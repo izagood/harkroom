@@ -753,6 +753,79 @@ class StringsEn implements Strings {
   String get chGone => 'This channel was deleted, archived, or you no longer have access.';
   @override
   String get chAgentBadge => 'Agent';
+
+  @override
+  String planChip(int done, int total) => 'Plan $done/$total';
+  @override
+  String planChipBlocked(int n) => '· $n blocked';
+  @override
+  String planChipSemantics(int done, int total) => 'Plan: $done of $total steps done';
+  @override
+  String planBlockedSemantics(int n) => '$n blocked';
+  @override
+  String planGoalSemantics(String goal) => 'Goal: $goal';
+  @override
+  String get planOpenHint => 'Double-tap to open the plan';
+  @override
+  String get planTitle => 'Plan';
+  @override
+  String get planFlow => 'Flow';
+  @override
+  String get planParallel => 'in parallel';
+  @override
+  String get planNext => 'Next:';
+  @override
+  String get planBlocked => 'Blocked:';
+  @override
+  String get planWaitingOn => 'After:';
+  @override
+  String get planReady => 'Ready to start';
+  @override
+  String get planReadyAfter => 'Earlier steps done · ready to start';
+  @override
+  String get planOpenLinked => 'Open that thread →';
+  @override
+  String get planLinkedHidden => 'Thread you can’t see';
+  @override
+  String get planStale => 'May be out of date';
+  @override
+  String get planStaleShort => 'Stale';
+  @override
+  String get planFlagged => 'Flagged by a check — not loaded into agent prompts';
+  @override
+  String get planLoadFailed => 'Couldn’t load the plan.';
+  @override
+  String planEditedAgo(String ago) => 'edited $ago';
+  @override
+  String planMoreGroups(int n) => '+$n';
+  @override
+  String planPillDone(String title) => '$title✓';
+  @override
+  String planPillBlocked(String title, int done, int total) => '$title blocked $done/$total';
+  @override
+  String planPillWaiting(String title) => '$title waiting';
+  @override
+  String planPillWaitingCount(String title, int done, int total) => '$title waiting $done/$total';
+  @override
+  String planPillCount(String title, int done, int total) => '$title $done/$total';
+  @override
+  String planSummary(int groups, int active, int blocked) => '$groups groups · $active in progress · $blocked blocked';
+  @override
+  String planSummaryNoBlocked(int groups, int active) => '$groups groups · $active in progress';
+  @override
+  String planSummaryGroups(int groups) => '$groups groups';
+  @override
+  String get planStateBlocked => 'Blocked';
+  @override
+  String get planStateActive => 'In progress';
+  @override
+  String get planStateDone => 'Done';
+  @override
+  String get planStateWaiting => 'Waiting';
+  @override
+  String get planStateReady => 'Ready';
+  @override
+  String get planStateHidden => 'Hidden';
   @override
   String get newMessageDmFailed => "Couldn't open the DM.";
   @override
@@ -1383,6 +1456,7 @@ class StringsEn implements Strings {
         'system.threadModel.set': '{accountId} set {agentId}\'s model in this thread to {value}. It applies from the next turn.',
         'system.threadModel.setByAgent': '{accountId} set {agentId}\'s model in this thread to {value} (set by an agent). It applies from the next turn.',
         'system.threadModel.cleared': '{accountId} cleared {agentId}\'s model in this thread. It runs on its default from the next turn.',
+        'system.plan.ready': '{n} step(s) ready to start: {ids}',
         'system.threadModel.clearedByAgent': '{accountId} cleared {agentId}\'s model in this thread (set by an agent). It runs on its default from the next turn.',
         'system.merge.approvalUsed': '🔓 {repo}#{number} merge attempted with a one-time approval · head {head} · gh {ghUser}',
         'system.merge.approvalUsedRelaxed': '🔓 {repo}#{number} merge attempted with a one-time approval · head {head} · gh {ghUser} · CI check left to GitHub',

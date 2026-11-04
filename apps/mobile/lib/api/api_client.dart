@@ -10,6 +10,7 @@ import 'content_type.dart';
 import 'ask.dart';
 import 'inbox_board.dart';
 import 'models.dart';
+import 'thread_plan.dart';
 import 'permission_card.dart' show DecideCheck;
 
 /// 서버 REST 클라이언트. 데스크탑 `api.ts` 의 **같은 규약**을 따른다:
@@ -377,6 +378,12 @@ class ApiClient {
   /// 채널에 함께 올린 답글을 채널에서만 거둔다. 글은 스레드에 남는다.
   Future<MessageRow> recallFromChannel(String channelId, String messageId) async => MessageRow.fromJson(
       _obj(await _send('DELETE', '/channels/$channelId/messages/$messageId/also-in-channel')));
+
+  /// 스레드 계획판(서버 158). 계획이 없으면 null. 파생 상태·연결 진행률은 서버가 보는 사람 기준으로 센다.
+  Future<ThreadPlanView?> threadPlan(String rootId) async {
+    final res = _obj(await _send('GET', '/threads/$rootId/plan'));
+    return ThreadPlanView.fromJson(res['plan']);
+  }
 
   /// 스레드 × 에이전트 모델 지정(서버 079).
   Future<List<ThreadAgentModel>> threadAgentModels(String channelId, String rootId) async {

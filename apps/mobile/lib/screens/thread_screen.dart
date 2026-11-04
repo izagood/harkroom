@@ -19,6 +19,7 @@ import 'message_feed.dart';
 import 'message_list_screen.dart';
 import 'message_tile.dart';
 import 'search_screen.dart';
+import 'thread_plan_sheet.dart';
 import 'attachments.dart';
 
 /// 스레드 하나. 루트를 맨 위에 두고 그 아래 답글이 붙는다.
@@ -502,6 +503,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 // 모델 바·끊김 띠는 머리 바로 밑에 겹쳐 선다 — 피드는 그 밑까지 흐르고 위 여백으로 비킨다.
                 header: Column(mainAxisSize: MainAxisSize.min, children: [
                   ThreadModelBar(channelId: widget.channelId, rootId: widget.rootId, agentIds: threadAgents),
+                  ThreadPlanBand(rootId: widget.rootId, progress: root?.planProgress),
                   const ConnectionBand(),
                 ]),
                 builder: (context, inset) => FeedKeyboardDismiss(

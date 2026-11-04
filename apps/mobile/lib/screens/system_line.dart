@@ -9,7 +9,8 @@ import '../i18n/system_text.dart';
 enum SystemLineShape { record, response }
 
 // runner: 러너 알림 줄(2026-11-02) — 누구의 요청에 대한 응답이 아니라 사람 멘션의 상태다.
-final RegExp _recordKey = RegExp(r'^system\.(member|threadModel|runner)\.');
+// plan: 계획판 「이제 시작 가능」 줄 — 계획 상태의 기록이다.
+final RegExp _recordKey = RegExp(r'^system\.(member|threadModel|runner|plan)\.');
 
 String? _i18nKey(MessageRow m) {
   final tag = m.meta['i18n'];
@@ -36,6 +37,7 @@ String systemRecordIcon(MessageRow m) {
   if (key.startsWith('system.member.')) return '−';
   if (key.startsWith('system.threadModel.')) return '⚙';
   if (key == 'system.runner.fenced') return '↪';
+  if (key.startsWith('system.plan.')) return '▶';
   if (key.startsWith('system.runner.')) return '⏳';
   return '•';
 }

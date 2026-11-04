@@ -21,6 +21,7 @@ import '../api/api_error.dart';
 import '../api/ask.dart';
 import '../api/inbox_board.dart';
 import '../api/models.dart';
+import '../api/thread_plan.dart';
 import '../api/permission_card.dart' show DecideCheck;
 import '../api/ws.dart';
 import '../api/ws_socket.dart';
@@ -1320,6 +1321,12 @@ class AppState extends ChangeNotifier {
         final rootId = event['rootId'];
         if (channelId is! String || rootId is! String) return;
         _applyThreadStatus(channelId, rootId, ThreadStatusMark.fromJson(event['statusReaction']));
+      case 'thread.plan.changed':
+        // 계획판. 칩은 이벤트 값 그대로(청중 기준). 판은 여기서 받지 않는다 — 루트 행 rev 가 바뀌면 띠가 받는다(데스크톱 R1).
+        final channelId = event['channelId'];
+        final rootId = event['rootId'];
+        if (channelId is! String || rootId is! String) return;
+        _applyThreadPlan(channelId, rootId, event['rev'], event['progress']);
       case 'avatar.changed':
         // 다른 기기(데스크톱)에서 사진을 바꾸면 여기로 온다. 이것을 안 받으면 앱을 다시 켤 때까지 옛 사진(또는 글자)이다.
         final id = event['accountId'];
@@ -1415,6 +1422,41 @@ class AppState extends ChangeNotifier {
   }
 
   /// 루트의 스레드 상태를 갈아 끼운다. 모르는 루트는 버린다(다음에 읽을 때 서버가 함께 준다).
+  void _applyThreadPlan(String channelId, String rootId, Object? rev, Object? progress) {
+    _touch(rootId);
+    final mark = PlanProgressMark.fromEvent(rev, progress);
+    if (rev == null) {
+      // 지워졌으면 들고 있던 판도 버린다(R3) — 다시 세운 판(rev 1)을 옛 판이 가리지 않게. 오던 응답도 무효로 한다.
+      threadPlans.remove(rootId);
+      threadPlanFailed.remove(rootId);
+      _threadPlanReq[rootId] = (_threadPlanReq[rootId] ?? 0) + 1;
+    }
+    for (final list in [messages[channelId], ...threads.values]) {
+      if (list == null) continue;
+      final idx = list.indexWhere((m) => m.id == rootId);
+      if (idx >= 0) list[idx] = list[idx].withPlanProgress(mark);
+    }
+    final root = threadRoots[rootId];
+    if (root != null && root.channelId == channelId) threadRoots[rootId] = root.withPlanProgress(mark);
+    notifyListeners();
+  }
+
+  /// 스레드 응답의 루트가 채널 줄과 같은 사실을 보게 한다 — 스레드 화면은 채널 줄을 먼저 읽는다.
+  void _syncRootPlan(MessageRow root) {
+    if (!root.planProgressKnown) return;
+    final list = messages[root.channelId];
+    if (list == null) return;
+    final idx = list.indexWhere((m) => m.id == root.id);
+    if (idx >= 0) list[idx] = list[idx].withPlanProgress(root.planProgress);
+  }
+
+  /// 앞 행의 계획 진행률을 지킨다 — `planProgress` 키가 없는 응답(실시간·POST·PATCH)은 「모른다」이지 「없다」가 아니다
+  /// (데스크톱 `keepThreadFacts`). 키가 있으면 null 이어도 그 값이 맞다.
+  MessageRow _keepPlan(MessageRow? prev, MessageRow next) =>
+      prev != null && !next.planProgressKnown && prev.planProgressKnown
+          ? next.withPlanProgress(prev.planProgress)
+          : next;
+
   void _applyThreadStatus(String channelId, String rootId, ThreadStatusMark? status) {
     _touch(rootId);
     for (final list in [messages[channelId], ...threads.values]) {
@@ -1508,9 +1550,13 @@ class AppState extends ChangeNotifier {
   /// 쓰고, 그 사이 지워졌으면 `null`(되살리지 않는다). 그 뒤의 변화는 이벤트로 온다.
   MessageRow? _fromPage(MessageRow row, int asOf) {
     if ((_liveTouched[row.id] ?? 0) <= asOf) return row;
+    // 실시간으로 더 새 행을 들고 있으면 그것이 맞다. 다만 그 행에 비어 오는 계획 진행률은 페이지 것으로 채운다.
     final held = _findMessage(row.channelId, row.id);
-    if (held != null) return held;
-    if (_liveRows.containsKey(row.id)) return _liveRows[row.id];
+    if (held != null) return _keepPlan(row, held);
+    if (_liveRows.containsKey(row.id)) {
+      final live = _liveRows[row.id];
+      return live == null ? null : _keepPlan(row, live);
+    }
     return row;
   }
 
@@ -1539,6 +1585,9 @@ class AppState extends ChangeNotifier {
   void _upsertMessage(MessageRow message, {int? asOf}) {
     if (asOf == null) {
       _touch(message.id);
+      if (message.isThreadRoot) {
+        message = _keepPlan(_findMessage(message.channelId, message.id) ?? _liveRows[message.id], message);
+      }
       _liveRows[message.id] = message;
     } else {
       final row = _fromPage(message, asOf);
@@ -2460,6 +2509,7 @@ class AppState extends ChangeNotifier {
     for (final m in page) {
       if (m.id == rootId) {
         threadRoots[rootId] = m;
+        _syncRootPlan(m);
       } else {
         replies.add(m);
       }
@@ -2473,6 +2523,7 @@ class AppState extends ChangeNotifier {
     for (final m in _pageRows(page, asOf)) {
       if (m.id == rootId) {
         threadRoots[rootId] = m;
+        _syncRootPlan(m);
       } else {
         byId[m.id] = m;
       }
@@ -2627,6 +2678,40 @@ class AppState extends ChangeNotifier {
 
   /// 스레드 루트 id → 에이전트 모델 지정(서버 079). 키가 없으면 아직 못 받았다.
   final Map<String, List<ThreadAgentModel>> threadAgentModels = {};
+
+  /// 받아 둔 계획판(루트 id → 판). 없으면 아직 안 받았거나 계획이 없다.
+  final Map<String, ThreadPlanView> threadPlans = {};
+
+  /// 계획판을 못 받은 스레드 — 시트가 오류와 다시 시도를 보인다. 띠는 루트 행 값으로 그대로 선다.
+  final Set<String> threadPlanFailed = {};
+
+  /// 스레드별 마지막 요청 번호. 나중에 시작한 요청이 있으면 먼저 시작한 응답은 버린다.
+  final Map<String, int> _threadPlanReq = {};
+
+  /// 계획판을 받는다. 늦게 온 옛 응답은 버린다(데스크톱 R1·R3) — 더 앞선 요청이거나, 들고 있는 판보다 옛 시각이면 덮지 않는다.
+  /// rev 는 지웠다 다시 세우면 1로 돌아가므로 시각으로 견준다.
+  Future<void> loadThreadPlan(String rootId) async {
+    final api = _api;
+    if (api == null) return;
+    final gen = _generation;
+    final req = (_threadPlanReq[rootId] ?? 0) + 1;
+    _threadPlanReq[rootId] = req;
+    try {
+      final plan = await api.threadPlan(rootId);
+      if (gen != _generation || _threadPlanReq[rootId] != req) return;
+      threadPlanFailed.remove(rootId);
+      final held = threadPlans[rootId];
+      if (plan == null) {
+        threadPlans.remove(rootId);
+      } else if (held?.updatedAt == null || plan.updatedAt == null || !plan.updatedAt!.isBefore(held!.updatedAt!)) {
+        threadPlans[rootId] = plan;
+      }
+    } on Object {
+      if (gen != _generation || _threadPlanReq[rootId] != req) return;
+      threadPlanFailed.add(rootId);
+    }
+    notifyListeners();
+  }
 
   /// 스레드의 모델 지정을 읽는다. 실패는 삼킨다 — 칩이 안 설 뿐 스레드는 열린다.
   Future<void> loadThreadAgentModels(String channelId, String rootId) async {
@@ -2875,6 +2960,9 @@ class AppState extends ChangeNotifier {
     _boardCardsFor = null;
     _boardPending.clear();
     _boardPendingRev++;
+    threadPlans.clear();
+    threadPlanFailed.clear();
+    _threadPlanReq.clear();
     agentActivity.clear();
     agentWakes.clear();
     agentsLoad = LoadState.loading;

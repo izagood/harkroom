@@ -1,8 +1,11 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
 import '../api/models.dart';
+import '../api/thread_plan.dart';
 import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
 import '../state/app_state.dart';
@@ -18,6 +21,7 @@ import 'message_link.dart';
 import 'saved_screen.dart';
 import '../i18n/system_text.dart';
 import 'system_line.dart';
+import 'thread_plan_sheet.dart';
 
 /// 말풍선 한 줄. **채널 화면과 스레드 화면이 같은 것을 쓴다.**
 ///
@@ -176,31 +180,22 @@ class MessageTile extends StatelessWidget {
                     borderRadius: BorderRadius.circular(HarkroomRadius.row),
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(minHeight: 32),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          for (final id in message.participantIds.take(3))
-                            Padding(
-                              key: Key('thread-participant-${message.id}-$id'),
-                              padding: const EdgeInsets.only(right: 3),
-                              child: HarkroomAvatar(
-                                id: id,
-                                name: app.accounts[id]?.handle ?? app.displayNameOf(id),
-                                size: 18,
-                              ),
+                      child: planTone(message.planProgress) == PlanTone.empty
+                          ? _summaryRow(context, app, t, k, message.participantIds.length, null, null)
+                          // 칩이 서면 좁은 폭에서 무엇을 줄일지 잰다(시안 v3). 칩이 없는 줄은 예전 그대로다.
+                          : LayoutBuilder(
+                              builder: (context, box) {
+                                final layout = PlanSummaryLayout.of(
+                                  context,
+                                  box.maxWidth,
+                                  _replyLabel(t, message)!,
+                                  _replyStyle(k),
+                                  message.planProgress!,
+                                  math.min(3, message.participantIds.length),
+                                );
+                                return _summaryRow(context, app, t, k, layout.avatars, layout.replyMax, layout.chipMax);
+                              },
                             ),
-                          if (message.participantIds.isNotEmpty) const SizedBox(width: 3),
-                          Text(
-                            _replyLabel(t, message)!,
-                            style: TextStyle(color: k.link, fontWeight: FontWeight.w600, fontSize: 13),
-                          ),
-                          if (message.lastReplyAt != null && (message.replyCount ?? 0) > 0)
-                            Text(
-                              ' · ${agoLabel(message.lastReplyAt!, DateTime.now().toUtc(), t)}',
-                              style: TextStyle(color: k.fgMuted, fontSize: 12),
-                            ),
-                        ],
-                      ),
                     ),
                   ),
               ],
@@ -225,6 +220,57 @@ class MessageTile extends StatelessWidget {
     final raw = meta['mentionDenied'];
     if (raw is! List) return const [];
     return raw.whereType<String>().where((h) => h.isNotEmpty).toList(growable: false);
+  }
+
+  TextStyle _replyStyle(HarkroomTokens k) => TextStyle(color: k.link, fontWeight: FontWeight.w600, fontSize: 13);
+
+  /// 스레드 요약 줄: 참여자 아바타 몇 개 · 「답글 n개」 · 계획 칩 · 마지막 답글 시각.
+  /// [replyMax]·[chipMax] 는 칩이 설 때만 준다([PlanSummaryLayout]).
+  Widget _summaryRow(BuildContext context, AppState app, Strings t, HarkroomTokens k, int avatars, double? replyMax, double? chipMax) {
+    final reply = Text(
+      _replyLabel(t, message)!,
+      maxLines: replyMax == null ? null : 1,
+      softWrap: replyMax == null ? null : false,
+      overflow: replyMax == null ? null : TextOverflow.ellipsis,
+      style: _replyStyle(k),
+    );
+    final shown = message.participantIds.take(math.min(3, avatars));
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (final id in shown)
+          Padding(
+            key: Key('thread-participant-${message.id}-$id'),
+            padding: const EdgeInsets.only(right: 3),
+            child: HarkroomAvatar(
+              id: id,
+              name: app.accounts[id]?.handle ?? app.displayNameOf(id),
+              size: 18,
+            ),
+          ),
+        if (shown.isNotEmpty) const SizedBox(width: 3),
+        if (replyMax == null) reply else ConstrainedBox(constraints: BoxConstraints(maxWidth: replyMax), child: reply),
+        if (chipMax != null)
+          Padding(
+            padding: const EdgeInsets.only(left: PlanSummaryLayout.chipGap),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: chipMax),
+              child: PlanChip(key: Key('plan-chip-${message.id}'), progress: message.planProgress!),
+            ),
+          ),
+        // 좁으면 시각부터 줄이고 지운다 — 칩과 「답글 n개」는 남는다.
+        if (message.lastReplyAt != null && (message.replyCount ?? 0) > 0)
+          Flexible(
+            child: Text(
+              ' · ${agoLabel(message.lastReplyAt!, DateTime.now().toUtc(), t)}',
+              maxLines: 1,
+              softWrap: false,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: k.fgMuted, fontSize: 12),
+            ),
+          ),
+      ],
+    );
   }
 
   /// 답글 수 줄의 문구. **`replyCount` 가 `null` 이면 아무것도 그리지 않는다** —
