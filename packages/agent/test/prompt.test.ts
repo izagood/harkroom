@@ -1145,6 +1145,15 @@ describe('메모리 주입 (#139)', () => {
     expect(text).toContain('`type: "plan"` 으로 `managerId` 를 바꾼다');
   });
 
+  it('계획판 안내: 끝점을 말하면 자동 진행을 켜고, 켠 턴에서 따로 부르지 않고, 멈추면 끈다', () => {
+    const text = build({ core: null, slugs: [] });
+    expect(text).toContain('`auto: { until: 그 단계·그룹 id, sourceMessageId: 너를 부른 그 글의 id }`');
+    expect(text).toContain('끝점이 분명하지 않으면 켜지 말고 묻는다');
+    expect(text).toContain('켠 턴에서는 단계를 `active` 로 바꾸거나 담당을 부르지 않는다');
+    expect(text).toContain('그 줄로 불리면 너는 관리자다');
+    expect(text).toContain('`auto: null` 로 끈다');
+  });
+
   // f3(스레드 d1e8f866, g7): 스레드 메모는 기억 저장소가 아니다 — 기억 조회가 실패해도 안내가 실린다(설계 원칙 1).
   it('스레드 메모 안내는 기억 상태와 무관하게 실리고, 조회 실패 턴에는 mem/* 를 입에 올리지 않는다', () => {
     for (const m of ['unavailable', { core: null, slugs: [] }, { core: '본문', slugs: ['mem/a'] }] as MemoryContext[]) {
