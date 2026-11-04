@@ -12,6 +12,7 @@ import {
 } from '../src/lib/appWindows';
 import { acc, msg, scheduledApiStub } from './helpers/fakeApi';
 import { undoSendStorage } from '../src/lib/prefs';
+import { loadPlanOpen } from '../src/lib/threadPlan';
 
 /**
  * 스레드 창(판 3) — 메인 트리에서 **새 창 문서로** 포털을 단다. jsdom 의 두 번째 문서가 `window.open` 이
@@ -173,5 +174,107 @@ describe('로그아웃 때 새 창을 닫는다 (security L1)', () => {
     ]));
     forgetSavedAppWindows('k1');
     expect(loadSavedAppWindows().map((w) => w.communityId)).toEqual(['k2']);
+  });
+});
+
+describe('계획판 창', () => {
+  const planDoc = { goal: '0.5 묶음\n둘째 줄', groups: [], steps: [
+    { id: 's1', title: '하나', state: 'pending', assigneeId: 'u2', links: [{ kind: 'message', id: 'm2' }], dependsOn: [] },
+  ] };
+  const planView = { rootId: 'm1', channelId: 'c1', rev: 3, updatedAt: '2026-11-01T00:00:00.000Z', updatedBy: 'u2', flagged: null, doc: planDoc,
+    derived: { s1: { derived: 'ready', waitingOn: [] } }, progress: { done: 0, total: 1, active: 0, blocked: 0, waiting: 0 }, linked: [] };
+  const withPlan = () => {
+    const rows = useAppStore.getState().messages.c1!;
+    useAppStore.getState().set({
+      threadPlans: { m1: planView as never },
+      messages: { c1: rows.map((m) => (m.id === 'm1' ? { ...m, planProgress: { done: 0, total: 1, active: 0, blocked: 0, waiting: 0, rev: 3 } } : m)) },
+    });
+  };
+  const openPlan = async () => {
+    const c = { ...fakeController(), loadThreadPlan: vi.fn(async () => undefined), openMessage: vi.fn(async () => undefined), openThread: vi.fn(async () => undefined),
+      highlightInThreadWindow: vi.fn(async () => true) };
+    setController(c as unknown as Controller);
+    render(<AppWindowsHost />);
+    act(() => { openAppWindow({ kind: 'plan', channelId: 'c1', rootId: 'm1' }); });
+    return c;
+  };
+
+  it('본문이 창을 채우고 제목은 「계획 · #채널 · 목표 첫 줄」, 손잡이·넓게·✕는 없다', async () => {
+    usePrefsStore.getState().setLocale('en');
+    withPlan();
+    await openPlan();
+    const popup = wins[0]!.document;
+    await waitFor(() => expect(popup.querySelector('[data-testid="plan-window"]')).toBeTruthy());
+    expect(popup.title).toBe('Plan · #room · 0.5 묶음');
+    for (const id of ['plan-resize-corner', 'plan-size-toggle', 'plan-panel-close', 'plan-pop-out']) {
+      expect(popup.querySelector(`[data-testid="${id}"]`)).toBeNull();
+    }
+    expect(popup.querySelector('[data-testid="window-pin"]')).toBeTruthy();
+    expect(popup.querySelector('[data-testid="window-back-to-main"]')!.textContent).toContain('⇲');
+  });
+
+  it('글로 가면 메인 창을 앞으로 가져와 열고, 창은 닫지 않는다', async () => {
+    withPlan();
+    const c = await openPlan();
+    const focus = vi.spyOn(window, 'focus').mockImplementation(() => undefined);
+    const popup = wins[0]!.document;
+    await waitFor(() => expect(popup.querySelector('[data-testid="plan-row"]')).toBeTruthy());
+    act(() => { (popup.querySelector('[data-testid="plan-row"]') as HTMLElement).click(); });
+    await waitFor(() => expect(c.openMessage).toHaveBeenCalledWith('m2'));
+    expect(focus).toHaveBeenCalled();
+    expect(wins[0]!.closed).toBe(false);
+    focus.mockRestore();
+  });
+
+  it('그 스레드가 새 창에 열려 있으면 그 창을 앞으로 가져오고 메인은 옮기지 않는다', async () => {
+    withPlan();
+    const c = await openPlan();
+    act(() => { openAppWindow({ kind: 'thread', channelId: 'c1', rootId: 'm1' }); });
+    const popup = wins[0]!.document;
+    await waitFor(() => expect(popup.querySelector('[data-testid="plan-row"]')).toBeTruthy());
+    act(() => { (popup.querySelector('[data-testid="plan-row"]') as HTMLElement).click(); });
+    await waitFor(() => expect(c.highlightInThreadWindow).toHaveBeenCalledWith('c1', 'm1', 'm2'));
+    expect(wins[1]!.focus).toHaveBeenCalled();
+    expect(c.openMessage).not.toHaveBeenCalled();
+  });
+
+  it('되돌리기는 창을 닫고 메인에서 그 스레드를 패널을 편 채로 연다', async () => {
+    withPlan();
+    const c = await openPlan();
+    const popup = wins[0]!.document;
+    await waitFor(() => expect(popup.querySelector('[data-testid="plan-window"]')).toBeTruthy());
+    act(() => { (popup.querySelector('[data-testid="window-back-to-main"]') as HTMLElement).click(); });
+    expect(wins[0]!.closed).toBe(true);
+    expect(loadPlanOpen('m1')).toBe(true);
+    expect(c.openThread).toHaveBeenCalledWith('m1', { channelId: 'c1' });
+  });
+
+  it('계획이 지워지면 까닭과 [창 닫기]를 보이고, 다시 세워지면 그 창에 그린다', async () => {
+    await openPlan();
+    const popup = wins[0]!.document;
+    await waitFor(() => expect(popup.querySelector('[data-testid="plan-window-close"]')).toBeTruthy());
+    expect(wins[0]!.closed).toBe(false);
+    withPlan();
+    await waitFor(() => expect(popup.querySelector('[data-testid="plan-window"]')).toBeTruthy());
+    expect(popup.querySelector('[data-testid="plan-window-close"]')).toBeNull();
+  });
+
+  it('스레드를 볼 수 없으면 기존 문구와 [창 닫기]이고, 스토어에 옛 판이 있어도 목표를 제목에 쓰지 않는다', async () => {
+    withPlan();
+    await openPlan();
+    cleanup();
+    resetAppWindowsForTest();
+    wins = [];
+    setWindowOpener({ open: () => { const w = fakeWin(); wins.push(w); return w as unknown as Window; } });
+    const failing = { ...fakeController(), loadThreadForWindow: vi.fn(async () => false), loadThreadPlan: vi.fn(async () => undefined) };
+    setController(failing as unknown as Controller);
+    render(<AppWindowsHost />);
+    act(() => { openAppWindow({ kind: 'plan', channelId: 'c1', rootId: 'm1' }); });
+    const popup = wins[0]!.document;
+    await waitFor(() => expect(popup.querySelector('[data-testid="plan-window-close"]')).toBeTruthy());
+    expect(popup.querySelector('[data-testid="window-empty"]')!.textContent).toContain('이 스레드는 없습니다');
+    expect(popup.title).not.toContain('0.5 묶음');
+    act(() => { (popup.querySelector('[data-testid="plan-window-close"]') as HTMLElement).click(); });
+    expect(wins[0]!.closed).toBe(true);
   });
 });

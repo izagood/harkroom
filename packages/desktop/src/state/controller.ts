@@ -1872,6 +1872,23 @@ export class Controller {
     this.store.getState().set({ highlightedMessageId: target.id });
   }
 
+  /**
+   * 그 스레드가 새 창에 열려 있을 때 글로 간다(계획판 창). 메인의 자리를 옮기지 않고 그 글이 실리게 한 뒤 강조만 건다.
+   * 이 스레드의 글이 아니거나 물을 수 없으면 `false` — 부르는 쪽이 메인 창의 `openMessage` 로 넘긴다.
+   */
+  async highlightInThreadWindow(channelId: string, rootId: string, messageId: string): Promise<boolean> {
+    try {
+      const target = this.findCachedMessage(messageId) ?? await this.api.message(messageId);
+      if (target.channelId !== channelId || (target.threadRootId ?? target.id) !== rootId) return false;
+      const page = await this.messagesPage(channelId, { thread: rootId, around: target.seq });
+      this.store.getState().upsertMessages(channelId, page.messages, page.asOf);
+      this.store.getState().set({ highlightedMessageId: target.id });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /** 스토어 어느 채널에든 실려 있는 그 메시지. 없으면 `null` — 서버에 물어야 한다. */
   private findCachedMessage(messageId: string): MessageRow | null {
     for (const rows of Object.values(this.store.getState().messages)) {

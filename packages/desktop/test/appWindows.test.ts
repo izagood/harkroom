@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   anyAppWindowFocused, appWindowKey, closeAppWindow, loadSavedAppWindows, markAppWindowGone, MAX_APP_WINDOWS,
-  openAppWindow, resetAppWindowsForTest, restoreAppWindows, setAppWindowInvoke, setAppWindowPinned, setAppWindowScope,
+  openAppWindow, persistAppWindows, resetAppWindowsForTest, restoreAppWindows, setAppWindowInvoke, setAppWindowPinned, setAppWindowScope,
   setWindowOpener, useAppWindows, type AppWindowTarget,
 } from '../src/lib/appWindows';
 
@@ -186,5 +186,31 @@ describe('appWindows', () => {
       { target: { kind: 'channel', channelId: 'c-ok-1' }, communityId: null, pinned: false },
     ]));
     expect(loadSavedAppWindows().map((w) => w.target)).toEqual([{ kind: 'channel', channelId: 'c-ok-1' }]);
+  });
+});
+
+describe('계획판 창', () => {
+  const plan: AppWindowTarget = { kind: 'plan', channelId: 'c1', rootId: 'R1' };
+  it('키는 뿌리로 짓고(Rust 라벨 꼴), 같은 계획은 창 하나다. 스레드 창과는 따로다', () => {
+    expect(appWindowKey(plan)).toBe('plan-r1');
+    setWindowOpener({ open: () => fakeWin() as unknown as Window });
+    const opened = openAppWindow(plan);
+    expect(opened.kind).toBe('opened');
+    expect(openAppWindow(plan).kind).toBe('focused');
+    expect(openAppWindow(thread('R1')).kind).toBe('opened');
+  });
+  it('처음 크기는 480×760 이고 복원 목록에 넣지 않는다', () => {
+    const features: string[] = [];
+    setWindowOpener({ open: (_u, _n, f) => { features.push(f); return fakeWin() as unknown as Window; } });
+    openAppWindow(plan, { communityId: 'cm1' });
+    expect(features[0]).toContain('width=480,height=760');
+    setAppWindowScope('cm1');
+    persistAppWindows();
+    expect(loadSavedAppWindows().some((w) => w.target.kind === 'plan')).toBe(false);
+    expect(localStorage.getItem('harkroom.appWindows') ?? '').not.toContain('"plan"');
+  });
+  it('저장소에 계획판 창을 넣어도 복원하지 않는다', () => {
+    localStorage.setItem('harkroom.appWindows', JSON.stringify([{ target: plan, communityId: null, pinned: false }]));
+    expect(loadSavedAppWindows()).toEqual([]);
   });
 });
