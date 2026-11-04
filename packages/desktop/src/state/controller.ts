@@ -2144,16 +2144,17 @@ export class Controller {
 
   /**
    * 묶음 카드의 한 줄을 고른다(선택 카드 P1). `answerAsk` 와 같이 낙관적 갱신을 하지 않는다 — 묶음 행은 응답과
-   * `message.updated` 로만 바뀌고, 줄의 상태는 카드가 원본을 다시 읽어 그린다. 진 경합·권한 없음은 삼킨다.
+   * `message.updated` 로만 바뀌고, 줄의 상태는 카드가 원본을 다시 읽어 그린다. 거절 이유는 돌려줘 그 줄 안에 적는다.
    */
-  async answerBundleItem(bundleId: string, channelId: string, rootId: string, optionId: string): Promise<boolean> {
+  async answerBundleItem(bundleId: string, channelId: string, rootId: string, optionId: string): Promise<{ status: number; code: string; message: string } | null> {
     try {
       const m = await this.api.answerBundleItem(channelId, bundleId, rootId, optionId);
       this.store.getState().upsertMessages(channelId, [m]);
-      return true;
-    } catch {
-      // 서버가 참이다 — 화면은 이벤트로 따라온다. 실패했다는 사실만 돌려줘 카드가 사람에게 알린다(#1288 designer n2).
-      return false;
+      return null;
+    } catch (e) {
+      // 서버가 참이다 — 화면은 이벤트로 따라온다. 어느 줄이 왜 안 됐는지는 그 줄이 말한다.
+      if (e instanceof ApiError) return { status: e.status, code: e.code, message: e.message };
+      return { status: 0, code: 'failed', message: e instanceof Error ? e.message : String(e) };
     }
   }
 

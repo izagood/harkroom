@@ -99,7 +99,11 @@ type Reach = Record<string, 'ok' | 'no' | 'unknown'>;
  * 한 번 승인의 상태·계정 고르기·보내기 — 따로 선 패널(줄 없는 옛 카드)과 줄 카드 안(`OnceCardRows`)이 같이 쓴다.
  * `eagerRemote` — 카드 안의 계정 줄은 서버 보고(D1, 서버 조회뿐이라 gh 를 깨우지 않는다)를 펼치기 전에도 읽는다.
  */
-export function useOnceApproval(message: MessageRow | null, eagerRemote = false) {
+export function useOnceApproval(
+  message: MessageRow | null, eagerRemote = false,
+  /** 묶음 줄처럼 다른 길로 보낼 때(`ask-bundle/answer`). 없으면 카드의 `approve-once`. */
+  send?: (body: { ghUser?: string; relaxChecks: boolean; number: number; headSha: string; failedChecks?: string[] }) => Promise<{ approvalExpiresAt?: string }>,
+) {
   const t = useT();
   const d = message ? readPermissionOnce(message.meta) : null;
   const me = useActiveStore((s) => s.me);
@@ -175,7 +179,8 @@ export function useOnceApproval(message: MessageRow | null, eagerRemote = false)
       // CI 거절 카드의 뜻은 「CI 무시하고 한 번」 그 자체다 — 체크박스가 아니라 언제나 켠다(서버도 끈 승인은 400).
       const relaxChecks = ci || relax;
       // CI 카드는 보여 준 실패 목록도 대조값으로 보낸다(n1) — 그 사이 목록이 바뀌었으면 서버가 card_stale 로 거절한다.
-      const r = await getController().approvePermissionOnce(d.agentId, d.requestId, { ...(ghUser ? { ghUser } : {}), relaxChecks, number: d.number, headSha: d.headSha, ...(ci ? { failedChecks: d.failedChecks } : {}) });
+      const body = { ...(ghUser ? { ghUser } : {}), relaxChecks, number: d.number, headSha: d.headSha, ...(ci ? { failedChecks: d.failedChecks } : {}) };
+      const r = await (send ? send(body) : getController().approvePermissionOnce(d.agentId, d.requestId, body));
       setDone({ ghUser: ghUser || null, relaxChecks, expiresAt: r.approvalExpiresAt ?? new Date(Date.now() + 86_400_000).toISOString() });
     } catch (e) {
       setError({ code: e instanceof ApiError ? e.code : 'failed', raw: errorText(e, t) });

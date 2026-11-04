@@ -1,11 +1,11 @@
-import { useRef, useState } from 'react';
-import { ASK_TEXT_MAX_CHARS, ASK_TEXT_OPTION_ID, askTakesText, readAskMeta, type AskAudience, type MessageRow } from '@harkroom/shared';
+import { useEffect, useRef, useState } from 'react';
+import { ASK_TEXT_MAX_CHARS, ASK_TEXT_OPTION_ID, askTakesText, readAskMeta, type AskAudience, type MessageRow, type PermissionMirrorMeta } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { selectAccountNames } from '../lib/accountNames';
 import { getController } from '../state/controller';
 import { useT } from '../i18n/useT';
 import type { Translate } from '../i18n';
-import { MandateLineBody, readCardSource } from './MandateLineBody';
+import { cardContextText, MandateLineBody, readCardSource, requestTargetOf, type CardSource } from './MandateLineBody';
 import { messageLinkFromMeta } from '../lib/link';
 import { CardMessageLink } from './CardMessageLink';
 import { useDecideCheck } from './useDecideCheck';
@@ -52,12 +52,22 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
     return (hit.threadRootId ?? hit.id) === root ? hit.body : null;
   });
   const [pickAnyway, setPickAnyway] = useState(false);
-  // P3 ②: 원본 권한 카드면 이 사람이 정할 수 있는지 묻는다(거울은 소유자만 — `MandateLineBody` 와 같다).
-  const reqMeta = message.meta?.permissionRequest as { agentId?: unknown } | undefined;
-  const decide = useDecideCheck(!message.meta?.permissionMirror && typeof reqMeta?.agentId === 'string' ? reqMeta.agentId : null, message.channelId);
+  // 거울이면 보는 사람 권한으로 원본을 읽는다 — 못 보면 null(서버가 403). 결정권 판정과 중립 거울의 내용에 쓴다.
+  const rawMirrorRootId = (message.meta?.permissionMirror as PermissionMirrorMeta | undefined)?.rootId ?? null;
+  // uuid 꼴이 아닌 값은 묻지 않는다(`messageLinkFromMeta` 가 링크를 그리지 않는 것과 같다).
+  const mirrorRootId = messageLinkFromMeta(rawMirrorRootId) ? rawMirrorRootId : null;
+  const mirrorRoot = useReadableRoot(mirrorRootId, message);
+  const mirrorTarget = mirrorRoot ? requestTargetOf(mirrorRoot) : null;
+  // P3 ②: 이 사람이 정할 수 있는지 **요청 채널**로 묻는다(`MandateLineBody` 와 같다).
+  const reqMeta = message.meta?.permissionRequest as { agentId?: unknown; channelId?: unknown } | undefined;
+  const decide = useDecideCheck(
+    mirrorRootId ? mirrorTarget?.agentId ?? null : typeof reqMeta?.agentId === 'string' ? reqMeta.agentId : null,
+    mirrorRootId ? mirrorTarget?.channelId ?? null : typeof reqMeta?.channelId === 'string' ? reqMeta.channelId : message.channelId,
+  );
   if (!ask) return null;
   // W4: 위임장 줄 카드(또는 권한 카드 거울)는 선택지 목록 대신 줄 상자와 버튼을 그린다.
-  const lined = readCardSource(message.meta);
+  const lined = revealNeutralMirror(readCardSource(message.meta), mirrorRoot);
+  const neutralRevealed = !!mirrorRoot && !!(message.meta?.permissionMirror as PermissionMirrorMeta | undefined)?.neutral && !!lined && !lined.mirror?.neutral;
   const decidedVia = (message.meta?.permissionRequest as { decidedVia?: { kind?: unknown; messageId?: unknown } } | undefined)?.decidedVia;
   const chatVia = decidedVia?.kind === 'chat' ? { messageId: typeof decidedVia.messageId === 'string' ? decidedVia.messageId : null }
     : ask.answeredVia === 'chat' ? { messageId: null } : null;
@@ -139,7 +149,7 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
     ? String(lined.request!.grantExpiresAt) : null;
   const standingLive = standingUntil != null && new Date(standingUntil).getTime() > Date.now();
   const resultKey = lined?.line && answered
-    ? (standingUntil != null ? (standingLive ? 'mandateCard.result.standingUntil' : 'mandateCard.result.standingEnded') : lineResultKey(ask.answeredWith ?? null))
+    ? (standingUntil != null ? (standingLive ? 'mandateCard.result.standingUntil' : 'mandateCard.result.standingEnded') : elsewhereResult(lineResultKey(ask.answeredWith ?? null), !!lined.mirror))
     : null;
   const standingDate = standingUntil ? mmdd(new Date(standingUntil)) : '';
   const resultHead = resultKey ? t(resultKey, { who: answeredByName ?? t('common.someone'), date: standingDate }) : null;
@@ -197,7 +207,8 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
       {lined && (
         <MandateLineBody message={message} src={lined} canChoose={canChoose} optionIds={ask.options.map((o) => o.id)}
           answeredWith={ask.answeredWith ?? null} closedReason={closed && !answered ? (closedReason ?? 'declined') : null}
-          supersededBy={ask.supersededBy ?? null} onOpenSettings={onOpenSettings} headSaysResult={resultHead != null} />
+          supersededBy={ask.supersededBy ?? null} onOpenSettings={onOpenSettings} headSaysResult={resultHead != null}
+          decideTarget={mirrorTarget} {...(neutralRevealed && mirrorRoot ? { contextText: cardContextText(mirrorRoot) } : {})} />
       )}
       {!lined && replied && !pickAnyway && forMe && (
         <div className="px-2 pb-2 pt-1">
@@ -345,6 +356,48 @@ function AskWriteAnswer({ messageId, channelId }: { messageId: string; channelId
   );
 }
 
+/**
+ * 원본을 보는 사람 권한으로 읽는다(`GET /messages/:id`, 못 보면 403 → null). 거울 행이 바뀔 때마다 다시 읽는다 — 원본이 바뀌면
+ * 서버가 거울을 맞추며 `message.updated` 를 보낸다. 거울이 아니면 아무것도 묻지 않는다.
+ */
+function useReadableRoot(rootId: string | null, message: MessageRow): MessageRow | null {
+  const [root, setRoot] = useState<{ id: string; row: MessageRow | null } | null>(null);
+  useEffect(() => {
+    if (!rootId) return;
+    let alive = true;
+    getController().api.message(rootId).then(
+      (row) => { if (alive) setRoot({ id: rootId, row }); },
+      () => { if (alive) setRoot({ id: rootId, row: null }); },
+    );
+    return () => { alive = false; };
+    // 거울 행이 바뀌면(원본이 바뀌었다는 알림) 다시 읽는다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rootId, message]);
+  return rootId && root?.id === rootId ? root.row : null;
+}
+
+/**
+ * 중립 거울은 청중 일부가 원본 채널을 못 봐서 내용을 뺀 것이다. 이 사람이 원본을 읽었으면 원본 내용으로 다시 그린다 — 글에 실리지 않고 이 사람
+ * 화면에만 그려지므로 못 보는 사람에게 새지 않는다. 버튼은 그대로 거울 글로 답한다(서버가 원본에 적고 `via: mirror` 로 남긴다).
+ */
+function revealNeutralMirror(src: CardSource | null, root: MessageRow | null): CardSource | null {
+  if (!src?.mirror?.neutral || !root) return src;
+  const from = readCardSource(root.meta);
+  if (!from?.line || !from.request) return src;
+  const pr = from.request as { kind?: PermissionMirrorMeta['kind']; ownerAccountId?: unknown; once?: PermissionMirrorMeta['once']; warnings?: string[] };
+  return {
+    line: from.line, mandate: from.mandate, request: null,
+    mirror: {
+      rootId: src.mirror.rootId, neutral: false,
+      ...(pr.kind ? { kind: pr.kind } : {}),
+      ...(typeof pr.ownerAccountId === 'string' ? { ownerAccountId: pr.ownerAccountId } : {}),
+      ...(pr.once ? { once: pr.once } : {}),
+      line: from.line,
+      ...(pr.warnings ? { warnings: pr.warnings } : {}),
+    },
+  };
+}
+
 /** 「11/09」 — 두 앱이 같은 꼴(designer nit 1). 내 시간대 기준. */
 function mmdd(d: Date): string {
   return Number.isNaN(d.getTime()) ? '' : `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
@@ -368,6 +421,13 @@ export function lineResultKey(id: string | null): 'mandateCard.result.denied' | 
   if (id === 'approve_mandate' || id === 'approve') return 'mandateCard.result.added';
   if (id === 'approve_once' || id === 'approve_hour') return 'mandateCard.result.once';
   return null;
+}
+
+/** 「이 위임장」은 보고 있는 스레드로 읽힌다 — 원 스레드가 아닌 자리에서는 어느 스레드의 위임장인지 쓴다(원 카드는 그대로). */
+export function elsewhereResult(key: ReturnType<typeof lineResultKey>, elsewhere: boolean) {
+  if (elsewhere && key === 'mandateCard.result.added') return 'mandateCard.result.addedElsewhere' as const;
+  if (elsewhere && key === 'mandateCard.result.newAdded') return 'mandateCard.result.newAddedElsewhere' as const;
+  return key;
 }
 
 /**

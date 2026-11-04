@@ -28,13 +28,17 @@ function card(opts: { options?: string[]; pr?: Record<string, unknown>; ask?: Re
   } as unknown as MessageRow;
 }
 let answerAsk: ReturnType<typeof vi.fn>;
+let rootRead: ReturnType<typeof vi.fn>;
+let decideCheck: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   usePrefsStore.getState().setLocale('ko');
   resetCommunityRegistry();
   useActiveStore.getState().reset();
   useActiveStore.getState().set({ me: acc(ME, 'alice'), accounts: { [ME]: acc(ME, 'alice'), 'agent-1': acc('agent-1', 'rcms', 'agent', false, { ownerAccountId: ME }), other: acc('other', 'carol') } });
   answerAsk = vi.fn(async () => {});
-  setController({ answerAsk, closeAsk: vi.fn() } as unknown as Controller);
+  rootRead = vi.fn(async () => { throw new Error('403'); });
+  decideCheck = vi.fn(async () => ({ viewerCanDecide: false, asOwner: false, decideScope: 'owner', ownerAccountId: 'other' }));
+  setController({ answerAsk, closeAsk: vi.fn(), api: { message: rootRead, decideCheck } } as unknown as Controller);
 });
 afterEach(cleanup);
 
@@ -144,11 +148,38 @@ describe('W4 mandate line card', () => {
     expect(screen.queryByTestId('merge-once-change-account')).toBeNull();
     expect(screen.getAllByTestId('ask-option-approve_once')).toHaveLength(1);
   });
-  it('neutral mirror shows only a line + link', () => {
+  it('neutral mirror the viewer cannot read: one line, no link, no buttons, nothing about the original', async () => {
     render(<AskCard message={card({ mirror: { rootId: ROOT, neutral: true } })} />);
-    expect(screen.getByTestId('mandate-mirror-neutral')).toBeTruthy();
+    await waitFor(() => expect(rootRead).toHaveBeenCalledWith(ROOT));
+    expect(screen.getByTestId('mandate-mirror-neutral').textContent).toBe('다른 채널의 결정 카드다');
+    expect(screen.queryByTestId('mandate-mirror-link')).toBeNull();
     expect(screen.queryByTestId('mandate-line')).toBeNull();
     expect(screen.queryByTestId('ask-option-deny')).toBeNull();
+  });
+  it('neutral mirror the viewer can read: the original target and reason appear, and pressing answers the mirror (via: mirror)', async () => {
+    rootRead.mockResolvedValue({
+      ...card({ pr: { channelId: 'c-origin' } }), id: ROOT, channelId: 'c-origin', body: '권한 요청 · @rcms\n명령 허용 `Bash(psql:*)`\n이유: 로그를 봐야 한다',
+    });
+    const m = card({ mirror: { rootId: ROOT, neutral: true } });
+    render(<AskCard message={m} />);
+    await screen.findByTestId('mandate-line');
+    expect(screen.getByTestId('mandate-line-scope').textContent).toBe('Bash(psql:*)');
+    expect(screen.getByTestId('mandate-context').textContent).toContain('이유: 로그를 봐야 한다');
+    expect(screen.queryByTestId('mandate-mirror-neutral')).toBeNull();
+    fireEvent.click(screen.getByTestId('ask-option-approve_mandate'));
+    expect(answerAsk).toHaveBeenCalledWith('m1', 'approve_mandate', 'c1');
+  });
+  it('genuine mirror: a non-owner who may decide gets the buttons, asked on the request channel not the mirror channel', async () => {
+    useActiveStore.getState().set({ serverVersion: { version: '9.9.9' } } as never);
+    rootRead.mockResolvedValue({ ...card({ pr: { channelId: 'c-origin', ownerAccountId: 'other' } }), id: ROOT, channelId: 'c-origin' });
+    decideCheck.mockResolvedValue({ viewerCanDecide: true, asOwner: false, decideScope: 'community', ownerAccountId: 'other' });
+    const m = card({ mirror: { rootId: ROOT, neutral: false, kind: 'tool', ownerAccountId: 'other', line: { cap: 'tool', scope: 'x', limits: {} } } });
+    render(<AskCard message={m} />);
+    fireEvent.click(await screen.findByTestId('ask-option-approve_mandate'));
+    expect(decideCheck).toHaveBeenCalledWith('agent-1', 'c-origin');
+    expect(screen.getByTestId('ask-option-approve_mandate').textContent).toBe('원 스레드 위임장 동안');
+    expect(answerAsk).toHaveBeenCalledWith('m1', 'approve_mandate', 'c1');
+    expect(screen.queryByTestId('mandate-chip')).toBeNull();
   });
   // r5: 답한 줄 카드는 머리가 결과를 말하고, 같은 말만 하는 상태 줄은 빠진다.
   it.each([
@@ -370,7 +401,7 @@ describe('W4 mandate line card', () => {
     // 대상 줄이 없거나(옛 카드) 줄 상자를 안 그리면(줄 없음·중립 거울·ask 없음) 본문 그대로.
     expect(bodyForLineCard(body, card().meta as Record<string, unknown>)).toBe(body);
     expect(bodyForLineCard(body, card({ pr: { bodyTargetLine: TL, line: undefined } }).meta as Record<string, unknown>)).toBe(body);
-    expect(bodyForLineCard(body, card({ mirror: { rootId: ROOT, neutral: true, bodyTargetLine: TL } }).meta as Record<string, unknown>)).toBe(body);
+    expect(bodyForLineCard(body, card({ mirror: { rootId: ROOT, neutral: true, bodyTargetLine: TL } }).meta as Record<string, unknown>)).toBe('');
     const { ask: _ask, ...noAsk } = m.meta as Record<string, unknown>;
     expect(bodyForLineCard(body, noAsk)).toBe(body);
     // 거울도 같은 칸으로 — 같은 글이 이유 줄에 있어도 하나만 뺀다(이유는 「이유: 」로 시작해 겹치지 않는다).
@@ -428,7 +459,7 @@ describe('permission mirror owner + in-app links', () => {
   });
   it('「원본 열기」 moves inside the app (openMessage), not via the webview', () => {
     const openMessage = vi.fn(async () => {});
-    setController({ answerAsk, closeAsk: vi.fn(), openMessage } as unknown as Controller);
+    setController({ answerAsk, closeAsk: vi.fn(), openMessage, api: { message: rootRead, decideCheck } } as unknown as Controller);
     render(<AskCard message={card({ options: ['approve_once', 'deny'], mirror: { rootId: ROOT, neutral: false, kind: 'command', line: MIRROR_LINE, ownerAccountId: ME } })} />);
     const link = screen.getByTestId('mandate-mirror-link');
     const ev = new MouseEvent('click', { bubbles: true, cancelable: true });
