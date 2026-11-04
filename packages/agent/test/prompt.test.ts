@@ -1128,6 +1128,8 @@ describe('메모리 주입 (#139)', () => {
     const text = build({ core: null, slugs: [] });
     expect(text).toContain('끝난 일을 `done` 단계로 넣고');
     expect(text).toContain(`상한(그룹 ${PLAN_LIMITS.groups}·단계 ${PLAN_LIMITS.steps})을 넘으면 열린 일은 그대로 두고`);
+    expect(text).toContain('시키지 않으면 단계 상태를 바꾸지 않는다');
+    expect(text).toContain('<plan-ref>');
     expect(text).toContain('막은 것(앞 단계는 `dependsOn`, 기다리는 카드·메시지·PR은 `links`)');
     expect(text).toContain('그 일의 단계를 찾아 `thread.plan.item` 으로 `active` 로 고친다');
     expect(text).toContain('거기 없는 일이면 단계를 더하고 `assigneeId` 를 적는다');
