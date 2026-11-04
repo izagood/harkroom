@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
-import { CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_EDIT_WINDOW_MS, type MentionEditSkipReason, headMentionRunEnd, isAskOpen, MENTION_CHAIN_LIMIT, messageLinkIds, stallStep, STALL_HOP_LIMIT, CHAIN_BACKSTOP_MS, CHAIN_BACKSTOP_CONTINUE, STALL_LOOKBACK, ASK_BUNDLE_MAX_ITEMS, type AskBundleItem, mentionedHandles, mentionedIds, mentionTargetKey, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type InboxThreadState, type MessageRow, type WakeReportTo } from '@harkroom/shared';
+import { askTakesText, CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_EDIT_WINDOW_MS, type MentionEditSkipReason, headMentionRunEnd, isAskOpen, MENTION_CHAIN_LIMIT, messageLinkIds, stallStep, STALL_HOP_LIMIT, CHAIN_BACKSTOP_MS, CHAIN_BACKSTOP_CONTINUE, STALL_LOOKBACK, ASK_BUNDLE_MAX_ITEMS, type AskBundleItem, mentionedHandles, mentionedIds, mentionTargetKey, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type InboxThreadState, type MessageRow, type WakeReportTo } from '@harkroom/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { getMentionPolicy } from './mentionPolicy.js';
 import { announceReportWakes, preemptWakesForThread } from './agentWakes.js';
@@ -2197,7 +2197,11 @@ export async function editMessage(
  */
 export async function recordAskAnswer(
   pool: Pool,
-  args: { messageId: string; actorId: string; optionId: string; viaPermissionDecision?: boolean; answeredVia?: AskAnsweredVia; skipWakeIfInboxFor?: string },
+  args: {
+    messageId: string; actorId: string; optionId: string; viaPermissionDecision?: boolean; answeredVia?: AskAnsweredVia; skipWakeIfInboxFor?: string;
+    /** 직접 쓴 답 — `optionId` 는 `ASK_TEXT_OPTION_ID` 다. */
+    written?: { text: string };
+  },
 ): Promise<MessageRow | MutationRefusal | 'already_answered' | 'unknown_option'> {
   const found = await pool.query(
     `select meta from message where id = $1 and deleted_at is null`, [args.messageId],
@@ -2207,7 +2211,7 @@ export async function recordAskAnswer(
   // 선택 요청이 아닌 메시지에 답을 달 수는 없다. 형식을 못 알아보는 것도 여기 걸린다 —
   // `readAskMeta` 가 그 판정의 유일한 자리다(shared 에 두어 화면과 같은 판정을 쓴다).
   if (!ask) return 'not_found';
-  if (!ask.options.some((o) => o.id === args.optionId)) return 'unknown_option';
+  if (!args.written && !ask.options.some((o) => o.id === args.optionId)) return 'unknown_option';
   /*
     **권한 요청 카드는 ask-answer 로 정하지 않는다**(111, 스레드 f61af808). 그 카드의 선택지는 소유자 사람 세션의
     `permission-requests/:rid/approve|deny` 가 grant 를 넣은 **뒤에** 적는 결과다 — 여기로 들어오면 소유자가 아닌 사람이
@@ -2226,6 +2230,8 @@ export async function recordAskAnswer(
    */
   if (ask.to.kind === 'account' && ask.to.accountId !== args.actorId) return 'forbidden';
   if (ask.to.kind === 'human' && !(await isHumanAccount(pool, args.actorId))) return 'forbidden';
+  // 직접 쓴 답은 사람의 말이다 — 에이전트 앞 카드라도 에이전트는 선택지로만 답한다. 서버가 세운 카드는 받지 않는다(`askTakesText`).
+  if (args.written && (!askTakesText(found.rows[0].meta as Record<string, unknown>) || !(await isHumanAccount(pool, args.actorId)))) return 'forbidden';
 
   /**
    * **거울 카드에 답하면 원본에 먼저 적는다**(2026-09-29). 정본은 원본이다 — 거울은
@@ -2244,10 +2250,14 @@ export async function recordAskAnswer(
       // 것이 **이 사람의 이름으로** 적는 일이기 때문이다 — 원본 채널을 못 보는 사람이
       // 거울을 거쳐 그 채널의 물음을 정하면 안 된다.
       if (root.ask.to.kind !== 'human') return 'forbidden';
-      if (!root.ask.options.some((o) => o.id === args.optionId)) return 'unknown_option';
+      if (!args.written && !root.ask.options.some((o) => o.id === args.optionId)) return 'unknown_option';
+      if (args.written) {
+        const rootMeta = (await pool.query(`select meta from message where id = $1`, [ask.mirrorOf])).rows[0]?.meta as Record<string, unknown> | undefined;
+        if (!askTakesText(rootMeta)) return 'forbidden';
+      }
       if (!(await assertChannelVisible(pool, root.channelId, args.actorId))) return 'forbidden';
 
-      const rootRow = await answerAskRow(pool, ask.mirrorOf, args.optionId, args.actorId, args.answeredVia, args.skipWakeIfInboxFor);
+      const rootRow = await answerAskRow(pool, ask.mirrorOf, args.optionId, args.actorId, args.answeredVia, args.skipWakeIfInboxFor, args.written?.text);
       if (rootRow) {
         emitEvent({ type: 'message.updated', message: rootRow, audience: await audienceFor(pool, rootRow.channelId) });
       }
@@ -2258,11 +2268,19 @@ export async function recordAskAnswer(
     }
   }
 
-  const row = await answerAskRow(pool, args.messageId, args.optionId, args.actorId, args.answeredVia, args.skipWakeIfInboxFor);
+  const row = await answerAskRow(pool, args.messageId, args.optionId, args.actorId, args.answeredVia, args.skipWakeIfInboxFor, args.written?.text);
   if (!row) return 'already_answered';
   // 원본이면 거울들도 같은 답으로 닫는다. 거울이 없으면 갱신되는 행이 없을 뿐이다.
   if (!ask.mirrorOf) await syncAskMirrors(pool, args.messageId);
   return row;
+}
+
+/** 이 메시지가 이 채널의 글인가. 카드는 그 카드가 선 채널의 경로로만 답하고 닫는다. */
+export async function isMessageInChannel(pool: Pool, messageId: string, channelId: string): Promise<boolean> {
+  const res = await pool.query(
+    `select 1 from message where id = $1 and channel_id = $2 and deleted_at is null`, [messageId, channelId],
+  );
+  return (res.rowCount ?? 0) > 0;
 }
 
 /** 권한 요청 카드인가(111) — 거울을 거쳐 원본에 답을 적는 길을 막을 때. */
@@ -2337,7 +2355,7 @@ export async function wakeAsker(
 export type AskAnsweredVia = 'bundle_bulk' | 'chat';
 
 async function answerAskRow(
-  pool: Pool, messageId: string, optionId: string, actorId: string, answeredVia?: AskAnsweredVia, skipWakeIfInboxFor?: string,
+  pool: Pool, messageId: string, optionId: string, actorId: string, answeredVia?: AskAnsweredVia, skipWakeIfInboxFor?: string, text?: string,
 ): Promise<MessageRow | null> {
   /*
     `answeredVia` — 사람이 그 줄을 **골라 누르지 않은** 답의 표지(security F1, #1280). 묶음 카드의 「추천대로 일괄」은 한 번
@@ -2349,8 +2367,17 @@ async function answerAskRow(
                 jsonb_set(meta::jsonb, '{ask,answeredWith}', to_jsonb($2::text)),
                 '{ask,answeredBy}', to_jsonb($3::text)),
               '{ask,answeredAt}', to_jsonb(now()))`;
-  // 표지는 있을 때만 싣는다 — 보통 답의 meta 모양은 그대로다.
-  const setMeta = answeredVia ? `jsonb_set(${answered}, '{ask,answeredVia}', to_jsonb($4::text))` : answered;
+  // 표지·직접 쓴 답은 있을 때만 싣는다 — 보통 답의 meta 모양은 그대로다.
+  const params: string[] = [messageId, optionId, actorId];
+  let setMeta = answered;
+  if (answeredVia) {
+    params.push(answeredVia);
+    setMeta = `jsonb_set(${setMeta}, '{ask,answeredVia}', to_jsonb($${params.length}::text))`;
+  }
+  if (text !== undefined) {
+    params.push(text);
+    setMeta = `jsonb_set(${setMeta}, '{ask,answeredText}', to_jsonb($${params.length}::text))`;
+  }
   const updated = await pool.query(
     `update message
         set meta = ${setMeta}
@@ -2359,7 +2386,7 @@ async function answerAskRow(
         and meta->'ask'->>'answeredWith' is null
         and meta->'ask'->>'closedReason' is distinct from 'superseded'
       returning ${COLS}`,
-    answeredVia ? [messageId, optionId, actorId, answeredVia] : [messageId, optionId, actorId],
+    params,
   );
   const row = updated.rows[0] as MessageRow | undefined;
   if (!row) return null;
@@ -2424,6 +2451,8 @@ export async function syncAskMirrors(pool: Pool, rootId: string): Promise<void> 
   if (root.ask.answeredWith != null) {
     reason = 'ask_answered';
     actorId = root.ask.answeredBy ?? '';
+    // 직접 쓴 답의 글(`answeredText`)은 옮기지 않는다 — 거울은 원본과 다른 청중의 채널에 설 수 있고, 쓴 사람은 그 청중을
+    // 고르지 않았다. 거울에는 직접 답했다는 사실만 남고, 글은 원본에서 그 채널을 볼 수 있는 사람만 읽는다.
     rows = (await pool.query(
       `update message
           set meta = jsonb_set(

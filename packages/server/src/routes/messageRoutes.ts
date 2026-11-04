@@ -2,11 +2,11 @@ import { createHash } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import { EFFORT_MAX, MAX_MESSAGE_BODY_CHARS, MENTION_EDIT_SKIPPED_HEADER, MODEL_ID_MAX, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS } from '@harkroom/shared';
+import { ASK_TEXT_MAX_CHARS, ASK_TEXT_OPTION_ID, EFFORT_MAX, MAX_MESSAGE_BODY_CHARS, MENTION_EDIT_SKIPPED_HEADER, MODEL_ID_MAX, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS } from '@harkroom/shared';
 import { emitEvent, emitPosted } from '../events.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
 import { acceptRecommended, answerBundleItem } from '../services/askBundles.js';
-import { closeAsk, closeAsksByReply, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, isPermissionCardMessage, getMessageById, hasOlderFeedMessages, hasOlderMessages, hasOlderThreadReplies, listInbox, listInboxThreads, listBoardThreads, listInboxThreadStates, setInboxThreadState, listMessages, markInboxRead, postMessage, searchMessages, searchInput, BAD_THREAD_MESSAGE, BOARD_COMPACT_BODY_CHARS } from '../services/messages.js';
+import { closeAsk, closeAsksByReply, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, isMessageInChannel, isPermissionCardMessage, getMessageById, hasOlderFeedMessages, hasOlderMessages, hasOlderThreadReplies, listInbox, listInboxThreads, listBoardThreads, listInboxThreadStates, setInboxThreadState, listMessages, markInboxRead, postMessage, searchMessages, searchInput, BAD_THREAD_MESSAGE, BOARD_COMPACT_BODY_CHARS } from '../services/messages.js';
 import { listSavedMessages, getSavedSummary, saveMessage, unsaveMessage, updateSavedMessageState } from '../services/savedMessages.js';
 import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
@@ -358,9 +358,43 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
     const { id, messageId } = z.object({
       id: z.string().uuid(), messageId: z.string().uuid(),
     }).parse(req.params);
-    const { optionId } = z.object({ optionId: z.string().min(1).max(64) }).parse(req.body);
+    // 고르거나(`optionId`) 직접 쓰거나(`text`) 둘 중 하나다. 직접 쓴 답도 이 문으로 온다 — 글이 아니라 그 카드의 답이라 다른 카드를 닫지 않는다.
+    const { optionId, text } = z.union([
+      z.object({ optionId: z.string().min(1).max(64), text: z.undefined().optional() }),
+      z.object({
+        // NUL 은 jsonb 에 못 들어간다(500 대신 400).
+        text: z.string().trim().min(1).max(ASK_TEXT_MAX_CHARS).refine((v) => !v.includes('\0')),
+        optionId: z.undefined().optional(),
+      }),
+    ]).parse(req.body);
     if (!(await assertChannelVisible(pool, id, req.account!.id))) {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+    if (!(await isMessageInChannel(pool, messageId, id))) {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such choice request' } });
+    }
+    const askReply = async (result: Awaited<ReturnType<typeof recordAskAnswer>>) => {
+      if (result === 'not_found') {
+        return reply.code(404).send({ error: { code: 'not_found', message: 'no such choice request' } });
+      }
+      if (result === 'forbidden') {
+        return reply.code(403).send({ error: { code: 'forbidden', message: 'this choice is addressed to someone else' } });
+      }
+      if (result === 'unknown_option') {
+        return reply.code(400).send({ error: { code: 'unknown_option', message: 'no such option in this request' } });
+      }
+      // 경합에서 진 것은 오류가 아니라 정상 경로다 — 409 로 구별해 화면이 "이미 정해졌다"를
+      // 말할 수 있게 한다.
+      if (result === 'already_answered') {
+        return reply.code(409).send({ error: { code: 'already_answered', message: 'this choice is already answered' } });
+      }
+      emitEvent({ type: 'message.updated', message: result, audience: await audienceFor(pool, id) });
+      return result;
+    };
+    if (text !== undefined) {
+      return askReply(await recordAskAnswer(pool, {
+        messageId, actorId: req.account!.id, optionId: ASK_TEXT_OPTION_ID, written: { text },
+      }));
     }
 
     // 권한 요청 카드(111)는 답이 곧 결정이다 — 소유자 **사람 세션**이 누를 때만 grant 를 넣고 답을 적는다. 모바일·웹도 이 길이다.
@@ -397,23 +431,7 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
       if (!mirror) return reply.code(404).send({ error: { code: 'not_found', message: 'no such choice request' } });
       return mirror;
     }
-    const result = decided.result;
-    if (result === 'not_found') {
-      return reply.code(404).send({ error: { code: 'not_found', message: 'no such choice request' } });
-    }
-    if (result === 'forbidden') {
-      return reply.code(403).send({ error: { code: 'forbidden', message: 'this choice is addressed to someone else' } });
-    }
-    if (result === 'unknown_option') {
-      return reply.code(400).send({ error: { code: 'unknown_option', message: 'no such option in this request' } });
-    }
-    // 경합에서 진 것은 오류가 아니라 정상 경로다 — 409 로 구별해 화면이 "이미 정해졌다"를
-    // 말할 수 있게 한다.
-    if (result === 'already_answered') {
-      return reply.code(409).send({ error: { code: 'already_answered', message: 'this choice is already answered' } });
-    }
-    emitEvent({ type: 'message.updated', message: result, audience: await audienceFor(pool, id) });
-    return result;
+    return askReply(decided.result);
   });
 
   /**
@@ -459,6 +477,9 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
     }).parse(req.params);
     if (!(await assertChannelVisible(pool, id, req.account!.id))) {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
+    }
+    if (!(await isMessageInChannel(pool, messageId, id))) {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'no such choice request' } });
     }
 
     const result = await closeAsk(pool, {

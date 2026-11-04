@@ -1815,7 +1815,7 @@ export function buildTurnPrompt(opts: {
    * 아래 자기-발화 필터에 전부 걸린다. 그대로 두면 `mentionTurn` 이 하네스를 돌리지
    * 않고 끝내, 걸어 둔 기다림이 조용히 사라진다.
    */
-  wake?: { reason: string; reportTo?: WakeReportTo; watch?: true; origin?: string };
+  wake?: { reason: string; reportTo?: WakeReportTo; watch?: true; origin?: string; written?: { by?: string; text: string } };
   /**
    * 감시 사슬을 **시작한 지시**(`meta.wake.origin` 이 가리키는 글, 2026-11-02). `wake.watch` 일 때만 뜻이 있고, 러너가
    * 앵커 스레드에서 읽어 같은 채널·같은 스레드·지운 적 없음을 확인한 것만 넘긴다. 사유 아래 「← 맡긴 글」로 싣는다 —
@@ -1957,6 +1957,8 @@ export function buildTurnPrompt(opts: {
   // 아래 델타에 사람의 새 발화가 함께 있을 수 있으므로 이 줄은 그것을 대체하지 않고 앞에 선다.
   const wakeLines = wake === undefined ? [] : [
     `(예약된 후속 턴 — 사유: ${wake.reason})`,
+    // 카드에 직접 쓴 답은 사람의 글이다 — 사유 줄 안에 섞지 않고 글과 같은 꼴(작성자: 본문)로 싣는다.
+    ...(wake.written ? [`${(wake.written.by && handles[wake.written.by]) || '알 수 없는 사용자'} (← 카드에 직접 쓴 답): ${wake.written.text}`] : []),
     ...(wake.reportTo ? reportToLines(wake.reportTo) : []),
     ...(wake.watch ? [WATCH_DUTY_LINE] : []),
     // 맡긴 지시는 감시일 때만 — 감시가 아닌 깨움에 실리면 지난 요청을 새 요청으로 읽는다.
