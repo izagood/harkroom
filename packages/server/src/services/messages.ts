@@ -156,6 +156,11 @@ export interface PostMessageInput {
    * 라우트·MCP 입력에서는 받지 않는다(서버 코드만 넘긴다).
    */
   noMentions?: boolean;
+  /**
+   * 서버 전용 — 자동 진행이 관리 에이전트를 깨우는 줄에 켠 사람의 위임 키·principal 을 잇는다(`threadPlanAuto.ts`).
+   * 라우트·MCP 입력에서는 받지 않는다.
+   */
+  planAutoStamp?: { mandateId: string | null; principalId: string };
 }
 
 // 리액션을 COLS 에 넣는 이유: 메시지를 내주는 경로가 네 갈래(목록·POST·PATCH·idempotency
@@ -1779,6 +1784,10 @@ export async function postMessage(
         await client.query(`update message set principal_account_id = $2, principal_cause_reasons = $3 where id = $1`,
           [message.id, principalId, principalCause?.causeReasons ?? null]);
       }
+    }
+    if (input.planAutoStamp && input.kind === 'system') {
+      await client.query(`update message set mandate_id = $2, principal_account_id = $3 where id = $1`,
+        [message.id, input.planAutoStamp.mandateId, input.planAutoStamp.principalId]);
     }
     /*
       회신권(084)을 연다 — 실제로 inbox 가 간 상대에게만(막힌·상한 걸린 부름은 열지 않는다). 최상위
