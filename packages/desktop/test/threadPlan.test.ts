@@ -32,11 +32,8 @@ describe('계획판 화면 판정', () => {
         g4: { derived: 'waiting', waitingOn: ['g2'], startedEarly: false },
       },
     } as unknown as ThreadPlanView;
-    const { pills, summary } = planPills(plan);
+    const pills = planPills(plan, null);
     expect(pills.map((p) => p.id)).toEqual(['g3', 'g2', 'g4', 'g1']);
-    // 넷 이상이면 알약 대신 개수 요약(D7).
-    expect(summary).toEqual({ groups: 4, active: 1, blocked: 1, firstBlocked: 'g3' });
-    expect(planPills({ ...plan, doc: { ...plan.doc, groups: plan.doc.groups.slice(0, 3) } }).summary).toBeNull();
   });
 });
 

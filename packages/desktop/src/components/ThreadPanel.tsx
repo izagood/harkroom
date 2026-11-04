@@ -11,7 +11,8 @@ import { groupProgress } from '../lib/progressGroup';
 import { AgentExchange } from './AgentExchange';
 import { groupAgentExchanges, exchangeRows } from '../lib/agentExchange';
 import { ThreadStateBadge, UnknownThreadStateBadge } from './ThreadStateBadge';
-import { ThreadPlanBand } from './ThreadPlanBand';
+import { ThreadPlanButton } from './ThreadPlanButton';
+import { planTone } from '../lib/threadPlan';
 import { threadState } from '../lib/threadState';
 import { WaitChainLine } from './WaitChain';
 import { waitChain } from '../lib/waitChain';
@@ -68,6 +69,8 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
       : null;
   // 접힌 `모델 · 모두 기본` 칩을 눌러 연 줄(결정 10). 스레드를 바꾸면 다시 접는다.
   const [modelsOpen, setModelsOpen] = useState(false);
+  // 계획판 버튼이 서 있는가·패널이 열렸는가 — 「최신 답글」 알약이 그 자리를 비킨다(W5).
+  const [planOpen, setPlanOpen] = useState(false);
   useEffect(() => { setModelsOpen(false); }, [threadRootId]);
 
   /**
@@ -91,6 +94,8 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
       .filter((m) => m.id === threadRootId || m.threadRootId === threadRootId)
       .sort((a, b) => a.seq - b.seq);
   }, [messages, activeChannelId, threadRootId]);
+  const planProgress = thread.find((m) => m.id === threadRootId)?.planProgress;
+  const planShown = planTone(planProgress) !== 'empty';
 
   /**
    * 이 스레드의 상태(Task 6). **스레드 패널에만 둔다** — 여기가 답글이 전부 로드된 유일한
@@ -449,8 +454,6 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
           ×
         </button>
       </header>
-      {/* 계획판 띠(P4). 루트 행에 `planProgress` 가 있을 때만 선다 — 옛 서버·계획 없는 스레드는 아무것도 그리지 않는다. */}
-      <ThreadPlanBand rootId={threadRootId} progress={thread.find((m) => m.id === threadRootId)?.planProgress} />
       {/* 사슬은 헤더 **바로 아래**다 — "무엇을 기다리는가"는 대화를 읽기 전에 알아야 한다. */}
       {/* 모델 줄은 사슬보다 **위**다 — 이 스레드가 어떤 비용으로 도는지가 기다림보다 먼저 정해진다. */}
       {activeChannelId && (
@@ -540,8 +543,15 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
             (채널의 `channel-bottom` 과 같다). */}
         <div ref={bottomRef} data-testid="thread-bottom" />
       </div>
+      {/* 계획판 버튼(W5). 루트 행에 `planProgress` 가 있을 때만 선다 — 옛 서버·계획 없는 스레드는 아무것도 그리지 않는다. */}
+      <ThreadPlanButton
+        rootId={threadRootId}
+        progress={planProgress}
+        onOpenChange={setPlanOpen}
+      />
       {(jumpVisible || tailMissing) && (
         <JumpToLatestPill
+          placement={planShown ? (planOpen ? 'besidePlan' : 'abovePlan') : 'corner'}
           testId="thread-jump-to-latest"
           label={t('thread.jumpLatest')}
           newLabel={(count) => t('thread.jumpLatest.new', { count })}

@@ -2,7 +2,7 @@
  * 스레드 계획판(P4·P5) 화면 판정 — 순수 함수만. 파생 상태는 서버가 준 `derived` 를 그대로 쓴다
  * (architect D-c: 앱에서 `derivePlan` 을 다시 돌리지 않는다 — 권한으로 거른 연결 맵은 서버만 안다).
  */
-import type { PlanDerivedState, PlanDoc, PlanGroup, PlanProgress, ThreadPlanView } from '@harkroom/shared';
+import type { PlanDerivedState, PlanDoc, PlanGroup, PlanProgress, PlanStep, ThreadPlanView } from '@harkroom/shared';
 
 /** 칩·띠의 색. 막힘만 빨강(D2) — 나머지는 진행 중/끝남 무채색 결이다. */
 export type PlanTone = 'blocked' | 'done' | 'active' | 'empty';
@@ -33,31 +33,174 @@ export function groupCount(plan: ThreadPlanView, g: PlanGroup): { done: number; 
   return { done: steps.filter((s) => plan.derived[s.id]?.derived === 'done').length, total: steps.length };
 }
 
-export interface PlanPill { id: string; title: string; state: PlanDerivedState; count: { done: number; total: number } | null }
+/**
+ * 단계 한 줄의 갈래(개선 시안 R1). 서버 파생 상태에 「보는 사람」을 얹은 것이다 — 내 차례는 사람마다 달라 서버가 줄 수 없다.
+ * 진행·시작 가능인 단계의 담당이 나면 내 차례다. **막힘은 내 것이어도 막힘으로 둔다** — 「막힌 까닭」과 막힘 칩이 그 단계를 찾아야 한다.
+ */
+export type PlanRowKind = 'done' | 'active' | 'blocked' | 'mine' | 'ready' | 'waiting' | 'hidden';
+
+/** 단계의 파생 상태. 맵에 없으면 선언 상태로 본다. */
+export function stepState(plan: ThreadPlanView, step: PlanStep): PlanDerivedState {
+  return plan.derived[step.id]?.derived ?? (step.state === 'pending' ? 'waiting' : step.state);
+}
+
+/** 담당 — 단계에 없으면 그룹 담당을 물려받는다. */
+export function stepAssignee(doc: PlanDoc, step: PlanStep): string | null {
+  return step.assigneeId ?? doc.groups.find((g) => g.id === step.groupId)?.assigneeId ?? null;
+}
+
+export function stepKind(plan: ThreadPlanView, step: PlanStep, me: string | null): PlanRowKind {
+  const state = stepState(plan, step);
+  if ((state === 'active' || state === 'ready') && me && stepAssignee(plan.doc, step) === me) return 'mine';
+  return state;
+}
+
+/** 화면의 줄 순서 — 그룹을 문서 순서로, 그 안의 단계를 문서 순서로, 그룹 밖 단계는 맨 뒤. 상태가 바뀌어도 줄이 자리를 옮기지 않는다(W2). */
+export function planStepOrder(doc: PlanDoc): PlanStep[] {
+  const known = new Set(doc.groups.map((g) => g.id));
+  return [
+    ...doc.groups.flatMap((g) => doc.steps.filter((s) => s.groupId === g.id)),
+    ...doc.steps.filter((s) => !s.groupId || !known.has(s.groupId)),
+  ];
+}
 
 /**
- * 띠의 그룹 알약(D7) — 막힘 먼저, 그다음 진행·시작 가능·대기·끝남. 같은 순위는 문서 순서.
- * 그룹이 넷 이상이면 알약 대신 개수 요약(`summary`)을 쓴다.
+ * 맨 위 상태 칩의 목록 — 칩이 보여 주는 수이자, 누를 때 차례로 갈 단계들이다. 한 칸은 한 목록에만 든다.
+ * 서버 `planProgress` 와 같은 단위로 센다: 단계 하나씩 + **연결 그룹 하나당 한 칸**(파생 상태 그대로, 누르면 그 그룹으로 간다).
+ * 안 그러면 연결 그룹이 막혔을 때 「막힘 1」은 보이는데 막힘 칩이 꺼진다. 볼 수 없는 연결 그룹은 갈 곳이 없어 빠진다 — `progress.total` 에는 든다.
  */
-export function planPills(plan: ThreadPlanView): {
-  pills: PlanPill[];
-  summary: { groups: number; active: number; blocked: number; firstBlocked: string | null } | null;
+export type PlanChipKind = 'done' | 'active' | 'blocked' | 'mine' | 'ready' | 'waiting';
+export const PLAN_CHIP_KINDS: PlanChipKind[] = ['done', 'active', 'blocked', 'mine', 'ready', 'waiting'];
+
+export function planLists(plan: ThreadPlanView, me: string | null): Record<PlanChipKind, string[]> {
+  const out: Record<PlanChipKind, string[]> = { done: [], active: [], blocked: [], mine: [], ready: [], waiting: [] };
+  const put = (kind: PlanRowKind, id: string) => { if (kind !== 'hidden') out[kind].push(id); };
+  const known = new Set(plan.doc.groups.map((g) => g.id));
+  for (const g of plan.doc.groups) {
+    if (g.linkedRootId) put(plan.derived[g.id]?.derived ?? 'waiting', g.id);
+    for (const s of plan.doc.steps) if (s.groupId === g.id) put(stepKind(plan, s, me), s.id);
+  }
+  for (const s of plan.doc.steps) if (!s.groupId || !known.has(s.groupId)) put(stepKind(plan, s, me), s.id);
+  return out;
+}
+
+/** 이 단계를 앞 단계로 둔 막힌 단계(문서 순서) — 내 차례 줄의 「막힌 n건이 기다린다」. */
+export function stepWaiters(plan: ThreadPlanView, stepId: string): string[] {
+  return planStepOrder(plan.doc).filter((s) => s.dependsOn.includes(stepId) && stepState(plan, s) === 'blocked').map((s) => s.id);
+}
+
+const PR_REPO_RE = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
+
+/** 단계 줄 끝에 둘 첫 PR(꼴이 맞는 것만)과 첫 글(메시지·카드). 앱 밖으로 나가는 주소는 이 꼴을 지난 것으로만 짓는다. */
+export function stepFirstLinks(step: PlanStep): { pr: { repo: string; number: number } | null; messageId: string | null } {
+  let pr: { repo: string; number: number } | null = null;
+  let messageId: string | null = null;
+  for (const l of step.links ?? []) {
+    if (l.kind === 'pr' && !pr && PR_REPO_RE.test(l.repo) && Number.isInteger(l.number) && l.number > 0) pr = { repo: l.repo, number: l.number };
+    if (l.kind === 'message' && !messageId) messageId = l.id;
+    if (l.kind === 'card' && !messageId) messageId = l.messageId;
+  }
+  return { pr, messageId };
+}
+
+export function prUrl(pr: { repo: string; number: number }): string {
+  return `https://github.com/${pr.repo}/pull/${pr.number}`;
+}
+
+/** 그룹 머리의 표지·수. 막힘이 먼저고, 내 단계가 있으면 내 차례, 그 밖은 서버 파생 상태다. */
+export function groupFacts(plan: ThreadPlanView, g: PlanGroup, me: string | null): {
+  kind: PlanRowKind; done: number; total: number; active: number; mine: number;
 } {
-  const all = plan.doc.groups.map((g, i) => ({
-    id: g.id, title: g.title, state: plan.derived[g.id]?.derived ?? 'waiting', count: groupCount(plan, g), i,
-  }));
-  all.sort((a, b) => PILL_RANK[a.state] - PILL_RANK[b.state] || a.i - b.i);
-  const pills = all.map(({ id, title, state, count }) => ({ id, title, state, count }));
-  if (pills.length < 4) return { pills, summary: null };
+  const steps = plan.doc.steps.filter((s) => s.groupId === g.id);
+  const kinds = steps.map((s) => stepKind(plan, s, me));
+  const count = groupCount(plan, g);
+  const mine = kinds.filter((k) => k === 'mine').length;
+  const state = plan.derived[g.id]?.derived ?? 'waiting';
   return {
-    pills,
-    summary: {
-      groups: pills.length,
-      active: pills.filter((p) => p.state === 'active').length,
-      blocked: pills.filter((p) => p.state === 'blocked').length,
-      firstBlocked: pills.find((p) => p.state === 'blocked')?.title ?? null,
-    },
+    kind: state === 'blocked' ? 'blocked' : mine > 0 ? 'mine' : state,
+    done: count?.done ?? 0,
+    total: count?.total ?? 0,
+    active: kinds.filter((k) => k === 'active').length,
+    mine,
   };
+}
+
+export type PlanPillKey = 'done' | 'blocked' | 'mine' | 'active' | 'waiting' | 'waitingCount' | 'count' | 'plain';
+export interface PlanPill {
+  id: string; title: string; state: PlanDerivedState; key: PlanPillKey; done: number; total: number; n: number;
+}
+
+/**
+ * 그룹 알약 — 막힘 먼저, 그다음 진행·시작 가능·대기·끝남. 같은 순위는 문서 순서(D7).
+ * 글자(R3): 막힘 「{그룹} 막힘 d/t」 · 내 차례 「{그룹} 내 차례 n」 · 진행 「{그룹} 진행 n · d/t」 · 그 밖은 앞과 같다.
+ */
+export function planPills(plan: ThreadPlanView, me: string | null): PlanPill[] {
+  const all = plan.doc.groups.map((g, i) => {
+    const f = groupFacts(plan, g, me);
+    const c = groupCount(plan, g);
+    const state = plan.derived[g.id]?.derived ?? 'waiting';
+    let key: PlanPillKey = 'plain';
+    let n = 0;
+    if (state === 'done') key = 'done';
+    else if (state === 'blocked' && c) key = 'blocked';
+    else if (f.mine > 0) { key = 'mine'; n = f.mine; }
+    else if (f.active > 0 && c) { key = 'active'; n = f.active; }
+    else if (state === 'waiting') key = c && c.total > 0 && c.done > 0 ? 'waitingCount' : 'waiting';
+    else if (c && c.total > 0 && state !== 'hidden') key = 'count';
+    return { id: g.id, title: g.title, state, key, n, done: f.done, total: f.total, i };
+  });
+  all.sort((a, b) => PILL_RANK[a.state] - PILL_RANK[b.state] || a.i - b.i);
+  return all.map(({ i: _i, ...p }) => p);
+}
+
+/** 패널 머리 흐름 한 줄(W4) — 앞에서 [max] 개만 두고 나머지는 「+n 그룹 ›」. */
+export function planFlowVisible(layers: string[][], max: number): { ids: string[]; more: number } {
+  const ids = layers.flat();
+  return { ids: ids.slice(0, max), more: Math.max(0, ids.length - max) };
+}
+
+/** 칩을 거듭 누를 때 다음 차례. 처음이거나 다른 칩에서 왔으면 첫 단계부터. */
+export function nextCycleIndex(length: number, current: number | null): number {
+  if (length === 0) return -1;
+  return current === null ? 0 : (current + 1) % length;
+}
+
+export type PlanWhyLink = { kind: 'pr'; repo: string; number: number } | { kind: 'message' | 'card' | 'workitem'; id: string };
+export interface PlanWhyDep { id: string; group: string | null; title: string; mine: boolean }
+
+/**
+ * 「막힌 까닭」 상자(R9) — 사유 전문 → 끝나지 않은 앞 단계 → 연결(꼴이 틀린 PR 은 뺀다) 순서.
+ * 앞 단계는 단계 자신과 그 그룹의 dependsOn 모두다.
+ */
+export function stepWhy(plan: ThreadPlanView, step: PlanStep, me: string | null): {
+  reason: string | null; deps: PlanWhyDep[]; links: PlanWhyLink[];
+} {
+  const parent = plan.doc.groups.find((g) => g.id === step.groupId);
+  const seen = new Set<string>();
+  const deps: PlanWhyDep[] = [];
+  for (const id of [...step.dependsOn, ...(parent?.dependsOn ?? [])]) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const dep = plan.doc.steps.find((s) => s.id === id);
+    if (dep && stepState(plan, dep) === 'done') continue;
+    if (!dep && plan.derived[id]?.derived === 'done') continue;
+    deps.push({ id, group: crossGroupTitle(plan.doc, id, step.groupId ?? null), title: planTitleOf(plan.doc, id), mine: dep ? stepKind(plan, dep, me) === 'mine' : false });
+  }
+  const links: PlanWhyLink[] = [];
+  for (const l of step.links ?? []) {
+    if (l.kind === 'pr') { if (PR_REPO_RE.test(l.repo) && Number.isInteger(l.number) && l.number > 0) links.push({ kind: 'pr', repo: l.repo, number: l.number }); }
+    else if (l.kind === 'card') links.push({ kind: 'card', id: l.messageId });
+    else links.push({ kind: l.kind, id: l.id });
+  }
+  return { reason: step.blockedReason ?? null, deps, links };
+}
+
+/** 떠 있는 버튼의 표지. 막힘이 먼저다 — 닫힌 채로도 막힘이 보여야 한다(W5). */
+export function planButtonKind(p: PlanProgress | null | undefined): PlanRowKind {
+  if (!p || p.blocked > 0) return 'blocked';
+  if (p.total > 0 && p.done >= p.total) return 'done';
+  if (p.active > 0) return 'active';
+  return p.done > 0 ? 'ready' : 'waiting';
 }
 
 /** 노드 id → 그 노드가 속한 그룹 id(그룹이면 자기 자신). 그룹 밖 단계는 null. */
