@@ -14,7 +14,7 @@
 import type { Pool, PoolClient } from 'pg';
 import {
   derivePlan, planProgress, validatePlan,
-  type LinkedProgress, type PlanDoc, type PlanProgress, type PlanValidationError, type ThreadPlanLinkedView, type ThreadPlanView,
+  type LinkedProgress, type PlanDoc, type PlanProgress, type PlanValidationError, type ThreadPlanAuto, type ThreadPlanLinkedView, type ThreadPlanView,
 } from '@harkroom/shared';
 import { emitEvent } from '../events.js';
 import { assertChannelVisible, audienceFor, channelVisibleSql } from './channels.js';
@@ -32,22 +32,30 @@ export interface ThreadPlanRow {
   flagReason: string | null;
   updatedBy: string | null;
   updatedAt: Date;
+  /** 자동 진행(`threadPlanAuto.ts`). 꺼져 있으면 `null`. */
+  auto: ThreadPlanAuto | null;
 }
 
 type Queryable = Pick<Pool, 'query'> | PoolClient;
 
-function toRow(r: {
+export const THREAD_PLAN_COLUMNS = 'root_id, channel_id, doc, rev, flag_reason, updated_by, updated_at, auto_until, auto_source, auto_by, auto_at';
+
+export function toRow(r: {
+  auto_until: string | null; auto_source: string | null; auto_by: string | null; auto_at: Date | null;
   root_id: string; channel_id: string; doc: PlanDoc; rev: number; flag_reason: string | null; updated_by: string | null; updated_at: Date;
 }): ThreadPlanRow {
   return {
     rootId: r.root_id, channelId: r.channel_id, doc: r.doc, rev: r.rev,
     flagReason: r.flag_reason, updatedBy: r.updated_by, updatedAt: r.updated_at,
+    auto: r.auto_until && r.auto_at
+      ? { until: r.auto_until, sourceMessageId: r.auto_source, by: r.auto_by, at: r.auto_at.toISOString() }
+      : null,
   };
 }
 
 export async function getThreadPlan(pool: Queryable, rootId: string): Promise<ThreadPlanRow | null> {
   const res = await pool.query(
-    `select root_id, channel_id, doc, rev, flag_reason, updated_by, updated_at from thread_plan where root_id = $1`,
+    `select ${THREAD_PLAN_COLUMNS} from thread_plan where root_id = $1`,
     [rootId],
   );
   return res.rows[0] ? toRow(res.rows[0]) : null;
@@ -141,6 +149,7 @@ export async function threadPlanView(pool: Pool, row: ThreadPlanRow, viewerId: s
     derived: derivePlan(row.doc, map),
     progress: planProgress(row.doc, map),
     linked: views,
+    auto: row.auto,
   };
 }
 
@@ -282,7 +291,7 @@ export async function writeThreadPlan<E extends { code: string }>(
            set doc = excluded.doc, flag_reason = excluded.flag_reason, updated_by = excluded.updated_by,
                rev = thread_plan.rev + 1,
                updated_at = greatest(now(), thread_plan.updated_at + interval '1 millisecond')
-         returning root_id, channel_id, doc, rev, flag_reason, updated_by, updated_at`,
+         returning ${THREAD_PLAN_COLUMNS}`,
         [rootId, channelId, JSON.stringify(doc), flag?.reason ?? null, accountId],
       );
       // 역참조는 doc 에서 다시 만든다 — 정본은 doc 하나다.

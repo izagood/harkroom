@@ -86,6 +86,7 @@ import { getThreadPlan, linkedFor, setThreadPlan, threadPlanView, writeThreadPla
 import { applyPlanItem, type PlanItemPatch } from '../services/threadPlanItem.js';
 import { completePlanStep, linkPlanCard, linkPlanGroup, type PlanHookResult } from '../services/threadPlanHooks.js';
 import { planDocSchema, planItemShape } from '../services/threadPlanSchema.js';
+import { clearPlanAuto, setPlanAuto } from '../services/threadPlanAuto.js';
 import {
   BG_MAX_WRITES, bgClaimPayload, bgCleanupOn, claimBgJob, completeBgJob, getBgJob, recordBgChange, releaseBgWrite, reserveBgWrite,
 } from '../services/bgJobs.js';
@@ -2258,11 +2259,24 @@ function buildMcpServer(
   server.registerTool('thread.plan.item', {
     description: '계획판의 단계·그룹 **하나**를 더하거나 고치거나 지운다 — 다른 단계는 건드리지 않아 병렬 턴과 부딪히지 않는다. '
       + 'id 생략=새로 더함(서버가 s<n>/g<n> 을 고른다, title 필요), remove: true=지움(다른 노드의 dependsOn 에서도 빠지고, 그룹을 지우면 그 단계는 그룹 밖으로). '
+      + '자동 진행은 type: "plan" 에 auto 만 적는다: 사람이 너를 불러 「~까지 진행」이라 했을 때 auto: { until: 단계·그룹 id, sourceMessageId: 그 글 id }, 「멈춰」면 auto: null. 관리 에이전트만, 그 글이 이 턴을 부른 글일 때만 된다. '
       + 'type 은 step(기본)·group, plan 은 managerId(관리 에이전트, null=비움)만 고친다. state·groupId·addLinks·removeLinks·blockedReason 은 단계만, linkedRootId 는 그룹만. '
       + 'dependsOn 은 통째 교체, addDependsOn·removeDependsOn 은 남이 단 간선을 지우지 않고 더하고 뺀다. after 로 자리(null=맨 앞). '
       + 'ifRev(선택)를 주면 그 판일 때만 쓴다. 계획이 없으면 no_plan — thread.plan 으로 먼저 세운다. 응답의 nowReady 가 이제 시작할 수 있는 것이다',
     inputSchema: { threadRootId: z.string().uuid(), ...planItemShape },
-  }, async ({ threadRootId, ...patch }) => {
+  }, async ({ threadRootId, auto, ...patch }) => {
+    if (auto !== undefined) {
+      if (account.kind !== 'agent') return jsonResult({ error: { code: 'agents_only', message: '자동 진행은 관리 에이전트만 적는다.' } });
+      if (patch.type !== 'plan' || Object.keys(patch).length > 1) return jsonResult({ error: { code: 'auto_alone', message: 'auto 는 type: "plan" 과 함께, 다른 칸 없이 쓴다.' } });
+      const root = await threadRootChannel(pool, threadRootId);
+      if (root === 'not_found' || root === 'not_root') return planError({ code: root });
+      if (!(await assertChannelVisible(pool, root.channelId, account.id))) return planError({ code: 'forbidden' });
+      const res = auto === null
+        ? await clearPlanAuto(pool, { rootId: threadRootId, actor: { kind: 'manager', accountId: account.id } })
+        : await setPlanAuto(pool, { rootId: threadRootId, agentId: account.id, until: auto.until, sourceMessageId: auto.sourceMessageId });
+      if (!res.ok) return jsonResult({ error: res.error });
+      return jsonResult({ ok: true, auto: res.row.auto, changed: res.changed });
+    }
     if (account.kind !== 'agent') return jsonResult({ error: { code: 'agents_only', message: '계획판 쓰기 도구는 에이전트만 쓴다' } });
     let id = '';
     const res = await writeThreadPlan(pool, threadRootId, { accountId: account.id }, (prev) => {

@@ -8,6 +8,7 @@ import { threadRootChannel } from '../services/threadNote.js';
 import { getThreadPlan, threadPlanView, writeThreadPlan } from '../services/threadPlan.js';
 import { applyPlanItem } from '../services/threadPlanItem.js';
 import { startPlanSteps } from '../services/threadPlanStart.js';
+import { clearPlanAuto } from '../services/threadPlanAuto.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -74,6 +75,22 @@ export async function registerThreadPlanRoutes(app: FastifyInstance, pool: Pool)
     });
     if (!res.ok) return reply.code(HTTP_BY_CODE[res.error.code] ?? 409).send({ error: res.error });
     if ('deleted' in res) return reply.code(404).send({ error: { code: 'no_plan' } });
+    return { plan: await threadPlanView(pool, res.row, req.account!.id) };
+  });
+
+  /**
+   * 자동 진행을 끈다. 그 스레드를 볼 수 있는 사람이면 누구나 끌 수 있다 — 멈추는 쪽은 좁히지 않는다. 사람 세션만.
+   * 켜는 길은 여기 없다: 사람 글을 근거로 관리 에이전트가 적는다(`threadPlanAuto.ts`).
+   */
+  app.delete<{ Params: { rootId: string } }>('/threads/:rootId/plan/auto', { preHandler: app.requireAccount }, async (req, reply) => {
+    if (req.account!.kind !== 'human' || req.authVia !== 'session') return reply.code(403).send({ error: { code: 'human_only' } });
+    const { rootId } = req.params;
+    if (!UUID_RE.test(rootId)) return reply.code(404).send({ error: { code: 'not_found' } });
+    const root = await threadRootChannel(pool, rootId);
+    if (typeof root === 'string') return reply.code(404).send({ error: { code: root } });
+    if (!(await assertChannelVisible(pool, root.channelId, req.account!.id))) return reply.code(404).send({ error: { code: 'not_found' } });
+    const res = await clearPlanAuto(pool, { rootId, actor: { kind: 'human', accountId: req.account!.id } });
+    if (!res.ok) return reply.code(404).send({ error: res.error });
     return { plan: await threadPlanView(pool, res.row, req.account!.id) };
   });
 }
