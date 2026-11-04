@@ -129,7 +129,7 @@ class _AskCardState extends State<AskCard> {
           children: [
             Text(
               switch ((ask.isOpen, ask.to)) {
-                (false, _) when ask.answeredText != null =>
+                (false, _) when ask.answeredWith == askTextOptionId =>
                   answeredByName == null ? t.askWrittenAnon : t.askWrittenBy(answeredByName),
                 (false, _) when ask.answeredWith != null => t.askAnswered,
                 (false, _) when ask.isReplied =>
@@ -203,6 +203,14 @@ class _AskCardState extends State<AskCard> {
                 ask.answeredText!,
                 key: Key('ask-written-${widget.message.id}'),
                 style: theme.textTheme.bodyMedium,
+              )
+            else if (ask.answeredWith == askTextOptionId && ask.mirrorOf != null)
+              // 거울에는 글이 없다 — 원본 카드에서, 그 채널을 볼 수 있는 사람만 읽는다.
+              TextButton(
+                key: Key('ask-written-source-${widget.message.id}'),
+                style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 44)),
+                onPressed: () => openMessageLink(context, ask.mirrorOf!),
+                child: Text('↪ ${t.askWrittenSource}'),
               )
             else if (ask.answeredWith != null || !(ask.isReplied || ask.isSuperseded || ask.isExpired))
               // **고른 것을 남긴다.** 버튼이 사라지고 결과가 그 자리에 선다 — 누른 뒤에도

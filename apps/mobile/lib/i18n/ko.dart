@@ -260,6 +260,9 @@ class StringsKo implements Strings {
   String get askWrittenAnon => '직접 답했다';
 
   @override
+  String get askWrittenSource => '원본 카드에서 보기';
+
+  @override
   String get askReplied => '글로 답했다';
 
   @override

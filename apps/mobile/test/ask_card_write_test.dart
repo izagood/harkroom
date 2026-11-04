@@ -90,6 +90,14 @@ void main() {
     expect(tester.widget<Text>(find.byKey(const Key('ask-head-m1'))).data, '직접 답했다');
   });
 
+  testWidgets('거울에는 글이 없다 — 머리와 원본 카드 링크만 선다', (tester) async {
+    await pump(tester, _ask(const {'answeredWith': askTextOptionId, 'mirrorOf': 'root-1'}));
+    expect(tester.widget<Text>(find.byKey(const Key('ask-head-m1'))).data, '직접 답했다');
+    expect(find.byKey(const Key('ask-written-source-m1')), findsOneWidget);
+    expect(find.byKey(const Key('ask-written-m1')), findsNothing);
+    expect(find.byKey(const Key('ask-chosen-m1')), findsNothing);
+  });
+
   testWidgets('머리는 표시 이름을 먼저, 없으면 handle 을 쓴다', (tester) async {
     AccountView acc(String display) => AccountView(
         id: 'me', handle: 'alice', displayName: display, isAgent: false, isDisabled: false, avatarAttachmentId: null);

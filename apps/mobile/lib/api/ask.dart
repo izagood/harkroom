@@ -86,6 +86,7 @@ class AskMeta {
     this.answeredWith,
     this.answeredBy,
     this.answeredText,
+    this.mirrorOf,
     this.closedAt,
     this.closedBy,
     this.closedReason,
@@ -106,6 +107,9 @@ class AskMeta {
 
   /// 선택지 대신 직접 쓴 답(`answeredWith` 가 [askTextOptionId] 일 때). 평문이다 — 마크다운·멘션으로 해석하지 않는다.
   final String? answeredText;
+
+  /// 거울 카드면 원본 카드의 id. 직접 쓴 답의 글은 원본에만 있다 — 거울은 다른 청중의 채널에 설 수 있다.
+  final String? mirrorOf;
 
   /// **답하지 않기로 한** 시각. 고른 것과 안 고른 것은 다른 사실이라 필드를 나눈다 —
   /// 하나로 뭉치면 "무엇으로 정해졌나"에 답할 수 없는 값이 그 자리에 앉는다.
@@ -187,6 +191,7 @@ class AskMeta {
       answeredWith: ask['answeredWith'] as String?,
       answeredBy: ask['answeredBy'] as String?,
       answeredText: ask['answeredWith'] == askTextOptionId && ask['answeredText'] is String ? ask['answeredText'] as String : null,
+      mirrorOf: ask['mirrorOf'] is String ? ask['mirrorOf'] as String : null,
       closedAt: ask['closedAt'] as String?,
       closedBy: ask['closedBy'] as String?,
       closedReason: ask['closedReason'] as String?,

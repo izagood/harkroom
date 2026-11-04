@@ -2165,6 +2165,7 @@ export const ko = {
   'speech.bundle.skip.skipped_link': '원 스레드에서 정하는 카드라 뺐다',
   'speech.bundle.skip.failed': '고르지 못했다 — 다시 시도해 줘',
   'speech.ask.writePlaceholder': '직접 입력…',
+  'speech.ask.writtenSource': '원본 카드에서 보기',
   'speech.ask.writeSend': '보내기',
   'speech.ask.writeFailed': '보내지 못했다. 쓴 글은 그대로 있다',
   'speech.ask.writtenBy': '{name:이가} 직접 답했다',

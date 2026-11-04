@@ -118,7 +118,10 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
 
   const chosen = answered ? ask.options.find((o) => o.id === ask.answeredWith) : undefined;
   // 선택지 대신 이 카드에 직접 쓴 답. 평문이다 — 마크다운·멘션으로 해석하지 않는다.
-  const writtenText = answered && ask.answeredWith === ASK_TEXT_OPTION_ID && typeof ask.answeredText === 'string' ? ask.answeredText : null;
+  const written = answered && ask.answeredWith === ASK_TEXT_OPTION_ID;
+  const writtenText = written && typeof ask.answeredText === 'string' ? ask.answeredText : null;
+  // 거울에는 글이 없다 — 글은 원본 카드에만 있고, 그 채널을 볼 수 있는 사람만 연다.
+  const writtenSourceId = written && writtenText == null ? ask.mirrorOf ?? null : null;
   // 이름을 모르면 **이름 자리에 보통명사가 온다** — 그 낱말이 `common.someone` 에 있는
   // 이유이고, 조사는 번역기가 그것을 보고 고른다(`{name:이가}`).
   const answeredByName = ask.answeredBy
@@ -164,7 +167,7 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
           {resultHead ?? (lineHead && !answered && !closed ? lineHead : headline(ask.to, myId, accounts, answered, closed, t, closedReason))}
         </span>
         {answered && answeredByName && !resultHead && (
-          <span className="text-meta text-fg-subtle">{t(writtenText != null ? 'speech.ask.writtenBy' : 'speech.ask.answeredBy', { name: answeredByName })}</span>
+          <span className="text-meta text-fg-subtle">{t(written ? 'speech.ask.writtenBy' : 'speech.ask.answeredBy', { name: answeredByName })}</span>
         )}
         {/* designer n3 — 글로 정한 카드는 답한 사람 뒤에 「· 글로 답함」(그 글로 가는 링크). */}
         {answered && chatVia && (
@@ -214,6 +217,11 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
           <p data-testid="ask-written-answer" className="whitespace-pre-wrap break-words rounded-row border border-border-agent px-2.5 py-1.5 text-body text-fg-agent">
             {writtenText}
           </p>
+        )}
+        {writtenSourceId && (
+          <CardMessageLink messageId={writtenSourceId} testId="ask-written-source" className="px-1 text-meta text-fg-muted underline decoration-dotted underline-offset-2">
+            {t('speech.ask.writtenSource')}
+          </CardMessageLink>
         )}
         {ask.options.map((o) => {
           const isChosen = chosen?.id === o.id;

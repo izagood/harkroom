@@ -343,6 +343,14 @@ describe('AskCard — 직접 쓴 답', () => {
     expect(screen.queryByTestId('ask-write-input')).toBeNull();
   });
 
+  it('거울에는 글이 없다 — 직접 답했다는 머리와 원본 카드 링크만 선다', () => {
+    const root = '11111111-1111-4111-8111-111111111111';
+    render(<MessageItem message={askMessage(askMeta({ answeredWith: ASK_TEXT_OPTION_ID, answeredBy: ME, mirrorOf: root }))} />);
+    expect(screen.getByText(/alice.* 직접 답했다/)).toBeTruthy();
+    expect(screen.getByTestId('ask-written-source').getAttribute('href')).toContain(root);
+    expect(screen.queryByTestId('ask-written-answer')).toBeNull();
+  });
+
   it('직접 쓴 답은 글 그대로 남고, 입력칸·선택지는 접힌다', () => {
     render(<MessageItem message={askMessage(askMeta({ answeredWith: ASK_TEXT_OPTION_ID, answeredBy: ME, answeredText: '<b>다른 길</b>\n이유' }))} />);
     expect(screen.getByTestId('ask-written-answer').textContent).toBe('<b>다른 길</b>\n이유');

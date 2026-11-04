@@ -1009,6 +1009,9 @@ abstract class Strings {
   /// 쓴 사람을 모를 때의 머리 — 이름만 빠질 뿐 직접 쓴 답이라는 것은 그대로 말한다.
   String get askWrittenAnon;
 
+  /// 거울 카드에서 직접 쓴 답의 글을 보러 원본 카드로 가는 링크.
+  String get askWrittenSource;
+
   /// 사람이 카드를 누르지 않고 같은 스레드에 글로 답해 닫힌 물음(A′, 2026-10-09).
   String get askReplied;
 
@@ -1741,6 +1744,7 @@ Map<String, String> stringsToMap(Strings s) => {
       'askWriteSend': s.askWriteSend,
       'askWrittenBy': s.askWrittenBy('x'),
       'askWrittenAnon': s.askWrittenAnon,
+      'askWrittenSource': s.askWrittenSource,
       'askReplied': s.askReplied,
       'askSuperseded': s.askSuperseded,
       'askExpired': s.askExpired,

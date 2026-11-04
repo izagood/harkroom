@@ -3954,6 +3954,7 @@ export const en = {
   'speech.bundle.skip.skipped_link': 'Left out — decided in its own thread',
   'speech.bundle.skip.failed': 'Couldn\'t choose — try again',
   'speech.ask.writePlaceholder': 'Write your own answer…',
+  'speech.ask.writtenSource': 'View on the original card',
   'speech.ask.writeSend': 'Send',
   'speech.ask.writeFailed': "Couldn't send. Your text is still here",
   'speech.ask.writtenBy': 'Written by {name}',
