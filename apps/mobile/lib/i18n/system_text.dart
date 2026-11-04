@@ -35,6 +35,7 @@ const Map<String, List<String>> systemI18nArgs = {
   'system.plan.autoOffMandate': [],
   'system.plan.autoOffFlagged': [],
   'system.plan.autoOffUntilGone': [],
+  'system.plan.autoOffRangeChanged': [],
   'system.plan.autoOffUnreachable': [],
   'system.merge.mergedGranted': ['repo', 'number', 'sha', 'granterId'],
   'system.merge.queued': ['repo', 'number', 'head'],

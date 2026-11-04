@@ -4903,6 +4903,7 @@ export const en = {
   'system.plan.autoOffMandate': 'Auto-run off · the delegation ended',
   'system.plan.autoOffFlagged': 'Auto-run off · the plan was flagged',
   'system.plan.autoOffUntilGone': 'Auto-run off · the end point no longer exists',
+  'system.plan.autoOffRangeChanged': 'Auto-run off · a step in the approved range changed · to turn it on again, ask anew',
   'system.plan.autoOffUnreachable': 'Auto-run off · the manager agent can’t be called',
   'system.merge.merged': '🔀 {repo}#{number} merged · {sha} (wrapper report)',
   'system.merge.mergedGranted': '🔀 {repo}#{number} merged · {sha} · permission: {granterId} (wrapper report)',

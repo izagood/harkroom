@@ -54,6 +54,7 @@ export const SYSTEM_I18N_ARGS = Object.freeze({
   'system.plan.autoOffMandate': [],
   'system.plan.autoOffFlagged': [],
   'system.plan.autoOffUntilGone': [],
+  'system.plan.autoOffRangeChanged': [],
   'system.plan.autoOffUnreachable': [],
   'system.merge.mergedGranted': ['repo', 'number', 'sha', 'granterId'],
   'system.merge.queued': ['repo', 'number', 'head'],

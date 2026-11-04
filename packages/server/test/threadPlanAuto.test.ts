@@ -406,6 +406,32 @@ describe('깨우기', () => {
     await writeThreadPlan(pool, root, { accountId: other.accountId }, (prev) => ({ doc: { ...prev!.doc, steps: prev!.doc.steps.map((x) => (x.id === 's1' ? { ...x, title: '다른 일', state: 'pending' as const } : x)) } }));
     await wakePlanAuto(pool, root);
     expect((await wakeLines(root)).flatMap((l) => l.meta.planAuto.stepIds)).not.toContain('s1');
+    expect((await getThreadPlan(pool, root))!.auto).toBeNull();
+    expect(await offReason(root)).toMatchObject({ on: false, reason: 'range_changed' });
+  });
+
+  it('범위 안 단계를 지우면 끈다', async () => {
+    const root = await plan2([{ ...step('s1'), state: 'active' }, step('s3'), dep('s2', 's3')]);
+    await on(root, 's2');
+    await writeThreadPlan(pool, root, { accountId: other.accountId }, (prev) => ({ doc: { ...prev!.doc, steps: prev!.doc.steps.filter((x) => x.id !== 's3').map((x) => (x.id === 's2' ? { ...x, dependsOn: [] } : x)) } }));
+    await wakePlanAuto(pool, root);
+    expect(await offReason(root)).toMatchObject({ on: false, reason: 'range_changed' });
+  });
+
+  it('번호를 지웠다 같은 제목으로 다시 쓰면 같은 단계다', async () => {
+    const root = await plan2([{ ...step('s1'), state: 'active' }, dep('s2', 's1')]);
+    await on(root, 's2');
+    await writeThreadPlan(pool, root, { accountId: other.accountId }, (prev) => ({ doc: { ...prev!.doc, steps: prev!.doc.steps.map((x) => (x.id === 's1' ? { ...step('s1'), state: 'active' as const } : x)) } }));
+    await wakePlanAuto(pool, root);
+    expect((await getThreadPlan(pool, root))!.auto).not.toBeNull();
+  });
+
+  it('켜져 있는데 범위가 비었으면 끈다', async () => {
+    const root = await plan2([step('s1')]);
+    await on(root, 's1');
+    await pool.query(`update thread_plan set auto_range = '{}'::jsonb where root_id = $1`, [root]);
+    await wakePlanAuto(pool, root);
+    expect(await offReason(root)).toMatchObject({ on: false, reason: 'range_changed' });
   });
 
   it('끝점 번호를 다른 제목으로 다시 쓰면 끈다', async () => {

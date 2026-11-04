@@ -143,7 +143,7 @@ export async function clearPlanAuto(pool: Pool, args: {
 }
 
 /** 자동 진행을 끈 까닭 — 켠 사람이 왜 멈췄는지 본다. */
-export type PlanAutoOffReason = 'done' | 'manager_changed' | 'source_gone' | 'by_gone' | 'mandate' | 'flagged' | 'until_gone' | 'unreachable';
+export type PlanAutoOffReason = 'done' | 'manager_changed' | 'source_gone' | 'by_gone' | 'mandate' | 'flagged' | 'until_gone' | 'range_changed' | 'unreachable';
 const OFF_KEY: Record<PlanAutoOffReason, SystemI18nKey> = {
   done: 'system.plan.autoOffDone',
   manager_changed: 'system.plan.autoOffManagerChanged',
@@ -152,6 +152,7 @@ const OFF_KEY: Record<PlanAutoOffReason, SystemI18nKey> = {
   mandate: 'system.plan.autoOffMandate',
   flagged: 'system.plan.autoOffFlagged',
   until_gone: 'system.plan.autoOffUntilGone',
+  range_changed: 'system.plan.autoOffRangeChanged',
   unreachable: 'system.plan.autoOffUnreachable',
 };
 
@@ -257,11 +258,15 @@ export async function wakePlanAuto(pool: Pool, rootId: string, now = new Date())
       return cur.auto_range[id] === titleHash(step.title);
     };
     const rangeIds = Object.keys(cur.auto_range);
-    const rangeDone = rangeIds.length > 0 && rangeIds.every((id) => sameStep(id) && derived[id]?.derived === 'done');
+    // 범위가 비었거나 그 안 단계가 바뀌었으면 사람이 본 범위가 아니다. 켜진 채 멈춰 두지 않고 끈다.
+    const rangeChanged = rangeIds.some((id) => !sameStep(id));
     if (cur.flag_reason) off = 'flagged';
     else if (!managerId) off = 'manager_changed';
+    else if (rangeIds.length === 0) off = 'range_changed';
     else if (![...doc.steps, ...doc.groups].some((n) => n.id === until) || !sameStep(until, true)) off = 'until_gone';
-    else if (derived[until]?.derived === 'done' || rangeDone) off = 'done';
+    else if (derived[until]?.derived === 'done') off = 'done';
+    else if (rangeChanged) off = 'range_changed';
+    else if (rangeIds.every((id) => derived[id]?.derived === 'done')) off = 'done';
     else {
       const source = cur.auto_source
         ? (await client.query(`select 1 from message where id = $1 and deleted_at is null`, [cur.auto_source])).rowCount

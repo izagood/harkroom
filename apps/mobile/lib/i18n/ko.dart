@@ -1619,6 +1619,7 @@ class StringsKo implements Strings {
         'system.plan.autoOffMandate': '자동 진행 꺼짐 · 위임이 끝났다',
         'system.plan.autoOffFlagged': '자동 진행 꺼짐 · 계획이 쓰기 검사에 걸렸다',
         'system.plan.autoOffUntilGone': '자동 진행 꺼짐 · 끝점 단계가 없어졌다',
+        'system.plan.autoOffRangeChanged': '자동 진행 꺼짐 · 허락한 범위의 단계가 바뀌었다 · 다시 켜려면 새로 「~까지 진행해」',
         'system.plan.autoOffUnreachable': '자동 진행 꺼짐 · 관리 에이전트를 부를 수 없다',
         'system.threadModel.clearedByAgent': '{accountId}님이 이 스레드에서 {agentId} 의 모델 지정을 풀었다(에이전트 지정). 다음 턴부터 기본값으로 돈다.',
         'system.merge.approvalUsed': '🔓 {repo}#{number} 1회 승인으로 머지 시도 · head {head} · gh {ghUser}',

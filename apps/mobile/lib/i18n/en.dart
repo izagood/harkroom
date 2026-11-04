@@ -1615,6 +1615,7 @@ class StringsEn implements Strings {
         'system.plan.autoOffMandate': 'Auto-run off · the delegation ended',
         'system.plan.autoOffFlagged': 'Auto-run off · the plan was flagged',
         'system.plan.autoOffUntilGone': 'Auto-run off · the end point no longer exists',
+        'system.plan.autoOffRangeChanged': 'Auto-run off · a step in the approved range changed · to turn it on again, ask anew',
         'system.plan.autoOffUnreachable': 'Auto-run off · the manager agent can’t be called',
         'system.threadModel.clearedByAgent': '{accountId} cleared {agentId}\'s model in this thread (set by an agent). It runs on its default from the next turn.',
         'system.merge.approvalUsed': '🔓 {repo}#{number} merge attempted with a one-time approval · head {head} · gh {ghUser}',
