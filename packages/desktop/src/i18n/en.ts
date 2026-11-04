@@ -4783,6 +4783,7 @@ export const en = {
   'plan.row.pr': 'PR #{number} ↗',
   'plan.row.message': '› Message',
   'plan.why.toggle': 'Why blocked ›',
+  'plan.why.collapse': 'Hide why ⌃',
   'plan.why.title': 'Why this is blocked',
   'plan.why.dep': 'Earlier step',
   'plan.why.card': 'Card',

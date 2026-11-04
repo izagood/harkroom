@@ -268,6 +268,7 @@ function StepRow({ step, actions, indent = false }: { step: PlanStep; actions: R
   const { pr, messageId } = stepFirstLinks(step);
   const waiters = kind === 'mine' ? stepWaiters(plan, step.id) : [];
   const assignee = stepAssignee(plan.doc, step);
+  const account = useActiveStore((st) => (assignee ? st.accounts[assignee] : undefined));
   const open = !!whyOpen[step.id];
   return (
     <div data-node={step.id} data-kind={kind}
@@ -276,36 +277,42 @@ function StepRow({ step, actions, indent = false }: { step: PlanStep; actions: R
         <PlanMark kind={kind} />
         <div className="min-w-0 flex-1">
           <div>{step.title}</div>
-          <div data-testid="plan-row-sub" className="flex flex-wrap items-center gap-x-1 text-meta text-fg-muted">
-            {kind === 'done' && <span className="font-semibold text-success">{t('plan.row.done')}</span>}
-            {kind === 'active' && <span className="font-semibold text-state-active">{t('plan.state.active')}</span>}
-            {kind === 'mine' && <span className="font-semibold text-accent-text">{t('plan.row.mine')}</span>}
-            {kind === 'blocked' && <span className="font-semibold text-state-stuck">{t('plan.row.blocked')}</span>}
-            {kind === 'blocked' && step.blockedReason && <span className="truncate text-state-stuck">· {step.blockedReason}</span>}
-            {kind === 'ready' && <span data-testid="plan-ready">{hasDeps ? t('plan.readyAfter') : t('plan.ready')}</span>}
-            {kind !== 'mine' && <Assignee id={assignee} me={me} lead={kind !== 'waiting'} />}
-            {waiters.length > 0 && (
+          {kind === 'blocked' && (
+            <div data-testid="plan-row-reason" className="flex min-w-0 gap-x-1 text-meta text-state-stuck">
+              <span className="shrink-0 font-semibold">{t('plan.row.blocked')}</span>
+              {step.blockedReason && <span aria-hidden="true">·</span>}
+              {/* 한 줄로 줄인다 — 전문은 「막힌 까닭」 상자에 있다. */}
+              {step.blockedReason && <span className="min-w-0 flex-1 truncate">{step.blockedReason}</span>}
+            </div>
+          )}
+          <RowParts parts={[
+            kind === 'done' && <span className="font-semibold text-success">{t('plan.row.done')}</span>,
+            kind === 'active' && <span className="font-semibold text-state-active">{t('plan.state.active')}</span>,
+            kind === 'mine' && <span className="font-semibold text-accent-text">{t('plan.row.mine')}</span>,
+            kind === 'ready' && <span data-testid="plan-ready">{hasDeps ? t('plan.readyAfter') : t('plan.ready')}</span>,
+            kind !== 'mine' && account && <Assignee account={account} me={me} />,
+            waiters.length > 0 && (
               <button type="button" data-testid="plan-waiters" className="text-state-stuck underline decoration-dotted" onClick={() => goTo(waiters[0]!, true)}>
-                · {t('plan.row.waiters', { n: waiters.length })}
+                {t('plan.row.waiters', { n: waiters.length })}
               </button>
-            )}
-            {pr && (
+            ),
+            pr && (
               <button type="button" data-testid="plan-row-pr" className="text-link underline decoration-dotted"
                 onClick={() => { void getExternalOpener().open(prUrl(pr)); }}>
-                · {t('plan.row.pr', { number: pr.number })}
+                {t('plan.row.pr', { number: pr.number })}
               </button>
-            )}
-            {messageId && kind !== 'blocked' && (
+            ),
+            messageId && kind !== 'blocked' && (
               <button type="button" data-testid="plan-row-message" className="text-link underline decoration-dotted" onClick={() => goToMessage(messageId)}>
-                · {t('plan.row.message')}
+                {t('plan.row.message')}
               </button>
-            )}
-            {kind === 'blocked' && (
+            ),
+            kind === 'blocked' && (
               <button type="button" data-testid="plan-why-toggle" aria-expanded={open} className="text-state-stuck underline decoration-dotted" onClick={() => toggleWhy(step.id)}>
-                {t('plan.why.toggle')}
+                {open ? t('plan.why.collapse') : t('plan.why.toggle')}
               </button>
-            )}
-          </div>
+            ),
+          ]} />
           <Waiting ids={d?.waitingOn ?? []} fromGroupId={step.groupId ?? null} actions={actions} goTo={goTo} />
         </div>
       </div>
@@ -385,17 +392,30 @@ function Waiting({ ids, fromGroupId, actions, goTo, indent = false }: {
   );
 }
 
+/** 둘째 줄의 조각들. 구분점은 **조각 사이에만** 둔다 — 줄이 구분점으로 시작하거나 링크 밑줄에 섞이지 않게. */
+function RowParts({ parts }: { parts: ReactNode[] }) {
+  const shown = parts.filter(Boolean);
+  if (!shown.length) return null;
+  return (
+    <div data-testid="plan-row-sub" className="flex flex-wrap items-center gap-x-1 text-meta text-fg-muted">
+      {shown.map((part, i) => (
+        <span key={i} className="inline-flex min-w-0 items-center gap-x-1">
+          {i > 0 && <span aria-hidden="true">·</span>}
+          {part}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 /**
  * 담당(P6, security 낮음) — 계정 id 로만 오므로 화면이 이름을 푼다. **이 커뮤니티에 있는 계정일 때만** 그린다:
- * 없는 계정·지워진 계정이면 아무것도 그리지 않는다(지어낸 이름을 보이지 않는다). 사람이고 내가 아니면 「사람」 꼬리표를 단다.
+ * 없는 계정·지워진 계정이면 부르는 쪽이 조각을 만들지 않는다(지어낸 이름을 보이지 않는다). 사람이고 내가 아니면 「사람」 꼬리표를 단다.
  */
-function Assignee({ id, me, lead }: { id: string | null; me: string | null; lead: boolean }) {
+function Assignee({ account, me }: { account: { id: string; handle: string; kind: string }; me: string | null }) {
   const t = useT();
-  const account = useActiveStore((s) => (id ? s.accounts[id] : undefined));
-  if (!account) return null;
   return (
     <span data-testid="plan-assignee" className="truncate text-fg-agent">
-      {lead ? '· ' : ''}
       {account.kind === 'human' && account.id !== me && <span data-testid="plan-person" className="mr-1 rounded-row border border-border px-1 text-fg-muted">{t('plan.row.person')}</span>}
       @{account.handle}
     </span>

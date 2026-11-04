@@ -97,6 +97,28 @@ describe('패널', () => {
     expect(done.textContent).toContain('PR #7 ↗');
   });
 
+  it('구분점은 조각 사이에만 있다 — 줄 맨 앞이나 링크 글자에 들지 않는다', () => {
+    openPanel_();
+    for (const sub of screen.getAllByTestId('plan-row-sub')) expect(sub.textContent!.startsWith('·')).toBe(false);
+    expect(screen.getByTestId('plan-row-pr').textContent).toBe('PR #7 ↗');
+    expect(screen.getByTestId('plan-waiters').textContent!.startsWith('·')).toBe(false);
+    expect(document.querySelector('[data-node="s1"] [data-testid="plan-row-sub"]')!.textContent).toBe('Done·@builder·PR #7 ↗');
+  });
+
+  it('막힌 줄: 「막힘 · 사유」 는 한 줄로 줄이고 담당·까닭 토글은 그 아래 줄이다. 펴면 글자가 바뀐다', () => {
+    openPanel_();
+    const row = document.querySelector('[data-node="s3"]')!;
+    const reason = row.querySelector('[data-testid="plan-row-reason"]')!;
+    expect(reason.textContent).toBe('Blocked·승인 대기');
+    expect(reason.querySelector('.truncate')!.className).toContain('min-w-0');
+    const sub = row.querySelector('[data-testid="plan-row-sub"]')!;
+    expect(sub.textContent).toBe('@builder·Why blocked ›');
+    const toggle = within(row as HTMLElement).getByTestId('plan-why-toggle');
+    fireEvent.click(toggle);
+    expect(toggle.textContent).toBe('Hide why ⌃');
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+  });
+
   it('머리와 목록이 갈려 있어 목록만 스크롤한다', () => {
     const panel = openPanel_();
     expect(within(screen.getByTestId('plan-head')).getByTestId('plan-chips')).toBeTruthy();

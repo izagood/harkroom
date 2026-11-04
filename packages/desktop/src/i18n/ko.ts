@@ -2726,6 +2726,7 @@ export const ko = {
   'plan.row.pr': 'PR #{number} ↗',
   'plan.row.message': '› 글',
   'plan.why.toggle': '까닭 보기 ›',
+  'plan.why.collapse': '까닭 접기 ⌃',
   'plan.why.title': '막힌 까닭',
   'plan.why.dep': '앞 단계',
   'plan.why.card': '카드',
