@@ -1,0 +1,128 @@
+{
+  "_comment": "계획판 판정 규칙의 공통 시험 자료 — 데스크톱 test/threadPlanRules.test.ts 와 아이폰 test/thread_plan_rules_test.dart 가 같은 내용을 읽는다. 고치면 두 곳을 같이 고친다.",
+  "cases": [
+    {
+      "name": "그룹·막힘·내 차례·연결이 섞인 판",
+      "me": "me",
+      "plan": {
+        "doc": {
+          "goal": "목표",
+          "groups": [
+            { "id": "g1", "title": "서버", "dependsOn": [] },
+            { "id": "g2", "title": "배포", "dependsOn": ["g1"] },
+            { "id": "g3", "title": "사람", "dependsOn": [] },
+            { "id": "g4", "title": "문서", "linkedRootId": "child", "dependsOn": [] },
+            { "id": "g5", "title": "완료", "dependsOn": [] },
+            { "id": "g6", "title": "출시", "dependsOn": ["g2", "g3"] }
+          ],
+          "steps": [
+            { "id": "s1", "groupId": "g1", "title": "설계", "state": "done", "assigneeId": "bot", "links": [{ "kind": "pr", "repo": "acme/app", "number": 7 }, { "kind": "pr", "repo": "acme/app", "number": 8 }], "dependsOn": [] },
+            { "id": "s2", "groupId": "g1", "title": "구현", "state": "active", "assigneeId": "bot", "links": [{ "kind": "message", "id": "m-1" }], "dependsOn": [] },
+            { "id": "s3", "groupId": "g2", "title": "키 교체", "state": "blocked", "blockedReason": "승인 대기", "assigneeId": "bot", "links": [{ "kind": "card", "messageId": "c-1" }, { "kind": "pr", "repo": "bad repo", "number": 1 }, { "kind": "workitem", "id": "w-1" }], "dependsOn": ["s4", "s1"] },
+            { "id": "s4", "groupId": "g3", "title": "승인", "state": "pending", "assigneeId": "me", "links": [], "dependsOn": [] },
+            { "id": "s5", "groupId": "g3", "title": "고르기", "state": "active", "assigneeId": "me", "links": [], "dependsOn": [] },
+            { "id": "s6", "groupId": "g3", "title": "남의 일", "state": "pending", "assigneeId": "other", "links": [], "dependsOn": [] },
+            { "id": "s7", "groupId": "g5", "title": "끝난 일", "state": "done", "links": [], "dependsOn": [] },
+            { "id": "s8", "groupId": "g6", "title": "태그", "state": "pending", "links": [], "dependsOn": ["s3"] },
+            { "id": "s9", "title": "그룹 밖 막힘", "state": "blocked", "assigneeId": "me", "links": [], "dependsOn": [] },
+            { "id": "s10", "title": "연결 없는 대기", "state": "pending", "assigneeId": "me", "links": [], "dependsOn": ["s9"] }
+          ]
+        },
+        "derived": {
+          "g1": { "derived": "active", "waitingOn": [] },
+          "g2": { "derived": "blocked", "waitingOn": ["g1"] },
+          "g3": { "derived": "active", "waitingOn": [] },
+          "g4": { "derived": "active", "waitingOn": [] },
+          "g5": { "derived": "done", "waitingOn": [] },
+          "g6": { "derived": "waiting", "waitingOn": ["g2", "g3"] },
+          "s1": { "derived": "done", "waitingOn": [] },
+          "s2": { "derived": "active", "waitingOn": [] },
+          "s3": { "derived": "blocked", "waitingOn": ["s4"] },
+          "s4": { "derived": "ready", "waitingOn": [] },
+          "s5": { "derived": "active", "waitingOn": [] },
+          "s6": { "derived": "ready", "waitingOn": [] },
+          "s7": { "derived": "done", "waitingOn": [] },
+          "s8": { "derived": "waiting", "waitingOn": ["s3"] },
+          "s9": { "derived": "blocked", "waitingOn": [] },
+          "s10": { "derived": "waiting", "waitingOn": ["s9"] }
+        },
+        "progress": { "done": 2, "total": 10, "active": 2, "blocked": 2, "waiting": 2 },
+        "linked": [
+          { "groupId": "g4", "rootId": "child", "hidden": false, "channelId": "c2", "progress": { "done": 1, "total": 4, "active": 1, "blocked": 0, "waiting": 2 } }
+        ]
+      },
+      "expect": {
+        "order": ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10"],
+        "lists": {
+          "done": ["s1", "s7"],
+          "active": ["s2"],
+          "blocked": ["s3", "s9"],
+          "mine": ["s4", "s5"],
+          "ready": ["s6"],
+          "waiting": ["s8", "s10"]
+        },
+        "rows": {
+          "s1": { "kind": "done", "waiters": ["s3"], "pr": { "repo": "acme/app", "number": 7 }, "messageId": null },
+          "s2": { "kind": "active", "waiters": [], "pr": null, "messageId": "m-1" },
+          "s3": { "kind": "blocked", "waiters": [], "pr": null, "messageId": "c-1" },
+          "s4": { "kind": "mine", "waiters": ["s3"], "pr": null, "messageId": null },
+          "s5": { "kind": "mine", "waiters": [], "pr": null, "messageId": null },
+          "s6": { "kind": "ready", "waiters": [], "pr": null, "messageId": null },
+          "s9": { "kind": "blocked", "waiters": [], "pr": null, "messageId": null },
+          "s10": { "kind": "waiting", "waiters": [], "pr": null, "messageId": null }
+        },
+        "groups": {
+          "g1": { "kind": "active", "done": 1, "total": 2, "active": 1, "mine": 0 },
+          "g2": { "kind": "blocked", "done": 0, "total": 1, "active": 0, "mine": 0 },
+          "g3": { "kind": "mine", "done": 0, "total": 3, "active": 0, "mine": 2 },
+          "g5": { "kind": "done", "done": 1, "total": 1, "active": 0, "mine": 0 },
+          "g6": { "kind": "waiting", "done": 0, "total": 1, "active": 0, "mine": 0 }
+        },
+        "pills": [
+          { "id": "g2", "key": "blocked", "done": 0, "total": 1, "n": 0 },
+          { "id": "g1", "key": "active", "done": 1, "total": 2, "n": 1 },
+          { "id": "g3", "key": "mine", "done": 0, "total": 3, "n": 2 },
+          { "id": "g4", "key": "count", "done": 1, "total": 4, "n": 0 },
+          { "id": "g6", "key": "waiting", "done": 0, "total": 1, "n": 0 },
+          { "id": "g5", "key": "done", "done": 1, "total": 1, "n": 0 }
+        ],
+        "flow": [["g1", "g3", "g4", "g5"], ["g2"], ["g6"]],
+        "flowVisible": { "max": 5, "ids": ["g1", "g3", "g4", "g5", "g2"], "more": 1 },
+        "why": {
+          "s3": {
+            "reason": "승인 대기",
+            "deps": [{ "id": "s4", "group": "사람", "title": "승인", "mine": true }, { "id": "g1", "group": null, "title": "서버", "mine": false }],
+            "links": [{ "kind": "card", "id": "c-1" }, { "kind": "workitem", "id": "w-1" }]
+          },
+          "s9": { "reason": null, "deps": [], "links": [] }
+        },
+        "buttonKind": "blocked"
+      }
+    },
+    {
+      "name": "다 끝난 판 — 칩에 빨강이 없고 수가 0 인 목록은 비어 있다",
+      "me": "me",
+      "plan": {
+        "doc": {
+          "goal": "끝",
+          "groups": [],
+          "steps": [{ "id": "s1", "title": "한 일", "state": "done", "links": [], "dependsOn": [] }]
+        },
+        "derived": { "s1": { "derived": "done", "waitingOn": [] } },
+        "progress": { "done": 1, "total": 1, "active": 0, "blocked": 0, "waiting": 0 },
+        "linked": []
+      },
+      "expect": {
+        "order": ["s1"],
+        "lists": { "done": ["s1"], "active": [], "blocked": [], "mine": [], "ready": [], "waiting": [] },
+        "rows": { "s1": { "kind": "done", "waiters": [], "pr": null, "messageId": null } },
+        "groups": {},
+        "pills": [],
+        "flow": [],
+        "flowVisible": { "max": 5, "ids": [], "more": 0 },
+        "why": {},
+        "buttonKind": "done"
+      }
+    }
+  ]
+}

@@ -9,7 +9,7 @@ import { useT } from '../i18n/useT';
  * 평소엔 떠 있는 면(`surface-raised` + `shadow-float`)이고, **새 글이 있다는 사건**일 때만 강조 면이다.
  * 받는 중(`loading`)이면 누름을 막는다 — 같은 페이지를 두 번 받지 않는다.
  */
-export function JumpToLatestPill({ label, newLabel, ariaLabel, ariaNewLabel, count, loading = false, onClick, testId }: {
+export function JumpToLatestPill({ label, newLabel, ariaLabel, ariaNewLabel, count, loading = false, onClick, testId, placement = 'corner' }: {
   /** 새 글이 없을 때의 문구(「최신 답글」). */
   label: string;
   /** 새 글 수를 받는 문구 함수(「새 답글 3」). */
@@ -20,6 +20,8 @@ export function JumpToLatestPill({ label, newLabel, ariaLabel, ariaNewLabel, cou
   loading?: boolean;
   onClick: () => void;
   testId: string;
+  /** 계획판 버튼과 같은 구석이라 비킨다(W5): 닫혀 있으면 버튼 위, 패널이 열려 있으면 버튼 왼쪽. */
+  placement?: 'corner' | 'abovePlan' | 'besidePlan';
 }) {
   const t = useT();
   const fresh = count > 0;
@@ -38,7 +40,8 @@ export function JumpToLatestPill({ label, newLabel, ariaLabel, ariaNewLabel, cou
       aria-busy={loading || undefined}
       disabled={loading}
       onClick={onClick}
-      className={`absolute bottom-3 right-4 inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded-full pl-2.5 pr-3 text-meta font-semibold shadow-float ${tone}`}
+      data-placement={placement}
+      className={`absolute ${PLACEMENT[placement]} inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded-full pl-2.5 pr-3 text-meta font-semibold shadow-float ${tone}`}
     >
       {loading
         ? <span aria-hidden="true" className="h-3 w-3 animate-spin rounded-full border-2 border-border border-t-fg-muted" />
@@ -53,3 +56,9 @@ export function JumpToLatestPill({ label, newLabel, ariaLabel, ariaNewLabel, cou
     </button>
   );
 }
+
+const PLACEMENT = {
+  corner: 'bottom-3 right-4',
+  abovePlan: 'bottom-14 right-4',
+  besidePlan: 'bottom-3 right-56',
+} as const;

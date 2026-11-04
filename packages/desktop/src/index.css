@@ -134,6 +134,8 @@
     풀 수 있고, 그것은 실패와 같은 대접을 받는다.
   */
   --app-state-turn: var(--app-accent);  /* 내 차례 — 화면에서 유일하게 강조받는 상태 */
+  --app-state-active: var(--app-link); /* 계획판 진행 — 끝(초록)·막힘(빨강)·내 차례(주황)·대기(회색) 사이의 파랑. 새 색 값은 아니다 */
+  --app-state-active-surface: #e8effb; /* 진행 칩의 옅은 면 */
   --app-state-running: #4e5a56;         /* 도는 중 — 답이 필요 없는 구간 */
   --app-state-waiting: #a8a39b;         /* 남을 기다림 — 사슬의 중간 */
   --app-state-done: #5e8a6e;            /* 끝남 */
@@ -187,6 +189,7 @@
   --app-fg-on-strong: #1c1b19;
   /* 상태 5단 — 라이트의 짝. `turn`·`stuck` 은 위 정의를 가리키므로 그 아래 둔다. */
   --app-state-turn: var(--app-accent);
+  --app-state-active-surface: #1b2638;
   --app-state-running: #8fa39d;
   --app-state-waiting: #716b64;
   --app-state-done: #6ea882;
@@ -233,6 +236,8 @@
   --color-fg-lane: var(--app-fg-lane);
   --color-surface-lane: var(--app-surface-lane);
   --color-state-turn: var(--app-state-turn);
+  --color-state-active: var(--app-state-active);
+  --color-state-active-surface: var(--app-state-active-surface);
   --color-state-running: var(--app-state-running);
   --color-state-waiting: var(--app-state-waiting);
   --color-state-done: var(--app-state-done);
