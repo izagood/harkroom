@@ -979,6 +979,29 @@ describe('runMentionTurn', () => {
     expect(failed).toContain('<thread-note>');
   });
 
+  it('부른 글에 든 단계 링크만 펼친다 — 스레드의 다른 글에 든 링크는 펼치지 않는다', async () => {
+    const ROOT = '00000000-0000-4000-8000-0000000000d2';
+    const doc = { goal: '출시', groups: [], steps: [
+      { id: 's1', title: '러너 싣기', state: 'blocked' as const, blockedReason: '키 대기', links: [], dependsOn: [] },
+      { id: 's2', title: '다른 단계', state: 'active' as const, links: [], dependsOn: [] },
+    ] };
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 계획판 스레드').id = ROOT;
+    fake.seedFrom('human-1', `옛 질문 harkroom://plan/${ROOT}/s2`, ROOT);
+    const mention = fake.seedFrom('human-1', `@forge 왜 막혔나 harkroom://plan/${ROOT}/s1 「러너 싣기」`, ROOT);
+    Object.assign(fake, { readThreadPlan: async () => ({
+      doc, rev: 3, updatedAt: '2026-11-03T00:00:00.000Z', flagged: null,
+      derived: { s1: { derived: 'blocked', waitingOn: [], startedEarly: false }, s2: { derived: 'active', waitingOn: [], startedEarly: false } },
+      progress: { done: 0, total: 2, active: 1, blocked: 1, waiting: 0 }, linked: [],
+    }) });
+    const { deps, plans, turnOpts } = await makeDeps(fake);
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: ROOT, mentionId: mention.id });
+    const prompt = (await getPlanContent(plans, turnOpts)).at(-1)!;
+    const block = prompt.slice(prompt.indexOf('<plan-ref>'), prompt.indexOf('</plan-ref>'));
+    expect(block).toContain('막힌 까닭 키 대기');
+    expect(block).not.toContain('다른 단계');
+  });
+
   // recall P1: 예약으로 깨어난 턴은 관련 기억을 찾지 않는다 — 앞 턴 요청의 되풀이라 같은 것·엉뚱한 것을 고른다.
   it('깨어난 턴은 memory.search(recall)를 부르지 않는다 — 평범한 멘션 턴은 부른다', async () => {
     const fake = new FakeHarkroom(defOf());

@@ -47,7 +47,7 @@ import type { TurnRegistry } from './turnRegistry.js';
 import type { MemoryCache } from './memoryCache.js';
 import { planMemory, RECALL_MAX_ITEMS, RECALL_ROOT_HEAD_CHARS, type RecallResult } from './memoryPin.js';
 import { planThreadNote, type ThreadNoteState } from './threadNotePin.js';
-import { planThreadPlan, type ThreadPlanState } from './threadPlanPin.js';
+import { planRefLines, planThreadPlan, type ThreadPlanState } from './threadPlanPin.js';
 import { claudeMemoryDir, planHarnessMemoryNotice, scanHarnessMemory } from './harnessMemory.js';
 import { issueTurnKeys, turnKeyValues, type TurnKeys } from './turnKeys.js';
 import { scrubNeedles, scrubPath, scrubText } from './secretScrub.js';
@@ -1334,6 +1334,10 @@ export async function runMentionTurn(
   });
   // 깨움 세션은 고정을 저장하지 않는다 — 메모와 같은 이유.
   const planPin = freshWake ? { ...plannedPlan, commit: async () => {} } : plannedPlan;
+  // 부른 글이 가리키는 계획 단계를 펼친다(`planRefLines`). 턴을 막지 않는다 — 읽지 못한 단계는 그렇다고 한 줄만 쓴다.
+  const planRefs = await planRefLines({
+    body: thread.find((m) => m.id === mentionId)?.body ?? '', anchor, anchorPlan: threadPlan, channelId, readPlan, meId: deps.me.id,
+  });
   // 하네스 파일 메모리 수확 알림(U5, `harnessMemory.ts`). 어댑터가 그 자리를 아는 하네스만
   // (지금은 claude). 읽기 실패는 빈 목록이라 턴을 막지 않는다.
   const fileMemoryRoot = fileMemoryDirUnderConfig(def.harness);
@@ -1347,6 +1351,7 @@ export async function runMentionTurn(
   const headLines = [
     ...memoryPlan.turnLines,
     ...(planPin.lines.length ? ['', ...planPin.lines] : []),
+    ...(planRefs.length ? ['', ...planRefs] : []),
     ...(notePlan.lines.length ? ['', ...notePlan.lines] : []),
     ...(harnessNotice?.lines.length ? ['', ...harnessNotice.lines] : []),
   ];

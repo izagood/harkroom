@@ -569,6 +569,7 @@ export class HarkroomAgentClient {
       throw new Error('thread.plan: unexpected shape');
     }
     return {
+      ...(typeof p.channelId === 'string' ? { channelId: p.channelId } : {}),
       doc: p.doc, rev: p.rev, updatedAt: p.updatedAt, derived: p.derived, progress: p.progress,
       flagged: p.flagged ? { reason: typeof p.flagged.reason === 'string' ? p.flagged.reason : 'flagged' } : null,
       linked: Array.isArray(p.linked) ? p.linked : [],
