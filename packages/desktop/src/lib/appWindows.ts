@@ -27,7 +27,9 @@ export type AppWindowTarget =
    * (사람이 보던 것이 저절로 바뀌지 않게). 새 판은 카드에서 다시 열면 그 판의 창이 따로 뜬다. 첨부 행은
    * `AppWindowEntry.attachment` 가 쥔다 — 재시작 복원 목록에는 넣지 않는다(서명 경로는 열 때마다 받는다).
    */
-  | { kind: 'artifact'; channelId: string; attachmentId: string };
+  | { kind: 'artifact'; channelId: string; attachmentId: string }
+  /** 계획판 창 — 스레드 하나의 계획만 그린다. 스레드 창과 따로 열 수 있다. 재시작 복원 목록에는 넣지 않는다(소유자 결정). */
+  | { kind: 'plan'; channelId: string; rootId: string };
 
 /** 합쳐 열 수 있는 창 수(C6). */
 export const MAX_APP_WINDOWS = 8;
@@ -37,6 +39,7 @@ export const APP_WINDOW_SIZE = {
   thread: { width: 420, height: 680 },
   channel: { width: 820, height: 720 },
   artifact: { width: 900, height: 720 },
+  plan: { width: 480, height: 760 },
 } as const;
 
 /**
@@ -45,7 +48,7 @@ export const APP_WINDOW_SIZE = {
  * 두 번 눌러도 창이 하나다.
  */
 export function appWindowKey(target: AppWindowTarget): string {
-  const id = target.kind === 'thread' ? target.rootId : target.kind === 'artifact' ? target.attachmentId : target.channelId;
+  const id = target.kind === 'thread' || target.kind === 'plan' ? target.rootId : target.kind === 'artifact' ? target.attachmentId : target.channelId;
   return `${target.kind}-${id.toLowerCase().replace(/[^a-z0-9-]/g, '')}`;
 }
 
@@ -306,7 +309,8 @@ export function persistAppWindows(): void {
   const others = loadSavedAppWindows().filter((w) => w.communityId !== scope);
   const mine: SavedAppWindow[] = prune()
     // 미리보기 창은 복원하지 않는다 — 첨부 행을 저장소에 적지 않고, 판은 그때그때 카드에서 고른다.
-    .filter((e) => !e.gone && e.communityId === scope && e.target.kind !== 'artifact')
+    // 계획판 창도 복원하지 않는다(소유자 결정 — 앱을 켜면 닫혀 있다).
+    .filter((e) => !e.gone && e.communityId === scope && e.target.kind !== 'artifact' && e.target.kind !== 'plan')
     .map((e) => ({
       target: e.target, communityId: e.communityId, pinned: e.pinned, bounds: boundsOf(e.win),
       ...(e.paneWidth ? { paneWidth: e.paneWidth } : {}),

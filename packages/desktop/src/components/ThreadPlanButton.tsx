@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { ThreadPlanProgress, ThreadPlanView } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
-import { getController } from '../state/controller';
 import {
   clampPlanSize, loadPlanOpen, loadPlanSize, PLAN_PANEL_DEFAULT, planButtonKind, planCanWiden, planTone, savePlanOpen, savePlanSize, widePlanSize, type PlanSizeScope,
 } from '../lib/threadPlan';
-import { PlanBody, PlanMark } from './PlanBody';
+import { PlanBody, PlanMark, usePlanSync } from './PlanBody';
+import { appWindowKey, useAppWindows } from '../lib/appWindows';
+import { openWindow } from '../lib/windowActions';
 import { useHostDocument, viewOf } from '../lib/hostDocument';
 import { useT } from '../i18n/useT';
 
@@ -28,26 +29,23 @@ export function ThreadPlanButton({ rootId, progress, onOpenChange }: {
   useEffect(() => { setOpenState(loadPlanOpen(rootId)); }, [rootId]);
 
   const shown = planTone(progress) !== 'empty';
-  const rev = shown ? progress?.rev ?? null : null;
-  // 목록 행의 updatedAt(P6) — 앱이 꺼진 사이 지웠다 다시 세워 rev 가 우연히 같아도 시각은 다르다(#1739 낮음).
-  // 실시간 이벤트에는 없으므로(목록 행에만) 없을 때는 rev 만 견준다.
-  const rowUpdatedAt = progress?.updatedAt ?? null;
+  usePlanSync(rootId, progress);
+  const isMainWindow = useHostDocument() === document;
+  const planKey = appWindowKey({ kind: 'plan', channelId: '', rootId });
+  const popped = useAppWindows((s) => s.entries.some((e) => e.key === planKey));
+  // 계획 창이 있는 동안 패널은 닫혀 있다. 창이 닫히면 메인 창은 저장값을 다시 읽는다 — 「되돌리기」는 편 채로 저장하고 닫는다.
   useEffect(() => {
-    if (rev === null) return;
-    // 다르면 받는다(architect R3) — rev 는 계획을 지웠다 다시 세우면 1로 돌아가므로 「크다」로 견주면 옛 판이 남는다.
-    const same = plan !== undefined && (plan?.rev ?? null) === rev
-      && (rowUpdatedAt === null || !plan || Date.parse(plan.updatedAt) >= Date.parse(rowUpdatedAt));
-    if (same) return;
-    void getController().loadThreadPlan(rootId).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- rev·시각이 바뀔 때만 다시 받는다(D-b)
-  }, [rootId, rev, rowUpdatedAt]);
+    if (popped) setOpenState(false);
+    else if (isMainWindow) setOpenState(loadPlanOpen(rootId));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 창이 열리고 닫힐 때만 맞춘다
+  }, [popped]);
 
   const setOpen = (next: boolean) => { setOpenState(next); savePlanOpen(rootId, next); };
-  useEffect(() => { onOpenChange?.(shown && open && !!plan); }, [shown, open, plan, onOpenChange]);
+  useEffect(() => { onOpenChange?.(shown && open && !!plan && !popped); }, [shown, open, plan, popped, onOpenChange]);
 
   if (!shown || !progress) return null;
   const counts = plan && plan.progress.total > 0 ? plan.progress : progress;
-  const isOpen = open && !!plan;
+  const isOpen = open && !!plan && !popped;
 
   return (
     <>
@@ -58,16 +56,22 @@ export function ThreadPlanButton({ rootId, progress, onOpenChange }: {
         aria-expanded={isOpen}
         aria-label={[t('plan.button.aria', { done: counts.done, total: counts.total }),
           ...(counts.blocked > 0 ? [t('plan.button.ariaBlocked', { n: counts.blocked })] : []),
-          isOpen ? t('plan.button.close') : t('plan.button.open')].join(', ')}
-        onClick={() => setOpen(!open)}
+          popped ? t('window.inWindow') : isOpen ? t('plan.button.close') : t('plan.button.open')].join(', ')}
+        data-popped={popped ? 'true' : undefined}
+        onClick={() => {
+          if (popped) { useAppWindows.getState().entries.find((e) => e.key === planKey)?.win.focus(); return; }
+          setOpen(!open);
+        }}
         onKeyDown={(e) => { if (e.key === 'Escape' && isOpen) { e.stopPropagation(); setOpen(false); } }}
-        className={`absolute bottom-3 right-4 inline-flex h-9 max-w-[calc(100%-32px)] items-center gap-2 whitespace-nowrap rounded-full border border-border pl-2 pr-3 text-meta font-semibold text-fg shadow-float ${isOpen ? 'bg-surface-sunken' : 'bg-surface-raised hover:bg-surface-sunken'}`}
+        className={`absolute bottom-3 right-4 inline-flex h-9 max-w-[calc(100%-32px)] items-center gap-2 whitespace-nowrap rounded-full border pl-2 pr-3 text-meta font-semibold text-fg shadow-float ${popped ? 'border-dashed border-state-active' : 'border-border'} ${isOpen ? 'bg-surface-sunken' : 'bg-surface-raised hover:bg-surface-sunken'}`}
       >
         <PlanMark kind={planButtonKind(counts)} />
         <span className="truncate">{t('plan.chip', { done: counts.done, total: counts.total })}</span>
         <ProgressBar done={counts.done} total={counts.total} />
         {counts.blocked > 0 && <span data-testid="plan-button-blocked" className="text-state-stuck">{t('plan.chip.blocked', { n: counts.blocked })}</span>}
-        <span aria-hidden="true" className="text-fg-subtle">{isOpen ? '⌄' : '⌃'}</span>
+        {popped
+          ? <span data-testid="plan-button-popped" className="text-state-active">⧉ {t('window.inWindow')}</span>
+          : <span aria-hidden="true" className="text-fg-subtle">{isOpen ? '⌄' : '⌃'}</span>}
       </button>
     </>
   );
@@ -166,6 +170,12 @@ function PlanPanel({ plan, onClose }: { plan: ThreadPlanView; onClose: () => voi
               {isWide ? t('plan.size.default') : t('plan.size.wide')}
             </button>
           )}
+          <button type="button" data-testid="plan-pop-out" title={t('plan.window.open')} aria-label={t('plan.window.open')}
+            onClick={() => {
+              const r = openWindow({ kind: 'plan', channelId: plan.channelId, rootId: plan.rootId });
+              if (r.kind === 'opened' || r.kind === 'focused') onClose();
+            }}
+            className="shrink-0 rounded-row px-1 text-meta text-fg-muted hover:bg-surface-sunken">⧉</button>
           <button type="button" data-testid="plan-panel-close" aria-label={t('plan.panel.close')} onClick={onClose}
             className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface-sunken text-fg-muted hover:text-fg">✕</button>
         </>

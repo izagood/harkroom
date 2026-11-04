@@ -1,31 +1,57 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
-import type { PlanGroup, PlanStep, ThreadPlanView } from '@harkroom/shared';
+import type { PlanGroup, PlanStep, ThreadPlanProgress, ThreadPlanView } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { getExternalOpener } from '../lib/openExternal';
 import type { PlanStartDone } from '../lib/api';
 import {
   crossGroupTitle, groupFacts, isPlanStale, nextCycleIndex, PLAN_CHIP_KINDS, planFlow, planFlowVisible, planLists,
-  planReadyStepIds, planPills, planStartClean, planTitleOf, prUrl, stepAssignee,
+  planReadyStepIds, planPills, planStartClean, planTitleOf, planTone, prUrl, stepAssignee,
   stepGoTargets, stepKind, stepStartState, stepWaiters, stepWhy, stepsOf,
   type PlanChipKind, type PlanPill, type PlanRowKind,
 } from '../lib/threadPlan';
 import { agoLabel } from '../lib/time';
 import { PlanStartBox } from './PlanStartBox';
+import { useHostDocument, viewOf } from '../lib/hostDocument';
 import { useLocale, useT } from '../i18n/useT';
+
+/**
+ * 판을 받는 곳(architect R1·R3). 루트 행의 rev 가 들고 있는 판과 다르면 받는다 — 버튼과 계획판 창이 같이 쓴다.
+ * 스토어가 하나라 한쪽에서 받으면 다른 쪽도 같은 판을 그린다.
+ */
+export function usePlanSync(rootId: string, progress: ThreadPlanProgress | null | undefined): void {
+  const plan = useActiveStore((s) => s.threadPlans[rootId]);
+  const rev = planTone(progress) !== 'empty' ? progress?.rev ?? null : null;
+  // 목록 행의 updatedAt(P6) — 앱이 꺼진 사이 지웠다 다시 세워 rev 가 우연히 같아도 시각은 다르다(#1739 낮음).
+  // 실시간 이벤트에는 없으므로(목록 행에만) 없을 때는 rev 만 견준다.
+  const rowUpdatedAt = progress?.updatedAt ?? null;
+  useEffect(() => {
+    if (rev === null) return;
+    // 다르면 받는다(architect R3) — rev 는 계획을 지웠다 다시 세우면 1로 돌아가므로 「크다」로 견주면 옛 판이 남는다.
+    const same = plan !== undefined && (plan?.rev ?? null) === rev
+      && (rowUpdatedAt === null || !plan || Date.parse(plan.updatedAt) >= Date.parse(rowUpdatedAt));
+    if (same) return;
+    void getController().loadThreadPlan(rootId).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- rev·시각이 바뀔 때만 다시 받는다(D-b)
+  }, [rootId, rev, rowUpdatedAt]);
+}
 
 /**
  * 계획판 본문 — 머리(고정)·칩·흐름·목록·시작 확인 상자. 떠 있는 패널이든 창이든 틀은 부르는 쪽 몫이고, 이것은 틀 안을 채운다.
  *
  * - 목표·제목·사유는 남이 쓴 글이라 **글자로만** 그린다. 앱 밖으로 나가는 주소는 꼴을 지난 PR 번호로만 짓는다(`stepGoTargets`).
  */
-export function PlanBody({ plan, headActions, onLeave }: {
+export function PlanBody({ plan, headActions, onLeave, onOpenMessage }: {
   plan: ThreadPlanView;
   /** 머리 오른쪽 끝에 틀이 놓는 단추. */
   headActions?: ReactNode;
   /** 글로 가기 전에 부른다. 패널은 글을 가리지 않게 닫는다. */
   onLeave?: () => void;
+  /** 글로 가는 길을 틀이 정한다(계획판 창). 없으면 메인 창에서 연다. */
+  onOpenMessage?: (id: string) => void;
 }) {
+  // 뒤에 깔린 메인 창의 프레임은 멈출 수 있다 — 이 본문이 그려지는 창의 것을 쓴다.
+  const hostView = viewOf(useHostDocument());
   const t = useT();
   const locale = useLocale();
   const me = useActiveStore((s) => s.me?.id ?? null);
@@ -76,7 +102,7 @@ export function PlanBody({ plan, headActions, onLeave }: {
     setFlash(id);
     clearTimeout(flashTimer.current);
     flashTimer.current = setTimeout(() => setFlash(null), 2000);
-    requestAnimationFrame(() => list.current?.querySelector(`[data-node="${id}"]`)?.scrollIntoView?.({ block: 'center' }));
+    hostView.requestAnimationFrame(() => list.current?.querySelector(`[data-node="${id}"]`)?.scrollIntoView?.({ block: 'center' }));
   };
   const pressChip = (kind: PlanChipKind) => {
     const ids = lists[kind];
@@ -92,7 +118,11 @@ export function PlanBody({ plan, headActions, onLeave }: {
     }
     goTo(p.id);
   };
-  const goToMessage = (id: string) => { onLeave?.(); void getController().openMessage(id).catch(() => {}); };
+  const goToMessage = (id: string) => {
+    onLeave?.();
+    if (onOpenMessage) onOpenMessage(id);
+    else void getController().openMessage(id).catch(() => {});
+  };
   const shared: RowActions = { plan, me, flash, whyOpen, goTo, goToMessage, human, started, startFor, setStartFor, onStarted,
     toggleWhy: (id) => setWhyOpen((w) => ({ ...w, [id]: !w[id] })) };
   const loose = stepsOf(plan.doc, null);
@@ -232,7 +262,7 @@ function GroupRow({ group, collapsed, onToggle, actions }: { group: PlanGroup; c
         ? <div data-testid="plan-linked-hidden" className="ml-8 mr-1 rounded-row border border-dashed border-border px-2.5 py-1.5 text-meta text-fg-subtle">{t('plan.linkedHidden')}</div>
         : (
           <button type="button" data-testid="plan-open-linked" className="ml-8 mr-1 block rounded-row border border-border px-2.5 py-1.5 text-meta font-semibold text-link hover:bg-surface-sunken"
-            onClick={() => { void getController().openThread(linked.rootId, { channelId: linked.channelId! }).catch(() => {}); }}>
+            onClick={() => { window.focus(); void getController().openThread(linked.rootId, { channelId: linked.channelId! }).catch(() => {}); }}>
             {t('plan.openLinked')}
           </button>
         ))}

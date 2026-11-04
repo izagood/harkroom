@@ -15,6 +15,10 @@ vi.mock('../src/lib/openExternal', () => ({ getExternalOpener: () => ({ open: op
 let plans: Record<string, ThreadPlanView | null> = {};
 let meKind = 'human';
 let accounts: Record<string, { id: string; handle: string; kind: string }> = {};
+vi.mock('../src/lib/windowActions', async () => {
+  const { openAppWindow } = await vi.importActual<typeof import('../src/lib/appWindows')>('../src/lib/appWindows');
+  return { openWindow: (target: Parameters<typeof openAppWindow>[0]) => openAppWindow(target) };
+});
 vi.mock('../src/state/communities', () => ({
   useActiveStore: (sel: (s: unknown) => unknown) => sel({ threadPlans: plans, accounts, channelMembers: {}, me: { id: 'me', kind: meKind, handle: 'owner' } }),
 }));
@@ -23,6 +27,8 @@ import { ThreadPlanButton } from '../src/components/ThreadPlanButton';
 import { ApiError } from '../src/lib/api';
 import { JumpToLatestPill } from '../src/components/JumpToLatestPill';
 import { HostDocumentContext } from '../src/lib/hostDocument';
+import { resetAppWindowsForTest, setWindowOpener, useAppWindows } from '../src/lib/appWindows';
+import { loadPlanOpen, savePlanOpen } from '../src/lib/threadPlan';
 import rules from './fixtures/planRules.json';
 
 const base = rules.cases[0]!.plan;
@@ -572,6 +578,47 @@ describe('새 창(포털)의 크기 조절', () => {
     fireEvent.doubleClick(doc.querySelector('[data-testid="plan-resize-corner"]')!);
     expect(localStorage.getItem('harkroom.threadPlan.size.window')).toBeNull();
     expect(localStorage.getItem('harkroom.threadPlan.size')).not.toBeNull();
+  });
+});
+
+describe('계획판 새 창으로 띄우기', () => {
+  const popupWin = () => ({ closed: false, focus: vi.fn(), document: document.implementation.createHTMLDocument('p'), addEventListener: () => undefined, removeEventListener: () => undefined, close() { (this as { closed: boolean }).closed = true; } });
+  let win: ReturnType<typeof popupWin>;
+  beforeEach(() => { resetAppWindowsForTest(); win = popupWin(); setWindowOpener({ open: () => win as unknown as Window }); });
+  afterEach(() => { resetAppWindowsForTest(); });
+
+  it('⧉ 를 누르면 창이 열리고 패널이 닫히며, 버튼은 「새 창에 열림」으로 바뀌어 누르면 창을 앞으로 가져온다', () => {
+    openPanel_();
+    fireEvent.click(screen.getByTestId('plan-pop-out'));
+    expect(screen.queryByTestId('plan-panel')).toBeNull();
+    expect(loadPlanOpen('r1')).toBe(false);
+    expect(screen.getByTestId('plan-button-popped').textContent).toContain('Open in a separate window');
+    fireEvent.click(button());
+    expect(win.focus).toHaveBeenCalled();
+    expect(screen.queryByTestId('plan-panel')).toBeNull();
+  });
+
+  it('창 단추로 닫으면 버튼은 보통으로 돌아가고 패널은 닫힌 채다', () => {
+    openPanel_();
+    fireEvent.click(screen.getByTestId('plan-pop-out'));
+    act(() => { useAppWindows.setState({ entries: [] }); });
+    expect(screen.queryByTestId('plan-button-popped')).toBeNull();
+    expect(screen.queryByTestId('plan-panel')).toBeNull();
+  });
+
+  it('되돌리기처럼 편 채로 적고 닫으면 메인 패널이 펴진다', () => {
+    openPanel_();
+    fireEvent.click(screen.getByTestId('plan-pop-out'));
+    act(() => { savePlanOpen('r1', true); useAppWindows.setState({ entries: [] }); });
+    expect(screen.getByTestId('plan-panel')).toBeTruthy();
+  });
+
+  it('창을 더 열 수 없으면 패널을 닫지 않는다', () => {
+    setWindowOpener({ open: () => null });
+    openPanel_();
+    fireEvent.click(screen.getByTestId('plan-pop-out'));
+    expect(screen.getByTestId('plan-panel')).toBeTruthy();
+    expect(screen.queryByTestId('plan-button-popped')).toBeNull();
   });
 });
 

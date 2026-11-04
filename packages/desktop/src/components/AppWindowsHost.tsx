@@ -4,11 +4,13 @@ import { useActiveStore, useCommunityRegistry } from '../state/communities';
 import { getController } from '../state/controller';
 import { WindowViewProvider, type WindowView } from '../state/windowView';
 import {
-  closeAllAppWindows, closeAppWindow, closeAppWindowOnly, markAppWindowGone, persistAppWindows, restoreAppWindows, setAppWindowPinned, setAppWindowScope, setAppWindowPaneWidth,
+  closeAllAppWindows, closeAppWindow, closeAppWindowOnly, findAppWindow, markAppWindowGone, persistAppWindows, restoreAppWindows, setAppWindowPinned, setAppWindowScope, setAppWindowPaneWidth,
   channelWindowPaneClamp, channelWindowPaneDefault, CHANNEL_WINDOW_MIN_CHANNEL, CHANNEL_WINDOW_MIN_THREAD, syncRootAttributes,
   useAppWindows, type AppWindowEntry,
 } from '../lib/appWindows';
 import { displayBody } from '../lib/mention';
+import { planTone, savePlanOpen } from '../lib/threadPlan';
+import { PlanBody, usePlanSync } from './PlanBody';
 import { ThreadPanel } from './ThreadPanel';
 import { ChannelPane } from './ChannelPane';
 import { ChannelSettingsSheet } from './ChannelSettingsSheet';
@@ -88,9 +90,11 @@ function AppWindowPortal({ entry }: { entry: AppWindowEntry }) {
       {entry.target.kind !== 'artifact' && <WindowBar entry={entry} />}
       {entry.target.kind === 'thread'
         ? <ThreadWindow entry={entry} channelId={entry.target.channelId} rootId={entry.target.rootId} />
-        : entry.target.kind === 'artifact'
-          ? <ArtifactWindow entry={entry} />
-          : <ChannelWindow entry={entry} channelId={entry.target.channelId} />}
+        : entry.target.kind === 'plan'
+          ? <PlanWindow entry={entry} channelId={entry.target.channelId} rootId={entry.target.rootId} />
+          : entry.target.kind === 'artifact'
+            ? <ArtifactWindow entry={entry} />
+            : <ChannelWindow entry={entry} channelId={entry.target.channelId} />}
     </div>
     </HostDocumentContext.Provider>,
     root,
@@ -154,15 +158,85 @@ function ThreadWindow({ entry, channelId, rootId }: { entry: AppWindowEntry; cha
   );
 }
 
-/** 창 제목줄: 「#채널 · 루트 첫 줄」(판 3). DM 이면 상대 이름. 루트를 아직 모르면 채널만. */
-function useWindowTitle(entry: AppWindowEntry, channelId: string, rootId?: string): void {
-  const where = useActiveStore((s) => {
+/**
+ * 계획판 창(480×760, 시안 v5): 계획 본문이 창을 채운다. 손잡이·넓게·✕는 없다 — OS 창이 그 일을 한다.
+ * 판은 루트 행의 rev 를 따라 스토어에 받으므로 스레드 버튼과 같은 판을 본다. 위임 글은 서버가 원래 스레드에 올린다.
+ */
+function PlanWindow({ entry, channelId, rootId }: { entry: AppWindowEntry; channelId: string; rootId: string }) {
+  const t = useT();
+  const [state, setState] = useState<LoadState>('loading');
+  useEffect(() => {
+    let live = true;
+    getController().loadThreadForWindow(channelId, rootId)
+      .then((ok) => { if (live) setState(ok ? 'ok' : 'gone'); if (!ok) markAppWindowGone(entry.key); })
+      .catch(() => { if (live) setState('gone'); });
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 창의 정체(채널·뿌리)가 그대로면 다시 받지 않는다
+  }, [channelId, rootId]);
+
+  const progress = useActiveStore((s) => (s.messages[channelId] ?? []).find((m) => m.id === rootId)?.planProgress);
+  const plan = useActiveStore((s) => s.threadPlans[rootId]);
+  usePlanSync(rootId, progress);
+  const planGone = state === 'ok' && (planTone(progress) === 'empty' || plan === null);
+
+  const where = useWindowWhere(channelId);
+  const goal = planGone ? '' : (plan?.doc.goal.split('\n')[0]?.trim() ?? '');
+  useEffect(() => {
+    const short = goal.length > 60 ? `${goal.slice(0, 60)}…` : goal;
+    entry.win.document.title = [t('plan.panel.title'), where, ...(short ? [short] : [])].join(' · ');
+  }, [entry, t, where, goal]);
+
+  /** 글로 간다 — 그 스레드가 새 창에 열려 있으면 그 창, 아니면 메인 창을 앞으로 가져온다. 이 창은 닫지 않는다(Y5). */
+  const openMessage = async (id: string) => {
+    const threadWindow = findAppWindow({ kind: 'thread', channelId, rootId });
+    if (threadWindow) {
+      threadWindow.win.focus();
+      if (await getController().highlightInThreadWindow(channelId, rootId, id)) return;
+    }
+    window.focus();
+    await getController().openMessage(id);
+  };
+
+  if (state !== 'ok' || planGone || !plan) {
+    const close = state === 'gone' || planGone;
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center text-fg-subtle" data-testid="window-empty">
+        {state === 'gone' ? <div>{t('window.threadGone')}</div> : planGone ? (
+          <>
+            <div className="font-semibold text-fg-muted">{t('plan.window.gone')}</div>
+            <div>{t('plan.window.goneHint')}</div>
+          </>
+        ) : <div>{t('window.loading')}</div>}
+        {close && (
+          <button type="button" data-testid="plan-window-close" onClick={() => closeAppWindow(entry.target)}
+            className="rounded-row border border-border px-2 py-0.5 text-fg-muted hover:bg-surface-sunken">
+            {t('plan.window.close')}
+          </button>
+        )}
+      </div>
+    );
+  }
+  return (
+    <div data-testid="plan-window" className="flex min-h-0 flex-1 flex-col bg-surface-raised text-body">
+      <PlanBody plan={plan} onOpenMessage={(id) => { void openMessage(id).catch(() => {}); }} />
+    </div>
+  );
+}
+
+/** 창 제목의 「어디」 — 「#채널」, DM 이면 상대 이름. */
+function useWindowWhere(channelId: string): string {
+  return useActiveStore((s) => {
     const channel = s.channels.find((c) => c.id === channelId);
     if (channel) return `#${channel.name}`;
     const dm = s.dms.find((d) => d.id === channelId);
     if (dm) return dm.memberIds.filter((id) => id !== s.me?.id).map((id) => s.accounts[id]?.handle ?? '…').join(', ');
     return 'Harkroom';
   });
+}
+
+/** 창 제목줄: 「#채널 · 루트 첫 줄」(판 3). DM 이면 상대 이름. 루트를 아직 모르면 채널만. */
+function useWindowTitle(entry: AppWindowEntry, channelId: string, rootId?: string): void {
+  const where = useWindowWhere(channelId);
   const first = useActiveStore((s) => {
     if (!rootId) return '';
     const root = (s.messages[channelId] ?? []).find((m) => m.id === rootId);
@@ -211,9 +285,14 @@ function WindowActions({ entry }: { entry: AppWindowEntry }) {
   const t = useT();
   const back = () => {
     const target = entry.target;
+    // 계획판 창은 메인 창 그 스레드의 패널을 편 채로 되돌린다(Y4). 창이 닫히면 메인 버튼이 이 값을 다시 읽으니 먼저 적는다.
+    if (target.kind === 'plan') savePlanOpen(target.rootId, true);
     closeAppWindow(target);
     const c = getController();
-    if (target.kind === 'thread') void c.openThread(target.rootId, { channelId: target.channelId });
+    if (target.kind === 'plan') {
+      window.focus();
+      void c.openThread(target.rootId, { channelId: target.channelId });
+    } else if (target.kind === 'thread') void c.openThread(target.rootId, { channelId: target.channelId });
     else if (target.kind === 'artifact') {
       // 메인의 미리보기 패널로 돌린다. 패널은 지금 보는 칸 곁에 선다 — 그 칸이 다른 채널이어도 판은 그대로다.
       if (entry.attachment) c.openArtifactPreview(entry.attachment);
@@ -237,7 +316,7 @@ function WindowActions({ entry }: { entry: AppWindowEntry }) {
         className="rounded-row px-2 py-0.5 text-fg-muted hover:bg-surface-sunken"
         onClick={back}
       >
-        ↩ {t('window.backToMain')}
+        {entry.target.kind === 'plan' ? '⇲' : '↩'} {t('window.backToMain')}
       </button>
     </>
   );
