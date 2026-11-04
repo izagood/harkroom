@@ -49,8 +49,11 @@ let mcpUrl: string;
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
 const post = async (token: string, body: Record<string, unknown>) =>
   (await app.inject({ method: 'POST', url: `/channels/${ch}/messages`, headers: auth(token), payload: body })).json().id as string;
-const start = (token: string, root: string, payload: Record<string, unknown>) =>
+const startRaw = (token: string, root: string, payload: Record<string, unknown>) =>
   app.inject({ method: 'POST', url: `/threads/${root}/plan/start`, headers: auth(token), payload });
+/** 실제 시작에는 ifRev 가 필수다 — 시험이 따로 주지 않으면 지금 판 번호를 싣는다(앱이 미리보기에서 받아 보내는 값). */
+const start = async (token: string, root: string, payload: Record<string, unknown>) =>
+  startRaw(token, root, payload.dryRun || 'ifRev' in payload ? payload : { ...payload, ifRev: (await getThreadPlan(pool, root))?.rev ?? 1 });
 const inboxOf = async (messageId: string) =>
   (await pool.query<{ account_id: string }>(`select account_id from inbox where message_id = $1`, [messageId])).rows.map((r) => r.account_id);
 const repliesOf = async (root: string) =>
@@ -346,6 +349,30 @@ describe('시작 — 관리 에이전트 경유', () => {
     const ok = await start(member.token, root, { steps: [{ id: 's1' }], ifRev: again.rev });
     expect(ok.statusCode).toBe(200);
     expect(ok.json().started[0]).toMatchObject({ via: 'manager', to: worker.accountId });
+  });
+
+  it('실제 시작은 ifRev 가 없으면 거절한다. 미리보기에는 필요 없다', async () => {
+    const root = await humanPlan([step('s1', { assigneeId: worker.accountId })]);
+    const res = await startRaw(member.token, root, { steps: [{ id: 's1' }] });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('if_rev_required');
+    expect((await getThreadPlan(pool, root))?.doc.steps[0]!.state).toBe('pending');
+    expect(await repliesOf(root)).toHaveLength(0);
+    expect((await startRaw(member.token, root, { steps: [{ id: 's1' }], dryRun: true })).statusCode).toBe(200);
+  });
+
+  it('미리보기 뒤 단계 제목이 바뀌면 시작하지 않는다 — 사람이 보지 못한 글을 사람 이름으로 내지 않는다', async () => {
+    const root = await humanPlan([step('s1', { assigneeId: worker.accountId })]);
+    const preview = (await start(member.token, root, { steps: [{ id: 's1' }], dryRun: true })).json();
+    const row = (await getThreadPlan(pool, root))!;
+    await setThreadPlan(pool, {
+      rootId: root, actor: { accountId: worker.accountId }, guard: { updatedAt: row.updatedAt },
+      doc: { ...row.doc, steps: row.doc.steps.map((x) => ({ ...x, title: '바꿔 쓴 제목' })) },
+    });
+    const stale = await start(member.token, root, { steps: [{ id: 's1' }], ifRev: preview.rev });
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json().error.code).toBe('plan_changed');
+    expect(await repliesOf(root)).toHaveLength(0);
   });
 
   it('누른 사람이 못 부르는 관리 에이전트도 사유를 싣고 내려간다', async () => {

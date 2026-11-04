@@ -46,8 +46,8 @@ export interface PlanStartRequest {
   steps: { id: string; assigneeId?: string }[];
   dryRun?: boolean;
   /**
-   * 미리보기에서 받은 판 번호. 주면 잠금 안에서 그 판일 때만 시작한다 — 미리보기와 누름 사이에 관리 에이전트·담당이 바뀌면
-   * 사람이 본 적 없는 상대를 사람 이름으로 부르게 된다. 다르면 아무것도 바꾸지 않고 `plan_changed`.
+   * 미리보기에서 받은 판 번호. **실제 시작에는 필수다**(없으면 `if_rev_required`). 잠금 안에서 그 판일 때만 시작한다 —
+   * 미리보기와 누름 사이에 제목·관리 에이전트·담당이 바뀌면 사람이 보지 못한 글이 사람 이름으로 나간다. 다르면 아무것도 바꾸지 않고 `plan_changed`.
    */
   ifRev?: number;
   locale?: PlanStartLocale;
@@ -255,6 +255,7 @@ function buildPosts(route: StartRoute, doc: PlanDoc, handles: Map<string, string
 /** 서비스 진입점. 사람 세션 여부는 라우트가 본다. */
 export async function startPlanSteps(pool: Pool, req: PlanStartRequest): Promise<PlanStartResult> {
   const locale = req.locale ?? 'ko';
+  if (!req.dryRun && req.ifRev === undefined) return { ok: false, error: { code: 'if_rev_required' } };
   const root = await threadRootChannel(pool, req.rootId);
   if (root === 'not_found' || root === 'not_root') return { ok: false, error: { code: root } };
   const channelId = root.channelId;
@@ -291,7 +292,7 @@ export async function startPlanSteps(pool: Pool, req: PlanStartRequest): Promise
   let activated = new Set<string>();
   const activate = await writeThreadPlan<{ code: string }>(pool, req.rootId, { accountId: req.actorId }, (prev) => {
     if (!prev) return { error: { code: 'no_plan' } };
-    if (req.ifRev !== undefined && prev.rev !== req.ifRev) return { error: { code: 'plan_changed' } };
+    if (prev.rev !== req.ifRev) return { error: { code: 'plan_changed' } };
     startRev = prev.rev;
     const derived = derivePlan(prev.doc, map);
     const managerMoved = (prev.doc.managerId ?? null) !== (row.doc.managerId ?? null);

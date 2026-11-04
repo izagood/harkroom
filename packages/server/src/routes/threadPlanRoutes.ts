@@ -22,7 +22,7 @@ const managerBody = z.object({ managerId: z.string().uuid().nullable() });
 const HTTP_BY_CODE: Record<string, number> = {
   not_found: 404, not_root: 404, forbidden: 404, no_plan: 404,
   channel_archived: 403,
-  invalid_manager: 400,
+  invalid_manager: 400, if_rev_required: 400,
 };
 
 export async function registerThreadPlanRoutes(app: FastifyInstance, pool: Pool): Promise<void> {
