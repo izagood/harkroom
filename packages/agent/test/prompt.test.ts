@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PLAN_LIMITS } from '@harkroom/shared/planGraph';
-import { BODY_LIMIT, DELTA_MAX_MESSAGES, fitDelta, mergeThreadPages, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, proxyAnswerBody, proxyRecordAnswerBody, looksLikeAnswer, PROXY_ANSWER_MAX_CHARS, AGENT_CALL_NO_ANSWER, stallNotice, stallRetryable, stallScreenErrorLine, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, macPermissionNotice, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, wakeReportTo, wakeWatch, wakeOrigin, hasOwnReportSince, type MemoryContext } from '../src/prompt.js';
+import { mentionedHandles } from '@harkroom/shared';
+import { BODY_LIMIT, DELTA_MAX_MESSAGES, fitDelta, mergeThreadPages, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, quotedLine, proxyAnswerBody, proxyRecordAnswerBody, looksLikeAnswer, PROXY_ANSWER_MAX_CHARS, AGENT_CALL_NO_ANSWER, stallNotice, stallRetryable, stallScreenErrorLine, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, macPermissionNotice, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, wakeReportTo, wakeWatch, wakeOrigin, hasOwnReportSince, type MemoryContext } from '../src/prompt.js';
 
 const msg = (seq: number, authorId: string, body: string, extra: Record<string, unknown> = {}) =>
   ({
@@ -1908,5 +1909,90 @@ describe('silentTurnNotice — 에이전트가 부른 말없는 턴 (2026-10-25 
   it('기록으로 끝을 아는 턴(FYI)은 ✅ 그대로다 — 10-01 의 FYI 카드 더미로 돌아가지 않는다', () => {
     expect(silentTurnNotice({ ...base, screenEnded: false, screenAnswer: '답' })).toEqual({ kind: 'react', emoji: '✅' });
     expect(silentTurnNotice({ ...base })).toEqual({ kind: 'react', emoji: '✅' });
+  });
+});
+
+describe('silentTurnNotice — 스스로 깨어난 턴의 침묵 (2026-11-04)', () => {
+  const base = { offAnchor: null, pat: 'hrkp_secretpat' } as const;
+  const TABLE_ANSWER = `| 게이트 | 상태 |\n|---|---|\n| CI | 도는 중 |\n${'가'.repeat(150)}`;
+
+  it.each([
+    ['wake', '예약된 확인 턴이'],
+    ['delegationOutcome', '넘긴 일의 결말을 확인한 턴이'],
+  ] as const)('%s: API 키 연결이든 구독이든 답 꼴이어도 옮기지 않고 같은 보통 글이다', (caller, what) => {
+    for (const recordProxy of [true, false, undefined]) {
+      expect(silentTurnNotice({ ...base, caller, lastSaid: '바뀐 것이 없어\n글을 올리지 않았다', recordProxy })).toEqual({
+        kind: 'post', body: `${what} 글 없이 끝났습니다 — 마지막 말:\n> 바뀐 것이 없어 글을 올리지 않았다`,
+      });
+      const long = silentTurnNotice({ ...base, caller, lastSaid: TABLE_ANSWER, recordProxy }) as { kind: string; body: string };
+      expect(long.kind).toBe('post');
+      expect(long.body).not.toContain('옮겨 올렸습니다');
+      expect(long.body.split('\n')).toHaveLength(2);
+      expect(silentTurnNotice({ ...base, caller, lastSaid: null, recordProxy })).toEqual({ kind: 'post', body: `${what} 글 없이 끝났습니다.` });
+    }
+  });
+
+  it.each(['wake', 'delegationOutcome'] as const)('%s: 실패처럼 읽는 문구가 없다', (caller) => {
+    for (const lastSaid of ['이유', null]) {
+      const { body } = silentTurnNotice({ ...base, caller, lastSaid }) as { body: string };
+      expect(body).not.toContain('다시 부르면');
+      expect(body).not.toContain('답을 남기지 못하고');
+    }
+  });
+
+  it.each(['wake', 'delegationOutcome'] as const)('%s: 마지막 말의 @ 는 아무도 부르지 않는다', (caller) => {
+    const { body } = silentTurnNotice({ ...base, caller, lastSaid: '@someone 에게 이미 알렸다\n@other 도' }) as { body: string };
+    expect(body).toContain('@someone');
+    expect(mentionedHandles(body)).toEqual([]);
+  });
+
+  it.each(['wake', 'delegationOutcome'] as const)('%s: 인용은 quotedLine 규칙 그대로다 — 상한·PAT·비밀 조각', (caller) => {
+    const cut = silentTurnNotice({ ...base, caller, lastSaid: '가'.repeat(500) }) as { body: string };
+    expect(cut.body).toContain(`> ${quotedLine('가'.repeat(500), base.pat)}`);
+    const pat = silentTurnNotice({ ...base, caller, lastSaid: '값은 hrkp_secretpat 이다' }) as { body: string };
+    expect(pat.body).toContain('> 값은 (가림) 이다');
+    const secret = 'mounted-secret-value-0123456789';
+    const fragment = silentTurnNotice({ ...base, caller, lastSaid: `조각 ${secret.slice(0, 14)}`, secrets: [secret] }) as { body: string };
+    expect(fragment.body).not.toContain(secret.slice(0, 14));
+    expect(fragment.body).not.toContain('마지막 말');
+  });
+
+  it.each(['wake', 'delegationOutcome'] as const)('%s: 다른 스레드에 답했으면 그 링크가 이긴다', (caller) => {
+    expect(silentTurnNotice({ ...base, caller, offAnchor: '다른 스레드', lastSaid: '이유' })).toEqual({ kind: 'post', body: '다른 스레드' });
+  });
+});
+
+describe('흔한 토큰 꼴 가림 (2026-11-04)', () => {
+  // 비밀 검사가 시험 값을 진짜로 읽지 않게 이어 붙인다.
+  const TOKENS = [
+    ['sk-', `sk${'-'}${'a1B2'.repeat(6)}`],
+    ['ghp_', `gh${'p_'}${'a1B2'.repeat(9)}`],
+    ['github_pat_', `github${'_pat_'}${'a1B2'.repeat(10)}`],
+    ['xox', `xo${'xb-'}${'1234567890-'.repeat(2)}abc`],
+    ['AKIA', `AK${'IA'}${'A1B2'.repeat(4)}`],
+  ] as const;
+
+  it.each(TOKENS)('%s: 인용 한 줄에서 가린다', (_name, token) => {
+    expect(quotedLine(`값은 ${token} 이다`, 'runner-pat-value')).toBe('값은 (가림) 이다');
+  });
+
+  it.each(TOKENS)('%s: 기록 대리 글에서 가린다', (_name, token) => {
+    const body = proxyRecordAnswerBody(`첫 줄\n값은 ${token} 이다`, 'runner-pat-value');
+    expect(body).toContain('> 값은 (가림) 이다');
+    expect(body).not.toContain(token);
+  });
+
+  it('토큰이 아닌 낱말은 그대로 둔다', () => {
+    for (const plain of ['sk-learn 을 쓴다', 'task-manager-long-handle-name', 'AKIA 라는 접두어', 'xoxo', 'github_pat_ 꼴을 가린다']) {
+      expect(quotedLine(plain, 'runner-pat-value')).toBe(plain);
+    }
+  });
+});
+
+describe('지시문 — 보고할 것 없는 예약 턴 (2026-11-04)', () => {
+  it('이유를 마지막 말에 적고 끝내라고 말하고, 감시는 그 밖이다', () => {
+    const prompt = buildSystemPrompt({ handle: 'forge', channelName: 'c', instructions: '', guide: '', memory: { core: '', slugs: [] } });
+    expect(prompt).toContain('감시(watch)가 아닌 예약으로 깨어났는데 보고할 것이 없으면');
+    expect(prompt).toContain('그 이유를 마지막 말에 적고 끝낸다.');
   });
 });

@@ -746,14 +746,17 @@ async function offAnchorEvidence(
 /**
  * 침묵 통지를 받을 쪽이 에이전트인가 사람인가(`silentTurnNotice`). 멘션 메시지의 작성자로 정한다.
  *
- * 예약(`wake`)·넘긴 일의 결말(`delegation`)로 깨어난 턴은 멘션이 내 대기 줄이거나 결말 줄이라
- * 작성자가 부른 쪽이 아니다 — 그 기다림의 끝을 보는 것은 원래 요청한 사람이므로 사람으로 둔다.
+ * 예약 시각(`scheduledWake`)·넘긴 일의 결말(`delegation`)로 깨어난 턴은 멘션이 내 대기 줄이거나 결말 줄이라
+ * 작성자가 부른 쪽이 아니고 지금 답을 기다리는 사람도 없다 — 각자의 갈래로 둔다. `scheduledWake` 없는 wake 는
+ * 사람이 카드에서 고른 답이므로 사람이 부른 턴이다.
  * 멘션 행을 못 찾거나 계정 종류를 모르면 사람이다(통지가 보이는 쪽으로 틀린다).
  */
 function silentTurnCaller(
   deps: Pick<MentionTurnDeps, 'agentIds'>, target: MentionTarget, thread: MessageRow[],
-): 'agent' | 'human' | 'delegated' {
-  if (target.wake || target.delegation) return 'human';
+): 'agent' | 'human' | 'delegated' | 'wake' | 'delegationOutcome' {
+  if (target.wake && target.scheduledWake) return 'wake';
+  if (target.delegation) return 'delegationOutcome';
+  if (target.wake) return 'human';
   // 넘겨받은 일은 부른 쪽이 에이전트여도 FYI 가 아니다 — 답이 없으면 위임을 실패로 닫아야 한다(`silentTurnNotice`).
   if (target.delegatedBy) return 'delegated';
   if (!deps.agentIds) return 'human';

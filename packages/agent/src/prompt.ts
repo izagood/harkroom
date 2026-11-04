@@ -48,8 +48,11 @@ export type SilentTurnNotice = { kind: 'react'; emoji: string } | { kind: 'post'
 export const SILENT_ACK_EMOJI = '✅';
 
 export function silentTurnNotice(opts: {
-  /** 이 턴을 부른 쪽. 모르면 `'human'` — 사람에게 안 보이는 쪽으로 틀리는 것이 더 나쁘다. `'delegated'` 는 넘겨받은 일이다. */
-  caller: 'agent' | 'human' | 'delegated';
+  /**
+   * 이 턴을 부른 쪽. 모르면 `'human'` — 사람에게 안 보이는 쪽으로 틀리는 것이 더 나쁘다. `'delegated'` 는 넘겨받은 일이다.
+   * `'wake'` 는 예약 시각이 되어 깨어난 턴, `'delegationOutcome'` 은 넘긴 일의 결말로 깨어난 턴이다 — 아무도 지금 답을 기다리지 않는다.
+   */
+  caller: 'agent' | 'human' | 'delegated' | 'wake' | 'delegationOutcome';
   /** 하네스가 끝내며 남긴 말(`readLastAssistantText`). 못 읽었으면 `null`. */
   lastSaid: string | null;
   /** `offAnchorNotice` 의 결과 — 이 턴이 다른 스레드에 답했으면 그 링크 문장. */
@@ -77,6 +80,15 @@ export function silentTurnNotice(opts: {
   recordProxy?: boolean;
 }): SilentTurnNotice {
   if (opts.offAnchor !== null) return { kind: 'post', body: opts.offAnchor };
+  // **스스로 깨어난 턴의 침묵은 실패가 아니다**(2026-11-04). 확인해 보니 보고할 것이 없어 글을 안 쓴 턴이 대부분인데 「답을 남기지 못하고」·
+  // 「다시 부르면」으로 적혀 실패처럼 읽혔다. 그 줄을 없애지는 않는다 — 약속한 보고가 사라진 것으로 읽힌 사례가 있어(`silentWakeNotice`)
+  // 확인했다는 사실과 이유는 남긴다. 종류는 보통 글이다(progress 면 끝난 턴이 「작업 중」으로 남는다, `AGENT_CALL_NO_ANSWER` 주석).
+  // 대리 게시는 하지 않는다 — 「할 일 없음」 끝말이 대리 글로 나간다. 인용은 줄 하나의 `> ` 라 글 속 `@handle` 이 멘션이 되지 않는다.
+  if (opts.caller === 'wake' || opts.caller === 'delegationOutcome') {
+    const what = opts.caller === 'wake' ? '예약된 확인 턴이' : '넘긴 일의 결말을 확인한 턴이';
+    const said = quotedLine(opts.lastSaid, opts.pat, opts.secrets);
+    return { kind: 'post', body: said ? `${what} 글 없이 끝났습니다 — 마지막 말:\n> ${said}` : `${what} 글 없이 끝났습니다.` };
+  }
   if (opts.caller === 'agent') {
     // **에이전트가 부른 턴**(2026-10-25 E13 회차, 스레드 db4ab174). ✅ 만 달면 부른 쪽은 답을 받은 줄 안다 — 화면으로 끝을 안 턴은
     // 화면 답이 있으면 대신 올리고, 없으면 답이 없었다고 남긴다. 둘 다 멘션 없는 보통 글이다 — 부른 에이전트를 멘션으로
@@ -250,13 +262,25 @@ const NOTICE_LINE_MAX_CHARS = 200;
 function oneLine(text: string, pat: string, max = NOTICE_LINE_MAX_CHARS, secrets: readonly string[] = []): string {
   let t = maskWhole(text, secrets);
   if (pat.length > 0) t = t.split(pat).join('(가림)');
-  t = t
-    .replace(/(?:hrkp|murp)_[A-Za-z0-9_-]+/g, '(가림)')
-    .replace(/(Bearer\s+)\S+/gi, '$1(가림)')
+  t = maskTokens(t)
     .replace(/`/g, "'")
     .replace(/\s+/g, ' ')
     .trim();
   return t.length > max ? `${t.slice(0, max)}…` : t;
+}
+
+/**
+ * 흔한 토큰 꼴. 마운트하지 않은 비밀(모델이 읽은 파일·CI 로그 속 남의 키)은 값을 모르므로 꼴로 가린다. `sk-` 는 낱말(`sk-learn`)과
+ * 부딪치지 않게 길이 하한을 둔다.
+ */
+const COMMON_TOKEN = /\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[a-z]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})/g;
+
+/** 러너가 스레드에 옮기는 글의 꼴 가림. 값을 아는 비밀은 그 앞에서 `maskWhole` 이 가린다. */
+function maskTokens(text: string): string {
+  return text
+    .replace(/(?:hrkp|murp)_[A-Za-z0-9_-]+/g, '(가림)')
+    .replace(/(Bearer\s+)\S+/gi, '$1(가림)')
+    .replace(COMMON_TOKEN, '(가림)');
 }
 
 /** 마운트한 비밀 값을 통째로 가린다(긴 것부터 온다 — `secretLeases.needles`). */
@@ -309,7 +333,7 @@ export function proxyRecordAnswerBody(text: string, pat: string, secrets: readon
   if (secrets.length > 0 && tailHasSecretFragment(maskWhole(text, secrets), secrets)) return '';
   let t = maskWhole(text, secrets);
   if (pat.length > 0) t = t.split(pat).join('(가림)');
-  t = t.replace(/(?:hrkp|murp)_[A-Za-z0-9_-]+/g, '(가림)').replace(/(Bearer\s+)\S+/gi, '$1(가림)').trim();
+  t = maskTokens(t).trim();
   if (!t) return '';
   // **인용을 붙인 뒤의 길이로 자른다**(2026-10-30 security 검토). 붙이기 전에 자르면 줄이 많은 답은 `> ` 몫만큼 상한을 넘고,
   // 호출부의 `slice(0, BODY_LIMIT)` 가 꼬리를 잘라 에이전트가 직접 쓴 글처럼 보였다. 꼬리 몫을 먼저 빼고 남은 칸에 인용을 담는다.
@@ -1256,6 +1280,9 @@ export function buildSystemPrompt(opts: {
     '다시 볼 시각을 예약하고 끝낸다(예: CI 결과 확인 — 5분 뒤). 예약은 스레드에 대기 줄로',
     '보이고, 시각이 되면 **이 세션이 그대로 이어져** 다시 시작한다 — 조사한 것을 다시 조사할',
     '필요가 없다. 예약을 건 턴은 결과 발화 없이 끝내도 된다.',
+    // 2026-11-04: 새 예약 없이 끝나는 깨어난 턴은 어떻게 끝낼지 적힌 곳이 없었다. 감시(watch)는 다음 예약이나 끝 보고가 따로 의무다.
+    '감시(watch)가 아닌 예약으로 깨어났는데 보고할 것이 없으면(이미 끝났거나 바뀐 것이 없으면) 글을 올리지 않아도 된다 —',
+    '그 이유를 마지막 말에 적고 끝낸다.',
     // 2026-10-06: 깨어난 턴은 자기 앵커 스레드만 안다. 다른 스레드에서 한 "몇 시에 확인한다" 약속은
     // 사유 한 줄에 없으면 사라졌다(task_manager 실측) — 약속한 곳을 기계가 읽는 인자로 받는다.
     '결과를 **다른 스레드에** 보고하기로 약속했으면 `turn.wake` 의 `reportTo`(그 채널·스레드 id)를 준다 —',
