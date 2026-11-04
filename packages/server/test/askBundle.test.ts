@@ -77,7 +77,7 @@ describe('묶음 카드 세우기 — 줄마다 거울 검사', () => {
     expect(items[1]).toMatchObject({ rootId: perm.askId, link: true });
   });
 
-  it('머지 거절 카드도 링크 줄이다 — 묶음에서 답하지 못한다(security n3)', async () => {
+  it('머지 거절 카드도 옛 앱에는 링크 줄이다. 새 앱이 그린 줄의 답은 원 카드의 선택지 답과 같다', async () => {
     const denial = await seedAsk({}, { mergeDenial: { denialId: 'x' } });
     const bundleId = ((await bundleOf([denial.askId])) as { message: { id: string } }).message.id;
     expect((await itemsOf(bundleId))[0]).toMatchObject({ rootId: denial.askId, link: true });
@@ -85,7 +85,8 @@ describe('묶음 카드 세우기 — 줄마다 거울 검사', () => {
       method: 'POST', url: `/channels/${pmChannel}/messages/${bundleId}/ask-bundle/answer`,
       headers: auth(memberToken), payload: { rootId: denial.askId, optionId: 'a' },
     });
-    expect(res.statusCode).toBe(403);
+    expect(res.statusCode).toBe(200);
+    expect((await askOf(denial.askId))).toMatchObject({ answeredWith: 'a', answeredBy: memberId });
   });
 
   it('거울·에이전트 앞·정해진 카드는 거절한다', async () => {
@@ -122,7 +123,7 @@ describe('줄에 답하기 — 원본에 누른 사람 이름으로', () => {
     expect(await askOf(one.askId)).toMatchObject({ answeredWith: 'b', answeredBy: memberId });
   });
 
-  it('권한 요청 링크 줄·묶음에 없는 원본·다른 채널 경로는 거절한다', async () => {
+  it('권한 요청 줄 뒤에 요청 기록이 없으면·묶음에 없는 원본·다른 채널 경로는 거절한다', async () => {
     const perm = await seedAsk({}, { permissionRequest: { id: 'x' } });
     const stranger = await seedAsk();
     const bundleId = ((await bundleOf([perm.askId])) as { message: { id: string } }).message.id;

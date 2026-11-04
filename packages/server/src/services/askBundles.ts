@@ -1,6 +1,7 @@
 import type { Pool } from 'pg';
 import { ASK_BUNDLE_MAX_ITEMS, isAskOpen, readAskBundleMeta, readAskMeta, type AskBundleItem, type MessageRow } from '@harkroom/shared';
 import { assertChannelVisible, audienceFor } from './channels.js';
+import { decide, resolveDecision, type DecideInput } from './decisions.js';
 import { emitEvent } from '../events.js';
 import {
   askBundleItemFor, checkAskMirror, COLS, getMessageById, postMessage, readAskRow, recordAskAnswer, syncAskMirrors, wakeAsker,
@@ -19,7 +20,9 @@ import {
  * - **줄마다 거울 검사**를 한다(`checkAskMirror`) — 원본이 보이는가·거울이 아닌가·사람 앞인가·열렸는가.
  * - **답할 권리는 원본에서 다시 본다** — 누른 사람이 원본 채널을 볼 수 있어야 하고, 원본의 수신자 규칙
  *   (사람 앞 물음은 사람만)을 그대로 거친다.
- * - **권한 요청 카드는 링크 줄**이다 — 소유자가 원 스레드에서만 정한다(111).
+ * - **권한 요청 카드는 줄에서 `decide` 로 정한다** — 원 카드와 같은 판정(결정권자·사람 세션·위임장)을 거치고, 원본 채널을 볼 수
+ *   있어야 하며, 감사·카드 meta 에 `via: bundle` 로 남는다. 화면은 사본이 아니라 **원본을 읽어** 대상·경고·이유를 펼친 채 그린다.
+ *   줄의 `link` 는 그것을 못 그리는 옛 앱용 표지일 뿐이다(옛 묶음에도 남아 있다) — 서버 판정은 원본 meta 로 한다.
  * - 「추천대로 일괄」은 **되돌릴 수 없는 줄을 서버가 뺀다**(`isIrreversible`). 화면이 빼는 것을 믿지 않는다.
  * - 묶음 스레드에 쓴 사람 글은 줄을 자동으로 닫지 않는다(어느 줄에 대한 글인지 갈린다). 관리 에이전트가 읽고
  *   `askBundleResolve` 로 그 줄을 닫는다 — 닫는 이름은 **그 글을 쓴 사람**이다.
@@ -43,12 +46,17 @@ export const ASK_BUNDLE_REFUSAL_MESSAGE: Record<AskBundleRefusal, string> = {
   bundle_full: `a bundle holds at most ${ASK_BUNDLE_MAX_ITEMS} rows — open a new bundle`,
   bundle_empty: 'give at least one card to bundle',
   bundle_item_not_found: 'that card is not a row of this bundle',
-  bundle_item_link: 'a permission request or merge-denial card is decided in its own thread',
+  bundle_item_link: 'a person decides a permission request or merge-denial card on its card or bundle row — an agent cannot close it',
   bundle_item_resolved: 'that row is already answered or closed',
   bundle_reply_invalid: 'replyMessageId must be a human message in this bundle thread, from someone who may answer the card',
 };
 
 type BundleRow = { id: string; channelId: string; threadRootId: string | null; authorId: string | null; items: AskBundleItem[] };
+
+/** 사본의 `link` 가 아니라 **원본 meta** 로 잰다 — 사본은 모을 때의 값이고 옛 묶음·새 묶음이 다를 수 있다. */
+async function isDecisionCard(pool: Pool, rootId: string): Promise<boolean> {
+  return ((await pool.query(`select 1 from message where id = $1 and (meta ? 'permissionRequest' or meta ? 'mergeDenial')`, [rootId])).rowCount ?? 0) > 0;
+}
 
 async function readBundle(pool: Pool, bundleId: string): Promise<BundleRow | null> {
   const res = await pool.query(
@@ -167,18 +175,23 @@ export type BundleAnswerResult =
   | { ok: false; status: number; code: string; message: string };
 
 /**
- * 묶음의 한 줄에 답한다 — **원본에 누른 사람 이름으로** 적는다. 원본의 규칙(수신자·사람만·권한 카드 불가·
- * superseded 거절)은 `recordAskAnswer` 가 그대로 본다. 여기서 더 보는 것은 묶음이 거울처럼 **다른 채널의 물음을
- * 정하는 자리**라는 점이다: 누른 사람이 원본 채널을 못 보면 거절한다.
+ * 묶음의 한 줄에 답한다 — **원본에 누른 사람 이름으로** 적는다. 원본의 규칙(수신자·사람만·superseded 거절)은
+ * `recordAskAnswer` 가 그대로 본다. 여기서 더 보는 것은 묶음이 거울처럼 **다른 채널의 물음을 정하는 자리**라는 점이다:
+ * 누른 사람이 원본 채널을 못 보면 거절한다.
+ *
+ * 권한 카드 줄은 `decide` 로 넘긴다 — 결정권자·위임장·만료·1회 대조를 원 카드와 같은 판정이 보고, 깨움도 같다. 사람 세션만 된다.
  */
 export async function answerBundleItem(pool: Pool, args: {
   bundleId: string; channelId: string; rootId: string; optionId: string; actorId: string; answeredVia?: AskAnsweredVia;
+  /** 사람이 앱 세션으로 눌렀는가 — 권한 카드 줄은 이때만 정할 수 있다(`ask-answer` 와 같다). */
+  humanSession?: boolean;
+  /** 머지 카드 줄의 [이번 한 번] — 고른 gh 계정·CI 완화와 카드가 보여 준 값(`permission-requests/:rid/approve-once` 와 같은 본문). */
+  once?: DecideInput['once'];
 }): Promise<BundleAnswerResult> {
   const bundle = await readBundle(pool, args.bundleId);
   if (!bundle || bundle.channelId !== args.channelId) return { ok: false, status: 404, code: 'not_found', message: ASK_BUNDLE_REFUSAL_MESSAGE.bundle_not_found };
   const item = bundle.items.find((i) => i.rootId === args.rootId);
   if (!item) return { ok: false, status: 404, code: 'bundle_item_not_found', message: ASK_BUNDLE_REFUSAL_MESSAGE.bundle_item_not_found };
-  if (item.link) return { ok: false, status: 403, code: 'bundle_item_link', message: ASK_BUNDLE_REFUSAL_MESSAGE.bundle_item_link };
   const root = await readAskRow(pool, args.rootId);
   if (!root) return { ok: false, status: 404, code: 'not_found', message: 'the original card is gone' };
   if (!(await assertChannelVisible(pool, root.channelId, args.actorId))) {
@@ -186,6 +199,23 @@ export async function answerBundleItem(pool: Pool, args: {
   }
   // 줄을 모을 때는 원본이 사람 앞 원본이었다. 그 뒤로 바뀌었을 수는 없지만, 거울이면 정본이 둘이 되니 다시 막는다.
   if (root.ask.mirrorOf) return { ok: false, status: 403, code: 'forbidden', message: ASK_BUNDLE_REFUSAL_MESSAGE.mirror_of_mirror };
+  const ref = await resolveDecision(pool, args.rootId);
+  if (ref?.kind === 'permission') {
+    const forbidden = { ok: false, status: 403, code: 'forbidden', message: 'only a person signed in to the app can decide a permission request' } as const;
+    // 일괄(`answeredVia`)은 권한 줄을 앞에서 뺀다. 여기까지 왔으면 잘못이다 — 사람이 그 줄을 골라 누른 것이 아니다.
+    if (!args.humanSession || args.answeredVia) return forbidden;
+    const decided = await decide(pool, ref, args.actorId, {
+      option: args.optionId, via: 'bundle', bundleMessageId: args.bundleId, ...(args.once && args.optionId === 'approve_once' ? { once: args.once } : {}),
+    });
+    if (decided.kind !== 'permission') throw new Error('permission row resolved to an ask');
+    if (!decided.ok) {
+      const code = decided.code === 'already_decided' || decided.code === 'request_expired' ? 'already_answered' : decided.code;
+      return { ok: false, status: decided.status, code, message: decided.message };
+    }
+    const after = await getMessageById(pool, args.bundleId);
+    if (!after) return { ok: false, status: 404, code: 'not_found', message: ASK_BUNDLE_REFUSAL_MESSAGE.bundle_not_found };
+    return { ok: true, bundle: after };
+  }
   const result = await recordAskAnswer(pool, { messageId: args.rootId, actorId: args.actorId, optionId: args.optionId, answeredVia: args.answeredVia });
   if (result === 'not_found') return { ok: false, status: 404, code: 'not_found', message: 'no such choice request' };
   if (result === 'forbidden') return { ok: false, status: 403, code: 'forbidden', message: 'this choice is addressed to someone else' };
@@ -211,7 +241,7 @@ export async function acceptRecommended(pool: Pool, args: {
   if (!bundle || bundle.channelId !== args.channelId) return { ok: false, status: 404, code: 'not_found', message: ASK_BUNDLE_REFUSAL_MESSAGE.bundle_not_found };
   const results: { rootId: string; outcome: AcceptOutcome; code?: string }[] = [];
   for (const item of bundle.items) {
-    if (item.link) { results.push({ rootId: item.rootId, outcome: 'skipped_link' }); continue; }
+    if (item.link || await isDecisionCard(pool, item.rootId)) { results.push({ rootId: item.rootId, outcome: 'skipped_link' }); continue; }
     const found = await pool.query(`select meta, body from message where id = $1 and deleted_at is null`, [item.rootId]);
     const row = found.rows[0] as { meta: Record<string, unknown>; body: string } | undefined;
     const ask = row ? readAskMeta(row.meta) : null;
@@ -248,7 +278,7 @@ export async function resolveBundleItem(pool: Pool, args: {
   if (bundle.authorId !== args.callerId) return { ok: false, code: 'bundle_not_yours' };
   const item = bundle.items.find((i) => i.rootId === args.rootId);
   if (!item) return { ok: false, code: 'bundle_item_not_found' };
-  if (item.link) return { ok: false, code: 'bundle_item_link' };
+  if (item.link || await isDecisionCard(pool, args.rootId)) return { ok: false, code: 'bundle_item_link' };
 
   const bundleRoot = bundle.threadRootId ?? bundle.id;
   const reply = (await pool.query(

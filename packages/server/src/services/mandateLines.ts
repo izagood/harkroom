@@ -17,7 +17,7 @@ import { validMandateOwner } from './mandates.js';
  */
 
 type Q = Pick<PoolClient, 'query'>;
-export type LineVia = 'button' | 'chat' | 'mirror' | 'standing' | 'system';
+export type LineVia = 'button' | 'chat' | 'mirror' | 'bundle' | 'standing' | 'system';
 
 export interface MandateLine extends LineFacts {
   id: string; mandateId: string; agentIds: string[] | null; grantedBy: string; via: LineVia;

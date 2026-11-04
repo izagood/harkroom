@@ -10,7 +10,7 @@ import { validateCapScope, type Cap, type LineLimits } from './capabilities.js';
 import { addMandateLine, listMandateLines, revokeLinesForGrant, type LineVia } from './mandateLines.js';
 import { auditMandateCreated, validMandateOwner, type MandateCreated } from './mandates.js';
 import { CI_CARD_ONCE_ONLY_MESSAGE, checkNamesForBody, insertApprovalFromDenial, type MergeDenialReason } from './mergeDenials.js';
-import { getMessageById, postMessage, recordAskAnswer, syncAskMirrors, wakeAsker } from './messages.js';
+import { carryBundleItem, getMessageById, postMessage, recordAskAnswer, syncAskMirrors, wakeAsker } from './messages.js';
 import { systemI18n } from './systemI18n.js';
 import { mayDecideFor, mayDecideSql } from './deciders.js';
 
@@ -529,7 +529,11 @@ async function closeSupersededCards(pool: Pool, newRequestId: string, newCardId:
       if (!closed.rowCount && o.status !== 'superseded') continue;
       const card = await getMessageById(pool, o.cardMessageId);
       if (card) emitEvent({ type: 'message.updated', message: card, audience: await audienceFor(pool, card.channelId) });
-      if (closed.rowCount) await syncAskMirrors(pool, o.cardMessageId);
+      if (closed.rowCount) {
+        // 옛 카드를 담은 묶음에 새 카드가 줄로 붙는다 — 사람이 새 카드를 찾으러 원 스레드로 가지 않게.
+        await carryBundleItem(pool, o.cardMessageId, newCardId);
+        await syncAskMirrors(pool, o.cardMessageId);
+      }
     }
   } catch (err) {
     console.error('permission supersede follow-up error:', err);
@@ -558,7 +562,7 @@ export async function decidePermissionRequest(
      * 어느 길로 정했나(`decisions.decide`). 글 승인(`chatApproval`)은 카드 meta(`decidedVia`)·감사 기록에, 버튼은 감사 기록에만
      * 남는다(카드 meta 는 전과 같다).
      */
-    via?: { kind: 'chat'; messageId: string; target?: 'T1' | 'T2' | 'T3' } | { kind: 'button' } | { kind: 'mirror'; mirrorMessageId: string };
+    via?: { kind: 'chat'; messageId: string; target?: 'T1' | 'T2' | 'T3' } | { kind: 'button' } | { kind: 'mirror'; mirrorMessageId: string } | { kind: 'bundle'; bundleMessageId: string };
   },
 ): Promise<({ ok: true; status: 'granted' | 'denied' | 'approved_once'; grantExpiresAt: string | null; approvalExpiresAt?: string; cardMessageId: string | null; grantMode?: 'once' | 'hour' }) | ({ ok: false } & DecideRefusal)> {
   const now = args.now ?? new Date();
@@ -735,7 +739,7 @@ export async function decidePermissionRequest(
           ...(grantMode ? { grantMode } : {}),
           // 줄 빼기(g1) — 카드가 자기가 적은 줄을 가리킨다. 이 값이 있는 카드만 [줄 빼기]를 그린다(새 서버만 싣는 값).
           ...(lineOutcome?.ok ? { lineId: lineOutcome.lineId } : {}),
-          ...(args.via?.kind === 'chat' || args.via?.kind === 'mirror' ? { decidedVia: args.via } : {}),
+          ...(args.via?.kind === 'chat' || args.via?.kind === 'mirror' || args.via?.kind === 'bundle' ? { decidedVia: args.via } : {}),
           // 정한 사람이 소유자인가(security 2·3, designer 시안 v1 ①) — 거짓이면 화면이 「소유자 아님」 칩을 그린다. 옛 카드에는 없다(없으면 소유자로 읽는다).
           decidedByOwner: args.asOwner !== false,
         })]);
@@ -766,6 +770,7 @@ export async function decidePermissionRequest(
       ...(grantMode ? { grantMode, commandGrantId } : {}),
       ...(args.via?.kind === 'chat' ? { via: args.via.kind, messageId: args.via.messageId, ...(args.via.target ? { chatTarget: args.via.target } : {}) }
         : args.via?.kind === 'mirror' ? { via: 'mirror', mirrorMessageId: args.via.mirrorMessageId }
+        : args.via?.kind === 'bundle' ? { via: 'bundle', bundleMessageId: args.via.bundleMessageId }
         : args.via ? { via: args.via.kind } : {}),
     },
   });

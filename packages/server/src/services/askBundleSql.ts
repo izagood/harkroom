@@ -31,7 +31,7 @@ export const uuidOrNullSql = (expr: string) =>
  * 쪽으로 실패한다. 차례 표시가 숨는 것(답할 사람이 어디에서도 🙋 를 못 받는 것)이 더 나쁘다.
  * - **묶음이 공개 standard 채널에 있다**(보관되지 않은). 공개 채널은 같은 커뮤니티 사람 모두가 보므로(`channelVisibleSql`)
  *   차례가 옮겨 가도 잃는 사람이 없다. 비공개 채널·DM 에 묶으면 답할 사람이 그 묶음을 못 볼 수 있다.
- * - **권한 요청·머지 거절 카드가 아니다.** 그 결정은 원 스레드에서만 나므로(묶음에서는 링크 줄) 🙋 도 거기 남는다.
+ * - **권한 요청·머지 거절 카드가 아니다.** 묶음에서도 정할 수 있지만 한 줄씩 직접 정하는 결정이고 옛 앱은 묶음에서 못 정한다 — 🙋 는 원 스레드에도 남는다.
  */
 export const bundledRootSql = (alias: string) => `(CASE WHEN ${alias}.meta->>'kind' = 'ask' THEN (
         NOT (${alias}.meta ? 'permissionRequest' OR ${alias}.meta ? 'mergeDenial')

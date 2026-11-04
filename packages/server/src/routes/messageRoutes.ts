@@ -12,6 +12,7 @@ import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
 import { normalizeSearchQuery } from '../services/mentions.js';
 import { decide, decidedCard, resolveDecision } from '../services/decisions.js';
+import { onceBody } from './permissionRequestRoutes.js';
 import { applyChatApproval } from '../services/chatApproval.js';
 import { extractUrls, queueLinkPreviewFetch } from '../services/linkPreview.js';
 import { axisValid, cleanAxis, clearThreadAgentModel, isChannelRoot, setThreadAgentModel } from '../services/threadAgentModels.js';
@@ -440,11 +441,15 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
    */
   app.post('/channels/:id/messages/:messageId/ask-bundle/answer', { preHandler: app.requireAccount }, async (req, reply) => {
     const { id, messageId } = z.object({ id: z.string().uuid(), messageId: z.string().uuid() }).parse(req.params);
-    const { rootId, optionId } = z.object({ rootId: z.string().uuid(), optionId: z.string().min(1).max(64) }).parse(req.body);
+    const { rootId, optionId, once } = z.object({ rootId: z.string().uuid(), optionId: z.string().min(1).max(64), once: onceBody.optional() }).parse(req.body);
     if (!(await assertChannelVisible(pool, id, req.account!.id))) {
       return reply.code(403).send({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
-    const result = await answerBundleItem(pool, { bundleId: messageId, channelId: id, rootId, optionId, actorId: req.account!.id });
+    const result = await answerBundleItem(pool, {
+      bundleId: messageId, channelId: id, rootId, optionId, actorId: req.account!.id,
+      humanSession: req.account!.kind === 'human' && req.authVia === 'session',
+      ...(once ? { once: { ghUser: once.ghUser ?? null, relaxChecks: once.relaxChecks ?? false, number: once.number, headSha: once.headSha, ...(once.failedChecks ? { failedChecks: once.failedChecks } : {}) } } : {}),
+    });
     if (!result.ok) return reply.code(result.status).send({ error: { code: result.code, message: result.message } });
     return result.bundle;
   });
