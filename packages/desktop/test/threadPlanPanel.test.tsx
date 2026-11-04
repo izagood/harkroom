@@ -506,7 +506,7 @@ describe('새 창(포털)의 크기 조절', () => {
     const doc = frame.contentDocument!;
     const host = doc.createElement('div');
     doc.body.appendChild(host);
-    render(<HostDocumentContext.Provider value={doc}><ThreadPlanButton rootId="r1" progress={plans.r1!.progress} /></HostDocumentContext.Provider>, { container: host });
+    render(<HostDocumentContext.Provider value={doc}><ThreadPlanButton rootId="r1" progress={{ ...plans.r1!.progress, rev: plans.r1!.rev }} /></HostDocumentContext.Provider>, { container: host });
     act(() => { doc.querySelector<HTMLElement>('[data-testid="plan-button"]')?.click(); });
     return { doc, view: frame.contentWindow!, panel: doc.querySelector<HTMLElement>('[data-testid="plan-panel"]')! };
   };
