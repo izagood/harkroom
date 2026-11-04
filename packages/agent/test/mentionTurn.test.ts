@@ -337,6 +337,16 @@ async function getPlanContent(
 }
 
 describe('runMentionTurn', () => {
+  it('턴 프롬프트 맨 위에 지금 시각을 싣는다(하네스에 시각이 없다)', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 몇 시야');
+    const { deps, plans, runTurn, turnOpts } = await makeDeps(fake);
+    runTurn.script = async () => { await fake.post(CHANNEL, '네', null); return { exitCode: 0, timedOut: false, tail: '' }; };
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    const [content] = await getPlanContent(plans, turnOpts);
+    expect(content).toMatch(/지금 시각\(이 턴을 시작한 때\): \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} /);
+  });
+
   it('스레드 지정 모델(079)이 argv 로 간다 — 채널 최상위 멘션이면 그 멘션 id 로 묻는다', async () => {
     const fake = new FakeHarkroom(defOf({ model: 'sonnet', effort: 'medium' }));
     fake.seedFrom('human-1', '@forge 고도화');

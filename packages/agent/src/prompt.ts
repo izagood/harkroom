@@ -1130,6 +1130,9 @@ export function buildSystemPrompt(opts: {
     'MCP 의 `message.post` 도구를 불러 이 스레드에 남겨라. channelId 와 threadRootId 는',
     '대화 프롬프트 맨 위에 준다 — 그대로 넣어 호출한다(threadRootId 가 "채널 최상위(없음)"으로',
     '적혀 있으면 그 인자는 생략하고 channelId 만 넘긴다).',
+    // 2026-11-04 3회차 시험: 지금 시각을 알 길이 없어 위임 글의 시각을 베끼거나(「지금 시각」 칸) 연도·시각을 지어냈다(`turnClockLine`).
+    '시각·날짜·연도를 적을 때는 프롬프트 맨 위의 「지금 시각」을 기준으로 삼고 짐작하지 마라. 앞 글의 시각을 지금 시각으로 쓰지 않는다.',
+    '이 시각을 알려고 `date` 같은 명령의 권한을 청하지 않는다.',
     // 2026-11-02(A): codex·opencode 레인 지시에만 있던 구절(#1589·#1665)을 모든 레인의 고정 절로 올린다 — 동료의 보고로 깬
     // claude 턴이 threadRootId 를 빼 다른 채널의 최상위에 보고·카드를 올렸다. 서버는 threadRootId 를 선택값으로 받으므로 막지 않는다.
     '`message.post`·`ask`·`report` 에는 threadRootId 를 꼭 넣는다 — 빼면 채널 최상위에 올라가 그 스레드에서 답이 안 보인다.',
@@ -1840,6 +1843,23 @@ export function mergeThreadPages(
  * 안다. 단 **동료 에이전트의 발화는 절대 빼지 않는다** — 그러지 않으면 두 에이전트가 한
  * 스레드에서 각자 자기한테 온 멘션만 보는 독백이 되어 방금 동료가 끝낸 일을 다시 한다.
  */
+/**
+ * **이 턴을 시작한 시각** 한 줄(2026-11-04 3회차 시험). 하네스가 싣는 것은 많아야 오늘 날짜라 에이전트는 시각을 알 길이 없었다 — 셸이 없거나 API 키
+ * 연결 턴이라 `date` 가 막히면 위임 글의 시각을 베끼거나 지어냈다. 시스템 프롬프트가 아니라 턴 프롬프트에 싣는다 — 턴마다 값이 바뀌므로
+ * 시스템 쪽에 두면 프롬프트 캐시를 매번 깬다. 표시 시간대는 러너가 도는 기계의 것이고, 검색 인자에 바로 쓰도록 UTC 도 같이 적는다.
+ */
+export function turnClockLine(now: Date, timeZone: string = Intl.DateTimeFormat().resolvedOptions().timeZone): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone, hourCycle: 'h23', timeZoneName: 'longOffset',
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(now);
+  const get = (t: Intl.DateTimeFormatPartTypes): string => parts.find((p) => p.type === t)?.value ?? '';
+  // UTC 자리는 런타임에 따라 `GMT` 또는 `GMT+00:00` 으로 나온다 — 한 모양으로 맞춘다.
+  const offset = get('timeZoneName').replace(/^GMT$/, 'GMT+00:00').replace('GMT', 'UTC');
+  const utc = now.toISOString().replace(/\.\d{3}Z$/, 'Z');
+  return `지금 시각(이 턴을 시작한 때): ${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')} (${timeZone}, ${offset}) · ${utc}`;
+}
+
 export function buildTurnPrompt(opts: {
   messages: MessageRow[];
   lastFedSeq: number;
@@ -1852,6 +1872,8 @@ export function buildTurnPrompt(opts: {
    * 아니다. 호출자가 이미 알고 있는 값을 두 번째 진실 원천으로 다시 만들지 않는다. */
   channelId: string;
   threadRootId: string | null;
+  /** 이 턴을 시작한 시각. 맨 위에 한 줄로 싣는다(`turnClockLine`). 러너는 늘 준다 — 빼는 것은 시험의 전체 비교뿐이다. */
+  now?: Date;
   /**
    * 이 턴이 **깨어난 턴**이면 그 사유(마이그레이션 040). 있으면 사람의 새 발화가 없어도
    * 프롬프트가 비지 않는다 — 깨움에는 부른 사람이 없고, 예약 줄을 쓴 것도 자기라서
@@ -1976,7 +1998,11 @@ export function buildTurnPrompt(opts: {
   // "null" 을 그대로 문자열로 흘리면 에이전트가 그걸 진짜 threadRootId 로 읽어
   // message.post 에 넘길 위험이 있다 — 사람이 읽어도, 그리고 buildSystemPrompt 의 지시와도
   // 맞물리게 "채널 최상위(없음)"으로 표현한다(§4 발화 경로).
-  const head = [`channelId: ${channelId}`, `threadRootId: ${threadRootId ?? '채널 최상위(없음)'}`].join('\n');
+  const head = [
+    `channelId: ${channelId}`,
+    `threadRootId: ${threadRootId ?? '채널 최상위(없음)'}`,
+    ...(opts.now ? [turnClockLine(opts.now)] : []),
+  ].join('\n');
   // 예산 안에서 **멘션 + 최신부터** 싣고 넘친 옛 글은 한 줄로 센다(`fitDelta`). 아래 판정(수정 글·첨부 안내)은 실제로
   // 실린 글(`shown`)로 한다 — 생략한 글의 첨부는 프롬프트에 id 가 없어 열 수 없다.
   const { shown, omitted, omittedAtLeast } = fitDelta(toShow, handles, { mentionId, gapAfterSeq });
