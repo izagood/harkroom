@@ -46,6 +46,19 @@ describe('buildTurnPrompt', () => {
     expect(r.prompt).toContain('lead: 그냥 글');
   });
 
+  it('위임 글의 받는 사람은 대소문자를 가리지 않고 견준다', () => {
+    const r = buildTurnPrompt({
+      messages: [
+        msg(1, 'lead', '대문자로 적은 내 몫', { id: 'mine', meta: { kind: 'delegation', delegation: { to: ['Checker'] } } }),
+        msg(2, 'lead', '끝맺는 글', { id: 'anchor' }),
+      ],
+      lastFedSeq: 0, meId: 'me', handles: { me: 'checker', lead: 'lead' },
+      channelId: 'c', threadRootId: 'root', mentionId: 'anchor',
+    });
+    expect(r.prompt).toContain('lead: 대문자로 적은 내 몫');
+    expect(r.prompt).not.toContain('너에게 온 글 아님');
+  });
+
   it('스레드 머리가 나를 불렀거나 머리 부름이 없으면 「너에게 온 글 아님」을 달지 않는다 · 앵커가 머리면 「← 너를 부른 글」 하나', () => {
     const h = { tm: 'lead', me: 'collector' };
     const run = (body: string, mentionId?: string) => buildTurnPrompt({

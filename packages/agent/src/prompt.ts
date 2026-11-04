@@ -1719,7 +1719,8 @@ export function lineNote(
   if (ctx.mentionId !== undefined && m.id === ctx.mentionId) return ANCHOR_LINE_NOTE;
   // 위임 글은 본문 머리에 멘션이 없어 받는 사람이 meta 에만 있다 — 스레드 머리가 아니어도 나에게 온 것이 아니면 밝힌다.
   const delegatedTo = delegationRecipients(m);
-  if (delegatedTo && ctx.meHandle && !delegatedTo.includes(ctx.meHandle)) {
+  // `to` 는 위임한 쪽이 적은 그대로 저장된다 — handle 은 대소문자를 가리지 않으므로 소문자로 견준다.
+  if (delegatedTo && ctx.meHandle && !delegatedTo.some((h) => h.toLowerCase() === ctx.meHandle!.toLowerCase())) {
     return `너에게 온 글 아님 — ${delegatedTo.map((h) => `@${h}`).join(' ')} 에게 넘긴 일이다`;
   }
   if (ctx.threadRootId === null || m.id !== ctx.threadRootId || !ctx.meHandle) return undefined;
