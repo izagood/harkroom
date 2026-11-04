@@ -259,9 +259,9 @@ describe('계획판 창', () => {
     expect(popup.querySelector('[data-testid="plan-window-close"]')).toBeNull();
   });
 
-  it('스레드를 볼 수 없으면 기존 문구와 [창 닫기]', async () => {
-    const c = await openPlan();
-    void c;
+  it('스레드를 볼 수 없으면 기존 문구와 [창 닫기]이고, 스토어에 옛 판이 있어도 목표를 제목에 쓰지 않는다', async () => {
+    withPlan();
+    await openPlan();
     cleanup();
     resetAppWindowsForTest();
     wins = [];
@@ -273,6 +273,7 @@ describe('계획판 창', () => {
     const popup = wins[0]!.document;
     await waitFor(() => expect(popup.querySelector('[data-testid="plan-window-close"]')).toBeTruthy());
     expect(popup.querySelector('[data-testid="window-empty"]')!.textContent).toContain('이 스레드는 없습니다');
+    expect(popup.title).not.toContain('0.5 묶음');
     act(() => { (popup.querySelector('[data-testid="plan-window-close"]') as HTMLElement).click(); });
     expect(wins[0]!.closed).toBe(true);
   });

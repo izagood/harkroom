@@ -180,7 +180,8 @@ function PlanWindow({ entry, channelId, rootId }: { entry: AppWindowEntry; chann
   const planGone = state === 'ok' && (planTone(progress) === 'empty' || plan === null);
 
   const where = useWindowWhere(channelId);
-  const goal = planGone ? '' : (plan?.doc.goal.split('\n')[0]?.trim() ?? '');
+  // 볼 수 없게 된 스레드·지워진 계획의 목표는 창 제목에 남기지 않는다 — 스토어에 옛 판이 남아 있어도.
+  const goal = state !== 'ok' || planGone ? '' : (plan?.doc.goal.split('\n')[0]?.trim() ?? '');
   useEffect(() => {
     const short = goal.length > 60 ? `${goal.slice(0, 60)}…` : goal;
     entry.win.document.title = [t('plan.panel.title'), where, ...(short ? [short] : [])].join(' · ');
