@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../api/models.dart';
+import '../api/thread_plan.dart';
 import '../i18n/i18n.dart';
 import '../mention/sticky.dart';
 import '../state/app_scope.dart';
@@ -37,6 +38,7 @@ class ThreadScreen extends StatefulWidget {
     this.highlightId,
     this.highlightSeq,
     this.focusComposer = false,
+    this.askStepId,
   });
 
   final String channelId;
@@ -51,6 +53,9 @@ class ThreadScreen extends StatefulWidget {
 
   /// 열자마자 작성칸에 포커스(키보드)를 준다 — 메시지 시트의 「스레드에서 답글」.
   final bool focusComposer;
+
+  /// 열자마자 이 계획 단계에 대해 묻는다(다른 스레드의 칩에서 온 💬).
+  final String? askStepId;
 
   @override
   State<ThreadScreen> createState() => _ThreadScreenState();
@@ -101,6 +106,11 @@ class _ThreadScreenState extends State<ThreadScreen> {
     _community = app.activeKey;
     _composer.text = app.draftFor(widget.rootId);
     _composer.addListener(_keepDraft);
+    if (widget.askStepId != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _startAsk(widget.askStepId!);
+      });
+    }
     if (widget.focusComposer) {
       // 첫 프레임 뒤에 준다 — 작성칸이 아직 나무에 없으면 포커스가 갈 곳이 없다.
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -167,6 +177,97 @@ class _ThreadScreenState extends State<ThreadScreen> {
     super.dispose();
   }
 
+  /// 이 단계에 대해 묻는 중이다(시안 v6 Z3). 띠에 칩 하나만 둔다 — 다시 누르면 바꾼다.
+  String? _askStepId;
+
+  /// 묻기가 작성칸 맨 앞에 채운 멘션 글자(`@x `). 사람이 지웠으면 건드리지 않는다.
+  String _askMention = '';
+
+  /// 받는 이의 까닭 글자. 사람이 ▾로 고르면 비운다.
+  String? _askReason;
+
+  void _startAsk(String stepId) {
+    final app = AppScope.read(context);
+    final t = context.t;
+    final plan = app.threadPlans[widget.rootId];
+    PlanStep? step;
+    for (final s in plan?.steps ?? const <PlanStep>[]) {
+      if (s.id == stepId) step = s;
+    }
+    if (plan == null || step == null) return;
+    final who = planAskRecipient(
+      managerId: plan.managerId,
+      assigneeId: stepAssignee(plan, step),
+      isAgent: (id) => app.accounts[id]?.isAgent ?? false,
+    );
+    setState(() {
+      _askStepId = stepId;
+      _askReason = switch (who.reason) {
+        'manager' => t.planAskReasonManager,
+        'assignee' => t.planAskReasonAssignee,
+        'human_assignee' => t.planAskReasonHuman,
+        _ => t.planAskReasonNone,
+      };
+    });
+    _setAskMention(who.to);
+    _composerFocus.requestFocus();
+  }
+
+  void _setAskMention(String? accountId) {
+    final handle = accountId == null ? null : AppScope.read(context).accounts[accountId]?.handle;
+    final next = handle == null ? '' : '@$handle ';
+    var text = _composer.text;
+    if (_askMention.isNotEmpty && text.startsWith(_askMention)) text = text.substring(_askMention.length);
+    _askMention = next;
+    _composer.text = '$next$text';
+    _composer.selection = TextSelection.collapsed(offset: _composer.text.length);
+    setState(() {});
+  }
+
+  void _endAsk() {
+    final text = _composer.text;
+    if (_askMention.isNotEmpty && text.startsWith(_askMention)) _composer.text = text.substring(_askMention.length);
+    setState(() {
+      _askStepId = null;
+      _askMention = '';
+      _askReason = null;
+    });
+  }
+
+  /// 보낼 글. 단계 링크는 맨 앞 멘션 바로 뒤에 넣는다 — 맨 앞 멘션이 받는 이를 정한다.
+  String _withAskLink(String text) {
+    final id = _askStepId;
+    final plan = id == null ? null : AppScope.read(context).threadPlans[widget.rootId];
+    if (id == null || plan == null) return text;
+    var title = '';
+    for (final s in plan.steps) {
+      if (s.id == id) title = s.title;
+    }
+    final link = planRefText(widget.rootId, id, title);
+    final m = RegExp(r'^@\S+\s*').firstMatch(text);
+    if (m == null) return '$link $text';
+    final rest = text.substring(m.end);
+    return '${text.substring(0, m.end).trimRight()} $link${rest.isEmpty ? '' : ' $rest'}';
+  }
+
+  Future<void> _pickAskRecipient() async {
+    final app = AppScope.read(context);
+    final t = context.t;
+    final agents = app.accounts.values.where((a) => a.isAgent && !a.isDisabled).toList(growable: false);
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      useRootNavigator: true,
+      useSafeArea: true,
+      builder: (ctx) => ListView(key: const Key('plan-ask-to-list'), shrinkWrap: true, children: [
+        ListTile(key: const Key('plan-ask-to-none'), title: Text(t.planAskToNone), onTap: () => Navigator.of(ctx).pop('')),
+        for (final a in agents) ListTile(key: Key('plan-ask-to-${a.id}'), title: Text('@${a.handle}'), onTap: () => Navigator.of(ctx).pop(a.id)),
+      ]),
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _askReason = null);
+    _setAskMention(picked.isEmpty ? null : picked);
+  }
+
   Future<void> _send() async {
     final text = _composer.text.trim();
     if (text.isEmpty || _sending) return;
@@ -180,7 +281,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
     setState(() => _picks = const {});
     // 자동·고정 멘션을 붙인 것이 **서버로 가는 본문**이다(채널 화면과 같다). 모델 지정도 이 본문으로
     // 센다 — 친 글로 세면 고정으로 부른 에이전트에게 고른 모델이 빠진다.
-    final body = withStickyMentions(text, app.composerPrefix(widget.channelId, widget.rootId));
+    final body = withStickyMentions(_withAskLink(text), app.composerPrefix(widget.channelId, widget.rootId));
     // 옛 답글 창에서 보내면 `send` 가 먼저 최신 묶음으로 옮긴다(m3). 목록이 통째로 바뀌어도 스크롤 위치는
     // 그대로라 방금 보낸 글이 화면 밖일 수 있다 — 옮겨졌으면 맨 아래로 굴린다(designer nit).
     final wasTailMissing = app.threadTailMissing.contains(widget.rootId);
@@ -197,6 +298,13 @@ class _ThreadScreenState extends State<ThreadScreen> {
       // 이번에 부른 상대는 다음 줄부터 고정이다.
       if (went) {
         app.keepStickyMentions(widget.rootId, text);
+        if (_askStepId != null && mounted) {
+          setState(() {
+            _askStepId = null;
+            _askMention = '';
+            _askReason = null;
+          });
+        }
         // 이번만 뺀 자동 멘션은 이 글로 끝이다 — 다음 글에는 다시 붙는다.
         app.clearAutoSkips(widget.rootId);
         if (wasTailMissing && !app.threadTailMissing.contains(widget.rootId) && mounted && _scroll.hasClients) {
@@ -467,7 +575,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
       ...failed.map((item) => FailedSendRow(item: item)),
     ];
 
-    return GallerySource(
+    return PlanAskScope(rootId: widget.rootId, onAsk: _startAsk, child: GallerySource(
       // 크게 보기에서 넘겨 볼 그림의 범위(그림 넘겨 보기 사양 1·5).
       messages: () => [?root, ...?app.threads[widget.rootId]],
       child: Scaffold(
@@ -553,6 +661,13 @@ class _ThreadScreenState extends State<ThreadScreen> {
               threadRootId: widget.rootId,
               onPicksChanged: (next) => setState(() => _picks = next),
             ),
+            if (_askStepId != null) _PlanAskBar(
+              planRef: PlanRef(rootId: widget.rootId, stepId: _askStepId!),
+              mention: _askMention,
+              reason: _askReason,
+              onPick: () => unawaited(_pickAskRecipient()),
+              onClose: _endAsk,
+            ),
             ComposerAttachments(composerKey: widget.rootId),
             // 떠 있는 알약(D5). 구분선 대신 그림자가 피드와 가른다.
             ComposerPill(
@@ -573,7 +688,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
                       controller: _composer,
                       focusNode: _composerFocus,
                       onChanged: (_) => setState(() {}),
-                      decoration: composerDecoration(context, t.threadReplyHint),
+                      decoration: composerDecoration(context, _askStepId != null ? t.planAskHint : t.threadReplyHint),
                     ),
                   ),
                   SendButton(
@@ -589,9 +704,68 @@ class _ThreadScreenState extends State<ThreadScreen> {
           ],
         ),
       )),
-    ));
+    )));
   }
 
+}
+
+/// 작성칸 위 참조 띠(시안 v6 Z3·Z4): 「💬 이 단계에 대해 묻는다 [칩] ✕」 + 받는 이와 그 까닭.
+class _PlanAskBar extends StatelessWidget {
+  const _PlanAskBar({required this.planRef, required this.mention, required this.reason, required this.onPick, required this.onClose});
+
+  final PlanRef planRef;
+  final String mention;
+  final String? reason;
+  final VoidCallback onPick;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    final k = context.tokens;
+    final meta = TextStyle(color: k.fgMuted, fontSize: HarkroomType.meta);
+    return Container(
+      key: const Key('plan-ask-bar'),
+      margin: const EdgeInsets.symmetric(horizontal: 12),
+      padding: const EdgeInsets.fromLTRB(10, 2, 2, 4),
+      decoration: BoxDecoration(
+        color: k.surfaceSunken,
+        border: Border.all(color: k.border),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+        Row(children: [
+          const Text('💬 '),
+          Expanded(child: Align(alignment: Alignment.centerLeft, child: PlanRefChip(planRef: planRef, interactive: false))),
+          IconButton(
+            key: const Key('plan-ask-close'),
+            tooltip: t.planAskClose,
+            onPressed: onClose,
+            icon: Icon(Icons.close, size: 16, color: k.fgMuted),
+          ),
+        ]),
+        Row(children: [
+          Text('${t.planAskTo} ', style: meta),
+          InkWell(
+            key: const Key('plan-ask-to'),
+            onTap: onPick,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: HarkroomSize.row),
+              child: Align(
+                widthFactor: 1,
+                heightFactor: 1,
+                child: Text('${mention.isEmpty ? t.planAskToNone : mention.trim()} ▾', style: TextStyle(color: k.fg, fontSize: HarkroomType.meta)),
+              ),
+            ),
+          ),
+          if (reason != null) ...[
+            const SizedBox(width: 6),
+            Expanded(child: Text(reason!, key: const Key('plan-ask-reason'), maxLines: 2, overflow: TextOverflow.ellipsis, style: meta)),
+          ],
+        ]),
+      ]),
+    );
+  }
 }
 
 /// 「↓ 최신 답글」 알약의 문구. 새 답글이 있으면 「새 답글 n」, 99 를 넘으면 「99+」.

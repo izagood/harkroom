@@ -736,6 +736,20 @@ abstract class Strings {
   String planStartGoN(int n);
   String get planStartStarting;
   String get planStartCancel;
+  String get planAskButton;
+  String get planAskBar;
+  String get planAskTo;
+  String get planAskToNone;
+  String get planAskReasonManager;
+  String get planAskReasonAssignee;
+  String get planAskReasonHuman;
+  String get planAskReasonNone;
+  String get planAskClose;
+  String get planAskHint;
+  String get planRefDeleted;
+  String get planRefNoPlan;
+  String get planRefHidden;
+  String get planRefTitleChanged;
   String get planStartBodyLabel;
   String planStartBodyLabelTo(String handle);
   String planStartRowTo(String handle);
@@ -2060,6 +2074,20 @@ Map<String, String> stringsToMap(Strings s) => {
       'planStartGoN': s.planStartGoN(2),
       'planStartStarting': s.planStartStarting,
       'planStartCancel': s.planStartCancel,
+      'planAskButton': s.planAskButton,
+      'planAskBar': s.planAskBar,
+      'planAskTo': s.planAskTo,
+      'planAskToNone': s.planAskToNone,
+      'planAskReasonManager': s.planAskReasonManager,
+      'planAskReasonAssignee': s.planAskReasonAssignee,
+      'planAskReasonHuman': s.planAskReasonHuman,
+      'planAskReasonNone': s.planAskReasonNone,
+      'planAskClose': s.planAskClose,
+      'planAskHint': s.planAskHint,
+      'planRefDeleted': s.planRefDeleted,
+      'planRefNoPlan': s.planRefNoPlan,
+      'planRefHidden': s.planRefHidden,
+      'planRefTitleChanged': s.planRefTitleChanged,
       'planStartBodyLabel': s.planStartBodyLabel,
       'planStartBodyLabelTo': s.planStartBodyLabelTo('{handle}'),
       'planStartRowTo': s.planStartRowTo('{handle}'),

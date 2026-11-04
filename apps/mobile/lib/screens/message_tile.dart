@@ -159,7 +159,7 @@ class MessageTile extends StatelessWidget {
                       if (body.isNotEmpty && systemText(message, app.accounts, t) != null)
                         Text(body, key: Key('system-i18n-${message.id}'))
                       else if (body.isNotEmpty)
-                        MarkdownBody(body, openMessage: (id) => openMessageLink(context, id)),
+                        MarkdownBody(body, openMessage: (id) => openMessageLink(context, id), planRefChip: (ref) => PlanRefChip(planRef: ref)),
                       if (denied.isNotEmpty) _MentionDenied(handles: denied),
                       if (attachmentsInGlow) AttachmentStrip(attachments: message.attachments, message: message),
                     ],

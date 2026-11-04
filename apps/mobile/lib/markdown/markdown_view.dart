@@ -1,3 +1,4 @@
+import '../api/thread_plan.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -13,7 +14,7 @@ final _mention = RegExp(r'(^|[^A-Za-z0-9_@-])@[A-Za-z0-9_-]{2,32}');
 ///
 /// 글자 크기·색은 토큰에서 온다(본문 15/1.5). 코드는 고정폭 + `surfaceSunken` 바탕, 인용은 왼쪽 선.
 class MarkdownBody extends StatefulWidget {
-  const MarkdownBody(this.source, {super.key, this.openLink, this.openMessage});
+  const MarkdownBody(this.source, {super.key, this.openLink, this.openMessage, this.planRefChip});
 
   final String source;
 
@@ -24,6 +25,9 @@ class MarkdownBody extends StatefulWidget {
   /// `harkroom://message/<id>` 를 여는 길(앱 안 이동). **없으면 그 링크는 글자로만 남는다** — 눌러도
   /// 아무 일 없는 링크를 그리면 사람은 앱이 멈춘 줄 안다(데스크톱 `MessageBody` 의 같은 규율).
   final Future<void> Function(String messageId)? openMessage;
+
+  /// 계획 단계 칩을 그리는 길. 없으면 글자로만 남는다.
+  final Widget Function(PlanRef ref)? planRefChip;
 
   @override
   State<MarkdownBody> createState() => _MarkdownBodyState();
@@ -278,6 +282,13 @@ class _MarkdownBodyState extends State<MarkdownBody> {
               backgroundColor: k.surfaceRaised,
             ),
           ));
+        case MdPlanRef(:final text, :final ref):
+          final chip = widget.planRefChip;
+          if (chip == null) {
+            spans.add(TextSpan(text: text));
+          } else {
+            spans.add(WidgetSpan(alignment: PlaceholderAlignment.middle, child: chip(ref)));
+          }
         case MdLink(:final text, :final uri, :final messageId):
           final openable = uri != null || (messageId != null && widget.openMessage != null);
           if (!openable) {

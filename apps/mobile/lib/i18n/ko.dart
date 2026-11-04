@@ -873,6 +873,34 @@ class StringsKo implements Strings {
   @override
   String get planStartCancel => '취소';
   @override
+  String get planAskButton => '이 단계에 대해 묻기';
+  @override
+  String get planAskBar => '이 단계에 대해 묻는다';
+  @override
+  String get planAskTo => '받는 이';
+  @override
+  String get planAskToNone => '없음';
+  @override
+  String get planAskReasonManager => '관리 에이전트라서 불렀다';
+  @override
+  String get planAskReasonAssignee => '이 단계의 담당이라서';
+  @override
+  String get planAskReasonHuman => '담당이 사람이라 아무도 부르지 않는다 — 에이전트를 고를 수 있다';
+  @override
+  String get planAskReasonNone => '담당이 없어 아무도 부르지 않는다 — 에이전트를 고를 수 있다';
+  @override
+  String get planAskClose => '묻기 취소';
+  @override
+  String get planAskHint => '질문을 쓴다…';
+  @override
+  String get planRefDeleted => '지워진 단계';
+  @override
+  String get planRefNoPlan => '계획 없음';
+  @override
+  String get planRefHidden => '볼 수 없는 단계';
+  @override
+  String get planRefTitleChanged => '제목 바뀜';
+  @override
   String get planStartBodyLabel => '이 스레드에 올라갈 글';
   @override
   String planStartBodyLabelTo(String handle) => '@$handle을 부르는 글 — 이 스레드에 올라간다';

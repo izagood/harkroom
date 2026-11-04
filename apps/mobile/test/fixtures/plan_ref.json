@@ -1,0 +1,256 @@
+{
+  "parse": [
+    {
+      "in": "harkroom://plan/11111111-2222-4333-8444-555555555555/s3",
+      "out": {
+        "rootId": "11111111-2222-4333-8444-555555555555",
+        "stepId": "s3",
+        "title": null
+      }
+    },
+    {
+      "in": "harkroom://plan/11111111-2222-4333-8444-555555555555/s12 「서버 시작」",
+      "out": {
+        "rootId": "11111111-2222-4333-8444-555555555555",
+        "stepId": "s12",
+        "title": "서버 시작"
+      }
+    },
+    {
+      "in": "  harkroom://plan/11111111-2222-4333-8444-555555555555/s9999  ",
+      "out": {
+        "rootId": "11111111-2222-4333-8444-555555555555",
+        "stepId": "s9999",
+        "title": null
+      }
+    },
+    {
+      "in": "harkroom://plan/11111111-2222-4333-8444-555555555555/s0",
+      "out": null
+    },
+    {
+      "in": "harkroom://plan/11111111-2222-4333-8444-555555555555/s10000",
+      "out": null
+    },
+    {
+      "in": "harkroom://plan/11111111-2222-4333-8444-555555555555/g1",
+      "out": null
+    },
+    {
+      "in": "harkroom://plan/11111111-2222-4333-8444-555555555555/s1x",
+      "out": null
+    },
+    {
+      "in": "harkroom://plan/11111111-2222-4333-8444-555555555555/s1/more",
+      "out": null
+    },
+    {
+      "in": "harkroom://plan/not-a-uuid/s1",
+      "out": null
+    },
+    {
+      "in": "x harkroom://plan/11111111-2222-4333-8444-555555555555/s1",
+      "out": null
+    },
+    {
+      "in": "harkroom://message/11111111-2222-4333-8444-555555555555",
+      "out": null
+    }
+  ],
+  "find": [
+    {
+      "in": "이것 harkroom://plan/11111111-2222-4333-8444-555555555555/s3 「가」 왜? harkroom://plan/11111111-2222-4333-8444-555555555555/s4 끝",
+      "out": [
+        {
+          "rootId": "11111111-2222-4333-8444-555555555555",
+          "stepId": "s3",
+          "title": "가",
+          "index": 3
+        },
+        {
+          "rootId": "11111111-2222-4333-8444-555555555555",
+          "stepId": "s4",
+          "title": null,
+          "index": 66
+        }
+      ]
+    },
+    {
+      "in": "없음",
+      "out": []
+    }
+  ],
+  "text": [
+    {
+      "root": "11111111-2222-4333-8444-555555555555",
+      "step": "s3",
+      "title": "서버 시작",
+      "out": "harkroom://plan/11111111-2222-4333-8444-555555555555/s3 「서버 시작」"
+    },
+    {
+      "root": "11111111-2222-4333-8444-555555555555",
+      "step": "s3",
+      "title": "",
+      "out": "harkroom://plan/11111111-2222-4333-8444-555555555555/s3"
+    },
+    {
+      "root": "11111111-2222-4333-8444-555555555555",
+      "step": "s3",
+      "title": "@builder 줄\n바꿈」 끝",
+      "out": "harkroom://plan/11111111-2222-4333-8444-555555555555/s3 「＠builder 줄 바꿈 끝」"
+    }
+  ],
+  "recipient": [
+    {
+      "doc": {
+        "managerId": "mgr",
+        "groups": [],
+        "steps": [
+          {
+            "id": "s1",
+            "assigneeId": "bot"
+          }
+        ]
+      },
+      "step": "s1",
+      "out": {
+        "to": "mgr",
+        "reason": "manager"
+      }
+    },
+    {
+      "doc": {
+        "groups": [],
+        "steps": [
+          {
+            "id": "s1",
+            "assigneeId": "bot"
+          }
+        ]
+      },
+      "step": "s1",
+      "out": {
+        "to": "bot",
+        "reason": "assignee"
+      }
+    },
+    {
+      "doc": {
+        "groups": [
+          {
+            "id": "g1",
+            "assigneeId": "bot"
+          }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "groupId": "g1"
+          }
+        ]
+      },
+      "step": "s1",
+      "out": {
+        "to": "bot",
+        "reason": "assignee"
+      }
+    },
+    {
+      "doc": {
+        "groups": [],
+        "steps": [
+          {
+            "id": "s1",
+            "assigneeId": "pat"
+          }
+        ]
+      },
+      "step": "s1",
+      "out": {
+        "to": null,
+        "reason": "human_assignee"
+      }
+    },
+    {
+      "doc": {
+        "groups": [],
+        "steps": [
+          {
+            "id": "s1"
+          }
+        ]
+      },
+      "step": "s1",
+      "out": {
+        "to": null,
+        "reason": "no_assignee"
+      }
+    },
+    {
+      "doc": {
+        "groups": [],
+        "steps": []
+      },
+      "step": "s9",
+      "out": {
+        "to": null,
+        "reason": "no_assignee"
+      }
+    },
+    {
+      "doc": {
+        "managerId": "pat",
+        "groups": [],
+        "steps": [
+          {
+            "id": "s1",
+            "assigneeId": "bot"
+          }
+        ]
+      },
+      "step": "s1",
+      "out": {
+        "to": "bot",
+        "reason": "assignee"
+      }
+    },
+    {
+      "doc": {
+        "managerId": "gone",
+        "groups": [],
+        "steps": [
+          {
+            "id": "s1",
+            "assigneeId": "bot"
+          }
+        ]
+      },
+      "step": "s1",
+      "out": {
+        "to": "bot",
+        "reason": "assignee"
+      }
+    },
+    {
+      "doc": {
+        "groups": [],
+        "steps": [
+          {
+            "id": "s1",
+            "assigneeId": "gone"
+          }
+        ]
+      },
+      "step": "s1",
+      "out": {
+        "to": null,
+        "reason": "human_assignee"
+      }
+    }
+  ],
+  "kinds": {
+    "mgr": "agent",
+    "bot": "agent",
+    "pat": "human"
+  }
+}

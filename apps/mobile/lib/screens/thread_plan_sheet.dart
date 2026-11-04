@@ -396,7 +396,7 @@ const double planSheetMax = 0.93;
 const double planSheetMin = 0.2;
 
 /// 계획 시트를 연다. [opener] 는 시트를 연 쪽의 context 다 — 글·연결 스레드로 갈 때 시트를 닫은 뒤 그 쌓기에 민다.
-Future<void> openThreadPlanSheet(BuildContext opener, String rootId) {
+Future<void> openThreadPlanSheet(BuildContext opener, String rootId, {String? focusStepId}) {
   final app = AppScope.read(opener);
   // 버튼이 못 받았으면(실패·아직 안 옴) 여기서 다시 부른다. 받아 둔 판이 있으면 그대로 연다.
   if (app.threadPlans[rootId] == null) unawaited(app.loadThreadPlan(rootId));
@@ -409,15 +409,18 @@ Future<void> openThreadPlanSheet(BuildContext opener, String rootId) {
     backgroundColor: opener.tokens.surfaceRaised,
     barrierColor: Colors.black.withValues(alpha: dark ? 0.5 : 0.32),
     shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
-    builder: (_) => _PlanSheet(opener: opener, rootId: rootId),
+    builder: (_) => _PlanSheet(opener: opener, rootId: rootId, focusStepId: focusStepId),
   );
 }
 
 class _PlanSheet extends StatefulWidget {
-  const _PlanSheet({required this.opener, required this.rootId});
+  const _PlanSheet({required this.opener, required this.rootId, this.focusStepId});
 
   final BuildContext opener;
   final String rootId;
+
+  /// 열자마자 굴려 갈 단계(글 안 칩). 막힌 단계면 까닭도 편다.
+  final String? focusStepId;
 
   @override
   State<_PlanSheet> createState() => _PlanSheetState();
@@ -440,6 +443,19 @@ class _PlanSheetState extends State<_PlanSheet> {
   ({PlanRowKind kind, int index})? _cycle;
   final Map<String, ({String who, String? messageId})> _started = {};
   bool _managerFailed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final id = widget.focusStepId;
+    if (id == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final plan = AppScope.read(context).threadPlans[widget.rootId];
+      if (plan == null) return;
+      _goTo(plan, id, why: plan.stateOf(id) == PlanState.blocked);
+    });
+  }
 
   /// 「▷ 시작」·「모두 시작」 — 작은 확인 시트를 겹쳐 연다. 시작하면 그 시트만 닫히고 이 시트의 줄이 바뀐다.
   Future<void> _openStart(ThreadPlanView plan, List<String> stepIds, {bool bulk = false}) async {
@@ -497,6 +513,22 @@ class _PlanSheetState extends State<_PlanSheet> {
   GlobalKey _keyOf(String id) => _nodeKeys.putIfAbsent(id, GlobalKey.new);
 
   /// 그 노드로 스크롤하고 깜빡인다(접힌 그룹이면 편다). [why] 면 「막힌 까닭」까지 편다.
+  /// 이 단계에 대해 묻는다 — 시트를 닫고 그 스레드 작성칸으로 간다. 그 스레드를 보고 있지 않으면 그리로 간다.
+  void _ask(ThreadPlanView plan, PlanStep step) {
+    final scope = PlanAskScope.maybeOf(widget.opener);
+    final opener = widget.opener;
+    Navigator.of(context).pop();
+    if (scope != null && scope.rootId == widget.rootId) {
+      scope.onAsk(step.id);
+      return;
+    }
+    final channelId = plan.channelId;
+    if (!opener.mounted || channelId == null) return;
+    unawaited(Navigator.of(opener).push(MaterialPageRoute<void>(
+      builder: (_) => ThreadScreen(channelId: channelId, rootId: widget.rootId, askStepId: step.id),
+    )));
+  }
+
   void _goTo(ThreadPlanView plan, String id, {bool why = false}) {
     String? groupId;
     for (final s in plan.steps) {
@@ -791,6 +823,7 @@ class _PlanSheetState extends State<_PlanSheet> {
           onMessage: _goToMessage,
           started: _started[s.id],
           onStart: () => unawaited(_openStart(plan, [s.id])),
+          onAsk: () => _ask(plan, s),
         ),
       );
 }
@@ -1284,7 +1317,7 @@ class _RowLink extends StatelessWidget {
 class _StepRow extends StatelessWidget {
   const _StepRow({
     required this.plan, required this.step, required this.app, required this.me, required this.grouped, required this.whyOpen,
-    required this.onToggleWhy, required this.onWaiting, required this.onGo, required this.onMessage, required this.onStart, this.started,
+    required this.onToggleWhy, required this.onWaiting, required this.onGo, required this.onMessage, required this.onStart, required this.onAsk, this.started,
   });
 
   final ThreadPlanView plan;
@@ -1298,6 +1331,7 @@ class _StepRow extends StatelessWidget {
   final void Function(String id, bool why) onGo;
   final ValueChanged<String> onMessage;
   final VoidCallback onStart;
+  final VoidCallback onAsk;
 
   /// 이 시트에서 방금 시작한 단계의 표시(X7).
   final ({String who, String? messageId})? started;
@@ -1395,7 +1429,8 @@ class _StepRow extends StatelessWidget {
                     for (var i = 0; i < parts.length; i++)
                       Row(mainAxisSize: MainAxisSize.min, children: [
                         if (i > 0) ExcludeSemantics(child: Text(' · ', style: meta(k.fgMuted))),
-                        parts[i],
+                        // 💬 자리만큼 좁아진 줄에서 조각이 줄 밖으로 나가지 않게 한다.
+                        Flexible(child: parts[i]),
                       ]),
                   ],
                 ),
@@ -1408,6 +1443,24 @@ class _StepRow extends StatelessWidget {
             const SizedBox(width: 8),
             _StartPill(key: Key('plan-start-${step.id}'), enabled: startState == PlanStartState.enabled, onTap: onStart),
           ],
+          SizedBox(
+            width: HarkroomSize.row,
+            height: HarkroomSize.row,
+            child: Tooltip(
+              message: t.planAskButton,
+              child: Semantics(
+                button: true,
+                label: t.planAskButton,
+                excludeSemantics: true,
+                child: InkWell(
+                  key: Key('plan-ask-${step.id}'),
+                  customBorder: const CircleBorder(),
+                  onTap: onAsk,
+                  child: const Center(child: Text('💬', style: TextStyle(fontSize: 15))),
+                ),
+              ),
+            ),
+          ),
           if (press != null && kind != PlanRowKind.blocked && startState == PlanStartState.none)
             Padding(padding: const EdgeInsets.only(left: 4, top: 2), child: ExcludeSemantics(child: Text('›', style: TextStyle(color: k.fgSubtle, fontSize: HarkroomType.body)))),
         ]),
@@ -1805,6 +1858,127 @@ class _LoadingLines extends StatelessWidget {
             ),
         ]),
       ),
+    );
+  }
+}
+
+/// 이 화면이 어느 스레드의 작성칸을 들고 있는가 — 시트의 💬 가 그리로 묻는다.
+class PlanAskScope extends InheritedWidget {
+  const PlanAskScope({super.key, required this.rootId, required this.onAsk, required super.child});
+
+  final String rootId;
+  final ValueChanged<String> onAsk;
+
+  static PlanAskScope? maybeOf(BuildContext context) => context.getInheritedWidgetOfExactType<PlanAskScope>();
+
+  @override
+  bool updateShouldNotify(PlanAskScope oldWidget) => rootId != oldWidget.rootId;
+}
+
+/// 글 안·작성칸 띠의 단계 칩(시안 v6 Z6·Z8). 바탕은 중립이고 색은 앞 표지와 막힘 글자에만 쓴다. 상태는 지금 판으로 그린다.
+/// 제목은 남이 쓴 글이라 글자로만 그린다. 볼 수 없으면 제목을 내보이지 않는다 — 본문에 적힌 제목도 감춘다.
+class PlanRefChip extends StatefulWidget {
+  const PlanRefChip({super.key, required this.planRef, this.interactive = true});
+
+  final PlanRef planRef;
+  final bool interactive;
+
+  @override
+  State<PlanRefChip> createState() => _PlanRefChipState();
+}
+
+class _PlanRefChipState extends State<PlanRefChip> {
+  var _asked = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.app;
+    final t = context.t;
+    final k = context.tokens;
+    final ref = widget.planRef;
+    final plan = app.threadPlans[ref.rootId];
+    final denied = app.threadPlanDenied.contains(ref.rootId);
+    if (plan == null && !denied && !_asked && !app.threadPlanChecked.contains(ref.rootId) && !app.threadPlanFailed.contains(ref.rootId)) {
+      _asked = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(context.app.loadThreadPlan(ref.rootId));
+      });
+    }
+    PlanStep? step;
+    for (final s in plan?.steps ?? const <PlanStep>[]) {
+      if (s.id == ref.stepId) step = s;
+    }
+    final style = TextStyle(color: k.fg, fontSize: 13);
+    final muted = TextStyle(color: k.fgMuted, fontSize: 13);
+    final subtle = TextStyle(color: k.fgSubtle, fontSize: 13);
+    final List<Widget> parts;
+    var dashed = false;
+    var pressable = false;
+    if (denied) {
+      dashed = true;
+      parts = [Text('🔒 ${t.planRefHidden}', key: Key('plan-ref-hidden-${ref.stepId}'), style: subtle)];
+    } else if (plan != null && step == null || plan == null && app.threadPlanChecked.contains(ref.rootId)) {
+      dashed = true;
+      parts = [
+        Flexible(
+          child: Text.rich(
+            TextSpan(children: [
+              TextSpan(text: '${ref.stepId}${ref.title == null ? '' : ' ${ref.title}'}', style: subtle.copyWith(decoration: TextDecoration.lineThrough)),
+              TextSpan(text: ' · ${plan == null ? t.planRefNoPlan : t.planRefDeleted}', style: subtle),
+            ]),
+            key: Key('plan-ref-gone-${ref.stepId}'),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ];
+    } else if (plan != null && step != null) {
+      pressable = true;
+      final kind = stepKind(plan, step, app.me?.id);
+      final pr = stepFirstLinks(step).pr;
+      final changed = ref.title != null && ref.title != parsePlanRef(planRefText(ref.rootId, ref.stepId, step.title))?.title;
+      parts = [
+        PlanStateMark(kind: kind, size: 14),
+        const SizedBox(width: 5),
+        Flexible(
+          child: Text.rich(
+            TextSpan(children: [
+              TextSpan(text: '${ref.stepId} ${step.title}', style: style),
+              TextSpan(text: ' · ', style: muted),
+              TextSpan(text: PlanStateMark.label(t, kind), style: kind == PlanRowKind.blocked ? TextStyle(color: k.stateStuck, fontSize: 13, fontWeight: FontWeight.w600) : style),
+              if (pr != null) TextSpan(text: ' · #${pr.number}', style: muted),
+              if (changed) TextSpan(text: ' · ${t.planRefTitleChanged}', style: TextStyle(color: k.warning, fontSize: 13)),
+            ]),
+            key: Key(changed ? 'plan-ref-changed-${ref.stepId}' : 'plan-ref-text-${ref.stepId}'),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ];
+    } else {
+      // 아직 답을 못 받았다 — 보낼 때 적힌 글자만.
+      parts = [Flexible(child: Text('${ref.stepId}${ref.title == null ? '' : ' ${ref.title}'}', maxLines: 1, overflow: TextOverflow.ellipsis, style: style))];
+    }
+    final chip = ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.72),
+      child: DecoratedBox(
+        key: Key('plan-ref-chip-${ref.stepId}'),
+        decoration: BoxDecoration(
+          color: k.surfaceSunken,
+          border: Border.all(color: k.border, style: BorderStyle.solid, strokeAlign: BorderSide.strokeAlignInside, width: dashed ? 0.5 : 1),
+          borderRadius: BorderRadius.circular(7),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+          child: Row(mainAxisSize: MainAxisSize.min, children: parts),
+        ),
+      ),
+    );
+    if (!pressable || !widget.interactive) return chip;
+    return InkWell(
+      borderRadius: BorderRadius.circular(7),
+      onTap: () => unawaited(openThreadPlanSheet(context, ref.rootId, focusStepId: ref.stepId)),
+      child: chip,
     );
   }
 }
