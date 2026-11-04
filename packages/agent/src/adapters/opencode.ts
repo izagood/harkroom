@@ -87,6 +87,7 @@ export const OPENCODE_ADAPTER: HarnessAdapter = {
     stats: ['stats'],
     parsed: false,
   },
+  lastSaidRecord: 'opencode-export',
 
   /**
    * **셋을 함께 줘야 움직인다**(실측). 하나만 주면 자격증명은 갈리는데 세션은 공유되는

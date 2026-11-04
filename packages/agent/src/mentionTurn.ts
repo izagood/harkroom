@@ -40,6 +40,7 @@ import { ensurePiLaneThread, listPiMcpTools, PI_LANE_PROVIDER, piLaneLoginPresen
 import { ensureOmpThread, findOmpBinary, OMP_LANE_PROVIDER, ompBinaryOk, ompUnverifiedBinaryNotice, ompCwdViolations, ompDirs, ompReadonlyToolList, ompSessionFile, readOmpRecordedApiError, writeOmpLaneModels, writeOmpSessionHeader, type OmpThreadDirs } from './ompHome.js';
 import { findOpencodeSessionId } from './opencodeSessions.js';
 import { readOpencodeTurnState } from './opencodeTurnState.js';
+import { readHarnessLastSaid, type HarnessLastSaidOpts } from './harnessLastSaid.js';
 import { screenShowsProgress } from './screenLife.js';
 import { ensureWorkspace, resolveWorkspaceName, type Exec } from './workspace.js';
 import type { TurnRegistry } from './turnRegistry.js';
@@ -521,6 +522,8 @@ export interface MentionTurnDeps {
     harness: AgentHarness, sessionId: string | null,
     opts: { configDir?: string | null; sinceMs?: number },
   ) => Promise<string[]>;
+  /** 화면으로 끝을 아는 하네스의 끝말을 기록에서 읽는다(기본 `readHarnessLastSaid`, API 키 연결 턴만). */
+  readHarnessLastSaid?: (harness: AgentHarness, opts: HarnessLastSaidOpts) => Promise<string | null>;
   /** 이 턴에서 하네스가 끝내며 남긴 말을 읽는다(기본 `readLastAssistantText`). */
   readLastSaid?: (
     harness: AgentHarness, sessionId: string | null,
@@ -3003,7 +3006,21 @@ export async function runMentionTurn(
       const recordSaid = await (deps.readLastSaid ?? readLastAssistantText)(def.harness, rec.sessionId, {
         configDir: deps.claudeConfigDir, sinceMs: turnStartedAtMs,
       }).catch(() => null);
-      const lastSaid = recordSaid ?? end.screenSaid;
+      // API 키 연결 턴은 화면으로 끝을 아는 하네스도 끝말을 기록에서 읽는다(`harnessLastSaid.ts`). 못 읽으면 화면 답 그대로다.
+      // 구독 턴은 읽지 않는다 — 기록 대리 게시를 켜지 않는 연결이라(`recordProxy`) 지금의 화면 답을 그대로 둔다.
+      const harnessSaid = providerEnv !== null && recordSaid === null
+        ? await (deps.readHarnessLastSaid ?? readHarnessLastSaid)(def.harness, {
+          sessionId: rec.sessionId,
+          sinceMs: turnStartedAtMs,
+          codexSessionsDir: codexSessionsDir(deps.codexHome),
+          opencode: {
+            command: harnessCommand(def.harness),
+            env: opencodeQueryEnv(def.harness, opencodeDirs(deps.opencodeHome), process.env),
+            cwd: rec.workspaceDir,
+          },
+        }).catch(() => null)
+        : null;
+      const lastSaid = recordSaid ?? harnessSaid ?? end.screenSaid;
       // **침묵의 이유가 옆 스레드에 있을 수 있다**(2026-09-08 실측, `offAnchorPosts` 주석).
       // 여기서만 채널 전체를 훑는 이유는 값이 싸지 않아서다: 이 경로는 드물게 도는 침묵
       // 경로이고, 그때는 사람에게 어차피 통지가 나가므로 한 왕복을 더 쓸 값어치가 있다.
@@ -3014,6 +3031,7 @@ export async function runMentionTurn(
         pat: deps.runnerSecret, secrets: await tailSecrets(),
         // 기록이 말해 주지 않을 때만 화면 답을 대신 올린다 — 기록을 읽는 하네스(claude)의 마지막 말은 아래 `recordProxy` 가 가른다.
         screenAnswer: recordSaid === null ? end.screenSaid : null,
+        recordAnswer: harnessSaid,
         screenEnded: recordSaid === null && end.screenEnded,
         // 기록 대리 게시는 API 키 연결 턴에만(2026-10-31, `silentTurnNotice` 의 `recordProxy`). 구독 claude 가 말없이 끝낸 에이전트 호출은
         // 일부러 한 침묵이라 ✅ 만 단다. 하네스 이름이 아니라 턴의 연결로 가른다 — 기록을 읽는 하네스는 표가 말한다(`readsSessionTranscript`).

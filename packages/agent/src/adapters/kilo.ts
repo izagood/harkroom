@@ -45,6 +45,8 @@ export const KILO_ADAPTER: HarnessAdapter = {
     stats: ['stats'],
     parsed: false,
   },
+  // opencode 표를 물려받지만 끝말 읽기는 재 보지 않았다 — 화면 답을 쓴다.
+  lastSaidRecord: undefined,
   account: {
     configDirEnv: ['XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME'],
     pooled: false,

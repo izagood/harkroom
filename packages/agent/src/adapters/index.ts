@@ -249,6 +249,11 @@ export function harnessCommand(harness: AgentHarness): string {
   return adapterFor(harness).command;
 }
 
+/** 끝말을 원문으로 읽을 기록 표면(`harnessLastSaid.ts`). 없으면 화면 답을 쓴다. */
+export function lastSaidRecordOf(harness: AgentHarness): 'codex-rollout' | 'opencode-export' | null {
+  return ADAPTERS[harness] === 'unsupported' ? null : adapterFor(harness).lastSaidRecord ?? null;
+}
+
 /**
  * 이 하네스가 **XDG 세 변수로 상태를 옮기는가**(opencode 가 그렇다).
  *
