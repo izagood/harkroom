@@ -557,8 +557,8 @@ void main() {
       expect(find.byKey(const ValueKey('plan-flash-s1-1')), findsOneWidget);
       expect(find.text('막힘 1 · 1/1'), findsOneWidget);
       await tester.pump(const Duration(seconds: 3));
-      final active = tester.widget<InkWell>(find.byKey(const Key('plan-chip-active')));
-      expect(active.onTap, isNull);
+      // 연결 그룹 g4 도 한 칸이라 진행 칩에 든다 — 진행 수가 0 이 아니다.
+      expect(tester.widget<InkWell>(find.byKey(const Key('plan-chip-active'))).onTap, isNotNull);
     });
 
     testWidgets('「⏳ 앞:」 을 누르면 그 자리로 가서 깜빡인다', (tester) async {
@@ -632,6 +632,16 @@ void main() {
       await tester.pump();
       expect(find.byKey(const ValueKey('plan-flash-g4-1')), findsOneWidget);
       await tester.pump(const Duration(seconds: 3));
+    });
+
+    testWidgets('수가 0 인 칩은 누를 수 없다', (tester) async {
+      final s = _Server()..fallback = () {
+        final j = _planJson();
+        (j['derived']! as Map<String, Object?>)['g4'] = {'derived': 'done', 'waitingOn': <Object?>[]};
+        return _json({'plan': j});
+      };
+      await open(tester, s);
+      expect(tester.widget<InkWell>(find.byKey(const Key('plan-chip-active'))).onTap, isNull);
     });
 
     testWidgets('머리: 상태 칩은 한 줄로 가로 스크롤하고, 흐름은 접혀 있다가 눌러야 편다', (tester) async {
