@@ -22,6 +22,7 @@ vi.mock('../src/state/communities', () => ({
 import { ThreadPlanButton } from '../src/components/ThreadPlanButton';
 import { ApiError } from '../src/lib/api';
 import { JumpToLatestPill } from '../src/components/JumpToLatestPill';
+import { HostDocumentContext } from '../src/lib/hostDocument';
 import rules from './fixtures/planRules.json';
 
 const base = rules.cases[0]!.plan;
@@ -487,13 +488,92 @@ describe('줄 누르기', () => {
 
 /** jsdom 의 PointerEvent 는 좌표를 싣지 않는다 — 같은 이름의 MouseEvent 로 민다. */
 const drag = (testId: string, from: [number, number], to: [number, number]) => {
-  const at = (type: string, [clientX, clientY]: [number, number]) => new MouseEvent(type, { bubbles: true, clientX, clientY });
+  const at = (type: string, [clientX, clientY]: [number, number]) => new MouseEvent(type, { bubbles: true, clientX, clientY, buttons: 1 });
   act(() => {
     screen.getByTestId(testId).dispatchEvent(at('pointerdown', from));
     window.dispatchEvent(at('pointermove', to));
     window.dispatchEvent(at('pointerup', to));
   });
 };
+
+describe('새 창(포털)의 크기 조절', () => {
+  let frame: HTMLIFrameElement;
+  const at = (view: Window, type: string, clientX: number, clientY: number) => new (view as Window & typeof globalThis).MouseEvent(type, { bubbles: true, clientX, clientY, buttons: 1 });
+  const openInWindow = () => {
+    manyReady();
+    frame = document.createElement('iframe');
+    document.body.appendChild(frame);
+    const doc = frame.contentDocument!;
+    const host = doc.createElement('div');
+    doc.body.appendChild(host);
+    render(<HostDocumentContext.Provider value={doc}><ThreadPlanButton rootId="r1" progress={{ ...plans.r1!.progress, rev: plans.r1!.rev }} /></HostDocumentContext.Provider>, { container: host });
+    act(() => { doc.querySelector<HTMLElement>('[data-testid="plan-button"]')?.click(); });
+    return { doc, view: frame.contentWindow!, panel: doc.querySelector<HTMLElement>('[data-testid="plan-panel"]')! };
+  };
+  afterEach(() => { frame?.remove(); });
+
+  it('끌기는 그 창의 포인터를 듣고, 메인 창의 포인터에는 움직이지 않는다', () => {
+    const { doc, view, panel } = openInWindow();
+    act(() => { doc.querySelector('[data-testid="plan-resize-corner"]')!.dispatchEvent(at(view, 'pointerdown', 500, 500)); });
+    act(() => { window.dispatchEvent(new MouseEvent('pointermove', { clientX: 100, clientY: 100 })); });
+    expect(panel.style.width).toBe('440px');
+    act(() => { view.dispatchEvent(at(view, 'pointermove', 400, 450)); view.dispatchEvent(at(view, 'pointerup', 400, 450)); });
+    expect([panel.style.width, panel.style.height]).toEqual(['540px', '650px']);
+    // 뗀 뒤에는 어느 창에서 움직여도 그대로다.
+    act(() => { view.dispatchEvent(at(view, 'pointermove', 100, 100)); window.dispatchEvent(new MouseEvent('pointermove', { clientX: 50, clientY: 50, buttons: 1 })); });
+    expect([panel.style.width, panel.style.height]).toEqual(['540px', '650px']);
+  });
+
+  it('새 창에서 눌렀다 떼면 메인 창 위를 움직여도 따라오지 않는다', () => {
+    const { doc, view, panel } = openInWindow();
+    act(() => {
+      doc.querySelector('[data-testid="plan-resize-corner"]')!.dispatchEvent(at(view, 'pointerdown', 500, 500));
+      view.dispatchEvent(at(view, 'pointerup', 500, 500));
+      window.dispatchEvent(new MouseEvent('pointermove', { clientX: 100, clientY: 100, buttons: 0 }));
+    });
+    expect(panel.style.width).toBe('440px');
+    expect(localStorage.getItem('harkroom.threadPlan.size.window')).toBeNull();
+  });
+
+  it('뗀 것을 놓쳐도 버튼 없는 움직임이나 창 포커스 잃음에서 끌기가 끝난다', () => {
+    const { doc, view, panel } = openInWindow();
+    const corner = doc.querySelector('[data-testid="plan-resize-corner"]')!;
+    act(() => {
+      corner.dispatchEvent(at(view, 'pointerdown', 500, 500));
+      view.dispatchEvent(at(view, 'pointermove', 400, 450));
+    });
+    expect(panel.style.width).toBe('540px');
+    const Mouse = (view as Window & typeof globalThis).MouseEvent;
+    act(() => { view.dispatchEvent(new Mouse('pointermove', { clientX: 100, clientY: 100, buttons: 0 })); });
+    expect(panel.style.width).toBe('540px');
+    act(() => { view.dispatchEvent(at(view, 'pointermove', 100, 100)); });
+    expect(panel.style.width).toBe('540px');
+    expect(JSON.parse(localStorage.getItem('harkroom.threadPlan.size.window')!)).toEqual({ w: 540, h: 650 });
+    act(() => {
+      corner.dispatchEvent(at(view, 'pointerdown', 500, 500));
+      view.dispatchEvent(at(view, 'pointermove', 480, 500));
+      view.dispatchEvent(new (view as Window & typeof globalThis).Event('blur'));
+      view.dispatchEvent(at(view, 'pointermove', 100, 100));
+    });
+    expect(panel.style.width).toBe('560px');
+  });
+
+  it('새 창의 크기는 따로 기억해 메인 창의 기억을 건드리지 않고, 두 번 누르면 새 창 것만 지운다', () => {
+    localStorage.setItem('harkroom.threadPlan.size', JSON.stringify({ w: 900, h: 700 }));
+    const { doc, view, panel } = openInWindow();
+    expect(panel.style.width).toBe('440px');
+    act(() => {
+      doc.querySelector('[data-testid="plan-resize-corner"]')!.dispatchEvent(at(view, 'pointerdown', 500, 500));
+      view.dispatchEvent(at(view, 'pointermove', 400, 450));
+      view.dispatchEvent(at(view, 'pointerup', 400, 450));
+    });
+    expect(JSON.parse(localStorage.getItem('harkroom.threadPlan.size.window')!)).toEqual({ w: 540, h: 650 });
+    expect(JSON.parse(localStorage.getItem('harkroom.threadPlan.size')!)).toEqual({ w: 900, h: 700 });
+    fireEvent.doubleClick(doc.querySelector('[data-testid="plan-resize-corner"]')!);
+    expect(localStorage.getItem('harkroom.threadPlan.size.window')).toBeNull();
+    expect(localStorage.getItem('harkroom.threadPlan.size')).not.toBeNull();
+  });
+});
 
 describe('크기·관리 에이전트', () => {
   it('왼쪽 위를 끌면 커지고 기기에 하나만 기억한다. 두 번 누르면 기본', () => {
@@ -506,6 +586,29 @@ describe('크기·관리 에이전트', () => {
     fireEvent.doubleClick(screen.getByTestId('plan-resize-corner'));
     expect(panel.style.width).toBe('440px');
     expect(localStorage.getItem('harkroom.threadPlan.size')).toBeNull();
+  });
+
+  it('저장값이 칸보다 커도 보이는 크기에서 끌기 시작한다. 누르기만 하면 저장하지 않는다', () => {
+    localStorage.setItem('harkroom.threadPlan.size', JSON.stringify({ w: 2000, h: 2000 }));
+    const panel = openPanel_();
+    vi.spyOn(panel, 'getBoundingClientRect').mockReturnValue({ width: 800, height: 600 } as DOMRect);
+    drag('plan-resize-corner', [500, 500], [500, 500]);
+    drag('plan-resize-corner', [500, 500], [530, 530]);
+    expect([panel.style.width, panel.style.height]).toEqual(['770px', '570px']);
+    localStorage.removeItem('harkroom.threadPlan.size');
+    act(() => {
+      const el = screen.getByTestId('plan-resize-corner');
+      el.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: 1, clientY: 1 }));
+      window.dispatchEvent(new MouseEvent('pointerup', { clientX: 1, clientY: 1 }));
+    });
+    expect(localStorage.getItem('harkroom.threadPlan.size')).toBeNull();
+  });
+
+  it('메인 창에서도 뗀 뒤에는 움직여도 크기가 그대로다', () => {
+    const panel = openPanel_();
+    drag('plan-resize-corner', [500, 500], [400, 450]);
+    act(() => { window.dispatchEvent(new MouseEvent('pointermove', { clientX: 100, clientY: 100, buttons: 1 })); });
+    expect([panel.style.width, panel.style.height]).toEqual(['540px', '650px']);
   });
 
   it('왼쪽 가장자리는 폭만, 위 가장자리는 높이만', () => {

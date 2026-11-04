@@ -5,7 +5,7 @@ import { derivePlan, planProgress } from '@harkroom/shared/planGraph';
 import rules from './fixtures/planRules.json';
 import {
   groupFacts, nextCycleIndex, planButtonKind, planFlow, planFlowVisible, planLists, planPills, planReadyStepIds, planStepOrder, stepFirstLinks, stepGoTargets, stepKind, stepStartState, stepWaiters, stepWhy,
-  clampPlanSize, widePlanSize,
+  clampPlanSize, planCanWiden, widePlanSize,
 } from '../src/lib/threadPlan';
 
 describe.each(rules.cases)('$name', (c) => {
@@ -87,5 +87,9 @@ describe('패널 크기', () => {
   });
   it('넓게 = 칸 폭 60% × 최대 높이', () => {
     expect(widePlanSize(box)).toEqual({ w: 600, h: 728 });
+    // 작은 새 창: 넓게가 기본보다 작아지지 않고, 커질 것이 없으면 그렇다고 말한다.
+    expect(widePlanSize({ w: 420, h: 589 })).toEqual({ w: 388, h: 517 });
+    expect(planCanWiden({ w: 420, h: 589 })).toBe(false);
+    expect(planCanWiden(box)).toBe(true);
   });
 });
