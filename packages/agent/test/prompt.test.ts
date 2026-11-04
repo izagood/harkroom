@@ -1,13 +1,37 @@
 import { describe, expect, it } from 'vitest';
 import { PLAN_LIMITS } from '@harkroom/shared/planGraph';
 import { mentionedHandles } from '@harkroom/shared';
-import { BODY_LIMIT, DELTA_MAX_MESSAGES, fitDelta, mergeThreadPages, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, quotedLine, proxyAnswerBody, proxyRecordAnswerBody, looksLikeAnswer, PROXY_ANSWER_MAX_CHARS, AGENT_CALL_NO_ANSWER, stallNotice, stallRetryable, stallScreenErrorLine, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, macPermissionNotice, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, wakeReportTo, wakeWatch, wakeOrigin, hasOwnReportSince, type MemoryContext } from '../src/prompt.js';
+import { turnClockLine, BODY_LIMIT, DELTA_MAX_MESSAGES, fitDelta, mergeThreadPages, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, quotedLine, proxyAnswerBody, proxyRecordAnswerBody, looksLikeAnswer, PROXY_ANSWER_MAX_CHARS, AGENT_CALL_NO_ANSWER, stallNotice, stallRetryable, stallScreenErrorLine, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, macPermissionNotice, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, wakeReportTo, wakeWatch, wakeOrigin, hasOwnReportSince, type MemoryContext } from '../src/prompt.js';
 
 const msg = (seq: number, authorId: string, body: string, extra: Record<string, unknown> = {}) =>
   ({
     seq, authorId, body, id: `m${seq}`, channelId: 'c', threadRootId: null, kind: 'user',
     meta: {}, createdAt: '', editedAt: null, reactions: [], attachments: [], ...extra,
   }) as never;
+
+describe('turnClockLine — 턴 프롬프트의 지금 시각', () => {
+  const at = new Date('2026-03-01T15:04:05.678Z');
+
+  it('날짜가 넘어가는 시간대의 현지 시각·오프셋·UTC 를 함께 적는다', () => {
+    expect(turnClockLine(at, 'Asia/Seoul')).toBe('지금 시각(이 턴을 시작한 때): 2026-03-02 00:04:05 (Asia/Seoul, UTC+09:00) · 2026-03-01T15:04:05Z');
+  });
+
+  it('자정은 24 가 아니라 00 으로 적고, UTC 시간대도 오프셋을 적는다', () => {
+    expect(turnClockLine(new Date('2026-03-01T00:00:00Z'), 'UTC')).toContain('2026-03-01 00:00:00 (UTC, UTC+00:00)');
+  });
+
+  it('now 를 주면 맨 위 머리 줄에 싣는다', () => {
+    const { prompt } = buildTurnPrompt({
+      messages: [{ id: 'm', seq: 1, channelId: 'c', threadRootId: null, authorId: 'a', body: '시각', kind: 'user', meta: {}, createdAt: '2026-03-01T00:00:00Z', editedAt: null, reactions: [], attachments: [] } as never],
+      lastFedSeq: 0, meId: 'me', handles: { a: 'alex' }, channelId: 'c', threadRootId: null, now: at,
+    });
+    expect(prompt.split('\n').slice(0, 3).join('\n')).toMatch(/^channelId: c\nthreadRootId: 채널 최상위\(없음\)\n지금 시각\(이 턴을 시작한 때\): 2026-/);
+  });
+
+  it('시스템 프롬프트가 그 시각을 쓰라고 말한다', () => {
+    expect(buildSystemPrompt({ handle: 'a', channelName: 'c', instructions: '', guide: '', memory: { core: null, slugs: [] } })).toContain('프롬프트 맨 위의 「지금 시각」');
+  });
+});
 
 describe('buildTurnPrompt', () => {
   const handles = { u1: 'alice', a1: 'forge', a2: 'scout' };

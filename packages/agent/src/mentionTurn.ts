@@ -1198,6 +1198,7 @@ export async function runMentionTurn(
     handles: deps.handles,
     channelId,
     threadRootId: anchor,
+    now: new Date((deps.now ?? Date.now)()),
     ...(target.wake ? { wake: target.wake } : {}),
     ...(watchOrigin ? { watchOrigin } : {}),
     ...(target.canceledWakes?.length ? { canceledWakes: target.canceledWakes } : {}),
