@@ -143,8 +143,28 @@ abstract final class PlanBandLayout {
   /// 칩·여백·⌃ 를 뺀 자리에서 요약이 쓸 수 있는 폭. 목표 2 : 요약 1 이다.
   static double summaryMax({required double screen, required double chip}) => math.max(0, screen - 22 - chip - 6 - 22) / 3;
 
-  /// 폰 폭에서는 진행 수를 빼고 「그룹 5 · 막힘 1 (화면)」 으로 줄인다.
-  static bool shortSummary(double screen) => screen < 430;
+  /// 폰 폭인가. 폰 폭에서 칩에 막힘이 있으면 요약을 그리지 않는다 — 칩이 이미 말하고, 잘린 글자는 뜻이 없다.
+  static bool narrow(double screen) => screen < 430;
+
+  /// 그룹이 넷 이상인 띠의 요약. 막힌 이름까지 들어가면 전체를, 안 들어가면 「그룹 5」 만 쓴다.
+  /// 넓은 화면의 막힘 요약은 이름이 중요해 말줄임으로 둔다. `null` 이면 요약을 그리지 않는다.
+  static ({String text, String? blockedName})? summaryText(
+    Strings t, {
+    required ({int groups, int active, int blocked, String? firstBlocked}) summary,
+    required int chipBlocked,
+    required double screen,
+    required double maxWidth,
+    required double Function(String) measure,
+  }) {
+    if (narrow(screen) && chipBlocked > 0) return null;
+    final text = summary.blocked > 0
+        ? t.planSummary(summary.groups, summary.active, summary.blocked)
+        : t.planSummaryNoBlocked(summary.groups, summary.active);
+    final name = summary.firstBlocked;
+    final fits = measure(name == null ? text : '$text ($name)') + 6 <= maxWidth;
+    if (fits || (summary.blocked > 0 && !narrow(screen))) return (text: text, blockedName: name);
+    return (text: t.planSummaryGroups(summary.groups), blockedName: null);
+  }
 }
 
 /// 스레드 머리 밑의 띠(44pt, 불투명). 칩 · 목표 · 알약 1개 · +n · ⌃. 띠 전체가 누르는 자리 하나다.
@@ -197,6 +217,16 @@ class _ThreadPlanBandState extends State<ThreadPlanBand> {
     final chipMax = screen * 0.55;
     // 요약은 칩을 뺀 자리의 1/3 까지만 쓴다 — 목표가 먼저 읽혀야 한다. 짧으면 남는 자리는 목표가 가져간다.
     final summaryMax = PlanBandLayout.summaryMax(screen: screen, chip: math.min(PlanChip.widthOf(context, chip), chipMax));
+    final summaryLine = summary == null
+        ? null
+        : PlanBandLayout.summaryText(
+            t,
+            summary: summary,
+            chipBlocked: chip.blocked,
+            screen: screen,
+            maxWidth: summaryMax,
+            measure: (s) => _textWidth(context, s, const TextStyle(fontSize: HarkroomType.meta)),
+          );
     void open() => openThreadPlanSheet(context, widget.rootId);
 
     return Semantics(
@@ -242,7 +272,7 @@ class _ThreadPlanBandState extends State<ThreadPlanBand> {
                   padding: const EdgeInsets.only(left: 6),
                   child: Text(t.planStaleShort, key: const Key('plan-stale'), style: TextStyle(color: k.warning, fontSize: HarkroomType.meta)),
                 )
-              else if (summary != null)
+              else if (summaryLine != null)
                 ConstrainedBox(
                   constraints: BoxConstraints(maxWidth: summaryMax),
                   child: Padding(
@@ -250,13 +280,9 @@ class _ThreadPlanBandState extends State<ThreadPlanBand> {
                     child: Text.rich(
                       key: const Key('plan-summary'),
                       TextSpan(children: [
-                        TextSpan(text: summary.blocked == 0
-                            ? t.planSummaryNoBlocked(summary.groups, summary.active)
-                            : PlanBandLayout.shortSummary(screen)
-                                ? t.planSummaryShort(summary.groups, summary.blocked)
-                                : t.planSummary(summary.groups, summary.active, summary.blocked)),
-                        if (summary.firstBlocked != null)
-                          TextSpan(text: ' (${summary.firstBlocked})', style: TextStyle(color: k.stateStuck)),
+                        TextSpan(text: summaryLine.text),
+                        if (summaryLine.blockedName != null)
+                          TextSpan(text: ' (${summaryLine.blockedName})', style: TextStyle(color: k.stateStuck)),
                       ]),
                       maxLines: 1,
                       softWrap: false,
@@ -265,7 +291,7 @@ class _ThreadPlanBandState extends State<ThreadPlanBand> {
                     ),
                   ),
                 )
-              else if (pills.isNotEmpty) ...[
+              else if (summary == null && pills.isNotEmpty) ...[
                 const SizedBox(width: 6),
                 _Pill(pill: pills.first),
                 if (pills.length > 1)

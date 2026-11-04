@@ -441,33 +441,52 @@ void main() {
       expect(s.planGets, 1);
       expect(find.text('계획 2/7 · 막힘 1'), findsOneWidget, reason: '판을 받은 뒤의 띠 칩은 개인 진행률이다');
       expect(find.text('파일 미리보기 출시'), findsOneWidget);
-      // 그룹 다섯 → 요약.
-      expect(find.byKey(const Key('plan-summary')), findsOneWidget);
     });
 
     for (final width in [320.0, 375.0]) {
-      testWidgets('그룹이 넷 이상이어도 $width pt 에서 목표 자리가 요약의 두 배 이상이다', (tester) async {
+      testWidgets('$width pt 에서 칩에 막힘이 있으면 요약을 그리지 않고 목표가 자리를 가져간다', (tester) async {
         final (app, _) = await tester.runAsync(() => _boot(_Server())) as (AppState, _Sock);
         await _band(tester, app, width: width);
-        final goal = tester.getSize(find.byKey(const Key('plan-band-goal'))).width;
-        final summary = tester.getSize(find.byKey(const Key('plan-summary'))).width;
-        expect(goal, greaterThanOrEqualTo(summary * 2 - 12), reason: '요약 $summary · 목표 $goal');
+        expect(find.byKey(const Key('plan-summary')), findsNothing);
+        expect(find.byKey(const Key('plan-more')), findsNothing, reason: '요약을 뺐다고 알약으로 돌아가지 않는다');
+        expect(tester.getSize(find.byKey(const Key('plan-band-goal'))).width, greaterThan(40));
         expect(tester.takeException(), isNull);
       });
     }
 
-    testWidgets('폰 폭의 요약은 진행 수를 빼고 막힌 이름을 남긴다', (tester) async {
-      final (app, _) = await tester.runAsync(() => _boot(_Server())) as (AppState, _Sock);
-      await _band(tester, app);
-      final text = tester.widget<Text>(find.byKey(const Key('plan-summary'))).textSpan!.toPlainText();
-      expect(text, '그룹 5 · 막힘 1 (화면)');
+    ({int groups, int active, int blocked, String? firstBlocked}) sum({int blocked = 0, String? name}) =>
+        (groups: 5, active: 2, blocked: blocked, firstBlocked: name);
+    final ko = stringsFor('ko');
+    double wide(String s) => s.length * 5.0;
+    double huge(String s) => 9999;
+
+    test('막힘이 없으면 들어갈 때 전체, 잘리면 「그룹 5」 만', () {
+      expect(PlanBandLayout.summaryText(ko, summary: sum(), chipBlocked: 0, screen: 375, maxWidth: 200, measure: wide)!.text, '그룹 5 · 진행 2');
+      expect(PlanBandLayout.summaryText(ko, summary: sum(), chipBlocked: 0, screen: 375, maxWidth: 40, measure: huge)!.text, '그룹 5');
+    });
+
+    test('폰 폭 막힘은 null, 넓은 화면 막힘은 이름까지(잘려도 전체)', () {
+      expect(PlanBandLayout.summaryText(ko, summary: sum(blocked: 1, name: '화면'), chipBlocked: 1, screen: 429, maxWidth: 999, measure: wide), isNull);
+      final w = PlanBandLayout.summaryText(ko, summary: sum(blocked: 1, name: '화면'), chipBlocked: 1, screen: 768, maxWidth: 10, measure: huge)!;
+      expect((w.text, w.blockedName), ('그룹 5 · 진행 2 · 막힘 1', '화면'));
+    });
+
+    test('칩에 막힘이 없는데 그룹만 막힌 폰 폭은 요약을 남기고, 안 들어가면 「그룹 5」', () {
+      final l = PlanBandLayout.summaryText(ko, summary: sum(blocked: 1, name: '화면'), chipBlocked: 0, screen: 375, maxWidth: 10, measure: huge)!;
+      expect((l.text, l.blockedName), ('그룹 5', null));
     });
 
     test('요약 폭은 칩을 뺀 자리의 1/3, 자리가 없으면 0', () {
       expect(PlanBandLayout.summaryMax(screen: 375, chip: 140), closeTo(61.67, 0.01));
       expect(PlanBandLayout.summaryMax(screen: 100, chip: 200), 0);
-      expect(PlanBandLayout.shortSummary(375), isTrue);
-      expect(PlanBandLayout.shortSummary(768), isFalse);
+      expect(PlanBandLayout.narrow(429), isTrue);
+      expect(PlanBandLayout.narrow(430), isFalse);
+    });
+
+    testWidgets('넓은 화면은 요약을 그린다', (tester) async {
+      final (app, _) = await tester.runAsync(() => _boot(_Server())) as (AppState, _Sock);
+      await _band(tester, app, width: 800);
+      expect(find.byKey(const Key('plan-summary')), findsOneWidget);
     });
 
     testWidgets('rev 가 바뀌면 다시 받고, 실패해도 띠는 행 값으로 서 있다', (tester) async {

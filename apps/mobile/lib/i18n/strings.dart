@@ -722,8 +722,8 @@ abstract class Strings {
   String planSummary(int groups, int active, int blocked);
   String planSummaryNoBlocked(int groups, int active);
 
-  /// 좁은 띠의 요약 — 진행 수를 뺀다. 「그룹 5 · 막힘 1」.
-  String planSummaryShort(int groups, int blocked);
+  /// 요약이 안 들어갈 때의 짧은 꼴. 「그룹 5」.
+  String planSummaryGroups(int groups);
   String get planStateBlocked;
   String get planStateActive;
   String get planStateDone;
@@ -1954,7 +1954,7 @@ Map<String, String> stringsToMap(Strings s) => {
       'planPillCount': s.planPillCount('{title}', 1, 2),
       'planSummary': s.planSummary(5, 2, 1),
       'planSummaryNoBlocked': s.planSummaryNoBlocked(5, 2),
-      'planSummaryShort': s.planSummaryShort(5, 1),
+      'planSummaryGroups': s.planSummaryGroups(5),
       'planStateBlocked': s.planStateBlocked,
       'planStateActive': s.planStateActive,
       'planStateDone': s.planStateDone,
