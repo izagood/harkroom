@@ -214,6 +214,11 @@ export interface RelayClientOptions {
    * 열린 세션마다 중단(`onCancel`)을 불렀다. 남은 일(폴 루프를 끝내고 물러나기)은 부른 쪽의 몫이다.
    */
   onLinkRejectedGiveUp?: () => void;
+  /**
+   * 링크가 열릴 때마다 부른다(첫 연결 포함). 오퍼레이터가 바뀌면 그 메모리에만 있던 것을 다시 맡겨야 한다 — 지금은 턴 열쇠다.
+   * 거절될 연결에서도 불린다(거절은 열린 **뒤**에 온다). 그때 나간 요청은 실패하고 다음 열림이 다시 부른다.
+   */
+  onLinkOpen?: () => void;
   /** 운영 로그 한 줄. 기본은 러너 로그(stdout). */
   log?: (line: string) => void;
 }
@@ -556,6 +561,7 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
         if (opts.providerLane !== undefined) {
           try { t.send(JSON.stringify({ type: 'providerLane.mode', on: opts.providerLane })); } catch { /* 끊겼다 — 다음 붙을 때 다시 */ }
         }
+        try { opts.onLinkOpen?.(); } catch { /* 부른 쪽의 실패가 링크를 막지 않는다 */ }
       },
       onMessage: onServerFrame,
       onClose: (reason) => {

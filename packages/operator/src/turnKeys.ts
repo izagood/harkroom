@@ -9,7 +9,8 @@
  * - 열쇠는 그것을 맡긴 러너(`runnerId`)에 묶인다. hello 의 runnerId 가 다르면 못 붙는다.
  * - 열쇠로 붙은 소켓의 요청은 cause·턴 id 를 **장부 값으로** 쓴다(`runnerLink.ts`) — 셸 env 의 값을 믿지 않는다.
  * - 장부에는 원값이 아니라 sha256 을 둔다. 러너가 잊히면(`forgetRunner`) 그 러너의 열쇠를 전부 지우고,
- *   끝내기가 오지 않은 열쇠는 `TURN_KEY_MAX_AGE_MS` 뒤에 쓴다. 오퍼레이터가 다시 뜨면 장부가 비어 모두 죽는다.
+ *   끝내기가 오지 않은 열쇠는 `TURN_KEY_MAX_AGE_MS` 뒤에 쓴다. 오퍼레이터가 다시 뜨면 장부가 비고, 러너의 relay 가 다시 붙으며
+ *   열린 턴의 열쇠를 다시 맡긴다(`agent/src/harkroom.ts`) — 장부를 디스크에 두지 않아도 교체를 넘어 도는 턴의 다리가 산다.
  */
 import { createHash, timingSafeEqual } from 'node:crypto';
 import {

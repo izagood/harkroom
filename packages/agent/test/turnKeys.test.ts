@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { RUNNER_LINK_ENV, RUNNER_TURN_KEY_ENV, TURN_KEY_PATTERN, TURN_KEYS_END_PATH, TURN_KEYS_PATH } from '@harkroom/shared/runnerLink';
 import { buildTurnCommand, turnKeyDelivery } from '../src/turn.js';
+import { HarkroomAgentClient } from '../src/harkroom.js';
 import { endTurnKeys, issueTurnKeys, registerTurnKeys, TurnKeyRegisterError } from '../src/turnKeys.js';
 import { writeOpencodeTurnMcpConfig, writeTurnMcpConfig } from '../src/providerLane.js';
 
@@ -148,5 +149,48 @@ describe('턴 열쇠 — opencode 전달(턴 설정 파일)', () => {
     expect(plan.env[RUNNER_TURN_KEY_ENV.bridge]).toBeUndefined();
     expect(plan.env[RUNNER_LINK_ENV.secret]).toBeUndefined();
     expect(() => buildTurnCommand({ ...base, harness: 'opencode', sessionId: null, opencodeHome: '/state/oc', turnKeys: keys })).toThrow();
+  });
+});
+
+describe('오퍼레이터가 바뀌면 열린 턴의 열쇠를 다시 맡긴다(2026-11-05)', () => {
+  const keys = { bridge: 'a'.repeat(64), shell: 'b'.repeat(64) };
+  const clientWith = (status: () => number) => {
+    const sent: { path: string; body: { turnId: string } }[] = [];
+    const client = new HarkroomAgentClient({
+      request: async (r: { type: string; path?: string; body?: string }) => {
+        sent.push({ path: r.path!, body: JSON.parse(r.body!) as { turnId: string } });
+        return { type: 'http.response', id: 'x', status: status(), body: '{}' };
+      },
+      mcpTransport: () => { throw new Error('안 쓴다'); },
+    } as unknown as ConstructorParameters<typeof HarkroomAgentClient>[0]);
+    return { client, sent };
+  };
+
+  it('열린 턴만 같은 값으로 다시 맡기고, 끝난 턴은 맡기지 않는다', async () => {
+    const { client, sent } = clientWith(() => 200);
+    await client.registerTurnKeys({ turnId: 't1', cause: 'c1', keys });
+    await client.registerTurnKeys({ turnId: 't2', cause: null, keys: { bridge: 'c'.repeat(64), shell: 'd'.repeat(64) } });
+    await client.endTurnKeys('t2');
+    sent.length = 0;
+    expect(await client.reRegisterTurnKeys()).toEqual({ ok: 1, failed: 0 });
+    expect(sent).toEqual([{ path: TURN_KEYS_PATH, body: { turnId: 't1', cause: 'c1', keys } }]);
+  });
+
+  it('맡기기에 실패한 턴은 열린 턴으로 치지 않는다 — 그 턴은 띄우지 않는다', async () => {
+    const { client, sent } = clientWith(() => 500);
+    await expect(client.registerTurnKeys({ turnId: 't1', cause: null, keys })).rejects.toBeInstanceOf(TurnKeyRegisterError);
+    sent.length = 0;
+    expect(await client.reRegisterTurnKeys()).toEqual({ ok: 0, failed: 0 });
+    expect(sent).toEqual([]);
+  });
+
+  it('다시 맡기기가 실패하면 세고 열쇠를 남긴다 — 다음 링크 열림이 다시 맡긴다', async () => {
+    let status = 200;
+    const { client } = clientWith(() => status);
+    await client.registerTurnKeys({ turnId: 't1', cause: null, keys });
+    status = 500;
+    expect(await client.reRegisterTurnKeys()).toEqual({ ok: 0, failed: 1 });
+    status = 200;
+    expect(await client.reRegisterTurnKeys()).toEqual({ ok: 1, failed: 0 });
   });
 });
