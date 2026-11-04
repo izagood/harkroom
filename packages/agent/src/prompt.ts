@@ -68,7 +68,8 @@ export function silentTurnNotice(opts: {
    */
   screenEnded?: boolean;
   /**
-   * 기록의 마지막 말이 답 꼴일 때 **대신 올려도 되는 턴인가**(2026-10-31). 호출자는 API 키 연결(lane) 턴에만 참을 준다 — 빠지면 ✅ 다.
+   * 기록의 마지막 말을 **대신 올려도 되는 턴인가**(2026-10-31). 호출자는 API 키 연결(lane) 턴에만 참을 준다. 에이전트가 부른 턴은 답 꼴일 때만
+   * 옮기고 빠지면 ✅ 다. 사람이 부른 턴은 말이 있으면 옮기고, 빠지면 인용 통지다(2026-11-04).
    * 기록 대리 게시(2026-10-30)를 부른 것은 API 키 모델이 답을 최종 텍스트로만 쓰고 끝낸 턴이었다. 구독 claude 는 답을 스스로
    * `message.post` 로 올리고, 말없이 끝낸 에이전트 호출은 **일부러 침묵한** FYI 다 — 그 끝말(「바뀐 게 없어 이번엔 글을 올리지 않았다」
    * + 글머리 목록)도 답 꼴이라, 하루 저녁에 원치 않는 대리 글이 아홉 건 올라갔다(소유자 결정: claude 하네스는 대리 게시를 끄고 ✅ 만).
@@ -99,6 +100,13 @@ export function silentTurnNotice(opts: {
   if (opts.caller === 'human') {
     const proxied = proxyAnswerBody(opts.screenAnswer ?? null, opts.pat, opts.secrets);
     if (proxied) return { kind: 'post', body: proxied };
+    // **기록을 읽는 하네스도 같다**(2026-11-04 실측, claude-code × API 키 모델). 모델이 인사·짧은 질문의 답을 최종 텍스트로만 쓰고 도구 없이
+    // `end_turn` 으로 끝냈는데, 이 하네스는 기록으로 끝을 알아 화면 답이 없다 — 답이 「마지막 말」 인용 한 줄로 잘려 「답을 남기지 못했다」가 됐다.
+    // 사람이 부른 턴에는 일부러 하는 침묵(FYI)이 없으니 답 꼴(`looksLikeAnswer`)을 따지지 않는다. 구독 턴은 지금처럼 인용만 한다.
+    if (opts.recordProxy === true && opts.lastSaid) {
+      const fromRecord = proxyRecordAnswerBody(opts.lastSaid, opts.pat, opts.secrets);
+      if (fromRecord) return { kind: 'post', body: fromRecord };
+    }
   }
   const said = quotedLine(opts.lastSaid, opts.pat, opts.secrets);
   if (opts.caller === 'delegated') {
