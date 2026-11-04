@@ -7,7 +7,7 @@ import { buildBoard, mineCount } from '../lib/inboxBoard';
 
 /** 보드 한 판의 재료 — `GET /inbox/board` 의 응답(`ApiClient.inboxBoard`). `truncated` 는 옛 시험 목이 안 줄 수 있다. */
 export interface InboxBoardData { entries: InboxEntry[]; threads: MessageRow[] | null; threadStates: InboxThreadState[]; truncated?: boolean }
-import { ApiClient, ApiError, type AvatarSourceRef, type BundleAcceptResult, type PreviewTicket } from '../lib/api';
+import { ApiClient, ApiError, type AvatarSourceRef, type BundleAcceptResult, type PlanStartDone, type PlanStartPreview, type PlanStartStep, type PreviewTicket } from '../lib/api';
 import type { AvatarSave } from '../lib/avatarCrop';
 export type { BundleAcceptResult } from '../lib/api';
 import { addRange, coversSeq, type SeqRange } from '../lib/seqCoverage';
@@ -2961,6 +2961,31 @@ export class Controller {
     if (held && plan && Date.parse(plan.updatedAt) < Date.parse(held.updatedAt)) return held;
     store.set({ threadPlans: { ...store.threadPlans, [rootId]: plan } });
     return plan;
+  }
+
+  /** 계획판 「시작」 미리보기. 아무것도 바꾸지 않는다. 글은 누른 사람의 앱 언어로 짓는다. */
+  async previewPlanStart(rootId: string, steps: PlanStartStep[]): Promise<PlanStartPreview> {
+    return this.api.planStart(rootId, { steps, dryRun: true, locale: this.planLocale() });
+  }
+
+  /** 계획판 「시작」. 미리보기의 판 번호(`ifRev`)가 없으면 시작할 수 없다. 받은 판을 바로 싣는다 — 이벤트를 기다리면 줄이 늦게 바뀐다. */
+  async startPlan(rootId: string, steps: PlanStartStep[], ifRev: number): Promise<PlanStartDone> {
+    const res = await this.api.planStart(rootId, { steps, ifRev, locale: this.planLocale() });
+    const store = this.store.getState();
+    store.set({ threadPlans: { ...store.threadPlans, [rootId]: res.plan } });
+    return res;
+  }
+
+  /** 관리 에이전트를 바꾸거나 비운다. */
+  async setPlanManager(rootId: string, managerId: string | null): Promise<void> {
+    const plan = await this.api.setPlanManager(rootId, managerId);
+    const store = this.store.getState();
+    store.set({ threadPlans: { ...store.threadPlans, [rootId]: plan } });
+  }
+
+  private planLocale(): 'ko' | 'en' {
+    const pref = usePrefsStore.getState().locale;
+    return (isLocale(pref) ? pref : detectLocale()) === 'ko' ? 'ko' : 'en';
   }
 
   /** 스레드 × 에이전트 모델 지정(079)을 받아 둔다. 실패는 던진다 — 삼킬지는 부르는 쪽이 정한다. */

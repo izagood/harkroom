@@ -107,6 +107,73 @@ export function prUrl(pr: { repo: string; number: number }): string {
   return `https://github.com/${pr.repo}/pull/${pr.number}`;
 }
 
+/**
+ * 줄을 누르면 갈 곳(시안 v4 R14) — 카드 → 메시지 → PR 순서. 앱 안에서 가는 것이 먼저고 PR 은 밖이라 마지막이다.
+ * 작업 항목은 id 만으로 갈 화면이 없어 넣지 않는다. 비면 누를 수 없는 줄이다.
+ */
+export type PlanGoTarget = { kind: 'card' | 'message'; id: string } | { kind: 'pr'; repo: string; number: number };
+export function stepGoTargets(step: PlanStep): PlanGoTarget[] {
+  const out: PlanGoTarget[] = [];
+  const links = step.links ?? [];
+  for (const l of links) if (l.kind === 'card') out.push({ kind: 'card', id: l.messageId });
+  for (const l of links) if (l.kind === 'message') out.push({ kind: 'message', id: l.id });
+  for (const l of links) {
+    if (l.kind === 'pr' && PR_REPO_RE.test(l.repo) && Number.isInteger(l.number) && l.number > 0) out.push({ kind: 'pr', repo: l.repo, number: l.number });
+  }
+  return out;
+}
+
+/**
+ * 「▷ 시작」(R13·A안) — 시작 가능한 단계에만 있다. 관리 에이전트가 있으면 담당과 상관없이 그쪽으로 간다.
+ * 없을 때 담당이 나 아닌 사람이면 꺼 둔다(그 사람이 시작한다). 담당이 없거나 에이전트면 켠다(담당 없음은 상자에서 고른다).
+ */
+export type PlanStartState = 'none' | 'enabled' | 'other_human';
+export function stepStartState(plan: ThreadPlanView, step: PlanStep, me: string | null, isHuman: (id: string) => boolean): PlanStartState {
+  if (stepState(plan, step) !== 'ready') return 'none';
+  if (plan.doc.managerId) return 'enabled';
+  const a = stepAssignee(plan.doc, step);
+  return a && a !== me && isHuman(a) ? 'other_human' : 'enabled';
+}
+
+/** 「모두 시작」의 후보 — 「시작 가능」 칩과 같은 단계(문서 순서). 내 차례는 뺀다. 고를 수 없는 줄은 서버 미리보기가 사유를 준다. */
+export function planReadyStepIds(plan: ThreadPlanView, me: string | null): string[] {
+  return planStepOrder(plan.doc).filter((s) => stepKind(plan, s, me) === 'ready').map((s) => s.id);
+}
+
+/** 시작 응답에 알릴 것이 없는가 — 있으면 확인 상자를 닫지 않고 보인다(글 실패·그 사이 남이 시작·못 알림). */
+export function planStartClean(res: { skipped: unknown[]; failed: unknown[]; notNotified: unknown[] }): boolean {
+  return res.skipped.length === 0 && res.failed.length === 0 && res.notNotified.length === 0;
+}
+
+/** 패널 크기(R15). 전역 하나만 기억한다 — 크기는 창에 대한 취향이지 스레드의 성질이 아니다. */
+export const PLAN_PANEL_DEFAULT = { w: 440, h: 600 };
+export const PLAN_PANEL_MIN = { w: 360, h: 320 };
+const SIZE_KEY = 'harkroom.threadPlan.size';
+export function clampPlanSize(size: { w: number; h: number }, box: { w: number; h: number }): { w: number; h: number } {
+  const maxW = Math.max(PLAN_PANEL_MIN.w, box.w - 32);
+  const maxH = Math.max(PLAN_PANEL_MIN.h, box.h - 72);
+  return {
+    w: Math.min(maxW, Math.max(PLAN_PANEL_MIN.w, Math.round(size.w))),
+    h: Math.min(maxH, Math.max(PLAN_PANEL_MIN.h, Math.round(size.h))),
+  };
+}
+/** 「⤢ 넓게」 = 칸 폭 60% × 최대 높이. */
+export function widePlanSize(box: { w: number; h: number }): { w: number; h: number } {
+  return clampPlanSize({ w: box.w * 0.6, h: box.h }, box);
+}
+export function loadPlanSize(): { w: number; h: number } | null {
+  try {
+    const v = JSON.parse(localStorage.getItem(SIZE_KEY) ?? 'null') as { w?: unknown; h?: unknown } | null;
+    return v && typeof v.w === 'number' && typeof v.h === 'number' ? { w: v.w, h: v.h } : null;
+  } catch { return null; }
+}
+export function savePlanSize(size: { w: number; h: number } | null): void {
+  try {
+    if (size) localStorage.setItem(SIZE_KEY, JSON.stringify(size));
+    else localStorage.removeItem(SIZE_KEY);
+  } catch { /* 저장 못 해도 이번 화면은 그 크기로 돈다 */ }
+}
+
 /** 그룹 머리의 표지·수. 막힘이 먼저고, 내 단계가 있으면 내 차례, 그 밖은 서버 파생 상태다. */
 export function groupFacts(plan: ThreadPlanView, g: PlanGroup, me: string | null): {
   kind: PlanRowKind; done: number; total: number; active: number; mine: number;

@@ -1,14 +1,17 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import type { PlanGroup, PlanStep, ThreadPlanProgress, ThreadPlanView } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
 import { getExternalOpener } from '../lib/openExternal';
+import type { PlanStartDone } from '../lib/api';
 import {
   crossGroupTitle, groupFacts, isPlanStale, loadPlanOpen, nextCycleIndex, PLAN_CHIP_KINDS, planButtonKind, planFlow, planFlowVisible, planLists,
-  planPills, planTitleOf, planTone, prUrl, savePlanOpen, stepAssignee, stepFirstLinks, stepKind, stepWaiters, stepWhy, stepsOf,
+  clampPlanSize, loadPlanSize, PLAN_PANEL_DEFAULT, planReadyStepIds, planPills, planStartClean, planTitleOf, planTone, prUrl, savePlanOpen, savePlanSize, stepAssignee,
+  stepGoTargets, stepKind, stepStartState, stepWaiters, stepWhy, stepsOf, widePlanSize,
   type PlanChipKind, type PlanPill, type PlanRowKind,
 } from '../lib/threadPlan';
 import { agoLabel } from '../lib/time';
+import { PlanStartBox } from './PlanStartBox';
 import { useLocale, useT } from '../i18n/useT';
 
 /**
@@ -98,6 +101,60 @@ function PlanPanel({ plan, onClose }: { plan: ThreadPlanView; onClose: () => voi
   const [flowAll, setFlowAll] = useState(false);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(flashTimer.current), []);
+  const human = useActiveStore((s) => s.me?.kind === 'human');
+  const accounts = useActiveStore((s) => s.accounts);
+  const myHandle = useActiveStore((s) => s.me?.handle ?? '');
+  const [startFor, setStartFor] = useState<string | 'all' | null>(null);
+  const [started, setStarted] = useState<Record<string, { who: string; messageId: string | null }>>({});
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState(() => loadPlanSize() ?? PLAN_PANEL_DEFAULT);
+  const [editingManager, setEditingManager] = useState(false);
+  const [managerError, setManagerError] = useState(false);
+  const readyIds = planReadyStepIds(plan, me);
+  const manager = plan.doc.managerId ? accounts[plan.doc.managerId] : undefined;
+  const agents = Object.values(accounts).filter((a) => a.kind === 'agent');
+  /** 스레드 칸의 크기 — 최대 크기를 정한다. 저장값은 건드리지 않고 그릴 때만 줄인다(CSS max-w·max-h, X2). */
+  const boxOf = () => {
+    const el = panelRef.current?.parentElement;
+    return { w: el?.clientWidth || window.innerWidth, h: el?.clientHeight || window.innerHeight };
+  };
+  /** 왼쪽·위로 끌수록 커진다 — 패널이 오른쪽 아래에 붙어 있다. */
+  const beginResize = (e: ReactPointerEvent, axis: { w: boolean; h: boolean }) => {
+    e.preventDefault();
+    const from = { x: e.clientX, y: e.clientY, ...size };
+    let last = size;
+    const move = (ev: PointerEvent) => {
+      last = clampPlanSize({ w: axis.w ? from.w + from.x - ev.clientX : from.w, h: axis.h ? from.h + from.y - ev.clientY : from.h }, boxOf());
+      setSize(last);
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      savePlanSize(last);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+  const resetSize = () => { setSize(PLAN_PANEL_DEFAULT); savePlanSize(null); };
+  const isWide = size.w !== PLAN_PANEL_DEFAULT.w || size.h !== PLAN_PANEL_DEFAULT.h;
+  const toggleWide = () => {
+    if (isWide) { resetSize(); return; }
+    const next = widePlanSize(boxOf());
+    setSize(next);
+    savePlanSize(next);
+  };
+  const changeManager = (id: string) => {
+    setEditingManager(false);
+    setManagerError(false);
+    void getController().setPlanManager(plan.rootId, id || null).catch(() => setManagerError(true));
+  };
+  const onStarted = (res: PlanStartDone) => {
+    // 못 한 것·못 알린 것이 있으면 상자를 닫지 않는다 — 상자가 그 사유를 보인다.
+    const clean = planStartClean(res);
+    if (clean) setStartFor(null);
+    setStarted((m) => ({ ...m, ...Object.fromEntries(res.started.map((x) => [x.id, { who: myHandle, messageId: x.messageId }])) }));
+    if (clean && res.started[0]) goTo(res.started[0].id);
+  };
 
   const lists = planLists(plan, me);
   const pills = planPills(plan, me);
@@ -132,17 +189,24 @@ function PlanPanel({ plan, onClose }: { plan: ThreadPlanView; onClose: () => voi
   };
   /** 글로 간다 — 패널을 접어 그 글을 가리지 않게 한다(W7). */
   const goToMessage = (id: string) => { onClose(); void getController().openMessage(id).catch(() => {}); };
-  const shared: RowActions = { plan, me, flash, whyOpen, goTo, goToMessage,
+  const shared: RowActions = { plan, me, flash, whyOpen, goTo, goToMessage, human, started, startFor, setStartFor, onStarted,
     toggleWhy: (id) => setWhyOpen((w) => ({ ...w, [id]: !w[id] })) };
   const loose = stepsOf(plan.doc, null);
 
   return (
     <div
+      ref={panelRef}
       data-testid="plan-panel"
       tabIndex={-1}
+      style={{ width: size.w, height: size.h }}
       onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } }}
-      className="absolute bottom-14 right-4 z-10 flex h-[600px] max-h-[calc(100%-72px)] w-[440px] max-w-[calc(100%-32px)] flex-col overflow-hidden rounded-card border border-border bg-surface-raised text-body shadow-float"
+      className="absolute bottom-14 right-4 z-10 flex max-h-[calc(100%-72px)] max-w-[calc(100%-32px)] flex-col overflow-hidden rounded-card border border-border bg-surface-raised text-body shadow-float"
     >
+      {/* 크기 조절(X1) — 패널이 오른쪽 아래에 붙어 있으니 왼쪽 위에서 끈다. 두 번 누르면 기본 크기. */}
+      <div data-testid="plan-resize-corner" aria-hidden="true" title={t('plan.resize.hint')} onPointerDown={(e) => beginResize(e, { w: true, h: true })} onDoubleClick={resetSize}
+        className="absolute left-0 top-0 z-10 flex h-[18px] w-[18px] cursor-nwse-resize items-center justify-center text-meta text-fg-subtle">↖</div>
+      <div data-testid="plan-resize-left" aria-hidden="true" onPointerDown={(e) => beginResize(e, { w: true, h: false })} className="absolute bottom-[18px] left-0 top-[18px] z-10 w-[5px] cursor-ew-resize" />
+      <div data-testid="plan-resize-top" aria-hidden="true" onPointerDown={(e) => beginResize(e, { w: false, h: true })} className="absolute left-[18px] right-[18px] top-0 z-10 h-[5px] cursor-ns-resize" />
       {/* 머리는 고정이다(W4) — 칩이 스크롤에 밀려 사라지면 차례로 가는 길도 사라진다. */}
       <div data-testid="plan-head" className="shrink-0 border-b border-border px-3.5 pb-1.5 pt-2.5">
         <div className="flex items-center gap-2">
@@ -151,8 +215,11 @@ function PlanPanel({ plan, onClose }: { plan: ThreadPlanView; onClose: () => voi
             {plan.progress.done}/{plan.progress.total}
             {plan.progress.blocked > 0 && <span className="text-state-stuck"> {t('plan.chip.blocked', { n: plan.progress.blocked })}</span>}
           </span>
+          <button type="button" data-testid="plan-size-toggle" onClick={toggleWide} className="ml-auto shrink-0 rounded-row px-1 text-meta text-fg-muted hover:bg-surface-sunken">
+            {isWide ? t('plan.size.default') : t('plan.size.wide')}
+          </button>
           <button type="button" data-testid="plan-panel-close" aria-label={t('plan.panel.close')} onClick={onClose}
-            className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface-sunken text-fg-muted hover:text-fg">✕</button>
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface-sunken text-fg-muted hover:text-fg">✕</button>
         </div>
         <div data-testid="plan-goal" className="mt-0.5">{plan.doc.goal}</div>
         <div className="text-meta text-fg-subtle">
@@ -161,11 +228,33 @@ function PlanPanel({ plan, onClose }: { plan: ThreadPlanView; onClose: () => voi
             t('plan.meta.counts', { groups: plan.doc.groups.length, steps: plan.doc.steps.length })].filter(Boolean).join(' · ')}
           {isPlanStale(plan.updatedAt, Date.now()) && <span data-testid="plan-stale" className="text-warning"> · {t('plan.stale')}</span>}
         </div>
+        {(manager || human) && (
+          <div data-testid="plan-manager" className="flex items-center gap-1 text-meta text-fg-muted">
+            <span>{t('plan.manager.label')}</span>
+            {editingManager ? (
+              <select data-testid="plan-manager-select" autoFocus value={plan.doc.managerId ?? ''} onChange={(e) => changeManager(e.target.value)} onBlur={() => setEditingManager(false)}
+                className="min-w-0 rounded-row border border-border bg-surface-raised px-1">
+                <option value="">{t('plan.manager.none')}</option>
+                {agents.map((a) => <option key={a.id} value={a.id}>@{a.handle}</option>)}
+              </select>
+            ) : <span className="truncate text-fg-agent">{manager ? `@${manager.handle}` : t('plan.manager.none')}</span>}
+            {human && !editingManager && (
+              <button type="button" data-testid="plan-manager-edit" aria-label={t('plan.manager.edit')} onClick={() => setEditingManager(true)} className="rounded-row px-1 hover:bg-surface-sunken">✎</button>
+            )}
+            {managerError && <span className="text-state-stuck">{t('plan.manager.failed')}</span>}
+          </div>
+        )}
         <div data-testid="plan-chips" className="flex flex-wrap gap-1.5 py-1.5">
           {PLAN_CHIP_KINDS.map((kind) => (
             <SummaryChip key={kind} kind={kind} n={lists[kind].length} visiting={cycle?.kind === kind ? cycle.index + 1 : null}
               onPress={() => pressChip(kind)} />
           ))}
+          {human && readyIds.length >= 2 && (
+            <button type="button" data-testid="plan-start-all" aria-expanded={startFor === 'all'} onClick={() => setStartFor(startFor === 'all' ? null : 'all')}
+              className="inline-flex h-6 items-center rounded-full border border-state-active px-2.5 text-meta font-semibold text-state-active hover:bg-state-active-surface">
+              {t('plan.start.all')}
+            </button>
+          )}
         </div>
         {layers.length > 0 && (
           <div data-testid="plan-flow" className="flex flex-wrap items-center gap-1 text-meta text-fg-muted">
@@ -189,6 +278,7 @@ function PlanPanel({ plan, onClose }: { plan: ThreadPlanView; onClose: () => voi
       </div>
       {/* 목록만 스크롤한다. 끝난 일도 접지 않고 문서 순서대로 쭉 둔다(W1·W2). */}
       <div ref={list} data-testid="plan-list" className="min-h-0 flex-1 overflow-y-auto px-2.5 pb-2 pt-1">
+        {startFor === 'all' && <PlanStartBox plan={plan} stepIds={readyIds} bulk onClose={() => setStartFor(null)} onStarted={onStarted} />}
         {plan.flagged && <div className="py-1 text-meta text-state-stuck">{t('plan.flagged')}</div>}
         {plan.doc.groups.map((g) => (
           <GroupRow key={g.id} group={g} collapsed={!!collapsed[g.id]} actions={shared}
@@ -215,6 +305,11 @@ interface RowActions {
   goTo: (id: string, why?: boolean) => void;
   goToMessage: (id: string) => void;
   toggleWhy: (id: string) => void;
+  human: boolean;
+  started: Record<string, { who: string; messageId: string | null }>;
+  startFor: string | 'all' | null;
+  setStartFor: (id: string | 'all' | null) => void;
+  onStarted: (res: PlanStartDone) => void;
 }
 
 function GroupRow({ group, collapsed, onToggle, actions }: { group: PlanGroup; collapsed: boolean; onToggle: () => void; actions: RowActions }) {
@@ -260,20 +355,38 @@ function GroupRow({ group, collapsed, onToggle, actions }: { group: PlanGroup; c
 
 function StepRow({ step, actions, indent = false }: { step: PlanStep; actions: RowActions; indent?: boolean }) {
   const t = useT();
-  const { plan, me, flash, whyOpen, goTo, goToMessage, toggleWhy } = actions;
+  const { plan, me, flash, whyOpen, goTo, goToMessage, toggleWhy, human, started, startFor, setStartFor, onStarted } = actions;
   const d = plan.derived[step.id];
   const kind = stepKind(plan, step, me);
   const parent = step.groupId ? plan.doc.groups.find((g) => g.id === step.groupId) : undefined;
   const hasDeps = (step.dependsOn?.length ?? 0) > 0 || (parent?.dependsOn?.length ?? 0) > 0;
-  const { pr, messageId } = stepFirstLinks(step);
   const waiters = kind === 'mine' ? stepWaiters(plan, step.id) : [];
   const assignee = stepAssignee(plan.doc, step);
-  const account = useActiveStore((st) => (assignee ? st.accounts[assignee] : undefined));
+  const accounts = useActiveStore((st) => st.accounts);
+  const account = assignee ? accounts[assignee] : undefined;
   const open = !!whyOpen[step.id];
+  const targets = stepGoTargets(step);
+  const startState = human ? stepStartState(plan, step, me, (id) => accounts[id]?.kind === 'human') : 'none';
+  const note = started[step.id];
+
+  const go = (target: (typeof targets)[number]) => {
+    if (target.kind === 'pr') void getExternalOpener().open(prUrl(target));
+    else goToMessage(target.id);
+  };
+  // 막힌 줄은 까닭을 펴고, 연결이 있는 줄은 그리로 간다(R14). 연결이 없으면 누르는 모양을 주지 않는다(X10).
+  const press = kind === 'blocked' ? () => toggleWhy(step.id) : targets[0] ? () => go(targets[0]!) : null;
+  const onRowClick = (e: ReactMouseEvent) => {
+    if ((e.target as Element).closest('button,select,input,label,a')) return;
+    press?.();
+  };
+  const label = (x: (typeof targets)[number]) => (x.kind === 'pr' ? t('plan.row.pr', { number: x.number }) : x.kind === 'card' ? t('plan.why.card') : t('plan.why.messageLink'));
+
   return (
     <div data-node={step.id} data-kind={kind}
       className={`rounded-row ${indent ? 'ml-5' : ''} ${flash === step.id ? 'ring-2 ring-accent' : ''} ${kind === 'blocked' ? 'bg-danger-surface' : ''}`}>
-      <div className="flex items-start gap-2 px-1.5 py-1">
+      <div data-testid="plan-row" role={press ? 'button' : undefined} tabIndex={press ? 0 : undefined} onClick={onRowClick}
+        onKeyDown={(e) => { if (press && e.key === 'Enter' && e.target === e.currentTarget) press(); }}
+        className={`group flex items-start gap-2 rounded-row px-1.5 py-1 ${press ? 'cursor-pointer hover:bg-surface-sunken' : ''}`}>
         <PlanMark kind={kind} />
         <div className="min-w-0 flex-1">
           <div>{step.title}</div>
@@ -296,26 +409,40 @@ function StepRow({ step, actions, indent = false }: { step: PlanStep; actions: R
                 {t('plan.row.waiters', { n: waiters.length })}
               </button>
             ),
-            pr && (
-              <button type="button" data-testid="plan-row-pr" className="text-link underline decoration-dotted"
-                onClick={() => { void getExternalOpener().open(prUrl(pr)); }}>
-                {t('plan.row.pr', { number: pr.number })}
-              </button>
+            note && (
+              <span data-testid="plan-started-note" className="inline-flex gap-x-1">
+                {t('plan.start.justStarted', { who: note.who })}
+                {note.messageId && (
+                  <button type="button" data-testid="plan-started-link" className="text-link underline decoration-dotted" onClick={() => goToMessage(note.messageId!)}>
+                    {t('plan.start.postLink')}
+                  </button>
+                )}
+              </span>
             ),
-            messageId && kind !== 'blocked' && (
-              <button type="button" data-testid="plan-row-message" className="text-link underline decoration-dotted" onClick={() => goToMessage(messageId)}>
-                {t('plan.row.message')}
+            kind !== 'blocked' && targets.map((x, i) => (i < 2 && (
+              <button key={i} type="button" data-testid={`plan-row-go-${x.kind}`} className="text-link underline decoration-dotted" onClick={() => go(x)}>
+                {label(x)}{i === 1 && targets.length > 2 ? ` ${t('plan.row.more', { n: targets.length - 2 })}` : ''}
               </button>
-            ),
+            ))),
+            kind === 'mine' && !targets.length && <span data-testid="plan-row-nolink" className="text-fg-subtle">{t('plan.row.noLink')}</span>,
             kind === 'blocked' && (
               <button type="button" data-testid="plan-why-toggle" aria-expanded={open} className="text-state-stuck underline decoration-dotted" onClick={() => toggleWhy(step.id)}>
                 {open ? t('plan.why.collapse') : t('plan.why.toggle')}
               </button>
             ),
-          ]} />
+          ].flat()} />
           <Waiting ids={d?.waitingOn ?? []} fromGroupId={step.groupId ?? null} actions={actions} goTo={goTo} />
         </div>
+        {startState !== 'none' && (
+          <button type="button" data-testid="plan-start" disabled={startState === 'other_human'} title={startState === 'other_human' ? t('plan.start.otherHuman') : undefined}
+            aria-expanded={startFor === step.id} onClick={() => setStartFor(startFor === step.id ? null : step.id)}
+            className="shrink-0 self-center rounded-full border border-state-active px-2 text-meta font-semibold text-state-active enabled:hover:bg-state-active-surface disabled:border-border disabled:text-fg-subtle">
+            {t('plan.start.button')}
+          </button>
+        )}
+        {press && kind !== 'blocked' && <span aria-hidden="true" className="invisible shrink-0 self-center text-fg-subtle group-hover:visible">›</span>}
       </div>
+      {startFor === step.id && <PlanStartBox plan={plan} stepIds={[step.id]} onClose={() => setStartFor(null)} onStarted={onStarted} />}
       {kind === 'blocked' && open && <WhyBox step={step} actions={actions} />}
     </div>
   );

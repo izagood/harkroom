@@ -143,6 +143,7 @@
   "POST /secrets/:p/reveal": "0.4.20",
   "POST /skills/:p/approve": "0.1.167",
   "POST /teams": "0.1.167",
+  "POST /threads/:p/plan/start": "0.4.390",
   "POST /ws-ticket": "0.1.167",
   "PUT /accounts/:p/grants": "0.2.9",
   "PUT /accounts/:p/role": "0.2.9",
@@ -173,5 +174,6 @@
   "PUT /teams/:p/invokers/:p": "0.3.29",
   "PUT /teams/:p/lead": "0.1.167",
   "PUT /teams/:p/members/:p": "0.1.167",
-  "PUT /teams/:p/scope": "0.3.29"
+  "PUT /teams/:p/scope": "0.3.29",
+  "PUT /threads/:p/plan/manager": "0.4.390"
 }
