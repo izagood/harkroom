@@ -29,6 +29,23 @@ describe('buildTurnPrompt', () => {
     expect(r.prompt).toContain('checker: 점검을 시작한다');
   });
 
+  it('받는 사람에 내가 없는 위임 글에 「너에게 온 글 아님」을 달고, 나에게 온 위임·앵커에는 달지 않는다', () => {
+    const r = buildTurnPrompt({
+      messages: [
+        msg(1, 'lead', '다른 팀원 몫의 지시', { id: 'others', meta: { kind: 'delegation', delegation: { to: ['alpha', 'beta'] } } }),
+        msg(2, 'lead', '나까지 받는 지시', { id: 'both', meta: { kind: 'delegation', delegation: { to: ['alpha', 'checker'] } } }),
+        msg(3, 'lead', '내 몫의 지시', { id: 'anchor', meta: { kind: 'delegation', delegation: { to: ['beta'] } } }),
+        msg(4, 'lead', '그냥 글', { id: 'plain' }),
+      ],
+      lastFedSeq: 0, meId: 'me', handles: { me: 'checker', lead: 'lead' },
+      channelId: 'c', threadRootId: 'root', mentionId: 'anchor',
+    });
+    expect(r.prompt).toContain('lead (너에게 온 글 아님 — @alpha @beta 에게 넘긴 일이다): 다른 팀원 몫의 지시');
+    expect(r.prompt).toContain('lead: 나까지 받는 지시');
+    expect(r.prompt).toContain('lead (← 너를 부른 글): 내 몫의 지시');
+    expect(r.prompt).toContain('lead: 그냥 글');
+  });
+
   it('스레드 머리가 나를 불렀거나 머리 부름이 없으면 「너에게 온 글 아님」을 달지 않는다 · 앵커가 머리면 「← 너를 부른 글」 하나', () => {
     const h = { tm: 'lead', me: 'collector' };
     const run = (body: string, mentionId?: string) => buildTurnPrompt({
