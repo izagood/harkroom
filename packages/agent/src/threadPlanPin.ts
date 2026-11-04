@@ -26,6 +26,8 @@ export const THREAD_PLAN_MAX_CHARS = 2000;
 
 /** 서버 `thread.plan` 읽기 응답의 `plan`(필요한 칸만). 옛 서버(도구 없음)·실패는 `'unavailable'`. */
 export interface ThreadPlanSnapshot {
+  /** 그 스레드가 사는 채널. 옛 서버·시험 대역은 없을 수 있다. */
+  channelId?: string;
   doc: PlanDoc;
   rev: number;
   updatedAt: string;
@@ -252,6 +254,8 @@ export async function planRefLines(opts: {
   body: string;
   anchor: string | null;
   anchorPlan: ThreadPlanState;
+  /** 부른 글의 채널. 답을 읽는 사람들의 범위라, 다른 채널의 계획은 펼치지 않는다(계획판 연결 그룹의 청중 규칙). */
+  channelId: string;
   readPlan?: (rootId: string) => Promise<Exclude<ThreadPlanState, 'unavailable'>>;
   meId: string;
 }): Promise<string[]> {
@@ -274,7 +278,12 @@ export async function planRefLines(opts: {
   for (const ref of refs) {
     const known = plans.get(ref.rootId);
     const plan = known === undefined ? 'unavailable' : known;
-    const line = plan === 'unavailable' ? `${ref.stepId}(스레드 ${ref.rootId}) — 이 단계를 읽을 수 없다` : planRefLine(ref, plan, opts.meId);
+    const sameThread = opts.anchor !== null && ref.rootId === opts.anchor.toLowerCase();
+    const line = plan === 'unavailable'
+      ? `${ref.stepId}(스레드 ${ref.rootId}) — 이 단계를 읽을 수 없다`
+      : !sameThread && plan?.channelId !== opts.channelId
+        ? `${ref.stepId}(스레드 ${ref.rootId}) — 다른 채널의 계획은 펼치지 않는다`
+        : planRefLine(ref, plan, opts.meId);
     if (size + line.length + 1 > PLAN_REF_MAX_CHARS) break;
     out.push(line);
     size += line.length + 1;

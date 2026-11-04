@@ -1336,7 +1336,7 @@ export async function runMentionTurn(
   const planPin = freshWake ? { ...plannedPlan, commit: async () => {} } : plannedPlan;
   // 부른 글이 가리키는 계획 단계를 펼친다(`planRefLines`). 턴을 막지 않는다 — 읽지 못한 단계는 그렇다고 한 줄만 쓴다.
   const planRefs = await planRefLines({
-    body: thread.find((m) => m.id === mentionId)?.body ?? '', anchor, anchorPlan: threadPlan, readPlan, meId: deps.me.id,
+    body: thread.find((m) => m.id === mentionId)?.body ?? '', anchor, anchorPlan: threadPlan, channelId, readPlan, meId: deps.me.id,
   });
   // 하네스 파일 메모리 수확 알림(U5, `harnessMemory.ts`). 어댑터가 그 자리를 아는 하네스만
   // (지금은 claude). 읽기 실패는 빈 목록이라 턴을 막지 않는다.
