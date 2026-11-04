@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../api/api_error.dart';
 import '../api/thread_plan.dart';
 import '../i18n/i18n.dart';
 import '../state/app_scope.dart';
@@ -436,6 +437,53 @@ class _PlanSheetState extends State<_PlanSheet> {
   String? _flashId;
   int _flashNo = 0;
   ({PlanRowKind kind, int index})? _cycle;
+  final Map<String, ({String who, String? messageId})> _started = {};
+  bool _managerFailed = false;
+
+  /// 「▷ 시작」·「모두 시작」 — 작은 확인 시트를 겹쳐 연다. 시작하면 그 시트만 닫히고 이 시트의 줄이 바뀐다.
+  Future<void> _openStart(ThreadPlanView plan, List<String> stepIds, {bool bulk = false}) async {
+    final app = AppScope.read(context);
+    final locale = context.t.localeCode;
+    final res = await showModalBottomSheet<PlanStartDone>(
+      context: context,
+      useRootNavigator: true,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: context.tokens.surfaceRaised,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (_) => _PlanStartSheet(rootId: widget.rootId, plan: plan, stepIds: stepIds, bulk: bulk, locale: locale),
+    );
+    if (res == null || !mounted) return;
+    setState(() {
+      for (final s in res.started) {
+        _started[s.id] = (who: app.me?.handle ?? '', messageId: s.messageId);
+      }
+    });
+    if (res.started.isNotEmpty) _goTo(res.plan ?? plan, res.started.first.id);
+  }
+
+  /// 관리 에이전트 바꾸기 — 에이전트 목록 시트에서 고른다. 비울 수도 있다.
+  Future<void> _pickManager(ThreadPlanView plan) async {
+    final app = AppScope.read(context);
+    final t = context.t;
+    final agents = app.accounts.values.where((a) => a.isAgent && !a.isDisabled).toList(growable: false);
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      useRootNavigator: true,
+      useSafeArea: true,
+      builder: (ctx) => ListView(key: const Key('plan-manager-list'), shrinkWrap: true, children: [
+        ListTile(key: const Key('plan-manager-none'), title: Text(t.planManagerNone), onTap: () => Navigator.of(ctx).pop('')),
+        for (final a in agents) ListTile(key: Key('plan-manager-pick-${a.id}'), title: Text('@${a.handle}'), onTap: () => Navigator.of(ctx).pop(a.id)),
+      ]),
+    );
+    if (picked == null || !mounted) return;
+    try {
+      await app.setPlanManager(widget.rootId, picked.isEmpty ? null : picked);
+      if (mounted) setState(() => _managerFailed = false);
+    } on Object {
+      if (mounted) setState(() => _managerFailed = true);
+    }
+  }
 
   @override
   void dispose() {
@@ -573,6 +621,9 @@ class _PlanSheetState extends State<_PlanSheet> {
                   app: app,
                   me: me,
                   cycle: _cycle,
+                  managerFailed: _managerFailed,
+                  onEditManager: () => unawaited(_pickManager(plan!)),
+                  onStartAll: () => unawaited(_openStart(plan!, planReadyStepIds(plan), bulk: true)),
                   onChip: (lists, kind) => _pressChip(plan!, lists, kind),
                   onPill: (p) => _pressPill(plan!, p, me),
                 ),
@@ -735,6 +786,8 @@ class _PlanSheetState extends State<_PlanSheet> {
           onWaiting: (id) => _pressWaiting(plan, id),
           onGo: (id, why) => _goTo(plan, id, why: why),
           onMessage: _goToMessage,
+          started: _started[s.id],
+          onStart: () => unawaited(_openStart(plan, [s.id])),
         ),
       );
 }
@@ -742,7 +795,7 @@ class _PlanSheetState extends State<_PlanSheet> {
 class _SheetHead extends StatefulWidget {
   const _SheetHead({
     super.key, required this.plan, required this.app, required this.me, required this.cycle,
-    required this.onChip, required this.onPill,
+    required this.onChip, required this.onPill, required this.onEditManager, required this.onStartAll, required this.managerFailed,
   });
 
   final ThreadPlanView? plan;
@@ -751,6 +804,9 @@ class _SheetHead extends StatefulWidget {
   final ({PlanRowKind kind, int index})? cycle;
   final void Function(Map<PlanRowKind, List<String>>, PlanRowKind) onChip;
   final ValueChanged<PlanPill> onPill;
+  final VoidCallback onEditManager;
+  final VoidCallback onStartAll;
+  final bool managerFailed;
 
   @override
   State<_SheetHead> createState() => _SheetHeadState();
@@ -830,7 +886,25 @@ class _SheetHeadState extends State<_SheetHead> {
             ]),
             style: TextStyle(color: k.fgMuted, fontSize: HarkroomType.meta),
           ),
-          const SizedBox(height: 6),
+          Row(key: const Key('plan-manager'), children: [
+            Text('${t.planManagerLabel} ', style: TextStyle(color: k.fgMuted, fontSize: HarkroomType.meta)),
+            Flexible(
+              child: Text(
+                plan.managerId != null && widget.app.accounts[plan.managerId] != null ? '@${widget.app.accounts[plan.managerId]!.handle}' : t.planManagerNone,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: k.fgAgent, fontSize: HarkroomType.meta),
+              ),
+            ),
+            IconButton(
+              key: const Key('plan-manager-edit'),
+              tooltip: t.planManagerEdit,
+              visualDensity: VisualDensity.compact,
+              icon: Icon(Icons.edit_outlined, size: 14, color: k.fgMuted),
+              onPressed: widget.onEditManager,
+            ),
+            if (widget.managerFailed) Text(t.planManagerFailed, style: TextStyle(color: k.stateStuck, fontSize: HarkroomType.meta)),
+          ]),
           // 상태 칩은 한 줄(가로 스크롤) — 40단계 판에서 목록 자리를 먹지 않게. 넘치는 쪽 끝을 흐린다.
           SizedBox(
             height: HarkroomSize.row,
@@ -853,6 +927,24 @@ class _SheetHeadState extends State<_SheetHead> {
                         n: lists![kind]!.length,
                         visiting: widget.cycle?.kind == kind ? widget.cycle!.index + 1 : null,
                         onTap: () => widget.onChip(lists, kind),
+                      ),
+                    ),
+                  if (planReadyStepIds(plan).length >= 2)
+                    InkWell(
+                      key: const Key('plan-start-all'),
+                      customBorder: const StadiumBorder(),
+                      onTap: widget.onStartAll,
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(minHeight: HarkroomSize.row),
+                        child: Align(
+                          widthFactor: 1,
+                          heightFactor: 1,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                            decoration: BoxDecoration(border: Border.all(color: k.stateActive), borderRadius: BorderRadius.circular(HarkroomRadius.full)),
+                            child: Text(t.planStartAll, style: TextStyle(color: k.stateActive, fontSize: HarkroomType.meta, fontWeight: FontWeight.w600)),
+                          ),
+                        ),
                       ),
                     ),
                 ]),
@@ -1166,7 +1258,7 @@ class _RowLink extends StatelessWidget {
 class _StepRow extends StatelessWidget {
   const _StepRow({
     required this.plan, required this.step, required this.app, required this.me, required this.grouped, required this.whyOpen,
-    required this.onToggleWhy, required this.onWaiting, required this.onGo, required this.onMessage,
+    required this.onToggleWhy, required this.onWaiting, required this.onGo, required this.onMessage, required this.onStart, this.started,
   });
 
   final ThreadPlanView plan;
@@ -1179,6 +1271,10 @@ class _StepRow extends StatelessWidget {
   final ValueChanged<String> onWaiting;
   final void Function(String id, bool why) onGo;
   final ValueChanged<String> onMessage;
+  final VoidCallback onStart;
+
+  /// 이 시트에서 방금 시작한 단계의 표시(X7).
+  final ({String who, String? messageId})? started;
 
   @override
   Widget build(BuildContext context) {
@@ -1193,7 +1289,19 @@ class _StepRow extends StatelessWidget {
     // 담당은 이 커뮤니티에 있는 계정일 때만 그린다 — 모르는 id 로 이름을 지어내지 않는다.
     final assigneeId = stepAssignee(plan, step);
     final assignee = assigneeId == null ? null : app.accounts[assigneeId];
-    final links = stepFirstLinks(step);
+    final targets = stepGoTargets(step);
+    void go(PlanGoTarget x) {
+      if (x.kind == 'pr') {
+        unawaited(launchUrl(Uri.parse(prUrl((repo: x.repo!, number: x.number!))), mode: LaunchMode.externalApplication));
+      } else {
+        onMessage(x.id!);
+      }
+    }
+
+    String goLabel(PlanGoTarget x) => x.kind == 'pr' ? t.planRowPr(x.number!) : (x.kind == 'card' ? t.planWhyCard : t.planWhyMessage);
+    // 막힌 줄은 까닭을 펴고, 연결이 있는 줄은 그리로 간다(R14). 연결이 없으면 누르는 모양을 주지 않는다(X10).
+    final VoidCallback? press = kind == PlanRowKind.blocked ? onToggleWhy : (targets.isEmpty ? null : () => go(targets.first));
+    final startState = stepStartState(plan, step, me, (id) => app.accounts[id] != null && !app.accounts[id]!.isAgent);
     final waiters = kind == PlanRowKind.mine ? stepWaiters(plan, step.id) : const <String>[];
     TextStyle meta(Color c, {bool bold = false}) => TextStyle(color: c, fontSize: HarkroomType.meta, height: 1.4, fontWeight: bold ? FontWeight.w600 : null);
     // 조각들. 구분점은 **조각 사이에만** 둔다 — 줄이 구분점으로 끝나거나 시작하지 않게.
@@ -1206,20 +1314,24 @@ class _StepRow extends StatelessWidget {
         Text('${!assignee.isAgent && assignee.id != me ? '${t.planRowPerson} ' : ''}@${assignee.handle}', style: meta(k.fgAgent)),
       if (waiters.isNotEmpty)
         _RowLink(key: Key('plan-waiters-${step.id}'), text: t.planRowWaiters(waiters.length), color: k.stateStuck, onTap: () => onGo(waiters.first, true)),
-      if (links.pr != null)
-        _RowLink(
-          key: Key('plan-row-pr-${step.id}'),
-          text: t.planRowPr(links.pr!.number),
-          color: k.link,
-          onTap: () => unawaited(launchUrl(Uri.parse(prUrl(links.pr!)), mode: LaunchMode.externalApplication)),
-        ),
-      if (links.messageId != null && kind != PlanRowKind.blocked)
-        _RowLink(key: Key('plan-row-message-${step.id}'), text: t.planRowMessage, color: k.link, onTap: () => onMessage(links.messageId!)),
+      if (started != null) Text(t.planStartJustStarted(started!.who), key: Key('plan-started-note-${step.id}'), style: meta(k.fgMuted)),
+      if (started?.messageId != null)
+        _RowLink(key: Key('plan-started-link-${step.id}'), text: t.planStartPostLink, color: k.link, onTap: () => onMessage(started!.messageId!)),
+      if (kind != PlanRowKind.blocked)
+        for (var i = 0; i < targets.length && i < 2; i++)
+          _RowLink(
+            key: Key('plan-row-go-${targets[i].kind}-${step.id}'),
+            text: '${goLabel(targets[i])}${i == 1 && targets.length > 2 ? ' ${t.planRowMore(targets.length - 2)}' : ''}',
+            color: k.link,
+            onTap: () => go(targets[i]),
+          ),
+      if (kind == PlanRowKind.mine && targets.isEmpty) Text(t.planRowNoLink, key: Key('plan-row-nolink-${step.id}'), style: meta(k.fgSubtle)),
+      if (startState == PlanStartState.otherHuman) Text(t.planStartOtherHuman, key: Key('plan-other-human-${step.id}'), style: meta(k.fgSubtle)),
       if (kind == PlanRowKind.blocked)
         _RowLink(key: Key('plan-why-toggle-${step.id}'), text: whyOpen ? t.planWhyCollapse : t.planWhyToggle, color: k.stateStuck, onTap: onToggleWhy),
     ];
     final node = plan.derived[step.id];
-    return Container(
+    final row = Container(
       key: Key('plan-step-${step.id}'),
       constraints: const BoxConstraints(minHeight: HarkroomSize.row),
       margin: EdgeInsets.only(left: grouped ? 24 : 0),
@@ -1266,9 +1378,254 @@ class _StepRow extends StatelessWidget {
             ]),
           ),
           if (kind == PlanRowKind.blocked) ...[const SizedBox(width: 8), const _BlockedTag()],
+          if (startState != PlanStartState.none) ...[
+            const SizedBox(width: 8),
+            _StartPill(key: Key('plan-start-${step.id}'), enabled: startState == PlanStartState.enabled, onTap: onStart),
+          ],
+          if (press != null && kind != PlanRowKind.blocked && startState == PlanStartState.none)
+            Padding(padding: const EdgeInsets.only(left: 4, top: 2), child: ExcludeSemantics(child: Text('›', style: TextStyle(color: k.fgSubtle, fontSize: HarkroomType.body)))),
         ]),
         if (kind == PlanRowKind.blocked && whyOpen) _WhyBox(plan: plan, step: step, me: me, onGo: (id) => onGo(id, false), onMessage: onMessage),
       ]),
+    );
+    if (press == null) return row;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(key: Key('plan-row-${step.id}'), onTap: press, child: row),
+    );
+  }
+}
+
+/// 「▷ 시작」 알약. 눈에 보이는 모양은 작아도 누르는 자리는 44 다.
+class _StartPill extends StatelessWidget {
+  const _StartPill({super.key, required this.enabled, required this.onTap});
+
+  final bool enabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final k = context.tokens;
+    final color = enabled ? k.stateActive : k.fgSubtle;
+    return Semantics(
+      button: true,
+      enabled: enabled,
+      child: InkWell(
+        onTap: enabled ? onTap : null,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: HarkroomSize.row, minWidth: HarkroomSize.row),
+          child: Align(
+            widthFactor: 1,
+            heightFactor: 1,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(border: Border.all(color: enabled ? k.stateActive : k.border), borderRadius: BorderRadius.circular(HarkroomRadius.full)),
+              child: Text(context.t.planStartButton, style: TextStyle(color: color, fontSize: HarkroomType.meta, fontWeight: FontWeight.w600)),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 「시작」 확인 시트(시안 v4 X11) — 계획 시트 위에 겹친다. 부를 상대와 올라갈 글을 보이고, 미리보기의 판 번호를 실어 시작한다.
+/// 판이 바뀌면(`plan_changed`·`if_rev_required`) 시작하지 않고 미리보기를 다시 받아 새 내용을 보인다. 글은 글자로만 그린다.
+class _PlanStartSheet extends StatefulWidget {
+  const _PlanStartSheet({required this.rootId, required this.plan, required this.stepIds, required this.bulk, required this.locale});
+
+  final String rootId;
+  final ThreadPlanView plan;
+  final List<String> stepIds;
+  final bool bulk;
+  final String locale;
+
+  @override
+  State<_PlanStartSheet> createState() => _PlanStartSheetState();
+}
+
+class _PlanStartSheetState extends State<_PlanStartSheet> {
+  final Set<String> _off = {};
+  String? _picked;
+  PlanStartPreview? _preview;
+  bool _starting = false;
+  bool _changed = false;
+  String? _error;
+  int _seq = 0;
+  bool _loaded = false;
+
+  List<Map<String, String>> get _steps => [
+        for (final id in widget.stepIds)
+          if (!_off.contains(id)) {'id': id, 'assigneeId': ?_picked},
+      ];
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_loaded) return;
+    _loaded = true;
+    unawaited(_load());
+  }
+
+  Future<void> _load() async {
+    final mine = ++_seq;
+    final steps = _steps;
+    if (steps.isEmpty) {
+      setState(() => _preview = null);
+      return;
+    }
+    final app = AppScope.read(context);
+    final t = context.t;
+    try {
+      final next = await app.previewPlanStart(widget.rootId, steps, widget.locale);
+      if (!mounted || mine != _seq) return;
+      setState(() {
+        _preview = next;
+        _error = null;
+      });
+    } on Object catch (e) {
+      if (!mounted || mine != _seq) return;
+      setState(() {
+        _preview = null;
+        _error = e is ApiError ? t.planStartSkip(e.code) : t.planStartFailed;
+      });
+    }
+  }
+
+  Future<void> _start() async {
+    final preview = _preview;
+    if (preview == null || _starting) return;
+    final app = AppScope.read(context);
+    final t = context.t;
+    final nav = Navigator.of(context);
+    setState(() {
+      _starting = true;
+      _error = null;
+      _changed = false;
+    });
+    try {
+      final res = await app.startPlan(widget.rootId, _steps, preview.rev, widget.locale);
+      if (mounted) nav.pop(res);
+    } on ApiError catch (e) {
+      if (!mounted) return;
+      if (e.code == 'plan_changed' || e.code == 'if_rev_required') {
+        setState(() => _changed = true);
+        await _load();
+      } else {
+        setState(() => _error = t.planStartSkip(e.code));
+      }
+    } on Object {
+      if (mounted) setState(() => _error = t.planStartFailed);
+    } finally {
+      if (mounted) setState(() => _starting = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    final k = context.tokens;
+    final app = context.app;
+    final p = _preview;
+    final first = (p?.posts.isEmpty ?? true) ? null : p!.posts.first;
+    final skipOf = {for (final s in p?.skipped ?? const <({String id, String code})>[]) s.id: s.code};
+    final needsPick = !widget.bulk && skipOf.containsValue('no_assignee');
+    final agents = app.accounts.values.where((a) => a.isAgent && !a.isDisabled).toList(growable: false);
+    String handleOf(String id) => app.accounts[id]?.handle ?? '';
+    final title = widget.bulk
+        ? t.planStartBulkTitle(p?.startable ?? 0)
+        : first != null
+            ? (first.via == 'manager' ? t.planStartViaManager(handleOf(first.to)) : t.planStartToAssignee(handleOf(first.to)))
+            : needsPick
+                ? t.planStartPickTitle
+                : (p?.selfStepIds.isNotEmpty ?? false)
+                    ? t.planStartSelf
+                    : t.planStartLoading;
+    return SafeArea(
+      top: false,
+      child: SingleChildScrollView(
+        key: const Key('plan-start-sheet'),
+        padding: const EdgeInsets.fromLTRB(HarkroomSize.gutter, 14, HarkroomSize.gutter, 12),
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(title, key: const Key('plan-start-title'), style: TextStyle(color: k.fg, fontSize: HarkroomType.body, fontWeight: FontWeight.w600)),
+          if (p?.managerSkipped != null)
+            Text(t.planStartManagerSkip(p!.managerSkipped!), key: const Key('plan-start-manager-skipped'), style: TextStyle(color: k.warning, fontSize: HarkroomType.meta)),
+          if (_changed) Text(t.planStartChanged, key: const Key('plan-start-changed'), style: TextStyle(color: k.warning, fontSize: HarkroomType.meta)),
+          if (widget.bulk && p != null)
+            Text(t.planStartBulkTurns(p.posts.length), key: const Key('plan-start-turns'), style: TextStyle(color: k.fgMuted, fontSize: HarkroomType.meta)),
+          if (widget.bulk)
+            for (final id in widget.stepIds)
+              CheckboxListTile(
+                key: Key('plan-start-check-$id'),
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                controlAffinity: ListTileControlAffinity.leading,
+                value: !_off.contains(id) && !skipOf.containsKey(id),
+                onChanged: skipOf.containsKey(id) || _starting
+                    ? null
+                    : (v) {
+                        setState(() => v == true ? _off.remove(id) : _off.add(id));
+                        unawaited(_load());
+                      },
+                title: Text(planTitleOf(widget.plan, id), maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: k.fg, fontSize: 14)),
+                subtitle: skipOf.containsKey(id) ? Text(t.planStartSkip(skipOf[id]!), style: TextStyle(color: k.fgSubtle, fontSize: HarkroomType.meta)) : null,
+              ),
+          if (needsPick)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: DropdownButton<String>(
+                key: const Key('plan-start-pick'),
+                isExpanded: true,
+                hint: Text(t.planStartPick),
+                value: _picked,
+                items: [for (final a in agents) DropdownMenuItem(value: a.id, child: Text('@${a.handle}'))],
+                onChanged: (v) {
+                  setState(() => _picked = v);
+                  unawaited(_load());
+                },
+              ),
+            ),
+          if (!widget.bulk)
+            for (final s in p?.skipped ?? const <({String id, String code})>[])
+              if (s.code != 'no_assignee') Text(t.planStartSkip(s.code), key: const Key('plan-start-skipped'), style: TextStyle(color: k.stateStuck, fontSize: HarkroomType.meta)),
+          for (final post in p?.posts ?? const <PlanStartPost>[])
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(top: 8),
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(color: k.surfaceSunken, borderRadius: BorderRadius.circular(HarkroomRadius.row)),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(t.planStartBodyLabel, style: TextStyle(color: k.fgMuted, fontSize: HarkroomType.meta)),
+                Text(post.body, key: Key('plan-start-body-${post.to}'), style: TextStyle(color: k.fg, fontSize: 13)),
+              ]),
+            ),
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(_error!, key: const Key('plan-start-error'), style: TextStyle(color: k.stateStuck, fontSize: HarkroomType.meta)),
+            ),
+          const SizedBox(height: 10),
+          Row(children: [
+            Expanded(
+              child: SizedBox(
+                height: HarkroomSize.row,
+                child: OutlinedButton(key: const Key('plan-start-cancel'), onPressed: () => Navigator.of(context).pop(), child: Text(t.planStartCancel)),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: SizedBox(
+                height: HarkroomSize.row,
+                child: FilledButton(
+                  key: const Key('plan-start-go'),
+                  onPressed: _starting || (p?.startable ?? 0) == 0 ? null : () => unawaited(_start()),
+                  child: Text(_starting ? t.planStartStarting : (widget.bulk ? t.planStartGoN(p?.startable ?? 0) : t.planStartGo)),
+                ),
+              ),
+            ),
+          ]),
+        ]),
+      ),
     );
   }
 }

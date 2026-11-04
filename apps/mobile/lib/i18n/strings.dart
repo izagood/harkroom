@@ -724,7 +724,38 @@ abstract class Strings {
   String get planRowPerson;
   String planRowWaiters(int n);
   String planRowPr(int number);
-  String get planRowMessage;
+  String planRowMore(int n);
+  String get planRowNoLink;
+  String get planManagerLabel;
+  String get planManagerNone;
+  String get planManagerEdit;
+  String get planManagerFailed;
+  String get planStartButton;
+  String get planStartAll;
+  String get planStartGo;
+  String planStartGoN(int n);
+  String get planStartStarting;
+  String get planStartCancel;
+  String get planStartBodyLabel;
+  String planStartViaManager(String handle);
+  String planStartToAssignee(String handle);
+  String get planStartSelf;
+  String get planStartPickTitle;
+  String get planStartPick;
+  String get planStartLoading;
+  String planStartBulkTitle(int n);
+  String planStartBulkTurns(int n);
+  String get planStartChanged;
+  String get planStartFailed;
+  String get planStartOtherHuman;
+  String planStartJustStarted(String who);
+  String get planStartPostLink;
+
+  /// 시작하지 못한 사유(서버 코드 → 글). 모르는 코드는 일반 실패 글로 떨어진다.
+  String planStartSkip(String code);
+
+  /// 관리 에이전트를 못 거친 사유(서버 코드 → 글).
+  String planStartManagerSkip(String code);
   String get planWhyToggle;
   String get planWhyCollapse;
   String get planWhyTitle;
@@ -1442,6 +1473,7 @@ const Set<String> i18nAllowSameAsEnglish = {
   // 번호·기호뿐인 계획판 표기 — 두 언어가 같다(데스크톱 `plan.sum.cycle`·`plan.row.pr`·`plan.why.pr`).
   'planSumCycle',
   'planRowPr',
+  'planRowMore',
   'planWhyPr',
   // 계획판 기호 표기 — 글자 없이 기호·숫자·제목만이라 두 언어가 같다(데스크톱 `plan.moreGroups`·`plan.pill.done`·`plan.pill.count`).
   'planPillDone',
@@ -2008,7 +2040,40 @@ Map<String, String> stringsToMap(Strings s) => {
       'planRowPerson': s.planRowPerson,
       'planRowWaiters': s.planRowWaiters(1),
       'planRowPr': s.planRowPr(7),
-      'planRowMessage': s.planRowMessage,
+      'planRowMore': s.planRowMore(2),
+      'planRowNoLink': s.planRowNoLink,
+      'planManagerLabel': s.planManagerLabel,
+      'planManagerNone': s.planManagerNone,
+      'planManagerEdit': s.planManagerEdit,
+      'planManagerFailed': s.planManagerFailed,
+      'planStartButton': s.planStartButton,
+      'planStartAll': s.planStartAll,
+      'planStartGo': s.planStartGo,
+      'planStartGoN': s.planStartGoN(2),
+      'planStartStarting': s.planStartStarting,
+      'planStartCancel': s.planStartCancel,
+      'planStartBodyLabel': s.planStartBodyLabel,
+      'planStartViaManager': s.planStartViaManager('{handle}'),
+      'planStartToAssignee': s.planStartToAssignee('{handle}'),
+      'planStartSelf': s.planStartSelf,
+      'planStartPickTitle': s.planStartPickTitle,
+      'planStartPick': s.planStartPick,
+      'planStartLoading': s.planStartLoading,
+      'planStartBulkTitle': s.planStartBulkTitle(2),
+      'planStartBulkTurns': s.planStartBulkTurns(2),
+      'planStartChanged': s.planStartChanged,
+      'planStartFailed': s.planStartFailed,
+      'planStartOtherHuman': s.planStartOtherHuman,
+      'planStartJustStarted': s.planStartJustStarted('{who}'),
+      'planStartPostLink': s.planStartPostLink,
+      'planStartSkipAlready': s.planStartSkip('already_started'),
+      'planStartSkipNotReady': s.planStartSkip('not_ready'),
+      'planStartSkipNoAssignee': s.planStartSkip('no_assignee'),
+      'planStartSkipNotInvokable': s.planStartSkip('not_invokable'),
+      'planStartSkipGone': s.planStartSkip('unknown_item'),
+      'planStartManagerOff': s.planStartManagerSkip('manager_off'),
+      'planStartManagerNoAccess': s.planStartManagerSkip('manager_no_access'),
+      'planStartManagerNotInvokable': s.planStartManagerSkip('manager_not_invokable'),
       'planWhyToggle': s.planWhyToggle,
       'planWhyCollapse': s.planWhyCollapse,
       'planWhyTitle': s.planWhyTitle,

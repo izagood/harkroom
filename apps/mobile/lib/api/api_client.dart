@@ -385,6 +385,20 @@ class ApiClient {
     return ThreadPlanView.fromJson(res['plan']);
   }
 
+  /// 계획판 「시작」 미리보기. 아무것도 바꾸지 않는다.
+  Future<PlanStartPreview> planStartPreview(String rootId, List<Map<String, String>> steps, String locale) async =>
+      PlanStartPreview.fromJson(await _send('POST', '/threads/$rootId/plan/start', body: {'steps': steps, 'dryRun': true, 'locale': locale}));
+
+  /// 계획판 「시작」. 미리보기의 판 번호([ifRev])가 없으면 시작할 수 없다 — 그 사이 판이 바뀌면 409 `plan_changed` 다.
+  Future<PlanStartDone> planStart(String rootId, List<Map<String, String>> steps, int ifRev, String locale) async =>
+      PlanStartDone.fromJson(await _send('POST', '/threads/$rootId/plan/start', body: {'steps': steps, 'ifRev': ifRev, 'locale': locale}));
+
+  /// 관리 에이전트를 바꾸거나 비운다.
+  Future<ThreadPlanView?> setPlanManager(String rootId, String? managerId) async {
+    final res = _obj(await _send('PUT', '/threads/$rootId/plan/manager', body: {'managerId': managerId}));
+    return ThreadPlanView.fromJson(res['plan']);
+  }
+
   /// 스레드 × 에이전트 모델 지정(서버 079).
   Future<List<ThreadAgentModel>> threadAgentModels(String channelId, String rootId) async {
     final res = _obj(await _send('GET', '/channels/$channelId/threads/$rootId/agent-models'));
