@@ -617,6 +617,22 @@ harkroom-operator run            # 또는 --data-dir <경로> / HARKROOM_DATA_DI
 데이터 디렉터리의 기본값은 앱과 같다: macOS `~/Library/Application Support/app.harkroom.desktop`,
 리눅스 `$XDG_DATA_HOME/app.harkroom.desktop`. 감독(launchd/systemd)은 8-1 이다.
 
+### 커뮤니티마다 오퍼레이터 (`HARKROOM_OPERATOR_PER_COMMUNITY=1`)
+
+스위치가 켜지면 커뮤니티 하나 = 뿌리 하나 = 오퍼레이터 프로세스 하나다. 뿌리는 앱과 같은 규칙으로 url 이 정한다 —
+데이터 디렉터리의 색인 `operators.json` 에 칸이 있으면 그 자리(옛 단일 오퍼레이터 자리 포함), 없으면
+`~/.harkroom-agent/c/<url 해시 앞 8자>/`. CLI 는 색인을 읽기만 한다(쓰는 것은 앱이다).
+
+```sh
+export HARKROOM_OPERATOR_PER_COMMUNITY=1
+harkroom-operator register https://<host> <코드>   # 토큰·operator.json 이 그 커뮤니티 뿌리에 들어간다
+harkroom-operator run --community https://<host>   # 그 커뮤니티 하나만 든 오퍼레이터
+harkroom-operator run --all                        # 이 기계의 커뮤니티마다 자식 하나(죽으면 1초→30초 백오프로 다시 띄운다)
+```
+
+스위치가 꺼져 있으면 `--community`·`--all` 은 거절된다(앱과 다른 자리를 보게 되므로). 감독은 커뮤니티마다
+인스턴스 하나인 systemd 템플릿 유닛을 권한다(8-1) — 커뮤니티 하나의 재시작이 다른 커뮤니티에 번지지 않는다.
+
 에이전트에 `mcpServers` 이름이 달려 있으면 그 정의는 **이 머신**에 있어야 한다 —
 `<데이터 디렉터리>/operator/mcp-servers.json`(`{ "<이름>": { "command": …, "args": […], "env": {…} } }`)
 또는 `~/.claude.json` 의 `mcpServers`. 없는 이름이 있으면 오퍼레이터는 그 배정을 **띄우지 않고**
@@ -674,6 +690,7 @@ PAT 절에서 폐기한다.
 |---|---|---|
 | macOS | [`ops/operator.plist.template`](../ops/operator.plist.template) | `@BIN@`·`@USER@` 를 채워 `~/Library/LaunchAgents/dev.harkroom.operator.plist` 로, `launchctl load` |
 | Linux | [`ops/operator.service.template`](../ops/operator.service.template) | `@BIN@` 을 채워 `~/.config/systemd/user/harkroom-operator.service` 로, `systemctl --user enable --now harkroom-operator`, `loginctl enable-linger` |
+| Linux, 커뮤니티마다 | [`ops/operator@.service.template`](../ops/operator@.service.template) | `@BIN@` 을 채워 `~/.config/systemd/user/harkroom-operator@.service` 로, 커뮤니티마다 `systemctl --user enable --now "harkroom-operator@$(systemd-escape 'https://<host>').service"`. 옛 단일 유닛과 함께 켜지 않는다 |
 
 함정은 셋이고 전부 템플릿 주석에 있다:
 

@@ -159,8 +159,8 @@ describe('repo hygiene', () => {
      */
     const 조직이름실측 = /\borg(?:Name)?['"]?\s*[=:]\s*['"]?[A-Z][a-z]+-[A-Z][a-z]+/;
 
-    /** `icons/128x128@2x.png` 같은 파일 이름이 이메일 모양으로 잡힌다. */
-    const 파일이름 = /\.(?:png|jpe?g|svg|webp|gif|ico|css|html|json|md|tsx?)$/i;
+    /** `icons/128x128@2x.png`·`operator@.service.template` 같은 파일 이름이 이메일 모양으로 잡힌다. */
+    const 파일이름 = /\.(?:png|jpe?g|svg|webp|gif|ico|css|html|json|md|tsx?|template)$/i;
 
     /** `user:pass@host:3400` 에서 호스트만 남긴다. */
     function 호스트만(raw: string): string {

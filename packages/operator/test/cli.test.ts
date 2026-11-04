@@ -26,6 +26,13 @@ describe('parseCliArgs', () => {
     expect(parseCliArgs(['merge', 'o/r', '7', '--head', 'x'])).toEqual({ command: 'merge', argv: ['o/r', '7', '--head', 'x'] });
     expect(parseCliArgs(['--socket', '/x.sock'])).toEqual({ command: 'daemon', argv: ['--socket', '/x.sock'] });
   });
+  it('run --community <url>(끝 슬래시를 뗀다) · run --all · 둘을 함께 주거나 url 이 아니면 던진다(격리 C P5)', () => {
+    expect(parseCliArgs(['run', '--community', 'https://a.example.com/'])).toEqual({ command: 'run', dataDir: undefined, community: 'https://a.example.com' });
+    expect(parseCliArgs(['run', '--all', '--data-dir', '/d'])).toEqual({ command: 'run', dataDir: '/d', all: true });
+    expect(() => parseCliArgs(['run', '--all', '--community', 'https://a.example.com'])).toThrow(/함께/);
+    expect(() => parseCliArgs(['run', '--community', 'ftp://a.example.com'])).toThrow(/http\(s\)/);
+    expect(() => parseCliArgs(['run', '--community'])).toThrow(/값이 없다/);
+  });
   it('register 에 URL 이나 코드가 없으면 던진다 — 반쯤 등록된 상태를 만들지 않는다', () => {
     expect(() => parseCliArgs(['register', 'https://example.com'])).toThrow(/register <baseUrl> <code>/);
     expect(() => parseCliArgs(['register', 'not a url', 'CODE'])).toThrow(/baseUrl/);
