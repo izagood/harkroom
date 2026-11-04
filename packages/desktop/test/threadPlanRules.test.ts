@@ -58,7 +58,7 @@ describe.each(rules.cases)('$name', (c) => {
     const humans = new Set(c.humans);
     for (const [id, go] of Object.entries(e.go)) expect(stepGoTargets(step(id))).toEqual(go);
     for (const [id, st] of Object.entries(e.start)) expect(stepStartState(plan, step(id), c.me, (x) => humans.has(x))).toBe(st);
-    expect(planReadyStepIds(plan)).toEqual(e.readyIds);
+    expect(planReadyStepIds(plan, c.me)).toEqual(e.readyIds);
   });
 
   it('막힌 까닭', () => {

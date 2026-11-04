@@ -3,7 +3,7 @@ import type { ThreadPlanView } from '@harkroom/shared';
 import { ApiError, type PlanStartDone, type PlanStartPreview, type PlanStartSkipCode, type PlanStartStep } from '../lib/api';
 import { useActiveStore } from '../state/communities';
 import { getController } from '../state/controller';
-import { planTitleOf } from '../lib/threadPlan';
+import { planStartClean, planTitleOf } from '../lib/threadPlan';
 import { useT } from '../i18n/useT';
 
 /** 판이 달라졌다는 응답 — 미리보기를 다시 받아 사람에게 새 내용을 보인 뒤에만 시작한다. */
@@ -46,7 +46,9 @@ export function PlanStartBox({ plan, stepIds, bulk = false, onClose, onStarted }
   const members = useActiveStore((s) => s.channelMembers[plan.channelId]);
   const [off, setOff] = useState<Record<string, boolean>>({});
   const [picked, setPicked] = useState<string>('');
-  const [preview, setPreview] = useState<PlanStartPreview | null>(null);
+  // 미리보기는 그때 보낸 단계(key)와 함께 둔다 — 고른 것이 바뀌면 판 번호가 같아도 낡은 미리보기다.
+  const [loaded, setLoaded] = useState<{ key: string; preview: PlanStartPreview } | null>(null);
+  const [result, setResult] = useState<PlanStartDone | null>(null);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState(false);
@@ -58,18 +60,21 @@ export function PlanStartBox({ plan, stepIds, bulk = false, onClose, onStarted }
 
   const load = useCallback(async () => {
     const mine = ++seq.current;
-    if (!steps.length) { setPreview(null); return; }
+    if (!steps.length) { setLoaded(null); return; }
     try {
       const next = await getController().previewPlanStart(plan.rootId, steps);
-      if (mine === seq.current) { setPreview(next); setError(null); }
+      if (mine === seq.current) { setLoaded({ key: stepsKey, preview: next }); setError(null); }
     } catch (e) {
-      if (mine === seq.current) { setPreview(null); setError(reasonOf(e)); }
+      if (mine === seq.current) { setLoaded(null); setError(reasonOf(e)); }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- stepsKey 가 steps 의 값이다
   }, [plan.rootId, stepsKey]);
   useEffect(() => { void load(); }, [load]);
   // 상자가 목록 아래쪽에서 펴져도 글과 버튼이 보이게 한다.
   const boxRef = useRef<HTMLDivElement>(null);
+  const preview = loaded?.preview ?? null;
+  /** 보이는 미리보기가 지금 고른 것의 것이 아니다 — 새 것이 올 때까지 시작하지 못한다. */
+  const refreshing = !!loaded && loaded.key !== stepsKey;
   useEffect(() => { boxRef.current?.scrollIntoView?.({ block: 'nearest' }); }, [preview]);
 
   /** 칩 줄의 「모두 시작」 상자에서 고를 수 없는 줄 — 처음 받은 미리보기의 사유를 남겨 둔다. */
@@ -83,12 +88,19 @@ export function PlanStartBox({ plan, stepIds, bulk = false, onClose, onStarted }
   const startable = preview ? preview.posts.reduce((n, p) => n + p.stepIds.length, 0) + preview.selfStepIds.length : 0;
 
   const start = async () => {
-    if (!preview || starting) return;
+    if (!preview || refreshing || starting) return;
     setStarting(true);
     setError(null);
     setNotice(false);
+    setResult(null);
     try {
-      onStarted(await getController().startPlan(plan.rootId, steps, preview.rev));
+      const res = await getController().startPlan(plan.rootId, steps, preview.rev);
+      onStarted(res);
+      if (!planStartClean(res)) {
+        // 판이 바뀌었으니 이 상자에 남은 줄의 미리보기도 새로 받는다.
+        setResult(res);
+        await load();
+      }
     } catch (e) {
       if (e instanceof ApiError && STALE_CODES.has(e.code)) {
         setNotice(true);
@@ -108,19 +120,22 @@ export function PlanStartBox({ plan, stepIds, bulk = false, onClose, onStarted }
   }
 
   const first = preview?.posts[0];
+  const toOf = new Map(preview?.posts.flatMap((p) => p.stepIds.map((id) => [id, p.to] as const)));
+  const notes = result ? [...result.skipped.map((s) => ({ id: s.id, text: t(SKIP_KEY[s.code]) })), ...result.failed.map((f) => ({ id: f.id, text: t('plan.start.postFailed') }))] : [];
   return (
     <div ref={boxRef} data-testid="plan-start-box" className="mb-1 ml-8 mr-1.5 rounded-row border border-state-active bg-surface-raised px-2.5 py-2 text-meta">
       <div data-testid="plan-start-title" className="font-semibold">
-        {bulk && t('plan.start.bulkTitle', { n: startable })}
+        {bulk && t('plan.start.bulkTitle', { n: stepIds.length })}
         {!bulk && first && (first.via === 'manager'
           ? t('plan.start.viaManager', { handle: handleOf(first.to) ?? '' })
           : t('plan.start.toAssignee', { handle: handleOf(first.to) ?? '' }))}
         {!bulk && !first && preview && preview.selfStepIds.length > 0 && t('plan.start.self')}
-        {!bulk && !first && !needsPick && !preview?.selfStepIds.length && !error && t('plan.start.loading')}
+        {!bulk && !preview && !error && t('plan.start.loading')}
         {!bulk && !first && needsPick && t('plan.start.pickTitle')}
       </div>
       {preview?.managerSkipped && <div data-testid="plan-start-manager-skipped" className="text-warning">{t(MANAGER_KEY[preview.managerSkipped])}</div>}
       {notice && <div data-testid="plan-start-changed" className="text-warning">{t('plan.start.changed')}</div>}
+      {refreshing && <div data-testid="plan-start-refreshing" className="text-fg-muted">{t('plan.start.refreshing')}</div>}
       {bulk && preview && <div data-testid="plan-start-turns" className="text-fg-muted">{t('plan.start.bulkTurns', { n: preview.posts.length })}</div>}
       {bulk && (
         <ul data-testid="plan-start-list" className="py-1">
@@ -133,6 +148,7 @@ export function PlanStartBox({ plan, stepIds, bulk = false, onClose, onStarted }
                     onChange={(e) => setOff((o) => ({ ...o, [id]: !e.target.checked }))} />
                   <span className="truncate">{planTitleOf(plan.doc, id)}</span>
                 </label>
+                {!skip && toOf.has(id) && <span data-testid={`plan-start-to-${id}`} className="shrink-0 text-fg-agent">{t('plan.start.rowTo', { handle: handleOf(toOf.get(id)!) ?? '' })}</span>}
                 {skip && <span className="shrink-0 text-fg-subtle">{t(SKIP_KEY[skip])}</span>}
               </li>
             );
@@ -153,15 +169,27 @@ export function PlanStartBox({ plan, stepIds, bulk = false, onClose, onStarted }
       ))}
       {/* 남이 쓴 제목이 든 글이다 — 글자로만 그린다. */}
       {preview?.posts.map((p) => (
-        <div key={p.to} className="mt-1 rounded-row bg-surface-sunken px-2 py-1">
-          <div className="text-fg-muted">{t('plan.start.bodyLabel')}</div>
+        <div key={p.to} className={`mt-1 rounded-row bg-surface-sunken px-2 py-1 ${refreshing ? 'opacity-50' : ''}`}>
+          <div className="text-fg-muted">{bulk ? t('plan.start.bodyLabelTo', { handle: handleOf(p.to) ?? '' }) : t('plan.start.bodyLabel')}</div>
           <div data-testid="plan-start-body" className="whitespace-pre-wrap break-words">{p.body}</div>
         </div>
       ))}
       {error && <div data-testid="plan-start-error" className="mt-1 text-state-stuck">{error}</div>}
+      {result && (result.failed.length > 0 || result.skipped.length > 0) && (
+        <div data-testid="plan-start-result" className="mt-1 text-state-stuck">
+          <div>{result.started.length > 0 ? t('plan.start.partial', { n: result.started.length, m: notes.length }) : t('plan.start.failed')}</div>
+          {/* 제목은 남이 쓴 글이다 — 글자로만 그린다. */}
+          {notes.map((x) => <div key={x.id} className="break-words">{planTitleOf(plan.doc, x.id)} · {x.text}</div>)}
+        </div>
+      )}
+      {result && result.notNotified.length > 0 && (
+        <div data-testid="plan-start-not-notified" className="mt-1 text-warning">
+          {t('plan.start.notNotified', { handles: result.notNotified.map((id) => handleOf(id) ?? '').filter(Boolean).map((h) => `@${h}`).join(' ') })}
+        </div>
+      )}
       <div className="mt-1.5 flex justify-end gap-1.5">
-        <button type="button" data-testid="plan-start-cancel" onClick={onClose} className="rounded-row border border-border px-2 py-0.5 hover:bg-surface-sunken">{t('plan.start.cancel')}</button>
-        <button type="button" data-testid="plan-start-go" disabled={starting || startable === 0} onClick={() => { void start(); }}
+        <button type="button" data-testid="plan-start-cancel" onClick={onClose} className="rounded-row border border-border px-2 py-0.5 hover:bg-surface-sunken">{result ? t('plan.start.close') : t('plan.start.cancel')}</button>
+        <button type="button" data-testid="plan-start-go" disabled={starting || refreshing || startable === 0} onClick={() => { void start(); }}
           className="rounded-row bg-state-active px-2 py-0.5 font-semibold text-fg-on-strong disabled:opacity-45">
           {starting ? t('plan.start.starting') : bulk ? t('plan.start.goN', { n: startable }) : t('plan.start.go')}
         </button>

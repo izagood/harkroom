@@ -135,9 +135,14 @@ export function stepStartState(plan: ThreadPlanView, step: PlanStep, me: string 
   return a && a !== me && isHuman(a) ? 'other_human' : 'enabled';
 }
 
-/** 「모두 시작」의 후보 — 시작 가능한 단계 전부(문서 순서). 고를 수 없는 줄은 서버 미리보기가 사유를 준다. */
-export function planReadyStepIds(plan: ThreadPlanView): string[] {
-  return planStepOrder(plan.doc).filter((s) => stepState(plan, s) === 'ready').map((s) => s.id);
+/** 「모두 시작」의 후보 — 「시작 가능」 칩과 같은 단계(문서 순서). 내 차례는 뺀다. 고를 수 없는 줄은 서버 미리보기가 사유를 준다. */
+export function planReadyStepIds(plan: ThreadPlanView, me: string | null): string[] {
+  return planStepOrder(plan.doc).filter((s) => stepKind(plan, s, me) === 'ready').map((s) => s.id);
+}
+
+/** 시작 응답에 알릴 것이 없는가 — 있으면 확인 상자를 닫지 않고 보인다(글 실패·그 사이 남이 시작·못 알림). */
+export function planStartClean(res: { skipped: unknown[]; failed: unknown[]; notNotified: unknown[] }): boolean {
+  return res.skipped.length === 0 && res.failed.length === 0 && res.notNotified.length === 0;
 }
 
 /** 패널 크기(R15). 전역 하나만 기억한다 — 크기는 창에 대한 취향이지 스레드의 성질이 아니다. */

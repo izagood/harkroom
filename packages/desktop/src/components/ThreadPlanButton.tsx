@@ -6,7 +6,7 @@ import { getExternalOpener } from '../lib/openExternal';
 import type { PlanStartDone } from '../lib/api';
 import {
   crossGroupTitle, groupFacts, isPlanStale, loadPlanOpen, nextCycleIndex, PLAN_CHIP_KINDS, planButtonKind, planFlow, planFlowVisible, planLists,
-  clampPlanSize, loadPlanSize, PLAN_PANEL_DEFAULT, planReadyStepIds, planPills, planTitleOf, planTone, prUrl, savePlanOpen, savePlanSize, stepAssignee,
+  clampPlanSize, loadPlanSize, PLAN_PANEL_DEFAULT, planReadyStepIds, planPills, planStartClean, planTitleOf, planTone, prUrl, savePlanOpen, savePlanSize, stepAssignee,
   stepGoTargets, stepKind, stepStartState, stepWaiters, stepWhy, stepsOf, widePlanSize,
   type PlanChipKind, type PlanPill, type PlanRowKind,
 } from '../lib/threadPlan';
@@ -110,7 +110,7 @@ function PlanPanel({ plan, onClose }: { plan: ThreadPlanView; onClose: () => voi
   const [size, setSize] = useState(() => loadPlanSize() ?? PLAN_PANEL_DEFAULT);
   const [editingManager, setEditingManager] = useState(false);
   const [managerError, setManagerError] = useState(false);
-  const readyIds = planReadyStepIds(plan);
+  const readyIds = planReadyStepIds(plan, me);
   const manager = plan.doc.managerId ? accounts[plan.doc.managerId] : undefined;
   const agents = Object.values(accounts).filter((a) => a.kind === 'agent');
   /** 스레드 칸의 크기 — 최대 크기를 정한다. 저장값은 건드리지 않고 그릴 때만 줄인다(CSS max-w·max-h, X2). */
@@ -149,9 +149,11 @@ function PlanPanel({ plan, onClose }: { plan: ThreadPlanView; onClose: () => voi
     void getController().setPlanManager(plan.rootId, id || null).catch(() => setManagerError(true));
   };
   const onStarted = (res: PlanStartDone) => {
-    setStartFor(null);
+    // 못 한 것·못 알린 것이 있으면 상자를 닫지 않는다 — 상자가 그 사유를 보인다.
+    const clean = planStartClean(res);
+    if (clean) setStartFor(null);
     setStarted((m) => ({ ...m, ...Object.fromEntries(res.started.map((x) => [x.id, { who: myHandle, messageId: x.messageId }])) }));
-    if (res.started[0]) goTo(res.started[0].id);
+    if (clean && res.started[0]) goTo(res.started[0].id);
   };
 
   const lists = planLists(plan, me);

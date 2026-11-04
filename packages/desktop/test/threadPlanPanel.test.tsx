@@ -364,6 +364,80 @@ describe('▷ 시작', () => {
     expect((screen.getByTestId('plan-start-go') as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it('모두 시작은 「시작 가능」 칩과 같은 단계만 담고, 줄마다 부를 상대를 적는다', async () => {
+    manyReady();
+    (plans.r1!.doc.steps[1] as { assigneeId?: string }).assigneeId = 'me';
+    previewPlanStart.mockResolvedValue({ rev: 3, selfStepIds: [], managerSkipped: null, skipped: [{ id: 's3', code: 'other_human_assignee' }],
+      posts: [{ to: 'bot', via: 'assignee', stepIds: ['s1'], body: '글' }] });
+    openPanel_();
+    fireEvent.click(screen.getByTestId('plan-start-all'));
+    await flush();
+    expect(previewPlanStart).toHaveBeenCalledWith('r1', [{ id: 's1' }, { id: 's3' }]);
+    expect(screen.queryByTestId('plan-start-check-s2')).toBeNull();
+    expect(screen.getByTestId('plan-start-title').textContent).toBe('Start 2 ready steps at once');
+    expect(screen.getByTestId('plan-chip-ready').textContent).toContain('2');
+    expect(screen.getByTestId('plan-start-to-s1').textContent).toBe('→ @builder');
+    expect(screen.queryByTestId('plan-start-to-s3')).toBeNull();
+    expect(screen.getByText(/Message calling @builder/)).toBeTruthy();
+  });
+
+  it('고른 것을 바꾸면 새 미리보기가 올 때까지 시작하지 못한다', async () => {
+    manyReady();
+    let answer: (v: unknown) => void = () => {};
+    previewPlanStart.mockImplementation((_r: string, steps: { id: string; assigneeId?: string }[]) => (steps[0]!.assigneeId === 'bot2'
+      ? new Promise((r) => { answer = r; })
+      : Promise.resolve({ ...P_OK, posts: [{ to: 'bot', via: 'assignee', stepIds: ['s2'], body: '글' }], skipped: [{ id: 's2', code: 'no_assignee' }] })));
+    accounts = { ...accounts, bot2: { ...accounts.bot!, id: 'bot2', handle: 'second' } };
+    openPanel_();
+    fireEvent.click(within(document.querySelector('[data-node="s2"]') as HTMLElement).getByTestId('plan-start'));
+    await flush();
+    fireEvent.change(screen.getByTestId('plan-start-pick'), { target: { value: 'bot2' } });
+    await flush();
+    expect(screen.getByTestId('plan-start-refreshing')).toBeTruthy();
+    const go = screen.getByTestId('plan-start-go') as HTMLButtonElement;
+    expect(go.disabled).toBe(true);
+    fireEvent.click(go);
+    await flush();
+    expect(startPlan).not.toHaveBeenCalled();
+    answer({ ...P_OK, posts: [{ to: 'bot2', via: 'assignee', stepIds: ['s2'], body: '글' }], skipped: [{ id: 's2', code: 'no_assignee' }] });
+    await flush();
+    expect(screen.queryByTestId('plan-start-refreshing')).toBeNull();
+    expect(go.disabled).toBe(false);
+  });
+
+  it('글 올리기가 실패하면 상자를 닫지 않고 사유를 보이며, 새 판으로 다시 시작한다', async () => {
+    manyReady();
+    previewPlanStart.mockResolvedValueOnce(P_OK).mockResolvedValue({ ...P_OK, rev: 5 });
+    startPlan.mockResolvedValueOnce({ rev: 5, started: [], skipped: [], failed: [{ id: 's1', code: 'post_failed' }], notNotified: [], managerSkipped: null, plan: plans.r1 });
+    openPanel_();
+    fireEvent.click(within(s1Row()).getByTestId('plan-start'));
+    await flush();
+    fireEvent.click(screen.getByTestId('plan-start-go'));
+    await flush();
+    expect(screen.getByTestId('plan-start-box')).toBeTruthy();
+    expect(screen.getByTestId('plan-start-result').textContent).toContain('Couldn’t post');
+    expect(screen.getByTestId('plan-start-cancel').textContent).toBe('Close');
+    startPlan.mockResolvedValueOnce({ rev: 6, started: [], skipped: [], failed: [], notNotified: [], managerSkipped: null, plan: plans.r1 });
+    fireEvent.click(screen.getByTestId('plan-start-go'));
+    await flush();
+    expect(startPlan.mock.calls.at(-1)![2]).toBe(5);
+  });
+
+  it('일부만 되면 몇 개인지와 못 한 줄을 보이고, 못 알린 상대를 한 줄로 적는다', async () => {
+    manyReady();
+    previewPlanStart.mockResolvedValue(P_OK);
+    startPlan.mockResolvedValueOnce({ rev: 5, started: [{ id: 's1', via: 'assignee', to: 'bot', messageId: 'm1' }], skipped: [{ id: 's3', code: 'already_started' }], failed: [], notNotified: ['bot'], managerSkipped: null, plan: plans.r1 });
+    openPanel_();
+    fireEvent.click(screen.getByTestId('plan-start-all'));
+    await flush();
+    fireEvent.click(screen.getByTestId('plan-start-go'));
+    await flush();
+    const r = screen.getByTestId('plan-start-result').textContent!;
+    expect(r).toContain('1 started · 1 not started');
+    expect(r).toContain('남의 일 · Already started');
+    expect(screen.getByTestId('plan-start-not-notified').textContent).toContain('@builder');
+  });
+
   it('에이전트가 보는 화면에는 시작이 없다', () => {
     manyReady();
     meKind = 'agent';
