@@ -157,20 +157,32 @@ export function clampPlanSize(size: { w: number; h: number }, box: { w: number; 
     h: Math.min(maxH, Math.max(PLAN_PANEL_MIN.h, Math.round(size.h))),
   };
 }
-/** 「⤢ 넓게」 = 칸 폭 60% × 최대 높이. */
+/** 「⤢ 넓게」 = 칸 폭 60%(기본 폭보다 좁아지지는 않는다) × 최대 높이. */
 export function widePlanSize(box: { w: number; h: number }): { w: number; h: number } {
-  return clampPlanSize({ w: box.w * 0.6, h: box.h }, box);
+  return clampPlanSize({ w: Math.max(box.w * 0.6, PLAN_PANEL_DEFAULT.w), h: box.h }, box);
 }
-export function loadPlanSize(): { w: number; h: number } | null {
+/** 이 칸에서 「넓게」가 기본보다 실제로 커지는가 — 작은 새 창에서는 기본이 이미 칸을 다 채운다. */
+export function planCanWiden(box: { w: number; h: number }): boolean {
+  const wide = widePlanSize(box);
+  const base = clampPlanSize(PLAN_PANEL_DEFAULT, box);
+  return wide.w > base.w || wide.h > base.h;
+}
+/**
+ * 크기는 메인 창과 새 창을 따로 기억한다 — 작은 새 창에서 맞춘 크기가 메인 창의 패널을 줄이지 않게.
+ * 새 창끼리는 하나를 같이 쓴다(스레드 창은 크기가 비슷하다).
+ */
+export type PlanSizeScope = 'main' | 'window';
+const sizeKey = (scope: PlanSizeScope) => (scope === 'main' ? SIZE_KEY : `${SIZE_KEY}.window`);
+export function loadPlanSize(scope: PlanSizeScope = 'main'): { w: number; h: number } | null {
   try {
-    const v = JSON.parse(localStorage.getItem(SIZE_KEY) ?? 'null') as { w?: unknown; h?: unknown } | null;
+    const v = JSON.parse(localStorage.getItem(sizeKey(scope)) ?? 'null') as { w?: unknown; h?: unknown } | null;
     return v && typeof v.w === 'number' && typeof v.h === 'number' ? { w: v.w, h: v.h } : null;
   } catch { return null; }
 }
-export function savePlanSize(size: { w: number; h: number } | null): void {
+export function savePlanSize(size: { w: number; h: number } | null, scope: PlanSizeScope = 'main'): void {
   try {
-    if (size) localStorage.setItem(SIZE_KEY, JSON.stringify(size));
-    else localStorage.removeItem(SIZE_KEY);
+    if (size) localStorage.setItem(sizeKey(scope), JSON.stringify(size));
+    else localStorage.removeItem(sizeKey(scope));
   } catch { /* 저장 못 해도 이번 화면은 그 크기로 돈다 */ }
 }
 

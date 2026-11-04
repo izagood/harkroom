@@ -6,12 +6,13 @@ import { getExternalOpener } from '../lib/openExternal';
 import type { PlanStartDone } from '../lib/api';
 import {
   crossGroupTitle, groupFacts, isPlanStale, loadPlanOpen, nextCycleIndex, PLAN_CHIP_KINDS, planButtonKind, planFlow, planFlowVisible, planLists,
-  clampPlanSize, loadPlanSize, PLAN_PANEL_DEFAULT, planReadyStepIds, planPills, planStartClean, planTitleOf, planTone, prUrl, savePlanOpen, savePlanSize, stepAssignee,
-  stepGoTargets, stepKind, stepStartState, stepWaiters, stepWhy, stepsOf, widePlanSize,
+  clampPlanSize, loadPlanSize, PLAN_PANEL_DEFAULT, planCanWiden, planReadyStepIds, planPills, planStartClean, planTitleOf, planTone, prUrl, savePlanOpen, savePlanSize, stepAssignee,
+  stepGoTargets, stepKind, stepStartState, stepWaiters, stepWhy, stepsOf, widePlanSize, type PlanSizeScope,
   type PlanChipKind, type PlanPill, type PlanRowKind,
 } from '../lib/threadPlan';
 import { agoLabel } from '../lib/time';
 import { PlanStartBox } from './PlanStartBox';
+import { useHostDocument, viewOf } from '../lib/hostDocument';
 import { useLocale, useT } from '../i18n/useT';
 
 /**
@@ -107,7 +108,12 @@ function PlanPanel({ plan, onClose }: { plan: ThreadPlanView; onClose: () => voi
   const [startFor, setStartFor] = useState<string | 'all' | null>(null);
   const [started, setStarted] = useState<Record<string, { who: string; messageId: string | null }>>({});
   const panelRef = useRef<HTMLDivElement>(null);
-  const [size, setSize] = useState(() => loadPlanSize() ?? PLAN_PANEL_DEFAULT);
+  // 새 창은 메인의 React 트리가 포털로 그린다 — 전역 `window` 는 늘 메인 창이고, 새 창의 포인터 이벤트는 거기 오지 않는다.
+  const hostDoc = useHostDocument();
+  const hostView = viewOf(hostDoc);
+  const sizeScope: PlanSizeScope = hostDoc === document ? 'main' : 'window';
+  const [size, setSize] = useState(() => loadPlanSize(sizeScope) ?? PLAN_PANEL_DEFAULT);
+  const [canWiden, setCanWiden] = useState(true);
   const [editingManager, setEditingManager] = useState(false);
   const [managerError, setManagerError] = useState(false);
   const readyIds = planReadyStepIds(plan, me);
@@ -116,32 +122,49 @@ function PlanPanel({ plan, onClose }: { plan: ThreadPlanView; onClose: () => voi
   /** 스레드 칸의 크기 — 최대 크기를 정한다. 저장값은 건드리지 않고 그릴 때만 줄인다(CSS max-w·max-h, X2). */
   const boxOf = () => {
     const el = panelRef.current?.parentElement;
-    return { w: el?.clientWidth || window.innerWidth, h: el?.clientHeight || window.innerHeight };
+    return { w: el?.clientWidth || hostView.innerWidth, h: el?.clientHeight || hostView.innerHeight };
   };
+  // 그 창의 생성자를 쓴다. 없는 환경(jsdom)이면 「넓게」를 그대로 둔다.
+  useEffect(() => {
+    const el = panelRef.current?.parentElement;
+    const Observer = (hostView as Window & typeof globalThis).ResizeObserver as typeof ResizeObserver | undefined;
+    if (!el || !Observer) return;
+    const measure = () => { setCanWiden(planCanWiden({ w: el.clientWidth, h: el.clientHeight })); };
+    const ro = new Observer(measure);
+    ro.observe(el);
+    measure();
+    return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 창은 이 패널이 사는 동안 바뀌지 않는다
+  }, [hostView]);
   /** 왼쪽·위로 끌수록 커진다 — 패널이 오른쪽 아래에 붙어 있다. */
   const beginResize = (e: ReactPointerEvent, axis: { w: boolean; h: boolean }) => {
     e.preventDefault();
-    const from = { x: e.clientX, y: e.clientY, ...size };
-    let last = size;
+    // 저장값이 아니라 **보이는 크기**에서 시작한다. 저장값이 칸보다 크면 CSS 가 줄여 그리므로, 저장값에서 시작하면
+    // 안쪽으로 끌어도 한참 동안 그대로다.
+    const shown = panelRef.current?.getBoundingClientRect();
+    const from = { x: e.clientX, y: e.clientY, w: shown?.width || size.w, h: shown?.height || size.h };
+    let last: { w: number; h: number } | null = null;
     const move = (ev: PointerEvent) => {
       last = clampPlanSize({ w: axis.w ? from.w + from.x - ev.clientX : from.w, h: axis.h ? from.h + from.y - ev.clientY : from.h }, boxOf());
       setSize(last);
     };
     const up = () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-      savePlanSize(last);
+      hostView.removeEventListener('pointermove', move);
+      hostView.removeEventListener('pointerup', up);
+      hostView.removeEventListener('pointercancel', up);
+      if (last) savePlanSize(last, sizeScope);
     };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
+    hostView.addEventListener('pointermove', move);
+    hostView.addEventListener('pointerup', up);
+    hostView.addEventListener('pointercancel', up);
   };
-  const resetSize = () => { setSize(PLAN_PANEL_DEFAULT); savePlanSize(null); };
+  const resetSize = () => { setSize(PLAN_PANEL_DEFAULT); savePlanSize(null, sizeScope); };
   const isWide = size.w !== PLAN_PANEL_DEFAULT.w || size.h !== PLAN_PANEL_DEFAULT.h;
   const toggleWide = () => {
     if (isWide) { resetSize(); return; }
     const next = widePlanSize(boxOf());
     setSize(next);
-    savePlanSize(next);
+    savePlanSize(next, sizeScope);
   };
   const changeManager = (id: string) => {
     setEditingManager(false);
@@ -215,9 +238,12 @@ function PlanPanel({ plan, onClose }: { plan: ThreadPlanView; onClose: () => voi
             {plan.progress.done}/{plan.progress.total}
             {plan.progress.blocked > 0 && <span className="text-state-stuck"> {t('plan.chip.blocked', { n: plan.progress.blocked })}</span>}
           </span>
-          <button type="button" data-testid="plan-size-toggle" onClick={toggleWide} className="ml-auto shrink-0 rounded-row px-1 text-meta text-fg-muted hover:bg-surface-sunken">
-            {isWide ? t('plan.size.default') : t('plan.size.wide')}
-          </button>
+          <span className="ml-auto" />
+          {(isWide || canWiden) && (
+            <button type="button" data-testid="plan-size-toggle" onClick={toggleWide} className="shrink-0 rounded-row px-1 text-meta text-fg-muted hover:bg-surface-sunken">
+              {isWide ? t('plan.size.default') : t('plan.size.wide')}
+            </button>
+          )}
           <button type="button" data-testid="plan-panel-close" aria-label={t('plan.panel.close')} onClick={onClose}
             className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface-sunken text-fg-muted hover:text-fg">✕</button>
         </div>

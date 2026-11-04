@@ -22,6 +22,7 @@ vi.mock('../src/state/communities', () => ({
 import { ThreadPlanButton } from '../src/components/ThreadPlanButton';
 import { ApiError } from '../src/lib/api';
 import { JumpToLatestPill } from '../src/components/JumpToLatestPill';
+import { HostDocumentContext } from '../src/lib/hostDocument';
 import rules from './fixtures/planRules.json';
 
 const base = rules.cases[0]!.plan;
@@ -495,6 +496,48 @@ const drag = (testId: string, from: [number, number], to: [number, number]) => {
   });
 };
 
+describe('새 창(포털)의 크기 조절', () => {
+  let frame: HTMLIFrameElement;
+  const at = (view: Window, type: string, clientX: number, clientY: number) => new (view as Window & typeof globalThis).MouseEvent(type, { bubbles: true, clientX, clientY });
+  const openInWindow = () => {
+    manyReady();
+    frame = document.createElement('iframe');
+    document.body.appendChild(frame);
+    const doc = frame.contentDocument!;
+    const host = doc.createElement('div');
+    doc.body.appendChild(host);
+    render(<HostDocumentContext.Provider value={doc}><ThreadPlanButton rootId="r1" progress={plans.r1!.progress} /></HostDocumentContext.Provider>, { container: host });
+    act(() => { doc.querySelector<HTMLElement>('[data-testid="plan-button"]')?.click(); });
+    return { doc, view: frame.contentWindow!, panel: doc.querySelector<HTMLElement>('[data-testid="plan-panel"]')! };
+  };
+  afterEach(() => { frame?.remove(); });
+
+  it('끌기는 그 창의 포인터를 듣고, 메인 창의 포인터에는 움직이지 않는다', () => {
+    const { doc, view, panel } = openInWindow();
+    act(() => { doc.querySelector('[data-testid="plan-resize-corner"]')!.dispatchEvent(at(view, 'pointerdown', 500, 500)); });
+    act(() => { window.dispatchEvent(new MouseEvent('pointermove', { clientX: 100, clientY: 100 })); });
+    expect(panel.style.width).toBe('440px');
+    act(() => { view.dispatchEvent(at(view, 'pointermove', 400, 450)); view.dispatchEvent(at(view, 'pointerup', 400, 450)); });
+    expect([panel.style.width, panel.style.height]).toEqual(['540px', '650px']);
+  });
+
+  it('새 창의 크기는 따로 기억해 메인 창의 기억을 건드리지 않고, 두 번 누르면 새 창 것만 지운다', () => {
+    localStorage.setItem('harkroom.threadPlan.size', JSON.stringify({ w: 900, h: 700 }));
+    const { doc, view, panel } = openInWindow();
+    expect(panel.style.width).toBe('440px');
+    act(() => {
+      doc.querySelector('[data-testid="plan-resize-corner"]')!.dispatchEvent(at(view, 'pointerdown', 500, 500));
+      view.dispatchEvent(at(view, 'pointermove', 400, 450));
+      view.dispatchEvent(at(view, 'pointerup', 400, 450));
+    });
+    expect(JSON.parse(localStorage.getItem('harkroom.threadPlan.size.window')!)).toEqual({ w: 540, h: 650 });
+    expect(JSON.parse(localStorage.getItem('harkroom.threadPlan.size')!)).toEqual({ w: 900, h: 700 });
+    fireEvent.doubleClick(doc.querySelector('[data-testid="plan-resize-corner"]')!);
+    expect(localStorage.getItem('harkroom.threadPlan.size.window')).toBeNull();
+    expect(localStorage.getItem('harkroom.threadPlan.size')).not.toBeNull();
+  });
+});
+
 describe('크기·관리 에이전트', () => {
   it('왼쪽 위를 끌면 커지고 기기에 하나만 기억한다. 두 번 누르면 기본', () => {
     const panel = openPanel_();
@@ -505,6 +548,22 @@ describe('크기·관리 에이전트', () => {
     expect(JSON.parse(localStorage.getItem('harkroom.threadPlan.size')!)).toEqual({ w: 540, h: 650 });
     fireEvent.doubleClick(screen.getByTestId('plan-resize-corner'));
     expect(panel.style.width).toBe('440px');
+    expect(localStorage.getItem('harkroom.threadPlan.size')).toBeNull();
+  });
+
+  it('저장값이 칸보다 커도 보이는 크기에서 끌기 시작한다. 누르기만 하면 저장하지 않는다', () => {
+    localStorage.setItem('harkroom.threadPlan.size', JSON.stringify({ w: 2000, h: 2000 }));
+    const panel = openPanel_();
+    vi.spyOn(panel, 'getBoundingClientRect').mockReturnValue({ width: 800, height: 600 } as DOMRect);
+    drag('plan-resize-corner', [500, 500], [500, 500]);
+    drag('plan-resize-corner', [500, 500], [530, 530]);
+    expect([panel.style.width, panel.style.height]).toEqual(['770px', '570px']);
+    localStorage.removeItem('harkroom.threadPlan.size');
+    act(() => {
+      const el = screen.getByTestId('plan-resize-corner');
+      el.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: 1, clientY: 1 }));
+      window.dispatchEvent(new MouseEvent('pointerup', { clientX: 1, clientY: 1 }));
+    });
     expect(localStorage.getItem('harkroom.threadPlan.size')).toBeNull();
   });
 
