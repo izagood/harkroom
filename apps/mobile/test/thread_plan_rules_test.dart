@@ -20,6 +20,13 @@ void main() {
         expect({for (final k in planChipKinds) k.name: lists[k]}, e['lists']);
       });
 
+      test('칩 합 + 볼 수 없는 연결 = 전체 수, 막힘 칩 수 = 막힘 수', () {
+        final lists = planLists(plan, me);
+        final sum = lists.values.fold<int>(0, (n, l) => n + l.length);
+        expect(sum + plan.linked.where((l) => l.hidden).length, plan.progress.total);
+        expect(lists[PlanRowKind.blocked]!.length, plan.progress.blocked);
+      });
+
       test('단계 줄', () {
         (e['rows'] as Map<String, dynamic>).forEach((id, row) {
           final links = stepFirstLinks(step(id));

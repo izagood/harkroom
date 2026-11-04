@@ -278,11 +278,20 @@ List<PlanStep> planStepOrder(ThreadPlanView plan) {
   ];
 }
 
-/// 칩의 목록 — 칩이 보여 주는 수이자 누를 때 차례로 갈 단계들이다. 한 단계는 한 목록에만 든다.
+/// 칩의 목록 — 칩이 보여 주는 수이자 누를 때 차례로 갈 단계들이다. 한 칸은 한 목록에만 든다.
+/// 서버 `planProgress` 와 같은 단위로 센다: 단계 하나씩 + **연결 그룹 하나당 한 칸**(파생 상태 그대로, 누르면 그 그룹으로 간다).
+/// 안 그러면 연결 그룹이 막혔을 때 「막힘 1」은 보이는데 막힘 칩이 꺼진다. 볼 수 없는 연결 그룹은 갈 곳이 없어 빠진다 — `progress.total` 에는 든다.
 Map<PlanRowKind, List<String>> planLists(ThreadPlanView plan, String? me) {
   final out = {for (final k in planChipKinds) k: <String>[]};
-  for (final step in planStepOrder(plan)) {
-    out[stepKind(plan, step, me)]?.add(step.id);
+  final known = {for (final g in plan.groups) g.id};
+  for (final g in plan.groups) {
+    if (g.linkedRootId != null) out[_kindOf(plan.stateOf(g.id))]?.add(g.id);
+    for (final s in plan.stepsOf(g.id)) {
+      out[stepKind(plan, s, me)]?.add(s.id);
+    }
+  }
+  for (final s in plan.steps) {
+    if (s.groupId == null || !known.contains(s.groupId)) out[stepKind(plan, s, me)]?.add(s.id);
   }
   return out;
 }

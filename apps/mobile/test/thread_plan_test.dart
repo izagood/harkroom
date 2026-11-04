@@ -617,6 +617,23 @@ void main() {
       expect(find.byKey(const Key('plan-flow-toggle')), findsOneWidget);
     });
 
+    testWidgets('연결 그룹이 막히면 막힘 칩이 켜지고 그 그룹으로 간다', (tester) async {
+      final s = _Server()..fallback = () {
+        final j = _planJson();
+        final derived = j['derived']! as Map<String, Object?>;
+        derived['g4'] = {'derived': 'blocked', 'waitingOn': <Object?>[]};
+        derived['s1'] = {'derived': 'done', 'waitingOn': <Object?>[]};
+        return _json({'plan': j});
+      };
+      await open(tester, s);
+      await tester.ensureVisible(find.byKey(const Key('plan-chip-blocked')));
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('plan-chip-blocked')));
+      await tester.pump();
+      expect(find.byKey(const ValueKey('plan-flash-g4-1')), findsOneWidget);
+      await tester.pump(const Duration(seconds: 3));
+    });
+
     testWidgets('머리: 상태 칩은 한 줄로 가로 스크롤하고, 흐름은 접혀 있다가 눌러야 편다', (tester) async {
       await open(tester, _Server());
       final top = tester.getTopLeft(find.byKey(const Key('plan-chip-done'))).dy;
