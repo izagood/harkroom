@@ -63,6 +63,7 @@ export function ThreadPlanButton({ rootId, progress, onOpenChange }: {
           ...(counts.blocked > 0 ? [t('plan.button.ariaBlocked', { n: counts.blocked })] : []),
           isOpen ? t('plan.button.close') : t('plan.button.open')].join(', ')}
         onClick={() => setOpen(!open)}
+        onKeyDown={(e) => { if (e.key === 'Escape' && isOpen) { e.stopPropagation(); setOpen(false); } }}
         className={`absolute bottom-3 right-4 inline-flex h-9 max-w-[calc(100%-32px)] items-center gap-2 whitespace-nowrap rounded-full border border-border pl-2 pr-3 text-meta font-semibold text-fg shadow-float ${isOpen ? 'bg-surface-sunken' : 'bg-surface-raised hover:bg-surface-sunken'}`}
       >
         <PlanMark kind={planButtonKind(counts)} />
@@ -89,7 +90,6 @@ function PlanPanel({ plan, onClose }: { plan: ThreadPlanView; onClose: () => voi
   const locale = useLocale();
   const me = useActiveStore((s) => s.me?.id ?? null);
   const editor = useActiveStore((s) => (plan.updatedBy ? s.accounts[plan.updatedBy] : undefined));
-  const box = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLDivElement>(null);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [whyOpen, setWhyOpen] = useState<Record<string, boolean>>({});
@@ -97,7 +97,7 @@ function PlanPanel({ plan, onClose }: { plan: ThreadPlanView; onClose: () => voi
   const [cycle, setCycle] = useState<{ kind: PlanChipKind; index: number } | null>(null);
   const [flowAll, setFlowAll] = useState(false);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => { box.current?.focus({ preventScroll: true }); return () => clearTimeout(flashTimer.current); }, []);
+  useEffect(() => () => clearTimeout(flashTimer.current), []);
 
   const lists = planLists(plan, me);
   const pills = planPills(plan, me);
@@ -138,11 +138,8 @@ function PlanPanel({ plan, onClose }: { plan: ThreadPlanView; onClose: () => voi
 
   return (
     <div
-      ref={box}
       data-testid="plan-panel"
       tabIndex={-1}
-      // 프로그램이 준 포커스(Esc 를 받으려고)다 — 전역 포커스 테두리가 패널을 두르지 않게 한다.
-      style={{ outline: 'none' }}
       onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } }}
       className="absolute bottom-14 right-4 z-10 flex h-[600px] max-h-[calc(100%-72px)] w-[440px] max-w-[calc(100%-32px)] flex-col overflow-hidden rounded-card border border-border bg-surface-raised text-body shadow-float"
     >

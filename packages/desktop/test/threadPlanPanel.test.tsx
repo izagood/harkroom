@@ -75,6 +75,10 @@ describe('버튼', () => {
     expect(screen.queryByTestId('plan-panel')).toBeNull();
     fireEvent.keyDown(openPanel(), { key: 'Escape' });
     expect(screen.queryByTestId('plan-panel')).toBeNull();
+    openPanel();
+    expect(document.activeElement).not.toBe(screen.getByTestId('plan-panel'));
+    fireEvent.keyDown(button(), { key: 'Escape' });
+    expect(screen.queryByTestId('plan-panel')).toBeNull();
     fireEvent.click(button());
     unmount();
     render(<ThreadPlanButton rootId="r1" progress={row} />);
