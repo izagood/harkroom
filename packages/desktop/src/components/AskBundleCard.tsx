@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { isAskOpen, readAskBundleMeta, readAskMeta, type AskBundleItem, type MessageRow } from '@harkroom/shared';
+import { ASK_TEXT_OPTION_ID, isAskOpen, readAskBundleMeta, readAskMeta, type AskBundleItem, type MessageRow } from '@harkroom/shared';
 import { useActiveStore } from '../state/communities';
 import { selectAccountNames, type AccountNames } from '../lib/accountNames';
 import { getController, type BundleAcceptResult } from '../state/controller';
+import { quoteLine } from './AskCard';
 import { useT } from '../i18n/useT';
 import type { Translate } from '../i18n';
 
@@ -143,7 +144,7 @@ function rowState(item: AskBundleItem, root: MessageRow | 'unavailable' | undefi
   const ask = readAskMeta(root.meta);
   if (!ask) return { kind: 'unavailable' };
   if (ask.answeredWith != null) {
-    return { kind: 'answered', root, label: ask.options.find((o) => o.id === ask.answeredWith)?.label ?? null, by: ask.answeredBy ?? null };
+    return { kind: 'answered', root, label: ask.answeredWith === ASK_TEXT_OPTION_ID && ask.answeredText ? quoteLine(ask.answeredText) : ask.options.find((o) => o.id === ask.answeredWith)?.label ?? null, by: ask.answeredBy ?? null };
   }
   if (item.link && isAskOpen(ask)) return { kind: 'link' };
   if (ask.closedReason === 'replied') return { kind: 'replied', root, note: ask.replyNote ?? null, noteBy: ask.replyNoteBy ?? null, by: ask.closedBy ?? null };

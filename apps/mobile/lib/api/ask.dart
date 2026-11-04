@@ -65,6 +65,19 @@ class AskAccount extends AskAudience {
 const int askMinOptions = 2;
 const int askMaxOptions = 5;
 
+/// 직접 쓴 답의 `answeredWith`(shared `ASK_TEXT_OPTION_ID`).
+const String askTextOptionId = '__text__';
+
+/// 직접 쓴 답의 글자 수 상한(shared `ASK_TEXT_MAX_CHARS`).
+const int askTextMaxChars = 2000;
+
+/// 이 카드가 직접 쓴 답을 받는가(shared `askTakesText` 와 같은 판정) — 서버가 세운 카드의 선택지는 곧 서버가 할 결정이라 받지 않는다.
+bool askTakesText(Map<String, Object?> meta) =>
+    !meta.containsKey('permissionRequest') &&
+    !meta.containsKey('permissionMirror') &&
+    !meta.containsKey('mergeDenial') &&
+    !meta.containsKey('chainBackstop');
+
 class AskMeta {
   const AskMeta({
     required this.options,
@@ -72,6 +85,8 @@ class AskMeta {
     this.prompt,
     this.answeredWith,
     this.answeredBy,
+    this.answeredText,
+    this.mirrorOf,
     this.closedAt,
     this.closedBy,
     this.closedReason,
@@ -89,6 +104,12 @@ class AskMeta {
   /// 고른 선택지의 `id`. 없으면 아직 아무도 답하지 않았다.
   final String? answeredWith;
   final String? answeredBy;
+
+  /// 선택지 대신 직접 쓴 답(`answeredWith` 가 [askTextOptionId] 일 때). 평문이다 — 마크다운·멘션으로 해석하지 않는다.
+  final String? answeredText;
+
+  /// 거울 카드면 원본 카드의 id. 직접 쓴 답의 글은 원본에만 있다 — 거울은 다른 청중의 채널에 설 수 있다.
+  final String? mirrorOf;
 
   /// **답하지 않기로 한** 시각. 고른 것과 안 고른 것은 다른 사실이라 필드를 나눈다 —
   /// 하나로 뭉치면 "무엇으로 정해졌나"에 답할 수 없는 값이 그 자리에 앉는다.
@@ -169,6 +190,8 @@ class AskMeta {
       to: audience,
       answeredWith: ask['answeredWith'] as String?,
       answeredBy: ask['answeredBy'] as String?,
+      answeredText: ask['answeredWith'] == askTextOptionId && ask['answeredText'] is String ? ask['answeredText'] as String : null,
+      mirrorOf: ask['mirrorOf'] is String ? ask['mirrorOf'] as String : null,
       closedAt: ask['closedAt'] as String?,
       closedBy: ask['closedBy'] as String?,
       closedReason: ask['closedReason'] as String?,
@@ -286,6 +309,10 @@ BundleRowState bundleRowState(AskBundleItem item, Map<String, Object?>? root, {b
     String? label;
     for (final o in ask.options) {
       if (o.id == ask.answeredWith) label = o.label;
+    }
+    if (ask.answeredText != null) {
+      final line = ask.answeredText!.split('\n').first.trim();
+      label = line.length > 80 ? '${line.substring(0, 79)}…' : line;
     }
     return BundleRowAnswered(label: label, by: ask.answeredBy);
   }

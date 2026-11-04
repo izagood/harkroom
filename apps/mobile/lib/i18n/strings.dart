@@ -997,6 +997,21 @@ abstract class Strings {
   /// 답하지 않기로 한 물음.
   String get askClosed;
 
+  /// 카드의 직접 입력 칸. 선택지에 없는 답을 그 카드에만 쓴다.
+  String get askWritePlaceholder;
+
+  /// 직접 입력을 보내는 버튼.
+  String get askWriteSend;
+
+  /// 선택지 대신 직접 쓴 답의 머리. 데스크톱 `speech.ask.writtenBy` 와 같은 말이다.
+  String askWrittenBy(String name);
+
+  /// 쓴 사람을 모를 때의 머리 — 이름만 빠질 뿐 직접 쓴 답이라는 것은 그대로 말한다.
+  String get askWrittenAnon;
+
+  /// 거울 카드에서 직접 쓴 답의 글을 보러 원본 카드로 가는 링크.
+  String get askWrittenSource;
+
   /// 사람이 카드를 누르지 않고 같은 스레드에 글로 답해 닫힌 물음(A′, 2026-10-09).
   String get askReplied;
 
@@ -1725,6 +1740,11 @@ Map<String, String> stringsToMap(Strings s) => {
       'artifactLeaveCancel': s.artifactLeaveCancel,
       'askAnswered': s.askAnswered,
       'askClosed': s.askClosed,
+      'askWritePlaceholder': s.askWritePlaceholder,
+      'askWriteSend': s.askWriteSend,
+      'askWrittenBy': s.askWrittenBy('x'),
+      'askWrittenAnon': s.askWrittenAnon,
+      'askWrittenSource': s.askWrittenSource,
       'askReplied': s.askReplied,
       'askSuperseded': s.askSuperseded,
       'askExpired': s.askExpired,

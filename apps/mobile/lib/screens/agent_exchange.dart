@@ -227,6 +227,11 @@ ExchangeConclusion? exchangeConclusion(List<MessageRow> messages) {
     final ask = _readAsk(meta);
     final answeredWith = ask?['answeredWith'];
     if (ask != null && answeredWith != null) {
+      // 직접 쓴 답은 그 글이 결론이다.
+      final written = ask['answeredText'];
+      if (answeredWith == '__text__' && written is String) {
+        return ExchangeConclusion(ExchangeConclusionSource.ask, _clamp(written));
+      }
       for (final o in ask['options']! as List) {
         if ((o as Map)['id'] == answeredWith) {
           return ExchangeConclusion(ExchangeConclusionSource.ask, _clamp(o['label']! as String));

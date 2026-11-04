@@ -244,6 +244,21 @@ class StringsEn implements Strings {
   String get askClosed => 'Closed without an answer';
 
   @override
+  String get askWritePlaceholder => 'Write your own answer…';
+
+  @override
+  String get askWriteSend => 'Send';
+
+  @override
+  String askWrittenBy(String name) => 'Written by $name';
+
+  @override
+  String get askWrittenAnon => 'Written answer';
+
+  @override
+  String get askWrittenSource => 'View on the original card';
+
+  @override
   String get askReplied => 'Answered in text';
 
   @override

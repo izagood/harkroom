@@ -617,6 +617,16 @@ class ApiClient {
     return MessageRow.fromJson(_obj(res));
   }
 
+  /// 선택지 대신 직접 쓴 답 — 그 카드 하나의 답이다. 같은 문이고 `optionId` 대신 `text` 를 싣는다.
+  Future<MessageRow> answerAskText(String channelId, String messageId, String text) async {
+    final res = await _send(
+      'POST',
+      '/channels/$channelId/messages/$messageId/ask-answer',
+      body: {'text': text},
+    );
+    return MessageRow.fromJson(_obj(res));
+  }
+
   /// **답하지 않기로 한다.**
   ///
   /// 고르기만 있으면 그 작업을 그만두기로 한 사람에게 남는 수단이 **메시지를 지우는

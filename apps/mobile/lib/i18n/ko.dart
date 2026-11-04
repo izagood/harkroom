@@ -243,6 +243,26 @@ class StringsKo implements Strings {
   String get askClosed => '답 없이 닫혔다';
 
   @override
+  String get askWritePlaceholder => '직접 입력…';
+
+  @override
+  String get askWriteSend => '보내기';
+
+  @override
+  String askWrittenBy(String name) {
+    // 데스크톱 `format.ts::applyParticle` 과 같은 규칙 — 한글이면 받침으로 고르고, 아니면 띄고 「가」.
+    final last = name.isEmpty ? 0 : name.codeUnitAt(name.length - 1);
+    if (last < 0xac00 || last > 0xd7a3) return '$name 가 직접 답했다';
+    return '$name${(last - 0xac00) % 28 != 0 ? '이' : '가'} 직접 답했다';
+  }
+
+  @override
+  String get askWrittenAnon => '직접 답했다';
+
+  @override
+  String get askWrittenSource => '원본 카드에서 보기';
+
+  @override
   String get askReplied => '글로 답했다';
 
   @override
