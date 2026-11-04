@@ -130,13 +130,22 @@ function hasCwdFragment(line: string, cwd: string | null): boolean {
 }
 
 /**
+ * 화면 답으로 집을 줄의 상한 — 터미널 높이(`ScreenIdleWatch` 기본 40줄)와 같다. 전에는 3줄이라 표 답이 머리말과 첫 줄만 남았다(2026-11-04
+ * 3회차 시험: 14줄 표가 첫 줄만 옮겨졌다).
+ */
+export const SCREEN_ANSWER_MAX_LINES = 40;
+
+/** 차례 끝에 그리는 요약 줄(`Build · 모델 · 1m 0s`). 줄 수 상한이 넓어져 답 뒤의 이 줄까지 집히므로 뺀다. */
+const TURN_SUMMARY = /^\S+ · \S+ · \d+(?:\.\d+)?(?:ms|s|m|h)(?: \d+(?:\.\d+)?(?:ms|s|m|h))*$/;
+
+/**
  * 끝난 화면에서 모델이 쓴 답으로 보이는 줄을 뽑는다(「답 없이 끝났다」 통지에 싣는다). 하네스마다 화면 모양이 달라 경계를
  * 모르므로 **마지막으로 본 일하는 중 화면에 없던 줄**만 집고, 입력창·일하는 중 표지·테두리·경로·생각 요약(`REASONING_SUMMARY`) 줄은
  * 뺀다(위에서 `max` 줄). 남는 줄이 없으면 빈 배열 — 호출자는 「답 없음」 통지로 물러난다.
  * `cwd`(턴의 작업 폴더)를 주면 그 이름 조각이 든 줄도 뺀다(`hasCwdFragment`).
  */
 export function screenAnswerLines(
-  text: string, facts: Pick<ScreenFacts, 'ready'> & { busy?: RegExp }, before: string | null, cwd: string | null = null, max = 3,
+  text: string, facts: Pick<ScreenFacts, 'ready'> & { busy?: RegExp }, before: string | null, cwd: string | null = null, max = SCREEN_ANSWER_MAX_LINES,
 ): string[] {
   const seen = new Set((before ?? '').split('\n').map((l) => l.trim()));
   const picked: string[] = [];
@@ -146,7 +155,7 @@ export function screenAnswerLines(
     const chrome = (l.match(CHROME) ?? []).length;
     if (chrome * 2 > l.replace(/\s/g, '').length) continue;
     const said = l.replace(/^[•●⏺◦▣]\s*/, '');
-    if (REASONING_SUMMARY.test(said)) continue;
+    if (REASONING_SUMMARY.test(said) || TURN_SUMMARY.test(said)) continue;
     picked.push(said);
     if (picked.length >= max) break;
   }
