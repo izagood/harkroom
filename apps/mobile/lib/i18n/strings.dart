@@ -1003,8 +1003,11 @@ abstract class Strings {
   /// 직접 입력을 보내는 버튼.
   String get askWriteSend;
 
-  /// 선택지 대신 직접 쓴 답의 머리.
+  /// 선택지 대신 직접 쓴 답의 머리. 데스크톱 `speech.ask.writtenBy` 와 같은 말이다.
   String askWrittenBy(String name);
+
+  /// 쓴 사람을 모를 때의 머리 — 이름만 빠질 뿐 직접 쓴 답이라는 것은 그대로 말한다.
+  String get askWrittenAnon;
 
   /// 사람이 카드를 누르지 않고 같은 스레드에 글로 답해 닫힌 물음(A′, 2026-10-09).
   String get askReplied;
@@ -1737,6 +1740,7 @@ Map<String, String> stringsToMap(Strings s) => {
       'askWritePlaceholder': s.askWritePlaceholder,
       'askWriteSend': s.askWriteSend,
       'askWrittenBy': s.askWrittenBy('x'),
+      'askWrittenAnon': s.askWrittenAnon,
       'askReplied': s.askReplied,
       'askSuperseded': s.askSuperseded,
       'askExpired': s.askExpired,

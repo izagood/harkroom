@@ -110,7 +110,10 @@ class _AskCardState extends State<AskCard> {
     final closedByName = closedBy == null
         ? null
         : (closedBy.displayName.isNotEmpty ? closedBy.displayName : closedBy.handle);
-    final answeredByName = ask.answeredBy == null ? null : app.accounts[ask.answeredBy!]?.handle;
+    final answeredBy = ask.answeredBy == null ? null : app.accounts[ask.answeredBy!];
+    final answeredByName = answeredBy == null
+        ? null
+        : (answeredBy.displayName.isNotEmpty ? answeredBy.displayName : answeredBy.handle);
     final canWrite = ((ask.isOpen && mine) || canPickLate) && askTakesText(widget.message.meta);
     final quote = ask.isReplied ? _replyQuote(app, widget.message, ask.replyMessageId) : null;
 
@@ -126,7 +129,8 @@ class _AskCardState extends State<AskCard> {
           children: [
             Text(
               switch ((ask.isOpen, ask.to)) {
-                (false, _) when ask.answeredText != null && answeredByName != null => t.askWrittenBy(answeredByName),
+                (false, _) when ask.answeredText != null =>
+                  answeredByName == null ? t.askWrittenAnon : t.askWrittenBy(answeredByName),
                 (false, _) when ask.answeredWith != null => t.askAnswered,
                 (false, _) when ask.isReplied =>
                   closedByName == null ? t.askReplied : '${t.askReplied} · $closedByName',
@@ -249,6 +253,9 @@ class _AskCardState extends State<AskCard> {
                 decoration: InputDecoration(
                   hintText: t.askWritePlaceholder,
                   isDense: true,
+                  // 옆 「보내기」(44pt)와 한 줄일 때 높이를 맞춘다.
+                  constraints: const BoxConstraints(minHeight: 44),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                   filled: true,
                   fillColor: context.tokens.surface,
                   border: const OutlineInputBorder(),

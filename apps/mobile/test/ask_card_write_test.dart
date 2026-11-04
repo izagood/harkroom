@@ -86,6 +86,34 @@ void main() {
     expect(find.text('다른 길\n이유'), findsOneWidget);
     expect(find.byKey(const Key('ask-write-m1')), findsNothing);
     expect(find.byKey(const Key('ask-chosen-m1')), findsNothing);
+    // 쓴 사람을 몰라도 직접 쓴 답이라는 것은 말한다.
+    expect(tester.widget<Text>(find.byKey(const Key('ask-head-m1'))).data, '직접 답했다');
+  });
+
+  testWidgets('머리는 표시 이름을 먼저, 없으면 handle 을 쓴다', (tester) async {
+    AccountView acc(String display) => AccountView(
+        id: 'me', handle: 'alice', displayName: display, isAgent: false, isDisabled: false, avatarAttachmentId: null);
+    final meta = _ask(const {'answeredWith': askTextOptionId, 'answeredBy': 'me', 'answeredText': '글'});
+    app.accounts['me'] = acc('민수');
+    await pump(tester, meta);
+    expect(tester.widget<Text>(find.byKey(const Key('ask-head-m1'))).data, '민수가 직접 답했다');
+    app.accounts['me'] = acc('');
+    await pump(tester, meta);
+    expect(tester.widget<Text>(find.byKey(const Key('ask-head-m1'))).data, 'alice 가 직접 답했다');
+  });
+
+  test('받침에 따라 조사가 갈린다 — 데스크톱과 같은 규칙', () {
+    final ko = stringsFor('ko');
+    expect(ko.askWrittenBy('민준'), '민준이 직접 답했다');
+    expect(ko.askWrittenBy('민수'), '민수가 직접 답했다');
+    expect(ko.askWrittenBy('forge'), 'forge 가 직접 답했다');
+    expect(stringsFor('en').askWrittenBy('forge'), 'Written by forge');
+  });
+
+  testWidgets('한 줄일 때 입력칸과 「보내기」의 높이가 같다', (tester) async {
+    await pump(tester, _ask());
+    expect(tester.getSize(find.byKey(const Key('ask-write-m1'))).height, 44);
+    expect(tester.getSize(find.byKey(const Key('ask-write-send-m1'))).height, 44);
   });
 
   test('이상한 값은 직접 쓴 답으로 읽지 않는다', () {

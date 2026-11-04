@@ -253,6 +253,9 @@ class StringsEn implements Strings {
   String askWrittenBy(String name) => 'Written by $name';
 
   @override
+  String get askWrittenAnon => 'Written answer';
+
+  @override
   String get askReplied => 'Answered in text';
 
   @override
