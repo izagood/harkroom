@@ -1164,6 +1164,29 @@ describe('runMentionTurn', () => {
     expect(fake.reactions.filter((r) => r.emoji === '✅')).toEqual([]);
   });
 
+  it('사람이 부른 API 키 연결 claude 턴: 도구 없이 끝낸 짧은 답을 기록에서 옮겨 올린다(2026-11-04 사례)', async () => {
+    const fake = new FakeHarkroom(defOf({ harness: 'claude-code', model: 'ExampleOrg/example-model' }));
+    fake.seedFrom('human-1', '@forge 안녕').id = MENTION;
+    const { deps } = await makeDeps(fake, { readLastSaid: async () => '안녕하세요!\n잘 돌아갑니다.', providerEnv: async () => ({}) });
+    const workspaceDir = join(deps.workspaceBaseDir, 'claude-lane');
+    await mkdir(workspaceDir, { recursive: true });
+    await deps.store.put(SessionStore.threadKey(CHANNEL, null), {
+      workspaceDir, sessionId: '00000000-0000-4000-8000-000000000001', harness: 'claude-code', lastFedSeq: 0, turnsRun: 0,
+    });
+    const mcpConfigPath = join(deps.workspaceBaseDir, 'mcp.json');
+    await writeFile(mcpConfigPath, JSON.stringify({ mcpServers: { harkroom: { type: 'stdio', command: '/opt/harkroom/harkroom-operator', args: ['mcp-bridge'] } } }));
+    vi.stubEnv('HARKROOM_RUNNER_SECRET', 'fake-runner-secret');
+    try {
+      await runMentionTurn({ ...deps, mcpConfigPath }, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+
+    expect(fake.posts.map((p) => p.body)).toEqual([
+      '> 안녕하세요!\n> 잘 돌아갑니다.\n\n(에이전트가 이 답을 스레드에 올리지 않고 끝내, 러너가 하네스 기록에서 옮겨 올렸습니다.)',
+    ]);
+  });
+
   it('넘겨받은 일(delegatedBy)이 답 없이 끝나면 ✅ 가 아니라 실패다 — 위임을 「실패」로 닫아 팀장을 깨운다', async () => {
     const fake = new FakeHarkroom(defOf());
     fake.seedFrom('agent-peer', '@forge 응답 점검이다').id = MENTION;

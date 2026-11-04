@@ -3009,7 +3009,7 @@ export async function runMentionTurn(
       const notice = silentTurnNotice({
         caller: silentTurnCaller(deps, target, thread), lastSaid, offAnchor,
         pat: deps.runnerSecret, secrets: await tailSecrets(),
-        // 기록이 말해 주지 않을 때만 화면 답을 대신 올린다 — 기록을 읽는 하네스(claude)의 마지막 말은 지금처럼 인용만 한다.
+        // 기록이 말해 주지 않을 때만 화면 답을 대신 올린다 — 기록을 읽는 하네스(claude)의 마지막 말은 아래 `recordProxy` 가 가른다.
         screenAnswer: recordSaid === null ? end.screenSaid : null,
         screenEnded: recordSaid === null && end.screenEnded,
         // 기록 대리 게시는 API 키 연결 턴에만(2026-10-31, `silentTurnNotice` 의 `recordProxy`). 구독 claude 가 말없이 끝낸 에이전트 호출은

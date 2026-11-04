@@ -1840,11 +1840,41 @@ describe('silentTurnNotice — 구독 claude 의 일부러 한 침묵은 대리 
     expect((n as { body: string }).body).toContain('하네스 기록에서 옮겨 올렸습니다');
   });
 
-  it('사람이 부른 턴·넘겨받은 일은 recordProxy 와 무관하다', () => {
+  it('넘겨받은 일은 recordProxy 와 무관하게 실패로 닫는다', () => {
     for (const recordProxy of [true, false]) {
-      expect(silentTurnNotice({ ...base, caller: 'human', lastSaid: QUIET, recordProxy }).kind).toBe('post');
       expect(silentTurnNotice({ ...base, caller: 'delegated', lastSaid: QUIET, recordProxy }).kind).toBe('fail');
     }
+  });
+
+  // 2026-11-04 실측: claude-code × API 키 모델이 「안녕」의 답을 최종 텍스트로만 쓰고 도구 없이 end_turn 으로 끝냈다 — 답이 인용 한 줄로 잘렸다.
+  it('사람이 부른 API 키 연결 턴은 짧은 답도 줄을 살려 기록에서 옮겨 올린다', () => {
+    const n = silentTurnNotice({ ...base, caller: 'human', lastSaid: '안녕하세요!\n잘 돌아갑니다.', recordProxy: true });
+    expect(n).toEqual({
+      kind: 'post',
+      body: '> 안녕하세요!\n> 잘 돌아갑니다.\n\n(에이전트가 이 답을 스레드에 올리지 않고 끝내, 러너가 하네스 기록에서 옮겨 올렸습니다.)',
+    });
+  });
+
+  it('사람이 부른 구독 턴은 지금처럼 인용 통지다', () => {
+    for (const recordProxy of [false, undefined]) {
+      const n = silentTurnNotice({ ...base, caller: 'human', lastSaid: '권한이 막혀서 멈췄다', recordProxy });
+      expect((n as { body: string }).body).toBe('답을 남기지 못하고 끝났습니다. 마지막 말: "권한이 막혀서 멈췄다" — 다시 부르면 이어서 합니다.');
+    }
+  });
+
+  it('사람이 부른 API 키 연결 턴: 옮길 말이 없거나 비밀이 걸리면 답 없음 통지로 돌아간다', () => {
+    const none = '답을 남기지 못하고 끝났습니다 — 다시 부르면 이어서 합니다.';
+    expect((silentTurnNotice({ ...base, caller: 'human', lastSaid: null, recordProxy: true }) as { body: string }).body).toBe(none);
+    expect((silentTurnNotice({ ...base, caller: 'human', lastSaid: '   ', recordProxy: true }) as { body: string }).body).toBe(none);
+    const secret = 'sk-live-ABCDEFGHIJKLMNOPQRSTUVWX';
+    const n = silentTurnNotice({ ...base, caller: 'human', lastSaid: `값은 ${secret.slice(0, 14)}`, secrets: [secret], recordProxy: true });
+    expect((n as { body: string }).body).toBe(none);
+  });
+
+  it('사람이 부른 API 키 연결 턴: 옮긴 글 속 멘션은 인용 줄 안이고 PAT 는 가린다', () => {
+    const body = (silentTurnNotice({ ...base, caller: 'human', lastSaid: '@someone 값은 hrkp_secretpat 이다', recordProxy: true }) as { body: string }).body;
+    expect(body.startsWith('> @someone 값은 (가림) 이다')).toBe(true);
+    expect(body).not.toContain('hrkp_secretpat');
   });
 });
 
