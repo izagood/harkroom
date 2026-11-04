@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../api/thread_plan.dart';
 import '../i18n/i18n.dart';
@@ -9,10 +10,11 @@ import '../state/app_scope.dart';
 import '../state/app_state.dart';
 import '../time.dart';
 import '../ui/tokens.dart';
+import 'message_link.dart';
 import 'tab_nav.dart';
 import 'thread_screen.dart';
 
-/// 스레드 계획판 — 칩·띠·시트(시안 v3, 데스크톱 `ThreadPlanBand`·`PlanChip` 의 폰 판).
+/// 스레드 계획판 — 칩·버튼·시트(개선 시안 v3, 데스크톱 `ThreadPlanBand`·`PlanChip` 의 폰 판).
 ///
 /// 파생 상태는 서버 값을 그대로 쓴다. 제목·목표·사유는 남이 쓴 글이라 **`Text` 로만** 그린다 — 마크다운·링크로 해석하지 않는다.
 /// 펼침은 기억하지 않는다: 시트가 작성칸을 덮으므로 스레드에 들어올 때는 늘 닫혀 있다.
@@ -138,50 +140,30 @@ class PlanChip extends StatelessWidget {
   }
 }
 
-/// 띠의 자리 나누기 — 그룹이 넷 이상일 때 목표와 요약이 함께 읽히게 한다(designer #1747).
-abstract final class PlanBandLayout {
-  /// 칩·여백·⌃ 를 뺀 자리에서 요약이 쓸 수 있는 폭. 목표 2 : 요약 1 이다.
-  static double summaryMax({required double screen, required double chip}) => math.max(0, screen - 22 - chip - 6 - 22) / 3;
+/// 떠 있는 버튼의 높이(W9, 누르는 자리 44).
+const double planButtonHeight = 44;
 
-  /// 폰 폭인가. 폰 폭에서 칩에 막힘이 있으면 요약을 그리지 않는다 — 칩이 이미 말하고, 잘린 글자는 뜻이 없다.
-  static bool narrow(double screen) => screen < 430;
+/// 버튼이 서 있는가. 계획이 없거나 단계가 없으면, 또는 키보드가 올라와 있으면 없다(입력하는 자리를 가리지 않게).
+bool planButtonVisible(PlanCounts? progress, {required bool keyboardOpen}) => planTone(progress) != PlanTone.empty && !keyboardOpen;
 
-  /// 그룹이 넷 이상인 띠의 요약. 막힌 이름까지 들어가면 전체를, 안 들어가면 「그룹 5」 만 쓴다.
-  /// 넓은 화면의 막힘 요약은 이름이 중요해 말줄임으로 둔다. `null` 이면 요약을 그리지 않는다.
-  static ({String text, String? blockedName})? summaryText(
-    Strings t, {
-    required ({int groups, int active, int blocked, String? firstBlocked}) summary,
-    required int chipBlocked,
-    required double screen,
-    required double maxWidth,
-    required double Function(String) measure,
-  }) {
-    if (narrow(screen) && chipBlocked > 0) return null;
-    final text = summary.blocked > 0
-        ? t.planSummary(summary.groups, summary.active, summary.blocked)
-        : t.planSummaryNoBlocked(summary.groups, summary.active);
-    final name = summary.firstBlocked;
-    final fits = measure(name == null ? text : '$text ($name)') + 6 <= maxWidth;
-    if (fits || (summary.blocked > 0 && !narrow(screen))) return (text: text, blockedName: name);
-    return (text: t.planSummaryGroups(summary.groups), blockedName: null);
-  }
-}
-
-/// 스레드 머리 밑의 띠(44pt, 불투명). 칩 · 목표 · 알약 1개 · +n · ⌃. 띠 전체가 누르는 자리 하나다.
+/// 스레드 작성칸 위 오른쪽에 뜨는 계획판 버튼(시안 v3 W5·W9). 누르면 시트가 열린다.
 ///
-/// **부를 길은 루트 행의 `planProgress` 뿐이다** — 옛 서버나 계획 없는 스레드에서는 띠가 없고 GET 도 없다.
-/// 판을 받는 곳은 이 띠 하나다(데스크톱 R1). 칩은 판을 받은 뒤 개인 진행률을 쓴다(R2).
-class ThreadPlanBand extends StatefulWidget {
-  const ThreadPlanBand({super.key, required this.rootId, required this.progress});
+/// **부를 길은 루트 행의 `planProgress` 뿐이다** — 옛 서버나 계획 없는 스레드에서는 버튼이 없고 GET 도 없다.
+/// 판을 받는 곳은 이 버튼 하나다(데스크톱 R1). 칩은 판을 받은 뒤 개인 진행률을 쓴다(R2). 키보드 때 숨어도 판은 받는다.
+class ThreadPlanButton extends StatefulWidget {
+  const ThreadPlanButton({super.key, required this.rootId, required this.progress, required this.keyboardOpen});
 
   final String rootId;
   final PlanProgressMark? progress;
 
+  /// 부르는 쪽이 Scaffold **바깥**에서 읽어 준다 — Scaffold 안의 `viewInsets` 는 0 으로 지워져 있다(`GlassBody` 주석).
+  final bool keyboardOpen;
+
   @override
-  State<ThreadPlanBand> createState() => _ThreadPlanBandState();
+  State<ThreadPlanButton> createState() => _ThreadPlanButtonState();
 }
 
-class _ThreadPlanBandState extends State<ThreadPlanBand> {
+class _ThreadPlanButtonState extends State<ThreadPlanButton> {
   /// 마지막으로 살펴본 rev·시각. 값이 바뀔 때만 다시 받는다 — 실패해도 매 프레임 두드리지 않는다.
   String? _checked;
 
@@ -205,104 +187,55 @@ class _ThreadPlanBandState extends State<ThreadPlanBand> {
       return const SizedBox.shrink();
     }
     final app = context.app;
+    _sync(app);
+    if (!planButtonVisible(mark, keyboardOpen: widget.keyboardOpen)) return const SizedBox.shrink();
     final t = context.t;
     final k = context.tokens;
-    _sync(app);
     final plan = app.threadPlans[widget.rootId];
-    final PlanCounts chip = plan != null && plan.progress.total > 0 ? plan.progress : mark!;
-    final pills = plan == null ? const <PlanPill>[] : planPills(plan);
-    final summary = planSummary(pills);
-    final stale = plan != null && isPlanStale(plan.updatedAt, DateTime.now().toUtc());
-    final screen = MediaQuery.sizeOf(context).width;
-    final chipMax = screen * 0.55;
-    // 요약은 칩을 뺀 자리의 1/3 까지만 쓴다 — 목표가 먼저 읽혀야 한다. 짧으면 남는 자리는 목표가 가져간다.
-    final summaryMax = PlanBandLayout.summaryMax(screen: screen, chip: math.min(PlanChip.widthOf(context, chip), chipMax));
-    final summaryLine = summary == null
-        ? null
-        : PlanBandLayout.summaryText(
-            t,
-            summary: summary,
-            chipBlocked: chip.blocked,
-            screen: screen,
-            maxWidth: summaryMax,
-            measure: (s) => _textWidth(context, s, const TextStyle(fontSize: HarkroomType.meta)),
-          );
+    final PlanCounts counts = plan != null && plan.progress.total > 0 ? plan.progress : mark!;
     void open() => openThreadPlanSheet(context, widget.rootId);
-
     return Semantics(
-      key: const Key('plan-band'),
       button: true,
       excludeSemantics: true,
-      label: [
-        t.planChipSemantics(chip.done, chip.total),
-        if (chip.blocked > 0) t.planBlockedSemantics(chip.blocked),
-        if (plan != null) t.planGoalSemantics(plan.goal),
-      ].join(', '),
+      label: [t.planChipSemantics(counts.done, counts.total), if (counts.blocked > 0) t.planBlockedSemantics(counts.blocked)].join(', '),
       hint: t.planOpenHint,
       onTap: open,
       child: Material(
+        key: const Key('plan-button'),
         color: k.surfaceRaised,
+        elevation: 3,
+        shape: StadiumBorder(side: BorderSide(color: k.border)),
+        clipBehavior: Clip.antiAlias,
         child: InkWell(
-          key: const Key('plan-band-open'),
+          key: const Key('plan-button-open'),
           onTap: open,
-          child: Container(
-            constraints: const BoxConstraints(minHeight: HarkroomSize.row),
-            padding: const EdgeInsets.fromLTRB(10, 0, 12, 0),
-            decoration: BoxDecoration(border: Border(bottom: BorderSide(color: k.border))),
-            child: Row(children: [
-              // 큰 글자에서도 목표·⌃ 자리를 남긴다.
-              ConstrainedBox(
-                constraints: BoxConstraints(maxWidth: chipMax),
-                child: PlanChip(progress: chip),
-              ),
-              const SizedBox(width: 6),
-              // 좁을수록 목표 글자부터 줄이고 알약은 남긴다(데스크톱 designer 1).
-              Expanded(
-                child: Text(
-                  plan?.goal ?? '',
-                  key: const Key('plan-band-goal'),
-                  maxLines: 1,
-                  softWrap: false,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: k.fg, fontSize: 14),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: planButtonHeight, maxWidth: MediaQuery.sizeOf(context).width - 32),
+            child: Padding(
+              padding: const EdgeInsets.only(left: 10, right: 12),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                PlanStateMark(kind: planButtonKind(counts)),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    t.planChip(counts.done, counts.total),
+                    maxLines: 1,
+                    softWrap: false,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: k.fg, fontSize: 13, fontWeight: FontWeight.w600),
+                  ),
                 ),
-              ),
-              if (stale)
-                Padding(
-                  padding: const EdgeInsets.only(left: 6),
-                  child: Text(t.planStaleShort, key: const Key('plan-stale'), style: TextStyle(color: k.warning, fontSize: HarkroomType.meta)),
-                )
-              else if (summaryLine != null)
-                ConstrainedBox(
-                  constraints: BoxConstraints(maxWidth: summaryMax),
-                  child: Padding(
-                    padding: const EdgeInsets.only(left: 6),
-                    child: Text.rich(
-                      key: const Key('plan-summary'),
-                      TextSpan(children: [
-                        TextSpan(text: summaryLine.text),
-                        if (summaryLine.blockedName != null)
-                          TextSpan(text: ' (${summaryLine.blockedName})', style: TextStyle(color: k.stateStuck)),
-                      ]),
-                      maxLines: 1,
-                      softWrap: false,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: k.fgMuted, fontSize: HarkroomType.meta),
-                    ),
-                  ),
-                )
-              else if (summary == null && pills.isNotEmpty) ...[
-                const SizedBox(width: 6),
-                _Pill(pill: pills.first),
-                if (pills.length > 1)
-                  Padding(
-                    padding: const EdgeInsets.only(left: 6),
-                    child: Text(t.planMoreGroups(pills.length - 1), key: const Key('plan-more'), style: TextStyle(color: k.fgMuted, fontSize: HarkroomType.meta)),
-                  ),
-              ],
-              const SizedBox(width: 4),
-              Icon(Icons.expand_less, size: 18, color: k.fgSubtle),
-            ]),
+                const SizedBox(width: 8),
+                ExcludeSemantics(child: _ProgressBar(done: counts.done, total: counts.total)),
+                if (counts.blocked > 0) ...[
+                  const SizedBox(width: 6),
+                  Text(t.planChipBlocked(counts.blocked), key: const Key('plan-button-blocked'), maxLines: 1, softWrap: false,
+                      style: TextStyle(color: k.stateStuck, fontSize: 13, fontWeight: FontWeight.w600)),
+                ],
+                const SizedBox(width: 4),
+                Icon(Icons.expand_less, size: 18, color: k.fgSubtle),
+              ]),
+            ),
           ),
         ),
       ),
@@ -310,140 +243,132 @@ class _ThreadPlanBandState extends State<ThreadPlanBand> {
   }
 }
 
-/// 알약 글자(D7) — 데스크톱 `plan.pill.*` 와 같다: 「화면 막힘 1/3」「서버✓」「출시 대기」「문서 대기 1/3」.
-String planPillLabel(Strings t, PlanPill p) {
-  final c = p.count;
-  if (p.state == PlanState.done) return t.planPillDone(p.title);
-  if (p.state == PlanState.blocked && c != null) return t.planPillBlocked(p.title, c.done, c.total);
-  if (p.state == PlanState.waiting && c != null && c.total > 0 && c.done > 0) {
-    return t.planPillWaitingCount(p.title, c.done, c.total);
-  }
-  if (p.state == PlanState.waiting) return t.planPillWaiting(p.title);
-  if (c != null && c.total > 0 && p.state != PlanState.hidden) return t.planPillCount(p.title, c.done, c.total);
-  return p.title;
-}
+class _ProgressBar extends StatelessWidget {
+  const _ProgressBar({required this.done, required this.total});
 
-class _Pill extends StatelessWidget {
-  const _Pill({required this.pill});
-
-  final PlanPill pill;
+  final int done;
+  final int total;
 
   @override
   Widget build(BuildContext context) {
     final k = context.tokens;
-    final (Color? bg, Color fg, Border? border) = switch (pill.state) {
-      PlanState.blocked => (k.dangerSurface, k.stateStuck, null),
-      PlanState.active => (k.surfaceSunken, k.fgAgent, null),
-      PlanState.ready => (k.surfaceSunken, k.fgMuted, null),
-      _ => (null, k.fgMuted, Border.all(color: k.border)),
-    };
-    return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 152),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
-        decoration: BoxDecoration(color: bg, border: border, borderRadius: BorderRadius.circular(HarkroomRadius.full)),
-        child: Text(
-          planPillLabel(context.t, pill),
-          maxLines: 1,
-          softWrap: false,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(color: fg, fontSize: HarkroomType.meta),
-        ),
+    return Container(
+      width: 36,
+      height: 5,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: k.surfaceSunken,
+        borderRadius: BorderRadius.circular(HarkroomRadius.full),
+        border: Border.all(color: k.border, width: 0.5),
+      ),
+      alignment: Alignment.centerLeft,
+      child: FractionallySizedBox(
+        widthFactor: total == 0 ? 0 : math.min(1, done / total),
+        heightFactor: 1,
+        child: ColoredBox(color: k.success),
       ),
     );
   }
 }
 
-/// 상태 표지 — **색만으로 가르지 않는다**: ✓ 끝남 · ◐ 진행 · ! 막힘 · ▷ 시작 가능 · ○ 대기 · 점선 볼 수 없음. VoiceOver 는 라벨을 읽는다.
+/// 알약 글자 — 데스크톱 `plan.pill.*` 와 같다.
+String planPillLabel(Strings t, PlanPill p) => switch (p.key) {
+      PlanPillKey.done => t.planPillDone(p.title),
+      PlanPillKey.blocked => t.planPillBlocked(p.title, p.done, p.total),
+      PlanPillKey.mine => t.planPillMine(p.title, p.n),
+      PlanPillKey.active => t.planPillActive(p.title, p.n, p.done, p.total),
+      PlanPillKey.waiting => t.planPillWaiting(p.title),
+      PlanPillKey.waitingCount => t.planPillWaitingCount(p.title, p.done, p.total),
+      PlanPillKey.count => t.planPillCount(p.title, p.done, p.total),
+      PlanPillKey.plain => p.title,
+    };
+
+/// 상태 표지(V1·V2) — 채운 원 18pt + 흰 기호: 끝 ✓ · 진행 ▶ · 막힘 ! · 내 차례 사람. 빈 원: 시작 가능 ▷ · 대기 점선 · 볼 수 없음 성긴 점선.
+/// 채운 것과 빈 것이 크기·면만으로 두 무리로 갈리고, 기호로 다시 갈린다. VoiceOver 는 글자로 읽는다.
 class PlanStateMark extends StatelessWidget {
-  const PlanStateMark({super.key, required this.state});
+  const PlanStateMark({super.key, required this.kind, this.size = 18});
 
-  final PlanState state;
+  final PlanRowKind kind;
+  final double size;
 
-  static String label(Strings t, PlanState s) => switch (s) {
-        PlanState.done => t.planStateDone,
-        PlanState.active => t.planStateActive,
-        PlanState.blocked => t.planStateBlocked,
-        PlanState.ready => t.planStateReady,
-        PlanState.waiting => t.planStateWaiting,
-        PlanState.hidden => t.planStateHidden,
+  static String label(Strings t, PlanRowKind k) => switch (k) {
+        PlanRowKind.done => t.planStateDone,
+        PlanRowKind.active => t.planStateActive,
+        PlanRowKind.blocked => t.planStateBlocked,
+        PlanRowKind.mine => t.planRowMine,
+        PlanRowKind.ready => t.planStateReady,
+        PlanRowKind.waiting => t.planStateWaiting,
+        PlanRowKind.hidden => t.planStateHidden,
       };
 
   @override
-  Widget build(BuildContext context) {
-    final k = context.tokens;
-    return Semantics(
-      label: label(context.t, state),
-      excludeSemantics: true,
-      child: SizedBox.square(
-        dimension: 16,
-        child: CustomPaint(painter: _MarkPainter(state: state, tokens: k)),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => Semantics(
+        label: label(context.t, kind),
+        excludeSemantics: true,
+        child: SizedBox.square(
+          dimension: size,
+          child: CustomPaint(painter: _MarkPainter(kind: kind, tokens: context.tokens)),
+        ),
+      );
 }
 
 class _MarkPainter extends CustomPainter {
-  _MarkPainter({required this.state, required this.tokens});
+  _MarkPainter({required this.kind, required this.tokens});
 
-  final PlanState state;
+  final PlanRowKind kind;
   final HarkroomTokens tokens;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final c = size.center(Offset.zero);
-    final r = size.width / 2 - 1;
-    Paint stroke(Color color) => Paint()..style = PaintingStyle.stroke..strokeWidth = 1.5..color = color;
-    Paint fill(Color color) => Paint()..color = color;
-    Paint ink(Color color) => Paint()
+    canvas.scale(size.width / 18);
+    const c = Offset(9, 9);
+    final white = Paint()..color = Colors.white;
+    Paint line(Color color, double w) => Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.8
+      ..strokeWidth = w
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round
       ..color = color;
-    Offset at(double x, double y) => Offset(c.dx + x, c.dy + y);
-    switch (state) {
-      case PlanState.done:
-        canvas.drawCircle(c, r + 1, fill(tokens.success));
+    void disc(Color color) => canvas.drawCircle(c, 9, Paint()..color = color);
+    void dashed(Color color, double w, int n, double part) {
+      for (var i = 0; i < n; i++) {
+        canvas.drawArc(Rect.fromCircle(center: c, radius: 8), i * 2 * math.pi / n, part * 2 * math.pi / n, false, line(color, w));
+      }
+    }
+
+    switch (kind) {
+      case PlanRowKind.done:
+        disc(tokens.success);
+        canvas.drawPath(Path()..moveTo(5, 9.3)..lineTo(8, 12.2)..lineTo(13, 6.5), line(Colors.white, 2));
+      case PlanRowKind.active:
+        disc(tokens.stateActive);
+        canvas.drawPath(Path()..moveTo(7, 5.2)..lineTo(7, 12.8)..lineTo(13, 9)..close(), white);
+      case PlanRowKind.blocked:
+        disc(tokens.stateStuck);
+        canvas.drawLine(const Offset(9, 4.5), const Offset(9, 10.1), line(Colors.white, 2.2));
+        canvas.drawCircle(const Offset(9, 13.2), 1.3, white);
+      case PlanRowKind.mine:
+        disc(tokens.accent);
+        canvas.drawCircle(const Offset(9, 6.6), 2.6, white);
         canvas.drawPath(
-          Path()
-            ..moveTo(at(-3.5, 0).dx, at(-3.5, 0).dy)
-            ..lineTo(at(-1, 2.5).dx, at(-1, 2.5).dy)
-            ..lineTo(at(3.5, -2.5).dx, at(3.5, -2.5).dy),
-          ink(tokens.surfaceRaised),
+          Path()..moveTo(4.4, 14.2)..arcToPoint(const Offset(13.6, 14.2), radius: const Radius.circular(4.6))..close(),
+          white,
         );
-      case PlanState.active:
-        canvas.drawCircle(c, r, stroke(tokens.stateRunning));
-        canvas.drawArc(Rect.fromCircle(center: c, radius: r), -math.pi / 2, math.pi, true, fill(tokens.stateRunning));
-      case PlanState.blocked:
-        canvas.drawCircle(c, r + 1, fill(tokens.stateStuck));
-        canvas.drawLine(at(0, -3.5), at(0, 0.8), ink(tokens.surfaceRaised));
-        canvas.drawCircle(at(0, 3.6), 1.1, fill(tokens.surfaceRaised));
-      case PlanState.ready:
-        canvas.drawCircle(c, r, stroke(tokens.stateWaiting));
-        canvas.drawPath(
-          Path()
-            ..moveTo(at(-1.8, -3).dx, at(-1.8, -3).dy)
-            ..lineTo(at(3, 0).dx, at(3, 0).dy)
-            ..lineTo(at(-1.8, 3).dx, at(-1.8, 3).dy)
-            ..close(),
-          fill(tokens.fgMuted),
-        );
-      case PlanState.waiting:
-        canvas.drawCircle(c, r, stroke(tokens.stateWaiting));
-      case PlanState.hidden:
-        const n = 8;
-        for (var i = 0; i < n; i++) {
-          canvas.drawArc(Rect.fromCircle(center: c, radius: r), i * 2 * math.pi / n, math.pi / n, false, stroke(tokens.fgSubtle));
-        }
+      case PlanRowKind.ready:
+        canvas.drawCircle(c, 8, line(tokens.stateWaiting, 1.6));
+        canvas.drawPath(Path()..moveTo(7.4, 5.8)..lineTo(7.4, 12.2)..lineTo(12.4, 9)..close(), Paint()..color = tokens.fgMuted);
+      case PlanRowKind.waiting:
+        dashed(tokens.stateWaiting, 1.6, 10, 0.5);
+      case PlanRowKind.hidden:
+        dashed(tokens.fgSubtle, 1.4, 8, 0.2);
     }
   }
 
   @override
-  bool shouldRepaint(_MarkPainter old) => old.state != state || old.tokens != tokens;
+  bool shouldRepaint(_MarkPainter old) => old.kind != kind || old.tokens != tokens;
 }
 
-/// 「막힘」 꼬리표 — 빨강만으로 말하지 않는다. 표지가 이미 읽히므로 VoiceOver 에는 겹쳐 읽히지 않게 한다.
+/// 빨강만으로 말하지 않는다. 표지가 이미 읽히므로 VoiceOver 에는 겹쳐 읽히지 않게 한다.
 class _BlockedTag extends StatelessWidget {
   const _BlockedTag();
 
@@ -468,10 +393,13 @@ const double planSheetInitial = 0.78;
 const double planSheetMax = 0.93;
 const double planSheetMin = 0.2;
 
-/// 계획 시트를 연다. [opener] 는 시트를 연 쪽의 context 다 — 「그 스레드 열기」가 시트를 닫은 뒤 그 쌓기에 민다.
+/// 머리 흐름에 먼저 보일 알약 수.
+const int planFlowMax = 4;
+
+/// 계획 시트를 연다. [opener] 는 시트를 연 쪽의 context 다 — 글·연결 스레드로 갈 때 시트를 닫은 뒤 그 쌓기에 민다.
 Future<void> openThreadPlanSheet(BuildContext opener, String rootId) {
   final app = AppScope.read(opener);
-  // 띠가 못 받았으면(실패·아직 안 옴) 여기서 다시 부른다. 받아 둔 판이 있으면 그대로 연다.
+  // 버튼이 못 받았으면(실패·아직 안 옴) 여기서 다시 부른다. 받아 둔 판이 있으면 그대로 연다.
   if (app.threadPlans[rootId] == null) unawaited(app.loadThreadPlan(rootId));
   final dark = Theme.of(opener).brightness == Brightness.dark;
   return showModalBottomSheet<void>(
@@ -502,13 +430,16 @@ class _PlanSheetState extends State<_PlanSheet> {
   final _headKey = GlobalKey();
   bool _fitted = false;
 
-  /// 그룹별 펼침을 사람이 바꾼 값. 없으면 상태로 정한다 — 이 시트 안에서만 산다(기억하지 않는다).
-  final Map<String, bool> _open = {};
+  /// 사람이 접은 그룹. 처음엔 모두 펼친다(W1). 이 시트 안에서만 산다(기억하지 않는다, W8).
+  final Set<String> _collapsed = {};
+  final Set<String> _whyOpen = {};
   final Map<String, GlobalKey> _nodeKeys = {};
 
   /// 지금 깜빡일 노드. 번호가 바뀌면 [HitFlash] 를 새로 세워 다시 깜빡인다.
   String? _flashId;
   int _flashNo = 0;
+  ({PlanRowKind kind, int index})? _cycle;
+  bool _flowAll = false;
 
   @override
   void dispose() {
@@ -518,16 +449,15 @@ class _PlanSheetState extends State<_PlanSheet> {
 
   GlobalKey _keyOf(String id) => _nodeKeys.putIfAbsent(id, GlobalKey.new);
 
-  bool _isOpen(ThreadPlanView plan, PlanGroup g) => _open[g.id] ?? planGroupStartsOpen(plan.stateOf(g.id));
-
-  /// 「⏳ 앞: X」 — 그 그룹을 펴고 스크롤한 뒤 깜빡인다.
-  void _jump(ThreadPlanView plan, String id) {
+  /// 그 노드로 스크롤하고 깜빡인다(접힌 그룹이면 편다). [why] 면 「막힌 까닭」까지 편다.
+  void _goTo(ThreadPlanView plan, String id, {bool why = false}) {
     String? groupId;
     for (final s in plan.steps) {
       if (s.id == id) groupId = s.groupId;
     }
     setState(() {
-      if (groupId != null) _open[groupId] = true;
+      if (groupId != null) _collapsed.remove(groupId);
+      if (why) _whyOpen.add(id);
       _flashId = id;
       _flashNo++;
     });
@@ -537,6 +467,43 @@ class _PlanSheetState extends State<_PlanSheet> {
         unawaited(Scrollable.ensureVisible(target, alignment: 0.2, duration: HarkroomMotion.base, curve: HarkroomMotion.ease));
       }
     });
+  }
+
+  void _pressChip(ThreadPlanView plan, Map<PlanRowKind, List<String>> lists, PlanRowKind kind) {
+    final ids = lists[kind] ?? const <String>[];
+    final index = nextCycleIndex(ids.length, _cycle?.kind == kind ? _cycle!.index : null);
+    if (index < 0) return;
+    _cycle = (kind: kind, index: index);
+    _goTo(plan, ids[index], why: kind == PlanRowKind.blocked);
+  }
+
+  void _pressPill(ThreadPlanView plan, PlanPill p, String? me) {
+    if (p.state == PlanState.blocked) {
+      for (final s in plan.stepsOf(p.id)) {
+        if (stepKind(plan, s, me) == PlanRowKind.blocked) {
+          _goTo(plan, s.id, why: true);
+          return;
+        }
+      }
+    }
+    _goTo(plan, p.id);
+  }
+
+  /// 앞 노드로 간다. 다른 스레드에 이어진 그룹이면 그 스레드를 연다.
+  void _pressWaiting(ThreadPlanView plan, String id) {
+    final linked = plan.linkedOf(id);
+    if (linked != null && !linked.hidden && linked.channelId != null) {
+      unawaited(_openLinked(linked));
+      return;
+    }
+    _goTo(plan, id);
+  }
+
+  /// 글로 간다 — 시트를 닫아 그 글을 가리지 않게 한다(W7).
+  void _goToMessage(String id) {
+    final opener = widget.opener;
+    Navigator.of(context).pop();
+    if (opener.mounted) unawaited(openMessageLink(opener, id));
   }
 
   /// 내용이 짧으면 내용 높이까지만 연다(시안 v3). 판을 처음 그린 뒤 한 번만 잰다 — 그 뒤 접고 펴도 높이를 흔들지 않는다.
@@ -583,6 +550,7 @@ class _PlanSheetState extends State<_PlanSheet> {
     final app = context.app;
     final plan = app.threadPlans[widget.rootId];
     final failed = app.threadPlanFailed.contains(widget.rootId);
+    final me = app.me?.id;
     if (plan != null) _fitOnce();
     return DraggableScrollableSheet(
       controller: _sheet,
@@ -590,14 +558,32 @@ class _PlanSheetState extends State<_PlanSheet> {
       initialChildSize: planSheetInitial,
       minChildSize: planSheetMin,
       maxChildSize: planSheetMax,
-      builder: (context, scroll) => Column(
+      builder: (context, scroll) => LayoutBuilder(builder: (context, box) => Column(
         key: const Key('plan-sheet'),
         children: [
+          // 머리는 고정이다(W4·W9) — 칩이 스크롤에 밀려 사라지면 차례로 가는 길도 사라진다.
+          // 끌어 내려 시트가 머리보다 작아지면 넘치지 않게 잘라 보인다.
           GestureDetector(
             behavior: HitTestBehavior.translucent,
             onVerticalDragUpdate: _dragHead,
             onVerticalDragEnd: _dragHeadEnd,
-            child: _SheetHead(key: _headKey, plan: plan, app: app),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: box.maxHeight),
+              child: SingleChildScrollView(
+                physics: const NeverScrollableScrollPhysics(),
+                child: _SheetHead(
+                  key: _headKey,
+                  plan: plan,
+                  app: app,
+                  me: me,
+                  cycle: _cycle,
+                  flowAll: _flowAll,
+                  onChip: (lists, kind) => _pressChip(plan!, lists, kind),
+                  onPill: (p) => _pressPill(plan!, p, me),
+                  onFlowAll: () => setState(() => _flowAll = true),
+                ),
+              ),
+            ),
           ),
           Expanded(
             child: SingleChildScrollView(
@@ -610,7 +596,7 @@ class _PlanSheetState extends State<_PlanSheet> {
                   key: _contentKey,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: plan != null
-                      ? _body(context, plan, app)
+                      ? _body(context, plan, app, me)
                       : failed
                           ? [_LoadFailed(onRetry: () => unawaited(app.loadThreadPlan(widget.rootId)))]
                           : const [_LoadingLines()],
@@ -619,18 +605,22 @@ class _PlanSheetState extends State<_PlanSheet> {
             ),
           ),
         ],
-      ),
+      )),
     );
   }
 
-  List<Widget> _body(BuildContext context, ThreadPlanView plan, AppState app) {
+  List<Widget> _body(BuildContext context, ThreadPlanView plan, AppState app, String? me) {
     final t = context.t;
     final k = context.tokens;
     return [
-      if (plan.groups.isNotEmpty) _Flow(plan: plan),
-      for (final g in plan.groups) ..._group(context, plan, g, app),
-      for (final s in plan.stepsOf(null)) _stepNode(plan, s, app, grouped: false),
-      if (plan.next != null || plan.blocked != null || plan.flagged)
+      if (plan.flagged)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(HarkroomSize.gutter, 8, HarkroomSize.gutter, 0),
+          child: Text(t.planFlagged, key: const Key('plan-flagged'), style: TextStyle(color: k.stateStuck, fontSize: 13)),
+        ),
+      for (final g in plan.groups) ..._group(context, plan, g, app, me),
+      for (final s in plan.stepsOf(null)) _stepNode(plan, s, app, me, grouped: false),
+      if (plan.next != null || plan.blocked != null)
         Container(
           key: const Key('plan-foot'),
           margin: const EdgeInsets.fromLTRB(HarkroomSize.gutter, 8, HarkroomSize.gutter, 12),
@@ -642,8 +632,19 @@ class _PlanSheetState extends State<_PlanSheet> {
                 TextSpan(text: '${t.planNext} ', style: TextStyle(color: k.fgMuted)),
                 TextSpan(text: plan.next),
               ]), style: TextStyle(color: k.fg, fontSize: 13)),
-            if (plan.blocked != null) Text('${t.planBlocked} ${plan.blocked}', style: TextStyle(color: k.stateStuck, fontSize: 13)),
-            if (plan.flagged) Text(t.planFlagged, key: const Key('plan-flagged'), style: TextStyle(color: k.stateStuck, fontSize: 13)),
+            if (plan.blocked != null)
+              InkWell(
+                key: const Key('plan-foot-blocked'),
+                onTap: () => _pressChip(plan, planLists(plan, me), PlanRowKind.blocked),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: HarkroomSize.row),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('${t.planBlocked} ${plan.blocked}',
+                        style: TextStyle(color: k.stateStuck, fontSize: 13, decoration: TextDecoration.underline, decorationStyle: TextDecorationStyle.dotted)),
+                  ),
+                ),
+              ),
           ]),
         ),
       const SizedBox(height: 8),
@@ -655,13 +656,13 @@ class _PlanSheetState extends State<_PlanSheet> {
         child: _flashId == id ? HitFlash(key: ValueKey('plan-flash-$id-$_flashNo'), child: child) : child,
       );
 
-  List<Widget> _group(BuildContext context, ThreadPlanView plan, PlanGroup g, AppState app) {
+  List<Widget> _group(BuildContext context, ThreadPlanView plan, PlanGroup g, AppState app, String? me) {
+    final t = context.t;
     final k = context.tokens;
-    final state = plan.stateOf(g.id);
+    final f = groupFacts(plan, g, me);
     final steps = plan.stepsOf(g.id);
     final linked = g.linkedRootId == null ? null : plan.linkedOf(g.id);
-    final count = groupCount(plan, g);
-    final open = _isOpen(plan, g);
+    final open = !_collapsed.contains(g.id);
     final node = plan.derived[g.id];
     final canToggle = steps.isNotEmpty;
     final childProgress = linked?.progress;
@@ -673,13 +674,13 @@ class _PlanSheetState extends State<_PlanSheet> {
           expanded: canToggle ? open : null,
           child: InkWell(
             key: Key('plan-group-${g.id}'),
-            onTap: canToggle ? () => setState(() => _open[g.id] = !open) : null,
+            onTap: canToggle ? () => setState(() => open ? _collapsed.add(g.id) : _collapsed.remove(g.id)) : null,
             child: ConstrainedBox(
               constraints: const BoxConstraints(minHeight: HarkroomSize.row),
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: HarkroomSize.gutter),
                 child: Row(children: [
-                  PlanStateMark(state: state),
+                  PlanStateMark(kind: f.kind),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Row(children: [
@@ -689,16 +690,16 @@ class _PlanSheetState extends State<_PlanSheet> {
                           maxLines: 1,
                           softWrap: false,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: state == PlanState.hidden ? k.fgSubtle : k.fg,
-                            fontWeight: FontWeight.w600,
-                            fontSize: HarkroomType.body,
-                          ),
+                          style: TextStyle(color: f.kind == PlanRowKind.hidden ? k.fgSubtle : k.fg, fontWeight: FontWeight.w600, fontSize: HarkroomType.body),
                         ),
                       ),
-                      if (g.linkedRootId == null && count != null && count.total > 0) ...[
+                      if (g.linkedRootId == null && f.total > 0) ...[
                         const SizedBox(width: 8),
-                        Text('${count.done}/${count.total}', key: Key('plan-group-count-${g.id}'), style: TextStyle(color: k.fgMuted, fontSize: HarkroomType.meta)),
+                        Text(
+                          '${f.done}/${f.total}${f.active > 0 ? ' ${t.planGroupActive(f.active)}' : ''}',
+                          key: Key('plan-group-count-${g.id}'),
+                          style: TextStyle(color: k.fgMuted, fontSize: HarkroomType.meta),
+                        ),
                       ],
                       if (linked != null && !linked.hidden && childProgress != null && childProgress.total > 0) ...[
                         const SizedBox(width: 6),
@@ -707,7 +708,7 @@ class _PlanSheetState extends State<_PlanSheet> {
                           child: PlanChip(progress: childProgress),
                         ),
                       ],
-                      if (state == PlanState.blocked) ...[const SizedBox(width: 8), const _BlockedTag()],
+                      if (f.kind == PlanRowKind.blocked) ...[const SizedBox(width: 8), const _BlockedTag()],
                     ]),
                   ),
                   if (canToggle) Icon(open ? Icons.expand_more : Icons.expand_less, size: 18, color: k.fgSubtle),
@@ -721,23 +722,43 @@ class _PlanSheetState extends State<_PlanSheet> {
       if (node != null && node.waitingOn.isNotEmpty)
         Padding(
           padding: const EdgeInsets.fromLTRB(40, 0, HarkroomSize.gutter, 2),
-          child: _Waiting(plan: plan, ids: node.waitingOn, fromGroupId: g.id, onJump: (id) => _jump(plan, id)),
+          child: _Waiting(plan: plan, ids: node.waitingOn, fromGroupId: g.id, onPress: (id) => _pressWaiting(plan, id)),
         ),
-      if (open) for (final s in steps) _stepNode(plan, s, app, grouped: true),
+      if (open) for (final s in steps) _stepNode(plan, s, app, me, grouped: true),
     ];
   }
 
-  Widget _stepNode(ThreadPlanView plan, PlanStep s, AppState app, {required bool grouped}) => _flashable(
+  Widget _stepNode(ThreadPlanView plan, PlanStep s, AppState app, String? me, {required bool grouped}) => _flashable(
         s.id,
-        _StepRow(plan: plan, step: s, app: app, grouped: grouped, onJump: (id) => _jump(plan, id)),
+        _StepRow(
+          plan: plan,
+          step: s,
+          app: app,
+          me: me,
+          grouped: grouped,
+          whyOpen: _whyOpen.contains(s.id),
+          onToggleWhy: () => setState(() => _whyOpen.contains(s.id) ? _whyOpen.remove(s.id) : _whyOpen.add(s.id)),
+          onWaiting: (id) => _pressWaiting(plan, id),
+          onGo: (id, why) => _goTo(plan, id, why: why),
+          onMessage: _goToMessage,
+        ),
       );
 }
 
 class _SheetHead extends StatefulWidget {
-  const _SheetHead({super.key, required this.plan, required this.app});
+  const _SheetHead({
+    super.key, required this.plan, required this.app, required this.me, required this.cycle, required this.flowAll,
+    required this.onChip, required this.onPill, required this.onFlowAll,
+  });
 
   final ThreadPlanView? plan;
   final AppState app;
+  final String? me;
+  final ({PlanRowKind kind, int index})? cycle;
+  final bool flowAll;
+  final void Function(Map<PlanRowKind, List<String>>, PlanRowKind) onChip;
+  final ValueChanged<PlanPill> onPill;
+  final VoidCallback onFlowAll;
 
   @override
   State<_SheetHead> createState() => _SheetHeadState();
@@ -758,7 +779,13 @@ class _SheetHeadState extends State<_SheetHead> {
         : [
             if (editor != null) editor.handle,
             if (plan.updatedAt != null) t.planEditedAgo(agoLabel(plan.updatedAt!, now, t)),
+            t.planMetaCounts(plan.groups.length, plan.steps.length),
           ];
+    final lists = plan == null ? null : planLists(plan, widget.me);
+    final pills = plan == null ? const <PlanPill>[] : planPills(plan, widget.me);
+    final layers = plan == null ? const <List<String>>[] : planFlow(plan);
+    final flow = planFlowVisible(layers, widget.flowAll ? 1 << 30 : planFlowMax);
+    final pillOf = {for (final p in pills) p.id: p};
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(HarkroomSize.gutter, 0, 8, 8),
@@ -806,66 +833,158 @@ class _SheetHeadState extends State<_SheetHead> {
           Text.rich(
             TextSpan(children: [
               TextSpan(text: meta.join(' · ')),
-              if (isPlanStale(plan.updatedAt, now))
-                TextSpan(text: '${meta.isEmpty ? '' : ' · '}${t.planStale}', style: TextStyle(color: k.warning)),
+              if (isPlanStale(plan.updatedAt, now)) TextSpan(text: ' · ${t.planStale}', style: TextStyle(color: k.warning)),
             ]),
             style: TextStyle(color: k.fgMuted, fontSize: HarkroomType.meta),
           ),
-          if (plan.updatedAt != null || editor != null) const SizedBox(height: 2),
+          const SizedBox(height: 6),
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: Wrap(
+              key: const Key('plan-chips'),
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (final kind in planChipKinds)
+                  _SummaryChip(
+                    kind: kind,
+                    n: lists![kind]!.length,
+                    visiting: widget.cycle?.kind == kind ? widget.cycle!.index + 1 : null,
+                    onTap: () => widget.onChip(lists, kind),
+                  ),
+              ],
+            ),
+          ),
+          if (flow.ids.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: Wrap(
+                key: const Key('plan-flow'),
+                spacing: 4,
+                runSpacing: 4,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  for (var i = 0; i < flow.ids.length; i++) ...[
+                    if (i > 0)
+                      ExcludeSemantics(
+                        child: Text(
+                          layers.any((l) => l.contains(flow.ids[i]) && l.contains(flow.ids[i - 1])) ? '·' : '⟶',
+                          style: TextStyle(color: k.fgSubtle, fontSize: HarkroomType.meta),
+                        ),
+                      ),
+                    if (pillOf[flow.ids[i]] != null) _Pill(pill: pillOf[flow.ids[i]]!, onTap: () => widget.onPill(pillOf[flow.ids[i]]!)),
+                  ],
+                  if (flow.more > 0)
+                    InkWell(
+                      key: const Key('plan-flow-more'),
+                      onTap: widget.onFlowAll,
+                      child: Text(t.planMoreFlow(flow.more),
+                          style: TextStyle(color: k.fgMuted, fontSize: HarkroomType.meta, decoration: TextDecoration.underline, decorationStyle: TextDecorationStyle.dotted)),
+                    ),
+                ],
+              ),
+            ),
+          ],
         ],
       ]),
     );
   }
 }
 
-/// 흐름 — 층마다 한 줄(시안 v3). 같은 층에 둘 이상이면 「동시에 진행」.
-class _Flow extends StatelessWidget {
-  const _Flow({required this.plan});
+/// 맨 위 상태 칩(V1·V3) — 누르면 그 상태 단계들을 문서 순서로 돌아가며 간다. 0 이면 흐리고 누를 수 없다.
+class _SummaryChip extends StatelessWidget {
+  const _SummaryChip({required this.kind, required this.n, required this.visiting, required this.onTap});
 
-  final ThreadPlanView plan;
+  final PlanRowKind kind;
+  final int n;
+  final int? visiting;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final t = context.t;
     final k = context.tokens;
-    final pillOf = {for (final p in planPills(plan)) p.id: p};
-    final layers = planFlow(plan);
-    return Container(
-      key: const Key('plan-flow'),
-      padding: const EdgeInsets.fromLTRB(HarkroomSize.gutter, 8, HarkroomSize.gutter, 10),
-      decoration: BoxDecoration(border: Border(bottom: BorderSide(color: k.border))),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(t.planFlow, style: TextStyle(color: k.fgMuted, fontSize: HarkroomType.meta, fontWeight: FontWeight.w600)),
-        const SizedBox(height: 4),
-        for (var i = 0; i < layers.length; i++) ...[
-          if (i > 0)
-            Padding(
-              padding: const EdgeInsets.only(left: 4),
-              child: ExcludeSemantics(child: Text('↓', style: TextStyle(color: k.fgSubtle, fontSize: 11, height: 1))),
-            ),
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 3),
-            child: Wrap(
-              key: Key('plan-flow-layer-$i'),
-              spacing: 6,
-              runSpacing: 4,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                Container(
-                  width: 18,
-                  height: 18,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(color: k.surfaceSunken, shape: BoxShape.circle),
-                  child: Text('${i + 1}', style: TextStyle(color: k.fgMuted, fontSize: 11, fontWeight: FontWeight.w600)),
-                ),
-                for (final id in layers[i])
-                  if (pillOf[id] != null) _Pill(pill: pillOf[id]!),
-                if (layers[i].length > 1) Text(t.planParallel, style: TextStyle(color: k.fgSubtle, fontSize: 11)),
-              ],
+    final (Color? bg, Color fg, Border? border) = switch (kind) {
+      PlanRowKind.done => (k.successSurface, k.success, null),
+      PlanRowKind.active => (k.stateActiveSurface, k.stateActive, null),
+      PlanRowKind.blocked => (k.dangerSurface, k.stateStuck, null),
+      PlanRowKind.mine => (k.accentSurface, k.accentText, null),
+      PlanRowKind.ready => (null, k.fgMuted, Border.all(color: k.border)),
+      _ => (null, k.fgSubtle, Border.all(color: k.border)),
+    };
+    return Opacity(
+      opacity: n == 0 ? 0.45 : 1,
+      child: Semantics(
+        button: n > 0,
+        enabled: n > 0,
+        excludeSemantics: true,
+        label: t.planSum(kind.name, n),
+        onTap: n > 0 ? onTap : null,
+        child: InkWell(
+          key: Key('plan-chip-${kind.name}'),
+          customBorder: const StadiumBorder(),
+          onTap: n > 0 ? onTap : null,
+          // 칩 모양은 작아도 누르는 자리는 44 다.
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: HarkroomSize.row),
+            child: Align(
+              widthFactor: 1,
+              heightFactor: 1,
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(4, 3, 10, 3),
+                decoration: BoxDecoration(color: bg, border: border, borderRadius: BorderRadius.circular(HarkroomRadius.full)),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  PlanStateMark(kind: kind, size: 14),
+                  const SizedBox(width: 4),
+                  Text(
+                    visiting == null ? t.planSum(kind.name, n) : '${t.planSum(kind.name, n)} · ${t.planSumCycle(visiting!, n)}',
+                    style: TextStyle(color: fg, fontSize: HarkroomType.meta, fontWeight: FontWeight.w600),
+                  ),
+                ]),
+              ),
             ),
           ),
-        ],
-      ]),
+        ),
+      ),
+    );
+  }
+}
+
+class _Pill extends StatelessWidget {
+  const _Pill({required this.pill, required this.onTap});
+
+  final PlanPill pill;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final k = context.tokens;
+    final (Color? bg, Color fg, Border? border) = switch (pill.key) {
+      PlanPillKey.blocked => (k.dangerSurface, k.stateStuck, null),
+      PlanPillKey.mine => (k.accentSurface, k.accentText, null),
+      PlanPillKey.active => (k.stateActiveSurface, k.stateActive, null),
+      PlanPillKey.plain => (null, k.fgMuted, null),
+      _ => (null, k.fgMuted, Border.all(color: k.border)),
+    };
+    return InkWell(
+      key: Key('plan-pill-${pill.id}'),
+      customBorder: const StadiumBorder(),
+      onTap: onTap,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 200),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          decoration: BoxDecoration(color: bg, border: border, borderRadius: BorderRadius.circular(HarkroomRadius.full)),
+          child: Text(
+            '${planPillLabel(context.t, pill)}${pill.key == PlanPillKey.blocked ? ' ›' : ''}',
+            maxLines: 1,
+            softWrap: false,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: fg, fontSize: HarkroomType.meta),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -913,19 +1032,12 @@ class _LinkedRow extends StatelessWidget {
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 10),
               child: Row(children: [
-                Expanded(
-                  child: Text(title, maxLines: 1, softWrap: false, overflow: TextOverflow.ellipsis, style: TextStyle(color: k.fg, fontSize: 13)),
-                ),
+                Expanded(child: Text(title, maxLines: 1, softWrap: false, overflow: TextOverflow.ellipsis, style: TextStyle(color: k.fg, fontSize: 13))),
                 const SizedBox(width: 8),
                 ConstrainedBox(
                   constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.55),
-                  child: Text(
-                    t.planOpenLinked,
-                    maxLines: 1,
-                    softWrap: false,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: k.link, fontSize: 13, fontWeight: FontWeight.w600),
-                  ),
+                  child: Text(t.planOpenLinked, maxLines: 1, softWrap: false, overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: k.link, fontSize: 13, fontWeight: FontWeight.w600)),
                 ),
               ]),
             ),
@@ -957,14 +1069,14 @@ class _DashedBorder extends CustomPainter {
   bool shouldRepaint(_DashedBorder old) => old.color != color || old.radius != radius;
 }
 
-/// 「⏳ 앞: X」(D6) — 회색 알약, 누르는 자리 44. 그룹을 넘으면 「그룹 · 단계」로 쓴다.
+/// 「⏳ 앞: X ›」(D6) — 회색 알약, 누르는 자리 44. 그룹을 넘으면 「그룹 · 단계」로 쓴다. 볼 수 없는 스레드는 누를 수 없다.
 class _Waiting extends StatelessWidget {
-  const _Waiting({required this.plan, required this.ids, required this.fromGroupId, required this.onJump});
+  const _Waiting({required this.plan, required this.ids, required this.fromGroupId, required this.onPress});
 
   final ThreadPlanView plan;
   final List<String> ids;
   final String? fromGroupId;
-  final ValueChanged<String> onJump;
+  final ValueChanged<String> onPress;
 
   @override
   Widget build(BuildContext context) {
@@ -976,13 +1088,14 @@ class _Waiting extends StatelessWidget {
           Builder(builder: (context) {
             final cross = crossGroupTitle(plan, ids[i], fromGroupId);
             final title = planTitleOf(plan, ids[i]);
+            final hidden = plan.linkedOf(ids[i])?.hidden ?? false;
             return Semantics(
-              button: true,
+              button: !hidden,
               label: '$prefix ${cross == null ? '' : '$cross · '}$title',
               excludeSemantics: true,
               child: InkWell(
                 key: Key('plan-waiting-${ids[i]}'),
-                onTap: () => onJump(ids[i]),
+                onTap: hidden ? null : () => onPress(ids[i]),
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(minHeight: HarkroomSize.row),
                   child: Align(
@@ -997,8 +1110,8 @@ class _Waiting extends StatelessWidget {
                         TextSpan(children: [
                           if (i == 0) TextSpan(text: '$prefix '),
                           TextSpan(
-                            text: '${cross == null ? '' : '$cross · '}$title',
-                            style: TextStyle(color: k.fg, decoration: TextDecoration.underline, decorationStyle: TextDecorationStyle.dotted),
+                            text: '${cross == null ? '' : '$cross · '}$title${hidden ? '' : ' ›'}',
+                            style: TextStyle(color: k.fg, decoration: hidden ? null : TextDecoration.underline, decorationStyle: TextDecorationStyle.dotted),
                           ),
                         ]),
                         maxLines: 2,
@@ -1016,75 +1129,170 @@ class _Waiting extends StatelessWidget {
   }
 }
 
+/// 둘째 줄의 작은 링크. 눈에 보이는 글자는 작아도 누르는 자리는 44 다.
+class _RowLink extends StatelessWidget {
+  const _RowLink({super.key, required this.text, required this.color, required this.onTap});
+
+  final String text;
+  final Color color;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+        onTap: onTap,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: HarkroomSize.row, minWidth: HarkroomSize.row),
+          child: Align(
+            widthFactor: 1,
+            heightFactor: 1,
+            alignment: Alignment.centerLeft,
+            child: Text(text,
+                style: TextStyle(color: color, fontSize: HarkroomType.meta, decoration: TextDecoration.underline, decorationStyle: TextDecorationStyle.dotted)),
+          ),
+        ),
+      );
+}
+
 class _StepRow extends StatelessWidget {
-  const _StepRow({required this.plan, required this.step, required this.app, required this.grouped, required this.onJump});
+  const _StepRow({
+    required this.plan, required this.step, required this.app, required this.me, required this.grouped, required this.whyOpen,
+    required this.onToggleWhy, required this.onWaiting, required this.onGo, required this.onMessage,
+  });
 
   final ThreadPlanView plan;
   final PlanStep step;
   final AppState app;
+  final String? me;
   final bool grouped;
-  final ValueChanged<String> onJump;
+  final bool whyOpen;
+  final VoidCallback onToggleWhy;
+  final ValueChanged<String> onWaiting;
+  final void Function(String id, bool why) onGo;
+  final ValueChanged<String> onMessage;
 
   @override
   Widget build(BuildContext context) {
     final t = context.t;
     final k = context.tokens;
-    final state = plan.stateOf(step.id);
+    final kind = stepKind(plan, step, me);
     PlanGroup? parent;
     for (final g in plan.groups) {
       if (g.id == step.groupId) parent = g;
     }
     final hasDeps = step.dependsOn.isNotEmpty || (parent?.dependsOn.isNotEmpty ?? false);
     // 담당은 이 커뮤니티에 있는 계정일 때만 그린다 — 모르는 id 로 이름을 지어내지 않는다.
-    final assigneeId = step.assigneeId ?? parent?.assigneeId;
+    final assigneeId = stepAssignee(plan, step);
     final assignee = assigneeId == null ? null : app.accounts[assigneeId];
-    final reason = state == PlanState.blocked ? step.blockedReason : null;
-    final ready = state != PlanState.ready ? null : (hasDeps ? t.planReadyAfter : t.planReady);
+    final links = stepFirstLinks(step);
+    final waiters = kind == PlanRowKind.mine ? stepWaiters(plan, step.id) : const <String>[];
     final spans = <InlineSpan>[
-      if (assignee != null) TextSpan(text: '@${assignee.handle}', style: TextStyle(color: k.fgAgent)),
-      if (reason != null) TextSpan(text: reason, style: TextStyle(color: k.stateStuck)),
-      if (ready != null) TextSpan(text: ready),
+      if (kind == PlanRowKind.done) TextSpan(text: t.planRowDone, style: TextStyle(color: k.success, fontWeight: FontWeight.w600)),
+      if (kind == PlanRowKind.active) TextSpan(text: t.planStateActive, style: TextStyle(color: k.stateActive, fontWeight: FontWeight.w600)),
+      if (kind == PlanRowKind.mine) TextSpan(text: t.planRowMine, style: TextStyle(color: k.accentText, fontWeight: FontWeight.w600)),
+      if (kind == PlanRowKind.blocked) TextSpan(text: t.planStateBlocked, style: TextStyle(color: k.stateStuck, fontWeight: FontWeight.w600)),
+      if (kind == PlanRowKind.blocked && step.blockedReason != null) TextSpan(text: step.blockedReason, style: TextStyle(color: k.stateStuck)),
+      if (kind == PlanRowKind.ready) TextSpan(text: hasDeps ? t.planReadyAfter : t.planReady),
+      if (kind != PlanRowKind.mine && assignee != null)
+        TextSpan(text: '${!assignee.isAgent && assignee.id != me ? '${t.planRowPerson} ' : ''}@${assignee.handle}', style: TextStyle(color: k.fgAgent)),
     ];
     final node = plan.derived[step.id];
-    return ConstrainedBox(
+    return Container(
       key: Key('plan-step-${step.id}'),
       constraints: const BoxConstraints(minHeight: HarkroomSize.row),
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(grouped ? 40 : HarkroomSize.gutter, 7, HarkroomSize.gutter, 7),
-        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Padding(padding: const EdgeInsets.only(top: 3), child: PlanStateMark(state: state)),
+      margin: EdgeInsets.only(left: grouped ? 24 : 0),
+      decoration: kind == PlanRowKind.blocked ? BoxDecoration(color: k.dangerSurface, borderRadius: BorderRadius.circular(HarkroomRadius.row)) : null,
+      padding: const EdgeInsets.fromLTRB(HarkroomSize.gutter, 7, HarkroomSize.gutter, 7),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          PlanStateMark(kind: kind),
           const SizedBox(width: 10),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               // 길면 말줄임하고 길게 누르면 전체를 본다.
               Tooltip(
                 message: step.title,
-                child: Text(
-                  step.title,
-                  maxLines: 1,
-                  softWrap: false,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: state == PlanState.done ? k.fgSubtle : k.fg, fontSize: HarkroomType.body),
-                ),
+                child: Text(step.title, maxLines: 1, softWrap: false, overflow: TextOverflow.ellipsis, style: TextStyle(color: k.fg, fontSize: HarkroomType.body)),
               ),
-              if (spans.isNotEmpty)
-                Text.rich(
-                  key: Key('plan-step-sub-${step.id}'),
-                  TextSpan(children: [
-                    for (var i = 0; i < spans.length; i++) ...[
-                      if (i > 0) const TextSpan(text: ' · '),
-                      spans[i],
-                    ],
-                  ]),
-                  style: TextStyle(color: k.fgMuted, fontSize: HarkroomType.meta, height: 1.4),
-                ),
+              // 둘째 줄 한 줄에 모은다(시안 v3) — 글자가 길면 링크는 다음 줄로 내려간다.
+              Wrap(spacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
+                if (spans.isNotEmpty)
+                  Text.rich(
+                    key: Key('plan-step-sub-${step.id}'),
+                    TextSpan(children: [
+                      for (var i = 0; i < spans.length; i++) ...[
+                        if (i > 0) const TextSpan(text: ' · '),
+                        spans[i],
+                      ],
+                    ]),
+                    style: TextStyle(color: k.fgMuted, fontSize: HarkroomType.meta, height: 1.4),
+                  ),
+                if (waiters.isNotEmpty)
+                  _RowLink(key: Key('plan-waiters-${step.id}'), text: t.planRowWaiters(waiters.length), color: k.stateStuck, onTap: () => onGo(waiters.first, true)),
+                if (links.pr != null)
+                  _RowLink(
+                    key: Key('plan-row-pr-${step.id}'),
+                    text: t.planRowPr(links.pr!.number),
+                    color: k.link,
+                    onTap: () => unawaited(launchUrl(Uri.parse(prUrl(links.pr!)), mode: LaunchMode.externalApplication)),
+                  ),
+                if (links.messageId != null && kind != PlanRowKind.blocked)
+                  _RowLink(key: Key('plan-row-message-${step.id}'), text: t.planRowMessage, color: k.link, onTap: () => onMessage(links.messageId!)),
+                if (kind == PlanRowKind.blocked)
+                  _RowLink(key: Key('plan-why-toggle-${step.id}'), text: t.planWhyToggle, color: k.stateStuck, onTap: onToggleWhy),
+              ]),
               if (node != null && node.waitingOn.isNotEmpty)
-                _Waiting(plan: plan, ids: node.waitingOn, fromGroupId: step.groupId, onJump: onJump),
+                _Waiting(plan: plan, ids: node.waitingOn, fromGroupId: step.groupId, onPress: onWaiting),
             ]),
           ),
-          if (state == PlanState.blocked) ...[const SizedBox(width: 8), const _BlockedTag()],
+          if (kind == PlanRowKind.blocked) ...[const SizedBox(width: 8), const _BlockedTag()],
         ]),
-      ),
+        if (kind == PlanRowKind.blocked && whyOpen) _WhyBox(plan: plan, step: step, me: me, onGo: (id) => onGo(id, false), onMessage: onMessage),
+      ]),
+    );
+  }
+}
+
+/// 「막힌 까닭」 상자(V3) — 사유 전문, 앞 단계, 연결. 하나도 없으면 「연결된 것 없음」.
+class _WhyBox extends StatelessWidget {
+  const _WhyBox({required this.plan, required this.step, required this.me, required this.onGo, required this.onMessage});
+
+  final ThreadPlanView plan;
+  final PlanStep step;
+  final String? me;
+  final ValueChanged<String> onGo;
+  final ValueChanged<String> onMessage;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    final k = context.tokens;
+    final why = stepWhy(plan, step, me);
+    Widget row(String label, Widget body) => Row(children: [
+          SizedBox(width: 56, child: Text(label, style: TextStyle(color: k.fgMuted, fontSize: HarkroomType.meta))),
+          Expanded(child: Align(alignment: Alignment.centerLeft, child: body)),
+        ]);
+    return Container(
+      key: Key('plan-why-${step.id}'),
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 6, left: 28),
+      padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
+      decoration: BoxDecoration(color: k.surfaceRaised, border: Border(left: BorderSide(color: k.stateStuck, width: 2))),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(t.planWhyTitle, style: TextStyle(color: k.stateStuck, fontSize: HarkroomType.meta, fontWeight: FontWeight.w600)),
+        if (why.reason != null) Text(why.reason!, key: Key('plan-why-reason-${step.id}'), style: TextStyle(color: k.fg, fontSize: HarkroomType.meta)),
+        for (final dep in why.deps)
+          row(t.planWhyDep, _RowLink(key: Key('plan-why-dep-${dep.id}'), text: '${dep.group == null ? '' : '${dep.group} · '}${dep.title} ›', color: k.fg, onTap: () => onGo(dep.id))),
+        for (final l in why.links)
+          switch (l.kind) {
+            'pr' => row(t.planWhyPr, _RowLink(key: Key('plan-why-pr-${l.number}'), text: t.planRowPr(l.number!), color: k.link,
+                onTap: () => unawaited(launchUrl(Uri.parse(prUrl((repo: l.repo!, number: l.number!))), mode: LaunchMode.externalApplication)))),
+            'workitem' => row(t.planWhyWorkitem, Text(l.id ?? '', style: TextStyle(color: k.fgSubtle, fontSize: HarkroomType.meta))),
+            _ => row(l.kind == 'card' ? t.planWhyCard : t.planWhyMessage,
+                _RowLink(key: Key('plan-why-goto-${l.id}'), text: t.planWhyGoto, color: k.link, onTap: () => onMessage(l.id ?? ''))),
+          },
+        if (why.deps.isEmpty && why.links.isEmpty)
+          Text(t.planWhyNone, key: Key('plan-why-none-${step.id}'), style: TextStyle(color: k.fgSubtle, fontSize: HarkroomType.meta)),
+      ]),
     );
   }
 }

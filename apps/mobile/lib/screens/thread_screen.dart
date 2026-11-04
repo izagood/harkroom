@@ -383,6 +383,8 @@ class _ThreadScreenState extends State<ThreadScreen> {
     final jumpNew = tailMissing ? (app.threadTailNew[widget.rootId]?.length ?? 0) : _newSince(app, threadRows);
     // 맨 아래가 보이면 숨긴다. 띠가 섰으면 띠가 보일 만한 자리(맨 아래에서 한 화면 안)에서도 숨긴다 — 같은 일을 하는
     // 둘이 한 화면에 겹치지 않게.
+    // 여기(Scaffold 바깥)에서 읽는다 — 안쪽 MediaQuery 의 viewInsets 는 Scaffold 가 0 으로 지운다.
+    final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
     final showJump = load == LoadState.loaded && !_atBottom && (tailMissing ? _far : _far || jumpNew > 0);
     // 머리 모델 줄에 세울 에이전트: 스레드 글의 작성자 중 에이전트 + 본문이 부른 에이전트.
     final threadAgents = <String>[];
@@ -503,7 +505,6 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 // 모델 바·끊김 띠는 머리 바로 밑에 겹쳐 선다 — 피드는 그 밑까지 흐르고 위 여백으로 비킨다.
                 header: Column(mainAxisSize: MainAxisSize.min, children: [
                   ThreadModelBar(channelId: widget.channelId, rootId: widget.rootId, agentIds: threadAgents),
-                  ThreadPlanBand(rootId: widget.rootId, progress: root?.planProgress),
                   const ConnectionBand(),
                 ]),
                 builder: (context, inset) => FeedKeyboardDismiss(
@@ -518,10 +519,16 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 ),
               )),
               // 작성칸 위 오른쪽에 뜬다 — 목록 위에만 겹치고 작성칸은 가리지 않는다.
+              // 계획판 버튼(W5·W9) — 작성칸 위 오른쪽. 「최신 답글」 알약은 그 위로 쌓인다.
+              Positioned(
+                right: 16,
+                bottom: 12,
+                child: ThreadPlanButton(rootId: widget.rootId, progress: root?.planProgress, keyboardOpen: keyboardOpen),
+              ),
               if (showJump)
                 Positioned(
                   right: 16,
-                  bottom: 12,
+                  bottom: planButtonVisible(root?.planProgress, keyboardOpen: keyboardOpen) ? 12 + planButtonHeight + 8 : 12,
                   child: ThreadJumpPill(
                     newCount: jumpNew,
                     loading: app.jumpingToLatest.contains(widget.rootId),
