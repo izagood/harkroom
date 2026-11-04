@@ -145,18 +145,24 @@ function PlanPanel({ plan, onClose }: { plan: ThreadPlanView; onClose: () => voi
     const from = { x: e.clientX, y: e.clientY, w: shown?.width || size.w, h: shown?.height || size.h };
     let last: { w: number; h: number } | null = null;
     const move = (ev: PointerEvent) => {
+      // 뗀 것을 놓쳤다(창 밖에서 뗐다 등) — 버튼이 눌려 있지 않으면 끌기는 이미 끝났다. 끝내지 않으면 마우스를 계속 따라온다.
+      if (ev.buttons === 0) { end(); return; }
       last = clampPlanSize({ w: axis.w ? from.w + from.x - ev.clientX : from.w, h: axis.h ? from.h + from.y - ev.clientY : from.h }, boxOf());
       setSize(last);
     };
-    const up = () => {
+    const end = () => {
       hostView.removeEventListener('pointermove', move);
-      hostView.removeEventListener('pointerup', up);
-      hostView.removeEventListener('pointercancel', up);
+      hostView.removeEventListener('pointerup', end);
+      hostView.removeEventListener('pointercancel', end);
+      hostView.removeEventListener('blur', end);
       if (last) savePlanSize(last, sizeScope);
     };
     hostView.addEventListener('pointermove', move);
-    hostView.addEventListener('pointerup', up);
-    hostView.addEventListener('pointercancel', up);
+    hostView.addEventListener('pointerup', end);
+    hostView.addEventListener('pointercancel', end);
+    hostView.addEventListener('blur', end);
+    // 창 밖에서 움직이고 떼어도 이 창이 받게 한다. 잡지 못해도(시험 환경 등) 끌기는 돈다.
+    try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch { /* 위 buttons 검사가 끝을 잡는다 */ }
   };
   const resetSize = () => { setSize(PLAN_PANEL_DEFAULT); savePlanSize(null, sizeScope); };
   const isWide = size.w !== PLAN_PANEL_DEFAULT.w || size.h !== PLAN_PANEL_DEFAULT.h;
