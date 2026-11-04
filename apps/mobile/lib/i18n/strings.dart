@@ -676,6 +676,58 @@ abstract class Strings {
   String get chGone;
   String get chAgentBadge;
 
+  // ── 스레드 계획판 ────────────────────────────────────────────────────
+  /// 칩. 「Plan 3/7」.
+  String planChip(int done, int total);
+
+  /// 칩에 붙는 막힘 글자. 폰에는 마우스를 올려 보는 설명이 없다(시안 v3).
+  String planChipBlocked(int n);
+
+  /// 칩의 VoiceOver. 「Plan 13 of 27 steps done」.
+  String planChipSemantics(int done, int total);
+
+  /// 칩 VoiceOver 의 막힘.
+  String planBlockedSemantics(int n);
+
+  /// 띠의 VoiceOver 목표 부분.
+  String planGoalSemantics(String goal);
+
+  /// 띠의 VoiceOver 힌트.
+  String get planOpenHint;
+  String get planTitle;
+  String get planFlow;
+  String get planParallel;
+  String get planNext;
+  String get planBlocked;
+  String get planWaitingOn;
+  String get planReady;
+  String get planReadyAfter;
+  String get planOpenLinked;
+  String get planLinkedHidden;
+  String get planStale;
+
+  /// 띠의 알약 자리에 들어가는 짧은 표기.
+  String get planStaleShort;
+  String get planFlagged;
+  String get planLoadFailed;
+
+  /// 시트 머리 「5분 전 고침」.
+  String planEditedAgo(String ago);
+  String planMoreGroups(int n);
+  String planPillDone(String title);
+  String planPillBlocked(String title, int done, int total);
+  String planPillWaiting(String title);
+  String planPillWaitingCount(String title, int done, int total);
+  String planPillCount(String title, int done, int total);
+  String planSummary(int groups, int active, int blocked);
+  String planSummaryNoBlocked(int groups, int active);
+  String get planStateBlocked;
+  String get planStateActive;
+  String get planStateDone;
+  String get planStateWaiting;
+  String get planStateReady;
+  String get planStateHidden;
+
   /// DM 을 열지 못했을 때.
   String get newMessageDmFailed;
 
@@ -1342,6 +1394,10 @@ abstract class Strings {
 /// 무조건 빨개지고, 그 시험을 끄면 진짜로 번역이 빠진 키도 함께 통과한다. 예외를
 /// **값으로** 적어 두는 것이 시험을 끄는 것보다 낫다 — 늘어나면 눈에 보인다.
 const Set<String> i18nAllowSameAsEnglish = {
+  // 계획판 기호 표기 — 글자 없이 기호·숫자·제목만이라 두 언어가 같다(데스크톱 `plan.moreGroups`·`plan.pill.done`·`plan.pill.count`).
+  'planMoreGroups',
+  'planPillDone',
+  'planPillCount',
   // 시스템 줄의 작성자 이름 — 앱 이름이라 번역하지 않는다(appName 과 같은 고유명사).
   'systemAuthor',
   // 버전 표기 `v3` — 기호라 두 언어가 같다(데스크톱 `artifact.card.version` 과 같다).
@@ -1866,4 +1922,39 @@ Map<String, String> stringsToMap(Strings s) => {
       'chActionFailed': s.chActionFailed,
       'chGone': s.chGone,
       'chAgentBadge': s.chAgentBadge,
+      'planChip': s.planChip(1, 2),
+      'planChipBlocked': s.planChipBlocked(1),
+      'planChipSemantics': s.planChipSemantics(1, 2),
+      'planBlockedSemantics': s.planBlockedSemantics(1),
+      'planGoalSemantics': s.planGoalSemantics('{goal}'),
+      'planOpenHint': s.planOpenHint,
+      'planTitle': s.planTitle,
+      'planFlow': s.planFlow,
+      'planParallel': s.planParallel,
+      'planNext': s.planNext,
+      'planBlocked': s.planBlocked,
+      'planWaitingOn': s.planWaitingOn,
+      'planReady': s.planReady,
+      'planReadyAfter': s.planReadyAfter,
+      'planOpenLinked': s.planOpenLinked,
+      'planLinkedHidden': s.planLinkedHidden,
+      'planStale': s.planStale,
+      'planStaleShort': s.planStaleShort,
+      'planFlagged': s.planFlagged,
+      'planLoadFailed': s.planLoadFailed,
+      'planEditedAgo': s.planEditedAgo('{ago}'),
+      'planMoreGroups': s.planMoreGroups(1),
+      'planPillDone': s.planPillDone('{title}'),
+      'planPillBlocked': s.planPillBlocked('{title}', 1, 2),
+      'planPillWaiting': s.planPillWaiting('{title}'),
+      'planPillWaitingCount': s.planPillWaitingCount('{title}', 1, 2),
+      'planPillCount': s.planPillCount('{title}', 1, 2),
+      'planSummary': s.planSummary(5, 2, 1),
+      'planSummaryNoBlocked': s.planSummaryNoBlocked(5, 2),
+      'planStateBlocked': s.planStateBlocked,
+      'planStateActive': s.planStateActive,
+      'planStateDone': s.planStateDone,
+      'planStateWaiting': s.planStateWaiting,
+      'planStateReady': s.planStateReady,
+      'planStateHidden': s.planStateHidden,
     };

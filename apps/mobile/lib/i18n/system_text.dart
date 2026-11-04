@@ -24,6 +24,7 @@ const Map<String, List<String>> systemI18nArgs = {
   'system.merge.approvalUsed': ['repo', 'number', 'head', 'ghUser'],
   'system.merge.approvalUsedRelaxed': ['repo', 'number', 'head', 'ghUser'],
   'system.merge.merged': ['repo', 'number', 'sha'],
+  'system.plan.ready': ['n', 'ids'],
   'system.merge.mergedGranted': ['repo', 'number', 'sha', 'granterId'],
   'system.merge.queued': ['repo', 'number', 'head'],
   'system.merge.queuedGranted': ['repo', 'number', 'head', 'granterId'],

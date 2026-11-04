@@ -752,6 +752,77 @@ class StringsKo implements Strings {
   String get chGone => '채널이 삭제·보관됐거나 더는 볼 수 없다.';
   @override
   String get chAgentBadge => '에이전트';
+
+  @override
+  String planChip(int done, int total) => '계획 $done/$total';
+  @override
+  String planChipBlocked(int n) => '· 막힘 $n';
+  @override
+  String planChipSemantics(int done, int total) => '계획 $done/$total단계 끝남';
+  @override
+  String planBlockedSemantics(int n) => '막힘 $n개';
+  @override
+  String planGoalSemantics(String goal) => '목표 $goal';
+  @override
+  String get planOpenHint => '두 번 탭하면 계획을 연다';
+  @override
+  String get planTitle => '계획';
+  @override
+  String get planFlow => '흐름';
+  @override
+  String get planParallel => '동시에 진행';
+  @override
+  String get planNext => '다음:';
+  @override
+  String get planBlocked => '막힘:';
+  @override
+  String get planWaitingOn => '앞:';
+  @override
+  String get planReady => '시작 가능';
+  @override
+  String get planReadyAfter => '앞 단계 끝남 · 시작 가능';
+  @override
+  String get planOpenLinked => '그 스레드 열기 →';
+  @override
+  String get planLinkedHidden => '볼 수 없는 스레드';
+  @override
+  String get planStale => '낡았을 수 있음';
+  @override
+  String get planStaleShort => '낡음';
+  @override
+  String get planFlagged => '검사에 걸린 판이다 — 에이전트 프롬프트에는 싣지 않는다';
+  @override
+  String get planLoadFailed => '계획을 불러오지 못했다.';
+  @override
+  String planEditedAgo(String ago) => '$ago 고침';
+  @override
+  String planMoreGroups(int n) => '+$n';
+  @override
+  String planPillDone(String title) => '$title✓';
+  @override
+  String planPillBlocked(String title, int done, int total) => '$title 막힘 $done/$total';
+  @override
+  String planPillWaiting(String title) => '$title 대기';
+  @override
+  String planPillWaitingCount(String title, int done, int total) => '$title 대기 $done/$total';
+  @override
+  String planPillCount(String title, int done, int total) => '$title $done/$total';
+  @override
+  String planSummary(int groups, int active, int blocked) => '그룹 $groups · 진행 $active · 막힘 $blocked';
+  @override
+  String planSummaryNoBlocked(int groups, int active) => '그룹 $groups · 진행 $active';
+  @override
+  String get planStateBlocked => '막힘';
+  @override
+  String get planStateActive => '진행 중';
+  @override
+  String get planStateDone => '끝남';
+  @override
+  String get planStateWaiting => '대기';
+  @override
+  String get planStateReady => '시작 가능';
+  @override
+  String get planStateHidden => '볼 수 없음';
   @override
   String get newMessageDmFailed => 'DM 을 열지 못했다.';
   @override
@@ -1382,6 +1453,7 @@ class StringsKo implements Strings {
         'system.threadModel.set': '{accountId}님이 이 스레드에서 {agentId} 의 모델을 {value} 로 정했다. 다음 턴부터 적용된다.',
         'system.threadModel.setByAgent': '{accountId}님이 이 스레드에서 {agentId} 의 모델을 {value} 로 정했다(에이전트 지정). 다음 턴부터 적용된다.',
         'system.threadModel.cleared': '{accountId}님이 이 스레드에서 {agentId} 의 모델 지정을 풀었다. 다음 턴부터 기본값으로 돈다.',
+        'system.plan.ready': '이제 시작할 수 있는 단계 {n}개: {ids}',
         'system.threadModel.clearedByAgent': '{accountId}님이 이 스레드에서 {agentId} 의 모델 지정을 풀었다(에이전트 지정). 다음 턴부터 기본값으로 돈다.',
         'system.merge.approvalUsed': '🔓 {repo}#{number} 1회 승인으로 머지 시도 · head {head} · gh {ghUser}',
         'system.merge.approvalUsedRelaxed': '🔓 {repo}#{number} 1회 승인으로 머지 시도 · head {head} · gh {ghUser} · CI 판정은 GitHub 에 맡김',

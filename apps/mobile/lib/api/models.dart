@@ -11,6 +11,8 @@
 /// 그 일을 한다. 서버가 모양을 바꾸면 사람이 앱을 열기 전에 시험이 먼저 빨개진다.
 library;
 
+import 'thread_plan.dart';
+
 /// `null` 도 아니고 문자열도 아닌 것이 올 수 있다 — JSON 은 무엇이든 담는다.
 String _str(Object? v, [String fallback = '']) => v is String ? v : fallback;
 
@@ -317,6 +319,8 @@ class MessageRow {
     this.participantIds = const [],
     this.lastReplyAt,
     this.status,
+    this.planProgress,
+    this.planProgressKnown = false,
   });
 
   final String id;
@@ -354,6 +358,13 @@ class MessageRow {
   /// **스레드 루트에만**: 스레드 상태(`ThreadStatusMark`). 옛 서버·답글·에이전트가 안 낀 스레드는 `null`.
   final ThreadStatusMark? status;
 
+  /// 스레드 계획판 진행률(루트에만). 청중 기준이라 채널 칩에 그대로 쓴다. 계획이 없으면 null.
+  final PlanProgressMark? planProgress;
+
+  /// 응답에 `planProgress` 키가 있었는가. **없으면 「모른다」다**(답글·한 줄 응답·실시간 갱신·옛 서버) — 앞 값을 지킨다.
+  /// 키가 있고 null 이면 「계획 없음」이라 지운다(데스크톱 `keepThreadFacts` 와 같은 규칙).
+  final bool planProgressKnown;
+
   /// 스레드 답글인데 **채널에도 보이라고** 올린 것(#231). 채널 화면은 루트와 이것만 그린다.
   final bool alsoInChannel;
 
@@ -381,6 +392,8 @@ class MessageRow {
         participantIds: participantIds,
         lastReplyAt: lastReplyAt,
         status: status,
+        planProgress: planProgress,
+        planProgressKnown: planProgressKnown,
       );
 
   /// 스레드 상태를 바꾼 사본(`thread.status` 이벤트).
@@ -402,6 +415,31 @@ class MessageRow {
         participantIds: participantIds,
         lastReplyAt: lastReplyAt,
         status: next,
+        planProgress: planProgress,
+        planProgressKnown: planProgressKnown,
+      );
+
+  /// 계획판 진행률을 갈아 끼운 사본(`thread.plan.changed`·앞 값 지키기).
+  MessageRow withPlanProgress(PlanProgressMark? next, {bool known = true}) => MessageRow(
+        id: id,
+        seq: seq,
+        channelId: channelId,
+        threadRootId: threadRootId,
+        authorId: authorId,
+        body: body,
+        kind: kind,
+        meta: meta,
+        createdAt: createdAt,
+        editedAt: editedAt,
+        reactions: reactions,
+        attachments: attachments,
+        replyCount: replyCount,
+        alsoInChannel: alsoInChannel,
+        participantIds: participantIds,
+        lastReplyAt: lastReplyAt,
+        status: status,
+        planProgress: next,
+        planProgressKnown: known,
       );
 
   bool get isThreadRoot => threadRootId == null;
@@ -450,6 +488,8 @@ class MessageRow {
       participantIds: participantIds,
       lastReplyAt: lastReplyAt,
       status: status,
+      planProgress: planProgress,
+      planProgressKnown: planProgressKnown,
     );
   }
 
@@ -486,6 +526,8 @@ class MessageRow {
             : const [],
         lastReplyAt: DateTime.tryParse(_str(j['lastReplyAt']))?.toUtc(),
         status: ThreadStatusMark.fromJson(j['statusReaction']),
+        planProgress: PlanProgressMark.fromJson(j['planProgress']),
+        planProgressKnown: j.containsKey('planProgress'),
       );
 }
 
