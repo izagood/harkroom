@@ -398,12 +398,6 @@ export function MandateLineBody({ message, src, canChoose, optionIds, answeredWi
               {t('mandateCard.deny')}
             </button>
           )}
-          {onceByPanel && once.isOwner && canPickAccount && !once.open && (
-            <button type="button" data-testid="merge-once-change-account" onClick={() => once.setOpen(true)}
-              className="ml-auto rounded-sm px-1 py-0.5 text-meta text-fg-subtle underline decoration-dotted underline-offset-2 hover:text-fg-muted">
-              {t('mergeOnce.changeAccount')}
-            </button>
-          )}
           {decideHere?.trailing && <span className="ml-auto">{decideHere.trailing}</span>}
         </div>
       )}

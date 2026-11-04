@@ -3945,6 +3945,7 @@ export const en = {
   'speech.bundle.replyInThread': 'Reply in the original thread →',
   'speech.bundle.decideInThread': 'Decide in the original thread →',
   'speech.bundle.originalThread': 'Original thread ↗',
+  'speech.bundle.expandToDecide': 'Expand to decide',
   'speech.bundle.loading': 'Loading the original…',
   'speech.bundle.unavailable': 'You can\'t see the original card',
   'speech.bundle.answered': '{label} · {name}',

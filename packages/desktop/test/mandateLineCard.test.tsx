@@ -169,6 +169,12 @@ describe('W4 mandate line card', () => {
     fireEvent.click(screen.getByTestId('ask-option-approve_mandate'));
     expect(answerAsk).toHaveBeenCalledWith('m1', 'approve_mandate', 'c1');
   });
+  it('answered mirror whose original ended as a 7-day grant says the date, not 「added to the mandate」', async () => {
+    rootRead.mockResolvedValue({ ...card({ pr: { status: 'granted', grantExpiresAt: '2099-11-09T00:00:00.000Z' } }), id: ROOT });
+    const m = card({ mirror: { rootId: ROOT, neutral: false, kind: 'tool', ownerAccountId: ME, line: { cap: 'tool', scope: 'x', limits: {} } }, ask: { answeredWith: 'approve_mandate', answeredBy: ME } });
+    render(<AskCard message={m} />);
+    await waitFor(() => expect(screen.getByTestId('ask-card').textContent).toMatch(/\d\d\/\d\d까지 허락함 · alice/));
+  });
   it('genuine mirror: a non-owner who may decide gets the buttons, asked on the request channel not the mirror channel', async () => {
     useActiveStore.getState().set({ serverVersion: { version: '9.9.9' } } as never);
     rootRead.mockResolvedValue({ ...card({ pr: { channelId: 'c-origin', ownerAccountId: 'other' } }), id: ROOT, channelId: 'c-origin' });

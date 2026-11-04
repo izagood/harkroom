@@ -164,6 +164,40 @@ describe('AskBundleCard', () => {
     expect(screen.getByTestId('ask-bundle-row-r2').dataset.state).toBe('expired');
   });
 
+  it('접힌 줄: 위임장 줄 없이 7일 허락으로 끝났으면 위임장에 더했다고 말하지 않고 기한을 쓴다(원 카드와 같다)', async () => {
+    newServer();
+    const options = [{ id: 'approve_mandate', label: 'x' }, { id: 'deny', label: 'y' }];
+    roots = {
+      r1: permRoot('r1', { status: 'granted', grantExpiresAt: '2099-11-09T00:00:00.000Z' }, { options, answeredWith: 'approve_mandate', answeredBy: ME }),
+      r2: permRoot('r2', { status: 'granted', grantExpiresAt: '2020-11-09T00:00:00.000Z' }, { options, answeredWith: 'approve_mandate', answeredBy: ME }),
+    };
+    render(<MessageItem message={bundleMessage([item('r1', { link: true }), item('r2', { link: true })])} />);
+    await screen.findAllByTestId('ask-bundle-result');
+    expect(screen.getByTestId('ask-bundle-row-r1').textContent).toMatch(/\d\d\/\d\d까지 허락함 · alice/);
+    expect(screen.getByTestId('ask-bundle-row-r1').textContent).not.toContain('위임장에 더함');
+    expect(screen.getByTestId('ask-bundle-row-r2').textContent).toContain('7일 허락 끝남 · alice');
+  });
+
+  it('권한 줄은 위에서 3개만 펼친다. 나머지는 대상 한 줄에 버튼 없이 서고, 눌러야 펼쳐지며, 앞 줄이 끝나면 다음 줄이 펼쳐진다', async () => {
+    newServer();
+    roots = Object.fromEntries(['r1', 'r2', 'r3', 'r4', 'r5'].map((id) => [id, permRoot(id)]));
+    const rows = Object.keys(roots).map((id) => item(id, { link: true }));
+    const { rerender } = render(<MessageItem message={bundleMessage(rows)} />);
+    await screen.findByTestId('ask-bundle-decide-r3');
+    expect(screen.getByTestId('ask-bundle-head').textContent).toBe('정할 것 5/5 남음');
+    expect(screen.queryByTestId('ask-bundle-decide-r4')).toBeNull();
+    expect(screen.getByTestId('ask-bundle-target-r4').textContent).toContain('tool Bash(kubectl logs:*)');
+    expect(screen.queryByTestId('ask-bundle-row-r4')!.querySelector('[data-testid^="ask-option-"]')).toBeNull();
+    fireEvent.click(screen.getByTestId('ask-bundle-expand-r5'));
+    await screen.findByTestId('ask-bundle-decide-r5');
+    expect(screen.queryByTestId('ask-bundle-decide-r4')).toBeNull();
+    // r1 이 끝나면 r4 가 3개 안으로 들어온다.
+    roots = { ...roots, r1: permRoot('r1', { status: 'denied' }, { answeredWith: 'deny', answeredBy: ME }) };
+    rerender(<MessageItem message={{ ...bundleMessage(rows), seq: 6 }} />);
+    await screen.findByTestId('ask-bundle-decide-r4');
+    expect(screen.getByTestId('ask-bundle-row-r1').dataset.state).toBe('answered');
+  });
+
   it('보통 줄의 「답하지 않기」는 원본을 닫는다', async () => {
     roots = { r1: root('r1') };
     render(<MessageItem message={bundleMessage([item('r1')])} />);

@@ -7,7 +7,7 @@ import { quoteLine } from './AskCard';
 import { useT } from '../i18n/useT';
 import type { Translate } from '../i18n';
 import { answerErrorText, cardContextText, MandateLineBody, readRootSource, type CardSource } from './MandateLineBody';
-import { elsewhereResult, lineResultKey } from './AskCard';
+import { elsewhereResult, lineResultKey, standingResultOf } from './AskCard';
 
 /**
  * **묶음 카드**(선택 카드 P1, 2026-10-10, 스레드 596146cc). 관리 에이전트가 여러 에이전트의 사람 앞 카드를 한 장에
@@ -42,6 +42,9 @@ export const BUNDLE_ACCEPT_DELAY_S = 5;
 /** `ask-bundle/answer` 가 권한 줄을 받기 시작한 서버 릴리스. 그 앞 서버에는 지금처럼 링크로 그린다. */
 export const BUNDLE_DECIDE_SINCE = '0.4.386';
 
+/** 위에서부터 펼쳐 두는 권한 줄 수. 나머지는 한 줄로 두고 눌러야 펼친다 — 그 줄에는 결정 버튼이 없다(대상·경고·이유를 보기 전에 누르지 않게). 하나를 정해 접히면 다음 줄이 펼쳐진다. */
+export const BUNDLE_OPEN_DECIDE_ROWS = 3;
+
 /** 서버가 일괄에서 **언제나** 빼는 결과 — 다시 눌러도 같으므로 n 에서 뺀다(#1288 designer s1). */
 const ALWAYS_SKIPPED = new Set<BundleAcceptResult['outcome']>(['skipped_irreversible', 'skipped_link']);
 
@@ -61,10 +64,12 @@ function BundleCardBody({ message, items }: { message: MessageRow; items: AskBun
   useEffect(() => () => { alive.current = false; }, []);
 
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const notify = (key: 'speech.bundle.acceptFailed') => useActiveStore.getState().pushNotice(t(key));
 
   const rows = items.map((item) => ({ item, state: rowState(item, roots[item.rootId], decideHere) }));
   const open = rows.filter((r) => r.state.kind === 'open' || r.state.kind === 'link' || r.state.kind === 'decide').length;
+  const firstDecideRows = new Set(rows.filter((r) => r.state.kind === 'decide').slice(0, BUNDLE_OPEN_DECIDE_ROWS).map((r) => r.item.rootId));
   const skipped = new Set((results ?? []).filter((r) => ALWAYS_SKIPPED.has(r.outcome)).map((r) => r.rootId));
   const recommendable = rows.filter((r) => r.state.kind === 'open' && !skipped.has(r.item.rootId)
     && recommendedOf(r.item, roots[r.item.rootId]) != null).length;
@@ -122,6 +127,8 @@ function BundleCardBody({ message, items }: { message: MessageRow; items: AskBun
             key={item.rootId} item={item} state={state} accounts={accounts} t={t}
             canPick={meIsHuman && !busy && countdown == null && picking !== item.rootId}
             canDecide={meIsHuman}
+            collapsed={state.kind === 'decide' && !firstDecideRows.has(item.rootId) && !expanded.has(item.rootId)}
+            onExpand={() => setExpanded((prev) => new Set(prev).add(item.rootId))}
             onPick={(optionId) => { void pick(item.rootId, optionId); }}
             onDecline={(root) => { void decline(root); }}
             bundle={message}
@@ -210,9 +217,9 @@ function nameOf(accounts: AccountNames, id: string | null, t: Translate): string
   return a ? (a.displayName || a.handle) : t('common.someone');
 }
 
-function BundleRow({ item, state, accounts, t, canPick, canDecide, onPick, onDecline, bundle, error, result }: {
+function BundleRow({ item, state, accounts, t, canPick, canDecide, collapsed, onExpand, onPick, onDecline, bundle, error, result }: {
   item: AskBundleItem; state: RowState; accounts: AccountNames; t: Translate;
-  canPick: boolean; canDecide: boolean; onPick: (optionId: string) => void; onDecline: (root: MessageRow) => void;
+  canPick: boolean; canDecide: boolean; collapsed: boolean; onExpand: () => void; onPick: (optionId: string) => void; onDecline: (root: MessageRow) => void;
   bundle: MessageRow; error: string | null; result?: BundleAcceptResult;
 }) {
   const asker = nameOf(accounts, item.askerId, t);
@@ -223,6 +230,20 @@ function BundleRow({ item, state, accounts, t, canPick, canDecide, onPick, onDec
       <div className="flex items-baseline gap-2">
         <span className="shrink-0 text-meta text-fg-subtle">{asker}</span>
         <span className={`min-w-0 truncate text-body ${settled ? 'text-fg-muted' : 'text-fg'}`}>{item.prompt}</span>
+        {collapsed && state.kind === 'decide' && (
+          <>
+            <span className="min-w-0 flex-1 truncate font-mono text-meta text-fg-muted" data-testid={`ask-bundle-target-${item.rootId}`}>
+              {state.src.line?.cap} {state.src.line?.scope}
+            </span>
+            <button
+              type="button" data-testid={`ask-bundle-expand-${item.rootId}`}
+              className="ml-auto shrink-0 rounded-sm px-1 text-meta text-fg-muted underline underline-offset-2 hover:text-fg"
+              onClick={onExpand}
+            >
+              {t('speech.bundle.expandToDecide')}
+            </button>
+          </>
+        )}
       </div>
 
       {state.kind === 'open' && (
@@ -255,7 +276,7 @@ function BundleRow({ item, state, accounts, t, canPick, canDecide, onPick, onDec
           </button>
         </div>
       )}
-      {state.kind === 'decide' && (
+      {state.kind === 'decide' && !collapsed && (
         <div className="-mx-3 -mb-1" data-testid={`ask-bundle-decide-${item.rootId}`}>
           <MandateLineBody
             message={state.root} src={state.src} canChoose={canDecide}
@@ -309,14 +330,15 @@ function BundleRow({ item, state, accounts, t, canPick, canDecide, onPick, onDec
 function AnsweredLine({ state, name, t }: { state: Extract<RowState, { kind: 'answered' }>; name: string; t: Translate }) {
   const src = readRootSource(state.root);
   const ask = readAskMeta(state.root.meta);
-  const key = src ? elsewhereResult(lineResultKey(ask?.answeredWith ?? null), true) : null;
+  const standing = src ? standingResultOf(src.request, ask?.answeredWith ?? null) : null;
+  const key = src ? standing?.key ?? elsewhereResult(lineResultKey(ask?.answeredWith ?? null), true) : null;
   if (!src?.line || !key) {
     return <p className="mt-0.5 text-meta text-fg-subtle">{t('speech.bundle.answered', { label: state.label ?? '—', name })}</p>;
   }
   const ghUser = (state.root.meta.permissionRequest as { ghUserUsed?: unknown } | undefined)?.ghUserUsed;
   return (
     <p className="mt-0.5 truncate text-meta text-fg-subtle" data-testid="ask-bundle-result">
-      {ask?.answeredWith !== 'deny' && '✓ '}{t(key, { who: name, date: '' })}
+      {ask?.answeredWith !== 'deny' && '✓ '}{t(key, { who: name, date: standing?.date ?? '' })}
       {typeof ghUser === 'string' && ` · gh ${ghUser}`}
       <span className="ml-1.5 font-mono">{src.line.cap} {src.line.scope}</span>
     </p>

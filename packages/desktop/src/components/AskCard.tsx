@@ -145,13 +145,14 @@ export function AskCard({ message, onOpenSettings }: { message: MessageRow; onOp
   // S2: 카드 답은 카드 선택지로만 적힌다 — 위임장을 못 세워 7일로 다시 한 카드도 「위임장 만들고 더하기」로 적힌다.
   // 원본 meta 에 줄(lineId)이 없고 7일 기한만 있으면 「7일 허락함」으로 그린다.
   // #1713 designer nit 1: 「7일」을 박지 않고 기한(`grantExpiresAt`)을 쓴다 — 지났으면 「7일 허락 끝남」.
-  const standingUntil = lined?.line && answered && grantedWithoutLine(lined.request) && isStandingAnswer(ask.answeredWith ?? null)
-    ? String(lined.request!.grantExpiresAt) : null;
-  const standingLive = standingUntil != null && new Date(standingUntil).getTime() > Date.now();
-  const resultKey = lined?.line && answered
-    ? (standingUntil != null ? (standingLive ? 'mandateCard.result.standingUntil' : 'mandateCard.result.standingEnded') : elsewhereResult(lineResultKey(ask.answeredWith ?? null), !!lined.mirror))
+  // 거울 meta 에는 grant 기한이 없다 — 원본을 읽었으면 원본 요청으로 같은 판정을 한다.
+  const standing = lined?.line && answered
+    ? standingResultOf(lined.request ?? (mirrorRoot?.meta.permissionRequest as Record<string, unknown> | undefined), ask.answeredWith ?? null)
     : null;
-  const standingDate = standingUntil ? mmdd(new Date(standingUntil)) : '';
+  const resultKey = lined?.line && answered
+    ? (standing?.key ?? elsewhereResult(lineResultKey(ask.answeredWith ?? null), !!lined.mirror))
+    : null;
+  const standingDate = standing?.date ?? '';
   const resultHead = resultKey ? t(resultKey, { who: answeredByName ?? t('common.someone'), date: standingDate }) : null;
 
   /* 폭 상한을 여기서 다시 두지 않는다 — 부모(`MessageItem` 의 본문 열)가 이미 상한을 쥐고
@@ -421,6 +422,16 @@ export function lineResultKey(id: string | null): 'mandateCard.result.denied' | 
   if (id === 'approve_mandate' || id === 'approve') return 'mandateCard.result.added';
   if (id === 'approve_once' || id === 'approve_hour') return 'mandateCard.result.once';
   return null;
+}
+
+/**
+ * 승인이 위임장 줄 없이 7일 허락으로 끝난 카드의 결과 — 원 카드·거울 머리와 묶음 접힌 줄이 같은 판정을 쓴다. 「위임장에 더함」이라 쓰면
+ * 허락한 범위를 실제보다 좁게 말한다(#1713 designer nit 1: 기한으로 쓴다, 지났으면 「7일 허락 끝남」).
+ */
+export function standingResultOf(request: Record<string, unknown> | null | undefined, answeredWith: string | null): { key: 'mandateCard.result.standingUntil' | 'mandateCard.result.standingEnded'; date: string } | null {
+  if (!grantedWithoutLine(request) || !isStandingAnswer(answeredWith)) return null;
+  const until = new Date(String(request!.grantExpiresAt));
+  return { key: until.getTime() > Date.now() ? 'mandateCard.result.standingUntil' : 'mandateCard.result.standingEnded', date: mmdd(until) };
 }
 
 /** 「이 위임장」은 보고 있는 스레드로 읽힌다 — 원 스레드가 아닌 자리에서는 어느 스레드의 위임장인지 쓴다(원 카드는 그대로). */

@@ -2156,6 +2156,7 @@ export const ko = {
   'speech.bundle.replyInThread': '원 스레드에서 글로 답하기 →',
   'speech.bundle.decideInThread': '원 스레드에서 정하기 →',
   'speech.bundle.originalThread': '원 스레드 ↗',
+  'speech.bundle.expandToDecide': '펼쳐 정하기',
   'speech.bundle.loading': '원본을 읽는 중…',
   'speech.bundle.unavailable': '원본 카드를 볼 수 없다',
   'speech.bundle.answered': '{label} · {name}',

@@ -425,7 +425,7 @@ export function OnceCardRows({ s, canAct }: { s: OnceApproval; canAct: boolean }
         {showAccount && (
           <>
             <dt className="text-fg-subtle">{t('mergeOnce.rowAccount')}</dt>
-            <dd data-testid="merge-once-account-row" className="text-fg">
+            <dd data-testid="merge-once-account-row" className="flex flex-wrap items-baseline gap-x-1 text-fg">
               {s.ghUser
                 ? <span data-testid="merge-once-account-pinned">{t('mergeOnce.rowPinned', { login: s.ghUser })}</span>
                 : <span>{t('mergeOnce.rowOperatorPicks')}</span>}
@@ -434,6 +434,13 @@ export function OnceCardRows({ s, canAct }: { s: OnceApproval; canAct: boolean }
               )}
               {!s.ghUser && report && Number.isFinite(reportedMs) && (
                 <span className="text-fg-subtle" data-testid="merge-once-reported"> · {t('mergeOnce.rowReported', { ago: agoLabel(reportedMs, Date.now(), locale, t) })}</span>
+              )}
+              {/* 무엇을 바꾸는지 옆에 있어야 읽힌다 — 버튼 줄이 아니라 계정 줄 끝에 둔다. */}
+              {s.isOwner && !s.open && (
+                <button type="button" data-testid="merge-once-change-account" onClick={() => s.setOpen(true)}
+                  className="ml-auto rounded-sm px-1 text-meta text-fg-subtle underline decoration-dotted underline-offset-2 hover:text-fg-muted">
+                  {t('mergeOnce.changeAccount')}
+                </button>
               )}
             </dd>
           </>
