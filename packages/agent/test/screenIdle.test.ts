@@ -39,6 +39,20 @@ describe('표 답을 화면에서 옮긴다(3회차 시험: 14줄 표가 첫 줄
   });
 });
 
+describe('rearm — 재촉을 넣은 뒤', () => {
+  it('일하는 중을 다시 본 뒤에야 끝을 말한다', async () => {
+    const w = new ScreenIdleWatch(screenIdleFactsFor('codex')!);
+    await w.feed(paint(fx('codex-tui-busy.txt')), 0);
+    await w.feed(paint(fx('codex-tui-ended.txt')), 10);
+    expect(w.ended(10 + SCREEN_IDLE_END_MS)).toBe(true);
+    w.rearm();
+    expect(w.ended(10_000)).toBe(false);
+    await w.feed(paint(fx('codex-tui-busy.txt')), 20_000);
+    await w.feed(paint(fx('codex-tui-ended.txt')), 20_010);
+    expect(w.ended(20_010 + SCREEN_IDLE_END_MS)).toBe(true);
+  });
+});
+
 describe('screen.busy — 실측 화면', () => {
   for (const h of HARNESSES) {
     it(`${h}: 일하는 중 화면은 busy, 끝난 화면은 idle`, () => {

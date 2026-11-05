@@ -42,7 +42,7 @@ export const BODY_LIMIT = 8000;
  * 읽을 수 없었다. 대신 하네스 기록의 **마지막 말 한 줄**(`readLastAssistantText`, `silentWakeNotice` 와
  * 같은 방식)을 싣고, 원문 꼬리는 러너 로그에만 남긴다(호출자).
  */
-export type SilentTurnNotice = { kind: 'react'; emoji: string } | { kind: 'post'; body: string } | { kind: 'fail'; body: string };
+export type SilentTurnNotice = { kind: 'react'; emoji: string } | { kind: 'post'; body: string; proxied?: true } | { kind: 'fail'; body: string };
 
 /** 에이전트가 부른 턴이 덧붙일 말 없이 끝났다는 표시 — 멘션 메시지에 단다(👀 받았음·💬 도는 중의 끝). */
 export const SILENT_ACK_EMOJI = '✅';
@@ -65,6 +65,8 @@ export function silentTurnNotice(opts: {
    * 호출자가 싣는다. 있으면 사람이 부른 턴은 「답 없음」 통지 대신 **그 답을 대신 올린다**(`proxyAnswerBody`).
    */
   screenAnswer?: string | null;
+  /** 대리 글 맨 앞에 붙일 머리(부른 사람 멘션, API 키 연결 턴). 길이를 본문 상한에서 먼저 빼므로 러너 꼬리가 잘리지 않는다. */
+  proxyHead?: string;
   /**
    * 화면으로 끝을 아는 하네스의 **기록에서 읽은 끝말**(`harnessLastSaid.ts`, API 키 연결 턴). 있으면 화면 답 대신 이것을 줄을 살려 옮긴다 —
    * 화면은 높이를 넘는 답을 잃는다. 비밀 조각에 걸리면 화면 답으로 돌아가지 않는다(같은 글이다).
@@ -85,6 +87,7 @@ export function silentTurnNotice(opts: {
   recordProxy?: boolean;
 }): SilentTurnNotice {
   if (opts.offAnchor !== null) return { kind: 'post', body: opts.offAnchor };
+  const head = opts.proxyHead ?? '';
   // **스스로 깨어난 턴의 침묵은 실패가 아니다**(2026-11-04). 확인해 보니 보고할 것이 없어 글을 안 쓴 턴이 대부분인데 「답을 남기지 못하고」·
   // 「다시 부르면」으로 적혀 실패처럼 읽혔다. 그 줄을 없애지는 않는다 — 약속한 보고가 사라진 것으로 읽힌 사례가 있어(`silentWakeNotice`)
   // 확인했다는 사실과 이유는 남긴다. 종류는 보통 글이다(progress 면 끝난 턴이 「작업 중」으로 남는다, `AGENT_CALL_NO_ANSWER` 주석).
@@ -102,11 +105,11 @@ export function silentTurnNotice(opts: {
       // **기록의 마지막 말이 답 꼴이면 ✅ 로 덮지 않는다**(2026-10-30 2회차 시험, log-triage·ledger). API 키 모델은 표 답을 최종
       // 텍스트로만 쓰고 message.post 를 안 불렀다 — ✅ 만 남아 부른 쪽은 답을 받은 줄 알았다. 답 꼴만 옮기고 나머지 FYI 는 ✅ 그대로.
       // 구독 턴은 끝말이 답 꼴이어도 옮기지 않는다(`recordProxy` 주석, 2026-10-31) — 일부러 침묵한 FYI 를 대리 글로 바꾸지 않는다.
-      const proxied = opts.recordProxy === true && looksLikeAnswer(opts.lastSaid) ? proxyRecordAnswerBody(opts.lastSaid!, opts.pat, opts.secrets) : '';
-      return proxied ? { kind: 'post', body: proxied } : { kind: 'react', emoji: SILENT_ACK_EMOJI };
+      const proxied = opts.recordProxy === true && looksLikeAnswer(opts.lastSaid) ? proxyRecordAnswerBody(opts.lastSaid!, opts.pat, opts.secrets, head.length) : '';
+      return proxied ? { kind: 'post', body: `${head}${proxied}`, proxied: true } : { kind: 'react', emoji: SILENT_ACK_EMOJI };
     }
-    const proxied = screenProxy(opts);
-    if (proxied) return { kind: 'post', body: proxied };
+    const proxied = screenProxy(opts, head.length);
+    if (proxied) return { kind: 'post', body: `${head}${proxied}`, proxied: true };
     // 「답 없음」 줄은 **보통 글**이다(jaebin 10-29, designer #1590). progress 로 두면 끝난 턴이 「막힘」·「작업 중」으로 그려지고 보드에서
     // 「끝남」으로 안 간다. 보통 글이라 머리 주인 에이전트에게 `thread_reply` 가 한 번 가므로(진짜 답과 같다), 문장은 다시 부르기를
     // 권하지 않고 그 결정을 사람에게 둔다 — 잡담에 늘 말없이 끝나는 조합에서 부름 사슬이 생기지 않게.
@@ -115,14 +118,14 @@ export function silentTurnNotice(opts: {
   // **대리 게시**(2026-10-25, 스레드 db4ab174). codex × API 키 연결 모델은 인사·잡담에 답을 화면에만 쓰고 끝냈다 — 사람에게 보여야 할
   // 답이 터미널에 있다. 사람이 부른 턴만 그 답을 옮겨 올린다(넘겨받은 일은 위임을 「실패」로 닫아야 하므로 아래 그대로).
   if (opts.caller === 'human') {
-    const proxied = screenProxy(opts);
-    if (proxied) return { kind: 'post', body: proxied };
+    const proxied = screenProxy(opts, head.length);
+    if (proxied) return { kind: 'post', body: `${head}${proxied}`, proxied: true };
     // **기록을 읽는 하네스도 같다**(2026-11-04 실측, claude-code × API 키 모델). 모델이 인사·짧은 질문의 답을 최종 텍스트로만 쓰고 도구 없이
     // `end_turn` 으로 끝냈는데, 이 하네스는 기록으로 끝을 알아 화면 답이 없다 — 답이 「마지막 말」 인용 한 줄로 잘려 「답을 남기지 못했다」가 됐다.
     // 사람이 부른 턴에는 일부러 하는 침묵(FYI)이 없으니 답 꼴(`looksLikeAnswer`)을 따지지 않는다. 구독 턴은 지금처럼 인용만 한다.
     if (opts.recordProxy === true && opts.lastSaid) {
-      const fromRecord = proxyRecordAnswerBody(opts.lastSaid, opts.pat, opts.secrets);
-      if (fromRecord) return { kind: 'post', body: fromRecord };
+      const fromRecord = proxyRecordAnswerBody(opts.lastSaid, opts.pat, opts.secrets, head.length);
+      if (fromRecord) return { kind: 'post', body: `${head}${fromRecord}`, proxied: true };
     }
   }
   const said = quotedLine(opts.lastSaid, opts.pat, opts.secrets);
@@ -313,16 +316,32 @@ const PROXY_SCREEN_TAIL = '\n\n(에이전트가 이 답을 터미널에만 쓰�
  *   확정해 올린 글이 아니므로 그 글로 남을 깨우거나 채팅 승인 낱말로 읽히게 두지 않는다.
  * - 꼬리 한 줄로 러너가 옮겼다는 사실을 밝힌다 — 에이전트가 직접 쓴 글처럼 보이지 않게. 꼬리가 잘리지 않게 그 몫을 먼저 뺀다.
  */
-export function proxyAnswerBody(screenAnswer: string | null, pat: string, secrets: readonly string[] = []): string {
+export function proxyAnswerBody(screenAnswer: string | null, pat: string, secrets: readonly string[] = [], reserve = 0): string {
   if (screenAnswer === null) return '';
   const needles = pat.length > 0 ? [...secrets, pat] : secrets;
   if (needles.length > 0 && tailHasSecretFragment(maskWhole(screenAnswer, needles), needles)) return '';
   const lines = screenAnswer.split('\n').map((l) => oneLine(l, pat, PROXY_ANSWER_MAX_CHARS, secrets)).filter(Boolean);
   if (lines.length === 0) return '';
   let quoted = lines.map((l) => `> ${l}`).join('\n');
-  const room = BODY_LIMIT - PROXY_SCREEN_TAIL.length - 1; // `…` 하나
+  // `reserve` 는 호출자가 앞에 붙일 머리(`proxyHead`) 몫이다 — 붙인 뒤 자르면 이 꼬리가 잘려 멘션 달린 대리 글이 직접 쓴 글처럼 보인다.
+  const room = BODY_LIMIT - PROXY_SCREEN_TAIL.length - 1 - reserve; // `…` 하나
   if (quoted.length > room) quoted = `${quoted.slice(0, room)}…`;
   return `${quoted}${PROXY_SCREEN_TAIL}`;
+}
+
+/**
+ * **말없이 끝난 API 키 연결 턴에 한 번 넣는 재촉**(2026-11-04 소유자 결정). 모델이 직접 올리면 멘션·보고처가 살아 대리 게시보다 낫다. 러너가 짓는 글이고
+ * 사람·모델의 글을 싣지 않는다.
+ */
+export function laneNudgeText(channelId: string, threadRootId: string | null): string {
+  const where = threadRootId ? `channelId: ${channelId} · threadRootId: ${threadRootId}` : `channelId: ${channelId}`;
+  return `(러너 알림) 방금 답이 harkroom 스레드에 올라가지 않았다. 사람은 이 화면을 못 본다. 답이 있으면 harkroom MCP 의 message_post 도구로 지금 올려라(${where}). 올릴 답이 없으면 아무것도 하지 말고 끝내라.`;
+}
+
+/** 재촉할 턴인가. 사람이 부른 턴·넘겨받은 일은 답이 있어야 한다. 에이전트가 부른 턴은 답 꼴일 때만 — 덧붙일 말 없는 FYI 를 재촉하면 쓸모없는 글이 나온다. 스스로 깬 턴은 재촉하지 않는다. */
+export function laneNudgeWanted(caller: 'agent' | 'human' | 'delegated' | 'wake' | 'delegationOutcome', said: string | null): boolean {
+  if (caller === 'human' || caller === 'delegated') return true;
+  return caller === 'agent' && looksLikeAnswer(said);
 }
 
 /** 답 꼴로 볼 마지막 말의 길이 하한(자). FYI 끝말(「확인했습니다, 덧붙일 말 없음」)은 이보다 짧다. */
@@ -342,7 +361,7 @@ export function looksLikeAnswer(text: string | null): boolean {
  * **기록의 마지막 말을 대신 올리는 글**(`silentTurnNotice`). 화면 답(`proxyAnswerBody`)과 달리 줄을 살린다 — 표 답이 한 줄로 뭉개지면
  * 못 읽는다. 줄마다 인용(`> `)으로 싸서 멘션이 되지 않게 하고, 가림·조각 검사는 `quotedLine` 과 같다. 상한은 서버 본문 상한에서 꼬리 몫을 뺀다.
  */
-export function proxyRecordAnswerBody(text: string, pat: string, secrets: readonly string[] = []): string {
+export function proxyRecordAnswerBody(text: string, pat: string, secrets: readonly string[] = [], reserve = 0): string {
   if (secrets.length > 0 && tailHasSecretFragment(maskWhole(text, secrets), secrets)) return '';
   let t = maskWhole(text, secrets);
   if (pat.length > 0) t = t.split(pat).join('(가림)');
@@ -351,16 +370,17 @@ export function proxyRecordAnswerBody(text: string, pat: string, secrets: readon
   // **인용을 붙인 뒤의 길이로 자른다**(2026-10-30 security 검토). 붙이기 전에 자르면 줄이 많은 답은 `> ` 몫만큼 상한을 넘고,
   // 호출부의 `slice(0, BODY_LIMIT)` 가 꼬리를 잘라 에이전트가 직접 쓴 글처럼 보였다. 꼬리 몫을 먼저 빼고 남은 칸에 인용을 담는다.
   let quoted = t.split('\n').map((l) => (l.trim() ? `> ${l}` : '>')).join('\n');
-  const room = BODY_LIMIT - PROXY_RECORD_TAIL.length - 3; // `…` 하나와 꼬리 앞 빈 줄 둘
+  // `reserve` 는 호출자가 앞에 붙일 머리(`proxyHead`) 몫이다 — 붙인 뒤 자르면 이 꼬리가 잘려 멘션 달린 대리 글이 직접 쓴 글처럼 보인다.
+  const room = BODY_LIMIT - PROXY_RECORD_TAIL.length - 3 - reserve; // `…` 하나와 꼬리 앞 빈 줄 둘
   if (quoted.length > room) quoted = `${quoted.slice(0, room)}…`;
   return `${quoted}${PROXY_RECORD_TAIL}`;
 }
 
 /** 대신 올릴 글 — 기록의 끝말이 있으면 그것을, 없으면 화면 답을 쓴다(`silentTurnNotice`). */
-function screenProxy(opts: { screenAnswer?: string | null; recordAnswer?: string | null; pat: string; secrets?: readonly string[] }): string {
+function screenProxy(opts: { screenAnswer?: string | null; recordAnswer?: string | null; pat: string; secrets?: readonly string[] }, reserve = 0): string {
   return opts.recordAnswer
-    ? proxyRecordAnswerBody(opts.recordAnswer, opts.pat, opts.secrets)
-    : proxyAnswerBody(opts.screenAnswer ?? null, opts.pat, opts.secrets);
+    ? proxyRecordAnswerBody(opts.recordAnswer, opts.pat, opts.secrets, reserve)
+    : proxyAnswerBody(opts.screenAnswer ?? null, opts.pat, opts.secrets, reserve);
 }
 
 /** 기록에서 옮긴 답의 꼬리 — 러너가 옮겼다는 표시라 잘리면 안 된다(`proxyRecordAnswerBody`). */

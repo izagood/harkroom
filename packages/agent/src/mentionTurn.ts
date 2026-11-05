@@ -16,7 +16,7 @@ import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs
 import { dirname, join } from 'node:path';
 import type { AgentHarness, AgentView, InboxCanceledWake, InboxDelegatedBy, InboxDelegationOutcome, InboxTeamCall, MessageRow, WakeReportTo } from '@harkroom/shared';
 import type { FailOpts, Me } from './harkroom.js';
-import { BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DELTA_MAX_MESSAGES, mergeThreadPages, DENIAL_NOTICE_MAX_PER_TURN, MAC_PERMISSION_NOTICE_MAX_PER_TURN, macPermissionNotice, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, stallScreenErrorLine, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, silentTurnNotice, silentWakeNotice, backgroundCutNotice, reportMissedNotice, MESSAGE_KIND_WAKE, hasOwnReportSince, watchMissedNotice } from './prompt.js';
+import { laneNudgeText, laneNudgeWanted, BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DELTA_MAX_MESSAGES, mergeThreadPages, DENIAL_NOTICE_MAX_PER_TURN, MAC_PERMISSION_NOTICE_MAX_PER_TURN, macPermissionNotice, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, stallScreenErrorLine, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, silentTurnNotice, silentWakeNotice, backgroundCutNotice, reportMissedNotice, MESSAGE_KIND_WAKE, hasOwnReportSince, watchMissedNotice } from './prompt.js';
 import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
 import { SessionStore, type SessionRecord } from './sessions.js';
 import { attachesCommandHook, attachesPostToolHook, buildTurnCommand, chromeTurnFor, harnessPath, turnKeyDelivery, safeToolAllows, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
@@ -24,7 +24,7 @@ import { screenGateFor, screenIdleFactsFor, readsBuiltinSkills } from './adapter
 import { SCREEN_IDLE_END_MS, ScreenIdleWatch, screenAnswerLines } from './screenIdle.js';
 import { commandRulesOf, fileMemoryDirUnderConfig, discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readonlyToolsFor, readsSessionTranscript, usesOmpHome, usesPiHome, usesTuiForMention, turnKeyDeliveryOf, usesXdgHome, waitsForMcpBeforePrompt, xdgAppFor } from './adapters/index.js';
 import { RUNNER_MCP_READY_FILE_ENV } from '@harkroom/shared/runnerLink';
-import { acceptsPtyInput, looksReadyForPrompt } from './pty.js';
+import { acceptsPtyInput, looksReadyForPrompt, sanitizePasteText } from './pty.js';
 import type { AttentionKind, PtyControls, PtyWriter, TurnResult } from './pty.js';
 import { codexRolloutFileFor, findCodexSessionId } from './codexSessions.js';
 import { claudeSessionFilePath, claudeSessionMaterialized } from './claudeSessions.js';
@@ -524,6 +524,10 @@ export interface MentionTurnDeps {
   ) => Promise<string[]>;
   /** 화면으로 끝을 아는 하네스의 끝말을 기록에서 읽는다(기본 `readHarnessLastSaid`, API 키 연결 턴만). */
   readHarnessLastSaid?: (harness: AgentHarness, opts: HarnessLastSaidOpts) => Promise<string | null>;
+  /** 재촉 뒤 답을 기다리는 상한(기본 `LANE_NUDGE_WAIT_MS`). */
+  laneNudgeWaitMs?: number;
+  /** 재촉 글을 붙여넣은 뒤 제출까지(기본 `LANE_NUDGE_SUBMIT_DELAY_MS`). */
+  laneNudgeSubmitMs?: number;
   /** 이 턴에서 하네스가 끝내며 남긴 말을 읽는다(기본 `readLastAssistantText`). */
   readLastSaid?: (
     harness: AgentHarness, sessionId: string | null,
@@ -766,6 +770,11 @@ function silentTurnCaller(
   const author = thread.find((m) => m.id === target.mentionId)?.authorId;
   return author !== undefined && deps.agentIds.has(author) ? 'agent' : 'human';
 }
+
+/** 재촉 뒤 답을 기다리는 상한. 일 지시에 모델이 도는 시간(수십 초)의 위다. */
+const LANE_NUDGE_WAIT_MS = 120_000;
+/** 붙여넣기 뒤 제출까지. 입력창이 붙여넣기를 다 그릴 틈이다. 제출되지 못해도 위 상한이 턴을 거둔다. */
+const LANE_NUDGE_SUBMIT_DELAY_MS = 1_000;
 
 function warnOnDuplicatePosts(key: string, postCount: number): void {
   if (postCount <= 1) return;
@@ -1764,6 +1773,12 @@ export async function runMentionTurn(
     screenSaid: string | null;
     /** 이 턴의 끝을 화면(`idleWatch`)으로 알았다. 에이전트 호출의 침묵 통지가 ✅ 대신 글을 남길지 가른다(`silentTurnNotice`). */
     screenEnded: boolean;
+    /** 말없이 끝난 API 키 연결 턴에 재촉을 넣은 시각(`laneNudgeText`). 0 은 안 넣었다. 한 턴에 한 번만 넣는다. */
+    laneNudgedAtMs: number;
+    /** 재촉하기 전에 읽어 둔 끝말. 대리 게시는 이것을 옮긴다 — 재촉 뒤의 말은 「올렸다」 같은 군말일 수 있다. */
+    laneNudgeSaid: string | null;
+    /** 같은 때 읽어 둔, 화면으로 끝을 아는 하네스의 기록 끝말(`readHarnessLastSaid`). */
+    laneNudgeHarnessSaid: string | null;
     /** 정지 직전 Enter 를 이미 한 번 쳤다 — 한 턴에 한 번만 친다(되풀이하면 정지가 영영 안 선다). */
     unsentNudged: boolean;
     /**
@@ -1821,7 +1836,7 @@ export async function runMentionTurn(
   } = {
     controls: null, exited: false, spoke: false, viewers: 0, silenced: false, reclaimed: false,
     apiError: null, recordedApiError: null, canceledBy: null, fencedOut: false, stalled: false, awaitingHuman: false, gateNoticed: false,
-    lastLifeMs: 0, lastDataAtMs: 0, opencodeAskedAtMs: 0, screenTail: '', screenSaid: null, screenEnded: false, unsentNudged: false, stalledIdleMs: 0, finished: false, pending: null, backgroundSinceMs: null, backgroundCut: null, reclaimGraceMs: 0, tail: null,
+    lastLifeMs: 0, lastDataAtMs: 0, opencodeAskedAtMs: 0, screenTail: '', screenSaid: null, screenEnded: false, laneNudgedAtMs: 0, laneNudgeSaid: null, laneNudgeHarnessSaid: null, unsentNudged: false, stalledIdleMs: 0, finished: false, pending: null, backgroundSinceMs: null, backgroundCut: null, reclaimGraceMs: 0, tail: null,
     threadUnreadable: false, silenceDeferred: false, deniedSeen: new Set(), denialNotices: 0, macSeen: new Set(), macNotices: 0, mcpRejectedSeen: new Set(),
     cancelReclaim: null, cancelProbe: null, cancelSilence: null,
     gateHeld: null, gateRequeue: null, cancelGateWatch: null,
@@ -2140,6 +2155,65 @@ export async function runMentionTurn(
     return true;
   };
 
+  /** 화면으로 끝을 아는 하네스의 끝말을 기록에서 읽는다(`harnessLastSaid.ts`). 구독 턴은 읽지 않는다 — 기록 대리 게시를 켜지 않는 연결이라(`recordProxy`) 화면 답을 그대로 둔다. */
+  const readLaneHarnessSaid = async (sessionId: string | null): Promise<string | null> => {
+    if (providerEnv === null) return null;
+    return (deps.readHarnessLastSaid ?? readHarnessLastSaid)(def.harness, {
+      sessionId,
+      sinceMs: turnStartedAtMs,
+      codexSessionsDir: codexSessionsDir(deps.codexHome),
+      opencode: {
+        command: harnessCommand(def.harness),
+        env: opencodeQueryEnv(def.harness, opencodeDirs(deps.opencodeHome), process.env),
+        cwd: opencodeCwd,
+      },
+    }).catch(() => null);
+  };
+
+  /**
+   * **말없이 끝난 API 키 연결 턴을 한 번 재촉한다**(2026-11-04 소유자 결정). 끝났다고 본 순간, 거두기 전에 PTY 에 한 번 넣고 끝 판정을 되돌린다.
+   * 모델이 직접 올리면 멘션·보고처가 살아 대리 게시보다 낫다. 답이 없으면 `LANE_NUDGE_WAIT_MS` 뒤 지금처럼 대리 게시로 간다 — 입력이 제출되지
+   * 않았거나 모델이 답하지 않아도 턴이 정지 시계까지 서지 않게 한다. 사람이 보고 있으면(`viewers`) 끼어들지 않는다.
+   */
+  const nudgeOrExpire = async (): Promise<void> => {
+    const now = deps.now?.() ?? Date.now();
+    if (end.laneNudgedAtMs) {
+      if (!end.finished && now - end.laneNudgedAtMs >= (deps.laneNudgeWaitMs ?? LANE_NUDGE_WAIT_MS)) {
+        console.error(`[mentionTurn] ${key}: 재촉 뒤에도 발화가 없다 — 끝난 것으로 본다`);
+        end.finished = true;
+        end.pending = 0;
+      }
+      return;
+    }
+    if (providerEnv === null || !usesTui || !end.finished || (end.pending ?? 0) > 0 || !end.controls || end.viewers > 0) return;
+    const recordSaid = await (deps.readLastSaid ?? readLastAssistantText)(def.harness, sessionIdForProbe, {
+      configDir: deps.claudeConfigDir, sinceMs: turnStartedAtMs,
+    }).catch(() => null);
+    const harnessSaid = recordSaid === null ? await readLaneHarnessSaid(sessionIdForProbe) : null;
+    const said = recordSaid ?? harnessSaid ?? end.screenSaid;
+    if (end.exited || !end.controls) return;
+    if (!laneNudgeWanted(silentTurnCaller(deps, target, thread), said)) return;
+    // 다른 스레드에 답하고 끝낸 턴이면 재촉하지 않는다 — 같은 답을 앵커에 또 쓰게 된다.
+    if (await offAnchorEvidence(deps, key, channelId, anchor, turnStartSeq, turnId) !== null) return;
+    if (end.exited || !end.controls) return;
+    end.laneNudgedAtMs = now;
+    end.laneNudgeSaid = recordSaid;
+    end.laneNudgeHarnessSaid = harnessSaid;
+    end.finished = false;
+    end.tail = null;
+    end.lastLifeMs = now;
+    idleWatch?.rearm();
+    console.error(`[mentionTurn] ${key}: API 키 연결 턴이 말없이 끝났다 — 한 번 재촉한다`);
+    const controls = end.controls;
+    try {
+      controls.write(Buffer.from(`\x1b[200~${sanitizePasteText(laneNudgeText(channelId, anchor))}\x1b[201~`));
+      const submit = setTimeout(() => {
+        if (!end.exited) try { controls.write(Buffer.from('\r')); } catch { /* 죽었으면 exit 가 정한다 */ }
+      }, deps.laneNudgeSubmitMs ?? LANE_NUDGE_SUBMIT_DELAY_MS);
+      submit.unref?.();
+    } catch { /* 죽었으면 exit 가 정한다 */ }
+  };
+
   /**
    * **opencode 의 차례 끝**(2026-10-25, e2e R1). opencode 는 기록을 우리가 읽지 않아(`transcript.parsed:
    * false`) 끝 판정이 없었다 — 모델이 말 없이 `stop` 한 턴은 화면이 10분 멈춘 뒤 「하네스 정지 — 사람이
@@ -2165,7 +2239,7 @@ export async function runMentionTurn(
       sessionId,
       sinceMs,
     }));
-    const state = await read(sessionIdForProbe, turnStartedAtMs).catch(() => null);
+    const state = await read(sessionIdForProbe, end.laneNudgedAtMs || turnStartedAtMs).catch(() => null);
     if (end.exited) return;
     end.tail = state;
     end.finished = state === 'ended';
@@ -2186,7 +2260,7 @@ export async function runMentionTurn(
     if (usesXdgHome(def.harness)) { await probeOpencodeTurnState(); return; }
     const read = deps.readTurnState ?? readTranscriptTurnState;
     const tail = await read(def.harness, sessionIdForProbe, {
-      configDir: deps.claudeConfigDir, sinceMs: turnStartedAtMs,
+      configDir: deps.claudeConfigDir, sinceMs: end.laneNudgedAtMs || turnStartedAtMs,
     }).catch(() => null);
     if (end.exited) return;
     end.tail = tail;
@@ -2414,10 +2488,13 @@ export async function runMentionTurn(
         if (idleWatch && !end.finished && !end.awaitingHuman && idleWatch.ended(deps.now?.() ?? Date.now())) {
           end.finished = true;
           end.pending = 0;
-          end.screenSaid = screenAnswerLines(idleWatch.text(), idleFacts!, idleWatch.busyText(), rec?.workspaceDir ?? null).join('\n') || null;
+          // 재촉 뒤의 화면은 군말일 수 있다 — 재촉 전에 본 답을 지킨다(`laneNudgeSaid`).
+          if (!end.laneNudgedAtMs) end.screenSaid = screenAnswerLines(idleWatch.text(), idleFacts!, idleWatch.busyText(), rec?.workspaceDir ?? null).join('\n') || null;
           end.screenEnded = true;
           console.log(`[mentionTurn] ${key}: 화면이 차례 끝을 말한다(입력창·일하는 중 표지 없음 ${SCREEN_IDLE_END_MS}ms)`);
         }
+        if (end.exited) return;
+        if (spoke === false) await nudgeOrExpire();
         if (end.exited) return;
         reconsiderEnd();
         // 끝나지 않았고 말도 없다 — 일하는 중인가, 서 있는가. 그것도 디스크가 말해 준다.
@@ -3009,30 +3086,24 @@ export async function runMentionTurn(
       // 로그에도 가린 사본을 쓴다: 로그 파일도 디스크에 남는 자리다.
       const evidence = harnessTailNotice(result.tail, deps.runnerSecret, await tailSecrets());
       if (evidence !== null) console.log(`[mentionTurn] ${key}: 발화 없이 끝났다 — 하네스가 마지막에 남긴 출력:\n${evidence}`);
-      const recordSaid = await (deps.readLastSaid ?? readLastAssistantText)(def.harness, rec.sessionId, {
+      // 재촉했으면 재촉 전에 읽어 둔 끝말을 옮긴다 — 그 뒤의 말은 군말일 수 있다.
+      const nudged = end.laneNudgedAtMs > 0;
+      const recordSaid = nudged ? end.laneNudgeSaid : await (deps.readLastSaid ?? readLastAssistantText)(def.harness, rec.sessionId, {
         configDir: deps.claudeConfigDir, sinceMs: turnStartedAtMs,
       }).catch(() => null);
-      // API 키 연결 턴은 화면으로 끝을 아는 하네스도 끝말을 기록에서 읽는다(`harnessLastSaid.ts`). 못 읽으면 화면 답 그대로다.
-      // 구독 턴은 읽지 않는다 — 기록 대리 게시를 켜지 않는 연결이라(`recordProxy`) 지금의 화면 답을 그대로 둔다.
-      const harnessSaid = providerEnv !== null && recordSaid === null
-        ? await (deps.readHarnessLastSaid ?? readHarnessLastSaid)(def.harness, {
-          sessionId: rec.sessionId,
-          sinceMs: turnStartedAtMs,
-          codexSessionsDir: codexSessionsDir(deps.codexHome),
-          opencode: {
-            command: harnessCommand(def.harness),
-            env: opencodeQueryEnv(def.harness, opencodeDirs(deps.opencodeHome), process.env),
-            cwd: rec.workspaceDir,
-          },
-        }).catch(() => null)
-        : null;
+      // API 키 연결 턴은 화면으로 끝을 아는 하네스도 끝말을 기록에서 읽는다. 못 읽으면 화면 답 그대로다.
+      const harnessSaid = nudged ? end.laneNudgeHarnessSaid : recordSaid === null ? await readLaneHarnessSaid(rec.sessionId) : null;
       const lastSaid = recordSaid ?? harnessSaid ?? end.screenSaid;
       // **침묵의 이유가 옆 스레드에 있을 수 있다**(2026-09-08 실측, `offAnchorPosts` 주석).
       // 여기서만 채널 전체를 훑는 이유는 값이 싸지 않아서다: 이 경로는 드물게 도는 침묵
       // 경로이고, 그때는 사람에게 어차피 통지가 나가므로 한 왕복을 더 쓸 값어치가 있다.
       // 실패해도 통지 자체는 그대로 나간다 — 정황이 없다고 사실을 못 남기면 본말이 뒤집힌다.
       const offAnchor = await offAnchorEvidence(deps, key, channelId, anchor, turnStartSeq, turnId);
+      // API 키 연결 턴의 대리 글은 **이 턴을 부른 글의 작성자 한 사람만** 부른다(2026-11-04 소유자 결정 — 10-25 「확정 안 된 글로 남을 깨우지 않는다」를
+      // 넓혔다). 앞 단계가 기다리는 에이전트가 깨어나야 하기 때문이다. 본문은 줄마다 인용이라 그 안의 멘션은 계속 풀리지 않는다.
+      const callerHandle = providerEnv !== null ? deps.handles[thread.find((m) => m.id === mentionId)?.authorId ?? ''] : undefined;
       const notice = silentTurnNotice({
+        ...(callerHandle ? { proxyHead: `@${callerHandle}\n\n` } : {}),
         caller: silentTurnCaller(deps, target, thread), lastSaid, offAnchor,
         pat: deps.runnerSecret, secrets: await tailSecrets(),
         // 기록이 말해 주지 않을 때만 화면 답을 대신 올린다 — 기록을 읽는 하네스(claude)의 마지막 말은 아래 `recordProxy` 가 가른다.
