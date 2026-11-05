@@ -53,11 +53,19 @@ class _StatusBarScrollState extends State<StatusBarScroll> with WidgetsBindingOb
       MetaData(key: _key, behavior: HitTestBehavior.translucent, child: widget.child);
 }
 
+/// iOS 「동작 줄이기」는 `reduceMotion` 만 켜고 `disableAnimations`(따라서 `MediaQuery.disableAnimations`)는
+/// 켜지 않는다(시뮬레이터 실측). 후자는 Android 쪽 설정이 들어오는 자리라 둘 다 본다.
+bool get _motionReduced {
+  final features = WidgetsBinding.instance.platformDispatcher.accessibilityFeatures;
+  return features.reduceMotion || features.disableAnimations;
+}
+
 /// 목록을 화면 위쪽 끝으로 굴린다 — `reverse` 면 실어 둔 것 중 **가장 오래된 쪽**이다.
 ///
 /// 줄 높이가 제각각인 지연 목록의 끝은 추정값이라 첫 굴림이 끝에 못 미치고 끝날 수 있어, 닿을 때까지 몇 번 더
-/// 짧게 굴린다. 끝에 닿으면 이전 페이지 받기는 목록의 평소 길(`_maybeLoadOlder`)을 탄다. 전체 기록까지 쫓아가지
-/// 않도록 횟수를 묶었다 — 더 오래된 말로 가려면 한 번 더 누른다. 손가락이 끼어들면 그 자리에서 멈춘다.
+/// **바로 옮긴다** — 다시 굴리면 끝에서 멈췄다 가는 것처럼 보인다. 「동작 줄이기」면 처음부터 바로 옮긴다.
+/// 끝에 닿으면 이전 페이지 받기는 목록의 평소 길(`_maybeLoadOlder`)을 탄다. 전체 기록까지 쫓아가지 않도록
+/// 횟수를 묶었다 — 더 오래된 말로 가려면 한 번 더 누른다. 손가락이 끼어들면 그 자리에서 멈춘다.
 Future<void> scrollToVisualTop(ScrollController controller) async {
   const legs = 3;
   for (var i = 0; i < legs; i++) {
@@ -65,12 +73,14 @@ Future<void> scrollToVisualTop(ScrollController controller) async {
     final pos = controller.position;
     final target = pos.axisDirection == AxisDirection.up ? pos.maxScrollExtent : pos.minScrollExtent;
     if ((pos.pixels - target).abs() < 1) return;
-    // 첫 굴림의 시간·곡선은 Scaffold 의 상태 표시줄 처리와 같다 — 앱 안 어느 목록에서든 같은 느낌으로.
-    await controller.animateTo(
-      target,
-      duration: Duration(milliseconds: i == 0 ? 1000 : 250),
-      curve: Curves.easeOutCirc,
-    );
+    if (i > 0 || _motionReduced) {
+      controller.jumpTo(target);
+    } else {
+      // 시간·곡선은 Scaffold 의 상태 표시줄 처리와 같다 — 앱 안 어느 목록에서든 같은 느낌으로.
+      await controller.animateTo(target, duration: const Duration(milliseconds: 1000), curve: Curves.easeOutCirc);
+    }
+    // 끝 추정은 닿은 자리를 배치해 봐야 고쳐진다 — 그 전에 다음 끝을 읽으면 다 왔다고 착각한다.
+    await WidgetsBinding.instance.endOfFrame;
     if (!controller.hasClients || (controller.position.pixels - target).abs() >= 1) return;
   }
 }

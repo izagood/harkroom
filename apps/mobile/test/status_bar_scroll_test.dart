@@ -221,6 +221,42 @@ void main() {
     expect(c.offset, 0);
   }, variant: ios);
 
+  testWidgets('끝 추정이 짧으면 첫 굴림 뒤로는 굴리지 않고 바로 옮긴다', (tester) async {
+    await _pump(tester);
+    await _openFeed(tester);
+    final c = _controller(tester, 'channel-feed');
+    final estimated = c.position.maxScrollExtent;
+    await _tapStatusBar(tester);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 1001));
+    // 시간을 거의 안 흘린다 — 다시 굴리면 여기서 끝에 못 닿는다.
+    for (var i = 0; i < 4; i++) {
+      await tester.pump(const Duration(milliseconds: 1));
+    }
+    expect(c.position.maxScrollExtent, isNot(estimated), reason: '첫 굴림이 끝에 못 미치는 데이터여야 한다');
+    expect(c.offset, c.position.maxScrollExtent);
+    expect(tester.binding.transientCallbackCount, 0, reason: '도는 굴림이 없다');
+  }, variant: ios);
+
+  for (final (name, features) in [
+    ('reduceMotion(iOS 「동작 줄이기」)', const FakeAccessibilityFeatures(reduceMotion: true)),
+    ('disableAnimations', const FakeAccessibilityFeatures(disableAnimations: true)),
+  ]) {
+    testWidgets('$name 이 켜져 있으면 처음부터 바로 옮긴다', (tester) async {
+      tester.platformDispatcher.accessibilityFeaturesTestValue = features;
+      addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+      await _pump(tester);
+      await _openFeed(tester);
+      final c = _controller(tester, 'channel-feed');
+      await _tapStatusBar(tester);
+      for (var i = 0; i < 4; i++) {
+        await tester.pump(const Duration(milliseconds: 1));
+      }
+      expect(c.offset, greaterThan(0));
+      expect(c.offset, c.position.maxScrollExtent);
+    }, variant: ios);
+  }
+
   testWidgets('굴러가는 중에 손가락이 끼어들면 거기서 멈추고 되돌아 굴리지 않는다', (tester) async {
     await _pump(tester);
     await _openFeed(tester);
