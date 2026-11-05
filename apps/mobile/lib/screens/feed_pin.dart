@@ -193,18 +193,23 @@ class FeedNewDivider extends StatelessWidget {
   Widget build(BuildContext context) {
     final accent = context.tokens.accent;
     final line = Expanded(child: ColoredBox(key: const Key('feed-new-divider-line'), color: accent, child: const SizedBox(height: 1)));
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: HarkroomSize.gutter),
-      child: Row(
-        children: [
-          line,
-          if (height >= feedDividerLabelMinHeight) ...[
-            const SizedBox(width: 8),
-            Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: accent)),
-            const SizedBox(width: 8),
+    // 글자가 안 보이는 좁은 틈(선만)에서도 읽기 도구에는 같은 이름을 준다. 글자는 이 이름과 겹치지 않게 뺀다.
+    return Semantics(
+      label: label,
+      excludeSemantics: true,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: HarkroomSize.gutter),
+        child: Row(
+          children: [
             line,
+            if (height >= feedDividerLabelMinHeight) ...[
+              const SizedBox(width: 8),
+              Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: accent)),
+              const SizedBox(width: 8),
+              line,
+            ],
           ],
-        ],
+        ),
       ),
     );
   }

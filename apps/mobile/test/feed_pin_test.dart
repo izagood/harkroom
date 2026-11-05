@@ -336,6 +336,9 @@ void main() {
       await pumpView(tester, gap: 64, split: true);
       expect(find.text('새 답글'), findsOneWidget);
       expect(find.byKey(const Key('feed-new-divider-line')), findsNWidgets(2));
+      final handle = tester.ensureSemantics();
+      expect(find.bySemanticsLabel('새 답글'), findsOneWidget, reason: '글자와 이름이 두 번 읽히지 않는다');
+      handle.dispose();
       expect(tester.getSize(find.byKey(feedGapKey)).height, 64);
       expect(tester.takeException(), isNull);
     });
@@ -344,6 +347,9 @@ void main() {
       await pumpView(tester, gap: 8, split: true);
       expect(find.text('새 답글'), findsNothing);
       expect(find.byKey(const Key('feed-new-divider-line')), findsOneWidget);
+      final handle = tester.ensureSemantics();
+      expect(find.bySemanticsLabel('새 답글'), findsOneWidget, reason: '선만 있어도 읽기 도구에는 이름이 있다');
+      handle.dispose();
       expect(tester.getSize(find.byKey(feedGapKey)).height, 8);
     });
 
