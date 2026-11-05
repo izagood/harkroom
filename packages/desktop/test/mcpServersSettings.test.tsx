@@ -326,6 +326,9 @@ describe('McpServersSettings — stdio', () => {
     expect(screen.queryByTestId('mcp-dialog-url')).toBeNull();
     expect(screen.queryByTestId('mcp-dialog-client-id')).toBeNull();
     expect(screen.getByTestId('mcp-dialog-stdio-warn')).toBeTruthy();
+    // 원격 전용 문구가 남지 않는다 — 범위 칩은 명령을 말하고, 「인증을 누른다」 안내는 없다.
+    expect(screen.getByTestId('mcp-dialog-scope-here').textContent).toContain('명령');
+    expect(screen.getByTestId('mcp-dialog-foot-note').textContent).toBe('');
     fireEvent.change(screen.getByTestId('mcp-dialog-command'), { target: { value: ' /opt/files-mcp ' } });
     fireEvent.change(screen.getByTestId('mcp-dialog-args'), { target: { value: '--root\n\n  /srv/my data  \n' } });
     fireEvent.click(screen.getByTestId('mcp-dialog-env-add'));

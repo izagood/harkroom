@@ -242,7 +242,7 @@ export function McpServerDialog({ mode, registry, canEdit, attach, onDone, onCan
         <h2 className="text-body font-semibold text-fg">{title}</h2>
         <div className="flex flex-wrap gap-1.5 text-meta">
           {mode.kind !== 'edit' && <span className="rounded-row bg-surface-sunken px-1.5 text-fg-muted">{t('mcpServers.dialog.scopeCommunity')}</span>}
-          {!remoteOnly && <span className="rounded-row bg-surface-sunken px-1.5 text-fg-muted">{t('mcpServers.dialog.scopeHere')}</span>}
+          {!remoteOnly && <span className="rounded-row bg-surface-sunken px-1.5 text-fg-muted" data-testid="mcp-dialog-scope-here">{isStdio ? t('mcpServers.stdio.scopeHere') : t('mcpServers.dialog.scopeHere')}</span>}
           {attach && <span className="rounded-row bg-surface-sunken px-1.5 text-fg-muted">{t('mcpServers.dialog.scopeAttach', { agent: attach.agentName })}</span>}
         </div>
         {mode.kind === 'add' && (
@@ -375,7 +375,7 @@ export function McpServerDialog({ mode, registry, canEdit, attach, onDone, onCan
             {mode.kind === 'edit' ? ''
               // 이미 등록된 이름인데 켜기를 끈 채면 [켜기] 가 비활성이다 — 이유를 버튼 곁에 적는다(designer #1455 n1).
               : remoteOnly ? (known && !attachOn ? t('mcpServers.dialog.attachNeedsCheck') : '')
-                : t('mcpServers.dialog.afterSave')}
+                : isStdio ? '' : t('mcpServers.dialog.afterSave')}
           </span>
           <span className="flex gap-2">
             <button type="button" className="rounded-row px-2 py-1 text-meta text-fg-muted hover:bg-surface-sunken" disabled={busy}
