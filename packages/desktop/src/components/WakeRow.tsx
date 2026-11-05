@@ -1,4 +1,4 @@
-import { readWakeMeta, type MessageRow } from '@harkroom/shared';
+import { readWakeMeta, WAKE_CHECKED_EMOJI, type MessageRow } from '@harkroom/shared';
 import { displayBody } from '../lib/mention';
 import { useActiveStore } from '../state/communities';
 import { selectAccountNames } from '../lib/accountNames';
@@ -17,6 +17,9 @@ import { useLocale, useT } from '../i18n/useT';
  *
  * 시각을 `stampLabel` 로 읽는 이유: 서버는 ISO 사실만 싣는다(`readWakeMeta`
  * 주석). 문자열로 구워 보냈다면 이 줄은 다른 시간대에서 거짓을 말하게 된다.
+ *
+ * ✅ 상태(2026-11-05): 깨어난 턴이 새 글 없이 끝나면 러너가 **보통 글 대신** 이 줄에 ✅를 단다. 줄 주인이 단 것만 확인이다 — 사람이
+ * 단 ✅로 「확인함」이 되면 거짓이다. 줄 자체가 상태이므로 리액션 칩은 그리지 않고, 초록 강조도 하지 않는다(끝난 대기는 나를 막지 않는다, 규칙 03).
  */
 /** 빈 배열 리터럴을 매 렌더 새로 만들지 않는다. */
 const NO_TEAMS_FALLBACK: never[] = [];
@@ -36,15 +39,26 @@ export function WakeRow({ message }: { message: MessageRow }) {
   const label = wake === null || Number.isNaN(new Date(wake.wakeAt).getTime())
     ? null
     : stampLabel(wake.wakeAt, locale);
+  const checked = message.reactions.some((r) => r.emoji === WAKE_CHECKED_EMOJI && r.accountIds.includes(message.authorId));
+  const checkedLabel = checked && wake?.checkedAt && !Number.isNaN(new Date(wake.checkedAt).getTime())
+    ? stampLabel(wake.checkedAt, locale)
+    : null;
+  const reason = displayBody(message, accounts, groups, teams);
+  const status = checked
+    ? (checkedLabel === null ? t('chat.wake.checked') : t('chat.wake.checkedAt', { when: checkedLabel }))
+    : (label === null ? t('chat.wake.again') : t('chat.wake.againAt', { when: label }));
 
   return (
     <div data-testid="wake-row" className="px-4 py-0.5">
-      <div className="flex items-center gap-1.5 text-meta text-fg-muted">
+      <div
+        className="flex items-center gap-1.5 text-meta text-fg-muted"
+        title={checkedLabel !== null && label !== null ? t('chat.wake.checkedTitle', { when: label, checked: checkedLabel }) : undefined}
+      >
         {/* 시계는 강조가 아니다 — 기다리는 것은 나를 막지 않는다(규칙 03). */}
-        <span aria-hidden="true" className="shrink-0">🕐</span>
-        <span className="font-medium text-fg-agent">{author?.handle ?? '…'}</span>
-        {label === null ? <span>{t('chat.wake.again')}</span> : <span>{t('chat.wake.againAt', { when: label })}</span>}
-        <span className="text-fg-subtle">· {displayBody(message, accounts, groups, teams)}</span>
+        <span aria-hidden="true" className="shrink-0">{checked ? WAKE_CHECKED_EMOJI : '🕐'}</span>
+        <span className="shrink-0 font-medium text-fg-agent">{author?.handle ?? '…'}</span>
+        <span className="shrink-0 whitespace-nowrap">{status}</span>
+        <span className="min-w-0 truncate text-fg-subtle" title={reason}>· {reason}</span>
       </div>
     </div>
   );

@@ -1256,8 +1256,9 @@ describe('runMentionTurn', () => {
   describe('스스로 깨어난 턴의 침묵 (2026-11-04)', () => {
     const SAID = `바뀐 것이 없어 글을 올리지 않았다. ${'가'.repeat(150)}`;
     const OUTCOME = { timedOut: false, roundsLeft: 1, items: [] };
+    let fake: FakeHarkroom;
     async function silent(lane: boolean, target: Partial<Parameters<typeof runMentionTurn>[1]>) {
-      const fake = new FakeHarkroom(defOf(lane ? { harness: 'claude-code', model: 'ExampleOrg/example-model' } : {}));
+      fake = new FakeHarkroom(defOf(lane ? { harness: 'claude-code', model: 'ExampleOrg/example-model' } : {}));
       fake.seedFrom('human-1', '@forge 확인').id = MENTION;
       const { deps } = await makeDeps(fake, { readLastSaid: async () => SAID, ...(lane ? { providerEnv: async () => ({}) } : {}) });
       const workspaceDir = join(deps.workspaceBaseDir, 'claude-lane');
@@ -1277,9 +1278,10 @@ describe('runMentionTurn', () => {
     }
     const quoted = quotedLine(SAID, 'fake-runner-secret');
 
-    it.each([['API 키 연결', true], ['구독', false]] as const)('%s × 예약 시각: 글 없이 끝났다는 보통 글이고 대리 게시하지 않는다', async (_n, lane) => {
+    it.each([['API 키 연결', true], ['구독', false]] as const)('%s × 예약 시각: 글을 올리지 않고 대기 줄에 ✅ 를 단다', async (_n, lane) => {
       const posts = await silent(lane, { wake: { reason: '확인' }, scheduledWake: true });
-      expect(posts).toEqual([`예약된 확인 턴이 글 없이 끝났습니다 — 마지막 말:\n> ${quoted}`]);
+      expect(posts).toEqual([]);
+      expect(fake.reactions).toContainEqual(expect.objectContaining({ messageId: MENTION, emoji: '✅', action: 'add' }));
     });
 
     it.each([['API 키 연결', true], ['구독', false]] as const)('%s × 위임 결말: 글 없이 끝났다는 보통 글이고 대리 게시하지 않는다', async (_n, lane) => {

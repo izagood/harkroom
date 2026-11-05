@@ -1567,9 +1567,15 @@ export interface WakeMeta {
    * 사유 한 줄만 받는다 — 실측: 3회차 턴이 "3회 하고 3회차에 끝을 알려라" 는 첫 지시를 몰라 아무것도 하지 않고
    * 멈췄다. 서버가 같은 채널·같은 스레드의 지운 적 없는 사람/에이전트 글만 싣고(본문은 싣지 않는다), 다음 고리는
    * 앞 고리의 값을 물려받아 언제나 첫 지시를 가리킨다. 러너가 그 글을 읽어 「← 맡긴 글」로 싣는다.
+   *
+   * `checkedAt`: 깨어난 턴이 새 글 없이 끝나 줄 주인이 이 줄에 ✅(`WAKE_CHECKED_EMOJI`)를 단 시각(ISO, 2026-11-05). 서버만 쓴다 —
+   * 리액션 행에는 시각이 없다. 옛 서버면 없고, 그때 화면은 시각 없이 그린다.
    */
-  wake: { wakeAt: string; reason?: string; reportTo?: WakeReportTo; watch?: boolean; origin?: string };
+  wake: { wakeAt: string; reason?: string; reportTo?: WakeReportTo; watch?: boolean; origin?: string; checkedAt?: string };
 }
+
+/** 대기 줄의 「확인함 · 새로 없음」 표시. 러너가 달고, 서버가 그 시각을 적고, 화면이 그린다 — 줄 주인이 단 것만 뜻이 있다. */
+export const WAKE_CHECKED_EMOJI = '✅';
 
 /**
  * `meta` 가 대기 줄인지 판정한다. `readAskMeta` 와 같은 판례를 따른다 — 형식을 못 알아보면
