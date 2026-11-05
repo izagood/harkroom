@@ -634,7 +634,7 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
       expect(callers).toEqual([{ fn: 'daemon_command', file: 'daemon_client.rs' }]);
     });
 
-    it('`#[tauri::command]` 중 웹뷰가 채울 수 있는 파라미터를 받는 것은 시크릿 3종·daemon 2종·로컬 설정 9종(operator_*)·작업 폴더 정리 2종뿐이다', () => {
+    it('`#[tauri::command]` 중 웹뷰가 채울 수 있는 파라미터를 받는 것은 시크릿 3종·daemon 2종·로컬 설정 10종(operator_*)·작업 폴더 정리 2종뿐이다', () => {
       const commands = [...mainRs.matchAll(
         /#\[tauri::command\]\s*\n\s*(?:async\s+)?fn\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)/g,
       )].map((m) => {
@@ -669,7 +669,7 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
           'codex_account_activate', 'codex_account_login_cancel', 'codex_account_login_start',
           'codex_account_remove', 'codex_accounts_provider_usage',
           'daemon_kill_runner', 'daemon_spawn_runner',
-          'operator_agent_provider_lane_set', 'operator_agent_remove', 'operator_agent_set', 'operator_mcp_auth', 'operator_mcp_remove', 'operator_mcp_set', 'operator_merge_check', 'operator_merge_set', 'operator_register',
+          'operator_agent_provider_lane_set', 'operator_agent_remove', 'operator_agent_set', 'operator_mcp_auth', 'operator_mcp_remove', 'operator_mcp_set', 'operator_mcp_set_stdio', 'operator_merge_check', 'operator_merge_set', 'operator_register',
           'pick_save_target', 'reveal_saved_attachment',
           'secret_delete', 'secret_get', 'secret_set',
           'workspace_cleanup_act', 'workspace_cleanup_settings_set',
@@ -704,6 +704,19 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
       // 없다** — 오퍼레이터가 http·sse 만 받는다(`readOperatorMcpSetPayload`, localMcp.test.ts).
       const setMcp = commands.find((c) => c.fn === 'operator_mcp_set')!;
       expect(setMcp.webviewParams.sort()).toEqual(['definition: serde_json::Value', 'name: String']);
+      // stdio 정의만 웹뷰가 프로그램·인자를 **제안**한다. 그 값은 아래처럼 OS 확인창에서 사람이 허락해야 소켓으로 나간다.
+      const setStdio = commands.find((c) => c.fn === 'operator_mcp_set_stdio')!;
+      expect(setStdio.webviewParams.sort()).toEqual([
+        'args: Vec<String>', 'command: String', 'env: std::collections::BTreeMap<String, String>', 'keep_env: Vec<String>', 'locale: String', 'name: String', 'webview: tauri::Webview',
+      ]);
+      const stdioBody = mainRs.slice(mainRs.indexOf('async fn operator_mcp_set_stdio('), mainRs.indexOf('async fn operator_mcp_remove('));
+      // 소켓으로 나가는 호출은 묻는 호출 **뒤에** 있고, 메인 창 검사가 그보다 앞선다.
+      expect(stdioBody.indexOf('ensure_main_window')).toBeGreaterThan(-1);
+      expect(stdioBody.indexOf('ensure_main_window')).toBeLessThan(stdioBody.indexOf('ask_human'));
+      expect(stdioBody.indexOf('ask_human')).toBeGreaterThan(-1);
+      expect(stdioBody.indexOf('ask_human')).toBeLessThan(stdioBody.indexOf('conn.operator_mcp_set_stdio'));
+      // 웹뷰에는 dialog 권한이 없다 — 있으면 웹뷰가 같은 모양의 창을 부르거나 우회할 재료가 생긴다.
+      expect(JSON.stringify(capabilities.permissions)).not.toContain('dialog:');
       const removeMcp = commands.find((c) => c.fn === 'operator_mcp_remove')!;
       expect(removeMcp.webviewParams).toEqual(['name: String']);
       // 원격 MCP 의 OAuth(2026-09-30): 동작 이름(start·status·forget — Rust 가 고정 표로 소켓 메서드에

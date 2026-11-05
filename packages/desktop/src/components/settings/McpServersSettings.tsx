@@ -57,7 +57,7 @@ function needsSignIn(entry: OperatorMcpEntry): boolean {
 
 /** 이 화면에서 정의를 고칠 수 있나. `~/.claude.json` 출처와 헤더가 있는 정의(값을 모른다)는 못 고친다. */
 function editable(entry: OperatorMcpEntry): boolean {
-  return entry.source === 'operator' && entry.transport !== 'stdio' && entry.headerKeys.length === 0;
+  return entry.source === 'operator' && entry.headerKeys.length === 0;
 }
 
 const BTN = 'shrink-0 rounded-row border border-border px-2 py-0.5 text-meta font-medium text-fg hover:bg-surface-sunken disabled:opacity-50';
@@ -184,7 +184,13 @@ function LocalCell({ row, entry, collapsed, agentsOn, slotPeers, baseUrl, tailIt
       <div className="min-w-0 flex-1 text-meta">
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="min-w-16 text-fg-muted">{defLabel}</span>
-          <span className="min-w-0 break-all text-fg">{entry.target.replace(/^https?:\/\//, '')}</span>
+          {remote
+            ? <span className="min-w-0 break-all text-fg">{entry.target.replace(/^https?:\/\//, '')}</span>
+            : <span className="min-w-0 break-all font-mono text-fg" data-testid={`mcp-cell-command-${row.name}`}>{[entry.target, ...entry.args].join(' ')}</span>}
+          {!remote && <span className="rounded-row border border-border px-1.5 text-fg-muted" data-testid={`mcp-cell-stdio-${row.name}`}>stdio</span>}
+          {!remote && entry.envKeys.length > 0 && (
+            <span className="rounded-row border border-border px-1.5 font-mono text-fg-muted" data-testid={`mcp-cell-env-${row.name}`}>{entry.envKeys.join(' · ')}</span>
+          )}
           {ownApp && <span className="rounded-row bg-accent-surface px-1.5 text-accent-text" data-testid={`mcp-cell-own-app-${row.name}`}>
             {t('mcpServers.cell.ownApp', { tail: clientIdTail(entry.oauthClientId!) })}</span>}
           {entry.source === 'claude' && <span className="rounded-row border border-border px-1.5 text-fg-muted">{t('mcpServers.cell.claudeJson')}</span>}

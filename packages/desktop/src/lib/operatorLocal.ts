@@ -85,9 +85,19 @@ export function listLocalMcpServers(): Promise<OperatorMcpListResult> {
   return call('operator_mcp_list') as Promise<OperatorMcpListResult>;
 }
 
-/** http·sse 정의만 넣는다 — stdio 는 오퍼레이터가 거절한다(#431). */
+/** http·sse 정의. stdio 는 이 명령으로 넣을 수 없다 — `setLocalMcpStdio` 다(#431). */
 export async function setLocalMcpServer(name: string, definition: OperatorMcpRemoteDefinition): Promise<void> {
   await call('operator_mcp_set', { name, definition });
+}
+
+/**
+ * stdio 정의. 웹뷰는 값을 건넬 뿐이고, Rust 가 OS 확인창에서 사람에게 묻는다(`mcp_stdio_confirm.rs`).
+ * 사람이 취소하면 `declined: true` 로 돌아오고 아무것도 저장되지 않는다.
+ */
+export function setLocalMcpStdio(name: string, input: {
+  command: string; args: string[]; env: Record<string, string>; keepEnv: string[]; locale: 'ko' | 'en';
+}): Promise<{ declined?: boolean }> {
+  return call('operator_mcp_set_stdio', { name, ...input }) as Promise<{ declined?: boolean }>;
 }
 
 export async function removeLocalMcpServer(name: string): Promise<void> {

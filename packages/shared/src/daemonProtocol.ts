@@ -30,6 +30,7 @@ import { readProviderLaneConfig, type ProviderLaneConfig, type ProviderLaneStatu
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 
 import { DAEMON_PROTOCOL_VERSION } from './daemonEndpoint.js';
+import { checkMcpEnvKey, checkMcpStdioCommand, MCP_STDIO_LIMITS } from './mcpStdio.js';
 
 /**
  * 이 프로토콜의 버전 — **`daemonEndpoint` 의 것을 그대로 다시 낸다.**
@@ -123,6 +124,8 @@ export const REQUEST_TYPES = [
   // env·headers 의 **값을 싣지 않는다**(키만) — 웹뷰가 토큰을 되읽을 길을 만들지 않는다.
   'operatorMcpList',
   'operatorMcpSet',
+  // stdio 정의. 앱에서는 Rust 가 OS 확인창에서 사람의 허락을 받은 뒤에만 이 요청을 보낸다(`mcp_stdio_confirm.rs`).
+  'operatorMcpSetStdio',
   'operatorMcpRemove',
   // 원격 MCP 의 OAuth(2026-09-30). 토큰은 오퍼레이터가 갖고(`operator/src/mcpOAuth.ts`), 소켓으로는
   // **상태만** 오간다 — 앱은 받은 인가 url 을 브라우저로 열 뿐 토큰을 보지 않는다.
@@ -710,9 +713,8 @@ export function readOperatorAgentSetPayload(payload: unknown): { baseUrl: string
 
 /** 이 머신의 MCP 정의 — claude `mcpServers` 한 항목과 같은 모양. `oauth` 는 claude 가 그대로 읽는다. */
 export interface OperatorMcpRemoteDefinition { type: 'http' | 'sse'; url: string; headers?: Record<string, string>; oauth?: { clientId?: string; callbackPort?: number } }
-export type OperatorMcpDefinition =
-  | { type?: 'stdio'; command: string; args?: string[]; env?: Record<string, string> }
-  | OperatorMcpRemoteDefinition;
+export interface OperatorMcpStdioDefinition { type?: 'stdio'; command: string; args?: string[]; env?: Record<string, string> }
+export type OperatorMcpDefinition = OperatorMcpStdioDefinition | OperatorMcpRemoteDefinition;
 
 /**
  * `operatorMcpList` 의 한 줄. `source` 는 정의가 어디서 왔나 — `operator` 는 앱이 고칠 수 있는
@@ -801,10 +803,39 @@ export function readOperatorMcpSetPayload(payload: unknown): { name: string; def
     }
     return { name, definition: def };
   }
-  // stdio 정의는 **소켓으로 받지 않는다**(#431). 그 command 는 에이전트 턴이 그대로 실행한다 —
-  // 웹뷰가 채우게 두면 "웹뷰는 프로그램·인자를 고르지 못한다"는 경계에 옆문이 난다. stdio 는
-  // 사람이 `mcp-servers.json`·`~/.claude.json` 에 손으로 적는다(목록에는 보인다).
-  return daemonError('bad-payload', '앱에서는 http·sse 정의만 넣는다 — stdio 는 mcp-servers.json 에 손으로 적는다');
+  // 이 요청으로는 stdio 를 받지 않는다(#431). 그 command 는 에이전트 턴이 그대로 실행한다 — 웹뷰가 바로 채우게 두면
+  // "웹뷰는 프로그램·인자를 고르지 못한다"는 경계에 옆문이 난다. stdio 는 `operatorMcpSetStdio` 로만 들어오고, 앱에서
+  // 그 요청은 Rust 가 OS 확인창에서 사람의 허락을 받은 뒤에만 나간다(`mcp_stdio_confirm.rs`).
+  return daemonError('bad-payload', 'operatorMcpSet 은 http·sse 정의만 받는다 — stdio 는 operatorMcpSetStdio 로 넣는다');
+}
+
+/** `keepEnv` 는 값을 다시 넣지 않고 지금 값을 둘 env 이름들이다 — 목록이 값을 돌려주지 않으므로 편집에 필요하다. */
+export function readOperatorMcpSetStdioPayload(payload: unknown): { name: string; definition: OperatorMcpStdioDefinition; keepEnv: string[] } | DaemonError {
+  const p = payload as { name?: unknown; command?: unknown; args?: unknown; env?: unknown; keepEnv?: unknown } | null;
+  if (!p) return daemonError('bad-payload', 'operatorMcpSetStdio 에는 name·command 가 필요하다');
+  const name = readMcpName(p.name, 'operatorMcpSetStdio');
+  if (typeof name !== 'string') return name;
+  if (typeof p.command !== 'string') return daemonError('bad-payload', 'command 는 문자열이어야 한다');
+  const args = p.args ?? [];
+  if (!Array.isArray(args) || !args.every((a) => typeof a === 'string')) return daemonError('bad-payload', 'args 는 문자열 배열이어야 한다');
+  const problem = checkMcpStdioCommand(p.command, args as string[]);
+  if (problem) return daemonError('bad-payload', `명령·인자를 받을 수 없다: ${problem}`);
+  const env = p.env ?? {};
+  if (!isStringRecord(env)) return daemonError('bad-payload', 'env 는 문자열 표여야 한다');
+  const keepEnv = p.keepEnv ?? [];
+  if (!Array.isArray(keepEnv) || !keepEnv.every((k) => typeof k === 'string')) return daemonError('bad-payload', 'keepEnv 는 문자열 배열이어야 한다');
+  if (Object.keys(env).length + keepEnv.length > MCP_STDIO_LIMITS.envs) return daemonError('bad-payload', `env 는 ${MCP_STDIO_LIMITS.envs}개까지다`);
+  for (const [key, value] of Object.entries(env)) {
+    const bad = checkMcpEnvKey(key);
+    if (bad) return daemonError('bad-payload', `env ${key} 를 받을 수 없다: ${bad}`);
+    if (value.length > MCP_STDIO_LIMITS.envValue || value.includes('\0')) return daemonError('bad-payload', `env ${key} 의 값을 받을 수 없다`);
+  }
+  // 그대로 둘 이름은 사람이 전에 적은 값이라 코드 적재 변수도 막지 않는다 — 있는 이름인지는 포트가 파일에서 잰다.
+  for (const key of keepEnv as string[]) if (checkMcpEnvKey(key) === 'env-key' || key in env) return daemonError('bad-payload', `keepEnv ${key} 를 받을 수 없다`);
+  const definition: OperatorMcpStdioDefinition = { type: 'stdio', command: p.command };
+  if ((args as string[]).length) definition.args = [...(args as string[])];
+  if (Object.keys(env).length) definition.env = { ...env };
+  return { name, definition, keepEnv: [...(keepEnv as string[])] };
 }
 
 export function readOperatorMcpRemovePayload(payload: unknown): { name: string } | DaemonError {

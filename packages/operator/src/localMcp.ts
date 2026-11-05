@@ -6,20 +6,27 @@
  * `operator.json` 과 같은 규율(`localAgents.ts`). 러너 config 는 러너를 띄울 때 이 파일을 다시
  * 읽어 만든다(`communities.ts::mcpConfig`)이므로 여기서 도는 러너에 알릴 것은 없다.
  *
- * 목록은 env·headers 의 **값을 돌려주지 않는다**(키만) — 웹뷰가 토큰을 되읽을 길을 만들지 않는다.
+ * 목록은 env·headers 의 **값을 돌려주지 않는다**(키만) — 웹뷰가 토큰을 되읽을 길을 만들지 않는다. 편집에서 값을
+ * 비운 env 는 명령·인자가 그대로일 때만 지금 값을 둔다(`setStdio`).
  * `~/.claude.json` 의 정의도 함께 보이지만(`source: 'claude'`) 여기서 고치지 않는다 — 그 파일은
  * 사람의 claude 설정이다. 같은 이름이면 오퍼레이터 표가 이긴다(`readLocalMcpDefinitions` 와 같은 순서).
  */
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import type { OperatorMcpAuthState, OperatorMcpEntry, OperatorMcpListResult, OperatorMcpRemoteDefinition } from '@harkroom/shared/daemonProtocol';
+import type { OperatorMcpAuthState, OperatorMcpEntry, OperatorMcpListResult, OperatorMcpRemoteDefinition, OperatorMcpStdioDefinition } from '@harkroom/shared/daemonProtocol';
+import { sameMcpProgram } from '@harkroom/shared/mcpStdio';
 import type { McpOAuth } from './mcpOAuth.js';
 
 export interface LocalMcpPort {
   list(): Promise<OperatorMcpListResult>;
-  /** http·sse 만 — stdio 는 소켓으로 받지 않는다(`readOperatorMcpSetPayload` 주석, #431). */
+  /** http·sse 만 — stdio 는 `setStdio` 다(`readOperatorMcpSetPayload` 주석, #431). */
   /** `oauth.clientId` 를 바꾸면 그 이름의 토큰을 버린다 — 새 클라이언트로 다시 인증해야 한다. */
   set(name: string, definition: OperatorMcpRemoteDefinition): Promise<void>;
+  /**
+   * stdio 정의. 앱에서는 Rust 가 OS 확인창에서 사람의 허락을 받은 뒤에 부른다. `keepEnv` 의 이름은 지금 값을 두는데,
+   * **명령·인자가 그대로일 때만**이다 — 옛 토큰을 다른 프로그램에 넘기지 않는다. 그 밖이면 던지고 파일을 두지 않는다.
+   */
+  setStdio(name: string, definition: OperatorMcpStdioDefinition, keepEnv: readonly string[]): Promise<void>;
   remove(name: string): Promise<void>;
   /**
    * 원격 정의의 OAuth(2026-09-30, `mcpOAuth.ts`). 정의는 두 파일을 합친 표에서 찾는다 — `~/.claude.json`
@@ -133,6 +140,36 @@ export function createLocalMcpPort(deps: { registryPath: string; claudeConfigPat
       // 클라이언트를 갈아탔으면 옛 토큰을 버린다 — 남겨 두면 1분 refresh 가 옛 클라이언트로 계속 돌린다
       // (security F2). 같은 clientId 로 다시 넣으면 토큰을 건드리지 않는다.
       if (prev !== undefined && prevClientId !== nextClientId) await deps.oauth?.forget(name);
+    },
+    async setStdio(name, definition, keepEnv) {
+      const table = await readTable(deps.registryPath);
+      const prev = table[name];
+      const wasRemote = isRecord(prev) && typeof prev.url === 'string';
+      const prevStdio = isRecord(prev) && !wasRemote ? prev : undefined;
+      const env: Record<string, string> = {};
+      if (keepEnv.length > 0) {
+        const prevArgs = Array.isArray(prevStdio?.args) ? prevStdio.args.filter((a): a is string => typeof a === 'string') : [];
+        const same = typeof prevStdio?.command === 'string' && sameMcpProgram(
+          { command: prevStdio.command, args: prevArgs }, { command: definition.command, args: definition.args ?? [] });
+        if (!same) throw new Error('명령이나 인자가 바뀌면 env 값을 다시 넣어야 한다');
+        const prevEnv = isRecord(prevStdio?.env) ? prevStdio.env : {};
+        for (const key of keepEnv) {
+          const value = prevEnv[key];
+          if (typeof value !== 'string') throw new Error(`지금 정의에 env ${key} 가 없다`);
+          env[key] = value;
+        }
+      }
+      Object.assign(env, definition.env ?? {});
+      // 사람이 파일에 적어 둔, 앱이 모르는 칸(`alwaysLoad` 등)은 지킨다. 원격 정의의 칸은 이어받지 않는다.
+      const { command: _command, args: _args, env: _env, type: _type, ...kept } = prevStdio ?? {};
+      table[name] = {
+        ...kept, type: 'stdio', command: definition.command,
+        ...(definition.args?.length ? { args: definition.args } : {}),
+        ...(Object.keys(env).length ? { env } : {}),
+      };
+      await writeTable(deps.registryPath, table);
+      // 원격에서 바꿨으면 그 토큰을 들고 있을 이유가 없다.
+      if (wasRemote) await deps.oauth?.forget(name);
     },
     async remove(name) {
       const table = await readTable(deps.registryPath);

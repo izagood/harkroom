@@ -2231,6 +2231,20 @@ impl DaemonConnection {
         self.request("operatorMcpSet", json!({ "name": name, "definition": definition }))
     }
 
+    /// stdio 정의. **사람의 허락을 받은 뒤에만 부른다**(`mcp_stdio_confirm.rs`) — 이 함수 자체는 묻지 않는다.
+    pub fn operator_mcp_set_stdio(&self, request: &crate::mcp_stdio_confirm::StdioRequest) -> Result<Value, String> {
+        self.request(
+            "operatorMcpSetStdio",
+            json!({
+                "name": request.name,
+                "command": request.command,
+                "args": request.args,
+                "env": request.env,
+                "keepEnv": request.keep_env,
+            }),
+        )
+    }
+
     pub fn operator_mcp_remove(&self, name: &str) -> Result<Value, String> {
         self.request("operatorMcpRemove", json!({ "name": name }))
     }

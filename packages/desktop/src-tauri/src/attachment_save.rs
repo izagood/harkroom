@@ -125,7 +125,7 @@ pub fn ensure_app_window(label: &str) -> Result<(), String> {
 /// 보이지 않는 서식 문자(Unicode Cf)인가. 방향 바꾸기(U+202A~202E·U+2066~2069)·폭 없는 글자(U+200B~200F)·
 /// BOM 따위다. 남겨 두면 `invoice\u{202E}fdp.command` 가 저장 창에 `invoicednammoc.pdf` 로 **보이면서**
 /// `.command` 로 저장된다(security #1212 n1).
-fn is_format_char(c: char) -> bool {
+pub(crate) fn is_format_char(c: char) -> bool {
     // Unicode 15 의 General_Category=Cf 전체다(security #1475 n1 — 처음 목록에 태그 글자 등이 빠졌었다).
     // 크레이트를 들이지 않고 표를 적는 이유: 이 함수 하나를 위해 의존을 늘리지 않는다. 새 Cf 가 생기면 여기 더한다.
     matches!(c,
