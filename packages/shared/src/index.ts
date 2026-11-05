@@ -1573,8 +1573,10 @@ export interface WakeMeta {
    *
    * `firedAt`·`canceledAt`: 이 예약이 깨어난 시각·접힌 시각(ISO, 2026-11-06). 서버만 쓴다 — 정본은 `agent_wake` 이고 메시지만 읽는 화면을 위한 사본이다.
    * 이 판 전에 닫힌 줄에는 없다. 둘 다 없고 `wakeAt` 이 지났으면 화면은 닫혔는지 모른다.
+   *
+   * `delegationId`: 이 예약이 기다리는 위임(`team_delegation.id`, 2026-11-06). 그 위임의 결말이 나면 서버가 이 예약을 접는다.
    */
-  wake: { wakeAt: string; reason?: string; reportTo?: WakeReportTo; watch?: boolean; origin?: string; checkedAt?: string; firedAt?: string; canceledAt?: string };
+  wake: { wakeAt: string; reason?: string; reportTo?: WakeReportTo; watch?: boolean; origin?: string; checkedAt?: string; firedAt?: string; canceledAt?: string; delegationId?: string };
 }
 
 /** 대기 줄의 「확인함 · 새로 없음」 표시. 러너가 달고, 서버가 그 시각을 적고, 화면이 그린다 — 줄 주인이 단 것만 뜻이 있다. */

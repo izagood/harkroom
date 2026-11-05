@@ -1954,6 +1954,7 @@ export async function postMessage(
         kind: input.kind ?? 'user',
         isReport: (input.meta as { kind?: unknown } | undefined)?.kind === 'report',
         isFailure: (input.meta as { kind?: unknown } | undefined)?.kind === 'failure',
+        reportTouched, wakeRowsTouched,
       })
       : [];
 

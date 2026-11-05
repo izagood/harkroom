@@ -130,7 +130,7 @@ describe('message.notice (러너 알림 줄)', () => {
     expect(woke.rowCount).toBe(0);
     expect(await hasReplyGrant(pool, { granteeId: member.accountId, granterId: lead.accountId, threadRootId: root })).toBe(true);
 
-    // 대조: 같은 팀원이 일반 글을 쓰면 닫힌다 — 위 단언이 「원래 안 닫히는 상황」이 아니었음을 보인다.
+    // 대조: 같은 팀원이 완료 보고를 올리면 닫힌다 — 위 단언이 「원래 안 닫히는 상황」이 아니었음을 보인다.
     await call(runner, 'message.report', { channelId, threadRootId: root, body: '끝났다', checks: ['확인'] });
     expect(await outcome()).toEqual(['done']);
     expect(await hasReplyGrant(pool, { granteeId: member.accountId, granterId: lead.accountId, threadRootId: root })).toBe(false);

@@ -36,6 +36,8 @@ export const MAX_CONSECUTIVE_WAKES = 20;
 
 export type WakeRefusal =
   | { code: 'wake_limit'; message: string }
+  /** 내가 넘긴 일이 아니거나 이미 결말이 났다 — 기다릴 것이 없다. */
+  | { code: 'bad_delegation'; message: string }
   /** 스레드 머리가 이 채널의 최상위 글이 아니다 — 게시가 거절한 그 사유를 그대로 돌려준다. */
   | { code: 'bad_thread'; message: string };
 
@@ -88,6 +90,8 @@ export interface ScheduleWakeInput {
    * 깨어난 턴이 다음 예약도 끝 보고(message.report)도 없이 끝나면 실패 줄을 남긴다. true 일 때만 싣는다.
    */
   watch?: boolean;
+  /** 이 예약이 기다리는 위임(`meta.wake.delegationId`). 내가 넘겼고 결말이 안 난 것만 받는다. */
+  delegationId?: string;
   /** 이 예약을 건 턴의 원인(오퍼레이터를 거친 요청만) — 대기 줄의 `cause_message_id`(118)로 남아 머지 사슬을 잇는다. */
   chainCause?: string | null;
   /** 대기 줄을 건 턴의 id(`PostMessageInput.turnId`). */
@@ -166,6 +170,15 @@ export async function scheduleWake(pool: Pool, input: ScheduleWakeInput): Promis
   // 대체될 감시의 보고처를 물려받는다(`replaceWatchWakes`) — 새 예약이 보고처를 말하지 않았다고 다른 스레드에 한 약속이
   // 사라지면 안 된다. 메시지 meta 에 실어야 해서 게시 전에 읽는다. 동시에 걸린 드문 경합은 `replaced` 가 알려 준다.
   const reportTo = input.reportTo ?? (input.watch === true ? await openWatchReportTo(pool, input) : undefined);
+  if (input.delegationId) {
+    const held = await pool.query(
+      `select 1 from team_delegation where id = $1 and lead_account_id = $2 and notified_at is null`,
+      [input.delegationId, input.accountId],
+    );
+    if (!held.rowCount) {
+      return { refusal: { code: 'bad_delegation', message: '내가 넘겼고 아직 결말이 안 난 위임만 적을 수 있다 — 결말이 났으면 예약이 필요 없다' } };
+    }
+  }
   const already = await consecutiveWakes(pool, input.threadRootId, input.accountId);
   if (already >= MAX_CONSECUTIVE_WAKES) {
     return {
@@ -198,6 +211,7 @@ export async function scheduleWake(pool: Pool, input: ScheduleWakeInput): Promis
         ...(reportTo ? { reportTo } : {}),
         ...(input.watch === true ? { watch: true } : {}),
         ...(origin ? { origin } : {}),
+        ...(input.delegationId ? { delegationId: input.delegationId } : {}),
       },
     },
   });
@@ -368,6 +382,45 @@ export async function foldWatchWakesOnReport(
   );
   await stampWakeClosed(pool, res.rows.map((r) => r.message_id), 'canceledAt');
   return res.rows.map(closedWatchView);
+}
+
+/**
+ * **위임의 결말이 그 일을 기다리던 예약을 접는다**(2026-11-06). 넘긴 쪽은 결말로 깨어나므로 예약으로 다시 볼 이유가 사라졌다 —
+ * 두면 끝난 일을 또 확인해 같은 보고를 되풀이한다.
+ *
+ * 접는 것: 넘긴 쪽의 열린 예약 중 ① 이 위임을 적은 것, ② 아무 위임도 적지 않았고 소식을 전할 곳이 이 위임의 스레드인 것(`reportTo`, 없으면 걸린 스레드).
+ * 다른 위임을 적은 예약은 그 일이 아직 안 끝났을 수 있어 남긴다. 감시 여부는 묻지 않는다 — 한 번 깨우기도 끝난 일을 다시 본다.
+ *
+ * 접은 까닭으로 위임 글을 남긴다(`canceled_by_message_id`) — 결말로 깨어난 턴의 프롬프트가 그것으로 「접혔다, 필요하면 다시 걸어라」를 말한다.
+ */
+export async function foldWakesForDelegation(
+  client: PoolClient,
+  args: {
+    delegationId: string; leadAccountId: string; threadRootId: string; messageId: string;
+    /** 접은 예약의 보고처·대기 줄. 신호는 커밋 뒤에 호출자가 낸다(`preemptWakesForThread` 와 같은 규약). */
+    reportTouched?: WakeReportTo[];
+    wakeRowsTouched?: string[];
+  },
+): Promise<void> {
+  const res = await client.query<{ report_to: unknown; message_id: string }>(
+    `update agent_wake w set canceled_at = now(), canceled_by_message_id = $4
+       from message m
+      where m.id = w.message_id
+        and w.account_id = $2
+        and w.fired_at is null
+        and w.canceled_at is null
+        and (m.meta->'wake'->>'delegationId' = $1::text
+          or (not (m.meta->'wake' ? 'delegationId')
+              and coalesce(lower(m.meta->'wake'->'reportTo'->>'threadRootId'), coalesce(m.thread_root_id, m.id)::text) = $3::text))
+      returning m.meta->'wake'->'reportTo' as report_to, m.id as message_id`,
+    [args.delegationId, args.leadAccountId, args.threadRootId, args.messageId],
+  );
+  await stampWakeClosed(client, res.rows.map((r) => r.message_id), 'canceledAt');
+  for (const row of res.rows) {
+    const report = asReportTo(row.report_to);
+    if (report) args.reportTouched?.push(report);
+    args.wakeRowsTouched?.push(row.message_id);
+  }
 }
 
 /**

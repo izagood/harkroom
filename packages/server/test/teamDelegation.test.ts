@@ -9,6 +9,8 @@ import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
 import { cancelDelegationsFor, createDelegationDeadlineSweeper, DELEGATION_WAIT_MAX_SEC } from '../src/services/delegations.js';
 import { delegationChainCapped } from '../src/services/messages.js';
 import { scheduleWake } from '../src/services/agentWakes.js';
+import { settleCanceledTurn } from '../src/services/turnCancel.js';
+import { onEvent, type WorkspaceEvent } from '../src/events.js';
 
 /**
  * 위임 왕복(050) — **팀장이 넘긴 일이 끝나면 팀장이 다시 깬다.**
@@ -701,5 +703,146 @@ describe('팀 밖 위임 · 끝 보고만 닫음', () => {
       expect(await delegationChainCapped(client, messageId)).toBe(true);
     } finally { client.release(); }
     await one.close(); await two.close();
+  });
+
+  describe('결말이 예약을 접는다(2026-11-06)', () => {
+    const isOpen = async (wakeId: string) => (await pool.query(
+      `select fired_at is null and canceled_at is null as open from agent_wake where id = $1`, [wakeId],
+    )).rows[0]!.open as boolean;
+    const delegationIdOf = async (messageId: string) => (await pool.query(`select id from team_delegation where message_id = $1`, [messageId])).rows[0]!.id as string;
+    const leadWake = async (threadRootId: string, reason: string, extra: { delegationId?: string; reportTo?: { channelId: string; threadRootId: string }; watch?: boolean } = {}) => {
+      const r = await scheduleWake(pool, { accountId: oneId, channelId, threadRootId, notBeforeSec: 3000, reason, ...extra });
+      expect(r.refusal).toBeUndefined();
+      return r.wake!.id;
+    };
+
+    it('이 위임을 적은 예약과 이 스레드로 보고하는 예약을 접고, 다른 일의 예약은 남긴다 — 깨어난 턴이 접힌 줄을 받는다', async () => {
+      const { rootId, messageId, one, two } = await handOff('접기');
+      const delegationId = await delegationIdOf(messageId);
+      const otherThread = await openThread('다른 스레드');
+      const elsewhere = await openThread('또 다른 스레드');
+      const tagged = await leadWake(otherThread, '이 위임 확인', { delegationId });
+      const reporting = await leadWake(otherThread, '이 스레드로 보고', { reportTo: { channelId, threadRootId: rootId }, watch: true });
+      const anchored = await leadWake(rootId, '이 스레드에 건 예약');
+      const unrelated = await leadWake(elsewhere, '다른 일');
+
+      await two.callTool({ name: 'message.report', arguments: { channelId, threadRootId: rootId, body: '끝', checks: ['확인'] } });
+
+      expect(await isOpen(tagged)).toBe(false);
+      expect(await isOpen(reporting)).toBe(false);
+      expect(await isOpen(anchored)).toBe(false);
+      expect(await isOpen(unrelated)).toBe(true);
+
+      const inbox = text(await one.callTool({ name: 'inbox.poll', arguments: { timeoutMs: 0 } }));
+      const entry = (inbox.entries as Array<{ messageId: string; reason: string; canceledWakes?: Array<{ reason: string }> }>)
+        .find((e) => e.messageId === messageId && e.reason === 'delegation_done');
+      expect((entry?.canceledWakes ?? []).map((w) => w.reason).sort()).toEqual(['이 스레드로 보고', '이 스레드에 건 예약', '이 위임 확인'].sort());
+      await one.close(); await two.close();
+    });
+
+    it('아직 안 끝난 위임을 적은 예약은 같은 스레드의 다른 위임 결말로 접히지 않는다', async () => {
+      const { rootId, messageId, one, two } = await handOff('둘');
+      const leadOnline = await mcpClient(leadPat);
+      const again = text(await one.callTool({ name: 'message.delegate', arguments: { channelId, threadRootId: rootId, body: '또 맡긴다', to: ['dlead'] } }));
+      expect(again.delegated).toEqual(['dlead']);
+      const otherId = again.delegationId as string;
+      const wake = await leadWake(rootId, '둘째 위임 확인', { delegationId: otherId });
+
+      await two.callTool({ name: 'message.report', arguments: { channelId, threadRootId: rootId, body: '끝', checks: ['확인'] } });
+      expect(await outcomes(messageId)).toEqual({ dtwo: 'done' });
+      expect(await isOpen(wake)).toBe(true);
+
+      await leadOnline.callTool({ name: 'message.report', arguments: { channelId, threadRootId: rootId, body: '끝', checks: ['확인'] } });
+      expect(await isOpen(wake)).toBe(false);
+      await leadOnline.close(); await one.close(); await two.close();
+    });
+
+    it('접은 줄에 canceledAt 을 적고 message.updated 로 알린다', async () => {
+      const { rootId, messageId, one, two } = await handOff('시각 적기');
+      const r = await scheduleWake(pool, { accountId: oneId, channelId, threadRootId: rootId, notBeforeSec: 3000, reason: '확인', delegationId: await delegationIdOf(messageId) });
+      const seen: WorkspaceEvent[] = [];
+      const off = onEvent((e) => seen.push(e));
+      try {
+        await two.callTool({ name: 'message.report', arguments: { channelId, threadRootId: rootId, body: '끝', checks: ['확인'] } });
+      } finally { off(); }
+      const hit = seen.find((e) => e.type === 'message.updated' && e.message.id === r.wake!.messageId);
+      expect(hit).toBeTruthy();
+      const wake = (hit as Extract<WorkspaceEvent, { type: 'message.updated' }>).message.meta as { wake: { canceledAt?: string; firedAt?: string } };
+      expect(typeof wake.wake.canceledAt).toBe('string');
+      expect(wake.wake.firedAt).toBeUndefined();
+      await one.close(); await two.close();
+    });
+
+    it('기한으로 접혀도 시각을 적고 알린다', async () => {
+      const { rootId, messageId, one, two } = await handOff('기한 시각');
+      const r = await scheduleWake(pool, { accountId: oneId, channelId, threadRootId: rootId, notBeforeSec: 3000, reason: '확인', delegationId: await delegationIdOf(messageId) });
+      await expire(messageId);
+      const seen: WorkspaceEvent[] = [];
+      const off = onEvent((e) => seen.push(e));
+      try { await createDelegationDeadlineSweeper(pool).sweep(); } finally { off(); }
+      expect(await outcomes(messageId)).toEqual({ dtwo: 'timeout' });
+      expect(seen.some((e) => e.type === 'message.updated' && e.message.id === r.wake!.messageId)).toBe(true);
+      await one.close(); await two.close();
+    });
+
+    it('사람이 담당을 멈춰 접혀도 시각을 적고 알린다', async () => {
+      const { rootId, messageId, one, two } = await handOff('중단 시각');
+      const r = await scheduleWake(pool, { accountId: oneId, channelId, threadRootId: rootId, notBeforeSec: 3000, reason: '확인', delegationId: await delegationIdOf(messageId) });
+      const seen: WorkspaceEvent[] = [];
+      const off = onEvent((e) => seen.push(e));
+      try { await settleCanceledTurn(pool, { threadRootId: rootId, agentAccountId: twoId }); } finally { off(); }
+      expect(seen.some((e) => e.type === 'message.updated' && e.message.id === r.wake!.messageId)).toBe(true);
+      await one.close(); await two.close();
+    });
+
+    it('실패로 끝나도 접는다', async () => {
+      const { rootId, messageId, one, two } = await handOff('실패 접기');
+      const wake = await leadWake(rootId, '확인', { delegationId: await delegationIdOf(messageId) });
+      await two.callTool({ name: 'message.fail', arguments: { channelId, threadRootId: rootId, body: '못 했다', retryable: true } });
+      expect(await isOpen(wake)).toBe(false);
+      await one.close(); await two.close();
+    });
+
+    it('기한으로 닫혀도 접는다', async () => {
+      const { rootId, messageId, one, two } = await handOff('기한 접기');
+      const wake = await leadWake(rootId, '확인', { delegationId: await delegationIdOf(messageId) });
+      await expire(messageId);
+      await createDelegationDeadlineSweeper(pool).sweep();
+      expect(await outcomes(messageId)).toEqual({ dtwo: 'timeout' });
+      expect(await isOpen(wake)).toBe(false);
+      await one.close(); await two.close();
+    });
+
+    it('사람이 담당을 중단해도 접는다', async () => {
+      const { rootId, messageId, one, two } = await handOff('중단 접기');
+      const wake = await leadWake(rootId, '확인', { delegationId: await delegationIdOf(messageId) });
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        await cancelDelegationsFor(client, { threadRootId: rootId, accountId: twoId });
+        await client.query('commit');
+      } finally { client.release(); }
+      expect(await isOpen(wake)).toBe(false);
+      await one.close(); await two.close();
+    });
+
+    it('남의 위임이나 이미 끝난 위임은 예약에 적지 못한다', async () => {
+      const { rootId, messageId, one, two } = await handOff('남의 위임');
+      const delegationId = await delegationIdOf(messageId);
+      const mine = await scheduleWake(pool, { accountId: twoId, channelId, threadRootId: rootId, notBeforeSec: 300, reason: '남의 것', delegationId });
+      expect(mine.refusal?.code).toBe('bad_delegation');
+      await two.callTool({ name: 'message.report', arguments: { channelId, threadRootId: rootId, body: '끝', checks: ['확인'] } });
+      const done = await scheduleWake(pool, { accountId: oneId, channelId, threadRootId: rootId, notBeforeSec: 300, reason: '끝난 것', delegationId });
+      expect(done.refusal?.code).toBe('bad_delegation');
+      await one.close(); await two.close();
+    });
+
+    it('담당의 예약은 접지 않는다 — 넘긴 쪽 것만 접는다', async () => {
+      const { rootId, one, two } = await handOff('담당 예약');
+      const r = await scheduleWake(pool, { accountId: twoId, channelId, threadRootId: rootId, notBeforeSec: 3000, reason: '담당의 확인' });
+      await two.callTool({ name: 'message.report', arguments: { channelId, threadRootId: rootId, body: '끝', checks: ['확인'] } });
+      expect(await isOpen(r.wake!.id)).toBe(true);
+      await one.close(); await two.close();
+    });
   });
 });

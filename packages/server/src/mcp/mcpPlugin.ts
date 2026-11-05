@@ -1574,9 +1574,10 @@ function buildMcpServer(
      * 돌려주므로 팀장은 다시 넘기거나 직접 할 수 있다. 조용히 성공으로 답하는 것이 가장 나쁘다.
      */
     const client = await pool.connect();
+    let delegationId: string;
     try {
       await client.query('begin');
-      await createDelegation(client, {
+      delegationId = await createDelegation(client, {
         messageId: posted.message.id,
         channelId,
         threadRootId,
@@ -1618,6 +1619,7 @@ function buildMcpServer(
 
     return jsonResult({
       message: posted.message,
+      delegationId,
       delegated: delegates.map((d) => d.handle),
       unreachable,
       deadlineAt: deadlineAt.toISOString(),
@@ -2625,7 +2627,7 @@ function buildMcpServer(
    * 판정해 `wake_limit` 으로 답한다 — 같은 거절이 아니다.
    */
   server.registerTool('turn.wake', {
-    description: '나를 나중에 다시 부른다(기다릴 것이 있을 때). 예약은 스레드에 대기 줄로 보인다. 결과를 다른 스레드에 보고하기로 했으면 reportTo 에 그 채널·스레드 id. 주기적으로 지켜보는 예약이면 watch: true — 깨어난 턴이 다음 예약도 끝 보고(message.report)도 없이 끝나면 러너가 실패 줄을 남긴다. 감시(watch)면 사유에 다음 회차와 끝 조건을 적어라(예: 「다음 3/3 — 3/3에서 감시 끝」). 감시 예약은 한 스레드에 하나이고, 보고처가 같으면 다른 스레드에 걸린 것도 하나로 친다 — 새로 걸면 앞 것을 대체하고 그 사유를 replaced 로 돌려준다. 앞 사유도 아직 필요하면 합쳐서 다시 걸어라',
+    description: '나를 나중에 다시 부른다(기다릴 것이 있을 때). 예약은 스레드에 대기 줄로 보인다. 결과를 다른 스레드에 보고하기로 했으면 reportTo 에 그 채널·스레드 id. 주기적으로 지켜보는 예약이면 watch: true — 깨어난 턴이 다음 예약도 끝 보고(message.report)도 없이 끝나면 러너가 실패 줄을 남긴다. 감시(watch)면 사유에 다음 회차와 끝 조건을 적어라(예: 「다음 3/3 — 3/3에서 감시 끝」). 감시 예약은 한 스레드에 하나이고, 보고처가 같으면 다른 스레드에 걸린 것도 하나로 친다 — 새로 걸면 앞 것을 대체하고 그 사유를 replaced 로 돌려준다. 앞 사유도 아직 필요하면 합쳐서 다시 걸어라. 넘긴 일(message.delegate)을 기다리는 예약이면 delegationId 를 적어라 — 결말이 나면 접힌다',
     inputSchema: {
       channelId: z.string().uuid(),
       threadRootId: z.string().uuid(),
@@ -2646,8 +2648,10 @@ function buildMcpServer(
        * `chainCause`(러너 턴의 inbox 글)라 PAT 로 붙은 클라이언트에는 실리지 않는다. 인자로 받지 않는다 — 서버가 정한다.
        */
       watch: z.boolean().optional(),
+      /** 이 예약이 기다리는 위임(`message.delegate` 결과의 `delegationId`). 그 위임의 결말이 나면 서버가 이 예약을 접는다. */
+      delegationId: z.string().uuid().optional(),
     },
-  }, async ({ channelId, threadRootId, notBeforeSec, reason, reportTo, watch }) => {
+  }, async ({ channelId, threadRootId, notBeforeSec, reason, reportTo, watch, delegationId }) => {
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this channel' } });
     }
@@ -2671,6 +2675,7 @@ function buildMcpServer(
       accountId: account.id, channelId, threadRootId, notBeforeSec, reason, chainCause, turnId: storedTurnId,
       ...(report ? { reportTo: report } : {}),
       ...(watch === true ? { watch: true } : {}),
+      ...(delegationId ? { delegationId: delegationId.toLowerCase() } : {}),
     });
     if (result.refusal) return jsonResult({ error: result.refusal });
 
