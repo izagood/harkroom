@@ -147,7 +147,10 @@ describe('turnUploads', () => {
       const work = join(base, AGENT, 'workspaces', `harkroom-${AGENT}-ab12cd34`);
       mkdirSync(work, { recursive: true });
       writeFileSync(join(work, 'work.txt'), 'b');
-      for (const path of ['here.txt', 'work.txt', join(work, 'work.txt')]) {
+      const moved = join(base, AGENT, 'omp-home', 'leftovers', hash, 'stamp');
+      mkdirSync(moved, { recursive: true });
+      writeFileSync(join(moved, 'old.txt'), 'c');
+      for (const path of ['here.txt', 'work.txt', join(work, 'work.txt'), join(moved, 'old.txt')]) {
         const r = resultOf(await up.maybeHandle(AGENT, uploadCall({ path }, threadCwd())));
         expect(r.isError, path).toBeFalsy();
       }
@@ -159,7 +162,10 @@ describe('turnUploads', () => {
       const otherWork = join(base, AGENT, 'workspaces', `harkroom-${AGENT}-99999999`);
       mkdirSync(otherWork, { recursive: true });
       writeFileSync(join(otherWork, 'other.txt'), 'c');
-      for (const path of ['../models.yml', join(otherWork, 'other.txt')]) {
+      const otherMoved = join(base, AGENT, 'omp-home', 'leftovers', '9'.repeat(24));
+      mkdirSync(otherMoved, { recursive: true });
+      writeFileSync(join(otherMoved, 'theirs.txt'), 'e');
+      for (const path of ['../models.yml', join(otherWork, 'other.txt'), join(otherMoved, 'theirs.txt')]) {
         expect(resultOf(await up.maybeHandle(AGENT, uploadCall({ path }, threadCwd()))).body.error.code, path).toBe('outside_workspace');
       }
       const lookalike = join(base, AGENT, 'workspaces', 'harkroom-other-ab12cd34');

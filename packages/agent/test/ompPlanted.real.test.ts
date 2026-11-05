@@ -143,7 +143,7 @@ describe.skipIf(!BIN)('omp 실물 — 심은 파일(C1·G1b·G1c·K3b)', () => {
       await writeFile(join(thread.cwd, 'mcp.json'), mcp('plain'));
       await mkdir(join(thread.cwd, '.cursor'), { recursive: true });
       await writeFile(join(thread.cwd, '.cursor', 'mcp.json'), mcp('cursor'));
-      swept = await sweepOmpThreadCwd(thread.cwd, repo);
+      swept = await sweepOmpThreadCwd(thread);
     } else {
       await mkdir(join(thread.cwd, '..', '.omp'), { recursive: true });
       await writeFile(join(thread.cwd, '..', '.omp', 'AGENTS.md'), 'PLANTED_ANCESTOR_AGENTS_MD\n');
@@ -193,7 +193,7 @@ describe.skipIf(!BIN)('omp 실물 — 심은 파일(C1·G1b·G1c·K3b)', () => {
     }
     await new Promise((r) => setTimeout(r, 3500)); // 심은 MCP 가 `touch` 할 틈
     const sessions = (await readdir(dirs.sessionsDir)).filter((n) => n.endsWith('.jsonl'));
-    return { turns, swept, markers: await readdir(mark), violations, sessions, sessionFile: join(dirs.sessionsDir, sessions[0] ?? 'none') };
+    return { turns, swept, repoFiles: await readdir(repo), markers: await readdir(mark), violations, sessions, sessionFile: join(dirs.sessionsDir, sessions[0] ?? 'none') };
   }
 
   it('격리 칸(빈 cwd + --add-dir 저장소): 실행 0 · 적용 0 · 실리는 것은 저장소 `.omp/AGENTS.md` 하나(G1c 수용) · 키는 키 파일에서', async () => {
@@ -219,6 +219,7 @@ describe.skipIf(!BIN)('omp 실물 — 심은 파일(C1·G1b·G1c·K3b)', () => {
   it('앞 턴이 남긴 설정: 비운 뒤 띄우면 다음 턴에 안 실리고 안 돈다', async () => {
     const r = await cell('leftovers', { cwdRepo: false, leftovers: true, turns: [{ plan: ['bash', 'mcp', 'text'], key: 'sk-ONE' }] });
     expect(r.swept.length).toBeGreaterThan(0);
+    expect(r.repoFiles).toEqual([]);
     expect(r.violations).toEqual([]);
     expect(r.markers).toEqual([]);
     const [one] = r.turns;

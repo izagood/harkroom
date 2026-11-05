@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { buildTurnCommand } from '../src/turn.js';
 import { OMP_ADAPTER } from '../src/adapters/omp.js';
 import {
-  ensureOmpHome, ensureOmpThread, findOmpBinary, ompBinaryOk, OMP_OVERLAY, ompCwdViolations, OMP_LEFTOVERS_DIR, ompDirs, sweepOmpThreadCwd, ompLaneModelsYml, ompReadonlyToolList,
+  ensureOmpHome, ensureOmpThread, findOmpBinary, ompBinaryOk, OMP_OVERLAY, ompCwdViolations, ompDirs, sweepOmpThreadCwd, ompLaneModelsYml, ompReadonlyToolList,
   ompSessionFile, ompThreadDirs, toOmpMcp, writeOmpLaneModels, writeOmpSessionHeader,
 } from '../src/ompHome.js';
 import { ompLaneVersionOk, providerLaneKeys, PROVIDER_LANE_ARGV_ONLY_KEYS } from '../src/providerLane.js';
@@ -61,43 +61,47 @@ describe('ompHome — 스레드 폴더 비우기', () => {
   async function thread() {
     const root = await tmp();
     await ensureOmpHome({ ompHome: join(root, 'omp-home'), mcpServers: {} });
-    const t = await ensureOmpThread(join(root, 'omp-home'), 'x');
-    const ws = join(root, 'workspaces', 'harkroom-a-1');
-    await mkdir(ws, { recursive: true });
-    return { root, t, ws };
+    return { root, t: await ensureOmpThread(join(root, 'omp-home'), 'x') };
   }
 
-  it('.git 말고 전부를 작업 폴더로 옮겨 검사를 통과시키고, 내용은 그대로 남는다', async () => {
-    const { root, t, ws } = await thread();
+  it('.git 말고 전부를 러너 자리로 옮겨 검사를 통과시키고, 내용은 그대로 남는다', async () => {
+    const { root, t } = await thread();
     await writeFile(join(t.cwd, 'made-by-model.txt'), 'x');
     await mkdir(join(t.cwd, '.hidden', 'deep'), { recursive: true });
     await writeFile(join(t.cwd, '.hidden', 'deep', 'a'), 'y');
-    const moved = await sweepOmpThreadCwd(t.cwd, ws);
+    const moved = await sweepOmpThreadCwd(t);
     expect(moved).toHaveLength(2);
     expect(await readdir(t.cwd)).toEqual(['.git']);
     expect(await ompCwdViolations(t.cwd, root)).toEqual([]);
     const dest = dirname(moved[0]!);
-    expect(dirname(dest)).toBe(join(ws, OMP_LEFTOVERS_DIR));
+    expect(dirname(dest)).toBe(t.leftovers);
     expect(await readFile(join(dest, 'made-by-model.txt'), 'utf8')).toBe('x');
     expect(await readFile(join(dest, '.hidden', 'deep', 'a'), 'utf8')).toBe('y');
+    for (const dir of [dest, t.leftovers, dirname(t.leftovers)]) expect((await stat(dir)).mode & 0o777, dir).toBe(0o700);
+  });
+
+  it('옮기는 자리는 cwd 의 부모 사슬 밖이다', async () => {
+    const { t } = await thread();
+    expect(`${t.cwd}/`.startsWith(`${t.leftovers}/`)).toBe(false);
+    expect(t.leftovers).not.toContain('/cwd/');
   });
 
   it('남은 것이 없으면 자리를 만들지 않는다', async () => {
-    const { t, ws } = await thread();
-    expect(await sweepOmpThreadCwd(t.cwd, ws)).toEqual([]);
-    expect(await readdir(ws)).toEqual([]);
+    const { t } = await thread();
+    expect(await sweepOmpThreadCwd(t)).toEqual([]);
+    await expect(stat(t.leftovers)).rejects.toThrow();
   });
 
   it('두 번 옮겨도 앞 것을 덮지 않고, 못 옮긴 것은 검사가 잡는다', async () => {
-    const { root, t, ws } = await thread();
+    const { root, t } = await thread();
     await writeFile(join(t.cwd, 'a.txt'), '1');
-    await sweepOmpThreadCwd(t.cwd, ws, new Date(0));
+    await sweepOmpThreadCwd(t, new Date(0));
     await writeFile(join(t.cwd, 'a.txt'), '2');
-    await sweepOmpThreadCwd(t.cwd, ws, new Date(0));
-    expect(await readdir(join(ws, OMP_LEFTOVERS_DIR))).toHaveLength(2);
+    await sweepOmpThreadCwd(t, new Date(0));
+    expect(await readdir(t.leftovers)).toHaveLength(2);
     await writeFile(join(t.cwd, 'b.txt'), '3');
     await writeFile(join(root, 'blocker'), 'not a directory');
-    await expect(sweepOmpThreadCwd(t.cwd, join(root, 'blocker'))).rejects.toThrow();
+    await expect(sweepOmpThreadCwd({ cwd: t.cwd, leftovers: join(root, 'blocker', 'x') })).rejects.toThrow();
     expect(await ompCwdViolations(t.cwd, root)).toEqual([join(t.cwd, 'b.txt')]);
   });
 });

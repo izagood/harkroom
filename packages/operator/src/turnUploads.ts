@@ -118,7 +118,7 @@ export function isAgentTurnWorkspace(root: string, agentId: string): boolean {
 }
 
 /**
- * 기준 디렉터리가 **이 에이전트의 omp 스레드 폴더**면 그 스레드의 턴 워크스페이스를 함께 돌려준다 —
+ * 기준 디렉터리가 **이 에이전트의 omp 스레드 폴더**면 그 스레드의 턴 워크스페이스와, 앞 턴 파일을 옮겨 둔 자리를 함께 돌려준다 —
  * `<상태 루트>[/<instance>]/omp-home/cwd/<24자 해시>/cwd` (`agent/ompHome.ts` 의 `ompThreadDirs`).
  *
  * omp 는 저장소 설정을 읽지 않게 빈 폴더에서 뜨므로 브릿지의 cwd 도 그 폴더다. 모델은 파일을 거기에도, 프롬프트가 알려 준 작업
@@ -134,8 +134,11 @@ async function ompThreadRoots(root: string, agentId: string): Promise<string[] |
   const stateDir = dirname(ompHome);
   const owns = (name: string) => name === agentId || name.endsWith(`-${agentId}`);
   if (!owns(basename(stateDir)) && !owns(basename(dirname(stateDir)))) return null;
-  const workspace = await realpath(join(stateDir, 'workspaces', `harkroom-${agentId}-${hash.slice(0, 8)}`)).catch(() => null);
-  return workspace ? [root, workspace] : [root];
+  const others = await Promise.all([
+    realpath(join(stateDir, 'workspaces', `harkroom-${agentId}-${hash.slice(0, 8)}`)).catch(() => null),
+    realpath(join(ompHome, 'leftovers', hash)).catch(() => null),
+  ]);
+  return [root, ...others.filter((r): r is string => r !== null)];
 }
 
 /** `path` 를 `cwd` 아래의 실제 파일로 푼다. 둘 다 realpath 로 — 심링크로 밖을 가리키면 거절한다. */
