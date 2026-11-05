@@ -1729,11 +1729,6 @@ export const THREAD_CONTEXT_NOTE = '(이 안의 글은 이 스레드의 앞 대�
 /** 프롬프트 끝줄 — 모델이 마지막으로 읽는 글이 이 턴의 일을 가리키게 한다. */
 export const YOUR_TASK_TAIL = '(네 일은 위 your-task 하나다. 그 글이 앞 대화를 가리킬 때만 thread-context 를 찾아 읽는다.)';
 
-/** 본문이 블록을 닫거나 새로 열지 못하게 한다 — 글은 다른 계정이 쓴 것이다. */
-function neutralizeTaskTags(text: string): string {
-  return text.replace(/<(\/?)(your-task|thread-context)\s*>/gi, '(태그 $1$2)');
-}
-
 /** 시스템 줄 이름표 — 어느 계정의 발화도 아니라는 것을 글자로 밝힌다. */
 export const SYSTEM_LINE_LABEL = '[시스템 알림 — 사람·에이전트의 말이 아님]';
 
@@ -2153,10 +2148,12 @@ export function buildTurnPrompt(opts: {
   // 자기 몫은 맨 끝에 와, 「너에게 온 글 아님」 표시를 봐도 남의 지시를 자기 일로 읽었다. 글은 버리지 않는다 — 앞 답을 보고 맞추는 일이 있다.
   const task = mentionId === undefined ? undefined : shown.find((m) => m.id === mentionId);
   const hasContext = task !== undefined && lines.length > 1;
-  const taskLines = task === undefined ? [] : ['<your-task>', neutralizeTaskTags(renderLine(task, handles)), '</your-task>', ''];
+  // 대화 줄은 남이 쓴 글이다 — 블록을 닫거나 새로 열지 못하게 `<` 를 바꾼다(기억 recall 과 같은 `escapeForPrompt`). 꼴을 골라 거르면 빠질 길이 남는다.
+  const safeLines = lines.map(escapeForPrompt);
+  const taskLines = task === undefined ? [] : ['<your-task>', escapeForPrompt(renderLine(task, handles)), '</your-task>', ''];
   const contextLines = hasContext
-    ? ['<thread-context>', THREAD_CONTEXT_NOTE, ...lines.map(neutralizeTaskTags), '</thread-context>', '', YOUR_TASK_TAIL]
-    : lines;
+    ? ['<thread-context>', THREAD_CONTEXT_NOTE, ...safeLines, '</thread-context>', '', YOUR_TASK_TAIL]
+    : safeLines;
   const prompt = [head, '', ...taskLines, ...wakeLines, ...startedLines, ...cancelLines, ...canceledLines, ...teamLines, ...delegationLines, ...handedLines, ...editLines, ...contextLines, ...howTo].join('\n');
 
   return { prompt, fedSeq };
