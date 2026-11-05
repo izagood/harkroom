@@ -9,7 +9,8 @@ import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ASK_TEXT_OPTION_ID } from '@harkroom/shared';
-import { askAnsweredWake, createMentionScheduler, DONE_UNREAD_MAX_MS, GATE_REQUEUE_MAX, GATE_WAIT_MAX_MS, RECENTLY_DONE_MS, type BatchContext } from '../src/mentionScheduler.js';
+import { DELTA_MAX_CHARS } from '../src/prompt.js';
+import { askAnsweredWake, BUNDLE_MAX_ENTRIES, createMentionScheduler, DONE_UNREAD_MAX_MS, GATE_REQUEUE_MAX, GATE_WAIT_MAX_MS, RECENTLY_DONE_MS, type BatchContext } from '../src/mentionScheduler.js';
 import { AccountGateRequeueError } from '../src/mentionTurn.js';
 import { SessionStore } from '../src/sessions.js';
 import { TurnRegistry } from '../src/turnRegistry.js';
@@ -896,6 +897,117 @@ describe('mentionScheduler 승인 관문', () => {
 // 서버가 `ask_answered` 로 깨워도, 러너가 그것을 평범한 멘션으로 다루면 **아무 일도
 // 일어나지 않는다**: 사람은 버튼만 눌렀지 새 메시지를 쓰지 않았으므로 델타가 비고,
 // 비면 하네스가 돌지 않는다(040 이 `wake` 를 따로 만든 이유와 같은 자리).
+describe('같은 사람의 연달은 부름을 한 턴으로 묶는다', () => {
+  const row = (id: string, seq: number, author = 'h1', over: Record<string, unknown> = {}) => ({
+    id, seq, channelId: CH, threadRootId: 'root', authorId: author, body: `글 ${id}`, kind: 'user', meta: {},
+    createdAt: '2026-11-05T00:00:00Z', alsoInChannel: false, deletedAt: null, attachments: [], ...over,
+  });
+  const batch = (rows: ReturnType<typeof row>[], entries: Record<number, Record<string, unknown>> = {}) => ({
+    entries: rows.map((r, n) => ({ id: n + 1, messageId: r.id, reason: 'mention', readAt: null, channelId: CH, ...entries[n + 1] })),
+    messages: rows,
+  }) as unknown as InboxBatch;
+  const run = (seen: MentionTarget[], fail = () => false) => (async (_d: unknown, t: MentionTarget) => {
+    seen.push(t);
+    if (fail()) throw new Error('터졌다');
+    return { stopRequestedAt: null };
+  }) as never;
+
+  it('원인은 가장 새 글이고, 앞 글은 오래된 순으로 싣고, 끝나면 한 번에 읽음 처리한다', async () => {
+    const seen: MentionTarget[] = [];
+    const { scheduler, markedRead, markReadCalls } = harness({ runTurn: run(seen) });
+    await scheduler.admit(batch([row('a', 1), row('b', 2), row('c', 3)]), ctx);
+    await scheduler.drain();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.mentionId).toBe('c');
+    expect(seen[0]!.bundledRows?.map((r) => r.id)).toEqual(['a', 'b']);
+    expect(markedRead.sort()).toEqual([1, 2, 3]);
+    expect(markReadCalls).toHaveLength(1);
+  });
+
+  it('작성자가 다르면 묶지 않는다 — 원인 글 하나의 권한으로 남의 부름을 처리하지 않는다', async () => {
+    const seen: MentionTarget[] = [];
+    const { scheduler } = harness({ runTurn: run(seen) });
+    const b = batch([row('a', 1), row('x', 2, 'h2'), row('c', 3)]);
+    await scheduler.admit(b, ctx);
+    await scheduler.drain();
+    expect(seen[0]!.mentionId).toBe('c');
+    expect(seen[0]!.bundledRows?.map((r) => r.id)).toEqual(['a']);
+    await scheduler.admit({ ...b, entries: b.entries.filter((e) => e.id === 2) }, ctx);
+    await scheduler.drain();
+    expect(seen[1]!.mentionId).toBe('x');
+    expect(seen[1]!.bundledRows).toBeUndefined();
+  });
+
+  it.each([
+    ['예약', { reason: 'wake' }, {}],
+    ['카드 답', { reason: 'ask_answered' }, {}],
+    ['카드 닫힘', { reason: 'ask_closed' }, {}],
+    ['위임 결말', { reason: 'delegation_done' }, {}],
+    ['넘겨받은 일', { reason: 'team_delegated' }, {}],
+    ['팀 부름', { reason: 'team_mention' }, {}],
+    ['수정으로 불림', { viaEdit: true }, {}],
+    ['위임장 시작 스레드', { startedIn: { channelId: CH, threadRootId: 'r' } }, {}],
+    ['시스템 줄', {}, { kind: 'system' }],
+    ['자동화 글', {}, { meta: { automation: { id: 'z' } } }],
+    ['시작 글', {}, { meta: { planStart: { steps: [] } } }],
+    ['카드 글', {}, { meta: { kind: 'ask' } }],
+  ])('%s 는 묶지 않는다', async (_n, entryOver, rowOver) => {
+    const seen: MentionTarget[] = [];
+    const { scheduler } = harness({ runTurn: run(seen) });
+    await scheduler.admit(batch([row('a', 1), row('b', 2, 'h1', rowOver)], { 2: entryOver }), ctx);
+    await scheduler.drain();
+    expect(seen[0]!.mentionId).toBe('a');
+    expect(seen[0]!.bundledRows).toBeUndefined();
+  });
+
+  it(`한 턴에 ${BUNDLE_MAX_ENTRIES}개까지 묶고 나머지는 다음 턴이다`, async () => {
+    const seen: MentionTarget[] = [];
+    const { scheduler, markedRead } = harness({ runTurn: run(seen) });
+    const b = batch(Array.from({ length: BUNDLE_MAX_ENTRIES + 2 }, (_, i) => row(`m${i}`, i + 1)));
+    await scheduler.admit(b, ctx);
+    await scheduler.drain();
+    expect(seen[0]!.mentionId).toBe(`m${BUNDLE_MAX_ENTRIES - 1}`);
+    expect(seen[0]!.bundledRows).toHaveLength(BUNDLE_MAX_ENTRIES - 1);
+    expect(markedRead).toHaveLength(BUNDLE_MAX_ENTRIES);
+    expect(markedRead).not.toContain(BUNDLE_MAX_ENTRIES + 1);
+  });
+
+  it('본문 합이 예산을 넘으면 그 글은 넣지 않는다 — 실리지 않은 글을 읽음 처리하지 않는다', async () => {
+    const seen: MentionTarget[] = [];
+    const { scheduler, markedRead } = harness({ runTurn: run(seen) });
+    await scheduler.admit(batch([row('a', 1), row('big', 2, 'h1', { body: 'x'.repeat(DELTA_MAX_CHARS) })]), ctx);
+    await scheduler.drain();
+    expect(seen[0]!.mentionId).toBe('a');
+    expect(markedRead).toEqual([1]);
+  });
+
+  it('실패하면 묶음 전체가 미읽음이고 함께 기다린다. 두 번 실패하면 하나씩 띄운다', async () => {
+    const seen: MentionTarget[] = [];
+    let t = 1_000;
+    const { scheduler, markedRead } = harness({ now: () => t, runTurn: run(seen, () => true) });
+    const b = batch([row('a', 1), row('b', 2), row('c', 3)]);
+    await scheduler.admit(b, ctx);
+    await scheduler.drain();
+    expect(markedRead).toEqual([]);
+    expect(seen).toHaveLength(1);
+    // 백오프 안에서는 앞 글도 따로 뜨지 않는다.
+    await scheduler.admit(b, ctx);
+    await scheduler.drain();
+    expect(seen).toHaveLength(1);
+    t += 3_600_000;
+    await scheduler.admit(b, ctx);
+    await scheduler.drain();
+    expect(seen).toHaveLength(2);
+    expect(seen[1]!.bundledRows).toHaveLength(2);
+    t += 3_600_000;
+    await scheduler.admit(b, ctx);
+    await scheduler.drain();
+    expect(seen).toHaveLength(3);
+    expect(seen[2]!.mentionId).toBe('a');
+    expect(seen[2]!.bundledRows).toBeUndefined();
+  });
+});
+
 describe('깨움 보고처·접힌 예약을 턴에 넘긴다 (2026-10-06)', () => {
   it('wake 항목은 메시지 meta 의 reportTo 를, 부름 항목은 canceledWakes 를 대상에 싣는다', async () => {
     const seen: MentionTarget[] = [];

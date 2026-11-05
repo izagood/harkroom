@@ -1756,7 +1756,8 @@ describe('델타를 멘션·최신 우선으로 싣는다 (2026-10-12, 스레드
       lastFedSeq: 7, meId: 'a1', handles, channelId: 'c', threadRootId: null, mentionId: 'X',
     });
     expect(prompt).toContain('alice (← 너를 부른 글): @forge 이것 좀 봐 줘');
-    expect(prompt).toContain('(너를 부른 글은 앞 턴에 맥락으로 이미 보였지만 아직 어느 턴도 처리하지 않았다 — 이 턴이 지금 처리하라)');
+    expect(prompt).toContain('그 뒤에 네 글이 있다 — 이미 끝낸 일이면 다시 하지 말고 끝났다고 한 줄만 답하고, 아니면 지금 처리하라');
+    expect(prompt).toContain('(너를 부른 글: harkroom://message/X · seq 5 · 이 글 뒤 네 글: seq 7)');
     expect(prompt).not.toContain('저것도');
     expect(fedSeq).toBe(7);
   });
@@ -1776,6 +1777,40 @@ describe('델타를 멘션·최신 우선으로 싣는다 (2026-10-12, 스레드
       lastFedSeq: 7, meId: 'a1', handles, channelId: 'c', threadRootId: null, mentionId: 'X',
     });
     expect(prompt).toBe('');
+  });
+
+  it('buildTurnPrompt: 그 뒤에 내 글이 없으면 지금 처리하라고만 한다', () => {
+    const { prompt } = buildTurnPrompt({
+      messages: [msg(5, 'u1', '@forge 이것 좀 봐 줘', { id: 'X' })],
+      lastFedSeq: 7, meId: 'a1', handles, channelId: 'c', threadRootId: null, mentionId: 'X',
+    });
+    expect(prompt).toContain('아직 어느 턴도 처리하지 않았다 — 이 턴이 지금 처리하라');
+    expect(prompt).not.toContain('이 글 뒤 네 글');
+  });
+
+  it('buildTurnPrompt: 묶인 앞 부름은 대화 줄에 다시 나오지 않는다', () => {
+    const { prompt } = buildTurnPrompt({
+      messages: [msg(11, 'u1', '@forge 앞 질문', { id: 'A' }), msg(12, 'u1', '@forge 지금 질문', { id: 'LEAD' })],
+      lastFedSeq: 10, meId: 'a1', handles, channelId: 'c', threadRootId: null, mentionId: 'LEAD', bundledIds: ['A'],
+    });
+    expect(prompt.split('@forge 앞 질문').length).toBe(2);
+  });
+
+  it('buildTurnPrompt: 묶인 앞 부름은 예산과 상관없이 본문을 싣고, 대화 줄에 두 번 나오지 않으며, 뒤의 내 글을 적는다', () => {
+    const { prompt, fedSeq } = buildTurnPrompt({
+      messages: [
+        msg(11, 'u1', '@forge 앞 질문 하나', { id: 'A' }), msg(12, 'a1', '답했다'), msg(13, 'u1', '@forge 앞 질문 둘', { id: 'B' }),
+        ...many(14, 14 + DELTA_MAX_MESSAGES + 5), msg(100, 'u1', '@forge 지금 질문', { id: 'LEAD' }),
+      ],
+      lastFedSeq: 10, meId: 'a1', handles, channelId: 'c', threadRootId: null, mentionId: 'LEAD', bundledIds: ['A', 'B'],
+    });
+    expect(prompt).toContain('같이 처리할 앞 부름 2개');
+    expect(prompt).toContain('뒤 글이 앞 글을 바꿨으면 뒤 글을 따른다');
+    expect(prompt).toContain('alice (앞 부름 · seq 11 · 이 글 뒤 네 글: seq 12): @forge 앞 질문 하나');
+    expect(prompt).toContain('alice (앞 부름 · seq 13): @forge 앞 질문 둘');
+    expect(prompt.split('@forge 앞 질문 하나').length).toBe(2);
+    expect(prompt).toContain('alice (← 너를 부른 글): @forge 지금 질문');
+    expect(fedSeq).toBe(100);
   });
 
   it('buildTurnPrompt: 커서가 넘은 부른 글이 읽은 범위에도 없으면 「범위 밖」 줄과 안내를 단다', () => {

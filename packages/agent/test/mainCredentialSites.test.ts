@@ -93,7 +93,7 @@ describe('종료 판정이 세 자리에 다 걸려 있다', () => {
   // 말하는 "재시도 0회"의 실제 모양이다. 회계 자체가 사라지면(다른 실패까지 안 세면) 이 단언이
   // 빨개진다.
   it('항목 시도 회계는 그대로 있다 — 이번 변경이 재시도 전반을 죽이지 않았다', () => {
-    expect(schedulerSource).toMatch(/attempts\.set\(entry\.id, \{ tried/);
+    expect(schedulerSource).toMatch(/attempts\.set\(lead\.id, \{ tried/);
     expect(schedulerSource).toContain('if (exhausted(tried))');
   });
 });

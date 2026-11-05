@@ -28,7 +28,7 @@ describe('#337 러너가 인터랙티브 경로를 실제로 배선한다', () =
     // 횟수를 갉아먹으면 오래 조종할수록 그 멘션이 MAX_ATTEMPTS 로 조용히 버려진다.
     const src = await readSrc('mentionScheduler.ts');
     const deferIdx = src.indexOf('deps.registry.controlOf(threadKey)');
-    const attemptsIdx = src.indexOf('attempts.set(entry.id, { tried');
+    const attemptsIdx = src.indexOf('attempts.set(lead.id, { tried');
     expect(deferIdx).toBeGreaterThan(-1);
     expect(attemptsIdx).toBeGreaterThan(-1);
     expect(deferIdx).toBeLessThan(attemptsIdx);

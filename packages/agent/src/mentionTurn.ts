@@ -619,6 +619,11 @@ export interface MentionTarget {
    */
   mentionRow?: MessageRow;
   /**
+   * 이 턴에 함께 처리할 앞 부름(같은 스레드·같은 작성자, 오래된 순). 이 글들은 턴이 끝나면 함께 읽음 처리되므로
+   * **본문이 반드시 프롬프트에 실려야 한다**(#1699: 본 것과 답한 것은 다르다).
+   */
+  bundledRows?: MessageRow[];
+  /**
    * 이 턴이 **깨어난 턴**이면 그 사유(마이그레이션 040). `main.ts` 가 inbox 항목의
    * `reason === 'wake'` 일 때 그 대기 줄의 본문을 그대로 싣는다.
    *
@@ -1149,6 +1154,17 @@ export async function runMentionTurn(
   if (inboxMention && !thread.some((m) => m.id === inboxMention.id)) {
     thread = [...thread, inboxMention].sort((a, b) => a.seq - b.seq);
   }
+  const bundledRows = inboxMention ? target.bundledRows ?? [] : [];
+  const missingBundled = bundledRows.filter((row) => !thread.some((m) => m.id === row.id));
+  if (missingBundled.length) thread = [...thread, ...missingBundled].sort((a, b) => a.seq - b.seq);
+  // 측정(B1): 이 턴이 처리하는 글 중 가장 옛 글이 얼마나 기다렸나 · 앞 턴이 이미 본 글인가(빈 턴 후보).
+  const handledRows = inboxMention ? [...bundledRows, inboxMention] : [];
+  const oldestAskedAt = handledRows.length ? Date.parse(handledRows[0]!.createdAt) : NaN;
+  const fedBefore = rec.lastFedSeq;
+  const askedAlreadySeen = handledRows.length > 0 && fedBefore > 0 && handledRows.every((row) => row.seq <= fedBefore);
+  for (const row of bundledRows) {
+    void deps.harkroom.addReaction(channelId, row.id, '👀').catch(() => {});
+  }
 
   // isFirstTurn 은 원칙적으로 turnsRun 에서 유도한다 — lastFedSeq 는 "무엇을 봤는지"의
   // 경계일 뿐 "하네스를 실제로 돌렸는지"의 증거가 아니다(sessions.ts::SessionRecord.turnsRun
@@ -1230,6 +1246,7 @@ export async function runMentionTurn(
     ...(rec.unseenOwnAfterSeq !== undefined ? { unseenOwnAfterSeq: rec.unseenOwnAfterSeq } : {}),
     ...(rec.canceledBy !== undefined ? { afterCancelBy: rec.canceledBy } : {}),
     ...(target.wake || target.delegation ? {} : { mentionId }),
+    ...(bundledRows.length ? { bundledIds: bundledRows.map((row) => row.id) } : {}),
     ...(gapAfterSeq !== undefined ? { gapAfterSeq } : {}),
   });
 
@@ -1725,6 +1742,8 @@ export async function runMentionTurn(
   // 전부 "뷰어 소멸" 하나로 수렴한다.
   const schedule = deps.schedule
     ?? ((fn: () => void, ms: number) => { const t = setTimeout(fn, ms); t.unref?.(); return () => clearTimeout(t); });
+  /** 이 턴의 첫 발화 시각(측정용). */
+  let firstSpokeAt: number | null = null;
   const end: {
     controls: PtyControls | null; exited: boolean; spoke: boolean; viewers: number; silenced: boolean;
     /**
@@ -2481,7 +2500,7 @@ export async function runMentionTurn(
       .then(async (spoke) => {
         if (end.exited) return;
         end.threadUnreadable = spoke === null;
-        if (spoke === true) end.spoke = true;
+        if (spoke === true) { end.spoke = true; firstSpokeAt ??= Date.now(); }
         await probeDenials();
         await probeMacPermission();
         await probeMcpAuth();
@@ -2735,6 +2754,10 @@ export async function runMentionTurn(
   const elapsedMs = (deps.now ?? Date.now)() - turnStartMs;
   const exitInfo = result.timedOut ? `timeout (${result.exitCode})` : String(result.exitCode);
   console.log(`[mentionTurn] ${key}: 턴 종료 (경과=${elapsedMs}ms, exitCode=${exitInfo})`);
+  if (handledRows.length) {
+    const waitedMs = Number.isNaN(oldestAskedAt) || firstSpokeAt === null ? null : firstSpokeAt - oldestAskedAt;
+    console.log(`[turnStats] ${key}: bundled=${handledRows.length} alreadySeen=${askedAlreadySeen} firstReplyMs=${waitedMs ?? 'none'}`);
+  }
 
   // #176: 마지막 활동 시각을 서버에 남긴다. **여기가 자리다** — 실패 분기(아래)보다 위여서
   // 실패한 턴도 보고된다. 실패한 턴도 움직인 턴이고, "마지막으로 언제 움직였나"에 성공
