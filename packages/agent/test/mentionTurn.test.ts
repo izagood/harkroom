@@ -2004,6 +2004,42 @@ describe('runMentionTurn', () => {
     expect(planContent[1]).not.toContain('먼저 돈 요청');
   });
 
+  /**
+   * 2026-11-05: 앞 턴이 길면 부른 글이 커서와 최신 페이지를 모두 지나간다. 프롬프트에 본문이 없어 에이전트가 그 글을 못 찾았다.
+   * 부른 글은 인박스가 이미 주었으니 그 값을 싣는다.
+   */
+  it('두 페이지 밖의 부른 글: 인박스가 준 본문과 seq 를 싣는다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.limit = 2;
+    const x = fake.seedFrom('human-1', '@forge 밀린 요청');
+    const y = fake.seedFrom('human-1', '@forge 먼저 돈 요청');
+    const { deps, plans, turnOpts } = await makeDeps(fake, { handles: { [ME.id]: ME.handle, 'human-1': 'alice' } });
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: y.id });
+    for (let i = 0; i < 5; i += 1) fake.seedFrom('human-1', `그 뒤 글 ${i}`);
+    const rec = deps.store.get(SessionStore.threadKey(CHANNEL, null))!;
+    rec.lastFedSeq = fake.messages.at(-1)!.seq;
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: x.id, mentionRow: x });
+    expect(plans).toHaveLength(2);
+    const planContent = await getPlanContent(plans, turnOpts);
+    expect(planContent[1]).toContain('alice (← 너를 부른 글): @forge 밀린 요청');
+    expect(planContent[1]).toContain(`(너를 부른 글: harkroom://message/${x.id} · seq ${x.seq})`);
+    expect(planContent[1]).not.toContain('범위 밖');
+  });
+
+  it('깨움 턴은 인박스 글을 부른 글로 싣지 않는다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.limit = 1;
+    const w = fake.seedFrom('human-1', '대기 줄');
+    fake.seedFrom('human-1', '그 뒤 글');
+    const { deps, plans, turnOpts } = await makeDeps(fake, { handles: { [ME.id]: ME.handle, 'human-1': 'alice' } });
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: w.id, mentionRow: w, wake: { reason: 'CI 확인' } });
+    const planContent = await getPlanContent(plans, turnOpts);
+    expect(planContent[0]).toContain('CI 확인');
+    // 페이지 밖의 대기 줄을 끌어오지 않는다.
+    expect(planContent[0]).not.toContain('대기 줄');
+  });
+
   // task-9 브리프 수정 항목 — handles 맵이 배치 단위로 채워져야 동료 발화가 handle 로 렌더된다.
   it('handles 맵에 있는 다른 계정의 메시지는 handle 로 렌더된다', async () => {
     const fake = new FakeHarkroom(defOf());

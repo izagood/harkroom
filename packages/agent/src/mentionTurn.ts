@@ -614,6 +614,11 @@ export interface MentionTarget {
    */
   mentionId: string;
   /**
+   * 인박스가 함께 준 부른 글. 턴이 읽는 두 페이지(커서 뒤·최신 30개) 밖이어도 이것으로 본문과 seq 를 싣는다 —
+   * 같은 스레드 멘션은 하나씩 돌아, 앞 턴이 길면 커서와 최신 페이지가 모두 이 글을 지나간다.
+   */
+  mentionRow?: MessageRow;
+  /**
    * 이 턴이 **깨어난 턴**이면 그 사유(마이그레이션 040). `main.ts` 가 inbox 항목의
    * `reason === 'wake'` 일 때 그 대기 줄의 본문을 그대로 싣는다.
    *
@@ -1138,6 +1143,11 @@ export async function runMentionTurn(
   if (rec.lastFedSeq > 0) {
     const latestPage = await deps.harkroom.readThread(channelId, anchor, undefined, DELTA_MAX_MESSAGES).catch(() => null);
     if (latestPage) ({ messages: thread, gapAfterSeq } = mergeThreadPages(oldestPage, latestPage, rec.lastFedSeq));
+  }
+  // 두 페이지 밖의 부른 글은 인박스 값으로 채운다. 깨움·위임 결말은 부른 글이 할 일이 아니다.
+  const inboxMention = target.wake || target.delegation ? undefined : target.mentionRow;
+  if (inboxMention && !thread.some((m) => m.id === inboxMention.id)) {
+    thread = [...thread, inboxMention].sort((a, b) => a.seq - b.seq);
   }
 
   // isFirstTurn 은 원칙적으로 turnsRun 에서 유도한다 — lastFedSeq 는 "무엇을 봤는지"의

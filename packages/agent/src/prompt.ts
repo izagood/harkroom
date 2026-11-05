@@ -1873,8 +1873,9 @@ export function fitDelta(
 }
 
 /** 생략 줄. 사람의 발화처럼 보이지 않게 괄호로 싸고, 읽을 길을 함께 적는다. */
-export function omittedLine(count: number, atLeast: boolean): string {
-  return `(앞선 글 ${count}개${atLeast ? ' 이상' : ''} 생략 — 필요하면 harkroom MCP 의 \`message.read\` 로 위 channelId·threadRootId 를 읽어라)`;
+export function omittedLine(count: number, atLeast: boolean, since?: number): string {
+  const from = since === undefined ? '' : `, since: ${since}`;
+  return `(앞선 글 ${count}개${atLeast ? ' 이상' : ''} 생략 — 필요하면 harkroom MCP 의 \`message.read\` 로 위 channelId·threadRootId${from} 를 읽어라)`;
 }
 
 /**
@@ -2068,11 +2069,15 @@ export function buildTurnPrompt(opts: {
   // 예산 안에서 **멘션 + 최신부터** 싣고 넘친 옛 글은 한 줄로 센다(`fitDelta`). 아래 판정(수정 글·첨부 안내)은 실제로
   // 실린 글(`shown`)로 한다 — 생략한 글의 첨부는 프롬프트에 id 가 없어 열 수 없다.
   const { shown, omitted, omittedAtLeast } = fitDelta(toShow, handles, { mentionId, gapAfterSeq });
-  const omittedLines = omitted > 0 || omittedAtLeast ? [omittedLine(omitted, omittedAtLeast)] : [];
+  // 생략한 글을 찾을 자리: `message.read` 는 since 뒤의 글을 준다. 틈이 있으면 커서 뒤부터가 빠졌다.
+  const shownIds = new Set(shown.map((m) => m.id));
+  const firstOmitted = toShow.find((m) => !shownIds.has(m.id));
+  const omittedSince = omittedAtLeast ? lastFedSeq : firstOmitted ? firstOmitted.seq - 1 : undefined;
+  const omittedLines = omitted > 0 || omittedAtLeast ? [omittedLine(omitted, omittedAtLeast, omittedSince)] : [];
   // 멘션이 읽은 두 페이지 어디에도 없다 — 그 뒤로 한 페이지가 넘게 쌓였다. 본문은 못 실어도 **어디 있는지는** 알린다.
   // 이미 먹인 구간(seq ≤ 커서)에 있으면 `messages` 에 들어 있으므로 여기 걸리지 않는다.
   if (mentionId !== undefined && editedMention?.id !== mentionId && !messages.some((m) => m.id === mentionId)) {
-    omittedLines.push(`(이 턴을 띄운 글 harkroom://message/${mentionId} 은 위 범위 밖이라 싣지 못했다 — \`message.read\` 로 먼저 읽어라)`);
+    omittedLines.push(`(이 턴을 띄운 글 harkroom://message/${mentionId} 은 위 범위 밖이라 싣지 못했다 — \`message.read\` 로 먼저 읽어라. since 뒤의 글만 주니 since 를 ${lastFedSeq} 보다 앞으로 잡는다)`);
   }
   // 델타에 없는 부른 글은 델타 **앞**에 「← 너를 부른 글」로 싣는다(seq 가 커서 이하라 델타보다 옛것이다). 읽은 페이지에도 없으면
   // 위 「범위 밖」 줄이 자리를 알린다 — 그때는 안내 줄만 단다.
@@ -2082,7 +2087,9 @@ export function buildTurnPrompt(opts: {
     ...(shown.length ? [''] : []),
   ];
   const noteCtx = { mentionId, threadRootId, meHandle: handles[meId] };
-  const lines = [...omittedLines, ...staleLines, ...shown.map((m) => renderLine(m, handles, lineNote(m, noteCtx)))];
+  // 부른 글의 자리. 대화 줄에는 id 와 seq 가 없어, 이 줄이 없으면 그 글을 다시 찾을 길이 없다.
+  const anchorLines = mentionRow ? [`(너를 부른 글: harkroom://message/${mentionRow.id} · seq ${mentionRow.seq})`] : [];
+  const lines = [...anchorLines, ...omittedLines, ...staleLines, ...shown.map((m) => renderLine(m, handles, lineNote(m, noteCtx)))];
   // 깨움 줄을 **사람의 발화처럼 렌더하지 않는다**(`renderLine` 을 쓰지 않는 이유다).
   // "forge: CI 결과 확인" 으로 보이면 에이전트가 자기 옛 말을 새 요청으로 읽는다.
   // 아래 델타에 사람의 새 발화가 함께 있을 수 있으므로 이 줄은 그것을 대체하지 않고 앞에 선다.

@@ -912,6 +912,8 @@ describe('깨움 보고처·접힌 예약을 턴에 넘긴다 (2026-10-06)', () 
 
     expect(seen.find((t) => t.mentionId === 'w1')?.wake).toEqual({ reason: '#1174 CI 확인', reportTo: { channelId: 'ch-9', threadRootId: 'task-root' } });
     expect(seen.find((t) => t.mentionId === 'm2')?.canceledWakes).toEqual([{ reason: '회수', wakeAt: '2026-10-06T02:00:00.000Z' }]);
+    // 인박스가 준 글을 그대로 넘긴다 — 턴이 읽는 페이지 밖이어도 본문을 싣는다.
+    expect(seen.find((t) => t.mentionId === 'm2')?.mentionRow).toBe(call.messages[0]);
     // 예약 깨움만 새 세션으로 돈다(2026-10-09) — 사람의 부름은 이어받는다.
     expect(seen.find((t) => t.mentionId === 'w1')?.scheduledWake).toBe(true);
     expect(seen.find((t) => t.mentionId === 'm2')?.scheduledWake).toBeUndefined();
