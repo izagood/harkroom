@@ -158,6 +158,15 @@ void main() {
     expect(c.offset, 0);
   }, variant: ios);
 
+  testWidgets('DM·인박스·에이전트 뿌리 목록도 Scaffold 가 굴리는 손잡이를 집는다', (tester) async {
+    await _pump(tester);
+    for (final (i, key) in [(1, 'tab-dms'), (2, 'tab-inbox'), (3, 'tab-agents')]) {
+      await tester.tap(find.byKey(Key(key)));
+      await tester.pumpAndSettle();
+      expect(TabNavigators.active!.scrolls[i].hasClients, isTrue, reason: key);
+    }
+  }, variant: ios);
+
   testWidgets('찾기 결과: 내려 둔 데서 탭하면 맨 위로', (tester) async {
     await _pump(tester);
     await tester.tap(find.byKey(const Key('tab-search')));
