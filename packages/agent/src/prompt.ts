@@ -2108,7 +2108,7 @@ export function buildTurnPrompt(opts: {
   const noteCtx = { mentionId, threadRootId, meHandle: handles[meId] };
   // 부른 글의 자리. 대화 줄에는 id 와 seq 가 없어, 이 줄이 없으면 그 글을 다시 찾을 길이 없다.
   const anchorLines = mentionRow ? [`(너를 부른 글: harkroom://message/${mentionRow.id} · seq ${mentionRow.seq})`] : [];
-  const lines = [...anchorLines, ...omittedLines, ...staleLines, ...shown.map((m) => renderLine(m, handles, lineNote(m, noteCtx)))];
+  const lines = [...omittedLines, ...staleLines, ...shown.map((m) => renderLine(m, handles, lineNote(m, noteCtx)))];
   // 깨움 줄을 **사람의 발화처럼 렌더하지 않는다**(`renderLine` 을 쓰지 않는 이유다).
   // "forge: CI 결과 확인" 으로 보이면 에이전트가 자기 옛 말을 새 요청으로 읽는다.
   // 아래 델타에 사람의 새 발화가 함께 있을 수 있으므로 이 줄은 그것을 대체하지 않고 앞에 선다.
@@ -2146,11 +2146,12 @@ export function buildTurnPrompt(opts: {
   // 팀 블록은 이 턴이 무엇인지다(둘이 함께 오는 경우는 예약이 걸린 팀 턴이다).
   // **이 턴의 일을 맨 앞에 따로 준다**(2026-11-05 소유자 결정, 재현 4/5). 대화를 시간 순서로만 실으면 가장 길고 명령형인 맨 위 글이 먼저 오고
   // 자기 몫은 맨 끝에 와, 「너에게 온 글 아님」 표시를 봐도 남의 지시를 자기 일로 읽었다. 글은 버리지 않는다 — 앞 답을 보고 맞추는 일이 있다.
-  const task = mentionId === undefined ? undefined : shown.find((m) => m.id === mentionId);
-  const hasContext = task !== undefined && lines.length > 1;
+  // 밀린 멘션은 대화 줄 범위 밖일 수 있어 인박스에서 온 값(`mentionRow`)을 쓴다 — 이 턴의 일이 맨 앞에서 빠지면 안 된다.
+  const task = mentionRow ?? undefined;
+  const hasContext = task !== undefined && lines.length > (shown.some((m) => m.id === task.id) ? 1 : 0);
   // 대화 줄은 남이 쓴 글이다 — 블록을 닫거나 새로 열지 못하게 `<` 를 바꾼다(기억 recall 과 같은 `escapeForPrompt`). 꼴을 골라 거르면 빠질 길이 남는다.
   const safeLines = lines.map(escapeForPrompt);
-  const taskLines = task === undefined ? [] : ['<your-task>', escapeForPrompt(renderLine(task, handles)), '</your-task>', ''];
+  const taskLines = task === undefined ? [] : ['<your-task>', escapeForPrompt(renderLine(task, handles)), '</your-task>', ...anchorLines, ''];
   const contextLines = hasContext
     ? ['<thread-context>', THREAD_CONTEXT_NOTE, ...safeLines, '</thread-context>', '', YOUR_TASK_TAIL]
     : safeLines;
