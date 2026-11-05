@@ -37,7 +37,7 @@ import { ensureDangerousModeAccepted, ensureWorkspaceTrusted } from './workspace
 import { codexSessionsDir } from './codexHome.js';
 import { laneRunModel, opencodeDirs, opencodeLaneAgentMatches, opencodeLaneAgentName, opencodeLaneModelMissing, providerLaneModelId } from './opencodeHome.js';
 import { ensurePiLaneThread, listPiMcpTools, PI_LANE_PROVIDER, piLaneLoginPresent, piSessionFile, readonlyToolList, writePiLaneModels } from './piHome.js';
-import { ensureOmpThread, findOmpBinary, OMP_LANE_PROVIDER, ompBinaryOk, ompUnverifiedBinaryNotice, ompCwdViolations, ompDirs, ompReadonlyToolList, ompSessionFile, readOmpRecordedApiError, writeOmpLaneModels, writeOmpSessionHeader, type OmpThreadDirs } from './ompHome.js';
+import { ensureOmpThread, findOmpBinary, OMP_LANE_PROVIDER, ompBinaryOk, ompUnverifiedBinaryNotice, ompCwdViolations, ompDirs, ompThreadDirs, sweepOmpThreadCwd, ompReadonlyToolList, ompSessionFile, readOmpRecordedApiError, writeOmpLaneModels, writeOmpSessionHeader, type OmpThreadDirs } from './ompHome.js';
 import { findOpencodeSessionId } from './opencodeSessions.js';
 import { readOpencodeTurnState } from './opencodeTurnState.js';
 import { readHarnessLastSaid, type HarnessLastSaidOpts } from './harnessLastSaid.js';
@@ -1494,7 +1494,7 @@ export async function runMentionTurn(
    */
   // omp 는 저장소 밖 빈 폴더에서 뜬다(security B4) — 셸이 거기서 시작하므로 작업 폴더를 본문 맨 앞에 알린다.
   const ompWorkspaceNote = usesOmpHome(def.harness)
-    ? `(작업 폴더는 ${rec.workspaceDir} 이다. 셸은 빈 폴더에서 시작하니 파일·명령은 그 경로에서 다뤄라.)`
+    ? `(작업 폴더는 ${rec.workspaceDir} 이다. 셸은 빈 폴더에서 시작하니 파일·명령은 그 경로에서 다뤄라.${deps.ompHome ? ` 빈 폴더에 남긴 파일은 다음 턴 전에 ${ompThreadDirs(deps.ompHome, key).leftovers} 로 옮겨진다.` : ''})`
     : '';
   const promptForHarness = guardInjectedPrompt(prefixesSystemPrompt(def.harness)
     ? [systemPrompt, ompWorkspaceNote, turnPrompt].filter((s) => s.length > 0).join('\n\n')
@@ -1586,8 +1586,10 @@ export async function runMentionTurn(
       if (!ompNoticeShown) { ompNoticeShown = true; laneNotices.push(notice); }
     }
     ompThread = await ensureOmpThread(deps.ompHome, key);
+    const swept = await sweepOmpThreadCwd(ompThread);
+    if (swept.length) console.log(`[mentionTurn] ${key}: omp 스레드 폴더에 남은 ${swept.length}개를 옮겼다`);
     const bad = await ompCwdViolations(ompThread.cwd, deps.stateDir);
-    if (bad.length) throw new Error(`mentionTurn: omp 의 빈 cwd 나 그 위 폴더에 설정 이름이 있어 띄우지 않는다: ${bad.join(', ')}`);
+    if (bad.length) throw new Error(`mentionTurn: omp 스레드 폴더를 비우지 못했거나 그 위 폴더에 설정 파일이 있어 띄우지 않는다: ${bad.join(', ')}`);
     await writeOmpSessionHeader(ompDirs(deps.ompHome).sessionsDir, rec.sessionId as string, ompThread.cwd);
     // omp 는 lane 으로만 돈다 — 러너는 사람 로그인을 물려받지 않아 lane 이 없으면 돌 모델이 없다(`ompHome.ts` 머리말).
     const baseUrl = providerEnv?.[OMP_LANE_BASE_URL_ENV];

@@ -137,6 +137,58 @@ describe('turnUploads', () => {
     expect(calls).toHaveLength(0);
   });
 
+  describe('omp thread folder as the base', () => {
+    const hash = 'ab12cd34'.padEnd(24, '0');
+    const threadCwd = () => join(base, AGENT, 'omp-home', 'cwd', hash, 'cwd');
+
+    it('uploads a file the model wrote in the thread folder or in that thread\u2019s work folder', async () => {
+      mkdirSync(threadCwd(), { recursive: true });
+      writeFileSync(join(threadCwd(), 'here.txt'), 'a');
+      const work = join(base, AGENT, 'workspaces', `harkroom-${AGENT}-ab12cd34`);
+      mkdirSync(work, { recursive: true });
+      writeFileSync(join(work, 'work.txt'), 'b');
+      const moved = join(base, AGENT, 'omp-home', 'leftovers', hash, 'stamp');
+      mkdirSync(moved, { recursive: true });
+      writeFileSync(join(moved, 'old.txt'), 'c');
+      for (const path of ['here.txt', 'work.txt', join(work, 'work.txt'), join(moved, 'old.txt')]) {
+        const r = resultOf(await up.maybeHandle(AGENT, uploadCall({ path }, threadCwd())));
+        expect(r.isError, path).toBeFalsy();
+      }
+    });
+
+    it('refuses anything outside those two folders, including the sibling agent dir and another thread', async () => {
+      mkdirSync(threadCwd(), { recursive: true });
+      writeFileSync(join(threadCwd(), '..', 'models.yml'), 'apiKey: x');
+      const otherWork = join(base, AGENT, 'workspaces', `harkroom-${AGENT}-99999999`);
+      mkdirSync(otherWork, { recursive: true });
+      writeFileSync(join(otherWork, 'other.txt'), 'c');
+      const otherMoved = join(base, AGENT, 'omp-home', 'leftovers', '9'.repeat(24));
+      mkdirSync(otherMoved, { recursive: true });
+      writeFileSync(join(otherMoved, 'theirs.txt'), 'e');
+      for (const path of ['../models.yml', join(otherWork, 'other.txt'), join(otherMoved, 'theirs.txt')]) {
+        expect(resultOf(await up.maybeHandle(AGENT, uploadCall({ path }, threadCwd()))).body.error.code, path).toBe('outside_workspace');
+      }
+      const lookalike = join(base, AGENT, 'workspaces', 'harkroom-other-ab12cd34');
+      mkdirSync(lookalike, { recursive: true });
+      writeFileSync(join(lookalike, 'near.txt'), 'd');
+      expect(resultOf(await up.maybeHandle(AGENT, uploadCall({ path: join(lookalike, 'near.txt') }, threadCwd()))).body.error.code).toBe('outside_workspace');
+      symlinkSync(join(threadCwd(), '..', 'models.yml'), join(threadCwd(), 'link.txt'));
+      expect(resultOf(await up.maybeHandle(AGENT, uploadCall({ path: 'link.txt' }, threadCwd()))).body.error.code).toBe('outside_workspace');
+    });
+
+    it('refuses a look-alike folder: another agent, a short hash, or a different home name', async () => {
+      for (const dir of [
+        join(base, OTHER, 'omp-home', 'cwd', hash, 'cwd'),
+        join(base, AGENT, 'omp-home', 'cwd', 'short', 'cwd'),
+        join(base, AGENT, 'not-omp', 'cwd', hash, 'cwd'),
+      ]) {
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, 'x.txt'), 'x');
+        expect(resultOf(await up.maybeHandle(AGENT, uploadCall({ path: 'x.txt' }, dir))).body.error.code, dir).toBe('no_workspace');
+      }
+    });
+  });
+
   it('refuses the workspaces directory itself as a base', async () => {
     writeFileSync(join(base, AGENT, 'workspaces', 'x.png'), PNG);
     const r = resultOf(await up.maybeHandle(AGENT, uploadCall({ path: 'x.png' }, join(base, AGENT, 'workspaces'))));

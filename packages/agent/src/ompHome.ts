@@ -17,7 +17,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { createReadStream } from 'node:fs';
-import { chmod, lstat, mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readdir, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import type { ReadonlyTools } from './adapters/contract.js';
@@ -146,18 +146,19 @@ export function ompReadonlyToolList(spec: ReadonlyTools): string {
   return [...spec.builtins, ...spec.mcpServers.map((s) => `mcp__${clean(s)}_*`)].join(',');
 }
 
-export interface OmpThreadDirs { cwd: string; agentDir: string }
+export interface OmpThreadDirs { cwd: string; agentDir: string; leftovers: string }
 
 /**
  * 스레드(세션 레코드 키)마다 고정한 자리 둘.
  * - `cwd`: 빈 폴더. 세션 헤더의 `cwd` 와 같아야 재개된다(실측) — 그래서 턴마다 새로 만들지 않는다.
  * - `agentDir`: 그 스레드의 `PI_CODING_AGENT_DIR`. lane 의 `models.yml` 이 **그 턴의 키 파일 경로**를 담으므로
  *   한 파일을 여러 스레드가 같이 쓰면 동시에 도는 턴이 서로의 경로를 덮는다 — 스레드마다 가른다.
+ * - `leftovers`: 스레드 폴더에서 옮겨 둔 파일 자리(`sweepOmpThreadCwd`). cwd 의 부모 사슬에도 `--add-dir` 에도 없다.
  */
 export function ompThreadDirs(ompHome: string, threadKey: string): OmpThreadDirs {
   const hash = createHash('sha256').update(threadKey).digest('hex').slice(0, 24);
   const root = join(ompDirs(ompHome).cwdRoot, hash);
-  return { cwd: join(root, 'cwd'), agentDir: join(root, 'agent') };
+  return { cwd: join(root, 'cwd'), agentDir: join(root, 'agent'), leftovers: join(ompHome, 'leftovers', hash) };
 }
 
 /**
@@ -183,6 +184,27 @@ export async function ensureOmpThread(ompHome: string, threadKey: string): Promi
 
 /** 빈 cwd 와 그 위 폴더에 있으면 안 되는 이름(C2). */
 const OMP_CWD_FORBIDDEN = ['.omp', '.mcp.json', '.claude', '.env', '.agents', 'AGENTS.md', 'CLAUDE.md'] as const;
+
+/**
+ * 스레드 폴더를 비운다 — `.git` 말고 전부를 러너만 보는 `leftovers/<시각>-<난수>/` 로 옮긴다. 턴을 띄우기 전에 부른다.
+ * 앞 턴의 모델이 이 폴더에 파일을 남겨도 다음 턴이 싣지 않게, 그리고 파일 하나로 스레드가 막히지 않게 한다(C2, 2026-11-05).
+ * 작업 폴더로 옮기지 않는다 — 사람의 저장소일 수 있어 커밋에 섞이거나 다른 하네스가 읽는다.
+ * 못 옮긴 것은 그 자리에 남고 뒤따르는 `ompCwdViolations` 가 잡는다. 옮긴 뒤의 경로를 돌려준다.
+ */
+export async function sweepOmpThreadCwd(thread: Pick<OmpThreadDirs, 'cwd' | 'leftovers'>, now = new Date()): Promise<string[]> {
+  const names = (await readdir(thread.cwd).catch(() => [] as string[])).filter((n) => n !== '.git');
+  if (!names.length) return [];
+  const dest = join(thread.leftovers, `${now.toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`);
+  await mkdir(dest, { recursive: true, mode: 0o700 });
+  await chmod(thread.leftovers, 0o700);
+  await chmod(dirname(thread.leftovers), 0o700);
+  const moved: string[] = [];
+  for (const name of names) {
+    const to = join(dest, name);
+    if (await rename(join(thread.cwd, name), to).then(() => true, () => false)) moved.push(to);
+  }
+  return moved;
+}
 
 /**
  * 빈 cwd 와 그 위 폴더에서 금지 이름을 찾는다(C2). cwd 자신은 `.git` 말고 아무것도 없어야 한다.

@@ -16,6 +16,8 @@ import { BUILTIN_SKILLS } from '@harkroom/shared/builtinSkills';
 import { quotedLine } from '../src/prompt.js';
 import { AccountGateRequeueError, mentionAnchor, runMentionTurn, laneSafeSkill, syncSkills, withLaneSkillHeader, type MentionTurnDeps, type MentionTurnHarkroom, type RunTurn } from '../src/mentionTurn.js';
 import { createAttentionLedger } from '../src/attentionLedger.js';
+import { execFileSync } from 'node:child_process';
+import { ensureOmpHome, ensureOmpThread } from '../src/ompHome.js';
 import { BODY_LIMIT, WATCH_ORIGIN_LINE_NOTE } from '../src/prompt.js';
 
 /** 사람이 부른 턴이 마지막 말도 못 읽고 답 없이 끝났을 때의 통지(`silentTurnNotice`). */
@@ -4573,6 +4575,42 @@ describe('말없이 끝난 API 키 연결 턴 — 재촉 1회와 부른 쪽 알�
     expect(nudges).toHaveLength(0);
     expect(fake.posts.some((p) => p.body.startsWith('@someone'))).toBe(false);
   }, 15_000);
+});
+
+describe('omp 턴은 띄우기 전에 스레드 폴더를 비운다', () => {
+  it('앞 턴이 남긴 파일은 러너 자리로 옮겨지고, 작업 폴더가 git 저장소여도 그 안에 아무것도 안 생긴다', async () => {
+    const fake = new FakeHarkroom(defOf({ harness: 'omp' }));
+    fake.seedFrom('human-1', '@forge 안녕').id = MENTION;
+    const { deps } = await makeDeps(fake, {});
+    const stateDir = deps.workspaceBaseDir;
+    const ompHome = join(stateDir, 'omp-home');
+    await ensureOmpHome({ ompHome, mcpServers: {} });
+    const key = SessionStore.threadKey(CHANNEL, null);
+    const thread = await ensureOmpThread(ompHome, key);
+    await writeFile(join(thread.cwd, 'left-by-model.txt'), 'x');
+    const workspaceDir = join(stateDir, 'omp-ws');
+    await mkdir(workspaceDir, { recursive: true });
+    execFileSync('git', ['init', '-q', workspaceDir]);
+    await deps.store.put(key, { workspaceDir, sessionId: '00000000-0000-4000-8000-000000000001', harness: 'omp', lastFedSeq: 0, turnsRun: 0 });
+    const mcpConfigPath = join(stateDir, 'mcp.json');
+    await writeFile(mcpConfigPath, JSON.stringify({ mcpServers: { harkroom: { type: 'stdio', command: '/opt/harkroom/harkroom-operator', args: ['mcp-bridge'] } } }));
+    vi.stubEnv('HARKROOM_RUNNER_SECRET', 'fake-runner-secret');
+    let error = '';
+    try {
+      // 판 시험 키가 없어 lane 단계에서 멈춘다 — 그 앞의 폴더 검사를 지났다는 표지다.
+      await runMentionTurn({ ...deps, mcpConfigPath, ompHome, stateDir } as never, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }).catch((e: unknown) => { error = String(e); });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect(error).not.toContain('띄우지 않는다');
+    expect(await readdir(thread.cwd)).toEqual(['.git']);
+    const [stamp] = await readdir(thread.leftovers);
+    expect(await readFile(join(thread.leftovers, stamp!, 'left-by-model.txt'), 'utf8')).toBe('x');
+    // 스킬 자리(.agents·.claude)는 러너가 원래 워크스페이스에 잇는다. 옮긴 파일은 그 밖에도 안에도 없어야 한다.
+    const status = execFileSync('git', ['-C', workspaceDir, 'status', '--porcelain', '-uall'], { encoding: 'utf8' });
+    expect(status).not.toContain('left-by-model');
+    expect((await readdir(workspaceDir)).filter((n) => !['.git', '.agents', '.claude'].includes(n))).toEqual([]);
+  });
 });
 
 describe('codex 의 차례 끝은 화면이 말해도 기록으로 확정한다', () => {

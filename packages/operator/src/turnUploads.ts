@@ -22,7 +22,7 @@
 import { randomUUID } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
 import { open, realpath, type FileHandle } from 'node:fs/promises';
-import { basename, dirname, extname, isAbsolute, resolve, sep } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
 import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
 
 export const ATTACHMENT_UPLOAD_TOOL = 'attachment.upload';
@@ -117,20 +117,49 @@ export function isAgentTurnWorkspace(root: string, agentId: string): boolean {
   return owns(basename(stateDir)) || owns(basename(dirname(stateDir)));
 }
 
+/**
+ * 기준 디렉터리가 **이 에이전트의 omp 스레드 폴더**면 그 스레드의 턴 워크스페이스와, 앞 턴 파일을 옮겨 둔 자리를 함께 돌려준다 —
+ * `<상태 루트>[/<instance>]/omp-home/cwd/<24자 해시>/cwd` (`agent/ompHome.ts` 의 `ompThreadDirs`).
+ *
+ * omp 는 저장소 설정을 읽지 않게 빈 폴더에서 뜨므로 브릿지의 cwd 도 그 폴더다. 모델은 파일을 거기에도, 프롬프트가 알려 준 작업
+ * 폴더(`<상태 루트>/workspaces/harkroom-<id>-<해시 앞 8자>`, 같은 스레드 키의 해시다)에도 쓴다. 모양이 아니면 `null`(fail-closed).
+ */
+async function ompThreadRoots(root: string, agentId: string): Promise<string[] | null> {
+  if (!agentId || basename(root) !== 'cwd') return null;
+  const hashDir = dirname(root);
+  const hash = basename(hashDir);
+  const cwdRoot = dirname(hashDir);
+  const ompHome = dirname(cwdRoot);
+  if (!/^[0-9a-f]{24}$/.test(hash) || basename(cwdRoot) !== 'cwd' || basename(ompHome) !== 'omp-home') return null;
+  const stateDir = dirname(ompHome);
+  const owns = (name: string) => name === agentId || name.endsWith(`-${agentId}`);
+  if (!owns(basename(stateDir)) && !owns(basename(dirname(stateDir)))) return null;
+  const others = await Promise.all([
+    realpath(join(stateDir, 'workspaces', `harkroom-${agentId}-${hash.slice(0, 8)}`)).catch(() => null),
+    realpath(join(ompHome, 'leftovers', hash)).catch(() => null),
+  ]);
+  return [root, ...others.filter((r): r is string => r !== null)];
+}
+
 /** `path` 를 `cwd` 아래의 실제 파일로 푼다. 둘 다 realpath 로 — 심링크로 밖을 가리키면 거절한다. */
 export async function resolveInsideWorkspace(cwd: string, path: string, agentId: string): Promise<Resolved> {
   let root: string;
   try { root = await realpath(cwd); } catch {
     return { ok: false, code: 'no_workspace', message: 'the turn workspace could not be resolved' };
   }
-  if (!isAgentTurnWorkspace(root, agentId)) {
+  const roots = isAgentTurnWorkspace(root, agentId) ? [root] : await ompThreadRoots(root, agentId);
+  if (!roots) {
     return { ok: false, code: 'no_workspace', message: 'this harness does not run in your harkroom turn workspace; uploads are disabled here' };
   }
-  let target: string;
-  try { target = await realpath(isAbsolute(path) ? path : resolve(root, path)); } catch {
-    return { ok: false, code: 'not_found', message: `no such file: ${path}` };
+  const inside = (target: string, r: string) => target === r || target.startsWith(r.endsWith(sep) ? r : r + sep);
+  // 상대 경로는 기준 폴더들을 차례로 찾는다(앞 폴더에 없을 때만 뒤로). 찾은 뒤의 판정은 같다.
+  let target: string | null = null;
+  for (const candidate of isAbsolute(path) ? [path] : roots.map((r) => resolve(r, path))) {
+    target = await realpath(candidate).catch(() => null);
+    if (target) break;
   }
-  if (target !== root && !target.startsWith(root.endsWith(sep) ? root : root + sep)) {
+  if (!target) return { ok: false, code: 'not_found', message: `no such file: ${path}` };
+  if (!roots.some((r) => inside(target, r))) {
     return { ok: false, code: 'outside_workspace', message: 'the file must be inside this turn workspace — copy it there first' };
   }
   return { ok: true, path: target };
