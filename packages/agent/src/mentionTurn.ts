@@ -16,7 +16,7 @@ import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs
 import { dirname, join } from 'node:path';
 import type { AgentHarness, AgentView, InboxCanceledWake, InboxDelegatedBy, InboxDelegationOutcome, InboxTeamCall, MessageRow, WakeReportTo } from '@harkroom/shared';
 import type { FailOpts, Me } from './harkroom.js';
-import { laneNudgeText, laneNudgeWanted, BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DELTA_MAX_MESSAGES, mergeThreadPages, DENIAL_NOTICE_MAX_PER_TURN, MAC_PERMISSION_NOTICE_MAX_PER_TURN, macPermissionNotice, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, stallScreenErrorLine, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, silentTurnNotice, silentWakeNotice, backgroundCutNotice, reportMissedNotice, MESSAGE_KIND_WAKE, hasOwnReportSince, watchMissedNotice } from './prompt.js';
+import { laneNudgeText, laneNudgeWanted, BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DELTA_MAX_MESSAGES, mergeThreadPages, DENIAL_NOTICE_MAX_PER_TURN, MAC_PERMISSION_NOTICE_MAX_PER_TURN, macPermissionNotice, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, stallScreenErrorLine, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, SILENT_ACK_EMOJI, silentTurnNotice, silentWakeNotice, backgroundCutNotice, reportMissedNotice, MESSAGE_KIND_WAKE, hasOwnReportSince, watchMissedNotice } from './prompt.js';
 import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
 import { SessionStore, type SessionRecord } from './sessions.js';
 import { attachesCommandHook, attachesPostToolHook, buildTurnCommand, chromeTurnFor, harnessPath, turnKeyDelivery, safeToolAllows, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
@@ -3183,7 +3183,15 @@ export async function runMentionTurn(
       const lastSaid = await (deps.readLastSaid ?? readLastAssistantText)(def.harness, rec.sessionId, {
         configDir: deps.claudeConfigDir, sinceMs: turnStartedAtMs,
       }).catch(() => null);
-      await deps.harkroom.progress(channelId, silentWakeNotice(lastSaid, deps.runnerSecret, await tailSecrets()), anchor);
+      if (target.scheduledWake) {
+        // **예약 시각에 깬 턴이면 깨운 대기 줄에 ✅ 를 단다**(2026-11-06). progress 줄은 같은 저자의 다음 글이 올 때까지 끝난 턴을 「작업 중」으로 그렸다.
+        // 글 없이 끝난 예약 턴(`silentTurnNotice` 의 `wake`)과 같은 표시이고, 끝말은 러너 로그에만 남는다.
+        const said = quotedLine(lastSaid, deps.runnerSecret, await tailSecrets());
+        console.log(`[mentionTurn] ${key}: 다시 예약하고 글 없이 끝났다 — ✅ 만 단다${said ? ` (마지막 말: ${said})` : ''}`);
+        await deps.harkroom.addReaction(channelId, mentionId, SILENT_ACK_EMOJI);
+      } else {
+        await deps.harkroom.progress(channelId, silentWakeNotice(lastSaid, deps.runnerSecret, await tailSecrets()), anchor);
+      }
     }
     // **약속한 보고처에 말했나**(2026-10-06). 앵커 쪽 판정(위)과 따로 본다 — 앵커에 답하고도 보고처를 잊는 것이
     // 실측된 모양이다(task_manager 10-06). 다시 기다리기로 했으면(새 깨움) 아직 보고할 때가 아니니 경고하지 않는다.
