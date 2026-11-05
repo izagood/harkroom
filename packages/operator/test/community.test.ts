@@ -74,6 +74,37 @@ describe('community', () => {
     expect(c.assignments.has('a-1')).toBe(false);
   });
 
+  it('agent.restart 는 바로 앞 assign 처리가 끝난 뒤에 내린다 — 새 정의로 다시 뜨게', async () => {
+    let handlers: Parameters<LinkDialer>[2] | null = null;
+    const dial: LinkDialer = (_u, _t, h) => { handlers = h; h.onOpen({ send: () => {}, close: () => {} }); };
+    const { reconciler, calls } = fakeReconciler();
+    let finishAssign = () => {};
+    const held: AssignmentReconciler = {
+      ...reconciler,
+      onAssign: async () => { await new Promise<void>((res) => { finishAssign = res; }); calls.push('assign done'); return 'already'; },
+    };
+    const c = createCommunity({
+      baseUrl: 'https://example.com', token: 'hkop_x', agents: { 'a-1': {} },
+      reconciler: held, dial, schedule: () => {}, log: () => {},
+    });
+    c.start();
+    const assign: ServerToOperatorFrame = { type: 'assign', agentId: 'a-1', definition: {
+      agentId: 'a-1', handle: 'murmur', harness: 'claude-code', instructions: '', model: null, effort: null,
+      mentionPermission: 'auto', workingDirDefault: null, credentialScope: 'none', ownerAccountId: null, mcpServers: ['files'],
+    } };
+    handlers!.onMessage(JSON.stringify(assign));
+    handlers!.onMessage(JSON.stringify({ type: 'agent.restart', agentId: 'a-1' }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toEqual([]);
+    finishAssign();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toEqual(['assign done', 'restart a-1']);
+    // 처리가 끝나면 바로 내린다.
+    handlers!.onMessage(JSON.stringify({ type: 'agent.restart', agentId: 'a-1' }));
+    expect(calls.at(-1)).toBe('restart a-1');
+    expect(calls).toHaveLength(3);
+  });
+
   it('러너 프레임은 runnerId 를 달고 서버로, 서버의 러너 프레임은 runnerId 의 러너로 간다(스펙 §5)', () => {
     const sent: string[] = [];
     let handlers: Parameters<LinkDialer>[2] | null = null;

@@ -140,6 +140,8 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
   const noLink = { send: () => false, isLinked: () => false };
   // 링크가 서버 링크를 필요로 하고 서버 링크의 훅이 다중화기를 필요로 한다 — 늦게 묶는다.
   const linkRef: { current: ServerLink | null } = { current: null };
+  /** 아직 처리 중인 `assign` — 바로 뒤에 오는 `agent.restart` 가 기다린다. */
+  const assignsInFlight = new Map<string, Promise<unknown>>();
   const mux = createRelayMux({
     link: deps.runnerLink ?? noLink,
     send: (frame) => linkRef.current?.send(frame) ?? false,
@@ -220,7 +222,7 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
         assignments.set(frame.agentId, frame.definition);
         // 주인이 같은 에이전트가 붙으면 로그인 목록을 다음 박동까지 기다리지 않고 낸다(같은 값이면 보내지 않는다).
         beatGh();
-        void deps.reconciler.onAssign(deps.baseUrl, frame.definition, local)
+        const pending = deps.reconciler.onAssign(deps.baseUrl, frame.definition, local)
           .then((outcome) => {
             if (typeof outcome !== 'object') return;
             // 거절은 조용히 안 뜨는 것이 아니다 — 서버(와 배정한 사람)가 사유를 본다. 러너가 없었으니
@@ -228,7 +230,9 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
             assignments.delete(frame.agentId);
             link.send({ type: 'runner.exited', runnerId: randomUUID(), code: null, reason: outcome.refused, agentId: frame.agentId });
           })
-          .catch((err: unknown) => deps.log(`배정 처리 실패: ${err instanceof Error ? err.message : String(err)}`));
+          .catch((err: unknown) => deps.log(`배정 처리 실패: ${err instanceof Error ? err.message : String(err)}`))
+          .finally(() => { if (assignsInFlight.get(frame.agentId) === pending) assignsInFlight.delete(frame.agentId); });
+        assignsInFlight.set(frame.agentId, pending);
         return;
       }
       if (frame.type === 'unassign') {
@@ -238,7 +242,12 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
         return;
       }
       if (frame.type === 'agent.restart') {
-        if (!deps.reconciler.restart(frame.agentId)) deps.log(`재시작 무시: agent=${frame.agentId} — 배정·러너가 없다`);
+        const restart = () => {
+          if (!deps.reconciler.restart(frame.agentId)) deps.log(`재시작 무시: agent=${frame.agentId} — 배정·러너가 없다`);
+        };
+        // 서버는 새 정의를 바로 앞에 보낸다. 그 처리(MCP 설정 쓰기·토큰 갱신)가 끝난 뒤에 내려야 새 정의로 뜬다.
+        const pending = assignsInFlight.get(frame.agentId);
+        if (pending) void pending.then(restart); else restart();
         return;
       }
       // 로컬 직결 키는 러너까지 가지 않는다 — 이 오퍼레이터의 허브가 받는다(R1 PR-3b).
