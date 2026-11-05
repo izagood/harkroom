@@ -2051,6 +2051,10 @@ export interface InboxEntry {
    */
   reason: 'mention' | 'thread_reply' | 'dm' | 'wake' | 'ask_answered' | 'ask_closed'
     | 'team_mention' | 'team_delegated' | 'delegation_done';
+  /**
+   * 이 글이 띄울 턴의 원인 키. 러너는 값이 같은 글만 한 턴으로 묶는다. 옛 서버는 싣지 않는다 — 그때는 사람 글만 묶는다.
+   */
+  causeKey?: string;
   readAt: string | null;
   channelId: string;
   /**

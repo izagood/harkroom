@@ -2000,7 +2000,9 @@ describe('runMentionTurn', () => {
     expect(plans).toHaveLength(2);
     const planContent = await getPlanContent(plans, turnOpts);
     expect(planContent[1]).toContain('alice (← 너를 부른 글): @forge 기다리던 요청');
-    expect(planContent[1]).toContain('아직 어느 턴도 처리하지 않았다');
+    // 그 뒤에 내 글이 있어도 처리하라는 말은 남는다 — 다른 요청에 답한 글일 수 있다(#1699).
+    expect(planContent[1]).toContain('그 뒤에 네 글이 있다');
+    expect(planContent[1]).toContain('아니면 지금 처리하라');
     expect(planContent[1]).not.toContain('먼저 돈 요청');
   });
 
@@ -2025,6 +2027,22 @@ describe('runMentionTurn', () => {
     expect(planContent[1]).toContain('alice (← 너를 부른 글): @forge 밀린 요청');
     expect(planContent[1]).toContain(`(너를 부른 글: harkroom://message/${x.id} · seq ${x.seq})`);
     expect(planContent[1]).not.toContain('범위 밖');
+  });
+
+  it('묶인 앞 부름: 페이지 밖이어도 본문을 싣고 👀 를 단다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.limit = 1;
+    const a1 = fake.seedFrom('human-1', '@forge 앞 부름 본문');
+    const lead = fake.seedFrom('human-1', '@forge 새 부름');
+    const { deps, plans, turnOpts } = await makeDeps(fake, { handles: { [ME.id]: ME.handle, 'human-1': 'alice' } });
+    const log = vi.spyOn(console, 'log');
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: lead.id, mentionRow: lead, bundledRows: [a1] });
+    // 측정: 묶인 수·앞 턴이 이미 본 글인가·첫 답 지연을 턴마다 한 줄 남긴다.
+    expect(log.mock.calls.flat().some((l) => /\[turnStats\].*bundled=2 alreadySeen=false firstReplyMs=/.test(String(l)))).toBe(true);
+    log.mockRestore();
+    const planContent = await getPlanContent(plans, turnOpts);
+    expect(planContent[0]).toContain(`alice (앞 부름 · seq ${a1.seq}): @forge 앞 부름 본문`);
+    expect(fake.reactions.some((r) => r.messageId === a1.id && r.emoji === '👀' && r.action === 'add')).toBe(true);
   });
 
   it('깨움 턴은 인박스 글을 부른 글로 싣지 않는다', async () => {

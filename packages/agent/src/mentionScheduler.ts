@@ -11,7 +11,8 @@
 // 이유 자체가 사라진다.
 import { ProviderLaneError } from './providerLane.js';
 import type { FailOpts, InboxBatch } from './harkroom.js';
-import { ASK_TEXT_OPTION_ID, type WakeReportTo } from '@harkroom/shared';
+import { ASK_TEXT_OPTION_ID, type MessageRow, type WakeReportTo } from '@harkroom/shared';
+import { DELTA_MAX_CHARS } from './prompt.js';
 import { AccountGateRequeueError, mentionAnchor, type MentionTarget, type MentionTurnDeps, type MentionTurnResult } from './mentionTurn.js';
 import { SessionStore } from './sessions.js';
 import type { TurnRegistry } from './turnRegistry.js';
@@ -106,6 +107,8 @@ export interface BatchContext {
   handles: Record<string, string>;
   /** 에이전트 계정 id 들 — 침묵 통지가 부른 쪽을 가른다(`MentionTurnDeps.agentIds`). */
   agentIds?: ReadonlySet<string>;
+  /** 계정 표에서 사람으로 확인된 id 들. 멘션 묶기는 여기 있는 작성자만 묶는다 — 모르는 계정은 묶지 않는다. */
+  humanIds?: ReadonlySet<string>;
 }
 
 export interface AdmitOutcome {
@@ -348,6 +351,25 @@ function wakeTarget(mention: InboxBatch['messages'][number]): { reason: string; 
   };
 }
 
+/** 한 턴으로 묶는 멘션 수의 상한. */
+export const BUNDLE_MAX_ENTRIES = 10;
+/** 묶인 글 본문 합의 상한. 프롬프트 예산(`DELTA_MAX_CHARS`)의 절반이다 — 대화 줄 자리를 남긴다. */
+const BUNDLE_MAX_CHARS = DELTA_MAX_CHARS / 2;
+/** 이 횟수만큼 실패한 entry 는 묶지 않고 하나씩 띄운다. */
+export const BUNDLE_MAX_FAILURES = 2;
+
+/**
+ * 한 턴으로 묶어도 되는 부름인가. 사람이 그냥 부른 글·답글뿐이다. 예약·카드 답·위임·팀 부름·수정으로 불림은 그 사유가
+ * 턴이 할 일이라 따로 뜨고, 시스템 줄·자동화·▷ 시작 글은 임대의 principal 이 작성자와 달라 섞으면 권한이 섞인다.
+ */
+export function isPlainMention(entry: InboxBatch['entries'][number], mention: MessageRow): boolean {
+  if (entry.reason !== 'mention' && entry.reason !== 'thread_reply' && entry.reason !== 'dm') return false;
+  if (entry.team || entry.delegation || entry.delegatedBy || entry.viaEdit || entry.canceledWakes?.length || entry.startedIn) return false;
+  if (mention.kind !== 'user') return false;
+  const meta = mention.meta ?? {};
+  return !('kind' in meta && (meta.kind === 'ask' || meta.kind === 'wake')) && !('automation' in meta) && !('automationId' in meta) && !('planStart' in meta);
+}
+
 /** 끝났는데 읽음 처리가 안 된 entry 를 "다시 띄우지 않는다" 로 기억하는 상한(2026-10-02). */
 export const DONE_UNREAD_MAX_MS = 24 * 60 * 60 * 1000;
 /**
@@ -479,7 +501,9 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       console.error(`  entry ${ids.join(',')} 읽음 처리 실패(턴은 끝났다 — 다시 띄우지 않고 다음 폴에 읽음 처리만 다시 한다): ${err instanceof Error ? err.message : String(err)}`);
     }
   };
-  const finish = (entryId: number): Promise<void> => finishMany([entryId]);
+  /** 묶음의 대표 entry → 함께 뜬 entry 전부(대표 포함). 끝나면 함께 읽음 처리하고, 실패 회계도 함께 진다. */
+  const bundles = new Map<number, number[]>();
+  const finish = (entryId: number): Promise<void> => finishMany(bundles.get(entryId) ?? [entryId]);
   /**
    * 상한을 넘긴 항목을 표에서 지운다(L1). 전에는 같은 entry 가 **다시 올 때만** 지웠다 — 서버가 읽음
    * 처리는 했는데 응답만 늦어 시한에 걸린 경우(`-32001`)가 그 모양이라, 다시 오지 않는 id 가 러너가
@@ -510,6 +534,8 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
     canceledWakes?: InboxBatch['entries'][number]['canceledWakes'],
     /** 이 일이 시작된 스레드(위임장, 서버가 inbox 항목에 싣는다 — `InboxEntry.startedIn`). */
     startedIn?: InboxBatch['entries'][number]['startedIn'],
+    /** 이 턴에 함께 처리할 앞 부름(오래된 순). 비었으면 혼자 뜬 턴이다. */
+    bundledRows: MessageRow[] = [],
   ): Promise<void> {
     /**
      * 임대를 잃어 접힌 턴의 표지(security L1). 사람이 스레드에서 "왜 말하다 멈췄나"를 알 수 있게 한 줄 남긴다.
@@ -522,6 +548,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
     };
     const target: MentionTarget = {
       channelId: mention.channelId, threadRootId: anchor, mentionId: mention.id, mentionRow: mention,
+      ...(bundledRows.length ? { bundledRows } : {}),
       ...(fence ? { fence } : {}),
       // 깨움(마이그레이션 040): 자기가 걸어 둔 예약이 시각이 되어 자기를 부른 것이다. 사유는
       // 그 대기 줄의 본문이다 — 서버가 거기 넣었고(agentWakes.ts::scheduleWake), 여기서 다시
@@ -920,11 +947,58 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       // **이 두 줄이 어떤 await 보다도 앞이어야 한다.** 뒤에 두면 그 사이 예외에 스레드
       // 키가 장부에 영구히 남고, 그 스레드는 영원히 blocked 가 된다 — 프로세스는 회수됐는데
       // 장부만 남아 스레드가 죽는다(turnRegistry.ts 머리 주석의 인메모리판).
-      inFlightEntries.delete(entryId);
+      // 묶음은 한 몸이다 — 대표가 재시도·관문 대기로 남았으면 나머지도 같이 기다린다. 따로 뜨면 빈 턴이 그대로다.
+      const members = bundles.get(entryId) ?? [entryId];
+      bundles.delete(entryId);
+      for (const id of members) {
+        inFlightEntries.delete(id);
+        if (id === entryId) continue;
+        const record = attempts.get(entryId);
+        if (record) attempts.set(id, { ...record, noticed: attempts.get(id)?.noticed ?? record.noticed });
+        else attempts.delete(id);
+        const gw = gateWaits.get(entryId);
+        if (gw) gateWaits.set(id, gw);
+      }
       inFlightThreads.delete(threadKey);
       deps.registry.unreserveMention(threadKey);
     }
   }
+
+  /**
+   * 혼자서도 지금 뜰 수 있는 entry 인가 — `admit` 앞쪽 관문과 같은 것을 읽기만 한다. 묶음이 관문을 건너뛰지 않게 한다.
+   * 실패가 쌓인 entry 는 묶지 않는다(`BUNDLE_MAX_FAILURES`): 한 글 때문에 같은 사람의 다른 글까지 늦지 않게 하나씩 띄운다.
+   */
+  const canJoinBundle = (entry: InboxBatch['entries'][number]): boolean => {
+    const record = attempts.get(entry.id);
+    if (record && (record.notBefore > now() || record.tried >= BUNDLE_MAX_FAILURES)) return false;
+    return !gateWaits.has(entry.id) && !doneUnread.has(entry.id) && !recentlyDone.has(entry.id)
+      && !inFlightEntries.has(entry.id) && !deps.heldEntryIds?.().has(entry.id);
+  };
+
+  /** [entry] 와 한 턴으로 묶을 entry 들(오래된 순, 끝이 대표). 묶을 수 없으면 [entry] 하나다. */
+  const bundleFor = (entry: InboxBatch['entries'][number], mention: MessageRow, threadKey: string, batch: InboxBatch, ctx: BatchContext): InboxBatch['entries'] => {
+    // 턴 임대는 대표 글 하나에서 나온다. 에이전트 글은 원인 키가 같을 때만 묶고, 키가 없으면 사람으로 확인된 글만 묶는다.
+    const sameCause = (other: InboxBatch['entries'][number]): boolean => {
+      // 한쪽만 있으면 묶지 않는다 — 서버가 키를 싣기 시작한 직후 옛 항목과 새 항목이 섞이는 순간이다.
+      if (entry.causeKey !== undefined || other.causeKey !== undefined) return entry.causeKey === other.causeKey;
+      return ctx.humanIds?.has(mention.authorId) === true;
+    };
+    if (!isPlainMention(entry, mention) || (attempts.get(entry.id)?.tried ?? 0) >= BUNDLE_MAX_FAILURES) return [entry];
+    const group = [entry];
+    let chars = mention.body.length;
+    for (const other of batch.entries) {
+      if (group.length >= BUNDLE_MAX_ENTRIES) break;
+      if (other.id <= entry.id) continue;
+      const row = batch.messages.find((m) => m.id === other.messageId);
+      if (!row || row.authorId !== mention.authorId || !sameCause(other) || !isPlainMention(other, row) || !canJoinBundle(other)) continue;
+      if (SessionStore.threadKey(row.channelId, mentionAnchor(row)) !== threadKey) continue;
+      // 본문을 다 싣지 못할 글은 넣지 않는다 — 안 실린 글을 읽음 처리하면 #1699 가 돌아온다. 다음 턴이 받는다.
+      if (chars + row.body.length > BUNDLE_MAX_CHARS) break;
+      chars += row.body.length;
+      group.push(other);
+    }
+    return group;
+  };
 
   return {
     async admit(batch, ctx) {
@@ -1066,10 +1140,22 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
           }
         }
 
+        // 같은 사람이 이 스레드에 연달아 부른 보통 멘션은 한 턴으로 처리한다. 원인은 그중 가장 새 글이다.
+        const group = bundleFor(entry, mention, threadKey, batch, ctx);
+        const lead = group.at(-1)!;
+        const leadMention = batch.messages.find((m) => m.id === lead.messageId)!;
+        const bundledRows = group.slice(0, -1).map((e) => batch.messages.find((m) => m.id === e.messageId)!);
+        if (group.length > 1) {
+          bundles.set(lead.id, group.map((e) => e.id));
+          // 관문 재시도 횟수도 시도 횟수처럼 구성원의 최대값을 대표가 물려받는다 — 대표가 바뀌어도 0부터 세지 않는다.
+          const heaviest = group.map((e) => gateRequeues.get(e.id)).filter((r) => r !== undefined).sort((a, b) => b.count - a.count)[0];
+          for (const e of group) gateRequeues.delete(e.id);
+          if (heaviest) gateRequeues.set(lead.id, heaviest);
+        }
+
         // 장부 등록은 **동기적으로, 띄우기 전에**. 위 inFlightThreads 주석이 이유다.
-        inFlightEntries.add(entry.id);
+        for (const e of group) { inFlightEntries.add(e.id); blockedNoticed.delete(e.id); }
         inFlightThreads.add(threadKey);
-        blockedNoticed.delete(entry.id);
         // 인터랙티브 open 도 이 결정을 보게 한다(`TurnRegistry.reserveMention` 주석) — 장부는 이 파일
         // 안에만 있어서, 그 틈에 사람이 연 터미널이 먼저 등록하면 이 턴의 `register` 가 던진다.
         deps.registry.reserveMention(threadKey);
@@ -1077,23 +1163,24 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
 
         // **관문을 전부 통과한 지금이 유일한 증가 지점이다.** blocked·deferred·skipped 는 이
         // 줄에 닿지 않는다 — 닿으면 붐비는 스레드의 멘션이 답도 못 듣고 MAX_ATTEMPTS 로 버려진다.
-        const prior = attempts.get(entry.id);
-        const tried = (prior?.tried ?? 0) + 1;
+        const prior = attempts.get(lead.id) ?? group.map((e) => attempts.get(e.id)).find(Boolean);
+        const tried = Math.max(0, ...group.map((e) => attempts.get(e.id)?.tried ?? 0)) + 1;
         // `noticed` 를 **보존한다**: 여기서 떨어뜨리면 시도마다 "아직 안 알렸다"가 되어
         // entry 당 1회라는 약속이 깨진다.
-        attempts.set(entry.id, { tried, notBefore: 0, noticed: prior?.noticed });
+        for (const e of group) if (e.id !== lead.id) attempts.delete(e.id);
+        attempts.set(lead.id, { tried, notBefore: 0, noticed: prior?.noticed });
 
-        void deps.turnWatch?.started(threadKey, mention.id).catch(() => {});
-        const task: Promise<void> = runOne(entry.id, mention, anchor, threadKey, ctx, tried, entry.reason, entry.team, entry.delegation, entry.delegatedBy, entry.viaEdit === true, claim?.lost, entry.canceledWakes, entry.startedIn)
+        void deps.turnWatch?.started(threadKey, leadMention.id).catch(() => {});
+        const task: Promise<void> = runOne(lead.id, leadMention, anchor, threadKey, ctx, tried, lead.reason, lead.team, lead.delegation, lead.delegatedBy, lead.viaEdit === true, claim?.lost, lead.canceledWakes, lead.startedIn, bundledRows)
           .catch((err: unknown) => {
-            console.error(`  ${entry.messageId} 턴 실패:`, err instanceof Error ? err.message : err);
+            console.error(`  ${lead.messageId} 턴 실패:`, err instanceof Error ? err.message : err);
           })
           // 임대는 턴이 **완전히 끝난 뒤** 놓는다(재시도로 미룬 멘션도 이 턴은 끝났다 — 다음 시도는 다시 잡는다).
           .finally(() => {
             running.delete(task);
             void claim?.release();
             if (slotHeld) void deps.turnSlots?.release(threadKey);
-            void deps.turnWatch?.ended(threadKey, mention.id).catch(() => {});
+            void deps.turnWatch?.ended(threadKey, leadMention.id).catch(() => {});
           });
         running.add(task);
       }
