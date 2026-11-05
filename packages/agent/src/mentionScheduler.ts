@@ -979,7 +979,8 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
   const bundleFor = (entry: InboxBatch['entries'][number], mention: MessageRow, threadKey: string, batch: InboxBatch, ctx: BatchContext): InboxBatch['entries'] => {
     // 턴 임대는 대표 글 하나에서 나온다. 에이전트 글은 원인 키가 같을 때만 묶고, 키가 없으면 사람으로 확인된 글만 묶는다.
     const sameCause = (other: InboxBatch['entries'][number]): boolean => {
-      if (entry.causeKey !== undefined && other.causeKey !== undefined) return entry.causeKey === other.causeKey;
+      // 한쪽만 있으면 묶지 않는다 — 서버가 키를 싣기 시작한 직후 옛 항목과 새 항목이 섞이는 순간이다.
+      if (entry.causeKey !== undefined || other.causeKey !== undefined) return entry.causeKey === other.causeKey;
       return ctx.humanIds?.has(mention.authorId) === true;
     };
     if (!isPlainMention(entry, mention) || (attempts.get(entry.id)?.tried ?? 0) >= BUNDLE_MAX_FAILURES) return [entry];

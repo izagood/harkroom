@@ -987,11 +987,16 @@ describe('같은 사람의 연달은 부름을 한 턴으로 묶는다', () => {
     }
   });
 
-  it('사람 글도 원인 키가 다르면 묶지 않는다', async () => {
+  it.each([
+    ['다르면', { causeKey: 'k' }, { causeKey: 'z' }],
+    ['앞 글에만 있으면', { causeKey: 'k' }, {}],
+    ['뒤 글에만 있으면', {}, { causeKey: 'k' }],
+  ])('사람 글도 원인 키가 %s 묶지 않는다', async (_n, one, two) => {
     const seen: MentionTarget[] = [];
     const { scheduler } = harness({ runTurn: run(seen) });
-    await scheduler.admit(batch([row('a', 1), row('b', 2)], { 1: { causeKey: 'k' }, 2: { causeKey: 'z' } }), bundleCtx);
+    await scheduler.admit(batch([row('a', 1), row('b', 2)], { 1: one, 2: two }), bundleCtx);
     await scheduler.drain();
+    expect(seen[0]!.mentionId).toBe('a');
     expect(seen[0]!.bundledRows).toBeUndefined();
   });
 
