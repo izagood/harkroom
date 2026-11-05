@@ -50,7 +50,7 @@ export const CODEX_ADAPTER: HarnessAdapter = {
     // **재 보지 않았다.** 같은 구조가 적용될 것으로 보지만 실물 화면이 없다
     // (`docs/specs/2026-09-08-tui-attention-design.md` §"codex 의 관문").
     gateMeasured: false,
-    // 일하는 중 줄 `• Working (35s • esc to interrupt)` — 첫 토큰 전 침묵·셸 실행 내내 보이고 최종 답에서 사라진다(0.154.0).
+    // 일하는 중 줄 `• Working (35s • esc to interrupt)` — 첫 토큰 전 침묵·셸 실행 내내 보이고, 모델의 글 뒤와 최종 답에서 사라진다(0.154.0).
     busy: /esc to interrupt/,
     /**
      * 실측(2026-09-14): 0.3초 주입 → Enter 가 삼켜짐, 2초 → 정상. 부팅이 끝나기 전의
@@ -84,6 +84,8 @@ export const CODEX_ADAPTER: HarnessAdapter = {
    */
   transcript: { kind: 'files', dirUnderConfig: 'sessions', layout: 'by-date', fileName: 'rollout-<ts>-<id>.jsonl', parsed: false },
   lastSaidRecord: 'codex-rollout',
+  /** 일하는 중 표지는 모델이 글을 낸 뒤 턴 도중에도 꺼진다(0.154.0 실측, 3초 넘게) — 끝은 기록의 `task_complete` 로 확정한다. */
+  turnEndRecord: 'codex-rollout',
 
   /**
    * 축은 있다 — `CODEX_HOME` 은 config·auth·sessions 를 한꺼번에 바꾸므로 claude 의
