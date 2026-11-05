@@ -10,6 +10,7 @@ import '../state/app_scope.dart';
 import '../state/app_state.dart';
 import '../ui/parts.dart';
 import '../ui/states.dart';
+import '../ui/status_bar_scroll.dart';
 import '../ui/tokens.dart';
 import 'channel_list_screen.dart';
 import 'message_link.dart';
@@ -253,7 +254,7 @@ class _SearchScreenState extends State<SearchScreen> {
       if (c.id == widget.channelId) channel = c;
     }
 
-    return Scaffold(
+    return StatusBarScroll(controller: _scroll, child: Scaffold(
       appBar: AppBar(
         automaticallyImplyLeading: false,
         titleSpacing: HarkroomSize.gutter,
@@ -336,7 +337,7 @@ class _SearchScreenState extends State<SearchScreen> {
           ],
         ),
       ),
-    );
+    ));
   }
 
   Widget _body(BuildContext context) {

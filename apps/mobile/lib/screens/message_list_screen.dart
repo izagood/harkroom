@@ -9,6 +9,7 @@ import '../state/app_scope.dart';
 import '../state/app_state.dart';
 import '../ui/parts.dart';
 import '../ui/states.dart';
+import '../ui/status_bar_scroll.dart';
 import '../ui/tokens.dart';
 import 'channel_manage.dart';
 import 'agent_model.dart';
@@ -149,7 +150,7 @@ class _MessageListScreenState extends State<MessageListScreen> {
     }
 
     final label = channelLabel(channel);
-    return GallerySource(
+    return StatusBarScroll(controller: _scroll, child: GallerySource(
       // 크게 보기에서 넘겨 볼 그림의 범위(그림 넘겨 보기 사양 1·5).
       messages: () => (app.messages[widget.channelId] ?? const <MessageRow>[]).where((m) => m.inChannelFeed).toList(),
       child: Scaffold(
@@ -284,7 +285,7 @@ class _MessageListScreenState extends State<MessageListScreen> {
           ],
         ),
       )),
-    ));
+    )));
   }
 }
 

@@ -10,6 +10,7 @@ import '../state/app_scope.dart';
 import '../state/app_state.dart';
 import '../ui/parts.dart';
 import '../ui/states.dart';
+import '../ui/status_bar_scroll.dart';
 import '../ui/tokens.dart';
 import 'agent_exchange.dart';
 import 'agent_model.dart';
@@ -575,7 +576,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
       ...failed.map((item) => FailedSendRow(item: item)),
     ];
 
-    return PlanAskScope(rootId: widget.rootId, onAsk: _startAsk, child: GallerySource(
+    return StatusBarScroll(controller: _scroll, child: PlanAskScope(rootId: widget.rootId, onAsk: _startAsk, child: GallerySource(
       // 크게 보기에서 넘겨 볼 그림의 범위(그림 넘겨 보기 사양 1·5).
       messages: () => [?root, ...?app.threads[widget.rootId]],
       child: Scaffold(
@@ -704,7 +705,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
           ],
         ),
       )),
-    )));
+    ))));
   }
 
 }
