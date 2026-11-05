@@ -349,12 +349,12 @@ export function takePlanAskHelp(): boolean {
 }
 
 export function loadPlanOpen(rootId: string): boolean {
-  try { return localStorage.getItem(OPEN_KEY + rootId) === '1'; } catch { return false; }
+  // 계획이 있는 스레드는 열린 채 시작한다. 사람이 닫은 스레드만 '0' 이 남는다. 옛 '1' 은 그대로 열림이다.
+  try { return localStorage.getItem(OPEN_KEY + rootId) !== '0'; } catch { return true; }
 }
 export function savePlanOpen(rootId: string, open: boolean): void {
   try {
-    if (open) localStorage.setItem(OPEN_KEY + rootId, '1');
-    else localStorage.removeItem(OPEN_KEY + rootId);
+    localStorage.setItem(OPEN_KEY + rootId, open ? '1' : '0');
   } catch { /* 저장 못 해도 이번 화면은 연다 */ }
 }
 

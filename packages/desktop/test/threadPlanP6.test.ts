@@ -36,8 +36,10 @@ describe('펼침 기억 정리', () => {
     savePlanOpen('r2', true);
     localStorage.setItem('harkroom.other', 'keep');
     clearPlanOpenKeys();
-    expect(loadPlanOpen('r1')).toBe(false);
-    expect(loadPlanOpen('r2')).toBe(false);
+    // 지우면 기본값으로 돌아간다 — 닫아 둔 기억도 남지 않는다.
+    expect(localStorage.getItem('harkroom.threadPlan.open.r1')).toBeNull();
+    expect(localStorage.getItem('harkroom.threadPlan.open.r2')).toBeNull();
+    expect(loadPlanOpen('r1')).toBe(true);
     expect(localStorage.getItem('harkroom.other')).toBe('keep');
   });
 });

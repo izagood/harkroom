@@ -37,7 +37,8 @@ const view = (over: Record<string, unknown> = {}): ThreadPlanView => ({
 } as ThreadPlanView);
 const row = { done: 2, total: 10, active: 2, blocked: 2, waiting: 2, rev: 3 };
 const button = () => screen.getByTestId('plan-button');
-const openPanel = () => { fireEvent.click(button()); return screen.getByTestId('plan-panel'); };
+// 계획이 있는 스레드는 열린 채 시작한다.
+const openPanel = () => screen.getByTestId('plan-panel');
 
 beforeEach(() => {
   meKind = 'human';
@@ -76,27 +77,43 @@ describe('버튼', () => {
     expect(loadThreadPlan).toHaveBeenCalledTimes(1);
   });
 
-  it('펼침을 스레드별로 기억하고, ✕·버튼·Esc 로 닫는다. 부모에게 알린다', () => {
+  it('계획이 있으면 열린 채 시작하고, 닫으면 그 스레드는 닫힘을 기억한다. ✕·버튼·Esc 로 닫는다. 부모에게 알린다', () => {
     const onOpenChange = vi.fn();
     const { unmount } = render(<ThreadPlanButton rootId="r1" progress={row} onOpenChange={onOpenChange} />);
-    expect(screen.queryByTestId('plan-panel')).toBeNull();
-    openPanel();
+    expect(screen.getByTestId('plan-panel')).toBeTruthy();
     expect(onOpenChange).toHaveBeenLastCalledWith(true);
     fireEvent.click(screen.getByTestId('plan-panel-close'));
     expect(screen.queryByTestId('plan-panel')).toBeNull();
+    expect(onOpenChange).toHaveBeenLastCalledWith(false);
     fireEvent.click(button());
+    expect(screen.getByTestId('plan-panel')).toBeTruthy();
     fireEvent.click(button());
     expect(screen.queryByTestId('plan-panel')).toBeNull();
-    fireEvent.keyDown(openPanel(), { key: 'Escape' });
+    fireEvent.click(button());
+    fireEvent.keyDown(screen.getByTestId('plan-panel'), { key: 'Escape' });
     expect(screen.queryByTestId('plan-panel')).toBeNull();
-    openPanel();
+    fireEvent.click(button());
     expect(document.activeElement).not.toBe(screen.getByTestId('plan-panel'));
     fireEvent.keyDown(button(), { key: 'Escape' });
     expect(screen.queryByTestId('plan-panel')).toBeNull();
-    fireEvent.click(button());
+    // 닫아 둔 스레드는 다시 와도 닫힌 채다.
     unmount();
+    const again = render(<ThreadPlanButton rootId="r1" progress={row} />);
+    expect(screen.queryByTestId('plan-panel')).toBeNull();
+    // 연 스레드는 다시 와도 열린 채다.
+    fireEvent.click(button());
+    again.unmount();
     render(<ThreadPlanButton rootId="r1" progress={row} />);
     expect(screen.getByTestId('plan-panel')).toBeTruthy();
+  });
+
+  it('옛 저장값 1 은 열림이고, 다른 스레드의 닫힘은 이 스레드에 번지지 않는다', () => {
+    localStorage.setItem('harkroom.threadPlan.open.r1', '1');
+    expect(loadPlanOpen('r1')).toBe(true);
+    savePlanOpen('r2', false);
+    expect(localStorage.getItem('harkroom.threadPlan.open.r2')).toBe('0');
+    expect(loadPlanOpen('r2')).toBe(false);
+    expect(loadPlanOpen('r3')).toBe(true);
   });
 });
 
@@ -513,7 +530,6 @@ describe('새 창(포털)의 크기 조절', () => {
     const host = doc.createElement('div');
     doc.body.appendChild(host);
     render(<HostDocumentContext.Provider value={doc}><ThreadPlanButton rootId="r1" progress={{ ...plans.r1!.progress, rev: plans.r1!.rev }} /></HostDocumentContext.Provider>, { container: host });
-    act(() => { doc.querySelector<HTMLElement>('[data-testid="plan-button"]')?.click(); });
     return { doc, view: frame.contentWindow!, panel: doc.querySelector<HTMLElement>('[data-testid="plan-panel"]')! };
   };
   afterEach(() => { frame?.remove(); });
