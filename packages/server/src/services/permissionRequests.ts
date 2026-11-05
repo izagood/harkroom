@@ -7,7 +7,7 @@ import { recordAudit } from '../audit.js';
 import { emitEvent } from '../events.js';
 import { assertChannelVisible, audienceFor, getOrCreateDm } from './channels.js';
 import { validateCapScope, type Cap, type LineLimits } from './capabilities.js';
-import { addMandateLine, listMandateLines, revokeLinesForGrant, type LineVia } from './mandateLines.js';
+import { addMandateLine, listMandateLines, revokeLinesForGrant, revokeTurnLines, type LineVia } from './mandateLines.js';
 import { auditMandateCreated, validMandateOwner, type MandateCreated } from './mandates.js';
 import { CI_CARD_ONCE_ONLY_MESSAGE, checkNamesForBody, insertApprovalFromDenial, type MergeDenialReason } from './mergeDenials.js';
 import { carryBundleItem, getMessageById, postMessage, recordAskAnswer, syncAskMirrors, wakeAsker } from './messages.js';
@@ -1141,19 +1141,86 @@ export async function toolReachFor(pool: Pool, agentId: string, now = new Date()
 export type ReleaseKind = 'tool' | 'merge' | 'read';
 
 /**
+ * `permission.revoke` 가 거둘 것을 못 찾은 까닭. `code` 는 계속 `not_found` 이고 이 값을 곁들인다 — 「대기 중이라 아직 없음」과 「받았는데 못 찾음」을
+ * 한 응답으로 뭉치면 에이전트가 권한이 어딘가 남아 있다고 잘못 읽는다.
+ */
+export type ReleaseNotFoundReason =
+  | 'request_pending' | 'request_denied' | 'request_expired' | 'request_closed'
+  | 'approved_once' | 'mandate_line' | 'grant_gone' | 'other_agent' | 'none';
+
+const RELEASE_NOT_FOUND_MESSAGE: Record<ReleaseNotFoundReason, string> = {
+  request_pending: 'your request is still waiting for the owner — nothing was granted yet',
+  request_denied: 'your request was denied — nothing was granted',
+  request_expired: 'your request expired without a decision — nothing was granted',
+  request_closed: 'your request was closed before a decision — nothing was granted',
+  approved_once: 'this was approved for one use only — there is no standing grant to release',
+  mandate_line: 'this was approved as a line on a mandate, not as a grant — the owner removes it from that mandate',
+  grant_gone: 'this was granted earlier but is no longer held — it expired or was already released',
+  other_agent: 'another agent holds or asked for this rule — only that agent or the owner can release it',
+  none: 'no grant or request for this on this agent',
+};
+
+/** 거둘 것이 없을 때 까닭을 고른다. 내 요청이 먼저다(살아 있는 대기 > 최신). 남의 것은 그 채널을 볼 수 있을 때만 말한다 — 안 보이는 채널의 규칙 유무를 알려 주지 않는다. */
+async function releaseNotFoundReason(pool: Pool, args: {
+  agentId: string; kind: ReleaseKind; targets: readonly string[]; grantScopes: readonly string[]; channelId: string; now: Date;
+}): Promise<ReleaseNotFoundReason> {
+  if (args.kind === 'read') return 'none';
+  const r = (await pool.query<{ status: string; expired: boolean }>(
+    `select status, expires_at <= $5 as expired from permission_request
+      where agent_id = $1 and kind = $2 and target = any($3::text[]) and status <> 'superseded'
+        and ($2 <> 'tool' or channel_id = $4)
+      order by (status = 'pending' and expires_at > $5) desc, created_at desc limit 1`,
+    [args.agentId, args.kind, args.targets, args.channelId, args.now])).rows[0];
+  if (r) {
+    if (r.status === 'pending') return r.expired ? 'request_expired' : 'request_pending';
+    if (r.status === 'denied') return 'request_denied';
+    if (r.status === 'expired') return 'request_expired';
+    if (r.status === 'obsolete') return 'request_closed';
+    if (r.status === 'approved_once') return 'approved_once';
+    // merge 의 [이 위임장 동안]은 grant 없이 줄만 적는다(D1) — 그 줄이 살아 있으면 「없어졌다」가 아니다.
+    if (args.kind === 'merge') {
+      const line = (await pool.query(
+        `select 1 from mandate_line l join permission_request q on q.id = l.request_id
+          where q.agent_id = $1 and l.cap = 'merge' and l.scope = any($2::text[]) and l.revoked_at is null
+            and (l.limits->>'until' is null or (l.limits->>'until')::timestamptz > $3)
+            and not (l.limits ? 'uses') limit 1`, [args.agentId, args.targets, args.now])).rowCount;
+      if (line) return 'mandate_line';
+    }
+    return 'grant_gone';
+  }
+  if (args.kind === 'tool' && await assertChannelVisible(pool, args.channelId, args.agentId)) {
+    const other = (await pool.query(
+      `select 1 from account_grant where account_id <> $1 and capability = 'tool.allow' and scope = any($2::text[]) and (expires_at is null or expires_at > $5)
+       union all
+       select 1 from permission_request where agent_id <> $1 and kind = 'tool' and channel_id = $4 and target = any($3::text[]) and status = 'pending' and expires_at > $5
+       limit 1`, [args.agentId, args.grantScopes, args.targets, args.channelId, args.now])).rowCount;
+    if (other) return 'other_agent';
+  }
+  return 'none';
+}
+
+/**
  * 에이전트가 **자기** grant 를 내려놓는다(`permission.revoke`). 좁히기만 하므로 어느 턴에서나 된다 — 설정 화면이 없는 동안
  * 소유자가 채팅으로 "그 권한 거둬"라고 하면 에이전트가 이것으로 거둔다(모바일 거두기). 옛 넓은 규칙도 원문 그대로 지울 수 있다.
+ * tool 은 그 채널의 「이번 턴만」 줄도 함께 닫는다(`revokeTurnLines`) — grant 가 없어도 줄이 닫히면 성공이다(`grantRemoved: false`).
  */
 export async function releaseGrant(
-  pool: Pool, args: { agentId: string; kind: ReleaseKind; rule?: string; repo?: string; channelId: string },
-): Promise<{ ok: true; capability: string; scope: string } | { ok: false; code: 'bad_repo' | 'not_found'; message: string }> {
+  pool: Pool, args: { agentId: string; kind: ReleaseKind; rule?: string; repo?: string; channelId: string; now?: Date },
+): Promise<
+  | { ok: true; capability: string; scope: string; grantRemoved: boolean; closedTurnLines: number }
+  | { ok: false; code: 'bad_repo'; message: string }
+  | { ok: false; code: 'not_found'; reason: ReleaseNotFoundReason; message: string }
+> {
+  const now = args.now ?? new Date();
   let capability: 'tool.allow' | 'repo.merge' | 'repo.read';
   let scopes: string[];
+  let targets: string[];
   if (args.kind === 'tool') {
     const raw = (args.rule ?? '').trim();
     const v = validateToolRule(raw);
     capability = 'tool.allow';
-    scopes = [...new Set([toolScope(args.channelId, raw), ...(v.ok ? [toolScope(args.channelId, v.rule)] : [])])];
+    targets = [...new Set([raw, ...(v.ok ? [v.rule] : [])])];
+    scopes = targets.map((t) => toolScope(args.channelId, t));
   } else {
     // 내려놓기는 조직 전체(`owner/*`)도 받는다 — 좁히는 쪽이다.
     const scope = repoGrantScope(args.repo ?? '');
@@ -1161,20 +1228,25 @@ export async function releaseGrant(
     // kind=read(2026-11-02)는 `repo.read` 줄만 지운다 — 같은 저장소의 머지 grant 는 그대로 둔다(따로 준 것이다).
     capability = args.kind === 'read' ? 'repo.read' : 'repo.merge';
     scopes = [scope];
+    targets = [scope];
   }
   // W4: grant 를 지우는 일과 그 grant 와 함께 적힌 위임 줄을 닫는 일은 한 트랜잭션 — 거둔 뒤에도 줄이 남아 머지·도구를
   // 허락하지 않게, 그리고 줄 닫기가 실패하면 grant 도 지워지지 않게.
   const client = await pool.connect();
   let scope = '';
+  let turnLines: Awaited<ReturnType<typeof revokeTurnLines>> = [];
   try {
     await client.query('begin');
     const del = await client.query<{ scope: string }>(
       `delete from account_grant where account_id = $1 and capability = $2 and scope = any($3::text[]) returning scope`,
       [args.agentId, capability, scopes]);
     scope = del.rows[0]?.scope ?? '';
-    if (!scope) {
+    // `revokeLinesForGrant` 도 같은 줄을 닫을 수 있어 먼저 부른다 — 응답의 개수·감사가 실제로 닫은 턴 줄을 말하게.
+    if (args.kind === 'tool') turnLines = await revokeTurnLines(client, { agentId: args.agentId, channelId: args.channelId, rules: targets, now });
+    if (!scope && !turnLines.length) {
       await client.query('rollback');
-      return { ok: false, code: 'not_found', message: 'no such grant on this agent' };
+      const reason = await releaseNotFoundReason(pool, { agentId: args.agentId, kind: args.kind, targets, grantScopes: scopes, channelId: args.channelId, now });
+      return { ok: false, code: 'not_found', reason, message: `no such grant on this agent: ${RELEASE_NOT_FOUND_MESSAGE[reason]}` };
     }
     for (const d of del.rows) await revokeLinesForGrant(client, { agentId: args.agentId, capability, scope: d.scope });
     await client.query('commit');
@@ -1184,9 +1256,45 @@ export async function releaseGrant(
   } finally {
     client.release();
   }
-  await recordAudit(pool, { action: 'grant.revoked', actorId: args.agentId, target: args.agentId, detail: { capability, scope, via: 'permission.revoke' } });
-  emitEvent({ type: 'grant.changed', accountId: args.agentId, audience: 'all' });
-  return { ok: true, capability, scope };
+  const grantRemoved = scope !== '';
+  if (grantRemoved) {
+    await recordAudit(pool, { action: 'grant.revoked', actorId: args.agentId, target: args.agentId, detail: { capability, scope, via: 'permission.revoke' } });
+    emitEvent({ type: 'grant.changed', accountId: args.agentId, audience: 'all' });
+  }
+  for (const l of turnLines) {
+    await recordAudit(pool, {
+      action: 'mandate.line.revoked', actorId: args.agentId, target: l.mandateId,
+      detail: { mandateId: l.mandateId, lineId: l.id, cap: 'tool', scope: l.scope, via: l.via, requestId: l.requestId, revokedVia: 'permission.revoke' },
+    });
+  }
+  return { ok: true, capability, scope: scope || toolScope(args.channelId, turnLines[0]!.scope), grantRemoved, closedTurnLines: turnLines.length };
+}
+
+/**
+ * `grant.list` 의 명령 허용 — 이 에이전트의 만료 안 된 tool.allow 줄 전부. `active` 는 지금 턴에 실제로 실리는지(`toolAllowsFor` 와 같은 판정)이고,
+ * 옛 넓은 규칙처럼 거짓인 줄도 내려놓을 수 있게 보여 준다. 규칙 글자는 지금 볼 수 있는 채널 것만 싣고, 나머지는 개수만 준다(다른 턴·채널로 글자가 새지 않게).
+ */
+export async function listToolRules(pool: Pool, agentId: string, now = new Date()): Promise<{
+  toolRules: { channelId: string; rule: string; expiresAt: string | null; active: boolean }[]; hiddenToolRules: number;
+}> {
+  const rows = (await pool.query<{ scope: string; expiresAt: Date | null; mayDecide: boolean }>(
+    `select scope, expires_at as "expiresAt",
+            ${mayDecideSql('account_grant.account_id', 'account_grant.granted_by', "nullif(split_part(account_grant.scope, ':', 2), '')::uuid")} as "mayDecide"
+       from account_grant
+      where account_id = $1 and capability = 'tool.allow' and left(scope, 5) = 'tool:' and (expires_at is null or expires_at > $2)
+      order by scope`, [agentId, now])).rows;
+  const visible = new Map<string, boolean>();
+  const toolRules: { channelId: string; rule: string; expiresAt: string | null; active: boolean }[] = [];
+  let hiddenToolRules = 0;
+  for (const r of rows) {
+    const p = parseToolScope(r.scope);
+    if (!p) continue;
+    if (!visible.has(p.channelId)) visible.set(p.channelId, await assertChannelVisible(pool, p.channelId, agentId));
+    if (!visible.get(p.channelId)) { hiddenToolRules += 1; continue; }
+    const v = validateToolRule(p.rule);
+    toolRules.push({ channelId: p.channelId, rule: p.rule, expiresAt: r.expiresAt?.toISOString() ?? null, active: r.mayDecide && v.ok && v.rule === p.rule });
+  }
+  return { toolRules, hiddenToolRules };
 }
 
 export interface CommandGrantView { id: string; command: string; singleUse: boolean; expiresAt: string }

@@ -214,11 +214,15 @@ describe('permission.request → 소유자 승인 → tool.allow / repo.merge', 
     await pool.query(`insert into account_grant (account_id, capability, scope, granted_by) values ($1, 'tool.allow', $2, $3)`, [agentId, `tool:${ch}:${rule}`, alice.accountId]);
     await pool.query(`insert into account_grant (account_id, capability, scope, granted_by) values ($1, 'repo.merge', 'repo:acme-org/infrak8s', $2)`, [agentId, alice.accountId]);
     const revoke = (args: Record<string, unknown>) => client.callTool({ name: 'permission.revoke', arguments: { channelId: ch, ...args } }).then(text);
-    expect(await revoke({ kind: 'tool', rule: `Bash( kubectl --context ops -n sitebot logs:*)` })).toMatchObject({ revoked: true, capability: 'tool.allow' });
+    // grant.list 에 채널·규칙이 실리고, 거두면 빠진다.
+    const toolRules = async () => text(await client.callTool({ name: 'grant.list', arguments: {} })).toolRules as { channelId: string; rule: string; active: boolean }[];
+    expect(await toolRules()).toContainEqual(expect.objectContaining({ channelId: ch, rule, active: true }));
+    expect(await revoke({ kind: 'tool', rule: `Bash( kubectl --context ops -n sitebot logs:*)` })).toMatchObject({ revoked: true, capability: 'tool.allow', grantRemoved: true, closedTurnLines: 0 });
+    expect((await toolRules()).some((r) => r.rule === rule)).toBe(false);
     expect(await toolAllowsFor(pool, agentId, ch)).not.toContain(rule);
     expect(await revoke({ kind: 'merge', repo: 'acme-org/infrak8s' })).toMatchObject({ revoked: true, scope: 'repo:acme-org/infrak8s' });
     expect(await mergeGrantFor(pool, agentId, 'acme-org/infrak8s')).toBeNull();
-    expect((await revoke({ kind: 'merge', repo: 'acme-org/infrak8s' })).error.code).toBe('not_found');
+    expect((await revoke({ kind: 'merge', repo: 'acme-org/infrak8s' })).error).toMatchObject({ code: 'not_found', reason: 'none' });
     expect((await revoke({ kind: 'tool', repo: 'a/b' })).error.code).toBe('bad_request');
   });
 
