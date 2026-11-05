@@ -7,6 +7,7 @@ import 'dart:async';
 import 'package:harkroom/api/api_client.dart';
 import 'package:harkroom/api/ws.dart';
 import 'package:harkroom/main.dart';
+import 'package:harkroom/screens/feed_pin.dart';
 import 'package:harkroom/screens/agent_model.dart';
 import 'package:harkroom/screens/message_tile.dart';
 import 'package:harkroom/screens/thread_screen.dart';
@@ -308,7 +309,7 @@ void main() {
     final glass = tester.getRect(find.byKey(const Key('glass-app-bar')));
     expect(tester.getRect(find.byKey(const Key('channel-feed'))).top, 0);
     // 맨 위(가장 옛 줄)까지 굴렸을 때 머리에 가리지 않게 — 목록 위 여백이 머리 높이 이상이다.
-    final pad = tester.widget<ListView>(find.byKey(const Key('channel-feed'))).padding! as EdgeInsets;
+    final pad = tester.widget<SliverPadding>(find.byKey(feedOlderKey)).padding as EdgeInsets;
     expect(pad.top, greaterThanOrEqualTo(glass.bottom));
 
     await tester.enterText(find.byKey(const Key('composer')), '@forge 이거 해 줘');
@@ -545,7 +546,7 @@ void main() {
     // 머리 부제에 채널과 답글 수. 목록은 아래부터 쌓는다.
     final screen = find.byType(ThreadScreen);
     expect(find.descendant(of: screen, matching: find.textContaining('# harkroom')), findsOneWidget);
-    expect(tester.widget<ListView>(find.byKey(const Key('thread-feed'))).reverse, isTrue);
+    expect(tester.widget<ScrollView>(find.byKey(const Key('thread-feed'))).reverse, isTrue);
     // S4d: 첫 답글 위에는 날짜 줄이 서지 않는다(구분 줄과 겹치지 않게).
     expect(find.descendant(of: screen, matching: find.byType(DayDivider)), findsNothing);
     // **스레드 안에서는 또 들어갈 문을 그리지 않는다.**
@@ -1024,7 +1025,7 @@ void main() {
       await tester.pump();
       expect(focused(tester, 'composer'), isTrue);
 
-      final scroll = tester.widget<ListView>(find.byKey(const Key('channel-feed'))).controller!;
+      final scroll = tester.widget<ScrollView>(find.byKey(const Key('channel-feed'))).controller!;
       scroll.jumpTo(40);
       await tester.pump();
       unawaited(scroll.animateTo(0, duration: const Duration(milliseconds: 100), curve: Curves.linear));
@@ -1067,7 +1068,7 @@ void main() {
       await tester.pump();
       expect(focused(tester, 'thread-composer'), isTrue);
       // 이 스레드는 스크롤할 거리가 0 이다 — 목록이 안 움직여도 끌기는 듣는다.
-      expect(tester.widget<ListView>(find.byKey(const Key('thread-feed'))).controller!.position.maxScrollExtent, 0);
+      expect(tester.widget<ScrollView>(find.byKey(const Key('thread-feed'))).controller!.position.maxScrollExtent, 0);
       await tester.drag(find.byKey(const Key('thread-feed')), const Offset(0, 300));
       await _settle(tester);
       expect(focused(tester, 'thread-composer'), isFalse);

@@ -127,7 +127,7 @@ void main() {
     await _settle(tester);
     expect(app.threadTailMissing, contains('root'));
     // 강조 줄(r40)로 굴러가 있어 창 끝(맨 아래)은 화면 밖이다 — 목록은 화면 밖 줄을 짓지 않으므로 아래로 되돌린다.
-    tester.widget<ListView>(find.byKey(const Key('thread-feed'))).controller!.jumpTo(0);
+    tester.widget<ScrollView>(find.byKey(const Key('thread-feed'))).controller!.jumpTo(0);
     await tester.pump();
     expect(find.byKey(const Key('thread-latest-band')), findsOneWidget);
     expect(find.text(stringsFor('ko').threadLatestReplies), findsOneWidget);
@@ -159,7 +159,7 @@ void main() {
     for (var i = 0; i < 40; i++) {
       await tester.pump(const Duration(milliseconds: 20));
     }
-    tester.widget<ListView>(find.byKey(const Key('thread-feed'))).controller!.jumpTo(0);
+    tester.widget<ScrollView>(find.byKey(const Key('thread-feed'))).controller!.jumpTo(0);
     await tester.pump();
     expect(find.byKey(const Key('thread-latest-go')), findsOneWidget);
   }

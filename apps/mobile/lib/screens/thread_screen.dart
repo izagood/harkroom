@@ -16,6 +16,7 @@ import 'agent_exchange.dart';
 import 'agent_model.dart';
 import 'agent_rows.dart';
 import 'composer_attachments.dart';
+import 'feed_pin.dart';
 import 'mention_button.dart';
 import 'message_feed.dart';
 import 'message_list_screen.dart';
@@ -86,21 +87,14 @@ class _ThreadScreenState extends State<ThreadScreen> {
   /// 목록 맨 위(reverse 라 끝)에 닿으면 옛 답글을 받는다 — 채널 화면의 `_maybeLoadOlder` 와 같다.
   final _scroll = ScrollController();
 
-  /// 「↓ 최신 답글」 알약([ThreadJumpPill])이 보는 자리. 맨 아래가 보이는가(0 근처), 한 화면 넘게 위로 갔는가.
-  /// 굴릴 때마다 빌드하지 않도록 둘이 바뀔 때만 다시 그린다.
-  bool _atBottom = true;
-  bool _far = false;
-
-  /// 맨 아래에서 마지막으로 본 답글의 seq. 위로 굴린 동안 이보다 뒤에 온 남의 답글을 알약에 「새 답글 n」으로 센다.
-  /// 길이 차로 세지 않는다 — 옛 답글을 받아도 목록이 자란다. 띠가 선 동안([AppState.threadTailMissing])은
-  /// 상태층의 수([AppState.threadTailNew])를 쓰므로 비워 둔다.
-  int? _seenSeq;
+  /// 「↓ 최신 답글」 알약과 보던 줄 고정이 보는 자리. 본 자리(`seenSeq`)는 띠가 선 동안
+  /// ([AppState.threadTailMissing])은 상태층의 수([AppState.threadTailNew])를 쓰므로 비워 둔다.
+  late final _pin = FeedPin(_scroll, rebuild: setState);
 
   @override
   void initState() {
     super.initState();
     _scroll.addListener(_maybeLoadOlder);
-    _scroll.addListener(_trackBottom);
     // 쓰던 글(D8)을 되살리고, 칠 때마다 적어 둔다. 커뮤니티 key 는 **지금** 쥔다 — 옮긴 뒤 이 화면이
     // 닫혀도 글은 이 커뮤니티 자리에 남는다.
     final app = AppScope.read(context);
@@ -135,21 +129,6 @@ class _ThreadScreenState extends State<ThreadScreen> {
     AppScope.read(context).loadOlderThread(widget.channelId, widget.rootId);
   }
 
-  /// 맨 아래 근처 기준(px). 이 안이면 맨 아래 답글이 보인다고 본다.
-  static const double _bottomSlop = 48;
-
-  void _trackBottom() {
-    if (!_scroll.hasClients) return;
-    final pos = _scroll.position;
-    final atBottom = pos.pixels < _bottomSlop;
-    final far = pos.pixels > pos.viewportDimension;
-    if (atBottom == _atBottom && far == _far) return;
-    setState(() {
-      _atBottom = atBottom;
-      _far = far;
-    });
-  }
-
   /// **`initState` 가 아니라 여기서 읽는다.**
   ///
   /// `context.app` 은 `InheritedWidget` 을 구독하는 일이고, Flutter 는 그것을
@@ -170,7 +149,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
   @override
   void dispose() {
     _scroll.removeListener(_maybeLoadOlder);
-    _scroll.removeListener(_trackBottom);
+    _pin.dispose();
     _scroll.dispose();
     _composer.removeListener(_keepDraft);
     _composer.dispose();
@@ -278,6 +257,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
     setState(() => _sending = true);
     // 먼저 비운다 — 남아 있으면 사람은 안 갔다고 생각하고 다시 누른다. 못 보낸 말은 목록에 남는다.
     _composer.clear();
+    _pin.revealOwnSend();
     final picks = _picks;
     setState(() => _picks = const {});
     // 자동·고정 멘션을 붙인 것이 **서버로 가는 본문**이다(채널 화면과 같다). 모델 지정도 이 본문으로
@@ -346,7 +326,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
   }
 
   /// 위로 굴린 동안 온 남의 답글 수. 진행 줄·깨우기는 답글로 안 센다(상태층의 [AppState.threadTailNew] 와 같은 기준).
-  int _newSince(AppState app, List<MessageRow> rows) => countNewSince(rows, _seenSeq, app.me?.id);
+  int _newSince(AppState app, List<MessageRow> rows) => countNewSince(rows, _pin.seenSeq, app.me?.id);
 
   /// 찾은 줄이면 강조로 감싼다.
   /// 이 화면에서 펼친 주고받기(구간 첫 행 id). 화면을 떠나면 다시 접힌다 — 데스크톱도 펼침을 기억하지 않는다.
@@ -456,24 +436,29 @@ class _ThreadScreenState extends State<ThreadScreen> {
     final unfolded = first is FeedMessage && first.dayBreak
         ? [FeedMessage(first.message, continued: first.continued), ...built.skip(1)]
         : built;
-    final replies = foldExchanges(unfolded, folds);
+    final allReplies = foldExchanges(unfolded, folds);
     final firstReplyAt = first is FeedMessage ? first.message.createdAt : null;
     final failed = app.failedSends[widget.rootId] ?? const <FailedSend>[];
     final load = app.threadLoad[widget.rootId];
     // 「↓ 최신 답글」 알약. 띠가 서 있으면 상태층의 수를, 아니면 맨 아래에서 본 뒤 온 답글 수를 쓴다.
     final tailMissing = app.threadTailMissing.contains(widget.rootId);
     if (tailMissing) {
-      _seenSeq = null;
-    } else if (load == LoadState.loaded && (_seenSeq == null || _atBottom)) {
-      // 처음 받은 답글·맨 아래에서 보이는 답글은 새 것이 아니다. 빌드 중에 적어도 되는 값이다(그리기에만 쓴다).
-      _seenSeq = threadRows.isEmpty ? 0 : threadRows.map((m) => m.seq).reduce((a, b) => a > b ? a : b);
+      _pin.seenSeq = null;
+      _pin.boundarySeq = null;
+    } else if (load == LoadState.loaded) {
+      // 빌드 중에 적어도 되는 값이다(그리기에만 쓴다).
+      _pin.markSeen(threadRows.map((m) => m.seq));
     }
     final jumpNew = tailMissing ? (app.threadTailNew[widget.rootId]?.length ?? 0) : _newSince(app, threadRows);
     // 맨 아래가 보이면 숨긴다. 띠가 섰으면 띠가 보일 만한 자리(맨 아래에서 한 화면 안)에서도 숨긴다 — 같은 일을 하는
     // 둘이 한 화면에 겹치지 않게.
     // 여기(Scaffold 바깥)에서 읽는다 — 안쪽 MediaQuery 의 viewInsets 는 Scaffold 가 0 으로 지운다.
     final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
-    final showJump = load == LoadState.loaded && !_atBottom && (tailMissing ? _far : _far || jumpNew > 0);
+    // 본 뒤에 온 답글은 기준 아래로 — 보던 줄이 밀리지 않는다([FeedPin]). 그때는 못 보낸 말도 아래 끝으로 간다.
+    final firstNew = load == LoadState.loaded ? _pin.firstNew(allReplies) : allReplies.length;
+    final replies = allReplies.sublist(0, firstNew);
+    final newReplies = allReplies.sublist(firstNew);
+    final showJump = load == LoadState.loaded && !_pin.atBottom && (tailMissing ? _pin.far : _pin.far || jumpNew > 0);
     // 머리 모델 줄에 세울 에이전트: 스레드 글의 작성자 중 에이전트 + 본문이 부른 에이전트.
     final threadAgents = <String>[];
     for (final m in [?root, ...?app.threads[widget.rootId]]) {
@@ -552,7 +537,15 @@ class _ThreadScreenState extends State<ThreadScreen> {
           retryLabel: t.commonRetry,
           onTap: _jumpToLatest,
         ),
-      ...failed.map((item) => FailedSendRow(item: item)),
+      if (newReplies.isEmpty) ...failed.map((item) => FailedSendRow(item: item)),
+    ];
+    final belowRows = <Widget>[
+      for (final item in newReplies)
+        if (item is FeedExchange)
+          ..._exchangeRows(context, item)
+        else
+          _replyRow(context, item),
+      if (newReplies.isNotEmpty) ...failed.map((item) => FailedSendRow(item: item)),
     ];
 
     return StatusBarScroll(controller: _scroll, child: PlanAskScope(rootId: widget.rootId, onAsk: _startAsk, child: GallerySource(
@@ -596,20 +589,21 @@ class _ThreadScreenState extends State<ThreadScreen> {
                   const ConnectionBand(),
                 ]),
                 builder: (context, inset) => FeedKeyboardDismiss(
-                child: ListView(
+                child: NotificationListener<Notification>(
+                  onNotification: _pin.onNotification,
+                  child: feedScrollView(
                   key: const Key('thread-feed'),
                   controller: _scroll,
-                  reverse: true,
-                  // 채널 화면과 같다 — 짧아도 끌려야 키보드를 내린다([FeedKeyboardDismiss]).
-                  physics: const AlwaysScrollableScrollPhysics(),
                   // 버튼이 떠 있으면 그만큼 비운다 — 맨 아래 글이 버튼 밑에 깔리면 끝까지 읽을 수 없다.
                   padding: EdgeInsets.only(
                     top: 8 + inset,
                     bottom: planButtonVisible(root?.planProgress, keyboardOpen: keyboardOpen) ? 12 + planButtonHeight + 8 : 8,
                   ),
-                  children: rows.reversed.toList(growable: false),
+                  dividerLabel: t.threadNewDivider,
+                  older: SliverList.list(children: rows.reversed.toList(growable: false)),
+                  below: belowRows.isEmpty ? null : SliverList.list(children: belowRows),
                 ),
-              )),
+              ))),
               // 작성칸 위 오른쪽에 뜬다 — 목록 위에만 겹치고 작성칸은 가리지 않는다.
               // 계획판 버튼(W5·W9) — 작성칸 위 오른쪽. 「최신 답글」 알약은 그 위로 쌓인다.
               Positioned(
@@ -756,26 +750,6 @@ int countNewSince(Iterable<MessageRow> rows, int? seen, String? me) {
     if (m.seq > seen && m.authorId != me && m.kind != MessageKind.progress && m.kind != MessageKind.wake) n++;
   }
   return n;
-}
-
-/// 맨 아래(0)로 굴린다. 화면 밖 줄은 짓지 않아 높이를 어림하므로, 0 에 닿은 프레임의 배치에서 실제 높이로
-/// 고쳐져 한 줄쯤 위에 멈출 수 있다(시험이 잡았다 — 위로 굴린 동안 새 답글이 붙은 경우). 그 프레임이 끝난 뒤
-/// 남았으면 0 으로 붙인다.
-void scrollFeedToBottom(ScrollController scroll) {
-  scroll.animateTo(0, duration: HarkroomMotion.base, curve: HarkroomMotion.ease).then((_) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (scroll.hasClients && scroll.position.pixels > 0) scroll.jumpTo(0);
-    });
-  });
-}
-
-/// 알약의 맨 아래 가기 — 세 화면보다 멀면 한 화면 거리로 먼저 건너뛰고 굴린다(긴 애니메이션은 지연 빌드로
-/// 버벅이고 오래 걸린다).
-void jumpFeedToBottom(ScrollController scroll) {
-  if (!scroll.hasClients) return;
-  final pos = scroll.position;
-  if (pos.pixels > pos.viewportDimension * 3) scroll.jumpTo(pos.viewportDimension);
-  scrollFeedToBottom(scroll);
 }
 
 /// 「↓ 최신 답글」 알약의 문구. 새 답글이 있으면 「새 답글 n」, 99 를 넘으면 「99+」. [channel] 이면 「메시지」 문구다.

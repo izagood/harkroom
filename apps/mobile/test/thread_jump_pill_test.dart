@@ -120,7 +120,7 @@ void main() {
   final ko = stringsFor('ko');
   final pill = find.byKey(const Key('thread-jump-pill'));
   ScrollController feed(WidgetTester tester) =>
-      tester.widget<ListView>(find.byKey(const Key('thread-feed'))).controller!;
+      tester.widget<ScrollView>(find.byKey(const Key('thread-feed'))).controller!;
 
   Future<AppState> open(WidgetTester tester, _Server server) async {
     final app = (await tester.runAsync(() => _boot(server)))!;
@@ -190,7 +190,8 @@ void main() {
     await tester.tap(pill);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    expect(c.position.pixels, 0);
+    await tester.pumpAndSettle(); // 멎은 뒤 기준 위아래가 하나로 합쳐진다
+    expect(c.position.pixels, c.position.minScrollExtent);
     expect(pill, findsNothing);
     // 다시 올라가도 본 답글은 새 것이 아니다.
     c.jumpTo(c.position.viewportDimension * 1.5);
@@ -207,7 +208,8 @@ void main() {
     await tester.tap(pill);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    expect(c.position.pixels, 0);
+    await tester.pumpAndSettle(); // 멎은 뒤 기준 위아래가 하나로 합쳐진다
+    expect(c.position.pixels, c.position.minScrollExtent);
     expect(pill, findsNothing);
   });
 
@@ -240,7 +242,7 @@ void main() {
     await _settle(tester);
     expect(server.asked.last.containsKey('around'), isFalse);
     expect(app.threadTailMissing, isEmpty);
-    expect(c.position.pixels, 0);
+    expect(c.position.pixels, c.position.minScrollExtent);
     expect(pill, findsNothing);
   });
 
