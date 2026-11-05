@@ -974,7 +974,9 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
   };
 
   /** [entry] 와 한 턴으로 묶을 entry 들(오래된 순, 끝이 대표). 묶을 수 없으면 [entry] 하나다. */
-  const bundleFor = (entry: InboxBatch['entries'][number], mention: MessageRow, threadKey: string, batch: InboxBatch): InboxBatch['entries'] => {
+  const bundleFor = (entry: InboxBatch['entries'][number], mention: MessageRow, threadKey: string, batch: InboxBatch, ctx: BatchContext): InboxBatch['entries'] => {
+    // 사람 글만 묶는다. 에이전트 글은 작성자가 같아도 글마다 원인 키가 다를 수 있는데 턴 임대는 대표 글 하나에서 나온다.
+    if (!ctx.agentIds || ctx.agentIds.has(mention.authorId)) return [entry];
     if (!isPlainMention(entry, mention) || (attempts.get(entry.id)?.tried ?? 0) >= BUNDLE_MAX_FAILURES) return [entry];
     const group = [entry];
     let chars = mention.body.length;
@@ -1133,11 +1135,17 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         }
 
         // 같은 사람이 이 스레드에 연달아 부른 보통 멘션은 한 턴으로 처리한다. 원인은 그중 가장 새 글이다.
-        const group = bundleFor(entry, mention, threadKey, batch);
+        const group = bundleFor(entry, mention, threadKey, batch, ctx);
         const lead = group.at(-1)!;
         const leadMention = batch.messages.find((m) => m.id === lead.messageId)!;
         const bundledRows = group.slice(0, -1).map((e) => batch.messages.find((m) => m.id === e.messageId)!);
-        if (group.length > 1) bundles.set(lead.id, group.map((e) => e.id));
+        if (group.length > 1) {
+          bundles.set(lead.id, group.map((e) => e.id));
+          // 관문 재시도 횟수도 시도 횟수처럼 구성원의 최대값을 대표가 물려받는다 — 대표가 바뀌어도 0부터 세지 않는다.
+          const heaviest = group.map((e) => gateRequeues.get(e.id)).filter((r) => r !== undefined).sort((a, b) => b.count - a.count)[0];
+          for (const e of group) gateRequeues.delete(e.id);
+          if (heaviest) gateRequeues.set(lead.id, heaviest);
+        }
 
         // 장부 등록은 **동기적으로, 띄우기 전에**. 위 inFlightThreads 주석이 이유다.
         for (const e of group) { inFlightEntries.add(e.id); blockedNoticed.delete(e.id); }

@@ -906,6 +906,7 @@ describe('같은 사람의 연달은 부름을 한 턴으로 묶는다', () => {
     entries: rows.map((r, n) => ({ id: n + 1, messageId: r.id, reason: 'mention', readAt: null, channelId: CH, ...entries[n + 1] })),
     messages: rows,
   }) as unknown as InboxBatch;
+  const bundleCtx: BatchContext = { ...ctx, agentIds: new Set(['bot']) };
   const run = (seen: MentionTarget[], fail = () => false) => (async (_d: unknown, t: MentionTarget) => {
     seen.push(t);
     if (fail()) throw new Error('터졌다');
@@ -915,7 +916,7 @@ describe('같은 사람의 연달은 부름을 한 턴으로 묶는다', () => {
   it('원인은 가장 새 글이고, 앞 글은 오래된 순으로 싣고, 끝나면 한 번에 읽음 처리한다', async () => {
     const seen: MentionTarget[] = [];
     const { scheduler, markedRead, markReadCalls } = harness({ runTurn: run(seen) });
-    await scheduler.admit(batch([row('a', 1), row('b', 2), row('c', 3)]), ctx);
+    await scheduler.admit(batch([row('a', 1), row('b', 2), row('c', 3)]), bundleCtx);
     await scheduler.drain();
     expect(seen).toHaveLength(1);
     expect(seen[0]!.mentionId).toBe('c');
@@ -928,11 +929,11 @@ describe('같은 사람의 연달은 부름을 한 턴으로 묶는다', () => {
     const seen: MentionTarget[] = [];
     const { scheduler } = harness({ runTurn: run(seen) });
     const b = batch([row('a', 1), row('x', 2, 'h2'), row('c', 3)]);
-    await scheduler.admit(b, ctx);
+    await scheduler.admit(b, bundleCtx);
     await scheduler.drain();
     expect(seen[0]!.mentionId).toBe('c');
     expect(seen[0]!.bundledRows?.map((r) => r.id)).toEqual(['a']);
-    await scheduler.admit({ ...b, entries: b.entries.filter((e) => e.id === 2) }, ctx);
+    await scheduler.admit({ ...b, entries: b.entries.filter((e) => e.id === 2) }, bundleCtx);
     await scheduler.drain();
     expect(seen[1]!.mentionId).toBe('x');
     expect(seen[1]!.bundledRows).toBeUndefined();
@@ -954,7 +955,25 @@ describe('같은 사람의 연달은 부름을 한 턴으로 묶는다', () => {
   ])('%s 는 묶지 않는다', async (_n, entryOver, rowOver) => {
     const seen: MentionTarget[] = [];
     const { scheduler } = harness({ runTurn: run(seen) });
-    await scheduler.admit(batch([row('a', 1), row('b', 2, 'h1', rowOver)], { 2: entryOver }), ctx);
+    await scheduler.admit(batch([row('a', 1), row('b', 2, 'h1', rowOver)], { 2: entryOver }), bundleCtx);
+    await scheduler.drain();
+    expect(seen[0]!.mentionId).toBe('a');
+    expect(seen[0]!.bundledRows).toBeUndefined();
+  });
+
+  it('에이전트가 쓴 글은 작성자가 같아도 묶지 않는다', async () => {
+    const seen: MentionTarget[] = [];
+    const { scheduler } = harness({ runTurn: run(seen) });
+    await scheduler.admit(batch([row('a', 1, 'bot'), row('b', 2, 'bot')]), bundleCtx);
+    await scheduler.drain();
+    expect(seen[0]!.mentionId).toBe('a');
+    expect(seen[0]!.bundledRows).toBeUndefined();
+  });
+
+  it('계정 종류를 모르면 묶지 않는다', async () => {
+    const seen: MentionTarget[] = [];
+    const { scheduler } = harness({ runTurn: run(seen) });
+    await scheduler.admit(batch([row('a', 1), row('b', 2)]), ctx);
     await scheduler.drain();
     expect(seen[0]!.mentionId).toBe('a');
     expect(seen[0]!.bundledRows).toBeUndefined();
@@ -964,7 +983,7 @@ describe('같은 사람의 연달은 부름을 한 턴으로 묶는다', () => {
     const seen: MentionTarget[] = [];
     const { scheduler, markedRead } = harness({ runTurn: run(seen) });
     const b = batch(Array.from({ length: BUNDLE_MAX_ENTRIES + 2 }, (_, i) => row(`m${i}`, i + 1)));
-    await scheduler.admit(b, ctx);
+    await scheduler.admit(b, bundleCtx);
     await scheduler.drain();
     expect(seen[0]!.mentionId).toBe(`m${BUNDLE_MAX_ENTRIES - 1}`);
     expect(seen[0]!.bundledRows).toHaveLength(BUNDLE_MAX_ENTRIES - 1);
@@ -975,7 +994,7 @@ describe('같은 사람의 연달은 부름을 한 턴으로 묶는다', () => {
   it('본문 합이 예산을 넘으면 그 글은 넣지 않는다 — 실리지 않은 글을 읽음 처리하지 않는다', async () => {
     const seen: MentionTarget[] = [];
     const { scheduler, markedRead } = harness({ runTurn: run(seen) });
-    await scheduler.admit(batch([row('a', 1), row('big', 2, 'h1', { body: 'x'.repeat(DELTA_MAX_CHARS) })]), ctx);
+    await scheduler.admit(batch([row('a', 1), row('big', 2, 'h1', { body: 'x'.repeat(DELTA_MAX_CHARS) })]), bundleCtx);
     await scheduler.drain();
     expect(seen[0]!.mentionId).toBe('a');
     expect(markedRead).toEqual([1]);
@@ -986,21 +1005,21 @@ describe('같은 사람의 연달은 부름을 한 턴으로 묶는다', () => {
     let t = 1_000;
     const { scheduler, markedRead } = harness({ now: () => t, runTurn: run(seen, () => true) });
     const b = batch([row('a', 1), row('b', 2), row('c', 3)]);
-    await scheduler.admit(b, ctx);
+    await scheduler.admit(b, bundleCtx);
     await scheduler.drain();
     expect(markedRead).toEqual([]);
     expect(seen).toHaveLength(1);
     // 백오프 안에서는 앞 글도 따로 뜨지 않는다.
-    await scheduler.admit(b, ctx);
+    await scheduler.admit(b, bundleCtx);
     await scheduler.drain();
     expect(seen).toHaveLength(1);
     t += 3_600_000;
-    await scheduler.admit(b, ctx);
+    await scheduler.admit(b, bundleCtx);
     await scheduler.drain();
     expect(seen).toHaveLength(2);
     expect(seen[1]!.bundledRows).toHaveLength(2);
     t += 3_600_000;
-    await scheduler.admit(b, ctx);
+    await scheduler.admit(b, bundleCtx);
     await scheduler.drain();
     expect(seen).toHaveLength(3);
     expect(seen[2]!.mentionId).toBe('a');
