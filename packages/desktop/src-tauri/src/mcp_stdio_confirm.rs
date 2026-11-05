@@ -11,6 +11,8 @@
 //! - **기본 버튼이 취소다.** Return 과 Esc 가 취소다. 웹뷰가 사람이 Enter 를 치는 순간에 맞춰 창을 띄워도 저장되지 않는다.
 //! - **화면에 다 들어가지 않으면 띄우지 않는다.** 시트는 창 위쪽에서 아래로 자라고 스크롤되지 않는다. 버튼이나 뒤 인자가
 //!   화면 밖으로 나갈 높이면 저장하지 않고 거절한다.
+//! - **「실행 허용」은 뜬 뒤 잠시 눌리지 않는다.** 웹뷰는 이 창을 아무 때나 부를 수 있고 창 자리는 늘 같다. 그 자리에 다른 버튼을
+//!   그려 두고 사람이 누르는 순간에 창을 띄우면 그 클릭이 허용이 된다. 다시 띄울 때마다 지연이 새로 걸린다.
 //! - **한 번에 창 하나.** 거절해도 곧바로 겹쳐 뜨지 않는다.
 //! - env 값은 창에 넣지 않는다(토큰이 있다). 값이 실행되는 코드를 바꾸는 변수는 오퍼레이터가 거절하고(`shared/mcpStdio.ts`),
 //!   값이 안 보인다는 사실은 창이 고정 문구로 말한다.
@@ -179,7 +181,7 @@ mod sheet {
     use objc2::runtime::AnyObject;
     use objc2::MainThreadMarker;
     use objc2_app_kit::{
-        NSAlert, NSAlertFirstButtonReturn, NSAlertSecondButtonReturn, NSAlertStyle, NSEvent, NSEventMask,
+        NSAlert, NSAlertFirstButtonReturn, NSAlertSecondButtonReturn, NSAlertStyle, NSButton, NSEvent, NSEventMask,
         NSModalResponse, NSWindow,
     };
     use objc2_foundation::NSString;
@@ -188,6 +190,22 @@ mod sheet {
     use std::sync::mpsc::{sync_channel, SyncSender};
 
     const KEY_ESCAPE: u16 = 53;
+    /// 「실행 허용」이 눌리기 시작할 때까지. 사람이 읽기 전에 들어온 클릭을 흘려보낼 만큼이면 되고, 저장을 번거롭게 할 만큼 길면 안 된다.
+    pub(super) const ALLOW_DELAY: std::time::Duration = std::time::Duration::from_millis(1000);
+
+    /// 다른 스레드에서 시간만 재고 메인 스레드로 돌려보내기 위한 소유권 묶음. 다른 스레드에서는 포인터를 건드리지 않는다.
+    struct OnMainOnly(*mut NSButton);
+    // SAFETY: 메인 스레드로 돌아가는 클로저 안에서만 역참조한다.
+    unsafe impl Send for OnMainOnly {}
+
+    impl OnMainOnly {
+        fn enable(self) {
+            // SAFETY: `Retained::into_raw` 로 넘겨받은 소유권을 메인 스레드에서 한 번만 되찾는다.
+            if let Some(button) = unsafe { Retained::from_raw(self.0) } {
+                button.setEnabled(true);
+            }
+        }
+    }
 
     pub struct Texts {
         pub title: String,
@@ -205,7 +223,8 @@ mod sheet {
     /// 창이 닫힐 때까지 막는다.
     pub fn show(app: &tauri::AppHandle, parent: tauri::WebviewWindow, texts: Texts) -> Result<bool, String> {
         let (tx, rx) = sync_channel::<Result<bool, String>>(1);
-        app.run_on_main_thread(move || open(&parent, &texts, tx))
+        let handle = app.clone();
+        app.run_on_main_thread(move || open(&handle, &parent, &texts, tx))
             .map_err(|e| format!("확인창을 띄우지 못했다: {e}"))?;
         // 띄우지 못하면 `tx` 가 그냥 사라져 여기서 오류가 된다 — 저장되지 않는 쪽이다.
         rx.recv().map_err(|_| "확인창을 띄우지 못했다".to_string())?
@@ -216,7 +235,18 @@ mod sheet {
         window_top - sheet_height >= screen_bottom
     }
 
-    fn open(parent: &tauri::WebviewWindow, texts: &Texts, tx: SyncSender<Result<bool, String>>) {
+    /// 지연 뒤에 켠다. 그 사이 시트가 끝났어도 살아 있는 버튼을 켜는 것뿐이라 해가 없다.
+    fn enable_later(app: &tauri::AppHandle, button: Retained<NSButton>) {
+        let app = app.clone();
+        let owned = OnMainOnly(Retained::into_raw(button));
+        std::thread::spawn(move || {
+            std::thread::sleep(ALLOW_DELAY);
+            // 앱이 끝나는 길이면 켜지지 않은 채로 끝난다.
+            let _ = app.run_on_main_thread(move || owned.enable());
+        });
+    }
+
+    fn open(app: &tauri::AppHandle, parent: &tauri::WebviewWindow, texts: &Texts, tx: SyncSender<Result<bool, String>>) {
         let Some(mtm) = MainThreadMarker::new() else { return };
         let Ok(pointer) = parent.ns_window() else { return };
         // SAFETY: Tauri 가 돌려준 살아 있는 NSWindow 포인터이고, 메인 스레드에서 retain 한다.
@@ -227,7 +257,8 @@ mod sheet {
         alert.setMessageText(&NSString::from_str(&texts.title));
         alert.setInformativeText(&NSString::from_str(&texts.body));
         alert.addButtonWithTitle(&NSString::from_str(&texts.cancel));
-        alert.addButtonWithTitle(&NSString::from_str(&texts.allow));
+        let allow = alert.addButtonWithTitle(&NSString::from_str(&texts.allow));
+        allow.setEnabled(false);
 
         // 띄우기 전에 크기를 잰다. 화면을 모르면 잴 수 없으니 띄우지 않는다.
         alert.layout();
@@ -263,6 +294,7 @@ mod sheet {
             let _ = &keep_alert;
         });
         alert.beginSheetModalForWindow_completionHandler(&window, Some(&done));
+        enable_later(app, allow);
     }
 }
 
@@ -399,6 +431,19 @@ mod tests {
         assert!(sheet::fits(1000.0, 880.0, 25.0));
         assert!(sheet::fits(905.0, 880.0, 25.0));
         assert!(!sheet::fits(904.0, 880.0, 25.0));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn 허용_버튼은_지연_뒤에_켜고_시트마다_다시_끈다() {
+        assert_eq!(sheet::ALLOW_DELAY.as_millis(), 1000);
+        // 시트를 만드는 자리에서 끄고, 시트를 띄운 뒤에 켜기를 예약한다. AppKit 동작은 실물로 본다.
+        let source = include_str!("mcp_stdio_confirm.rs");
+        let open = &source[source.find("    fn open(app").unwrap()..];
+        let off = open.find("allow.setEnabled(false)").unwrap();
+        let begin = open.find("beginSheetModalForWindow_completionHandler").unwrap();
+        let later = open.find("enable_later(app, allow)").unwrap();
+        assert!(off < begin && begin < later);
     }
 
     #[test]
