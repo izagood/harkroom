@@ -331,16 +331,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
     _scrollToBottom();
   }
 
-  /// 맨 아래(0)로 굴린다. 화면 밖 줄은 짓지 않아 높이를 어림하므로, 0 에 닿은 프레임의 배치에서 실제 높이로
-  /// 고쳐져 한 줄쯤 위에 멈출 수 있다(시험이 잡았다 — 위로 굴린 동안 새 답글이 붙은 경우). 그 프레임이 끝난 뒤
-  /// 남았으면 0 으로 붙인다.
-  void _scrollToBottom() {
-    _scroll.animateTo(0, duration: HarkroomMotion.base, curve: HarkroomMotion.ease).then((_) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && _scroll.hasClients && _scroll.position.pixels > 0) _scroll.jumpTo(0);
-      });
-    });
-  }
+  void _scrollToBottom() => scrollFeedToBottom(_scroll);
 
   /// 알약을 눌렀다. 띠가 섰으면(최신 답글이 안 실렸다) 띠와 같은 길([_jumpToLatest])로 최신 페이지를 받는다.
   /// 아니면 맨 아래로 굴린다 — 세 화면보다 멀면 한 화면 거리로 먼저 건너뛰고 굴린다(긴 애니메이션은 지연 빌드로
@@ -351,23 +342,11 @@ class _ThreadScreenState extends State<ThreadScreen> {
       _jumpToLatest();
       return;
     }
-    if (!_scroll.hasClients) return;
-    final pos = _scroll.position;
-    if (pos.pixels > pos.viewportDimension * 3) _scroll.jumpTo(pos.viewportDimension);
-    _scrollToBottom();
+    jumpFeedToBottom(_scroll);
   }
 
   /// 위로 굴린 동안 온 남의 답글 수. 진행 줄·깨우기는 답글로 안 센다(상태층의 [AppState.threadTailNew] 와 같은 기준).
-  int _newSince(AppState app, List<MessageRow> rows) {
-    final seen = _seenSeq;
-    if (seen == null) return 0;
-    final me = app.me?.id;
-    var n = 0;
-    for (final m in rows) {
-      if (m.seq > seen && m.authorId != me && m.kind != MessageKind.progress && m.kind != MessageKind.wake) n++;
-    }
-    return n;
-  }
+  int _newSince(AppState app, List<MessageRow> rows) => countNewSince(rows, _seenSeq, app.me?.id);
 
   /// 찾은 줄이면 강조로 감싼다.
   /// 이 화면에서 펼친 주고받기(구간 첫 행 id). 화면을 떠나면 다시 접힌다 — 데스크톱도 펼침을 기억하지 않는다.
@@ -642,7 +621,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 Positioned(
                   right: 16,
                   bottom: planButtonVisible(root?.planProgress, keyboardOpen: keyboardOpen) ? 12 + planButtonHeight + 8 : 12,
-                  child: ThreadJumpPill(
+                  child: FeedJumpPill(
                     newCount: jumpNew,
                     loading: app.jumpingToLatest.contains(widget.rootId),
                     onTap: _onJumpPill,
@@ -769,20 +748,51 @@ class _PlanAskBar extends StatelessWidget {
   }
 }
 
-/// 「↓ 최신 답글」 알약의 문구. 새 답글이 있으면 「새 답글 n」, 99 를 넘으면 「99+」.
-String jumpPillLabel(Strings t, int newCount) => newCount <= 0
-    ? t.threadJumpLatest
-    : t.threadJumpNew.replaceFirst('{n}', newCount > 99 ? '99+' : '$newCount');
+/// 위로 굴린 동안 온 남의 말 수. 진행 줄·깨우기는 세지 않는다. [seen] 이 없으면(아직 본 자리가 없다) 0.
+int countNewSince(Iterable<MessageRow> rows, int? seen, String? me) {
+  if (seen == null) return 0;
+  var n = 0;
+  for (final m in rows) {
+    if (m.seq > seen && m.authorId != me && m.kind != MessageKind.progress && m.kind != MessageKind.wake) n++;
+  }
+  return n;
+}
 
-/// 위로 굴린 목록에 떠서 맨 아래(최신 답글)로 데려가는 알약. 높이 36 이지만 누르는 자리는 44 다.
-/// 새 답글이 있으면 강조 면(사건), 없으면 들뜬 면 + 떠 있는 그림자(작성칸·탭 막대와 같은 한 종류).
+/// 맨 아래(0)로 굴린다. 화면 밖 줄은 짓지 않아 높이를 어림하므로, 0 에 닿은 프레임의 배치에서 실제 높이로
+/// 고쳐져 한 줄쯤 위에 멈출 수 있다(시험이 잡았다 — 위로 굴린 동안 새 답글이 붙은 경우). 그 프레임이 끝난 뒤
+/// 남았으면 0 으로 붙인다.
+void scrollFeedToBottom(ScrollController scroll) {
+  scroll.animateTo(0, duration: HarkroomMotion.base, curve: HarkroomMotion.ease).then((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (scroll.hasClients && scroll.position.pixels > 0) scroll.jumpTo(0);
+    });
+  });
+}
+
+/// 알약의 맨 아래 가기 — 세 화면보다 멀면 한 화면 거리로 먼저 건너뛰고 굴린다(긴 애니메이션은 지연 빌드로
+/// 버벅이고 오래 걸린다).
+void jumpFeedToBottom(ScrollController scroll) {
+  if (!scroll.hasClients) return;
+  final pos = scroll.position;
+  if (pos.pixels > pos.viewportDimension * 3) scroll.jumpTo(pos.viewportDimension);
+  scrollFeedToBottom(scroll);
+}
+
+/// 「↓ 최신 답글」 알약의 문구. 새 답글이 있으면 「새 답글 n」, 99 를 넘으면 「99+」. [channel] 이면 「메시지」 문구다.
+String jumpPillLabel(Strings t, int newCount, {bool channel = false}) => newCount <= 0
+    ? (channel ? t.channelJumpLatest : t.threadJumpLatest)
+    : (channel ? t.channelJumpNew : t.threadJumpNew).replaceFirst('{n}', newCount > 99 ? '99+' : '$newCount');
+
+/// 위로 굴린 목록에 떠서 맨 아래(최신)로 데려가는 알약 — 스레드와 채널([channel])이 같은 것을 쓴다. 높이 36 이지만
+/// 누르는 자리는 44 다. 새 말이 있으면 강조 면(사건), 없으면 들뜬 면 + 떠 있는 그림자(작성칸·탭 막대와 같은 한 종류).
 /// 받는 중([loading])이면 화살표 대신 스피너이고 눌리지 않는다.
-class ThreadJumpPill extends StatelessWidget {
-  const ThreadJumpPill({super.key, required this.onTap, this.newCount = 0, this.loading = false});
+class FeedJumpPill extends StatelessWidget {
+  const FeedJumpPill({super.key, required this.onTap, this.newCount = 0, this.loading = false, this.channel = false});
 
   final VoidCallback onTap;
   final int newCount;
   final bool loading;
+  final bool channel;
 
   @override
   Widget build(BuildContext context) {
@@ -793,11 +803,13 @@ class ThreadJumpPill extends StatelessWidget {
     final fg = hot ? k.fgOnStrong : k.fg;
     final n = newCount > 99 ? '99+' : '$newCount';
     return Semantics(
-      key: const Key('thread-jump-pill'),
+      key: Key(channel ? 'channel-jump-pill' : 'thread-jump-pill'),
       button: true,
       // 수가 바뀌면 읽기 도구가 알린다.
       liveRegion: hot,
-      label: hot ? t.threadJumpA11yNew.replaceFirst('{n}', n) : t.threadJumpA11y,
+      label: hot
+          ? (channel ? t.channelJumpA11yNew : t.threadJumpA11yNew).replaceFirst('{n}', n)
+          : (channel ? t.channelJumpA11y : t.threadJumpA11y),
       excludeSemantics: true,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
@@ -824,7 +836,7 @@ class ThreadJumpPill extends StatelessWidget {
                         Icon(Icons.arrow_downward, size: 16, color: fg),
                       const SizedBox(width: 6),
                       Text(
-                        jumpPillLabel(t, newCount),
+                        jumpPillLabel(t, newCount, channel: channel),
                         style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: fg),
                       ),
                     ],

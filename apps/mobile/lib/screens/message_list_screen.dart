@@ -46,10 +46,19 @@ class _MessageListScreenState extends State<MessageListScreen> {
   /// 작성칸 모델 칩으로 고른 값(서버 079). 보내면 비운다(결정 12).
   Map<String, ModelPick> _picks = const {};
 
+  /// 「↓ 최신 메시지」 알약([FeedJumpPill])이 보는 자리 — 스레드 화면과 같은 기준이다.
+  bool _atBottom = true;
+  bool _far = false;
+
+  /// 맨 아래에서 마지막으로 본 seq. 그 위로 온 남의 말만 새 것으로 센다 — 옛 페이지를 받아도 목록이 자라므로
+  /// 길이 차로 세지 않는다.
+  int? _seenSeq;
+
   @override
   void initState() {
     super.initState();
     _scroll.addListener(_maybeLoadOlder);
+    _scroll.addListener(_trackBottom);
     // 쓰던 글(D8)을 되살리고, 칠 때마다 적어 둔다. 커뮤니티 key 는 **지금** 쥔다 — 옮긴 뒤 이 화면이
     // 닫혀도 글은 이 커뮤니티 자리에 남는다.
     final app = AppScope.read(context);
@@ -75,9 +84,25 @@ class _MessageListScreenState extends State<MessageListScreen> {
     AppScope.read(context).loadOlder(widget.channelId);
   }
 
+  /// 맨 아래 근처 기준(px). 이 안이면 맨 아래 말이 보인다고 본다.
+  static const double _bottomSlop = 48;
+
+  void _trackBottom() {
+    if (!_scroll.hasClients) return;
+    final pos = _scroll.position;
+    final atBottom = pos.pixels < _bottomSlop;
+    final far = pos.pixels > pos.viewportDimension;
+    if (atBottom == _atBottom && far == _far) return;
+    setState(() {
+      _atBottom = atBottom;
+      _far = far;
+    });
+  }
+
   @override
   void dispose() {
     _scroll.removeListener(_maybeLoadOlder);
+    _scroll.removeListener(_trackBottom);
     _composer.removeListener(_keepDraft);
     _composer.dispose();
     _composerFocus.dispose();
@@ -135,7 +160,16 @@ class _MessageListScreenState extends State<MessageListScreen> {
     // 흘리면 채널이 진행 로그로 덮인다.
     // **이제 전부 그린다.** P1 까지는 `progress`·`wake` 를 버렸는데, 그러면 오래 도는
     // 스레드가 조용해 보였다 — 진행은 한 줄로 접히고 대기는 대기 줄이 된다.
-    final feed = buildFeed(all.where((m) => m.inChannelFeed).toList(growable: false));
+    final feedRows = all.where((m) => m.inChannelFeed).toList(growable: false);
+    final feed = buildFeed(feedRows);
+    final load = app.channelLoad[widget.channelId];
+    if (load == LoadState.loaded && (_seenSeq == null || _atBottom)) {
+      // 처음 받은 말·맨 아래에서 보이는 말은 새 것이 아니다. 빌드 중에 적어도 되는 값이다(그리기에만 쓴다).
+      _seenSeq = feedRows.isEmpty ? 0 : feedRows.map((m) => m.seq).reduce((a, b) => a > b ? a : b);
+    }
+    final jumpNew = countNewSince(feedRows, _seenSeq, app.me?.id);
+    // 맨 아래가 보이면 숨긴다. 한 화면 안이어도 새 말이 오면 띄운다 — 맨 아래는 안 보이는 자리다.
+    final showJump = load == LoadState.loaded && !_atBottom && (_far || jumpNew > 0);
     final failed = app.failedSends[widget.channelId] ?? const <FailedSend>[];
     final top = feedTopOf(app, widget.channelId);
     // `firstOrNull` 은 `package:collection` 것이다. 의존성 하나를 이것 때문에 들이지
@@ -175,9 +209,12 @@ class _MessageListScreenState extends State<MessageListScreen> {
         child: Column(
           children: [
             Expanded(
-              child: GlassBody(
+              child: Stack(
+              fit: StackFit.expand,
+              children: [
+              GlassBody(
                 header: const ConnectionBand(),
-                builder: (context, inset) => FeedKeyboardDismiss(child: switch (app.channelLoad[widget.channelId]) {
+                builder: (context, inset) => FeedKeyboardDismiss(child: switch (load) {
                 // 아직 판정 전(열자마자)도 읽는 중으로 본다 — 그 한 프레임에 "비어 있다"가
                 // 스쳐 지나가면 사람은 빈 채널로 읽는다.
                 null || LoadState.loading => Padding(padding: EdgeInsets.only(top: inset), child: const LoadingSkeleton()),
@@ -236,6 +273,15 @@ class _MessageListScreenState extends State<MessageListScreen> {
                       ),
                     ),
               })),
+              // 작성칸 위 오른쪽에 뜬다 — 목록 위에만 겹치고 작성칸은 가리지 않는다(스레드와 같은 자리).
+              if (showJump)
+                Positioned(
+                  right: 16,
+                  bottom: 12,
+                  child: FeedJumpPill(channel: true, newCount: jumpNew, onTap: () => jumpFeedToBottom(_scroll)),
+                ),
+              ],
+              ),
             ),
             MentionModelBar(
               controller: _composer,

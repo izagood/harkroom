@@ -1347,6 +1347,18 @@ class StringsKo implements Strings {
   String get threadJumpA11yNew => '최신 답글로 이동, 새 답글 {n}개';
 
   @override
+  String get channelJumpLatest => '최신 메시지';
+
+  @override
+  String get channelJumpNew => '새 메시지 {n}';
+
+  @override
+  String get channelJumpA11y => '최신 메시지로 이동';
+
+  @override
+  String get channelJumpA11yNew => '최신 메시지로 이동, 새 메시지 {n}개';
+
+  @override
   String get inboxLoadFailed => '인박스를 불러오지 못했다';
 
   @override
