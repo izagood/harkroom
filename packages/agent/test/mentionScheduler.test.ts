@@ -970,6 +970,31 @@ describe('같은 사람의 연달은 부름을 한 턴으로 묶는다', () => {
     expect(seen[0]!.bundledRows).toBeUndefined();
   });
 
+  it('에이전트 글도 원인 키가 같으면 묶는다. 다르거나 한쪽만 있으면 묶지 않는다', async () => {
+    const seen: MentionTarget[] = [];
+    const { scheduler } = harness({ runTurn: run(seen) });
+    await scheduler.admit(batch([row('a', 1, 'bot'), row('b', 2, 'bot')], { 1: { causeKey: 'k' }, 2: { causeKey: 'k' } }), bundleCtx);
+    await scheduler.drain();
+    expect(seen[0]!.mentionId).toBe('b');
+    expect(seen[0]!.bundledRows?.map((r) => r.id)).toEqual(['a']);
+    for (const [one, two] of [[{ causeKey: 'k' }, { causeKey: 'z' }], [{ causeKey: 'k' }, {}]] as const) {
+      const list: MentionTarget[] = [];
+      const h = harness({ runTurn: run(list) });
+      await h.scheduler.admit(batch([row('a', 1, 'bot'), row('b', 2, 'bot')], { 1: one, 2: two }), bundleCtx);
+      await h.scheduler.drain();
+      expect(list[0]!.mentionId).toBe('a');
+      expect(list[0]!.bundledRows).toBeUndefined();
+    }
+  });
+
+  it('사람 글도 원인 키가 다르면 묶지 않는다', async () => {
+    const seen: MentionTarget[] = [];
+    const { scheduler } = harness({ runTurn: run(seen) });
+    await scheduler.admit(batch([row('a', 1), row('b', 2)], { 1: { causeKey: 'k' }, 2: { causeKey: 'z' } }), bundleCtx);
+    await scheduler.drain();
+    expect(seen[0]!.bundledRows).toBeUndefined();
+  });
+
   it('계정 종류를 모르면 묶지 않는다', async () => {
     const seen: MentionTarget[] = [];
     const { scheduler } = harness({ runTurn: run(seen) });

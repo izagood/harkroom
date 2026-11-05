@@ -975,8 +975,11 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
 
   /** [entry] 와 한 턴으로 묶을 entry 들(오래된 순, 끝이 대표). 묶을 수 없으면 [entry] 하나다. */
   const bundleFor = (entry: InboxBatch['entries'][number], mention: MessageRow, threadKey: string, batch: InboxBatch, ctx: BatchContext): InboxBatch['entries'] => {
-    // 사람 글만 묶는다. 에이전트 글은 작성자가 같아도 글마다 원인 키가 다를 수 있는데 턴 임대는 대표 글 하나에서 나온다.
-    if (!ctx.agentIds || ctx.agentIds.has(mention.authorId)) return [entry];
+    // 턴 임대는 대표 글 하나에서 나온다. 에이전트 글은 원인 키가 같을 때만 묶고, 키가 없으면 사람 글만 묶는다.
+    const sameCause = (other: InboxBatch['entries'][number]): boolean => {
+      if (entry.causeKey !== undefined && other.causeKey !== undefined) return entry.causeKey === other.causeKey;
+      return ctx.agentIds !== undefined && !ctx.agentIds.has(mention.authorId);
+    };
     if (!isPlainMention(entry, mention) || (attempts.get(entry.id)?.tried ?? 0) >= BUNDLE_MAX_FAILURES) return [entry];
     const group = [entry];
     let chars = mention.body.length;
@@ -984,7 +987,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       if (group.length >= BUNDLE_MAX_ENTRIES) break;
       if (other.id <= entry.id) continue;
       const row = batch.messages.find((m) => m.id === other.messageId);
-      if (!row || row.authorId !== mention.authorId || !isPlainMention(other, row) || !canJoinBundle(other)) continue;
+      if (!row || row.authorId !== mention.authorId || !sameCause(other) || !isPlainMention(other, row) || !canJoinBundle(other)) continue;
       if (SessionStore.threadKey(row.channelId, mentionAnchor(row)) !== threadKey) continue;
       // 본문을 다 싣지 못할 글은 넣지 않는다 — 안 실린 글을 읽음 처리하면 #1699 가 돌아온다. 다음 턴이 받는다.
       if (chars + row.body.length > BUNDLE_MAX_CHARS) break;
