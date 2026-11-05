@@ -1329,6 +1329,8 @@ export function buildSystemPrompt(opts: {
     // 호출 권한 재설계 5단계(소유자 결정 2026-10-30) — 서버는 에이전트 글의 멘션을 「이번 턴을 깨운 사람이 직접 부를 수
     // 있나」로도 연다(`invokePrincipal.ts`). 이 줄이 없으면 에이전트는 예전처럼 다른 에이전트에게 중계를 부탁한다.
     // 막힌 부름을 다른 에이전트로 돌아가지 말라는 줄은 안전선이다 — 쓰는 법과 함께 둔다.
+    // 넘길 수단이 멘션뿐이던 동안 넘긴 쪽은 결말을 예약으로 훑어야 했다(2026-11-06) — 이 문단이 없으면 아무도 `message.delegate` 를 쓰지 않는다(mem/new-vocabulary-needs-a-prompt).
+    '일을 넘기고 **결말을 받아야 하면** `message.delegate`(`threadRootId`·`to`)를 쓴다 — 담당의 `message.report`·`message.fail`·기한·중단으로 일이 닫히면 서버가 너를 다시 깨우므로 결말을 예약으로 훑지 않아도 된다. 맨 앞 멘션은 알리기·묻기용이고 결말이 돌아오지 않는다.',
     '동료 에이전트에게 맡길 일은 **그 동료를 직접 부른다** — 다른 에이전트에게 대신 불러 달라고 중계를 부탁하지 않는다.',
     '서버는 이번 턴을 깨운 사람이 직접 부를 수 있는 에이전트면 네 부름도 통과시킨다. 그 사람도 못 부르는 상대면 막히고',
     '그 이유가 글에 남는다 — 그때는 다른 에이전트를 거쳐 돌아가지 말고 요청자에게 넘긴다.',
@@ -1755,15 +1757,19 @@ function delegationSection(outcome: InboxDelegationOutcome): string[] {
  * 봐야 한다. 그래서 그 하나를 명시적으로 열어 둔다.
  */
 function handedSection(handed: InboxDelegatedBy): string[] {
+  const lead = handed.teamName ? `팀 @${handed.teamName} 의 팀장 @${handed.leadHandle}` : `@${handed.leadHandle}`;
   return [
-    `(넘겨받은 일 — 팀 @${handed.teamName} 의 팀장 @${handed.leadHandle} 가 너에게 넘겼다)`,
+    `(넘겨받은 일 — ${lead} 가 너에게 넘겼다)`,
     '',
-    `**최종 답은 팀장이 쓴다.** 네 발화는 @${handed.leadHandle} 에게 오는 **보고**다 —`,
+    `**최종 답은 넘긴 쪽이 쓴다.** 네 발화는 @${handed.leadHandle} 에게 오는 **보고**다 —`,
     '요청자(사람)를 `@handle` 로 부르지 마라. 네 보고까지 사람에게 직접 오면 창구가 둘이 되고,',
     '그것이 지금 고치고 있는 바로 그 시끄러움이다.',
     '',
-    `기한은 ${handed.deadlineAt} 까지다. 그 안에 답하지 않으면 이 일은 **무응답**으로 닫히고`,
-    '팀장이 직접 하거나 다른 팀원에게 돌린다 — 오래 걸릴 것 같으면 지금 아는 것을 먼저 보고해라.',
+    `**끝나면 \`message.report\` 를 이 스레드에 올려라 — 이 일은 완료 보고나 \`message.fail\` 로만 닫힌다.** 보통 답글·진행은`,
+    `닫지 않는다. 닫아야 @${handed.leadHandle} 가 깨어나므로 위임자를 따로 멘션할 필요는 없다. 예약을 걸고 이어 가면 깨어난 턴에서 보고한다.`,
+    '',
+    `기한은 ${handed.deadlineAt} 까지다. 그때까지 아무 신호도 없으면 이 일은 **무응답**으로 닫히고`,
+    '넘긴 쪽이 직접 하거나 다른 담당에게 돌린다 — 진행·예약·물음은 기한을 민다. 오래 걸릴 것 같으면 `message.progress` 로 알려라.',
     '',
     '**막혔으면 `message.fail` 을 써라.** 실패는 사람에게도 보이는 유일한 예외다 — 막힌 것을',
     '조용히 두는 것이 가장 나쁘다.',
@@ -2439,6 +2445,21 @@ export function hasOwnReportSince(
  * 감시 예약으로 깨어난 턴이 다음 예약도 끝 보고도 없이 끝났을 때 앵커 스레드에 남기는 실패 줄(2026-10-31).
  * 사유를 싣는다 — 같은 스레드에 이미 대기 줄로 보이던 말이라 새로 드러나는 것이 없다.
  */
+/**
+ * 넘겨받은 일을 이 턴이 **열어 둔 채 끝냈는가**(2026-11-06). 끝 보고·실패로 닫았거나, 예약·사람에게 물음으로 이어 갈 길을 남겼으면 아니다.
+ * 끝 보고가 아닌 글만 썼으면 그렇다 — 위임은 끝 보고로만 닫히므로 그대로 두면 넘긴 쪽이 기한까지 기다린 뒤 무응답을 받는다.
+ */
+export function delegationLeftOpen(
+  messages: MessageRow[], meId: string, sinceSeq: number, turnId?: string | null,
+): boolean {
+  if (hasOwnWakeSince(messages, meId, sinceSeq, turnId)) return false;
+  return !messages.some((m) => m.authorId === meId && m.seq > sinceSeq && ownedByTurn(m, turnId, 'count')
+    && ['report', 'failure', 'ask'].includes(String((m.meta as { kind?: unknown } | null | undefined)?.kind)));
+}
+
+/** 넘겨받은 일을 끝 보고 없이 끝낸 턴에 러너가 올리는 실패 줄. */
+export const DELEGATION_REPORT_MISSED_NOTICE = '넘겨받은 일을 끝 보고(`message.report`) 없이 끝냈습니다 — 앞 글에 결과가 있으면 그것을 보고, 필요하면 다시 넘기세요.';
+
 export function watchMissedNotice(reason: string): string {
   return [
     '감시 예약으로 깨어난 턴이 다음 예약도 끝 보고도 없이 끝났다 — 감시가 여기서 멈췄다.',

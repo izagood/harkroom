@@ -6,7 +6,9 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
-import { cancelDelegationsFor, createDelegationDeadlineSweeper } from '../src/services/delegations.js';
+import { cancelDelegationsFor, createDelegationDeadlineSweeper, DELEGATION_WAIT_MAX_SEC } from '../src/services/delegations.js';
+import { delegationChainCapped } from '../src/services/messages.js';
+import { scheduleWake } from '../src/services/agentWakes.js';
 
 /**
  * 위임 왕복(050) — **팀장이 넘긴 일이 끝나면 팀장이 다시 깬다.**
@@ -175,23 +177,16 @@ describe('050 위임 왕복', () => {
     await oneClient.close(); await leadClient.close();
   });
 
-  it('3. 팀장만 넘길 수 있고, `to` 는 그 팀의 팀원이어야 한다', async () => {
+  it('3. 받는 쪽은 호출 게이트를 지나야 하고, 자기에게는 넘길 수 없다', async () => {
     const rootId = await openThread('@delegteam 권한');
-    const oneClient = await mcpClient(onePat);
-
-    // 팀원이 넘기려 들면 거절이다 — 열면 위임이 트리가 되고 사람이 화면에서 읽을 수 없다.
-    const notLead = text(await oneClient.callTool({
-      name: 'message.delegate',
-      arguments: { channelId, threadRootId: rootId, body: '내가 넘긴다', to: ['dtwo'] },
-    }));
-    expect((notLead.error as { code: string }).code).toBe('not_a_lead');
-
     const leadClient = await mcpClient(leadPat);
+
+    // 없는 이름은 막힌 에이전트와 같은 말로 거절한다 — 거절 사유로 범위 설정을 읽어 낼 수 없게.
     const stranger = text(await leadClient.callTool({
       name: 'message.delegate',
       arguments: { channelId, threadRootId: rootId, body: '남에게 넘긴다', to: ['mcpstranger'] },
     }));
-    expect((stranger.error as { code: string }).code).toBe('not_team_members');
+    expect((stranger.error as { code: string }).code).toBe('not_invokable');
 
     // 자기에게 넘기는 것은 뜻이 없다.
     const self = text(await leadClient.callTool({
@@ -200,7 +195,7 @@ describe('050 위임 왕복', () => {
     }));
     expect((self.error as { code: string }).code).toBe('self_delegation');
 
-    await oneClient.close(); await leadClient.close();
+    await leadClient.close();
   });
 
   it('4. 미결이 0 이 될 때 한 번만 깨운다', async () => {
@@ -217,13 +212,13 @@ describe('050 위임 왕복', () => {
 
     // 첫 팀원이 답한다 — 아직 미결이 하나 남았으므로 팀장은 깨지 않는다.
     await oneClient.callTool({
-      name: 'message.post', arguments: { channelId, threadRootId: rootId, body: '서버 쪽 끝났다' },
+      name: 'message.report', arguments: { channelId, threadRootId: rootId, body: '서버 쪽 끝났다', checks: ['확인'] },
     });
     expect(await inboxReasons(leadId, messageId)).toEqual([]);
 
     // 둘째가 답하면 그때 한 번 깬다.
     await twoClient.callTool({
-      name: 'message.post', arguments: { channelId, threadRootId: rootId, body: '화면 쪽 끝났다' },
+      name: 'message.report', arguments: { channelId, threadRootId: rootId, body: '화면 쪽 끝났다', checks: ['확인'] },
     });
     expect(await inboxReasons(leadId, messageId)).toEqual(['delegation_done']);
     expect(await outcomes(messageId)).toEqual({ done1: 'done', dtwo: 'done' });
@@ -299,7 +294,7 @@ describe('050 위임 왕복', () => {
     // 늦게 온 답으로는 다시 깨우지 않는다 — 이미 사람에게 넘어간 일을 되살리면 둘이 같은
     // 일을 잡는다. 의무가 이미 닫혔으므로 이 답은 아무 것도 열지 않는다.
     await oneClient.callTool({
-      name: 'message.post', arguments: { channelId, threadRootId: rootId, body: '늦었지만 했다' },
+      name: 'message.report', arguments: { channelId, threadRootId: rootId, body: '늦었지만 했다', checks: ['확인'] },
     });
     expect(await inboxReasons(leadId, messageId)).toEqual(['delegation_done']);
 
@@ -364,13 +359,13 @@ describe('050 위임 왕복', () => {
 
     // 하나가 답하면 그 하나만 빠진다.
     await oneClient.callTool({
-      name: 'message.post', arguments: { channelId, threadRootId: rootId, body: '끝났다' },
+      name: 'message.report', arguments: { channelId, threadRootId: rootId, body: '끝났다', checks: ['확인'] },
     });
     expect(await openIds()).toEqual([twoId]);
 
     // 전부 닫히면 빈 배열이다 — 사슬에서도 사라진다.
     await twoClient.callTool({
-      name: 'message.post', arguments: { channelId, threadRootId: rootId, body: '나도 끝났다' },
+      name: 'message.report', arguments: { channelId, threadRootId: rootId, body: '나도 끝났다', checks: ['확인'] },
     });
     expect(await openIds()).toEqual([]);
 
@@ -563,5 +558,148 @@ describe('050 위임 왕복', () => {
     expect(again.delegated).toEqual(['done1']);
 
     await oneClient.close(); await leadClient.close();
+  });
+});
+
+/**
+ * 위임을 팀 밖으로 열고 끝 보고만 의무를 닫는다(162, 소유자 결정 2026-11-06).
+ * 넘긴 쪽을 깨우는 다른 길(실패·기한·중단)은 팀 없는 위임에서도 그대로여야 한다.
+ */
+describe('팀 밖 위임 · 끝 보고만 닫음', () => {
+  /** `done1` 은 팀장이 아니다 — `dtwo` 에게 넘기면 팀 없는 위임이 된다. */
+  async function handOff(body: string): Promise<{ rootId: string; messageId: string; one: Client; two: Client }> {
+    const rootId = await openThread(body);
+    const one = await mcpClient(onePat);
+    const two = await mcpClient(twoPat);
+    const res = text(await one.callTool({ name: 'message.delegate', arguments: { channelId, threadRootId: rootId, body: '맡긴다', to: ['dtwo'] } }));
+    expect(res.delegated).toEqual(['dtwo']);
+    return { rootId, messageId: (res.message as { id: string }).id, one, two };
+  }
+  const expire = (messageId: string) => pool.query(`update team_delegation set deadline_at = now() - interval '1 second' where message_id = $1`, [messageId]);
+  const deadlineOf = async (messageId: string) => new Date((await pool.query(`select deadline_at from team_delegation where message_id = $1`, [messageId])).rows[0]!.deadline_at as string);
+
+  it('팀장이 아닌 에이전트도 넘긴다 — 팀 칸은 비고, 담당의 항목에 넘긴 쪽이 실린다', async () => {
+    const { messageId, one, two } = await handOff('팀 없이');
+    expect((await pool.query(`select team_id from team_delegation where message_id = $1`, [messageId])).rows[0]!.team_id).toBeNull();
+    expect(await inboxReasons(twoId, messageId)).toEqual(['team_delegated']);
+    const inbox = text(await two.callTool({ name: 'inbox.poll', arguments: { timeoutMs: 0 } }));
+    const entry = (inbox.entries as Array<{ messageId: string; delegatedBy?: { leadHandle: string; teamName: string | null } }>).find((e) => e.messageId === messageId);
+    expect(entry?.delegatedBy).toMatchObject({ leadHandle: 'done1', teamName: null });
+    await one.close(); await two.close();
+  });
+
+  it('호출 범위에 막힌 상대에게는 넘기지 못하고 글도 남지 않는다', async () => {
+    const { accountId: closedId } = await createAgent(app, adminToken, 'dclosed');
+    const updated = await pool.query(`update agent_config set invoke_scope = 'list' where account_id = $1`, [closedId]);
+    expect(updated.rowCount).toBe(1);
+    const closed = await mcpClient(onePat);
+    const rootId = await openThread('막힌 상대');
+    const res = text(await closed.callTool({ name: 'message.delegate', arguments: { channelId, threadRootId: rootId, body: '넘긴다', to: ['dclosed'] } }));
+    expect(res.error).toMatchObject({ code: 'not_invokable', handles: ['dclosed'] });
+    const rows = await pool.query(`select 1 from team_delegation where thread_root_id = $1`, [rootId]);
+    expect(rows.rowCount).toBe(0);
+    const posted = await pool.query(`select 1 from message where thread_root_id = $1`, [rootId]);
+    expect(posted.rowCount).toBe(0);
+    await closed.close();
+  });
+
+  it('보통 답글은 닫지 않고 기한만 민다 — 끝 보고가 닫고 넘긴 쪽을 한 번 깨운다', async () => {
+    const { rootId, messageId, one, two } = await handOff('보고만 닫는다');
+    await expire(messageId);
+    await two.callTool({ name: 'message.post', arguments: { channelId, threadRootId: rootId, body: '시작한다' } });
+    expect(await outcomes(messageId)).toEqual({ dtwo: null });
+    expect(await inboxReasons(oneId, messageId)).toEqual([]);
+    expect((await deadlineOf(messageId)).getTime()).toBeGreaterThan(Date.now());
+
+    await two.callTool({ name: 'message.report', arguments: { channelId, threadRootId: rootId, body: '끝', checks: ['확인'] } });
+    expect(await outcomes(messageId)).toEqual({ dtwo: 'done' });
+    expect(await inboxReasons(oneId, messageId)).toEqual(['delegation_done']);
+    await two.callTool({ name: 'message.report', arguments: { channelId, threadRootId: rootId, body: '또 끝', checks: ['확인'] } });
+    expect(await inboxReasons(oneId, messageId)).toEqual(['delegation_done']);
+    await one.close(); await two.close();
+  });
+
+  it('실패(침묵 종료가 러너를 거쳐 오는 길)는 실패로 닫고 넘긴 쪽을 깨운다', async () => {
+    const { rootId, messageId, one, two } = await handOff('실패');
+    await two.callTool({ name: 'message.fail', arguments: { channelId, threadRootId: rootId, body: '넘겨받은 일에 답을 남기지 못하고 끝났습니다', retryable: true } });
+    expect(await outcomes(messageId)).toEqual({ dtwo: 'failed' });
+    expect(await inboxReasons(oneId, messageId)).toEqual(['delegation_done']);
+    await one.close(); await two.close();
+  });
+
+  it('기한 스위퍼는 신호가 없으면 무응답으로 닫고 넘긴 쪽을 깨운다', async () => {
+    const { messageId, one, two } = await handOff('기한');
+    await expire(messageId);
+    await createDelegationDeadlineSweeper(pool).sweep();
+    expect(await outcomes(messageId)).toEqual({ dtwo: 'timeout' });
+    expect(await inboxReasons(oneId, messageId)).toEqual(['delegation_done']);
+    await one.close(); await two.close();
+  });
+
+  it('사람이 담당을 중단하면 취소로 닫고 넘긴 쪽을 깨운다', async () => {
+    const { rootId, messageId, one, two } = await handOff('중단');
+    const client = await pool.connect();
+    try {
+      await client.query('begin');
+      expect(await cancelDelegationsFor(client, { threadRootId: rootId, accountId: twoId })).toEqual([oneId]);
+      await client.query('commit');
+    } finally { client.release(); }
+    expect(await outcomes(messageId)).toEqual({ dtwo: 'canceled' });
+    expect(await inboxReasons(oneId, messageId)).toEqual(['delegation_done']);
+    await one.close(); await two.close();
+  });
+
+  it('담당의 예약이 남아 있으면 기한이 지나도 닫지 않고 그 시각 뒤로 민다', async () => {
+    const { rootId, messageId, one, two } = await handOff('예약');
+    const wake = await scheduleWake(pool, { accountId: twoId, channelId, threadRootId: rootId, notBeforeSec: 3000, reason: 'CI 확인' });
+    await expire(messageId);
+    await createDelegationDeadlineSweeper(pool).sweep();
+    expect(await outcomes(messageId)).toEqual({ dtwo: null });
+    expect((await deadlineOf(messageId)).getTime()).toBeGreaterThan(new Date(wake.wake!.wakeAt).getTime());
+    await one.close(); await two.close();
+  });
+
+  it('담당의 물음이 열려 있으면 닫지 않고, 답이 나면 다시 기한으로 닫는다', async () => {
+    const { rootId, messageId, one, two } = await handOff('물음');
+    const asked = text(await two.callTool({
+      name: 'message.ask',
+      arguments: { channelId, threadRootId: rootId, body: '어느 쪽?', prompt: '어느 쪽?', options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }] },
+    }));
+    expect(asked.error).toBeUndefined();
+    await expire(messageId);
+    await createDelegationDeadlineSweeper(pool).sweep();
+    expect(await outcomes(messageId)).toEqual({ dtwo: null });
+
+    await pool.query(`update message set meta = jsonb_set(meta, '{ask,answeredWith}', '"a"') where id = $1`, [(asked.message as { id: string }).id]);
+    await expire(messageId);
+    await createDelegationDeadlineSweeper(pool).sweep();
+    expect(await outcomes(messageId)).toEqual({ dtwo: 'timeout' });
+    await one.close(); await two.close();
+  });
+
+  it('기다림에도 끝이 있다 — 상한이 지나면 예약이 남아도 기한으로 닫는다', async () => {
+    const { rootId, messageId, one, two } = await handOff('상한');
+    await scheduleWake(pool, { accountId: twoId, channelId, threadRootId: rootId, notBeforeSec: 3000, reason: '또 확인' });
+    await pool.query(
+      `update team_delegation set created_at = now() - ($2::int * interval '1 second'), deadline_at = now() - interval '1 second' where message_id = $1`,
+      [messageId, DELEGATION_WAIT_MAX_SEC + 60],
+    );
+    await createDelegationDeadlineSweeper(pool).sweep();
+    expect(await outcomes(messageId)).toEqual({ dtwo: 'timeout' });
+    expect(await inboxReasons(oneId, messageId)).toEqual(['delegation_done']);
+    await one.close(); await two.close();
+  });
+
+  it('연쇄 상한에 닿은 글이면 팀 밖 위임을 막는다', async () => {
+    const { messageId, one, two } = await handOff('연쇄');
+    const client = await pool.connect();
+    try {
+      expect(await delegationChainCapped(client, messageId)).toBe(false);
+      await client.query(`update message set mention_depth = 1000 where id = $1`, [messageId]);
+      expect(await delegationChainCapped(client, messageId)).toBe(true);
+      await client.query(`update message set mention_depth = 0, chain_started_at = now() - interval '30 days' where id = $1`, [messageId]);
+      expect(await delegationChainCapped(client, messageId)).toBe(true);
+    } finally { client.release(); }
+    await one.close(); await two.close();
   });
 });

@@ -16,7 +16,7 @@ import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs
 import { dirname, join } from 'node:path';
 import type { AgentHarness, AgentView, InboxCanceledWake, InboxDelegatedBy, InboxDelegationOutcome, InboxTeamCall, MessageRow, WakeReportTo } from '@harkroom/shared';
 import type { FailOpts, Me } from './harkroom.js';
-import { laneNudgeText, laneNudgeWanted, BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DELTA_MAX_MESSAGES, mergeThreadPages, DENIAL_NOTICE_MAX_PER_TURN, MAC_PERMISSION_NOTICE_MAX_PER_TURN, macPermissionNotice, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, stallScreenErrorLine, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, SILENT_ACK_EMOJI, silentTurnNotice, silentWakeNotice, backgroundCutNotice, reportMissedNotice, MESSAGE_KIND_WAKE, hasOwnReportSince, watchMissedNotice } from './prompt.js';
+import { laneNudgeText, laneNudgeWanted, BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DELTA_MAX_MESSAGES, mergeThreadPages, DENIAL_NOTICE_MAX_PER_TURN, MAC_PERMISSION_NOTICE_MAX_PER_TURN, macPermissionNotice, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, stallScreenErrorLine, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, SILENT_ACK_EMOJI, silentTurnNotice, silentWakeNotice, backgroundCutNotice, reportMissedNotice, MESSAGE_KIND_WAKE, hasOwnReportSince, watchMissedNotice, delegationLeftOpen, DELEGATION_REPORT_MISSED_NOTICE } from './prompt.js';
 import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
 import { SessionStore, type SessionRecord } from './sessions.js';
 import { attachesCommandHook, attachesPostToolHook, buildTurnCommand, chromeTurnFor, harnessPath, turnKeyDelivery, safeToolAllows, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
@@ -3209,6 +3209,12 @@ export async function runMentionTurn(
         retryable: false,
         what: '감시 예약으로 깨어난 턴이 다음 예약 없이 끝났다',
       });
+    }
+    // **넘겨받은 일은 끝 보고로만 닫힌다**(2026-11-06). 글만 쓰고 끝난 턴을 두면 넘긴 쪽은 10분 뒤 「무응답」을 받아 멀쩡한 일을 다시 맡긴다 —
+    // 실패로 바로 닫아 지금 깨운다. 말 없이 끝난 턴은 위 침묵 경로가 이미 실패로 닫았다. 예약·물음을 남겼으면 아직 끝나지 않은 일이다.
+    if (target.delegatedBy && postCount > 0 && delegationLeftOpen(after, deps.me.id, turnStartSeq, turnId)) {
+      console.log(`[mentionTurn] ${key}: 넘겨받은 일을 끝 보고 없이 끝냈다 — 실패 줄을 남긴다`);
+      await deps.harkroom.fail(channelId, DELEGATION_REPORT_MISSED_NOTICE, anchor, { retryable: true, mentionId });
     }
   } catch (err) {
     console.error(

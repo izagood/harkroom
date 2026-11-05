@@ -1,11 +1,12 @@
 import type { Pool, PoolClient } from 'pg';
 import { countsAsReply, TEAM_ROUND_LIMIT, type InboxDelegationOutcome, type MessageRow } from '@harkroom/shared';
+import { invokeFactsFor, mayInvoke } from './invokeGate.js';
 
 /**
  * 위임 왕복(마이그레이션 050) — **팀장이 넘긴 일이 끝나면 팀장이 다시 깬다.**
  *
- * 이 파일이 갖는 사실은 넷이다: **누가 넘길 수 있나**(팀장만) · **몇 번까지**(라운드) ·
- * **무엇이 의무를 닫나**(답·실패·기한) · **언제 팀장을 깨우나**(미결 0 또는 기한, 한 번만).
+ * 이 파일이 갖는 사실은 넷이다: **누가 넘길 수 있나**(자기 팀원에게 넘기는 팀장, 또는 호출 게이트를 지나는 에이전트) · **몇 번까지**(라운드) ·
+ * **무엇이 의무를 닫나**(완료 보고·실패·기한·중단) · **언제 팀장을 깨우나**(미결 0 또는 기한, 한 번만).
  * 넷 다 정책이라 한 곳에 모아 둔다 — `agentWakes.ts` 가 깨움 정책을 한 곳에 모은 것과 같은
  * 이유다: MCP 도구와 스위퍼가 각자 판정하면 표면이 늘 때 갈라진다.
  */
@@ -43,9 +44,15 @@ export const DELEGATION_SILENCE_SEC = 10 * 60;
 export const DELEGATION_DEADLINE_MIN_SEC = 60;
 export const DELEGATION_DEADLINE_MAX_SEC = 6 * 60 * 60;
 
+/**
+ * 담당이 **예약을 걸었거나 사람의 답을 기다리는 동안** 기한을 미는 상한(2026-11-06, 위임 시각부터).
+ * 끝 보고만 의무를 닫으므로 CI 를 기다리는 일이 턴 사이에 10분을 넘겨도 무응답이 되어서는 안 된다. 다만 사람이 답하지 않는 카드나
+ * 되풀이되는 예약이 넘긴 쪽을 영영 재우면 안 되므로 끝을 둔다 — 이 시각이 지나면 전처럼 기한으로 닫는다.
+ */
+export const DELEGATION_WAIT_MAX_SEC = 24 * 60 * 60;
+
 export type DelegateRefusal =
-  | { code: 'not_a_lead'; message: string }
-  | { code: 'not_team_members'; message: string }
+  | { code: 'not_invokable'; message: string }
   | { code: 'round_limit'; message: string };
 
 export interface LeadTeam {
@@ -90,6 +97,37 @@ export async function leadTeamFor(
     if (wanted.every((h) => members.has(h))) return { teamId, members };
   }
   return null;
+}
+
+/**
+ * 팀 밖에게 넘길 때의 대상 해석(2026-11-06). **멘션과 같은 호출 게이트**(`mayInvoke`)를 지나는 에이전트만 받는다 —
+ * 위임이 부를 수 없는 상대를 부르는 뒷문이 되지 않게. 회신권(084)은 넘기지 않는다: 그것은 결과 한 번을 돌려주는 권리이지 일을 새로 맡기는 권리가 아니다.
+ *
+ * 없는 이름·사람·막힌 에이전트를 같은 말로 거절한다 — 거절 사유로 계정의 범위 설정을 읽어 낼 수 없게.
+ */
+export async function openDelegationTargets(
+  client: PoolClient, args: { callerId: string; channelId: string; to: string[] },
+): Promise<{ members: LeadTeam['members'] } | { refused: string[] }> {
+  const wanted = args.to.map((h) => h.toLowerCase());
+  const res = await client.query<{ id: string; handle: string; disabled: boolean }>(
+    `select id, lower(handle) as handle, disabled_at is not null as disabled from account
+      where kind = 'agent' and deleted_at is null and lower(handle) = any($1::text[])`,
+    [wanted],
+  );
+  const byHandle = new Map(res.rows.map((r) => [r.handle, r]));
+  const facts = await invokeFactsFor(client, res.rows.map((r) => r.id));
+  const members: LeadTeam['members'] = new Map();
+  const refused: string[] = [];
+  for (const [i, handle] of wanted.entries()) {
+    const row = byHandle.get(handle);
+    const fact = row ? facts.get(row.id) : undefined;
+    if (!row || !fact || !(await mayInvoke(client, fact, { callerId: args.callerId, channelId: args.channelId, via: 'mention' }))) {
+      refused.push(args.to[i]!);
+      continue;
+    }
+    members.set(handle, { accountId: row.id, disabled: row.disabled });
+  }
+  return refused.length ? { refused } : { members };
 }
 
 /**
@@ -155,7 +193,8 @@ export async function createDelegation(
     messageId: string;
     channelId: string;
     threadRootId: string;
-    teamId: string;
+    /** 팀장이 자기 팀원에게 넘긴 일일 때만 있다(162). */
+    teamId: string | null;
     leadAccountId: string;
     delegateIds: string[];
     deadlineAt: Date;
@@ -238,18 +277,18 @@ export async function touchDelegationDeadline(
 }
 
 /**
- * 팀원의 발화가 **자기 의무를 닫는다.** `postMessage` 안에서 같은 트랜잭션으로 불린다.
+ * 팀원의 **완료 보고·실패가 자기 의무를 닫는다.** `postMessage` 안에서 같은 트랜잭션으로 불린다.
  *
  * ## 무엇이 닫는가
  *
- * `countsAsReply(kind)` 인 발화 하나다 — `progress`·`wake` 는 답이 아니므로 닫지 않는다
- * (#687 이 만들고 시험까지 있는 판정을 그대로 쓴다). **실패도 닫는다**: 실패는 결과이고,
- * 러너는 3회 소진·사용량 한도·세션 충돌에서 이미 `message.fail` 을 올린다 — 그래서 하네스
+ * `message.report` 와 `message.fail` 뿐이다(소유자 결정 2026-11-06). 보통 답글·물음·`progress`·`wake` 는 닫지 않고 기한만 민다 —
+ * 첫 답이 닫던 동안에는 「시작한다」 같은 중간 글 하나로 의무가 닫혀 넘긴 쪽이 결과 없이 깨어났다.
+ * **실패도 닫는다**: 실패는 결과이고, 러너는 3회 소진·사용량 한도·세션 충돌에서 이미 `message.fail` 을 올린다 — 그래서 하네스
  * 실패는 이 경로로 **자동으로** 풀린다.
  *
- * ## 왜 첫 발화 하나만인가
+ * ## 왜 첫 결말 하나만인가
  *
- * 팀원이 두 번 말하면 두 번째는 이미 닫힌 의무를 다시 닫지 않는다(`outcome is null` 조건).
+ * 팀원이 두 번 보고하면 두 번째는 이미 닫힌 의무를 다시 닫지 않는다(`outcome is null` 조건).
  * 결말을 뒤늦게 바꾸면(성공 뒤의 실패, 또는 그 반대) 팀장이 이미 취합한 판단이 흔들린다.
  *
  * ## 정확히 한 번 깨운다
@@ -270,12 +309,13 @@ export async function closeDelegationsForReply(
     messageId: string;
     /** `MessageRow['kind']` 그대로다 — `countsAsReply` 가 그 갈래만 받는다. */
     kind: MessageRow['kind'];
+    isReport: boolean;
     isFailure: boolean;
   },
 ): Promise<string[]> {
-  // 닫지 않는 발화(`progress`·`wake`)는 **"살아 있다"** 는 신호다 — 의무는 그대로 두고
+  // 닫지 않는 발화는 **"살아 있다"** 는 신호다 — 의무는 그대로 두고
   // 기한만 뒤로 민다(2026-09-12). 그 판단의 근거는 `touchDelegationDeadline` 주석에 있다.
-  if (!countsAsReply(args.kind)) {
+  if (!countsAsReply(args.kind) || !(args.isReport || args.isFailure)) {
     await touchDelegationDeadline(client, { threadRootId: args.threadRootId, authorId: args.authorId });
     return [];
   }
@@ -530,8 +570,8 @@ export function createDelegationDeadlineSweeper(pool: Pool, opts: {
     const client: PoolClient = await pool.connect();
     try {
       await client.query('begin');
-      const due = await client.query<{ id: string; thread_root_id: string }>(
-        `select id, thread_root_id from team_delegation
+      const due = await client.query<{ id: string; thread_root_id: string; created_at: Date }>(
+        `select id, thread_root_id, created_at from team_delegation
           where notified_at is null and deadline_at < now() and id <> all($1)
           order by deadline_at
           limit 1
@@ -571,6 +611,41 @@ export function createDelegationDeadlineSweeper(pool: Pool, opts: {
                 set deadline_at = greatest(deadline_at, now() + ($2::int * interval '1 second'))
               where id = $1`,
             [row.id, DELEGATION_SILENCE_SEC],
+          );
+          await client.query('commit');
+          return 'done';
+        }
+      }
+
+      /**
+       * **담당이 턴 사이에서 기다리는 중이면 닫지 않는다**(2026-11-06). 끝 보고만 의무를 닫으므로, 예약을 걸고 CI 를 기다리거나
+       * 사람의 답을 기다리는 담당이 10분에 무응답이 되면 정작 보고가 닫힌 의무에 닿지 못한다. 상한은 `DELEGATION_WAIT_MAX_SEC`.
+       */
+      if (Date.now() - new Date(row.created_at).getTime() < DELEGATION_WAIT_MAX_SEC * 1000) {
+        const waiting = await client.query<{ wake_at: Date | null; open_ask: boolean }>(
+          `with delegate as (
+             select delegate_account_id as id from team_delegation_item where delegation_id = $1 and outcome is null
+           )
+           select (select max(w.wake_at) from agent_wake w join message m on m.id = w.message_id
+                    where w.account_id in (select id from delegate)
+                      and w.fired_at is null and w.canceled_at is null
+                      and (coalesce(m.thread_root_id, m.id) = $2
+                        or lower(m.meta->'wake'->'reportTo'->>'threadRootId') = $2::text)) as wake_at,
+                  exists (select 1 from message m
+                           where m.author_id in (select id from delegate)
+                             and m.thread_root_id = $2 and m.created_at >= $3
+                             and m.deleted_at is null and m.meta->>'kind' = 'ask'
+                             and m.meta->'ask'->>'answeredWith' is null and m.meta->'ask'->>'closedAt' is null) as open_ask`,
+          [row.id, row.thread_root_id, row.created_at],
+        );
+        const wait = waiting.rows[0]!;
+        if (wait.wake_at !== null || wait.open_ask) {
+          await client.query(
+            `update team_delegation
+                set deadline_at = greatest(deadline_at, now() + ($2::int * interval '1 second'),
+                                           coalesce($3::timestamptz, now()) + ($2::int * interval '1 second'))
+              where id = $1`,
+            [row.id, DELEGATION_SILENCE_SEC, wait.wake_at],
           );
           await client.query('commit');
           return 'done';
