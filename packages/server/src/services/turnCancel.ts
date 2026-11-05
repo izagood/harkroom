@@ -35,7 +35,7 @@ export async function settleCanceledTurn(
   try {
     await client.query('begin');
     out.woke = await cancelDelegationsFor(client, {
-      threadRootId: args.threadRootId, accountId: args.agentAccountId,
+      threadRootId: args.threadRootId, accountId: args.agentAccountId, reportTouched, wakeRowsTouched,
     });
     out.wakesCanceled = await cancelWakesForTurn(client, {
       threadRootId: args.threadRootId, accountId: args.agentAccountId, reportTouched, wakeRowsTouched,

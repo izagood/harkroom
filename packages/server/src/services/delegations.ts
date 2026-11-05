@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from 'pg';
-import { countsAsReply, TEAM_ROUND_LIMIT, type InboxDelegationOutcome, type MessageRow } from '@harkroom/shared';
+import { countsAsReply, TEAM_ROUND_LIMIT, type InboxDelegationOutcome, type MessageRow, type WakeReportTo } from '@harkroom/shared';
 import { invokeFactsFor, mayInvoke } from './invokeGate.js';
+import { announceReportWakes, announceWakeRows, foldWakesForDelegation } from './agentWakes.js';
 
 /**
  * 위임 왕복(마이그레이션 050) — **팀장이 넘긴 일이 끝나면 팀장이 다시 깬다.**
@@ -311,6 +312,9 @@ export async function closeDelegationsForReply(
     kind: MessageRow['kind'];
     isReport: boolean;
     isFailure: boolean;
+    /** 결말이 접은 예약의 보고처·대기 줄을 모은다 — 호출부가 커밋 뒤에 알린다. */
+    reportTouched?: WakeReportTo[];
+    wakeRowsTouched?: string[];
   },
 ): Promise<string[]> {
   // 닫지 않는 발화는 **"살아 있다"** 는 신호다 — 의무는 그대로 두고
@@ -343,7 +347,7 @@ export async function closeDelegationsForReply(
     );
     if (!closed.rowCount) continue;
 
-    const lead = await notifyIfSettled(client, row.delegation_id);
+    const lead = await notifyIfSettled(client, row.delegation_id, args);
     if (lead) woke.push(lead);
   }
   return woke;
@@ -375,7 +379,7 @@ export async function closeDelegationsForReply(
  */
 export async function cancelDelegationsFor(
   client: PoolClient,
-  args: { threadRootId: string; accountId: string },
+  args: { threadRootId: string; accountId: string; reportTouched?: WakeReportTo[]; wakeRowsTouched?: string[] },
 ): Promise<string[]> {
   const woke: string[] = [];
 
@@ -396,7 +400,7 @@ export async function cancelDelegationsFor(
       [row.delegation_id, args.accountId],
     );
     if (!closed.rowCount) continue;
-    const lead = await notifyIfSettled(client, row.delegation_id);
+    const lead = await notifyIfSettled(client, row.delegation_id, args);
     if (lead) woke.push(lead);
   }
 
@@ -434,7 +438,9 @@ export async function cancelDelegationsFor(
  * 같은 스레드에 턴 하나만 돌리므로(`mentionScheduler` 의 `inFlightThreads`) 팀장 턴이
  * **순차로 여러 번** 돌아 최종 답을 여러 번 쓴다 — 지금 증상보다 나쁘다.
  */
-async function notifyIfSettled(client: PoolClient, delegationId: string): Promise<string | null> {
+async function notifyIfSettled(
+  client: PoolClient, delegationId: string, touched: { reportTouched?: WakeReportTo[]; wakeRowsTouched?: string[] } = {},
+): Promise<string | null> {
   /**
    * **남은 미결을 메시지 meta 에 되쓴다**(3-3). 화면은 표를 못 읽는다 — 대기 사슬과 채널
    * 목록의 집계는 둘 다 메시지 meta 를 본다(`ask.answeredWith` 가 그렇게 쓰인다).
@@ -459,15 +465,18 @@ async function notifyIfSettled(client: PoolClient, delegationId: string): Promis
   );
   if (still.rowCount) return null;
 
-  const marked = await client.query<{ lead_account_id: string; message_id: string }>(
+  const marked = await client.query<{ lead_account_id: string; message_id: string; thread_root_id: string }>(
     `update team_delegation set notified_at = now()
       where id = $1 and notified_at is null
-      returning lead_account_id, message_id`,
+      returning lead_account_id, message_id, thread_root_id`,
     [delegationId],
   );
   if (!marked.rowCount) return null;
 
   const row = marked.rows[0]!;
+  await foldWakesForDelegation(client, {
+    delegationId, leadAccountId: row.lead_account_id, threadRootId: row.thread_root_id, messageId: row.message_id, ...touched,
+  });
   // 사유가 가리키는 메시지는 **위임 자신**이다(043 의 "물음 자신"과 같은 규약) — 러너는
   // 그것으로 결말 목록을 되찾는다. 새 메시지를 만들지 않는 이유도 같다: 스레드에
   // "결말이 났다"는 줄이 하나 더 생기면 그 대화를 읽는 사람에게 소음이다.
@@ -659,8 +668,12 @@ export function createDelegationDeadlineSweeper(pool: Pool, opts: {
           where delegation_id = $1 and outcome is null`,
         [row.id],
       );
-      const lead = await notifyIfSettled(client, row.id);
+      const reportTouched: WakeReportTo[] = [];
+      const wakeRowsTouched: string[] = [];
+      const lead = await notifyIfSettled(client, row.id, { reportTouched, wakeRowsTouched });
       await client.query('commit');
+      if (reportTouched.length) await announceReportWakes(pool, reportTouched).catch(() => undefined);
+      await announceWakeRows(pool, wakeRowsTouched);
       if (lead) opts.onWake?.(lead);
       return 'done';
     } catch (err) {
