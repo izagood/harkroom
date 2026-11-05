@@ -475,7 +475,8 @@ async function notifyIfSettled(
 
   const row = marked.rows[0]!;
   await foldWakesForDelegation(client, {
-    delegationId, leadAccountId: row.lead_account_id, threadRootId: row.thread_root_id, messageId: row.message_id, ...touched,
+    delegationId, leadAccountId: row.lead_account_id, threadRootId: row.thread_root_id, messageId: row.message_id,
+    reportTouched: touched.reportTouched, wakeRowsTouched: touched.wakeRowsTouched,
   });
   // 사유가 가리키는 메시지는 **위임 자신**이다(043 의 "물음 자신"과 같은 규약) — 러너는
   // 그것으로 결말 목록을 되찾는다. 새 메시지를 만들지 않는 이유도 같다: 스레드에
