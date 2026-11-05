@@ -244,6 +244,18 @@ abstract class Strings {
   /// 알약의 읽기 도구 이름(새 답글 n개). `{n}` 은 [threadJumpNew] 와 같다.
   String get threadJumpA11yNew;
 
+  /// 채널을 위로 굴렸을 때 작성칸 위 오른쪽에 뜨는 「↓ 최신 메시지」 알약의 대기 문구. 스레드 알약([threadJumpLatest])의 채널판.
+  String get channelJumpLatest;
+
+  /// 위로 굴린 동안 새 메시지가 왔을 때의 알약 문구. `{n}` 은 99 넘으면 「99+」.
+  String get channelJumpNew;
+
+  /// 알약의 읽기 도구 이름(새 메시지 없음).
+  String get channelJumpA11y;
+
+  /// 알약의 읽기 도구 이름(새 메시지 n개). `{n}` 은 [channelJumpNew] 와 같다.
+  String get channelJumpA11yNew;
+
   /// 인박스를 못 읽음.
   String get inboxLoadFailed;
 
@@ -1604,6 +1616,10 @@ Map<String, String> stringsToMap(Strings s) => {
       'threadJumpNew': s.threadJumpNew,
       'threadJumpA11y': s.threadJumpA11y,
       'threadJumpA11yNew': s.threadJumpA11yNew,
+      'channelJumpLatest': s.channelJumpLatest,
+      'channelJumpNew': s.channelJumpNew,
+      'channelJumpA11y': s.channelJumpA11y,
+      'channelJumpA11yNew': s.channelJumpA11yNew,
       'inboxLoadFailed': s.inboxLoadFailed,
       'messagesEmptyHint': s.messagesEmptyHint,
       'channelStartLine': s.channelStartLine,

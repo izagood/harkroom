@@ -1343,6 +1343,18 @@ class StringsEn implements Strings {
   String get threadJumpA11yNew => 'Jump to latest replies, {n} new';
 
   @override
+  String get channelJumpLatest => 'Latest messages';
+
+  @override
+  String get channelJumpNew => 'New messages · {n}';
+
+  @override
+  String get channelJumpA11y => 'Jump to latest messages';
+
+  @override
+  String get channelJumpA11yNew => 'Jump to latest messages, {n} new';
+
+  @override
   String get inboxLoadFailed => 'Could not load your inbox';
 
   @override
