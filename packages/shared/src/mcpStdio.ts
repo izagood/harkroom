@@ -11,10 +11,11 @@ const BARE_COMMAND = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
 const INVISIBLE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 /**
- * 값이 곧 실행할 코드·라이브러리인 변수. 확인창에는 env 의 이름만 보이므로(값에 토큰이 있다) 앱에서는 받지 않는다.
- * 이름으로 알아볼 수 있는 대표만 막는 얇은 막이다 — 명령과 인자는 사람이 확인창에서 본다.
+ * 값을 바꾸면 실행되는 코드가 바뀌는 변수. 확인창에는 env 의 이름만 보이므로(값에 토큰이 있다) 앱에서는 받지 않는다.
+ * 코드 적재 변수뿐 아니라 패키지 실행기의 설정(`npm_config_registry`), 설정을 읽는 자리(`HOME`·`XDG_*`), 받는 길(`*_PROXY`)도
+ * 든다 — 창에는 평범한 `npx -y <패키지>` 만 보이는데 다른 코드를 받아 돌리는 길이다. 대소문자를 가리지 않는다.
  */
-const CODE_LOADING_ENV = /^(DYLD_.*|LD_.*|NODE_OPTIONS|NODE_PATH|PYTHONPATH|PYTHONSTARTUP|PYTHONHOME|PERL5OPT|PERL5LIB|RUBYOPT|RUBYLIB|BASH_ENV|ENV|ZDOTDIR|PATH)$/i;
+const CODE_LOADING_ENV = /^(DYLD_.*|LD_.*|NODE_OPTIONS|NODE_PATH|PYTHONPATH|PYTHONSTARTUP|PYTHONHOME|PERL5OPT|PERL5LIB|RUBYOPT|RUBYLIB|BASH_ENV|ENV|ZDOTDIR|PATH|NPM_CONFIG_.*|PIP_.*|UV_.*|JAVA_TOOL_OPTIONS|_JAVA_OPTIONS|JDK_JAVA_OPTIONS|LUA_.*|GIT_.*|HOME|XDG_.*|.*_PROXY)$/i;
 
 export type McpStdioProblem =
   | 'command-empty' | 'command-shape' | 'command-too-long' | 'text-invisible' | 'text-spacing'

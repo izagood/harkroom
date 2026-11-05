@@ -8,7 +8,8 @@
 //!   웹뷰가 주는 설명 문구는 창에 넣지 않는다 — 고정 문구와 명령·인자·env 이름뿐이다.
 //! - **기본 버튼이 취소다.** 웹뷰가 사람이 Enter 를 치는 순간에 맞춰 창을 띄워도 저장되지 않는다.
 //! - **한 번에 창 하나.** 거절해도 곧바로 겹쳐 뜨지 않는다.
-//! - env 값은 창에 넣지 않는다(토큰이 있다). 값이 곧 코드인 변수는 오퍼레이터가 거절한다(`shared/mcpStdio.ts`).
+//! - env 값은 창에 넣지 않는다(토큰이 있다). 값이 실행되는 코드를 바꾸는 변수는 오퍼레이터가 거절하고(`shared/mcpStdio.ts`),
+//!   값이 안 보인다는 사실은 창이 고정 문구로 말한다.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -100,6 +101,7 @@ struct Words {
     lead: &'static str,
     command: &'static str,
     args: &'static str,
+    env_note: &'static str,
     env_new: &'static str,
     env_keep: &'static str,
     allow: &'static str,
@@ -111,6 +113,7 @@ const KO: Words = Words {
     lead: "이 명령은 이 서버를 켠 에이전트의 턴마다 이 맥에서 내 권한으로 실행된다. 직접 입력한 내용이 맞을 때만 허용한다.",
     command: "명령",
     args: "인자",
+    env_note: "환경 변수의 값은 여기 보이지 않는다. 직접 넣은 이름이 아니면 취소한다.",
     env_new: "새로 넣는 환경 변수",
     env_keep: "그대로 두는 환경 변수",
     allow: "실행 허용",
@@ -122,6 +125,7 @@ const EN: Words = Words {
     lead: "This command runs on this Mac with your permissions on every turn of an agent that uses this server. Allow it only if you entered exactly this.",
     command: "Command",
     args: "Arguments",
+    env_note: "Environment variable values are not shown here. Cancel unless you entered these names yourself.",
     env_new: "New environment variables",
     env_keep: "Environment variables kept as they are",
     allow: "Allow to run",
@@ -137,6 +141,9 @@ fn body(r: &StdioRequest, w: &Words) -> String {
         for (i, arg) in r.args.iter().enumerate() {
             out.push_str(&format!("  {}. {}\n", i + 1, arg));
         }
+    }
+    if !r.env.is_empty() || !r.keep_env.is_empty() {
+        out.push_str(&format!("\n{}\n", w.env_note));
     }
     if !r.env.is_empty() {
         let names: Vec<&str> = r.env.keys().map(String::as_str).collect();
@@ -220,6 +227,9 @@ mod tests {
         let shown = body(&r, &KO);
         assert!(shown.contains("API_TOKEN") && shown.contains("KEPT"));
         assert!(!shown.contains("SECRET-VALUE"));
+        // 값이 안 보인다는 말은 env 줄보다 앞에 온다.
+        assert!(shown.find(KO.env_note).unwrap() < shown.find("API_TOKEN").unwrap());
+        assert!(!body(&request("x", &[]), &KO).contains(KO.env_note));
         r.env.insert("A=B".into(), "v".into());
         assert!(check(&r).is_err());
     }

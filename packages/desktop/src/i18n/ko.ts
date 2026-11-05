@@ -3778,7 +3778,7 @@ export const ko = {
   'mcpServers.stdio.errSpacing': '명령·인자에 공백이 4칸 넘게 이어져 있다.',
   'mcpServers.stdio.errTooLong': '명령·인자가 너무 길다(인자 24개, 인자 하나 512자, 합계 1,500자까지).',
   'mcpServers.stdio.errEnvKey': '환경 변수 이름 {key} 를 쓸 수 없다 — 영문·숫자·_ 만, 숫자로 시작할 수 없다.',
-  'mcpServers.stdio.errEnvCodeLoading': '{key} 는 값이 곧 실행할 코드가 되는 변수라 여기서 넣을 수 없다.',
+  'mcpServers.stdio.errEnvCodeLoading': '{key} 는 값에 따라 실행되는 코드가 바뀌는 변수라 여기서 넣을 수 없다.',
   'mcpServers.stdio.errEnvDuplicate': '환경 변수 {key} 가 두 번 있다.',
   'mcpServers.stdio.errEnvValue': '환경 변수 {key} 의 값을 넣는다.',
   'mcpServers.stdio.errEnvRetype': '명령이나 인자가 바뀌어 지금 값을 둘 수 없다 — {key} 의 값을 다시 넣는다.',

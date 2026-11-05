@@ -5933,7 +5933,7 @@ export const en = {
   'mcpServers.stdio.errSpacing': 'The command or arguments contain a run of more than three spaces.',
   'mcpServers.stdio.errTooLong': 'The command or arguments are too long (up to 24 arguments, 512 characters each, 1,500 in total).',
   'mcpServers.stdio.errEnvKey': 'Can\'t use {key} as a variable name. Use letters, digits and _, not starting with a digit.',
-  'mcpServers.stdio.errEnvCodeLoading': '{key} can\'t be set here because its value is loaded as code.',
+  'mcpServers.stdio.errEnvCodeLoading': '{key} can\'t be set here because its value can change which code runs.',
   'mcpServers.stdio.errEnvDuplicate': 'The variable {key} appears twice.',
   'mcpServers.stdio.errEnvValue': 'Enter a value for {key}.',
   'mcpServers.stdio.errEnvRetype': 'The command or arguments changed, so the current value can\'t be kept. Enter {key} again.',

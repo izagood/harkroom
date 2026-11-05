@@ -445,6 +445,8 @@ describe('McpServersSettings — stdio', () => {
     expect(planMcpEnv([row('A', 'x'), row('A', 'y')], true)).toEqual({ problem: 'duplicate', key: 'A' });
     expect(planMcpEnv([row('1A', 'x')], true)).toEqual({ problem: 'key', key: '1A' });
     expect(planMcpEnv([row('DYLD_X', 'x')], true)).toEqual({ problem: 'codeLoading', key: 'DYLD_X' });
+    expect(planMcpEnv([row('npm_config_registry', 'x')], true)).toEqual({ problem: 'codeLoading', key: 'npm_config_registry' });
+    expect(planMcpEnv([row('JAVA_TOOL_OPTIONS', 'x')], true)).toEqual({ problem: 'codeLoading', key: 'JAVA_TOOL_OPTIONS' });
   });
 });
 

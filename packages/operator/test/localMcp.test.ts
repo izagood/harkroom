@@ -137,10 +137,28 @@ describe('readOperatorMcpSetStdioPayload', () => {
     ['LD_', { ...ok, env: { LD_PRELOAD: '/x' } }],
     ['NODE_OPTIONS', { ...ok, env: { node_options: '--require /x' } }],
     ['PATH', { ...ok, env: { PATH: '/x' } }],
+    ['npm_config_registry', { ...ok, env: { npm_config_registry: 'https://evil.example.com' } }],
+    ['NPM_CONFIG_', { ...ok, env: { NPM_CONFIG_USERCONFIG: '/x' } }],
+    ['PIP_', { ...ok, env: { PIP_INDEX_URL: 'https://evil.example.com' } }],
+    ['UV_', { ...ok, env: { UV_INDEX_URL: 'https://evil.example.com' } }],
+    ['JAVA_TOOL_OPTIONS', { ...ok, env: { JAVA_TOOL_OPTIONS: '-javaagent:/x' } }],
+    ['_JAVA_OPTIONS', { ...ok, env: { _JAVA_OPTIONS: '-javaagent:/x' } }],
+    ['JDK_JAVA_OPTIONS', { ...ok, env: { JDK_JAVA_OPTIONS: '-javaagent:/x' } }],
+    ['LUA_', { ...ok, env: { LUA_INIT: '@/x' } }],
+    ['GIT_', { ...ok, env: { GIT_SSH_COMMAND: '/x' } }],
+    ['HOME', { ...ok, env: { HOME: '/x' } }],
+    ['XDG_', { ...ok, env: { XDG_CONFIG_HOME: '/x' } }],
+    ['*_PROXY', { ...ok, env: { https_proxy: 'http://evil.example.com' } }],
     ['값에 NUL', { ...ok, env: { TOKEN: 'a\0b' } }],
     ['둘 다 있는 이름', { ...ok, keepEnv: ['TOKEN'] }],
   ])('%s 는 거절한다', (_label, payload) => {
     expect(readOperatorMcpSetStdioPayload(payload)).toMatchObject({ code: 'bad-payload' });
+  });
+
+  it('토큰 변수는 막지 않고, 그대로 두는 이름은 목록 검사를 건너뛴다', () => {
+    const env = { GITHUB_TOKEN: 'v', API_TOKEN: 'v', OPENAI_API_KEY: 'v' };
+    expect(readOperatorMcpSetStdioPayload({ ...ok, env })).toMatchObject({ definition: { env } });
+    expect(readOperatorMcpSetStdioPayload({ ...ok, env: {}, keepEnv: ['HOME', 'npm_config_registry'] })).toMatchObject({ keepEnv: ['HOME', 'npm_config_registry'] });
   });
 
   it('operatorMcpSet 으로는 여전히 stdio 를 못 넣는다', () => {
