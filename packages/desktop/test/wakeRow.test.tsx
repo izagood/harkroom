@@ -1,10 +1,12 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import type { MessageRow } from '@harkroom/shared';
 import { readWakeMeta } from '@harkroom/shared';
 import { WakeRow } from '../src/components/WakeRow';
 import { MessageItem } from '../src/components/MessageItem';
 import { useActiveStore as useAppStore } from '../src/state/communities';
+import { stampLabel } from '../src/lib/day';
+import { usePrefsStore } from '../src/state/prefsStore';
 import { acc, msg as fakeMsg } from './helpers/fakeApi';
 
 /**
@@ -62,6 +64,81 @@ describe('WakeRow', () => {
   it('시각을 못 읽어도 사유는 그린다', () => {
     render(<WakeRow message={msg('CI 결과 확인', {})} />);
     expect(screen.getByTestId('wake-row').textContent).toContain('CI 결과 확인');
+  });
+
+  describe('✅ 확인함 · 새로 없음 (2026-11-05)', () => {
+    const WAKE_AT = '2026-09-07T06:12:00.000Z';
+    const CHECKED_AT = '2026-09-07T06:13:00.000Z';
+    const hhmm = (iso: string) => stampLabel(iso, 'ko');
+    beforeEach(() => { usePrefsStore.getState().setLocale('ko'); });
+    afterEach(() => { usePrefsStore.getState().setLocale('system'); });
+    const row = (checkedAt: string | undefined, reactions: Array<{ emoji: string; accountIds: string[] }>): MessageRow => ({
+      ...msg('CI 결과 확인', { kind: 'wake', wake: { wakeAt: WAKE_AT, reason: 'CI 결과 확인', ...(checkedAt ? { checkedAt } : {}) } }),
+      reactions,
+    });
+    const owners = [{ emoji: '✅', accountIds: ['a1'] }];
+
+    it('줄 주인의 ✅ + checkedAt: 🕐 자리에 ✅, 확인 시각, 말풍선에 약속 시각', () => {
+      render(<WakeRow message={row(CHECKED_AT, owners)} />);
+      const el = screen.getByTestId('wake-row');
+      expect(el.textContent).toContain('✅');
+      expect(el.textContent).not.toContain('🕐');
+      expect(el.textContent).toContain(`${hhmm(CHECKED_AT)} 확인 · 새로 없음`);
+      expect(el.querySelector('[title*="새 글 없이 끝남"]')?.getAttribute('title')).toBe(
+        `${hhmm(WAKE_AT)} 에 다시 보기로 한 예약 — ${hhmm(CHECKED_AT)} 에 확인, 새 글 없이 끝남`,
+      );
+    });
+
+    it('영어 문구', () => {
+      usePrefsStore.getState().setLocale('en');
+      render(<WakeRow message={row(CHECKED_AT, owners)} />);
+      const at = (iso: string) => stampLabel(iso, 'en');
+      const el = screen.getByTestId('wake-row');
+      expect(el.textContent).toContain(`checked ${at(CHECKED_AT)} · nothing new`);
+      expect(el.querySelector('[title*="nothing new"]')?.getAttribute('title')).toBe(
+        `Scheduled to check at ${at(WAKE_AT)} — checked ${at(CHECKED_AT)}, ended with nothing new`,
+      );
+    });
+
+    it('checkedAt 이 없거나 못 읽으면 시각 없이 「확인함 · 새로 없음」', () => {
+      for (const at of [undefined, 'not-a-date']) {
+        const { unmount } = render(<WakeRow message={row(at, owners)} />);
+        const el = screen.getByTestId('wake-row');
+        expect(el.textContent).toContain('✅');
+        expect(el.textContent).toContain('확인함 · 새로 없음');
+        expect(el.querySelector('[title*="새 글 없이 끝남"]')).toBeNull();
+        unmount();
+      }
+    });
+
+    it('사람이 단 ✅ 는 확인이 아니다 — checkedAt 이 있어도 🕐 그대로', () => {
+      render(<WakeRow message={row(CHECKED_AT, [{ emoji: '✅', accountIds: ['u1'] }])} />);
+      const el = screen.getByTestId('wake-row');
+      expect(el.textContent).toContain('🕐');
+      expect(el.textContent).not.toContain('✅');
+      expect(el.textContent).toContain(`${hhmm(WAKE_AT)} 에 다시 본다`);
+    });
+
+    it('줄 주인의 다른 리액션(👀)은 확인이 아니다', () => {
+      render(<WakeRow message={row(undefined, [{ emoji: '👀', accountIds: ['a1'] }])} />);
+      expect(screen.getByTestId('wake-row').textContent).toContain('🕐');
+    });
+
+    it('사유는 한 줄로 자르고 전문은 title 에, 상태 문구는 줄바꿈하지 않는다', () => {
+      const long = '가'.repeat(300);
+      render(<WakeRow message={{ ...row(CHECKED_AT, owners), body: long }} />);
+      const reason = screen.getByTitle(long);
+      expect(reason.className).toContain('truncate');
+      expect(reason.className).toContain('min-w-0');
+      const status = screen.getByText(`${hhmm(CHECKED_AT)} 확인 · 새로 없음`);
+      expect(status.className).toContain('whitespace-nowrap');
+      expect(status.className).toContain('shrink-0');
+    });
+
+    it('리액션 칩을 그리지 않는다', () => {
+      render(<WakeRow message={row(CHECKED_AT, owners)} />);
+      expect(screen.getByTestId('wake-row').querySelector('button')).toBeNull();
+    });
   });
 });
 

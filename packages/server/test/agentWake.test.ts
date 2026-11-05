@@ -927,3 +927,71 @@ describe('GET /agent-wakes — 아직 오지 않은 깨움', () => {
     expect(await listWakes(login.json().token as string)).toEqual([]);
   });
 });
+
+/**
+ * 대기 줄의 확인 시각(2026-11-05) — 리액션 행에는 시각이 없어 줄 주인이 ✅를 달 때 서버가 `meta.wake.checkedAt` 을 적는다.
+ * 남이 단 ✅로 적히면 사람이 「확인했다」는 거짓을 읽는다.
+ */
+describe('대기 줄 ✅ → meta.wake.checkedAt', () => {
+  const newWake = async (reason: string): Promise<string> => {
+    const root = await app.inject({
+      method: 'POST', url: `/channels/${channelId}/messages`, headers: { authorization: `Bearer ${adminToken}` }, payload: { body: `머리 ${reason}` },
+    });
+    const res = await scheduleWake(pool, { accountId: botAccountId, channelId, threadRootId: root.json().id, notBeforeSec: 300, reason });
+    if (!res.wake) throw new Error('예약이 거절됐다');
+    return res.wake.messageId;
+  };
+  const react = (messageId: string, emoji: string, token: string) => app.inject({
+    method: 'PUT', url: `/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`,
+    headers: { authorization: `Bearer ${token}` },
+  });
+  const checkedAt = async (messageId: string): Promise<string | null> =>
+    (await pool.query(`select meta->'wake'->>'checkedAt' as v from message where id = $1`, [messageId])).rows[0].v;
+
+  it('줄 주인의 ✅ 는 시각을 적고 message.updated 를 낸다', async () => {
+    const id = await newWake('확인 1');
+    const seen: WorkspaceEvent[] = [];
+    const off = onEvent((e) => seen.push(e));
+    const before = Date.now();
+    expect((await react(id, '✅', botPat)).statusCode).toBe(200);
+    off();
+    const at = await checkedAt(id);
+    expect(at).not.toBeNull();
+    expect(Date.parse(at!)).toBeGreaterThanOrEqual(before);
+    const updated = seen.find((e) => e.type === 'message.updated' && e.message.id === id);
+    expect(updated).toBeTruthy();
+    const row = (updated as Extract<WorkspaceEvent, { type: 'message.updated' }>).message;
+    expect((row.meta as { wake: { checkedAt?: string } }).wake.checkedAt).toBe(at);
+    expect(row.reactions).toContainEqual({ emoji: '✅', accountIds: [botAccountId] });
+  });
+
+  it('두 번 달아도 첫 시각을 지키고 message.updated 를 또 내지 않는다', async () => {
+    const id = await newWake('확인 2');
+    await react(id, '✅', botPat);
+    const first = await checkedAt(id);
+    await pool.query(`update message set meta = jsonb_set(meta, '{wake,checkedAt}', to_jsonb('2000-01-01T00:00:00.000Z'::text)) where id = $1`, [id]);
+    const seen: WorkspaceEvent[] = [];
+    const off = onEvent((e) => seen.push(e));
+    await react(id, '✅', botPat);
+    off();
+    expect(first).not.toBeNull();
+    expect(await checkedAt(id)).toBe('2000-01-01T00:00:00.000Z');
+    expect(seen.some((e) => e.type === 'message.updated')).toBe(false);
+  });
+
+  it('사람이 단 ✅ 와 줄 주인의 다른 이모지는 적지 않는다', async () => {
+    const id = await newWake('확인 3');
+    await react(id, '✅', adminToken);
+    await react(id, '👀', botPat);
+    expect(await checkedAt(id)).toBeNull();
+  });
+
+  it('wake 가 아닌 글의 ✅ 는 meta 를 건드리지 않는다', async () => {
+    const res = await app.inject({
+      method: 'POST', url: `/channels/${channelId}/messages`, headers: { authorization: `Bearer ${botPat}` }, payload: { body: '보통 글' },
+    });
+    const id = res.json().id as string;
+    await react(id, '✅', botPat);
+    expect((await pool.query(`select meta->'wake' as w from message where id = $1`, [id])).rows[0].w).toBeNull();
+  });
+});

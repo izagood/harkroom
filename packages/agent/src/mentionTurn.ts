@@ -3148,10 +3148,10 @@ export async function runMentionTurn(
         recordProxy: providerEnv !== null,
       });
       if (notice.kind === 'react') {
-        // 에이전트가 부른 FYI — 글 없이 멘션에 ✅ 만 단다(`silentTurnNotice` 주석). 마지막 말은 로그에만.
+        // 에이전트가 부른 FYI·할 일 없이 끝난 예약 턴 — 글 없이 멘션(대기 줄)에 ✅ 만 단다(`silentTurnNotice` 주석). 마지막 말은 로그에만.
         // 로그에도 가린 한 줄만 쓴다(꼬리와 같은 판단: 로그 파일도 디스크에 남는다).
         const said = quotedLine(lastSaid, deps.runnerSecret, await tailSecrets());
-        console.log(`[mentionTurn] ${key}: 에이전트 호출에 덧붙일 말 없이 끝났다 — ✅ 만 단다${said ? ` (마지막 말: ${said})` : ''}`);
+        console.log(`[mentionTurn] ${key}: 덧붙일 말 없이 끝났다 — ✅ 만 단다${said ? ` (마지막 말: ${said})` : ''}`);
         await deps.harkroom.addReaction(channelId, mentionId, notice.emoji);
       } else if (notice.kind === 'fail') {
         // 넘겨받은 일 — 실패로 남겨 위임을 「실패」로 닫는다(서버 `closeDelegationsForReply`). 다시 넘기면 이어진다.

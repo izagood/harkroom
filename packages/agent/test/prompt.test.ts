@@ -2144,10 +2144,21 @@ describe('silentTurnNotice — 스스로 깨어난 턴의 침묵 (2026-11-04)', 
   const base = { offAnchor: null, pat: 'hrkp_secretpat' } as const;
   const TABLE_ANSWER = `| 게이트 | 상태 |\n|---|---|\n| CI | 도는 중 |\n${'가'.repeat(150)}`;
 
-  it.each([
-    ['wake', '예약된 확인 턴이'],
-    ['delegationOutcome', '넘긴 일의 결말을 확인한 턴이'],
-  ] as const)('%s: API 키 연결이든 구독이든 답 꼴이어도 옮기지 않고 같은 보통 글이다', (caller, what) => {
+  it('wake: 끝말이 무엇이든 글 없이 ✅ 다(2026-11-05) — 같은 말이 두 번 보이지 않고 머리 주인을 깨우지 않는다', () => {
+    for (const recordProxy of [true, false, undefined]) {
+      for (const lastSaid of ['바뀐 것이 없어\n글을 올리지 않았다', TABLE_ANSWER, null]) {
+        expect(silentTurnNotice({ ...base, caller: 'wake', lastSaid, recordProxy })).toEqual({ kind: 'react', emoji: '✅' });
+      }
+    }
+  });
+
+  it('wake: 앵커 밖에 쓴 턴은 그 링크 줄이 이긴다', () => {
+    expect(silentTurnNotice({ ...base, caller: 'wake', lastSaid: '이유', offAnchor: '다른 스레드에 답했습니다' })).toEqual({ kind: 'post', body: '다른 스레드에 답했습니다' });
+  });
+
+  it('delegationOutcome: API 키 연결이든 구독이든 답 꼴이어도 옮기지 않고 같은 보통 글이다', () => {
+    const caller = 'delegationOutcome';
+    const what = '넘긴 일의 결말을 확인한 턴이';
     for (const recordProxy of [true, false, undefined]) {
       expect(silentTurnNotice({ ...base, caller, lastSaid: '바뀐 것이 없어\n글을 올리지 않았다', recordProxy })).toEqual({
         kind: 'post', body: `${what} 글 없이 끝났습니다 — 마지막 말:\n> 바뀐 것이 없어 글을 올리지 않았다`,
@@ -2160,7 +2171,8 @@ describe('silentTurnNotice — 스스로 깨어난 턴의 침묵 (2026-11-04)', 
     }
   });
 
-  it.each(['wake', 'delegationOutcome'] as const)('%s: 실패처럼 읽는 문구가 없다', (caller) => {
+  it('delegationOutcome: 실패처럼 읽는 문구가 없다', () => {
+    const caller = 'delegationOutcome';
     for (const lastSaid of ['이유', null]) {
       const { body } = silentTurnNotice({ ...base, caller, lastSaid }) as { body: string };
       expect(body).not.toContain('다시 부르면');
@@ -2168,13 +2180,13 @@ describe('silentTurnNotice — 스스로 깨어난 턴의 침묵 (2026-11-04)', 
     }
   });
 
-  it.each(['wake', 'delegationOutcome'] as const)('%s: 마지막 말의 @ 는 아무도 부르지 않는다', (caller) => {
+  it.each(['delegationOutcome'] as const)('%s: 마지막 말의 @ 는 아무도 부르지 않는다', (caller) => {
     const { body } = silentTurnNotice({ ...base, caller, lastSaid: '@someone 에게 이미 알렸다\n@other 도' }) as { body: string };
     expect(body).toContain('@someone');
     expect(mentionedHandles(body)).toEqual([]);
   });
 
-  it.each(['wake', 'delegationOutcome'] as const)('%s: 인용은 quotedLine 규칙 그대로다 — 상한·PAT·비밀 조각', (caller) => {
+  it.each(['delegationOutcome'] as const)('%s: 인용은 quotedLine 규칙 그대로다 — 상한·PAT·비밀 조각', (caller) => {
     const cut = silentTurnNotice({ ...base, caller, lastSaid: '가'.repeat(500) }) as { body: string };
     expect(cut.body).toContain(`> ${quotedLine('가'.repeat(500), base.pat)}`);
     const pat = silentTurnNotice({ ...base, caller, lastSaid: '값은 hrkp_secretpat 이다' }) as { body: string };

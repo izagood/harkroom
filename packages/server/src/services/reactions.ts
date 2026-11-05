@@ -1,4 +1,6 @@
 import type { Pool } from 'pg';
+import { WAKE_CHECKED_EMOJI, type MessageRow } from '@harkroom/shared';
+import { getMessageById } from './messages.js';
 
 /**
  * 한 사람이 한 메시지에 달 수 있는 서로 다른 이모지의 수. 제한이 없으면 한 명이 수백 개를
@@ -52,6 +54,24 @@ export async function addReaction(
     [input.messageId, input.accountId, input.emoji],
   );
   return 'added';
+}
+
+/**
+ * **대기 줄의 확인 시각**(`meta.wake.checkedAt`, 2026-11-05). 리액션 행에는 시각이 없어, 줄 주인이 자기 대기 줄에 ✅를 달 때 서버가 적는다.
+ * 남이 단 ✅는 확인이 아니다 — `author_id` 로 거른다. 첫 확인 시각을 지키려고 이미 있으면 덮지 않는다.
+ * 적었을 때만 행을 돌려준다: 호출자가 `message.updated` 를 내야 붙어 있는 화면이 다시 받아오기 전에 시각을 안다.
+ */
+export async function stampWakeChecked(
+  pool: Pool, input: { channelId: string; messageId: string; accountId: string; emoji: string },
+): Promise<MessageRow | null> {
+  if (input.emoji !== WAKE_CHECKED_EMOJI) return null;
+  const res = await pool.query(
+    `update message set meta = jsonb_set(meta, '{wake,checkedAt}', to_jsonb($4::text))
+      where id = $1 and channel_id = $2 and author_id = $3 and kind = 'wake' and deleted_at is null
+        and jsonb_typeof(meta->'wake') = 'object' and meta->'wake'->>'checkedAt' is null`,
+    [input.messageId, input.channelId, input.accountId, new Date().toISOString()],
+  );
+  return res.rowCount === 1 ? getMessageById(pool, input.messageId) : null;
 }
 
 /**

@@ -9,7 +9,7 @@ import { acceptRecommended, answerBundleItem } from '../services/askBundles.js';
 import { closeAsk, closeAsksByReply, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, isMessageInChannel, isPermissionCardMessage, getMessageById, hasOlderFeedMessages, hasOlderMessages, hasOlderThreadReplies, listInbox, listInboxThreads, listBoardThreads, listInboxThreadStates, setInboxThreadState, listMessages, markInboxRead, postMessage, searchMessages, searchInput, BAD_THREAD_MESSAGE, BOARD_COMPACT_BODY_CHARS } from '../services/messages.js';
 import { listSavedMessages, getSavedSummary, saveMessage, unsaveMessage, updateSavedMessageState } from '../services/savedMessages.js';
 import { recordAudit } from '../audit.js';
-import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
+import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction, stampWakeChecked } from '../services/reactions.js';
 import { normalizeSearchQuery } from '../services/mentions.js';
 import { decide, decidedCard, resolveDecision } from '../services/decisions.js';
 import { onceBody } from './permissionRequestRoutes.js';
@@ -530,10 +530,10 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
         error: { code: 'too_many_reactions', message: `at most ${MAX_REACTIONS_PER_ACTOR} reactions per message` },
       });
     }
-    emitEvent({
-      type: 'reaction.added', channelId: id, messageId, emoji,
-      accountId: req.account!.id, audience: await audienceFor(pool, id),
-    });
+    const audience = await audienceFor(pool, id);
+    emitEvent({ type: 'reaction.added', channelId: id, messageId, emoji, accountId: req.account!.id, audience });
+    const checked = await stampWakeChecked(pool, { channelId: id, messageId, accountId: req.account!.id, emoji });
+    if (checked) emitEvent({ type: 'message.updated', message: checked, audience });
     return reply.code(200).send({ emoji });
   });
 

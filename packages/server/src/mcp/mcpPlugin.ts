@@ -42,7 +42,7 @@ import {
   createDelegation, leadTeamFor, roundsUsed,
   DELEGATION_DEADLINE_DEFAULT_SEC, DELEGATION_DEADLINE_MAX_SEC, DELEGATION_DEADLINE_MIN_SEC,
 } from '../services/delegations.js';
-import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction } from '../services/reactions.js';
+import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction, stampWakeChecked } from '../services/reactions.js';
 import {
   listMemoryIndex, MAX_CORE_MEMORY_LENGTH, MAX_JOURNAL_MEMORIES_PER_ACCOUNT, MAX_MEMORY_DESCRIPTION_LENGTH,
   MAX_MEMORY_ITEMS_PER_ACCOUNT, MAX_MEMORY_VALUE_LENGTH, MEMORY_KINDS, memoryRev, readMemoryCounted, searchMemory, recordRecall, auditMemory,
@@ -1711,10 +1711,10 @@ function buildMcpServer(
     // REST 라우트와 **똑같이** 이벤트를 낸다. 이게 없으면 리액션은 DB 에만 남고 붙어 있는
     // 데스크탑은 다시 조회할 때까지 못 본다 — 에이전트가 👀 를 다는 목적이 "사람이 지금
     // 본다"인데 그 목적이 사라진다(#99). 두 표면이 같은 규칙을 갖는다는 계약의 일부다.
-    emitEvent({
-      type: 'reaction.added', channelId, messageId, emoji,
-      accountId: account.id, audience: await audienceFor(pool, channelId),
-    });
+    const audience = await audienceFor(pool, channelId);
+    emitEvent({ type: 'reaction.added', channelId, messageId, emoji, accountId: account.id, audience });
+    const checked = await stampWakeChecked(pool, { channelId, messageId, accountId: account.id, emoji });
+    if (checked) emitEvent({ type: 'message.updated', message: checked, audience });
     return jsonResult({ emoji });
   });
 

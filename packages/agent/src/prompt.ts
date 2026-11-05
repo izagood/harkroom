@@ -44,7 +44,7 @@ export const BODY_LIMIT = 8000;
  */
 export type SilentTurnNotice = { kind: 'react'; emoji: string } | { kind: 'post'; body: string; proxied?: true } | { kind: 'fail'; body: string };
 
-/** 에이전트가 부른 턴이 덧붙일 말 없이 끝났다는 표시 — 멘션 메시지에 단다(👀 받았음·💬 도는 중의 끝). */
+/** 턴이 덧붙일 말 없이 끝났다는 표시 — 부른 멘션이나 그 대기 줄에 단다(👀 받았음·💬 도는 중의 끝). 대기 줄에서는 `WAKE_CHECKED_EMOJI` 와 같은 값이다. */
 export const SILENT_ACK_EMOJI = '✅';
 
 export function silentTurnNotice(opts: {
@@ -88,14 +88,16 @@ export function silentTurnNotice(opts: {
 }): SilentTurnNotice {
   if (opts.offAnchor !== null) return { kind: 'post', body: opts.offAnchor };
   const head = opts.proxyHead ?? '';
-  // **스스로 깨어난 턴의 침묵은 실패가 아니다**(2026-11-04). 확인해 보니 보고할 것이 없어 글을 안 쓴 턴이 대부분인데 「답을 남기지 못하고」·
-  // 「다시 부르면」으로 적혀 실패처럼 읽혔다. 그 줄을 없애지는 않는다 — 약속한 보고가 사라진 것으로 읽힌 사례가 있어(`silentWakeNotice`)
-  // 확인했다는 사실과 이유는 남긴다. 종류는 보통 글이다(progress 면 끝난 턴이 「작업 중」으로 남는다, `AGENT_CALL_NO_ANSWER` 주석).
+  // **예약으로 깨어난 턴의 침묵은 글이 아니다**(2026-11-05). 보고할 것이 없어 안 쓴 턴에 보통 글을 올리면 끝말이 앞 보고를 되풀이하고,
+  // 머리 주인 에이전트의 턴을 깨우고(`thread_reply`), 결과로 세어 회신권·위임을 닫는다. 지시문(`buildSystemPrompt`)이 시킨 「글 없이 끝내기」와도
+  // 어긋난다. 「확인은 했다」는 그 대기 줄의 ✅로 남고(`WAKE_CHECKED_EMOJI`, `WakeRow`), 끝말은 턴 기록·러너 로그에만 남는다.
+  if (opts.caller === 'wake') return { kind: 'react', emoji: SILENT_ACK_EMOJI };
+  // **넘긴 일의 결말로 깨어난 턴의 침묵은 실패가 아니다**(2026-11-04). 그 줄을 없애지는 않는다 — 대기 줄처럼 ✅를 그릴 자리가 없다.
+  // 종류는 보통 글이다(progress 면 끝난 턴이 「작업 중」으로 남는다, `AGENT_CALL_NO_ANSWER` 주석).
   // 대리 게시는 하지 않는다 — 「할 일 없음」 끝말이 대리 글로 나간다. 인용은 줄 하나의 `> ` 라 글 속 `@handle` 이 멘션이 되지 않는다.
-  if (opts.caller === 'wake' || opts.caller === 'delegationOutcome') {
-    const what = opts.caller === 'wake' ? '예약된 확인 턴이' : '넘긴 일의 결말을 확인한 턴이';
+  if (opts.caller === 'delegationOutcome') {
     const said = quotedLine(opts.lastSaid, opts.pat, opts.secrets);
-    return { kind: 'post', body: said ? `${what} 글 없이 끝났습니다 — 마지막 말:\n> ${said}` : `${what} 글 없이 끝났습니다.` };
+    return { kind: 'post', body: said ? `넘긴 일의 결말을 확인한 턴이 글 없이 끝났습니다 — 마지막 말:\n> ${said}` : '넘긴 일의 결말을 확인한 턴이 글 없이 끝났습니다.' };
   }
   if (opts.caller === 'agent') {
     // **에이전트가 부른 턴**(2026-10-25 E13 회차, 스레드 db4ab174). ✅ 만 달면 부른 쪽은 답을 받은 줄 안다 — 화면으로 끝을 안 턴은
