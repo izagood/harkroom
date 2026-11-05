@@ -836,7 +836,7 @@ export function escapeForPrompt(text: string): string {
 
 /** 경계 표식·역할 표식에 쓰이는 낱말. 이것이 든 태그 꼴은 이름이 평범해도 막는다(`neutralizeForPrompt`). */
 const PROMPT_MARKER_WORDS = /task|context|memory|thread|system|note|plan|recall|digest|instruction|reminder|notification|prompt|harness|user|assistant|human|tool|function|invoke|parameter|result|output/i;
-const PROMPT_ANGLE_OPEN = /<|＜|&(?:lt|#0*60|#x0*3c);?/gi;
+const PROMPT_ANGLE_OPEN = /<|＜|﹤|&(?:lt|#0*60|#x0*3c);?/gi;
 const PROMPT_ANGLE_GAP = /^[\s\p{Cf}]*(?:(?:[/／]|&sol;?|&#0*47;?|&#x0*2f;?)[\s\p{Cf}]*)?/iu;
 /** 판정에 볼 글자 수. 태그 이름은 이 안에 있다 — 글이 길어도 자리마다 일정한 일만 한다. */
 const PROMPT_ANGLE_LOOK = 160;
