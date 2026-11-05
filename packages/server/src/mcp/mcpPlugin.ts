@@ -57,7 +57,7 @@ import { proposeSkill, isValidSkillSlug } from '../services/skills.js';
 import { scanWrite } from '../services/contentScan.js';
 import { listAutomationsForAgent, proposeAutomation, runAutomationForAgent, triggerSchema } from '../services/automations.js';
 import { channelPostGate } from '../services/channels.js';
-import { announceReportWakes, foldWatchWakesOnReport, scheduleWake, WAKE_MAX_SEC, WAKE_MIN_SEC, type ClosedWatchWake } from '../services/agentWakes.js';
+import { announceReportWakes, announceWakeRows, foldWatchWakesOnReport, scheduleWake, WAKE_MAX_SEC, WAKE_MIN_SEC, type ClosedWatchWake } from '../services/agentWakes.js';
 import { guideFor } from './guide.js';
 import { listWorkItems, removeWorkItem, resolveWorkItemOwner, upsertWorkItem, WORK_ITEM_REFUSAL_MESSAGE, WORK_ITEM_SOURCES } from '../services/workItems.js';
 import { workItemUpsertSchema } from '../routes/workItemRoutes.js';
@@ -1676,6 +1676,7 @@ function buildMcpServer(
       : [];
     const foldedTargets = reportTargetsOf(folded);
     if (foldedTargets.length) await announceReportWakes(pool, foldedTargets).catch(() => undefined);
+    await announceWakeRows(pool, folded.map((w) => w.messageId));
     const foldedExtra = folded.length ? { foldedWatchWakes: folded } : {};
     // 보고는 이미 섰다 — 단계 갱신이 막혀도 보고를 되돌리지 않는다. 재시도(replayed)면 이미 한 번 반영했다.
     if (planStepId && threadRootId && !replayed) {

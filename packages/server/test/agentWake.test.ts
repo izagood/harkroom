@@ -9,6 +9,7 @@ import { bootstrapAdmin, createAgent, createMember } from './helpers/fixtures.js
 import { onEvent, type WorkspaceEvent } from '../src/events.js';
 import { refreshThreadStatus } from '../src/services/threadStatus.js';
 import { createAgentWakeSweeper, foldWatchWakesOnReport, scheduleWake } from '../src/services/agentWakes.js';
+import { settleCanceledTurn } from '../src/services/turnCancel.js';
 import { postMessage } from '../src/services/messages.js';
 
 /**
@@ -578,6 +579,89 @@ describe('turn.wake — 에이전트가 자기를 나중에 깨운다', () => {
         expect(await foldWatchWakesOnReport(pool, { accountId: botAccountId, threadRootId: rootId, turnId: '22222222-2222-4222-8222-222222222222' }))
           .toEqual([expect.objectContaining({ reason: '이 턴의 감시' })]);
         expect(await open(rootId)).toEqual([]);
+      });
+    });
+
+    describe('닫힌 시각을 대기 줄에 적는다(2026-11-06)', () => {
+      const closedOf = async (messageId: string) => {
+        const wake = (await pool.query(`select meta->'wake' as wake from message where id = $1`, [messageId])).rows[0].wake as Record<string, unknown>;
+        return { fired: typeof wake.firedAt === 'string', canceled: typeof wake.canceledAt === 'string' };
+      };
+      const wakeOf = async (threadRootId: string, extra: Record<string, unknown> = {}) => {
+        const r = await scheduleWake(pool, { accountId: botAccountId, channelId, threadRootId, notBeforeSec: 3600, reason: '닫힘 시험', ...extra });
+        expect(r.refusal).toBeUndefined();
+        return r.wake!.messageId;
+      };
+      /** 일어난 일 하나를 돌리고 그 사이 나간 message.updated 의 대기 줄 meta 를 돌려준다. */
+      const updatedDuring = async (messageId: string, act: () => Promise<unknown>) => {
+        const seen: WorkspaceEvent[] = [];
+        const off = onEvent((e) => seen.push(e));
+        try { await act(); } finally { off(); }
+        const hit = seen.find((e) => e.type === 'message.updated' && e.message.id === messageId);
+        return hit ? ((hit as Extract<WorkspaceEvent, { type: 'message.updated' }>).message.meta as { wake: Record<string, unknown> }).wake : null;
+      };
+      const humanSays = (threadRootId: string, body: string) => app.inject({
+        method: 'POST', url: `/channels/${channelId}/messages`, headers: { authorization: `Bearer ${adminToken}` }, payload: { body, threadRootId },
+      });
+
+      it('걸어 둔 동안에는 둘 다 없다', async () => {
+        expect(await closedOf(await wakeOf(await newThread()))).toEqual({ fired: false, canceled: false });
+      });
+
+      it('시각이 되어 깨어나면 firedAt 을 적고 알린다', async () => {
+        const id = await wakeOf(await newThread());
+        await pool.query(`update agent_wake set wake_at = now() - interval '1 second' where message_id = $1`, [id]);
+        const wake = await updatedDuring(id, () => createAgentWakeSweeper(pool).sweep());
+        expect(typeof wake?.firedAt).toBe('string');
+        expect(wake?.canceledAt).toBeUndefined();
+      });
+
+      it('사람이 부르지 않고 말해 깨어나면 firedAt 을 적고 알린다', async () => {
+        const root = await newThread();
+        const id = await wakeOf(root);
+        const wake = await updatedDuring(id, () => humanSays(root, '그거 지금 봐'));
+        expect(typeof wake?.firedAt).toBe('string');
+      });
+
+      it('사람이 불러 접히면 canceledAt 을 적고 알린다', async () => {
+        const root = await newThread();
+        const id = await wakeOf(root);
+        const wake = await updatedDuring(id, () => humanSays(root, '@wakebot 그거 지금 봐'));
+        expect(typeof wake?.canceledAt).toBe('string');
+        expect(wake?.firedAt).toBeUndefined();
+      });
+
+      it('새 감시에 대체되면 canceledAt 을 적고 알린다', async () => {
+        const root = await newThread();
+        const id = await wakeOf(root, { watch: true });
+        const wake = await updatedDuring(id, () => wakeOf(root, { watch: true }));
+        expect(typeof wake?.canceledAt).toBe('string');
+      });
+
+      it('끝 보고로 접히면 canceledAt 을 적고 알린다', async () => {
+        const root = await newThread();
+        const id = await wakeOf(root, { watch: true });
+        const bot = await mcpClient(botPat);
+        const wake = await updatedDuring(id, () => bot.callTool({ name: 'message.report', arguments: { channelId, threadRootId: root, body: '끝', checks: ['확인'] } }));
+        await bot.close();
+        expect(typeof wake?.canceledAt).toBe('string');
+      });
+
+      it('사람이 턴을 멈춰 접히면 canceledAt 을 적고 알린다', async () => {
+        const root = await newThread();
+        const id = await wakeOf(root);
+        const wake = await updatedDuring(id, () => settleCanceledTurn(pool, { threadRootId: root, agentAccountId: botAccountId }));
+        expect(typeof wake?.canceledAt).toBe('string');
+      });
+
+      it('처음 시각을 지킨다 — 이미 닫힌 줄은 두 번 깨어나지도 시각이 바뀌지도 않는다', async () => {
+        const id = await wakeOf(await newThread());
+        await pool.query(`update agent_wake set wake_at = now() - interval '1 second' where message_id = $1`, [id]);
+        const sweeper = createAgentWakeSweeper(pool);
+        await sweeper.sweep();
+        const first = (await pool.query(`select meta->'wake'->>'firedAt' as v from message where id = $1`, [id])).rows[0].v as string;
+        await sweeper.sweep();
+        expect((await pool.query(`select meta->'wake'->>'firedAt' as v from message where id = $1`, [id])).rows[0].v).toBe(first);
       });
     });
 
