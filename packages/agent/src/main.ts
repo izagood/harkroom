@@ -886,6 +886,7 @@ while (running) {
       channelName: (channelId) => byId.get(channelId) ?? 'dm',
       handles,
       agentIds: new Set(accounts.filter((a) => a.kind === 'agent').map((a) => a.id)),
+      humanIds: new Set(accounts.filter((a) => a.kind === 'human').map((a) => a.id)),
     };
     const outcome = await scheduler.admit(batch, ctx);
 

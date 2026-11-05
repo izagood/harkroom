@@ -107,6 +107,8 @@ export interface BatchContext {
   handles: Record<string, string>;
   /** 에이전트 계정 id 들 — 침묵 통지가 부른 쪽을 가른다(`MentionTurnDeps.agentIds`). */
   agentIds?: ReadonlySet<string>;
+  /** 계정 표에서 사람으로 확인된 id 들. 멘션 묶기는 여기 있는 작성자만 묶는다 — 모르는 계정은 묶지 않는다. */
+  humanIds?: ReadonlySet<string>;
 }
 
 export interface AdmitOutcome {
@@ -975,10 +977,10 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
 
   /** [entry] 와 한 턴으로 묶을 entry 들(오래된 순, 끝이 대표). 묶을 수 없으면 [entry] 하나다. */
   const bundleFor = (entry: InboxBatch['entries'][number], mention: MessageRow, threadKey: string, batch: InboxBatch, ctx: BatchContext): InboxBatch['entries'] => {
-    // 턴 임대는 대표 글 하나에서 나온다. 에이전트 글은 원인 키가 같을 때만 묶고, 키가 없으면 사람 글만 묶는다.
+    // 턴 임대는 대표 글 하나에서 나온다. 에이전트 글은 원인 키가 같을 때만 묶고, 키가 없으면 사람으로 확인된 글만 묶는다.
     const sameCause = (other: InboxBatch['entries'][number]): boolean => {
       if (entry.causeKey !== undefined && other.causeKey !== undefined) return entry.causeKey === other.causeKey;
-      return ctx.agentIds !== undefined && !ctx.agentIds.has(mention.authorId);
+      return ctx.humanIds?.has(mention.authorId) === true;
     };
     if (!isPlainMention(entry, mention) || (attempts.get(entry.id)?.tried ?? 0) >= BUNDLE_MAX_FAILURES) return [entry];
     const group = [entry];

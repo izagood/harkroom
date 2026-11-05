@@ -906,7 +906,7 @@ describe('같은 사람의 연달은 부름을 한 턴으로 묶는다', () => {
     entries: rows.map((r, n) => ({ id: n + 1, messageId: r.id, reason: 'mention', readAt: null, channelId: CH, ...entries[n + 1] })),
     messages: rows,
   }) as unknown as InboxBatch;
-  const bundleCtx: BatchContext = { ...ctx, agentIds: new Set(['bot']) };
+  const bundleCtx: BatchContext = { ...ctx, agentIds: new Set(['bot']), humanIds: new Set(['h1', 'h2']) };
   const run = (seen: MentionTarget[], fail = () => false) => (async (_d: unknown, t: MentionTarget) => {
     seen.push(t);
     if (fail()) throw new Error('터졌다');
@@ -992,6 +992,15 @@ describe('같은 사람의 연달은 부름을 한 턴으로 묶는다', () => {
     const { scheduler } = harness({ runTurn: run(seen) });
     await scheduler.admit(batch([row('a', 1), row('b', 2)], { 1: { causeKey: 'k' }, 2: { causeKey: 'z' } }), bundleCtx);
     await scheduler.drain();
+    expect(seen[0]!.bundledRows).toBeUndefined();
+  });
+
+  it('계정 표에 없는 작성자는 묶지 않는다', async () => {
+    const seen: MentionTarget[] = [];
+    const { scheduler } = harness({ runTurn: run(seen) });
+    await scheduler.admit(batch([row('a', 1, 'gone'), row('b', 2, 'gone')]), bundleCtx);
+    await scheduler.drain();
+    expect(seen[0]!.mentionId).toBe('a');
     expect(seen[0]!.bundledRows).toBeUndefined();
   });
 
