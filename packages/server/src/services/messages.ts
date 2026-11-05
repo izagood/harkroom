@@ -974,6 +974,19 @@ export async function verifiedCauseLink(
   return row?.id ?? null;
 }
 
+/**
+ * 팀 밖 위임이 **멘션과 같은 연쇄 상한**에 걸리는가(2026-11-06). 넘겨받는 쪽의 부름은 멘션 판정을 지나지 않고 만들어지므로(`createDelegation`),
+ * 그 판정이 이 글에 매긴 깊이·사슬 시작 시각을 같은 기준으로 다시 잰다. 팀 밖으로 연 뒤 `A→B→A…` 사슬을 막는 것은 라운드 상한(스레드·넘긴 쪽마다)과 이것이다.
+ */
+export async function delegationChainCapped(client: PoolClient, messageId: string): Promise<boolean> {
+  const row = (await client.query<{ depth: number; chain_started_at: Date | null }>(
+    `select mention_depth as depth, chain_started_at from message where id = $1`, [messageId],
+  )).rows[0];
+  if (!row) return false;
+  const aged = row.chain_started_at != null && Date.now() - new Date(row.chain_started_at).getTime() >= CHAIN_BACKSTOP_MS;
+  return aged || row.depth >= (await getMentionPolicy(client)).chainLimit;
+}
+
 async function causeDepth(client: PoolClient, authorId: string, causeMessageId: string): Promise<ChainLink | null> {
   /*
     **사람이 누른 카드도 사람의 손길이다**(2026-10-27). 카드 답·닫힘의 깨움(`wakeAsker`)은 inbox 를 **에이전트가 쓴
@@ -1917,7 +1930,7 @@ export async function postMessage(
       : [];
 
     /**
-     * **팀원의 답이 자기 의무를 닫는다**(050). 판정과 "정확히 한 번 깨우기"는
+     * **팀원의 완료 보고·실패가 자기 의무를 닫는다**(050, 보고만 2026-11-06). 판정과 "정확히 한 번 깨우기"는
      * `delegations.ts::closeDelegationsForReply` 가 갖고, 여기서 하는 일은 위 깨움과
      * 똑같이 **같은 커밋 안에서** 부르는 것뿐이다 — 답은 남았는데 의무가 열려 있으면
      * 팀장은 기한이 될 때까지 그 답을 모른다.
@@ -1939,6 +1952,7 @@ export async function postMessage(
         authorId: input.authorId,
         messageId: message.id,
         kind: input.kind ?? 'user',
+        isReport: (input.meta as { kind?: unknown } | undefined)?.kind === 'report',
         isFailure: (input.meta as { kind?: unknown } | undefined)?.kind === 'failure',
       })
       : [];
@@ -3426,13 +3440,13 @@ export async function listInbox(
   const handedIds = rows.filter((r) => r.reason === 'team_delegated').map((r) => r.messageId);
   if (handedIds.length) {
     const handed = await pool.query<{
-      message_id: string; leadHandle: string; teamName: string; deadlineAt: string;
+      message_id: string; leadHandle: string; teamName: string | null; deadlineAt: string;
     }>(
       `select d.message_id, a.handle as "leadHandle", t.name as "teamName",
               d.deadline_at as "deadlineAt"
          from team_delegation d
          join account a on a.id = d.lead_account_id
-         join agent_team t on t.id = d.team_id
+         left join agent_team t on t.id = d.team_id
         where d.message_id = any($1)`,
       [[...new Set(handedIds)]],
     );

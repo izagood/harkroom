@@ -2258,7 +2258,8 @@ export function readDelegationMeta(
 export interface InboxDelegatedBy {
   /** 넘긴 팀장의 handle. 보고를 누구에게 하는지가 이 값 하나로 정해진다. */
   leadHandle: string;
-  teamName: string;
+  /** 팀장이 자기 팀원에게 넘긴 일의 팀 이름. 팀 밖 에이전트가 넘겼으면 null(162). */
+  teamName: string | null;
   /** 이 시각까지 답하지 않으면 무응답으로 닫힌다. */
   deadlineAt: string;
 }

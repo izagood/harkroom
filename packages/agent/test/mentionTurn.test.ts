@@ -1320,6 +1320,31 @@ describe('runMentionTurn', () => {
     expect(fake.reactions.filter((r) => r.emoji === '✅')).toEqual([]);
   });
 
+  describe('넘겨받은 일은 끝 보고로만 닫힌다(2026-11-06)', () => {
+    const handed = { leadHandle: 'lead', teamName: null, deadlineAt: '2026-11-06T04:00:00.000Z' };
+    async function run(meta: Record<string, unknown> | null) {
+      const fake = new FakeHarkroom(defOf());
+      fake.seedFrom('agent-peer', '@forge 이 일 해줘').id = MENTION;
+      const { deps } = await makeDeps(fake, { agentIds: new Set(['agent-peer']), readLastSaid: async () => null });
+      deps.runTurn = (async (plan) => {
+        await fake.postFromTurn(CHANNEL, '결과 글', null, plan.env.HARKROOM_TURN_ID);
+        const last = fake.messages[fake.messages.length - 1] as unknown as { meta: Record<string, unknown> };
+        if (meta) last.meta = { ...last.meta, ...meta };
+        return { exitCode: 0, timedOut: false, tail: '' };
+      }) as typeof deps.runTurn;
+      await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION, delegatedBy: handed });
+      return fake.fails;
+    }
+
+    it('글만 쓰고 끝나면 실패로 닫아 넘긴 쪽을 지금 깨운다', async () => {
+      expect(await run(null)).toEqual([expect.objectContaining({ retryable: true, mentionId: MENTION, body: expect.stringContaining('끝 보고') })]);
+    });
+
+    it.each([['끝 보고', { kind: 'report' }], ['스스로 올린 실패', { kind: 'failure' }], ['사람에게 물음', { kind: 'ask' }]])('%s 이면 실패 줄을 더 올리지 않는다', async (_n, meta) => {
+      expect(await run(meta)).toEqual([]);
+    });
+  });
+
   it('에이전트가 불렀어도 다른 스레드에 답했으면 보통 답글로 링크를 준다', async () => {
     const fake = new FakeHarkroom(defOf());
     fake.seedFrom('agent-peer', '@forge 이 일 해줘').id = MENTION;

@@ -760,6 +760,20 @@ describe('buildTurnPrompt — 넘겨받은 일(3-2)', () => {
     expect(prompt).toContain('보고');
   });
 
+  it('끝 보고로만 닫힌다고 말한다', () => {
+    expect(call().prompt).toContain('이 일은 완료 보고나 `message.fail` 로만 닫힌다');
+  });
+
+  it('팀 없이 넘겨받으면 팀 이름을 지어내지 않는다', () => {
+    const { prompt } = buildTurnPrompt({
+      messages: [msg(10, 'a1', '@scout 는 서버를 봐라')],
+      lastFedSeq: 9, meId: 'a2', handles, channelId: 'c', threadRootId: 't',
+      delegatedBy: { ...handed, teamName: null },
+    });
+    expect(prompt).toContain('(넘겨받은 일 — @forge 가 너에게 넘겼다)');
+    expect(prompt).not.toContain('@null');
+  });
+
   it('요청자를 부르지 말라고 말한다 — 이 한 줄이 화면의 접힘과 한 쌍이다', () => {
     expect(call().prompt).toContain('요청자(사람)를 `@handle` 로 부르지 마라');
   });

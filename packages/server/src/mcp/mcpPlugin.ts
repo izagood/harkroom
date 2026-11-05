@@ -18,7 +18,7 @@ import { RUNNER_NOTICE_KEYS, RUNNER_NOTICE_MAX_PENDING, runnerNotice } from '../
 import { emitEvent, emitPosted, onEvent } from '../events.js';
 import type { Lifecycle } from '../lifecycle.js';
 import { assertChannelVisible, audienceFor, getChannelDoc, listChannels } from '../services/channels.js';
-import { BAD_THREAD_MESSAGE, checkAskMirror, ASK_SUPERSEDES_MAX, checkAskSupersede, getMessageById, listOpenHumanAsks, gateAwaitingAccount, leaseInboxEntries, listInbox, listMessages, markInboxRead, notifyGateAwaiting, postMessage, searchInput, searchMessages, supersedeAsk, syncAskMirrors, type AskMirrorRefusal, type AskSupersedeRefusal } from '../services/messages.js';
+import { BAD_THREAD_MESSAGE, checkAskMirror, ASK_SUPERSEDES_MAX, checkAskSupersede, delegationChainCapped, getMessageById, listOpenHumanAsks, gateAwaitingAccount, leaseInboxEntries, listInbox, listMessages, markInboxRead, notifyGateAwaiting, postMessage, searchInput, searchMessages, supersedeAsk, syncAskMirrors, type AskMirrorRefusal, type AskSupersedeRefusal } from '../services/messages.js';
 
 /** `message.ask` 의 `mirrorOf` 거절 사유 — 에이전트가 읽고 고칠 수 있게 무엇을 바꾸면 되는지 적는다. */
 const MIRROR_REFUSAL_MESSAGE: Record<AskMirrorRefusal, string> = {
@@ -39,7 +39,7 @@ const SUPERSEDE_REFUSAL_MESSAGE: Record<AskSupersedeRefusal, string> = {
   supersedes_too_many: 'list at most 4 cards in supersedes',
 };
 import {
-  createDelegation, leadTeamFor, roundsUsed,
+  createDelegation, leadTeamFor, openDelegationTargets, roundsUsed,
   DELEGATION_DEADLINE_DEFAULT_SEC, DELEGATION_DEADLINE_MAX_SEC, DELEGATION_DEADLINE_MIN_SEC,
 } from '../services/delegations.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction, stampWakeChecked } from '../services/reactions.js';
@@ -1444,7 +1444,7 @@ function buildMcpServer(
    * 최상위에 걸면 그 둘이 성립하지 않는다.
    */
   server.registerTool('message.delegate', {
-    description: '팀원에게 일을 넘긴다(팀장만). 전부 끝나거나 기한이 지나면 다시 깨어난다. planRootId·planGroupId 를 함께 주면 그 스레드 계획의 그룹을 이 위임 스레드에 잇는다(결과는 plan 칸)',
+    description: '다른 에이전트에게 일을 넘기고 결말을 받는다 — `to` 는 내가 멘션으로 부를 수 있는 에이전트(내 팀원 포함). 담당의 완료 보고(message.report)·실패(message.fail)만 일을 닫고 보통 답글은 닫지 않는다. 전부 끝나거나 기한이 지나거나 중단되면 네가 다시 깨어난다. planRootId·planGroupId 를 함께 주면 그 스레드 계획의 그룹을 이 위임 스레드에 잇는다(결과는 plan 칸)',
     inputSchema: {
       channelId: z.string().uuid(),
       threadRootId: z.string().uuid(),
@@ -1472,16 +1472,26 @@ function buildMcpServer(
       return jsonResult({ error: { code: 'self_delegation', message: 'you cannot delegate to yourself' } });
     }
 
+    /*
+      팀장이 `to` 전원을 자기 팀에서 넘기면 전처럼 팀 명단으로 지나간다(팀원이 된 것이 곧 그 팀장의 일을 받기로 한 것이다).
+      그 밖의 위임은 받는 쪽마다 멘션과 같은 호출 게이트와 연쇄 상한을 지난다(2026-11-06).
+    */
     const team = await leadTeamFor(pool, account.id, to);
-    if (!team) {
-      // 사유를 갈라 말한다 — 팀장이 아닌 것과 그 팀원들이 내 팀에 없는 것은 다음 행동이
-      // 다르다(전자는 사람에게 말해야 하고, 후자는 `to` 를 고치면 된다).
-      const anyTeam = await leadTeamFor(pool, account.id, []);
-      return jsonResult({
-        error: anyTeam
-          ? { code: 'not_team_members', message: 'every handle in `to` must be a member of your team' }
-          : { code: 'not_a_lead', message: 'only a team lead can delegate' },
-      });
+    let members = team?.members;
+    if (!members) {
+      if (account.kind !== 'agent') {
+        return jsonResult({ error: { code: 'not_agent', message: 'only agents delegate' } });
+      }
+      const gate = await pool.connect();
+      try {
+        const opened = await openDelegationTargets(gate, { callerId: account.id, channelId, to });
+        if ('refused' in opened) {
+          return jsonResult({ error: { code: 'not_invokable', message: `cannot delegate to: ${opened.refused.join(', ')} — not an agent you may invoke`, handles: opened.refused } });
+        }
+        members = opened.members;
+      } finally {
+        gate.release();
+      }
     }
 
     const used = await roundsUsed(pool, { threadRootId, leadAccountId: account.id });
@@ -1500,7 +1510,7 @@ function buildMcpServer(
     const delegates: { handle: string; accountId: string }[] = [];
     const unreachable: string[] = [];
     for (const handle of to) {
-      const member = team.members.get(handle.toLowerCase())!;
+      const member = members.get(handle.toLowerCase())!;
       if (member.disabled || !online.has(member.accountId)) unreachable.push(handle);
       else delegates.push({ handle, accountId: member.accountId });
     }
@@ -1533,8 +1543,12 @@ function buildMcpServer(
         위임에서 "이 글이 깨우는 상대"는 팬아웃이 아니라 **넘겨받는 팀원**이다 — 그들의 부름은 아래
         `createDelegation` 이 만든다. 그래서 판정의 `notified` 로 그 명단(도달 가능한 팀원)을 준다.
       */
-      ...(picks.list.length ? {
+      ...(picks.list.length || !team ? {
         beforeCommit: async (txn, ctx) => {
+          if (!team && await delegationChainCapped(txn, ctx.message.id)) {
+            return { status: 409, code: 'chain_limit', message: '이 사슬은 에이전트끼리의 호출 상한에 닿았다 — 사람에게 넘겨라' };
+          }
+          if (!picks.list.length) return null;
           const out = await applyAgentPicks(txn, {
             channelId, threadRootId, actorId: account.id, picks: picks.list,
             notified: new Set([...ctx.notified, ...delegates.map((d) => d.accountId)]),
@@ -1566,7 +1580,7 @@ function buildMcpServer(
         messageId: posted.message.id,
         channelId,
         threadRootId,
-        teamId: team.teamId,
+        teamId: team?.teamId ?? null,
         leadAccountId: account.id,
         delegateIds: delegates.map((d) => d.accountId),
         deadlineAt,
