@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { askTakesText, CHANNEL_MENTION_HANDLE, countsAsReply, MENTION_EDIT_WINDOW_MS, type MentionEditSkipReason, headMentionRunEnd, isAskOpen, MENTION_CHAIN_LIMIT, messageLinkIds, stallStep, STALL_HOP_LIMIT, CHAIN_BACKSTOP_MS, CHAIN_BACKSTOP_CONTINUE, STALL_LOOKBACK, ASK_BUNDLE_MAX_ITEMS, type AskBundleItem, mentionedHandles, mentionedIds, mentionTargetKey, normalizeMentions, readAskMeta, splitMentionCalls, type InboxEntry, type InboxTeamCall, type InboxThreadState, type MessageRow, type WakeReportTo } from '@harkroom/shared';
 import { attachToMessage, type AttachFailure } from './attachments.js';
 import { getMentionPolicy } from './mentionPolicy.js';
-import { announceReportWakes, preemptWakesForThread } from './agentWakes.js';
+import { announceReportWakes, announceWakeRows, preemptWakesForThread } from './agentWakes.js';
 import { auditMandateCreated, mandateForAgentPost, stampHumanMandate, type MandateCreated } from './mandates.js';
 import {
   causeReasonsFor, PRINCIPAL_INVOKE_DAILY_CAP, principalForAgentPost, principalInvokeEnabled, principalInvokesToday, stripServerCallMeta,
@@ -1908,10 +1908,11 @@ export async function postMessage(
      * 앵커 없는 채널 최상위 발화에는 하지 않는다: 깨움은 반드시 스레드에 걸린다(040).
      */
     const reportTouched: WakeReportTo[] = [];
+    const wakeRowsTouched: string[] = [];
     const wokeByPost = input.threadRootId && !isSystemLine
       ? await preemptWakesForThread(client, {
         threadRootId: input.threadRootId, authorId: input.authorId, notified, messageId: message.id,
-        reportTouched,
+        reportTouched, wakeRowsTouched,
       })
       : [];
 
@@ -1969,6 +1970,7 @@ export async function postMessage(
     for (const accountId of wokeByPost) emitEvent({ type: 'inbox.updated', accountId });
     // 깨우거나 접은 깨움에 보고처가 있었으면 그 스레드의 대기 줄·머리 ⏳ 를 다시 그리게 한다(신호만).
     if (reportTouched.length) await announceReportWakes(pool, reportTouched).catch(() => undefined);
+    await announceWakeRows(pool, wakeRowsTouched);
     // 결말이 난 팀장도 같은 자리에서 깨운다(위 주석의 이유가 그대로 적용된다).
     for (const accountId of wokeByDelegation) emitEvent({ type: 'inbox.updated', accountId });
 

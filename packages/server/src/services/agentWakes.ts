@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from 'pg';
 import type { MessageRow, ReportWakeView, WakeReportTo } from '@harkroom/shared';
-import { BAD_THREAD_MESSAGE, postMessage, verifiedCauseLink } from './messages.js';
+import { BAD_THREAD_MESSAGE, getMessageById, postMessage, verifiedCauseLink } from './messages.js';
 import { audienceFor, channelVisibleSql } from './channels.js';
 import { emitEvent } from '../events.js';
 
@@ -141,6 +141,8 @@ export interface ClosedWatchWake {
   id: string;
   reason: string | null;
   wakeAt: string;
+  /** 이 예약의 대기 줄. 호출자가 커밋 뒤에 `announceWakeRows` 로 알린다. */
+  messageId: string;
   reportTo?: WakeReportTo;
 }
 
@@ -223,6 +225,7 @@ export async function scheduleWake(pool: Pool, input: ScheduleWakeInput): Promis
     const id = res.rows[0].id as string;
     const replaced = input.watch === true ? await replaceWatchWakes(client, input, id) : [];
     await client.query('commit');
+    await announceWakeRows(pool, replaced.map((w) => w.messageId));
     return {
       wake: { id, wakeAt: wakeAt.toISOString(), messageId: posted.message.id },
       message: posted.message,
@@ -243,9 +246,9 @@ const OPEN_WATCH_WAKE_SQL = `m.id = w.message_id
         and w.fired_at is null
         and w.canceled_at is null
         and m.meta->'wake'->>'watch' = 'true'`;
-const CLOSED_WATCH_COLUMNS = `w.id, w.wake_at, m.body, m.deleted_at is not null as deleted, m.meta->'wake'->'reportTo' as report_to`;
+const CLOSED_WATCH_COLUMNS = `w.id, w.wake_at, w.message_id, m.body, m.deleted_at is not null as deleted, m.meta->'wake'->'reportTo' as report_to`;
 
-interface ClosedWatchRow { id: string; wake_at: Date; body: string | null; deleted: boolean; report_to: unknown }
+interface ClosedWatchRow { id: string; wake_at: Date; message_id: string; body: string | null; deleted: boolean; report_to: unknown }
 
 function closedWatchView(row: ClosedWatchRow): ClosedWatchWake {
   const report = asReportTo(row.report_to);
@@ -253,8 +256,38 @@ function closedWatchView(row: ClosedWatchRow): ClosedWatchWake {
     id: row.id,
     reason: row.deleted ? null : row.body,
     wakeAt: new Date(row.wake_at).toISOString(),
+    messageId: row.message_id,
     ...(report ? { reportTo: report } : {}),
   };
+}
+
+/**
+ * 대기 줄 meta 에 **닫힌 시각**을 적는다(2026-11-06). 깨어났는지·접혔는지의 정본은 `agent_wake` 인데 메시지만 읽는 화면에는 닿지 않아,
+ * 지난 예약이 영영 대기 중으로 보였다. 적은 뒤 커밋이 끝나면 호출자가 `announceWakeRows` 를 부른다.
+ *
+ * 처음 값을 지킨다 — 줄이 닫히는 일은 한 번뿐이고 뒤늦은 호출이 시각을 고치면 안 된다.
+ */
+async function stampWakeClosed(
+  db: Pick<Pool, 'query'>, messageIds: readonly string[], field: 'firedAt' | 'canceledAt',
+): Promise<void> {
+  if (!messageIds.length) return;
+  await db.query(
+    `update message set meta = jsonb_set(meta, array['wake', $3::text], to_jsonb($2::text))
+      where id = any($1::uuid[]) and jsonb_typeof(meta->'wake') = 'object' and meta->'wake'->>($3::text) is null`,
+    [messageIds, new Date().toISOString(), field],
+  );
+}
+
+/** 닫힌 대기 줄을 `message.updated` 로 알린다. 커밋 뒤에 부른다. 신호가 실패해도 닫힘은 이미 끝났다 — 다음 읽기가 맞춘다. */
+export async function announceWakeRows(pool: Pool, messageIds: readonly string[]): Promise<void> {
+  for (const id of new Set(messageIds)) {
+    try {
+      const message = await getMessageById(pool, id);
+      if (message) emitEvent({ type: 'message.updated', message, audience: await audienceFor(pool, message.channelId) });
+    } catch (err) {
+      console.error('[wake] 닫힌 대기 줄을 알리지 못했다:', err);
+    }
+  }
 }
 
 /** 이 스레드에 열린 내 감시 예약 중 가장 늦게 걸린 것의 보고처. */
@@ -290,6 +323,7 @@ async function replaceWatchWakes(
       returning ${CLOSED_WATCH_COLUMNS}`,
     [input.threadRootId, input.accountId, keepId],
   );
+  await stampWakeClosed(client, res.rows.map((r) => r.message_id), 'canceledAt');
   return res.rows.map(closedWatchView);
 }
 
@@ -312,6 +346,7 @@ export async function foldWatchWakesOnReport(
       returning ${CLOSED_WATCH_COLUMNS}`,
     [args.threadRootId, args.accountId, args.turnId ?? null],
   );
+  await stampWakeClosed(pool, res.rows.map((r) => r.message_id), 'canceledAt');
   return res.rows.map(closedWatchView);
 }
 
@@ -351,6 +386,8 @@ export async function preemptWakesForThread(
      * 쳐야 하므로 호출자가 `announceReportWakes` 로 낸다 — `inbox.updated` 를 호출자가 내는 것과 같은 이유다.
      */
     reportTouched?: WakeReportTo[];
+    /** 깨우거나 접은 대기 줄. 호출자가 커밋 뒤에 `announceWakeRows` 로 알린다. */
+    wakeRowsTouched?: string[];
   },
 ): Promise<string[]> {
   // 판정은 계정 종류 하나다. 라우트가 아니라 여기서 보는 이유: 이 파일이 깨움 정책의
@@ -363,8 +400,8 @@ export async function preemptWakesForThread(
   // 앵커는 시계 테이블에 없다 — 040 의 규칙(앵커를 두 번 저장하지 않는다) 그대로
   // 깨움 메시지에서 되찾는다. `for update` 는 sweep 과의 경합용이다: 그쪽이 먼저
   // 잡았으면 잠금을 기다린 뒤 술어가 다시 평가돼 이 행은 빠진다(이미 fired 다).
-  const due = await client.query<{ id: string; account_id: string; report_to: unknown }>(
-    `select w.id, w.account_id, m.meta->'wake'->'reportTo' as report_to from agent_wake w
+  const due = await client.query<{ id: string; account_id: string; message_id: string; report_to: unknown }>(
+    `select w.id, w.account_id, w.message_id, m.meta->'wake'->'reportTo' as report_to from agent_wake w
        join message m on m.id = w.message_id
       where coalesce(m.thread_root_id, m.id) = $1
         and w.account_id <> $2
@@ -379,11 +416,13 @@ export async function preemptWakesForThread(
   for (const row of due.rows) {
     const report = asReportTo(row.report_to);
     if (report) args.reportTouched?.push(report);
+    args.wakeRowsTouched?.push(row.message_id);
     if (args.notified.has(row.account_id)) {
       await client.query(
         `update agent_wake set canceled_at = now(), canceled_by_message_id = $2 where id = $1`,
         [row.id, args.messageId],
       );
+      await stampWakeClosed(client, [row.message_id], 'canceledAt');
       continue;
     }
     // sweep 과 **같은 생 insert** 다(`insertInbox` 가 아니다) — 자기가 자기를 부르는
@@ -394,6 +433,7 @@ export async function preemptWakesForThread(
       [row.id],
     );
     await client.query(`update agent_wake set fired_at = now() where id = $1`, [row.id]);
+    await stampWakeClosed(client, [row.message_id], 'firedAt');
     woke.push(row.account_id);
   }
   return woke;
@@ -415,9 +455,11 @@ export async function cancelWakesForTurn(
     threadRootId: string; accountId: string;
     /** 접은 예약의 보고처. 신호는 커밋 뒤에 호출자가 낸다(`preemptWakesForThread` 와 같은 규약). */
     reportTouched?: WakeReportTo[];
+    /** 접은 대기 줄. 호출자가 커밋 뒤에 `announceWakeRows` 로 알린다. */
+    wakeRowsTouched?: string[];
   },
 ): Promise<number> {
-  const res = await client.query<{ report_to: unknown }>(
+  const res = await client.query<{ report_to: unknown; message_id: string }>(
     `update agent_wake w set canceled_at = now()
        from message m
       where m.id = w.message_id
@@ -425,12 +467,14 @@ export async function cancelWakesForTurn(
         and w.account_id = $2
         and w.fired_at is null
         and w.canceled_at is null
-      returning m.meta->'wake'->'reportTo' as report_to`,
+      returning m.meta->'wake'->'reportTo' as report_to, m.id as message_id`,
     [args.threadRootId, args.accountId],
   );
+  await stampWakeClosed(client, res.rows.map((r) => r.message_id), 'canceledAt');
   for (const row of res.rows) {
     const report = asReportTo(row.report_to);
     if (report) args.reportTouched?.push(report);
+    args.wakeRowsTouched?.push(row.message_id);
   }
   return res.rowCount ?? 0;
 }
@@ -574,7 +618,9 @@ export function createAgentWakeSweeper(pool: Pool): {
         [row.account_id, row.message_id],
       );
       await client.query(`update agent_wake set fired_at = now() where id = $1`, [row.id]);
+      await stampWakeClosed(client, [row.message_id], 'firedAt');
       await client.query('commit');
+      await announceWakeRows(pool, [row.message_id]);
 
       // 보고처가 있었으면 그 스레드의 대기 줄·머리 ⏳ 가 풀린다 — 신호만 보낸다(커밋 뒤).
       const meta = await pool.query<{ report_to: unknown }>(

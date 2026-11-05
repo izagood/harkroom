@@ -6,7 +6,7 @@
 // 문으로 멈춘 일이 기한·예약으로 되살아난다(위임 의무가 그렇게 10분 뒤 되살아났던 것이 051 이다).
 import type { Pool } from 'pg';
 import type { AgentSessionView, WakeReportTo } from '@harkroom/shared';
-import { announceReportWakes, cancelWakesForTurn } from './agentWakes.js';
+import { announceReportWakes, announceWakeRows, cancelWakesForTurn } from './agentWakes.js';
 import { cancelDelegationsFor } from './delegations.js';
 import { emitEvent } from '../events.js';
 
@@ -30,6 +30,7 @@ export async function settleCanceledTurn(
 ): Promise<SettledCancel> {
   const out: SettledCancel = { woke: [], wakesCanceled: 0 };
   const reportTouched: WakeReportTo[] = [];
+  const wakeRowsTouched: string[] = [];
   const client = await pool.connect();
   try {
     await client.query('begin');
@@ -37,7 +38,7 @@ export async function settleCanceledTurn(
       threadRootId: args.threadRootId, accountId: args.agentAccountId,
     });
     out.wakesCanceled = await cancelWakesForTurn(client, {
-      threadRootId: args.threadRootId, accountId: args.agentAccountId, reportTouched,
+      threadRootId: args.threadRootId, accountId: args.agentAccountId, reportTouched, wakeRowsTouched,
     });
     await client.query('commit');
   } catch (err) {
@@ -49,6 +50,7 @@ export async function settleCanceledTurn(
   }
   for (const accountId of out.woke) emitEvent({ type: 'inbox.updated', accountId });
   if (reportTouched.length) await announceReportWakes(pool, reportTouched).catch(() => undefined);
+  await announceWakeRows(pool, wakeRowsTouched);
   return out;
 }
 
