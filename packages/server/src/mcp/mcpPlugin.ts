@@ -96,7 +96,7 @@ import { collectStrings, SECRET_IN_BODY, type SecretLeakGuard } from '../service
 import type { AgentPresence } from './presence.js';
 import { enqueueAskPush, enqueueBundlePush } from '../services/push/pushJobs.js';
 import { DENIAL_CARD_REFUSAL_MESSAGE, prepareDenialCard, type MergeDenialReason } from '../services/mergeDenials.js';
-import { linkPermissionCard, openPermissionRequest, permissionCardBody, permissionCardOptions, releaseGrant, renderPermissionMirror } from '../services/permissionRequests.js';
+import { linkPermissionCard, listToolRules, openPermissionRequest, permissionCardBody, permissionCardOptions, releaseGrant, renderPermissionMirror } from '../services/permissionRequests.js';
 import { mandateForAgentPost } from '../services/mandates.js';
 import { openDelegatesOf, settleCanceledTurn, type TurnCancelHub } from '../services/turnCancel.js';
 import { recordAudit } from '../audit.js';
@@ -1322,7 +1322,7 @@ function buildMcpServer(
    * 채팅(모바일 포함)으로 "그 권한 거둬"라고 하면 에이전트가 이것으로 거둔다. 넓히는 길은 `permission.request` 하나뿐이다.
    */
   server.registerTool('permission.revoke', {
-    description: '내가 받은 명령 허용(kind=tool, 그 채널의 규칙)·머지 권한(kind=merge)·읽기 권한(kind=read — pr.status 용, merge 와 따로 준 것) 하나를 내려놓는다. merge·read 의 repo 는 owner/name 또는 조직 전체 owner/*. 다음 턴부터 빠진다',
+    description: '내가 받은 명령 허용(kind=tool, 그 채널의 규칙)·머지 권한(kind=merge)·읽기 권한(kind=read — pr.status 용, merge 와 따로 준 것) 하나를 내려놓는다. kind=tool 은 그 규칙의 「이번 턴만」 줄도 닫는다. merge·read 의 repo 는 owner/name 또는 조직 전체 owner/*. 다음 턴부터 빠진다. 거둘 것이 없으면 not_found 와 까닭(reason: request_pending·request_denied·request_expired·request_closed·approved_once·mandate_line·grant_gone·other_agent·none)',
     inputSchema: {
       // `read`(2026-11-02): `repo.read` 내려놓기. 좁히기만 하므로 요청 길(`permission.request`)보다 먼저 연다.
       kind: z.enum(['tool', 'merge', 'read']),
@@ -1336,8 +1336,8 @@ function buildMcpServer(
       return jsonResult({ error: { code: 'bad_request', message: 'kind "tool" takes `rule`, kinds "merge" and "read" take `repo` — exactly one' } });
     }
     const r = await releaseGrant(pool, { agentId: account.id, kind, rule, repo, channelId });
-    if (!r.ok) return jsonResult({ error: { code: r.code, message: r.message } });
-    return jsonResult({ revoked: true, capability: r.capability, scope: r.scope });
+    if (!r.ok) return jsonResult({ error: { code: r.code, ...(r.code === 'not_found' ? { reason: r.reason } : {}), message: r.message } });
+    return jsonResult({ revoked: true, capability: r.capability, scope: r.scope, grantRemoved: r.grantRemoved, closedTurnLines: r.closedTurnLines });
   });
 
   server.registerTool('message.fail', {
@@ -2832,9 +2832,9 @@ function buildMcpServer(
     return jsonResult(r.ok ? { revoked: true } : { error: { code: r.code ?? 'not_found', message: 'no such grant given by you' } });
   });
   server.registerTool('grant.list', {
-    description: '내 API 권한(다시 줄 수 있는 단계 포함)과 내가 다시 준 권한 목록',
+    description: '내 API 권한(다시 줄 수 있는 단계 포함), 내가 다시 준 권한, 내 7일 명령 허용 규칙(toolRules — 채널·규칙·기한·active. 「이번 턴만」 줄은 없다. 지금 안 보이는 채널의 규칙은 hiddenToolRules 에 개수만) 목록',
     inputSchema: {},
-  }, async () => jsonResult(await listDelegations(pool, account.id)));
+  }, async () => jsonResult({ ...(await listDelegations(pool, account.id)), ...(await listToolRules(pool, account.id)) }));
 
   server.registerTool('secret.mount', {
     description: '비밀 하나를 이 턴 전용 파일로 받는다 — 값이 아니라 파일 경로를 준다. 이름은 secret.list 에 있다. 파일 내용을 출력·복사하지 마라',

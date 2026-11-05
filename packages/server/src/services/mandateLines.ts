@@ -202,6 +202,26 @@ export async function revokeLinesForGrant(q: Pool | Q, args: {
   return res.rowCount ?? 0;
 }
 
+/**
+ * 「이번 턴만」 줄을 그 줄을 받은 에이전트가 스스로 닫는다(`permission.revoke`). 이 줄에는 account_grant 가 없어 `revokeLinesForGrant` 로는 닫히지 않는다.
+ * 고르는 범위 — 넷이 다 맞아야 한다: ① 이 에이전트가 **이 채널에서** 낸 tool 요청에서 온 줄 ② 줄이 이 에이전트 하나에만 걸림(`agent_ids`)
+ * ③ 같은 규칙 ④ `turnCause` 가 있고 아직 살아 있음. 7일 줄·다른 에이전트의 줄·다른 채널의 요청에서 온 줄은 건드리지 않는다.
+ */
+export async function revokeTurnLines(q: Q, args: {
+  agentId: string; channelId: string; rules: readonly string[]; now?: Date;
+}): Promise<{ id: string; mandateId: string; scope: string; via: string; requestId: string }[]> {
+  const now = args.now ?? new Date();
+  return (await q.query<{ id: string; mandateId: string; scope: string; via: string; requestId: string }>(
+    `update mandate_line l set revoked_at = $4
+       from permission_request r
+      where r.id = l.request_id and r.agent_id = $1 and r.channel_id = $2 and r.kind = 'tool'
+        and l.revoked_at is null and l.cap = 'tool' and l.scope = any($3::text[])
+        and l.agent_ids = array[$1::uuid]
+        and l.limits ? 'turnCause' and (l.limits->>'until')::timestamptz > $4
+      returning l.id, l.mandate_id as "mandateId", l.scope, l.via, l.request_id as "requestId"`,
+    [args.agentId, args.channelId, args.rules, now])).rows;
+}
+
 export type RevokeLineResult =
   | { ok: true; line: MandateLine; revokedAt: Date }
   | { ok: false; code: 'not_found' | 'standing_line' | 'already_revoked' };

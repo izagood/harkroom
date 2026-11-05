@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { startTestDb } from './helpers/testDb.js';
@@ -7,7 +7,7 @@ import { bootstrapAdmin, createAgent, createMember } from './helpers/fixtures.js
 import { postMessage } from '../src/services/messages.js';
 import { decide, resolveDecision } from '../src/services/decisions.js';
 import { findLine, listMandateLines, revokeMandateLine } from '../src/services/mandateLines.js';
-import { mandateChipName, openPermissionRequest, permissionCardOptions, renderPermissionMirror } from '../src/services/permissionRequests.js';
+import { listToolRules, mandateChipName, openPermissionRequest, permissionCardOptions, releaseGrant, renderPermissionMirror } from '../src/services/permissionRequests.js';
 
 // 권한 카드 계약(W4b) — 선택지·위임장 줄·새 위임장·거울 칸·칩 이름.
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
@@ -315,6 +315,115 @@ describe('permission card decisions (W4b)', () => {
     expect(await decideCard(d.cardId, 'deny')).toMatchObject({ ok: true, result: { status: 'denied' } });
     expect(await linesOf(d.requestId)).toEqual([]);
     expect(await decideCard((await card({ kind: 'tool', target: rule(), root, mandateId })).cardId, 'approve_forever')).toMatchObject({ ok: false, code: 'unknown_option' });
+  });
+
+  describe('permission.revoke: reasons, turn lines, grant.list', () => {
+    const rv = (target: string, who = agentId) => releaseGrant(pool, { agentId: who, kind: 'tool', rule: target, channelId: ch });
+    const allow = async (a: string, target: string) => (await listToolRules(pool, a)).toolRules.some((r) => r.rule === target);
+    const reasonOf = async (target: string, who = agentId) => ((await rv(target, who)) as { reason?: string }).reason;
+    const lineRevokedAt = async (requestId: string) =>
+      (await pool.query(`select revoked_at from mandate_line where request_id = $1`, [requestId])).rows[0].revoked_at as Date | null;
+    // 하루 요청 한도(20) 안에서 — `ageRequest` 와 같은 까닭.
+    afterEach(async () => { await pool.query(`update permission_request set created_at = created_at - interval '2 days' where agent_id = $1`, [agentId]); });
+
+    it('names why there is nothing to release: none, pending, denied, expired, granted and gone, another agent', async () => {
+      const { root, mandateId } = await mandateThread(alice.accountId, '@cardbot reasons');
+      const target = rule();
+      expect(await reasonOf(target)).toBe('none');
+      const c = await card({ kind: 'tool', target, root, mandateId });
+      expect(await rv(target)).toMatchObject({ ok: false, code: 'not_found', reason: 'request_pending' });
+      // 남의 대기 카드 — 다른 에이전트가 부르면 그 에이전트 몫이 아니라고 말한다(카드를 청한 쪽 아님).
+      expect(await reasonOf(target, bobAgentId)).toBe('other_agent');
+      await decideCard(c.cardId, 'deny');
+      expect(await reasonOf(target)).toBe('request_denied');
+      expect(await reasonOf(target, bobAgentId)).toBe('none');
+
+      const expired = rule();
+      const e = await card({ kind: 'tool', target: expired, root, mandateId });
+      await pool.query(`update permission_request set expires_at = now() - interval '1 second' where id = $1`, [e.requestId]);
+      expect(await reasonOf(expired)).toBe('request_expired');
+
+      const granted = rule();
+      const g = await card({ kind: 'tool', target: granted, root, mandateId });
+      await decideCard(g.cardId, 'approve_mandate');
+      expect(await reasonOf(granted, bobAgentId)).toBe('other_agent');
+      expect(await rv(granted)).toMatchObject({ ok: true, grantRemoved: true, closedTurnLines: 0 });
+      expect(await reasonOf(granted)).toBe('grant_gone');
+    });
+
+    it('other_agent is not said for a channel the caller cannot see', async () => {
+      const target = rule();
+      await pool.query(`insert into account_grant (account_id, capability, scope, granted_by) values ($1, 'tool.allow', $2, $3)`, [agentId, `tool:${privCh}:${target}`, alice.accountId]);
+      expect(await releaseGrant(pool, { agentId: bobAgentId, kind: 'tool', rule: target, channelId: privCh })).toMatchObject({ ok: false, reason: 'none' });
+      await pool.query(`delete from account_grant where account_id = $1 and scope = $2`, [agentId, `tool:${privCh}:${target}`]);
+    });
+
+    it('closes the requester\'s own turn line in that channel, and nothing else', async () => {
+      const { root, mandateId } = await mandateThread(alice.accountId, '@cardbot close turn');
+      const target = rule();
+      const a = await card({ kind: 'tool', target, root, mandateId });
+      await decideCard(a.cardId, 'approve_turn');
+      // 다른 에이전트·다른 채널에서는 닫히지 않는다.
+      expect(await rv(target, bobAgentId)).toMatchObject({ ok: false, code: 'not_found' });
+      expect(await releaseGrant(pool, { agentId, kind: 'tool', rule: target, channelId: privCh })).toMatchObject({ ok: false, code: 'not_found' });
+      expect(await lineRevokedAt(a.requestId)).toBeNull();
+      // 다른 규칙의 줄은 남는다.
+      const keep = rule();
+      const k = await card({ kind: 'tool', target: keep, root, mandateId });
+      await decideCard(k.cardId, 'approve_turn');
+      expect(await rv(target)).toMatchObject({ ok: true, grantRemoved: false, closedTurnLines: 1, capability: 'tool.allow', scope: `tool:${ch}:${target}` });
+      expect(await lineRevokedAt(a.requestId)).not.toBeNull();
+      expect(await lineRevokedAt(k.requestId)).toBeNull();
+      // 그 턴을 다시 띄워도 읽는 길에 실리지 않는다 — 두 번째 revoke 는 「없어졌다」.
+      expect((await listMandateLines(pool, mandateId!)).some((l) => l.scope === target)).toBe(false);
+      expect(await reasonOf(target)).toBe('grant_gone');
+      const audit = (await pool.query(`select detail from audit_log where action = 'mandate.line.revoked' and detail->>'scope' = $1`, [target])).rows;
+      expect(audit[0].detail).toMatchObject({ revokedVia: 'permission.revoke', cap: 'tool' });
+    });
+
+    it('an expired turn line is not closed and reads as gone', async () => {
+      const { root, mandateId } = await mandateThread(alice.accountId, '@cardbot expired turn');
+      const target = rule();
+      const a = await card({ kind: 'tool', target, root, mandateId });
+      await decideCard(a.cardId, 'approve_turn');
+      const later = new Date(Date.now() + 2 * 3_600_000);
+      expect(await releaseGrant(pool, { agentId, kind: 'tool', rule: target, channelId: ch, now: later })).toMatchObject({ ok: false, reason: 'grant_gone' });
+      expect(await lineRevokedAt(a.requestId)).toBeNull();
+    });
+
+    it('a merge approved as a mandate line says so instead of "gone"', async () => {
+      const { root, mandateId } = await mandateThread(alice.accountId, '@cardbot merge line');
+      const repo = 'acme-org/line-only';
+      const m = await card({ kind: 'merge', target: repo, root, mandateId });
+      await decideCard(m.cardId, 'approve_mandate');
+      expect(await releaseGrant(pool, { agentId, kind: 'merge', repo, channelId: ch })).toMatchObject({ ok: false, code: 'not_found', reason: 'mandate_line' });
+    });
+
+    it('grant.list rows: own live 7-day rules with channel and expiry, turn lines left out, unseen channels counted only', async () => {
+      const { root, mandateId } = await mandateThread(alice.accountId, '@cardbot list');
+      const target = rule();
+      const g = await card({ kind: 'tool', target, root, mandateId });
+      await decideCard(g.cardId, 'approve_mandate');
+      const turn = rule();
+      const t = await card({ kind: 'tool', target: turn, root, mandateId });
+      await decideCard(t.cardId, 'approve_turn');
+      const listed = (await listToolRules(pool, agentId)).toolRules.find((r) => r.rule === target);
+      expect(listed).toMatchObject({ channelId: ch, active: true });
+      expect(Date.parse(listed!.expiresAt!)).toBeGreaterThan(Date.now());
+      expect(await allow(agentId, turn)).toBe(false);
+      expect(await allow(bobAgentId, target)).toBe(false);
+      // 안 보이는 채널의 규칙은 글자 없이 개수만.
+      const hidden = rule();
+      await pool.query(`insert into account_grant (account_id, capability, scope, granted_by) values ($1, 'tool.allow', $2, $3)`, [bobAgentId, `tool:${privCh}:${hidden}`, alice.accountId]);
+      const seen = await listToolRules(pool, bobAgentId);
+      expect(seen.toolRules.some((r) => r.rule === hidden)).toBe(false);
+      expect(seen.hiddenToolRules).toBe(1);
+      await pool.query(`delete from account_grant where account_id = $1`, [bobAgentId]);
+      // 만료된 줄은 빠진다.
+      await pool.query(`update account_grant set expires_at = now() - interval '1 second' where account_id = $1 and scope = $2`, [agentId, `tool:${ch}:${target}`]);
+      expect(await allow(agentId, target)).toBe(false);
+      await pool.query(`delete from account_grant where account_id = $1 and scope = $2`, [agentId, `tool:${ch}:${target}`]);
+    });
   });
 
   it('t1 approve_turn (tool on a mandate) → a line for the turn the answer wakes only, no grant; refused elsewhere', async () => {
