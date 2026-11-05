@@ -407,6 +407,7 @@ export function quotedLine(lastSaid: string | null, pat: string, secrets: readon
  * 것으로 읽었다. 한 줄로 **확인은 했다**는 사실과 하네스가 남긴 이유를 싣는다.
  *
  * progress 로 올린다(호출자) — 결과 발화가 아니므로 발화로 세지 않고, 스레드를 `막힘` 으로 칠하지 않는다.
+ * 예약 시각에 깬 턴은 이 줄 대신 대기 줄의 ✅로 남긴다(2026-11-06). 이 줄은 사람이 카드에 답해 깬 턴에만 쓴다.
  */
 export function silentWakeNotice(lastSaid: string | null, pat: string, secrets: readonly string[] = []): string {
   const said = quotedLine(lastSaid, pat, secrets);

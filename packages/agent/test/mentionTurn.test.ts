@@ -5280,7 +5280,25 @@ describe('러너가 턴의 사정을 스레드에 드러낸다 (2026-09-30)', ()
     return () => { cut = true; };
   };
 
-  it('깨어난 턴이 다시 깨움만 걸고 말없이 끝나면 한 줄을 남긴다 — 하네스의 마지막 말과 함께(e3ecfdf7)', async () => {
+  it('예약 시각에 깬 턴이 다시 예약만 걸고 말없이 끝나면 글 대신 그 대기 줄에 ✅ 를 단다 — 「확인은 했다」가 ✅ 로 남는다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge PR 확인해서 보고해');
+    const t = tui(rewake(fake), 1_000);
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5, orphanMs: 5, readTurnState: async () => 'ended',
+      readLastSaid: async () => '05:01Z 에 이미 보고해서\n다시 올리지 않았어',
+    });
+    runTurn.script = t.script;
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION, wake: { reason: 'PR 확인' }, scheduledWake: true });
+
+    // progress 줄이 없다 — 있으면 같은 저자의 다음 글이 올 때까지 끝난 턴이 「작업 중」으로 보인다.
+    expect(fake.posts).toEqual([]);
+    expect(fake.messages.filter((m) => m.kind === 'progress')).toEqual([]);
+    expect(fake.reactions.filter((r) => r.emoji === '✅')).toEqual([expect.objectContaining({ messageId: MENTION })]);
+  });
+
+  it('카드 답으로 깬 턴이 다시 깨움만 걸고 말없이 끝나면 한 줄을 남긴다 — 하네스의 마지막 말과 함께(e3ecfdf7)', async () => {
     const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge PR 확인해서 보고해');
     const t = tui(rewake(fake), 1_000);
