@@ -17,6 +17,7 @@ import 'agent_rows.dart';
 import 'ask_bundle_card.dart';
 import 'ask_card.dart';
 import 'composer_attachments.dart';
+import 'feed_pin.dart';
 import 'mention_button.dart';
 import 'message_feed.dart';
 import 'message_tile.dart';
@@ -46,19 +47,13 @@ class _MessageListScreenState extends State<MessageListScreen> {
   /// 작성칸 모델 칩으로 고른 값(서버 079). 보내면 비운다(결정 12).
   Map<String, ModelPick> _picks = const {};
 
-  /// 「↓ 최신 메시지」 알약([FeedJumpPill])이 보는 자리 — 스레드 화면과 같은 기준이다.
-  bool _atBottom = true;
-  bool _far = false;
-
-  /// 맨 아래에서 마지막으로 본 seq. 그 위로 온 남의 말만 새 것으로 센다 — 옛 페이지를 받아도 목록이 자라므로
-  /// 길이 차로 세지 않는다.
-  int? _seenSeq;
+  /// 「↓ 최신 메시지」 알약과 보던 줄 고정이 보는 자리 — 스레드 화면과 같은 코드다.
+  late final _pin = FeedPin(_scroll, rebuild: setState);
 
   @override
   void initState() {
     super.initState();
     _scroll.addListener(_maybeLoadOlder);
-    _scroll.addListener(_trackBottom);
     // 쓰던 글(D8)을 되살리고, 칠 때마다 적어 둔다. 커뮤니티 key 는 **지금** 쥔다 — 옮긴 뒤 이 화면이
     // 닫혀도 글은 이 커뮤니티 자리에 남는다.
     final app = AppScope.read(context);
@@ -84,31 +79,39 @@ class _MessageListScreenState extends State<MessageListScreen> {
     AppScope.read(context).loadOlder(widget.channelId);
   }
 
-  /// 맨 아래 근처 기준(px). 이 안이면 맨 아래 말이 보인다고 본다.
-  static const double _bottomSlop = 48;
-
-  void _trackBottom() {
-    if (!_scroll.hasClients) return;
-    final pos = _scroll.position;
-    final atBottom = pos.pixels < _bottomSlop;
-    final far = pos.pixels > pos.viewportDimension;
-    if (atBottom == _atBottom && far == _far) return;
-    setState(() {
-      _atBottom = atBottom;
-      _far = far;
-    });
-  }
-
   @override
   void dispose() {
     _scroll.removeListener(_maybeLoadOlder);
-    _scroll.removeListener(_trackBottom);
+    _pin.dispose();
     _composer.removeListener(_keepDraft);
     _composer.dispose();
     _composerFocus.dispose();
     _scroll.dispose();
     super.dispose();
   }
+
+  Widget _feedRow(BuildContext context, FeedItem item) => buildFeedItem(
+        context,
+        item,
+        // 채널에 올라온 답글(alsoInChannel)은 그 원글의 스레드로 간다.
+        onOpenThread: (m) => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => ThreadScreen(
+              channelId: widget.channelId,
+              rootId: m.threadRootId ?? m.id,
+            ),
+          ),
+        ),
+        onReplyInThread: (m) => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => ThreadScreen(
+              channelId: widget.channelId,
+              rootId: m.id,
+              focusComposer: true,
+            ),
+          ),
+        ),
+      );
 
   Future<void> _send() async {
     final text = _composer.text.trim();
@@ -121,6 +124,7 @@ class _MessageListScreenState extends State<MessageListScreen> {
     // **먼저 비운다.** 보내는 동안 글자가 남아 있으면 사람은 안 갔다고 생각하고 다시
     // 누른다. 못 보낸 말은 작성칸이 아니라 목록 안에 "보내지 못했다"로 남는다.
     _composer.clear();
+    _pin.revealOwnSend();
     final picks = _picks;
     setState(() => _picks = const {});
     // **자동·고정 멘션은 보내는 순간 본문에 들어간다**(데스크탑 `Composer.tsx` 의 `send` 와 같다).
@@ -162,15 +166,19 @@ class _MessageListScreenState extends State<MessageListScreen> {
     // 스레드가 조용해 보였다 — 진행은 한 줄로 접히고 대기는 대기 줄이 된다.
     final feedRows = all.where((m) => m.inChannelFeed).toList(growable: false);
     final feed = buildFeed(feedRows);
-    final load = app.channelLoad[widget.channelId];
-    if (load == LoadState.loaded && (_seenSeq == null || _atBottom)) {
-      // 처음 받은 말·맨 아래에서 보이는 말은 새 것이 아니다. 빌드 중에 적어도 되는 값이다(그리기에만 쓴다).
-      _seenSeq = feedRows.isEmpty ? 0 : feedRows.map((m) => m.seq).reduce((a, b) => a > b ? a : b);
-    }
-    final jumpNew = countNewSince(feedRows, _seenSeq, app.me?.id);
-    // 맨 아래가 보이면 숨긴다. 한 화면 안이어도 새 말이 오면 띄운다 — 맨 아래는 안 보이는 자리다.
-    final showJump = load == LoadState.loaded && !_atBottom && (_far || jumpNew > 0);
     final failed = app.failedSends[widget.channelId] ?? const <FailedSend>[];
+    final load = app.channelLoad[widget.channelId];
+    // 빌드 중에 적어도 되는 값이다(그리기에만 쓴다).
+    if (load == LoadState.loaded) _pin.markSeen(feedRows.map((m) => m.seq));
+    final jumpNew = countNewSince(feedRows, _pin.seenSeq, app.me?.id);
+    // 본 뒤에 온 줄은 기준 아래로 — 보던 줄이 밀리지 않는다([FeedPin]). 그때는 못 보낸 말도 아래 끝으로 간다.
+    final firstNew = _pin.firstNew(feed);
+    final olderFeed = feed.sublist(0, firstNew);
+    final newFeed = feed.sublist(firstNew);
+    _pin.hasBelow = newFeed.isNotEmpty;
+    final olderFailed = newFeed.isEmpty ? failed : const <FailedSend>[];
+    // 맨 아래가 보이면 숨긴다. 한 화면 안이어도 새 말이 오면 띄운다 — 맨 아래는 안 보이는 자리다.
+    final showJump = load == LoadState.loaded && !_pin.atBottom && (_pin.far || jumpNew > 0);
     final top = feedTopOf(app, widget.channelId);
     // `firstOrNull` 은 `package:collection` 것이다. 의존성 하나를 이것 때문에 들이지
     // 않는다 — 채널이 목록에서 사라지는 경우(다른 기기에서 나갔다)가 있으므로 null 은
@@ -229,49 +237,36 @@ class _MessageListScreenState extends State<MessageListScreen> {
                   // 첫 페이지 중 **가장 오래된 것**이 보이고, 새 말은 화면 밖 아래로 붙는다 —
                   // 채팅에서 사람이 보려는 것은 늘 맨 아래다. 짧은 시험 목록에서는 한 화면에
                   // 다 들어가서 드러나지 않았다.
-                  : ListView.builder(
+                  : NotificationListener<ScrollNotification>(
+                      onNotification: _pin.onNotification,
+                      child: feedScrollView(
                       key: const Key('channel-feed'),
                       controller: _scroll,
-                      reverse: true,
-                      // 짧은 채널도 늘 끌리게 둔다 — 끌기 시작이 키보드를 내린다([FeedKeyboardDismiss]).
-                      // 안 그러면 Android 에서 한 화면에 다 드는 채널은 끌기가 아예 시작되지 않는다.
-                      physics: const AlwaysScrollableScrollPhysics(),
                       // 위 여백 = 머리 + 띠 — 맨 위(가장 옛 줄)까지 굴려도 머리에 가리지 않는다.
                       padding: EdgeInsets.only(top: 8 + inset, bottom: 8),
                       // 못 보낸 말이 **맨 아래**(reverse 라 앞쪽)에 선다 — 보낸 자리다. 맨 위(끝)에는
                       // 회전자·"다시 시도"·채널 시작 중 하나를 둔다([FeedTop]).
-                      itemCount: feed.length + failed.length + (top == null ? 0 : 1),
-                      itemBuilder: (context, i) => i == feed.length + failed.length
-                          ? FeedTopRow(
-                              top: top!,
-                              channelName: channel?.name ?? '',
-                              onRetry: () => app.retryOlder(widget.channelId),
-                            )
-                          : i < failed.length
-                          ? FailedSendRow(item: failed[failed.length - 1 - i])
-                          : buildFeedItem(
-                        context,
-                        feed[feed.length - 1 - (i - failed.length)],
-                        // 채널에 올라온 답글(alsoInChannel)은 그 원글의 스레드로 간다.
-                        onOpenThread: (m) => Navigator.of(context).push(
-                          MaterialPageRoute<void>(
-                            builder: (_) => ThreadScreen(
-                              channelId: widget.channelId,
-                              rootId: m.threadRootId ?? m.id,
-                            ),
-                          ),
-                        ),
-                        onReplyInThread: (m) => Navigator.of(context).push(
-                          MaterialPageRoute<void>(
-                            builder: (_) => ThreadScreen(
-                              channelId: widget.channelId,
-                              rootId: m.id,
-                              focusComposer: true,
-                            ),
-                          ),
-                        ),
+                      older: SliverList.builder(
+                        itemCount: olderFeed.length + olderFailed.length + (top == null ? 0 : 1),
+                        itemBuilder: (context, i) => i == olderFeed.length + olderFailed.length
+                            ? FeedTopRow(
+                                top: top!,
+                                channelName: channel?.name ?? '',
+                                onRetry: () => app.retryOlder(widget.channelId),
+                              )
+                            : i < olderFailed.length
+                                ? FailedSendRow(item: olderFailed[olderFailed.length - 1 - i])
+                                : _feedRow(context, olderFeed[olderFeed.length - 1 - (i - olderFailed.length)]),
                       ),
-                    ),
+                      below: newFeed.isEmpty
+                          ? null
+                          : SliverList.builder(
+                              itemCount: newFeed.length + failed.length,
+                              itemBuilder: (context, i) => i < newFeed.length
+                                  ? _feedRow(context, newFeed[i])
+                                  : FailedSendRow(item: failed[i - newFeed.length]),
+                            ),
+                    )),
               })),
               // 작성칸 위 오른쪽에 뜬다 — 목록 위에만 겹치고 작성칸은 가리지 않는다(스레드와 같은 자리).
               if (showJump)

@@ -59,7 +59,7 @@ void main() {
   final ko = stringsFor('ko');
   final pill = find.byKey(const Key('channel-jump-pill'));
   ScrollController feed(WidgetTester tester) =>
-      tester.widget<ListView>(find.byKey(const Key('channel-feed'))).controller!;
+      tester.widget<ScrollView>(find.byKey(const Key('channel-feed'))).controller!;
 
   Future<AppState> open(WidgetTester tester) async {
     final app = (await tester.runAsync(() async {
@@ -151,6 +151,7 @@ void main() {
     await tester.tap(pill);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle(); // 멎은 뒤 기준 위아래가 하나로 합쳐진다
     expect(c.position.pixels, 0);
     expect(pill, findsNothing);
     c.jumpTo(c.position.viewportDimension * 1.5);
@@ -166,6 +167,7 @@ void main() {
     await tester.tap(pill);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle(); // 멎은 뒤 기준 위아래가 하나로 합쳐진다
     expect(c.position.pixels, 0);
     expect(pill, findsNothing);
   });

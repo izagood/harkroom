@@ -9,6 +9,7 @@ import 'package:harkroom/api/thread_plan.dart';
 import 'package:harkroom/api/ws.dart';
 import 'package:harkroom/i18n/i18n.dart';
 import 'package:harkroom/markdown/markdown_view.dart';
+import 'package:harkroom/screens/feed_pin.dart';
 import 'package:harkroom/screens/message_tile.dart';
 import 'package:harkroom/screens/thread_plan_sheet.dart';
 import 'package:harkroom/screens/thread_screen.dart';
@@ -471,13 +472,12 @@ void main() {
       expect(tester.getBottomRight(button).dx, 375 - 16);
       expect(tester.getTopLeft(button).dy, greaterThan(400));
       // 맨 아래 글이 버튼 밑에 깔리지 않게 피드가 비켜 있다.
-      final feed = find.byKey(const Key('thread-feed'));
-      expect(tester.widget<ListView>(feed).padding!.resolve(TextDirection.ltr).bottom, 12 + planButtonHeight + 8);
+      expect(tester.widget<SliverPadding>(find.byKey(feedCenterKey)).padding.resolve(TextDirection.ltr).bottom, 12 + planButtonHeight + 8);
       tester.view.viewInsets = const FakeViewPadding(bottom: 900);
       addTearDown(tester.view.resetViewInsets);
       await tester.pump();
       expect(button, findsNothing);
-      expect(tester.widget<ListView>(feed).padding!.resolve(TextDirection.ltr).bottom, 8);
+      expect(tester.widget<SliverPadding>(find.byKey(feedCenterKey)).padding.resolve(TextDirection.ltr).bottom, 8);
     });
 
     testWidgets('rev 가 바뀌면 다시 받고, 실패해도 버튼은 행 값으로 서 있다', (tester) async {
