@@ -521,7 +521,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       });
     };
     const target: MentionTarget = {
-      channelId: mention.channelId, threadRootId: anchor, mentionId: mention.id,
+      channelId: mention.channelId, threadRootId: anchor, mentionId: mention.id, mentionRow: mention,
       ...(fence ? { fence } : {}),
       // 깨움(마이그레이션 040): 자기가 걸어 둔 예약이 시각이 되어 자기를 부른 것이다. 사유는
       // 그 대기 줄의 본문이다 — 서버가 거기 넣었고(agentWakes.ts::scheduleWake), 여기서 다시

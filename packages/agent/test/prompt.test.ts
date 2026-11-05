@@ -1668,6 +1668,8 @@ describe('델타를 멘션·최신 우선으로 싣는다 (2026-10-12, 스레드
     expect(prompt).toContain(`peer: 글${11 + DELTA_MAX_MESSAGES + 9}`);
     expect(prompt).not.toContain('peer: 글11\n'); // 41개 중 멘션 + 최신 29개만 — 옛 11개는 생략
     expect(prompt).toMatch(/\(앞선 글 11개 생략 — 필요하면 harkroom MCP 의 `message.read`/);
+    // 어디부터 읽으면 되는지 적는다(첫 생략 글 앞의 seq).
+    expect(prompt).toContain('channelId·threadRootId, since: 10 를 읽어라');
     expect(prompt.indexOf('앞선 글')).toBeLessThan(prompt.indexOf('peer: 글'));
     expect(fedSeq).toBe(100);
   });
@@ -1725,6 +1727,7 @@ describe('델타를 멘션·최신 우선으로 싣는다 (2026-10-12, 스레드
       lastFedSeq: 7, meId: 'a1', handles, channelId: 'c', threadRootId: null, mentionId: 'GONE',
     });
     expect(prompt).toContain('(이 턴을 띄운 글 harkroom://message/GONE 은 위 범위 밖이라 싣지 못했다');
+    expect(prompt).toContain('since 를 7 보다 앞으로 잡는다');
     expect(prompt).toContain('아직 어느 턴도 처리하지 않았다');
   });
 
