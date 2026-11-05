@@ -871,7 +871,12 @@ export async function registerAccountRoutes(app: FastifyInstance, pool: Pool, ro
     }
     const assignment = await assignmentOf(pool, id);
     if (!assignment) return reply.code(409).send({ error: { code: 'not_assigned', message: '배정된 오퍼레이터가 없다' } });
-    const sent = routeDeps.operatorHub?.send?.(assignment.operatorId, { type: 'agent.restart', agentId: id }) ?? false;
+    // 새 정의를 먼저 보낸다. 오퍼레이터는 마지막으로 받은 정의로 다시 띄우므로, 그러지 않으면 방금 켠 MCP 가 다음 재접속까지
+    // 빠진 채 뜬다. 정의를 고치는 PATCH 는 오퍼레이터에 알리지 않고, 사람은 [재시작] 으로 반영을 청한다.
+    const definition = await definitionFor(pool, id);
+    const hub = routeDeps.operatorHub;
+    const pushed = definition ? (hub?.send?.(assignment.operatorId, { type: 'assign', agentId: id, definition }) ?? false) : true;
+    const sent = pushed && (hub?.send?.(assignment.operatorId, { type: 'agent.restart', agentId: id }) ?? false);
     if (!sent) return reply.code(409).send({ error: { code: 'operator_offline', message: '그 오퍼레이터가 지금 붙어 있지 않다' } });
     await recordAudit(pool, {
       action: 'agent.restart.requested', actorId: req.account!.id, actorHandle: req.account!.handle,

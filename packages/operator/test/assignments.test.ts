@@ -1,9 +1,13 @@
 // 배정 조정기 — 스펙 2026-09-20 §3·§9. 서버의 `assign`/`unassign` 을 "이 머신에서 무엇을
 // 띄우고 무엇을 내릴까"로 바꾼다. 실제 프로세스는 `runners.test.ts` 가 재고, 여기서는
 // 결정만 잰다 — spawn·kill·시계·PAT 을 전부 주입한다.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import type { AgentDefinition } from '@harkroom/shared/operatorProtocol';
+import { mkdtemp, readFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createAssignmentReconciler, type AssignmentDeps } from '../src/assignments.js';
+import { buildMcpConfig, writeAgentMcpConfig, type McpServerDefinition } from '../src/mcpConfig.js';
 
 const def = (agentId = 'a-1'): AgentDefinition => ({
   agentId, handle: 'murmur', harness: 'claude-code', instructions: '', model: null, effort: null,
@@ -307,6 +311,36 @@ describe('restart — 사람의 [재시작]', () => {
     h.timers.at(-1)!.fn();
     await new Promise((res) => setTimeout(res, 0));
     expect(h.spawned).toHaveLength(3);
+  });
+  it('[재시작] 앞에 온 새 정의로 다시 띄운다 — 새로 켠 stdio·http MCP 가 설정에 실린다', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'restart-def-'));
+    const definitions: Record<string, McpServerDefinition> = {
+      files: { type: 'stdio', command: '/opt/files-mcp', args: ['--root', '/srv'], env: { TOKEN: 'v' } },
+      remote: { type: 'http', url: 'https://mcp.example.com/mcp' },
+    };
+    const names: string[][] = [];
+    const h = harness({
+      mcpConfig: async (d) => {
+        names.push(d.mcpServers);
+        const built = buildMcpConfig({ operatorBin: '/opt/op', names: d.mcpServers, definitions });
+        return { path: await writeAgentMcpConfig(dir, d.agentId, built.mcpServers) };
+      },
+    });
+    const r = createAssignmentReconciler(h.deps);
+    const servers = async () => JSON.parse(await readFile(join(dir, 'a-1.json'), 'utf8')).mcpServers as Record<string, unknown>;
+    await r.onAssign('https://example.com', def(), undefined);
+    expect(Object.keys(await servers())).toEqual(['harkroom', 'avcs']);
+
+    await r.onAssign('https://example.com', { ...def(), mcpServers: ['files', 'remote'] }, undefined);
+    expect(r.restart('a-1')).toBe(true);
+    h.exit('a-1'); r.onRunnerExit('a-1', 0);
+    h.timers.at(-1)!.fn();
+    // 설정을 실제 파일로 쓰므로 틱 하나로는 끝나지 않는다.
+    await vi.waitFor(() => expect(h.spawned).toHaveLength(2));
+
+    // 다시 띄울 때 옛 정의로 설정을 덮어쓰지 않는다.
+    expect(names.at(-1)).toEqual(['files', 'remote']);
+    expect(await servers()).toMatchObject({ files: definitions.files, remote: definitions.remote });
   });
   it('배정이 없거나 러너가 없으면 아무것도 안 한다', async () => {
     const h = harness();

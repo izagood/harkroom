@@ -168,6 +168,27 @@ describe('배정', () => {
     const none = await app.inject({ method: 'POST', url: `/accounts/agents/${loose}/restart`, headers: auth(adminToken) });
     expect(none.json().error.code).toBe('not_assigned');
   });
+  it('[재시작] 은 바로 앞에 새 정의를 보낸다 — 방금 켠 MCP 가 다음 재접속까지 빠지지 않는다', async () => {
+    const b = await attachOperator(opB, [agentId]);
+    await waitCapable(opB.operatorId, [agentId]);
+    await waitFor(() => b.frames.some((f) => f.type === 'assign' && f.agentId === agentId));
+    const put = await app.inject({ method: 'PUT', url: '/mcp-servers/restart-probe', headers: auth(adminToken), payload: { credentialKind: 'community' } });
+    expect(put.statusCode).toBeLessThan(300);
+    const patched = await app.inject({ method: 'PATCH', url: `/accounts/agents/${agentId}`, headers: auth(adminToken), payload: { mcpServers: ['restart-probe'] } });
+    expect(patched.statusCode).toBe(200);
+    expect(b.frames.some((f) => f.type === 'assign' && f.definition.mcpServers.includes('restart-probe'))).toBe(false);
+
+    const res = await app.inject({ method: 'POST', url: `/accounts/agents/${agentId}/restart`, headers: auth(aliceToken) });
+    expect(res.statusCode).toBe(202);
+    await waitFor(() => b.frames.some((f) => f.type === 'agent.restart' && f.agentId === agentId));
+    const at = b.frames.findIndex((f) => f.type === 'agent.restart' && f.agentId === agentId);
+    const before = b.frames[at - 1]!;
+    expect(before.type).toBe('assign');
+    if (before.type === 'assign') expect(before.definition.mcpServers).toEqual(['restart-probe']);
+
+    await app.inject({ method: 'PATCH', url: `/accounts/agents/${agentId}`, headers: auth(adminToken), payload: { mcpServers: [] } });
+    await b.close();
+  });
   it('배정 해제는 unassign{drain} 을 보내고 404 로 두 번 지울 수 없다', async () => {
     const b = await attachOperator(opB, [agentId]);
     await waitCapable(opB.operatorId, [agentId]);
