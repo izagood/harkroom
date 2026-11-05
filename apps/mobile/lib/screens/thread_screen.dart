@@ -444,6 +444,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
     final tailMissing = app.threadTailMissing.contains(widget.rootId);
     if (tailMissing) {
       _pin.seenSeq = null;
+      _pin.boundarySeq = null;
     } else if (load == LoadState.loaded) {
       // 빌드 중에 적어도 되는 값이다(그리기에만 쓴다).
       _pin.markSeen(threadRows.map((m) => m.seq));
@@ -457,7 +458,6 @@ class _ThreadScreenState extends State<ThreadScreen> {
     final firstNew = load == LoadState.loaded ? _pin.firstNew(allReplies) : allReplies.length;
     final replies = allReplies.sublist(0, firstNew);
     final newReplies = allReplies.sublist(firstNew);
-    _pin.hasBelow = newReplies.isNotEmpty;
     final showJump = load == LoadState.loaded && !_pin.atBottom && (tailMissing ? _pin.far : _pin.far || jumpNew > 0);
     // 머리 모델 줄에 세울 에이전트: 스레드 글의 작성자 중 에이전트 + 본문이 부른 에이전트.
     final threadAgents = <String>[];
@@ -589,7 +589,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
                   const ConnectionBand(),
                 ]),
                 builder: (context, inset) => FeedKeyboardDismiss(
-                child: NotificationListener<ScrollNotification>(
+                child: NotificationListener<Notification>(
                   onNotification: _pin.onNotification,
                   child: feedScrollView(
                   key: const Key('thread-feed'),
@@ -599,6 +599,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
                     top: 8 + inset,
                     bottom: planButtonVisible(root?.planProgress, keyboardOpen: keyboardOpen) ? 12 + planButtonHeight + 8 : 8,
                   ),
+                  dividerLabel: t.threadNewDivider,
                   older: SliverList.list(children: rows.reversed.toList(growable: false)),
                   below: belowRows.isEmpty ? null : SliverList.list(children: belowRows),
                 ),

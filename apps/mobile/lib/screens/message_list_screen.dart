@@ -175,7 +175,6 @@ class _MessageListScreenState extends State<MessageListScreen> {
     final firstNew = _pin.firstNew(feed);
     final olderFeed = feed.sublist(0, firstNew);
     final newFeed = feed.sublist(firstNew);
-    _pin.hasBelow = newFeed.isNotEmpty;
     final olderFailed = newFeed.isEmpty ? failed : const <FailedSend>[];
     // 맨 아래가 보이면 숨긴다. 한 화면 안이어도 새 말이 오면 띄운다 — 맨 아래는 안 보이는 자리다.
     final showJump = load == LoadState.loaded && !_pin.atBottom && (_pin.far || jumpNew > 0);
@@ -237,7 +236,7 @@ class _MessageListScreenState extends State<MessageListScreen> {
                   // 첫 페이지 중 **가장 오래된 것**이 보이고, 새 말은 화면 밖 아래로 붙는다 —
                   // 채팅에서 사람이 보려는 것은 늘 맨 아래다. 짧은 시험 목록에서는 한 화면에
                   // 다 들어가서 드러나지 않았다.
-                  : NotificationListener<ScrollNotification>(
+                  : NotificationListener<Notification>(
                       onNotification: _pin.onNotification,
                       child: feedScrollView(
                       key: const Key('channel-feed'),
@@ -246,6 +245,7 @@ class _MessageListScreenState extends State<MessageListScreen> {
                       padding: EdgeInsets.only(top: 8 + inset, bottom: 8),
                       // 못 보낸 말이 **맨 아래**(reverse 라 앞쪽)에 선다 — 보낸 자리다. 맨 위(끝)에는
                       // 회전자·"다시 시도"·채널 시작 중 하나를 둔다([FeedTop]).
+                      dividerLabel: t.channelNewDivider,
                       older: SliverList.builder(
                         itemCount: olderFeed.length + olderFailed.length + (top == null ? 0 : 1),
                         itemBuilder: (context, i) => i == olderFeed.length + olderFailed.length

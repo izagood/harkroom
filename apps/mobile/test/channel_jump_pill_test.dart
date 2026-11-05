@@ -152,7 +152,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pumpAndSettle(); // 멎은 뒤 기준 위아래가 하나로 합쳐진다
-    expect(c.position.pixels, 0);
+    expect(c.position.pixels, c.position.minScrollExtent);
     expect(pill, findsNothing);
     c.jumpTo(c.position.viewportDimension * 1.5);
     await tester.pump();
@@ -168,7 +168,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pumpAndSettle(); // 멎은 뒤 기준 위아래가 하나로 합쳐진다
-    expect(c.position.pixels, 0);
+    expect(c.position.pixels, c.position.minScrollExtent);
     expect(pill, findsNothing);
   });
 

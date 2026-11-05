@@ -309,7 +309,7 @@ void main() {
     final glass = tester.getRect(find.byKey(const Key('glass-app-bar')));
     expect(tester.getRect(find.byKey(const Key('channel-feed'))).top, 0);
     // 맨 위(가장 옛 줄)까지 굴렸을 때 머리에 가리지 않게 — 목록 위 여백이 머리 높이 이상이다.
-    final pad = tester.widget<SliverPadding>(find.byKey(feedCenterKey)).padding as EdgeInsets;
+    final pad = tester.widget<SliverPadding>(find.byKey(feedOlderKey)).padding as EdgeInsets;
     expect(pad.top, greaterThanOrEqualTo(glass.bottom));
 
     await tester.enterText(find.byKey(const Key('composer')), '@forge 이거 해 줘');

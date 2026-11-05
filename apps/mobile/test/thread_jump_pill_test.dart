@@ -191,7 +191,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pumpAndSettle(); // 멎은 뒤 기준 위아래가 하나로 합쳐진다
-    expect(c.position.pixels, 0);
+    expect(c.position.pixels, c.position.minScrollExtent);
     expect(pill, findsNothing);
     // 다시 올라가도 본 답글은 새 것이 아니다.
     c.jumpTo(c.position.viewportDimension * 1.5);
@@ -209,7 +209,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pumpAndSettle(); // 멎은 뒤 기준 위아래가 하나로 합쳐진다
-    expect(c.position.pixels, 0);
+    expect(c.position.pixels, c.position.minScrollExtent);
     expect(pill, findsNothing);
   });
 
@@ -242,7 +242,7 @@ void main() {
     await _settle(tester);
     expect(server.asked.last.containsKey('around'), isFalse);
     expect(app.threadTailMissing, isEmpty);
-    expect(c.position.pixels, 0);
+    expect(c.position.pixels, c.position.minScrollExtent);
     expect(pill, findsNothing);
   });
 

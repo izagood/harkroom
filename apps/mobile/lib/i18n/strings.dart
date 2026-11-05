@@ -256,6 +256,12 @@ abstract class Strings {
   /// 알약의 읽기 도구 이름(새 메시지 n개). `{n}` 은 [channelJumpNew] 와 같다.
   String get channelJumpA11yNew;
 
+  /// 위로 올라가 있는 동안 온 줄의 시작을 표시하는 구분선 글자(채널).
+  String get channelNewDivider;
+
+  /// 같은 구분선의 글자(스레드).
+  String get threadNewDivider;
+
   /// 인박스를 못 읽음.
   String get inboxLoadFailed;
 
@@ -1620,6 +1626,8 @@ Map<String, String> stringsToMap(Strings s) => {
       'channelJumpNew': s.channelJumpNew,
       'channelJumpA11y': s.channelJumpA11y,
       'channelJumpA11yNew': s.channelJumpA11yNew,
+      'channelNewDivider': s.channelNewDivider,
+      'threadNewDivider': s.threadNewDivider,
       'inboxLoadFailed': s.inboxLoadFailed,
       'messagesEmptyHint': s.messagesEmptyHint,
       'channelStartLine': s.channelStartLine,
