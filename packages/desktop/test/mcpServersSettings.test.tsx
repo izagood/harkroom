@@ -387,6 +387,18 @@ describe('McpServersSettings — stdio', () => {
     await waitFor(() => expect(calls.find((x) => x.cmd === 'operator_mcp_set_stdio')?.args).toMatchObject({ name: 'files', env: {}, keepEnv: ['TOKEN'] }));
   });
 
+  it('편집 창이 열린 채 다른 행의 [편집] 이 눌려도 제목과 내용이 같은 항목을 가리킨다', async () => {
+    fake([{ name: 'files', credentialKind: 'personal' }, { name: 'other', credentialKind: 'personal' }]);
+    useActiveStore.setState({ me: me([]) });
+    local([stdio(), stdio({ name: 'other', target: '/opt/other-mcp', args: [], envKeys: [] })]);
+    render(<McpServersSection />);
+    fireEvent.click(await screen.findByTestId('mcp-cell-primary-files'));
+    expect((screen.getByTestId('mcp-dialog-command') as HTMLInputElement).value).toBe('/opt/files-mcp');
+    fireEvent.click(screen.getByTestId('mcp-cell-primary-other'));
+    expect((screen.getByTestId('mcp-dialog-name') as HTMLInputElement).value).toBe('other');
+    expect((screen.getByTestId('mcp-dialog-command') as HTMLInputElement).value).toBe('/opt/other-mcp');
+  });
+
   it('[편집] 에서 인자를 바꾸면 env 값을 다시 넣으라고 한다', async () => {
     fake([{ name: 'files', credentialKind: 'personal' }]);
     useActiveStore.setState({ me: me([]) });

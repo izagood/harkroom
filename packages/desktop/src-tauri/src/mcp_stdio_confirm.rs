@@ -6,7 +6,11 @@
 //!
 //! - **창의 글자가 곧 저장되는 글자다.** 안 보이는 글자는 거절하고(`check`), 창이 잘리지 않도록 길이를 묶는다.
 //!   웹뷰가 주는 설명 문구는 창에 넣지 않는다 — 고정 문구와 명령·인자·env 이름뿐이다.
-//! - **기본 버튼이 취소다.** 웹뷰가 사람이 Enter 를 치는 순간에 맞춰 창을 띄워도 저장되지 않는다.
+//! - **맥에서는 메인 창에 붙은 NSAlert 시트를 직접 띄운다.** 부모 창 없는 rfd 는 시스템 알림 창을 써서 기본 버튼이 없고
+//!   버튼 순서가 본문 길이에 따라 뒤집히며, 부모 창을 줘도 「취소」라는 글자에는 Esc 가 붙지 않는다(모두 실물 확인).
+//! - **기본 버튼이 취소다.** Return 과 Esc 가 취소다. 웹뷰가 사람이 Enter 를 치는 순간에 맞춰 창을 띄워도 저장되지 않는다.
+//! - **화면에 다 들어가지 않으면 띄우지 않는다.** 시트는 창 위쪽에서 아래로 자라고 스크롤되지 않는다. 버튼이나 뒤 인자가
+//!   화면 밖으로 나갈 높이면 저장하지 않고 거절한다.
 //! - **한 번에 창 하나.** 거절해도 곧바로 겹쳐 뜨지 않는다.
 //! - env 값은 창에 넣지 않는다(토큰이 있다). 값이 실행되는 코드를 바꾸는 변수는 오퍼레이터가 거절하고(`shared/mcpStdio.ts`),
 //!   값이 안 보인다는 사실은 창이 고정 문구로 말한다.
@@ -106,6 +110,7 @@ struct Words {
     env_keep: &'static str,
     allow: &'static str,
     cancel: &'static str,
+    too_tall: &'static str,
 }
 
 const KO: Words = Words {
@@ -118,6 +123,7 @@ const KO: Words = Words {
     env_keep: "그대로 두는 환경 변수",
     allow: "실행 허용",
     cancel: "취소",
+    too_tall: "확인창이 화면에 다 들어가지 않아 저장하지 않았다. 창을 화면 위쪽으로 옮기거나 인자를 줄인다.",
 };
 
 const EN: Words = Words {
@@ -130,6 +136,7 @@ const EN: Words = Words {
     env_keep: "Environment variables kept as they are",
     allow: "Allow to run",
     cancel: "Cancel",
+    too_tall: "Not saved because the dialog does not fit on this screen. Move the window higher or use fewer arguments.",
 };
 
 /// 창의 본문. 인자는 경계가 보이도록 번호를 붙여 한 줄씩 적는다.
@@ -155,36 +162,170 @@ fn body(r: &StdioRequest, w: &Words) -> String {
     out
 }
 
-/// 첫 버튼이 Enter 를 받으므로 **취소를 첫 버튼에 둔다.**
+/// 맥이 아닌 곳은 플러그인 창을 쓴다. 첫 버튼이 Enter 를 받으므로 **취소를 첫 버튼에 둔다.**
+#[cfg(not(target_os = "macos"))]
 fn approved(result: &tauri_plugin_dialog::MessageDialogResult, allow: &str) -> bool {
     matches!(result, tauri_plugin_dialog::MessageDialogResult::Custom(label) if label == allow)
 }
 
 static ASKING: AtomicBool = AtomicBool::new(false);
 
+/// 맥의 확인창. NSAlert 는 첫 버튼에 Return 을 주고 첫 버튼이 오른쪽 끝에 온다. 그래서 취소를 첫 버튼에 둔다.
+/// Esc 는 NSAlert 가 영어 제목 "Cancel" 에만 붙여서 시트가 떠 있는 동안 키 입력을 직접 본다.
+#[cfg(target_os = "macos")]
+mod sheet {
+    use block2::RcBlock;
+    use objc2::rc::Retained;
+    use objc2::runtime::AnyObject;
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{
+        NSAlert, NSAlertFirstButtonReturn, NSAlertSecondButtonReturn, NSAlertStyle, NSEvent, NSEventMask,
+        NSModalResponse, NSWindow,
+    };
+    use objc2_foundation::NSString;
+    use std::cell::Cell;
+    use std::ptr::NonNull;
+    use std::sync::mpsc::{sync_channel, SyncSender};
+
+    const KEY_ESCAPE: u16 = 53;
+
+    pub struct Texts {
+        pub title: String,
+        pub body: String,
+        pub cancel: String,
+        pub allow: String,
+        pub too_tall: String,
+    }
+
+    /// 둘째 버튼(「실행 허용」)만 허락이다. Esc·창이 닫혀 끝난 것을 포함해 나머지는 모두 거절이다.
+    pub(super) fn allows(response: NSModalResponse) -> bool {
+        response == NSAlertSecondButtonReturn
+    }
+
+    /// 창이 닫힐 때까지 막는다.
+    pub fn show(app: &tauri::AppHandle, parent: tauri::WebviewWindow, texts: Texts) -> Result<bool, String> {
+        let (tx, rx) = sync_channel::<Result<bool, String>>(1);
+        app.run_on_main_thread(move || open(&parent, &texts, tx))
+            .map_err(|e| format!("확인창을 띄우지 못했다: {e}"))?;
+        // 띄우지 못하면 `tx` 가 그냥 사라져 여기서 오류가 된다 — 저장되지 않는 쪽이다.
+        rx.recv().map_err(|_| "확인창을 띄우지 못했다".to_string())?
+    }
+
+    /// 시트는 창 위 가장자리에서 내려온다. 그 아래 끝이 화면의 쓸 수 있는 영역 안에 있어야 한다(좌표는 아래에서 위로 자란다).
+    pub(super) fn fits(window_top: f64, sheet_height: f64, screen_bottom: f64) -> bool {
+        window_top - sheet_height >= screen_bottom
+    }
+
+    fn open(parent: &tauri::WebviewWindow, texts: &Texts, tx: SyncSender<Result<bool, String>>) {
+        let Some(mtm) = MainThreadMarker::new() else { return };
+        let Ok(pointer) = parent.ns_window() else { return };
+        // SAFETY: Tauri 가 돌려준 살아 있는 NSWindow 포인터이고, 메인 스레드에서 retain 한다.
+        let Some(window) = (unsafe { Retained::retain(pointer.cast::<NSWindow>()) }) else { return };
+
+        let alert = NSAlert::new(mtm);
+        alert.setAlertStyle(NSAlertStyle::Warning);
+        alert.setMessageText(&NSString::from_str(&texts.title));
+        alert.setInformativeText(&NSString::from_str(&texts.body));
+        alert.addButtonWithTitle(&NSString::from_str(&texts.cancel));
+        alert.addButtonWithTitle(&NSString::from_str(&texts.allow));
+
+        // 띄우기 전에 크기를 잰다. 화면을 모르면 잴 수 없으니 띄우지 않는다.
+        alert.layout();
+        let sheet = alert.window();
+        let visible = window.screen().map(|screen| screen.visibleFrame());
+        let top = window.frame().origin.y + window.frame().size.height;
+        if !visible.is_some_and(|area| fits(top, sheet.frame().size.height, area.origin.y)) {
+            let _ = tx.try_send(Err(texts.too_tall.clone()));
+            return;
+        }
+        let escape = {
+            let (window, sheet) = (window.clone(), sheet.clone());
+            RcBlock::new(move |event: NonNull<NSEvent>| -> *mut NSEvent {
+                // SAFETY: AppKit 이 이 호출 동안 살아 있는 이벤트를 넘긴다.
+                let key = unsafe { event.as_ref() }.keyCode();
+                if key == KEY_ESCAPE && sheet.isKeyWindow() {
+                    window.endSheet_returnCode(&sheet, NSAlertFirstButtonReturn);
+                    return std::ptr::null_mut();
+                }
+                event.as_ptr()
+            })
+        };
+        // SAFETY: 블록은 키 코드만 읽고, 모니터는 시트가 끝나는 자리에서 뗀다.
+        let monitor: Cell<Option<Retained<AnyObject>>> =
+            Cell::new(unsafe { NSEvent::addLocalMonitorForEventsMatchingMask_handler(NSEventMask::KeyDown, &escape) });
+        let keep_alert = alert.clone();
+        let done = RcBlock::new(move |response: NSModalResponse| {
+            if let Some(monitor) = monitor.take() {
+                // SAFETY: 위에서 받은 모니터를 한 번만 뗀다.
+                unsafe { NSEvent::removeMonitor(&monitor) };
+            }
+            let _ = tx.try_send(Ok(allows(response)));
+            let _ = &keep_alert;
+        });
+        alert.beginSheetModalForWindow_completionHandler(&window, Some(&done));
+    }
+}
+
+/// RAII 로 `ASKING` 을 푼다 — 창을 못 띄운 길에서도 다음 저장이 막히지 않는다.
+struct Asking;
+
+impl Asking {
+    fn begin() -> Result<Self, String> {
+        if ASKING.swap(true, Ordering::SeqCst) {
+            return Err("이미 떠 있는 확인창이 있다".into());
+        }
+        Ok(Self)
+    }
+}
+
+impl Drop for Asking {
+    fn drop(&mut self) {
+        ASKING.store(false, Ordering::SeqCst);
+    }
+}
+
 /// 창이 닫힐 때까지 막는다 — 메인 스레드에서 부르지 않는다(`on_daemon_pool` 위에서 부른다).
 pub fn ask_human(app: &tauri::AppHandle, r: &StdioRequest, locale: &str) -> Result<bool, String> {
-    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    use tauri::Manager;
 
-    if ASKING.swap(true, Ordering::SeqCst) {
-        return Err("이미 떠 있는 확인창이 있다".into());
-    }
+    let parent = app
+        .get_webview_window("main")
+        .ok_or_else(|| "메인 창이 없어 확인창을 띄울 수 없다".to_string())?;
+    let _asking = Asking::begin()?;
     let w = if locale == "ko" { &KO } else { &EN };
-    let result = app
-        .dialog()
-        .message(body(r, w))
-        .title(w.title)
-        .kind(MessageDialogKind::Warning)
-        .buttons(MessageDialogButtons::OkCancelCustom(w.cancel.to_string(), w.allow.to_string()))
-        .blocking_show_with_result();
-    ASKING.store(false, Ordering::SeqCst);
-    Ok(approved(&result, w.allow))
+
+    #[cfg(target_os = "macos")]
+    {
+        sheet::show(
+            app,
+            parent,
+            sheet::Texts {
+                title: w.title.to_string(),
+                body: body(r, w),
+                cancel: w.cancel.to_string(),
+                allow: w.allow.to_string(),
+                too_tall: w.too_tall.to_string(),
+            },
+        )
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+        let result = app
+            .dialog()
+            .message(body(r, w))
+            .title(w.title)
+            .kind(MessageDialogKind::Warning)
+            .parent(&parent)
+            .buttons(MessageDialogButtons::OkCancelCustom(w.cancel.to_string(), w.allow.to_string()))
+            .blocking_show_with_result();
+        Ok(approved(&result, w.allow))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tauri_plugin_dialog::MessageDialogResult;
 
     fn request(command: &str, args: &[&str]) -> StdioRequest {
         StdioRequest {
@@ -242,8 +383,36 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn 둘째_버튼만_허락이다() {
+        use objc2_app_kit::{NSAlertFirstButtonReturn, NSAlertSecondButtonReturn, NSAlertThirdButtonReturn};
+        assert!(sheet::allows(NSAlertSecondButtonReturn));
+        assert!(!sheet::allows(NSAlertFirstButtonReturn));
+        assert!(!sheet::allows(NSAlertThirdButtonReturn));
+        assert!(!sheet::allows(0));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn 시트_아래_끝이_화면_안일_때만_띄운다() {
+        assert!(sheet::fits(1000.0, 880.0, 25.0));
+        assert!(sheet::fits(905.0, 880.0, 25.0));
+        assert!(!sheet::fits(904.0, 880.0, 25.0));
+    }
+
+    #[test]
+    fn 떠_있는_동안은_겹쳐_띄우지_않고_끝나면_풀린다() {
+        let first = Asking::begin().unwrap();
+        assert!(Asking::begin().is_err());
+        drop(first);
+        assert!(Asking::begin().is_ok());
+    }
+
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn 허용_버튼만_허락이다() {
+        use tauri_plugin_dialog::MessageDialogResult;
         assert!(approved(&MessageDialogResult::Custom(KO.allow.to_string()), KO.allow));
         assert!(!approved(&MessageDialogResult::Custom(KO.cancel.to_string()), KO.allow));
         assert!(!approved(&MessageDialogResult::Ok, KO.allow));

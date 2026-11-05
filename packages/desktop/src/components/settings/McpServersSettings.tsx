@@ -558,7 +558,8 @@ export function McpServersSection() {
         />
       )}
       {dialog && (
-        <McpServerDialog mode={dialog} registry={registry} canEdit={canEdit}
+        // 행마다 새로 연다 — 입력칸 상태가 앞 행에 남으면 제목과 내용이 다른 항목을 가리킨다.
+        <McpServerDialog key={dialog.kind === 'add' ? 'add' : `${dialog.kind}:${dialog.row.name}`} mode={dialog} registry={registry} canEdit={canEdit}
           onDone={() => { setDialog(null); reload(); }} onCancel={() => setDialog(null)} />
       )}
       {error && !confirming && !removingLocal && (
