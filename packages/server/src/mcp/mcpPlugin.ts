@@ -1620,7 +1620,7 @@ function buildMcpServer(
    * 없는 보고는 보고가 아니다.
    */
   server.registerTool('message.report', {
-    description: '완료 보고(확인한 것 · 바뀐 파일 · 남은 것 · 다음 제안). checks 는 필수. planStepId 를 주면 이 스레드 계획의 그 단계를 done 으로 바꾼다(결과는 plan 칸). 이 스레드에 앞 턴이 건 내 감시 예약(watch)은 접히고 그 사유가 foldedWatchWakes 로 온다 — 아직 지켜볼 일이면 다시 걸어라',
+    description: '완료 보고(확인한 것 · 바뀐 파일 · 남은 것 · 다음 제안). checks 는 필수. planStepId 를 주면 이 스레드 계획의 그 단계를 done 으로 바꾼다(결과는 plan 칸). 이 스레드에 걸렸거나 이 스레드로 보고하는, 앞 턴이 건 내 감시 예약(watch)은 접히고 그 사유가 foldedWatchWakes 로 온다 — 아직 지켜볼 일이면 다시 걸어라',
     inputSchema: {
       channelId: z.string().uuid(),
       body: z.string().min(1).max(MAX_MESSAGE_BODY_CHARS),
@@ -2611,7 +2611,7 @@ function buildMcpServer(
    * 판정해 `wake_limit` 으로 답한다 — 같은 거절이 아니다.
    */
   server.registerTool('turn.wake', {
-    description: '나를 나중에 다시 부른다(기다릴 것이 있을 때). 예약은 스레드에 대기 줄로 보인다. 결과를 다른 스레드에 보고하기로 했으면 reportTo 에 그 채널·스레드 id. 주기적으로 지켜보는 예약이면 watch: true — 깨어난 턴이 다음 예약도 끝 보고(message.report)도 없이 끝나면 러너가 실패 줄을 남긴다. 감시(watch)면 사유에 다음 회차와 끝 조건을 적어라(예: 「다음 3/3 — 3/3에서 감시 끝」). 감시 예약은 한 스레드에 하나다 — 새로 걸면 앞 것을 대체하고 그 사유를 replaced 로 돌려준다. 앞 사유도 아직 필요하면 합쳐서 다시 걸어라',
+    description: '나를 나중에 다시 부른다(기다릴 것이 있을 때). 예약은 스레드에 대기 줄로 보인다. 결과를 다른 스레드에 보고하기로 했으면 reportTo 에 그 채널·스레드 id. 주기적으로 지켜보는 예약이면 watch: true — 깨어난 턴이 다음 예약도 끝 보고(message.report)도 없이 끝나면 러너가 실패 줄을 남긴다. 감시(watch)면 사유에 다음 회차와 끝 조건을 적어라(예: 「다음 3/3 — 3/3에서 감시 끝」). 감시 예약은 한 스레드에 하나이고, 보고처가 같으면 다른 스레드에 걸린 것도 하나로 친다 — 새로 걸면 앞 것을 대체하고 그 사유를 replaced 로 돌려준다. 앞 사유도 아직 필요하면 합쳐서 다시 걸어라',
     inputSchema: {
       channelId: z.string().uuid(),
       threadRootId: z.string().uuid(),

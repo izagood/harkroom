@@ -549,6 +549,94 @@ describe('turn.wake — 에이전트가 자기를 나중에 깨운다', () => {
         expect((next.message!.meta as { wake: { reportTo?: unknown } }).wake.reportTo).toEqual(reportTo);
       });
 
+      describe('보고처 기준(2026-11-06)', () => {
+        it('보고처가 같으면 다른 스레드의 감시도 대체한다 — 어느 스레드 것이었는지 돌려준다', async () => {
+          const [workRoot, requestRoot, nextWork] = [await newThread(), await newThread(), await newThread()];
+          const reportTo = { channelId, threadRootId: requestRoot };
+          const first = await watch(workRoot, '작업 스레드 감시', { reportTo });
+          const second = await watch(nextWork, '다른 작업 스레드 감시', { reportTo });
+          expect(second.replaced).toEqual([expect.objectContaining({ id: first.wake!.id, threadRootId: workRoot, reportTo })]);
+          expect(await open(workRoot)).toEqual([]);
+          expect(await open(nextWork)).toEqual(['다른 작업 스레드 감시']);
+        });
+
+        it('보고처 없이 요청 스레드에 건 감시와 그 스레드로 보고하는 감시는 같은 일이다(어느 쪽이 먼저든)', async () => {
+          const [workRoot, requestRoot] = [await newThread(), await newThread()];
+          const reportTo = { channelId, threadRootId: requestRoot };
+          await watch(requestRoot, '요청 스레드 감시');
+          await watch(workRoot, '작업 스레드 감시', { reportTo });
+          expect(await open(requestRoot)).toEqual([]);
+          expect(await open(workRoot)).toEqual(['작업 스레드 감시']);
+          await watch(requestRoot, '요청 스레드 감시 2');
+          expect(await open(requestRoot)).toEqual(['요청 스레드 감시 2']);
+          expect(await open(workRoot)).toEqual([]);
+        });
+
+        it('보고처가 다르고 스레드도 다르면 그대로 둔다', async () => {
+          const [a, b, ra, rb] = [await newThread(), await newThread(), await newThread(), await newThread()];
+          await watch(a, 'A 감시', { reportTo: { channelId, threadRootId: ra } });
+          await watch(b, 'B 감시', { reportTo: { channelId, threadRootId: rb } });
+          expect(await open(a)).toEqual(['A 감시']);
+          expect(await open(b)).toEqual(['B 감시']);
+        });
+
+        it('같은 스레드에 걸린 감시는 보고처가 달라도 대체한다 — 한 스레드에 하나라는 앞 약속을 지킨다', async () => {
+          const [rootId, ra, rb] = [await newThread(), await newThread(), await newThread()];
+          await watch(rootId, '앞 감시', { reportTo: { channelId, threadRootId: ra } });
+          await watch(rootId, '뒤 감시', { reportTo: { channelId, threadRootId: rb } });
+          expect(await open(rootId)).toEqual(['뒤 감시']);
+        });
+
+        it('보고처 글자의 대소문자가 달라도 같은 스레드로 본다', async () => {
+          const [a, b, requestRoot] = [await newThread(), await newThread(), await newThread()];
+          await watch(a, 'A 감시', { reportTo: { channelId, threadRootId: requestRoot.toUpperCase() } });
+          await watch(b, 'B 감시', { reportTo: { channelId, threadRootId: requestRoot } });
+          expect(await open(a)).toEqual([]);
+          expect(await open(b)).toEqual(['B 감시']);
+        });
+
+        it('감시가 아닌 예약은 보고처가 같아도 대체하지 않는다', async () => {
+          const [a, b, requestRoot] = [await newThread(), await newThread(), await newThread()];
+          const reportTo = { channelId, threadRootId: requestRoot };
+          await scheduleWake(pool, { accountId: botAccountId, channelId, threadRootId: a, notBeforeSec: 300, reason: '한 번 깨움', reportTo });
+          await watch(b, 'B 감시', { reportTo });
+          expect(await open(a)).toEqual(['한 번 깨움']);
+        });
+
+        it('보고처 스레드에 끝 보고를 올리면 다른 스레드에서 거기로 보고하던 감시도 접힌다', async () => {
+          const [workRoot, requestRoot] = [await newThread(), await newThread()];
+          await watch(workRoot, '작업 스레드 감시', { reportTo: { channelId, threadRootId: requestRoot } });
+          const bot = await mcpClient(botPat);
+          const res = text(await bot.callTool({ name: 'message.report', arguments: { channelId, threadRootId: requestRoot, body: '끝', checks: ['확인'] } }));
+          await bot.close();
+          expect(res.foldedWatchWakes).toEqual([expect.objectContaining({ reason: '작업 스레드 감시', threadRootId: workRoot })]);
+          expect(await open(workRoot)).toEqual([]);
+        });
+
+        it('걸린 스레드에 끝 보고를 올려도 접힌다(앞 동작)', async () => {
+          const [workRoot, requestRoot] = [await newThread(), await newThread()];
+          await watch(workRoot, '작업 스레드 감시', { reportTo: { channelId, threadRootId: requestRoot } });
+          await foldWatchWakesOnReport(pool, { accountId: botAccountId, threadRootId: workRoot });
+          expect(await open(workRoot)).toEqual([]);
+        });
+
+        it('다른 스레드에서 같은 보고처로 동시에 걸어도 하나만 남는다', async () => {
+          const [a, b, requestRoot] = [await newThread(), await newThread(), await newThread()];
+          const reportTo = { channelId, threadRootId: requestRoot };
+          await Promise.all(Array.from({ length: 12 }, (_, i) => watch(i % 2 ? a : b, `감시 ${i}`, { reportTo })));
+          expect((await open(a)).length + (await open(b)).length).toBe(1);
+        });
+
+        it('양쪽 스레드를 서로 보고처로 동시에 걸어도 교착이 없다 — 보고처가 달라 쪽마다 하나씩 남는다', async () => {
+          const [a, b] = [await newThread(), await newThread()];
+          await Promise.all(Array.from({ length: 12 }, (_, i) => (i % 2
+            ? watch(a, `A→B ${i}`, { reportTo: { channelId, threadRootId: b } })
+            : watch(b, `B→A ${i}`, { reportTo: { channelId, threadRootId: a } }))));
+          expect((await open(a)).length).toBe(1);
+          expect((await open(b)).length).toBe(1);
+        });
+      });
+
       it('끝 보고(message.report)를 올리면 앞 턴이 건 감시가 접힌다', async () => {
         const rootId = await newThread();
         await watch(rootId, '남은 감시');
