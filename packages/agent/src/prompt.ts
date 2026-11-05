@@ -834,6 +834,50 @@ export function escapeForPrompt(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;');
 }
 
+/** 경계 표식·역할 표식에 쓰이는 낱말. 이것이 든 태그 꼴은 이름이 평범해도 막는다(`neutralizeForPrompt`). */
+const PROMPT_MARKER_WORDS = /task|context|memory|thread|system|note|plan|recall|digest|instruction|reminder|notification|prompt|harness|user|assistant|human|tool|function|invoke|parameter|result|output/i;
+const PROMPT_ANGLE_OPEN = /<|＜|﹤|&(?:lt|#0*60|#x0*3c);?/gi;
+const PROMPT_ANGLE_GAP = /^[\s\p{Cf}]*(?:(?:[/／]|&sol;?|&#0*47;?|&#x0*2f;?)[\s\p{Cf}]*)?/iu;
+/** 판정에 볼 글자 수. 태그 이름은 이 안에 있다 — 글이 길어도 자리마다 일정한 일만 한다. */
+const PROMPT_ANGLE_LOOK = 160;
+
+/** 여는 꺾쇠 뒤 글자(`rest`)가 원문으로 둬도 안전한 꼴인가. **아는 안전한 꼴만 참이다** — 나머지는 막는다. */
+function angleIsSafe(rest: string): boolean {
+  const gap = PROMPT_ANGLE_GAP.exec(rest)?.[0] ?? '';
+  const named = rest.slice(gap.length);
+  const closes = /[/／]|&sol|&#/i.test(gap);
+  const spaced = /\s/.test(gap);
+  if (/\p{Cf}/u.test(gap)) return false;
+  if (!named) return !closes;
+  // 이름 뒤 몇 낱말까지 붙여 본다 — 공백·구분자로 쪼갠 표식도 표식이다.
+  const probe = (/^[^>＞<＜;,)]*/.exec(named)?.[0] ?? '').split(/\s+/).slice(0, 3).join('').normalize('NFKC').replace(/[\p{Cf}\p{Pd}_.:]/gu, '');
+  if (PROMPT_MARKER_WORDS.test(probe)) return false;
+  const first = named[0]!;
+  if (/[0-9=<\-]/.test(first)) return !closes;
+  if (!/[A-Za-z]/.test(first)) {
+    if (closes || !spaced) return false;
+    return /^[\x21-\x7e]/.test(first) && !/[|!?%]/.test(first);
+  }
+  const name = /^[^\s>＞<＜/,;)=.(\[{"'+*:&]*/.exec(named)?.[0] ?? '';
+  if (!/^[A-Za-z0-9]+$/.test(name)) return false;
+  // 이름 안에 글자로 적은 꺾쇠·기호가 이어지면 판정을 믿지 못한다. 닫는 꺾쇠와 `&&` 는 코드다.
+  const after = named.slice(name.length);
+  return !/^&(?:#|[a-z]+;)/i.test(after) || /^&(?:gt|#0*62|#x0*3e);?/i.test(after);
+}
+
+/**
+ * 프롬프트에 **남의 글을 실을 때** 경계 표식을 위조하지 못하게 한다. `escapeForPrompt` 와 달리 코드의 `<`·`&` 는 원문으로 둔다 —
+ * 전부 바꾸면 모델이 받은 글자를 그대로 옮겨 답과 파일이 깨지고, 옮길 때마다 한 겹씩 쌓인다(2026-11-05 소유자 결정).
+ * **닫힌 기본이다**: 평범한 낱말 이름·비교 연산처럼 아는 꼴만 원문이고, 나머지 태그 꼴은 막는다. 글자로 적은 꺾쇠도 같은 판정이다.
+ * 저장해 두고 다시 읽는 기억·메모·계획판은 `escapeForPrompt` 그대로다.
+ */
+export function neutralizeForPrompt(text: string): string {
+  return text.replace(PROMPT_ANGLE_OPEN, (open: string, at: number) => {
+    if (angleIsSafe(text.slice(at + open.length, at + open.length + PROMPT_ANGLE_LOOK))) return open;
+    return open.startsWith('&') ? `&amp;${open.slice(1)}` : '&lt;';
+  });
+}
+
 /**
  * 메모리를 **쓰는 법**. 저장소가 비었을 때와 차 있을 때가 같은 문장을 쓴다 — 갈라 두면
  * 한쪽만 늙고, 실제로 늙은 쪽이 매 턴 실리는 쪽이었다.
@@ -2131,7 +2175,7 @@ export function buildTurnPrompt(opts: {
   // 대표 글과 함께 이 턴의 일이다 — 맨 앞 블록에 넣고, 대화 줄처럼 블록을 닫지 못하게 글자를 바꾼다.
   const bundledLines = !bundled.length ? [] : [
     `(같이 처리할 앞 부름 ${bundled.length}개 — 오래된 순이다. 뒤 글이 앞 글을 바꿨으면 뒤 글을 따른다. 이미 끝낸 일이면 다시 하지 말고 끝났다고 한 줄만 답하고, 아니면 지금 처리하라)`,
-    ...bundled.map((m) => escapeForPrompt(renderLine(m, handles, `앞 부름 · seq ${m.seq}${afterMine(m.seq)}`))),
+    ...bundled.map((m) => neutralizeForPrompt(renderLine(m, handles, `앞 부름 · seq ${m.seq}${afterMine(m.seq)}`))),
     '',
   ];
   const lines = [...omittedLines, ...staleLines, ...shown.map((m) => renderLine(m, handles, lineNote(m, noteCtx)))];
@@ -2141,11 +2185,11 @@ export function buildTurnPrompt(opts: {
   const wakeLines = wake === undefined ? [] : [
     `(예약된 후속 턴 — 사유: ${wake.reason})`,
     // 카드에 직접 쓴 답은 사람의 글이다 — 사유 줄 안에 섞지 않고 글과 같은 꼴(작성자: 본문)로 싣는다.
-    ...(wake.written ? [`${(wake.written.by && handles[wake.written.by]) || '알 수 없는 사용자'} (← 카드에 직접 쓴 답): ${wake.written.text}`] : []),
+    ...(wake.written ? [`${(wake.written.by && handles[wake.written.by]) || '알 수 없는 사용자'} (← 카드에 직접 쓴 답): ${neutralizeForPrompt(wake.written.text)}`] : []),
     ...(wake.reportTo ? reportToLines(wake.reportTo) : []),
     ...(wake.watch ? [WATCH_DUTY_LINE] : []),
     // 맡긴 지시는 감시일 때만 — 감시가 아닌 깨움에 실리면 지난 요청을 새 요청으로 읽는다.
-    ...(wake.watch && watchOrigin ? [renderLine(watchOrigin, handles, WATCH_ORIGIN_LINE_NOTE)] : []),
+    ...(wake.watch && watchOrigin ? [neutralizeForPrompt(renderLine(watchOrigin, handles, WATCH_ORIGIN_LINE_NOTE))] : []),
     ...(freshWake ? freshWakeLines() : []),
     '',
   ];
@@ -2161,7 +2205,7 @@ export function buildTurnPrompt(opts: {
   // 둘 다 싣으면 같은 글이 두 번 보인다.
   const editLines = editedMention === undefined ? [] : [
     '(수정으로 추가된 멘션 — 앞서 올라온 글이 고쳐지면서 너를 불렀다. 고친 뒤의 본문을 다시 읽어라)',
-    ...(shown.some((m) => m.id === editedMention.id) ? [] : [renderLine(editedMention, handles)]),
+    ...(shown.some((m) => m.id === editedMention.id) ? [] : [neutralizeForPrompt(renderLine(editedMention, handles))]),
     '',
   ];
   // 안내는 첨부 줄 **뒤**에 선다 — 먼저 무엇이 왔는지 보고 그다음 어떻게 여는지 읽는 순서다.
@@ -2175,9 +2219,9 @@ export function buildTurnPrompt(opts: {
   // 밀린 멘션은 대화 줄 범위 밖일 수 있어 인박스에서 온 값(`mentionRow`)을 쓴다 — 이 턴의 일이 맨 앞에서 빠지면 안 된다.
   const task = mentionRow ?? undefined;
   const hasContext = task !== undefined && lines.length > (shown.some((m) => m.id === task.id) ? 1 : 0);
-  // 대화 줄은 남이 쓴 글이다 — 블록을 닫거나 새로 열지 못하게 `<` 를 바꾼다(기억 recall 과 같은 `escapeForPrompt`). 꼴을 골라 거르면 빠질 길이 남는다.
-  const safeLines = lines.map(escapeForPrompt);
-  const taskLines = task === undefined ? [] : ['<your-task>', ...bundledLines, escapeForPrompt(renderLine(task, handles)), '</your-task>', ...anchorLines, ''];
+  // 대화 줄은 남이 쓴 글이다 — 블록을 닫거나 새로 열지 못하게 한다(`neutralizeForPrompt`).
+  const safeLines = lines.map(neutralizeForPrompt);
+  const taskLines = task === undefined ? [] : ['<your-task>', ...bundledLines, neutralizeForPrompt(renderLine(task, handles)), '</your-task>', ...anchorLines, ''];
   const contextLines = hasContext
     ? ['<thread-context>', THREAD_CONTEXT_NOTE, ...safeLines, '</thread-context>', '', YOUR_TASK_TAIL]
     : safeLines;
