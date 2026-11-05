@@ -9,11 +9,16 @@ import 'package:flutter/rendering.dart';
 /// 앞에 보이는 화면인지는 Scaffold 와 같은 방법으로 가린다: (0,0) 을 hit test 해서 이 위젯이 경로에 있어야 한다.
 /// 그래야 숨은 탭·덮인 경로·시트 뒤의 목록이 같이 굴러가지 않는다. 그 까닭에 [child] 는 Scaffold 째로 감싼다 —
 /// 목록만 감싸면 (0,0) 을 머리(AppBar)가 먼저 받아 이 위젯까지 오지 않는다.
+///
+/// [reducedMotionOnly] 는 Scaffold 기본 처리가 맡는 목록(탭 뿌리)에 쓴다. 평소에는 Scaffold 의 1초 굴림에 맡기고
+/// 「동작 줄이기」일 때만 여기서 바로 옮긴다 — 어느 쪽이 먼저 불려도 된다. 먼저 옮기면 Scaffold 의 굴림은 이미 닿은
+/// 자리라 움직이지 않고, 나중에 옮기면 `jumpTo` 가 그 굴림을 끊는다.
 class StatusBarScroll extends StatefulWidget {
-  const StatusBarScroll({super.key, required this.controller, required this.child});
+  const StatusBarScroll({super.key, required this.controller, required this.child, this.reducedMotionOnly = false});
 
   final ScrollController controller;
   final Widget child;
+  final bool reducedMotionOnly;
 
   @override
   State<StatusBarScroll> createState() => _StatusBarScrollState();
@@ -45,6 +50,7 @@ class _StatusBarScrollState extends State<StatusBarScroll> with WidgetsBindingOb
   @override
   void handleStatusBarTap() {
     super.handleStatusBarTap();
+    if (widget.reducedMotionOnly && !_motionReduced) return;
     if (widget.controller.hasClients && _inForeground) scrollToVisualTop(widget.controller).ignore();
   }
 

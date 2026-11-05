@@ -257,6 +257,44 @@ void main() {
     }, variant: ios);
   }
 
+  testWidgets('탭 뿌리 목록: 「동작 줄이기」면 바로 맨 위로, 평소에는 Scaffold 의 굴림 그대로', (tester) async {
+    await _pump(tester);
+    final c = TabNavigators.active!.scrolls[0];
+    final bottom = c.position.maxScrollExtent;
+    c.jumpTo(bottom);
+    await tester.pump();
+    await _tapStatusBar(tester);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(c.offset, allOf(greaterThan(0), lessThan(bottom)), reason: '꺼져 있으면 굴러가는 중이다');
+    await tester.pumpAndSettle();
+    expect(c.offset, 0);
+
+    tester.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(reduceMotion: true);
+    addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+    c.jumpTo(bottom);
+    await tester.pump();
+    await _tapStatusBar(tester);
+    await tester.pump(const Duration(milliseconds: 1));
+    expect(c.offset, 0);
+    expect(tester.binding.transientCallbackCount, 0, reason: '도는 굴림이 없다');
+  }, variant: ios);
+
+  testWidgets('탭 뿌리 목록: 「동작 줄이기」여도 숨은 탭은 그대로', (tester) async {
+    tester.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(reduceMotion: true);
+    addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+    await _pump(tester);
+    final c = TabNavigators.active!.scrolls[0];
+    c.jumpTo(c.position.maxScrollExtent);
+    await tester.pump();
+    final held = c.offset;
+    await tester.tap(find.byKey(const Key('tab-inbox')));
+    await tester.pumpAndSettle();
+    await _tapStatusBar(tester);
+    await tester.pumpAndSettle();
+    expect(c.offset, held);
+  }, variant: ios);
+
   testWidgets('굴러가는 중에 손가락이 끼어들면 거기서 멈추고 되돌아 굴리지 않는다', (tester) async {
     await _pump(tester);
     await _openFeed(tester);

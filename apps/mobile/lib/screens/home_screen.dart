@@ -9,6 +9,7 @@ import '../state/app_scope.dart';
 import '../state/app_state.dart';
 import '../time.dart';
 import '../ui/parts.dart';
+import '../ui/status_bar_scroll.dart';
 import '../ui/states.dart';
 import 'channel_list_screen.dart';
 import 'message_list_screen.dart';
@@ -98,7 +99,12 @@ class _HomeScreenState extends State<HomeScreen> {
           onGenerateRoute: (settings) => MaterialPageRoute<void>(
             settings: settings,
             // 맨 위로 굴리기(D4)는 **뿌리 화면의 목록**만 집는다 — 쌓기 위 채널·스레드 목록은 제 손잡이를 쓴다.
-            builder: (_) => PrimaryScrollController(controller: _tabs.scrolls[i], child: root),
+            // 상태 표시줄 탭은 Scaffold 가 이 손잡이를 굴린다. 「동작 줄이기」만 따로 받는다.
+            builder: (_) => StatusBarScroll(
+              controller: _tabs.scrolls[i],
+              reducedMotionOnly: true,
+              child: PrimaryScrollController(controller: _tabs.scrolls[i], child: root),
+            ),
           ),
         ),
       );
