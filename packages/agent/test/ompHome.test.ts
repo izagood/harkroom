@@ -41,17 +41,21 @@ describe('ompHome — 저장소 설정 차단(security B4·C2·C4·G1)', () => {
     expect(await ompCwdViolations(t.cwd, root)).toEqual([]);
   });
 
-  it('ompCwdViolations: cwd 안의 파일과 위 폴더(상태 폴더까지)의 설정 이름을 다 잡는다', async () => {
+  it('ompCwdViolations: cwd 와 위 폴더(상태 폴더까지)의 설정 이름을 다 잡고, 보통 파일은 막지 않는다', async () => {
     const root = await tmp();
     const t = await ensureOmpThread(join(root, 'omp-home'), 'x').catch(async () => {
       await ensureOmpHome({ ompHome: join(root, 'omp-home'), mcpServers: {} });
       return ensureOmpThread(join(root, 'omp-home'), 'x');
     });
+    await writeFile(join(t.cwd, 'made-by-model.txt'), 'x');
+    expect(await ompCwdViolations(t.cwd, root)).toEqual([]);
     await writeFile(join(t.cwd, 'AGENTS.md'), 'planted');
+    await writeFile(join(t.cwd, '.mcp.json'), '{}');
     await mkdir(join(root, '.omp'));
     await writeFile(join(root, '.env'), 'K=V');
     const found = await ompCwdViolations(t.cwd, root);
-    expect(found).toEqual(expect.arrayContaining([join(t.cwd, 'AGENTS.md'), join(root, '.omp'), join(root, '.env')]));
+    expect(found).toEqual(expect.arrayContaining([join(t.cwd, 'AGENTS.md'), join(t.cwd, '.mcp.json'), join(root, '.omp'), join(root, '.env')]));
+    expect(found).not.toContain(join(t.cwd, 'made-by-model.txt'));
     await expect(ompCwdViolations('/elsewhere/cwd', root)).rejects.toThrow(/안에 없다/);
   });
 });

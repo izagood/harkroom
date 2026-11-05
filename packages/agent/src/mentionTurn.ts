@@ -1584,7 +1584,7 @@ export async function runMentionTurn(
     }
     ompThread = await ensureOmpThread(deps.ompHome, key);
     const bad = await ompCwdViolations(ompThread.cwd, deps.stateDir);
-    if (bad.length) throw new Error(`mentionTurn: omp 의 빈 cwd 나 그 위 폴더에 설정 이름이 있어 띄우지 않는다: ${bad.join(', ')}`);
+    if (bad.length) throw new Error(`mentionTurn: omp 스레드 폴더나 그 위 폴더에 설정 파일이 있어 띄우지 않는다(지우면 다시 뜬다): ${bad.join(', ')}`);
     await writeOmpSessionHeader(ompDirs(deps.ompHome).sessionsDir, rec.sessionId as string, ompThread.cwd);
     // omp 는 lane 으로만 돈다 — 러너는 사람 로그인을 물려받지 않아 lane 이 없으면 돌 모델이 없다(`ompHome.ts` 머리말).
     const baseUrl = providerEnv?.[OMP_LANE_BASE_URL_ENV];

@@ -185,18 +185,17 @@ export async function ensureOmpThread(ompHome: string, threadKey: string): Promi
 const OMP_CWD_FORBIDDEN = ['.omp', '.mcp.json', '.claude', '.env', '.agents', 'AGENTS.md', 'CLAUDE.md'] as const;
 
 /**
- * 빈 cwd 와 그 위 폴더에서 금지 이름을 찾는다(C2). cwd 자신은 `.git` 말고 아무것도 없어야 한다.
+ * 빈 cwd 와 그 위 폴더에서 금지 이름을 찾는다(C2). 막는 것은 **설정 이름뿐이다** — 모델이 cwd 에 만든 보통 파일은 omp 가 읽지
+ * 않는데, 그것까지 막으면 파일 하나로 그 스레드의 다음 턴이 전부 못 뜬다(소유자 결정, 2026-11-05).
  * 위로는 `stopAt`(러너 상태 폴더)까지만 본다 — 그 위는 사람의 홈이라 `~/.claude`·`~/.omp` 가 늘 있다.
  * 그 자리는 두 겹으로 막는다: 위로 찾는 것은 `.omp/AGENTS.md` 뿐이고 cwd 의 git 경계가 끊는다(G1, 실측),
  * `HOME` 을 옮겨 `~/.omp/agent` 도 안 본다(C3). 찾은 경로를 돌려준다 — 비면 통과.
  */
 export async function ompCwdViolations(dir: string, stopAt: string): Promise<string[]> {
   const found: string[] = [];
-  const own = await readdir(dir).catch(() => [] as string[]);
-  for (const name of own) if (name !== '.git') found.push(join(dir, name));
   const stop = resolve(stopAt);
-  let cur = dirname(resolve(dir));
-  if (cur !== stop && !cur.startsWith(`${stop}/`)) throw new Error(`ompCwdViolations: ${dir} 가 ${stopAt} 안에 없다`);
+  let cur = resolve(dir);
+  if (dirname(cur) !== stop && !cur.startsWith(`${stop}/`)) throw new Error(`ompCwdViolations: ${dir} 가 ${stopAt} 안에 없다`);
   for (;;) {
     for (const name of OMP_CWD_FORBIDDEN) {
       if (await lstat(join(cur, name)).catch(() => null)) found.push(join(cur, name));
