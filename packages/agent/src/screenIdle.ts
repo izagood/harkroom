@@ -16,6 +16,7 @@ const { Terminal } = xtermHeadless as unknown as typeof import('@xterm/headless'
  * **끝났다고 보려면 이만큼 이어져야 한다**(ms). 실측(2026-10-25, 다섯 하네스 · 첫 토큰 전 30초 침묵 ·
  * 셸 20초): 일하는 중 표지는 Enter 뒤 ~0.6초부터 최종 답까지 내내 보였고, 꺼진 것은 omp 의 도구 끝 한
  * 프레임(0ms)뿐이었다. 화면이 가장 오래 멈춘 것도 1초 미만이었다. 1.5초는 그 위의 여유다.
+ * 이 측정에는 **모델이 글을 낸 뒤의 침묵**이 없었다 — codex 는 그때 표지를 지운다(2026-11-05 실측, `harnessTurnEnd.ts`).
  */
 export const SCREEN_IDLE_END_MS = 1_500;
 

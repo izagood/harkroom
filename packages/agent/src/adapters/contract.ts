@@ -277,6 +277,10 @@ export interface HarnessAdapter {
    */
   readonly lastSaidRecord?: 'codex-rollout' | 'opencode-export';
   /**
+   * 화면이 끝을 말할 때 그 끝을 확정할 기록 표면(`harnessTurnEnd.ts`). `transcript.parsed` 와 따로다 — 차례 표지만 읽는다. 재 본 하네스만 적는다.
+   */
+  readonly turnEndRecord?: 'codex-rollout';
+  /**
    * 하네스가 **작업 디렉터리별 파일 메모리**를 `<config>/<dirUnderConfig>/<cwd 이름>/memory/` 에
    * 적는가(메모리 고도화 U5 — `harnessMemory.ts` 가 새로 생긴 것을 다음 턴에 알린다). 없으면 알리지
    * 않는다. 선택 필드인 이유: 모르는 하네스에 지어낸 경로를 주면 없는 디렉터리를 뒤지는 게 아니라

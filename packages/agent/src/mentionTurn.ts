@@ -41,6 +41,7 @@ import { ensureOmpThread, findOmpBinary, OMP_LANE_PROVIDER, ompBinaryOk, ompUnve
 import { findOpencodeSessionId } from './opencodeSessions.js';
 import { readOpencodeTurnState } from './opencodeTurnState.js';
 import { readHarnessLastSaid, type HarnessLastSaidOpts } from './harnessLastSaid.js';
+import { readHarnessTurnEnd, type HarnessTurnEndOpts, type RecordedTurnEnd } from './harnessTurnEnd.js';
 import { screenShowsProgress } from './screenLife.js';
 import { ensureWorkspace, resolveWorkspaceName, type Exec } from './workspace.js';
 import type { TurnRegistry } from './turnRegistry.js';
@@ -524,6 +525,8 @@ export interface MentionTurnDeps {
   ) => Promise<string[]>;
   /** 화면으로 끝을 아는 하네스의 끝말을 기록에서 읽는다(기본 `readHarnessLastSaid`, API 키 연결 턴만). */
   readHarnessLastSaid?: (harness: AgentHarness, opts: HarnessLastSaidOpts) => Promise<string | null>;
+  /** 화면이 말한 끝을 기록으로 확정한다(기본 `readHarnessTurnEnd`). */
+  readHarnessTurnEnd?: (harness: AgentHarness, opts: HarnessTurnEndOpts) => Promise<RecordedTurnEnd | null>;
   /** 재촉 뒤 답을 기다리는 상한(기본 `LANE_NUDGE_WAIT_MS`). */
   laneNudgeWaitMs?: number;
   /** 재촉 글을 붙여넣은 뒤 제출까지(기본 `LANE_NUDGE_SUBMIT_DELAY_MS`). */
@@ -2514,7 +2517,18 @@ export async function runMentionTurn(
         await probeTurnState();
         // 화면이 「입력창 + 일하는 중 표지 없음」을 `SCREEN_IDLE_END_MS` 이어 말하면 차례가 끝났다(하네스 기록을 보지 않는다).
         // 자식 작업 수는 화면이 말하지 않는다 — 표지가 꺼졌다는 것은 하네스가 더 기다리는 일이 없다는 뜻이라 0 으로 둔다.
-        if (idleWatch && !end.finished && !end.awaitingHuman && idleWatch.ended(deps.now?.() ?? Date.now())) {
+        // 화면은 언제 물을지만 정한다 — 기록이 일하는 중이라고 하면 끝이 아니다(`harnessTurnEnd.ts`). 못 읽으면 화면을 따른다.
+        const screenSaysEnded = idleWatch !== null && !end.finished && !end.awaitingHuman && idleWatch.ended(deps.now?.() ?? Date.now());
+        const recordedEnd = screenSaysEnded
+          ? await (deps.readHarnessTurnEnd ?? readHarnessTurnEnd)(def.harness, {
+            sessionId: sessionIdForProbe,
+            cwd: opencodeCwd,
+            sinceMs: end.laneNudgedAtMs || turnStartedAtMs,
+            codexSessionsDir: codexSessionsDir(deps.codexHome),
+          }).catch(() => null)
+          : null;
+        if (end.exited) return;
+        if (idleWatch && screenSaysEnded && recordedEnd !== 'working') {
           end.finished = true;
           end.pending = 0;
           // 재촉 뒤의 화면은 군말일 수 있다 — 재촉 전에 본 답을 지킨다(`laneNudgeSaid`).
