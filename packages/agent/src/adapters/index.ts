@@ -254,6 +254,11 @@ export function lastSaidRecordOf(harness: AgentHarness): 'codex-rollout' | 'open
   return ADAPTERS[harness] === 'unsupported' ? null : adapterFor(harness).lastSaidRecord ?? null;
 }
 
+/** 화면이 말한 끝을 확정할 기록 표면(`harnessTurnEnd.ts`). 없으면 화면 판정 그대로다. */
+export function turnEndRecordOf(harness: AgentHarness): 'codex-rollout' | null {
+  return ADAPTERS[harness] === 'unsupported' ? null : adapterFor(harness).turnEndRecord ?? null;
+}
+
 /**
  * 이 하네스가 **XDG 세 변수로 상태를 옮기는가**(opencode 가 그렇다).
  *

@@ -4613,6 +4613,73 @@ describe('omp 턴은 띄우기 전에 스레드 폴더를 비운다', () => {
   });
 });
 
+describe('codex 의 차례 끝은 화면이 말해도 기록으로 확정한다', () => {
+  // 모델이 글을 낸 뒤에는 턴 도중에도 일하는 중 표지가 꺼진다. 그때 거두면 답도 못 올리고 끊긴다.
+  async function codexTurn(read: () => 'working' | 'ended' | null, opts: { lane?: boolean; onWrite?: (text: string) => void } = {}) {
+    const fake = new FakeHarkroom(defOf({ harness: 'codex', ...(opts.lane ? { model: 'ExampleOrg/example-model' } : {}) }));
+    fake.seedFrom('human-1', '@forge 안녕').id = MENTION;
+    const writes: string[] = [];
+    let killedAt: number | null = null;
+    const asked: { sessionId: string | null; sinceMs: number }[] = [];
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5, orphanMs: 5, harnessStallMs: 60_000,
+      readHarnessLastSaid: async () => null,
+      readHarnessTurnEnd: async (_h: unknown, o: { sessionId: string | null; sinceMs: number }) => { asked.push(o); return read(); },
+      ...(opts.lane ? { providerEnv: async () => ({ HARKROOM_LANE_BASE_URL: 'https://gateway.example.com/v1' }) } : {}),
+    } as never);
+    runTurn.script = (async (_plan: TurnPlan, o: {
+      onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void;
+      onData?: (chunk: Buffer) => void;
+    }) => {
+      o.onSpawn?.({ write: (b) => { const t = b.toString('utf8'); writes.push(t); opts.onWrite?.(t); }, resize: () => {}, kill: () => { killedAt ??= Date.now(); } });
+      o.onData?.(Buffer.from('\x1b[2J\x1b[H• Working (3s • esc to interrupt)\r\n› Ask Codex to do anything', 'utf8'));
+      await new Promise((r) => setTimeout(r, 50));
+      o.onData?.(Buffer.from('\x1b[2J\x1b[H• 계속 진행합니다.\r\n› Ask Codex to do anything', 'utf8'));
+      for (let i = 0; i < 800 && killedAt === null; i += 1) await new Promise((r) => setTimeout(r, 5));
+      return { exitCode: killedAt ? 143 : 0, timedOut: false, tail: '' };
+    }) as never;
+    const workspaceDir = join(deps.workspaceBaseDir, 'codex-end');
+    await mkdir(workspaceDir, { recursive: true });
+    await deps.store.put(SessionStore.threadKey(CHANNEL, null), {
+      workspaceDir, sessionId: '00000000-0000-4000-8000-000000000001', harness: 'codex', lastFedSeq: 0, turnsRun: 0,
+    });
+    const mcpConfigPath = join(deps.workspaceBaseDir, 'mcp.json');
+    await writeFile(mcpConfigPath, JSON.stringify({ mcpServers: { harkroom: { type: 'stdio', command: '/opt/harkroom/harkroom-operator', args: ['mcp-bridge'] } } }));
+    vi.stubEnv('HARKROOM_RUNNER_SECRET', 'fake-runner-secret');
+    const startedAt = Date.now();
+    try {
+      await runMentionTurn({ ...deps, mcpConfigPath }, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }).catch(() => null);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    return { asked, writes, killedAfterMs: killedAt === null ? null : killedAt - startedAt };
+  }
+
+  it('구독 턴: 기록이 일하는 중이면 거두지 않다가, 끝나면 거둔다', async () => {
+    let reads = 0;
+    const r = await codexTurn(() => { reads += 1; return reads < 40 ? 'working' : 'ended'; });
+    expect(reads).toBe(40);
+    expect(r.killedAfterMs).not.toBeNull();
+    expect(r.asked[0]?.sessionId).toBe('00000000-0000-4000-8000-000000000001');
+  }, 15_000);
+
+  it('API 키 턴: 일하는 동안에는 재촉을 넣지 않고, 기록이 끝났다고 한 뒤에 한 번 넣는다', async () => {
+    let reads = 0;
+    const atNudge: number[] = [];
+    const r = await codexTurn(() => { reads += 1; return reads < 40 ? 'working' : 'ended'; }, {
+      lane: true, onWrite: (t) => { if (t.includes('(러너 알림)')) atNudge.push(reads); },
+    });
+    expect(r.writes.filter((w) => w.includes('(러너 알림)'))).toHaveLength(1);
+    expect(atNudge[0]).toBeGreaterThanOrEqual(40);
+  }, 15_000);
+
+  it('기록을 못 읽으면 지금처럼 화면을 따른다', async () => {
+    const r = await codexTurn(() => null);
+    expect(r.asked.length).toBeGreaterThan(0);
+    expect(r.killedAfterMs).not.toBeNull();
+  }, 15_000);
+});
+
 describe('정지 직전 제출 대기 화면이면 Enter 를 한 번 친다 (2026-10-07)', () => {
   function stuckScript(screen: string, holdMs: number) {
     const writes: string[] = [];
