@@ -162,6 +162,10 @@ describe('turnUploads', () => {
       for (const path of ['../models.yml', join(otherWork, 'other.txt')]) {
         expect(resultOf(await up.maybeHandle(AGENT, uploadCall({ path }, threadCwd()))).body.error.code, path).toBe('outside_workspace');
       }
+      const lookalike = join(base, AGENT, 'workspaces', 'harkroom-other-ab12cd34');
+      mkdirSync(lookalike, { recursive: true });
+      writeFileSync(join(lookalike, 'near.txt'), 'd');
+      expect(resultOf(await up.maybeHandle(AGENT, uploadCall({ path: join(lookalike, 'near.txt') }, threadCwd()))).body.error.code).toBe('outside_workspace');
       symlinkSync(join(threadCwd(), '..', 'models.yml'), join(threadCwd(), 'link.txt'));
       expect(resultOf(await up.maybeHandle(AGENT, uploadCall({ path: 'link.txt' }, threadCwd()))).body.error.code).toBe('outside_workspace');
     });

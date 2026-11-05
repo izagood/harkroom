@@ -17,7 +17,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { createReadStream } from 'node:fs';
-import { chmod, lstat, mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readdir, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import type { ReadonlyTools } from './adapters/contract.js';
@@ -181,21 +181,43 @@ export async function ensureOmpThread(ompHome: string, threadKey: string): Promi
   return t;
 }
 
+/** 스레드 폴더에 남은 파일을 옮겨 두는 작업 폴더 안 자리(`sweepOmpThreadCwd`). */
+export const OMP_LEFTOVERS_DIR = 'omp-cwd-leftovers';
+
 /** 빈 cwd 와 그 위 폴더에 있으면 안 되는 이름(C2). */
 const OMP_CWD_FORBIDDEN = ['.omp', '.mcp.json', '.claude', '.env', '.agents', 'AGENTS.md', 'CLAUDE.md'] as const;
 
 /**
- * 빈 cwd 와 그 위 폴더에서 금지 이름을 찾는다(C2). 막는 것은 **설정 이름뿐이다** — 모델이 cwd 에 만든 보통 파일은 omp 가 읽지
- * 않는데, 그것까지 막으면 파일 하나로 그 스레드의 다음 턴이 전부 못 뜬다(소유자 결정, 2026-11-05).
+ * 스레드 폴더를 비운다 — `.git` 말고 전부를 그 스레드 작업 폴더의 `omp-cwd-leftovers/<시각>/` 로 옮긴다. 턴을 띄우기 전에 부른다.
+ * 앞 턴의 모델이 이 폴더에 파일을 남겨도 다음 턴이 싣지 않게, 그리고 파일 하나로 스레드가 막히지 않게 한다(C2, 2026-11-05).
+ * 못 옮긴 것은 그 자리에 남고 뒤따르는 `ompCwdViolations` 가 잡는다. 옮긴 뒤의 경로를 돌려준다.
+ */
+export async function sweepOmpThreadCwd(cwd: string, workspaceDir: string, now = new Date()): Promise<string[]> {
+  const names = (await readdir(cwd).catch(() => [] as string[])).filter((n) => n !== '.git');
+  if (!names.length) return [];
+  const dest = join(workspaceDir, OMP_LEFTOVERS_DIR, `${now.toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`);
+  await mkdir(dest, { recursive: true, mode: 0o700 });
+  const moved: string[] = [];
+  for (const name of names) {
+    const to = join(dest, name);
+    if (await rename(join(cwd, name), to).then(() => true, () => false)) moved.push(to);
+  }
+  return moved;
+}
+
+/**
+ * 빈 cwd 와 그 위 폴더에서 금지 이름을 찾는다(C2). cwd 자신은 `.git` 말고 아무것도 없어야 한다.
  * 위로는 `stopAt`(러너 상태 폴더)까지만 본다 — 그 위는 사람의 홈이라 `~/.claude`·`~/.omp` 가 늘 있다.
  * 그 자리는 두 겹으로 막는다: 위로 찾는 것은 `.omp/AGENTS.md` 뿐이고 cwd 의 git 경계가 끊는다(G1, 실측),
  * `HOME` 을 옮겨 `~/.omp/agent` 도 안 본다(C3). 찾은 경로를 돌려준다 — 비면 통과.
  */
 export async function ompCwdViolations(dir: string, stopAt: string): Promise<string[]> {
   const found: string[] = [];
+  const own = await readdir(dir).catch(() => [] as string[]);
+  for (const name of own) if (name !== '.git') found.push(join(dir, name));
   const stop = resolve(stopAt);
-  let cur = resolve(dir);
-  if (dirname(cur) !== stop && !cur.startsWith(`${stop}/`)) throw new Error(`ompCwdViolations: ${dir} 가 ${stopAt} 안에 없다`);
+  let cur = dirname(resolve(dir));
+  if (cur !== stop && !cur.startsWith(`${stop}/`)) throw new Error(`ompCwdViolations: ${dir} 가 ${stopAt} 안에 없다`);
   for (;;) {
     for (const name of OMP_CWD_FORBIDDEN) {
       if (await lstat(join(cur, name)).catch(() => null)) found.push(join(cur, name));

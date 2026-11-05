@@ -16,6 +16,7 @@ import { BUILTIN_SKILLS } from '@harkroom/shared/builtinSkills';
 import { quotedLine } from '../src/prompt.js';
 import { AccountGateRequeueError, mentionAnchor, runMentionTurn, laneSafeSkill, syncSkills, withLaneSkillHeader, type MentionTurnDeps, type MentionTurnHarkroom, type RunTurn } from '../src/mentionTurn.js';
 import { createAttentionLedger } from '../src/attentionLedger.js';
+import { ensureOmpHome, ensureOmpThread, OMP_LEFTOVERS_DIR } from '../src/ompHome.js';
 import { BODY_LIMIT, WATCH_ORIGIN_LINE_NOTE } from '../src/prompt.js';
 
 /** 사람이 부른 턴이 마지막 말도 못 읽고 답 없이 끝났을 때의 통지(`silentTurnNotice`). */
@@ -4573,6 +4574,37 @@ describe('말없이 끝난 API 키 연결 턴 — 재촉 1회와 부른 쪽 알�
     expect(nudges).toHaveLength(0);
     expect(fake.posts.some((p) => p.body.startsWith('@someone'))).toBe(false);
   }, 15_000);
+});
+
+describe('omp 턴은 띄우기 전에 스레드 폴더를 비운다', () => {
+  it('앞 턴이 남긴 파일은 작업 폴더로 옮겨지고 그 때문에 턴이 막히지 않는다', async () => {
+    const fake = new FakeHarkroom(defOf({ harness: 'omp' }));
+    fake.seedFrom('human-1', '@forge 안녕').id = MENTION;
+    const { deps } = await makeDeps(fake, {});
+    const stateDir = deps.workspaceBaseDir;
+    const ompHome = join(stateDir, 'omp-home');
+    await ensureOmpHome({ ompHome, mcpServers: {} });
+    const key = SessionStore.threadKey(CHANNEL, null);
+    const thread = await ensureOmpThread(ompHome, key);
+    await writeFile(join(thread.cwd, 'left-by-model.txt'), 'x');
+    const workspaceDir = join(stateDir, 'omp-ws');
+    await mkdir(workspaceDir, { recursive: true });
+    await deps.store.put(key, { workspaceDir, sessionId: '00000000-0000-4000-8000-000000000001', harness: 'omp', lastFedSeq: 0, turnsRun: 0 });
+    const mcpConfigPath = join(stateDir, 'mcp.json');
+    await writeFile(mcpConfigPath, JSON.stringify({ mcpServers: { harkroom: { type: 'stdio', command: '/opt/harkroom/harkroom-operator', args: ['mcp-bridge'] } } }));
+    vi.stubEnv('HARKROOM_RUNNER_SECRET', 'fake-runner-secret');
+    let error = '';
+    try {
+      // 판 시험 키가 없어 lane 단계에서 멈춘다 — 그 앞의 폴더 검사를 지났다는 표지다.
+      await runMentionTurn({ ...deps, mcpConfigPath, ompHome, stateDir } as never, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }).catch((e: unknown) => { error = String(e); });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect(error).not.toContain('띄우지 않는다');
+    expect(await readdir(thread.cwd)).toEqual(['.git']);
+    const [stamp] = await readdir(join(workspaceDir, OMP_LEFTOVERS_DIR));
+    expect(await readFile(join(workspaceDir, OMP_LEFTOVERS_DIR, stamp!, 'left-by-model.txt'), 'utf8')).toBe('x');
+  });
 });
 
 describe('정지 직전 제출 대기 화면이면 Enter 를 한 번 친다 (2026-10-07)', () => {

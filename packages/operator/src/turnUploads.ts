@@ -21,7 +21,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
-import { open, readdir, realpath, type FileHandle } from 'node:fs/promises';
+import { open, realpath, type FileHandle } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
 import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
 
@@ -122,7 +122,7 @@ export function isAgentTurnWorkspace(root: string, agentId: string): boolean {
  * `<상태 루트>[/<instance>]/omp-home/cwd/<24자 해시>/cwd` (`agent/ompHome.ts` 의 `ompThreadDirs`).
  *
  * omp 는 저장소 설정을 읽지 않게 빈 폴더에서 뜨므로 브릿지의 cwd 도 그 폴더다. 모델은 파일을 거기에도, 프롬프트가 알려 준 작업
- * 폴더(`<상태 루트>/workspaces/harkroom-<…>-<해시 앞 8자>`, 같은 스레드 키의 해시다)에도 쓴다. 모양이 아니면 `null`(fail-closed).
+ * 폴더(`<상태 루트>/workspaces/harkroom-<id>-<해시 앞 8자>`, 같은 스레드 키의 해시다)에도 쓴다. 모양이 아니면 `null`(fail-closed).
  */
 async function ompThreadRoots(root: string, agentId: string): Promise<string[] | null> {
   if (!agentId || basename(root) !== 'cwd') return null;
@@ -134,10 +134,7 @@ async function ompThreadRoots(root: string, agentId: string): Promise<string[] |
   const stateDir = dirname(ompHome);
   const owns = (name: string) => name === agentId || name.endsWith(`-${agentId}`);
   if (!owns(basename(stateDir)) && !owns(basename(dirname(stateDir)))) return null;
-  const base = join(stateDir, 'workspaces');
-  const names = await readdir(base).catch(() => [] as string[]);
-  const name = names.find((n) => n.startsWith('harkroom-') && n.endsWith(`-${hash.slice(0, 8)}`));
-  const workspace = name ? await realpath(join(base, name)).catch(() => null) : null;
+  const workspace = await realpath(join(stateDir, 'workspaces', `harkroom-${agentId}-${hash.slice(0, 8)}`)).catch(() => null);
   return workspace ? [root, workspace] : [root];
 }
 

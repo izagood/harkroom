@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildTurnCommand } from '../src/turn.js';
 import {
-  ensureOmpHome, ensureOmpThread, newOmpSessionId, ompBinaryOk, ompCwdViolations, ompDirs, writeOmpLaneModels, writeOmpSessionHeader,
+  ensureOmpHome, ensureOmpThread, newOmpSessionId, ompBinaryOk, ompCwdViolations, ompDirs, sweepOmpThreadCwd, writeOmpLaneModels, writeOmpSessionHeader,
 } from '../src/ompHome.js';
 
 const BIN = process.env.HARKROOM_OMP_BIN;
@@ -123,19 +123,31 @@ describe.skipIf(!BIN)('omp 실물 — 심은 파일(C1·G1b·G1c·K3b)', () => {
     expect(await ompBinaryOk(BIN as string)).toBe(true);
   });
 
-  async function cell(name: string, opts: { cwdRepo: boolean; turns: Array<{ plan: string[]; key: string }> }) {
+  async function cell(name: string, opts: { cwdRepo: boolean; leftovers?: boolean; turns: Array<{ plan: string[]; key: string }> }) {
     const cellRoot = join(root, name);
     const mark = join(cellRoot, 'mark');
     const repo = join(cellRoot, 'repo');
     await mkdir(mark, { recursive: true });
-    await plantRepo(repo, mark, port);
+    await mkdir(repo, { recursive: true });
+    if (!opts.leftovers) await plantRepo(repo, mark, port);
     const ompHome = join(cellRoot, 'state', 'omp');
     await ensureOmpHome({ ompHome, mcpServers: { harkroom: { command: process.execPath, args: [join(root, 'mcp.mjs')] } } });
     const thread = await ensureOmpThread(ompHome, 'thread-1');
     const dirs = ompDirs(ompHome);
     // G1 두 겹: 빈 cwd 의 위 폴더에 심으면 기동 전 검사가 잡는다. 그래도 띄웠을 때 git 경계가 막는지도 본다.
-    await mkdir(join(thread.cwd, '..', '.omp'), { recursive: true });
-    await writeFile(join(thread.cwd, '..', '.omp', 'AGENTS.md'), 'PLANTED_ANCESTOR_AGENTS_MD\n');
+    let swept: string[] = [];
+    if (opts.leftovers) {
+      // 앞 턴의 모델이 스레드 폴더에 설정을 남긴 꼴 — 러너처럼 비운 뒤 띄운다.
+      await plantRepo(thread.cwd, mark, port);
+      const mcp = (n: string) => JSON.stringify({ mcpServers: { [n]: { command: '/bin/sh', args: ['-c', `touch ${mark}/mcp-${n}; sleep 3`] } } });
+      await writeFile(join(thread.cwd, 'mcp.json'), mcp('plain'));
+      await mkdir(join(thread.cwd, '.cursor'), { recursive: true });
+      await writeFile(join(thread.cwd, '.cursor', 'mcp.json'), mcp('cursor'));
+      swept = await sweepOmpThreadCwd(thread.cwd, repo);
+    } else {
+      await mkdir(join(thread.cwd, '..', '.omp'), { recursive: true });
+      await writeFile(join(thread.cwd, '..', '.omp', 'AGENTS.md'), 'PLANTED_ANCESTOR_AGENTS_MD\n');
+    }
     const violations = await ompCwdViolations(thread.cwd, join(cellRoot, 'state'));
     const sessionId = newOmpSessionId();
     const cwd = opts.cwdRepo ? repo : thread.cwd;
@@ -181,7 +193,7 @@ describe.skipIf(!BIN)('omp 실물 — 심은 파일(C1·G1b·G1c·K3b)', () => {
     }
     await new Promise((r) => setTimeout(r, 3500)); // 심은 MCP 가 `touch` 할 틈
     const sessions = (await readdir(dirs.sessionsDir)).filter((n) => n.endsWith('.jsonl'));
-    return { turns, markers: await readdir(mark), violations, sessions, sessionFile: join(dirs.sessionsDir, sessions[0] ?? 'none') };
+    return { turns, swept, markers: await readdir(mark), violations, sessions, sessionFile: join(dirs.sessionsDir, sessions[0] ?? 'none') };
   }
 
   it('격리 칸(빈 cwd + --add-dir 저장소): 실행 0 · 적용 0 · 실리는 것은 저장소 `.omp/AGENTS.md` 하나(G1c 수용) · 키는 키 파일에서', async () => {
@@ -203,6 +215,19 @@ describe.skipIf(!BIN)('omp 실물 — 심은 파일(C1·G1b·G1c·K3b)', () => {
     expect(r.sessions).toHaveLength(1); // 미리 쓴 헤더 하나로 두 턴이 이어졌다
     expect((await readFile(r.sessionFile, 'utf8')).split('\n').filter(Boolean).length).toBeGreaterThan(4);
   }, 180_000);
+
+  it('앞 턴이 남긴 설정: 비운 뒤 띄우면 다음 턴에 안 실리고 안 돈다', async () => {
+    const r = await cell('leftovers', { cwdRepo: false, leftovers: true, turns: [{ plan: ['bash', 'mcp', 'text'], key: 'sk-ONE' }] });
+    expect(r.swept.length).toBeGreaterThan(0);
+    expect(r.violations).toEqual([]);
+    expect(r.markers).toEqual([]);
+    const [one] = r.turns;
+    expect(one!.code).toBe(0);
+    expect(one!.planted).toEqual([]);
+    expect(one!.tools.filter((t) => t?.startsWith('planted_'))).toEqual([]);
+    expect(one!.dotenvInShell).toBe(false);
+    expect(one!.pong).toBe(true);
+  }, 120_000);
 
   it('비교 칸(cwd = 저장소): 같은 심은 파일이 돈다 — B4 가 필요하다는 이빨', async () => {
     const r = await cell('compare', { cwdRepo: true, turns: [{ plan: ['text'], key: 'sk-ONE' }] });
