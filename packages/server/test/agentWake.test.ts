@@ -620,12 +620,20 @@ describe('turn.wake — 에이전트가 자기를 나중에 깨운다', () => {
           expect(await open(workRoot)).toEqual([]);
         });
 
-        it('양쪽 스레드를 서로 보고처로 동시에 걸어도 교착 없이 하나만 남는다', async () => {
+        it('다른 스레드에서 같은 보고처로 동시에 걸어도 하나만 남는다', async () => {
+          const [a, b, requestRoot] = [await newThread(), await newThread(), await newThread()];
+          const reportTo = { channelId, threadRootId: requestRoot };
+          await Promise.all(Array.from({ length: 12 }, (_, i) => watch(i % 2 ? a : b, `감시 ${i}`, { reportTo })));
+          expect((await open(a)).length + (await open(b)).length).toBe(1);
+        });
+
+        it('양쪽 스레드를 서로 보고처로 동시에 걸어도 교착이 없다 — 보고처가 달라 쪽마다 하나씩 남는다', async () => {
           const [a, b] = [await newThread(), await newThread()];
           await Promise.all(Array.from({ length: 12 }, (_, i) => (i % 2
             ? watch(a, `A→B ${i}`, { reportTo: { channelId, threadRootId: b } })
             : watch(b, `B→A ${i}`, { reportTo: { channelId, threadRootId: a } }))));
-          expect((await open(a)).length + (await open(b)).length).toBe(1);
+          expect((await open(a)).length).toBe(1);
+          expect((await open(b)).length).toBe(1);
         });
       });
 
