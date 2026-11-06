@@ -19,6 +19,7 @@ type Q = Pick<PoolClient, 'query'>;
  * 모르면 null 이다 — null 이면 판정은 지금 규칙 그대로다(넓어지는 쪽으로 새지 않는다).
  *
  * - wake 로 깬 턴: null(C2). 같은 글로 온 wake 인박스가 하나라도 있으면 사람 부름과 섞였어도 null 로 둔다.
+ * - 위임 후속 보고로 깬 턴: null. 6시간짜리 자동 깨움이 사람 권한을 나르지 않는다.
  * - 사람 글(`kind = 'user'`, 자동화 아님, 활성 계정): 그 작성자.
  * - 이 에이전트 자신의 선택 카드: **원본 카드를 사람이 직접 누른 답**만 그 사람(C3). 거울(mirrorOf)·
  *   일괄 답(answeredVia)·닫힘·만료(closedAt)는 null.
@@ -26,7 +27,7 @@ type Q = Pick<PoolClient, 'query'>;
  * - 자동화·시스템 글·그 밖: null.
  */
 export const PRINCIPAL_FROM_CAUSE_SQL = `(case
-  when exists (select 1 from inbox iw where iw.account_id = i.account_id and iw.message_id = m.id and iw.reason = 'wake') then null
+  when exists (select 1 from inbox iw where iw.account_id = i.account_id and iw.message_id = m.id and iw.reason in ('wake', 'delegation_followup')) then null
   when m.kind = 'system' and m.meta ? 'planAuto' then (
     select pa.id from account pa
      where pa.id = m.principal_account_id and pa.kind = 'human' and pa.deleted_at is null and pa.disabled_at is null)

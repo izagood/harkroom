@@ -605,6 +605,8 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
        * 그리면 팀장에게 "결말 없음"을 알리는 셈이고, 그것은 사실이 아니라 조회 결과의 부재다.
        */
       ...(reason === 'delegation_done' && delegation ? { delegation } : {}),
+      /** **닫힌 위임의 후속 보고**(163). 멘션 행이 그 보고다 — 할 일이 아니라 결과로 싣는다. */
+      ...(reason === 'delegation_followup' ? { delegationFollowup: mention } : {}),
       /**
        * **넘겨받은 일**(3-2). 사유와 함께 보는 이유는 팀 명단과 같다 — 위임이 그 사이
        * 지워지면 서버가 맥락 없이 사유만 준다. 그때는 블록 없이 평범한 부름처럼 돈다.

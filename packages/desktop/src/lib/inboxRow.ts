@@ -98,7 +98,7 @@ export function inboxRow(entry: InboxEntry, myAccountId: string | null, t: Trans
   if (entry.reason === 'team_delegated') {
     return { kind: 'mention', label: t('inbox.label.delegated'), rank: 1, options: null };
   }
-  if (entry.reason === 'delegation_done') {
+  if (entry.reason === 'delegation_done' || entry.reason === 'delegation_followup') {
     return { kind: 'mention', label: t('inbox.label.delegationDone'), rank: 1, options: null };
   }
   return { kind: 'reply', label: t('inbox.label.reply'), rank: 2, options: null };

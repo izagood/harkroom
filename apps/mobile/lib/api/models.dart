@@ -662,6 +662,7 @@ enum InboxReason {
         'team_mention' => InboxReason.teamMention,
         'team_delegated' => InboxReason.teamDelegated,
         'delegation_done' => InboxReason.delegationDone,
+        'delegation_followup' => InboxReason.delegationDone,
         _ => InboxReason.unknown,
       };
 }

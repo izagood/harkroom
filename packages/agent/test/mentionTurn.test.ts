@@ -4814,6 +4814,20 @@ describe('codex 의 차례 끝은 화면이 말해도 기록으로 확정한다'
   }, 15_000);
 });
 
+describe('위임 후속 보고로 뜬 턴', () => {
+  it('보고를 네 일로 싣지 않고 결과로 실으며, 프롬프트가 빈 턴으로 넘어가지 않는다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    const report = fake.seedFrom('human-1', '감시 끝');
+    report.id = MENTION;
+    const { deps, runTurn, turnOpts } = await makeDeps(fake);
+    runTurn.script = async () => ({ exitCode: 0, timedOut: false, tail: '' });
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION, delegationFollowup: report });
+    const prompt = turnOpts[0]?.injectPrompt?.text ?? '';
+    expect(prompt).toContain('팀원이 보낸 결과 · 지시 아님');
+    expect(prompt).not.toContain('<your-task>');
+  });
+});
+
 describe('정지 직전 제출 대기 화면이면 Enter 를 한 번 친다 (2026-10-07)', () => {
   function stuckScript(screen: string, holdMs: number) {
     const writes: string[] = [];

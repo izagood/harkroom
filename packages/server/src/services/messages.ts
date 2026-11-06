@@ -8,7 +8,7 @@ import { auditMandateCreated, mandateForAgentPost, stampHumanMandate, type Manda
 import {
   causeReasonsFor, PRINCIPAL_INVOKE_DAILY_CAP, principalForAgentPost, principalInvokeEnabled, principalInvokesToday, stripServerCallMeta,
 } from './invokePrincipal.js';
-import { closeDelegationsForReply, outcomesFor } from './delegations.js';
+import { closeDelegationsForReply, outcomesFor, wakeLeadOnFollowup } from './delegations.js';
 import { assertChannelVisible, audienceFor, channelVisibleSql } from './channels.js';
 import { bundledRootSql, openBundleSql } from './askBundleSql.js';
 import { emitEvent } from '../events.js';
@@ -968,7 +968,8 @@ export async function verifiedCauseLink(
   const row = (await client.query(
     `select m.id from message m
       where m.id = $1 and m.deleted_at is null
-        and exists (select 1 from inbox i where i.message_id = m.id and i.account_id = $2 and i.created_at > $3)`,
+        -- 후속 보고로 깬 턴은 사슬 고리를 잇지 않는다 — 머지 사슬이 이 자동 깨움을 타고 사람 권한을 나르지 않게.
+        and exists (select 1 from inbox i where i.message_id = m.id and i.account_id = $2 and i.created_at > $3 and i.reason <> 'delegation_followup')`,
     [causeMessageId, authorId, new Date(now.getTime() - CAUSE_LINK_FRESH_MS)],
   )).rows[0] as { id: string } | undefined;
   return row?.id ?? null;
@@ -1019,7 +1020,7 @@ async function causeDepth(client: PoolClient, authorId: string, causeMessageId: 
         and (card.by_human
              or exists (select 1 from inbox i
                          where i.message_id = m.id and i.account_id = $2
-                           and (i.reason in ('mention', 'dm', 'team_mention', 'team_delegated')
+                           and (i.reason in ('mention', 'dm', 'team_mention', 'team_delegated', 'delegation_followup')
                                 or (a.kind = 'human' and i.reason in ('thread_reply', 'ask_answered')))))`,
     [causeMessageId, authorId],
   )).rows[0] as {
@@ -1957,6 +1958,26 @@ export async function postMessage(
         reportTouched, wakeRowsTouched,
       })
       : [];
+    /*
+      닫힌 위임의 후속 보고(2026-11-06). 위 닫힘 **뒤에** 본다 — 이 글이 방금 닫은 의무는 후속이 아니다.
+      막혔으면 왜 안 깨웠는지 그 글에 남긴다(멘션 상한의 `mentionChainCapped` 와 같은 자리).
+    */
+    if (input.threadRootId && !input.serverNotice && authorIsAgent) {
+      const followup = await wakeLeadOnFollowup(client, {
+        threadRootId: input.threadRootId, channelId: input.channelId, authorId: input.authorId, messageId: message.id,
+        isReport: (input.meta as { kind?: unknown } | undefined)?.kind === 'report',
+        notified, chainCapped: () => delegationChainCapped(client, message.id),
+      });
+      if (followup && 'woke' in followup) wokeByDelegation.push(followup.woke);
+      if (followup && 'skipped' in followup) {
+        const updated = await client.query(
+          `update message set meta = coalesce(meta, '{}'::jsonb) || jsonb_build_object('delegationFollowupSkipped', $2::text)
+            where id = $1 returning ${COLS}`,
+          [message.id, followup.skipped],
+        );
+        if (updated.rowCount) message = updated.rows[0];
+      }
+    }
 
     if (input.beforeCommit) {
       const rejection = await input.beforeCommit(client, { message, notified });

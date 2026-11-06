@@ -944,6 +944,7 @@ describe('같은 사람의 연달은 부름을 한 턴으로 묶는다', () => {
     ['카드 답', { reason: 'ask_answered' }, {}],
     ['카드 닫힘', { reason: 'ask_closed' }, {}],
     ['위임 결말', { reason: 'delegation_done' }, {}],
+    ['위임 후속 보고', { reason: 'delegation_followup' }, {}],
     ['넘겨받은 일', { reason: 'team_delegated' }, {}],
     ['팀 부름', { reason: 'team_mention' }, {}],
     ['수정으로 불림', { viaEdit: true }, {}],
