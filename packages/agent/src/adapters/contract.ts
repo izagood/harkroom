@@ -279,7 +279,7 @@ export interface HarnessAdapter {
   /**
    * 화면이 끝을 말할 때 그 끝을 확정할 기록 표면(`harnessTurnEnd.ts`). `transcript.parsed` 와 따로다 — 차례 표지만 읽는다. 재 본 하네스만 적는다.
    */
-  readonly turnEndRecord?: 'codex-rollout';
+  readonly turnEndRecord?: 'codex-rollout' | 'omp-session';
   /**
    * 하네스가 **작업 디렉터리별 파일 메모리**를 `<config>/<dirUnderConfig>/<cwd 이름>/memory/` 에
    * 적는가(메모리 고도화 U5 — `harnessMemory.ts` 가 새로 생긴 것을 다음 턴에 알린다). 없으면 알리지
