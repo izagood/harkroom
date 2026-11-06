@@ -60,8 +60,9 @@ async function report(token: string, threadRootId: string, body = '결과'): Pro
 /** 위임을 만들고 첫 report 로 닫은 뒤, 결말 항목을 읽은 상태까지 간다. */
 async function closedDelegation(): Promise<{ rootId: string; delegationId: string }> {
   const rootId = await openThread();
+  await client(onePat); // MCP 로 붙은 것이 곧 presence 다 — 안 붙은 팀원에게는 위임이 서지 않는다.
   const res = text(await (await client(leadPat)).callTool({
-    name: 'message.delegate', arguments: { channelId, threadRootId: rootId, body: '넘긴다', to: ['fone'] },
+    name: 'message.delegate', arguments: { channelId, threadRootId: rootId, body: '@fone 넘긴다', to: ['fone'] },
   }));
   const messageId = (res.message as { id: string }).id;
   await report(onePat, rootId, '첫 보고');
@@ -218,7 +219,12 @@ describe('163 위임 후속 보고', () => {
     } finally {
       db.release();
     }
-    expect(await causeChainRoot(pool, { agentId: leadId, causeMessageId: reported, now: new Date() })).toBeNull();
+    // 소유자 글까지 이어진 사슬이어도 끊긴다 — 잇지 않으면 차단 줄이 없어도 null 이라 시험이 아니다(cause 는 insert 때만 받는다).
+    const chained = (await pool.query(
+      `insert into message (channel_id, thread_root_id, author_id, body, kind, cause_message_id)
+       values ($1, $2, $3, '이어진 보고', 'user', $2) returning id`, [channelId, rootId, oneId])).rows[0].id as string;
+    await pool.query(`insert into inbox (account_id, message_id, reason) values ($1, $2, 'delegation_followup')`, [leadId, chained]);
+    expect(await causeChainRoot(pool, { agentId: leadId, causeMessageId: chained, now: new Date() })).toBeNull();
     const mandate = await pool.query(
       `insert into mandate (owner_account_id, delegator_account_id, root_message_id, channel_id, thread_root_id, created_at, last_activity_at)
        values ($1, $1, $2, $3, $2, now(), now()) returning id`, [adminId, rootId, channelId]);
@@ -232,8 +238,8 @@ describe('163 위임 후속 보고', () => {
   it('대조군: 평범한 멘션으로 받은 글은 사슬 고리가 된다', async () => {
     const rootId = await openThread();
     const mention = await pool.query(
-      `insert into message (channel_id, thread_root_id, author_id, body, kind, seq)
-       select $1, $2, $3, '본문', 'user', coalesce(max(seq), 0) + 1 from message where channel_id = $1 returning id`,
+      `insert into message (channel_id, thread_root_id, author_id, body, kind)
+       values ($1, $2, $3, '본문', 'user') returning id`,
       [channelId, rootId, oneId]);
     const id = mention.rows[0].id as string;
     await pool.query(`insert into inbox (account_id, message_id, reason) values ($1, $2, 'mention')`, [leadId, id]);
