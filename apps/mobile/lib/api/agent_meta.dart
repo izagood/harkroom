@@ -79,12 +79,49 @@ class FailureMeta {
   }
 }
 
+/// 예약 줄의 상태. 위에 있는 것이 먼저다 — ✅가 가장 구체적인 사실이다.
+enum WakeState {
+  /// 깨어난 턴이 새 글 없이 끝났다(`checkedAt` 또는 줄 주인의 ✅).
+  checked,
+
+  /// 접혔거나 대체됐다(`canceledAt`).
+  canceled,
+
+  /// 깨어났다(`firedAt`).
+  fired,
+
+  /// 값이 없고 남은 1분 미만 ~ 지난 지 2분 안. 깨우기는 주기적으로 돌아 몇십 초 늦을 수 있다.
+  soon,
+
+  /// 값이 없고 1분 넘게 남았다.
+  waiting,
+
+  /// 값이 없고 지난 지 2분이 넘었다 — 서버가 시각을 적기 전에 닫힌 옛 줄이다.
+  passed;
+
+  /// 끝난 줄인가. 아니면 아직 기다리는 줄이다.
+  bool get isPast => this != soon && this != waiting;
+}
+
 /// 대기 줄 — 에이전트가 걸어 둔 예약의 **시각**.
 class WakeMeta {
-  const WakeMeta({required this.wakeAt, this.reason});
+  const WakeMeta({required this.wakeAt, this.reason, this.firedAt, this.canceledAt, this.checkedAt});
 
   final DateTime wakeAt;
   final String? reason;
+  final DateTime? firedAt;
+  final DateTime? canceledAt;
+  final DateTime? checkedAt;
+
+  /// [ownerChecked] 는 줄 주인이 이 줄에 ✅를 달았는가다. 남이 단 ✅는 확인이 아니다.
+  WakeState stateAt(DateTime now, {bool ownerChecked = false}) {
+    if (checkedAt != null || ownerChecked) return WakeState.checked;
+    if (canceledAt != null) return WakeState.canceled;
+    if (firedAt != null) return WakeState.fired;
+    final left = wakeAt.difference(now);
+    if (left >= const Duration(minutes: 1)) return WakeState.waiting;
+    return left > const Duration(minutes: -2) ? WakeState.soon : WakeState.passed;
+  }
 
   static WakeMeta? read(Map<String, Object?> meta) {
     if (meta['kind'] != 'wake') return null;
@@ -92,9 +129,17 @@ class WakeMeta {
     if (wake is! Map) return null;
     final at = DateTime.tryParse(wake['wakeAt'] as String? ?? '');
     if (at == null) return null;
-    return WakeMeta(wakeAt: at.toUtc(), reason: wake['reason'] as String?);
+    return WakeMeta(
+      wakeAt: at.toUtc(),
+      reason: wake['reason'] as String?,
+      firedAt: _time(wake['firedAt']),
+      canceledAt: _time(wake['canceledAt']),
+      checkedAt: _time(wake['checkedAt']),
+    );
   }
 }
+
+DateTime? _time(Object? v) => v is String ? DateTime.tryParse(v)?.toUtc() : null;
 
 List<String> _strings(Object? v) =>
     v is List ? v.whereType<String>().where((e) => e.trim().isNotEmpty).toList(growable: false) : const [];

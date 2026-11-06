@@ -44,6 +44,20 @@ String agoLabel(DateTime from, DateTime now, Strings t) {
   return t.timeAgo.replaceFirst('{duration}', durationLabel(d, t));
 }
 
+/// 이 기기 시간대의 시각(`21:55`).
+String clockLabel(DateTime at) {
+  final local = at.toLocal();
+  return '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+}
+
+/// 절대 시각. 오늘이면 `21:55`, 다른 날이면 `11/05 21:55`.
+String stampLabel(DateTime at, DateTime now) {
+  final local = at.toLocal();
+  final today = now.toLocal();
+  if (local.year == today.year && local.month == today.month && local.day == today.day) return clockLabel(at);
+  return '${local.month.toString().padLeft(2, '0')}/${local.day.toString().padLeft(2, '0')} ${clockLabel(at)}';
+}
+
 /// **아직 오지 않은 것**(`4분 뒤`).
 ///
 /// 시각이 이미 지났으면 숫자를 쓰지 않는다: 깨움 sweep 은 주기적으로 돌므로 `0분 뒤` 는
