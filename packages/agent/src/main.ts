@@ -630,8 +630,11 @@ const accountAssigner = createAccountAssigner({
 });
 
 // 턴 임대(비밀 보관소 PR 3). 멘션마다 한 번 받아 오퍼레이터에 맡긴다 — 토큰은 relay 로만 간다(R2).
+// 스레드 임대의 holder(서버 095). **이 프로세스**다 — 앱 업데이트로 같은 에이전트의 옛 러너와 겹쳐 도는 동안 둘을 가르는 값이라
+// 기동마다 새로 짓는다(같은 에이전트 자격이라 계정 id 로는 못 가른다). 턴 임대를 받을 때도 함께 보낸다 — 넘겨받았다는 증거다.
+const threadClaimHolder = randomUUID();
 const secretLeases = createSecretLeases({
-  issue: (cause) => harkroom.issueTurnLease(cause),
+  issue: (cause) => harkroom.issueTurnLease(cause, undefined, threadClaimHolder),
   notifyLease: (cause, lease) => relay.notifySecretLease(cause, lease),
   notifyEnded: (cause) => relay.notifySecretLeaseEnded(cause),
   notifyHeartbeat: (cause) => relay.notifySecretLeaseHeartbeat(cause),
@@ -674,9 +677,7 @@ function harnessVersion(harness: AgentHarness): Promise<string | null> {
   });
 }
 
-// 스레드 임대(서버 095). holder 는 **이 프로세스**다 — 앱 업데이트로 같은 에이전트의 옛 러너와 겹쳐 도는 동안
-// 둘을 가르는 값이라 기동마다 새로 짓는다(같은 에이전트 자격이라 계정 id 로는 못 가른다).
-const threadClaims = createThreadClaims({ client: harkroom, holder: randomUUID() });
+const threadClaims = createThreadClaims({ client: harkroom, holder: threadClaimHolder });
 
 // 작업 폴더 정리(스레드 9e909150). 오퍼레이터는 이 상태 트리를 못 읽으므로 러너가 알리고, 이 트리 안의 지우기도 러너가 한다.
 // 턴의 기록 파일은 멘션 id 로 모은다 — 턴이 끝날 때 그 기록에서 `worktree add` 경로를 읽는다.

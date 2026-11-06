@@ -10,7 +10,7 @@ import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ASK_TEXT_OPTION_ID } from '@harkroom/shared';
 import { DELTA_MAX_CHARS } from '../src/prompt.js';
-import { askAnsweredWake, BUNDLE_MAX_ENTRIES, createMentionScheduler, DONE_UNREAD_MAX_MS, GATE_REQUEUE_MAX, GATE_WAIT_MAX_MS, RECENTLY_DONE_MS, type BatchContext } from '../src/mentionScheduler.js';
+import { askAnsweredWake, BUNDLE_MAX_ENTRIES, createMentionScheduler, DONE_UNREAD_MAX_MS, GATE_REQUEUE_MAX, GATE_WAIT_MAX_MS, LEASE_RETRY_MS, LEASE_WAIT_MAX_MS, RECENTLY_DONE_MS, type BatchContext } from '../src/mentionScheduler.js';
 import { AccountGateRequeueError } from '../src/mentionTurn.js';
 import { SessionStore } from '../src/sessions.js';
 import { TurnRegistry } from '../src/turnRegistry.js';
@@ -62,7 +62,7 @@ function harness(opts: {
   /** 앞 세대가 끝냈는데 읽음 처리만 못 한 entry(`HARKROOM_HANDOVER_DONE`, L2). */
   handoverDone?: Set<number>;
   /** 턴 임대(비밀 보관소) — 시험이 acquire 결과를 정한다. */
-  secretLeases?: { acquire(cause: string): Promise<'held' | 'none' | 'lease_used'>; release(cause: string): Promise<void> };
+  secretLeases?: { acquire(cause: string): Promise<'held' | 'none' | 'lease_used' | 'unreachable'>; release(cause: string): Promise<void> };
 }) {
   const markedRead: number[] = [];
   /** `markRead` 가 불린 **호출** 단위 — 묶음 호출(L1) 회귀선이 본다. */
@@ -1717,25 +1717,89 @@ describe('멘션 턴 예약 — 인터랙티브 open 이 보는 「시작되는 
 
 describe('턴 임대를 앞 러너가 받아 갔으면(409 lease_used)', () => {
   /**
-   * 앱 갱신·재기동으로 러너가 바뀐 뒤 같은 멘션을 다시 집으면 서버는 그 멘션의 임대를 다시 주지 않는다(한 번만 발급).
-   * 그대로 돌면 비밀·API·머지가 전부 `no_lease` 로 막힌 채 반쯤 일하고 끝난다 → 돌리지 않고 「다시 불러 달라」로 알린다.
-   *
-   * 되돌려 RED: 스케줄러가 acquire 결과를 안 보면 runTurn 이 불려 started 가 1, failed 가 비게 된다.
+   * 앱 갱신·재기동으로 러너가 바뀌어도 사람이 다시 부를 일이 없어야 한다. 서버가 옛 임대를 끝내고 새로 줄 때까지 턴을 띄우지 않고
+   * (그대로 돌면 비밀·API·머지가 `no_lease` 로 막힌다) 조용히 다시 묻는다.
    */
-  it('턴을 시작하지 않고 retryable 실패로 알리고 읽음 처리한다', async () => {
+  it.each(['lease_used', 'unreachable'] as const)('%s: 실패도 읽음도 시도 회계도 없이 미뤘다 다시 물어 턴을 돌린다', async (state) => {
     let ran = 0;
+    let t = 1_000;
+    let answer: 'held' | 'lease_used' | 'unreachable' = state;
+    let asked = 0;
+    const h = harness({
+      now: () => t,
+      runTurn: async () => { ran++; return { stopRequestedAt: null }; },
+      secretLeases: { acquire: async () => { asked++; return answer; }, release: async () => {} },
+    });
+    const batch = batchOf([{ entryId: 7, messageId: 'm-7' }]);
+    await h.scheduler.admit(batch, ctx);
+    await h.scheduler.drain();
+    expect([ran, h.failed.length, h.markedRead.length]).toEqual([0, 0, 0]);
+    // 간격 안에서는 묻지도 않는다.
+    expect((await h.scheduler.admit(batch, ctx)).blocked).toBe(1);
+    expect(asked).toBe(1);
+    t += LEASE_RETRY_MS + 1;
+    answer = 'held';
+    await h.scheduler.admit(batch, ctx);
+    await h.scheduler.drain();
+    expect([ran, asked, h.failed.length]).toEqual([1, 2, 0]);
+    expect(h.markedRead).toContain(7);
+  });
+
+  it('미룬 횟수는 재시도 회계에 들지 않는다 — 상한 안에서 몇 번을 미뤄도 통지 없이 기다린다', async () => {
+    let t = 1_000;
+    let ran = 0;
+    const h = harness({
+      now: () => t,
+      runTurn: async () => { ran++; return { stopRequestedAt: null }; },
+      secretLeases: { acquire: async () => 'lease_used', release: async () => {} },
+    });
+    const batch = batchOf([{ entryId: 7, messageId: 'm-7' }]);
+    for (let i = 0; i < 20; i++) {
+      await h.scheduler.admit(batch, ctx);
+      await h.scheduler.drain();
+      t += LEASE_RETRY_MS + 1;
+    }
+    expect([ran, h.failed.length, h.markedRead.length]).toEqual([0, 0, 0]);
+  });
+
+  it('상한까지 409 면(재기동 탓이 아니다) 턴을 시작하지 않고 retryable 실패로 알리고 읽음 처리한다', async () => {
+    let ran = 0;
+    let t = 1_000;
     const released: string[] = [];
     const h = harness({
+      now: () => t,
       runTurn: async () => { ran++; return { ok: true } as never; },
       secretLeases: { acquire: async () => 'lease_used', release: async (c) => { released.push(c); } },
     });
-    await h.scheduler.admit(batchOf([{ entryId: 7, messageId: 'm-7' }]), ctx);
+    const batch = batchOf([{ entryId: 7, messageId: 'm-7' }]);
+    await h.scheduler.admit(batch, ctx);
+    await h.scheduler.drain();
+    t += LEASE_WAIT_MAX_MS + 1;
+    await h.scheduler.admit(batch, ctx);
     await h.scheduler.drain();
     expect(ran).toBe(0);
     expect(h.failed).toEqual([expect.objectContaining({ retryable: true })]);
-    expect(h.failed[0]!.body).toContain('턴 임대를 잃었습니다');
+    expect(h.failed[0]!.body).toContain('턴 임대를 다시 받지 못했습니다');
     expect(h.markedRead).toContain(7);
     expect(released).toEqual(['m-7']);
+  });
+
+  it('상한까지 답을 못 받았으면 지금처럼 비밀 없이 돈다', async () => {
+    let ran = 0;
+    let t = 1_000;
+    const h = harness({
+      now: () => t,
+      runTurn: async () => { ran++; return { stopRequestedAt: null }; },
+      secretLeases: { acquire: async () => 'unreachable', release: async () => {} },
+    });
+    const batch = batchOf([{ entryId: 7, messageId: 'm-7' }]);
+    await h.scheduler.admit(batch, ctx);
+    await h.scheduler.drain();
+    expect(ran).toBe(0);
+    t += LEASE_WAIT_MAX_MS + 1;
+    await h.scheduler.admit(batch, ctx);
+    await h.scheduler.drain();
+    expect([ran, h.failed.length]).toEqual([1, 0]);
   });
 
   it('임대가 없을 뿐이면(403·보관소 꺼짐) 지금처럼 비밀 없이 돈다', async () => {

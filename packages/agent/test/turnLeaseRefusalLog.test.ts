@@ -10,12 +10,22 @@ describe('issueTurnLease refusal log', () => {
   it.each([
     [409, JSON.stringify({ error: { code: 'lease_used', message: 'this mention has already had a lease' } }), 'status=409 code=lease_used', 'lease_used'],
     [403, JSON.stringify({ error: { code: 'not_invoked', message: 'x' } }), 'status=403 code=not_invoked', null],
-    [502, '', 'status=502 code=unknown', null],
+    [502, '', 'status=502 code=unknown', 'unreachable'],
+    [0, '', 'status=0 code=unknown', 'unreachable'],
     [403, JSON.stringify({ error: { code: 'Weird Code; rm -rf' } }), 'status=403 code=unknown', null],
   ])('%s → logs the code; only 409 lease_used is told apart', async (status, body, tail, expected) => {
     const lines: string[] = [];
     expect(await client(status, body).issueTurnLease(CAUSE, (l) => lines.push(l))).toBe(expected);
     expect(lines).toEqual([`[secretLeases] 임대 발급 거절 cause=${CAUSE} ${tail}`]);
+  });
+
+  it('sends the thread claim holder with the request', async () => {
+    const bodies: string[] = [];
+    const c = new HarkroomAgentClient({ request: async (r: { body: string }) => { bodies.push(r.body); return { type: 'http.response', id: 'x', status: 403, body: '' }; } } as never);
+    await c.issueTurnLease(CAUSE, () => {}, 'holder-1');
+    await c.issueTurnLease(CAUSE, () => {});
+    expect(JSON.parse(bodies[0]!)).toEqual({ causeMessageId: CAUSE, claimHolder: 'holder-1' });
+    expect(JSON.parse(bodies[1]!)).toEqual({ causeMessageId: CAUSE });
   });
 
   it('a granted lease logs nothing and never echoes the token', async () => {

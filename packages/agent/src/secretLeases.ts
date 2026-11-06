@@ -5,8 +5,9 @@
  * - **멘션마다 한 번만 받는다**(R1). 계정 전환(`withAccountFailover`)·재시도(`attempts`)로 같은 멘션의 턴이
  *   다시 돌아도 이 프로세스가 받은 임대를 그대로 쓴다 — 오퍼레이터가 들고 있다. 서버도 멘션당 평생 하나만
  *   준다(086, S1).
- * - **재기동한 러너는 비밀 없이 돈다**(R1 fail-closed). 이 장부는 메모리에만 있고, 다시 받으려 하면 서버가
- *   409 `lease_used` 로 거절한다. 실패는 턴을 막지 않는다 — 비밀이 없을 뿐이다.
+ * - **재기동한 러너는 다시 묻는다.** 이 장부는 메모리에만 있다. 앞 러너가 받아 간 임대는 서버가 옛 턴이 없다고 확인하면
+ *   끝내고 새로 준다(서버 157). 확인 전에는 409 `lease_used` 이고, 호출부가 그 멘션을 미뤘다 다시 묻는다. 거절(403 등)은
+ *   턴을 막지 않는다 — 비밀이 없을 뿐이다.
  * - **토큰은 relay 통지로만 나간다**(R2). 하네스 env·argv·프롬프트·로그 어디에도 싣지 않는다. 이 장부에도
  *   임대 id 만 남긴다.
  * - **놓기 전에 가린다**(D7). 그 멘션의 턴들이 남긴 하네스 기록(`noteTranscript`)에서 마운트한 값을 `***` 로
@@ -24,8 +25,8 @@ export interface TurnLease { id: string; token: string; expiresAt: string }
 
 export interface SecretLeaseDeps {
   /** `POST /agent/turn-leases`. 거절·실패면 null — 이유는 로그 한 줄로 충분하다(토큰은 찍지 않는다). */
-  /** `'lease_used'` = 앞 러너가 이 멘션의 임대를 이미 받아 갔다(409). */
-  issue(causeMessageId: string): Promise<TurnLease | 'lease_used' | null>;
+  /** `'lease_used'` = 앞 러너가 이 멘션의 임대를 이미 받아 갔다(409). `'unreachable'` = 답을 못 받았다(링크 끊김·5xx). */
+  issue(causeMessageId: string): Promise<TurnLease | 'lease_used' | 'unreachable' | null>;
   notifyLease(cause: string, lease: TurnLease): void;
   notifyEnded(cause: string): void;
   /** 턴이 아직 돈다(C-1). 없으면(옛 배선) 늘리지 않는다 — 임대는 발급 수명대로 끝난다. */
@@ -39,10 +40,11 @@ export interface SecretLeaseDeps {
 
 export interface SecretLeases {
   /**
-   * 임대를 받는다. `'lease_used'` 면 이 멘션의 임대는 앞 러너가 이미 받아 갔다 — 호출부는 임대 없이 돌리지 말고 실패로
-   * 알린다(비밀·API·머지가 그 턴에서 `no_lease` 로 줄줄이 막히는 대신, 사람이 다시 부르면 새 멘션으로 새 임대를 받는다).
+   * 임대를 받는다. `'lease_used'` 면 이 멘션의 임대는 앞 러너가 이미 받아 갔고, `'unreachable'` 이면 답을 받지 못했다(서버에는
+   * 임대가 생겼을 수 있다). 둘 다 **아직 정해지지 않은 답**이라 적어 두지 않는다 — 호출부가 턴을 띄우지 말고 미뤘다 다시 묻는다
+   * (그대로 돌면 비밀·API·머지가 그 턴에서 `no_lease` 로 줄줄이 막힌다).
    */
-  acquire(causeMessageId: string): Promise<'held' | 'none' | 'lease_used'>;
+  acquire(causeMessageId: string): Promise<'held' | 'none' | 'lease_used' | 'unreachable'>;
   /** 그 멘션의 하네스 기록(파일 또는 디렉터리 — 디렉터리면 그 아래 일반 파일 전부). 같은 멘션의 재시도가 여럿 남길 수 있다. */
   noteTranscript(causeMessageId: string, path: string): void;
   /** 가리고 놓는다. 던지지 않는다 — 가리기가 실패해도 임대는 놓는다(값을 오래 붙들지 않는다). */
@@ -56,13 +58,13 @@ export interface SecretLeases {
   drain(ms: number): Promise<void>;
 }
 
-interface Held { leaseId: string | null; used?: boolean; transcripts: Set<string>; beat?: ReturnType<typeof setInterval> }
+interface Held { leaseId: string | null; transcripts: Set<string>; beat?: ReturnType<typeof setInterval> }
 
 /** 서버 갱신 폭(LEASE_RENEW_MS 10분)의 절반 — 박동 하나를 놓쳐도 다음 박동이 만료 전에 닿는다. */
 export const LEASE_HEARTBEAT_MS = 4 * 60_000;
 
 export function createSecretLeases(deps: SecretLeaseDeps): SecretLeases {
-  /** 멘션 id → 받은 임대(id 만). 거절된 것도 적는다(leaseId null) — 재시도마다 다시 묻지 않는다(어차피 409 다). */
+  /** 멘션 id → 받은 임대(id 만). 거절된 것도 적는다(leaseId null) — 재시도마다 다시 묻지 않는다. 409·무응답은 적지 않는다(다시 묻는다). */
   const held = new Map<string, Held>();
   const log = deps.log ?? ((line: string) => console.error(line));
 
@@ -99,11 +101,15 @@ export function createSecretLeases(deps: SecretLeaseDeps): SecretLeases {
     async acquire(cause) {
       // 재시도·계정 전환은 처음 받은 결과를 그대로 쓴다(멘션당 한 번만 묻는다).
       const prior = held.get(cause);
-      if (prior) return prior.leaseId ? 'held' : prior.used ? 'lease_used' : 'none';
+      if (prior) return prior.leaseId ? 'held' : 'none';
       const h: Held = { leaseId: null, transcripts: new Set() };
       held.set(cause, h);
-      const lease = await deps.issue(cause).catch(() => null);
-      if (lease === 'lease_used') { h.used = true; return 'lease_used'; }
+      const lease = await deps.issue(cause).catch(() => 'unreachable' as const);
+      if (lease === 'lease_used' || lease === 'unreachable') {
+        // 묻는 사이 놓였으면 그 자리는 이미 비었다. 다음 시도가 다시 묻도록 지운다.
+        if (held.get(cause) === h) held.delete(cause);
+        return lease;
+      }
       if (!lease) return 'none';
       h.leaseId = lease.id;
       deps.notifyLease(cause, lease);
