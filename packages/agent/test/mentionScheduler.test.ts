@@ -1073,14 +1073,18 @@ describe('깨움 보고처·접힌 예약을 턴에 넘긴다 (2026-10-06)', () 
     const { scheduler } = harness({ runTurn });
     const wake = batchOf([{ entryId: 1, messageId: 'w1', threadRootId: 'root-1', body: '#1174 CI 확인' }]);
     (wake.entries[0] as { reason: string }).reason = 'wake';
-    (wake.messages[0] as { meta: unknown }).meta = { kind: 'wake', wake: { wakeAt: 'x', reason: '#1174 CI 확인', reportTo: { channelId: 'ch-9', threadRootId: 'task-root' } } };
+    (wake.messages[0] as { meta: unknown }).meta = { kind: 'wake', turnId: 'turn-scheduled', wake: { wakeAt: 'x', reason: '#1174 CI 확인', reportTo: { channelId: 'ch-9', threadRootId: 'task-root' } } };
     const call = batchOf([{ entryId: 2, messageId: 'm2', threadRootId: 'root-2' }]);
     (call.entries[0] as { canceledWakes?: unknown }).canceledWakes = [{ reason: '회수', wakeAt: '2026-10-06T02:00:00.000Z' }];
 
     await scheduler.admit({ entries: [...wake.entries, ...call.entries], messages: [...wake.messages, ...call.messages] }, ctx);
     await scheduler.drain();
 
-    expect(seen.find((t) => t.mentionId === 'w1')?.wake).toEqual({ reason: '#1174 CI 확인', reportTo: { channelId: 'ch-9', threadRootId: 'task-root' } });
+    expect(seen.find((t) => t.mentionId === 'w1')?.wake).toEqual({
+      reason: '#1174 CI 확인', reportTo: { channelId: 'ch-9', threadRootId: 'task-root' },
+      // 보고처 판정의 기준선 — 예약한 때와 예약을 건 턴.
+      scheduledSeq: wake.messages[0]!.seq, scheduledTurnId: 'turn-scheduled',
+    });
     expect(seen.find((t) => t.mentionId === 'm2')?.canceledWakes).toEqual([{ reason: '회수', wakeAt: '2026-10-06T02:00:00.000Z' }]);
     // 인박스가 준 글을 그대로 넘긴다 — 턴이 읽는 페이지 밖이어도 본문을 싣는다.
     expect(seen.find((t) => t.mentionId === 'm2')?.mentionRow).toBe(call.messages[0]);

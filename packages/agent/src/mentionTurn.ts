@@ -633,7 +633,13 @@ export interface MentionTarget {
    * 옵셔널인 이유: 평범한 멘션 턴에는 깨움이 없다. 그리고 값이 있으면 프롬프트 조립이
    * 달라진다 — 깨움에는 부른 사람이 없어서 델타가 비고, 비면 하네스가 돌지 않는다.
    */
-  wake?: { reason: string; reportTo?: WakeReportTo; watch?: true; origin?: string; written?: { by?: string; text: string } };
+  wake?: {
+    reason: string; reportTo?: WakeReportTo; watch?: true; origin?: string; written?: { by?: string; text: string };
+    /** 대기 줄의 seq — 예약한 때. seq 는 채널을 넘어 전역이라 보고처 글과 견줄 수 있다. */
+    scheduledSeq?: number;
+    /** 예약을 건 턴의 id(대기 줄 `meta.turnId`). 그 턴이 보고처에 쓴 글은 약속이지 보고가 아니다. */
+    scheduledTurnId?: string;
+  };
   /**
    * 이 턴이 **예약(`turn.wake`)이 시각이 되어** 깨어난 턴이다(inbox 사유 `wake`). `wake` 만으로는
    * 못 가른다 — 선택 답(`ask_answered`·`ask_closed`)도 같은 자리를 쓰는데, 그것은 사람이 방금 답한
@@ -714,8 +720,13 @@ export interface MentionTarget {
 const REPORT_CHECK_PAGE = 200;
 const REPORT_CHECK_MAX_PAGES = 10;
 
+/** 그 턴이 쓴 글인가. 턴 id 가 없는 옛 글은 아니라고 본다 — 근거 없이 경고하지 않는 쪽이다. */
+function wroteByTurn(m: { meta?: unknown }, turnId: string | undefined): boolean {
+  return turnId !== undefined && (m.meta as { turnId?: unknown } | null | undefined)?.turnId === turnId;
+}
+
 async function reportPromiseCheck(
-  deps: MentionTurnDeps, reportTo: WakeReportTo, baseSeq: number, reason: string, anchor: string, anchorChannelId: string,
+  deps: MentionTurnDeps, reportTo: WakeReportTo, baseSeq: number, scheduledTurnId: string | undefined, reason: string, anchor: string, anchorChannelId: string,
 ): Promise<void> {
   // **창을 넘겨 끝까지 읽는다**(#1208 security n4). 한 번 읽기는 `seq > baseSeq` 중 가장 오래된 limit 개라, 턴 동안
   // 보고처가 바빠 글이 limit 을 넘게 쌓이면 내 보고가 창 밖으로 밀려 **보고했는데 경고**가 났다. 찾으면 멈추고,
@@ -727,7 +738,7 @@ async function reportPromiseCheck(
       return;
     }
     const there = await deps.harkroom.readThread(reportTo.channelId, reportTo.threadRootId, since, REPORT_CHECK_PAGE);
-    if (there.some((m) => m.authorId === deps.me.id && m.seq > baseSeq && m.kind !== MESSAGE_KIND_WAKE)) return;
+    if (there.some((m) => m.authorId === deps.me.id && m.seq > baseSeq && m.kind !== MESSAGE_KIND_WAKE && !wroteByTurn(m, scheduledTurnId))) return;
     const last = there.reduce((max, m) => Math.max(max, m.seq), since);
     if (there.length === 0 || last <= since) break;
     since = last;
@@ -1274,15 +1285,15 @@ export async function runMentionTurn(
   // 이 턴의 id(`RUNNER_TURN_ID_ENV`). 하네스 env 로 넘기면 서버가 이 턴의 발화에 `meta.turnId` 로 적는다 — 아래 발화 판정·앵커
   // 밖 관측이 계정이 아니라 턴으로 센다(`prompt.ts::ownedByTurn`). 같은 계정의 턴이 동시에 돌아도 서로의 글을 세지 않는다.
   const turnId = randomUUID();
-  // 보고처의 기준선(2026-10-06). 앵커의 seq 로는 못 잰다: 약속 글은 대개 **다른 스레드에서 깨움보다 뒤에**
-  // 쓰여 앵커의 마지막 seq 보다 크다 — 그것을 이 턴의 보고로 잘못 센다. 보고처의 지금 마지막 글을 잰다.
-  // 못 읽으면 판정을 접는다(null) — 근거 없이 경고하지 않는다.
+  // 보고처의 기준선은 **예약한 때**다(2026-11-06). 깨어난 턴의 시작을 쓰면 그 사이 병렬 턴이 올린 보고를 못 세어 끝난 일에 헛 실패 줄이 섰다(11-05 실측).
+  // 약속 글(2026-10-06)은 대개 다른 스레드에서 깨움보다 뒤에 쓰여 기준선보다 크다 — 그래서 예약을 건 턴의 글은 빼고 센다.
+  // 대기 줄 seq 가 없으면(옛 서버) 전처럼 보고처의 지금 마지막 글을 잰다. 못 읽으면 판정을 접는다(null) — 근거 없이 경고하지 않는다.
   const reportTo = target.wake?.reportTo;
-  const reportBaseSeq = reportTo
-    ? await deps.harkroom.readThread(reportTo.channelId, reportTo.threadRootId, undefined, 1)
+  const reportBaseSeq = !reportTo ? null : target.wake?.scheduledSeq !== undefined
+    ? target.wake.scheduledSeq
+    : await deps.harkroom.readThread(reportTo.channelId, reportTo.threadRootId, undefined, 1)
       .then((ms) => ms.reduce((max, m) => Math.max(max, m.seq), 0))
-      .catch(() => null)
-    : null;
+      .catch(() => null);
 
   // #139 는 "매 턴 다시 읽는다, 캐시 없음"이었다. 이제 러너 사본(`memoryCache.ts`)을 거친다
   // (2026-09-28) — 판본이 같으면 왕복하지 않고, 서버를 못 읽으면 사본으로 돈다. 수정이 다음
@@ -3196,7 +3207,7 @@ export async function runMentionTurn(
     // **약속한 보고처에 말했나**(2026-10-06). 앵커 쪽 판정(위)과 따로 본다 — 앵커에 답하고도 보고처를 잊는 것이
     // 실측된 모양이다(task_manager 10-06). 다시 기다리기로 했으면(새 깨움) 아직 보고할 때가 아니니 경고하지 않는다.
     if (reportTo && reportBaseSeq !== null && !hasOwnWakeSince(after, deps.me.id, turnStartSeq, turnId)) {
-      await reportPromiseCheck(deps, reportTo, reportBaseSeq, target.wake?.reason ?? '', anchor ?? mentionId, channelId);
+      await reportPromiseCheck(deps, reportTo, reportBaseSeq, target.wake?.scheduledTurnId, target.wake?.reason ?? '', anchor ?? mentionId, channelId);
     }
     // **감시가 이어졌나**(2026-10-31). 실측: "5분마다 확인" 감시의 깨어난 턴이 다음 예약도 끝났다는 말도 없이 끝나
     // 감시가 조용히 멈췄고 아무도 몰랐다. 감시 예약(`watch: true`)으로 깨어난 턴은 다음 깨움을 걸거나 끝 보고
