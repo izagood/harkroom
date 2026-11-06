@@ -259,11 +259,13 @@ export async function scheduleWake(pool: Pool, input: ScheduleWakeInput): Promis
   }
 }
 
-/** 이 계정의 열린 감시 예약. `$2` 계정. */
-const OPEN_WATCH_WAKE_BASE_SQL = `m.id = w.message_id
+/** 이 계정의 열린 예약. `$2` 계정. */
+const OPEN_WAKE_BASE_SQL = `m.id = w.message_id
         and w.account_id = $2
         and w.fired_at is null
-        and w.canceled_at is null
+        and w.canceled_at is null`;
+/** 그중 감시 예약. */
+const OPEN_WATCH_WAKE_BASE_SQL = `${OPEN_WAKE_BASE_SQL}
         and m.meta->'wake'->>'watch' = 'true'`;
 /** 그중 이 스레드에 걸린 것. `$1` 스레드 머리. */
 const OPEN_WATCH_WAKE_SQL = `${OPEN_WATCH_WAKE_BASE_SQL}
@@ -272,9 +274,10 @@ const OPEN_WATCH_WAKE_SQL = `${OPEN_WATCH_WAKE_BASE_SQL}
  * 그중 **같은 일을 보는** 것(2026-11-06): 스레드가 `$1` 이거나, 소식을 전할 곳이 `$3` 인 것.
  * 소식을 전할 곳은 `reportTo` 의 스레드이고, 없으면 걸린 스레드 자신이다. `reportTo` 는 meta 의 글자이므로 소문자로 맞춰 견준다.
  */
-const SAME_WORK_WATCH_WAKE_SQL = `${OPEN_WATCH_WAKE_BASE_SQL}
-        and (coalesce(m.thread_root_id, m.id) = $1
+const SAME_WORK_SQL = `(coalesce(m.thread_root_id, m.id) = $1
           or coalesce(lower(m.meta->'wake'->'reportTo'->>'threadRootId'), coalesce(m.thread_root_id, m.id)::text) = lower($3::text))`;
+const SAME_WORK_WATCH_WAKE_SQL = `${OPEN_WATCH_WAKE_BASE_SQL}
+        and ${SAME_WORK_SQL}`;
 const CLOSED_WATCH_COLUMNS = `w.id, w.wake_at, w.message_id, m.body, m.deleted_at is not null as deleted, m.meta->'wake'->'reportTo' as report_to,
         coalesce(m.thread_root_id, m.id) as thread_root_id`;
 
@@ -362,20 +365,22 @@ async function replaceWatchWakes(
 }
 
 /**
- * **끝 보고가 남은 감시를 접는다**(2026-11-05). 그 에이전트가 그 스레드에 `message.report` 를 올리면 그 스레드에 걸렸거나 그 스레드로 보고하는
- * 감시 예약을 닫는다(보고처 기준 2026-11-06) — 끝났다고 말한 뒤에 다시 깨어나 같은 보고를 하는 것을 막는다.
+ * **끝 보고가 남은 예약을 접는다**(2026-11-05, 보고처 기준·종류 무관 2026-11-06). 그 에이전트가 그 스레드에 `message.report` 를 올리면 그 스레드에
+ * 걸렸거나 그 스레드로 보고하는 예약을 닫는다 — 끝났다고 말한 뒤에 다시 깨어나 같은 보고를 하거나, 할 말이 없어 「보고 없이 끝났다」 실패 줄을 남기는 것을 막는다.
+ * 감시만 접으면 한 번 깨우기가 남는다: 병렬 턴이 이미 끝낸 일에 한 번 깨우기가 깨어나 글 없이 끝나자 보고처에 헛 실패 줄이 섰다(11-05 실측).
  *
  * **같은 턴이 건 예약은 남긴다**: 한 단계를 보고하고 다음 확인을 거는 턴은 흔하고, 호출 순서가 wake → report 일 수도 있다.
- * 접은 사유는 결과로 돌려준다 — 다른 일을 보고했을 뿐이면 그 턴이 다시 걸 수 있다.
+ * 같은 보고처에 다른 일을 걸어 둔 예약도 함께 접힌다 — 접은 사유를 결과로 돌려주니 그 턴이 다시 걸 수 있다.
  */
-export async function foldWatchWakesOnReport(
+export async function foldWakesOnReport(
   pool: Pick<Pool, 'query'>,
   args: { accountId: string; threadRootId: string; turnId?: string | null },
 ): Promise<ClosedWatchWake[]> {
   const res = await pool.query<ClosedWatchRow>(
     `update agent_wake w set canceled_at = now()
        from message m
-      where ${SAME_WORK_WATCH_WAKE_SQL}
+      where ${OPEN_WAKE_BASE_SQL}
+        and ${SAME_WORK_SQL}
         and ($4::text is null or m.meta->>'turnId' is distinct from $4::text)
       returning ${CLOSED_WATCH_COLUMNS}`,
     [args.threadRootId, args.accountId, args.threadRootId, args.turnId ?? null],
