@@ -826,6 +826,37 @@ describe('runMentionTurn', () => {
         expect(warn).toHaveLength(1);
       });
 
+      it('다른 턴의 보고가 있으면 프롬프트에 「이미 보고됨: 링크」 한 줄이 실린다', async () => {
+        const fake = new FakeHarkroom(defOf());
+        fake.seedFrom('human-1', '@forge #1174 확인해');
+        const { deps, runTurn, plans, turnOpts } = await makeDeps(fake);
+        const scheduled = fake.seedFrom(deps.me.id, '#1174 CI 확인', 'anchor-root');
+        scheduled.kind = 'wake';
+        const report = fake.seedFrom(deps.me.id, '#1174 머지했다', 'report-root');
+        report.meta = { turnId: 'turn-other' };
+        runTurn.script = async () => ({ exitCode: 0, timedOut: false, tail: '' });
+        await runMentionTurn(deps, {
+          channelId: CHANNEL, threadRootId: null, mentionId: MENTION,
+          wake: { reason: '#1174 CI 확인', reportTo: REPORT, scheduledSeq: scheduled.seq, scheduledTurnId: SCHEDULING_TURN },
+        });
+        expect((await getPlanContent(plans, turnOpts)).at(-1)!).toContain(`이미 보고됨: harkroom://message/${report.id}`);
+      });
+
+      it('예약 턴의 약속 글만 있으면 그 한 줄이 없다', async () => {
+        const fake = new FakeHarkroom(defOf());
+        fake.seedFrom('human-1', '@forge #1174 확인해');
+        const { deps, runTurn, plans, turnOpts } = await makeDeps(fake);
+        const scheduled = fake.seedFrom(deps.me.id, '#1174 CI 확인', 'anchor-root');
+        scheduled.kind = 'wake';
+        fake.seedFrom(deps.me.id, '다음 확인은 13:21 KST', 'report-root').meta = { turnId: SCHEDULING_TURN };
+        runTurn.script = async () => ({ exitCode: 0, timedOut: false, tail: '' });
+        await runMentionTurn(deps, {
+          channelId: CHANNEL, threadRootId: null, mentionId: MENTION,
+          wake: { reason: '#1174 CI 확인', reportTo: REPORT, scheduledSeq: scheduled.seq, scheduledTurnId: SCHEDULING_TURN },
+        });
+        expect((await getPlanContent(plans, turnOpts)).at(-1)!).not.toContain('이미 보고됨');
+      });
+
       it('턴 id 가 없는 옛 글은 보고로 센다 — 근거 없이 경고하지 않는다', async () => {
         const warn = await silentWake((f, me) => { f.seedFrom(me, '보고', 'report-root'); });
         expect(warn).toEqual([]);

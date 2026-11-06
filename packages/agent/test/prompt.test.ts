@@ -384,6 +384,16 @@ describe('깨움(wake) — 기다림을 예약한다', () => {
     });
     expect(r.prompt).toContain('channelId: c9 · threadRootId: r9');
     expect(r.prompt).toContain('harkroom://message/r9');
+    expect(r.prompt).not.toContain('이미 보고됨');
+    expect(r.prompt).toContain('다른 턴의 보고가 이미 있으면 글 없이 끝내도 된다');
+  });
+
+  it('다른 턴의 보고가 있는 깨움에는 그 링크를 싣는다', () => {
+    const r = buildTurnPrompt({
+      messages: [], lastFedSeq: 9, meId: 'a1', handles, channelId: 'c', threadRootId: 't',
+      wake: { reason: 'CI 결과 확인', reportTo: { channelId: 'c9', threadRootId: 'r9' }, alreadyReported: 'm7' },
+    });
+    expect(r.prompt).toContain('이미 보고됨: harkroom://message/m7');
   });
 
   it('접힌 예약은 사람의 발화 위에 덧붙는다 — 델타를 대신하지 않는다', () => {
