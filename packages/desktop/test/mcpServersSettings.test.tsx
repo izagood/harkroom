@@ -10,7 +10,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
-import { McpServersSection } from '../src/components/settings/McpServersSettings';
+import { McpServersSection, formatMcpCommand } from '../src/components/settings/McpServersSettings';
 import { buildMcpDefinition, parseMcpArgs, planMcpEnv } from '../src/components/settings/McpServerDialog';
 import { MCP_PRESETS } from '../src/lib/mcpPresets';
 import { setController, type Controller } from '../src/state/controller';
@@ -444,6 +444,51 @@ describe('McpServersSettings — stdio', () => {
     fireEvent.click(await screen.findByTestId('mcp-server-add-open'));
     expect(screen.queryByTestId('mcp-dialog-transport')).toBeNull();
     expect(screen.getByTestId('mcp-dialog-url')).toBeTruthy();
+  });
+
+  it('목록 명령줄은 공백 든 인자만 따옴표로 감싸고, 한 줄로 접으며 전체는 title 에 둔다', async () => {
+    expect(formatMcpCommand('/opt/x', ['--root', '/srv/my files'])).toBe('/opt/x --root "/srv/my files"');
+    expect(formatMcpCommand('/opt/my tool', ['a"b c'])).toBe('"/opt/my tool" "a\\"b c"');
+    expect(formatMcpCommand('npx', [])).toBe('npx');
+    fake([{ name: 'files', credentialKind: 'personal' }]);
+    useActiveStore.setState({ me: me([]) });
+    local([stdio({ args: ['--root', '/srv/my files'] })]);
+    render(<McpServersSection />);
+    const cell = await screen.findByTestId('mcp-cell-command-files');
+    expect(cell.textContent).toBe('/opt/files-mcp --root "/srv/my files"');
+    expect(cell.getAttribute('title')).toBe('/opt/files-mcp --root "/srv/my files"');
+    expect(cell.className).toContain('truncate');
+  });
+
+  it('지우기 확인 문구는 종류를 따른다 — stdio 는 명령·인자·환경 변수, 원격은 URL·Client ID', async () => {
+    fake([{ name: 'files', credentialKind: 'personal' }, { name: 'web', credentialKind: 'personal' }]);
+    useActiveStore.setState({ me: me([]) });
+    local([stdio(), remote('web', { state: 'ok' })]);
+    render(<McpServersSection />);
+    fireEvent.click(await screen.findByTestId('mcp-cell-menu-files'));
+    fireEvent.click(await screen.findByText('이 맥에서 지우기'));
+    const detail = await screen.findByTestId('mcp-remove-here-detail');
+    expect(detail.textContent).toContain('명령·인자·환경 변수');
+    expect(detail.textContent).not.toContain('Client ID');
+    fireEvent.click(screen.getByRole('button', { name: '취소' }));
+    fireEvent.click(await screen.findByTestId('mcp-cell-menu-web'));
+    fireEvent.click(await screen.findByText('이 맥에서 지우기'));
+    expect((await screen.findByTestId('mcp-remove-here-detail')).textContent).toContain('Client ID');
+  });
+
+  it('새 변수 줄의 × 는 이름이 없어도 무엇을 하는지 읽히고, stdio 면 자격증명 도움말이 보인다', async () => {
+    fake([]);
+    useActiveStore.setState({ me: me(['agent.privileged']) });
+    local([]);
+    render(<McpServersSection />);
+    await openAdd();
+    expect(screen.getByTestId('mcp-dialog-stdio-kind-note').textContent).toContain('소유자만');
+    fireEvent.click(screen.getByTestId('mcp-dialog-env-add'));
+    expect(screen.getByTestId('mcp-dialog-env-remove-1').getAttribute('aria-label')).toBe('이 변수 빼기');
+    fireEvent.change(screen.getByTestId('mcp-dialog-env-key-1'), { target: { value: 'TOKEN' } });
+    expect(screen.getByTestId('mcp-dialog-env-remove-1').getAttribute('aria-label')).toBe('TOKEN 빼기');
+    fireEvent.change(screen.getByTestId('mcp-dialog-transport'), { target: { value: 'http' } });
+    expect(screen.queryByTestId('mcp-dialog-stdio-kind-note')).toBeNull();
   });
 
   it('parseMcpArgs·planMcpEnv', () => {

@@ -105,6 +105,7 @@ pub fn check(r: &StdioRequest) -> Result<(), String> {
 struct Words {
     title: &'static str,
     lead: &'static str,
+    name: &'static str,
     command: &'static str,
     args: &'static str,
     env_note: &'static str,
@@ -113,11 +114,13 @@ struct Words {
     allow: &'static str,
     cancel: &'static str,
     too_tall: &'static str,
+    too_tall_screen: &'static str,
 }
 
 const KO: Words = Words {
     title: "stdio MCP 서버 실행 허용",
     lead: "이 명령은 이 서버를 켠 에이전트의 턴마다 이 맥에서 내 권한으로 실행된다. 직접 입력한 내용이 맞을 때만 허용한다.",
+    name: "이름",
     command: "명령",
     args: "인자",
     env_note: "환경 변수의 값은 여기 보이지 않는다. 직접 넣은 이름이 아니면 취소한다.",
@@ -126,11 +129,13 @@ const KO: Words = Words {
     allow: "실행 허용",
     cancel: "취소",
     too_tall: "확인창이 화면에 다 들어가지 않아 저장하지 않았다. 창을 화면 위쪽으로 옮기거나 인자를 줄인다.",
+    too_tall_screen: "확인창이 이 화면보다 커서 저장하지 않았다. 인자를 줄인다.",
 };
 
 const EN: Words = Words {
     title: "Allow stdio MCP server to run",
     lead: "This command runs on this Mac with your permissions on every turn of an agent that uses this server. Allow it only if you entered exactly this.",
+    name: "Name",
     command: "Command",
     args: "Arguments",
     env_note: "Environment variable values are not shown here. Cancel unless you entered these names yourself.",
@@ -139,11 +144,12 @@ const EN: Words = Words {
     allow: "Allow to run",
     cancel: "Cancel",
     too_tall: "Not saved because the dialog does not fit on this screen. Move the window higher or use fewer arguments.",
+    too_tall_screen: "Not saved because the dialog is taller than this screen. Use fewer arguments.",
 };
 
 /// 창의 본문. 인자는 경계가 보이도록 번호를 붙여 한 줄씩 적는다.
 fn body(r: &StdioRequest, w: &Words) -> String {
-    let mut out = format!("{}\n\n{}\n", w.lead, r.name);
+    let mut out = format!("{}\n\n{}: {}\n", w.lead, w.name, r.name);
     out.push_str(&format!("{}: {}\n", w.command, r.command));
     if !r.args.is_empty() {
         out.push_str(&format!("{}:\n", w.args));
@@ -213,6 +219,7 @@ mod sheet {
         pub cancel: String,
         pub allow: String,
         pub too_tall: String,
+        pub too_tall_screen: String,
     }
 
     /// 둘째 버튼(「실행 허용」)만 허락이다. Esc·창이 닫혀 끝난 것을 포함해 나머지는 모두 거절이다.
@@ -233,6 +240,11 @@ mod sheet {
     /// 시트는 창 위 가장자리에서 내려온다. 그 아래 끝이 화면의 쓸 수 있는 영역 안에 있어야 한다(좌표는 아래에서 위로 자란다).
     pub(super) fn fits(window_top: f64, sheet_height: f64, screen_bottom: f64) -> bool {
         window_top - sheet_height >= screen_bottom
+    }
+
+    /// 창을 맨 위로 옮겨도 시트가 화면에 다 들어가지 않는가.
+    pub(super) fn taller_than_screen(sheet_height: f64, screen_height: f64) -> bool {
+        sheet_height > screen_height
     }
 
     /// 지연 뒤에 켠다. 그 사이 시트가 끝났어도 살아 있는 버튼을 켜는 것뿐이라 해가 없다.
@@ -265,8 +277,11 @@ mod sheet {
         let sheet = alert.window();
         let visible = window.screen().map(|screen| screen.visibleFrame());
         let top = window.frame().origin.y + window.frame().size.height;
-        if !visible.is_some_and(|area| fits(top, sheet.frame().size.height, area.origin.y)) {
-            let _ = tx.try_send(Err(texts.too_tall.clone()));
+        let height = sheet.frame().size.height;
+        if !visible.is_some_and(|area| fits(top, height, area.origin.y)) {
+            // 창을 옮겨서 풀리는 경우에만 옮기라고 말한다.
+            let larger = visible.is_some_and(|area| taller_than_screen(height, area.size.height));
+            let _ = tx.try_send(Err(if larger { texts.too_tall_screen.clone() } else { texts.too_tall.clone() }));
             return;
         }
         let escape = {
@@ -337,6 +352,7 @@ pub fn ask_human(app: &tauri::AppHandle, r: &StdioRequest, locale: &str) -> Resu
                 cancel: w.cancel.to_string(),
                 allow: w.allow.to_string(),
                 too_tall: w.too_tall.to_string(),
+                too_tall_screen: w.too_tall_screen.to_string(),
             },
         )
     }
@@ -410,7 +426,7 @@ mod tests {
     #[test]
     fn 본문에_이름_명령_인자가_모두_보인다() {
         let shown = body(&request("/opt/mcp", &["--a", "b c"]), &EN);
-        for part in ["local-files", "/opt/mcp", "1. --a", "2. b c"] {
+        for part in ["Name: local-files", "/opt/mcp", "1. --a", "2. b c"] {
             assert!(shown.contains(part), "{part} 없음: {shown}");
         }
     }
@@ -444,6 +460,13 @@ mod tests {
         let begin = open.find("beginSheetModalForWindow_completionHandler").unwrap();
         let later = open.find("enable_later(app, allow)").unwrap();
         assert!(off < begin && begin < later);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn 화면보다_큰_시트만_구분한다() {
+        assert!(sheet::taller_than_screen(880.0, 870.0));
+        assert!(!sheet::taller_than_screen(870.0, 870.0));
     }
 
     #[test]

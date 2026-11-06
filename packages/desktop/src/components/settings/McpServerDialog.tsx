@@ -287,6 +287,7 @@ export function McpServerDialog({ mode, registry, canEdit, attach, onDone, onCan
             </select>
           </label>
         </div>
+        {isStdio && <p className="text-meta text-fg-subtle" data-testid="mcp-dialog-stdio-kind-note">{t('mcpServers.stdio.kindNote')}</p>}
         {remoteOnly && (
           <p className="rounded-row border border-warning-border bg-warning-surface px-2.5 py-2 text-meta text-warning" data-testid="mcp-dialog-remote-note">
             {t('mcpServers.dialog.remoteNote', { agent: attach!.agentName, host: attach!.remoteHost! })}
@@ -318,7 +319,7 @@ export function McpServerDialog({ mode, registry, canEdit, attach, onDone, onCan
                       onChange={(e) => patch({ value: e.target.value })} autoComplete="off" spellCheck={false} data-testid={`mcp-dialog-env-value-${row.id}`}
                       placeholder={row.existing ? (programSame ? t('mcpServers.stdio.envKeep') : t('mcpServers.stdio.envRetype')) : t('mcpServers.stdio.envValue')} />
                     <button type="button" className="shrink-0 rounded-row px-1.5 py-0.5 text-fg-muted hover:bg-surface-sunken" disabled={busy}
-                      aria-label={t('mcpServers.stdio.envRemove', { key: row.key })} data-testid={`mcp-dialog-env-remove-${row.id}`}
+                      aria-label={row.key.trim() ? t('mcpServers.stdio.envRemove', { key: row.key.trim() }) : t('mcpServers.stdio.envRemoveEmpty')} data-testid={`mcp-dialog-env-remove-${row.id}`}
                       onClick={() => setEnvRows((rows) => rows.filter((r) => r.id !== row.id))}>×</button>
                   </div>
                 );
