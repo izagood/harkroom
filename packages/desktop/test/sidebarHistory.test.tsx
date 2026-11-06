@@ -252,7 +252,7 @@ describe('뒤로/앞으로 탐색', () => {
 });
 
 describe('키보드 단축키', () => {
-  it('입력 요소에 포커스가 있으면 단축키를 가로채지 않는다', () => {
+  it('입력 요소에 포커스가 있으면 ⌘\\ 는 가로채지 않고, ⌘[·⌘] 는 이동한다', () => {
     const c = fakeController();
     useAppStore.getState().set({
       history: [
@@ -272,9 +272,9 @@ describe('키보드 단축키', () => {
     fireEvent.keyDown(input, { key: ']', metaKey: true });
     fireEvent.keyDown(input, { key: '\\', metaKey: true });
 
-    // 컴포저에서 대괄호를 치는 동안 채널이 바뀌거나 사이드바가 접히면 안 된다.
-    expect(c.goBack).not.toHaveBeenCalled();
-    expect(c.goForward).not.toHaveBeenCalled();
+    // 포커스는 대개 작성창에 있으므로 뒤로·앞으로는 입력 중에도 먹는다(`historyShortcut.test.tsx`). 글자 `[` 는 조합키 없이 쳐진다.
+    expect(c.goBack).toHaveBeenCalledTimes(1);
+    expect(c.goForward).toHaveBeenCalledTimes(1);
     expect(screen.getByText('Harkroom')).toBeTruthy();
 
     document.body.removeChild(input);
