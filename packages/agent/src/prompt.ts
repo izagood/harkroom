@@ -312,6 +312,26 @@ const PROXY_SCREEN_TAIL = '\n\n(에이전트가 이 답을 터미널에만 쓰�
 const proxyOmitted = (n: number): string => `> … ${n > 0 ? `${n}줄` : '일부'} 생략 …`;
 
 /**
+ * 앞에서 `n` 칸(UTF-16)을 남긴다. 칸을 `.length` 로 재므로 자르기도 같은 단위로 한다 — 코드 포인트로 자르면 이모지 든 줄이 칸을 두 배까지 넘는다
+ * (2026-11-06 security 실측). 서러게이트 짝의 가운데면 한 칸 물린다.
+ */
+function keepHeadUnits(s: string, n: number): string {
+  if (n <= 0) return '';
+  if (s.length <= n) return s;
+  const c = s.charCodeAt(n - 1);
+  return s.slice(0, c >= 0xd800 && c <= 0xdbff ? n - 1 : n);
+}
+
+/** 끝에서 `n` 칸(UTF-16)을 남긴다. 서러게이트 짝의 가운데면 한 칸 물린다(`keepHeadUnits`). */
+function keepTailUnits(s: string, n: number): string {
+  if (n <= 0) return '';
+  if (s.length <= n) return s;
+  const start = s.length - n;
+  const c = s.charCodeAt(start);
+  return s.slice(c >= 0xdc00 && c <= 0xdfff ? start + 1 : start);
+}
+
+/**
  * 인용한 답을 `room` 안에 담는다. **넘치면 앞뒤를 줄 단위로 남기고 가운데를 줄인다**(2026-11-06 소유자 결정) — 앞에서만 자르면 표 뒤의 끝말이
  * 사라지고 잘렸다는 말도 없었다(400줄 표 실측). 끝말(마지막 문단)을 먼저 잡되 뒤쪽이 칸의 60% 를 넘지 않게 해 표 머리줄이 앞쪽에 남게 한다.
  * 한 줄이 칸을 혼자 넘으면 그 줄을 글자로 자른다.
@@ -335,7 +355,7 @@ function fitQuotedLines(lines: readonly string[], room: number): string {
   // 끝줄 하나가 뒤쪽 칸을 넘으면 그 끝을 글자로 남긴다 — 끝말이 통째로 빠지지 않게.
   if (tail.length === 0) {
     const last = lines[lines.length - 1]!;
-    tail.push(`> …${Array.from(last).slice(-(tailTarget - 4)).join('')}`);
+    tail.push(`> …${keepTailUnits(last, tailTarget - 4)}`);
     tailUsed = tail[0]!.length + 1;
   }
   const headRoom = budget - tailUsed;
@@ -348,11 +368,16 @@ function fitQuotedLines(lines: readonly string[], room: number): string {
     head.push(lines[i]!);
     headUsed += cost;
   }
-  // 첫 줄부터 넘치면 그 앞을 글자로 남긴다.
-  if (head.length === 0) head.push(`${Array.from(lines[0]!).slice(0, Math.max(0, headRoom - 1)).join('')}…`);
+  // 첫 줄부터 넘치면 그 앞을 글자로 남긴다. 남길 칸이 없으면 싣지 않는다 — 인용(`>`) 없는 줄을 만들지 않는다.
+  if (head.length === 0) {
+    const kept = keepHeadUnits(lines[0]!, headRoom - 1);
+    if (kept) head.push(`${kept}…`);
+  }
   // 뒤쪽을 글자로 자른 줄은 빠진 줄이 아니다.
   const omitted = stop - head.length;
-  return [...head, proxyOmitted(omitted), ...tail].join('\n');
+  const fitted = [...head, proxyOmitted(omitted), ...tail].join('\n');
+  // 칸을 넘기면 호출부의 `slice(0, BODY_LIMIT)` 가 러너 꼬리줄을 잘라 직접 쓴 글처럼 보인다 — 위 계산이 틀려도 칸은 넘지 않게 막는다.
+  return keepHeadUnits(fitted, room);
 }
 
 /**

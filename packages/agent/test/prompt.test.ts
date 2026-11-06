@@ -2086,6 +2086,26 @@ describe('대리 글이 넘칠 때 — 앞뒤를 남기고 가운데를 줄인�
     expect(body).toContain('> 끝');
   });
 
+  // 칸은 UTF-16 으로 재므로 자르기도 같은 단위여야 한다 — 코드 포인트로 자르면 칸을 두 배까지 넘어 꼬리줄이 잘린다(2026-11-06 security 실측).
+  const emoji = (n: number) => '😀'.repeat(n);
+  const shortLines = Array.from({ length: 10 }, (_, i) => `짧은 줄 ${i + 1}`);
+  it.each([
+    ['이모지 긴 한 줄', emoji(5_000)],
+    ['짧은 줄 + 이모지 긴 끝줄', [...shortLines, emoji(5_000)].join('\n')],
+    ['이모지 긴 첫 줄 + 짧은 끝줄', [emoji(5_000), ...shortLines].join('\n')],
+    ['한 칸 밀린 이모지 긴 한 줄', `x${emoji(5_000)}`],
+  ])('이모지: %s — 멘션까지 합쳐 상한 안이고, 줄마다 인용이고, 짝이 깨지지 않고, 꼬리줄이 남는다', (_, text) => {
+    const head = '@some-long-handle\n\n';
+    const body = proxyRecordAnswerBody(text, '', [], head.length);
+    expect(head.length + body.length).toBeLessThanOrEqual(BODY_LIMIT);
+    expect(body.endsWith('러너가 하네스 기록에서 옮겨 올렸습니다.)')).toBe(true);
+    const quoted = body.split('\n\n')[0]!.split('\n');
+    for (const l of quoted) expect(l.startsWith('>')).toBe(true);
+    expect(body).not.toMatch(/\p{Cs}/u);
+    expect(body).toContain('😀');
+    expect(body).toContain('생략');
+  });
+
   it('화면 답도 같은 방식이다', () => {
     const body = proxyAnswerBody(table, '');
     expect(body.length).toBeLessThanOrEqual(BODY_LIMIT);
