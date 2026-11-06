@@ -65,6 +65,6 @@ describe('깨움 배선', () => {
 
   it('mentionTurn 이 그 사유를 프롬프트 조립에 넘긴다', async () => {
     const src = await readSrc('mentionTurn.ts');
-    expect(src).toMatch(/wake:\s*target\.wake/);
+    expect(src).toMatch(/wake:\s*\{\s*\.\.\.target\.wake/);
   });
 });

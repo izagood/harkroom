@@ -1393,7 +1393,7 @@ export function buildSystemPrompt(opts: {
     '필요가 없다. 예약을 건 턴은 결과 발화 없이 끝내도 된다.',
     // 2026-11-04: 새 예약 없이 끝나는 깨어난 턴은 어떻게 끝낼지 적힌 곳이 없었다. 감시(watch)는 다음 예약이나 끝 보고가 따로 의무다.
     '감시(watch)가 아닌 예약으로 깨어났는데 보고할 것이 없으면(이미 끝났거나 바뀐 것이 없으면) 글을 올리지 않아도 된다 —',
-    '그 이유를 마지막 말에 적고 끝낸다.',
+    '그 이유를 마지막 말에 적고 끝낸다. 보고처(`reportTo`)가 있는 예약이면 그 스레드에 다른 턴의 보고가 이미 있을 때만 그렇게 하고, 없으면 보고처에 남긴다.',
     // 2026-10-06: 깨어난 턴은 자기 앵커 스레드만 안다. 다른 스레드에서 한 "몇 시에 확인한다" 약속은
     // 사유 한 줄에 없으면 사라졌다(task_manager 실측) — 약속한 곳을 기계가 읽는 인자로 받는다.
     '결과를 **다른 스레드에** 보고하기로 약속했으면 `turn.wake` 의 `reportTo`(그 채널·스레드 id)를 준다 —',
@@ -1403,7 +1403,7 @@ export function buildSystemPrompt(opts: {
     // 2026-11-02: 3회차 깨움 턴이 자기가 쓴 애매한 사유만 받고 끝 조건을 몰라 멈췄다 — 사유가 다음 턴의 유일한 단서다.
     '감시(watch)면 사유에 다음 회차와 끝 조건을 적어라(예: 「다음 3/3 — 3/3에서 감시 끝」).',
     // 2026-11-05: 턴 다섯이 같은 일에 각자 감시를 걸어 끝 보고 뒤에도 같은 보고가 되풀이됐다 — 서버가 하나로 줄인다. 사유가 사라지는 것은 알려야 한다.
-    '감시 예약은 한 스레드에 하나이고, 보고처(`reportTo`)가 같으면 다른 스레드에 걸린 것도 하나로 친다 — 새로 걸면 앞 것을 대체하고 그 사유를 `replaced` 로 돌려주니, 앞 일도 아직 필요하면 합쳐서 다시 건다. `message.report` 를 올리면 그 스레드에 걸렸거나 그 스레드로 보고하는, 앞 턴이 건 감시는 접힌다(`foldedWatchWakes`) — 아직 지켜볼 일이면 다시 건다.',
+    '감시 예약은 한 스레드에 하나이고, 보고처(`reportTo`)가 같으면 다른 스레드에 걸린 것도 하나로 친다 — 새로 걸면 앞 것을 대체하고 그 사유를 `replaced` 로 돌려주니, 앞 일도 아직 필요하면 합쳐서 다시 건다. `message.report` 를 올리면 그 스레드에 걸렸거나 그 스레드로 보고하는, 앞 턴이 건 예약은 감시 여부와 상관없이 접힌다(`foldedWakes`) — 아직 볼 일이면 다시 건다.',
     // f4(2026-10-27): 서버 가이드의 예약 절을 턴 판본에서 뺐다(`server/src/mcp/guide.ts` 머리) — 거기에만 있던 사실을 여기로 옮긴다.
     '예약은 하한 60초, 사람의 새 발화 없이 연속 20회까지다 — 소진되면 `message.fail` 로 넘긴다. 사람이 그 스레드에서',
     '너를 부르면 걸어 둔 예약은 접힌다(그 턴 프롬프트에 접힌 사유가 실린다) — 아직 필요하면 다시 건다.',
@@ -2015,7 +2015,11 @@ export function buildTurnPrompt(opts: {
    * 아래 자기-발화 필터에 전부 걸린다. 그대로 두면 `mentionTurn` 이 하네스를 돌리지
    * 않고 끝내, 걸어 둔 기다림이 조용히 사라진다.
    */
-  wake?: { reason: string; reportTo?: WakeReportTo; watch?: true; origin?: string; written?: { by?: string; text: string } };
+  wake?: {
+    reason: string; reportTo?: WakeReportTo; watch?: true; origin?: string; written?: { by?: string; text: string };
+    /** 예약 뒤 다른 턴이 보고처에 쓴 내 글의 id. 러너가 턴 전에 읽어 넘긴다. */
+    alreadyReported?: string;
+  };
   /**
    * 감시 사슬을 **시작한 지시**(`meta.wake.origin` 이 가리키는 글, 2026-11-02). `wake.watch` 일 때만 뜻이 있고, 러너가
    * 앵커 스레드에서 읽어 같은 채널·같은 스레드·지운 적 없음을 확인한 것만 넘긴다. 사유 아래 「← 맡긴 글」로 싣는다 —
@@ -2193,7 +2197,7 @@ export function buildTurnPrompt(opts: {
     `(예약된 후속 턴 — 사유: ${wake.reason})`,
     // 카드에 직접 쓴 답은 사람의 글이다 — 사유 줄 안에 섞지 않고 글과 같은 꼴(작성자: 본문)로 싣는다.
     ...(wake.written ? [`${(wake.written.by && handles[wake.written.by]) || '알 수 없는 사용자'} (← 카드에 직접 쓴 답): ${neutralizeForPrompt(wake.written.text)}`] : []),
-    ...(wake.reportTo ? reportToLines(wake.reportTo) : []),
+    ...(wake.reportTo ? reportToLines(wake.reportTo, wake.alreadyReported) : []),
     ...(wake.watch ? [WATCH_DUTY_LINE] : []),
     // 맡긴 지시는 감시일 때만 — 감시가 아닌 깨움에 실리면 지난 요청을 새 요청으로 읽는다.
     ...(wake.watch && watchOrigin ? [neutralizeForPrompt(renderLine(watchOrigin, handles, WATCH_ORIGIN_LINE_NOTE))] : []),
@@ -2480,11 +2484,12 @@ export function startedInLines(r: WakeReportTo): string[] {
   ];
 }
 
-export function reportToLines(r: WakeReportTo): string[] {
+export function reportToLines(r: WakeReportTo, alreadyReported?: string): string[] {
   return [
     `(이 예약은 결과를 **다른 스레드에 보고하기로 약속했다** — channelId: ${r.channelId} · threadRootId: ${r.threadRootId}`,
     ` (harkroom://message/${r.threadRootId}). 이 스레드 답과 별도로 그 스레드에도 message.post 로 결과를 남겨라.`,
-    ' 거기에 아무 말 없이 끝나면 러너가 그 스레드에 "보고 없이 끝났다" 를 남긴다.)',
+    ' 그 스레드에 다른 턴의 보고가 이미 있으면 글 없이 끝내도 된다. 없는데 아무 말 없이 끝나면 러너가 그 스레드에 "보고 없이 끝났다" 를 남긴다.)',
+    ...(alreadyReported ? [`(이미 보고됨: harkroom://message/${alreadyReported} — 예약 뒤 다른 턴이 그 스레드에 쓴 네 글이다. 읽어 보고 더 보고할 것이 없으면 글 없이 끝낸다.)`] : []),
   ];
 }
 

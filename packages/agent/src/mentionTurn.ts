@@ -725,24 +725,33 @@ function wroteByTurn(m: { meta?: unknown }, turnId: string | undefined): boolean
   return turnId !== undefined && (m.meta as { turnId?: unknown } | null | undefined)?.turnId === turnId;
 }
 
+/**
+ * 보고처에서 기준선 뒤의 내 보고를 찾는다. 다 못 읽었으면 `'too_busy'`.
+ * **창을 넘겨 끝까지 읽는다**(#1208 security n4). 한 번 읽기는 `seq > baseSeq` 중 가장 오래된 limit 개라, 보고처가 바빠 글이 limit 을 넘게 쌓이면
+ * 내 보고가 창 밖으로 밀려 **보고했는데 경고**가 났다.
+ */
+async function ownReportSince(
+  deps: MentionTurnDeps, reportTo: WakeReportTo, baseSeq: number, scheduledTurnId: string | undefined,
+): Promise<{ id: string } | 'too_busy' | null> {
+  let since = baseSeq;
+  for (let page = 0; page < REPORT_CHECK_MAX_PAGES; page += 1) {
+    const there = await deps.harkroom.readThread(reportTo.channelId, reportTo.threadRootId, since, REPORT_CHECK_PAGE);
+    const found = there.find((m) => m.authorId === deps.me.id && m.seq > baseSeq && m.kind !== MESSAGE_KIND_WAKE && !wroteByTurn(m, scheduledTurnId));
+    if (found) return found;
+    const last = there.reduce((max, m) => Math.max(max, m.seq), since);
+    if (there.length === 0 || last <= since) return null;
+    since = last;
+  }
+  return 'too_busy';
+}
+
 async function reportPromiseCheck(
   deps: MentionTurnDeps, reportTo: WakeReportTo, baseSeq: number, scheduledTurnId: string | undefined, reason: string, anchor: string, anchorChannelId: string,
 ): Promise<void> {
-  // **창을 넘겨 끝까지 읽는다**(#1208 security n4). 한 번 읽기는 `seq > baseSeq` 중 가장 오래된 limit 개라, 턴 동안
-  // 보고처가 바빠 글이 limit 을 넘게 쌓이면 내 보고가 창 밖으로 밀려 **보고했는데 경고**가 났다. 찾으면 멈추고,
-  // 쪽 수 상한을 넘기면 판정을 접는다 — 근거 없이 경고하지 않는다(기준선을 못 읽었을 때와 같은 판단).
-  let since = baseSeq;
-  for (let page = 0; ; page += 1) {
-    if (page >= REPORT_CHECK_MAX_PAGES) {
-      console.log(`[mentionTurn] 보고처 ${reportTo.threadRootId} 가 너무 바빠 보고 여부를 다 못 읽었다 — 경고하지 않는다`);
-      return;
-    }
-    const there = await deps.harkroom.readThread(reportTo.channelId, reportTo.threadRootId, since, REPORT_CHECK_PAGE);
-    if (there.some((m) => m.authorId === deps.me.id && m.seq > baseSeq && m.kind !== MESSAGE_KIND_WAKE && !wroteByTurn(m, scheduledTurnId))) return;
-    const last = there.reduce((max, m) => Math.max(max, m.seq), since);
-    if (there.length === 0 || last <= since) break;
-    since = last;
-  }
+  const found = await ownReportSince(deps, reportTo, baseSeq, scheduledTurnId);
+  // 찾으면 멈춘다. 쪽 수 상한을 넘기면 판정을 접는다 — 근거 없이 경고하지 않는다(기준선을 못 읽었을 때와 같은 판단).
+  if (found === 'too_busy') console.log(`[mentionTurn] 보고처 ${reportTo.threadRootId} 가 너무 바빠 보고 여부를 다 못 읽었다 — 경고하지 않는다`);
+  if (found) return;
   console.log(`[mentionTurn] 깨움 턴이 보고처 ${reportTo.threadRootId} 에 말하지 않고 끝났다 — 거기에 경고를 남긴다`);
   // 채널이 다르면 사유를 옮겨 적지 않는다(security n2) — 비공개 앵커의 사유가 공개 보고처에 드러난다.
   const notice = reportMissedNotice(reportTo.channelId === anchorChannelId ? reason : null, anchor);
@@ -1240,6 +1249,14 @@ export async function runMentionTurn(
     ? await watchOriginRow(deps, key, channelId, anchor, target.wake.origin, thread)
     : undefined;
 
+  // 예약 뒤 다른 턴이 이미 보고했으면 프롬프트에 한 줄로 알린다 — 같은 보고를 되풀이하지 않게. 못 읽으면 안 싣는다.
+  const wakeReportTarget = target.wake?.reportTo;
+  const alreadyReported = wakeReportTarget && target.wake?.scheduledSeq !== undefined
+    ? await ownReportSince(deps, wakeReportTarget, target.wake.scheduledSeq, target.wake.scheduledTurnId)
+      .then((r) => (r && r !== 'too_busy' ? r.id : undefined))
+      .catch(() => undefined)
+    : undefined;
+
   const { prompt, fedSeq } = buildTurnPrompt({
     messages: thread,
     lastFedSeq: rec.lastFedSeq,
@@ -1248,7 +1265,7 @@ export async function runMentionTurn(
     channelId,
     threadRootId: anchor,
     now: new Date((deps.now ?? Date.now)()),
-    ...(target.wake ? { wake: target.wake } : {}),
+    ...(target.wake ? { wake: { ...target.wake, ...(alreadyReported ? { alreadyReported } : {}) } } : {}),
     ...(watchOrigin ? { watchOrigin } : {}),
     ...(target.canceledWakes?.length ? { canceledWakes: target.canceledWakes } : {}),
     ...(target.startedIn ? { startedIn: target.startedIn } : {}),
