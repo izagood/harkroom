@@ -249,6 +249,30 @@ describe('localMcp 포트 — 원격 MCP 인증 (2026-09-30)', () => {
     expect((await port.list()).servers.find((x) => x.name === 'slack')).toMatchObject({ oauthClientId: 'OWN' });
   });
 
+  it('콜백 포트를 바꾸거나 비우면 옛 토큰을 버리고 파일에 그대로 적는다 — 같은 값이면 건드리지 않는다', async () => {
+    const { registryPath } = await fresh();
+    const f = fakeOAuth();
+    const port = createLocalMcpPort({ registryPath, claudeConfigPath: null, oauth: f.oauth });
+    const url = 'https://mcp.example.com/mcp';
+    const onDisk = async () => JSON.parse(await readFile(registryPath, 'utf8')).remote.oauth;
+    await port.set('remote', { type: 'http', url, oauth: { clientId: 'c', callbackPort: 4555 } });
+    f.calls.length = 0;
+    await port.set('remote', { type: 'http', url, oauth: { clientId: 'c', callbackPort: 4555 } });
+    expect(f.calls).toEqual([]);
+    await port.set('remote', { type: 'http', url, oauth: { clientId: 'c', callbackPort: 4556 } });
+    expect(f.calls).toEqual(['forget:remote']);
+    expect(await onDisk()).toEqual({ clientId: 'c', callbackPort: 4556 });
+    f.calls.length = 0;
+    await port.set('remote', { type: 'http', url, oauth: { clientId: 'c' } });
+    expect(f.calls).toEqual(['forget:remote']);
+    expect(await onDisk()).toEqual({ clientId: 'c' });
+    f.calls.length = 0;
+    await port.set('remote', { type: 'sse', url, oauth: { clientId: 'c', callbackPort: 4557 } });
+    expect(f.calls).toEqual(['forget:remote']);
+    expect(JSON.parse(await readFile(registryPath, 'utf8')).remote).toEqual({ type: 'sse', url, oauth: { clientId: 'c', callbackPort: 4557 } });
+    expect((await port.list()).servers[0]).toMatchObject({ oauthCallbackPort: 4557, transport: 'sse' });
+  });
+
   it('URL 이 바뀌면 비운 Client ID 를 유지하지 않는다 — 옛 클라이언트는 새 서버의 것이 아니다(security #1453 n4)', async () => {
     const { registryPath } = await fresh();
     const f = fakeOAuth();
