@@ -127,6 +127,7 @@ export function createLocalMcpPort(deps: { registryPath: string; claudeConfigPat
       const prev = table[name];
       const prevClientId = isRecord(prev) && isRecord(prev.oauth) && typeof prev.oauth.clientId === 'string' ? prev.oauth.clientId : undefined;
       const prevUrl = isRecord(prev) && typeof prev.url === 'string' ? prev.url : undefined;
+      const prevPort = isRecord(prev) && isRecord(prev.oauth) && typeof prev.oauth.callbackPort === 'number' ? prev.oauth.callbackPort : undefined;
       // Client ID 칸을 비워 보냈으면 **같은 URL 일 때만** 지금 값을 유지한다(MCP 설정 v2 PR3) — 비움이 공용 앱으로
       // 되돌리는 것이 되면 토큰 칸 상한이 있는 서버에서 서로 밀어낸다(security #1244 n1). URL 이 바뀌면 그 클라이언트는
       // 새 서버의 것이 아니므로 따라가지 않는다(security #1453 n4). 공용으로 되돌리기는 프리셋 값을 명시해 보낸다.
@@ -139,7 +140,10 @@ export function createLocalMcpPort(deps: { registryPath: string; claudeConfigPat
       await writeTable(deps.registryPath, table);
       // 클라이언트를 갈아탔으면 옛 토큰을 버린다 — 남겨 두면 1분 refresh 가 옛 클라이언트로 계속 돌린다
       // (security F2). 같은 clientId 로 다시 넣으면 토큰을 건드리지 않는다.
-      if (prev !== undefined && prevClientId !== nextClientId) await deps.oauth?.forget(name);
+      // 콜백 포트를 고쳤을 때도 같다 — 등록된 redirect 가 바뀌었다는 뜻이라 새 값으로 다시 인증하게 한다. oauth 블록 없이 온
+      // 저장은 포트를 고친 것이 아니다(옛 앱이 URL 만 고칠 때의 모양이다).
+      const portChanged = given !== undefined && prevPort !== given.callbackPort;
+      if (prev !== undefined && (prevClientId !== nextClientId || portChanged)) await deps.oauth?.forget(name);
     },
     async setStdio(name, definition, keepEnv) {
       const table = await readTable(deps.registryPath);

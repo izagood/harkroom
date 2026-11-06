@@ -12,6 +12,8 @@
  * - 회사 앱 Client ID 같은 값은 화면에 끝 4자리만 보인다. 정의에만 있고 공개 프리셋에는 없다.
  * - 권한(`agent.privileged`)이 없으면 커뮤니티에 새 이름을 등록할 수 없다 — 이미 있는 이름에 이 맥 정의를
  *   넣는 것은 된다(내 맥이다).
+ * - 원격 정의에는 OAuth 콜백 포트 칸이 있다. Client ID 와 달리 비우면 **지운다**(남는 포트를 쓴다) — 값을 다 보여 주므로 비움이
+ *   뜻하는 바가 모호하지 않다. 프리셋을 그대로 쓰는 동안에는 칸이 없다(slack 은 등록된 3118 고정).
  * - 연결 방식이 stdio 면 URL·Client ID 대신 명령·인자·환경 변수를 받는다. 저장을 누르면 Rust 가 OS 확인창에서 그 명령을
  *   보여 주고 묻는다(`mcp_stdio_confirm.rs`) — 웹뷰가 혼자 실행할 프로그램을 고르지 못한다는 경계(#431)를 지키는 자리다.
  *   목록은 env 값을 돌려주지 않으므로 편집에서 값을 비운 이름은 지금 값을 두는데, 명령·인자가 그대로일 때만이다.
@@ -48,6 +50,8 @@ export function clientIdTail(id: string): string {
  */
 export function buildMcpDefinition(input: {
   name: string; url: string; clientId: string; revert: boolean; entry?: OperatorMcpEntry; transport?: OperatorMcpRemoteDefinition['type'];
+  /** 콜백 포트 칸의 값. `null` 은 비움(지운다), 없으면 칸이 없던 것이라 지금 값을 지킨다. */
+  callbackPort?: number | null;
 }): OperatorMcpRemoteDefinition {
   const url = input.url.trim();
   const preset = presetForName(input.name);
@@ -55,7 +59,8 @@ export function buildMcpDefinition(input: {
   const base: OperatorMcpRemoteDefinition = preset && preset.definition.url === url && preset.definition.type === type ? preset.definition : { type, url };
   let oauth = base.oauth ? { ...base.oauth } : input.entry?.oauth ? {} : undefined;
   // 프리셋이 아닌 정의는 손으로 넣은 callbackPort 를 지킨다(목록이 실어 준다, PR3).
-  if (!base.oauth?.callbackPort && input.entry?.oauthCallbackPort) oauth = { ...(oauth ?? {}), callbackPort: input.entry.oauthCallbackPort };
+  if (input.callbackPort === undefined && !base.oauth?.callbackPort && input.entry?.oauthCallbackPort) oauth = { ...(oauth ?? {}), callbackPort: input.entry.oauthCallbackPort };
+  if (typeof input.callbackPort === 'number') oauth = { ...(oauth ?? {}), callbackPort: input.callbackPort };
   const typed = input.clientId.trim();
   // 칸을 비우면 지금 Client ID 를 유지한다 — 단 **URL 이 그대로일 때만**. 옛 클라이언트는 새 서버의 것이 아니다
   // (security #1453 n4, 오퍼레이터 `localMcp.set` 과 같은 규칙).
@@ -65,6 +70,16 @@ export function buildMcpDefinition(input: {
   // 되돌리기는 프리셋 값을 **명시해** 보낸다 — 비워 보내면 오퍼레이터가 지금 값을 유지한다(PR3).
   else if (input.revert && preset?.definition.oauth?.clientId) oauth = { ...(oauth ?? {}), clientId: preset.definition.oauth.clientId };
   return oauth ? { ...base, oauth } : { type: base.type, url: base.url, ...(base.headers ? { headers: base.headers } : {}) };
+}
+
+/** 콜백 포트 칸 읽기. 빈 칸은 `null`, 받을 수 없는 값은 `'invalid'`. 파일에 이미 있는 값(`current`)은 범위 밖이어도 지킨다. */
+export function parseCallbackPort(text: string, current?: number): number | null | 'invalid' {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  if (!/^\d{1,5}$/.test(trimmed)) return 'invalid';
+  const port = Number(trimmed);
+  if (port === current) return port;
+  return port >= 1024 && port <= 65535 ? port : 'invalid';
 }
 
 /** 인자 칸은 한 줄에 인자 하나다 — 앞뒤 공백과 빈 줄은 버리고, 줄 안의 공백은 그 인자의 일부다. */
@@ -135,6 +150,7 @@ export function McpServerDialog({ mode, registry, canEdit, attach, onDone, onCan
   const [url, setUrl] = useState((stdioEntry ? undefined : entry?.target) ?? (fixedRow ? (presetForName(fixedRow.name)?.definition.url ?? '') : first.definition.url));
   const [kind, setKind] = useState<McpServerRow['credentialKind']>(fixedRow?.credentialKind ?? first.credentialKind);
   const [clientId, setClientId] = useState('');
+  const [callbackPort, setCallbackPort] = useState(entry?.oauthCallbackPort ? String(entry.oauthCallbackPort) : '');
   const [command, setCommand] = useState(stdioEntry?.target ?? '');
   const [argsText, setArgsText] = useState((stdioEntry?.args ?? []).join('\n'));
   const [envRows, setEnvRows] = useState<McpEnvRow[]>(() => (stdioEntry?.envKeys ?? []).map((key, id) => ({ id, key, value: '', existing: true })));
@@ -157,6 +173,7 @@ export function McpServerDialog({ mode, registry, canEdit, attach, onDone, onCan
     const p = MCP_PRESETS.find((x) => x.id === id);
     if (p) { setName(p.name); setUrl(p.definition.url); setKind(p.credentialKind); setTransport(p.definition.type); } else { setName(''); setUrl(''); setKind('personal'); }
     setClientId('');
+    setCallbackPort('');
   };
 
   const placeholder = mode.kind === 'edit' && entry?.oauthClientId
@@ -166,6 +183,8 @@ export function McpServerDialog({ mode, registry, canEdit, attach, onDone, onCan
   const ownApp = !!current && current !== presetClientId;
 
   const isStdio = !remoteOnly && transport === 'stdio';
+  // 프리셋 주소를 그대로 쓰는 동안에는 칸이 없다 — 그 서비스에 등록된 값이 정해져 있다.
+  const showCallbackPort = !remoteOnly && !isStdio && !(preset && preset.definition.url === url.trim());
   const showTransport = !remoteOnly && (presetId === 'custom' || !!stdioEntry);
   const stdioProgram = { command: command.trim(), args: parseMcpArgs(argsText) };
   const programSame = !!stdioEntry && sameMcpProgram(stdioProgram, { command: stdioEntry.target, args: stdioEntry.args });
@@ -212,6 +231,8 @@ export function McpServerDialog({ mode, registry, canEdit, attach, onDone, onCan
       }
       plan = planned;
     } else if (!remoteOnly && !/^https?:\/\//.test(url.trim())) { setError(t('agents.mcp.errUrl')); return; }
+    const parsedPort = showCallbackPort ? parseCallbackPort(callbackPort, entry?.oauthCallbackPort) : undefined;
+    if (parsedPort === 'invalid') { setError(t('mcpServers.dialog.errCallbackPort')); return; }
     if (!registry.some((r) => r.name === n) && !canEdit) { setError(t('mcpServers.dialog.needPrivilege')); return; }
     setBusy(true);
     try {
@@ -221,7 +242,7 @@ export function McpServerDialog({ mode, registry, canEdit, attach, onDone, onCan
         if (!registry.some((r) => r.name === n)) await getController().putMcpServer(n, kind);
         // 원격 배정 에이전트에서 열었으면 이 맥 정의는 넣지 않는다 — 그 에이전트는 그 호스트의 정의를 쓴다.
         const remoteTransport = transport === 'sse' ? 'sse' : 'http';
-        if (!remoteOnly) await setLocalMcpServer(n, buildMcpDefinition({ name: n, url, clientId, revert, transport: remoteTransport, ...(entry && entry.transport !== 'stdio' ? { entry } : {}) }));
+        if (!remoteOnly) await setLocalMcpServer(n, buildMcpDefinition({ name: n, url, clientId, revert, transport: remoteTransport, ...(entry && entry.transport !== 'stdio' ? { entry } : {}), ...(parsedPort !== undefined ? { callbackPort: parsedPort } : {}) }));
       }
       onDone({ name: n, attach: !!attach && attachOn });
     } catch (e) {
@@ -334,11 +355,23 @@ export function McpServerDialog({ mode, registry, canEdit, attach, onDone, onCan
             </p>
           </div>
         )}
-        {!remoteOnly && !isStdio && <label className="flex flex-col gap-1 text-meta text-fg">
-          {t('agents.mcp.clientId')}
-          <input className={`${field} font-mono`} value={clientId} disabled={busy}
-            onChange={(e) => { setClientId(e.target.value); setRevert(false); }}
-            placeholder={placeholder} autoComplete="off" spellCheck={false} data-testid="mcp-dialog-client-id" />
+        {!remoteOnly && !isStdio && <div className="flex flex-col gap-1 text-meta text-fg">
+          <div className="flex items-start gap-2">
+            <label className="flex min-w-0 flex-1 flex-col gap-1">
+              {t('agents.mcp.clientId')}
+              <input className={`${field} font-mono`} value={clientId} disabled={busy}
+                onChange={(e) => { setClientId(e.target.value); setRevert(false); }}
+                placeholder={placeholder} autoComplete="off" spellCheck={false} data-testid="mcp-dialog-client-id" />
+            </label>
+            {showCallbackPort && (
+              <label className="flex w-40 shrink-0 flex-col gap-1">
+                {t('mcpServers.dialog.callbackPort')}
+                <input className={`${field} font-mono`} value={callbackPort} disabled={busy} inputMode="numeric"
+                  onChange={(e) => setCallbackPort(e.target.value)} placeholder={t('mcpServers.dialog.callbackPortAuto')}
+                  autoComplete="off" spellCheck={false} data-testid="mcp-dialog-callback-port" />
+              </label>
+            )}
+          </div>
           {mode.kind === 'edit' && current && (
             <span className="text-fg-subtle" data-testid="mcp-dialog-client-current">
               {revert
@@ -352,9 +385,10 @@ export function McpServerDialog({ mode, registry, canEdit, attach, onDone, onCan
           )}
           <span className="text-fg-subtle">{t('mcpServers.dialog.noteOwnApp')}</span>
           <span className="text-fg-subtle">{t('mcpServers.dialog.notePkce')}</span>
-          {mode.kind === 'edit' && <span className="text-fg-subtle">{t('mcpServers.dialog.noteChange')}</span>}
+          {showCallbackPort && <span className="text-fg-subtle" data-testid="mcp-dialog-callback-note">{t('mcpServers.dialog.noteCallbackPort')}</span>}
+          {mode.kind === 'edit' && <span className="text-fg-subtle" data-testid="mcp-dialog-note-change">{showCallbackPort ? t('mcpServers.dialog.noteChangeWithPort') : t('mcpServers.dialog.noteChange')}</span>}
           {mode.kind === 'edit' && <span className="text-fg-subtle">{t('mcpServers.dialog.noteSignInAgain')}</span>}
-        </label>}
+        </div>}
         {attach && (
           <label className="flex items-start gap-1.5 text-meta text-fg">
             <input type="checkbox" className="mt-0.5" checked={attachOn} disabled={busy} data-testid="mcp-dialog-attach"

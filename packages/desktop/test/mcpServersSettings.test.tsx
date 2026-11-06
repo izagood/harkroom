@@ -11,7 +11,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { McpServersSection, formatMcpCommand } from '../src/components/settings/McpServersSettings';
-import { buildMcpDefinition, parseMcpArgs, planMcpEnv } from '../src/components/settings/McpServerDialog';
+import { buildMcpDefinition, parseCallbackPort, parseMcpArgs, planMcpEnv } from '../src/components/settings/McpServerDialog';
 import { MCP_PRESETS } from '../src/lib/mcpPresets';
 import { setController, type Controller } from '../src/state/controller';
 import { resetCommunityRegistry, useActiveStore } from '../src/state/communities';
@@ -507,6 +507,106 @@ describe('McpServersSettings — stdio', () => {
   });
 });
 
+describe('McpServersSettings — OAuth 콜백 포트', () => {
+  const url = 'https://mcp.example.com/mcp';
+  const openCustomAdd = async () => {
+    fireEvent.click(await screen.findByTestId('mcp-server-add-open'));
+    fireEvent.change(screen.getAllByRole('combobox')[0]!, { target: { value: 'custom' } });
+    fireEvent.change(screen.getByTestId('mcp-dialog-name'), { target: { value: 'remote' } });
+    fireEvent.change(screen.getByTestId('mcp-dialog-url'), { target: { value: url } });
+  };
+  const sent = (calls: { cmd: string; args?: Record<string, unknown> }[]) => calls.find((x) => x.cmd === 'operator_mcp_set')?.args;
+
+  it('추가 창에서 넣은 포트를 정의로 보낸다 — HTTP·SSE 둘 다', async () => {
+    for (const transport of ['http', 'sse']) {
+      fake([]);
+      useActiveStore.setState({ me: me(['agent.privileged']) });
+      const calls = local([]);
+      render(<McpServersSection />);
+      await openCustomAdd();
+      fireEvent.change(screen.getByTestId('mcp-dialog-transport'), { target: { value: transport } });
+      fireEvent.change(screen.getByTestId('mcp-dialog-client-id'), { target: { value: 'client-a' } });
+      fireEvent.change(screen.getByTestId('mcp-dialog-callback-port'), { target: { value: ' 4555 ' } });
+      fireEvent.click(screen.getByTestId('mcp-dialog-submit'));
+      await waitFor(() => expect(sent(calls)).toMatchObject({ name: 'remote', definition: { type: transport, url, oauth: { clientId: 'client-a', callbackPort: 4555 } } }));
+      cleanup();
+    }
+  });
+
+  it('받을 수 없는 값은 창 안에서 말하고 보내지 않는다', async () => {
+    fake([]);
+    useActiveStore.setState({ me: me(['agent.privileged']) });
+    const calls = local([]);
+    render(<McpServersSection />);
+    await openCustomAdd();
+    for (const bad of ['80', '65536', 'abc', '45.5']) {
+      fireEvent.change(screen.getByTestId('mcp-dialog-callback-port'), { target: { value: bad } });
+      fireEvent.click(screen.getByTestId('mcp-dialog-submit'));
+      expect((await screen.findByRole('alert')).textContent).toContain('1024~65535');
+    }
+    expect(sent(calls)).toBeUndefined();
+  });
+
+  it('편집은 지금 값을 보이고, 바꾸거나 비우면 그대로 보내며 로그인이 풀린다고 말한다', async () => {
+    fake([{ name: 'remote', credentialKind: 'personal' }]);
+    useActiveStore.setState({ me: me([]) });
+    const row = remote('remote', { state: 'ok' }, { target: url, oauthClientId: 'client-a', oauthCallbackPort: 4555 });
+    let calls = local([row]);
+    render(<McpServersSection />);
+    fireEvent.click(await screen.findByTestId('mcp-cell-primary-remote'));
+    expect((screen.getByTestId('mcp-dialog-callback-port') as HTMLInputElement).value).toBe('4555');
+    expect(screen.getByTestId('mcp-dialog-note-change').textContent).toContain('콜백 포트');
+    fireEvent.change(screen.getByTestId('mcp-dialog-callback-port'), { target: { value: '4556' } });
+    fireEvent.click(screen.getByTestId('mcp-dialog-submit'));
+    await waitFor(() => expect(sent(calls)).toMatchObject({ definition: { oauth: { clientId: 'client-a', callbackPort: 4556 } } }));
+    cleanup();
+
+    calls = local([row]);
+    render(<McpServersSection />);
+    fireEvent.click(await screen.findByTestId('mcp-cell-primary-remote'));
+    fireEvent.change(screen.getByTestId('mcp-dialog-callback-port'), { target: { value: '' } });
+    fireEvent.click(screen.getByTestId('mcp-dialog-submit'));
+    await waitFor(() => expect(sent(calls)).toBeDefined());
+    expect((sent(calls)!.definition as { oauth: unknown }).oauth).toEqual({ clientId: 'client-a' });
+  });
+
+  it('프리셋을 그대로 쓰면 칸이 없고 등록된 포트를 보낸다. stdio 에도 칸이 없다', async () => {
+    fake([]);
+    useActiveStore.setState({ me: me(['agent.privileged']) });
+    const calls = local([]);
+    render(<McpServersSection />);
+    fireEvent.click(await screen.findByTestId('mcp-server-add-open'));
+    expect(screen.queryByTestId('mcp-dialog-callback-port')).toBeNull();
+    fireEvent.click(screen.getByTestId('mcp-dialog-submit'));
+    await waitFor(() => expect(sent(calls)).toBeDefined());
+    const preset = MCP_PRESETS[0]!.definition;
+    expect((sent(calls)!.definition as { oauth?: { callbackPort?: number } }).oauth?.callbackPort).toBe(preset.oauth?.callbackPort);
+    cleanup();
+
+    fake([]);
+    useActiveStore.setState({ me: me(['agent.privileged']) });
+    local([]);
+    render(<McpServersSection />);
+    await openCustomAdd();
+    expect(screen.getByTestId('mcp-dialog-callback-port')).toBeTruthy();
+    fireEvent.change(screen.getByTestId('mcp-dialog-transport'), { target: { value: 'stdio' } });
+    expect(screen.queryByTestId('mcp-dialog-callback-port')).toBeNull();
+  });
+
+  it('parseCallbackPort — 파일에 이미 있는 범위 밖 값은 그대로 지킨다', () => {
+    expect(parseCallbackPort('')).toBeNull();
+    expect(parseCallbackPort('  ')).toBeNull();
+    expect(parseCallbackPort('1024')).toBe(1024);
+    expect(parseCallbackPort('65535')).toBe(65535);
+    expect(parseCallbackPort('1023')).toBe('invalid');
+    expect(parseCallbackPort('65536')).toBe('invalid');
+    expect(parseCallbackPort('1e4')).toBe('invalid');
+    expect(parseCallbackPort('-1')).toBe('invalid');
+    expect(parseCallbackPort('80', 80)).toBe(80);
+    expect(parseCallbackPort('81', 80)).toBe('invalid');
+  });
+});
+
 describe('buildMcpDefinition', () => {
   const entry = (over: Record<string, unknown>) => ({ name: 'x', source: 'operator', transport: 'http', target: 'https://x.example.com/mcp', args: [], envKeys: [], headerKeys: [], oauth: true, ...over }) as never;
   it('입력한 Client ID 가 지금 값을 이긴다', () => {
@@ -526,6 +626,12 @@ describe('buildMcpDefinition', () => {
   it('프리셋이 아닌 정의는 목록의 callbackPort 를 지킨다', () => {
     expect(buildMcpDefinition({ name: 'x', url: 'https://x.example.com/mcp', clientId: '', revert: false, entry: entry({ oauthCallbackPort: 4555 }) }))
       .toEqual({ type: 'http', url: 'https://x.example.com/mcp', oauth: { callbackPort: 4555 } });
+  });
+  it('콜백 포트 칸의 값이 지금 값을 이긴다 — 비우면 지운다', () => {
+    const base = { name: 'x', url: 'https://x.example.com/mcp', clientId: '', revert: false, entry: entry({ oauthCallbackPort: 4555 }) };
+    expect(buildMcpDefinition({ ...base, callbackPort: 4600 })).toEqual({ type: 'http', url: base.url, oauth: { callbackPort: 4600 } });
+    expect(buildMcpDefinition({ ...base, callbackPort: null })).toEqual({ type: 'http', url: base.url, oauth: {} });
+    expect(buildMcpDefinition({ name: 'x', url: base.url, clientId: '', revert: false, callbackPort: 4600 })).toEqual({ type: 'http', url: base.url, oauth: { callbackPort: 4600 } });
   });
   it('slack 을 되돌리면 URL 을 바꿨어도 프리셋 Client ID 를 명시해 보낸다', () => {
     const slack = (over: Record<string, unknown>) => entry({ name: 'slack', target: 'https://mcp.slack.com/mcp', oauthClientId: 'own-1', ...over });
