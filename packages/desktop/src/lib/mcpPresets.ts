@@ -7,7 +7,7 @@
  * `oauth.clientId`·`callbackPort` 는 그 흐름이 쓰는 값이다(slack 은 등록된 redirect 가 3118). 토큰은
  * 오퍼레이터가 **서버 이름**을 키로 든다 — 이름을 바꾸면 다시 인증해야 하므로 프리셋 이름은 고정해 둔다.
  *
- * 앱은 http·sse 만 넣는다(stdio 는 오퍼레이터가 거절한다, #431).
+ * 프리셋은 http·sse 뿐이다. stdio 는 사람이 명령을 적고 OS 확인창에서 허락한다(`mcp_stdio_confirm.rs`).
  */
 import type { OperatorMcpRemoteDefinition } from '@harkroom/shared/daemonProtocol';
 

@@ -15,6 +15,7 @@ mod daemon_client;
 mod external_link;
 mod fda_probe;
 mod login_path;
+mod mcp_stdio_confirm;
 mod notification;
 mod pinch_zoom;
 mod concealed_clipboard;
@@ -781,6 +782,35 @@ async fn operator_mcp_set(
     .await
 }
 
+/// stdio MCP 정의를 넣는다. 그 명령은 에이전트 턴이 그대로 실행하므로, 웹뷰의 말만으로는 넣지 않는다 — 여기 Rust 가
+/// 띄우는 OS 확인창에서 사람이 그 명령을 보고 허락해야 소켓으로 나간다(`mcp_stdio_confirm.rs`). 거절은 오류가 아니라
+/// `{ declined: true }` 다. `operator_mcp_set` 은 여전히 stdio 를 못 싣는다.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+async fn operator_mcp_set_stdio(
+    app: tauri::AppHandle,
+    webview: tauri::Webview,
+    name: String,
+    command: String,
+    args: Vec<String>,
+    env: std::collections::BTreeMap<String, String>,
+    keep_env: Vec<String>,
+    locale: String,
+    community: Option<String>,
+) -> Result<serde_json::Value, String> {
+    mcp_stdio_confirm::ensure_main_window(webview.label())?;
+    let request = mcp_stdio_confirm::StdioRequest { name, command, args, env, keep_env };
+    mcp_stdio_confirm::check(&request)?;
+    on_daemon_pool(app, move |app, state| {
+        if !mcp_stdio_confirm::ask_human(app, &request, &locale)? {
+            return Ok(serde_json::json!({ "declined": true }));
+        }
+        let (conn, _kind) = daemon_client::ensure_daemon(app, state, community.as_deref())?;
+        conn.operator_mcp_set_stdio(&request)
+    })
+    .await
+}
+
 #[tauri::command]
 async fn operator_mcp_remove(
     app: tauri::AppHandle,
@@ -1206,6 +1236,7 @@ fn main() {
             operator_agent_provider_lane_set,
             operator_mcp_list,
             operator_mcp_set,
+            operator_mcp_set_stdio,
             operator_mcp_remove,
             operator_merge_get,
             operator_merge_set,

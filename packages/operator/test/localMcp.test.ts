@@ -2,7 +2,7 @@ import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { readOperatorMcpRemovePayload, readOperatorMcpSetPayload } from '@harkroom/shared/daemonProtocol';
+import { readOperatorMcpRemovePayload, readOperatorMcpSetPayload, readOperatorMcpSetStdioPayload } from '@harkroom/shared/daemonProtocol';
 import { createLocalMcpPort } from '../src/localMcp.js';
 
 async function fresh() {
@@ -52,6 +52,118 @@ describe('localMcp 포트', () => {
     const port = createLocalMcpPort({ registryPath, claudeConfigPath: null });
     await expect(port.set('slack', { type: 'http', url: 'https://x' })).rejects.toThrow();
     expect(await readFile(registryPath, 'utf8')).toBe('{ not json');
+  });
+});
+
+describe('localMcp 포트 — stdio 정의', () => {
+  const read = async (path: string) => JSON.parse(await readFile(path, 'utf8'));
+
+  it('명령·인자·env 를 0600 파일에 쓰고, 러너 설정이 읽는 모양 그대로다', async () => {
+    const { registryPath } = await fresh();
+    const port = createLocalMcpPort({ registryPath, claudeConfigPath: null });
+    await port.setStdio('files', { type: 'stdio', command: '/opt/files-mcp', args: ['--root', '/srv'], env: { TOKEN: 'SECRET' } }, []);
+    expect(await read(registryPath)).toEqual({ files: { type: 'stdio', command: '/opt/files-mcp', args: ['--root', '/srv'], env: { TOKEN: 'SECRET' } } });
+    expect((await stat(registryPath)).mode & 0o777).toBe(0o600);
+    const listed = await port.list();
+    expect(JSON.stringify(listed)).not.toContain('SECRET');
+    expect(listed.servers[0]).toMatchObject({ transport: 'stdio', target: '/opt/files-mcp', args: ['--root', '/srv'], envKeys: ['TOKEN'] });
+  });
+
+  it('명령·인자가 그대로면 값을 비운 env 는 지금 값을 두고, 앱이 모르는 칸도 지킨다', async () => {
+    const { dir, registryPath } = await fresh();
+    await (await import('node:fs/promises')).mkdir(join(dir, 'operator'), { recursive: true });
+    await writeFile(registryPath, JSON.stringify({ files: { command: 'files-mcp', args: ['a'], env: { TOKEN: 'OLD', DROP: 'x' }, alwaysLoad: true } }));
+    const port = createLocalMcpPort({ registryPath, claudeConfigPath: null });
+    await port.setStdio('files', { type: 'stdio', command: 'files-mcp', args: ['a'], env: { MORE: 'new' } }, ['TOKEN']);
+    expect(await read(registryPath)).toEqual({ files: { type: 'stdio', command: 'files-mcp', args: ['a'], env: { TOKEN: 'OLD', MORE: 'new' }, alwaysLoad: true } });
+  });
+
+  it.each([
+    ['명령이 바뀌면', { type: 'stdio' as const, command: 'other', args: ['a'] }, ['TOKEN']],
+    ['인자가 바뀌면', { type: 'stdio' as const, command: 'files-mcp', args: ['b'] }, ['TOKEN']],
+    ['없는 이름이면', { type: 'stdio' as const, command: 'files-mcp', args: ['a'] }, ['NOPE']],
+  ])('%s 옛 값을 두지 않고 거절한다 — 파일도 그대로다', async (_label, def, keep) => {
+    const { dir, registryPath } = await fresh();
+    await (await import('node:fs/promises')).mkdir(join(dir, 'operator'), { recursive: true });
+    const before = JSON.stringify({ files: { command: 'files-mcp', args: ['a'], env: { TOKEN: 'OLD' } } });
+    await writeFile(registryPath, before);
+    const port = createLocalMcpPort({ registryPath, claudeConfigPath: null });
+    await expect(port.setStdio('files', def, keep)).rejects.toThrow();
+    expect(await readFile(registryPath, 'utf8')).toBe(before);
+  });
+
+  it('원격을 stdio 로 바꾸면 토큰을 버리고 원격 칸을 잇지 않는다. stdio 를 고쳐도 토큰 저장소는 건드리지 않는다', async () => {
+    const { registryPath } = await fresh();
+    const forgot: string[] = [];
+    const oauth = { forget: async (n: string) => { forgot.push(n); } } as unknown as NonNullable<Parameters<typeof createLocalMcpPort>[0]['oauth']>;
+    const port = createLocalMcpPort({ registryPath, claudeConfigPath: null, oauth });
+    await port.set('files', { type: 'http', url: 'https://mcp.example.com/mcp', oauth: { clientId: 'c' } });
+    await port.setStdio('files', { type: 'stdio', command: 'files-mcp' }, []);
+    expect(await read(registryPath)).toEqual({ files: { type: 'stdio', command: 'files-mcp' } });
+    expect(forgot).toEqual(['files']);
+    await port.setStdio('files', { type: 'stdio', command: 'files-mcp', args: ['x'] }, []);
+    expect(forgot).toEqual(['files']);
+  });
+});
+
+describe('readOperatorMcpSetStdioPayload', () => {
+  const ok = { name: 'files', command: '/opt/files-mcp', args: ['--root', '/srv/my data'], env: { TOKEN: 'v' }, keepEnv: ['KEPT'] };
+
+  it('절대 경로·맨 이름을 받고 모양을 고르게 돌려준다', () => {
+    expect(readOperatorMcpSetStdioPayload(ok)).toEqual({
+      name: 'files', definition: { type: 'stdio', command: '/opt/files-mcp', args: ['--root', '/srv/my data'], env: { TOKEN: 'v' } }, keepEnv: ['KEPT'],
+    });
+    expect(readOperatorMcpSetStdioPayload({ name: 'files', command: 'npx' })).toEqual({ name: 'files', definition: { type: 'stdio', command: 'npx' }, keepEnv: [] });
+  });
+
+  it.each([
+    ['상대 경로(작업 폴더 저장소의 파일을 실행한다)', { ...ok, command: './evil' }],
+    ['이름 속 경로', { ...ok, command: 'a/b' }],
+    ['~ 는 풀리지 않는다', { ...ok, command: '~/bin/x' }],
+    ['.. 경로', { ...ok, command: '/opt/../bin/x' }],
+    ['빈 명령', { ...ok, command: '' }],
+    ['앞뒤 공백', { ...ok, command: ' /opt/x' }],
+    ['방향 바꾸기 글자', { ...ok, args: ['a\u202Eb'] }],
+    ['폭 없는 글자', { ...ok, command: '/opt/\u200Bx' }],
+    ['줄바꿈', { ...ok, args: ['a\nb'] }],
+    ['긴 공백', { ...ok, args: ['a    b'] }],
+    ['문자열이 아닌 인자', { ...ok, args: [1] }],
+    ['인자 25개', { ...ok, args: Array(25).fill('a') }],
+    ['인자 하나가 긴 것', { ...ok, args: ['a'.repeat(513)] }],
+    ['합계가 긴 것', { ...ok, args: Array(16).fill('a'.repeat(100)) }],
+    ['예약 이름', { ...ok, name: 'harkroom' }],
+    ['env 이름 문법', { ...ok, env: { 'A=B': 'v' } }],
+    ['DYLD_', { ...ok, env: { DYLD_INSERT_LIBRARIES: '/x' } }],
+    ['LD_', { ...ok, env: { LD_PRELOAD: '/x' } }],
+    ['NODE_OPTIONS', { ...ok, env: { node_options: '--require /x' } }],
+    ['PATH', { ...ok, env: { PATH: '/x' } }],
+    ['npm_config_registry', { ...ok, env: { npm_config_registry: 'https://evil.example.com' } }],
+    ['NPM_CONFIG_', { ...ok, env: { NPM_CONFIG_USERCONFIG: '/x' } }],
+    ['PIP_', { ...ok, env: { PIP_INDEX_URL: 'https://evil.example.com' } }],
+    ['UV_', { ...ok, env: { UV_INDEX_URL: 'https://evil.example.com' } }],
+    ['JAVA_TOOL_OPTIONS', { ...ok, env: { JAVA_TOOL_OPTIONS: '-javaagent:/x' } }],
+    ['_JAVA_OPTIONS', { ...ok, env: { _JAVA_OPTIONS: '-javaagent:/x' } }],
+    ['JDK_JAVA_OPTIONS', { ...ok, env: { JDK_JAVA_OPTIONS: '-javaagent:/x' } }],
+    ['LUA_', { ...ok, env: { LUA_INIT: '@/x' } }],
+    ['GIT_', { ...ok, env: { GIT_SSH_COMMAND: '/x' } }],
+    ['HOME', { ...ok, env: { HOME: '/x' } }],
+    ['XDG_', { ...ok, env: { XDG_CONFIG_HOME: '/x' } }],
+    ['*_PROXY', { ...ok, env: { https_proxy: 'http://evil.example.com' } }],
+    ['값에 NUL', { ...ok, env: { TOKEN: 'a\0b' } }],
+    ['둘 다 있는 이름', { ...ok, keepEnv: ['TOKEN'] }],
+  ])('%s 는 거절한다', (_label, payload) => {
+    expect(readOperatorMcpSetStdioPayload(payload)).toMatchObject({ code: 'bad-payload' });
+  });
+
+  it('토큰 변수는 막지 않고, 그대로 두는 이름은 목록 검사를 건너뛴다', () => {
+    const env = { GITHUB_TOKEN: 'v', API_TOKEN: 'v', OPENAI_API_KEY: 'v' };
+    expect(readOperatorMcpSetStdioPayload({ ...ok, env })).toMatchObject({ definition: { env } });
+    expect(readOperatorMcpSetStdioPayload({ ...ok, env: {}, keepEnv: ['HOME', 'npm_config_registry'] })).toMatchObject({ keepEnv: ['HOME', 'npm_config_registry'] });
+  });
+
+  it('operatorMcpSet 으로는 여전히 stdio 를 못 넣는다', () => {
+    expect(readOperatorMcpSetPayload({ name: 'files', definition: { type: 'stdio', command: 'x' } })).toMatchObject({ code: 'bad-payload' });
+    expect(readOperatorMcpSetPayload({ name: 'files', definition: { command: 'x' } })).toMatchObject({ code: 'bad-payload' });
   });
 });
 

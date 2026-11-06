@@ -50,7 +50,24 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
 # 첨부 저장 뒤 [Finder에서 보기] — `NSWorkspace activateFileViewerSelectingURLs:` 하나만 쓴다
 # (`attachment_save.rs`). `open -R` 처럼 프로세스를 띄우지 않으려고 직접 부른다. 새로 들인 것이 아니다 —
 # Tauri 가 이미 같은 버전을 끌고 있다.
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace"] }
+# stdio MCP 확인창(`mcp_stdio_confirm.rs`)은 NSAlert 시트를 직접 띄운다 — 취소 버튼에 Return 과 Esc 를 둘 다 주려면
+# 버튼과 키 입력에 손이 닿아야 한다.
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+  "std",
+  "block2",
+  "NSWorkspace",
+  "NSAlert",
+  "NSApplication",
+  "NSButton",
+  "NSControl",
+  "NSEvent",
+  "NSGraphics",
+  "NSPanel",
+  "NSResponder",
+  "NSScreen",
+  "NSView",
+  "NSWindow",
+] }
 # 핀치 엿보기(`src/pinch_zoom.rs`) — `NSEvent addLocalMonitorForEventsMatchingMask:handler:` 에 블록을 넘긴다.
 # 새로 들인 것이 아니다 — Tauri 가 이미 같은 버전(0.6.2)을 끌고 있다.
 block2 = "0.6"

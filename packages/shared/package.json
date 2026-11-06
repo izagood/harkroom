@@ -9,6 +9,7 @@
     "./operatorRoots": "./src/operatorRoots.ts",
     "./agentStateRoot": "./src/agentStateRoot.ts",
     "./daemonProtocol": "./src/daemonProtocol.ts",
+    "./mcpStdio": "./src/mcpStdio.ts",
     "./operatorEndpoint": "./src/operatorEndpoint.ts",
     "./operatorProtocol": "./src/operatorProtocol.ts",
     "./runnerLink": "./src/runnerLink.ts",

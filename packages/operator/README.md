@@ -130,7 +130,8 @@ unix 소켓으로 말하는 것이고, 그 어느 것도 네이티브 애드온�
 
 데이터 디렉터리 기본값은 앱의 `app_data_dir` 과 같다(`HARKROOM_DATA_DIR` 로 바꾼다). 그 아래
 `operator/mcp-servers.json` 이 에이전트 `mcpServers` 이름의 정의(`src/mcpConfig.ts`)이고, 없으면
-`~/.claude.json` 을 본다.
+`~/.claude.json` 을 본다. 앱에서는 설정 › 연동 › MCP 서버에서 넣고 고친다. stdio 정의의 명령은 턴이 그대로 실행하므로
+앱이 OS 확인창에서 사람에게 묻고 허락을 받은 뒤에 `operatorMcpSetStdio` 를 보낸다(`desktop/src-tauri/src/mcp_stdio_confirm.rs`).
 
 원격(http·sse) MCP 의 OAuth 토큰은 오퍼레이터가 든다(`src/mcpOAuth.ts`, `operator/secrets/mcp-oauth.json`
 0600). 사람이 앱의 에이전트 상세 › MCP 에서 [인증] 을 한 번 누르면 오퍼레이터가 흐름(보호 자원

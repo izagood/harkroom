@@ -12,6 +12,9 @@
  * - 회사 앱 Client ID 같은 값은 화면에 끝 4자리만 보인다. 정의에만 있고 공개 프리셋에는 없다.
  * - 권한(`agent.privileged`)이 없으면 커뮤니티에 새 이름을 등록할 수 없다 — 이미 있는 이름에 이 맥 정의를
  *   넣는 것은 된다(내 맥이다).
+ * - 연결 방식이 stdio 면 URL·Client ID 대신 명령·인자·환경 변수를 받는다. 저장을 누르면 Rust 가 OS 확인창에서 그 명령을
+ *   보여 주고 묻는다(`mcp_stdio_confirm.rs`) — 웹뷰가 혼자 실행할 프로그램을 고르지 못한다는 경계(#431)를 지키는 자리다.
+ *   목록은 env 값을 돌려주지 않으므로 편집에서 값을 비운 이름은 지금 값을 두는데, 명령·인자가 그대로일 때만이다.
  * - 에이전트 화면의 [+ 추가] 도 이 창을 연다(`attach`, 시안 v2 D4·D12). 「<에이전트> 에 켜기」 칸이 더해지고,
  *   그 에이전트가 **원격 오퍼레이터**에 배정돼 있으면 URL·Client ID 칸을 빼고(그 호스트에서 넣는다) 켜기를 꺼진 채
  *   시작한다 — 켜면 그 호스트에 정의가 생길 때까지 에이전트가 뜨지 않기 때문이다.
@@ -20,10 +23,11 @@ import { useState } from 'react';
 import type { McpServerRow } from '@harkroom/shared';
 import type { OperatorMcpEntry, OperatorMcpRemoteDefinition } from '@harkroom/shared/daemonProtocol';
 import { Overlay } from '../Overlay';
+import { checkMcpEnvKey, checkMcpStdioCommand, sameMcpProgram, type McpStdioProblem } from '@harkroom/shared/mcpStdio';
 import { MCP_PRESETS, presetForName } from '../../lib/mcpPresets';
-import { setLocalMcpServer } from '../../lib/operatorLocal';
+import { setLocalMcpServer, setLocalMcpStdio } from '../../lib/operatorLocal';
 import { getController } from '../../state/controller';
-import { useT } from '../../i18n/useT';
+import { useLocale, useT } from '../../i18n/useT';
 import { errorText } from '../../lib/errorText';
 
 const NAME_RE = /^[a-z0-9-]{1,32}$/;
@@ -43,12 +47,12 @@ export function clientIdTail(id: string): string {
  * 지금 clientId 를 그대로 싣는다 — `revert` 일 때만 바탕(프리셋)의 값으로 돌아간다.
  */
 export function buildMcpDefinition(input: {
-  name: string; url: string; clientId: string; revert: boolean; entry?: OperatorMcpEntry;
+  name: string; url: string; clientId: string; revert: boolean; entry?: OperatorMcpEntry; transport?: OperatorMcpRemoteDefinition['type'];
 }): OperatorMcpRemoteDefinition {
   const url = input.url.trim();
   const preset = presetForName(input.name);
-  const type: OperatorMcpRemoteDefinition['type'] = input.entry?.transport === 'sse' ? 'sse' : 'http';
-  const base: OperatorMcpRemoteDefinition = preset && preset.definition.url === url ? preset.definition : { type, url };
+  const type: OperatorMcpRemoteDefinition['type'] = input.transport ?? (input.entry?.transport === 'sse' ? 'sse' : 'http');
+  const base: OperatorMcpRemoteDefinition = preset && preset.definition.url === url && preset.definition.type === type ? preset.definition : { type, url };
   let oauth = base.oauth ? { ...base.oauth } : input.entry?.oauth ? {} : undefined;
   // 프리셋이 아닌 정의는 손으로 넣은 callbackPort 를 지킨다(목록이 실어 준다, PR3).
   if (!base.oauth?.callbackPort && input.entry?.oauthCallbackPort) oauth = { ...(oauth ?? {}), callbackPort: input.entry.oauthCallbackPort };
@@ -61,6 +65,39 @@ export function buildMcpDefinition(input: {
   // 되돌리기는 프리셋 값을 **명시해** 보낸다 — 비워 보내면 오퍼레이터가 지금 값을 유지한다(PR3).
   else if (input.revert && preset?.definition.oauth?.clientId) oauth = { ...(oauth ?? {}), clientId: preset.definition.oauth.clientId };
   return oauth ? { ...base, oauth } : { type: base.type, url: base.url, ...(base.headers ? { headers: base.headers } : {}) };
+}
+
+/** 인자 칸은 한 줄에 인자 하나다 — 앞뒤 공백과 빈 줄은 버리고, 줄 안의 공백은 그 인자의 일부다. */
+export function parseMcpArgs(text: string): string[] {
+  return text.split('\n').map((line) => line.trim()).filter((line) => line.length > 0);
+}
+
+/** 환경 변수 한 줄. `existing` 이면 지금 정의에 있는 이름이라 값을 비우면 그대로 둔다. */
+export interface McpEnvRow { id: number; key: string; value: string; existing: boolean }
+
+export type McpEnvPlan = { env: Record<string, string>; keepEnv: string[] } | { problem: 'key' | 'codeLoading' | 'duplicate' | 'value' | 'retype'; key: string };
+
+/** 줄들을 보낼 env·keepEnv 로 가른다. `programSame` 이 거짓이면 값을 비운 이름은 둘 수 없다. */
+export function planMcpEnv(rows: readonly McpEnvRow[], programSame: boolean): McpEnvPlan {
+  const env: Record<string, string> = {};
+  const keepEnv: string[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const key = row.key.trim();
+    if (!key && !row.value) continue;
+    if (seen.has(key)) return { problem: 'duplicate', key };
+    seen.add(key);
+    if (row.existing && !row.value) {
+      if (!programSame) return { problem: 'retype', key };
+      keepEnv.push(key);
+      continue;
+    }
+    const bad = checkMcpEnvKey(key);
+    if (bad) return { problem: bad === 'env-key' ? 'key' : 'codeLoading', key };
+    if (!row.value) return { problem: 'value', key };
+    env[key] = row.value;
+  }
+  return { env, keepEnv };
 }
 
 /** 에이전트 화면에서 열 때 — 그 에이전트에 켜기 칸과, 원격 배정이면 그 호스트 이름. */
@@ -86,15 +123,23 @@ export function McpServerDialog({ mode, registry, canEdit, attach, onDone, onCan
   onCancel: () => void;
 }) {
   const t = useT();
+  const locale = useLocale();
   const first = MCP_PRESETS[0]!;
   const fixedRow = mode.kind === 'add' ? null : mode.row;
   const entry = mode.kind === 'edit' ? mode.entry : undefined;
   const initialPreset = fixedRow ? (presetForName(fixedRow.name)?.id ?? 'custom') : first.id;
   const [presetId, setPresetId] = useState(initialPreset);
   const [name, setName] = useState(fixedRow?.name ?? first.name);
-  const [url, setUrl] = useState(entry?.target ?? (fixedRow ? (presetForName(fixedRow.name)?.definition.url ?? '') : first.definition.url));
+  const stdioEntry = entry?.transport === 'stdio' ? entry : undefined;
+  const [transport, setTransport] = useState<OperatorMcpEntry['transport']>(entry?.transport ?? 'http');
+  const [url, setUrl] = useState((stdioEntry ? undefined : entry?.target) ?? (fixedRow ? (presetForName(fixedRow.name)?.definition.url ?? '') : first.definition.url));
   const [kind, setKind] = useState<McpServerRow['credentialKind']>(fixedRow?.credentialKind ?? first.credentialKind);
   const [clientId, setClientId] = useState('');
+  const [command, setCommand] = useState(stdioEntry?.target ?? '');
+  const [argsText, setArgsText] = useState((stdioEntry?.args ?? []).join('\n'));
+  const [envRows, setEnvRows] = useState<McpEnvRow[]>(() => (stdioEntry?.envKeys ?? []).map((key, id) => ({ id, key, value: '', existing: true })));
+  const [nextEnvId, setNextEnvId] = useState((stdioEntry?.envKeys.length ?? 0) + 1);
+  const [declined, setDeclined] = useState(false);
   const [revert, setRevert] = useState(false);
   const remoteOnly = !!attach?.remoteHost;
   // 이 맥(또는 배정 전)이면 미리 켠다(D4), 원격 배정이면 꺼진 채(D12).
@@ -110,7 +155,7 @@ export function McpServerDialog({ mode, registry, canEdit, attach, onDone, onCan
   const pickPreset = (id: string) => {
     setPresetId(id);
     const p = MCP_PRESETS.find((x) => x.id === id);
-    if (p) { setName(p.name); setUrl(p.definition.url); setKind(p.credentialKind); } else { setName(''); setUrl(''); setKind('personal'); }
+    if (p) { setName(p.name); setUrl(p.definition.url); setKind(p.credentialKind); setTransport(p.definition.type); } else { setName(''); setUrl(''); setKind('personal'); }
     setClientId('');
   };
 
@@ -120,17 +165,64 @@ export function McpServerDialog({ mode, registry, canEdit, attach, onDone, onCan
   const current = entry?.oauthClientId;
   const ownApp = !!current && current !== presetClientId;
 
+  const isStdio = !remoteOnly && transport === 'stdio';
+  const showTransport = !remoteOnly && (presetId === 'custom' || !!stdioEntry);
+  const stdioProgram = { command: command.trim(), args: parseMcpArgs(argsText) };
+  const programSame = !!stdioEntry && sameMcpProgram(stdioProgram, { command: stdioEntry.target, args: stdioEntry.args });
+
+  const stdioProblemText = (p: McpStdioProblem): string => {
+    switch (p) {
+      case 'command-empty': return t('mcpServers.stdio.errCommandEmpty');
+      case 'command-shape': return t('mcpServers.stdio.errCommandShape');
+      case 'text-invisible': return t('mcpServers.stdio.errInvisible');
+      case 'text-spacing': return t('mcpServers.stdio.errSpacing');
+      default: return t('mcpServers.stdio.errTooLong');
+    }
+  };
+
+  /** stdio 저장. 이름 등록은 사람이 확인창에서 허락한 뒤에 한다 — 취소하면 아무것도 남지 않는다. */
+  const saveStdio = async (n: string, plan: { env: Record<string, string>; keepEnv: string[] }): Promise<boolean> => {
+    const language = locale.toLowerCase().startsWith('ko') ? 'ko' : 'en';
+    const out = await setLocalMcpStdio(n, { ...stdioProgram, ...plan, locale: language });
+    if (out.declined) { setDeclined(true); return false; }
+    if (!registry.some((r) => r.name === n)) await getController().putMcpServer(n, kind);
+    return true;
+  };
+
   const submit = () => void (async () => {
     setError(null);
+    setDeclined(false);
     const n = name.trim();
     if (!NAME_RE.test(n)) { setError(t('mcpServers.badName')); return; }
-    if (!remoteOnly && !/^https?:\/\//.test(url.trim())) { setError(t('agents.mcp.errUrl')); return; }
+    let plan: { env: Record<string, string>; keepEnv: string[] } | null = null;
+    if (isStdio) {
+      const problem = checkMcpStdioCommand(stdioProgram.command, stdioProgram.args);
+      if (problem) { setError(stdioProblemText(problem)); return; }
+      const planned = planMcpEnv(envRows, programSame);
+      if ('problem' in planned) {
+        const key = planned.key;
+        switch (planned.problem) {
+          case 'key': setError(t('mcpServers.stdio.errEnvKey', { key })); break;
+          case 'codeLoading': setError(t('mcpServers.stdio.errEnvCodeLoading', { key })); break;
+          case 'duplicate': setError(t('mcpServers.stdio.errEnvDuplicate', { key })); break;
+          case 'retype': setError(t('mcpServers.stdio.errEnvRetype', { key })); break;
+          default: setError(t('mcpServers.stdio.errEnvValue', { key }));
+        }
+        return;
+      }
+      plan = planned;
+    } else if (!remoteOnly && !/^https?:\/\//.test(url.trim())) { setError(t('agents.mcp.errUrl')); return; }
     if (!registry.some((r) => r.name === n) && !canEdit) { setError(t('mcpServers.dialog.needPrivilege')); return; }
     setBusy(true);
     try {
-      if (!registry.some((r) => r.name === n)) await getController().putMcpServer(n, kind);
-      // 원격 배정 에이전트에서 열었으면 이 맥 정의는 넣지 않는다 — 그 에이전트는 그 호스트의 정의를 쓴다.
-      if (!remoteOnly) await setLocalMcpServer(n, buildMcpDefinition({ name: n, url, clientId, revert, ...(entry ? { entry } : {}) }));
+      if (plan) {
+        if (!await saveStdio(n, plan)) return;
+      } else {
+        if (!registry.some((r) => r.name === n)) await getController().putMcpServer(n, kind);
+        // 원격 배정 에이전트에서 열었으면 이 맥 정의는 넣지 않는다 — 그 에이전트는 그 호스트의 정의를 쓴다.
+        const remoteTransport = transport === 'sse' ? 'sse' : 'http';
+        if (!remoteOnly) await setLocalMcpServer(n, buildMcpDefinition({ name: n, url, clientId, revert, transport: remoteTransport, ...(entry && entry.transport !== 'stdio' ? { entry } : {}) }));
+      }
       onDone({ name: n, attach: !!attach && attachOn });
     } catch (e) {
       setError(t('mcpServers.saveFailed', { reason: errorText(e, t) }));
@@ -150,7 +242,7 @@ export function McpServerDialog({ mode, registry, canEdit, attach, onDone, onCan
         <h2 className="text-body font-semibold text-fg">{title}</h2>
         <div className="flex flex-wrap gap-1.5 text-meta">
           {mode.kind !== 'edit' && <span className="rounded-row bg-surface-sunken px-1.5 text-fg-muted">{t('mcpServers.dialog.scopeCommunity')}</span>}
-          {!remoteOnly && <span className="rounded-row bg-surface-sunken px-1.5 text-fg-muted">{t('mcpServers.dialog.scopeHere')}</span>}
+          {!remoteOnly && <span className="rounded-row bg-surface-sunken px-1.5 text-fg-muted" data-testid="mcp-dialog-scope-here">{isStdio ? t('mcpServers.stdio.scopeHere') : t('mcpServers.dialog.scopeHere')}</span>}
           {attach && <span className="rounded-row bg-surface-sunken px-1.5 text-fg-muted">{t('mcpServers.dialog.scopeAttach', { agent: attach.agentName })}</span>}
         </div>
         {mode.kind === 'add' && (
@@ -168,8 +260,19 @@ export function McpServerDialog({ mode, registry, canEdit, attach, onDone, onCan
             <input className={`${field} font-mono`} value={name} disabled={busy || mode.kind !== 'add'}
               onChange={(e) => setName(e.target.value)} placeholder="github" data-testid="mcp-dialog-name" />
           </label>
-          {!remoteOnly && (
-            <label className="flex min-w-0 flex-1 flex-col gap-1 text-meta text-fg">
+          {showTransport && (
+            <label className="flex flex-col gap-1 text-meta text-fg">
+              {t('mcpServers.stdio.transport')}
+              <select className={field} value={transport} disabled={busy} data-testid="mcp-dialog-transport"
+                onChange={(e) => { setTransport(e.target.value as OperatorMcpEntry['transport']); setDeclined(false); }}>
+                <option value="http">{t('mcpServers.stdio.transportHttp')}</option>
+                <option value="sse">{t('mcpServers.stdio.transportSse')}</option>
+                <option value="stdio">{t('mcpServers.stdio.transportStdio')}</option>
+              </select>
+            </label>
+          )}
+          {!remoteOnly && !isStdio && (
+            <label className="flex min-w-40 flex-1 flex-col gap-1 text-meta text-fg">
               {t('agents.mcp.url')}
               <input className={field} value={url} disabled={busy} onChange={(e) => setUrl(e.target.value)}
                 placeholder="https://…/mcp" data-testid="mcp-dialog-url" />
@@ -189,7 +292,48 @@ export function McpServerDialog({ mode, registry, canEdit, attach, onDone, onCan
             {t('mcpServers.dialog.remoteNote', { agent: attach!.agentName, host: attach!.remoteHost! })}
           </p>
         )}
-        {!remoteOnly && <label className="flex flex-col gap-1 text-meta text-fg">
+        {isStdio && (
+          <div className="flex flex-col gap-3" data-testid="mcp-dialog-stdio">
+            <label className="flex flex-col gap-1 text-meta text-fg">
+              {t('mcpServers.stdio.command')}
+              <input className={`${field} font-mono`} value={command} disabled={busy} onChange={(e) => setCommand(e.target.value)}
+                placeholder="/usr/local/bin/example-mcp" autoComplete="off" spellCheck={false} data-testid="mcp-dialog-command" />
+              <span className="text-fg-subtle">{t('mcpServers.stdio.commandNote')}</span>
+            </label>
+            <label className="flex flex-col gap-1 text-meta text-fg">
+              {t('mcpServers.stdio.args')}
+              <textarea className={`${field} resize-y font-mono`} rows={3} value={argsText} disabled={busy} onChange={(e) => setArgsText(e.target.value)}
+                placeholder={t('mcpServers.stdio.argsPlaceholder')} autoComplete="off" spellCheck={false} data-testid="mcp-dialog-args" />
+              <span className="text-fg-subtle">{t('mcpServers.stdio.argsNote')}</span>
+            </label>
+            <div className="flex flex-col gap-1 text-meta text-fg">
+              <span>{t('mcpServers.stdio.env')}</span>
+              {envRows.map((row) => {
+                const patch = (next: Partial<McpEnvRow>) => setEnvRows((rows) => rows.map((r) => (r.id === row.id ? { ...r, ...next } : r)));
+                return (
+                  <div key={row.id} className="flex items-center gap-1.5" data-testid={`mcp-dialog-env-${row.id}`}>
+                    <input className={`${field} w-40 font-mono`} value={row.key} disabled={busy || row.existing} aria-label={t('mcpServers.stdio.envKey')}
+                      onChange={(e) => patch({ key: e.target.value })} placeholder="API_TOKEN" autoComplete="off" spellCheck={false} data-testid={`mcp-dialog-env-key-${row.id}`} />
+                    <input className={`${field} flex-1 font-mono`} type="password" value={row.value} disabled={busy} aria-label={t('mcpServers.stdio.envValue')}
+                      onChange={(e) => patch({ value: e.target.value })} autoComplete="off" spellCheck={false} data-testid={`mcp-dialog-env-value-${row.id}`}
+                      placeholder={row.existing ? (programSame ? t('mcpServers.stdio.envKeep') : t('mcpServers.stdio.envRetype')) : t('mcpServers.stdio.envValue')} />
+                    <button type="button" className="shrink-0 rounded-row px-1.5 py-0.5 text-fg-muted hover:bg-surface-sunken" disabled={busy}
+                      aria-label={t('mcpServers.stdio.envRemove', { key: row.key })} data-testid={`mcp-dialog-env-remove-${row.id}`}
+                      onClick={() => setEnvRows((rows) => rows.filter((r) => r.id !== row.id))}>×</button>
+                  </div>
+                );
+              })}
+              <button type="button" className="self-start text-accent-text hover:underline" disabled={busy} data-testid="mcp-dialog-env-add"
+                onClick={() => { setEnvRows((rows) => [...rows, { id: nextEnvId, key: '', value: '', existing: false }]); setNextEnvId((id) => id + 1); }}>
+                {t('mcpServers.stdio.envAdd')}
+              </button>
+            </div>
+            <p className="rounded-row border border-warning-border bg-warning-surface px-2.5 py-2 text-meta text-warning" data-testid="mcp-dialog-stdio-warn">
+              {t('mcpServers.stdio.warn')}
+            </p>
+          </div>
+        )}
+        {!remoteOnly && !isStdio && <label className="flex flex-col gap-1 text-meta text-fg">
           {t('agents.mcp.clientId')}
           <input className={`${field} font-mono`} value={clientId} disabled={busy}
             onChange={(e) => { setClientId(e.target.value); setRevert(false); }}
@@ -224,13 +368,14 @@ export function McpServerDialog({ mode, registry, canEdit, attach, onDone, onCan
             </span>
           </label>
         )}
+        {declined && <p className="text-meta text-fg-muted" data-testid="mcp-dialog-declined">{t('mcpServers.stdio.declined')}</p>}
         {error && <p role="alert" className="text-meta text-danger">{error}</p>}
         <div className="flex items-center justify-between gap-2">
           <span className="text-meta text-fg-subtle" data-testid="mcp-dialog-foot-note">
             {mode.kind === 'edit' ? ''
               // 이미 등록된 이름인데 켜기를 끈 채면 [켜기] 가 비활성이다 — 이유를 버튼 곁에 적는다(designer #1455 n1).
               : remoteOnly ? (known && !attachOn ? t('mcpServers.dialog.attachNeedsCheck') : '')
-                : t('mcpServers.dialog.afterSave')}
+                : isStdio ? '' : t('mcpServers.dialog.afterSave')}
           </span>
           <span className="flex gap-2">
             <button type="button" className="rounded-row px-2 py-1 text-meta text-fg-muted hover:bg-surface-sunken" disabled={busy}

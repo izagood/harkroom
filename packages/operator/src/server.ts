@@ -42,7 +42,7 @@ import {
   readWorkspaceCleanupActPayload,
   readWorkspaceCleanupSettingsPayload,
   readOperatorMcpAuthPayload,
-  readOperatorMcpSetPayload,
+  readOperatorMcpSetPayload, readOperatorMcpSetStdioPayload,
   type AdoptRunnerResult,
   type DaemonError,
   type DaemonIdentity,
@@ -449,6 +449,18 @@ export class DaemonServer {
         }
         // 정의 본문은 적지 않는다 — env·headers 에 토큰이 실린다.
         this.log(`MCP 정의: ${p.name} 넣음`);
+        return {};
+      }
+      case 'operatorMcpSetStdio': {
+        const port = this.deps.localMcp;
+        if (!port) return daemonError('no-such-runner', '이 daemon 에는 MCP 정의가 배선되지 않았다');
+        const p = readOperatorMcpSetStdioPayload(req.payload);
+        if (isDaemonError(p)) return p;
+        try { await port.setStdio(p.name, p.definition, p.keepEnv); } catch (err) {
+          return daemonError('internal', err instanceof Error ? err.message : String(err));
+        }
+        // 명령·env 는 적지 않는다 — 인자와 env 에 토큰이 실릴 수 있다.
+        this.log(`MCP 정의: ${p.name} 넣음(stdio)`);
         return {};
       }
       case 'operatorMcpRemove': {

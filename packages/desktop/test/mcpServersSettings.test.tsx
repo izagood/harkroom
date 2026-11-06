@@ -11,7 +11,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { McpServersSection } from '../src/components/settings/McpServersSettings';
-import { buildMcpDefinition } from '../src/components/settings/McpServerDialog';
+import { buildMcpDefinition, parseMcpArgs, planMcpEnv } from '../src/components/settings/McpServerDialog';
 import { MCP_PRESETS } from '../src/lib/mcpPresets';
 import { setController, type Controller } from '../src/state/controller';
 import { resetCommunityRegistry, useActiveStore } from '../src/state/communities';
@@ -32,12 +32,13 @@ function fake(rows: { name: string; credentialKind: 'community' | 'personal' }[]
 const me = (caps: string[]) => ({ ...acc('me', 'me'), capabilities: caps });
 const SLACK_PRESET_ID = MCP_PRESETS.find((p) => p.name === 'slack')!.definition.oauth!.clientId!;
 
-function local(servers: Record<string, unknown>[]) {
+function local(servers: Record<string, unknown>[], setStdioResult: Record<string, unknown> = {}) {
   const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
   (globalThis as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {
     invoke: async (cmd: string, args?: Record<string, unknown>) => {
       calls.push({ cmd, args });
       if (cmd === 'operator_mcp_list') return { servers };
+      if (cmd === 'operator_mcp_set_stdio') return setStdioResult;
       if (cmd === 'operator_mcp_auth' && args?.action === 'start') return { authUrl: 'https://auth.example.com/authorize' };
       if (cmd === 'operator_mcp_auth' && args?.action === 'status') return { state: 'ok' };
       return {};
@@ -302,6 +303,162 @@ describe('McpServersSettings — 이 맥 칸', () => {
     await screen.findByTestId('mcp-server-slack');
     expect(screen.queryByTestId('mcp-server-local-slack')).toBeNull();
     expect(screen.queryByTestId('mcp-server-add-open')).toBeNull();
+  });
+});
+
+describe('McpServersSettings — stdio', () => {
+  const stdio = (over: Record<string, unknown> = {}) => ({
+    name: 'files', source: 'operator', transport: 'stdio', target: '/opt/files-mcp', args: ['--root', '/srv'], envKeys: ['TOKEN'], headerKeys: [], oauth: false, ...over,
+  });
+  const openAdd = async () => {
+    fireEvent.click(await screen.findByTestId('mcp-server-add-open'));
+    fireEvent.change(screen.getAllByRole('combobox')[0]!, { target: { value: 'custom' } });
+    fireEvent.change(screen.getByTestId('mcp-dialog-name'), { target: { value: 'files' } });
+    fireEvent.change(screen.getByTestId('mcp-dialog-transport'), { target: { value: 'stdio' } });
+  };
+
+  it('종류를 stdio 로 고르면 URL·Client ID 대신 명령·인자·env 를 받아 확인창 명령으로 보내고, 그 뒤에 이름을 등록한다', async () => {
+    const c = fake([]);
+    useActiveStore.setState({ me: me(['agent.privileged']) });
+    const calls = local([]);
+    render(<McpServersSection />);
+    await openAdd();
+    expect(screen.queryByTestId('mcp-dialog-url')).toBeNull();
+    expect(screen.queryByTestId('mcp-dialog-client-id')).toBeNull();
+    expect(screen.getByTestId('mcp-dialog-stdio-warn')).toBeTruthy();
+    // 원격 전용 문구가 남지 않는다 — 범위 칩은 명령을 말하고, 「인증을 누른다」 안내는 없다.
+    expect(screen.getByTestId('mcp-dialog-scope-here').textContent).toContain('명령');
+    expect(screen.getByTestId('mcp-dialog-foot-note').textContent).toBe('');
+    fireEvent.change(screen.getByTestId('mcp-dialog-command'), { target: { value: ' /opt/files-mcp ' } });
+    fireEvent.change(screen.getByTestId('mcp-dialog-args'), { target: { value: '--root\n\n  /srv/my data  \n' } });
+    fireEvent.click(screen.getByTestId('mcp-dialog-env-add'));
+    fireEvent.change(screen.getByTestId('mcp-dialog-env-key-1'), { target: { value: 'TOKEN' } });
+    fireEvent.change(screen.getByTestId('mcp-dialog-env-value-1'), { target: { value: 'v' } });
+    fireEvent.click(screen.getByTestId('mcp-dialog-submit'));
+    await waitFor(() => expect(c.putMcpServer).toHaveBeenCalledWith('files', expect.any(String)));
+    const call = calls.find((x) => x.cmd === 'operator_mcp_set_stdio')!;
+    expect(call.args).toMatchObject({ name: 'files', command: '/opt/files-mcp', args: ['--root', '/srv/my data'], env: { TOKEN: 'v' }, keepEnv: [], locale: 'ko' });
+    expect(calls.some((x) => x.cmd === 'operator_mcp_set')).toBe(false);
+  });
+
+  it('확인창에서 취소하면 이름을 등록하지 않고 창에 남아 그 사실을 말한다', async () => {
+    const c = fake([]);
+    useActiveStore.setState({ me: me(['agent.privileged']) });
+    local([], { declined: true });
+    render(<McpServersSection />);
+    await openAdd();
+    fireEvent.change(screen.getByTestId('mcp-dialog-command'), { target: { value: 'files-mcp' } });
+    fireEvent.click(screen.getByTestId('mcp-dialog-submit'));
+    expect(await screen.findByTestId('mcp-dialog-declined')).toBeTruthy();
+    expect(c.putMcpServer).not.toHaveBeenCalled();
+    expect(screen.getByTestId('mcp-server-dialog')).toBeTruthy();
+  });
+
+  it('상대 경로·코드 적재 변수는 확인창을 부르기 전에 창 안에서 말한다', async () => {
+    fake([]);
+    useActiveStore.setState({ me: me(['agent.privileged']) });
+    const calls = local([]);
+    render(<McpServersSection />);
+    await openAdd();
+    fireEvent.change(screen.getByTestId('mcp-dialog-command'), { target: { value: './evil' } });
+    fireEvent.click(screen.getByTestId('mcp-dialog-submit'));
+    expect((await screen.findByRole('alert')).textContent).toContain('절대 경로');
+    fireEvent.change(screen.getByTestId('mcp-dialog-command'), { target: { value: 'files-mcp' } });
+    fireEvent.click(screen.getByTestId('mcp-dialog-env-add'));
+    fireEvent.change(screen.getByTestId('mcp-dialog-env-key-1'), { target: { value: 'LD_PRELOAD' } });
+    fireEvent.change(screen.getByTestId('mcp-dialog-env-value-1'), { target: { value: '/x' } });
+    fireEvent.click(screen.getByTestId('mcp-dialog-submit'));
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('LD_PRELOAD'));
+    expect(calls.some((x) => x.cmd === 'operator_mcp_set_stdio')).toBe(false);
+  });
+
+  it('이 맥 칸은 명령·stdio·env 이름을 보이고 [편집] 이 지금 값으로 열린다 — 값을 비운 env 는 그대로 둔다', async () => {
+    fake([{ name: 'files', credentialKind: 'personal' }]);
+    useActiveStore.setState({ me: me(['agent.privileged']) });
+    const calls = local([stdio()]);
+    render(<McpServersSection />);
+    expect((await screen.findByTestId('mcp-cell-command-files')).textContent).toBe('/opt/files-mcp --root /srv');
+    expect(screen.getByTestId('mcp-cell-env-files').textContent).toBe('TOKEN');
+    expect(screen.queryByTestId('agent-mcp-auth-start-files')).toBeNull();
+    fireEvent.click(screen.getByTestId('mcp-cell-primary-files'));
+    expect((screen.getByTestId('mcp-dialog-command') as HTMLInputElement).value).toBe('/opt/files-mcp');
+    expect((screen.getByTestId('mcp-dialog-args') as HTMLTextAreaElement).value).toBe('--root\n/srv');
+    fireEvent.click(screen.getByTestId('mcp-dialog-submit'));
+    await waitFor(() => expect(calls.find((x) => x.cmd === 'operator_mcp_set_stdio')?.args).toMatchObject({ name: 'files', env: {}, keepEnv: ['TOKEN'] }));
+  });
+
+  it('편집 창이 열린 채 다른 행의 [편집] 이 눌려도 제목과 내용이 같은 항목을 가리킨다', async () => {
+    fake([{ name: 'files', credentialKind: 'personal' }, { name: 'other', credentialKind: 'personal' }]);
+    useActiveStore.setState({ me: me([]) });
+    local([stdio(), stdio({ name: 'other', target: '/opt/other-mcp', args: [], envKeys: [] })]);
+    render(<McpServersSection />);
+    fireEvent.click(await screen.findByTestId('mcp-cell-primary-files'));
+    expect((screen.getByTestId('mcp-dialog-command') as HTMLInputElement).value).toBe('/opt/files-mcp');
+    fireEvent.click(screen.getByTestId('mcp-cell-primary-other'));
+    expect((screen.getByTestId('mcp-dialog-name') as HTMLInputElement).value).toBe('other');
+    expect((screen.getByTestId('mcp-dialog-command') as HTMLInputElement).value).toBe('/opt/other-mcp');
+  });
+
+  it('[편집] 에서 인자를 바꾸면 env 값을 다시 넣으라고 한다', async () => {
+    fake([{ name: 'files', credentialKind: 'personal' }]);
+    useActiveStore.setState({ me: me([]) });
+    const calls = local([stdio()]);
+    render(<McpServersSection />);
+    fireEvent.click(await screen.findByTestId('mcp-cell-primary-files'));
+    fireEvent.change(screen.getByTestId('mcp-dialog-args'), { target: { value: '--root\n/other' } });
+    fireEvent.click(screen.getByTestId('mcp-dialog-submit'));
+    expect((await screen.findByRole('alert')).textContent).toContain('TOKEN');
+    expect(calls.some((x) => x.cmd === 'operator_mcp_set_stdio')).toBe(false);
+    fireEvent.change(screen.getByTestId('mcp-dialog-env-value-0'), { target: { value: 'new' } });
+    fireEvent.click(screen.getByTestId('mcp-dialog-submit'));
+    await waitFor(() => expect(calls.find((x) => x.cmd === 'operator_mcp_set_stdio')?.args).toMatchObject({ args: ['--root', '/other'], env: { TOKEN: 'new' }, keepEnv: [] }));
+  });
+
+  it('stdio 를 HTTP 로 바꾸면 원격 정의로 저장하고, 옛 명령을 URL 로 잇지 않는다', async () => {
+    fake([{ name: 'files', credentialKind: 'personal' }]);
+    useActiveStore.setState({ me: me([]) });
+    const calls = local([stdio()]);
+    render(<McpServersSection />);
+    fireEvent.click(await screen.findByTestId('mcp-cell-primary-files'));
+    fireEvent.change(screen.getByTestId('mcp-dialog-transport'), { target: { value: 'sse' } });
+    expect((screen.getByTestId('mcp-dialog-url') as HTMLInputElement).value).toBe('');
+    fireEvent.change(screen.getByTestId('mcp-dialog-url'), { target: { value: 'https://mcp.example.com/sse' } });
+    fireEvent.click(screen.getByTestId('mcp-dialog-submit'));
+    await waitFor(() => expect(calls.find((x) => x.cmd === 'operator_mcp_set')?.args).toMatchObject({ name: 'files', definition: { type: 'sse', url: 'https://mcp.example.com/sse' } }));
+  });
+
+  it('~/.claude.json 의 stdio 는 여전히 고칠 수 없다', async () => {
+    fake([{ name: 'files', credentialKind: 'personal' }]);
+    useActiveStore.setState({ me: me([]) });
+    local([stdio({ source: 'claude' })]);
+    render(<McpServersSection />);
+    await screen.findByTestId('mcp-cell-command-files');
+    expect(screen.queryByTestId('mcp-cell-primary-files')).toBeNull();
+  });
+
+  it('프리셋을 고른 동안에는 연결 방식 칸이 없다 — slack·jira 흐름은 그대로다', async () => {
+    fake([]);
+    useActiveStore.setState({ me: me(['agent.privileged']) });
+    local([]);
+    render(<McpServersSection />);
+    fireEvent.click(await screen.findByTestId('mcp-server-add-open'));
+    expect(screen.queryByTestId('mcp-dialog-transport')).toBeNull();
+    expect(screen.getByTestId('mcp-dialog-url')).toBeTruthy();
+  });
+
+  it('parseMcpArgs·planMcpEnv', () => {
+    expect(parseMcpArgs(' a \n\nb c\n')).toEqual(['a', 'b c']);
+    const row = (key: string, value: string, existing = false) => ({ id: 0, key, value, existing });
+    expect(planMcpEnv([row('', '')], true)).toEqual({ env: {}, keepEnv: [] });
+    expect(planMcpEnv([row('A', '', true), row('B', 'v')], true)).toEqual({ env: { B: 'v' }, keepEnv: ['A'] });
+    expect(planMcpEnv([row('PATH', '', true)], true)).toEqual({ env: {}, keepEnv: ['PATH'] });
+    expect(planMcpEnv([row('A', '', true)], false)).toEqual({ problem: 'retype', key: 'A' });
+    expect(planMcpEnv([row('A', '')], true)).toEqual({ problem: 'value', key: 'A' });
+    expect(planMcpEnv([row('A', 'x'), row('A', 'y')], true)).toEqual({ problem: 'duplicate', key: 'A' });
+    expect(planMcpEnv([row('1A', 'x')], true)).toEqual({ problem: 'key', key: '1A' });
+    expect(planMcpEnv([row('DYLD_X', 'x')], true)).toEqual({ problem: 'codeLoading', key: 'DYLD_X' });
+    expect(planMcpEnv([row('npm_config_registry', 'x')], true)).toEqual({ problem: 'codeLoading', key: 'npm_config_registry' });
+    expect(planMcpEnv([row('JAVA_TOOL_OPTIONS', 'x')], true)).toEqual({ problem: 'codeLoading', key: 'JAVA_TOOL_OPTIONS' });
   });
 });
 
