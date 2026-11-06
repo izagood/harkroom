@@ -8,6 +8,7 @@ import { open, stat } from 'node:fs/promises';
 import type { AgentHarness } from '@harkroom/shared';
 import { turnEndRecordOf } from './adapters/index.js';
 import { codexRolloutFileFor, findCodexSessionId } from './codexSessions.js';
+import { ompSessionFile } from './ompHome.js';
 
 export type RecordedTurnEnd = 'working' | 'ended';
 
@@ -39,6 +40,32 @@ export function turnEndFromCodexRollout(text: string, sinceMs: number): Recorded
   return null;
 }
 
+/**
+ * omp 세션 기록의 마지막 말. 도구 결과·사용자 입력이나 `toolUse` 로 끝난 assistant 면 모델 차례가 남았고, 그 밖의 `stopReason` 이면 끝났다.
+ * `sinceMs` 앞의 줄은 이 차례의 것이 아니다 — `null`.
+ */
+export function turnEndFromOmpSession(text: string, sinceMs: number): RecordedTurnEnd | null {
+  const lines = text.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]!.trim();
+    if (!line) continue;
+    let rec: { type?: unknown; timestamp?: unknown; message?: { role?: unknown; stopReason?: unknown } };
+    try {
+      rec = JSON.parse(line) as typeof rec;
+    } catch {
+      continue;
+    }
+    if (rec.type !== 'message') continue;
+    const at = typeof rec.timestamp === 'string' ? Date.parse(rec.timestamp) : Number.NaN;
+    if (!Number.isFinite(at) || at < sinceMs) return null;
+    const { role, stopReason } = rec.message ?? {};
+    if (role === 'toolResult' || role === 'user') return 'working';
+    if (role !== 'assistant' || typeof stopReason !== 'string') return null;
+    return stopReason === 'toolUse' ? 'working' : 'ended';
+  }
+  return null;
+}
+
 async function readTail(path: string): Promise<string> {
   const { size } = await stat(path);
   const handle = await open(path, 'r');
@@ -58,12 +85,20 @@ export interface HarnessTurnEndOpts {
   cwd: string;
   sinceMs: number;
   codexSessionsDir: string;
+  /** omp 턴만 있다. */
+  ompHome?: string;
 }
 
 /** 기록이 말하는 차례 상태. **던지지 않는다** — 읽을 기록이 없거나 못 읽으면 `null`. */
 export async function readHarnessTurnEnd(harness: AgentHarness, opts: HarnessTurnEndOpts): Promise<RecordedTurnEnd | null> {
   try {
-    if (turnEndRecordOf(harness) !== 'codex-rollout') return null;
+    const source = turnEndRecordOf(harness);
+    if (source === 'omp-session') {
+      if (!opts.sessionId || !opts.ompHome) return null;
+      const file = await ompSessionFile(opts.ompHome, opts.sessionId);
+      return file ? turnEndFromOmpSession(await readTail(file), opts.sinceMs) : null;
+    }
+    if (source !== 'codex-rollout') return null;
     const id = opts.sessionId ?? await findCodexSessionId(opts.codexSessionsDir, { cwd: opts.cwd, sinceMs: opts.sinceMs });
     if (!id) return null;
     const file = await codexRolloutFileFor(opts.codexSessionsDir, id);

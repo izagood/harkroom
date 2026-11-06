@@ -38,6 +38,9 @@ export const OMP_ADAPTER: HarnessAdapter = {
     readyMinMs: 1000,
   },
 
+  /** 화면이 턴 도중 끝을 말한 사례가 있다(2026-11-06 실측, 재촉이 도구 결과 뒤에 들어갔다) — 끝은 세션 기록의 `stopReason` 으로 확정한다. */
+  turnEndRecord: 'omp-session',
+
   // 저장소 설정을 아예 안 보게 cwd 를 빈 폴더로 옮긴다(B4) — 들일지 묻는 화면도, 적어 둘 장부도 없다.
   trust: null,
 

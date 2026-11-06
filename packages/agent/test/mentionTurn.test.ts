@@ -17,6 +17,7 @@ import { quotedLine } from '../src/prompt.js';
 import { AccountGateRequeueError, mentionAnchor, runMentionTurn, laneSafeSkill, syncSkills, withLaneSkillHeader, type MentionTurnDeps, type MentionTurnHarkroom, type RunTurn } from '../src/mentionTurn.js';
 import { createAttentionLedger } from '../src/attentionLedger.js';
 import { execFileSync } from 'node:child_process';
+import { OMP_LANE_BASE_URL_ENV, OMP_LANE_KEY_FILE_ENV } from '../src/providerLane.js';
 import { ensureOmpHome, ensureOmpThread } from '../src/ompHome.js';
 import { BODY_LIMIT, WATCH_ORIGIN_LINE_NOTE } from '../src/prompt.js';
 
@@ -4737,6 +4738,58 @@ describe('말없이 끝난 API 키 연결 턴 — 재촉 1회와 부른 쪽 알�
     const { fake, nudges } = await setUp({ lane: false });
     expect(nudges).toHaveLength(0);
     expect(fake.posts.some((p) => p.body.startsWith('@someone'))).toBe(false);
+  }, 15_000);
+});
+
+describe('omp 의 차례 끝은 화면이 말해도 세션 기록으로 확정한다', () => {
+  it('기록이 일하는 중이면 재촉하지 않고, 끝났다고 한 뒤에 한 번 재촉한다', async () => {
+    const fake = new FakeHarkroom(defOf({ harness: 'omp', model: 'ExampleOrg/example-model' }));
+    fake.seedFrom('human-1', '@forge 안녕').id = MENTION;
+    const stateDir = await mkdtemp(join(tmpdir(), 'omp-end-'));
+    const ompHome = join(stateDir, 'omp-home');
+    await ensureOmpHome({ ompHome, mcpServers: {} });
+    let reads = 0;
+    const seen: { harness: string; ompHome?: string }[] = [];
+    const atNudge: number[] = [];
+    const writes: string[] = [];
+    let killed = false;
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5, orphanMs: 5, harnessStallMs: 60_000, laneNudgeWaitMs: 60, laneNudgeSubmitMs: 1,
+      readHarnessLastSaid: async () => null,
+      readHarnessTurnEnd: async (harness: string, o: { ompHome?: string }) => {
+        seen.push({ harness, ...(o.ompHome ? { ompHome: o.ompHome } : {}) });
+        reads += 1;
+        return reads < 40 ? 'working' : 'ended';
+      },
+      providerEnv: async () => ({ [OMP_LANE_BASE_URL_ENV]: 'https://gateway.example.com', [OMP_LANE_KEY_FILE_ENV]: join(stateDir, 'key') }),
+    } as never);
+    runTurn.script = (async (_plan: TurnPlan, o: {
+      onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void;
+      onData?: (chunk: Buffer) => void;
+    }) => {
+      o.onSpawn?.({ write: (b) => { const t = b.toString('utf8'); writes.push(t); if (t.includes('(러너 알림)')) atNudge.push(reads); }, resize: () => {}, kill: () => { killed = true; } });
+      o.onData?.(Buffer.from('\x1b[2J\x1b[H⠏ 3s > Working…\r\n 7% 128K', 'utf8'));
+      await new Promise((r) => setTimeout(r, 50));
+      o.onData?.(Buffer.from('\x1b[2J\x1b[H 7% 128K', 'utf8'));
+      for (let i = 0; i < 800 && !killed; i += 1) await new Promise((r) => setTimeout(r, 5));
+      return { exitCode: killed ? 143 : 0, timedOut: false, tail: '' };
+    }) as never;
+    const workspaceDir = join(deps.workspaceBaseDir, 'omp-end');
+    await mkdir(workspaceDir, { recursive: true });
+    await deps.store.put(SessionStore.threadKey(CHANNEL, null), {
+      workspaceDir, sessionId: '00000000-0000-4000-8000-000000000001', harness: 'omp', lastFedSeq: 0, turnsRun: 0,
+    });
+    const mcpConfigPath = join(deps.workspaceBaseDir, 'mcp.json');
+    await writeFile(mcpConfigPath, JSON.stringify({ mcpServers: { harkroom: { type: 'stdio', command: '/opt/harkroom/harkroom-operator', args: ['mcp-bridge'] } } }));
+    vi.stubEnv('HARKROOM_RUNNER_SECRET', 'fake-runner-secret');
+    try {
+      await runMentionTurn({ ...deps, mcpConfigPath, ompHome, stateDir } as never, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }).catch(() => null);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect(seen[0]).toEqual({ harness: 'omp', ompHome });
+    expect(writes.filter((w) => w.includes('(러너 알림)'))).toHaveLength(1);
+    expect(atNudge[0]).toBeGreaterThanOrEqual(40);
   }, 15_000);
 });
 

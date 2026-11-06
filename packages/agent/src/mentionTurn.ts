@@ -2558,6 +2558,7 @@ export async function runMentionTurn(
             cwd: opencodeCwd,
             sinceMs: end.laneNudgedAtMs || turnStartedAtMs,
             codexSessionsDir: codexSessionsDir(deps.codexHome),
+            ...(deps.ompHome ? { ompHome: deps.ompHome } : {}),
           }).catch(() => null)
           : null;
         if (end.exited) return;

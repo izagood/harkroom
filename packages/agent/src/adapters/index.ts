@@ -255,7 +255,7 @@ export function lastSaidRecordOf(harness: AgentHarness): 'codex-rollout' | 'open
 }
 
 /** 화면이 말한 끝을 확정할 기록 표면(`harnessTurnEnd.ts`). 없으면 화면 판정 그대로다. */
-export function turnEndRecordOf(harness: AgentHarness): 'codex-rollout' | null {
+export function turnEndRecordOf(harness: AgentHarness): 'codex-rollout' | 'omp-session' | null {
   return ADAPTERS[harness] === 'unsupported' ? null : adapterFor(harness).turnEndRecord ?? null;
 }
 
