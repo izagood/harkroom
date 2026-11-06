@@ -80,6 +80,8 @@ export async function issueTurnLease(
               -- 위임 키(133, W1): cause 글의 위임, 없으면 그 글이 연 깨움 행의 위임. 이 에이전트의 지금 소유자가 위임 소유자일 때만.
               (select d.id from mandate d join agent_config c on c.account_id = i.account_id
                 where c.owner_account_id = d.owner_account_id
+                  -- 위임 후속 보고로 깬 턴은 그 글의 위임을 잇지 않는다.
+                  and not exists (select 1 from inbox fu where fu.account_id = i.account_id and fu.message_id = m.id and fu.reason = 'delegation_followup')
                   and d.id = coalesce(m.mandate_id,
                     (select w.mandate_id from agent_wake w where w.message_id = m.id and w.account_id = i.account_id
                       order by w.created_at desc limit 1))) as "mandateId",

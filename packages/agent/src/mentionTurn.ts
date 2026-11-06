@@ -674,6 +674,8 @@ export interface MentionTarget {
    * 경우엔 팀원이 아무 말도 하지 않았으므로 새 메시지가 없다.
    */
   delegation?: InboxDelegationOutcome;
+  /** 닫힌 위임의 후속 보고(163). 결말처럼 부른 글이 할 일이 아니다 — 보고를 결과로 싣는다. */
+  delegationFollowup?: MessageRow;
   /** 이 턴이 **넘겨받은 일**이면 넘긴 팀장과 기한(3-2). 서버가 inbox 항목에 실어 준다. */
   delegatedBy?: InboxDelegatedBy;
   /**
@@ -795,7 +797,7 @@ function silentTurnCaller(
   deps: Pick<MentionTurnDeps, 'agentIds'>, target: MentionTarget, thread: MessageRow[],
 ): 'agent' | 'human' | 'delegated' | 'wake' | 'delegationOutcome' {
   if (target.wake && target.scheduledWake) return 'wake';
-  if (target.delegation) return 'delegationOutcome';
+  if (target.delegation || target.delegationFollowup) return 'delegationOutcome';
   if (target.wake) return 'human';
   // 넘겨받은 일은 부른 쪽이 에이전트여도 FYI 가 아니다 — 답이 없으면 위임을 실패로 닫아야 한다(`silentTurnNotice`).
   if (target.delegatedBy) return 'delegated';
@@ -1173,7 +1175,7 @@ export async function runMentionTurn(
     if (latestPage) ({ messages: thread, gapAfterSeq } = mergeThreadPages(oldestPage, latestPage, rec.lastFedSeq));
   }
   // 두 페이지 밖의 부른 글은 인박스 값으로 채운다. 깨움·위임 결말은 부른 글이 할 일이 아니다.
-  const inboxMention = target.wake || target.delegation ? undefined : target.mentionRow;
+  const inboxMention = target.wake || target.delegation || target.delegationFollowup ? undefined : target.mentionRow;
   if (inboxMention && !thread.some((m) => m.id === inboxMention.id)) {
     thread = [...thread, inboxMention].sort((a, b) => a.seq - b.seq);
   }
@@ -1271,12 +1273,13 @@ export async function runMentionTurn(
     ...(target.startedIn ? { startedIn: target.startedIn } : {}),
     ...(target.team ? { team: target.team } : {}),
     ...(target.delegation ? { delegation: target.delegation } : {}),
+    ...(target.delegationFollowup ? { delegationFollowup: target.delegationFollowup } : {}),
     ...(target.delegatedBy ? { delegatedBy: target.delegatedBy } : {}),
     ...(target.editedMention ? { editedMention: target.editedMention } : {}),
     ...(freshWake ? { freshWake: true } : {}),
     ...(rec.unseenOwnAfterSeq !== undefined ? { unseenOwnAfterSeq: rec.unseenOwnAfterSeq } : {}),
     ...(rec.canceledBy !== undefined ? { afterCancelBy: rec.canceledBy } : {}),
-    ...(target.wake || target.delegation ? {} : { mentionId }),
+    ...(target.wake || target.delegation || target.delegationFollowup ? {} : { mentionId }),
     ...(bundledRows.length ? { bundledIds: bundledRows.map((row) => row.id) } : {}),
     ...(gapAfterSeq !== undefined ? { gapAfterSeq } : {}),
   });
@@ -3118,7 +3121,7 @@ export async function runMentionTurn(
       cwd: rec.workspaceDir,
       plan,
       claudeConfigDir: deps.claudeConfigDir,
-      skip: Boolean(target.wake) || Boolean(target.delegation) || byAutomation,
+      skip: Boolean(target.wake) || Boolean(target.delegation) || Boolean(target.delegationFollowup) || byAutomation,
     }).catch((err: unknown) => {
       console.error(
         `[mentionTurn] ${key}: 리뷰 포크 준비 실패(턴은 계속한다) — ${err instanceof Error ? err.message : String(err)}`,

@@ -2059,9 +2059,12 @@ export interface InboxEntry {
    * `'delegation_done'` 은 **넘긴 일의 결말이 나왔다**(050). 미결이 0 이 되었거나 기한이
    * 지났다. 그때 `delegation` 에 결말 목록이 함께 온다 — 러너는 그것을 프롬프트에 싣고,
    * 팀장은 취합하거나 다시 넘기거나 사람에게 막혔다고 말한다.
+   *
+   * `'delegation_followup'` 은 **닫힌 위임의 팀원이 결과를 더 올렸다**(163). 가리키는 글이 그 보고이고, 넘긴 쪽의 턴은 그것을
+   * 할 일이 아니라 팀원이 보낸 결과로 읽는다.
    */
   reason: 'mention' | 'thread_reply' | 'dm' | 'wake' | 'ask_answered' | 'ask_closed'
-    | 'team_mention' | 'team_delegated' | 'delegation_done';
+    | 'team_mention' | 'team_delegated' | 'delegation_done' | 'delegation_followup';
   /**
    * 이 글이 띄울 턴의 원인 키. 러너는 값이 같은 글만 한 턴으로 묶는다. 옛 서버는 싣지 않는다 — 그때는 사람 글만 묶는다.
    */

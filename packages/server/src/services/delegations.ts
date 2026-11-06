@@ -1,5 +1,6 @@
 import type { Pool, PoolClient } from 'pg';
 import { countsAsReply, TEAM_ROUND_LIMIT, type InboxDelegationOutcome, type MessageRow, type WakeReportTo } from '@harkroom/shared';
+import { channelVisibleSql } from './channels.js';
 import { invokeFactsFor, mayInvoke } from './invokeGate.js';
 import { announceReportWakes, announceWakeRows, foldWakesForDelegation } from './agentWakes.js';
 
@@ -486,6 +487,86 @@ async function notifyIfSettled(
     [row.lead_account_id, row.message_id],
   );
   return row.lead_account_id;
+}
+
+/** 위임을 만든 뒤 이만큼 안에서만 후속 보고가 넘긴 쪽을 깨운다. */
+export const DELEGATION_FOLLOWUP_WINDOW_SEC = 6 * 60 * 60;
+/** 위임 하나가 후속으로 깨우는 횟수 상한. */
+export const DELEGATION_FOLLOWUP_LIMIT = 3;
+
+/**
+ * 후속 보고로 깨우는 스위치 — 기본 꺼짐. 옛 러너는 모르는 사유를 보통 부름으로 돌려 팀원 글을 할 일로 싣는다. 앱이 다 올라간 뒤에 켠다.
+ * 부를 때마다 읽는다(`principalInvokeEnabled` 와 같다).
+ */
+export function delegationFollowupEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const v = (env.HARKROOM_DELEGATION_FOLLOWUP ?? '').trim().toLowerCase();
+  return v === '1' || v === 'on' || v === 'true';
+}
+
+export type DelegationFollowup =
+  | { woke: string }
+  | { skipped: 'chain_limit' | 'followup_limit' }
+  | null;
+
+/**
+ * **닫힌 위임의 팀원이 올린 후속 `report` 로 넘긴 쪽을 깨운다**(2026-11-06 소유자 결정). 감시 끝 보고처럼 첫 답 뒤의 결과는 의무를
+ * 닫지 못하므로 넘긴 쪽이 모른다. 멘션 게이트·회신권은 건드리지 않는다 — 판정은 서버가 위임 행으로만 한다.
+ *
+ * 끝나지 않은 위임은 건드리지 않는다(`notified_at`): 모두 끝나면 어차피 결말로 깨고, 그 턴이 스레드에서 이 글을 읽는다.
+ * 아직 안 집어 간 후속·결말이 있으면 새로 넣지 않는다 — 곧 뜰 턴 하나로 합친다.
+ *
+ * 깨우는 글은 후속 글 자신이다(`message_id`). 깊이가 그 글에서 이어지게 하려는 것이고, 위임장·principal·머지 사슬은 이 사유에서
+ * 끊는다(`secretAccess.ts`·`invokePrincipal.ts`·`mergeGrants.ts`·`verifiedCauseLink`).
+ */
+export async function wakeLeadOnFollowup(
+  client: PoolClient,
+  args: {
+    threadRootId: string; channelId: string; authorId: string; messageId: string; isReport: boolean;
+    /** 이 글로 이미 inbox 가 간 계정 — 멘션으로 불렸으면 두 번 깨우지 않는다. */
+    notified: ReadonlySet<string>;
+    /** 멘션과 같은 연쇄 상한에 걸리는가(`messages.ts::delegationChainCapped`). */
+    chainCapped: () => Promise<boolean>;
+  },
+): Promise<DelegationFollowup> {
+  if (!args.isReport || !delegationFollowupEnabled()) return null;
+  const row = (await client.query<{ id: string; lead_account_id: string; followups: number }>(
+    `select d.id, d.lead_account_id, d.followups
+       from team_delegation d
+       join team_delegation_item i on i.delegation_id = d.id
+       join account a on a.id = d.lead_account_id
+       join channel c on c.id = d.channel_id
+      where d.thread_root_id = $1 and d.channel_id = $2 and i.delegate_account_id = $3
+        and i.outcome = 'done' and i.closed_by_message_id is distinct from $4
+        and d.notified_at is not null and d.lead_account_id <> $3
+        and d.created_at > now() - make_interval(secs => $5)
+        and a.kind = 'agent' and a.deleted_at is null and a.disabled_at is null
+        and ${channelVisibleSql('c', 'd.lead_account_id')}
+      order by d.created_at desc
+      limit 1
+      for update of d`,
+    [args.threadRootId, args.channelId, args.authorId, args.messageId, DELEGATION_FOLLOWUP_WINDOW_SEC],
+  )).rows[0];
+  if (!row || args.notified.has(row.lead_account_id)) return null;
+  const pending = await client.query(
+    `select 1 from inbox i join message m on m.id = i.message_id
+      where i.account_id = $1 and i.read_at is null and i.reason in ('delegation_followup', 'delegation_done')
+        and coalesce(m.thread_root_id, m.id) = $2
+        -- 이미 턴이 집어 간 항목은 합치지 않는다 — 그 턴은 이 글을 못 볼 수 있어 끝 보고가 묻힌다.
+        and not exists (select 1 from secret_turn_lease l
+                         where l.agent_id = i.account_id and l.cause_message_id = i.message_id
+                           and l.ended_at is null and l.expires_at > now())
+      limit 1`,
+    [row.lead_account_id, args.threadRootId],
+  );
+  if (pending.rowCount) return null;
+  if (row.followups >= DELEGATION_FOLLOWUP_LIMIT) return { skipped: 'followup_limit' };
+  if (await args.chainCapped()) return { skipped: 'chain_limit' };
+  await client.query(`update team_delegation set followups = followups + 1 where id = $1`, [row.id]);
+  await client.query(
+    `insert into inbox (account_id, message_id, reason) values ($1, $2, 'delegation_followup')`,
+    [row.lead_account_id, args.messageId],
+  );
+  return { woke: row.lead_account_id };
 }
 
 /**

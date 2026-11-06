@@ -141,6 +141,11 @@ export interface CauseChain { rootId: string; path: string[] }
 export async function causeChainRoot(
   pool: Pool, args: { agentId: string; causeMessageId: string; now: Date },
 ): Promise<CauseChain | null> {
+  // 위임 후속 보고로 깬 턴은 사슬을 잇지 않는다 — 자동 깨움이 소유자가 시작한 흐름을 증명하지 않는다.
+  const followup = await pool.query(
+    `select 1 from inbox where account_id = $1 and message_id = $2 and reason = 'delegation_followup' limit 1`,
+    [args.agentId, args.causeMessageId]);
+  if (followup.rowCount) return null;
   const row = (await pool.query<{ rootId: string; path: string[] }>(
     `with recursive
        own as (

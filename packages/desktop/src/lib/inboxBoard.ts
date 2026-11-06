@@ -121,7 +121,7 @@ const rootOf = (e: InboxEntry): string => e.threadRootId ?? e.messageId;
  * 뜻일 뿐 나를 지목한 것이 아니다(내가 연 스레드면 아래 `opened` 가 따로 잡는다).
  */
 const CALLED_ME: ReadonlySet<InboxEntry['reason']> = new Set([
-  'mention', 'team_mention', 'team_delegated', 'delegation_done', 'dm', 'ask_answered', 'ask_closed',
+  'mention', 'team_mention', 'team_delegated', 'delegation_done', 'delegation_followup', 'dm', 'ask_answered', 'ask_closed',
 ]);
 
 /**
