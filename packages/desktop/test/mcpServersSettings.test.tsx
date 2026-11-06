@@ -607,6 +607,29 @@ describe('McpServersSettings — OAuth 콜백 포트', () => {
   });
 });
 
+describe('McpServersSettings — ⋯ 메뉴 자리', () => {
+  it('⋯ 메뉴는 ⋯ 를 감싼 기준 상자 안에 뜨고 오른쪽을 맞춘다 — 설정 화면 전체에 붙지 않는다. Esc·바깥 클릭으로 닫힌다', async () => {
+    fake([{ name: 'web', credentialKind: 'personal' }]);
+    useActiveStore.setState({ me: me(['agent.privileged']) });
+    local([remote('web', { state: 'ok' })]);
+    render(<McpServersSection />);
+    const open = async () => {
+      const button = await screen.findByTestId('mcp-cell-menu-web');
+      fireEvent.click(button);
+      const menu = await screen.findByRole('menu');
+      expect(button.parentElement!.className).toContain('relative');
+      expect(button.parentElement!.contains(menu)).toBe(true);
+      expect(menu.className).toContain('right-0');
+      return menu;
+    };
+    fireEvent.keyDown(await open(), { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    await open();
+    fireEvent.mouseDown(document.body);
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+  });
+});
+
 describe('buildMcpDefinition', () => {
   const entry = (over: Record<string, unknown>) => ({ name: 'x', source: 'operator', transport: 'http', target: 'https://x.example.com/mcp', args: [], envKeys: [], headerKeys: [], oauth: true, ...over }) as never;
   it('입력한 Client ID 가 지금 값을 이긴다', () => {
