@@ -837,11 +837,14 @@ describe('팀 밖 위임 · 끝 보고만 닫음', () => {
       await one.close(); await two.close();
     });
 
-    it('담당의 예약은 접지 않는다 — 넘긴 쪽 것만 접는다', async () => {
+    // 위임 결말이 접는 것은 넘긴 쪽 예약뿐이다. 담당의 예약은 담당 자신의 끝 보고가 접는다(`foldWakesOnReport`) — 까닭 글이 없고 사유가 담당에게 돌아온다.
+    it('위임 결말은 담당의 예약을 접지 않는다 — 담당의 끝 보고가 접고 사유를 돌려준다', async () => {
       const { rootId, one, two } = await handOff('담당 예약');
       const r = await scheduleWake(pool, { accountId: twoId, channelId, threadRootId: rootId, notBeforeSec: 3000, reason: '담당의 확인' });
-      await two.callTool({ name: 'message.report', arguments: { channelId, threadRootId: rootId, body: '끝', checks: ['확인'] } });
-      expect(await isOpen(r.wake!.id)).toBe(true);
+      const res = text(await two.callTool({ name: 'message.report', arguments: { channelId, threadRootId: rootId, body: '끝', checks: ['확인'] } }));
+      expect(res.foldedWakes).toEqual([expect.objectContaining({ reason: '담당의 확인' })]);
+      const row = await pool.query<{ canceled_by_message_id: string | null }>('select canceled_by_message_id from agent_wake where id = $1', [r.wake!.id]);
+      expect(row.rows[0]!.canceled_by_message_id).toBeNull();
       await one.close(); await two.close();
     });
   });
