@@ -57,7 +57,7 @@ import { proposeSkill, isValidSkillSlug } from '../services/skills.js';
 import { scanWrite } from '../services/contentScan.js';
 import { listAutomationsForAgent, proposeAutomation, runAutomationForAgent, triggerSchema } from '../services/automations.js';
 import { channelPostGate } from '../services/channels.js';
-import { announceReportWakes, announceWakeRows, foldWatchWakesOnReport, scheduleWake, WAKE_MAX_SEC, WAKE_MIN_SEC, type ClosedWatchWake } from '../services/agentWakes.js';
+import { announceReportWakes, announceWakeRows, foldWakesOnReport, scheduleWake, WAKE_MAX_SEC, WAKE_MIN_SEC, type ClosedWatchWake } from '../services/agentWakes.js';
 import { guideFor } from './guide.js';
 import { listWorkItems, removeWorkItem, resolveWorkItemOwner, upsertWorkItem, WORK_ITEM_REFUSAL_MESSAGE, WORK_ITEM_SOURCES } from '../services/workItems.js';
 import { workItemUpsertSchema } from '../routes/workItemRoutes.js';
@@ -1636,7 +1636,7 @@ function buildMcpServer(
    * 없는 보고는 보고가 아니다.
    */
   server.registerTool('message.report', {
-    description: '완료 보고(확인한 것 · 바뀐 파일 · 남은 것 · 다음 제안). checks 는 필수. planStepId 를 주면 이 스레드 계획의 그 단계를 done 으로 바꾼다(결과는 plan 칸). 이 스레드에 걸렸거나 이 스레드로 보고하는, 앞 턴이 건 내 감시 예약(watch)은 접히고 그 사유가 foldedWatchWakes 로 온다 — 아직 지켜볼 일이면 다시 걸어라',
+    description: '완료 보고(확인한 것 · 바뀐 파일 · 남은 것 · 다음 제안). checks 는 필수. planStepId 를 주면 이 스레드 계획의 그 단계를 done 으로 바꾼다(결과는 plan 칸). 이 스레드에 걸렸거나 이 스레드로 보고하는, 앞 턴이 건 내 예약은 감시 여부와 상관없이 접히고 그 사유가 foldedWakes 로 온다 — 아직 볼 일이면 다시 걸어라',
     inputSchema: {
       channelId: z.string().uuid(),
       body: z.string().min(1).max(MAX_MESSAGE_BODY_CHARS),
@@ -1685,15 +1685,15 @@ function buildMcpServer(
     }
     // 보고는 이미 섰다 — 예약 접기가 실패해도 보고를 되돌리지 않는다. 재시도(replayed)면 이미 한 번 반영했다.
     const folded = threadRootId && !replayed
-      ? await foldWatchWakesOnReport(pool, { accountId: account.id, threadRootId, turnId: storedTurnId }).catch((err: unknown) => {
-        console.error('report: 감시 예약 접기 실패:', err);
+      ? await foldWakesOnReport(pool, { accountId: account.id, threadRootId, turnId: storedTurnId }).catch((err: unknown) => {
+        console.error('report: 예약 접기 실패:', err);
         return [] as ClosedWatchWake[];
       })
       : [];
     const foldedTargets = reportTargetsOf(folded);
     if (foldedTargets.length) await announceReportWakes(pool, foldedTargets).catch(() => undefined);
     await announceWakeRows(pool, folded.map((w) => w.messageId));
-    const foldedExtra = folded.length ? { foldedWatchWakes: folded } : {};
+    const foldedExtra = folded.length ? { foldedWakes: folded } : {};
     // 보고는 이미 섰다 — 단계 갱신이 막혀도 보고를 되돌리지 않는다. 재시도(replayed)면 이미 한 번 반영했다.
     if (planStepId && threadRootId && !replayed) {
       const plan = planHookOut(await completePlanStep(pool, threadRootId, account.id, planStepId));

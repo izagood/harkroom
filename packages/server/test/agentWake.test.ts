@@ -8,7 +8,7 @@ import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, createMember } from './helpers/fixtures.js';
 import { onEvent, type WorkspaceEvent } from '../src/events.js';
 import { refreshThreadStatus } from '../src/services/threadStatus.js';
-import { createAgentWakeSweeper, foldWatchWakesOnReport, scheduleWake } from '../src/services/agentWakes.js';
+import { createAgentWakeSweeper, foldWakesOnReport, scheduleWake } from '../src/services/agentWakes.js';
 import { settleCanceledTurn } from '../src/services/turnCancel.js';
 import { postMessage } from '../src/services/messages.js';
 
@@ -609,14 +609,14 @@ describe('turn.wake — 에이전트가 자기를 나중에 깨운다', () => {
           const bot = await mcpClient(botPat);
           const res = text(await bot.callTool({ name: 'message.report', arguments: { channelId, threadRootId: requestRoot, body: '끝', checks: ['확인'] } }));
           await bot.close();
-          expect(res.foldedWatchWakes).toEqual([expect.objectContaining({ reason: '작업 스레드 감시', threadRootId: workRoot })]);
+          expect(res.foldedWakes).toEqual([expect.objectContaining({ reason: '작업 스레드 감시', threadRootId: workRoot })]);
           expect(await open(workRoot)).toEqual([]);
         });
 
         it('걸린 스레드에 끝 보고를 올려도 접힌다(앞 동작)', async () => {
           const [workRoot, requestRoot] = [await newThread(), await newThread()];
           await watch(workRoot, '작업 스레드 감시', { reportTo: { channelId, threadRootId: requestRoot } });
-          await foldWatchWakesOnReport(pool, { accountId: botAccountId, threadRootId: workRoot });
+          await foldWakesOnReport(pool, { accountId: botAccountId, threadRootId: workRoot });
           expect(await open(workRoot)).toEqual([]);
         });
 
@@ -643,28 +643,64 @@ describe('turn.wake — 에이전트가 자기를 나중에 깨운다', () => {
         const bot = await mcpClient(botPat);
         const res = text(await bot.callTool({ name: 'message.report', arguments: { channelId, threadRootId: rootId, body: '끝', checks: ['확인'] } }));
         await bot.close();
-        expect(res.foldedWatchWakes).toEqual([expect.objectContaining({ reason: '남은 감시' })]);
+        expect(res.foldedWakes).toEqual([expect.objectContaining({ reason: '남은 감시' })]);
         expect(await open(rootId)).toEqual([]);
       });
 
-      it('끝 보고는 감시가 아닌 예약과 다른 스레드의 감시를 접지 않는다', async () => {
-        const [rootId, otherRoot] = [await newThread(), await newThread()];
-        await scheduleWake(pool, { accountId: botAccountId, channelId, threadRootId: rootId, notBeforeSec: 300, reason: '한 번 깨움' });
-        await watch(otherRoot, '딴 스레드 감시');
+      it('끝 보고는 다른 스레드로 보고하는 예약과 다른 스레드의 감시를 접지 않는다', async () => {
+        const [rootId, otherRoot, elsewhere] = [await newThread(), await newThread(), await newThread()];
+        await scheduleWake(pool, { accountId: botAccountId, channelId, threadRootId: otherRoot, notBeforeSec: 300, reason: '딴 곳 보고', reportTo: { channelId, threadRootId: elsewhere } });
+        await watch(elsewhere, '딴 스레드 감시');
         const bot = await mcpClient(botPat);
         const res = text(await bot.callTool({ name: 'message.report', arguments: { channelId, threadRootId: rootId, body: '끝', checks: ['확인'] } }));
         await bot.close();
-        expect(res.foldedWatchWakes).toBeUndefined();
-        expect(await open(rootId)).toEqual(['한 번 깨움']);
-        expect(await open(otherRoot)).toEqual(['딴 스레드 감시']);
+        expect(res.foldedWakes).toBeUndefined();
+        expect(await open(otherRoot)).toEqual(['딴 곳 보고']);
+        expect(await open(elsewhere)).toEqual(['딴 스레드 감시']);
+      });
+
+      it('끝 보고는 그 스레드에 걸린 한 번 깨우기도 접는다 — 끝난 일을 다시 볼 까닭이 없다', async () => {
+        const rootId = await newThread();
+        await scheduleWake(pool, { accountId: botAccountId, channelId, threadRootId: rootId, notBeforeSec: 300, reason: '한 번 깨움' });
+        const bot = await mcpClient(botPat);
+        const res = text(await bot.callTool({ name: 'message.report', arguments: { channelId, threadRootId: rootId, body: '끝', checks: ['확인'] } }));
+        await bot.close();
+        expect(res.foldedWakes).toEqual([expect.objectContaining({ reason: '한 번 깨움' })]);
+        expect(await open(rootId)).toEqual([]);
+      });
+
+      // 11-05 실측: 병렬 턴이 일을 끝내 보고처에 보고했는데, 남은 한 번 깨우기가 깨어나 글 없이 끝나 보고처에 헛 실패 줄이 섰다.
+      it('같은 보고처로 걸린 서로 다른 예약 둘이 함께 접히고 둘 다 돌려준다 — 다른 일이었으면 그 턴이 다시 건다', async () => {
+        const [a, b, requestRoot] = [await newThread(), await newThread(), await newThread()];
+        const reportTo = { channelId, threadRootId: requestRoot };
+        await scheduleWake(pool, { accountId: botAccountId, channelId, threadRootId: a, notBeforeSec: 300, reason: '일 A 확인', reportTo });
+        await scheduleWake(pool, { accountId: botAccountId, channelId, threadRootId: b, notBeforeSec: 300, reason: '일 B 확인', reportTo });
+        const bot = await mcpClient(botPat);
+        const res = text(await bot.callTool({ name: 'message.report', arguments: { channelId, threadRootId: requestRoot, body: '일 A 끝', checks: ['확인'] } }));
+        await bot.close();
+        expect(res.foldedWakes).toHaveLength(2);
+        expect(res.foldedWakes).toEqual(expect.arrayContaining([
+          expect.objectContaining({ reason: '일 A 확인', threadRootId: a, reportTo }),
+          expect.objectContaining({ reason: '일 B 확인', threadRootId: b, reportTo }),
+        ]));
+        expect(await open(a)).toEqual([]);
+        expect(await open(b)).toEqual([]);
+      });
+
+      it('같은 턴이 건 한 번 깨우기는 그 턴의 보고가 접지 않는다', async () => {
+        const rootId = await newThread();
+        const turnId = '33333333-3333-4333-8333-333333333333';
+        await scheduleWake(pool, { accountId: botAccountId, channelId, threadRootId: rootId, notBeforeSec: 300, reason: '이 턴의 깨움', turnId });
+        expect(await foldWakesOnReport(pool, { accountId: botAccountId, threadRootId: rootId, turnId })).toEqual([]);
+        expect(await open(rootId)).toEqual(['이 턴의 깨움']);
       });
 
       it('같은 턴이 건 감시는 그 턴의 보고가 접지 않는다 — 단계를 보고하고 다음 확인을 거는 턴이다', async () => {
         const rootId = await newThread();
         await watch(rootId, '이 턴의 감시', { turnId: '11111111-1111-4111-8111-111111111111' });
-        expect(await foldWatchWakesOnReport(pool, { accountId: botAccountId, threadRootId: rootId, turnId: '11111111-1111-4111-8111-111111111111' })).toEqual([]);
+        expect(await foldWakesOnReport(pool, { accountId: botAccountId, threadRootId: rootId, turnId: '11111111-1111-4111-8111-111111111111' })).toEqual([]);
         expect(await open(rootId)).toEqual(['이 턴의 감시']);
-        expect(await foldWatchWakesOnReport(pool, { accountId: botAccountId, threadRootId: rootId, turnId: '22222222-2222-4222-8222-222222222222' }))
+        expect(await foldWakesOnReport(pool, { accountId: botAccountId, threadRootId: rootId, turnId: '22222222-2222-4222-8222-222222222222' }))
           .toEqual([expect.objectContaining({ reason: '이 턴의 감시' })]);
         expect(await open(rootId)).toEqual([]);
       });
