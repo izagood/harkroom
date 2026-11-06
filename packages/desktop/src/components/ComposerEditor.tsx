@@ -10,6 +10,7 @@ import { HighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/lang
 import { Strikethrough } from '@lezer/markdown';
 import { tags } from '@lezer/highlight';
 import { clean } from '../lib/systemText';
+import { historyShortcut } from '../lib/historyShortcut';
 import { focusKind, recordEnter } from '../lib/enterTrace';
 import { formatShortcut } from '../lib/mdFormat';
 
@@ -111,6 +112,9 @@ function activeFormatsAt(state: EditorState): ActiveFormats {
 const isFormatChord = (e: KeyboardEvent): boolean =>
   (e.metaKey || e.ctrlKey) && (formatShortcut(e) !== null || (!e.altKey && !e.shiftKey && (e.code === 'KeyE' || e.code === 'KeyK'))
     || (e.altKey && !e.shiftKey && e.code === 'KeyC'));
+
+/** 기본 열쇠표에서 ⌘[·⌘](들여쓰기)만 뺀다 — 그 두 키는 앱의 뒤로·앞으로다(`Workspace`). */
+const editorKeymap = defaultKeymap.filter((b) => b.key !== 'Mod-[' && b.key !== 'Mod-]');
 
 const mdHighlight = HighlightStyle.define([
   { tag: tags.strong, fontWeight: '700' },
@@ -323,7 +327,7 @@ export const ComposerEditor = forwardRef<ComposerTextBox, Props>(function Compos
           return e.defaultPrevented;
         },
       })),
-      keymap.of([...historyKeymap, ...defaultKeymap]),
+      keymap.of([...historyKeymap, ...editorKeymap]),
       EditorView.updateListener.of((u) => {
         if (syncing.current) return;
         const caret = u.state.selection.main.head;
@@ -369,7 +373,7 @@ export const ComposerEditor = forwardRef<ComposerTextBox, Props>(function Compos
       조합이 진행 중일 때 받은 열쇠 하나(Enter 또는 서식 열쇠) — 확정 뒤에 처리한다. `scope` 는 받은 순간의 자리(`historyKey`):
       대기 중 채널·스레드를 옮겼으면 풀 때 버린다(#1465 security n1 — 안 버리면 옮긴 자리의 초안이 그 자리로 나간다).
     */
-    let pendingEnter: { k: KeyParts; kind: 'enter' | 'format'; scope: string | undefined; timer: ReturnType<typeof setTimeout> } | null = null;
+    let pendingEnter: { k: KeyParts; kind: 'enter' | 'format' | 'history'; scope: string | undefined; timer: ReturnType<typeof setTimeout> } | null = null;
     const flushPendingEnter = () => {
       const p = pendingEnter;
       if (!p) return;
@@ -377,13 +381,18 @@ export const ComposerEditor = forwardRef<ComposerTextBox, Props>(function Compos
       clearTimeout(p.timer);
       if (p.scope !== latest.current.historyKey) return;
       if (p.kind === 'enter') { routeEnter(p.k); return; }
+      // 뒤로·앞으로: 확정된 글이 초안에 들어간 뒤 옮긴다. 앱 단축키이므로 문서에 다시 쏴서 평소 길로 보낸다.
+      if (p.kind === 'history') {
+        view.dom.ownerDocument.dispatchEvent(new KeyboardEvent('keydown', { ...p.k, bubbles: true, cancelable: true }));
+        return;
+      }
       // 서식 열쇠: Slack 처럼 확정한 뒤 굵게 — 처리기에 그 열쇠를 다시 넘긴다(확정된 글·커서 위에서).
       latest.current.onKeyDown?.({
         key: p.k.key, code: p.k.code, shiftKey: p.k.shiftKey, metaKey: p.k.metaKey, ctrlKey: p.k.ctrlKey, altKey: p.k.altKey,
         isComposing: false, editorComposing: view.composing, preventDefault: () => {}, currentTarget: box.current,
       });
     };
-    const holdUntilComposed = (k: KeyParts, kind: 'enter' | 'format') => {
+    const holdUntilComposed = (k: KeyParts, kind: 'enter' | 'format' | 'history') => {
       if (pendingEnter) clearTimeout(pendingEnter.timer);
       pendingEnter = { k, kind, scope: latest.current.historyKey, timer: setTimeout(flushPendingEnter, COMPOSING_ENTER_FALLBACK_MS) };
     };
@@ -396,6 +405,14 @@ export const ComposerEditor = forwardRef<ComposerTextBox, Props>(function Compos
         e.stopImmediatePropagation();
         e.preventDefault();
         holdUntilComposed({ key: e.key, code: e.code, shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey }, 'format');
+        return;
+      }
+      const historyKey = e.isComposing || view.composing ? historyShortcut(e) : null;
+      if (historyKey) {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        // 새 창의 전달(`FORWARDED_KEYS`)은 `key` 로 가리므로, 조합 중 이름(`Process`)이 아니라 글자로 적어 둔다.
+        holdUntilComposed({ key: historyKey === 'back' ? '[' : ']', code: e.code, shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey }, 'history');
         return;
       }
       if (!isEnterKey(e) || e.altKey) return;

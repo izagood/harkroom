@@ -36,6 +36,7 @@ import { ChannelDirectory } from './ChannelDirectory';
 import { Inbox } from './Inbox';
 import type { SectionId } from './settings/sections';
 import { useT } from '../i18n/useT';
+import { historyShortcut } from '../lib/historyShortcut';
 
 const reloginNotWired: ReloginDone = async () => { throw new Error('relogin is not wired'); };
 
@@ -209,6 +210,19 @@ export function Workspace({ onLogout, onOpenSettings, onRelogin = reloginNotWire
         }
       }
 
+      /**
+       * 뒤로·앞으로도 **입력 중에 먹는다** — 채널에 있는 동안 포커스는 대개 작성창에 있어서, 여기서 안 들으면 키가
+       * 없는 것과 같다. 예외 둘: 터미널에서 Ctrl+[ 는 ESC 이므로 터미널이 갖고, 겹창이 열려 있으면 뒤의 버튼을
+       * 누를 수 없는 것과 같게 아무것도 하지 않는다.
+       */
+      const historyKey = historyShortcut(e);
+      if (historyKey) {
+        if ((e.target as Partial<Element>).closest?.('.xterm') || document.querySelector('[aria-modal="true"]')) return;
+        e.preventDefault();
+        void (historyKey === 'back' ? handleGoBack() : handleGoForward());
+        return;
+      }
+
       // 입력 요소에 포커스가 있으면 단축키를 가로채지 않는다.
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
@@ -237,20 +251,6 @@ export function Workspace({ onLogout, onOpenSettings, onRelogin = reloginNotWire
         e.preventDefault();
         setSearchInitialScope('all');
         setSearchOpen(true);
-        return;
-      }
-
-      // 뒤로: Cmd/Ctrl + [
-      if ((e.metaKey || e.ctrlKey) && e.key === '[') {
-        e.preventDefault();
-        void handleGoBack();
-        return;
-      }
-
-      // 앞으로: Cmd/Ctrl + ]
-      if ((e.metaKey || e.ctrlKey) && e.key === ']') {
-        e.preventDefault();
-        void handleGoForward();
         return;
       }
 
