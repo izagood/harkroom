@@ -48,6 +48,11 @@ export interface McpOperatorCell {
   agents: string[] | null;
 }
 
+/** 목록에 보일 명령줄. 공백이 든 인자는 따옴표로 감싸 인자 경계가 보이게 한다 — 표시만 바꾸고 실행과는 무관하다. */
+export function formatMcpCommand(command: string, args: readonly string[]): string {
+  return [command, ...args].map((part) => (/\s/.test(part) ? `"${part.replace(/"/g, '\\"')}"` : part)).join(' ');
+}
+
 /** 인증이 사람 손을 기다리나 — 그때만 칸의 주 버튼이 [인증]/[다시 인증] 이고 색을 쓴다. */
 function needsSignIn(entry: OperatorMcpEntry): boolean {
   const st = entry.auth;
@@ -186,7 +191,7 @@ function LocalCell({ row, entry, collapsed, agentsOn, slotPeers, baseUrl, tailIt
           <span className="min-w-16 text-fg-muted">{defLabel}</span>
           {remote
             ? <span className="min-w-0 break-all text-fg">{entry.target.replace(/^https?:\/\//, '')}</span>
-            : <span className="min-w-0 break-all font-mono text-fg" data-testid={`mcp-cell-command-${row.name}`}>{[entry.target, ...entry.args].join(' ')}</span>}
+            : <span className="block min-w-0 max-w-full truncate font-mono text-fg" title={formatMcpCommand(entry.target, entry.args)} data-testid={`mcp-cell-command-${row.name}`}>{formatMcpCommand(entry.target, entry.args)}</span>}
           {!remote && <span className="rounded-row border border-border px-1.5 text-fg-muted" data-testid={`mcp-cell-stdio-${row.name}`}>stdio</span>}
           {!remote && entry.envKeys.length > 0 && (
             <span className="rounded-row border border-border px-1.5 font-mono text-fg-muted" data-testid={`mcp-cell-env-${row.name}`}>{entry.envKeys.join(' · ')}</span>
@@ -539,7 +544,7 @@ export function McpServersSection() {
           title={t('mcpServers.removeHereTitle', { name: removingLocal.name })}
           detail={(
             <span className="flex flex-col gap-2">
-              <span>{t('mcpServers.removeHereDetail')}</span>
+              <span data-testid="mcp-remove-here-detail">{removingLocal.transport === 'stdio' ? t('mcpServers.stdio.removeHereDetail') : t('mcpServers.removeHereDetail')}</span>
               {(() => {
                 const hit = onHere(removingLocal.name);
                 return hit && hit.length > 0 && (
