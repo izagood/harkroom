@@ -73,10 +73,11 @@ class ProgressRow extends StatelessWidget {
     final String status;
     if (!ended) {
       status = '${t.agentWorking} · ${runningLabel(DateTime.now().toUtc().difference(run.first.createdAt), t)}';
-    } else if (endedAt != null) {
-      status = '${t.agentWorked} · ${tookLabel(endedAt.difference(run.first.createdAt), t)}';
-    } else {
+    } else if (item.silentEnd || endedAt == null) {
+      // 알림 줄의 시각은 턴 길이가 아니라 다음 글까지 걸린 시간이다 — 뒤에 글이 있어도 길이를 말하지 않는다.
       status = '${t.agentWorked} · ${t.agentEnded}';
+    } else {
+      status = '${t.agentWorked} · ${tookLabel(endedAt.difference(run.first.createdAt), t)}';
     }
     final style = TextStyle(fontSize: 12, height: 1.35, color: ended ? k.fgSubtle : k.fgMuted);
     // 개정판 3.3: 본문 열(아바타 뒤)에 맞춘 회색 한 줄 「◌ designer 작업 중 · 2분째 — 문구」.

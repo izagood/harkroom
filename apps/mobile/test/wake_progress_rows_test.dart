@@ -314,6 +314,18 @@ void main() {
       expect(find.byType(CircularProgressIndicator), findsNothing);
     });
 
+    testWidgets('알림 줄은 뒤에 글이 있어도 길이를 말하지 않는다 — 그 시간은 턴 길이가 아니다', (tester) async {
+      final items = buildFeed([
+        _row(1, 'progress', body: '(예약된 확인 턴이 발화 없이 끝났습니다)', at: _ago(9)),
+        _wake(2, wakeAt: _in(30), at: _ago(3)),
+      ]);
+      expect((items.first as FeedProgressRun).endedAt, isNotNull);
+      await _pump(tester, (c) => buildFeedItem(c, items.first));
+      final text = _text(tester, find.byKey(const Key('progress-m1')));
+      expect(text, contains('작업 · 끝남'));
+      expect(text, isNot(contains('걸림')));
+    });
+
     testWidgets('도는 진행은 그대로 회전 표시', (tester) async {
       final run = FeedProgressRun([_row(1, 'progress', body: '일', at: _ago(2))]);
       await _pump(tester, (c) => buildFeedItem(c, run));
