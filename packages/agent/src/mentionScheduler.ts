@@ -383,6 +383,13 @@ export const DONE_UNREAD_MAX_MS = 24 * 60 * 60 * 1000;
 export const RECENTLY_DONE_MS = 10 * 60 * 1000;
 /** 관문 때문에 접어 둔 멘션을 기다리는 상한. 그 뒤에는 읽음 처리한다(관문 통지는 이미 남았다). */
 export const GATE_WAIT_MAX_MS = 2 * 60 * 60 * 1000;
+/** 턴 임대가 아직 정해지지 않은 멘션을 다시 묻는 간격. */
+export const LEASE_RETRY_MS = 15_000;
+/**
+ * 임대를 다시 묻는 상한. 서버는 늦어도 옛 임대의 박동이 6분 끊기면 새로 준다(`LEASE_REISSUE_STALE_MS`, 스레드 임대를 넘겨받았으면 바로) —
+ * 그 문턱에 폴·재시도 간격을 더한 값이다. 이만큼 묻고도 안 되면 재기동 때문이 아니다(다른 오퍼레이터·끝난 임대·다시 주기 상한).
+ */
+export const LEASE_WAIT_MAX_MS = 8 * 60_000;
 /** 한 멘션을 관문 때문에 접어 다시 띄우는 횟수 상한(#1047 security F1 안전판). */
 export const GATE_REQUEUE_MAX = 5;
 
@@ -412,6 +419,11 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
    * 건드려도 재기동·알림이 끝없이 번지지 않게 하는 안전판이다. 재시도 회계(`tried`)와 따로 센다.
    */
   const gateRequeues = new Map<number, { count: number; since: number }>();
+  /**
+   * 턴 임대를 기다리는 멘션 → 처음 미룬 시각. 재기동은 사람이 할 일이 아니므로 턴을 시작할 수 있을 때까지 조용히 다시 묻는다.
+   * 읽음 처리하지 않고 재시도 회계에도 넣지 않는다 — inbox 의 at-least-once 가 그대로 큐다.
+   */
+  const leaseWaits = new Map<number, number>();
   /** 지금 도는 턴의 entry id. markRead 가 완료 후라 같은 entry 가 다음 폴에 또 온다. */
   const inFlightEntries = new Set<number>();
   /**
@@ -623,15 +635,25 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       const lane = deps.laneFor
         ? await deps.laneFor(threadKey, anchor)
         : typeof deps.accountLane === 'function' ? await deps.accountLane() : deps.accountLane;
-      // 비밀이 없어도 턴은 돈다 — 임대 실패는 여기서 삼킨다(acquire 가 던지지 않는다).
-      // **단 409 `lease_used` 는 다르다**: 이 멘션의 임대를 앞 러너(앱 갱신·재기동 전)가 이미 받아 갔다. 그대로 돌면 그 턴의
-      // 비밀·API·머지가 전부 `no_lease` 로 막힌 채 반쯤 일하고 끝난다 — 돌리지 않고 「임대를 잃었다, 다시 불러 달라」로 알린다.
-      // 사람이 다시 부르면 새 멘션이라 새 임대를 받는다.
-      if (await deps.secretLeases?.acquire(mention.id) === 'lease_used') {
-        console.error(`  ${mention.id} 턴 임대를 앞 러너가 이미 받았다(409 lease_used) — 돌리지 않고 실패로 알린다`);
+      // 비밀이 없어도 턴은 돈다 — 임대 거절은 여기서 삼킨다(acquire 가 던지지 않는다).
+      // **단 409 `lease_used` 와 무응답은 다르다**: 앞 러너(앱 갱신·재기동 전)가 받아 갔거나 답을 잃었을 뿐이고, 그대로 돌면 그 턴의
+      // 비밀·API·머지가 전부 `no_lease` 로 막힌 채 반쯤 일하고 끝난다. 사람이 할 일이 아니므로 **미뤘다 다시 묻는다.**
+      const leaseState = await deps.secretLeases?.acquire(mention.id);
+      if (leaseState === 'lease_used' || leaseState === 'unreachable') {
+        const since = leaseWaits.get(entryId) ?? now();
+        if (now() - since < LEASE_WAIT_MAX_MS) {
+          leaseWaits.set(entryId, since);
+          attempts.set(entryId, { tried: Math.max(0, tried - 1), notBefore: now() + LEASE_RETRY_MS, noticed: attempts.get(entryId)?.noticed });
+          return;
+        }
+      }
+      leaseWaits.delete(entryId);
+      // 상한까지 물어도 409 면 재기동 탓이 아니다 — 그때만 사람에게 넘긴다. 무응답은 상한 뒤 지금처럼 비밀 없이 돈다.
+      if (leaseState === 'lease_used') {
+        console.error(`  ${mention.id} 턴 임대를 ${LEASE_WAIT_MAX_MS / 60_000}분 동안 다시 받지 못했다(409 lease_used) — 돌리지 않고 실패로 알린다`);
         await deps.harkroom.fail(mention.channelId, LEASE_LOST_NOTICE, anchor, {
           retryable: true,
-          what: '이 부름의 턴 임대를 잃었다(러너가 다시 떠서 앞 러너가 받아 간 임대를 다시 받을 수 없다)',
+          what: '이 부름의 턴 임대를 다시 받지 못했다',
           reason: '비밀·API 연결·머지를 쓸 수 없는 턴이라 시작하지 않았다 — 다시 부르면 새 임대로 돈다',
         }).catch((e: unknown) => {
           console.error(`  ${mention.id} 임대 잃음 통지 발화 실패(읽음 처리 계속):`, e instanceof Error ? e.message : e);

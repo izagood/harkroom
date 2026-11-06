@@ -8,7 +8,7 @@ import { TURN_LEASE_HEARTBEAT_MS } from '@harkroom/shared/runnerLink';
 // 비밀 보관소 PR 3 — 러너의 턴 임대(R1)와 놓기 전 기록 가리기(D7). 스레드 bc98df3a.
 const VALUE = `ghp_${'e'.repeat(36)}`;
 
-function harness(issueResult: { id: string; token: string; expiresAt: string } | null | 'throw' | 'lease_used', turnSecretsDir: string | null = null) {
+function harness(issueResult: { id: string; token: string; expiresAt: string } | null | 'throw' | 'lease_used' | 'unreachable', turnSecretsDir: string | null = null) {
   const log: string[] = [];
   let issued = 0;
   const leases = createSecretLeases({
@@ -44,7 +44,7 @@ describe('secretLeases', () => {
     expect(h.log.at(-1)).toBe('ended:m1');
   });
 
-  it('acquire 결과: 받으면 held · 없으면 none · 409 lease_used 면 lease_used — 재시도도 같은 결과(다시 묻지 않는다)', async () => {
+  it('acquire 결과: 받으면 held · 거절이면 none(다시 묻지 않는다) · 409·무응답은 적지 않고 다시 묻는다', async () => {
     const held = harness(L);
     expect(await held.leases.acquire('m1')).toBe('held');
     expect(await held.leases.acquire('m1')).toBe('held');
@@ -53,19 +53,23 @@ describe('secretLeases', () => {
     const used = harness('lease_used');
     expect(await used.leases.acquire('m1')).toBe('lease_used');
     expect(await used.leases.acquire('m1')).toBe('lease_used');
-    expect(used.issued()).toBe(1);
-    expect(used.log).toEqual(['issue:m1']);
+    expect(used.issued()).toBe(2);
+    expect(used.log).toEqual(['issue:m1', 'issue:m1']);
+    for (const r of ['unreachable', 'throw'] as const) {
+      const lost = harness(r);
+      expect(await lost.leases.acquire('m1')).toBe('unreachable');
+      expect(await lost.leases.acquire('m1')).toBe('unreachable');
+      expect(lost.issued()).toBe(2);
+    }
   });
 
-  it('받지 못했으면(409·실패) 맡기지도 놓지도 않는다 — 비밀 없이 돈다(fail-closed)', async () => {
-    for (const r of [null, 'throw'] as const) {
-      const h = harness(r);
-      await h.leases.acquire('m1');
-      await h.leases.acquire('m1');
-      expect(h.issued()).toBe(1);
-      await h.leases.release('m1');
-      expect(h.log).toEqual(['issue:m1']);
-    }
+  it('거절됐으면 맡기지도 놓지도 않는다 — 비밀 없이 돈다(fail-closed)', async () => {
+    const h = harness(null);
+    await h.leases.acquire('m1');
+    await h.leases.acquire('m1');
+    expect(h.issued()).toBe(1);
+    await h.leases.release('m1');
+    expect(h.log).toEqual(['issue:m1']);
   });
 
   it('놓은 뒤 같은 멘션을 다시 집으면 다시 묻는다(서버가 409 로 거절한다)', async () => {
