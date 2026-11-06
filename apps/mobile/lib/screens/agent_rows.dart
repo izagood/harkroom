@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../api/agent_meta.dart';
@@ -8,47 +10,116 @@ import '../time.dart';
 import '../ui/tokens.dart';
 import '../mention/render.dart';
 import 'agent_exchange.dart';
+import 'message_feed.dart';
+
+/// 살아 있는 줄의 상대 시각이 멈추지 않게 1분마다 다시 그린다. 끝난 줄은 값이 바뀌지 않으므로 쓰지 않는다.
+class _MinuteTicker extends StatefulWidget {
+  const _MinuteTicker({required this.builder});
+
+  final WidgetBuilder builder;
+
+  @override
+  State<_MinuteTicker> createState() => _MinuteTickerState();
+}
+
+class _MinuteTickerState extends State<_MinuteTicker> {
+  late final Timer _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(minutes: 1), (_) => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _timer.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.builder(context);
+}
 
 /// 진행 줄 — **말풍선이 아니라 상태 한 줄**이다.
 ///
 /// 진행은 수십 개가 이어진다. 말풍선으로 흘리면 채널이 진행 로그로 덮이고, 정작 사람이
 /// 읽어야 할 말이 그 사이에 묻힌다. 그래서 **이어진 것을 한 줄로 접고 마지막 것만**
 /// 보여 준다 — 데스크탑 `ProgressRow` 와 같은 판단이다.
+///
+/// 끝난 묶음은 과거로 그린다: 회전 표시 대신 회색 점, 「작업 · 5분 걸림」. 길이를 모르면 「작업 · 끝남」.
 class ProgressRow extends StatelessWidget {
-  const ProgressRow({super.key, required this.run});
+  const ProgressRow({super.key, required this.item, this.inRun = false});
 
-  /// 이어진 진행들(시간 순). 마지막이 지금 하는 일이다.
-  final List<MessageRow> run;
+  final FeedProgressRun item;
+
+  /// 펼친 묶음 안의 줄 — 이름은 묶음 머리에 있고 왼쪽 선 안에 선다.
+  final bool inRun;
 
   @override
   Widget build(BuildContext context) {
+    if (item.ended) return _line(context);
+    return _MinuteTicker(builder: _line);
+  }
+
+  Widget _line(BuildContext context) {
     final t = context.t;
     final app = context.app;
-    final last = run.last;
-    final elapsed = DateTime.now().toUtc().difference(run.first.createdAt);
-
     final k = context.tokens;
-    final muted = TextStyle(fontSize: 12, color: k.fgMuted, height: 1.35);
+    final run = item.run;
+    final last = run.last;
+    final ended = item.ended;
+    final endedAt = item.endedAt;
+    final String status;
+    if (!ended) {
+      status = '${t.agentWorking} · ${runningLabel(DateTime.now().toUtc().difference(run.first.createdAt), t)}';
+    } else if (item.silentEnd || endedAt == null) {
+      // 알림 줄의 시각은 턴 길이가 아니라 다음 글까지 걸린 시간이다 — 뒤에 글이 있어도 길이를 말하지 않는다.
+      status = '${t.agentWorked} · ${t.agentEnded}';
+    } else {
+      status = '${t.agentWorked} · ${tookLabel(endedAt.difference(run.first.createdAt), t)}';
+    }
+    final style = TextStyle(fontSize: 12, height: 1.35, color: ended ? k.fgSubtle : k.fgMuted);
     // 개정판 3.3: 본문 열(아바타 뒤)에 맞춘 회색 한 줄 「◌ designer 작업 중 · 2분째 — 문구」.
     // 가장 최근 줄이면 목록이 아래부터 쌓이므로 작성칸 바로 위에 선다(따로 고정하지 않는다 —
     // 뒤에 말이 오면 그 말 위, 일이 일어난 순서 자리에 남는다).
     return Padding(
       key: Key('progress-${last.id}'),
-      padding: const EdgeInsets.fromLTRB(
-          HarkroomSize.gutter + HarkroomSize.avatar + 10, 4, HarkroomSize.gutter, 6),
+      padding: inRun
+          ? const EdgeInsets.fromLTRB(12, 3, HarkroomSize.gutter, 3)
+          : const EdgeInsets.fromLTRB(HarkroomSize.gutter + HarkroomSize.avatar + 10, 4, HarkroomSize.gutter, 6),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Padding(
-            padding: EdgeInsets.only(top: 2),
-            child: SizedBox(width: 11, height: 11, child: CircularProgressIndicator(strokeWidth: 1.6)),
-          ),
+          if (ended)
+            Padding(
+              key: Key('progress-dot-${last.id}'),
+              padding: const EdgeInsets.fromLTRB(3, 5, 2, 0),
+              child: Container(
+                width: 6,
+                height: 6,
+                decoration: BoxDecoration(color: k.fgSubtle, shape: BoxShape.circle),
+              ),
+            )
+          else
+            const Padding(
+              padding: EdgeInsets.only(top: 2),
+              child: SizedBox(width: 11, height: 11, child: CircularProgressIndicator(strokeWidth: 1.6)),
+            ),
           const SizedBox(width: 6),
           Expanded(
-            child: Text(
-              '${app.displayNameOf(last.authorId)} ${t.agentWorking} · ${runningLabel(elapsed, t)} — '
-              '${renderMentions(last.body, context.app.accounts, context.t.mentionUnknown)}',
-              style: muted,
+            child: Text.rich(
+              TextSpan(children: [
+                if (!inRun) ...[
+                  TextSpan(
+                    text: app.displayNameOf(last.authorId),
+                    style: TextStyle(fontWeight: FontWeight.w600, color: k.fgAgent),
+                  ),
+                  const TextSpan(text: ' '),
+                ],
+                TextSpan(text: '$status — ${renderMentions(last.body, app.accounts, t.mentionUnknown)}'),
+              ]),
+              style: style,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
@@ -56,7 +127,7 @@ class ProgressRow extends StatelessWidget {
           // 접힌 진행이 여럿이면 몇 개인지(누르면 펼치는 것은 이 줄의 일이 아니다).
           if (run.length > 1) ...[
             const SizedBox(width: 6),
-            Text('${run.length}', key: Key('progress-count-${last.id}'), style: muted),
+            Text('${run.length}', key: Key('progress-count-${last.id}'), style: style),
           ],
         ],
       ),
@@ -66,38 +137,143 @@ class ProgressRow extends StatelessWidget {
 
 /// 대기 줄 — 에이전트가 **언제 다시 볼지** 걸어 둔 예약.
 ///
-/// 이것이 없으면 기다리는 스레드는 그냥 조용한 스레드와 구별되지 않는다.
+/// 이것이 없으면 기다리는 스레드는 그냥 조용한 스레드와 구별되지 않는다. 끝난 예약은 회색 한 줄로 낮춰,
+/// 살아 있는 대기와 한눈에 갈린다. 초록·강조색은 쓰지 않는다 — 끝난 대기는 나를 막지 않는다.
 class WakeRow extends StatelessWidget {
-  const WakeRow({super.key, required this.message, required this.wake});
+  const WakeRow({super.key, required this.message, required this.wake, this.inRun = false});
 
   final MessageRow message;
   final WakeMeta wake;
 
+  /// 펼친 묶음 안의 줄 — 왼쪽 선 안에 서고 두 줄까지 보인다.
+  final bool inRun;
+
+  WakeState _state(DateTime now) => wake.stateAt(now, ownerChecked: ownerCheckedWake(message));
+
   @override
   Widget build(BuildContext context) {
+    if (_state(DateTime.now().toUtc()).isPast) return _line(context);
+    return _MinuteTicker(builder: _line);
+  }
+
+  Widget _line(BuildContext context) {
     final t = context.t;
-    final theme = Theme.of(context);
-    // 서버는 ISO 시각만 싣는다 — **읽는 쪽이 자기 시간대로 읽는다.**
-    final when = inLabel(wake.wakeAt, DateTime.now().toUtc(), t);
+    final k = context.tokens;
+    final now = DateTime.now().toUtc();
+    final state = _state(now);
+    final status = _statusLabel(state, now, t);
+    final past = state.isPast;
+    final reason = wake.reason == null || wake.reason!.trim().isEmpty
+        ? null
+        : renderMentions(wake.reason!, context.app.accounts, t.mentionUnknown);
+    final icon = switch (state) {
+      WakeState.checked => Icons.check,
+      WakeState.canceled => Icons.block,
+      _ => Icons.schedule,
+    };
 
     return Padding(
       key: Key('wake-${message.id}'),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      padding: inRun
+          ? const EdgeInsets.fromLTRB(12, 3, HarkroomSize.gutter, 3)
+          : const EdgeInsets.symmetric(horizontal: HarkroomSize.gutter, vertical: 3),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.schedule, size: 14, color: theme.colorScheme.outline),
-          const SizedBox(width: 8),
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Icon(icon, key: Key('wake-icon-${state.name}'), size: 13, color: past ? k.fgSubtle : k.fg),
+          ),
+          const SizedBox(width: 7),
           Expanded(
-            child: Text(
-              wake.reason == null
-                  ? '${t.agentWaiting} · $when'
-                  : '${t.agentWaiting} · $when — ${wake.reason}',
-              style: theme.textTheme.bodySmall,
-              maxLines: 2,
+            child: Text.rich(
+              TextSpan(children: [
+                TextSpan(
+                  text: status,
+                  style: past
+                      ? TextStyle(color: k.fgMuted)
+                      : TextStyle(color: k.fg, fontWeight: FontWeight.w500),
+                ),
+                if (reason != null) TextSpan(text: ' — $reason'),
+              ]),
+              style: TextStyle(fontSize: 12, height: 1.38, color: past ? k.fgSubtle : k.fgMuted),
+              maxLines: past && !inRun ? 1 : 2,
               overflow: TextOverflow.ellipsis,
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  String _statusLabel(WakeState state, DateTime now, Strings t) {
+    String at(String template, DateTime when) => template.replaceFirst('{when}', stampLabel(when, now));
+    String again(String rest) => at(t.wakeStatusAgain, wake.wakeAt).replaceFirst('{rest}', rest);
+    return switch (state) {
+      WakeState.checked => wake.checkedAt == null ? t.wakeStatusCheckedNoTime : at(t.wakeStatusChecked, wake.checkedAt!),
+      WakeState.canceled => at(t.wakeStatusCanceled, wake.wakeAt),
+      WakeState.fired => at(t.wakeStatusFired, wake.firedAt!),
+      WakeState.soon => again(t.timeSoon),
+      WakeState.waiting => again(inLabel(wake.wakeAt, now, t)),
+      WakeState.passed => at(t.wakeStatusPassed, wake.wakeAt),
+    };
+  }
+}
+
+/// 지난 예약·확인 묶음의 머리 줄. 누르면 원래 순서로 펼친다.
+class PastRunRow extends StatelessWidget {
+  const PastRunRow({super.key, required this.run, required this.open, required this.onToggle});
+
+  final FeedPastRun run;
+  final bool open;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.t;
+    final k = context.tokens;
+    final rows = run.rows;
+    final name = context.app.displayNameOf(rows.first.authorId);
+    final count = '${run.items.length}';
+    final from = stampLabel(rows.first.createdAt, DateTime.now().toUtc());
+    final to = clockLabel(rows.last.createdAt);
+    final range = from.endsWith(to) ? from : '$from–$to';
+    final summary = t.pastRunSummary.replaceFirst('{n}', count).replaceFirst('{range}', range);
+    final label = (open ? t.pastRunCollapse : t.pastRunExpand).replaceFirst('{name}', name).replaceFirst('{n}', count);
+    return Semantics(
+      button: true,
+      expanded: open,
+      label: label,
+      excludeSemantics: true,
+      child: InkWell(
+        key: Key('past-run-${run.key}'),
+        onTap: onToggle,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: HarkroomSize.gutter, vertical: 8),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Icon(Icons.schedule, size: 13, color: k.fgSubtle),
+              ),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text.rich(
+                  TextSpan(children: [
+                    TextSpan(text: name, style: TextStyle(fontWeight: FontWeight.w600, color: k.fgAgent)),
+                    TextSpan(text: ' $summary'),
+                  ]),
+                  style: TextStyle(fontSize: 12, height: 1.38, color: k.fgSubtle),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 7),
+              Icon(open ? Icons.expand_more : Icons.chevron_right, size: 15, color: k.fgSubtle),
+            ],
+          ),
+        ),
       ),
     );
   }

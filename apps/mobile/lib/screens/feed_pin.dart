@@ -146,6 +146,7 @@ int feedItemSeq(FeedItem item) => switch (item) {
       FeedMessage(:final message) => message.seq,
       FeedProgressRun(:final run) => run.first.seq,
       FeedExchange(:final slot) => slot.rows.first.seq,
+      FeedPastRun(:final rows) => rows.first.seq,
     };
 
 /// 맨 아래로 굴린다. 화면 밖 줄은 짓지 않아 높이를 어림하므로, 닿은 프레임의 배치에서 실제 높이로 고쳐져 한 줄쯤 위에

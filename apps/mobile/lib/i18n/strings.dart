@@ -467,7 +467,17 @@ abstract class Strings {
   String exchangeAttachments(int n);
 
   /// 대기 줄의 머리말.
-  String get agentWaiting;
+  String get wakeStatusChecked;
+  String get wakeStatusCheckedNoTime;
+  String get wakeStatusCanceled;
+  String get wakeStatusFired;
+  String get wakeStatusAgain;
+  String get wakeStatusPassed;
+  String get pastRunSummary;
+  String get pastRunExpand;
+  String get pastRunCollapse;
+  String get agentWorked;
+  String get agentEnded;
 
   /// 완료 보고 카드 제목.
   String get reportTitle;
@@ -1693,7 +1703,17 @@ Map<String, String> stringsToMap(Strings s) => {
       'exchangeCollapse': s.exchangeCollapse,
       'exchangeCount': s.exchangeCount(0),
       'exchangeAttachments': s.exchangeAttachments(0),
-      'agentWaiting': s.agentWaiting,
+      'wakeStatusChecked': s.wakeStatusChecked,
+      'wakeStatusCheckedNoTime': s.wakeStatusCheckedNoTime,
+      'wakeStatusCanceled': s.wakeStatusCanceled,
+      'wakeStatusFired': s.wakeStatusFired,
+      'wakeStatusAgain': s.wakeStatusAgain,
+      'wakeStatusPassed': s.wakeStatusPassed,
+      'pastRunSummary': s.pastRunSummary,
+      'pastRunExpand': s.pastRunExpand,
+      'pastRunCollapse': s.pastRunCollapse,
+      'agentWorked': s.agentWorked,
+      'agentEnded': s.agentEnded,
       'reportTitle': s.reportTitle,
       'reportChecks': s.reportChecks,
       'reportFiles': s.reportFiles,

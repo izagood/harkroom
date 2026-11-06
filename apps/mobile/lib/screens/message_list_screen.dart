@@ -90,7 +90,19 @@ class _MessageListScreenState extends State<MessageListScreen> {
     super.dispose();
   }
 
-  Widget _feedRow(BuildContext context, FeedItem item) => buildFeedItem(
+  /// 이 화면에서 펼친 지난 줄 묶음(첫 행 id). 화면을 떠나면 다시 접힌다.
+  final Set<String> _openPastRuns = {};
+
+  Widget _feedRow(BuildContext context, FeedItem item) => item is FeedPastRun
+      ? buildPastRun(
+          context,
+          item,
+          open: _openPastRuns.contains(item.key),
+          onToggle: () => setState(() {
+            if (!_openPastRuns.remove(item.key)) _openPastRuns.add(item.key);
+          }),
+        )
+      : buildFeedItem(
         context,
         item,
         // 채널에 올라온 답글(alsoInChannel)은 그 원글의 스레드로 간다.
@@ -165,7 +177,7 @@ class _MessageListScreenState extends State<MessageListScreen> {
     // **이제 전부 그린다.** P1 까지는 `progress`·`wake` 를 버렸는데, 그러면 오래 도는
     // 스레드가 조용해 보였다 — 진행은 한 줄로 접히고 대기는 대기 줄이 된다.
     final feedRows = all.where((m) => m.inChannelFeed).toList(growable: false);
-    final feed = buildFeed(feedRows);
+    final feed = foldPastRuns(buildFeed(feedRows), DateTime.now().toUtc());
     final failed = app.failedSends[widget.channelId] ?? const <FailedSend>[];
     final load = app.channelLoad[widget.channelId];
     // 빌드 중에 적어도 되는 값이다(그리기에만 쓴다).
@@ -339,7 +351,7 @@ Widget buildFeedItem(
   void Function(MessageRow)? onReplyInThread,
   Widget Function(Widget row)? mark,
 }) {
-  if (item is FeedProgressRun) return ProgressRow(run: item.run);
+  if (item is FeedProgressRun) return ProgressRow(item: item);
   final feed = item as FeedMessage;
   final m = feed.message;
 
@@ -380,6 +392,41 @@ Widget buildFeedItem(
   return Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [DayDivider(at: m.createdAt), row],
+  );
+}
+
+/// 지난 예약·확인 묶음. 접혔으면 머리 줄 하나, 펼쳤으면 그 아래 왼쪽 선 안에 원래 줄들이 선다.
+/// [mark] 는 찾은 줄 강조처럼 화면이 대기 줄에 덧씌우는 것이다.
+Widget buildPastRun(
+  BuildContext context,
+  FeedPastRun run, {
+  required bool open,
+  required VoidCallback onToggle,
+  Widget Function(String messageId, Widget row)? mark,
+}) {
+  Widget inner(FeedItem it) {
+    if (it is FeedProgressRun) return ProgressRow(item: it, inRun: true);
+    final m = (it as FeedMessage).message;
+    final row = WakeRow(message: m, wake: WakeMeta.read(m.meta)!, inRun: true);
+    return mark == null ? row : mark(m.id, row);
+  }
+
+  final first = run.items.first;
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      if (first is FeedMessage && first.dayBreak) DayDivider(at: first.message.createdAt),
+      PastRunRow(run: run, open: open, onToggle: onToggle),
+      if (open)
+        Container(
+          margin: const EdgeInsets.only(left: HarkroomSize.gutter),
+          decoration: BoxDecoration(border: Border(left: BorderSide(color: context.tokens.border, width: 2))),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [for (final it in run.items) inner(it)],
+          ),
+        ),
+    ],
   );
 }
 

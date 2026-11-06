@@ -1199,7 +1199,27 @@ class StringsKo implements Strings {
   String exchangeAttachments(int n) => '첨부 $n개';
 
   @override
-  String get agentWaiting => '대기 중';
+  String get wakeStatusChecked => '{when} 확인 · 새로 없음';
+  @override
+  String get wakeStatusCheckedNoTime => '확인함 · 새로 없음';
+  @override
+  String get wakeStatusCanceled => '{when} 예약 · 접힘';
+  @override
+  String get wakeStatusFired => '{when} 에 다시 봄';
+  @override
+  String get wakeStatusAgain => '{when} 에 다시 본다 · {rest}';
+  @override
+  String get wakeStatusPassed => '{when} 예약 · 지남';
+  @override
+  String get pastRunSummary => '지난 예약·확인 {n}줄 · {range}';
+  @override
+  String get pastRunExpand => '{name} 지난 예약·확인 {n}줄, 펼치기';
+  @override
+  String get pastRunCollapse => '{name} 지난 예약·확인 {n}줄, 접기';
+  @override
+  String get agentWorked => '작업';
+  @override
+  String get agentEnded => '끝남';
 
   @override
   String get reportTitle => '끝남';

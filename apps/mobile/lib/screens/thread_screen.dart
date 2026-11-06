@@ -332,8 +332,26 @@ class _ThreadScreenState extends State<ThreadScreen> {
   /// 이 화면에서 펼친 주고받기(구간 첫 행 id). 화면을 떠나면 다시 접힌다 — 데스크톱도 펼침을 기억하지 않는다.
   final Set<String> _openExchanges = {};
 
-  Widget _replyRow(BuildContext context, FeedItem item) => buildFeedItem(context, item,
-      mark: item is FeedMessage ? (row) => _mark(item.message.id, row) : null);
+  /// 이 화면에서 펼친 지난 줄 묶음(첫 행 id). 찾은 줄이 그 안에 있으면 펼친 채로 연다.
+  final Set<String> _openPastRuns = {};
+
+  Widget _replyRow(BuildContext context, FeedItem item) {
+    if (item is FeedPastRun) {
+      final hit = widget.highlightId != null && item.rows.any((m) => m.id == widget.highlightId);
+      return buildPastRun(
+        context,
+        item,
+        open: hit || _openPastRuns.contains(item.key),
+        onToggle: hit
+            ? () {}
+            : () => setState(() {
+                  if (!_openPastRuns.remove(item.key)) _openPastRuns.add(item.key);
+                }),
+        mark: _mark,
+      );
+    }
+    return buildFeedItem(context, item, mark: item is FeedMessage ? (row) => _mark(item.message.id, row) : null);
+  }
 
   /// 접힌 주고받기. 찾기·링크로 온 줄([ThreadScreen.highlightId])이 그 안에 있으면 **펼쳐서** 연다 —
   /// 접힌 줄 뒤에 숨은 것을 가리키면 사람은 엉뚱한 자리에 떨어진다.
@@ -436,7 +454,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
     final unfolded = first is FeedMessage && first.dayBreak
         ? [FeedMessage(first.message, continued: first.continued), ...built.skip(1)]
         : built;
-    final allReplies = foldExchanges(unfolded, folds);
+    final allReplies = foldPastRuns(foldExchanges(unfolded, folds), DateTime.now().toUtc());
     final firstReplyAt = first is FeedMessage ? first.message.createdAt : null;
     final failed = app.failedSends[widget.rootId] ?? const <FailedSend>[];
     final load = app.threadLoad[widget.rootId];

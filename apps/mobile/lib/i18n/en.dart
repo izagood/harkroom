@@ -1195,7 +1195,27 @@ class StringsEn implements Strings {
   String exchangeAttachments(int n) => n == 1 ? '1 attachment' : '$n attachments';
 
   @override
-  String get agentWaiting => 'Waiting';
+  String get wakeStatusChecked => 'Checked {when} · nothing new';
+  @override
+  String get wakeStatusCheckedNoTime => 'Checked · nothing new';
+  @override
+  String get wakeStatusCanceled => 'Check at {when} · canceled';
+  @override
+  String get wakeStatusFired => 'Checked again {when}';
+  @override
+  String get wakeStatusAgain => 'Checking again {when} · {rest}';
+  @override
+  String get wakeStatusPassed => 'Check at {when} · passed';
+  @override
+  String get pastRunSummary => 'Past checks {n} · {range}';
+  @override
+  String get pastRunExpand => '{name}: {n} past checks, expand';
+  @override
+  String get pastRunCollapse => '{name}: {n} past checks, collapse';
+  @override
+  String get agentWorked => 'Worked';
+  @override
+  String get agentEnded => 'ended';
 
   @override
   String get reportTitle => 'Done';

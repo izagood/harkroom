@@ -1,3 +1,4 @@
+import '../api/agent_meta.dart';
 import '../api/models.dart';
 import 'agent_exchange.dart';
 
@@ -28,9 +29,49 @@ const continuationWindow = Duration(minutes: 5);
 
 /// 이어진 진행 묶음. 마지막 것이 "지금 하는 일"이다.
 class FeedProgressRun extends FeedItem {
-  const FeedProgressRun(this.run);
+  const FeedProgressRun(this.run, {this.endedAt, this.silentEnd = false});
   final List<MessageRow> run;
+
+  /// 같은 작성자의 다음 글이 온 시각(데스크톱 `progressGroup.ts` 와 같은 판정). 아직 돌면 null.
+  final DateTime? endedAt;
+
+  /// 러너의 침묵 종료 알림 줄로 끝났다. 뒤에 글이 없어도 끝난 턴이고, 길이는 모른다.
+  final bool silentEnd;
+
+  bool get ended => endedAt != null || silentEnd;
 }
+
+/// 예약으로 깬 턴이 다음 예약만 걸고 끝났을 때 러너가 올리던 줄의 앞머리. meta 가 비어 있어 본문으로만 가른다.
+/// 예약 턴은 이제 이 줄 대신 대기 줄에 ✅를 달므로, 이미 쌓인 줄과 카드 답으로 깬 턴의 줄을 위한 판정이다.
+const silentWakeNoticePrefix = '(예약된 확인 턴이 발화 없이 끝났습니다';
+
+/// 같은 작성자가 연달아 쌓은 **끝난 줄**(지난 예약·끝난 진행) 묶음. 두 줄 이상일 때만 생긴다.
+class FeedPastRun extends FeedItem {
+  const FeedPastRun(this.items);
+
+  /// 펼치면 원래 순서로 서는 줄들.
+  final List<FeedItem> items;
+
+  List<MessageRow> get rows => [
+        for (final it in items)
+          ...switch (it) {
+            FeedMessage(:final message) => [message],
+            FeedProgressRun(:final run) => run,
+            _ => const <MessageRow>[],
+          },
+      ];
+
+  /// 펼침 상태의 키 — 첫 행 id. 뒤에 줄이 붙어도 앞머리는 그대로다.
+  String get key => rows.first.id;
+}
+
+/// 이 메시지가 대기 줄이면 그 상태, 아니면 null.
+WakeState? wakeStateOfRow(MessageRow m, DateTime now) =>
+    WakeMeta.read(m.meta)?.stateAt(now, ownerChecked: ownerCheckedWake(m));
+
+/// 줄 주인이 이 줄에 ✅를 달았는가.
+bool ownerCheckedWake(MessageRow m) =>
+    m.reactions.any((r) => r.emoji == '✅' && r.accountIds.contains(m.authorId));
 
 /// 메시지들을 그릴 줄로 바꾼다.
 ///
@@ -43,9 +84,22 @@ List<FeedItem> buildFeed(List<MessageRow> messages) {
   final out = <FeedItem>[];
   var run = <MessageRow>[];
 
+  // 줄마다 같은 작성자의 바로 다음 글이 온 시각 — 그 진행이 끝난 시각이다. 사이에 남의 글이 끼어도 찾아간다.
+  final nextOwnAt = <String, DateTime>{};
+  final latestOwnAt = <String, DateTime>{};
+  for (final m in messages.reversed) {
+    final next = latestOwnAt[m.authorId];
+    if (next != null) nextOwnAt[m.id] = next;
+    latestOwnAt[m.authorId] = m.createdAt;
+  }
+
   void flush() {
     if (run.isEmpty) return;
-    out.add(FeedProgressRun(List.unmodifiable(run)));
+    out.add(FeedProgressRun(
+      List.unmodifiable(run),
+      endedAt: nextOwnAt[run.last.id],
+      silentEnd: run.last.body.startsWith(silentWakeNoticePrefix),
+    ));
     run = <MessageRow>[];
   }
 
@@ -83,6 +137,55 @@ List<FeedItem> buildFeed(List<MessageRow> messages) {
     prev = m;
   }
   flush();
+  return out;
+}
+
+/// 같은 작성자가 연달아 쌓은 끝난 줄을 [FeedPastRun] 하나로 묶는다.
+///
+/// 묶음을 끊는 것: 보통 글(누구 것이든)·날짜 줄·다른 작성자의 줄·아직 도는 진행. 같은 작성자의 **살아 있는 대기 줄은 끊지 않고**
+/// 묶음 바로 뒤에 둔다 — 감시 턴은 다음 예약을 건 뒤에 끝난 줄을 남기므로, 끊으면 묶음이 예약마다 둘로 갈라진다.
+/// 끝난 줄이 하나뿐이면 묶지 않는다.
+List<FeedItem> foldPastRuns(List<FeedItem> feed, DateTime now) {
+  final out = <FeedItem>[];
+  var group = <FeedItem>[];
+  var liveAfter = <FeedItem>[];
+  String? author;
+
+  void close() {
+    if (group.length >= 2) {
+      out.add(FeedPastRun(List.unmodifiable(group)));
+    } else {
+      out.addAll(group);
+    }
+    out.addAll(liveAfter);
+    group = <FeedItem>[];
+    liveAfter = <FeedItem>[];
+    author = null;
+  }
+
+  for (final it in feed) {
+    final (String? who, bool past, bool live, bool dayBreak) = switch (it) {
+      FeedProgressRun(:final run, :final ended) => (run.first.authorId, ended, false, false),
+      FeedMessage(:final message, :final dayBreak) => () {
+          final state = wakeStateOfRow(message, now);
+          return (message.authorId, state?.isPast ?? false, state != null && !state.isPast, dayBreak);
+        }(),
+      _ => (null, false, false, false),
+    };
+    if (group.isNotEmpty && who == author && live && !dayBreak) {
+      liveAfter.add(it);
+      continue;
+    }
+    if (past) {
+      if (group.isNotEmpty && (who != author || dayBreak)) close();
+      group.add(it);
+      author = who;
+      continue;
+    }
+    close();
+    out.add(it);
+  }
+  close();
   return out;
 }
 
@@ -124,6 +227,7 @@ List<FeedItem> foldExchanges(List<FeedItem> feed, List<FoldSlot> slots) {
         FeedMessage(:final message) => message.id,
         FeedProgressRun(:final run) => run.first.id,
         FeedExchange(:final key) => key,
+        FeedPastRun(:final key) => key,
       };
 
   final out = <FeedItem>[];
