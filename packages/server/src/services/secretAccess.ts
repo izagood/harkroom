@@ -43,7 +43,8 @@ export const LEASE_RENEW_MS = 10 * 60_000;
  */
 export const LEASE_INBOX_MAX_AGE_MS = 6 * 60 * 60_000;
 /**
- * 다시 주기(157). 같은 부름의 옛 임대가 살아 있어도(`ended_at` 없음) **박동이 이만큼 끊겼으면** 그 러너는 죽었다고 보고 옛 임대를
+ * 다시 주기(157). 같은 부름의 옛 임대가 살아 있어도(`ended_at` 없음) **박동이 이만큼 끊겼으면**(또는 묻는 러너가 그 뒤에 스레드 임대를
+ * 넘겨받았으면 — `issueTurnLease`) 그 러너는 죽었다고 보고 옛 임대를
  * 끝내고 새로 준다. 러너 박동 주기(`TURN_LEASE_HEARTBEAT_MS`, 4분)의 1.5배 — 박동 하나를 늦게 받아도 살아 있는 턴의 임대는 뺏지
  * 않는다(시험이 이 관계를 묶는다). 박동이 이만큼 끊긴 살아 있는 턴(링크 끊김)은 임대를 잃고 다음 도구 호출에서 멈춘다(fail-closed).
  */
@@ -58,7 +59,7 @@ export type LeaseIssue =
       /** 부름이 인박스에 들어온 뒤 발급까지 기다린 초(감사용 — 줄이 밀려 늦게 받은 것을 로그 한 줄로 가른다). */
       waitedSec: number;
       /** 다시 주기(157)면 대신한 옛 임대와 그 임대의 마지막 박동 뒤 지난 초. */
-      reissue?: { oldLeaseId: string; sinceLastBeatSec: number } }
+      reissue?: { oldLeaseId: string; sinceLastBeatSec: number; via: 'thread_claim' | 'stale_beat' } }
   | { ok: false; code: 'not_invoked' | 'lease_used' };
 
 /**
@@ -67,7 +68,11 @@ export type LeaseIssue =
  * 호출부가 감사에 남긴다.
  */
 export async function issueTurnLease(
-  pool: Pool, args: { agentId: string; operatorId: string; causeMessageId: string; now?: Date },
+  pool: Pool, args: {
+    agentId: string; operatorId: string; causeMessageId: string; now?: Date;
+    /** 묻는 러너의 스레드 임대 holder(095). 옛 러너는 없다 — 그때는 박동 문턱만 본다. */
+    claimHolder?: string;
+  },
 ): Promise<LeaseIssue> {
   const now = args.now ?? new Date();
   const client = await pool.connect();
@@ -100,7 +105,7 @@ export async function issueTurnLease(
     // 부름당 한 번이 원칙이다. 예외는 하나(157): **같은 오퍼레이터**가 다시 물었고, 옛 임대가 끝나지 않은 채 **박동이 끊겼고**
     // (러너가 다시 떴다), 다시 주기가 남았을 때 — 옛 임대를 끝내고 새로 준다. 판정(읽지 않은 부름·6시간·지운 글)은 위에서 처음과
     // 똑같이 다시 탔고, 위임장·principal 도 아래에서 새로 계산한다(옛 임대에서 베끼지 않는다).
-    let reissue: { oldLeaseId: string; sinceLastBeatSec: number } | null = null;
+    let reissue: { oldLeaseId: string; sinceLastBeatSec: number; via: 'thread_claim' | 'stale_beat' } | null = null;
     if (used.rowCount) {
       const prior = (await client.query<{ id: string; operatorId: string; ended: boolean; lastBeat: Date; total: number }>(
         `select id, operator_id as "operatorId", ended_at is not null as ended, coalesce(last_renewed_at, created_at) as "lastBeat",
@@ -109,11 +114,21 @@ export async function issueTurnLease(
           order by created_at desc limit 1`,
         [args.agentId, args.causeMessageId])).rows[0];
       const stale = !!prior && now.getTime() - new Date(prior.lastBeat).getTime() >= LEASE_REISSUE_STALE_MS;
-      if (!prior || prior.ended || prior.operatorId !== args.operatorId || !stale || prior.total > LEASE_MAX_REISSUES) {
+      // 박동 문턱(6분)을 기다리지 않아도 되는 증거: **묻는 러너가 이 스레드의 임대를 옛 임대의 마지막 박동 뒤에 잡았다.**
+      // 스레드 임대를 쥔 러너만 그 스레드에서 턴을 띄우고 턴 내내 민다(`threadClaims.ts`). 옛 임대의 턴이 살아 있다면 그 스레드
+      // 임대를 쥐고 있어 남이 잡을 수 없다(409). 그러니 넘겨받았다는 사실이 곧 옛 턴이 없다는 뜻이다. 응답을 못 받아 아무도
+      // 쓰지 못한 임대도, 재기동으로 끊긴 턴의 임대도 이 조건으로 바로 풀린다.
+      const claimMoved = !!prior && !prior.ended && !!args.claimHolder && ((await client.query(
+        `select 1 from agent_thread_claim
+          where agent_id = $1 and channel_id = $2 and thread_root_id = $3 and holder = $4
+            and expires_at > now() and claimed_at > $5`,
+        [args.agentId, (msg.rows[0] as { channelId: string }).channelId, (msg.rows[0] as { threadRootId: string }).threadRootId, args.claimHolder, prior.lastBeat],
+      )).rowCount ?? 0) > 0;
+      if (!prior || prior.ended || prior.operatorId !== args.operatorId || !(stale || claimMoved) || prior.total > LEASE_MAX_REISSUES) {
         await client.query('rollback'); return { ok: false, code: 'lease_used' };
       }
       await client.query(`update secret_turn_lease set ended_at = $2 where id = $1 and ended_at is null`, [prior.id, now]);
-      reissue = { oldLeaseId: prior.id, sinceLastBeatSec: Math.round((now.getTime() - new Date(prior.lastBeat).getTime()) / 1000) };
+      reissue = { oldLeaseId: prior.id, sinceLastBeatSec: Math.round((now.getTime() - new Date(prior.lastBeat).getTime()) / 1000), via: stale ? 'stale_beat' : 'thread_claim' };
     }
     const token = randomBytes(32).toString('base64url');
     const expiresAt = new Date(now.getTime() + LEASE_TTL_MS);

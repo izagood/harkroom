@@ -598,9 +598,10 @@ export async function registerSecretRoutes(
   app.post('/agent/turn-leases', { preHandler: app.requireAccount }, async (req, reply) => {
     const who = viaOperator(req, reply);
     if (!who) return reply;
-    const parsed = z.object({ causeMessageId: z.string().uuid() }).safeParse(req.body ?? {});
+    // claimHolder: 묻는 러너의 스레드 임대 holder(`threadClaimRoutes.ts` 와 같은 꼴). 옛 러너는 안 보낸다.
+    const parsed = z.object({ causeMessageId: z.string().uuid(), claimHolder: z.string().min(1).max(100).optional() }).safeParse(req.body ?? {});
     if (!parsed.success) return reply.code(400).send({ error: { code: 'bad_request', message: parsed.error.message } });
-    const issued = await issueTurnLease(pool, { ...who, causeMessageId: parsed.data.causeMessageId });
+    const issued = await issueTurnLease(pool, { ...who, causeMessageId: parsed.data.causeMessageId, ...(parsed.data.claimHolder ? { claimHolder: parsed.data.claimHolder } : {}) });
     if (!issued.ok) {
       // 충돌은 사건이다 — 러너가 아닌 누군가(같은 자격을 쥔 셸)가 먼저 받아 갔거나, 끝난 멘션으로
       // 다시 받으려 했다(H2·S1).
@@ -621,7 +622,7 @@ export async function registerSecretRoutes(
       // 다시 주기(157) — 앞 러너의 옛 임대를 끝내고 새로 줬다(토큰 없음).
       ? {
         action: 'secret.lease.reissued', ...actorOf(req), target: who.agentId,
-        detail: { causeMessageId: parsed.data.causeMessageId, operatorId: who.operatorId, oldLeaseId: issued.reissue.oldLeaseId, newLeaseId: issued.leaseId, waitedSec: issued.waitedSec, sinceLastBeatSec: issued.reissue.sinceLastBeatSec },
+        detail: { causeMessageId: parsed.data.causeMessageId, operatorId: who.operatorId, oldLeaseId: issued.reissue.oldLeaseId, newLeaseId: issued.leaseId, waitedSec: issued.waitedSec, sinceLastBeatSec: issued.reissue.sinceLastBeatSec, via: issued.reissue.via },
       }
       : {
         action: 'secret.lease.issued', ...actorOf(req), target: who.agentId,

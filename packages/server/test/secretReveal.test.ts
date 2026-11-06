@@ -137,6 +137,75 @@ describe('턴 임대·reveal (086)', () => {
       await pool.query(`update inbox set read_at = now() where account_id = $1 and message_id = $2`, [agentId, m]);
       expect((await lease(m)).json().error.code).toBe('not_invoked');
     });
+    describe('스레드 임대를 넘겨받은 러너는 박동 문턱을 기다리지 않는다', () => {
+      const leaseAs = (m: string, claimHolder?: string) => app.inject({
+        method: 'POST', url: '/agent/turn-leases', headers: asAgent(op), payload: { causeMessageId: m, ...(claimHolder ? { claimHolder } : {}) },
+      });
+      const claim = (holder: string, opts: { at?: string; expired?: boolean } = {}) => pool.query(
+        `insert into agent_thread_claim (agent_id, channel_id, thread_root_id, holder, claimed_at, expires_at)
+         values ($1, $2, $3, $4, coalesce($5::timestamptz, now()), now() + make_interval(secs => $6))
+         on conflict (agent_id, channel_id, thread_root_id) do update set holder = excluded.holder, claimed_at = excluded.claimed_at, expires_at = excluded.expires_at`,
+        // 기본은 2초 뒤로 찍는다 — 시험의 발급 시각은 JS 시계, 임대는 DB 시계라 같은 순간이면 앞뒤가 갈린다.
+        [agentId, privCh, threadOf, holder, opts.at ?? new Date(Date.now() + 2_000).toISOString(), opts.expired ? -10 : 90]);
+      let threadOf: string;
+      const fresh = async () => {
+        const m = await mention(privCh);
+        threadOf = m;
+        return m;
+      };
+      it('옛 임대의 마지막 박동 뒤에 잡았으면 바로 다시 주고 옛 토큰은 죽는다 · 감사 via=thread_claim', async () => {
+        const m = await fresh();
+        await claim('old-runner', { at: new Date(Date.now() - 60_000).toISOString() });
+        const first = (await leaseAs(m, 'old-runner')).json().lease as { id: string; token: string };
+        await claim('new-runner');
+        const again = await leaseAs(m, 'new-runner');
+        expect(again.statusCode).toBe(200);
+        const second = again.json().lease as { id: string; token: string };
+        expect(second.id).not.toBe(first.id);
+        expect((await reveal(first)).json().error.code).toBe('lease_invalid');
+        const a = (await pool.query(`select detail from audit_log where action = 'secret.lease.reissued' and detail->>'newLeaseId' = $1`, [second.id])).rows[0];
+        expect(a.detail).toMatchObject({ oldLeaseId: first.id, via: 'thread_claim' });
+      });
+      it('턴이 살아 있으면(그 러너가 스레드 임대를 쥐고 있으면) 같은 holder 를 대도 409', async () => {
+        const m = await fresh();
+        await claim('live-runner', { at: new Date(Date.now() - 60_000).toISOString() });
+        expect((await leaseAs(m, 'live-runner')).statusCode).toBe(200);
+        expect((await leaseAs(m, 'live-runner')).json().error.code).toBe('lease_used');
+      });
+      it('임대를 안 쥔 holder · 만료된 임대 · 옛 임대 박동 앞에 잡은 임대 · holder 없음이면 409', async () => {
+        const m = await fresh();
+        const first = (await leaseAs(m)).json().lease as { id: string; token: string };
+        expect((await leaseAs(m, 'nobody')).json().error.code).toBe('lease_used');
+        await claim('expired', { expired: true });
+        expect((await leaseAs(m, 'expired')).json().error.code).toBe('lease_used');
+        await claim('earlier', { at: new Date(Date.now() - 60_000).toISOString() });
+        expect((await leaseAs(m, 'earlier')).json().error.code).toBe('lease_used');
+        await claim('later');
+        expect((await leaseAs(m)).json().error.code).toBe('lease_used');
+        // 박동이 스레드 임대보다 늦으면 옛 턴이 살아 있다는 뜻이다 — 다시 주지 않는다.
+        await pool.query(`update secret_turn_lease set last_renewed_at = now() + interval '1 minute' where id = $1`, [first.id]);
+        expect((await leaseAs(m, 'later')).json().error.code).toBe('lease_used');
+      });
+      it('다른 오퍼레이터 · 끝난 임대 · 횟수 상한은 넘겨받아도 그대로 409', async () => {
+        const m = await fresh();
+        await claim('old-runner', { at: new Date(Date.now() - 60_000).toISOString() });
+        const first = (await leaseAs(m, 'old-runner')).json().lease as { id: string; token: string };
+        await claim('new-runner');
+        expect(await issueTurnLease(pool, { agentId, operatorId: op2.operatorId, causeMessageId: m, claimHolder: 'new-runner' })).toEqual({ ok: false, code: 'lease_used' });
+        await app.inject({ method: 'POST', url: `/agent/turn-leases/${first.id}/end`, headers: asAgent(op), payload: { token: first.token } });
+        expect((await leaseAs(m, 'new-runner')).json().error.code).toBe('lease_used');
+
+        const m2 = await fresh();
+        await claim('r0', { at: new Date(Date.now() - 60_000).toISOString() });
+        expect((await leaseAs(m2, 'r0')).statusCode).toBe(200);
+        for (let i = 1; i <= LEASE_MAX_REISSUES; i++) {
+          await claim(`r${i}`);
+          expect((await leaseAs(m2, `r${i}`)).statusCode).toBe(200);
+        }
+        await claim('r-last');
+        expect((await leaseAs(m2, 'r-last')).json().error.code).toBe('lease_used');
+      });
+    });
     it('박동(갱신)은 마지막 박동 시각을 남긴다', async () => {
       const m = await mention(privCh);
       const l = (await lease(m)).json().lease as { id: string; token: string };
