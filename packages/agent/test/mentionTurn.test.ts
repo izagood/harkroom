@@ -1341,6 +1341,35 @@ describe('runMentionTurn', () => {
     }
   });
 
+  it('API 키 연결 턴: 400줄 표도 표 머리줄·끝말·꼬리줄을 남기고 상한 안에서 올린다', async () => {
+    const table = ['| 번호 | 값 |', '|---|---|', ...Array.from({ length: 400 }, (_, i) => `| ${i + 1} | ${'값'.repeat(30)} |`), '', '끝말이다'].join('\n');
+    const fake = new FakeHarkroom(defOf({ harness: 'codex', model: 'ExampleOrg/example-model' }));
+    fake.seedFrom('human-1', '@forge 표').id = MENTION;
+    const { deps } = await makeDeps(fake, {
+      readHarnessLastSaid: async () => table,
+      providerEnv: async () => ({ HARKROOM_LANE_BASE_URL: 'https://gateway.example.com/v1' }),
+    });
+    const workspaceDir = join(deps.workspaceBaseDir, 'codex-long');
+    await mkdir(workspaceDir, { recursive: true });
+    await deps.store.put(SessionStore.threadKey(CHANNEL, null), {
+      workspaceDir, sessionId: '00000000-0000-4000-8000-000000000001', harness: 'codex', lastFedSeq: 0, turnsRun: 0,
+    });
+    const mcpConfigPath = join(deps.workspaceBaseDir, 'mcp.json');
+    await writeFile(mcpConfigPath, JSON.stringify({ mcpServers: { harkroom: { type: 'stdio', command: '/opt/harkroom/harkroom-operator', args: ['mcp-bridge'] } } }));
+    vi.stubEnv('HARKROOM_RUNNER_SECRET', 'fake-runner-secret');
+    try {
+      await runMentionTurn({ ...deps, mcpConfigPath }, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    const body = fake.posts.at(-1)!.body;
+    expect(body.length).toBeLessThanOrEqual(8000);
+    expect(body).toContain('> | 번호 | 값 |');
+    expect(body).toContain('> 끝말이다');
+    expect(body).toMatch(/> … \d+줄 생략 …/);
+    expect(body).toContain('하네스 기록에서 옮겨 올렸습니다');
+  });
+
   it('사람이 부른 API 키 연결 claude 턴: 도구 없이 끝낸 짧은 답을 기록에서 옮겨 올린다(2026-11-04 사례)', async () => {
     const fake = new FakeHarkroom(defOf({ harness: 'claude-code', model: 'ExampleOrg/example-model' }));
     fake.seedFrom('human-1', '@forge 안녕').id = MENTION;

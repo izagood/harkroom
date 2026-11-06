@@ -308,6 +308,78 @@ export const PROXY_ANSWER_MAX_CHARS = 1_000;
 
 const PROXY_SCREEN_TAIL = '\n\n(에이전트가 이 답을 터미널에만 쓰고 스레드에 올리지 않아, 러너가 화면에서 옮겨 올렸습니다. 화면에 보이던 부분만이라 긴 답은 일부가 빠질 수 있습니다.)';
 
+/** 앞뒤를 남기고 가운데를 줄인 자리 표시. 줄을 통째로 뺀 것이 없으면(한 줄을 글자로 자른 경우) 수를 적지 않는다. */
+const proxyOmitted = (n: number): string => `> … ${n > 0 ? `${n}줄` : '일부'} 생략 …`;
+
+/**
+ * 앞에서 `n` 칸(UTF-16)을 남긴다. 칸을 `.length` 로 재므로 자르기도 같은 단위로 한다 — 코드 포인트로 자르면 이모지 든 줄이 칸을 두 배까지 넘는다
+ * (2026-11-06 security 실측). 서러게이트 짝의 가운데면 한 칸 물린다.
+ */
+function keepHeadUnits(s: string, n: number): string {
+  if (n <= 0) return '';
+  if (s.length <= n) return s;
+  const c = s.charCodeAt(n - 1);
+  return s.slice(0, c >= 0xd800 && c <= 0xdbff ? n - 1 : n);
+}
+
+/** 끝에서 `n` 칸(UTF-16)을 남긴다. 서러게이트 짝의 가운데면 한 칸 물린다(`keepHeadUnits`). */
+function keepTailUnits(s: string, n: number): string {
+  if (n <= 0) return '';
+  if (s.length <= n) return s;
+  const start = s.length - n;
+  const c = s.charCodeAt(start);
+  return s.slice(c >= 0xdc00 && c <= 0xdfff ? start + 1 : start);
+}
+
+/**
+ * 인용한 답을 `room` 안에 담는다. **넘치면 앞뒤를 줄 단위로 남기고 가운데를 줄인다**(2026-11-06 소유자 결정) — 앞에서만 자르면 표 뒤의 끝말이
+ * 사라지고 잘렸다는 말도 없었다(400줄 표 실측). 끝말(마지막 문단)을 먼저 잡되 뒤쪽이 칸의 60% 를 넘지 않게 해 표 머리줄이 앞쪽에 남게 한다.
+ * 한 줄이 칸을 혼자 넘으면 그 줄을 글자로 자른다.
+ */
+function fitQuotedLines(lines: readonly string[], room: number): string {
+  const whole = lines.join('\n');
+  if (whole.length <= room) return whole;
+  const budget = room - proxyOmitted(lines.length).length - 2; // 자리 표시와 그 앞뒤 줄바꿈
+  const blank = lines.map((l) => l === '>').lastIndexOf(true);
+  const lastParagraph = lines.slice(blank + 1).join('\n').length + 1; // 줄마다 줄바꿈 몫을 친 아래 합과 맞춘다
+  const tailMax = Math.floor(budget * 0.6);
+  const tailTarget = Math.min(tailMax, Math.max(lastParagraph, Math.floor(budget / 4)));
+  const tail: string[] = [];
+  let tailUsed = 0;
+  for (let i = lines.length - 1; i > 0; i -= 1) {
+    const cost = lines[i]!.length + 1;
+    if (tailUsed + cost > tailTarget) break;
+    tail.unshift(lines[i]!);
+    tailUsed += cost;
+  }
+  // 끝줄 하나가 뒤쪽 칸을 넘으면 그 끝을 글자로 남긴다 — 끝말이 통째로 빠지지 않게.
+  if (tail.length === 0) {
+    const last = lines[lines.length - 1]!;
+    tail.push(`> …${keepTailUnits(last, tailTarget - 4)}`);
+    tailUsed = tail[0]!.length + 1;
+  }
+  const headRoom = budget - tailUsed;
+  const stop = lines.length - tail.length;
+  const head: string[] = [];
+  let headUsed = 0;
+  for (let i = 0; i < stop; i += 1) {
+    const cost = lines[i]!.length + (i > 0 ? 1 : 0);
+    if (headUsed + cost > headRoom) break;
+    head.push(lines[i]!);
+    headUsed += cost;
+  }
+  // 첫 줄부터 넘치면 그 앞을 글자로 남긴다. 남길 칸이 없으면 싣지 않는다 — 인용(`>`) 없는 줄을 만들지 않는다.
+  if (head.length === 0) {
+    const kept = keepHeadUnits(lines[0]!, headRoom - 1);
+    if (kept) head.push(`${kept}…`);
+  }
+  // 뒤쪽을 글자로 자른 줄은 빠진 줄이 아니다.
+  const omitted = stop - head.length;
+  const fitted = [...head, proxyOmitted(omitted), ...tail].join('\n');
+  // 칸을 넘기면 호출부의 `slice(0, BODY_LIMIT)` 가 러너 꼬리줄을 잘라 직접 쓴 글처럼 보인다 — 위 계산이 틀려도 칸은 넘지 않게 막는다.
+  return keepHeadUnits(fitted, room);
+}
+
 /**
  * **화면의 답을 대신 올리는 글**(`silentTurnNotice`). 없거나 가림에 걸리면 빈 문자열이고, 그때 호출자는 「답 없음」 통지로 돌아간다.
  *
@@ -324,11 +396,9 @@ export function proxyAnswerBody(screenAnswer: string | null, pat: string, secret
   if (needles.length > 0 && tailHasSecretFragment(maskWhole(screenAnswer, needles), needles)) return '';
   const lines = screenAnswer.split('\n').map((l) => oneLine(l, pat, PROXY_ANSWER_MAX_CHARS, secrets)).filter(Boolean);
   if (lines.length === 0) return '';
-  let quoted = lines.map((l) => `> ${l}`).join('\n');
   // `reserve` 는 호출자가 앞에 붙일 머리(`proxyHead`) 몫이다 — 붙인 뒤 자르면 이 꼬리가 잘려 멘션 달린 대리 글이 직접 쓴 글처럼 보인다.
-  const room = BODY_LIMIT - PROXY_SCREEN_TAIL.length - 1 - reserve; // `…` 하나
-  if (quoted.length > room) quoted = `${quoted.slice(0, room)}…`;
-  return `${quoted}${PROXY_SCREEN_TAIL}`;
+  const room = BODY_LIMIT - PROXY_SCREEN_TAIL.length - reserve;
+  return `${fitQuotedLines(lines.map((l) => `> ${l}`), room)}${PROXY_SCREEN_TAIL}`;
 }
 
 /**
@@ -371,11 +441,10 @@ export function proxyRecordAnswerBody(text: string, pat: string, secrets: readon
   if (!t) return '';
   // **인용을 붙인 뒤의 길이로 자른다**(2026-10-30 security 검토). 붙이기 전에 자르면 줄이 많은 답은 `> ` 몫만큼 상한을 넘고,
   // 호출부의 `slice(0, BODY_LIMIT)` 가 꼬리를 잘라 에이전트가 직접 쓴 글처럼 보였다. 꼬리 몫을 먼저 빼고 남은 칸에 인용을 담는다.
-  let quoted = t.split('\n').map((l) => (l.trim() ? `> ${l}` : '>')).join('\n');
+  const quoted = t.split('\n').map((l) => (l.trim() ? `> ${l}` : '>'));
   // `reserve` 는 호출자가 앞에 붙일 머리(`proxyHead`) 몫이다 — 붙인 뒤 자르면 이 꼬리가 잘려 멘션 달린 대리 글이 직접 쓴 글처럼 보인다.
-  const room = BODY_LIMIT - PROXY_RECORD_TAIL.length - 3 - reserve; // `…` 하나와 꼬리 앞 빈 줄 둘
-  if (quoted.length > room) quoted = `${quoted.slice(0, room)}…`;
-  return `${quoted}${PROXY_RECORD_TAIL}`;
+  const room = BODY_LIMIT - PROXY_RECORD_TAIL.length - reserve;
+  return `${fitQuotedLines(quoted, room)}${PROXY_RECORD_TAIL}`;
 }
 
 /** 대신 올릴 글 — 기록의 끝말이 있으면 그것을, 없으면 화면 답을 쓴다(`silentTurnNotice`). */

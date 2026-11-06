@@ -2052,6 +2052,83 @@ describe('silentTurnNotice — 기록의 마지막 말이 답 꼴이면 ✅ 로 
   });
 });
 
+describe('대리 글이 넘칠 때 — 앞뒤를 남기고 가운데를 줄인다', () => {
+  const rows = (n: number) => Array.from({ length: n }, (_, i) => `| ${i + 1} | ${'값'.repeat(30)} |`);
+  const table = ['서두 한 줄', '', '| 번호 | 값 |', '|---|---|', ...rows(400), '', '끝말: 표는 여기까지다.'].join('\n');
+  const base = { offAnchor: null, pat: 'hrkp_secretpat', recordProxy: true, caller: 'human' as const };
+
+  it('400줄 표: 머리·표 머리줄·끝말·러너 꼬리줄이 남고, 생략 줄 수가 빠진 줄 수와 맞고, 멘션까지 합쳐 상한 안이다', () => {
+    const head = '@some-long-handle\n\n';
+    const body = (silentTurnNotice({ ...base, proxyHead: head, lastSaid: table }) as { body: string }).body;
+    expect(body.length).toBeLessThanOrEqual(BODY_LIMIT);
+    expect(body.startsWith(`${head}> 서두 한 줄\n>\n> | 번호 | 값 |\n> |---|---|\n> | 1 | ${'값'.repeat(30)} |`)).toBe(true);
+    expect(body).toContain(`> | 400 | ${'값'.repeat(30)} |\n>\n> 끝말: 표는 여기까지다.`);
+    expect(body.endsWith('러너가 하네스 기록에서 옮겨 올렸습니다.)')).toBe(true);
+    const omitted = Number(/> … (\d+)줄 생략 …/.exec(body)![1]);
+    const kept = body.split('\n').filter((l) => /^> \| \d+ \|/.test(l)).length;
+    expect(omitted).toBeGreaterThan(0);
+    expect(kept + omitted).toBe(400);
+  });
+
+  it('상한 안이면 그대로 옮기고 생략 표시가 없다', () => {
+    const short = ['| 번호 | 값 |', '|---|---|', ...rows(30), '', '끝말'].join('\n');
+    const body = proxyRecordAnswerBody(short, '');
+    expect(body).not.toContain('생략');
+    expect(body).toContain(`> | 30 | ${'값'.repeat(30)} |\n>\n> 끝말`);
+  });
+
+  it('끝말이 긴 문단이어도 통째로 남고, 표 머리줄도 남는다', () => {
+    const para = '끝말 '.repeat(800).trim();
+    const body = proxyRecordAnswerBody(['| 번호 | 값 |', '|---|---|', ...rows(400), '', para].join('\n'), '');
+    expect(body).toContain(`> ${para}`);
+    expect(body).toContain('> | 번호 | 값 |');
+    expect(body.length).toBeLessThanOrEqual(BODY_LIMIT);
+  });
+
+  it('줄바꿈 없는 긴 답: 앞뒤를 글자로 남기고 상한 안이다', () => {
+    const body = proxyRecordAnswerBody(`시작${'가'.repeat(20_000)}마지막`, '');
+    expect(body.length).toBeLessThanOrEqual(BODY_LIMIT);
+    expect(body).toContain('> 시작');
+    expect(body).toContain('가마지막');
+    expect(body).toContain('일부 생략');
+    expect(body.endsWith('러너가 하네스 기록에서 옮겨 올렸습니다.)')).toBe(true);
+  });
+
+  it('줄 수가 아주 많아도 상한 안이고 줄마다 인용이다', () => {
+    const body = proxyRecordAnswerBody(`${'@x\n'.repeat(9_000)}끝`, '');
+    expect(body.length).toBeLessThanOrEqual(BODY_LIMIT);
+    for (const l of body.split('\n').slice(0, -2)) expect(l.startsWith('>')).toBe(true);
+    expect(body).toContain('> 끝');
+  });
+
+  // 칸은 UTF-16 으로 재므로 자르기도 같은 단위여야 한다 — 코드 포인트로 자르면 칸을 두 배까지 넘어 꼬리줄이 잘린다(2026-11-06 security 실측).
+  const emoji = (n: number) => '😀'.repeat(n);
+  const shortLines = Array.from({ length: 10 }, (_, i) => `짧은 줄 ${i + 1}`);
+  it.each([
+    ['이모지 긴 한 줄', emoji(5_000)],
+    ['짧은 줄 + 이모지 긴 끝줄', [...shortLines, emoji(5_000)].join('\n')],
+    ['이모지 긴 첫 줄 + 짧은 끝줄', [emoji(5_000), ...shortLines].join('\n')],
+    ['한 칸 밀린 이모지 긴 한 줄', `x${emoji(5_000)}`],
+  ])('이모지: %s — 멘션까지 합쳐 상한 안이고, 줄마다 인용이고, 짝이 깨지지 않고, 꼬리줄이 남는다', (_, text) => {
+    const head = '@some-long-handle\n\n';
+    const body = proxyRecordAnswerBody(text, '', [], head.length);
+    expect(head.length + body.length).toBeLessThanOrEqual(BODY_LIMIT);
+    expect(body.endsWith('러너가 하네스 기록에서 옮겨 올렸습니다.)')).toBe(true);
+    const quoted = body.split('\n\n')[0]!.split('\n');
+    for (const l of quoted) expect(l.startsWith('>')).toBe(true);
+    expect(body).not.toMatch(/\p{Cs}/u);
+    expect(body).toContain('😀');
+    expect(body).toContain('생략');
+  });
+
+  it('화면 답도 같은 방식이다', () => {
+    const body = proxyAnswerBody(table, '');
+    expect(body.length).toBeLessThanOrEqual(BODY_LIMIT);
+    expect(body).toContain('> 끝말: 표는 여기까지다.');
+    expect(body).toMatch(/> … \d+줄 생략 …/);
+  });
+});
+
 describe('대리 글 머리(부른 사람 멘션) — 꼬리가 잘리지 않는다', () => {
   const base = { offAnchor: null, pat: 'hrkp_secretpat', recordProxy: true, proxyHead: '@some-long-handle\n\n' } as const;
   const long = Array.from({ length: 300 }, () => '가'.repeat(100)).join('\n');
