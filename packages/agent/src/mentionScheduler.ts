@@ -341,12 +341,15 @@ function askAnsweredNote(mention: { body: string; meta?: unknown }): string {
 /**
  * 깨움 턴의 대상: 사유는 깨움 메시지 본문, 보고처·감시 표식은 그 meta(`meta.wake.reportTo`·`meta.wake.watch`, 2026-10-31).
  * 감시면 사슬을 시작한 지시의 id(`meta.wake.origin`, 2026-11-02)도 — 감시가 아니면 `wakeOrigin` 이 보지 않는다.
+ * 보고처가 있으면 예약한 때(대기 줄 seq)와 예약을 건 턴(`meta.turnId`)도 — 보고처 판정의 기준선이다(2026-11-06).
  */
-function wakeTarget(mention: InboxBatch['messages'][number]): { reason: string; reportTo?: WakeReportTo; watch?: true; origin?: string } {
+function wakeTarget(mention: InboxBatch['messages'][number]): NonNullable<MentionTarget['wake']> {
   const reportTo = wakeReportTo(mention.meta);
   const origin = wakeOrigin(mention.meta);
+  const turnId = (mention.meta as { turnId?: unknown } | null | undefined)?.turnId;
   return {
-    reason: mention.body, ...(reportTo ? { reportTo } : {}),
+    reason: mention.body, ...(reportTo ? { reportTo, scheduledSeq: mention.seq } : {}),
+    ...(reportTo && typeof turnId === 'string' ? { scheduledTurnId: turnId } : {}),
     ...(wakeWatch(mention.meta) ? { watch: true as const } : {}), ...(origin ? { origin } : {}),
   };
 }

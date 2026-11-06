@@ -771,6 +771,84 @@ describe('runMentionTurn', () => {
       expect(warn[0]!.body).toContain(`harkroom://message/${MENTION}`);
     });
 
+    // 11-05 실측: 예약 뒤 병렬 턴이 일을 끝내 보고처에 보고했는데, 깨어난 턴이 글 없이 끝나자 헛 실패 줄이 섰다.
+    describe('기준선은 예약한 때(2026-11-06)', () => {
+      const SCHEDULING_TURN = 'turn-scheduling';
+
+      /** 예약을 건 뒤~턴 시작 전 보고처에 쌓인 글을 [before] 로 심고, 글 없이 끝나는 깨어난 턴을 돌린다. */
+      async function silentWake(before: (f: FakeHarkroom, me: string) => void) {
+        const fake = new FakeHarkroom(defOf());
+        fake.seedFrom('human-1', '@forge #1174 확인해');
+        const { deps, runTurn } = await makeDeps(fake);
+        const scheduled = fake.seedFrom(deps.me.id, '#1174 CI 확인', 'anchor-root');
+        scheduled.kind = 'wake';
+        before(fake, deps.me.id);
+        runTurn.script = async () => ({ exitCode: 0, timedOut: false, tail: '' });
+        await runMentionTurn(deps, {
+          channelId: CHANNEL, threadRootId: null, mentionId: MENTION,
+          wake: { reason: '#1174 CI 확인', reportTo: REPORT, scheduledSeq: scheduled.seq, scheduledTurnId: SCHEDULING_TURN },
+        });
+        return fake.fails.filter((x) => x.threadRootId === 'report-root');
+      }
+
+      it('예약 뒤 다른 턴이 보고처에 이미 보고했으면 글 없이 끝나도 경고하지 않는다', async () => {
+        const warn = await silentWake((f, me) => {
+          f.seedFrom(me, '#1174 머지했다', 'report-root').meta = { turnId: 'turn-other' };
+        });
+        expect(warn).toEqual([]);
+      });
+
+      // 10-06 회귀: 예약을 건 턴이 쓴 약속 글은 기준선보다 뒤여도 보고가 아니다.
+      it('예약을 건 턴의 약속 글만 있으면 경고한다', async () => {
+        const warn = await silentWake((f, me) => {
+          f.seedFrom(me, '다음 확인은 13:21 KST', 'report-root').meta = { turnId: SCHEDULING_TURN };
+        });
+        expect(warn).toHaveLength(1);
+      });
+
+      it('예약 전에 쓴 내 글은 세지 않는다', async () => {
+        const fake = new FakeHarkroom(defOf());
+        fake.seedFrom('human-1', '@forge #1174 확인해');
+        const { deps, runTurn } = await makeDeps(fake);
+        fake.seedFrom(deps.me.id, '옛 보고', 'report-root').meta = { turnId: 'turn-old' };
+        const scheduled = fake.seedFrom(deps.me.id, '#1174 CI 확인', 'anchor-root');
+        scheduled.kind = 'wake';
+        runTurn.script = async () => ({ exitCode: 0, timedOut: false, tail: '' });
+        await runMentionTurn(deps, {
+          channelId: CHANNEL, threadRootId: null, mentionId: MENTION,
+          wake: { reason: '#1174 CI 확인', reportTo: REPORT, scheduledSeq: scheduled.seq, scheduledTurnId: SCHEDULING_TURN },
+        });
+        expect(fake.fails.filter((x) => x.threadRootId === 'report-root')).toHaveLength(1);
+      });
+
+      it('예약 뒤 사람 글만 있으면 경고한다', async () => {
+        const warn = await silentWake((f) => { f.seedFrom('human-1', '잡담', 'report-root'); });
+        expect(warn).toHaveLength(1);
+      });
+
+      it('턴 id 가 없는 옛 글은 보고로 센다 — 근거 없이 경고하지 않는다', async () => {
+        const warn = await silentWake((f, me) => { f.seedFrom(me, '보고', 'report-root'); });
+        expect(warn).toEqual([]);
+      });
+
+      it('깨어난 턴 자신이 보고처에 쓴 글은 보고다', async () => {
+        const fake = new FakeHarkroom(defOf());
+        fake.seedFrom('human-1', '@forge #1174 확인해');
+        const { deps, runTurn } = await makeDeps(fake);
+        const scheduled = fake.seedFrom(deps.me.id, '#1174 CI 확인', 'anchor-root');
+        scheduled.kind = 'wake';
+        runTurn.script = async () => {
+          fake.seedFrom(deps.me.id, '#1174 초록', 'report-root').meta = { turnId: 'turn-woken' };
+          return { exitCode: 0, timedOut: false, tail: '' };
+        };
+        await runMentionTurn(deps, {
+          channelId: CHANNEL, threadRootId: null, mentionId: MENTION,
+          wake: { reason: '#1174 CI 확인', reportTo: REPORT, scheduledSeq: scheduled.seq, scheduledTurnId: SCHEDULING_TURN },
+        });
+        expect(fake.fails.filter((x) => x.threadRootId === 'report-root')).toEqual([]);
+      });
+    });
+
     it('다시 기다리기로 했으면(새 깨움) 경고하지 않는다 — 아직 보고할 때가 아니다', async () => {
       const { fake } = await wakeTurn((f, me) => {
         const m = f.seedFrom(me, '#1174 CI 다시 확인', null);
