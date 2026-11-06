@@ -494,6 +494,15 @@ export const DELEGATION_FOLLOWUP_WINDOW_SEC = 6 * 60 * 60;
 /** 위임 하나가 후속으로 깨우는 횟수 상한. */
 export const DELEGATION_FOLLOWUP_LIMIT = 3;
 
+/**
+ * 후속 보고로 깨우는 스위치 — 기본 꺼짐. 옛 러너는 모르는 사유를 보통 부름으로 돌려 팀원 글을 할 일로 싣는다. 앱이 다 올라간 뒤에 켠다.
+ * 부를 때마다 읽는다(`principalInvokeEnabled` 와 같다).
+ */
+export function delegationFollowupEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const v = (env.HARKROOM_DELEGATION_FOLLOWUP ?? '').trim().toLowerCase();
+  return v === '1' || v === 'on' || v === 'true';
+}
+
 export type DelegationFollowup =
   | { woke: string }
   | { skipped: 'chain_limit' | 'followup_limit' }
@@ -504,7 +513,7 @@ export type DelegationFollowup =
  * 닫지 못하므로 넘긴 쪽이 모른다. 멘션 게이트·회신권은 건드리지 않는다 — 판정은 서버가 위임 행으로만 한다.
  *
  * 끝나지 않은 위임은 건드리지 않는다(`notified_at`): 모두 끝나면 어차피 결말로 깨고, 그 턴이 스레드에서 이 글을 읽는다.
- * 안 읽은 후속·결말이 있으면 새로 넣지 않는다 — 곧 뜰(또는 도는) 턴 하나로 합친다.
+ * 아직 안 집어 간 후속·결말이 있으면 새로 넣지 않는다 — 곧 뜰 턴 하나로 합친다.
  *
  * 깨우는 글은 후속 글 자신이다(`message_id`). 깊이가 그 글에서 이어지게 하려는 것이고, 위임장·principal·머지 사슬은 이 사유에서
  * 끊는다(`secretAccess.ts`·`invokePrincipal.ts`·`mergeGrants.ts`·`verifiedCauseLink`).
@@ -519,7 +528,7 @@ export async function wakeLeadOnFollowup(
     chainCapped: () => Promise<boolean>;
   },
 ): Promise<DelegationFollowup> {
-  if (!args.isReport) return null;
+  if (!args.isReport || !delegationFollowupEnabled()) return null;
   const row = (await client.query<{ id: string; lead_account_id: string; followups: number }>(
     `select d.id, d.lead_account_id, d.followups
        from team_delegation d
@@ -542,6 +551,10 @@ export async function wakeLeadOnFollowup(
     `select 1 from inbox i join message m on m.id = i.message_id
       where i.account_id = $1 and i.read_at is null and i.reason in ('delegation_followup', 'delegation_done')
         and coalesce(m.thread_root_id, m.id) = $2
+        -- 이미 턴이 집어 간 항목은 합치지 않는다 — 그 턴은 이 글을 못 볼 수 있어 끝 보고가 묻힌다.
+        and not exists (select 1 from secret_turn_lease l
+                         where l.agent_id = i.account_id and l.cause_message_id = i.message_id
+                           and l.ended_at is null and l.expires_at > now())
       limit 1`,
     [row.lead_account_id, args.threadRootId],
   );

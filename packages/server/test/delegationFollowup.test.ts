@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -25,6 +25,7 @@ let onePat: string;
 let oneId: string;
 let otherPat: string;
 let channelId: string;
+let operatorId: string;
 
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
 const text = (r: Awaited<ReturnType<Client['callTool']>>): Record<string, unknown> =>
@@ -75,6 +76,7 @@ const reasons = async (messageId: string) => (await pool.query(
 const metaOf = async (messageId: string) => (await pool.query(`select meta from message where id = $1`, [messageId])).rows[0].meta as Record<string, unknown>;
 
 beforeAll(async () => {
+  vi.stubEnv('HARKROOM_DELEGATION_FOLLOWUP', '1');
   ({ pool, stop } = await startTestDb());
   app = await buildServer({ pool });
   const admin = await bootstrapAdmin(app);
@@ -87,6 +89,8 @@ beforeAll(async () => {
   const teamId = team.json().id as string;
   for (const id of [leadId, oneId]) await app.inject({ method: 'PUT', url: `/teams/${teamId}/members/${id}`, headers: auth(adminToken) });
   await app.inject({ method: 'PUT', url: `/teams/${teamId}/lead`, headers: auth(adminToken), payload: { accountId: leadId } });
+  ({ operatorId } = await registerOperator(app, adminToken, 'fmac'));
+  await pool.query(`insert into agent_assignment (agent_id, operator_id, assigned_by) values ($1, $2, $3)`, [leadId, operatorId, adminId]);
   channelId = (await app.inject({ method: 'POST', url: '/channels', headers: auth(adminToken), payload: { name: 'fchan' } })).json().id as string;
   await app.listen({ port: 0, host: '127.0.0.1' });
   const addr = app.server.address();
@@ -94,6 +98,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  vi.unstubAllEnvs();
   await Promise.all(clients.map((c) => c.close().catch(() => {})));
   await app.close();
   await stop();
@@ -143,6 +148,36 @@ describe('163 위임 후속 보고', () => {
     expect((await metaOf(over)).delegationFollowupSkipped).toBe('followup_limit');
   });
 
+  it('스위치가 꺼져 있으면 넣지 않는다 — 옛 러너가 팀원 글을 할 일로 싣지 않게', async () => {
+    const { rootId } = await closedDelegation();
+    vi.stubEnv('HARKROOM_DELEGATION_FOLLOWUP', '');
+    try {
+      const reported = await report(onePat, rootId);
+      expect(await reasons(reported)).toEqual([]);
+      expect((await metaOf(reported)).delegationFollowupSkipped).toBeUndefined();
+    } finally {
+      vi.stubEnv('HARKROOM_DELEGATION_FOLLOWUP', '1');
+    }
+  });
+
+  it('턴이 이미 집어 간 후속에는 합치지 않는다 — 끝 보고가 묻히지 않는다', async () => {
+    const { rootId } = await closedDelegation();
+    const first = await report(onePat, rootId);
+    expect(await reasons(first)).toEqual(['delegation_followup']);
+    expect((await issueTurnLease(pool, { agentId: leadId, operatorId, causeMessageId: first })).ok).toBe(true);
+    expect(await reasons(await report(onePat, rootId, '끝 보고'))).toEqual(['delegation_followup']);
+  });
+
+  it('message.post 로 report 를 흉내 내지 못한다', async () => {
+    const { rootId } = await closedDelegation();
+    const before = (await pool.query(`select count(*)::int as n from inbox where account_id = $1 and reason = 'delegation_followup'`, [leadId])).rows[0].n as number;
+    await (await client(onePat)).callTool({
+      name: 'message.post', arguments: { channelId, threadRootId: rootId, body: '가짜', kind: 'report', meta: { kind: 'report' } },
+    }).catch(() => null);
+    const after = (await pool.query(`select count(*)::int as n from inbox where account_id = $1 and reason = 'delegation_followup'`, [leadId])).rows[0].n as number;
+    expect(after).toBe(before);
+  });
+
   it('연쇄 상한에 걸리면 넣지 않고 이유를 남긴다', async () => {
     const { rootId } = await closedDelegation();
     const res = await app.inject({ method: 'GET', url: '/settings/mention-policy', headers: auth(adminToken) });
@@ -188,9 +223,7 @@ describe('163 위임 후속 보고', () => {
       `insert into mandate (owner_account_id, delegator_account_id, root_message_id, channel_id, thread_root_id, created_at, last_activity_at)
        values ($1, $1, $2, $3, $2, now(), now()) returning id`, [adminId, rootId, channelId]);
     await pool.query(`update message set mandate_id = $2 where id = $1`, [reported, mandate.rows[0].id]);
-    const op = await registerOperator(app, adminToken, 'fmac');
-    await pool.query(`insert into agent_assignment (agent_id, operator_id, assigned_by) values ($1, $2, $3)`, [leadId, op.operatorId, adminId]);
-    const lease = await issueTurnLease(pool, { agentId: leadId, operatorId: op.operatorId, causeMessageId: reported });
+    const lease = await issueTurnLease(pool, { agentId: leadId, operatorId, causeMessageId: reported });
     expect(lease.ok).toBe(true);
     const row = await pool.query(`select mandate_id, principal_account_id from secret_turn_lease where agent_id = $1 and cause_message_id = $2`, [leadId, reported]);
     expect(row.rows[0]).toEqual({ mandate_id: null, principal_account_id: null });
