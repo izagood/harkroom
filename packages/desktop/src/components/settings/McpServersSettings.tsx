@@ -71,10 +71,13 @@ const BTN_PRI = 'shrink-0 rounded-row border border-accent bg-accent px-2 py-0.5
 function MenuButton({ items, label, testid }: { items: MenuItem[]; label: string; testid: string }) {
   if (items.length === 0) return null;
   return (
-    <Menu placement="bottom" items={items} renderTrigger={(props) => (
-      <button type="button" {...props} aria-label={label} data-testid={testid}
-        className="shrink-0 rounded-row px-1.5 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken">⋯</button>
-    )} />
+    // Menu 는 가장 가까운 positioned 조상에 붙는다 — relative 가 없으면 설정 화면 전체를 기준으로 떠서 ⋯ 와 멀어진다.
+    <span className="relative flex shrink-0">
+      <Menu placement="bottom" className="right-0" items={items} renderTrigger={(props) => (
+        <button type="button" {...props} aria-label={label} data-testid={testid}
+          className="shrink-0 rounded-row px-1.5 py-0.5 text-meta text-fg-muted hover:bg-surface-sunken">⋯</button>
+      )} />
+    </span>
   );
 }
 
