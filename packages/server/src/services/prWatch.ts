@@ -165,7 +165,8 @@ export async function reportWatchStatus(pool: Pool, args: { agentId: string; wat
   if (!w) return { ok: false, code: 'not_found' };
   if (!(await holdsPrGrant(pool, args.agentId, w.repo, w.channel_id))) return { ok: false, code: 'not_granted' };
   const sum = summarize(args.status);
-  const changed = JSON.stringify(sum) !== JSON.stringify(w.last_status ?? null);
+  // jsonb 는 키 순서를 바꾸므로 비교는 DB 에서(jsonb 동치) 한다.
+  const changed = (await pool.query<{ c: boolean }>(`select ($1::jsonb is distinct from last_status) as c from pr_watch where id = $2`, [JSON.stringify(sum), w.id])).rows[0]?.c ?? true;
   const end = nextState(w.until, w.head, sum);
   // 같은 감시를 두 오퍼레이터가 겹쳐 보고해도 한 번만 넘어가게 — 여전히 열려 있고 last_status 가 그대로일 때만 쓴다.
   const upd = await pool.query(
