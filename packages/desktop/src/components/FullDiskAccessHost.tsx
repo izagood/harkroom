@@ -11,12 +11,16 @@ import { fdaPromptStorage, getFdaSurface, shouldPrompt, useFdaStatus } from '../
  * - 다시 시작 띠: 켜졌는데 **이 프로세스가 아직 막혀 있을 때만**(`restart`) 선다(소유자 결정 #8). 다시 시작한 뒤
  *   켜짐으로 읽히면 상태가 `on` 이라 서지 않는다. [나중에] 는 이번 실행 동안만 접는다 — 설정 줄에는 남는다.
  */
-export function FullDiskAccessHost() {
+export function FullDiskAccessHost({ onDialogChange }: {
+  /** 첫 안내 창이 떴는지 — 「로그인할 때 자동으로 시작」 묻는 띠가 이 창 뒤에 서려고 본다(`LoginItemHost`). */
+  onDialogChange?: (open: boolean) => void;
+} = {}) {
   const t = useT();
   const { status } = useFdaStatus();
   const [open, setOpen] = useState(false);
   const [bandHidden, setBandHidden] = useState(false);
   const [bandError, setBandError] = useState<string | null>(null);
+  useEffect(() => { onDialogChange?.(open); }, [open, onDialogChange]);
 
   useEffect(() => {
     if (status && shouldPrompt(status, fdaPromptStorage.wasShown())) {

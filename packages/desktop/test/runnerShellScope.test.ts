@@ -641,7 +641,7 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
       expect(callers).toEqual([{ fn: 'daemon_command', file: 'daemon_client.rs' }]);
     });
 
-    it('`#[tauri::command]` 중 웹뷰가 채울 수 있는 파라미터를 받는 것은 시크릿 3종·daemon 2종·로컬 설정 10종(operator_*)·작업 폴더 정리 2종뿐이다', () => {
+    it('`#[tauri::command]` 중 웹뷰가 채울 수 있는 파라미터를 받는 것은 시크릿 3종·daemon 2종·로컬 설정 10종(operator_*)·작업 폴더 정리 2종·로그인 항목 켜기 1종뿐이다', () => {
       const commands = [...mainRs.matchAll(
         /#\[tauri::command\]\s*\n\s*(?:async\s+)?fn\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)/g,
       )].map((m) => {
@@ -676,6 +676,7 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
           'codex_account_activate', 'codex_account_login_cancel', 'codex_account_login_start',
           'codex_account_remove', 'codex_accounts_provider_usage',
           'daemon_kill_runner', 'daemon_spawn_runner',
+          'login_item_set',
           'operator_agent_provider_lane_set', 'operator_agent_remove', 'operator_agent_set', 'operator_mcp_auth', 'operator_mcp_remove', 'operator_mcp_set', 'operator_mcp_set_stdio', 'operator_merge_check', 'operator_merge_set', 'operator_register',
           'pick_save_target', 'reveal_saved_attachment',
           'secret_delete', 'secret_get', 'secret_set',
@@ -694,6 +695,8 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
       // 판정(http(s)·/preview/·90초·한 번)은 Rust `PreviewAllowance` 가 하고 그 단위 시험이 고정한다.
       const preview = commands.find((c) => c.fn === 'allow_preview_once')!;
       expect(preview.webviewParams.sort()).toEqual(['url: String', 'webview: tauri::Webview']);
+      // 로그인 항목(2026-11-09): 켜기/끄기 불리언 하나뿐 — 무엇을 등록할지(이 앱 번들)는 Rust 가 정한다(`login_item.rs`).
+      expect(commands.find((c) => c.fn === 'login_item_set')!.webviewParams).toEqual(['enabled: bool']);
       // 등록: 서버 URL·코드·이름 문자열뿐 — claim 은 데몬이 한다.
       const reg = commands.find((c) => c.fn === 'operator_register')!;
       expect(reg.webviewParams.sort()).toEqual(['base_url: String', 'code: String', 'name: Option<String>']);

@@ -103,7 +103,9 @@ visible before it becomes a conflict.
   agents, and relays the terminal of an agent you are watching (without storing it).
 - **Operator** — one per machine that runs agents. It starts and restarts that machine's agents
   and talks to the server on their behalf. The desktop app starts it for you **while the app is
-  open** (after a restart, open the app again); a machine without the app runs it on its own.
+  running**. To keep agents answering after a restart without opening the app, turn on
+  **Settings › This machine's operator › Start at login** (macOS 13+) — the app then starts without a
+  window when you log in. A machine without the app runs the operator on its own.
 - **Runner** — one per agent. It waits for a mention and runs that turn. Both the runner and the
   operator ship inside the desktop app
   (`/Applications/Harkroom.app/Contents/MacOS/harkroom-runner`, next to `harkroom-operator`).

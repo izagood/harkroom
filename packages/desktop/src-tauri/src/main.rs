@@ -14,6 +14,7 @@ mod community_root;
 mod daemon_client;
 mod external_link;
 mod fda_probe;
+mod login_item;
 mod login_path;
 mod mcp_stdio_confirm;
 mod notification;
@@ -355,6 +356,25 @@ async fn fda_status() -> String {
 #[tauri::command]
 fn fda_open_settings() -> Result<(), String> {
     fda_probe::open_settings()
+}
+
+/// 로그인 항목 상태(`login_item.rs`). 파라미터가 없다.
+#[tauri::command]
+fn login_item_status() -> String {
+    login_item::status().as_str().to_string()
+}
+
+/// 로그인 항목을 켜거나 끈다. 웹뷰가 고르는 것은 켜기/끄기 하나뿐이다 — 무엇을 등록할지(이 앱 번들)는 Rust 가 정한다.
+/// 성공하면 바뀐 상태를, 실패하면 macOS 가 준 사유를 돌려준다.
+#[tauri::command]
+fn login_item_set(enabled: bool) -> Result<String, String> {
+    login_item::set(enabled).map(|s| s.as_str().to_string())
+}
+
+/// 시스템 설정 › 일반 › 로그인 항목 화면을 연다.
+#[tauri::command]
+fn login_item_open_settings() -> Result<(), String> {
+    login_item::open_settings()
 }
 
 /// Finder 에서 이 앱 번들을 보인다(설정 목록에 끌어다 놓기용).
@@ -1179,6 +1199,7 @@ fn main() {
             }
             // 기동 확인(`scripts/launch-smoke.sh`)이 "setup 을 지났다"를 읽는 표지. 켜지 않으면 아무것도 안 한다.
             if std::env::var_os("HARKROOM_LAUNCH_SMOKE").is_some() {
+                eprintln!("harkroom-launch-smoke: login_item raw_status={:?}", login_item::raw_status());
                 eprintln!("harkroom-launch-smoke: setup done");
             }
             Ok(())
@@ -1207,6 +1228,9 @@ fn main() {
             fda_status,
             fda_open_settings,
             fda_reveal_app,
+            login_item_status,
+            login_item_set,
+            login_item_open_settings,
             operator_cli_path,
             update_channel::app_update_check,
             update_channel::app_update_install,

@@ -28,8 +28,11 @@ function call(cmd: string, args?: Record<string, unknown>): Promise<unknown> {
 }
 
 /** 이 머신의 오퍼레이터를 이 커뮤니티에 등록한다 — 코드는 서버가 발급했고, claim 은 오퍼레이터가 한다. */
-export function registerLocalOperator(baseUrl: string, code: string, name?: string): Promise<OperatorRegisterResult> {
-  return call('operator_register', { baseUrl, code, name: name ?? null }) as Promise<OperatorRegisterResult>;
+export async function registerLocalOperator(baseUrl: string, code: string, name?: string): Promise<OperatorRegisterResult> {
+  const out = await call('operator_register', { baseUrl, code, name: name ?? null }) as OperatorRegisterResult;
+  // 등록 기록이 바뀌었다 — 첫 등록을 기다리는 자리(「로그인할 때 자동으로 시작」 묻는 띠)가 다시 읽는다.
+  notifyLocalAgentsChanged();
+  return out;
 }
 
 /** 이 앱 번들 안 `harkroom-operator` 의 전체 경로. 붙여 넣어도 쓸모없는 임시 경로면 null(`main.rs::operator_cli_path`). */

@@ -280,26 +280,51 @@ export function ReadonlyRow({ label, value }: { label: string; value: ReactNode 
  * `describedBy` 는 이 줄 **밖**에 서는 설명(예: 켜져 있는 동안만 서는 경고 줄)의 id 들이다 — 그 요소가
  * 화면에 있을 때만 넘긴다(없는 id 를 가리키면 읽을 것이 없다).
  */
-export function Toggle({ label, description, describedBy, checked, disabled, onChange }: {
+export function Toggle({ label, description, describedBy, checked, disabled, onChange, side, descriptionClassName, testId }: {
   label: string; description?: string; describedBy?: string[]; checked: boolean; disabled?: boolean;
   onChange(next: boolean): void;
+  /** 스위치 앞에 서는 상태 칩·고치는 버튼(「로그인할 때 자동으로 시작」의 승인 필요·켜지 못함). 좁은 폭에선 아래로 내려간다. */
+  side?: ReactNode;
+  /** 설명 줄의 색(주의·위험). 없으면 흐린 글. */
+  descriptionClassName?: string;
+  testId?: string;
 }) {
   const descriptionId = useId();
+  const switchId = useId();
   const ids = [...(description ? [descriptionId] : []), ...(describedBy ?? [])];
+  const text = (
+    <>
+      <span className="block font-medium text-fg">{label}</span>
+      {description && <span id={descriptionId} className={`mt-0.5 block ${descriptionClassName ?? 'text-fg-subtle'}`}>{description}</span>}
+    </>
+  );
+  const sw = (
+    <Switch
+      id={side ? switchId : undefined}
+      testId={testId}
+      ariaLabel={label}
+      ariaDescribedBy={ids.length > 0 ? ids.join(' ') : undefined}
+      checked={checked}
+      disabled={disabled}
+      onChange={onChange}
+      className="mt-0.5"
+    />
+  );
+  // 칩·버튼이 있으면 줄 전체를 label 로 감싸지 않는다 — label 은 for 가 없으면 첫 대화형 자손(그 버튼)에 묶여, 이름·설명을
+  // 누르면 스위치 대신 버튼이 눌린다. 글만 `htmlFor` 로 스위치에 잇고 버튼은 label 밖 형제로 둔다.
+  if (side) {
+    return (
+      <div className={`flex items-start gap-4 px-4 py-3 ${disabled ? 'opacity-50' : ''}`}>
+        <label htmlFor={switchId} className="min-w-0 flex-1 cursor-pointer">{text}</label>
+        <span className="flex shrink-0 flex-wrap items-center justify-end gap-2">{side}</span>
+        {sw}
+      </div>
+    );
+  }
   return (
     <label className={`flex items-start gap-4 px-4 py-3 ${disabled ? 'opacity-50' : ''}`}>
-      <span className="min-w-0 flex-1">
-        <span className="block font-medium text-fg">{label}</span>
-        {description && <span id={descriptionId} className="mt-0.5 block text-fg-subtle">{description}</span>}
-      </span>
-      <Switch
-        ariaLabel={label}
-        ariaDescribedBy={ids.length > 0 ? ids.join(' ') : undefined}
-        checked={checked}
-        disabled={disabled}
-        onChange={onChange}
-        className="mt-0.5"
-      />
+      <span className="min-w-0 flex-1">{text}</span>
+      {sw}
     </label>
   );
 }
@@ -309,12 +334,13 @@ export function Toggle({ label, description, describedBy, checked, disabled, onC
  * 스위치**다 — 자동화 줄의 "켜짐" 이 맨 체크박스(파란 네모)였고, 같은 일을 하는 것이 화면마다
  * 다른 컨트롤로 보였다(M9). 이제 켜기/끄기는 모두 이 모양 하나다.
  */
-export function Switch({ checked, disabled, onChange, ariaLabel, ariaDescribedBy, testId, className = '' }: {
-  checked: boolean; disabled?: boolean; onChange(next: boolean): void;
+export function Switch({ id, checked, disabled, onChange, ariaLabel, ariaDescribedBy, testId, className = '' }: {
+  id?: string; checked: boolean; disabled?: boolean; onChange(next: boolean): void;
   ariaLabel?: string; ariaDescribedBy?: string; testId?: string; className?: string;
 }) {
   return (
     <input
+      id={id}
       type="checkbox"
       role="switch"
       aria-label={ariaLabel}

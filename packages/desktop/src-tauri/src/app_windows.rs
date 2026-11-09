@@ -59,7 +59,14 @@ pub fn build_main<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
         .cloned()
         .expect("tauri.conf.json 에 main 창이 있어야 한다");
     let handle = app.handle().clone();
+    // 로그인 항목으로 떴으면 창 없이 둔다(`login_item.rs`) — 웹뷰는 숨은 채 돌아 오퍼레이터·러너를 세운다.
+    // Dock 아이콘을 누르면 `RunEvent::Reopen` 이 띄운다.
+    let at_login = crate::login_item::launched_at_login();
+    if std::env::var_os("HARKROOM_LAUNCH_SMOKE").is_some() {
+        eprintln!("harkroom-launch-smoke: launched_at_login={at_login}");
+    }
     let main = tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?
+        .visible(config.visible && !at_login)
         .on_new_window(move |url, features| {
             let Some(label) = popup_label(&url) else {
                 return tauri::webview::NewWindowResponse::Deny;

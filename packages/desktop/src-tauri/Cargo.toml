@@ -46,6 +46,10 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
   "NSUserNotification",
   "NSArray",
   "NSURL",
+  # 로그인 항목(`login_item.rs`): 등록 실패 사유와, 로그인 항목으로 떴는지 읽는 첫 Apple Event.
+  "NSError",
+  "NSAppleEventManager",
+  "NSAppleEventDescriptor",
 ] }
 # 첨부 저장 뒤 [Finder에서 보기] — `NSWorkspace activateFileViewerSelectingURLs:` 하나만 쓴다
 # (`attachment_save.rs`). `open -R` 처럼 프로세스를 띄우지 않으려고 직접 부른다. 새로 들인 것이 아니다 —

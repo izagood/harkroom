@@ -20,6 +20,7 @@ import { ReloginPanel, type ReloginDone } from './ReloginPanel';
 import { PROJECTION_SECTION, ProjectionBanner } from './ProjectionBanner';
 import { PasswordResetNoticeBanner } from './PasswordReset';
 import { FullDiskAccessHost } from './FullDiskAccessHost';
+import { LoginItemHost } from './LoginItemHost';
 import { ServerCompatBanner } from './ServerCompatBanner';
 import { ConnectionBanner } from './ConnectionBanner';
 import { OperatorStartupBanner } from './OperatorStartupBanner';
@@ -63,6 +64,7 @@ export function Workspace({ onLogout, onOpenSettings, onRelogin = reloginNotWire
   const history = useActiveStore((s) => s.history);
   const historyIndex = useActiveStore((s) => s.historyIndex);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [fdaDialogOpen, setFdaDialogOpen] = useState(false);
   const [searchInitialScope, setSearchInitialScope] = useState<SearchScope>('all');
   const [directoryOpen, setDirectoryOpen] = useState(false);
   const [channelDirectoryOpen, setChannelDirectoryOpen] = useState(false);
@@ -432,7 +434,9 @@ export function Workspace({ onLogout, onOpenSettings, onRelogin = reloginNotWire
         {/* 내 계정에 재설정 코드가 발급됐다는 알림(R7) — 확인할 때까지 남는다. */}
         <PasswordResetNoticeBanner />
         {/* 전체 디스크 접근 — 첫 안내 창과, 켜졌는데 다시 시작해야 할 때만 서는 띠(`FullDiskAccessHost`). */}
-        <FullDiskAccessHost />
+        <FullDiskAccessHost onDialogChange={setFdaDialogOpen} />
+        {/* 로그인할 때 자동으로 시작 — 첫 등록 뒤 한 번 묻는 띠와, 승인 대기·켜지 못함일 때만 서는 주의 띠(`LoginItemHost`). */}
+        <LoginItemHost fdaDialogOpen={fdaDialogOpen} onOpenSettings={onOpenSettings} />
         <div className="relative flex flex-1 overflow-hidden">
           {/* 관문 카드·실패 토스트는 본문 위에 **겹쳐** 그린다(2026-10-09 A안). 전에는 헤더 아래
               흐름 안의 띠라 뜰 때마다 화면 전체가 한 줄 내려갔다. 채널 안이 아니라 여기인 이유는

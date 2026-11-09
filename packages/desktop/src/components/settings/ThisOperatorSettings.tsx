@@ -5,7 +5,8 @@ import { useT } from '../../i18n/useT';
 import { hasCapability } from '../../lib/capabilities';
 import { hasOperatorLocalSurface, listLocalAgents, registerLocalOperator } from '../../lib/operatorLocal';
 import type { SectionId } from './sections';
-import { SettingsGroup, SettingsPage } from './primitives';
+import { SettingsGroup, SettingsPage, Toggle } from './primitives';
+import { getLoginItemSurface, setLoginItem, useLoginItem, type LoginItemView } from '../../lib/loginItem';
 import { operatorNameOf } from '../../lib/operatorName';
 import { errorText } from '../../lib/errorText';
 import { getFdaSurface, useFdaStatus, type FdaStatus } from '../../lib/fullDiskAccess';
@@ -228,6 +229,7 @@ export function ThisOperatorSettings({ onOpenSection }: {
           {error && <p role="alert" className="mt-3 text-meta text-danger">{error}</p>}
         </div>
       </SettingsGroup>
+      <LoginItemGroup />
       <FullDiskAccessGroup />
     </SettingsPage>
   );
@@ -288,6 +290,73 @@ function FullDiskAccessGroup() {
         </div>
       </div>
       {open && <FullDiskAccessDialog status={status} onClose={() => setOpen(false)} />}
+    </SettingsGroup>
+  );
+}
+
+/**
+ * 「시작」 묶음 — 로그인할 때 자동으로 시작 한 줄(designer 시안 2절). 등록 카드와 「macOS 권한」 사이에 선다: 영향을 받는
+ * 것이 이 맥에서 도는 에이전트라 이 페이지에 산다. macOS 13 미만·데스크톱 밖이면 묶음째 숨긴다.
+ *
+ * 다섯 상태: 꺼짐·켜짐은 스위치만. 승인 대기는 스위치 켜진 채 주의 칩 + [시스템 설정 열기]. 켜지 못함은 스위치를 꺼짐으로
+ * 되돌리고(거짓으로 켜져 보이지 않게) 위험색 사유 + [다시 시도]. 시스템 설정에서 꺼짐은 회색 설명만.
+ */
+function LoginItemGroup() {
+  const t = useT();
+  const { view, failure } = useLoginItem();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (view === 'hidden') return null;
+
+  // 켜기 실패는 줄의 「켜지 못함」이 사유째 말한다 — 같은 사유를 두 번 쓰지 않는다. 끄기 실패만 아래 한 줄로.
+  const toggle = (next: boolean) => {
+    setError(null);
+    setBusy(true);
+    setLoginItem(next)
+      .catch((e) => { if (!next) setError(t('loginItem.actionFailed', { reason: errorText(e, t) })); })
+      .finally(() => setBusy(false));
+  };
+  const openSystem = () => {
+    setError(null);
+    getLoginItemSurface().openSettings().catch((e) => setError(t('loginItem.actionFailed', { reason: errorText(e, t) })));
+  };
+
+  const under: Record<Exclude<LoginItemView, 'hidden'>, { text: string; cls?: string }> = {
+    off: { text: t('loginItem.row.off') },
+    on: { text: t('loginItem.row.on') },
+    approval: { text: t('loginItem.row.approval'), cls: 'text-warning' },
+    failed: { text: t('loginItem.row.failed', { reason: failure ?? '' }), cls: 'break-all text-danger' },
+    system: { text: t('loginItem.row.system') },
+  };
+  const chipCls = 'inline-flex items-center rounded-full bg-warning-surface px-2 py-0.5 text-meta font-semibold text-warning';
+  const btnCls = 'rounded-row border border-border px-3 py-1 text-fg hover:bg-surface-sunken disabled:opacity-50';
+  const side = view === 'approval' ? (
+    <>
+      <span data-testid="login-item-chip" className={chipCls}>{t('loginItem.chip.approval')}</span>
+      <button type="button" data-testid="login-item-open-system" className={btnCls} onClick={openSystem}>{t('loginItem.openSystem')}</button>
+    </>
+  ) : view === 'failed' ? (
+    <>
+      <span data-testid="login-item-chip" className={chipCls}>{t('loginItem.chip.failed')}</span>
+      <button type="button" data-testid="login-item-retry" className={btnCls} disabled={busy} onClick={() => toggle(true)}>{t('loginItem.retry')}</button>
+    </>
+  ) : undefined;
+
+  return (
+    <SettingsGroup title={t('loginItem.group')}>
+      <div data-testid="login-item-row" data-state={view}>
+        <Toggle
+          label={t('loginItem.label')}
+          description={under[view].text}
+          descriptionClassName={under[view].cls}
+          checked={view === 'on' || view === 'approval'}
+          disabled={busy}
+          onChange={toggle}
+          side={side}
+          testId="login-item-switch"
+        />
+        {error && <p role="alert" className="px-4 pb-3 text-meta text-danger">{error}</p>}
+      </div>
     </SettingsGroup>
   );
 }
