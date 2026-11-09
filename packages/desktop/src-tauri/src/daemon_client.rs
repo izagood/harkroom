@@ -1666,6 +1666,12 @@ const EXIT_COMMAND_NOT_FOUND: i32 = 127;
 /// 있다는 뜻이고, 그때 사람이 할 일은 `occupied_reason` 이 말한다.
 const EXIT_OCCUPIED: i32 = 10;
 
+/// 사이드카가 **Node 가 너무 낡았다**고 보고 물러난 종료 코드.
+///
+/// 출처는 `packages/desktop/scripts/nodeVersionGuard.mjs` 의 `EXIT_NODE_TOO_OLD`(번들 머리의 판 검사).
+/// 대조는 `EXIT_OCCUPIED` 와 같은 `test/daemonExitCodes.test.ts` 다.
+const EXIT_NODE_TOO_OLD: i32 = 12;
+
 impl DaemonExitWatch {
     fn new(program: PathBuf, pid_path: PathBuf) -> Self {
         DaemonExitWatch {
@@ -1752,6 +1758,14 @@ fn exit_reason(
         if let Some(line) = tail {
             if looks_like_missing_node(line) {
                 return node_missing_reason(program, line);
+            }
+        }
+    }
+    // 판 검사도 **코드와 끝줄 표식이 둘 다** 맞을 때만 단정한다(위 갈래와 같은 좁음).
+    if code == Some(EXIT_NODE_TOO_OLD) {
+        if let Some(line) = tail {
+            if looks_like_old_node(line) {
+                return node_too_old_reason(line);
             }
         }
     }
@@ -1853,6 +1867,22 @@ fn looks_like_missing_node(line: &str) -> bool {
         return false;
     }
     lower.contains("no such file or directory") || lower.contains("not found")
+}
+
+/// 사이드카 머리의 판 검사(`nodeVersionGuard.mjs`)가 남긴 줄인가.
+fn looks_like_old_node(line: &str) -> bool {
+    line.contains("harkroom: Node.js") && line.contains("is required")
+}
+
+/// **Node 가 너무 낡았다**는 사유의 문구. 어느 `node` 를 집었는지(끝줄의 경로)와 그때의
+/// `PATH` 를 함께 적는다 — 낡은 판이 앞서 잡혔다면 사람은 그 자리를 고쳐야 한다.
+fn node_too_old_reason(tail: &str) -> String {
+    format!(
+        "오퍼레이터가 쓸 Node.js 가 너무 낡았다 — 22 이상이 필요하다. \
+         Node.js 22 LTS 이상을 설치하라: https://nodejs.org/en/download \
+         (오퍼레이터 로그: {tail} / 이때 쓴 PATH: {})",
+        crate::login_path::child_path(),
+    )
 }
 
 /// **`node` 가 없다**는 사유의 문구. `spawn_failure_reason` 과 같은 말을 한다.
@@ -3696,6 +3726,24 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
             watch.death_reason().is_none(),
             "안 죽었는데 죽었다고 말하면 정상 기동이 실패로 뒤집힌다"
         );
+    }
+
+    /// **Node 가 낡아 물러났으면 그 판과 22 이상이 필요하다는 말을 한다.** 코드만 12 이고
+    /// 끝줄이 다른 이야기면 단정하지 않는다.
+    #[test]
+    fn node_가_낡았으면_판_사유를_말한다() {
+        let old = DaemonExitWatch::exited(
+            "/A/harkroom-operator",
+            Some(EXIT_NODE_TOO_OLD),
+            Some("harkroom: Node.js 22+ is required, found v20.18.1 at /x/node"),
+        );
+        let msg = old.death_reason().unwrap();
+        assert!(msg.contains("22 이상"), "{msg}");
+        assert!(msg.contains("v20.18.1"), "집은 판이 남는다: {msg}");
+
+        let other = DaemonExitWatch::exited("/A/harkroom-operator", Some(EXIT_NODE_TOO_OLD), Some("다른 일"));
+        let msg = other.death_reason().unwrap();
+        assert!(!msg.contains("22 이상"), "지어내지 않는다: {msg}");
     }
 
     /// **대조군 ② — 다른 사유로 죽으면 Node 이야기를 안 한다**(`#513` 회귀선 4).

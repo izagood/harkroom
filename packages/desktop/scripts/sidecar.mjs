@@ -42,6 +42,7 @@ import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { nodeVersionGuard } from './nodeVersionGuard.mjs';
 
 const require = createRequire(import.meta.url);
 const here = dirname(fileURLToPath(import.meta.url));
@@ -211,7 +212,8 @@ export async function buildSidecar({ name, entry, resolveFrom, nativeDeps = [], 
      */
     banner: {
       js: "import { createRequire as __sidecarCreateRequire } from 'node:module';\n"
-        + 'const require = __sidecarCreateRequire(import.meta.url);',
+        + 'const require = __sidecarCreateRequire(import.meta.url);\n'
+        + nodeVersionGuard(),
     },
   });
 
