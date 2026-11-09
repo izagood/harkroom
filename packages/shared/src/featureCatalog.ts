@@ -122,7 +122,7 @@ export const FEATURE_CATALOG: readonly FeatureEntry[] = [
   },
   {
     id: 'prStatus',
-    tools: ['pr.status'],
+    tools: ['pr.status', 'pr.watch'],
     lines: [
       '`pr.status`(repo·number): 셸 없이 PR 의 상태·CI 를 볼 때 — state·draft·head·base·mergeState·체크별 이름/결론만 준다(읽기 전용).',
       '머지 권한을 받은 저장소만 읽힌다. `not_granted` 면 짐작하지 말고 사람에게 말한다.',

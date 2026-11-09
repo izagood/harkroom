@@ -25,6 +25,7 @@ const TABLE: Record<string, { sites: number; noMentions: number; muted?: number;
   'src/services/chatApproval.ts': { sites: 1, noMentions: 1, why: 'noMentions(덧댄 한 겹) — 규칙 원문·채널 이름, 앞 단 plain()(@→＠)·코드 구간' },
   'src/services/mergeGrants.ts': { sites: 2, noMentions: 0, why: 'serverOnly — repo·번호·sha·handle, 래퍼 오류 문구는 meta 에만(N2)' },
   'src/services/permissionRequests.ts': { sites: 2, noMentions: 0, muted: 1, why: 'muted — 소유자를 일부러 부름, 대상(target)만 무력화(채널 줄과 DM 이 같은 본문)' },
+  'src/services/prWatch.ts': { sites: 1, noMentions: 0, why: 'serverOnly — PR 감시 결과 줄: 정규식을 지난 repo·번호·sha·고정 상태 문구, 체크 이름(남이 정한 글)은 meta 에만' },
   'src/services/secretCreate.ts': { sites: 1, noMentions: 0, muted: 1, why: 'muted — 소유자를 일부러 부름, 비밀 이름만 무력화' },
   'src/services/skills.ts': { sites: 1, noMentions: 0, why: 'serverOnly — 스킬 slug(정규식)·검사 사유 라벨' },
   'src/services/threadPlanAuto.ts': { sites: 2, noMentions: 1, muted: 1, why: 'noMentions — 켜짐·꺼짐 줄(고정 문구·id). muted — 깨우기 줄은 관리 에이전트를 일부러 부름, 제목·담당은 무력화' },

@@ -723,6 +723,21 @@ export function createDelegationDeadlineSweeper(pool: Pool, opts: {
         }
       }
 
+      // P5: 이 위임에 열린 PR 감시가 붙어 있으면 「외부 대기」다 — 닫지 않고 침묵 시계를 민다(스위치가 켜졌을 때만). 감시는 최대 6시간이라
+      // 끝나면(done·gone·expired) 다음 스윕이 평소대로 판정한다. `prWatch.ts::delegationHasOpenWatch` 와 같은 술어다(순환 import 를 피해 여기 적는다).
+      if (delegationV2Enabled()) {
+        const watched = await client.query(
+          `select 1 from pr_watch_subscriber s join pr_watch w on w.id = s.watch_id
+            where s.delegation_id = $1 and w.state = 'open' and w.expires_at > now() limit 1`, [row.id]);
+        if (watched.rowCount) {
+          await client.query(
+            `update team_delegation set deadline_at = greatest(deadline_at, now() + ($2::int * interval '1 second')) where id = $1`,
+            [row.id, DELEGATION_SILENCE_SEC]);
+          await client.query('commit');
+          return 'done';
+        }
+      }
+
       /**
        * **담당이 턴 사이에서 기다리는 중이면 닫지 않는다**(2026-11-06). 끝 보고만 의무를 닫으므로, 예약을 걸고 CI 를 기다리거나
        * 사람의 답을 기다리는 담당이 10분에 무응답이 되면 정작 보고가 닫힌 의무에 닿지 못한다. 상한은 `DELEGATION_WAIT_MAX_SEC`.

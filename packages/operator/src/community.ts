@@ -105,6 +105,8 @@ export interface CommunityInstance {
   onRunnerExit(agentId: string, code: number | null, reason?: RunnerExitReason | null): void;
   /** 이 커뮤니티의 로컬 설정에 있는 에이전트인가 — 러너 프레임을 어느 커뮤니티로 보낼지의 근거. */
   knowsAgent(agentId: string): boolean;
+  /** 이 커뮤니티에서 띄우는 에이전트 id(PR 감시 폴러가 그 이름으로 묻는다). */
+  agentIds(): string[];
   /**
    * 러너 링크에서 온 프레임 — runnerId 를 달아 서버로. **`local.input` 은 버린다**(security n1) — 감사 바이트는
    * 오퍼레이터의 허브만 올릴 수 있다(`reportLocalInput`). 러너가 직접 올리면 남의 감사를 부풀리거나 지울 수 있다.
@@ -371,6 +373,7 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
       if (assignments.has(agentId)) deps.reconciler.onRunnerExit(agentId, code, reason);
     },
     knowsAgent: (agentId) => agentId in agents,
+    agentIds: () => Object.keys(agents),
     onRunnerFrame: (runnerId, frame) => {
       if (frame.type === 'local.input') {
         deps.log(`러너가 올린 local.input 을 버린다: runner=${runnerId} — 감사 바이트는 오퍼레이터 허브만 올린다`);

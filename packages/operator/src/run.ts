@@ -60,6 +60,7 @@ import { collectMcpStatus, collectStatus, readMachineDigest } from './heartbeat.
 import { announceOf } from './communities.js';
 import { createTurnUploads } from './turnUploads.js';
 import { createTurnPrStatus } from './turnPrStatus.js';
+import { createPrWatchPoller } from './prWatchPoller.js';
 import { cleanupLedgerPath } from './workspaceCleanup.js';
 import { cleanupOwnersPath, createCleanupOwners } from './workspaceCleanupOwners.js';
 import { createWorkspaceCleanup, GIT_PATH, readCleanupSettings } from './workspaceCleanupService.js';
@@ -306,6 +307,15 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     ghUserFor,
     firstSeen: prFirstSeen,
   });
+  // PR 감시 폴러(위임 재설계 P5) — pr.status 와 같은 gh 길. 서버 스위치가 꺼지면 due 가 비어 gh 를 부르지 않는다.
+  createPrWatchPoller({
+    forward: async (agentId, req) => {
+      const c = communities.find((x) => x.knowsAgent(agentId));
+      return c ? c.forward(agentId, req) : { type: 'http.response', id: req.id, status: 0, body: '' };
+    },
+    agentIds: () => communities.flatMap((c) => c.agentIds()),
+    log, ghPath: GH_PATH, home: homedir(), ghUserFor, firstSeen: prFirstSeen,
+  }).start();
   // 외부 API 래퍼(C안 P3, 스레드 07519d86). 브릿지 소켓으로 온 `api.call` 을 여기서 받아 서버 판정 → 키를 붙여 호출 → 결과
   // 보고를 한다. 키는 이 프로세스 밖으로 나가지 않는다. 임대는 머지와 같이 `turnSecrets` 의 것을 쓴다.
   const turnApi = createTurnApi({
