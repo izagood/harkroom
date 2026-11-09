@@ -3615,6 +3615,26 @@ describe('syncSkills 단독(#140)', () => {
 // 위 시나리오들은 FakeHarkroom 를 태운다 — 그것만으로는 **프로덕션 클라이언트**가 실패를
 // 빈 배열로 삼켜도 전부 초록이다(가짜가 대신 던져 주기 때문이다). 그래서 실제 클라이언트를
 // 스텁 fetch 로 한 번 태운다: 러너가 stderr 에 한 줄 남길 수 있는지는 여기서 갈린다.
+describe('HarkroomAgentClient merge-grants 한 번 읽기', () => {
+  it('턴 준비가 mergeGrants·mergeApprovals 를 함께 부르면 /agent/merge-grants 는 한 번만 나가고 두 결과를 나눠 쓴다', async () => {
+    const body = JSON.stringify({ repos: ['o/r', 3], approvals: [{ repo: 'o/a', number: 7, channelId: 'c', threadRootId: 't' }, { repo: 'bad' }] });
+    const link = fakeLink({ http: () => ({ status: 200, body }) });
+    const client = new HarkroomAgentClient(link);
+    const [repos, approvals] = await Promise.all([client.mergeGrants(), client.mergeApprovals()]);
+    expect(repos).toEqual(['o/r']);
+    expect(approvals).toEqual([{ repo: 'o/a', number: 7, channelId: 'c', threadRootId: 't' }]);
+    expect(link.requests.filter((r) => r.path === '/agent/merge-grants')).toHaveLength(1);
+    // 끝난 요청은 붙들지 않는다 — 다음 턴은 새로 읽는다.
+    await client.mergeGrants();
+    expect(link.requests.filter((r) => r.path === '/agent/merge-grants')).toHaveLength(2);
+  });
+
+  it('실패는 둘 다 빈 목록으로 물러난다', async () => {
+    const client = new HarkroomAgentClient(fakeLink({ http: () => ({ status: 503, body: 'nope' }) }));
+    expect(await Promise.all([client.mergeGrants(), client.mergeApprovals()])).toEqual([[], []]);
+  });
+});
+
 describe('HarkroomAgentClient.listApprovedSkills(#140)', () => {
   it('승인된 것만 요청한다 — 미승인 스킬을 실체화하면 승인 게이트가 없는 것과 같다', async () => {
     const link = fakeLink({ http: () => ({ status: 200, body: '[]' }) });
