@@ -2345,7 +2345,7 @@ export const ko = {
   'thread.delegations.reported': '결과 옴',
   'thread.delegations.failed': '막힘',
   'thread.delegations.closed': '닫힘',
-  'thread.delegations.closedDelegator': '닫힘 · {who:이가} 닫음',
+  'thread.delegations.closedDelegator': '닫힘 · {who}',
   'thread.delegations.closedSuperseded': '닫힘 · 새로 맡김',
   'thread.delegations.closedIdle': '닫힘 · 6시간 조용',
   'thread.delegations.closedMaxAge': '닫힘 · 24시간 지남',

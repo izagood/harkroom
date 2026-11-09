@@ -4219,7 +4219,7 @@ export const en = {
   'thread.delegations.reported': 'Reported',
   'thread.delegations.failed': 'Stuck',
   'thread.delegations.closed': 'Closed',
-  'thread.delegations.closedDelegator': 'Closed · by {who}',
+  'thread.delegations.closedDelegator': 'Closed · {who}',
   'thread.delegations.closedSuperseded': 'Closed · handed off again',
   'thread.delegations.closedIdle': 'Closed · quiet 6h',
   'thread.delegations.closedMaxAge': 'Closed · 24h limit',

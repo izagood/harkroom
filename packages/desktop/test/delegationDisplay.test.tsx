@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import type { InboxDelegationSummary, InboxEntry } from '@harkroom/shared';
-import { cardDelegation, chipRow, threadDelegations, MAX_VISIBLE_CHIPS, STALLED_MS } from '../src/lib/delegationDisplay';
+import { cardDelegation, chipRow, threadDelegations, MAX_VISIBLE_CHIPS, MAX_VISIBLE_CHIPS_NARROW, STALLED_MS } from '../src/lib/delegationDisplay';
 import { buildBoard } from '../src/lib/inboxBoard';
 import { DelegationChips } from '../src/components/DelegationChips';
 import { DelegationLabel } from '../src/components/DelegationLabel';
@@ -106,6 +106,15 @@ describe('chipRow — 칩 줄', () => {
     expect(row.hiddenClosed).toBe(2);
   });
 
+  it(`좁은 줄은 담당 칩 ${MAX_VISIBLE_CHIPS_NARROW}개만 편다 — 순서 규칙은 같다`, () => {
+    const row = chipRow([summary([
+      item('a', 'open'), item('b', 'open'), item('c', 'closed'), item('d', 'failed'),
+    ])], MAX_VISIBLE_CHIPS_NARROW)!;
+    expect(row.chips.map((c) => (c.kind === 'item' ? c.handle : ''))).toEqual(['d', 'a']);
+    expect(row.hidden.map((c) => (c.kind === 'item' ? c.handle : ''))).toEqual(['b', 'c']);
+    expect(row.hiddenClosed).toBe(1);
+  });
+
   it('옛 결말(done·timeout·canceled)은 닫힘으로 읽는다', () => {
     const row = chipRow([summary([item('a', 'done'), item('b', 'timeout')])])!;
     expect(row.chips.map((c) => (c.kind === 'item' ? c.state : ''))).toEqual(['closed', 'closed']);
@@ -139,7 +148,9 @@ describe('화면 — ko/en', () => {
     expect(screen.getByTestId('delegation-chip-harkroom').textContent).toContain('하는 중');
     expect(screen.getByTestId('delegation-chip-harkroom').textContent).toContain('s2 단계');
     expect(screen.getByTestId('delegation-chip-security').textContent).toContain('막힘');
-    expect(screen.getByTestId('delegation-chip-designer').textContent).toContain('닫힘 · lead 가 닫음');
+    expect(screen.getByTestId('delegation-chip-designer').textContent).toContain('닫힘 · lead');
+    // 조사를 붙이지 않는다 — handle 끝소리에 따라 틀리기 쉽다(designer).
+    expect(screen.getByTestId('delegation-chip-designer').textContent).not.toContain('닫음');
     expect(screen.getByTestId('delegation-pr-1724').textContent).toContain('#1724 CI 감시 중');
     fireEvent.click(screen.getByTestId('delegation-chip-security'));
     expect(opened).toEqual(['open-msg']);
@@ -164,6 +175,20 @@ describe('화면 — ko/en', () => {
     expect(screen.queryByTestId('delegation-chip-e')).toBeNull();
     fireEvent.click(more);
     expect(screen.getByTestId('delegation-chip-e')).toBeTruthy();
+  });
+
+  it('좁은 줄 몫: 3·4번째 칩은 @sm 이상에서만 보이고 「+n」 이 폭마다 따로 선다', () => {
+    render(<DelegationChips rootId="r1" onOpenMessage={() => {}} summaries={[summary([
+      item('a', 'open'), item('b', 'open'), item('c', 'closed'), item('d', 'failed'),
+    ])]} />);
+    expect(screen.queryByTestId('delegation-chips-more')).toBeNull();
+    const narrowMore = screen.getByTestId('delegation-chips-more-narrow');
+    expect(narrowMore.textContent).toBe('+2 · 닫힘 1');
+    expect(narrowMore.className).toContain('@sm:hidden');
+    expect(screen.getByTestId('delegation-chip-b').parentElement!.className).toContain('hidden @sm:block');
+    expect(screen.getByTestId('delegation-chip-a').parentElement!.className).not.toContain('hidden');
+    fireEvent.click(narrowMore);
+    expect(screen.getByTestId('delegation-chip-b').parentElement!.className).not.toContain('hidden');
   });
 
   it('라벨 넷 — ko 와 en', () => {

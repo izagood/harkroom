@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { chipRow, type ChipState, type DelegationChip } from '../lib/delegationDisplay';
+import { chipRow, MAX_VISIBLE_CHIPS_NARROW, type ChipState, type DelegationChip } from '../lib/delegationDisplay';
 import type { InboxDelegationSummary } from '@harkroom/shared';
 import { useT } from '../i18n/useT';
 
@@ -33,6 +33,10 @@ export function DelegationChips({ rootId, summaries, delegatorWho, onOpenMessage
   useEffect(() => { setExpanded(false); }, [rootId]);
   const row = chipRow(summaries);
   if (!row) return null;
+  // 좁은 칩 줄(@sm 컨테이너 미만)은 담당 칩 2개까지만 편다. 폭을 재지 않고 CSS 컨테이너 쿼리로 가린다 —
+  // 넓은 줄의 3·4번째 칩은 좁을 때만 숨고, 「+n」 단추도 폭마다 하나씩 둔다.
+  const narrow = chipRow(summaries, MAX_VISIBLE_CHIPS_NARROW)!;
+  const narrowKeys = new Set(narrow.chips.map((c) => c.key));
 
   const closedText = (c: Extract<DelegationChip, { kind: 'item' }>, who: string): string => {
     switch (c.closedReason) {
@@ -54,11 +58,12 @@ export function DelegationChips({ rootId, summaries, delegatorWho, onOpenMessage
   const whoOf = (id: string): string => summaries?.find((d) => d.id === id)?.delegatorHandle ?? delegatorWho ?? '';
 
   const chip = (c: DelegationChip) => {
+    const wideOnly = !expanded && !narrowKeys.has(c.key);
     if (c.kind === 'pr') {
       const full = t('thread.delegations.watching', { number: c.watch.number });
       return (
         <li key={c.key} data-testid={`delegation-pr-${c.watch.number}`} title={`${c.watch.repo} · ${full}`}
-          className="inline-flex max-w-full items-center gap-1.5 whitespace-nowrap rounded-full border border-border bg-state-active-surface px-2 text-meta text-link"
+          className={`${wideOnly ? 'hidden @sm:inline-flex' : 'inline-flex'} max-w-full items-center gap-1.5 whitespace-nowrap rounded-full border border-border bg-state-active-surface px-2 text-meta text-link`}
         >
           <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-link motion-safe:animate-pulse" />
           {/* 좁은 스레드 창(시안 360px)에서는 「#n CI」로 줄인다 — 전체 문구는 툴팁·스크린리더 이름에 남는다. */}
@@ -69,7 +74,7 @@ export function DelegationChips({ rootId, summaries, delegatorWho, onOpenMessage
     }
     const text = stateText(c, whoOf(c.delegationId));
     return (
-      <li key={c.key} className="max-w-full">
+      <li key={c.key} data-narrow-hidden={wideOnly || undefined} className={`max-w-full ${wideOnly ? 'hidden @sm:block' : ''}`}>
         <button
           type="button"
           data-testid={`delegation-chip-${c.handle}`}
@@ -91,6 +96,22 @@ export function DelegationChips({ rootId, summaries, delegatorWho, onOpenMessage
 
   const shown = expanded ? [...row.chips, ...row.hidden] : row.chips;
   const hiddenItems = row.hidden.filter((c) => c.kind === 'item').length;
+  const narrowHiddenItems = narrow.hidden.filter((c) => c.kind === 'item').length;
+  const moreButton = (count: number, closed: number, visibility: string, testId: string) => count > 0 && (
+    <button
+      type="button"
+      data-testid={testId}
+      aria-expanded={expanded}
+      onClick={() => setExpanded((v) => !v)}
+      className={`${visibility} rounded-full border border-border bg-surface-raised px-2 text-meta text-fg-muted hover:bg-surface-hover`}
+    >
+      {expanded
+        ? t('thread.delegations.less')
+        : closed > 0
+          ? t('thread.delegations.more', { count, closed })
+          : t('thread.delegations.moreOpen', { count })}
+    </button>
+  );
   return (
     <div data-testid="delegation-chips" className="@container flex flex-wrap items-center gap-1.5 border-b border-border bg-surface px-4 py-1.5">
       <span className="mr-0.5 text-meta text-fg-subtle">
@@ -99,21 +120,8 @@ export function DelegationChips({ rootId, summaries, delegatorWho, onOpenMessage
           : t('thread.delegations.assignedBy', { who: row.delegatorHandle ?? '' })}
       </span>
       <ul className="contents">{shown.map(chip)}</ul>
-      {hiddenItems > 0 && (
-        <button
-          type="button"
-          data-testid="delegation-chips-more"
-          aria-expanded={expanded}
-          onClick={() => setExpanded((v) => !v)}
-          className="rounded-full border border-border bg-surface-raised px-2 text-meta text-fg-muted hover:bg-surface-hover"
-        >
-          {expanded
-            ? t('thread.delegations.less')
-            : row.hiddenClosed > 0
-              ? t('thread.delegations.more', { count: hiddenItems, closed: row.hiddenClosed })
-              : t('thread.delegations.moreOpen', { count: hiddenItems })}
-        </button>
-      )}
+      {moreButton(hiddenItems, row.hiddenClosed, 'hidden @sm:inline-block', 'delegation-chips-more')}
+      {moreButton(narrowHiddenItems, narrow.hiddenClosed, '@sm:hidden', 'delegation-chips-more-narrow')}
     </div>
   );
 }

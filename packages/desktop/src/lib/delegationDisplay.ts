@@ -107,13 +107,15 @@ export interface ChipRow {
 
 /** 펼쳐 둘 담당 칩 수. 넘치면 뒤(닫힌 것부터)를 「+n」으로 접는다. 시안의 「두 줄까지」를 칩 수로 근사한다. */
 export const MAX_VISIBLE_CHIPS = 4;
+/** 좁은 칩 줄(@sm 컨테이너 미만, 시안 360px)에서 펼쳐 둘 담당 칩 수 — 4개면 네 줄이 되어 대화를 밀어낸다(designer). */
+export const MAX_VISIBLE_CHIPS_NARROW = 2;
 
 /**
  * 스레드 머리 아래 「맡긴 일」 칩 줄. 위임이 없으면 null — 줄 자체를 그리지 않는다.
  *
  * 순서는 막힘 → 결과 옴 → 하는 중 → 닫힘(시안). 같은 상태 안에서는 서버가 준 순서 그대로다.
  */
-export function chipRow(summaries: InboxDelegationSummary[] | null | undefined): ChipRow | null {
+export function chipRow(summaries: InboxDelegationSummary[] | null | undefined, maxVisible: number = MAX_VISIBLE_CHIPS): ChipRow | null {
   if (!summaries || summaries.length === 0) return null;
   const asDelegator = summaries.filter((d) => d.role === 'delegator');
   const use = asDelegator.length > 0 ? asDelegator : summaries;
@@ -143,8 +145,8 @@ export function chipRow(summaries: InboxDelegationSummary[] | null | undefined):
     .map((u, idx) => ({ u, idx }))
     .sort((a, b) => ORDER[a.u.item.state] - ORDER[b.u.item.state] || a.idx - b.idx)
     .map(({ u }) => u);
-  const shown = sorted.slice(0, MAX_VISIBLE_CHIPS);
-  const rest = sorted.slice(MAX_VISIBLE_CHIPS);
+  const shown = sorted.slice(0, maxVisible);
+  const rest = sorted.slice(maxVisible);
   return {
     role,
     delegatorHandle: role === 'delegate' ? use[0]!.delegatorHandle : null,
