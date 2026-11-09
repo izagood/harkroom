@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { PR_STATUS_CHECKS_PATH } from '@harkroom/shared/prStatus';
 import { checkMerge, mergeableRepos, openMergeApprovals, peekMergeApproval, reportMerge, reportMergeClosed } from '../services/mergeGrants.js';
 import { checkPrStatus } from '../services/prStatusChecks.js';
-import { dueWatches, reportWatchStatus } from '../services/prWatch.js';
+import { dueWatches, reportWatchStatus, PR_WATCH_STATES, PR_WATCH_CONCLUSIONS } from '../services/prWatch.js';
 
 const REPO = z.string().min(3).max(201);
 const SHA = z.string().regex(/^[0-9a-f]{40}$/);
@@ -82,8 +82,9 @@ export async function registerMergeRoutes(app: FastifyInstance, pool: Pool): Pro
     if (!who) return reply;
     const id = z.string().uuid().safeParse((req.params as { id?: string }).id);
     const body = z.object({
-      state: z.string().max(40), headRefOid: SHA,
-      checks: z.array(z.object({ name: z.string().max(200), conclusion: z.string().max(40) })).max(100),
+      // security c: 상태·결론은 GitHub 이 정한 값만 받는다(시스템 줄 본문은 고정 문구라는 표 주장과 맞춘다).
+      state: z.enum(PR_WATCH_STATES), headRefOid: SHA,
+      checks: z.array(z.object({ name: z.string().max(200), conclusion: z.enum(PR_WATCH_CONCLUSIONS) })).max(100),
     }).safeParse(req.body ?? {});
     if (!id.success || !body.success) return reply.code(400).send({ error: { code: 'bad_request', message: 'state, headRefOid and checks are required' } });
     const r = await reportWatchStatus(pool, { agentId: who.agentId, watchId: id.data, status: body.data });
