@@ -285,9 +285,10 @@ export class BgExecutor {
   get running(): Promise<void> | null { return this.inFlight; }
 
   async tick(): Promise<BgTickResult> {
-    if ((await this.deps.harness().catch(() => null)) !== 'claude-code') return 'not_claude';
+    // 공짜인 로컬 판정을 먼저 — 하네스 읽기(GET /agent/config)는 이 틱이 실제로 일감을 볼 때만 한다.
     if (this.inFlight) return 'busy';
     if (!inBgWindow(this.deps.now?.() ?? new Date())) return 'outside_window';
+    if ((await this.deps.harness().catch(() => null)) !== 'claude-code') return 'not_claude';
     // 자리를 **먼저** 잡는다 — 집은 뒤에 자리가 없으면 회차가 running 으로 매달린다. 'unsupported'(옛 오퍼레이터)는 상한이 없는 것으로 본다.
     if ((await this.deps.slots.acquire(BG_SLOT_KEY, { keepFree: 1 })) === 'full') return 'no_slot';
     try {

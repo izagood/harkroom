@@ -3,7 +3,7 @@ import { PassThrough } from 'node:stream';
 import { mkdtemp, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { readFile } from 'node:fs/promises';
 import { READONLY_RULES } from '../src/turn.js';
@@ -33,8 +33,9 @@ async function make(opts: { release?: () => Promise<void>; harness?: string; slo
   const spawned: { args: string[]; cwd: string; env: Record<string, string> }[] = [];
   const acquired: number[] = [];
   let released = 0;
+  let harnessReads = 0;
   const ex = new BgExecutor({
-    harness: async () => (opts.harness ?? 'claude-code') as never,
+    harness: async () => { harnessReads += 1; return (opts.harness ?? 'claude-code') as never; },
     harkroom: {
       claimBg: async () => (opts.job === undefined ? JOB : opts.job),
       completeBg: async (jobId, r) => { completed.push({ jobId, r }); },
@@ -53,7 +54,7 @@ async function make(opts: { release?: () => Promise<void>; harness?: string; slo
     timeoutMs: opts.timeoutMs,
     log: () => {},
   });
-  return { ex, completed, spawned, stateDir, acquired, released: () => released };
+  return { ex, completed, spawned, stateDir, acquired, released: () => released, harnessReads: () => harnessReads };
 }
 
 describe('bgExecutor (BG2)', () => {
@@ -170,13 +171,28 @@ describe('bgExecutor (BG2)', () => {
 
   it('claude 가 아니거나·창 밖이거나·자리가 없으면(한 칸 남김) 묻지도 않는다, 잡은 자리는 늘 놓는다', async () => {
     expect(await (await make({ harness: 'codex' })).ex.tick()).toBe('not_claude');
-    expect(await (await make({ now: NOON })).ex.tick()).toBe('outside_window');
+    const outside = await make({ now: NOON });
+    expect(await outside.ex.tick()).toBe('outside_window');
+    // 창 밖 틱은 하네스(GET /agent/config)를 읽지 않는다.
+    expect(outside.harnessReads()).toBe(0);
     const full = await make({ slot: 'full' });
     expect(await full.ex.tick()).toBe('no_slot');
     expect(full.acquired).toEqual([1]);
     const none = await make({ job: null });
     expect(await none.ex.tick()).toBe('none');
     expect(none.released()).toBe(1);
+  });
+
+  it('도는 중(inFlight)인 틱은 하네스를 읽지 않고 busy 로 물러난다', async () => {
+    let finish!: () => void;
+    const m = await make({ child: () => { const c = fakeChild({ result: 'ok', is_error: false }, 0, true); finish = () => c.kill('SIGKILL'); return c; } });
+    const first = m.ex.tick();
+    await vi.waitFor(() => expect(m.ex.running).not.toBeNull());
+    const reads = m.harnessReads();
+    expect(await m.ex.tick()).toBe('busy');
+    expect(m.harnessReads()).toBe(reads);
+    finish();
+    await first;
   });
 
   it('돈다: 새 세션·원인 bg:<id>·stdin 프롬프트, 끝나면 done+요약·토큰을 보고하고 작업 폴더를 지운다', async () => {

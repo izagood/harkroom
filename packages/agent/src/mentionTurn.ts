@@ -1439,29 +1439,35 @@ export async function runMentionTurn(
     ? `${headLines.join('\n').replace(/^\n+/, '')}\n\n${prompt}`
     : prompt;
 
-  // 머지 권한(스레드 3deac356): 서버가 허락한 저장소만 프롬프트에 적고 allow 규칙을 준다. 표면이 없는(옛) 클라이언트는 빈 목록.
-  const grantedRepos = (await deps.harkroom.mergeGrants?.().catch(() => [] as string[])) ?? [];
-  // 1회 승인(스레드 1b75d7a0, security 6): 이 (채널, 스레드)에 안 쓴 승인이 있을 때만 그 저장소를 더한다 — 래퍼 allow 와 프롬프트 줄.
-  // 판정은 서버가 소모로 한다. 여기서 더하는 것은 「래퍼를 부를 수 있음」뿐이다.
-  const approvedHere = ((await deps.harkroom.mergeApprovals?.().catch(() => [])) ?? [])
-    .filter((a) => a.channelId === channelId && a.threadRootId === (anchor ?? mentionId));
+  // 턴 준비의 서버 읽기 여섯 개는 서로 기대지 않는다 — 동시에 보낸다. 실패 처리는 각자 그대로(실패하면 빈 값으로 물러난다).
+  const [grantedRepos, mergeApprovals, apiInfo, secretCreate, ruleSets, turnModel] = await Promise.all([
+    // 머지 권한(스레드 3deac356): 서버가 허락한 저장소만 프롬프트에 적고 allow 규칙을 준다. 표면이 없는(옛) 클라이언트는 빈 목록.
+    deps.harkroom.mergeGrants?.().catch(() => [] as string[]).then((v) => v ?? []) ?? Promise.resolve([] as string[]),
+    // 1회 승인(스레드 1b75d7a0, security 6): 이 (채널, 스레드)에 안 쓴 승인이 있을 때만 그 저장소를 더한다 — 래퍼 allow 와 프롬프트 줄.
+    // 판정은 서버가 소모로 한다. 여기서 더하는 것은 「래퍼를 부를 수 있음」뿐이다.
+    deps.harkroom.mergeApprovals?.().catch(() => []).then((v) => v ?? []) ?? Promise.resolve([]),
+    // 외부 API 권한(C안 P3, 스레드 07519d86): 같은 틀 — 서버가 허락한 연결이 있을 때만 절을 쓰고 allow 규칙을 준다.
+    (deps.harkroom.apiGrantInfo
+      ? deps.harkroom.apiGrantInfo().catch(() => ({ connectors: [] as string[], delegatable: [] as string[] }))
+      : deps.harkroom.apiGrants?.().then((connectors) => ({ connectors, delegatable: [] as string[] })).catch(() => undefined))
+      ?.then((v) => v ?? { connectors: [] as string[], delegatable: [] as string[] })
+      ?? Promise.resolve({ connectors: [] as string[], delegatable: [] as string[] }),
+    // 비밀 만들기(스레드 1a08d0cf): 소유자가 켠 에이전트에게만 절을 쓴다. 판정은 서버가 매 호출 한다 — 이것은 안내다.
+    deps.harkroom.secretCreateGranted?.().catch(() => false).then((v) => v ?? false) ?? Promise.resolve(false),
+    // 권한 요청(스레드 f61af808): 소유자가 이 채널에 승인한 allow 규칙. 서버가 판정해 주지만 러너도 모양을 한 번 더 거른다.
+    // `reach` 는 이 에이전트의 모든 채널 규칙의 합 — codex 명령 규칙 파일에 쓴다(`codexRules.ts`). 옛 서버는 null 이다.
+    deps.harkroom.toolRuleSets
+      ? deps.harkroom.toolRuleSets(channelId, mentionId).catch(() => ({ rules: [] as string[], reach: null as string[] | null }))
+      : (deps.harkroom.toolAllows?.(channelId).catch(() => [] as string[]) ?? Promise.resolve(undefined))
+        .then((rules) => ({ rules: rules ?? [], reach: null as string[] | null })),
+    // **턴마다** 읽는다 — 사람이 스레드 칩을 바꾸면 다음 턴부터 먹는다(결정 11). 도는 턴의 argv 는
+    // 여기서 정해지므로 도중에 바꾼 값은 이 턴에 닿지 않는다. 채널 최상위 멘션이면 그 글이 루트다.
+    resolveTurnModel(deps.harkroom, def, anchor ?? mentionId),
+  ]);
+  const approvedHere = mergeApprovals.filter((a) => a.channelId === channelId && a.threadRootId === (anchor ?? mentionId));
   const mergeRepos = [...new Set([...grantedRepos, ...approvedHere.map((a) => a.repo)])];
-  // 외부 API 권한(C안 P3, 스레드 07519d86): 같은 틀 — 서버가 허락한 연결이 있을 때만 절을 쓰고 allow 규칙을 준다.
-  const apiInfo = (await (deps.harkroom.apiGrantInfo
-    ? deps.harkroom.apiGrantInfo().catch(() => ({ connectors: [] as string[], delegatable: [] as string[] }))
-    : deps.harkroom.apiGrants?.().then((connectors) => ({ connectors, delegatable: [] as string[] })).catch(() => undefined))) ?? { connectors: [], delegatable: [] };
   const apiConnectors = apiInfo.connectors;
-  // 비밀 만들기(스레드 1a08d0cf): 소유자가 켠 에이전트에게만 절을 쓴다. 판정은 서버가 매 호출 한다 — 이것은 안내다.
-  const secretCreate = (await deps.harkroom.secretCreateGranted?.().catch(() => false)) ?? false;
-  // 권한 요청(스레드 f61af808): 소유자가 이 채널에 승인한 allow 규칙. 서버가 판정해 주지만 러너도 모양을 한 번 더 거른다.
-  // `reach` 는 이 에이전트의 모든 채널 규칙의 합 — codex 명령 규칙 파일에 쓴다(`codexRules.ts`). 옛 서버는 null 이다.
-  const ruleSets = deps.harkroom.toolRuleSets
-    ? await deps.harkroom.toolRuleSets(channelId, mentionId).catch(() => ({ rules: [] as string[], reach: null }))
-    : { rules: (await deps.harkroom.toolAllows?.(channelId).catch(() => [] as string[])) ?? [], reach: null };
   const toolAllows = safeToolAllows(ruleSets.rules);
-  // **턴마다** 읽는다 — 사람이 스레드 칩을 바꾸면 다음 턴부터 먹는다(결정 11). 도는 턴의 argv 는
-  // 여기서 정해지므로 도중에 바꾼 값은 이 턴에 닿지 않는다. 채널 최상위 멘션이면 그 글이 루트다.
-  const turnModel = await resolveTurnModel(deps.harkroom, def, anchor ?? mentionId);
   const systemPrompt = buildSystemPrompt({
     handle: deps.me.handle,
     // API 키 연결 턴은 하네스의 환경 설명에 실제 모델이 없다 — 발화 `model` 인자에 실을 값을 알려 준다.

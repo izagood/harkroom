@@ -313,9 +313,24 @@ export class HarkroomAgentClient {
     }
   }
 
+  /**
+   * `/agent/merge-grants` 한 번의 응답을 `mergeGrants`·`mergeApprovals` 가 나눠 쓴다 — 턴 준비가 둘을 동시에 부르므로
+   * 진행 중인 요청을 함께 기다린다(같은 GET 두 번을 한 번으로). 끝나면 비운다 — 다음 턴은 새로 읽는다.
+   */
+  private mergeGrantsInflight: Promise<{ repos?: unknown; approvals?: unknown }> | null = null;
+  private fetchMergeGrants(): Promise<{ repos?: unknown; approvals?: unknown }> {
+    if (!this.mergeGrantsInflight) {
+      const p = this.rest<{ repos?: unknown; approvals?: unknown }>('GET', '/agent/merge-grants', 'merge-grants');
+      this.mergeGrantsInflight = p;
+      const clear = () => { if (this.mergeGrantsInflight === p) this.mergeGrantsInflight = null; };
+      p.then(clear, clear);
+    }
+    return this.mergeGrantsInflight;
+  }
+
   async mergeGrants(): Promise<string[]> {
     try {
-      const r = await this.rest<{ repos?: unknown }>('GET', '/agent/merge-grants', 'merge-grants');
+      const r = await this.fetchMergeGrants();
       return Array.isArray(r?.repos) ? r.repos.filter((x): x is string => typeof x === 'string') : [];
     } catch {
       return [];
@@ -325,7 +340,7 @@ export class HarkroomAgentClient {
   /** 아직 안 쓴 1회 머지 승인(스레드 1b75d7a0) — 그 (채널, 스레드)의 턴에만 래퍼 allow 를 넣는다. 옛 서버는 빈 목록. */
   async mergeApprovals(): Promise<{ repo: string; number: number; channelId: string; threadRootId: string }[]> {
     try {
-      const r = await this.rest<{ approvals?: unknown }>('GET', '/agent/merge-grants', 'merge-grants');
+      const r = await this.fetchMergeGrants();
       if (!Array.isArray(r?.approvals)) return [];
       return (r.approvals as Record<string, unknown>[]).flatMap((a) =>
         typeof a.repo === 'string' && typeof a.number === 'number' && typeof a.channelId === 'string' && typeof a.threadRootId === 'string'
