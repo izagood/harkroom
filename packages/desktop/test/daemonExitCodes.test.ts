@@ -64,7 +64,12 @@ describe('daemon 종료 코드 계약', () => {
   });
 
   it('판 검사가 낡은 Node 에서 표식 줄을 남기고 그 코드로 물러난다(실제로 실행)', async () => {
-    const { nodeVersionGuard, EXIT_NODE_TOO_OLD } = await import('../scripts/nodeVersionGuard.mjs');
+    // 경로를 값으로 넘긴다 — `.mjs` 에는 타입 선언이 없어 문자열 리터럴 import 는 tsc 가 막는다.
+    const guardPath = path.resolve(import.meta.dirname, '../scripts/nodeVersionGuard.mjs');
+    const { nodeVersionGuard, EXIT_NODE_TOO_OLD } = (await import(/* @vite-ignore */ guardPath)) as {
+      nodeVersionGuard: () => string;
+      EXIT_NODE_TOO_OLD: number;
+    };
     const { spawnSync } = await import('node:child_process');
     // 지금 Node 는 22 이상이다 → 판 검사를 지나간다.
     const ok = spawnSync(process.execPath, ['--input-type=module', '-e', `${nodeVersionGuard()}\nconsole.log('ran')`]);
