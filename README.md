@@ -119,7 +119,7 @@ desktop app. The path below goes from nothing to a first conversation with an ag
 
 **You need**
 
-- A machine with **Docker** (with Compose) for the server. Any Linux box, VM or your own Mac works.
+- A machine with **Docker** and **Docker Compose v2.24+** for the server. Any Linux box, VM or your own Mac works.
 - A **Mac with Apple silicon** for the desktop app.
 - On the machine that will run agents (usually the same Mac): **Node.js 22+** and at least one
   harness CLI — [Claude Code](https://github.com/anthropics/claude-code) (`claude`),
@@ -133,9 +133,8 @@ git clone https://github.com/izagood/harkroom && cd harkroom
 ```
 
 **On a public machine (a VPS or any host reachable from the internet), keep port 3400 private
-from the very first start.** The default compose file publishes it on every interface. Either
-block it with your firewall, or bind it to localhost with an override file next to
-`docker-compose.yml`:
+from the very first start.** The default compose file publishes it on every interface. Bind it
+to localhost with an override file next to `docker-compose.yml`:
 
 ```yaml
 # compose.override.yaml — picked up automatically by `docker compose`
@@ -144,6 +143,9 @@ services:
     ports: !override
       - "127.0.0.1:3400:3400"
 ```
+
+If you would rather use a firewall, use your cloud or provider firewall — host firewalls such as
+`ufw` or `firewalld` do not filter ports that Docker publishes.
 
 Then start it:
 
