@@ -1,5 +1,8 @@
 import type { Pool, PoolClient } from 'pg';
-import { countsAsReply, TEAM_ROUND_LIMIT, type InboxDelegationOutcome, type MessageRow, type WakeReportTo } from '@harkroom/shared';
+import {
+  countsAsReply, TEAM_ROUND_LIMIT, type DelegationClosedReason, type DelegationItemState, type DelegationKind,
+  type InboxDelegationSummary, type PrWatchUntil, type InboxDelegationOutcome, type MessageRow, type WakeReportTo,
+} from '@harkroom/shared';
 import { channelVisibleSql } from './channels.js';
 import { invokeFactsFor, mayInvoke } from './invokeGate.js';
 import { announceReportWakes, announceWakeRows, foldWakesForDelegation } from './agentWakes.js';
@@ -1049,4 +1052,83 @@ export async function closeDelegationByDelegator(
   );
   await markSettledQuietly(client, r.rows.map((x) => x.delegation_id));
   return r.rowCount ?? 0;
+}
+
+/** 스레드 하나에 실을 위임 요약의 최대 개수(최근 것부터). */
+const DELEGATION_SUMMARY_PER_THREAD = 10;
+
+/**
+ * inbox 항목에 실을 스레드별 위임 요약(`InboxEntry.delegations`). 넘긴 쪽은 담당 전원을, **담당 쪽은 자기 한 줄만** 받는다 —
+ * 다른 담당의 `lastMessageId` 는 결코 담당에게 가지 않는다(보안 요구). 열린 PR 감시는 `pr_watch_subscriber.delegation_id` 로 붙인다.
+ */
+export async function delegationSummariesFor(
+  pool: Pool | PoolClient, accountId: string, threadRootIds: string[],
+): Promise<Map<string, InboxDelegationSummary[]>> {
+  const out = new Map<string, InboxDelegationSummary[]>();
+  if (!threadRootIds.length) return out;
+  const dl = await pool.query<{
+    id: string; thread_root_id: string; kind: DelegationKind; delegator_handle: string; message_id: string;
+    plan_step_id: string | null; is_lead: boolean;
+  }>(
+    `select * from (
+       select d.id, d.thread_root_id, d.kind, la.handle as delegator_handle, d.message_id, d.plan_step_id,
+              d.lead_account_id = $1 as is_lead,
+              row_number() over (partition by d.thread_root_id order by d.created_at desc) as rn
+         from team_delegation d
+         join account la on la.id = d.lead_account_id
+        where d.thread_root_id = any($2::uuid[])
+          and (d.lead_account_id = $1
+               or exists (select 1 from team_delegation_item i where i.delegation_id = d.id and i.delegate_account_id = $1))
+     ) x where rn <= $3
+     order by thread_root_id, rn desc`,
+    [accountId, [...new Set(threadRootIds)], DELEGATION_SUMMARY_PER_THREAD],
+  );
+  if (!dl.rowCount) return out;
+  const ids = dl.rows.map((r) => r.id);
+  const items = await pool.query<{
+    delegation_id: string; delegate_account_id: string; handle: string; outcome: string | null;
+    closed_reason: DelegationClosedReason | null; last_activity_at: Date | null; last_message_id: string | null;
+  }>(
+    `select i.delegation_id, i.delegate_account_id, a.handle, i.outcome, i.closed_reason, i.last_activity_at,
+            (select m.id from message m
+              where m.thread_root_id = d.thread_root_id and m.author_id = i.delegate_account_id and m.created_at >= d.created_at
+              order by m.created_at desc limit 1) as last_message_id
+       from team_delegation_item i
+       join team_delegation d on d.id = i.delegation_id
+       join account a on a.id = i.delegate_account_id
+      where i.delegation_id = any($1::uuid[])
+      order by a.handle`,
+    [ids],
+  );
+  const watches = await pool.query<{ delegation_id: string; repo: string; number: number; head: string; until: PrWatchUntil; handle: string }>(
+    `select s.delegation_id, w.repo, w.number, w.head, w.until, a.handle
+       from pr_watch_subscriber s
+       join pr_watch w on w.id = s.watch_id and w.state = 'open'
+       join account a on a.id = s.account_id
+      where s.delegation_id = any($1::uuid[])
+      order by w.created_at`,
+    [ids],
+  );
+  for (const d of dl.rows) {
+    const summary: InboxDelegationSummary = {
+      id: d.id, role: d.is_lead ? 'delegator' : 'delegate', kind: d.kind, delegatorHandle: d.delegator_handle,
+      messageId: d.message_id, planStepId: d.plan_step_id,
+      items: items.rows
+        // 담당 쪽은 자기 한 줄만. 위임자이면서 담당인 경우(자기에게 넘김)는 위임자 쪽으로 본다.
+        .filter((i) => i.delegation_id === d.id && (d.is_lead || i.delegate_account_id === accountId))
+        .map((i) => ({
+          handle: i.handle,
+          state: (i.outcome ?? 'open') as DelegationItemState,
+          ...(i.outcome === 'closed' && i.closed_reason ? { closedReason: i.closed_reason } : {}),
+          lastMessageId: i.last_message_id,
+          lastActivityAt: i.last_activity_at ? i.last_activity_at.toISOString() : null,
+        })),
+      prWatches: watches.rows.filter((w) => w.delegation_id === d.id)
+        .map((w) => ({ repo: w.repo, number: w.number, head: w.head, until: w.until, byHandle: w.handle })),
+    };
+    const list = out.get(d.thread_root_id) ?? [];
+    list.push(summary);
+    out.set(d.thread_root_id, list);
+  }
+  return out;
 }

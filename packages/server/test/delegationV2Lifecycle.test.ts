@@ -6,12 +6,13 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
+import { listInbox } from '../src/services/messages.js';
 import { autoCloseDelegations, flushDelegationUpdates, DELEGATION_UPDATE_LIMIT } from '../src/services/delegations.js';
 
 /** 위임 재설계 v1(P3): 스위치를 켠 서버의 수명(reported·failed·closed)과 턴 끝 update. */
 let app: FastifyInstance; let pool: Pool; let stop: () => Promise<void>;
 let adminToken: string; let mcpUrl: string; let channelId: string;
-let leadPat: string; let leadId: string; let onePat: string; let oneId: string;
+let leadPat: string; let leadId: string; let onePat: string; let oneId: string; let twoPat: string;
 
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
 const text = (r: Awaited<ReturnType<Client['callTool']>>): Record<string, unknown> =>
@@ -57,6 +58,7 @@ beforeAll(async () => {
   adminToken = admin.token;
   ({ pat: leadPat, accountId: leadId } = await createAgent(app, adminToken, 'vlead'));
   ({ pat: onePat, accountId: oneId } = await createAgent(app, adminToken, 'vone'));
+  ({ pat: twoPat } = await createAgent(app, adminToken, 'vtwo'));
   channelId = (await app.inject({ method: 'POST', url: '/channels', headers: auth(adminToken), payload: { name: 'vchan' } })).json().id as string;
   await app.listen({ port: 0, host: '127.0.0.1' });
   const addr = app.server.address();
@@ -151,5 +153,21 @@ describe('P3 위임 수명', () => {
     expect(await item(a)).toMatchObject({ outcome: 'closed', closed_reason: 'idle' });
     expect(await item(b)).toMatchObject({ outcome: 'closed', closed_reason: 'max_age' });
     expect(await leadInbox()).toEqual([]);
+  });
+
+  it('inbox 의 위임 요약: 위임자는 담당 전원, 담당은 자기 한 줄만 받는다', async () => {
+    const rootId = await openThread();
+    await client(onePat); await client(twoPat);
+    await call(leadPat, 'message.delegate', { channelId, threadRootId: rootId, body: '@vone @vtwo 넘긴다', to: ['vone', 'vtwo'] });
+    const p = idOf(await call(onePat, 'message.post', { channelId, threadRootId: rootId, body: '하는 중' }));
+    const mine = (await listInbox(pool, oneId, { unreadOnly: true })).find((e) => e.threadRootId === rootId);
+    expect(mine?.delegations).toHaveLength(1);
+    expect(mine!.delegations![0]).toMatchObject({ role: 'delegate', delegatorHandle: 'vlead', prWatches: [] });
+    expect(mine!.delegations![0]!.items).toEqual([expect.objectContaining({ handle: 'vone', state: 'open', lastMessageId: p })]);
+    await backdatePending();
+    await flush();
+    const lead = (await listInbox(pool, leadId, { unreadOnly: true })).find((e) => e.reason === 'delegation_update' && e.threadRootId === rootId);
+    expect(lead!.delegations![0]!.role).toBe('delegator');
+    expect(lead!.delegations![0]!.items.map((i) => i.handle)).toEqual(['vone', 'vtwo']);
   });
 });

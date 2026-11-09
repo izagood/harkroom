@@ -8,7 +8,9 @@ import { auditMandateCreated, mandateForAgentPost, stampHumanMandate, type Manda
 import {
   causeReasonsFor, PRINCIPAL_INVOKE_DAILY_CAP, principalForAgentPost, principalInvokeEnabled, principalInvokesToday, stripServerCallMeta,
 } from './invokePrincipal.js';
-import { closeDelegationsForReply, outcomesFor, wakeLeadOnFollowup } from './delegations.js';
+import {
+  closeDelegationsForReply, delegationSummariesFor, delegationV2Enabled, outcomesFor, wakeLeadOnFollowup,
+} from './delegations.js';
 import { assertChannelVisible, audienceFor, channelVisibleSql } from './channels.js';
 import { bundledRootSql, openBundleSql } from './askBundleSql.js';
 import { emitEvent } from '../events.js';
@@ -3448,6 +3450,19 @@ export async function listInbox(
     for (const row of rows) {
       const found = row.reason === 'delegation_done' ? outcomes.get(row.messageId) : undefined;
       if (found) row.delegation = found;
+    }
+  }
+
+  /**
+   * 위임 재설계 v1(P3): 스레드에 걸린 위임 요약을 사유와 상관없이 붙인다. 담당은 자기 한 줄만 받는다.
+   * 스위치가 꺼진 서버는 이 칸을 싣지 않는다.
+   */
+  if (delegationV2Enabled()) {
+    const threadIds = rows.map((r) => r.threadRootId ?? r.messageId);
+    const summaries = await delegationSummariesFor(pool, accountId, threadIds);
+    for (const row of rows) {
+      const found = summaries.get(row.threadRootId ?? row.messageId);
+      if (found?.length) row.delegations = found;
     }
   }
 
