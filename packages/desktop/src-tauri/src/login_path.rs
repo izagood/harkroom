@@ -464,6 +464,16 @@ fn run_login_shell(shell: &str, interactive: bool) -> Result<String, String> {
             .read_to_string(&mut out)
             .map_err(|e| format!("셸의 출력을 읽지 못했다: {e}"))?;
     }
+    let line = last_line(&out).ok_or_else(|| "셸이 빈 PATH 를 돌려줬다".to_string())?;
+    let dropped = relative_entries(line);
+    if !dropped.is_empty() {
+        // 버린 것을 남긴다 — 「내 PATH 의 `.` 이 왜 안 먹나」를 사람이 로그에서 찾을 수 있게.
+        crate::daemon_client::log_line(&format!(
+            "셸의 PATH 에서 절대 경로가 아닌 항목 {}개를 뺐다: {}",
+            dropped.len(),
+            dropped.join(":")
+        ));
+    }
     sanitize(&out).ok_or_else(|| "셸이 빈 PATH 를 돌려줬다".to_string())
 }
 
@@ -481,15 +491,38 @@ fn run_login_shell(shell: &str, interactive: bool) -> Result<String, String> {
 /// 목록이고, 그것을 안 보면 `Welcome!` 한 줄짜리 출력도 통과한다. **비어 있지 않고,
 /// `/` 로 시작하는 항목이 하나라도 있어야** 받아들인다 — 지어내지 않되 명백히 아닌 것은
 /// 거른다.
+///
+/// ## 왜 상대 항목을 빼나 — 오퍼레이터·러너는 남의 폴더에서 명령을 찾는다
+///
+/// `.`·`node_modules/.bin`·`bin` 같은 상대 항목은 **그 순간의 작업 폴더**를 기준으로 풀린다.
+/// 러너는 에이전트가 일하는 저장소 폴더에서 `git`·`node`·하네스를 찾으므로, 상대 항목이 남아
+/// 있으면 그 저장소가 심어 둔 같은 이름의 파일이 먼저 집힐 수 있다. `.zshrc` 를 읽는 `-ilc`
+/// 를 들인 뒤로 이런 줄을 만날 일이 늘었다(security 권고, 2026-11-09). 그래서 **절대 경로 항목만**
+/// 남기고, 버린 것은 `run_login_shell` 이 로그에 적는다. 빈 항목(`::`)도 현재 폴더를 뜻하므로 뺀다.
 fn sanitize(raw: &str) -> Option<String> {
+    let line = last_line(raw)?;
+    let kept: Vec<&str> = line
+        .split(':')
+        .filter(|seg| Path::new(seg).is_absolute())
+        .collect();
+    if kept.is_empty() {
+        return None;
+    }
+    Some(kept.join(":"))
+}
+
+/// 셸 출력의 마지막 비어 있지 않은 줄.
+fn last_line(raw: &str) -> Option<&str> {
     let line = raw.lines().rev().find(|l| !l.trim().is_empty())?.trim();
-    if line.is_empty() {
-        return None;
-    }
-    if !line.split(':').any(|seg| Path::new(seg).is_absolute()) {
-        return None;
-    }
-    Some(line.to_string())
+    (!line.is_empty()).then_some(line)
+}
+
+/// `sanitize` 가 버리는 항목(절대 경로가 아닌 것). 빈 항목은 `(빈 항목)` 으로 적는다.
+fn relative_entries(line: &str) -> Vec<String> {
+    line.split(':')
+        .filter(|seg| !Path::new(seg).is_absolute())
+        .map(|seg| if seg.is_empty() { "(빈 항목)".to_string() } else { seg.to_string() })
+        .collect()
 }
 
 #[cfg(all(test, unix))]
@@ -593,6 +626,21 @@ mod tests {
         assert_eq!(sanitize("   \n \n"), None);
         assert_eq!(sanitize("Welcome!\n"), None);
         assert_eq!(sanitize("relative:paths\n"), None);
+    }
+
+    /// **상대 항목은 자식에게 넘기지 않는다**(security 권고) — `.`·`node_modules/.bin`·빈 항목은
+    /// 작업 폴더 기준으로 풀려, 러너가 남의 저장소에서 같은 이름의 파일을 집을 수 있다.
+    #[test]
+    fn 절대_경로가_아닌_항목은_뺀다() {
+        let raw = "/opt/homebrew/bin:.:node_modules/.bin::/usr/bin:bin\n";
+        assert_eq!(sanitize(raw), Some("/opt/homebrew/bin:/usr/bin".to_string()));
+        assert_eq!(
+            relative_entries(last_line(raw).unwrap()),
+            vec![".", "node_modules/.bin", "(빈 항목)", "bin"]
+        );
+        // 다 절대 경로면 그대로다.
+        assert_eq!(sanitize("/a/bin:/usr/bin\n"), Some("/a/bin:/usr/bin".to_string()));
+        assert!(relative_entries("/a/bin:/usr/bin").is_empty());
     }
 
     fn scratch(tag: &str) -> std::path::PathBuf {
