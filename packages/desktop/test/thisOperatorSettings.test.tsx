@@ -165,6 +165,36 @@ describe('이 머신의 오퍼레이터 (UX ⑥b-2)', () => {
     expect(screen.getByTestId('this-operator-register').textContent).toBe('이 머신을 등록');
   });
 
+  it('「알 수 없다」에 사유를 붙이고, 등록 실패도 이 화면에서 말한다', async () => {
+    withTauri(vi.fn(async () => { throw new Error('daemon down'); }));
+    fakeController();
+    useAppStore.getState().set({ operatorStartupIssue: { kind: 'register', reason: 'mint failed' } });
+    render(<ThisOperatorSettings />);
+    await waitFor(() => expect(screen.getByTestId('this-operator-status').textContent).toContain('daemon down'));
+    expect(screen.getByTestId('this-operator-startup-issue').textContent).toContain('mint failed');
+    expect(screen.getByTestId('this-operator-register')).toBeTruthy();
+  });
+
+  it('오퍼레이터가 안 떴으면 머리는 그 말 하나, 사유 전문, [다시 시도] — 소켓 사유·「돈다」 설명·등록 버튼은 없다', async () => {
+    withTauri(vi.fn(async () => { throw new Error('daemon down'); }));
+    const c = fakeController() as unknown as { ensureOperatorAndRegister: () => Promise<void> };
+    const retry = vi.fn(async () => {});
+    c.ensureOperatorAndRegister = retry;
+    useAppStore.getState().set({ operatorStartupIssue: { kind: 'start', reason: 'env: node: No such file or directory' } });
+    render(<ThisOperatorSettings />);
+    await waitFor(() => expect(screen.getByTestId('this-operator-status').dataset.state).toBe('unknown'));
+    const head = screen.getByTestId('this-operator-status').textContent ?? '';
+    expect(head).toContain('시작하지 못했다');
+    expect(head).not.toContain('daemon down');
+    const reason = screen.getByTestId('this-operator-startup-issue');
+    expect(reason.textContent).toBe('env: node: No such file or directory');
+    expect(reason.className).toContain('break-all');
+    expect(screen.queryByText(/오퍼레이터가 돈다/)).toBeNull();
+    expect(screen.queryByTestId('this-operator-register')).toBeNull();
+    fireEvent.click(screen.getByTestId('this-operator-retry-start'));
+    await waitFor(() => expect(retry).toHaveBeenCalledTimes(1));
+  });
+
   it('오퍼레이터 목록으로 가는 길이 글이 아니라 버튼이다', async () => {
     withTauri(vi.fn(async () => local(false)));
     fakeController();

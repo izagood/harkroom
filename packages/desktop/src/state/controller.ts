@@ -27,10 +27,10 @@ import { beginSend, endSend, markOwnSend, type OwnSendMarks } from '../lib/ownSe
 import { RunnerLauncher, tauriDaemonObserver, tauriAppVersionReader, type AppVersionReader, type DaemonObserver } from '../lib/runnerLauncher';
 // 만들기 흐름이 러너를 띄우기 **전에** 풀 배정을 쓴다 — 근거는 `createAgent` 안에 있다.
 import { assignAgentPools } from '../lib/claudeAccounts';
-import { listLocalAgents, registerLocalOperator, setLocalAgent, setLocalAgentProviderLane } from '../lib/operatorLocal';
+import { hasOperatorLocalSurface, listLocalAgents, registerLocalOperator, setLocalAgent, setLocalAgentProviderLane } from '../lib/operatorLocal';
 import { autoRegisterFirstOperator } from '../lib/autoRegisterOperator';
 import { hasCapability } from '../lib/capabilities';
-import type { AppState, AppStore } from './appStore';
+import type { AppState, AppStore, OperatorStartupIssue } from './appStore';
 import { communityLabel, getActiveController, getActiveStore, useCommunityRegistry, type CommunityEntry } from './communities';
 import { usePrefsStore } from './prefsStore';
 import { detectLocale, isLocale, translator, type MessageKey, type Translate } from '../i18n';
@@ -328,6 +328,53 @@ export class Controller {
     return mine ? { communityId: mine.id, messageId } : undefined;
   }
 
+  /** 지금 도는 오퍼레이터 확보·자동 등록. 재접속이 겹쳐 불러도 한 번만 돈다. */
+  private operatorStartupRun: Promise<void> | null = null;
+
+  /**
+   * **오퍼레이터를 세우고 첫 설치면 이 머신을 등록한다 — 실패를 버리지 않는다.**
+   *
+   * 앞 판본은 이 사슬을 `swallow` 로 감쌌다: Node 를 못 찾아 오퍼레이터가 바로 죽어도, 등록 코드 발급이 실패해도
+   * 화면에는 아무것도 안 남고 다시 시도하지도 않았다(앱을 다시 켤 때뿐). 첫 설치에서 「에이전트가 안 돈다」가
+   * 조용히 생기던 길이다. 이제 사유를 `operatorStartupIssue` 로 올려 첫 화면 띠(`OperatorStartupBanner`)와
+   * 설정 › 이 기기의 오퍼레이터가 말하게 하고, 잘 되면 지운다. Tauri 표면이 없는 곳(웹·테스트)은 실패가 아니다.
+   */
+  ensureOperatorAndRegister(): Promise<void> {
+    if (this.operatorStartupRun) return this.operatorStartupRun;
+    const run = this.runOperatorStartup().finally(() => { if (this.operatorStartupRun === run) this.operatorStartupRun = null; });
+    this.operatorStartupRun = run;
+    return run;
+  }
+
+  private async runOperatorStartup(): Promise<void> {
+    if (!hasOperatorLocalSurface()) return;
+    const setIssue = (issue: OperatorStartupIssue | null) => {
+      if (!this.stopped) this.store.getState().set({ operatorStartupIssue: issue });
+    };
+    const { observation, error } = await this.runnerLauncher.ensureOperatorWithReason();
+    if (this.stopped) return;
+    if (!observation) {
+      setIssue({ kind: 'start', reason: errorText(error, this.t()) });
+      return;
+    }
+    const me = this.store.getState().me;
+    let listError: unknown = null;
+    try {
+      const outcome = await autoRegisterFirstOperator({
+        baseUrl: this.api.baseUrl,
+        canRegister: hasCapability(me, 'operator.register'),
+        canManage: hasCapability(me, 'operator.manage'),
+        listLocal: () => listLocalAgents(this.api.baseUrl).catch((e: unknown) => { listError = e; throw e; }),
+        listOperators: () => this.api.operators().catch((e: unknown) => { listError = e; throw e; }),
+        mintCode: () => this.api.operatorRegisterCode(),
+        register: (baseUrl, code) => registerLocalOperator(baseUrl, code),
+      });
+      setIssue(outcome === 'unknown' ? { kind: 'register', reason: errorText(listError, this.t()) } : null);
+    } catch (e) {
+      setIssue({ kind: 'register', reason: errorText(e, this.t()) });
+    }
+  }
+
   // fire-and-forget 호출의 unhandled rejection 방지 — 실패는 조용히 무시(다음 이벤트/리컨실이 자연 복구).
   private swallow(p: Promise<unknown>): void { void p.catch(() => {}); }
   private projectionRefreshInterval: ReturnType<typeof setInterval> | null = null;
@@ -407,6 +454,9 @@ export class Controller {
         this.swallow(this.refreshServerVersion());
         // 워크스페이스 아이콘도 재접속마다 다시 받는다 — 끊긴 사이에 바뀌었으면 이벤트를 놓쳤다.
         this.swallow(this.refreshWorkspaceIcon());
+        // 오퍼레이터를 못 세웠거나 등록을 못 했으면 **다시 붙을 때 한 번 더 해 본다** — 전에는 앱을 다시 켤 때뿐이었다.
+        // 잘 됐으면(사유가 없으면) 재접속마다 다시 하지 않는다.
+        if (this.store.getState().operatorStartupIssue) this.swallow(this.ensureOperatorAndRegister());
       },
       onDown: (reason) => this.handleDown(reason),
       // 4401 은 티켓 미스일 수도 있다 — 지우기 전에 REST 로 다시 묻는다(ws.ts `credentialStillValid`).
@@ -431,18 +481,7 @@ export class Controller {
     // 오퍼레이터가 섰으면 **첫 설치인지** 보고 이 머신을 등록한다 — 전체 목록을 보는 사람(operator.manage)에게
     // 오퍼레이터가 하나도 없는 커뮤니티일 때만
     // (`autoRegisterOperator.ts`). 오퍼레이터를 못 세웠으면(웹·테스트·실패) 묻지 않는다.
-    this.swallow(this.runnerLauncher.ensureOperator().then((observed) => {
-      if (!observed || this.stopped) return;
-      return autoRegisterFirstOperator({
-        baseUrl: this.api.baseUrl,
-        canRegister: hasCapability(me, 'operator.register'),
-        canManage: hasCapability(me, 'operator.manage'),
-        listLocal: () => listLocalAgents(this.api.baseUrl),
-        listOperators: () => this.api.operators(),
-        mintCode: () => this.api.operatorRegisterCode(),
-        register: (baseUrl, code) => registerLocalOperator(baseUrl, code),
-      });
-    }));
+    this.swallow(this.ensureOperatorAndRegister());
 
     // 마지막 채널을 연다 — 기다리지 않는다. 첫 화면은 그 채널의 머리로 바로 서고, 메시지는
     // 위에서 미리 띄운 응답이 오는 대로 찬다. 그 사이 사람이 다른 채널을 눌렀으면 열지 않는다.

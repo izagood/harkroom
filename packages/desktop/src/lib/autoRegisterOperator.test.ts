@@ -35,6 +35,30 @@ describe('autoRegisterFirstOperator — 첫 설치에서 이 머신을 등록', 
     expect(d.register).not.toHaveBeenCalled();
   });
 
+  it('로컬 기록의 오퍼레이터가 서버 목록에 있으면 하지 않는다', async () => {
+    const d = deps({
+      listLocal: async () => ({ communities: [{ baseUrl: BASE, registered: true, operatorId: 'op-mine' }] }),
+      listOperators: async () => [{ id: 'op-mine' }],
+    });
+    expect(await autoRegisterFirstOperator(d)).toBe('already-local');
+    expect(d.register).not.toHaveBeenCalled();
+  });
+
+  it('로컬엔 등록됨인데 서버가 그 오퍼레이터를 모르면(서버 DB 를 새로 만듦) 다시 등록한다', async () => {
+    const d = deps({ listLocal: async () => ({ communities: [{ baseUrl: BASE, registered: true, operatorId: 'op-gone' }] }) });
+    expect(await autoRegisterFirstOperator(d)).toBe('registered');
+    expect(d.register).toHaveBeenCalledWith(BASE, 'hkreg_test');
+  });
+
+  it('로컬 기록이 낡았어도 남의 오퍼레이터가 있으면 사람이 정한다', async () => {
+    const d = deps({
+      listLocal: async () => ({ communities: [{ baseUrl: BASE, registered: true, operatorId: 'op-gone' }] }),
+      listOperators: async () => [{ id: 'op-other' }],
+    });
+    expect(await autoRegisterFirstOperator(d)).toBe('community-has-operators');
+    expect(d.register).not.toHaveBeenCalled();
+  });
+
   it('커뮤니티에 다른 오퍼레이터가 있으면 사람이 정한다 — 하지 않는다', async () => {
     const d = deps({ listOperators: async () => [{ id: 'op-1' }] });
     expect(await autoRegisterFirstOperator(d)).toBe('community-has-operators');

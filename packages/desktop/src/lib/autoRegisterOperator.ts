@@ -20,7 +20,7 @@ export interface AutoRegisterDeps {
   /** `operator.manage` 능력이 있는가 — 있어야 `GET /operators` 가 커뮤니티 전체다. */
   canManage: boolean;
   /** 이 머신의 오퍼레이터 로컬 설정(`operator_agents_list`). */
-  listLocal: () => Promise<{ communities: { baseUrl: string; registered: boolean }[] }>;
+  listLocal: () => Promise<{ communities: { baseUrl: string; registered: boolean; operatorId?: string | null }[] }>;
   /** 커뮤니티에 등록된 오퍼레이터 목록(`GET /operators`). `canManage` 일 때만 전체다. */
   listOperators: () => Promise<unknown[]>;
   /** 등록 코드 발급(`POST /operators/register-code`). */
@@ -48,9 +48,20 @@ export async function autoRegisterFirstOperator(deps: AutoRegisterDeps): Promise
   } catch {
     return 'unknown';
   }
-  if (local.communities.some((c) => c.baseUrl === baseUrl && c.registered)) return 'already-local';
+  const mine = local.communities.find((c) => c.baseUrl === baseUrl && c.registered);
+  // **로컬 기록만 믿지 않는다.** 같은 주소로 서버 DB 를 새로 만들면(셀프호스팅 첫 시험이 그렇다) 이 머신의
+  // `operator.json` 에는 「등록됨」이 남아 있는데 서버는 그 오퍼레이터를 모르고, 옛 토큰은 거절된다 — 그런데도
+  // 건너뛰면 Operators 는 빈 채로 남는다. 이 판단은 `canManage`(전체 목록)일 때만 서므로 「목록에 없다」가
+  // 곧 「서버가 모른다」다. id 를 모르는 옛 기록은 판단할 수 없으니 전처럼 건너뛴다.
+  if (mine && (!mine.operatorId || operators.some((o) => idOf(o) === mine.operatorId))) return 'already-local';
+  // 남의 오퍼레이터가 있으면 로컬 기록이 낡았어도 **사람이 정한다**(버튼) — 이 자동 등록은 「빈 커뮤니티의
+  // 첫 기기」에만 쓰는 길이고, 다른 기기가 있는 커뮤니티에 이 기기를 더하는 것은 그 사람의 선택이다.
   if (operators.length > 0) return 'community-has-operators';
   const { code } = await deps.mintCode();
   await deps.register(baseUrl, code);
   return 'registered';
+}
+
+function idOf(o: unknown): unknown {
+  return o && typeof o === 'object' ? (o as { id?: unknown }).id : undefined;
 }
