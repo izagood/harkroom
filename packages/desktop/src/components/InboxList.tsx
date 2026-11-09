@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Identity } from './Identity';
+import { DelegationLabel, DelegationUpdates } from './DelegationLabel';
 import { daysWaiting, groupSimilar, laterUntilLabel, oneSentence, BOARD_KINDS, type BoardCard, type BoardGroup, type BoardKind } from '../lib/inboxBoard';
 import { bodyWithHandles } from '../lib/mention';
 import { useActiveStore } from '../state/communities';
@@ -238,9 +239,11 @@ export function InboxList({ cards, busy, channelLabel, onOpen, onAnswer, onSetSt
             : <span className="mt-0.5 h-6 w-6 shrink-0" aria-hidden="true" />}
           <span className="flex min-w-0 flex-1 flex-col">
             <span className="flex min-w-0 items-center gap-1.5">
+              {card.delegation && <DelegationLabel delegation={card.delegation} testId={`inbox-card-delegation-${card.rootId}`} />}
               <span data-testid={`inbox-card-summary-${card.rootId}`} className={`min-w-0 truncate ${card.unread ? 'font-medium text-fg' : 'text-fg'}`}>
                 {bodyWithHandles(card.summary, accounts, groups, teams)}
               </span>
+              {card.delegation && <DelegationUpdates delegation={card.delegation} testId={`inbox-card-updates-${card.rootId}`} />}
               {g.similar.length > 0 && (
                 <span data-testid={`inbox-card-similar-${card.rootId}`} className="shrink-0 rounded-full bg-surface-sunken px-1.5 text-meta text-fg-muted">
                   {t('inbox.board.similar', { count: g.similar.length + 1 })}
@@ -306,6 +309,7 @@ export function InboxList({ cards, busy, channelLabel, onOpen, onAnswer, onSetSt
           )}
         </div>
         <p className="break-words text-name text-fg">
+          {card.delegation && <DelegationLabel delegation={card.delegation} />}
           {bodyWithHandles(card.summary, accounts, groups, teams)}
           {g.similar.length > 0 && (
             <span className="ml-1.5 rounded-full bg-surface-sunken px-1.5 text-meta text-fg-muted">{t('inbox.board.similar', { count: g.similar.length + 1 })}</span>

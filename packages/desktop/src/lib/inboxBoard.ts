@@ -1,4 +1,5 @@
 import { isAskOpen, readAskMeta, readFailureMeta, type InboxEntry, type InboxThreadState, type MessageRow } from '@harkroom/shared';
+import { cardDelegation, type CardDelegation } from './delegationDisplay';
 
 /**
  * Inbox **상태 보드**(C안, 2026-10-01 소유자 선택 · designer 정정 1~5 반영).
@@ -100,6 +101,11 @@ export interface BoardCard {
   similarKey: string | null;
   /** 스레드의 답글 수(R6, 머리의 `replyCount`). 머리가 없으면 null. */
   replyCount: number | null;
+  /**
+   * 위임 라벨(위임 재설계 v1 P6). 위임 사유로 온 항목이나 서버의 위임 요약이 있을 때만 — 없으면 null 이고 카드는 지금과 같다.
+   * `failed`·`stalled` 면 카드가 「막힘」 묶음으로 간다.
+   */
+  delegation: CardDelegation | null;
 }
 
 export interface BoardInput {
@@ -121,7 +127,7 @@ const rootOf = (e: InboxEntry): string => e.threadRootId ?? e.messageId;
  * 뜻일 뿐 나를 지목한 것이 아니다(내가 연 스레드면 아래 `opened` 가 따로 잡는다).
  */
 const CALLED_ME: ReadonlySet<InboxEntry['reason']> = new Set([
-  'mention', 'team_mention', 'team_delegated', 'delegation_done', 'delegation_followup', 'dm', 'ask_answered', 'ask_closed',
+  'mention', 'team_mention', 'team_delegated', 'delegation_done', 'delegation_followup', 'delegation_update', 'dm', 'ask_answered', 'ask_closed',
 ]);
 
 /**
@@ -341,7 +347,9 @@ export function buildBoard(input: BoardInput): BoardCard[] {
 
     // 결정 카드는 묶지 않는다(security F1·n3) — 물음 항목이 내 인박스에 없고 머리만 나를 지목해도
     // 결정이다. 묶으면 결정 하나가 줄 뒤에 숨는다.
-    const kind = kindOf(head, input, ask != null, failure != null);
+    const delegation = cardDelegation(list, nowMs);
+    const kind = kindOf(head, input, ask != null, failure != null
+      || delegation?.label === 'failed' || delegation?.label === 'stalled');
     cards.push({
       rootId,
       channelId: head?.channelId ?? latest!.channelId,
@@ -360,6 +368,7 @@ export function buildBoard(input: BoardInput): BoardCard[] {
         ? JSON.stringify([failure.channelId, failure.authorId, failureMeta?.code ?? null, failureTitle])
         : null,
       replyCount: head?.replyCount ?? null,
+      delegation,
     });
   }
   // **최근 것이 위**다(R1, 2026-10-11 designer 재설계). 옛 규칙(정정 2)은 내 차례·막힘을 오래 기다린

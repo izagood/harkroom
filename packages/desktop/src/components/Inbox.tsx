@@ -5,6 +5,7 @@ import type { InboxEntry, InboxThreadState, MessageRow } from '@harkroom/shared'
 import { buildBoard, daysWaiting, laterUntilLabel, mineCount, filterBoard, groupSimilar, BOARD_KINDS, BOARD_SCOPES, type BoardCard, type BoardColumn, type BoardFold, type BoardGroup, type BoardKind, type BoardScope } from '../lib/inboxBoard';
 import { bodyWithHandles } from '../lib/mention';
 import { useActiveStore } from '../state/communities';
+import { DelegationLabel, DelegationUpdates } from './DelegationLabel';
 import { getController } from '../state/controller';
 import { useAgo, useLocale, useT } from '../i18n/useT';
 import { dateTimeText } from '../lib/localeText';
@@ -387,7 +388,10 @@ export function Inbox({ open, onClose }: Props) {
         >
           {/* **해야 할 일 한 문장.** 잘라 낸 본문 두 줄이 아니라 고른 한 문장이다(`oneSentence`). */}
           <span data-testid={`inbox-card-summary-${card.rootId}`} className="line-clamp-2 break-words text-fg">
+            {/* 위임 라벨은 요약 **앞**, 같은 줄(위임 재설계 v1 P6). 위임이 아닌 카드는 지금처럼 라벨이 없다. */}
+            {card.delegation && <DelegationLabel delegation={card.delegation} testId={`inbox-card-delegation-${card.rootId}`} />}
             {bodyWithHandles(card.summary, accounts, groups, teams)}
+            {card.delegation && <DelegationUpdates delegation={card.delegation} testId={`inbox-card-updates-${card.rootId}`} />}
             {/* 같은 실패가 몇 번 났나(R5) — 묶인 일 수. */}
             {group.similar.length > 0 && (
               <span data-testid={`inbox-card-similar-${card.rootId}`} className="ml-1.5 rounded-full bg-surface-sunken px-1.5 text-meta text-fg-muted">

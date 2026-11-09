@@ -19,6 +19,9 @@ import { threadState } from '../lib/threadState';
 import { WaitChainLine } from './WaitChain';
 import { waitChain } from '../lib/waitChain';
 import { ThreadParticipants } from './ThreadParticipants';
+import { DelegationChips } from './DelegationChips';
+import type { InboxEntry } from '@harkroom/shared';
+import { threadDelegations } from '../lib/delegationDisplay';
 import { ThreadModelCollapsed, ThreadModelRow } from './ThreadModelRow';
 import { Composer } from './Composer';
 import { PaneResizer } from './PaneResizer';
@@ -49,6 +52,21 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
   const view = useWindowView();
   const { channelId: activeChannelId, threadRootId } = view;
   const planAsk = useActiveStore((s) => (threadRootId ? s.planAsks[threadRootId] : undefined));
+  /*
+    「맡긴 일」 칩 줄의 재료(위임 재설계 v1 P6) — 서버가 inbox 항목에 싣는 위임 요약이다. 따로 조회하지 않고 이미 받은
+    안 읽은 항목·보드 재료에서 이 스레드의 가장 최근 요약을 고른다. 스위치가 꺼진 서버는 요약을 안 실어 줄이 없다.
+  */
+  const unreadEntries = useActiveStore((s) => s.unread);
+  const boardRevision = useActiveStore((s) => s.inboxBoardRevision);
+  const delegationSummaries = useMemo(() => {
+    if (!threadRootId) return null;
+    let board: InboxEntry[] = [];
+    // 컨트롤러가 아직 없으면(기동 중·시험) 안 읽은 항목만 본다.
+    try { board = getController().inboxBoardSnapshot()?.entries ?? []; } catch { board = []; }
+    return threadDelegations([...unreadEntries, ...board], threadRootId);
+    // boardRevision 은 스냅숏이 바뀌었다는 신호다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [threadRootId, unreadEntries, boardRevision]);
   // 스레드 창 안이면 패널이 창을 채운다 — 손잡이·왼쪽 선이 없고 ⧉ 도 없다(이미 창이다).
   const fill = view.kind === 'thread';
   // 답글을 보낼 커뮤니티 — 보낸 순간의 것을 붙잡는다(PR #997, ChannelPane 과 같은 이유).
@@ -457,6 +475,12 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
           ×
         </button>
       </header>
+      {/* 「맡긴 일」 칩 줄(위임 재설계 v1 P6) — 머리 바로 아래. 위임이 없으면 줄이 없다. */}
+      <DelegationChips
+        rootId={threadRootId}
+        summaries={delegationSummaries}
+        onOpenMessage={(id) => { void getController().openMessage(id).catch(() => {}); }}
+      />
       {/* 사슬은 헤더 **바로 아래**다 — "무엇을 기다리는가"는 대화를 읽기 전에 알아야 한다. */}
       {/* 모델 줄은 사슬보다 **위**다 — 이 스레드가 어떤 비용으로 도는지가 기다림보다 먼저 정해진다. */}
       {activeChannelId && (
