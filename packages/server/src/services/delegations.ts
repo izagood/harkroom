@@ -503,6 +503,15 @@ export function delegationFollowupEnabled(env: NodeJS.ProcessEnv = process.env):
   return v === '1' || v === 'on' || v === 'true';
 }
 
+/**
+ * 위임 재설계 v1 스위치 — 기본 꺼짐(164 의 자리만 있고 아직 아무 경로도 이것을 보지 않는다). 켜면 report 가 닫지 않고 담당 글이
+ * `delegation_update` 로 넘긴 쪽에 간다(P3 이후). 러너가 새 사유를 알게 된 뒤(P2) 서버를 켠다. 부를 때마다 읽는다.
+ */
+export function delegationV2Enabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const v = (env.HARKROOM_DELEGATION_V2 ?? '').trim().toLowerCase();
+  return v === '1' || v === 'on' || v === 'true';
+}
+
 export type DelegationFollowup =
   | { woke: string }
   | { skipped: 'chain_limit' | 'followup_limit' }
