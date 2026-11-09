@@ -95,6 +95,13 @@ export const GATE_NOTIFY_PER_AGENT = 3;
 /** 보드가 닫혀 있을 때 배지용 보드 조회를 미루는 시간(`refreshInboxMine`). */
 export const BADGE_REFRESH_MS = 30_000;
 /**
+ * `inbox.updated` → `/inbox/unread`, `lease.changed` → `/leases` 다시 읽기의 꼬리 디바운스.
+ * 멘션·리스 변경은 몰려서 온다(에이전트 여럿이 한꺼번에 답하거나 리스를 줄줄이 잡는다). 신호마다
+ * 목록 전체를 다시 받으면 같은 응답을 연달아 받는다 — 이 창 안에 온 신호는 **마지막 신호 뒤**
+ * 한 번의 조회로 접는다. 꼬리라서 마지막 신호는 반드시 조회로 이어진다.
+ */
+export const EVENT_REFETCH_DEBOUNCE_MS = 400;
+/**
  * 이 기기에서 내가 한 동작(글·답글·읽음·리액션) 뒤 이 시간 안에 오는 `inbox.updated` 는 미루지 않는다 — 그 신호는
  * 내 동작의 결과일 가능성이 크고, 처리했는데 배지가 안 줄면 사람은 처리가 안 된 줄 안다(#1333 designer d1).
  */
@@ -139,6 +146,9 @@ export class Controller {
   /** 보드가 열려 있나(`setInboxBoardOpen`) · 닫혀 있을 때 배지용으로 미뤄 둔 보드 조회(`refreshInboxMine`). */
   private boardOpenCount = 0;
   private badgeRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  /** `EVENT_REFETCH_DEBOUNCE_MS` 의 예약들. `stop()` 이 걷는다. */
+  private unreadRefetchTimer: ReturnType<typeof setTimeout> | null = null;
+  private leasesRefetchTimer: ReturnType<typeof setTimeout> | null = null;
   /** 이 시각까지 온 `inbox.updated` 는 내 동작의 결과로 보고 바로 받는다(`noteOwnInboxAction`). */
   private ownActionUntil = 0;
   /** 히스토리를 이미 통째로 받은 채널. 이 집합에 없으면 openChannel이 증분이 아니라 전체를 받는다. */
@@ -601,6 +611,27 @@ export class Controller {
     if (this.mineTick) { clearInterval(this.mineTick); this.mineTick = null; }
     this.clearOfflineTimer();
     if (this.badgeRefreshTimer) { clearTimeout(this.badgeRefreshTimer); this.badgeRefreshTimer = null; }
+    if (this.unreadRefetchTimer) { clearTimeout(this.unreadRefetchTimer); this.unreadRefetchTimer = null; }
+    if (this.leasesRefetchTimer) { clearTimeout(this.leasesRefetchTimer); this.leasesRefetchTimer = null; }
+  }
+
+  /** 꼬리 디바운스: 신호가 올 때마다 예약을 미루고, 마지막 신호 뒤 `EVENT_REFETCH_DEBOUNCE_MS` 에 한 번 부른다. */
+  private scheduleUnreadRefetch(): void {
+    if (this.stopped) return;
+    if (this.unreadRefetchTimer) clearTimeout(this.unreadRefetchTimer);
+    this.unreadRefetchTimer = setTimeout(() => {
+      this.unreadRefetchTimer = null;
+      if (!this.stopped) this.swallow(this.refreshUnread().then(() => this.announceNewMentions()));
+    }, EVENT_REFETCH_DEBOUNCE_MS);
+  }
+
+  private scheduleLeasesRefetch(): void {
+    if (this.stopped) return;
+    if (this.leasesRefetchTimer) clearTimeout(this.leasesRefetchTimer);
+    this.leasesRefetchTimer = setTimeout(() => {
+      this.leasesRefetchTimer = null;
+      if (!this.stopped) this.swallow(this.api.leases().then((leases) => this.store.getState().set({ leases })));
+    }, EVENT_REFETCH_DEBOUNCE_MS);
   }
 
   /**
@@ -845,7 +876,7 @@ export class Controller {
       }
       case 'inbox.updated':
         if (e.accountId === store.me?.id) {
-          this.swallow(this.refreshUnread().then(() => this.announceNewMentions()));
+          this.scheduleUnreadRefetch();
           this.swallow(this.refreshInboxMine());
           // 선호도 다시 읽는다(#376). 나를 부르는 것이 오면 **서버가** 그 채널의 숨김을
           // 풀기 때문이다(`services/messages.ts` 의 `insertInbox`). 같은 판정을 여기서 다시
@@ -862,7 +893,7 @@ export class Controller {
         }
         break;
       case 'lease.changed':
-        this.swallow(this.api.leases().then((leases) => this.store.getState().set({ leases })));
+        this.scheduleLeasesRefetch();
         break;
       case 'presence.snapshot':
         store.set({ online: e.online });

@@ -17,7 +17,8 @@ export function ChannelEmptyState(
   { channel, isArchived }: { channel: ChannelRow | undefined; isArchived: boolean },
 ) {
   const t = useT();
-  const { accounts, me } = useActiveStore();
+  const accounts = useActiveStore((s) => s.accounts);
+  const me = useActiveStore((s) => s.me);
 
   // 멘션 자동완성과 **같은 기준**으로 고른다(Composer.tsx 의 후보 필터 — 나 자신 제외,
   // disabled 제외). 기준이 갈리면 여기서 이름을 보여 준 에이전트가 정작 자동완성에는 뜨지

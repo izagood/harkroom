@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useActiveStore as useAppStore } from '../src/state/communities';
-import { Controller } from '../src/state/controller';
+import { Controller, EVENT_REFETCH_DEBOUNCE_MS } from '../src/state/controller';
 import { acc, accountsResult, fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
 import { ApiError } from '../src/lib/api';
 
@@ -345,10 +345,17 @@ describe('Controller', () => {
     const c = new Controller(api, makeWs);
     await c.start();
 
-    callbacks.current!.onEvent({ type: 'inbox.updated', accountId: 'u1' }); // call #2 — 응답 지연
-    callbacks.current!.onEvent({ type: 'inbox.updated', accountId: 'u1' }); // call #3 — 즉시 resolve
-    await Promise.resolve();
-    await Promise.resolve();
+    // `inbox.updated` 는 꼬리 디바운스로 접히므로, 두 조회를 따로 내려면 창을 하나씩 흘려보낸다.
+    vi.useFakeTimers();
+    try {
+      callbacks.current!.onEvent({ type: 'inbox.updated', accountId: 'u1' });
+      await vi.advanceTimersByTimeAsync(EVENT_REFETCH_DEBOUNCE_MS); // call #2 — 응답 지연
+      callbacks.current!.onEvent({ type: 'inbox.updated', accountId: 'u1' });
+      await vi.advanceTimersByTimeAsync(EVENT_REFETCH_DEBOUNCE_MS); // call #3 — 즉시 resolve
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(call).toBe(3);
     expect(useAppStore.getState().unread).toEqual(entries2);
 
     const revAfterFresh = useAppStore.getState().inboxRevision;
@@ -376,11 +383,87 @@ describe('Controller', () => {
     await c.start();
     const before = useAppStore.getState().inboxRevision;
 
-    callbacks.current!.onEvent({ type: 'inbox.updated', accountId: 'u1' });
-    await Promise.resolve();
-    await Promise.resolve();
+    vi.useFakeTimers();
+    try {
+      callbacks.current!.onEvent({ type: 'inbox.updated', accountId: 'u1' });
+      await vi.advanceTimersByTimeAsync(EVENT_REFETCH_DEBOUNCE_MS);
+    } finally {
+      vi.useRealTimers();
+    }
 
     expect(useAppStore.getState().inboxRevision).toBe(before + 1);
+  });
+
+  /**
+   * 몰려 오는 `inbox.updated` · `lease.changed` 는 꼬리 디바운스로 한 번의 조회로 접힌다.
+   * 창 안에서는 아무것도 받지 않고, **마지막 신호 뒤** 창이 지나면 반드시 한 번 받는다.
+   */
+  it('inbox.updated 가 몰려 오면 /inbox/unread 를 마지막 신호 뒤 한 번만 받는다', async () => {
+    const api = fakeApi();
+    const { makeWs, callbacks } = fakeWsFactory();
+    const c = new Controller(api, makeWs);
+    await c.start();
+    const unread = api.inboxUnread as ReturnType<typeof vi.fn>;
+    const base = unread.mock.calls.length;
+
+    vi.useFakeTimers();
+    try {
+      for (let i = 0; i < 5; i++) {
+        callbacks.current!.onEvent({ type: 'inbox.updated', accountId: 'u1' });
+        await vi.advanceTimersByTimeAsync(EVENT_REFETCH_DEBOUNCE_MS - 50);
+      }
+      expect(unread.mock.calls.length).toBe(base); // 창 안: 아직 없다
+      await vi.advanceTimersByTimeAsync(50);
+      expect(unread.mock.calls.length).toBe(base + 1); // 마지막 신호 뒤 꼭 한 번
+      await vi.advanceTimersByTimeAsync(EVENT_REFETCH_DEBOUNCE_MS * 3);
+      expect(unread.mock.calls.length).toBe(base + 1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('lease.changed 가 몰려 오면 /leases 를 마지막 신호 뒤 한 번만 받는다', async () => {
+    const api = fakeApi();
+    const { makeWs, callbacks } = fakeWsFactory();
+    const c = new Controller(api, makeWs);
+    await c.start();
+    const leases = api.leases as ReturnType<typeof vi.fn>;
+    const base = leases.mock.calls.length;
+
+    vi.useFakeTimers();
+    try {
+      for (let i = 0; i < 4; i++) {
+        callbacks.current!.onEvent({ type: 'lease.changed', repo: 'r' });
+        await vi.advanceTimersByTimeAsync(100);
+      }
+      expect(leases.mock.calls.length).toBe(base);
+      await vi.advanceTimersByTimeAsync(EVENT_REFETCH_DEBOUNCE_MS);
+      expect(leases.mock.calls.length).toBe(base + 1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stop() 은 걸려 있는 디바운스 조회를 걷는다', async () => {
+    const api = fakeApi();
+    const { makeWs, callbacks } = fakeWsFactory();
+    const c = new Controller(api, makeWs);
+    await c.start();
+    const leases = api.leases as ReturnType<typeof vi.fn>;
+    const unread = api.inboxUnread as ReturnType<typeof vi.fn>;
+    const [lBase, uBase] = [leases.mock.calls.length, unread.mock.calls.length];
+
+    vi.useFakeTimers();
+    try {
+      callbacks.current!.onEvent({ type: 'lease.changed', repo: 'r' });
+      callbacks.current!.onEvent({ type: 'inbox.updated', accountId: 'u1' });
+      c.stop();
+      await vi.advanceTimersByTimeAsync(EVENT_REFETCH_DEBOUNCE_MS * 2);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(leases.mock.calls.length).toBe(lBase);
+    expect(unread.mock.calls.length).toBe(uBase);
   });
 
   it('send posts to active channel with idempotency key', async () => {
