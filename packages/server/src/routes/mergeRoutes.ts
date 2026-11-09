@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { PR_STATUS_CHECKS_PATH } from '@harkroom/shared/prStatus';
 import { checkMerge, mergeableRepos, openMergeApprovals, peekMergeApproval, reportMerge, reportMergeClosed } from '../services/mergeGrants.js';
 import { checkPrStatus } from '../services/prStatusChecks.js';
+import { dueWatches, reportWatchStatus } from '../services/prWatch.js';
 
 const REPO = z.string().min(3).max(201);
 const SHA = z.string().regex(/^[0-9a-f]{40}$/);
@@ -63,6 +64,31 @@ export async function registerMergeRoutes(app: FastifyInstance, pool: Pool): Pro
     void reply.header('cache-control', 'no-store');
     if (!r.ok) return reply.code(r.code === 'bad_repo' ? 400 : 403).send({ error: { code: r.code, message: `pr status not allowed: ${r.code}` } });
     return { allowed: true, repo: r.repo };
+  });
+
+  /**
+   * PR 감시 폴러(위임 재설계 P5, `services/prWatch.ts`). 오퍼레이터가 자기가 띄우는 에이전트 이름으로 60초마다 묻고, gh 로 읽은 고정 칸을 보낸다.
+   * 스위치가 꺼지면 due 는 빈 목록이고 status 는 409 `disabled`.
+   */
+  app.get('/agent/pr-watches/due', { preHandler: app.requireAccount }, async (req, reply) => {
+    const who = viaOperator(req, reply);
+    if (!who) return reply;
+    void reply.header('cache-control', 'no-store');
+    return { watches: await dueWatches(pool, who.agentId) };
+  });
+
+  app.post('/agent/pr-watches/:id/status', { preHandler: app.requireAccount }, async (req, reply) => {
+    const who = viaOperator(req, reply);
+    if (!who) return reply;
+    const id = z.string().uuid().safeParse((req.params as { id?: string }).id);
+    const body = z.object({
+      state: z.string().max(40), headRefOid: SHA,
+      checks: z.array(z.object({ name: z.string().max(200), conclusion: z.string().max(40) })).max(100),
+    }).safeParse(req.body ?? {});
+    if (!id.success || !body.success) return reply.code(400).send({ error: { code: 'bad_request', message: 'state, headRefOid and checks are required' } });
+    const r = await reportWatchStatus(pool, { agentId: who.agentId, watchId: id.data, status: body.data });
+    if (!r.ok) return reply.code(r.code === 'not_found' ? 404 : r.code === 'not_granted' ? 403 : 409).send({ error: { code: r.code, message: `pr watch status not recorded: ${r.code}` } });
+    return { changed: r.changed, state: r.state };
   });
 
   /** 래퍼의 사전 확인(security F2) — 이 임대로 판정하면 소모될 승인을 소모 없이 본다. 없으면 `{ approval: null }`. */

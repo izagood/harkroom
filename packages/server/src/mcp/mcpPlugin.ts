@@ -5,6 +5,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
+import { createWatch } from '../services/prWatch.js';
 import {
   ASK_BUNDLE_MAX_ITEMS, ASK_MAX_OPTIONS, ASK_MIN_OPTIONS, MAX_MESSAGE_BODY_CHARS,
   MODEL_ID_MAX, REPORT_MAX_ITEMS, REPORT_MAX_NEXT, TEAM_ROUND_LIMIT,
@@ -2918,6 +2919,27 @@ function buildMcpServer(
       number: z.number().int().positive(),
     },
   }, operatorOnly('pr.status'));
+
+  /**
+   * PR 감시(위임 재설계 P5, `services/prWatch.ts`). 서버가 상태를 쥐고, gh 가 있는 오퍼레이터가 60초마다 읽어 보낸다. 바뀌면 구독자 스레드에
+   * 시스템 줄 하나, 구독자만 깨운다. `source` 는 인자가 아니다 — 늘 manual(merge_queue 는 머지 래퍼 보고만 정한다). 스위치가 꺼지면 `disabled`.
+   */
+  server.registerTool('pr.watch', {
+    description: 'PR 을 지켜보다 바뀌면 이 스레드에 알리고 나를 깨운다(최대 6시간). until=checks 는 그 head 의 체크가 다 끝나면, merged 는 머지되거나 닫히면 끝. pr.status 와 같은 권한(그 저장소의 grant)이 있어야 한다. 넘긴 일을 기다리는 감시면 delegationId',
+    inputSchema: {
+      repo: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}\/[A-Za-z0-9._-]{1,100}$/).describe('owner/name'),
+      number: z.number().int().positive(),
+      head: z.string().regex(/^[0-9a-f]{40}$/),
+      until: z.enum(['checks', 'merged']),
+      channelId: z.string().uuid(),
+      threadRootId: z.string().uuid(),
+      delegationId: z.string().uuid().optional(),
+    },
+  }, async ({ repo, number, head, until, channelId, threadRootId, delegationId }) => {
+    const r = await createWatch(pool, { accountId: account.id, repo, number, head, until, channelId, threadRootId, delegationId: delegationId ?? null });
+    if (!r.ok) return jsonResult({ error: { code: r.code, message: `pr watch not created: ${r.code}` } });
+    return jsonResult({ watchId: r.watchId, created: r.created, expiresAt: r.expiresAt });
+  });
 
   server.registerTool('attachment.fetch', {
     description: '첨부 바이트 받기 — 이미지는 그림으로(3MiB 를 넘으면 줄인 사본), 텍스트는 글로, PDF 는 문서 자료로(8MiB 까지 — 파일로 저장되면 그 파일을 연다) 실린다. id 는 프롬프트의 [첨부: …] 에 있다',

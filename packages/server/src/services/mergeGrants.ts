@@ -10,6 +10,7 @@ import { systemI18n } from './systemI18n.js';
 import { consumeLine, findLine, type LineVia } from './mandateLines.js';
 import { GH_LOGIN_RE } from './mergeDenials.js';
 import { noteOnceGhUserUsed } from './permissionRequests.js';
+import { autoWatchOnQueued } from './prWatch.js';
 
 /**
  * 에이전트 머지 권한 — 서버 쪽 판정과 기록. 설계 스레드 3deac356(채널 a42006a1), security F1~F4.
@@ -573,6 +574,10 @@ export async function reportMerge(pool: Pool, r: MergeReport): Promise<{ ok: tru
   // 계정을 비운 1회 승인으로 머지·큐에 넣었으면 그 권한 카드(와 거울)에 오퍼레이터가 고른 이름을 적는다. 실패해도 보고는 남는다.
   if (usedApproval && usedApproval.ghUser === null && ghUserUsed) {
     await noteOnceGhUserUsed(pool, { approvalId: usedApproval.id, ghUserUsed }).catch(() => null);
+  }
+  // P5: 머지 큐에 넣었으면 머지한 에이전트 이름으로 그 스레드에 `until: merged` 감시를 건다(source=merge_queue). 스위치가 꺼지면 아무것도. 실패해도 보고는 남는다.
+  if (r.result === 'queued') {
+    await autoWatchOnQueued(pool, { agentId: r.agentId, repo: scope.slice('repo:'.length), number: r.number, headSha: r.headSha, channelId: lease.channelId, threadRootId: lease.threadRootId }).catch(() => null);
   }
   // Q3-a: 통과한 판정(N1 관문)을 지난 `merged` 보고면 그 PR 의 기다리는 머지 카드를 **모든 에이전트에 걸쳐** 닫는다. 실패해도 보고는 남는다.
   if (r.result === 'merged') {
