@@ -11,7 +11,7 @@
 //!
 //! 그 플러그인의 macOS 구현은 LaunchAgent plist 를 직접 쓰거나 AppleScript 로 System Events 를 부른다 — 켜짐/꺼짐만
 //! 알고 「macOS 승인 대기」를 읽지 못하며, AppleScript 길은 자동화 권한 창을 하나 더 띄운다. `SMAppService` 는
-//! 새 크레이트 없이(이미 끌고 있는 objc2) 부를 수 있고 상태 넷(꺼짐·켜짐·승인 필요·찾지 못함)을 돌려준다.
+//! 새 크레이트 없이(이미 끌고 있는 objc2) 부를 수 있고 상태(꺼짐·켜짐·승인 필요)를 돌려준다.
 //!
 //! ## 표면
 //!
@@ -22,13 +22,13 @@
 pub enum Status {
     /// macOS 13 미만·macOS 밖 — 묶음째 숨긴다.
     Unsupported,
-    /// 등록 안 됨(한 번도 안 켰거나, 시스템 설정에서 껐다).
+    /// 등록 안 됨(한 번도 안 켰거나, 시스템 설정에서 지웠다).
     Off,
     /// 등록됨 — 다음 로그인 때 뜬다.
     On,
     /// 등록은 했는데 사람이 시스템 설정 › 로그인 항목에서 허용해야 한다.
     Approval,
-    /// 그 밖(`notFound` 등) — 지어내지 않는다.
+    /// 그 밖(문서에 없는 값) — 지어내지 않는다.
     Unknown,
 }
 
@@ -44,9 +44,12 @@ impl Status {
     }
 
     /// `SMAppServiceStatus` 값 → 상태. 0 notRegistered · 1 enabled · 2 requiresApproval · 3 notFound.
+    ///
+    /// `mainApp` 의 3(notFound)은 꺼짐이다 — macOS 26 실측: 한 번도 등록 안 한 번들도, 등록했다가 시스템 설정
+    /// › 로그인 항목에서 「-」로 지운 번들도 3 을 준다(`unregister` 뒤에만 0). 번들을 같은 자리에 갈아 끼워도(업데이트) 1 은 남는다.
     pub fn from_raw(raw: isize) -> Self {
         match raw {
-            0 => Status::Off,
+            0 | 3 => Status::Off,
             1 => Status::On,
             2 => Status::Approval,
             _ => Status::Unknown,
@@ -173,11 +176,11 @@ mod tests {
     use super::Status;
 
     #[test]
-    fn raw_status_maps_to_the_four_states_and_unknown() {
+    fn raw_status_maps_not_found_to_off_and_the_rest_to_unknown() {
         assert_eq!(Status::from_raw(0), Status::Off);
         assert_eq!(Status::from_raw(1), Status::On);
         assert_eq!(Status::from_raw(2), Status::Approval);
-        assert_eq!(Status::from_raw(3), Status::Unknown);
+        assert_eq!(Status::from_raw(3), Status::Off);
         assert_eq!(Status::from_raw(-1), Status::Unknown);
     }
 
