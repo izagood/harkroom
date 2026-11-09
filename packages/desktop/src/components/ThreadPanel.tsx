@@ -46,11 +46,23 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
   reserveLeft?: number;
 } = {}) {
   const t = useT();
-  const { messages, channels, dms, accounts, me, online, connected, link, offlineSince, threadFetch } = useActiveStore();
+  // 스토어 전체(`useActiveStore()`)를 구독하면 입력 중 표시·접속 상태·**다른 채널**의 메시지마다
+  // 이 패널이 통째로 다시 그려진다. ChannelPane 과 같이 쓰는 필드만 하나씩 고른다.
+  const channels = useActiveStore((s) => s.channels);
+  const dms = useActiveStore((s) => s.dms);
+  const accounts = useActiveStore((s) => s.accounts);
+  const me = useActiveStore((s) => s.me);
+  const online = useActiveStore((s) => s.online);
+  const connected = useActiveStore((s) => s.connected);
+  const link = useActiveStore((s) => s.link);
+  const offlineSince = useActiveStore((s) => s.offlineSince);
+  const threadFetch = useActiveStore((s) => s.threadFetch);
   const locale = useLocale();
   // 보는 자리는 **이 창의 것**이다(새 창 — `state/windowView`). 메인이면 스토어 그대로다.
   const view = useWindowView();
   const { channelId: activeChannelId, threadRootId } = view;
+  // 이 스레드가 사는 채널의 메시지 배열만 구독한다 — 다른 채널에 온 말로는 다시 그리지 않는다.
+  const channelMessages = useActiveStore((s) => (activeChannelId ? s.messages[activeChannelId] : undefined));
   const planAsk = useActiveStore((s) => (threadRootId ? s.planAsks[threadRootId] : undefined));
   /*
     「맡긴 일」 칩 줄의 재료(위임 재설계 v1 P6) — 서버가 inbox 항목에 싣는 위임 요약이다. 따로 조회하지 않고 이미 받은
@@ -111,10 +123,10 @@ export function ThreadPanel({ onOpenDirectory, onOpenSettings, reserveLeft = MIN
 
   const thread = useMemo(() => {
     if (!activeChannelId || !threadRootId) return [];
-    return (messages[activeChannelId] ?? [])
+    return (channelMessages ?? [])
       .filter((m) => m.id === threadRootId || m.threadRootId === threadRootId)
       .sort((a, b) => a.seq - b.seq);
-  }, [messages, activeChannelId, threadRootId]);
+  }, [channelMessages, activeChannelId, threadRootId]);
   const planProgress = thread.find((m) => m.id === threadRootId)?.planProgress;
   const planShown = planTone(planProgress) !== 'empty';
 

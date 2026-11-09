@@ -1,5 +1,7 @@
 import { useMemo, useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useActiveStore, useCommunityRegistry } from '../state/communities';
+import type { AppState } from '../state/appStore';
 import { getController, type Controller } from '../state/controller';
 import { openChannelFrom, popOutChannel } from '../lib/windowActions';
 import { useAppWindows } from '../lib/appWindows';
@@ -226,6 +228,37 @@ function InboxRowBadge() {
   return null;
 }
 
+/*
+ * 사이드바가 `messages` 에서 실제로 쓰는 것은 둘뿐이다 — DM 줄의 「마지막으로 들어온 말 시각」과
+ * 채널 메뉴의 「마지막 seq」. 스토어 전체나 `messages` 통째를 구독하면 입력 중 표시·접속 상태·
+ * 아무 채널의 메시지마다 사이드바 전체가 다시 그려진다. 그래서 **파생값만** 고르고 `useShallow`
+ * 로 비교한다 — 값이 같으면 다시 그리지 않는다.
+ */
+const lastSeqCache = new WeakMap<readonly { seq: number }[], number>();
+function lastSeqOf(rows: readonly { seq: number }[]): number {
+  // 배열 참조마다 한 번만 센다 — 스토어는 바뀐 채널의 배열만 새로 만든다.
+  let v = lastSeqCache.get(rows);
+  if (v === undefined) {
+    v = Math.max(0, ...rows.map((m) => m.seq));
+    lastSeqCache.set(rows, v);
+  }
+  return v;
+}
+function selectLastSeqByChannel(s: AppState): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const id in s.messages) out[id] = lastSeqOf(s.messages[id]!);
+  return out;
+}
+function selectDmLiveAt(s: AppState): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
+  for (const dm of s.dms) {
+    // `upsertMessages` 가 `seq` 오름차순으로 정렬해 두므로 마지막 원소가 곧 가장 최근이다.
+    const loaded = s.messages[dm.id];
+    out[dm.id] = loaded?.length ? loaded[loaded.length - 1]!.createdAt : null;
+  }
+  return out;
+}
+
 export function Sidebar({
   panel, onOpenDirectory, onOpenChannelDirectory, onOpenInbox, onOpenAgentConfig, onOpenProfile,
   onOpenProjectionSettings, onOpenClaudeReauth, collapsed, onToggleCollapse, footer,
@@ -301,7 +334,22 @@ export function Sidebar({
   collapsed: boolean;
   onToggleCollapse: () => void;
 }) {
-  const { me, accounts, channels, dms, online, connected, activeChannelId, channelPrefs, channelSections, channelMembers, channelAutoMentions, messages, runnerStates, projectionStatus } = useActiveStore();
+  // 스토어 전체(`useActiveStore()`)를 구독하지 않는다 — 쓰는 필드만 하나씩 고른다(ChannelPane 과 같은 방식).
+  const me = useActiveStore((s) => s.me);
+  const accounts = useActiveStore((s) => s.accounts);
+  const channels = useActiveStore((s) => s.channels);
+  const dms = useActiveStore((s) => s.dms);
+  const online = useActiveStore((s) => s.online);
+  const connected = useActiveStore((s) => s.connected);
+  const activeChannelId = useActiveStore((s) => s.activeChannelId);
+  const channelPrefs = useActiveStore((s) => s.channelPrefs);
+  const channelSections = useActiveStore((s) => s.channelSections);
+  const channelMembers = useActiveStore((s) => s.channelMembers);
+  const channelAutoMentions = useActiveStore((s) => s.channelAutoMentions);
+  const runnerStates = useActiveStore((s) => s.runnerStates);
+  const projectionStatus = useActiveStore((s) => s.projectionStatus);
+  const lastSeqByChannel = useActiveStore(useShallow(selectLastSeqByChannel));
+  const dmLiveAt = useActiveStore(useShallow(selectDmLiveAt));
   // 「채널 만들기」 손잡이는 역할이 아니라 서버 `POST /channels` 와 같은 `channel.create` 능력으로 그린다
   // (#1613 의 에이전트·팀 만들기와 같다) — admin 만 보이면 그 능력을 받은 member 는 만들 길이 없다.
   const canCreateChannel = hasCapability(me, 'channel.create');
@@ -521,8 +569,7 @@ export function Sidebar({
       const peers = dm.memberIds.filter((id) => id !== me?.id);
       // 스토어에 들어와 있는 마지막 메시지. `upsertMessages` 가 `seq` 오름차순으로
       // 정렬해 두므로 마지막 원소가 곧 가장 최근이다 — 여기서 다시 훑지 않는다.
-      const loaded = messages[dm.id];
-      const liveAt = loaded?.length ? loaded[loaded.length - 1]!.createdAt : null;
+      const liveAt = dmLiveAt[dm.id] ?? null;
       return {
         id: dm.id,
         label: peers.map((id) => accounts[id]?.handle ?? '…').join(', ') || t('sidebar.dm.justMe'),
@@ -552,7 +599,7 @@ export function Sidebar({
         return a.lastAt < b.lastAt ? 1 : -1;
       }
       return a.id.localeCompare(b.id);
-    }), [dms, accounts, me, online, connected, channelPrefs, messages, t]);
+    }), [dms, accounts, me, online, connected, channelPrefs, dmLiveAt, t]);
 
   const others = Object.values(accounts).filter((a) => a.id !== me?.id);
 
@@ -1363,7 +1410,7 @@ className="rounded-row px-2 py-0.5 text-meta text-fg-muted hover:bg-surface-rais
     // 마지막 메시지 seq. **로드된 메시지에서만 알 수 있다** — 서버는 채널별 최대 seq 를 주지
     // 않는다. 0 이면 보낼 것이 없으므로 항목을 아예 만들지 않는다: 눌러도 아무 일이 없는
     // 항목은 "할 수 있다"는 거짓 신호다(docs/design.md §4).
-    const lastSeq = Math.max(0, ...(messages[ch.id] ?? []).map((m) => m.seq));
+    const lastSeq = lastSeqByChannel[ch.id] ?? 0;
     // 목록을 아직 못 받았으면 undefined 다 — 그때는 '모른다'이지 '아니다'가 아니다.
     const knownMembers = channelMembers[ch.id];
     const knownMember = knownMembers === undefined || (!!me && knownMembers.some((m) => m.accountId === me.id));
