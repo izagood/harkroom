@@ -2024,6 +2024,12 @@ export interface InboxThreadState {
 export type InboxReason = 'mention' | 'thread_reply' | 'dm' | 'wake' | 'ask_answered' | 'ask_closed'
   | 'team_mention' | 'team_delegated' | 'delegation_done' | 'delegation_followup' | 'delegation_update';
 
+/**
+ * 러너가 `inbox.poll` 의 `inboxReasons` 로 알리는 **옵트인 사유**(위임 재설계 v1). 여기 든 사유는 옛 러너가 모르므로, 서버는
+ * 폴이 이 값을 알리지 않은 러너에게는 그 사유 대신 `mention`(같은 글을 가리킨다)으로 준다. 서버 쪽 읽기는 P3 의 몫이다.
+ */
+export const RUNNER_OPT_IN_INBOX_REASONS = ['delegation_update'] as const satisfies readonly InboxReason[];
+
 export interface InboxEntry {
   id: number;
   messageId: string;

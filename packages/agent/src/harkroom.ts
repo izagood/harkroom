@@ -15,7 +15,7 @@ import type { RecallHit, RecallResult } from './memoryPin.js';
 import type { BgJob } from './bgExecutor.js';
 import type { ThreadPlanSnapshot } from './threadPlanPin.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import type { AccountView, AgentView, FailureCode, InboxEntry, MessageRow } from '@harkroom/shared';
+import { RUNNER_OPT_IN_INBOX_REASONS, type AccountView, type AgentView, type FailureCode, type InboxEntry, type MessageRow } from '@harkroom/shared';
 import type { RelayClient } from './relay.js';
 import { HARKROOM_ERROR_SOURCE } from './policy.js';
 import { VERSION } from './version.js';
@@ -643,7 +643,8 @@ export class HarkroomAgentClient {
     lease?: { runnerId: string; holding: number[] },
   ): Promise<InboxBatch> {
     return this.call<InboxBatch>('inbox.poll', {
-      timeoutMs, version: VERSION, ...(claudeLane ? { claudeLane } : {}), ...(lease ? { lease } : {}),
+      // `inboxReasons`: 이 러너가 아는 옵트인 사유(위임 재설계 v1). 알리지 않은 옛 러너에게 서버는 `mention` 으로 준다. 옛 서버는 무시한다.
+      timeoutMs, version: VERSION, inboxReasons: [...RUNNER_OPT_IN_INBOX_REASONS], ...(claudeLane ? { claudeLane } : {}), ...(lease ? { lease } : {}),
     });
   }
 

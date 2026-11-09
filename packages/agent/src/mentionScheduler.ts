@@ -551,6 +551,8 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
     startedIn?: InboxBatch['entries'][number]['startedIn'],
     /** 이 턴에 함께 처리할 앞 부름(오래된 순). 비었으면 혼자 뜬 턴이다. */
     bundledRows: MessageRow[] = [],
+    /** 이 스레드의 위임 요약(위임 재설계 v1, `InboxEntry.delegations`). 사유와 상관없이 싣는다. */
+    delegations?: InboxBatch['entries'][number]['delegations'],
   ): Promise<void> {
     /**
      * 임대를 잃어 접힌 턴의 표지(security L1). 사람이 스레드에서 "왜 말하다 멈췄나"를 알 수 있게 한 줄 남긴다.
@@ -619,6 +621,9 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       ...(reason === 'delegation_done' && delegation ? { delegation } : {}),
       /** **닫힌 위임의 후속 보고**(163). 멘션 행이 그 보고다 — 할 일이 아니라 결과로 싣는다. */
       ...(reason === 'delegation_followup' ? { delegationFollowup: mention } : {}),
+      /** **넘긴 일의 진행/결과**(위임 재설계 v1). 후속 보고와 같다 — 멘션 행은 담당의 글이라 할 일이 아니라 진행·결과로 싣는다. */
+      ...(reason === 'delegation_update' ? { delegationUpdate: mention } : {}),
+      ...(delegations?.length ? { delegations } : {}),
       /**
        * **넘겨받은 일**(3-2). 사유와 함께 보는 이유는 팀 명단과 같다 — 위임이 그 사이
        * 지워지면 서버가 맥락 없이 사유만 준다. 그때는 블록 없이 평범한 부름처럼 돈다.
@@ -1198,7 +1203,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
         attempts.set(lead.id, { tried, notBefore: 0, noticed: prior?.noticed });
 
         void deps.turnWatch?.started(threadKey, leadMention.id).catch(() => {});
-        const task: Promise<void> = runOne(lead.id, leadMention, anchor, threadKey, ctx, tried, lead.reason, lead.team, lead.delegation, lead.delegatedBy, lead.viaEdit === true, claim?.lost, lead.canceledWakes, lead.startedIn, bundledRows)
+        const task: Promise<void> = runOne(lead.id, leadMention, anchor, threadKey, ctx, tried, lead.reason, lead.team, lead.delegation, lead.delegatedBy, lead.viaEdit === true, claim?.lost, lead.canceledWakes, lead.startedIn, bundledRows, lead.delegations)
           .catch((err: unknown) => {
             console.error(`  ${lead.messageId} 턴 실패:`, err instanceof Error ? err.message : err);
           })
