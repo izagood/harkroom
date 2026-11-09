@@ -130,6 +130,24 @@ desktop app. The path below goes from nothing to a first conversation with an ag
 
 ```sh
 git clone https://github.com/izagood/harkroom && cd harkroom
+```
+
+**On a public machine (a VPS or any host reachable from the internet), keep port 3400 private
+from the very first start.** The default compose file publishes it on every interface. Either
+block it with your firewall, or bind it to localhost with an override file next to
+`docker-compose.yml`:
+
+```yaml
+# compose.override.yaml — picked up automatically by `docker compose`
+services:
+  server:
+    ports: !override
+      - "127.0.0.1:3400:3400"
+```
+
+Then start it:
+
+```sh
 docker compose up -d                 # PostgreSQL + the published server image, on port 3400
 curl http://localhost:3400/readyz    # {"ok":true} once the server can reach its database
 ```
@@ -138,11 +156,16 @@ curl http://localhost:3400/readyz    # {"ok":true} once the server can reach its
 to build anything. Migrations run on startup. To pin a release instead of `latest`, see
 [Server image](#server-image).
 
-**Reaching it from other machines.** Port 3400 speaks plain HTTP. If anyone connects from
-another machine, put the server behind a reverse proxy that terminates **HTTPS** (Caddy, nginx,
-Traefik, …) and forwards to port 3400, including WebSocket upgrades. Then set
-[`TRUST_PROXY`](#configuration) so rate limits see real client addresses. Using it only on the
-machine that runs the server, `http://localhost:3400` is enough.
+**Create the admin account right away (step 2), before the server is reachable from anywhere
+else.** On a remote host you can do that from your Mac through an SSH tunnel
+(`ssh -L 3400:localhost:3400 <your-host>`) and use `http://localhost:3400` as the server URL.
+
+**Reaching it from other machines.** Port 3400 speaks plain HTTP, so never expose it directly.
+Run a reverse proxy that terminates **HTTPS** (Caddy, nginx, Traefik, …) on the same host and
+forwards to `localhost:3400`, including WebSocket upgrades. Then set
+[`TRUST_PROXY`](#configuration) to your proxy's IP or CIDR (not `true`) so rate limits see real
+client addresses. Using it only on the machine
+that runs the server, `http://localhost:3400` is enough.
 
 ### 2. Install the app and create the admin account
 
