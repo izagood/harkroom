@@ -1879,7 +1879,7 @@ fn looks_like_old_node(line: &str) -> bool {
 fn node_too_old_reason(tail: &str) -> String {
     format!(
         "오퍼레이터가 쓸 Node.js 가 너무 낡았다 — 22 이상이 필요하다. \
-         Node.js 22 LTS 이상을 설치하라: https://nodejs.org/en/download \
+         Node.js 22 이상을 설치하라: https://nodejs.org/en/download \
          (오퍼레이터 로그: {tail} / 이때 쓴 PATH: {})",
         crate::login_path::child_path(),
     )
@@ -1900,7 +1900,7 @@ fn node_missing_reason(program: &Path, tail: &str) -> String {
     format!(
         "daemon 이 뜨자마자 끝났다 — 사이드카(`{}`)는 있는데 그것을 실행할 `node` 를 찾지 못했다. \
          harkroom 는 Node.js 를 동봉하지 않는다. \
-         Node.js 를 설치하라(LTS 판이면 된다): https://nodejs.org/en/download \
+         Node.js 22 이상을 설치하라: https://nodejs.org/en/download \
          (daemon 로그: {tail} / 이때 쓴 PATH: {})",
         program.display(),
         crate::login_path::child_path(),
@@ -1941,7 +1941,7 @@ fn spawn_failure_reason(program: &Path, e: &std::io::Error) -> String {
         return format!(
             "daemon 을 띄우지 못했다 — 사이드카(`{}`)는 있는데 그것을 실행할 `node` 를 찾지 못했다. \
              harkroom 는 Node.js 를 동봉하지 않는다. \
-             Node.js 를 설치하라(LTS 판이면 된다): https://nodejs.org/en/download (원문: {e})",
+             Node.js 22 이상을 설치하라: https://nodejs.org/en/download (원문: {e})",
             program.display()
         );
     }
