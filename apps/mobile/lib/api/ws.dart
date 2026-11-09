@@ -65,6 +65,21 @@ Duration nextBackoff(Duration current) {
 
 const Duration initialBackoff = Duration(seconds: 1);
 
+/// 앱 수준 hb 프레임의 `type`. 서버(`appHeartbeat.ts`)가 주기마다 보낸다.
+const String wsHeartbeatType = 'hb';
+
+/// 마지막 프레임 뒤 hb 주기의 이만큼 아무것도 못 받으면 좀비 연결로 본다(2주기 + 반 주기). `ws.ts` 와 같은 값.
+const double wsHeartbeatStaleFactor = 2.5;
+
+/// 프레임이 hb 면 주기를, 아니면 null 을 낸다. 서버가 준 값은 [floor]~5분으로 묶는다.
+Duration? heartbeatInterval(Map<Object?, Object?> frame, {Duration floor = const Duration(seconds: 1)}) {
+  if (frame['type'] != wsHeartbeatType) return null;
+  final raw = frame['intervalMs'];
+  final ms = raw is num && raw.isFinite ? raw.toInt() : 20000;
+  final clamped = ms.clamp(floor.inMilliseconds, 5 * 60 * 1000);
+  return Duration(milliseconds: clamped);
+}
+
 /// 이벤트 소켓을 열고 **살아 있게 유지한다.**
 class WsClient {
   WsClient({
@@ -75,7 +90,9 @@ class WsClient {
     this.onOpen,
     this.onDown,
     Future<void> Function(Duration)? sleep,
+    Duration heartbeatFloor = const Duration(seconds: 1),
   })  : _wsBase = _toWsBase(baseUrl),
+        _heartbeatFloor = heartbeatFloor,
         _getTicket = getTicket,
         _connect = connect,
         // 시험이 시간을 건너뛴다. 진짜 지연을 기다리면 백오프 시험 하나가 30초를 쓴다.
@@ -85,6 +102,9 @@ class WsClient {
   final TicketProvider _getTicket;
   final WsConnector _connect;
   final Future<void> Function(Duration) _sleep;
+
+  /// 서버가 준 hb 주기의 하한. 시험만 낮춘다 — 진짜 주기(20초)를 기다리면 시험 하나가 1분을 쓴다.
+  final Duration _heartbeatFloor;
 
   final void Function(Map<String, Object?> event)? onEvent;
   final void Function()? onOpen;
@@ -144,13 +164,44 @@ class WsClient {
 
         final done = Completer<void>();
         _socketClosed = done;
+        // 수신 감시(좀비 연결) — `ws.ts` 와 같은 판단이다. 서버가 끊었는데 앞단이 이쪽 다리를 열어 둔 채 두면
+        // onDone 이 오지 않아, 이벤트 없이 「붙어 있음」으로 남는다. 받은 프레임의 시각을 재고 hb 주기의
+        // 2.5배 동안 아무것도 없으면 이 소켓을 버리고 다시 붙는다. **첫 hb 전에는 켜지 않는다**(옛 서버).
+        final rx = Stopwatch()..start();
+        Timer? watchdog;
+        Duration? watched;
+        void watch(Duration interval) {
+          if (watchdog != null && watched == interval) return;
+          watchdog?.cancel();
+          watched = interval;
+          final stale = interval * wsHeartbeatStaleFactor;
+          var tick = interval ~/ 4;
+          if (tick < const Duration(milliseconds: 10)) tick = const Duration(milliseconds: 10);
+          watchdog = Timer.periodic(tick, (t) {
+            if (rx.elapsed > stale) {
+              t.cancel();
+              if (!done.isCompleted) done.complete();
+              // 죽은 연결이라 닫기가 끝나지 않을 수 있다 — 기다리지 않는다.
+              unawaited(conn.close().catchError((Object _) {}));
+            }
+          });
+        }
+
         _sub = conn.messages.listen(
           (raw) {
+            rx.reset();
             // 비정형 프레임은 **무시한다.** 하나가 깨졌다고 소켓을 끊으면, 서버가 새
             // 이벤트를 하나 더하는 날 옛 앱이 전부 연결을 잃는다.
             try {
               final decoded = jsonDecode(raw);
-              if (decoded is Map) onEvent?.call(Map<String, Object?>.from(decoded));
+              if (decoded is Map) {
+                final hb = heartbeatInterval(decoded, floor: _heartbeatFloor);
+                if (hb != null) {
+                  watch(hb); // hb 는 소켓 층의 신호다 — 상태 층으로 올리지 않는다.
+                } else {
+                  onEvent?.call(Map<String, Object?>.from(decoded));
+                }
+              }
             } on FormatException {
               /* 무시 */
             }
@@ -164,6 +215,7 @@ class WsClient {
           cancelOnError: false,
         );
         await done.future;
+        watchdog?.cancel();
         _socketClosed = null;
         await _sub?.cancel();
         _sub = null;

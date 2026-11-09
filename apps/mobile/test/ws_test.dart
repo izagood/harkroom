@@ -206,4 +206,99 @@ void main() {
       expect(seen!.queryParameters['ticket'], 'tk 1');
     });
   });
+
+  // 좀비 연결: 서버가 끊었는데 앞단이 이쪽 다리를 열어 둔 채 두면 onDone 이 오지 않는다.
+  // hb 를 한 번 받은 뒤로 주기의 2.5배 동안 아무 프레임도 없으면 스스로 버리고 새 티켓으로 다시 붙는다.
+  group('수신 감시(앱 hb)', () {
+    test('hb 가 끊기면 소켓을 버리고 새 티켓으로 다시 붙는다', () async {
+      final conns = <FakeConnection>[];
+      final tickets = <String>[];
+      final downs = <WsDownReason>[];
+      var issued = 0;
+      late WsClient client;
+      client = WsClient(
+        baseUrl: 'https://h.example.com',
+        getTicket: () async => 't${++issued}',
+        connect: (url) async {
+          tickets.add(url.queryParameters['ticket']!);
+          final c = FakeConnection();
+          conns.add(c);
+          if (conns.length == 1) {
+            // 첫 소켓: hb 를 한 번 받고 그 뒤로 조용하다(좀비).
+            scheduleMicrotask(() => c.push('{"type":"hb","intervalMs":40}'));
+          } else {
+            // 둘째 소켓이 섰으면 끝 — 시작 루프가 이 소켓의 닫힘을 기다리기 시작한 뒤에 닫는다.
+            Future<void>.delayed(const Duration(milliseconds: 20), client.close);
+          }
+          return c;
+        },
+        onDown: downs.add,
+        sleep: (_) => Future<void>.delayed(const Duration(milliseconds: 5)),
+        heartbeatFloor: const Duration(milliseconds: 10),
+      );
+      await client.start().timeout(const Duration(seconds: 2));
+      expect(conns, hasLength(2));
+      expect(tickets, ['t1', 't2']);
+      expect(downs, [WsDownReason.network]);
+    });
+
+    test('hb 는 상태 층으로 올리지 않고, 프레임이 계속 오면 끊지 않는다', () async {
+      final events = <Map<String, Object?>>[];
+      final conns = <FakeConnection>[];
+      final client = WsClient(
+        baseUrl: 'https://h.example.com',
+        getTicket: () async => 't',
+        connect: (_) async {
+          final c = FakeConnection();
+          conns.add(c);
+          return c;
+        },
+        onEvent: events.add,
+        sleep: (_) => Future<void>.delayed(const Duration(milliseconds: 50)),
+        heartbeatFloor: const Duration(milliseconds: 10),
+      );
+      final run = client.start();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      final conn = conns.single;
+      conn.push('{"type":"hb","intervalMs":200}');
+      for (var i = 0; i < 6; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        conn.push(i.isEven ? '{"type":"hb","intervalMs":200}' : '{"type":"lease.changed"}');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 20)); // 마지막 프레임이 리스너에 닿게
+      expect(conns, hasLength(1));
+      expect(events, [
+        for (var i = 0; i < 3; i++) {'type': 'lease.changed'},
+      ]);
+      await client.close();
+      await run;
+    });
+
+    test('hb 를 보내지 않는 옛 서버에는 감시를 켜지 않는다', () async {
+      final conns = <FakeConnection>[];
+      final client = WsClient(
+        baseUrl: 'https://h.example.com',
+        getTicket: () async => 't',
+        connect: (_) async {
+          final c = FakeConnection();
+          conns.add(c);
+          return c;
+        },
+        sleep: (_) => Future<void>.delayed(const Duration(milliseconds: 50)),
+        heartbeatFloor: const Duration(milliseconds: 10),
+      );
+      final run = client.start();
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(conns, hasLength(1));
+      await client.close();
+      await run;
+    });
+
+    test('서버가 준 주기는 하한~5분으로 묶는다', () {
+      expect(heartbeatInterval({'type': 'hb', 'intervalMs': 0}), const Duration(seconds: 1));
+      expect(heartbeatInterval({'type': 'hb', 'intervalMs': 1e12}), const Duration(minutes: 5));
+      expect(heartbeatInterval({'type': 'hb'}), const Duration(seconds: 20));
+      expect(heartbeatInterval({'type': 'lease.changed'}), isNull);
+    });
+  });
 }

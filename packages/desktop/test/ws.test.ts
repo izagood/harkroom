@@ -249,3 +249,105 @@ describe('connectWs — 자격증명 실패는 재시도로 낫지 않는다', (
     handle.close();
   });
 });
+
+// 좀비 연결: 서버가 끊었는데 앞단이 이쪽 다리를 열어 둔 채 두면 close 가 오지 않는다(실측 17분).
+// 서버 hb 를 한 번 받은 뒤로 주기의 2.5배 동안 아무 프레임도 없으면 스스로 버리고 새 티켓으로 다시 붙어야 한다.
+describe('connectWs — receive watchdog (app heartbeat)', () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  const hb = (intervalMs: number) => ({ data: JSON.stringify({ type: 'hb', intervalMs }) });
+
+  it('abandons a silent socket and reconnects within a minute when hb stops (20s server interval)', async () => {
+    let issued = 0;
+    const downs: string[] = [];
+    const events: unknown[] = [];
+    const handle = connectWs('http://x:3400', async () => `murt_${++issued}`, {
+      onEvent: (e) => events.push(e), onOpen: () => {}, onDown: (r) => downs.push(r),
+    });
+    await settle();
+    vi.useFakeTimers();
+    const ws1 = FakeWebSocket.instances[0]!;
+    ws1.onopen?.();
+    ws1.onmessage?.(hb(20_000));
+    expect(events).toEqual([]); // hb 는 상태 층으로 올라가지 않는다
+
+    // 2주기(40초)까지는 참는다 — 한 번 늦은 hb 로 끊지 않는다.
+    await vi.advanceTimersByTimeAsync(45_000);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    expect(ws1.closed).toBe(false);
+
+    // 2.5주기(50초)를 넘기면 다음 점검(5초 간격)에서 버리고, 1초 백오프 뒤 새 티켓으로 다시 연다.
+    // 최악 50+5+1 = 56초 — 마지막 프레임 뒤 1분 안에 새 소켓이 선다.
+    await vi.advanceTimersByTimeAsync(11_000);
+    expect(ws1.closed).toBe(true);
+    expect(downs).toEqual(['network']);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    expect(FakeWebSocket.instances[1]!.url).toContain('ticket=murt_2');
+    handle.close();
+  });
+
+  it('keeps a socket that keeps receiving frames (hb or events)', async () => {
+    const handle = connectWs('http://x:3400', async () => 't', {
+      onEvent: () => {}, onOpen: () => {}, onDown: () => {},
+    });
+    await settle();
+    vi.useFakeTimers();
+    const ws1 = FakeWebSocket.instances[0]!;
+    ws1.onopen?.();
+    ws1.onmessage?.(hb(20_000));
+    for (let i = 0; i < 10; i += 1) {
+      await vi.advanceTimersByTimeAsync(20_000);
+      ws1.onmessage?.(i % 2 ? hb(20_000) : { data: JSON.stringify({ type: 'lease.changed', repo: 'r' }) });
+    }
+    expect(ws1.closed).toBe(false);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    handle.close();
+  });
+
+  // 옛 서버는 hb 를 보내지 않는다 — 그때 감시를 켜면 새 앱이 옛 서버와 계속 끊긴다.
+  it('never arms the watchdog against an old server that sends no hb', async () => {
+    const handle = connectWs('http://x:3400', async () => 't', {
+      onEvent: () => {}, onOpen: () => {}, onDown: () => {},
+    });
+    await settle();
+    vi.useFakeTimers();
+    const ws1 = FakeWebSocket.instances[0]!;
+    ws1.onopen?.();
+    await vi.advanceTimersByTimeAsync(30 * 60_000);
+    expect(ws1.closed).toBe(false);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    handle.close();
+  });
+
+  it('stops watching after an explicit close', async () => {
+    const downs: string[] = [];
+    const handle = connectWs('http://x:3400', async () => 't', {
+      onEvent: () => {}, onOpen: () => {}, onDown: (r) => downs.push(r),
+    });
+    await settle();
+    vi.useFakeTimers();
+    const ws1 = FakeWebSocket.instances[0]!;
+    ws1.onopen?.();
+    ws1.onmessage?.(hb(20_000));
+    handle.close();
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(downs).toEqual([]);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+  });
+
+  it('clamps an absurd interval instead of spinning', async () => {
+    const handle = connectWs('http://x:3400', async () => 't', {
+      onEvent: () => {}, onOpen: () => {}, onDown: () => {},
+    });
+    await settle();
+    vi.useFakeTimers();
+    const ws1 = FakeWebSocket.instances[0]!;
+    ws1.onopen?.();
+    ws1.onmessage?.(hb(0)); // → 1초로 묶인다: 2.5초 안에 프레임이 없으면 끊는 것이 정상
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(ws1.closed).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(ws1.closed).toBe(true);
+    handle.close();
+  });
+});
