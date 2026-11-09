@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
@@ -6,7 +6,7 @@ import { ASK_TEXT_MAX_CHARS, ASK_TEXT_OPTION_ID, EFFORT_MAX, MAX_MESSAGE_BODY_CH
 import { emitEvent, emitPosted } from '../events.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
 import { acceptRecommended, answerBundleItem } from '../services/askBundles.js';
-import { closeAsk, closeAsksByReply, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, isMessageInChannel, isPermissionCardMessage, getMessageById, hasOlderFeedMessages, hasOlderMessages, hasOlderThreadReplies, listInbox, listInboxThreads, listBoardThreads, listInboxThreadStates, setInboxThreadState, listMessages, markInboxRead, postMessage, searchMessages, searchInput, BAD_THREAD_MESSAGE, BOARD_COMPACT_BODY_CHARS } from '../services/messages.js';
+import { closeAsk, closeAsksByReply, deleteMessage, editMessage, promoteToChannel, recallFromChannel, recordAskAnswer, isMessageInChannel, isPermissionCardMessage, getMessageById, hasOlderFeedMessages, hasOlderMessages, hasOlderThreadReplies, listInbox, listInboxNewest, INBOX_PAGE_LIMIT, boardVersion, listInboxThreads, listBoardThreads, listInboxThreadStates, setInboxThreadState, listMessages, markInboxRead, postMessage, searchMessages, searchInput, BAD_THREAD_MESSAGE, BOARD_COMPACT_BODY_CHARS } from '../services/messages.js';
 import { listSavedMessages, getSavedSummary, saveMessage, unsaveMessage, updateSavedMessageState } from '../services/savedMessages.js';
 import { recordAudit } from '../audit.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction, stampWakeChecked } from '../services/reactions.js';
@@ -18,6 +18,9 @@ import { extractUrls, queueLinkPreviewFetch } from '../services/linkPreview.js';
 import { axisValid, cleanAxis, clearThreadAgentModel, isChannelRoot, setThreadAgentModel } from '../services/threadAgentModels.js';
 import { agentModelInput, announceChange, checkOffered, emitChanged } from './threadAgentModelRoutes.js';
 import type { OperatorHub } from '../ws/operatorHub.js';
+
+/** 서버 기동마다 새 값 — 배포로 보드 응답 모양이 바뀌어도 옛 태그가 304 를 받지 않게 `/inbox/board` ETag 에 섞는다. */
+const BOARD_ETAG_BOOT = randomUUID();
 
 export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, deps: { operatorHub?: OperatorHub } = {}): Promise<void> {
   app.post('/channels/:id/messages', { preHandler: app.requireAccount }, async (req, reply) => {
@@ -587,13 +590,27 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
        * 앱은 시작·재연결·당겨서 새로고침 때 전체를 받는다. 옛 앱은 이 키를 안 보내 응답이 그대로다.
        */
       since: z.coerce.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+      /**
+       * 상한 페이지의 커서(2026-11, A1): 이 id **앞**(더 작은 id)의 줄만. `since`·`unread` 없는 조회에서만 뜻이 있다.
+       */
+      before: z.coerce.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
     }).parse(req.query);
-    const entries = await listInbox(pool, req.account!.id, { unreadOnly: q.unread ?? false, sinceId: q.since });
-    if (q.threads !== '1') return { entries };
+    /**
+     * `since`·`unread` 가 없으면 **최신 200줄**만(A1) — 읽은 줄까지 본문째 전부(34MB·45초)를 내리던 길이다. 더 있으면
+     * `truncated: true` 이고 `before=<가장 작은 id>` 로 이어 받는다. 러너 폴(`unread=1`)과 `since` 는 예전 그대로 다 준다.
+     */
+    const capped = q.since === undefined && q.unread !== true;
+    const page = capped
+      ? await listInboxNewest(pool, req.account!.id, { limit: INBOX_PAGE_LIMIT, beforeId: q.before })
+      : null;
+    const entries = page ? page.entries
+      : await listInbox(pool, req.account!.id, { unreadOnly: q.unread ?? false, sinceId: q.since });
+    const extra = page ? { truncated: page.truncated } : {};
+    if (q.threads !== '1') return { entries, ...extra };
     const threads = await listInboxThreads(pool, req.account!.id, entries);
     // 내 완료·나중에(089). 머리가 실린 스레드의 것만 — 걸러진 머리의 상태가 따로 새지 않게.
     const threadStates = await listInboxThreadStates(pool, req.account!.id, threads.map((m) => m.id));
-    return { entries, threads, threadStates };
+    return { entries, threads, threadStates, ...extra };
   });
 
   /**
@@ -606,6 +623,22 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
     // 옛 앱은 이 키를 안 보내 응답이 그대로다.
     const q = z.object({ compact: z.enum(['1']).optional() }).parse(req.query);
     const accountId = req.account!.id;
+    /**
+     * **바뀐 것이 없으면 304**(2026-10-12), 그리고 **본문을 만들기 전에** 잰다(2026-11, A2). 예전 태그는 본문 해시라 304 여도
+     * 비싼 조회(inbox 전부·머리 집계)가 다 돌았다. 이제 태그는 본문이 읽는 행들의 판(`boardVersion` — 행 (id, xmin) 접기)에서
+     * 나온다: 같으면 본문 조회 없이 304. 덮는 범위·덮지 않는 것은 `boardVersion` 주석에 있다. 태그는 **계정 id 를 섞은** 해시라
+     * 두 사람의 판이 같아도 태그가 갈린다(남의 판을 태그로 맞혀 보는 길이 없다). `compact` 와 서버 기동 판(`BOARD_ETAG_BOOT`
+     * — 배포마다 응답 모양이 바뀔 수 있다)도 섞는다. 사람마다 다른 응답이니 공유 캐시는 금지(`private`), 쓰기 전에 늘 다시
+     * 묻게 한다(`no-cache`).
+     */
+    const version = await boardVersion(pool, accountId);
+    const etag = `"${createHash('sha256').update(accountId).update('\0').update(BOARD_ETAG_BOOT)
+      .update('\0').update(q.compact ?? '').update('\0').update(version).digest('base64url').slice(0, 32)}"`;
+    void reply.header('etag', etag).header('cache-control', 'private, no-cache');
+    const ifNoneMatch = req.headers['if-none-match'];
+    if (typeof ifNoneMatch === 'string' && ifNoneMatch.split(',').some((t) => t.trim() === etag)) {
+      return reply.code(304).send();
+    }
     const entries = await listInbox(pool, accountId, { unreadOnly: false, compact: q.compact === '1' });
     const { threads, truncated } = await listBoardThreads(pool, accountId, entries);
     const threadStates = await listInboxThreadStates(pool, accountId, threads.map((m) => m.id));
@@ -617,18 +650,6 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
       }
     }
     const body = JSON.stringify({ entries, threads, threadStates, truncated });
-    /**
-     * **바뀐 것이 없으면 304**(2026-10-12). 보드는 신호마다 다시 받는데 대개 그대로다 — 같은 판이면 본문을
-     * 보내지 않아 전송·파싱·다시 그리기를 아낀다. 태그는 **계정 id 를 섞은** 해시라 두 사람의 판이 같아도
-     * 태그가 갈린다(남의 판을 태그로 맞혀 보는 길이 없다). 사람마다 다른 응답이니 공유 캐시는 금지(`private`),
-     * 쓰기 전에 늘 다시 묻게 한다(`no-cache`).
-     */
-    const etag = `"${createHash('sha256').update(accountId).update('\0').update(body).digest('base64url').slice(0, 32)}"`;
-    void reply.header('etag', etag).header('cache-control', 'private, no-cache');
-    const ifNoneMatch = req.headers['if-none-match'];
-    if (typeof ifNoneMatch === 'string' && ifNoneMatch.split(',').some((t) => t.trim() === etag)) {
-      return reply.code(304).send();
-    }
     return reply.type('application/json; charset=utf-8').send(body);
   });
 
