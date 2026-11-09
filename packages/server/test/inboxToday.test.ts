@@ -187,4 +187,21 @@ describe('GET /inbox/today/done', () => {
     await post('@admin 새 보고', { meta: { kind: 'report', report: { summary: 'x' } } });
     expect((await getDone(adminToken, '', etag)).statusCode).toBe(200);
   });
+
+  it('ETag: 내가 못 보는 채널의 스레드 상태는 태그를 바꾸지 않고, 내 스레드의 상태는 바꾼다', async () => {
+    const priv = await app.inject({
+      method: 'POST', url: '/channels', headers: auth(adminToken), payload: { name: 'today-done-private', visibility: 'private' },
+    });
+    const privId = priv.json().id as string;
+    await app.inject({ method: 'POST', url: `/channels/${privId}/members`, headers: auth(adminToken), payload: { accountId: botId } });
+    const hidden = await post('비공개 스레드', { ch: privId });
+    const mine = await post('@other 내가 불린 스레드');
+    const first = await getDone(otherToken);
+    const etag = first.headers.etag as string;
+    expect((await getDone(otherToken, '', etag)).statusCode).toBe(304);
+    await pool.query(`insert into thread_status (root_id, status, emoji) values ($1, 'done', '✅')`, [hidden]);
+    expect((await getDone(otherToken, '', etag)).statusCode).toBe(304);
+    await pool.query(`insert into thread_status (root_id, status, emoji) values ($1, 'done', '✅')`, [mine]);
+    expect((await getDone(otherToken, '', etag)).statusCode).toBe(200);
+  });
 });

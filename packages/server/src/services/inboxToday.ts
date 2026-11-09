@@ -221,12 +221,21 @@ export async function doneVersion(pool: Pool, accountId: string): Promise<string
   const r = await pool.query<Record<string, string | null>>(
     `select
        (select concat_ws('|', count(*) filter (where m.deleted_at is null and ${channelVisibleSql('c', '$1')}),
-                         count(*) filter (where m.deleted_at is not null), max(i.id), max(m.edited_at)::text,
+                         count(*) filter (where m.deleted_at is not null and ${channelVisibleSql('c', '$1')}),
+                         max(i.id) filter (where ${channelVisibleSql('c', '$1')}),
+                         max(m.edited_at) filter (where ${channelVisibleSql('c', '$1')})::text,
                          md5(coalesce(string_agg(distinct m.channel_id::text, ',') filter (where ${channelVisibleSql('c', '$1')}), '')))
           from inbox i join message m on m.id = i.message_id join channel c on c.id = m.channel_id
          where i.account_id = $1) as inbox,
-       concat_ws('|', ${['received', 'running', 'waiting', 'my-turn', 'stuck', 'done']
-         .map((s) => `(select max(updated_at)::text from thread_status where status = '${s}')`).join(', ')}) as st,
+       -- 본문(listTodayDone)과 같은 집합 — 내 inbox 의 보이는 줄이 속한 스레드 머리만 본다. 워크스페이스 전체의
+       -- thread_status 를 재면 남의 비공개 채널 활동 시각이 내 태그로 드러난다(security 낮음 1, 2026-11-09).
+       (select md5(coalesce(string_agg(ts.root_id::text || ':' || ts.status || ':' || ts.updated_at::text || ':' || (rm.deleted_at is null)::text,
+                                       ',' order by ts.root_id), ''))
+          from thread_status ts join message rm on rm.id = ts.root_id
+         where ts.root_id in (
+           select coalesce(m.thread_root_id, m.id)
+             from inbox i join message m on m.id = i.message_id join channel c on c.id = m.channel_id
+            where i.account_id = $1 and m.deleted_at is null and ${channelVisibleSql('c', '$1')})) as st,
        (select seen_at::text from inbox_view_cursor where account_id = $1) as seen,
        ((now() at time zone 'utc')::date)::text as day`,
     [accountId],
