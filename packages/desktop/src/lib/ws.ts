@@ -1,4 +1,6 @@
-import type { WsServerEvent } from '@harkroom/shared';
+import {
+  WS_HEARTBEAT_STALE_FACTOR, WS_HEARTBEAT_TYPE, type WsServerEvent,
+} from '@harkroom/shared';
 
 /**
  * 연결이 끊긴 **이유**. 기다리면 낫는 것과 그렇지 않은 것을 갈라야 한다 —
@@ -40,6 +42,23 @@ export type TicketProvider = () => Promise<string>;
 /** 서버가 핸드셰이크를 거절하거나 소켓을 끊을 때 쓰는 코드. 4403 은 재시도로 낫지 않는다. 4401 은 다시 확인한다. */
 const CLOSE_CREDENTIAL = 4401; // 티켓 무효, 또는 소켓 수명 중 자격증명이 폐기됨 — 둘을 가르는 것은 `credentialStillValid`
 const CLOSE_ORIGIN = 4403;     // 서버의 허용 origin 목록에 없다
+/** 수신 감시가 좀비 소켓을 버릴 때 싣는 코드(4000~4999 는 애플리케이션 몫). 서버는 이 값으로 판단하지 않는다. */
+const CLOSE_STALE = 4008;
+
+/** 서버가 준 hb 주기를 이 범위로 묶는다 — 0·음수·터무니없는 값이 와도 감시가 폭주하거나 영영 안 돌지 않게. */
+const HB_MIN_MS = 1_000;
+const HB_MAX_MS = 5 * 60_000;
+
+/**
+ * 프레임이 앱 수준 hb 면 주기(ms)를, 아니면 null 을 낸다.
+ * hb 는 소켓 층의 신호라 상태 층(`onEvent`)으로 올리지 않는다.
+ */
+function heartbeatInterval(frame: unknown): number | null {
+  if (!frame || typeof frame !== 'object' || (frame as { type?: unknown }).type !== WS_HEARTBEAT_TYPE) return null;
+  const raw = Number((frame as { intervalMs?: unknown }).intervalMs);
+  if (!Number.isFinite(raw)) return 20_000;
+  return Math.min(Math.max(raw, HB_MIN_MS), HB_MAX_MS);
+}
 
 export function connectWs(baseUrl: string, getTicket: TicketProvider, cb: WsCallbacks): WsHandle {
   const wsBase = `${baseUrl.replace(/\/$/, '').replace(/^http/, 'ws')}/ws`;
@@ -77,12 +96,48 @@ export function connectWs(baseUrl: string, getTicket: TicketProvider, cb: WsCall
     // 발급을 기다리는 사이 명시 종료가 들어왔을 수 있다. 여기서 안 막으면 닫은 뒤에 소켓이 열린다.
     if (closed) return;
 
-    ws = new WebSocket(`${wsBase}?ticket=${encodeURIComponent(ticket)}`);
-    ws.onopen = () => { retryMs = 1000; cb.onOpen(); };
-    ws.onmessage = (ev) => {
-      try { cb.onEvent(JSON.parse(String(ev.data)) as WsServerEvent); } catch { /* 비정형 프레임 무시 */ }
+    const sock = new WebSocket(`${wsBase}?ticket=${encodeURIComponent(ticket)}`);
+    ws = sock;
+    // 수신 감시(좀비 연결). 서버가 끊었는데 앞단이 이쪽 다리를 열어 둔 채 두면 close 가 오지 않는다 —
+    // 무언가를 보내 RST 를 받기 전까지 이벤트 없이 「붙어 있음」으로 남는다(실측 17분). 그래서 받은 프레임의
+    // 시각을 재고, 서버 hb 주기의 2.5배 동안 아무것도 못 받으면 이 소켓을 버리고 다시 붙는다.
+    // **첫 hb 를 받기 전에는 켜지 않는다** — hb 를 모르는 옛 서버에 붙으면 영영 받을 것이 없다.
+    let lastRx = Date.now();
+    let watchdog: ReturnType<typeof setInterval> | null = null;
+    let watchedMs = 0;
+    const stopWatch = () => { if (watchdog) { clearInterval(watchdog); watchdog = null; } };
+    const abandon = () => {
+      stopWatch();
+      sock.onopen = null; sock.onmessage = null; sock.onclose = null;
+      // 죽은 연결이라 close 핸드셰이크가 끝나지 않을 수 있다 — onclose 를 기다리지 않고 바로 다시 붙는다.
+      try { sock.close(CLOSE_STALE, 'no frames from server'); } catch { /* 이미 닫힘 */ }
+      if (ws === sock) ws = null;
+      if (closed) return;
+      cb.onDown('network');
+      retry();
     };
-    ws.onclose = (ev) => {
+    const watch = (intervalMs: number) => {
+      if (watchdog && watchedMs === intervalMs) return;
+      stopWatch();
+      watchedMs = intervalMs;
+      const staleMs = intervalMs * WS_HEARTBEAT_STALE_FACTOR;
+      watchdog = setInterval(() => {
+        if (closed) { stopWatch(); return; }
+        if (Date.now() - lastRx > staleMs) abandon();
+      }, Math.max(250, Math.floor(intervalMs / 4)));
+    };
+
+    sock.onopen = () => { retryMs = 1000; lastRx = Date.now(); cb.onOpen(); };
+    sock.onmessage = (ev) => {
+      lastRx = Date.now();
+      let frame: unknown;
+      try { frame = JSON.parse(String(ev.data)); } catch { return; /* 비정형 프레임 무시 */ }
+      const hb = heartbeatInterval(frame);
+      if (hb !== null) { watch(hb); return; }
+      try { cb.onEvent(frame as WsServerEvent); } catch { /* 상태 층 오류가 소켓을 죽이지 않게 */ }
+    };
+    sock.onclose = (ev) => {
+      stopWatch();
       if (closed) return;
       const code = (ev as { code?: number } | undefined)?.code;
       if (code === CLOSE_CREDENTIAL) {

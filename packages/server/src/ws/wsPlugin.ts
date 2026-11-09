@@ -9,6 +9,7 @@ import { createTypingRegistry } from './typing.js';
 import { assertChannelVisible, audienceFor } from '../services/channels.js';
 import { createCredentialSweep, DEFAULT_REVALIDATE_MS, originAllowed as isOriginAllowed } from './socketLifetime.js';
 import { createHeartbeat } from './heartbeat.js';
+import { createAppHeartbeat, DEFAULT_APP_HEARTBEAT_MS } from './appHeartbeat.js';
 import type { AgentPresence } from '../mcp/presence.js';
 
 export function visibleTo(e: WorkspaceEvent, accountId: string): boolean {
@@ -57,6 +58,11 @@ export interface WsOptions {
   /** ping/pong 주기. 이 주기 안에 pong 이 없으면 다음 주기에 끊는다. 기본 30초. */
   heartbeatMs?: number;
   /**
+   * 앱 수준 hb 프레임 주기(`appHeartbeat.ts`). 기본 20초. 클라이언트는 이것의 2.5배 동안 아무 프레임도 못 받으면
+   * 스스로 다시 붙는다 — 서버가 끊었는데 앞단이 클라이언트 쪽을 열어 둔 좀비 연결을 1분 안에 걷어 낸다.
+   */
+  appHeartbeatMs?: number;
+  /**
    * 살아 있는 소켓 수를 읽어갈 수 있게 수집기를 넘겨준다. ws 층이 관측 층을 import 하지
    * 않도록 방향을 뒤집었다 — 여기서는 "세는 법"만 주고, 무엇을 하든 호출부가 정한다.
    */
@@ -101,6 +107,12 @@ export async function registerWs(app: FastifyInstance, pool: Pool, opts: WsOptio
   beat.unref?.(); // 이 타이머가 프로세스 종료를 붙잡지 않게 한다
   app.addHook('onClose', async () => { clearInterval(beat); });
 
+  const appHeartbeatMs = opts.appHeartbeatMs ?? DEFAULT_APP_HEARTBEAT_MS;
+  const appBeat = createAppHeartbeat(appHeartbeatMs);
+  const appBeatTimer = setInterval(() => appBeat.tick(), appHeartbeatMs);
+  appBeatTimer.unref?.();
+  app.addHook('onClose', async () => { clearInterval(appBeatTimer); });
+
   // 브라우저의 WebSocket 생성자는 헤더를 붙일 수 없다. 그래서 자격증명은 URL 로 갈 수밖에
   // 없는데, URL 은 앞단 프록시 로그에 남는다 — 장기 토큰 대신 여기서 받은 단기 1회용
   // 티켓을 싣는다. 이 엔드포인트는 Authorization 헤더로 인증한다.
@@ -123,6 +135,7 @@ export async function registerWs(app: FastifyInstance, pool: Pool, opts: WsOptio
     // 정상 ws 클라이언트는 ping 에 자동으로 pong 한다. 서버는 그 답을 기록만 한다.
     heartbeat.track(socket);
     socket.on('pong', () => heartbeat.pong(socket));
+    appBeat.track(socket);
 
     /**
      * 이 채널에서 입력 중인 사람들을 알린다. 받는 사람마다 자기를 뺀 목록이어야 하므로
@@ -191,6 +204,7 @@ export async function registerWs(app: FastifyInstance, pool: Pool, opts: WsOptio
     socket.on('close', () => {
       untrack();
       heartbeat.untrack(socket);
+      appBeat.untrack(socket);
       off();
       // 소켓이 닫히면 stop 이 오지 않는다 — 그래도 '입력 중'이 남으면 안 된다.
       // 어느 채널에 남아 있었는지 모르므로 전부 지우고, 남아 있던 채널에만 다시 알린다.

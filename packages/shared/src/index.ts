@@ -2863,6 +2863,30 @@ export interface AutomationMessageMeta {
   initiatedBy?: string;
 }
 
+/**
+ * 앱 수준 하트비트 프레임(`/ws`). 서버가 `intervalMs` 마다 모든 이벤트 소켓에 보낸다.
+ *
+ * 프로토콜 ping/pong 은 클라이언트의 네트워크 층이 자동으로 답하므로 **클라이언트 쪽에서는 보이지 않는다.**
+ * 서버가 죽은 소켓을 끊어도 중간(프록시·엣지)이 클라이언트 쪽 다리를 열어 둔 채 두면, 클라이언트는
+ * 무언가를 보내 RST 를 받기 전까지 「붙어 있다」고 믿는다(반쯤 열린 좀비 연결). 이 프레임은
+ * 클라이언트가 **받는 쪽에서** 살아 있음을 재게 한다: 첫 프레임을 받은 뒤 `intervalMs` 의 2.5배 동안
+ * 아무 프레임도 못 받으면 클라이언트가 스스로 닫고 다시 붙는다.
+ *
+ * `WsServerEvent` 에 넣지 않는다 — 소켓 층(ws.ts·ws.dart)이 걸러 내고 상태 층까지 올리지 않는다.
+ * 옛 클라이언트는 모르는 `type` 을 무시하므로 받아도 해가 없다. 옛 서버는 이 프레임을 보내지 않으므로,
+ * 클라이언트는 첫 프레임을 받기 전에는 감시를 켜지 않는다(켜면 옛 서버에 붙은 새 앱이 계속 끊는다).
+ */
+export interface WsHeartbeatFrame {
+  type: 'hb';
+  /** 다음 hb 까지의 간격(ms). 클라이언트는 이 값으로 기한을 잡는다. */
+  intervalMs: number;
+}
+
+export const WS_HEARTBEAT_TYPE = 'hb' as const;
+
+/** 마지막 프레임 뒤 이만큼(주기의 배수) 아무것도 못 받으면 좀비로 본다. 2주기 + 반 주기 여유. */
+export const WS_HEARTBEAT_STALE_FACTOR = 2.5;
+
 export type WsServerEvent =
   | { type: 'message.created'; message: MessageRow; audience: 'all' | string[] }
   | { type: 'message.updated'; message: MessageRow; audience: 'all' | string[] }
