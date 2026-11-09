@@ -170,4 +170,25 @@ describe('P3 위임 수명', () => {
     expect(lead!.delegations![0]!.role).toBe('delegator');
     expect(lead!.delegations![0]!.items.map((i) => i.handle)).toEqual(['vone', 'vtwo']);
   });
+
+  it('update 는 위임자의 그 스레드 대기 깨움을 접고, 옛 러너(사유 미표기)에게는 mention 으로 보인다', async () => {
+    const rootId = await openThread();
+    const dlg = await delegate(rootId);
+    const woken = await call(leadPat, 'turn.wake', { channelId, threadRootId: rootId, notBeforeSec: 600, reason: '담당 기다림' });
+    expect(woken.error).toBeUndefined();
+    await markRead();
+    const p = idOf(await call(onePat, 'message.post', { channelId, threadRootId: rootId, body: '진행' }));
+    await backdatePending();
+    await flush();
+    const canceled = await pool.query(
+      `select count(*)::int as n from agent_wake where account_id = $1 and canceled_by_message_id = $2`, [leadId, p]);
+    expect(canceled.rows[0].n).toBe(1);
+    const entry = (await listInbox(pool, leadId, { unreadOnly: true })).find((e) => e.messageId === p);
+    expect(entry?.canceledWakes?.length).toBe(1);
+    const oldPoll = await call(leadPat, 'inbox.poll', {});
+    expect((oldPoll.entries as { messageId: string; reason: string }[]).find((e) => e.messageId === p)?.reason).toBe('mention');
+    const newPoll = await call(leadPat, 'inbox.poll', { inboxReasons: ['delegation_update'] });
+    expect((newPoll.entries as { messageId: string; reason: string }[]).find((e) => e.messageId === p)?.reason).toBe('delegation_update');
+    void dlg;
+  });
 });

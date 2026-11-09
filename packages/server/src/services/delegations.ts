@@ -788,10 +788,12 @@ export function createDelegationDeadlineSweeper(pool: Pool, opts: {
   async function sweepV2(): Promise<void> {
     const client: PoolClient = await pool.connect();
     let woke: string[] = [];
+    const reportTouched: WakeReportTo[] = [];
+    const wakeRowsTouched: string[] = [];
     try {
       await client.query('begin');
       await autoCloseDelegations(client);
-      woke = await flushDelegationUpdates(client);
+      woke = await flushDelegationUpdates(client, { reportTouched, wakeRowsTouched });
       await client.query('commit');
     } catch (err) {
       await client.query('rollback').catch(() => undefined);
@@ -800,6 +802,9 @@ export function createDelegationDeadlineSweeper(pool: Pool, opts: {
       client.release();
     }
     for (const id of new Set(woke)) opts.onWake?.(id);
+    // 접은 대기 줄·보고처는 커밋 뒤에 알린다(`closeDelegationsForReply` 호출자와 같은 규약).
+    if (wakeRowsTouched.length) await announceWakeRows(pool, wakeRowsTouched).catch(() => undefined);
+    if (reportTouched.length) await announceReportWakes(pool, reportTouched).catch(() => undefined);
   }
 
   const sweep = async () => {
@@ -939,7 +944,9 @@ async function closeDelegationsForReplyV2(
  *
  * 돌려주는 것은 깨운 위임자 id 들이다.
  */
-export async function flushDelegationUpdates(client: PoolClient, limit = DELEGATION_SWEEP_BATCH): Promise<string[]> {
+export async function flushDelegationUpdates(
+  client: PoolClient, touched: { reportTouched?: WakeReportTo[]; wakeRowsTouched?: string[] } = {}, limit = DELEGATION_SWEEP_BATCH,
+): Promise<string[]> {
   const due = await client.query<{
     delegation_id: string; delegate_account_id: string; message_id: string;
     lead_account_id: string; thread_root_id: string; update_count: number;
@@ -1001,6 +1008,7 @@ export async function flushDelegationUpdates(client: PoolClient, limit = DELEGAT
     await foldWakesForDelegation(client, {
       delegationId: row.delegation_id, leadAccountId: row.lead_account_id,
       threadRootId: row.thread_root_id, messageId: row.message_id,
+      reportTouched: touched.reportTouched, wakeRowsTouched: touched.wakeRowsTouched,
     });
     woke.push(row.lead_account_id);
   }

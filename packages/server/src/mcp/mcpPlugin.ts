@@ -1815,8 +1815,13 @@ function buildMcpServer(
         runnerId: z.string().min(1).max(128),
         holding: z.array(z.number().int().min(1).max(Number.MAX_SAFE_INTEGER)).max(1000),
       }).optional(),
+      /**
+       * 이 러너가 아는 opt-in 사유(위임 재설계 v1). `delegation_update` 를 안 밝힌 옛 러너에게는 스위치가 켜진 서버가
+       * 그 항목을 `mention`(담당의 글을 가리킨다)으로 보여 준다 — 모르는 사유를 받은 러너가 항목을 버리지 않게.
+       */
+      inboxReasons: z.array(z.string()).max(32).optional(),
     },
-  }, async ({ timeoutMs, version, claudeLane, lease }) => {
+  }, async ({ timeoutMs, version, claudeLane, lease, inboxReasons }) => {
     // 버전이 오면 기록한다 — 배포가 넣어 준 빌드 시점 값이다(#129). 값이 바뀔 때만
     // 실제로 쓰이므로 이 핫 패스에 쓰기 비용이 없다(services/runnerVersion.ts 주석).
     if (version) {
@@ -1834,7 +1839,10 @@ function buildMcpServer(
     // 30초 TTL 이 만료됐다. 신호를 게이트로 올리면 도구 하나가 빠뜨릴 수 없다.
     if (lease) await leaseInboxEntries(pool, account.id, lease.runnerId, lease.holding);
     const fetchUnread = async () => {
-      const entries = await listInbox(pool, account.id, { unreadOnly: true, skipLeased: lease !== undefined });
+      const listed = await listInbox(pool, account.id, { unreadOnly: true, skipLeased: lease !== undefined });
+      const entries = delegationV2Enabled() && !inboxReasons?.includes('delegation_update')
+        ? listed.map((e) => (e.reason === 'delegation_update' ? { ...e, reason: 'mention' as const } : e))
+        : listed;
       if (!entries.length) return { entries, messages: [] };
       const ids = entries.map((e) => e.messageId);
       const msgs = await pool.query(
