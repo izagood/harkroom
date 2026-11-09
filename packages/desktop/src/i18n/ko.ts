@@ -174,6 +174,8 @@ export const ko = {
   'operatorStartup.banner.register': '이 머신의 오퍼레이터를 커뮤니티에 등록하지 못했다.',
   'operatorStartup.banner.openSettings': '오퍼레이터 설정 열기',
   'operatorStartup.banner.dismiss': '나중에',
+  'operatorStartup.retry': '다시 시도',
+  'operatorStartup.retrying': '시작하는 중…',
   'thisOperator.statusNone': '아직 등록 안 됨',
   'thisOperator.statusRegistered': '등록됨',
   'thisOperator.registerAgain': '다시 등록',

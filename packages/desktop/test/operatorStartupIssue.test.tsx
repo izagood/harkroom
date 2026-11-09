@@ -3,10 +3,10 @@
  * 첫 설치에서 「에이전트가 안 돈다」가 조용히 생겼다. 다시 붙을 때 한 번 더 해 보고, 잘 되면 사유를 지운다.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { useActiveStore as useAppStore } from '../src/state/communities';
 import { Controller } from '../src/state/controller';
-import { OperatorStartupBanner } from '../src/components/OperatorStartupBanner';
+import { OperatorStartupBanner, startupDismissKey } from '../src/components/OperatorStartupBanner';
 import type { DaemonObserver } from '../src/lib/runnerLauncher';
 import { acc, fakeApi, fakeWsFactory } from './helpers/fakeApi';
 
@@ -19,6 +19,7 @@ beforeEach(() => {
   useAppStore.getState().set({ me: acc('u1', 'owner', 'human', true), operatorStartupIssue: null, operatorStartupBannerDismissed: null });
 });
 afterEach(() => {
+  cleanup();
   delete (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
 });
 
@@ -86,6 +87,29 @@ describe('OperatorStartupBanner', () => {
     useAppStore.getState().set({ operatorStartupIssue: { kind: 'register', reason: 'other' } });
     rerender(<OperatorStartupBanner onOpenSettings={open} />);
     expect(screen.getByTestId('strip-operator-startup')).toBeTruthy();
+  });
+
+  it('[나중에] 는 사유의 머리로 기억한다 — 괄호 속 로그 끝줄·PATH 가 바뀌어도 다시 서지 않는다', () => {
+    const a = { kind: 'start' as const, reason: '오퍼레이터를 띄우지 못했다 — node 를 못 찾았다 (로그: pid 1 / PATH: /a)' };
+    const b = { kind: 'start' as const, reason: '오퍼레이터를 띄우지 못했다 — node 를 못 찾았다 (로그: pid 2 / PATH: /b)' };
+    expect(startupDismissKey(a)).toBe(startupDismissKey(b));
+    expect(startupDismissKey({ ...a, kind: 'register' })).not.toBe(startupDismissKey(a));
+    expect(startupDismissKey({ kind: 'start', reason: '다른 실패 (x)' })).not.toBe(startupDismissKey(a));
+    useAppStore.getState().set({ operatorStartupIssue: a });
+    const { rerender } = render(<OperatorStartupBanner />);
+    fireEvent.click(screen.getByTestId('operator-startup-dismiss'));
+    useAppStore.getState().set({ operatorStartupIssue: b });
+    rerender(<OperatorStartupBanner />);
+    expect(screen.queryByTestId('strip-operator-startup')).toBeNull();
+  });
+
+  it('사유는 둘째 줄 블록으로 잘리고 전문은 title 에 있다', () => {
+    useAppStore.getState().set({ operatorStartupIssue: { kind: 'start', reason: NODE_MISSING } });
+    render(<OperatorStartupBanner />);
+    const r = screen.getByTestId('operator-startup-reason');
+    expect(r.className).toContain('block');
+    expect(r.className).toContain('truncate');
+    expect(r.getAttribute('title')).toBe(NODE_MISSING);
   });
 
   it('사유가 없으면 그리지 않는다', () => {

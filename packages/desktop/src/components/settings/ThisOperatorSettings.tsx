@@ -78,6 +78,8 @@ export function ThisOperatorSettings({ onOpenSection }: {
   }, [t]);
   useEffect(() => { if (localAvailable) void loadStatus(); }, [localAvailable, loadStatus]);
   const isRegistered = status.kind === 'registered';
+  // 오퍼레이터가 **아예 안 떴다**(designer #2) — 등록은 그 뒤의 일이다. 머리·버튼을 「다시 시도」로 바꾼다.
+  const startFailed = startupIssue?.kind === 'start' && !isRegistered;
   // 확인 중에는 어느 쪽 버튼인지 아직 모른다 — 누르게 두면 등록된 머신을 확인 창 없이 한 번 더 등록한다.
   const checking = status.kind === 'checking';
 
@@ -96,6 +98,17 @@ export function ThisOperatorSettings({ onOpenSection }: {
       void loadStatus();
     } catch (e) {
       setError(t('operators.registerHereFailed', { reason: errorText(e, t) }));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const retryStart = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      await getController().ensureOperatorAndRegister();
+      void loadStatus();
     } finally {
       setBusy(false);
     }
@@ -126,11 +139,12 @@ export function ThisOperatorSettings({ onOpenSection }: {
                   <span aria-hidden data-testid="this-operator-dot" className={`h-2 w-2 shrink-0 rounded-full ${status.online ? 'bg-success' : 'bg-fg-subtle'}`} />
                 )}
                 <span>
-                  {status.kind === 'checking' && t('thisOperator.statusChecking')}
-                  {status.kind === 'unknown' && (status.reason ?? startupIssue?.reason
+                  {startFailed && t('operatorStartup.banner.start')}
+                  {!startFailed && status.kind === 'checking' && t('thisOperator.statusChecking')}
+                  {!startFailed && status.kind === 'unknown' && (status.reason ?? startupIssue?.reason
                     ? t('thisOperator.statusUnknownReason', { reason: status.reason ?? startupIssue?.reason ?? '' })
                     : t('thisOperator.statusUnknown'))}
-                  {status.kind === 'none' && t('thisOperator.statusNone')}
+                  {!startFailed && status.kind === 'none' && t('thisOperator.statusNone')}
                   {status.kind === 'registered' && [
                     t('thisOperator.statusRegistered'),
                     status.name,
@@ -149,12 +163,19 @@ export function ThisOperatorSettings({ onOpenSection }: {
                 )}
               </p>
               {/* 기동 때의 실패를 여기서도 말한다 — 띠를 닫았어도 이 화면에 오면 사유가 보여야 한다. */}
-              {startupIssue && status.kind !== 'registered' && (
-                <p className="mb-3 text-meta text-warning" data-testid="this-operator-startup-issue">
-                  {startupIssue.kind === 'start' ? t('operatorStartup.banner.start') : t('operatorStartup.banner.register')} {startupIssue.reason}
+              {/* 시작 실패: 머리가 이미 그 말을 하므로 여기엔 사유 전문만(PATH 가 카드를 뚫지 않게 break-all). */}
+              {startFailed && startupIssue && (
+                <p className="mb-3 break-all text-meta text-warning" data-testid="this-operator-startup-issue">
+                  {startupIssue.reason}
                 </p>
               )}
-              <p className="mb-3 text-meta text-fg-muted">{t('operators.registerHereNote')}</p>
+              {startupIssue?.kind === 'register' && !isRegistered && (
+                <p className="mb-3 text-meta text-warning" data-testid="this-operator-startup-issue">
+                  {t('operatorStartup.banner.register')} {startupIssue.reason}
+                </p>
+              )}
+              {/* 「이 머신에는 오퍼레이터가 돈다」는 시작 실패와 반대 말이다 — 그때는 숨긴다. */}
+              {!startFailed && <p className="mb-3 text-meta text-fg-muted">{t('operators.registerHereNote')}</p>}
               {registered && (
                 <p className="mb-3 text-meta text-success" data-testid="operator-registered-here">{t('operators.registerHereDone', { name: registered })}</p>
               )}
@@ -165,7 +186,18 @@ export function ThisOperatorSettings({ onOpenSection }: {
                 <p role="alert" className="mb-3 text-meta text-danger" data-testid="this-operator-kept">{t('thisOperator.replacedKept')}</p>
               )}
               <div className="flex flex-wrap items-center gap-2">
-                {/* 이미 등록돼 있으면 **다시 등록** 으로 낮춘다(회색 테두리) — 같은 머신을 두 번 등록하지 않게. */}
+                {/* 시작 실패면 등록 대신 **다시 시도** — 오퍼레이터가 없으면 등록도 같은 이유로 실패한다. 등록은 성공 뒤 자동으로 이어진다. */}
+                {startFailed ? (
+                  <button
+                    data-testid="this-operator-retry-start"
+                    className="rounded-row bg-accent px-4 py-2 font-medium text-fg-on-strong disabled:opacity-50"
+                    disabled={busy}
+                    onClick={() => void retryStart()}
+                  >
+                    {busy ? t('operatorStartup.retrying') : t('operatorStartup.retry')}
+                  </button>
+                ) : (
+                // 이미 등록돼 있으면 **다시 등록** 으로 낮춘다(회색 테두리) — 같은 머신을 두 번 등록하지 않게.
                 <button
                   data-testid="this-operator-register"
                   className={isRegistered || checking
@@ -176,6 +208,7 @@ export function ThisOperatorSettings({ onOpenSection }: {
                 >
                   {busy ? t('operators.registerBusy') : isRegistered ? t('thisOperator.registerAgain') : t('operators.registerHere')}
                 </button>
+                )}
                 {/* 등록된 머신 목록은 에이전트 › 오퍼레이터에 있다 — 글로만 적지 않고 그리로 간다. */}
                 {onOpenSection && (
                   <button

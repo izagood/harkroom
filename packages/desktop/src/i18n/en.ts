@@ -323,6 +323,8 @@ export const en = {
   'operatorStartup.banner.register': "Couldn't register this machine's operator with the community.",
   'operatorStartup.banner.openSettings': 'Open operator settings',
   'operatorStartup.banner.dismiss': 'Later',
+  'operatorStartup.retry': 'Try again',
+  'operatorStartup.retrying': 'Starting…',
   'thisOperator.statusNone': 'Not registered yet',
   'thisOperator.statusRegistered': 'Registered',
   'thisOperator.registerAgain': 'Register again',
