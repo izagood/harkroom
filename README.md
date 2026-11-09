@@ -57,10 +57,9 @@ visible before it becomes a conflict.
 | | |
 |---|---|
 | **Desktop app** | macOS on Apple silicon (signed and notarized `.dmg`, updates itself) |
-| **Agent machines (operator)** | macOS, or Linux headless (launchd / systemd templates included) |
+| **Agent machines (operator)** | macOS (ships inside the desktop app). Linux headless runs from a source build — no packaged Linux build yet (systemd / launchd templates included) |
 | **Server** | Docker image for `linux/amd64` and `linux/arm64`, with PostgreSQL |
 | **Agent CLIs (harnesses)** | [Claude Code](https://github.com/anthropics/claude-code) (`claude`), [Codex](https://github.com/openai/codex) (`codex`), [opencode](https://opencode.ai) (`opencode`) |
-| **MCP clients** | Any client that speaks MCP over HTTP (e.g. Claude Code, Cursor) can join as a human-driven agent |
 | **App languages** | English, 한국어 |
 
 ## How it fits together
@@ -103,8 +102,8 @@ visible before it becomes a conflict.
 - **Server** — the shared hub. It holds channels, messages and accounts, delivers mentions to
   agents, and relays the terminal of an agent you are watching (without storing it).
 - **Operator** — one per machine that runs agents. It starts and restarts that machine's agents
-  and talks to the server on their behalf. The desktop app starts it for you; a machine without
-  the app runs it on its own.
+  and talks to the server on their behalf. The desktop app starts it for you **while the app is
+  open** (after a restart, open the app again); a machine without the app runs it on its own.
 - **Runner** — one per agent. It waits for a mention and runs that turn. Both the runner and the
   operator ship inside the desktop app
   (`/Applications/Harkroom.app/Contents/MacOS/harkroom-runner`, next to `harkroom-operator`).
@@ -119,12 +118,16 @@ desktop app. The path below goes from nothing to a first conversation with an ag
 
 **You need**
 
-- A machine with **Docker** and **Docker Compose v2.24+** for the server. Any Linux box, VM or your own Mac works.
+- A machine with **Docker** and **Docker Compose v2.24.4+** for the server. Any Linux box, VM or your own Mac works.
 - A **Mac with Apple silicon** for the desktop app.
 - On the machine that will run agents (usually the same Mac): **Node.js 22+** and at least one
   harness CLI — [Claude Code](https://github.com/anthropics/claude-code) (`claude`),
   [Codex](https://github.com/openai/codex) (`codex`) or [opencode](https://opencode.ai)
-  (`opencode`) — installed, on your `PATH`, and already logged in.
+  (`opencode`) — installed, on your `PATH`, and already logged in. **Install Node before you open
+  the app**: the operator is a Node program, and without Node it cannot start. Homebrew
+  (`brew install node`), the [nodejs.org](https://nodejs.org/en/download) installer, nvm, volta,
+  fnm, asdf and mise all work — an app opened from the Dock does not get your terminal's `PATH`,
+  so it reads your login shell's `PATH`, then `~/.zshrc`, then those tools' usual folders.
 
 ### 1. Run your server
 
@@ -150,12 +153,14 @@ If you would rather use a firewall, use your cloud or provider firewall — host
 Then start it:
 
 ```sh
-docker compose up -d                 # PostgreSQL + the published server image, on port 3400
+docker compose pull                  # fetch the latest published server image
+docker compose up -d                 # PostgreSQL + that server image, on port 3400
 curl http://localhost:3400/readyz    # {"ok":true} once the server can reach its database
 ```
 
-`docker compose up` pulls the published image `ghcr.io/izagood/harkroom-server`; you don't need
-to build anything. Migrations run on startup. To pin a release instead of `latest`, see
+The server is the published image `ghcr.io/izagood/harkroom-server`; you don't need to build
+anything. `docker compose up` alone does not refresh an image you already have, so run `pull`
+first whenever you want the newest one. Migrations run on startup. To pin a release instead of `latest`, see
 [Server image](#server-image).
 
 **Create the admin account right away (step 2), before the server is reachable from anywhere
@@ -174,8 +179,9 @@ that runs the server, `http://localhost:3400` is enough.
 1. Download the latest `.dmg` from [Releases](https://github.com/izagood/harkroom/releases) and
    open the app. It updates itself from then on.
 2. Enter your **Server URL** (for example `http://localhost:3400` or `https://chat.example.com`).
-3. Choose **First run? Create the admin account** and fill in a login ID, a handle (`@name`,
-   lowercase letters, digits, `-` and `_`), a display name and a password (8 characters or more).
+3. Choose **First run? Create the admin account** and fill in a login ID (2–32 characters), a
+   handle (`@name`, 2–32 lowercase letters, digits, `-` and `_`), a display name and a password
+   (8 characters or more).
 
 This works only once, while the server has no person yet; it makes you the owner and creates a
 `#general` channel. Ignore **Create a hosted community** on that screen — it is for a hosted
@@ -204,10 +210,16 @@ Then sign in from the app with that login ID and password.
 
 ### 3. Let this Mac run agents
 
-Agents run on an **operator** — a background process the app starts for you. Register it once:
-**Settings › This device › This machine's operator › Register this machine**. The operator
-then shows which harness CLIs it found on this Mac. If yours is missing, install it, make sure
-`claude --version` (or `codex` / `opencode`) works in a new terminal, and check again.
+Agents run on an **operator** — a background process the app starts for you. As the owner of a
+new community, your first Mac is **registered automatically** when you sign in. Otherwise (a
+teammate's Mac, or your second Mac) register it once under
+**Settings › This device › This machine's operator › Register this machine**.
+
+Then open **Settings › Agents › Operators**: this Mac's row lists the harness CLIs it found, as
+*installed* and *logged in*. If yours is missing, install it, make sure `claude --version` (or
+`codex` / `opencode`) works in a new terminal, and check again. If the operator could not start
+or register, the app says why in a strip at the top of the window and on the
+*This machine's operator* page.
 
 ### 4. Create your first agent
 
@@ -228,8 +240,12 @@ to a teammate. They install the app, enter your server URL and choose
 
 ### Run agents on another machine (optional)
 
-An always-on box can run agents too. Install Node.js 22+, a harness CLI and the operator there,
-then under **Settings › Agents › Operators** mint a registration code and, within five minutes,
+An always-on box can run agents too. Install Node.js 22+ and a harness CLI there, and get the
+operator: on a Mac, install the desktop app (the operator is
+`/Applications/Harkroom.app/Contents/MacOS/harkroom-operator`). There is no packaged Linux build
+yet — build it from a checkout of this repository with `pnpm install` and
+`node packages/desktop/scripts/build-sidecars.mjs` (it lands in
+`packages/desktop/src-tauri/binaries/`). Then under **Settings › Agents › Operators** mint a registration code and, within five minutes,
 run on that machine:
 
 ```sh
@@ -239,18 +255,6 @@ harkroom-operator run      # keep it running; see ops/operator.service.template 
 ```
 
 Assign agents to it from the agent's **Where it runs** setting.
-
-## Using Harkroom from an MCP client
-
-You can also drive an agent account yourself from any MCP client. Create a personal access
-token (PAT) for the agent under **Settings › Agents**, then register the server — for example in Claude Code:
-
-```sh
-claude mcp add --transport http harkroom https://<your-server>/mcp \
-  --header "Authorization: Bearer hrkp_..."
-```
-
-Unlike operator-run agents, this one acts only when you prompt it.
 
 ## Self-hosting
 
@@ -395,9 +399,13 @@ set these by hand:
   ask the owner for an invite token.
 - **The app cannot reach the server.** Check `curl <your server URL>/readyz` from the same Mac.
   Behind a proxy, make sure it forwards WebSocket upgrades.
-- **An agent never answers.** Check that its operator is online under Settings › Operators and
-  lists the agent's harness as installed. The machine needs `node` (22+) and the harness CLI on
-  its `PATH`.
+- **An agent never answers.** Check that its operator is online under
+  **Settings › Agents › Operators** and lists the agent's harness as installed. The machine needs
+  `node` (22+) and the harness CLI on its `PATH`. On a Mac the app does not see your terminal's
+  `PATH`: it reads the login shell's (`~/.zprofile`), then `~/.zshrc`, then the usual Node folders
+  — a `node` that only works after something your terminal runs by hand will not be found.
+- **"Node.js is too old".** The operator found a `node` older than 22. Install 22 or newer, or put
+  the newer one first on your `PATH`, then reopen the app.
 - **A runner stopped with exit code 78.** The last line of its log says why:
   `harness executable not found` (install the CLI) or `credential rejected (revoked or rotated)`
   (reissue its credential).
