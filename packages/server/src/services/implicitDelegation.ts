@@ -7,8 +7,8 @@ import { createDelegation, delegationV2Enabled, DELEGATION_DEADLINE_DEFAULT_SEC,
  * 습관(`message.delegate` 를 쓰느냐 멘션으로 부르느냐)과 상관없이 위임자를 깨우는 길이 하나가 되게 하려는 것이다.
  *
  * - 반대 방향 위임이 열려 있으면 열지 않는다 — 담당이 위임자를 부른 것은 답장이다(`reply`).
- * - 같은 방향 위임이 이미 열려 있으면 새로 열지 않는다 — 이어지는 말이다(`existing`). 새로 열면 P3 의 대체(superseded)가
- *   앞 위임을 닫아 버린다.
+ * - 불린 쪽이 이 스레드에서 이미 열린 위임을 맡고 있으면(누가 넘겼든) 새로 열지 않는다 — 이어지는 말이다(`existing`).
+ *   암묵 위임은 앞 위임을 대체(superseded)하지도 않는다 — 맨 앞 멘션으로 남이 넘긴 일을 닫을 수 없게.
  * - 계획판 단계의 담당을 부르면 그 단계 id 를 단다.
  *
  * ## 모드(`HARKROOM_DELEGATION_IMPLICIT`, `HARKROOM_DELEGATION_V2` 가 켜졌을 때만 읽는다)
@@ -67,21 +67,23 @@ type Verdict = 'open' | 'reply' | 'existing';
 async function verdictFor(
   client: PoolClient, args: { threadRootId: string; from: string; to: string },
 ): Promise<Verdict> {
+  // `same` 은 위임자와 상관없이 「불린 쪽이 이 스레드에서 이미 맡은 일이 있다」다 — 다른 위임자가 넘긴 열린 위임도 이어짐으로 본다.
+  // 새로 열면 그 담당의 일이 둘로 갈리고(security P4 #1), 그림자 지표도 부풀려진다.
   const r = await client.query<{ dir: 'reverse' | 'same' }>(
-    `select case when d.lead_account_id = $2 then 'same' else 'reverse' end as dir
+    `select case when i.delegate_account_id = $3 then 'same' else 'reverse' end as dir
        from team_delegation d
        join team_delegation_item i on i.delegation_id = d.id
       where d.thread_root_id = $1
         and (i.outcome is null or i.outcome = 'reported')
-        and ((d.lead_account_id = $3 and i.delegate_account_id = $2)
-          or (d.lead_account_id = $2 and i.delegate_account_id = $3))
+        and (i.delegate_account_id = $3
+          or (d.lead_account_id = $3 and i.delegate_account_id = $2))
      union all
-     select case when l.delegator_account_id = $2 then 'same' else 'reverse' end
+     select case when l.delegate_account_id = $3 then 'same' else 'reverse' end
        from delegation_implicit_log l
       where l.thread_root_id = $1 and l.verdict = 'open' and l.mode = 'shadow'
         and l.created_at > now() - make_interval(secs => $4)
-        and ((l.delegator_account_id = $3 and l.delegate_account_id = $2)
-          or (l.delegator_account_id = $2 and l.delegate_account_id = $3))`,
+        and (l.delegate_account_id = $3
+          or (l.delegator_account_id = $3 and l.delegate_account_id = $2))`,
     [args.threadRootId, args.from, args.to, DELEGATION_MAX_AGE_SEC],
   );
   // 반대 방향이 하나라도 열려 있으면 답장이다 — 서로 넘긴 상태에서도 답장이 이긴다(루프를 만들지 않는 쪽).

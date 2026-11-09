@@ -11,7 +11,7 @@ import { flushDelegationUpdates } from '../src/services/delegations.js';
 /** 위임 재설계 v1 P4: 암묵 위임(에이전트→에이전트 맨 앞 멘션). 그림자 모드는 판정만 적고 아무도 더 깨우지 않는다. */
 let app: FastifyInstance; let pool: Pool; let stop: () => Promise<void>;
 let adminToken: string; let mcpUrl: string; let channelId: string;
-let leadPat: string; let leadId: string; let onePat: string; let oneId: string;
+let leadPat: string; let leadId: string; let onePat: string; let oneId: string; let thirdPat: string;
 
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
 const clients: Client[] = [];
@@ -48,6 +48,7 @@ beforeAll(async () => {
   adminToken = admin.token;
   ({ pat: leadPat, accountId: leadId } = await createAgent(app, adminToken, 'ilead'));
   ({ pat: onePat, accountId: oneId } = await createAgent(app, adminToken, 'ione'));
+  ({ pat: thirdPat } = await createAgent(app, adminToken, 'ithird'));
   channelId = (await app.inject({ method: 'POST', url: '/channels', headers: auth(adminToken), payload: { name: 'ichan' } })).json().id as string;
   await app.listen({ port: 0, host: '127.0.0.1' });
   const addr = app.server.address();
@@ -144,6 +145,17 @@ describe('P4 암묵 위임 — 켬(on)', () => {
     await post(leadPat, rootId, '@ione main');
     expect((await logRows(rootId)).map((r) => r.verdict)).toEqual(['open', 'reply', 'existing']);
     expect(await delegations(rootId)).toHaveLength(1);
+  });
+
+  it('제3자가 담당을 맨 앞 멘션으로 불러도 다른 위임자가 넘긴 열린 위임은 닫히지 않는다(이어짐) — security P4 #1', async () => {
+    const rootId = await openThread();
+    await call(leadPat, 'message.delegate', { channelId, threadRootId: rootId, body: '@ione 넘긴다', to: ['ione'] });
+    await post(thirdPat, rootId, '@ione 이것도 봐 달라');
+    const items = (await pool.query(
+      `select d.kind, i.outcome from team_delegation d join team_delegation_item i on i.delegation_id = d.id
+        where d.thread_root_id = $1 order by d.created_at`, [rootId])).rows;
+    expect(items).toEqual([{ kind: 'delegate', outcome: null }]);
+    expect((await logRows(rootId)).map((r) => r.verdict)).toEqual(['existing']);
   });
 
   it('암묵 위임은 message.delegate 의 라운드 상한을 쓰지 않는다', async () => {

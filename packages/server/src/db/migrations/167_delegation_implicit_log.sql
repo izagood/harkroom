@@ -15,7 +15,7 @@ create table delegation_implicit_log (
   delegator_account_id uuid not null references account(id) on delete cascade,
   delegate_account_id uuid not null references account(id) on delete cascade,
   -- `open`: 위임을 연다(그림자면 열었을 것). `reply`: 반대 방향 위임이 열려 있어 답장으로 봤다.
-  -- `existing`: 같은 방향 위임이 이미 열려 있어 새로 열지 않았다(이어지는 말).
+  -- `existing`: 불린 쪽이 이 스레드에서 이미 열린 위임을 맡고 있어(누가 넘겼든) 새로 열지 않았다(이어지는 말).
   verdict text not null check (verdict in ('open', 'reply', 'existing')),
   -- 그 순간의 모드. `shadow` 면 아무 행도 열지 않았다.
   mode text not null check (mode in ('shadow', 'on')),

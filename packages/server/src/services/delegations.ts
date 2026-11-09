@@ -223,7 +223,11 @@ export async function createDelegation(
 
   for (const delegateId of args.delegateIds) {
     // v1(P3): 같은 스레드에서 같은 담당에게 새로 넘기면 앞의 열린·보고된 의무는 대체된다. 깨우지 않는다.
-    if (delegationV2Enabled()) await supersedePrevious(client, { threadRootId: args.threadRootId, delegateId, keep: delegationId });
+    // 암묵 위임(kind=mention)은 앞 위임을 대체하지 않는다 — 맨 앞 멘션 하나로 남(다른 위임자)이 넘긴 일이 깨움 없이 닫히면 안 된다
+    // (security P4 #1). 열린 위임이 있으면 `implicitDelegation.ts` 가 애초에 열지 않는다(`existing`).
+    if (delegationV2Enabled() && kind === 'delegate') {
+      await supersedePrevious(client, { threadRootId: args.threadRootId, delegateId, keep: delegationId });
+    }
     await client.query(
       `insert into team_delegation_item (delegation_id, delegate_account_id) values ($1, $2)`,
       [delegationId, delegateId],
