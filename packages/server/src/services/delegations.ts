@@ -212,6 +212,8 @@ export async function createDelegation(
   const delegationId = inserted.rows[0]!.id;
 
   for (const delegateId of args.delegateIds) {
+    // v1(P3): 같은 스레드에서 같은 담당에게 새로 넘기면 앞의 열린·보고된 의무는 대체된다. 깨우지 않는다.
+    if (delegationV2Enabled()) await supersedePrevious(client, { threadRootId: args.threadRootId, delegateId, keep: delegationId });
     await client.query(
       `insert into team_delegation_item (delegation_id, delegate_account_id) values ($1, $2)`,
       [delegationId, delegateId],
@@ -318,6 +320,7 @@ export async function closeDelegationsForReply(
     wakeRowsTouched?: string[];
   },
 ): Promise<string[]> {
+  if (delegationV2Enabled()) return closeDelegationsForReplyV2(client, args);
   // 닫지 않는 발화는 **"살아 있다"** 는 신호다 — 의무는 그대로 두고
   // 기한만 뒤로 민다(2026-09-12). 그 판단의 근거는 `touchDelegationDeadline` 주석에 있다.
   if (!countsAsReply(args.kind) || !(args.isReport || args.isFailure)) {
@@ -778,6 +781,24 @@ export function createDelegationDeadlineSweeper(pool: Pool, opts: {
     }
   }
 
+  /** v1(P3): 자동 닫힘(idle·max_age)과 턴 끝 update 를 한 트랜잭션으로. */
+  async function sweepV2(): Promise<void> {
+    const client: PoolClient = await pool.connect();
+    let woke: string[] = [];
+    try {
+      await client.query('begin');
+      await autoCloseDelegations(client);
+      woke = await flushDelegationUpdates(client);
+      await client.query('commit');
+    } catch (err) {
+      await client.query('rollback').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+    for (const id of new Set(woke)) opts.onWake?.(id);
+  }
+
   const sweep = async () => {
     if (running) return;
     running = true;
@@ -786,6 +807,7 @@ export function createDelegationDeadlineSweeper(pool: Pool, opts: {
       for (let i = 0; i < DELEGATION_SWEEP_BATCH; i++) {
         if ((await expireOne(skip)) === 'none') break;
       }
+      if (delegationV2Enabled()) await sweepV2();
     } catch (err) {
       // DB 에 닿지 못한 것(`pool.connect` 는 한 건 처리의 try 밖이다)이 여기로 온다. 던지면
       // `void sweep()` 이 처리 안 된 거절이 되어 프로세스가 죽는다(2026-10-12 PG OOM 때 실제로 죽었다).
@@ -810,4 +832,221 @@ export function createDelegationDeadlineSweeper(pool: Pool, opts: {
     },
     sweep,
   };
+}
+
+// ───────────────────────── 위임 재설계 v1 — 수명·턴 끝 update (P3) ─────────────────────────
+// 모두 `delegationV2Enabled()` 뒤다. 스위치가 꺼진 서버는 아래 함수를 하나도 부르지 않는다.
+
+/** 보고된 뒤 담당이 이만큼 조용하면 `closed/idle`. */
+export const DELEGATION_IDLE_SEC = 6 * 60 * 60;
+/** 위임의 최대 수명 — 넘으면 `closed/max_age`. */
+export const DELEGATION_MAX_AGE_SEC = 24 * 60 * 60;
+/** 임대 없는 턴(PTY·bg·옛 러너)의 턴 끝 대용: 담당의 마지막 글에서 이만큼. */
+export const DELEGATION_UPDATE_QUIET_SEC = 60;
+/** 위임 하나당 update 상한. 넘으면 만들지 않고 글 meta 에 까닭을 남긴다. */
+export const DELEGATION_UPDATE_LIMIT = 40;
+
+/**
+ * 닫힌 위임 행이 더는 열린 의무를 갖지 않으면 `notified_at` 을 찍어 기한 스위퍼가 다시 잡지 않게 한다.
+ * 깨우지 않는다(자동 닫힘·위임자 닫힘은 깨움이 없다).
+ */
+async function markSettledQuietly(client: PoolClient, delegationIds: string[]): Promise<void> {
+  if (!delegationIds.length) return;
+  await client.query(
+    `update team_delegation d set notified_at = now()
+      where d.id = any($1::uuid[]) and d.notified_at is null
+        and not exists (select 1 from team_delegation_item i where i.delegation_id = d.id and i.outcome is null)`,
+    [delegationIds],
+  );
+}
+
+async function supersedePrevious(
+  client: PoolClient, args: { threadRootId: string; delegateId: string; keep: string },
+): Promise<void> {
+  const r = await client.query<{ delegation_id: string }>(
+    `update team_delegation_item i
+        set outcome = 'closed', closed_reason = 'superseded', closed_at = now(), update_pending_message_id = null
+       from team_delegation d
+      where d.id = i.delegation_id and d.thread_root_id = $1 and i.delegate_account_id = $2
+        and i.delegation_id <> $3 and (i.outcome is null or i.outcome = 'reported')
+      returning i.delegation_id`,
+    [args.threadRootId, args.delegateId, args.keep],
+  );
+  await markSettledQuietly(client, r.rows.map((x) => x.delegation_id));
+}
+
+/**
+ * v1 의 답 처리. `report` 는 결과 신호일 뿐 닫지 않는다(`reported`), `fail` 은 `failed`. 둘 다 미결이 0 이 되면
+ * 지금처럼 `delegation_done` 으로 위임자를 깨운다. 그 밖의 담당 글(또는 이미 보고된 뒤의 글)은 「대기 중 update」로
+ * 적어 두고, 턴이 끝나면 스위퍼(`flushDelegationUpdates`)가 위임자에게 하나를 만든다.
+ */
+async function closeDelegationsForReplyV2(
+  client: PoolClient,
+  args: {
+    threadRootId: string; authorId: string; messageId: string; kind: MessageRow['kind'];
+    isReport: boolean; isFailure: boolean; reportTouched?: WakeReportTo[]; wakeRowsTouched?: string[];
+  },
+): Promise<string[]> {
+  await touchDelegationDeadline(client, { threadRootId: args.threadRootId, authorId: args.authorId });
+  const woke: string[] = [];
+  if (countsAsReply(args.kind) && (args.isReport || args.isFailure)) {
+    const open = await client.query<{ delegation_id: string }>(
+      `select i.delegation_id
+         from team_delegation_item i
+         join team_delegation d on d.id = i.delegation_id
+        where i.delegate_account_id = $1 and i.outcome is null and d.thread_root_id = $2
+        order by d.created_at
+        for update of d`,
+      [args.authorId, args.threadRootId],
+    );
+    for (const row of open.rows) {
+      const closed = await client.query(
+        `update team_delegation_item
+            set outcome = $3, closed_by_message_id = $4, closed_at = now(), last_activity_at = now(),
+                update_pending_message_id = null, update_pending_at = null
+          where delegation_id = $1 and delegate_account_id = $2 and outcome is null`,
+        [row.delegation_id, args.authorId, args.isFailure ? 'failed' : 'reported', args.messageId],
+      );
+      if (!closed.rowCount) continue;
+      const lead = await notifyIfSettled(client, row.delegation_id, args);
+      if (lead) woke.push(lead);
+    }
+    if (open.rowCount) return woke;
+  }
+  // 결과가 아닌 글, 또는 이미 보고된 뒤의 글: 턴 끝에 update 로 간다.
+  await client.query(
+    `update team_delegation_item i
+        set last_activity_at = now(), update_pending_message_id = $3, update_pending_at = now()
+       from team_delegation d
+      where d.id = i.delegation_id and d.thread_root_id = $2 and i.delegate_account_id = $1
+        and (i.outcome is null or i.outcome = 'reported')`,
+    [args.authorId, args.threadRootId, args.messageId],
+  );
+  return woke;
+}
+
+/**
+ * 턴이 끝난 담당의 대기 중 update 를 위임자 inbox 로 옮긴다. 턴 끝 = 다음 중 먼저:
+ * 그 글을 덮는 턴 임대가 끝났다(`endTurnLease` 가 `ended_at` 을 찍는다) · 그 임대의 `expires_at` 이 지났다 ·
+ * 마지막 글에서 60초가 지났다(임대 없는 턴). 임대 수명은 건드리지 않는다 — 읽기만 한다.
+ *
+ * - (위임자, 위임) 당 읽지 않은 update 는 하나: 앞의 것을 지우고 새 글을 가리키는 것 하나만 둔다.
+ * - 같은 글이 위임자에게 이미 `mention` 을 만들었으면 그 행을 update 로 바꾼다(`createDelegation` 의 mention→team_delegated 와 같다).
+ * - 위임자의 그 스레드 대기 깨움은 접는다(`foldWakesForDelegation`, 사람 글 선점과 같은 모양).
+ *
+ * 돌려주는 것은 깨운 위임자 id 들이다.
+ */
+export async function flushDelegationUpdates(client: PoolClient, limit = DELEGATION_SWEEP_BATCH): Promise<string[]> {
+  const due = await client.query<{
+    delegation_id: string; delegate_account_id: string; message_id: string;
+    lead_account_id: string; thread_root_id: string; update_count: number;
+  }>(
+    `select i.delegation_id, i.delegate_account_id, i.update_pending_message_id as message_id,
+            d.lead_account_id, d.thread_root_id, i.update_count
+       from team_delegation_item i
+       join team_delegation d on d.id = i.delegation_id
+      where i.update_pending_message_id is not null
+        and (i.update_pending_at <= now() - make_interval(secs => $1)
+             or exists (
+               select 1 from secret_turn_lease l
+                where l.agent_id = i.delegate_account_id and l.thread_root_id = d.thread_root_id
+                  and l.created_at <= i.update_pending_at
+                  and coalesce(l.ended_at, case when l.expires_at <= now() then l.expires_at end) >= i.update_pending_at))
+      order by i.update_pending_at
+      limit $2
+      for update of i skip locked`,
+    [DELEGATION_UPDATE_QUIET_SEC, limit],
+  );
+  const woke: string[] = [];
+  for (const row of due.rows) {
+    await client.query(
+      `update team_delegation_item set update_pending_message_id = null, update_pending_at = null
+        where delegation_id = $1 and delegate_account_id = $2`,
+      [row.delegation_id, row.delegate_account_id],
+    );
+    if (row.update_count >= DELEGATION_UPDATE_LIMIT) {
+      // TODO(P3 후속): 상한을 넘으면 사람에게 카드를 띄운다. 지금은 글에 까닭만 남기고 만들지 않는다.
+      await client.query(
+        `update message set meta = coalesce(meta, '{}'::jsonb) || jsonb_build_object('delegationUpdateSkipped', 'limit')
+          where id = $1`,
+        [row.message_id],
+      );
+      continue;
+    }
+    // 읽지 않은 update 는 (위임자, 위임) 당 하나 — 이 담당이 이 스레드에 쓴 글을 가리키는 앞 행을 지운다.
+    await client.query(
+      `delete from inbox x using message m
+        where x.account_id = $1 and x.reason = 'delegation_update' and x.read_at is null
+          and m.id = x.message_id and m.thread_root_id = $2 and m.author_id = $3 and x.message_id <> $4`,
+      [row.lead_account_id, row.thread_root_id, row.delegate_account_id, row.message_id],
+    );
+    const converted = await client.query(
+      `update inbox set reason = 'delegation_update'
+        where account_id = $1 and message_id = $2 and reason in ('mention', 'delegation_update')`,
+      [row.lead_account_id, row.message_id],
+    );
+    if (!converted.rowCount) {
+      await client.query(
+        `insert into inbox (account_id, message_id, reason) values ($1, $2, 'delegation_update')`,
+        [row.lead_account_id, row.message_id],
+      );
+    }
+    await client.query(
+      `update team_delegation_item set update_count = update_count + 1 where delegation_id = $1 and delegate_account_id = $2`,
+      [row.delegation_id, row.delegate_account_id],
+    );
+    await foldWakesForDelegation(client, {
+      delegationId: row.delegation_id, leadAccountId: row.lead_account_id,
+      threadRootId: row.thread_root_id, messageId: row.message_id,
+    });
+    woke.push(row.lead_account_id);
+  }
+  return woke;
+}
+
+/** 보고된 뒤 6시간 조용하면 `idle`, 만든 지 24시간이면 `max_age` 로 닫는다. 깨우지 않는다. 닫은 의무 수. */
+export async function autoCloseDelegations(client: PoolClient): Promise<number> {
+  const idle = await client.query<{ delegation_id: string }>(
+    `update team_delegation_item
+        set outcome = 'closed', closed_reason = 'idle', update_pending_message_id = null, update_pending_at = null
+      where outcome = 'reported' and coalesce(last_activity_at, closed_at) < now() - make_interval(secs => $1)
+      returning delegation_id`,
+    [DELEGATION_IDLE_SEC],
+  );
+  const aged = await client.query<{ delegation_id: string }>(
+    `update team_delegation_item i
+        set outcome = 'closed', closed_reason = 'max_age', closed_at = coalesce(i.closed_at, now()),
+            update_pending_message_id = null, update_pending_at = null
+       from team_delegation d
+      where d.id = i.delegation_id and (i.outcome is null or i.outcome = 'reported')
+        and d.created_at < now() - make_interval(secs => $1)
+      returning i.delegation_id`,
+    [DELEGATION_MAX_AGE_SEC],
+  );
+  await markSettledQuietly(client, [...idle.rows, ...aged.rows].map((r) => r.delegation_id));
+  return (idle.rowCount ?? 0) + (aged.rowCount ?? 0);
+}
+
+/**
+ * `delegation.close` — 위임자만 닫는다(`closed/delegator_close`). 깨우지 않는다.
+ * `delegationId` 가 없으면 이 스레드에서 호출자가 낸 열린·보고된 의무 전부, `delegateId` 가 있으면 그 담당 것만.
+ */
+export async function closeDelegationByDelegator(
+  client: PoolClient,
+  args: { callerId: string; threadRootId: string; delegationId?: string; delegateId?: string },
+): Promise<number> {
+  const r = await client.query<{ delegation_id: string }>(
+    `update team_delegation_item i
+        set outcome = 'closed', closed_reason = 'delegator_close', closed_at = coalesce(i.closed_at, now()),
+            update_pending_message_id = null, update_pending_at = null
+       from team_delegation d
+      where d.id = i.delegation_id and d.lead_account_id = $1 and d.thread_root_id = $2
+        and ($3::uuid is null or d.id = $3::uuid)
+        and ($4::uuid is null or i.delegate_account_id = $4::uuid)
+        and (i.outcome is null or i.outcome = 'reported')
+      returning i.delegation_id`,
+    [args.callerId, args.threadRootId, args.delegationId ?? null, args.delegateId ?? null],
+  );
+  await markSettledQuietly(client, r.rows.map((x) => x.delegation_id));
+  return r.rowCount ?? 0;
 }

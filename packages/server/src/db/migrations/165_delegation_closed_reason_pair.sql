@@ -4,3 +4,14 @@
 alter table team_delegation_item drop constraint team_delegation_item_closed_reason_pair;
 alter table team_delegation_item add constraint team_delegation_item_closed_reason_pair
   check ((outcome is not distinct from 'closed') = (closed_reason is not null));
+
+-- ## 턴 끝 update 의 자리(P3, 스위치 `HARKROOM_DELEGATION_V2` 뒤)
+-- 담당이 위임 스레드에 글을 쓰면 그 글을 「대기 중 update」로 적어 두고, 그 턴이 끝나면(임대 끝·임대 만료·마지막 글 60초 뒤
+-- 중 먼저) 스위퍼가 위임자에게 `delegation_update` 하나를 만든다. `update_count` 는 위임 하나당 상한(40)을 센다.
+alter table team_delegation_item add column update_pending_message_id uuid references message(id) on delete set null;
+alter table team_delegation_item add column update_pending_at timestamptz;
+alter table team_delegation_item add column update_count integer not null default 0;
+-- 침묵 알림(stalled)은 한 번만.
+alter table team_delegation_item add column stalled_notified_at timestamptz;
+create index team_delegation_item_update_pending_idx on team_delegation_item (update_pending_message_id)
+  where update_pending_message_id is not null;
