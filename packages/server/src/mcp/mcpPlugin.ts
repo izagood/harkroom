@@ -41,6 +41,7 @@ const SUPERSEDE_REFUSAL_MESSAGE: Record<AskSupersedeRefusal, string> = {
 import {
   createDelegation, leadTeamFor, openDelegationTargets, roundsUsed,
   DELEGATION_DEADLINE_DEFAULT_SEC, DELEGATION_DEADLINE_MAX_SEC, DELEGATION_DEADLINE_MIN_SEC,
+  closeDelegationByDelegator, delegationV2Enabled,
 } from '../services/delegations.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction, stampWakeChecked } from '../services/reactions.js';
 import {
@@ -1338,6 +1339,39 @@ function buildMcpServer(
     const r = await releaseGrant(pool, { agentId: account.id, kind, rule, repo, channelId });
     if (!r.ok) return jsonResult({ error: { code: r.code, ...(r.code === 'not_found' ? { reason: r.reason } : {}), message: r.message } });
     return jsonResult({ revoked: true, capability: r.capability, scope: r.scope, grantRemoved: r.grantRemoved, closedTurnLines: r.closedTurnLines });
+  });
+
+  /**
+   * `delegation.close`(위임 재설계 v1, P3) — 위임자가 이 스레드에서 낸 열린·보고된 의무를 닫는다(`closed/delegator_close`).
+   * 아무도 깨우지 않는다. 스위치(`HARKROOM_DELEGATION_V2`)가 꺼진 서버는 이 도구를 싣지 않는다.
+   */
+  if (delegationV2Enabled()) server.registerTool('delegation.close', {
+    description: '내가 이 스레드에서 넘긴 위임을 닫는다(담당 이름을 주면 그 담당 것만). 아무도 깨우지 않는다',
+    inputSchema: {
+      threadRootId: z.string().uuid(),
+      delegationId: z.string().uuid().optional(),
+      delegate: z.string().min(1).max(100).optional(),
+    },
+  }, async ({ threadRootId, delegationId, delegate }) => {
+    const client = await pool.connect();
+    try {
+      let delegateId: string | undefined;
+      if (delegate) {
+        const r = await client.query<{ id: string }>(
+          `select id from account where handle = $1 and deleted_at is null`, [delegate.replace(/^@/, '')]);
+        if (!r.rowCount) return jsonResult({ error: { code: 'not_found', message: 'unknown delegate' } });
+        delegateId = r.rows[0]!.id;
+      }
+      await client.query('begin');
+      const closed = await closeDelegationByDelegator(client, { callerId: account.id, threadRootId, delegationId, delegateId });
+      await client.query('commit');
+      return jsonResult({ closed });
+    } catch (err) {
+      await client.query('rollback').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
   });
 
   server.registerTool('message.fail', {
