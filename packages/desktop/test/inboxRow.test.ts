@@ -122,7 +122,7 @@ describe('줄이 갈린다 — reason 만으로는 못 하던 것', () => {
     const done = inboxRow(entry({ reason: 'delegation_done' }), ME, ko);
     const mention = inboxRow(entry({ reason: 'mention' }), ME, ko);
     expect(handed.label).toBe('넘겨받았다');
-    expect(done.label).toBe('결말이 났다');
+    expect(done.label).toBe('결과가 왔다');
     expect(new Set([handed.label, done.label, mention.label]).size).toBe(3);
     expect(handed.rank).toBe(mention.rank);
     expect(done.rank).toBe(mention.rank);

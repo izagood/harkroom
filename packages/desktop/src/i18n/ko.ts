@@ -2327,10 +2327,34 @@ export const ko = {
   'inbox.label.failure': '막혔다',
   'inbox.label.report': '끝냈다',
   'inbox.label.delegated': '넘겨받았다',
-  'inbox.label.delegationDone': '결말이 났다',
+  // report 가 위임을 닫지 않게 되어(위임 재설계 v1) 「결말」이 아니라 「결과」다 — 닫기는 넘긴 쪽이 한다.
+  'inbox.label.delegationDone': '결과가 왔다',
   'inbox.label.mention': '불렀다',
   'inbox.label.teamMention': '팀을 불렀다',
   'inbox.label.reply': '답글',
+  // 위임 라벨(위임 재설계 v1 P6) — 카드 요약 앞. 실패·멈춤은 「막힘」 묶음으로 간다.
+  'inbox.delegation.update': '진행 소식',
+  'inbox.delegation.reported': '결과가 왔다',
+  'inbox.delegation.failed': '맡긴 일이 막혔다',
+  'inbox.delegation.stalled': '멈췄다 · {hours}시간 조용',
+  'inbox.delegation.updates': { other: '소식 {count}' },
+  // 스레드 머리 아래 「맡긴 일」 칩 줄.
+  'thread.delegations.handedOff': '맡긴 일',
+  'thread.delegations.assignedBy': '맡은 일 · {who}',
+  'thread.delegations.open': '하는 중',
+  'thread.delegations.reported': '결과 옴',
+  'thread.delegations.failed': '막힘',
+  'thread.delegations.closed': '닫힘',
+  'thread.delegations.closedDelegator': '닫힘 · {who}',
+  'thread.delegations.closedSuperseded': '닫힘 · 새로 맡김',
+  'thread.delegations.closedIdle': '닫힘 · 6시간 조용',
+  'thread.delegations.closedMaxAge': '닫힘 · 24시간 지남',
+  'thread.delegations.step': '{step} 단계',
+  'thread.delegations.watching': '#{number} CI 감시 중',
+  'thread.delegations.watchingShort': '#{number} CI',
+  'thread.delegations.more': '+{count} · 닫힘 {closed}',
+  'thread.delegations.moreOpen': '+{count}',
+  'thread.delegations.less': '접기',
 
   // ---------------------------------------------------------------------------
   // channel — **원래 화면 문구를 그대로 옮겼다.** 단정을 바꾼 곳은 없다.
