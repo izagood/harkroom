@@ -1323,11 +1323,13 @@ export class Controller {
       team_delegated: 'handed you work in',
       delegation_done: 'got results in',
       delegation_followup: 'got an update in',
+      delegation_update: 'got an update in',
     };
     const wanted: Record<InboxEntry['reason'], boolean> = {
       mention: prefs.mention, thread_reply: prefs.threadReply, dm: prefs.dm,
       wake: false, ask_answered: false, ask_closed: false, team_mention: false,
       team_delegated: false, delegation_done: false, delegation_followup: false,
+      delegation_update: false,
     };
 
     for (const e of unread) {

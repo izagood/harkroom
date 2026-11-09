@@ -2020,6 +2020,10 @@ export interface InboxThreadState {
   updatedAt: string;
 }
 
+/** `InboxEntry.reason` 의 값들. 서버 마이그레이션 `inbox_reason_check` 와 같은 목록이다. */
+export type InboxReason = 'mention' | 'thread_reply' | 'dm' | 'wake' | 'ask_answered' | 'ask_closed'
+  | 'team_mention' | 'team_delegated' | 'delegation_done' | 'delegation_followup' | 'delegation_update';
+
 export interface InboxEntry {
   id: number;
   messageId: string;
@@ -2062,9 +2066,12 @@ export interface InboxEntry {
    *
    * `'delegation_followup'` 은 **닫힌 위임의 팀원이 결과를 더 올렸다**(163). 가리키는 글이 그 보고이고, 넘긴 쪽의 턴은 그것을
    * 할 일이 아니라 팀원이 보낸 결과로 읽는다.
+   *
+   * `'delegation_update'` 는 **넘긴 일의 담당이 그 스레드에 글을 쓴 턴이 끝났다**(위임 재설계 v1, 164). 넘긴 쪽에게 간다.
+   * 가리키는 글이 그 턴의 마지막 글이고, 넘긴 쪽의 턴은 그것을 할 일이 아니라 담당의 진행·결과로 읽는다. 스위치
+   * `HARKROOM_DELEGATION_V2` 가 켜진 서버만 만든다 — 그 전에는 어느 쪽도 이 값을 보지 않는다.
    */
-  reason: 'mention' | 'thread_reply' | 'dm' | 'wake' | 'ask_answered' | 'ask_closed'
-    | 'team_mention' | 'team_delegated' | 'delegation_done' | 'delegation_followup';
+  reason: InboxReason;
   /**
    * 이 글이 띄울 턴의 원인 키. 러너는 값이 같은 글만 한 턴으로 묶는다. 옛 서버는 싣지 않는다 — 그때는 사람 글만 묶는다.
    */
@@ -2141,6 +2148,72 @@ export interface InboxEntry {
    * 옛 서버는 싣지 않는다(그러면 지금처럼 앵커만 안다).
    */
   startedIn?: WakeReportTo;
+  /**
+   * 이 스레드에 걸린 **위임 요약**(위임 재설계 v1, 164). 사유와 상관없이 그 스레드에 열린(또는 결과가 온) 위임이 있으면 실린다 —
+   * 러너는 멘션·깨움·사람 부름 어느 턴에서든 이것으로 위임 블록을 그린다. 담당이면 넘긴 쪽·처음 지시·상태·감시, 넘긴
+   * 쪽이면 담당별 상태·마지막 글·감시다. 스위치 `HARKROOM_DELEGATION_V2` 가 꺼진 서버·옛 서버는 싣지 않는다(지금처럼
+   * 위임받은 턴에만 `delegatedBy` 가 실린다).
+   */
+  delegations?: InboxDelegationSummary[];
+}
+
+/**
+ * 위임 의무 하나(담당 한 명)의 상태(164). `open` 은 아직 결과 없음, `reported` 는 담당이 `report` 를 썼으나 닫히지 않음,
+ * `failed`·`closed` 는 끝. 옛 결말(`done`·`timeout`·`canceled`)도 그대로 올 수 있다 — 스위치가 꺼진 동안 닫힌 위임이다.
+ */
+export type DelegationItemState = 'open' | 'reported' | 'failed' | 'closed' | 'done' | 'timeout' | 'canceled';
+
+/** `closed` 의 까닭(164). 위임자가 닫았다·같은 담당에게 새로 넘겼다·결과 뒤 6시간 활동 없음·최대 수명 24시간. */
+export type DelegationClosedReason = 'delegator_close' | 'superseded' | 'idle' | 'max_age';
+
+/** 위임이 어떻게 생겼나(164). `delegate` 는 `message.delegate`, `mention` 은 에이전트가 에이전트를 맨 앞 멘션으로 부른 암묵 위임. */
+export type DelegationKind = 'delegate' | 'mention';
+
+/** PR 감시가 끝나는 때(164). `checks` 는 체크가 다 끝나면, `merged` 는 머지되거나 닫히면. */
+export type PrWatchUntil = 'checks' | 'merged';
+
+/** 위임에 붙은 PR 감시 한 줄 — 위임 블록의 「#123 CI 감시 중」. */
+export interface DelegationPrWatch {
+  repo: string;
+  number: number;
+  /** 감시하는 head 커밋(40자). */
+  head: string;
+  until: PrWatchUntil;
+  /** 감시를 건 계정의 handle — 위임자 블록이 「담당이 감시 중」과 「내가 감시 중」을 가른다. */
+  byHandle: string;
+}
+
+/** `InboxDelegationSummary.items` 한 줄 — 담당 한 명. */
+export interface InboxDelegationItemSummary {
+  handle: string;
+  state: DelegationItemState;
+  /** `state === 'closed'` 일 때만 있다. */
+  closedReason?: DelegationClosedReason;
+  /** 담당이 이 스레드에 쓴 마지막 글(`harkroom://message/<id>` 로 가리킨다). 아직 없으면 null. */
+  lastMessageId: string | null;
+  /** 담당이 마지막으로 움직인 때(ISO). 아직 없으면 null. */
+  lastActivityAt: string | null;
+}
+
+/**
+ * 스레드 하나에 걸린 위임 하나의 요약(164). 서버가 inbox 항목에 실어 준다 — 러너가 따로 조회하면 서버의 판정과 갈라진다
+ * (`team`·`delegation` 이 서버에서 오는 것과 같은 이유).
+ */
+export interface InboxDelegationSummary {
+  id: string;
+  /** 이 턴의 계정이 이 위임에서 어느 쪽인가. `delegate` 면 담당, `delegator` 면 넘긴 쪽. */
+  role: 'delegate' | 'delegator';
+  kind: DelegationKind;
+  /** 넘긴 쪽의 handle. */
+  delegatorHandle: string;
+  /** 처음 지시(위임을 연 글)의 id. */
+  messageId: string;
+  /** 계획판 단계에서 불렀으면 그 단계 id(예: `s7`). */
+  planStepId: string | null;
+  /** 담당 쪽이면 자기 한 줄, 넘긴 쪽이면 담당 전원. */
+  items: InboxDelegationItemSummary[];
+  /** 이 위임에 걸린 열린 PR 감시. 감시가 있으면 그 위임은 외부 대기다. */
+  prWatches: DelegationPrWatch[];
 }
 
 /** 깨움 메시지 `meta.wake.reportTo` — 깨어난 턴이 결과를 보고하기로 약속한 스레드(2026-10-06). */
