@@ -7,7 +7,7 @@ import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
 import { listInbox } from '../src/services/messages.js';
-import { autoCloseDelegations, flushDelegationUpdates, DELEGATION_UPDATE_LIMIT } from '../src/services/delegations.js';
+import { createDelegationDeadlineSweeper, autoCloseDelegations, flushDelegationUpdates, DELEGATION_UPDATE_LIMIT } from '../src/services/delegations.js';
 
 /** 위임 재설계 v1(P3): 스위치를 켠 서버의 수명(reported·failed·closed)과 턴 끝 update. */
 let app: FastifyInstance; let pool: Pool; let stop: () => Promise<void>;
@@ -190,5 +190,20 @@ describe('P3 위임 수명', () => {
     const newPoll = await call(leadPat, 'inbox.poll', { inboxReasons: ['delegation_update'] });
     expect((newPoll.entries as { messageId: string; reason: string }[]).find((e) => e.messageId === p)?.reason).toBe('delegation_update');
     void dlg;
+  });
+
+  it('침묵은 닫지 않고 위임자에게 한 번만 알린다(stalled)', async () => {
+    const rootId = await openThread();
+    const dlg = await delegate(rootId);
+    await markRead();
+    const msg = (await pool.query(`select message_id from team_delegation where id = $1`, [dlg])).rows[0].message_id as string;
+    await pool.query(`update team_delegation set deadline_at = now() - interval '1 minute' where id = $1`, [dlg]);
+    await createDelegationDeadlineSweeper(pool).sweep();
+    expect((await item(dlg)).outcome).toBeNull();
+    expect(await leadInbox()).toEqual([{ reason: 'delegation_update', message_id: msg }]);
+    await markRead();
+    await pool.query(`update team_delegation set deadline_at = now() - interval '1 minute' where id = $1`, [dlg]);
+    await createDelegationDeadlineSweeper(pool).sweep();
+    expect(await leadInbox()).toEqual([]);
   });
 });

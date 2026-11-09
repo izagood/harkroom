@@ -758,6 +758,49 @@ export function createDelegationDeadlineSweeper(pool: Pool, opts: {
         }
       }
 
+      /**
+       * v1(P3): 침묵은 닫지 않는다 — 위임자에게 한 번 알리고(`stalled`) 열어 둔다. 닫힘은 위임자·idle·max_age 가 맡는다.
+       * 열린 PR 감시가 붙은 위임은 「외부 대기」라 알리지도 않는다.
+       * TODO(P3 후속): 전용 사유(`stalled`)가 shared 에 생기면 그것으로 바꾼다. 지금은 위임 글을 가리키는 `delegation_update` 다.
+       */
+      if (delegationV2Enabled()) {
+        const watched = await client.query(
+          `select 1 from pr_watch_subscriber s join pr_watch w on w.id = s.watch_id
+            where s.delegation_id = $1 and w.state = 'open' limit 1`,
+          [row.id],
+        );
+        const marked = watched.rowCount ? { rowCount: 0 } : await client.query(
+          `update team_delegation_item set stalled_notified_at = now()
+            where delegation_id = $1 and outcome is null and stalled_notified_at is null`,
+          [row.id],
+        );
+        let lead: string | null = null;
+        if (marked.rowCount) {
+          const d = await client.query<{ lead_account_id: string; message_id: string }>(
+            `select lead_account_id, message_id from team_delegation where id = $1`, [row.id]);
+          const r = d.rows[0]!;
+          const exists = await client.query(
+            `select 1 from inbox where account_id = $1 and message_id = $2 and reason = 'delegation_update' and read_at is null`,
+            [r.lead_account_id, r.message_id]);
+          if (!exists.rowCount) {
+            await client.query(
+              `insert into inbox (account_id, message_id, reason) values ($1, $2, 'delegation_update')`,
+              [r.lead_account_id, r.message_id]);
+            lead = r.lead_account_id;
+          }
+        }
+        // 다시 잡히지 않게 기한을 뒤로 민다(감시 중이면 침묵 간격만큼, 알렸으면 최대 수명까지 — max_age 가 닫는다).
+        await client.query(
+          `update team_delegation set deadline_at = greatest(deadline_at,
+             case when $2 then now() + ($3::int * interval '1 second') else created_at + ($4::int * interval '1 second') end)
+            where id = $1`,
+          [row.id, !!watched.rowCount, DELEGATION_SILENCE_SEC, DELEGATION_MAX_AGE_SEC],
+        );
+        await client.query('commit');
+        if (lead) opts.onWake?.(lead);
+        return 'done';
+      }
+
       // 남은 미결을 **무응답**으로 닫는다. 이미 닫힌 것(답·실패)은 그대로 둔다 —
       // 결말을 뒤늦게 덮으면 팀장이 받는 목록이 사실과 달라진다.
       await client.query(
