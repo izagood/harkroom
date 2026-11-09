@@ -2008,6 +2008,57 @@ export interface ChannelDoc {
 }
 
 /**
+ * 인박스 「오늘」(C안 P1, 마이그레이션 167). `GET /inbox/today/open` 의 한 줄 — 내가 손대야 하는 것.
+ * `staleHint` 는 「대체됐을 수 있음」의 근거일 뿐 확정 판정이 아니다(C3): 스레드가 이미 끝났거나(`thread_done`),
+ * 같은 작성자가 같은 스레드에 더 새 열린 카드를 세웠다(`newer_card`).
+ */
+export interface InboxTodayOpenItem {
+  kind: 'ask' | 'permission' | 'blocked';
+  /** ask: 카드 · permission: 권한 카드(없으면 null) · blocked: 실패 글 또는 막힌 스레드 머리 */
+  messageId: string | null;
+  /** permission 일 때만 — 승인·거절 REST 가 쓰는 요청 id */
+  permissionRequestId?: string;
+  threadRootId: string;
+  channelId: string;
+  authorId: string | null;
+  /** ask prompt(없으면 본문 앞부분) · 권한 규칙 · 실패 이유 */
+  question: string;
+  /** permission 의 이유 */
+  reason?: string | null;
+  options?: { id: string; label: string }[];
+  createdAt: string;
+  isNew: boolean;
+  /** UTC 달력 날짜 차(정수). 버전 태그가 UTC 날짜를 품어 날이 바뀌면 태그도 바뀐다. */
+  ageDays: number;
+  staleHint: 'thread_done' | 'newer_card' | null;
+}
+export interface InboxTodayOpen {
+  items: InboxTodayOpenItem[];
+  truncated: boolean;
+  counts: { running: number; waiting: number };
+  seenAt: string | null;
+}
+/** `GET /inbox/today/done` 의 한 줄 — 끝난 것. `report` 는 inbox 의 보고·위임 결말, `thread_done` 은 내가 불린 스레드가 ✅ 가 된 것. */
+export interface InboxTodayDoneItem {
+  kind: 'report' | 'thread_done';
+  messageId: string;
+  threadRootId: string;
+  channelId: string;
+  authorId: string | null;
+  body: string;
+  at: string;
+}
+export interface InboxTodayDone {
+  items: InboxTodayDoneItem[];
+  /** 다음 쪽이 있으면 그 `since`. 없으면 null. */
+  nextCursor: string | null;
+  /** 이번 응답 끝의 커서(빈 응답이면 받은 since). 화면은 다 그린 뒤 이 `at` 으로 seen 을 올린다. */
+  cursor: string;
+  /** `cursor` 가 가리키는 시각 — `PUT /inbox/today/seen {upTo}` 에 그대로 쓴다. */
+  cursorAt: string;
+}
+
+/**
  * 스레드 하나에 대한 **나만의** 처리 상태(Inbox 보드 2/2, 마이그레이션 089). 완료는 보드에서
  * 내리고(끝남 맨 아래 "치운 것"), 나중에는 `until` 까지 접는다. 그 뒤 새 말이 오면 카드는 다시
  * 선다 — 그 판정은 화면이 `updatedAt` 과 항목 시각을 견주어 한다.
