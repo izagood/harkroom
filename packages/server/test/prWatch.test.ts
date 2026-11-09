@@ -5,7 +5,7 @@ import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, createMember, registerOperator } from './helpers/fixtures.js';
 import { createDelegationDeadlineSweeper } from '../src/services/delegations.js';
-import { autoWatchOnQueued, createWatch, delegationHasOpenWatch, reportWatchStatus } from '../src/services/prWatch.js';
+import { autoWatchOnQueued, createWatch, delegationHasOpenWatch, reportWatchStatus, PR_WATCH_OPEN_PER_ACCOUNT } from '../src/services/prWatch.js';
 
 // PR 감시(위임 재설계 P5).
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
@@ -108,6 +108,46 @@ describe('pr watch', () => {
     const wakes = (await pool.query(`select distinct account_id from inbox where reason = 'wake'`)).rows.map((r) => r.account_id).sort();
     expect(wakes).toEqual([agentId, agent2].sort());
     expect(wakes).not.toContain(alice.accountId);
+  });
+
+  it('채널에서 빠졌거나 grant 를 잃은 구독자에게는 결과 줄을 쓰지도 깨우지도 않는다', async () => {
+    await grant(agentId); await grant(agent2);
+    const a = await watch(agentId); await watch(agent2);
+    if (!a.ok) throw new Error('watch');
+    await pool.query(`delete from channel_member where channel_id = $1 and account_id = $2`, [ch, agent2]);
+    try {
+      const r = await reportWatchStatus(pool, { agentId, watchId: a.watchId, status: { state: 'OPEN', headRefOid: HEAD, checks: [{ name: 'ci', conclusion: 'IN_PROGRESS' }] } });
+      expect(r).toMatchObject({ ok: true, changed: true, woke: [agentId] });
+      const authors = (await pool.query(`select distinct author_id from message where thread_root_id = $1 and meta->'prWatch'->>'watchId' = $2`, [root, a.watchId])).rows.map((x) => x.author_id);
+      expect(authors).toEqual([agentId]);
+      // 채널에 돌아와도 grant 를 잃었으면 마찬가지다.
+      await pool.query(`insert into channel_member (channel_id, account_id) values ($1, $2)`, [ch, agent2]);
+      await pool.query(`delete from account_grant where account_id = $1`, [agent2]);
+      const r2 = await reportWatchStatus(pool, { agentId, watchId: a.watchId, status: { state: 'OPEN', headRefOid: HEAD, checks: [{ name: 'ci', conclusion: 'SUCCESS' }] } });
+      expect(r2).toMatchObject({ ok: true, state: 'done', woke: [agentId] });
+    } finally {
+      await pool.query(`insert into channel_member (channel_id, account_id) values ($1, $2) on conflict do nothing`, [ch, agent2]);
+    }
+  });
+
+  it(`계정당 열린 감시는 ${PR_WATCH_OPEN_PER_ACCOUNT}개까지 — 넘으면 too_many, 이미 건 것에 다시 붙는 것은 된다`, async () => {
+    await grant(agentId);
+    for (let n = 1; n <= PR_WATCH_OPEN_PER_ACCOUNT; n++) expect((await watch(agentId, { number: n })).ok).toBe(true);
+    expect(await watch(agentId, { number: PR_WATCH_OPEN_PER_ACCOUNT + 1 })).toEqual({ ok: false, code: 'too_many' });
+    expect((await watch(agentId, { number: 1 })).ok).toBe(true);
+    // 끝난 감시는 세지 않는다.
+    await pool.query(`update pr_watch set state = 'done', ended_at = now() where number = 1`);
+    expect((await watch(agentId, { number: PR_WATCH_OPEN_PER_ACCOUNT + 1 })).ok).toBe(true);
+  });
+
+  it('status 라우트는 GitHub 이 정한 상태·결론만 받는다', async () => {
+    await grant(agentId);
+    const a = await watch(agentId); if (!a.ok) throw new Error('watch');
+    const post = (payload: unknown) => app.inject({ method: 'POST', url: `/agent/pr-watches/${a.watchId}/status`,
+      headers: { ...auth(op.token), 'x-harkroom-agent': agentId }, payload: payload as object });
+    expect((await post({ state: 'OPEN @alice', headRefOid: HEAD, checks: [] })).statusCode).toBe(400);
+    expect((await post({ state: 'OPEN', headRefOid: HEAD, checks: [{ name: 'ci', conclusion: 'see @alice' }] })).statusCode).toBe(400);
+    expect((await post({ state: 'OPEN', headRefOid: HEAD, checks: [{ name: 'ci', conclusion: 'IN_PROGRESS' }, { name: 'ctx', conclusion: '' }] })).statusCode).toBe(200);
   });
 
   it('head 가 밀리면 gone', async () => {

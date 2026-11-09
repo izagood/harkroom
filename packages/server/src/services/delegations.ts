@@ -498,6 +498,14 @@ async function notifyIfSettled(
 /** 위임을 만든 뒤 이만큼 안에서만 후속 보고가 넘긴 쪽을 깨운다. */
 export const DELEGATION_FOLLOWUP_WINDOW_SEC = 6 * 60 * 60;
 /** 위임 하나가 후속으로 깨우는 횟수 상한. */
+/**
+ * 이 위임에 열린 PR 감시가 붙어 있는가(`$1` = 위임 id). 있으면 「외부 대기」라 기한 스위퍼가 닫지도 멈춤을 알리지도 않는다.
+ * 기한 스위퍼와 `prWatch.ts::delegationHasOpenWatch` 가 같은 술어를 쓰도록 여기 한 곳에 둔다.
+ */
+export const OPEN_WATCH_FOR_DELEGATION_SQL =
+  `select 1 from pr_watch_subscriber s join pr_watch w on w.id = s.watch_id
+    where s.delegation_id = $1 and w.state = 'open' and w.expires_at > now() limit 1`;
+
 export const DELEGATION_FOLLOWUP_LIMIT = 3;
 
 /**
@@ -724,11 +732,9 @@ export function createDelegationDeadlineSweeper(pool: Pool, opts: {
       }
 
       // P5: 이 위임에 열린 PR 감시가 붙어 있으면 「외부 대기」다 — 닫지 않고 침묵 시계를 민다(스위치가 켜졌을 때만). 감시는 최대 6시간이라
-      // 끝나면(done·gone·expired) 다음 스윕이 평소대로 판정한다. `prWatch.ts::delegationHasOpenWatch` 와 같은 술어다(순환 import 를 피해 여기 적는다).
+      // 끝나면(done·gone·expired) 다음 스윕이 평소대로 판정한다. 술어는 `OPEN_WATCH_FOR_DELEGATION_SQL` 하나다(`prWatch.ts::delegationHasOpenWatch` 와 같이 쓴다).
       if (delegationV2Enabled()) {
-        const watched = await client.query(
-          `select 1 from pr_watch_subscriber s join pr_watch w on w.id = s.watch_id
-            where s.delegation_id = $1 and w.state = 'open' and w.expires_at > now() limit 1`, [row.id]);
+        const watched = await client.query(OPEN_WATCH_FOR_DELEGATION_SQL, [row.id]);
         if (watched.rowCount) {
           await client.query(
             `update team_delegation set deadline_at = greatest(deadline_at, now() + ($2::int * interval '1 second')) where id = $1`,
@@ -775,16 +781,12 @@ export function createDelegationDeadlineSweeper(pool: Pool, opts: {
 
       /**
        * v1(P3): 침묵은 닫지 않는다 — 위임자에게 한 번 알리고(`stalled`) 열어 둔다. 닫힘은 위임자·idle·max_age 가 맡는다.
-       * 열린 PR 감시가 붙은 위임은 「외부 대기」라 알리지도 않는다.
+       * 열린 PR 감시가 붙은 위임은 「외부 대기」라 위에서 먼저 빠진다(알리지도 않는다).
        * TODO(P3 후속): 전용 사유(`stalled`)가 shared 에 생기면 그것으로 바꾼다. 지금은 위임 글을 가리키는 `delegation_update` 다.
        */
       if (delegationV2Enabled()) {
-        const watched = await client.query(
-          `select 1 from pr_watch_subscriber s join pr_watch w on w.id = s.watch_id
-            where s.delegation_id = $1 and w.state = 'open' limit 1`,
-          [row.id],
-        );
-        const marked = watched.rowCount ? { rowCount: 0 } : await client.query(
+        // 열린 감시가 붙은 위임은 위(P5 「외부 대기」)에서 이미 돌아갔다 — 여기서 다시 보지 않는다.
+        const marked = await client.query(
           `update team_delegation_item set stalled_notified_at = now()
             where delegation_id = $1 and outcome is null and stalled_notified_at is null`,
           [row.id],
@@ -804,12 +806,11 @@ export function createDelegationDeadlineSweeper(pool: Pool, opts: {
             lead = r.lead_account_id;
           }
         }
-        // 다시 잡히지 않게 기한을 뒤로 민다(감시 중이면 침묵 간격만큼, 알렸으면 최대 수명까지 — max_age 가 닫는다).
+        // 다시 잡히지 않게 기한을 최대 수명까지 민다 — max_age 가 닫는다.
         await client.query(
-          `update team_delegation set deadline_at = greatest(deadline_at,
-             case when $2 then now() + ($3::int * interval '1 second') else created_at + ($4::int * interval '1 second') end)
+          `update team_delegation set deadline_at = greatest(deadline_at, created_at + ($2::int * interval '1 second'))
             where id = $1`,
-          [row.id, !!watched.rowCount, DELEGATION_SILENCE_SEC, DELEGATION_MAX_AGE_SEC],
+          [row.id, DELEGATION_MAX_AGE_SEC],
         );
         await client.query('commit');
         if (lead) opts.onWake?.(lead);

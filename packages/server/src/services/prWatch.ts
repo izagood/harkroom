@@ -3,7 +3,7 @@ import { repoScope } from '@harkroom/shared';
 import { mergeGrantFor } from '../auth/permissions.js';
 import { recordAudit } from '../audit.js';
 import { postMessage } from './messages.js';
-import { delegationV2Enabled } from './delegations.js';
+import { delegationV2Enabled, OPEN_WATCH_FOR_DELEGATION_SQL } from './delegations.js';
 
 /**
  * PR 감시(위임 재설계 P5, 164 의 `pr_watch`·`pr_watch_subscriber`). 서버가 상태를 쥔다 — 감시 하나 = (repo, number, head, until),
@@ -27,10 +27,22 @@ export type PrWatchSource = 'manual' | 'merge_queue';
 const REPO_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}\/[A-Za-z0-9._-]{1,100}$/;
 const SHA_RE = /^[0-9a-f]{40}$/;
 
+/** 오퍼레이터가 보내는 PR 상태(gh `state`). 시스템 줄 본문에 그대로 실리므로 이 셋만 받는다(security c). */
+export const PR_WATCH_STATES = ['OPEN', 'CLOSED', 'MERGED'] as const;
+/**
+ * 오퍼레이터가 보내는 체크 결론(shared `pickPrStatus` — CheckRun conclusion·status, StatusContext state, 모르면 '').
+ * GitHub 이 정한 값만 받는다 — 본문에는 개수만 싣지만 meta 에 실리므로 남이 정한 글이 들어오지 않게 한다.
+ */
+export const PR_WATCH_CONCLUSIONS = ['', 'SUCCESS', 'FAILURE', 'NEUTRAL', 'CANCELLED', 'SKIPPED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STALE', 'ERROR',
+  'STARTUP_FAILURE', 'QUEUED', 'IN_PROGRESS', 'COMPLETED', 'WAITING', 'REQUESTED', 'PENDING', 'EXPECTED'] as const;
+
 /** 끝난 체크의 결론. 이 밖(IN_PROGRESS·QUEUED·PENDING·''…)은 아직 도는 중이다. */
 const CONCLUDED = new Set(['SUCCESS', 'FAILURE', 'NEUTRAL', 'CANCELLED', 'SKIPPED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STALE', 'ERROR', 'STARTUP_FAILURE']);
 
-export type CreateWatchDenial = 'disabled' | 'bad_request' | 'not_granted' | 'forbidden' | 'delegation_not_found';
+export type CreateWatchDenial = 'disabled' | 'bad_request' | 'not_granted' | 'forbidden' | 'delegation_not_found' | 'too_many';
+
+/** 계정당 열린 감시 상한. 폴러가 에이전트당 차례로 gh 를 부르므로 한 계정이 감시를 끝없이 늘려 폴링을 밀어내지 못하게 한다. */
+export const PR_WATCH_OPEN_PER_ACCOUNT = 20;
 export type CreateWatchResult =
   | { ok: true; watchId: string; created: boolean; expiresAt: string }
   | { ok: false; code: CreateWatchDenial };
@@ -77,6 +89,20 @@ export async function createWatch(pool: Pool, args: {
   const client = await pool.connect();
   try {
     await client.query('begin');
+    // 상한(security b): 이 계정이 구독한 열린 감시 수. 같은 키에 다시 붙는 것(이미 구독 중)은 새로 세지 않는다.
+    // 같은 계정의 동시 생성이 상한을 함께 넘지 않게 계정 단위 advisory lock 을 잡는다.
+    await client.query(`select pg_advisory_xact_lock(hashtext('pr_watch_open:' || $1::text))`, [args.accountId]);
+    const counted = await client.query<{ n: number; already: boolean }>(
+      `select count(distinct w.id)::int as n,
+              bool_or(w.repo = $2 and w.number = $3 and w.head = $4 and w.until = $5) as already
+         from pr_watch_subscriber s join pr_watch w on w.id = s.watch_id
+        where s.account_id = $1 and w.state = 'open' and w.expires_at > now()`,
+      [args.accountId, repo, args.number, args.head, args.until]);
+    const c = counted.rows[0]!;
+    if (!c.already && c.n >= PR_WATCH_OPEN_PER_ACCOUNT) {
+      await client.query('rollback');
+      return { ok: false, code: 'too_many' };
+    }
     const ins = await client.query<{ id: string; expires_at: Date; created: boolean }>(
       `insert into pr_watch (repo, number, head, until, expires_at)
        values ($1, $2, $3, $4, now() + make_interval(secs => $5))
@@ -184,6 +210,8 @@ export async function reportWatchStatus(pool: Pool, args: { agentId: string; wat
   const body = `👀 ${w.repo}#${w.number} ${sum.state} · 체크 ${done}/${sum.checks.length} 끝 · 실패 ${failing}${tail}`;
   const woke: string[] = [];
   for (const s of subs) {
+    // security a: 감시를 건 뒤 채널에서 빠졌거나 grant 를 잃은 구독자에게는 쓰지도 깨우지도 않는다(그 계정 이름으로 줄이 서므로).
+    if (!(await subscriberStillEntitled(pool, s.account_id, s.channel_id, w.repo))) continue;
     const posted = await postMessage(pool, {
       channelId: s.channel_id, threadRootId: s.thread_root_id, authorId: s.account_id, body, kind: 'system',
       meta: { prWatch: { watchId: w.id, repo: w.repo, number: w.number, head: w.head, until: w.until, state: end ?? 'open', status: sum } },
@@ -195,11 +223,16 @@ export async function reportWatchStatus(pool: Pool, args: { agentId: string; wat
   return { ok: true, changed, state: end ?? 'open', woke };
 }
 
+/** 구독자가 지금도 그 채널의 멤버이고 그 저장소의 머지 grant 를 쥐는가 — 결과 줄을 쓰기 직전에 본다. */
+async function subscriberStillEntitled(pool: Pool, accountId: string, channelId: string, repo: string): Promise<boolean> {
+  const member = await pool.query(`select 1 from channel_member where channel_id = $1 and account_id = $2`, [channelId, accountId]);
+  if (!member.rowCount) return false;
+  return holdsPrGrant(pool, accountId, repo, channelId);
+}
+
 /** 이 위임에 열린 감시가 붙어 있는가 — 있으면 「외부 대기」라 침묵 스위퍼가 건드리지 않는다. */
 export async function delegationHasOpenWatch(pool: Pool, delegationId: string): Promise<boolean> {
   if (!delegationV2Enabled()) return false;
-  const r = await pool.query(
-    `select 1 from pr_watch_subscriber s join pr_watch w on w.id = s.watch_id
-      where s.delegation_id = $1 and w.state = 'open' and w.expires_at > now() limit 1`, [delegationId]);
+  const r = await pool.query(OPEN_WATCH_FOR_DELEGATION_SQL, [delegationId]);
   return !!r.rowCount;
 }
