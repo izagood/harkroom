@@ -181,6 +181,7 @@ export const CATALOG_ELSEWHERE: Readonly<Record<string, string>> = {
   'attachment.fetch': '러너 턴 프롬프트의 첨부 안내(첨부가 있는 턴에만, attachmentHowTo)',
   'agent.modelOptions': '러너 「다른 에이전트를 부를 때 agentModels」 문단',
   'message.delegate': '러너 「agentModels」 문단·팀 블록(teamSection)',
+  'delegation.close': '러너 위임 블록(delegationsBlock — 넘긴 쪽 줄, 위임 재설계 v1). 스위치 HARKROOM_DELEGATION_V2 가 켜진 서버만 등록한다',
   'permission.request': '러너 권한 요청 절(permissionSection, 권한이 있을 때만)',
   'permission.revoke': '러너 권한 요청 절(permissionSection)',
   'grant.delegate': '러너 외부 API 절(apiSection, 넘길 수 있는 연결이 있을 때만)',
