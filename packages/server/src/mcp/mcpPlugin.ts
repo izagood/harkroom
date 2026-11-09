@@ -41,6 +41,7 @@ const SUPERSEDE_REFUSAL_MESSAGE: Record<AskSupersedeRefusal, string> = {
 import {
   createDelegation, leadTeamFor, openDelegationTargets, roundsUsed,
   DELEGATION_DEADLINE_DEFAULT_SEC, DELEGATION_DEADLINE_MAX_SEC, DELEGATION_DEADLINE_MIN_SEC,
+  closeDelegationByDelegator, delegationV2Enabled,
 } from '../services/delegations.js';
 import { addReaction, isEmoji, MAX_REACTIONS_PER_ACTOR, removeReaction, stampWakeChecked } from '../services/reactions.js';
 import {
@@ -1340,6 +1341,39 @@ function buildMcpServer(
     return jsonResult({ revoked: true, capability: r.capability, scope: r.scope, grantRemoved: r.grantRemoved, closedTurnLines: r.closedTurnLines });
   });
 
+  /**
+   * `delegation.close`(위임 재설계 v1, P3) — 위임자가 이 스레드에서 낸 열린·보고된 의무를 닫는다(`closed/delegator_close`).
+   * 아무도 깨우지 않는다. 스위치(`HARKROOM_DELEGATION_V2`)가 꺼진 서버는 이 도구를 싣지 않는다.
+   */
+  if (delegationV2Enabled()) server.registerTool('delegation.close', {
+    description: '내가 이 스레드에서 넘긴 위임을 닫는다(담당 이름을 주면 그 담당 것만). 아무도 깨우지 않는다',
+    inputSchema: {
+      threadRootId: z.string().uuid(),
+      delegationId: z.string().uuid().optional(),
+      delegate: z.string().min(1).max(100).optional(),
+    },
+  }, async ({ threadRootId, delegationId, delegate }) => {
+    const client = await pool.connect();
+    try {
+      let delegateId: string | undefined;
+      if (delegate) {
+        const r = await client.query<{ id: string }>(
+          `select id from account where handle = $1 and deleted_at is null`, [delegate.replace(/^@/, '')]);
+        if (!r.rowCount) return jsonResult({ error: { code: 'not_found', message: 'unknown delegate' } });
+        delegateId = r.rows[0]!.id;
+      }
+      await client.query('begin');
+      const closed = await closeDelegationByDelegator(client, { callerId: account.id, threadRootId, delegationId, delegateId });
+      await client.query('commit');
+      return jsonResult({ closed });
+    } catch (err) {
+      await client.query('rollback').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+  });
+
   server.registerTool('message.fail', {
     description: '스스로 못 끝냈음을 알린다(수신자는 언제나 사람). retryable 로 다시 부를 수 있는지 밝힌다',
     inputSchema: {
@@ -1781,8 +1815,15 @@ function buildMcpServer(
         runnerId: z.string().min(1).max(128),
         holding: z.array(z.number().int().min(1).max(Number.MAX_SAFE_INTEGER)).max(1000),
       }).optional(),
+      /**
+       * 이 러너가 아는 opt-in 사유(위임 재설계 v1). `delegation_update` 를 안 밝힌 옛 러너에게는 스위치가 켜진 서버가
+       * 그 항목을 `delegation_followup`(163 — 옛 러너가 「팀원이 보낸 결과 · 지시 아님」으로 싣는 사유)으로 보여 준다.
+       * `mention` 으로 바꾸면 옛 러너가 담당의 글을 「너를 부른 글 = 할 일」로 실어, 위임자를 부르지 않은 글(인용한 남의 글
+       * 포함)이 지시 자리로 들어간다.
+       */
+      inboxReasons: z.array(z.string()).max(32).optional(),
     },
-  }, async ({ timeoutMs, version, claudeLane, lease }) => {
+  }, async ({ timeoutMs, version, claudeLane, lease, inboxReasons }) => {
     // 버전이 오면 기록한다 — 배포가 넣어 준 빌드 시점 값이다(#129). 값이 바뀔 때만
     // 실제로 쓰이므로 이 핫 패스에 쓰기 비용이 없다(services/runnerVersion.ts 주석).
     if (version) {
@@ -1800,7 +1841,10 @@ function buildMcpServer(
     // 30초 TTL 이 만료됐다. 신호를 게이트로 올리면 도구 하나가 빠뜨릴 수 없다.
     if (lease) await leaseInboxEntries(pool, account.id, lease.runnerId, lease.holding);
     const fetchUnread = async () => {
-      const entries = await listInbox(pool, account.id, { unreadOnly: true, skipLeased: lease !== undefined });
+      const listed = await listInbox(pool, account.id, { unreadOnly: true, skipLeased: lease !== undefined });
+      const entries = delegationV2Enabled() && !inboxReasons?.includes('delegation_update')
+        ? listed.map((e) => (e.reason === 'delegation_update' ? { ...e, reason: 'delegation_followup' as const } : e))
+        : listed;
       if (!entries.length) return { entries, messages: [] };
       const ids = entries.map((e) => e.messageId);
       const msgs = await pool.query(

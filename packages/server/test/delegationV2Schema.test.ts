@@ -57,6 +57,15 @@ describe('164 위임 재설계 스키마', () => {
     await expect(pool.query(`update team_delegation_item set closed_reason = 'bored' where delegation_id = $1`, [id])).rejects.toThrow(/check/);
   });
 
+  it('165: 열린 의무(outcome null)에 closed_reason 만 붙는 것을 거절한다', async () => {
+    const id = await delegation();
+    await pool.query(`insert into team_delegation_item (delegation_id, delegate_account_id) values ($1, $2)`, [id, memberId]);
+    await expect(pool.query(`update team_delegation_item set closed_reason = 'idle' where delegation_id = $1`, [id])).rejects.toThrow(/check/);
+    await expect(pool.query(
+      `insert into team_delegation_item (delegation_id, delegate_account_id, outcome, closed_reason) values ($1, $2, null, 'idle')`,
+      [await delegation(), memberId])).rejects.toThrow(/check/);
+  });
+
   it('PR 감시는 (repo, number, head, until) 로 열린 것이 하나뿐이고, 끝나면 다시 열 수 있다', async () => {
     const open = (until = 'checks') => pool.query<{ id: string }>(
       `insert into pr_watch (repo, number, head, until, expires_at) values ('o/r', 12, $1, $2, now() + interval '6 hours') returning id`, [HEAD, until]);
