@@ -19,6 +19,27 @@ import {
   closeSync, fstatSync, ftruncateSync, openSync, readSync, renameSync, statSync, unlinkSync, writeSync,
 } from 'node:fs';
 
+/**
+ * 로그 줄 앞에 붙이는 시각 — 이 기계의 지역 시각에 오프셋을 붙인 ISO 8601(`2026-11-09T20:44:45.123+09:00`).
+ *
+ * 2026-11-09 끊김 분석에서 이 로그에 시각이 없어 「서버와 끊겼다」 줄을 서버 기록과 맞출 수 없었다(머지 줄을
+ * GitHub 머지 시각으로 되짚어 30분 창까지만 좁혔다). 오프셋을 붙이므로 UTC 로 쓰는 서버 로그와 그대로 대조된다.
+ */
+export function logTimestamp(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number, w = 2) => String(Math.abs(n)).padStart(w, '0');
+  const off = -d.getTimezoneOffset();
+  const sign = off >= 0 ? '+' : '-';
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+    + `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`
+    + `${sign}${pad(Math.trunc(off / 60))}:${pad(off % 60)}`;
+}
+
+/** `logTimestamp` 를 줄 앞에 붙인다. 여러 줄이면 첫 줄에만 붙인다(이어지는 줄은 같은 사건이다). */
+export function stampLogLine(line: string, ms: number): string {
+  return `${logTimestamp(ms)} ${line}`;
+}
+
 export const OPERATOR_LOG_MAX_BYTES = 50 * 1024 * 1024;
 /** 이만큼 쓸 때마다 크기를 잰다. 줄마다 fstat 하지 않으려는 것이다. */
 export const OPERATOR_LOG_CHECK_BYTES = 256 * 1024;

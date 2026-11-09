@@ -44,7 +44,7 @@ import { rewriteMcpConfigTokens } from './mcpConfig.js';
 import { claudeConfigPath, readLocalMcpDefinitions, readLocalMcpSources } from './mcpConfig.js';
 import { fileSecrets } from './secrets.js';
 import { createRunnerLinkServer } from './runnerLink.js';
-import { createOperatorLog, operatorLogPathFromSocket } from './operatorLog.js';
+import { createOperatorLog, operatorLogPathFromSocket, stampLogLine } from './operatorLog.js';
 import { createLocalTerminalHub } from './localTerminal.js';
 import type { CommunityInstance } from './community.js';
 import { createTurnSecrets } from './turnSecrets.js';
@@ -204,7 +204,8 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
   // 기본 로그는 크기 상한·회전이 걸린 stdout 이다(`operatorLog.ts`). 앱이 stdout 을 붙인 파일일 때만 민다.
   const operatorLog = options.log ? null : createOperatorLog({ path: operatorLogPathFromSocket(args.socket) });
   operatorLog?.rotateIfLarge();
-  const log = options.log ?? ((line: string) => operatorLog!.log(line));
+  // 줄마다 시각을 붙인다(`stampLogLine`) — 끊김 같은 사건을 서버 기록과 맞추려면 이 로그만으로 시각을 알아야 한다.
+  const log = options.log ?? ((line: string) => operatorLog!.log(stampLogLine(line, Date.now())));
   const entryPath = args.entryPath ?? resolve(process.argv[1] ?? 'harkroom-operator');
   const appDataDir = appDataDirFromSocket(args.socket);
 
