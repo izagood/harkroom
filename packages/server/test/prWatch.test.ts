@@ -4,6 +4,7 @@ import type { Pool } from 'pg';
 import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, createMember, registerOperator } from './helpers/fixtures.js';
+import { createDelegationDeadlineSweeper } from '../src/services/delegations.js';
 import { autoWatchOnQueued, createWatch, delegationHasOpenWatch, reportWatchStatus } from '../src/services/prWatch.js';
 
 // PR 감시(위임 재설계 P5).
@@ -60,6 +61,11 @@ describe('pr watch', () => {
   });
 
   it('grant 가 없으면 not_granted', async () => {
+    expect(await watch(agentId)).toEqual({ ok: false, code: 'not_granted' });
+  });
+
+  it('읽기 grant 만으로는 not_granted', async () => {
+    await pool.query(`insert into account_grant (account_id, capability, scope, granted_by) values ($1, 'repo.read', $2, $3)`, [agentId, `repo:${REPO}`, alice.accountId]);
     expect(await watch(agentId)).toEqual({ ok: false, code: 'not_granted' });
   });
 
@@ -127,5 +133,28 @@ describe('pr watch', () => {
     const res = await app.inject({ method: 'GET', url: '/agent/pr-watches/due', headers: { ...auth(op.token), 'x-harkroom-agent': agentId } });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ watches: [] });
+  });
+
+  it('열린 감시가 붙은 위임은 침묵 스위퍼가 닫지 않는다(스위치 켜짐) — 꺼지면 평소대로 닫는다', async () => {
+    await grant(agentId);
+    const mk = async () => {
+      const team = (await pool.query(`insert into agent_team (name, created_by) values ('t' || gen_random_uuid(), $1) returning id`, [admin.accountId])).rows[0].id;
+      const d = (await pool.query(
+        `insert into team_delegation (message_id, team_id, lead_account_id, channel_id, thread_root_id, deadline_at, created_at)
+         values ($1, $2, $3, $4, $1, now() - interval '1 minute', now() - interval '20 minutes') returning id`,
+        [root, team, agent2, ch])).rows[0].id as string;
+      await pool.query(`insert into team_delegation_item (delegation_id, delegate_account_id) values ($1, $2)`, [d, agentId]);
+      return d;
+    };
+    const d = await mk();
+    expect((await watch(agentId, { delegationId: d })).ok).toBe(true);
+    expect(await delegationHasOpenWatch(pool, d)).toBe(true);
+    await createDelegationDeadlineSweeper(pool).sweep();
+    expect((await pool.query(`select outcome from team_delegation_item where delegation_id = $1`, [d])).rows[0].outcome).toBeNull();
+    // 스위치가 꺼지면 감시는 근거가 아니다.
+    await pool.query(`update team_delegation set deadline_at = now() - interval '1 minute' where id = $1`, [d]);
+    delete process.env.HARKROOM_DELEGATION_V2;
+    await createDelegationDeadlineSweeper(pool).sweep();
+    expect((await pool.query(`select outcome from team_delegation_item where delegation_id = $1`, [d])).rows[0].outcome).toBe('timeout');
   });
 });

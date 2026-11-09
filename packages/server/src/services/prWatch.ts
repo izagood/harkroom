@@ -1,6 +1,6 @@
 import type { Pool } from 'pg';
 import { repoScope } from '@harkroom/shared';
-import { mergeGrantFor, readGrantFor } from '../auth/permissions.js';
+import { mergeGrantFor } from '../auth/permissions.js';
 import { recordAudit } from '../audit.js';
 import { postMessage } from './messages.js';
 import { delegationV2Enabled } from './delegations.js';
@@ -35,10 +35,9 @@ export type CreateWatchResult =
   | { ok: true; watchId: string; created: boolean; expiresAt: string }
   | { ok: false; code: CreateWatchDenial };
 
-/** `pr.status` 와 **같은** grant 판정(`prStatusChecks.ts`): 읽기 grant 또는 머지 grant, 그 채널에서 센다. */
+/** 감시를 걸고·보고하는 근거는 **머지 grant 만**이다(리뷰 결정) — 읽기 grant(`repo.read`)는 감시를 열지 않는다. 그 채널에서 센다. */
 export async function holdsPrGrant(pool: Pool, accountId: string, repo: string, channelId: string): Promise<boolean> {
-  const opts = { channelId };
-  return !!(await readGrantFor(pool, accountId, repo, opts)) || !!(await mergeGrantFor(pool, accountId, repo, opts));
+  return !!(await mergeGrantFor(pool, accountId, repo, { channelId }));
 }
 
 /**
