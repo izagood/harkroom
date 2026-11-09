@@ -3,7 +3,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, writeFileSync, writeSync, existsSync, symlinkSync, lstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createOperatorLog, operatorLogPathFromSocket, nodeOperatorLogFs, openExclusive, type OperatorLogFs } from '../src/operatorLog.js';
+import { createOperatorLog, logTimestamp, stampLogLine, operatorLogPathFromSocket, nodeOperatorLogFs, openExclusive, type OperatorLogFs } from '../src/operatorLog.js';
 
 const dirs: string[] = [];
 const fds: number[] = [];
@@ -153,5 +153,19 @@ describe('실패해도 죽지 않는다', () => {
     const op = createOperatorLog({ path: '/p/operator-v1.log', fd: 999, fs, warn: (l) => warns.push(l), write: () => {} });
     expect(() => op.rotateIfLarge()).not.toThrow();
     expect(warns[0]).toMatch(/EBADF/);
+  });
+});
+
+describe('logTimestamp / stampLogLine — 줄마다 시각', () => {
+  it('지역 시각에 오프셋을 붙인 ISO 8601 이고, 되읽으면 같은 순간이다', () => {
+    const ms = Date.UTC(2026, 10, 9, 11, 44, 45, 123);
+    const ts = logTimestamp(ms);
+    expect(ts).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}$/);
+    expect(Date.parse(ts)).toBe(ms);
+  });
+  it('줄 앞에 시각 하나를 붙인다', () => {
+    const ms = Date.UTC(2026, 0, 2, 3, 4, 5, 6);
+    expect(stampLogLine('서버와 끊겼다: https://h.example.com', ms))
+      .toBe(`${logTimestamp(ms)} 서버와 끊겼다: https://h.example.com`);
   });
 });

@@ -126,13 +126,41 @@ const nodeWsDialer: LinkDialer = (url, token, handlers) => {
     const { default: WebSocket } = await import('ws');
     const socket = new WebSocket(url, { headers: { authorization: `Bearer ${token}` } });
     let settled = false;
+    let lastPingAt: number | null = null;
+    let lastError: string | null = null;
     const settle = (reason?: string) => { if (!settled) { settled = true; handlers.onClose(reason); } };
     socket.on('open', () => {
       handlers.onOpen({ send: (data) => socket.send(data), close: () => socket.close() });
     });
     socket.on('message', (raw: unknown) => handlers.onMessage(String(raw)));
-    socket.on('ping', () => handlers.onPing?.());
-    socket.on('close', () => settle());
-    socket.on('error', (err: Error) => settle(err.message));
+    socket.on('ping', () => { lastPingAt = Date.now(); handlers.onPing?.(); });
+    socket.on('close', (code: number, reason: Buffer) => settle(describeClose(
+      code, reason?.toString('utf8') ?? '', lastPingAt === null ? null : Date.now() - lastPingAt, lastError,
+    )));
+    // 'error' 뒤에는 보통 'close'(1006)가 따라온다 — 그 줄에 code 와 마지막 ping 을 함께 적으려고 잠깐 기다린다.
+    // 'close' 가 끝내 안 오면 1초 뒤 오류 문구만으로 닫는다(재접속이 멈추면 안 된다).
+    socket.on('error', (err: Error) => {
+      lastError = err.message;
+      setTimeout(() => settle(err.message), 1_000).unref?.();
+    });
   })().catch((err: unknown) => handlers.onClose(err instanceof Error ? err.message : String(err)));
 };
+
+/**
+ * 닫힘을 로그 한 줄로 적는다 — close code·reason 과 마지막 서버 ping 뒤 지난 시간.
+ *
+ * 서버 하트비트가 끊었으면(pong 미수신 → terminate) 이쪽에는 1006 이 오고 마지막 ping 이 30~60초 전이다.
+ * 서버가 정상 종료(배포)면 1001·1012, 자격증명이면 4401 이다. 이 셋을 로그만 보고 가를 수 있어야
+ * 「pong 을 왜 못 보냈나」를 다음에 확정할 수 있다(2026-11-09 분석에서 이 로그엔 아무 단서가 없었다).
+ */
+export function describeClose(
+  code: number, reason: string, sinceLastPingMs: number | null, error: string | null = null,
+): string {
+  const parts = [`close ${code}`];
+  // reason 은 서버가 정한 짧은 문구다. 줄을 깨뜨리지 않게 한 줄로 접고 자른다.
+  const r = reason.replace(/\s+/g, ' ').trim().slice(0, 120);
+  if (r) parts.push(r);
+  if (error) parts.push(`오류 ${error.replace(/\s+/g, ' ').trim().slice(0, 120)}`);
+  parts.push(sinceLastPingMs === null ? '서버 ping 받은 적 없음' : `마지막 서버 ping ${Math.round(sinceLastPingMs / 1000)}초 전`);
+  return parts.join(', ');
+}

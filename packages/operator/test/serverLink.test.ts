@@ -4,7 +4,7 @@
 //
 // dialer·시계·타이머를 주입해 실제 소켓 없이 잰다. 실제 소켓은 서버 쪽 operatorChannel.test 가 탄다.
 import { describe, it, expect } from 'vitest';
-import { createServerLink, operatorUrl, type LinkDialer, type LinkTransport } from '../src/serverLink.js';
+import { createServerLink, describeClose, operatorUrl, type LinkDialer, type LinkTransport } from '../src/serverLink.js';
 
 const HELLO = () => ({
   type: 'hello' as const, protocol: 1 as const,
@@ -85,5 +85,19 @@ describe('serverLink', () => {
     link.stop();
     expect(dials).toBe(1);
     expect(link.send(HELLO())).toBe(false);
+  });
+});
+
+describe('describeClose — 끊김 줄에 남기는 단서', () => {
+  it('서버 하트비트가 끊은 꼴: 1006 과 마지막 ping 경과를 적는다', () => {
+    expect(describeClose(1006, '', 47_400, 'read ECONNRESET'))
+      .toBe('close 1006, 오류 read ECONNRESET, 마지막 서버 ping 47초 전');
+  });
+  it('서버가 준 reason 은 한 줄로 접는다', () => {
+    expect(describeClose(4401, 'credential\nno longer valid', 3_000))
+      .toBe('close 4401, credential no longer valid, 마지막 서버 ping 3초 전');
+  });
+  it('ping 을 한 번도 못 받았으면 그렇게 적는다', () => {
+    expect(describeClose(1001, '', null)).toBe('close 1001, 서버 ping 받은 적 없음');
   });
 });
