@@ -34,7 +34,7 @@ import { FullDiskAccessDialog } from '../FullDiskAccessDialog';
  */
 type LocalStatus =
   | { kind: 'checking' }
-  | { kind: 'unknown' }
+  | { kind: 'unknown'; reason: string | null }
   | { kind: 'none' }
   | { kind: 'registered'; name: string | null; online: boolean | null };
 
@@ -44,6 +44,8 @@ export function ThisOperatorSettings({ onOpenSection }: {
 } = {}) {
   const t = useT();
   const me = useActiveStore((s) => s.me);
+  // 앱 기동 때 오퍼레이터를 못 세웠거나 등록하지 못한 사유(`controller.ts::ensureOperatorAndRegister`).
+  const startupIssue = useActiveStore((s) => s.operatorStartupIssue);
   const canRegister = hasCapability(me, 'operator.register');
   const localAvailable = hasOperatorLocalSurface();
   const [registered, setRegistered] = useState<string | null>(null);
@@ -59,7 +61,7 @@ export function ThisOperatorSettings({ onOpenSection }: {
 
   const loadStatus = useCallback(async (): Promise<void> => {
     const baseUrl = getController().api?.baseUrl ?? null;
-    if (!baseUrl) { setStatus({ kind: 'unknown' }); return; }
+    if (!baseUrl) { setStatus({ kind: 'unknown', reason: null }); return; }
     try {
       const local = await listLocalAgents();
       const mine = local.communities.find((c) => c.baseUrl === baseUrl);
@@ -69,10 +71,11 @@ export function ThisOperatorSettings({ onOpenSection }: {
       const list = await getController().operators().catch(() => null);
       const op = list?.find((o) => o.id === mine.operatorId) ?? null;
       setStatus({ kind: 'registered', name: operatorNameOf(op) ?? null, online: op ? op.online : null });
-    } catch {
-      setStatus({ kind: 'unknown' });
+    } catch (e) {
+      // 사유를 버리지 않는다 — 「알 수 없다」만으로는 사람이 할 일이 없다(오퍼레이터가 안 떴는지, 소켓이 막혔는지).
+      setStatus({ kind: 'unknown', reason: errorText(e, t) });
     }
-  }, []);
+  }, [t]);
   useEffect(() => { if (localAvailable) void loadStatus(); }, [localAvailable, loadStatus]);
   const isRegistered = status.kind === 'registered';
   // 확인 중에는 어느 쪽 버튼인지 아직 모른다 — 누르게 두면 등록된 머신을 확인 창 없이 한 번 더 등록한다.
@@ -124,7 +127,9 @@ export function ThisOperatorSettings({ onOpenSection }: {
                 )}
                 <span>
                   {status.kind === 'checking' && t('thisOperator.statusChecking')}
-                  {status.kind === 'unknown' && t('thisOperator.statusUnknown')}
+                  {status.kind === 'unknown' && (status.reason ?? startupIssue?.reason
+                    ? t('thisOperator.statusUnknownReason', { reason: status.reason ?? startupIssue?.reason ?? '' })
+                    : t('thisOperator.statusUnknown'))}
                   {status.kind === 'none' && t('thisOperator.statusNone')}
                   {status.kind === 'registered' && [
                     t('thisOperator.statusRegistered'),
@@ -143,6 +148,12 @@ export function ThisOperatorSettings({ onOpenSection }: {
                   </button>
                 )}
               </p>
+              {/* 기동 때의 실패를 여기서도 말한다 — 띠를 닫았어도 이 화면에 오면 사유가 보여야 한다. */}
+              {startupIssue && status.kind !== 'registered' && (
+                <p className="mb-3 text-meta text-warning" data-testid="this-operator-startup-issue">
+                  {startupIssue.kind === 'start' ? t('operatorStartup.banner.start') : t('operatorStartup.banner.register')} {startupIssue.reason}
+                </p>
+              )}
               <p className="mb-3 text-meta text-fg-muted">{t('operators.registerHereNote')}</p>
               {registered && (
                 <p className="mb-3 text-meta text-success" data-testid="operator-registered-here">{t('operators.registerHereDone', { name: registered })}</p>

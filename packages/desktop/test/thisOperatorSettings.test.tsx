@@ -165,6 +165,15 @@ describe('이 머신의 오퍼레이터 (UX ⑥b-2)', () => {
     expect(screen.getByTestId('this-operator-register').textContent).toBe('이 머신을 등록');
   });
 
+  it('「알 수 없다」에 사유를 붙이고, 기동 때의 실패도 이 화면에서 말한다', async () => {
+    withTauri(vi.fn(async () => { throw new Error('daemon down'); }));
+    fakeController();
+    useAppStore.getState().set({ operatorStartupIssue: { kind: 'start', reason: 'env: node: No such file or directory' } });
+    render(<ThisOperatorSettings />);
+    await waitFor(() => expect(screen.getByTestId('this-operator-status').textContent).toContain('daemon down'));
+    expect(screen.getByTestId('this-operator-startup-issue').textContent).toContain('env: node');
+  });
+
   it('오퍼레이터 목록으로 가는 길이 글이 아니라 버튼이다', async () => {
     withTauri(vi.fn(async () => local(false)));
     fakeController();

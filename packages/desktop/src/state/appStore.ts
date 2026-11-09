@@ -15,6 +15,9 @@ import type { NotifiedSummary } from '../lib/notified';
  * 그리고 채널 작성창은 채널을 옮겨도 같은 인스턴스라, 올리던 중에 옮기면 끝난 첨부가
  * **옮겨 간 채널**에 붙었다. 자리(scope)를 들고 여기 살아야 둘 다 풀린다.
  */
+/** 이 머신의 오퍼레이터를 세우거나 등록하지 못한 사유(`AppState.operatorStartupIssue`). */
+export interface OperatorStartupIssue { kind: 'start' | 'register'; reason: string }
+
 export interface PendingUpload {
   localId: string;
   /** 붙은 자리(scopeKey). `null` 이면 전송이 가져가서 **작성창에는 안 보이는** 것이다. */
@@ -233,6 +236,14 @@ export interface AppState {
    * 이 이슈가 닫으려는 결함이 스토어 층에 그대로 되살아난다(docs/design.md §4).
    */
   projectionStatusError: string | null;
+  /**
+   * 이 머신의 오퍼레이터를 **세우지 못했거나 등록하지 못한** 사유. `null` 이면 문제없다(또는 이 빌드에 오퍼레이터가 없다).
+   * `start` = 오퍼레이터가 안 떴다(예: Node 를 못 찾음), `register` = 떴는데 자동 등록이 실패했다.
+   * 첫 화면 띠와 설정 › 이 기기의 오퍼레이터가 읽는다(`controller.ts::ensureOperatorAndRegister`).
+   */
+  operatorStartupIssue: OperatorStartupIssue | null;
+  /** 오퍼레이터 띠를 **어느 사유에 대해** 닫았는가 — 사유가 바뀌면 다시 선다(`projectionBannerDismissed` 와 같은 규칙). */
+  operatorStartupBannerDismissed: string | null;
   /** 계정별 채널 음소거·즐겨찾기. channelId → preference */
   channelPrefs: Record<string, ChannelPrefRow>;
   /**
@@ -572,7 +583,7 @@ const initial = {
   online: [], terminalTarget: null, channelSheetId: null, artifactPreview: null, artifactPreviewFrom: null, channelSheetTab: null, leases: [], connected: false, link: 'online' as AppState['link'], offlineSince: null, threadFetch: null as AppState['threadFetch'], serverVersion: null, workspaceIconUrl: null,
   projectionStatus: null, projectionStatusError: null,
   channelPrefs: {}, channelSections: null, pins: {}, channelDocs: {}, channelMembers: {}, channelAutoMentions: {}, threadAgentModels: {}, threadPlans: {}, threadPlanDenied: {}, planAsks: {}, planFocus: null, drafts: {}, stickyMentions: {}, uploads: {},
-  history: [], historyIndex: -1, notices: [], attachmentSaving: {}, saveToast: null, gates: [], notifiedGaps: {}, projectionBannerDismissed: null, serverCompatBannerDismissed: null,
+  history: [], historyIndex: -1, notices: [], attachmentSaving: {}, saveToast: null, gates: [], notifiedGaps: {}, projectionBannerDismissed: null, serverCompatBannerDismissed: null, operatorStartupIssue: null, operatorStartupBannerDismissed: null,
   ownSendIds: {}, sendsInFlight: {},
   highlightedMessageId: null, channelRevealSeq: 0,
   runnerStates: {}, daemonRunners: {}, appVersion: null, savedIds: [], savedCount: 0, savedChange: null,

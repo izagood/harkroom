@@ -152,11 +152,19 @@ export class RunnerLauncher {
    * 스펙 §2)에서는 이것이 늘 `null` 이고, 그것이 정상이다.
    */
   async ensureOperator(): Promise<DaemonObservation | null> {
-    if (this.disposed) return null;
+    return (await this.ensureOperatorWithReason()).observation;
+  }
+
+  /**
+   * `ensureOperator` 와 같되 **실패의 원인을 버리지 않는다** — 앱 기동이 그 사유를 화면 띠로 올린다
+   * (`controller.ts::ensureOperatorAndRegister`). 여기서도 던지지 않는다(기동 경로다).
+   */
+  async ensureOperatorWithReason(): Promise<{ observation: DaemonObservation | null; error: unknown }> {
+    if (this.disposed) return { observation: null, error: null };
     try {
-      return await this.observeAndPublish();
-    } catch {
-      return null;
+      return { observation: await this.observeAndPublish(), error: null };
+    } catch (error) {
+      return { observation: null, error };
     }
   }
 
