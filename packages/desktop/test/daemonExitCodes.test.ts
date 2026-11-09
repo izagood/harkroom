@@ -52,6 +52,40 @@ describe('daemon 종료 코드 계약', () => {
     expect(DAEMON_RS).toContain('if code == Some(EXIT_OCCUPIED)');
   });
 
+  it('`EXIT_NODE_TOO_OLD` 가 사이드카 판 검사와 앱에서 같은 값이고, 앱이 그 상수로 판정한다', async () => {
+    const sidecar = read('../scripts/nodeVersionGuard.mjs');
+    const js = only(sidecar, /export const EXIT_NODE_TOO_OLD = (\d+);/g, 'nodeVersionGuard.mjs 의 EXIT_NODE_TOO_OLD');
+    const rs = only(DAEMON_RS, /const EXIT_NODE_TOO_OLD: i32 = (\d+);/g, 'Rust 의 EXIT_NODE_TOO_OLD');
+    expect(rs).toBe(js);
+    expect(DAEMON_RS).toContain('if code == Some(EXIT_NODE_TOO_OLD)');
+    // operator 의 다른 종료 코드와 겹치면 앱이 오진한다.
+    const others = [...RUN_TS.matchAll(/export const EXIT_[A-Z_]+ = (\d+);/g)].map((m) => m[1]);
+    expect(others).not.toContain(js);
+  });
+
+  it('판 검사가 낡은 Node 에서 표식 줄을 남기고 그 코드로 물러난다(실제로 실행)', async () => {
+    // 경로를 값으로 넘긴다 — `.mjs` 에는 타입 선언이 없어 문자열 리터럴 import 는 tsc 가 막는다.
+    const guardPath = path.resolve(import.meta.dirname, '../scripts/nodeVersionGuard.mjs');
+    const { nodeVersionGuard, EXIT_NODE_TOO_OLD } = (await import(/* @vite-ignore */ guardPath)) as {
+      nodeVersionGuard: () => string;
+      EXIT_NODE_TOO_OLD: number;
+    };
+    const { spawnSync } = await import('node:child_process');
+    // 지금 Node 는 22 이상이다 → 판 검사를 지나간다.
+    const ok = spawnSync(process.execPath, ['--input-type=module', '-e', `${nodeVersionGuard()}\nconsole.log('ran')`]);
+    expect(ok.status).toBe(0);
+    expect(ok.stdout.toString()).toContain('ran');
+    // 판을 18 로 속여 낡은 Node 를 흉내 낸다.
+    const fake = `Object.defineProperty(process.versions, 'node', { value: '18.20.4' });\n${nodeVersionGuard()}\nconsole.log('ran')`;
+    const old = spawnSync(process.execPath, ['--input-type=module', '-e', fake]);
+    expect(old.status).toBe(EXIT_NODE_TOO_OLD);
+    expect(old.stdout.toString()).not.toContain('ran');
+    // 앱의 `looks_like_old_node` 가 보는 두 낱말.
+    expect(old.stderr.toString()).toContain('harkroom: Node.js');
+    expect(old.stderr.toString()).toContain('is required');
+    expect(DAEMON_RS).toContain('line.contains("harkroom: Node.js") && line.contains("is required")');
+  });
+
   it('daemon 이 그 상수로 물러난다 — `main.ts` 가 숫자를 따로 적지 않는다', () => {
     const mainTs = read('../../operator/src/main.ts');
     expect(mainTs).toContain('process.exit(EXIT_OCCUPIED)');

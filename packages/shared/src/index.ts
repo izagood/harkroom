@@ -3981,7 +3981,7 @@ export function installHint(binary: string | undefined | null): string | null {
     case 'node':
       // 사이드카가 셔뱅(`#!/usr/bin/env node`)이라 **`node` 가 없으면 러너 자체가 안 뜬다.**
       // harkroom 가 동봉하지 않는 것 셋 중 하나다.
-      return 'Node.js 를 설치하라(LTS 판이면 된다): https://nodejs.org/en/download';
+      return 'Node.js 22 이상을 설치하라: https://nodejs.org/en/download';
     default:
       return null;
   }

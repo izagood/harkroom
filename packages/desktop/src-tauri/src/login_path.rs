@@ -102,6 +102,44 @@ pub const LOGIN_SHELL_ARGS: [&str; 2] = ["-lc", "echo $PATH"];
 /// 판본도 `sh` 를 불렀으므로 동작이 바뀌지 않는다.
 pub const DEFAULT_SHELL: &str = "/bin/sh";
 
+/// 로그인 셸이 준 `PATH` 에 `node` 가 없을 때 **두 번째로** 부르는 셸의 인자. 역시 리터럴이다.
+///
+/// ## 왜 `-i` 가 따로 필요한가 — nvm·fnm 은 `.zshrc` 에 쓴다
+///
+/// `-l` 만 주면 zsh 는 `.zprofile`·`.zlogin` 은 읽지만 `.zshrc` 는 **안 읽는다** — `.zshrc` 는
+/// 대화형 셸의 파일이다. 그런데 nvm·fnm 설치기는 `PATH` 줄을 `.zshrc` 에 쓴다. 그래서 nvm 으로만
+/// Node 를 깐 사람은 터미널에서는 `node` 가 되는데 앱은 못 찾았다. 실측(2026-11-09, 가짜 `ZDOTDIR`
+/// 의 `.zshrc` 에만 표식 디렉터리를 넣고): `zsh -lc 'echo $PATH'` 에는 0번, `zsh -ilc 'echo $PATH'`
+/// 에는 1번 나온다.
+///
+/// ## 왜 처음부터 `-ilc` 로 부르지 않나
+///
+/// 대화형 rc 는 무겁고(테마·플러그인·자동 업데이트 확인) tty 를 기대하는 줄이 섞여 있을 수 있다.
+/// `-lc` 로 이미 `node` 가 보이는 다수에게 그 비용·위험을 얹을 이유가 없다 — **`node` 를 못 찾았을
+/// 때만** 부른다. 상한(`LOGIN_SHELL_TIMEOUT`)은 똑같이 걸린다.
+pub const INTERACTIVE_SHELL_ARGS: [&str; 2] = ["-ilc", "echo $PATH"];
+
+/// 셸 두 번으로도 `node` 를 못 찾았을 때 **실제로 `node` 가 들어 있는지 확인하고** 덧붙이는 자리.
+///
+/// `$HOME` 아래 경로는 `~/` 로 적었다. nvm 은 판마다 디렉터리가 달라 따로 고른다(`nvm_node_dir`).
+///
+/// ## 아래 `SYSTEM_PATH_FALLBACK` 주석의 "추측 목록을 만들지 않는다"와 어떻게 맞나
+///
+/// 그 주석이 꺼린 것은 **있는지 모르는 디렉터리를 `PATH` 에 지어 넣는 것**이다. 이 목록은 그렇게
+/// 쓰지 않는다 — 디렉터리마다 실행 가능한 `node` 파일이 **실제로 있을 때만** 덧붙이고(`has_node`),
+/// 로그인 셸의 `PATH` **뒤에** 붙여 사람이 고른 순서를 앞지르지 않는다. 셸 rc 에서 `PATH` 를 얻는
+/// 길이 막힌 사람(nvm 을 `.zshrc` 에만 두고 대화형 rc 도 멎는 경우, `$SHELL` 이 fish 인 경우 등)에게
+/// 남은 마지막 길이다.
+pub const KNOWN_NODE_DIRS: [&str; 7] = [
+    "~/.volta/bin",
+    "~/.local/share/fnm/aliases/default/bin",
+    "~/Library/Application Support/fnm/aliases/default/bin",
+    "~/.asdf/shims",
+    "~/.local/share/mise/shims",
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+];
+
 /// 로그인 셸 조회를 포기하는 시각.
 ///
 /// ## 왜 상한이 필요한가 — 셸 rc 는 남의 코드다
@@ -207,13 +245,130 @@ pub fn login_path() -> Option<String> {
     LOGIN_PATH.get_or_init(read_login_path).clone()
 }
 
-/// 실제로 셸을 부르는 자리. 캐시를 거치지 않는다 — 회귀선이 이 함수를 직접 잰다.
+/// `PATH` 를 정하는 순서. 캐시를 거치지 않는다.
+///
+/// 1. `-lc` 로 얻은 값에 `node` 가 있으면 그것.
+/// 2. 없으면 `-ilc`(`.zshrc` 까지) 로 한 번 더 — 거기 `node` 가 있으면 그것.
+/// 3. 그래도 없으면 얻은 값(없으면 폴백) 뒤에 `node` 가 **실제로 있는** 알려진 자리를 덧붙인다.
+///
+/// 어느 단계에서도 `node` 를 못 찾으면 1·2 에서 얻은 값을 그대로 준다 — 그때의 사유는
+/// `daemon_client::node_missing_reason` 이 화면에 말한다.
 fn read_login_path() -> Option<String> {
     let shell = shell_program();
-    match run_login_shell(&shell) {
+    let login = run_and_log(&shell, false);
+    if login.as_deref().is_some_and(has_node) {
+        return login;
+    }
+    let interactive = run_and_log(&shell, true);
+    if interactive.as_deref().is_some_and(has_node) {
+        crate::daemon_client::log_line("`node` 는 대화형 셸(.zshrc 등)의 PATH 에서 찾았다");
+        return interactive;
+    }
+    let base = login.or(interactive);
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let extra = known_node_dirs(home.as_deref());
+    if extra.is_empty() {
+        crate::daemon_client::log_line("셸의 PATH 에도 알려진 자리에도 `node` 가 없다");
+        return base;
+    }
+    crate::daemon_client::log_line(&format!(
+        "셸의 PATH 에 `node` 가 없어 알려진 자리를 덧붙인다: {}",
+        extra.join(":")
+    ));
+    Some(append_dirs(base.as_deref().unwrap_or(SYSTEM_PATH_FALLBACK), &extra))
+}
+
+/// `PATH` 안 어느 디렉터리에 실행 가능한 `node` 가 있는가.
+fn has_node(path: &str) -> bool {
+    path.split(':')
+        .filter(|seg| !seg.is_empty())
+        .any(|seg| is_executable(&Path::new(seg).join("node")))
+}
+
+#[cfg(not(unix))]
+fn is_executable(p: &Path) -> bool {
+    p.is_file()
+}
+
+#[cfg(unix)]
+fn is_executable(p: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    // 심링크(volta·asdf shim, nvm alias)는 따라간다 — `metadata` 가 그렇게 한다.
+    std::fs::metadata(p)
+        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+/// `KNOWN_NODE_DIRS` + nvm 중 `node` 가 실제로 있는 디렉터리. `home` 이 없으면 `~/` 자리는 건너뛴다.
+fn known_node_dirs(home: Option<&Path>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut push = |dir: std::path::PathBuf| {
+        if is_executable(&dir.join("node")) {
+            let s = dir.to_string_lossy().into_owned();
+            if !out.contains(&s) {
+                out.push(s);
+            }
+        }
+    };
+    if let Some(h) = home {
+        if let Some(d) = nvm_node_dir(h) {
+            push(d);
+        }
+    }
+    for raw in KNOWN_NODE_DIRS {
+        match raw.strip_prefix("~/") {
+            Some(rest) => {
+                if let Some(h) = home {
+                    push(h.join(rest));
+                }
+            }
+            None => push(std::path::PathBuf::from(raw)),
+        }
+    }
+    out
+}
+
+/// nvm 이 깐 판 중 **가장 높은** 판의 `bin`. nvm 의 `default` 별칭은 판 이름이 아니라
+/// `lts/*`·`22` 같은 식일 수 있어 그것을 풀지 않고 디렉터리 이름(`v22.11.0`)으로 고른다.
+fn nvm_node_dir(home: &Path) -> Option<std::path::PathBuf> {
+    let root = home.join(".nvm/versions/node");
+    let mut best: Option<((u64, u64, u64), std::path::PathBuf)> = None;
+    for entry in std::fs::read_dir(&root).ok()?.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(ver) = parse_version(&name) else { continue };
+        if best.as_ref().map_or(true, |(b, _)| ver > *b) {
+            best = Some((ver, entry.path().join("bin")));
+        }
+    }
+    best.map(|(_, p)| p)
+}
+
+fn parse_version(name: &str) -> Option<(u64, u64, u64)> {
+    let mut it = name.strip_prefix('v')?.split('.');
+    let major = it.next()?.parse().ok()?;
+    let minor = it.next().unwrap_or("0").parse().ok()?;
+    let patch = it.next().unwrap_or("0").parse().ok()?;
+    Some((major, minor, patch))
+}
+
+/// 사람이 고른 순서를 지키려고 **뒤에** 붙인다. 이미 있는 디렉터리는 다시 넣지 않는다.
+fn append_dirs(base: &str, extra: &[String]) -> String {
+    let mut parts: Vec<&str> = base.split(':').filter(|s| !s.is_empty()).collect();
+    for d in extra {
+        if !parts.contains(&d.as_str()) {
+            parts.push(d);
+        }
+    }
+    parts.join(":")
+}
+
+/// 셸 한 번을 부르고 결과를 로그에 남긴다.
+fn run_and_log(shell: &str, interactive: bool) -> Option<String> {
+    let flag = if interactive { INTERACTIVE_SHELL_ARGS[0] } else { LOGIN_SHELL_ARGS[0] };
+    match run_login_shell(shell, interactive) {
         Ok(value) => {
             crate::daemon_client::log_line(&format!(
-                "로그인 셸에서 PATH 를 얻었다: `{shell}` ({}자)",
+                "로그인 셸에서 PATH 를 얻었다: `{shell} {flag}` ({}자)",
                 value.len()
             ));
             Some(value)
@@ -223,7 +378,7 @@ fn read_login_path() -> Option<String> {
             // "폴백을 쓰고 있다"는 사실 자체를 아무도 모른다 — `#456` 이 고친 침묵과
             // 같은 모양이다.
             crate::daemon_client::log_line(&format!(
-                "로그인 셸에서 PATH 를 얻지 못해 폴백을 쓴다: `{shell}`: {reason}"
+                "로그인 셸에서 PATH 를 얻지 못했다: `{shell} {flag}`: {reason}"
             ));
             None
         }
@@ -262,11 +417,14 @@ fn shell_program() -> String {
 /// 그룹에 있고, `Child::kill`(SIGKILL)은 셸 자신만 죽인다. 셸이 띄운 손자가 남을 수는
 /// 있지만 그것은 rc 가 띄운 것이지 우리가 띄운 것이 아니고, 여기서 프로세스 그룹째
 /// 죽이면 **우리 자신이 든 그룹**을 죽이게 된다.
-fn run_login_shell(shell: &str) -> Result<String, String> {
+///
+/// 인자는 **받지 않고 고른다** — 두 리터럴 중 하나다. 배열을 파라미터로 받으면 그것이 곧
+/// 임의 인자의 문이 된다(`test/runnerShellScope.test.ts` 가 이 모양을 못박는다).
+fn run_login_shell(shell: &str, interactive: bool) -> Result<String, String> {
     use std::process::Stdio;
 
     let mut child = Command::new(shell)
-        .args(LOGIN_SHELL_ARGS)
+        .args(if interactive { INTERACTIVE_SHELL_ARGS } else { LOGIN_SHELL_ARGS })
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         // **stderr 를 버린다.** rc 가 뱉는 잡소리(`nvm` 경고 등)가 stdout 에 섞이면
@@ -306,6 +464,16 @@ fn run_login_shell(shell: &str) -> Result<String, String> {
             .read_to_string(&mut out)
             .map_err(|e| format!("셸의 출력을 읽지 못했다: {e}"))?;
     }
+    let line = last_line(&out).ok_or_else(|| "셸이 빈 PATH 를 돌려줬다".to_string())?;
+    let dropped = relative_entries(line);
+    if !dropped.is_empty() {
+        // 버린 것을 남긴다 — 「내 PATH 의 `.` 이 왜 안 먹나」를 사람이 로그에서 찾을 수 있게.
+        crate::daemon_client::log_line(&format!(
+            "셸의 PATH 에서 절대 경로가 아닌 항목 {}개를 뺐다: {}",
+            dropped.len(),
+            dropped.join(":")
+        ));
+    }
     sanitize(&out).ok_or_else(|| "셸이 빈 PATH 를 돌려줬다".to_string())
 }
 
@@ -323,15 +491,38 @@ fn run_login_shell(shell: &str) -> Result<String, String> {
 /// 목록이고, 그것을 안 보면 `Welcome!` 한 줄짜리 출력도 통과한다. **비어 있지 않고,
 /// `/` 로 시작하는 항목이 하나라도 있어야** 받아들인다 — 지어내지 않되 명백히 아닌 것은
 /// 거른다.
+///
+/// ## 왜 상대 항목을 빼나 — 오퍼레이터·러너는 남의 폴더에서 명령을 찾는다
+///
+/// `.`·`node_modules/.bin`·`bin` 같은 상대 항목은 **그 순간의 작업 폴더**를 기준으로 풀린다.
+/// 러너는 에이전트가 일하는 저장소 폴더에서 `git`·`node`·하네스를 찾으므로, 상대 항목이 남아
+/// 있으면 그 저장소가 심어 둔 같은 이름의 파일이 먼저 집힐 수 있다. `.zshrc` 를 읽는 `-ilc`
+/// 를 들인 뒤로 이런 줄을 만날 일이 늘었다(security 권고, 2026-11-09). 그래서 **절대 경로 항목만**
+/// 남기고, 버린 것은 `run_login_shell` 이 로그에 적는다. 빈 항목(`::`)도 현재 폴더를 뜻하므로 뺀다.
 fn sanitize(raw: &str) -> Option<String> {
+    let line = last_line(raw)?;
+    let kept: Vec<&str> = line
+        .split(':')
+        .filter(|seg| Path::new(seg).is_absolute())
+        .collect();
+    if kept.is_empty() {
+        return None;
+    }
+    Some(kept.join(":"))
+}
+
+/// 셸 출력의 마지막 비어 있지 않은 줄.
+fn last_line(raw: &str) -> Option<&str> {
     let line = raw.lines().rev().find(|l| !l.trim().is_empty())?.trim();
-    if line.is_empty() {
-        return None;
-    }
-    if !line.split(':').any(|seg| Path::new(seg).is_absolute()) {
-        return None;
-    }
-    Some(line.to_string())
+    (!line.is_empty()).then_some(line)
+}
+
+/// `sanitize` 가 버리는 항목(절대 경로가 아닌 것). 빈 항목은 `(빈 항목)` 으로 적는다.
+fn relative_entries(line: &str) -> Vec<String> {
+    line.split(':')
+        .filter(|seg| !Path::new(seg).is_absolute())
+        .map(|seg| if seg.is_empty() { "(빈 항목)".to_string() } else { seg.to_string() })
+        .collect()
 }
 
 #[cfg(all(test, unix))]
@@ -437,10 +628,98 @@ mod tests {
         assert_eq!(sanitize("relative:paths\n"), None);
     }
 
+    /// **상대 항목은 자식에게 넘기지 않는다**(security 권고) — `.`·`node_modules/.bin`·빈 항목은
+    /// 작업 폴더 기준으로 풀려, 러너가 남의 저장소에서 같은 이름의 파일을 집을 수 있다.
+    #[test]
+    fn 절대_경로가_아닌_항목은_뺀다() {
+        let raw = "/opt/homebrew/bin:.:node_modules/.bin::/usr/bin:bin\n";
+        assert_eq!(sanitize(raw), Some("/opt/homebrew/bin:/usr/bin".to_string()));
+        assert_eq!(
+            relative_entries(last_line(raw).unwrap()),
+            vec![".", "node_modules/.bin", "(빈 항목)", "bin"]
+        );
+        // 다 절대 경로면 그대로다.
+        assert_eq!(sanitize("/a/bin:/usr/bin\n"), Some("/a/bin:/usr/bin".to_string()));
+        assert!(relative_entries("/a/bin:/usr/bin").is_empty());
+    }
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "hk-login-path-{tag}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn fake_node(dir: &Path, exec: bool) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(dir).unwrap();
+        let f = dir.join("node");
+        std::fs::write(&f, "#!/bin/sh\n").unwrap();
+        let mode = if exec { 0o755 } else { 0o644 };
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(mode)).unwrap();
+    }
+
+    /// **nvm·volta 처럼 `$HOME` 밑에만 있는 `node` 를 찾는다** — 실행 가능한 파일이 있을 때만.
+    #[test]
+    fn 홈_아래_node_자리를_실제로_있을_때만_찾는다() {
+        let home = scratch("home");
+        // 아무것도 없으면 홈 자리는 하나도 안 나온다(시스템 자리는 기계마다 달라 거른다).
+        let homed = |v: Vec<String>| -> Vec<String> {
+            v.into_iter().filter(|d| d.starts_with(&*home.to_string_lossy())).collect()
+        };
+        assert!(homed(known_node_dirs(Some(&home))).is_empty());
+
+        // nvm: 판 여럿 중 가장 높은 것(문자열 순서로는 v9 가 v22 보다 크다 — 숫자로 비교해야 한다).
+        fake_node(&home.join(".nvm/versions/node/v9.11.2/bin"), true);
+        fake_node(&home.join(".nvm/versions/node/v22.11.0/bin"), true);
+        fake_node(&home.join(".nvm/versions/node/v20.18.1/bin"), true);
+        // volta: 실행 비트가 없으면 넣지 않는다.
+        fake_node(&home.join(".volta/bin"), false);
+        let got = homed(known_node_dirs(Some(&home)));
+        assert_eq!(
+            got,
+            vec![home.join(".nvm/versions/node/v22.11.0/bin").to_string_lossy().into_owned()]
+        );
+
+        fake_node(&home.join(".volta/bin"), true);
+        let got = homed(known_node_dirs(Some(&home)));
+        assert_eq!(got.len(), 2);
+        assert!(got[1].ends_with(".volta/bin"));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn path_에_node_가_있는지_본다() {
+        let d = scratch("has");
+        let bin = d.join("bin");
+        fake_node(&bin, true);
+        let with = format!("/nonexistent-hk:{}", bin.display());
+        assert!(has_node(&with));
+        assert!(!has_node("/nonexistent-hk:/nonexistent-hk2"));
+        let noexec = d.join("noexec");
+        fake_node(&noexec, false);
+        assert!(!has_node(&noexec.to_string_lossy()));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// 덧붙이기는 **뒤에**, 겹치지 않게 — 사람이 고른 `node` 가 먼저다.
+    #[test]
+    fn 알려진_자리는_뒤에_붙고_겹치지_않는다() {
+        let got = append_dirs("/opt/homebrew/bin:/usr/bin", &["/a/bin".into(), "/usr/bin".into()]);
+        assert_eq!(got, "/opt/homebrew/bin:/usr/bin:/a/bin");
+        assert_eq!(parse_version("v22.11.0"), Some((22, 11, 0)));
+        assert_eq!(parse_version("system"), None);
+    }
+
     /// 조회 인자가 리터럴이고 **로그인 셸**이다. `-l` 이 빠지면 GUI 가 준 빈약한 `PATH`
     /// 를 그대로 되돌려받아 이 모듈 전체가 아무 일도 안 하게 된다.
     #[test]
     fn 로그인_셸_인자가_고정_리터럴이다() {
         assert_eq!(LOGIN_SHELL_ARGS, ["-lc", "echo $PATH"]);
+        assert_eq!(INTERACTIVE_SHELL_ARGS, ["-ilc", "echo $PATH"]);
     }
 }

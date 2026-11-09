@@ -618,12 +618,19 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
       expect(loginPathRs).toContain(
         'pub const LOGIN_SHELL_ARGS: [&str; 2] = ["-lc", "echo $PATH"];',
       );
-      // 셸을 부르는 함수가 받는 것은 셸 경로 하나뿐이고, 그 값은 `shell_program()` 이 만든다.
+      // `.zshrc` 까지 읽는 두 번째 조회도 리터럴이다 — `node` 를 못 찾았을 때만 부른다.
+      expect(loginPathRs).toContain(
+        'pub const INTERACTIVE_SHELL_ARGS: [&str; 2] = ["-ilc", "echo $PATH"];',
+      );
+      // 셸을 부르는 함수가 받는 것은 셸 경로와 「대화형이냐」 한 비트뿐이다 — 인자 배열을 받지 않는다.
+      // 셸 경로는 `shell_program()` 이 만든다.
       const sig = loginPathRs.match(/fn run_login_shell\(([\s\S]*?)\)\s*->/);
-      expect(splitParams(sig![1]!)).toEqual(['shell: &str']);
+      expect(splitParams(sig![1]!)).toEqual(['shell: &str', 'interactive: bool']);
       expect(loginPathRs).toMatch(/fn shell_program\(\)\s*->\s*String/);
-      // 인자를 조립하는 자리가 없다 — `args(LOGIN_SHELL_ARGS)` 그대로 넘긴다.
-      expect(loginPathRs).toContain('.args(LOGIN_SHELL_ARGS)');
+      // 인자를 조립하는 자리가 없다 — 두 리터럴 중 하나를 그대로 넘긴다.
+      expect(loginPathRs).toContain(
+        '.args(if interactive { INTERACTIVE_SHELL_ARGS } else { LOGIN_SHELL_ARGS })',
+      );
     });
 
     it('`detached_command` 를 부르는 자리는 daemon 커맨드 조립 하나뿐이다 — 러너는 daemon 이 띄운다', () => {
