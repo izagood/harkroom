@@ -22,6 +22,7 @@ import { registerMcpServerRoutes } from './routes/mcpServerRoutes.js';
 import { registerChannelRoutes } from './routes/channelRoutes.js';
 import { registerTeamRoutes } from './routes/teamRoutes.js';
 import { registerMessageRoutes } from './routes/messageRoutes.js';
+import { registerInboxTodayRoutes } from './routes/inboxTodayRoutes.js';
 import { registerWorkItemRoutes } from './routes/workItemRoutes.js';
 import { registerAttachmentRoutes } from './routes/attachmentRoutes.js';
 import { registerPreviewRoutes } from './routes/previewRoutes.js';
@@ -683,6 +684,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // 채널·메시지 라우트가 createLocalStorage 뒤로 내려왔다.
   await registerChannelRoutes(app, deps.pool, storage);
   await registerMessageRoutes(app, deps.pool, { operatorHub });
+  await registerInboxTodayRoutes(app, deps.pool);
   await registerWorkItemRoutes(app, deps.pool);
   await registerAttachmentRoutes(app, deps.pool, storage, leakGuard);
   // 미리보기(아티팩트) — 첨부와 같은 스토리지·같은 가시성 함수를 쓴다(previewRoutes 주석).
