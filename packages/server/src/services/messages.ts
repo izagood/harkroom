@@ -11,6 +11,7 @@ import {
 import {
   closeDelegationsForReply, delegationSummariesFor, delegationV2Enabled, outcomesFor, wakeLeadOnFollowup,
 } from './delegations.js';
+import { implicitDelegationMode, recordImplicitDelegations } from './implicitDelegation.js';
 import { assertChannelVisible, audienceFor, channelVisibleSql } from './channels.js';
 import { bundledRootSql, openBundleSql } from './askBundleSql.js';
 import { emitEvent } from '../events.js';
@@ -1816,6 +1817,28 @@ export async function postMessage(
         threadRootId: input.threadRootId ?? message.id,
         granteeIds: calls.calledIds.filter((id) => notified.has(id)),
       });
+    }
+    /*
+      암묵 위임(위임 재설계 P4, `implicitDelegation.ts`) — 에이전트가 에이전트를 맨 앞 멘션으로 불렀으면 그 부름을 위임으로 판정해
+      적는다(그림자 모드는 적기만). 스위치 `HARKROOM_DELEGATION_V2` 가 꺼져 있으면 모드가 `off` 라 아무 쿼리도 하지 않는다.
+      결과로 세는 글만 본다(진행 한 줄·대기 줄·서버 알림은 아니다). `message.delegate` 의 글은 그 도구가 진짜 위임을 만든다.
+    */
+    const implicitMode = implicitDelegationMode();
+    if (implicitMode !== 'off' && authorIsAgent && isResult && input.kind !== 'system'
+      && (input.meta as { kind?: unknown } | undefined)?.kind !== 'delegation') {
+      const called = calls.calledIds.filter((id) => id !== input.authorId && notified.has(id));
+      const agentCallees = called.length
+        ? ((await client.query<{ id: string }>(
+          `select id from account where id = any($1::uuid[]) and kind = 'agent'`, [called],
+        )).rows).map((r) => r.id)
+        : [];
+      if (agentCallees.length) {
+        await recordImplicitDelegations(client, {
+          mode: implicitMode, messageId: message.id, channelId: input.channelId,
+          threadRootId: input.threadRootId ?? message.id, authorId: input.authorId,
+          calleeIds: called.filter((id) => agentCallees.includes(id)), normalizedBody: calls.normalizedBody,
+        });
+      }
     }
 
 

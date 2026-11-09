@@ -165,6 +165,7 @@ export async function roundsUsedMany(
                from team_delegation d
               where d.thread_root_id = p.root
                 and d.lead_account_id = p.lead
+                and d.kind = 'delegate'
                 and d.created_at > coalesce((
                   select max(m.created_at) from message m
                    join account a on a.id = m.author_id
@@ -203,14 +204,20 @@ export async function createDelegation(
     leadAccountId: string;
     delegateIds: string[];
     deadlineAt: Date;
+    /** 어떻게 생겼나(164). 기본 `delegate`(`message.delegate`). `mention` 은 암묵 위임(P4, `implicitDelegation.ts`). */
+    kind?: DelegationKind;
+    /** 계획판 단계에서 그 담당을 불렀으면 그 단계 id(164). */
+    planStepId?: string | null;
   },
 ): Promise<string> {
+  const kind = args.kind ?? 'delegate';
   const inserted = await client.query<{ id: string }>(
     `insert into team_delegation
-       (message_id, team_id, lead_account_id, channel_id, thread_root_id, deadline_at)
-     values ($1, $2, $3, $4, $5, $6)
+       (message_id, team_id, lead_account_id, channel_id, thread_root_id, deadline_at, kind, plan_step_id)
+     values ($1, $2, $3, $4, $5, $6, $7, $8)
      returning id`,
-    [args.messageId, args.teamId, args.leadAccountId, args.channelId, args.threadRootId, args.deadlineAt],
+    [args.messageId, args.teamId, args.leadAccountId, args.channelId, args.threadRootId, args.deadlineAt,
+     kind, args.planStepId ?? null],
   );
   const delegationId = inserted.rows[0]!.id;
 
@@ -237,6 +244,9 @@ export async function createDelegation(
      * 이유는 `agentWakes` 의 sweep 과 같다 — 팀장이 지목한 대상에게 가는 항목이라 남의
      * 화면(숨김 되돌리기)을 건드릴 일이 없고, 사유가 그 관문의 `REVEAL_REASONS` 에도 없다.
      */
+    // 암묵 위임은 부름 자체가 위임이다 — 멘션 팬아웃이 이미 깨운 `mention` 항목을 그대로 둔다(담당 턴의 위임 맥락은
+    // P3 의 inbox 위임 요약이 싣는다). 바꾸면 옛 러너가 맨 앞 멘션 하나마다 「넘겨받은 일」 지시문을 싣는다.
+    if (kind === 'mention') continue;
     const converted = await client.query(
       `update inbox set reason = 'team_delegated', team_id = $3
         where account_id = $1 and message_id = $2 and reason = 'mention'`,
