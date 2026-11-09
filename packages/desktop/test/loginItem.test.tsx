@@ -145,6 +145,19 @@ describe('설정 › 이 머신의 오퍼레이터 「시작」 줄', () => {
     expect(s.openSettings).toHaveBeenCalledTimes(1);
   });
 
+  it('칩·버튼이 있어도 줄 이름·설명을 누르면 스위치가 바뀐다 — [시스템 설정 열기]가 눌리지 않는다', async () => {
+    const s = fakeSurface('approval');
+    setLoginItemSurface(s);
+    render(<ThisOperatorSettings />);
+    await waitFor(() => expect(screen.getByTestId('login-item-row').dataset.state).toBe('approval'));
+    // 버튼은 label 밖이다.
+    expect(screen.getByTestId('login-item-open-system').closest('label')).toBeNull();
+    fireEvent.click(screen.getByText(en['loginItem.label']));
+    await waitFor(() => expect(screen.getByTestId('login-item-row').dataset.state).toBe('off'));
+    expect(s.set).toHaveBeenCalledWith(false);
+    expect(s.openSettings).not.toHaveBeenCalled();
+  });
+
   it('여기서 켰는데 꺼짐으로 읽히면 「시스템 설정에서 꺼짐」 — 칩 없이 설명만', async () => {
     loginItemStorage.setWanted(true);
     setLoginItemSurface(fakeSurface('off'));

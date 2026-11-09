@@ -65,7 +65,7 @@ export function LoginItemHost({ fdaDialogOpen, onOpenSettings }: {
 
   if (ask === 'ask' || ask === 'done') {
     return (
-      <div role="status" data-testid="login-item-ask" className="flex items-start gap-2 border-b border-info-border bg-info-surface px-4 py-2 text-body text-fg">
+      <div role="status" data-testid="login-item-ask" className="flex items-start gap-2 border-b border-border bg-accent-surface px-4 py-2 text-body text-fg">
         {ask === 'ask' ? (
           <>
             <div className="min-w-0 flex-1">
@@ -82,7 +82,7 @@ export function LoginItemHost({ fdaDialogOpen, onOpenSettings }: {
         ) : (
           <>
             <p className="min-w-0 flex-1 break-keep" data-testid="login-item-ask-done">{t('loginItem.row.on')}</p>
-            <button data-testid="login-item-ask-close" aria-label={t('operatorStartup.banner.dismiss')} className="shrink-0 rounded-sm px-1 hover:bg-surface-sunken" onClick={() => setAsk(null)}>×</button>
+            <button data-testid="login-item-ask-close" aria-label={t('fda.close')} className="shrink-0 rounded-sm px-1 hover:bg-surface-sunken" onClick={() => setAsk(null)}>×</button>
           </>
         )}
       </div>
