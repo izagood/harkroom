@@ -114,61 +114,106 @@ visible before it becomes a conflict.
 
 ## Getting started
 
-### 1. Run a server
+Harkroom is self-hosted: **you run the server yourself**, then everyone connects to it with the
+desktop app. The path below goes from nothing to a first conversation with an agent.
+
+**You need**
+
+- A machine with **Docker** (with Compose) for the server. Any Linux box, VM or your own Mac works.
+- A **Mac with Apple silicon** for the desktop app.
+- On the machine that will run agents (usually the same Mac): **Node.js 22+** and at least one
+  harness CLI — [Claude Code](https://github.com/anthropics/claude-code) (`claude`),
+  [Codex](https://github.com/openai/codex) (`codex`) or [opencode](https://opencode.ai)
+  (`opencode`) — installed, on your `PATH`, and already logged in.
+
+### 1. Run your server
 
 ```sh
 git clone https://github.com/izagood/harkroom && cd harkroom
-docker compose up -d          # postgres + server, listening on :3400
+docker compose up -d                 # PostgreSQL + the published server image, on port 3400
+curl http://localhost:3400/readyz    # {"ok":true} once the server can reach its database
 ```
 
-Create the first admin account. Put the password in a file rather than on the command line
-(command lines are visible in `ps` and your shell history):
+`docker compose up` pulls the published image `ghcr.io/izagood/harkroom-server`; you don't need
+to build anything. Migrations run on startup. To pin a release instead of `latest`, see
+[Server image](#server-image).
+
+**Reaching it from other machines.** Port 3400 speaks plain HTTP. If anyone connects from
+another machine, put the server behind a reverse proxy that terminates **HTTPS** (Caddy, nginx,
+Traefik, …) and forwards to port 3400, including WebSocket upgrades. Then set
+[`TRUST_PROXY`](#configuration) so rate limits see real client addresses. Using it only on the
+machine that runs the server, `http://localhost:3400` is enough.
+
+### 2. Install the app and create the admin account
+
+1. Download the latest `.dmg` from [Releases](https://github.com/izagood/harkroom/releases) and
+   open the app. It updates itself from then on.
+2. Enter your **Server URL** (for example `http://localhost:3400` or `https://chat.example.com`).
+3. Choose **First run? Create the admin account** and fill in a login ID, a handle (`@name`,
+   lowercase letters, digits, `-` and `_`), a display name and a password (8 characters or more).
+
+This works only once, while the server has no person yet; it makes you the owner and creates a
+`#general` channel. Ignore **Create a hosted community** on that screen — it is for a hosted
+service, not for a server you run yourself.
+
+<details>
+<summary>Create the admin account from the command line instead</summary>
+
+Put the password in a file rather than on the command line (command lines are visible in `ps`
+and your shell history):
 
 ```sh
 umask 077
 cat > bootstrap.json <<'JSON'
-{"handle":"me","displayName":"Me","password":"change-this-password"}
+{"loginId":"me","handle":"me","displayName":"Me","password":"change-this-password"}
 JSON
-curl -X POST localhost:3400/bootstrap \
+curl -X POST http://localhost:3400/bootstrap \
   -H 'content-type: application/json' \
   --data @bootstrap.json
 rm -f bootstrap.json
 ```
 
-`/bootstrap` works only once, while the server has no human account yet. Add everyone else
-with invites (step 3).
+Then sign in from the app with that login ID and password.
 
-### 2. Install the app and sign in
+</details>
 
-Download the latest `.dmg` from [Releases](https://github.com/izagood/harkroom/releases), open
-the app, enter your server URL and sign in.
+### 3. Let this Mac run agents
 
-### 3. Invite your team
+Agents run on an **operator** — a background process the app starts for you. Register it once:
+**Settings › This device › This machine's operator › Register this machine**. The operator
+then shows which harness CLIs it found on this Mac. If yours is missing, install it, make sure
+`claude --version` (or `codex` / `opencode`) works in a new terminal, and check again.
 
-Mint an invite token in the app's settings and send it to a teammate. They sign up with it
-in their own app; each token works once.
+### 4. Create your first agent
 
-### 4. Add an agent
+Open **Agents** and choose **New agent**. Give it a handle, pick its harness and model, and
+leave **Run it on this machine** on so it starts right away on the operator from step 3.
 
-1. Install the CLI for the harness you want (`claude`, `codex` or `opencode`) and **Node.js 22+**
-   on the machine that will run the agent, and log in to that CLI.
-2. Register that machine under **Settings › Operators**. On the machine where you use the app
-   this is one click (**Register this machine**); for another machine, mint a registration code
-   there in the app and run the operator headless on that machine within five minutes:
+### 5. Talk to it
 
-   ```sh
-   harkroom-operator register https://<your-server> <code>   # one-time code from Settings › Operators
-   harkroom-operator run                                     # keep it running (see ops/*.template)
-   ```
+In `#general` (or any channel you create with **Create channel**), write
+`@your-agent say hello`. The agent replies in a thread; open its terminal from the thread to
+watch it work. If it needs a decision it posts a question card for you to answer.
 
-   The operator shows which harnesses it found on that machine.
-3. Create the agent under **Settings › Agents**, pick its harness, and choose the operator under
-   **Where it runs**.
+### 6. Invite your team
 
-### 5. Mention it
+Under **Settings › Community › Members & invites**, choose **Mint an invite token** and send it
+to a teammate. They install the app, enter your server URL and choose
+**Have an invite token? Join this community**. Each token works once.
 
-Write `@your-agent do something` in any channel. The agent replies in the thread; open its
-terminal from the thread to watch it work.
+### Run agents on another machine (optional)
+
+An always-on box can run agents too. Install Node.js 22+, a harness CLI and the operator there,
+then under **Settings › Agents › Operators** mint a registration code and, within five minutes,
+run on that machine:
+
+```sh
+harkroom-operator register https://<your-server> <code>
+harkroom-operator run      # keep it running; see ops/operator.service.template (systemd)
+                           # or ops/operator.plist.template (launchd)
+```
+
+Assign agents to it from the agent's **Where it runs** setting.
 
 ## Using Harkroom from an MCP client
 
@@ -321,6 +366,10 @@ set these by hand:
 
 ## Troubleshooting
 
+- **`/bootstrap` answers `already_bootstrapped`.** The server already has a person; sign in, or
+  ask the owner for an invite token.
+- **The app cannot reach the server.** Check `curl <your server URL>/readyz` from the same Mac.
+  Behind a proxy, make sure it forwards WebSocket upgrades.
 - **An agent never answers.** Check that its operator is online under Settings › Operators and
   lists the agent's harness as installed. The machine needs `node` (22+) and the harness CLI on
   its `PATH`.
