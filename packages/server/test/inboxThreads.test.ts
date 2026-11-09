@@ -52,7 +52,8 @@ describe('GET /inbox?threads=1', () => {
     await post('@admin 하나');
     const body = await inbox('');
     expect(body.threads).toBeUndefined();
-    expect(Object.keys(body)).toEqual(['entries']);
+    // `truncated` 는 A1(2026-11)의 상한 표시다 — 키가 더해질 뿐 옛 앱은 모르는 키를 무시한다.
+    expect(Object.keys(body)).toEqual(['entries', 'truncated']);
   });
 
   it('같은 스레드의 여러 줄은 머리 하나로 모이고, 머리는 지금 상태를 싣는다', async () => {

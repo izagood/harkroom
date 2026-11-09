@@ -3247,6 +3247,78 @@ async function listThreadHeads(pool: Pool, accountId: string, ids: string[]): Pr
   return res.rows;
 }
 
+/** `GET /inbox` 가 `since`·`unread` 없이 불릴 때 싣는 최신 줄 수(2026-11, A1). */
+export const INBOX_PAGE_LIMIT = 200;
+
+/**
+ * `GET /inbox` 의 전체 조회(since·unread 없음)를 **최신 `limit` 줄**로 자른다(A1). 예전에는 읽은 줄까지 본문째 전부(큰 계정
+ * 수만 줄, 34MB·45초)를 내렸다. 더 오래된 줄은 `beforeId`(이 id 보다 작은 것)로 받는다. 순서는 예전처럼 id 오름차순이고,
+ * `truncated` 는 이 페이지 앞(더 오래된 쪽)에 줄이 더 있다는 뜻이다. 러너 폴(`unreadOnly`)·`sinceId`·보드는 이 함수를 쓰지 않는다.
+ */
+export async function listInboxNewest(
+  pool: Pool, accountId: string, opts: { limit: number; beforeId?: number },
+): Promise<{ entries: InboxEntry[]; truncated: boolean }> {
+  const rows = await listInbox(pool, accountId, { newestLimit: opts.limit + 1, beforeId: opts.beforeId });
+  const truncated = rows.length > opts.limit;
+  return { entries: truncated ? rows.slice(rows.length - opts.limit) : rows, truncated };
+}
+
+/**
+ * 「내 작업」 보드의 **판 버전**(2026-11, A2). `/inbox/board` 는 본문을 다 만든 뒤 해시해 ETag 를 냈다 — 304 여도 비싼 조회는
+ * 다 돌았다. 이것은 본문이 읽는 **행 집합의 (id, xmin)** 을 모아 짧은 문자열로 접는다. 행이 생기거나·바뀌거나(UPDATE 는 언제나
+ * 새 xmin 의 새 판을 만든다 — `jsonb_set` 으로 meta 만 고치는 물음 닫기도) 지워지면 값이 바뀐다. 쓰는 쪽이 타임스탬프를
+ * 올리는지에 기대지 않는다(message 에는 updated_at 이 없다).
+ *
+ * 덮는 것: 내 inbox 행(읽음·새 줄) · 보드 머리 후보(inbox 줄의 머리 ∪ 30일 안 내 말의 머리 ∩ thread_status, 그 집합 자체 — 30일
+ * 창에서 빠지는 것도) · 그 스레드들의 모든 메시지(머리·답글: 본문·meta·수정·삭제 → 답글 수·마지막 말·열린 물음·실패) · 머리의
+ * 리액션·첨부 행 · thread_status · 내 inbox_thread_state · 그 채널 행과 내 channel_member 행(가시성) · agent_team(_member)(팀 명단).
+ * 덮지 않는 것(PR 본문에 적었다): 위임 결말·요약·넘겨받은 일·접힌 깨움 같은 inbox 줄의 덧붙임 표, 팀원 계정의
+ * handle·지시문, 첨부의 artifact 제목. 이들은 대개 같은 스레드에 메시지가 붙을 때 함께 바뀌어 그 변화로 태그가 갈린다.
+ *
+ * 다른 사람의 inbox·상태 행은 읽지 않는다 — 내 inbox·내 말·내 머리 후보의 스레드만. 머리 후보는 가시성으로 거르지 않은
+ * **상위 집합**이다: 더 넓게 보면 태그가 쓸데없이 갈릴 뿐 낡은 304 는 생기지 않는다. 값은 해시로만 나간다(라우트가 계정 id 와
+ * 섞는다) — 본문은 싣지 않는다.
+ */
+export async function boardVersion(pool: Pool, accountId: string): Promise<string> {
+  const h = (expr: string) => `count(*)::text || ':' || coalesce(bit_xor(hashtextextended(${expr}, 0)), 0)::text`;
+  const res = await pool.query<{ v: string }>(
+    `with inb as materialized (
+       select i.id, i.message_id, i.xmin::text as x from inbox i where i.account_id = $1
+     ),
+     roots as materialized (
+       select coalesce(m.thread_root_id, m.id) as id from inb join message m on m.id = inb.message_id
+       union
+       select ts.root_id from (
+         select distinct coalesce(said.thread_root_id, said.id) as root_id
+           from message said
+          where said.author_id = $1 and said.deleted_at is null
+            and said.created_at > now() - make_interval(days => $2::int)
+       ) mine join thread_status ts on ts.root_id = mine.root_id
+     ),
+     msgs as materialized (
+       select m.id, m.xmin::text as x, m.channel_id from message m where m.id in (select id from roots)
+       union all
+       select m.id, m.xmin::text, m.channel_id from message m where m.thread_root_id in (select id from roots)
+     )
+     select concat_ws('|',
+       (select ${h(`id::text || ':' || x`)} from inb),
+       (select ${h('id::text')} from roots),
+       (select ${h(`id::text || ':' || x`)} from msgs),
+       (select ${h(`r.message_id::text || r.account_id::text || r.emoji || ':' || r.xmin::text`)}
+          from message_reaction r where r.message_id in (select id from roots)),
+       (select ${h(`a.id::text || ':' || a.xmin::text`)} from attachment a where a.message_id in (select id from roots)),
+       (select ${h(`ts.root_id::text || ':' || ts.xmin::text`)} from thread_status ts where ts.root_id in (select id from roots)),
+       (select ${h(`s.root_id::text || ':' || s.xmin::text`)} from inbox_thread_state s where s.account_id = $1),
+       (select ${h(`c.id::text || ':' || c.xmin::text`)} from channel c where c.id in (select channel_id from msgs)),
+       (select ${h(`cm.channel_id::text || ':' || cm.xmin::text`)} from channel_member cm where cm.account_id = $1),
+       (select ${h(`t.id::text || ':' || t.xmin::text`)} from agent_team t),
+       (select ${h(`tm.team_id::text || tm.agent_account_id::text || ':' || tm.xmin::text`)} from agent_team_member tm)
+     ) as v`,
+    [accountId, BOARD_WINDOW_DAYS],
+  );
+  return res.rows[0]!.v;
+}
+
 /** 「내 작업」 보드가 inbox 밖에서 더 모으는 기간과 상한. */
 export const BOARD_WINDOW_DAYS = 30;
 export const BOARD_EXTRA_LIMIT = 300;
@@ -3349,8 +3421,14 @@ const BOARD_COMPACT_KEEP_SQL = `i.id in (
         where r.rn <= ${BOARD_COMPACT_LATEST} or r.rr = 1 or r.pinned)`;
 
 export async function listInbox(
-  pool: Pool, accountId: string, opts: { unreadOnly?: boolean; compact?: boolean; sinceId?: number; skipLeased?: boolean },
+  pool: Pool, accountId: string,
+  opts: { unreadOnly?: boolean; compact?: boolean; sinceId?: number; skipLeased?: boolean; newestLimit?: number; beforeId?: number },
 ): Promise<InboxEntry[]> {
+  // 상한(`newestLimit`)이면 **최신 N줄**을 id 내림차순으로 자른 뒤 아래에서 오름차순으로 되돌린다 — 응답 순서는 그대로다.
+  const params: unknown[] = [accountId];
+  const sinceParam = opts.sinceId !== undefined ? `$${params.push(opts.sinceId)}` : null;
+  const beforeParam = opts.beforeId !== undefined ? `$${params.push(opts.beforeId)}` : null;
+  const limitParam = opts.newestLimit !== undefined ? `$${params.push(opts.newestLimit)}` : null;
   const bodySql = opts.compact
     ? `left(${displayBodySql('m')}, ${BOARD_COMPACT_BODY_CHARS}) as body,
             length(${displayBodySql('m')}) > ${BOARD_COMPACT_BODY_CHARS} as "bodyTruncated"`
@@ -3386,11 +3464,13 @@ export async function listInbox(
        and ${channelVisibleSql('c', '$1')}
        ${opts.unreadOnly ? 'and i.read_at is null' : ''}
        ${opts.compact ? `and ${BOARD_COMPACT_KEEP_SQL}` : ''}
-       ${opts.sinceId !== undefined ? 'and i.id > $2::bigint' : ''}
+       ${sinceParam ? `and i.id > ${sinceParam}::bigint` : ''}
+       ${beforeParam ? `and i.id < ${beforeParam}::bigint` : ''}
        ${opts.skipLeased ? 'and (i.claimed_until is null or i.claimed_until < now())' : ''}
-     order by i.id`,
-    opts.sinceId !== undefined ? [accountId, opts.sinceId] : [accountId],
+     ${limitParam ? `order by i.id desc limit ${limitParam}::int` : 'order by i.id'}`,
+    params,
   );
+  if (limitParam) res.rows.reverse();
 
   /**
    * 팀 부름에 **명단을 붙인다**(047). 팀장은 이것으로 누구에게 무엇을 넘길지 판단한다 —
