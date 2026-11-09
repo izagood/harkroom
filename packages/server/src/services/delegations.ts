@@ -1151,8 +1151,8 @@ export async function delegationSummariesFor(
       order by a.handle`,
     [ids],
   );
-  const watches = await pool.query<{ delegation_id: string; repo: string; number: number; head: string; until: PrWatchUntil; handle: string }>(
-    `select s.delegation_id, w.repo, w.number, w.head, w.until, a.handle
+  const watches = await pool.query<{ delegation_id: string; account_id: string; repo: string; number: number; head: string; until: PrWatchUntil; handle: string }>(
+    `select s.delegation_id, s.account_id, w.repo, w.number, w.head, w.until, a.handle
        from pr_watch_subscriber s
        join pr_watch w on w.id = s.watch_id and w.state = 'open'
        join account a on a.id = s.account_id
@@ -1174,7 +1174,8 @@ export async function delegationSummariesFor(
           lastMessageId: i.last_message_id,
           lastActivityAt: i.last_activity_at ? i.last_activity_at.toISOString() : null,
         })),
-      prWatches: watches.rows.filter((w) => w.delegation_id === d.id)
+      // 담당 쪽은 자기가 건 감시만(items 와 같은 「자기 줄만」 원칙).
+      prWatches: watches.rows.filter((w) => w.delegation_id === d.id && (d.is_lead || w.account_id === accountId))
         .map((w) => ({ repo: w.repo, number: w.number, head: w.head, until: w.until, byHandle: w.handle })),
     };
     const list = out.get(d.thread_root_id) ?? [];

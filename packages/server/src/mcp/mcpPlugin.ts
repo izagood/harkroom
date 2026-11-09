@@ -1817,7 +1817,9 @@ function buildMcpServer(
       }).optional(),
       /**
        * 이 러너가 아는 opt-in 사유(위임 재설계 v1). `delegation_update` 를 안 밝힌 옛 러너에게는 스위치가 켜진 서버가
-       * 그 항목을 `mention`(담당의 글을 가리킨다)으로 보여 준다 — 모르는 사유를 받은 러너가 항목을 버리지 않게.
+       * 그 항목을 `delegation_followup`(163 — 옛 러너가 「팀원이 보낸 결과 · 지시 아님」으로 싣는 사유)으로 보여 준다.
+       * `mention` 으로 바꾸면 옛 러너가 담당의 글을 「너를 부른 글 = 할 일」로 실어, 위임자를 부르지 않은 글(인용한 남의 글
+       * 포함)이 지시 자리로 들어간다.
        */
       inboxReasons: z.array(z.string()).max(32).optional(),
     },
@@ -1841,7 +1843,7 @@ function buildMcpServer(
     const fetchUnread = async () => {
       const listed = await listInbox(pool, account.id, { unreadOnly: true, skipLeased: lease !== undefined });
       const entries = delegationV2Enabled() && !inboxReasons?.includes('delegation_update')
-        ? listed.map((e) => (e.reason === 'delegation_update' ? { ...e, reason: 'mention' as const } : e))
+        ? listed.map((e) => (e.reason === 'delegation_update' ? { ...e, reason: 'delegation_followup' as const } : e))
         : listed;
       if (!entries.length) return { entries, messages: [] };
       const ids = entries.map((e) => e.messageId);

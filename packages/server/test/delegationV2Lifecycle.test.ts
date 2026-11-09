@@ -12,7 +12,7 @@ import { createDelegationDeadlineSweeper, autoCloseDelegations, flushDelegationU
 /** 위임 재설계 v1(P3): 스위치를 켠 서버의 수명(reported·failed·closed)과 턴 끝 update. */
 let app: FastifyInstance; let pool: Pool; let stop: () => Promise<void>;
 let adminToken: string; let mcpUrl: string; let channelId: string;
-let leadPat: string; let leadId: string; let onePat: string; let oneId: string; let twoPat: string;
+let leadPat: string; let leadId: string; let onePat: string; let oneId: string; let twoPat: string; let twoId: string;
 
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
 const text = (r: Awaited<ReturnType<Client['callTool']>>): Record<string, unknown> =>
@@ -58,7 +58,7 @@ beforeAll(async () => {
   adminToken = admin.token;
   ({ pat: leadPat, accountId: leadId } = await createAgent(app, adminToken, 'vlead'));
   ({ pat: onePat, accountId: oneId } = await createAgent(app, adminToken, 'vone'));
-  ({ pat: twoPat } = await createAgent(app, adminToken, 'vtwo'));
+  ({ pat: twoPat, accountId: twoId } = await createAgent(app, adminToken, 'vtwo'));
   channelId = (await app.inject({ method: 'POST', url: '/channels', headers: auth(adminToken), payload: { name: 'vchan' } })).json().id as string;
   await app.listen({ port: 0, host: '127.0.0.1' });
   const addr = app.server.address();
@@ -171,7 +171,31 @@ describe('P3 위임 수명', () => {
     expect(lead!.delegations![0]!.items.map((i) => i.handle)).toEqual(['vone', 'vtwo']);
   });
 
-  it('update 는 위임자의 그 스레드 대기 깨움을 접고, 옛 러너(사유 미표기)에게는 mention 으로 보인다', async () => {
+  it('담당 쪽 요약의 PR 감시는 자기가 건 것만, 위임자는 전부 본다', async () => {
+    const rootId = await openThread();
+    await client(onePat); await client(twoPat);
+    const msg = idOf(await call(leadPat, 'message.delegate', { channelId, threadRootId: rootId, body: '@vone @vtwo 넘긴다', to: ['vone', 'vtwo'] }));
+    const dlg = (await pool.query(`select id from team_delegation where message_id = $1`, [msg])).rows[0].id as string;
+    const watch = async (n: number, accountId: string) => {
+      const w = (await pool.query<{ id: string }>(
+        `insert into pr_watch (repo, number, head, until, expires_at) values ('example-org/example-repo', $1, $2, 'checks', now() + interval '1 hour') returning id`,
+        [n, 'b'.repeat(40)])).rows[0]!.id;
+      await pool.query(
+        `insert into pr_watch_subscriber (watch_id, account_id, channel_id, thread_root_id, delegation_id) values ($1, $2, $3, $4, $5)`,
+        [w, accountId, channelId, rootId, dlg]);
+    };
+    await watch(101, oneId);
+    await watch(102, twoId);
+    await call(onePat, 'message.post', { channelId, threadRootId: rootId, body: '하는 중' });
+    const mine = (await listInbox(pool, oneId, { unreadOnly: true })).find((e) => e.threadRootId === rootId);
+    expect(mine!.delegations![0]!.prWatches.map((w) => w.number)).toEqual([101]);
+    await backdatePending();
+    await flush();
+    const lead = (await listInbox(pool, leadId, { unreadOnly: true })).find((e) => e.reason === 'delegation_update' && e.threadRootId === rootId);
+    expect(lead!.delegations![0]!.prWatches.map((w) => w.number).sort()).toEqual([101, 102]);
+  });
+
+  it('update 는 위임자의 그 스레드 대기 깨움을 접고, 옛 러너(사유 미표기)에게는 delegation_followup 으로 보인다', async () => {
     const rootId = await openThread();
     const dlg = await delegate(rootId);
     const woken = await call(leadPat, 'turn.wake', { channelId, threadRootId: rootId, notBeforeSec: 600, reason: '담당 기다림' });
@@ -186,7 +210,9 @@ describe('P3 위임 수명', () => {
     const entry = (await listInbox(pool, leadId, { unreadOnly: true })).find((e) => e.messageId === p);
     expect(entry?.canceledWakes?.length).toBe(1);
     const oldPoll = await call(leadPat, 'inbox.poll', {});
-    expect((oldPoll.entries as { messageId: string; reason: string }[]).find((e) => e.messageId === p)?.reason).toBe('mention');
+    expect((oldPoll.entries as { messageId: string; reason: string }[]).find((e) => e.messageId === p)?.reason).toBe('delegation_followup');
+    // 옛 러너가 담당의 글을 「너를 부른 글 = 할 일」로 싣지 않게 — mention 으로 바꾸지 않는다.
+    expect((oldPoll.entries as { reason: string }[]).some((e) => e.reason === 'mention')).toBe(false);
     const newPoll = await call(leadPat, 'inbox.poll', { inboxReasons: ['delegation_update'] });
     expect((newPoll.entries as { messageId: string; reason: string }[]).find((e) => e.messageId === p)?.reason).toBe('delegation_update');
     void dlg;
