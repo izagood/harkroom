@@ -292,6 +292,13 @@ function fastifyTrustProxy(t: TrustProxy): boolean | string[] | ((addr: string, 
   return typeof t === 'number' ? (_addr, hop) => hop < t : t;
 }
 
+/**
+ * CORS 프리플라이트 캐시 수명(초) — `Access-Control-Max-Age`.
+ * 브라우저마다 상한이 있다: Chromium(WebView2 포함) 7200, WebKit(macOS Tauri·Safari) 600, Firefox 86400.
+ * 600 은 WebKit 상한 그대로라 모든 엔진에서 깎이지 않고 그대로 효과를 낸다.
+ */
+export const CORS_PREFLIGHT_MAX_AGE_SEC = 600;
+
 export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const app = Fastify({
     // 기본값 false 를 유지한다 — 프록시가 없는데 신뢰하면 헤더 위조로 리밋이 무의미해진다.
@@ -397,6 +404,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     // retry-after: 429 의 남은 시간(비밀 보관소 잠금 해제·보기). 본문 `retryAfterSec` 와 같은 값이다.
     // AVATAR_SOURCE_HEADER: 사진 원본과 함께 오는 원본 id·자른 자리(사진 맞추기).
     exposedHeaders: [NOTIFIED_HEADER, NOTIFIED_COUNT_HEADER, MENTION_EDIT_SKIPPED_HEADER, AVATAR_SOURCE_HEADER, 'retry-after'],
+    // 프리플라이트 결과를 브라우저가 캐시하게 한다. 없으면 Bearer 를 싣는 모든 요청 앞에 OPTIONS 가 1:1 로 붙는다.
+    maxAge: CORS_PREFLIGHT_MAX_AGE_SEC,
   });
 
   // 푸시 worker 는 아래(비밀 가림을 만든 뒤)에서 만든다. healthz 는 그보다 먼저 등록되므로 늦게 묶는다.
