@@ -945,6 +945,7 @@ describe('같은 사람의 연달은 부름을 한 턴으로 묶는다', () => {
     ['카드 닫힘', { reason: 'ask_closed' }, {}],
     ['위임 결말', { reason: 'delegation_done' }, {}],
     ['위임 후속 보고', { reason: 'delegation_followup' }, {}],
+    ['위임 진행/결과', { reason: 'delegation_update' }, {}],
     ['넘겨받은 일', { reason: 'team_delegated' }, {}],
     ['팀 부름', { reason: 'team_mention' }, {}],
     ['수정으로 불림', { viaEdit: true }, {}],
@@ -960,6 +961,30 @@ describe('같은 사람의 연달은 부름을 한 턴으로 묶는다', () => {
     await scheduler.drain();
     expect(seen[0]!.mentionId).toBe('a');
     expect(seen[0]!.bundledRows).toBeUndefined();
+  });
+
+  it('delegation_update 는 멘션 행을 진행/결과로 싣고, 위임 요약은 사유와 상관없이 넘긴다', async () => {
+    const delegations = [{
+      id: 'd1', role: 'delegator' as const, kind: 'delegate' as const, delegatorHandle: 'me', messageId: 'orig', planStepId: null,
+      items: [{ handle: 'helper', state: 'open' as const, lastMessageId: 'a', lastActivityAt: null }], prWatches: [],
+    }];
+    const seen: MentionTarget[] = [];
+    const { scheduler } = harness({ runTurn: run(seen) });
+    await scheduler.admit(batch([row('a', 1)], { 1: { reason: 'delegation_update', delegations } }), bundleCtx);
+    await scheduler.drain();
+    expect(seen[0]!.delegationUpdate?.id).toBe('a');
+    expect(seen[0]!.delegations).toEqual(delegations);
+    const plain: MentionTarget[] = [];
+    const h = harness({ runTurn: run(plain) });
+    await h.scheduler.admit(batch([row('b', 1)], { 1: { delegations } }), bundleCtx);
+    await h.scheduler.drain();
+    expect(plain[0]!.delegationUpdate).toBeUndefined();
+    expect(plain[0]!.delegations).toEqual(delegations);
+    const none: MentionTarget[] = [];
+    const h2 = harness({ runTurn: run(none) });
+    await h2.scheduler.admit(batch([row('c', 1)]), bundleCtx);
+    await h2.scheduler.drain();
+    expect('delegations' in none[0]!).toBe(false);
   });
 
   it('에이전트가 쓴 글은 작성자가 같아도 묶지 않는다', async () => {

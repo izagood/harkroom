@@ -14,7 +14,7 @@ import { StringDecoder } from 'node:string_decoder';
 import { existsSync } from 'node:fs';
 import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import type { AgentHarness, AgentView, InboxCanceledWake, InboxDelegatedBy, InboxDelegationOutcome, InboxTeamCall, MessageRow, WakeReportTo } from '@harkroom/shared';
+import type { AgentHarness, AgentView, InboxCanceledWake, InboxDelegatedBy, InboxDelegationOutcome, InboxDelegationSummary, InboxTeamCall, MessageRow, WakeReportTo } from '@harkroom/shared';
 import type { FailOpts, Me } from './harkroom.js';
 import { laneNudgeText, laneNudgeWanted, BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DELTA_MAX_MESSAGES, mergeThreadPages, DENIAL_NOTICE_MAX_PER_TURN, MAC_PERMISSION_NOTICE_MAX_PER_TURN, macPermissionNotice, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, stallScreenErrorLine, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, SILENT_ACK_EMOJI, silentTurnNotice, silentWakeNotice, backgroundCutNotice, reportMissedNotice, MESSAGE_KIND_WAKE, hasOwnReportSince, watchMissedNotice, delegationLeftOpen, DELEGATION_REPORT_MISSED_NOTICE } from './prompt.js';
 import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
@@ -676,6 +676,10 @@ export interface MentionTarget {
   delegation?: InboxDelegationOutcome;
   /** 닫힌 위임의 후속 보고(163). 결말처럼 부른 글이 할 일이 아니다 — 보고를 결과로 싣는다. */
   delegationFollowup?: MessageRow;
+  /** 담당의 진행/결과(`delegation_update`, 위임 재설계 v1). 후속 보고처럼 부른 글이 할 일이 아니다 — 진행·결과로 싣는다. */
+  delegationUpdate?: MessageRow;
+  /** 이 스레드의 위임 요약(`InboxEntry.delegations`). 사유와 상관없이 서버가 실으면 프롬프트에 블록으로 그린다. */
+  delegations?: InboxDelegationSummary[];
   /** 이 턴이 **넘겨받은 일**이면 넘긴 팀장과 기한(3-2). 서버가 inbox 항목에 실어 준다. */
   delegatedBy?: InboxDelegatedBy;
   /**
@@ -797,7 +801,7 @@ function silentTurnCaller(
   deps: Pick<MentionTurnDeps, 'agentIds'>, target: MentionTarget, thread: MessageRow[],
 ): 'agent' | 'human' | 'delegated' | 'wake' | 'delegationOutcome' {
   if (target.wake && target.scheduledWake) return 'wake';
-  if (target.delegation || target.delegationFollowup) return 'delegationOutcome';
+  if (target.delegation || target.delegationFollowup || target.delegationUpdate) return 'delegationOutcome';
   if (target.wake) return 'human';
   // 넘겨받은 일은 부른 쪽이 에이전트여도 FYI 가 아니다 — 답이 없으면 위임을 실패로 닫아야 한다(`silentTurnNotice`).
   if (target.delegatedBy) return 'delegated';
@@ -1175,7 +1179,7 @@ export async function runMentionTurn(
     if (latestPage) ({ messages: thread, gapAfterSeq } = mergeThreadPages(oldestPage, latestPage, rec.lastFedSeq));
   }
   // 두 페이지 밖의 부른 글은 인박스 값으로 채운다. 깨움·위임 결말은 부른 글이 할 일이 아니다.
-  const inboxMention = target.wake || target.delegation || target.delegationFollowup ? undefined : target.mentionRow;
+  const inboxMention = target.wake || target.delegation || target.delegationFollowup || target.delegationUpdate ? undefined : target.mentionRow;
   if (inboxMention && !thread.some((m) => m.id === inboxMention.id)) {
     thread = [...thread, inboxMention].sort((a, b) => a.seq - b.seq);
   }
@@ -1274,12 +1278,14 @@ export async function runMentionTurn(
     ...(target.team ? { team: target.team } : {}),
     ...(target.delegation ? { delegation: target.delegation } : {}),
     ...(target.delegationFollowup ? { delegationFollowup: target.delegationFollowup } : {}),
+    ...(target.delegationUpdate ? { delegationUpdate: target.delegationUpdate } : {}),
+    ...(target.delegations?.length ? { delegations: target.delegations } : {}),
     ...(target.delegatedBy ? { delegatedBy: target.delegatedBy } : {}),
     ...(target.editedMention ? { editedMention: target.editedMention } : {}),
     ...(freshWake ? { freshWake: true } : {}),
     ...(rec.unseenOwnAfterSeq !== undefined ? { unseenOwnAfterSeq: rec.unseenOwnAfterSeq } : {}),
     ...(rec.canceledBy !== undefined ? { afterCancelBy: rec.canceledBy } : {}),
-    ...(target.wake || target.delegation || target.delegationFollowup ? {} : { mentionId }),
+    ...(target.wake || target.delegation || target.delegationFollowup || target.delegationUpdate ? {} : { mentionId }),
     ...(bundledRows.length ? { bundledIds: bundledRows.map((row) => row.id) } : {}),
     ...(gapAfterSeq !== undefined ? { gapAfterSeq } : {}),
   });
@@ -3122,7 +3128,7 @@ export async function runMentionTurn(
       cwd: rec.workspaceDir,
       plan,
       claudeConfigDir: deps.claudeConfigDir,
-      skip: Boolean(target.wake) || Boolean(target.delegation) || Boolean(target.delegationFollowup) || byAutomation,
+      skip: Boolean(target.wake) || Boolean(target.delegation) || Boolean(target.delegationFollowup) || Boolean(target.delegationUpdate) || byAutomation,
     }).catch((err: unknown) => {
       console.error(
         `[mentionTurn] ${key}: 리뷰 포크 준비 실패(턴은 계속한다) — ${err instanceof Error ? err.message : String(err)}`,
