@@ -328,6 +328,8 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
   it('사이드카 이름이 고정 리터럴이다', () => {
     expect(mainRs).toContain('const RUNNER_SIDECAR_NAME: &str = "harkroom-runner"');
     expect(daemonRs).toContain('pub const OPERATOR_SIDECAR_NAME: &str = "harkroom-operator"');
+    expect(daemonRs).toContain('pub const OPERATOR_RS_SIDECAR_NAME: &str = "harkroom-operator-rs"');
+    expect(daemonRs).toContain('pub const RUNNER_SIDECAR_FOR_OPERATOR: &str = "harkroom-runner"');
   });
 
   /**
@@ -638,7 +640,12 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
         ...scanCallers(stripped.rest, 'main.rs'),
         ...scanCallers(daemonStripped.rest, 'daemon_client.rs'),
       ];
-      expect(callers).toEqual([{ fn: 'daemon_command', file: 'daemon_client.rs' }]);
+      // S2 A4②: Rust 오퍼레이터 커맨드(`rust_daemon_command`)가 둘째 자리다. 프로그램은 같은 `sidecar_path` 상수
+      // (`OPERATOR_RS_SIDECAR_NAME`)이고 인자는 전부 Rust 가 정한다 — 늘어난 것은 오퍼레이터 조립 자리이지 옆문이 아니다.
+      expect(callers).toEqual([
+        { fn: 'daemon_command', file: 'daemon_client.rs' },
+        { fn: 'rust_daemon_command', file: 'daemon_client.rs' },
+      ]);
     });
 
     it('`#[tauri::command]` 중 웹뷰가 채울 수 있는 파라미터를 받는 것은 시크릿 3종·daemon 2종·로컬 설정 10종(operator_*)·작업 폴더 정리 2종·로그인 항목 켜기 1종뿐이다', () => {

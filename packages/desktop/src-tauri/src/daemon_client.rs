@@ -59,6 +59,44 @@ use serde_json::{json, Value};
 /// — 러너 쪽 `RUNNER_SIDECAR_NAME` 과 같은 계약이다.
 pub const OPERATOR_SIDECAR_NAME: &str = "harkroom-operator";
 
+/// Rust 오퍼레이터 사이드카의 이름(S2 A4②). `tauri.conf.json` 의 `bundle.externalBin` 에 같이 실린다.
+/// **스위치 `HARKROOM_OPERATOR_IMPL=rust` 일 때만 띄운다** — 기본은 Node(`OPERATOR_SIDECAR_NAME`)다.
+pub const OPERATOR_RS_SIDECAR_NAME: &str = "harkroom-operator-rs";
+
+/// Rust 오퍼레이터가 띄울 러너 사이드카. Node 오퍼레이터는 자기 자리에서 러너 경로를 계산하지만,
+/// Rust 오퍼레이터는 `--runner-command` 로 받는다(클라이언트는 프로그램을 못 고른다 — 이 값도 Rust 상수다).
+pub const RUNNER_SIDECAR_FOR_OPERATOR: &str = "harkroom-runner";
+
+/// 오퍼레이터 구현 스위치의 env 이름(S2 A4②). 정확히 `rust` 일 때만 Rust 다 — 그 밖의 값·없음은 전부 Node.
+pub const OPERATOR_IMPL_ENV: &str = "HARKROOM_OPERATOR_IMPL";
+
+/// 어느 오퍼레이터 구현을 띄우나. **기본은 Node** — Rust 판은 아직 앱이 부르는 요청 일부만 받는다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OperatorImpl {
+    Node,
+    Rust,
+}
+
+impl OperatorImpl {
+    fn from_env_value(v: Option<&str>) -> Self {
+        match v {
+            Some("rust") => OperatorImpl::Rust,
+            _ => OperatorImpl::Node,
+        }
+    }
+
+    pub fn current() -> Self {
+        Self::from_env_value(std::env::var(OPERATOR_IMPL_ENV).ok().as_deref())
+    }
+
+    fn sidecar_name(self) -> &'static str {
+        match self {
+            OperatorImpl::Node => OPERATOR_SIDECAR_NAME,
+            OperatorImpl::Rust => OPERATOR_RS_SIDECAR_NAME,
+        }
+    }
+}
+
 /// 소켓·pid·토큰 파일명에 박히는 프로토콜 버전. **`@harkroom/shared` 의
 /// `DAEMON_PROTOCOL_VERSION` 과 같은 값이어야 한다** — 다르면 앱은 `daemon-v1.sock` 을
 /// 보는데 daemon 은 `daemon-v2.sock` 에 열어 서로를 영영 못 만난다.
@@ -1078,6 +1116,15 @@ pub fn ensure_daemon(
     } else {
         None
     };
+    // Rust 오퍼레이터는 커뮤니티 하나만 맡는다(`serve --base-url`) — 커뮤니티 모드가 아니면 띄울 수 없다.
+    // Node 로 물러나지 않는다(모듈 주석 "왜 폴백이 없나").
+    let operator_impl = OperatorImpl::current();
+    if operator_impl == OperatorImpl::Rust && target.is_none() {
+        return Err(format!(
+            "{OPERATOR_IMPL_ENV}=rust 는 커뮤니티마다 오퍼레이터 모드({}=1)에서만 쓴다",
+            crate::community_root::PER_COMMUNITY_ENV
+        ));
+    }
     let slot = target.as_ref().map(|t| t.key.clone()).unwrap_or_default();
     let mut guard = state
         .inner
@@ -1104,7 +1151,7 @@ pub fn ensure_daemon(
     };
     // **내 빌드의 daemon 실행 파일.** 소켓을 쥔 daemon 이 이것과 다른 것이면 안 붙는다
     // (`same_entry_path` 주석: 소켓이 워크트리를 가로질러 공유된다).
-    let my_entry = crate::sidecar_path(OPERATOR_SIDECAR_NAME)?;
+    let my_entry = crate::sidecar_path(operator_impl.sidecar_name())?;
     let launch_app = app.clone();
     let launch_paths = paths.clone();
     let launch_target = target.clone();
@@ -1514,7 +1561,11 @@ fn spawn_daemon(
     paths: &EndpointPaths,
     community: Option<&crate::community_root::CommunityTarget>,
 ) -> Result<DaemonExitWatch, String> {
-    let program = crate::sidecar_path(OPERATOR_SIDECAR_NAME)?;
+    let operator_impl = OperatorImpl::current();
+    let program = match operator_impl {
+        OperatorImpl::Node => crate::sidecar_path(OPERATOR_SIDECAR_NAME)?,
+        OperatorImpl::Rust => crate::sidecar_path(OPERATOR_RS_SIDECAR_NAME)?,
+    };
     if !program.is_file() {
         return Err(format!(
             "daemon 사이드카를 찾지 못했다: `{}` — 빌드가 externalBin 을 이 이름으로 넣었는지 확인하라",
@@ -1525,7 +1576,31 @@ fn spawn_daemon(
     let nonce = new_nonce();
     let app_version = app.package_info().version.to_string();
 
-    let mut cmd = daemon_command(&program, paths, &nonce, &app_version);
+    let mut cmd = match (operator_impl, community) {
+        (OperatorImpl::Node, _) => daemon_command(&program, paths, &nonce, &app_version),
+        (OperatorImpl::Rust, Some(target)) => {
+            use tauri::Manager;
+            let app_data_dir = app
+                .path()
+                .app_data_dir()
+                .map_err(|e| format!("앱 데이터 디렉터리를 찾지 못했다: {e}"))?;
+            let runner = crate::sidecar_path(RUNNER_SIDECAR_FOR_OPERATOR)?;
+            rust_daemon_command(
+                &program,
+                paths,
+                &nonce,
+                &app_version,
+                &RustServeArgs {
+                    base_url: &target.key,
+                    app_data_root: &app_data_root(&app_data_dir),
+                    runner: &runner,
+                },
+            )
+        }
+        (OperatorImpl::Rust, None) => {
+            return Err(format!("{OPERATOR_IMPL_ENV}=rust 인데 커뮤니티를 받지 못했다"));
+        }
+    };
     // 커뮤니티마다 모드: 이 오퍼레이터(와 그 러너)가 맡은 커뮤니티·뿌리를 준다. 오퍼레이터는 이 값으로 계정 선택
     // 자리(`claudePoolsFilePath`)를 정하고, `operator.json` 에 이 커뮤니티 칸만 받는다(`assertSingleCommunity`).
     // 꺼져 있으면 아무것도 주지 않는다 — 앱이 물려받은 스위치 값이 새지 않게 지운다.
@@ -2002,6 +2077,58 @@ fn daemon_command(
         .arg(app_version)
         .stdin(Stdio::null());
 
+    redirect_output_to_log(&mut cmd, paths);
+    cmd
+}
+
+
+/// Rust 오퍼레이터에 줄 인자 중 Node 판에 없는 것. 전부 Rust 가 정한 값이다(웹뷰가 닿지 않는다).
+struct RustServeArgs<'a> {
+    /// 커뮤니티 키(`community_root::community_key` — 끝 `/` 를 뗀 baseUrl). 오퍼레이터가 이 값으로 뿌리를 다시 계산한다.
+    base_url: &'a str,
+    /// `operators.json` 색인이 있는 앱 데이터 뿌리 — 앱이 방금 적은 색인 칸을 오퍼레이터가 같이 읽는다.
+    app_data_root: &'a Path,
+    runner: &'a Path,
+}
+
+/// Rust 오퍼레이터(`harkroom-operator-rs serve`)를 띄울 `Command` (S2 A4②).
+///
+/// Node 판과 다른 점: 소켓·토큰·pid 경로를 넘기지 않는다 — Rust 판은 `--base-url` 로 뿌리를 스스로 정하고 그 아래
+/// `operator/operator-v1.*` 를 쓴다. 그 자리는 앱의 `endpoint_paths(&target.root)` 와 같다(같은 색인·같은 해시).
+/// `--app-version` 을 꼭 준다 — 없으면 crate 판(0.1.0)이 pid 레코드에 실려 앱이 띄울 때마다 물린다(`should_retire_daemon`).
+/// 띄우는 방식(`detached_command`·`PATH`·로그 돌리기)은 Node 판과 같다.
+fn rust_daemon_command(
+    program: &Path,
+    paths: &EndpointPaths,
+    nonce: &str,
+    app_version: &str,
+    serve: &RustServeArgs<'_>,
+) -> std::process::Command {
+    use std::process::Stdio;
+
+    let mut cmd = crate::detached_command(program);
+    // 러너 사이드카가 셔뱅 스크립트(`#!/usr/bin/env node`)라 Node 판과 같은 `PATH` 가 필요하다(`#513`).
+    cmd.env("PATH", crate::login_path::child_path());
+    cmd.arg("serve")
+        .arg("--base-url")
+        .arg(serve.base_url)
+        .arg("--app-data")
+        .arg(serve.app_data_root)
+        .arg("--runner-command")
+        .arg(serve.runner)
+        .arg("--app-version")
+        .arg(app_version)
+        .arg("--launch-nonce")
+        .arg(nonce)
+        .stdin(Stdio::null());
+    redirect_output_to_log(&mut cmd, paths);
+    cmd
+}
+
+/// 오퍼레이터의 stdout·stderr 를 로그 파일로 돌린다(Node·Rust 판 공통).
+fn redirect_output_to_log(cmd: &mut std::process::Command, paths: &EndpointPaths) {
+    use std::process::Stdio;
+
     // **stdout·stderr 를 파일로 돌린다** — `EndpointPaths::log` 주석의 이유다.
     // `open` 으로 띄운 앱의 자식 출력은 그러지 않으면 어디에도 안 남는다(`#450`).
     //
@@ -2030,7 +2157,6 @@ fn daemon_command(
             cmd.stdout(Stdio::null()).stderr(Stdio::null());
         }
     }
-    cmd
 }
 
 /// 기동 난스. daemon 이 pid 레코드에 그대로 적고, 앱이 "내가 방금 띄운 그 daemon 인가"를
@@ -3626,6 +3752,64 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
     /// 모드이고, `daemon_command` 를 떼어낸 이유가 그것이다).
     ///
     /// 되돌려 RED: `daemon_command` 의 `cmd.env("PATH", …)` 한 줄을 지우면 빨개진다.
+    /// S2 A4② — 스위치는 정확히 `rust` 일 때만 Rust 다. 빈 값·대문자·오타는 전부 Node(기본).
+    #[test]
+    fn 오퍼레이터_구현_스위치는_rust_일_때만_켜진다() {
+        assert_eq!(OperatorImpl::from_env_value(None), OperatorImpl::Node);
+        assert_eq!(OperatorImpl::from_env_value(Some("")), OperatorImpl::Node);
+        assert_eq!(OperatorImpl::from_env_value(Some("node")), OperatorImpl::Node);
+        assert_eq!(OperatorImpl::from_env_value(Some("Rust")), OperatorImpl::Node);
+        assert_eq!(OperatorImpl::from_env_value(Some("rust ")), OperatorImpl::Node);
+        assert_eq!(OperatorImpl::from_env_value(Some("rust")), OperatorImpl::Rust);
+        assert_eq!(OperatorImpl::Node.sidecar_name(), "harkroom-operator");
+        assert_eq!(OperatorImpl::Rust.sidecar_name(), "harkroom-operator-rs");
+    }
+
+    /// S2 A4② — Rust 오퍼레이터 커맨드가 `serve` 와 앱이 정한 값만 싣는다. `--app-version` 이 빠지면
+    /// crate 판이 pid 레코드에 실려 앱이 띄울 때마다 물린다. 소켓·토큰 경로는 넘기지 않는다(뿌리에서 스스로 정한다).
+    #[test]
+    fn rust_오퍼레이터_커맨드가_serve_인자와_path_를_싣는다() {
+        let dir = std::env::temp_dir().join(format!("mmr-rs-{}", std::process::id()));
+        let paths = endpoint_paths(&dir);
+        let cmd = rust_daemon_command(
+            Path::new("/A/harkroom-operator-rs"),
+            &paths,
+            "nonce-x",
+            "0.4.999",
+            &RustServeArgs {
+                base_url: "https://c.example.com",
+                app_data_root: Path::new("/D/app"),
+                runner: Path::new("/A/harkroom-runner"),
+            },
+        );
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            args,
+            [
+                "serve",
+                "--base-url",
+                "https://c.example.com",
+                "--app-data",
+                "/D/app",
+                "--runner-command",
+                "/A/harkroom-runner",
+                "--app-version",
+                "0.4.999",
+                "--launch-nonce",
+                "nonce-x",
+            ]
+        );
+        assert!(
+            cmd.get_envs()
+                .any(|(k, v)| k == std::ffi::OsStr::new("PATH") && v.is_some()),
+            "Rust 오퍼레이터 커맨드에 PATH 가 없다 — 러너 셔뱅의 `node` 를 못 찾는다"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn daemon_커맨드가_path_를_env_로_넘긴다() {
         let dir = std::env::temp_dir().join(format!("mmr-env-{}", std::process::id()));
