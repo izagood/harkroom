@@ -26,6 +26,8 @@ async function run(mode: Mode, argv: string[] = ARGV): Promise<{ stdout: string;
   const server = net.createServer((conn) => {
     let buf = '';
     conn.on('data', (chunk) => {
+      // 거절 뒤 끝낸 연결에 따로 도착한 요청 조각은 버린다 — 조각 나뉨에 따라 write after end 가 났다(CI 경쟁).
+      if (conn.writableEnded) return;
       buf += chunk.toString('utf8');
       let nl: number;
       while ((nl = buf.indexOf('\n')) >= 0) {
