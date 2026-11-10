@@ -1,0 +1,1282 @@
+[
+ {
+  "input": {
+   "kind": "ok",
+   "lang": "ko",
+   "name": null,
+   "code": null
+  },
+  "status": 200,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"ko\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>연결됐습니다 · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"ok\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st ok\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M5 12.5l4.5 4.5L19 7.5\"/></svg></div>\n<h1>연결됐습니다</h1>\n<p class=\"d\">인증을 마쳤습니다.<br>Harkroom 앱으로 돌아가면 바로 쓸 수 있습니다.</p>\n<div class=\"ft\">이 탭은 닫아도 됩니다.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "ok",
+   "lang": "ko",
+   "name": "  <b>&\"x'  ",
+   "code": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  "status": 200,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"ko\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>연결됐습니다 · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"ok\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st ok\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M5 12.5l4.5 4.5L19 7.5\"/></svg></div>\n<h1>연결됐습니다</h1>\n<p class=\"d\"><b>&lt;b&gt;&amp;&quot;x&#39;</b> 인증을 마쳤습니다.<br>Harkroom 앱으로 돌아가면 바로 쓸 수 있습니다.</p>\n<div class=\"ft\">이 탭은 닫아도 됩니다.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "ok",
+   "lang": "ko",
+   "name": "   ",
+   "code": "한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀"
+  },
+  "status": 200,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"ko\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>연결됐습니다 · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"ok\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st ok\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M5 12.5l4.5 4.5L19 7.5\"/></svg></div>\n<h1>연결됐습니다</h1>\n<p class=\"d\">인증을 마쳤습니다.<br>Harkroom 앱으로 돌아가면 바로 쓸 수 있습니다.</p>\n<div class=\"ft\">이 탭은 닫아도 됩니다.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "ok",
+   "lang": "ko",
+   "name": "slack",
+   "code": "access_denied"
+  },
+  "status": 200,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"ko\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>연결됐습니다 · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"ok\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st ok\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M5 12.5l4.5 4.5L19 7.5\"/></svg></div>\n<h1>연결됐습니다</h1>\n<p class=\"d\"><b>slack</b> 인증을 마쳤습니다.<br>Harkroom 앱으로 돌아가면 바로 쓸 수 있습니다.</p>\n<div class=\"ft\">이 탭은 닫아도 됩니다.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "expired",
+   "lang": "ko",
+   "name": null,
+   "code": null
+  },
+  "status": 400,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"ko\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>인증 시간이 지났습니다 · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"expired\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st bad\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"8.5\"/><path d=\"M12 7.5V12l3 2\"/></svg></div>\n<h1>인증 시간이 지났습니다</h1>\n<p class=\"d\">이 링크는 더 이상 쓸 수 없습니다.<br>Harkroom 앱에서 인증을 다시 시작하세요.</p>\n<div class=\"ft\">이 탭은 닫아도 됩니다.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "expired",
+   "lang": "ko",
+   "name": "  <b>&\"x'  ",
+   "code": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  "status": 400,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"ko\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>인증 시간이 지났습니다 · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"expired\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st bad\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"8.5\"/><path d=\"M12 7.5V12l3 2\"/></svg></div>\n<h1>인증 시간이 지났습니다</h1>\n<p class=\"d\">이 링크는 더 이상 쓸 수 없습니다.<br>Harkroom 앱에서 인증을 다시 시작하세요.</p>\n<div class=\"ft\">이 탭은 닫아도 됩니다.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "expired",
+   "lang": "ko",
+   "name": "   ",
+   "code": "한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀"
+  },
+  "status": 400,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"ko\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>인증 시간이 지났습니다 · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"expired\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st bad\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"8.5\"/><path d=\"M12 7.5V12l3 2\"/></svg></div>\n<h1>인증 시간이 지났습니다</h1>\n<p class=\"d\">이 링크는 더 이상 쓸 수 없습니다.<br>Harkroom 앱에서 인증을 다시 시작하세요.</p>\n<div class=\"ft\">이 탭은 닫아도 됩니다.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "expired",
+   "lang": "ko",
+   "name": "slack",
+   "code": "access_denied"
+  },
+  "status": 400,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"ko\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>인증 시간이 지났습니다 · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"expired\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st bad\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"8.5\"/><path d=\"M12 7.5V12l3 2\"/></svg></div>\n<h1>인증 시간이 지났습니다</h1>\n<p class=\"d\">이 링크는 더 이상 쓸 수 없습니다.<br>Harkroom 앱에서 인증을 다시 시작하세요.</p>\n<div class=\"ft\">이 탭은 닫아도 됩니다.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "denied",
+   "lang": "ko",
+   "name": null,
+   "code": null
+  },
+  "status": 400,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"ko\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>연결하지 못했습니다 · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"denied\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st bad\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" aria-hidden=\"true\"><path d=\"M7 7l10 10M17 7L7 17\"/></svg></div>\n<h1>연결하지 못했습니다</h1>\n<p class=\"d\">인증 서버가 접근을 허용하지 않았습니다.<br>Harkroom 앱의 설정 › MCP에서 다시 인증하세요.</p>\n<div class=\"ft\">이 탭은 닫아도 됩니다.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "denied",
+   "lang": "ko",
+   "name": "  <b>&\"x'  ",
+   "code": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  "status": 400,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"ko\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>연결하지 못했습니다 · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"denied\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st bad\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" aria-hidden=\"true\"><path d=\"M7 7l10 10M17 7L7 17\"/></svg></div>\n<h1>연결하지 못했습니다</h1>\n<p class=\"d\"><b>&lt;b&gt;&amp;&quot;x&#39;</b>에서 접근을 허용하지 않았습니다.<br>Harkroom 앱의 설정 › MCP에서 다시 인증하세요.</p>\n<div class=\"code\">xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</div><div class=\"ft\">이 탭은 닫아도 됩니다.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "denied",
+   "lang": "ko",
+   "name": "   ",
+   "code": "한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀"
+  },
+  "status": 400,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"ko\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>연결하지 못했습니다 · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"denied\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st bad\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" aria-hidden=\"true\"><path d=\"M7 7l10 10M17 7L7 17\"/></svg></div>\n<h1>연결하지 못했습니다</h1>\n<p class=\"d\">인증 서버가 접근을 허용하지 않았습니다.<br>Harkroom 앱의 설정 › MCP에서 다시 인증하세요.</p>\n<div class=\"code\">한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀</div><div class=\"ft\">이 탭은 닫아도 됩니다.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "denied",
+   "lang": "ko",
+   "name": "slack",
+   "code": "access_denied"
+  },
+  "status": 400,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"ko\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>연결하지 못했습니다 · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"denied\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st bad\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" aria-hidden=\"true\"><path d=\"M7 7l10 10M17 7L7 17\"/></svg></div>\n<h1>연결하지 못했습니다</h1>\n<p class=\"d\"><b>slack</b>에서 접근을 허용하지 않았습니다.<br>Harkroom 앱의 설정 › MCP에서 다시 인증하세요.</p>\n<div class=\"code\">access_denied</div><div class=\"ft\">이 탭은 닫아도 됩니다.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "exchange_failed",
+   "lang": "ko",
+   "name": null,
+   "code": null
+  },
+  "status": 400,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"ko\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>연결하지 못했습니다 · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"exchange_failed\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st bad\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" aria-hidden=\"true\"><path d=\"M7 7l10 10M17 7L7 17\"/></svg></div>\n<h1>연결하지 못했습니다</h1>\n<p class=\"d\">인증 서버가 인증을 마무리하지 못했습니다.<br>앱에서 다시 시도하세요.</p>\n<div class=\"ft\">이 탭은 닫아도 됩니다.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "exchange_failed",
+   "lang": "ko",
+   "name": "  <b>&\"x'  ",
+   "code": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  "status": 400,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"ko\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>연결하지 못했습니다 · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"exchange_failed\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st bad\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" aria-hidden=\"true\"><path d=\"M7 7l10 10M17 7L7 17\"/></svg></div>\n<h1>연결하지 못했습니다</h1>\n<p class=\"d\"><b>&lt;b&gt;&amp;&quot;x&#39;</b> 서버가 인증을 마무리하지 못했습니다.<br>앱에서 다시 시도하세요.</p>\n<div class=\"code\">xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</div><div class=\"ft\">이 탭은 닫아도 됩니다.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "exchange_failed",
+   "lang": "ko",
+   "name": "   ",
+   "code": "한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀"
+  },
+  "status": 400,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"ko\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>연결하지 못했습니다 · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"exchange_failed\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st bad\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" aria-hidden=\"true\"><path d=\"M7 7l10 10M17 7L7 17\"/></svg></div>\n<h1>연결하지 못했습니다</h1>\n<p class=\"d\">인증 서버가 인증을 마무리하지 못했습니다.<br>앱에서 다시 시도하세요.</p>\n<div class=\"code\">한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀</div><div class=\"ft\">이 탭은 닫아도 됩니다.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "exchange_failed",
+   "lang": "ko",
+   "name": "slack",
+   "code": "access_denied"
+  },
+  "status": 400,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"ko\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>연결하지 못했습니다 · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"exchange_failed\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st bad\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" aria-hidden=\"true\"><path d=\"M7 7l10 10M17 7L7 17\"/></svg></div>\n<h1>연결하지 못했습니다</h1>\n<p class=\"d\"><b>slack</b> 서버가 인증을 마무리하지 못했습니다.<br>앱에서 다시 시도하세요.</p>\n<div class=\"code\">access_denied</div><div class=\"ft\">이 탭은 닫아도 됩니다.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "save_failed",
+   "lang": "ko",
+   "name": null,
+   "code": null
+  },
+  "status": 500,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"ko\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>연결하지 못했습니다 · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"save_failed\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st bad\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" aria-hidden=\"true\"><path d=\"M7 7l10 10M17 7L7 17\"/></svg></div>\n<h1>연결하지 못했습니다</h1>\n<p class=\"d\">인증은 받았지만 Harkroom이 저장하지 못했습니다.<br>앱에서 다시 시도하세요.</p>\n<div class=\"ft\">이 탭은 닫아도 됩니다.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "save_failed",
+   "lang": "ko",
+   "name": "  <b>&\"x'  ",
+   "code": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  "status": 500,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"ko\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>연결하지 못했습니다 · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"save_failed\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st bad\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" aria-hidden=\"true\"><path d=\"M7 7l10 10M17 7L7 17\"/></svg></div>\n<h1>연결하지 못했습니다</h1>\n<p class=\"d\">인증은 받았지만 Harkroom이 저장하지 못했습니다.<br>앱에서 다시 시도하세요.</p>\n<div class=\"ft\">이 탭은 닫아도 됩니다.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "save_failed",
+   "lang": "ko",
+   "name": "   ",
+   "code": "한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀"
+  },
+  "status": 500,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"ko\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>연결하지 못했습니다 · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"save_failed\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st bad\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" aria-hidden=\"true\"><path d=\"M7 7l10 10M17 7L7 17\"/></svg></div>\n<h1>연결하지 못했습니다</h1>\n<p class=\"d\">인증은 받았지만 Harkroom이 저장하지 못했습니다.<br>앱에서 다시 시도하세요.</p>\n<div class=\"ft\">이 탭은 닫아도 됩니다.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "save_failed",
+   "lang": "ko",
+   "name": "slack",
+   "code": "access_denied"
+  },
+  "status": 500,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"ko\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>연결하지 못했습니다 · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"save_failed\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st bad\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" aria-hidden=\"true\"><path d=\"M7 7l10 10M17 7L7 17\"/></svg></div>\n<h1>연결하지 못했습니다</h1>\n<p class=\"d\">인증은 받았지만 Harkroom이 저장하지 못했습니다.<br>앱에서 다시 시도하세요.</p>\n<div class=\"ft\">이 탭은 닫아도 됩니다.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "ok",
+   "lang": "en",
+   "name": null,
+   "code": null
+  },
+  "status": 200,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>Connected · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"ok\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st ok\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M5 12.5l4.5 4.5L19 7.5\"/></svg></div>\n<h1>Connected</h1>\n<p class=\"d\">Signed in.<br>Head back to the Harkroom app — it's ready to use.</p>\n<div class=\"ft\">You can close this tab.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "ok",
+   "lang": "en",
+   "name": "  <b>&\"x'  ",
+   "code": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  "status": 200,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>Connected · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"ok\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st ok\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M5 12.5l4.5 4.5L19 7.5\"/></svg></div>\n<h1>Connected</h1>\n<p class=\"d\">Signed in to <b>&lt;b&gt;&amp;&quot;x&#39;</b>.<br>Head back to the Harkroom app — it's ready to use.</p>\n<div class=\"ft\">You can close this tab.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "ok",
+   "lang": "en",
+   "name": "   ",
+   "code": "한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀"
+  },
+  "status": 200,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>Connected · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"ok\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st ok\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M5 12.5l4.5 4.5L19 7.5\"/></svg></div>\n<h1>Connected</h1>\n<p class=\"d\">Signed in.<br>Head back to the Harkroom app — it's ready to use.</p>\n<div class=\"ft\">You can close this tab.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "ok",
+   "lang": "en",
+   "name": "slack",
+   "code": "access_denied"
+  },
+  "status": 200,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>Connected · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"ok\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st ok\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M5 12.5l4.5 4.5L19 7.5\"/></svg></div>\n<h1>Connected</h1>\n<p class=\"d\">Signed in to <b>slack</b>.<br>Head back to the Harkroom app — it's ready to use.</p>\n<div class=\"ft\">You can close this tab.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "expired",
+   "lang": "en",
+   "name": null,
+   "code": null
+  },
+  "status": 400,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>This sign-in link has expired · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"expired\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st bad\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"8.5\"/><path d=\"M12 7.5V12l3 2\"/></svg></div>\n<h1>This sign-in link has expired</h1>\n<p class=\"d\">This link can no longer be used.<br>Start the sign-in again from the Harkroom app.</p>\n<div class=\"ft\">You can close this tab.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "expired",
+   "lang": "en",
+   "name": "  <b>&\"x'  ",
+   "code": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  "status": 400,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>This sign-in link has expired · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"expired\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st bad\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"8.5\"/><path d=\"M12 7.5V12l3 2\"/></svg></div>\n<h1>This sign-in link has expired</h1>\n<p class=\"d\">This link can no longer be used.<br>Start the sign-in again from the Harkroom app.</p>\n<div class=\"ft\">You can close this tab.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "expired",
+   "lang": "en",
+   "name": "   ",
+   "code": "한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀"
+  },
+  "status": 400,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>This sign-in link has expired · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"expired\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st bad\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"8.5\"/><path d=\"M12 7.5V12l3 2\"/></svg></div>\n<h1>This sign-in link has expired</h1>\n<p class=\"d\">This link can no longer be used.<br>Start the sign-in again from the Harkroom app.</p>\n<div class=\"ft\">You can close this tab.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "expired",
+   "lang": "en",
+   "name": "slack",
+   "code": "access_denied"
+  },
+  "status": 400,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>This sign-in link has expired · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"expired\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st bad\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"8.5\"/><path d=\"M12 7.5V12l3 2\"/></svg></div>\n<h1>This sign-in link has expired</h1>\n<p class=\"d\">This link can no longer be used.<br>Start the sign-in again from the Harkroom app.</p>\n<div class=\"ft\">You can close this tab.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "denied",
+   "lang": "en",
+   "name": null,
+   "code": null
+  },
+  "status": 400,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>Couldn&#39;t connect · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"denied\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st bad\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" aria-hidden=\"true\"><path d=\"M7 7l10 10M17 7L7 17\"/></svg></div>\n<h1>Couldn&#39;t connect</h1>\n<p class=\"d\">The server didn't grant access.<br>Sign in again from Settings › MCP in the Harkroom app.</p>\n<div class=\"ft\">You can close this tab.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "denied",
+   "lang": "en",
+   "name": "  <b>&\"x'  ",
+   "code": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  "status": 400,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>Couldn&#39;t connect · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"denied\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st bad\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" aria-hidden=\"true\"><path d=\"M7 7l10 10M17 7L7 17\"/></svg></div>\n<h1>Couldn&#39;t connect</h1>\n<p class=\"d\"><b>&lt;b&gt;&amp;&quot;x&#39;</b> didn't grant access.<br>Sign in again from Settings › MCP in the Harkroom app.</p>\n<div class=\"code\">xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</div><div class=\"ft\">You can close this tab.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "denied",
+   "lang": "en",
+   "name": "   ",
+   "code": "한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀"
+  },
+  "status": 400,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>Couldn&#39;t connect · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"denied\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st bad\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" aria-hidden=\"true\"><path d=\"M7 7l10 10M17 7L7 17\"/></svg></div>\n<h1>Couldn&#39;t connect</h1>\n<p class=\"d\">The server didn't grant access.<br>Sign in again from Settings › MCP in the Harkroom app.</p>\n<div class=\"code\">한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀</div><div class=\"ft\">You can close this tab.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "denied",
+   "lang": "en",
+   "name": "slack",
+   "code": "access_denied"
+  },
+  "status": 400,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>Couldn&#39;t connect · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"denied\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st bad\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" aria-hidden=\"true\"><path d=\"M7 7l10 10M17 7L7 17\"/></svg></div>\n<h1>Couldn&#39;t connect</h1>\n<p class=\"d\"><b>slack</b> didn't grant access.<br>Sign in again from Settings › MCP in the Harkroom app.</p>\n<div class=\"code\">access_denied</div><div class=\"ft\">You can close this tab.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "exchange_failed",
+   "lang": "en",
+   "name": null,
+   "code": null
+  },
+  "status": 400,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>Couldn&#39;t connect · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"exchange_failed\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st bad\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" aria-hidden=\"true\"><path d=\"M7 7l10 10M17 7L7 17\"/></svg></div>\n<h1>Couldn&#39;t connect</h1>\n<p class=\"d\">The server couldn't finish the sign-in.<br>Try again from the app.</p>\n<div class=\"ft\">You can close this tab.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "exchange_failed",
+   "lang": "en",
+   "name": "  <b>&\"x'  ",
+   "code": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  "status": 400,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>Couldn&#39;t connect · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"exchange_failed\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st bad\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" aria-hidden=\"true\"><path d=\"M7 7l10 10M17 7L7 17\"/></svg></div>\n<h1>Couldn&#39;t connect</h1>\n<p class=\"d\"><b>&lt;b&gt;&amp;&quot;x&#39;</b> couldn't finish the sign-in.<br>Try again from the app.</p>\n<div class=\"code\">xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</div><div class=\"ft\">You can close this tab.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "exchange_failed",
+   "lang": "en",
+   "name": "   ",
+   "code": "한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀"
+  },
+  "status": 400,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>Couldn&#39;t connect · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"exchange_failed\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st bad\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" aria-hidden=\"true\"><path d=\"M7 7l10 10M17 7L7 17\"/></svg></div>\n<h1>Couldn&#39;t connect</h1>\n<p class=\"d\">The server couldn't finish the sign-in.<br>Try again from the app.</p>\n<div class=\"code\">한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀</div><div class=\"ft\">You can close this tab.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "exchange_failed",
+   "lang": "en",
+   "name": "slack",
+   "code": "access_denied"
+  },
+  "status": 400,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>Couldn&#39;t connect · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"exchange_failed\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st bad\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" aria-hidden=\"true\"><path d=\"M7 7l10 10M17 7L7 17\"/></svg></div>\n<h1>Couldn&#39;t connect</h1>\n<p class=\"d\"><b>slack</b> couldn't finish the sign-in.<br>Try again from the app.</p>\n<div class=\"code\">access_denied</div><div class=\"ft\">You can close this tab.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "save_failed",
+   "lang": "en",
+   "name": null,
+   "code": null
+  },
+  "status": 500,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>Couldn&#39;t connect · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"save_failed\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st bad\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" aria-hidden=\"true\"><path d=\"M7 7l10 10M17 7L7 17\"/></svg></div>\n<h1>Couldn&#39;t connect</h1>\n<p class=\"d\">Sign-in succeeded, but Harkroom couldn't save it.<br>Try again from the app.</p>\n<div class=\"ft\">You can close this tab.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "save_failed",
+   "lang": "en",
+   "name": "  <b>&\"x'  ",
+   "code": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  "status": 500,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>Couldn&#39;t connect · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"save_failed\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st bad\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" aria-hidden=\"true\"><path d=\"M7 7l10 10M17 7L7 17\"/></svg></div>\n<h1>Couldn&#39;t connect</h1>\n<p class=\"d\">Sign-in succeeded, but Harkroom couldn't save it.<br>Try again from the app.</p>\n<div class=\"ft\">You can close this tab.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "save_failed",
+   "lang": "en",
+   "name": "   ",
+   "code": "한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀한글😀"
+  },
+  "status": 500,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>Couldn&#39;t connect · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"save_failed\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st bad\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" aria-hidden=\"true\"><path d=\"M7 7l10 10M17 7L7 17\"/></svg></div>\n<h1>Couldn&#39;t connect</h1>\n<p class=\"d\">Sign-in succeeded, but Harkroom couldn't save it.<br>Try again from the app.</p>\n<div class=\"ft\">You can close this tab.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ },
+ {
+  "input": {
+   "kind": "save_failed",
+   "lang": "en",
+   "name": "slack",
+   "code": "access_denied"
+  },
+  "status": 500,
+  "headers": [
+   [
+    "content-type",
+    "text/html; charset=utf-8"
+   ],
+   [
+    "content-security-policy",
+    "default-src 'none'; style-src 'sha256-debtXxNYkrNB75mr/98EvswAggYECmMyKUAunVfQDuA='; script-src 'sha256-Oj8NXtozZZU1PH1L/FDvoCP7UnpoyvCXDljdREP+QVY='; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+   ],
+   [
+    "cache-control",
+    "no-store"
+   ],
+   [
+    "referrer-policy",
+    "no-referrer"
+   ],
+   [
+    "x-content-type-options",
+    "nosniff"
+   ]
+  ],
+  "body": "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\">\n<title>Couldn&#39;t connect · Harkroom</title>\n<style>:root{color-scheme:light dark;--s:#fbfaf8;--r:#fff;--b:#e6e2dc;--f:#1b1a19;--m:#6b665f;--u:#8e8880;--br:#e4572e;--ok:#1b7d45;--oks:#e6f6ec;--bad:#b42318;--bads:#fdecea}\n@media (prefers-color-scheme:dark){:root{--s:#1c1b19;--r:#262422;--b:#34312e;--f:#ebe7e2;--m:#9a938b;--u:#7a746c;--br:#ff7a4a;--ok:#5ccf86;--oks:#16301f;--bad:#ff8a80;--bads:#3a1d1b}}\n*{box-sizing:border-box}\nhtml,body{height:100%}\nbody{margin:0;background:var(--s);color:var(--f);font:15px/1.55 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Pretendard\",\"Segoe UI\",system-ui,sans-serif;display:grid;place-items:center;padding:32px 16px}\n.card{width:100%;max-width:380px;background:var(--r);border:1px solid var(--b);border-radius:14px;padding:28px 26px 22px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.05)}\n.logo{display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:13px;letter-spacing:-.01em;margin-bottom:22px}\n.logo svg{width:22px;height:22px}.logo .c{stroke:var(--br)}\n.st{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;margin:0 auto 14px}\n.st.ok{background:var(--oks);color:var(--ok)}.st.bad{background:var(--bads);color:var(--bad)}\n.st svg{width:24px;height:24px}\nh1{font-size:18px;font-weight:650;margin:0 0 6px;letter-spacing:-.01em}\n.d{color:var(--m);margin:0;font-size:14px;overflow-wrap:anywhere}\n.d b{color:var(--f);font-weight:600}\n.code{margin:14px auto 0;display:inline-block;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--u);border:1px solid var(--b);border-radius:6px;padding:2px 8px;max-width:100%;overflow-wrap:anywhere}\n.ft{margin-top:22px;padding-top:14px;border-top:1px solid var(--b);font-size:12.5px;color:var(--u)}</style></head>\n<body><main class=\"card\" data-kind=\"save_failed\">\n<div class=\"logo\"><svg viewBox=\"0 0 128 128\" aria-hidden=\"true\"><g stroke=\"currentColor\" stroke-width=\"10\" stroke-linecap=\"round\"><path d=\"M20 52V76M35 42V86M50 31V97M80 33V95M95 45V83M110 53V75\"/></g><path class=\"c\" d=\"M65 18V110\" stroke-width=\"10\" stroke-linecap=\"round\"/></svg>Harkroom</div>\n<div class=\"st bad\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\" aria-hidden=\"true\"><path d=\"M7 7l10 10M17 7L7 17\"/></svg></div>\n<h1>Couldn&#39;t connect</h1>\n<p class=\"d\">Sign-in succeeded, but Harkroom couldn't save it.<br>Try again from the app.</p>\n<div class=\"ft\">You can close this tab.</div>\n</main><script>history.replaceState(null,'',location.pathname);</script></body></html>\n"
+ }
+]

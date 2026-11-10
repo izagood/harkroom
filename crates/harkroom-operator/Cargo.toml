@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.88"
 license = "Apache-2.0"
 publish = false
-description = "Rust port of the harkroom operator (S2). A1: `merge` wrapper client. A2: app socket server (hello/ping/listRunners). A3b: runner table (spawn/kill, runnerExit event), operators.json index read. A5a: local agent config (operatorAgent* 4). A5b: merge gh account (operatorMerge* 3). A5c: local MCP definitions (operatorMcp* 4)."
+description = "Rust port of the harkroom operator (S2). A1: `merge` wrapper client. A2: app socket server (hello/ping/listRunners). A3b: runner table (spawn/kill, runnerExit event), operators.json index read. A5a: local agent config (operatorAgent* 4). A5b: merge gh account (operatorMerge* 3). A5c: local MCP definitions (operatorMcp* 4). A5d: remote MCP OAuth (operatorMcpAuth* 3)."
 
 [[bin]]
 name = "harkroom-operator-rs"
@@ -21,3 +21,8 @@ serde_json = { version = "=1.0.154", features = ["preserve_order"] }
 indexmap = "=2.14.2"
 # kill(pid, 0) — TS isProcessAlive 와 같은 잔해 판정(security C2). lock 에 이미 있는 판이다.
 libc = "=0.2.191"
+# A5d MCP OAuth: 동기 HTTP(오퍼레이터는 std::thread 구조, tokio 없음) + rustls(ring). 기본 기능 끔.
+ureq = { version = "=3.5.0", default-features = false, features = ["rustls", "json"] }
+# PKCE(sha256)·state 난수는 rustls 가 이미 싣는 ring 으로 — getrandom 0.4 는 wasm 쪽 wit-bindgen·syn 3 을 끌고 온다.
+ring = "=0.17.14"
+base64 = "=0.23.1"
