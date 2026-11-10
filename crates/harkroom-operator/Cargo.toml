@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.88"
 license = "Apache-2.0"
 publish = false
-description = "Rust port of the harkroom operator (S2). A1: `merge` wrapper client. A2: app socket server (hello/ping/listRunners). A3b: runner table (spawn/kill, runnerExit event), operators.json index read. A5a: local agent config (operatorAgent* 4)."
+description = "Rust port of the harkroom operator (S2). A1: `merge` wrapper client. A2: app socket server (hello/ping/listRunners). A3b: runner table (spawn/kill, runnerExit event), operators.json index read. A5a: local agent config (operatorAgent* 4). A5b: merge gh account (operatorMerge* 3)."
 
 [[bin]]
 name = "harkroom-operator-rs"

@@ -95,10 +95,7 @@ impl LocalAgents {
 
     /// `operatorAgentsList`.
     pub fn list(&self) -> Result<Value, DaemonError> {
-        let config = match self.load()? {
-            Loaded::Ok(m) => m,
-            Loaded::Missing | Loaded::Broken => Map::new(),
-        };
+        let config = self.read_config()?;
         let mut out = Vec::new();
         if let Some(Value::Object(communities)) = config.get("communities") {
             for (raw, section) in communities {
@@ -132,6 +129,23 @@ impl LocalAgents {
                 self.community
             )));
         }
+        self.modify_config(f)
+    }
+
+    /// 깨진 파일·없는 파일은 빈 설정으로 읽는다(TS `readConfig`) — 읽기 전용 길(`operatorMergeGet` 등)이 쓴다.
+    pub(crate) fn read_config(&self) -> Result<Map<String, Value>, DaemonError> {
+        Ok(match self.load()? {
+            Loaded::Ok(m) => m,
+            Loaded::Missing | Loaded::Broken => Map::new(),
+        })
+    }
+
+    /// 잠그고 읽어 `f` 로 고친 뒤 쓴다(커뮤니티 키 검사 없음 — 칸을 더하지 않는 쓰기용, `local_merge`).
+    /// `f` 가 `false` 를 돌려주면 쓰지 않는다. 쓰기 전에 커뮤니티 칸이 하나뿐인지는 그대로 본다.
+    pub(crate) fn modify_config(
+        &self,
+        f: impl FnOnce(&mut Map<String, Value>) -> Result<bool, DaemonError>,
+    ) -> Result<(), DaemonError> {
         let dir = self
             .config_path
             .parent()

@@ -12,6 +12,7 @@
 use crate::endpoint::{ClaimOutcome, claim, random_hex};
 use crate::index::read_roots_index;
 use crate::local_agents::LocalAgents;
+use crate::local_merge::{LocalMerge, default_gh_path};
 use crate::runners::RunnerLaunch;
 use crate::socket::{ServerState, accept_loop};
 use harkroom_proto::p3::DaemonIdentity;
@@ -91,6 +92,11 @@ pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
         }) => {
             state.set_token(token);
             state.set_local_agents(LocalAgents::new(&root, base_url));
+            state.set_local_merge(LocalMerge::new(
+                LocalAgents::new(&root, base_url),
+                default_gh_path(),
+                home.clone(),
+            ));
             println!(
                 "{}",
                 json!({"ok": true, "listening": paths.socket_path, "root": root, "pid": identity.pid})
