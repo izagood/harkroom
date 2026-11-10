@@ -1,0 +1,554 @@
+{
+  "note": "packages/operator/test/mergeCliGolden.test.ts 가 쓴다 — 손으로 고치지 마라",
+  "cases": [
+    {
+      "name": "merged",
+      "argv": [
+        "izagood/Harkroom",
+        "1842",
+        "--head",
+        "53e53ae5d9f3b6fb2712d6281f0ec31e66f572f1"
+      ],
+      "env": "turnKey",
+      "reply": {
+        "type": "mcp.response",
+        "messages": [
+          {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"merged\":true,\"sha\":\"x\"}"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "expect": {
+        "stdout": "{\"merged\":true,\"sha\":\"x\",\"exit\":0}",
+        "exit": 0,
+        "frames": [
+          {
+            "type": "hello",
+            "version": 1,
+            "role": "runner",
+            "runnerId": "r1",
+            "turnKey": "tk",
+            "kind": "wrapper"
+          },
+          {
+            "type": "mcp.request",
+            "id": "<id>",
+            "payload": {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "method": "tools/call",
+              "params": {
+                "name": "repo.merge",
+                "arguments": {
+                  "repo": "izagood/harkroom",
+                  "number": 1842,
+                  "headSha": "53e53ae5d9f3b6fb2712d6281f0ec31e66f572f1"
+                }
+              }
+            },
+            "cwd": "<cwd>"
+          }
+        ]
+      }
+    },
+    {
+      "name": "queued",
+      "argv": [
+        "izagood/Harkroom",
+        "1842",
+        "--head",
+        "53e53ae5d9f3b6fb2712d6281f0ec31e66f572f1"
+      ],
+      "env": "turnKey",
+      "reply": {
+        "type": "mcp.response",
+        "messages": [
+          {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"queued\":true,\"merged\":false,\"queue\":{\"position\":2}}"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "expect": {
+        "stdout": "{\"queued\":true,\"merged\":false,\"queue\":{\"position\":2},\"exit\":0}",
+        "exit": 0,
+        "frames": [
+          {
+            "type": "hello",
+            "version": 1,
+            "role": "runner",
+            "runnerId": "r1",
+            "turnKey": "tk",
+            "kind": "wrapper"
+          },
+          {
+            "type": "mcp.request",
+            "id": "<id>",
+            "payload": {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "method": "tools/call",
+              "params": {
+                "name": "repo.merge",
+                "arguments": {
+                  "repo": "izagood/harkroom",
+                  "number": 1842,
+                  "headSha": "53e53ae5d9f3b6fb2712d6281f0ec31e66f572f1"
+                }
+              }
+            },
+            "cwd": "<cwd>"
+          }
+        ]
+      }
+    },
+    {
+      "name": "denied",
+      "argv": [
+        "izagood/Harkroom",
+        "1842",
+        "--head",
+        "53e53ae5d9f3b6fb2712d6281f0ec31e66f572f1"
+      ],
+      "env": "turnKey",
+      "reply": {
+        "type": "mcp.response",
+        "messages": [
+          {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"error\":{\"code\":\"not_granted\",\"denialId\":\"d1\"}}"
+                }
+              ],
+              "isError": true
+            }
+          }
+        ]
+      },
+      "expect": {
+        "stdout": "{\"error\":{\"code\":\"not_granted\",\"denialId\":\"d1\"},\"merged\":false,\"exit\":1}",
+        "exit": 1,
+        "frames": [
+          {
+            "type": "hello",
+            "version": 1,
+            "role": "runner",
+            "runnerId": "r1",
+            "turnKey": "tk",
+            "kind": "wrapper"
+          },
+          {
+            "type": "mcp.request",
+            "id": "<id>",
+            "payload": {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "method": "tools/call",
+              "params": {
+                "name": "repo.merge",
+                "arguments": {
+                  "repo": "izagood/harkroom",
+                  "number": 1842,
+                  "headSha": "53e53ae5d9f3b6fb2712d6281f0ec31e66f572f1"
+                }
+              }
+            },
+            "cwd": "<cwd>"
+          }
+        ]
+      }
+    },
+    {
+      "name": "server_error",
+      "argv": [
+        "izagood/Harkroom",
+        "1842",
+        "--head",
+        "53e53ae5d9f3b6fb2712d6281f0ec31e66f572f1"
+      ],
+      "env": "turnKey",
+      "reply": {
+        "type": "mcp.error",
+        "status": 403,
+        "message": "nope"
+      },
+      "expect": {
+        "stdout": "{\"error\":{\"code\":\"link_error\",\"message\":\"harkroom 서버가 거절했다 (403): nope\"},\"merged\":false,\"exit\":1}",
+        "exit": 1,
+        "frames": [
+          {
+            "type": "hello",
+            "version": 1,
+            "role": "runner",
+            "runnerId": "r1",
+            "turnKey": "tk",
+            "kind": "wrapper"
+          },
+          {
+            "type": "mcp.request",
+            "id": "<id>",
+            "payload": {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "method": "tools/call",
+              "params": {
+                "name": "repo.merge",
+                "arguments": {
+                  "repo": "izagood/harkroom",
+                  "number": 1842,
+                  "headSha": "53e53ae5d9f3b6fb2712d6281f0ec31e66f572f1"
+                }
+              }
+            },
+            "cwd": "<cwd>"
+          }
+        ]
+      }
+    },
+    {
+      "name": "raw_text",
+      "argv": [
+        "izagood/Harkroom",
+        "1842",
+        "--head",
+        "53e53ae5d9f3b6fb2712d6281f0ec31e66f572f1"
+      ],
+      "env": "turnKey",
+      "reply": {
+        "type": "mcp.response",
+        "messages": [
+          {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "plain text"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "expect": {
+        "stdout": "{\"raw\":\"plain text\",\"merged\":false,\"exit\":0}",
+        "exit": 0,
+        "frames": [
+          {
+            "type": "hello",
+            "version": 1,
+            "role": "runner",
+            "runnerId": "r1",
+            "turnKey": "tk",
+            "kind": "wrapper"
+          },
+          {
+            "type": "mcp.request",
+            "id": "<id>",
+            "payload": {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "method": "tools/call",
+              "params": {
+                "name": "repo.merge",
+                "arguments": {
+                  "repo": "izagood/harkroom",
+                  "number": 1842,
+                  "headSha": "53e53ae5d9f3b6fb2712d6281f0ec31e66f572f1"
+                }
+              }
+            },
+            "cwd": "<cwd>"
+          }
+        ]
+      }
+    },
+    {
+      "name": "array_result",
+      "argv": [
+        "izagood/Harkroom",
+        "1842",
+        "--head",
+        "53e53ae5d9f3b6fb2712d6281f0ec31e66f572f1"
+      ],
+      "env": "turnKey",
+      "reply": {
+        "type": "mcp.response",
+        "messages": [
+          {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "[1,\"a\"]"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "expect": {
+        "stdout": "{\"0\":1,\"1\":\"a\",\"merged\":false,\"exit\":0}",
+        "exit": 0,
+        "frames": [
+          {
+            "type": "hello",
+            "version": 1,
+            "role": "runner",
+            "runnerId": "r1",
+            "turnKey": "tk",
+            "kind": "wrapper"
+          },
+          {
+            "type": "mcp.request",
+            "id": "<id>",
+            "payload": {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "method": "tools/call",
+              "params": {
+                "name": "repo.merge",
+                "arguments": {
+                  "repo": "izagood/harkroom",
+                  "number": 1842,
+                  "headSha": "53e53ae5d9f3b6fb2712d6281f0ec31e66f572f1"
+                }
+              }
+            },
+            "cwd": "<cwd>"
+          }
+        ]
+      }
+    },
+    {
+      "name": "closed_silently",
+      "argv": [
+        "izagood/Harkroom",
+        "1842",
+        "--head",
+        "53e53ae5d9f3b6fb2712d6281f0ec31e66f572f1"
+      ],
+      "env": "turnKey",
+      "reply": "close",
+      "expect": {
+        "stdout": "{\"error\":{\"code\":\"link_error\",\"message\":\"오퍼레이터 링크가 끊겼다(오퍼레이터 교체·재시작) — 이 요청이 처리됐는지는 알 수 없다. 결과를 확인한 뒤에 다시 불러라. 링크는 곧 스스로 다시 붙는다\"},\"merged\":false,\"exit\":1}",
+        "exit": 1,
+        "frames": [
+          {
+            "type": "hello",
+            "version": 1,
+            "role": "runner",
+            "runnerId": "r1",
+            "turnKey": "tk",
+            "kind": "wrapper"
+          },
+          {
+            "type": "mcp.request",
+            "id": "<id>",
+            "payload": {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "method": "tools/call",
+              "params": {
+                "name": "repo.merge",
+                "arguments": {
+                  "repo": "izagood/harkroom",
+                  "number": 1842,
+                  "headSha": "53e53ae5d9f3b6fb2712d6281f0ec31e66f572f1"
+                }
+              }
+            },
+            "cwd": "<cwd>"
+          }
+        ]
+      }
+    },
+    {
+      "name": "link_rejected",
+      "argv": [
+        "izagood/Harkroom",
+        "1842",
+        "--head",
+        "53e53ae5d9f3b6fb2712d6281f0ec31e66f572f1"
+      ],
+      "env": "turnKey",
+      "reply": "rejected",
+      "expect": {
+        "stdout": "{\"error\":{\"code\":\"link_error\",\"message\":\"오퍼레이터 링크가 없다 — 재접속 중이다. 잠시 뒤 다시 불러라\"},\"merged\":false,\"exit\":1}",
+        "exit": 1,
+        "frames": [
+          {
+            "type": "hello",
+            "version": 1,
+            "role": "runner",
+            "runnerId": "r1",
+            "turnKey": "tk",
+            "kind": "wrapper"
+          },
+          {
+            "type": "mcp.request",
+            "id": "<id>",
+            "payload": {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "method": "tools/call",
+              "params": {
+                "name": "repo.merge",
+                "arguments": {
+                  "repo": "izagood/harkroom",
+                  "number": 1842,
+                  "headSha": "53e53ae5d9f3b6fb2712d6281f0ec31e66f572f1"
+                }
+              }
+            },
+            "cwd": "<cwd>"
+          }
+        ]
+      }
+    },
+    {
+      "name": "secret_credentials",
+      "argv": [
+        "izagood/Harkroom",
+        "1842",
+        "--head",
+        "53e53ae5d9f3b6fb2712d6281f0ec31e66f572f1"
+      ],
+      "env": "secret",
+      "reply": {
+        "type": "mcp.response",
+        "messages": [
+          {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"merged\":true,\"sha\":\"x\"}"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "expect": {
+        "stdout": "{\"merged\":true,\"sha\":\"x\",\"exit\":0}",
+        "exit": 0,
+        "frames": [
+          {
+            "type": "hello",
+            "version": 1,
+            "role": "runner",
+            "runnerId": "r1",
+            "secret": "sec",
+            "kind": "bridge"
+          },
+          {
+            "type": "mcp.request",
+            "id": "<id>",
+            "payload": {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "method": "tools/call",
+              "params": {
+                "name": "repo.merge",
+                "arguments": {
+                  "repo": "izagood/harkroom",
+                  "number": 1842,
+                  "headSha": "53e53ae5d9f3b6fb2712d6281f0ec31e66f572f1"
+                }
+              }
+            },
+            "cause": "cz",
+            "cwd": "<cwd>"
+          }
+        ]
+      }
+    },
+    {
+      "name": "not_in_turn",
+      "argv": [
+        "izagood/Harkroom",
+        "1842",
+        "--head",
+        "53e53ae5d9f3b6fb2712d6281f0ec31e66f572f1"
+      ],
+      "env": "none",
+      "reply": null,
+      "expect": {
+        "stdout": "{\"error\":{\"code\":\"not_in_turn\",\"message\":\"HARKROOM_OPERATOR_SOCKET·HARKROOM_RUNNER_ID·HARKROOM_RUNNER_SECRET·HARKROOM_TURN_CAUSE are required — the wrapper only runs inside a runner-launched mention turn\"},\"merged\":false,\"exit\":2}",
+        "exit": 2,
+        "frames": []
+      }
+    },
+    {
+      "name": "usage",
+      "argv": [
+        "a/b"
+      ],
+      "env": "turnKey",
+      "reply": null,
+      "expect": {
+        "stdout": "{\"error\":{\"code\":\"bad_request\",\"message\":\"사용법: harkroom-operator merge <owner/name> <PR 번호> --head <40자 sha>\"},\"merged\":false,\"exit\":2}",
+        "exit": 2,
+        "frames": []
+      }
+    },
+    {
+      "name": "unknown_flag",
+      "argv": [
+        "a/b",
+        "1",
+        "--admin"
+      ],
+      "env": "turnKey",
+      "reply": null,
+      "expect": {
+        "stdout": "{\"error\":{\"code\":\"bad_request\",\"message\":\"받지 않는 인자: --admin — 래퍼는 --head 만 받는다(--admin·--auto·-R·--approval 없음)\"},\"merged\":false,\"exit\":2}",
+        "exit": 2,
+        "frames": []
+      }
+    },
+    {
+      "name": "bad_head",
+      "argv": [
+        "a/b",
+        "1",
+        "--head",
+        "zz"
+      ],
+      "env": "turnKey",
+      "reply": null,
+      "expect": {
+        "stdout": "{\"error\":{\"code\":\"bad_request\",\"message\":\"--head <40자 hex sha> 가 필요하다\"},\"merged\":false,\"exit\":2}",
+        "exit": 2,
+        "frames": []
+      }
+    }
+  ]
+}
