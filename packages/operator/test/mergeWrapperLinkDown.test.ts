@@ -13,12 +13,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 const TSX = join(import.meta.dirname, '..', 'node_modules', '.bin', 'tsx');
 const MAIN = join(import.meta.dirname, '..', 'src', 'main.ts');
 const ARGV = ['merge', 'example/repo', '12', '--head', 'a'.repeat(40)];
+const API_ARGV = ['api', 'example-api', 'GET', '/v1/items'];
 
 type Mode = 'rejected' | 'merged' | 'denied';
 const dirs: string[] = [];
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 
-async function run(mode: Mode): Promise<{ stdout: string; code: number | null }> {
+async function run(mode: Mode, argv: string[] = ARGV): Promise<{ stdout: string; code: number | null }> {
   const dir = mkdtempSync(join(tmpdir(), 'hr-wrap-'));
   dirs.push(dir);
   const sock = join(dir, 'op.sock');
@@ -45,7 +46,7 @@ async function run(mode: Mode): Promise<{ stdout: string; code: number | null }>
         PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '',
         HARKROOM_OPERATOR_SOCKET: sock, HARKROOM_RUNNER_ID: 'r1', HARKROOM_TURN_GRANT: 'f'.repeat(64),
       };
-      const child = spawn(TSX, [MAIN, ...ARGV], { env, stdio: ['ignore', 'pipe', 'ignore'] });
+      const child = spawn(TSX, [MAIN, ...argv], { env, stdio: ['ignore', 'pipe', 'ignore'] });
       let stdout = '';
       child.stdout.on('data', (c: Buffer) => { stdout += c.toString('utf8'); });
       child.on('close', (code) => resolve({ stdout: stdout.trim(), code }));
@@ -68,6 +69,24 @@ describe('merge 래퍼 — 링크가 없을 때', () => {
     expect(await run('merged')).toEqual({ stdout: '{"merged":true,"repo":"example/repo","exit":0}', code: 0 });
     expect(await run('denied')).toEqual({
       stdout: '{"error":{"code":"not_granted","message":"no","denialId":"d1"},"merged":false,"exit":1}', code: 1,
+    });
+  }, 40_000);
+});
+
+describe('api 래퍼 — 링크가 없을 때(merge 와 같은 빈틈, 2026-11-10)', () => {
+  it('오퍼레이터가 링크를 거절하면 link_error 한 줄과 exit 1 로 끝난다', async () => {
+    const r = await run('rejected', API_ARGV);
+    expect(r.code).toBe(1);
+    expect(r.stdout).toBe(JSON.stringify({
+      error: { code: 'link_error', message: '오퍼레이터 링크가 없다 — 재접속 중이다. 잠시 뒤 다시 불러라' }, exit: 1,
+    }));
+  }, 40_000);
+
+  it('답이 오면 출력은 전과 같다 — 성공 · 거절', async () => {
+    // api 출력은 `{ ...out, exit }` 이다(merge 처럼 `merged` 를 덧붙이지 않는다).
+    expect(await run('merged', API_ARGV)).toEqual({ stdout: '{"merged":true,"repo":"example/repo","exit":0}', code: 0 });
+    expect(await run('denied', API_ARGV)).toEqual({
+      stdout: '{"error":{"code":"not_granted","message":"no","denialId":"d1"},"exit":1}', code: 1,
     });
   }, 40_000);
 });
