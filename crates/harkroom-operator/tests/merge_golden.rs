@@ -52,8 +52,9 @@ fn run_case(c: &Value) -> Value {
                     "{}",
                     serde_json::json!({ "type": "link.rejected", "reason": "x" })
                 );
-                let _ = writer.shutdown(std::net::Shutdown::Both);
-                return;
+                // TS 쪽 가짜 소켓(`conn.end`)처럼 쓰기만 닫고, 이미 받은 줄은 계속 적는다 — 두 구현 모두 hello 뒤에 요청을 붙여 보낸다.
+                let _ = writer.shutdown(std::net::Shutdown::Write);
+                continue;
             }
             if frame["type"] != "mcp.request" {
                 continue;

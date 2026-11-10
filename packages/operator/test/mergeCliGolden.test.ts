@@ -39,7 +39,6 @@ const CASES: Case[] = [
   { name: 'closed_silently', argv: GOOD, env: 'turnKey', reply: 'close' },
   {
     name: 'link_rejected', argv: GOOD, env: 'turnKey', reply: 'rejected',
-    tsDiffers: 'TS 는 link.rejected 를 받으면 아무것도 찍지 않고 exit 0 으로 끝난다(에이전트가 성공으로 읽을 수 있다). Rust 는 link_error·exit 1.',
     expect: {
       stdout: JSON.stringify({ error: { code: 'link_error', message: '오퍼레이터 링크가 없다 — 재접속 중이다. 잠시 뒤 다시 불러라' }, merged: false, exit: 1 }),
       exit: 1,
