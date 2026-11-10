@@ -4,7 +4,7 @@ import { homedir, tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { GRANT_DELEGATE_TOOL, laneEnvAllowed, laneGhConfigDir, LANE_BASE_ALLOW, LANE_DENY, READONLY_ALLOW, READONLY_RULES, READONLY_TOOLS, PERMISSION_REQUEST_TOOL, POST_TOOLS, HARNESS_ENV_DENYLIST, MERGE_DENY_RULES, SETTINGS_SELF_EDIT_DENY_RULES, assertHarnessContract, configSettingsDenyRules, buildTurnCommand, chromeTurnFor, harnessPath, preassignsSessionId, readExtraMcpServers, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
+import { GRANT_DELEGATE_TOOL, laneEnvAllowed, laneGhConfigDir, LANE_BASE_ALLOW, LANE_DENY, READONLY_ALLOW, READONLY_RULES, READONLY_TOOLS, PERMISSION_REQUEST_TOOL, POST_TOOLS, HARNESS_ENV_DENYLIST, MERGE_DENY_RULES, MENTION_DENY_TOOLS, SETTINGS_SELF_EDIT_DENY_RULES, assertHarnessContract, configSettingsDenyRules, buildTurnCommand, chromeTurnFor, harnessPath, preassignsSessionId, readExtraMcpServers, writePromptFile, writeSystemPromptFile } from '../src/turn.js';
 import { decodeLaneHookRules } from '@harkroom/shared/providerLane';
 
 // harkroomUrl 은 **서버 베이스 URL이다, MCP 엔드포인트가 아니다** — main.ts::loadConfig 가
@@ -1168,9 +1168,17 @@ describe('claude 머지 권한 규칙 주입 (permissionRules)', () => {
 
   it('auto 멘션 턴에는 deny 4개가 항상 붙는다 — grant 가 없어도', () => {
     const args = buildTurnCommand({ ...common, mode: 'mention' }).args;
-    expect(after(args, '--disallowedTools')).toEqual([...MERGE_DENY_RULES, ...SETTINGS_SELF_EDIT_DENY_RULES, ...configSettingsDenyRules(common.claudeConfigDir ?? null)]);
+    expect(after(args, '--disallowedTools')).toEqual([...MERGE_DENY_RULES, ...SETTINGS_SELF_EDIT_DENY_RULES, ...configSettingsDenyRules(common.claudeConfigDir ?? null), ...MENTION_DENY_TOOLS]);
     // 권한 요청 도구와 머지 래퍼는 늘 연다(H①·스레드 1b75d7a0) — 막힌 에이전트가 청할 길. 둘 다 판정은 서버가 한다.
     expect(after(args, '--allowedTools')).toEqual(['Bash(/opt/harkroom/harkroom-operator merge:*)', PERMISSION_REQUEST_TOOL, ...POST_TOOLS]);
+  });
+
+  it('auto 멘션 턴은 AskUserQuestion 을 뺀다 — 터미널에 답할 사람이 없다(C안 P4). 인터랙티브·읽기 전용 턴에는 deny 로 싣지 않는다', () => {
+    expect(MENTION_DENY_TOOLS).toEqual(['AskUserQuestion']);
+    expect(after(buildTurnCommand({ ...common, mode: 'mention' }).args, '--disallowedTools')).toContain('AskUserQuestion');
+    expect(buildTurnCommand({ ...common, mode: 'interactive' }).args).not.toContain('AskUserQuestion');
+    const ro = buildTurnCommand({ ...common, mode: 'mention', mentionPermission: 'readonly' }).args;
+    expect(ro.join(' ')).not.toContain('AskUserQuestion');
   });
 
   it('발화 도구는 정확한 이름 넷만 분류기 없이 연다 — 그 밖의 harkroom 쓰기 도구·서버 통째는 없다(security 조건 ①④, 10-25)', () => {
@@ -1204,7 +1212,7 @@ describe('claude 머지 권한 규칙 주입 (permissionRules)', () => {
     const args = buildTurnCommand({ ...common, mode: 'mention', toolAllows: [...ok, ...bad] }).args;
     expect(after(args, '--allowedTools')).toEqual(['Bash(/opt/harkroom/harkroom-operator merge:*)', PERMISSION_REQUEST_TOOL, ...POST_TOOLS, ...ok]);
     // deny 는 그대로 앞서 있다 — 승인 규칙이 머지·설정 deny 를 지우지 않는다.
-    expect(after(args, '--disallowedTools')).toEqual([...MERGE_DENY_RULES, ...SETTINGS_SELF_EDIT_DENY_RULES, ...configSettingsDenyRules(common.claudeConfigDir ?? null)]);
+    expect(after(args, '--disallowedTools')).toEqual([...MERGE_DENY_RULES, ...SETTINGS_SELF_EDIT_DENY_RULES, ...configSettingsDenyRules(common.claudeConfigDir ?? null), ...MENTION_DENY_TOOLS]);
     // 읽기 전용 턴에는 붙지 않는다 — 고정 규칙(READONLY_RULES)만 실린다.
     const ro = buildTurnCommand({ ...common, mode: 'mention', mentionPermission: 'readonly', toolAllows: ok }).args;
     expect(after(ro, '--allowedTools')).toEqual([READONLY_ALLOW.join(',')]);

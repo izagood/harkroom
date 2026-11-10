@@ -393,7 +393,7 @@ const CLAUDE_PRESET: HarnessPreset = {
       ...(providerLane ? LANE_BASE_ALLOW : []),
     ];
     return [
-      '--disallowedTools', ...MERGE_DENY_RULES, ...SETTINGS_SELF_EDIT_DENY_RULES, ...configSettingsDenyRules(claudeConfigDir),
+      '--disallowedTools', ...MERGE_DENY_RULES, ...SETTINGS_SELF_EDIT_DENY_RULES, ...configSettingsDenyRules(claudeConfigDir), ...MENTION_DENY_TOOLS,
       ...(providerLane ? LANE_DENY : []),
       ...(allow.length ? ['--allowedTools', ...allow] : []),
       // 「정확한 명령」 hook(H③b) — **인라인 JSON** 이라 에이전트가 고칠 파일이 없다. 켜졌을 때만.
@@ -937,6 +937,14 @@ export function assertHarnessContract(runnableHarnesses?: readonly AgentHarness[
  * - `gh api graphql …mergePullRequest` 와 그 밖의 push 모양(`--force-with-lease`, `-u`, 다른 리모트 이름)은 규칙으로
  *   표현할 수 없어 **분류기에 남는다**. 넓은 `git push:*` 로 막으면 PR 올리기가 죽는다.
  */
+/**
+ * auto 멘션 턴에서 아예 빼는 내장 도구(하네스 물음 자동 해결 C안 P4, 결정 #3). `AskUserQuestion` 은 터미널에 선택 화면을 띄우는데
+ * 멘션 턴의 터미널에는 답할 사람이 없다 — 턴이 그 화면에서 멈추고 「확인을 기다려 멈춤」 줄이 선다(실측 2026-11-10 claude 2.1.321:
+ * PreToolUse → PermissionRequest → Notification 순으로 불리고 선택 화면에서 멈춤). 갈림길은 harkroom 의 `message.ask` 카드로 묻는다
+ * (시스템 프롬프트). 읽기 전용 턴은 `--tools` 목록에 이미 없다. 인터랙티브 턴은 사람이 터미널 앞에 있으므로 그대로 둔다.
+ */
+export const MENTION_DENY_TOOLS: readonly string[] = ['AskUserQuestion'];
+
 export const MERGE_DENY_RULES: readonly string[] = [
   'Bash(gh pr merge:*)',
   'Bash(gh api -X PUT:*)',
