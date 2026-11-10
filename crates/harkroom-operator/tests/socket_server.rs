@@ -391,3 +391,43 @@ fn local_agents_set_list_lane_remove_over_socket() {
     let mode = std::fs::metadata(&cfg).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600);
 }
+
+#[test]
+fn merge_gh_account_over_socket() {
+    let home = short_home();
+    let a = spawn(&home, "https://a.example.com");
+    assert_eq!(a.first["ok"], true, "{}", a.first);
+    let sock = a.first["listening"].as_str().unwrap();
+    let root = a.first["root"].as_str().unwrap();
+    let mut c = Client::connect(sock);
+    c.send(&hello(&Client::token_for(sock)));
+    assert_eq!(c.recv().unwrap()["type"], "hello");
+    // gh 가 없거나 로그인이 없는 기계에서도 돈다 — 목록은 비거나 accountsError 로 온다.
+    let reqs = [
+        json!({"id":"1","type":"operatorMergeGet"}),
+        json!({"id":"2","type":"operatorMergeSet","payload":{"scope":"Acme/App","ghUser":null}}),
+        json!({"id":"3","type":"operatorMergeSet","payload":{"ghUser":"bad name"}}),
+        json!({"id":"4","type":"operatorMergeCheck","payload":{"scopes":["nope"]}}),
+        json!({"id":"5","type":"operatorMergeCheck","payload":{"scopes":["acme/app"]}}),
+    ];
+    let mut out = Vec::new();
+    for r in &reqs {
+        c.send(r);
+        out.push(c.recv().unwrap());
+    }
+    assert_eq!(out[0]["ok"], true, "{}", out[0]);
+    assert_eq!(out[0]["payload"]["ghUser"], Value::Null, "{}", out[0]);
+    assert_eq!(out[0]["payload"]["byScope"], Value::Null, "{}", out[0]);
+    assert!(out[0]["payload"]["host"].is_string(), "{}", out[0]);
+    assert_eq!(out[1]["ok"], true, "{}", out[1]);
+    assert_eq!(out[1]["payload"]["byScope"], json!({}), "{}", out[1]);
+    assert_eq!(out[2]["error"]["code"], "bad-payload", "{}", out[2]);
+    assert_eq!(out[3]["error"]["code"], "bad-payload", "{}", out[3]);
+    assert_eq!(out[4]["ok"], true, "{}", out[4]);
+    assert!(out[4]["payload"]["reach"].is_object(), "{}", out[4]);
+    let cfg: Value = serde_json::from_str(
+        &std::fs::read_to_string(format!("{root}/operator/operator.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(cfg["merge"], json!({"byScope":{}}));
+}

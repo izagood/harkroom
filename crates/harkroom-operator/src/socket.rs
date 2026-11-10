@@ -11,6 +11,7 @@
 //!
 //! 접속마다 스레드 하나다. 앱 하나가 붙는 로컬 소켓이라 async 런타임을 들이지 않는다(의존이 늘지 않는다).
 use crate::local_agents::{self, LocalAgents};
+use crate::local_merge::{self, LocalMerge};
 use crate::runners::{RunnerLaunch, RunnerTable, SpawnOutcome};
 use harkroom_proto::p3::{
     DAEMON_PROTOCOL_VERSION, DaemonError, DaemonErrorCode, DaemonIdentity, EVENT_NAMES,
@@ -232,6 +233,8 @@ pub struct ServerState {
     next_conn: AtomicU64,
     /// 로컬 설정의 에이전트 항목(A5a). 뿌리를 잡은 뒤 채운다 — 없으면 `operatorAgent*` 는 거절된다.
     local_agents: OnceLock<LocalAgents>,
+    /// 머지 래퍼의 gh 계정(A5b). 없으면 `operatorMerge*` 는 거절된다.
+    local_merge: OnceLock<LocalMerge>,
 }
 
 impl ServerState {
@@ -258,6 +261,7 @@ impl ServerState {
                 authed: Mutex::new(HashMap::new()),
                 next_conn: AtomicU64::new(1),
                 local_agents: OnceLock::new(),
+                local_merge: OnceLock::new(),
             }
         })
     }
@@ -273,6 +277,20 @@ impl ServerState {
             err(
                 DaemonErrorCode::NoSuchRunner,
                 "이 daemon 에는 로컬 설정이 배선되지 않았다",
+            )
+        })
+    }
+
+    /// 머지 gh 계정 설정을 배선한다(한 번만).
+    pub fn set_local_merge(&self, merge: LocalMerge) {
+        let _ = self.local_merge.set(merge);
+    }
+
+    fn merge(&self) -> Result<&LocalMerge, DaemonError> {
+        self.local_merge.get().ok_or_else(|| {
+            err(
+                DaemonErrorCode::NoSuchRunner,
+                "이 daemon 에는 머지 설정이 배선되지 않았다",
             )
         })
     }
@@ -382,6 +400,29 @@ impl ServerState {
                 local.remove(&base_url, &agent_id)?;
                 eprintln!("로컬 설정: agent={agent_id} @ {base_url} 뺌");
                 Ok(json!({}))
+            }
+            // ── 머지 gh 계정(A5b, TS `server.ts` 의 같은 칸) ──────────────────────────────────
+            "operatorMergeGet" => self.merge()?.get(),
+            "operatorMergeSet" => {
+                let merge = self.merge()?;
+                let p = local_merge::read_set_payload(payload)?;
+                let (state, changes) = merge.set(&p)?;
+                // 바꾼 사실을 남긴다(security C8) — 이름뿐이다, 토큰은 이 경로에 없다.
+                for c in changes {
+                    eprintln!(
+                        "머지 gh 계정{}: {} → {} @ {}",
+                        c.scope.map(|s| format!(" [{s}]")).unwrap_or_default(),
+                        c.from.as_deref().unwrap_or("(없음)"),
+                        c.to.as_deref().unwrap_or("(없음)"),
+                        merge.host()
+                    );
+                }
+                Ok(state)
+            }
+            "operatorMergeCheck" => {
+                let merge = self.merge()?;
+                let scopes = local_merge::read_check_payload(payload)?;
+                Ok(merge.check(&scopes))
             }
             other => Err(err(
                 DaemonErrorCode::Internal,
