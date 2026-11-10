@@ -4857,6 +4857,7 @@ describe('codex 의 차례 끝은 화면이 말해도 기록으로 확정한다'
     const writes: string[] = [];
     let killedAt: number | null = null;
     const asked: { sessionId: string | null; sinceMs: number }[] = [];
+    const marks: Record<string, unknown>[] = [];
     const { deps, runTurn } = await makeDeps(fake, {
       utteranceProbeMs: 5, orphanMs: 5, harnessStallMs: 60_000,
       readHarnessLastSaid: async () => null,
@@ -4864,10 +4865,10 @@ describe('codex 의 차례 끝은 화면이 말해도 기록으로 확정한다'
       ...(opts.lane ? { providerEnv: async () => ({ HARKROOM_LANE_BASE_URL: 'https://gateway.example.com/v1' }) } : {}),
     } as never);
     runTurn.script = (async (_plan: TurnPlan, o: {
-      onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void }) => void;
+      onSpawn?: (c: { write(b: Buffer): void; resize(c: number, r: number): void; kill(s?: string): void; mark?(d: Record<string, unknown>): void }) => void;
       onData?: (chunk: Buffer) => void;
     }) => {
-      o.onSpawn?.({ write: (b) => { const t = b.toString('utf8'); writes.push(t); opts.onWrite?.(t); }, resize: () => {}, kill: () => { killedAt ??= Date.now(); } });
+      o.onSpawn?.({ write: (b) => { const t = b.toString('utf8'); writes.push(t); opts.onWrite?.(t); }, resize: () => {}, kill: () => { killedAt ??= Date.now(); }, mark: (d) => { marks.push(d); } });
       o.onData?.(Buffer.from('\x1b[2J\x1b[H• Working (3s • esc to interrupt)\r\n› Ask Codex to do anything', 'utf8'));
       await new Promise((r) => setTimeout(r, 50));
       o.onData?.(Buffer.from('\x1b[2J\x1b[H• 계속 진행합니다.\r\n› Ask Codex to do anything', 'utf8'));
@@ -4888,8 +4889,19 @@ describe('codex 의 차례 끝은 화면이 말해도 기록으로 확정한다'
     } finally {
       vi.unstubAllEnvs();
     }
-    return { asked, writes, killedAfterMs: killedAt === null ? null : killedAt - startedAt };
+    return { asked, writes, marks, killedAfterMs: killedAt === null ? null : killedAt - startedAt };
   }
+
+  it('녹화 표지: 화면 판정이 바뀔 때만, 그 판정까지 넣은 바이트 수와 함께 남긴다(그림자 비교, Rust 전환 S3)', async () => {
+    let reads = 0;
+    const r = await codexTurn(() => { reads += 1; return reads < 3 ? 'working' : 'ended'; });
+    const busy = Buffer.byteLength('\x1b[2J\x1b[H• Working (3s • esc to interrupt)\r\n› Ask Codex to do anything');
+    const idle = Buffer.byteLength('\x1b[2J\x1b[H• 계속 진행합니다.\r\n› Ask Codex to do anything');
+    expect(r.marks).toEqual([
+      { kind: 'screen', harness: 'codex', state: 'busy', bytes: busy },
+      { kind: 'screen', harness: 'codex', state: 'idle', bytes: busy + idle },
+    ]);
+  }, 15_000);
 
   it('구독 턴: 기록이 일하는 중이면 거두지 않다가, 끝나면 거둔다', async () => {
     let reads = 0;

@@ -582,6 +582,8 @@ export interface PtyWriter {
  */
 export interface PtyControls extends PtyWriter {
   kill(signal?: 'SIGTERM' | 'SIGKILL'): void;
+  /** 녹화를 켠 턴(`recordDir`)에만 표지를 남긴다 — 꺼져 있으면 아무 일도 없다(`ptyRecorder.ts::mark`). */
+  mark?(data: Record<string, unknown>): void;
 }
 
 export interface TurnResult {
@@ -1012,6 +1014,10 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
         // 고아 회수(#337)·사람의 중단(#686)의 손잡이다. exit 후 no-op — 회수 타이머와 자연
         // 종료가 경합해도 이미 끝난 프로세스에 시그널을 또 쏘지 않는다(`terminate`).
         terminate(signal ?? 'SIGTERM');
+      },
+      mark(data) {
+        if (settled) return;
+        recorder?.mark(data);
       },
     });
 
