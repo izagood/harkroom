@@ -431,3 +431,85 @@ fn merge_gh_account_over_socket() {
     .unwrap();
     assert_eq!(cfg["merge"], json!({"byScope":{}}));
 }
+
+#[test]
+fn local_mcp_set_list_remove_over_socket() {
+    let home = short_home();
+    // 사람의 진짜 `~/.claude.json` 을 읽지 않게 임시 집 아래로 돌린다.
+    let cdir = format!("{home}/claude");
+    std::fs::create_dir_all(&cdir).unwrap();
+    std::fs::write(
+        format!("{cdir}/.claude.json"),
+        json!({"mcpServers":{"c":{"command":"uvx","env":{"K":"secret-value"}}}}).to_string(),
+    )
+    .unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_harkroom-operator-rs"))
+        .args([
+            "serve",
+            "--base-url",
+            "https://a.example.com",
+            "--home",
+            &home,
+        ])
+        .env("CLAUDE_CONFIG_DIR", &cdir)
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut line = String::new();
+    BufReader::new(child.stdout.take().unwrap())
+        .read_line(&mut line)
+        .unwrap();
+    let a = Op {
+        child,
+        first: serde_json::from_str(line.trim()).unwrap(),
+    };
+    assert_eq!(a.first["ok"], true, "{}", a.first);
+    let sock = a.first["listening"].as_str().unwrap();
+    let root = a.first["root"].as_str().unwrap();
+    let mut c = Client::connect(sock);
+    c.send(&hello(&Client::token_for(sock)));
+    assert_eq!(c.recv().unwrap()["type"], "hello");
+    let reqs = [
+        json!({"id":"1","type":"operatorMcpSet","payload":{"name":"gh","definition":{"type":"http","url":"https://g/mcp","headers":{"Authorization":"Bearer t0k"}}}}),
+        json!({"id":"2","type":"operatorMcpSetStdio","payload":{"name":"fs","command":"npx","args":["-y","p"],"env":{"TOKEN":"s3cret"}}}),
+        json!({"id":"3","type":"operatorMcpSet","payload":{"name":"x","definition":{"type":"stdio","command":"sh"}}}),
+        json!({"id":"4","type":"operatorMcpSetStdio","payload":{"name":"y","command":"npx","env":{"NODE_OPTIONS":"--require /x"}}}),
+        json!({"id":"5","type":"operatorMcpList"}),
+        json!({"id":"6","type":"operatorMcpRemove","payload":{"name":"gh"}}),
+        json!({"id":"7","type":"operatorMcpRemove","payload":{"name":"avcs"}}),
+        json!({"id":"8","type":"operatorMcpList"}),
+    ];
+    let mut out = Vec::new();
+    for r in &reqs {
+        c.send(r);
+        out.push(c.recv().unwrap());
+    }
+    assert_eq!(out[0]["ok"], true, "{}", out[0]);
+    assert_eq!(out[1]["ok"], true, "{}", out[1]);
+    assert_eq!(out[2]["error"]["code"], "bad-payload", "{}", out[2]);
+    assert_eq!(out[3]["error"]["code"], "bad-payload", "{}", out[3]);
+    let listed = out[4]["payload"].to_string();
+    assert!(
+        !listed.contains("t0k") && !listed.contains("s3cret") && !listed.contains("secret-value"),
+        "{listed}"
+    );
+    let names: Vec<&str> = out[4]["payload"]["servers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, vec!["c", "fs", "gh"]);
+    assert_eq!(out[4]["payload"]["servers"][1]["envKeys"], json!(["TOKEN"]));
+    assert_eq!(out[5]["ok"], true, "{}", out[5]);
+    assert_eq!(out[6]["error"]["code"], "bad-payload", "{}", out[6]);
+    assert_eq!(out[7]["payload"]["servers"].as_array().unwrap().len(), 2);
+    let reg = format!("{root}/operator/mcp-servers.json");
+    let mode = std::fs::metadata(&reg).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+    let table: Value = serde_json::from_str(&std::fs::read_to_string(&reg).unwrap()).unwrap();
+    assert_eq!(
+        table,
+        json!({"fs":{"type":"stdio","command":"npx","args":["-y","p"],"env":{"TOKEN":"s3cret"}}})
+    );
+}
