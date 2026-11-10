@@ -11,6 +11,7 @@
 //!
 //! 접속마다 스레드 하나다. 앱 하나가 붙는 로컬 소켓이라 async 런타임을 들이지 않는다(의존이 늘지 않는다).
 use crate::local_agents::{self, LocalAgents};
+use crate::local_mcp::{self, LocalMcp};
 use crate::local_merge::{self, LocalMerge};
 use crate::runners::{RunnerLaunch, RunnerTable, SpawnOutcome};
 use harkroom_proto::p3::{
@@ -235,6 +236,8 @@ pub struct ServerState {
     local_agents: OnceLock<LocalAgents>,
     /// 머지 래퍼의 gh 계정(A5b). 없으면 `operatorMerge*` 는 거절된다.
     local_merge: OnceLock<LocalMerge>,
+    /// 이 머신의 MCP 정의(A5c). 없으면 `operatorMcp*` 는 거절된다.
+    local_mcp: OnceLock<LocalMcp>,
 }
 
 impl ServerState {
@@ -262,6 +265,7 @@ impl ServerState {
                 next_conn: AtomicU64::new(1),
                 local_agents: OnceLock::new(),
                 local_merge: OnceLock::new(),
+                local_mcp: OnceLock::new(),
             }
         })
     }
@@ -291,6 +295,20 @@ impl ServerState {
             err(
                 DaemonErrorCode::NoSuchRunner,
                 "이 daemon 에는 머지 설정이 배선되지 않았다",
+            )
+        })
+    }
+
+    /// MCP 정의를 배선한다(한 번만).
+    pub fn set_local_mcp(&self, mcp: LocalMcp) {
+        let _ = self.local_mcp.set(mcp);
+    }
+
+    fn mcp(&self) -> Result<&LocalMcp, DaemonError> {
+        self.local_mcp.get().ok_or_else(|| {
+            err(
+                DaemonErrorCode::NoSuchRunner,
+                "이 daemon 에는 MCP 정의가 배선되지 않았다",
             )
         })
     }
@@ -423,6 +441,30 @@ impl ServerState {
                 let merge = self.merge()?;
                 let scopes = local_merge::read_check_payload(payload)?;
                 Ok(merge.check(&scopes))
+            }
+            // ── 이 머신의 MCP 정의(A5c, TS `server.ts` 의 같은 칸) ─────────────────────────────────
+            // 로그에는 이름만 — 정의 본문·env·headers 에 토큰이 실린다.
+            "operatorMcpList" => self.mcp()?.list(),
+            "operatorMcpSet" => {
+                let mcp = self.mcp()?;
+                let (name, def) = local_mcp::read_set_payload(payload)?;
+                mcp.set(&name, &def)?;
+                eprintln!("MCP 정의: {name} 넣음");
+                Ok(json!({}))
+            }
+            "operatorMcpSetStdio" => {
+                let mcp = self.mcp()?;
+                let (name, def) = local_mcp::read_set_stdio_payload(payload)?;
+                mcp.set_stdio(&name, &def)?;
+                eprintln!("MCP 정의: {name} 넣음(stdio)");
+                Ok(json!({}))
+            }
+            "operatorMcpRemove" => {
+                let mcp = self.mcp()?;
+                let name = local_mcp::read_remove_payload(payload)?;
+                mcp.remove(&name)?;
+                eprintln!("MCP 정의: {name} 뺌");
+                Ok(json!({}))
             }
             other => Err(err(
                 DaemonErrorCode::Internal,
