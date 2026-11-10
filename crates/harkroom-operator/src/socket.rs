@@ -320,12 +320,18 @@ impl Drop for Slot {
 }
 
 fn take_slot(active: &Arc<AtomicUsize>, limit: usize) -> Option<Slot> {
-    active
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
-            (n < limit).then_some(n + 1)
-        })
-        .ok()
-        .map(|_| Slot(Arc::clone(active)))
+    // `fetch_update` 는 새 Rust 에서 `try_update` 로 이름이 바뀌어(옛 이름은 deprecated) 판마다 갈린다 —
+    // 어느 판에서나 같은 compare_exchange 반복으로 쓴다.
+    let mut n = active.load(Ordering::Acquire);
+    loop {
+        if n >= limit {
+            return None;
+        }
+        match active.compare_exchange_weak(n, n + 1, Ordering::AcqRel, Ordering::Acquire) {
+            Ok(_) => return Some(Slot(Arc::clone(active))),
+            Err(now) => n = now,
+        }
+    }
 }
 
 pub fn accept_loop(state: Arc<ServerState>, listener: UnixListener) {
