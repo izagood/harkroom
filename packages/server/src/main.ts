@@ -8,6 +8,8 @@ import { getProjectionConfig } from './services/projectionConfig.js';
 import { resolveProjectionUrl } from '@harkroom/shared';
 import { Lifecycle } from './lifecycle.js';
 import { seedClaimToken } from './services/claimToken.js';
+import pg from 'pg';
+import { startEventBus } from './eventBus.js';
 
 const config = loadConfig();
 // 가드 없는 Pool 을 만들지 않는다 — pg 는 유휴 클라이언트 에러를 리스너 없으면 uncaught
@@ -62,6 +64,10 @@ const app = await buildServer({
   trustProxy: config.trustProxy,
 });
 await app.listen({ port: config.port, host: '0.0.0.0' });
+// 이벤트 버스(S5.0) — 다른 프로세스(Rust 서버)가 낸 이벤트를 이 프로세스의 WS 구독자에게 옮긴다. 기본 꺼짐.
+const eventBus = config.eventBus
+  ? await startEventBus({ pool, connect: async () => { const c = new pg.Client({ connectionString: config.databaseUrl }); await c.connect(); return c; } })
+  : null;
 console.log(
   `harkroom server on :${config.port} `
   + `(avcs: ${boot.url ?? 'disabled'}${boot.source ? ` via ${boot.source}` : ''})`,
@@ -74,6 +80,7 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
     // 다음 poll로 넘어가게 하는 지점이다. 이후 남은 응답은 grace 안에서 흘려보낸다.
     await lifecycle.beginDrain();
     await supervisor.stop();
+    await eventBus?.stop();
     await app.close();
     await pool.end();
     process.exit(0);

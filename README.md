@@ -311,6 +311,7 @@ The server reads these environment variables:
 | `AVCS_BASE_URL` | AVCS server URL for event projection | - | No |
 | `CORS_ORIGINS` | Allowed CORS origins (comma-separated) | All origins | No |
 | `LOG_LEVEL` | Server log level (`debug`, `info`, `warn`, `error`) | `info` | No |
+| `EVENT_BUS` | `pg` relays workspace events another server process wrote to the `event_outbox` table (Postgres NOTIFY carries only the row id) to this process's WebSocket clients. Used while the Rust server takes over routes | unset (off) | No |
 | `TRUST_PROXY` | Which reverse proxies to trust for `X-Forwarded-For`: a hop count of 2 or more, or comma-separated proxy IPs/CIDRs (use this for a single proxy). `1`/`true` trusts every hop and lets clients spoof their address — not recommended | `false` | No |
 | `HARKROOM_RETENTION_DELETE` | `1` turns on the retention sweep's deletes: `idempotency_key` rows older than 7 days and `session` rows expired for more than 30 days, at most 1,000 rows per table per hour. Anything else (unset, `0`, `true`) keeps it in dry-run: the sweep only logs `retention: <table> eligible=N (dry-run)` every hour and deletes nothing. See `docs/operations.md` §13 | unset (dry-run) | No |
 | `HARKROOM_BACKGROUND_ENABLED` | `1` turns on background agent turns (memory distillation/cleanup that run without a chat thread and post nothing to chat): the server's job sweep runs and runners may claim jobs, only between 03:00 and 07:00 KST, at most one per agent, kind and day. Anything else keeps them off | unset (off) | No |
