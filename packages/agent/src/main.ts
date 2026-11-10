@@ -67,6 +67,13 @@ import { randomUUID } from 'node:crypto';
 import { createThreadClaims } from './threadClaims.js';
 
 const config = loadConfig();
+/**
+ * 턴을 돌리는 함수. `AGENT_PTY_RECORD_DIR` 를 줬을 때만 녹화 폴더를 얹는다(기본 꺼짐, `ptyRecorder.ts`).
+ * 멘션·인터랙티브 두 길이 같은 함수를 받아 어느 턴이든 같은 규칙으로 녹화된다.
+ */
+const runTurnWithRecording: typeof runPtyTurn = config.ptyRecordDir
+  ? (plan, opts) => runPtyTurn(plan, { ...opts, recordDir: config.ptyRecordDir })
+  : runPtyTurn;
 // 릴레이(오퍼레이터 링크)가 곧 서버로 가는 유일한 길이다(스펙 2026-09-20 §5) — MCP 도 REST 도 이
 // 소켓 위로 간다. 그래서 클라이언트보다 먼저 세운다. 재접속은 이 객체가 스스로 한다.
 //
@@ -568,7 +575,7 @@ const bgExecutor = new BgExecutor({
 });
 setInterval(() => { void bgExecutor.tick().catch((err: unknown) => console.error(`[bg] tick 오류: ${err instanceof Error ? err.message : String(err)}`)); }, BG_POLL_INTERVAL_MS).unref();
 interactive = createInteractiveManager({
-  harkroom, store, exec, runTurn: runPtyTurn, me,
+  harkroom, store, exec, runTurn: runTurnWithRecording, me,
   workspaceBaseDir, mcpConfigPath, extraMcpServers, readTurnMcp, codexHome, opencodeHome, piHome,
   ...(syncCodexLink ? { syncCodexAuth: syncCodexLink } : {}),
   sweepCodexRules: sweepRules,
@@ -763,7 +770,7 @@ const scheduler = createMentionScheduler({
       providerEnvDone: (env: Record<string, string>) => providerLane.release(env),
       providerNotice: (cause: string) => providerLane.takeNotice(cause),
     } : {}),
-    harkroom, memory: memoryCache, store, exec, runTurn: runPtyTurn, me, guide: guideCache.current(),
+    harkroom, memory: memoryCache, store, exec, runTurn: runTurnWithRecording, me, guide: guideCache.current(),
     channelName: ctx.channelName(mention.channelId),
     handles: ctx.handles, agentIds: ctx.agentIds, workspaceBaseDir, mcpConfigPath, extraMcpServers, readTurnMcp,
     // 지시문 파일이 여기 쓰인다(#92) — 에이전트 워크스페이스가 아니라 러너의 상태

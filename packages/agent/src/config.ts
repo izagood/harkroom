@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { RUNNER_LINK_ENV, RUNNER_LINK_ENV_KEYS } from '@harkroom/shared/runnerLink';
 import { agentStateBaseDir } from '@harkroom/shared/agentStateRoot';
 
@@ -78,6 +78,11 @@ export interface RunnerConfig {
    * 자세한 근거는 `mentionTurn.ts` 의 `harnessStallMs` 주석에 있다.
    */
   harnessStallMs: number;
+  /**
+   * PTY 원시 출력을 턴마다 asciicast 파일로 남길 폴더(`AGENT_PTY_RECORD_DIR`, 절대 경로). 기본 null = 끔.
+   * 터미널 에뮬레이터를 바꿀 때 같은 화면이 나오는지 재는 녹화다(`ptyRecorder.ts`). 상대 경로는 끔으로 본다.
+   */
+  ptyRecordDir: string | null;
   /** 세션 파일(sessions.json)·MCP 설정·avcs 워크스페이스가 사는 곳. 러너 재시작·재배포에도
    * 살아남아야 하는 것들이라 임시 디렉터리(mkdtemp)가 아니라 고정 경로를 쓴다. */
   stateDir: string;
@@ -132,6 +137,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RunnerConfig {
     // 10분 — 멀쩡히 도는 세션들의 기록 간격 최대치(390초)보다 넉넉히 위이고, 실측된
     // 정지(30분 내내 한 줄도 안 자랐다)와는 멀리 떨어져 있다. 0 이면 재지 않는다.
     harnessStallMs: Number(env.AGENT_HARNESS_STALL_MS ?? 10 * 60_000),
+    ptyRecordDir: env.AGENT_PTY_RECORD_DIR && isAbsolute(env.AGENT_PTY_RECORD_DIR) ? env.AGENT_PTY_RECORD_DIR : null,
     // 커뮤니티마다 오퍼레이터면 그 커뮤니티 뿌리 아래(`@harkroom/shared/agentStateRoot`, 격리 C P4). 꺼져 있으면 지금 그대로.
     stateDir: env.AGENT_STATE_DIR
       ?? agentStateBaseDir(join(homedir(), '.harkroom-agent'), env),

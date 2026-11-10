@@ -22,10 +22,11 @@
 // (`invalid destination for symbolic link in bundle`) — 자세한 근거와 실측은
 // `nodePtyLoader.ts` 모듈 주석에 있다.
 import { accessSync, constants } from 'node:fs';
-import { delimiter, join } from 'node:path';
+import { basename, delimiter, join } from 'node:path';
 import type * as NodePty from 'node-pty';
 import { loadNodePty, sidecarDirFromModule } from './nodePtyLoader.js';
 import { ExecutableNotFoundError } from './policy.js';
+import { openPtyRecorder } from './ptyRecorder.js';
 import type { TurnPlan } from './turn.js';
 
 /**
@@ -803,6 +804,11 @@ export interface RunPtyTurnOptions {
    */
   onData?: (chunk: Buffer) => void;
   /**
+   * PTY 원시 출력을 녹화할 폴더(절대 경로, `AGENT_PTY_RECORD_DIR`). 없으면(기본) 녹화하지 않는다.
+   * 형식·남기지 않는 것·실패 규율은 `ptyRecorder.ts` 머리 주석에 있다.
+   */
+  recordDir?: string | null;
+  /**
    * spawn 직후 **PTY stdin 으로 가는 통로**를 넘긴다(#315 — attach 한 사람의 타이핑).
    *
    * `onData` 의 정확한 반대 방향이라 나란히 둔다. 콜백으로 넘기는 이유: 세션은 spawn
@@ -916,6 +922,10 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
     // 이미 fork 된 자식이 아무도 안 지켜보는 채로 남아 좀비가 된다(spec §10 축소판). 이
     // 리스너가 유일하게 dispose 를 보장하는 경로이므로, 등록을 늦출 이유가 없다.
     let settled = false;
+    // 녹화는 spawn 이 성공한 뒤에만 연다 — 뜨지 못한 턴은 남길 바이트가 없다.
+    const recorder = openPtyRecorder(opts.recordDir ?? null, {
+      label: basename(plan.command), cols: opts.cols ?? 120, rows: opts.rows ?? 40,
+    });
     let killTimer: ReturnType<typeof setTimeout> | null = null;
     // 턴 도중 관문을 지켜보는 창(2026-09-09). 주입이 성공한 뒤에만 선다 — 아래 설치 자리의
     // 주석이 왜인지 말한다. unref 되어 있어 프로세스를 붙잡지는 않지만, 정착 경로에서
@@ -962,6 +972,7 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
       if (gateProbe) clearInterval(gateProbe);
       dataListener.dispose();
       exitListener.dispose();
+      recorder?.close();
       // **턴의 마지막 화면이 창 안에 남아 있을 수 있다.** 여기서 안 내보내면 사람이 보는
       // 마지막 프레임이 통째로 사라진다(정확히 그 프레임에 결과가 적혀 있다).
       relay.stop();
@@ -989,6 +1000,7 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
         // 실측: 계획 문서 "스파이크 결과" §3).
         if (settled) return;
         try { proc.resize(cols, rows); } catch { /* 끝난 PTY 의 크기는 의미가 없다 */ }
+        recorder?.resize(cols, rows);
       },
       kill(signal) {
         // 고아 회수(#337)·사람의 중단(#686)의 손잡이다. exit 후 no-op — 회수 타이머와 자연
@@ -1011,6 +1023,7 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
     });
 
     const dataListener = proc.onData((chunk) => {
+      recorder?.output(chunk);
       const buf = Buffer.from(chunk, 'utf8');
       tail.push(buf);
       relay.push(buf);
