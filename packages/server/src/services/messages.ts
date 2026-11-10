@@ -9,7 +9,7 @@ import {
   causeReasonsFor, PRINCIPAL_INVOKE_DAILY_CAP, principalForAgentPost, principalInvokeEnabled, principalInvokesToday, stripServerCallMeta,
 } from './invokePrincipal.js';
 import {
-  closeDelegationsForReply, delegationSummariesFor, delegationV2Enabled, outcomesFor, wakeLeadOnFollowup,
+  closeDelegationsForReply, delegationSummariesFor, delegationV2Enabled, outcomesFor,
 } from './delegations.js';
 import { implicitDelegationMode, recordImplicitDelegations } from './implicitDelegation.js';
 import { assertChannelVisible, audienceFor, channelVisibleSql } from './channels.js';
@@ -1983,27 +1983,6 @@ export async function postMessage(
         reportTouched, wakeRowsTouched,
       })
       : [];
-    /*
-      닫힌 위임의 후속 보고(2026-11-06). 위 닫힘 **뒤에** 본다 — 이 글이 방금 닫은 의무는 후속이 아니다.
-      막혔으면 왜 안 깨웠는지 그 글에 남긴다(멘션 상한의 `mentionChainCapped` 와 같은 자리).
-    */
-    if (input.threadRootId && !input.serverNotice && authorIsAgent) {
-      const followup = await wakeLeadOnFollowup(client, {
-        threadRootId: input.threadRootId, channelId: input.channelId, authorId: input.authorId, messageId: message.id,
-        isReport: (input.meta as { kind?: unknown } | undefined)?.kind === 'report',
-        notified, chainCapped: () => delegationChainCapped(client, message.id),
-      });
-      if (followup && 'woke' in followup) wokeByDelegation.push(followup.woke);
-      if (followup && 'skipped' in followup) {
-        const updated = await client.query(
-          `update message set meta = coalesce(meta, '{}'::jsonb) || jsonb_build_object('delegationFollowupSkipped', $2::text)
-            where id = $1 returning ${COLS}`,
-          [message.id, followup.skipped],
-        );
-        if (updated.rowCount) message = updated.rows[0];
-      }
-    }
-
     if (input.beforeCommit) {
       const rejection = await input.beforeCommit(client, { message, notified });
       if (rejection) {
