@@ -75,6 +75,7 @@ dependencies = [
  "harkroom-proto",
  "harkroom-roots",
  "indexmap",
+ "libc",
  "serde",
  "serde_json",
 ]
