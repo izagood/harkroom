@@ -1,0 +1,24 @@
+[package]
+name = "harkroom-server"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+publish = false
+description = "Rust front for the harkroom server (S5.1a): proxies every HTTP request to the TS server and checks the schema version. Not deployed yet."
+
+[[bin]]
+name = "harkroom-server-rs"
+path = "src/main.rs"
+
+# 버전은 `=` 로 고정한다. lock 의 모든 판은 공개 14일이 지난 것만 쓴다.
+[dependencies]
+axum = { version = "=0.8.9", default-features = false, features = ["http1", "tokio"] }
+http-body-util = "=0.1.5"
+hyper = { version = "=1.12.0", features = ["client", "http1"] }
+hyper-util = { version = "=0.1.21", features = ["client-legacy", "http1", "tokio"] }
+sqlx = { version = "=0.9.0", default-features = false, features = ["postgres", "runtime-tokio"] }
+tokio = { version = "=1.48.0", features = ["macros", "rt-multi-thread", "net", "signal"] }
+
+[dev-dependencies]
+tokio = { version = "=1.48.0", features = ["macros", "rt-multi-thread", "net", "time"] }
