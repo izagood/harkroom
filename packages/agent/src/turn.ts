@@ -399,9 +399,11 @@ const CLAUDE_PRESET: HarnessPreset = {
       // 「정확한 명령」 hook(H③b) — **인라인 JSON** 이라 에이전트가 고칠 파일이 없다. 켜졌을 때만.
       // API 키 연결 턴은 셸·웹을 hook 으로 판정한다(D1, `laneHookSettings`) — 「정확한 명령」 판정도 그 안에서 한다.
       // 턴 도중 새 글 hook 은 같은 `--settings` 한 장에 합친다(`withPostToolHook`) — 둘로 주면 어느 쪽이 이기는지 판본마다 다를 수 있다.
+      // 하네스 물음 hook(C안 P1) — 구독형 auto 멘션 턴마다. deny 만 내고 allow 는 내지 않으므로 넓어지는 것이 없다. API 키 연결 턴은
+      // `dontAsk` 라 물음이 생기지 않는다(묻지 않고 거절) — 달지 않는다.
       ...settingsArgs(
         providerLane ? laneHookSettings(operatorBin, allow) : commandHook ? commandHookSettings(operatorBin) : null,
-        operatorBin, postToolSinceSeq,
+        operatorBin, postToolSinceSeq, !providerLane,
       ),
     ];
   },
@@ -527,10 +529,23 @@ export function postToolHookEntry(operatorBin: string, sinceSeq: number): { matc
   return { matcher: '*', hooks: [{ type: 'command', command: `${JSON.stringify(operatorBin)} hook posttool --since ${since}`, timeout: 15 }] };
 }
 
-/** PreToolUse 설정 JSON(없으면 null)에 턴 도중 새 글 hook 을 합친다. 둘 다 없으면 빈 배열. */
-export function settingsArgs(preSettings: string | null, operatorBin: string, postToolSinceSeq: number | null): string[] {
-  if (postToolSinceSeq === null || postToolSinceSeq === undefined) return preSettings ? ['--settings', preSettings] : [];
-  return ['--settings', withPostToolHook(preSettings, operatorBin, postToolSinceSeq)];
+/**
+ * 하네스 물음 hook(C안 P1, 실측 2026-11-10 claude 2.1.321): claude 가 터미널에 확인·선택 화면을 띄우기 **직전에** 부르는 PermissionRequest.
+ * 오퍼레이터 `hook permission` 이 변수 경로 `rm`·`AskUserQuestion` 만 deny(고칠 방법을 모델에)하고 그 밖은 결정 없음 — 화면 물음이 받친다.
+ * allow 는 내지 않는다. 언제나 종료 0 이라 hook 이 죽어도 지금 경로 그대로다.
+ */
+export function permissionRequestHookEntry(operatorBin: string): { matcher: string; hooks: { type: 'command'; command: string; timeout: number }[] } {
+  return { matcher: '*', hooks: [{ type: 'command', command: `${JSON.stringify(operatorBin)} hook permission`, timeout: 15 }] };
+}
+
+/** PreToolUse 설정 JSON(없으면 null)에 턴 도중 새 글 hook·물음 hook 을 합친다 — 한 장의 `--settings` 로. 아무것도 없으면 빈 배열. */
+export function settingsArgs(preSettings: string | null, operatorBin: string, postToolSinceSeq: number | null, permissionHook = false): string[] {
+  const hasPost = postToolSinceSeq !== null && postToolSinceSeq !== undefined;
+  if (!hasPost && !permissionHook) return preSettings ? ['--settings', preSettings] : [];
+  const merged = hasPost ? withPostToolHook(preSettings, operatorBin, postToolSinceSeq) : preSettings;
+  if (!permissionHook) return ['--settings', merged!];
+  const base = (merged ? JSON.parse(merged) : {}) as { hooks?: Record<string, unknown> };
+  return ['--settings', JSON.stringify({ ...base, hooks: { ...(base.hooks ?? {}), PermissionRequest: [permissionRequestHookEntry(operatorBin)] } })];
 }
 
 export function withPostToolHook(preSettings: string | null, operatorBin: string, sinceSeq: number): string {
