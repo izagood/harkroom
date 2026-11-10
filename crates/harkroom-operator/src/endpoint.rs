@@ -14,7 +14,7 @@ use harkroom_proto::p3::DaemonIdentity;
 use harkroom_roots::{EndpointPaths, daemon_endpoint_paths};
 use std::fs;
 use std::io::{ErrorKind, Read, Write};
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 
 const MAX_CLAIM_ATTEMPTS: u32 = 3;
@@ -59,6 +59,16 @@ pub enum Probe {
 }
 
 pub fn probe_socket(path: &str) -> Probe {
+    // 소켓이 아닌 파일(보통 파일·심볼릭 링크 등)은 잔해가 아니다. Linux 는 이런 파일에 connect 하면 ECONNREFUSED 를
+    // 돌려줘(macOS 는 다른 오류) 잔해로 읽힐 수 있으므로 connect 전에 lstat 으로 갈라 판정을 보류한다(C1).
+    if let Ok(m) = fs::symlink_metadata(path)
+        && !m.file_type().is_socket()
+    {
+        return Probe::Other(std::io::Error::new(
+            ErrorKind::InvalidInput,
+            "엔드포인트 이름이 소켓이 아니다",
+        ));
+    }
     match UnixStream::connect(path) {
         Ok(_) => Probe::Connected,
         Err(e) => match e.kind() {
@@ -273,7 +283,7 @@ mod tests {
 
     #[test]
     fn non_debris_connect_error_backs_off_without_deleting() {
-        // 소켓이 아닌 보통 파일 — connect 는 ECONNREFUSED 도 ENOENT 도 아닌 오류를 낸다.
+        // 소켓이 아닌 보통 파일 — 잔해로 읽지 않는다(Linux connect 는 ECONNREFUSED 를 내므로 lstat 으로 먼저 거른다).
         let d = dir();
         let f = format!("{d}/s.sock");
         fs::write(&f, b"x").unwrap();
