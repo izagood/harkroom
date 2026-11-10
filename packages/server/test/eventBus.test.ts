@@ -78,7 +78,8 @@ describe('startEventBus — outbox + NOTIFY(id)', () => {
     await publish({ type: 'message.created', message: {} });
     await db.pool.query('select pg_notify($1, $2)', [EVENT_OUTBOX_CHANNEL, 'not-a-number']);
     await publish({ type: 'inbox.updated', accountId: 'acct-1' });
-    await waitFor(1);
+    // 알림마다 줄을 따로 다시 읽으므로(풀 연결 여럿) 버린 줄의 읽기가 정상 줄보다 늦게 끝날 수 있다 — 버린 수도 기다린다.
+    for (let i = 0; i < 200 && (got.length < 1 || bus.stats().dropped < 2); i += 1) await new Promise((r) => setTimeout(r, 10));
     expect(got).toEqual([{ type: 'inbox.updated', accountId: 'acct-1' }]);
     expect(bus.stats().dropped).toBe(2);
   });
