@@ -10,6 +10,7 @@
 //! 이벤트 줄이 서로 끼어들어 한 줄이 깨지지 않게 한다.
 //!
 //! 접속마다 스레드 하나다. 앱 하나가 붙는 로컬 소켓이라 async 런타임을 들이지 않는다(의존이 늘지 않는다).
+use crate::local_agents::{self, LocalAgents};
 use crate::runners::{RunnerLaunch, RunnerTable, SpawnOutcome};
 use harkroom_proto::p3::{
     DAEMON_PROTOCOL_VERSION, DaemonError, DaemonErrorCode, DaemonIdentity, EVENT_NAMES,
@@ -21,7 +22,7 @@ use std::io::{Read, Write};
 use std::net::Shutdown;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// 접속마다의 쓰기 시간 제한. 인증은 됐지만 읽지 않는 접속 하나가 이벤트 흘리기(`broadcast_event`, 러너 종료를
@@ -229,6 +230,8 @@ pub struct ServerState {
     /// 인증된 접속의 쓰는 쪽 — 이벤트가 여기로 흐른다.
     authed: Mutex<HashMap<u64, Writer>>,
     next_conn: AtomicU64,
+    /// 로컬 설정의 에이전트 항목(A5a). 뿌리를 잡은 뒤 채운다 — 없으면 `operatorAgent*` 는 거절된다.
+    local_agents: OnceLock<LocalAgents>,
 }
 
 impl ServerState {
@@ -254,7 +257,23 @@ impl ServerState {
                 runners,
                 authed: Mutex::new(HashMap::new()),
                 next_conn: AtomicU64::new(1),
+                local_agents: OnceLock::new(),
             }
+        })
+    }
+
+    /// 로컬 설정을 배선한다(한 번만 — 두 번째는 무시된다).
+    pub fn set_local_agents(&self, local: LocalAgents) {
+        let _ = self.local_agents.set(local);
+    }
+
+    fn local(&self) -> Result<&LocalAgents, DaemonError> {
+        // TS 와 같은 코드·문구(`no-such-runner` — 앱이 이미 아는 꼴).
+        self.local_agents.get().ok_or_else(|| {
+            err(
+                DaemonErrorCode::NoSuchRunner,
+                "이 daemon 에는 로컬 설정이 배선되지 않았다",
+            )
         })
     }
 
@@ -336,6 +355,33 @@ impl ServerState {
                 Ok(
                     json!({ "agentId": r.agent_id, "pid": r.pid, "termSentAtMs": r.term_sent_at_ms }),
                 )
+            }
+            // ── 오퍼레이터 로컬 설정(A5a, TS `server.ts` 의 같은 칸) ──────────────────────────
+            "operatorAgentsList" => self.local()?.list(),
+            "operatorAgentSet" => {
+                let local = self.local()?;
+                let (base_url, agent_id, config) = local_agents::read_set_payload(payload)?;
+                local.set(&base_url, &agent_id, &config)?;
+                eprintln!("로컬 설정: agent={agent_id} @ {base_url} 넣음");
+                Ok(json!({}))
+            }
+            "operatorAgentProviderLaneSet" => {
+                let local = self.local()?;
+                let (base_url, agent_id, lane) = local_agents::read_lane_payload(payload)?;
+                local.set_provider_lane(&base_url, &agent_id, lane.as_ref())?;
+                // 주소·비밀 이름은 찍지 않는다 — 켜졌는지만.
+                eprintln!(
+                    "로컬 설정: agent={agent_id} @ {base_url} 전용 제공사 경로 {}",
+                    if lane.is_some() { "켬" } else { "끔" }
+                );
+                Ok(json!({}))
+            }
+            "operatorAgentRemove" => {
+                let local = self.local()?;
+                let (base_url, agent_id) = local_agents::read_remove_payload(payload)?;
+                local.remove(&base_url, &agent_id)?;
+                eprintln!("로컬 설정: agent={agent_id} @ {base_url} 뺌");
+                Ok(json!({}))
             }
             other => Err(err(
                 DaemonErrorCode::Internal,

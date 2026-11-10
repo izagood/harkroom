@@ -350,3 +350,44 @@ fn app_version_and_nonce_from_app_land_in_pid_record() {
     assert_eq!(pid["appVersion"], "9.8.7", "{pid}");
     assert_eq!(pid["launchNonce"], "nonce-a4b", "{pid}");
 }
+
+#[test]
+fn local_agents_set_list_lane_remove_over_socket() {
+    let home = short_home();
+    let a = spawn(&home, "https://a.example.com");
+    assert_eq!(a.first["ok"], true, "{}", a.first);
+    let sock = a.first["listening"].as_str().unwrap();
+    let root = a.first["root"].as_str().unwrap();
+    let mut c = Client::connect(sock);
+    c.send(&hello(&Client::token_for(sock)));
+    assert_eq!(c.recv().unwrap()["type"], "hello");
+    let base = "https://a.example.com/";
+    let reqs = [
+        json!({"id":"1","type":"operatorAgentSet","payload":{"baseUrl":base,"agentId":"ag","config":{"workingDir":" /w "}}}),
+        json!({"id":"2","type":"operatorAgentProviderLaneSet","payload":{"baseUrl":base,"agentId":"ag","lane":{"baseUrl":"https://g.example.com/x/","secretName":"k"}}}),
+        json!({"id":"3","type":"operatorAgentsList"}),
+        json!({"id":"4","type":"operatorAgentSet","payload":{"baseUrl":"https://b.example.com","agentId":"ag"}}),
+        json!({"id":"5","type":"operatorAgentRemove","payload":{"baseUrl":base,"agentId":"ag"}}),
+        json!({"id":"6","type":"operatorAgentsList"}),
+    ];
+    let mut out = Vec::new();
+    for r in &reqs {
+        c.send(r);
+        out.push(c.recv().unwrap());
+    }
+    assert_eq!(out[0]["ok"], true, "{}", out[0]);
+    assert_eq!(out[1]["ok"], true, "{}", out[1]);
+    assert_eq!(
+        out[2]["payload"],
+        json!({"communities":[{"baseUrl":"https://a.example.com","registered":false,"operatorId":null,
+            "agents":{"ag":{"workingDir":"/w","providerLane":{"baseUrl":"https://g.example.com/x","secretName":"k"}}}}]})
+    );
+    // 다른 커뮤니티 칸은 넣지 않는다.
+    assert_eq!(out[3]["ok"], false);
+    assert_eq!(out[3]["error"]["code"], "internal");
+    assert_eq!(out[4]["ok"], true);
+    assert_eq!(out[5]["payload"]["communities"][0]["agents"], json!({}));
+    let cfg = format!("{root}/operator/operator.json");
+    let mode = std::fs::metadata(&cfg).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+}
