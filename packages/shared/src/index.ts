@@ -4237,6 +4237,8 @@ export * from './planGraph.js';
 export * from './chainStall.js';
 // 시스템 줄의 번역 표지(meta.i18n) 키 표·검사 — 서버가 쓰고 앱이 그린다(i18n P5).
 export * from './systemI18n.js';
+// 서버 ↔ UI 응답 타입(P6) — 정본은 Rust(`crates/harkroom-server/src/api.rs`), ts-rs 가 생성한다.
+export type * from './generated/index.js';
 import type { ProviderLaneFailureCode } from './providerLane.js';
 import type { Capability, Role } from './permissions.js';
 import { MAX_AGENT_POOLS } from './claudePools.js';
