@@ -19,12 +19,12 @@
 // 닿지 않는다. 즉 이 핸들러가 아예 안 불려도(SIGKILL) 러너는 산다 — 이 핸들러가 하는
 // 일은 러너를 살리는 것이 아니라 **잔해를 남기지 않는 것**이다.
 import { dirname, join, resolve } from 'node:path';
-import { RUNNER_LINK_ENV, RUNNER_LINK_ENV_KEYS, RUNNER_MCP_READY_FILE_ENV, RUNNER_TURN_CAUSE_ENV, RUNNER_TURN_ID_ENV, RUNNER_TURN_KEY_ENV } from '@harkroom/shared/runnerLink';
+import { RUNNER_LINK_ENV, RUNNER_LINK_ENV_KEYS, RUNNER_GATE_FILE_ENV, RUNNER_MCP_READY_FILE_ENV, RUNNER_TURN_CAUSE_ENV, RUNNER_TURN_ID_ENV, RUNNER_TURN_KEY_ENV } from '@harkroom/shared/runnerLink';
 import { parseDaemonArgs, describeArgs, type DaemonArgs } from './args.js';
 import { parseCliArgs, register, registerViaRunningOperator, resolveDataDir, runArgs } from './cli.js';
 import { runMcpBridge, writeReadyMarker } from './mcpBridge.js';
 import { MERGE_TOOL, parseMergeArgs } from './turnMerge.js';
-import { countTurnDenials, decideHook, decideLaneHook, decidePermissionHook, decidePostToolHook, decideTailHook, HOOK_STDIN_MAX, postToolOutput, HOOK_TIMEOUT_MS, laneDeny, readStdinCapped, type LaneDenyDecision, type PermissionRecord } from './hookCli.js';
+import { countTurnDenials, decideHook, notifyGateLine, decideLaneHook, decidePermissionHook, decidePostToolHook, decideTailHook, HOOK_STDIN_MAX, postToolOutput, HOOK_TIMEOUT_MS, laneDeny, readStdinCapped, type LaneDenyDecision, type PermissionRecord } from './hookCli.js';
 import { CODEX_HOOK_SPEC_ENV, decodeCodexHookSpec, decodeLaneHookRules } from '@harkroom/shared/providerLane';
 import { decideCodexHook } from './codexHook.js';
 import { API_TOOL, parseApiArgs } from './turnApi.js';
@@ -160,6 +160,7 @@ async function hookMain(event: string, laneRules?: string, laneMode: 'lane' | 't
   const quiet = () => process.exit(0);
   if (event === 'posttool') return postToolHookMain(since ?? 0);
   if (event === 'permission') return permissionHookMain();
+  if (event === 'notify') return notifyHookMain();
   if (event !== 'pretool') return quiet();
   // codex 턴: 판정할 것은 턴 env 로 온다. 값이 없는 codex(대화형 턴 등 — 같은 홈의 규칙 파일·hook 을 싣는다)는 그 채널 규칙이 없는
   // 것으로 본다: 규칙 파일의 명령에 닿으면 막고 그 밖은 판단하지 않는다. 값이 있는데 못 읽으면 막는다(fail-closed).
@@ -209,6 +210,24 @@ function appendPermissionRecord(path: string, rec: PermissionRecord): void {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     appendFileSync(path, `${JSON.stringify(rec)}\n`, { mode: 0o600 });
   } catch { /* 기록 실패는 판정을 바꾸지 않는다 */ }
+}
+
+/**
+ * `harkroom-operator hook notify` — Notification hook(C안 P2, 판정은 `hookCli.ts::notifyGateLine`). **언제나 종료 0·무출력**: 알림을
+ * 막거나 바꾸지 않는다. 러너가 심은 신호 파일(`RUNNER_GATE_FILE_ENV`, 절대 경로만)에 덧붙이기만 한다 — 없으면 아무것도 안 한다.
+ */
+async function notifyHookMain(): Promise<void> {
+  const quiet = () => process.exit(0);
+  const timer = setTimeout(quiet, HOOK_TIMEOUT_MS);
+  timer.unref?.();
+  try {
+    const raw = await readStdinCapped(process.stdin, HOOK_STDIN_MAX);
+    const file = process.env[RUNNER_GATE_FILE_ENV];
+    const line = notifyGateLine(raw, Date.now());
+    if (line && file && file.startsWith('/')) appendFileSync(file, line, { mode: 0o600 });
+  } catch { /* 무출력 */ }
+  clearTimeout(timer);
+  process.exit(0);
 }
 
 async function permissionHookMain(): Promise<void> {
