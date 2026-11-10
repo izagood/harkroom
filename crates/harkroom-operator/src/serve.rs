@@ -11,6 +11,7 @@
 //! 이름을 잡으면 stdout 에 JSON 한 줄(`listening`·`root`·`pid`)을 찍고 듣는다. 점유 중이면 그 사실을 찍고 1 로 끝난다.
 use crate::endpoint::{ClaimOutcome, claim, random_hex};
 use crate::index::read_roots_index;
+use crate::local_agents::LocalAgents;
 use crate::runners::RunnerLaunch;
 use crate::socket::{ServerState, accept_loop};
 use harkroom_proto::p3::DaemonIdentity;
@@ -89,6 +90,7 @@ pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
             token,
         }) => {
             state.set_token(token);
+            state.set_local_agents(LocalAgents::new(&root, base_url));
             println!(
                 "{}",
                 json!({"ok": true, "listening": paths.socket_path, "root": root, "pid": identity.pid})
