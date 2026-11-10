@@ -99,3 +99,49 @@ describe('startEventBus — outbox + NOTIFY(id)', () => {
     expect(got).toEqual([]);
   });
 });
+
+describe('startEventBus — 순서', () => {
+  let db: TestDb;
+  let bus: EventBus;
+  const got: WorkspaceEvent[] = [];
+
+  beforeAll(async () => {
+    db = await startTestDb();
+    // 다시 읽기마다 지연을 거꾸로 준다(앞 알림일수록 늦게 끝난다) — 병렬로 읽으면 순서가 뒤집힌다.
+    let n = 0;
+    const slowPool = {
+      query: async (...args: unknown[]) => {
+        const delay = Math.max(0, 60 - (n++) * 6);
+        await new Promise((r) => setTimeout(r, delay));
+        return (db.pool.query as (...a: unknown[]) => unknown)(...args);
+      },
+    } as unknown as pg.Pool;
+    bus = await startEventBus({
+      pool: slowPool,
+      connect: async () => { const c = new pg.Client({ connectionString: db.uri }); await c.connect(); return c; },
+      emit: (e) => got.push(e),
+      log: () => {},
+    });
+  });
+  afterAll(async () => {
+    await bus?.stop();
+    await db?.stop();
+  });
+
+  it('알림(커밋) 순서대로 낸다 — 다시 읽기가 늦게 끝나도 뒤 이벤트가 앞질러 나가지 않는다', async () => {
+    const N = 10;
+    for (let i = 0; i < N; i += 1) {
+      const c = await db.pool.connect();
+      try {
+        await c.query('begin');
+        const r = await c.query<{ id: string }>('insert into event_outbox (event) values ($1) returning id', [JSON.stringify({ type: 'inbox.updated', accountId: `a${i}` })]);
+        await c.query('select pg_notify($1, $2)', [EVENT_OUTBOX_CHANNEL, r.rows[0]!.id]);
+        await c.query('commit');
+      } finally {
+        c.release();
+      }
+    }
+    for (let i = 0; i < 400 && got.length < N; i += 1) await new Promise((r) => setTimeout(r, 10));
+    expect(got.map((e) => (e as { accountId: string }).accountId)).toEqual(Array.from({ length: N }, (_, i) => `a${i}`));
+  });
+});

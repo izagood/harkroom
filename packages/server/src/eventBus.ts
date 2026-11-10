@@ -81,6 +81,8 @@ export async function startEventBus(deps: EventBusDeps): Promise<EventBus> {
   let stopped = false;
   let attempt = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 알림을 하나씩 처리하는 사슬(위 `notification` 처리기). */
+  let delivering: Promise<void> = Promise.resolve();
 
   const deliver = async (payload: string | undefined): Promise<void> => {
     if (!payload || !/^[1-9][0-9]{0,18}$/.test(payload)) { stats.dropped += 1; return; }
@@ -102,7 +104,12 @@ export async function startEventBus(deps: EventBusDeps): Promise<EventBus> {
       const c = await deps.connect();
       c.on('notification', (n) => {
         if (n.channel !== EVENT_OUTBOX_CHANNEL) return;
-        deliver(n.payload).catch((err: unknown) => log(`event bus: 읽기 실패: ${err instanceof Error ? err.message : String(err)}`));
+        // **알림이 온 순서대로 하나씩** 낸다. 알림 순서 = 커밋 순서다(같은 메시지의 created → updated 가 이 순서로 커밋된다).
+        // 줄을 병렬로 다시 읽으면 늦게 끝난 읽기가 앞 이벤트를 추월해 WS 에 순서가 뒤바뀐 채 나간다. id 순서는 쓰지 않는다 —
+        // bigserial 은 insert 때 정해져 커밋 순서와 다를 수 있다.
+        delivering = delivering
+          .then(() => deliver(n.payload))
+          .catch((err: unknown) => log(`event bus: 읽기 실패: ${err instanceof Error ? err.message : String(err)}`));
       });
       c.on('error', (err) => { log(`event bus: 연결 오류: ${err.message}`); reconnect(c); });
       c.on('end', () => reconnect(c));
