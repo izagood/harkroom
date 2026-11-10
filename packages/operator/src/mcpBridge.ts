@@ -100,6 +100,12 @@ export interface BridgeLink {
    * 요청의 `method` 를 보고 그 답이 나간 순간을 짚을 뿐, 내용은 건드리지 않는다.
    */
   onToolsListed?: () => void;
+  /**
+   * 오퍼레이터가 링크를 거절(`link.rejected`)하면 다시 붙지 않고 **기다리는 요청 전부를 바로** 링크 없음으로 답한다(2026-11-10).
+   * 한 번 묻고 끝나는 래퍼(`merge`·`api`·hook)용이다 — 하네스의 상주 브릿지는 오퍼레이터 교체 동안 다시 붙는 것이 맞아 켜지 않는다.
+   * 이것이 없으면 거절 → 재접속(연결은 되므로 유예 시계가 매번 처음으로) → 거절이 되풀이돼 요청 시한(90초)까지 답이 없다.
+   */
+  failOnRejected?: boolean;
   /** hello 의 kind — 하네스의 MCP 브릿지는 `bridge`, PreToolUse hook 은 `hook`(H③b). */
   kind?: 'bridge' | 'hook' | 'wrapper';
 }
@@ -274,6 +280,16 @@ export function runMcpBridge(link: BridgeLink, io: BridgeStdio, tuning: BridgeTu
           framesThisLink += 1;
           if (isRunnerLinkRejected(line.value)) {
             if (!firstFrame) continue;
+            if (link.failOnRejected) {
+              for (const [id, entry] of [...pending]) {
+                pending.delete(id);
+                entry.timer.cancel();
+                answerError(entry.rpcId, LINK_DOWN_MESSAGE);
+              }
+              queued.splice(0);
+              sentUnconfirmed = [];
+              continue;
+            }
             // 곧 끊긴다. 지금부터 들어오는 줄도 큐로 간다. 일시 끊김이 아니라 거절이니 백오프를 이어 간다.
             queued.unshift(...sentUnconfirmed.filter((e) => pending.has(e.id)));
             sentUnconfirmed = [];
