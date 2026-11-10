@@ -64,8 +64,9 @@ concurrency:
   group: image-${{ inputs.release_tag || github.ref }}
   cancel-in-progress: false
 
-env:
-  IMAGE: ghcr.io/${{ github.repository_owner }}/harkroom-server
+# 이미지는 둘이다 — TS 서버(`harkroom-server`)와 Rust 앞단(`harkroom-server-rs`, S5.1). 같은 커밋·같은 태그 규칙으로
+# 나가야 배포가 둘을 한 판 태그로 맞출 수 있다(앞단은 기동할 때 그 판의 마이그레이션 목록을 DB 와 대조한다).
+# 이미지 이름은 아래 두 잡의 matrix `image` 에서 정한다.
 
 jobs:
   # ## 왜 아키텍처마다 **다른 러너**인가
@@ -76,20 +77,27 @@ jobs:
   # (공개 저장소에서 무료) 각자 네이티브로 빌드하고 아래 `merge` 가 둘을 하나의 매니페스트
   # 리스트로 묶는다.
   build:
-    name: ${{ matrix.platform }}
-    runs-on: ${{ matrix.runner }}
+    name: ${{ matrix.image.name }} ${{ matrix.arch.platform }}
+    runs-on: ${{ matrix.arch.runner }}
     timeout-minutes: 30
     strategy:
       # 한쪽 아키텍처가 깨져도 다른 쪽 로그는 봐야 한다.
       fail-fast: false
       matrix:
-        include:
+        image:
+          - name: harkroom-server
+            dockerfile: packages/server/Dockerfile
+          - name: harkroom-server-rs
+            dockerfile: crates/harkroom-server/Dockerfile
+        arch:
           - platform: linux/amd64
             runner: ubuntu-latest
             slug: amd64
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
             slug: arm64
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.image.name }}
     steps:
       # 액션은 40자 커밋 SHA 로 핀한다(ci.yml 상단의 같은 근거). 뒤 주석이 사람이 읽는 버전이다.
       #
@@ -113,16 +121,17 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
-          file: packages/server/Dockerfile
-          platforms: ${{ matrix.platform }}
+          file: ${{ matrix.image.dockerfile }}
+          platforms: ${{ matrix.arch.platform }}
           build-args: |
             HARKROOM_COMMIT=${{ github.sha }}
           # provenance 첨부는 다이제스트 하나에 매니페스트를 더 얹어 `push-by-digest` 와
           # 어긋난다. 출처는 아래 `merge` 가 만드는 리스트 수준에서 다룬다.
           provenance: false
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=${{ matrix.slug }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.slug }}
+          # 캐시 scope 는 옛 이름(`amd64`)을 TS 서버가 그대로 쓴다 — 바꾸면 첫 빌드가 캐시 없이 돈다.
+          cache-from: type=gha,scope=${{ matrix.image.name == 'harkroom-server' && matrix.arch.slug || format('{0}-{1}', matrix.image.name, matrix.arch.slug) }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.name == 'harkroom-server' && matrix.arch.slug || format('{0}-{1}', matrix.image.name, matrix.arch.slug) }}
 
       - name: 다이제스트를 파일 이름으로 남긴다
         run: |
@@ -133,17 +142,23 @@ jobs:
 
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
-          name: digests-${{ matrix.slug }}
+          name: digests-${{ matrix.image.name }}-${{ matrix.arch.slug }}
           path: /tmp/digests/*
           # 빈 채로 지나가면 `merge` 가 아키텍처 하나짜리 리스트를 조용히 만든다.
           if-no-files-found: error
           retention-days: 1
 
   merge:
-    name: 매니페스트 리스트를 만든다
+    name: ${{ matrix.image }} 매니페스트 리스트를 만든다
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [harkroom-server, harkroom-server-rs]
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
     steps:
       # 태그를 정하려면 `tauri.conf.json` 과 커밋 sha 가 필요하다. **build 와 같은 ref 를
       # 봐야 한다** — 다른 것을 보면 붙는 태그가 구워진 내용과 어긋난다.
@@ -154,7 +169,8 @@ jobs:
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           path: /tmp/digests
-          pattern: digests-*
+          # `digests-harkroom-server-*` 는 `-rs-` 것까지 잡으므로 아키텍처를 끝까지 적는다.
+          pattern: digests-${{ matrix.image }}-{amd64,arm64}
           merge-multiple: true
 
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3

@@ -45,9 +45,18 @@ async fn main() {
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(async {
-        let _ = tokio::signal::ctrl_c().await;
-    })
+    .with_graceful_shutdown(shutdown())
     .await
     .expect("serve");
+}
+
+/// Ctrl-C 또는 SIGTERM 에서 멈춘다. 컨테이너에서 이 바이너리는 PID 1 이라 처리기가 없는 SIGTERM 은 무시되고,
+/// k8s·`docker stop` 은 유예 시간을 다 기다린 뒤 SIGKILL 로 끊는다(롤링 배포마다 그만큼 늦어진다).
+async fn shutdown() {
+    let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .expect("SIGTERM handler");
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = term.recv() => {}
+    }
 }
