@@ -377,6 +377,7 @@ set these by hand:
 | `AGENT_INBOX_LEASE` | `0` turns off the inbox lease: the runner stops telling `inbox.poll` which entries it is working on, so the server hands them back on every poll (the old path) | unset (on) | No |
 | `AGENT_TURN_TIMEOUT_MS` | Maximum wait for one turn (PTY execution) | `1800000` (30min) | No |
 | `AGENT_HARNESS_STALL_MS` | Idle time after which a harness whose transcript stopped growing is treated as stalled and the turn is folded (`0` disables) | `600000` (10min) | No |
+| `AGENT_PTY_RECORD_DIR` | Absolute folder where the runner writes each turn's raw PTY output as an asciicast v2 file (output only, never keystrokes; files are `0600`). Used to check that a different terminal emulator draws the same screens. Screen output can show account names, folder paths and the pasted prompt, so keep these files on your machine | unset (off) | No |
 | `AGENT_INTERACTIVE_ORPHAN_MS` | Grace before an interactive PTY with zero viewers is reclaimed (SIGTERM → SIGKILL) | `60000` (60s) | No |
 | `AGENT_STATE_DIR` | Directory for sessions.json, MCP config, AVCS workspace | `~/.harkroom-agent` | No |
 | `CODEX_HOME` | Source Codex home whose `auth.json` is linked into the runner-isolated Codex home; child Codex processes always use the isolated home under `AGENT_STATE_DIR` | `~/.codex` | No |
