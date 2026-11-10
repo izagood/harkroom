@@ -50,3 +50,36 @@ jobs:
             git diff -- packages/shared/src/generated
             exit 1
           fi
+
+  # 버스 경유 이벤트 순서 — 끝에서 끝(S5.1d). Rust 쓰는 쪽(`harkroom-bus` 의 `publish_lines` 예제)을 빌드하고, TS 서버 + 실제 WS 로
+  # 커밋 순서대로 도착하는지 본다(`packages/server/test/eventBusRustE2e.test.ts`). `CI` 의 `check` 잡은 이 바이너리를 빌드하지 않아 그 시험을 건너뛴다.
+  # Postgres 는 서버 시험과 같이 testcontainers 가 띄운다(ubuntu 러너에 Docker 가 있다).
+  bus-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            crates/harkroom-bus/target
+          key: bus-e2e-${{ runner.os }}-${{ hashFiles('crates/harkroom-bus/Cargo.lock') }}
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6
+        with:
+          version: 11
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: cargo build --manifest-path crates/harkroom-bus/Cargo.toml --locked --example publish_lines
+      - name: Rust 가 커밋한 순서대로 WS 에 도착하는가
+        run: pnpm --filter @harkroom/server exec vitest run test/eventBusRustE2e.test.ts
+        env:
+          HARKROOM_BUS_PUBLISH_BIN: ${{ github.workspace }}/crates/harkroom-bus/target/debug/examples/publish_lines
+          # 바이너리가 없어 건너뛰면 통과로 보이므로, 이 잡에서는 건너뛰기를 실패로 친다.
+          HARKROOM_BUS_E2E_REQUIRED: '1'
