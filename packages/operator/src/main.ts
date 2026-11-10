@@ -73,7 +73,7 @@ async function mergeMain(argv: string[]): Promise<void> {
     console.log(JSON.stringify({ error: { code: 'bad_request', message: parsed.error }, merged: false, exit: 2 }));
     process.exit(2);
   }
-  const r = await callOperatorTool(MERGE_TOOL, { repo: parsed.repo, number: parsed.number, headSha: parsed.headSha });
+  const r = await callOperatorTool(MERGE_TOOL, { repo: parsed.repo, number: parsed.number, headSha: parsed.headSha }, 'wrapper', { waitForAnswer: true });
   if ('notInTurn' in r) {
     console.log(JSON.stringify({ error: { code: 'not_in_turn', message: `${RUNNER_LINK_ENV_KEYS.join('·')}·${RUNNER_TURN_CAUSE_ENV} are required — the wrapper only runs inside a runner-launched mention turn` }, merged: false, exit: 2 }));
     process.exit(2);
@@ -90,7 +90,7 @@ async function mergeMain(argv: string[]): Promise<void> {
 /**
  * 브릿지와 같은 소켓·같은 자격으로 `tools/call` 한 줄을 보내고 답 한 줄을 받는다(머지·api 래퍼 공용 꼴).
  */
-async function callOperatorTool(name: string, args: Record<string, unknown>, kind: 'wrapper' | 'hook' = 'wrapper'): Promise<{ ok: boolean; text: string } | { ok: false; notInTurn: true }> {
+async function callOperatorTool(name: string, args: Record<string, unknown>, kind: 'wrapper' | 'hook' = 'wrapper', opts: { waitForAnswer?: boolean } = {}): Promise<{ ok: boolean; text: string } | { ok: false; notInTurn: true }> {
   const socketPath = process.env[RUNNER_LINK_ENV.socketPath];
   const runnerId = process.env[RUNNER_LINK_ENV.runnerId];
   const secret = process.env[RUNNER_LINK_ENV.secret] || null;
@@ -119,9 +119,17 @@ async function callOperatorTool(name: string, args: Record<string, unknown>, kin
       stdin.end();
     });
   });
-  const bridge = runMcpBridge({ socketPath, runnerId, secret, turnKey, cause, cwd: process.cwd(), kind: linkKind }, { stdin, stdout, stderr: process.stderr });
+  const bridge = runMcpBridge({ socketPath, runnerId, secret, turnKey, cause, cwd: process.cwd(), kind: linkKind, ...(opts.waitForAnswer ? { failOnRejected: true } : {}) }, { stdin, stdout, stderr: process.stderr });
   stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } })}\n`);
-  const r = await done;
+  // **답이 올 때까지 프로세스를 붙잡는다**(2026-11-10). 브릿지의 재접속·유예·요청 시한 타이머는 전부 `unref` 다 — 하네스가 띄운
+  // `mcp-bridge` 는 stdin 이 살아 있어 상관없지만, 이 래퍼의 stdin 은 메모리 파이프라 아무것도 루프를 붙잡지 않는다. 그래서
+  // 오퍼레이터가 링크를 거절(`link.rejected`)하거나 소켓이 없어 브릿지가 재접속을 기다리는 사이 Node 가 **아무것도 찍지 않고
+  // exit 0** 으로 끝났다(에이전트가 성공으로 읽을 수 있다). 이제 거절은 `failOnRejected` 로 바로, 소켓 없음은 브릿지의 유예(15초)
+  // 끝에 링크 없음 오류가 오고, 위 `done` 이 그것을 `link_error` 로 바꿔 exit 1 이 된다. 브릿지는 요청 시한(90초)에 반드시
+  // 답하므로 영원히 서지 않는다.
+  // 지금은 `merge` 만 켠다(`waitForAnswer`) — `api`·hook 의 같은 빈틈은 그 길의 거절 처리(hook 은 막기 쪽)를 따로 정한 뒤에 넓힌다.
+  const keepAlive = opts.waitForAnswer ? setInterval(() => {}, 60_000) : null;
+  const r = await done.finally(() => { if (keepAlive) clearInterval(keepAlive); });
   await bridge;
   return r;
 }
