@@ -20,7 +20,7 @@ import { RUNNER_NOTICE_KEYS, RUNNER_NOTICE_MAX_PENDING, runnerNotice } from '../
 import { emitEvent, emitPosted, onEvent } from '../events.js';
 import type { Lifecycle } from '../lifecycle.js';
 import { assertChannelVisible, audienceFor, getChannelDoc, listChannels } from '../services/channels.js';
-import { BAD_THREAD_MESSAGE, checkAskMirror, ASK_SUPERSEDES_MAX, checkAskSupersede, delegationChainCapped, getMessageById, listOpenHumanAsks, gateAwaitingAccount, leaseInboxEntries, listInbox, listMessages, markInboxRead, notifyGateAwaiting, postMessage, searchInput, searchMessages, supersedeAsk, syncAskMirrors, type AskMirrorRefusal, type AskSupersedeRefusal } from '../services/messages.js';
+import { COLS as MESSAGE_COLS, BAD_THREAD_MESSAGE, checkAskMirror, ASK_SUPERSEDES_MAX, checkAskSupersede, delegationChainCapped, getMessageById, listOpenHumanAsks, gateAwaitingAccount, leaseInboxEntries, listInbox, listMessages, markInboxRead, notifyGateAwaiting, postMessage, searchInput, searchMessages, supersedeAsk, syncAskMirrors, type AskMirrorRefusal, type AskSupersedeRefusal } from '../services/messages.js';
 
 /** `message.ask` 의 `mirrorOf` 거절 사유 — 에이전트가 읽고 고칠 수 있게 무엇을 바꾸면 되는지 적는다. */
 const MIRROR_REFUSAL_MESSAGE: Record<AskMirrorRefusal, string> = {
@@ -1860,11 +1860,9 @@ function buildMcpServer(
       }
       if (!entries.length) return { entries, messages: [] };
       const ids = entries.map((e) => e.messageId);
-      const msgs = await pool.query(
-        `select id, seq::int as seq, channel_id as "channelId", thread_root_id as "threadRootId",
-           author_id as "authorId", body, kind, meta, created_at as "createdAt",
-           also_in_channel as "alsoInChannel"
-         from message where id = any($1) order by seq`, [ids]);
+      // `MessageRow` 전체 칸(COLS)으로 싣는다. 러너는 이 행을 `delegation_update`·후속·밀린 멘션에서 스레드 글과 똑같이 그린다
+      // (`prompt.ts::renderLine` 이 `attachments.length` 를 읽는다). 칸을 줄여 실으면 V2 를 켠 날처럼 그 턴이 시작 전에 죽는다.
+      const msgs = await pool.query(`select ${MESSAGE_COLS} from message where id = any($1) order by seq`, [ids]);
       return { entries, messages: markSystemLines(await denormalizeBodies(pool, msgs.rows as { body: string; kind: string; authorId: string }[])) };
     };
     // Subscribe before the first fetch so an inbox.updated arriving during that DB round trip is

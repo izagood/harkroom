@@ -218,6 +218,11 @@ describe('P3 위임 수명', () => {
     expect((oldPoll.entries as { reason: string }[]).some((e) => e.reason === 'mention')).toBe(false);
     const newPoll = await call(leadPat, 'inbox.poll', { inboxReasons: ['delegation_update'] });
     expect((newPoll.entries as { messageId: string; reason: string }[]).find((e) => e.messageId === p)?.reason).toBe('delegation_update');
+    // 운영 실측(V2 켠 날): 폴의 글 행에 `attachments` 가 없어 러너가 update 글을 그리다 「reading 'length'」 로 죽었다.
+    // 러너는 이 행을 스레드 글과 같은 `MessageRow` 로 그리므로 배열 칸이 있어야 한다.
+    const row = (newPoll.messages as Record<string, unknown>[]).find((m) => m.id === p);
+    expect(Array.isArray(row?.attachments)).toBe(true);
+    expect(Array.isArray(row?.reactions)).toBe(true);
     // 163 보다 오래된 러너(`delegation_followup` 도 모름)에게는 싣지 않고 읽음으로 접는다 — 보통 부름으로 돌지 않게.
     const ancient = await call(leadPat, 'inbox.poll', { version: '0.4.400', timeoutMs: 0 });
     expect((ancient.entries as { messageId: string }[]).some((e) => e.messageId === p)).toBe(false);
