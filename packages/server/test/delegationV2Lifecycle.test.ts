@@ -79,6 +79,9 @@ describe('P3 위임 수명', () => {
     await call(onePat, 'message.report', { channelId, threadRootId: rootId, body: '결과', checks: ['확인'] });
     expect(await item(dlg)).toMatchObject({ outcome: 'reported', closed_reason: null });
     expect((await leadInbox()).map((r) => r.reason)).toEqual(['delegation_done']);
+    // 결말 값은 인박스 넷 중 하나로 옮겨 싣는다 — `reported` 가 그대로 가면 러너가 「undefined」 를 쓴다.
+    const done = (await listInbox(pool, leadId, { unreadOnly: true })).find((e) => e.reason === 'delegation_done' && e.threadRootId === rootId);
+    expect(done?.delegation?.items).toEqual([{ handle: 'vone', outcome: 'done' }]);
   });
 
   it('fail 은 failed', async () => {
