@@ -18,10 +18,15 @@ use harkroom_proto::p3::{
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::io::{Read, Write};
+use std::net::Shutdown;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+/// 접속마다의 쓰기 시간 제한. 인증은 됐지만 읽지 않는 접속 하나가 이벤트 흘리기(`broadcast_event`, 러너 종료를
+/// 기다리는 스레드에서 돈다)를 그 자리에 붙잡지 못하게 한다. 넘기면 그 접속은 끊는다 — 앱은 다시 붙는다.
+pub const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn err(code: DaemonErrorCode, message: impl Into<String>) -> DaemonError {
     DaemonError {
@@ -272,9 +277,21 @@ impl ServerState {
         else {
             return;
         };
-        let writers: Vec<Writer> = self.authed().values().cloned().collect();
-        for w in writers {
-            let _ = w.lock().unwrap_or_else(|p| p.into_inner()).write_all(&line);
+        let writers: Vec<(u64, Writer)> = self
+            .authed()
+            .iter()
+            .map(|(id, w)| (*id, Arc::clone(w)))
+            .collect();
+        for (id, w) in writers {
+            let mut stream = w.lock().unwrap_or_else(|p| p.into_inner());
+            if stream.write_all(&line).is_err() {
+                // 시간 제한(`WRITE_TIMEOUT`)을 넘겼거나 끊긴 접속이다. 명단에서 빼고 양쪽을 닫는다 — 줄이 반쯤
+                // 나갔을 수 있어 그 접속으로는 더 쓸 수 없고, 읽는 스레드도 0 을 읽고 끝난다.
+                let _ = stream.shutdown(Shutdown::Both);
+                drop(stream);
+                self.authed().remove(&id);
+                eprintln!("이벤트 쓰기 실패 — 접속을 끊는다: conn={id}");
+            }
         }
     }
 
@@ -379,6 +396,10 @@ pub fn read_kill_params(payload: Option<&Value>) -> Result<(String, Option<Strin
 
 /// 접속 하나를 끝까지 서비스한다. `hello` 전에는 아무 요청도 받지 않고, 거절이면 사유 한 줄을 보내고 끊는다.
 pub fn serve_connection(state: &ServerState, mut stream: UnixStream) {
+    // 쓰기 시간 제한은 소켓 옵션(SO_SNDTIMEO)이라 복제한 fd 에도 같이 걸린다. 못 걸면 받지 않는다.
+    if stream.set_write_timeout(Some(WRITE_TIMEOUT)).is_err() {
+        return;
+    }
     let writer: Writer = match stream.try_clone() {
         Ok(w) => Arc::new(Mutex::new(w)),
         Err(_) => return,
@@ -513,6 +534,36 @@ pub fn accept_loop_with_limit(state: Arc<ServerState>, listener: UnixListener, l
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn broadcast_drops_authed_peer_that_never_reads() {
+        let state = ServerState::new(
+            DaemonIdentity {
+                pid: 1,
+                started_at_ms: 0,
+                launch_nonce: String::new(),
+                entry_path: String::new(),
+                app_version: String::new(),
+            },
+            None,
+        );
+        // 읽지 않는 상대. 시험은 짧은 제한으로 본다(실제 값은 `WRITE_TIMEOUT`).
+        let (ours, _theirs) = UnixStream::pair().unwrap();
+        ours.set_write_timeout(Some(Duration::from_millis(200)))
+            .unwrap();
+        state.authed().insert(7, Arc::new(Mutex::new(ours)));
+        let big = "x".repeat(256 * 1024);
+        let started = std::time::Instant::now();
+        // 소켓 버퍼가 찰 때까지 흘린다 — 막히지 않고 끝나야 하고, 그 접속은 명단에서 빠져야 한다.
+        for _ in 0..64 {
+            state.broadcast_event("runnerExit", json!({ "pad": big }));
+            if state.authed().is_empty() {
+                break;
+            }
+        }
+        assert!(state.authed().is_empty(), "읽지 않는 접속이 명단에 남았다");
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
 
     #[test]
     fn connection_slots_cap_and_return() {
