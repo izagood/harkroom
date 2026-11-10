@@ -1833,7 +1833,8 @@ function delegationSection(outcome: InboxDelegationOutcome): string[] {
       ? '(넘긴 일의 기한이 지났다 — 결말은 아래와 같다)'
       : '(넘긴 일이 모두 끝났다 — 결말은 아래와 같다)',
     '',
-    ...outcome.items.map((i) => `- @${i.handle} — ${label[i.outcome]}`),
+    // 모르는 값(새 서버의 새 상태)이면 글자 그대로 — 「undefined」 를 싣지 않는다.
+    ...outcome.items.map((i) => `- @${i.handle} — ${label[i.outcome] ?? String(i.outcome)}`),
     '',
     // 2026-09-16 실측: 팀장이 이미 처리된 일을 **다시 시켰다**. 팀원이 "닫았습니다" 라고
     // 답한 뒤인데도 같은 지시를 다시 보냈고, 팀원은 "앞 메시지가 엇갈린 것 같다" 고 답했다.

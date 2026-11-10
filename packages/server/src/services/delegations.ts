@@ -607,6 +607,23 @@ export async function wakeLeadOnFollowup(
 }
 
 /**
+ * DB 의 항목 결말을 인박스 결말 넷(`InboxDelegationOutcome`)으로 옮긴다.
+ *
+ * v2(P3)는 `report` 를 `'reported'` 로, 자동 닫힘을 `'closed'` 로 적는다. 그 값을 그대로 실으면
+ * 러너(옛 판 포함)의 라벨표에 없어 위임자 프롬프트에 「undefined」 가 실렸다(V2 켠 첫날 운영 실측).
+ * 러너를 고치지 않아도 옛 러너가 낫도록 서버에서 맞춘다.
+ * - `reported` → `done`: 담당이 결과를 냈다(닫지 않을 뿐).
+ * - `closed` → `timeout`: 결과 없이 닫혔다 — 위임자가 할 일(직접 하거나 다시 넘김)이 무응답과 같다.
+ */
+export function inboxOutcome(raw: string): InboxDelegationOutcome['items'][number]['outcome'] {
+  switch (raw) {
+    case 'done': case 'failed': case 'timeout': case 'canceled': return raw;
+    case 'reported': return 'done';
+    default: return 'timeout';
+  }
+}
+
+/**
  * 팀장의 `delegation_done` 항목에 실어 줄 **결말**. `listInbox` 가 부른다.
  *
  * `roundsLeft` 를 함께 세는 이유는 `InboxDelegationOutcome` 주석에 있다 — 다시 넘기는 것은
@@ -618,7 +635,7 @@ export async function outcomesFor(
   if (!messageIds.length) return new Map();
   const res = await db.query<{
     message_id: string; thread_root_id: string; lead_account_id: string;
-    handle: string; outcome: 'done' | 'failed' | 'timeout' | null;
+    handle: string; outcome: string | null;
   }>(
     `select d.message_id, d.thread_root_id, d.lead_account_id, a.handle, i.outcome
        from team_delegation d
@@ -635,6 +652,7 @@ export async function outcomesFor(
     // 결말이 아직 없는 항목(`null`)은 목록에 넣지 않는다 — 이 함수는 결말이 난 위임에만
     // 불리지만, 기한 스위퍼가 닫기 **전에** 사람이 인박스를 읽는 순간이 있을 수 있다.
     if (row.outcome === null) continue;
+    const outcome = inboxOutcome(row.outcome);
     let entry = out.get(row.message_id);
     if (!entry) {
       entry = { timedOut: false, roundsLeft: 0, items: [] };
@@ -643,8 +661,8 @@ export async function outcomesFor(
         threadRootId: row.thread_root_id, leadAccountId: row.lead_account_id,
       });
     }
-    entry.items.push({ handle: row.handle, outcome: row.outcome });
-    if (row.outcome === 'timeout') entry.timedOut = true;
+    entry.items.push({ handle: row.handle, outcome });
+    if (outcome === 'timeout') entry.timedOut = true;
   }
 
   // 줄마다 따로 묻지 않는다(Q4) — 결말이 난 위임 전부의 라운드를 한 번에 센다.
