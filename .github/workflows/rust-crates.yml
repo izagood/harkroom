@@ -1,0 +1,40 @@
+name: Rust crates
+
+# `crates/*` 는 Rust 전환(S1·S3a…)의 독립 crate 들이다 — 아직 앱·러너에 연결되지 않아 `CI` 의 어느 잡도 이것을 빌드하지 않는다.
+# crate 마다 따로 `cargo test --locked` 를 돈다(작업 공간을 두지 않는 이유: `packages/desktop/src-tauri` 위 디렉터리에
+# `[workspace]` 가 생기면 그 crate 가 「작업 공간 밖」 오류로 깨진다). 정본(TS)이 쓴 골든을 읽는 시험이 여기서 돈다.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: rust-crates-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
+
+permissions:
+  contents: read
+
+jobs:
+  crates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            crates/*/target
+          key: crates-${{ runner.os }}-${{ hashFiles('crates/*/Cargo.lock') }}
+      - name: cargo fmt · clippy · test (crate 마다)
+        run: |
+          set -euo pipefail
+          for m in crates/*/Cargo.toml; do
+            echo "::group::$m"
+            cargo fmt --manifest-path "$m" --check
+            cargo clippy --manifest-path "$m" --locked --all-targets -- -D warnings
+            cargo test --manifest-path "$m" --locked
+            echo "::endgroup::"
+          done

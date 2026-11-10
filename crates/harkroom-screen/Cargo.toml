@@ -1,0 +1,16 @@
+[package]
+name = "harkroom-screen"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+publish = false
+description = "Harness TUI screen judgment (vt100) — Rust port of packages/agent/src/screenIdle.ts. Not wired in yet."
+
+# 버전은 `=` 로 고정한다(Rust 전환 계획의 약속). 올리는 것은 따로 PR 로.
+[dependencies]
+regex = "=1.13.1"
+vt100 = "=0.18.1"
+
+[dev-dependencies]
+serde_json = "=1.0.154"
