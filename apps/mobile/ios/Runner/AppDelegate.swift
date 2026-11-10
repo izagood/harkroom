@@ -19,6 +19,9 @@ import UserNotifications
   ) -> Bool {
     // 누른 알림·앞에 떠 있을 때의 알림을 여기서 받는다. 엔진보다 먼저 정해야 꺼진 앱을 연 알림도 온다.
     UNUserNotificationCenter.current().delegate = self
+    // 기기를 흔들면 뜨는 「실행 취소」 확인창(shake to undo)을 앱 전체에서 끈다(소유자 결정 2026-11-10).
+    // 흔들기 제스처만 끈다 — 키보드 단축키(⌘Z)·편집 메뉴의 실행 취소는 그대로다.
+    application.applicationSupportsShakeToEdit = false
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
