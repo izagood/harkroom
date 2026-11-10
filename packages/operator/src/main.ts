@@ -127,7 +127,8 @@ async function callOperatorTool(name: string, args: Record<string, unknown>, kin
   // exit 0** 으로 끝났다(에이전트가 성공으로 읽을 수 있다). 이제 거절은 `failOnRejected` 로 바로, 소켓 없음은 브릿지의 유예(15초)
   // 끝에 링크 없음 오류가 오고, 위 `done` 이 그것을 `link_error` 로 바꿔 exit 1 이 된다. 브릿지는 요청 시한(90초)에 반드시
   // 답하므로 영원히 서지 않는다.
-  // 지금은 `merge` 만 켠다(`waitForAnswer`) — `api`·hook 의 같은 빈틈은 그 길의 거절 처리(hook 은 막기 쪽)를 따로 정한 뒤에 넓힌다.
+  // `merge`·`api` 가 켠다(`waitForAnswer`). PreToolUse hook 은 켜지 않는다 — hook 은 allow 만 내므로 답 없이 끝나면 평소 권한 판정으로
+  // 넘어가 안전한 쪽으로 실패한다(security 판정 2026-11-10).
   const keepAlive = opts.waitForAnswer ? setInterval(() => {}, 60_000) : null;
   const r = await done.finally(() => { if (keepAlive) clearInterval(keepAlive); });
   await bridge;
@@ -146,7 +147,7 @@ async function apiMain(argv: string[]): Promise<void> {
     console.log(JSON.stringify({ error: { code: 'bad_request', message: parsed.error }, exit: 2 }));
     process.exit(2);
   }
-  const r = await callOperatorTool(API_TOOL, { connector: parsed.connector, method: parsed.method, path: parsed.path, body: parsed.body, contentType: parsed.contentType });
+  const r = await callOperatorTool(API_TOOL, { connector: parsed.connector, method: parsed.method, path: parsed.path, body: parsed.body, contentType: parsed.contentType }, 'wrapper', { waitForAnswer: true });
   if ('notInTurn' in r) {
     console.log(JSON.stringify({ error: { code: 'not_in_turn', message: `${RUNNER_LINK_ENV_KEYS.join('·')}·${RUNNER_TURN_CAUSE_ENV} are required — the wrapper only runs inside a runner-launched mention turn` }, exit: 2 }));
     process.exit(2);
