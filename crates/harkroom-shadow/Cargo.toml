@@ -1,0 +1,13 @@
+[package]
+name = "harkroom-shadow"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+publish = false
+description = "Shadow check (S3 B2): replay runner PTY recordings (asciicast v2) through harkroom-screen and compare with the TS judgments marked in them. Not wired in."
+
+# 버전은 `=` 로 고정한다(Rust 전환 계획의 약속). 올리는 것은 따로 PR 로.
+[dependencies]
+harkroom-screen = { path = "../harkroom-screen" }
+serde_json = "=1.0.154"
