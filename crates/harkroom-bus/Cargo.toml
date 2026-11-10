@@ -1,0 +1,17 @@
+[package]
+name = "harkroom-bus"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+publish = false
+description = "Event bus writer (S5.0) — writes a workspace event to event_outbox and notifies the TS server (packages/server/src/eventBus.ts). Not wired in yet."
+
+# 버전은 `=` 로 고정한다(Rust 전환 계획의 약속). 올리는 것은 따로 PR 로.
+# tls 는 켜지 않는다 — 서버와 DB 는 같은 클러스터 안에서 평문으로 붙는다(TS 서버와 같음).
+[dependencies]
+sqlx = { version = "=0.9.0", default-features = false, features = ["postgres", "runtime-tokio", "json"] }
+serde_json = "=1.0.154"
+
+[dev-dependencies]
+tokio = { version = "=1.48.0", features = ["macros", "rt-multi-thread", "sync", "time"] }
