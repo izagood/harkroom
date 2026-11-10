@@ -8,6 +8,7 @@
  * | `harkroom-operator mcp-bridge` | 하네스가 띄우는 stdio MCP 브릿지(`mcpBridge.ts`) |
  * | `harkroom-operator merge <owner/name> <n> --head <sha>` | 에이전트 머지 래퍼 — 브릿지와 같은 소켓으로 오퍼레이터에 묻는다(`turnMerge.ts`) |
  * | `harkroom-operator hook pretool` | claude PreToolUse hook — 승인된 「정확한 명령」이면 allow, 아니면 무출력(`turnCommand.ts`, H③b) |
+| `harkroom-operator hook permission` | claude PermissionRequest hook — 변수 경로 `rm`·`AskUserQuestion` 물음만 deny(고칠 법을 모델에), 그 밖은 기록만·무출력(`hookCli.ts::decidePermissionHook`, C안 P1) |
 | `harkroom-operator hook posttool --since <seq>` | claude PostToolUse hook — 턴 도중 사람이 앵커 스레드에 쓴 글을 `additionalContext` 로 싣는다, 없으면 무출력(`turnPeek.ts`) |
  * | 그 밖 | 앱이 넘기는 `--socket …` 인자 그대로(`args.ts`) |
  *

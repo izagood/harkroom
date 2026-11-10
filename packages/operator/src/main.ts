@@ -18,17 +18,18 @@
 // 러너는 `detached` 로 떠 있으므로 이 프로세스의 프로세스 그룹에 오는 시그널도 러너에
 // 닿지 않는다. 즉 이 핸들러가 아예 안 불려도(SIGKILL) 러너는 산다 — 이 핸들러가 하는
 // 일은 러너를 살리는 것이 아니라 **잔해를 남기지 않는 것**이다.
-import { resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { RUNNER_LINK_ENV, RUNNER_LINK_ENV_KEYS, RUNNER_MCP_READY_FILE_ENV, RUNNER_TURN_CAUSE_ENV, RUNNER_TURN_ID_ENV, RUNNER_TURN_KEY_ENV } from '@harkroom/shared/runnerLink';
 import { parseDaemonArgs, describeArgs, type DaemonArgs } from './args.js';
 import { parseCliArgs, register, registerViaRunningOperator, resolveDataDir, runArgs } from './cli.js';
 import { runMcpBridge, writeReadyMarker } from './mcpBridge.js';
 import { MERGE_TOOL, parseMergeArgs } from './turnMerge.js';
-import { decideHook, decideLaneHook, decidePostToolHook, decideTailHook, HOOK_STDIN_MAX, postToolOutput, HOOK_TIMEOUT_MS, laneDeny, readStdinCapped, type LaneDenyDecision } from './hookCli.js';
+import { countTurnDenials, decideHook, decideLaneHook, decidePermissionHook, decidePostToolHook, decideTailHook, HOOK_STDIN_MAX, postToolOutput, HOOK_TIMEOUT_MS, laneDeny, readStdinCapped, type LaneDenyDecision, type PermissionRecord } from './hookCli.js';
 import { CODEX_HOOK_SPEC_ENV, decodeCodexHookSpec, decodeLaneHookRules } from '@harkroom/shared/providerLane';
 import { decideCodexHook } from './codexHook.js';
 import { API_TOOL, parseApiArgs } from './turnApi.js';
-import { readFileSync, writeSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, writeSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { PassThrough } from 'node:stream';
 import { EXIT_INCONCLUSIVE, EXIT_OCCUPIED, startDaemon } from './run.js';
 
@@ -158,6 +159,7 @@ async function apiMain(argv: string[]): Promise<void> {
 async function hookMain(event: string, laneRules?: string, laneMode: 'lane' | 'tail' = 'lane', tailReach?: string, codex = false, since?: number): Promise<void> {
   const quiet = () => process.exit(0);
   if (event === 'posttool') return postToolHookMain(since ?? 0);
+  if (event === 'permission') return permissionHookMain();
   if (event !== 'pretool') return quiet();
   // codex 턴: 판정할 것은 턴 env 로 온다. 값이 없는 codex(대화형 턴 등 — 같은 홈의 규칙 파일·hook 을 싣는다)는 그 채널 규칙이 없는
   // 것으로 본다: 규칙 파일의 명령에 닿으면 막고 그 밖은 판단하지 않는다. 값이 있는데 못 읽으면 막는다(fail-closed).
@@ -180,6 +182,58 @@ async function hookMain(event: string, laneRules?: string, laneMode: 'lane' | 't
     const decision = await decideHook(raw, (name, args) => callOperatorTool(name, args, 'hook'));
     if (decision) process.stdout.write(`${JSON.stringify(decision)}\n`);
   } catch { /* 무출력 */ }
+  clearTimeout(timer);
+  process.exit(0);
+}
+
+/**
+ * `harkroom-operator hook permission` — claude PermissionRequest hook(C안 P1, 판정은 `hookCli.ts::decidePermissionHook`). **언제나 종료 0**:
+ * 결정은 deny 뿐이고, 결정 없음·오류·시간 초과는 무출력이라 지금 경로(화면 물음 → 2분 자동 거절)가 받친다(결정 #6). 0 이 아닌 종료는
+ * 하네스가 비차단 오류로 넘기지만 판본마다 다를 수 있어 쓰지 않는다. 판정은 로컬이다 — 오퍼레이터에 묻지 않는다.
+ *
+ * 기록(1주 관찰): 오퍼레이터 데이터 디렉터리(링크 소켓 옆, 턴 밖이면 임시 디렉터리)의 `permission-hook/<날짜>.jsonl` 에 한 줄씩.
+ * 명령 전문은 남기지 않는다(첫 낱말만). 같은 파일에서 이 턴의 거절 수를 세어 3번째 거절 문구를 고른다.
+ */
+function permissionLogPath(now: Date): string {
+  const sock = process.env[RUNNER_LINK_ENV.socketPath];
+  const dir = join(sock ? dirname(sock) : tmpdir(), 'permission-hook');
+  return join(dir, `${now.toISOString().slice(0, 10)}.jsonl`);
+}
+
+function permissionTurn(): string {
+  return process.env[RUNNER_TURN_ID_ENV] || process.env[RUNNER_TURN_CAUSE_ENV] || 'unknown';
+}
+
+function appendPermissionRecord(path: string, rec: PermissionRecord): void {
+  try {
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    appendFileSync(path, `${JSON.stringify(rec)}\n`, { mode: 0o600 });
+  } catch { /* 기록 실패는 판정을 바꾸지 않는다 */ }
+}
+
+async function permissionHookMain(): Promise<void> {
+  const now = new Date();
+  const path = permissionLogPath(now);
+  const turn = permissionTurn();
+  const incident = (error: string): never => {
+    appendPermissionRecord(path, { at: now.toISOString(), turn, event: 'hook_error', error });
+    process.exit(0);
+  };
+  process.on('uncaughtException', () => incident('uncaught'));
+  process.on('unhandledRejection', () => incident('unhandled'));
+  const timer = setTimeout(() => incident('timeout'), HOOK_TIMEOUT_MS);
+  timer.unref?.();
+  try {
+    const raw = await readStdinCapped(process.stdin, HOOK_STDIN_MAX);
+    let prior = 0;
+    try { prior = countTurnDenials(readFileSync(path, 'utf8'), turn); } catch { /* 첫 줄 */ }
+    const d = decidePermissionHook(raw, prior);
+    if (!d) return incident('bad_input');
+    appendPermissionRecord(path, { at: now.toISOString(), turn, event: 'decided', tool: d.tool, kind: d.kind, program: d.program, decision: d.decision ? 'deny' : 'none' });
+    if (d.decision) writeSync(1, `${JSON.stringify(d.decision)}\n`);
+  } catch {
+    return incident('error');
+  }
   clearTimeout(timer);
   process.exit(0);
 }

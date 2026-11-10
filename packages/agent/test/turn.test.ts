@@ -1211,11 +1211,28 @@ describe('claude 머지 권한 규칙 주입 (permissionRules)', () => {
     for (const rule of ok) expect(ro.join(' ')).not.toContain(rule);
   });
 
+  const PERM_ENTRY = { matcher: '*', hooks: [{ type: 'command', command: '"/opt/harkroom/harkroom-operator" hook permission', timeout: 15 }] };
+
+  it('하네스 물음 hook(C안 P1): 구독형 auto 멘션 턴마다 PermissionRequest 를 한 장의 --settings 에 합친다 — 읽기 전용·인터랙티브·API 키 연결 턴엔 없다', () => {
+    const args = buildTurnCommand({ ...common, mode: 'mention' }).args;
+    expect(args.filter((a) => a === '--settings')).toHaveLength(1);
+    expect(JSON.parse(args[args.indexOf('--settings') + 1]!)).toEqual({ hooks: { PermissionRequest: [PERM_ENTRY] } });
+    // 턴 도중 새 글 hook 과 같은 장에 산다.
+    const both = buildTurnCommand({ ...common, mode: 'mention', postToolSinceSeq: 7 }).args;
+    const j = JSON.parse(both[both.indexOf('--settings') + 1]!);
+    expect(j.hooks.PermissionRequest).toEqual([PERM_ENTRY]);
+    expect(j.hooks.PostToolUse).toHaveLength(1);
+    expect(buildTurnCommand({ ...common, mode: 'mention', mentionPermission: 'readonly' }).args.join(' ')).not.toContain('hook permission');
+    expect(buildTurnCommand({ ...common, mode: 'interactive' }).args.join(' ')).not.toContain('hook permission');
+    expect(buildTurnCommand({ ...common, mode: 'mention', providerEnv: { ANTHROPIC_BASE_URL: 'https://gateway.example', ANTHROPIC_AUTH_TOKEN: 'tok-lane' } }).args.join(' ')).not.toContain('hook permission');
+  });
+
   it('「정확한 명령」 hook(H③b): 기본 꺼짐 — 켜면 auto 멘션 턴에만 인라인 --settings PreToolUse(Bash) 하나', () => {
-    expect(buildTurnCommand({ ...common, mode: 'mention' }).args).not.toContain('--settings');
+    const off = buildTurnCommand({ ...common, mode: 'mention' }).args;
+    expect(JSON.parse(off[off.indexOf('--settings') + 1]!).hooks.PreToolUse).toBeUndefined();
     const on = buildTurnCommand({ ...common, mode: 'mention', commandHook: true }).args;
     const json = JSON.parse(on[on.indexOf('--settings') + 1]!);
-    expect(json).toEqual({ hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: '"/opt/harkroom/harkroom-operator" hook pretool', timeout: 15 }] }] } });
+    expect(json).toEqual({ hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: '"/opt/harkroom/harkroom-operator" hook pretool', timeout: 15 }] }], PermissionRequest: [PERM_ENTRY] } });
     expect(on.filter((a) => a === '--settings')).toHaveLength(1);
     expect(buildTurnCommand({ ...common, mode: 'mention', mentionPermission: 'readonly', commandHook: true }).args).not.toContain('--settings');
     expect(buildTurnCommand({ ...common, mode: 'interactive', commandHook: true }).args).not.toContain('--settings');

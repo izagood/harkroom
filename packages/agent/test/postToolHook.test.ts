@@ -29,13 +29,17 @@ describe('턴 도중 새 글 hook — 러너', () => {
     const s = settingsOf(p.args);
     expect(s).toHaveLength(1);
     const hooks = s[0]!.hooks as Record<string, unknown>;
-    expect(Object.keys(hooks).sort()).toEqual(['PostToolUse', 'PreToolUse']);
+    expect(Object.keys(hooks).sort()).toEqual(['PermissionRequest', 'PostToolUse', 'PreToolUse']);
     expect(JSON.parse(withPostToolHook(commandHookSettings('/x'), '/x', 7)).hooks.PreToolUse).toEqual(JSON.parse(commandHookSettings('/x')).hooks.PreToolUse);
   });
 
   it('끄면(null) 붙지 않고, 읽기 전용 턴·codex 에도 붙지 않는다', () => {
-    expect(settingsOf(buildTurnCommand({ ...base, postToolSinceSeq: null }).args)).toHaveLength(0);
-    expect(settingsOf(buildTurnCommand({ ...base }).args)).toHaveLength(0);
+    // 물음 hook(C안 P1)은 늘 같은 장에 있다 — PostToolUse 만 빠진다.
+    for (const p of [buildTurnCommand({ ...base, postToolSinceSeq: null }), buildTurnCommand({ ...base })]) {
+      const s = settingsOf(p.args);
+      expect(s).toHaveLength(1);
+      expect(Object.keys(s[0]!.hooks as Record<string, unknown>)).toEqual(['PermissionRequest']);
+    }
     expect(settingsArgs(null, '/x', null)).toEqual([]);
     expect(attachesPostToolHook('claude-code', 'auto')).toBe(true);
     expect(attachesPostToolHook('claude-code', 'readonly')).toBe(false);

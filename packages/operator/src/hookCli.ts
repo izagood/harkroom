@@ -204,3 +204,80 @@ export async function decidePostToolHook(since: number, ask: Ask): Promise<strin
     .map((p) => ({ ...p, caller: p.caller === true }));
   return peekContext(posts);
 }
+
+/**
+ * `harkroom-operator hook permission` — claude 의 **PermissionRequest** hook(하네스 물음 자동 해결 C안 P1). claude 가 터미널에 확인·선택
+ * 화면을 띄우기 **직전에만** 불린다(실측 2026-11-10 claude 2.1.321: PreToolUse → PermissionRequest → Notification(`permission_prompt`) 순,
+ * hook 이 결정을 주면 화면 없이 이어 가고, 안 주면 화면 물음 → 답이 없으면 2분 뒤 자동 거절).
+ *
+ * **allow 는 내지 않는다**(결정 #2 — 사람만 승인하라는 안전 검사를 넘지 않는다). 내는 것은 둘 뿐이다:
+ * - 변수 경로 `rm`(안전 검사가 묻는 꼴) → deny + 다시 쓰는 법.
+ * - `AskUserQuestion`(멘션 턴의 터미널엔 답할 사람이 없다) → deny + 스스로 고르거나 `message.ask` 로 물으라는 말.
+ * 같은 턴에서 거절이 `PERMISSION_STOP_AFTER` 번째가 되면 문구를 「멈추고 message.fail 로 보고」로 바꾼다(재시도 루프 막기, 결정 #7).
+ * 그 밖은 결정 없음 — 지금처럼 화면 물음이 받는다(정책 밖 물음은 1주 기록을 본 뒤 P3 에서 정한다).
+ */
+export type PermissionDenyDecision = { hookSpecificOutput: { hookEventName: 'PermissionRequest'; decision: { behavior: 'deny'; message: string } } };
+export type PermissionKind = 'rm_variable_path' | 'ask_user_question' | 'other';
+
+export const PERMISSION_STOP_AFTER = 3;
+export const PERMISSION_RM_REASON =
+  'harkroom: this rm targets a path built from shell variables, which needs interactive approval — and no human is at this terminal. '
+  + 'Rewrite it so the path is checked or literal: use ${VAR:?} for every variable in the path (e.g. rm -rf "${P:?}/sub"), or write the absolute path literally. Then run it again.';
+export const PERMISSION_ASK_REASON =
+  'harkroom: no human is at this terminal, so AskUserQuestion cannot be answered. Choose yourself and continue. '
+  + 'If the decision truly belongs to a person, ask with the harkroom message.ask tool (a card in the thread) instead.';
+export const PERMISSION_STOP_REASON =
+  'harkroom: this turn has hit repeated permission denials. Stop retrying: report what you were trying to do and what was blocked with the harkroom message.fail tool, then end the turn.';
+
+/**
+ * 변수로 지은 경로를 지우는 `rm` 인가. 안전 검사가 실제로 묻는 꼴(실측: 루프 변수·변수 둘 이상)보다 **넓게** 잡는다 — 이 hook 은 claude 가
+ * 이미 물으려 할 때만 불리므로, 넓게 잡아도 묻지 않을 명령을 막지 않는다. `${X:?}` 만 쓴 경로도 여기 걸리지만 그 꼴은 claude 가 묻지 않는다.
+ */
+export function variablePathRm(command: string): boolean {
+  // 명령 경계(줄 시작·`;`·`&`·`|`·`(`·`{`·`do`/`then` 뒤) 다음의 rm 과, 같은 단순 명령 안의 `$`.
+  return /(?:^|[;&|({\n]|\b(?:do|then|else|xargs|sudo)\s)\s*(?:command\s+)?rm\s[^;&|\n]*\$/.test(command);
+}
+
+export function classifyPermissionRequest(raw: string): { tool: string; kind: PermissionKind; program: string | null } | null {
+  let input: { hook_event_name?: unknown; tool_name?: unknown; tool_input?: { command?: unknown } };
+  try { input = JSON.parse(raw) as typeof input; } catch { return null; }
+  if (!input || typeof input !== 'object' || typeof input.tool_name !== 'string') return null;
+  const tool = input.tool_name;
+  if (tool === 'AskUserQuestion') return { tool, kind: 'ask_user_question', program: null };
+  if (tool === 'Bash' && typeof input.tool_input?.command === 'string') {
+    const command = input.tool_input.command;
+    // 기록에는 명령 전문을 남기지 않는다(비밀이 섞일 수 있다) — 첫 낱말만.
+    const program = /^\s*([A-Za-z0-9_./-]{1,64})/.exec(command)?.[1] ?? null;
+    return { tool, kind: variablePathRm(command) ? 'rm_variable_path' : 'other', program };
+  }
+  return { tool, kind: 'other', program: null };
+}
+
+function permissionDeny(message: string): PermissionDenyDecision {
+  return { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message } } };
+}
+
+/** 판정. `priorDenials` 는 이 턴에서 이 hook 이 이미 낸 거절 수다. 결정 없음이면 `decision: null`. */
+export function decidePermissionHook(raw: string, priorDenials: number): { tool: string; kind: PermissionKind; program: string | null; decision: PermissionDenyDecision | null } | null {
+  const c = classifyPermissionRequest(raw);
+  if (!c) return null;
+  if (c.kind === 'other') return { ...c, decision: null };
+  if (priorDenials + 1 >= PERMISSION_STOP_AFTER) return { ...c, decision: permissionDeny(PERMISSION_STOP_REASON) };
+  return { ...c, decision: permissionDeny(c.kind === 'rm_variable_path' ? PERMISSION_RM_REASON : PERMISSION_ASK_REASON) };
+}
+
+/** 기록 한 줄(JSONL). 명령 전문·입력은 싣지 않는다. */
+export type PermissionRecord = { at: string; turn: string; event: 'decided' | 'hook_error'; tool?: string; kind?: PermissionKind; program?: string | null; decision?: 'deny' | 'none'; error?: string };
+
+/** 그날 기록에서 이 턴이 낸 거절 수. */
+export function countTurnDenials(jsonl: string, turn: string): number {
+  let n = 0;
+  for (const line of jsonl.split('\n')) {
+    if (!line) continue;
+    try {
+      const r = JSON.parse(line) as Partial<PermissionRecord>;
+      if (r.turn === turn && r.event === 'decided' && r.decision === 'deny') n++;
+    } catch { /* 깨진 줄은 센 것으로 치지 않는다 */ }
+  }
+  return n;
+}
