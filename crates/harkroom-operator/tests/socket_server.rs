@@ -33,8 +33,13 @@ impl Drop for Op {
 }
 
 fn spawn(home: &str, base: &str) -> Op {
+    spawn_with(home, base, &[])
+}
+
+fn spawn_with(home: &str, base: &str, extra: &[&str]) -> Op {
     let mut child = Command::new(env!("CARGO_BIN_EXE_harkroom-operator-rs"))
         .args(["serve", "--base-url", base, "--home", home])
+        .args(extra)
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
@@ -126,6 +131,11 @@ fn two_communities_two_operators_hello_ping_list() {
         c.send(&json!({"id":"3","type":"nope"}));
         assert_eq!(c.recv().unwrap()["error"]["code"], "unknown-request");
         c.send(&json!({"id":"4","type":"spawnRunner","payload":{}}));
+        assert_eq!(c.recv().unwrap()["error"]["code"], "bad-payload");
+        // 러너 프로그램이 정해지지 않은 오퍼레이터는 띄우지 않는다.
+        c.send(&json!({"id":"5","type":"spawnRunner","payload":{"agentId":"x","env":{}}}));
+        assert_eq!(c.recv().unwrap()["error"]["code"], "internal");
+        c.send(&json!({"id":"6","type":"terminalInput","payload":{}}));
         assert_eq!(c.recv().unwrap()["error"]["code"], "internal");
     }
     // 서로의 토큰으로는 안 붙는다.
@@ -195,5 +205,129 @@ fn same_community_second_operator_backs_off_and_stale_socket_is_reclaimed() {
     let mut c = Client::connect(&sock);
     c.send(&hello(&Client::token_for(&sock)));
     assert_eq!(c.recv().unwrap()["daemon"]["pid"], c2.first["pid"]);
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+/// A3b — 러너 표: spawn → 중복 없음 → list → kill(SIGTERM) → `runnerExit` 이벤트는 인증된 접속에만, 세대가 실려 온다.
+#[test]
+fn runner_table_spawn_kill_and_exit_event() {
+    let home = short_home();
+    let runner = format!("{home}/runner.sh");
+    std::fs::write(
+        &runner,
+        "#!/bin/sh\nif [ \"$HK_MODE\" = quick ]; then exit 3; fi\nexec sleep 30\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&runner, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let a = spawn_with(
+        &home,
+        "https://runner.example.com",
+        &["--runner-command", &runner],
+    );
+    assert_eq!(a.first["ok"], true, "{}", a.first);
+    let sock = a.first["listening"].as_str().unwrap().to_string();
+    let token = Client::token_for(&sock);
+    // 인증 안 한 접속 — 이벤트를 받으면 안 된다.
+    let mut quiet = Client::connect(&sock);
+    let mut c = Client::connect(&sock);
+    c.send(&hello(&token));
+    assert_eq!(c.recv().unwrap()["ok"], true);
+
+    c.send(&json!({"id":"1","type":"spawnRunner","payload":{"agentId":"ag1","env":{"HK_MODE":"long"}}}));
+    let s1 = c.recv().unwrap();
+    assert_eq!(s1["ok"], true, "{s1}");
+    let pid = s1["payload"]["pid"].as_i64().unwrap();
+    let inc = s1["payload"]["incarnationId"].as_str().unwrap().to_string();
+    c.send(&json!({"id":"2","type":"spawnRunner","payload":{"agentId":"ag1","env":{}}}));
+    let s2 = c.recv().unwrap();
+    assert_eq!(s2["payload"], s1["payload"], "살아 있으면 새로 안 띄운다");
+    c.send(&json!({"id":"3","type":"listRunners"}));
+    let l = c.recv().unwrap();
+    let rows = l["payload"]["runners"].as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        (
+            rows[0]["pid"].as_i64(),
+            rows[0]["alive"].as_bool(),
+            rows[0]["adopted"].as_bool()
+        ),
+        (Some(pid), Some(true), Some(false))
+    );
+    // 세대가 어긋난 kill 은 없는 러너와 같다.
+    c.send(
+        &json!({"id":"4","type":"killRunner","payload":{"agentId":"ag1","incarnationId":"old"}}),
+    );
+    assert_eq!(c.recv().unwrap()["error"]["code"], "no-such-runner");
+    c.send(&json!({"id":"5","type":"killRunner","payload":{"agentId":"ag1","incarnationId":inc}}));
+    let k = c.recv().unwrap();
+    assert_eq!(k["payload"]["pid"].as_i64(), Some(pid));
+    assert!(k["payload"]["termSentAtMs"].as_i64().unwrap() > 0);
+    let ev = c.recv().unwrap();
+    assert_eq!(
+        ev,
+        json!({"type":"event","event":"runnerExit","payload":{
+            "agentId":"ag1","incarnationId":inc,"code":null,"signal":"SIGTERM","tailLines":[]}})
+    );
+    // 종료 코드가 실린다. 표에서 빠진다.
+    c.send(&json!({"id":"6","type":"spawnRunner","payload":{"agentId":"ag2","env":{"HK_MODE":"quick"}}}));
+    let s3 = c.recv().unwrap();
+    assert_eq!(s3["ok"], true);
+    let ev = c.recv().unwrap();
+    assert_eq!(ev["payload"]["code"], 3);
+    assert_eq!(
+        ev["payload"]["incarnationId"],
+        s3["payload"]["incarnationId"]
+    );
+    c.send(&json!({"id":"7","type":"listRunners"}));
+    assert_eq!(c.recv().unwrap()["payload"]["runners"], json!([]));
+    // 인증 안 한 접속은 이벤트를 하나도 못 받았다 — 첫 줄을 보내면 hello 거절이 첫 응답이다.
+    quiet.send(&json!({"id":"1","type":"ping"}));
+    assert_eq!(quiet.recv().unwrap()["type"], "hello");
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+/// A3b — `--app-data` 의 `operators.json` 에 적힌 자리를 계산한 자리보다 먼저 쓴다. 깨진 색인이면 뜨지 않는다.
+#[test]
+fn operators_index_root_wins_and_broken_index_refuses() {
+    let home = short_home();
+    let app = format!("{home}/app");
+    std::fs::create_dir_all(&app).unwrap();
+    let legacy = format!("{home}/legacy");
+    std::fs::write(
+        format!("{app}/operators.json"),
+        json!({"version":1,"communities":{"https://idx.example.com/":{"root":legacy,"legacy":true}}}).to_string(),
+    )
+    .unwrap();
+    let a = spawn_with(&home, "https://idx.example.com", &["--app-data", &app]);
+    assert_eq!(a.first["ok"], true, "{}", a.first);
+    assert_eq!(a.first["root"], legacy.as_str());
+    assert_eq!(
+        a.first["listening"],
+        format!("{legacy}/operator/operator-v1.sock").as_str()
+    );
+    drop(a);
+    std::fs::write(
+        format!("{app}/operators.json"),
+        r#"{"version":1,"communities":[]}"#,
+    )
+    .unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_harkroom-operator-rs"))
+        .args([
+            "serve",
+            "--base-url",
+            "https://idx.example.com",
+            "--home",
+            &home,
+            "--app-data",
+            &app,
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(
+        v["error"].as_str().unwrap().contains("모양이 다르다"),
+        "{v}"
+    );
     let _ = std::fs::remove_dir_all(&home);
 }

@@ -2,7 +2,7 @@
 name = "harkroom-proto"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 license = "Apache-2.0"
 publish = false
 description = "Process-boundary shapes shared by TS and Rust (runner link, operator WS, app socket, merge CLI output). Not wired in yet."

@@ -2,7 +2,7 @@
 name = "harkroom-roots"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 license = "Apache-2.0"
 publish = false
 description = "Per-community operator root rule and operators.json index (P5) — Rust port of packages/shared/src/operatorRoots.ts. Not wired in yet."

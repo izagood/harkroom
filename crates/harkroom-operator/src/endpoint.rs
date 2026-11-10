@@ -237,6 +237,7 @@ mod tests {
 
     #[test]
     fn stale_socket_without_pid_is_dead_and_reclaimed() {
+        let _g = crate::fork_guard();
         let d = dir();
         let sock = format!("{d}/s.sock");
         drop(UnixListener::bind(&sock).unwrap()); // 파일만 남는다
@@ -263,6 +264,7 @@ mod tests {
 
     #[test]
     fn refused_but_pid_alive_is_alive() {
+        let _g = crate::fork_guard();
         let d = dir();
         let sock = format!("{d}/s.sock");
         drop(UnixListener::bind(&sock).unwrap());
@@ -296,6 +298,7 @@ mod tests {
 
     #[test]
     fn reclaim_restores_when_inode_differs() {
+        let _g = crate::fork_guard();
         let d = dir();
         let sock = format!("{d}/s.sock");
         drop(UnixListener::bind(&sock).unwrap());

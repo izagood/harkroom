@@ -1,20 +1,26 @@
 //! 앱(Tauri) ↔ 오퍼레이터 소켓 서버(경계 P3, S2 A2). 정본은 `packages/operator/src/server.ts`(`DaemonServer`)와
 //! `packages/shared/src/daemonProtocol.ts`(`NdjsonDecoder`·`checkHello`·`tokensMatch`·`parseRequest`)다.
 //!
-//! A2 는 **문지기와 읽기 요청 둘**만 옮긴다: `hello`(버전 → role → 토큰 순, 상수시간 비교) · `ping` · `listRunners`.
-//! 러너 표는 아직 비어 있다(러너를 띄우는 `spawnRunner` 는 A3). 프로토콜이 아는 나머지 요청에는 `unknown-request` 가
-//! 아니라 `internal`("이 오퍼레이터에는 아직 없다")로 답한다 — 모른다고 하면 앱이 프로토콜 판이 갈렸다고 읽는다(TS 주석).
+//! A2 는 문지기(`hello`: 버전 → role → 토큰 순, 상수시간 비교)와 `ping`·`listRunners` 를, A3b 는 러너 표
+//! (`spawnRunner`·`killRunner`, `runners.rs`)와 `runnerExit` 이벤트를 옮긴다. 프로토콜이 아는 나머지 요청에는
+//! `unknown-request` 가 아니라 `internal`("이 오퍼레이터에는 아직 없다")로 답한다 — 모른다고 하면 앱이 프로토콜 판이
+//! 갈렸다고 읽는다(TS 주석).
+//!
+//! 이벤트는 **인증된** 접속에만 흘린다(TS `broadcastEvent`). 접속마다 쓰는 쪽을 잠금 하나로 묶어, 응답 줄과
+//! 이벤트 줄이 서로 끼어들어 한 줄이 깨지지 않게 한다.
 //!
 //! 접속마다 스레드 하나다. 앱 하나가 붙는 로컬 소켓이라 async 런타임을 들이지 않는다(의존이 늘지 않는다).
+use crate::runners::{RunnerLaunch, RunnerTable, SpawnOutcome};
 use harkroom_proto::p3::{
-    DAEMON_PROTOCOL_VERSION, DaemonError, DaemonErrorCode, DaemonIdentity, MAX_LINE_BYTES,
-    REQUEST_TYPES,
+    DAEMON_PROTOCOL_VERSION, DaemonError, DaemonErrorCode, DaemonIdentity, EVENT_NAMES,
+    MAX_LINE_BYTES, REQUEST_TYPES,
 };
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn err(code: DaemonErrorCode, message: impl Into<String>) -> DaemonError {
@@ -207,20 +213,43 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+type Writer = Arc<Mutex<UnixStream>>;
+
 /// 서버가 들고 있는 것. 토큰은 엔드포인트를 이긴 뒤에 생기므로 나중에 채운다(빈 값이면 누구도 통과 못 한다).
 pub struct ServerState {
     pub identity: DaemonIdentity,
     token: Mutex<String>,
-    /// `listRunners` 의 원천. A2 에서는 늘 비어 있다(A3 에서 러너 표가 채운다).
-    pub runners: Mutex<Vec<Value>>,
+    /// 러너 표(A3b). `listRunners` 의 원천이다.
+    pub runners: Arc<RunnerTable>,
+    /// 인증된 접속의 쓰는 쪽 — 이벤트가 여기로 흐른다.
+    authed: Mutex<HashMap<u64, Writer>>,
+    next_conn: AtomicU64,
 }
 
 impl ServerState {
-    pub fn new(identity: DaemonIdentity) -> Arc<Self> {
-        Arc::new(Self {
-            identity,
-            token: Mutex::new(String::new()),
-            runners: Mutex::new(Vec::new()),
+    /// `launch` 가 없으면 `spawnRunner` 는 거절된다(러너 프로그램은 기동 인자로만 정한다).
+    pub fn new(identity: DaemonIdentity, launch: Option<RunnerLaunch>) -> Arc<Self> {
+        Arc::new_cyclic(|me: &Weak<Self>| {
+            let me = me.clone();
+            let runners = RunnerTable::new(
+                launch,
+                Arc::new(move |exit| {
+                    if let Some(st) = me.upgrade() {
+                        eprintln!(
+                            "러너 종료: agent={} code={:?} signal={:?}",
+                            exit.agent_id, exit.code, exit.signal
+                        );
+                        st.broadcast_event("runnerExit", exit.to_json());
+                    }
+                }),
+            );
+            Self {
+                identity,
+                token: Mutex::new(String::new()),
+                runners,
+                authed: Mutex::new(HashMap::new()),
+                next_conn: AtomicU64::new(1),
+            }
         })
     }
 
@@ -232,17 +261,64 @@ impl ServerState {
         self.token.lock().unwrap_or_else(|p| p.into_inner()).clone()
     }
 
+    fn authed(&self) -> std::sync::MutexGuard<'_, HashMap<u64, Writer>> {
+        self.authed.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// 이벤트를 인증된 접속 전부에 흘린다. 인증 못 한 접속에는 아무것도 흘리지 않는다 — 이벤트도 정보다.
+    pub fn broadcast_event(&self, name: &str, payload: Value) {
+        debug_assert!(EVENT_NAMES.contains(&name));
+        let Ok(line) = encode_line(&json!({ "type": "event", "event": name, "payload": payload }))
+        else {
+            return;
+        };
+        let writers: Vec<Writer> = self.authed().values().cloned().collect();
+        for w in writers {
+            let _ = w.lock().unwrap_or_else(|p| p.into_inner()).write_all(&line);
+        }
+    }
+
     /// 인증된 요청 하나에 대한 답(`DaemonServer.dispatch`).
-    pub fn dispatch(&self, ty: &str, _payload: Option<&Value>) -> Result<Value, DaemonError> {
+    pub fn dispatch(&self, ty: &str, payload: Option<&Value>) -> Result<Value, DaemonError> {
         match ty {
             "ping" => Ok(json!({ "nowMs": now_ms() })),
-            "listRunners" => {
-                let runners = self
+            "listRunners" => Ok(json!({ "runners": self.runners.list_runners() })),
+            "spawnRunner" => {
+                let (agent_id, env) = read_spawn_params(payload)?;
+                let outcome = self
                     .runners
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .clone();
-                Ok(json!({ "runners": runners }))
+                    .spawn_runner(&agent_id, &env)
+                    .map_err(|m| err(DaemonErrorCode::Internal, m))?;
+                let r = outcome.record();
+                // env 를 로그에 적지 않는다 — PAT 가 실린다. 띄웠는지·이미 있었는지를 가른다(TS `#456` ②).
+                match &outcome {
+                    SpawnOutcome::Started(_) => {
+                        eprintln!("러너 spawn: agent={} pid={}", r.agent_id, r.pid)
+                    }
+                    SpawnOutcome::Existing(_) => eprintln!(
+                        "러너가 이미 있다 — 새로 안 띄운다: agent={} pid={}",
+                        r.agent_id, r.pid
+                    ),
+                }
+                Ok(
+                    json!({ "agentId": r.agent_id, "pid": r.pid, "incarnationId": r.incarnation_id }),
+                )
+            }
+            "killRunner" => {
+                let (agent_id, incarnation_id) = read_kill_params(payload)?;
+                let Some(r) = self
+                    .runners
+                    .kill_runner(&agent_id, incarnation_id.as_deref())
+                else {
+                    return Err(err(
+                        DaemonErrorCode::NoSuchRunner,
+                        format!("이 daemon 이 아는 러너가 아니다: {agent_id}"),
+                    ));
+                };
+                eprintln!("SIGTERM 보냄: agent={} pid={}", r.agent_id, r.pid);
+                Ok(
+                    json!({ "agentId": r.agent_id, "pid": r.pid, "termSentAtMs": r.term_sent_at_ms }),
+                )
             }
             other => Err(err(
                 DaemonErrorCode::Internal,
@@ -252,8 +328,70 @@ impl ServerState {
     }
 }
 
+/// TS `readSpawnParams` 와 같은 검사·문구.
+pub fn read_spawn_params(
+    payload: Option<&Value>,
+) -> Result<(String, Vec<(String, String)>), DaemonError> {
+    let Some(obj) = payload.and_then(Value::as_object) else {
+        return Err(err(DaemonErrorCode::BadPayload, "payload 가 객체가 아니다"));
+    };
+    let agent_id = match obj.get("agentId").and_then(Value::as_str) {
+        Some(s) if !s.is_empty() => s.to_string(),
+        _ => return Err(err(DaemonErrorCode::BadPayload, "agentId 가 없다")),
+    };
+    let Some(env) = obj.get("env").and_then(Value::as_object) else {
+        return Err(err(DaemonErrorCode::BadPayload, "env 가 객체가 아니다"));
+    };
+    let mut out = Vec::with_capacity(env.len());
+    for (k, v) in env {
+        let Some(v) = v.as_str() else {
+            return Err(err(
+                DaemonErrorCode::BadPayload,
+                format!("env.{k} 가 문자열이 아니다"),
+            ));
+        };
+        out.push((k.clone(), v.to_string()));
+    }
+    Ok((agent_id, out))
+}
+
+/// TS `readKillParams` 와 같은 검사·문구.
+pub fn read_kill_params(payload: Option<&Value>) -> Result<(String, Option<String>), DaemonError> {
+    let Some(obj) = payload.and_then(Value::as_object) else {
+        return Err(err(DaemonErrorCode::BadPayload, "payload 가 객체가 아니다"));
+    };
+    let agent_id = match obj.get("agentId").and_then(Value::as_str) {
+        Some(s) if !s.is_empty() => s.to_string(),
+        _ => return Err(err(DaemonErrorCode::BadPayload, "agentId 가 없다")),
+    };
+    let incarnation_id = match obj.get("incarnationId") {
+        None => None,
+        Some(Value::String(s)) => Some(s.clone()),
+        Some(_) => {
+            return Err(err(
+                DaemonErrorCode::BadPayload,
+                "incarnationId 가 문자열이 아니다",
+            ));
+        }
+    };
+    Ok((agent_id, incarnation_id))
+}
+
 /// 접속 하나를 끝까지 서비스한다. `hello` 전에는 아무 요청도 받지 않고, 거절이면 사유 한 줄을 보내고 끊는다.
 pub fn serve_connection(state: &ServerState, mut stream: UnixStream) {
+    let writer: Writer = match stream.try_clone() {
+        Ok(w) => Arc::new(Mutex::new(w)),
+        Err(_) => return,
+    };
+    let conn_id = state.next_conn.fetch_add(1, Ordering::Relaxed);
+    // 끝날 때 이벤트 명단에서 뺀다(패닉이어도 빠진다).
+    struct Leave<'a>(&'a ServerState, u64);
+    impl Drop for Leave<'_> {
+        fn drop(&mut self) {
+            self.0.authed().remove(&self.1);
+        }
+    }
+    let _leave = Leave(state, conn_id);
     let mut decoder = NdjsonDecoder::default();
     let mut authenticated = false;
     let mut buf = vec![0u8; 64 * 1024];
@@ -266,7 +404,7 @@ pub fn serve_connection(state: &ServerState, mut stream: UnixStream) {
             let reply = match line {
                 Decoded::Err(e) => {
                     let drop = e.code == DaemonErrorCode::LineTooLong;
-                    let _ = write_value(&mut stream, &error_response(None, &e));
+                    let _ = write_value(&writer, &error_response(None, &e));
                     if drop {
                         return;
                     }
@@ -275,11 +413,17 @@ pub fn serve_connection(state: &ServerState, mut stream: UnixStream) {
                 Decoded::Ok(v) if !authenticated => match check_hello(&v, &state.token()) {
                     Ok(()) => {
                         authenticated = true;
-                        json!({ "type": "hello", "ok": true, "daemon": state.identity })
+                        let ok = json!({ "type": "hello", "ok": true, "daemon": state.identity });
+                        // hello 응답을 먼저 쓰고 나서 명단에 올린다 — 이벤트가 hello 응답보다 앞서 가지 않게.
+                        if write_value(&writer, &ok).is_err() {
+                            return;
+                        }
+                        state.authed().insert(conn_id, Arc::clone(&writer));
+                        continue;
                     }
                     Err(e) => {
                         let _ = write_value(
-                            &mut stream,
+                            &writer,
                             &json!({ "type": "hello", "ok": false, "error": e }),
                         );
                         eprintln!("hello 거절: {}", e.message);
@@ -294,16 +438,19 @@ pub fn serve_connection(state: &ServerState, mut stream: UnixStream) {
                     },
                 },
             };
-            if write_value(&mut stream, &reply).is_err() {
+            if write_value(&writer, &reply).is_err() {
                 return;
             }
         }
     }
 }
 
-fn write_value(stream: &mut UnixStream, v: &Value) -> std::io::Result<()> {
+fn write_value(writer: &Writer, v: &Value) -> std::io::Result<()> {
     let bytes = encode_line(v).map_err(|e| std::io::Error::other(e.message))?;
-    stream.write_all(&bytes)
+    writer
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .write_all(&bytes)
 }
 
 /// 듣기 고리. 접속마다 스레드 하나.
