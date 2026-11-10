@@ -12,41 +12,66 @@ import { createHeartbeat } from './heartbeat.js';
 import { createAppHeartbeat, DEFAULT_APP_HEARTBEAT_MS } from './appHeartbeat.js';
 import type { AgentPresence } from '../mcp/presence.js';
 
+/**
+ * 이벤트 종류마다 **누가 받는가**(허용 목록). 종류를 `events.ts` 에 더하면 여기에도 더해야 컴파일된다 — `Record` 가
+ * 빠진 키를 거절한다. 판정은 셋뿐이다:
+ * - `audience`: 이벤트에 실린 `audience`('all' 또는 계정 목록)로 거른다. 받는 사람을 계산해 싣는 이벤트는 모두 여기다.
+ * - `account`: `accountId` 본인만.
+ * - `everyone`: 연결된 전원. 워크스페이스 전체가 이미 보는 사실(계정 디렉터리·presence·상태·아바타·아이콘 등)만 둔다.
+ * 모르는 종류(옛 서버가 낸 값·잘못된 값)는 **아무에게도 보내지 않는다** — 예전에는 기본이 「전원」이었다.
+ */
+export const EVENT_VISIBILITY: Readonly<Record<WorkspaceEvent['type'], 'audience' | 'account' | 'everyone'>> = {
+  'message.created': 'audience',
+  'message.updated': 'audience',
+  'message.deleted': 'audience',
+  'reaction.added': 'audience',
+  'reaction.removed': 'audience',
+  'typing.changed': 'audience',
+  'channel.created': 'audience',
+  'channel.updated': 'audience',
+  'channel.deleted': 'audience',
+  'channel.member_added': 'audience',
+  'channel.member_removed': 'audience',
+  'handle_group.changed': 'audience',
+  'agent_team.changed': 'audience',
+  'grant.changed': 'audience',
+  'operator.changed': 'audience',
+  'agent_assignment.changed': 'audience',
+  'thread.agent_model.changed': 'audience',
+  'thread.status': 'audience',
+  'thread.reportWakes.changed': 'audience',
+  'thread.plan.changed': 'audience',
+  // 관문 알림은 그 에이전트의 소유자에게만 간다(audience 가 소유자 한 명).
+  'agent.attention': 'audience',
+  'agent.attention.cleared': 'audience',
+  'link_preview.ready': 'audience',
+  'inbox.updated': 'account',
+  'saved.changed': 'account',
+  // 상태도 presence 와 같은 범위로 간다 — 전원. 이 워크스페이스는 단일 스코프라 계정 디렉터리가 이미 전원에게 열려 있다.
+  'presence.changed': 'everyone',
+  'status.changed': 'everyone',
+  'avatar.changed': 'everyone',
+  'account.handle_changed': 'everyone',
+  'workspace.icon.changed': 'everyone',
+  'lease.changed': 'everyone',
+  'skill.proposed': 'everyone',
+  'skill.approved': 'everyone',
+  'skill.disabled': 'everyone',
+};
+
 export function visibleTo(e: WorkspaceEvent, accountId: string): boolean {
-  switch (e.type) {
-    case 'message.created':
-    case 'message.updated':
-    case 'message.deleted':
-    case 'typing.changed':
-    case 'channel.created':
-    case 'channel.updated':
-    case 'channel.deleted':
-    case 'channel.member_added':
-    case 'channel.member_removed':
-    case 'handle_group.changed':
-    case 'agent_team.changed':
-    case 'grant.changed':
-    case 'operator.changed':
-    case 'agent_assignment.changed':
-    case 'thread.agent_model.changed':
-    case 'thread.status':
-    case 'thread.reportWakes.changed':
-    case 'thread.plan.changed':
-    // 관문 알림은 그 에이전트의 소유자에게만 간다(audience 가 소유자 한 명). 여기 빠져 있으면
-    // 아래 default 로 떨어져 모든 소켓이 받는다 — 남의 앱에 배너가 뜨고 터미널이 열린다.
-    case 'agent.attention':
-    case 'agent.attention.cleared':
-      return e.audience === 'all' || e.audience.includes(accountId);
-    case 'inbox.updated':
-    case 'saved.changed':
-      return e.accountId === accountId;
-    case 'presence.changed':
-    // 상태도 presence 와 같은 범위로 간다 — 전원. 문구는 임의 텍스트지만 이 워크스페이스는
-    // 단일 스코프라 계정 디렉터리 자체가 이미 전원에게 열려 있다(directoryRoutes 의 /accounts).
-    case 'status.changed':
+  const rule = Object.prototype.hasOwnProperty.call(EVENT_VISIBILITY, e.type) ? EVENT_VISIBILITY[e.type] : undefined;
+  switch (rule) {
+    case 'audience': {
+      const audience = (e as { audience?: unknown }).audience;
+      return audience === 'all' || (Array.isArray(audience) && audience.includes(accountId));
+    }
+    case 'account':
+      return (e as { accountId?: unknown }).accountId === accountId;
+    case 'everyone':
       return true;
     default:
-      return true;
+      return false;
   }
 }
 
