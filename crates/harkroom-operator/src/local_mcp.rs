@@ -70,7 +70,7 @@ fn js_space(c: char) -> bool {
     )
 }
 
-fn js_trim(s: &str) -> &str {
+pub(crate) fn js_trim(s: &str) -> &str {
     s.trim_matches(js_space)
 }
 
