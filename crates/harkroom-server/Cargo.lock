@@ -401,9 +401,11 @@ name = "harkroom-server"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "hex",
  "http-body-util",
  "hyper",
  "hyper-util",
+ "sha2 0.10.9",
  "sqlx",
  "tokio",
 ]
