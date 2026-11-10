@@ -38,3 +38,15 @@ jobs:
             cargo test --manifest-path "$m" --locked
             echo "::endgroup::"
           done
+      - name: 서버 ↔ UI 생성 타입(ts-rs)이 커밋된 것과 같은가
+        # 위 `cargo test` 가 `crates/harkroom-server` 의 `p6_bindings` 시험으로 `packages/shared/src/generated/` 를 다시 쓴다.
+        # 달라졌거나 새 파일이 생겼으면 Rust 타입만 고치고 생성 파일을 안 올린 것이다.
+        run: |
+          set -euo pipefail
+          out=$(git status --porcelain -- packages/shared/src/generated)
+          if [ -n "$out" ]; then
+            echo "::error::packages/shared/src/generated 가 Rust 타입과 다르다 — crates/harkroom-server 에서 cargo test 를 돌려 생성 파일을 커밋하라"
+            echo "$out"
+            git diff -- packages/shared/src/generated
+            exit 1
+          fi

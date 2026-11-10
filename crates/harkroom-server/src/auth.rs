@@ -376,3 +376,29 @@ mod tests {
         assert_eq!(agent_header(&h), Err(()));
     }
 }
+
+#[cfg(test)]
+mod error_shape {
+    use super::*;
+    use crate::api::ApiErrorBody;
+
+    /// 손으로 쓴 오류 본문이 UI 에 생성해 준 타입(`ApiErrorBody`)과 같은 꼴인지 — 어긋나면 UI 가 `unknown` 코드로 읽는다.
+    #[test]
+    fn fixed_bodies_match_api_error_body() {
+        for (raw, code) in [
+            (UNAUTHORIZED, "unauthorized"),
+            (OPERATOR_REQUIRED, "unauthorized"),
+            (FORBIDDEN_ADMIN, "forbidden"),
+            (NOT_ASSIGNED, "not_assigned"),
+            (INTERNAL, "internal"),
+        ] {
+            let b: ApiErrorBody = serde_json::from_str(raw).expect(raw);
+            assert_eq!(b.error.code, code);
+            assert_eq!(
+                serde_json::to_string(&b).unwrap(),
+                raw,
+                "필드 순서·꼴이 같아야 한다"
+            );
+        }
+    }
+}

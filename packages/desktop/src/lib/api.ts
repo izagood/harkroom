@@ -3,7 +3,7 @@ import type {
   McpServerRow, AccountStatus, AddTeamToChannelResult, AgentConfig, AgentDefaults, AgentSessionView, MentionPolicy,
   AgentModelOptions, AgentPickableModel, AgentPickableSaved, AgentModelPick, ThreadAgentModelView, ThreadPlanView,
   AgentWakeView, AgentTeamMemberRow, AgentTeamRow, AgentView, AgentAssignmentView, AccountView, MeView, OperatorView, OperatorCapabilities, AttachmentRow, ChannelAutoMentionMode, ChannelAutoMentionRow, ChannelDoc, ChannelFileRow, ChannelRow, ChannelMemberRow, ChannelPrefRow, ChannelSectionRow, CollabProposalsView, DmView, HandleGroupRow, InboxEntry, InviteCreated, InviteView, InboxThreadState, InvokeScope, LeaseRow, MentionEditSkipReason, LinkPreviewView, MessageRow, NotifyLevel, PatView, PinRow, ProjectionConfigView, ProjectionStatus, ServerHealth, ServerVersion, SavedMessageRow, ScheduledMessageView, WorkspaceSkillView } from '@harkroom/shared';
-import { AVATAR_SOURCE_HEADER, MENTION_EDIT_SKIPPED_HEADER, type AvatarCrop, type AvatarSourceMeta, type GrantRow, type Capability, type Role, type ApiAuthKind, type ApiConnectorView, type ApiGrantLimits, type ApiTokenForm, type ApiMethod } from '@harkroom/shared';
+import { AVATAR_SOURCE_HEADER, MENTION_EDIT_SKIPPED_HEADER, type AvatarCrop, type AvatarSourceMeta, type GrantRow, type Capability, type Role, type ApiAuthKind, type ApiConnectorView, type ApiGrantLimits, type ApiTokenForm, type ApiMethod, type ApiErrorDetail } from '@harkroom/shared';
 import type { MemoryAudit, MemoryBatchResult, MemoryEdit, MemoryEntry, MemoryRevision } from './memoryList';
 import { readNotifiedHeaders, type NotifiedResult } from './notified';
 
@@ -222,7 +222,7 @@ export class ApiClient {
         return null;
       });
       if (!res.ok) {
-        const err = (json as { error?: { code?: string; message?: string } } | null)?.error;
+        const err = (json as { error?: Partial<ApiErrorDetail> } | null)?.error;
         throw new ApiError(res.status, err?.code ?? 'unknown', err?.message ?? `HTTP ${res.status}`, json);
       }
       return { body: json as T, headers: res.headers, status: res.status };
@@ -807,7 +807,7 @@ export class ApiClient {
           resolve(body as AttachmentRow);
           return;
         }
-        const err = (body as { error?: { code?: string; message?: string } } | null)?.error;
+        const err = (body as { error?: Partial<ApiErrorDetail> } | null)?.error;
         reject(new ApiError(xhr.status, err?.code ?? 'upload_failed', err?.message ?? `HTTP ${xhr.status}`));
       };
       // 네트워크가 끊긴 경우다. status 는 0 이라 위의 분기로는 잡히지 않는다.

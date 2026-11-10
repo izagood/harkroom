@@ -18,9 +18,13 @@ hex = "=0.4.3"
 http-body-util = "=0.1.5"
 hyper = { version = "=1.12.0", features = ["client", "http1"] }
 hyper-util = { version = "=0.1.21", features = ["client-legacy", "http1", "tokio"] }
+serde = { version = "=1.0.229", features = ["derive"] }
 sha2 = "=0.10.9"
 sqlx = { version = "=0.9.0", default-features = false, features = ["postgres", "runtime-tokio"] }
 tokio = { version = "=1.48.0", features = ["macros", "rt-multi-thread", "net", "signal"] }
+# 서버 ↔ UI 타입(P6)의 TS 생성. 생성 import 의 `.js` 는 아래 `TS_RS_IMPORT_EXTENSION` 참고.
+ts-rs = "=12.0.1"
 
 [dev-dependencies]
+serde_json = "=1.0.154"
 tokio = { version = "=1.48.0", features = ["macros", "rt-multi-thread", "net", "time"] }
