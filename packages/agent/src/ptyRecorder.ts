@@ -30,6 +30,11 @@ export const PTY_RECORD_MAX_BYTES = 32 * 1024 * 1024;
 export interface PtyRecorder {
   output(chunk: string): void;
   resize(cols: number, rows: number): void;
+  /**
+   * asciicast 표지(`[초, "m", 글]`) — 러너가 그 순간 내린 판정을 적는다. `data` 는 JSON 글로 들어간다.
+   * Rust 그림자 비교(`harkroom-shadow`)가 녹화를 다시 틀어 같은 자리에서 같은 판정이 나오는지 본다.
+   */
+  mark(data: Record<string, unknown>): void;
   close(): void;
 }
 
@@ -87,6 +92,7 @@ export function openPtyRecorder(
   return {
     output(chunk) { write(JSON.stringify([elapsed(), 'o', chunk])); },
     resize(cols, rows) { write(JSON.stringify([elapsed(), 'r', `${cols}x${rows}`])); },
+    mark(data) { write(JSON.stringify([elapsed(), 'm', JSON.stringify(data)])); },
     close,
   };
 }

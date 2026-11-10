@@ -1935,6 +1935,12 @@ export async function runMentionTurn(
   };
   // 화면 꼬리를 글자로 잇는다 — 청크 경계에서 UTF-8 이 잘려도 다음 청크와 붙여 읽는다.
   const screenDecoder = new StringDecoder('utf8');
+  /**
+   * 화면 판정의 **바뀜**을 녹화에 표지로 남긴다(그림자 비교, Rust 전환 S3). `bytes` = 그 판정까지 화면에 넣은 PTY 바이트 수 —
+   * Rust 쪽은 녹화의 출력을 그만큼 다시 그려 같은 판정이 나오는지 본다. 녹화가 꺼져 있으면 `mark` 는 아무 일도 안 한다.
+   */
+  let screenFedBytes = 0;
+  let screenMarked: string | null = null;
 
   const reclaim = (): void => {
     if (end.exited || !end.controls) return;
@@ -2748,7 +2754,16 @@ export async function runMentionTurn(
         // 확인 창의 대기 표시 깜빡임은 사람을 기다리는 화면이지 진행이 아니다(`screenLife.ts`, e2e R2).
         const text = screenDecoder.write(chunk);
         if (screenShowsProgress(text)) end.lastDataAtMs = deps.now?.() ?? Date.now();
-        if (idleWatch) void idleWatch.feed(text, deps.now?.() ?? Date.now());
+        if (idleWatch) {
+          screenFedBytes += chunk.length;
+          const bytes = screenFedBytes;
+          void idleWatch.feed(text, deps.now?.() ?? Date.now()).then(() => {
+            const state = idleWatch.current();
+            if (state === screenMarked) return;
+            screenMarked = state;
+            end.controls?.mark?.({ kind: 'screen', harness: def.harness, state, bytes });
+          });
+        }
         end.screenTail = (end.screenTail + text).slice(-SCREEN_TAIL_CHARS);
         session?.push(chunk);
       },

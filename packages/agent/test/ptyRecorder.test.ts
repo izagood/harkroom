@@ -29,13 +29,14 @@ describe('openPtyRecorder', () => {
     const rec = openPtyRecorder(join(dir, 'rec'), { label: 'claude', cols: 120, rows: 40 }, () => t)!;
     t += 500; rec.output('\x1b[2Jhello 한글');
     t += 250; rec.resize(100, 30);
+    t += 250; rec.mark({ kind: 'screen', state: 'busy', bytes: 9 });
     rec.close();
     rec.output('after close');
     const file = await onlyFile(join(dir, 'rec'));
     expect(file).toMatch(/-claude-\d+\.cast$/);
     const lines = (await readFile(file, 'utf8')).trim().split('\n').map((l) => JSON.parse(l));
     expect(lines[0]).toEqual({ version: 2, width: 120, height: 40, timestamp: 1000, env: { TERM: 'xterm-256color' } });
-    expect(lines.slice(1)).toEqual([[0.5, 'o', '\x1b[2Jhello 한글'], [0.75, 'r', '100x30']]);
+    expect(lines.slice(1)).toEqual([[0.5, 'o', '\x1b[2Jhello 한글'], [0.75, 'r', '100x30'], [1, 'm', '{"kind":"screen","state":"busy","bytes":9}']]);
   });
 
   it('파일은 0600, 폴더는 0700 으로 만든다', async () => {
