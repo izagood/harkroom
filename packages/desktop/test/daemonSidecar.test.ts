@@ -44,6 +44,8 @@ describe('tauri.conf.json — daemon 이 externalBin 에 있다 (#431 2단계-a)
     const externalBin = readTauriConf().bundle?.externalBin;
     expect(externalBin).toContain('binaries/harkroom-runner');
     expect(externalBin).toContain('binaries/harkroom-operator');
+    // S2 A4②: Rust 오퍼레이터도 같이 실린다(스위치 `HARKROOM_OPERATOR_IMPL=rust` 일 때만 뜬다).
+    expect(externalBin).toContain('binaries/harkroom-operator-rs');
   });
 
   /**

@@ -331,3 +331,22 @@ fn operators_index_root_wins_and_broken_index_refuses() {
     );
     let _ = std::fs::remove_dir_all(&home);
 }
+
+/// A4②: 앱이 준 `--app-version`·`--launch-nonce` 가 pid 레코드에 실린다. 안 실리면 앱은 crate 판(0.1.0)을 자기보다
+/// 낮다고 보고 띄울 때마다 물린다(`should_retire_daemon`).
+#[test]
+fn app_version_and_nonce_from_app_land_in_pid_record() {
+    let home = short_home();
+    let op = spawn_with(
+        &home,
+        "https://v.example.com",
+        &["--app-version", "9.8.7", "--launch-nonce", "nonce-a4b"],
+    );
+    assert_eq!(op.first["ok"], true, "{}", op.first);
+    let sock = op.first["listening"].as_str().unwrap();
+    let pid: Value =
+        serde_json::from_str(&std::fs::read_to_string(sock.replace(".sock", ".pid")).unwrap())
+            .unwrap();
+    assert_eq!(pid["appVersion"], "9.8.7", "{pid}");
+    assert_eq!(pid["launchNonce"], "nonce-a4b", "{pid}");
+}
