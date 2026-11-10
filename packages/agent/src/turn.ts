@@ -538,6 +538,23 @@ export function permissionRequestHookEntry(operatorBin: string): { matcher: stri
   return { matcher: '*', hooks: [{ type: 'command', command: `${JSON.stringify(operatorBin)} hook permission`, timeout: 15 }] };
 }
 
+/**
+ * 「확인을 기다려 멈춤」 신호 hook(C안 P2): Notification 을 오퍼레이터 `hook notify` 가 받아 `permission_prompt` 일 때만 러너의 신호
+ * 파일(`RUNNER_GATE_FILE_ENV`)에 한 줄 쓴다. 물음 hook 과 늘 함께 단다 — hook 이 결정한 물음은 이 알림이 안 온다(실측).
+ */
+export function notificationHookEntry(operatorBin: string): { matcher: string; hooks: { type: 'command'; command: string; timeout: number }[] } {
+  return { matcher: '*', hooks: [{ type: 'command', command: `${JSON.stringify(operatorBin)} hook notify`, timeout: 15 }] };
+}
+
+/** 이 턴에 「멈춤」 신호 hook(Notification)이 붙는가 — 붙으면 러너는 화면 정규식이 아니라 신호 파일로 판정한다. */
+export function attachesGateHook(harness: AgentHarness, mentionPermission: MentionPermission, providerLane = false): boolean {
+  const preset = PRESETS[harness];
+  if (preset === 'unsupported') return false;
+  const args = preset.permissionRules?.({ mode: 'mention', mentionPermission, operatorBin: '/x', mergeRepos: [], providerLane }) ?? [];
+  const i = args.indexOf('--settings');
+  return i >= 0 && (args[i + 1] ?? '').includes('"Notification"');
+}
+
 /** PreToolUse 설정 JSON(없으면 null)에 턴 도중 새 글 hook·물음 hook 을 합친다 — 한 장의 `--settings` 로. 아무것도 없으면 빈 배열. */
 export function settingsArgs(preSettings: string | null, operatorBin: string, postToolSinceSeq: number | null, permissionHook = false): string[] {
   const hasPost = postToolSinceSeq !== null && postToolSinceSeq !== undefined;
@@ -545,7 +562,7 @@ export function settingsArgs(preSettings: string | null, operatorBin: string, po
   const merged = hasPost ? withPostToolHook(preSettings, operatorBin, postToolSinceSeq) : preSettings;
   if (!permissionHook) return ['--settings', merged!];
   const base = (merged ? JSON.parse(merged) : {}) as { hooks?: Record<string, unknown> };
-  return ['--settings', JSON.stringify({ ...base, hooks: { ...(base.hooks ?? {}), PermissionRequest: [permissionRequestHookEntry(operatorBin)] } })];
+  return ['--settings', JSON.stringify({ ...base, hooks: { ...(base.hooks ?? {}), PermissionRequest: [permissionRequestHookEntry(operatorBin)], Notification: [notificationHookEntry(operatorBin)] } })];
 }
 
 export function withPostToolHook(preSettings: string | null, operatorBin: string, sinceSeq: number): string {

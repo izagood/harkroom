@@ -29,7 +29,7 @@ describe('턴 도중 새 글 hook — 러너', () => {
     const s = settingsOf(p.args);
     expect(s).toHaveLength(1);
     const hooks = s[0]!.hooks as Record<string, unknown>;
-    expect(Object.keys(hooks).sort()).toEqual(['PermissionRequest', 'PostToolUse', 'PreToolUse']);
+    expect(Object.keys(hooks).sort()).toEqual(['Notification', 'PermissionRequest', 'PostToolUse', 'PreToolUse']);
     expect(JSON.parse(withPostToolHook(commandHookSettings('/x'), '/x', 7)).hooks.PreToolUse).toEqual(JSON.parse(commandHookSettings('/x')).hooks.PreToolUse);
   });
 
@@ -38,7 +38,7 @@ describe('턴 도중 새 글 hook — 러너', () => {
     for (const p of [buildTurnCommand({ ...base, postToolSinceSeq: null }), buildTurnCommand({ ...base })]) {
       const s = settingsOf(p.args);
       expect(s).toHaveLength(1);
-      expect(Object.keys(s[0]!.hooks as Record<string, unknown>)).toEqual(['PermissionRequest']);
+      expect(Object.keys(s[0]!.hooks as Record<string, unknown>).sort()).toEqual(['Notification', 'PermissionRequest']);
     }
     expect(settingsArgs(null, '/x', null)).toEqual([]);
     expect(attachesPostToolHook('claude-code', 'auto')).toBe(true);

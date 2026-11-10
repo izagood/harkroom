@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  countTurnDenials, decidePermissionHook, PERMISSION_ASK_REASON, PERMISSION_RM_REASON, PERMISSION_STOP_AFTER, PERMISSION_STOP_REASON, variablePathRm,
+  countTurnDenials, decidePermissionHook, notifyGateLine, PERMISSION_ASK_REASON, PERMISSION_RM_REASON, PERMISSION_STOP_AFTER, PERMISSION_STOP_REASON, variablePathRm,
 } from '../src/hookCli.js';
 
 const bash = (command: string) => JSON.stringify({ hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command } });
@@ -59,5 +59,14 @@ describe('하네스 물음 hook(C안 P1) — 판정', () => {
     ].map((l) => JSON.stringify(l)).join('\n') + '\n{broken';
     expect(countTurnDenials(lines, 't1')).toBe(2);
     expect(countTurnDenials('', 't1')).toBe(0);
+  });
+});
+
+describe('멈춤 신호 hook(C안 P2) — notifyGateLine', () => {
+  it('permission_prompt 일 때만 시각 한 줄', () => {
+    expect(notifyGateLine(JSON.stringify({ hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'Claude needs your permission' }), 1234.9)).toBe('1234\n');
+    expect(notifyGateLine(JSON.stringify({ notification_type: 'idle_prompt' }), 1)).toBeNull();
+    expect(notifyGateLine('nope', 1)).toBeNull();
+    expect(notifyGateLine('null', 1)).toBeNull();
   });
 });

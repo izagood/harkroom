@@ -907,6 +907,39 @@ describe('주입 확인 창 — 준비 신호만으로는 부족하다', () => {
     await turn.catch(() => {});
   }, 20_000);
 
+  /**
+   * **신호가 있는 턴은 화면이 아니라 신호로 부른다**(하네스 물음 C안 P2). claude 는 Notification `permission_prompt` 로 「물음이 남아 있다」를
+   * 알린다 — 화면이 관문처럼 보여도 신호가 없으면 부르지 않고(긴 대기 루프·`--watch` 오탐, 11-09 ③), 화면이 조용해도 신호가 오면 부른다.
+   */
+  it('gateSignal 이 있으면 관문 화면이어도 신호 없이는 부르지 않는다', async () => {
+    const 부름: string[] = [];
+    const turn = runPtyTurn(plan('ready-then-gate'), {
+      cwd: process.cwd(), timeoutMs: 2_000,
+      injectPrompt: { text: '안녕', gateProbeMs: 60, onTurnGate: (s) => 부름.push(s), gateSignal: () => 0 },
+    });
+    await new Promise((r) => setTimeout(r, 900));
+    expect(부름).toHaveLength(0);
+    await turn.catch(() => {});
+  }, 20_000);
+
+  it('gateSignal 이 늘 때마다 한 번씩 부른다 — 화면이 관문이 아니어도', async () => {
+    const 부름: string[] = [];
+    let n = 0;
+    const turn = runPtyTurn(plan('ready-then-silent'), {
+      cwd: process.cwd(), timeoutMs: 3_000,
+      injectPrompt: { text: '안녕', gateProbeMs: 60, onTurnGate: (s) => 부름.push(s), gateSignal: () => n },
+    });
+    await new Promise((r) => setTimeout(r, 400));
+    expect(부름).toHaveLength(0);
+    n = 1;
+    await vi.waitFor(() => expect(부름).toHaveLength(1), { timeout: 1_500 });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(부름).toHaveLength(1);
+    n = 2;
+    await vi.waitFor(() => expect(부름).toHaveLength(2), { timeout: 1_500 });
+    await turn.catch(() => {});
+  }, 20_000);
+
   it('한 관문에 한 번만 부른다 — 주기마다 부르면 통지가 쌓인다', async () => {
     const 부름: string[] = [];
     const turn = runPtyTurn(plan('ready-then-gate'), {

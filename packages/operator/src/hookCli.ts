@@ -216,6 +216,17 @@ export async function decidePostToolHook(since: number, ask: Ask): Promise<strin
  * 같은 턴에서 거절이 `PERMISSION_STOP_AFTER` 번째가 되면 문구를 「멈추고 message.fail 로 보고」로 바꾼다(재시도 루프 막기, 결정 #7).
  * 그 밖은 결정 없음 — 지금처럼 화면 물음이 받는다(정책 밖 물음은 1주 기록을 본 뒤 P3 에서 정한다).
  */
+/**
+ * `harkroom-operator hook notify` — claude Notification hook(C안 P2). `permission_prompt` 일 때만 신호 파일에 받은 시각 한 줄을 쓴다.
+ * 판정을 내지 않는 알림이라 어떤 길로 끝나도 넓어지는 것이 없다. 그 밖의 알림(대기 알림 등)·깨진 입력은 아무것도 안 쓴다.
+ */
+export function notifyGateLine(raw: string, nowMs: number): string | null {
+  let input: { notification_type?: unknown };
+  try { input = JSON.parse(raw) as typeof input; } catch { return null; }
+  if (!input || typeof input !== 'object' || input.notification_type !== 'permission_prompt') return null;
+  return `${Math.floor(nowMs)}\n`;
+}
+
 export type PermissionDenyDecision = { hookSpecificOutput: { hookEventName: 'PermissionRequest'; decision: { behavior: 'deny'; message: string } } };
 export type PermissionKind = 'rm_variable_path' | 'ask_user_question' | 'other';
 

@@ -75,6 +75,13 @@ export const RUNNER_TURN_ID_ENV = 'HARKROOM_TURN_ID';
  * 없으면 브릿지는 아무것도 안 쓴다. 파일은 비어 있다 — 있는가만 뜻이 있다.
  */
 export const RUNNER_MCP_READY_FILE_ENV = 'HARKROOM_MCP_READY_FILE';
+/**
+ * **하네스가 사람의 확인을 기다린다는 신호 파일**(하네스 물음 C안 P2). 러너가 턴마다 새 경로를 심고, claude 의 Notification hook
+ * (`harkroom-operator hook notify`)이 `permission_prompt` 를 받을 때마다 받은 시각(ms) 한 줄을 덧붙인다. 러너는 이 파일로만
+ * 「확인을 기다려 멈춤」을 판정한다(화면 정규식 대신). 실측(claude 2.1.321): PermissionRequest hook 이 결정하면 Notification 은
+ * 오지 않고, 결정하지 않아 화면 물음이 남으면 약 6초 뒤에 온다.
+ */
+export const RUNNER_GATE_FILE_ENV = 'HARKROOM_GATE_FILE';
 /** 오퍼레이터 → 서버 `/mcp` 요청에서 `RUNNER_TURN_CAUSE_ENV` 값을 싣는 헤더. */
 export const CAUSE_HEADER = 'x-harkroom-cause';
 /** 오퍼레이터 → 서버 `/mcp` 요청에서 `RUNNER_TURN_ID_ENV` 값을 싣는 헤더. */

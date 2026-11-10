@@ -11,7 +11,7 @@ import { BUILTIN_SKILLS, isBuiltinSkillSlug } from '@harkroom/shared/builtinSkil
 import { runnerSkillsDir } from './stateDir.js';
 import { randomUUID } from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { AgentHarness, AgentView, InboxCanceledWake, InboxDelegatedBy, InboxDelegationOutcome, InboxDelegationSummary, InboxTeamCall, MessageRow, WakeReportTo } from '@harkroom/shared';
@@ -19,11 +19,11 @@ import type { FailOpts, Me } from './harkroom.js';
 import { laneNudgeText, laneNudgeWanted, BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DELTA_MAX_MESSAGES, mergeThreadPages, DENIAL_NOTICE_MAX_PER_TURN, MAC_PERMISSION_NOTICE_MAX_PER_TURN, macPermissionNotice, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, stallScreenErrorLine, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, SILENT_ACK_EMOJI, silentTurnNotice, silentWakeNotice, backgroundCutNotice, reportMissedNotice, MESSAGE_KIND_WAKE, hasOwnReportSince, watchMissedNotice, delegationLeftOpen, DELEGATION_REPORT_MISSED_NOTICE } from './prompt.js';
 import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
 import { SessionStore, type SessionRecord } from './sessions.js';
-import { attachesCommandHook, attachesPostToolHook, buildTurnCommand, chromeTurnFor, harnessPath, turnKeyDelivery, safeToolAllows, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
+import { attachesCommandHook, attachesGateHook, attachesPostToolHook, buildTurnCommand, chromeTurnFor, harnessPath, turnKeyDelivery, safeToolAllows, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
 import { screenGateFor, screenIdleFactsFor, readsBuiltinSkills } from './adapters/index.js';
 import { SCREEN_IDLE_END_MS, ScreenIdleWatch, screenAnswerLines } from './screenIdle.js';
 import { commandRulesOf, fileMemoryDirUnderConfig, discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readonlyToolsFor, readsSessionTranscript, usesOmpHome, usesPiHome, usesTuiForMention, turnKeyDeliveryOf, usesXdgHome, waitsForMcpBeforePrompt, xdgAppFor } from './adapters/index.js';
-import { RUNNER_MCP_READY_FILE_ENV } from '@harkroom/shared/runnerLink';
+import { RUNNER_GATE_FILE_ENV, RUNNER_MCP_READY_FILE_ENV } from '@harkroom/shared/runnerLink';
 import { acceptsPtyInput, looksReadyForPrompt, sanitizePasteText } from './pty.js';
 import type { AttentionKind, PtyControls, PtyWriter, TurnResult } from './pty.js';
 import { codexRolloutFileFor, findCodexSessionId } from './codexSessions.js';
@@ -1751,6 +1751,21 @@ export async function runMentionTurn(
     )
     : null;
   if (mcpReadyFile !== null) plan.env[RUNNER_MCP_READY_FILE_ENV] = mcpReadyFile;
+  /**
+   * 「확인을 기다려 멈춤」 신호 파일(C안 P2). 물음 hook·Notification hook 이 붙는 턴에만 심는다 — 그 턴은 화면 정규식이 아니라 이
+   * 파일로 턴 도중 관문·정지 갈래를 판정한다(`gateSignalOf`). 자리는 `mcpReadyFile` 과 같은 이유로 러너 상태 디렉터리(0700)다.
+   * 못 만들면 지금처럼 화면 정규식으로 판정한다.
+   */
+  const gateFile = usesTui && attachesGateHook(def.harness, def.mentionPermission, providerEnv !== null)
+    ? await mkdir(join(deps.stateDir, 'gate-signal'), { recursive: true, mode: 0o700 }).then(
+      () => join(deps.stateDir, 'gate-signal', randomUUID()),
+      (e: unknown) => {
+        console.error(`[mentionTurn] ${key}: 멈춤 신호 자리를 못 만들어 화면으로 판정한다:`, e instanceof Error ? e.message : e);
+        return null;
+      },
+    )
+    : null;
+  if (gateFile !== null) plan.env[RUNNER_GATE_FILE_ENV] = gateFile;
 
   // #126: 턴 시작 로그 (어느 채널·스레드·하네스·워크스페이스에서 PTY 를 띄우는가)
   const turnStartMs = (deps.now ?? Date.now)();
@@ -2723,6 +2738,7 @@ export async function runMentionTurn(
           ...(deps.callsForHuman === false
             ? { onTurnGate: (screen: string) => callHuman(screen, 'gate') }
             : { onAttention: callHuman }),
+          ...(gateFile !== null ? { gateSignal: () => gateSignalOf(gateFile).count } : {}),
         },
       } : {}),
       // 릴레이가 없으면 탭도 없다 — `undefined` 를 넘겨 pty 쪽 호출을 아예 안 만든다.
@@ -2793,6 +2809,7 @@ export async function runMentionTurn(
   } finally {
     await settle();
     if (mcpReadyFile !== null) await rm(mcpReadyFile, { force: true }).catch(() => undefined);
+    if (gateFile !== null) await rm(gateFile, { force: true }).catch(() => undefined);
     if (turnKeysRegistered) await deps.harkroom.endTurnKeys?.(turnId);
     if (turnMcpConfig !== null) await rm(turnMcpConfig, { force: true }).catch(() => undefined);
     if (ownedTurnConfig !== null) await rm(ownedTurnConfig, { force: true }).catch(() => undefined);
@@ -3066,7 +3083,7 @@ export async function runMentionTurn(
      */
     if (end.stalled) failure.harnessStalledMs = end.stalledIdleMs || (deps.harnessStallMs ?? 10 * 60_000);
     // 정지 순간 화면의 갈래(2026-10-25) — 물음·답 없이 끝남·멈춤. 그린 화면이 있는 하네스만 셋으로 가르고, 없으면 물음만 가린다.
-    if (end.stalled) failure.harnessStalledScreen = stallScreenOf(idleWatch, end.screenTail, def.harness);
+    if (end.stalled) failure.harnessStalledScreen = stallScreenOf(idleWatch, end.screenTail, def.harness, gateFile === null ? null : { ...gateSignalOf(gateFile), lastProgressAtMs: end.lastDataAtMs ?? null });
     // 정지 통지에 마지막 화면의 오류처럼 보이는 줄 하나를 싣는다(2026-10-25) — 「터미널을 봐라」만으로는 원인을 몰랐다.
     // 가린 화면에서 뽑고 한 줄 상한·비밀 가림(`quotedLine`)을 한 번 더 거친다. 보이는 글로만 쓴다.
     if (end.stalled) {
@@ -3307,7 +3324,25 @@ async function watchOriginRow(
   }
 }
 
-function stallScreenOf(watch: ScreenIdleWatch | null, rawTail: string, harness: Parameters<typeof screenGateFor>[0]): 'gate' | 'idle' | 'stuck' {
+/** 신호 파일(`RUNNER_GATE_FILE_ENV`)의 줄 수와 마지막 신호 시각(ms). 없거나 못 읽으면 0·null. */
+export function gateSignalOf(file: string): { count: number; lastAtMs: number | null } {
+  let text = '';
+  try { text = readFileSync(file, 'utf8'); } catch { return { count: 0, lastAtMs: null }; }
+  const stamps = text.split('\n').map((l) => Number(l.trim())).filter((n) => Number.isSafeInteger(n) && n > 0);
+  return { count: stamps.length, lastAtMs: stamps.length ? stamps[stamps.length - 1]! : null };
+}
+
+/**
+ * 정지 갈래. 신호(`signal`)가 있는 턴은 **신호로만** 'gate' 를 말한다(C안 P2): 마지막 신호 뒤로 화면이 진행하지 않았으면 물음 앞에서
+ * 선 것이고, 그 밖에 화면 정규식이 관문으로 읽은 것은 오탐으로 보고 'stuck' 으로 낸다(긴 대기 루프·`--watch` — 11-09 ③).
+ */
+export function stallScreenOf(watch: ScreenIdleWatch | null, rawTail: string, harness: Parameters<typeof screenGateFor>[0],
+  signal: { count: number; lastAtMs: number | null; lastProgressAtMs: number | null } | null = null): 'gate' | 'idle' | 'stuck' {
+  if (signal) {
+    if (signal.lastAtMs !== null && (signal.lastProgressAtMs === null || signal.lastAtMs >= signal.lastProgressAtMs)) return 'gate';
+    const now = watch?.current();
+    return now === 'idle' ? 'idle' : 'stuck';
+  }
   if (watch) {
     const now = watch.current();
     return now === 'gate' ? 'gate' : now === 'idle' ? 'idle' : 'stuck';

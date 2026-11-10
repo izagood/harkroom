@@ -735,6 +735,12 @@ export interface RunPtyTurnOptions {
      */
     onTurnGate?: (screen: string) => void;
     /**
+     * 턴 도중 관문을 **화면이 아니라 하네스의 신호로** 판정한다(C안 P2). 값은 지금까지 받은 신호 수다(claude Notification
+     * `permission_prompt` — `RUNNER_GATE_FILE_ENV`). 주면 화면 정규식은 턴 도중 관문에 쓰지 않는다 — 긴 대기 루프·`--watch` 화면이
+     * 관문 문구를 닮아 사람을 부르던 오탐이 없어진다. 수가 늘 때마다 한 번 부른다(신호 자체가 「물음이 6초 넘게 남음」이라 두 번 보지 않는다).
+     */
+    gateSignal?: () => number;
+    /**
      * 턴 도중 관문을 확인하는 주기(기본 3초). **두 번 연속** 관문으로 보여야 부른다 —
      * 판정 하나로 재면 스크롤을 지나가는 글자에 걸린다(모델이 관문 문장을 그대로 인용해
      * 출력할 수 있다). `onAttention` 이 없으면 이 창도 돌지 않는다.
@@ -1267,8 +1273,19 @@ export function runPtyTurn(plan: TurnPlan, opts: RunPtyTurnOptions): Promise<Tur
           // (명령마다 묻는다), 두 번째를 안 부르면 그 턴은 다시 조용히 선다.
           let seenOnce = false;
           let called = false;
+          const gateSignal = opts.injectPrompt?.gateSignal;
+          let signalsSeen = 0;
           gateProbe = setInterval(() => {
             if (settled) return;
+            if (gateSignal) {
+              let n = signalsSeen;
+              try { n = gateSignal(); } catch { /* 못 읽으면 이번 주기는 건너뛴다 */ }
+              if (n > signalsSeen) {
+                signalsSeen = n;
+                onTurnGate(decodeTailText(tail.snapshot()));
+              }
+              return;
+            }
             if (!looksLikeGate(decodeTailText(tail.snapshot()))) {
               // 관문이 화면에서 내려갔다 — 사람이 지났거나 오인이었다. 어느 쪽이든 다음
               // 관문은 처음부터 다시 센다.
