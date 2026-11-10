@@ -11,18 +11,20 @@
 //! - 읽고-고치고-쓰기를 `mcp-servers.json.lock`(P5 잠금, `file_lock.rs`)으로 묶는다. TS 는 잠그지 않는다 — 동시에 온 두 저장 중
 //!   하나가 지워질 수 있다(후속 후보).
 //! - 임시 파일 이름에 프로세스 안 순번을 더한다(TS 는 pid+ms 라 같은 ms 의 두 쓰기가 부딪힌다).
-//! - OAuth(`auth` 칸·`operatorMcpAuth*`)는 A5d 다. 그래서 목록에 `auth` 를 싣지 않는다(옛 오퍼레이터와 같은 모양 — 「모른다」).
+//! - OAuth(`auth` 칸·`operatorMcpAuth*`)는 A5d(`mcp_oauth`)다. 목록은 원격 정의마다 `auth` 를 싣는다(TS 와 같음).
 //!   다만 TS 가 토큰을 버리는 자리(클라이언트·콜백 포트를 바꿈·stdio 로 바꿈·정의를 뺌)에서는 `secrets/mcp-oauth.json` 의 그
 //!   이름 칸을 **지운다** — 정의가 바뀐 뒤 옛 토큰이 남아 Node 오퍼레이터로 돌아갔을 때 다시 쓰이지 않게(security F2).
 //! - 이름순 정렬은 `localeCompare` 대신 소문자 비교 뒤 원래 글자 비교다. 오퍼레이터 표의 이름(`[a-z0-9-]`)에서는 같다 —
 //!   `~/.claude.json` 에 대문자·`_` 가 섞인 이름이 있으면 순서가 다를 수 있다.
 use crate::file_lock::{FileLockOptions, with_file_lock};
+use crate::mcp_oauth::McpOAuth;
 use harkroom_proto::p3::{DaemonError, DaemonErrorCode};
 use serde_json::{Map, Value, json};
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 fn internal(message: impl Into<String>) -> DaemonError {
@@ -400,6 +402,11 @@ pub fn read_set_stdio_payload(
 }
 
 /// TS `readOperatorMcpRemovePayload`.
+/// `operatorMcpAuth*` 의 `{ name }`(TS `readOperatorMcpAuthPayload`).
+pub fn read_auth_payload(payload: Option<&Value>, method: &str) -> Result<String, DaemonError> {
+    read_mcp_name(payload.and_then(|p| p.get("name")), method)
+}
+
 pub fn read_remove_payload(payload: Option<&Value>) -> Result<String, DaemonError> {
     read_mcp_name(payload.and_then(|p| p.get("name")), "operatorMcpRemove")
 }
@@ -460,6 +467,8 @@ pub struct LocalMcp {
     registry_path: PathBuf,
     claude_config_path: Option<PathBuf>,
     oauth_store_path: PathBuf,
+    /// OAuth 흐름과 토큰(A5d). 목록의 `auth` 칸과 `operatorMcpAuth*` 가 쓴다.
+    oauth: Arc<McpOAuth>,
 }
 
 static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -473,7 +482,10 @@ pub fn claude_config_path(claude_config_dir: Option<&str>, home: &str) -> PathBu
 }
 
 /// 없으면 `None`, 있는데 객체가 아니거나 JSON 이 아니면 오류(덮어쓰지 않는다).
-fn read_object(path: &Path, label: &str) -> Result<Option<Map<String, Value>>, DaemonError> {
+pub(crate) fn read_object(
+    path: &Path,
+    label: &str,
+) -> Result<Option<Map<String, Value>>, DaemonError> {
     let text = match fs::read_to_string(path) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -487,7 +499,11 @@ fn read_object(path: &Path, label: &str) -> Result<Option<Map<String, Value>>, D
 }
 
 /// 임시 파일(0600)에 2칸 들여쓰기 JSON + 개행을 쓰고 rename 한다 — env·headers·토큰이 실린다.
-fn write_object(path: &Path, table: &Map<String, Value>, label: &str) -> Result<(), DaemonError> {
+pub(crate) fn write_object(
+    path: &Path,
+    table: &Map<String, Value>,
+    label: &str,
+) -> Result<(), DaemonError> {
     let dir = path
         .parent()
         .ok_or_else(|| internal(format!("{label} 의 디렉터리를 모른다")))?;
@@ -548,6 +564,7 @@ impl LocalMcp {
             registry_path: dir.join("mcp-servers.json"),
             claude_config_path,
             oauth_store_path: dir.join("secrets").join("mcp-oauth.json"),
+            oauth: Arc::new(McpOAuth::new(dir.join("secrets").join("mcp-oauth.json"))),
         }
     }
 
@@ -615,6 +632,56 @@ impl LocalMcp {
         .map_err(|e| internal(format!("mcp-oauth.json 잠금을 잡지 못했다: {e}")))?
     }
 
+    /// 합친 표에서 원격 정의 하나(`list` 와 같은 순서 — 오퍼레이터 표가 이긴다). TS `remoteDefinition`.
+    fn remote_definition(&self, name: &str) -> Result<Map<String, Value>, DaemonError> {
+        let mut def = self.read_table()?.get(name).cloned();
+        if def.is_none()
+            && let Some(path) = &self.claude_config_path
+            && let Ok(text) = fs::read_to_string(path)
+            && let Ok(Value::Object(claude)) = serde_json::from_str::<Value>(&text)
+        {
+            def = claude.get("mcpServers").and_then(|m| m.get(name)).cloned();
+        }
+        let Some(Value::Object(def)) = def else {
+            return Err(internal(format!("{name} 의 정의가 이 머신에 없다")));
+        };
+        if !def.get("url").is_some_and(Value::is_string) {
+            return Err(internal(format!(
+                "{name} 는 원격(http·sse) 정의가 아니다 — OAuth 는 원격 서버만 한다"
+            )));
+        }
+        Ok(def)
+    }
+
+    /// `operatorMcpAuthStart`. 인가 url 을 돌려준다(로그에는 적지 않는다 — state·challenge 가 실린다).
+    pub fn auth_start(&self, name: &str) -> Result<Value, DaemonError> {
+        let def = self.remote_definition(name)?;
+        let url = def["url"].as_str().unwrap_or("");
+        let oauth = def.get("oauth");
+        let client_id = str_field(oauth, "clientId").filter(|c| !c.is_empty());
+        let port = oauth
+            .and_then(|o| o.get("callbackPort"))
+            .and_then(js_integer)
+            .filter(|p| (1.0..=65535.0).contains(p))
+            .map(|p| p as u16);
+        self.oauth.start(name, url, client_id, port)
+    }
+
+    /// `operatorMcpAuthStatus`.
+    pub fn auth_status(&self, name: &str) -> Result<Value, DaemonError> {
+        let def = self.remote_definition(name)?;
+        self.oauth.status(
+            name,
+            def["url"].as_str().unwrap_or(""),
+            str_field(def.get("oauth"), "clientId"),
+        )
+    }
+
+    /// `operatorMcpAuthForget`.
+    pub fn auth_forget(&self, name: &str) -> Result<(), DaemonError> {
+        self.oauth.forget(name)
+    }
+
     /// `operatorMcpList`. claude 정의 먼저, 같은 이름은 오퍼레이터 표가 이긴다. 깨진 claude 설정은 건너뛴다.
     pub fn list(&self) -> Result<Value, DaemonError> {
         let mut out: Map<String, Value> = Map::new();
@@ -633,6 +700,22 @@ impl LocalMcp {
             if let Value::Object(d) = def {
                 out.insert(name.clone(), describe_mcp_definition(name, "operator", d));
             }
+        }
+        for e in out.values_mut() {
+            if e.get("transport").and_then(Value::as_str) == Some("stdio") {
+                continue;
+            }
+            let name = e["name"].as_str().unwrap_or("").to_string();
+            let target = e["target"].as_str().unwrap_or("").to_string();
+            let client = e
+                .get("oauthClientId")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let auth = self
+                .oauth
+                .status(&name, &target, client.as_deref())
+                .unwrap_or_else(|_| json!({"state": "error", "reason": "상태를 읽지 못했다"}));
+            e["auth"] = auth;
         }
         let mut servers: Vec<(String, Value)> = out.into_iter().collect();
         servers.sort_by(|a, b| {
@@ -965,8 +1048,8 @@ mod tests {
         assert_eq!(
             got,
             json!({"servers": [
-                {"name": "a", "source": "claude", "transport": "sse", "target": "https://s", "args": [], "envKeys": [], "headerKeys": ["Auth"], "oauth": false},
-                {"name": "b", "source": "operator", "transport": "http", "target": "https://b", "args": [], "envKeys": [], "headerKeys": [], "oauth": true, "oauthClientId": "cid", "oauthCallbackPort": 3000},
+                {"name": "a", "source": "claude", "transport": "sse", "target": "https://s", "args": [], "envKeys": [], "headerKeys": ["Auth"], "oauth": false, "auth": {"state": "none"}},
+                {"name": "b", "source": "operator", "transport": "http", "target": "https://b", "args": [], "envKeys": [], "headerKeys": [], "oauth": true, "oauthClientId": "cid", "oauthCallbackPort": 3000, "auth": {"state": "none"}},
             ]})
         );
         let mode = fs::metadata(mcp.registry_path()).unwrap().permissions();

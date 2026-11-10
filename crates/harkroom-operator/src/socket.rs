@@ -466,6 +466,26 @@ impl ServerState {
                 eprintln!("MCP 정의: {name} 뺌");
                 Ok(json!({}))
             }
+            // ── OAuth(A5d, TS `server.ts` 의 같은 칸). 인가 url·토큰은 로그에 적지 않는다 ──────────────────────
+            "operatorMcpAuthStart" => {
+                let mcp = self.mcp()?;
+                let name = local_mcp::read_auth_payload(payload, "operatorMcpAuthStart")?;
+                let r = mcp.auth_start(&name)?;
+                eprintln!("MCP OAuth: {name} 흐름 시작");
+                Ok(r)
+            }
+            "operatorMcpAuthStatus" => {
+                let mcp = self.mcp()?;
+                let name = local_mcp::read_auth_payload(payload, "operatorMcpAuthStatus")?;
+                mcp.auth_status(&name)
+            }
+            "operatorMcpAuthForget" => {
+                let mcp = self.mcp()?;
+                let name = local_mcp::read_auth_payload(payload, "operatorMcpAuthForget")?;
+                mcp.auth_forget(&name)?;
+                eprintln!("MCP OAuth: {name} 토큰 지움");
+                Ok(json!({}))
+            }
             other => Err(err(
                 DaemonErrorCode::Internal,
                 format!("이 오퍼레이터(Rust)에는 아직 없는 요청이다: {other}"),

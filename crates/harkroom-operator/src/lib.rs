@@ -4,7 +4,8 @@
 //! A3b 는 러너 표(`spawnRunner`·`killRunner`·`runnerExit` 이벤트, `runners`)와 `operators.json` 색인 읽기(`index`)를 옮긴다.
 //! A5a 는 로컬 설정의 에이전트 항목(`operatorAgent*` 4개, `local_agents`)을 옮긴다.
 //! A5b 는 머지 래퍼의 gh 계정(`operatorMerge*` 3개, `local_merge`)을 옮긴다.
-//! A5c 는 이 머신의 MCP 정의(`operatorMcp*` 4개, `local_mcp`)를 옮긴다. OAuth(`operatorMcpAuth*`)는 A5d 다.
+//! A5c 는 이 머신의 MCP 정의(`operatorMcp*` 4개, `local_mcp`)를 옮긴다.
+//! A5d 는 원격 MCP 의 OAuth(`operatorMcpAuth*` 3개와 목록의 `auth` 칸, `mcp_oauth`)를 옮긴다. refresh·토큰 굽기는 러너 쪽(s21)이다.
 //! 아직 앱에 실리지 않는다(번들·스위치는 A4).
 //!
 //! `merge` 는 에이전트 지시문·허용 규칙(`Bash(…harkroom-operator merge:*)`)이 **이름·인자·한 줄 JSON 출력·종료 코드**에
@@ -18,6 +19,7 @@ pub mod index;
 pub mod local_agents;
 pub mod local_mcp;
 pub mod local_merge;
+pub mod mcp_oauth;
 pub mod merge;
 pub mod runners;
 pub mod serve;
