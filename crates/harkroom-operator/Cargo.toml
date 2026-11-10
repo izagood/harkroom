@@ -19,3 +19,5 @@ serde = { version = "=1.0.228", features = ["derive"] }
 # 출력 JSON 의 키 순서를 TS(`{...out, merged, exit}`)와 똑같이 지키려고 preserve_order 를 켠다.
 serde_json = { version = "=1.0.154", features = ["preserve_order"] }
 indexmap = "=2.14.2"
+# kill(pid, 0) — TS isProcessAlive 와 같은 잔해 판정(security C2). lock 에 이미 있는 판이다.
+libc = "=0.2.191"

@@ -13,6 +13,7 @@ use harkroom_proto::p3::{
 use serde_json::{Value, json};
 use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -306,17 +307,75 @@ fn write_value(stream: &mut UnixStream, v: &Value) -> std::io::Result<()> {
 }
 
 /// 듣기 고리. 접속마다 스레드 하나.
+/// 동시 연결 상한(security C3). 연결마다 스레드가 하나라, 상주 프로세스가 되면 스레드 수를 묶어 둔다.
+pub const MAX_CONNECTIONS: usize = 64;
+
+/// 연결 하나가 끝나면 자리를 돌려준다(스레드가 패닉해도 drop 으로 돌려준다).
+struct Slot(Arc<AtomicUsize>);
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+fn take_slot(active: &Arc<AtomicUsize>, limit: usize) -> Option<Slot> {
+    // `fetch_update` 는 새 Rust 에서 `try_update` 로 이름이 바뀌어(옛 이름은 deprecated) 판마다 갈린다 —
+    // 어느 판에서나 같은 compare_exchange 반복으로 쓴다.
+    let mut n = active.load(Ordering::Acquire);
+    loop {
+        if n >= limit {
+            return None;
+        }
+        match active.compare_exchange_weak(n, n + 1, Ordering::AcqRel, Ordering::Acquire) {
+            Ok(_) => return Some(Slot(Arc::clone(active))),
+            Err(now) => n = now,
+        }
+    }
+}
+
 pub fn accept_loop(state: Arc<ServerState>, listener: UnixListener) {
+    accept_loop_with_limit(state, listener, MAX_CONNECTIONS);
+}
+
+/// 상한을 넘은 연결은 사유 한 줄을 보내고 곧바로 닫는다 — 스레드를 띄우지 않는다.
+pub fn accept_loop_with_limit(state: Arc<ServerState>, listener: UnixListener, limit: usize) {
+    let active = Arc::new(AtomicUsize::new(0));
     for conn in listener.incoming() {
-        let Ok(stream) = conn else { continue };
+        let Ok(mut stream) = conn else { continue };
+        let Some(slot) = take_slot(&active, limit) else {
+            // 앱은 첫 줄로 hello 응답을 기다리므로 hello 거절 꼴로 답한다.
+            let e = err(
+                DaemonErrorCode::Internal,
+                format!("동시 연결 상한({limit})을 넘었다"),
+            );
+            let msg = json!({ "type": "hello", "ok": false, "error": e });
+            if let Ok(line) = encode_line(&msg) {
+                let _ = stream.write_all(&line);
+            }
+            continue;
+        };
         let st = Arc::clone(&state);
-        std::thread::spawn(move || serve_connection(&st, stream));
+        std::thread::spawn(move || {
+            let _slot = slot;
+            serve_connection(&st, stream);
+        });
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn connection_slots_cap_and_return() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let a = take_slot(&active, 2).unwrap();
+        let _b = take_slot(&active, 2).unwrap();
+        assert!(take_slot(&active, 2).is_none());
+        drop(a);
+        assert!(take_slot(&active, 2).is_some());
+    }
 
     #[test]
     fn decoder_split_and_joined_chunks() {
