@@ -12,6 +12,7 @@ import {
   ACCOUNT_GATE_LABEL_PATTERN, FAILURE_CODES, type AccountView, type AskAudience, type AskMeta, type DelegationMeta, type FailureMeta,
   type MessageRow, type ModelMeta, type ReportMeta,
   ASK_TEXT_OPTION_ID,
+  compareRelease,
 } from '@harkroom/shared';
 import { CAUSE_HEADER, COMMAND_FILES_HEADER, TURN_ID_HEADER, type CommandFileDigest } from '@harkroom/shared/runnerLink';
 import { denormalizeBodies, normalizeSearchQuery } from '../services/mentions.js';
@@ -1843,9 +1844,20 @@ function buildMcpServer(
     if (lease) await leaseInboxEntries(pool, account.id, lease.runnerId, lease.holding);
     const fetchUnread = async () => {
       const listed = await listInbox(pool, account.id, { unreadOnly: true, skipLeased: lease !== undefined });
-      const entries = delegationV2Enabled() && !inboxReasons?.includes('delegation_update')
-        ? listed.map((e) => (e.reason === 'delegation_update' ? { ...e, reason: 'delegation_followup' as const } : e))
-        : listed;
+      let entries = listed;
+      if (delegationV2Enabled() && !inboxReasons?.includes('delegation_update')) {
+        if (knowsDelegationFollowup(version)) {
+          entries = listed.map((e) => (e.reason === 'delegation_update' ? { ...e, reason: 'delegation_followup' as const } : e));
+        } else {
+          // 163(#1803, 0.4.426)보다 오래된 러너는 `delegation_followup` 도 모른다 — 모르는 사유는 보통 부름으로 돌아 담당의 글이
+          // 「너를 부른 글 = 할 일」로 실린다. 그런 러너에게는 update 를 싣지 않고 읽음으로 접는다(결말은 `delegation_done` 으로 따로 간다).
+          const dropped = listed.filter((e) => e.reason === 'delegation_update').map((e) => e.id);
+          if (dropped.length) {
+            await pool.query(`update inbox set read_at = now() where account_id = $1 and id = any($2::bigint[]) and read_at is null`, [account.id, dropped]);
+            entries = listed.filter((e) => e.reason !== 'delegation_update');
+          }
+        }
+      }
       if (!entries.length) return { entries, messages: [] };
       const ids = entries.map((e) => e.messageId);
       const msgs = await pool.query(
@@ -3255,4 +3267,12 @@ export function parseCommandFilesHeader(raw: unknown): CommandFileDigest[] | nul
     out.push({ path, sha256, size, ...(typeof preview === 'string' ? { preview } : {}) });
   }
   return out;
+}
+
+/** `delegation_followup` 을 「팀원이 보낸 결과」로 싣는 첫 러너(163, #1803). 버전을 안 밝히거나 못 읽으면 모르는 것으로 본다. */
+export const DELEGATION_FOLLOWUP_RUNNER_MIN = '0.4.426';
+export function knowsDelegationFollowup(version: string | undefined): boolean {
+  if (!version) return false;
+  const c = compareRelease(version.replace(/^v/, ''), DELEGATION_FOLLOWUP_RUNNER_MIN);
+  return c !== null && c >= 0;
 }

@@ -209,12 +209,17 @@ describe('P3 위임 수명', () => {
     expect(canceled.rows[0].n).toBe(1);
     const entry = (await listInbox(pool, leadId, { unreadOnly: true })).find((e) => e.messageId === p);
     expect(entry?.canceledWakes?.length).toBe(1);
-    const oldPoll = await call(leadPat, 'inbox.poll', {});
+    const oldPoll = await call(leadPat, 'inbox.poll', { version: '0.4.439' });
     expect((oldPoll.entries as { messageId: string; reason: string }[]).find((e) => e.messageId === p)?.reason).toBe('delegation_followup');
     // 옛 러너가 담당의 글을 「너를 부른 글 = 할 일」로 싣지 않게 — mention 으로 바꾸지 않는다.
     expect((oldPoll.entries as { reason: string }[]).some((e) => e.reason === 'mention')).toBe(false);
     const newPoll = await call(leadPat, 'inbox.poll', { inboxReasons: ['delegation_update'] });
     expect((newPoll.entries as { messageId: string; reason: string }[]).find((e) => e.messageId === p)?.reason).toBe('delegation_update');
+    // 163 보다 오래된 러너(`delegation_followup` 도 모름)에게는 싣지 않고 읽음으로 접는다 — 보통 부름으로 돌지 않게.
+    const ancient = await call(leadPat, 'inbox.poll', { version: '0.4.400', timeoutMs: 0 });
+    expect((ancient.entries as { messageId: string }[]).some((e) => e.messageId === p)).toBe(false);
+    const left = await pool.query(`select read_at from inbox where account_id = $1 and message_id = $2`, [leadId, p]);
+    expect(left.rows[0].read_at).not.toBeNull();
     void dlg;
   });
 
