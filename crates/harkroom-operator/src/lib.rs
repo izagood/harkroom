@@ -1,6 +1,7 @@
 //! harkroom 오퍼레이터의 Rust 판(S2, Rust 전환). **A1 은 `merge` 래퍼의 클라이언트 쪽과 P5 파일 잠금만** 옮긴다 —
 //! 정본은 `packages/operator/src/main.ts::mergeMain`·`callOperatorTool`, `turnMerge.ts::parseMergeArgs`, `fileLock.ts` 다.
 //! A2 는 앱 ↔ 오퍼레이터 소켓 서버(P3)의 문지기와 `ping`·`listRunners` 를 옮긴다(`socket`·`endpoint`·`serve`).
+//! A3b 는 러너 표(`spawnRunner`·`killRunner`·`runnerExit` 이벤트, `runners`)와 `operators.json` 색인 읽기(`index`)를 옮긴다.
 //! 아직 앱에 실리지 않는다(번들·스위치는 A4).
 //!
 //! `merge` 는 에이전트 지시문·허용 규칙(`Bash(…harkroom-operator merge:*)`)이 **이름·인자·한 줄 JSON 출력·종료 코드**에
@@ -9,6 +10,17 @@
 //! 파일 잠금(P5)은 전환 동안 Node·Rust 오퍼레이터가 **같은 잠금 파일**을 번갈아 잡는다 — `tests/file_lock_xlang.rs`.
 pub mod endpoint;
 pub mod file_lock;
+pub mod index;
 pub mod merge;
+pub mod runners;
 pub mod serve;
 pub mod socket;
+
+/// 시험 전용: 러너 시험의 fork 와, 소켓을 bind 했다 닫아 「잔해」를 만드는 시험이 겹치지 않게 한다.
+/// fork 와 exec 사이에 자식이 그 듣는 fd 를 잠깐 물려받으면 잔해가 「살아 있음」으로 보인다(로컬 1/9 재현).
+#[cfg(test)]
+pub(crate) static FORK_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+#[cfg(test)]
+pub(crate) fn fork_guard() -> std::sync::MutexGuard<'static, ()> {
+    FORK_GUARD.lock().unwrap_or_else(|p| p.into_inner())
+}

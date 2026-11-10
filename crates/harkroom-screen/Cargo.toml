@@ -2,7 +2,7 @@
 name = "harkroom-screen"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 license = "Apache-2.0"
 publish = false
 description = "Harness TUI screen judgment (vt100) — Rust port of packages/agent/src/screenIdle.ts. Not wired in yet."

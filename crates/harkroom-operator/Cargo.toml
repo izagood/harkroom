@@ -2,10 +2,10 @@
 name = "harkroom-operator"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 license = "Apache-2.0"
 publish = false
-description = "Rust port of the harkroom operator (S2). A1: `merge` wrapper client. A2: app socket server (hello/ping/listRunners). Not bundled yet."
+description = "Rust port of the harkroom operator (S2). A1: `merge` wrapper client. A2: app socket server (hello/ping/listRunners). A3b: runner table (spawn/kill, runnerExit event) and operators.json index read. Not bundled yet."
 
 [[bin]]
 name = "harkroom-operator-rs"

@@ -2,7 +2,7 @@
 name = "harkroom-shadow"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 license = "Apache-2.0"
 publish = false
 description = "Shadow check (S3 B2): replay runner PTY recordings (asciicast v2) through harkroom-screen and compare with the TS judgments marked in them. Not wired in."

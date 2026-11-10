@@ -1,9 +1,14 @@
-//! `harkroom-operator-rs serve --base-url <url> [--home <dir>]` — 커뮤니티 하나의 오퍼레이터 소켓을 연다(S2 A2).
+//! `harkroom-operator-rs serve --base-url <url> [--home <dir>] [--app-data <dir>] [--runner-command <절대 경로>]`
+//! — 커뮤니티 하나의 오퍼레이터 소켓을 연다(S2 A2·A3b).
 //!
 //! 뿌리는 `harkroom-roots::resolve_community_root` 로 정한다. 커뮤니티가 다르면 뿌리·소켓이 달라 **여럿이 함께 뜬다**.
-//! `operators.json` 색인은 아직 읽지 않는다(색인 잠금·쓰기 규칙은 앱에 실을 때 옮긴다) — 계산한 자리만 쓴다.
+//! `--app-data` 를 주면 그 아래 `operators.json` 색인을 읽어 색인에 적힌 자리(옛 자리 포함)를 먼저 쓴다(A3b).
+//! 색인이 깨져 있으면 뜨지 않는다 — 빈 색인으로 치면 같은 커뮤니티가 두 자리로 갈린다. 색인 쓰기는 이 판에 없다.
+//! `--runner-command` 는 러너 프로그램이다. 클라이언트(앱)는 프로그램을 고르지 못하고 env 만 준다(`#250` 경계).
 //! 이름을 잡으면 stdout 에 JSON 한 줄(`listening`·`root`·`pid`)을 찍고 듣는다. 점유 중이면 그 사실을 찍고 1 로 끝난다.
 use crate::endpoint::{ClaimOutcome, claim, random_hex};
+use crate::index::read_roots_index;
+use crate::runners::RunnerLaunch;
 use crate::socket::{ServerState, accept_loop};
 use harkroom_proto::p3::DaemonIdentity;
 use harkroom_roots::{CommunityRootResolution, OperatorRootsIndex, resolve_community_root};
@@ -31,7 +36,27 @@ pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
             2,
         );
     };
-    let root = match resolve_community_root(&home, base_url, &OperatorRootsIndex::default()) {
+    let index = match flag(args, "--app-data") {
+        Some(dir) => match read_roots_index(dir) {
+            Ok(i) => i,
+            Err(e) => return (json!({"ok": false, "error": e}).to_string(), 1),
+        },
+        None => OperatorRootsIndex::default(),
+    };
+    let launch = match flag(args, "--runner-command") {
+        Some(c) if c.starts_with('/') => Some(RunnerLaunch {
+            command: c.to_string(),
+            args: Vec::new(),
+        }),
+        Some(_) => {
+            return (
+                json!({"ok": false, "error": "--runner-command 는 절대 경로여야 한다"}).to_string(),
+                2,
+            );
+        }
+        None => None,
+    };
+    let root = match resolve_community_root(&home, base_url, &index) {
         CommunityRootResolution::Ok { root, .. } => root,
         CommunityRootResolution::Refused(r) => {
             return (json!({"ok": false, "refused": r}).to_string(), 1);
@@ -49,7 +74,7 @@ pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
             .unwrap_or_default(),
         app_version: env!("CARGO_PKG_VERSION").to_string(),
     };
-    let state = ServerState::new(identity.clone());
+    let state = ServerState::new(identity.clone(), launch);
     match claim(&root, &identity) {
         Ok(ClaimOutcome::Claimed {
             listener,
