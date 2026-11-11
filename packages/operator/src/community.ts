@@ -214,6 +214,12 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
     onClose: (reason) => deps.log(`서버와 끊겼다: ${deps.baseUrl}${reason ? ` — ${reason}` : ''}`),
     onFrame: (frame) => {
       if (frame.type === 'assign') {
+        // 동의를 확인한 에이전트와 띄울 에이전트가 같아야 한다 — 다르면 로컬에 없는 에이전트가 남의 로컬 설정(작업 폴더 등)으로
+        // 뜬다. 오퍼레이터는 서버만 믿지 않는다(security #1892 낮음).
+        if (frame.definition.agentId !== frame.agentId) {
+          deps.log(`배정을 거절한다: agent=${frame.agentId} — 정의의 agentId(${frame.definition.agentId})와 다르다`);
+          return;
+        }
         const local = agents[frame.agentId];
         // 양쪽 동의(스펙 §3): 로컬 설정에 없으면 서버가 무엇을 내려도 띄우지 않는다. 서버가
         // 능력을 보고 거절했어야 하지만, 오퍼레이터는 서버만 믿지 않는다.

@@ -265,6 +265,27 @@ pub fn permission_log_path(sock: Option<&str>, temp_dir: &Path, now_ms: u64) -> 
         .join(format!("{}.jsonl", &iso[..10]))
 }
 
+/// 기록 폴더가 심링크·폴더 아닌 것이면 거절한다(#1885 정리 — `turn_secrets::ensure_dir` 와 같은 꼴). 남이 심어 둔
+/// 링크를 따라 다른 곳에 쓰지 않게 한다.
+fn plain_dir(dir: &Path) -> std::io::Result<()> {
+    let m = std::fs::symlink_metadata(dir)?;
+    if m.file_type().is_symlink() || !m.is_dir() {
+        return Err(std::io::Error::other("not a plain directory"));
+    }
+    Ok(())
+}
+
+/// 마지막 칸이 심링크면 열지 않고(O_NOFOLLOW), FIFO 에 멈추지 않게(O_NONBLOCK) 열어 일반 파일인지 핸들에서 본다.
+fn open_nofollow(path: &Path, opts: &mut std::fs::OpenOptions) -> std::io::Result<std::fs::File> {
+    let f = opts
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)?;
+    if !f.metadata()?.is_file() {
+        return Err(std::io::Error::other("not a regular file"));
+    }
+    Ok(f)
+}
+
 /// TS `appendPermissionRecord` — 디렉터리 0700·파일 0600(만들 때). 기록 실패는 판정을 바꾸지 않는다.
 fn append_record(path: &Path, rec: &Value) {
     let _ = (|| -> std::io::Result<()> {
@@ -273,14 +294,28 @@ fn append_record(path: &Path, rec: &Value) {
                 .recursive(true)
                 .mode(0o700)
                 .create(dir)?;
+            plain_dir(dir)?;
         }
-        let mut f = std::fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            .mode(0o600)
-            .open(path)?;
+        let mut f = open_nofollow(
+            path,
+            std::fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .mode(0o600),
+        )?;
         f.write_all(format!("{rec}\n").as_bytes())
     })();
+}
+
+/// 앞선 기록을 읽는다 — 폴더·파일이 심링크면 읽지 않는다(0 으로 센다).
+fn read_record(path: &Path) -> Option<Vec<u8>> {
+    if let Some(dir) = path.parent() {
+        plain_dir(dir).ok()?;
+    }
+    let mut f = open_nofollow(path, std::fs::OpenOptions::new().read(true)).ok()?;
+    let mut b = Vec::new();
+    f.read_to_end(&mut b).ok()?;
+    Some(b)
 }
 
 fn permission_turn(io: &HookIo) -> String {
@@ -318,7 +353,7 @@ fn permission_main(io: &mut HookIo) -> HookOutcome {
     let Some(raw) = read_capped(io.stdin, HOOK_STDIN_MAX) else {
         return permission_incident(io.env, &io.temp_dir, io.now_ms, "error");
     };
-    let prior = std::fs::read(&path)
+    let prior = read_record(&path)
         .map(|b| count_turn_denials(&String::from_utf8_lossy(&b), &turn))
         .unwrap_or(0);
     let Some((class, decision)) = decide_permission_hook(&raw, prior) else {
@@ -351,12 +386,15 @@ fn notify_main(io: &mut HookIo) -> HookOutcome {
     if let (Some(line), Some(file)) = (notify_gate_line(&raw, io.now_ms as f64), file)
         && file.starts_with('/')
     {
-        let _ = std::fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            .mode(0o600)
-            .open(&file)
-            .and_then(|mut f| f.write_all(line.as_bytes()));
+        // gate 파일도 심링크를 따라가지 않는다(#1885 정리).
+        let _ = open_nofollow(
+            Path::new(&file),
+            std::fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .mode(0o600),
+        )
+        .and_then(|mut f| f.write_all(line.as_bytes()));
     }
     quiet()
 }

@@ -22,6 +22,8 @@
  * - 사설 IP·내부 호스트를 기본 주소로 쓰는 것은 연결 주인의 선택이다(문서에 적는다) — 여기서 막지 않는다.
  */
 import { createHash, randomUUID } from 'node:crypto';
+import { closeSync, constants as fsc, fstatSync, lstatSync, openSync, readSync, realpathSync } from 'node:fs';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
 import { API_METHODS } from '@harkroom/shared';
 import type { MergeLease } from './turnMerge.js';
@@ -99,6 +101,35 @@ export async function exchangeToken(
   if (json.token_type !== undefined && (typeof json.token_type !== 'string' || json.token_type.toLowerCase() !== 'bearer')) return { ok: false, status: res.status };
   if (typeof token !== 'string' || !token.length || token.length > TOKEN_MAX || !TOKEN_RE.test(token)) return { ok: false, status: res.status };
   return { ok: true, token, ttlS: tokenTtlSeconds(json.expires_in) };
+}
+
+/**
+ * `--data @파일` 을 읽는다(#1882 정리, Rust `api_cli::read_body_file` 과 같은 규칙).
+ * - 작업 폴더(`cwd`, 하네스 셸의 cwd) **안의 일반 파일**만 — 절대 경로·`..`·심링크로 밖을 가리키면 거절한다. 판정은 실제 경로끼리 한다.
+ * - FIFO 에 멈추지 않게 열기 전에 종류를 보고 O_NONBLOCK·O_NOFOLLOW 로 연 뒤 핸들에서 다시 본다.
+ * - 상한+1 바이트까지만 읽는다. 넘었는지는 `parseApiArgs` 가 길이로 판정한다.
+ */
+export function readApiBodyFile(cwd: string, p: string): Buffer {
+  if (!p || isAbsolute(p) || p.split(/[\\/]/).some((c) => c === '..')) throw new Error('outside the working folder');
+  const root = realpathSync(cwd);
+  const real = realpathSync(resolve(root, p));
+  const rel = relative(root, real);
+  if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw new Error('outside the working folder');
+  if (!lstatSync(real).isFile()) throw new Error('not a regular file');
+  const fd = openSync(real, fsc.O_RDONLY | fsc.O_NOFOLLOW | fsc.O_NONBLOCK);
+  try {
+    if (!fstatSync(fd).isFile()) throw new Error('not a regular file');
+    const buf = Buffer.alloc(API_MAX_BODY + 1);
+    let n = 0;
+    while (n < buf.length) {
+      const r = readSync(fd, buf, n, buf.length - n, null);
+      if (r === 0) break;
+      n += r;
+    }
+    return buf.subarray(0, n);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 export interface ApiArgs { connector: string; method: string; path: string; body: string | null; contentType: string | null }

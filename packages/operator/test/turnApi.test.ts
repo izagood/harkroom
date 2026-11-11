@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
-import { createTurnApi, exchangeToken, parseApiArgs, scrubValue, tokenTtlSeconds, type TurnApi } from '../src/turnApi.js';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { API_MAX_BODY, createTurnApi, exchangeToken, parseApiArgs, readApiBodyFile, scrubValue, tokenTtlSeconds, type TurnApi } from '../src/turnApi.js';
 
 // 외부 API 래퍼(C안 P3, 스레드 07519d86) — 오퍼레이터 쪽. 지키는 것: 키는 결과에 안 나간다 · 리다이렉트는 안 따라간다 ·
 // origin 을 다시 잰다 · 서버에 닿지 않으면 부르지 않는다 · 호출마다 보고한다.
@@ -242,5 +245,30 @@ describe('토큰 교환 순수 함수', () => {
     const f = (async () => { called = true; return new Response('{}'); }) as unknown as typeof fetch;
     expect(await exchangeToken(f, 'http://auth.example.com/t', { grantType: 'g', clientId: 'c', keyField: 'k' }, KEY)).toEqual({ ok: false, status: 0 });
     expect(called).toBe(false);
+  });
+});
+
+describe('readApiBodyFile — --data @파일 은 작업 폴더 안의 일반 파일만, 상한+1 까지만', () => {
+  it('안의 파일은 읽고 밖·심링크·폴더는 거절한다', () => {
+    const root = mkdtempSync(join(tmpdir(), 'hk-apibody-'));
+    try {
+      const work = join(root, 'work');
+      mkdirSync(join(work, 'sub'), { recursive: true });
+      writeFileSync(join(work, 'sub', 'b.json'), '{}');
+      writeFileSync(join(root, 'outside.txt'), 'secret');
+      symlinkSync(join(root, 'outside.txt'), join(work, 'link'));
+      symlinkSync(root, join(work, 'dirlink'));
+      expect(readApiBodyFile(work, 'sub/b.json').toString()).toBe('{}');
+      expect(readApiBodyFile(work, './sub/b.json').toString()).toBe('{}');
+      for (const p of [join(root, 'outside.txt'), '../outside.txt', 'sub/../../outside.txt', 'link', 'dirlink/outside.txt', 'sub', '']) {
+        expect(() => readApiBodyFile(work, p), p).toThrow();
+      }
+      writeFileSync(join(work, 'big'), Buffer.alloc(API_MAX_BODY + 10, 0x61));
+      expect(readApiBodyFile(work, 'big').length).toBe(API_MAX_BODY + 1);
+      const r = parseApiArgs(['c', 'POST', '/x', '--data', '@big'], (p) => readApiBodyFile(work, p));
+      expect(r).toEqual({ error: `본문이 ${API_MAX_BODY} 바이트보다 크다` });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

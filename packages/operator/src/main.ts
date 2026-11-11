@@ -27,8 +27,8 @@ import { MERGE_TOOL, parseMergeArgs } from './turnMerge.js';
 import { countTurnDenials, decideHook, notifyGateLine, decideLaneHook, decidePermissionHook, decidePostToolHook, decideTailHook, HOOK_STDIN_MAX, postToolOutput, HOOK_TIMEOUT_MS, laneDeny, readStdinCapped, type LaneDenyDecision, type PermissionRecord } from './hookCli.js';
 import { CODEX_HOOK_SPEC_ENV, decodeCodexHookSpec, decodeLaneHookRules } from '@harkroom/shared/providerLane';
 import { decideCodexHook } from './codexHook.js';
-import { API_TOOL, parseApiArgs } from './turnApi.js';
-import { appendFileSync, mkdirSync, readFileSync, writeSync } from 'node:fs';
+import { API_TOOL, parseApiArgs, readApiBodyFile } from './turnApi.js';
+import { closeSync, constants as fsc, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { PassThrough } from 'node:stream';
 import { EXIT_INCONCLUSIVE, EXIT_OCCUPIED, startDaemon } from './run.js';
@@ -142,7 +142,7 @@ async function callOperatorTool(name: string, args: Record<string, unknown>, kin
  * allow 규칙이 깨진다 — 머지 래퍼 qa ②).
  */
 async function apiMain(argv: string[]): Promise<void> {
-  const parsed = parseApiArgs(argv, (p) => readFileSync(resolve(process.cwd(), p)));
+  const parsed = parseApiArgs(argv, (p) => readApiBodyFile(process.cwd(), p));
   if ('error' in parsed) {
     console.log(JSON.stringify({ error: { code: 'bad_request', message: parsed.error }, exit: 2 }));
     process.exit(2);
@@ -214,11 +214,37 @@ function permissionTurn(): string {
   return process.env[RUNNER_TURN_ID_ENV] || process.env[RUNNER_TURN_CAUSE_ENV] || 'unknown';
 }
 
+/** 기록 폴더가 심링크·폴더 아닌 것이면 던진다(#1885 정리 — 남이 심어 둔 링크를 따라 다른 곳에 쓰지 않게). */
+function assertPlainDir(dir: string): void {
+  const st = lstatSync(dir);
+  if (st.isSymbolicLink() || !st.isDirectory()) throw new Error('not a plain directory');
+}
+
+/** 마지막 칸이 심링크면 열지 않고(O_NOFOLLOW), FIFO 에 멈추지 않게(O_NONBLOCK) 열어 일반 파일일 때만 쓴다. */
+function appendNoFollow(path: string, text: string): void {
+  const fd = openSync(path, fsc.O_WRONLY | fsc.O_APPEND | fsc.O_CREAT | fsc.O_NOFOLLOW | fsc.O_NONBLOCK, 0o600);
+  try {
+    if (!fstatSync(fd).isFile()) throw new Error('not a regular file');
+    writeSync(fd, text);
+  } finally { closeSync(fd); }
+}
+
 function appendPermissionRecord(path: string, rec: PermissionRecord): void {
   try {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-    appendFileSync(path, `${JSON.stringify(rec)}\n`, { mode: 0o600 });
+    assertPlainDir(dirname(path));
+    appendNoFollow(path, `${JSON.stringify(rec)}\n`);
   } catch { /* 기록 실패는 판정을 바꾸지 않는다 */ }
+}
+
+/** 앞선 기록 — 폴더·파일이 심링크면 읽지 않는다(던지면 0 으로 센다). */
+function readPermissionRecord(path: string): string {
+  assertPlainDir(dirname(path));
+  const fd = openSync(path, fsc.O_RDONLY | fsc.O_NOFOLLOW | fsc.O_NONBLOCK);
+  try {
+    if (!fstatSync(fd).isFile()) throw new Error('not a regular file');
+    return readFileSync(fd, 'utf8');
+  } finally { closeSync(fd); }
 }
 
 /**
@@ -233,7 +259,7 @@ async function notifyHookMain(): Promise<void> {
     const raw = await readStdinCapped(process.stdin, HOOK_STDIN_MAX);
     const file = process.env[RUNNER_GATE_FILE_ENV];
     const line = notifyGateLine(raw, Date.now());
-    if (line && file && file.startsWith('/')) appendFileSync(file, line, { mode: 0o600 });
+    if (line && file && file.startsWith('/')) appendNoFollow(file, line);
   } catch { /* 무출력 */ }
   clearTimeout(timer);
   process.exit(0);
@@ -254,7 +280,7 @@ async function permissionHookMain(): Promise<void> {
   try {
     const raw = await readStdinCapped(process.stdin, HOOK_STDIN_MAX);
     let prior = 0;
-    try { prior = countTurnDenials(readFileSync(path, 'utf8'), turn); } catch { /* 첫 줄 */ }
+    try { prior = countTurnDenials(readPermissionRecord(path), turn); } catch { /* 첫 줄 */ }
     const d = decidePermissionHook(raw, prior);
     if (!d) return incident('bad_input');
     appendPermissionRecord(path, { at: now.toISOString(), turn, event: 'decided', tool: d.tool, kind: d.kind, program: d.program, decision: d.decision ? 'deny' : 'none' });
