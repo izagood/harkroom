@@ -7,6 +7,8 @@
  * 레지스트리는 배정을 모른다 — 둘을 잇는 어댑터가 여기 하나다.
  */
 import { createAssignmentReconciler, type AssignmentDeps } from './assignments.js';
+import { reapUnassignedAdopted } from './adoptedReap.js';
+import { psIdentityProbe, type ProcessIdentityProbe } from './adopt.js';
 import { createCommunity, type CommunityDeps, type CommunityInstance } from './community.js';
 import { operatorVersion } from './version.js';
 import { communityKey, readConfig, rememberOperatorId } from './config.js';
@@ -59,6 +61,8 @@ export interface StartCommunitiesDeps {
    * (`chromeHost.ts`). 생략은 거짓이다.
    */
   appLaunched?: boolean;
+  /** 채택 러너 회수 전 신원 재대조(`adopt.ts`). 테스트가 바꿔 끼운다. 기본 `ps`. */
+  identityProbe?: ProcessIdentityProbe;
 }
 
 export interface CommunityRuntime {
@@ -175,6 +179,21 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
   });
 
   const started: CommunityInstance[] = [];
+  /** 이 오퍼레이터가 맡은 커뮤니티(띄우려 한 것 전부). 하나라도 안 떠 있으면 채택 러너를 회수하지 않는다. */
+  const expected = new Set<string>();
+  const probe: ProcessIdentityProbe = deps.identityProbe ?? psIdentityProbe;
+  const reap = () => {
+    void reapUnassignedAdopted({
+      allStarted: () => [...expected].every((k) => started.some((c) => c.baseUrl === k)),
+      keeps: () => started.map((c) => c.syncedKeep()),
+      // 떠 있는 커뮤니티의 로컬 설정에 있는 에이전트만 — 모르는 에이전트(다른 인스턴스 몫 등)는 이 길로 건드리지 않는다.
+      adopted: () => deps.registry.adoptedRunners().filter((r) => started.some((c) => c.knowsAgent(r.agentId))),
+      currentIncarnation: (agentId) => deps.registry.currentIncarnation(agentId),
+      probe,
+      kill: (agentId, incarnationId) => deps.registry.killRunner(agentId, incarnationId) !== null,
+      log: deps.log,
+    }).catch((err: unknown) => deps.log(`채택 러너 회수 실패: ${err instanceof Error ? err.message : String(err)}`));
+  };
   /** 인스턴스가 붙을 때 쓴 토큰 — 다시 등록을 알아보는 기준이다. */
   const tokens = new WeakMap<CommunityInstance, string>();
   const startOne = async (rawUrl: string, section?: { agents: Record<string, import('./config.js').LocalAgentConfig> }): Promise<CommunityInstance | null> => {
@@ -184,6 +203,7 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
       deps.log(`커뮤니티 건너뜀(이 오퍼레이터가 맡은 커뮤니티가 아니다): ${baseUrl}`);
       return null;
     }
+    expected.add(baseUrl);
     const token = await secrets.getToken(baseUrl);
     const existingAt = started.findIndex((c) => c.baseUrl === baseUrl);
     if (existingAt >= 0) {
@@ -200,6 +220,7 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
     const reconciler = createAssignmentReconciler(runnerDeps(ref));
     const community = createCommunity({
       baseUrl, token, agents, reconciler, log: deps.log,
+      onSynced: reap,
       version: operatorVersion(deps.appVersion),
       heartbeat: deps.heartbeat,
       ghLines: deps.ghLines,
