@@ -9,6 +9,7 @@ use crate::runner_link::{RunnerLinkHandler, RunnerLinkServer};
 use crate::server_link::ServerLink;
 use crate::turn_keys::TurnKeyLedger;
 use crate::turn_leases::{LeaseCall, TurnLeases};
+use crate::turn_peek::{TurnPeek, tool_call};
 use crate::turn_slots::TurnSlots;
 use harkroom_proto::p1::{RunnerLinkKind, RunnerLinkRequest, RunnerLinkResponse};
 use harkroom_proto::p2::OperatorToServerFrame;
@@ -69,6 +70,8 @@ pub struct LinkHandler {
     slots: Arc<Mutex<TurnSlots>>,
     /// 턴 임대 장부(s21b-3b) — relay 의 `secret.lease*` 통지로 채운다. 이 커뮤니티의 러너만 쓴다.
     leases: Arc<Mutex<TurnLeases>>,
+    /// 턴 도중 새 글(s21b-3b) — hook 소켓의 `thread.peek`.
+    peek: Arc<TurnPeek>,
 }
 
 /// 임대 끝내기·늘리기를 별도 스레드에서 보낼 때 들고 가는 것.
@@ -132,6 +135,65 @@ impl LeaseIo {
     }
 }
 
+impl LinkHandler {
+    /// 에이전트 자격으로 이 커뮤니티 서버에 GET(오퍼레이터 자체 요청 — 러너 REST 허용 목록을 거치지 않는다).
+    fn server_get(&self, agent_id: &str, path: &str) -> Result<Value, String> {
+        let url = format!("{}{}", self.base_url.trim_end_matches('/'), path);
+        let headers = vec![
+            (
+                "authorization".to_string(),
+                format!("Bearer {}", self.token),
+            ),
+            (
+                crate::forward::AGENT_HEADER.to_string(),
+                agent_id.to_string(),
+            ),
+        ];
+        let bare = path.split('?').next().unwrap_or_default();
+        let r = self.transport.send("GET", &url, &headers, None)?;
+        if r.status != 200 {
+            return Err(format!("GET {bare} → {}", r.status));
+        }
+        serde_json::from_str(&r.body).map_err(|e| format!("GET {bare} → {e}"))
+    }
+}
+
+/// TS turnCommand 의 hook 소켓 가드 — hook 소켓은 `command.check` 하나만 한다(그 밖은 서버로 나가지 않는다).
+/// `command.check` 의 판정(명령 허락 대조)은 아직 없다(s21b-3c) — 그동안은 닫힌 쪽 `{allow:false}` 로 답한다:
+/// hook 은 무출력으로 권한 분류기에 넘긴다(TS 의 「임대 없음·서버 무응답」과 같은 결말).
+pub const COMMAND_CHECK_TOOL: &str = "command.check";
+
+fn hook_guard(req: &RunnerLinkRequest) -> RunnerLinkResponse {
+    let name = match req {
+        RunnerLinkRequest::McpRequest { payload, .. } => {
+            tool_call(payload).and_then(|c| c.get("params")?.get("name")?.as_str())
+        }
+        _ => None,
+    };
+    match (req, name) {
+        (RunnerLinkRequest::McpRequest { id, payload, .. }, Some(COMMAND_CHECK_TOOL)) => {
+            let rpc = payload.get("id").cloned().unwrap_or(Value::Null);
+            RunnerLinkResponse::McpResponse {
+                id: id.clone(),
+                messages: vec![crate::turn_peek::tool_result(
+                    rpc,
+                    &serde_json::json!({"allow": false}),
+                )],
+            }
+        }
+        (RunnerLinkRequest::McpRequest { id, .. }, _) => RunnerLinkResponse::McpError {
+            id: id.clone(),
+            status: 403,
+            message: "the hook link only answers command.check".into(),
+        },
+        (RunnerLinkRequest::HttpForward { id, .. }, _) => RunnerLinkResponse::HttpResponse {
+            id: id.clone(),
+            status: 403,
+            body: "the hook link only answers command.check".into(),
+        },
+    }
+}
+
 impl RunnerLinkHandler for LinkHandler {
     /// relay 통지 — 턴 임대(TS run.ts 의 `secret.lease*`). 서버 요청은 별도 스레드에서 보내 링크 읽기를 막지 않는다.
     fn on_notice(&self, runner_id: &str, agent_id: &str, notice: Value) {
@@ -182,6 +244,27 @@ impl RunnerLinkHandler for LinkHandler {
         // 가로채기 — TS run.ts 의 순서(turnKeys → … → turnSlots). 서버로 나가지 않는다.
         if let Some(r) = lock(&self.turn_keys).maybe_handle(runner_id, &req, kind) {
             return Some(r);
+        }
+        // `thread.peek` 은 hook 소켓 가드보다 먼저(TS run.ts 순서: turnKeys → turnPeek → turnCommand).
+        let cause = match &req {
+            RunnerLinkRequest::McpRequest { cause, .. } => cause.clone(),
+            _ => None,
+        };
+        let lease = lock(&self.leases).lookup_for(runner_id, agent_id, cause.as_deref());
+        let get = |a: &str, p: &str| self.server_get(a, p);
+        if let Some(r) = self.peek.maybe_handle(
+            runner_id,
+            agent_id,
+            &req,
+            kind,
+            lease.as_ref(),
+            &get,
+            &|l| eprintln!("{l}"),
+        ) {
+            return Some(r);
+        }
+        if kind == RunnerLinkKind::Hook {
+            return Some(hook_guard(&req));
         }
         if let Some(r) = lock(&self.slots).maybe_handle(runner_id, &req, kind) {
             return Some(r);
@@ -242,6 +325,7 @@ pub fn build_bridge(
         turn_keys: Arc::clone(&turn_keys),
         slots,
         leases: Arc::new(Mutex::new(TurnLeases::system())),
+        peek: Arc::new(TurnPeek::system()),
     });
     // 턴 열쇠 장부(s21b-3a) — 하네스의 bridge·hook·wrapper 소켓이 맡긴 열쇠로 붙는다.
     let runner_link = RunnerLinkServer::new(handler, Some(turn_keys));
@@ -315,6 +399,7 @@ mod tests {
             turn_keys: Arc::new(Mutex::new(TurnKeyLedger::new(|| 0, |_| {}))),
             slots: Arc::new(Mutex::new(TurnSlots::new(Some(1), || 0, |_| {}))),
             leases: Arc::new(Mutex::new(TurnLeases::new(|| 0))),
+            peek: Arc::new(TurnPeek::new(|| 0)),
         };
         h.on_frame(
             "r1",
@@ -332,6 +417,59 @@ mod tests {
     }
 
     #[test]
+    fn hook_link_answers_only_peek_and_command_check_never_forwards() {
+        let (_srv, tr, b) = bridge();
+        let h = LinkHandler {
+            mux: Arc::clone(&b.mux),
+            transport: tr.clone(),
+            base_url: "https://h.example".into(),
+            token: "op-token".into(),
+            turn_keys: Arc::new(Mutex::new(TurnKeyLedger::new(|| 0, |_| {}))),
+            slots: Arc::new(Mutex::new(TurnSlots::new(None, || 0, |_| {}))),
+            leases: Arc::new(Mutex::new(TurnLeases::new(|| 0))),
+            peek: Arc::new(TurnPeek::new(|| 0)),
+        };
+        let call = |name: &str| -> RunnerLinkRequest {
+            serde_json::from_value(json!({"type":"mcp.request","id":"q","cause":"c1",
+                "payload":{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":name,"arguments":{}}}}))
+            .unwrap()
+        };
+        let v = |r: Option<RunnerLinkResponse>| serde_json::to_value(r.unwrap()).unwrap();
+        // 임대가 없으니 peek 은 서버에 묻지 않고 빈 목록.
+        let r = v(h.on_request("r1", "a1", call("thread.peek"), RunnerLinkKind::Hook));
+        assert_eq!(
+            r["messages"][0]["result"]["content"][0]["text"],
+            r#"{"posts":[]}"#
+        );
+        let r = v(h.on_request("r1", "a1", call("command.check"), RunnerLinkKind::Hook));
+        assert_eq!(
+            r["messages"][0]["result"]["content"][0]["text"],
+            r#"{"allow":false}"#
+        );
+        let r = v(h.on_request("r1", "a1", call("message.post"), RunnerLinkKind::Hook));
+        assert_eq!(r["type"], "mcp.error");
+        assert_eq!(r["status"], 403);
+        let rest: RunnerLinkRequest = serde_json::from_value(
+            json!({"type":"http.forward","id":"h","method":"GET","path":"/accounts"}),
+        )
+        .unwrap();
+        let r = v(h.on_request("r1", "a1", rest, RunnerLinkKind::Hook));
+        assert_eq!(r["status"], 403);
+        // 브릿지에서 부른 thread.peek 은 hook_only.
+        let r = v(h.on_request("r1", "a1", call("thread.peek"), RunnerLinkKind::Bridge));
+        assert!(
+            r["messages"][0]["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("hook_only")
+        );
+        assert!(
+            tr.0.lock().unwrap().is_empty(),
+            "hook 소켓 요청은 서버로 안 나간다"
+        );
+    }
+
+    #[test]
     fn request_forwards_as_expected_agent_with_operator_token() {
         let (_srv, tr, b) = bridge();
         let h = LinkHandler {
@@ -342,6 +480,7 @@ mod tests {
             turn_keys: Arc::new(Mutex::new(TurnKeyLedger::new(|| 0, |_| {}))),
             slots: Arc::new(Mutex::new(TurnSlots::new(None, || 0, |_| {}))),
             leases: Arc::new(Mutex::new(TurnLeases::new(|| 0))),
+            peek: Arc::new(TurnPeek::new(|| 0)),
         };
         let req: RunnerLinkRequest = serde_json::from_value(json!({
             "type":"mcp.request","id":"q1","payload":{"jsonrpc":"2.0","id":1,"method":"x"}
@@ -414,6 +553,7 @@ mod tests {
             turn_keys: Arc::new(Mutex::new(TurnKeyLedger::new(|| 0, |_| {}))),
             slots: Arc::new(Mutex::new(TurnSlots::new(Some(1), || 0, |_| {}))),
             leases: Arc::new(Mutex::new(TurnLeases::new(|| 0))),
+            peek: Arc::new(TurnPeek::new(|| 0)),
         };
         let keys = json!({"turnId":"t1","keys":{"bridge":"a".repeat(64),"shell":"b".repeat(64)}});
         assert_eq!(
@@ -493,6 +633,7 @@ mod tests {
             turn_keys: Arc::new(Mutex::new(TurnKeyLedger::new(|| 0, |_| {}))),
             slots: Arc::new(Mutex::new(TurnSlots::new(None, || 0, |_| {}))),
             leases: Arc::new(Mutex::new(TurnLeases::new(|| 0))),
+            peek: Arc::new(TurnPeek::new(|| 0)),
         };
         h.on_notice(
             "r1",
