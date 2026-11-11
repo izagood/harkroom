@@ -33,11 +33,20 @@ impl RunnerLink for LinkClient {
     }
 }
 
-/// `http.forward` 의 답.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// `http.forward` 의 답. **`Debug` 는 본문 길이만 보인다** — 본문에 토큰(턴 임대·lane 마운트)이 들 수 있다(security, B3a-2 낮음).
+#[derive(Clone, PartialEq, Eq)]
 pub struct HttpReply {
     pub status: u16,
     pub body: String,
+}
+
+impl std::fmt::Debug for HttpReply {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HttpReply")
+            .field("status", &self.status)
+            .field("body", &format_args!("<{} bytes>", self.body.len()))
+            .finish()
+    }
 }
 
 /// 정본 `harkroomError` — `status` 는 `isCredentialFailure` 가 읽는다(401·403 이면 harkroom 자격 실패).
@@ -48,7 +57,7 @@ pub struct HarkroomError {
 }
 
 impl HarkroomError {
-    fn new(message: String, status: Option<u16>) -> Self {
+    pub(crate) fn new(message: String, status: Option<u16>) -> Self {
         Self { message, status }
     }
     /// 정본 `isCredentialFailure` 의 harkroom 갈래: status 로만 판정한다(문구를 보지 않는다).
@@ -714,6 +723,17 @@ mod tests {
     fn encode_matches_js() {
         assert_eq!(encode_uri_component("a b&c=d/é"), "a%20b%26c%3Dd%2F%C3%A9");
         assert_eq!(encode_uri_component("-_.!~*'()"), "-_.!~*'()");
+    }
+
+    #[test]
+    fn http_reply_debug_hides_body() {
+        let r = HttpReply {
+            status: 200,
+            body: r#"{"token":"secret-value"}"#.into(),
+        };
+        let d = format!("{r:?}");
+        assert!(!d.contains("secret-value"), "{d}");
+        assert!(d.contains("24 bytes") && d.contains("200"), "{d}");
     }
 
     #[test]
