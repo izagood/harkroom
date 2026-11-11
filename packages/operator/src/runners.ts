@@ -46,6 +46,9 @@ import {
   type RunnerInfo,
 } from '@harkroom/shared/daemonProtocol';
 
+import { PROVIDER_LANE_ENV } from '@harkroom/shared/providerLane';
+import { RUNNER_LINK_ENV } from '@harkroom/shared/runnerLink';
+
 import { psIdentityProbe } from './adopt.js';
 
 /** 러너 하나에 대해 daemon 이 들고 있는 사실. **전부 프로세스 수준이다.** */
@@ -345,13 +348,40 @@ export interface RunnerLogSink {
  * 요청 값이 **나중에** 오는 순서가 계약이다: PAT·URL·PATH 는 앱이 정하고(키체인에서 꺼낸
  * PAT, 로그인 셸에서 얻은 PATH), daemon 자신의 값이 그것을 덮으면 안 된다.
  */
-function withUserEnv(env: Record<string, string>): Record<string, string> {
+export function withUserEnv(env: Record<string, string>, parent: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const merged: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined) merged[key] = value;
+  for (const [key, value] of Object.entries(parent)) {
+    if (value !== undefined && !COORDINATOR_OWNED.has(key)) merged[key] = value;
   }
   return { ...merged, ...env };
 }
+
+/**
+ * **조정기 소유 키 거부 목록** — 배정 조정기(`assignments.ts`)·이관 보류(`spawnRunner`)가 정하는 러너 env 이름. 부모(오퍼레이터)
+ * env 에서는 **물려주지 않는다**: 조정기는 이 중 일부를 「켜졌을 때만·값이 있을 때만」 적으므로, 오퍼레이터를 띄운 셸에 같은 이름이
+ * 있으면 사람이 켜지 않은 기능(`HARKROOM_COMMAND_HOOK=1` 등)이나 남의 소켓·작업 폴더가 러너에 새어 든다.
+ *
+ * 화이트리스트가 아니다 — 나머지(사람이 정한 손잡이 `HARKROOM_CLAUDE_ACCOUNTS_DIR`·`HARKROOM_MAX_TURNS`, codex 로그인 원본
+ * `CODEX_HOME` 등)는 위 주석대로 그대로 물려준다. Rust `crates/harkroom-operator/src/runners.rs::COORDINATOR_OWNED_ENV` 와 같은
+ * 목록이고, 조정기에 새 키를 더하면 여기에도 더한다(`runnerEnv.test.ts` 가 소스를 읽어 대조한다).
+ */
+export const COORDINATOR_OWNED_ENV: readonly string[] = [
+  RUNNER_LINK_ENV.socketPath,
+  RUNNER_LINK_ENV.runnerId,
+  RUNNER_LINK_ENV.secret,
+  'HARKROOM_OPERATOR_BIN',
+  'HARKROOM_MCP_CONFIG',
+  'HARKROOM_TURN_SECRETS_DIR',
+  'HARKROOM_WORKING_DIR',
+  'HARKROOM_CLAUDE_POOL',
+  'HARKROOM_COMMAND_HOOK',
+  'HARKROOM_POST_TOOL_HOOK',
+  'HARKROOM_CHROME_HOST',
+  PROVIDER_LANE_ENV,
+  'HARKROOM_HANDOVER_HOLD',
+  'HARKROOM_HANDOVER_DONE',
+];
+const COORDINATOR_OWNED = new Set(COORDINATOR_OWNED_ENV);
 
 export class RunnerRegistry {
   /** `agentId` → 지금 세대. **에이전트당 하나**다 — 둘이면 멘션을 나눠 집어 간다. */
