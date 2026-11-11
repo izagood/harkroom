@@ -304,6 +304,9 @@ pub fn spawn_server_link(
     let assign_login_path = login_path.clone();
     let secrets_dir = secrets_root.to_string_lossy().into_owned();
     let merge_home = home.clone();
+    // 작업 폴더 청소가 쓸 몫(s21c5-4) — 같은 이유로 먼저 떼어 둔다.
+    let cleanup_cfg = local.clone();
+    let cleanup_home = home.clone();
     // 능력(`{agentIds, harnesses}`)은 hello 와 설정 변경 알림이 같이 쓴다 — 매번 새로 잰다.
     let caps: std::sync::Arc<dyn Fn() -> serde_json::Value + Send + Sync> =
         std::sync::Arc::new(move || {
@@ -368,6 +371,18 @@ pub fn spawn_server_link(
     state.set_runner_link(std::sync::Arc::clone(&bridge.runner_link));
     // 앱의 `terminal*` 요청이 같은 허브를 쓴다(s21c-4).
     state.set_local_terminal(std::sync::Arc::clone(&bridge.hub));
+    // 작업 폴더 청소(s21c5-4, TS run.ts 377·767). 주인 장부는 relay 가로채기 자리에, 서비스는 앱 소켓에 건다. 기동 1분 뒤·1시간마다 돈다.
+    state.set_workspace_cleanup(crate::workspace_cleanup::wire::wire(
+        crate::workspace_cleanup::wire::WireInputs {
+            config: cleanup_cfg,
+            app_data: root.to_path_buf(),
+            home: cleanup_home,
+            base_url: base_url.clone(),
+            token: token.clone(),
+            runner_link: std::sync::Arc::clone(&bridge.runner_link),
+            owners_slot: std::sync::Arc::clone(&bridge.cleanup_owners),
+        },
+    ));
     let bridge_link_adopt = std::sync::Arc::clone(&bridge.runner_link);
     // 회수 중 세대(s21c-2c-2b): 러너의 「인박스를 놓았다」는 러너 표로, 앞 세대가 다 물러나면 지금 세대에 보류 풀기를 알린다.
     {
