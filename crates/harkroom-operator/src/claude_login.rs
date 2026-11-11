@@ -11,7 +11,7 @@
 //! `settled` 를 보고 보낸다 — 거둔 뒤의 pid(재사용될 수 있다)에 신호가 가는 틈이 없다.
 //!
 //! **코드·URL 은 로그에 적지 않는다.** URL 은 앱 소켓 이벤트(`claudeLoginOutput`)로만 나가고 서버로는 가지 않는다.
-use crate::claude_accounts::{under, under_no_symlink, update_pool_order};
+use crate::claude_accounts::{under_no_symlink, update_pool_order};
 use indexmap::IndexMap;
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
@@ -245,7 +245,8 @@ impl ClaudeLogins {
 
     /// TS `loginStart`. 돌려주는 것은 `loginId`.
     pub fn start(&self, pool: &str, account: &str, reauth: bool) -> Result<String, String> {
-        let config_dir = under(&self.inner.root, &[pool, account])?;
+        // 심링크 칸은 받지 않는다 — 로그인 자식이 뿌리 밖 폴더에 자격을 쓰지 않게(#1909 security 낮음).
+        let config_dir = under_no_symlink(&self.inner.root, &[pool, account])?;
         let slot = format!("{pool}/{account}");
         let is_dir = |p: &Path| fs::metadata(p).map(|m| m.is_dir()).unwrap_or(false);
         // 다시 로그인은 있는 계정에만 — 낡은 화면이 지운 계정을 되살리지 않게(2026-09-29).

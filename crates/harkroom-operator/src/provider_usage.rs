@@ -393,6 +393,9 @@ impl Default for UreqUsageHttp {
             agent: ureq::Agent::new_with_config(
                 ureq::Agent::config_builder()
                     .http_status_as_error(false)
+                    // 리다이렉트는 따라가지 않는다 — Authorization 이 다른 곳으로 실려 가지 않게. 3xx 는 `http-3xx` 로 친다.
+                    .max_redirects(0)
+                    .max_redirects_will_error(false)
                     .timeout_global(Some(FETCH_TIMEOUT))
                     .build(),
             ),

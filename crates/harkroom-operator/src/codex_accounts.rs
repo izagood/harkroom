@@ -240,6 +240,11 @@ impl CodexAccounts {
         &self.root
     }
 
+    /// 시스템 기본 로그인(`~/.codex`) — 사용량 요청의 `''` 계정.
+    pub fn system_home(&self) -> &Path {
+        &self.system_home
+    }
+
     /// 깨졌거나 없으면 `None`(러너와 같은 판정).
     pub fn read_active(&self) -> Option<String> {
         let text = fs::read_to_string(&self.active_path).ok()?;
