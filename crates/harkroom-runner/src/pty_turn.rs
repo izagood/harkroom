@@ -13,12 +13,23 @@
 //! 순서로 옮겼다. 같은 시각에 마감이 여럿이면 정본의 타이머 등록 순서와 무관하게 **아래 `on_tick` 의 순서**로 돈다 —
 //! 정본도 같은 ms 의 두 타이머 순서를 계약으로 삼지 않는다.
 
+use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
+
 use regex::Regex;
+use serde_json::Value;
 
 use crate::pty::{
-    AttentionKind, NotDeliveredKind, PromptNotDelivered, RingBuffer, TAIL_CAP_BYTES,
-    decode_tail_text, looks_like_gate, looks_ready_for_prompt, sanitize_paste_text, strip_ansi,
+    AttentionKind, NotDeliveredKind, OUTPUT_COALESCE_MS, OutputCoalescer, PromptNotDelivered, Push,
+    RingBuffer, SIGKILL_GRACE_MS, TAIL_CAP_BYTES, compose_spawn, decode_tail_text, looks_like_gate,
+    looks_ready_for_prompt, sanitize_paste_text, strip_ansi,
 };
+use crate::pty_proc::{
+    ExecutableNotFound, PtyExit, PtyHandle, PtyProcess, SpawnError, SpawnSpec, read_until_closed,
+    spawn_pty,
+};
+use crate::pty_record::PtyRecorder;
 
 /// bracketed paste 시작·끝 표식.
 const PASTE_START: &str = "\u{1b}[200~";
@@ -565,6 +576,324 @@ fn turn_gate_action(screen: String, own_turn_gate: bool) -> Action {
 fn is_pasting(after: &str) -> bool {
     let t = after.trim_end();
     t.ends_with("Pasting…") || t.ends_with("Pasting")
+}
+
+// ── PTY 루프(B3b-2b-2): spawn·읽기·회수 스레드와 위 상태 기계·출력 합치기·시간 한도를 한 스레드에서 돈다. ──
+
+/// 띄울 계획(정본 `TurnPlan` 중 PTY 가 쓰는 것).
+pub struct PtyPlan {
+    pub command: String,
+    pub args: Vec<String>,
+    /// 자식 env 전체 — 러너 env 를 물려주지 않는다.
+    pub env: Vec<(String, String)>,
+    pub stdin_file: Option<String>,
+}
+
+/// 정본 `RunPtyTurnOptions` 의 값 절반. 콜백 절반은 `PtyTurnSink` 다.
+pub struct PtyTurnOptions {
+    pub cwd: PathBuf,
+    pub cols: u16,
+    pub rows: u16,
+    /// 0 = 무기한(인터랙티브·TUI 멘션 턴) — 정본처럼 타이머를 아예 걸지 않는다.
+    pub timeout_ms: u64,
+    pub kill_grace_ms: u64,
+    pub coalesce_ms: u64,
+    pub record_dir: Option<PathBuf>,
+    pub inject: Option<InjectPrompt>,
+}
+
+impl Default for PtyTurnOptions {
+    fn default() -> Self {
+        Self {
+            cwd: PathBuf::from("/"),
+            cols: 120,
+            rows: 40,
+            timeout_ms: 0,
+            kill_grace_ms: SIGKILL_GRACE_MS,
+            coalesce_ms: OUTPUT_COALESCE_MS,
+            record_dir: None,
+            inject: None,
+        }
+    }
+}
+
+/// 정본 `TurnResult`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TurnResult {
+    pub exit_code: i32,
+    pub timed_out: bool,
+    pub tail: String,
+}
+
+/// 정본이 reject 하는 둘(실행 파일 부재·프롬프트 미전달)과 spawn 의 그 밖의 I/O 오류.
+#[derive(Debug)]
+pub enum PtyTurnError {
+    NotFound(ExecutableNotFound),
+    Spawn(std::io::Error),
+    NotDelivered(PromptNotDelivered),
+}
+
+impl std::fmt::Display for PtyTurnError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound(e) => e.fmt(f),
+            Self::Spawn(e) => write!(f, "PTY 를 띄우지 못했다: {e}"),
+            Self::NotDelivered(e) => e.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for PtyTurnError {}
+
+/// 사람·중계가 쥐는 손잡이(정본 `PtyControls`). `PtyHandle` 에 녹화로 가는 길만 더했다 — 녹화기는 루프 스레드가 쥔다.
+#[derive(Clone)]
+pub struct PtyControls {
+    handle: PtyHandle,
+    tx: mpsc::Sender<Event>,
+}
+
+impl PtyControls {
+    pub fn pid(&self) -> u32 {
+        self.handle.pid()
+    }
+    pub fn write(&self, chunk: &[u8]) {
+        self.handle.write(chunk);
+    }
+    pub fn resize(&self, cols: u16, rows: u16) {
+        self.handle.resize(cols, rows);
+        let _ = self.tx.send(Event::Resize(cols, rows));
+    }
+    /// SIGTERM 은 유예 뒤 SIGKILL 로 승격한다(`PtyHandle::kill`).
+    pub fn kill(&self, sigkill: bool) {
+        self.handle.kill(sigkill);
+    }
+    pub fn mark(&self, data: Value) {
+        let _ = self.tx.send(Event::Mark(data));
+    }
+}
+
+/// 정본 `RunPtyTurnOptions` 의 콜백들. 전부 루프 스레드에서 불린다.
+pub trait PtyTurnSink: PromptHooks {
+    /// 정본 `onSpawn` — 시간 한도는 이것이 돌아온 **뒤에** 흐르기 시작한다(정본 #391 주석).
+    fn on_spawn(&mut self, _controls: PtyControls) {}
+    /// 합친 출력(정본 `ring.push` + `onData`).
+    fn on_output(&mut self, _frame: &[u8]) {}
+    fn on_injected(&mut self) {}
+    fn on_attention(&mut self, _screen: &str, _kind: AttentionKind) {}
+    fn on_turn_gate(&mut self, _screen: &str) {}
+}
+
+enum Event {
+    Data(Vec<u8>),
+    ReaderDone,
+    Exit(std::io::Result<PtyExit>),
+    Resize(u16, u16),
+    Mark(Value),
+}
+
+/// 자식이 끝난 뒤 남은 화면 바이트를 기다리는 상한. 정본(node-pty)은 exit 뒤 데이터를 버리지만, 마지막 프레임에
+/// 결과가 적혀 있으므로(정본 `relay.stop` 주석) 읽기 끝이 닫힐 때까지 잠깐 더 받는다 — 손자가 slave 를 쥐고 있으면
+/// 끝이 안 오므로 상한을 둔다. 이식에서 달라진 점.
+const DRAIN_AFTER_EXIT_MS: u64 = 200;
+
+/// 정본 `runPtyTurn`. 실행 파일 부재·프롬프트 미전달만 `Err` 이고, 끝남·시간 한도는 `TurnResult` 로 돌려준다.
+pub fn run_pty_turn<S: PtyTurnSink>(
+    plan: &PtyPlan,
+    opts: PtyTurnOptions,
+    sink: &mut S,
+) -> Result<TurnResult, PtyTurnError> {
+    let (command, args) = compose_spawn(&plan.command, &plan.args, plan.stdin_file.as_deref());
+    let spec = SpawnSpec {
+        harness: &plan.command,
+        command: &command,
+        args: &args,
+        env: &plan.env,
+        cwd: &opts.cwd,
+        cols: opts.cols,
+        rows: opts.rows,
+    };
+    let proc =
+        spawn_pty(&spec, Duration::from_millis(opts.kill_grace_ms)).map_err(|e| match e {
+            SpawnError::NotFound(n) => PtyTurnError::NotFound(n),
+            SpawnError::Io(e) => PtyTurnError::Spawn(e),
+        })?;
+    let started = Instant::now();
+    let now_ms = || started.elapsed().as_millis() as u64;
+    let (tx, rx) = mpsc::channel();
+    let handle = proc.handle.clone();
+    // 읽기·회수 스레드를 다른 무엇보다 먼저 세운다 — 그 사이에 무언가 실패하면 자식이 아무도 안 지켜보는 채로 남는다
+    // (정본 exit 리스너 주석). 회수 스레드는 루프가 먼저 끝나도(미전달 실패) 끝까지 회수한다.
+    {
+        let PtyProcess { reader, .. } = &proc;
+        let reader = reader.try_clone().map_err(PtyTurnError::Spawn)?;
+        let tx = tx.clone();
+        std::thread::spawn(move || {
+            read_until_closed(reader, |c| {
+                let _ = tx.send(Event::Data(c.to_vec()));
+            });
+            let _ = tx.send(Event::ReaderDone);
+        });
+    }
+    {
+        let tx = tx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(Event::Exit(proc.wait()));
+        });
+    }
+    let label = Path::new(&plan.command)
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let mut recorder = PtyRecorder::open(opts.record_dir.as_deref(), &label, opts.cols, opts.rows);
+    sink.on_spawn(PtyControls {
+        handle: handle.clone(),
+        tx: tx.clone(),
+    });
+    drop(tx);
+
+    let base = now_ms();
+    let mut tail = RingBuffer::new(TAIL_CAP_BYTES);
+    let mut relay = OutputCoalescer::new();
+    let mut relay_at: Option<u64> = None;
+    let mut injector = opts.inject.map(|o| (PromptInjector::new(o), base));
+    let timeout_at = (opts.timeout_ms > 0).then(|| base + opts.timeout_ms);
+    let mut timed_out = false;
+    let mut exited: Option<(PtyExit, u64)> = None;
+
+    let finish = |relay: &mut OutputCoalescer, sink: &mut S, recorder: &mut Option<PtyRecorder>| {
+        if let Some(rest) = relay.stop() {
+            sink.on_output(&rest);
+        }
+        if let Some(r) = recorder.as_mut() {
+            r.close();
+        }
+    };
+
+    loop {
+        let now = now_ms();
+        let mut next = [relay_at, timeout_at.filter(|_| !timed_out)]
+            .into_iter()
+            .flatten()
+            .chain(
+                injector
+                    .as_ref()
+                    .and_then(|(m, b)| m.next_deadline().map(|d| d + b)),
+            )
+            .min();
+        if let Some((_, at)) = exited {
+            next = Some(next.map_or(at + DRAIN_AFTER_EXIT_MS, |n| {
+                n.min(at + DRAIN_AFTER_EXIT_MS)
+            }));
+        }
+        let ev = match next {
+            Some(d) if d <= now => None,
+            Some(d) => match rx.recv_timeout(Duration::from_millis(d - now)) {
+                Ok(e) => Some(e),
+                Err(mpsc::RecvTimeoutError::Timeout) => None,
+                Err(mpsc::RecvTimeoutError::Disconnected) => Some(Event::ReaderDone),
+            },
+            None => match rx.recv() {
+                Ok(e) => Some(e),
+                Err(_) => Some(Event::ReaderDone),
+            },
+        };
+        let now = now_ms();
+        let mut actions = Vec::new();
+        match ev {
+            Some(Event::Data(chunk)) => {
+                if let Some(r) = recorder.as_mut() {
+                    r.output(&chunk);
+                }
+                tail.push(&chunk);
+                match relay.push(&chunk) {
+                    Push::EmitAndArm(b) => {
+                        sink.on_output(&b);
+                        relay_at = Some(now + opts.coalesce_ms);
+                    }
+                    Push::Buffered | Push::Ignored => {}
+                }
+                if exited.is_none()
+                    && let Some((m, b)) = injector.as_mut()
+                {
+                    actions = m.on_data(now - *b, &chunk, sink);
+                }
+            }
+            Some(Event::Resize(c, r)) => {
+                if let Some(rec) = recorder.as_mut() {
+                    rec.resize(c, r);
+                }
+            }
+            Some(Event::Mark(v)) => {
+                if exited.is_none()
+                    && let Some(rec) = recorder.as_mut()
+                {
+                    rec.mark(&v);
+                }
+            }
+            Some(Event::Exit(r)) => {
+                if let Some((m, _)) = injector.as_mut() {
+                    m.settle();
+                }
+                let exit = r.unwrap_or(PtyExit {
+                    code: None,
+                    signal: None,
+                });
+                exited = Some((exit, now));
+            }
+            Some(Event::ReaderDone) => {
+                if let Some((exit, _)) = exited {
+                    finish(&mut relay, sink, &mut recorder);
+                    return Ok(TurnResult {
+                        exit_code: exit.node_exit_code(),
+                        timed_out,
+                        tail: decode_tail_text(&tail.snapshot()),
+                    });
+                }
+            }
+            None => {}
+        }
+        if relay_at.is_some_and(|d| now >= d) {
+            let (frame, again) = relay.window_end();
+            if let Some(f) = frame {
+                sink.on_output(&f);
+            }
+            relay_at = again.then_some(now + opts.coalesce_ms);
+        }
+        if let Some((exit, at)) = exited
+            && now >= at + DRAIN_AFTER_EXIT_MS
+        {
+            finish(&mut relay, sink, &mut recorder);
+            return Ok(TurnResult {
+                exit_code: exit.node_exit_code(),
+                timed_out,
+                tail: decode_tail_text(&tail.snapshot()),
+            });
+        }
+        if !timed_out && timeout_at.is_some_and(|d| now >= d) {
+            timed_out = true;
+            // 승격까지 `PtyHandle::kill` 이 갖는다 — 끝내는 길을 하나로(정본 `terminate` 주석).
+            handle.kill(false);
+        }
+        if exited.is_none()
+            && let Some((m, b)) = injector.as_mut()
+        {
+            actions.extend(m.on_tick(now - *b, sink));
+        }
+        for a in actions {
+            match a {
+                Action::Write(b) => handle.write(&b),
+                Action::Injected => sink.on_injected(),
+                Action::Attention(screen, kind) => sink.on_attention(&screen, kind),
+                Action::TurnGate(screen) => sink.on_turn_gate(&screen),
+                Action::Fail(e) => {
+                    handle.kill(true);
+                    // 정본은 여기서 녹화를 닫지 않았다(누락) — 닫는다. 회수는 회수 스레드가 끝까지 한다.
+                    finish(&mut relay, sink, &mut recorder);
+                    return Err(PtyTurnError::NotDelivered(e));
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

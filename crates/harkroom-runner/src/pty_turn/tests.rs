@@ -417,3 +417,125 @@ fn next_deadline_tracks_earliest_timer() {
     m.on_tick(250, &mut h);
     assert_eq!(m.next_deadline(), Some(310));
 }
+
+// ── PTY 루프: 진짜 PTY 에 /bin/sh 로 만든 가짜 TUI 를 띄운다. ──
+
+#[derive(Default)]
+struct Sink {
+    out: Vec<u8>,
+    injected: bool,
+    spawned: Option<super::PtyControls>,
+}
+
+impl PromptHooks for Sink {}
+
+impl PtyTurnSink for Sink {
+    fn on_spawn(&mut self, controls: super::PtyControls) {
+        self.spawned = Some(controls);
+    }
+    fn on_output(&mut self, frame: &[u8]) {
+        self.out.extend_from_slice(frame);
+    }
+    fn on_injected(&mut self) {
+        self.injected = true;
+    }
+}
+
+fn sh(script: &str) -> PtyPlan {
+    PtyPlan {
+        command: "sh".into(),
+        args: vec!["-c".into(), script.into()],
+        env: vec![
+            ("PATH".into(), "/usr/bin:/bin".into()),
+            ("TERM".into(), "xterm-256color".into()),
+        ],
+        stdin_file: None,
+    }
+}
+
+#[test]
+fn loop_injects_into_fake_tui_and_returns_last_frame() {
+    // 입력창을 그리고 한 줄을 받아 되돌려 쓴 뒤 끝나는 TUI.
+    let plan =
+        sh(r#"printf '\342\235\257\302\240'; IFS= read -r line; printf 'GOT[%s]DONE' "$line""#);
+    let mut o = opts("hello world");
+    o.ready_quiet_ms = 50;
+    o.submit_min_ms = 50;
+    let mut sink = Sink::default();
+    let r = run_pty_turn(
+        &plan,
+        PtyTurnOptions {
+            timeout_ms: 10_000,
+            inject: Some(o),
+            ..PtyTurnOptions::default()
+        },
+        &mut sink,
+    )
+    .expect("turn");
+    assert!(sink.injected);
+    assert!(sink.spawned.is_some());
+    assert_eq!(r.exit_code, 0);
+    assert!(!r.timed_out);
+    assert!(r.tail.contains("hello world"), "{:?}", r.tail);
+    assert!(r.tail.contains("DONE"), "{:?}", r.tail);
+    // 합친 출력도 마지막 프레임까지 받았다.
+    assert!(String::from_utf8_lossy(&sink.out).contains("DONE"));
+}
+
+#[test]
+fn loop_timeout_terminates_and_reports_timed_out() {
+    let plan = sh("trap '' TERM; printf up; sleep 30");
+    let mut sink = Sink::default();
+    let t = std::time::Instant::now();
+    let r = run_pty_turn(
+        &plan,
+        PtyTurnOptions {
+            timeout_ms: 300,
+            kill_grace_ms: 300,
+            ..PtyTurnOptions::default()
+        },
+        &mut sink,
+    )
+    .expect("turn");
+    assert!(r.timed_out);
+    assert!(t.elapsed() < std::time::Duration::from_secs(5));
+    assert!(r.tail.contains("up"));
+}
+
+#[test]
+fn loop_fails_undelivered_when_ready_never_shows() {
+    let plan = sh("printf 'booting'; sleep 30");
+    let mut o = opts("x");
+    o.ready_timeout_ms = 300;
+    o.waiting_quiet_ms = 10_000;
+    let mut sink = Sink::default();
+    let t = std::time::Instant::now();
+    match run_pty_turn(
+        &plan,
+        PtyTurnOptions {
+            inject: Some(o),
+            ..PtyTurnOptions::default()
+        },
+        &mut sink,
+    ) {
+        Err(super::PtyTurnError::NotDelivered(e)) => {
+            assert_eq!(e.kind, NotDeliveredKind::Timeout);
+            assert!(e.tail.contains("booting"));
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(!sink.injected);
+    assert!(t.elapsed() < std::time::Duration::from_secs(5));
+}
+
+#[test]
+fn loop_missing_harness_is_not_found() {
+    let mut plan = sh("true");
+    plan.command = "harkroom-no-such-harness".into();
+    let mut sink = Sink::default();
+    assert!(matches!(
+        run_pty_turn(&plan, PtyTurnOptions::default(), &mut sink),
+        Err(super::PtyTurnError::NotFound(_))
+    ));
+    assert!(sink.spawned.is_none());
+}
