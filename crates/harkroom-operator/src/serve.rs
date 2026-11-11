@@ -175,6 +175,20 @@ pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
                 }
                 Err(e) => eprintln!("codex 계정을 배선하지 않는다: {e}"),
             }
+            // 공급자 사용률(s21c3d-3) — 화면 요청과 폴러가 claude 캐시 하나를 함께 쓴다(TS `measureUsage`).
+            let meters = crate::usage_meter::UsageMeters::system();
+            let poller = start_usage_poller(&meters, &home);
+            let signed_in_poller = poller.clone();
+            state.set_usage_meters(
+                meters,
+                // TS `void usagePoller?.forget(dir)` — 한 회차(CLI 45초까지)를 로그인 스레드가 기다리지 않게 따로 돈다.
+                Some(Box::new(move |dir: &std::path::Path| {
+                    if let Some(p) = signed_in_poller.clone() {
+                        let dir = dir.to_path_buf();
+                        std::thread::spawn(move || p.forget(&dir));
+                    }
+                })),
+            );
             state.set_local_merge(LocalMerge::new(
                 LocalAgents::new(&root, base_url),
                 default_gh_path(),
@@ -194,6 +208,9 @@ pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
                 json!({"ok": true, "listening": paths.socket_path, "root": root, "pid": identity.pid})
             );
             accept_loop(state, listener);
+            if let Some(p) = &poller {
+                p.stop();
+            }
             (String::new(), 0)
         }
         Ok(ClaimOutcome::Occupied { paths }) => (
@@ -209,6 +226,46 @@ pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
 /// 러너로 가는 프레임은 릴레이 다중화기로 넘기고(s21b-2), 나머지는 종류만 stderr 에 적는다(assign·unassign 처리는 s21c).
 /// 러너 링크도 여기서 배선한다 — 토큰이 없으면 러너 요청을 넘길 곳이 없으므로 러너 hello 는 앱 hello 로 검사돼 거절된다.
 /// 하네스 능력은 hello 마다 새로 잰다 — 사람이 그 사이 claude 를 설치·로그인했을 수 있다(TS community.ts).
+/// 사용량 폴러(TS run.ts `createClaudeUsagePoller` — 커뮤니티 서버에 붙은 오퍼레이터만). 이 오퍼레이터는 늘 커뮤니티에 붙는다.
+/// 계정 뿌리·`pools.json` 자리를 못 정하면 띄우지 않는다. 커뮤니티마다 프로세스 모드면 `usage.json` 을 여럿이 함께 쓴다.
+fn start_usage_poller(
+    meters: &crate::usage_meter::UsageMeters,
+    home: &str,
+) -> Option<crate::claude_usage_poller::ClaudeUsagePoller> {
+    use crate::claude_usage_poller::{ClaudeUsagePoller, PollerOpts, read_sign_in_key};
+    let env = |k: &str| std::env::var(k).ok();
+    let root = crate::claude_accounts::claude_accounts_root(env, home);
+    let pools_path = match crate::claude_accounts::pools_file_path(&root, env) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("사용량 폴러를 띄우지 않는다: {e}");
+            return None;
+        }
+    };
+    let m = meters.clone();
+    let poller = ClaudeUsagePoller::new(PollerOpts {
+        root,
+        pools_path,
+        measure: Box::new(move |dir| m.poller_measure(dir)),
+        read_sign_in: Box::new(read_sign_in_key),
+        now: Box::new(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as f64)
+                .unwrap_or(0.0)
+        }),
+        log: Some(Box::new(|line: &str| eprintln!("{line}"))),
+        shared_file: env("HARKROOM_OPERATOR_PER_COMMUNITY").as_deref() == Some("1"),
+    });
+    match poller.start() {
+        Ok(_) => Some(poller),
+        Err(e) => {
+            eprintln!("사용량 폴러 기동 실패: {e}");
+            None
+        }
+    }
+}
+
 pub fn spawn_server_link(
     state: std::sync::Arc<ServerState>,
     local: LocalAgents,

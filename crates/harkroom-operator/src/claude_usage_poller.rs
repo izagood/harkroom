@@ -454,16 +454,25 @@ impl ClaudeUsagePoller {
         let due_now: Vec<&(String, String, PathBuf)> =
             targets.iter().filter(|t| due(st.get(&t.2), at)).collect();
         if !due_now.is_empty() {
-            let measured: Vec<(PathBuf, AccountState)> = std::thread::scope(|s| {
-                let hs: Vec<_> = due_now
-                    .iter()
-                    .map(|(pool, name, dir)| {
-                        let prev = st.get(dir);
-                        s.spawn(move || (dir.clone(), self.measure_one(prev, pool, name, dir, at)))
-                    })
-                    .collect();
-                hs.into_iter().filter_map(|h| h.join().ok()).collect()
-            });
+            // 동시에 재는 계정은 `MAX_PARALLEL`(4) 개까지 — 계정이 많아도 CLI 를 한꺼번에 띄우지 않는다(security c3d-4 메모).
+            let mut measured: Vec<(PathBuf, AccountState)> = Vec::with_capacity(due_now.len());
+            for chunk in due_now.chunks(crate::usage_meter::MAX_PARALLEL) {
+                let st = &*st;
+                measured.extend(std::thread::scope(|s| {
+                    let hs: Vec<_> = chunk
+                        .iter()
+                        .map(|(pool, name, dir)| {
+                            let prev = st.get(dir);
+                            s.spawn(move || {
+                                (dir.clone(), self.measure_one(prev, pool, name, dir, at))
+                            })
+                        })
+                        .collect();
+                    hs.into_iter()
+                        .filter_map(|h| h.join().ok())
+                        .collect::<Vec<_>>()
+                }));
+            }
             for (d, s) in measured {
                 st.set(d, s);
             }
