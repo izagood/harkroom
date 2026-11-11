@@ -61,6 +61,7 @@ pub mod turn_pr_status;
 pub mod turn_secrets;
 pub mod turn_slots;
 pub mod turn_uploads;
+pub mod usage_meter;
 pub mod wipe;
 pub mod ws_dialer;
 

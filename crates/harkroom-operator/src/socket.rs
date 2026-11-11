@@ -272,6 +272,8 @@ pub struct ServerState {
     codex_accounts: OnceLock<CodexAccounts>,
     /// codex 로그인(s21c3c-2). 계정이 배선될 때 같이 선다.
     codex_logins: OnceLock<CodexLogins>,
+    /// 공급자 사용률 측정기(s21c3d-3). 없으면 `*ProviderUsage` 요청은 거절된다. 폴러와 캐시를 함께 쓴다.
+    usage_meters: OnceLock<crate::usage_meter::UsageMeters>,
     /// 로컬 에이전트 설정이 바뀌었다(TS `localAgents.ts` 의 `onChanged`) — 서버 링크가 능력을 다시 낸다. 링크가 없으면 비어 있다.
     on_agents_changed: OnceLock<Box<dyn Fn() + Send + Sync>>,
     /// 러너 링크(s21b-1). 첫 줄이 `hello{role:'runner'}` 인 접속을 넘겨받는다. 없으면 그 hello 는 앱 hello 로 검사돼 거절된다.
@@ -313,6 +315,7 @@ impl ServerState {
                 claude_accounts: OnceLock::new(),
                 claude_logins: OnceLock::new(),
                 codex_accounts: OnceLock::new(),
+                usage_meters: OnceLock::new(),
                 codex_logins: OnceLock::new(),
                 on_agents_changed: OnceLock::new(),
                 runner_link: OnceLock::new(),
@@ -399,6 +402,70 @@ impl ServerState {
             }
         }));
         let _ = self.claude_logins.set(logins);
+    }
+
+    /// 사용률 측정기를 배선한다(한 번만). 로그인이 성공하면 그 계정의 캐시를 잊는다(TS `onSignedIn`·codex `usageCache.forget`).
+    /// `on_claude_signed_in` 은 그 뒤에 부른다 — 폴러가 그 계정을 다음 tick 에 바로 다시 재게 한다(TS run.ts).
+    pub fn set_usage_meters(
+        &self,
+        meters: crate::usage_meter::UsageMeters,
+        on_claude_signed_in: Option<crate::claude_login::SignedIn>,
+    ) {
+        if let Some(l) = self.claude_logins.get() {
+            let c = meters.claude_cache.clone();
+            l.set_on_signed_in(Box::new(move |dir| {
+                c.forget(&dir.to_string_lossy());
+                if let Some(f) = &on_claude_signed_in {
+                    f(dir);
+                }
+            }));
+        }
+        if let Some(l) = self.codex_logins.get() {
+            let c = meters.codex_cache.clone();
+            l.set_on_signed_in(Box::new(move |home| c.forget(&home.to_string_lossy())));
+        }
+        let _ = self.usage_meters.set(meters);
+    }
+
+    /// 사용률 요청을 검사하고 잴 일을 돌려준다(TS `server.ts` 의 같은 칸). 잰 결과만 싣는다 — 토큰·URL 은 싣지 않는다.
+    /// 검사(배선·payload)는 지금, 측정은 돌려준 함수가 한다 — 접속 스레드 밖에서 돌리려고 갈랐다.
+    pub fn usage_job(
+        &self,
+        ty: &str,
+        payload: Option<&Value>,
+    ) -> Result<Box<dyn FnOnce() -> Value + Send>, DaemonError> {
+        match ty {
+            "claudeAccountsProviderUsage" => {
+                let port = self.accounts()?;
+                let meters = self.usage_meters()?.clone();
+                let req = crate::usage_meter::read_usage_request(payload).map_err(bad)?;
+                let (root, pools) = (port.root().to_path_buf(), port.pools_path().to_path_buf());
+                Ok(Box::new(move || {
+                    let layout = claude_accounts::read_layout(&root, &pools);
+                    meters.claude_snapshot(&layout, &req)
+                }))
+            }
+            "codexAccountsProviderUsage" => {
+                let port = self.codex()?;
+                let meters = self.usage_meters()?.clone();
+                let req = crate::usage_meter::read_usage_request(payload).map_err(bad)?;
+                let (sys, root) = (port.system_home().to_path_buf(), port.root().to_path_buf());
+                Ok(Box::new(move || meters.codex_snapshot(&sys, &root, &req)))
+            }
+            other => Err(err(
+                DaemonErrorCode::Internal,
+                format!("사용률 요청이 아니다: {other}"),
+            )),
+        }
+    }
+
+    fn usage_meters(&self) -> Result<&crate::usage_meter::UsageMeters, DaemonError> {
+        self.usage_meters.get().ok_or_else(|| {
+            err(
+                DaemonErrorCode::NoSuchRunner,
+                "이 daemon 에는 사용률 측정기가 배선되지 않았다",
+            )
+        })
     }
 
     /// 진행 중인 로그인을 전부 회수한다(TS run.ts 종료 경로의 `shutdownLogins`).
@@ -702,6 +769,13 @@ impl ServerState {
                 let port = self.accounts()?;
                 let (pool, account) = claude_accounts::read_account_ref(payload).map_err(bad)?;
                 port.remove_account(&pool, &account).map_err(bad)?;
+                // TS `usageCache.forget(dir)` — 같은 이름으로 다시 만든 계정이 지난 값을 물려받지 않게.
+                if let (Some(m), Ok(dir)) = (
+                    self.usage_meters.get(),
+                    claude_accounts::under(port.root(), &[&pool, &account]),
+                ) {
+                    m.claude_cache.forget(&dir.to_string_lossy());
+                }
                 eprintln!("계정 삭제: {pool}/{account}");
                 Ok(json!({}))
             }
@@ -709,6 +783,13 @@ impl ServerState {
                 let port = self.accounts()?;
                 let pool = claude_accounts::read_pool_ref(payload).map_err(bad)?;
                 port.remove_pool(&pool).map_err(bad)?;
+                // TS `usageCache.forgetUnder(dir)`.
+                if let (Some(m), Ok(dir)) = (
+                    self.usage_meters.get(),
+                    claude_accounts::under(port.root(), &[&pool]),
+                ) {
+                    m.claude_cache.forget_under(&dir);
+                }
                 eprintln!("풀 삭제: {pool}");
                 Ok(json!({}))
             }
@@ -722,6 +803,11 @@ impl ServerState {
                     result["loggedIn"]
                 );
                 Ok(result)
+            }
+            // ── 공급자 사용률(s21c3d-3, TS `server.ts` 의 같은 칸). 잰 결과만 돌려준다 — 토큰·URL 은 싣지 않는다.
+            // ── 공급자 사용률(s21c3d-3) — 소켓에서는 `usage_job` 으로 따로 돈다. 여기는 같은 결과를 곧바로 낸다.
+            "claudeAccountsProviderUsage" | "codexAccountsProviderUsage" => {
+                Ok(self.usage_job(ty, payload)?())
             }
             // ── codex 계정(s21c3c) — 로그에는 계정 이름만 적는다(이메일은 사람의 로컬 사실이다).
             "codexAccountsList" => Ok(self.codex()?.list()),
@@ -743,6 +829,12 @@ impl ServerState {
                 let port = self.codex()?;
                 let account = codex_accounts::read_account_ref(payload).map_err(bad)?;
                 port.remove_account(&account).map_err(bad)?;
+                if let (Some(m), Ok(dir)) = (
+                    self.usage_meters.get(),
+                    codex_accounts::under(port.root(), &account),
+                ) {
+                    m.codex_cache.forget(&dir.to_string_lossy());
+                }
                 eprintln!("codex 계정 삭제: {account}");
                 Ok(json!({}))
             }
@@ -896,6 +988,21 @@ fn serve_connection_in(state: &ServerState, mut stream: UnixStream, slot: Option
                 },
                 Decoded::Ok(v) => match parse_request(&v) {
                     Err(e) => error_response(read_id(&v), &e),
+                    // 사용률 요청은 처음 재거나 `force` 면 CLI 를 기다린다(45초까지) — 이 접속의 다른 요청을 막지 않게 따로 돈다
+                    // (TS 는 await 사이에 다른 요청을 받는다). 답은 같은 writer 로 id 를 달아 쓴다.
+                    Ok((id, ty, payload)) if is_slow_request(&ty) => {
+                        match state.usage_job(&ty, payload.as_ref()) {
+                            Err(e) => error_response(Some(id), &e),
+                            Ok(job) => {
+                                let w = Arc::clone(&writer);
+                                std::thread::spawn(move || {
+                                    let reply = json!({ "id": id, "ok": true, "payload": job() });
+                                    let _ = write_value(&w, &reply);
+                                });
+                                continue;
+                            }
+                        }
+                    }
                     Ok((id, ty, payload)) => match state.dispatch(&ty, payload.as_ref()) {
                         Ok(p) => json!({ "id": id, "ok": true, "payload": p }),
                         Err(e) => error_response(Some(id), &e),
@@ -907,6 +1014,14 @@ fn serve_connection_in(state: &ServerState, mut stream: UnixStream, slot: Option
             }
         }
     }
+}
+
+/// 접속 스레드 밖에서 처리할 요청 — 공급자 사용률(s21c3d-3).
+fn is_slow_request(ty: &str) -> bool {
+    matches!(
+        ty,
+        "claudeAccountsProviderUsage" | "codexAccountsProviderUsage"
+    )
 }
 
 fn write_value(writer: &Writer, v: &Value) -> std::io::Result<()> {

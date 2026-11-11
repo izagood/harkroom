@@ -318,3 +318,30 @@ fn codex_fetch_account_header_only_when_present() {
         Some("no-credentials")
     );
 }
+
+/// 3xx 는 따라가지 않고 `http-3xx` 다 — Authorization 이 Location 으로 실려 가지 않는다(security c3d-3).
+#[test]
+fn ureq_does_not_follow_redirects() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let (mut s, _) = listener.accept().unwrap();
+        let mut buf = [0u8; 2048];
+        let _ = s.read(&mut buf);
+        let _ = s.write_all(
+            b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:1/steal\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        );
+        // 두 번째 접속(리다이렉트를 따라온 것)은 없어야 한다.
+        listener.set_nonblocking(true).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        listener.accept().is_err()
+    });
+    let r = UreqUsageHttp::default().get_json(
+        &format!("http://127.0.0.1:{port}/usage"),
+        &[("Authorization", "Bearer t")],
+    );
+    assert!(matches!(r, Err(FetchError::Status(302))), "{r:?}");
+    assert_eq!(error_label(FetchError::Status(302)), "http-302");
+    assert!(server.join().unwrap());
+}
