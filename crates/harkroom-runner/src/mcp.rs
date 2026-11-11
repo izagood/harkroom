@@ -102,7 +102,7 @@ impl<L: RunnerLink> HarkroomMcpClient<L> {
 
     /// 서버 재시작·절단 뒤 다음 호출이 다시 `initialize` 하도록 버린다(정본 `reset()`).
     pub fn reset(&self) {
-        *self.initialized.lock().unwrap() = false;
+        *self.initialized.lock().unwrap_or_else(|p| p.into_inner()) = false;
     }
 
     /// JSON-RPC 메시지 한 개를 링크로 보낸다. 링크·서버의 HTTP 거절은 `status` 를 싣는다(정본 `tagTransportError`) —
@@ -140,7 +140,7 @@ impl<L: RunnerLink> HarkroomMcpClient<L> {
     }
 
     fn ensure_initialized(&self) -> Result<(), HarkroomError> {
-        let mut ready = self.initialized.lock().unwrap();
+        let mut ready = self.initialized.lock().unwrap_or_else(|p| p.into_inner());
         if *ready {
             return Ok(());
         }
