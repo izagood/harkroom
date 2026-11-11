@@ -58,9 +58,18 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha }}
         # --redact 는 비밀 값만 가린다. --verbose 는 커밋 author 메일까지 찍으므로 쓰지 않고,
         # JSON 보고서에서 파일·줄·규칙만 꺼내 찍는다(로그도 공개다).
+        # 검사 설정(`.gitleaks.toml`)과 무시 목록(`.gitleaksignore`)은 **base 의 것**만 쓴다. 체크아웃한 PR head 의
+        # 파일을 읽으면 PR 이 자기 브랜치에서 그 파일을 고쳐 자기 검사를 스스로 느슨하게 할 수 있다(security F1).
+        # base 에 없으면 기본 규칙·빈 무시 목록이다. 그래서 그 두 파일을 바꾸는 PR 은 머지된 **다음** PR 부터 효력이 난다.
         run: |
+          cfg="$RUNNER_TEMP/gitleaks-base.toml"
+          ign="$RUNNER_TEMP/gitleaks-base-ignore"
+          mkdir -p "$ign"
+          git show "$BASE:.gitleaks.toml" > "$cfg" 2>/dev/null || printf '[extend]\nuseDefault = true\n' > "$cfg"
+          git show "$BASE:.gitleaksignore" > "$ign/.gitleaksignore" 2>/dev/null || : > "$ign/.gitleaksignore"
           set +e
           "$RUNNER_TEMP/gitleaks" git --no-banner --redact --log-opts="$BASE..$HEAD" \
+            --config "$cfg" --gitleaks-ignore-path "$ign" \
             --report-format json --report-path "$RUNNER_TEMP/gitleaks.json" .
           rc=$?
           set -e
@@ -68,6 +77,22 @@ jobs:
             jq -r '.[] | "::error file=\(.File),line=\(.StartLine)::gitleaks \(.RuleID) (커밋 \(.Commit[0:9]))"' "$RUNNER_TEMP/gitleaks.json"
           fi
           exit "$rc"
+      - name: no inline scan skips in added lines
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        # 줄 끝 주석 하나로 그 줄을 비밀 검사에서 빼는 길이 있다. 그래서 PR 의 **커밋마다** 더한 줄에 그 표식이 있으면
+        # 여기서 막는다 — 최종 diff 만 보면, 앞 커밋에서 더하고 뒤 커밋에서 지운 줄이 빠진다(gitleaks 는 커밋마다 훑는다).
+        # merge 커밋에서만 생긴 줄도 보이게 첫 부모 기준 diff 를 함께 본다(main 을 merge 로 들인 내용도 「더한 줄」로
+        # 보이지만, main 에는 이 표식이 없고 이 단계가 새로 들어오는 것을 막으므로 헛걸림은 없다).
+        # 꼭 필요하면 위의 base 설정 파일(security 검토)로 좁게 허용한다.
+        # 정규식은 `[:]` 로 써서 이 파일 자신이 걸리지 않게 했다.
+        run: |
+          hits=$(git log -p --diff-merges=first-parent --format= "$BASE..$HEAD" | grep -nE '^\+.*gitleaks[:]allow' || true)
+          if [ -n "$hits" ]; then
+            echo "::error::PR 이 더한 줄에 비밀 검사 건너뛰기 표식이 있다 — 지우고, 꼭 필요하면 .gitleaks.toml 로 좁게 허용한다(security 검토)"
+            exit 1
+          fi
 
   pr-body:
     runs-on: ubuntu-latest
