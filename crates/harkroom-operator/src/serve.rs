@@ -178,6 +178,7 @@ pub fn spawn_server_link(
     let merge_cfg = local.clone();
     // 배정 조정기가 쓸 몫(s21c-1b-2b) — 같은 이유로 먼저 떼어 둔다.
     let assign_cfg = local.clone();
+    let assign_cfg_adopt = local.clone();
     let assign_login_path = login_path.clone();
     let secrets_dir = secrets_root.to_string_lossy().into_owned();
     let merge_home = home.clone();
@@ -243,6 +244,7 @@ pub fn spawn_server_link(
         },
     );
     state.set_runner_link(std::sync::Arc::clone(&bridge.runner_link));
+    let bridge_link_adopt = std::sync::Arc::clone(&bridge.runner_link);
     let mux = bridge.mux;
     // 배정 조정기(s21c-1b-2b, TS communities.ts runnerDeps·community.ts onFrame).
     let frames = {
@@ -316,6 +318,59 @@ pub fn spawn_server_link(
             });
             frames.on_runner_exit(&exit.agent_id, exit.code, None);
         }));
+    }
+    // 고아 채택(s21c-2b-3, TS run.ts adoptOrphans) — 종료 통지를 건 뒤, 서버 hello 전에 한다(hello 가 채택한 러너를 알린다).
+    // 채택한 러너는 내 자식이 아니라 종료를 `kill(pid, 0)` 2초 폴링으로 묻는다(TS ADOPTED_POLL_MS).
+    {
+        use crate::runner_ledger::{
+            legacy_runner_ledger_path, read_runner_ledger, runner_ledger_path,
+        };
+        struct Ports<'a> {
+            local: &'a LocalAgents,
+            runners: &'a crate::runners::RunnerTable,
+            link: &'a crate::runner_link::RunnerLinkServer,
+        }
+        impl crate::adopt::AdoptPorts for Ports<'_> {
+            fn is_local(&self, agent_id: &str) -> bool {
+                self.local.agent_entry(agent_id).is_some()
+            }
+            fn adopt(&self, e: &crate::runner_ledger::RunnerLedgerEntry) -> bool {
+                self.runners.adopt_runner(e).is_some()
+            }
+            fn retire(&self, e: &crate::runner_ledger::RunnerLedgerEntry) {
+                crate::runners::signal_sent(e.pid, libc::SIGTERM);
+            }
+            fn link_expect(&self, runner_id: &str, agent_id: &str, secret: &str) {
+                self.link.expect(runner_id, agent_id, secret);
+            }
+        }
+        let (adopted, rejected) = crate::adopt::adopt_orphans(
+            read_runner_ledger(&runner_ledger_path(root)),
+            read_runner_ledger(&legacy_runner_ledger_path(root)),
+            &crate::adopt::PsProbe,
+            version.as_deref(),
+            &Ports {
+                local: &assign_cfg_adopt,
+                runners: &state.runners,
+                link: &bridge_link_adopt,
+            },
+        );
+        // 후보가 0건이어도 적는다 — 「장부를 봤는데 없었다」와 「안 봤다」를 가른다(TS #456 ②).
+        eprintln!(
+            "고아 채택: {}건 채택, {}건 거절",
+            adopted.len(),
+            rejected.len()
+        );
+        for line in &rejected {
+            eprintln!("  {line}");
+        }
+        let poll_runners = std::sync::Arc::clone(&state.runners);
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(Duration::from_secs(2));
+                poll_runners.poll_adopted();
+            }
+        });
     }
     let runners_state = state.clone();
     let hello_mux = std::sync::Arc::clone(&mux);
