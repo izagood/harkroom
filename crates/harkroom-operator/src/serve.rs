@@ -92,6 +92,16 @@ pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
             token,
         }) => {
             state.set_token(token);
+            // 러너 장부(s21c-2b-2) — 자리는 `<appDataDir>/operator/runners-v1.json`. Rust 의 appDataDir 은 커뮤니티 뿌리다
+            // (TS `appDataDirFromSocket` = 소켓 두 단계 위 = 같은 폴더). 소켓을 쥔 뒤에 건다 — writer 는 이 오퍼레이터 하나다.
+            state.runners.set_ledger(crate::runners::LedgerBinding {
+                writer: crate::runner_ledger::RunnerLedgerWriter::new(
+                    std::path::PathBuf::from(&root),
+                    Box::new(|line: &str| eprintln!("{line}")),
+                ),
+                nonce: identity.launch_nonce.clone(),
+                app_version: flag(args, "--app-version").map(str::to_string),
+            });
             state.set_local_agents(LocalAgents::new(&root, base_url));
             state.set_local_mcp(LocalMcp::new(
                 &root,
