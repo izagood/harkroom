@@ -1,4 +1,4 @@
-//! `harkroom-operator-rs` — `merge`(A1)와 `serve`(A2, 앱 소켓 서버)만 한다. 나머지는 TS 오퍼레이터가 맡는다.
+//! `harkroom-operator-rs` — `merge`(A1)·`serve`(A2, 앱 소켓 서버)·`mcp-bridge`(s21b-2b)만 한다. 나머지는 TS 오퍼레이터가 맡는다.
 use harkroom_operator::merge::{LinkEnv, REQUEST_TIMEOUT, merge_main};
 
 fn main() {
@@ -13,6 +13,9 @@ fn main() {
             println!("{line}");
             std::process::exit(exit);
         }
+        Some("mcp-bridge") => {
+            std::process::exit(harkroom_operator::mcp_bridge::mcp_bridge_main());
+        }
         Some("serve") => {
             let (line, exit) =
                 harkroom_operator::serve::serve_main(&args[1..], std::env::var("HOME").ok());
@@ -21,7 +24,7 @@ fn main() {
         }
         other => {
             eprintln!(
-                "harkroom-operator-rs: {} is not implemented yet (only `merge` and `serve`)",
+                "harkroom-operator-rs: {} is not implemented yet (only `merge`, `mcp-bridge` and `serve`)",
                 other.unwrap_or("(none)")
             );
             std::process::exit(2);
