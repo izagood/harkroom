@@ -155,3 +155,53 @@ fn marker_lines_match_shared_ts() {
         assert!(src.contains(&format!("'{m}'")), "shared 와 갈렸다: {m}");
     }
 }
+
+#[test]
+fn new_operator_dir_is_0700_and_symlinked_dir_is_refused() {
+    let d = tmp();
+    open_runner_log(&d, "a1", RUNNER_LOG_MAX_BYTES, &|_| {}).unwrap();
+    let mode = std::fs::metadata(d.join("operator"))
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o700);
+
+    let d2 = tmp();
+    let elsewhere = tmp();
+    std::os::unix::fs::symlink(&elsewhere, d2.join("operator")).unwrap();
+    assert!(open_runner_log(&d2, "a1", RUNNER_LOG_MAX_BYTES, &|_| {}).is_none());
+    assert!(!elsewhere.join("runner-a1.log").exists());
+}
+
+#[test]
+fn symlinked_log_is_not_followed_for_open_rotate_or_tail() {
+    let d = tmp();
+    std::fs::create_dir_all(d.join("operator")).unwrap();
+    let target = d.join("victim.txt");
+    std::fs::write(&target, "keep\n".repeat(10)).unwrap();
+    let path = runner_log_path(&d, "a1");
+    std::os::unix::fs::symlink(&target, &path).unwrap();
+    let reasons = std::cell::RefCell::new(Vec::new());
+    // 상한 1바이트 — 링크를 따라갔다면 대상을 밀었을 것이다.
+    assert!(open_runner_log(&d, "a1", 1, &|m| reasons.borrow_mut().push(m.to_string())).is_none());
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        "keep\n".repeat(10)
+    );
+    assert!(reasons.borrow().iter().any(|m| m.contains("열지 못했다")));
+    assert!(read_runner_log_tail(&path, 5).is_empty());
+}
+
+#[test]
+fn fifo_or_dir_at_log_path_is_refused_without_blocking() {
+    let d = tmp();
+    std::fs::create_dir_all(runner_log_path(&d, "a1")).unwrap();
+    assert!(open_runner_log(&d, "a1", RUNNER_LOG_MAX_BYTES, &|_| {}).is_none());
+    let fifo = runner_log_path(&d, "a2");
+    let c = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+    // SAFETY: 경로 문자열만 넘긴다.
+    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+    assert!(open_runner_log(&d, "a2", RUNNER_LOG_MAX_BYTES, &|_| {}).is_none());
+    assert!(read_runner_log_tail(&fifo, 5).is_empty());
+}

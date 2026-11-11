@@ -10,7 +10,7 @@
 //! - 오퍼레이터는 꼬리를 해석하지 않는다 — 사유 판정(`runner_exit_reason`)은 shared `runnerExitReason` 과 같은 규칙 한 곳.
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom};
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
 /// TS `RUNNER_LOG_MAX_BYTES`.
@@ -63,14 +63,21 @@ pub fn open_runner_log(
     log: &dyn Fn(&str),
 ) -> Option<(File, PathBuf)> {
     let path = runner_log_path(app_data_dir, agent_id);
-    let opened = std::fs::create_dir_all(app_data_dir.join("operator")).and_then(|()| {
-        rotate_if_large(&path, max_bytes, log);
-        OpenOptions::new()
-            .append(true)
-            .create(true)
-            .mode(0o600)
-            .open(&path)
-    });
+    // 폴더는 만들 때 0700, 심링크·폴더 아닌 것이면 거절. 파일은 마지막 칸 심링크를 따라가지 않고(O_NOFOLLOW)
+    // 일반 파일일 때만 쓴다 — 같은 사용자의 다른 프로세스가 심어 둔 링크로 남의 파일에 러너 출력을 덧붙이지 않게(security 낮음).
+    let dir = app_data_dir.join("operator");
+    let opened = std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&dir)
+        .and_then(|()| crate::hook_run::plain_dir(&dir))
+        .and_then(|()| {
+            rotate_if_large(&path, max_bytes, log);
+            crate::hook_run::open_nofollow(
+                &path,
+                OpenOptions::new().append(true).create(true).mode(0o600),
+            )
+        });
     match opened {
         Ok(f) => Some((f, path)),
         Err(e) => {
@@ -84,9 +91,12 @@ pub fn open_runner_log(
 }
 
 fn rotate_if_large(path: &Path, max_bytes: u64, log: &dyn Fn(&str)) {
-    let Ok(meta) = std::fs::metadata(path) else {
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
         return; // 아직 없다 — 첫 기동.
     };
+    if !meta.is_file() {
+        return; // 심링크·폴더·FIFO 는 밀지 않는다 — 여는 쪽(O_NOFOLLOW·일반 파일 확인)이 거절한다.
+    }
     let size = meta.len();
     if size <= max_bytes {
         return;
@@ -108,7 +118,7 @@ fn rotate_if_large(path: &Path, max_bytes: u64, log: &dyn Fn(&str)) {
 /// TS `readRunnerLogTail` — 마지막 `max_lines` 줄을 그대로. 못 읽으면 빈 배열.
 pub fn read_runner_log_tail(path: &Path, max_lines: usize) -> Vec<String> {
     let read = || -> std::io::Result<Vec<String>> {
-        let mut f = File::open(path)?;
+        let mut f = crate::hook_run::open_nofollow(path, OpenOptions::new().read(true))?;
         let size = f.metadata()?.len();
         let start = size.saturating_sub(RUNNER_TAIL_READ_BYTES);
         if size == start {
