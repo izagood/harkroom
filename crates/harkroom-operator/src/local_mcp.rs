@@ -572,6 +572,16 @@ impl LocalMcp {
         &self.registry_path
     }
 
+    /// 읽기만 하는 claude 설정(`~/.claude.json`).
+    pub fn claude_config_path(&self) -> Option<&Path> {
+        self.claude_config_path.as_deref()
+    }
+
+    /// OAuth 토큰 저장소 — 배정 조정기의 `tokens_for` 가 같은 것을 쓴다(refresh 가 한 곳에서 일어나게).
+    pub fn oauth(&self) -> Arc<McpOAuth> {
+        Arc::clone(&self.oauth)
+    }
+
     fn read_table(&self) -> Result<Map<String, Value>, DaemonError> {
         Ok(read_object(&self.registry_path, "mcp-servers.json")?.unwrap_or_default())
     }
