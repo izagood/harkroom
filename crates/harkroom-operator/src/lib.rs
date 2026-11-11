@@ -37,6 +37,7 @@ pub mod tool_rules;
 pub mod turn_command;
 pub mod turn_keys;
 pub mod turn_leases;
+pub mod turn_merge;
 pub mod turn_peek;
 pub mod turn_secrets;
 pub mod turn_slots;
