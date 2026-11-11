@@ -203,18 +203,23 @@ describe('스레드 상태 리액션', () => {
     const presence = { online: () => [botId, bot2Id] } as unknown as Parameters<typeof startThreadStatusWatcher>[1];
     const w = startThreadStatusWatcher(pool, presence, { debounceMs: 0 });
     try {
+      // ✅(끝남)으로 잰다 — 💬(도는 중)는 presence 에 기대어, 앱이 띄운 기본 watcher(봇이 오프라인인 진짜 presence)가
+      // 같은 이벤트에 🚨 로 맞받아 써서 느린 CI 에서 흔들렸다. 끝남은 presence 와 무관해 두 watcher 가 같은 답을 낸다.
       const id = await seed(adminId, '부탁');
-      await seed(botId, '시작', { root: id, kind: 'progress' });
+      await seed(botId, '끝', { root: id });
       await refreshThreadStatus(pool, id, live());
-      await addReaction(pool, { channelId, messageId: id, accountId: botId, emoji: '💬' });
-      expect(await removeReaction(pool, { messageId: id, accountId: botId, emoji: '💬' })).toBe('removed');
+      await addReaction(pool, { channelId, messageId: id, accountId: botId, emoji: '✅' });
+      expect(await removeReaction(pool, { messageId: id, accountId: botId, emoji: '✅' })).toBe('removed');
       const src = async () => (await pool.query(`select emoji, source from message_reaction where message_id = $1`, [id])).rows;
       // 시험의 이빨: 떼기 직후에는 비어 있다 — 판정이 다시 돌아야 돌아온다.
       expect(await src()).toEqual([]);
-      emitEvent({ type: 'reaction.removed', channelId, messageId: id, emoji: '💬', accountId: botId, audience: 'all' });
+      emitEvent({ type: 'reaction.removed', channelId, messageId: id, emoji: '✅', accountId: botId, audience: 'all' });
       await new Promise((r) => setTimeout(r, 10));
       await w.flush();
-      expect(await src()).toEqual([{ emoji: '💬', source: 'status' }]);
+      expect(await src()).toEqual([{ emoji: '✅', source: 'status' }]);
+      // 앱 기본 watcher(300ms 미룸)가 뒤늦게 돌아도 같은 답이다 — 흔들림의 회귀선.
+      await new Promise((r) => setTimeout(r, 700));
+      expect(await src()).toEqual([{ emoji: '✅', source: 'status' }]);
     } finally { w.stop(); }
   });
 
