@@ -167,6 +167,17 @@ impl LinkHandler {
         path: &str,
         body: String,
     ) -> Result<(u16, String), String> {
+        self.server_post_bytes(agent_id, path, "application/json", body.into_bytes())
+    }
+
+    /// 에이전트 자격으로 이 커뮤니티 서버에 POST(오퍼레이터 자체 요청 — 러너 REST 허용 목록을 거치지 않는다).
+    fn server_post_bytes(
+        &self,
+        agent_id: &str,
+        path: &str,
+        content_type: &str,
+        body: Vec<u8>,
+    ) -> Result<(u16, String), String> {
         let url = format!("{}{}", self.base_url.trim_end_matches('/'), path);
         let headers = vec![
             (
@@ -177,11 +188,9 @@ impl LinkHandler {
                 crate::forward::AGENT_HEADER.to_string(),
                 agent_id.to_string(),
             ),
-            ("content-type".to_string(), "application/json".to_string()),
+            ("content-type".to_string(), content_type.to_string()),
         ];
-        let r = self
-            .transport
-            .send("POST", &url, &headers, Some(body.into_bytes()))?;
+        let r = self.transport.send("POST", &url, &headers, Some(body))?;
         Ok((r.status, r.body))
     }
 
@@ -288,6 +297,18 @@ impl RunnerLinkHandler for LinkHandler {
             CommandStep::Pass(r) => r,
         };
         if let Some(r) = lock(&self.slots).maybe_handle(runner_id, &req, kind) {
+            return Some(r);
+        }
+        // `attachment.upload`(TS turnUploads — run.ts 가로채기의 맨 끝). 경로 판정·읽기·`/uploads` 올리기는 오퍼레이터가 한다.
+        let upload = |p: &str, ct: &str, b: Vec<u8>| self.server_post_bytes(agent_id, p, ct, b);
+        if let Some(r) = crate::turn_uploads::maybe_handle(
+            agent_id,
+            &req,
+            crate::turn_uploads::UPLOAD_MAX_BYTES,
+            &upload,
+            &|| crate::runners::new_incarnation_id().unwrap_or_else(|_| "0".into()),
+            &|l| eprintln!("{l}"),
+        ) {
             return Some(r);
         }
         Some(self.forward_to_server(agent_id, req, kind))

@@ -38,6 +38,7 @@ pub mod turn_keys;
 pub mod turn_leases;
 pub mod turn_peek;
 pub mod turn_slots;
+pub mod turn_uploads;
 pub mod ws_dialer;
 
 /// 시험 전용: 러너 시험의 fork 와, 소켓을 bind 했다 닫아 「잔해」를 만드는 시험이 겹치지 않게 한다.
