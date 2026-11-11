@@ -4,7 +4,7 @@
 // 한쪽이 죽지 않는다.
 import { describe, it, expect } from 'vitest';
 import { OPERATOR_PROTOCOL_VERSION } from '../src/operatorEndpoint.js';
-import { isMachineDigest, parseOperatorFrame, parseOperatorStatus, parseServerFrame, parseUpgradeProgress } from '../src/operatorProtocol.js';
+import { isMachineDigest, parseOperatorFrame, parseOperatorStatus, parseServerFrame, parseAssignSynced, parseUpgradeProgress } from '../src/operatorProtocol.js';
 
 describe('operatorProtocol', () => {
   it('프로토콜 버전은 1 이다', () => {
@@ -44,6 +44,18 @@ describe('operatorProtocol', () => {
     expect(parseServerFrame(JSON.stringify({ type: 'assign', agentId: 'a', definition: {} }))?.type).toBe('assign');
     expect(parseServerFrame(JSON.stringify({ type: 'pty.input', sessionId: 's', bytes: '' }))).toBeNull(); // runnerId 없음
     expect(parseServerFrame(JSON.stringify({ type: 'pty.input', runnerId: 'r', sessionId: 's', bytes: '' }))?.type).toBe('pty.input');
+  });
+  it('assign.synced 는 runnerId 없이 받는다 — 옛 오퍼레이터(이 타입을 모르는 파서)는 「nope」처럼 null 로 버린다', () => {
+    expect(parseServerFrame(JSON.stringify({ type: 'assign.synced', agentIds: ['a'] }))?.type).toBe('assign.synced');
+  });
+  it('assign.synced 의 agentIds — 문자열 배열만 「남길 것」으로 읽고, 모양이 틀리면 null(=아직 못 받음 → 안 죽임)', () => {
+    expect([...(parseAssignSynced({ agentIds: ['a', 'b', 'a'] }) ?? [])]).toEqual(['a', 'b']);
+    expect(parseAssignSynced({ agentIds: [] })?.size).toBe(0);
+    expect(parseAssignSynced({})).toBeNull();
+    expect(parseAssignSynced({ agentIds: 'a' })).toBeNull();
+    expect(parseAssignSynced({ agentIds: ['a', 1] })).toBeNull();
+    expect(parseAssignSynced({ agentIds: [''] })).toBeNull();
+    expect(parseAssignSynced({ agentIds: ['x'.repeat(65)] })).toBeNull();
   });
 });
 
