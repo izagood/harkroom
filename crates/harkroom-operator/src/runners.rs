@@ -18,8 +18,11 @@
 //!   쥐고 있어 재사용 창이 없다(TS 는 `child.on('exit')` 를 건 뒤 await 로 읽어 그 창이 조금 있다).
 //!   링크 secret 은 요청 env 의 `HARKROOM_RUNNER_SECRET`(TS `runners.ts` 의 `linkSecret`)이다.
 //!
-//! **아직 옮기지 않은 것**: 기동 때 고아 채택(`adoptRunner`, s21c-2b-3)·회수 중 세대(retiring·이관 보류)·
-//! 러너 로그 파일과 종료 통지의 `tailLines`(지금은 빈 배열, 출력은 버린다) — s21c-2c.
+//! - 러너 로그(s21c-2c-2a): `set_log_dir` 로 배선하면 러너의 stdout·stderr 를 `<appDataDir>/operator/runner-<agentId>.log` 에
+//!   붙이고(파이프 아님, `runner_log.rs`), 종료 통지에 그 꼬리(`tailLines`)를 싣는다 — 꼬리를 **읽고 나서** 알린다(TS 와 같다).
+//!   채택한 러너도 경로가 agentId 하나로 정해지므로 같은 꼬리를 싣는다.
+//!
+//! **아직 옮기지 않은 것**: 회수 중 세대(retiring·이관 보류 `HARKROOM_HANDOVER_HOLD/DONE`) — s21c-2c-2b.
 use crate::runner_ledger::{RunnerLedgerEntry, RunnerLedgerWriter};
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -49,6 +52,8 @@ pub struct RunnerRecord {
     pub link_secret: Option<String>,
     /// 앞 오퍼레이터가 남긴 고아를 채택한 줄인가(s21c-2b-3 에서 채운다).
     pub adopted: bool,
+    /// 러너 로그 파일(TS `logPath`). 로그를 배선하지 않았거나 못 열었으면 None — 종료 꼬리는 빈 배열.
+    pub log_path: Option<std::path::PathBuf>,
 }
 
 impl std::fmt::Debug for RunnerRecord {
@@ -65,6 +70,7 @@ impl std::fmt::Debug for RunnerRecord {
                 &self.link_secret.as_ref().map(|_| "<redacted>"),
             )
             .field("adopted", &self.adopted)
+            .field("log_path", &self.log_path)
             .finish()
     }
 }
@@ -104,6 +110,8 @@ pub struct RunnerExit {
     pub incarnation_id: String,
     pub code: Option<i32>,
     pub signal: Option<String>,
+    /// 러너 로그의 마지막 줄들(TS `tailLines`). 실을 것이 없으면 빈 배열 — 지어내지 않는다.
+    pub tail_lines: Vec<String>,
 }
 
 impl RunnerExit {
@@ -113,7 +121,7 @@ impl RunnerExit {
             "incarnationId": self.incarnation_id,
             "code": self.code,
             "signal": self.signal,
-            "tailLines": [],
+            "tailLines": self.tail_lines,
         })
     }
 }
@@ -145,6 +153,16 @@ pub struct RunnerTable {
     ledger: OnceLock<LedgerBinding>,
     /// 커널 시작 시각을 읽는 자리 — 실물은 `ps`, 시험은 주입.
     boot_probe: BootProbe,
+    /// 러너 로그 뿌리(appDataDir). 배선 전에는 출력을 버린다(TS `logs === null`).
+    log_dir: OnceLock<std::path::PathBuf>,
+}
+
+/// TS `tailOf` — 경로가 없으면 빈 배열. 못 읽어도 빈 배열(던지면 종료 통지가 통째로 안 나간다).
+fn tail_of(path: Option<&std::path::Path>) -> Vec<String> {
+    path.map(|p| {
+        crate::runner_log::read_runner_log_tail(p, crate::runner_log::RUNNER_EXIT_TAIL_LINES)
+    })
+    .unwrap_or_default()
 }
 
 pub fn now_ms() -> i64 {
@@ -224,7 +242,14 @@ pub const COORDINATOR_OWNED_ENV: &[&str] = &[
 ];
 
 /// 러너 명령을 세운다 — 오퍼레이터 env 를 물려받되(`withUserEnv`) 조정기 몫 이름은 먼저 걷고, 요청 env 를 얹는다.
-fn runner_command(launch: &RunnerLaunch, env: &[(String, String)]) -> Command {
+///
+/// `log` 가 있으면 자식의 stdout·stderr 를 그 파일에 붙인다(파이프 아님 — 오퍼레이터가 죽어도 러너가 EPIPE 로 죽지 않는다).
+/// 오퍼레이터 쪽 사본은 `Command` 가 spawn 뒤 떨굴 때 닫힌다(fd 가 쌓이지 않는다).
+fn runner_command(
+    launch: &RunnerLaunch,
+    env: &[(String, String)],
+    log: Option<&std::fs::File>,
+) -> Command {
     let mut cmd = Command::new(&launch.command);
     cmd.args(&launch.args);
     for k in COORDINATOR_OWNED_ENV {
@@ -232,9 +257,12 @@ fn runner_command(launch: &RunnerLaunch, env: &[(String, String)]) -> Command {
     }
     cmd.envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
         .process_group(0);
+    // 같은 열린 파일을 둘이 나눠 쓴다(TS `['ignore', logFd, logFd]`). 복제 실패는 버린다 — 로그는 기동 조건이 아니다.
+    match log.map(|f| (f.try_clone(), f.try_clone())) {
+        Some((Ok(out), Ok(err))) => cmd.stdout(out).stderr(err),
+        _ => cmd.stdout(Stdio::null()).stderr(Stdio::null()),
+    };
     cmd
 }
 
@@ -246,7 +274,15 @@ impl RunnerTable {
             on_exit,
             ledger: OnceLock::new(),
             boot_probe: crate::adopt::ps_boot_time_sec,
+            log_dir: OnceLock::new(),
         })
+    }
+
+    /// 러너 로그를 건다(appDataDir). 한 번만.
+    pub fn set_log_dir(&self, app_data_dir: std::path::PathBuf) {
+        if self.log_dir.set(app_data_dir).is_err() {
+            eprintln!("러너 로그가 이미 배선돼 있다 — 두 번째 배선을 버린다");
+        }
     }
 
     /// 장부를 건다. 한 번만 — 두 번째는 stderr 에 남기고 버린다(`set_on_runner_exit` 와 같은 꼴).
@@ -294,8 +330,21 @@ impl RunnerTable {
             Some(_) => return Err("러너 id 가 비었다".into()),
             None => new_incarnation_id().map_err(|e| e.to_string())?,
         };
-        let mut cmd = runner_command(launch, env);
-        let mut child = cmd.spawn().map_err(|e| format!("러너를 못 띄웠다: {e}"))?;
+        // 로그를 **spawn 보다 먼저** 연다 — 회전도 이 순간(러너가 아직 안 연 파일)에 한다(`runner_log.rs`).
+        let log = self.log_dir.get().and_then(|dir| {
+            crate::runner_log::open_runner_log(
+                dir,
+                agent_id,
+                crate::runner_log::RUNNER_LOG_MAX_BYTES,
+                &|l| eprintln!("{l}"),
+            )
+        });
+        let mut cmd = runner_command(launch, env, log.as_ref().map(|(f, _)| f));
+        let spawned = cmd.spawn();
+        // 오퍼레이터 쪽 사본은 spawn 성패와 상관없이 바로 닫는다 — 자식은 이미 자기 복제본을 받았다(TS `finally` close).
+        drop(cmd);
+        let log_path = log.map(|(_, p)| p);
+        let mut child = spawned.map_err(|e| format!("러너를 못 띄웠다: {e}"))?;
         let pid = i32::try_from(child.id()).map_err(|_| "러너 pid 가 범위를 넘었다".to_string())?;
         // 커널 시작 시각은 **waiter 가 거두기 전에** 읽는다 — 그 전까지는 러너가 끝났어도 좀비가 pid 를 쥐고 있어서
         // 무관한 프로세스의 시작 시각을 우리 러너 것으로 적을 길이 없다. 못 읽으면 None(다음 오퍼레이터가 채택하지 않는다).
@@ -313,6 +362,7 @@ impl RunnerTable {
                 .map(|(_, v)| v.clone())
                 .filter(|v| !v.is_empty()),
             adopted: false,
+            log_path: log_path.clone(),
         };
         table.insert(agent_id.to_string(), record.clone());
         self.save_locked(&table);
@@ -337,11 +387,13 @@ impl RunnerTable {
                 Ok(s) => (s.code(), s.signal().map(signal_name)),
                 Err(_) => (None, None),
             };
+            // 꼬리를 **읽고 나서** 알린다 — 코드만 실린 통지가 먼저 가면 앱이 그 순간 사유를 단정한다(TS #473).
             (me.on_exit)(RunnerExit {
                 agent_id: agent,
                 incarnation_id,
                 code,
                 signal,
+                tail_lines: tail_of(log_path.as_deref()),
             });
         });
         Ok(SpawnOutcome::Started(record))
@@ -486,6 +538,11 @@ impl RunnerTable {
             // secret 도 잇는다 — 다음 장부 쓰기가 빠뜨리면 두 번째 재시작에서 다시 잃는다.
             link_secret: entry.link_secret.clone().filter(|s| !s.is_empty()),
             adopted: true,
+            // 경로는 agentId 하나로 정해진다 — 채택한 러너의 꼬리도 읽는다(TS `logs.pathFor`).
+            log_path: self
+                .log_dir
+                .get()
+                .map(|d| crate::runner_log::runner_log_path(d, &entry.agent_id)),
         };
         table.insert(entry.agent_id.clone(), record.clone());
         self.save_locked(&table);
@@ -514,6 +571,7 @@ impl RunnerTable {
         }
         for r in gone {
             (self.on_exit)(RunnerExit {
+                tail_lines: tail_of(r.log_path.as_deref()),
                 agent_id: r.agent_id,
                 incarnation_id: r.incarnation_id,
                 code: None,
@@ -588,6 +646,54 @@ mod tests {
         assert!(t.list_runners().is_empty());
     }
 
+    /// TS `runnerLog.test.ts` 「러너가 쓴 것이 로그 파일에 남는다」·「꼬리를 읽고 나서 통지한다」의 대조.
+    #[test]
+    fn runner_output_goes_to_log_file_and_exit_carries_tail_and_reason() {
+        let dir =
+            std::env::temp_dir().join(format!("hk-runners-log-{}", new_incarnation_id().unwrap()));
+        let (t, rx) = table(&format!(
+            "echo out1; echo err1 >&2; echo '{}' >&2; exit 78",
+            crate::runner_log::CREDENTIAL_REJECTED_LINE
+        ));
+        t.set_log_dir(dir.clone());
+        let r = spawn(&t, &[]);
+        let path = crate::runner_log::runner_log_path(&dir, "a1");
+        assert_eq!(r.record().log_path.as_deref(), Some(path.as_path()));
+        let e = rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert_eq!(e.code, Some(78));
+        assert_eq!(
+            e.tail_lines,
+            vec!["out1", "err1", crate::runner_log::CREDENTIAL_REJECTED_LINE]
+        );
+        assert_eq!(
+            e.to_json()["tailLines"][2],
+            json!(crate::runner_log::CREDENTIAL_REJECTED_LINE)
+        );
+        assert_eq!(
+            crate::runner_log::runner_exit_reason(&e.tail_lines),
+            Some("credential-rejected")
+        );
+        assert!(std::fs::read_to_string(&path).unwrap().contains("err1"));
+    }
+
+    /// 로그 뿌리를 못 쓰면 출력만 버리고 러너는 뜬다(로그는 기동 조건이 아니다).
+    #[test]
+    fn unwritable_log_dir_still_spawns_with_empty_tail() {
+        let dir = std::env::temp_dir().join(format!(
+            "hk-runners-nolog-{}",
+            new_incarnation_id().unwrap()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("operator"), "file, not dir").unwrap();
+        let (t, rx) = table("echo hi; exit 3");
+        t.set_log_dir(dir);
+        let r = spawn(&t, &[]);
+        assert_eq!(r.record().log_path, None);
+        let e = rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert_eq!(e.code, Some(3));
+        assert!(e.tail_lines.is_empty());
+    }
+
     #[test]
     fn kill_sends_sigterm_once_and_checks_incarnation() {
         let (t, rx) = table("sleep 30");
@@ -652,6 +758,7 @@ mod tests {
                 ("HARKROOM_CHROME_HOST".into(), "0".into()),
                 ("X".into(), "1".into()),
             ],
+            None,
         );
         let envs: HashMap<String, Option<String>> = cmd
             .get_envs()
@@ -712,6 +819,7 @@ mod tests {
             }),
             ledger: OnceLock::new(),
             boot_probe: probe,
+            log_dir: OnceLock::new(),
         });
         let snaps: Snapshots = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&snaps);

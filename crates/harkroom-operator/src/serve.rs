@@ -102,6 +102,8 @@ pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
                 nonce: identity.launch_nonce.clone(),
                 app_version: flag(args, "--app-version").map(str::to_string),
             });
+            // 러너 로그(s21c-2c-2a) — `<appDataDir>/operator/runner-<agentId>.log`. 장부와 같은 뿌리다.
+            state.runners.set_log_dir(std::path::PathBuf::from(&root));
             state.set_local_agents(LocalAgents::new(&root, base_url));
             state.set_local_mcp(LocalMcp::new(
                 &root,
@@ -316,7 +318,9 @@ pub fn spawn_server_link(
                 reason: None,
                 agent_id: None,
             });
-            frames.on_runner_exit(&exit.agent_id, exit.code, None);
+            // 78 의 사유(로그인 풀림·PAT 거절·하네스 부재)는 로그 꼬리로만 가린다 — 판정은 한 곳(TS run.ts onExit).
+            let reason = crate::runner_log::runner_exit_reason(&exit.tail_lines);
+            frames.on_runner_exit(&exit.agent_id, exit.code, reason);
         }));
     }
     // 고아 채택(s21c-2b-3, TS run.ts adoptOrphans) — 종료 통지를 건 뒤, 서버 hello 전에 한다(hello 가 채택한 러너를 알린다).
