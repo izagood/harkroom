@@ -108,6 +108,21 @@ describe('배정', () => {
     await waitFor(() => b.frames.some((f) => f.type === 'assign' && f.agentId === agentId));
     await b.close();
   });
+  it('재전송 묶음 끝에 assign.synced — 보낸 assign 뒤에, 그 오퍼레이터의 것만 싣는다(남의 배정은 안 섞임)', async () => {
+    const b = await attachOperator(opB, [agentId]);
+    const a = await attachOperator(opA, [agentId]);
+    await waitFor(() => b.frames.some((f) => f.type === 'assign.synced'));
+    await waitFor(() => a.frames.some((f) => f.type === 'assign.synced'));
+    const bAssign = b.frames.findIndex((f) => f.type === 'assign' && f.agentId === agentId);
+    const bSynced = b.frames.findIndex((f) => f.type === 'assign.synced');
+    expect(bAssign).toBeGreaterThanOrEqual(0);
+    expect(bSynced).toBeGreaterThan(bAssign);
+    expect(b.frames[bSynced]).toEqual({ type: 'assign.synced', agentIds: [agentId] });
+    // opA 는 같은 에이전트를 능력으로 말했지만 배정은 opB 다 — opA 의 목록에는 실리지 않는다.
+    expect(a.frames.find((f) => f.type === 'assign.synced')).toEqual({ type: 'assign.synced', agentIds: [] });
+    expect(a.frames.some((f) => f.type === 'assign')).toBe(false);
+    await a.close(); await b.close();
+  });
   it('오퍼레이터가 그 하네스를 없다고 했으면 409 harness_missing — 말하지 않았으면 모른다', async () => {
     const a = await attachOperator(opA, [agentId], { 'claude-code': { installed: false, loggedIn: false } });
     await waitCapable(opA.operatorId, [agentId]);
@@ -146,6 +161,8 @@ describe('배정', () => {
     await waitCapable(opB.operatorId, [agentId]);
     await new Promise((r) => setTimeout(r, 200));
     expect(again.frames.some((f) => f.type === 'assign' && f.agentId === agentId)).toBe(false);
+    // 멈춘 에이전트는 묶음 끝 목록에도 없다 — 보낸 것만 싣는다.
+    expect(again.frames.find((f) => f.type === 'assign.synced')).toEqual({ type: 'assign.synced', agentIds: [] });
     const undo = await app.inject({ method: 'POST', url: `/accounts/agents/${agentId}/stop/undo`, headers: auth(adminToken) });
     expect(undo.statusCode).toBe(200);
     await waitFor(() => again.frames.some((f) => f.type === 'assign' && f.agentId === agentId));

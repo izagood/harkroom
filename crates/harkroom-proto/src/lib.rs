@@ -448,6 +448,9 @@ pub mod p2 {
         },
         #[serde(rename = "unassign", rename_all = "camelCase")]
         Unassign { agent_id: String, drain: bool },
+        /// hello 뒤 배정 재전송 묶음의 끝 — `agent_ids` 는 그 묶음에 보낸 에이전트 전부(「남길 것」으로만 쓴다).
+        #[serde(rename = "assign.synced", rename_all = "camelCase")]
+        AssignSynced { agent_ids: Vec<String> },
         #[serde(rename = "agent.restart", rename_all = "camelCase")]
         AgentRestart { agent_id: String },
         #[serde(rename = "runner.kill", rename_all = "camelCase")]
@@ -517,9 +520,10 @@ pub mod p2 {
     }
 
     /// 정본의 `SERVER_TYPES`.
-    pub const SERVER_TO_OPERATOR_TYPES: [&str; 13] = [
+    pub const SERVER_TO_OPERATOR_TYPES: [&str; 14] = [
         "assign",
         "unassign",
+        "assign.synced",
         "agent.restart",
         "runner.kill",
         "pty.replay.request",
