@@ -280,3 +280,67 @@ fn remove_deps_goes_through_removal_guard() {
     p.remove_deps(&wt).unwrap();
     assert!(!Path::new(&wt).join("node_modules").exists());
 }
+
+#[test]
+fn last_activity_does_not_call_signature_program() {
+    let t = tmpdir();
+    let p = ports(t.0.to_str().unwrap(), vec![], vec![]);
+    let (repo, wt, _head) = setup(&p, &t.0);
+    let (cmd, marker) = trap(&t.0, "gpg");
+    // 서명이 달린 커밋을 손으로 만들고, 저장소 설정에서 서명 표시와 검사 프로그램을 켠다.
+    let tree = git(&p, &["-C", &wt, "rev-parse", "HEAD^{tree}"]);
+    let parent = git(&p, &["-C", &wt, "rev-parse", "HEAD"]);
+    let obj = format!(
+        "tree {tree}\nparent {parent}\nauthor t <t@example.invalid> 1700000000 +0000\ncommitter t <t@example.invalid> 1700000000 +0000\ngpgsig -----BEGIN PGP SIGNATURE-----\n \n x\n -----END PGP SIGNATURE-----\n\nsigned\n"
+    );
+    let f = t.0.join("commit.txt");
+    std::fs::write(&f, obj).unwrap();
+    let c = git(
+        &p,
+        &[
+            "-C",
+            &wt,
+            "hash-object",
+            "-t",
+            "commit",
+            "-w",
+            f.to_str().unwrap(),
+        ],
+    );
+    git(&p, &["-C", &wt, "update-ref", "refs/heads/wt", &c]);
+    git(&p, &["-C", &repo, "config", "log.showSignature", "true"]);
+    git(&p, &["-C", &repo, "config", "gpg.program", &cmd]);
+    assert!(super::super::scan::last_activity_at(&p.deps, &wt).is_some());
+    assert!(!marker.exists(), "서명 검사 프로그램이 돌았다");
+}
+
+#[test]
+fn check_does_not_enter_submodules() {
+    let t = tmpdir();
+    let p = ports(t.0.to_str().unwrap(), vec![], vec![]);
+    let (repo, wt, head) = setup(&p, &t.0);
+    let (cmd, marker) = trap(&t.0, "subfilter");
+    // 서브모듈 저장소: 그 저장소 설정의 filter 는 바깥 저장소 검사가 보지 못한다.
+    let sub = Path::new(&wt).join("sub");
+    std::fs::create_dir_all(&sub).unwrap();
+    let sub_s = sub.to_str().unwrap();
+    git(&p, &["-C", sub_s, "init", "-q", "-b", "main"]);
+    std::fs::write(sub.join("f"), "f").unwrap();
+    git(&p, &["-C", sub_s, "add", "f"]);
+    git(&p, &["-C", sub_s, "commit", "-qm", "f"]);
+    git(&p, &["-C", &wt, "add", "sub"]);
+    git(&p, &["-C", &wt, "commit", "-qm", "sub"]);
+    let head2 = git(&p, &["-C", &wt, "rev-parse", "HEAD"]);
+    let _ = head;
+    git(&p, &["-C", sub_s, "config", "filter.x.clean", &cmd]);
+    // .gitattributes 를 올려 두고, f 는 크기가 같은 다른 내용으로 바꿔 git 이 내용(=filter)을 보게 한다.
+    std::fs::write(sub.join(".gitattributes"), "* filter=x\n").unwrap();
+    git(&p, &["-C", sub_s, "add", ".gitattributes"]);
+    git(&p, &["-C", sub_s, "commit", "-qm", "attr"]);
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    std::fs::write(sub.join("f"), "g").unwrap();
+    // 준비하며 시험 자신의 `git add` 가 부른 흔적은 지운다.
+    let _ = std::fs::remove_file(&marker);
+    let _ = p.check(&item(&wt, &repo, &head2), &HashSet::new());
+    assert!(!marker.exists(), "서브모듈의 filter 명령이 돌았다");
+}

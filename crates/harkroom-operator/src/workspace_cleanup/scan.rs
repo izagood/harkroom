@@ -146,12 +146,14 @@ pub(super) fn args(a: &[&str]) -> Vec<String> {
 /// 청소기의 git 은 **에이전트가 쓸 수 있는 저장소** 안에서 오퍼레이터 권한으로 돈다. 그래서 git 호출에서 저장소 설정의 실행
 /// 칸을 끈다(security c5 A, TS #1924 와 같다) — 선택적 잠금을 잡지 않고 fsmonitor·hooks 를 덮는다. 시스템·전역 설정은
 /// `git_env` 가 끈다. `-c` 로 덮을 수 없는 칸은 `has_runnable_git_config` 가 보고 막는다.
-pub const SAFE_GIT_ARGS: [&str; 5] = [
+pub const SAFE_GIT_ARGS: [&str; 7] = [
     "--no-optional-locks",
     "-c",
     "core.fsmonitor=false",
     "-c",
     "core.hooksPath=/dev/null",
+    "-c",
+    "log.showSignature=false",
 ];
 
 /// git 인자 — 앞에 `SAFE_GIT_ARGS` 를 붙인다. 청소기의 git 호출은 모두 이것을 쓴다.
@@ -422,6 +424,8 @@ pub fn only_rebuildable_ignored(deps: &ScanDeps, path: &str) -> bool {
             "-C",
             path,
             "status",
+            // 서브모듈 안으로 들어가지 않는다(그 저장소의 설정은 검사 밖이다).
+            "--ignore-submodules=all",
             "--porcelain",
             "-z",
             "--ignored=matching",

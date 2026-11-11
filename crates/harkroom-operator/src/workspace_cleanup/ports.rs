@@ -147,6 +147,8 @@ impl CleanupPorts for GitPorts {
             "-C",
             &item.path,
             "status",
+            // 서브모듈 안으로 들어가지 않는다(그 저장소의 설정은 검사 밖이다). `worktree remove` 는 서브모듈이 든 worktree 를 원래 거절한다.
+            "--ignore-submodules=all",
             "--porcelain",
             "--untracked-files=all",
         ]);
