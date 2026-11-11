@@ -77,6 +77,20 @@ pub struct LinkHandler {
     secrets: Option<crate::turn_secrets::SecretsRoot>,
     /// 머지 손잡이·`pr.status`(s21b-3d-1). 같은 `PrGate`(= 같은 `first_seen`)를 나눠 쓴다. 없으면 서버로 넘어가 `operator_required`.
     merge: Option<MergeHandlers>,
+    /// 러너가 「인박스를 놓았다」(`runner.pollStopped`)를 러너 표에 넘기는 자리(s21c-2c-2b). serve 가 건다.
+    poll_stopped: Arc<OnceLock<PollStoppedHook>>,
+}
+
+/// (agent id, **링크 세션의 인증된** runner id, holding, done).
+pub type PollStoppedHook = Box<dyn Fn(&str, &str, &[i64], &[i64]) + Send + Sync>;
+
+/// `runner.pollStopped` 의 숫자 목록. 꼴은 링크가 이미 걸렀다(`is_runner_link_notice`) — 여기서는 정수만 남긴다.
+fn notice_ids(notice: &Value, key: &str) -> Vec<i64> {
+    notice
+        .get(key)
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_i64).collect())
+        .unwrap_or_default()
 }
 
 /// TS run.ts 의 `createTurnMerge`·`createTurnPrStatus` 한 벌 — 「처음 본 시각」 Map 은 하나다.
@@ -270,6 +284,18 @@ impl LinkHandler {
 impl RunnerLinkHandler for LinkHandler {
     /// relay 통지 — 턴 임대(TS run.ts 의 `secret.lease*`). 서버 요청은 별도 스레드에서 보내 링크 읽기를 막지 않는다.
     fn on_notice(&self, runner_id: &str, agent_id: &str, notice: Value) {
+        // 그 러너 자신의 relay 링크가 보낸 것만 여기 온다 — `runner_id` 는 세션의 인증된 id 라 남의 세대 보류를 적을 수 없다.
+        if notice.get("type").and_then(Value::as_str) == Some("runner.pollStopped") {
+            if let Some(f) = self.poll_stopped.get() {
+                f(
+                    agent_id,
+                    runner_id,
+                    &notice_ids(&notice, "holding"),
+                    &notice_ids(&notice, "done"),
+                );
+            }
+            return;
+        }
         let s = |k: &str| notice.get(k).and_then(Value::as_str).unwrap_or("");
         let cause = s("cause").to_string();
         let (c, renew) = match s("type") {
@@ -434,6 +460,8 @@ impl RunnerLinkHandler for LinkHandler {
 pub struct Bridge {
     pub mux: Arc<RelayMux>,
     pub runner_link: Arc<RunnerLinkServer>,
+    /// `runner.pollStopped` 를 받을 자리 — serve 가 러너 표(`RunnerTable::note_poll_stopped`)를 건다.
+    pub poll_stopped: Arc<OnceLock<PollStoppedHook>>,
 }
 
 /// 만료 쓸기 주기(TS `turnSecrets` 의 1분 타이머와 같다).
@@ -488,6 +516,7 @@ pub fn build_bridge(
         runner_link: Arc::clone(&slot),
         server,
     })));
+    let poll_stopped: Arc<OnceLock<PollStoppedHook>> = Arc::new(OnceLock::new());
     let leases = Arc::new(Mutex::new(TurnLeases::system()));
     if let Some(root) = secrets.clone() {
         spawn_lease_sweeper(Arc::downgrade(&leases), root, LEASE_SWEEP_EVERY);
@@ -503,11 +532,16 @@ pub fn build_bridge(
         peek: Arc::new(TurnPeek::system()),
         secrets,
         merge,
+        poll_stopped: Arc::clone(&poll_stopped),
     });
     // 턴 열쇠 장부(s21b-3a) — 하네스의 bridge·hook·wrapper 소켓이 맡긴 열쇠로 붙는다.
     let runner_link = RunnerLinkServer::new(handler, Some(turn_keys));
     let _ = slot.set(Arc::downgrade(&runner_link));
-    Bridge { mux, runner_link }
+    Bridge {
+        mux,
+        runner_link,
+        poll_stopped,
+    }
 }
 
 #[cfg(test)]
@@ -581,6 +615,7 @@ mod tests {
             secrets: None,
             peek: Arc::new(TurnPeek::new(|| 0)),
             merge: None,
+            poll_stopped: Arc::new(OnceLock::new()),
         };
         h.on_frame(
             "r1",
@@ -611,6 +646,7 @@ mod tests {
             secrets: None,
             peek: Arc::new(TurnPeek::new(|| 0)),
             merge: None,
+            poll_stopped: Arc::new(OnceLock::new()),
         };
         let call = |name: &str| -> RunnerLinkRequest {
             serde_json::from_value(json!({"type":"mcp.request","id":"q","cause":"c1",
@@ -666,6 +702,7 @@ mod tests {
             secrets: None,
             peek: Arc::new(TurnPeek::new(|| 0)),
             merge: None,
+            poll_stopped: Arc::new(OnceLock::new()),
         };
         let req: RunnerLinkRequest = serde_json::from_value(json!({
             "type":"mcp.request","id":"q1","payload":{"jsonrpc":"2.0","id":1,"method":"x"}
@@ -708,6 +745,7 @@ mod tests {
             secrets: None,
             peek: Arc::new(TurnPeek::new(|| 0)),
             merge: None,
+            poll_stopped: Arc::new(OnceLock::new()),
         };
         // 링크가 미리 채운 commandFiles 는 서버 머리에 실리지 않는다(사전 2).
         let req: RunnerLinkRequest = serde_json::from_value(json!({
@@ -794,6 +832,7 @@ mod tests {
             secrets: None,
             peek: Arc::new(TurnPeek::new(|| 0)),
             merge: None,
+            poll_stopped: Arc::new(OnceLock::new()),
         };
         let keys = json!({"turnId":"t1","keys":{"bridge":"a".repeat(64),"shell":"b".repeat(64)}});
         assert_eq!(
@@ -861,6 +900,46 @@ mod tests {
         assert_eq!(tr.0.lock().unwrap().len(), 1);
     }
 
+    /// security #1906 ③ — `runner.pollStopped` 은 링크 세션의 인증된 runner id 로만 러너 표에 간다. 서버로는 안 간다.
+    #[test]
+    fn poll_stopped_goes_to_runner_table_with_session_runner_id_only() {
+        let (srv, tr, b) = bridge();
+        type Got = Vec<(String, String, Vec<i64>, Vec<i64>)>;
+        let got: Arc<Mutex<Got>> = Arc::default();
+        let sink = Arc::clone(&got);
+        let hook = Arc::new(OnceLock::new());
+        let _ = hook.set(Box::new(move |a: &str, r: &str, h: &[i64], d: &[i64]| {
+            sink.lock()
+                .unwrap()
+                .push((a.into(), r.into(), h.to_vec(), d.to_vec()))
+        }) as PollStoppedHook);
+        let h = LinkHandler {
+            mux: Arc::clone(&b.mux),
+            transport: tr.clone(),
+            base_url: String::new(),
+            token: String::new(),
+            turn_keys: Arc::new(Mutex::new(TurnKeyLedger::new(|| 0, |_| {}))),
+            slots: Arc::new(Mutex::new(TurnSlots::new(None, || 0, |_| {}))),
+            leases: Arc::new(Mutex::new(TurnLeases::new(|| 0))),
+            secrets: None,
+            peek: Arc::new(TurnPeek::new(|| 0)),
+            merge: None,
+            poll_stopped: hook,
+        };
+        // 본문에 다른 runnerId 를 실어도 세션 id(r1)로 간다.
+        h.on_notice(
+            "r1",
+            "a1",
+            json!({"type":"runner.pollStopped","holding":[4,5],"done":[6],"runnerId":"r-other"}),
+        );
+        assert_eq!(
+            got.lock().unwrap().clone(),
+            vec![("a1".to_string(), "r1".to_string(), vec![4, 5], vec![6])]
+        );
+        assert!(srv.0.lock().unwrap().is_empty());
+        assert!(tr.0.lock().unwrap().is_empty());
+    }
+
     #[test]
     fn lease_notices_fill_ledger_and_end_renew_go_to_server() {
         let tr = Arc::new(FakeTransport::default());
@@ -876,6 +955,7 @@ mod tests {
             secrets: None,
             peek: Arc::new(TurnPeek::new(|| 0)),
             merge: None,
+            poll_stopped: Arc::new(OnceLock::new()),
         };
         h.on_notice(
             "r1",

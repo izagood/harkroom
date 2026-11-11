@@ -141,6 +141,12 @@ impl SpawnOutcome {
     }
 }
 
+/// (agent id, 지금 세대 runner id).
+pub type ReleaseHandover = Box<dyn Fn(&str, &str) + Send + Sync>;
+
+/// spawn 거절 사유의 머리 — 앞 세대가 아직 인박스를 쥐고 있다(TS `code: 'retiring'`). 조정기가 이것으로 갈라 다시 시도한다.
+pub const SPAWN_RETIRING: &str = "retiring:";
+
 type ExitSink = Arc<dyn Fn(RunnerExit) + Send + Sync>;
 
 type BootProbe = fn(i32) -> Option<i64>;
@@ -148,6 +154,10 @@ type BootProbe = fn(i32) -> Option<i64>;
 pub struct RunnerTable {
     launch: Option<RunnerLaunch>,
     by_agent: Mutex<HashMap<String, RunnerRecord>>,
+    /// 회수 중 세대(s21c-2c-2b, TS `retiring`). **잠금 순서는 언제나 `by_agent` → `retiring`** 이다.
+    retiring: Mutex<crate::retiring::RetiringSet>,
+    /// 이관 보류를 풀라고 지금 세대 러너에게 알리는 자리(TS `releaseHandover` → `handover.released`). 없으면 러너의 시한이 백스톱.
+    release_handover: OnceLock<ReleaseHandover>,
     on_exit: ExitSink,
     /// 장부. 배선 전(시험·토큰 없는 기동)에는 비어 있고 아무것도 쓰지 않는다.
     ledger: OnceLock<LedgerBinding>,
@@ -271,6 +281,8 @@ impl RunnerTable {
         Arc::new(Self {
             launch,
             by_agent: Mutex::new(HashMap::new()),
+            retiring: Mutex::new(crate::retiring::RetiringSet::new()),
+            release_handover: OnceLock::new(),
             on_exit,
             ledger: OnceLock::new(),
             boot_probe: crate::adopt::ps_boot_time_sec,
@@ -295,7 +307,132 @@ impl RunnerTable {
     /// 표 잠금을 쥔 자리에서만 부른다 — 스냅샷이 지금 표와 같은 순서로 창구에 들어가야 마지막 save 가 지금 표다.
     fn save_locked(&self, table: &HashMap<String, RunnerRecord>) {
         if let Some(l) = self.ledger.get() {
-            l.writer.save(l.entries(table));
+            let mut rows = l.entries(table);
+            // 회수 중인 러너도 적는다 — 다음 오퍼레이터가 그 러너의 링크를 받아 남은 턴을 끝내게 한다(TS `records`).
+            let pids: Vec<i32> = table.values().map(|r| r.pid).collect();
+            rows.extend(
+                self.retiring_set()
+                    .ledger_rows(&pids, &l.nonce, l.app_version.as_deref()),
+            );
+            l.writer.save(rows);
+        }
+    }
+
+    fn retiring_set(&self) -> std::sync::MutexGuard<'_, crate::retiring::RetiringSet> {
+        self.retiring.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// 이관 보류 풀기 알림을 건다(한 번만).
+    pub fn set_release_handover(&self, f: ReleaseHandover) {
+        if self.release_handover.set(f).is_err() {
+            eprintln!("이관 보류 풀기 알림이 이미 배선돼 있다 — 두 번째 배선을 버린다");
+        }
+    }
+
+    /// 그 pid 가 장부가 아는 바로 그 프로세스인가 — 커널 시작 시각을 `ps` 로 다시 읽어 맞춘다. 모르면 **다르다**.
+    /// 채택 러너의 신호(`kill_runner_if`)와 회수 중 세대의 생사·신호가 같은 판정을 쓴다(security #1898·#1906).
+    fn same_boot(&self, pid: i32, expected: Option<i64>) -> bool {
+        match expected {
+            Some(b) => (self.boot_probe)(pid) == Some(b),
+            None => false,
+        }
+    }
+
+    /// 회수 중 세대의 생사 — `kill(pid,0)` **과** 커널 시작 시각 대조. 회수 중 세대는 모두 내 자식이 아니라(앞 오퍼레이터의 고아)
+    /// pid 가 재사용되면 `kill(pid,0)` 만으로는 「아직 인박스를 쥔 앞 세대」로 남아 새 세대를 막는다(security #1906 ①).
+    fn retiring_alive(&self) -> impl Fn(i32) -> bool + '_ {
+        let boots = self.retiring_set().boot_times();
+        move |pid| signal_sent(pid, 0) && self.same_boot(pid, boots.get(&pid).copied().flatten())
+    }
+
+    /// 앞 오퍼레이터의 고아를 **표에 올리지 않고** 회수한다(TS `retire`) — 낡은 세대·회수 중 러너·로컬에 없는 에이전트.
+    /// 회수 중 표에 적고(장부 사실·앞서 받은 「인박스를 놓았다」를 잇는다), 커널 시작 시각이 장부와 같을 때만 SIGTERM.
+    /// 다르거나 못 읽으면 우리 러너가 아니다 — 적지도 보내지도 않는다(`kill_runner_if` 와 같은 쪽, security #1906 ②).
+    pub fn retire(&self, entry: &RunnerLedgerEntry) -> bool {
+        if !self.same_boot(entry.pid, entry.boot_time_sec) {
+            eprintln!(
+                "회수 안 함: agent={} pid={} — 커널 시작 시각이 장부와 다르거나 읽히지 않는다",
+                entry.agent_id, entry.pid
+            );
+            return false;
+        }
+        let table = self.table();
+        self.retiring_set().insert(
+            &entry.agent_id,
+            crate::retiring::RetiringEntry {
+                pid: entry.pid,
+                incarnation_id: Some(entry.incarnation_id.clone()),
+                poll_stopped: entry.retiring.clone(),
+                ledger: Some(crate::retiring::RetiringLedgerFacts {
+                    started_at_ms: entry.started_at_ms,
+                    boot_time_sec: entry.boot_time_sec,
+                    link_secret: entry.link_secret.clone(),
+                    spawned_by_app_version: entry.spawned_by_app_version.clone(),
+                }),
+            },
+        );
+        let sent = signal_sent(entry.pid, libc::SIGTERM);
+        self.save_locked(&table);
+        sent
+    }
+
+    /// 회수 중 러너가 「인박스를 놓았다」(`runner.pollStopped`). **그 러너 자신의 링크**가 보낸 것만 온다 —
+    /// `runner_id` 는 링크 세션의 인증된 id 다(security #1906 ③). 회수 중 표에 그 id 가 없으면 아무것도 안 한다.
+    pub fn note_poll_stopped(
+        &self,
+        agent_id: &str,
+        runner_id: &str,
+        holding: &[i64],
+        done: &[i64],
+    ) -> bool {
+        let table = self.table();
+        let changed = self
+            .retiring_set()
+            .note_poll_stopped(agent_id, runner_id, holding, done);
+        if changed {
+            self.save_locked(&table);
+        }
+        changed
+    }
+
+    /// 회수 중이고 살아 있는(시작 시각 대조), id 를 아는 러너들 — hello 의 announce 에 실린다(TS `retiringRunners`).
+    pub fn retiring_runners(&self) -> Vec<(String, i32, String)> {
+        let alive = self.retiring_alive();
+        self.retiring_set().announce(alive)
+    }
+
+    /// 물러난 회수 중 러너를 알린다(TS `reapRetiring` 뒷부분) — 표 잠금 **밖**에서 부른다.
+    fn finish_reaped(&self, reaped: Vec<crate::retiring::Reaped>) {
+        if reaped.is_empty() {
+            return;
+        }
+        let current: HashMap<String, String> = {
+            let table = self.table();
+            self.save_locked(&table);
+            table
+                .values()
+                .filter(|r| signal_sent(r.pid, 0))
+                .map(|r| (r.agent_id.clone(), r.incarnation_id.clone()))
+                .collect()
+        };
+        for r in reaped {
+            // 앞 러너가 완전히 물러났다 — 보류를 푸는 유일한 정상 경로다(러너 쪽 시한은 백스톱).
+            if r.release_handover
+                && let (Some(now), Some(f)) =
+                    (current.get(&r.agent_id), self.release_handover.get())
+            {
+                f(&r.agent_id, now);
+            }
+            // 내 자식이 아니라 wait 할 수 없다 — 코드도 시그널도 모른다.
+            if let Some(id) = r.incarnation_id {
+                (self.on_exit)(RunnerExit {
+                    agent_id: r.agent_id,
+                    incarnation_id: id,
+                    code: None,
+                    signal: None,
+                    tail_lines: Vec::new(),
+                });
+            }
         }
     }
 
@@ -314,12 +451,39 @@ impl RunnerTable {
         env: &[(String, String)],
         runner_id: Option<&str>,
     ) -> Result<SpawnOutcome, String> {
+        let mut reaped = Vec::new();
+        let out = self.spawn_inner(agent_id, env, runner_id, &mut reaped);
+        self.finish_reaped(reaped);
+        out
+    }
+
+    fn spawn_inner(
+        self: &Arc<Self>,
+        agent_id: &str,
+        env: &[(String, String)],
+        runner_id: Option<&str>,
+        reaped: &mut Vec<crate::retiring::Reaped>,
+    ) -> Result<SpawnOutcome, String> {
         let mut table = self.table();
         if let Some(existing) = table.get(agent_id)
             && signal_sent(existing.pid, 0)
         {
             return Ok(SpawnOutcome::Existing(existing.clone()));
         }
+        // 앞 세대가 아직 인박스를 쥐고 있으면 띄우지 않는다 — 같은 인박스를 둘이 폴하면 같은 멘션에 두 번 답한다
+        // (TS `retiringHoldsInbox`). 죽었거나(시작 시각 대조) 폴을 놓았으면 통과하고, 놓은 목록을 이관 보류로 심는다.
+        let handover = {
+            let alive = self.retiring_alive();
+            let mut set = self.retiring_set();
+            if let Some(pid) = set.holds_inbox(agent_id, alive, reaped) {
+                return Err(format!(
+                    "{SPAWN_RETIRING} 앞 세대 러너(pid {pid})가 아직 인박스를 쥐고 있다"
+                ));
+            }
+            set.handover_env(agent_id)
+        };
+        let env: Vec<(String, String)> = env.iter().cloned().chain(handover).collect();
+        let env = env.as_slice();
         let Some(launch) = &self.launch else {
             return Err(
                 "이 오퍼레이터(Rust)에는 러너 프로그램이 정해지지 않았다(--runner-command)".into(),
@@ -462,10 +626,7 @@ impl RunnerTable {
     /// 재사용되면 `kill(pid, 0)` 은 참이고, 그 틈의 신호는 무관한 프로세스에 간다. 장부에 시각이 없거나 지금 못 읽으면
     /// **다르다고 본다** — 모르는 채로 보내는 쪽이 더 나쁘다(채택 판정 `judge_candidate` 와 같은 쪽으로 기운다).
     fn same_process(&self, record: &RunnerRecord) -> bool {
-        match record.boot_time_sec {
-            Some(expected) => (self.boot_probe)(record.pid) == Some(expected),
-            None => false,
-        }
+        self.same_boot(record.pid, record.boot_time_sec)
     }
 
     /// 재사용된(또는 확인 못 한) 채택 러너를 표·장부에서만 뺀다 — 신호는 보내지 않는다. 그 러너는 이미 없으므로
@@ -594,6 +755,12 @@ impl RunnerTable {
                 signal: None,
             });
         }
+        // 회수 중 세대도 같은 주기로 거둔다(TS `pollAdopted` 앞부분) — 생사는 시작 시각 대조까지 본다.
+        let reaped = {
+            let alive = self.retiring_alive();
+            self.retiring_set().reap_dead(alive)
+        };
+        self.finish_reaped(reaped);
     }
 }
 
@@ -830,6 +997,8 @@ mod tests {
                 args: vec!["-c".into(), script.into()],
             }),
             by_agent: Mutex::new(HashMap::new()),
+            retiring: Mutex::new(crate::retiring::RetiringSet::new()),
+            release_handover: OnceLock::new(),
             on_exit: Arc::new(move |e| {
                 let _ = tx.lock().unwrap().send(e);
             }),
@@ -930,6 +1099,146 @@ mod tests {
             spawned_by_app_version: Some("0.4.498".into()),
             retiring: None,
         }
+    }
+
+    /// SIGTERM 을 무시하는 「회수 중 러너」 흉내 — 회수(SIGTERM)를 받아도 살아 있어야 인박스 판정을 볼 수 있다.
+    fn stubborn() -> std::process::Child {
+        let _g = crate::fork_guard();
+        std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg("trap '' TERM; sleep 30 & wait; sleep 30")
+            .spawn()
+            .unwrap()
+    }
+
+    fn exit_of(rx: &mpsc::Receiver<RunnerExit>, inc: &str) -> RunnerExit {
+        loop {
+            let e = rx.recv_timeout(Duration::from_secs(10)).unwrap();
+            if e.incarnation_id == inc {
+                return e;
+            }
+        }
+    }
+
+    /// retiring 2/2 — 회수 중 세대가 인박스를 쥐면 spawn 은 `retiring` 거절, **그 세대 자신의 id** 로 온 pollStopped 만
+    /// 받고(security #1906 ③), 그 뒤 교체 러너에 이관 보류 env 를 심는다. 장부·announce 에도 회수 줄이 실린다.
+    #[test]
+    fn retiring_holds_inbox_until_own_poll_stopped_then_handover_env() {
+        let (t, rx, snaps) = ledgered(
+            "[ \"$HARKROOM_HANDOVER_HOLD\" = 11,12 ] && [ \"$HARKROOM_HANDOVER_DONE\" = 13 ] && exit 5; exit 9",
+            |_| Some(7),
+        );
+        let mut old = stubborn();
+        let pid = old.id() as i32;
+        assert!(
+            t.retire(&orphan("a1", pid)),
+            "시작 시각이 같으면 SIGTERM 을 보낸다"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(signal_sent(pid, 0), "TERM 을 무시하는 앞 세대는 산다");
+        let refused = t.spawn_runner("a1", &[], None).unwrap_err();
+        assert!(refused.starts_with(SPAWN_RETIRING), "{refused}");
+        // 남의 id 로 온 pollStopped 는 받지 않는다.
+        assert!(!t.note_poll_stopped("a1", "someone-else", &[1], &[]));
+        assert!(
+            t.spawn_runner("a1", &[], None)
+                .unwrap_err()
+                .starts_with(SPAWN_RETIRING)
+        );
+        // 장부의 회수 줄·announce.
+        assert!(t.note_poll_stopped("a1", "inc-orphan", &[11, 12], &[12, 13]));
+        let rows = last(&t, &snaps);
+        let row = rows.iter().find(|r| r.pid == pid).expect("회수 줄");
+        assert_eq!(
+            row.retiring,
+            Some(crate::runner_ledger::RetiringFacts {
+                holding: vec![11, 12],
+                done: vec![12, 13]
+            })
+        );
+        assert_eq!(row.link_secret.as_deref(), Some("orph-s"));
+        assert!(
+            crate::hello::announce_of(&t)
+                .iter()
+                .any(|a| a.runner_id == "inc-orphan" && a.pid == i64::from(pid))
+        );
+        // 폴을 놓았으니 교체가 뜨고, 보류(11,12)와 끝남(13 — 보류에 든 12 는 뺌)을 env 로 받는다.
+        let r = spawn(&t, &[]).record().clone();
+        assert_eq!(exit_of(&rx, &r.incarnation_id).code, Some(5));
+        old.kill().unwrap();
+        old.wait().unwrap();
+    }
+
+    /// security #1906 ①② — 회수 중 세대의 생사·회수 신호는 `kill(pid,0)` 이 아니라 커널 시작 시각 대조를 거친다.
+    #[test]
+    fn retiring_alive_and_retire_signal_check_boot_time_not_just_pid() {
+        use std::sync::atomic::{AtomicI64, Ordering};
+        static BOOT: AtomicI64 = AtomicI64::new(7);
+        fn probe(_: i32) -> Option<i64> {
+            Some(BOOT.load(Ordering::SeqCst))
+        }
+        let (t, rx, _s) = ledgered("sleep 30", probe);
+        // 시작 시각이 다르면 회수 줄에 적지도, SIGTERM 을 보내지도 않는다.
+        BOOT.store(99, Ordering::SeqCst);
+        let mut other = outside("30");
+        let opid = other.id() as i32;
+        assert!(!t.retire(&orphan("b1", opid)));
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(
+            signal_sent(opid, 0),
+            "무관한 프로세스에 SIGTERM 이 가지 않았다"
+        );
+        assert!(t.retiring_runners().is_empty());
+        other.kill().unwrap();
+        other.wait().unwrap();
+        // 같으면 적고 막는다.
+        BOOT.store(7, Ordering::SeqCst);
+        let mut old = stubborn();
+        let pid = old.id() as i32;
+        assert!(t.retire(&orphan("a1", pid)));
+        assert!(
+            t.spawn_runner("a1", &[], None)
+                .unwrap_err()
+                .starts_with(SPAWN_RETIRING)
+        );
+        // pid 는 살아 있어도 시작 시각이 달라지면(재사용) 앞 세대는 없다 — 막지 않고 거두며 종료를 알린다.
+        BOOT.store(99, Ordering::SeqCst);
+        assert!(t.retiring_runners().is_empty());
+        let r = spawn(&t, &[]).record().clone();
+        let e = exit_of(&rx, "inc-orphan");
+        assert_eq!((e.code, e.signal.as_deref()), (None, None));
+        BOOT.store(7, Ordering::SeqCst);
+        assert!(t.force_kill("a1") || !signal_sent(r.pid, 0));
+        old.kill().unwrap();
+        old.wait().unwrap();
+    }
+
+    /// 마지막 회수 중 세대가 물러나면 지금 세대 러너에 보류 풀기를 알린다(TS `reapRetiring` → `handover.released`).
+    #[test]
+    fn last_retiring_gone_releases_handover_to_current_runner() {
+        let (t, rx, _s) = ledgered("sleep 30", |_| Some(7));
+        let released: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
+        let sink = Arc::clone(&released);
+        t.set_release_handover(Box::new(move |a, r| {
+            sink.lock().unwrap().push((a.to_string(), r.to_string()))
+        }));
+        let mut old = stubborn();
+        assert!(t.retire(&orphan("a1", old.id() as i32)));
+        assert!(t.note_poll_stopped("a1", "inc-orphan", &[3], &[]));
+        let now = spawn(&t, &[]).record().clone();
+        assert!(
+            released.lock().unwrap().is_empty(),
+            "앞 세대가 살아 있는 동안은 풀지 않는다"
+        );
+        old.kill().unwrap();
+        old.wait().unwrap();
+        t.poll_adopted();
+        assert_eq!(
+            released.lock().unwrap().clone(),
+            vec![("a1".to_string(), now.incarnation_id.clone())]
+        );
+        assert_eq!(exit_of(&rx, "inc-orphan").code, None);
+        assert!(t.force_kill("a1"));
     }
 
     /// 남의 자식처럼 다룰 프로세스 — 이 시험이 띄우되 표 밖에서 거둔다.
