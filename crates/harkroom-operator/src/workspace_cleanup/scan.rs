@@ -120,6 +120,9 @@ pub struct ScanDeps {
     pub gh_path: String,
     pub gh_env: Vec<(String, String)>,
     pub home: String,
+    /// 지우면 안 되는 자리(security c5 조건 2) — 홈, `.harkroom-agent`, claude/codex 계정 뿌리, 앱 데이터 폴더.
+    /// 후보가 이 중 하나와 **같거나 그 조상**이면 후보로 올리지 않는다. 실제 경로(canonicalize)로 넣는다.
+    pub protected: Vec<String>,
 }
 
 fn git_env(home: &str) -> Vec<(String, String)> {
@@ -194,11 +197,21 @@ fn is_within(child: &str, parent: &str) -> bool {
     child == parent || child.starts_with(&format!("{}/", parent.trim_end_matches('/')))
 }
 
-/// 후보로 올려도 되는 worktree 경로인가(TS 에 없는 검사). 모양·실제 경로·main 과의 관계를 본다.
-pub fn candidate_path_ok(path: &str, main: &str) -> bool {
+/// 지키는 자리(`protected`) 중 하나와 같거나 그 조상인가 — 지우면 그 자리까지 사라지는 경로(security c5 조건 2).
+/// c5-3 의 지우기 직전 검사도 이것을 쓴다.
+pub fn guards_protected(path: &str, protected: &[String]) -> bool {
+    let p = normalize_cleanup_path(path);
+    protected
+        .iter()
+        .any(|g| is_within(&normalize_cleanup_path(g), &p))
+}
+
+/// 후보로 올려도 되는 worktree 경로인가(TS 에 없는 검사). 모양·실제 경로·main 과의 관계·지키는 자리를 본다.
+pub fn candidate_path_ok(path: &str, main: &str, protected: &[String]) -> bool {
     let p = normalize_cleanup_path(path);
     let m = normalize_cleanup_path(main);
-    if !safe_target(&p) || is_within(&p, &m) || is_within(&m, &p) {
+    if !safe_target(&p) || is_within(&p, &m) || is_within(&m, &p) || guards_protected(&p, protected)
+    {
         return false;
     }
     // 실제 경로가 적힌 경로와 같아야 한다 — 어느 칸이든 심링크면 거절.
@@ -239,7 +252,11 @@ pub fn scan_repo(
         .flatten();
     let mut out = Vec::new();
     for w in list {
-        if w.bare || w.locked || w.prunable || !candidate_path_ok(&w.path, &main.path) {
+        if w.bare
+            || w.locked
+            || w.prunable
+            || !candidate_path_ok(&w.path, &main.path, &deps.protected)
+        {
             continue;
         }
         let mut pr = None;

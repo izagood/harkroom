@@ -61,6 +61,7 @@ fn deps(f: impl Fn(&[String]) -> ExecResult + Send + Sync + 'static) -> (ScanDep
             gh_path: "gh".into(),
             gh_env: vec![],
             home: "/h".into(),
+            protected: vec![],
         },
         calls,
     )
@@ -139,19 +140,55 @@ fn candidate_path_narrowing() {
     std::fs::create_dir_all(&main).unwrap();
     std::fs::create_dir_all(format!("{main}/inner")).unwrap();
     std::fs::create_dir_all(&wt).unwrap();
-    assert!(candidate_path_ok(&wt, &main));
+    assert!(candidate_path_ok(&wt, &main, &[]));
     // main 자신·자손·조상은 안 된다.
-    assert!(!candidate_path_ok(&main, &main));
-    assert!(!candidate_path_ok(&format!("{main}/inner"), &main));
-    assert!(!candidate_path_ok(&root, &main));
+    assert!(!candidate_path_ok(&main, &main, &[]));
+    assert!(!candidate_path_ok(&format!("{main}/inner"), &main, &[]));
+    assert!(!candidate_path_ok(&root, &main, &[]));
     // 심링크 거절.
     let ln = format!("{root}/ln");
     std::os::unix::fs::symlink(&wt, &ln).unwrap();
-    assert!(!candidate_path_ok(&ln, &main));
+    assert!(!candidate_path_ok(&ln, &main, &[]));
     // 없는 경로·상대·`..` 거절.
-    assert!(!candidate_path_ok(&format!("{root}/gone"), &main));
-    assert!(!candidate_path_ok("wt", &main));
-    assert!(!candidate_path_ok(&format!("{root}/wt/../wt"), &main));
+    assert!(!candidate_path_ok(&format!("{root}/gone"), &main, &[]));
+    assert!(!candidate_path_ok("wt", &main, &[]));
+    assert!(!candidate_path_ok(&format!("{root}/wt/../wt"), &main, &[]));
+}
+
+/// security c5 조건 2 — 홈·계정 뿌리·앱 데이터 폴더와 같거나 그 조상인 경로는 후보가 아니다. 그 안쪽은 막지 않는다.
+#[test]
+fn candidate_refuses_protected_roots_and_their_ancestors() {
+    let (_d, root) = real_tmp();
+    let main = format!("{root}/repo");
+    let home = format!("{root}/home/me");
+    let acct = format!("{home}/.harkroom-agent/claude-accounts");
+    let inside = format!("{home}/dev/wt");
+    for d in [&main, &acct, &inside] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    let protected = vec![
+        home.clone(),
+        format!("{home}/.harkroom-agent"),
+        acct.clone(),
+    ];
+    // 지키는 자리 자신·그 조상은 거절.
+    for p in [
+        &home,
+        &format!("{root}/home"),
+        &format!("{home}/.harkroom-agent"),
+        &acct,
+    ] {
+        assert!(!candidate_path_ok(p, &main, &protected), "{p}");
+        assert!(guards_protected(p, &protected), "{p}");
+    }
+    // 홈 안쪽의 평범한 worktree 는 이 검사로 막지 않는다(git 등록·실제 경로 검사는 따로).
+    assert!(candidate_path_ok(&inside, &main, &protected));
+    assert!(!guards_protected(&inside, &protected));
+    // /private/tmp 꼴로 적힌 지키는 자리도 같은 곳으로 본다.
+    assert!(guards_protected(
+        "/tmp/x",
+        &["/private/tmp/x/y".to_string()]
+    ));
 }
 
 #[test]
