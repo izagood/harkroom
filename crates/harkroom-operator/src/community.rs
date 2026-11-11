@@ -330,12 +330,13 @@ pub fn reap_unassigned_adopted(
             continue;
         }
         // 다시 붙었거나 배정이 왔으면 안 죽인다 — 매번 지금 값을 본다.
-        match keep() {
-            Some(k) if !k.contains(&rec.agent_id) => {}
-            _ => continue,
+        let unassigned = || matches!(keep(), Some(k) if !k.contains(&rec.agent_id));
+        if !unassigned() {
+            continue;
         }
+        // 시작 시각 재대조(ps) 뒤 신호 직전에 한 번 더 본다 — ps 사이에 온 assign 을 놓치지 않게(security #1900 낮음).
         if table
-            .kill_runner(&rec.agent_id, Some(&rec.incarnation_id))
+            .kill_runner_if(&rec.agent_id, Some(&rec.incarnation_id), &unassigned)
             .is_some()
         {
             eprintln!(
@@ -345,7 +346,7 @@ pub fn reap_unassigned_adopted(
             reaped.push(rec.agent_id);
         } else {
             eprintln!(
-                "채택 러너 회수 안 함: agent={} pid={} — 세대가 바뀌었거나 시작 시각이 장부와 다르다",
+                "채택 러너 회수 안 함: agent={} pid={} — 세대가 바뀌었거나, 시작 시각이 장부와 다르거나, 그 사이 배정이 왔다",
                 rec.agent_id, rec.pid
             );
         }

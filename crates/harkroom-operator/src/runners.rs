@@ -405,6 +405,18 @@ impl RunnerTable {
         agent_id: &str,
         incarnation_id: Option<&str>,
     ) -> Option<RunnerRecord> {
+        self.kill_runner_if(agent_id, incarnation_id, &|| true)
+    }
+
+    /// `kill_runner` 와 같되, 채택 러너의 시작 시각 재대조(`ps`) **뒤**·SIGTERM **직전**에 `still()` 을 한 번 더 본다.
+    /// 거짓이면 보내지 않고 `None`. 배정에 없는 채택 러너 회수가 쓴다 — ps 가 도는 몇 ms 사이 온 assign 을 놓치지
+    /// 않으려고(security #1900 낮음, TS `adoptedReap.ts` 가 ps 뒤 다시 보는 것과 같은 순서).
+    pub fn kill_runner_if(
+        &self,
+        agent_id: &str,
+        incarnation_id: Option<&str>,
+        still: &dyn Fn() -> bool,
+    ) -> Option<RunnerRecord> {
         let mut table = self.table();
         let record = table.get_mut(agent_id)?;
         if let Some(id) = incarnation_id
@@ -416,6 +428,9 @@ impl RunnerTable {
             let inc = record.incarnation_id.clone();
             drop(table);
             self.forget_reused(agent_id, &inc);
+            return None;
+        }
+        if !still() {
             return None;
         }
         if record.term_sent_at_ms.is_none() {
@@ -1069,6 +1084,47 @@ mod tests {
         assert!(signal_sent(pid2, 0));
         child2.kill().unwrap();
         child2.wait().unwrap();
+    }
+
+    /// security #1900 낮음 — 시작 시각 재대조(ps)가 도는 사이 배정이 오면 SIGTERM 을 보내지 않는다(kill 직전 `keep()` 재확인).
+    #[test]
+    fn reap_rechecks_keep_after_boot_probe() {
+        use std::collections::HashSet;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        // BootProbe 는 fn 포인터라 이 시험 전용 static 으로 「ps 가 도는 사이 assign 이 왔다」를 흉내 낸다.
+        static ARMED: AtomicBool = AtomicBool::new(false);
+        static ASSIGNED: AtomicBool = AtomicBool::new(false);
+        fn probe(_: i32) -> Option<i64> {
+            if ARMED.load(Ordering::SeqCst) {
+                ASSIGNED.store(true, Ordering::SeqCst);
+            }
+            Some(7)
+        }
+        let (t, _rx, _s) = ledgered("sleep 30", probe);
+        let mut child = outside("30");
+        let pid = child.id() as i32;
+        t.adopt_runner(&orphan("late", pid)).unwrap();
+        ARMED.store(true, Ordering::SeqCst);
+        let keep = || {
+            Some(if ASSIGNED.load(Ordering::SeqCst) {
+                HashSet::from(["late".to_string()])
+            } else {
+                HashSet::new()
+            })
+        };
+        // 처음 볼 때는 배정에 없다 → kill_runner_if 안의 ps(probe) 동안 배정이 온다 → 신호 직전 재확인에서 멈춘다.
+        assert!(crate::community::reap_unassigned_adopted(&keep, &t, &|_| true).is_empty());
+        assert!(
+            ASSIGNED.load(Ordering::SeqCst),
+            "probe 가 불려 배정이 들어왔다"
+        );
+        assert!(signal_sent(pid, 0), "SIGTERM 이 가지 않아 프로세스가 산다");
+        assert!(
+            t.records().iter().any(|r| r.agent_id == "late"),
+            "표에 그대로 남는다"
+        );
+        child.kill().unwrap();
+        child.wait().unwrap();
     }
 
     #[test]
