@@ -240,7 +240,7 @@ describe('주인 장부(러너 보고)', () => {
 });
 
 import { createCleanupPorts, createWorkspaceCleanup, readCleanupSettings } from '../src/workspaceCleanupService.js';
-import { SAFE_GIT_ARGS } from '../src/workspaceCleanupScan.js';
+import { SAFE_GIT_ARGS, lastActivityAt } from '../src/workspaceCleanupScan.js';
 
 describe('지우기 직전 검사', () => {
   const base = {
@@ -261,17 +261,17 @@ describe('지우기 직전 검사', () => {
     expect(calls).toEqual([]);
   });
   it('변경이 있으면 uncommitted', async () => {
-    expect(await ports({ 'status --porcelain': { code: 0, stdout: ' M a.ts\n' } }).p.check(base, new Set())).toBe('uncommitted');
+    expect(await ports({ 'status --ignore-submodules=all': { code: 0, stdout: ' M a.ts\n' } }).p.check(base, new Set())).toBe('uncommitted');
   });
   it('원격에도 PR head 에도 없으면 unpushed, PR head 의 조상이면 통과', async () => {
-    expect(await ports({ 'status --porcelain': { code: 0, stdout: '' }, 'branch -r': { code: 0, stdout: '' } }).p.check(base, new Set())).toBe('unpushed');
-    expect(await ports({ 'status --porcelain': { code: 0, stdout: '' }, 'branch -r': { code: 0, stdout: '' }, 'merge-base --is-ancestor': { code: 0, stdout: '' } }).p.check(base, new Set())).toBeNull();
-    expect(await ports({ 'status --porcelain': { code: 0, stdout: '' } }).p.check({ ...base, pr: { ...base.pr, headSha: 'h1' } }, new Set())).toBeNull();
+    expect(await ports({ 'status --ignore-submodules=all': { code: 0, stdout: '' }, 'branch -r': { code: 0, stdout: '' } }).p.check(base, new Set())).toBe('unpushed');
+    expect(await ports({ 'status --ignore-submodules=all': { code: 0, stdout: '' }, 'branch -r': { code: 0, stdout: '' }, 'merge-base --is-ancestor': { code: 0, stdout: '' } }).p.check(base, new Set())).toBeNull();
+    expect(await ports({ 'status --ignore-submodules=all': { code: 0, stdout: '' } }).p.check({ ...base, pr: { ...base.pr, headSha: 'h1' } }, new Set())).toBeNull();
   });
   it('스캔 뒤 커밋이 더 생겼으면(HEAD 가 원장과 다르면) PR head 와 같아 보여도 unpushed', async () => {
     const pushedLooking = { ...base, pr: { ...base.pr, headSha: 'h1' } };
-    expect(await ports({ 'status --porcelain': { code: 0, stdout: '' }, 'rev-parse HEAD': { code: 0, stdout: 'h2\n' } }).p.check(pushedLooking, new Set())).toBe('unpushed');
-    expect(await ports({ 'status --porcelain': { code: 0, stdout: '' }, 'symbolic-ref -q': { code: 0, stdout: 'other\n' } }).p.check(pushedLooking, new Set())).toBe('unpushed');
+    expect(await ports({ 'status --ignore-submodules=all': { code: 0, stdout: '' }, 'rev-parse HEAD': { code: 0, stdout: 'h2\n' } }).p.check(pushedLooking, new Set())).toBe('unpushed');
+    expect(await ports({ 'status --ignore-submodules=all': { code: 0, stdout: '' }, 'symbolic-ref -q': { code: 0, stdout: 'other\n' } }).p.check(pushedLooking, new Set())).toBe('unpushed');
   });
   it('지우기는 --force 없이 worktree remove, 브랜치는 검사한 커밋 그대로일 때만', async () => {
     const { p, calls } = ports({ 'worktree remove': { code: 0, stdout: '' } });
@@ -323,6 +323,36 @@ describe('청소기의 git 은 저장소 설정의 실행 칸을 끈 채로 돈�
     await mkdir(join(d, 'node_modules'));
     await ports().removeDeps(d);
     expect((await lstat(join(d, 'node_modules'))).isDirectory()).toBe(true);
+  });
+  it('저장소 설정의 서명 표시·검사 프로그램은 마지막 활동 시각을 잴 때 돌지 않는다', async () => {
+    const { d, git, mark, script } = await setup();
+    // 서명이 달린 커밋을 손으로 만든다.
+    const tree = git('rev-parse', 'HEAD^{tree}').toString().trim();
+    const parent = git('rev-parse', 'HEAD').toString().trim();
+    const obj = join(d, '..', `${d.split('/').pop()}-commit.txt`);
+    await writeFile(obj, `tree ${tree}\nparent ${parent}\nauthor t <t@example.com> 1700000000 +0000\ncommitter t <t@example.com> 1700000000 +0000\ngpgsig -----BEGIN PGP SIGNATURE-----\n \n x\n -----END PGP SIGNATURE-----\n\nsigned\n`);
+    const c = git('hash-object', '-t', 'commit', '-w', obj).toString().trim();
+    git('update-ref', 'HEAD', c);
+    git('config', 'log.showSignature', 'true');
+    git('config', 'gpg.program', script);
+    expect(await lastActivityAt({ exec: defaultExec, gitPath: 'git', ghPath: '/gh', ghEnv: {}, home: process.env.HOME ?? '/' }, d)).not.toBeNull();
+    await expect(lstat(mark)).rejects.toThrow();
+  });
+  it('검사는 서브모듈 안으로 들어가지 않는다(서브모듈 저장소의 filter 가 돌지 않는다)', async () => {
+    const { d, git, mark, script } = await setup();
+    const sub = join(d, 'sub');
+    await mkdir(sub);
+    const sg = (...a: string[]) => execFileSync('git', ['-C', sub, ...a], { env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } });
+    sg('init', '-q'); sg('config', 'user.email', 't@example.com'); sg('config', 'user.name', 't');
+    await writeFile(join(sub, 'f'), 'f');
+    await writeFile(join(sub, '.gitattributes'), '* filter=x\n');
+    sg('add', 'f', '.gitattributes'); sg('commit', '-q', '-m', 'f');
+    git('add', 'sub'); git('commit', '-q', '-m', 'sub');
+    sg('config', 'filter.x.clean', script);
+    await new Promise((r) => setTimeout(r, 1100));
+    await writeFile(join(sub, 'f'), 'g'); // 크기는 같고 내용만 다르다 — git 이 내용을 보려면 filter 를 부른다
+    await ports().check(item(d), new Set());
+    await expect(lstat(mark)).rejects.toThrow();
   });
 });
 

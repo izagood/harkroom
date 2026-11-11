@@ -80,7 +80,7 @@ export interface ScanDeps {
  * 시키는 실행 칸을 끈다 — 시스템·전역 설정은 읽지 않고(env), 저장소 설정의 fsmonitor·hooks 는 덮고(`-c`), 선택적 잠금은
  * 잡지 않는다. 저장소 설정의 `filter.*` 처럼 `-c` 로 덮을 수 없는 칸은 `hasRunnableGitConfig` 가 보고 막는다.
  */
-export const SAFE_GIT_ARGS = ['--no-optional-locks', '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null'] as const;
+export const SAFE_GIT_ARGS = ['--no-optional-locks', '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', '-c', 'log.showSignature=false'] as const;
 
 export const cleanupGitEnv = (home: string): Record<string, string> => ({
   HOME: home, PATH: '/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin', GIT_TERMINAL_PROMPT: '0',
@@ -177,7 +177,7 @@ export async function onlyRebuildableIgnored(deps: ScanDeps, path: string): Prom
   if (await hasRunnableGitConfig(deps, path)) return false;
   // matching: 무시 규칙에 걸린 경로 그대로(`pkg/node_modules/`) — traditional 은 무시된 것만 든 부모를 `pkg/` 로 접어 이름을 잃는다.
   // 무시된 파일만 든 폴더(`logs/`)도 한 줄로 나오는데, 이름이 다시 만들 수 있는 폴더가 아니면 손 파일로 친다(지우지 않는 쪽).
-  const r = await runGit(deps, ['-C', path, 'status', '--porcelain', '-z', '--ignored=matching', '--untracked-files=normal']);
+  const r = await runGit(deps, ['-C', path, 'status', '--ignore-submodules=all', '--porcelain', '-z', '--ignored=matching', '--untracked-files=normal']);
   if (r.code !== 0) return false;
   const rebuildable = new Set<string>(REBUILDABLE_DIRS);
   return r.stdout.split('\0').filter((e) => e.startsWith('!! ')).every((e) => rebuildable.has(e.slice(3).replace(/\/$/, '').split('/').pop()!));

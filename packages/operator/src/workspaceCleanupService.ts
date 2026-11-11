@@ -94,7 +94,7 @@ export function createCleanupPorts(deps: ScanDeps): CleanupPorts {
       // 저장소 설정에 끌 수 없는 실행 칸이 있으면 검사 자체를 돌리지 않고 막는다(주인 확인 불가).
       if (await hasRunnableGitConfig(deps, item.path)) return 'uncommitted';
       // `--untracked-files=all`: 저장소 설정 `status.showUntrackedFiles=no` 여도 untracked 를 본다(security n3).
-      const st = await runGit(deps, ['-C', item.path, 'status', '--porcelain', '--untracked-files=all']);
+      const st = await runGit(deps, ['-C', item.path, 'status', '--ignore-submodules=all', '--porcelain', '--untracked-files=all']);
       if (st.code !== 0 || st.stdout.trim()) return 'uncommitted';
       // HEAD·브랜치는 **지금** 다시 읽는다. 원장 값은 스캔 때 것이라 그 사이 커밋이 더 생겼을 수 있다 — 낡은 값으로 "올라감"을
       // 판정하면 새 커밋이 브랜치와 함께 사라진다. 원장과 다르면 다음 회차의 스캔이 새 값을 잴 때까지 막는다.
