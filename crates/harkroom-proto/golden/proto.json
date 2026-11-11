@@ -481,6 +481,12 @@
     "drain": true
    },
    {
+    "type": "assign.synced",
+    "agentIds": [
+     "00000000-aaaa-4bbb-8ccc-000000000001"
+    ]
+   },
+   {
     "type": "agent.restart",
     "agentId": "00000000-aaaa-4bbb-8ccc-000000000001"
    },

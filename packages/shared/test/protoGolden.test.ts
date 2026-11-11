@@ -108,6 +108,7 @@ const p2ServerToOperator = [
     },
   },
   { type: 'unassign', agentId: ID, drain: true },
+  { type: 'assign.synced', agentIds: [ID] },
   { type: 'agent.restart', agentId: ID },
   { type: 'runner.kill', runnerId: RUNNER },
   { type: 'pty.replay.request', runnerId: RUNNER, sessionId: 'ses-1' },

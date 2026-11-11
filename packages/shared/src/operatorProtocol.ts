@@ -108,6 +108,12 @@ export type ServerToOperatorFrame =
   | { type: 'assign'; agentId: string; definition: AgentDefinition }
   | { type: 'unassign'; agentId: string; drain: boolean }
   /**
+   * hello 뒤 배정 재전송(`assign` 묶음)이 끝났다는 표지 — `agentIds` 는 그 묶음에 실제로 보낸 에이전트 전부다.
+   * 오퍼레이터는 이것을 「남길 것」으로만 쓴다: 모든 커뮤니티에서 받은 뒤 그 합집합(과 이 연결에서 받은 `assign`)에
+   * 없는 **채택한** 러너만 회수한다. 이 프레임으로 러너를 띄우지 않는다. 모르는 옛 오퍼레이터는 버린다(파서가 null).
+   */
+  | { type: 'assign.synced'; agentIds: string[] }
+  /**
    * 배정은 그대로 두고 러너만 갈아 띄운다 — 사람의 [재시작](새 MCP config·지시문을 읽히려고).
    * 오퍼레이터는 SIGTERM(진행 중인 턴을 마치고 물러남) 뒤 배정을 보고 바로 다시 띄운다.
    * 모르는 옛 오퍼레이터는 이 프레임을 버린다(파서가 null) — 러너는 그대로 돈다.
@@ -138,12 +144,12 @@ const OPERATOR_TYPES = new Set<OperatorToServerFrame['type']>([
   'local.input', 'gh.report', 'gh.lines.result',
 ]);
 const SERVER_TYPES = new Set<ServerToOperatorFrame['type']>([
-  'assign', 'unassign', 'agent.restart', 'runner.kill', 'pty.replay.request', 'pty.input', 'pty.resize', 'viewer.count', 'session.cancel', 'interactive.open',
+  'assign', 'unassign', 'assign.synced', 'agent.restart', 'runner.kill', 'pty.replay.request', 'pty.input', 'pty.resize', 'viewer.count', 'session.cancel', 'interactive.open',
   'local.writer', 'local.view', 'gh.lines.set',
 ]);
 
-/** `hello` 와 배정 셋(`assign`·`unassign`·`agent.restart`)만 러너 밖의 말이다 — 나머지는 전부 `runnerId` 가 있어야 한다. */
-const NO_RUNNER_ID = new Set<string>(['hello', 'capabilities', 'status', 'upgrade.progress', 'gh.report', 'gh.lines.result', 'gh.lines.set', 'assign', 'unassign', 'agent.restart']);
+/** `hello` 와 배정 넷(`assign`·`unassign`·`assign.synced`·`agent.restart`)만 러너 밖의 말이다 — 나머지는 전부 `runnerId` 가 있어야 한다. */
+const NO_RUNNER_ID = new Set<string>(['hello', 'capabilities', 'status', 'upgrade.progress', 'gh.report', 'gh.lines.result', 'gh.lines.set', 'assign', 'unassign', 'assign.synced', 'agent.restart']);
 
 function parse(raw: string, known: Set<string>): Record<string, unknown> | null {
   let value: unknown;
@@ -368,6 +374,20 @@ const GH_LINES_REFUSALS = new Set<string>(['bad_request', 'unknown_login', 'no_a
 const GH_LINES_REQUEST_ID = /^[A-Za-z0-9-]{1,64}$/;
 
 /** `gh.lines.set` 의 몸을 받을 모양으로 — 범위는 소문자로 맞추고 `owner/name`·`owner/*` 만, 이름은 gh 로그인 모양만. */
+/**
+ * `assign.synced` 의 `agentIds` 를 「남길 것」 집합으로 읽는다. 모양이 틀리면 null — 받는 쪽은 그 커뮤니티를
+ * 「아직 못 받음」으로 두어 회수하지 않는다(실패하면 안 죽이는 쪽).
+ */
+export function parseAssignSynced(frame: { agentIds?: unknown }): Set<string> | null {
+  if (!Array.isArray(frame.agentIds) || frame.agentIds.length > 10_000) return null;
+  const out = new Set<string>();
+  for (const id of frame.agentIds) {
+    if (typeof id !== 'string' || id.length === 0 || id.length > 64) return null;
+    out.add(id);
+  }
+  return out;
+}
+
 export function parseGhLinesSet(frame: { requestId?: unknown; scope?: unknown; ghUser?: unknown }): { requestId: string; scope: string; ghUser: string | null } | null {
   if (typeof frame.requestId !== 'string' || !GH_LINES_REQUEST_ID.test(frame.requestId)) return null;
   if (typeof frame.scope !== 'string') return null;

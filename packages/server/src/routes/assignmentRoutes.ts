@@ -39,10 +39,17 @@ export async function registerAssignmentRoutes(app: FastifyInstance, pool: Pool,
         `select a.agent_id from agent_assignment a
            left join agent_config c on c.account_id = a.agent_id
           where a.operator_id = $1 and c.stop_requested_at is null`, [operatorId]);
+      const sent: string[] = [];
       for (const r of rows.rows) {
         const definition = await definitionFor(pool, r.agent_id);
-        if (definition) hub.send(operatorId, { type: 'assign', agentId: r.agent_id, definition });
+        if (definition) {
+          hub.send(operatorId, { type: 'assign', agentId: r.agent_id, definition });
+          sent.push(r.agent_id);
+        }
       }
+      // 묶음의 끝 — 실제로 보낸 것만 싣는다(같은 쿼리·같은 오퍼레이터). 오퍼레이터는 이 목록에 없는 **채택한**
+      // 러너만 회수한다. 위에서 실패하면 여기 오지 않으므로 오퍼레이터는 회수하지 않는다(안 죽이는 쪽).
+      hub.send(operatorId, { type: 'assign.synced', agentIds: sent });
     })().catch(() => { /* 재전송 실패는 다음 hello 가 다시 한다 */ });
   });
 
