@@ -143,6 +143,29 @@ impl TurnKeyLedger {
         )
     }
 
+    /// 프로세스 하나에 하나 — 여러 커뮤니티의 러너 링크가 같이 쓴다(TS run.ts 는 오퍼레이터당 하나를 만든다).
+    pub fn process() -> std::sync::Arc<std::sync::Mutex<TurnKeyLedger>> {
+        static LEDGER: std::sync::OnceLock<std::sync::Arc<std::sync::Mutex<TurnKeyLedger>>> =
+            std::sync::OnceLock::new();
+        std::sync::Arc::clone(LEDGER.get_or_init(|| {
+            let l = std::sync::Arc::new(std::sync::Mutex::new(Self::system()));
+            // TS run.ts — 1분마다 끝내기가 오지 않은 열쇠를 쓴다.
+            let w = std::sync::Arc::downgrade(&l);
+            let _ = std::thread::Builder::new()
+                .name("turn-keys-sweep".into())
+                .spawn(move || {
+                    loop {
+                        std::thread::sleep(std::time::Duration::from_secs(60));
+                        let Some(l) = w.upgrade() else { return };
+                        l.lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .sweep();
+                    }
+                });
+            l
+        }))
+    }
+
     fn drop_turn(&mut self, runner_id: &str, turn_id: &str) {
         let Some(turns) = self.by_runner.get_mut(runner_id) else {
             return;
