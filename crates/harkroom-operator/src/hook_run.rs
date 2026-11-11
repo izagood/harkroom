@@ -267,7 +267,7 @@ pub fn permission_log_path(sock: Option<&str>, temp_dir: &Path, now_ms: u64) -> 
 
 /// 기록 폴더가 심링크·폴더 아닌 것이면 거절한다(#1885 정리 — `turn_secrets::ensure_dir` 와 같은 꼴). 남이 심어 둔
 /// 링크를 따라 다른 곳에 쓰지 않게 한다.
-fn plain_dir(dir: &Path) -> std::io::Result<()> {
+pub(crate) fn plain_dir(dir: &Path) -> std::io::Result<()> {
     let m = std::fs::symlink_metadata(dir)?;
     if m.file_type().is_symlink() || !m.is_dir() {
         return Err(std::io::Error::other("not a plain directory"));
@@ -276,7 +276,10 @@ fn plain_dir(dir: &Path) -> std::io::Result<()> {
 }
 
 /// 마지막 칸이 심링크면 열지 않고(O_NOFOLLOW), FIFO 에 멈추지 않게(O_NONBLOCK) 열어 일반 파일인지 핸들에서 본다.
-fn open_nofollow(path: &Path, opts: &mut std::fs::OpenOptions) -> std::io::Result<std::fs::File> {
+pub(crate) fn open_nofollow(
+    path: &Path,
+    opts: &mut std::fs::OpenOptions,
+) -> std::io::Result<std::fs::File> {
     let f = opts
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)?;

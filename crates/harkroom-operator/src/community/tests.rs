@@ -345,3 +345,46 @@ fn agent_entry_reads_only_this_community() {
     assert_eq!(la.agent_entry("zz"), None);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// ①b(s21c-2c-1b-2) — `assign.synced` 는 받은 목록 ∪ 이 연결의 assign, 연결이 바뀌면 지운다, 모양이 틀리면 못 받음.
+#[test]
+fn assign_synced_keeps_list_plus_link_assigns_and_resets() {
+    let (_f, frames, _sent) = setup();
+    let none = |_: &str| None;
+    assert_eq!(frames.synced_keep(), None);
+    // 로컬에 없어 거절된 assign 도 남길 것에는 든다 — 회수 길로 죽이지 않는다.
+    frames.on_frame(
+        &assign(def("stranger", CredentialScope::Community, None)),
+        &none,
+    );
+    assert!(frames.on_frame(
+        &ServerToOperatorFrame::AssignSynced {
+            agent_ids: vec!["a1".into()]
+        },
+        &none
+    ));
+    let k = frames.synced_keep().unwrap();
+    assert!(k.contains("a1") && k.contains("stranger"));
+    frames.on_frame(
+        &assign(def("late", CredentialScope::Community, None)),
+        &none,
+    );
+    assert!(frames.synced_keep().unwrap().contains("late"));
+    frames.reset_synced();
+    assert_eq!(frames.synced_keep(), None);
+    // 다시 붙은 뒤 앞 연결의 assign 은 남지 않는다.
+    frames.on_frame(
+        &ServerToOperatorFrame::AssignSynced { agent_ids: vec![] },
+        &none,
+    );
+    assert!(frames.synced_keep().unwrap().is_empty());
+    // 모양이 틀리면 버리고 못 받음 그대로.
+    frames.reset_synced();
+    for bad in [vec![String::new()], vec!["x".repeat(65)]] {
+        frames.on_frame(
+            &ServerToOperatorFrame::AssignSynced { agent_ids: bad },
+            &none,
+        );
+        assert_eq!(frames.synced_keep(), None);
+    }
+}

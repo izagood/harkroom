@@ -102,6 +102,8 @@ pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
                 nonce: identity.launch_nonce.clone(),
                 app_version: flag(args, "--app-version").map(str::to_string),
             });
+            // 러너 로그(s21c-2c-2a) — `<appDataDir>/operator/runner-<agentId>.log`. 장부와 같은 뿌리다.
+            state.runners.set_log_dir(std::path::PathBuf::from(&root));
             state.set_local_agents(LocalAgents::new(&root, base_url));
             state.set_local_mcp(LocalMcp::new(
                 &root,
@@ -316,7 +318,9 @@ pub fn spawn_server_link(
                 reason: None,
                 agent_id: None,
             });
-            frames.on_runner_exit(&exit.agent_id, exit.code, None);
+            // 78 의 사유(로그인 풀림·PAT 거절·하네스 부재)는 로그 꼬리로만 가린다 — 판정은 한 곳(TS run.ts onExit).
+            let reason = crate::runner_log::runner_exit_reason(&exit.tail_lines);
+            frames.on_runner_exit(&exit.agent_id, exit.code, reason);
         }));
     }
     // 고아 채택(s21c-2b-3, TS run.ts adoptOrphans) — 종료 통지를 건 뒤, 서버 hello 전에 한다(hello 가 채택한 러너를 알린다).
@@ -383,9 +387,31 @@ pub fn spawn_server_link(
         )
     });
     let frame_mux = std::sync::Arc::clone(&mux);
+    let open_frames = std::sync::Arc::clone(&frames);
+    let close_frames = std::sync::Arc::clone(&frames);
+    let reap_runners = std::sync::Arc::clone(&state.runners);
     let on_frame = Box::new(move |frame: harkroom_proto::p2::ServerToOperatorFrame| {
         // 배정 프레임은 조정기로(작업 스레드에서 차례로 처리한다).
         if frames.on_frame(&frame, &*local_of) {
+            // 재전송 묶음 끝 — 배정에 없는 채택 러너 회수(①b). `ps` 를 부르므로 링크 스레드 밖에서 한다.
+            if matches!(
+                frame,
+                harkroom_proto::p2::ServerToOperatorFrame::AssignSynced { .. }
+            ) && frames.synced_keep().is_some()
+            {
+                let (f, t, l) = (
+                    std::sync::Arc::clone(&frames),
+                    std::sync::Arc::clone(&reap_runners),
+                    std::sync::Arc::clone(&local_of),
+                );
+                let _ = std::thread::Builder::new()
+                    .name("adopted-reap".into())
+                    .spawn(move || {
+                        crate::community::reap_unassigned_adopted(&|| f.synced_keep(), &t, &|a| {
+                            l(a).is_some()
+                        });
+                    });
+            }
             return;
         }
         // 러너로 가는 말은 다중화기가 runnerId 로 보낸다(러너가 없으면 거기서 로그를 남기고 버린다).
@@ -405,6 +431,7 @@ pub fn spawn_server_link(
     let url_open = base_url.clone();
     opts.on_open = Some(Box::new(move || {
         eprintln!("서버에 붙었다: {url_open}");
+        open_frames.reset_synced();
         // 소유자는 붙을 때마다 새로 읽는다(TS selfOwner) — 그 사이 온 personal assign 은 답을 기다린다.
         owner.begin();
         let (owner, u, t) = (
@@ -422,6 +449,7 @@ pub fn spawn_server_link(
         mux.resync();
     }));
     opts.on_close = Some(Box::new(move |reason: &str| {
+        close_frames.reset_synced();
         eprintln!("서버와 끊겼다: {base_url} — {reason}")
     }));
     std::thread::Builder::new()

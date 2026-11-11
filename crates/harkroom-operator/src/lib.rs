@@ -39,6 +39,7 @@ pub mod relay_mux;
 pub mod retiring;
 pub mod runner_ledger;
 pub mod runner_link;
+pub mod runner_log;
 pub mod runners;
 pub mod serve;
 pub mod server_link;

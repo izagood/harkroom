@@ -916,6 +916,15 @@ export class RunnerRegistry {
     return out;
   }
 
+  /** 표에 있는 채택 러너(아직 종료를 못 본 것). 배정에 없는 채택 러너 회수(`adoptedReap.ts`)가 쓴다. */
+  adoptedRunners(): { agentId: string; incarnationId: IncarnationId; pid: number; bootTimeSec: number | null }[] {
+    const out = [];
+    for (const r of this.byAgent.values()) {
+      if (r.adopted && !r.exited) out.push({ agentId: r.agentId, incarnationId: r.incarnationId, pid: r.pid, bootTimeSec: r.bootTimeSec });
+    }
+    return out;
+  }
+
   /** 표에 있는 세대. 회귀선이 "늦은 exit 이 새 세대를 안 지웠다"를 재는 자리다. */
   currentIncarnation(agentId: string): IncarnationId | null {
     return this.byAgent.get(agentId)?.incarnationId ?? null;

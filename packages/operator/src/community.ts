@@ -13,7 +13,7 @@ import { PROVIDER_LANE_INTERACTIVE_REJECTION } from '@harkroom/shared/providerLa
 import { createHash, randomUUID } from 'node:crypto';
 import type { RelayRunnerFrame, RelayServerFrame } from '@harkroom/shared';
 import type { OperatorCapabilities, OperatorStatus, RunnerExitReason } from '@harkroom/shared';
-import { parseGhLinesSet, type AgentDefinition, type GhLinesRefusal, type GhReport, type ServerToOperatorFrame } from '@harkroom/shared/operatorProtocol';
+import { parseAssignSynced, parseGhLinesSet, type AgentDefinition, type GhLinesRefusal, type GhReport, type ServerToOperatorFrame } from '@harkroom/shared/operatorProtocol';
 import type { RunnerLinkRequest, RunnerLinkResponse } from '@harkroom/shared/runnerLink';
 import type { Forwarder } from './forward.js';
 import type { AssignmentReconciler } from './assignments.js';
@@ -29,6 +29,11 @@ export interface CommunityDeps {
   /** 이 커뮤니티에서 이 머신이 돌릴 수 있는 에이전트(로컬 설정). 키는 에이전트 id. */
   agents: Record<string, LocalAgentConfig>;
   reconciler: AssignmentReconciler;
+  /**
+   * 이번 연결의 배정 재전송이 끝났다(`assign.synced`) — 배정에 없는 채택 러너 회수(`adoptedReap.ts`)를 깨운다.
+   * 회수 판단은 거기서 모든 커뮤니티의 `syncedKeep()` 을 모아 한다.
+   */
+  onSynced?: () => void;
   /**
    * 러너 링크(스펙 §5). 서버의 러너 프레임을 이리로 내려보내고, 러너의 프레임은
    * `onRunnerFrame` 으로 받아 서버에 올린다. 없으면 러너 프레임은 어디로도 가지 않는다
@@ -133,6 +138,11 @@ export interface CommunityInstance {
   lanePending?(): Record<string, boolean>;
   /** 하네스 능력이 바뀌었다(모델 목록이 늦게 도착했다 등) — 서버에 능력을 다시 낸다. */
   announceCapabilities(): void;
+  /**
+   * 이번 연결에서 받은 「남길 것」 — `assign.synced` 의 목록 ∪ 이 연결에서 받은 `assign`. 아직 못 받았으면(옛 서버
+   * 포함) null. 연결이 새로 열릴 때마다 null 로 돌아간다 — 지난 연결의 목록으로 회수하지 않는다.
+   */
+  syncedKeep(): ReadonlySet<string> | null;
 }
 
 export function createCommunity(deps: CommunityDeps): CommunityInstance {
@@ -144,6 +154,10 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
   const linkRef: { current: ServerLink | null } = { current: null };
   /** 아직 처리 중인 `assign` — 바로 뒤에 오는 `agent.restart` 가 기다린다. */
   const assignsInFlight = new Map<string, Promise<unknown>>();
+  // 회수 기준(①b) — 연결마다 처음부터. `assignedThisLink` 는 synced 보다 먼저 온 assign 도 담는다(서버는 묶음 안의
+  // 것을 목록에도 싣지만, 묶음 쿼리 뒤에 따로 온 배정도 남기려고 둘 다 본다).
+  let syncedKeep: Set<string> | null = null;
+  let assignedThisLink = new Set<string>();
   const mux = createRelayMux({
     link: deps.runnerLink ?? noLink,
     send: (frame) => linkRef.current?.send(frame) ?? false,
@@ -205,15 +219,24 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
     onOpen: () => {
       deps.log(`서버에 붙었다: ${deps.baseUrl}`);
       selfOwner = readSelf();
+      syncedKeep = null;
+      assignedThisLink = new Set();
       lastGh = null;
       // 서버는 소켓이 끊기면 러너의 세션을 버린다 — hello 의 목록 뒤에 러너별 announce 로 능력까지 다시 낸다.
       mux.resync();
       // hello 다음에 박동 하나 — 서버는 끊길 때 박동을 버리므로 붙자마자 채워 둔다.
       beat();
     },
-    onClose: (reason) => deps.log(`서버와 끊겼다: ${deps.baseUrl}${reason ? ` — ${reason}` : ''}`),
+    onClose: (reason) => {
+      // 끊긴 동안은 「못 받음」이다 — 다른 커뮤니티가 받아도 이 커뮤니티의 지난 목록으로 회수하지 않는다.
+      syncedKeep = null;
+      deps.log(`서버와 끊겼다: ${deps.baseUrl}${reason ? ` — ${reason}` : ''}`);
+    },
     onFrame: (frame) => {
       if (frame.type === 'assign') {
+        // 「남길 것」은 받은 그대로 먼저 적는다 — 아래 검사로 거절해도 그 에이전트의 러너를 이 길로 죽이지 않는다.
+        assignedThisLink.add(frame.agentId);
+        syncedKeep?.add(frame.agentId);
         // 동의를 확인한 에이전트와 띄울 에이전트가 같아야 한다 — 다르면 로컬에 없는 에이전트가 남의 로컬 설정(작업 폴더 등)으로
         // 뜬다. 오퍼레이터는 서버만 믿지 않는다(security #1892 낮음).
         if (frame.definition.agentId !== frame.agentId) {
@@ -247,6 +270,14 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
         assignments.delete(frame.agentId);
         void deps.reconciler.onUnassign(deps.baseUrl, frame.agentId, frame.drain)
           .catch((err: unknown) => deps.log(`해제 처리 실패: ${err instanceof Error ? err.message : String(err)}`));
+        return;
+      }
+      if (frame.type === 'assign.synced') {
+        const keep = parseAssignSynced(frame);
+        if (!keep) { deps.log(`assign.synced 를 버린다 — agentIds 모양이 틀렸다: ${deps.baseUrl}`); return; }
+        for (const id of assignedThisLink) keep.add(id);
+        syncedKeep = keep;
+        deps.onSynced?.();
         return;
       }
       if (frame.type === 'agent.restart') {
@@ -408,6 +439,7 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
     noteRunnerLane: (runnerId, on) => deps.reconciler.noteRunnerLane(runnerId, on),
     lanePending: () => deps.reconciler.lanePending(),
     announceCapabilities: () => { link.send({ type: 'capabilities', capabilities: capabilities() }); },
+    syncedKeep: () => syncedKeep,
     forward: async (agentId, req) => {
       if (!deps.forwarder) {
         return req.type === 'mcp.request'
