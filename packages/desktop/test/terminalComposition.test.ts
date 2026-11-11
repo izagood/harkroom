@@ -183,6 +183,19 @@ describe('한글 입력 — 조합은 xterm 이 아니라 sink 가 받는다', (
     sink.dispose();
   });
 
+  it('확정 키가 key:Process 로 와도 code 로 알아본다 — Enter 가 삼켜지지 않는다(security #1339 n3)', async () => {
+    const sent: string[] = [];
+    const sink = getTerminalSinkFactory()(host(), { onInput: (d) => sent.push(d) });
+    await settle();
+    sink.setReadOnly!(false);
+
+    compose(helperTextarea!, '한');
+    helperTextarea!.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, keyCode: 229, key: 'Process', code: 'Enter' } as KeyboardEventInit));
+    expect(sent).toEqual(['한', '\r']);
+    expect(xtermSaw).toEqual([]);
+    sink.dispose();
+  });
+
   it('조합 중의 Backspace 는 IME 의 것이다 — 확정 글자를 지우는 DEL 을 보내지 않는다', async () => {
     const sent: string[] = [];
     const sink = getTerminalSinkFactory()(host(), { onInput: (d) => sent.push(d) });
