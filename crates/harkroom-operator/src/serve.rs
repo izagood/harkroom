@@ -129,7 +129,8 @@ pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
 
 /// 서버 링크 스레드(s21a-2) — 이 커뮤니티의 토큰이 있으면 `wss://…/operator` 로 붙어 hello 를 올리고, 끊기면 backoff 로 다시 붙는다.
 /// 토큰이 없으면(등록 전) 띄우지 않는다 — 등록은 아직 TS 오퍼레이터 몫이다.
-/// 받은 프레임은 이 판에서는 종류만 stderr 에 적는다(assign·unassign 처리는 s21b·s21c).
+/// 러너로 가는 프레임은 릴레이 다중화기로 넘기고(s21b-2), 나머지는 종류만 stderr 에 적는다(assign·unassign 처리는 s21c).
+/// 러너 링크도 여기서 배선한다 — 토큰이 없으면 러너 요청을 넘길 곳이 없으므로 러너 hello 는 앱 hello 로 검사돼 거절된다.
 /// 하네스 능력은 hello 마다 새로 잰다 — 사람이 그 사이 claude 를 설치·로그인했을 수 있다(TS community.ts).
 pub fn spawn_server_link(
     state: std::sync::Arc<ServerState>,
@@ -179,16 +180,32 @@ pub fn spawn_server_link(
             });
         }));
     }
+    // 러너 링크·다중화기·서버 전달(s21b-2). 러너 요청은 이 커뮤니티의 오퍼레이터 토큰으로 서버에 넘긴다.
+    let bridge = crate::bridge::build_bridge(
+        std::sync::Arc::new(link.clone()),
+        std::sync::Arc::new(crate::forward::UreqTransport::default()),
+        base_url.clone(),
+        token.clone(),
+    );
+    state.set_runner_link(std::sync::Arc::clone(&bridge.runner_link));
+    let mux = bridge.mux;
     let runners_state = state.clone();
+    let hello_mux = std::sync::Arc::clone(&mux);
     let hello = Box::new(move || {
         build_hello(
             caps(),
             announce_of(&runners_state.runners),
-            Vec::new(),
+            hello_mux.sessions(),
             version.as_deref(),
         )
     });
-    let on_frame = Box::new(|frame: harkroom_proto::p2::ServerToOperatorFrame| {
+    let frame_mux = std::sync::Arc::clone(&mux);
+    let on_frame = Box::new(move |frame: harkroom_proto::p2::ServerToOperatorFrame| {
+        // 러너로 가는 말은 다중화기가 runnerId 로 보낸다(러너가 없으면 거기서 로그를 남기고 버린다).
+        if crate::relay_mux::unwrap_server_frame(&frame).is_some() {
+            frame_mux.on_server_frame(&frame);
+            return;
+        }
         let ty = serde_json::to_value(&frame)
             .ok()
             .and_then(|v| v.get("type").and_then(|t| t.as_str()).map(str::to_string))
@@ -197,7 +214,11 @@ pub fn spawn_server_link(
     });
     let mut opts = ServerLinkOptions::new(base_url.clone(), token, hello, on_frame);
     let url_open = base_url.clone();
-    opts.on_open = Some(Box::new(move || eprintln!("서버에 붙었다: {url_open}")));
+    opts.on_open = Some(Box::new(move || {
+        eprintln!("서버에 붙었다: {url_open}");
+        // 재접속 사이에 놓친 세션 목록을 다시 낸다(TS community.ts onOpen).
+        mux.resync();
+    }));
     opts.on_close = Some(Box::new(move |reason: &str| {
         eprintln!("서버와 끊겼다: {base_url} — {reason}")
     }));
