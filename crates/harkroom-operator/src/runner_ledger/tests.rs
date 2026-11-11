@@ -193,3 +193,25 @@ fn writer_survives_panicking_write() {
     assert!(logged.lock().unwrap().iter().any(|s| s.contains("패닉")));
     let _ = std::fs::remove_dir_all(&d);
 }
+
+#[test]
+fn debug_hides_link_secret() {
+    let mut e = entry("a1", 1);
+    e.link_secret = Some("s3cret-value".into());
+    let s = format!("{e:?}");
+    assert!(!s.contains("s3cret"), "{s}");
+    assert!(s.contains("<redacted>") && s.contains("a1"), "{s}");
+}
+
+#[test]
+fn new_operator_dir_is_0700() {
+    let d = tmp_dir("dir");
+    let app = d.join("app");
+    write_runner_ledger(&app, &[entry("a1", 1)], &|m| panic!("{m}"));
+    let mode = std::fs::metadata(app.join("operator"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o700);
+    std::fs::remove_dir_all(&d).unwrap();
+}
