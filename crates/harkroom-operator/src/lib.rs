@@ -15,6 +15,7 @@
 pub mod callback_page;
 pub mod endpoint;
 pub mod file_lock;
+pub mod forward;
 pub mod harnesses;
 pub mod hello;
 pub mod index;
