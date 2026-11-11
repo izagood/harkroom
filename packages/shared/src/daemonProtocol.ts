@@ -869,7 +869,8 @@ export interface OperatorMergeState {
 export const GH_LOGIN_RE = /^[A-Za-z0-9-]{1,39}$/;
 
 /** 머지 권한 줄의 범위 — `owner/name` 또는 조직 전체 `owner/*`. 서버 grant scope 에서 `repo:` 를 뗀 모양이다. */
-export const MERGE_SCOPE_RE = /^[a-z0-9][a-z0-9._-]{0,99}\/(?:\*|[a-z0-9._-]{1,100})$/;
+// 저장소 칸이 `.`·`..` 이면 gh API 경로(`repos/<owner>/<name>/…`)가 위로 올라간다 — GitHub 도 그 이름을 받지 않는다(s21d).
+export const MERGE_SCOPE_RE = /^[a-z0-9][a-z0-9._-]{0,99}\/(?:\*|(?!\.{1,2}$)[a-z0-9._-]{1,100})$/;
 
 export type OperatorMergeSetPayload =
   /** 옛 기기 기본값(`merge.ghUser`). 옮긴 뒤에는 쓰이지 않는다. */

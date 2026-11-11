@@ -150,7 +150,7 @@ pub fn is_gh_login(s: &str) -> bool {
     (1..=39).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
 
-/// `MERGE_SCOPE_RE` = `^[a-z0-9][a-z0-9._-]{0,99}\/(?:\*|[a-z0-9._-]{1,100})$`(소문자로 바꾼 뒤 잰다).
+/// `MERGE_SCOPE_RE` = `^[a-z0-9][a-z0-9._-]{0,99}\/(?:\*|(?!\.{1,2}$)[a-z0-9._-]{1,100})$`(소문자로 바꾼 뒤 잰다).
 pub fn is_merge_scope(s: &str) -> bool {
     let Some((owner, name)) = s.split_once('/') else {
         return false;
@@ -161,7 +161,12 @@ pub fn is_merge_scope(s: &str) -> bool {
     let owner_ok = (1..=100).contains(&ob.len())
         && (ob[0].is_ascii_lowercase() || ob[0].is_ascii_digit())
         && ob.iter().all(|&b| part(b));
-    let name_ok = name == "*" || ((1..=100).contains(&name.len()) && name.bytes().all(part));
+    // `.`·`..` 은 gh API 경로를 위로 올린다 — TS `(?!\.{1,2}$)` 와 같다(s21d).
+    let name_ok = name == "*"
+        || ((1..=100).contains(&name.len())
+            && name.bytes().all(part)
+            && name != "."
+            && name != "..");
     owner_ok && name_ok
 }
 
@@ -832,6 +837,11 @@ mod tests {
         assert!(!is_gh_login(&"a".repeat(40)));
         assert!(!is_gh_login("a_b"));
         assert!(is_merge_scope("izagood/*"));
+        // s21d: `.`·`..` 저장소 칸은 gh API 경로를 위로 올린다.
+        assert!(!is_merge_scope("izagood/."));
+        assert!(!is_merge_scope("izagood/.."));
+        assert!(is_merge_scope("izagood/..x"));
+        assert!(is_merge_scope("izagood/.github"));
         assert!(is_merge_scope("a.b/c_d-e.f"));
         assert!(!is_merge_scope(".x/y"));
         assert!(!is_merge_scope("x/"));

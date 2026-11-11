@@ -8,7 +8,7 @@
  */
 import type { OperatorAgentsListResult, OperatorLocalAgent, OperatorRegisterResult } from '@harkroom/shared/daemonProtocol';
 import { register as claimAndSave } from './cli.js';
-import { communityKey, readConfig, writeConfig, type LocalAgentConfig } from './config.js';
+import { communityKey, readConfig, updateConfig, type LocalAgentConfig } from './config.js';
 import type { OperatorSecrets } from './secrets.js';
 import type { ProviderLaneConfig } from '@harkroom/shared/providerLane';
 
@@ -66,38 +66,40 @@ export function createLocalAgentsPort(deps: {
     },
     async set(rawUrl, agentId, cfg) {
       const baseUrl = communityKey(rawUrl);
-      const config = await readConfig(deps.configPath);
-      // 등록 전이라도 자리를 만든다 — `register` 가 토큰을 채우면 그대로 능력이 된다.
-      const section = (config.communities[baseUrl] ??= { agents: {} });
-      // lane 은 이 길로 바뀌지 않는다 — 옛 앱이 작업 디렉터리만 고쳐도 lane 이 지워지지 않게 있던 값을 그대로 옮긴다.
-      const lane = section.agents[agentId]?.providerLane;
-      section.agents[agentId] = {
-        ...(cfg.workingDir ? { workingDir: cfg.workingDir } : {}),
-        ...(cfg.claudePool ? { claudePool: cfg.claudePool } : {}),
-        ...(lane ? { providerLane: lane } : {}),
-      };
-      await writeConfig(deps.configPath, config);
-      deps.onChanged(baseUrl, section.agents);
+      const config = await updateConfig(deps.configPath, (config) => {
+        // 등록 전이라도 자리를 만든다 — `register` 가 토큰을 채우면 그대로 능력이 된다.
+        const section = (config.communities[baseUrl] ??= { agents: {} });
+        // lane 은 이 길로 바뀌지 않는다 — 옛 앱이 작업 디렉터리만 고쳐도 lane 이 지워지지 않게 있던 값을 그대로 옮긴다.
+        const lane = section.agents[agentId]?.providerLane;
+        section.agents[agentId] = {
+          ...(cfg.workingDir ? { workingDir: cfg.workingDir } : {}),
+          ...(cfg.claudePool ? { claudePool: cfg.claudePool } : {}),
+          ...(lane ? { providerLane: lane } : {}),
+        };
+      });
+      deps.onChanged(baseUrl, config.communities[baseUrl]!.agents);
     },
     async setProviderLane(rawUrl, agentId, lane) {
       const baseUrl = communityKey(rawUrl);
-      const config = await readConfig(deps.configPath);
-      const section = (config.communities[baseUrl] ??= { agents: {} });
-      const entry = { ...(section.agents[agentId] ?? {}) };
-      if (lane) entry.providerLane = { baseUrl: lane.baseUrl, secretName: lane.secretName };
-      else delete entry.providerLane;
-      section.agents[agentId] = entry;
-      await writeConfig(deps.configPath, config);
-      deps.onChanged(baseUrl, section.agents);
+      const config = await updateConfig(deps.configPath, (config) => {
+        const section = (config.communities[baseUrl] ??= { agents: {} });
+        const entry = { ...(section.agents[agentId] ?? {}) };
+        if (lane) entry.providerLane = { baseUrl: lane.baseUrl, secretName: lane.secretName };
+        else delete entry.providerLane;
+        section.agents[agentId] = entry;
+      });
+      deps.onChanged(baseUrl, config.communities[baseUrl]!.agents);
     },
     async remove(rawUrl, agentId) {
       const baseUrl = communityKey(rawUrl);
-      const config = await readConfig(deps.configPath);
-      const section = config.communities[baseUrl];
-      if (!section || !(agentId in section.agents)) return;
-      delete section.agents[agentId];
-      await writeConfig(deps.configPath, config);
-      deps.onChanged(baseUrl, section.agents);
+      let removed = false;
+      const config = await updateConfig(deps.configPath, (config) => {
+        const section = config.communities[baseUrl];
+        if (!section || !(agentId in section.agents)) return false;
+        delete section.agents[agentId];
+        removed = true;
+      });
+      if (removed) deps.onChanged(baseUrl, config.communities[baseUrl]!.agents);
     },
   };
 }

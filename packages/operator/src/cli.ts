@@ -23,7 +23,7 @@ import { daemonEndpointPaths } from '@harkroom/shared/daemonEndpoint';
 import { SOCKET_PATH_LIMIT_BYTES } from '@harkroom/shared/operatorRoots';
 import type { OperatorRegisterResult } from '@harkroom/shared/daemonProtocol';
 import type { DaemonArgs } from './args.js';
-import { communityKey, readConfig, writeConfig } from './config.js';
+import { communityKey, readConfig, updateConfig } from './config.js';
 import { fileSecrets, type OperatorSecrets } from './secrets.js';
 
 /** 앱(Tauri)의 identifier — 데이터 디렉터리 이름이다. 앱과 같은 자리를 써야 소켓·설정·토큰이 하나다. */
@@ -158,12 +158,13 @@ export async function register(
   // 토큰이 먼저다 — 설정만 있고 토큰이 없는 커뮤니티는 기동 때 "등록이 필요하다"로 건너뛴다(communities.ts).
   const secrets = deps.secrets ?? fileSecrets(join(deps.dataDir, 'operator', 'secrets'));
   await secrets.setToken(baseUrl, body.token);
-  const config = await readConfig(configPath);
-  // 이미 있는 자리의 로컬 설정(agents)은 그대로 — 재등록은 토큰을 바꾸는 일이지 머신 설정을 지우는 일이 아니다.
-  const section = (config.communities[baseUrl] ??= { agents: {} });
-  // 재등록이면 오퍼레이터가 새로 생긴다(claim 마다 새 행) — 옛 id 를 남기면 앱이 남의 기기를 고른다.
-  section.operatorId = body.operator.id;
-  await writeConfig(configPath, config);
+  const operatorId = body.operator.id;
+  await updateConfig(configPath, (config) => {
+    // 이미 있는 자리의 로컬 설정(agents)은 그대로 — 재등록은 토큰을 바꾸는 일이지 머신 설정을 지우는 일이 아니다.
+    const section = (config.communities[baseUrl] ??= { agents: {} });
+    // 재등록이면 오퍼레이터가 새로 생긴다(claim 마다 새 행) — 옛 id 를 남기면 앱이 남의 기기를 고른다.
+    section.operatorId = operatorId;
+  });
   return { operatorId: body.operator.id, name: body.operator.name, baseUrl, replaced: body.replaced ?? null };
 }
 
