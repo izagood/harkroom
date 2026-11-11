@@ -968,6 +968,7 @@ pub mod payload;
 pub mod ports;
 pub mod scan;
 pub mod service;
+pub mod wire;
 
 #[cfg(test)]
 mod tests;
