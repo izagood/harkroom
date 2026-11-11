@@ -148,6 +148,12 @@ pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
                 crate::codex_accounts::codex_accounts_root(|k| std::env::var(k).ok(), &home);
             match crate::codex_accounts::active_file_path(&codex_root, |k| std::env::var(k).ok()) {
                 Ok(active_path) => {
+                    state.set_codex_logins(crate::codex_login::CodexLogins::new(
+                        codex_root.clone(),
+                        Box::new(crate::codex_login::os_spawn_login),
+                        std::sync::Arc::new(crate::codex_accounts::status_from_disk),
+                        crate::codex_login::LOGIN_KILL_GRACE,
+                    ));
                     state.set_codex_accounts(crate::codex_accounts::CodexAccounts::new(
                         codex_root,
                         crate::codex_accounts::system_codex_home(|k| std::env::var(k).ok(), &home),

@@ -12,6 +12,7 @@
 //! 접속마다 스레드 하나다. 앱 하나가 붙는 로컬 소켓이라 async 런타임을 들이지 않는다(의존이 늘지 않는다).
 use crate::claude_accounts::{self, ClaudeAccounts};
 use crate::codex_accounts::{self, CodexAccounts};
+use crate::codex_login::{self, CodexLogins};
 use crate::local_agents::{self, LocalAgents};
 use crate::local_mcp::{self, LocalMcp};
 use crate::local_merge::{self, LocalMerge};
@@ -266,6 +267,8 @@ pub struct ServerState {
     claude_accounts: OnceLock<ClaudeAccounts>,
     /// codex 계정(s21c3c). 없으면 `codex*` 요청은 거절된다.
     codex_accounts: OnceLock<CodexAccounts>,
+    /// codex 로그인(s21c3c-2). 계정이 배선될 때 같이 선다.
+    codex_logins: OnceLock<CodexLogins>,
     /// 로컬 에이전트 설정이 바뀌었다(TS `localAgents.ts` 의 `onChanged`) — 서버 링크가 능력을 다시 낸다. 링크가 없으면 비어 있다.
     on_agents_changed: OnceLock<Box<dyn Fn() + Send + Sync>>,
     /// 러너 링크(s21b-1). 첫 줄이 `hello{role:'runner'}` 인 접속을 넘겨받는다. 없으면 그 hello 는 앱 hello 로 검사돼 거절된다.
@@ -306,6 +309,7 @@ impl ServerState {
                 local_mcp: OnceLock::new(),
                 claude_accounts: OnceLock::new(),
                 codex_accounts: OnceLock::new(),
+                codex_logins: OnceLock::new(),
                 on_agents_changed: OnceLock::new(),
                 runner_link: OnceLock::new(),
                 on_runner_exit: OnceLock::new(),
@@ -396,6 +400,34 @@ impl ServerState {
     /// codex 계정을 배선한다(한 번만).
     pub fn set_codex_accounts(&self, accounts: CodexAccounts) {
         let _ = self.codex_accounts.set(accounts);
+    }
+
+    /// codex 로그인을 배선한다(한 번만). 로그인 출력은 인증된 앱 접속에만 `codexLoginOutput` 으로 흘린다.
+    pub fn set_codex_logins(self: &Arc<Self>, logins: CodexLogins) {
+        let me = Arc::downgrade(self);
+        logins.on_event(Box::new(move |e| {
+            if let Some(st) = me.upgrade() {
+                st.broadcast_event("codexLoginOutput", e);
+            }
+        }));
+        let _ = self.codex_logins.set(logins);
+    }
+
+    /// 진행 중인 codex 로그인을 전부 회수한다(TS run.ts 종료 경로의 `codexAccounts.shutdownLogins`).
+    pub fn shutdown_codex_logins(&self) {
+        if let Some(l) = self.codex_logins.get() {
+            l.shutdown();
+        }
+    }
+
+    fn codex_logins(&self) -> Result<&CodexLogins, DaemonError> {
+        self.codex()?;
+        self.codex_logins.get().ok_or_else(|| {
+            err(
+                DaemonErrorCode::NoSuchRunner,
+                "이 daemon 에는 codex 계정이 배선되지 않았다",
+            )
+        })
     }
 
     fn codex(&self) -> Result<&CodexAccounts, DaemonError> {
@@ -636,6 +668,20 @@ impl ServerState {
             }
             // ── codex 계정(s21c3c) — 로그에는 계정 이름만 적는다(이메일은 사람의 로컬 사실이다).
             "codexAccountsList" => Ok(self.codex()?.list()),
+            "codexAccountLoginStart" => {
+                let port = self.codex_logins()?;
+                let account = codex_accounts::read_account_ref(payload).map_err(bad)?;
+                let login_id = port.start(&account).map_err(bad)?;
+                // URL 은 로그에 적지 않는다 — 계정 이름만.
+                eprintln!("codex 계정 로그인 시작: {account}");
+                Ok(json!({ "loginId": login_id }))
+            }
+            "codexAccountLoginCancel" => {
+                let port = self.codex_logins()?;
+                let login_id = codex_login::read_login_ref(payload).map_err(bad)?;
+                port.cancel(&login_id);
+                Ok(json!({}))
+            }
             "codexAccountRemove" => {
                 let port = self.codex()?;
                 let account = codex_accounts::read_account_ref(payload).map_err(bad)?;

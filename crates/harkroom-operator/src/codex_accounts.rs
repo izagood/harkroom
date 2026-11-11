@@ -7,7 +7,7 @@
 //! 정체(이메일·플랜)는 `auth.json` 의 `id_token` 페이로드에서 읽는다(서명 검증 없음 — 화면 이름표로만 쓴다).
 //! 토큰 자체는 이 모듈 밖으로 나가지 않는다. 이메일은 로그에 적지 않는다(계정 이름만).
 //!
-//! 로그인(`codexAccountLoginStart`·`Cancel`)과 사용량은 이 PR 몫이 아니다 — 뒤 PR(c3c-2·c3d).
+//! 로그인(`codexAccountLoginStart`·`Cancel`)은 `codex_login`(c3c-2), 사용량은 뒤 PR(c3d).
 use base64::Engine;
 use serde_json::{Map, Value, json};
 use std::fs;
@@ -316,7 +316,7 @@ impl CodexAccounts {
     /// TS `activate` — 로그인이 없는 계정은 활성으로 만들지 않는다. `None` = 시스템 기본.
     pub fn activate(&self, account: Option<&str>) -> Result<(), String> {
         if let Some(a) = account {
-            let s = (self.status)(&under(&self.root, a)?);
+            let s = (self.status)(&under_no_symlink(&self.root, a)?);
             if !logged_in(&s) {
                 return Err(format!("로그인되지 않은 계정이다: {a}"));
             }
