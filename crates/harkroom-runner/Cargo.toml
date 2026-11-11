@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.88"
 license = "Apache-2.0"
 publish = false
-description = "Rust port of the harkroom runner (S3 B3). B3a: config (env), runner link client (operator unix socket: hello, request/response, reconnect/backoff, rejection give-up, sticky pollStopped, notices), startup. B3b-1: PTY pure half (spawn compose, paste sanitize, ready/gate screens, ring buffer, output coalescer). B3b-2a: PTY process half (openpty spawn, write/resize, SIGTERM→SIGKILL grace, reader) and recorder. B3b-2b: prompt injection state machine (ready/quiet, waitFor, gate deferral, bracketed paste + settled Enter, unsent nudge, in-turn gate, delivery confirm) and the PTY turn loop (run_pty_turn: reader/waiter threads, coalesced output, timeout, recorder). Not wired in yet — the operator still spawns the node runner."
+description = "Rust port of the harkroom runner (S3 B3). B3a: config (env), runner link client (operator unix socket: hello, request/response, reconnect/backoff, rejection give-up, sticky pollStopped, notices), startup. B3b-1: PTY pure half (spawn compose, paste sanitize, ready/gate screens, ring buffer, output coalescer). B3b-2a: PTY process half (openpty spawn, write/resize, SIGTERM→SIGKILL grace, reader) and recorder. B3b-2b: prompt injection state machine (ready/quiet, waitFor, gate deferral, bracketed paste + settled Enter, unsent nudge, in-turn gate, delivery confirm) and the PTY turn loop (run_pty_turn: reader/waiter threads, coalesced output, timeout, recorder). B3b-2c: relay session ledger (ring/replay/input/resize/viewer count/cancel/interactive open) and serialized PTY spawn. Not wired in yet — the operator still spawns the node runner."
 
 [[bin]]
 name = "harkroom-runner-rs"
@@ -21,4 +21,6 @@ serde_json = { version = "=1.0.154", features = ["preserve_order"] }
 # 준비·관문 판정(pty.rs). 오퍼레이터·harkroom-screen lock 에 이미 있는 판이다(regex-automata 0.4.18·regex-syntax 0.8.11).
 # PTY 실행(pty_proc.rs: openpty·setsid·TIOCSCTTY·kill·waitid). 오퍼레이터 lock 에 이미 있는 판 — 새 PTY crate 를 들이지 않는다.
 libc = "=0.2.191"
+# 중계 프레임의 PTY 바이트(base64, relay_session.rs). 오퍼레이터 lock 에 이미 있는 판이다.
+base64 = "=0.23.1"
 regex = { version = "=1.13.1", default-features = false, features = ["std", "unicode"] }
