@@ -14,8 +14,8 @@
 //!   지워지지 않는다. TS 는 잠그지 않는다(같은 뿌리에 writer 가 둘이 되는 일은 점유 규칙이 막는다).
 //! - lane base URL 은 TS 처럼 `new URL` 로 정규화하지 않고, 정규화가 필요 없는 꼴만 받는다(`normalize_provider_base_url`).
 //!   TS 가 받는 이상한 꼴(퍼센트 인코딩될 글자·IDN 등)은 거절될 수 있다 — 키가 갈 주소라 좁은 쪽을 골랐다.
-//! - `laneStatus`·`lanePending` 은 싣지 않는다(러너 링크가 아직 없다 — 옛 오퍼레이터와 같은 모양). 바뀐 뒤 능력을 다시 내는
-//!   `onChanged` 도 없다(서버 링크가 아직 없다).
+//! - `laneStatus`·`lanePending` 은 싣지 않는다 — TS 도 비어 있으면 싣지 않고, 채울 원천(키 받기 결과·턴 자리 조정기)은
+//!   러너 링크(s21b)에 있다. 바뀐 뒤 능력을 다시 내는 `onChanged` 는 `ServerState::set_on_agents_changed`(서버 링크가 건다)다.
 use crate::file_lock::{FileLockOptions, with_file_lock};
 use harkroom_proto::p3::{DaemonError, DaemonErrorCode};
 use harkroom_roots::{community_root_hash, community_root_key};

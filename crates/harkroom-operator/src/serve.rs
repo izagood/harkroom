@@ -142,6 +142,7 @@ pub fn spawn_server_link(
     use crate::hello::{announce_of, build_hello, capabilities, read_login_path};
     use crate::server_link::{ServerLink, ServerLinkOptions, SystemClock};
     use crate::ws_dialer::WsDialer;
+    use harkroom_proto::p2::OperatorToServerFrame;
     use std::path::Path;
     use std::time::Duration;
 
@@ -156,16 +157,33 @@ pub fn spawn_server_link(
     if login_path.is_none() {
         eprintln!("로그인 셸 PATH 를 못 읽었다 — 러너가 하네스를 못 찾을 수 있다");
     }
+    // 능력(`{agentIds, harnesses}`)은 hello 와 설정 변경 알림이 같이 쓴다 — 매번 새로 잰다.
+    let caps: std::sync::Arc<dyn Fn() -> serde_json::Value + Send + Sync> =
+        std::sync::Arc::new(move || {
+            let harnesses = detect_harnesses(
+                login_path.as_deref(),
+                &|k| std::env::var(k).ok(),
+                Path::new(&home),
+                &|p| p.exists(),
+            );
+            capabilities(&local.agent_ids(), harnesses)
+        });
+    let link = ServerLink::new();
+    // TS `community.setAgents` — 붙어 있으면 `capabilities` 를 다시 낸다. 끊겨 있으면 다음 hello 가 새 표를 싣는다(send 의 false 는 실패가 아니다).
+    {
+        let link = link.clone();
+        let caps = caps.clone();
+        state.set_on_agents_changed(Box::new(move || {
+            let _ = link.send(&OperatorToServerFrame::Capabilities {
+                capabilities: caps(),
+            });
+        }));
+    }
+    let runners_state = state.clone();
     let hello = Box::new(move || {
-        let harnesses = detect_harnesses(
-            login_path.as_deref(),
-            &|k| std::env::var(k).ok(),
-            Path::new(&home),
-            &|p| p.exists(),
-        );
         build_hello(
-            capabilities(&local.agent_ids(), harnesses),
-            announce_of(&state.runners),
+            caps(),
+            announce_of(&runners_state.runners),
             Vec::new(),
             version.as_deref(),
         )
@@ -186,7 +204,6 @@ pub fn spawn_server_link(
     std::thread::Builder::new()
         .name("server-link".into())
         .spawn(move || {
-            let link = ServerLink::new();
             link.run(&opts, &mut WsDialer::default(), &SystemClock);
         })
         .ok()
