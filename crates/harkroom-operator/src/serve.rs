@@ -277,6 +277,23 @@ pub fn spawn_server_link(
     );
     state.set_runner_link(std::sync::Arc::clone(&bridge.runner_link));
     let bridge_link_adopt = std::sync::Arc::clone(&bridge.runner_link);
+    // 회수 중 세대(s21c-2c-2b): 러너의 「인박스를 놓았다」는 러너 표로, 앞 세대가 다 물러나면 지금 세대에 보류 풀기를 알린다.
+    {
+        let runners = std::sync::Arc::clone(&state.runners);
+        let _ = bridge
+            .poll_stopped
+            .set(Box::new(move |agent, runner, holding, done| {
+                runners.note_poll_stopped(agent, runner, holding, done);
+            }));
+        let link = std::sync::Arc::clone(&bridge.runner_link);
+        state
+            .runners
+            .set_release_handover(Box::new(move |agent, runner| {
+                if link.send(runner, &serde_json::json!({ "type": "handover.released" })) {
+                    eprintln!("이관 보류 풀기: agent={agent} runner={runner}");
+                }
+            }));
+    }
     let mux = bridge.mux;
     // 배정 조정기(s21c-1b-2b, TS communities.ts runnerDeps·community.ts onFrame).
     let frames = {
@@ -372,7 +389,8 @@ pub fn spawn_server_link(
                 self.runners.adopt_runner(e).is_some()
             }
             fn retire(&self, e: &crate::runner_ledger::RunnerLedgerEntry) {
-                crate::runners::signal_sent(e.pid, libc::SIGTERM);
+                // 회수 중 표에 적고(장부·announce·이관 보류) 시작 시각이 같을 때만 SIGTERM(s21c-2c-2b retiring 2/2).
+                self.runners.retire(e);
             }
             fn link_expect(&self, runner_id: &str, agent_id: &str, secret: &str) {
                 self.link.expect(runner_id, agent_id, secret);

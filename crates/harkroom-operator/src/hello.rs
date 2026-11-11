@@ -15,9 +15,10 @@ use serde_json::{Map, Value, json};
 
 use crate::runners::{RunnerTable, signal_sent};
 
-/// TS `announceOf` 의 살아 있는 러너 절반 — `kill(pid,0)` 이 통하는 러너만, 시작 순.
+/// TS `announceOf` — 살아 있는 표의 러너(`kill(pid,0)`, 시작 순) 뒤에 회수 중이고 살아 있는 앞 세대(`retiringRunners`).
+/// 회수 중 러너도 우리 러너로 알려야 서버가 그 러너의 프레임을 받아 진행 중 턴을 끝내게 한다(TS #838).
 pub fn announce_of(table: &RunnerTable) -> Vec<RunnerAnnounce> {
-    table
+    let mut out: Vec<RunnerAnnounce> = table
         .records()
         .into_iter()
         .filter(|r| signal_sent(r.pid, 0))
@@ -26,7 +27,18 @@ pub fn announce_of(table: &RunnerTable) -> Vec<RunnerAnnounce> {
             runner_id: r.incarnation_id,
             pid: i64::from(r.pid),
         })
-        .collect()
+        .collect();
+    out.extend(
+        table
+            .retiring_runners()
+            .into_iter()
+            .map(|(agent_id, pid, runner_id)| RunnerAnnounce {
+                agent_id,
+                runner_id,
+                pid: i64::from(pid),
+            }),
+    );
+    out
 }
 
 /// `capabilities` — `{ agentIds, harnesses }`. agentIds 는 **이 커뮤니티의** 로컬 에이전트 키다(다른 커뮤니티 것을 싣지 않는다).
