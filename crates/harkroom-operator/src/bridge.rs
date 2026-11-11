@@ -75,6 +75,50 @@ pub struct LinkHandler {
     peek: Arc<TurnPeek>,
     /// 비밀 마운트 루트(s21b-3c-2, `<커뮤니티 뿌리>/turn-secrets`). 없으면 비밀 도구는 `no_lease` 로 닫힌다.
     secrets: Option<crate::turn_secrets::SecretsRoot>,
+    /// 머지 손잡이·`pr.status`(s21b-3d-1). 같은 `PrGate`(= 같은 `first_seen`)를 나눠 쓴다. 없으면 서버로 넘어가 `operator_required`.
+    merge: Option<MergeHandlers>,
+}
+
+/// TS run.ts 의 `createTurnMerge`·`createTurnPrStatus` 한 벌 — 「처음 본 시각」 Map 은 하나다.
+#[derive(Clone)]
+pub struct MergeHandlers {
+    pub merge: crate::turn_merge::TurnMerge,
+    pub pr_status: crate::turn_pr_status::TurnPrStatus,
+}
+
+impl MergeHandlers {
+    /// 실제 gh·시계로 만든다. `gh_user_for` 는 `operator.json` 의 `merge`(`pick_merge_gh_user`).
+    pub fn system(gh_path: String, home: String, gh_user_for: crate::pr_gate::GhUserFor) -> Self {
+        let exec = crate::local_merge::default_exec();
+        let gh_exec = Arc::clone(&exec);
+        let path = gh_path.clone();
+        let gate = crate::pr_gate::PrGate {
+            gh: Arc::new(move |args: &[String], env: &[(String, String)]| {
+                gh_exec(&path, args, env)
+            }),
+            now: Arc::new(|| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0)
+            }),
+            first_seen: Arc::new(Mutex::new(std::collections::HashMap::new())),
+        };
+        let tokens = crate::pr_gate::GhTokens {
+            exec,
+            gh_path,
+            home: home.clone(),
+            gh_user_for,
+        };
+        MergeHandlers {
+            merge: crate::turn_merge::TurnMerge {
+                gate: gate.clone(),
+                tokens: tokens.clone(),
+                home: home.clone(),
+            },
+            pr_status: crate::turn_pr_status::TurnPrStatus { gate, tokens, home },
+        }
+    }
 }
 
 /// 임대 끝내기·늘리기를 별도 스레드에서 보낼 때 들고 가는 것.
@@ -329,6 +373,23 @@ impl RunnerLinkHandler for LinkHandler {
         ) {
             return Some(r);
         }
+        // 머지·PR 상태(TS run.ts 순서: turnSecrets → turnMerge → turnPrStatus). gh 를 부르니 runner_link 의 요청 스레드에서 돈다.
+        if let Some(m) = &self.merge {
+            let post = |p: &str, body: String| self.server_post(agent_id, p, body);
+            let log = |l: &str| eprintln!("{l}");
+            if let Some(r) = m
+                .merge
+                .maybe_handle(agent_id, &req, lease.as_ref(), &post, &log)
+            {
+                return Some(r);
+            }
+            if let Some(r) = m
+                .pr_status
+                .maybe_handle(agent_id, &req, lease.as_ref(), &post, &log)
+            {
+                return Some(r);
+            }
+        }
         // `attachment.upload`(TS turnUploads — run.ts 가로채기의 맨 끝). 경로 판정·읽기·`/uploads` 올리기는 오퍼레이터가 한다.
         let upload = |p: &str, ct: &str, b: Vec<u8>| self.server_post_bytes(agent_id, p, ct, b);
         if let Some(r) = crate::turn_uploads::maybe_handle(
@@ -400,6 +461,8 @@ fn spawn_lease_sweeper(
         });
 }
 
+// 배선 한 벌의 재료를 serve 한 곳에서만 넘긴다 — 묶음 구조체로 감싸도 읽기가 나아지지 않는다.
+#[allow(clippy::too_many_arguments)]
 pub fn build_bridge(
     server: Arc<dyn ServerSend>,
     transport: Arc<dyn Transport>,
@@ -408,6 +471,7 @@ pub fn build_bridge(
     turn_keys: Arc<Mutex<TurnKeyLedger>>,
     slots: Arc<Mutex<TurnSlots>>,
     secrets: Option<crate::turn_secrets::SecretsRoot>,
+    merge: Option<MergeHandlers>,
 ) -> Bridge {
     let slot: Arc<OnceLock<Weak<RunnerLinkServer>>> = Arc::new(OnceLock::new());
     let mux = Arc::new(RelayMux::new(Box::new(MuxDeps {
@@ -428,6 +492,7 @@ pub fn build_bridge(
         leases,
         peek: Arc::new(TurnPeek::system()),
         secrets,
+        merge,
     });
     // 턴 열쇠 장부(s21b-3a) — 하네스의 bridge·hook·wrapper 소켓이 맡긴 열쇠로 붙는다.
     let runner_link = RunnerLinkServer::new(handler, Some(turn_keys));
@@ -487,6 +552,7 @@ mod tests {
             Arc::new(Mutex::new(TurnKeyLedger::new(|| 0, |_| {}))),
             Arc::new(Mutex::new(TurnSlots::new(Some(1), || 0, |_| {}))),
             None,
+            None,
         );
         (srv, tr, b)
     }
@@ -504,6 +570,7 @@ mod tests {
             leases: Arc::new(Mutex::new(TurnLeases::new(|| 0))),
             secrets: None,
             peek: Arc::new(TurnPeek::new(|| 0)),
+            merge: None,
         };
         h.on_frame(
             "r1",
@@ -533,6 +600,7 @@ mod tests {
             leases: Arc::new(Mutex::new(TurnLeases::new(|| 0))),
             secrets: None,
             peek: Arc::new(TurnPeek::new(|| 0)),
+            merge: None,
         };
         let call = |name: &str| -> RunnerLinkRequest {
             serde_json::from_value(json!({"type":"mcp.request","id":"q","cause":"c1",
@@ -587,6 +655,7 @@ mod tests {
             leases: Arc::new(Mutex::new(TurnLeases::new(|| 0))),
             secrets: None,
             peek: Arc::new(TurnPeek::new(|| 0)),
+            merge: None,
         };
         let req: RunnerLinkRequest = serde_json::from_value(json!({
             "type":"mcp.request","id":"q1","payload":{"jsonrpc":"2.0","id":1,"method":"x"}
@@ -628,6 +697,7 @@ mod tests {
             leases: Arc::new(Mutex::new(TurnLeases::new(|| 0))),
             secrets: None,
             peek: Arc::new(TurnPeek::new(|| 0)),
+            merge: None,
         };
         // 링크가 미리 채운 commandFiles 는 서버 머리에 실리지 않는다(사전 2).
         let req: RunnerLinkRequest = serde_json::from_value(json!({
@@ -713,6 +783,7 @@ mod tests {
             leases: Arc::new(Mutex::new(TurnLeases::new(|| 0))),
             secrets: None,
             peek: Arc::new(TurnPeek::new(|| 0)),
+            merge: None,
         };
         let keys = json!({"turnId":"t1","keys":{"bridge":"a".repeat(64),"shell":"b".repeat(64)}});
         assert_eq!(
@@ -794,6 +865,7 @@ mod tests {
             leases: Arc::new(Mutex::new(TurnLeases::new(|| 0))),
             secrets: None,
             peek: Arc::new(TurnPeek::new(|| 0)),
+            merge: None,
         };
         h.on_notice(
             "r1",

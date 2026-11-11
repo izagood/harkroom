@@ -35,7 +35,7 @@ pub struct MergeArgs {
     pub head_sha: String,
 }
 
-fn is_repo(s: &str) -> bool {
+pub fn is_repo(s: &str) -> bool {
     // /^[a-z0-9][a-z0-9._-]{0,99}\/[a-z0-9._-]{1,100}$/i
     let Some((owner, name)) = s.split_once('/') else {
         return false;
