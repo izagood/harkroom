@@ -136,6 +136,7 @@ impl AssignmentDeps for SystemDeps {
                 pid: r.pid,
                 runner_id: r.incarnation_id,
             }),
+            Err(e) if e.starts_with(crate::runners::SPAWN_RETIRING) => Err(SpawnError::Retiring(e)),
             Err(e) => Err(SpawnError::Other(e)),
         }
     }

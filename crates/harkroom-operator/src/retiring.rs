@@ -149,6 +149,15 @@ impl RetiringSet {
         })
     }
 
+    /// pid → 장부의 커널 시작 시각. 생사를 `kill(pid,0)` 에 더해 시작 시각으로 대조하려고 부르는 쪽이 쓴다.
+    pub fn boot_times(&self) -> HashMap<i32, Option<i64>> {
+        self.by_agent
+            .values()
+            .flatten()
+            .map(|e| (e.pid, e.ledger.as_ref().and_then(|l| l.boot_time_sec)))
+            .collect()
+    }
+
     /// 회수를 보냈고 아직 살아 있는, id 를 아는 러너들 — hello 의 announce 에 실린다(TS `retiringRunners`).
     pub fn announce(&self, alive: impl Fn(i32) -> bool) -> Vec<(String, i32, String)> {
         let mut out: Vec<(String, i32, String)> = self
