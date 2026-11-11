@@ -365,6 +365,41 @@ pub struct Bridge {
     pub runner_link: Arc<RunnerLinkServer>,
 }
 
+/// 만료 쓸기 주기(TS `turnSecrets` 의 1분 타이머와 같다).
+pub const LEASE_SWEEP_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// 만료된 임대를 장부에서 빼고 그 비밀 마운트 폴더를 지운다. 장부가 사라지면(`Weak`) 스레드도 끝난다.
+/// 이것이 없으면 만료 임대의 폴더는 다음 임대 통지·오퍼레이터 재기동 때까지 남는다.
+pub fn sweep_expired_secrets(
+    leases: &Mutex<TurnLeases>,
+    root: &crate::turn_secrets::SecretsRoot,
+) -> usize {
+    let gone = lock(leases).sweep_expired();
+    for id in &gone {
+        root.drop_lease(id);
+    }
+    gone.len()
+}
+
+fn spawn_lease_sweeper(
+    leases: Weak<Mutex<TurnLeases>>,
+    root: crate::turn_secrets::SecretsRoot,
+    every: std::time::Duration,
+) {
+    let _ = std::thread::Builder::new()
+        .name("lease-sweeper".into())
+        .spawn(move || {
+            loop {
+                std::thread::sleep(every);
+                let Some(l) = leases.upgrade() else { return };
+                let n = sweep_expired_secrets(&l, &root);
+                if n > 0 {
+                    eprintln!("turn-secrets: 만료 임대 {n}개의 마운트 폴더를 지웠다");
+                }
+            }
+        });
+}
+
 pub fn build_bridge(
     server: Arc<dyn ServerSend>,
     transport: Arc<dyn Transport>,
@@ -379,6 +414,10 @@ pub fn build_bridge(
         runner_link: Arc::clone(&slot),
         server,
     })));
+    let leases = Arc::new(Mutex::new(TurnLeases::system()));
+    if let Some(root) = secrets.clone() {
+        spawn_lease_sweeper(Arc::downgrade(&leases), root, LEASE_SWEEP_EVERY);
+    }
     let handler = Arc::new(LinkHandler {
         mux: Arc::clone(&mux),
         transport,
@@ -386,7 +425,7 @@ pub fn build_bridge(
         token,
         turn_keys: Arc::clone(&turn_keys),
         slots,
-        leases: Arc::new(Mutex::new(TurnLeases::system())),
+        leases,
         peek: Arc::new(TurnPeek::system()),
         secrets,
     });
@@ -787,5 +826,32 @@ mod tests {
             json!({"type":"secret.leaseEnded","cause":"nope"}),
         );
         assert_eq!(calls.len(), 2);
+    }
+
+    #[test]
+    fn lease_sweep_drops_expired_mount_dirs_only() {
+        let dir = std::env::temp_dir().join(format!("hk-sweep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("L-old")).unwrap();
+        std::fs::create_dir_all(dir.join("L-live")).unwrap();
+        let root = crate::turn_secrets::SecretsRoot { root: dir.clone() };
+        // 둘 다 살아 있을 때 적고, 시계를 앞으로 돌려 하나만 만료되게 한다.
+        let clock = Arc::new(std::sync::atomic::AtomicU64::new(1_700_000_000_000));
+        let c2 = Arc::clone(&clock);
+        let leases = Mutex::new(TurnLeases::new(move || {
+            c2.load(std::sync::atomic::Ordering::SeqCst)
+        }));
+        lock(&leases).note("r1", "a1", "c1", "L-old", "T", "2026-01-01T00:00:00.000Z");
+        lock(&leases).note("r1", "a1", "c2", "L-live", "T", "2099-01-01T00:00:00.000Z");
+        assert!(lock(&leases).len() == 2);
+        clock.store(1_800_000_000_000, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(sweep_expired_secrets(&leases, &root), 1);
+        assert!(
+            !dir.join("L-old").exists(),
+            "만료 임대의 마운트 폴더는 지운다"
+        );
+        assert!(dir.join("L-live").exists(), "살아 있는 임대의 폴더는 둔다");
+        assert_eq!(lock(&leases).len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

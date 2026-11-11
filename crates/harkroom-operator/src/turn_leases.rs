@@ -254,12 +254,18 @@ impl TurnLeases {
         }
     }
 
-    /// TS `sweepExpired` — 만료된 임대 수.
-    pub fn sweep_expired(&mut self) -> usize {
+    /// TS `sweepExpired` — 만료돼 장부에서 뺀 임대들의 id(비밀 마운트 폴더를 지우는 데 쓴다).
+    pub fn sweep_expired(&mut self) -> Vec<String> {
         let now = (self.now)();
-        let before = self.leases.len();
-        self.leases.retain(|_, e| e.expires_at_ms > now);
-        before - self.leases.len()
+        let mut gone = Vec::new();
+        self.leases.retain(|_, e| {
+            let keep = e.expires_at_ms > now;
+            if !keep {
+                gone.push(e.lease.lease_id.clone());
+            }
+            keep
+        });
+        gone
     }
 
     pub fn len(&self) -> usize {
@@ -326,7 +332,7 @@ mod tests {
         assert!(l.lookup_for("r1", "a1", Some("c1")).is_some());
         clock.store(T0_MS, Ordering::SeqCst);
         assert!(l.lookup("r1", "c1").is_none(), "만료 시각에 닫힌다");
-        assert_eq!(l.sweep_expired(), 1);
+        assert_eq!(l.sweep_expired().len(), 1);
         assert!(l.is_empty());
     }
 
