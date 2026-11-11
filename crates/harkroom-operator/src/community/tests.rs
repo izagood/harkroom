@@ -126,6 +126,23 @@ fn assign_needs_local_consent_then_spawns_with_expected_id() {
 }
 
 #[test]
+fn frame_agent_must_match_definition_agent() {
+    let (f, frames, sent) = setup();
+    // a1 은 로컬 설정에 있다 — 그러나 정의는 b2 다. a1 의 동의로 b2 를 띄우면 안 된다(security #1892).
+    let local = |id: &str| (id == "a1").then(LocalAgent::default);
+    let frame = ServerToOperatorFrame::Assign {
+        agent_id: "a1".into(),
+        definition: def("b2", CredentialScope::Community, None),
+    };
+    assert!(frames.on_frame(&frame, &local));
+    assert!(frames.flush(WAIT));
+    assert!(lock(&f.spawns).is_empty());
+    assert!(!frames.is_assigned("a1"));
+    assert!(!frames.is_assigned("b2"));
+    assert!(lock(&sent).is_empty());
+}
+
+#[test]
 fn refused_assign_tells_server_with_reason() {
     let (f, frames, sent) = setup();
     *lock(&f.owner) = Some("me".into());

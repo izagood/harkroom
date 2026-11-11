@@ -130,6 +130,55 @@ pub fn parse_api_args(
     })
 }
 
+/// `--data @파일` 을 읽는다(#1882 정리, TS `readApiBodyFile` 과 같은 규칙).
+/// - 작업 폴더(`base`, 하네스 셸의 cwd) **안의 일반 파일**만 — 절대 경로·`..`·심링크로 밖을 가리키면 거절한다.
+///   판정은 실제 경로(canonicalize)끼리 하고, 연 핸들의 종류를 다시 본다.
+/// - 상한+1 바이트까지만 읽는다 — 큰 파일·끝없는 파일(`/dev/zero` 류)을 통째로 메모리에 올리지 않는다.
+///   상한을 넘었는지는 `parse_api_args` 가 길이로 판정한다.
+pub fn read_body_file(base: &std::path::Path, p: &str) -> std::io::Result<Vec<u8>> {
+    use std::io::{Error, ErrorKind, Read};
+    let rel = std::path::Path::new(p);
+    if p.is_empty()
+        || rel.is_absolute()
+        || rel.components().any(|c| {
+            !matches!(
+                c,
+                std::path::Component::Normal(_) | std::path::Component::CurDir
+            )
+        })
+    {
+        return Err(Error::new(
+            ErrorKind::PermissionDenied,
+            "outside the working folder",
+        ));
+    }
+    let root = base.canonicalize()?;
+    let real = root.join(rel).canonicalize()?;
+    if !real.starts_with(&root) {
+        return Err(Error::new(
+            ErrorKind::PermissionDenied,
+            "outside the working folder",
+        ));
+    }
+    // FIFO 를 열면 쓰는 쪽이 올 때까지 멈춘다 — 열기 전에 종류를 보고, O_NONBLOCK·O_NOFOLLOW 로 연 뒤 핸들에서 다시 본다.
+    if !std::fs::symlink_metadata(&real)?.is_file() {
+        return Err(Error::new(ErrorKind::InvalidInput, "not a regular file"));
+    }
+    let f = {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(&real)?
+    };
+    if !f.metadata()?.is_file() {
+        return Err(Error::new(ErrorKind::InvalidInput, "not a regular file"));
+    }
+    let mut buf = Vec::new();
+    f.take(API_MAX_BODY as u64 + 1).read_to_end(&mut buf)?;
+    Ok(buf)
+}
+
 /// TS `{ ...out, exit }`.
 pub fn render_api(reply: &ToolReply) -> (String, i32) {
     let mut out: Map<String, Value> = match serde_json::from_str::<Value>(&reply.text) {
@@ -187,6 +236,48 @@ pub fn api_main(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn read_body_file_stays_inside_the_working_folder() {
+        let root = std::env::temp_dir().join(format!("hk-apibody-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let work = root.join("work");
+        std::fs::create_dir_all(work.join("sub")).unwrap();
+        std::fs::write(work.join("sub/b.json"), b"{}").unwrap();
+        std::fs::write(root.join("outside.txt"), b"secret").unwrap();
+        std::os::unix::fs::symlink(root.join("outside.txt"), work.join("link")).unwrap();
+        std::os::unix::fs::symlink(&root, work.join("dirlink")).unwrap();
+        // 안의 일반 파일은 읽는다.
+        assert_eq!(read_body_file(&work, "sub/b.json").unwrap(), b"{}");
+        assert_eq!(read_body_file(&work, "./sub/b.json").unwrap(), b"{}");
+        // 절대 경로·..·밖을 가리키는 심링크(파일·폴더)·폴더는 거절.
+        let abs = root.join("outside.txt").to_string_lossy().into_owned();
+        for p in [
+            abs.as_str(),
+            "../outside.txt",
+            "sub/../../outside.txt",
+            "link",
+            "dirlink/outside.txt",
+            "sub",
+            "",
+        ] {
+            assert!(read_body_file(&work, p).is_err(), "{p} 는 거절돼야 한다");
+        }
+        // 상한+1 까지만 읽는다 → parse_api_args 가 크다고 거절한다.
+        let big = vec![b'a'; API_MAX_BODY + 10];
+        std::fs::write(work.join("big"), &big).unwrap();
+        assert_eq!(
+            read_body_file(&work, "big").unwrap().len(),
+            API_MAX_BODY + 1
+        );
+        let argv: Vec<String> = ["c", "POST", "/x", "--data", "@big"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let err = parse_api_args(&argv, |p| read_body_file(&work, p)).unwrap_err();
+        assert!(err.contains("바이트보다 크다"), "{err}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     use super::*;
 
     fn v(a: &[&str]) -> Vec<String> {
