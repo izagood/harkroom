@@ -81,11 +81,12 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
-        # 줄 끝 주석 하나로 그 줄을 비밀 검사에서 빼는 길이 있고, 그것은 설정으로 끌 수 없다. 그래서 PR 이 **새로 더하는**
-        # 줄에 그 표식이 있으면 여기서 막는다. 꼭 필요하면 위의 base 설정 파일(security 검토)로 좁게 허용한다.
+        # 줄 끝 주석 하나로 그 줄을 비밀 검사에서 빼는 길이 있다. 그래서 PR 의 **커밋마다** 더한 줄에 그 표식이 있으면
+        # 여기서 막는다 — 최종 diff 만 보면, 앞 커밋에서 더하고 뒤 커밋에서 지운 줄이 빠진다(gitleaks 는 커밋마다 훑는다).
+        # 꼭 필요하면 위의 base 설정 파일(security 검토)로 좁게 허용한다.
         # 정규식은 `[:]` 로 써서 이 파일 자신이 걸리지 않게 했다.
         run: |
-          hits=$(git diff --unified=0 "$BASE...$HEAD" | grep -nE '^\+.*gitleaks[:]allow' || true)
+          hits=$(git log -p --format= "$BASE..$HEAD" | grep -nE '^\+.*gitleaks[:]allow' || true)
           if [ -n "$hits" ]; then
             echo "::error::PR 이 더한 줄에 비밀 검사 건너뛰기 표식이 있다 — 지우고, 꼭 필요하면 .gitleaks.toml 로 좁게 허용한다(security 검토)"
             exit 1
