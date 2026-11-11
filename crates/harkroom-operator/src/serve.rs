@@ -155,6 +155,20 @@ pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
                 }
                 Err(e) => eprintln!("claude 계정 풀을 배선하지 않는다: {e}"),
             }
+            // codex 계정(s21c3c). `active.json` 자리를 못 정하면(커뮤니티 모드인데 뿌리 env 가 틀림) 배선하지 않는다 —
+            // 그때 `codex*` 요청은 TS 와 같은 `no-such-runner` 로 거절된다.
+            let codex_root =
+                crate::codex_accounts::codex_accounts_root(|k| std::env::var(k).ok(), &home);
+            match crate::codex_accounts::active_file_path(&codex_root, |k| std::env::var(k).ok()) {
+                Ok(active_path) => {
+                    state.set_codex_accounts(crate::codex_accounts::CodexAccounts::new(
+                        codex_root,
+                        crate::codex_accounts::system_codex_home(|k| std::env::var(k).ok(), &home),
+                        active_path,
+                    ))
+                }
+                Err(e) => eprintln!("codex 계정을 배선하지 않는다: {e}"),
+            }
             state.set_local_merge(LocalMerge::new(
                 LocalAgents::new(&root, base_url),
                 default_gh_path(),
