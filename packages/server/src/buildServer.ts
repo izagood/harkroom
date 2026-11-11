@@ -127,6 +127,12 @@ const LIMITED_ROUTES: { method: string; url: string; rule: Exclude<RateLimitName
   { method: 'POST', url: '/auth/password-reset', rule: 'passwordReset' },
 ];
 
+declare module 'fastify' {
+  interface FastifyInstance {
+    threadStatusWatcher: ReturnType<typeof startThreadStatusWatcher>;
+  }
+}
+
 export interface ServerDeps {
   pool: Pool;
   /**
@@ -590,6 +596,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // 스레드 상태 리액션(D안). 메시지·presence 이벤트로 루트를 다시 판정한다.
   const threadStatusWatcher = startThreadStatusWatcher(deps.pool, agentPresence);
   app.addHook('onClose', async () => { threadStatusWatcher.stop(); });
+  // 시험이 벽시계 대신 「미뤄 둔 판정이 끝날 때까지」를 기다리는 손잡이다. CI 가 몇 초씩 멈추는 회차에
+  // 시한을 둔 poll 은 판정보다 먼저 끝난다(threadStatus.test 「REST 로 쓴 말이…」).
+  app.decorate('threadStatusWatcher', threadStatusWatcher);
   // 스레드 계획판 2차(P6) — 머지 줄·카드 답으로 단계 갱신, 자식 계획 변화를 부모로 전파.
   const threadPlanWatcher = startThreadPlanWatcher(deps.pool);
   app.addHook('onClose', async () => { threadPlanWatcher.stop(); });

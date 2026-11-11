@@ -236,7 +236,10 @@ describe('스레드 상태 리액션', () => {
         payload: { body: '어떻게 돼 가?', threadRootId: id },
       });
       expect(res.statusCode).toBeLessThan(300);
-      await expect.poll(() => seen.find((e) => e.type === 'thread.status' && e.rootId === id), { timeout: 3000 }).toBeTruthy();
+      // 시한을 둔 poll 이 아니라 앱 감시자의 미뤄 둔 판정이 **끝날 때까지** 기다린다. CI 에서 여러 fork 가 12~18초
+      // 멈춘 회차에 3초 poll 이 판정보다 먼저 끝나 흔들렸다(#1882 check 1회차). 판정이 이벤트를 낸 뒤에야 flush 가 끝난다.
+      await app.threadStatusWatcher.flush();
+      expect(seen.find((e) => e.type === 'thread.status' && e.rootId === id)).toBeTruthy();
     } finally { off(); }
   });
 
