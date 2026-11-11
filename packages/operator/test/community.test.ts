@@ -276,4 +276,42 @@ describe('community — 로컬 설정이 바뀌면 능력을 다시 낸다', () 
     await new Promise((r) => setTimeout(r, 0));
     expect(calls).toEqual(['assign https://example.com a-9 ~/nine']);
   });
+  it('assign.synced — 받은 목록 ∪ 이 연결의 assign 을 「남길 것」으로, 끊기거나 다시 붙으면 null(지난 목록으로 회수 안 함)', async () => {
+    let handlers: Parameters<LinkDialer>[2] | null = null;
+    const dial: LinkDialer = (_u, _t, h) => { handlers = h; h.onOpen({ send: () => {}, close: () => {} }); };
+    const { reconciler } = fakeReconciler();
+    let synced = 0;
+    const c = createCommunity({
+      baseUrl: 'https://example.com', token: 'hkop_x', agents: { 'a-1': { workingDir: '/w' } },
+      reconciler, dial, schedule: () => {}, log: () => {}, onSynced: () => { synced += 1; },
+    });
+    c.start();
+    expect(c.syncedKeep()).toBeNull();
+    // 묶음 안의 assign(로컬에 없어 거절돼도 남길 것에는 든다 — 이 길로 죽이지 않는다)
+    handlers!.onMessage(JSON.stringify({ type: 'assign', agentId: 'stranger', definition: { agentId: 'stranger', handle: 's' } }));
+    handlers!.onMessage(JSON.stringify({ type: 'assign.synced', agentIds: ['a-1'] }));
+    expect(synced).toBe(1);
+    expect([...c.syncedKeep()!].sort()).toEqual(['a-1', 'stranger']);
+    // 받은 뒤 온 배정도 더한다
+    handlers!.onMessage(JSON.stringify({ type: 'assign', agentId: 'late', definition: { agentId: 'late', handle: 'l' } }));
+    expect(c.syncedKeep()!.has('late')).toBe(true);
+    // 끊기면 「못 받음」으로 돌아간다
+    handlers!.onClose('drop');
+    expect(c.syncedKeep()).toBeNull();
+  });
+
+  it('assign.synced 의 모양이 틀리면 「못 받음」 그대로 — onSynced 도 안 부른다', () => {
+    let handlers: Parameters<LinkDialer>[2] | null = null;
+    const dial: LinkDialer = (_u, _t, h) => { handlers = h; h.onOpen({ send: () => {}, close: () => {} }); };
+    let synced = 0;
+    const c = createCommunity({
+      baseUrl: 'https://example.com', token: 'hkop_x', agents: {},
+      reconciler: fakeReconciler().reconciler, dial, schedule: () => {}, log: () => {}, onSynced: () => { synced += 1; },
+    });
+    c.start();
+    handlers!.onMessage(JSON.stringify({ type: 'assign.synced', agentIds: [1] }));
+    handlers!.onMessage(JSON.stringify({ type: 'assign.synced' }));
+    expect(synced).toBe(0);
+    expect(c.syncedKeep()).toBeNull();
+  });
 });
