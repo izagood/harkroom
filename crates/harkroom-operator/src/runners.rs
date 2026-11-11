@@ -479,6 +479,7 @@ impl RunnerTable {
                 incarnation_id: r.incarnation_id,
                 code: None,
                 signal: None,
+                tail_lines: tail_of(r.log_path.as_deref()),
             });
         }
     }
