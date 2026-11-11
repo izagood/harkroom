@@ -31,3 +31,5 @@ base64 = "=0.23.1"
 tungstenite = { version = "=0.28.0", default-features = false, features = ["handshake"] }
 rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 webpki-roots = "=1.0.11"
+# s21b-3b 명령 판정(shared toolRules.ts 이식) — harkroom-screen 과 같은 판.
+regex = { version = "=1.13.1", default-features = false, features = ["std", "unicode-perl", "unicode-case"] }

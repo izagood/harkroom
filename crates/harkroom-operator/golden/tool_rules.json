@@ -1,0 +1,3007 @@
+{
+ "rules": [
+  {
+   "input": "Bash(gh pr view -R acme-org/infra-k8s:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh pr view -R acme-org/infra-k8s:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(kubectl --context ops -n sitebot get:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(kubectl --context ops -n sitebot get:*)",
+    "kind": "bash_prefix",
+    "warnings": []
+   }
+  },
+  {
+   "input": "Bash(kubectl --context ops -n sitebot exec:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(kubectl --context ops -n sitebot exec:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "executes_in_workload"
+    ]
+   }
+  },
+  {
+   "input": "Bash(kubectl --context ops delete pod x)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(kubectl --context ops delete pod x)",
+    "kind": "bash_exact",
+    "warnings": [
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(git push origin feature)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(git push origin feature)",
+    "kind": "bash_exact",
+    "warnings": [
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(kubectl get:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(kubectl get:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "short_prefix"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh pr view:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh pr view:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh -R acme-org/infra-k8s pr view:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh -R acme-org/infra-k8s pr view:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh api repos/acme-org/infra-k8s/pulls/11170)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh api repos/acme-org/infra-k8s/pulls/11170)",
+    "kind": "bash_exact",
+    "warnings": [
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(git push origin feature/example-driver)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(git push origin feature/example-driver)",
+    "kind": "bash_exact",
+    "warnings": [
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(git push -u origin corp-account/x:corp-account/x)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(git push -u origin corp-account/x:corp-account/x)",
+    "kind": "bash_exact",
+    "warnings": [
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh workflow run deploy.yml)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh workflow run deploy.yml)",
+    "kind": "bash_exact",
+    "warnings": [
+     "mutates_remote",
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh release create v1)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh release create v1)",
+    "kind": "bash_exact",
+    "warnings": [
+     "mutates_remote",
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh repo edit o/r --visibility public)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh repo edit o/r --visibility public)",
+    "kind": "bash_exact",
+    "warnings": [
+     "mutates_remote",
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh pr create -R o/r:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh pr create -R o/r:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "mutates_remote",
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh pr comment 1 -R o/r --body x)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh pr comment 1 -R o/r --body x)",
+    "kind": "bash_exact",
+    "warnings": [
+     "mutates_remote",
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh pr close 1 -R o/r)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh pr close 1 -R o/r)",
+    "kind": "bash_exact",
+    "warnings": [
+     "mutates_remote",
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh pr edit -R o/r:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh pr edit -R o/r:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "mutates_remote",
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh pr reopen 1 -R o/r)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh pr reopen 1 -R o/r)",
+    "kind": "bash_exact",
+    "warnings": [
+     "mutates_remote",
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh pr ready 1 -R o/r)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh pr ready 1 -R o/r)",
+    "kind": "bash_exact",
+    "warnings": [
+     "mutates_remote",
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh -R o/r pr review 1 --approve)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh -R o/r pr review 1 --approve)",
+    "kind": "bash_exact",
+    "warnings": [
+     "mutates_remote",
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh pr --repo o/r create:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh pr --repo o/r create:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "mutates_remote",
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh run rerun -R o/r:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh run rerun -R o/r:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "mutates_remote",
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh run cancel 1 -R o/r)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh run cancel 1 -R o/r)",
+    "kind": "bash_exact",
+    "warnings": [
+     "mutates_remote",
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh run delete 1 -R o/r)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh run delete 1 -R o/r)",
+    "kind": "bash_exact",
+    "warnings": [
+     "mutates_remote",
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh pr list -R o/r --state open:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh pr list -R o/r --state open:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh pr view -R o/r:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh pr view -R o/r:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh pr checks -R o/r:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh pr checks -R o/r:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh pr diff 1 -R o/r)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh pr diff 1 -R o/r)",
+    "kind": "bash_exact",
+    "warnings": [
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh run list -R o/r:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh run list -R o/r:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh run view 1 -R o/r)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh run view 1 -R o/r)",
+    "kind": "bash_exact",
+    "warnings": [
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh issue list -R cli/cli --limit 3)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh issue list -R cli/cli --limit 3)",
+    "kind": "bash_exact",
+    "warnings": [
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh issue view 1 -R cli/cli)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh issue view 1 -R cli/cli)",
+    "kind": "bash_exact",
+    "warnings": [
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh release view v1 -R o/r)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh release view v1 -R o/r)",
+    "kind": "bash_exact",
+    "warnings": [
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh repo view o/r)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh repo view o/r)",
+    "kind": "bash_exact",
+    "warnings": [
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh workflow list -R o/r)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh workflow list -R o/r)",
+    "kind": "bash_exact",
+    "warnings": [
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh api repos/o/r/pulls)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh api repos/o/r/pulls)",
+    "kind": "bash_exact",
+    "warnings": [
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh api repos/o/r/pulls --jq .)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh api repos/o/r/pulls --jq .)",
+    "kind": "bash_exact",
+    "warnings": [
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh issue list:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh issue list:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "mutates_remote",
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh issue create --title x)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh issue create --title x)",
+    "kind": "bash_exact",
+    "warnings": [
+     "mutates_remote",
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh issue close 1 -R o/r)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh issue close 1 -R o/r)",
+    "kind": "bash_exact",
+    "warnings": [
+     "mutates_remote",
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh -R o/r issue comment 1 --body x)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh -R o/r issue comment 1 --body x)",
+    "kind": "bash_exact",
+    "warnings": [
+     "mutates_remote",
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh label create bug)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh label create bug)",
+    "kind": "bash_exact",
+    "warnings": [
+     "mutates_remote",
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh secret list -R o/r:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh secret list -R o/r:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "mutates_remote",
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(kubectl --context prod-main-admin@prod-main -n app-cluster exec:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(kubectl --context prod-main-admin@prod-main -n app-cluster exec:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "executes_in_workload"
+    ]
+   }
+  },
+  {
+   "input": "Bash(find . -name x -exec rm:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(find . -name x -exec rm:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "runs_arbitrary"
+    ]
+   }
+  },
+  {
+   "input": "Bash(awk -f prog.awk:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(awk -f prog.awk:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "runs_arbitrary"
+    ]
+   }
+  },
+  {
+   "input": "Bash(uv run pytest:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(uv run pytest:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "runs_arbitrary"
+    ]
+   }
+  },
+  {
+   "input": "Bash(make -C build all:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(make -C build all:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "runs_arbitrary"
+    ]
+   }
+  },
+  {
+   "input": "Bash(git -c core.sshCommand=x fetch)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(git -c core.sshCommand=x fetch)",
+    "kind": "bash_exact",
+    "warnings": [
+     "runs_arbitrary"
+    ]
+   }
+  },
+  {
+   "input": "Bash(kubectl --context ops -n app:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(kubectl --context ops -n app:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "executes_in_workload",
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(oc --context ops:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(oc --context ops:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "executes_in_workload",
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(docker --context remote:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(docker --context remote:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "executes_in_workload",
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(docker-compose -f app.yml:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(docker-compose -f app.yml:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "executes_in_workload",
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(helm --kube-context ops:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(helm --kube-context ops:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "executes_in_workload",
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(terraform -chdir=infra:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(terraform -chdir=infra:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "executes_in_workload",
+     "mutates_remote",
+     "short_prefix"
+    ]
+   }
+  },
+  {
+   "input": "Bash(docker compose -f app.yml:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(docker compose -f app.yml:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "executes_in_workload",
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(docker compose -f app.yml exec:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(docker compose -f app.yml exec:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "executes_in_workload"
+    ]
+   }
+  },
+  {
+   "input": "Bash(docker compose run:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(docker compose run:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "executes_in_workload"
+    ]
+   }
+  },
+  {
+   "input": "Bash(docker compose -f app.yml ps:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(docker compose -f app.yml ps:*)",
+    "kind": "bash_prefix",
+    "warnings": []
+   }
+  },
+  {
+   "input": "Bash(docker-compose -f app.yml exec:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(docker-compose -f app.yml exec:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "executes_in_workload"
+    ]
+   }
+  },
+  {
+   "input": "Bash(kubectl --insecure-skip-tls-verify exec mypod:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(kubectl --insecure-skip-tls-verify exec mypod:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "executes_in_workload"
+    ]
+   }
+  },
+  {
+   "input": "Bash(kubectl --insecure-skip-tls-verify delete pod:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(kubectl --insecure-skip-tls-verify delete pod:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(oc --insecure-skip-tls-verify rsh mypod:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(oc --insecure-skip-tls-verify rsh mypod:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "executes_in_workload"
+    ]
+   }
+  },
+  {
+   "input": "Bash(helm --debug upgrade rel:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(helm --debug upgrade rel:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(terraform -no-color apply plan:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(terraform -no-color apply plan:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(docker -D run img:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(docker -D run img:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "executes_in_workload"
+    ]
+   }
+  },
+  {
+   "input": "Bash(podman --remote exec box:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(podman --remote exec box:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "executes_in_workload"
+    ]
+   }
+  },
+  {
+   "input": "Bash(nerdctl --debug run img:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(nerdctl --debug run img:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "executes_in_workload"
+    ]
+   }
+  },
+  {
+   "input": "Bash(docker compose --dry-run exec svc:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(docker compose --dry-run exec svc:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "executes_in_workload"
+    ]
+   }
+  },
+  {
+   "input": "Bash(docker-compose --verbose exec svc:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(docker-compose --verbose exec svc:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "executes_in_workload"
+    ]
+   }
+  },
+  {
+   "input": "Bash(docker --context compose compose exec:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(docker --context compose compose exec:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "executes_in_workload"
+    ]
+   }
+  },
+  {
+   "input": "Bash(docker --context remote rm box:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(docker --context remote rm box:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(docker compose -f app.yml up:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(docker compose -f app.yml up:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(docker compose down:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(docker compose down:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(podman stop box:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(podman stop box:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(docker-compose -f app.yml rm:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(docker-compose -f app.yml rm:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(podman-compose up:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(podman-compose up:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "mutates_remote",
+     "short_prefix"
+    ]
+   }
+  },
+  {
+   "input": "Bash(podman exec box:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(podman exec box:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "executes_in_workload"
+    ]
+   }
+  },
+  {
+   "input": "Bash(docker cp box:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(docker cp box:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "executes_in_workload"
+    ]
+   }
+  },
+  {
+   "input": "Bash(docker attach box:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(docker attach box:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "executes_in_workload"
+    ]
+   }
+  },
+  {
+   "input": "Bash(podman cp box:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(podman cp box:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "executes_in_workload"
+    ]
+   }
+  },
+  {
+   "input": "Bash(docker compose cp svc:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(docker compose cp svc:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "executes_in_workload"
+    ]
+   }
+  },
+  {
+   "input": "Bash(docker-compose attach svc:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(docker-compose attach svc:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "executes_in_workload"
+    ]
+   }
+  },
+  {
+   "input": "Bash(podman machine ssh vm:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(podman machine ssh vm:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "executes_in_workload"
+    ]
+   }
+  },
+  {
+   "input": "Bash(kubectl --context ops proxy:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(kubectl --context ops proxy:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "executes_in_workload"
+    ]
+   }
+  },
+  {
+   "input": "Bash(docker stack deploy app:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(docker stack deploy app:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(docker service update app:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(docker service update app:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(docker swarm leave:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(docker swarm leave:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(helm --kube-context ops test rel:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(helm --kube-context ops test rel:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(terraform state rm res:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(terraform state rm res:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(terraform state mv res:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(terraform state mv res:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(terraform state push file:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(terraform state push file:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(terraform taint res:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(terraform taint res:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(terraform untaint res:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(terraform untaint res:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(terraform force-unlock id:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(terraform force-unlock id:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(docker stack ls:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(docker stack ls:*)",
+    "kind": "bash_prefix",
+    "warnings": []
+   }
+  },
+  {
+   "input": "Bash(docker service ls:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(docker service ls:*)",
+    "kind": "bash_prefix",
+    "warnings": []
+   }
+  },
+  {
+   "input": "Bash(terraform state list:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(terraform state list:*)",
+    "kind": "bash_prefix",
+    "warnings": []
+   }
+  },
+  {
+   "input": "Bash(podman machine list:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(podman machine list:*)",
+    "kind": "bash_prefix",
+    "warnings": []
+   }
+  },
+  {
+   "input": "Bash(kubectl --context ops -n app logs:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(kubectl --context ops -n app logs:*)",
+    "kind": "bash_prefix",
+    "warnings": []
+   }
+  },
+  {
+   "input": "Bash(helm --kube-context ops status:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(helm --kube-context ops status:*)",
+    "kind": "bash_prefix",
+    "warnings": []
+   }
+  },
+  {
+   "input": "Bash(kubectl --context ops)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(kubectl --context ops)",
+    "kind": "bash_exact",
+    "warnings": []
+   }
+  },
+  {
+   "input": "mcp__slack__read_thread",
+   "want": {
+    "ok": true,
+    "rule": "mcp__slack__read_thread",
+    "kind": "mcp_tool",
+    "warnings": []
+   }
+  },
+  {
+   "input": "mcp__harkroom__grant_delegate",
+   "want": {
+    "ok": false,
+    "code": "unsupported_tool"
+   }
+  },
+  {
+   "input": "Bash(*)",
+   "want": {
+    "ok": false,
+    "code": "too_broad"
+   }
+  },
+  {
+   "input": "Bash(:*)",
+   "want": {
+    "ok": false,
+    "code": "too_broad"
+   }
+  },
+  {
+   "input": "Bash(kubectl:*)",
+   "want": {
+    "ok": false,
+    "code": "too_broad"
+   }
+  },
+  {
+   "input": "Bash(kubectl * exec:*)",
+   "want": {
+    "ok": false,
+    "code": "wildcard"
+   }
+  },
+  {
+   "input": "Bash(gh pr view && rm -rf x)",
+   "want": {
+    "ok": false,
+    "code": "shell_syntax"
+   }
+  },
+  {
+   "input": "Bash(echo $(id))",
+   "want": {
+    "ok": false,
+    "code": "shell_syntax"
+   }
+  },
+  {
+   "input": "Bash(kubectl get pods > /tmp/x)",
+   "want": {
+    "ok": false,
+    "code": "shell_syntax"
+   }
+  },
+  {
+   "input": "Bash(claude --dangerously-skip-permissions:*)",
+   "want": {
+    "ok": false,
+    "code": "dangerous_flag"
+   }
+  },
+  {
+   "input": "Bash(bash -c:*)",
+   "want": {
+    "ok": false,
+    "code": "interpreter"
+   }
+  },
+  {
+   "input": "Bash(/usr/bin/env kubectl:*)",
+   "want": {
+    "ok": false,
+    "code": "interpreter"
+   }
+  },
+  {
+   "input": "Bash(python3 -c print:*)",
+   "want": {
+    "ok": false,
+    "code": "interpreter"
+   }
+  },
+  {
+   "input": "Bash(sudo kubectl get:*)",
+   "want": {
+    "ok": false,
+    "code": "interpreter"
+   }
+  },
+  {
+   "input": "Bash(/opt/harkroom/harkroom-operator merge:*)",
+   "want": {
+    "ok": false,
+    "code": "operator_wrapper"
+   }
+  },
+  {
+   "input": "Bash(gh pr merge 12)",
+   "want": {
+    "ok": false,
+    "code": "merge_bypass"
+   }
+  },
+  {
+   "input": "Bash(gh -R a/b pr merge:*)",
+   "want": {
+    "ok": false,
+    "code": "merge_bypass"
+   }
+  },
+  {
+   "input": "Bash(gh api -X PUT repos/a/b/pulls/1/merge)",
+   "want": {
+    "ok": false,
+    "code": "merge_bypass"
+   }
+  },
+  {
+   "input": "Bash(git status), Bash, Bash(x:*)",
+   "want": {
+    "ok": false,
+    "code": "bad_chars"
+   }
+  },
+  {
+   "input": "Bash(git status,Bash)",
+   "want": {
+    "ok": false,
+    "code": "bad_chars"
+   }
+  },
+  {
+   "input": "Bash(\"sh\" -c x:*)",
+   "want": {
+    "ok": false,
+    "code": "bad_chars"
+   }
+  },
+  {
+   "input": "Bash(\\sh -c x:*)",
+   "want": {
+    "ok": false,
+    "code": "bad_chars"
+   }
+  },
+  {
+   "input": "Bash(python3.12 -c x:*)",
+   "want": {
+    "ok": false,
+    "code": "interpreter"
+   }
+  },
+  {
+   "input": "Bash(node22 -e x:*)",
+   "want": {
+    "ok": false,
+    "code": "interpreter"
+   }
+  },
+  {
+   "input": "Bash(caffeinate -i sh:*)",
+   "want": {
+    "ok": false,
+    "code": "interpreter"
+   }
+  },
+  {
+   "input": "Bash(kubectl get pods {a,b})",
+   "want": {
+    "ok": false,
+    "code": "bad_chars"
+   }
+  },
+  {
+   "input": "Bash(cat ~/.ssh/id_ed25519)",
+   "want": {
+    "ok": false,
+    "code": "bad_chars"
+   }
+  },
+  {
+   "input": "Bash(gh api:*)",
+   "want": {
+    "ok": false,
+    "code": "gh_api_write"
+   }
+  },
+  {
+   "input": "Bash(gh api repos/o/r/pulls/1/merge:*)",
+   "want": {
+    "ok": false,
+    "code": "merge_bypass"
+   }
+  },
+  {
+   "input": "Bash(gh api -XPUT repos/o/r:*)",
+   "want": {
+    "ok": false,
+    "code": "gh_api_write"
+   }
+  },
+  {
+   "input": "Bash(gh api -XPUT repos/o/r/pulls/1)",
+   "want": {
+    "ok": false,
+    "code": "gh_api_write"
+   }
+  },
+  {
+   "input": "Bash(gh api --method=PUT repos/o/r/pulls/1)",
+   "want": {
+    "ok": false,
+    "code": "gh_api_write"
+   }
+  },
+  {
+   "input": "Bash(gh api repos/o/r/issues -f title=x)",
+   "want": {
+    "ok": false,
+    "code": "gh_api_write"
+   }
+  },
+  {
+   "input": "Bash(gh api graphql:*)",
+   "want": {
+    "ok": false,
+    "code": "gh_api_write"
+   }
+  },
+  {
+   "input": "Bash(gh api graphql)",
+   "want": {
+    "ok": false,
+    "code": "gh_api_write"
+   }
+  },
+  {
+   "input": "Bash(gh -R o/r pr:*)",
+   "want": {
+    "ok": false,
+    "code": "too_broad"
+   }
+  },
+  {
+   "input": "Bash(gh -R o/r pr merge 1)",
+   "want": {
+    "ok": false,
+    "code": "merge_bypass"
+   }
+  },
+  {
+   "input": "Bash(gh pr:*)",
+   "want": {
+    "ok": false,
+    "code": "too_broad"
+   }
+  },
+  {
+   "input": "Bash(gh alias set pv pr:*)",
+   "want": {
+    "ok": false,
+    "code": "merge_bypass"
+   }
+  },
+  {
+   "input": "Bash(git push:*)",
+   "want": {
+    "ok": false,
+    "code": "merge_bypass"
+   }
+  },
+  {
+   "input": "Bash(git push origin:*)",
+   "want": {
+    "ok": false,
+    "code": "merge_bypass"
+   }
+  },
+  {
+   "input": "Bash(git push origin HEAD:refs/heads/main)",
+   "want": {
+    "ok": false,
+    "code": "merge_bypass"
+   }
+  },
+  {
+   "input": "Bash(git push origin HEAD:main)",
+   "want": {
+    "ok": false,
+    "code": "merge_bypass"
+   }
+  },
+  {
+   "input": "Bash(git push -f origin main)",
+   "want": {
+    "ok": false,
+    "code": "merge_bypass"
+   }
+  },
+  {
+   "input": "Bash(git push --force-with-lease origin master)",
+   "want": {
+    "ok": false,
+    "code": "merge_bypass"
+   }
+  },
+  {
+   "input": "Bash(git push origin HEAD)",
+   "want": {
+    "ok": false,
+    "code": "merge_bypass"
+   }
+  },
+  {
+   "input": "Bash(git push origin feat:Main)",
+   "want": {
+    "ok": false,
+    "code": "merge_bypass"
+   }
+  },
+  {
+   "input": "Bash(git push origin :feature)",
+   "want": {
+    "ok": false,
+    "code": "merge_bypass"
+   }
+  },
+  {
+   "input": "Bash(git push --all origin)",
+   "want": {
+    "ok": false,
+    "code": "merge_bypass"
+   }
+  },
+  {
+   "input": "Bash(git push origin)",
+   "want": {
+    "ok": false,
+    "code": "merge_bypass"
+   }
+  },
+  {
+   "input": "Bash(git -C repo push origin main)",
+   "want": {
+    "ok": false,
+    "code": "merge_bypass"
+   }
+  },
+  {
+   "input": "Bash(git push origin @)",
+   "want": {
+    "ok": false,
+    "code": "merge_bypass"
+   }
+  },
+  {
+   "input": "Bash(git push origin @:feat)",
+   "want": {
+    "ok": false,
+    "code": "merge_bypass"
+   }
+  },
+  {
+   "input": "Bash(gh repo sync:*)",
+   "want": {
+    "ok": false,
+    "code": "merge_bypass"
+   }
+  },
+  {
+   "input": "Bash(gh repo sync izagood/harkroom --force)",
+   "want": {
+    "ok": false,
+    "code": "merge_bypass"
+   }
+  },
+  {
+   "input": "Bash(gh -R o/r repo sync)",
+   "want": {
+    "ok": false,
+    "code": "merge_bypass"
+   }
+  },
+  {
+   "input": "Bash(gh pr list -R cli/cli --limit 3)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh pr list -R cli/cli --limit 3)",
+    "kind": "bash_exact",
+    "warnings": [
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "",
+   "want": {
+    "ok": false,
+    "code": "empty"
+   }
+  },
+  {
+   "input": "Bash()",
+   "want": {
+    "ok": false,
+    "code": "too_broad"
+   }
+  },
+  {
+   "input": "Bash(ls)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(ls)",
+    "kind": "bash_exact",
+    "warnings": []
+   }
+  },
+  {
+   "input": "Bash(ls:*)",
+   "want": {
+    "ok": false,
+    "code": "too_broad"
+   }
+  },
+  {
+   "input": "Bash(git status)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(git status)",
+    "kind": "bash_exact",
+    "warnings": []
+   }
+  },
+  {
+   "input": "Bash(git push origin feat)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(git push origin feat)",
+    "kind": "bash_exact",
+    "warnings": [
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(git push origin main)",
+   "want": {
+    "ok": false,
+    "code": "merge_bypass"
+   }
+  },
+  {
+   "input": "Bash(git push origin HEAD:refs/heads/x)",
+   "want": {
+    "ok": false,
+    "code": "merge_bypass"
+   }
+  },
+  {
+   "input": "Bash(git push --all origin x)",
+   "want": {
+    "ok": false,
+    "code": "merge_bypass"
+   }
+  },
+  {
+   "input": "Bash(git -c x=y status)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(git -c x=y status)",
+    "kind": "bash_exact",
+    "warnings": [
+     "runs_arbitrary"
+    ]
+   }
+  },
+  {
+   "input": "Bash(git config user.name)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(git config user.name)",
+    "kind": "bash_exact",
+    "warnings": [
+     "runs_arbitrary"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh pr view 1)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh pr view 1)",
+    "kind": "bash_exact",
+    "warnings": [
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh pr merge 1)",
+   "want": {
+    "ok": false,
+    "code": "merge_bypass"
+   }
+  },
+  {
+   "input": "Bash(gh api -X PUT x)",
+   "want": {
+    "ok": false,
+    "code": "gh_api_write"
+   }
+  },
+  {
+   "input": "Bash(gh issue list)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh issue list)",
+    "kind": "bash_exact",
+    "warnings": [
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh issue create)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh issue create)",
+    "kind": "bash_exact",
+    "warnings": [
+     "mutates_remote",
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh pr create --title x)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh pr create --title x)",
+    "kind": "bash_exact",
+    "warnings": [
+     "mutates_remote",
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh run rerun 1)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(gh run rerun 1)",
+    "kind": "bash_exact",
+    "warnings": [
+     "mutates_remote",
+     "uses_github_account"
+    ]
+   }
+  },
+  {
+   "input": "Bash(gh repo sync)",
+   "want": {
+    "ok": false,
+    "code": "merge_bypass"
+   }
+  },
+  {
+   "input": "Bash(gh alias set x y)",
+   "want": {
+    "ok": false,
+    "code": "merge_bypass"
+   }
+  },
+  {
+   "input": "Bash(docker compose up)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(docker compose up)",
+    "kind": "bash_exact",
+    "warnings": [
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(docker compose:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(docker compose:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "executes_in_workload",
+     "mutates_remote",
+     "short_prefix"
+    ]
+   }
+  },
+  {
+   "input": "Bash(docker compose ps)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(docker compose ps)",
+    "kind": "bash_exact",
+    "warnings": []
+   }
+  },
+  {
+   "input": "Bash(docker --context r compose exec a sh)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(docker --context r compose exec a sh)",
+    "kind": "bash_exact",
+    "warnings": [
+     "executes_in_workload"
+    ]
+   }
+  },
+  {
+   "input": "Bash(docker stack deploy x)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(docker stack deploy x)",
+    "kind": "bash_exact",
+    "warnings": [
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(docker:*)",
+   "want": {
+    "ok": false,
+    "code": "too_broad"
+   }
+  },
+  {
+   "input": "Bash(docker ps)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(docker ps)",
+    "kind": "bash_exact",
+    "warnings": []
+   }
+  },
+  {
+   "input": "Bash(podman machine ssh)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(podman machine ssh)",
+    "kind": "bash_exact",
+    "warnings": [
+     "executes_in_workload"
+    ]
+   }
+  },
+  {
+   "input": "Bash(terraform state rm x)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(terraform state rm x)",
+    "kind": "bash_exact",
+    "warnings": [
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(terraform plan)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(terraform plan)",
+    "kind": "bash_exact",
+    "warnings": []
+   }
+  },
+  {
+   "input": "Bash(kubectl get pods:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(kubectl get pods:*)",
+    "kind": "bash_prefix",
+    "warnings": []
+   }
+  },
+  {
+   "input": "Bash(kubectl exec -it p -- sh)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(kubectl exec -it p -- sh)",
+    "kind": "bash_exact",
+    "warnings": [
+     "executes_in_workload"
+    ]
+   }
+  },
+  {
+   "input": "Bash(kubectl -n x delete pod y)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(kubectl -n x delete pod y)",
+    "kind": "bash_exact",
+    "warnings": [
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(rm -rf /tmp/x)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(rm -rf /tmp/x)",
+    "kind": "bash_exact",
+    "warnings": [
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(ssh host)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(ssh host)",
+    "kind": "bash_exact",
+    "warnings": [
+     "executes_in_workload",
+     "runs_arbitrary"
+    ]
+   }
+  },
+  {
+   "input": "Bash(find . -name x)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(find . -name x)",
+    "kind": "bash_exact",
+    "warnings": [
+     "runs_arbitrary"
+    ]
+   }
+  },
+  {
+   "input": "Bash(npm run build)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(npm run build)",
+    "kind": "bash_exact",
+    "warnings": [
+     "runs_arbitrary"
+    ]
+   }
+  },
+  {
+   "input": "Bash(npm ls)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(npm ls)",
+    "kind": "bash_exact",
+    "warnings": []
+   }
+  },
+  {
+   "input": "Bash(cargo test:*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(cargo test:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "runs_arbitrary",
+     "short_prefix"
+    ]
+   }
+  },
+  {
+   "input": "Bash(python3.12 x)",
+   "want": {
+    "ok": false,
+    "code": "interpreter"
+   }
+  },
+  {
+   "input": "Bash(/bin/sh x)",
+   "want": {
+    "ok": false,
+    "code": "interpreter"
+   }
+  },
+  {
+   "input": "Bash(node22 x)",
+   "want": {
+    "ok": false,
+    "code": "interpreter"
+   }
+  },
+  {
+   "input": "Bash(Rscript x)",
+   "want": {
+    "ok": false,
+    "code": "interpreter"
+   }
+  },
+  {
+   "input": "Bash(env FOO=1 ls)",
+   "want": {
+    "ok": false,
+    "code": "interpreter"
+   }
+  },
+  {
+   "input": "Bash(ls *)",
+   "want": {
+    "ok": false,
+    "code": "wildcard"
+   }
+  },
+  {
+   "input": "Bash(ls $(x))",
+   "want": {
+    "ok": false,
+    "code": "shell_syntax"
+   }
+  },
+  {
+   "input": "Bash(ls ${x})",
+   "want": {
+    "ok": false,
+    "code": "shell_syntax"
+   }
+  },
+  {
+   "input": "Bash(ls | x)",
+   "want": {
+    "ok": false,
+    "code": "shell_syntax"
+   }
+  },
+  {
+   "input": "Bash(ls \"x\")",
+   "want": {
+    "ok": false,
+    "code": "bad_chars"
+   }
+  },
+  {
+   "input": "Bash(ls, x)",
+   "want": {
+    "ok": false,
+    "code": "bad_chars"
+   }
+  },
+  {
+   "input": "Bash(ls (x))",
+   "want": {
+    "ok": false,
+    "code": "bad_chars"
+   }
+  },
+  {
+   "input": "Bash(  ls   -la  )",
+   "want": {
+    "ok": true,
+    "rule": "Bash(ls -la)",
+    "kind": "bash_exact",
+    "warnings": []
+   }
+  },
+  {
+   "input": "Bash(ls -la :*)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(ls -la:*)",
+    "kind": "bash_prefix",
+    "warnings": [
+     "short_prefix"
+    ]
+   }
+  },
+  {
+   "input": "mcp__srv__tool",
+   "want": {
+    "ok": true,
+    "rule": "mcp__srv__tool",
+    "kind": "mcp_tool",
+    "warnings": []
+   }
+  },
+  {
+   "input": "mcp__harkroom__message_post",
+   "want": {
+    "ok": false,
+    "code": "unsupported_tool"
+   }
+  },
+  {
+   "input": "mcp__a-b__c_d",
+   "want": {
+    "ok": true,
+    "rule": "mcp__a-b__c_d",
+    "kind": "mcp_tool",
+    "warnings": []
+   }
+  },
+  {
+   "input": "mcp__x",
+   "want": {
+    "ok": false,
+    "code": "unsupported_tool"
+   }
+  },
+  {
+   "input": "Read(x)",
+   "want": {
+    "ok": false,
+    "code": "unsupported_tool"
+   }
+  },
+  {
+   "input": "bash(ls)",
+   "want": {
+    "ok": false,
+    "code": "unsupported_tool"
+   }
+  },
+  {
+   "input": " Bash(ls) ",
+   "want": {
+    "ok": true,
+    "rule": "Bash(ls)",
+    "kind": "bash_exact",
+    "warnings": []
+   }
+  },
+  {
+   "input": "Bash(ls --dangerously)",
+   "want": {
+    "ok": false,
+    "code": "dangerous_flag"
+   }
+  },
+  {
+   "input": "Bash(caffeinate ls)",
+   "want": {
+    "ok": false,
+    "code": "interpreter"
+   }
+  },
+  {
+   "input": "Bash(oc rsh x)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(oc rsh x)",
+    "kind": "bash_exact",
+    "warnings": [
+     "executes_in_workload"
+    ]
+   }
+  },
+  {
+   "input": "Bash(ls é)",
+   "want": {
+    "ok": false,
+    "code": "bad_chars"
+   }
+  },
+  {
+   "input": "Bash(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)",
+   "want": {
+    "ok": false,
+    "code": "too_long"
+   }
+  },
+  {
+   "input": "Bash(helm install x y)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(helm install x y)",
+    "kind": "bash_exact",
+    "warnings": [
+     "mutates_remote"
+    ]
+   }
+  },
+  {
+   "input": "Bash(helm list)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(helm list)",
+    "kind": "bash_exact",
+    "warnings": []
+   }
+  },
+  {
+   "input": "Bash(rsync -a x y)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(rsync -a x y)",
+    "kind": "bash_exact",
+    "warnings": [
+     "runs_arbitrary"
+    ]
+   }
+  },
+  {
+   "input": "Bash(go test ./...)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(go test ./...)",
+    "kind": "bash_exact",
+    "warnings": [
+     "runs_arbitrary"
+    ]
+   }
+  },
+  {
+   "input": "Bash(yarn dlx x)",
+   "want": {
+    "ok": true,
+    "rule": "Bash(yarn dlx x)",
+    "kind": "bash_exact",
+    "warnings": [
+     "runs_arbitrary"
+    ]
+   }
+  },
+  {
+   "input": "Bash(docker-compose:*)",
+   "want": {
+    "ok": false,
+    "code": "too_broad"
+   }
+  },
+  {
+   "input": "Bash(ssh:*)",
+   "want": {
+    "ok": false,
+    "code": "too_broad"
+   }
+  },
+  {
+   "input": "Bash(rm:*)",
+   "want": {
+    "ok": false,
+    "code": "too_broad"
+   }
+  }
+ ],
+ "exact": [
+  {
+   "input": "kubectl exec 는 받되 실행형 경고를 단다(D4)",
+   "want": {
+    "ok": false,
+    "code": "bad_chars"
+   }
+  },
+  {
+   "input": "gh 는 하위 명령 두 단계를 고정한 접두와 읽기 api 한 줄만 받는다(F3)",
+   "want": {
+    "ok": false,
+    "code": "bad_chars"
+   }
+  },
+  {
+   "input": "git push 는 기능 브랜치를 명시한 정확 규칙만 받는다(F4)",
+   "want": {
+    "ok": false,
+    "code": "bad_chars"
+   }
+  },
+  {
+   "input": "gh 의 원격을 바꾸는 하위 명령은 mutates_remote 경고(security 낮은 후속)",
+   "want": {
+    "ok": false,
+    "code": "bad_chars"
+   }
+  },
+  {
+   "input": "gh pr·run 의 쓰기 동작에 원격 변경 경고를 단다 · 읽기 동작은 접두라도 그대로",
+   "want": {
+    "ok": false,
+    "code": "bad_chars"
+   }
+  },
+  {
+   "input": "gh 읽기(정확 규칙의 list·view·status·diff·checks, GET api)에는 mutates_remote 를 달지 않는다 · 접두·쓰기는 그대로",
+   "want": {
+    "ok": false,
+    "code": "bad_chars"
+   }
+  },
+  {
+   "input": "gh_api_write",
+   "want": {
+    "ok": false,
+    "code": "unsupported_head"
+   }
+  },
+  {
+   "input": "kubectl --kubeconfig /x --context rc apply -f /x",
+   "want": {
+    "ok": true,
+    "command": "kubectl --kubeconfig /x --context rc apply -f /x",
+    "warnings": [
+     "mutates_remote",
+     "reads_file"
+    ],
+    "files": [
+     {
+      "path": "/x",
+      "flag": "--kubeconfig",
+      "secret": true
+     }
+    ]
+   }
+  },
+  {
+   "input": "/x",
+   "want": {
+    "ok": false,
+    "code": "path_head"
+   }
+  },
+  {
+   "input": "",
+   "want": {
+    "ok": false,
+    "code": "empty"
+   }
+  },
+  {
+   "input": "   ",
+   "want": {
+    "ok": false,
+    "code": "empty"
+   }
+  },
+  {
+   "input": "kubectl get pods:*",
+   "want": {
+    "ok": false,
+    "code": "wildcard"
+   }
+  },
+  {
+   "input": "kubectl --kubeconfig /k/c --context x get pods",
+   "want": {
+    "ok": true,
+    "command": "kubectl --kubeconfig /k/c --context x get pods",
+    "warnings": [
+     "reads_file"
+    ],
+    "files": [
+     {
+      "path": "/k/c",
+      "flag": "--kubeconfig",
+      "secret": true
+     }
+    ]
+   }
+  },
+  {
+   "input": "kubectl  --kubeconfig /k/c --context x   get   pods  ",
+   "want": {
+    "ok": true,
+    "command": "kubectl --kubeconfig /k/c --context x get pods",
+    "warnings": [
+     "reads_file"
+    ],
+    "files": [
+     {
+      "path": "/k/c",
+      "flag": "--kubeconfig",
+      "secret": true
+     }
+    ]
+   }
+  },
+  {
+   "input": "kubectl --kubeconfig /k/c --context x apply -f /a/b.yaml",
+   "want": {
+    "ok": true,
+    "command": "kubectl --kubeconfig /k/c --context x apply -f /a/b.yaml",
+    "warnings": [
+     "mutates_remote",
+     "reads_file"
+    ],
+    "files": [
+     {
+      "path": "/k/c",
+      "flag": "--kubeconfig",
+      "secret": true
+     },
+     {
+      "path": "/a/b.yaml",
+      "flag": "-f",
+      "secret": false
+     }
+    ]
+   }
+  },
+  {
+   "input": "kubectl --kubeconfig /k/c --context x apply -f a.yaml",
+   "want": {
+    "ok": false,
+    "code": "relative_path"
+   }
+  },
+  {
+   "input": "kubectl --kubeconfig /k/c --context x apply -f/a.yaml",
+   "want": {
+    "ok": false,
+    "code": "glued_flag"
+   }
+  },
+  {
+   "input": "kubectl --kubeconfig /k/c --context x apply -f=/a.yaml",
+   "want": {
+    "ok": false,
+    "code": "glued_flag"
+   }
+  },
+  {
+   "input": "kubectl --kubeconfig /k/c --context x apply --filename=/a/b.yaml",
+   "want": {
+    "ok": true,
+    "command": "kubectl --kubeconfig /k/c --context x apply --filename=/a/b.yaml",
+    "warnings": [
+     "mutates_remote",
+     "reads_file"
+    ],
+    "files": [
+     {
+      "path": "/k/c",
+      "flag": "--kubeconfig",
+      "secret": true
+     },
+     {
+      "path": "/a/b.yaml",
+      "flag": "--filename",
+      "secret": false
+     }
+    ]
+   }
+  },
+  {
+   "input": "kubectl --kubeconfig /k/c --context x logs -f pod",
+   "want": {
+    "ok": true,
+    "command": "kubectl --kubeconfig /k/c --context x logs -f pod",
+    "warnings": [
+     "reads_file"
+    ],
+    "files": [
+     {
+      "path": "/k/c",
+      "flag": "--kubeconfig",
+      "secret": true
+     }
+    ]
+   }
+  },
+  {
+   "input": "kubectl --kubeconfig /k/c --context x create configmap x --from-file=k=/a/b",
+   "want": {
+    "ok": true,
+    "command": "kubectl --kubeconfig /k/c --context x create configmap x --from-file=k=/a/b",
+    "warnings": [
+     "mutates_remote",
+     "reads_file"
+    ],
+    "files": [
+     {
+      "path": "/k/c",
+      "flag": "--kubeconfig",
+      "secret": true
+     },
+     {
+      "path": "/a/b",
+      "flag": "--from-file",
+      "secret": false
+     }
+    ]
+   }
+  },
+  {
+   "input": "kubectl --kubeconfig /k/c --context x create configmap x --from-file k=rel",
+   "want": {
+    "ok": false,
+    "code": "relative_path"
+   }
+  },
+  {
+   "input": "kubectl --kubeconfig /k/c --context x apply -f /k/c",
+   "want": {
+    "ok": true,
+    "command": "kubectl --kubeconfig /k/c --context x apply -f /k/c",
+    "warnings": [
+     "mutates_remote",
+     "reads_file"
+    ],
+    "files": [
+     {
+      "path": "/k/c",
+      "flag": "--kubeconfig",
+      "secret": true
+     }
+    ]
+   }
+  },
+  {
+   "input": "kubectl --kubeconfig /k/c --context x apply -f /a/./b",
+   "want": {
+    "ok": false,
+    "code": "relative_path"
+   }
+  },
+  {
+   "input": "kubectl --kubeconfig /k/c --context x apply -f /a/../b",
+   "want": {
+    "ok": false,
+    "code": "relative_path"
+   }
+  },
+  {
+   "input": "kubectl --kubeconfig /k/c --context x apply -f /a/",
+   "want": {
+    "ok": false,
+    "code": "relative_path"
+   }
+  },
+  {
+   "input": "kubectl --kubeconfig /k/c --context x apply -f",
+   "want": {
+    "ok": false,
+    "code": "relative_path"
+   }
+  },
+  {
+   "input": "kubectl --kubeconfig /k/c --context x cp a b",
+   "want": {
+    "ok": false,
+    "code": "unsupported_subcommand"
+   }
+  },
+  {
+   "input": "kubectl --kubeconfig /k/c --context x edit deploy x",
+   "want": {
+    "ok": false,
+    "code": "unsupported_subcommand"
+   }
+  },
+  {
+   "input": "kubectl --kubeconfig /k/c --context x exec -it p -- sh",
+   "want": {
+    "ok": true,
+    "command": "kubectl --kubeconfig /k/c --context x exec -it p -- sh",
+    "warnings": [
+     "executes_in_workload",
+     "reads_file"
+    ],
+    "files": [
+     {
+      "path": "/k/c",
+      "flag": "--kubeconfig",
+      "secret": true
+     }
+    ]
+   }
+  },
+  {
+   "input": "kubectl --kubeconfig /k/c --context x plugin list",
+   "want": {
+    "ok": false,
+    "code": "unsupported_subcommand"
+   }
+  },
+  {
+   "input": "kubectl get pods",
+   "want": {
+    "ok": false,
+    "code": "needs_kubeconfig"
+   }
+  },
+  {
+   "input": "kubectl --kubeconfig /k/c get pods",
+   "want": {
+    "ok": false,
+    "code": "needs_kubeconfig"
+   }
+  },
+  {
+   "input": "kubectl --context x get pods",
+   "want": {
+    "ok": false,
+    "code": "needs_kubeconfig"
+   }
+  },
+  {
+   "input": "kubectl --kubeconfig=/k/c --context=x get pods",
+   "want": {
+    "ok": true,
+    "command": "kubectl --kubeconfig=/k/c --context=x get pods",
+    "warnings": [
+     "reads_file"
+    ],
+    "files": [
+     {
+      "path": "/k/c",
+      "flag": "--kubeconfig",
+      "secret": true
+     }
+    ]
+   }
+  },
+  {
+   "input": "kubectl --kubeconfig rel --context x get pods",
+   "want": {
+    "ok": false,
+    "code": "relative_path"
+   }
+  },
+  {
+   "input": "kubectl --kubeconfig /k/c --context x apply -f /a --client-key /k/key",
+   "want": {
+    "ok": true,
+    "command": "kubectl --kubeconfig /k/c --context x apply -f /a --client-key /k/key",
+    "warnings": [
+     "mutates_remote",
+     "reads_file"
+    ],
+    "files": [
+     {
+      "path": "/k/c",
+      "flag": "--kubeconfig",
+      "secret": true
+     },
+     {
+      "path": "/a",
+      "flag": "-f",
+      "secret": false
+     },
+     {
+      "path": "/k/key",
+      "flag": "--client-key",
+      "secret": true
+     }
+    ]
+   }
+  },
+  {
+   "input": "kubectl --kubeconfig /k/c --context x apply @/a/b",
+   "want": {
+    "ok": true,
+    "command": "kubectl --kubeconfig /k/c --context x apply @/a/b",
+    "warnings": [
+     "mutates_remote",
+     "reads_file"
+    ],
+    "files": [
+     {
+      "path": "/k/c",
+      "flag": "--kubeconfig",
+      "secret": true
+     },
+     {
+      "path": "/a/b",
+      "flag": "@",
+      "secret": false
+     }
+    ]
+   }
+  },
+  {
+   "input": "kubectl --kubeconfig /k/c --context x get pods -n default -o yaml",
+   "want": {
+    "ok": true,
+    "command": "kubectl --kubeconfig /k/c --context x get pods -n default -o yaml",
+    "warnings": [
+     "reads_file"
+    ],
+    "files": [
+     {
+      "path": "/k/c",
+      "flag": "--kubeconfig",
+      "secret": true
+     }
+    ]
+   }
+  },
+  {
+   "input": "helm --kubeconfig /k/c --kube-context x install r oci://reg/c --version 1.2.3",
+   "want": {
+    "ok": true,
+    "command": "helm --kubeconfig /k/c --kube-context x install r oci://reg/c --version 1.2.3",
+    "warnings": [
+     "mutates_remote",
+     "reads_file"
+    ],
+    "files": [
+     {
+      "path": "/k/c",
+      "flag": "--kubeconfig",
+      "secret": true
+     }
+    ]
+   }
+  },
+  {
+   "input": "helm --kubeconfig /k/c --kube-context x install r oci://reg/c",
+   "want": {
+    "ok": false,
+    "code": "chart_not_pinned"
+   }
+  },
+  {
+   "input": "helm --kubeconfig /k/c --kube-context x install r ./chart --version 1",
+   "want": {
+    "ok": false,
+    "code": "chart_not_pinned"
+   }
+  },
+  {
+   "input": "helm --kubeconfig /k/c --kube-context x install r repo/chart --version 1",
+   "want": {
+    "ok": false,
+    "code": "chart_not_pinned"
+   }
+  },
+  {
+   "input": "helm --kubeconfig /k/c --kube-context x upgrade r oci://reg/c --version=2 -f /v.yaml --set-file a=/b/c",
+   "want": {
+    "ok": true,
+    "command": "helm --kubeconfig /k/c --kube-context x upgrade r oci://reg/c --version=2 -f /v.yaml --set-file a=/b/c",
+    "warnings": [
+     "mutates_remote",
+     "reads_file"
+    ],
+    "files": [
+     {
+      "path": "/k/c",
+      "flag": "--kubeconfig",
+      "secret": true
+     },
+     {
+      "path": "/v.yaml",
+      "flag": "-f",
+      "secret": false
+     },
+     {
+      "path": "/b/c",
+      "flag": "--set-file",
+      "secret": false
+     }
+    ]
+   }
+  },
+  {
+   "input": "helm --kubeconfig /k/c --kube-context x upgrade r oci://reg/../c --version 2",
+   "want": {
+    "ok": false,
+    "code": "chart_not_pinned"
+   }
+  },
+  {
+   "input": "helm --kubeconfig /k/c --kube-context x template r oci://reg/c --version 1 --post-renderer /x",
+   "want": {
+    "ok": false,
+    "code": "unsupported_flag"
+   }
+  },
+  {
+   "input": "helm --kubeconfig /k/c --kube-context x status r",
+   "want": {
+    "ok": true,
+    "command": "helm --kubeconfig /k/c --kube-context x status r",
+    "warnings": [
+     "reads_file"
+    ],
+    "files": [
+     {
+      "path": "/k/c",
+      "flag": "--kubeconfig",
+      "secret": true
+     }
+    ]
+   }
+  },
+  {
+   "input": "helm --kubeconfig /k/c --kube-context x repo add a b",
+   "want": {
+    "ok": false,
+    "code": "unsupported_subcommand"
+   }
+  },
+  {
+   "input": "helm --kubeconfig /k/c --context x status r",
+   "want": {
+    "ok": false,
+    "code": "needs_kubeconfig"
+   }
+  },
+  {
+   "input": "helm --kubeconfig /k/c --kube-context x install -r oci://reg/c --version 1",
+   "want": {
+    "ok": false,
+    "code": "chart_not_pinned"
+   }
+  },
+  {
+   "input": "helm --kubeconfig /k/c --kube-context x install r oci://reg/c oci://reg/d --version 1",
+   "want": {
+    "ok": false,
+    "code": "chart_not_pinned"
+   }
+  },
+  {
+   "input": "helm --kubeconfig /k/c --kube-context x upgrade r oci://reg/c --version 1 --ca-file /ca --values /v",
+   "want": {
+    "ok": true,
+    "command": "helm --kubeconfig /k/c --kube-context x upgrade r oci://reg/c --version 1 --ca-file /ca --values /v",
+    "warnings": [
+     "mutates_remote",
+     "reads_file"
+    ],
+    "files": [
+     {
+      "path": "/k/c",
+      "flag": "--kubeconfig",
+      "secret": true
+     },
+     {
+      "path": "/ca",
+      "flag": "--ca-file",
+      "secret": true
+     },
+     {
+      "path": "/v",
+      "flag": "--values",
+      "secret": false
+     }
+    ]
+   }
+  },
+  {
+   "input": "FOO=1 kubectl get pods",
+   "want": {
+    "ok": false,
+    "code": "env_prefix"
+   }
+  },
+  {
+   "input": "./deploy.sh",
+   "want": {
+    "ok": false,
+    "code": "path_head"
+   }
+  },
+  {
+   "input": "/usr/bin/kubectl get pods",
+   "want": {
+    "ok": false,
+    "code": "path_head"
+   }
+  },
+  {
+   "input": "bash -c x",
+   "want": {
+    "ok": false,
+    "code": "interpreter"
+   }
+  },
+  {
+   "input": "kubectl get pods; rm -rf /",
+   "want": {
+    "ok": false,
+    "code": "shell_syntax"
+   }
+  },
+  {
+   "input": "kubectl get \"pods\"",
+   "want": {
+    "ok": false,
+    "code": "bad_chars"
+   }
+  },
+  {
+   "input": "make deploy",
+   "want": {
+    "ok": false,
+    "code": "unsupported_head"
+   }
+  },
+  {
+   "input": "terraform apply",
+   "want": {
+    "ok": false,
+    "code": "unsupported_head"
+   }
+  },
+  {
+   "input": "Kubectl --kubeconfig /k/c --context x get pods",
+   "want": {
+    "ok": true,
+    "command": "Kubectl --kubeconfig /k/c --context x get pods",
+    "warnings": [
+     "reads_file"
+    ],
+    "files": [
+     {
+      "path": "/k/c",
+      "flag": "--kubeconfig",
+      "secret": true
+     }
+    ]
+   }
+  },
+  {
+   "input": "kubectl --kubeconfig /k/c --context x get pods --dangerously-skip",
+   "want": {
+    "ok": false,
+    "code": "dangerous_flag"
+   }
+  },
+  {
+   "input": "harkroom-operator merge a 1",
+   "want": {
+    "ok": false,
+    "code": "operator_wrapper"
+   }
+  },
+  {
+   "input": "kubectl --kubeconfig /k/c --context x apply -f /a/b.yaml -f /a/b.yaml --kubeconfig /a/b.yaml",
+   "want": {
+    "ok": true,
+    "command": "kubectl --kubeconfig /k/c --context x apply -f /a/b.yaml -f /a/b.yaml --kubeconfig /a/b.yaml",
+    "warnings": [
+     "mutates_remote",
+     "reads_file"
+    ],
+    "files": [
+     {
+      "path": "/k/c",
+      "flag": "--kubeconfig",
+      "secret": true
+     },
+     {
+      "path": "/a/b.yaml",
+      "flag": "-f",
+      "secret": true
+     }
+    ]
+   }
+  },
+  {
+   "input": "kubectl --kubeconfig /k/c --context x get pods xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "want": {
+    "ok": false,
+    "code": "too_long"
+   }
+  }
+ ],
+ "secret": [
+  {
+   "input": "kind: Secret",
+   "want": true
+  },
+  {
+   "input": "kind: 'Secret'",
+   "want": true
+  },
+  {
+   "input": "KIND:secret",
+   "want": true
+  },
+  {
+   "input": "stringData:",
+   "want": true
+  },
+  {
+   "input": "stringdata:",
+   "want": false
+  },
+  {
+   "input": "-----BEGIN RSA PRIVATE KEY-----",
+   "want": true
+  },
+  {
+   "input": "-----BEGIN PRIVATE KEY",
+   "want": true
+  },
+  {
+   "input": "password: x",
+   "want": true
+  },
+  {
+   "input": "API_KEY=1",
+   "want": true
+  },
+  {
+   "input": "apikey = 1",
+   "want": true
+  },
+  {
+   "input": "Credentials: x",
+   "want": true
+  },
+  {
+   "input": "token\"",
+   "want": false
+  },
+  {
+   "input": "AKIAABCDEFGHIJKLMNOP",
+   "want": true
+  },
+  {
+   "input": "xAKIAABCDEFGHIJKLMNOP",
+   "want": false
+  },
+  {
+   "input": "ghp_abcdefghij1234",
+   "want": true
+  },
+  {
+   "input": "sk-proj-abcdefghijk",
+   "want": true
+  },
+  {
+   "input": "xoxb-1234567890",
+   "want": true
+  },
+  {
+   "input": "apiVersion: v1\nkind: ConfigMap",
+   "want": false
+  },
+  {
+   "input": "name: tokens",
+   "want": false
+  },
+  {
+   "input": "my secret is here",
+   "want": false
+  },
+  {
+   "input": "éAKIAABCDEFGHIJKLMNOP",
+   "want": true
+  },
+  {
+   "input": "kind: Secrets",
+   "want": false
+  }
+ ]
+}
