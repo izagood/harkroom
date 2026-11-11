@@ -379,7 +379,29 @@ fn base_and_agent<'a>(
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
         .ok_or_else(need)?;
+    // agentId 는 설정 파일의 키가 된다 — 서버가 주는 uuid 꼴만 받는다(경로·제어문자가 키로 들어가지 않게).
+    if !is_uuid_shape(agent) {
+        return Err(bad(format!("{ty} 의 agentId 는 uuid 꼴이어야 한다")));
+    }
     Ok((obj, base.to_string(), agent.to_string()))
+}
+
+/// `8-4-4-4-12` 16진 꼴(대소문자 무시). 판(version) 숫자는 따지지 않는다.
+fn is_uuid_shape(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 36
+        && b.iter().enumerate().all(|(i, c)| match i {
+            8 | 13 | 18 | 23 => *c == b'-',
+            _ => c.is_ascii_hexdigit(),
+        })
+}
+
+/// 설정에 그대로 적히는 값 — 제어문자(줄바꿈·NUL 등)는 거절한다.
+fn reject_control(field: &str, v: &str) -> Result<(), DaemonError> {
+    if v.chars().any(char::is_control) {
+        return Err(bad(format!("{field} 에 제어문자가 있다")));
+    }
+    Ok(())
 }
 
 /// JS `String.prototype.trim` 과 같은 공백(유니코드 White_Space + BOM).
@@ -405,6 +427,7 @@ pub fn read_set_payload(
             return Err(bad("workingDir 는 문자열이어야 한다"));
         };
         let t = js_trim(s);
+        reject_control("workingDir", t)?;
         if !t.is_empty() {
             out.working_dir = Some(t.to_string());
         }
@@ -414,6 +437,7 @@ pub fn read_set_payload(
             return Err(bad("claudePool 은 문자열이어야 한다"));
         };
         let t = js_trim(s);
+        reject_control("claudePool", t)?;
         if !t.is_empty() {
             out.claude_pool = Some(t.to_string());
         }
@@ -712,23 +736,47 @@ mod tests {
 
     #[test]
     fn payload_checks_match_ts() {
-        let e = read_set_payload(Some(&json!({"baseUrl": "", "agentId": "x"}))).unwrap_err();
+        const AID: &str = "0b9c6f1e-2a3d-4e5f-8a9b-0c1d2e3f4a5b";
+        for bad_id in [
+            "x",
+            "../x",
+            "0b9c6f1e-2a3d-4e5f-8a9b-0c1d2e3f4a5g",
+            "0b9c6f1e2a3d4e5f8a9b0c1d2e3f4a5b",
+        ] {
+            let e =
+                read_set_payload(Some(&json!({"baseUrl": URL, "agentId": bad_id}))).unwrap_err();
+            assert_eq!(
+                e.message,
+                "operatorAgentSet 의 agentId 는 uuid 꼴이어야 한다"
+            );
+        }
+        let e = read_set_payload(Some(
+            &json!({"baseUrl": URL, "agentId": AID, "config": {"workingDir": "/w\n/x"}}),
+        ))
+        .unwrap_err();
+        assert_eq!(e.message, "workingDir 에 제어문자가 있다");
+        let e = read_set_payload(Some(
+            &json!({"baseUrl": URL, "agentId": AID, "config": {"claudePool": "p\u{0}"}}),
+        ))
+        .unwrap_err();
+        assert_eq!(e.message, "claudePool 에 제어문자가 있다");
+        let e = read_set_payload(Some(&json!({"baseUrl": "", "agentId": AID}))).unwrap_err();
         assert_eq!(
             e.message,
             "operatorAgentSet 에는 baseUrl·agentId 가 필요하다"
         );
         let e = read_set_payload(Some(
-            &json!({"baseUrl": URL, "agentId": "x", "config": {"workingDir": 1}}),
+            &json!({"baseUrl": URL, "agentId": AID, "config": {"workingDir": 1}}),
         ))
         .unwrap_err();
         assert_eq!(e.message, "workingDir 는 문자열이어야 한다");
         let e = read_set_payload(Some(
-            &json!({"baseUrl": URL, "agentId": "x", "config": "w"}),
+            &json!({"baseUrl": URL, "agentId": AID, "config": "w"}),
         ))
         .unwrap_err();
         assert_eq!(e.message, "config 는 객체여야 한다");
         let (_, _, c) = read_set_payload(Some(
-            &json!({"baseUrl": URL, "agentId": "x", "config": {"workingDir": "  /w ", "claudePool": "   "}}),
+            &json!({"baseUrl": URL, "agentId": AID, "config": {"workingDir": "  /w ", "claudePool": "   "}}),
         ))
         .unwrap();
         assert_eq!(
@@ -739,12 +787,12 @@ mod tests {
             }
         );
         assert_eq!(
-            read_lane_payload(Some(&json!({"baseUrl": URL, "agentId": "x", "lane": null})))
+            read_lane_payload(Some(&json!({"baseUrl": URL, "agentId": AID, "lane": null})))
                 .unwrap()
                 .2,
             None
         );
-        let e = read_lane_payload(Some(&json!({"baseUrl": URL, "agentId": "x"}))).unwrap_err();
+        let e = read_lane_payload(Some(&json!({"baseUrl": URL, "agentId": AID}))).unwrap_err();
         assert_eq!(
             e.message,
             "lane 은 { baseUrl: https URL, secretName: 비밀 이름 } 이어야 한다"
