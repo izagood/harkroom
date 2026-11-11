@@ -13,6 +13,7 @@
 use crate::local_agents::{self, LocalAgents};
 use crate::local_mcp::{self, LocalMcp};
 use crate::local_merge::{self, LocalMerge};
+use crate::runner_link::RunnerLinkServer;
 use crate::runners::{RunnerLaunch, RunnerTable, SpawnOutcome};
 use harkroom_proto::p3::{
     DAEMON_PROTOCOL_VERSION, DaemonError, DaemonErrorCode, DaemonIdentity, EVENT_NAMES,
@@ -69,6 +70,19 @@ impl NdjsonDecoder {
 
     pub fn pending_bytes(&self) -> usize {
         self.buf.len()
+    }
+
+    /// 아직 개행이 안 온 줄의 머리를 꺼낸다(TS `takeBuffered`). 접속을 러너 링크로 넘길 때 쓴다 —
+    /// 버리면 hello 와 한 청크로 온 큰 요청이 잘린다. 버리는 중이던 줄이면 넘길 것이 없다.
+    pub fn take_buffered(&mut self) -> Vec<u8> {
+        let out = if self.discarding {
+            Vec::new()
+        } else {
+            std::mem::take(&mut self.buf)
+        };
+        self.buf.clear();
+        self.discarding = false;
+        out
     }
 
     fn too_long(&self, n: usize) -> DaemonError {
@@ -240,6 +254,8 @@ pub struct ServerState {
     local_mcp: OnceLock<LocalMcp>,
     /// 로컬 에이전트 설정이 바뀌었다(TS `localAgents.ts` 의 `onChanged`) — 서버 링크가 능력을 다시 낸다. 링크가 없으면 비어 있다.
     on_agents_changed: OnceLock<Box<dyn Fn() + Send + Sync>>,
+    /// 러너 링크(s21b-1). 첫 줄이 `hello{role:'runner'}` 인 접속을 넘겨받는다. 없으면 그 hello 는 앱 hello 로 검사돼 거절된다.
+    runner_link: OnceLock<Arc<RunnerLinkServer>>,
 }
 
 impl ServerState {
@@ -269,6 +285,7 @@ impl ServerState {
                 local_merge: OnceLock::new(),
                 local_mcp: OnceLock::new(),
                 on_agents_changed: OnceLock::new(),
+                runner_link: OnceLock::new(),
             }
         })
     }
@@ -281,6 +298,11 @@ impl ServerState {
     /// 설정 변경 알림을 배선한다(한 번만). 서버 링크(`serve::spawn_server_link`)가 건다.
     pub fn set_on_agents_changed(&self, hook: Box<dyn Fn() + Send + Sync>) {
         let _ = self.on_agents_changed.set(hook);
+    }
+
+    /// 러너 링크를 배선한다(한 번만 — 두 번째는 무시된다).
+    pub fn set_runner_link(&self, link: Arc<RunnerLinkServer>) {
+        let _ = self.runner_link.set(link);
     }
 
     fn agents_changed(&self) {
@@ -587,7 +609,26 @@ pub fn serve_connection(state: &ServerState, mut stream: UnixStream) {
             Ok(0) | Err(_) => return,
             Ok(n) => n,
         };
-        for line in decoder.push(&buf[..n]) {
+        let mut lines = decoder.push(&buf[..n]).into_iter();
+        while let Some(line) = lines.next() {
+            // 러너의 hello 면 접속을 링크에 넘긴다 — 같은 청크에 이미 풀린 뒷줄과 덜 끝난 줄의 머리도 함께
+            // (TS `server.ts::onData`). 넘기지 않으면 hello 바로 뒤의 첫 announce 가 앱 요청으로 새어 거절된다.
+            if !authenticated
+                && let Decoded::Ok(v) = &line
+                && v.get("role").and_then(Value::as_str) == Some("runner")
+                && let Some(link) = state.runner_link.get()
+            {
+                let rest: Vec<Value> = lines
+                    .filter_map(|l| match l {
+                        Decoded::Ok(v) => Some(v),
+                        Decoded::Err(_) => None,
+                    })
+                    .collect();
+                let buffered = decoder.take_buffered();
+                drop(writer);
+                link.serve(stream, v, rest, buffered);
+                return;
+            }
             let reply = match line {
                 Decoded::Err(e) => {
                     let drop = e.code == DaemonErrorCode::LineTooLong;
@@ -700,6 +741,116 @@ pub fn accept_loop_with_limit(state: Arc<ServerState>, listener: UnixListener, l
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod runner_hello {
+        use super::*;
+        use crate::runner_link::RunnerLinkHandler;
+        use std::sync::mpsc;
+
+        struct Rec(Mutex<mpsc::Sender<(String, String, Value)>>);
+        impl RunnerLinkHandler for Rec {
+            fn on_frame(&self, runner_id: &str, agent_id: &str, frame: Value) {
+                let _ = self.0.lock().unwrap().send((
+                    runner_id.to_string(),
+                    agent_id.to_string(),
+                    frame,
+                ));
+            }
+            fn log(&self, _line: &str) {}
+        }
+
+        fn state() -> Arc<ServerState> {
+            let st = ServerState::new(
+                DaemonIdentity {
+                    pid: 1,
+                    started_at_ms: 0,
+                    launch_nonce: String::new(),
+                    entry_path: String::new(),
+                    app_version: String::new(),
+                },
+                None,
+            );
+            st.set_token("app-token".into());
+            st
+        }
+
+        fn serve(st: &Arc<ServerState>) -> UnixStream {
+            let (ours, theirs) = UnixStream::pair().unwrap();
+            let st = Arc::clone(st);
+            std::thread::spawn(move || serve_connection(&st, theirs));
+            ours.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            ours
+        }
+
+        const HELLO: &str =
+            r#"{"type":"hello","version":1,"role":"runner","runnerId":"r1","secret":"s3cret"}"#;
+
+        #[test]
+        fn runner_hello_hands_socket_to_link_with_same_chunk_lines_and_partial_tail() {
+            let st = state();
+            let (tx, rx) = mpsc::channel();
+            let link = RunnerLinkServer::new(Arc::new(Rec(Mutex::new(tx))), None);
+            link.expect("r1", "agent-1", "s3cret");
+            st.set_runner_link(Arc::clone(&link));
+            let mut c = serve(&st);
+            // hello·첫 프레임·덜 끝난 둘째 프레임의 머리가 한 청크로 간다.
+            let chunk =
+                format!("{HELLO}\n{{\"type\":\"announce\",\"n\":1}}\n{{\"type\":\"announce\",");
+            c.write_all(chunk.as_bytes()).unwrap();
+            let first = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert_eq!(
+                first,
+                (
+                    "r1".into(),
+                    "agent-1".into(),
+                    json!({"type":"announce","n":1})
+                )
+            );
+            c.write_all(b"\"n\":2}\n").unwrap();
+            let second = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert_eq!(second.2, json!({"type":"announce","n":2}));
+            assert!(link.is_linked("r1"));
+            // 앱 명단에는 오르지 않는다 — 앱 이벤트가 러너 소켓으로 새지 않는다.
+            assert!(st.authed().is_empty());
+        }
+
+        #[test]
+        fn runner_hello_without_link_is_refused_as_app_hello() {
+            let st = state();
+            let mut c = serve(&st);
+            c.write_all(format!("{HELLO}\n").as_bytes()).unwrap();
+            let mut line = String::new();
+            std::io::BufRead::read_line(&mut std::io::BufReader::new(&mut c), &mut line).unwrap();
+            let v: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(v["ok"], json!(false));
+            assert!(v["error"]["message"].as_str().unwrap().contains("role"));
+        }
+
+        #[test]
+        fn unknown_runner_secret_is_not_admitted_and_app_hello_still_works() {
+            let st = state();
+            let (tx, rx) = mpsc::channel();
+            let link = RunnerLinkServer::new(Arc::new(Rec(Mutex::new(tx))), None);
+            link.expect("r1", "agent-1", "other");
+            st.set_runner_link(Arc::clone(&link));
+            let mut c = serve(&st);
+            c.write_all(format!("{HELLO}\n{{\"type\":\"announce\"}}\n").as_bytes())
+                .unwrap();
+            assert!(rx.recv_timeout(Duration::from_millis(300)).is_err());
+            assert!(!link.is_linked("r1"));
+            let mut app = serve(&st);
+            app.write_all(
+                b"{\"type\":\"hello\",\"version\":1,\"role\":\"app\",\"token\":\"app-token\"}\n",
+            )
+            .unwrap();
+            let mut line = String::new();
+            std::io::BufRead::read_line(&mut std::io::BufReader::new(&mut app), &mut line).unwrap();
+            assert_eq!(
+                serde_json::from_str::<Value>(&line).unwrap()["ok"],
+                json!(true)
+            );
+        }
+    }
 
     #[test]
     fn broadcast_drops_authed_peer_that_never_reads() {
