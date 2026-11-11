@@ -427,7 +427,7 @@ fn base_and_agent<'a>(
 }
 
 /// `8-4-4-4-12` 16진 꼴(대소문자 무시). 판(version) 숫자는 따지지 않는다.
-fn is_uuid_shape(s: &str) -> bool {
+pub(crate) fn is_uuid_shape(s: &str) -> bool {
     let b = s.as_bytes();
     b.len() == 36
         && b.iter().enumerate().all(|(i, c)| match i {

@@ -288,6 +288,8 @@ pub struct ServerState {
     on_runner_exit: OnceLock<RunnerExitHook>,
     /// 같은 머신의 터미널 직결(s21c-4). 없으면 `terminal*` 요청은 배선 안 됨으로 답한다. 구독은 **접속에 묶인다**.
     local_terminal: OnceLock<Arc<LocalTerminalHub>>,
+    /// 작업 폴더 청소(s21c5-4). 없으면 `workspaceCleanup*` 요청은 배선 안 됨으로 답한다.
+    workspace_cleanup: OnceLock<Arc<crate::workspace_cleanup::service::WorkspaceCleanup>>,
 }
 
 impl ServerState {
@@ -328,6 +330,7 @@ impl ServerState {
                 codex_logins: OnceLock::new(),
                 on_agents_changed: OnceLock::new(),
                 runner_link: OnceLock::new(),
+                workspace_cleanup: OnceLock::new(),
                 on_runner_exit: OnceLock::new(),
                 local_terminal: OnceLock::new(),
             }
@@ -386,6 +389,58 @@ impl ServerState {
                 "이 daemon 에는 로컬 설정이 배선되지 않았다",
             )
         })
+    }
+
+    /// 작업 폴더 청소를 배선한다(한 번만).
+    pub fn set_workspace_cleanup(
+        &self,
+        c: Arc<crate::workspace_cleanup::service::WorkspaceCleanup>,
+    ) {
+        let _ = self.workspace_cleanup.set(c);
+    }
+
+    /// TS `server.ts` 의 `workspaceCleanup*` 칸. 실패는 모두 `bad-payload` 다(TS 의 catch 와 같다).
+    fn workspace_cleanup_dispatch(
+        &self,
+        ty: &str,
+        payload: Option<&Value>,
+    ) -> Result<Value, DaemonError> {
+        use crate::workspace_cleanup::payload::{read_act_payload, read_settings_payload};
+        let port = self.workspace_cleanup.get().ok_or_else(|| {
+            err(
+                DaemonErrorCode::NoSuchRunner,
+                "이 daemon 에는 작업 폴더 정리가 배선되지 않았다",
+            )
+        })?;
+        let bad = |m: String| err(DaemonErrorCode::BadPayload, m);
+        match ty {
+            "workspaceCleanupGet" => Ok(port.get()),
+            "workspaceCleanupSweep" => {
+                port.sweep().map_err(bad)?;
+                Ok(port.get())
+            }
+            "workspaceCleanupSettingsSet" => {
+                let p = read_settings_payload(payload).map_err(bad)?;
+                let v = port.set_settings(&p).map_err(bad)?;
+                let s = &v["settings"];
+                eprintln!(
+                    "작업 폴더 정리 설정: {} · {}일",
+                    if s["enabled"].as_bool() == Some(true) {
+                        "켬"
+                    } else {
+                        "끔"
+                    },
+                    s["graceDays"]
+                );
+                Ok(v)
+            }
+            _ => {
+                let (path, action, by) = read_act_payload(payload).map_err(bad)?;
+                let v = port.act(&path, action, &by).map_err(bad)?;
+                eprintln!("작업 폴더 정리: {action:?} {path}");
+                Ok(v)
+            }
+        }
     }
 
     /// 머지 gh 계정 설정을 배선한다(한 번만).
@@ -741,6 +796,10 @@ impl ServerState {
                 Ok(json!({}))
             }
             // ── 머지 gh 계정(A5b, TS `server.ts` 의 같은 칸) ──────────────────────────────────
+            "workspaceCleanupGet"
+            | "workspaceCleanupSettingsSet"
+            | "workspaceCleanupAct"
+            | "workspaceCleanupSweep" => self.workspace_cleanup_dispatch(ty, payload),
             "operatorMergeGet" => self.merge()?.get(),
             "operatorMergeSet" => {
                 let merge = self.merge()?;

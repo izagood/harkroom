@@ -964,6 +964,7 @@ pub fn run_sweep(
 }
 
 pub mod owners;
+pub mod payload;
 pub mod ports;
 pub mod scan;
 pub mod service;
