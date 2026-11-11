@@ -25,7 +25,7 @@
 import { execFileSync, spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { connect } from 'node:net';
@@ -80,6 +80,13 @@ async function daemon띄우기(
   extra: Partial<Parameters<typeof startDaemon>[0]> = {},
 ): Promise<StartOutcome> {
   const paths = daemonEndpointPaths(appDataDir);
+  // 채택은 로컬 설정(`operator.json`)에 있는 에이전트만이다(security c2c-2b). 이 파일의 시험은
+  // `a1` 을 쓴다 — 시험이 따로 써 두지 않았으면 그것을 적는다.
+  const cfg = join(appDataDir, 'operator', 'operator.json');
+  if (!(await readFile(cfg, 'utf8').then(() => true, () => false))) {
+    await mkdir(dirname(cfg), { recursive: true });
+    await writeFile(cfg, JSON.stringify({ communities: { 'https://h.example': { agents: { a1: {} } } } }));
+  }
   const outcome = await startDaemon({ communities: false,
     args: {
       socket: paths.socketPath,
@@ -265,6 +272,33 @@ describe('고아 재발견 — daemon 이 죽고 새로 떠도 그 러너를 안
    * 되돌려 RED: `run.ts` 의 `runnerLink.expect(...)` 한 줄, 또는 장부의 `linkSecret` 을 빼면
    * 아래 hello 가 거절돼 로그에 "러너 링크 연결" 이 안 찍힌다.
    */
+  /**
+   * **로컬 설정에서 뺀 에이전트는 채택하지 않고 회수한다**(security c2c-2b, Rust `adopt_orphans` 의
+   * `is_local` 과 같다). 앱에서 에이전트를 뺀 뒤 오퍼레이터가 다시 떠도 그 러너가 남아 돌면 안 된다.
+   *
+   * 되돌려 RED: `run.ts` 의 `isLocal` 갈래를 빼면 채택 1 이 되고 러너가 산다.
+   */
+  it('로컬 설정에 없는 에이전트의 러너는 채택하지 않고 회수한다', async () => {
+    const dir = await 임시앱디렉터리();
+    const 첫daemon = await daemon띄우기(dir);
+    if (첫daemon.kind !== 'running') throw new Error('daemon 이 안 떴다');
+    const 러너 = await 첫daemon.daemon.registry.spawnRunner('a1', { PATH: process.env.PATH ?? '' });
+    정리할pid.push(러너.pid);
+    await 조건까지장부(dir, 1);
+    await 첫daemon.daemon.shutdown();
+    expect(살아있나(러너.pid)).toBe(true);
+
+    // 앱이 a1 을 뺐다 — 다른 에이전트만 남는다.
+    await writeFile(join(dir, 'operator', 'operator.json'),
+      JSON.stringify({ communities: { 'https://h.example': { agents: { b1: {} } } } }));
+    const 새daemon = await daemon띄우기(dir);
+    if (새daemon.kind !== 'running') throw new Error('새 daemon 이 안 떴다');
+
+    expect(새daemon.daemon.adoptedAtStartup.adopted).toHaveLength(0);
+    expect(새daemon.daemon.adoptedAtStartup.rejected.join(' ')).toContain('로컬 설정에 없는');
+    await vi.waitFor(() => expect(살아있나(러너.pid)).toBe(false), { timeout: 5_000 });
+  }, 30_000);
+
   it('새 daemon 이 채택한 러너의 링크 secret 을 장부에서 받아 재접속을 받아들인다', async () => {
     const dir = await 임시앱디렉터리();
     const 첫daemon = await daemon띄우기(dir);
