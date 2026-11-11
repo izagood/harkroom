@@ -244,3 +244,56 @@ fn over_long_line_is_skipped() {
     link.stop();
     let _ = std::fs::remove_file(&path);
 }
+
+#[test]
+fn relay_sessions_wired_into_link_announce_output_replay() {
+    use harkroom_runner::relay_session::{OpenSessionInput, RelaySessions};
+    let path = sock_path("rs");
+    let listener = UnixListener::bind(&path).unwrap();
+    let sessions = RelaySessions::new(None, Box::new(|_| {}));
+    let o = sessions.wire(opts(&path));
+    let link = LinkClient::new(o);
+    sessions.attach_link(&link);
+
+    let cancels = Arc::new(AtomicU32::new(0));
+    let c = cancels.clone();
+    // 링크 전에 연 세션 — ring 에 쌓이고, 붙으면 announce 에 실린다.
+    let h = sessions.open_session(OpenSessionInput {
+        agent_account_id: "a1".into(),
+        channel_id: "c1".into(),
+        harness: "claude".into(),
+        on_cancel: Some(Arc::new(move |_| {
+            c.fetch_add(1, Ordering::SeqCst);
+        })),
+        ..Default::default()
+    });
+    h.push(b"before");
+
+    link.start();
+    let (s, _) = listener.accept().unwrap();
+    let mut r = BufReader::new(s.try_clone().unwrap());
+    let _hello = read_json(&mut r);
+    let announce = read_json(&mut r);
+    assert_eq!(announce["sessions"][0]["sessionId"], h.session_id());
+    assert!(link.when_connected(Duration::from_secs(2)));
+
+    h.push(b"after");
+    let out = read_json(&mut r);
+    assert_eq!(out["type"], "output");
+    assert_eq!(out["data"], "YWZ0ZXI="); // "after"
+    let mut w = s;
+    writeln!(
+        w,
+        "{}",
+        json!({"type":"replay.request","sessionId":h.session_id()})
+    )
+    .unwrap();
+    let replay = read_json(&mut r);
+    assert_eq!(replay["type"], "replay");
+    assert_eq!(replay["data"], "YmVmb3JlYWZ0ZXI="); // "beforeafter"
+    h.close();
+    assert_eq!(read_json(&mut r)["type"], "session.ended");
+    link.stop();
+    assert_eq!(cancels.load(Ordering::SeqCst), 0);
+    let _ = std::fs::remove_file(&path);
+}
