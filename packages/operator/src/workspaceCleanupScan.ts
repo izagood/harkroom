@@ -75,24 +75,46 @@ export interface ScanDeps {
   home: string;
 }
 
-const GIT_ENV = (home: string) => ({ HOME: home, PATH: '/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin', GIT_TERMINAL_PROMPT: '0' });
+/**
+ * 청소기의 git 은 **에이전트가 쓸 수 있는 저장소** 안에서 오퍼레이터 권한으로 돈다. 그래서 저장소·사용자 설정이 git 에게
+ * 시키는 실행 칸을 끈다 — 시스템·전역 설정은 읽지 않고(env), 저장소 설정의 fsmonitor·hooks 는 덮고(`-c`), 선택적 잠금은
+ * 잡지 않는다. 저장소 설정의 `filter.*` 처럼 `-c` 로 덮을 수 없는 칸은 `hasRunnableGitConfig` 가 보고 막는다.
+ */
+export const SAFE_GIT_ARGS = ['--no-optional-locks', '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null'] as const;
+
+export const cleanupGitEnv = (home: string): Record<string, string> => ({
+  HOME: home, PATH: '/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin', GIT_TERMINAL_PROMPT: '0',
+  GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
+});
+
+/** 청소기의 모든 git 호출은 이 길로 — 위 실행 칸을 끈 채로 돈다. */
+export const runGit = (deps: Pick<ScanDeps, 'exec' | 'gitPath' | 'home'>, args: string[]): ReturnType<Exec> =>
+  deps.exec(deps.gitPath, [...SAFE_GIT_ARGS, ...args], cleanupGitEnv(deps.home));
+
+/**
+ * 저장소 설정에 `-c` 로 끌 수 없는 실행 칸(`filter.<드라이버>.*`)이 있는가. 있으면(또는 못 읽으면) 그 worktree 는 「주인 확인
+ * 불가」로 본다 — 검사하려고 git 을 돌리는 것 자체가 그 칸을 부를 수 있다. 설정 읽기는 그 칸을 부르지 않는다.
+ */
+export async function hasRunnableGitConfig(deps: Pick<ScanDeps, 'exec' | 'gitPath' | 'home'>, path: string): Promise<boolean> {
+  const r = await runGit(deps, ['-C', path, 'config', '--get-regexp', '^filter\\.']);
+  return r.code !== 1; // 1 = 맞는 키 없음. 0 = 있음, 그 밖 = 못 읽음 — 둘 다 막는다.
+}
 
 /** PR head 가 worktree head 와 같거나 그 조상인가. 어느 쪽이든 모르거나 로컬에 그 커밋이 없으면 false. */
 export async function prHeadIsOurs(deps: ScanDeps, path: string, prHead: string | null, head: string | null): Promise<boolean> {
   if (!prHead || !head) return false;
   if (prHead === head) return true;
-  const r = await deps.exec(deps.gitPath, ['-C', path, 'merge-base', '--is-ancestor', prHead, head], GIT_ENV(deps.home));
+  const r = await runGit(deps, ['-C', path, 'merge-base', '--is-ancestor', prHead, head]);
   return r.code === 0;
 }
 
 /** 한 저장소의 worktree 들(main 제외)에 브랜치·PR·크기·주인을 붙인다. */
 export async function scanRepo(deps: ScanDeps, repo: string, owners: ReadonlyMap<string, { channelId: string; threadRootId: string }>): Promise<ObservedWorktree[]> {
-  const env = GIT_ENV(deps.home);
-  const r = await deps.exec(deps.gitPath, ['-C', repo, 'worktree', 'list', '--porcelain'], env);
+  const r = await runGit(deps, ['-C', repo, 'worktree', 'list', '--porcelain']);
   if (r.code !== 0) return [];
   const [main, ...rest] = parseWorktreePorcelain(r.stdout);
   if (!main) return [];
-  const origin = await deps.exec(deps.gitPath, ['-C', main.path, 'remote', 'get-url', 'origin'], env);
+  const origin = await runGit(deps, ['-C', main.path, 'remote', 'get-url', 'origin']);
   const slug = origin.code === 0 ? githubSlug(origin.stdout) : null;
   const out: ObservedWorktree[] = [];
   for (const w of rest) {
@@ -124,7 +146,7 @@ export async function scanRepo(deps: ScanDeps, repo: string, owners: ReadonlyMap
  */
 export async function repoOfWorktree(deps: ScanDeps, path: string): Promise<string | null> {
   if (!(await lstat(path).catch(() => null))?.isDirectory()) return null;
-  const r = await deps.exec(deps.gitPath, ['-C', path, 'rev-parse', '--path-format=absolute', '--git-common-dir'], GIT_ENV(deps.home));
+  const r = await runGit(deps, ['-C', path, 'rev-parse', '--path-format=absolute', '--git-common-dir']);
   if (r.code !== 0) return null;
   const common = r.stdout.trim();
   return basename(common) === '.git' ? dirname(common) : null;
@@ -136,10 +158,9 @@ export async function repoOfWorktree(deps: ScanDeps, path: string): Promise<stri
  * mtime(`git status` 가 건드린다) — 둘 다 스스로 「최근에 손댐」을 만든다. 하나도 못 읽으면 null(자동 대상 아님).
  */
 export async function lastActivityAt(deps: ScanDeps, path: string): Promise<string | null> {
-  const env = GIT_ENV(deps.home);
-  const r = await deps.exec(deps.gitPath, ['-C', path, 'log', '-1', '--format=%cI', 'HEAD'], env);
+  const r = await runGit(deps, ['-C', path, 'log', '-1', '--format=%cI', 'HEAD']);
   const commit = r.code === 0 ? Date.parse(r.stdout.trim()) : Number.NaN;
-  const g = await deps.exec(deps.gitPath, ['-C', path, 'rev-parse', '--path-format=absolute', '--git-dir'], env);
+  const g = await runGit(deps, ['-C', path, 'rev-parse', '--path-format=absolute', '--git-dir']);
   const reflog = g.code === 0 && g.stdout.trim()
     ? (await lstat(join(g.stdout.trim(), 'logs', 'HEAD')).catch(() => null))?.mtimeMs ?? Number.NaN : Number.NaN;
   const made = (await lstat(join(path, '.git')).catch(() => null))?.mtimeMs ?? Number.NaN;
@@ -153,9 +174,10 @@ export async function lastActivityAt(deps: ScanDeps, path: string): Promise<stri
  * 것이 하나라도 있으면 false — `git worktree remove` 는 그것까지 지운다. git 이 못 읽으면 false.
  */
 export async function onlyRebuildableIgnored(deps: ScanDeps, path: string): Promise<boolean> {
+  if (await hasRunnableGitConfig(deps, path)) return false;
   // matching: 무시 규칙에 걸린 경로 그대로(`pkg/node_modules/`) — traditional 은 무시된 것만 든 부모를 `pkg/` 로 접어 이름을 잃는다.
   // 무시된 파일만 든 폴더(`logs/`)도 한 줄로 나오는데, 이름이 다시 만들 수 있는 폴더가 아니면 손 파일로 친다(지우지 않는 쪽).
-  const r = await deps.exec(deps.gitPath, ['-C', path, 'status', '--porcelain', '-z', '--ignored=matching', '--untracked-files=normal'], GIT_ENV(deps.home));
+  const r = await runGit(deps, ['-C', path, 'status', '--porcelain', '-z', '--ignored=matching', '--untracked-files=normal']);
   if (r.code !== 0) return false;
   const rebuildable = new Set<string>(REBUILDABLE_DIRS);
   return r.stdout.split('\0').filter((e) => e.startsWith('!! ')).every((e) => rebuildable.has(e.slice(3).replace(/\/$/, '').split('/').pop()!));
