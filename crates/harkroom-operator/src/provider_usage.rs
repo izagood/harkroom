@@ -1,9 +1,19 @@
-//! 공급자 한도 사용률(s21c3d-1). 정본은 `packages/operator/src/providerUsage.ts`(응답 해석·꼬리표)와
-//! `usageChain.ts::cliThenApi`(CLI 먼저, 실패하면 API)다. 이 모듈은 **순수한 부분만** 옮긴다 —
-//! 토큰 읽기·HTTP·CLI 실행·캐시는 c3d 의 다음 PR 이다.
+//! 공급자 한도 사용률(s21c3d-1). 정본은 `packages/operator/src/providerUsage.ts`(토큰 읽기·API 조회·응답
+//! 해석·꼬리표)와 `usageChain.ts`(`cliThenApi` — CLI 먼저, 실패하면 API · `createUsageCache`)다.
+//! CLI 실행(`cliUsage.ts`)은 c3d-2, socket 요청은 c3d-3 이다.
+//!
+//! ## 토큰을 다루는 규율(TS 와 같다)
+//! - **읽기만 한다.** 만료된 토큰을 갱신하지 않는다 — 그 파일·Keychain 의 주인은 CLI 다.
+//! - 토큰은 이 모듈의 함수 인자 밖으로 나가지 않는다. 결과·오류 꼬리표·로그에 싣지 않는다.
 //!
 //! 화면(`ProviderUsageBars.tsx`)이 이 JSON 을 그대로 읽으므로 키 이름·빠지는 칸(`undefined` → 키 없음)을
 //! TS 와 똑같이 맞춘다.
+use std::fs;
+use std::io::Read;
+use std::path::Path;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+
 use serde::Serialize;
 use serde_json::Value;
 
@@ -260,6 +270,214 @@ pub fn cli_then_api(cli: impl FnOnce() -> Measured, api: impl FnOnce() -> Measur
         }
     }
 }
+
+// ── 토큰 읽기 ─────────────────────────────────────────────────────────────────
+
+/// TS `ClaudeOAuthToken`. `Debug` 를 일부러 두지 않는다 — 실수로 로그에 찍히지 않게.
+pub struct ClaudeToken {
+    pub access_token: String,
+    /// epoch ms. 없으면 모른다.
+    pub expires_at_ms: Option<f64>,
+}
+
+/// TS `parseClaudeCredentials` — `claudeAiOauth.accessToken`(빈 글자 아님)·`expiresAt`(수).
+fn parse_claude_credentials(raw: &Value) -> Option<ClaudeToken> {
+    let o = raw.get("claudeAiOauth")?.as_object()?;
+    let t = o.get("accessToken")?.as_str()?;
+    if t.is_empty() {
+        return None;
+    }
+    Some(ClaudeToken {
+        access_token: t.to_owned(),
+        expires_at_ms: num(o.get("expiresAt")),
+    })
+}
+
+/// 절대 경로 — PATH 에 끼운 가짜 `security` 가 값을 받는 길을 닫는다(`claude_accounts::SECURITY_BIN` 과 같은 까닭).
+const SECURITY_BIN: &str = "/usr/bin/security";
+const SECURITY_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// `security find-generic-password … -w` 의 stdout. **값이 이 프로세스를 지나는 유일한 자리**다(TS 와 같다).
+/// 10초 넘으면 죽이고 `None`. stdout 은 따로 읽는다 — 기다리는 동안 파이프가 차서 서로 막히지 않게.
+fn keychain_read(config_dir: &Path) -> Option<String> {
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+    let user = std::env::var("USER").unwrap_or_default();
+    let service = crate::claude_accounts::keychain_service(config_dir);
+    let mut child = Command::new(SECURITY_BIN)
+        .args(["find-generic-password", "-s", &service, "-a", &user, "-w"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let mut out = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut buf = String::new();
+        out.read_to_string(&mut buf).ok().map(|_| buf)
+    });
+    let deadline = Instant::now() + SECURITY_TIMEOUT;
+    let ok = loop {
+        match child.try_wait() {
+            Ok(Some(st)) => break st.success(),
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break false;
+            }
+        }
+    };
+    let text = reader.join().ok().flatten()?;
+    ok.then_some(text)
+}
+
+/// TS `nodeReadClaudeToken` — 파일(`.credentials.json`)이 먼저, 없거나 못 읽으면 macOS Keychain.
+pub fn read_claude_token(config_dir: &Path) -> Option<ClaudeToken> {
+    if let Some(t) = fs::read_to_string(config_dir.join(".credentials.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        .and_then(|v| parse_claude_credentials(&v))
+    {
+        return Some(t);
+    }
+    let out = keychain_read(config_dir)?;
+    parse_claude_credentials(&serde_json::from_str(&out).ok()?)
+}
+
+/// TS `CodexToken`. `Debug` 없음(위와 같은 까닭).
+pub struct CodexToken {
+    pub access_token: String,
+    pub account_id: Option<String>,
+}
+
+/// TS `nodeReadCodexToken` — `auth.json` 의 `tokens.access_token`(빈 글자 아님)·`tokens.account_id`.
+pub fn read_codex_token(codex_home: &Path) -> Option<CodexToken> {
+    let v: Value =
+        serde_json::from_str(&fs::read_to_string(codex_home.join("auth.json")).ok()?).ok()?;
+    let t = v.get("tokens")?;
+    let access = t.get("access_token")?.as_str()?;
+    if access.is_empty() {
+        return None;
+    }
+    Some(CodexToken {
+        access_token: access.to_owned(),
+        account_id: t
+            .get("account_id")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+    })
+}
+
+// ── API 조회 ──────────────────────────────────────────────────────────────────
+
+/// 요청 하나의 상한(TS `FETCH_TIMEOUT_MS`). 화면이 폴링하므로 매달리면 다음 폴과 겹친다.
+pub const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
+/// 응답 본문 상한 — 사용량 JSON 은 수 KB 다. 넘으면 `network` 로 친다.
+const MAX_BODY_BYTES: u64 = 1 << 20;
+
+/// TS `FetchLike` + `getJson` — GET 하고 2xx 면 JSON. 시험은 가짜를 꽂는다.
+pub trait UsageHttp {
+    fn get_json(&self, url: &str, headers: &[(&str, &str)]) -> Result<Value, FetchError>;
+}
+
+/// ureq 판. 상태 코드만 싣는다 — 본문·오류 문자열에는 무엇이 들어 있을지 모른다.
+pub struct UreqUsageHttp {
+    agent: ureq::Agent,
+}
+
+impl Default for UreqUsageHttp {
+    fn default() -> Self {
+        Self {
+            agent: ureq::Agent::new_with_config(
+                ureq::Agent::config_builder()
+                    .http_status_as_error(false)
+                    .timeout_global(Some(FETCH_TIMEOUT))
+                    .build(),
+            ),
+        }
+    }
+}
+
+impl UsageHttp for UreqUsageHttp {
+    fn get_json(&self, url: &str, headers: &[(&str, &str)]) -> Result<Value, FetchError> {
+        let mut req = self.agent.get(url);
+        for (k, v) in headers {
+            req = req.header(*k, *v);
+        }
+        let mut res = req.call().map_err(|e| match e {
+            ureq::Error::Timeout(_) => FetchError::Timeout,
+            _ => FetchError::Network,
+        })?;
+        let status = res.status().as_u16();
+        if !(200..300).contains(&status) {
+            return Err(FetchError::Status(status));
+        }
+        let text = res
+            .body_mut()
+            .with_config()
+            .limit(MAX_BODY_BYTES)
+            .read_to_string()
+            .map_err(|e| match e {
+                ureq::Error::Timeout(_) => FetchError::Timeout,
+                _ => FetchError::Network,
+            })?;
+        // TS `res.json()` 이 던지면 `errorLabel` 은 `network` 다.
+        serde_json::from_str(&text).map_err(|_| FetchError::Network)
+    }
+}
+
+/// TS `fetchClaudeProviderUsage`. 토큰이 없으면 `no-credentials`, 만료면 `token-expired`(갱신하지 않는다).
+pub fn fetch_claude_provider_usage(
+    config_dir: &Path,
+    now: f64,
+    http: &dyn UsageHttp,
+    read_token: &dyn Fn(&Path) -> Option<ClaudeToken>,
+) -> Measured {
+    let Some(token) = read_token(config_dir) else {
+        return Measured::failed(now, "no-credentials");
+    };
+    if token.expires_at_ms.is_some_and(|e| e <= now) {
+        return Measured::failed(now, "token-expired");
+    }
+    let auth = format!("Bearer {}", token.access_token);
+    match http.get_json(
+        CLAUDE_OAUTH_USAGE_URL,
+        &[
+            ("Authorization", &auth),
+            ("anthropic-beta", "oauth-2025-04-20"),
+            ("Accept", "application/json"),
+        ],
+    ) {
+        Ok(raw) => parse_claude_oauth_usage(&raw, now),
+        Err(e) => Measured::failed(now, &error_label(e)),
+    }
+}
+
+/// TS `fetchCodexProviderUsage`. account id 가 있을 때만 `ChatGPT-Account-Id` 를 싣는다.
+pub fn fetch_codex_provider_usage(
+    codex_home: &Path,
+    now: f64,
+    http: &dyn UsageHttp,
+    read_token: &dyn Fn(&Path) -> Option<CodexToken>,
+) -> Measured {
+    let Some(token) = read_token(codex_home) else {
+        return Measured::failed(now, "no-credentials");
+    };
+    let auth = format!("Bearer {}", token.access_token);
+    let mut headers: Vec<(&str, &str)> = vec![("Authorization", &auth)];
+    if let Some(id) = token.account_id.as_deref() {
+        headers.push(("ChatGPT-Account-Id", id));
+    }
+    headers.push(("Accept", "application/json"));
+    match http.get_json(CODEX_WHAM_USAGE_URL, &headers) {
+        Ok(raw) => parse_codex_wham_usage(&raw, now),
+        Err(e) => Measured::failed(now, &error_label(e)),
+    }
+}
+
+pub mod cache;
 
 #[cfg(test)]
 mod tests;
