@@ -4,6 +4,7 @@
 //! 순환: 다중화기는 러너 링크로 보내야 하고 러너 링크의 핸들러는 다중화기로 넘겨야 한다. 다중화기 쪽 바깥은
 //! 러너 링크를 `OnceLock<Weak<_>>` 로 늦게 받는다 — 강한 참조 고리를 만들지 않는다.
 use crate::forward::{ForwardTarget, Transport, forward, strip_link_only_fields};
+use crate::local_terminal::{LocalTerminalDeps, LocalTerminalHub};
 use crate::relay_mux::{RelayMux, RelayMuxDeps};
 use crate::runner_link::{RunnerLinkHandler, RunnerLinkServer};
 use crate::server_link::ServerLink;
@@ -59,9 +60,49 @@ impl RelayMuxDeps for MuxDeps {
     }
 }
 
+/// 로컬 터미널 허브의 바깥(TS run.ts `createLocalTerminalHub`) — 러너 링크(늦게 받음)와 서버 링크.
+pub struct HubDeps {
+    runner_link: Arc<OnceLock<Weak<RunnerLinkServer>>>,
+    server: Arc<dyn ServerSend>,
+}
+
+impl LocalTerminalDeps for HubDeps {
+    fn send_to_runner(&self, runner_id: &str, frame: &Value) -> bool {
+        self.runner_link
+            .get()
+            .and_then(Weak::upgrade)
+            .is_some_and(|l| l.send(runner_id, frame))
+    }
+    /// 입력 바이트 수를 서버 감사에 올린다 — 경로와 상관없이 서버 detach 감사가 같은 값을 남긴다.
+    /// 링크가 그 러너의 에이전트를 모르면(끊김·남의 러너) 버린다(TS `agentOf` 가 없으면 return).
+    /// 이 프로세스는 커뮤니티 하나이고 링크는 이 커뮤니티가 기대한 러너만 받으므로 `agent_of` 가 곧 `knowsAgent` 다.
+    fn report_input(&self, runner_id: &str, session_id: &str, r#gen: i64, bytes: i64) {
+        let known = self
+            .runner_link
+            .get()
+            .and_then(Weak::upgrade)
+            .and_then(|l| l.agent_of(runner_id))
+            .is_some();
+        if !known {
+            return;
+        }
+        self.server.send(&OperatorToServerFrame::LocalInput {
+            runner_id: runner_id.to_string(),
+            session_id: session_id.to_string(),
+            r#gen,
+            bytes,
+        });
+    }
+    fn log(&self, line: &str) {
+        eprintln!("{line}");
+    }
+}
+
 /// 러너 링크의 콜백 — 프레임은 다중화기로, 요청은 서버로.
 pub struct LinkHandler {
     mux: Arc<RelayMux>,
+    /// 같은 머신의 터미널 직결(s21c-4) — 러너 프레임을 서버로 올리는 것과 **따로** 본다.
+    hub: Arc<LocalTerminalHub>,
     transport: Arc<dyn Transport>,
     base_url: String,
     token: String,
@@ -331,6 +372,8 @@ impl RunnerLinkHandler for LinkHandler {
     }
 
     fn on_frame(&self, runner_id: &str, _agent_id: &str, frame: Value) {
+        // 허브가 먼저 본다(TS run.ts onFrame 순서). 서버 경로는 그대로다.
+        self.hub.on_runner_frame(runner_id, &frame);
         // 감사 바이트(`local.input`)는 오퍼레이터 허브만 올린다 — 러너의 주장은 버린다(TS community.ts).
         if frame.get("type").and_then(Value::as_str) == Some("local.input") {
             eprintln!(
@@ -444,6 +487,8 @@ impl RunnerLinkHandler for LinkHandler {
     fn on_close(&self, runner_id: &str) {
         eprintln!("러너 링크가 끊겼다: runner={runner_id}");
         lock(&self.slots).release_runner(runner_id);
+        // 그 러너 세션의 구독자에게 끝을 알리고 잊는다.
+        self.hub.forget_runner(runner_id);
     }
 
     /// relay 가 다시 붙었다 — 끊긴 사이 사라진 놓기 요청 때문에 상한이 조용히 줄지 않게 돌려받는다(security #1127 L1).
@@ -462,6 +507,63 @@ pub struct Bridge {
     pub runner_link: Arc<RunnerLinkServer>,
     /// `runner.pollStopped` 를 받을 자리 — serve 가 러너 표(`RunnerTable::note_poll_stopped`)를 건다.
     pub poll_stopped: Arc<OnceLock<PollStoppedHook>>,
+    /// 로컬 터미널 허브 — 소켓 서버(앱 구독)와 서버 프레임(`local.view`·`local.writer`)이 같은 것을 쓴다.
+    pub hub: Arc<LocalTerminalHub>,
+}
+
+/// 서버가 내린 로컬 직결 키를 허브에 넣는다(TS community.ts `applyLocal`). `local.view`·`local.writer` 가 아니면 false.
+/// **이 커뮤니티의 세션일 때만** 받는다 — 한 서버가 다른 서버의 세션 id 로 키를 내려 남의 화면을 여는 길을 막는다:
+/// 그 세션을 가진 러너가 프레임의 `runnerId` 와 같고, 그 러너의 에이전트를(인증된 링크 기준) 이 커뮤니티가 알아야 한다.
+pub fn apply_local_frame(
+    hub: &LocalTerminalHub,
+    agent_of: &dyn Fn(&str) -> Option<String>,
+    knows_agent: &dyn Fn(&str) -> bool,
+    frame: &harkroom_proto::p2::ServerToOperatorFrame,
+) -> bool {
+    use harkroom_proto::p2::ServerToOperatorFrame as S;
+    let (ty, runner_id, session_id) = match frame {
+        S::LocalView {
+            runner_id,
+            session_id,
+            ..
+        } => ("local.view", runner_id, session_id),
+        S::LocalWriter {
+            runner_id,
+            session_id,
+            ..
+        } => ("local.writer", runner_id, session_id),
+        _ => return false,
+    };
+    let owned = hub.owner_of(session_id).as_deref() == Some(runner_id.as_str());
+    let known = agent_of(runner_id).is_some_and(|a| knows_agent(&a));
+    if !owned || !known {
+        eprintln!(
+            "로컬 직결 키를 버린다: {ty} session={session_id} — 이 커뮤니티의 이 러너 세션이 아니다"
+        );
+        return true;
+    }
+    match frame {
+        S::LocalView {
+            session_id,
+            view_key,
+            granted,
+            ..
+        } => {
+            if *granted {
+                hub.grant_view(session_id, view_key);
+            } else {
+                hub.revoke_view(session_id, view_key);
+            }
+        }
+        S::LocalWriter {
+            session_id,
+            writer_key,
+            r#gen,
+            ..
+        } => hub.grant_writer(session_id, writer_key.as_deref(), Some(*r#gen)),
+        _ => {}
+    }
+    true
 }
 
 /// 만료 쓸기 주기(TS `turnSecrets` 의 1분 타이머와 같다).
@@ -512,10 +614,17 @@ pub fn build_bridge(
     merge: Option<MergeHandlers>,
 ) -> Bridge {
     let slot: Arc<OnceLock<Weak<RunnerLinkServer>>> = Arc::new(OnceLock::new());
-    let mux = Arc::new(RelayMux::new(Box::new(MuxDeps {
+    let hub = LocalTerminalHub::new(Box::new(HubDeps {
         runner_link: Arc::clone(&slot),
-        server,
-    })));
+        server: Arc::clone(&server),
+    }));
+    let mux = Arc::new(
+        RelayMux::new(Box::new(MuxDeps {
+            runner_link: Arc::clone(&slot),
+            server,
+        }))
+        .with_extra_caps(&["local-terminal"]),
+    );
     let poll_stopped: Arc<OnceLock<PollStoppedHook>> = Arc::new(OnceLock::new());
     let leases = Arc::new(Mutex::new(TurnLeases::system()));
     if let Some(root) = secrets.clone() {
@@ -523,6 +632,7 @@ pub fn build_bridge(
     }
     let handler = Arc::new(LinkHandler {
         mux: Arc::clone(&mux),
+        hub: Arc::clone(&hub),
         transport,
         base_url,
         token,
@@ -541,6 +651,7 @@ pub fn build_bridge(
         mux,
         runner_link,
         poll_stopped,
+        hub,
     }
 }
 
@@ -606,6 +717,7 @@ mod tests {
         let (srv, _tr, b) = bridge();
         let h = LinkHandler {
             mux: Arc::clone(&b.mux),
+            hub: Arc::clone(&b.hub),
             transport: Arc::new(FakeTransport::default()),
             base_url: String::new(),
             token: String::new(),
@@ -637,6 +749,7 @@ mod tests {
         let (_srv, tr, b) = bridge();
         let h = LinkHandler {
             mux: Arc::clone(&b.mux),
+            hub: Arc::clone(&b.hub),
             transport: tr.clone(),
             base_url: "https://h.example".into(),
             token: "op-token".into(),
@@ -693,6 +806,7 @@ mod tests {
         let (_srv, tr, b) = bridge();
         let h = LinkHandler {
             mux: Arc::clone(&b.mux),
+            hub: Arc::clone(&b.hub),
             transport: tr.clone(),
             base_url: "https://h.example".into(),
             token: "op-token".into(),
@@ -736,6 +850,7 @@ mod tests {
         let (_srv, tr, b) = bridge();
         let h = LinkHandler {
             mux: Arc::clone(&b.mux),
+            hub: Arc::clone(&b.hub),
             transport: tr.clone(),
             base_url: "https://h.example".into(),
             token: "op-token".into(),
@@ -823,6 +938,7 @@ mod tests {
         let (_srv, _tr0, b) = bridge();
         let h = LinkHandler {
             mux: Arc::clone(&b.mux),
+            hub: Arc::clone(&b.hub),
             transport: tr.clone(),
             base_url: "https://h.example".into(),
             token: "t".into(),
@@ -915,6 +1031,7 @@ mod tests {
         }) as PollStoppedHook);
         let h = LinkHandler {
             mux: Arc::clone(&b.mux),
+            hub: Arc::clone(&b.hub),
             transport: tr.clone(),
             base_url: String::new(),
             token: String::new(),
@@ -946,6 +1063,7 @@ mod tests {
         let (_srv, _tr0, b) = bridge();
         let h = LinkHandler {
             mux: Arc::clone(&b.mux),
+            hub: Arc::clone(&b.hub),
             transport: tr.clone(),
             base_url: "https://h.example/".into(),
             token: "op".into(),
@@ -1015,5 +1133,126 @@ mod tests {
         assert!(dir.join("L-live").exists(), "살아 있는 임대의 폴더는 둔다");
         assert_eq!(lock(&leases).len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    struct NoSub;
+    impl crate::local_terminal::LocalTerminalSubscriber for NoSub {
+        fn id(&self) -> u64 {
+            7
+        }
+        fn send(&self, _event: &str, _payload: Value) {}
+    }
+
+    const VK: &str = "view-key-0123456789abcdef";
+
+    fn hub_with_session(b: &Bridge) {
+        b.hub.on_runner_frame(
+            "r1",
+            &json!({"type":"announce","sessions":[{"sessionId":"s1"}]}),
+        );
+    }
+
+    fn view(runner: &str, granted: bool) -> harkroom_proto::p2::ServerToOperatorFrame {
+        harkroom_proto::p2::ServerToOperatorFrame::LocalView {
+            runner_id: runner.into(),
+            session_id: "s1".into(),
+            view_key: VK.into(),
+            granted,
+        }
+    }
+
+    fn can_view(b: &Bridge) -> bool {
+        // 시험 링크에는 러너가 없어 키가 맞으면 `RunnerGone`(재생 요청을 못 내림), 틀리면 `NotViewer` 다.
+        let r = b.hub.subscribe(Arc::new(NoSub), "s1", VK);
+        b.hub.drop_subscriber(7);
+        r != Err(crate::local_terminal::Refusal::NotViewer)
+    }
+
+    #[test]
+    fn local_view_from_this_community_runner_session_reaches_hub() {
+        let (_srv, _tr, b) = bridge();
+        hub_with_session(&b);
+        let agent_of = |r: &str| (r == "r1").then(|| "a1".to_string());
+        let knows = |a: &str| a == "a1";
+        assert!(!can_view(&b));
+        assert!(apply_local_frame(
+            &b.hub,
+            &agent_of,
+            &knows,
+            &view("r1", true)
+        ));
+        assert!(can_view(&b));
+        assert!(apply_local_frame(
+            &b.hub,
+            &agent_of,
+            &knows,
+            &view("r1", false)
+        ));
+        assert!(!can_view(&b));
+    }
+
+    #[test]
+    fn local_keys_for_other_runner_or_unknown_agent_are_dropped_not_routed() {
+        let (_srv, _tr, b) = bridge();
+        hub_with_session(&b);
+        let agent_of = |r: &str| Some(format!("agent-of-{r}"));
+        // 다른 러너를 사칭 — 세션 주인이 r1 이 아니다.
+        assert!(apply_local_frame(
+            &b.hub,
+            &agent_of,
+            &|_| true,
+            &view("r2", true)
+        ));
+        assert!(!can_view(&b));
+        // 주인은 맞지만 이 커뮤니티가 모르는 에이전트.
+        assert!(apply_local_frame(
+            &b.hub,
+            &agent_of,
+            &|_| false,
+            &view("r1", true)
+        ));
+        assert!(!can_view(&b));
+        // 링크가 러너를 모른다(인증 안 됨).
+        assert!(apply_local_frame(
+            &b.hub,
+            &|_| None,
+            &|_| true,
+            &view("r1", true)
+        ));
+        assert!(!can_view(&b));
+        // 다른 프레임은 손대지 않는다.
+        let other = harkroom_proto::p2::ServerToOperatorFrame::SessionCancel {
+            runner_id: "r1".into(),
+            session_id: "s1".into(),
+            by_handle: "x".into(),
+        };
+        assert!(!apply_local_frame(&b.hub, &agent_of, &|_| true, &other));
+    }
+
+    #[test]
+    fn announce_gets_local_terminal_cap_once_and_runner_claim_is_stripped() {
+        let (srv, _tr, b) = bridge();
+        b.mux.on_runner_frame(
+            "r1",
+            json!({"type":"announce","caps":["local-terminal","x"],"sessions":[{"sessionId":"s1","agentId":"a1"}]}),
+        );
+        let sent = srv.0.lock().unwrap().clone();
+        let caps = sent
+            .iter()
+            .find(|f| f["type"] == "runner.announce")
+            .map(|f| f["caps"].clone())
+            .expect("announce 가 서버로 가야 한다");
+        assert_eq!(caps, json!(["x", "local-terminal"]));
+    }
+
+    #[test]
+    fn hub_input_report_is_dropped_when_link_does_not_know_runner() {
+        let srv = Arc::new(FakeServer::default());
+        let deps = HubDeps {
+            runner_link: Arc::new(OnceLock::new()),
+            server: Arc::clone(&srv) as Arc<dyn ServerSend>,
+        };
+        deps.report_input("r1", "s1", 1, 5);
+        assert!(srv.0.lock().unwrap().is_empty());
     }
 }

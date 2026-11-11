@@ -6,7 +6,7 @@
 //!
 //! 러너 프레임은 꼴을 여기서 확인한다 — 필드가 빠졌거나 타입이 틀리면 서버로 보내지 않는다(TS 는 타입 검사에 맡겼다).
 //! 러너는 오퍼레이터의 능력(`local-terminal`)을 주장하지 못한다(security n2) — announce 의 caps 에서 지운다.
-//! 이 판에는 로컬 터미널 허브가 없으므로 덧붙이는 능력도 없다(`extra_caps` 비어 있음).
+//! 로컬 터미널 허브가 있으면 오퍼레이터가 `local-terminal` 을 덧붙인다(`with_extra_caps`, TS `extraCaps`).
 use harkroom_proto::p2::{OperatorToServerFrame, ServerToOperatorFrame};
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
@@ -194,6 +194,12 @@ impl RelayMux {
             known: Mutex::new(HashMap::new()),
             extra_caps: Vec::new(),
         }
+    }
+
+    /// 오퍼레이터가 announce 에 덧붙일 능력(TS `extraCaps`). 로컬 터미널 허브가 있을 때 `local-terminal`.
+    pub fn with_extra_caps(mut self, caps: &[&str]) -> Self {
+        self.extra_caps = caps.iter().map(|c| c.to_string()).collect();
+        self
     }
 
     /// 러너가 주장한 caps 에서 오퍼레이터 능력을 지우고, 오퍼레이터 능력을 덧붙인다(TS `ownCaps`).

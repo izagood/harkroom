@@ -384,6 +384,9 @@ pub fn spawn_server_link(
                 }
             }));
     }
+    // 로컬 터미널 허브(s21c-4) — 서버의 `local.view`·`local.writer` 를 여기서 걸러 넣는다.
+    let local_hub = std::sync::Arc::clone(&bridge.hub);
+    let local_link = std::sync::Arc::clone(&bridge.runner_link);
     let mux = bridge.mux;
     // 배정 조정기(s21c-1b-2b, TS communities.ts runnerDeps·community.ts onFrame).
     let frames = {
@@ -550,6 +553,15 @@ pub fn spawn_server_link(
                         });
                     });
             }
+            return;
+        }
+        // 로컬 직결 키 — 러너로 내리지 않고 허브에 넣는다(이 커뮤니티의 이 러너 세션일 때만).
+        if crate::bridge::apply_local_frame(
+            &local_hub,
+            &|r| local_link.agent_of(r),
+            &|a| local_of(a).is_some(),
+            &frame,
+        ) {
             return;
         }
         // 러너로 가는 말은 다중화기가 runnerId 로 보낸다(러너가 없으면 거기서 로그를 남기고 버린다).
