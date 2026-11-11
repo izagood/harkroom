@@ -11,3 +11,5 @@ description = "Process-boundary shapes shared by TS and Rust (runner link, opera
 [dependencies]
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.154"
+# 승인 규칙 판정(tool_rules.rs, 오퍼레이터에서 옮김). 오퍼레이터 lock 에 이미 있는 판·기능 그대로다.
+regex = { version = "=1.13.1", default-features = false, features = ["std", "unicode-perl", "unicode-case"] }
