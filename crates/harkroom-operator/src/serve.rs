@@ -138,6 +138,19 @@ pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
                             or_none(&removed)
                         );
                     }
+                    // 로그인(s21c3b) — 상태는 계정 풀과 같은 디스크 판정(정체 + 자격 존재)이다.
+                    state.set_claude_logins(crate::claude_login::ClaudeLogins::new(
+                        accounts.root().to_path_buf(),
+                        accounts.pools_path().to_path_buf(),
+                        Box::new(crate::claude_login::os_spawn_login),
+                        std::sync::Arc::new(|dir: &std::path::Path| {
+                            crate::claude_accounts::account_status_from_disk(
+                                dir,
+                                &crate::claude_accounts::os_has_keychain,
+                            )
+                        }),
+                        crate::claude_login::LOGIN_KILL_GRACE,
+                    ));
                     state.set_claude_accounts(accounts);
                 }
                 Err(e) => eprintln!("claude 계정 풀을 배선하지 않는다: {e}"),
