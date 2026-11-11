@@ -144,6 +144,18 @@ impl LocalAgents {
             .collect()
     }
 
+    /// 이 커뮤니티의 로컬 에이전트 칸 하나(배정의 양쪽 동의). 없거나 설정이 깨졌으면 `None`.
+    pub fn agent_entry(&self, agent_id: &str) -> Option<Value> {
+        let config = self.read_config().ok()?;
+        let Value::Object(communities) = config.get("communities")? else {
+            return None;
+        };
+        communities
+            .iter()
+            .filter(|(raw, _)| community_root_key(raw) == self.community)
+            .find_map(|(_, s)| s.get("agents").and_then(|a| a.get(agent_id)).cloned())
+    }
+
     /// 잠그고 읽어 `f` 로 고친 뒤 쓴다. `f` 가 `false` 를 돌려주면 쓰지 않는다.
     fn modify(
         &self,

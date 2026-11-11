@@ -17,6 +17,7 @@ pub mod assignments;
 pub mod bridge;
 pub mod callback_page;
 pub mod codex_hook;
+pub mod community;
 pub mod endpoint;
 pub mod file_lock;
 pub mod forward;

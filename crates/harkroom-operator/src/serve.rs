@@ -111,7 +111,8 @@ pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
                 base_url.to_string(),
                 home.clone(),
                 flag(args, "--app-version").map(str::to_string),
-                std::path::Path::new(&root).join("turn-secrets"),
+                std::path::Path::new(&root),
+                paths.socket_path.clone(),
             );
             println!(
                 "{}",
@@ -139,7 +140,8 @@ pub fn spawn_server_link(
     base_url: String,
     home: String,
     version: Option<String>,
-    secrets_root: std::path::PathBuf,
+    root: &std::path::Path,
+    socket_path: String,
 ) -> Option<std::thread::JoinHandle<()>> {
     use crate::harnesses::detect_harnesses;
     use crate::hello::{announce_of, build_hello, capabilities, read_login_path};
@@ -149,6 +151,8 @@ pub fn spawn_server_link(
     use std::path::Path;
     use std::time::Duration;
 
+    let secrets_root = root.join("turn-secrets");
+    let operator_dir = root.join("operator");
     let Some(token) = local.operator_token() else {
         eprintln!(
             "서버 링크를 띄우지 않는다 — 이 커뮤니티의 오퍼레이터 토큰이 없다(등록 전): {base_url}"
@@ -162,6 +166,10 @@ pub fn spawn_server_link(
     }
     // 머지·`pr.status` 가 쓸 몫(caps 클로저가 local·home 을 가져가기 전에 떼어 둔다).
     let merge_cfg = local.clone();
+    // 배정 조정기가 쓸 몫(s21c-1b-2b) — 같은 이유로 먼저 떼어 둔다.
+    let assign_cfg = local.clone();
+    let assign_login_path = login_path.clone();
+    let secrets_dir = secrets_root.to_string_lossy().into_owned();
     let merge_home = home.clone();
     // 능력(`{agentIds, harnesses}`)은 hello 와 설정 변경 알림이 같이 쓴다 — 매번 새로 잰다.
     let caps: std::sync::Arc<dyn Fn() -> serde_json::Value + Send + Sync> =
@@ -175,11 +183,20 @@ pub fn spawn_server_link(
             capabilities(&local.agent_ids(), harnesses)
         });
     let link = ServerLink::new();
+    let owner = std::sync::Arc::new(crate::community::OwnerCell::default());
     // TS `community.setAgents` — 붙어 있으면 `capabilities` 를 다시 낸다. 끊겨 있으면 다음 hello 가 새 표를 싣는다(send 의 false 는 실패가 아니다).
+    // 배정된 에이전트의 로컬 설정을 조정기에 넘기는 자리 — 조정기는 아래에서 서므로 나중에 채운다.
+    let on_locals: std::sync::Arc<std::sync::OnceLock<Box<dyn Fn() + Send + Sync>>> =
+        std::sync::Arc::new(std::sync::OnceLock::new());
     {
         let link = link.clone();
         let caps = caps.clone();
+        let on_locals = std::sync::Arc::clone(&on_locals);
         state.set_on_agents_changed(Box::new(move || {
+            // 다음 spawn 이 새 env 를 쓰고, API 키 연결이 바뀌었으면 러너가 다시 뜬다(TS setAgents C1).
+            if let Some(f) = on_locals.get() {
+                f();
+            }
             let _ = link.send(&OperatorToServerFrame::Capabilities {
                 capabilities: caps(),
             });
@@ -217,6 +234,79 @@ pub fn spawn_server_link(
     );
     state.set_runner_link(std::sync::Arc::clone(&bridge.runner_link));
     let mux = bridge.mux;
+    // 배정 조정기(s21c-1b-2b, TS communities.ts runnerDeps·community.ts onFrame).
+    let frames = {
+        use crate::assignments::{AssignmentOptions, AssignmentReconciler};
+        use crate::community::{AssignmentFrames, SystemDeps};
+        let mcp = state.local_mcp();
+        let started_link = link.clone();
+        let deps = SystemDeps {
+            runners: std::sync::Arc::clone(&state.runners),
+            link: std::sync::Arc::clone(&bridge.runner_link),
+            local: assign_cfg.clone(),
+            mcp_registry: operator_dir.join("mcp-servers.json"),
+            claude_config: mcp.and_then(|m| m.claude_config_path().map(Path::to_path_buf)),
+            oauth: mcp.map_or_else(
+                || {
+                    std::sync::Arc::new(crate::mcp_oauth::McpOAuth::new(
+                        operator_dir.join("secrets").join("mcp-oauth.json"),
+                    ))
+                },
+                |m| m.oauth(),
+            ),
+            mcp_dir: operator_dir.join("mcp"),
+            operator_bin: std::env::current_exe()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            owner: std::sync::Arc::clone(&owner),
+            on_started: Box::new(move |agent_id: &str, runner_id: &str| {
+                let _ = started_link.send(&OperatorToServerFrame::RunnerStarted {
+                    agent_id: agent_id.to_string(),
+                    runner_id: runner_id.to_string(),
+                });
+            }),
+        };
+        let mut opts = AssignmentOptions::new(socket_path, deps.operator_bin.clone());
+        opts.login_path = assign_login_path;
+        opts.app_version = version.clone();
+        opts.turn_secrets_dir = Some(secrets_dir);
+        let reconciler = AssignmentReconciler::new(std::sync::Arc::new(deps), opts);
+        let send_link = link.clone();
+        AssignmentFrames::start(
+            reconciler,
+            base_url.clone(),
+            std::sync::Arc::new(move |f| send_link.send(&f)),
+            Box::new(|| crate::runners::new_incarnation_id().unwrap_or_default()),
+        )
+    };
+    let local_of = {
+        let cfg = assign_cfg;
+        std::sync::Arc::new(move |agent_id: &str| {
+            cfg.agent_entry(agent_id)
+                .map(|e| crate::community::local_agent_of(&e))
+        })
+    };
+    {
+        let frames = std::sync::Arc::clone(&frames);
+        let local_of = std::sync::Arc::clone(&local_of);
+        let _ = on_locals.set(Box::new(move || frames.set_locals(&*local_of)));
+    }
+    // 러너 종료 → 다중화기 잊기 · 서버에 `runner.exited` · 배정이면 조정기가 다시 띄울지 판단(TS run.ts onExit).
+    {
+        let frames = std::sync::Arc::clone(&frames);
+        let exit_link = link.clone();
+        let exit_mux = std::sync::Arc::clone(&mux);
+        state.set_on_runner_exit(Box::new(move |exit: &crate::runners::RunnerExit| {
+            exit_mux.forget(&exit.incarnation_id);
+            let _ = exit_link.send(&OperatorToServerFrame::RunnerExited {
+                runner_id: exit.incarnation_id.clone(),
+                code: exit.code.map(i64::from),
+                reason: None,
+                agent_id: None,
+            });
+            frames.on_runner_exit(&exit.agent_id, exit.code, None);
+        }));
+    }
     let runners_state = state.clone();
     let hello_mux = std::sync::Arc::clone(&mux);
     let hello = Box::new(move || {
@@ -229,6 +319,10 @@ pub fn spawn_server_link(
     });
     let frame_mux = std::sync::Arc::clone(&mux);
     let on_frame = Box::new(move |frame: harkroom_proto::p2::ServerToOperatorFrame| {
+        // 배정 프레임은 조정기로(작업 스레드에서 차례로 처리한다).
+        if frames.on_frame(&frame, &*local_of) {
+            return;
+        }
         // 러너로 가는 말은 다중화기가 runnerId 로 보낸다(러너가 없으면 거기서 로그를 남기고 버린다).
         if crate::relay_mux::unwrap_server_frame(&frame).is_some() {
             frame_mux.on_server_frame(&frame);
@@ -240,10 +334,25 @@ pub fn spawn_server_link(
             .unwrap_or_default();
         eprintln!("서버 프레임(아직 처리 안 함): {ty}");
     });
+    let self_url = base_url.clone();
+    let self_token = token.clone();
     let mut opts = ServerLinkOptions::new(base_url.clone(), token, hello, on_frame);
     let url_open = base_url.clone();
     opts.on_open = Some(Box::new(move || {
         eprintln!("서버에 붙었다: {url_open}");
+        // 소유자는 붙을 때마다 새로 읽는다(TS selfOwner) — 그 사이 온 personal assign 은 답을 기다린다.
+        owner.begin();
+        let (owner, u, t) = (
+            std::sync::Arc::clone(&owner),
+            self_url.clone(),
+            self_token.clone(),
+        );
+        let _ = std::thread::Builder::new()
+            .name("operators-self".into())
+            .spawn(move || {
+                let tr = crate::forward::UreqTransport::default();
+                owner.set(crate::community::read_self(&tr, &u, &t));
+            });
         // 재접속 사이에 놓친 세션 목록을 다시 낸다(TS community.ts onOpen).
         mux.resync();
     }));
