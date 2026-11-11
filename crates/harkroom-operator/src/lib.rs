@@ -19,6 +19,7 @@ pub mod file_lock;
 pub mod forward;
 pub mod harnesses;
 pub mod hello;
+pub mod hook_cli;
 pub mod index;
 pub mod local_agents;
 pub mod local_mcp;
