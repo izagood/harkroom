@@ -238,6 +238,9 @@ fn now_ms() -> i64 {
 type Writer = Arc<Mutex<UnixStream>>;
 
 /// 서버가 들고 있는 것. 토큰은 엔드포인트를 이긴 뒤에 생기므로 나중에 채운다(빈 값이면 누구도 통과 못 한다).
+/// 러너 종료를 서버 링크에 넘기는 자리(s21c-1b-2b).
+pub type RunnerExitHook = Box<dyn Fn(&crate::runners::RunnerExit) + Send + Sync>;
+
 pub struct ServerState {
     pub identity: DaemonIdentity,
     token: Mutex<String>,
@@ -256,6 +259,8 @@ pub struct ServerState {
     on_agents_changed: OnceLock<Box<dyn Fn() + Send + Sync>>,
     /// 러너 링크(s21b-1). 첫 줄이 `hello{role:'runner'}` 인 접속을 넘겨받는다. 없으면 그 hello 는 앱 hello 로 검사돼 거절된다.
     runner_link: OnceLock<Arc<RunnerLinkServer>>,
+    /// 러너가 끝났다 — 서버 링크가 배정 조정기와 서버에 알린다(s21c-1b-2b). 링크가 없으면 비어 있다.
+    on_runner_exit: OnceLock<RunnerExitHook>,
 }
 
 impl ServerState {
@@ -272,6 +277,10 @@ impl ServerState {
                             exit.agent_id, exit.code, exit.signal
                         );
                         st.broadcast_event("runnerExit", exit.to_json());
+                        // 서버 링크(배정 조정기·`runner.exited`)에도 알린다(TS run.ts onExit 의 communities 고리).
+                        if let Some(hook) = st.on_runner_exit.get() {
+                            hook(&exit);
+                        }
                     }
                 }),
             );
@@ -286,6 +295,7 @@ impl ServerState {
                 local_mcp: OnceLock::new(),
                 on_agents_changed: OnceLock::new(),
                 runner_link: OnceLock::new(),
+                on_runner_exit: OnceLock::new(),
             }
         })
     }
@@ -293,6 +303,16 @@ impl ServerState {
     /// 로컬 설정을 배선한다(한 번만 — 두 번째는 무시된다).
     pub fn set_local_agents(&self, local: LocalAgents) {
         let _ = self.local_agents.set(local);
+    }
+
+    /// 러너 종료 알림을 배선한다(한 번만). 서버 링크(`serve::spawn_server_link`)가 건다.
+    pub fn set_on_runner_exit(&self, hook: RunnerExitHook) {
+        let _ = self.on_runner_exit.set(hook);
+    }
+
+    /// 이 머신의 MCP 정의(A5c) — 배정 조정기가 같은 OAuth 저장소를 쓴다.
+    pub fn local_mcp(&self) -> Option<&LocalMcp> {
+        self.local_mcp.get()
     }
 
     /// 설정 변경 알림을 배선한다(한 번만). 서버 링크(`serve::spawn_server_link`)가 건다.
