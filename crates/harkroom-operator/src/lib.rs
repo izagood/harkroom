@@ -26,6 +26,7 @@ pub mod local_merge;
 pub mod mcp_bridge;
 pub mod mcp_oauth;
 pub mod merge;
+pub mod pr_gate;
 pub mod relay_mux;
 pub mod runner_link;
 pub mod runners;
