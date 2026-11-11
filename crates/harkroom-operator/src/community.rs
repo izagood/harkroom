@@ -5,7 +5,7 @@
 //! - 배정 처리(MCP 설정 쓰기·OAuth refresh·spawn)는 링크 스레드를 붙잡지 않게 **작업 스레드 하나**에서 차례로 한다. TS 의
 //!   `assignsInFlight`(재시작이 앞 assign 을 기다림)는 같은 큐의 순서로 지켜진다 — assign 다음에 온 restart 는 assign 뒤에 돈다.
 //! - `chrome_host` 는 이 판에서 늘 닫힘이다(TS `chromeHostAvailable` 이식 전 — 못 재면 닫힘과 같은 값).
-//! - 러너 종료 사유(`runnerExitReason(tailLines)`)는 Rust 러너 표가 로그 꼬리를 아직 안 들어 늘 없음이다(c2 장부에서).
+//! - 러너 종료 사유(`runnerExitReason(tailLines)`)는 serve.rs 가 종료 꼬리로 가려 넘긴다(`runner_log::runner_exit_reason`).
 //! - `/operators/self` 의 operator id 를 `operator.json` 에 적는 일(`rememberOperatorId`)은 하지 않는다 — 앱 기본값용이고 아직 TS 몫.
 use crate::assignments::{
     AssignOutcome, AssignmentDeps, AssignmentReconciler, Cancel, LocalAgent, Sig, SpawnError,
