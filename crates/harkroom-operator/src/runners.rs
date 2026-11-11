@@ -251,6 +251,13 @@ impl RunnerTable {
             .collect()
     }
 
+    /// 표의 기록 사본, 시작 순 — hello announce 가 쓴다.
+    pub fn records(&self) -> Vec<RunnerRecord> {
+        let mut rows: Vec<RunnerRecord> = self.table().values().cloned().collect();
+        rows.sort_by_key(|r| r.started_at_ms);
+        rows
+    }
+
     pub fn current_incarnation(&self, agent_id: &str) -> Option<String> {
         self.table().get(agent_id).map(|r| r.incarnation_id.clone())
     }

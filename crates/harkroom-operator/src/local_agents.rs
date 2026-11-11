@@ -84,6 +84,17 @@ impl LocalAgents {
         })
     }
 
+    /// 이 커뮤니티의 오퍼레이터 토큰(`operator/secrets/operator-token.<hash16>`). 없거나 비었으면 `None` — 등록 전이다.
+    pub fn operator_token(&self) -> Option<String> {
+        let file = self.secrets_dir.join(format!(
+            "operator-token.{}",
+            community_root_hash(&self.community, 16)
+        ));
+        let t = fs::read_to_string(file).ok()?;
+        let t = t.trim();
+        (!t.is_empty()).then(|| t.to_string())
+    }
+
     /// 토큰 파일이 있고 비어 있지 않은가(TS `getToken() !== null`).
     fn registered(&self, base_url: &str) -> bool {
         let file = self.secrets_dir.join(format!(
@@ -114,6 +125,23 @@ impl LocalAgents {
             }
         }
         Ok(json!({ "communities": out }))
+    }
+
+    /// 이 커뮤니티의 로컬 에이전트 키 — hello `capabilities.agentIds`(TS `Object.keys(agents)`). 깨진·없는 설정은 빈 목록.
+    /// 설정의 커뮤니티 키는 정규화 전 꼴일 수 있어 `community_root_key` 로 맞춘다.
+    pub fn agent_ids(&self) -> Vec<String> {
+        let Ok(config) = self.read_config() else {
+            return Vec::new();
+        };
+        let Some(Value::Object(communities)) = config.get("communities") else {
+            return Vec::new();
+        };
+        communities
+            .iter()
+            .filter(|(raw, _)| community_root_key(raw) == self.community)
+            .filter_map(|(_, s)| s.get("agents").and_then(Value::as_object))
+            .flat_map(|a| a.keys().cloned())
+            .collect()
     }
 
     /// 잠그고 읽어 `f` 로 고친 뒤 쓴다. `f` 가 `false` 를 돌려주면 쓰지 않는다.
@@ -589,6 +617,24 @@ mod tests {
 
     fn read(la: &LocalAgents) -> Value {
         serde_json::from_str(&fs::read_to_string(la.config_path()).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn agent_ids_only_this_community() {
+        let r = root();
+        let la = LocalAgents::new(&r, URL);
+        assert!(la.agent_ids().is_empty(), "설정 없으면 빈 목록");
+        fs::create_dir_all(Path::new(&r).join("operator")).unwrap();
+        fs::write(
+            la.config_path(),
+            r#"{"communities":{"https://a.example.com/":{"agents":{"x":{},"y":{}}},"https://b.example.com":{"agents":{"z":{}}}}}"#,
+        )
+        .unwrap();
+        let mut ids = la.agent_ids();
+        ids.sort();
+        assert_eq!(ids, vec!["x".to_string(), "y".to_string()]);
+        fs::write(la.config_path(), "not json").unwrap();
+        assert!(la.agent_ids().is_empty(), "깨진 설정은 빈 목록");
     }
 
     #[test]

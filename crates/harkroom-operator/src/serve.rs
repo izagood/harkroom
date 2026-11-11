@@ -105,6 +105,13 @@ pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
                 default_gh_path(),
                 home.clone(),
             ));
+            let _link = spawn_server_link(
+                state.clone(),
+                LocalAgents::new(&root, base_url),
+                base_url.to_string(),
+                home.clone(),
+                flag(args, "--app-version").map(str::to_string),
+            );
             println!(
                 "{}",
                 json!({"ok": true, "listening": paths.socket_path, "root": root, "pid": identity.pid})
@@ -118,4 +125,69 @@ pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
         ),
         Err(e) => (json!({"ok": false, "error": e.to_string()}).to_string(), 1),
     }
+}
+
+/// 서버 링크 스레드(s21a-2) — 이 커뮤니티의 토큰이 있으면 `wss://…/operator` 로 붙어 hello 를 올리고, 끊기면 backoff 로 다시 붙는다.
+/// 토큰이 없으면(등록 전) 띄우지 않는다 — 등록은 아직 TS 오퍼레이터 몫이다.
+/// 받은 프레임은 이 판에서는 종류만 stderr 에 적는다(assign·unassign 처리는 s21b·s21c).
+/// 하네스 능력은 hello 마다 새로 잰다 — 사람이 그 사이 claude 를 설치·로그인했을 수 있다(TS community.ts).
+pub fn spawn_server_link(
+    state: std::sync::Arc<ServerState>,
+    local: LocalAgents,
+    base_url: String,
+    home: String,
+    version: Option<String>,
+) -> Option<std::thread::JoinHandle<()>> {
+    use crate::harnesses::detect_harnesses;
+    use crate::hello::{announce_of, build_hello, capabilities, read_login_path};
+    use crate::server_link::{ServerLink, ServerLinkOptions, SystemClock};
+    use crate::ws_dialer::WsDialer;
+    use std::path::Path;
+    use std::time::Duration;
+
+    let Some(token) = local.operator_token() else {
+        eprintln!(
+            "서버 링크를 띄우지 않는다 — 이 커뮤니티의 오퍼레이터 토큰이 없다(등록 전): {base_url}"
+        );
+        return None;
+    };
+    let shell = std::env::var("SHELL").ok();
+    let login_path = read_login_path(shell.as_deref(), Duration::from_secs(5));
+    if login_path.is_none() {
+        eprintln!("로그인 셸 PATH 를 못 읽었다 — 러너가 하네스를 못 찾을 수 있다");
+    }
+    let hello = Box::new(move || {
+        let harnesses = detect_harnesses(
+            login_path.as_deref(),
+            &|k| std::env::var(k).ok(),
+            Path::new(&home),
+            &|p| p.exists(),
+        );
+        build_hello(
+            capabilities(&local.agent_ids(), harnesses),
+            announce_of(&state.runners),
+            Vec::new(),
+            version.as_deref(),
+        )
+    });
+    let on_frame = Box::new(|frame: harkroom_proto::p2::ServerToOperatorFrame| {
+        let ty = serde_json::to_value(&frame)
+            .ok()
+            .and_then(|v| v.get("type").and_then(|t| t.as_str()).map(str::to_string))
+            .unwrap_or_default();
+        eprintln!("서버 프레임(아직 처리 안 함): {ty}");
+    });
+    let mut opts = ServerLinkOptions::new(base_url.clone(), token, hello, on_frame);
+    let url_open = base_url.clone();
+    opts.on_open = Some(Box::new(move || eprintln!("서버에 붙었다: {url_open}")));
+    opts.on_close = Some(Box::new(move |reason: &str| {
+        eprintln!("서버와 끊겼다: {base_url} — {reason}")
+    }));
+    std::thread::Builder::new()
+        .name("server-link".into())
+        .spawn(move || {
+            let link = ServerLink::new();
+            link.run(&opts, &mut WsDialer::default(), &SystemClock);
+        })
+        .ok()
 }
