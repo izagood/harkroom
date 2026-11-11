@@ -395,7 +395,7 @@ impl ServerState {
                 let (agent_id, env) = read_spawn_params(payload)?;
                 let outcome = self
                     .runners
-                    .spawn_runner(&agent_id, &env)
+                    .spawn_runner(&agent_id, &env, None)
                     .map_err(|m| err(DaemonErrorCode::Internal, m))?;
                 let r = outcome.record();
                 // env 를 로그에 적지 않는다 — PAT 가 실린다. 띄웠는지·이미 있었는지를 가른다(TS `#456` ②).

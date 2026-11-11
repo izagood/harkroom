@@ -134,6 +134,44 @@ fn signal_name(sig: i32) -> String {
     .to_string()
 }
 
+/// 배정 조정기(`assignments.rs` `runner_env`)와 이관 보류가 **정하는** 러너 env 이름들. 오퍼레이터를 띄운 셸에 같은 이름이 있으면
+/// 그 값이 러너로 새어 사람이 켜지 않은 기능이 켜진다(예: `HARKROOM_COMMAND_HOOK=1`, security #1888 낮음) — spawn 전에 부모 env 에서 걷어 낸다.
+/// 요청 env 가 준 값은 그 뒤에 얹으므로 그대로 산다.
+///
+/// `HARKROOM_*` 전부가 아닌 이유: 러너는 부모 env 의 `HARKROOM_CLAUDE_ACCOUNTS_DIR`·`HARKROOM_AGENT_INSTANCE`·`HARKROOM_MAX_TURNS` 같은
+/// 사람이 정한 손잡이도 읽는다(TS `withUserEnv` — "하네스가 무엇을 읽는지 모른다"). `CODEX_HOME` 도 러너가 로그인 원본으로 읽는다(`codexHome.ts`).
+pub const COORDINATOR_OWNED_ENV: &[&str] = &[
+    "HARKROOM_OPERATOR_SOCKET",
+    "HARKROOM_RUNNER_ID",
+    "HARKROOM_RUNNER_SECRET",
+    "HARKROOM_OPERATOR_BIN",
+    "HARKROOM_MCP_CONFIG",
+    "HARKROOM_TURN_SECRETS_DIR",
+    "HARKROOM_WORKING_DIR",
+    "HARKROOM_CLAUDE_POOL",
+    "HARKROOM_COMMAND_HOOK",
+    "HARKROOM_POST_TOOL_HOOK",
+    "HARKROOM_CHROME_HOST",
+    "HARKROOM_PROVIDER_LANE",
+    "HARKROOM_HANDOVER_HOLD",
+    "HARKROOM_HANDOVER_DONE",
+];
+
+/// 러너 명령을 세운다 — 오퍼레이터 env 를 물려받되(`withUserEnv`) 조정기 몫 이름은 먼저 걷고, 요청 env 를 얹는다.
+fn runner_command(launch: &RunnerLaunch, env: &[(String, String)]) -> Command {
+    let mut cmd = Command::new(&launch.command);
+    cmd.args(&launch.args);
+    for k in COORDINATOR_OWNED_ENV {
+        cmd.env_remove(k);
+    }
+    cmd.envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0);
+    cmd
+}
+
 impl RunnerTable {
     pub fn new(launch: Option<RunnerLaunch>, on_exit: ExitSink) -> Arc<Self> {
         Arc::new(Self {
@@ -148,10 +186,15 @@ impl RunnerTable {
     }
 
     /// 러너 하나를 띄운다. 표의 잠금을 쥔 채 띄워 같은 에이전트의 동시 spawn 이 둘을 만들지 않게 한다.
+    ///
+    /// `runner_id` 는 밖(배정 조정기)에서 정한 세대 id 다 — 러너는 그 id 를 env(`HARKROOM_RUNNER_ID`)로 받아 링크에 hello 하므로
+    /// spawn **전에** 정해져 있어야 하고, 표의 `incarnation_id` 도 같은 값이어야 한다(TS `spawnRunner(agentId, env, incarnationId?)`).
+    /// 없으면 여기서 만든다(앱 `spawnRunner` 요청 경로).
     pub fn spawn_runner(
         self: &Arc<Self>,
         agent_id: &str,
         env: &[(String, String)],
+        runner_id: Option<&str>,
     ) -> Result<SpawnOutcome, String> {
         let mut table = self.table();
         if let Some(existing) = table.get(agent_id)
@@ -164,14 +207,12 @@ impl RunnerTable {
                 "이 오퍼레이터(Rust)에는 러너 프로그램이 정해지지 않았다(--runner-command)".into(),
             );
         };
-        let incarnation_id = new_incarnation_id().map_err(|e| e.to_string())?;
-        let mut cmd = Command::new(&launch.command);
-        cmd.args(&launch.args)
-            .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .process_group(0);
+        let incarnation_id = match runner_id {
+            Some(id) if !id.is_empty() => id.to_string(),
+            Some(_) => return Err("러너 id 가 비었다".into()),
+            None => new_incarnation_id().map_err(|e| e.to_string())?,
+        };
+        let mut cmd = runner_command(launch, env);
         let mut child = cmd.spawn().map_err(|e| format!("러너를 못 띄웠다: {e}"))?;
         let pid = i32::try_from(child.id()).map_err(|_| "러너 pid 가 범위를 넘었다".to_string())?;
         let record = RunnerRecord {
@@ -287,7 +328,7 @@ mod tests {
     /// spawn 하는 동안만 잡는다(`crate::FORK_GUARD` 주석).
     fn spawn(t: &Arc<RunnerTable>, env: &[(String, String)]) -> SpawnOutcome {
         let _g = crate::fork_guard();
-        t.spawn_runner("a1", env).unwrap()
+        t.spawn_runner("a1", env, None).unwrap()
     }
 
     #[test]
@@ -367,10 +408,76 @@ mod tests {
     }
 
     #[test]
+    fn given_runner_id_becomes_incarnation_and_empty_is_refused() {
+        let (t, rx) = table("exit 0");
+        let r = {
+            let _g = crate::fork_guard();
+            t.spawn_runner("a1", &[], Some("rid-from-coordinator"))
+                .unwrap()
+        };
+        assert_eq!(r.record().incarnation_id, "rid-from-coordinator");
+        let e = rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert_eq!(e.incarnation_id, "rid-from-coordinator");
+        assert!(t.spawn_runner("a2", &[], Some("")).is_err());
+    }
+
+    #[test]
+    fn coordinator_owned_parent_env_is_removed_then_request_env_applies() {
+        let launch = RunnerLaunch {
+            command: "/bin/sh".into(),
+            args: vec![],
+        };
+        let cmd = runner_command(
+            &launch,
+            &[
+                ("HARKROOM_CHROME_HOST".into(), "0".into()),
+                ("X".into(), "1".into()),
+            ],
+        );
+        let envs: HashMap<String, Option<String>> = cmd
+            .get_envs()
+            .map(|(k, v)| {
+                (
+                    k.to_string_lossy().into_owned(),
+                    v.map(|v| v.to_string_lossy().into_owned()),
+                )
+            })
+            .collect();
+        // 조정기가 이번에 안 준 이름은 지운다(None) — 부모 셸의 `HARKROOM_COMMAND_HOOK=1` 이 새지 않는다.
+        assert_eq!(envs.get("HARKROOM_COMMAND_HOOK"), Some(&None));
+        assert_eq!(envs.get("HARKROOM_WORKING_DIR"), Some(&None));
+        // 준 이름은 요청 값이 이긴다.
+        assert_eq!(envs.get("HARKROOM_CHROME_HOST"), Some(&Some("0".into())));
+        assert_eq!(envs.get("X"), Some(&Some("1".into())));
+        // 사람이 정한 손잡이는 건드리지 않는다(물려받는다).
+        assert!(!envs.contains_key("HARKROOM_CLAUDE_ACCOUNTS_DIR"));
+        assert!(!envs.contains_key("CODEX_HOME"));
+    }
+
+    #[test]
+    fn coordinator_owned_list_covers_every_key_runner_env_writes() {
+        let src = include_str!("assignments.rs");
+        let i = src.find("fn runner_env(").unwrap();
+        let body = &src[i..i + src[i..].find("\n    }\n").unwrap()];
+        let mut n = 0;
+        for part in body.split("put(\"").skip(1) {
+            let k = &part[..part.find('"').unwrap()];
+            // PATH·AGENT_VERSION 은 사람 셸 값이 있어도 되는 이름이다 — 조정기 몫은 HARKROOM_* 만.
+            if !k.starts_with("HARKROOM_") {
+                continue;
+            }
+            assert!(COORDINATOR_OWNED_ENV.contains(&k), "{k} 가 목록에 없다");
+            n += 1;
+        }
+        assert!(n >= 10, "runner_env 의 put 을 못 찾았다: {n}");
+        assert!(COORDINATOR_OWNED_ENV.contains(&crate::assignments::PROVIDER_LANE_ENV));
+    }
+
+    #[test]
     fn no_launch_means_refusal() {
         let t = RunnerTable::new(None, Arc::new(|_| {}));
         assert!(
-            t.spawn_runner("a1", &[])
+            t.spawn_runner("a1", &[], None)
                 .unwrap_err()
                 .contains("--runner-command")
         );
