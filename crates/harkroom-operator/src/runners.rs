@@ -479,6 +479,7 @@ impl RunnerTable {
                 incarnation_id: r.incarnation_id,
                 code: None,
                 signal: None,
+                tail_lines: tail_of(r.log_path.as_deref()),
             });
         }
     }
@@ -1024,6 +1025,50 @@ mod tests {
             child.kill().unwrap();
             child.wait().unwrap();
         }
+    }
+
+    /// ①b(s21c-2c-1b-2) — 배정에 없는 채택 러너만, 받음 표지가 있을 때만, 같은 프로세스일 때만 SIGTERM.
+    #[test]
+    fn reap_unassigned_adopted_only_when_synced_and_same_process() {
+        use std::collections::HashSet;
+        let knows = |_: &str| true;
+        // 못 받았으면 아무것도 안 한다.
+        let (t, _rx, _s) = ledgered("sleep 30", |_| Some(7));
+        let mut child = outside("30");
+        let pid = child.id() as i32;
+        t.adopt_runner(&orphan("gone", pid)).unwrap();
+        assert!(crate::community::reap_unassigned_adopted(&|| None, &t, &knows).is_empty());
+        // 남길 것에 있으면 안 죽인다.
+        let keep: HashSet<String> = ["gone".to_string()].into();
+        assert!(
+            crate::community::reap_unassigned_adopted(&|| Some(keep.clone()), &t, &knows)
+                .is_empty()
+        );
+        // 로컬 설정에 없는 에이전트는 이 길로 안 건드린다.
+        assert!(
+            crate::community::reap_unassigned_adopted(&|| Some(HashSet::new()), &t, &|_| false)
+                .is_empty()
+        );
+        assert!(signal_sent(pid, 0));
+        // 받았고 없고 같은 프로세스면 SIGTERM.
+        assert_eq!(
+            crate::community::reap_unassigned_adopted(&|| Some(HashSet::new()), &t, &knows),
+            vec!["gone".to_string()]
+        );
+        assert_eq!(child.wait().unwrap().signal(), Some(libc::SIGTERM));
+
+        // 시작 시각이 다르면 보내지 않는다.
+        let (t2, _rx2, _s2) = ledgered("sleep 30", |_| Some(8));
+        let mut child2 = outside("30");
+        let pid2 = child2.id() as i32;
+        t2.adopt_runner(&orphan("gone", pid2)).unwrap();
+        assert!(
+            crate::community::reap_unassigned_adopted(&|| Some(HashSet::new()), &t2, &knows)
+                .is_empty()
+        );
+        assert!(signal_sent(pid2, 0));
+        child2.kill().unwrap();
+        child2.wait().unwrap();
     }
 
     #[test]

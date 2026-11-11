@@ -288,6 +288,69 @@ pub struct AssignmentFrames {
     tx: Mutex<Sender<Job>>,
     assigned: Arc<Mutex<HashSet<String>>>,
     reconciler: Arc<AssignmentReconciler>,
+    /// 회수 기준(s21c-2c-1b-2, TS community.ts `syncedKeep`) — 이번 연결에서 받은 「남길 것」. 못 받았으면 None.
+    synced: Mutex<SyncedState>,
+}
+
+#[derive(Default)]
+struct SyncedState {
+    keep: Option<HashSet<String>>,
+    this_link: HashSet<String>,
+}
+
+/// `assign.synced` 의 목록 모양 검사(TS `parseAssignSynced`) — 틀리면 None(= 못 받음 → 회수 안 함).
+pub fn parse_synced_ids(ids: &[String]) -> Option<HashSet<String>> {
+    if ids.len() > 10_000 {
+        return None;
+    }
+    let mut out = HashSet::new();
+    for id in ids {
+        if id.is_empty() || id.chars().count() > 64 {
+            return None;
+        }
+        out.insert(id.clone());
+    }
+    Some(out)
+}
+
+/// 배정에 없는 채택 러너 회수(TS `adoptedReap.ts`). 이 오퍼레이터는 커뮤니티 하나를 맡으므로 「모든 커뮤니티」는
+/// 이 커뮤니티다. 채택한 러너 중 로컬 설정에 있는(`knows`) 에이전트이면서 남길 것에 없는 것만, 신호 직전에 남길 것을
+/// 다시 보고 `kill_runner`(채택 러너면 커널 시작 시각 재대조)로 SIGTERM. 회수한 에이전트 id 를 돌려준다.
+pub fn reap_unassigned_adopted(
+    keep: &dyn Fn() -> Option<HashSet<String>>,
+    table: &RunnerTable,
+    knows: &dyn Fn(&str) -> bool,
+) -> Vec<String> {
+    let mut reaped = Vec::new();
+    if keep().is_none() {
+        return reaped;
+    }
+    for rec in table.records() {
+        if !rec.adopted || !knows(&rec.agent_id) {
+            continue;
+        }
+        // 다시 붙었거나 배정이 왔으면 안 죽인다 — 매번 지금 값을 본다.
+        match keep() {
+            Some(k) if !k.contains(&rec.agent_id) => {}
+            _ => continue,
+        }
+        if table
+            .kill_runner(&rec.agent_id, Some(&rec.incarnation_id))
+            .is_some()
+        {
+            eprintln!(
+                "채택 러너 회수: agent={} pid={} — 이 오퍼레이터의 배정에 없다(SIGTERM)",
+                rec.agent_id, rec.pid
+            );
+            reaped.push(rec.agent_id);
+        } else {
+            eprintln!(
+                "채택 러너 회수 안 함: agent={} pid={} — 세대가 바뀌었거나 시작 시각이 장부와 다르다",
+                rec.agent_id, rec.pid
+            );
+        }
+    }
+    reaped
 }
 
 pub type SendFrame = Arc<dyn Fn(OperatorToServerFrame) -> bool + Send + Sync>;
@@ -343,6 +406,7 @@ impl AssignmentFrames {
             tx: Mutex::new(tx),
             assigned,
             reconciler,
+            synced: Mutex::new(SyncedState::default()),
         })
     }
 
@@ -359,6 +423,16 @@ impl AssignmentFrames {
         rx.recv_timeout(timeout).is_ok()
     }
 
+    /// 연결이 열리거나 끊겼다 — 받음 표지를 지운다(지난 연결의 목록으로 회수하지 않는다).
+    pub fn reset_synced(&self) {
+        *lock(&self.synced) = SyncedState::default();
+    }
+
+    /// 이번 연결의 「남길 것」. 아직 못 받았으면(옛 서버 포함) None.
+    pub fn synced_keep(&self) -> Option<HashSet<String>> {
+        lock(&self.synced).keep.clone()
+    }
+
     /// assign·unassign·agent.restart 면 맡고 `true`. `local` 은 이 머신의 로컬 설정에서 그 에이전트 칸.
     pub fn on_frame(
         &self,
@@ -370,6 +444,14 @@ impl AssignmentFrames {
                 agent_id,
                 definition,
             } => {
+                // 「남길 것」은 받은 그대로 먼저 적는다 — 아래 검사로 거절해도 그 에이전트의 러너를 회수 길로 죽이지 않는다.
+                {
+                    let mut st = lock(&self.synced);
+                    st.this_link.insert(agent_id.clone());
+                    if let Some(k) = st.keep.as_mut() {
+                        k.insert(agent_id.clone());
+                    }
+                }
                 // 동의를 확인한 에이전트와 띄울 에이전트가 같아야 한다 — 다르면 로컬에 없는 에이전트가 남의 로컬 설정
                 // (작업 폴더 등)으로 뜬다. 오퍼레이터는 서버만 믿지 않는다(security #1892 낮음).
                 if definition.agent_id != *agent_id {
@@ -395,6 +477,16 @@ impl AssignmentFrames {
             }
             ServerToOperatorFrame::AgentRestart { agent_id } => {
                 self.push(Job::Restart(agent_id.clone()));
+                true
+            }
+            ServerToOperatorFrame::AssignSynced { agent_ids } => {
+                let Some(mut keep) = parse_synced_ids(agent_ids) else {
+                    eprintln!("assign.synced 를 버린다 — agentIds 모양이 틀렸다");
+                    return true;
+                };
+                let mut st = lock(&self.synced);
+                keep.extend(st.this_link.iter().cloned());
+                st.keep = Some(keep);
                 true
             }
             _ => false,
