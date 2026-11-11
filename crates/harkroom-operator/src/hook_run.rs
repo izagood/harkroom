@@ -7,8 +7,7 @@
 //! - **기록하고 0** — permission. 결정은 deny 뿐이고 오류·시간 초과는 `hook_error` 한 줄을 남긴다.
 //! - **막기(2)** — `--lane`·`--tail`·`--codex`. 하네스는 종료 2 만 막으므로 결정 없음 말고는 어떤 길로 끝나도 2 다.
 //!
-//! `--codex` 판정(`codexHook.ts`)은 다음 PR(3d-3b-2b)이다. 그 전까지 Rust 로 오면 **모두 막는다**(fail-closed) — TS 는 규칙 파일에
-//! 닿지 않는 명령을 판단하지 않고 넘기므로 이쪽이 더 좁다. 기본 구현은 node 라 운영 경로는 바뀌지 않는다.
+//! `--codex` 판정은 `codex_hook.rs`(3d-3b-2b)에 있다. 턴 env `HARKROOM_CODEX_HOOK` 을 못 풀면 막는다(fail-closed).
 
 use std::io::{Read, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
@@ -20,6 +19,7 @@ use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
 use regex::Regex;
 use serde_json::{Value, json};
 
+use crate::codex_hook::{codex_spec_from_env, decide_codex_hook};
 use crate::hook_cli::{
     HOOK_STDIN_MAX, LANE_HOOK_DENY_REASON, count_turn_denials, decide_hook, decide_lane_hook,
     decide_permission_hook, decide_tail_hook, lane_deny, notify_gate_line, post_tool_output,
@@ -404,8 +404,12 @@ pub fn run_hook(args: &HookArgs, io: &mut HookIo) -> HookOutcome {
         "notify" => notify_main(io),
         "pretool" => {
             if args.codex {
-                // 3d-3b-2b 전까지는 막는다(머리 주석).
-                return blocking_main(io, |_| Some(lane_deny(LANE_HOOK_DENY_REASON)));
+                // 값이 있는데 못 풀면 막는다. 값이 없으면 `CODEX_HOME` 의 규칙 파일만으로 판정한다(TS `hookMain`).
+                let spec = codex_spec_from_env(io.env);
+                return blocking_main(io, |raw| match &spec {
+                    Some(s) => decide_codex_hook(raw, s),
+                    None => Some(lane_deny(LANE_HOOK_DENY_REASON)),
+                });
             }
             if let Some((rules, mode)) = &args.lane {
                 let rules = decode_lane_hook_rules(rules);
