@@ -34,6 +34,7 @@ pub mod serve;
 pub mod server_link;
 pub mod socket;
 pub mod tool_rules;
+pub mod turn_api;
 pub mod turn_command;
 pub mod turn_keys;
 pub mod turn_leases;
