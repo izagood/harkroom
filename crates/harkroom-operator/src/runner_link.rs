@@ -156,9 +156,10 @@ impl RejectLogThrottle {
     pub fn hit(&mut self, key: &str, first_line: &str, t: u64) -> Option<String> {
         let Some(&(since, count)) = self.seen.get(key) else {
             if self.seen.len() >= self.max_keys
-                && let Some(oldest) = self.order.pop_front() {
-                    self.seen.remove(&oldest);
-                }
+                && let Some(oldest) = self.order.pop_front()
+            {
+                self.seen.remove(&oldest);
+            }
             self.seen.insert(key.to_string(), (t, 0));
             self.order.push_back(key.to_string());
             return Some(first_line.to_string());
