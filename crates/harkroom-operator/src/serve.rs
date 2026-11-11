@@ -366,6 +366,8 @@ pub fn spawn_server_link(
         },
     );
     state.set_runner_link(std::sync::Arc::clone(&bridge.runner_link));
+    // 앱의 `terminal*` 요청이 같은 허브를 쓴다(s21c-4).
+    state.set_local_terminal(std::sync::Arc::clone(&bridge.hub));
     let bridge_link_adopt = std::sync::Arc::clone(&bridge.runner_link);
     // 회수 중 세대(s21c-2c-2b): 러너의 「인박스를 놓았다」는 러너 표로, 앞 세대가 다 물러나면 지금 세대에 보류 풀기를 알린다.
     {

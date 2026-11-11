@@ -17,6 +17,7 @@ use crate::codex_login::{self, CodexLogins};
 use crate::local_agents::{self, LocalAgents};
 use crate::local_mcp::{self, LocalMcp};
 use crate::local_merge::{self, LocalMerge};
+use crate::local_terminal::LocalTerminalHub;
 use crate::runner_link::RunnerLinkServer;
 use crate::runners::{RunnerLaunch, RunnerTable, SpawnOutcome};
 use harkroom_proto::p3::{
@@ -280,6 +281,8 @@ pub struct ServerState {
     runner_link: OnceLock<Arc<RunnerLinkServer>>,
     /// 러너가 끝났다 — 서버 링크가 배정 조정기와 서버에 알린다(s21c-1b-2b). 링크가 없으면 비어 있다.
     on_runner_exit: OnceLock<RunnerExitHook>,
+    /// 같은 머신의 터미널 직결(s21c-4). 없으면 `terminal*` 요청은 배선 안 됨으로 답한다. 구독은 **접속에 묶인다**.
+    local_terminal: OnceLock<Arc<LocalTerminalHub>>,
 }
 
 impl ServerState {
@@ -320,6 +323,7 @@ impl ServerState {
                 on_agents_changed: OnceLock::new(),
                 runner_link: OnceLock::new(),
                 on_runner_exit: OnceLock::new(),
+                local_terminal: OnceLock::new(),
             }
         })
     }
@@ -354,6 +358,10 @@ impl ServerState {
     }
 
     /// 러너 링크를 배선한다(한 번만 — 두 번째는 무시된다).
+    pub fn set_local_terminal(&self, hub: Arc<LocalTerminalHub>) {
+        let _ = self.local_terminal.set(hub);
+    }
+
     pub fn set_runner_link(&self, link: Arc<RunnerLinkServer>) {
         let _ = self.runner_link.set(link);
     }
@@ -586,6 +594,71 @@ impl ServerState {
                 self.authed().remove(&id);
                 eprintln!("이벤트 쓰기 실패 — 접속을 끊는다: conn={id}");
             }
+        }
+    }
+
+    /// `terminal*` 요청(TS `server.ts::handleTerminal`). 거절은 오류가 아니라 `{ok:false, reason}` 이다 —
+    /// 앱은 `not-viewer`·`not-writer` 면 서버 경유로, `no-such-session` 이면 이 머신 것이 아니라고 읽는다.
+    fn handle_terminal(
+        &self,
+        conn_id: u64,
+        writer: &Writer,
+        ty: &str,
+        payload: Option<&Value>,
+    ) -> Result<Value, DaemonError> {
+        let Some(hub) = self.local_terminal.get() else {
+            return Err(err(
+                DaemonErrorCode::Internal,
+                "이 오퍼레이터에는 터미널 직결이 배선되지 않았다",
+            ));
+        };
+        let p = payload.cloned().unwrap_or(Value::Null);
+        let str_of = |k: &str| p.get(k).and_then(Value::as_str);
+        let session_id = match str_of("sessionId") {
+            Some(s) if !s.is_empty() => s,
+            _ => return Err(bad("sessionId 가 필요하다".into())),
+        };
+        let answer = |r: Result<(), crate::local_terminal::Refusal>| match r {
+            Ok(()) => json!({ "ok": true }),
+            Err(r) => json!({ "ok": false, "reason": r.as_str() }),
+        };
+        match ty {
+            "terminalIsLocal" => Ok(json!({ "local": hub.is_local(session_id) })),
+            "terminalSubscribe" => {
+                let Some(view_key) = str_of("viewKey") else {
+                    return Err(bad("viewKey 가 필요하다".into()));
+                };
+                let sub = Arc::new(ConnSub {
+                    id: conn_id,
+                    writer: Arc::clone(writer),
+                });
+                Ok(answer(hub.subscribe(sub, session_id, view_key)))
+            }
+            "terminalUnsubscribe" => {
+                hub.unsubscribe(
+                    &ConnSub {
+                        id: conn_id,
+                        writer: Arc::clone(writer),
+                    },
+                    session_id,
+                );
+                Ok(json!({ "ok": true }))
+            }
+            "terminalInput" => match (str_of("writerKey"), str_of("data")) {
+                (Some(k), Some(d)) => Ok(answer(hub.input(session_id, k, d))),
+                _ => Err(bad("writerKey·data 가 필요하다".into())),
+            },
+            "terminalResize" => {
+                let (Some(k), Some(c), Some(r)) = (
+                    str_of("writerKey"),
+                    p.get("cols").filter(|v| v.is_number()),
+                    p.get("rows").filter(|v| v.is_number()),
+                ) else {
+                    return Err(bad("writerKey·cols·rows 가 필요하다".into()));
+                };
+                Ok(answer(hub.resize(session_id, k, c, r)))
+            }
+            _ => Err(err(DaemonErrorCode::UnknownRequest, ty)),
         }
     }
 
@@ -926,6 +999,10 @@ fn serve_connection_in(state: &ServerState, mut stream: UnixStream, slot: Option
     impl Drop for Leave<'_> {
         fn drop(&mut self) {
             self.0.authed().remove(&self.1);
+            // 이 접속의 터미널 구독을 놓는다(TS `close` 의 `localTerminal.drop`).
+            if let Some(hub) = self.0.local_terminal.get() {
+                hub.drop_subscriber(self.1);
+            }
         }
     }
     let _leave = Leave(state, conn_id);
@@ -1003,6 +1080,13 @@ fn serve_connection_in(state: &ServerState, mut stream: UnixStream, slot: Option
                             }
                         }
                     }
+                    // 터미널 직결은 접속을 알아야 한다(구독이 접속에 묶인다) — `dispatch` 가 아니라 여기서 받는다.
+                    Ok((id, ty, payload)) if ty.starts_with("terminal") => {
+                        match state.handle_terminal(conn_id, &writer, &ty, payload.as_ref()) {
+                            Ok(p) => json!({ "id": id, "ok": true, "payload": p }),
+                            Err(e) => error_response(Some(id), &e),
+                        }
+                    }
                     Ok((id, ty, payload)) => match state.dispatch(&ty, payload.as_ref()) {
                         Ok(p) => json!({ "id": id, "ok": true, "payload": p }),
                         Err(e) => error_response(Some(id), &e),
@@ -1030,6 +1114,30 @@ fn write_value(writer: &Writer, v: &Value) -> std::io::Result<()> {
         .lock()
         .unwrap_or_else(|p| p.into_inner())
         .write_all(&bytes)
+}
+
+/// 터미널 구독자 하나 = 앱 소켓 접속 하나(TS `conn.terminal`). 같은 접속은 같은 id 라 구독을 다시 열면 키만 바뀐다.
+struct ConnSub {
+    id: u64,
+    writer: Writer,
+}
+
+impl crate::local_terminal::LocalTerminalSubscriber for ConnSub {
+    fn id(&self) -> u64 {
+        self.id
+    }
+    fn send(&self, event: &str, payload: Value) {
+        debug_assert!(EVENT_NAMES.contains(&event));
+        // 끊긴 접속은 읽는 쪽이 0 을 읽고 끝나며 `Leave` 가 구독을 놓는다. 쓰기 실패면 양쪽을 닫아 그 길을 앞당긴다.
+        let line = json!({ "type": "event", "event": event, "payload": payload });
+        if write_value(&self.writer, &line).is_err() {
+            let _ = self
+                .writer
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .shutdown(Shutdown::Both);
+        }
+    }
 }
 
 /// 듣기 고리. 접속마다 스레드 하나.
@@ -1198,6 +1306,213 @@ mod tests {
             assert_eq!(
                 serde_json::from_str::<Value>(&line).unwrap()["ok"],
                 json!(true)
+            );
+        }
+    }
+
+    mod terminal {
+        use super::*;
+        use crate::local_terminal::{LocalTerminalDeps, LocalTerminalHub};
+        use std::io::{BufRead, BufReader};
+
+        #[derive(Default)]
+        struct ToRunner(Mutex<Vec<(String, Value)>>);
+        struct Deps(Arc<ToRunner>);
+        impl LocalTerminalDeps for Deps {
+            fn send_to_runner(&self, runner_id: &str, frame: &Value) -> bool {
+                self.0
+                    .0
+                    .lock()
+                    .unwrap()
+                    .push((runner_id.into(), frame.clone()));
+                true
+            }
+            fn report_input(&self, _r: &str, _s: &str, _g: i64, _b: i64) {}
+            fn log(&self, _line: &str) {}
+        }
+
+        const VK: &str = "view-key-0123456789abcdef";
+        const WK: &str = "writer-key-0123456789abcdef";
+
+        fn setup() -> (Arc<ServerState>, Arc<LocalTerminalHub>, Arc<ToRunner>) {
+            let st = ServerState::new(
+                DaemonIdentity {
+                    pid: 1,
+                    started_at_ms: 0,
+                    launch_nonce: String::new(),
+                    entry_path: String::new(),
+                    app_version: String::new(),
+                },
+                None,
+            );
+            st.set_token("app-token".into());
+            let rec = Arc::new(ToRunner::default());
+            let hub = LocalTerminalHub::new(Box::new(Deps(Arc::clone(&rec))));
+            hub.on_runner_frame(
+                "r1",
+                &json!({"type":"announce","sessions":[{"sessionId":"s1"}]}),
+            );
+            st.set_local_terminal(Arc::clone(&hub));
+            (st, hub, rec)
+        }
+
+        struct App {
+            w: UnixStream,
+            r: BufReader<UnixStream>,
+        }
+        impl App {
+            fn open(st: &Arc<ServerState>) -> Self {
+                let (ours, theirs) = UnixStream::pair().unwrap();
+                let st = Arc::clone(st);
+                std::thread::spawn(move || serve_connection(&st, theirs));
+                ours.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                let mut app = App {
+                    r: BufReader::new(ours.try_clone().unwrap()),
+                    w: ours,
+                };
+                app.send(json!({"type":"hello","version":1,"token":"app-token","role":"app"}));
+                assert_eq!(app.line()["ok"], json!(true));
+                app
+            }
+            fn send(&mut self, v: Value) {
+                self.w.write_all(&encode_line(&v).unwrap()).unwrap();
+            }
+            fn line(&mut self) -> Value {
+                let mut l = String::new();
+                self.r.read_line(&mut l).unwrap();
+                serde_json::from_str(&l).unwrap()
+            }
+            fn req(&mut self, ty: &str, payload: Value) -> Value {
+                self.send(json!({"id":"q","type":ty,"payload":payload}));
+                self.line()
+            }
+        }
+
+        #[test]
+        fn subscribe_input_resize_ride_the_connection_and_events_come_back() {
+            let (st, hub, rec) = setup();
+            let mut app = App::open(&st);
+            assert_eq!(
+                app.req("terminalIsLocal", json!({"sessionId":"s1"}))["payload"],
+                json!({"local": true})
+            );
+            assert_eq!(
+                app.req("terminalIsLocal", json!({"sessionId":"nope"}))["payload"],
+                json!({"local": false})
+            );
+            // 키가 없으면 열람 거절 — 오류가 아니라 이유가 붙은 답이다.
+            assert_eq!(
+                app.req("terminalSubscribe", json!({"sessionId":"s1","viewKey":VK}))["payload"],
+                json!({"ok": false, "reason": "not-viewer"})
+            );
+            hub.grant_view("s1", VK);
+            assert_eq!(
+                app.req("terminalSubscribe", json!({"sessionId":"s1","viewKey":VK}))["payload"],
+                json!({"ok": true})
+            );
+            assert_eq!(
+                rec.0.lock().unwrap().last().unwrap().1["type"],
+                json!("replay.request")
+            );
+            hub.on_runner_frame("r1", &json!({"type":"replay","sessionId":"s1","data":"hi"}));
+            let ev = app.line();
+            assert_eq!(ev["type"], json!("event"));
+            assert_eq!(ev["event"], json!("terminalOutput"));
+            assert_eq!(
+                ev["payload"],
+                json!({"sessionId":"s1","data":"hi","replay":true})
+            );
+            // writer 키가 없으면 입력 거절, 받으면 러너로.
+            assert_eq!(
+                app.req(
+                    "terminalInput",
+                    json!({"sessionId":"s1","writerKey":WK,"data":"ls"})
+                )["payload"],
+                json!({"ok": false, "reason": "not-writer"})
+            );
+            hub.grant_writer("s1", Some(WK), Some(1));
+            assert_eq!(
+                app.req(
+                    "terminalInput",
+                    json!({"sessionId":"s1","writerKey":WK,"data":"ls"})
+                )["payload"],
+                json!({"ok": true})
+            );
+            assert_eq!(
+                app.req(
+                    "terminalResize",
+                    json!({"sessionId":"s1","writerKey":WK,"cols":0,"rows":10})
+                )["payload"],
+                json!({"ok": false, "reason": "bad-size"})
+            );
+            assert_eq!(
+                app.req(
+                    "terminalResize",
+                    json!({"sessionId":"s1","writerKey":WK,"cols":80,"rows":24})
+                )["payload"],
+                json!({"ok": true})
+            );
+            // 틀린 꼴은 bad-payload 오류.
+            assert_eq!(
+                app.req("terminalInput", json!({"sessionId":"s1"}))["ok"],
+                json!(false)
+            );
+            assert_eq!(
+                app.req("terminalSubscribe", json!({"viewKey":VK}))["ok"],
+                json!(false)
+            );
+            assert_eq!(
+                app.req("terminalWhatever", json!({"sessionId":"s1"}))["error"]["code"],
+                json!("unknown-request")
+            );
+            assert_eq!(
+                app.req("terminalUnsubscribe", json!({"sessionId":"s1"}))["payload"],
+                json!({"ok": true})
+            );
+        }
+
+        #[test]
+        fn closing_the_connection_drops_its_subscription() {
+            let (st, hub, _rec) = setup();
+            hub.grant_view("s1", VK);
+            let mut app = App::open(&st);
+            assert_eq!(
+                app.req("terminalSubscribe", json!({"sessionId":"s1","viewKey":VK}))["payload"],
+                json!({"ok": true})
+            );
+            // 앱이 쓰기를 닫으면 접속 스레드가 끝나고 `Leave` 가 구독을 놓는다. 구독이 남아 있으면 그 구독이 든
+            // 쓰기 끝이 살아 있어 아래 재생이 이벤트로 오고, 놓였으면 마지막 쓰기 끝이 닫혀 EOF 가 온다.
+            app.w.shutdown(Shutdown::Write).unwrap();
+            std::thread::sleep(Duration::from_millis(300));
+            hub.on_runner_frame(
+                "r1",
+                &json!({"type":"replay","sessionId":"s1","data":"late"}),
+            );
+            let mut l = String::new();
+            assert_eq!(
+                app.r.read_line(&mut l).unwrap(),
+                0,
+                "닫힌 접속에 이벤트가 갔다: {l}"
+            );
+        }
+
+        #[test]
+        fn without_hub_terminal_requests_are_internal_errors() {
+            let st = ServerState::new(
+                DaemonIdentity {
+                    pid: 1,
+                    started_at_ms: 0,
+                    launch_nonce: String::new(),
+                    entry_path: String::new(),
+                    app_version: String::new(),
+                },
+                None,
+            );
+            st.set_token("app-token".into());
+            let mut app = App::open(&st);
+            assert_eq!(
+                app.req("terminalIsLocal", json!({"sessionId":"s1"}))["error"]["code"],
+                json!("internal")
             );
         }
     }
