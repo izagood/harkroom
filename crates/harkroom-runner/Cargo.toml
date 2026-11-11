@@ -23,4 +23,6 @@ serde_json = { version = "=1.0.154", features = ["preserve_order"] }
 libc = "=0.2.191"
 # 중계 프레임의 PTY 바이트(base64, relay_session.rs). 오퍼레이터 lock 에 이미 있는 판이다.
 base64 = "=0.23.1"
+# lane 스레드 홈 이름(sha256 앞 24자, pi_lane.rs). 오퍼레이터 lock 에 이미 있는 판이다(digest 0.10.7·cpufeatures 0.2.17 등도 같다).
+sha2 = { version = "=0.10.9", default-features = false }
 regex = { version = "=1.13.1", default-features = false, features = ["std", "unicode"] }
