@@ -216,10 +216,11 @@ describe('스레드 상태 리액션', () => {
       emitEvent({ type: 'reaction.removed', channelId, messageId: id, emoji: '✅', accountId: botId, audience: 'all' });
       await new Promise((r) => setTimeout(r, 10));
       await w.flush();
-      expect(await src()).toEqual([{ emoji: '✅', source: 'status' }]);
-      // 앱 기본 watcher(300ms 미룸)가 뒤늦게 돌아도 같은 답이다 — 흔들림의 회귀선.
-      await new Promise((r) => setTimeout(r, 700));
-      expect(await src()).toEqual([{ emoji: '✅', source: 'status' }]);
+      // 앱 기본 watcher(300ms 미룸)가 뒤늦게 돌아도 1초 내내 같은 답이다 — 흔들림의 회귀선. 옛 💬 판으로 이 표본을
+      // 찍으면 그 사이에 🚨 가 끼어 5/5 빨갛다(두 watcher 가 presence 를 달리 봐 서로 덮는다).
+      const seen = new Set<string>();
+      for (let i = 0; i < 40; i++) { seen.add(JSON.stringify(await src())); await new Promise((r) => setTimeout(r, 25)); }
+      expect([...seen]).toEqual([JSON.stringify([{ emoji: '✅', source: 'status' }])]);
     } finally { w.stop(); }
   });
 
