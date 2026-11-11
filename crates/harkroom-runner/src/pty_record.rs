@@ -38,6 +38,11 @@ fn safe_label(label: &str) -> String {
 
 /// `2026-11-11T16-33-50-123Z` — 정본의 `toISOString().replace(/[:.]/g, '-')`.
 fn stamp(ms: u128) -> String {
+    iso_utc(ms).replace([':', '.'], "-")
+}
+
+/// UTC ISO-8601 밀리초(`Date.prototype.toISOString` 꼴, 예 `2026-11-11T16:33:50.123Z`).
+pub(crate) fn iso_utc(ms: u128) -> String {
     let secs = (ms / 1000) as i64;
     let (days, sod) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
     // civil_from_days(Howard Hinnant)
@@ -51,7 +56,7 @@ fn stamp(ms: u128) -> String {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = yoe + era * 400 + i64::from(m <= 2);
     format!(
-        "{y:04}-{m:02}-{d:02}T{:02}-{:02}-{:02}-{:03}Z",
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.{:03}Z",
         sod / 3600,
         sod % 3600 / 60,
         sod % 60,
@@ -207,6 +212,7 @@ mod tests {
         // 2026-11-11T16:33:50.123Z
         assert_eq!(stamp(1_794_414_830_123), "2026-11-11T16-33-50-123Z");
         assert_eq!(stamp(0), "1970-01-01T00-00-00-000Z");
+        assert_eq!(iso_utc(1_794_414_830_123), "2026-11-11T16:33:50.123Z");
     }
 
     #[test]

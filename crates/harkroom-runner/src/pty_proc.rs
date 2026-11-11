@@ -238,6 +238,15 @@ fn cvt(r: libc::c_int) -> io::Result<libc::c_int> {
     }
 }
 
+/// PTY spawn 줄 세우기(security B3b-2a 낮음). `openpty` 가 연 두 fd 에 `FD_CLOEXEC` 를 세우기 **전** 틈에 다른 스레드가
+/// 동시에 fork 하면(턴 둘이 함께 spawn) 그 자식이 이 턴의 master·slave 를 물려받는다 — master 가 새면 엉뚱한 하네스가
+/// 남의 PTY 를 읽고 쓸 수 있고, 이 턴의 EOF 도 오지 않는다. openpty 부터 spawn(fork·exec)까지를 이 잠금 하나로 줄 세워
+/// 러너 안의 PTY spawn 끼리는 틈이 겹치지 않게 한다. 러너의 다른 자식 띄우기도 fd 를 막 열고 띄운다면 같은 잠금을 쓴다.
+pub fn spawn_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// PTY 를 열고 자식을 띄운다(정본 `nodePty().spawn`). 하네스 부재는 spawn **전에** 잰다(정본 순서·이유).
 pub fn spawn_pty(spec: &SpawnSpec<'_>, kill_grace: Duration) -> Result<PtyProcess, SpawnError> {
     let path = spec
@@ -257,6 +266,7 @@ pub fn spawn_pty(spec: &SpawnSpec<'_>, kill_grace: Duration) -> Result<PtyProces
     // execvp 와 같게 PATH 로 푼다 — Command 는 부모 PATH 로 찾으므로 자식 env 의 PATH 로 직접 푼 절대 경로를 준다.
     let program = resolve_executable(spec.command, path).ok_or_else(not_found)?;
 
+    let spawn_guard = spawn_lock();
     let mut master: libc::c_int = -1;
     let mut slave: libc::c_int = -1;
     let mut ws = libc::winsize {
@@ -315,6 +325,7 @@ pub fn spawn_pty(spec: &SpawnSpec<'_>, kill_grace: Duration) -> Result<PtyProces
             SpawnError::Io(e)
         }
     })?;
+    drop(spawn_guard);
     drop(slave);
     let master = File::from(master);
     let reader = master.try_clone().map_err(SpawnError::Io)?;
