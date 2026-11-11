@@ -36,6 +36,7 @@ pub mod mcp_oauth;
 pub mod merge;
 pub mod pr_gate;
 pub mod relay_mux;
+pub mod retiring;
 pub mod runner_ledger;
 pub mod runner_link;
 pub mod runners;
