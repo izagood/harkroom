@@ -426,5 +426,8 @@ fn js_whitespace(c: char) -> bool {
     c.is_whitespace() || c == '\u{feff}'
 }
 
+mod ensure;
+pub use ensure::*;
+
 #[cfg(test)]
 mod tests;
