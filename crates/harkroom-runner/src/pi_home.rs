@@ -7,8 +7,7 @@
 //! - `settings.json` 에서는 기본 제공자·모델만 고른다. 확장(`packages`) 등은 들이지 않는다 — pi 프로세스 안에서 도는 코드다.
 //! - `mcp.json` 은 물려받지 않고 오퍼레이터의 표만으로 새로 쓴다.
 //!
-//! 이 조각에 없는 것: API 키 연결(lane) 턴의 스레드 홈·`models.json`(`piLaneThreadHome`·`piLaneModelsJson`·
-//! `writePiLaneModels`·`ensurePiLaneThread`)은 sha256 이 필요해 B3c-2c-2 로 미룬다.
+//! API 키 연결(lane) 턴의 스레드 홈·`models.json` 은 `pi_lane`(B3c-2c-2).
 //!
 //! 정본과 다른 점(모두 좁히는 쪽):
 //! - `settings.json`·`mcp.json` 은 임시 파일 → rename 으로 쓴다. 그 자리에 링크가 있어도 링크 대상을 덮지 않는다
@@ -272,12 +271,15 @@ impl PiHomeError {
     }
 }
 
-fn io_err(what: &'static str, path: &Path) -> impl FnOnce(io::Error) -> PiHomeError + use<> {
+pub(crate) fn io_err(
+    what: &'static str,
+    path: &Path,
+) -> impl FnOnce(io::Error) -> PiHomeError + use<> {
     let path = path.to_path_buf();
     move |err| PiHomeError::Io { what, path, err }
 }
 
-fn ensure_private_dir(dir: &Path) -> Result<(), PiHomeError> {
+pub(crate) fn ensure_private_dir(dir: &Path) -> Result<(), PiHomeError> {
     fs::DirBuilder::new()
         .recursive(true)
         .mode(0o700)
@@ -296,7 +298,7 @@ fn tmp_suffix() -> String {
 }
 
 /// 0600 임시 파일(`create_new`·`O_NOFOLLOW`) → rename. 그 자리의 링크는 링크째 바뀐다(대상을 덮지 않는다).
-fn write_private(path: &Path, body: &str) -> Result<(), PiHomeError> {
+pub(crate) fn write_private(path: &Path, body: &str) -> Result<(), PiHomeError> {
     let tmp = PathBuf::from(format!("{}{}", path.display(), tmp_suffix()));
     let res = (|| {
         use std::io::Write;
@@ -327,7 +329,7 @@ fn read_json_object(path: &Path) -> Map<String, Value> {
         .unwrap_or_default()
 }
 
-fn pretty(v: &Value) -> String {
+pub(crate) fn pretty(v: &Value) -> String {
     format!("{}\n", serde_json::to_string_pretty(v).unwrap_or_default())
 }
 
@@ -351,7 +353,7 @@ fn resolve_from(base: &Path, p: &Path) -> PathBuf {
     out
 }
 
-fn is_symlink(p: &Path) -> bool {
+pub(crate) fn is_symlink(p: &Path) -> bool {
     fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink())
 }
 
