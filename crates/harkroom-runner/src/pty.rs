@@ -27,7 +27,9 @@ pub fn compose_spawn(
         .collect::<Vec<_>>()
         .join(" ");
     (
-        "sh".into(),
+        // 절대 경로(security B3b-2 요구): PATH 의 앞자리에 놓인 다른 `sh` 가 래퍼를 가로채지 못하게 한다.
+        // 정본은 맨 `sh` 다 — 이식에서 달라진 점.
+        "/bin/sh".into(),
         vec!["-c".into(), format!("exec {parts} < {}", shell_quote(file))],
     )
 }
@@ -406,7 +408,7 @@ mod tests {
             ("claude", &["-p".to_string()][..])
         );
         let (c, a) = compose_spawn("/a b/claude", &["it's".into()], Some("/tmp/p q.txt"));
-        assert_eq!(c, "sh");
+        assert_eq!(c, "/bin/sh");
         assert_eq!(a[0], "-c");
         assert_eq!(a[1], r#"exec '/a b/claude' 'it'\''s' < '/tmp/p q.txt'"#);
         assert!(accepts_pty_input(None));
