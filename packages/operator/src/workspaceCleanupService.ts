@@ -35,7 +35,7 @@ import {
   type ObservedWorktree,
 } from './workspaceCleanup.js';
 import type { CleanupOwners } from './workspaceCleanupOwners.js';
-import { isThreadDone, lastActivityAt, onlyRebuildableIgnored, repoOfWorktree, scanRepo, type Forward, type ScanDeps } from './workspaceCleanupScan.js';
+import { hasRunnableGitConfig, isThreadDone, lastActivityAt, onlyRebuildableIgnored, repoOfWorktree, runGit, scanRepo, type Forward, type ScanDeps } from './workspaceCleanupScan.js';
 
 export interface WorkspaceCleanupView {
   settings: CleanupSettings;
@@ -72,35 +72,34 @@ export async function readCleanupSettings(configPath: string): Promise<CleanupSe
   return { enabled: c.cleanup?.enabled === true, graceDays: clampGraceDays(c.cleanup?.graceDays ?? CLEANUP_GRACE_DEFAULT) };
 }
 
-const gitEnv = (home: string) => ({ HOME: home, PATH: '/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin', GIT_TERMINAL_PROMPT: '0' });
 
 /** `head` 가 원격 ref 나 PR head 에 들어 있는가. 원격 브랜치는 squash 머지 뒤 사라지므로 PR head 도 본다. */
 async function isPushed(deps: ScanDeps, item: CleanupItem, head: string): Promise<boolean> {
-  const env = gitEnv(deps.home);
   if (item.pr?.headSha === head) return true;
-  const r = await deps.exec(deps.gitPath, ['-C', item.path, 'branch', '-r', '--contains', head], env);
+  const r = await runGit(deps, ['-C', item.path, 'branch', '-r', '--contains', head]);
   if (r.code === 0 && r.stdout.trim()) return true;
   if (item.pr?.headSha) {
     // PR head 의 조상이면 올라간 커밋이다(PR head 를 로컬이 모르면 실패 → 안 올라간 것으로 본다).
-    const a = await deps.exec(deps.gitPath, ['-C', item.path, 'merge-base', '--is-ancestor', head, item.pr.headSha], env);
+    const a = await runGit(deps, ['-C', item.path, 'merge-base', '--is-ancestor', head, item.pr.headSha]);
     if (a.code === 0) return true;
   }
   return false;
 }
 
 export function createCleanupPorts(deps: ScanDeps): CleanupPorts {
-  const env = gitEnv(deps.home);
   return {
     async check(item, running): Promise<CleanupBlockReason | null> {
       if (item.thread && running.has(threadKey(item.thread))) return 'turn-running';
       if (item.kind !== 'worktree') return null;
+      // 저장소 설정에 끌 수 없는 실행 칸이 있으면 검사 자체를 돌리지 않고 막는다(주인 확인 불가).
+      if (await hasRunnableGitConfig(deps, item.path)) return 'uncommitted';
       // `--untracked-files=all`: 저장소 설정 `status.showUntrackedFiles=no` 여도 untracked 를 본다(security n3).
-      const st = await deps.exec(deps.gitPath, ['-C', item.path, 'status', '--porcelain', '--untracked-files=all'], env);
+      const st = await runGit(deps, ['-C', item.path, 'status', '--porcelain', '--untracked-files=all']);
       if (st.code !== 0 || st.stdout.trim()) return 'uncommitted';
       // HEAD·브랜치는 **지금** 다시 읽는다. 원장 값은 스캔 때 것이라 그 사이 커밋이 더 생겼을 수 있다 — 낡은 값으로 "올라감"을
       // 판정하면 새 커밋이 브랜치와 함께 사라진다. 원장과 다르면 다음 회차의 스캔이 새 값을 잴 때까지 막는다.
-      const head = (await deps.exec(deps.gitPath, ['-C', item.path, 'rev-parse', 'HEAD'], env)).stdout.trim();
-      const b = await deps.exec(deps.gitPath, ['-C', item.path, 'symbolic-ref', '-q', '--short', 'HEAD'], env);
+      const head = (await runGit(deps, ['-C', item.path, 'rev-parse', 'HEAD'])).stdout.trim();
+      const b = await runGit(deps, ['-C', item.path, 'symbolic-ref', '-q', '--short', 'HEAD']);
       const branch = b.code === 0 ? b.stdout.trim() || null : null;
       if (!head || head !== item.headSha || branch !== item.branch) return 'unpushed';
       if (!(await isPushed(deps, item, head))) return 'unpushed';
@@ -110,10 +109,10 @@ export function createCleanupPorts(deps: ScanDeps): CleanupPorts {
       if (item.kind !== 'worktree') { await rm(item.path, { recursive: true, force: true }); return; }
       if (!item.repo || !item.headSha) throw new Error('worktree without repo');
       // --force 없이: 변경이 있으면 git 이 거절한다.
-      const r = await deps.exec(deps.gitPath, ['-C', item.repo, 'worktree', 'remove', item.path], env);
+      const r = await runGit(deps, ['-C', item.repo, 'worktree', 'remove', item.path]);
       if (r.code !== 0) throw new Error(r.stderr.trim() || 'git worktree remove failed');
       // 브랜치는 끝이 검사한 커밋 그대로일 때만 지운다(`update-ref -d <ref> <old>` 는 값이 다르면 거절한다).
-      if (item.branch) await deps.exec(deps.gitPath, ['-C', item.repo, 'update-ref', '-d', `refs/heads/${item.branch}`, item.headSha], env);
+      if (item.branch) await runGit(deps, ['-C', item.repo, 'update-ref', '-d', `refs/heads/${item.branch}`, item.headSha]);
     },
     async size(path) {
       const du = await deps.exec('/usr/bin/du', ['-sk', path], { PATH: '/usr/bin:/bin' });
@@ -122,13 +121,14 @@ export function createCleanupPorts(deps: ScanDeps): CleanupPorts {
     },
     removeDeps: (root) => removeRebuildable(root, async (name, symlink) => {
       // 올려 둔 파일이 하나도 없어야 한다(심링크 자체가 올라가 있어도 안 된다).
-      const tracked = await deps.exec(deps.gitPath, ['-C', root, 'ls-files', '--', name], env);
+      if (await hasRunnableGitConfig(deps, root)) return false;
+      const tracked = await runGit(deps, ['-C', root, 'ls-files', '--', name]);
       if (tracked.code !== 0 || tracked.stdout.trim() !== '') return false;
       // 심링크는 링크만 지우므로(대상은 따라가지 않는다) 올라가 있지 않으면 된다. `node_modules/` 처럼 끝에 `/` 가 붙은 무시
       // 규칙은 심링크에 맞지 않아 check-ignore 로는 영영 못 지운다(security 참고, #1210).
       if (symlink) return true;
       // 폴더는 그 저장소가 무시하는 것이어야 한다 — 무시 안 된 폴더의 손 파일은 되살릴 수 없다.
-      const ignored = await deps.exec(deps.gitPath, ['-C', root, 'check-ignore', '-q', '--', name], env);
+      const ignored = await runGit(deps, ['-C', root, 'check-ignore', '-q', '--', name]);
       return ignored.code === 0;
     }),
   };

@@ -240,6 +240,7 @@ describe('주인 장부(러너 보고)', () => {
 });
 
 import { createCleanupPorts, createWorkspaceCleanup, readCleanupSettings } from '../src/workspaceCleanupService.js';
+import { SAFE_GIT_ARGS } from '../src/workspaceCleanupScan.js';
 
 describe('지우기 직전 검사', () => {
   const base = {
@@ -251,7 +252,7 @@ describe('지우기 직전 검사', () => {
   const ports = (replies: Record<string, { code: number; stdout: string }>) => {
     const calls: string[][] = [];
     const all: Record<string, { code: number; stdout: string }> = { ...FRESH, ...replies };
-    const exec = async (_f: string, args: string[]) => { calls.push(args); const k = args.slice(2, 4).join(' '); return { stderr: '', ...(all[k] ?? { code: 1, stdout: '' }) }; };
+    const exec = async (_f: string, args: string[]) => { calls.push(args.slice(SAFE_GIT_ARGS.length)); const a = args.slice(SAFE_GIT_ARGS.length); const k = a.slice(2, 4).join(' '); return { stderr: '', ...(all[k] ?? { code: 1, stdout: '' }) }; };
     return { calls, p: createCleanupPorts({ exec, gitPath: '/usr/bin/git', ghPath: '/gh', ghEnv: {}, home: '/h' }) };
   };
   it('도는 턴 → turn-running(git 을 부르지도 않는다)', async () => {
@@ -282,6 +283,48 @@ describe('지우기 직전 검사', () => {
 
 import { execFileSync } from 'node:child_process';
 import { defaultExec } from '../src/turnMerge.js';
+
+describe('청소기의 git 은 저장소 설정의 실행 칸을 끈 채로 돈다 (실제 git)', () => {
+  const setup = async () => {
+    const d = await mkdtemp(join(tmpdir(), 'cleanup-cfg-'));
+    const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+    const git = (...a: string[]) => execFileSync('git', ['-C', d, ...a], { env });
+    git('init', '-q');
+    git('config', 'user.email', 't@example.com');
+    git('config', 'user.name', 't');
+    await writeFile(join(d, 'a.txt'), 'x');
+    git('add', 'a.txt');
+    git('commit', '-q', '-m', 'i');
+    const mark = join(d, '..', `${d.split('/').pop()}-ran`);
+    const script = join(d, '..', `${d.split('/').pop()}-hook.sh`);
+    await writeFile(script, `#!/bin/sh\ntouch '${mark}'\n`, { mode: 0o755 });
+    return { d, git, mark, script };
+  };
+  const item = (d: string) => ({
+    path: d, kind: 'worktree' as const, state: 'listed' as const, repo: d, branch: null, headSha: 'x',
+    thread: null, pr: null, lastModifiedAt: null, listedAt: null, deleteAfter: null, blockReason: null,
+    actedBy: null, actedAt: null, sizeBefore: null, sizeNow: null,
+  });
+  const ports = () => createCleanupPorts({ exec: defaultExec, gitPath: 'git', ghPath: '/gh', ghEnv: {}, home: process.env.HOME ?? '/' });
+
+  it('저장소 설정의 fsmonitor 명령은 검사 중에 돌지 않는다', async () => {
+    const { d, git, mark, script } = await setup();
+    git('config', 'core.fsmonitor', script);
+    await ports().check(item(d), new Set());
+    await expect(lstat(mark)).rejects.toThrow();
+  });
+  it('-c 로 끌 수 없는 filter 설정이 있으면 git status 를 돌리지 않고 막는다', async () => {
+    const { d, git, mark, script } = await setup();
+    git('config', 'filter.x.clean', script);
+    await writeFile(join(d, '.gitattributes'), '*.txt filter=x\n');
+    expect(await ports().check(item(d), new Set())).toBe('uncommitted');
+    await expect(lstat(mark)).rejects.toThrow();
+    // 의존성 폴더 지우기도 그 저장소에서는 하지 않는다.
+    await mkdir(join(d, 'node_modules'));
+    await ports().removeDeps(d);
+    expect((await lstat(join(d, 'node_modules'))).isDirectory()).toBe(true);
+  });
+});
 
 describe('의존성 폴더 지우기 — 무시되고 올려 둔 파일이 없는 폴더만 (실제 git)', () => {
   it('무시되는 dist·node_modules 는 지우고, 올려 둔 build·무시 안 된 target 은 남긴다', async () => {
