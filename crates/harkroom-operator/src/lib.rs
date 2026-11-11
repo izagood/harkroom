@@ -29,6 +29,7 @@ pub mod local_agents;
 pub mod local_mcp;
 pub mod local_merge;
 pub mod mcp_bridge;
+pub mod mcp_config;
 pub mod mcp_oauth;
 pub mod merge;
 pub mod pr_gate;
