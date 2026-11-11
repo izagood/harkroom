@@ -13,6 +13,7 @@
 //! TS 가 실제로 낸 출력(`golden/merge.json`)과 비교한다.
 //! 파일 잠금(P5)은 전환 동안 Node·Rust 오퍼레이터가 **같은 잠금 파일**을 번갈아 잡는다 — `tests/file_lock_xlang.rs`.
 pub mod api_cli;
+pub mod assignments;
 pub mod bridge;
 pub mod callback_page;
 pub mod codex_hook;

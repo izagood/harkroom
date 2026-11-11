@@ -454,7 +454,8 @@ pub struct McpOAuth {
 pub type ClientIdLookup = Box<dyn Fn(&str) -> Option<String> + Send + Sync>;
 
 /// `reportRejected` 가 한 일. 토큰 값은 `Refreshed` 에만 있다.
-#[derive(Debug, Clone, PartialEq)]
+/// `Debug` 는 손으로 쓴다 — `{:?}` 로 찍어도 토큰 값이 나가지 않게(security #1887 낮음).
+#[derive(Clone, PartialEq)]
 pub enum RejectOutcome {
     /// `unknown`·`not_ok`·`stale`·`cooldown`·`network`·`no_refresh_token`·`client_changed`
     Ignored(&'static str),
@@ -466,11 +467,35 @@ pub enum RejectOutcome {
     Rejected,
 }
 
-/// `tokensFor` 결과 — 쓸 수 있는 토큰과 "인증 필요" 이름.
-#[derive(Debug, Default, Clone, PartialEq)]
+/// `tokensFor` 결과 — 쓸 수 있는 토큰과 "인증 필요" 이름. `Debug` 는 이름만 낸다(값은 가린다).
+#[derive(Default, Clone, PartialEq)]
 pub struct TokensFor {
     pub tokens: std::collections::BTreeMap<String, String>,
     pub expired: Vec<String>,
+}
+
+impl std::fmt::Debug for RejectOutcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ignored(why) => f.debug_tuple("Ignored").field(why).finish(),
+            Self::Refreshed { url, .. } => f
+                .debug_struct("Refreshed")
+                .field("url", url)
+                .field("access_token", &"<가림>")
+                .finish(),
+            Self::Expired => f.write_str("Expired"),
+            Self::Rejected => f.write_str("Rejected"),
+        }
+    }
+}
+
+impl std::fmt::Debug for TokensFor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TokensFor")
+            .field("tokens", &self.tokens.keys().collect::<Vec<_>>())
+            .field("expired", &self.expired)
+            .finish()
+    }
 }
 
 /// `tokensFor` 에 넘기는 정의 한 칸.
@@ -1743,5 +1768,22 @@ mod tests {
             o.report_rejected("s", at, "a").unwrap(),
             RejectOutcome::Ignored("client_changed")
         );
+    }
+
+    #[test]
+    fn debug_does_not_print_token_values() {
+        let r = RejectOutcome::Refreshed {
+            url: "https://mcp.example/x".into(),
+            access_token: "aaaa-token-value".into(),
+        };
+        let d = format!("{r:?}");
+        assert!(!d.contains("aaaa-token-value"), "{d}");
+        assert!(d.contains("mcp.example"));
+        let mut t = TokensFor::default();
+        t.tokens.insert("srv".into(), "bbbb-token-value".into());
+        t.expired.push("old".into());
+        let d = format!("{t:?}");
+        assert!(!d.contains("bbbb-token-value"), "{d}");
+        assert!(d.contains("srv") && d.contains("old"));
     }
 }
