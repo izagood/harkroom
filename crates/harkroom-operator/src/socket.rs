@@ -10,6 +10,7 @@
 //! 이벤트 줄이 서로 끼어들어 한 줄이 깨지지 않게 한다.
 //!
 //! 접속마다 스레드 하나다. 앱 하나가 붙는 로컬 소켓이라 async 런타임을 들이지 않는다(의존이 늘지 않는다).
+use crate::claude_accounts::{self, ClaudeAccounts};
 use crate::codex_accounts::{self, CodexAccounts};
 use crate::local_agents::{self, LocalAgents};
 use crate::local_mcp::{self, LocalMcp};
@@ -34,7 +35,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 pub const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// 포트가 던진 문구를 `bad-payload` 로 싣는다(TS `catch → daemonError('bad-payload', …)`).
-fn bad_payload(message: String) -> DaemonError {
+fn bad(message: String) -> DaemonError {
     err(DaemonErrorCode::BadPayload, message)
 }
 
@@ -261,6 +262,8 @@ pub struct ServerState {
     local_merge: OnceLock<LocalMerge>,
     /// 이 머신의 MCP 정의(A5c). 없으면 `operatorMcp*` 는 거절된다.
     local_mcp: OnceLock<LocalMcp>,
+    /// claude 계정 풀(s21c3a). 없으면 `claude*` 요청은 거절된다.
+    claude_accounts: OnceLock<ClaudeAccounts>,
     /// codex 계정(s21c3c). 없으면 `codex*` 요청은 거절된다.
     codex_accounts: OnceLock<CodexAccounts>,
     /// 로컬 에이전트 설정이 바뀌었다(TS `localAgents.ts` 의 `onChanged`) — 서버 링크가 능력을 다시 낸다. 링크가 없으면 비어 있다.
@@ -301,6 +304,7 @@ impl ServerState {
                 local_agents: OnceLock::new(),
                 local_merge: OnceLock::new(),
                 local_mcp: OnceLock::new(),
+                claude_accounts: OnceLock::new(),
                 codex_accounts: OnceLock::new(),
                 on_agents_changed: OnceLock::new(),
                 runner_link: OnceLock::new(),
@@ -369,6 +373,21 @@ impl ServerState {
             err(
                 DaemonErrorCode::NoSuchRunner,
                 "이 daemon 에는 머지 설정이 배선되지 않았다",
+            )
+        })
+    }
+
+    /// claude 계정 풀을 배선한다(한 번만).
+    pub fn set_claude_accounts(&self, accounts: ClaudeAccounts) {
+        let _ = self.claude_accounts.set(accounts);
+    }
+
+    fn accounts(&self) -> Result<&ClaudeAccounts, DaemonError> {
+        // TS `requireAccounts` 와 같은 꼴.
+        self.claude_accounts.get().ok_or_else(|| {
+            err(
+                DaemonErrorCode::NoSuchRunner,
+                "이 daemon 에는 계정 풀이 배선되지 않았다",
             )
         })
     }
@@ -578,19 +597,56 @@ impl ServerState {
                 eprintln!("MCP OAuth: {name} 토큰 지움");
                 Ok(json!({}))
             }
+            // ── claude 계정 풀(s21c3a) — 로그에는 계정 이름만 적는다(TS 와 같은 규율).
+            "claudeAccountsList" => Ok(self.accounts()?.list()),
+            "claudeAccountsConfigure" => {
+                let port = self.accounts()?;
+                let cfg = claude_accounts::read_configure_payload(payload).map_err(bad)?;
+                port.configure(&cfg).map_err(bad)?;
+                eprintln!(
+                    "계정 설정 갱신: 기본 풀={}",
+                    cfg["defaultPool"].as_str().unwrap_or("(없음)")
+                );
+                Ok(json!({}))
+            }
+            "claudeAccountRemove" => {
+                let port = self.accounts()?;
+                let (pool, account) = claude_accounts::read_account_ref(payload).map_err(bad)?;
+                port.remove_account(&pool, &account).map_err(bad)?;
+                eprintln!("계정 삭제: {pool}/{account}");
+                Ok(json!({}))
+            }
+            "claudePoolRemove" => {
+                let port = self.accounts()?;
+                let pool = claude_accounts::read_pool_ref(payload).map_err(bad)?;
+                port.remove_pool(&pool).map_err(bad)?;
+                eprintln!("풀 삭제: {pool}");
+                Ok(json!({}))
+            }
+            "claudeAccountMove" => {
+                let port = self.accounts()?;
+                let (account, to_pool) =
+                    claude_accounts::read_account_move(payload).map_err(bad)?;
+                let result = port.move_account(&account, &to_pool).map_err(bad)?;
+                eprintln!(
+                    "계정 이전: {account} → {to_pool}/{account} (로그인 유지={})",
+                    result["loggedIn"]
+                );
+                Ok(result)
+            }
             // ── codex 계정(s21c3c) — 로그에는 계정 이름만 적는다(이메일은 사람의 로컬 사실이다).
             "codexAccountsList" => Ok(self.codex()?.list()),
             "codexAccountRemove" => {
                 let port = self.codex()?;
-                let account = codex_accounts::read_account_ref(payload).map_err(bad_payload)?;
-                port.remove_account(&account).map_err(bad_payload)?;
+                let account = codex_accounts::read_account_ref(payload).map_err(bad)?;
+                port.remove_account(&account).map_err(bad)?;
                 eprintln!("codex 계정 삭제: {account}");
                 Ok(json!({}))
             }
             "codexAccountActivate" => {
                 let port = self.codex()?;
-                let account = codex_accounts::read_activate(payload).map_err(bad_payload)?;
-                port.activate(account.as_deref()).map_err(bad_payload)?;
+                let account = codex_accounts::read_activate(payload).map_err(bad)?;
+                port.activate(account.as_deref()).map_err(bad)?;
                 eprintln!(
                     "codex 활성 계정: {}",
                     account.as_deref().unwrap_or("(시스템 기본)")
