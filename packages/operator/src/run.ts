@@ -594,10 +594,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     // 채택하지 않는 다른 사유들(죽음·pid 재사용)과 달리 여기서는 **우리 것이 확실하다** —
     // 장부가 우리 계보의 spawn 만 담고(`adopt.ts` 모듈 주석) pid·커널 시작 시각 검사까지
     // 통과한 러너다. 그래서 SIGTERM 을 보낼 근거가 선다.
-    for (const { entry, verdict } of plan.rejected) {
-      // `retiring`: 앞 오퍼레이터가 회수하던 러너(판이 연달아 바뀐 경우, 2026-11-02). 똑같이 회수하고
-      // 링크를 받는다 — 안 받으면 「모르는 러너」로 거절돼 그 러너는 열린 턴을 중단한다.
-      if (verdict.kind !== 'stale-generation' && verdict.kind !== 'retiring') continue;
+    const retireEntry = (entry: RunnerLedgerEntry) => {
       registry.retire(entry.agentId, entry.pid, entry.incarnationId, {
         // 장부에 다시 적을 사실 — 판이 **또** 바뀌어도 다음 오퍼레이터가 이 러너를 안다.
         ledger: {
@@ -614,9 +611,30 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
       // 회수 러너의 링크도 받는다(#838). 그 러너의 링크는 죽은 옛 오퍼레이터를 향해 있었다 —
       // 여기서 secret 을 적어 두지 않으면 재접속이 영영 거절돼 진행 중이던 턴을 끝낼 길이 없다.
       if (entry.linkSecret) runnerLink.expect(entry.incarnationId, entry.agentId, entry.linkSecret);
+    };
+    for (const { entry, verdict } of plan.rejected) {
+      // `retiring`: 앞 오퍼레이터가 회수하던 러너(판이 연달아 바뀐 경우, 2026-11-02). 똑같이 회수하고
+      // 링크를 받는다 — 안 받으면 「모르는 러너」로 거절돼 그 러너는 열린 턴을 중단한다.
+      if (verdict.kind !== 'stale-generation' && verdict.kind !== 'retiring') continue;
+      retireEntry(entry);
     }
+    // 이 머신의 로컬 설정(`operator.json`)에 아직 있는 에이전트만 채택한다(security c2c-2b — Rust
+    // `adopt_orphans` 의 `is_local` 과 같은 판정). 앱에서 뺀 에이전트의 러너가 장부에 남아 있으면
+    // 우리 러너는 맞으니(pid·커널 시작 시각 통과) 채택하지 않고 회수한다 — 뺀 설정으로 계속 돌지 않게.
+    // 매번 다시 읽는다: `adoptRunner` 요청도 이 함수를 부르고, 그 사이 앱이 설정을 고쳤을 수 있다.
+    const localConfig = await readConfig(join(appDataDir, 'operator', 'operator.json'));
+    const isLocal = (agentId: string) => Object.values(localConfig.communities)
+      .some((section) => Object.hasOwn(section.agents ?? {}, agentId));
     const adopted = [];
     for (const entry of plan.adopt) {
+      if (!isLocal(entry.agentId)) {
+        retireEntry(entry);
+        plan.rejected.push({
+          entry,
+          verdict: { kind: 'unverifiable', reason: '이 머신의 로컬 설정에 없는 에이전트다 — 채택하지 않고 회수한다' },
+        });
+        continue;
+      }
       const record = registry.adopt(entry);
       // 채택한 러너의 링크를 다시 받는다. 러너는 같은 소켓 경로에 같은 id·secret 으로 재접속을
       // 계속 시도한다(`relay.ts`) — 여기서 적어 두지 않으면 그 hello 는 영영 거절이다.
