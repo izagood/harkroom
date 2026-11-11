@@ -35,6 +35,11 @@ pub const LINK_REJECT_LOG_WINDOW_MS: u64 = 10 * 60_000;
 pub const LINK_REJECT_LOG_MAX_KEYS: usize = 256;
 /// 한 소켓에서 답을 기다리는 요청 수 상한(Rust 판만). 하네스 MCP 호출은 직렬이라 평소엔 1~2개다.
 pub const MAX_INFLIGHT_PER_SOCKET: usize = 32;
+/// 인증된 러너 소켓 상한(security C3 후속, 10:56 A안). 러너 하나가 relay·bridge·hook·wrapper 를 열므로
+/// 러너 표(`expect` 된 러너) 수×[`RUNNER_SOCKETS_PER_RUNNER`], 그래도 [`MAX_RUNNER_SOCKETS`] 를 넘지 않는다.
+/// 인증 전 소켓은 `socket::MAX_CONNECTIONS` 자리를 쓰고, 인증되면 그 자리를 놓고 이 몫으로 옮긴다.
+pub const RUNNER_SOCKETS_PER_RUNNER: usize = 4;
+pub const MAX_RUNNER_SOCKETS: usize = 512;
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|p| p.into_inner())
@@ -248,6 +253,17 @@ pub struct RunnerLinkServer {
     linked: Mutex<HashMap<String, Conn>>,
     /// 받아들인 소켓 전부(relay·bridge·hook·wrapper). `close` 가 전부 끊는다 — 남기면 종료가 멈춘다(2026-09-21).
     accepted: Mutex<Vec<Conn>>,
+    /// 인증된 소켓 수 — [`RunnerLinkServer::socket_limit`] 과 견준다.
+    sockets: Arc<AtomicUsize>,
+}
+
+/// 인증된 러너 소켓 자리. 소켓이 끝나면(패닉이어도) 돌려준다.
+struct RunnerSlot(Arc<AtomicUsize>);
+
+impl Drop for RunnerSlot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 fn same(a: &Conn, b: &Conn) -> bool {
@@ -353,7 +369,30 @@ impl RunnerLinkServer {
             expected: Mutex::new(HashMap::new()),
             linked: Mutex::new(HashMap::new()),
             accepted: Mutex::new(Vec::new()),
+            sockets: Arc::new(AtomicUsize::new(0)),
         })
+    }
+
+    /// 지금 받을 수 있는 인증된 러너 소켓 수.
+    pub fn socket_limit(&self) -> usize {
+        (lock(&self.expected).len() * RUNNER_SOCKETS_PER_RUNNER).min(MAX_RUNNER_SOCKETS)
+    }
+
+    fn take_socket_slot(&self) -> Option<RunnerSlot> {
+        let limit = self.socket_limit();
+        let mut n = self.sockets.load(Ordering::Acquire);
+        loop {
+            if n >= limit {
+                return None;
+            }
+            match self
+                .sockets
+                .compare_exchange_weak(n, n + 1, Ordering::AcqRel, Ordering::Acquire)
+            {
+                Ok(_) => return Some(RunnerSlot(Arc::clone(&self.sockets))),
+                Err(now) => n = now,
+            }
+        }
     }
 
     /// spawn 직전에 적는다. 같은 runnerId 를 다시 적으면 덮어쓴다(재spawn).
@@ -601,31 +640,58 @@ impl RunnerLinkServer {
 
     /// `socket::serve_connection` 이 첫 줄을 읽고 넘긴다. `pending` 은 hello 뒤로 이미 풀린 줄,
     /// `buffered` 는 그 뒤에 붙어 온 아직 안 끝난 줄의 머리다. 받으면 이 스레드에서 소켓이 닫힐 때까지 돈다.
+    /// `release` 는 인증 전 자리를 놓는다 — 인증되고 러너 몫 자리를 잡은 뒤에 부른다(못 받으면 돌아갈 때 놓인다).
     pub fn serve(
         self: &Arc<Self>,
         stream: UnixStream,
         hello: &Value,
         pending: Vec<Value>,
         buffered: Vec<u8>,
+        release: impl FnOnce(),
     ) -> bool {
         let Ok(write_half) = stream.try_clone() else {
             return false;
         };
         let conn: Conn = Arc::new(Mutex::new(write_half));
-        self.run(conn, stream, hello, pending, buffered)
+        self.run_with(conn, stream, hello, pending, buffered, release)
     }
 
+    #[cfg(test)]
     fn run(
+        self: &Arc<Self>,
+        conn: Conn,
+        reader: impl Read,
+        hello: &Value,
+        pending: Vec<Value>,
+        buffered: Vec<u8>,
+    ) -> bool {
+        self.run_with(conn, reader, hello, pending, buffered, || {})
+    }
+
+    fn run_with(
         self: &Arc<Self>,
         conn: Conn,
         mut reader: impl Read,
         hello: &Value,
         pending: Vec<Value>,
         buffered: Vec<u8>,
+        release: impl FnOnce(),
     ) -> bool {
         let Some(s) = self.admit(&conn, hello) else {
             return false;
         };
+        let Some(_slot) = self.take_socket_slot() else {
+            self.handler.log(&format!(
+                "러너 링크 거절: runnerId={} — 인증된 러너 소켓 상한({})을 넘었다",
+                s.runner_id,
+                self.socket_limit()
+            ));
+            let _ =
+                conn.write_line(b"{\"type\":\"link.rejected\",\"reason\":\"too_many_sockets\"}\n");
+            conn.destroy();
+            return false;
+        };
+        release();
         if s.kind == RunnerLinkKind::Relay {
             // 같은 러너가 다시 붙으면 앞 소켓을 놓는다 — 재접속이 앞 소켓의 close 보다 먼저 올 수 있다.
             let prev = lock(&self.linked).insert(s.runner_id.clone(), Arc::clone(&conn));
@@ -787,6 +853,86 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         panic!("시간 안에 안 왔다");
+    }
+
+    #[test]
+    fn runner_sockets_have_their_own_cap_and_release_pre_auth_only_after_admit() {
+        let rec = Arc::new(Rec::default());
+        let srv = server(
+            &rec,
+            RUNNER_LINK_MAX_LINE_BYTES,
+            Arc::new(AtomicU64::new(0)),
+        );
+        // 러너가 없으면 인증된 자리도 없다.
+        assert_eq!(srv.socket_limit(), 0);
+        srv.expect("r1", "a1", "s1");
+        assert_eq!(srv.socket_limit(), RUNNER_SOCKETS_PER_RUNNER);
+        let mut held: Vec<_> = (0..RUNNER_SOCKETS_PER_RUNNER)
+            .map(|_| srv.take_socket_slot().expect("자리"))
+            .collect();
+        assert!(srv.take_socket_slot().is_none());
+
+        // 자리가 꽉 찼으면 맞는 secret 이어도 거절 한 줄 + 끊음, 인증 전 자리는 링크가 놓지 않는다(돌아간 뒤 호출자가 놓는다).
+        let c = Arc::new(FakeConn::default());
+        let released = std::sync::atomic::AtomicBool::new(false);
+        let ok = srv.run_with(
+            c.clone(),
+            Cursor::new(Vec::new()),
+            &hello("r1", "s1", None),
+            vec![],
+            vec![],
+            || released.store(true, Ordering::SeqCst),
+        );
+        assert!(!ok);
+        assert!(!released.load(Ordering::SeqCst));
+        assert!(c.destroyed.load(Ordering::SeqCst));
+        assert_eq!(c.lines()[0]["reason"], "too_many_sockets");
+
+        // 하나 놓으면 다시 받고, 그때 인증 전 자리를 놓는다. 끝나면 러너 자리도 돌려준다.
+        drop(held.pop());
+        let c = Arc::new(FakeConn::default());
+        let released = std::sync::atomic::AtomicBool::new(false);
+        assert!(srv.run_with(
+            c.clone(),
+            Cursor::new(Vec::new()),
+            &hello("r1", "s1", None),
+            vec![],
+            vec![],
+            || released.store(true, Ordering::SeqCst),
+        ));
+        assert!(released.load(Ordering::SeqCst));
+        assert_eq!(
+            srv.sockets.load(Ordering::SeqCst),
+            RUNNER_SOCKETS_PER_RUNNER - 1
+        );
+
+        // 나쁜 secret 은 자리를 잡지 않고 인증 전 자리도 놓지 않는다.
+        let c = Arc::new(FakeConn::default());
+        let released = std::sync::atomic::AtomicBool::new(false);
+        assert!(!srv.run_with(
+            c.clone(),
+            Cursor::new(Vec::new()),
+            &hello("r1", "nope", None),
+            vec![],
+            vec![],
+            || released.store(true, Ordering::SeqCst),
+        ));
+        assert!(!released.load(Ordering::SeqCst));
+        assert_eq!(c.lines()[0]["reason"], "unknown_runner");
+    }
+
+    #[test]
+    fn runner_socket_cap_is_bounded() {
+        let rec = Arc::new(Rec::default());
+        let srv = server(
+            &rec,
+            RUNNER_LINK_MAX_LINE_BYTES,
+            Arc::new(AtomicU64::new(0)),
+        );
+        for i in 0..(MAX_RUNNER_SOCKETS / RUNNER_SOCKETS_PER_RUNNER + 10) {
+            srv.expect(&format!("r{i}"), "a", "s");
+        }
+        assert_eq!(srv.socket_limit(), MAX_RUNNER_SOCKETS);
     }
 
     #[test]
