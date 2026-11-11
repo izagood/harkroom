@@ -13,6 +13,7 @@ use crate::turn_keys::TurnKeyLedger;
 use crate::turn_leases::{LeaseCall, TurnLeases};
 use crate::turn_peek::TurnPeek;
 use crate::turn_slots::TurnSlots;
+use crate::workspace_cleanup::owners::CleanupOwners;
 use harkroom_proto::p1::{RunnerLinkKind, RunnerLinkRequest, RunnerLinkResponse};
 use harkroom_proto::p2::OperatorToServerFrame;
 use serde_json::Value;
@@ -120,6 +121,8 @@ pub struct LinkHandler {
     merge: Option<MergeHandlers>,
     /// 러너가 「인박스를 놓았다」(`runner.pollStopped`)를 러너 표에 넘기는 자리(s21c-2c-2b). serve 가 건다.
     poll_stopped: Arc<OnceLock<PollStoppedHook>>,
+    /// 작업 폴더 청소의 주인 장부(s21c5-4) — relay 의 정리 보고를 받는다. serve 가 건다.
+    cleanup_owners: Arc<OnceLock<Arc<CleanupOwners>>>,
 }
 
 /// (agent id, **링크 세션의 인증된** runner id, holding, done).
@@ -469,6 +472,14 @@ impl RunnerLinkHandler for LinkHandler {
                 return Some(r);
             }
         }
+        // 작업 폴더 정리 보고(TS run.ts: turnApi 다음, turnUploads 앞). relay 에서만 받는다 — 판정은 owners 가 한다.
+        if let Some(r) = self
+            .cleanup_owners
+            .get()
+            .and_then(|o| o.maybe_handle(runner_id, agent_id, &req, kind))
+        {
+            return Some(r);
+        }
         // `attachment.upload`(TS turnUploads — run.ts 가로채기의 맨 끝). 경로 판정·읽기·`/uploads` 올리기는 오퍼레이터가 한다.
         let upload = |p: &str, ct: &str, b: Vec<u8>| self.server_post_bytes(agent_id, p, ct, b);
         if let Some(r) = crate::turn_uploads::maybe_handle(
@@ -487,6 +498,9 @@ impl RunnerLinkHandler for LinkHandler {
     fn on_close(&self, runner_id: &str) {
         eprintln!("러너 링크가 끊겼다: runner={runner_id}");
         lock(&self.slots).release_runner(runner_id);
+        if let Some(o) = self.cleanup_owners.get() {
+            o.release_runner(runner_id);
+        }
         // 그 러너 세션의 구독자에게 끝을 알리고 잊는다.
         self.hub.forget_runner(runner_id);
     }
@@ -494,6 +508,9 @@ impl RunnerLinkHandler for LinkHandler {
     /// relay 가 다시 붙었다 — 끊긴 사이 사라진 놓기 요청 때문에 상한이 조용히 줄지 않게 돌려받는다(security #1127 L1).
     fn on_relay_attach(&self, runner_id: &str) {
         lock(&self.slots).release_runner(runner_id);
+        if let Some(o) = self.cleanup_owners.get() {
+            o.release_runner(runner_id);
+        }
     }
 
     fn log(&self, line: &str) {
@@ -507,6 +524,8 @@ pub struct Bridge {
     pub runner_link: Arc<RunnerLinkServer>,
     /// `runner.pollStopped` 를 받을 자리 — serve 가 러너 표(`RunnerTable::note_poll_stopped`)를 건다.
     pub poll_stopped: Arc<OnceLock<PollStoppedHook>>,
+    /// 작업 폴더 청소의 주인 장부를 걸 자리(s21c5-4) — serve 가 건다.
+    pub cleanup_owners: Arc<OnceLock<Arc<CleanupOwners>>>,
     /// 로컬 터미널 허브 — 소켓 서버(앱 구독)와 서버 프레임(`local.view`·`local.writer`)이 같은 것을 쓴다.
     pub hub: Arc<LocalTerminalHub>,
 }
@@ -626,6 +645,7 @@ pub fn build_bridge(
         .with_extra_caps(&["local-terminal"]),
     );
     let poll_stopped: Arc<OnceLock<PollStoppedHook>> = Arc::new(OnceLock::new());
+    let cleanup_owners: Arc<OnceLock<Arc<CleanupOwners>>> = Arc::new(OnceLock::new());
     let leases = Arc::new(Mutex::new(TurnLeases::system()));
     if let Some(root) = secrets.clone() {
         spawn_lease_sweeper(Arc::downgrade(&leases), root, LEASE_SWEEP_EVERY);
@@ -643,6 +663,7 @@ pub fn build_bridge(
         secrets,
         merge,
         poll_stopped: Arc::clone(&poll_stopped),
+        cleanup_owners: Arc::clone(&cleanup_owners),
     });
     // 턴 열쇠 장부(s21b-3a) — 하네스의 bridge·hook·wrapper 소켓이 맡긴 열쇠로 붙는다.
     let runner_link = RunnerLinkServer::new(handler, Some(turn_keys));
@@ -651,6 +672,7 @@ pub fn build_bridge(
         mux,
         runner_link,
         poll_stopped,
+        cleanup_owners,
         hub,
     }
 }
@@ -728,6 +750,7 @@ mod tests {
             peek: Arc::new(TurnPeek::new(|| 0)),
             merge: None,
             poll_stopped: Arc::new(OnceLock::new()),
+            cleanup_owners: Arc::new(OnceLock::new()),
         };
         h.on_frame(
             "r1",
@@ -760,6 +783,7 @@ mod tests {
             peek: Arc::new(TurnPeek::new(|| 0)),
             merge: None,
             poll_stopped: Arc::new(OnceLock::new()),
+            cleanup_owners: Arc::new(OnceLock::new()),
         };
         let call = |name: &str| -> RunnerLinkRequest {
             serde_json::from_value(json!({"type":"mcp.request","id":"q","cause":"c1",
@@ -817,6 +841,7 @@ mod tests {
             peek: Arc::new(TurnPeek::new(|| 0)),
             merge: None,
             poll_stopped: Arc::new(OnceLock::new()),
+            cleanup_owners: Arc::new(OnceLock::new()),
         };
         let req: RunnerLinkRequest = serde_json::from_value(json!({
             "type":"mcp.request","id":"q1","payload":{"jsonrpc":"2.0","id":1,"method":"x"}
@@ -861,6 +886,7 @@ mod tests {
             peek: Arc::new(TurnPeek::new(|| 0)),
             merge: None,
             poll_stopped: Arc::new(OnceLock::new()),
+            cleanup_owners: Arc::new(OnceLock::new()),
         };
         // 링크가 미리 채운 commandFiles 는 서버 머리에 실리지 않는다(사전 2).
         let req: RunnerLinkRequest = serde_json::from_value(json!({
@@ -949,6 +975,7 @@ mod tests {
             peek: Arc::new(TurnPeek::new(|| 0)),
             merge: None,
             poll_stopped: Arc::new(OnceLock::new()),
+            cleanup_owners: Arc::new(OnceLock::new()),
         };
         let keys = json!({"turnId":"t1","keys":{"bridge":"a".repeat(64),"shell":"b".repeat(64)}});
         assert_eq!(
@@ -1042,6 +1069,7 @@ mod tests {
             peek: Arc::new(TurnPeek::new(|| 0)),
             merge: None,
             poll_stopped: hook,
+            cleanup_owners: Arc::new(OnceLock::new()),
         };
         // 본문에 다른 runnerId 를 실어도 세션 id(r1)로 간다.
         h.on_notice(
@@ -1074,6 +1102,7 @@ mod tests {
             peek: Arc::new(TurnPeek::new(|| 0)),
             merge: None,
             poll_stopped: Arc::new(OnceLock::new()),
+            cleanup_owners: Arc::new(OnceLock::new()),
         };
         h.on_notice(
             "r1",

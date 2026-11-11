@@ -133,11 +133,47 @@ pub(super) fn git_env(home: &str) -> Vec<(String, String)> {
             "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin".into(),
         ),
         ("GIT_TERMINAL_PROMPT".into(), "0".into()),
+        // 시스템·전역 설정을 읽지 않는다(security c5 A — 아래 SAFE_GIT_ARGS 주석).
+        ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
+        ("GIT_CONFIG_GLOBAL".into(), "/dev/null".into()),
     ]
 }
 
 pub(super) fn args(a: &[&str]) -> Vec<String> {
     a.iter().map(|s| s.to_string()).collect()
+}
+
+/// 청소기의 git 은 **에이전트가 쓸 수 있는 저장소** 안에서 오퍼레이터 권한으로 돈다. 그래서 git 호출에서 저장소 설정의 실행
+/// 칸을 끈다(security c5 A, TS #1924 와 같다) — 선택적 잠금을 잡지 않고 fsmonitor·hooks 를 덮는다. 시스템·전역 설정은
+/// `git_env` 가 끈다. `-c` 로 덮을 수 없는 칸은 `has_runnable_git_config` 가 보고 막는다.
+pub const SAFE_GIT_ARGS: [&str; 7] = [
+    "--no-optional-locks",
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "core.hooksPath=/dev/null",
+    "-c",
+    "log.showSignature=false",
+];
+
+/// git 인자 — 앞에 `SAFE_GIT_ARGS` 를 붙인다. 청소기의 git 호출은 모두 이것을 쓴다.
+pub(super) fn git_args(a: &[&str]) -> Vec<String> {
+    SAFE_GIT_ARGS
+        .iter()
+        .chain(a.iter())
+        .map(|s| s.to_string())
+        .collect()
+}
+
+/// 저장소 설정에 `-c` 로 끌 수 없는 실행 칸(`filter.<드라이버>.*`)이 있는가. 있거나 못 읽으면 true — 그 worktree 는
+/// 「주인 확인 불가」로 보고 검사·지우기를 하지 않는다. 설정 읽기는 그 칸을 부르지 않는다.
+pub fn has_runnable_git_config(deps: &ScanDeps, path: &str) -> bool {
+    let r = (deps.exec)(
+        &deps.git_path,
+        &git_args(&["-C", path, "config", "--get-regexp", "^filter\\."]),
+        &git_env(&deps.home),
+    );
+    r.code != 1
 }
 
 fn mtime_ms(m: &std::fs::Metadata) -> Option<u64> {
@@ -186,7 +222,7 @@ pub fn pr_head_is_ours(
     }
     (deps.exec)(
         &deps.git_path,
-        &args(&["-C", path, "merge-base", "--is-ancestor", pr, h]),
+        &git_args(&["-C", path, "merge-base", "--is-ancestor", pr, h]),
         &git_env(&deps.home),
     )
     .code
@@ -232,7 +268,7 @@ pub fn scan_repo(
     let env = git_env(&deps.home);
     let r = (deps.exec)(
         &deps.git_path,
-        &args(&["-C", repo, "worktree", "list", "--porcelain"]),
+        &git_args(&["-C", repo, "worktree", "list", "--porcelain"]),
         &env,
     );
     if r.code != 0 {
@@ -244,7 +280,7 @@ pub fn scan_repo(
     };
     let origin = (deps.exec)(
         &deps.git_path,
-        &args(&["-C", &main.path, "remote", "get-url", "origin"]),
+        &git_args(&["-C", &main.path, "remote", "get-url", "origin"]),
         &env,
     );
     let slug = (origin.code == 0)
@@ -318,7 +354,7 @@ pub fn repo_of_worktree(deps: &ScanDeps, path: &str) -> Option<String> {
     }
     let r = (deps.exec)(
         &deps.git_path,
-        &args(&[
+        &git_args(&[
             "-C",
             path,
             "rev-parse",
@@ -341,7 +377,7 @@ pub fn last_activity_at(deps: &ScanDeps, path: &str) -> Option<String> {
     let env = git_env(&deps.home);
     let r = (deps.exec)(
         &deps.git_path,
-        &args(&["-C", path, "log", "-1", "--format=%cI", "HEAD"]),
+        &git_args(&["-C", path, "log", "-1", "--format=%cI", "HEAD"]),
         &env,
     );
     let commit = (r.code == 0)
@@ -349,7 +385,7 @@ pub fn last_activity_at(deps: &ScanDeps, path: &str) -> Option<String> {
         .flatten();
     let g = (deps.exec)(
         &deps.git_path,
-        &args(&[
+        &git_args(&[
             "-C",
             path,
             "rev-parse",
@@ -379,12 +415,17 @@ pub fn last_activity_at(deps: &ScanDeps, path: &str) -> Option<String> {
 
 /// TS `onlyRebuildableIgnored` — 무시된 것이 모두 다시 만들 수 있는 폴더(마지막 마디가 그 이름)인가. git 이 못 읽으면 false.
 pub fn only_rebuildable_ignored(deps: &ScanDeps, path: &str) -> bool {
+    if has_runnable_git_config(deps, path) {
+        return false;
+    }
     let r = (deps.exec)(
         &deps.git_path,
-        &args(&[
+        &git_args(&[
             "-C",
             path,
             "status",
+            // 서브모듈 안으로 들어가지 않는다(그 저장소의 설정은 검사 밖이다).
+            "--ignore-submodules=all",
             "--porcelain",
             "-z",
             "--ignored=matching",
