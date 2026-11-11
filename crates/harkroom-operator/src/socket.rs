@@ -306,8 +306,17 @@ impl ServerState {
     }
 
     /// 러너 종료 알림을 배선한다(한 번만). 서버 링크(`serve::spawn_server_link`)가 건다.
+    ///
+    /// 한 번만이어도 되는 근거: `serve_main` 은 `--base-url` 하나로 `ServerState` 하나를 만들고
+    /// `spawn_server_link` 를 한 번만 부른다 — 한 프로세스에 커뮤니티(서버 링크) 하나다. 다중 인스턴스는
+    /// 프로세스를 따로 띄운다(A1). 이 전제가 깨져 두 번째 링크가 걸리면 그 종료 통지가 조용히 빠지지 않게
+    /// stderr 에 남긴다.
     pub fn set_on_runner_exit(&self, hook: RunnerExitHook) {
-        let _ = self.on_runner_exit.set(hook);
+        if self.on_runner_exit.set(hook).is_err() {
+            eprintln!(
+                "러너 종료 알림이 이미 배선돼 있다 — 두 번째 서버 링크의 종료 통지는 전달되지 않는다"
+            );
+        }
     }
 
     /// 이 머신의 MCP 정의(A5c) — 배정 조정기가 같은 OAuth 저장소를 쓴다.
