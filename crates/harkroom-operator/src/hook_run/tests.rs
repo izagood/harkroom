@@ -490,3 +490,53 @@ fn fallback_per_mode() {
     assert_eq!(f(&["pretool", "--codex"]).exit, 2);
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+#[test]
+fn records_and_gate_do_not_follow_symlinks() {
+    let root = std::env::temp_dir().join(format!("hk-hooknf-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("real")).unwrap();
+    let elsewhere = root.join("elsewhere.jsonl");
+    std::fs::write(&elsewhere, b"").unwrap();
+    let rec = json!({"event": "x"});
+
+    // 기록 폴더가 심링크면 쓰지도 읽지도 않는다.
+    let sock_dir = root.join("sockdir");
+    std::fs::create_dir_all(&sock_dir).unwrap();
+    std::os::unix::fs::symlink(root.join("real"), sock_dir.join("permission-hook")).unwrap();
+    let via_dir = sock_dir.join("permission-hook").join("d.jsonl");
+    append_record(&via_dir, &rec);
+    assert!(!root.join("real").join("d.jsonl").exists());
+    std::fs::write(root.join("real").join("d.jsonl"), b"{}\n").unwrap();
+    assert!(read_record(&via_dir).is_none());
+
+    // 기록 파일이 심링크면 쓰지도 읽지도 않는다.
+    let plain = root.join("plain");
+    std::fs::create_dir_all(&plain).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, plain.join("f.jsonl")).unwrap();
+    append_record(&plain.join("f.jsonl"), &rec);
+    assert_eq!(std::fs::read(&elsewhere).unwrap(), b"");
+    assert!(read_record(&plain.join("f.jsonl")).is_none());
+
+    // 일반 폴더·파일에는 쓰고 읽는다(0600).
+    let ok = plain.join("ok.jsonl");
+    append_record(&ok, &rec);
+    assert_eq!(read_record(&ok).unwrap(), b"{\"event\":\"x\"}\n");
+    assert_eq!(
+        std::fs::metadata(&ok).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+
+    // gate 파일도 심링크를 따라가지 않는다.
+    let gate_link = plain.join("gate");
+    std::os::unix::fs::symlink(&elsewhere, &gate_link).unwrap();
+    assert!(
+        open_nofollow(
+            &gate_link,
+            std::fs::OpenOptions::new().append(true).create(true)
+        )
+        .is_err()
+    );
+    assert_eq!(std::fs::read(&elsewhere).unwrap(), b"");
+    let _ = std::fs::remove_dir_all(&root);
+}

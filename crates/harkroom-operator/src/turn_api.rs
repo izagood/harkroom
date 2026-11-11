@@ -206,13 +206,13 @@ pub fn exchange_token(
     if token_url.bytes().any(|b| !(0x21..=0x7e).contains(&b)) {
         return Err(0);
     }
-    let body = format!(
+    let body = crate::wipe::WipedString(format!(
         "grant_type={}&client_id={}&{}={}",
         form_encode(&form.grant_type),
         form_encode(&form.client_id),
         form_encode(&form.key_field),
         form_encode(key)
-    );
+    ));
     let headers = [
         (
             "content-type".to_string(),
@@ -221,16 +221,28 @@ pub fn exchange_token(
         ("accept".to_string(), "application/json".to_string()),
         ("user-agent".to_string(), USER_AGENT.to_string()),
     ];
-    let Ok(res) = fetch(&ApiRequest {
+    let mut req = ApiRequest {
         method: "POST",
         url: token_url,
         headers: &headers,
-        body: Some(body.into_bytes()),
+        body: Some(body.as_bytes().to_vec()),
         timeout: EXCHANGE_TIMEOUT,
         read_max: EXCHANGE_READ_MAX,
-    }) else {
+    };
+    let sent = fetch(&req);
+    if let Some(b) = req.body.as_mut() {
+        crate::wipe::wipe_bytes(b);
+    }
+    let Ok(mut res) = sent else {
         return Err(0);
     };
+    // 응답 본문에는 받은 토큰이 들어 있다 — 꺼낸 뒤 지운다.
+    let out = read_exchange(&res);
+    crate::wipe::wipe_bytes(&mut res.body);
+    out
+}
+
+fn read_exchange(res: &ApiReply) -> Result<(String, f64), u16> {
     // 3xx 도 실패다 — Location 을 따라가지 않는다.
     if !(200..300).contains(&res.status) || res.truncated {
         return Err(res.status);
@@ -456,10 +468,16 @@ pub fn is_api_call(req: &RunnerLinkRequest) -> bool {
         && payload.pointer("/params/name").and_then(Value::as_str) == Some(API_TOOL)
 }
 
-/// 받은 토큰 캐시 한 칸.
+/// 받은 토큰 캐시 한 칸. 밀려나거나 버려질 때 토큰을 0 으로 지운다.
 struct Cached {
     token: String,
     until_ms: f64,
+}
+
+impl Drop for Cached {
+    fn drop(&mut self) {
+        crate::wipe::wipe_string(&mut self.token);
+    }
 }
 
 /// TS `createTurnApi` 한 벌. 토큰 캐시는 메모리에만, 키는 (에이전트·연결 주소·토큰 주소·form·키 값) sha256 지문.
@@ -562,12 +580,22 @@ impl TurnApi {
         let Ok(mut g) = serde_json::from_str::<Map<String, Value>>(&text) else {
             return fail("bad_reply", "unparseable api-checks reply");
         };
-        let value = g
-            .remove("valueBase64")
-            .and_then(|v| v.as_str().map(str::to_string))
-            .and_then(|b| base64::engine::general_purpose::STANDARD.decode(b).ok())
-            .map(|b| String::from_utf8_lossy(&b).into_owned())
-            .unwrap_or_default();
+        // 키 값 — 이 호출이 끝나면(어느 길로 돌아가든) 0 으로 지운다. 디코드 중간 버퍼도 지운다.
+        let value = crate::wipe::WipedString(match g.remove("valueBase64") {
+            Some(Value::String(mut b64)) => {
+                let decoded = base64::engine::general_purpose::STANDARD.decode(&b64);
+                crate::wipe::wipe_string(&mut b64);
+                match decoded {
+                    Ok(mut b) => {
+                        let s = String::from_utf8_lossy(&b).into_owned();
+                        crate::wipe::wipe_bytes(&mut b);
+                        s
+                    }
+                    Err(_) => String::new(),
+                }
+            }
+            _ => String::new(),
+        });
         let gs = |k: &str| g.get(k).and_then(Value::as_str).map(str::to_string);
         let base = gs("baseUrl").unwrap_or_default();
         let auth_kind = gs("authKind").unwrap_or_default();
@@ -604,10 +632,11 @@ impl TurnApi {
             }
         };
 
-        let mut headers: Vec<(String, String)> = vec![
+        // authorization 칸에 키·토큰이 들어간다 — 버릴 때 지운다.
+        let mut headers = crate::wipe::WipedHeaders(vec![
             ("accept".into(), "application/json, */*;q=0.5".into()),
             ("user-agent".into(), USER_AGENT.into()),
-        ];
+        ]);
         let form = g.get("tokenForm").and_then(Value::as_object).and_then(|f| {
             let s = |k: &str| f.get(k).and_then(Value::as_str).map(str::to_string);
             Some(TokenForm {
@@ -623,16 +652,17 @@ impl TurnApi {
             }
             _ => None,
         };
-        let mut access = String::new();
+        let mut access = crate::wipe::WipedString::default();
         let mut from_cache = false;
-        let get_token = |access: &mut String, from_cache: &mut bool| -> bool {
+        let get_token = |access: &mut crate::wipe::WipedString, from_cache: &mut bool| -> bool {
             let (Some(tk), Some(u), Some(f)) = (&tk, &token_url, &form) else {
                 return false;
             };
             if let Some(hit) = self.cache().get(tk)
                 && hit.until_ms > (self.now_ms)()
             {
-                access.clone_from(&hit.token);
+                crate::wipe::wipe_string(access);
+                access.push_str(&hit.token);
                 *from_cache = true;
                 return true;
             }
@@ -646,7 +676,10 @@ impl TurnApi {
                             until_ms: (self.now_ms)() + ttl * 1000.0,
                         },
                     );
-                    *access = t;
+                    crate::wipe::wipe_string(access);
+                    access.push_str(&t);
+                    let mut t = t;
+                    crate::wipe::wipe_string(&mut t);
                     true
                 }
                 Err(_) => false,
@@ -665,18 +698,22 @@ impl TurnApi {
                     report(0, 0.0, 0, Some("token_exchange_failed"));
                     return fail("token_exchange_failed", "token exchange failed");
                 }
-                headers.push(("authorization".into(), format!("Bearer {access}")));
+                headers
+                    .0
+                    .push(("authorization".into(), format!("Bearer {}", *access)));
             }
-            "bearer" => headers.push(("authorization".into(), format!("Bearer {value}"))),
+            "bearer" => headers
+                .0
+                .push(("authorization".into(), format!("Bearer {}", *value))),
             "header" => {
                 if let Some(h) = gs("authHeader").filter(|h| !h.is_empty()) {
-                    headers.push((h.to_ascii_lowercase(), value.clone()));
+                    headers.0.push((h.to_ascii_lowercase(), (*value).clone()));
                 }
             }
             _ => {}
         }
         if parsed.body.is_some() {
-            headers.push((
+            headers.0.push((
                 "content-type".into(),
                 parsed
                     .content_type
@@ -697,7 +734,7 @@ impl TurnApi {
                 read_max: RESPONSE_READ_MAX,
             })
         };
-        let mut res = send(&headers);
+        let mut res = send(&headers.0);
         // 캐시 토큰이 401 이면 버리고 한 번만 다시 교환해 다시 보낸다.
         if matches!(&res, Ok(r) if r.status == 401) && from_cache {
             if let Some(tk) = &tk {
@@ -712,10 +749,11 @@ impl TurnApi {
                 );
                 return fail("token_exchange_failed", "token exchange failed");
             }
-            for h in headers.iter_mut().filter(|h| h.0 == "authorization") {
-                h.1 = format!("Bearer {access}");
+            for h in headers.0.iter_mut().filter(|h| h.0 == "authorization") {
+                crate::wipe::wipe_string(&mut h.1);
+                h.1 = format!("Bearer {}", *access);
             }
-            res = send(&headers);
+            res = send(&headers.0);
         }
         let scrub = |t: &str| scrub_value(&scrub_value(t, &value), &access);
         let res = match res {

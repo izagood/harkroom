@@ -165,6 +165,23 @@ describe('community', () => {
     expect(calls).toEqual([]);
     expect(lines.some((l) => l.includes('stranger'))).toBe(true);
   });
+
+  it('프레임의 agentId 와 정의의 agentId 가 다르면 거절한다 — 남의 로컬 설정으로 뜨지 않게(security #1892)', async () => {
+    let handlers: Parameters<LinkDialer>[2] | null = null;
+    const dial: LinkDialer = (_u, _t, h) => { handlers = h; h.onOpen({ send: () => {}, close: () => {} }); };
+    const { reconciler, calls } = fakeReconciler();
+    const lines: string[] = [];
+    const c = createCommunity({
+      baseUrl: 'https://example.com', token: 'hkop_x', agents: { 'a-1': { workingDir: '/w' } },
+      reconciler, dial, schedule: () => {}, log: (l) => lines.push(l),
+    });
+    c.start();
+    handlers!.onMessage(JSON.stringify({ type: 'assign', agentId: 'a-1', definition: { agentId: 'b-2', handle: 'b' } }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toEqual([]);
+    expect(c.assignments.size).toBe(0);
+    expect(lines.some((l) => l.includes('b-2'))).toBe(true);
+  });
 });
 
 // 교차 불변식(스펙 §7)의 재료 — 오퍼레이터는 자기 소유자를 `/operators/self` 로 안다. 그리고

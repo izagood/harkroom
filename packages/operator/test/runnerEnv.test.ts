@@ -206,12 +206,26 @@ describe('러너 환경 — daemon 의 사용자 환경을 물려준다', () => 
   it('물려주는 것은 전체다 — 화이트리스트를 두면 다음 하네스가 읽는 것을 또 빠뜨린다', async () => {
     const { host, envs } = 엿보는host();
     const registry = new RunnerRegistry(SLEEPER, host);
-    process.env.HARKROOM_TEST_CANARY = '카나리아';
-    try {
+    await withProcessEnv({ HARKROOM_TEST_CANARY: '카나리아' }, async () => {
       await registry.spawnRunner('a1', { PATH: '/usr/bin' });
       expect(envs[0]!.HARKROOM_TEST_CANARY).toBe('카나리아');
+    });
+  });
+});
+
+describe('withProcessEnv — 시험이 바꾼 process.env 를 원래 값으로 되돌린다', () => {
+  it('있던 값은 되살리고 없던 키는 지운다(던져도)', async () => {
+    process.env.HARKROOM_TEST_KEEP = '원래';
+    delete process.env.HARKROOM_TEST_NEW;
+    try {
+      await expect(withProcessEnv({ HARKROOM_TEST_KEEP: '바뀜', HARKROOM_TEST_NEW: '새것' }, async () => {
+        expect(process.env.HARKROOM_TEST_KEEP).toBe('바뀜');
+        throw new Error('boom');
+      })).rejects.toThrow('boom');
+      expect(process.env.HARKROOM_TEST_KEEP).toBe('원래');
+      expect('HARKROOM_TEST_NEW' in process.env).toBe(false);
     } finally {
-      delete process.env.HARKROOM_TEST_CANARY;
+      delete process.env.HARKROOM_TEST_KEEP;
     }
   });
 });
@@ -240,17 +254,12 @@ describe('러너 환경 — 조정기 소유 키는 부모에게서 물려받지
   it('spawnRunner 경로에서도 걷힌다 — 셸에 있던 COMMAND_HOOK·WORKING_DIR 이 새지 않는다', async () => {
     const { host, envs } = 엿보는host();
     const registry = new RunnerRegistry(SLEEPER, host);
-    process.env.HARKROOM_COMMAND_HOOK = '1';
-    process.env.HARKROOM_WORKING_DIR = '/남의/폴더';
-    try {
+    await withProcessEnv({ HARKROOM_COMMAND_HOOK: '1', HARKROOM_WORKING_DIR: '/남의/폴더' }, async () => {
       await registry.spawnRunner('a1', { PATH: '/usr/bin' });
       expect(envs[0]!.HARKROOM_COMMAND_HOOK).toBeUndefined();
       expect(envs[0]!.HARKROOM_WORKING_DIR).toBeUndefined();
       expect(envs[0]!.USER).toBe(process.env.USER);
-    } finally {
-      delete process.env.HARKROOM_COMMAND_HOOK;
-      delete process.env.HARKROOM_WORKING_DIR;
-    }
+    });
   });
 
   it('목록 대조 — 조정기가 적는 키가 전부 목록에 있고, Rust 목록과 같다', () => {
@@ -279,3 +288,20 @@ describe('러너 환경 — 조정기 소유 키는 부모에게서 물려받지
     expect(rust).toEqual([...COORDINATOR_OWNED_ENV]);
   });
 });
+
+/**
+ * `vars` 를 process.env 에 잠깐 싣고 `fn` 을 돌린 뒤 **원래 값으로** 되돌린다(#1891 nit) — 그냥 `delete` 하면 시험을 돌린 셸이
+ * 그 키를 갖고 있었을 때 값이 사라져 뒤 시험이 다른 환경에서 돈다.
+ */
+async function withProcessEnv(vars: Record<string, string>, fn: () => Promise<void>): Promise<void> {
+  const saved = new Map<string, string | undefined>();
+  for (const [k, v] of Object.entries(vars)) { saved.set(k, process.env[k]); process.env[k] = v; }
+  try {
+    await fn();
+  } finally {
+    for (const [k, v] of saved) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
