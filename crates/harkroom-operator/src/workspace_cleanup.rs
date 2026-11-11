@@ -534,7 +534,7 @@ fn event(at: &str, item: &CleanupItem, action: EventAction) -> CleanupEvent {
     }
 }
 
-fn trim_events(mut v: Vec<CleanupEvent>) -> Vec<CleanupEvent> {
+pub(super) fn trim_events(mut v: Vec<CleanupEvent>) -> Vec<CleanupEvent> {
     let skip = v.len().saturating_sub(MAX_EVENTS);
     v.drain(..skip);
     v
@@ -964,7 +964,9 @@ pub fn run_sweep(
 }
 
 pub mod owners;
+pub mod ports;
 pub mod scan;
+pub mod service;
 
 #[cfg(test)]
 mod tests;
