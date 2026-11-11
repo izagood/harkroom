@@ -95,7 +95,8 @@ jobs:
 
       - run: pnpm --filter @harkroom/desktop exec vite build
 
-      - run: pnpm --filter @harkroom/e2e exec playwright install --with-deps chromium
+      # 시스템 라이브러리는 러너 이미지에 있는 것을 쓴다 — --with-deps 의 apt 받기는 Ubuntu 미러 장애 때 job 전체를 막는다.
+      - run: pnpm --filter @harkroom/e2e exec playwright install chromium
 
       - run: pnpm --filter @harkroom/e2e e2e:web
         env:
