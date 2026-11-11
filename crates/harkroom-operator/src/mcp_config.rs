@@ -9,18 +9,29 @@ use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 /// 늘 들어가고 정의로 덮어쓸 수 없는 둘(TS `RESERVED_MCP_NAMES`).
 pub use crate::local_mcp::RESERVED_MCP_SERVER_NAMES;
 
 /// TS `buildMcpConfig` 의 결과.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct BuiltMcpConfig {
     pub mcp_servers: Map<String, Value>,
     pub missing: Vec<String>,
     pub needs_auth: Vec<String>,
+}
+
+/// `mcp_servers` 에는 원격 서버의 `Authorization: Bearer <토큰>` 이 구워져 있다 — 이름만 낸다(#1887·#1888 과 같은 가림).
+impl std::fmt::Debug for BuiltMcpConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BuiltMcpConfig")
+            .field("mcp_servers", &self.mcp_servers.keys().collect::<Vec<_>>())
+            .field("missing", &self.missing)
+            .field("needs_auth", &self.needs_auth)
+            .finish()
+    }
 }
 
 /// TS `buildMcpConfig`. `tokens` 는 오퍼레이터가 든 OAuth 토큰(이름 → access token), `expired` 는 refresh 가 거절된 이름.
@@ -169,6 +180,9 @@ pub fn write_agent_mcp_config(
         Ok(_) => {}
         Err(e) => return Err(format!("MCP 설정 폴더를 보지 못했다: {e}")),
     }
+    // 폴더가 이미 있었으면 `DirBuilder::mode` 는 권한을 건드리지 않는다 — 끝에서 0700 으로 다시 맞춘다(#1880 `ensure_dir` 과 같다).
+    fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
+        .map_err(|e| format!("MCP 설정 폴더 권한을 맞추지 못했다: {e}"))?;
     let path = dir.join(format!("{agent_id}.json"));
     let text = serde_json::to_string_pretty(&json!({ "mcpServers": mcp_servers }))
         .map_err(|e| format!("MCP 설정을 직렬화하지 못했다: {e}"))?;
@@ -324,5 +338,36 @@ mod tests {
         std::os::unix::fs::symlink(&real, &link).unwrap();
         assert!(write_agent_mcp_config(&link, "a", &m).is_err());
         assert_eq!(fs::read_dir(&real).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn existing_loose_dir_is_tightened_to_0700() {
+        let dir = tmp("loose").join("mcp");
+        fs::create_dir_all(&dir).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+        let mut m = Map::new();
+        m.insert("harkroom".into(), json!({"command": "/b"}));
+        write_agent_mcp_config(&dir, "a", &m).unwrap();
+        assert_eq!(
+            fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+    }
+
+    #[test]
+    fn debug_hides_baked_bearer_token() {
+        let mut m = Map::new();
+        m.insert(
+            "remote".into(),
+            json!({"type": "http", "headers": {"Authorization": "Bearer sekret-tok"}}),
+        );
+        let b = BuiltMcpConfig {
+            mcp_servers: m,
+            missing: vec![],
+            needs_auth: vec![],
+        };
+        let s = format!("{b:?}");
+        assert!(!s.contains("sekret-tok"), "{s}");
+        assert!(s.contains("remote"), "{s}");
     }
 }
