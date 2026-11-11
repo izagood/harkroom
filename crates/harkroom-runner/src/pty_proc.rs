@@ -272,7 +272,8 @@ pub fn spawn_pty(spec: &SpawnSpec<'_>, kill_grace: Duration) -> Result<PtyProces
             &mut slave,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
-            &mut ws,
+            // Linux libc 는 *const winsize, macOS 는 *mut — 날 포인터로 넘겨 둘 다 맞춘다.
+            std::ptr::addr_of_mut!(ws),
         )
     })
     .map_err(SpawnError::Io)?;
