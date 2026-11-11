@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.88"
 license = "Apache-2.0"
 publish = false
-description = "Rust port of the harkroom runner (S3 B3). B3a: config (env), runner link client (operator unix socket: hello, request/response, reconnect/backoff, rejection give-up, sticky pollStopped, notices), startup. B3b-1: PTY pure half (spawn compose, paste sanitize, ready/gate screens, ring buffer, output coalescer). B3b-2a: PTY process half (openpty spawn, write/resize, SIGTERM→SIGKILL grace, reader) and recorder. B3c-2a: isolated CODEX_HOME (active codex account auth link) and workspace trust / account settings scrub. Not wired in yet — the operator still spawns the node runner."
+description = "Rust port of the harkroom runner (S3 B3). B3a: config (env), runner link client (operator unix socket: hello, request/response, reconnect/backoff, rejection give-up, sticky pollStopped, notices), startup. B3b-1: PTY pure half (spawn compose, paste sanitize, ready/gate screens, ring buffer, output coalescer). B3b-2a: PTY process half (openpty spawn, write/resize, SIGTERM→SIGKILL grace, reader) and recorder. B3b-2b: prompt injection state machine (ready/quiet, waitFor, gate deferral, bracketed paste + settled Enter, unsent nudge, in-turn gate, delivery confirm) and the PTY turn loop (run_pty_turn: reader/waiter threads, coalesced output, timeout, recorder). Not wired in yet — the operator still spawns the node runner."
 
 [[bin]]
 name = "harkroom-runner-rs"
