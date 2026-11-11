@@ -21,10 +21,18 @@ pub struct ExecutableNotFound {
     pub path: Option<String>,
 }
 
+/// 화면·서버로 갈 수 있는 문구에는 **명령 이름만** 싣는다 — `PATH` 는 이 맥의 로컬 경로라 `message.fail` 로 채팅에 남으면
+/// 안 된다(security B3b-2a 낮음). 정본은 `PATH=` 를 싣는다. 진단용 전체는 `local_detail()` 로 로컬 로그에만 쓴다.
 impl std::fmt::Display for ExecutableNotFound {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
+        write!(f, "executable not found: {}", self.command)
+    }
+}
+
+impl ExecutableNotFound {
+    /// 로컬 로그 전용 — 찾아본 `PATH` 까지 싣는다.
+    pub fn local_detail(&self) -> String {
+        format!(
             "executable not found: {} (PATH={})",
             self.command,
             self.path.as_deref().unwrap_or("")

@@ -160,3 +160,15 @@ fn master_is_not_leaked_into_child() {
     let exit = p.wait().unwrap();
     assert_eq!(exit.code, Some(0));
 }
+
+#[test]
+fn not_found_message_hides_local_path() {
+    let e = ExecutableNotFound {
+        command: "claude".into(),
+        path: Some("/opt/secret-dir/bin:/usr/bin".into()),
+    };
+    let shown = e.to_string();
+    assert_eq!(shown, "executable not found: claude");
+    assert!(!format!("{}", SpawnError::NotFound(e.clone())).contains("secret-dir"));
+    assert!(e.local_detail().contains("PATH=/opt/secret-dir/bin"));
+}
