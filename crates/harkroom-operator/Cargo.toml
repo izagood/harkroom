@@ -26,3 +26,8 @@ ureq = { version = "=3.5.0", default-features = false, features = ["rustls", "js
 # PKCE(sha256)·state 난수는 rustls 가 이미 싣는 ring 으로 — getrandom 0.4 는 wasm 쪽 wit-bindgen·syn 3 을 끌고 온다.
 ring = "=0.17.14"
 base64 = "=0.23.1"
+# s21a 서버 링크 WS. tungstenite 는 handshake 만 켜고 TLS 는 rustls 를 직접 감싼다(ureq 와 같은 ring·webpki-roots).
+# 0.30 은 rand 0.10(getrandom 0.4)을 끌고 와 0.28 을 쓴다.
+tungstenite = { version = "=0.28.0", default-features = false, features = ["handshake"] }
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+webpki-roots = "=1.0.11"

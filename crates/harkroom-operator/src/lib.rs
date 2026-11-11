@@ -25,6 +25,7 @@ pub mod runners;
 pub mod serve;
 pub mod server_link;
 pub mod socket;
+pub mod ws_dialer;
 
 /// 시험 전용: 러너 시험의 fork 와, 소켓을 bind 했다 닫아 「잔해」를 만드는 시험이 겹치지 않게 한다.
 /// fork 와 exec 사이에 자식이 그 듣는 fd 를 잠깐 물려받으면 잔해가 「살아 있음」으로 보인다(로컬 1/9 재현).
