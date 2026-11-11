@@ -40,7 +40,10 @@
 import { describe, expect, it } from 'vitest';
 import type { ChildProcess } from 'node:child_process';
 
-import { RunnerRegistry, type RunnerHost, type RunnerExitNotice } from '../src/runners.js';
+import { readFileSync } from 'node:fs';
+import { PROVIDER_LANE_ENV } from '@harkroom/shared/providerLane';
+import { RUNNER_LINK_ENV } from '@harkroom/shared/runnerLink';
+import { COORDINATOR_OWNED_ENV, RunnerRegistry, withUserEnv, type RunnerHost, type RunnerExitNotice } from '../src/runners.js';
 import type { IncarnationId } from '@harkroom/shared/daemonProtocol';
 
 const SLEEPER = { command: '/bin/sh', args: ['-c', 'sleep 30'] };
@@ -210,5 +213,69 @@ describe('러너 환경 — daemon 의 사용자 환경을 물려준다', () => 
     } finally {
       delete process.env.HARKROOM_TEST_CANARY;
     }
+  });
+});
+
+describe('러너 환경 — 조정기 소유 키는 부모에게서 물려받지 않는다', () => {
+  const src = (rel: string) => readFileSync(new URL(rel, import.meta.url), 'utf8');
+
+  /**
+   * **되돌려 RED**: `withUserEnv` 의 거부 목록 검사를 빼면, 오퍼레이터를 띄운 셸의 `HARKROOM_COMMAND_HOOK=1` 이 사람이 켜지 않았는데도
+   * 러너에 그대로 새어 든다(조정기는 켜졌을 때만 그 키를 적는다).
+   */
+  it('부모의 조정기 소유 키는 걷고, 사람이 정한 손잡이·CODEX_HOME 은 물려준다', () => {
+    const parent: NodeJS.ProcessEnv = { USER: 'u', CODEX_HOME: '/c', HARKROOM_CLAUDE_ACCOUNTS_DIR: '/a', HARKROOM_MAX_TURNS: '9' };
+    for (const k of COORDINATOR_OWNED_ENV) parent[k] = 'from-shell';
+    const out = withUserEnv({ PATH: '/usr/bin' }, parent);
+    for (const k of COORDINATOR_OWNED_ENV) expect(out[k], k).toBeUndefined();
+    expect(out).toEqual({ USER: 'u', CODEX_HOME: '/c', HARKROOM_CLAUDE_ACCOUNTS_DIR: '/a', HARKROOM_MAX_TURNS: '9', PATH: '/usr/bin' });
+  });
+
+  it('요청(조정기)이 준 값은 그대로 실린다', () => {
+    const out = withUserEnv({ HARKROOM_CHROME_HOST: '0', [RUNNER_LINK_ENV.runnerId]: 'r1' }, { HARKROOM_CHROME_HOST: '1', [RUNNER_LINK_ENV.runnerId]: 'old' });
+    expect(out.HARKROOM_CHROME_HOST).toBe('0');
+    expect(out[RUNNER_LINK_ENV.runnerId]).toBe('r1');
+  });
+
+  it('spawnRunner 경로에서도 걷힌다 — 셸에 있던 COMMAND_HOOK·WORKING_DIR 이 새지 않는다', async () => {
+    const { host, envs } = 엿보는host();
+    const registry = new RunnerRegistry(SLEEPER, host);
+    process.env.HARKROOM_COMMAND_HOOK = '1';
+    process.env.HARKROOM_WORKING_DIR = '/남의/폴더';
+    try {
+      await registry.spawnRunner('a1', { PATH: '/usr/bin' });
+      expect(envs[0]!.HARKROOM_COMMAND_HOOK).toBeUndefined();
+      expect(envs[0]!.HARKROOM_WORKING_DIR).toBeUndefined();
+      expect(envs[0]!.USER).toBe(process.env.USER);
+    } finally {
+      delete process.env.HARKROOM_COMMAND_HOOK;
+      delete process.env.HARKROOM_WORKING_DIR;
+    }
+  });
+
+  it('목록 대조 — 조정기가 적는 키가 전부 목록에 있고, Rust 목록과 같다', () => {
+    const names: Record<string, string> = {
+      'RUNNER_LINK_ENV.socketPath': RUNNER_LINK_ENV.socketPath,
+      'RUNNER_LINK_ENV.runnerId': RUNNER_LINK_ENV.runnerId,
+      'RUNNER_LINK_ENV.secret': RUNNER_LINK_ENV.secret,
+      PROVIDER_LANE_ENV,
+    };
+    const written: string[] = [];
+    for (const file of ['../src/assignments.ts', '../src/runners.ts']) {
+      for (const m of src(file).matchAll(/\b(HARKROOM_[A-Z_]+)\s*:|\[(RUNNER_LINK_ENV\.[a-zA-Z]+|PROVIDER_LANE_ENV)\]\s*:/g)) {
+        const key = m[1] ?? names[m[2]!];
+        expect(key, m[0]).toBeDefined();
+        written.push(key!);
+      }
+    }
+    expect(written.length).toBeGreaterThanOrEqual(14);
+    for (const k of written) expect(COORDINATOR_OWNED_ENV, k).toContain(k);
+    expect(new Set(COORDINATOR_OWNED_ENV).size).toBe(COORDINATOR_OWNED_ENV.length);
+
+    const rs = src('../../../crates/harkroom-operator/src/runners.rs');
+    const block = /pub const COORDINATOR_OWNED_ENV: &\[&str\] = &\[([\s\S]*?)\];/.exec(rs);
+    expect(block).not.toBeNull();
+    const rust = [...block![1]!.matchAll(/"([A-Z_]+)"/g)].map((m) => m[1]);
+    expect(rust).toEqual([...COORDINATOR_OWNED_ENV]);
   });
 });
