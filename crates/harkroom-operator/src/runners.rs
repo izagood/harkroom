@@ -397,6 +397,66 @@ impl RunnerTable {
     pub fn current_incarnation(&self, agent_id: &str) -> Option<String> {
         self.table().get(agent_id).map(|r| r.incarnation_id.clone())
     }
+
+    /// 앞 오퍼레이터가 남긴 고아를 표에 올린다(TS `RunnerRegistry.adopt`). 신원 확인은 하지 않는다 —
+    /// `adopt::plan_adoption` 이 이미 했고, 판정을 두 곳에 두면 한쪽만 강화되는 날이 온다.
+    ///
+    /// - `incarnation_id` 는 **장부 것을 그대로** 쓴다 — 새로 만들면 앱이 아는 세대와 갈려 `kill_runner` 가 조용히 거절된다.
+    /// - 그 에이전트에 살아 있는 표가 있으면 **채택하지 않는다**(None) — 지금 러너를 밀어내 고아를 만들지 않는다.
+    /// - `term_sent_at_ms` 는 None — 이 오퍼레이터는 SIGTERM 을 보낸 적이 없다(추측으로 채우지 않는다).
+    /// - 내 자식이 아니라 wait 할 수 없다 — 종료는 `poll_adopted` 가 `kill(pid, 0)` 으로 묻는다.
+    pub fn adopt_runner(&self, entry: &RunnerLedgerEntry) -> Option<RunnerRecord> {
+        let mut table = self.table();
+        if let Some(existing) = table.get(&entry.agent_id)
+            && signal_sent(existing.pid, 0)
+        {
+            return None;
+        }
+        let record = RunnerRecord {
+            agent_id: entry.agent_id.clone(),
+            pid: entry.pid,
+            incarnation_id: entry.incarnation_id.clone(),
+            started_at_ms: entry.started_at_ms,
+            term_sent_at_ms: None,
+            boot_time_sec: entry.boot_time_sec,
+            // secret 도 잇는다 — 다음 장부 쓰기가 빠뜨리면 두 번째 재시작에서 다시 잃는다.
+            link_secret: entry.link_secret.clone().filter(|s| !s.is_empty()),
+            adopted: true,
+        };
+        table.insert(entry.agent_id.clone(), record.clone());
+        self.save_locked(&table);
+        Some(record)
+    }
+
+    /// 채택한 러너의 생사를 묻고 끝난 것을 표·장부에서 뺀 뒤 종료를 알린다(TS `pollAdopted`).
+    /// 코드·시그널은 **모른다**(None) — 지어내지 않는다. 주기는 부르는 쪽이 정한다(여기엔 타이머가 없다).
+    pub fn poll_adopted(&self) {
+        let mut gone = Vec::new();
+        {
+            let mut table = self.table();
+            let dead: Vec<String> = table
+                .values()
+                .filter(|r| r.adopted && !signal_sent(r.pid, 0))
+                .map(|r| r.agent_id.clone())
+                .collect();
+            for agent in dead {
+                if let Some(r) = table.remove(&agent) {
+                    gone.push(r);
+                }
+            }
+            if !gone.is_empty() {
+                self.save_locked(&table);
+            }
+        }
+        for r in gone {
+            (self.on_exit)(RunnerExit {
+                agent_id: r.agent_id,
+                incarnation_id: r.incarnation_id,
+                code: None,
+                signal: None,
+            });
+        }
+    }
 }
 
 #[cfg(test)]
@@ -668,6 +728,77 @@ mod tests {
         assert!(!d.contains("s3cret"), "{d}");
         assert!(d.contains("<redacted>"));
         signal_sent(r.pid, libc::SIGKILL);
+    }
+
+    fn orphan(agent: &str, pid: i32) -> RunnerLedgerEntry {
+        RunnerLedgerEntry {
+            agent_id: agent.into(),
+            pid,
+            incarnation_id: "inc-orphan".into(),
+            link_secret: Some("orph-s".into()),
+            started_at_ms: 42,
+            boot_time_sec: Some(7),
+            spawned_by_nonce: "old-nonce".into(),
+            spawned_by_app_version: Some("0.4.498".into()),
+            retiring: None,
+        }
+    }
+
+    /// 남의 자식처럼 다룰 프로세스 — 이 시험이 띄우되 표 밖에서 거둔다.
+    fn outside(secs: &str) -> std::process::Child {
+        let _g = crate::fork_guard();
+        std::process::Command::new("/bin/sleep")
+            .arg(secs)
+            .spawn()
+            .unwrap()
+    }
+
+    #[test]
+    fn adopt_keeps_ledger_incarnation_and_secret_then_poll_reports_unknown_exit() {
+        let (t, rx, snaps) = ledgered("sleep 30", |_| None);
+        let mut child = outside("30");
+        let pid = child.id() as i32;
+        let r = t
+            .adopt_runner(&orphan("a1", pid))
+            .expect("빈 자리면 채택한다");
+        assert!(r.adopted);
+        assert_eq!(r.incarnation_id, "inc-orphan");
+        assert_eq!(r.term_sent_at_ms, None);
+        assert_eq!(t.current_incarnation("a1").as_deref(), Some("inc-orphan"));
+        let rows = last(&t, &snaps);
+        assert_eq!(rows[0].link_secret.as_deref(), Some("orph-s"));
+        assert_eq!(rows[0].boot_time_sec, Some(7));
+        // 살아 있으면 poll 은 아무것도 안 한다.
+        t.poll_adopted();
+        assert!(rx.try_recv().is_err());
+        // 같은 에이전트의 spawn 은 채택한 세대를 그대로 돌려준다(둘이 되지 않는다).
+        assert!(matches!(spawn(&t, &[]), SpawnOutcome::Existing(_)));
+        child.kill().unwrap();
+        child.wait().unwrap();
+        t.poll_adopted();
+        let e = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(
+            (e.agent_id.as_str(), e.incarnation_id.as_str()),
+            ("a1", "inc-orphan")
+        );
+        assert_eq!((e.code, e.signal), (None, None));
+        assert!(last(&t, &snaps).is_empty());
+        assert_eq!(t.current_incarnation("a1"), None);
+    }
+
+    #[test]
+    fn adopt_refuses_when_live_runner_holds_the_seat() {
+        let (t, _rx, _snaps) = ledgered("sleep 30", |_| None);
+        let live = spawn(&t, &[]).record().clone();
+        let mut child = outside("30");
+        assert_eq!(t.adopt_runner(&orphan("a1", child.id() as i32)), None);
+        assert_eq!(
+            t.current_incarnation("a1").as_deref(),
+            Some(live.incarnation_id.as_str())
+        );
+        child.kill().unwrap();
+        child.wait().unwrap();
+        signal_sent(live.pid, libc::SIGKILL);
     }
 
     #[test]
