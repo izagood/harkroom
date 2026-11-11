@@ -8,6 +8,8 @@
 //! | P4 `harkroom-operator merge` 한 줄 출력 | operator `main.ts::mergeMain`·`turnMerge.ts` | [`p4`] |
 //! | P5 로컬 공유 파일 | `operatorRoots.ts` | `harkroom-roots` crate |
 //!
+//! 경계 모양 말고 하나 더: [`tool_rules`] — 승인 규칙 판정(shared `toolRules.ts`). 오퍼레이터와 러너가 같은 판정을 써야 해서 여기 둔다.
+//!
 //! ## 어긋남을 잡는 법
 //! 타입을 생성하지 않는다(서버 ↔ UI 만 S5.1 에서 ts-rs). 대신 TS 시험 `packages/shared/test/protoGolden.test.ts` 가
 //! TS 타입 검사를 통과한 표본을 `golden/proto.json` 에 쓰고, 이 crate 의 시험이 그것을 **파싱 → 다시 직렬화 = 원본**으로 본다.
@@ -17,6 +19,8 @@
 //! 이 경계는 그것을 해석하지 않고 넘긴다. 그 객체를 해석하는 Rust 코드가 생길 때 그 자리에서 타입을 붙인다.
 
 pub use serde_json::Value;
+
+pub mod tool_rules;
 
 /// `null` 이 올 수도 있는 **선택** 필드(`x?: T | null`)를 왕복에서 지키는 꼴 — 없음(`None`)과 `null`(`Some(None)`)을 가른다.
 pub mod double_option {
