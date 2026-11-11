@@ -84,6 +84,8 @@ pub struct LinkHandler {
 pub struct MergeHandlers {
     pub merge: crate::turn_merge::TurnMerge,
     pub pr_status: crate::turn_pr_status::TurnPrStatus,
+    /// 외부 API 래퍼 `api.call`(s21b-3d-2, TS turnApi). 받은 토큰 캐시를 들고 있어 한 벌만 둔다.
+    pub api: crate::turn_api::TurnApi,
 }
 
 impl MergeHandlers {
@@ -117,6 +119,7 @@ impl MergeHandlers {
                 home: home.clone(),
             },
             pr_status: crate::turn_pr_status::TurnPrStatus { gate, tokens, home },
+            api: crate::turn_api::TurnApi::system(),
         }
     }
 }
@@ -385,6 +388,13 @@ impl RunnerLinkHandler for LinkHandler {
             }
             if let Some(r) = m
                 .pr_status
+                .maybe_handle(agent_id, &req, lease.as_ref(), &post, &log)
+            {
+                return Some(r);
+            }
+            // 외부 API(TS run.ts 순서: turnPrStatus → turnApi). 키는 이 프로세스 메모리에만 잠깐 있다.
+            if let Some(r) = m
+                .api
                 .maybe_handle(agent_id, &req, lease.as_ref(), &post, &log)
             {
                 return Some(r);

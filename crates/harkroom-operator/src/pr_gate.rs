@@ -1060,10 +1060,8 @@ impl GhTokens {
             }
             return Err(GhTokenFail {
                 code: "gh_token_failed",
-                message: format!(
-                    "gh auth token -u {user} failed: {}",
-                    cut(r.stderr.trim(), 200)
-                ),
+                // stderr 는 싣지 않는다(#1880 security 낮음 — pr.status 처럼 고정 문장).
+                message: format!("gh auth token -u {user} failed"),
             });
         }
         Ok(GhToken {
