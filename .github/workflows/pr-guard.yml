@@ -58,9 +58,18 @@ jobs:
           HEAD: ${{ github.event.pull_request.head.sha }}
         # --redact 는 비밀 값만 가린다. --verbose 는 커밋 author 메일까지 찍으므로 쓰지 않고,
         # JSON 보고서에서 파일·줄·규칙만 꺼내 찍는다(로그도 공개다).
+        # 검사 설정(`.gitleaks.toml`)과 무시 목록(`.gitleaksignore`)은 **base 의 것**만 쓴다. 체크아웃한 PR head 의
+        # 파일을 읽으면 PR 이 자기 브랜치에서 그 파일을 고쳐 자기 검사를 스스로 느슨하게 할 수 있다(security F1).
+        # base 에 없으면 기본 규칙·빈 무시 목록이다. 그래서 그 두 파일을 바꾸는 PR 은 머지된 **다음** PR 부터 효력이 난다.
         run: |
+          cfg="$RUNNER_TEMP/gitleaks-base.toml"
+          ign="$RUNNER_TEMP/gitleaks-base-ignore"
+          mkdir -p "$ign"
+          git show "$BASE:.gitleaks.toml" > "$cfg" 2>/dev/null || printf '[extend]\nuseDefault = true\n' > "$cfg"
+          git show "$BASE:.gitleaksignore" > "$ign/.gitleaksignore" 2>/dev/null || : > "$ign/.gitleaksignore"
           set +e
           "$RUNNER_TEMP/gitleaks" git --no-banner --redact --log-opts="$BASE..$HEAD" \
+            --config "$cfg" --gitleaks-ignore-path "$ign" \
             --report-format json --report-path "$RUNNER_TEMP/gitleaks.json" .
           rc=$?
           set -e

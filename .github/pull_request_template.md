@@ -25,3 +25,4 @@ PR 제목·본문은 한국어로 쓴다(CONTRIBUTING.md 「Language Convention�
 - [ ] 새 화면 문구는 i18n 키로 넣고 `en.ts`·`ko.ts` 를 둘 다 채웠다
 - [ ] 앱이 서버의 새 기능에 기대면 `MIN_SERVER_VERSION` 을 올렸다(`packages/shared/src/compat.ts`) — 해당 없으면 지운다
 - [ ] 로그·스크린샷에 토큰·비밀번호가 없다
+- [ ] `.gitleaks.toml`·`.gitleaksignore` 를 바꿨다면 security 검토를 받았다(비밀 검사는 base 의 설정으로 돈다) — 해당 없으면 지운다
