@@ -286,10 +286,32 @@ fn lane_and_tail_block_with_exit_2() {
     assert_eq!(tail("git status --short", &rules).exit, 2);
     assert_eq!(tail("ls", &rules), quiet());
     assert_eq!(tail("ls", "@@").exit, 2);
-    // codex 는 3d-3b-2b 전까지 막는다.
+    // codex: 턴 env 도 `CODEX_HOME` 도 없으면 막는다 · 턴 env 를 못 풀면 막는다 · `CODEX_HOME` 만 있으면 규칙 파일만으로 판정한다.
     assert_eq!(
         run(&["pretool", "--codex"], &bash("ls"), &env, None, &asked).exit,
         2
+    );
+    let bad = Env {
+        vars: vec![("HARKROOM_CODEX_HOOK".into(), "!!".into())],
+        tmp: env.tmp.clone(),
+    };
+    assert_eq!(
+        run(&["pretool", "--codex"], &bash("ls"), &bad, None, &asked).exit,
+        2
+    );
+    let home_only = Env {
+        vars: vec![("CODEX_HOME".into(), env.tmp.to_string_lossy().into_owned())],
+        tmp: env.tmp.clone(),
+    };
+    assert_eq!(
+        run(
+            &["pretool", "--codex"],
+            &bash("ls"),
+            &home_only,
+            None,
+            &asked
+        ),
+        quiet()
     );
     assert!(
         asked.borrow().is_empty(),

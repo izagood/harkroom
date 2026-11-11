@@ -15,6 +15,7 @@
 pub mod api_cli;
 pub mod bridge;
 pub mod callback_page;
+pub mod codex_hook;
 pub mod endpoint;
 pub mod file_lock;
 pub mod forward;
