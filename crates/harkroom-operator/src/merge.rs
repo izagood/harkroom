@@ -159,6 +159,17 @@ pub fn call_operator_tool(link: &LinkEnv, name: &str, args: Value, timeout: Dura
     } else {
         RunnerLinkKind::Bridge
     };
+    call_operator_tool_as(link, name, args, timeout, kind)
+}
+
+/// `kind` 를 고르는 꼴 — hook 은 턴 열쇠가 있든 없든 `hook` 으로 붙는다(TS `callOperatorTool(…, 'hook')`).
+pub fn call_operator_tool_as(
+    link: &LinkEnv,
+    name: &str,
+    args: Value,
+    timeout: Duration,
+    kind: RunnerLinkKind,
+) -> ToolReply {
     let mut hello = Map::new();
     hello.insert("type".into(), json!("hello"));
     hello.insert("version".into(), json!(RUNNER_LINK_PROTOCOL_VERSION));
