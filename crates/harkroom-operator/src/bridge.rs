@@ -8,6 +8,7 @@ use crate::relay_mux::{RelayMux, RelayMuxDeps};
 use crate::runner_link::{RunnerLinkHandler, RunnerLinkServer};
 use crate::server_link::ServerLink;
 use crate::turn_keys::TurnKeyLedger;
+use crate::turn_leases::{LeaseCall, TurnLeases};
 use crate::turn_slots::TurnSlots;
 use harkroom_proto::p1::{RunnerLinkKind, RunnerLinkRequest, RunnerLinkResponse};
 use harkroom_proto::p2::OperatorToServerFrame;
@@ -66,9 +67,100 @@ pub struct LinkHandler {
     turn_keys: Arc<Mutex<TurnKeyLedger>>,
     /// 동시 턴 상한(s21b-3a) — 프로세스 하나에 하나(`TurnSlots::process`).
     slots: Arc<Mutex<TurnSlots>>,
+    /// 턴 임대 장부(s21b-3b) — relay 의 `secret.lease*` 통지로 채운다. 이 커뮤니티의 러너만 쓴다.
+    leases: Arc<Mutex<TurnLeases>>,
+}
+
+/// 임대 끝내기·늘리기를 별도 스레드에서 보낼 때 들고 가는 것.
+#[derive(Clone)]
+struct LeaseIo {
+    transport: Arc<dyn Transport>,
+    base_url: String,
+    token: String,
+    leases: Arc<Mutex<TurnLeases>>,
+}
+
+impl LinkHandler {
+    fn clone_for_io(&self) -> LeaseIo {
+        LeaseIo {
+            transport: Arc::clone(&self.transport),
+            base_url: self.base_url.clone(),
+            token: self.token.clone(),
+            leases: Arc::clone(&self.leases),
+        }
+    }
+}
+
+impl LeaseIo {
+    /// 장부가 돌려준 끝내기·늘리기를 이 커뮤니티 서버로 보낸다(오퍼레이터 자체 전달 — 러너 REST 허용 목록을 거치지 않는다).
+    /// 늘리기면 새 만료 시각을 장부에 반영한다. 실패해도 임대는 서버에서 스스로 만료된다.
+    fn run_lease_call(&self, runner_id: &str, cause: &str, c: &LeaseCall, renew: bool) {
+        let url = format!("{}{}", self.base_url.trim_end_matches('/'), c.path);
+        let headers = vec![
+            (
+                "authorization".to_string(),
+                format!("Bearer {}", self.token),
+            ),
+            (crate::forward::AGENT_HEADER.to_string(), c.agent_id.clone()),
+            ("content-type".to_string(), "application/json".to_string()),
+        ];
+        let res = self
+            .transport
+            .send("POST", &url, &headers, Some(c.body.clone().into_bytes()));
+        let Ok(r) = res else { return };
+        if !renew {
+            if r.status != 204 && r.status != 404 {
+                eprintln!("turn-leases: 임대 {} 끝내기 응답 {}", c.lease_id, r.status);
+            }
+            return;
+        }
+        // 404 = 옛 서버거나 끝났거나 만료 — 늘리지 않는다. 서버가 판정의 정본이다.
+        if r.status != 200 {
+            if r.status != 404 {
+                eprintln!("turn-leases: 임대 {} 늘리기 응답 {}", c.lease_id, r.status);
+            }
+            return;
+        }
+        let at = serde_json::from_str::<Value>(&r.body).ok().and_then(|v| {
+            v.get("expiresAt")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        });
+        if let Some(at) = at {
+            lock(&self.leases).renewed(runner_id, cause, &c.lease_id, &at);
+        }
+    }
 }
 
 impl RunnerLinkHandler for LinkHandler {
+    /// relay 통지 — 턴 임대(TS run.ts 의 `secret.lease*`). 서버 요청은 별도 스레드에서 보내 링크 읽기를 막지 않는다.
+    fn on_notice(&self, runner_id: &str, agent_id: &str, notice: Value) {
+        let s = |k: &str| notice.get(k).and_then(Value::as_str).unwrap_or("");
+        let cause = s("cause").to_string();
+        let (c, renew) = match s("type") {
+            "secret.lease" => {
+                lock(&self.leases).note(
+                    runner_id,
+                    agent_id,
+                    &cause,
+                    s("leaseId"),
+                    s("token"),
+                    s("expiresAt"),
+                );
+                return;
+            }
+            "secret.leaseEnded" => (lock(&self.leases).ended(runner_id, &cause), false),
+            "secret.leaseHeartbeat" => (lock(&self.leases).heartbeat(runner_id, &cause), true),
+            _ => return,
+        };
+        let Some(c) = c else { return };
+        let me = self.clone_for_io();
+        let runner_id = runner_id.to_string();
+        let _ = std::thread::Builder::new()
+            .name("turn-lease-call".into())
+            .spawn(move || me.run_lease_call(&runner_id, &cause, &c, renew));
+    }
+
     fn on_frame(&self, runner_id: &str, _agent_id: &str, frame: Value) {
         // 감사 바이트(`local.input`)는 오퍼레이터 허브만 올린다 — 러너의 주장은 버린다(TS community.ts).
         if frame.get("type").and_then(Value::as_str) == Some("local.input") {
@@ -149,6 +241,7 @@ pub fn build_bridge(
         token,
         turn_keys: Arc::clone(&turn_keys),
         slots,
+        leases: Arc::new(Mutex::new(TurnLeases::system())),
     });
     // 턴 열쇠 장부(s21b-3a) — 하네스의 bridge·hook·wrapper 소켓이 맡긴 열쇠로 붙는다.
     let runner_link = RunnerLinkServer::new(handler, Some(turn_keys));
@@ -221,6 +314,7 @@ mod tests {
             token: String::new(),
             turn_keys: Arc::new(Mutex::new(TurnKeyLedger::new(|| 0, |_| {}))),
             slots: Arc::new(Mutex::new(TurnSlots::new(Some(1), || 0, |_| {}))),
+            leases: Arc::new(Mutex::new(TurnLeases::new(|| 0))),
         };
         h.on_frame(
             "r1",
@@ -247,6 +341,7 @@ mod tests {
             token: "op-token".into(),
             turn_keys: Arc::new(Mutex::new(TurnKeyLedger::new(|| 0, |_| {}))),
             slots: Arc::new(Mutex::new(TurnSlots::new(None, || 0, |_| {}))),
+            leases: Arc::new(Mutex::new(TurnLeases::new(|| 0))),
         };
         let req: RunnerLinkRequest = serde_json::from_value(json!({
             "type":"mcp.request","id":"q1","payload":{"jsonrpc":"2.0","id":1,"method":"x"}
@@ -318,6 +413,7 @@ mod tests {
             token: "t".into(),
             turn_keys: Arc::new(Mutex::new(TurnKeyLedger::new(|| 0, |_| {}))),
             slots: Arc::new(Mutex::new(TurnSlots::new(Some(1), || 0, |_| {}))),
+            leases: Arc::new(Mutex::new(TurnLeases::new(|| 0))),
         };
         let keys = json!({"turnId":"t1","keys":{"bridge":"a".repeat(64),"shell":"b".repeat(64)}});
         assert_eq!(
@@ -383,5 +479,51 @@ mod tests {
             RunnerLinkKind::Relay,
         );
         assert_eq!(tr.0.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn lease_notices_fill_ledger_and_end_renew_go_to_server() {
+        let tr = Arc::new(FakeTransport::default());
+        let (_srv, _tr0, b) = bridge();
+        let h = LinkHandler {
+            mux: Arc::clone(&b.mux),
+            transport: tr.clone(),
+            base_url: "https://h.example/".into(),
+            token: "op".into(),
+            turn_keys: Arc::new(Mutex::new(TurnKeyLedger::new(|| 0, |_| {}))),
+            slots: Arc::new(Mutex::new(TurnSlots::new(None, || 0, |_| {}))),
+            leases: Arc::new(Mutex::new(TurnLeases::new(|| 0))),
+        };
+        h.on_notice(
+            "r1",
+            "a1",
+            json!({"type":"secret.lease","cause":"c1","leaseId":"L1","token":"tk","expiresAt":"2026-11-11T02:00:00.000Z"}),
+        );
+        let l = lock(&h.leases)
+            .lookup_for("r1", "a1", Some("c1"))
+            .expect("임대");
+        assert_eq!(l.lease_id, "L1");
+        // 늘리기 — 가짜 서버는 expiresAt 이 없는 200 을 준다 → 만료는 그대로.
+        let hb = lock(&h.leases).heartbeat("r1", "c1").unwrap();
+        h.clone_for_io().run_lease_call("r1", "c1", &hb, true);
+        let end = lock(&h.leases).ended("r1", "c1").unwrap();
+        h.clone_for_io().run_lease_call("r1", "c1", &end, false);
+        let calls = tr.0.lock().unwrap();
+        assert_eq!(calls[0].1, "https://h.example/agent/turn-leases/L1/renew");
+        assert_eq!(calls[1].1, "https://h.example/agent/turn-leases/L1/end");
+        assert!(
+            calls[1]
+                .2
+                .iter()
+                .any(|(k, v)| k == "x-harkroom-agent" && v == "a1")
+        );
+        assert!(lock(&h.leases).is_empty());
+        // 모르는 통지·빈 cause 는 장부를 건드리지 않는다.
+        h.on_notice(
+            "r1",
+            "a1",
+            json!({"type":"secret.leaseEnded","cause":"nope"}),
+        );
+        assert_eq!(calls.len(), 2);
     }
 }

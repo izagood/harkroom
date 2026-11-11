@@ -33,6 +33,7 @@ pub mod serve;
 pub mod server_link;
 pub mod socket;
 pub mod turn_keys;
+pub mod turn_leases;
 pub mod turn_slots;
 pub mod ws_dialer;
 
