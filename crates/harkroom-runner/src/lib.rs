@@ -17,6 +17,7 @@ pub mod codex_home;
 pub mod config;
 pub mod link;
 pub mod mcp;
+pub mod omp_home;
 pub mod opencode_home;
 pub mod pi_home;
 pub mod pi_lane;
