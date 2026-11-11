@@ -360,11 +360,75 @@ impl RunnerTable {
         {
             return None;
         }
+        if record.adopted && !self.same_process(record) {
+            let inc = record.incarnation_id.clone();
+            drop(table);
+            self.forget_reused(agent_id, &inc);
+            return None;
+        }
         if record.term_sent_at_ms.is_none() {
             record.term_sent_at_ms = Some(now_ms());
         }
         signal_sent(record.pid, libc::SIGTERM);
         Some(record.clone())
+    }
+
+    /// SIGKILL — 배정 해제의 유예가 끝났을 때(TS `deps.signal(agentId, 'SIGKILL')`). 보냈으면 `true`.
+    /// 채택한 러너는 `kill_runner` 와 같이 커널 시작 시각을 다시 대조한다.
+    pub fn force_kill(&self, agent_id: &str) -> bool {
+        let table = self.table();
+        let Some(record) = table.get(agent_id) else {
+            return false;
+        };
+        if record.adopted && !self.same_process(record) {
+            let inc = record.incarnation_id.clone();
+            drop(table);
+            self.forget_reused(agent_id, &inc);
+            return false;
+        }
+        signal_sent(record.pid, libc::SIGKILL)
+    }
+
+    /// 채택한 러너가 아직 그 프로세스인가 — 신호 **직전**에 커널 시작 시각을 `ps` 로 다시 읽어 장부 값과 맞춘다.
+    ///
+    /// 채택한 러너는 내 자식이 아니라 wait 로 죽음을 알 수 없다. `poll_adopted`(2초 주기)가 표에서 빼기 전에 pid 가
+    /// 재사용되면 `kill(pid, 0)` 은 참이고, 그 틈의 신호는 무관한 프로세스에 간다. 장부에 시각이 없거나 지금 못 읽으면
+    /// **다르다고 본다** — 모르는 채로 보내는 쪽이 더 나쁘다(채택 판정 `judge_candidate` 와 같은 쪽으로 기운다).
+    fn same_process(&self, record: &RunnerRecord) -> bool {
+        match record.boot_time_sec {
+            Some(expected) => (self.boot_probe)(record.pid) == Some(expected),
+            None => false,
+        }
+    }
+
+    /// 재사용된(또는 확인 못 한) 채택 러너를 표·장부에서만 뺀다 — 신호는 보내지 않는다. 그 러너는 이미 없으므로
+    /// `poll_adopted` 가 죽음을 본 것과 같게 종료를 알린다(코드·시그널은 모른다).
+    /// 그 사이 같은 자리에 다른 세대가 섰으면 건드리지 않는다.
+    fn forget_reused(&self, agent_id: &str, incarnation_id: &str) {
+        let gone = {
+            let mut table = self.table();
+            let gone = table
+                .get(agent_id)
+                .is_some_and(|r| r.incarnation_id == incarnation_id)
+                .then(|| table.remove(agent_id))
+                .flatten();
+            if gone.is_some() {
+                self.save_locked(&table);
+            }
+            gone
+        };
+        if let Some(r) = gone {
+            eprintln!(
+                "채택 러너의 커널 시작 시각이 장부와 다르거나 읽히지 않는다 — 신호를 보내지 않고 표에서 뺀다: agent={} pid={}",
+                r.agent_id, r.pid
+            );
+            (self.on_exit)(RunnerExit {
+                agent_id: r.agent_id,
+                incarnation_id: r.incarnation_id,
+                code: None,
+                signal: None,
+            });
+        }
     }
 
     /// `RunnerInfo[]`.
@@ -799,6 +863,70 @@ mod tests {
         child.kill().unwrap();
         child.wait().unwrap();
         signal_sent(live.pid, libc::SIGKILL);
+    }
+
+    /// security c2b-3(낮음) — 채택 러너에 신호를 보내기 직전에 커널 시작 시각을 다시 대조한다.
+    #[test]
+    fn adopted_signal_rechecks_boot_time_and_sends_when_same() {
+        let (t, rx, _snaps) = ledgered("sleep 30", |_| Some(7));
+        let mut child = outside("30");
+        let pid = child.id() as i32;
+        t.adopt_runner(&orphan("a1", pid)).unwrap();
+        let r = t.kill_runner("a1", None).expect("같은 프로세스면 보낸다");
+        assert!(r.term_sent_at_ms.is_some());
+        let st = child.wait().unwrap();
+        assert_eq!(st.signal(), Some(libc::SIGTERM));
+        assert!(rx.try_recv().is_err(), "보낸 경우는 poll 이 죽음을 알린다");
+        t.poll_adopted();
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(5)).unwrap().agent_id,
+            "a1"
+        );
+    }
+
+    #[test]
+    fn adopted_signal_skipped_and_forgotten_when_boot_time_differs_or_unreadable() {
+        let probes: [BootProbe; 2] = [|_| Some(8), |_| None];
+        for probe in probes {
+            let (t, rx, snaps) = ledgered("sleep 30", probe);
+            let mut child = outside("30");
+            let pid = child.id() as i32;
+            t.adopt_runner(&orphan("a1", pid)).unwrap();
+            assert_eq!(
+                t.kill_runner("a1", None),
+                None,
+                "다르면 SIGTERM 을 보내지 않는다"
+            );
+            // 표·장부에서 빠지고 종료를 알린다(코드 모름).
+            let e = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert_eq!((e.agent_id.as_str(), e.code, e.signal), ("a1", None, None));
+            assert_eq!(t.current_incarnation("a1"), None);
+            assert!(last(&t, &snaps).is_empty());
+            // 프로세스는 그대로 산다 — 신호가 가지 않았다.
+            assert!(signal_sent(pid, 0));
+            assert_eq!(child.try_wait().unwrap(), None);
+
+            t.adopt_runner(&orphan("a1", pid)).unwrap();
+            assert!(!t.force_kill("a1"), "SIGKILL 도 같은 대조를 거친다");
+            assert_eq!(
+                rx.recv_timeout(Duration::from_secs(5)).unwrap().agent_id,
+                "a1"
+            );
+            assert!(signal_sent(pid, 0));
+            child.kill().unwrap();
+            child.wait().unwrap();
+        }
+    }
+
+    #[test]
+    fn own_child_is_signalled_without_boot_recheck() {
+        // 내 자식은 wait 로 죽음을 아니 pid 재사용 틈이 없다 — 대조 없이(못 읽어도) 보낸다.
+        let (t, rx, _snaps) = ledgered("sleep 30", |_| None);
+        let r = spawn(&t, &[]).record().clone();
+        assert!(t.force_kill("a1"));
+        let e = rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert_eq!(e.incarnation_id, r.incarnation_id);
+        assert_eq!(e.signal.as_deref(), Some("SIGKILL"));
     }
 
     #[test]

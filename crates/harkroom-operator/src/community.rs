@@ -143,12 +143,7 @@ impl AssignmentDeps for SystemDeps {
     fn signal(&self, agent_id: &str, sig: Sig) -> bool {
         match sig {
             Sig::Term => self.runners.kill_runner(agent_id, None).is_some(),
-            Sig::Kill => self
-                .runners
-                .records()
-                .into_iter()
-                .find(|r| r.agent_id == agent_id)
-                .is_some_and(|r| signal_sent(r.pid, libc::SIGKILL)),
+            Sig::Kill => self.runners.force_kill(agent_id),
         }
     }
 
