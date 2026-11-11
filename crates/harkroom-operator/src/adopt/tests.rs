@@ -211,3 +211,117 @@ fn real_probe_reads_own_process_and_rejects_nonsense() {
     assert_eq!(p.boot_time_sec(0), None);
     assert_eq!(p.boot_time_sec(-1), None);
 }
+
+#[derive(Default)]
+struct Ports {
+    locals: Vec<&'static str>,
+    occupied: Vec<&'static str>,
+    log: std::sync::Mutex<Vec<String>>,
+}
+
+impl AdoptPorts for Ports {
+    fn is_local(&self, agent_id: &str) -> bool {
+        self.locals.contains(&agent_id)
+    }
+    fn adopt(&self, e: &RunnerLedgerEntry) -> bool {
+        if self.occupied.contains(&e.agent_id.as_str()) {
+            return false;
+        }
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("adopt {} {}", e.agent_id, e.pid));
+        true
+    }
+    fn retire(&self, e: &RunnerLedgerEntry) {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("retire {} {}", e.agent_id, e.pid));
+    }
+    fn link_expect(&self, runner_id: &str, agent_id: &str, secret: &str) {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("expect {runner_id} {agent_id} {secret}"));
+    }
+}
+
+#[test]
+fn adopt_orphans_adopts_local_retires_stale_and_pairs_secret_with_incarnation() {
+    let ok = entry("a1", 10, 1, Some(100));
+    let mut stale = entry("a2", 20, 1, Some(200));
+    stale.spawned_by_app_version = Some("0.4.400".into());
+    let not_local = entry("a3", 30, 1, Some(300));
+    let mut no_secret = entry("a4", 40, 1, Some(400));
+    no_secret.link_secret = None;
+    let occupied = entry("a5", 50, 1, Some(500));
+    let dead = entry("a6", 60, 1, Some(600));
+    let probe = fake(&[
+        (10, true, Some(100)),
+        (20, true, Some(200)),
+        (30, true, Some(300)),
+        (40, true, Some(400)),
+        (50, true, Some(500)),
+        (60, false, None),
+    ]);
+    let ports = Ports {
+        locals: vec!["a1", "a2", "a4", "a5", "a6"],
+        occupied: vec!["a5"],
+        ..Default::default()
+    };
+    let (adopted, lines) = adopt_orphans(
+        vec![ok, stale, not_local, no_secret, occupied, dead],
+        vec![],
+        &probe,
+        Some("0.4.498"),
+        &ports,
+    );
+    assert_eq!(adopted, vec!["a1", "a4"]);
+    let log = ports.log.into_inner().unwrap();
+    assert_eq!(
+        log,
+        vec![
+            "retire a2 20",
+            "expect inc-20 a2 s3cret-value",
+            "adopt a1 10",
+            "expect inc-10 a1 s3cret-value",
+            "retire a3 30",
+            "adopt a4 40",
+        ]
+    );
+    // 거절 사유는 사람이 읽는다 — secret 은 싣지 않는다.
+    assert_eq!(lines.len(), 4, "{lines:?}");
+    assert!(lines.iter().all(|l| !l.contains("s3cret")));
+    assert!(lines.iter().any(|l| l.contains("로컬 설정에 없는")));
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("이미 이 오퍼레이터가 아는"))
+    );
+}
+
+#[test]
+fn adopt_orphans_prefers_fresh_ledger_over_legacy_for_same_pid() {
+    let fresh = entry("a1", 10, 5, Some(100));
+    let mut legacy_same = entry("a1", 10, 9, Some(100));
+    legacy_same.incarnation_id = "legacy-inc".into();
+    let legacy_other = entry("b1", 11, 1, Some(110));
+    let probe = fake(&[(10, true, Some(100)), (11, true, Some(110))]);
+    let ports = Ports {
+        locals: vec!["a1", "b1"],
+        ..Default::default()
+    };
+    let (adopted, lines) = adopt_orphans(
+        vec![fresh],
+        vec![legacy_same, legacy_other],
+        &probe,
+        Some("0.4.498"),
+        &ports,
+    );
+    assert_eq!(adopted, vec!["a1", "b1"]);
+    assert!(lines.is_empty(), "{lines:?}");
+    let log = ports.log.into_inner().unwrap();
+    assert!(log.contains(&"expect inc-10 a1 s3cret-value".to_string()));
+    assert!(!log.iter().any(|l| l.contains("legacy-inc")));
+}

@@ -217,6 +217,77 @@ pub fn describe_verdict(entry: &RunnerLedgerEntry, verdict: &Verdict) -> String 
     }
 }
 
+/// 채택을 실제로 거는 자리들(TS run.ts `adoptOrphans` 가 닿는 registry·runnerLink·로컬 설정). 시험은 가짜를 꽂는다.
+pub trait AdoptPorts {
+    /// 이 커뮤니티 로컬 설정(`operator.json`)에 그 에이전트가 있나 — 없으면 채택하지 않는다(security c2b-3 ①).
+    fn is_local(&self, agent_id: &str) -> bool;
+    /// 표에 올린다. 그 자리에 살아 있는 러너가 있어 못 올렸으면 false(`RunnerTable::adopt_runner`).
+    fn adopt(&self, entry: &RunnerLedgerEntry) -> bool;
+    /// 회수 — SIGTERM 하나(승격 없음). 장부·회수 중 표 기록은 c2c(retiring)가 잇는다.
+    fn retire(&self, entry: &RunnerLedgerEntry);
+    /// 러너 링크에 그 세대의 secret 을 적는다(`RunnerLink::expect`).
+    fn link_expect(&self, runner_id: &str, agent_id: &str, secret: &str);
+}
+
+/// TS `adoptOrphans`(run.ts) — 새 장부 + 개명 전 장부를 훑어 고아를 채택하고 낡은 세대·회수 중 러너는 회수한다.
+/// 같은 pid 가 둘에 있으면 새 장부가 이긴다. 돌려주는 것은 채택한 agentId 들과 사람이 읽을 거절 사유 줄들.
+///
+/// **링크 secret 은 그 줄의 `incarnation_id` 와 짝지어서만 적는다**(security ②) — 빈 secret 줄은 링크를 열지 않는다.
+pub fn adopt_orphans(
+    fresh: Vec<RunnerLedgerEntry>,
+    legacy: Vec<RunnerLedgerEntry>,
+    probe: &dyn IdentityProbe,
+    my_app_version: Option<&str>,
+    ports: &dyn AdoptPorts,
+) -> (Vec<String>, Vec<String>) {
+    let seen: std::collections::HashSet<i32> = fresh.iter().map(|e| e.pid).collect();
+    let mut entries = fresh;
+    entries.extend(legacy.into_iter().filter(|e| !seen.contains(&e.pid)));
+    let mut plan = plan_adoption(&entries, probe, my_app_version);
+    let expect = |e: &RunnerLedgerEntry| {
+        if let Some(secret) = e.link_secret.as_deref().filter(|s| !s.is_empty()) {
+            ports.link_expect(&e.incarnation_id, &e.agent_id, secret);
+        }
+    };
+    for (entry, verdict) in &plan.rejected {
+        // 우리 것이 확실한(pid·커널 시작 시각 통과) 낡은 세대·회수 중 러너만 회수한다. 링크도 받는다 —
+        // 안 받으면 「모르는 러너」로 거절돼 그 러너가 열린 턴을 끝낼 길이 없다(TS #838).
+        if matches!(verdict, Verdict::StaleGeneration { .. } | Verdict::Retiring) {
+            ports.retire(entry);
+            expect(entry);
+        }
+    }
+    let mut adopted = Vec::new();
+    for entry in std::mem::take(&mut plan.adopt) {
+        if !ports.is_local(&entry.agent_id) {
+            // 로컬 설정에서 빠진 에이전트 — 우리 러너는 맞으니 회수한다(남의 로컬 설정으로 계속 돌지 않게).
+            ports.retire(&entry);
+            plan.rejected.push((
+                entry,
+                Verdict::Unverifiable(
+                    "이 커뮤니티 로컬 설정에 없는 에이전트다 — 채택하지 않고 회수한다".into(),
+                ),
+            ));
+            continue;
+        }
+        if !ports.adopt(&entry) {
+            plan.rejected.push((
+                entry,
+                Verdict::Unverifiable("이미 이 오퍼레이터가 아는 러너가 그 자리에 있다".into()),
+            ));
+            continue;
+        }
+        expect(&entry);
+        adopted.push(entry.agent_id);
+    }
+    let lines = plan
+        .rejected
+        .iter()
+        .map(|(e, v)| describe_verdict(e, v))
+        .collect();
+    (adopted, lines)
+}
+
 #[cfg(test)]
 #[path = "adopt/tests.rs"]
 mod tests;

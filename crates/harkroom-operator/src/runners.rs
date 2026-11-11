@@ -802,6 +802,50 @@ mod tests {
     }
 
     #[test]
+    fn zombie_keeps_boot_time_readable_until_reaped_order_fixed() {
+        // security c2b-3 ③ — 순서를 고정한다: 러너가 표지 파일을 남기고 **끝난 것을 확인한 뒤**, 거두기(wait) 전에 읽는다.
+        let mark = std::env::temp_dir().join(format!("hk-zombie-{}", std::process::id()));
+        let _ = std::fs::remove_file(&mark);
+        let mut child = {
+            let _g = crate::fork_guard();
+            std::process::Command::new("/bin/sh")
+                .arg("-c")
+                .arg(format!("touch '{}'", mark.display()))
+                .spawn()
+                .unwrap()
+        };
+        let pid = child.id() as i32;
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !mark.exists() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "표지 파일이 안 생겼다"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // 파일이 생긴 뒤에도 셸이 끝날 때까지 기다린다 — waitpid(WNOHANG|WNOWAIT) 대신 ps 의 상태(Z)로 본다.
+        loop {
+            let st = std::process::Command::new("/bin/ps")
+                .args(["-o", "stat=", "-p", &pid.to_string()])
+                .output()
+                .unwrap();
+            if String::from_utf8_lossy(&st.stdout)
+                .trim_start()
+                .starts_with('Z')
+            {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "좀비가 안 됐다");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(signal_sent(pid, 0), "거두기 전 좀비는 kill(pid,0) 이 산다");
+        let b = crate::adopt::ps_boot_time_sec(pid).expect("좀비라도 시작 시각이 읽혀야 한다");
+        assert!((now_ms() / 1000 - b).abs() <= 5);
+        child.wait().unwrap();
+        let _ = std::fs::remove_file(&mark);
+    }
+
+    #[test]
     fn no_launch_means_refusal() {
         let t = RunnerTable::new(None, Arc::new(|_| {}));
         assert!(
