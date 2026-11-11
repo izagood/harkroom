@@ -14,6 +14,8 @@ struct Rec {
     reports: Mutex<Vec<(String, String, i64, i64)>>,
     scheduled: Mutex<Vec<Box<dyn FnOnce() + Send>>>,
     unlinked: AtomicBool,
+    /// 러너로 보내는 도중 한 번 부를 것(잠금 밖 경쟁 흉내).
+    during_send: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 struct Deps(Arc<Rec>);
@@ -21,6 +23,10 @@ impl LocalTerminalDeps for Deps {
     fn send_to_runner(&self, runner_id: &str, frame: &Value) -> bool {
         if self.0.unlinked.load(Ordering::SeqCst) {
             return false;
+        }
+        let hook = self.0.during_send.lock().unwrap().take();
+        if let Some(f) = hook {
+            f();
         }
         self.0
             .to_runner
@@ -461,4 +467,81 @@ fn key_compare_and_byte_length() {
     assert_eq!(base64_byte_length("YQ=="), 1);
     assert_eq!(base64_byte_length("YWI="), 2);
     assert_eq!(base64_byte_length("YWJj"), 3);
+}
+
+// ── security c4-1 낮음: 잠금 밖 경쟁 ──
+
+#[test]
+fn bytes_sent_while_writer_key_swaps_are_reported_under_the_gate_gen() {
+    let t = setup();
+    t.hub.grant_writer("s1", Some(W1), Some(1));
+    let weak = Arc::downgrade(&t.hub);
+    *t.rec.during_send.lock().unwrap() = Some(Box::new(move || {
+        if let Some(h) = weak.upgrade() {
+            h.grant_writer("s1", Some(W2), Some(2));
+        }
+    }));
+    // "aGk=" = 2바이트. 문은 W1(번호 1)로 지났고, 보내는 사이 W2(번호 2)로 갈렸다.
+    assert_eq!(t.hub.input("s1", W1, "aGk="), Ok(()));
+    assert_eq!(
+        t.rec.reports.lock().unwrap().clone(),
+        vec![("r1".to_string(), "s1".to_string(), 1, 2)]
+    );
+    // 새 writer 의 창에는 아무것도 섞이지 않았다.
+    t.run_scheduled();
+    t.hub.flush("s1");
+    assert_eq!(t.rec.reports.lock().unwrap().len(), 1);
+}
+
+struct HookSub {
+    id: u64,
+    events: Mutex<Vec<(String, Value)>>,
+    on_send: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+impl LocalTerminalSubscriber for HookSub {
+    fn id(&self) -> u64 {
+        self.id
+    }
+    fn send(&self, event: &str, payload: Value) {
+        self.events.lock().unwrap().push((event.into(), payload));
+        let hook = self.on_send.lock().unwrap().take();
+        if let Some(f) = hook {
+            f();
+        }
+    }
+}
+
+#[test]
+fn output_is_not_sent_to_a_subscription_dropped_after_the_lock_was_released() {
+    let t = setup();
+    t.hub.grant_view("s1", VIEW);
+    let a = Arc::new(HookSub {
+        id: 10,
+        events: Mutex::new(Vec::new()),
+        on_send: Mutex::new(None),
+    });
+    let b = Arc::new(HookSub {
+        id: 11,
+        events: Mutex::new(Vec::new()),
+        on_send: Mutex::new(None),
+    });
+    t.hub.subscribe(a.clone(), "s1", VIEW).unwrap();
+    t.hub.subscribe(b.clone(), "s1", VIEW).unwrap();
+    t.frame("r1", json!({"type":"replay","sessionId":"s1","data":"r"}));
+    // a 에게 라이브를 보내는 도중 b 의 접속이 끊긴다 — 같은 묶음의 b 몫은 나가지 않아야 한다.
+    let weak = Arc::downgrade(&t.hub);
+    *a.on_send.lock().unwrap() = Some(Box::new(move || {
+        if let Some(h) = weak.upgrade() {
+            h.drop_subscriber(11);
+        }
+    }));
+    t.frame(
+        "r1",
+        json!({"type":"output","sessionId":"s1","data":"live"}),
+    );
+    assert_eq!(
+        datas(&a.events.lock().unwrap()).last(),
+        Some(&json!("live"))
+    );
+    assert!(!datas(&b.events.lock().unwrap()).contains(&json!("live")));
 }

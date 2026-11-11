@@ -194,10 +194,27 @@ impl LocalTerminalHub {
         })
     }
 
+    fn still_subscribed(&self, sub: &dyn LocalTerminalSubscriber, payload: &Value) -> bool {
+        let Some(id) = payload.get("sessionId").and_then(Value::as_str) else {
+            return false;
+        };
+        lock(&self.state)
+            .subs
+            .get(id)
+            .is_some_and(|l| l.iter().any(|(x, _)| x.id() == sub.id()))
+    }
+
     fn run(&self, out: Vec<Out>) {
         for o in out {
             match o {
-                Out::Send(sub, event, payload) => sub.send(event, payload),
+                Out::Send(sub, event, payload) => {
+                    // 출력은 보내기 직전 그 구독이 아직 있는지 다시 본다(security c4-1 낮음) — 잠금을 놓은 사이
+                    // 거둬졌거나 풀린 구독에 `terminalEnded` 뒤 출력이 새지 않게. 끝 알림은 구독을 뺀 뒤 내므로 보지 않는다.
+                    if event == "terminalOutput" && !self.still_subscribed(sub.as_ref(), &payload) {
+                        continue;
+                    }
+                    sub.send(event, payload)
+                }
                 Out::Report(u, session_id) => {
                     self.deps
                         .report_input(&u.runner_id, &session_id, u.r#gen, u.bytes)
@@ -493,7 +510,12 @@ impl LocalTerminalHub {
     }
 
     pub fn input(&self, session_id: &str, writer_key: &str, data: &str) -> Result<(), Refusal> {
-        let runner_id = lock(&self.state).writer_gate(session_id, writer_key)?;
+        // 문을 지날 때의 writer 번호를 같이 잡는다 — 보내는 사이 키가 갈리면 이 바이트는 옛 번호의 몫이다(security c4-1 낮음).
+        let (runner_id, gate_gen) = {
+            let st = lock(&self.state);
+            let r = st.writer_gate(session_id, writer_key)?;
+            (r, st.writer_gen.get(session_id).copied())
+        };
         let frame = json!({ "type": "input", "sessionId": session_id, "data": data });
         if !self.deps.send_to_runner(&runner_id, &frame) {
             return Err(Refusal::RunnerGone);
@@ -504,7 +526,19 @@ impl LocalTerminalHub {
         {
             let mut st = lock(&self.state);
             *st.input_bytes.entry(session_id.to_string()).or_insert(0) += bytes;
-            if let Some(g) = st.writer_gen.get(session_id).copied() {
+            if st.writer_gen.get(session_id).copied() != gate_gen {
+                // 그사이 키가 갈렸다 — 새 writer 의 창에 섞지 않고 옛 번호로 바로 보고한다.
+                if let Some(g) = gate_gen {
+                    out.push(Out::Report(
+                        Unreported {
+                            runner_id: runner_id.clone(),
+                            r#gen: g,
+                            bytes,
+                        },
+                        session_id.to_string(),
+                    ));
+                }
+            } else if let Some(g) = gate_gen {
                 match st.unreported.get_mut(session_id) {
                     Some(u) if u.r#gen == g => u.bytes += bytes,
                     _ => {
