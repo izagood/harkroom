@@ -37,6 +37,7 @@ pub mod turn_command;
 pub mod turn_keys;
 pub mod turn_leases;
 pub mod turn_peek;
+pub mod turn_secrets;
 pub mod turn_slots;
 pub mod turn_uploads;
 pub mod ws_dialer;

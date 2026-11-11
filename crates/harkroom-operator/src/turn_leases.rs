@@ -10,7 +10,7 @@
 //! - 통지는 relay 소켓에서 온 것만 받는다(러너 링크가 통지를 relay 에서만 넘긴다).
 //! - 이 장부는 I/O 를 하지 않는다. 끝내기·늘리기에 서버로 보낼 것을 [`LeaseCall`] 로 돌려주고, 부르는 쪽(bridge)이
 //!   장부 잠금을 놓은 뒤 보낸다 — 서버가 느려도 다른 러너의 조회가 막히지 않게.
-//! - 비밀 마운트 폴더 지우기는 아직 없다 — Rust 에는 마운트가 없다(s21b-3c `turnSecrets` 에서 붙인다).
+//! - 비밀 마운트 폴더 지우기는 부르는 쪽(bridge)이 [`crate::turn_secrets::SecretsRoot`] 로 한다 — `note` 가 뺀 임대 id·`ended` 의 임대 id.
 
 use std::collections::HashMap;
 
@@ -178,15 +178,21 @@ impl TurnLeases {
         lease_id: &str,
         token: &str,
         expires_at: &str,
-    ) {
+    ) -> Vec<String> {
         let Some(expires_at_ms) = parse_iso_ms(expires_at) else {
-            return;
+            return Vec::new();
         };
         let now = (self.now)();
         // 끝 통지를 못 받은 만료 임대가 쌓이지 않게 여기서 함께 턴다(TS 는 1분 sweep).
+        // 뺀 임대 id 를 돌려준다 — 부르는 쪽이 그 비밀 마운트 폴더를 지운다(TS `drop`).
+        let mut dropped = Vec::new();
         self.leases.retain(|(_, c), e| {
-            e.expires_at_ms > now
-                && !(e.lease.agent_id == agent_id && c == cause && e.lease.lease_id != lease_id)
+            let keep = e.expires_at_ms > now
+                && !(e.lease.agent_id == agent_id && c == cause && e.lease.lease_id != lease_id);
+            if !keep {
+                dropped.push(e.lease.lease_id.clone());
+            }
+            keep
         });
         self.leases.insert(
             (runner_id.to_string(), cause.to_string()),
@@ -199,6 +205,7 @@ impl TurnLeases {
                 expires_at_ms,
             },
         );
+        dropped
     }
 
     /// TS `lookup` — 그 러너·그 부름의 살아 있는 임대. 만료됐으면 없다.
@@ -327,10 +334,14 @@ mod tests {
     fn bad_expiry_is_dropped_and_old_lease_of_same_call_is_replaced() {
         let clock = Arc::new(AtomicU64::new(0));
         let mut l = at(&clock);
-        l.note("r1", "a1", "c1", "L1", "tok", "later");
+        assert!(l.note("r1", "a1", "c1", "L1", "tok", "later").is_empty());
         assert!(l.is_empty());
         l.note("r1", "a1", "c1", "L1", "tok", T0);
-        l.note("r2", "a1", "c1", "L2", "tok2", T0);
+        assert_eq!(
+            l.note("r2", "a1", "c1", "L2", "tok2", T0),
+            vec!["L1".to_string()],
+            "뺀 임대 id 를 돌려준다"
+        );
         assert!(l.lookup("r1", "c1").is_none(), "앞 러너의 옛 임대는 빠진다");
         assert_eq!(l.lookup("r2", "c1").map(|x| x.lease_id), Some("L2".into()));
         // 다른 에이전트의 같은 cause 는 건드리지 않는다.

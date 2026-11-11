@@ -73,6 +73,8 @@ pub struct LinkHandler {
     leases: Arc<Mutex<TurnLeases>>,
     /// 턴 도중 새 글(s21b-3b) — hook 소켓의 `thread.peek`.
     peek: Arc<TurnPeek>,
+    /// 비밀 마운트 루트(s21b-3c-2, `<커뮤니티 뿌리>/turn-secrets`). 없으면 비밀 도구는 `no_lease` 로 닫힌다.
+    secrets: Option<crate::turn_secrets::SecretsRoot>,
 }
 
 /// 임대 끝내기·늘리기를 별도 스레드에서 보낼 때 들고 가는 것.
@@ -85,6 +87,14 @@ struct LeaseIo {
 }
 
 impl LinkHandler {
+    fn drop_secret_dirs(&self, lease_ids: &[String]) {
+        if let Some(root) = &self.secrets {
+            for id in lease_ids {
+                root.drop_lease(id);
+            }
+        }
+    }
+
     fn clone_for_io(&self) -> LeaseIo {
         LeaseIo {
             transport: Arc::clone(&self.transport),
@@ -217,7 +227,7 @@ impl RunnerLinkHandler for LinkHandler {
         let cause = s("cause").to_string();
         let (c, renew) = match s("type") {
             "secret.lease" => {
-                lock(&self.leases).note(
+                let dropped = lock(&self.leases).note(
                     runner_id,
                     agent_id,
                     &cause,
@@ -225,9 +235,17 @@ impl RunnerLinkHandler for LinkHandler {
                     s("token"),
                     s("expiresAt"),
                 );
+                self.drop_secret_dirs(&dropped);
                 return;
             }
-            "secret.leaseEnded" => (lock(&self.leases).ended(runner_id, &cause), false),
+            "secret.leaseEnded" => {
+                let c = lock(&self.leases).ended(runner_id, &cause);
+                // 값부터 지운다 — 끝내기 응답이 실패해도 임대는 서버에서 35분에 스스로 만료된다(TS `drop`).
+                if let Some(c) = &c {
+                    self.drop_secret_dirs(std::slice::from_ref(&c.lease_id));
+                }
+                (c, false)
+            }
             "secret.leaseHeartbeat" => (lock(&self.leases).heartbeat(runner_id, &cause), true),
             _ => return,
         };
@@ -299,6 +317,18 @@ impl RunnerLinkHandler for LinkHandler {
         if let Some(r) = lock(&self.slots).maybe_handle(runner_id, &req, kind) {
             return Some(r);
         }
+        // 비밀 도구(TS turnSecrets — run.ts 순서: turnSlots → providerLaneMount → turnSecrets). 값은 임대 폴더로만 나간다.
+        let secret_post = |p: &str, body: String| self.server_post(agent_id, p, body);
+        if let Some(r) = crate::turn_secrets::maybe_handle(
+            &req,
+            lease.as_ref(),
+            self.secrets.as_ref(),
+            &secret_post,
+            &|| crate::runners::new_incarnation_id().unwrap_or_else(|_| "0".into()),
+            &|l| eprintln!("{l}"),
+        ) {
+            return Some(r);
+        }
         // `attachment.upload`(TS turnUploads — run.ts 가로채기의 맨 끝). 경로 판정·읽기·`/uploads` 올리기는 오퍼레이터가 한다.
         let upload = |p: &str, ct: &str, b: Vec<u8>| self.server_post_bytes(agent_id, p, ct, b);
         if let Some(r) = crate::turn_uploads::maybe_handle(
@@ -342,6 +372,7 @@ pub fn build_bridge(
     token: String,
     turn_keys: Arc<Mutex<TurnKeyLedger>>,
     slots: Arc<Mutex<TurnSlots>>,
+    secrets: Option<crate::turn_secrets::SecretsRoot>,
 ) -> Bridge {
     let slot: Arc<OnceLock<Weak<RunnerLinkServer>>> = Arc::new(OnceLock::new());
     let mux = Arc::new(RelayMux::new(Box::new(MuxDeps {
@@ -357,6 +388,7 @@ pub fn build_bridge(
         slots,
         leases: Arc::new(Mutex::new(TurnLeases::system())),
         peek: Arc::new(TurnPeek::system()),
+        secrets,
     });
     // 턴 열쇠 장부(s21b-3a) — 하네스의 bridge·hook·wrapper 소켓이 맡긴 열쇠로 붙는다.
     let runner_link = RunnerLinkServer::new(handler, Some(turn_keys));
@@ -415,6 +447,7 @@ mod tests {
             "op-token".into(),
             Arc::new(Mutex::new(TurnKeyLedger::new(|| 0, |_| {}))),
             Arc::new(Mutex::new(TurnSlots::new(Some(1), || 0, |_| {}))),
+            None,
         );
         (srv, tr, b)
     }
@@ -430,6 +463,7 @@ mod tests {
             turn_keys: Arc::new(Mutex::new(TurnKeyLedger::new(|| 0, |_| {}))),
             slots: Arc::new(Mutex::new(TurnSlots::new(Some(1), || 0, |_| {}))),
             leases: Arc::new(Mutex::new(TurnLeases::new(|| 0))),
+            secrets: None,
             peek: Arc::new(TurnPeek::new(|| 0)),
         };
         h.on_frame(
@@ -458,6 +492,7 @@ mod tests {
             turn_keys: Arc::new(Mutex::new(TurnKeyLedger::new(|| 0, |_| {}))),
             slots: Arc::new(Mutex::new(TurnSlots::new(None, || 0, |_| {}))),
             leases: Arc::new(Mutex::new(TurnLeases::new(|| 0))),
+            secrets: None,
             peek: Arc::new(TurnPeek::new(|| 0)),
         };
         let call = |name: &str| -> RunnerLinkRequest {
@@ -511,6 +546,7 @@ mod tests {
             turn_keys: Arc::new(Mutex::new(TurnKeyLedger::new(|| 0, |_| {}))),
             slots: Arc::new(Mutex::new(TurnSlots::new(None, || 0, |_| {}))),
             leases: Arc::new(Mutex::new(TurnLeases::new(|| 0))),
+            secrets: None,
             peek: Arc::new(TurnPeek::new(|| 0)),
         };
         let req: RunnerLinkRequest = serde_json::from_value(json!({
@@ -551,6 +587,7 @@ mod tests {
             turn_keys: Arc::new(Mutex::new(TurnKeyLedger::new(|| 0, |_| {}))),
             slots: Arc::new(Mutex::new(TurnSlots::new(None, || 0, |_| {}))),
             leases: Arc::new(Mutex::new(TurnLeases::new(|| 0))),
+            secrets: None,
             peek: Arc::new(TurnPeek::new(|| 0)),
         };
         // 링크가 미리 채운 commandFiles 는 서버 머리에 실리지 않는다(사전 2).
@@ -635,6 +672,7 @@ mod tests {
             turn_keys: Arc::new(Mutex::new(TurnKeyLedger::new(|| 0, |_| {}))),
             slots: Arc::new(Mutex::new(TurnSlots::new(Some(1), || 0, |_| {}))),
             leases: Arc::new(Mutex::new(TurnLeases::new(|| 0))),
+            secrets: None,
             peek: Arc::new(TurnPeek::new(|| 0)),
         };
         let keys = json!({"turnId":"t1","keys":{"bridge":"a".repeat(64),"shell":"b".repeat(64)}});
@@ -715,6 +753,7 @@ mod tests {
             turn_keys: Arc::new(Mutex::new(TurnKeyLedger::new(|| 0, |_| {}))),
             slots: Arc::new(Mutex::new(TurnSlots::new(None, || 0, |_| {}))),
             leases: Arc::new(Mutex::new(TurnLeases::new(|| 0))),
+            secrets: None,
             peek: Arc::new(TurnPeek::new(|| 0)),
         };
         h.on_notice(
