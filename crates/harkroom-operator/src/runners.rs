@@ -12,13 +12,20 @@
 //! - `alive` 는 `kill(pid, 0)` 으로 커널에 직접 묻는다.
 //! - 늦게 온 종료가 그 사이 새로 뜬 세대의 자리를 비우지 않는다(표에서 지금 세대일 때만 뺀다).
 //!
-//! **아직 옮기지 않은 것**(A4 전 또는 B 줄): 장부(`runners.json`)·고아 채택(`adoptRunner`)·회수 중 세대(retiring·이관 보류)·
-//! 러너 로그 파일과 종료 통지의 `tailLines`(지금은 빈 배열, 출력은 버린다)·커널 시작 시각.
+//! - 장부(s21c-2b-2): 띄우고 끝날 때마다 표 전체를 `<appDataDir>/operator/runners-v1.json` 에 적는다(`set_ledger` 로 배선했을 때만).
+//!   **표 잠금을 쥔 채 `save` 를 부른다** — JS 는 단일 스레드라 저절로 서는 「마지막 스냅샷 = 지금 표」를 여기서는 잠금이 세운다.
+//!   커널 시작 시각(`bootTimeSec`)은 spawn 직후, **waiter 스레드가 `wait` 하기 전에** 읽는다 — 거두기 전이라 끝났어도 좀비가 pid 를
+//!   쥐고 있어 재사용 창이 없다(TS 는 `child.on('exit')` 를 건 뒤 await 로 읽어 그 창이 조금 있다).
+//!   링크 secret 은 요청 env 의 `HARKROOM_RUNNER_SECRET`(TS `runners.ts` 의 `linkSecret`)이다.
+//!
+//! **아직 옮기지 않은 것**: 기동 때 고아 채택(`adoptRunner`, s21c-2b-3)·회수 중 세대(retiring·이관 보류)·
+//! 러너 로그 파일과 종료 통지의 `tailLines`(지금은 빈 배열, 출력은 버린다) — s21c-2c.
+use crate::runner_ledger::{RunnerLedgerEntry, RunnerLedgerWriter};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// 러너를 띄울 고정값. 기동 인자에서만 온다.
@@ -28,13 +35,66 @@ pub struct RunnerLaunch {
     pub args: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+/// `Debug` 는 손으로 쓴다 — `link_secret` 이 `{:?}` 로 새지 않게(장부 줄과 같은 이유).
+#[derive(Clone, PartialEq)]
 pub struct RunnerRecord {
     pub agent_id: String,
     pub pid: i32,
     pub incarnation_id: String,
     pub started_at_ms: i64,
     pub term_sent_at_ms: Option<i64>,
+    /// 커널 시작 시각(초). 못 읽었으면 None — 그러면 다음 오퍼레이터가 채택하지 않는다(`adopt.rs`).
+    pub boot_time_sec: Option<i64>,
+    /// 러너 링크 secret(`HARKROOM_RUNNER_SECRET`). 장부에 실려 다음 오퍼레이터가 채택한 러너의 링크를 다시 받는다.
+    pub link_secret: Option<String>,
+    /// 앞 오퍼레이터가 남긴 고아를 채택한 줄인가(s21c-2b-3 에서 채운다).
+    pub adopted: bool,
+}
+
+impl std::fmt::Debug for RunnerRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RunnerRecord")
+            .field("agent_id", &self.agent_id)
+            .field("pid", &self.pid)
+            .field("incarnation_id", &self.incarnation_id)
+            .field("started_at_ms", &self.started_at_ms)
+            .field("term_sent_at_ms", &self.term_sent_at_ms)
+            .field("boot_time_sec", &self.boot_time_sec)
+            .field(
+                "link_secret",
+                &self.link_secret.as_ref().map(|_| "<redacted>"),
+            )
+            .field("adopted", &self.adopted)
+            .finish()
+    }
+}
+
+/// 장부 배선(TS run.ts `ledgerSink`) — 쓰기 창구와 줄마다 찍을 출처(이 오퍼레이터의 launch nonce·앱 세대).
+pub struct LedgerBinding {
+    pub writer: RunnerLedgerWriter,
+    pub nonce: String,
+    /// `--app-version`. 없으면 장부에 세대를 적지 않는다(TS 와 같다 — 다음 오퍼레이터는 낡은 세대로 본다).
+    pub app_version: Option<String>,
+}
+
+impl LedgerBinding {
+    fn entries(&self, table: &HashMap<String, RunnerRecord>) -> Vec<RunnerLedgerEntry> {
+        let mut rows: Vec<&RunnerRecord> = table.values().collect();
+        rows.sort_by_key(|r| r.started_at_ms);
+        rows.into_iter()
+            .map(|r| RunnerLedgerEntry {
+                agent_id: r.agent_id.clone(),
+                pid: r.pid,
+                incarnation_id: r.incarnation_id.clone(),
+                link_secret: r.link_secret.clone().filter(|s| !s.is_empty()),
+                started_at_ms: r.started_at_ms,
+                boot_time_sec: r.boot_time_sec,
+                spawned_by_nonce: self.nonce.clone(),
+                spawned_by_app_version: self.app_version.clone(),
+                retiring: None,
+            })
+            .collect()
+    }
 }
 
 /// 러너 종료 통지(`RunnerExitEvent`).
@@ -75,10 +135,16 @@ impl SpawnOutcome {
 
 type ExitSink = Arc<dyn Fn(RunnerExit) + Send + Sync>;
 
+type BootProbe = fn(i32) -> Option<i64>;
+
 pub struct RunnerTable {
     launch: Option<RunnerLaunch>,
     by_agent: Mutex<HashMap<String, RunnerRecord>>,
     on_exit: ExitSink,
+    /// 장부. 배선 전(시험·토큰 없는 기동)에는 비어 있고 아무것도 쓰지 않는다.
+    ledger: OnceLock<LedgerBinding>,
+    /// 커널 시작 시각을 읽는 자리 — 실물은 `ps`, 시험은 주입.
+    boot_probe: BootProbe,
 }
 
 pub fn now_ms() -> i64 {
@@ -178,7 +244,23 @@ impl RunnerTable {
             launch,
             by_agent: Mutex::new(HashMap::new()),
             on_exit,
+            ledger: OnceLock::new(),
+            boot_probe: crate::adopt::ps_boot_time_sec,
         })
+    }
+
+    /// 장부를 건다. 한 번만 — 두 번째는 stderr 에 남기고 버린다(`set_on_runner_exit` 와 같은 꼴).
+    pub fn set_ledger(&self, binding: LedgerBinding) {
+        if self.ledger.set(binding).is_err() {
+            eprintln!("러너 장부가 이미 배선돼 있다 — 두 번째 배선을 버린다");
+        }
+    }
+
+    /// 표 잠금을 쥔 자리에서만 부른다 — 스냅샷이 지금 표와 같은 순서로 창구에 들어가야 마지막 save 가 지금 표다.
+    fn save_locked(&self, table: &HashMap<String, RunnerRecord>) {
+        if let Some(l) = self.ledger.get() {
+            l.writer.save(l.entries(table));
+        }
     }
 
     fn table(&self) -> std::sync::MutexGuard<'_, HashMap<String, RunnerRecord>> {
@@ -215,14 +297,25 @@ impl RunnerTable {
         let mut cmd = runner_command(launch, env);
         let mut child = cmd.spawn().map_err(|e| format!("러너를 못 띄웠다: {e}"))?;
         let pid = i32::try_from(child.id()).map_err(|_| "러너 pid 가 범위를 넘었다".to_string())?;
+        // 커널 시작 시각은 **waiter 가 거두기 전에** 읽는다 — 그 전까지는 러너가 끝났어도 좀비가 pid 를 쥐고 있어서
+        // 무관한 프로세스의 시작 시각을 우리 러너 것으로 적을 길이 없다. 못 읽으면 None(다음 오퍼레이터가 채택하지 않는다).
+        let boot_time_sec = (self.boot_probe)(pid);
         let record = RunnerRecord {
             agent_id: agent_id.to_string(),
             pid,
             incarnation_id: incarnation_id.clone(),
             started_at_ms: now_ms(),
             term_sent_at_ms: None,
+            boot_time_sec,
+            link_secret: env
+                .iter()
+                .find(|(k, _)| k == "HARKROOM_RUNNER_SECRET")
+                .map(|(_, v)| v.clone())
+                .filter(|v| !v.is_empty()),
+            adopted: false,
         };
         table.insert(agent_id.to_string(), record.clone());
+        self.save_locked(&table);
         drop(table);
 
         // 종료를 지켜보는 스레드. wait 가 자식을 거두므로 좀비가 남지 않는다.
@@ -236,6 +329,8 @@ impl RunnerTable {
                 if t.get(&agent).map(|r| r.incarnation_id.as_str()) == Some(incarnation_id.as_str())
                 {
                     t.remove(&agent);
+                    // 장부도 줄인다 — 정상 종료한 러너가 다음 오퍼레이터의 후보로 남지 않게(TS exit 핸들러와 같다).
+                    me.save_locked(&t);
                 }
             }
             let (code, signal) = match status {
@@ -272,7 +367,7 @@ impl RunnerTable {
         Some(record.clone())
     }
 
-    /// `RunnerInfo[]`. 채택은 아직 없으므로 `adopted` 는 늘 false 다.
+    /// `RunnerInfo[]`.
     pub fn list_runners(&self) -> Vec<Value> {
         let table = self.table();
         let mut rows: Vec<&RunnerRecord> = table.values().collect();
@@ -286,7 +381,7 @@ impl RunnerTable {
                     "startedAtMs": r.started_at_ms,
                     "alive": signal_sent(r.pid, 0),
                     "termSentAtMs": r.term_sent_at_ms,
-                    "adopted": false,
+                    "adopted": r.adopted,
                 })
             })
             .collect()
@@ -471,6 +566,108 @@ mod tests {
         }
         assert!(n >= 10, "runner_env 의 put 을 못 찾았다: {n}");
         assert!(COORDINATOR_OWNED_ENV.contains(&crate::assignments::PROVIDER_LANE_ENV));
+    }
+
+    type Snapshots = Arc<Mutex<Vec<Vec<RunnerLedgerEntry>>>>;
+
+    /// 장부를 건 표 — 쓰기는 디스크 대신 스냅샷 목록에 쌓는다.
+    fn ledgered(
+        script: &str,
+        probe: BootProbe,
+    ) -> (Arc<RunnerTable>, mpsc::Receiver<RunnerExit>, Snapshots) {
+        let (tx, rx) = mpsc::channel();
+        let tx = Mutex::new(tx);
+        let t = Arc::new(RunnerTable {
+            launch: Some(RunnerLaunch {
+                command: "/bin/sh".into(),
+                args: vec!["-c".into(), script.into()],
+            }),
+            by_agent: Mutex::new(HashMap::new()),
+            on_exit: Arc::new(move |e| {
+                let _ = tx.lock().unwrap().send(e);
+            }),
+            ledger: OnceLock::new(),
+            boot_probe: probe,
+        });
+        let snaps: Snapshots = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&snaps);
+        t.set_ledger(LedgerBinding {
+            writer: RunnerLedgerWriter::with_write(
+                std::env::temp_dir(),
+                Box::new(|_| {}),
+                Box::new(move |_, entries, _| sink.lock().unwrap().push(entries.to_vec())),
+            ),
+            nonce: "nonce-1".into(),
+            app_version: Some("0.4.498".into()),
+        });
+        (t, rx, snaps)
+    }
+
+    fn last(t: &RunnerTable, snaps: &Snapshots) -> Vec<RunnerLedgerEntry> {
+        t.ledger.get().unwrap().writer.drain();
+        snaps.lock().unwrap().last().cloned().unwrap()
+    }
+
+    #[test]
+    fn spawn_and_exit_write_ledger_with_boot_time_secret_and_origin() {
+        let (t, rx, snaps) = ledgered("read _ < /dev/null; sleep 0.3", |pid| {
+            Some(i64::from(pid) + 7)
+        });
+        let r = spawn(&t, &[("HARKROOM_RUNNER_SECRET".into(), "s3cret".into())])
+            .record()
+            .clone();
+        assert_eq!(r.boot_time_sec, Some(i64::from(r.pid) + 7));
+        assert_eq!(r.link_secret.as_deref(), Some("s3cret"));
+        let rows = last(&t, &snaps);
+        assert_eq!(rows.len(), 1);
+        let e = &rows[0];
+        assert_eq!((e.agent_id.as_str(), e.pid), ("a1", r.pid));
+        assert_eq!(e.incarnation_id, r.incarnation_id);
+        assert_eq!(e.boot_time_sec, Some(i64::from(r.pid) + 7));
+        assert_eq!(e.link_secret.as_deref(), Some("s3cret"));
+        assert_eq!(e.spawned_by_nonce, "nonce-1");
+        assert_eq!(e.spawned_by_app_version.as_deref(), Some("0.4.498"));
+        assert_eq!(e.retiring, None);
+        // 끝나면 장부에서도 빠진다 — 정상 종료한 러너가 다음 오퍼레이터의 후보로 남지 않는다.
+        rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert!(last(&t, &snaps).is_empty());
+    }
+
+    #[test]
+    fn missing_boot_time_and_empty_secret_are_written_as_absent() {
+        let (t, _rx, snaps) = ledgered("sleep 30", |_| None);
+        let r = spawn(&t, &[("HARKROOM_RUNNER_SECRET".into(), String::new())])
+            .record()
+            .clone();
+        let rows = last(&t, &snaps);
+        assert_eq!(rows[0].boot_time_sec, None);
+        assert_eq!(rows[0].link_secret, None);
+        signal_sent(r.pid, libc::SIGKILL);
+    }
+
+    #[test]
+    fn boot_time_is_read_before_reaping_even_if_runner_exits_at_once() {
+        // 러너가 곧바로 끝나도 waiter 가 거두기 전이라 좀비가 pid 를 쥐고 있다 — 실물 ps 로 그 pid 의 시작 시각이 읽힌다.
+        let (t, rx, _snaps) = ledgered("exit 0", crate::adopt::ps_boot_time_sec);
+        let r = spawn(&t, &[]).record().clone();
+        let now = now_ms() / 1000;
+        let b = r
+            .boot_time_sec
+            .expect("거두기 전에는 좀비라도 시작 시각이 읽혀야 한다");
+        assert!((now - b).abs() <= 5, "boot={b} now={now}");
+        rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    }
+
+    #[test]
+    fn record_debug_hides_link_secret() {
+        let (t, _rx, _snaps) = ledgered("sleep 30", |_| None);
+        let r = spawn(&t, &[("HARKROOM_RUNNER_SECRET".into(), "s3cret".into())])
+            .record()
+            .clone();
+        let d = format!("{r:?}");
+        assert!(!d.contains("s3cret"), "{d}");
+        assert!(d.contains("<redacted>"));
+        signal_sent(r.pid, libc::SIGKILL);
     }
 
     #[test]
