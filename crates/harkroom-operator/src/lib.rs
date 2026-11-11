@@ -32,6 +32,7 @@ pub mod runners;
 pub mod serve;
 pub mod server_link;
 pub mod socket;
+pub mod tool_rules;
 pub mod turn_keys;
 pub mod turn_leases;
 pub mod turn_peek;
