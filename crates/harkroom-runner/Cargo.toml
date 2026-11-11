@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.88"
 license = "Apache-2.0"
 publish = false
-description = "Rust port of the harkroom runner (S3 B3). B3a: config (env), runner link client (operator unix socket: hello, request/response, reconnect/backoff, rejection give-up, sticky pollStopped, notices), startup. Not wired in yet — the operator still spawns the node runner."
+description = "Rust port of the harkroom runner (S3 B3). B3a: config (env), runner link client (operator unix socket: hello, request/response, reconnect/backoff, rejection give-up, sticky pollStopped, notices), startup. B3b-1: PTY pure half (spawn compose, paste sanitize, ready/gate screens, ring buffer, output coalescer). Not wired in yet — the operator still spawns the node runner."
 
 [[bin]]
 name = "harkroom-runner-rs"
@@ -18,3 +18,5 @@ path = "src/main.rs"
 harkroom-proto = { path = "../harkroom-proto" }
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = { version = "=1.0.154", features = ["preserve_order"] }
+# 준비·관문 판정(pty.rs). 오퍼레이터·harkroom-screen lock 에 이미 있는 판이다(regex-automata 0.4.18·regex-syntax 0.8.11).
+regex = { version = "=1.13.1", default-features = false, features = ["std", "unicode"] }
