@@ -375,6 +375,15 @@ impl AssignmentFrames {
                 agent_id,
                 definition,
             } => {
+                // 동의를 확인한 에이전트와 띄울 에이전트가 같아야 한다 — 다르면 로컬에 없는 에이전트가 남의 로컬 설정
+                // (작업 폴더 등)으로 뜬다. 오퍼레이터는 서버만 믿지 않는다(security #1892 낮음).
+                if definition.agent_id != *agent_id {
+                    eprintln!(
+                        "배정을 거절한다: agent={agent_id} — 정의의 agentId({})와 다르다",
+                        definition.agent_id
+                    );
+                    return true;
+                }
                 // 양쪽 동의(스펙 §3): 로컬 설정에 없으면 서버가 무엇을 내려도 띄우지 않는다.
                 let Some(l) = local(agent_id) else {
                     eprintln!("배정을 거절한다: agent={agent_id} — 이 머신의 로컬 설정에 없다");
