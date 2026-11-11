@@ -1,6 +1,6 @@
 //! 공급자 한도 사용률(s21c3d-1). 정본은 `packages/operator/src/providerUsage.ts`(토큰 읽기·API 조회·응답
 //! 해석·꼬리표)와 `usageChain.ts`(`cliThenApi` — CLI 먼저, 실패하면 API · `createUsageCache`)다.
-//! CLI 실행(`cliUsage.ts`)은 c3d-2, socket 요청은 c3d-3 이다.
+//! CLI 실행(`cliUsage.ts`)은 `cli`(c3d-2), socket 요청은 c3d-3 이다.
 //!
 //! ## 토큰을 다루는 규율(TS 와 같다)
 //! - **읽기만 한다.** 만료된 토큰을 갱신하지 않는다 — 그 파일·Keychain 의 주인은 CLI 다.
@@ -478,6 +478,8 @@ pub fn fetch_codex_provider_usage(
 }
 
 pub mod cache;
+pub mod cli;
+mod tz;
 
 #[cfg(test)]
 mod tests;
