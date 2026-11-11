@@ -15,7 +15,7 @@
 use serde::Serialize;
 use serde_json::Value;
 use std::io::Write;
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
 
@@ -43,7 +43,8 @@ pub struct RetiringFacts {
 }
 
 /// 장부 한 줄(TS `RunnerLedgerEntry`). 직렬화 키 순서는 TS 와 맞춘다(읽기에는 상관없다).
-#[derive(Debug, Clone, PartialEq, Serialize)]
+/// `Debug` 는 손으로 쓴다 — `link_secret` 이 `{:?}` 로 새지 않게(security #1894 낮음).
+#[derive(Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunnerLedgerEntry {
     pub agent_id: String,
@@ -60,6 +61,25 @@ pub struct RunnerLedgerEntry {
     pub spawned_by_app_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retiring: Option<RetiringFacts>,
+}
+
+impl std::fmt::Debug for RunnerLedgerEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RunnerLedgerEntry")
+            .field("agent_id", &self.agent_id)
+            .field("pid", &self.pid)
+            .field("incarnation_id", &self.incarnation_id)
+            .field(
+                "link_secret",
+                &self.link_secret.as_ref().map(|_| "<redacted>"),
+            )
+            .field("started_at_ms", &self.started_at_ms)
+            .field("boot_time_sec", &self.boot_time_sec)
+            .field("spawned_by_nonce", &self.spawned_by_nonce)
+            .field("spawned_by_app_version", &self.spawned_by_app_version)
+            .field("retiring", &self.retiring)
+            .finish()
+    }
 }
 
 /// JS `Number.isInteger` 와 같은 판정으로 정수를 꺼낸다(`3.0` 은 정수, `3.5` 는 아니다).
@@ -191,7 +211,12 @@ pub fn write_runner_ledger(app_data_dir: &Path, entries: &[RunnerLedgerEntry], l
         runners: entries,
     };
     let result = (|| -> std::io::Result<()> {
-        std::fs::create_dir_all(app_data_dir.join("operator"))?;
+        // 장부에 러너 링크 secret 이 들므로 새로 만드는 폴더는 0700(umask 에 맡기지 않는다, security #1894 낮음).
+        // 이미 있는 폴더의 권한은 바꾸지 않는다 — TS 오퍼레이터와 같이 쓰는 폴더라 손대는 범위를 넓히지 않는다. 파일은 0600 이다.
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(app_data_dir.join("operator"))?;
         let text = serde_json::to_string(&body).map_err(std::io::Error::other)?;
         let mut f = std::fs::OpenOptions::new()
             .write(true)
