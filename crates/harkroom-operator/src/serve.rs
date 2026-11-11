@@ -111,6 +111,7 @@ pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
                 base_url.to_string(),
                 home.clone(),
                 flag(args, "--app-version").map(str::to_string),
+                std::path::Path::new(&root).join("turn-secrets"),
             );
             println!(
                 "{}",
@@ -138,6 +139,7 @@ pub fn spawn_server_link(
     base_url: String,
     home: String,
     version: Option<String>,
+    secrets_root: std::path::PathBuf,
 ) -> Option<std::thread::JoinHandle<()>> {
     use crate::harnesses::detect_harnesses;
     use crate::hello::{announce_of, build_hello, capabilities, read_login_path};
@@ -188,6 +190,15 @@ pub fn spawn_server_link(
         token.clone(),
         crate::turn_keys::TurnKeyLedger::process(),
         crate::turn_slots::TurnSlots::process(),
+        {
+            // 기동 쓸기(TS `sweepAll`) — 앞 오퍼레이터가 남긴 마운트 폴더는 이 프로세스가 모르는 임대다.
+            let r = crate::turn_secrets::SecretsRoot { root: secrets_root };
+            let n = r.sweep_all();
+            if n > 0 {
+                eprintln!("turn-secrets: 기동 쓸기 {n}개");
+            }
+            Some(r)
+        },
     );
     state.set_runner_link(std::sync::Arc::clone(&bridge.runner_link));
     let mux = bridge.mux;
