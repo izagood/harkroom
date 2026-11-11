@@ -12,6 +12,7 @@
 //! 기대는 경계(P4)다. 그래서 TS 와 같은 입력에 **바이트까지 같은** 출력을 내야 한다 — `tests/merge_golden.rs` 가
 //! TS 가 실제로 낸 출력(`golden/merge.json`)과 비교한다.
 //! 파일 잠금(P5)은 전환 동안 Node·Rust 오퍼레이터가 **같은 잠금 파일**을 번갈아 잡는다 — `tests/file_lock_xlang.rs`.
+pub mod api_cli;
 pub mod bridge;
 pub mod callback_page;
 pub mod endpoint;

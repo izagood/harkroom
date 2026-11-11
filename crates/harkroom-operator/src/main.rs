@@ -13,6 +13,22 @@ fn main() {
             println!("{line}");
             std::process::exit(exit);
         }
+        Some("api") => {
+            let cwd = std::env::current_dir().ok();
+            let link = LinkEnv::from_env(
+                |k| std::env::var(k).ok(),
+                cwd.as_ref().map(|p| p.to_string_lossy().into_owned()),
+            );
+            let base = cwd.unwrap_or_default();
+            let (line, exit) = harkroom_operator::api_cli::api_main(
+                &args[1..],
+                link,
+                |p| std::fs::read(base.join(p)),
+                REQUEST_TIMEOUT,
+            );
+            println!("{line}");
+            std::process::exit(exit);
+        }
         Some("mcp-bridge") => {
             std::process::exit(harkroom_operator::mcp_bridge::mcp_bridge_main());
         }
@@ -24,7 +40,7 @@ fn main() {
         }
         other => {
             eprintln!(
-                "harkroom-operator-rs: {} is not implemented yet (only `merge`, `mcp-bridge` and `serve`)",
+                "harkroom-operator-rs: {} is not implemented yet (only `merge`, `api`, `mcp-bridge` and `serve`)",
                 other.unwrap_or("(none)")
             );
             std::process::exit(2);

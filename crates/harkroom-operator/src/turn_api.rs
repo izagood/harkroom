@@ -259,7 +259,7 @@ pub struct ApiArgs {
     pub content_type: Option<String>,
 }
 
-fn is_connector(s: &str) -> bool {
+pub(crate) fn is_connector(s: &str) -> bool {
     let b = s.as_bytes();
     !b.is_empty()
         && b.len() <= 64
