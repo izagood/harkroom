@@ -15,11 +15,22 @@ pub const PER_COMMUNITY_ENV: &str = "HARKROOM_OPERATOR_PER_COMMUNITY";
 pub const OPERATOR_ROOT_ENV: &str = "HARKROOM_OPERATOR_ROOT";
 pub const OPERATOR_LEGACY_ENV: &str = "HARKROOM_OPERATOR_LEGACY";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct OperatorLink {
     pub socket_path: String,
     pub runner_id: String,
     pub secret: String,
+}
+
+/// `secret` 은 링크 비밀이다 — `{:?}` 로 config 를 찍어도 로그에 나가지 않게 손으로 가린다(security #1866 낮음).
+impl std::fmt::Debug for OperatorLink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OperatorLink")
+            .field("socket_path", &self.socket_path)
+            .field("runner_id", &self.runner_id)
+            .field("secret", &"<redacted>")
+            .finish()
+    }
 }
 
 /// TS `RunnerConfig` 와 칸이 같다. 각 칸의 뜻은 정본 주석에 있다.
@@ -283,5 +294,25 @@ mod tests {
         );
         e.insert("AGENT_STATE_DIR".into(), "/s".into());
         assert_eq!(load_config(&e).unwrap().state_dir, "/s");
+    }
+}
+
+#[cfg(test)]
+mod debug_redaction_tests {
+    use super::OperatorLink;
+
+    #[test]
+    fn debug_hides_link_secret() {
+        let link = OperatorLink {
+            socket_path: "/s".into(),
+            runner_id: "r1".into(),
+            secret: "top-secret-value".into(),
+        };
+        let shown = format!("{link:?}");
+        assert!(!shown.contains("top-secret-value"), "{shown}");
+        assert!(
+            shown.contains("<redacted>") && shown.contains("r1"),
+            "{shown}"
+        );
     }
 }
