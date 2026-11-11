@@ -125,7 +125,7 @@ pub struct ScanDeps {
     pub protected: Vec<String>,
 }
 
-fn git_env(home: &str) -> Vec<(String, String)> {
+pub(super) fn git_env(home: &str) -> Vec<(String, String)> {
     vec![
         ("HOME".into(), home.to_string()),
         (
@@ -136,7 +136,7 @@ fn git_env(home: &str) -> Vec<(String, String)> {
     ]
 }
 
-fn args(a: &[&str]) -> Vec<String> {
+pub(super) fn args(a: &[&str]) -> Vec<String> {
     a.iter().map(|s| s.to_string()).collect()
 }
 
@@ -193,7 +193,7 @@ pub fn pr_head_is_ours(
         == 0
 }
 
-fn is_within(child: &str, parent: &str) -> bool {
+pub(super) fn is_within(child: &str, parent: &str) -> bool {
     child == parent || child.starts_with(&format!("{}/", parent.trim_end_matches('/')))
 }
 
