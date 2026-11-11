@@ -91,7 +91,7 @@ fn claude_snapshot_shape_and_order() {
         &layout(&[("p1", &["a", "b", "c", "d", "e"]), ("p2", &["a"])]),
         &UsageRequest::default(),
     );
-    assert_eq!(snap["measuredAtMs"], json!(1000.0));
+    assert_eq!(snap["measuredAtMs"], json!(1000));
     let accts = snap["accounts"].as_array().unwrap();
     let keys: Vec<String> = accts
         .iter()

@@ -57,7 +57,7 @@ fn claude_text_session_weekly_and_model_weekly_with_zone() {
     // TS `{ fetchedAtMs, ...parsed }` 와 같은 키 순서.
     let j = serde_json::to_string(&r).unwrap();
     assert!(
-        j.starts_with(r#"{"fetchedAtMs":1790617500000.0,"session":"#),
+        j.starts_with(r#"{"fetchedAtMs":1790617500000,"session":"#),
         "{j}"
     );
 }
