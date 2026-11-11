@@ -7,8 +7,12 @@
 //! 3. 클라이언트 — 정의의 `oauth.clientId`(PKCE 공개 클라이언트), 없으면 동적 등록(`token_endpoint_auth_method: none`).
 //! 4. 루프백 콜백(127.0.0.1, ::1 은 되면) → 코드 교환(`resource` = MCP url) → `secrets/mcp-oauth.json` 에 잠금 쓰기.
 //!
-//! **러너 쪽(s21) 몫으로 남긴 것**: `refresh`·`tokensFor`·`refreshDue`·`reportRejected`·`onToken`(도는 러너 설정 재작성).
-//! 이 묶음은 사람이 데스크톱에서 인증하고 상태를 보는 길만 옮긴다. 소켓으로는 토큰 값을 내보내지 않는다(상태만).
+//! s21b-4 에서 `refreshOne`·`tokensFor`·`refreshDue`·`reportRejected` 를 더했다(정본 같은 파일). 부르는 쪽
+//! (스폰 직전·1분 주기·거절 보고·`onToken` 설정 재작성)은 러너 링크 쪽 PR 몫이다.
+//! 소켓으로는 토큰 값을 내보내지 않는다(상태만).
+//!
+//! TS 보다 좁힌 곳: HTTP 는 리다이렉트를 따라가지 않는다(`max_redirects(0)` — 토큰 요청 본문이 다른 곳으로
+//! 다시 실려 가지 않게). 토큰 엔드포인트는 https 또는 루프백 http 만 받는다(`endpoint_allowed`).
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
@@ -180,6 +184,7 @@ fn agent() -> ureq::Agent {
     ureq::Agent::new_with_config(
         ureq::Agent::config_builder()
             .http_status_as_error(false)
+            .max_redirects(0)
             .timeout_global(Some(Duration::from_secs(20)))
             .build(),
     )
@@ -338,12 +343,55 @@ fn register(a: &ureq::Agent, endpoint: Option<&str>, redirect_uri: &str) -> Resu
     }
 }
 
+/// 토큰을 보낼 수 있는 엔드포인트인가 — https, 또는 루프백(127.0.0.1·localhost·[::1]) http.
+/// 평문 http 로 refresh 토큰·코드를 실어 보내지 않는다(TS 보다 좁음).
+pub fn endpoint_allowed(endpoint: &str) -> bool {
+    let Some(u) = parse_url(endpoint) else {
+        return false;
+    };
+    if u.origin.starts_with("https://") {
+        return true;
+    }
+    let host = &u.origin["http://".len()..];
+    let host = match host.rsplit_once(':') {
+        Some((h, p)) if !h.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) => h,
+        _ => host,
+    };
+    matches!(host, "127.0.0.1" | "localhost" | "[::1]")
+}
+
+/// 토큰 요청 실패. `Network` 는 거절이 아니다(들고 있는 토큰을 그대로 둔다).
+#[derive(Debug)]
+enum TokenError {
+    Network(String),
+    Rejected(String),
+}
+
+impl std::fmt::Display for TokenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TokenError::Network(e) | TokenError::Rejected(e) => f.write_str(e),
+        }
+    }
+}
+
 /// 토큰 요청. 성공이면 본문, 아니면 `error` 또는 `http_<status>`.
 fn token_request(
     a: &ureq::Agent,
     endpoint: &str,
     form: &[(&str, &str)],
 ) -> Result<Map<String, Value>, String> {
+    token_request_typed(a, endpoint, form).map_err(|e| e.to_string())
+}
+
+fn token_request_typed(
+    a: &ureq::Agent,
+    endpoint: &str,
+    form: &[(&str, &str)],
+) -> Result<Map<String, Value>, TokenError> {
+    if !endpoint_allowed(endpoint) {
+        return Err(TokenError::Rejected("insecure_token_endpoint".into()));
+    }
     let body: Vec<String> = form
         .iter()
         .map(|(k, v)| format!("{}={}", form_encode(k), form_encode(v)))
@@ -353,7 +401,7 @@ fn token_request(
         .header("content-type", "application/x-www-form-urlencoded")
         .header("accept", "application/json")
         .send(body.join("&"))
-        .map_err(|e| format!("network: {e}"))?;
+        .map_err(|e| TokenError::Network(format!("network: {e}")))?;
     let status = res.status().as_u16();
     let b = object(res.body_mut().read_json::<Value>().ok());
     if (200..300).contains(&status)
@@ -362,12 +410,14 @@ fn token_request(
     {
         return Ok(b.clone());
     }
-    Err(b
-        .as_ref()
-        .and_then(|b| b.get("error"))
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .unwrap_or_else(|| format!("http_{status}")))
+    // 3xx(따라가지 않은 리다이렉트)·5xx 도 인가 서버의 답이다 — TS 와 같이 거절로 본다.
+    Err(TokenError::Rejected(
+        b.as_ref()
+            .and_then(|b| b.get("error"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("http_{status}")),
+    ))
 }
 
 // ── 흐름 ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -388,6 +438,46 @@ pub struct McpOAuth {
     store_path: PathBuf,
     flows: Mutex<HashMap<String, Arc<Flow>>>,
     timeout: Duration,
+    /// refresh 는 이름마다 한 번에 하나 — refresh 토큰이 회전하면 둘째 요청이 첫째가 받은 것을 무효로 만든다.
+    refreshing: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// 만료 몇 ms 전에 refresh 하나. 기본 5분.
+    refresh_skew_ms: f64,
+    /// 거절 보고로 당기는 refresh 의 이름별 최소 간격. 기본 5분.
+    reject_cooldown_ms: f64,
+    /// 이름별로 거절 보고가 refresh 를 당긴 마지막 시각(메모리에만).
+    last_reject_refresh: Mutex<HashMap<String, f64>>,
+    /// 지금 정의의 `oauth.clientId`(security F2). 다르면 1분 refresh·거절 refresh 가 그 토큰을 돌리지 않는다.
+    current_client_id: Option<ClientIdLookup>,
+}
+
+/// 이름 → 지금 정의의 clientId(모르면 None).
+pub type ClientIdLookup = Box<dyn Fn(&str) -> Option<String> + Send + Sync>;
+
+/// `reportRejected` 가 한 일. 토큰 값은 `Refreshed` 에만 있다.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RejectOutcome {
+    /// `unknown`·`not_ok`·`stale`·`cooldown`·`network`·`no_refresh_token`·`client_changed`
+    Ignored(&'static str),
+    Refreshed {
+        url: String,
+        access_token: String,
+    },
+    Expired,
+    Rejected,
+}
+
+/// `tokensFor` 결과 — 쓸 수 있는 토큰과 "인증 필요" 이름.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct TokensFor {
+    pub tokens: std::collections::BTreeMap<String, String>,
+    pub expired: Vec<String>,
+}
+
+/// `tokensFor` 에 넘기는 정의 한 칸.
+#[derive(Debug, Default, Clone)]
+pub struct DefRef {
+    pub url: Option<String>,
+    pub client_id: Option<String>,
 }
 
 impl std::fmt::Debug for McpOAuth {
@@ -494,7 +584,25 @@ impl McpOAuth {
             store_path,
             flows: Mutex::new(HashMap::new()),
             timeout: FLOW_TIMEOUT,
+            refreshing: Mutex::new(HashMap::new()),
+            refresh_skew_ms: 5.0 * 60_000.0,
+            reject_cooldown_ms: 5.0 * 60_000.0,
+            last_reject_refresh: Mutex::new(HashMap::new()),
+            current_client_id: None,
         }
+    }
+
+    /// 지금 정의의 clientId 를 묻는 길을 단다(TS `deps.currentClientId`).
+    pub fn with_client_id_lookup(mut self, f: ClientIdLookup) -> Self {
+        self.current_client_id = Some(f);
+        self
+    }
+
+    #[cfg(test)]
+    fn with_skew(mut self, skew_ms: f64, cooldown_ms: f64) -> Self {
+        self.refresh_skew_ms = skew_ms;
+        self.reject_cooldown_ms = cooldown_ms;
+        self
     }
 
     #[cfg(test)]
@@ -788,6 +896,283 @@ impl McpOAuth {
         Ok(o)
     }
 
+    fn due(&self, rec: &Map<String, Value>) -> bool {
+        rec.get("expiresAt")
+            .and_then(Value::as_f64)
+            .is_some_and(|e| e - now_ms() <= self.refresh_skew_ms)
+    }
+
+    fn client_changed(&self, name: &str, rec: &Map<String, Value>) -> bool {
+        let Some(f) = &self.current_client_id else {
+            return false;
+        };
+        match f(name) {
+            Some(cur) => rec.get("clientId").and_then(Value::as_str) != Some(cur.as_str()),
+            None => false,
+        }
+    }
+
+    fn record(&self, name: &str) -> Result<Option<Map<String, Value>>, DaemonError> {
+        Ok(self.load()?.get(name).and_then(Value::as_object).cloned())
+    }
+
+    fn mark_expired(&self, name: &str) -> Result<(), DaemonError> {
+        self.update(|s| {
+            if let Some(Value::Object(r)) = s.get_mut(name) {
+                r.insert("status".into(), json!("expired"));
+            }
+        })
+    }
+
+    /// TS `refreshOne`. 새 기록, 또는 쓸 수 없으면 None. 네트워크 실패는 들고 있던 기록(아직 안 지났으면).
+    fn refresh_one(
+        &self,
+        name: &str,
+        rec: &Map<String, Value>,
+        on_reject: bool,
+    ) -> Result<Option<Map<String, Value>>, DaemonError> {
+        let gate = self
+            .refreshing
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .entry(name.to_string())
+            .or_default()
+            .clone();
+        let _g = gate.lock().unwrap_or_else(|p| p.into_inner());
+        // 앞선 refresh 가 이미 새 토큰을 받았으면 그것을 쓴다(TS 는 같은 약속을 돌려준다).
+        match self.record(name)? {
+            // 지워졌거나 앞선 refresh 가 거절돼 `expired` 가 됐다 — 같은 refresh 토큰을 또 보내지 않는다.
+            None => return Ok(None),
+            Some(cur) if cur.get("status").and_then(Value::as_str) != Some("ok") => {
+                return Ok(None);
+            }
+            Some(cur) if cur.get("accessToken") != rec.get("accessToken") => return Ok(Some(cur)),
+            Some(_) => {}
+        }
+        let s = |k: &str| rec.get(k).and_then(Value::as_str);
+        let Some(refresh) = s("refreshToken") else {
+            self.mark_expired(name)?;
+            return Ok(None);
+        };
+        let mut form: Vec<(&str, &str)> = vec![
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh),
+            ("client_id", s("clientId").unwrap_or("")),
+            ("resource", s("resource").unwrap_or("")),
+        ];
+        // secret 은 DCR 로 받은 것만 기록에 있다. 없으면 PKCE 공개 클라이언트로 refresh 한다.
+        if let Some(sec) = s("clientSecret").filter(|v| !v.is_empty()) {
+            form.push(("client_secret", sec));
+        }
+        match token_request_typed(&agent(), s("tokenEndpoint").unwrap_or(""), &form) {
+            Err(TokenError::Network(e)) => {
+                eprintln!("MCP OAuth: {name} refresh 실패(네트워크, 다시 시도한다): {e}");
+                let gone = rec
+                    .get("expiresAt")
+                    .and_then(Value::as_f64)
+                    .is_some_and(|e| e <= now_ms());
+                Ok((!gone).then(|| rec.clone()))
+            }
+            Err(TokenError::Rejected(e)) => {
+                eprintln!(
+                    "MCP OAuth: {name} refresh 거절({e}) — refresh 토큰이 만료됐거나 회수됐다. 데스크톱에서 다시 인증해야 한다"
+                );
+                self.mark_expired(name)?;
+                Ok(None)
+            }
+            Ok(body) => {
+                let now = now_ms();
+                let mut next = rec.clone();
+                // 거절 표시는 새 토큰과 함께 지운다 — 그것은 옛 토큰의 사실이다.
+                for k in ["rejectedAt", "rejectedBy", "refreshedOnReject"] {
+                    next.shift_remove(k);
+                }
+                if on_reject {
+                    next.insert("refreshedOnReject".into(), json!(true));
+                    next.insert("rejectRefreshUsed".into(), json!(true));
+                }
+                next.insert("accessToken".into(), body["access_token"].clone());
+                // 회전하지 않는 서버는 새 refresh 토큰을 안 준다 — 있던 것을 그대로 쓴다.
+                if let Some(r) = body.get("refresh_token").filter(|v| v.is_string()) {
+                    next.insert("refreshToken".into(), r.clone());
+                }
+                match body
+                    .get("expires_in")
+                    .and_then(Value::as_f64)
+                    .filter(|e| *e > 0.0)
+                {
+                    Some(e) => {
+                        next.insert("expiresAt".into(), num(now + e * 1000.0));
+                    }
+                    None => {
+                        next.shift_remove("expiresAt");
+                    }
+                }
+                next.insert("status".into(), json!("ok"));
+                next.insert("updatedAt".into(), num(now));
+                let v = next.clone();
+                self.update(|st| {
+                    st.insert(name.to_string(), Value::Object(v));
+                })?;
+                Ok(Some(next))
+            }
+        }
+    }
+
+    /// TS `tokensFor`. 스폰·재작성 직전에 부른다. 만료가 가까우면 refresh 하고 쓸 수 있는 토큰만 돌려준다.
+    pub fn tokens_for(
+        &self,
+        defs: &std::collections::BTreeMap<String, DefRef>,
+    ) -> Result<TokensFor, DaemonError> {
+        let store = self.load()?;
+        let mut out = TokensFor::default();
+        for (name, def) in defs {
+            let Some(rec) = store.get(name).and_then(Value::as_object) else {
+                continue;
+            };
+            let Some(url) = def.url.as_deref() else {
+                continue;
+            };
+            if url.is_empty() || rec.get("url").and_then(Value::as_str) != Some(url) {
+                continue;
+            }
+            // 다른 클라이언트로 받은 토큰 — 굽지 않고 "인증 필요"로 낸다.
+            if let Some(c) = def.client_id.as_deref().filter(|c| !c.is_empty())
+                && rec.get("clientId").and_then(Value::as_str) != Some(c)
+            {
+                out.expired.push(name.clone());
+                continue;
+            }
+            // 거절·만료된 토큰은 구워 봐야 또 401 이다.
+            if rec.get("status").and_then(Value::as_str) != Some("ok") {
+                out.expired.push(name.clone());
+                continue;
+            }
+            let live = if self.due(rec) {
+                self.refresh_one(name, rec, false)?
+            } else {
+                Some(rec.clone())
+            };
+            match live
+                .as_ref()
+                .and_then(|r| r.get("accessToken"))
+                .and_then(Value::as_str)
+            {
+                Some(t) => {
+                    out.tokens.insert(name.clone(), t.to_string());
+                }
+                None => out.expired.push(name.clone()),
+            }
+        }
+        Ok(out)
+    }
+
+    /// TS `refreshDue`. 만료가 가까운 것을 전부 refresh 하고, 새 토큰이 생긴 이름 → (url, 토큰).
+    pub fn refresh_due(
+        &self,
+    ) -> Result<std::collections::BTreeMap<String, (String, String)>, DaemonError> {
+        let store = self.load()?;
+        let mut out = std::collections::BTreeMap::new();
+        for (name, rec) in &store {
+            let Some(rec) = rec.as_object() else { continue };
+            if rec.get("status").and_then(Value::as_str) != Some("ok") || !self.due(rec) {
+                continue;
+            }
+            // 다른 클라이언트의 토큰은 돌리지 않는다(security F2).
+            if self.client_changed(name, rec) {
+                continue;
+            }
+            if let Some(next) = self.refresh_one(name, rec, false)?
+                && next.get("accessToken") != rec.get("accessToken")
+                && let (Some(u), Some(t)) = (
+                    next.get("url").and_then(Value::as_str),
+                    next.get("accessToken").and_then(Value::as_str),
+                )
+            {
+                out.insert(name.clone(), (u.to_string(), t.to_string()));
+            }
+        }
+        Ok(out)
+    }
+
+    /// TS `reportRejected`. MCP 서버가 토큰을 거절했다는 러너 보고.
+    pub fn report_rejected(
+        &self,
+        name: &str,
+        turn_started_at_ms: f64,
+        agent_id: &str,
+    ) -> Result<RejectOutcome, DaemonError> {
+        let Some(rec) = self.record(name)? else {
+            return Ok(RejectOutcome::Ignored("unknown"));
+        };
+        if rec.get("status").and_then(Value::as_str) != Some("ok") {
+            return Ok(RejectOutcome::Ignored("not_ok"));
+        }
+        if self.client_changed(name, &rec) {
+            return Ok(RejectOutcome::Ignored("client_changed"));
+        }
+        let updated = rec.get("updatedAt").and_then(Value::as_f64);
+        if !updated.is_some_and(|u| turn_started_at_ms >= u) {
+            return Ok(RejectOutcome::Ignored("stale"));
+        }
+        let flag = |k: &str| rec.get(k).and_then(Value::as_bool) == Some(true);
+        if flag("refreshedOnReject") || flag("rejectRefreshUsed") {
+            // 거절로 당겨 받은 토큰도 거절됐거나, 이 인증에서 당길 한 번을 이미 썼다.
+            let at = now_ms();
+            let token = rec.get("accessToken").cloned();
+            self.update(|s| {
+                if let Some(Value::Object(cur)) = s.get_mut(name)
+                    && cur.get("accessToken") == token.as_ref()
+                {
+                    cur.insert("status".into(), json!("rejected"));
+                    cur.insert("rejectedAt".into(), num(at));
+                    cur.insert("rejectedBy".into(), json!(agent_id));
+                }
+            })?;
+            eprintln!(
+                "MCP OAuth: {name} 새 토큰도 MCP 서버가 거절했다 — 데스크톱에서 다시 인증해야 한다 (agent={agent_id})"
+            );
+            return Ok(RejectOutcome::Rejected);
+        }
+        // refresh 토큰이 없으면 당길 것이 없다. 보고만으로 `expired` 를 붙이지 않는다.
+        if rec.get("refreshToken").and_then(Value::as_str).is_none() {
+            return Ok(RejectOutcome::Ignored("no_refresh_token"));
+        }
+        {
+            let mut last = self
+                .last_reject_refresh
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            let now = now_ms();
+            if let Some(l) = last.get(name)
+                && now - l < self.reject_cooldown_ms
+            {
+                return Ok(RejectOutcome::Ignored("cooldown"));
+            }
+            last.insert(name.to_string(), now);
+        }
+        let Some(next) = self.refresh_one(name, &rec, true)? else {
+            return Ok(RejectOutcome::Expired);
+        };
+        // 네트워크 실패는 들고 있던 것을 그대로 돌려준다 — 바뀐 것이 없다.
+        if next.get("accessToken") == rec.get("accessToken") {
+            return Ok(RejectOutcome::Ignored("network"));
+        }
+        eprintln!("MCP OAuth: {name} MCP 서버 거절 보고로 토큰을 새로 받았다 (agent={agent_id})");
+        Ok(RejectOutcome::Refreshed {
+            url: next
+                .get("url")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            access_token: next
+                .get("accessToken")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+        })
+    }
+
     /// `operatorMcpAuthForget`. 흐름을 닫고 그 이름의 토큰 칸을 지운다.
     pub fn forget(&self, name: &str) -> Result<(), DaemonError> {
         self.close_flow(name);
@@ -1049,5 +1434,314 @@ mod tests {
         assert!(o.forget("x").is_err());
         assert_eq!(std::fs::read_to_string(&store).unwrap(), "{not json");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 토큰 엔드포인트만 있는 가짜 인가 서버. 요청마다 `replies` 를 앞에서 하나씩 낸다(다 쓰면 마지막 것).
+    fn token_server(replies: Vec<(u16, String, String)>) -> (u16, Arc<Mutex<Vec<String>>>) {
+        use std::io::Read;
+        let l = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = l.local_addr().unwrap().port();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let seen2 = seen.clone();
+        std::thread::spawn(move || {
+            let mut i = 0usize;
+            for s in l.incoming() {
+                let Ok(mut s) = s else { continue };
+                let mut r = BufReader::new(s.try_clone().unwrap());
+                let mut line = String::new();
+                r.read_line(&mut line).unwrap();
+                let mut len = 0usize;
+                loop {
+                    let mut h = String::new();
+                    r.read_line(&mut h).unwrap();
+                    if h.trim().is_empty() {
+                        break;
+                    }
+                    if let Some(v) = h.to_ascii_lowercase().strip_prefix("content-length:") {
+                        len = v.trim().parse().unwrap();
+                    }
+                }
+                let mut body = vec![0u8; len];
+                r.read_exact(&mut body).unwrap();
+                seen2.lock().unwrap().push(String::from_utf8(body).unwrap());
+                let (status, extra, out) = replies[i.min(replies.len() - 1)].clone();
+                i += 1;
+                let _ = write!(
+                    s,
+                    "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\n{extra}content-length: {}\r\nconnection: close\r\n\r\n{out}",
+                    out.len()
+                );
+            }
+        });
+        (port, seen)
+    }
+
+    fn seeded(tag: &str, rec: Value) -> (PathBuf, McpOAuth) {
+        let dir = std::env::temp_dir().join(format!(
+            "hk-oauth-r-{tag}-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let store = dir.join("secrets").join("mcp-oauth.json");
+        let o = McpOAuth::new(store.clone());
+        o.update(|s| {
+            s.insert("s".into(), rec);
+        })
+        .unwrap();
+        (store, o)
+    }
+
+    fn rec_of(store: &PathBuf) -> Map<String, Value> {
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(store).unwrap()).unwrap();
+        v["s"].as_object().unwrap().clone()
+    }
+
+    fn base_rec(port: u16, expires_in_ms: f64) -> Value {
+        json!({"url":"https://m/mcp","clientId":"c1","clientSecret":"sec","tokenEndpoint":format!("http://127.0.0.1:{port}/token"),
+               "resource":"https://m/mcp","accessToken":"OLD","refreshToken":"R1","expiresAt":num(now_ms()+expires_in_ms),
+               "status":"ok","updatedAt":num(now_ms()-1000.0)})
+    }
+
+    fn defs(url: &str, cid: Option<&str>) -> std::collections::BTreeMap<String, DefRef> {
+        [(
+            "s".to_string(),
+            DefRef {
+                url: Some(url.into()),
+                client_id: cid.map(str::to_string),
+            },
+        )]
+        .into()
+    }
+
+    #[test]
+    fn endpoint_allowed_https_or_loopback() {
+        assert!(endpoint_allowed("https://as.example/token"));
+        assert!(endpoint_allowed("http://127.0.0.1:9/token"));
+        assert!(endpoint_allowed("http://localhost/token"));
+        assert!(endpoint_allowed("http://[::1]:8/t"));
+        assert!(!endpoint_allowed("http://as.example/token"));
+        assert!(!endpoint_allowed("http://127.0.0.1.evil/token"));
+        assert!(!endpoint_allowed("http://localhost.evil:1/token"));
+        assert!(!endpoint_allowed("ftp://x/"));
+        assert!(!endpoint_allowed(""));
+    }
+
+    #[test]
+    fn tokens_for_refreshes_when_due_and_keeps_rotating_token() {
+        let (port, seen) = token_server(vec![(
+            200,
+            String::new(),
+            json!({"access_token":"NEW","expires_in":3600}).to_string(),
+        )]);
+        let (store, o) = seeded("due", base_rec(port, 60_000.0));
+        let t = o.tokens_for(&defs("https://m/mcp", Some("c1"))).unwrap();
+        assert_eq!(t.tokens.get("s").map(String::as_str), Some("NEW"));
+        assert!(t.expired.is_empty());
+        let body = seen.lock().unwrap()[0].clone();
+        assert_eq!(
+            body,
+            "grant_type=refresh_token&refresh_token=R1&client_id=c1&resource=https%3A%2F%2Fm%2Fmcp&client_secret=sec"
+        );
+        let r = rec_of(&store);
+        // 회전하지 않는 서버 — 있던 refresh 토큰을 그대로 둔다.
+        assert_eq!(r["refreshToken"], "R1");
+        assert!(r["expiresAt"].as_f64().unwrap() > now_ms() + 3_000_000.0);
+        // 이제 멀었다 — 다시 묻지 않는다.
+        assert_eq!(
+            o.tokens_for(&defs("https://m/mcp", None)).unwrap().tokens["s"],
+            "NEW"
+        );
+        assert_eq!(seen.lock().unwrap().len(), 1);
+        // url 이 다르면 아무것도 아니다, clientId 가 다르면 인증 필요.
+        assert_eq!(
+            o.tokens_for(&defs("https://x/mcp", None)).unwrap(),
+            TokensFor::default()
+        );
+        assert_eq!(
+            o.tokens_for(&defs("https://m/mcp", Some("c2")))
+                .unwrap()
+                .expired,
+            ["s"]
+        );
+    }
+
+    #[test]
+    fn refresh_rejected_marks_expired_network_keeps_token() {
+        let (port, _) = token_server(vec![(
+            400,
+            String::new(),
+            json!({"error":"invalid_grant"}).to_string(),
+        )]);
+        let (store, o) = seeded("rej", base_rec(port, 60_000.0));
+        let t = o.tokens_for(&defs("https://m/mcp", None)).unwrap();
+        assert!(t.tokens.is_empty());
+        assert_eq!(t.expired, ["s"]);
+        assert_eq!(rec_of(&store)["status"], "expired");
+        assert_eq!(
+            o.status("s", "https://m/mcp", None).unwrap(),
+            json!({"state":"expired"})
+        );
+        // 네트워크 실패(닫힌 포트) — 아직 안 지났으면 들고 있던 것을 쓴다, 지났으면 못 쓴다(expired 표시는 안 붙임).
+        let dead = TcpListener::bind(("127.0.0.1", 0))
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let (store, o) = seeded("net", base_rec(dead, 60_000.0));
+        assert_eq!(
+            o.tokens_for(&defs("https://m/mcp", None)).unwrap().tokens["s"],
+            "OLD"
+        );
+        assert_eq!(rec_of(&store)["status"], "ok");
+        let (store, o) = seeded("net2", base_rec(dead, -1000.0));
+        assert_eq!(
+            o.tokens_for(&defs("https://m/mcp", None)).unwrap().expired,
+            ["s"]
+        );
+        assert_eq!(rec_of(&store)["status"], "ok");
+    }
+
+    #[test]
+    fn redirect_is_not_followed_and_plain_http_endpoint_refused() {
+        // 307 로 다른 곳을 가리켜도 따라가 refresh 토큰을 다시 싣지 않는다 — 거절로 본다.
+        let (other, other_seen) = token_server(vec![(
+            200,
+            String::new(),
+            json!({"access_token":"STOLEN"}).to_string(),
+        )]);
+        let (port, seen) = token_server(vec![(
+            307,
+            format!("location: http://127.0.0.1:{other}/token\r\n"),
+            "{}".into(),
+        )]);
+        let (store, o) = seeded("redir", base_rec(port, 60_000.0));
+        assert_eq!(
+            o.tokens_for(&defs("https://m/mcp", None)).unwrap().expired,
+            ["s"]
+        );
+        assert_eq!(seen.lock().unwrap().len(), 1);
+        assert!(other_seen.lock().unwrap().is_empty());
+        assert_eq!(rec_of(&store)["status"], "expired");
+        // 평문 http 원격 엔드포인트는 보내지 않는다.
+        let mut r = base_rec(port, 60_000.0);
+        r["tokenEndpoint"] = json!("http://as.example/token");
+        let (store, o) = seeded("plain", r);
+        assert_eq!(
+            o.tokens_for(&defs("https://m/mcp", None)).unwrap().expired,
+            ["s"]
+        );
+        assert_eq!(seen.lock().unwrap().len(), 1);
+        assert_eq!(rec_of(&store)["status"], "expired");
+    }
+
+    #[test]
+    fn refresh_due_skips_other_client_and_reports_new_tokens() {
+        let (port, seen) = token_server(vec![(
+            200,
+            String::new(),
+            json!({"access_token":"NEW","refresh_token":"R2","expires_in":3600}).to_string(),
+        )]);
+        let (store, o) = seeded("dueall", base_rec(port, 60_000.0));
+        let o = o.with_client_id_lookup(Box::new(|_| Some("other".into())));
+        assert!(o.refresh_due().unwrap().is_empty());
+        assert!(seen.lock().unwrap().is_empty());
+        let o = McpOAuth::new(store.clone());
+        let out = o.refresh_due().unwrap();
+        assert_eq!(out["s"], ("https://m/mcp".to_string(), "NEW".to_string()));
+        assert_eq!(rec_of(&store)["refreshToken"], "R2");
+        assert!(o.refresh_due().unwrap().is_empty());
+    }
+
+    #[test]
+    fn report_rejected_once_per_auth_then_rejected() {
+        let (port, seen) = token_server(vec![(
+            200,
+            String::new(),
+            json!({"access_token":"NEW","expires_in":3600}).to_string(),
+        )]);
+        let (store, o) = seeded("rr", base_rec(port, 3_600_000.0));
+        let o = o.with_skew(5.0 * 60_000.0, 0.0);
+        let at = rec_of(&store)["updatedAt"].as_f64().unwrap();
+        assert_eq!(
+            o.report_rejected("x", at, "a").unwrap(),
+            RejectOutcome::Ignored("unknown")
+        );
+        assert_eq!(
+            o.report_rejected("s", at - 1.0, "a").unwrap(),
+            RejectOutcome::Ignored("stale")
+        );
+        assert_eq!(
+            o.report_rejected("s", at, "a").unwrap(),
+            RejectOutcome::Refreshed {
+                url: "https://m/mcp".into(),
+                access_token: "NEW".into()
+            }
+        );
+        assert_eq!(seen.lock().unwrap().len(), 1);
+        let r = rec_of(&store);
+        assert_eq!(
+            (
+                r["refreshedOnReject"].clone(),
+                r["rejectRefreshUsed"].clone()
+            ),
+            (json!(true), json!(true))
+        );
+        // 새 토큰도 거절 — 사람이 다시 인증해야 한다. refresh 를 더 당기지 않는다.
+        let at2 = r["updatedAt"].as_f64().unwrap();
+        assert_eq!(
+            o.report_rejected("s", at2, "agent-9").unwrap(),
+            RejectOutcome::Rejected
+        );
+        assert_eq!(seen.lock().unwrap().len(), 1);
+        let r = rec_of(&store);
+        assert_eq!(
+            (r["status"].clone(), r["rejectedBy"].clone()),
+            (json!("rejected"), json!("agent-9"))
+        );
+        assert_eq!(
+            o.status("s", "https://m/mcp", None).unwrap()["state"],
+            "rejected"
+        );
+        assert_eq!(
+            o.tokens_for(&defs("https://m/mcp", None)).unwrap().expired,
+            ["s"]
+        );
+        assert_eq!(
+            o.report_rejected("s", at2, "a").unwrap(),
+            RejectOutcome::Ignored("not_ok")
+        );
+    }
+
+    #[test]
+    fn report_rejected_cooldown_no_refresh_token_client_changed() {
+        let dead = TcpListener::bind(("127.0.0.1", 0))
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let (store, o) = seeded("cd", base_rec(dead, 3_600_000.0));
+        let at = rec_of(&store)["updatedAt"].as_f64().unwrap();
+        // 네트워크 실패 — 바뀐 것이 없다. 곧바로 또 오면 쿨다운.
+        assert_eq!(
+            o.report_rejected("s", at, "a").unwrap(),
+            RejectOutcome::Ignored("network")
+        );
+        assert_eq!(
+            o.report_rejected("s", at, "a").unwrap(),
+            RejectOutcome::Ignored("cooldown")
+        );
+        let mut r = base_rec(dead, 3_600_000.0);
+        r.as_object_mut().unwrap().shift_remove("refreshToken");
+        let (store, o) = seeded("nort", r);
+        let at = rec_of(&store)["updatedAt"].as_f64().unwrap();
+        assert_eq!(
+            o.report_rejected("s", at, "a").unwrap(),
+            RejectOutcome::Ignored("no_refresh_token")
+        );
+        let o = o.with_client_id_lookup(Box::new(|_| Some("c2".into())));
+        assert_eq!(
+            o.report_rejected("s", at, "a").unwrap(),
+            RejectOutcome::Ignored("client_changed")
+        );
     }
 }
