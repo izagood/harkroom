@@ -13,7 +13,7 @@
  */
 import { hostname } from 'node:os';
 import { GH_LOGIN_RE, MERGE_SCOPE_RE, type OperatorGhAccount, type OperatorMergeCheckResult, type OperatorMergeReach, type OperatorMergeSetPayload, type OperatorMergeState } from '@harkroom/shared/daemonProtocol';
-import { readConfig, writeConfig, type OperatorConfig } from './config.js';
+import { readConfig, updateConfig, type OperatorConfig } from './config.js';
 import { defaultExec, ghEnv, type Exec } from './turnMerge.js';
 
 export interface LocalMergePort {
@@ -139,43 +139,45 @@ export function createLocalMergePort(deps: {
       return state(config.merge, a);
     },
     async set(p) {
-      const config = await readConfig(deps.configPath);
-      const before = config.merge;
-      const changes: { scope: string | null; from: string | null; to: string | null }[] = [];
-      let a: Accounts | null = null;
-      const loggedIn = async (login: string): Promise<void> => {
-        a ??= await accounts();
+      // gh 로그인 확인은 **잠금 밖에서** 먼저 한다 — 잠금 안에서 gh 를 기다리면 다른 writer 가 5초 상한에 걸린다(s21d).
+      const a: Accounts | null = !('migrate' in p) && p.ghUser !== null ? await accounts() : null;
+      const loggedIn = (login: string): void => {
+        if (!a) throw new Error('gh accounts were not checked');
         if (!a.ok) throw new Error(a.error);
         if (!a.accounts.some((x) => x.login === login)) throw new Error(`${login} is not logged in to gh on this machine`);
       };
-      let next: Merge = { ...before };
-      if ('migrate' in p) {
-        // 한 번만: byScope 가 이미 있으면 옮긴 것이다 — 옛 값이 남아 있어도 다시 복사하지 않는다.
-        if (!byScopeOf(before)) {
-          const legacy = legacyOf(before);
-          const byScope: Record<string, string> = {};
-          if (legacy) for (const sc of p.migrate) { byScope[sc] = legacy; changes.push({ scope: sc, from: null, to: legacy }); }
+      const changes: { scope: string | null; from: string | null; to: string | null }[] = [];
+      const config = await updateConfig(deps.configPath, (config) => {
+        const before = config.merge;
+        let next: Merge = { ...before };
+        if ('migrate' in p) {
+          // 한 번만: byScope 가 이미 있으면 옮긴 것이다 — 옛 값이 남아 있어도 다시 복사하지 않는다.
+          if (!byScopeOf(before)) {
+            const legacy = legacyOf(before);
+            const byScope: Record<string, string> = {};
+            if (legacy) for (const sc of p.migrate) { byScope[sc] = legacy; changes.push({ scope: sc, from: null, to: legacy }); }
+            next = { ...before, byScope };
+            delete next.ghUser;
+            if (legacy) changes.push({ scope: null, from: legacy, to: null });
+          }
+        } else if ('scope' in p) {
+          if (p.ghUser !== null) loggedIn(p.ghUser);
+          // 줄을 고르는 것 자체가 옮김이다 — byScope 가 생기면 옛 기본값은 더 읽지 않는다(다른 줄로 말없이 떨어지지 않게).
+          const byScope = { ...(byScopeOf(before) ?? {}) };
+          const from = byScope[p.scope] ?? null;
+          if (p.ghUser === null) delete byScope[p.scope]; else byScope[p.scope] = p.ghUser;
           next = { ...before, byScope };
-          delete next.ghUser;
-          if (legacy) changes.push({ scope: null, from: legacy, to: null });
+          if (from !== p.ghUser) changes.push({ scope: p.scope, from, to: p.ghUser });
+        } else {
+          if (p.ghUser !== null) loggedIn(p.ghUser);
+          const from = legacyOf(before);
+          next = { ...before };
+          if (p.ghUser === null) delete next.ghUser; else next.ghUser = p.ghUser;
+          if (from !== p.ghUser) changes.push({ scope: null, from, to: p.ghUser });
         }
-      } else if ('scope' in p) {
-        if (p.ghUser !== null) await loggedIn(p.ghUser);
-        // 줄을 고르는 것 자체가 옮김이다 — byScope 가 생기면 옛 기본값은 더 읽지 않는다(다른 줄로 말없이 떨어지지 않게).
-        const byScope = { ...(byScopeOf(before) ?? {}) };
-        const from = byScope[p.scope] ?? null;
-        if (p.ghUser === null) delete byScope[p.scope]; else byScope[p.scope] = p.ghUser;
-        next = { ...before, byScope };
-        if (from !== p.ghUser) changes.push({ scope: p.scope, from, to: p.ghUser });
-      } else {
-        if (p.ghUser !== null) await loggedIn(p.ghUser);
-        const from = legacyOf(before);
-        next = { ...before };
-        if (p.ghUser === null) delete next.ghUser; else next.ghUser = p.ghUser;
-        if (from !== p.ghUser) changes.push({ scope: null, from, to: p.ghUser });
-      }
-      if (!Object.keys(next).length) delete config.merge; else config.merge = next;
-      if (JSON.stringify(before ?? {}) !== JSON.stringify(next)) await writeConfig(deps.configPath, config);
+        if (!Object.keys(next).length) delete config.merge; else config.merge = next;
+        return JSON.stringify(before ?? {}) !== JSON.stringify(next);
+      });
       return { state: state(config.merge, a ?? await accounts()), changes };
     },
   };

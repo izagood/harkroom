@@ -9,10 +9,12 @@
  * **writer 는 오퍼레이터 하나다.** 그 머신의 데스크탑은 unix 소켓으로 요청할 뿐 파일을 직접
  * 쓰지 않는다 — `claudeAccounts.ts` 가 `pools.json` 에 세운 것과 같은 단일 writer 규칙이다.
  */
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { ProviderLaneConfig } from '@harkroom/shared/providerLane';
 import { assertSingleCommunity } from './communityRoots.js';
+import { withFileLock } from './fileLock.js';
 
 export interface LocalAgentConfig {
   /** 이 머신에서의 작업 디렉터리. 없으면 서버 정의의 `workingDirDefault`. */
@@ -85,13 +87,59 @@ export async function readConfig(path: string): Promise<OperatorConfig> {
   } catch { return { ...EMPTY }; }
 }
 
-/** 임시 파일에 쓰고 rename 한다 — 도중에 죽어도 반쪽짜리 설정이 남지 않는다. */
+/**
+ * 임시 파일에 쓰고 rename 한다 — 도중에 죽어도 반쪽짜리 설정이 남지 않는다.
+ * 임시 이름은 **유일**하다(`randomUUID` + `wx`) — `pid-시각` 은 같은 ms 의 두 쓰기가 한 임시 파일을 같이 쓴다(s21d).
+ * 읽고-고치고-쓰기는 이 함수가 아니라 `updateConfig` 로 한다(잠금·깨진 파일 거절).
+ */
 export async function writeConfig(path: string, cfg: OperatorConfig): Promise<void> {
   assertSingleCommunity(cfg.communities, process.env);
   await mkdir(dirname(path), { recursive: true });
-  const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
-  await writeFile(tmp, `${JSON.stringify(cfg, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-  await rename(tmp, path);
+  const tmp = `${path}.tmp-${process.pid}-${randomUUID()}`;
+  try {
+    await writeFile(tmp, `${JSON.stringify(cfg, null, 2)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    await rename(tmp, path);
+  } catch (err) {
+    await rm(tmp, { force: true }).catch(() => undefined);
+    throw err;
+  }
+}
+
+/** 쓰기 전에 읽는다 — 없으면 빈 설정, **깨졌으면 던진다**(빈 설정으로 덮으면 사람이 고치던 내용과 에이전트 목록을 잃는다). */
+export async function readConfigForWrite(path: string): Promise<OperatorConfig> {
+  let text: string;
+  try {
+    text = await readFile(path, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { communities: {} };
+    throw err;
+  }
+  let parsed: unknown;
+  try { parsed = JSON.parse(text); } catch { throw new Error(`${path} 가 깨졌다 — 덮어쓰지 않는다(손으로 고친 뒤 다시 해라)`); }
+  if (!isConfig(parsed)) throw new Error(`${path} 가 설정 모양이 아니다 — 덮어쓰지 않는다`);
+  return parsed;
+}
+
+/** `operator.json` 잠금 자리 — Rust 오퍼레이터(`local_agents.rs`)와 **같은 파일**이라 둘이 함께 돌아도 서로를 막는다. */
+export function configLockPath(path: string): string {
+  return `${path}.lock`;
+}
+
+/**
+ * 읽고-고치고-쓰기(s21d). `operator.json.lock` 을 쥔 채 읽고(깨졌으면 던짐), `edit` 가 고치게 하고, 쓴다.
+ * `edit` 가 `false` 를 돌려주면 쓰지 않는다(바뀐 것이 없다). 잠금 안에서 오래 기다리는 일(gh 호출 등)은 하지 마라 —
+ * 다른 writer 의 잠금 대기 상한은 5초다.
+ */
+export async function updateConfig(
+  path: string,
+  edit: (cfg: OperatorConfig) => boolean | void,
+): Promise<OperatorConfig> {
+  await mkdir(dirname(path), { recursive: true });
+  return withFileLock(configLockPath(path), async () => {
+    const cfg = await readConfigForWrite(path);
+    if (edit(cfg) !== false) await writeConfig(path, cfg);
+    return cfg;
+  });
 }
 
 /**
@@ -100,11 +148,13 @@ export async function writeConfig(path: string, cfg: OperatorConfig): Promise<vo
  */
 export async function rememberOperatorId(path: string, baseUrl: string, operatorId: string): Promise<void> {
   const key = communityKey(baseUrl);
-  const config = await readConfig(path);
-  const section = (config.communities[key] ??= { agents: {} });
-  if (section.operatorId === operatorId) return;
-  section.operatorId = operatorId;
-  await writeConfig(path, config);
+  // 바뀌지 않았으면 잠금도 잡지 않는다(붙을 때마다 부르는 자리다).
+  if ((await readConfig(path)).communities[key]?.operatorId === operatorId) return;
+  await updateConfig(path, (config) => {
+    const section = (config.communities[key] ??= { agents: {} });
+    if (section.operatorId === operatorId) return false;
+    section.operatorId = operatorId;
+  });
 }
 
 /** baseUrl 을 설정 키로 정규화한다 — 끝 슬래시 하나 때문에 같은 서버가 두 섹션이 되면 안 된다. */
