@@ -167,7 +167,7 @@ impl UsageMeters {
             .zip(measured)
             .map(|((pool, name, _), m)| entry(name, Some(pool), &m))
             .collect::<Vec<_>>();
-        json!({ "measuredAtMs": at, "accounts": accounts })
+        json!({ "measuredAtMs": crate::provider_usage::ms_value(at), "accounts": accounts })
     }
 
     /// TS `codexAccounts.providerUsage(req)` — 시스템 기본 로그인(`''`) 먼저, 그다음 계정 폴더.
@@ -188,7 +188,7 @@ impl UsageMeters {
             .zip(measured)
             .map(|((account, _), m)| entry(account, None, &m))
             .collect::<Vec<_>>();
-        json!({ "measuredAtMs": at, "accounts": accounts })
+        json!({ "measuredAtMs": crate::provider_usage::ms_value(at), "accounts": accounts })
     }
 }
 
