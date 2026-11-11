@@ -3,7 +3,7 @@
 //! TS 와 같이 `buildTurnCommand` 는 하네스 이름을 보지 않고 표만 부른다. 이 파일은 **조각**만 낸다 —
 //! 조립(순서·세션 검사)은 B3d-2b `turn_command` 몫이다.
 //!
-//! 진행: claude·codex 프리셋(codex lane 덮어쓰기·추가 MCP 조각은 B3d-4). opencode/kilo·pi·omp 는 다음 커밋.
+//! 진행: claude·codex·opencode/kilo·pi·omp 조각(codex lane 덮어쓰기·추가 MCP 조각은 B3d-4). 세션 판정·chrome 헬퍼는 다음 커밋.
 
 use crate::adapter::MentionPermission;
 use crate::turn_rules::{
@@ -305,6 +305,126 @@ pub mod codex {
     }
 }
 
+/// opencode·kilo 프리셋(TS `OPENCODE_PRESET`·`KILO_PRESET` — kilo 는 실행 파일 이름만 다르다).
+/// MCP·지시문·본문은 argv 에 없다(설정 파일·PTY 주입). `--auto` 와 읽기 전용 에이전트를 **같이 주지 않는 것**이 보안 경계다(kilo 실측).
+pub mod opencode {
+    use super::*;
+    use crate::opencode_home::{OPENCODE_LANE_AGENT, OPENCODE_READONLY_AGENT};
+
+    pub const OPENCODE_COMMAND: &str = "opencode";
+    pub const KILO_COMMAND: &str = "kilo";
+    pub const ALLOWS_NULL_SESSION_ON_FIRST_TURN: bool = true;
+
+    pub fn session(session_id: Option<&str>) -> Vec<String> {
+        session_id.map(|id| v(&["-s", id])).unwrap_or_default()
+    }
+
+    pub fn permission(p: MentionPermission) -> Vec<String> {
+        match p {
+            MentionPermission::Auto => v(&["--auto"]),
+            MentionPermission::Readonly => v(&["--agent", OPENCODE_READONLY_AGENT]),
+        }
+    }
+
+    /// API 키 연결 턴의 auto — `--auto` 없이 권한 표를 박은 lane 에이전트만. 읽기 전용 lane 은 `permission(Readonly)`.
+    pub fn lane_permission_auto() -> Vec<String> {
+        v(&["--agent", OPENCODE_LANE_AGENT])
+    }
+
+    /// 채널별 lane 에이전트(U3).
+    pub fn lane_agent_args(agent: &str) -> Vec<String> {
+        v(&["--agent", agent])
+    }
+
+    pub fn model(model: Option<&str>) -> Vec<String> {
+        model.map(|m| v(&["-m", m])).unwrap_or_default()
+    }
+
+    pub fn effort(effort: Option<&str>) -> Vec<String> {
+        effort.map(|e| v(&["--variant", e])).unwrap_or_default()
+    }
+}
+
+/// pi·omp 공통: 지시문은 파일 경로로만(`--append-system-prompt <파일>` 은 파일 내용을 붙인다).
+fn pi_family_prompt(
+    system_prompt: &str,
+    system_prompt_file: Option<&str>,
+) -> Result<Vec<String>, TurnPresetError> {
+    match system_prompt_file {
+        Some(f) => Ok(v(&["--append-system-prompt", f])),
+        None if !system_prompt.is_empty() => Err(TurnPresetError::SystemPromptNeedsFile),
+        None => Ok(Vec::new()),
+    }
+}
+
+/// pi 프리셋(TS `PI_PRESET`). 세션 인자 하나(있으면 잇고 없으면 만든다). 권한 플래그 없음 — 읽기 전용 `--tools` 는 조립 몫.
+pub mod pi {
+    use super::*;
+
+    pub const COMMAND: &str = "pi";
+    pub const ALLOWS_NULL_SESSION_ON_FIRST_TURN: bool = false;
+
+    pub fn session(session_id: &str) -> Vec<String> {
+        v(&["--session-id", session_id])
+    }
+
+    pub fn model(model: Option<&str>) -> Vec<String> {
+        model.map(|m| v(&["--model", m])).unwrap_or_default()
+    }
+
+    pub fn effort(effort: Option<&str>) -> Vec<String> {
+        effort.map(|e| v(&["--thinking", e])).unwrap_or_default()
+    }
+
+    /// 워크스페이스 `.pi/`(확장·설정)를 들이지 않는다.
+    pub fn always_args() -> Vec<String> {
+        v(&["--no-approve"])
+    }
+
+    /// API 키 연결 턴은 context 파일을 읽지 않는다.
+    pub fn lane_args() -> Vec<String> {
+        v(&["--no-context-files"])
+    }
+
+    pub fn prompt(
+        system_prompt: &str,
+        system_prompt_file: Option<&str>,
+    ) -> Result<Vec<String>, TurnPresetError> {
+        pi_family_prompt(system_prompt, system_prompt_file)
+    }
+}
+
+/// omp 프리셋(TS `OMP_PRESET`, pi 포크). 첫 턴부터 `--resume`(헤더 파일을 러너가 미리 쓴다). `--add-dir`·`--config`·`--session-dir` 은 조립 몫.
+pub mod omp {
+    use super::*;
+
+    pub const COMMAND: &str = "omp";
+    pub const ALLOWS_NULL_SESSION_ON_FIRST_TURN: bool = false;
+
+    pub fn session(session_id: &str) -> Vec<String> {
+        v(&["--resume", session_id])
+    }
+
+    pub fn model(model: Option<&str>) -> Vec<String> {
+        model.map(|m| v(&["--model", m])).unwrap_or_default()
+    }
+
+    pub fn effort(effort: Option<&str>) -> Vec<String> {
+        effort.map(|e| v(&["--thinking", e])).unwrap_or_default()
+    }
+
+    pub fn always_args() -> Vec<String> {
+        v(&["--no-extensions", "--no-title"])
+    }
+
+    pub fn prompt(
+        system_prompt: &str,
+        system_prompt_file: Option<&str>,
+    ) -> Result<Vec<String>, TurnPresetError> {
+        pi_family_prompt(system_prompt, system_prompt_file)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -479,5 +599,39 @@ mod tests {
         );
         assert!(codex::effort(None).is_empty());
         assert!(codex::prompt().is_empty());
+    }
+
+    #[test]
+    fn opencode_auto_and_readonly_never_together() {
+        assert_eq!(opencode::permission(MentionPermission::Auto), ["--auto"]);
+        let ro = opencode::permission(MentionPermission::Readonly);
+        assert_eq!(ro, ["--agent", "harkroom-readonly"]);
+        assert!(!ro.iter().any(|x| x == "--auto"));
+        assert_eq!(
+            opencode::lane_permission_auto(),
+            ["--agent", "harkroom-lane"]
+        );
+        assert!(opencode::session(None).is_empty());
+        assert_eq!(opencode::session(Some("s")), ["-s", "s"]);
+        assert_eq!(opencode::model(Some("m")), ["-m", "m"]);
+        assert_eq!(opencode::effort(Some("high")), ["--variant", "high"]);
+    }
+
+    #[test]
+    fn pi_and_omp_fragments() {
+        assert_eq!(pi::session("u"), ["--session-id", "u"]);
+        assert_eq!(omp::session("u"), ["--resume", "u"]);
+        assert_eq!(pi::always_args(), ["--no-approve"]);
+        assert_eq!(omp::always_args(), ["--no-extensions", "--no-title"]);
+        assert_eq!(pi::lane_args(), ["--no-context-files"]);
+        assert_eq!(pi::effort(Some("low")), ["--thinking", "low"]);
+        for f in [pi::prompt, omp::prompt] {
+            assert_eq!(f("지시", None), Err(TurnPresetError::SystemPromptNeedsFile));
+            assert!(f("", None).unwrap().is_empty());
+            assert_eq!(
+                f("지시", Some("/p")).unwrap(),
+                ["--append-system-prompt", "/p"]
+            );
+        }
     }
 }
