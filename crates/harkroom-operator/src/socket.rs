@@ -245,6 +245,8 @@ fn now_ms() -> i64 {
 }
 
 type Writer = Arc<Mutex<UnixStream>>;
+/// 사용률 요청 열쇠 → 그 결과를 기다리는 (요청 id, 접속 writer)들.
+type UsageWaiters = HashMap<String, Vec<(String, Writer)>>;
 
 /// 서버가 들고 있는 것. 토큰은 엔드포인트를 이긴 뒤에 생기므로 나중에 채운다(빈 값이면 누구도 통과 못 한다).
 /// 러너 종료를 서버 링크에 넘기는 자리(s21c-1b-2b).
@@ -274,6 +276,9 @@ pub struct ServerState {
     codex_logins: OnceLock<CodexLogins>,
     /// 공급자 사용률 측정기(s21c3d-3). 없으면 `*ProviderUsage` 요청은 거절된다. 폴러와 캐시를 함께 쓴다.
     usage_meters: OnceLock<crate::usage_meter::UsageMeters>,
+    /// 지금 도는 사용률 요청(종류+payload) → 그 결과를 기다리는 (요청 id, 접속 writer)들. 같은 요청이 이미 돌면 스레드를 새로 띄우지 않고
+    /// 그 결과를 함께 받는다 — force 연타로 기다리는 스레드가 쌓이지 않게(security #1916 낮음).
+    usage_inflight: Arc<Mutex<UsageWaiters>>,
     /// 로컬 에이전트 설정이 바뀌었다(TS `localAgents.ts` 의 `onChanged`) — 서버 링크가 능력을 다시 낸다. 링크가 없으면 비어 있다.
     on_agents_changed: OnceLock<Box<dyn Fn() + Send + Sync>>,
     /// 러너 링크(s21b-1). 첫 줄이 `hello{role:'runner'}` 인 접속을 넘겨받는다. 없으면 그 hello 는 앱 hello 로 검사돼 거절된다.
@@ -316,6 +321,7 @@ impl ServerState {
                 claude_logins: OnceLock::new(),
                 codex_accounts: OnceLock::new(),
                 usage_meters: OnceLock::new(),
+                usage_inflight: Arc::new(Mutex::new(HashMap::new())),
                 codex_logins: OnceLock::new(),
                 on_agents_changed: OnceLock::new(),
                 runner_link: OnceLock::new(),
@@ -994,11 +1000,8 @@ fn serve_connection_in(state: &ServerState, mut stream: UnixStream, slot: Option
                         match state.usage_job(&ty, payload.as_ref()) {
                             Err(e) => error_response(Some(id), &e),
                             Ok(job) => {
-                                let w = Arc::clone(&writer);
-                                std::thread::spawn(move || {
-                                    let reply = json!({ "id": id, "ok": true, "payload": job() });
-                                    let _ = write_value(&w, &reply);
-                                });
+                                let key = usage_key(&ty, payload.as_ref());
+                                state.run_usage(key, id, Arc::clone(&writer), job);
                                 continue;
                             }
                         }
@@ -1013,6 +1016,55 @@ fn serve_connection_in(state: &ServerState, mut stream: UnixStream, slot: Option
                 return;
             }
         }
+    }
+}
+
+/// 같은 사용률 요청을 하나로 묶는 열쇠 — 종류와 payload 글자(같은 앱의 같은 버튼은 같은 글자를 낸다).
+fn usage_key(ty: &str, payload: Option<&Value>) -> String {
+    format!("{ty}\u{0}{}", payload.unwrap_or(&Value::Null))
+}
+
+impl ServerState {
+    /// 사용률 요청을 접속 스레드 밖에서 돌린다. 같은 열쇠가 이미 돌고 있으면 그 결과를 함께 받는다(스레드를 새로 띄우지 않는다).
+    /// 결과가 나오면 기다리던 모든 (id, writer) 에 같은 payload 를 쓴다. 쓰기 실패는 그 접속만의 일이다.
+    pub(crate) fn run_usage(
+        &self,
+        key: String,
+        id: String,
+        writer: Writer,
+        job: Box<dyn FnOnce() -> Value + Send>,
+    ) {
+        {
+            let mut inflight = self
+                .usage_inflight
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            if let Some(waiters) = inflight.get_mut(&key) {
+                waiters.push((id, writer));
+                return;
+            }
+            inflight.insert(key.clone(), vec![(id, writer)]);
+        }
+        let inflight = Arc::clone(&self.usage_inflight);
+        std::thread::spawn(move || {
+            // 측정이 패닉해도 열쇠를 지우고 기다리던 쪽 모두에 답한다 — 남겨 두면 그 열쇠의 요청이 영영 답을 못 받는다.
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job));
+            let waiters = inflight
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .remove(&key)
+                .unwrap_or_default();
+            for (id, w) in waiters {
+                let reply = match &result {
+                    Ok(payload) => json!({ "id": id, "ok": true, "payload": payload }),
+                    Err(_) => error_response(
+                        Some(id),
+                        &err(DaemonErrorCode::Internal, "사용률을 재다 멈췄다"),
+                    ),
+                };
+                let _ = write_value(&w, &reply);
+            }
+        });
     }
 }
 
@@ -1200,6 +1252,98 @@ mod tests {
                 json!(true)
             );
         }
+    }
+
+    /// security #1916 낮음 — 같은 사용률 요청이 돌고 있으면 측정을 한 번만 돌리고, 기다리던 요청 모두에 같은 답을 쓴다.
+    /// 측정이 패닉해도 열쇠를 지우고 기다리던 쪽 모두에 오류로 답한다.
+    #[test]
+    fn same_usage_request_is_coalesced_and_panic_still_answers_all() {
+        use std::io::{BufRead, BufReader};
+        use std::os::unix::net::UnixStream;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let state = ServerState::new(
+            DaemonIdentity {
+                pid: 1,
+                started_at_ms: 0,
+                launch_nonce: String::new(),
+                entry_path: String::new(),
+                app_version: String::new(),
+            },
+            None,
+        );
+        let pair = || {
+            let (a, b) = UnixStream::pair().unwrap();
+            (Arc::new(Mutex::new(a)) as Writer, BufReader::new(b))
+        };
+        let (w1, mut r1) = pair();
+        let (w2, mut r2) = pair();
+        let runs = Arc::new(AtomicUsize::new(0));
+        let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
+        let key = usage_key("claudeAccountsProviderUsage", Some(&json!({"force": true})));
+        {
+            let runs = Arc::clone(&runs);
+            state.run_usage(
+                key.clone(),
+                "a".into(),
+                w1,
+                Box::new(move || {
+                    runs.fetch_add(1, Ordering::SeqCst);
+                    go_rx.recv().unwrap();
+                    json!({"measuredAtMs": 1})
+                }),
+            );
+        }
+        // 같은 열쇠 — 새 측정 없이 기다림에 붙는다.
+        state.run_usage(
+            key.clone(),
+            "b".into(),
+            w2,
+            Box::new(|| panic!("두 번째 측정은 돌지 않아야 한다")),
+        );
+        go_tx.send(()).unwrap();
+        let read = |r: &mut BufReader<UnixStream>| {
+            let mut l = String::new();
+            r.read_line(&mut l).unwrap();
+            serde_json::from_str::<Value>(&l).unwrap()
+        };
+        assert_eq!(
+            read(&mut r1),
+            json!({"id":"a","ok":true,"payload":{"measuredAtMs":1}})
+        );
+        assert_eq!(
+            read(&mut r2),
+            json!({"id":"b","ok":true,"payload":{"measuredAtMs":1}})
+        );
+        assert_eq!(runs.load(Ordering::SeqCst), 1);
+        assert!(state.usage_inflight.lock().unwrap().is_empty());
+
+        // 패닉: 열쇠가 지워지고 기다리던 쪽은 오류 답을 받는다. 그 뒤 같은 열쇠는 다시 돈다.
+        let (w3, mut r3) = pair();
+        state.run_usage(
+            key.clone(),
+            "c".into(),
+            w3,
+            Box::new(|| panic!("측정 실패")),
+        );
+        let v = read(&mut r3);
+        assert_eq!(v["id"], "c");
+        assert_eq!(v["ok"], false);
+        let (w4, mut r4) = pair();
+        state.run_usage(key, "d".into(), w4, Box::new(|| json!({"x": 2})));
+        assert_eq!(read(&mut r4)["payload"], json!({"x": 2}));
+    }
+
+    #[test]
+    fn usage_key_separates_type_and_payload() {
+        let k = |t: &str, p: Option<Value>| usage_key(t, p.as_ref());
+        assert_ne!(
+            k("claudeAccountsProviderUsage", Some(json!({"force": true}))),
+            k("claudeAccountsProviderUsage", None)
+        );
+        assert_ne!(
+            k("claudeAccountsProviderUsage", None),
+            k("codexAccountsProviderUsage", None)
+        );
     }
 
     #[test]

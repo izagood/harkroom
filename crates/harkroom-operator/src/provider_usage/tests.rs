@@ -34,8 +34,8 @@ fn claude_parse_full() {
     assert_eq!(
         serde_json::to_value(&m).unwrap(),
         json!({
-            "fetchedAtMs": NOW,
-            "session": {"usedPercent": 42.5, "resetsAtMs": 1000.0},
+            "fetchedAtMs": (NOW) as i64,
+            "session": {"usedPercent": 42.5, "resetsAtMs": 1000},
             "weekly": {"usedPercent": 100.0, "resetsAtMs": null},
             "extra": [{"label": "Opus weekly", "window": {"usedPercent": 0.0, "resetsAtMs": null}}],
         })
@@ -47,7 +47,7 @@ fn claude_parse_unknown_shape_is_empty_not_error() {
     let m = parse_claude_oauth_usage(&json!("x"), NOW);
     assert_eq!(
         serde_json::to_value(&m).unwrap(),
-        json!({"fetchedAtMs": NOW, "session": null, "weekly": null, "extra": []})
+        json!({"fetchedAtMs": (NOW) as i64, "session": null, "weekly": null, "extra": []})
     );
 }
 
@@ -64,9 +64,9 @@ fn codex_parse_reset_at_then_after() {
     assert_eq!(
         serde_json::to_value(&m).unwrap(),
         json!({
-            "fetchedAtMs": NOW,
-            "session": {"usedPercent": 10.0, "resetsAtMs": 2000.0, "windowMinutes": 300.0},
-            "weekly": {"usedPercent": 50.0, "resetsAtMs": NOW + 3000.0, "windowMinutes": 2.0},
+            "fetchedAtMs": (NOW) as i64,
+            "session": {"usedPercent": 10.0, "resetsAtMs": 2000, "windowMinutes": 300.0},
+            "weekly": {"usedPercent": 50.0, "resetsAtMs": (NOW + 3000.0) as i64, "windowMinutes": 2.0},
             "plan": "plus",
         })
     );
@@ -77,7 +77,7 @@ fn codex_parse_missing_rate_limit() {
     let m = parse_codex_wham_usage(&json!({}), NOW);
     assert_eq!(
         serde_json::to_value(&m).unwrap(),
-        json!({"fetchedAtMs": NOW, "session": null, "weekly": null})
+        json!({"fetchedAtMs": (NOW) as i64, "session": null, "weekly": null})
     );
 }
 
@@ -268,7 +268,7 @@ fn claude_fetch_paths() {
     let m = fetch_claude_provider_usage(p, NOW, &bad, &good);
     assert_eq!(
         serde_json::to_value(&m).unwrap(),
-        json!({"fetchedAtMs": NOW, "session": null, "weekly": null, "error": "unauthorized"})
+        json!({"fetchedAtMs": (NOW) as i64, "session": null, "weekly": null, "error": "unauthorized"})
     );
 }
 
@@ -344,4 +344,22 @@ fn ureq_does_not_follow_redirects() {
     assert!(matches!(r, Err(FetchError::Status(302))), "{r:?}");
     assert_eq!(error_label(FetchError::Status(302)), "http-302");
     assert!(server.join().unwrap());
+}
+
+/// TS 의 `Date.now()` 처럼 정수로 낸다(로컬 실측에서 `1794399373105.0` 꼴로 나가던 것).
+#[test]
+fn ms_fields_serialize_as_integers_like_ts() {
+    assert_eq!(ms_value(1794399373105.0).to_string(), "1794399373105");
+    assert_eq!(ms_value(1.5).to_string(), "1.5");
+    let mut m = Measured::failed(1794399373105.0, "no-credentials");
+    m.session = Some(UsageWindow {
+        used_percent: 12.5,
+        resets_at_ms: Some(1794400000000.0),
+        window_minutes: None,
+    });
+    let s = serde_json::to_string(&m).unwrap();
+    assert!(s.contains("\"fetchedAtMs\":1794399373105,"), "{s}");
+    assert!(s.contains("\"resetsAtMs\":1794400000000"), "{s}");
+    assert!(s.contains("\"usedPercent\":12.5"), "{s}");
+    assert!(!s.contains(".0,") && !s.contains(".0}"), "{s}");
 }

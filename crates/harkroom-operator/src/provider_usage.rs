@@ -25,6 +25,7 @@ pub const CODEX_WHAM_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usa
 #[serde(rename_all = "camelCase")]
 pub struct UsageWindow {
     pub used_percent: f64,
+    #[serde(serialize_with = "opt_ms_as_integer")]
     pub resets_at_ms: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub window_minutes: Option<f64>,
@@ -40,6 +41,7 @@ pub struct ExtraWindow {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Measured {
+    #[serde(serialize_with = "ms_as_integer")]
     pub fetched_at_ms: f64,
     pub session: Option<UsageWindow>,
     pub weekly: Option<UsageWindow>,
@@ -52,6 +54,23 @@ pub struct Measured {
     /// TS 는 `{ ...a, source }` 로 맨 뒤에 붙인다 — 키 순서도 그대로.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<&'static str>,
+}
+
+/// TS 의 `Date.now()` 는 정수다 — 소수점 꼴(`1794399373105.0`)로 내지 않는다. 정수로 떨어지지 않는 값은 그대로 낸다.
+pub fn ms_value(ms: f64) -> serde_json::Value {
+    if ms.is_finite() && ms.fract() == 0.0 && ms.abs() < 9_007_199_254_740_992.0 {
+        serde_json::Value::from(ms as i64)
+    } else {
+        serde_json::Value::from(ms)
+    }
+}
+
+fn opt_ms_as_integer<S: serde::Serializer>(ms: &Option<f64>, s: S) -> Result<S::Ok, S::Error> {
+    serde::Serialize::serialize(&ms.map(ms_value), s)
+}
+
+fn ms_as_integer<S: serde::Serializer>(ms: &f64, s: S) -> Result<S::Ok, S::Error> {
+    serde::Serialize::serialize(&ms_value(*ms), s)
 }
 
 impl Measured {
