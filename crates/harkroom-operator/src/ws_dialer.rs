@@ -88,7 +88,21 @@ pub fn split_url(url: &str) -> Result<(bool, String, u16), String> {
     if host.is_empty() {
         return Err("주소의 호스트가 잘못됐다".to_string());
     }
+    // 평문 ws:// 는 이 기계 안(loopback)에서만 — 원격에 토큰을 평문으로 보내지 않는다.
+    if !tls && !is_loopback_host(&host) {
+        return Err("원격 서버는 wss:// 만 받는다(ws:// 는 localhost 전용)".to_string());
+    }
     Ok((tls, host, port))
+}
+
+/// `localhost` · `127.0.0.1`(127/8) · `::1` 만 loopback 으로 친다.
+fn is_loopback_host(host: &str) -> bool {
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    host.parse::<std::net::IpAddr>()
+        .map(|ip| ip.is_loopback())
+        .unwrap_or(false)
 }
 
 fn tls_config() -> Arc<rustls::ClientConfig> {
@@ -243,6 +257,15 @@ mod tests {
             split_url("ws://[::1]:9/operator").unwrap(),
             (false, "::1".into(), 9)
         );
+        assert_eq!(
+            split_url("ws://LocalHost:3000/operator").unwrap(),
+            (false, "LocalHost".into(), 3000)
+        );
+        // 원격은 평문 금지
+        assert!(split_url("ws://a.example.com/operator").is_err());
+        assert!(split_url("ws://10.0.0.5:80/operator").is_err());
+        assert!(split_url("ws://localhost.evil.com/operator").is_err());
+        assert!(split_url("ws://[::ffff:8.8.8.8]/operator").is_err());
         assert!(split_url("http://a/operator").is_err());
         assert!(split_url("wss://user@a/operator").is_err());
         assert!(split_url("wss://a:x/operator").is_err());

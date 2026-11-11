@@ -14,8 +14,8 @@
 //!   지워지지 않는다. TS 는 잠그지 않는다(같은 뿌리에 writer 가 둘이 되는 일은 점유 규칙이 막는다).
 //! - lane base URL 은 TS 처럼 `new URL` 로 정규화하지 않고, 정규화가 필요 없는 꼴만 받는다(`normalize_provider_base_url`).
 //!   TS 가 받는 이상한 꼴(퍼센트 인코딩될 글자·IDN 등)은 거절될 수 있다 — 키가 갈 주소라 좁은 쪽을 골랐다.
-//! - `laneStatus`·`lanePending` 은 싣지 않는다(러너 링크가 아직 없다 — 옛 오퍼레이터와 같은 모양). 바뀐 뒤 능력을 다시 내는
-//!   `onChanged` 도 없다(서버 링크가 아직 없다).
+//! - `laneStatus`·`lanePending` 은 싣지 않는다 — TS 도 비어 있으면 싣지 않고, 채울 원천(키 받기 결과·턴 자리 조정기)은
+//!   러너 링크(s21b)에 있다. 바뀐 뒤 능력을 다시 내는 `onChanged` 는 `ServerState::set_on_agents_changed`(서버 링크가 건다)다.
 use crate::file_lock::{FileLockOptions, with_file_lock};
 use harkroom_proto::p3::{DaemonError, DaemonErrorCode};
 use harkroom_roots::{community_root_hash, community_root_key};
@@ -84,6 +84,17 @@ impl LocalAgents {
         })
     }
 
+    /// 이 커뮤니티의 오퍼레이터 토큰(`operator/secrets/operator-token.<hash16>`). 없거나 비었으면 `None` — 등록 전이다.
+    pub fn operator_token(&self) -> Option<String> {
+        let file = self.secrets_dir.join(format!(
+            "operator-token.{}",
+            community_root_hash(&self.community, 16)
+        ));
+        let t = fs::read_to_string(file).ok()?;
+        let t = t.trim();
+        (!t.is_empty()).then(|| t.to_string())
+    }
+
     /// 토큰 파일이 있고 비어 있지 않은가(TS `getToken() !== null`).
     fn registered(&self, base_url: &str) -> bool {
         let file = self.secrets_dir.join(format!(
@@ -114,6 +125,23 @@ impl LocalAgents {
             }
         }
         Ok(json!({ "communities": out }))
+    }
+
+    /// 이 커뮤니티의 로컬 에이전트 키 — hello `capabilities.agentIds`(TS `Object.keys(agents)`). 깨진·없는 설정은 빈 목록.
+    /// 설정의 커뮤니티 키는 정규화 전 꼴일 수 있어 `community_root_key` 로 맞춘다.
+    pub fn agent_ids(&self) -> Vec<String> {
+        let Ok(config) = self.read_config() else {
+            return Vec::new();
+        };
+        let Some(Value::Object(communities)) = config.get("communities") else {
+            return Vec::new();
+        };
+        communities
+            .iter()
+            .filter(|(raw, _)| community_root_key(raw) == self.community)
+            .filter_map(|(_, s)| s.get("agents").and_then(Value::as_object))
+            .flat_map(|a| a.keys().cloned())
+            .collect()
     }
 
     /// 잠그고 읽어 `f` 로 고친 뒤 쓴다. `f` 가 `false` 를 돌려주면 쓰지 않는다.
@@ -379,7 +407,29 @@ fn base_and_agent<'a>(
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
         .ok_or_else(need)?;
+    // agentId 는 설정 파일의 키가 된다 — 서버가 주는 uuid 꼴만 받는다(경로·제어문자가 키로 들어가지 않게).
+    if !is_uuid_shape(agent) {
+        return Err(bad(format!("{ty} 의 agentId 는 uuid 꼴이어야 한다")));
+    }
     Ok((obj, base.to_string(), agent.to_string()))
+}
+
+/// `8-4-4-4-12` 16진 꼴(대소문자 무시). 판(version) 숫자는 따지지 않는다.
+fn is_uuid_shape(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 36
+        && b.iter().enumerate().all(|(i, c)| match i {
+            8 | 13 | 18 | 23 => *c == b'-',
+            _ => c.is_ascii_hexdigit(),
+        })
+}
+
+/// 설정에 그대로 적히는 값 — 제어문자(줄바꿈·NUL 등)는 거절한다.
+fn reject_control(field: &str, v: &str) -> Result<(), DaemonError> {
+    if v.chars().any(char::is_control) {
+        return Err(bad(format!("{field} 에 제어문자가 있다")));
+    }
+    Ok(())
 }
 
 /// JS `String.prototype.trim` 과 같은 공백(유니코드 White_Space + BOM).
@@ -405,6 +455,7 @@ pub fn read_set_payload(
             return Err(bad("workingDir 는 문자열이어야 한다"));
         };
         let t = js_trim(s);
+        reject_control("workingDir", t)?;
         if !t.is_empty() {
             out.working_dir = Some(t.to_string());
         }
@@ -414,6 +465,7 @@ pub fn read_set_payload(
             return Err(bad("claudePool 은 문자열이어야 한다"));
         };
         let t = js_trim(s);
+        reject_control("claudePool", t)?;
         if !t.is_empty() {
             out.claude_pool = Some(t.to_string());
         }
@@ -568,6 +620,24 @@ mod tests {
     }
 
     #[test]
+    fn agent_ids_only_this_community() {
+        let r = root();
+        let la = LocalAgents::new(&r, URL);
+        assert!(la.agent_ids().is_empty(), "설정 없으면 빈 목록");
+        fs::create_dir_all(Path::new(&r).join("operator")).unwrap();
+        fs::write(
+            la.config_path(),
+            r#"{"communities":{"https://a.example.com/":{"agents":{"x":{},"y":{}}},"https://b.example.com":{"agents":{"z":{}}}}}"#,
+        )
+        .unwrap();
+        let mut ids = la.agent_ids();
+        ids.sort();
+        assert_eq!(ids, vec!["x".to_string(), "y".to_string()]);
+        fs::write(la.config_path(), "not json").unwrap();
+        assert!(la.agent_ids().is_empty(), "깨진 설정은 빈 목록");
+    }
+
+    #[test]
     fn set_creates_section_and_keeps_lane_and_other_fields() {
         let r = root();
         let la = LocalAgents::new(&r, URL);
@@ -712,23 +782,47 @@ mod tests {
 
     #[test]
     fn payload_checks_match_ts() {
-        let e = read_set_payload(Some(&json!({"baseUrl": "", "agentId": "x"}))).unwrap_err();
+        const AID: &str = "0b9c6f1e-2a3d-4e5f-8a9b-0c1d2e3f4a5b";
+        for bad_id in [
+            "x",
+            "../x",
+            "0b9c6f1e-2a3d-4e5f-8a9b-0c1d2e3f4a5g",
+            "0b9c6f1e2a3d4e5f8a9b0c1d2e3f4a5b",
+        ] {
+            let e =
+                read_set_payload(Some(&json!({"baseUrl": URL, "agentId": bad_id}))).unwrap_err();
+            assert_eq!(
+                e.message,
+                "operatorAgentSet 의 agentId 는 uuid 꼴이어야 한다"
+            );
+        }
+        let e = read_set_payload(Some(
+            &json!({"baseUrl": URL, "agentId": AID, "config": {"workingDir": "/w\n/x"}}),
+        ))
+        .unwrap_err();
+        assert_eq!(e.message, "workingDir 에 제어문자가 있다");
+        let e = read_set_payload(Some(
+            &json!({"baseUrl": URL, "agentId": AID, "config": {"claudePool": "p\u{0}"}}),
+        ))
+        .unwrap_err();
+        assert_eq!(e.message, "claudePool 에 제어문자가 있다");
+        let e = read_set_payload(Some(&json!({"baseUrl": "", "agentId": AID}))).unwrap_err();
         assert_eq!(
             e.message,
             "operatorAgentSet 에는 baseUrl·agentId 가 필요하다"
         );
         let e = read_set_payload(Some(
-            &json!({"baseUrl": URL, "agentId": "x", "config": {"workingDir": 1}}),
+            &json!({"baseUrl": URL, "agentId": AID, "config": {"workingDir": 1}}),
         ))
         .unwrap_err();
         assert_eq!(e.message, "workingDir 는 문자열이어야 한다");
         let e = read_set_payload(Some(
-            &json!({"baseUrl": URL, "agentId": "x", "config": "w"}),
+            &json!({"baseUrl": URL, "agentId": AID, "config": "w"}),
         ))
         .unwrap_err();
         assert_eq!(e.message, "config 는 객체여야 한다");
         let (_, _, c) = read_set_payload(Some(
-            &json!({"baseUrl": URL, "agentId": "x", "config": {"workingDir": "  /w ", "claudePool": "   "}}),
+            &json!({"baseUrl": URL, "agentId": AID, "config": {"workingDir": "  /w ", "claudePool": "   "}}),
         ))
         .unwrap();
         assert_eq!(
@@ -739,12 +833,12 @@ mod tests {
             }
         );
         assert_eq!(
-            read_lane_payload(Some(&json!({"baseUrl": URL, "agentId": "x", "lane": null})))
+            read_lane_payload(Some(&json!({"baseUrl": URL, "agentId": AID, "lane": null})))
                 .unwrap()
                 .2,
             None
         );
-        let e = read_lane_payload(Some(&json!({"baseUrl": URL, "agentId": "x"}))).unwrap_err();
+        let e = read_lane_payload(Some(&json!({"baseUrl": URL, "agentId": AID}))).unwrap_err();
         assert_eq!(
             e.message,
             "lane 은 { baseUrl: https URL, secretName: 비밀 이름 } 이어야 한다"

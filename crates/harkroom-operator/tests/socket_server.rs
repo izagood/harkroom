@@ -363,11 +363,11 @@ fn local_agents_set_list_lane_remove_over_socket() {
     assert_eq!(c.recv().unwrap()["type"], "hello");
     let base = "https://a.example.com/";
     let reqs = [
-        json!({"id":"1","type":"operatorAgentSet","payload":{"baseUrl":base,"agentId":"ag","config":{"workingDir":" /w "}}}),
-        json!({"id":"2","type":"operatorAgentProviderLaneSet","payload":{"baseUrl":base,"agentId":"ag","lane":{"baseUrl":"https://g.example.com/x/","secretName":"k"}}}),
+        json!({"id":"1","type":"operatorAgentSet","payload":{"baseUrl":base,"agentId":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee","config":{"workingDir":" /w "}}}),
+        json!({"id":"2","type":"operatorAgentProviderLaneSet","payload":{"baseUrl":base,"agentId":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee","lane":{"baseUrl":"https://g.example.com/x/","secretName":"k"}}}),
         json!({"id":"3","type":"operatorAgentsList"}),
-        json!({"id":"4","type":"operatorAgentSet","payload":{"baseUrl":"https://b.example.com","agentId":"ag"}}),
-        json!({"id":"5","type":"operatorAgentRemove","payload":{"baseUrl":base,"agentId":"ag"}}),
+        json!({"id":"4","type":"operatorAgentSet","payload":{"baseUrl":"https://b.example.com","agentId":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"}}),
+        json!({"id":"5","type":"operatorAgentRemove","payload":{"baseUrl":base,"agentId":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"}}),
         json!({"id":"6","type":"operatorAgentsList"}),
     ];
     let mut out = Vec::new();
@@ -380,7 +380,7 @@ fn local_agents_set_list_lane_remove_over_socket() {
     assert_eq!(
         out[2]["payload"],
         json!({"communities":[{"baseUrl":"https://a.example.com","registered":false,"operatorId":null,
-            "agents":{"ag":{"workingDir":"/w","providerLane":{"baseUrl":"https://g.example.com/x","secretName":"k"}}}}]})
+            "agents":{"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee":{"workingDir":"/w","providerLane":{"baseUrl":"https://g.example.com/x","secretName":"k"}}}}]})
     );
     // 다른 커뮤니티 칸은 넣지 않는다.
     assert_eq!(out[3]["ok"], false);

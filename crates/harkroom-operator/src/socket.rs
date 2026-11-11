@@ -238,6 +238,8 @@ pub struct ServerState {
     local_merge: OnceLock<LocalMerge>,
     /// 이 머신의 MCP 정의(A5c). 없으면 `operatorMcp*` 는 거절된다.
     local_mcp: OnceLock<LocalMcp>,
+    /// 로컬 에이전트 설정이 바뀌었다(TS `localAgents.ts` 의 `onChanged`) — 서버 링크가 능력을 다시 낸다. 링크가 없으면 비어 있다.
+    on_agents_changed: OnceLock<Box<dyn Fn() + Send + Sync>>,
 }
 
 impl ServerState {
@@ -266,6 +268,7 @@ impl ServerState {
                 local_agents: OnceLock::new(),
                 local_merge: OnceLock::new(),
                 local_mcp: OnceLock::new(),
+                on_agents_changed: OnceLock::new(),
             }
         })
     }
@@ -273,6 +276,17 @@ impl ServerState {
     /// 로컬 설정을 배선한다(한 번만 — 두 번째는 무시된다).
     pub fn set_local_agents(&self, local: LocalAgents) {
         let _ = self.local_agents.set(local);
+    }
+
+    /// 설정 변경 알림을 배선한다(한 번만). 서버 링크(`serve::spawn_server_link`)가 건다.
+    pub fn set_on_agents_changed(&self, hook: Box<dyn Fn() + Send + Sync>) {
+        let _ = self.on_agents_changed.set(hook);
+    }
+
+    fn agents_changed(&self) {
+        if let Some(hook) = self.on_agents_changed.get() {
+            hook();
+        }
     }
 
     fn local(&self) -> Result<&LocalAgents, DaemonError> {
@@ -399,6 +413,7 @@ impl ServerState {
                 let (base_url, agent_id, config) = local_agents::read_set_payload(payload)?;
                 local.set(&base_url, &agent_id, &config)?;
                 eprintln!("로컬 설정: agent={agent_id} @ {base_url} 넣음");
+                self.agents_changed();
                 Ok(json!({}))
             }
             "operatorAgentProviderLaneSet" => {
@@ -410,6 +425,7 @@ impl ServerState {
                     "로컬 설정: agent={agent_id} @ {base_url} 전용 제공사 경로 {}",
                     if lane.is_some() { "켬" } else { "끔" }
                 );
+                self.agents_changed();
                 Ok(json!({}))
             }
             "operatorAgentRemove" => {
@@ -417,6 +433,7 @@ impl ServerState {
                 let (base_url, agent_id) = local_agents::read_remove_payload(payload)?;
                 local.remove(&base_url, &agent_id)?;
                 eprintln!("로컬 설정: agent={agent_id} @ {base_url} 뺌");
+                self.agents_changed();
                 Ok(json!({}))
             }
             // ── 머지 gh 계정(A5b, TS `server.ts` 의 같은 칸) ──────────────────────────────────
@@ -712,6 +729,54 @@ mod tests {
         }
         assert!(state.authed().is_empty(), "읽지 않는 접속이 명단에 남았다");
         assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn agent_config_writes_fire_changed_hook_only_on_success() {
+        let state = ServerState::new(
+            DaemonIdentity {
+                pid: 1,
+                started_at_ms: 0,
+                launch_nonce: String::new(),
+                entry_path: String::new(),
+                app_version: String::new(),
+            },
+            None,
+        );
+        let root = std::env::temp_dir().join(format!("hk-sock-chg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let url = "https://a.example.com";
+        state.set_local_agents(LocalAgents::new(&root.to_string_lossy(), url));
+        let fired = Arc::new(AtomicUsize::new(0));
+        let f = fired.clone();
+        state.set_on_agents_changed(Box::new(move || {
+            f.fetch_add(1, Ordering::SeqCst);
+        }));
+        let agent = "11111111-2222-4333-8444-555555555555";
+        state
+            .dispatch(
+                "operatorAgentSet",
+                Some(&json!({"baseUrl": url, "agentId": agent, "config": {}})),
+            )
+            .unwrap();
+        assert_eq!(fired.load(Ordering::SeqCst), 1);
+        // 실패한 쓰기(다른 커뮤니티)는 알리지 않는다.
+        assert!(state
+            .dispatch("operatorAgentSet", Some(&json!({"baseUrl": "https://other.example.com", "agentId": agent, "config": {}})))
+            .is_err());
+        assert_eq!(fired.load(Ordering::SeqCst), 1);
+        state
+            .dispatch(
+                "operatorAgentRemove",
+                Some(&json!({"baseUrl": url, "agentId": agent})),
+            )
+            .unwrap();
+        assert_eq!(fired.load(Ordering::SeqCst), 2);
+        // 읽기는 알리지 않는다.
+        state.dispatch("operatorAgentsList", None).unwrap();
+        assert_eq!(fired.load(Ordering::SeqCst), 2);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

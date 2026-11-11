@@ -15,6 +15,8 @@
 pub mod callback_page;
 pub mod endpoint;
 pub mod file_lock;
+pub mod harnesses;
+pub mod hello;
 pub mod index;
 pub mod local_agents;
 pub mod local_mcp;
