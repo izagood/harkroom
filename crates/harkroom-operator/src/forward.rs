@@ -181,7 +181,7 @@ pub fn rest_allowed(method: &str, path: &str) -> bool {
 }
 
 /// 링크에서 들어온 요청의 「오퍼레이터만 채우는 칸」을 지운다(TS `turnCommand.stripLinkOnlyFields`).
-/// `commandFiles` 는 오퍼레이터가 잰 값만 서버에 간다 — 재는 쪽(s21b-3) 전까지는 늘 비운다.
+/// `commandFiles` 는 오퍼레이터가 잰 값만 서버에 간다 — 브릿지가 어떤 처리보다 먼저 부르고, 재기는 `turn_command` 가 한다.
 pub fn strip_link_only_fields(req: RunnerLinkRequest) -> RunnerLinkRequest {
     match req {
         RunnerLinkRequest::McpRequest {
