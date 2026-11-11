@@ -160,6 +160,9 @@ pub fn spawn_server_link(
     if login_path.is_none() {
         eprintln!("로그인 셸 PATH 를 못 읽었다 — 러너가 하네스를 못 찾을 수 있다");
     }
+    // 머지·`pr.status` 가 쓸 몫(caps 클로저가 local·home 을 가져가기 전에 떼어 둔다).
+    let merge_cfg = local.clone();
+    let merge_home = home.clone();
     // 능력(`{agentIds, harnesses}`)은 hello 와 설정 변경 알림이 같이 쓴다 — 매번 새로 잰다.
     let caps: std::sync::Arc<dyn Fn() -> serde_json::Value + Send + Sync> =
         std::sync::Arc::new(move || {
@@ -198,6 +201,18 @@ pub fn spawn_server_link(
                 eprintln!("turn-secrets: 기동 쓸기 {n}개");
             }
             Some(r)
+        },
+        {
+            // 머지·`pr.status` 의 gh 계정은 이 커뮤니티 `operator.json` 의 `merge`(TS run.ts `ghUserFor`). 부를 때마다 다시 읽는다.
+            let cfg = merge_cfg;
+            Some(crate::bridge::MergeHandlers::system(
+                crate::local_merge::default_gh_path(),
+                merge_home,
+                std::sync::Arc::new(move |repo: &str| {
+                    let c = cfg.read_config().ok()?;
+                    crate::local_merge::pick_merge_gh_user(c.get("merge"), repo)
+                }),
+            ))
         },
     );
     state.set_runner_link(std::sync::Arc::clone(&bridge.runner_link));

@@ -348,6 +348,21 @@ pub fn by_scope_of(merge: Option<&Value>) -> Option<Map<String, Value>> {
     Some(out)
 }
 
+/// TS `pickMergeGhUser` — 저장소 → (login, scope). 정확한 `owner/name` → `owner/*` 순. `byScope` 가 아직 없으면
+/// 옛 단일 계정(`ghUser`, scope `(device default)`). 없으면 None — 활성 gh 계정으로 넘어가지 않는다.
+pub fn pick_merge_gh_user(merge: Option<&Value>, repo: &str) -> Option<(String, String)> {
+    let Some(by) = by_scope_of(merge) else {
+        return legacy_of(merge).map(|l| (l, "(device default)".to_string()));
+    };
+    let r = repo.to_lowercase();
+    let org = format!("{}/*", r.split('/').next().unwrap_or(""));
+    [r, org].into_iter().find_map(|sc| {
+        by.get(&sc)
+            .and_then(Value::as_str)
+            .map(|l| (l.to_string(), sc.clone()))
+    })
+}
+
 /// 바뀐 줄 하나 — 소켓 쪽이 로그에 남긴다(security C8). 이름뿐이다.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MergeChange {
@@ -720,6 +735,21 @@ impl LocalMerge {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[test]
+    fn pick_merge_gh_user_exact_then_org_then_legacy() {
+        let m = json!({"ghUser": "old", "byScope": {"O/R": "exact", "o/*": "org"}});
+        let p = |m: &Value, r: &str| pick_merge_gh_user(Some(m), r);
+        assert_eq!(p(&m, "o/R"), Some(("exact".into(), "o/r".into())));
+        assert_eq!(p(&m, "o/x"), Some(("org".into(), "o/*".into())));
+        assert_eq!(p(&m, "z/x"), None);
+        let legacy = json!({"ghUser": "old"});
+        assert_eq!(
+            p(&legacy, "z/x"),
+            Some(("old".into(), "(device default)".into()))
+        );
+        assert_eq!(pick_merge_gh_user(None, "o/r"), None);
+    }
 
     fn ok(stdout: &str) -> ExecResult {
         ExecResult {

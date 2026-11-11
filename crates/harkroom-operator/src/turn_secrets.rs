@@ -126,13 +126,27 @@ impl SecretsRoot {
         n
     }
 
-    /// 루트와 임대 폴더를 0700 으로 박는다(P4 — create 의 mode 는 umask 를 탄다).
+    /// 루트와 임대 폴더를 0700 으로 박는다(P4). 처음부터 0700 으로 만들고(`DirBuilder` mode — 잠깐이라도 넓게 열리지 않게),
+    /// 심링크·폴더 아닌 것은 거절한다(남이 심어 둔 링크를 따라 다른 곳에 비밀을 쓰지 않게). mode 는 umask 를 타므로 끝에 다시 박는다.
     fn ensure_dir(&self, lease_id: &str) -> std::io::Result<PathBuf> {
+        use std::os::unix::fs::DirBuilderExt;
         let dir = self
             .dir_of(lease_id)
             .ok_or_else(|| std::io::Error::other("bad lease id"))?;
         for d in [&self.root, &dir] {
-            std::fs::create_dir_all(d)?;
+            match std::fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(d)
+            {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(e) => return Err(e),
+            }
+            let m = std::fs::symlink_metadata(d)?;
+            if m.file_type().is_symlink() || !m.is_dir() {
+                return Err(std::io::Error::other("not a plain directory"));
+            }
             std::fs::set_permissions(d, std::fs::Permissions::from_mode(0o700))?;
         }
         Ok(dir)
@@ -657,6 +671,34 @@ mod tests {
             serde_json::from_str(text).unwrap(),
             res.get("isError") == Some(&Value::Bool(true)),
         )
+    }
+
+    #[test]
+    fn ensure_dir_refuses_symlinked_lease_dir_and_makes_0700() {
+        use std::os::unix::fs::PermissionsExt;
+        let b = base("ensure");
+        let root = SecretsRoot {
+            root: b.join("turn-secrets"),
+        };
+        let d = root.ensure_dir("L-ok").unwrap();
+        for p in [&root.root, &d] {
+            assert_eq!(
+                std::fs::metadata(p).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+        }
+        // 남이 심어 둔 링크 — 따라가 다른 곳에 쓰지 않는다.
+        let elsewhere = b.join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, root.root.join("L-link")).unwrap();
+        assert!(root.ensure_dir("L-link").is_err());
+        // 루트 자체가 링크여도 거절한다.
+        let root2 = SecretsRoot {
+            root: b.join("root-link"),
+        };
+        std::os::unix::fs::symlink(&elsewhere, &root2.root).unwrap();
+        assert!(root2.ensure_dir("L1").is_err());
+        let _ = std::fs::remove_dir_all(&b);
     }
 
     #[test]
