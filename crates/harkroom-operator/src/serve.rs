@@ -112,6 +112,36 @@ pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
                     &home,
                 )),
             ));
+            // claude 계정 풀(s21c3a). `pools.json` 자리를 못 정하면(커뮤니티 모드인데 뿌리 env 가 틀림) 배선하지 않는다 —
+            // 그때 `claude*` 요청은 TS 와 같은 `no-such-runner` 로 거절된다.
+            let accounts_root =
+                crate::claude_accounts::claude_accounts_root(|k| std::env::var(k).ok(), &home);
+            match crate::claude_accounts::pools_file_path(&accounts_root, |k| std::env::var(k).ok())
+            {
+                Ok(pools_path) => {
+                    let accounts =
+                        crate::claude_accounts::ClaudeAccounts::new(accounts_root, pools_path);
+                    // 기동 때 한 번 `order` 를 디스크와 맞춘다(TS run.ts). 실패해도 기동을 막지 않는다. 이름만 적는다.
+                    if let Ok((added, removed)) = accounts.reconcile_order()
+                        && (!added.is_empty() || !removed.is_empty())
+                    {
+                        let or_none = |v: &[String]| {
+                            if v.is_empty() {
+                                "없음".to_string()
+                            } else {
+                                v.join(", ")
+                            }
+                        };
+                        eprintln!(
+                            "claude 계정 순서 맞춤: 더함 {} · 뺌 {}",
+                            or_none(&added),
+                            or_none(&removed)
+                        );
+                    }
+                    state.set_claude_accounts(accounts);
+                }
+                Err(e) => eprintln!("claude 계정 풀을 배선하지 않는다: {e}"),
+            }
             state.set_local_merge(LocalMerge::new(
                 LocalAgents::new(&root, base_url),
                 default_gh_path(),

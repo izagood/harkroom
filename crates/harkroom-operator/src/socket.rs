@@ -10,6 +10,7 @@
 //! 이벤트 줄이 서로 끼어들어 한 줄이 깨지지 않게 한다.
 //!
 //! 접속마다 스레드 하나다. 앱 하나가 붙는 로컬 소켓이라 async 런타임을 들이지 않는다(의존이 늘지 않는다).
+use crate::claude_accounts::{self, ClaudeAccounts};
 use crate::local_agents::{self, LocalAgents};
 use crate::local_mcp::{self, LocalMcp};
 use crate::local_merge::{self, LocalMerge};
@@ -31,6 +32,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 /// 접속마다의 쓰기 시간 제한. 인증은 됐지만 읽지 않는 접속 하나가 이벤트 흘리기(`broadcast_event`, 러너 종료를
 /// 기다리는 스레드에서 돈다)를 그 자리에 붙잡지 못하게 한다. 넘기면 그 접속은 끊는다 — 앱은 다시 붙는다.
 pub const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// 포트가 던진 문구를 `bad-payload` 로 싣는다(TS `catch → daemonError('bad-payload', …)`).
+fn bad(message: String) -> DaemonError {
+    err(DaemonErrorCode::BadPayload, message)
+}
 
 fn err(code: DaemonErrorCode, message: impl Into<String>) -> DaemonError {
     DaemonError {
@@ -255,6 +261,8 @@ pub struct ServerState {
     local_merge: OnceLock<LocalMerge>,
     /// 이 머신의 MCP 정의(A5c). 없으면 `operatorMcp*` 는 거절된다.
     local_mcp: OnceLock<LocalMcp>,
+    /// claude 계정 풀(s21c3a). 없으면 `claude*` 요청은 거절된다.
+    claude_accounts: OnceLock<ClaudeAccounts>,
     /// 로컬 에이전트 설정이 바뀌었다(TS `localAgents.ts` 의 `onChanged`) — 서버 링크가 능력을 다시 낸다. 링크가 없으면 비어 있다.
     on_agents_changed: OnceLock<Box<dyn Fn() + Send + Sync>>,
     /// 러너 링크(s21b-1). 첫 줄이 `hello{role:'runner'}` 인 접속을 넘겨받는다. 없으면 그 hello 는 앱 hello 로 검사돼 거절된다.
@@ -293,6 +301,7 @@ impl ServerState {
                 local_agents: OnceLock::new(),
                 local_merge: OnceLock::new(),
                 local_mcp: OnceLock::new(),
+                claude_accounts: OnceLock::new(),
                 on_agents_changed: OnceLock::new(),
                 runner_link: OnceLock::new(),
                 on_runner_exit: OnceLock::new(),
@@ -360,6 +369,21 @@ impl ServerState {
             err(
                 DaemonErrorCode::NoSuchRunner,
                 "이 daemon 에는 머지 설정이 배선되지 않았다",
+            )
+        })
+    }
+
+    /// claude 계정 풀을 배선한다(한 번만).
+    pub fn set_claude_accounts(&self, accounts: ClaudeAccounts) {
+        let _ = self.claude_accounts.set(accounts);
+    }
+
+    fn accounts(&self) -> Result<&ClaudeAccounts, DaemonError> {
+        // TS `requireAccounts` 와 같은 꼴.
+        self.claude_accounts.get().ok_or_else(|| {
+            err(
+                DaemonErrorCode::NoSuchRunner,
+                "이 daemon 에는 계정 풀이 배선되지 않았다",
             )
         })
     }
@@ -553,6 +577,43 @@ impl ServerState {
                 mcp.auth_forget(&name)?;
                 eprintln!("MCP OAuth: {name} 토큰 지움");
                 Ok(json!({}))
+            }
+            // ── claude 계정 풀(s21c3a) — 로그에는 계정 이름만 적는다(TS 와 같은 규율).
+            "claudeAccountsList" => Ok(self.accounts()?.list()),
+            "claudeAccountsConfigure" => {
+                let port = self.accounts()?;
+                let cfg = claude_accounts::read_configure_payload(payload).map_err(bad)?;
+                port.configure(&cfg).map_err(bad)?;
+                eprintln!(
+                    "계정 설정 갱신: 기본 풀={}",
+                    cfg["defaultPool"].as_str().unwrap_or("(없음)")
+                );
+                Ok(json!({}))
+            }
+            "claudeAccountRemove" => {
+                let port = self.accounts()?;
+                let (pool, account) = claude_accounts::read_account_ref(payload).map_err(bad)?;
+                port.remove_account(&pool, &account).map_err(bad)?;
+                eprintln!("계정 삭제: {pool}/{account}");
+                Ok(json!({}))
+            }
+            "claudePoolRemove" => {
+                let port = self.accounts()?;
+                let pool = claude_accounts::read_pool_ref(payload).map_err(bad)?;
+                port.remove_pool(&pool).map_err(bad)?;
+                eprintln!("풀 삭제: {pool}");
+                Ok(json!({}))
+            }
+            "claudeAccountMove" => {
+                let port = self.accounts()?;
+                let (account, to_pool) =
+                    claude_accounts::read_account_move(payload).map_err(bad)?;
+                let result = port.move_account(&account, &to_pool).map_err(bad)?;
+                eprintln!(
+                    "계정 이전: {account} → {to_pool}/{account} (로그인 유지={})",
+                    result["loggedIn"]
+                );
+                Ok(result)
             }
             other => Err(err(
                 DaemonErrorCode::Internal,
