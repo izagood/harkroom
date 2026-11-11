@@ -23,6 +23,7 @@ pub mod local_mcp;
 pub mod local_merge;
 pub mod mcp_oauth;
 pub mod merge;
+pub mod runner_link;
 pub mod runners;
 pub mod serve;
 pub mod server_link;
