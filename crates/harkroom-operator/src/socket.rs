@@ -10,6 +10,7 @@
 //! 이벤트 줄이 서로 끼어들어 한 줄이 깨지지 않게 한다.
 //!
 //! 접속마다 스레드 하나다. 앱 하나가 붙는 로컬 소켓이라 async 런타임을 들이지 않는다(의존이 늘지 않는다).
+use crate::codex_accounts::{self, CodexAccounts};
 use crate::local_agents::{self, LocalAgents};
 use crate::local_mcp::{self, LocalMcp};
 use crate::local_merge::{self, LocalMerge};
@@ -31,6 +32,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 /// 접속마다의 쓰기 시간 제한. 인증은 됐지만 읽지 않는 접속 하나가 이벤트 흘리기(`broadcast_event`, 러너 종료를
 /// 기다리는 스레드에서 돈다)를 그 자리에 붙잡지 못하게 한다. 넘기면 그 접속은 끊는다 — 앱은 다시 붙는다.
 pub const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// 포트가 던진 문구를 `bad-payload` 로 싣는다(TS `catch → daemonError('bad-payload', …)`).
+fn bad_payload(message: String) -> DaemonError {
+    err(DaemonErrorCode::BadPayload, message)
+}
 
 fn err(code: DaemonErrorCode, message: impl Into<String>) -> DaemonError {
     DaemonError {
@@ -255,6 +261,8 @@ pub struct ServerState {
     local_merge: OnceLock<LocalMerge>,
     /// 이 머신의 MCP 정의(A5c). 없으면 `operatorMcp*` 는 거절된다.
     local_mcp: OnceLock<LocalMcp>,
+    /// codex 계정(s21c3c). 없으면 `codex*` 요청은 거절된다.
+    codex_accounts: OnceLock<CodexAccounts>,
     /// 로컬 에이전트 설정이 바뀌었다(TS `localAgents.ts` 의 `onChanged`) — 서버 링크가 능력을 다시 낸다. 링크가 없으면 비어 있다.
     on_agents_changed: OnceLock<Box<dyn Fn() + Send + Sync>>,
     /// 러너 링크(s21b-1). 첫 줄이 `hello{role:'runner'}` 인 접속을 넘겨받는다. 없으면 그 hello 는 앱 hello 로 검사돼 거절된다.
@@ -293,6 +301,7 @@ impl ServerState {
                 local_agents: OnceLock::new(),
                 local_merge: OnceLock::new(),
                 local_mcp: OnceLock::new(),
+                codex_accounts: OnceLock::new(),
                 on_agents_changed: OnceLock::new(),
                 runner_link: OnceLock::new(),
                 on_runner_exit: OnceLock::new(),
@@ -365,6 +374,21 @@ impl ServerState {
     }
 
     /// MCP 정의를 배선한다(한 번만).
+    /// codex 계정을 배선한다(한 번만).
+    pub fn set_codex_accounts(&self, accounts: CodexAccounts) {
+        let _ = self.codex_accounts.set(accounts);
+    }
+
+    fn codex(&self) -> Result<&CodexAccounts, DaemonError> {
+        // TS `requireCodexAccounts` 와 같은 꼴.
+        self.codex_accounts.get().ok_or_else(|| {
+            err(
+                DaemonErrorCode::NoSuchRunner,
+                "이 daemon 에는 codex 계정이 배선되지 않았다",
+            )
+        })
+    }
+
     pub fn set_local_mcp(&self, mcp: LocalMcp) {
         let _ = self.local_mcp.set(mcp);
     }
@@ -552,6 +576,25 @@ impl ServerState {
                 let name = local_mcp::read_auth_payload(payload, "operatorMcpAuthForget")?;
                 mcp.auth_forget(&name)?;
                 eprintln!("MCP OAuth: {name} 토큰 지움");
+                Ok(json!({}))
+            }
+            // ── codex 계정(s21c3c) — 로그에는 계정 이름만 적는다(이메일은 사람의 로컬 사실이다).
+            "codexAccountsList" => Ok(self.codex()?.list()),
+            "codexAccountRemove" => {
+                let port = self.codex()?;
+                let account = codex_accounts::read_account_ref(payload).map_err(bad_payload)?;
+                port.remove_account(&account).map_err(bad_payload)?;
+                eprintln!("codex 계정 삭제: {account}");
+                Ok(json!({}))
+            }
+            "codexAccountActivate" => {
+                let port = self.codex()?;
+                let account = codex_accounts::read_activate(payload).map_err(bad_payload)?;
+                port.activate(account.as_deref()).map_err(bad_payload)?;
+                eprintln!(
+                    "codex 활성 계정: {}",
+                    account.as_deref().unwrap_or("(시스템 기본)")
+                );
                 Ok(json!({}))
             }
             other => Err(err(

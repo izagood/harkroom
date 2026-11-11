@@ -17,6 +17,7 @@ pub mod api_cli;
 pub mod assignments;
 pub mod bridge;
 pub mod callback_page;
+pub mod codex_accounts;
 pub mod codex_hook;
 pub mod community;
 pub mod endpoint;
