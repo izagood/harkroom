@@ -119,7 +119,7 @@ fn millis(env: &Env, key: &str, default: u64) -> Result<u64, String> {
 }
 
 /// node `path.resolve` 처럼 `.`·`..`·겹친 `/` 를 글자로만 접는다(절대 경로 입력만).
-fn resolve_abs(p: &str) -> String {
+pub(crate) fn resolve_abs(p: &str) -> String {
     let mut parts: Vec<&str> = Vec::new();
     for seg in p.split('/') {
         match seg {
