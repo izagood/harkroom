@@ -3,7 +3,7 @@
 //! TS 와 같이 `buildTurnCommand` 는 하네스 이름을 보지 않고 표만 부른다. 이 파일은 **조각**만 낸다 —
 //! 조립(순서·세션 검사)은 B3d-2b `turn_command` 몫이다.
 //!
-//! 진행: claude 프리셋. codex·opencode/kilo·pi·omp 는 다음 커밋.
+//! 진행: claude·codex 프리셋(codex lane 덮어쓰기·추가 MCP 조각은 B3d-4). opencode/kilo·pi·omp 는 다음 커밋.
 
 use crate::adapter::MentionPermission;
 use crate::turn_rules::{
@@ -179,6 +179,132 @@ pub mod claude {
     }
 }
 
+/// codex 프리셋(TS `CODEX_PRESET`). 세션·항상 붙는 플래그는 **실행 방식**(exec/tui)으로 갈린다 — 모드가 아니다.
+pub mod codex {
+    use super::*;
+    use crate::adapter::{AgentHarness, ExecutionModel, Mode, execution_model_for};
+    use crate::config::RUNNER_LINK_ENV_KEYS;
+    use crate::turn_env::{RUNNER_TURN_CAUSE_ENV, RUNNER_TURN_ID_ENV, RUNNER_TURN_KEY_BRIDGE_ENV};
+
+    pub const COMMAND: &str = "codex";
+    pub const ALLOWS_NULL_SESSION_ON_FIRST_TURN: bool = true;
+    /// TS `MCP_BRIDGE_ARGS`.
+    pub const MCP_BRIDGE_ARGS: [&str; 1] = ["mcp-bridge"];
+
+    fn exec_model(mode: TurnMode) -> ExecutionModel {
+        let m = match mode {
+            TurnMode::Mention => Mode::Mention,
+            TurnMode::Interactive => Mode::Interactive,
+        };
+        // codex 는 어댑터 표에 늘 있다 — 없으면 표가 깨진 것이라 exec(옛 답)로 둔다.
+        execution_model_for(AgentHarness::Codex, m).unwrap_or(ExecutionModel::Exec)
+    }
+
+    /// tui: 첫 턴 맨 `codex`, 이후 `resume <id>`. exec: 첫 턴 `exec`(id 는 rollout 에서 나중에), 이후 `exec resume <id>`.
+    pub fn session(session_id: Option<&str>, mode: TurnMode) -> Vec<String> {
+        match (exec_model(mode), session_id) {
+            (ExecutionModel::Tui, None) => Vec::new(),
+            (ExecutionModel::Tui, Some(id)) => v(&["resume", id]),
+            (ExecutionModel::Exec, None) => v(&["exec"]),
+            (ExecutionModel::Exec, Some(id)) => v(&["exec", "resume", id]),
+        }
+    }
+
+    /// `-s` 가 아니라 `-c sandbox_mode=` — `-s` 는 `exec resume` 에서 파싱 오류(codex-cli 0.148 실측).
+    pub fn permission(p: MentionPermission) -> Vec<String> {
+        match p {
+            MentionPermission::Auto => v(&[
+                "-c",
+                "sandbox_mode=\"workspace-write\"",
+                "-c",
+                "mcp_servers.harkroom.default_tools_approval_mode=\"approve\"",
+            ]),
+            MentionPermission::Readonly => v(&["-c", "sandbox_mode=\"read-only\""]),
+        }
+    }
+
+    fn json<T: serde::Serialize + ?Sized>(x: &T) -> String {
+        serde_json::to_string(x).expect("문자열·문자열 배열 직렬화는 실패하지 않는다")
+    }
+
+    /// avcs·harkroom 브릿지는 늘. `transport` 를 반드시 적는다(빠지면 MCP 설정 전체가 로드 실패, 0.154 실측).
+    /// `env` 가 아니라 `env_vars`(이름만 — 값은 argv 에 안 오른다). `extra` 는 `codexMcpFlags` 결과(B3d-4)를 그대로 잇는다.
+    pub fn mcp(operator_bin: &str, turn_keys: bool, extra: &[String]) -> Vec<String> {
+        let mut env_vars: Vec<&str> = RUNNER_LINK_ENV_KEYS.to_vec();
+        env_vars.push(RUNNER_TURN_CAUSE_ENV);
+        env_vars.push(RUNNER_TURN_ID_ENV);
+        if turn_keys {
+            env_vars.push(RUNNER_TURN_KEY_BRIDGE_ENV);
+        }
+        let mut out = v(&[
+            "-c",
+            "mcp_servers.avcs.transport=\"stdio\"",
+            "-c",
+            "mcp_servers.avcs.command=\"avcs\"",
+            "-c",
+            "mcp_servers.avcs.args=[\"mcp\"]",
+            "-c",
+            "mcp_servers.harkroom.transport=\"stdio\"",
+        ]);
+        out.push("-c".into());
+        out.push(format!(
+            "mcp_servers.harkroom.command={}",
+            json(operator_bin)
+        ));
+        out.push("-c".into());
+        out.push(format!(
+            "mcp_servers.harkroom.args={}",
+            json(&MCP_BRIDGE_ARGS)
+        ));
+        out.push("-c".into());
+        out.push(format!("mcp_servers.harkroom.env_vars={}", json(&env_vars)));
+        if turn_keys {
+            // 다리 열쇠는 브릿지에만 — 셸에는 거른다. 스냅숏·로그인 셸·코드 모드·tty 실행은 이 거르기를 지나므로 끈다.
+            out.push("-c".into());
+            out.push(format!(
+                "shell_environment_policy.exclude={}",
+                json(&[RUNNER_TURN_KEY_BRIDGE_ENV])
+            ));
+            out.extend(v(&[
+                "-c",
+                "features.shell_snapshot=false",
+                "-c",
+                "allow_login_shell=false",
+                "-c",
+                "features.code_mode=false",
+                "-c",
+                "features.unified_exec_tty=false",
+            ]));
+        }
+        out.extend(extra.iter().cloned());
+        out
+    }
+
+    pub fn model(model: Option<&str>) -> Vec<String> {
+        model.map(|m| v(&["--model", m])).unwrap_or_default()
+    }
+
+    /// TOML 문자열로 인용한다(security #968 ③) — JSON 문자열과 이스케이프가 같다.
+    pub fn effort(effort: Option<&str>) -> Vec<String> {
+        effort
+            .map(|e| vec!["-c".into(), format!("model_reasoning_effort={}", json(e))])
+            .unwrap_or_default()
+    }
+
+    /// exec 계열에만 있는 두 플래그(`codex resume`·TUI 는 파싱 오류).
+    pub fn always_args(mode: TurnMode) -> Vec<String> {
+        match exec_model(mode) {
+            ExecutionModel::Exec => v(&["--skip-git-repo-check", "--ignore-user-config"]),
+            ExecutionModel::Tui => Vec::new(),
+        }
+    }
+
+    /// 지시문·본문 모두 stdin 파일(#117) — argv 에는 아무것도 없다.
+    pub fn prompt() -> Vec<String> {
+        Vec::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -276,5 +402,82 @@ mod tests {
             let i = r.iter().position(|x| x == b).unwrap();
             assert!(i > allow_at);
         }
+    }
+
+    #[test]
+    fn codex_session_follows_execution_model() {
+        use crate::adapter::{AgentHarness, ExecutionModel, Mode, execution_model_for};
+        let em = execution_model_for(AgentHarness::Codex, Mode::Mention).unwrap();
+        let (first, next) = (
+            codex::session(None, TurnMode::Mention),
+            codex::session(Some("s1"), TurnMode::Mention),
+        );
+        match em {
+            ExecutionModel::Tui => {
+                assert!(first.is_empty());
+                assert_eq!(next, ["resume", "s1"]);
+                assert!(codex::always_args(TurnMode::Mention).is_empty());
+            }
+            ExecutionModel::Exec => {
+                assert_eq!(first, ["exec"]);
+                assert_eq!(next, ["exec", "resume", "s1"]);
+                assert_eq!(
+                    codex::always_args(TurnMode::Mention),
+                    ["--skip-git-repo-check", "--ignore-user-config"]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn codex_permission_uses_c_not_s() {
+        let a = codex::permission(MentionPermission::Auto);
+        assert!(!a.iter().any(|x| x == "-s"));
+        assert_eq!(a[1], "sandbox_mode=\"workspace-write\"");
+        assert_eq!(
+            codex::permission(MentionPermission::Readonly),
+            ["-c", "sandbox_mode=\"read-only\""]
+        );
+    }
+
+    #[test]
+    fn codex_mcp_bridge_and_env_vars_names_only() {
+        let r = codex::mcp("/a b/op", false, &[]);
+        assert!(r.contains(&"mcp_servers.avcs.transport=\"stdio\"".to_string()));
+        assert!(r.contains(&"mcp_servers.harkroom.command=\"/a b/op\"".to_string()));
+        assert!(r.contains(&"mcp_servers.harkroom.args=[\"mcp-bridge\"]".to_string()));
+        let ev = r
+            .iter()
+            .find(|x| x.starts_with("mcp_servers.harkroom.env_vars="))
+            .unwrap();
+        assert!(ev.contains("HARKROOM_TURN_CAUSE") && ev.contains("HARKROOM_TURN_ID"));
+        assert!(!ev.contains("HARKROOM_TURN_BRIDGE_KEY"));
+        assert!(!r.iter().any(|x| x.starts_with("shell_environment_policy")));
+
+        let k = codex::mcp(
+            "/op",
+            true,
+            &["-c".into(), "mcp_servers.x.url=\"u\"".into()],
+        );
+        let ev = k
+            .iter()
+            .find(|x| x.starts_with("mcp_servers.harkroom.env_vars="))
+            .unwrap();
+        assert!(ev.contains("HARKROOM_TURN_BRIDGE_KEY"));
+        assert!(k.contains(
+            &"shell_environment_policy.exclude=[\"HARKROOM_TURN_BRIDGE_KEY\"]".to_string()
+        ));
+        assert!(k.contains(&"features.unified_exec_tty=false".to_string()));
+        assert_eq!(k.last().unwrap(), "mcp_servers.x.url=\"u\"");
+    }
+
+    #[test]
+    fn codex_effort_quotes_toml() {
+        assert_eq!(
+            codex::effort(Some("hi\"\nx=1")),
+            ["-c", "model_reasoning_effort=\"hi\\\"\\nx=1\""]
+        );
+        assert!(codex::effort(None).is_empty());
+        assert!(codex::prompt().is_empty());
     }
 }
