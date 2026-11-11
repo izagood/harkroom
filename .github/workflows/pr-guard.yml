@@ -77,6 +77,19 @@ jobs:
             jq -r '.[] | "::error file=\(.File),line=\(.StartLine)::gitleaks \(.RuleID) (커밋 \(.Commit[0:9]))"' "$RUNNER_TEMP/gitleaks.json"
           fi
           exit "$rc"
+      - name: no inline scan skips in added lines
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        # 줄 끝 주석 하나로 그 줄을 비밀 검사에서 빼는 길이 있고, 그것은 설정으로 끌 수 없다. 그래서 PR 이 **새로 더하는**
+        # 줄에 그 표식이 있으면 여기서 막는다. 꼭 필요하면 위의 base 설정 파일(security 검토)로 좁게 허용한다.
+        # 정규식은 `[:]` 로 써서 이 파일 자신이 걸리지 않게 했다.
+        run: |
+          hits=$(git diff --unified=0 "$BASE...$HEAD" | grep -nE '^\+.*gitleaks[:]allow' || true)
+          if [ -n "$hits" ]; then
+            echo "::error::PR 이 더한 줄에 비밀 검사 건너뛰기 표식이 있다 — 지우고, 꼭 필요하면 .gitleaks.toml 로 좁게 허용한다(security 검토)"
+            exit 1
+          fi
 
   pr-body:
     runs-on: ubuntu-latest
