@@ -7,9 +7,10 @@ use crate::forward::{ForwardTarget, Transport, forward, strip_link_only_fields};
 use crate::relay_mux::{RelayMux, RelayMuxDeps};
 use crate::runner_link::{RunnerLinkHandler, RunnerLinkServer};
 use crate::server_link::ServerLink;
+use crate::turn_command::CommandStep;
 use crate::turn_keys::TurnKeyLedger;
 use crate::turn_leases::{LeaseCall, TurnLeases};
-use crate::turn_peek::{TurnPeek, tool_call};
+use crate::turn_peek::TurnPeek;
 use crate::turn_slots::TurnSlots;
 use harkroom_proto::p1::{RunnerLinkKind, RunnerLinkRequest, RunnerLinkResponse};
 use harkroom_proto::p2::OperatorToServerFrame;
@@ -158,39 +159,45 @@ impl LinkHandler {
     }
 }
 
-/// TS turnCommand 의 hook 소켓 가드 — hook 소켓은 `command.check` 하나만 한다(그 밖은 서버로 나가지 않는다).
-/// `command.check` 의 판정(명령 허락 대조)은 아직 없다(s21b-3c) — 그동안은 닫힌 쪽 `{allow:false}` 로 답한다:
-/// hook 은 무출력으로 권한 분류기에 넘긴다(TS 의 「임대 없음·서버 무응답」과 같은 결말).
-pub const COMMAND_CHECK_TOOL: &str = "command.check";
+impl LinkHandler {
+    /// 에이전트 자격으로 이 커뮤니티 서버에 JSON POST(오퍼레이터 자체 요청 — `command.check` 의 match).
+    fn server_post(
+        &self,
+        agent_id: &str,
+        path: &str,
+        body: String,
+    ) -> Result<(u16, String), String> {
+        let url = format!("{}{}", self.base_url.trim_end_matches('/'), path);
+        let headers = vec![
+            (
+                "authorization".to_string(),
+                format!("Bearer {}", self.token),
+            ),
+            (
+                crate::forward::AGENT_HEADER.to_string(),
+                agent_id.to_string(),
+            ),
+            ("content-type".to_string(), "application/json".to_string()),
+        ];
+        let r = self
+            .transport
+            .send("POST", &url, &headers, Some(body.into_bytes()))?;
+        Ok((r.status, r.body))
+    }
 
-fn hook_guard(req: &RunnerLinkRequest) -> RunnerLinkResponse {
-    let name = match req {
-        RunnerLinkRequest::McpRequest { payload, .. } => {
-            tool_call(payload).and_then(|c| c.get("params")?.get("name")?.as_str())
-        }
-        _ => None,
-    };
-    match (req, name) {
-        (RunnerLinkRequest::McpRequest { id, payload, .. }, Some(COMMAND_CHECK_TOOL)) => {
-            let rpc = payload.get("id").cloned().unwrap_or(Value::Null);
-            RunnerLinkResponse::McpResponse {
-                id: id.clone(),
-                messages: vec![crate::turn_peek::tool_result(
-                    rpc,
-                    &serde_json::json!({"allow": false}),
-                )],
-            }
-        }
-        (RunnerLinkRequest::McpRequest { id, .. }, _) => RunnerLinkResponse::McpError {
-            id: id.clone(),
-            status: 403,
-            message: "the hook link only answers command.check".into(),
-        },
-        (RunnerLinkRequest::HttpForward { id, .. }, _) => RunnerLinkResponse::HttpResponse {
-            id: id.clone(),
-            status: 403,
-            body: "the hook link only answers command.check".into(),
-        },
+    /// 서버로 넘긴다. agent_id 는 `expect` 가 적어 둔 값이다(러너의 주장이 아님). `req` 는 이미 링크 전용 칸을 지운 것이다.
+    fn forward_to_server(
+        &self,
+        agent_id: &str,
+        req: RunnerLinkRequest,
+        kind: RunnerLinkKind,
+    ) -> RunnerLinkResponse {
+        let target = ForwardTarget {
+            base_url: self.base_url.clone(),
+            token: self.token.clone(),
+            agent_id: agent_id.to_string(),
+        };
+        forward(self.transport.as_ref(), &target, req, kind)
     }
 }
 
@@ -241,7 +248,9 @@ impl RunnerLinkHandler for LinkHandler {
         req: RunnerLinkRequest,
         kind: RunnerLinkKind,
     ) -> Option<RunnerLinkResponse> {
-        // 가로채기 — TS run.ts 의 순서(turnKeys → … → turnSlots). 서버로 나가지 않는다.
+        // 링크에서 온 「오퍼레이터만 채우는 칸」(commandFiles)은 어떤 처리보다 먼저 지운다(TS run.ts `stripLinkOnlyFields`, security 사전 2).
+        let req = strip_link_only_fields(req);
+        // 가로채기 — TS run.ts 의 순서(turnKeys → turnPeek → turnCommand → turnSlots). 서버로 나가지 않는다.
         if let Some(r) = lock(&self.turn_keys).maybe_handle(runner_id, &req, kind) {
             return Some(r);
         }
@@ -263,24 +272,25 @@ impl RunnerLinkHandler for LinkHandler {
         ) {
             return Some(r);
         }
-        if kind == RunnerLinkKind::Hook {
-            return Some(hook_guard(&req));
-        }
+        // 「정확한 명령」(TS turnCommand) — hook 소켓 가드·`command.check`·`permission.request`(kind=command) 파일 재기.
+        let post =
+            |a: &str, body: String| self.server_post(a, crate::turn_command::MATCH_PATH, body);
+        let req = match crate::turn_command::maybe_handle(
+            req,
+            kind,
+            agent_id,
+            lease.as_ref(),
+            &post,
+            &|l| eprintln!("{l}"),
+        ) {
+            CommandStep::Reply(r) => return Some(r),
+            CommandStep::Forward(r) => return Some(self.forward_to_server(agent_id, r, kind)),
+            CommandStep::Pass(r) => r,
+        };
         if let Some(r) = lock(&self.slots).maybe_handle(runner_id, &req, kind) {
             return Some(r);
         }
-        // agent_id 는 `expect` 가 적어 둔 값이다(러너의 주장이 아님) — 서버에 그 에이전트로 넘긴다.
-        let target = ForwardTarget {
-            base_url: self.base_url.clone(),
-            token: self.token.clone(),
-            agent_id: agent_id.to_string(),
-        };
-        Some(forward(
-            self.transport.as_ref(),
-            &target,
-            strip_link_only_fields(req),
-            kind,
-        ))
+        Some(self.forward_to_server(agent_id, req, kind))
     }
 
     fn on_close(&self, runner_id: &str) {
@@ -507,6 +517,57 @@ mod tests {
             "에이전트 id 는 expect 가 적은 값으로 실린다: {:?}",
             calls[0].2
         );
+    }
+
+    #[test]
+    fn forged_command_files_are_stripped_and_command_check_goes_to_match_with_lease() {
+        let (_srv, tr, b) = bridge();
+        let h = LinkHandler {
+            mux: Arc::clone(&b.mux),
+            transport: tr.clone(),
+            base_url: "https://h.example".into(),
+            token: "op-token".into(),
+            turn_keys: Arc::new(Mutex::new(TurnKeyLedger::new(|| 0, |_| {}))),
+            slots: Arc::new(Mutex::new(TurnSlots::new(None, || 0, |_| {}))),
+            leases: Arc::new(Mutex::new(TurnLeases::new(|| 0))),
+            peek: Arc::new(TurnPeek::new(|| 0)),
+        };
+        // 링크가 미리 채운 commandFiles 는 서버 머리에 실리지 않는다(사전 2).
+        let req: RunnerLinkRequest = serde_json::from_value(json!({
+            "type":"mcp.request","id":"q1","cause":"c1","commandFiles":"Zm9yZ2Vk",
+            "payload":{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"message.post","arguments":{}}}
+        }))
+        .unwrap();
+        h.on_request("r1", "a1", req, RunnerLinkKind::Bridge)
+            .unwrap();
+        {
+            let calls = tr.0.lock().unwrap();
+            assert!(calls[0].1.ends_with("/mcp"));
+            assert!(
+                !calls[0]
+                    .2
+                    .iter()
+                    .any(|(n, _)| n == crate::forward::COMMAND_FILES_HEADER)
+            );
+        }
+        // 임대가 있으면 hook 의 command.check 가 match 로 간다(오퍼레이터 자체 요청, 그 에이전트 자격).
+        let dir = std::env::temp_dir().join(format!("brcc-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let k = std::fs::canonicalize(&dir).unwrap().join("k");
+        std::fs::write(&k, "x").unwrap();
+        lock(&h.leases).note("r1", "a1", "c1", "L1", "T1", "2099-01-01T00:00:00.000Z");
+        let cmd = format!("kubectl --kubeconfig {} --context rc get pods", k.display());
+        let req: RunnerLinkRequest = serde_json::from_value(json!({
+            "type":"mcp.request","id":"q2","cause":"c1",
+            "payload":{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"command.check","arguments":{"command":cmd}}}
+        }))
+        .unwrap();
+        h.on_request("r1", "a1", req, RunnerLinkKind::Hook).unwrap();
+        let calls = tr.0.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[1].0, "POST");
+        assert_eq!(calls[1].1, "https://h.example/agent/command-grants/match");
+        assert!(calls[1].2.iter().any(|(_, v)| v == "a1"));
     }
 
     #[test]
