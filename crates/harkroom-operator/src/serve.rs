@@ -186,6 +186,8 @@ pub fn spawn_server_link(
         std::sync::Arc::new(crate::forward::UreqTransport::default()),
         base_url.clone(),
         token.clone(),
+        crate::turn_keys::TurnKeyLedger::process(),
+        crate::turn_slots::TurnSlots::process(),
     );
     state.set_runner_link(std::sync::Arc::clone(&bridge.runner_link));
     let mux = bridge.mux;

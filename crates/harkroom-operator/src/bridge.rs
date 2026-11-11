@@ -7,10 +7,16 @@ use crate::forward::{ForwardTarget, Transport, forward, strip_link_only_fields};
 use crate::relay_mux::{RelayMux, RelayMuxDeps};
 use crate::runner_link::{RunnerLinkHandler, RunnerLinkServer};
 use crate::server_link::ServerLink;
+use crate::turn_keys::TurnKeyLedger;
+use crate::turn_slots::TurnSlots;
 use harkroom_proto::p1::{RunnerLinkKind, RunnerLinkRequest, RunnerLinkResponse};
 use harkroom_proto::p2::OperatorToServerFrame;
 use serde_json::Value;
-use std::sync::{Arc, OnceLock, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
+
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 /// 서버 채널로 보내는 쪽 — 시험은 가짜를 준다.
 pub trait ServerSend: Send + Sync {
@@ -56,6 +62,10 @@ pub struct LinkHandler {
     transport: Arc<dyn Transport>,
     base_url: String,
     token: String,
+    /// 턴 열쇠 장부(s21b-3a) — 맡기기·끝내기는 여기서 답하고 서버로 넘기지 않는다.
+    turn_keys: Arc<Mutex<TurnKeyLedger>>,
+    /// 동시 턴 상한(s21b-3a) — 프로세스 하나에 하나(`TurnSlots::process`).
+    slots: Arc<Mutex<TurnSlots>>,
 }
 
 impl RunnerLinkHandler for LinkHandler {
@@ -72,11 +82,18 @@ impl RunnerLinkHandler for LinkHandler {
 
     fn on_request(
         &self,
-        _runner_id: &str,
+        runner_id: &str,
         agent_id: &str,
         req: RunnerLinkRequest,
         kind: RunnerLinkKind,
     ) -> Option<RunnerLinkResponse> {
+        // 가로채기 — TS run.ts 의 순서(turnKeys → … → turnSlots). 서버로 나가지 않는다.
+        if let Some(r) = lock(&self.turn_keys).maybe_handle(runner_id, &req, kind) {
+            return Some(r);
+        }
+        if let Some(r) = lock(&self.slots).maybe_handle(runner_id, &req, kind) {
+            return Some(r);
+        }
         // agent_id 는 `expect` 가 적어 둔 값이다(러너의 주장이 아님) — 서버에 그 에이전트로 넘긴다.
         let target = ForwardTarget {
             base_url: self.base_url.clone(),
@@ -93,6 +110,12 @@ impl RunnerLinkHandler for LinkHandler {
 
     fn on_close(&self, runner_id: &str) {
         eprintln!("러너 링크가 끊겼다: runner={runner_id}");
+        lock(&self.slots).release_runner(runner_id);
+    }
+
+    /// relay 가 다시 붙었다 — 끊긴 사이 사라진 놓기 요청 때문에 상한이 조용히 줄지 않게 돌려받는다(security #1127 L1).
+    fn on_relay_attach(&self, runner_id: &str) {
+        lock(&self.slots).release_runner(runner_id);
     }
 
     fn log(&self, line: &str) {
@@ -111,6 +134,8 @@ pub fn build_bridge(
     transport: Arc<dyn Transport>,
     base_url: String,
     token: String,
+    turn_keys: Arc<Mutex<TurnKeyLedger>>,
+    slots: Arc<Mutex<TurnSlots>>,
 ) -> Bridge {
     let slot: Arc<OnceLock<Weak<RunnerLinkServer>>> = Arc::new(OnceLock::new());
     let mux = Arc::new(RelayMux::new(Box::new(MuxDeps {
@@ -122,9 +147,11 @@ pub fn build_bridge(
         transport,
         base_url,
         token,
+        turn_keys: Arc::clone(&turn_keys),
+        slots,
     });
-    // 턴 열쇠 장부는 s21b-3(turn*) 몫이다 — 지금은 열쇠 소켓을 받지 않는다.
-    let runner_link = RunnerLinkServer::new(handler, None);
+    // 턴 열쇠 장부(s21b-3a) — 하네스의 bridge·hook·wrapper 소켓이 맡긴 열쇠로 붙는다.
+    let runner_link = RunnerLinkServer::new(handler, Some(turn_keys));
     let _ = slot.set(Arc::downgrade(&runner_link));
     Bridge { mux, runner_link }
 }
@@ -134,7 +161,6 @@ mod tests {
     use super::*;
     use crate::forward::HttpReply;
     use serde_json::json;
-    use std::sync::Mutex;
 
     #[derive(Default)]
     struct FakeServer(Mutex<Vec<Value>>);
@@ -179,6 +205,8 @@ mod tests {
             tr.clone(),
             "https://h.example".into(),
             "op-token".into(),
+            Arc::new(Mutex::new(TurnKeyLedger::new(|| 0, |_| {}))),
+            Arc::new(Mutex::new(TurnSlots::new(Some(1), || 0, |_| {}))),
         );
         (srv, tr, b)
     }
@@ -191,6 +219,8 @@ mod tests {
             transport: Arc::new(FakeTransport::default()),
             base_url: String::new(),
             token: String::new(),
+            turn_keys: Arc::new(Mutex::new(TurnKeyLedger::new(|| 0, |_| {}))),
+            slots: Arc::new(Mutex::new(TurnSlots::new(Some(1), || 0, |_| {}))),
         };
         h.on_frame(
             "r1",
@@ -215,6 +245,8 @@ mod tests {
             transport: tr.clone(),
             base_url: "https://h.example".into(),
             token: "op-token".into(),
+            turn_keys: Arc::new(Mutex::new(TurnKeyLedger::new(|| 0, |_| {}))),
+            slots: Arc::new(Mutex::new(TurnSlots::new(None, || 0, |_| {}))),
         };
         let req: RunnerLinkRequest = serde_json::from_value(json!({
             "type":"mcp.request","id":"q1","payload":{"jsonrpc":"2.0","id":1,"method":"x"}
@@ -255,5 +287,101 @@ mod tests {
         let weak = Arc::downgrade(&b.runner_link);
         drop(b);
         assert!(weak.upgrade().is_none(), "러너 링크가 고리로 새지 않는다");
+    }
+
+    fn fwd(path: &str, body: Value) -> RunnerLinkRequest {
+        RunnerLinkRequest::HttpForward {
+            id: "q".into(),
+            method: "POST".into(),
+            path: path.into(),
+            body: Some(body.to_string()),
+            body_base64: None,
+            content_type: Some("application/json".into()),
+        }
+    }
+
+    fn status_of(r: Option<RunnerLinkResponse>) -> u16 {
+        match r.expect("answered") {
+            RunnerLinkResponse::HttpResponse { status, .. } => status,
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn turn_keys_and_slots_are_answered_locally_not_forwarded() {
+        let tr = Arc::new(FakeTransport::default());
+        let (_srv, _tr0, b) = bridge();
+        let h = LinkHandler {
+            mux: Arc::clone(&b.mux),
+            transport: tr.clone(),
+            base_url: "https://h.example".into(),
+            token: "t".into(),
+            turn_keys: Arc::new(Mutex::new(TurnKeyLedger::new(|| 0, |_| {}))),
+            slots: Arc::new(Mutex::new(TurnSlots::new(Some(1), || 0, |_| {}))),
+        };
+        let keys = json!({"turnId":"t1","keys":{"bridge":"a".repeat(64),"shell":"b".repeat(64)}});
+        assert_eq!(
+            status_of(h.on_request(
+                "r1",
+                "a1",
+                fwd("/agent/turn-keys", keys),
+                RunnerLinkKind::Relay
+            )),
+            200
+        );
+        assert_eq!(
+            status_of(h.on_request(
+                "r1",
+                "a1",
+                fwd("/agent/turn-slots", json!({"key":"k1"})),
+                RunnerLinkKind::Relay
+            )),
+            200
+        );
+        assert_eq!(
+            status_of(h.on_request(
+                "r2",
+                "a2",
+                fwd("/agent/turn-slots", json!({"key":"k1"})),
+                RunnerLinkKind::Relay
+            )),
+            409
+        );
+        // 하네스 소켓은 자리를 못 잡는다.
+        assert_eq!(
+            status_of(h.on_request(
+                "r1",
+                "a1",
+                fwd("/agent/turn-slots", json!({"key":"k2"})),
+                RunnerLinkKind::Bridge
+            )),
+            403
+        );
+        assert!(
+            tr.0.lock().unwrap().is_empty(),
+            "nothing reached the server"
+        );
+        // relay 가 다시 붙으면 그 러너의 자리를 돌려받는다.
+        h.on_relay_attach("r1");
+        assert_eq!(
+            status_of(h.on_request(
+                "r2",
+                "a2",
+                fwd("/agent/turn-slots", json!({"key":"k1"})),
+                RunnerLinkKind::Relay
+            )),
+            200
+        );
+        // 끊기면 돌려받는다.
+        h.on_close("r2");
+        assert_eq!(lock(&h.slots).in_use(), 0);
+        // 나머지는 그대로 서버로 넘긴다.
+        h.on_request(
+            "r1",
+            "a1",
+            fwd("/agent/activity", json!({})),
+            RunnerLinkKind::Relay,
+        );
+        assert_eq!(tr.0.lock().unwrap().len(), 1);
     }
 }
