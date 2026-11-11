@@ -288,8 +288,13 @@ describe('the zoom control in the preview panel', () => {
 
     it('zooms in steps when the pinch starts inside the preview, and remembers it', async () => {
       render(<ArtifactPanel />);
-      open(page('p1', 'art-1'));
-      await screen.findByTestId('artifact-frame');
+      // 프레임이 DOM 에 붙는 바로 그 마이크로태스크에서 핀치를 시작한다 — 느린 CI 에서 findBy 가 돌아오던 꼴이다.
+      // 듣기를 보통 효과로 달면 여기서 옛 듣기(로딩 중)가 시작을 버려 100% 에 머문다(고치기 전 결정적으로 빨갛다).
+      await new Promise<void>((resolve) => {
+        const mo = new MutationObserver(() => { if (document.querySelector('[data-testid=artifact-frame]')) { mo.disconnect(); resolve(); } });
+        mo.observe(document.body, { childList: true, subtree: true });
+        open(page('p1', 'art-1'));
+      });
       magnify(1);
       magnify(4, -0.1);
       magnify(4, -0.1);

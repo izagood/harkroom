@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { useHostDocument } from '../lib/hostDocument';
 import type { AttachmentRow } from '@harkroom/shared';
 import { getController } from '../state/controller';
@@ -250,7 +250,9 @@ export function ArtifactPanel({ fill = false, windowed }: {
     단추·⌘키와 같은 상태·기억을 쓴다. 옆 패널·⤢·새 창 어디서든 된다 — 앱은 핀치를 다른 데 쓰지 않는다.
   */
   const pinch = useRef<{ base: number; acc: number } | null>(null);
-  useEffect(() => {
+  // 레이아웃 효과로 단다 — 보통 효과는 커밋 **뒤** 따로 돌아서, 그 사이에 온 핀치 시작은 옛 듣기(로딩 중 판정)가 받아
+  // 버렸다(느린 CI 에서 시험이 흔들린 원인). 레이아웃 효과는 DOM 이 바뀐 커밋 안에서 돌아 그 틈이 없다.
+  useLayoutEffect(() => {
     const view = hostDoc.defaultView;
     if (!attachment || !view) return;
     const onMagnify = (ev: Event) => {
