@@ -11,6 +11,7 @@
 //!
 //! 접속마다 스레드 하나다. 앱 하나가 붙는 로컬 소켓이라 async 런타임을 들이지 않는다(의존이 늘지 않는다).
 use crate::claude_accounts::{self, ClaudeAccounts};
+use crate::claude_login::{self, ClaudeLogins};
 use crate::codex_accounts::{self, CodexAccounts};
 use crate::codex_login::{self, CodexLogins};
 use crate::local_agents::{self, LocalAgents};
@@ -265,6 +266,8 @@ pub struct ServerState {
     local_mcp: OnceLock<LocalMcp>,
     /// claude 계정 풀(s21c3a). 없으면 `claude*` 요청은 거절된다.
     claude_accounts: OnceLock<ClaudeAccounts>,
+    /// claude 계정 로그인(s21c3b). 계정 풀과 함께 배선된다.
+    claude_logins: OnceLock<ClaudeLogins>,
     /// codex 계정(s21c3c). 없으면 `codex*` 요청은 거절된다.
     codex_accounts: OnceLock<CodexAccounts>,
     /// codex 로그인(s21c3c-2). 계정이 배선될 때 같이 선다.
@@ -308,6 +311,7 @@ impl ServerState {
                 local_merge: OnceLock::new(),
                 local_mcp: OnceLock::new(),
                 claude_accounts: OnceLock::new(),
+                claude_logins: OnceLock::new(),
                 codex_accounts: OnceLock::new(),
                 codex_logins: OnceLock::new(),
                 on_agents_changed: OnceLock::new(),
@@ -384,6 +388,34 @@ impl ServerState {
     /// claude 계정 풀을 배선한다(한 번만).
     pub fn set_claude_accounts(&self, accounts: ClaudeAccounts) {
         let _ = self.claude_accounts.set(accounts);
+    }
+
+    /// claude 계정 로그인을 배선한다(한 번만). 로그인 출력은 인증된 앱 접속에만 `claudeLoginOutput` 으로 흘린다.
+    pub fn set_claude_logins(self: &Arc<Self>, logins: ClaudeLogins) {
+        let me = Arc::downgrade(self);
+        logins.on_event(Box::new(move |e| {
+            if let Some(st) = me.upgrade() {
+                st.broadcast_event("claudeLoginOutput", e);
+            }
+        }));
+        let _ = self.claude_logins.set(logins);
+    }
+
+    /// 진행 중인 로그인을 전부 회수한다(TS run.ts 종료 경로의 `shutdownLogins`).
+    pub fn shutdown_logins(&self) {
+        if let Some(l) = self.claude_logins.get() {
+            l.shutdown();
+        }
+    }
+
+    fn logins(&self) -> Result<&ClaudeLogins, DaemonError> {
+        self.accounts()?;
+        self.claude_logins.get().ok_or_else(|| {
+            err(
+                DaemonErrorCode::NoSuchRunner,
+                "이 daemon 에는 계정 풀이 배선되지 않았다",
+            )
+        })
     }
 
     fn accounts(&self) -> Result<&ClaudeAccounts, DaemonError> {
@@ -639,6 +671,31 @@ impl ServerState {
                     "계정 설정 갱신: 기본 풀={}",
                     cfg["defaultPool"].as_str().unwrap_or("(없음)")
                 );
+                Ok(json!({}))
+            }
+            "claudeAccountLoginStart" => {
+                let port = self.logins()?;
+                let (pool, account) = claude_accounts::read_account_ref(payload).map_err(bad)?;
+                // 옛 앱은 `reauth` 를 싣지 않는다 — 그때는 지금까지와 같은 로그인이다.
+                let reauth = payload.and_then(|p| p.get("reauth")) == Some(&Value::Bool(true));
+                let login_id = port.start(&pool, &account, reauth).map_err(bad)?;
+                eprintln!(
+                    "계정 {}로그인 시작: {pool}/{account}",
+                    if reauth { "다시 " } else { "" }
+                );
+                Ok(json!({ "loginId": login_id }))
+            }
+            "claudeAccountLoginSubmit" => {
+                let port = self.logins()?;
+                let (login_id, code) = claude_login::read_login_submit(payload).map_err(bad)?;
+                // 코드를 로그에 적지 않는다 — 그것으로 자격증명을 교환할 수 있다.
+                port.submit(&login_id, &code).map_err(bad)?;
+                Ok(json!({}))
+            }
+            "claudeAccountLoginCancel" => {
+                let port = self.logins()?;
+                let login_id = claude_login::read_login_ref(payload).map_err(bad)?;
+                port.cancel(&login_id);
                 Ok(json!({}))
             }
             "claudeAccountRemove" => {

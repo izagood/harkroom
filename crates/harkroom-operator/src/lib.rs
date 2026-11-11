@@ -18,6 +18,7 @@ pub mod assignments;
 pub mod bridge;
 pub mod callback_page;
 pub mod claude_accounts;
+pub mod claude_login;
 pub mod codex_accounts;
 pub mod codex_hook;
 pub mod codex_login;

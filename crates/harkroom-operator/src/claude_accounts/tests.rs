@@ -416,3 +416,36 @@ fn refs_like_ts() {
         "toPool 이 없다"
     );
 }
+
+#[test]
+fn remove_and_move_refuse_symlinked_components() {
+    let base = std::env::temp_dir().join(format!("hk-acct-sym-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    let root = base.join("root");
+    let outside = base.join("outside");
+    fs::create_dir_all(outside.join("a")).unwrap();
+    fs::write(outside.join("a/keep"), "k").unwrap();
+    fs::create_dir_all(&root).unwrap();
+    std::os::unix::fs::symlink(&outside, root.join("p")).unwrap();
+    // 글자로는 뿌리 아래다.
+    assert!(under(&root, &["p", "a"]).is_ok());
+    assert!(
+        under_no_symlink(&root, &["p", "a"])
+            .unwrap_err()
+            .contains("심링크")
+    );
+    let acc = ClaudeAccounts::with(
+        root.clone(),
+        root.join("pools.json"),
+        Box::new(|_| false),
+        Box::new(|_| {}),
+        || 0.0,
+    );
+    assert!(acc.remove_account("p", "a").is_err());
+    assert!(acc.remove_pool("p").is_err());
+    fs::create_dir_all(root.join("flat")).unwrap();
+    assert!(acc.move_account("flat", "p").is_err());
+    assert!(outside.join("a/keep").exists(), "뿌리 밖은 그대로여야 한다");
+    assert!(root.join("flat").exists());
+    let _ = fs::remove_dir_all(&base);
+}

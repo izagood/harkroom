@@ -205,6 +205,23 @@ pub fn under(root: &Path, names: &[&str]) -> Result<PathBuf, String> {
     Ok(target)
 }
 
+/// 지우기·옮기기 자리 — `under` 에 더해, 뿌리 아래 각 칸이 **심링크가 아닌지** 실제 디스크로 본다(#1908 security 낮음).
+/// 글자 판정만으로는 `<root>/p` 가 심링크일 때 `<root>/p/a` 가 뿌리 밖을 가리킨다. 심링크면 거절한다(TS 보다 좁다).
+pub fn under_no_symlink(root: &Path, names: &[&str]) -> Result<PathBuf, String> {
+    let target = under(root, names)?;
+    let mut at = normalize(root);
+    for n in names {
+        at.push(n);
+        if fs::symlink_metadata(&at).is_ok_and(|m| m.file_type().is_symlink()) {
+            return Err(format!(
+                "심링크 경로는 지우거나 옮기지 않는다: {}",
+                at.display()
+            ));
+        }
+    }
+    Ok(target)
+}
+
 /// 하위 디렉터리 이름(사전순, 문법에 맞는 것만). 심링크를 따라간다(`stat`) — 러너와 같은 규율.
 pub fn subdirs(dir: &Path) -> Vec<String> {
     let Ok(rd) = fs::read_dir(dir) else {
@@ -435,13 +452,16 @@ pub fn keychain_service(config_dir: &Path) -> String {
     format!("Claude Code-credentials-{}", &hex[..8])
 }
 
+/// 절대 경로로 부른다 — PATH 에 끼운 가짜 `security` 가 서비스·계정 이름을 받는 길을 닫는다(#1908 security 낮음).
+const SECURITY_BIN: &str = "/usr/bin/security";
+
 fn security_cmd(verb: &str, config_dir: &Path) -> bool {
     if !cfg!(target_os = "macos") {
         return false;
     }
     let user = std::env::var("USER").unwrap_or_default();
     // `-w`(값 출력)를 붙이지 않는다 — 존재만 보고, 토큰 바이트가 이 프로세스를 지나지 않게 한다.
-    let mut child = match std::process::Command::new("security")
+    let mut child = match std::process::Command::new(SECURITY_BIN)
         .args([verb, "-s", &keychain_service(config_dir), "-a", &user])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -586,6 +606,10 @@ impl ClaudeAccounts {
         &self.root
     }
 
+    pub fn pools_path(&self) -> &Path {
+        &self.pools_path
+    }
+
     fn status(&self, dir: &Path) -> Value {
         account_status_from_disk(dir, &*self.has_keychain)
     }
@@ -687,7 +711,7 @@ impl ClaudeAccounts {
     }
 
     pub fn remove_account(&self, pool: &str, account: &str) -> Result<(), String> {
-        let dir = under(&self.root, &[pool, account])?;
+        let dir = under_no_symlink(&self.root, &[pool, account])?;
         if !is_dir(&dir) {
             return Err(format!("계정이 없다: {pool}/{account}"));
         }
@@ -711,7 +735,7 @@ impl ClaudeAccounts {
     }
 
     pub fn remove_pool(&self, pool: &str) -> Result<(), String> {
-        let dir = under(&self.root, &[pool])?;
+        let dir = under_no_symlink(&self.root, &[pool])?;
         if !is_dir(&dir) {
             return Err(format!("풀이 없다: {pool}"));
         }
@@ -720,8 +744,8 @@ impl ClaudeAccounts {
 
     /// 평평한 계정을 풀로 옮긴다. 이름이 겹치면 거절한다. `order` 실패는 옮김을 되돌리지 않는다(TS 와 같다).
     pub fn move_account(&self, account: &str, to_pool: &str) -> Result<Value, String> {
-        let from = under(&self.root, &[account])?;
-        let pool_dir = under(&self.root, &[to_pool])?;
+        let from = under_no_symlink(&self.root, &[account])?;
+        let pool_dir = under_no_symlink(&self.root, &[to_pool])?;
         let to = under(&self.root, &[to_pool, account])?;
         if !is_dir(&from) {
             return Err(format!("옮길 계정이 없다: {account}"));
