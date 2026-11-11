@@ -48,12 +48,23 @@ type Calls = Arc<Mutex<Vec<Vec<String>>>>;
 fn deps(f: impl Fn(&[String]) -> ExecResult + Send + Sync + 'static) -> (ScanDeps, Calls) {
     let calls: Calls = Arc::default();
     let c = calls.clone();
-    let exec: Exec = Arc::new(
-        move |_file: &str, a: &[String], _env: &[(String, String)]| {
-            c.lock().unwrap().push(a.to_vec());
-            f(a)
-        },
-    );
+    let exec: Exec = Arc::new(move |file: &str, a: &[String], env: &[(String, String)]| {
+        // git 호출은 모두 실행 칸을 끈 채로 와야 한다(security c5 A). 시험의 응답 표는 그 앞붙임을 뗀 인자로 본다.
+        let a = if file == "git" {
+            assert_eq!(&a[..SAFE_GIT_ARGS.len()], &SAFE_GIT_ARGS[..], "{a:?}");
+            assert!(env.contains(&("GIT_CONFIG_NOSYSTEM".into(), "1".into())));
+            assert!(env.contains(&("GIT_CONFIG_GLOBAL".into(), "/dev/null".into())));
+            &a[SAFE_GIT_ARGS.len()..]
+        } else {
+            a
+        };
+        c.lock().unwrap().push(a.to_vec());
+        // 저장소 설정의 filter 칸 묻기는 기본으로 「없음」(git config 의 code 1).
+        if a.len() > 3 && a[2] == "config" && a[3] == "--get-regexp" {
+            return fail();
+        }
+        f(a)
+    });
     (
         ScanDeps {
             exec,

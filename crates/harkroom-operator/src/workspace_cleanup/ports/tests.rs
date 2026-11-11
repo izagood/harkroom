@@ -188,3 +188,95 @@ fn remove_refuses_dirty_worktree_without_force() {
     assert!(p.remove(&item(&wt, &repo, &head)).is_err());
     assert!(Path::new(&wt).join("a").exists());
 }
+
+/// 부르면 `marker` 를 만드는 실행 파일 — 저장소 설정에 넣어 그것이 도는지 본다.
+fn trap(root: &Path, name: &str) -> (String, PathBuf) {
+    let marker = root.join(format!("{name}.ran"));
+    let script = root.join(format!("{name}.sh"));
+    std::fs::write(
+        &script,
+        format!("#!/bin/sh\ntouch '{}'\ncat\n", marker.display()),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    (script.to_str().unwrap().to_string(), marker)
+}
+
+#[test]
+fn check_does_not_run_commands_from_repo_or_global_config() {
+    let t = tmpdir();
+    let p = ports(t.0.to_str().unwrap(), vec![], vec![]);
+    let (repo, wt, head) = setup(&p, &t.0);
+    let (cmd, marker) = trap(&t.0, "fsmonitor");
+    // 저장소 설정(에이전트가 쓸 수 있다)과 전역 설정(HOME) 양쪽에 명령을 넣는다.
+    git(&p, &["-C", &repo, "config", "core.fsmonitor", &cmd]);
+    std::fs::write(
+        t.0.join(".gitconfig"),
+        format!("[core]\n\tfsmonitor = {cmd}\n"),
+    )
+    .unwrap();
+    // hooks 도 덮인다 — 저장소 hooks 폴더에 무엇이 있어도 돌지 않는다.
+    let hooks = Path::new(&repo).join(".git/hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    for h in [
+        "reference-transaction",
+        "post-checkout",
+        "post-index-change",
+    ] {
+        std::fs::copy(&cmd, hooks.join(h)).unwrap();
+    }
+    let it = item(&wt, &repo, &head);
+    assert_eq!(p.check(&it, &HashSet::new()), None);
+    p.remove(&it).unwrap();
+    assert!(!marker.exists(), "저장소/전역 설정의 명령이 돌았다");
+}
+
+#[test]
+fn filter_config_blocks_check_and_keeps_deps() {
+    let t = tmpdir();
+    let p = ports(t.0.to_str().unwrap(), vec![], vec![]);
+    let (repo, wt, head) = setup(&p, &t.0);
+    let (cmd, marker) = trap(&t.0, "filter");
+    git(&p, &["-C", &repo, "config", "filter.x.clean", &cmd]);
+    git(&p, &["-C", &repo, "config", "filter.x.smudge", &cmd]);
+    std::fs::write(Path::new(&wt).join(".gitattributes"), "* filter=x\n").unwrap();
+    std::fs::write(Path::new(&wt).join(".gitignore"), "node_modules/\n").unwrap();
+    std::fs::create_dir_all(Path::new(&wt).join("node_modules/m")).unwrap();
+    let it = item(&wt, &repo, &head);
+    assert_eq!(
+        p.check(&it, &HashSet::new()),
+        Some(BlockReason::Uncommitted)
+    );
+    assert!(p.remove_deps(&wt).is_err());
+    assert!(Path::new(&wt).join("node_modules/m").exists());
+    assert!(!marker.exists(), "filter 명령이 돌았다");
+}
+
+#[test]
+fn remove_deps_goes_through_removal_guard() {
+    let t = tmpdir();
+    let p = ports(t.0.to_str().unwrap(), vec![], vec![]);
+    let (_repo, wt, _head) = setup(&p, &t.0);
+    // 등록 안 된 폴더(혼자 선 저장소) — 무시되는 node_modules 라도 남는다.
+    let loose = t.0.join("loose");
+    std::fs::create_dir_all(loose.join("node_modules/m")).unwrap();
+    let loose_s = loose.to_str().unwrap();
+    git(&p, &["-C", loose_s, "init", "-q"]);
+    std::fs::write(loose.join(".gitignore"), "node_modules/\n").unwrap();
+    assert!(p.remove_deps(loose_s).is_err());
+    assert!(loose.join("node_modules/m").exists());
+    // 지키는 자리 안쪽의 등록 worktree 도 남는다.
+    std::fs::write(Path::new(&wt).join(".gitignore"), "node_modules/\n").unwrap();
+    std::fs::create_dir_all(Path::new(&wt).join("node_modules/m")).unwrap();
+    let guarded = ports(
+        t.0.to_str().unwrap(),
+        vec![],
+        vec![t.0.to_str().unwrap().into()],
+    );
+    assert!(guarded.remove_deps(&wt).is_err());
+    assert!(Path::new(&wt).join("node_modules/m").exists());
+    // 등록된 worktree 의 무시되는 node_modules 는 지운다(대조).
+    p.remove_deps(&wt).unwrap();
+    assert!(!Path::new(&wt).join("node_modules").exists());
+}

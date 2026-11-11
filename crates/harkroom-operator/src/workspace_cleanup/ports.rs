@@ -9,7 +9,8 @@
 //! - 스레드 폴더·세션 기록은 오퍼레이터가 지우지 않는다(TS 는 `rm -rf`). 러너에게 맡기는 것은 서비스(`service.rs`)다.
 //! - 브랜치 지우기·`merge-base` 에 넘기는 sha 는 40자 16진수만, 브랜치 이름은 `-` 로 시작하지 않는 것만 받는다.
 use super::scan::{
-    ScanDeps, args, candidate_path_ok, git_env, is_within, parse_worktree_porcelain,
+    ScanDeps, candidate_path_ok, git_env, has_runnable_git_config, is_within,
+    parse_worktree_porcelain, repo_of_worktree,
 };
 use super::{
     BlockReason, CleanupItem, CleanupKind, CleanupPorts, normalize_cleanup_path,
@@ -46,7 +47,11 @@ pub struct GitPorts {
 
 impl GitPorts {
     fn git(&self, a: &[&str]) -> crate::local_merge::ExecResult {
-        (self.deps.exec)(&self.deps.git_path, &args(a), &git_env(&self.deps.home))
+        (self.deps.exec)(
+            &self.deps.git_path,
+            &super::scan::git_args(a),
+            &git_env(&self.deps.home),
+        )
     }
 
     /// TS `isPushed` — `head` 가 원격 ref 나 PR head 에 들어 있는가.
@@ -133,6 +138,10 @@ impl CleanupPorts for GitPorts {
         if item.kind != CleanupKind::Worktree {
             return None;
         }
+        // 저장소 설정에 `-c` 로 끌 수 없는 실행 칸이 있으면 검사 자체를 돌리지 않고 막는다(security c5 A, 주인 확인 불가).
+        if has_runnable_git_config(&self.deps, &item.path) {
+            return Some(BlockReason::Uncommitted);
+        }
         // `--untracked-files=all`: 저장소 설정 `status.showUntrackedFiles=no` 여도 untracked 를 본다(security n3).
         let st = self.git(&[
             "-C",
@@ -197,8 +206,15 @@ impl CleanupPorts for GitPorts {
     }
 
     fn remove_deps(&self, root: &str) -> Result<(), String> {
-        if !safe_target(root) || !real_path_matches(root) {
-            return Err("받지 않는 경로".into());
+        // 지우기 직전 검사(조건 1~3)를 똑같이 건다(security c5 B) — 원장이 틀려도 등록 안 된 폴더·지키는 자리의 의존성 폴더는
+        // 지우지 않는다. 저장소는 지금 그 경로에서 다시 찾는다.
+        let probe = super::CleanupItem {
+            repo: repo_of_worktree(&self.deps, root),
+            ..super::CleanupItem::blank(root, CleanupKind::Worktree)
+        };
+        self.removal_guard(&probe)?;
+        if has_runnable_git_config(&self.deps, root) {
+            return Err("저장소 설정에 끌 수 없는 실행 칸이 있다".into());
         }
         remove_rebuildable(Path::new(root), &|name, symlink| {
             // 올려 둔 파일이 하나도 없어야 한다(심링크 자체가 올라가 있어도 안 된다).
