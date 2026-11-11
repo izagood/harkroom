@@ -583,7 +583,12 @@ pub fn read_kill_params(payload: Option<&Value>) -> Result<(String, Option<Strin
 }
 
 /// 접속 하나를 끝까지 서비스한다. `hello` 전에는 아무 요청도 받지 않고, 거절이면 사유 한 줄을 보내고 끊는다.
-pub fn serve_connection(state: &ServerState, mut stream: UnixStream) {
+pub fn serve_connection(state: &ServerState, stream: UnixStream) {
+    serve_connection_in(state, stream, None);
+}
+
+/// `slot` 은 인증 전 자리다. 러너로 인증되면 링크가 러너 몫 자리를 잡은 뒤 놓는다(10:56 A안).
+fn serve_connection_in(state: &ServerState, mut stream: UnixStream, slot: Option<Slot>) {
     // 쓰기 시간 제한은 소켓 옵션(SO_SNDTIMEO)이라 복제한 fd 에도 같이 걸린다. 못 걸면 받지 않는다.
     if stream.set_write_timeout(Some(WRITE_TIMEOUT)).is_err() {
         return;
@@ -626,7 +631,7 @@ pub fn serve_connection(state: &ServerState, mut stream: UnixStream) {
                     .collect();
                 let buffered = decoder.take_buffered();
                 drop(writer);
-                link.serve(stream, v, rest, buffered);
+                link.serve(stream, v, rest, buffered, move || drop(slot));
                 return;
             }
             let reply = match line {
@@ -732,8 +737,7 @@ pub fn accept_loop_with_limit(state: Arc<ServerState>, listener: UnixListener, l
         };
         let st = Arc::clone(&state);
         std::thread::spawn(move || {
-            let _slot = slot;
-            serve_connection(&st, stream);
+            serve_connection_in(&st, stream, Some(slot));
         });
     }
 }
