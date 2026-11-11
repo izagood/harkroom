@@ -114,7 +114,7 @@ fn main() {
             let (line, exit) = harkroom_operator::api_cli::api_main(
                 &args[1..],
                 link,
-                |p| std::fs::read(base.join(p)),
+                |p| harkroom_operator::api_cli::read_body_file(&base, p),
                 REQUEST_TIMEOUT,
             );
             println!("{line}");
