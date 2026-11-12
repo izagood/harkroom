@@ -165,25 +165,25 @@ fn sync_removes_stale_skills_and_only_our_links() {
         drop_tool_grants: false,
         builtins: Some(&none),
     };
-    sync_skills(&state, &ws, || Ok(vec![sk("a", "A"), sk("b", "B")]), opts);
+    sync_skills(&state, &ws, || Ok(vec![sk("aa", "A"), sk("bb", "B")]), opts);
     let claude = ws.join(".claude/skills");
     // 사람이 넣은 디렉터리·다른 곳을 가리키는 링크·예전 `.codex/skills` 의 우리 링크.
     fs::create_dir_all(claude.join("mine")).unwrap();
     symlink(&other, claude.join("foreign")).unwrap();
     let legacy = ws.join(".codex/skills");
     fs::create_dir_all(&legacy).unwrap();
-    symlink(runner_skills_dir(&state).join("a"), legacy.join("a")).unwrap();
+    symlink(runner_skills_dir(&state).join("aa"), legacy.join("aa")).unwrap();
     symlink(&other, legacy.join("keep")).unwrap();
 
-    sync_skills(&state, &ws, || Ok(vec![sk("a", "A2")]), opts);
+    sync_skills(&state, &ws, || Ok(vec![sk("aa", "A2")]), opts);
     let sd = runner_skills_dir(&state);
-    assert!(!sd.join("b").exists());
-    assert_eq!(fs::read_to_string(sd.join("a/SKILL.md")).unwrap(), "A2");
-    assert!(fs::symlink_metadata(claude.join("b")).is_err());
+    assert!(!sd.join("bb").exists());
+    assert_eq!(fs::read_to_string(sd.join("aa/SKILL.md")).unwrap(), "A2");
+    assert!(fs::symlink_metadata(claude.join("bb")).is_err());
     assert!(fs::symlink_metadata(ws.join(".agents/skills/b")).is_err());
     assert!(claude.join("mine").is_dir());
     assert_eq!(link_target(&claude.join("foreign")), Some(other.clone()));
-    assert!(fs::symlink_metadata(legacy.join("a")).is_err());
+    assert!(fs::symlink_metadata(legacy.join("aa")).is_err());
     assert_eq!(link_target(&legacy.join("keep")), Some(other));
 }
 
@@ -194,22 +194,22 @@ fn sync_relinks_wrong_or_plain_entries() {
     let other = tmp();
     let claude = ws.join(".claude/skills");
     fs::create_dir_all(&claude).unwrap();
-    symlink(&other, claude.join("a")).unwrap();
+    symlink(&other, claude.join("aa")).unwrap();
     let agents = ws.join(".agents/skills");
-    fs::create_dir_all(agents.join("a")).unwrap();
+    fs::create_dir_all(agents.join("aa")).unwrap();
     let none: [Skill; 0] = [];
     sync_skills(
         &state,
         &ws,
-        || Ok(vec![sk("a", "A")]),
+        || Ok(vec![sk("aa", "A")]),
         SyncSkillsOpts {
             drop_tool_grants: false,
             builtins: Some(&none),
         },
     );
-    let want = runner_skills_dir(&state).join("a");
-    assert_eq!(link_target(&claude.join("a")), Some(want.clone()));
-    assert_eq!(link_target(&agents.join("a")), Some(want));
+    let want = runner_skills_dir(&state).join("aa");
+    assert_eq!(link_target(&claude.join("aa")), Some(want.clone()));
+    assert_eq!(link_target(&agents.join("aa")), Some(want));
 }
 
 #[test]
@@ -258,10 +258,10 @@ fn sync_list_failure_keeps_existing_and_does_not_panic() {
         drop_tool_grants: false,
         builtins: Some(&none),
     };
-    sync_skills(&state, &ws, || Ok(vec![sk("a", "A")]), opts);
+    sync_skills(&state, &ws, || Ok(vec![sk("aa", "A")]), opts);
     sync_skills(&state, &ws, || Err("server down".into()), opts);
     // 목록을 못 받은 턴은 아무것도 걷지 않는다(정본: 예외가 걷기 전에 난다).
-    assert!(runner_skills_dir(&state).join("a/SKILL.md").exists());
+    assert!(runner_skills_dir(&state).join("aa/SKILL.md").exists());
 }
 
 #[test]
@@ -272,5 +272,50 @@ fn sync_default_builtins_are_installed() {
     for s in builtin_skills() {
         let p = runner_skills_dir(&state).join(&s.slug).join("SKILL.md");
         assert_eq!(fs::read_to_string(p).unwrap(), s.body);
+    }
+}
+
+/// security #1981 낮음 1: slug 는 경로 조각이다 — 서버 확인이 빠져도 러너가 모양이 틀린 slug 를 깔지 않는다.
+#[test]
+fn sync_skips_malformed_slugs() {
+    let state = tmp();
+    let ws = tmp();
+    let long = "a".repeat(41);
+    let bad = [
+        "../escape",
+        "a/b",
+        "UPPER",
+        "x",
+        long.as_str(),
+        ".hidden",
+        "",
+    ];
+    sync_skills(
+        &state,
+        &ws,
+        || {
+            let mut v: Vec<Skill> = bad.iter().map(|s| sk(s, "# bad")).collect();
+            v.push(sk("ok-1", "# ok"));
+            Ok(v)
+        },
+        SyncSkillsOpts {
+            drop_tool_grants: false,
+            builtins: Some(&[]),
+        },
+    );
+    let names = |p: &Path| {
+        let mut v: Vec<String> = fs::read_dir(p)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        v.sort();
+        v
+    };
+    assert_eq!(names(&runner_skills_dir(&state)), vec!["ok-1"]);
+    assert_eq!(names(&ws.join(".claude/skills")), vec!["ok-1"]);
+    assert_eq!(names(&state), vec!["skills"]);
+    assert!(is_runner_skill_slug("harkroom-artifact"));
+    for s in bad {
+        assert!(!is_runner_skill_slug(s), "{s}");
     }
 }

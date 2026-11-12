@@ -53,6 +53,14 @@ pub fn builtin_skills() -> &'static [Skill] {
 }
 
 /// 정본 `isBuiltinSkillSlug`.
+/// 러너가 깔 스킬 slug 모양 — 서버 `SKILL_SLUG_REGEX`(`^[a-z0-9-]{2,40}$`)와 같다.
+pub fn is_runner_skill_slug(slug: &str) -> bool {
+    (2..=40).contains(&slug.len())
+        && slug
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
 pub fn is_builtin_skill_slug(slug: &str) -> bool {
     slug.starts_with(BUILTIN_SKILL_PREFIX)
 }
@@ -268,7 +276,19 @@ where
     ];
     let legacy_codex_dir = workspace_dir.join(".codex").join("skills");
 
-    let approved = list_skills()?;
+    // slug 는 경로 조각이 된다. 서버(`SKILL_SLUG_REGEX`)가 이미 거르지만 러너도 한 겹 더 거른다(security #1981 낮음 1).
+    let listed_approved = list_skills()?;
+    let malformed = listed_approved
+        .iter()
+        .filter(|s| !is_runner_skill_slug(&s.slug))
+        .count();
+    if malformed > 0 {
+        eprintln!("[mentionTurn] slug 모양이 맞지 않는 스킬 {malformed}개를 깔지 않았다");
+    }
+    let approved: Vec<Skill> = listed_approved
+        .into_iter()
+        .filter(|s| is_runner_skill_slug(&s.slug))
+        .collect();
     let builtins: &[Skill] = match opts.builtins {
         Some(b) => b,
         None => builtin_skills(),

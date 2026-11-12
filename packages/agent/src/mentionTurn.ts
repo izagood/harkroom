@@ -939,6 +939,9 @@ export function laneSafeSkill(body: string): boolean {
   });
 }
 
+/** 러너가 깔 스킬 slug 모양 — 서버 `SKILL_SLUG_REGEX` 와 같다. */
+export const RUNNER_SKILL_SLUG_RE = /^[a-z0-9-]{2,40}$/;
+
 export async function syncSkills(
   stateDir: string,
   workspaceDir: string,
@@ -966,7 +969,14 @@ export async function syncSkills(
   const legacyCodexDir = join(workspaceDir, '.codex', 'skills');
 
   try {
-    const approved = await listSkills();
+    // slug 는 경로 조각이 된다(`<skillsDir>/<slug>`·`<harness>/<slug>`). 서버(`SKILL_SLUG_REGEX`)가 이미 거르지만 러너도 한 겹 더
+    // 거른다 — 서버 쪽 확인이 빠져도 상태 디렉터리 밖에 쓰거나 지우지 않게(security #1981 낮음 1).
+    const listedApproved = await listSkills();
+    const malformed = listedApproved.filter((s) => !RUNNER_SKILL_SLUG_RE.test(s.slug));
+    if (malformed.length) {
+      console.warn(`[mentionTurn] slug 모양이 맞지 않는 스킬 ${malformed.length}개를 깔지 않았다`);
+    }
+    const approved = listedApproved.filter((s) => RUNNER_SKILL_SLUG_RE.test(s.slug));
     const builtins = opts.builtins ?? BUILTIN_SKILLS;
     // 내장 접두를 쓴 워크스페이스 스킬(서버 예약 이전에 승인된 것 등)은 깔지 않는다 — 내장 이름은 내장 것이다.
     const shadowing = approved.filter((s) => isBuiltinSkillSlug(s.slug));
