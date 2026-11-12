@@ -109,6 +109,42 @@ pub struct RelaySessions {
     log: Box<dyn Fn(&str) + Send + Sync>,
 }
 
+/// `interactive.error` 문구의 상한(글자).
+pub const INTERACTIVE_ERROR_MAX_CHARS: usize = 200;
+
+/// 처리자 문구를 사람 화면에 싣기 전에 한 번 더 거른다 — 계약(「`Display` 수준만」)을 처리자 구현에만 맡기지 않는다.
+/// 제어 문자는 빼고, `/`·`~` 로 시작하는 낱말(로컬 경로)은 `<경로>` 로 바꾸고, 상한에서 자른다.
+pub fn public_error_text(message: &str) -> String {
+    let mut out = String::new();
+    for word in message.split_whitespace() {
+        let w: String = word.chars().filter(|c| !c.is_control()).collect();
+        if w.is_empty() {
+            continue;
+        }
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        let bare = w.trim_start_matches(['(', '[', '"', '\'', '`']);
+        if bare.starts_with('/') || bare.starts_with('~') {
+            out.push_str("<경로>");
+        } else {
+            out.push_str(&w);
+        }
+    }
+    if out.chars().count() > INTERACTIVE_ERROR_MAX_CHARS {
+        out = out
+            .chars()
+            .take(INTERACTIVE_ERROR_MAX_CHARS)
+            .collect::<String>()
+            + "…";
+    }
+    if out.is_empty() {
+        "인터랙티브 열기가 실패했다".to_string()
+    } else {
+        out
+    }
+}
+
 /// 콜백 패닉을 삼킨다 — 정본의 `try { … } catch {}` 자리.
 fn guarded(f: impl FnOnce()) {
     let _ = catch_unwind(AssertUnwindSafe(f));
@@ -361,7 +397,7 @@ impl RelaySessions {
                             json!({"type": "interactive.opened", "requestId": request_id, "sessionId": session_id, "created": created})
                         }
                         Err(message) => {
-                            json!({"type": "interactive.error", "requestId": request_id, "message": message})
+                            json!({"type": "interactive.error", "requestId": request_id, "message": public_error_text(&message)})
                         }
                     };
                     me.send(&frame);

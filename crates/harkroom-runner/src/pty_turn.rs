@@ -14,7 +14,8 @@
 //! 정본도 같은 ms 의 두 타이머 순서를 계약으로 삼지 않는다.
 
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use regex::Regex;
@@ -26,8 +27,8 @@ use crate::pty::{
     looks_ready_for_prompt, sanitize_paste_text, strip_ansi,
 };
 use crate::pty_proc::{
-    ExecutableNotFound, PtyExit, PtyHandle, PtyProcess, SpawnError, SpawnSpec, read_until_closed,
-    spawn_pty,
+    ExecutableNotFound, PtyExit, PtyHandle, PtyProcess, SpawnError, SpawnSpec,
+    read_until_closed_or_stopped, spawn_pty,
 };
 use crate::pty_record::PtyRecorder;
 
@@ -696,6 +697,15 @@ enum Event {
 /// 끝이 안 오므로 상한을 둔다. 이식에서 달라진 점.
 const DRAIN_AFTER_EXIT_MS: u64 = 200;
 
+/// 떨어질 때 깃발을 세운다 — `run_pty_turn` 의 모든 반환 길에서 읽기 스레드를 멈추려고.
+struct StopOnDrop(Arc<AtomicBool>);
+
+impl Drop for StopOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
 /// 정본 `runPtyTurn`. 실행 파일 부재·프롬프트 미전달만 `Err` 이고, 끝남·시간 한도는 `TurnResult` 로 돌려준다.
 pub fn run_pty_turn<S: PtyTurnSink>(
     plan: &PtyPlan,
@@ -723,12 +733,16 @@ pub fn run_pty_turn<S: PtyTurnSink>(
     let handle = proc.handle.clone();
     // 읽기·회수 스레드를 다른 무엇보다 먼저 세운다 — 그 사이에 무언가 실패하면 자식이 아무도 안 지켜보는 채로 남는다
     // (정본 exit 리스너 주석). 회수 스레드는 루프가 먼저 끝나도(미전달 실패) 끝까지 회수한다.
+    // 루프가 어느 길로 돌아가든(끝남·상한·미전달) 읽기 스레드를 멈춘다 — 손자가 slave 를 쥐면 읽기 끝이 안 닫힌다.
+    let reader_stop = Arc::new(AtomicBool::new(false));
+    let _stop_reader = StopOnDrop(reader_stop.clone());
     {
         let PtyProcess { reader, .. } = &proc;
         let reader = reader.try_clone().map_err(PtyTurnError::Spawn)?;
         let tx = tx.clone();
+        let stop = reader_stop.clone();
         std::thread::spawn(move || {
-            read_until_closed(reader, |c| {
+            read_until_closed_or_stopped(reader, &stop, |c| {
                 let _ = tx.send(Event::Data(c.to_vec()));
             });
             let _ = tx.send(Event::ReaderDone);

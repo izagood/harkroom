@@ -11,6 +11,7 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -346,9 +347,44 @@ pub fn spawn_pty(spec: &SpawnSpec<'_>, kill_grace: Duration) -> Result<PtyProces
 }
 
 /// master 를 끝까지 읽는다 — 자식 쪽이 모두 닫히면 macOS·Linux 모두 EIO(또는 0)로 끝난다. 그것은 오류가 아니라 끝이다.
-pub fn read_until_closed(mut reader: File, mut on_chunk: impl FnMut(&[u8])) {
+pub fn read_until_closed(reader: File, on_chunk: impl FnMut(&[u8])) {
+    read_until_closed_or_stopped(reader, &AtomicBool::new(false), on_chunk);
+}
+
+/// 읽기 끝을 기다리는 사이 `stop` 을 볼 간격.
+const READ_STOP_POLL_MS: libc::c_int = 100;
+
+/// `read_until_closed` 에 멈춤 깃발을 더했다. 손자가 slave 를 쥐고 있으면 읽기 끝이 영영 안 닫힌다 — 그때 루프가
+/// 상한(`DRAIN_AFTER_EXIT_MS`)을 넘겨 먼저 돌아가도, 깃발을 세우면 이 스레드가 `READ_STOP_POLL_MS` 안에 끝나고
+/// master 복제본을 놓는다(B3b-2b security 낮음: 상한 뒤 남는 읽기 스레드).
+pub fn read_until_closed_or_stopped(
+    mut reader: File,
+    stop: &AtomicBool,
+    mut on_chunk: impl FnMut(&[u8]),
+) {
     let mut buf = vec![0u8; 64 * 1024];
+    let fd = reader.as_raw_fd();
     loop {
+        if stop.load(Ordering::Acquire) {
+            return;
+        }
+        let mut pfd = libc::pollfd {
+            fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // SAFETY: pfd 는 열린 fd 하나를 가리키는 유효한 pollfd 다.
+        let r = unsafe { libc::poll(&mut pfd, 1, READ_STOP_POLL_MS) };
+        if r == 0 {
+            continue;
+        }
+        if r < 0 {
+            if io::Error::last_os_error().kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return;
+        }
+        // POLLIN·POLLHUP·POLLERR 어느 것이든 read 가 막히지 않고 데이터·0·EIO 를 돌려준다.
         match reader.read(&mut buf) {
             Ok(0) => return,
             Ok(n) => on_chunk(&buf[..n]),
