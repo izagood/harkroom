@@ -4,8 +4,7 @@
 //! 세션 → 항상 → 멘션 권한 → 권한 규칙 → 읽기 전용 `--tools` → chrome → pi/omp 자리 → MCP → lane → 모델 → effort → 지시문.
 //! env 는 `turn_env::child_env` 위에 하네스 MCP env·명령 규칙 env 를 얹는다.
 //!
-//! 아직 없는 것(B3d-4): codex lane 덮어쓰기(`codexLaneArgs`)·에이전트 추가 MCP(`codexMcpFlags`·`codexBearerEnv`).
-//! 그 길에 들어오면 조용히 빼지 않고 거절한다(`CodexLanePending`).
+//! codex 는 에이전트 추가 MCP(`codexMcpFlags`)·lane 덮어쓰기(`codexLaneArgs`)·bearer env(`codexBearerEnv`)를 `turn_files` 에서 받는다(B3d-4).
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -18,6 +17,9 @@ use crate::adapter::{
 use crate::omp_home::omp_dirs;
 use crate::pi_home::pi_sessions_dir;
 use crate::turn_env::{ChildEnvError, ChildEnvInput, TurnKeys, child_env, lane_gh_config_dir};
+use crate::turn_files::{
+    CODEX_LANE_BASE_URL_ENV, McpServerEntry, codex_bearer_env, codex_lane_args, codex_mcp_flags,
+};
 use crate::turn_preset::{
     PresetCheckError, RuleArgs, TurnMode, TurnPresetError, assert_valid_session, claude, codex,
     omp, opencode, pi, preset_of,
@@ -67,6 +69,8 @@ pub struct TurnCommandOptions<'a> {
     pub turn_keys: Option<&'a TurnKeys>,
     pub opencode_turn_config: Option<&'a Path>,
     pub command_rule_env: Option<&'a BTreeMap<String, String>>,
+    /// 정본 `extraMcpServers` — harkroom·avcs 를 뺀 에이전트 MCP(파일 순서). codex 만 argv 로 싣는다.
+    pub extra_mcp_servers: &'a [(String, McpServerEntry)],
 }
 
 impl<'a> TurnCommandOptions<'a> {
@@ -112,6 +116,7 @@ impl<'a> TurnCommandOptions<'a> {
             turn_keys: None,
             opencode_turn_config: None,
             command_rule_env: None,
+            extra_mcp_servers: &[],
         }
     }
 }
@@ -142,8 +147,8 @@ pub enum TurnCommandError {
     ReadonlyToolListMissing(AgentHarness),
     TurnKeysNoDelivery(AgentHarness),
     TurnKeysNeedTurnConfig(AgentHarness),
-    /// codex API 키 연결 턴(lane 덮어쓰기)은 B3d-4 전까지 조립하지 않는다.
-    CodexLanePending,
+    /// codex API 키 연결 턴에 주소(`HARKROOM_LANE_BASE_URL`)가 없다 — provider 덮어쓰기 없이 뜨면 홈의 기본 provider 로 돈다.
+    CodexLaneNoBaseUrl,
     /// 계정 설정 폴더 경로가 UTF-8 이 아니다 — 그대로 두면 설정 자기 수정 금지 규칙이 계정 폴더가 아니라 `~/.claude` 를 가리킨다(security #1944 낮음).
     ClaudeConfigDirNotUtf8,
     Preset(TurnPresetError),
@@ -183,9 +188,9 @@ impl fmt::Display for TurnCommandError {
             Self::ClaudeConfigDirNotUtf8 => f.write_str(
                 "buildTurnCommand: claude 계정 설정 폴더 경로가 UTF-8 이 아니다 — 설정 자기 수정 금지 규칙을 그 폴더에 걸 수 없다",
             ),
-            Self::CodexLanePending => f.write_str(
-                "buildTurnCommand: codex API 키 연결 턴은 아직 Rust 러너가 조립하지 않는다(B3d-4)",
-            ),
+            Self::CodexLaneNoBaseUrl => {
+                f.write_str("buildTurnCommand: codex API 키 연결 턴에 주소가 없다")
+            }
             Self::Preset(e) => write!(f, "{e}"),
             Self::Env(e) => write!(f, "{e}"),
         }
@@ -327,9 +332,19 @@ pub fn build_turn_command(
             prompt: claude::prompt(o.system_prompt, o.system_prompt_file)?,
         },
         AgentHarness::Codex => {
-            if provider_lane {
-                return Err(TurnCommandError::CodexLanePending);
-            }
+            // 정본 `laneArgs` — 빈 주소도 없는 것으로 친다(`!baseUrl`).
+            let lane = match o.provider_env {
+                Some(env) => match env.get(CODEX_LANE_BASE_URL_ENV) {
+                    Some(u) if !u.is_empty() => codex_lane_args(u),
+                    _ => return Err(TurnCommandError::CodexLaneNoBaseUrl),
+                },
+                None => Vec::new(),
+            };
+            let extra: Vec<String> = o
+                .extra_mcp_servers
+                .iter()
+                .flat_map(|(name, entry)| codex_mcp_flags(name, entry))
+                .collect();
             Parts {
                 command: codex::COMMAND,
                 session: codex::session(o.session_id, o.mode),
@@ -341,8 +356,8 @@ pub fn build_turn_command(
                 },
                 rules: Vec::new(),
                 chrome: Vec::new(),
-                mcp: codex::mcp(o.operator_bin, turn_keys, &[]),
-                lane: Vec::new(),
+                mcp: codex::mcp(o.operator_bin, turn_keys, &extra),
+                lane,
                 model: codex::model(o.model),
                 effort: codex::effort(o.effort),
                 prompt: codex::prompt(),
@@ -472,7 +487,10 @@ pub fn build_turn_command(
     input.turn_keys = o.turn_keys;
     input.opencode_turn_config = o.opencode_turn_config;
     let mut env = child_env(&input, parent_env, home)?;
-    // 하네스 MCP env(codex `codexBearerEnv`)는 추가 MCP 와 함께 B3d-4 — 지금은 추가 MCP 를 받지 않으므로 비어 있다.
+    // 하네스 MCP env(정본 `preset.mcpEnv`) — codex 만: 추가 MCP 의 bearer 토큰을 이름표 env 로.
+    if h == AgentHarness::Codex {
+        env.extend(codex_bearer_env(o.extra_mcp_servers));
+    }
     if let Some(extra) = o.command_rule_env {
         env.extend(extra.iter().map(|(k, v)| (k.clone(), v.clone())));
     }

@@ -196,7 +196,50 @@ fn codex_exec_first_turn_and_home_required() {
     );
     let lane = BTreeMap::new();
     o.provider_env = Some(&lane);
-    assert_eq!(build(&o), Err(TurnCommandError::CodexLanePending));
+    assert_eq!(build(&o), Err(TurnCommandError::CodexLaneNoBaseUrl));
+}
+
+#[test]
+fn codex_lane_and_extra_mcp() {
+    use crate::turn_files::McpServerEntry;
+    let extra = vec![(
+        "slack-work".to_string(),
+        McpServerEntry::Http {
+            sse: false,
+            url: "https://mcp.example.com/mcp".into(),
+            headers: vec![("Authorization".into(), "Bearer SECRET-1".into())],
+        },
+    )];
+    let mut lane = BTreeMap::new();
+    lane.insert(
+        "HARKROOM_LANE_BASE_URL".to_string(),
+        "http://127.0.0.1:9".to_string(),
+    );
+    lane.insert("HARKROOM_LANE_API_KEY".to_string(), "k".to_string());
+    let home = PathBuf::from("/codex");
+    let mut o = TurnCommandOptions::new(Codex, TurnMode::Mention, Auto, "/op");
+    o.codex_home = Some(&home);
+    o.extra_mcp_servers = &extra;
+    o.provider_env = Some(&lane);
+    let p = build(&o).unwrap();
+    assert!(!p.args.join(" ").contains("SECRET-1"));
+    let at = |needle: &str| p.args.iter().position(|x| x.starts_with(needle)).unwrap();
+    // 정본 순서: 프리셋 MCP → 추가 MCP → lane.
+    assert!(at("mcp_servers.harkroom.env_vars=") < at("mcp_servers.slack-work.url="));
+    assert!(at("mcp_servers.slack-work.bearer_token_env_var=") < at("model_provider="));
+    assert_eq!(
+        p.env
+            .get("HARKROOM_MCP_BEARER_SLACK_WORK")
+            .map(String::as_str),
+        Some("SECRET-1")
+    );
+    // claude 는 파일로 받으므로 bearer env 를 얹지 않는다.
+    let mut c = TurnCommandOptions::new(ClaudeCode, TurnMode::Mention, Auto, "/op");
+    c.session_id = Some("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+    c.mcp_config_path = "/m.json";
+    c.extra_mcp_servers = &extra;
+    let p = build(&c).unwrap();
+    assert!(p.env.keys().all(|k| !k.starts_with("HARKROOM_MCP_BEARER_")));
 }
 
 #[test]
