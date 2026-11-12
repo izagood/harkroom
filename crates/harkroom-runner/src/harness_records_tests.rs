@@ -421,3 +421,24 @@ fn omp_turn_end_via_session_file() {
     // omp 홈이 없으면 모른다.
     assert_eq!(read_harness_turn_end(AgentHarness::Omp, &opts), None);
 }
+
+/// security #1991 낮음: `export <id>` 에 들어갈 id 는 opencode 세션 꼴만 받는다(`-` 로 시작하는 값은 플래그로 읽힌다).
+#[test]
+fn opencode_session_id_shape_is_checked_before_argv() {
+    for ok in ["ses_1", "ses_abc_DEF9", &format!("ses_{}", "a".repeat(124))] {
+        assert!(is_opencode_session_id(ok), "{ok}");
+    }
+    for bad in [
+        "",
+        "ses_",
+        "-h",
+        "--help",
+        "ses-1",
+        "ses_a b",
+        "ses_a/../b",
+        "SES_1",
+        &format!("ses_{}", "a".repeat(125)),
+    ] {
+        assert!(!is_opencode_session_id(bad), "{bad}");
+    }
+}

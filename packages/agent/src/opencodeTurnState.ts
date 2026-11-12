@@ -11,7 +11,7 @@
 // 도구 호출 대기(`tool-calls`)가 아니면 opencode 의 루프는 끝났다.
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { findOpencodeSessionId } from './opencodeSessions.js';
+import { findOpencodeSessionId, OPENCODE_SESSION_ID_RE } from './opencodeSessions.js';
 
 const run = promisify(execFile);
 
@@ -55,7 +55,7 @@ export async function readOpencodeTurnState(
   const id = opts.sessionId ?? await findOpencodeSessionId({
     command: opts.command, env: opts.env, cwd: opts.cwd, sinceMs: opts.sinceMs,
   });
-  if (!id) return null;
+  if (!id || !OPENCODE_SESSION_ID_RE.test(id)) return null;
   try {
     const res = await run(opts.command, ['export', id], {
       env: opts.env,

@@ -250,7 +250,19 @@ pub fn pick_opencode_session(json: &str, cwd: &Path, since_ms: i64) -> Option<St
     best.map(|(id, _)| id)
 }
 
+/// opencode 세션 id 꼴(`ses_` + 영숫자·밑줄, 128자까지). `export <id>` 의 argv 에 들어가므로 이 꼴이 아니면 묻지 않는다 —
+/// `-` 로 시작하는 값은 opencode 가 플래그로 읽는다(security #1991 낮음). 정본 `OPENCODE_SESSION_ID_RE` 와 같다.
+pub fn is_opencode_session_id(id: &str) -> bool {
+    id.len() <= 128
+        && id.strip_prefix("ses_").is_some_and(|rest| {
+            !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        })
+}
+
 fn opencode_export(call: OpencodeCall<'_>, id: &str) -> Option<String> {
+    if !is_opencode_session_id(id) {
+        return None;
+    }
     let args = ["export".to_string(), id.to_string()];
     run_capped_with(
         call.command,

@@ -500,7 +500,8 @@ export function permissionDenialNotice(
 ): string {
   const lines = denials.map((d) => {
     const what = d.tool === 'Bash' ? d.input : `${d.tool}${d.input ? ` ${d.input}` : ''}`;
-    return `- ${oneLine(d.reason, pat, 120)} — \`${oneLine(what, pat)}\``;
+    // 이유는 코드 스팬 **밖**이라 `@누구` 가 실제 멘션이 된다 — `@` 를 전각 `＠` 로 바꿔 멘션 꼴을 깬다(security #1992 낮음).
+    return `- ${oneLine(d.reason, pat, 120).replace(/@/g, '＠')} — \`${oneLine(what, pat)}\``;
   });
   return ['권한 거부(auto mode 분류기) — 이 명령은 실행되지 않았다:', ...lines].join('\n');
 }

@@ -124,3 +124,14 @@ describe('findOpencodeSessionId', () => {
     expect(await findOpencodeSessionId({ command, env: ENV, cwd, sinceMs: 1_000 })).toBe('ses_link');
   });
 });
+
+// security #1991 낮음: `export <id>` 에 들어갈 id 는 opencode 세션 꼴만 받는다.
+describe('OPENCODE_SESSION_ID_RE', () => {
+  it('세션 꼴만 받고 플래그·경로 꼴은 거른다', async () => {
+    const { OPENCODE_SESSION_ID_RE } = await import('../src/opencodeSessions.js');
+    for (const ok of ['ses_1', 'ses_abc_DEF9', `ses_${'a'.repeat(124)}`]) expect(OPENCODE_SESSION_ID_RE.test(ok)).toBe(true);
+    for (const bad of ['', 'ses_', '-h', '--help', 'ses-1', 'ses_a b', 'ses_a/../b', 'SES_1', `ses_${'a'.repeat(125)}`]) {
+      expect(OPENCODE_SESSION_ID_RE.test(bad)).toBe(false);
+    }
+  });
+});

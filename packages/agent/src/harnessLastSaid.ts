@@ -11,7 +11,7 @@ import { promisify } from 'node:util';
 import { lastSaidRecordOf } from './adapters/index.js';
 import type { AgentHarness } from '@harkroom/shared';
 import { codexRolloutFileFor } from './codexSessions.js';
-import { findOpencodeSessionId } from './opencodeSessions.js';
+import { findOpencodeSessionId, OPENCODE_SESSION_ID_RE } from './opencodeSessions.js';
 
 const run = promisify(execFile);
 
@@ -90,7 +90,7 @@ export async function readHarnessLastSaid(harness: AgentHarness, opts: HarnessLa
     if (source === 'opencode-export') {
       const { command, env, cwd } = opts.opencode;
       const id = opts.sessionId ?? await findOpencodeSessionId({ command, env, cwd, sinceMs: opts.sinceMs });
-      if (!id) return null;
+      if (!id || !OPENCODE_SESSION_ID_RE.test(id)) return null;
       const res = await run(command, ['export', id], { env, cwd, timeout: 20_000, maxBuffer: 32 * 1024 * 1024 });
       return lastSaidFromOpencodeExport(res.stdout, opts.sinceMs);
     }
