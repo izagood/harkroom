@@ -163,58 +163,57 @@ describe('clock — 풀리는 시각', () => {
   });
 });
 
-describe('AgentTurns — 「↓ N번 풀」 칩', () => {
-  const turn = (pool: string): AgentSessionView => ({
-    sessionId: `s-${pool}`, agentAccountId: 'agent-1', channelId: 'c1', threadRootId: 't1',
-    harness: 'claude-code', startedAt: new Date(NOW).toISOString(), claudeAccount: 'a', claudePool: pool,
+describe('AgentTurns — 계정 칩의 아래 풀 표시(designer A1)', () => {
+  const turn = (id: string, extra: Partial<AgentSessionView>): AgentSessionView => ({
+    sessionId: id, agentAccountId: 'agent-1', channelId: 'c1', threadRootId: 't1',
+    harness: 'claude-code', startedAt: new Date(NOW).toISOString(), ...extra,
   } as unknown as AgentSessionView);
+  const renderChips = (turns: AgentSessionView[]) => render(
+    <AgentTurns
+      snapshot={{ kind: 'known', turns } as never}
+      handleOf={(id) => id} channelLabel={(id) => id} onOpenThread={() => {}} now={NOW}
+    />,
+  );
 
-  it('2번 풀에서 돌면 붙고, 1번 풀에서는 붙지 않는다', () => {
-    render(
-      <AgentTurns
-        snapshot={{ kind: 'known', turns: [turn('work'), turn('personal')] } as never}
-        handleOf={(id) => id} channelLabel={(id) => id} onOpenThread={() => {}} now={NOW}
-        poolChainOf={() => ['work', 'personal']}
-      />,
-    );
-    expect(screen.queryByTestId('agent-turn-pool-fallback-s-work')).toBeNull();
-    expect(screen.getByTestId('agent-turn-pool-fallback-s-personal').textContent).toBe('↓ 2번 풀');
+  it('1번 풀은 회색, 2번 풀부터는 「↓」와 주황 — 칩은 하나다', () => {
+    renderChips([
+      turn('s-1', { claudePoolRank: 1, claudeAccountRank: 2 }),
+      turn('s-2', { claudePoolRank: 2, claudeAccountRank: 1 }),
+    ]);
+    const first = screen.getByTestId('agent-turn-account-s-1');
+    expect(first.textContent).toBe('풀 1 · 계정 2');
+    expect(first.dataset.fallback).toBeUndefined();
+    const fell = screen.getByTestId('agent-turn-account-s-2');
+    expect(fell.textContent).toBe('↓ 풀 2 · 계정 1');
+    expect(fell.dataset.fallback).toBe('true');
+    expect(fell.className).toContain('shrink-0');
+    expect(fell.className).toContain('tabular-nums');
+    expect(screen.queryByTestId('agent-turn-pool-fallback-s-2')).toBeNull();
   });
 
-  // f3: 원격 오퍼레이터의 턴은 이 기기의 순서와 다를 수 있다 — 러너가 실은 번호가 이긴다.
-  it('러너가 실은 순서 번호가 이 기기의 순서보다 먼저다', () => {
-    render(
-      <AgentTurns
-        snapshot={{ kind: 'known', turns: [
-          { ...turn('work'), claudePoolRank: 3 },
-          { ...turn('personal'), claudePoolRank: 1 },
-          { ...turn('remote-only'), claudePoolRank: 2 },
-        ] } as never}
-        handleOf={(id) => id} channelLabel={(id) => id} onOpenThread={() => {}} now={NOW}
-        poolChainOf={() => ['work', 'personal']}
-      />,
-    );
-    expect(screen.getByTestId('agent-turn-pool-fallback-s-work').textContent).toBe('↓ 3번 풀');
-    expect(screen.queryByTestId('agent-turn-pool-fallback-s-personal')).toBeNull();
-    // 이 기기에는 없는 풀이어도 러너의 번호로 붙는다.
-    expect(screen.getByTestId('agent-turn-pool-fallback-s-remote-only').textContent).toBe('↓ 2번 풀');
+  it('옛 러너: 풀 순번만 2 이상이면 「↓ 풀 n」, 순번이 없으면 그리지 않는다', () => {
+    renderChips([
+      turn('s-old2', { claudePoolRank: 2 }),
+      turn('s-old1', { claudePoolRank: 1 }),
+      turn('s-none', { claudeAccount: 'a', claudePool: 'work' } as never),
+    ]);
+    expect(screen.getByTestId('agent-turn-account-s-old2').textContent).toBe('↓ 풀 2');
+    expect(screen.queryByTestId('agent-turn-account-s-old1')).toBeNull();
+    expect(screen.queryByTestId('agent-turn-account-s-none')).toBeNull();
   });
 
-  it('형식이 틀린 번호는 버리고 이 기기의 순서로 잰다', () => {
-    render(
-      <AgentTurns
-        snapshot={{ kind: 'known', turns: [
-          { ...turn('personal'), claudePoolRank: 0 },
-          { ...turn('work'), sessionId: 's-w2', claudePoolRank: 1.5 },
-          { ...turn('work'), sessionId: 's-w3', claudePoolRank: 99 },
-          { ...turn('work'), sessionId: 's-w4', claudePoolRank: '2' },
-        ] } as never}
-        handleOf={(id) => id} channelLabel={(id) => id} onOpenThread={() => {}} now={NOW}
-        poolChainOf={() => ['work', 'personal']}
-      />,
-    );
-    expect(screen.getByTestId('agent-turn-pool-fallback-s-personal').textContent).toBe('↓ 2번 풀');
-    for (const id of ['s-w2', 's-w3', 's-w4']) expect(screen.queryByTestId(`agent-turn-pool-fallback-${id}`)).toBeNull();
+  it('형식이 틀린 순번은 버린다', () => {
+    renderChips([
+      turn('s-p0', { claudePoolRank: 0, claudeAccountRank: 1 }),
+      turn('s-a0', { claudePoolRank: 1, claudeAccountRank: 0 }),
+      turn('s-af', { claudeAccountRank: 1.5 }),
+      turn('s-as', { claudeAccountRank: '2' } as never),
+      turn('s-pbig', { claudePoolRank: 99, claudeAccountRank: 1 }),
+    ]);
+    // 풀 순번이 틀리면 뿌리처럼 「계정 m」만.
+    expect(screen.getByTestId('agent-turn-account-s-p0').textContent).toBe('계정 1');
+    expect(screen.getByTestId('agent-turn-account-s-pbig').textContent).toBe('계정 1');
+    for (const id of ['s-a0', 's-af', 's-as']) expect(screen.queryByTestId(`agent-turn-account-${id}`)).toBeNull();
   });
 });
 

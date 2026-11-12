@@ -32,7 +32,7 @@
  * 그리면** 사람은 폭주가 멈춘 줄 안다.
  */
 import { useState } from 'react';
-import { isPoolRank, type AgentSessionView } from '@harkroom/shared';
+import { isAccountRank, isPoolRank, type AgentSessionView } from '@harkroom/shared';
 import type { AgentTurnsSnapshot } from '../lib/agentTurns';
 import { groupTurnsByThread } from '../lib/agentTurns';
 import { Menu } from './Menu';
@@ -43,7 +43,7 @@ import { useLocalLanes } from '../lib/localLanes';
 
 export function AgentTurns({
   snapshot, handleOf, channelLabel, threadTitleOf, onOpenThread, onCancelTurns, onOpenTerminal,
-  variant = 'panel', now = Date.now(), poolChainOf,
+  variant = 'panel', now = Date.now(),
 }: {
   snapshot: AgentTurnsSnapshot;
   /** 계정 id → `@handle`. 스토어 모양을 이 컴포넌트가 알지 않게 함수로 받는다. */
@@ -76,12 +76,6 @@ export function AgentTurns({
    * 길로 연다: 새 경로를 만들면 같은 문에 손잡이가 둘이 된다).
    */
   onOpenTerminal?: (turn: AgentSessionView) => void;
-  /**
-   * 에이전트 계정 id → 이 기기의 **풀 순서**(2026-10-15 풀 n개). 턴이 1번이 아닌 풀에서 돌면 계정 배지
-   * 옆에 「↓ 2번 풀」 칩을 붙인다. 없거나 그 풀이 목록에 없으면 칩을 세우지 않는다 — 확인하지 않은
-   * 순서를 단언하지 않는다. 1번 풀에서는 붙이지 않는다(평소 상태에 표시를 더하지 않는다).
-   */
-  poolChainOf?: (agentAccountId: string) => readonly string[] | undefined;
   /**
    * **좁은 칸(`panel`)이냐 본문(`tower`)이냐.**
    *
@@ -313,44 +307,46 @@ export function AgentTurns({
                         </span>
                       )}
                       {/*
-                        **지금 이 턴이 쓰는 claude 계정**(다중 계정 3단계). 계정 풀은
-                        러너가 기동할 때 정하고 한도에 걸리면 턴 단위로 다음 계정으로
-                        넘어가는데, 그 사실이 러너 콘솔 한 줄에만 남아서 사람은 등록한
-                        계정 중 무엇이 도는지 볼 수 없었다 — 그래서 사용량도, 넘어간
-                        순간도 알 수 없었다. 여기 배지가 그 사실을 턴 줄에 붙인다.
+                        **지금 이 턴이 쓰는 claude 계정**(다중 계정 3단계 → 계정 칩 A 2026-11-12). 한도에 걸리면
+                        턴 단위로 다음 계정·다음 풀로 넘어가는데, 그 사실이 러너 콘솔에만 남던 것을 줄에 붙인다.
 
-                        `undefined` 와 `null` 을 가른다(`AgentSessionView.claudeAccount`):
-                        없으면 **아무것도 그리지 않는다** — 이 필드를 싣지 않는 러너이거나
-                        claude 하네스가 아닌 턴이고, 그때 "기본"이라고 적으면 화면이
-                        확인한 적 없는 것을 단언한다. `null` 은 확인된 사실이다: 풀이 비어
-                        시스템 기본 로그인으로 돈다.
+                        **이름이 아니라 순번이다**(#1039) — 계정·풀 이름은 폴더 이름이라 사람 이름일 수 있어서 서버로
+                        보내지 않는다. 러너가 실은 순번만 그린다: 「풀 n · 계정 m」, 뿌리 풀이면 「계정 m」.
+                        칩은 **하나**다(designer A1) — 1번 풀이 아니면(아래 풀로 내려왔으면) 주황과 「↓」를 더한다.
+                        예전의 「↓ 2번 풀」 칩을 따로 두면 한 줄에 풀 번호가 두 번 선다.
 
-                        풀 이름은 배지에 적지 않고 `title` 에 둔다 — 줄이 좁고, 사람이
-                        평소 쫓는 것은 계정 이름이다. 같은 이름의 계정이 풀마다 있을 수
-                        있어서 풀은 그때만 필요하다.
+                        셋을 가른다(`AgentSessionView.claudeAccountRank`): 숫자는 그 순번, `null` 은 확인된
+                        시스템 기본 로그인, 없으면 **그리지 않는다**(옛 러너·claude 가 아닌 턴 — 모르는 것을
+                        단언하지 않는다). 옛 러너가 풀 순번만 실었고 2 이상이면 「↓ 풀 n」만 선다.
+                        이 기기의 풀 순서로 다시 재지 않는다 — 이름이 오지 않으니 대조할 것이 없다.
+
+                        숫자가 잘리면 안 되므로 칩은 `shrink-0`, 좁은 칸에서는 핸들이 먼저 잘린다.
                       */}
-                      {turn.claudeAccount !== undefined && (
-                        <span data-testid={`agent-turn-account-${turn.sessionId}`}
-                          title={turn.claudePool
-                            ? t('agentTurns.accountTitle', { pool: turn.claudePool })
-                            : t('agentTurns.accountTitleRoot')}
-                          className="min-w-0 shrink truncate rounded-sm bg-surface-raised px-1 text-fg-muted">
-                          {turn.claudeAccount ?? t('agentTurns.accountDefault')}
-                        </span>
-                      )}
                       {(() => {
-                        // 러너가 실은 순서 번호가 먼저다(f3) — 원격 오퍼레이터의 턴은 이 기기의 순서와
-                        // 다를 수 있다. 없거나 형식이 틀리면(옛 러너) 이 기기의 순서로 잰다.
-                        const idx = !turn.claudePool ? -1
-                          : isPoolRank(turn.claudePoolRank) ? turn.claudePoolRank - 1
-                          : (poolChainOf?.(turn.agentAccountId)?.indexOf(turn.claudePool) ?? -1);
-                        return idx > 0 ? (
-                          <span data-testid={`agent-turn-pool-fallback-${turn.sessionId}`}
-                            title={t('agentTurns.poolFallbackTitle', { n: idx + 1, pool: turn.claudePool! })}
-                            className="shrink-0 rounded-sm bg-warning-surface px-1 text-warning">
-                            {t('agentTurns.poolFallback', { n: idx + 1 })}
+                        const pool = isPoolRank(turn.claudePoolRank) ? turn.claudePoolRank : null;
+                        const acct = turn.claudeAccountRank;
+                        const known = acct === null || isAccountRank(acct);
+                        if (!known && !(pool !== null && pool > 1)) return null;
+                        const fell = pool !== null && pool > 1;
+                        const label = !known ? t('agentTurns.poolFallback', { n: pool! })
+                          : acct === null ? t('agentTurns.accountDefault')
+                          : `${fell ? '↓ ' : ''}${pool !== null
+                            ? t('agentTurns.accountChip', { pool, account: acct })
+                            : t('agentTurns.accountChipRoot', { account: acct })}`;
+                        const title = !known ? t('agentTurns.poolFallbackTitle', { n: pool! })
+                          : acct === null ? t('agentTurns.accountTitleDefault')
+                          : pool !== null ? t('agentTurns.accountTitle', { pool, account: acct })
+                          : t('agentTurns.accountTitleRoot', { account: acct });
+                        return (
+                          <span data-testid={`agent-turn-account-${turn.sessionId}`}
+                            data-fallback={fell ? 'true' : undefined}
+                            title={fell && known ? `${title} · ${t('agentTurns.poolFallbackTitle', { n: pool! })}` : title}
+                            className={`shrink-0 rounded-sm px-1 tabular-nums ${fell
+                              ? 'bg-warning-surface text-warning'
+                              : 'bg-surface-raised text-fg-muted'}`}>
+                            {label}
                           </span>
-                        ) : null;
+                        );
                       })()}
                       {/*
                         하네스는 **본문에서만 자기 칸을 갖는다.** 칸(300px)에서는 경과
