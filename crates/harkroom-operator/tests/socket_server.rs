@@ -76,6 +76,22 @@ impl Client {
     fn token_for(sock: &str) -> String {
         std::fs::read_to_string(sock.replace(".sock", ".token")).unwrap()
     }
+    /// 요청 `id` 의 답과 이벤트 하나를 **도착 순서와 상관없이** 받는다. 러너가 곧바로 끝나면 종료를 지켜보는 스레드가
+    /// `runnerExit` 를 답보다 먼저 쓸 수 있다(CI 에서 두 번 본 흔들림).
+    fn recv_reply_and_event(&mut self, id: &str) -> (Value, Value) {
+        let (mut reply, mut event) = (None, None);
+        while reply.is_none() || event.is_none() {
+            let v = self.recv().expect("접속이 닫혔다");
+            if v["type"] == "event" {
+                assert!(event.is_none(), "이벤트가 둘: {v}");
+                event = Some(v);
+            } else {
+                assert_eq!(v["id"], id, "{v}");
+                reply = Some(v);
+            }
+        }
+        (reply.unwrap(), event.unwrap())
+    }
 }
 
 fn hello(token: &str) -> Value {
@@ -259,10 +275,9 @@ fn runner_table_spawn_kill_and_exit_event() {
     );
     assert_eq!(c.recv().unwrap()["error"]["code"], "no-such-runner");
     c.send(&json!({"id":"5","type":"killRunner","payload":{"agentId":"ag1","incarnationId":inc}}));
-    let k = c.recv().unwrap();
+    let (k, ev) = c.recv_reply_and_event("5");
     assert_eq!(k["payload"]["pid"].as_i64(), Some(pid));
     assert!(k["payload"]["termSentAtMs"].as_i64().unwrap() > 0);
-    let ev = c.recv().unwrap();
     assert_eq!(
         ev,
         json!({"type":"event","event":"runnerExit","payload":{
@@ -270,9 +285,8 @@ fn runner_table_spawn_kill_and_exit_event() {
     );
     // 종료 코드가 실린다. 표에서 빠진다.
     c.send(&json!({"id":"6","type":"spawnRunner","payload":{"agentId":"ag2","env":{"HK_MODE":"quick"}}}));
-    let s3 = c.recv().unwrap();
-    assert_eq!(s3["ok"], true);
-    let ev = c.recv().unwrap();
+    let (s3, ev) = c.recv_reply_and_event("6");
+    assert_eq!(s3["ok"], true, "{s3}");
     assert_eq!(ev["payload"]["code"], 3);
     assert_eq!(
         ev["payload"]["incarnationId"],
