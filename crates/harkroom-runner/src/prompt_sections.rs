@@ -417,7 +417,8 @@ pub fn canceled_wake_lines(list: &[Value]) -> Vec<String> {
             .unwrap_or_default();
         out.push(format!(
             "- {} (원래 {}{report})",
-            str_of(w, "reason"),
+            // 사유는 예약을 건 턴이 쓴 글이다 — 정본처럼 경계 표식 위조만 막는다.
+            crate::prompt::neutralize_for_prompt(str_of(w, "reason")),
             str_of(w, "wakeAt")
         ));
     }

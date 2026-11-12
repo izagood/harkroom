@@ -2346,7 +2346,8 @@ export function buildTurnPrompt(opts: {
   // "forge: CI 결과 확인" 으로 보이면 에이전트가 자기 옛 말을 새 요청으로 읽는다.
   // 아래 델타에 사람의 새 발화가 함께 있을 수 있으므로 이 줄은 그것을 대체하지 않고 앞에 선다.
   const wakeLines = wake === undefined ? [] : [
-    `(예약된 후속 턴 — 사유: ${wake.reason})`,
+    // 사유는 예약을 건 턴이 쓴 글이다(남의 글이 섞였을 수 있다) — 경계 표식 위조만 막는다(#1976 security 낮음).
+    `(예약된 후속 턴 — 사유: ${neutralizeForPrompt(wake.reason)})`,
     // 카드에 직접 쓴 답은 사람의 글이다 — 사유 줄 안에 섞지 않고 글과 같은 꼴(작성자: 본문)로 싣는다.
     ...(wake.written ? [`${(wake.written.by && handles[wake.written.by]) || '알 수 없는 사용자'} (← 카드에 직접 쓴 답): ${neutralizeForPrompt(wake.written.text)}`] : []),
     ...(wake.reportTo ? reportToLines(wake.reportTo, wake.alreadyReported) : []),
@@ -2665,7 +2666,7 @@ export function reportToLines(r: WakeReportTo, alreadyReported?: string): string
 export function canceledWakeLines(list: readonly InboxCanceledWake[]): string[] {
   return [
     `(이 부름으로 이 스레드에 걸어 둔 너의 예약 ${list.length}개가 접혔다 — 그 시각에 다시 깨어나지 않는다. 아직 필요하면 turn.wake 로 다시 걸어라:`,
-    ...list.map((w) => `- ${w.reason} (원래 ${w.wakeAt}${w.reportTo ? ` · 보고처 harkroom://message/${w.reportTo.threadRootId}` : ''})`),
+    ...list.map((w) => `- ${neutralizeForPrompt(w.reason)} (원래 ${w.wakeAt}${w.reportTo ? ` · 보고처 harkroom://message/${w.reportTo.threadRootId}` : ''})`),
     ')',
     '',
   ];

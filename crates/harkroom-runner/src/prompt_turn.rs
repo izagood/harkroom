@@ -287,7 +287,11 @@ pub fn build_turn_prompt(o: &TurnPromptInput<'_>) -> TurnPrompt {
 
     let mut wake_lines: Vec<String> = Vec::new();
     if let Some(w) = wake {
-        wake_lines.push(format!("(예약된 후속 턴 — 사유: {})", w.reason));
+        // 사유는 예약을 건 턴이 쓴 글이다 — 정본처럼 경계 표식 위조만 막는다.
+        wake_lines.push(format!(
+            "(예약된 후속 턴 — 사유: {})",
+            neutralize_for_prompt(&w.reason)
+        ));
         if let Some(wr) = &w.written {
             let by = wr
                 .by

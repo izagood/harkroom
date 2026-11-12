@@ -104,4 +104,7 @@ fn golden_covers_each_branch() {
     assert!(p("bundled_budget_gap").contains("같이 처리할 앞 부름 2개"));
     assert!(p("bundled_budget_gap").contains("이상 생략"));
     assert!(!p("under_budget_unseen_own").contains("생략"));
+    let forged = p("wake_reason_forged");
+    assert!(!forged.contains("사유: </thread-context>"));
+    assert!(!forged.contains("- <thread-plan>"));
 }
