@@ -338,11 +338,20 @@ impl RunnerTable {
         }
     }
 
-    /// 회수 중 세대의 생사 — `kill(pid,0)` **과** 커널 시작 시각 대조. 회수 중 세대는 모두 내 자식이 아니라(앞 오퍼레이터의 고아)
-    /// pid 가 재사용되면 `kill(pid,0)` 만으로는 「아직 인박스를 쥔 앞 세대」로 남아 새 세대를 막는다(security #1906 ①).
-    fn retiring_alive(&self) -> impl Fn(i32) -> bool + '_ {
+    /// 회수 중 세대의 생사를 **잠금 밖에서** 잰다 — `kill(pid,0)` **과** 커널 시작 시각 대조(`ps`). 회수 중 세대는 모두 내 자식이
+    /// 아니라(앞 오퍼레이터의 고아) pid 가 재사용되면 `kill(pid,0)` 만으로는 「아직 인박스를 쥔 앞 세대」로 남아 새 세대를 막는다
+    /// (security #1906 ①). `ps` 는 느리고 실패할 수 있어 표 잠금·회수 중 표 잠금을 쥔 채 부르지 않는다(security #1907 낮음):
+    /// 장부의 시작 시각만 짧게 베끼고 잠금을 놓은 뒤에 잰다. 결과는 [`RetiringProbe::alive`] 로 잠금 안에서 대조만 한다.
+    fn probe_retiring(&self) -> RetiringProbe {
         let boots = self.retiring_set().boot_times();
-        move |pid| signal_sent(pid, 0) && self.same_boot(pid, boots.get(&pid).copied().flatten())
+        let measured = boots
+            .into_iter()
+            .map(|(pid, boot)| {
+                let alive = signal_sent(pid, 0) && self.same_boot(pid, boot);
+                (pid, (boot, alive))
+            })
+            .collect();
+        RetiringProbe { measured }
     }
 
     /// 앞 오퍼레이터의 고아를 **표에 올리지 않고** 회수한다(TS `retire`) — 낡은 세대·회수 중 러너·로컬에 없는 에이전트.
@@ -397,8 +406,10 @@ impl RunnerTable {
 
     /// 회수 중이고 살아 있는(시작 시각 대조), id 를 아는 러너들 — hello 의 announce 에 실린다(TS `retiringRunners`).
     pub fn retiring_runners(&self) -> Vec<(String, i32, String)> {
-        let alive = self.retiring_alive();
-        self.retiring_set().announce(alive)
+        let probe = self.probe_retiring();
+        let set = self.retiring_set();
+        let alive = probe.alive(set.boot_times());
+        set.announce(alive)
     }
 
     /// 물러난 회수 중 러너를 알린다(TS `reapRetiring` 뒷부분) — 표 잠금 **밖**에서 부른다.
@@ -464,6 +475,8 @@ impl RunnerTable {
         runner_id: Option<&str>,
         reaped: &mut Vec<crate::retiring::Reaped>,
     ) -> Result<SpawnOutcome, String> {
+        // 회수 중 세대의 생사는 표 잠금을 쥐기 **전에** 잰다(security #1907 낮음).
+        let probe = self.probe_retiring();
         let mut table = self.table();
         if let Some(existing) = table.get(agent_id)
             && signal_sent(existing.pid, 0)
@@ -473,8 +486,8 @@ impl RunnerTable {
         // 앞 세대가 아직 인박스를 쥐고 있으면 띄우지 않는다 — 같은 인박스를 둘이 폴하면 같은 멘션에 두 번 답한다
         // (TS `retiringHoldsInbox`). 죽었거나(시작 시각 대조) 폴을 놓았으면 통과하고, 놓은 목록을 이관 보류로 심는다.
         let handover = {
-            let alive = self.retiring_alive();
             let mut set = self.retiring_set();
+            let alive = probe.alive(set.boot_times());
             if let Some(pid) = set.holds_inbox(agent_id, alive, reaped) {
                 return Err(format!(
                     "{SPAWN_RETIRING} 앞 세대 러너(pid {pid})가 아직 인박스를 쥐고 있다"
@@ -757,10 +770,29 @@ impl RunnerTable {
         }
         // 회수 중 세대도 같은 주기로 거둔다(TS `pollAdopted` 앞부분) — 생사는 시작 시각 대조까지 본다.
         let reaped = {
-            let alive = self.retiring_alive();
-            self.retiring_set().reap_dead(alive)
+            let probe = self.probe_retiring();
+            let mut set = self.retiring_set();
+            let alive = probe.alive(set.boot_times());
+            set.reap_dead(alive)
         };
         self.finish_reaped(reaped);
+    }
+}
+
+/// 잠금 밖에서 잰 회수 중 세대의 생사(security #1907 낮음). pid → (잴 때 장부의 시작 시각, 살아 있음).
+struct RetiringProbe {
+    measured: HashMap<i32, (Option<i64>, bool)>,
+}
+
+impl RetiringProbe {
+    /// 잠금 안에서 쓰는 판정 — 지금 회수 중 표의 시작 시각(`now`)이 잴 때와 같은 줄만 잰 결과를 믿는다. 그 사이에 새로 들어왔거나
+    /// 바뀐 줄은 **살아 있다고** 본다: 거두지 않고, 인박스를 쥔 것으로 보아 spawn 을 다음 회차로 미루고, announce 에 싣는다 —
+    /// 모두 다음 주기에 다시 재면 풀리는 쪽이다. 죽었다고 보는 쪽으로 틀리면 살아 있는 앞 세대와 새 세대가 같은 인박스를 폴한다.
+    fn alive(&self, now: HashMap<i32, Option<i64>>) -> impl Fn(i32) -> bool + '_ {
+        move |pid| match (self.measured.get(&pid), now.get(&pid)) {
+            (Some((boot, alive)), Some(cur)) if boot == cur => *alive,
+            _ => true,
+        }
     }
 }
 
@@ -1211,6 +1243,71 @@ mod tests {
         assert!(t.force_kill("a1") || !signal_sent(r.pid, 0));
         old.kill().unwrap();
         old.wait().unwrap();
+    }
+
+    /// security #1907 낮음 — 회수 중 세대의 생사(`ps` 로 시작 시각 읽기)는 표·회수 중 표 잠금을 **쥐지 않은 채** 잰다.
+    /// spawn 거절·announce·주기 거두기 세 길 모두. 잴 때 잠금이 잡혀 있으면 기록해 두고 끝에 실패시킨다.
+    #[test]
+    fn retiring_liveness_is_probed_outside_both_locks() {
+        use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+        static TABLE: OnceLock<Arc<RunnerTable>> = OnceLock::new();
+        static RETIRED_PID: AtomicI32 = AtomicI32::new(-1);
+        static PROBED: AtomicI32 = AtomicI32::new(0);
+        static HELD: AtomicBool = AtomicBool::new(false);
+        fn probe(pid: i32) -> Option<i64> {
+            if pid == RETIRED_PID.load(Ordering::SeqCst)
+                && let Some(t) = TABLE.get()
+            {
+                PROBED.fetch_add(1, Ordering::SeqCst);
+                if t.retiring.try_lock().is_err() || t.by_agent.try_lock().is_err() {
+                    HELD.store(true, Ordering::SeqCst);
+                }
+            }
+            Some(7)
+        }
+        let (t, _rx, _s) = ledgered("sleep 30", probe);
+        let _ = TABLE.set(Arc::clone(&t));
+        let mut old = stubborn();
+        let pid = old.id() as i32;
+        RETIRED_PID.store(pid, Ordering::SeqCst);
+        assert!(t.retire(&orphan("a1", pid)));
+        let before = PROBED.load(Ordering::SeqCst);
+        // 살아 있고 시작 시각이 같다 — spawn 은 거절, announce 에 실림, 거두지 않음.
+        assert!(
+            t.spawn_runner("a1", &[], None)
+                .unwrap_err()
+                .starts_with(SPAWN_RETIRING)
+        );
+        assert_eq!(t.retiring_runners().len(), 1);
+        t.poll_adopted();
+        assert_eq!(t.retiring_runners().len(), 1);
+        assert!(
+            PROBED.load(Ordering::SeqCst) >= before + 3,
+            "세 길이 모두 생사를 쟀다"
+        );
+        assert!(!HELD.load(Ordering::SeqCst), "잠금을 쥔 채 ps 를 불렀다");
+        old.kill().unwrap();
+        old.wait().unwrap();
+    }
+
+    /// 잠금 밖에서 잰 뒤 그 줄이 바뀌었으면(시작 시각이 다르면) 잰 값을 믿지 않고 살아 있다고 본다 — 거두지 않는 쪽.
+    #[test]
+    fn probe_result_is_trusted_only_for_the_same_row() {
+        let mut measured = HashMap::new();
+        measured.insert(10, (Some(7), false));
+        measured.insert(11, (Some(7), true));
+        let p = RetiringProbe { measured };
+        let mut now = HashMap::new();
+        now.insert(10, Some(7)); // 같은 줄 — 잰 값(죽음)을 쓴다
+        now.insert(11, Some(7));
+        now.insert(12, Some(7)); // 잰 뒤에 들어온 줄 — 살아 있다고 본다
+        let alive = p.alive(now.clone());
+        assert!(!alive(10));
+        assert!(alive(11));
+        assert!(alive(12));
+        now.insert(10, Some(8)); // 같은 pid 지만 줄이 바뀌었다 — 살아 있다고 본다
+        let alive = p.alive(now);
+        assert!(alive(10));
     }
 
     /// 마지막 회수 중 세대가 물러나면 지금 세대 러너에 보류 풀기를 알린다(TS `reapRetiring` → `handover.released`).
