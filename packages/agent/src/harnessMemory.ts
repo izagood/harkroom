@@ -16,7 +16,7 @@
  * 턴이 끝난 뒤에는 에이전트에게 말할 길이 없기 때문이다.
  */
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, open, readdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { escapeForPrompt } from './prompt.js';
@@ -61,9 +61,10 @@ export async function scanHarnessMemory(dir: string): Promise<HarnessMemoryFile[
     if (name === 'MEMORY.md' || !name.endsWith('.md')) continue;
     try {
       const path = join(dir, name);
-      const st = await stat(path);
+      // 링크는 따르지 않는다 — 폴더 밖 파일을 끌어오지 않게 일반 파일만 받는다.
+      const st = await lstat(path);
       if (!st.isFile()) continue;
-      const head = (await readFile(path, 'utf8')).slice(0, 2000);
+      const head = (await readHead(path)).slice(0, 2000);
       const m = /^description:\s*(.+)$/m.exec(head);
       out.push({ name, mtimeMs: Math.floor(st.mtimeMs), description: m ? m[1]!.trim().slice(0, 200) : null });
     } catch {
@@ -71,6 +72,20 @@ export async function scanHarnessMemory(dir: string): Promise<HarnessMemoryFile[
     }
   }
   return out;
+}
+
+/** 파일마다 읽는 앞부분 바이트 수 — 머리 2000자(UTF-16 단위 최대 6000바이트)는 그 안에 다 든다. */
+const READ_HEAD_BYTES = 8192;
+
+async function readHead(path: string): Promise<string> {
+  const fh = await open(path, 'r');
+  try {
+    const buf = Buffer.alloc(READ_HEAD_BYTES);
+    const { bytesRead } = await fh.read(buf, 0, READ_HEAD_BYTES, 0);
+    return buf.subarray(0, bytesRead).toString('utf8');
+  } finally {
+    await fh.close();
+  }
 }
 
 export interface HarnessMemoryNotice {

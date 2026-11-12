@@ -19,6 +19,7 @@
 //! - `provider_lane`: 전용 제공사 경로의 러너 절반(`providerLane.ts` — 턴 키 받기·턴 파일·lane/턴 MCP 설정). 턴 흐름에는 아직 안 붙였다.
 //! - `mcp`: `HarkroomAgentClient` 의 MCP 절반(`call()`·`inbox.poll`·`message.*`·기억·계획·bg) — 링크의 `mcp.request`.
 //! - `session_store`·`turn_prep`: 스레드 세션 기록(`sessions.ts`)과 멘션 턴 준비 판정(`runMentionTurn` 앞부분, B4-2d). 턴 루프 연결은 다음 조각.
+//! - `harness_memory`: 하네스 파일 메모리 수확 알림(`harnessMemory.ts`, B4-2e-2). 턴 흐름 연결은 다음 조각.
 //! - `poll_loop`·`turn_registry`: 폴 루프와 턴 레지스트리·멘션 대기 장부(`main.ts` 루프·`stop.ts`·`idleStop.ts`·`turnRegistry.ts`·`mentionQueue.ts`, B4-1a). 스케줄러는 trait 뒤 — `mentionScheduler` 는 B4-1b.
 
 pub mod account_assign;
@@ -30,6 +31,7 @@ pub mod codex_home;
 pub mod codex_rules;
 pub mod config;
 pub mod fail_text;
+pub mod harness_memory;
 pub mod link;
 pub mod mcp;
 pub mod memory_cache;
