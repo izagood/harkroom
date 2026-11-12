@@ -67,9 +67,9 @@ pub struct OpenSessionInput {
     pub mode: Option<String>,
     /// 필수 사실 — 호출부가 `accepts_pty_input(plan)` 으로 읽어 넘긴다(정본 #369).
     pub accepts_input: bool,
+    /// 계정의 **순번**(풀 안 1부터, 계정 칩 A — 서버에는 계정·풀 이름을 보내지 않는다, #1039).
     /// 바깥 `None` = 모른다(필드 생략), `Some(None)` = 시스템 기본 로그인(null).
-    pub claude_account: Option<Option<String>>,
-    pub claude_pool: Option<Option<String>>,
+    pub claude_account_rank: Option<Option<u32>>,
     pub claude_pool_rank: Option<u32>,
     pub on_viewer_count: Option<ViewerHook>,
     pub on_cancel: Option<CancelHook>,
@@ -427,11 +427,9 @@ impl RelaySessions {
             json!(input.mode.unwrap_or_else(|| "mention".into())),
         );
         info.insert("acceptsInput".into(), json!(input.accepts_input));
-        if let Some(a) = input.claude_account {
-            info.insert("claudeAccount".into(), json!(a));
-        }
-        if let Some(p) = input.claude_pool {
-            info.insert("claudePool".into(), json!(p));
+        // 이름은 싣지 않는다 — 순번만(계정 칩 A).
+        if let Some(a) = input.claude_account_rank {
+            info.insert("claudeAccountRank".into(), json!(a));
         }
         if let Some(r) = input.claude_pool_rank {
             info.insert("claudePoolRank".into(), json!(r));

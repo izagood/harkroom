@@ -3717,12 +3717,10 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
       // 사람이 [중단] 을 누르면 릴레이가 이 훅으로 알린다(3단계). **죽이는 것은 이 턴이다** —
       // 넘기지 않으면 서버는 caps 로 "할 수 있다"고 말해 놓고 프레임은 아무 일도 못 한다.
       onCancel: expect.any(Function),
-      // 다중 계정 3단계: 이 턴이 **어느 claude 계정으로 도는지**를 세션에 싣는다. 이
-      // 픽스처는 풀이 빈 러너라(`makeDeps` 기본값) 둘 다 null — 시스템 기본 로그인이다.
-      // `null` 과 `undefined` 는 다르다: 여기 null 은 확인된 사실이고, 없으면 모른다는
-      // 뜻이다(아래 codex 케이스).
-      claudeAccount: null,
-      claudePool: null,
+      // 다중 계정 3단계: 이 턴이 **어느 claude 계정으로 도는지**를 세션에 싣는다 — 계정 칩 A 부터 이름이 아니라
+      // 순번이다(#1039). 이 픽스처는 풀이 빈 러너라(`makeDeps` 기본값) 시스템 기본 로그인 `null` 이다.
+      // `null` 과 `undefined` 는 다르다: 여기 null 은 확인된 사실이고, 없으면 모른다는 뜻이다(아래 codex 케이스).
+      claudeAccountRank: null,
     }]);
     // 바이트가 **변형 없이** 그대로 온다 — 문자열로 뜨면 잘린 UTF-8 이 U+FFFD 가 된다.
     expect(r.bytes).toHaveLength(1);
@@ -3737,15 +3735,18 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
     지금 도는지 알 수 없었다. 사용량도, 한도에 걸려 넘어간 순간도 그래서 안 보였다.
     화면이 그것을 말할 수 있는 유일한 근거가 이 세션에 실리는 값이다.
   */
-  it('claude 턴은 지금 쓰는 계정과 풀을 세션에 싣는다', async () => {
+  it('claude 턴은 지금 쓰는 계정의 순번을 세션에 싣고 이름은 싣지 않는다(계정 칩 A)', async () => {
     const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     const r = fakeRelay();
-    const { deps } = await makeDeps(fake, { relay: r.relay, claudeAccount: 'lime', claudePool: 'work' });
+    const { deps } = await makeDeps(fake, { relay: r.relay, claudeAccount: 'lime', claudePool: 'work', claudeAccountRank: 2 });
 
     await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
-    expect(r.opened.map((o) => [o.claudeAccount, o.claudePool])).toEqual([['lime', 'work']]);
+    expect(r.opened[0]!.claudeAccountRank).toBe(2);
+    // 계정·풀 이름은 서버로 가지 않는다 — 폴더 이름이라 사람 이름일 수 있다(#1039).
+    expect(JSON.stringify(r.opened[0])).not.toContain('lime');
+    expect(JSON.stringify(r.opened[0])).not.toContain('work');
     // 순서 번호를 모르면 싣지 않는다 — 화면이 자기 기기의 순서로 잰다(f3).
     expect('claudePoolRank' in r.opened[0]!).toBe(false);
   });

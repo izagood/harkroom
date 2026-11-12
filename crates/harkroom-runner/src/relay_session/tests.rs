@@ -49,7 +49,7 @@ fn input() -> OpenSessionInput {
 fn open_push_close_frames_and_announce() {
     let (l, sent) = ledger(None);
     let h = l.open_session(OpenSessionInput {
-        claude_account: Some(None),
+        claude_account_rank: Some(None),
         claude_pool_rank: Some(2),
         ..input()
     });
@@ -61,7 +61,12 @@ fn open_push_close_frames_and_announce() {
     assert_eq!(s["acceptsInput"], true);
     assert_eq!(s["threadRootId"], "t1");
     // null(시스템 기본)은 싣고, 모르는 풀은 생략한다.
-    assert!(s["claudeAccount"].is_null() && s.as_object().unwrap().contains_key("claudeAccount"));
+    // 기본 로그인은 null 순번, 계정·풀 이름 칸은 없다(계정 칩 A).
+    assert!(
+        s["claudeAccountRank"].is_null()
+            && s.as_object().unwrap().contains_key("claudeAccountRank")
+    );
+    assert!(!s.as_object().unwrap().contains_key("claudeAccount"));
     assert!(!s.as_object().unwrap().contains_key("claudePool"));
     assert_eq!(s["claudePoolRank"], 2);
     assert!(s["startedAt"].as_str().unwrap().ends_with('Z'));

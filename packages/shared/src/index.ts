@@ -3305,12 +3305,18 @@ export interface AgentSessionView {
    *
    * 이름만 싣는다 — 이메일·configDir 경로는 싣지 않는다(`main.ts` 의 계정 로그와 같은
    * 규율이다). 화면은 사람이 계정 설정에서 본 그 이름만 필요하다.
+   *
+   * **더는 싣지 않는다(2026-11-12, 서버에 계정 이름을 보내지 않는다 — #1039·계정 칩 A).** 계정 이름은 계정 풀의
+   * 폴더 이름이라 사람 이름일 수 있다. 새 러너는 순번(`claudePoolRank`·`claudeAccountRank`)만 싣고, 서버는 옛 러너가
+   * 보낸 이 칸을 받자마자 버린다(`ws/relay.ts` registerSession). 타입에 남긴 것은 옛 러너 프레임을 읽기 위해서다.
    */
   claudeAccount?: string | null;
   /**
    * 그 계정이 속한 풀 이름(`pools.json`). `null` 은 뿌리(암묵 풀)다. `claudeAccount` 와
    * 짝으로만 뜻이 있다 — 같은 이름의 계정이 풀마다 따로 있을 수 있어서, 계정 이름
    * 하나로는 화면이 어느 줄을 가리키는지 확정할 수 없다.
+   *
+   * **더는 싣지 않는다** — `claudeAccount` 와 같은 까닭이다(풀 이름도 폴더 이름). 서버가 받자마자 버린다.
    */
   claudePool?: string | null;
   /**
@@ -3321,10 +3327,27 @@ export interface AgentSessionView {
    * 그 순간 러너가 쓴 순서를 그대로 싣는다.
    *
    * 없으면(`undefined`) 모른다 — 이 칸을 모르는 옛 러너이거나 풀 순서가 없는 턴이다. 그때 화면은
-   * 예전처럼 이 기기의 순서로 판단한다. 숫자만 싣는다(풀 이름은 `claudePool` 이 이미 싣는다).
+   * 예전처럼 이 기기의 순서로 판단한다. 숫자만 싣는다.
    * 서버는 이 값을 열지 않고 나르므로 화면이 `isPoolRank` 로 형식을 다시 본다.
    */
   claudePoolRank?: number;
+  /**
+   * 그 계정이 **그 풀 안에서** 몇 번째인가(1부터, 계정 칩 A 2026-11-12). 화면 칩은 「풀 n · 계정 m」(뿌리 풀이면
+   * 「계정 m」)으로 그리고, 계정 **이름**은 데스크톱이 자기 기기의 계정 목록에서 찾아 로컬에서만 쓴다.
+   *
+   * 셋을 구분한다: 숫자는 그 순번의 계정, `null` 은 시스템 기본 로그인(계정 지정 없음), 없으면(`undefined`) 모른다 —
+   * 이 칸을 모르는 옛 러너이거나 claude 가 아닌 턴이다. 모르면 화면은 계정 칩을 그리지 않는다.
+   * 서버는 이 값을 열지 않고 나르므로 화면이 `isAccountRank` 로 형식을 다시 본다.
+   */
+  claudeAccountRank?: number | null;
+}
+
+/** `AgentSessionView.claudeAccountRank` 숫자 형식의 상한 — 풀 하나에 둘 계정 수보다 넉넉하다. */
+export const MAX_ACCOUNT_RANK = 99;
+
+/** `AgentSessionView.claudeAccountRank` 숫자 형식 — 1 이상 `MAX_ACCOUNT_RANK` 이하의 정수. 러너가 보낸 값을 화면이 다시 본다. */
+export function isAccountRank(v: unknown): v is number {
+  return typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= MAX_ACCOUNT_RANK;
 }
 
 /** `AgentSessionView.claudePoolRank` 형식 — 1 이상의 정수, 풀 상한(`MAX_AGENT_POOLS`) 이하. 러너가 보낸 값을 화면이 다시 본다. */

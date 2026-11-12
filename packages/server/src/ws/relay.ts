@@ -451,7 +451,10 @@ export function createRelayHub(
   const registerSession = (agentAccountId: string, session: AgentSessionView): void => {
     const runner = runners.get(agentAccountId);
     if (!runner) return;
-    runner.sessions.set(session.sessionId, session);
+    // 계정·풀 **이름**은 받자마자 버린다(계정 칩 A, #1039) — 폴더 이름이라 사람 이름일 수 있고, 여기서 데스크톱
+    // 여럿에게 퍼진다. 새 러너는 싣지 않고 순번(`claudePoolRank`·`claudeAccountRank`)만 싣는다. 옛 러너가 보낸 것만 걸린다.
+    const { claudeAccount: _account, claudePool: _pool, ...kept } = session;
+    runner.sessions.set(session.sessionId, kept);
     ownerOf.set(session.sessionId, agentAccountId);
   };
 
