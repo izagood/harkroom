@@ -28,6 +28,10 @@ pub enum AdmitNotice {
 /// 러너 사이의 스레드 임대 하나(정본 `ThreadClaim`). 턴이 완전히 끝난 뒤 놓는다.
 pub trait ThreadClaimHandle: Send {
     fn release(&self);
+    /// 이 임대를 잃었다(정본 `claim.lost.aborted` — 펜싱). 잃는 길이 없는 임대는 늘 `false`.
+    fn fenced(&self) -> bool {
+        false
+    }
 }
 
 /// 스레드 임대를 잡아 본 결과.
