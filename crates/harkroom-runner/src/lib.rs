@@ -48,6 +48,7 @@ pub mod thread_plan_pin;
 pub mod turn_command;
 pub mod turn_env;
 pub mod turn_files;
+pub mod turn_notice;
 pub mod turn_preset;
 pub mod turn_rules;
 pub mod workspace_trust;
