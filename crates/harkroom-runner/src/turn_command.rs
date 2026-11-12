@@ -19,6 +19,7 @@ use crate::pi_home::pi_sessions_dir;
 use crate::turn_env::{ChildEnvError, ChildEnvInput, TurnKeys, child_env, lane_gh_config_dir};
 use crate::turn_files::{
     CODEX_LANE_BASE_URL_ENV, McpServerEntry, codex_lane_args, codex_mcp_env, codex_mcp_flags,
+    plan_codex_mcp_env,
 };
 use crate::turn_preset::{
     PresetCheckError, RuleArgs, TurnMode, TurnPresetError, assert_valid_session, claude, codex,
@@ -333,9 +334,18 @@ pub fn build_turn_command(
         },
         AgentHarness::Codex => {
             // 정본 `laneArgs` — 빈 주소도 없는 것으로 친다(`!baseUrl`).
+            let env_plan = plan_codex_mcp_env(o.extra_mcp_servers);
+            if !env_plan.argv_servers.is_empty() {
+                // 조건 ④: 값이 argv 에 남는 서버의 **이름만** 로컬 로그에(값·env 이름 없이).
+                eprintln!(
+                    "[codexMcp] 추가 MCP env 값 일부를 argv 에 남김(예약 이름·이름 충돌): {}",
+                    env_plan.argv_servers.join(", ")
+                );
+            }
+            let moved_env = env_plan.moved_names();
             let lane = match o.provider_env {
                 Some(env) => match env.get(CODEX_LANE_BASE_URL_ENV) {
-                    Some(u) if !u.is_empty() => codex_lane_args(u),
+                    Some(u) if !u.is_empty() => codex_lane_args(u, &moved_env),
                     _ => return Err(TurnCommandError::CodexLaneNoBaseUrl),
                 },
                 None => Vec::new(),
@@ -343,7 +353,7 @@ pub fn build_turn_command(
             let extra: Vec<String> = o
                 .extra_mcp_servers
                 .iter()
-                .flat_map(|(name, entry)| codex_mcp_flags(name, entry))
+                .flat_map(|(name, entry)| codex_mcp_flags(name, entry, &env_plan))
                 .collect();
             Parts {
                 command: codex::COMMAND,
@@ -360,6 +370,7 @@ pub fn build_turn_command(
                     o.operator_bin,
                     turn_keys,
                     !codex_mcp_env(o.extra_mcp_servers).is_empty(),
+                    &moved_env,
                     &extra,
                 ),
                 lane,
