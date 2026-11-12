@@ -46,7 +46,7 @@ function fakeChild(stdout: string, opts: { hang?: boolean } = {}) {
   return { child, stdin: () => stdinText, killed };
 }
 
-async function setup(opts: { on?: boolean; env?: NodeJS.ProcessEnv } = {}) {
+async function setup(opts: { on?: boolean; env?: NodeJS.ProcessEnv; timeoutMs?: number } = {}) {
   const stateDir = await mkdtemp(join(tmpdir(), 'rfork-'));
   await writeFile(join(stateDir, 'system-prompt.md'), 'SYSTEM', 'utf8');
   if (opts.on !== false) await writeFile(join(stateDir, REVIEW_FORK_ON_FILE), '', 'utf8');
@@ -64,7 +64,7 @@ async function setup(opts: { on?: boolean; env?: NodeJS.ProcessEnv } = {}) {
     },
     log: (l) => logs.push(l),
     readToolNames: async () => ['mcp__harkroom__memory_get', 'mcp__harkroom__memory_set'],
-    timeoutMs: 200,
+    timeoutMs: opts.timeoutMs ?? 200,
   });
   const turn = (over: Partial<ReviewForkTurn> = {}): ReviewForkTurn => ({
     agentId: AGENT, harness: 'claude-code', sessionId: 'sess-1', cwd: '/ws',
@@ -205,13 +205,14 @@ describe('ReviewFork.afterTurn', () => {
   });
 
   it('동시에 하나만 돈다 — 앞 포크가 돌면 이번엔 띄우지 않고 다음 턴에 다시 본다', async () => {
-    const s = await setup();
+    // 시한을 넉넉히 둔다 — 200ms 였을 때 느린 CI 에서 두 번째 묶음보다 첫 포크의 시한이 먼저 와 둘째가 떴다(흔들림 2회).
+    const s = await setup({ timeoutMs: 1_500 });
     s.setHang(true);
     const first = await turns(s.rf, () => s.turn(), REVIEW_FORK_EVERY_TURNS);
     expect(first).not.toBeNull();
     expect(await turns(s.rf, () => s.turn(), REVIEW_FORK_EVERY_TURNS)).toBeNull();
     expect(s.spawns).toHaveLength(1);
-    // 시한(200ms)에 죽는다.
+    // 시한(1.5초)에 죽는다.
     const usage = (await first!.run) as { timedOut: boolean };
     expect(usage.timedOut).toBe(true);
     expect(s.child()!.killed).toEqual(['SIGKILL']);
