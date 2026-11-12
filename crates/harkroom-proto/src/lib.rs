@@ -408,8 +408,17 @@ pub mod p2 {
         AttentionRequired {
             runner_id: String,
             session_id: String,
-            account_label: String,
             screen: String,
+            /// 막힌 계정의 풀 순번(칩 ③). 계정 이름은 싣지 않는다(#1039).
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            claude_pool_rank: Option<u32>,
+            /// 풀 안 계정 순번. `Some(None)` = 기본 로그인(null), `None` = 모른다(생략).
+            #[serde(
+                default,
+                skip_serializing_if = "Option::is_none",
+                with = "super::double_option"
+            )]
+            claude_account_rank: Option<Option<u32>>,
         },
         #[serde(rename = "local.input", rename_all = "camelCase")]
         LocalInput {

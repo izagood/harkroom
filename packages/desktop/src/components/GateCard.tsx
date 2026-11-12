@@ -1,6 +1,7 @@
 import { useActiveStore } from '../state/communities';
 import { useT } from '../i18n/useT';
 import { displayBody } from '../lib/mention';
+import { accountChipOf } from '../lib/accountChip';
 import type { AgentTeamRow } from '@harkroom/shared';
 
 const NO_TEAMS: readonly AgentTeamRow[] = [];
@@ -48,8 +49,10 @@ export function GateCard({ extraMore = 0 }: {
   // 주는 자리라 `displayBody` 를 지난다(그 함수 머리 주석의 규약, security n2).
   const firstLine = root ? displayBody(root, accounts, groups, teams).split('\n')[0]?.trim() : undefined;
   const snippet = firstLine && firstLine.length > SNIPPET_CHARS ? `${firstLine.slice(0, SNIPPET_CHARS)}…` : firstLine;
+  // 어느 계정인지는 순번 칩 글로 말한다(칩 ③) — 턴 줄 칩·관문 카드 줄과 같은 `accountChipOf`. 모르면 뺀다.
+  const chip = accountChipOf(t, gate.claudePoolRank, gate.claudeAccountRank);
   const where = [
-    t('gate.account', { account: gate.accountLabel }),
+    chip?.label ?? null,
     channel ? `#${channel.name}${snippet ? ` › ${snippet}` : ''}` : null,
   ].filter(Boolean).join(' · ');
   const { threadRootId } = gate;

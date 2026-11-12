@@ -444,8 +444,16 @@
     "type": "attention.required",
     "runnerId": "r-00000000-0000-4000-8000-000000000002",
     "sessionId": "ses-1",
-    "accountLabel": "example",
-    "screen": "Do you want to proceed?"
+    "screen": "Do you want to proceed?",
+    "claudePoolRank": 2,
+    "claudeAccountRank": 1
+   },
+   {
+    "type": "attention.required",
+    "runnerId": "r-00000000-0000-4000-8000-000000000002",
+    "sessionId": "ses-2",
+    "screen": "Do you want to proceed?",
+    "claudeAccountRank": null
    },
    {
     "type": "local.input",

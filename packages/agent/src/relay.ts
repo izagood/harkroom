@@ -180,10 +180,13 @@ export interface OpenSession {
    * 부를지 말지는 호출자가 정한다: 관문은 계정 단위라 같은 계정으로 여러 번 부르면
    * 사람이 같은 승인을 반복한다(`attentionLedger.ts`).
    */
-  needsAttention(screen: string, accountLabel: string): void;
+  needsAttention(screen: string, ranks: AttentionRanks): void;
   /** 턴이 끝났다. 세션을 닫고 서버에 알린다. */
   close(): void;
 }
+
+/** 관문에 막힌 계정의 풀·계정 순번(칩 ③). 생략은 모른다, `claudeAccountRank: null` 은 기본 로그인. */
+export interface AttentionRanks { claudePoolRank?: number; claudeAccountRank?: number | null }
 
 export interface RelayClientOptions {
   link: RunnerLinkTarget;
@@ -727,12 +730,14 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
         bindInput(writer) {
           live.writer = writer;
         },
-        needsAttention(screen, accountLabel) {
+        needsAttention(screen, ranks) {
           if (closed) return;
           send({
             type: 'attention.required',
             sessionId: info.sessionId,
-            accountLabel,
+            // 계정 이름은 싣지 않는다 — 순번만(칩 ③, #1039).
+            ...(ranks.claudePoolRank !== undefined ? { claudePoolRank: ranks.claudePoolRank } : {}),
+            ...(ranks.claudeAccountRank !== undefined ? { claudeAccountRank: ranks.claudeAccountRank } : {}),
             // `output` 과 같은 규율 — 서버는 이 바이트를 열지 않는다.
             screen: Buffer.from(screen, 'utf8').toString('base64'),
           });

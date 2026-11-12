@@ -235,7 +235,7 @@ export interface TurnRelay {
      * 이 세션이 사람 손을 기다린다(2026-09-08). 앱이 이 세션의 터미널을 연다 —
      * 관문에 걸린 턴은 화면에 아무 신호도 남기지 않아서, 사람은 열어 볼 이유조차 모른다.
      */
-    needsAttention(screen: string, accountLabel: string): void;
+    needsAttention(screen: string, ranks: { claudePoolRank?: number; claudeAccountRank?: number | null }): void;
     close(): void;
   };
 }
@@ -2571,7 +2571,7 @@ export async function runMentionTurn(
         end.cancelGateWatch = () => clearInterval(t);
       }
     }
-    session?.needsAttention(screen, label);
+    session?.needsAttention(screen, gateRanks);
     console.error(
       `[mentionTurn] ${key}: 사람 손이 필요하다(${kind}, 계정=${label}) — 앱이 이 세션의 터미널을 연다`,
     );

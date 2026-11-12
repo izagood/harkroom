@@ -188,13 +188,35 @@ fn attention_screen_is_capped_tail() {
     let (l, sent) = ledger(None);
     let h = l.open_session(input());
     let long = format!("{}끝", "가".repeat(2_000));
-    h.needs_attention(&long, "acct");
+    h.needs_attention(&long, Some(2), Some(Some(1)));
     let f = sent.lock().unwrap().last().unwrap().clone();
     assert_eq!(f["type"], "attention.required");
-    assert_eq!(f["accountLabel"], "acct");
+    // 계정은 순번만(칩 ③) — 이름 칸은 없다.
+    assert_eq!(
+        (
+            f["claudePoolRank"].as_u64(),
+            f["claudeAccountRank"].as_u64()
+        ),
+        (Some(2), Some(1))
+    );
+    assert!(f.get("accountLabel").is_none());
     let screen = String::from_utf8(B64.decode(f["screen"].as_str().unwrap()).unwrap()).unwrap();
     assert!(screen.len() <= ATTENTION_SCREEN_MAX_BYTES);
     assert!(screen.ends_with("가끝"));
+}
+
+#[test]
+fn attention_ranks_default_login_and_unknown() {
+    let (l, sent) = ledger(None);
+    let h = l.open_session(input());
+    h.needs_attention("s", None, Some(None));
+    let f = sent.lock().unwrap().last().unwrap().clone();
+    assert!(f["claudeAccountRank"].is_null() && f.get("claudeAccountRank").is_some());
+    assert!(f.get("claudePoolRank").is_none());
+    let h2 = l.open_session(input());
+    h2.needs_attention("s", None, None);
+    let f2 = sent.lock().unwrap().last().unwrap().clone();
+    assert!(f2.get("claudeAccountRank").is_none() && f2.get("accountLabel").is_none());
 }
 
 #[test]

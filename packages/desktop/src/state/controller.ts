@@ -919,7 +919,8 @@ export class Controller {
           sessionId: e.sessionId,
           agentAccountId: e.agentAccountId,
           agentHandle: e.agentHandle,
-          accountLabel: e.accountLabel,
+          ...(e.claudePoolRank !== undefined ? { claudePoolRank: e.claudePoolRank } : {}),
+          ...(e.claudeAccountRank !== undefined ? { claudeAccountRank: e.claudeAccountRank } : {}),
           channelId: e.channelId,
           threadRootId: e.threadRootId,
         });

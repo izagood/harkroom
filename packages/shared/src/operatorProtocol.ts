@@ -100,7 +100,8 @@ export type OperatorToServerFrame =
   | { type: 'pty.replay'; runnerId: string; sessionId: string; bytes: string }
   | { type: 'interactive.opened'; runnerId: string; requestId: string; sessionId: string; created: boolean }
   | { type: 'interactive.error'; runnerId: string; requestId: string; message: string }
-  | { type: 'attention.required'; runnerId: string; sessionId: string; accountLabel: string; screen: string }
+  | { type: 'attention.required'; runnerId: string; sessionId: string; screen: string;
+      claudePoolRank?: number; claudeAccountRank?: number | null; accountLabel?: string }
   /** 로컬 직결 입력의 바이트 수(R1) — 러너가 아니라 오퍼레이터의 로컬 터미널 허브가 낸다. 내용은 없다. */
   | { type: 'local.input'; runnerId: string; sessionId: string; gen: number; bytes: number };
 

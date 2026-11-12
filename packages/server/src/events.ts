@@ -13,7 +13,7 @@ export type WorkspaceEvent =
   // 막힌 것은 이 사람이 할 수 있는 일이 아니다.
   | { type: 'agent.attention'; sessionId: string; channelId: string;
       threadRootId: string | null; agentAccountId: string; agentHandle: string;
-      accountLabel: string; audience: string[] }
+      claudePoolRank?: number; claudeAccountRank?: number | null; audience: string[] }
   // 그 세션이 끝났다(2026-10-09) — 부른 적 있는 세션만, 같은 소유자에게. 앱이 관문 카드를 닫는다.
   | { type: 'agent.attention.cleared'; sessionId: string; channelId: string;
       threadRootId: string | null; agentAccountId: string; audience: string[] }

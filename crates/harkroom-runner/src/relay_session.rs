@@ -507,17 +507,30 @@ impl SessionHandle {
     }
 
     /// 사람 손을 기다린다. 화면은 끝에서 `ATTENTION_SCREEN_MAX_BYTES` 까지만 싣는다.
-    pub fn needs_attention(&self, screen: &str, account_label: &str) {
+    /// 막힌 계정은 풀·계정 **순번**으로만 싣는다(칩 ③ — 계정 이름은 서버로 보내지 않는다, #1039).
+    /// `account_rank`: `None` = 모른다(생략), `Some(None)` = 기본 로그인(null).
+    pub fn needs_attention(
+        &self,
+        screen: &str,
+        pool_rank: Option<u32>,
+        account_rank: Option<Option<u32>>,
+    ) {
         if self.is_closed() {
             return;
         }
         let screen = tail_str(screen, ATTENTION_SCREEN_MAX_BYTES);
-        self.ledger.send(&json!({
+        let mut frame = json!({
             "type": "attention.required",
             "sessionId": self.session_id,
-            "accountLabel": account_label,
             "screen": B64.encode(screen.as_bytes()),
-        }));
+        });
+        if let Some(p) = pool_rank {
+            frame["claudePoolRank"] = json!(p);
+        }
+        if let Some(a) = account_rank {
+            frame["claudeAccountRank"] = json!(a);
+        }
+        self.ledger.send(&frame);
     }
 
     /// 턴이 끝났다. 두 번째 호출은 아무 일도 하지 않는다.
