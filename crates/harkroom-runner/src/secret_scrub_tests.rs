@@ -144,11 +144,19 @@ fn t1_session_dir_tool_results_and_subagents_masked_symlinks_and_depth_skipped()
     fs::create_dir_all(&deep).unwrap();
     fs::write(deep.join("too-deep.txt"), &v).unwrap();
     let mut skipped = Vec::new();
-    let n = scrub_path(&sess, &scrub_needles(v.as_bytes()), &mut |p| {
-        skipped.push(p.to_path_buf())
-    })
-    .unwrap();
-    assert_eq!(n, 2);
+    let n = scrub_path(
+        &sess,
+        &scrub_needles(v.as_bytes()),
+        &mut |p| skipped.push(p.to_path_buf()),
+        &mut |_, _| {},
+    );
+    assert_eq!(
+        n,
+        ScrubTally {
+            replaced: 2,
+            failed: 0
+        }
+    );
     assert_eq!(fs::read_to_string(&tool).unwrap(), "long output\n***\nmore");
     assert!(!fs::read_to_string(&sub).unwrap().contains(&v));
     assert_eq!(fs::read_to_string(&outside).unwrap(), v);
@@ -158,10 +166,10 @@ fn t1_session_dir_tool_results_and_subagents_masked_symlinks_and_depth_skipped()
         scrub_path(
             &root.join("nope"),
             &scrub_needles(v.as_bytes()),
-            &mut |_| {}
-        )
-        .unwrap(),
-        0
+            &mut |_| {},
+            &mut |_, _| {}
+        ),
+        ScrubTally::default()
     );
 }
 
@@ -174,10 +182,13 @@ fn over_64mb_skipped_with_path_reported() {
     f.set_len(SCRUB_MAX_FILE_BYTES + 1).unwrap(); // 희소 파일
     let mut skipped = Vec::new();
     assert_eq!(
-        scrub_path(&dir, &scrub_needles(v.as_bytes()), &mut |p| skipped
-            .push(p.to_path_buf()))
-        .unwrap(),
-        0
+        scrub_path(
+            &dir,
+            &scrub_needles(v.as_bytes()),
+            &mut |p| skipped.push(p.to_path_buf()),
+            &mut |_, _| {}
+        ),
+        ScrubTally::default()
     );
     assert_eq!(skipped, vec![big]);
 }
@@ -195,14 +206,72 @@ fn turn_keys_scrubbed_across_paths_and_empty_needles_noop() {
     fs::write(b.join("t.txt"), &shell).unwrap();
     assert_eq!(
         scrub_turn_keys("k", &[a.clone(), b.clone(), dir.join("missing")], &needles),
-        3
+        ScrubTally {
+            replaced: 3,
+            failed: 0
+        }
     );
     assert_eq!(fs::read_to_string(&a).unwrap(), "*** ***");
-    assert_eq!(scrub_turn_keys("k", &[a], &[]), 0);
+    assert_eq!(scrub_turn_keys("k", &[a], &[]), ScrubTally::default());
 }
 
 #[test]
 fn needles_longest_first() {
     let n = scrub_needles(value().as_bytes());
     assert!(n.windows(2).all(|w| w[0].len() >= w[1].len()));
+}
+
+/// #2010 security 낮음: 디렉터리를 돌다 가운데 파일이 실패해도 멈추지 않고 뒤 파일을 가린다. 실패는 경로로 알리고 센다.
+#[test]
+fn middle_failure_does_not_stop_later_files() {
+    // root 는 권한 검사를 건너뛰어 실패를 만들 수 없다.
+    if unsafe { libc::geteuid() } == 0 {
+        return;
+    }
+    let v = value();
+    let dir = tmpdir("midfail");
+    let a = dir.join("a.txt");
+    let locked = dir.join("b");
+    let c = dir.join("c.txt");
+    fs::write(&a, &v).unwrap();
+    fs::create_dir_all(&locked).unwrap();
+    fs::write(locked.join("in.txt"), &v).unwrap();
+    // 읽기는 되지만 임시 파일을 만들 수 없는 디렉터리 → 그 안 파일만 실패한다.
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).unwrap();
+    fs::write(&c, &v).unwrap();
+    let mut errs = Vec::new();
+    let t = scrub_path(
+        &dir,
+        &scrub_needles(v.as_bytes()),
+        &mut |_| {},
+        &mut |p, _| errs.push(p.to_path_buf()),
+    );
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(
+        t,
+        ScrubTally {
+            replaced: 2,
+            failed: 1
+        }
+    );
+    assert_eq!(errs, vec![locked.join("in.txt")]);
+    assert_eq!(fs::read_to_string(&a).unwrap(), "***");
+    assert_eq!(fs::read_to_string(&c).unwrap(), "***", "뒤 파일도 가린다");
+    assert_eq!(fs::read_to_string(locked.join("in.txt")).unwrap(), v);
+    // scrub_turn_keys 도 실패 수를 돌려준다.
+    fs::write(&a, &v).unwrap();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).unwrap();
+    let t = scrub_turn_keys(
+        "k",
+        std::slice::from_ref(&dir),
+        &scrub_needles(v.as_bytes()),
+    );
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(
+        t,
+        ScrubTally {
+            replaced: 1,
+            failed: 1
+        }
+    );
 }
