@@ -135,3 +135,19 @@ fn notice_escapes_names_and_descriptions() {
     assert!(!body.contains("</harness-memory>"));
     fs::remove_dir_all(&st).unwrap();
 }
+
+#[test]
+fn scan_skips_symlinks_and_reads_only_head() {
+    let d = tmp("link");
+    let outside = tmp("outside");
+    fs::write(outside.join("secret.md"), "description: 밖의 글\n").unwrap();
+    std::os::unix::fs::symlink(outside.join("secret.md"), d.join("link.md")).unwrap();
+    // 설명 줄이 8KB 뒤에 있으면 읽지 않는다(앞부분만 읽기).
+    let mut big = "x".repeat(READ_HEAD_BYTES);
+    big.push_str("\ndescription: 뒤쪽\n");
+    fs::write(d.join("big.md"), big).unwrap();
+    let got = scan_harness_memory(&d);
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].name, "big.md");
+    assert_eq!(got[0].description, None);
+}

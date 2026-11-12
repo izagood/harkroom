@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdir, mkdtemp, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { claudeMemoryDir, claudeProjectDirName, planHarnessMemoryNotice, scanHarnessMemory } from '../src/harnessMemory.js';
@@ -54,6 +54,15 @@ describe('harnessMemory — 스레드에 갇힌 파일 메모리를 알린다', 
     await note('a.md', '하나');
     await planHarnessMemoryNotice({ stateDir, key: KEY, files: await scanHarnessMemory(memDir) });
     expect(await turn()).toContain('a.md');
+  });
+
+  it('심볼릭 링크는 따르지 않고, 앞 8KB 만 읽는다', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'hm-out-'));
+    await writeFile(join(outside, 'secret.md'), 'description: 밖의 글\n');
+    await symlink(join(outside, 'secret.md'), join(memDir, 'link.md'));
+    await writeFile(join(memDir, 'big.md'), `${'x'.repeat(8192)}\ndescription: 뒤쪽\n`);
+    const files = await scanHarnessMemory(memDir);
+    expect(files.map((f) => [f.name, f.description])).toEqual([['big.md', null]]);
   });
 
   it('디렉터리가 없으면 조용히 아무것도 안 한다', async () => {

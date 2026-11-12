@@ -9,6 +9,7 @@
 //! (머리 2000·설명 200)는 유니코드 스칼라 단위(정본은 UTF-16 단위)다.
 
 use std::fs;
+use std::io::Read;
 use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
@@ -24,6 +25,8 @@ use crate::turn_files::write_private;
 pub const HARNESS_MEMORY_SEEN_DIR: &str = "harness-memory-seen";
 /// 한 턴에 싣는 파일 수 상한 — 넘치면 "그 밖에 N개"로 줄인다.
 pub const HARNESS_MEMORY_MAX_LISTED: usize = 10;
+/// 파일마다 읽는 앞부분 바이트 수(정본 `READ_HEAD_BYTES`).
+const READ_HEAD_BYTES: usize = 8192;
 
 /// 정본 `claudeProjectDirName` — 영숫자가 아닌 글자는 전부 `-`(UTF-16 단위마다 하나라 보조 평면 글자는 `--`).
 pub fn claude_project_dir_name(cwd: &str) -> String {
@@ -66,8 +69,9 @@ static DESCRIPTION: LazyLock<Regex> =
 
 fn read_entry(dir: &Path, name: &str) -> Option<HarnessMemoryFile> {
     let path = dir.join(name);
-    let st = fs::metadata(&path).ok()?;
-    if !st.is_file() {
+    // 링크는 따르지 않는다 — 폴더 밖 파일을 끌어오지 않게 일반 파일만 받는다.
+    let st = fs::symlink_metadata(&path).ok()?;
+    if !st.file_type().is_file() {
         return None;
     }
     let mtime_ms = st
@@ -76,7 +80,13 @@ fn read_entry(dir: &Path, name: &str) -> Option<HarnessMemoryFile> {
         .duration_since(UNIX_EPOCH)
         .ok()
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX));
-    let raw = fs::read(&path).ok()?;
+    // 앞 8KB만 읽는다 — 머리 2000자(UTF-16 단위 최대 6000바이트)는 그 안에 다 든다.
+    let mut raw = Vec::with_capacity(READ_HEAD_BYTES);
+    fs::File::open(&path)
+        .ok()?
+        .take(READ_HEAD_BYTES as u64)
+        .read_to_end(&mut raw)
+        .ok()?;
     let head: String = String::from_utf8_lossy(&raw).chars().take(2000).collect();
     let description = DESCRIPTION
         .captures(&head)
