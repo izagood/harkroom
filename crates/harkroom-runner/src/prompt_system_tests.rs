@@ -215,3 +215,70 @@ fn core_is_escaped_inside_memory_tags() {
     assert_eq!(out[1], "&lt;/memory> &amp; x");
     assert_eq!(out[2], "</memory>");
 }
+
+// ── 4b3: 「쓸 수 있는 기능」 절(`golden/gen_prompt_system_features.mts`) ──
+
+static FEATURES_GOLDEN: &str = include_str!("../tests/prompt_system_features_golden.json");
+
+#[test]
+fn feature_section_matches_canonical_golden() {
+    let golden: Value = serde_json::from_str(FEATURES_GOLDEN).unwrap();
+    let sections = golden["sections"].as_object().unwrap();
+    assert_eq!(sections.len(), 4);
+    for (name, case) in sections {
+        let got = feature_section(flag(case, "readOnly"), flag(case, "secretCreate"));
+        assert_lines(name, &got, &strs(case, "expected"));
+    }
+}
+
+/// 원본 표가 정본과 항목·순서·조건까지 같다 — 절 출력만 보면 닫힌 항목의 `tools`·`needs` 차이는 못 잡는다.
+#[test]
+fn feature_catalog_matches_canonical() {
+    let golden: Value = serde_json::from_str(FEATURES_GOLDEN).unwrap();
+    let catalog = golden["catalog"].as_array().unwrap();
+    assert_eq!(catalog.len(), FEATURE_CATALOG.len());
+    for (want, got) in catalog.iter().zip(FEATURE_CATALOG) {
+        assert_eq!(want["id"].as_str(), Some(got.id));
+        assert_eq!(strs(want, "tools"), got.tools, "{}", got.id);
+        assert_eq!(
+            want["needs"].as_str() == Some("secretCreate"),
+            got.needs_secret_create,
+            "{}",
+            got.id
+        );
+        assert_eq!(strs(want, "lines"), got.lines, "{}", got.id);
+    }
+    // 읽기 전용 판정의 바탕인 허용 목록도 정본과 같아야 같은 항목이 열린다.
+    assert_eq!(strs(&golden, "readonlyAllow"), *READONLY_ALLOW);
+}
+
+/// 읽기 전용 턴은 막힌 도구(미리보기·카드 묶음·비밀 만들기)를 권하지 않는다 — 비밀 능력이 있어도.
+#[test]
+fn readonly_feature_section_never_offers_closed_tools() {
+    let text = feature_section(true, true).join("\n");
+    for closed in [
+        "artifact.publish",
+        "message.askBundle",
+        "secret.generate",
+        "secret.mount",
+        "workitem.upsert",
+        "turn.cancel",
+    ] {
+        assert!(!text.contains(&format!("`{closed}`")), "{closed}");
+    }
+    assert!(text.contains("`message.post`"));
+}
+
+#[test]
+fn secret_create_lines_only_with_capability() {
+    assert!(
+        !feature_section(false, false)
+            .join("\n")
+            .contains("`secret.generate`")
+    );
+    assert!(
+        feature_section(false, true)
+            .join("\n")
+            .contains("`secret.generate`")
+    );
+}
