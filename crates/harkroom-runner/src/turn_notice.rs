@@ -1,5 +1,6 @@
 //! 멘션 턴이 스레드에 남기는 실패·관문 통지 문구를 조립한다(정본 `prompt.ts` 의 `harnessTailNotice`·`quotedLine`·
-//! `stallScreenErrorLine`·`gateNotice`·`retryReason`, `mentionTurn.ts` 의 실패 문장 3019~3110행).
+//! `stallScreenErrorLine`·`gateNotice`·`retryReason`·`permissionDenialNotice`·`macPermissionNotice`·`laneNudgeText`·`laneNudgeWanted`,
+//! `mentionTurn.ts` 의 실패 문장 3019~3110행).
 //!
 //! 화면 원문(PTY tail·관문 화면)은 이 모듈을 거쳐서만 사람이 보는 자리에 나간다.
 //! - **실패 문구(`message.fail`·재시도 통지)에는 화면을 싣지 않는다.** 정본은 `harness 종료 N: <tail>` 로 실었다. 그런데
@@ -14,6 +15,9 @@ use std::fmt;
 use std::sync::LazyLock;
 
 use regex::Regex;
+
+use crate::harness_errors::{MacPermissionState, MacPermissionWait, PermissionDenial};
+use crate::prompt_system::BODY_LIMIT;
 
 /// 정본 `TAIL_NOTICE_MAX_CHARS` — 꼬리 통지에 남기는 뒤쪽 글자 수.
 pub const TAIL_NOTICE_MAX_CHARS: usize = 1_000;
@@ -179,6 +183,140 @@ pub fn quoted_line(last_said: Option<&str>, pat: &str, secrets: &[String]) -> St
         return String::new();
     }
     one_line(said, pat, NOTICE_LINE_MAX_CHARS, secrets)
+}
+
+/// 정본 `DENIAL_NOTICE_MAX_PER_TURN` — 한 턴에 권한 거부 통지를 몇 번까지 올리나(거부는 줄줄이 번진다, 09-30 실측 4건).
+pub const DENIAL_NOTICE_MAX_PER_TURN: usize = 3;
+/// 정본 `MAC_PERMISSION_NOTICE_MAX_PER_TURN`.
+pub const MAC_PERMISSION_NOTICE_MAX_PER_TURN: usize = 3;
+/// 비밀 조각이 남아 명령·이유를 싣지 않을 때 그 자리에 두는 말.
+const FRAGMENT_WITHHELD: &str = "(비밀 조각이 보여 싣지 않음)";
+
+/// 통지에 싣는 원문 한 칸. 통째로 가린 뒤에도 비밀의 12자 조각이 보이면 칸을 통째로 뺀다 — 정본 `oneLine` 은 통째 가림만 했다.
+/// 명령 원문은 터미널 폭이나 따옴표로 값이 쪼개질 수 있어 `quotedLine` 과 같은 조각 검사를 더한다.
+fn guarded_line(text: &str, pat: &str, max: usize, secrets: &[String]) -> String {
+    if !secrets.is_empty() && tail_has_secret_fragment(&mask_whole(text, secrets), secrets) {
+        return FRAGMENT_WITHHELD.to_owned();
+    }
+    one_line(text, pat, max, secrets)
+}
+
+/// 서버 본문 상한까지 앞을 남긴다(정본 호출부의 `.slice(0, BODY_LIMIT)`).
+fn cap_body(text: String) -> String {
+    match char_head(&text, BODY_LIMIT) {
+        Some(head) => head.to_owned(),
+        None => text,
+    }
+}
+
+/// 정본 `permissionDenialNotice` — 권한 분류기가 거부한 도구 호출을 스레드에 알리는 글(progress 로 올린다).
+///
+/// 거부는 턴을 죽이지 않고 거부 문구가 「다른 도구로 좇지 마라」를 시키므로 에이전트가 말하지 못하고 끝나기 쉽다.
+/// 명령·이유는 원문([`PermissionDenial`])이라 여기서 가린다: 러너 비밀(`pat`)·마운트한 비밀(통째 + 12자 조각)·토큰 꼴.
+/// 정본은 마운트한 비밀을 넘기지 않았다(`permissionDenialNotice(fresh, runnerSecret)`) — 여기서는 받는다.
+/// 명령은 코드 스팬에 넣는다(백틱은 `'` 로 바뀐다) — 밖에 두면 `@누구` 가 멘션이 된다.
+pub fn permission_denial_notice(
+    denials: &[PermissionDenial],
+    pat: &str,
+    secrets: &[String],
+) -> String {
+    let mut lines = vec!["권한 거부(auto mode 분류기) — 이 명령은 실행되지 않았다:".to_owned()];
+    for d in denials {
+        let what = if d.tool == "Bash" {
+            d.input.clone()
+        } else if d.input.is_empty() {
+            d.tool.clone()
+        } else {
+            format!("{} {}", d.tool, d.input)
+        };
+        lines.push(format!(
+            "- {} — `{}`",
+            guarded_line(&d.reason, pat, 120, secrets),
+            guarded_line(&what, pat, NOTICE_LINE_MAX_CHARS, secrets)
+        ));
+    }
+    cap_body(lines.join("\n"))
+}
+
+/// 정본 `macPermissionNotice` — macOS 권한 창(TCC) 앞에 선 턴을 알리는 글. 창은 Harkroom 뒤에 숨으므로 사람이 할 일을 적는다.
+/// 러너는 대신 허용하지 않는다. 앱 이름·명령은 명령에서 온 글이라 코드 스팬에 넣고 가린다(security n2).
+pub fn mac_permission_notice(waits: &[MacPermissionWait], pat: &str, secrets: &[String]) -> String {
+    let app = |t: Option<&str>| match t {
+        Some(t) => format!("`{}`", guarded_line(t, pat, 60, secrets)),
+        None => "다른 앱".to_owned(),
+    };
+    let mut lines = vec!["macOS 권한 창 — 사람이 눌러야 진행된다:".to_owned()];
+    for w in waits {
+        let target = app(w.target.as_deref());
+        let what = format!(
+            "`{}`",
+            guarded_line(&w.input, pat, NOTICE_LINE_MAX_CHARS, secrets)
+        );
+        lines.push(match w.state {
+            MacPermissionState::Denied => format!(
+                "- 거부됨: Harkroom → {target} 제어 — 시스템 설정 › 개인정보 보호 및 보안 › 자동화 › Harkroom 에서 {target} 을(를) 켜 주세요. {what}"
+            ),
+            MacPermissionState::Timeout | MacPermissionState::Waiting => {
+                let tail = if w.state == MacPermissionState::Timeout {
+                    "명령이 시간 초과로 끝났다"
+                } else {
+                    "명령이 답을 기다리는 중이다"
+                };
+                format!(
+                    "- Harkroom → {target} 제어 [허용] 필요 — 「'Harkroom'에서 …을(를) 제어하려고 합니다」 창이 Harkroom 뒤에 떠 있을 수 있다({tail}). {what}"
+                )
+            }
+        });
+    }
+    cap_body(lines.join("\n"))
+}
+
+/// 정본 `laneNudgeText` — 말없이 끝난 API 키 연결 턴에 **한 번** 넣는 재촉(2026-11-04 소유자 결정). 러너가 짓는 글이고
+/// 사람·모델의 글을 싣지 않는다(id 만 싣는다).
+pub fn lane_nudge_text(channel_id: &str, thread_root_id: Option<&str>) -> String {
+    let place = match thread_root_id {
+        Some(t) => format!("channelId: {channel_id} · threadRootId: {t}"),
+        None => format!("channelId: {channel_id}"),
+    };
+    format!(
+        "(러너 알림) 방금 답이 harkroom 스레드에 올라가지 않았다. 사람은 이 화면을 못 본다. 답이 있으면 harkroom MCP 의 message_post 도구로 지금 올려라({place}). 올릴 답이 없으면 아무것도 하지 말고 끝내라."
+    )
+}
+
+/// 정본 `laneNudgeWanted` 의 부른 쪽 갈래.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NudgeCaller {
+    Agent,
+    Human,
+    Delegated,
+    Wake,
+    DelegationOutcome,
+}
+
+/// 정본 `RECORD_ANSWER_MIN_CHARS` — 답 꼴로 볼 마지막 말의 길이 하한(자).
+pub const RECORD_ANSWER_MIN_CHARS: usize = 120;
+
+static TABLE_ROW: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^\s*\|.*\|\s*$").expect("table row"));
+static HANDLE_CALL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:^|\s)@[A-Za-z0-9_-]+").expect("handle call"));
+
+/// 정본 `looksLikeAnswer` — 하네스 기록의 마지막 말이 답 꼴인가(길이 하한·표 줄·`@handle` 부름 중 하나).
+pub fn looks_like_answer(text: Option<&str>) -> bool {
+    let Some(t) = text.map(str::trim).filter(|t| !t.is_empty()) else {
+        return false;
+    };
+    t.chars().count() >= RECORD_ANSWER_MIN_CHARS || TABLE_ROW.is_match(t) || HANDLE_CALL.is_match(t)
+}
+
+/// 정본 `laneNudgeWanted` — 재촉할 턴인가. 사람이 부른 턴·넘겨받은 일은 답이 있어야 한다. 에이전트가 부른 턴은 답 꼴일 때만,
+/// 스스로 깬 턴은 재촉하지 않는다.
+pub fn lane_nudge_wanted(caller: NudgeCaller, said: Option<&str>) -> bool {
+    match caller {
+        NudgeCaller::Human | NudgeCaller::Delegated => true,
+        NudgeCaller::Agent => looks_like_answer(said),
+        NudgeCaller::Wake | NudgeCaller::DelegationOutcome => false,
+    }
 }
 
 /// 정본 `stallScreenErrorLine` — 가린 화면에서 오류처럼 보이는 마지막 줄. 판정에는 쓰지 않는다(보이는 글로만).

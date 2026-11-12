@@ -74,6 +74,7 @@ pub mod turn_env_plan;
 pub mod turn_files;
 pub mod turn_mcp_plan;
 pub mod turn_notice;
+pub mod turn_posts;
 pub mod turn_prep;
 pub mod turn_preset;
 pub mod turn_registry;

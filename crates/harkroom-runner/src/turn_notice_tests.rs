@@ -198,3 +198,149 @@ fn gate_fail_has_no_screen_and_startup_extras() {
     );
     assert_eq!((d.claude_pool_rank, d.claude_account_rank), (None, None));
 }
+
+fn denial(tool: &str, input: &str, reason: &str) -> PermissionDenial {
+    PermissionDenial {
+        tool_use_id: "t".into(),
+        tool: tool.into(),
+        input: input.into(),
+        reason: reason.into(),
+    }
+}
+
+#[test]
+fn denial_notice_shapes_bash_and_other_tools() {
+    let got = permission_denial_notice(
+        &[
+            denial("Bash", "git push --force", "[Git Destructive]"),
+            denial("Write", "{\"file_path\":\"/x\"}", "outside"),
+            denial("?", "", "(이유 없음)"),
+        ],
+        "",
+        &[],
+    );
+    assert_eq!(
+        got,
+        "권한 거부(auto mode 분류기) — 이 명령은 실행되지 않았다:\n\
+         - [Git Destructive] — `git push --force`\n\
+         - outside — `Write {\"file_path\":\"/x\"}`\n\
+         - (이유 없음) — `?`"
+    );
+}
+
+#[test]
+fn denial_notice_masks_and_keeps_code_span() {
+    let secret = "ZYXWVUTSRQPONMLKJIHG";
+    let got = permission_denial_notice(
+        &[denial(
+            "Bash",
+            &format!(
+                "echo `x` runner-pat {secret} ghp_{} @someone",
+                "a".repeat(24)
+            ),
+            "reason runner-pat",
+        )],
+        "runner-pat",
+        &s(&[secret]),
+    );
+    assert!(!got.contains("runner-pat"));
+    assert!(!got.contains(secret));
+    assert!(!got.contains("ghp_"));
+    // 원문 백틱은 `'` 로 바뀌어 코드 스팬이 깨지지 않는다 → `@someone` 은 스팬 안에 남는다.
+    assert!(got.contains("`echo 'x' (가림) (가림) (가림) @someone`"));
+}
+
+#[test]
+fn denial_notice_withholds_split_secret() {
+    let secret = "ABCDEFGHIJKLMNOPQRSTUVWX";
+    let input = format!("curl -d '{}' -d '{}'", &secret[..12], &secret[12..]);
+    let got = permission_denial_notice(&[denial("Bash", &input, "r")], "", &s(&[secret]));
+    assert!(!got.contains(&secret[..12]));
+    assert!(got.contains("`(비밀 조각이 보여 싣지 않음)`"));
+}
+
+#[test]
+fn denial_notice_caps_at_body_limit() {
+    let many: Vec<_> = (0..200)
+        .map(|i| denial("Bash", &"가".repeat(300), &format!("r{i}")))
+        .collect();
+    let got = permission_denial_notice(&many, "", &[]);
+    assert_eq!(got.chars().count(), BODY_LIMIT);
+}
+
+#[test]
+fn mac_notice_states_and_target() {
+    let w = |state, target: Option<&str>| MacPermissionWait {
+        tool_use_id: "t".into(),
+        state,
+        target: target.map(str::to_owned),
+        input: "osascript -e 'tell application \"Notes\"'".into(),
+    };
+    let got = mac_permission_notice(
+        &[
+            w(MacPermissionState::Waiting, Some("Notes")),
+            w(MacPermissionState::Timeout, None),
+            w(MacPermissionState::Denied, Some("@Mail")),
+        ],
+        "",
+        &[],
+    );
+    let lines: Vec<&str> = got.lines().collect();
+    assert_eq!(lines[0], "macOS 권한 창 — 사람이 눌러야 진행된다:");
+    assert!(lines[1].starts_with("- Harkroom → `Notes` 제어 [허용] 필요"));
+    assert!(lines[1].contains("(명령이 답을 기다리는 중이다)"));
+    assert!(lines[2].starts_with("- Harkroom → 다른 앱 제어 [허용] 필요"));
+    assert!(lines[2].contains("(명령이 시간 초과로 끝났다)"));
+    assert!(lines[3].starts_with("- 거부됨: Harkroom → `@Mail` 제어"));
+    assert!(lines[3].ends_with("`osascript -e 'tell application \"Notes\"'`"));
+}
+
+#[test]
+fn mac_notice_masks_target_and_input() {
+    let secret = "SECRETVALUE-0123456789";
+    let got = mac_permission_notice(
+        &[MacPermissionWait {
+            tool_use_id: "t".into(),
+            state: MacPermissionState::Waiting,
+            target: Some(format!("App {secret}")),
+            input: format!("osascript pat-xyz {secret}"),
+        }],
+        "pat-xyz",
+        &s(&[secret]),
+    );
+    assert!(!got.contains(secret));
+    assert!(!got.contains("pat-xyz"));
+}
+
+#[test]
+fn lane_nudge_text_with_and_without_thread() {
+    let t = lane_nudge_text("c1", Some("r1"));
+    assert!(t.starts_with("(러너 알림) 방금 답이"));
+    assert!(t.contains("(channelId: c1 · threadRootId: r1)"));
+    assert!(lane_nudge_text("c1", None).contains("(channelId: c1)."));
+}
+
+#[test]
+fn nudge_wanted_by_caller_and_answer_shape() {
+    use NudgeCaller::*;
+    assert!(lane_nudge_wanted(Human, None));
+    assert!(lane_nudge_wanted(Delegated, None));
+    assert!(!lane_nudge_wanted(Wake, Some(&"x".repeat(500))));
+    assert!(!lane_nudge_wanted(DelegationOutcome, Some("| a | b |")));
+    assert!(!lane_nudge_wanted(Agent, None));
+    assert!(!lane_nudge_wanted(
+        Agent,
+        Some("확인했습니다, 덧붙일 말 없음")
+    ));
+    assert!(lane_nudge_wanted(Agent, Some("결과\n| a | b |\n끝")));
+    assert!(lane_nudge_wanted(Agent, Some("@jaebin 끝났습니다")));
+    assert!(!lane_nudge_wanted(Agent, Some("me@example.com")));
+    assert!(lane_nudge_wanted(
+        Agent,
+        Some(&"가".repeat(RECORD_ANSWER_MIN_CHARS))
+    ));
+    assert!(!lane_nudge_wanted(
+        Agent,
+        Some(&"가".repeat(RECORD_ANSWER_MIN_CHARS - 1))
+    ));
+}
