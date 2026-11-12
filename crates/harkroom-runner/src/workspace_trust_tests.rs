@@ -220,3 +220,23 @@ fn ensure_workspace_trusted_dispatches_and_swallows() {
     );
     let _ = fs::remove_dir_all(&d);
 }
+
+#[test]
+fn codex_trust_refuses_toml_breaking_paths() {
+    let d = std::env::temp_dir().join(format!("hr-trust-toml-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&d);
+    fs::create_dir_all(&d).unwrap();
+    let p = d.join("config.toml");
+    for bad in ["/w/a\"]\n[x]", "/w/a\\b", "/w/a\nb", "/w/a\rb", "/w/\u{0}"] {
+        let e = trust_for_codex(bad, &p).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::InvalidInput);
+        assert!(!e.to_string().contains("/w/"));
+    }
+    assert!(!p.exists());
+    trust_for_codex("/w/한글 폴더", &p).unwrap();
+    assert!(
+        fs::read_to_string(&p)
+            .unwrap()
+            .contains("[projects.\"/w/한글 폴더\"]")
+    );
+}

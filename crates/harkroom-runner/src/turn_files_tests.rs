@@ -1,4 +1,5 @@
 use super::*;
+use std::os::unix::fs::PermissionsExt as _;
 
 fn tmp(tag: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("hr-turn-files-{tag}-{}", std::process::id()));
@@ -193,4 +194,54 @@ fn prompt_files_are_0600_even_when_preexisting() {
     let e = write_system_prompt_file(&gone, "x").unwrap_err();
     assert!(matches!(e, TurnFileError::StateDirGone { .. }));
     assert!(!e.to_string().contains("moved-away"));
+}
+
+#[test]
+fn mcp_name_grammar_is_enforced() {
+    for ok in ["github", "a", "my-mcp-2", &"a".repeat(64)] {
+        assert!(is_valid_mcp_name(ok), "{ok}");
+    }
+    for bad in [
+        "",
+        "GitHub",
+        "a.b",
+        "a=b",
+        "a\"b",
+        "a b",
+        "가",
+        &"a".repeat(65),
+    ] {
+        assert!(!is_valid_mcp_name(bad), "{bad}");
+    }
+    let d = tmp("names");
+    let p = d.join("m.json");
+    fs::write(
+        &p,
+        r#"{"mcpServers":{"harkroom":{"command":"/op"},"x.transport":{"command":"z"}}}"#,
+    )
+    .unwrap();
+    let e = read_extra_mcp_servers(&p).unwrap_err();
+    assert!(matches!(e, TurnFileError::McpEntryInvalid { ref name } if name == "x.transport"));
+    assert!(!e.to_string().contains("x.transport"));
+}
+
+#[test]
+fn prompt_file_does_not_follow_symlink() {
+    let d = tmp("link");
+    let target = d.join("victim.txt");
+    fs::write(&target, "keep").unwrap();
+    std::os::unix::fs::symlink(&target, d.join("stdin-prompt.txt")).unwrap();
+    let p = write_prompt_file(&d, "프롬프트").unwrap();
+    assert_eq!(fs::read_to_string(&target).unwrap(), "keep");
+    let meta = fs::symlink_metadata(&p).unwrap();
+    assert!(meta.file_type().is_file());
+    assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+    assert_eq!(fs::read_to_string(&p).unwrap(), "프롬프트");
+    // 임시 파일이 남지 않는다.
+    let left: Vec<_> = fs::read_dir(&d)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+        .collect();
+    assert!(left.is_empty());
 }

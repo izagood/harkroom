@@ -315,3 +315,20 @@ fn list_tools_runs_with_given_env_only_and_parses() {
     env.insert("LEAK".into(), "1".into());
     assert_eq!(list_pi_mcp_tools(&script, &[], &env, &t.0), None);
 }
+
+#[test]
+fn mcp_list_does_not_wait_for_grandchild_holding_stdout() {
+    // 자식은 곧 끝나지만 손자(sleep)가 stdout 을 쥐고 남는다 — 그룹째 걷어서 금방 돌아와야 한다.
+    let mut env = Env::new();
+    env.insert("PATH".into(), "/usr/bin:/bin".into());
+    let started = Instant::now();
+    let out = run_capped(
+        Path::new("/bin/sh"),
+        &["-c".into(), "sleep 30 & echo '{}'".into()],
+        &env,
+        Path::new("/"),
+    )
+    .unwrap();
+    assert_eq!(out.trim(), "{}");
+    assert!(started.elapsed() < Duration::from_secs(5));
+}
