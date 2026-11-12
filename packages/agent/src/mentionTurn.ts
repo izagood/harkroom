@@ -757,6 +757,7 @@ async function ownReportSince(
 
 async function reportPromiseCheck(
   deps: MentionTurnDeps, reportTo: WakeReportTo, baseSeq: number, scheduledTurnId: string | undefined, reason: string, anchor: string, anchorChannelId: string,
+  secrets: readonly string[] = [],
 ): Promise<void> {
   const found = await ownReportSince(deps, reportTo, baseSeq, scheduledTurnId);
   // 찾으면 멈춘다. 쪽 수 상한을 넘기면 판정을 접는다 — 근거 없이 경고하지 않는다(기준선을 못 읽었을 때와 같은 판단).
@@ -764,7 +765,7 @@ async function reportPromiseCheck(
   if (found) return;
   console.log(`[mentionTurn] 깨움 턴이 보고처 ${reportTo.threadRootId} 에 말하지 않고 끝났다 — 거기에 경고를 남긴다`);
   // 채널이 다르면 사유를 옮겨 적지 않는다(security n2) — 비공개 앵커의 사유가 공개 보고처에 드러난다.
-  const notice = reportMissedNotice(reportTo.channelId === anchorChannelId ? reason : null, anchor);
+  const notice = reportMissedNotice(reportTo.channelId === anchorChannelId ? reason : null, anchor, deps.runnerSecret, secrets);
   await deps.harkroom.fail(reportTo.channelId, notice, reportTo.threadRootId, {
     retryable: false,
     what: '약속한 스레드에 보고하지 않고 깨움 턴이 끝났다',
@@ -3302,7 +3303,7 @@ export async function runMentionTurn(
     // **약속한 보고처에 말했나**(2026-10-06). 앵커 쪽 판정(위)과 따로 본다 — 앵커에 답하고도 보고처를 잊는 것이
     // 실측된 모양이다(task_manager 10-06). 다시 기다리기로 했으면(새 깨움) 아직 보고할 때가 아니니 경고하지 않는다.
     if (reportTo && reportBaseSeq !== null && !hasOwnWakeSince(after, deps.me.id, turnStartSeq, turnId)) {
-      await reportPromiseCheck(deps, reportTo, reportBaseSeq, target.wake?.scheduledTurnId, target.wake?.reason ?? '', anchor ?? mentionId, channelId);
+      await reportPromiseCheck(deps, reportTo, reportBaseSeq, target.wake?.scheduledTurnId, target.wake?.reason ?? '', anchor ?? mentionId, channelId, await tailSecrets());
     }
     // **감시가 이어졌나**(2026-10-31). 실측: "5분마다 확인" 감시의 깨어난 턴이 다음 예약도 끝났다는 말도 없이 끝나
     // 감시가 조용히 멈췄고 아무도 몰랐다. 감시 예약(`watch: true`)으로 깨어난 턴은 다음 깨움을 걸거나 끝 보고
