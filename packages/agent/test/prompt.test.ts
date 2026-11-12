@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PLAN_LIMITS } from '@harkroom/shared/planGraph';
 import { mentionedHandles } from '@harkroom/shared';
-import { YOUR_TASK_TAIL, TURN_CORE_LINES, turnClockLine, BODY_LIMIT, DELTA_MAX_MESSAGES, fitDelta, mergeThreadPages, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, quotedLine, proxyAnswerBody, proxyRecordAnswerBody, looksLikeAnswer, PROXY_ANSWER_MAX_CHARS, AGENT_CALL_NO_ANSWER, stallNotice, stallRetryable, stallScreenErrorLine, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, macPermissionNotice, permissionDenialNotice, reportMissedNotice, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, wakeReportTo, wakeWatch, wakeOrigin, hasOwnReportSince, type MemoryContext, DELEGATION_FOLLOWUP_NOTE, DELEGATION_UPDATE_NOTE } from '../src/prompt.js';
+import { YOUR_TASK_TAIL, TURN_CORE_LINES, turnClockLine, BODY_LIMIT, DELTA_MAX_MESSAGES, fitDelta, mergeThreadPages, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, quotedLine, proxyAnswerBody, proxyRecordAnswerBody, looksLikeAnswer, PROXY_ANSWER_MAX_CHARS, AGENT_CALL_NO_ANSWER, stallNotice, stallRetryable, stallScreenErrorLine, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, macPermissionNotice, permissionDenialNotice, reportMissedNotice, watchMissedNotice, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, wakeReportTo, wakeWatch, wakeOrigin, hasOwnReportSince, type MemoryContext, DELEGATION_FOLLOWUP_NOTE, DELEGATION_UPDATE_NOTE } from '../src/prompt.js';
 
 const msg = (seq: number, authorId: string, body: string, extra: Record<string, unknown> = {}) =>
   ({
@@ -2439,5 +2439,19 @@ describe('reportMissedNotice 사유', () => {
   });
   it('사유가 null 이면 싣지 않는다(채널이 다를 때)', () => {
     expect(reportMissedNotice(null, 'anc')).not.toContain('사유');
+  });
+});
+
+// #2008 security 낮음: 감시 끊김 줄의 사유도 가리고 `@` 를 ＠ 로 바꾼다.
+describe('watchMissedNotice 사유', () => {
+  it('사유를 가리고 @ 를 ＠ 로 바꾼다', () => {
+    const secret = 'MOUNTEDsecretVALUE0123456789';
+    const pat = 'hrkp_runnerpat_abcdefghijklmnop';
+    const n = watchMissedNotice(`@task_manager 에게 5분마다 ${pat} ${secret}\n둘째 줄`, pat, [secret]);
+    expect(n).not.toContain('@');
+    expect(n).toContain('＠task_manager');
+    expect(n).not.toContain(pat);
+    expect(n).not.toContain(secret);
+    expect(n.split('\n')).toHaveLength(2);
   });
 });
