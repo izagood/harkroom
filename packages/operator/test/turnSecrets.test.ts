@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mkdtempSync, readFileSync, statSync, lstatSync, existsSync, mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -55,8 +55,8 @@ describe('turnSecrets', () => {
     expect(existsSync(join(root, 'lease-1'))).toBe(true);
     expect(r.isError).toBe(false);
     ts.noteLease('r-new', 'a1', { type: 'secret.lease', cause: 'cause-1', leaseId: 'lease-2', token: 'tok-2', expiresAt: new Date(clock + 35 * 60_000).toISOString() });
-    await new Promise((res) => setTimeout(res, 20));
-    expect(existsSync(join(root, 'lease-1'))).toBe(false);
+    // 옛 마운트 폴더는 비동기로 지운다 — 고정 20ms 대기는 느린 CI 에서 흔들렸다. 시한 안에서 지워질 때까지 본다(안 지워지면 실패).
+    await vi.waitFor(() => expect(existsSync(join(root, 'lease-1'))).toBe(false), { timeout: 2_000, interval: 10 });
     expect(ts.lookup('r-old', 'cause-1')).toBeNull();
     expect(ts.lookup('r-new', 'cause-1')).toMatchObject({ leaseId: 'lease-2' });
     // 다른 에이전트·다른 부름의 임대는 건드리지 않는다.
