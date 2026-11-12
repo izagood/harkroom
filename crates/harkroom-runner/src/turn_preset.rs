@@ -231,10 +231,12 @@ pub mod codex {
     /// avcs·harkroom 브릿지는 늘. `transport` 를 반드시 적는다(빠지면 MCP 설정 전체가 로드 실패, 0.154 실측).
     /// `env` 가 아니라 `env_vars`(이름만 — 값은 argv 에 안 오른다). `extra` 는 `codexMcpFlags` 결과(B3d-4)를 그대로 잇는다.
     /// `mcp_secrets`: 추가 MCP 의 비밀 값(bearer·헤더)이 자식 env 에 실린다 — 셸에서 `HARKROOM_MCP_*` 를 거른다.
+    /// `moved_env`: 추가 stdio MCP 에서 자식 env 로 옮긴 이름 — 셸 `exclude` 에 이름 그대로 더한다(security #1945 낮음 2 조건 ③).
     pub fn mcp(
         operator_bin: &str,
         turn_keys: bool,
         mcp_secrets: bool,
+        moved_env: &[String],
         extra: &[String],
     ) -> Vec<String> {
         let mut env_vars: Vec<&str> = RUNNER_LINK_ENV_KEYS.to_vec();
@@ -273,6 +275,7 @@ pub mod codex {
             }
             if mcp_secrets {
                 exclude.push(CODEX_MCP_SHELL_EXCLUDE);
+                exclude.extend(moved_env.iter().map(String::as_str));
             }
             out.push("-c".into());
             out.push(format!(
@@ -821,7 +824,7 @@ mod tests {
 
     #[test]
     fn codex_mcp_bridge_and_env_vars_names_only() {
-        let r = codex::mcp("/a b/op", false, false, &[]);
+        let r = codex::mcp("/a b/op", false, false, &[], &[]);
         assert!(r.contains(&"mcp_servers.avcs.transport=\"stdio\"".to_string()));
         assert!(r.contains(&"mcp_servers.harkroom.command=\"/a b/op\"".to_string()));
         assert!(r.contains(&"mcp_servers.harkroom.args=[\"mcp-bridge\"]".to_string()));
@@ -837,6 +840,7 @@ mod tests {
             "/op",
             true,
             false,
+            &[],
             &["-c".into(), "mcp_servers.x.url=\"u\"".into()],
         );
         let ev = k
@@ -851,10 +855,18 @@ mod tests {
         assert_eq!(k.last().unwrap(), "mcp_servers.x.url=\"u\"");
 
         // 추가 MCP 비밀만 있어도 셸 거르기·우회 길 끄기가 붙는다.
-        let m = codex::mcp("/op", false, true, &[]);
+        // 조건 ③: 옮긴 stdio env 이름은 셸 exclude 에 이름 그대로.
+        let mv = codex::mcp("/op", false, true, &["SHARED".to_string()], &[]);
+        assert!(
+            mv.contains(
+                &"shell_environment_policy.exclude=[\"HARKROOM_MCP_*\",\"SHARED\"]".to_string()
+            ),
+            "{mv:?}"
+        );
+        let m = codex::mcp("/op", false, true, &[], &[]);
         assert!(m.contains(&"shell_environment_policy.exclude=[\"HARKROOM_MCP_*\"]".to_string()));
         assert!(m.contains(&"features.shell_snapshot=false".to_string()));
-        let both = codex::mcp("/op", true, true, &[]);
+        let both = codex::mcp("/op", true, true, &[], &[]);
         assert!(both.contains(
             &"shell_environment_policy.exclude=[\"HARKROOM_TURN_BRIDGE_KEY\",\"HARKROOM_MCP_*\"]"
                 .to_string()

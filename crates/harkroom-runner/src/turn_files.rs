@@ -277,6 +277,71 @@ pub fn codex_header_env_name(name: &str, index: usize) -> String {
 /// 셸 거르기와 무관하다.
 pub const CODEX_MCP_SHELL_EXCLUDE: &str = "HARKROOM_MCP_*";
 
+/// stdio MCP `env` 에서 codex 자식 env 로 옮기지 **않는** 이름(security #1945 낮음 2 의 조건 ①) — codex·셸·러너가 쓰는 자리라
+/// 옮기면 codex 자신의 env 를 덮는다. 대소문자를 가리지 않고 본다.
+pub fn is_reserved_mcp_env(name: &str) -> bool {
+    let up = name.to_ascii_uppercase();
+    ["PATH", "HOME", "USER", "SHELL", "TMPDIR", "NODE_OPTIONS"].contains(&up.as_str())
+        || ["LD_", "DYLD_", "CODEX_", "OPENAI_", "HARKROOM_", "RUST_"]
+            .iter()
+            .any(|p| up.starts_with(p))
+}
+
+/// env 이름 문법 — `[A-Za-z_][A-Za-z0-9_]*`. 어긋나면 옮기지 않는다(codex `env_vars` 는 이름 그대로 읽는다).
+fn is_env_name(name: &str) -> bool {
+    let mut cs = name.chars();
+    matches!(cs.next(), Some(c) if c == '_' || c.is_ascii_alphabetic())
+        && cs.all(|c| c == '_' || c.is_ascii_alphanumeric())
+}
+
+/// 추가 stdio MCP 의 `env` 값을 argv 대신 codex 자식 env 로 옮기는 계획(security #1945 낮음 2, 조건 넷).
+/// codex `mcp_servers.<n>.env_vars` 는 **같은 이름**을 codex 자신의 env 에서 읽어 넘기므로 서버 사이·codex 사이 이름 충돌을
+/// 여기서 한 번에 판정한다.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CodexMcpEnvPlan {
+    /// 옮길 이름 → 값(codex 자식 env 에 얹는다).
+    pub moved: std::collections::BTreeMap<String, String>,
+    /// argv(`env` 인라인 표)에 남는 값이 있는 서버 이름 — 로컬 로그에 이름만 남긴다(조건 ④).
+    pub argv_servers: Vec<String>,
+}
+
+impl CodexMcpEnvPlan {
+    /// 셸 `exclude` 에 이름 그대로 더할 것(조건 ③).
+    pub fn moved_names(&self) -> Vec<String> {
+        self.moved.keys().cloned().collect()
+    }
+    fn is_moved(&self, k: &str, v: &str) -> bool {
+        self.moved.get(k).is_some_and(|m| m == v)
+    }
+}
+
+/// 조건 ①(예약 이름) · 문법 · ②(서버끼리 같은 이름에 다른 값이면 둘 다 argv)를 따라 옮길 이름을 고른다.
+pub fn plan_codex_mcp_env(servers: &[(String, McpServerEntry)]) -> CodexMcpEnvPlan {
+    let mut values: std::collections::BTreeMap<&str, Vec<&str>> = Default::default();
+    for (_, entry) in servers {
+        if let McpServerEntry::Stdio { env: Some(env), .. } = entry {
+            for (k, v) in env {
+                values.entry(k.as_str()).or_default().push(v.as_str());
+            }
+        }
+    }
+    let mut plan = CodexMcpEnvPlan::default();
+    for (k, vs) in &values {
+        let same = vs.windows(2).all(|w| w[0] == w[1]);
+        if same && is_env_name(k) && !is_reserved_mcp_env(k) {
+            plan.moved.insert((*k).to_owned(), vs[0].to_owned());
+        }
+    }
+    for (name, entry) in servers {
+        if let McpServerEntry::Stdio { env: Some(env), .. } = entry
+            && env.iter().any(|(k, v)| !plan.is_moved(k, v))
+        {
+            plan.argv_servers.push(name.clone());
+        }
+    }
+    plan
+}
+
 /// codex 자식 env 에 얹을 추가 MCP 의 비밀 값 — bearer 토큰과 나머지 HTTP 헤더 값(argv 에는 env 이름만).
 /// 정본 `codexBearerEnv` 는 bearer 만 옮겼다 — 나머지 헤더 값도 argv(`ps` 로 보인다)에서 뺀다(security #1945 낮음 2).
 pub fn codex_mcp_env(servers: &[(String, McpServerEntry)]) -> Vec<(String, String)> {
@@ -292,11 +357,13 @@ pub fn codex_mcp_env(servers: &[(String, McpServerEntry)]) -> Vec<(String, Strin
             }
         }
     }
+    // stdio `env` 중 옮긴 값(이름 그대로 — codex `env_vars` 가 그 이름을 읽는다).
+    out.extend(plan_codex_mcp_env(servers).moved);
     out
 }
 
 /// 정본 `codexMcpFlags` — `-c mcp_servers.<name>.*`. transport 를 늘 적는다. Bearer 토큰·나머지 헤더 값은 argv 에 굽지 않는다.
-pub fn codex_mcp_flags(name: &str, entry: &McpServerEntry) -> Vec<String> {
+pub fn codex_mcp_flags(name: &str, entry: &McpServerEntry, plan: &CodexMcpEnvPlan) -> Vec<String> {
     let key = format!("mcp_servers.{name}");
     let mut out = Vec::new();
     let mut c = |v: String| {
@@ -338,7 +405,20 @@ pub fn codex_mcp_flags(name: &str, entry: &McpServerEntry) -> Vec<String> {
                 serde_json::to_string(args).expect("문자열 배열 직렬화는 실패하지 않는다")
             ));
             if let Some(env) = env {
-                c(format!("{key}.env={}", toml_inline_table(env)));
+                // 옮긴 이름은 `env_vars`(이름만), 남는 것만 `env` 인라인 표(값이 argv 에 보인다 — 조건 ①②의 예외).
+                let (moved, kept): (Vec<_>, Vec<_>) =
+                    env.iter().cloned().partition(|(k, v)| plan.is_moved(k, v));
+                if !moved.is_empty() {
+                    let names: Vec<&str> = moved.iter().map(|(k, _)| k.as_str()).collect();
+                    c(format!(
+                        "{key}.env_vars={}",
+                        serde_json::to_string(&names)
+                            .expect("문자열 배열 직렬화는 실패하지 않는다")
+                    ));
+                }
+                if !kept.is_empty() {
+                    c(format!("{key}.env={}", toml_inline_table(&kept)));
+                }
             }
         }
     }
@@ -346,15 +426,17 @@ pub fn codex_mcp_flags(name: &str, entry: &McpServerEntry) -> Vec<String> {
 }
 
 /// 정본 `codexLaneArgs` — codex API 키 연결 턴의 `-c` 덮어쓰기(키는 env 이름만, 셸 env 걷기, 업데이트 확인 끔).
-pub fn codex_lane_args(base_url: &str) -> Vec<String> {
+/// `extra_exclude` 는 추가 MCP 에서 옮긴 stdio env 이름이다 — 이 `-c` 가 앞의 `exclude` 를 덮으므로 여기에도 넣는다.
+pub fn codex_lane_args(base_url: &str, extra_exclude: &[String]) -> Vec<String> {
     let p = format!("model_providers.{CODEX_LANE_PROVIDER}");
-    let exclude = serde_json::to_string(&[
+    let mut names: Vec<&str> = vec![
         CODEX_LANE_KEY_ENV,
         CODEX_LANE_BASE_URL_ENV,
         RUNNER_TURN_KEY_BRIDGE_ENV,
         CODEX_MCP_SHELL_EXCLUDE,
-    ])
-    .expect("문자열 배열 직렬화는 실패하지 않는다");
+    ];
+    names.extend(extra_exclude.iter().map(String::as_str));
+    let exclude = serde_json::to_string(&names).expect("문자열 배열 직렬화는 실패하지 않는다");
     let flags = [
         format!("model_provider={}", json_str(CODEX_LANE_PROVIDER)),
         format!("{p}.name={}", json_str(CODEX_LANE_PROVIDER)),

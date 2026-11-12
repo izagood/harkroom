@@ -72,8 +72,11 @@ fn stdio_flags_use_toml_inline_table() {
         args: vec!["serve".into()],
         env: Some(vec![("GH_TOKEN".into(), "x".into())]),
     };
+    // 예약 이름이 아니고 겹치지 않으므로 값은 argv 에서 빠지고 이름만 `env_vars` 로(security #1945 낮음 2).
+    let servers = vec![("github".to_string(), e.clone())];
+    let plan = plan_codex_mcp_env(&servers);
     assert_eq!(
-        codex_mcp_flags("github", &e),
+        codex_mcp_flags("github", &e, &plan),
         [
             "-c",
             "mcp_servers.github.transport=\"stdio\"",
@@ -82,22 +85,37 @@ fn stdio_flags_use_toml_inline_table() {
             "-c",
             "mcp_servers.github.args=[\"serve\"]",
             "-c",
-            "mcp_servers.github.env={ \"GH_TOKEN\" = \"x\" }",
+            "mcp_servers.github.env_vars=[\"GH_TOKEN\"]",
         ]
+    );
+    assert_eq!(
+        codex_mcp_env(&servers),
+        [("GH_TOKEN".to_string(), "x".to_string())]
+    );
+    // 빈 계획(옮김 없음)이면 지금처럼 인라인 표.
+    assert_eq!(
+        codex_mcp_flags("github", &e, &CodexMcpEnvPlan::default())[7],
+        "mcp_servers.github.env={ \"GH_TOKEN\" = \"x\" }"
     );
     let no_env = McpServerEntry::Stdio {
         command: "c".into(),
         args: vec![],
         env: None,
     };
-    assert_eq!(codex_mcp_flags("n", &no_env)[5], "mcp_servers.n.args=[]");
-    assert_eq!(codex_mcp_flags("n", &no_env).len(), 6);
+    assert_eq!(
+        codex_mcp_flags("n", &no_env, &CodexMcpEnvPlan::default())[5],
+        "mcp_servers.n.args=[]"
+    );
+    assert_eq!(
+        codex_mcp_flags("n", &no_env, &CodexMcpEnvPlan::default()).len(),
+        6
+    );
 }
 
 #[test]
 fn bearer_goes_to_env_not_argv() {
     let e = http(&[("Authorization", "Bearer SECRET-1"), ("X-Team", "t")]);
-    let flags = codex_mcp_flags("slack-work", &e);
+    let flags = codex_mcp_flags("slack-work", &e, &CodexMcpEnvPlan::default());
     assert!(!flags.join(" ").contains("SECRET-1"));
     assert!(flags.contains(&"mcp_servers.slack-work.transport=\"streamable_http\"".to_string()));
     assert!(
@@ -130,7 +148,7 @@ fn header_values_never_reach_argv() {
         ("X-Api-Key", "HDR-SECRET"),
         ("Authorization", "Basic BASIC-SECRET"),
     ]);
-    let flags = codex_mcp_flags("vendor", &e);
+    let flags = codex_mcp_flags("vendor", &e, &CodexMcpEnvPlan::default());
     let joined = flags.join(" ");
     assert!(!joined.contains("HDR-SECRET"));
     assert!(!joined.contains("BASIC-SECRET"));
@@ -184,7 +202,7 @@ fn bearer_match_follows_js_regex() {
         headers: vec![],
     };
     assert_eq!(
-        codex_mcp_flags("s", &e),
+        codex_mcp_flags("s", &e, &CodexMcpEnvPlan::default()),
         [
             "-c",
             "mcp_servers.s.transport=\"sse\"",
@@ -196,7 +214,7 @@ fn bearer_match_follows_js_regex() {
 
 #[test]
 fn lane_args_match_canon() {
-    let a = codex_lane_args("http://127.0.0.1:9");
+    let a = codex_lane_args("http://127.0.0.1:9", &[]);
     let flags: Vec<&str> = a.iter().skip(1).step_by(2).map(String::as_str).collect();
     assert!(a.iter().step_by(2).all(|x| x == "-c"));
     assert_eq!(flags[0], "model_provider=\"harkroom-lane\"");
@@ -288,4 +306,93 @@ fn prompt_file_does_not_follow_symlink() {
         .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
         .collect();
     assert!(left.is_empty());
+}
+
+fn stdio(env: &[(&str, &str)]) -> McpServerEntry {
+    McpServerEntry::Stdio {
+        command: "srv".into(),
+        args: vec![],
+        env: Some(
+            env.iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        ),
+    }
+}
+
+/// security #1945 낮음 2 조건 ①②: 예약 이름·문법 밖·서버끼리 다른 값은 옮기지 않는다. 같은 값이면 한 번 옮긴다.
+#[test]
+fn stdio_env_plan_keeps_reserved_and_conflicting_names_in_argv() {
+    for r in [
+        "PATH",
+        "home",
+        "USER",
+        "SHELL",
+        "TMPDIR",
+        "NODE_OPTIONS",
+        "LD_PRELOAD",
+        "DYLD_X",
+        "CODEX_HOME",
+        "OPENAI_API_KEY",
+        "HARKROOM_X",
+        "RUST_LOG",
+    ] {
+        assert!(is_reserved_mcp_env(r), "{r}");
+    }
+    assert!(!is_reserved_mcp_env("GH_TOKEN"));
+    let servers = vec![
+        (
+            "a".to_string(),
+            stdio(&[
+                ("API_TOKEN", "a1"),
+                ("SHARED", "same"),
+                ("PATH", "/evil"),
+                ("bad-name", "z"),
+            ]),
+        ),
+        (
+            "b".to_string(),
+            stdio(&[("API_TOKEN", "b1"), ("SHARED", "same"), ("ONLY_B", "ob")]),
+        ),
+    ];
+    let plan = plan_codex_mcp_env(&servers);
+    assert_eq!(plan.moved_names(), ["ONLY_B", "SHARED"]);
+    // 조건 ④: argv 에 남는 서버 이름만.
+    assert_eq!(plan.argv_servers, ["a", "b"]);
+    let fa = codex_mcp_flags("a", &servers[0].1, &plan);
+    assert!(
+        fa.contains(&"mcp_servers.a.env_vars=[\"SHARED\"]".to_string()),
+        "{fa:?}"
+    );
+    let inline = fa
+        .iter()
+        .find(|x| x.starts_with("mcp_servers.a.env="))
+        .unwrap();
+    assert!(inline.contains("API_TOKEN") && inline.contains("PATH") && inline.contains("bad-name"));
+    assert!(!inline.contains("SHARED"));
+    let fb = codex_mcp_flags("b", &servers[1].1, &plan);
+    assert!(
+        fb.contains(&"mcp_servers.b.env_vars=[\"ONLY_B\",\"SHARED\"]".to_string())
+            || fb.contains(&"mcp_servers.b.env_vars=[\"SHARED\",\"ONLY_B\"]".to_string()),
+        "{fb:?}"
+    );
+    // 옮긴 값만 자식 env 로 — 예약·충돌 값은 env 에 싣지 않는다(codex 자신의 env 를 덮지 않음).
+    let env = codex_mcp_env(&servers);
+    assert_eq!(
+        env,
+        [
+            ("ONLY_B".to_string(), "ob".to_string()),
+            ("SHARED".to_string(), "same".to_string())
+        ]
+    );
+}
+
+/// 조건 ③: 옮긴 이름은 lane 의 `exclude` 에도 이름 그대로(뒤의 `-c` 가 앞 것을 덮는다).
+#[test]
+fn lane_exclude_carries_moved_names() {
+    let a = codex_lane_args("http://127.0.0.1:9", &["SHARED".to_string()]);
+    assert_eq!(
+        a.last().unwrap(),
+        "shell_environment_policy.exclude=[\"HARKROOM_LANE_API_KEY\",\"HARKROOM_LANE_BASE_URL\",\"HARKROOM_TURN_BRIDGE_KEY\",\"HARKROOM_MCP_*\",\"SHARED\"]"
+    );
 }
