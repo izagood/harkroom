@@ -21,6 +21,7 @@
 //! - `poll_loop`·`turn_registry`: 폴 루프와 턴 레지스트리·멘션 대기 장부(`main.ts` 루프·`stop.ts`·`idleStop.ts`·`turnRegistry.ts`·`mentionQueue.ts`, B4-1a). 스케줄러는 trait 뒤 — `mentionScheduler` 는 B4-1b.
 
 pub mod account_assign;
+pub mod account_failover;
 pub mod adapter;
 pub mod bg_executor;
 pub mod bg_tick;
@@ -33,8 +34,10 @@ pub mod memory_cache;
 pub mod memory_pin;
 pub mod mention_admit;
 pub mod mention_ledger;
+pub mod mention_run;
 pub mod mention_scheduler;
 pub mod mention_settle;
+pub mod mention_target;
 pub mod omp_home;
 pub mod opencode_home;
 pub mod pi_home;
