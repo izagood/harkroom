@@ -313,11 +313,15 @@ pub fn list_codex_hooks(opts: &ListHooksOpts) -> Result<Vec<CodexHookListEntry>,
     if let Some(h) = opts.home {
         cmd.env("HOME", h);
     }
+    // 제 프로세스 그룹으로 띄워 끝낼 때 그룹째 죽인다 — 손자가 stdout 을 쥐고 남으면 읽기 스레드가 끝나지 않는다
+    // (security B3c 낮음 「list_codex_hooks 읽기 스레드」).
+    std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
     let mut child = cmd.spawn().map_err(ListHooksError::Spawn)?;
+    let pgid = child.id() as libc::pid_t;
     let mut stdin = child.stdin.take().expect("stdin piped");
     let stdout = child.stdout.take().expect("stdout piped");
     let (tx, rx) = mpsc::channel::<String>();
-    // 읽기 스레드는 자식이 죽어 파이프가 닫히면 끝난다. 손자가 파이프를 쥐면 남을 수 있어 join 하지 않는다.
+    // 읽기 스레드는 그룹이 죽어 파이프가 닫히면 끝난다. join 하지 않는다.
     std::thread::spawn(move || {
         for line in BufReader::new(stdout).lines() {
             let Ok(line) = line else { break };
@@ -374,7 +378,8 @@ pub fn list_codex_hooks(opts: &ListHooksOpts) -> Result<Vec<CodexHookListEntry>,
         }
     };
     drop(stdin);
-    let _ = child.kill();
+    // SAFETY: 우리가 띄운 자식이 우두머리인 그룹에만 신호를 보낸다.
+    unsafe { libc::killpg(pgid, libc::SIGKILL) };
     let _ = child.wait();
     out
 }

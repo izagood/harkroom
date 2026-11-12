@@ -175,7 +175,11 @@ pub fn list_pi_mcp_tools(
     }
 }
 
+/// 자식을 제 프로세스 그룹 우두머리로 띄우고, 끝낼 때 그룹째 죽인다 — 손자가 stdout 파이프를 쥐고 남아 읽기 스레드가
+/// 끝나지 않는 일을 막는다(security B3c 낮음 「pi mcp list join 시한」). 읽기 결과도 시한 안에서만 기다린다.
 fn run_capped(command: &Path, args: &[String], env: &Env, cwd: &Path) -> io::Result<String> {
+    use std::os::unix::process::CommandExt as _;
+    use std::sync::mpsc;
     let mut child = Command::new(command)
         .args(args)
         .env_clear()
@@ -184,14 +188,21 @@ fn run_capped(command: &Path, args: &[String], env: &Env, cwd: &Path) -> io::Res
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
+        .process_group(0)
         .spawn()?;
+    let pgid = child.id() as libc::pid_t;
+    let kill_group = || {
+        // SAFETY: 우리가 띄운 자식이 우두머리인 그룹에만 신호를 보낸다.
+        unsafe { libc::killpg(pgid, libc::SIGKILL) };
+    };
     let mut stdout = child.stdout.take().expect("piped");
-    let reader = std::thread::spawn(move || {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
         let mut buf = Vec::new();
         let r = (&mut stdout)
             .take(MCP_LIST_MAX_BYTES as u64 + 1)
             .read_to_end(&mut buf);
-        r.map(|_| buf)
+        let _ = tx.send(r.map(|_| buf));
     });
     let deadline = Instant::now() + MCP_LIST_TIMEOUT;
     let status = loop {
@@ -199,15 +210,23 @@ fn run_capped(command: &Path, args: &[String], env: &Env, cwd: &Path) -> io::Res
             break s;
         }
         if Instant::now() >= deadline {
-            let _ = child.kill();
+            kill_group();
             let _ = child.wait();
             return Err(io::Error::new(io::ErrorKind::TimedOut, "시한을 넘었다"));
         }
         std::thread::sleep(Duration::from_millis(20));
     };
-    let buf = reader
-        .join()
-        .map_err(|_| io::Error::other("읽기 스레드가 죽었다"))??;
+    // 자식은 끝났다. 남은 손자가 파이프를 쥐었을 수 있으니 그룹을 걷고, 읽기 결과는 짧게만 기다린다.
+    kill_group();
+    let buf = match rx.recv_timeout(READER_GRACE) {
+        Ok(r) => r?,
+        Err(_) => {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "출력 읽기가 끝나지 않았다",
+            ));
+        }
+    };
     if buf.len() > MCP_LIST_MAX_BYTES {
         return Err(io::Error::other("출력이 상한을 넘었다"));
     }
@@ -216,6 +235,9 @@ fn run_capped(command: &Path, args: &[String], env: &Env, cwd: &Path) -> io::Res
     }
     Ok(String::from_utf8_lossy(&buf).into_owned())
 }
+
+/// 자식이 끝난 뒤 읽기 스레드를 기다리는 상한.
+const READER_GRACE: Duration = Duration::from_secs(2);
 
 /// `ensure_pi_home` 의 실패. `Display` 는 채팅으로 갈 수 있는 문구라 **로컬 경로를 싣지 않는다** — 경로는 `local_detail()`.
 #[derive(Debug)]
