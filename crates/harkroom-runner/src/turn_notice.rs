@@ -231,7 +231,8 @@ pub fn permission_denial_notice(
         };
         lines.push(format!(
             "- {} — `{}`",
-            guarded_line(&d.reason, pat, 120, secrets),
+            // 이유는 코드 스팬 밖이라 `@누구` 가 실제 멘션이 된다 — 전각 `＠` 로 바꿔 멘션 꼴을 깬다(security #1992 낮음).
+            guarded_line(&d.reason, pat, 120, secrets).replace('@', "＠"),
             guarded_line(&what, pat, NOTICE_LINE_MAX_CHARS, secrets)
         ));
     }

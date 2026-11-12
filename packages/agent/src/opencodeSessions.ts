@@ -27,6 +27,13 @@ const run = promisify(execFile);
 /** 파일 시각의 반올림·클럭 오차를 감안한 여유. `codexSessions.ts` 와 같은 값이다. */
 const TIME_TOLERANCE_MS = 2000;
 
+/**
+ * opencode 세션 id 꼴(`ses_` + 영숫자·밑줄, 128자까지). `export <id>` 의 argv 에 들어가므로 이 꼴이 아니면 묻지 않는다 —
+ * `-` 로 시작하는 값은 opencode 가 플래그로 읽는다(security #1991 낮음). id 는 같은 기기 opencode 의 목록에서 오지만 argv
+ * 앞에서 한 번 더 본다.
+ */
+export const OPENCODE_SESSION_ID_RE = /^ses_[A-Za-z0-9_]{1,124}$/;
+
 interface SessionRow { id: string; created?: number; updated?: number; directory?: string }
 
 /**

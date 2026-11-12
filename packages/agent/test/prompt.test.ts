@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PLAN_LIMITS } from '@harkroom/shared/planGraph';
 import { mentionedHandles } from '@harkroom/shared';
-import { YOUR_TASK_TAIL, TURN_CORE_LINES, turnClockLine, BODY_LIMIT, DELTA_MAX_MESSAGES, fitDelta, mergeThreadPages, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, quotedLine, proxyAnswerBody, proxyRecordAnswerBody, looksLikeAnswer, PROXY_ANSWER_MAX_CHARS, AGENT_CALL_NO_ANSWER, stallNotice, stallRetryable, stallScreenErrorLine, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, macPermissionNotice, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, wakeReportTo, wakeWatch, wakeOrigin, hasOwnReportSince, type MemoryContext, DELEGATION_FOLLOWUP_NOTE, DELEGATION_UPDATE_NOTE } from '../src/prompt.js';
+import { YOUR_TASK_TAIL, TURN_CORE_LINES, turnClockLine, BODY_LIMIT, DELTA_MAX_MESSAGES, fitDelta, mergeThreadPages, buildSystemPrompt, harnessTailNotice, silentTurnNotice, silentWakeNotice, quotedLine, proxyAnswerBody, proxyRecordAnswerBody, looksLikeAnswer, PROXY_ANSWER_MAX_CHARS, AGENT_CALL_NO_ANSWER, stallNotice, stallRetryable, stallScreenErrorLine, buildTurnPrompt, countOwnPostsSince, harnessLoginNotice, hasOwnPostSince, hasOwnWakeSince, macPermissionNotice, permissionDenialNotice, offAnchorNotice, offAnchorPosts, quotaNotice, sessionConflictNotice, wakeReportTo, wakeWatch, wakeOrigin, hasOwnReportSince, type MemoryContext, DELEGATION_FOLLOWUP_NOTE, DELEGATION_UPDATE_NOTE } from '../src/prompt.js';
 
 const msg = (seq: number, authorId: string, body: string, extra: Record<string, unknown> = {}) =>
   ({
@@ -2410,5 +2410,16 @@ describe('지시문 — 보고할 것 없는 예약 턴 (2026-11-04)', () => {
     const prompt = buildSystemPrompt({ handle: 'forge', channelName: 'c', instructions: '', guide: '', memory: { core: '', slugs: [] } });
     expect(prompt).toContain('감시(watch)가 아닌 예약으로 깨어났는데 보고할 것이 없으면');
     expect(prompt).toContain('그 이유를 마지막 말에 적고 끝낸다.');
+  });
+});
+
+// security #1992 낮음: 거부 통지의 이유 칸은 코드 스팬 밖이다 — `@handle` 이 섞여도 멘션 꼴이 아니어야 한다.
+describe('permissionDenialNotice 이유 칸', () => {
+  it('이유에 @x 가 있어도 스팬 밖에는 멘션 꼴이 없다', () => {
+    const got = permissionDenialNotice([{ tool: 'Bash', input: 'ls', reason: 'ask @task_manager and @jaebin first' }], '');
+    const line = got.split('\n')[1]!;
+    const outside = line.split('`')[0]!;
+    expect(outside).not.toContain('@');
+    expect(outside).toContain('＠task_manager');
   });
 });

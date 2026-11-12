@@ -344,3 +344,17 @@ fn nudge_wanted_by_caller_and_answer_shape() {
         Some(&"가".repeat(RECORD_ANSWER_MIN_CHARS - 1))
     ));
 }
+
+/// security #1992 낮음: 이유 칸은 코드 스팬 밖이다 — `@handle` 이 섞여도 멘션 꼴(`@` + 이름)이 아니어야 한다.
+#[test]
+fn denial_reason_mention_is_defused() {
+    let got = permission_denial_notice(
+        &[denial("Bash", "ls", "ask @task_manager and @jaebin first")],
+        "",
+        &[],
+    );
+    let reason_line = got.lines().nth(1).unwrap();
+    let outside_span = reason_line.split('`').next().unwrap();
+    assert!(!outside_span.contains('@'), "{reason_line}");
+    assert!(outside_span.contains("＠task_manager"), "{reason_line}");
+}
