@@ -70,6 +70,8 @@ export const REVIEW_DISALLOWED_TOOLS = [
   'mcp__harkroom__inbox_poll', 'mcp__harkroom__inbox_read', 'mcp__harkroom__turn_wake',
   'mcp__harkroom__automation_propose', 'mcp__harkroom__automation_run',
   'mcp__harkroom__secret_mount',
+  'mcp__harkroom__permission_request',
+  'mcp__harkroom__grant_delegate',
 ] as const;
 
 export const REVIEW_PROMPT = [
@@ -150,11 +152,19 @@ export function originalPermissionMode(args: readonly string[]): string | null {
 }
 
 export function reviewForkArgs(turnArgs: readonly string[], sessionId: string, systemPromptCopy: string | null): string[] {
-  const drop = new Set(['--session-id', '-r', '--resume', '--permission-mode']);
+  // 원 턴의 허락·금지 목록(가변 인자)·hook 설정(`--settings`)은 버리고 포크 목록만 싣는다 — 남기면 원 턴의 허락이 dontAsk 포크에 열린다.
+  const drop = new Set(['--session-id', '-r', '--resume', '--permission-mode', '--settings']);
+  const dropVariadic = new Set(['--allowedTools', '--allowed-tools', '--disallowedTools', '--disallowed-tools', '--tools']);
+  const eqForm = (a: string) => [...drop, ...dropVariadic].some((f) => a.startsWith(`${f}=`));
   const kept: string[] = [];
   for (let i = 0; i < turnArgs.length; i++) {
     const a = turnArgs[i]!;
     if (drop.has(a)) { i++; continue; }
+    if (dropVariadic.has(a)) {
+      while (i + 1 < turnArgs.length && !turnArgs[i + 1]!.startsWith('-')) i++;
+      continue;
+    }
+    if (eqForm(a)) continue;
     if (a === '--append-system-prompt-file' && systemPromptCopy) {
       kept.push(a, systemPromptCopy); i++; continue;
     }
