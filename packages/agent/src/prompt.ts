@@ -2639,10 +2639,13 @@ export function delegationLeftOpen(
 /** 넘겨받은 일을 끝 보고 없이 끝낸 턴에 러너가 올리는 실패 줄. */
 export const DELEGATION_REPORT_MISSED_NOTICE = '넘겨받은 일을 끝 보고(`message.report`) 없이 끝냈습니다 — 앞 글에 결과가 있으면 그것을 보고, 필요하면 다시 넘기세요.';
 
-export function watchMissedNotice(reason: string): string {
+export function watchMissedNotice(reason: string, pat = '', secrets: readonly string[] = []): string {
+  // 이 글은 `message.fail` 본문으로 다시 올라가 서버가 멘션을 새로 판정한다 — 사유를 가리고(PAT·마운트한 비밀·토큰,
+  // 한 줄·길이) `@` 를 전각 `＠` 로 바꾼다(#2008 security 낮음, reportMissedNotice 와 같은 규칙).
+  const why = reason ? ` (사유: ${oneLine(reason, pat, undefined, secrets).replace(/@/g, '＠')})` : '';
   return [
     '감시 예약으로 깨어난 턴이 다음 예약도 끝 보고도 없이 끝났다 — 감시가 여기서 멈췄다.',
-    `이어서 볼 거면 다시 부르거나 예약을 걸어라${reason ? ` (사유: ${reason})` : ''}.`,
+    `이어서 볼 거면 다시 부르거나 예약을 걸어라${why}.`,
   ].join('\n');
 }
 

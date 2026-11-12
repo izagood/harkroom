@@ -3311,7 +3311,7 @@ export async function runMentionTurn(
     if (target.wake?.watch && !hasOwnWakeSince(after, deps.me.id, turnStartSeq, turnId)
       && !hasOwnReportSince(after, deps.me.id, turnStartSeq, turnId)) {
       console.log(`[mentionTurn] ${key}: 감시 예약으로 깨어난 턴이 다음 예약도 끝 보고도 없이 끝났다 — 실패 줄을 남긴다`);
-      await deps.harkroom.fail(channelId, watchMissedNotice(target.wake.reason).slice(0, BODY_LIMIT), anchor, {
+      await deps.harkroom.fail(channelId, watchMissedNotice(target.wake.reason, deps.runnerSecret, await tailSecrets()).slice(0, BODY_LIMIT), anchor, {
         retryable: false,
         what: '감시 예약으로 깨어난 턴이 다음 예약 없이 끝났다',
       });

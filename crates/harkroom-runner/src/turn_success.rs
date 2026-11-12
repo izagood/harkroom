@@ -3,7 +3,7 @@
 //! 여기는 **고르기만** 한다. 실제 글·반응·실패 줄은 턴 연결(TurnAttempt)이 기존 문구 함수(`silent_turn_notice`·
 //! `background_cut_notice`·`silent_wake_notice`·`report_promise_check`)로 만든다 — 결과 글에 싣는 말은 그 함수들이
 //! 이미 `quoted_line`·`*_notice` 로 가린다. 이 모듈이 새로 만드는 문구는 고정 문장 둘뿐이고 그중 하나(`watch_missed_notice`)는
-//! 이미 대기 줄로 보이던 예약 사유를 그대로 싣는다.
+//! 예약 사유를 가리고 `@` 를 `＠` 로 바꿔 싣는다(#2008 security 낮음).
 //!
 //! 정본 순서(서로 배타인 앞 갈래 하나 + 독립 검사 셋):
 //! 1. 침묵 갈래 — 배경 끊김 → (발화 0 · 내 예약 없음) 침묵 통지 → (발화 0 · 예약 턴) 예약 시각 깸이면 ✅, 아니면 progress 한 줄.
@@ -12,6 +12,8 @@
 //! 4. 위임 끝 보고 누락 — 넘겨받은 일에 글은 썼는데 끝 보고·실패·물음·예약 없이 끝났으면 실패 줄(재시도 가능).
 
 use serde_json::Value;
+
+use crate::turn_notice::{NOTICE_LINE_MAX_CHARS, one_line};
 
 use crate::turn_posts::{
     TurnOwnership, count_own_posts_since, has_own_wake_since, owned_by_turn, seq,
@@ -71,13 +73,17 @@ pub fn delegation_left_open(
         .any(|m| meta_kind(m).is_some_and(|k| DELEGATION_CLOSING_KINDS.contains(&k)))
 }
 
-/// 정본 `watchMissedNotice` — 감시 예약으로 깬 턴이 다음 예약도 끝 보고도 없이 끝났을 때의 실패 줄. 사유는 이미 대기 줄로
-/// 보이던 말이라 새로 드러나는 것이 없다.
-pub fn watch_missed_notice(reason: &str) -> String {
+/// 정본 `watchMissedNotice` — 감시 예약으로 깬 턴이 다음 예약도 끝 보고도 없이 끝났을 때의 실패 줄. 이 글은 `message.fail`
+/// 본문으로 다시 올라가 서버가 멘션을 새로 판정하므로, 사유를 [`one_line`](PAT·마운트한 비밀·토큰 가림, 한 줄·길이)에
+/// 거친 뒤 `@` 를 전각 `＠` 로 바꾼다(#2008 security 낮음, #2006 `report_missed_notice` 와 같은 규칙).
+pub fn watch_missed_notice(reason: &str, pat: &str, secrets: &[String]) -> String {
     let tail = if reason.is_empty() {
         String::new()
     } else {
-        format!(" (사유: {reason})")
+        format!(
+            " (사유: {})",
+            one_line(reason, pat, NOTICE_LINE_MAX_CHARS, secrets).replace('@', "＠")
+        )
     };
     format!(
         "감시 예약으로 깨어난 턴이 다음 예약도 끝 보고도 없이 끝났다 — 감시가 여기서 멈췄다.\n이어서 볼 거면 다시 부르거나 예약을 걸어라{tail}."

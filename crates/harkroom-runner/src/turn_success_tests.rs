@@ -89,10 +89,10 @@ fn delegation_open_until_report_failure_ask_or_wake() {
 #[test]
 fn watch_missed_notice_carries_reason_only_when_given() {
     assert_eq!(
-        watch_missed_notice("CI 확인"),
+        watch_missed_notice("CI 확인", "", &[]),
         "감시 예약으로 깨어난 턴이 다음 예약도 끝 보고도 없이 끝났다 — 감시가 여기서 멈췄다.\n이어서 볼 거면 다시 부르거나 예약을 걸어라 (사유: CI 확인)."
     );
-    assert!(watch_missed_notice("").ends_with("예약을 걸어라."));
+    assert!(watch_missed_notice("", "", &[]).ends_with("예약을 걸어라."));
 }
 
 #[test]
@@ -195,4 +195,20 @@ fn delegation_report_missed_only_with_posts_left_open() {
     assert_eq!(silent.silent, SilentPath::SilentTurn);
     assert!(!silent.delegation_report_missed);
     assert!(!plan(&[reply(11)], None, SuccessTarget::default()).delegation_report_missed);
+}
+
+/// #2008 security 낮음: 감시 끊김 줄의 사유는 가리고, 사유의 `@x` 는 멘션 꼴이 아니다(전각 ＠).
+#[test]
+fn watch_missed_reason_is_masked_and_mentions_defused() {
+    let secret = "MOUNTEDsecretVALUE0123456789".to_string();
+    let pat = "hrkp_runnerpat_abcdefghijklmnop";
+    let n = watch_missed_notice(
+        &format!("@task_manager 에게 5분마다 {pat} {secret}\n둘째 줄"),
+        pat,
+        std::slice::from_ref(&secret),
+    );
+    assert!(!n.contains('@'), "{n}");
+    assert!(n.contains("＠task_manager"), "{n}");
+    assert!(!n.contains(pat) && !n.contains(&secret), "{n}");
+    assert_eq!(n.lines().count(), 2, "사유는 한 줄로");
 }
