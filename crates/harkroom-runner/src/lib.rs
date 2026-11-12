@@ -73,6 +73,7 @@ pub mod turn_command;
 pub mod turn_end;
 pub mod turn_env;
 pub mod turn_env_plan;
+pub mod turn_failure;
 pub mod turn_files;
 pub mod turn_gate;
 pub mod turn_io;
