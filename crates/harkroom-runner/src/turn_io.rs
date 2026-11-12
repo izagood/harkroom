@@ -149,12 +149,13 @@ pub struct TurnIo<P: TurnPoster> {
     /// 관문 원장. 풀의 마지막 계정이 아니면 `None`(사람을 부르지 않는다).
     pub ledger: Option<Arc<Mutex<AttentionLedger>>>,
     pub poster: P,
-    /// PTY 에 SIGTERM(정본 `controls.terminate`).
-    pub terminate: Box<dyn FnMut() + Send>,
+    /// PTY 에 SIGTERM(정본 `controls.terminate`). 회수 타이머 스레드도 부르므로 공유한다.
+    pub terminate: Arc<dyn Fn() + Send + Sync>,
     /// 턴 시작 관문 표식(정본 `deps.markAccountGate`). 계정 풀이 없으면 `None`.
     pub mark_gate: Option<Box<dyn FnMut() + Send>>,
     /// 관문 감시 주기를 거는 일(정본 `deps.accountGateCleared` 가 있을 때). 없으면 감시하지 않는다.
-    pub arm_gate: Option<Box<dyn FnMut() -> Timer + Send>>,
+    /// 인자는 [`TurnIo::ended`] — 감시 콜백은 매 주기 이것을 다시 보고, 서 있으면 아무것도 하지 않는다.
+    pub arm_gate: Option<Box<dyn FnMut(Arc<AtomicBool>) -> Timer + Send>>,
     /// lane env 를 놓는다(정본 `providerEnvDone`). 한 번만 돈다.
     pub provider_done: Option<Box<dyn FnOnce() + Send>>,
     pub probe: Option<Timer>,
@@ -163,11 +164,37 @@ pub struct TurnIo<P: TurnPoster> {
     pub gate_watch: Option<Timer>,
     /// 펜스 잃음을 듣고 있다 — 탐침 주기가 이것을 보고 임대를 묻는다.
     pub fence_listening: Arc<AtomicBool>,
+    /// 턴이 끝났다(settle 이 타이머를 끄기 **시작**한 순간 선다). 타이머는 끈 직후에도 한 번 깨어날 수 있으므로
+    /// (`wait_or_stop` 과 콜백 사이) 회수·감시 콜백은 이것을 다시 보고, 서 있으면 아무것도 하지 않는다(security #1999 낮음).
+    pub ended: Arc<AtomicBool>,
     pub log_prefix: String,
     pub log: Box<dyn FnMut(&str) + Send>,
 }
 
+/// 회수 타이머 콜백 — 턴이 이미 끝났으면 SIGTERM 을 보내지 않는다.
+pub fn reclaim_fire(ended: &AtomicBool, terminate: &(dyn Fn() + Send + Sync)) {
+    if !ended.load(Ordering::SeqCst) {
+        terminate();
+    }
+}
+
 impl<P: TurnPoster> TurnIo<P> {
+    /// 회수 유예 뒤 SIGTERM 을 보내는 타이머를 건다(정본 `reclaimTimer`). 이미 걸려 있으면 그대로 둔다.
+    pub fn arm_reclaim(&mut self, delay: Duration) {
+        if self.reclaim_timer.is_some() || self.ended.load(Ordering::SeqCst) {
+            return;
+        }
+        let ended = self.ended.clone();
+        let terminate = self.terminate.clone();
+        self.reclaim_timer = Some(Timer::after(delay, move || {
+            reclaim_fire(&ended, terminate.as_ref())
+        }));
+    }
+
+    fn mark_ended(&self) {
+        self.ended.store(true, Ordering::SeqCst);
+    }
+
     fn line(&mut self, s: &str) {
         let msg = format!("{}{s}", self.log_prefix);
         (self.log)(&msg);
@@ -195,16 +222,20 @@ impl<P: TurnPoster> LifeIo for TurnIo<P> {
         self.fence_listening.store(false, Ordering::SeqCst);
     }
     fn reclaim(&mut self, end: &mut EndState) {
-        if end.reclaim() {
+        if end.reclaim() && !self.ended.load(Ordering::SeqCst) {
             (self.terminate)();
         }
     }
     fn cancel_probe(&mut self) {
+        // settle 은 타이머 끄기를 여기서 시작한다(탐침은 settle 에서만 끈다) — 끄기 **전에** 표지를 세워, 이미 깨어난
+        // 회수·감시 콜백도 멈추게 한다.
+        self.mark_ended();
         if let Some(t) = self.probe.take() {
             t.cancel();
         }
     }
     fn cancel_reclaim(&mut self) {
+        // 표지는 세우지 않는다 — 회수 타이머는 사람이 붙으면 턴 도중에도 끈다(정본 `cancelReclaim`).
         if let Some(t) = self.reclaim_timer.take() {
             t.cancel();
         }
@@ -277,8 +308,12 @@ impl<P: TurnPoster> GateIo for TurnIo<P> {
         if self.gate_watch.is_some() {
             return;
         }
+        if self.ended.load(Ordering::SeqCst) {
+            return;
+        }
+        let ended = self.ended.clone();
         if let Some(arm) = self.arm_gate.as_mut() {
-            self.gate_watch = Some(arm());
+            self.gate_watch = Some(arm(ended));
         }
     }
     fn needs_attention(&mut self, screen: &str, ranks: GateRanks) {
