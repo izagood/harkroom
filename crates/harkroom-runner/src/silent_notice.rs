@@ -123,6 +123,15 @@ fn fit_quoted_lines(lines: &[String], room: i64) -> String {
     keep_head_units(&fitted, room).to_owned()
 }
 
+/// 통째 가림 뒤에도 비밀·PAT 의 12자 조각이 남았는지 — 대리 글 두 갈래가 같은 바늘을 쓴다.
+fn has_secret_fragment(text: &str, pat: &str, secrets: &[String]) -> bool {
+    let mut needles: Vec<String> = secrets.to_vec();
+    if !pat.is_empty() {
+        needles.push(pat.to_owned());
+    }
+    !needles.is_empty() && tail_has_secret_fragment(&mask_whole(text, &needles), &needles)
+}
+
 /// 정본 `proxyAnswerBody` — 화면의 답을 대신 올리는 글. 없거나 가림에 걸리면 빈 문자열.
 pub fn proxy_answer_body(
     screen_answer: Option<&str>,
@@ -133,11 +142,7 @@ pub fn proxy_answer_body(
     let Some(screen) = screen_answer else {
         return String::new();
     };
-    let mut needles: Vec<String> = secrets.to_vec();
-    if !pat.is_empty() {
-        needles.push(pat.to_owned());
-    }
-    if !needles.is_empty() && tail_has_secret_fragment(&mask_whole(screen, &needles), &needles) {
+    if has_secret_fragment(screen, pat, secrets) {
         return String::new();
     }
     let lines: Vec<String> = screen
@@ -160,7 +165,8 @@ pub fn proxy_record_answer_body(
     secrets: &[String],
     reserve: usize,
 ) -> String {
-    if !secrets.is_empty() && tail_has_secret_fragment(&mask_whole(text, secrets), secrets) {
+    // 정본은 마운트한 비밀만 조각 검사하지만, 화면 답과 같이 PAT 도 넣는다(security #2004 낮음 1).
+    if has_secret_fragment(text, pat, secrets) {
         return String::new();
     }
     let mut t = mask_whole(text, secrets);

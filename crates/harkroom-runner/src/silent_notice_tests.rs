@@ -166,6 +166,16 @@ fn secret_fragment_withholds_proxy() {
         ),
         ""
     );
+    // PAT 조각 — 기록 끝말도 화면 답과 같이 접는다.
+    assert_eq!(
+        proxy_record_answer_body(
+            "끝말 hrkp_0123456789\nabcdef",
+            "hrkp_0123456789abcdef",
+            &[],
+            0
+        ),
+        ""
+    );
 }
 
 #[test]
