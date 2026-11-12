@@ -3,9 +3,9 @@
 //! TS 와 같이 `buildTurnCommand` 는 하네스 이름을 보지 않고 표만 부른다. 이 파일은 **조각**만 낸다 —
 //! 조립(순서·세션 검사)은 B3d-2b `turn_command` 몫이다.
 //!
-//! 진행: claude·codex·opencode/kilo·pi·omp 조각(codex lane 덮어쓰기·추가 MCP 조각은 B3d-4). 세션 판정·chrome 헬퍼는 다음 커밋.
+//! 진행: claude·codex·opencode/kilo·pi·omp 조각(codex lane 덮어쓰기·추가 MCP 조각은 B3d-4). 세션 판정·hook 붙음 판정·계약 검사·chrome 헬퍼는 표 아래 「판정 헬퍼」 절.
 
-use crate::adapter::MentionPermission;
+use crate::adapter::{AgentHarness, MentionPermission};
 use crate::turn_rules::{
     self, GRANT_DELEGATE_TOOL, LANE_BASE_ALLOW, LANE_DENY, MENTION_DENY_TOOLS, MERGE_DENY_RULES,
     PERMISSION_REQUEST_TOOL, POST_TOOLS, READONLY_RULES, SETTINGS_SELF_EDIT_DENY_RULES,
@@ -422,6 +422,251 @@ pub mod omp {
         system_prompt_file: Option<&str>,
     ) -> Result<Vec<String>, TurnPresetError> {
         pi_family_prompt(system_prompt, system_prompt_file)
+    }
+}
+
+// ---- 판정 헬퍼(TS `turn.ts` 863~1018) — 하네스 이름을 비교하지 않고 표(아래 `preset_of`)만 본다. ----
+
+/// TS `PRESETS` 의 칸 — 러너가 아직 지원하지 않는 하네스는 `None`(`'unsupported'`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PresetInfo {
+    pub allows_null_session_on_first_turn: bool,
+    /// `permissionRules` 가 있는 프리셋(지금은 claude 뿐).
+    pub has_permission_rules: bool,
+}
+
+/// TS `RUNNABLE_HARNESSES`(`@harkroom/shared`).
+pub const RUNNABLE_HARNESSES: [AgentHarness; 6] = [
+    AgentHarness::ClaudeCode,
+    AgentHarness::Codex,
+    AgentHarness::Opencode,
+    AgentHarness::Kilo,
+    AgentHarness::Pi,
+    AgentHarness::Omp,
+];
+
+pub fn preset_of(h: AgentHarness) -> Option<PresetInfo> {
+    let (null_ok, rules) = match h {
+        AgentHarness::ClaudeCode => (claude::ALLOWS_NULL_SESSION_ON_FIRST_TURN, true),
+        AgentHarness::Codex => (codex::ALLOWS_NULL_SESSION_ON_FIRST_TURN, false),
+        AgentHarness::Opencode | AgentHarness::Kilo => {
+            (opencode::ALLOWS_NULL_SESSION_ON_FIRST_TURN, false)
+        }
+        AgentHarness::Pi => (pi::ALLOWS_NULL_SESSION_ON_FIRST_TURN, false),
+        AgentHarness::Omp => (omp::ALLOWS_NULL_SESSION_ON_FIRST_TURN, false),
+        AgentHarness::Gemini => return None,
+    };
+    Some(PresetInfo {
+        allows_null_session_on_first_turn: null_ok,
+        has_permission_rules: rules,
+    })
+}
+
+/// 판정 헬퍼의 거절. 하네스·모드 이름만 싣는다(값·경로 없음).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PresetCheckError {
+    Unsupported(AgentHarness),
+    NullSession {
+        harness: AgentHarness,
+        mode: TurnMode,
+        is_first_turn: bool,
+    },
+    Contract(AgentHarness),
+}
+
+impl std::fmt::Display for PresetCheckError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unsupported(h) => {
+                write!(f, "harness '{}' 는 러너가 아직 지원하지 않는다", h.as_str())
+            }
+            Self::NullSession {
+                harness,
+                mode,
+                is_first_turn,
+            } => write!(
+                f,
+                "buildTurnCommand: sessionId 가 null 이다 (harness={}, mode={}, isFirstTurn={is_first_turn}) — 이 harness/모드 조합에서는 호출자가 세션 id 를 먼저 확보했어야 한다",
+                harness.as_str(),
+                match mode {
+                    TurnMode::Mention => "mention",
+                    TurnMode::Interactive => "interactive",
+                }
+            ),
+            Self::Contract(h) => write!(
+                f,
+                "harness 계약 불일치: RUNNABLE_HARNESSES 에 '{}' 이(가) 있지만 PRESETS 에는 구현이 없다",
+                h.as_str()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for PresetCheckError {}
+
+/// TS `assertValidSession` — 세션 id 가 없어도 되는 것은 「`allowsNullSessionOnFirstTurn` 인 하네스의 첫 턴」뿐이다.
+pub fn assert_valid_session(
+    harness: AgentHarness,
+    mode: TurnMode,
+    session_id: Option<&str>,
+    is_first_turn: bool,
+) -> Result<(), PresetCheckError> {
+    let p = preset_of(harness).ok_or(PresetCheckError::Unsupported(harness))?;
+    if session_id.is_some() || (p.allows_null_session_on_first_turn && is_first_turn) {
+        return Ok(());
+    }
+    Err(PresetCheckError::NullSession {
+        harness,
+        mode,
+        is_first_turn,
+    })
+}
+
+/// TS `preassignsSessionId` — 새 세션 기록을 만들 때 러너가 id 를 미리 발급해야 하는 하네스인가.
+pub fn preassigns_session_id(harness: AgentHarness) -> Result<bool, PresetCheckError> {
+    preset_of(harness)
+        .map(|p| !p.allows_null_session_on_first_turn)
+        .ok_or(PresetCheckError::Unsupported(harness))
+}
+
+/// 가짜 오퍼레이터 경로로 그 프리셋의 멘션 권한 조각을 만들어 본다(TS 는 `operatorBin: '/x'`).
+fn probe_rules(harness: AgentHarness, p: MentionPermission, a: &RuleArgs<'_>) -> Vec<String> {
+    match preset_of(harness) {
+        Some(info) if info.has_permission_rules => {
+            claude::permission_rules(TurnMode::Mention, p, a).unwrap_or_default()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// TS `attachesPostToolHook` — 이 턴에 턴 도중 새 글 hook(PostToolUse)이 실제로 붙는가.
+pub fn attaches_post_tool_hook(harness: AgentHarness, p: MentionPermission) -> bool {
+    let a = RuleArgs {
+        operator_bin: "/x",
+        post_tool_since_seq: Some(0),
+        ..Default::default()
+    };
+    let args = probe_rules(harness, p, &a);
+    args.iter()
+        .position(|x| x == "--settings")
+        .and_then(|i| args.get(i + 1))
+        .is_some_and(|s| s.contains("PostToolUse"))
+}
+
+/// TS `attachesCommandHook` — 이 턴에 「정확한 명령」 hook 이 실제로 붙는가.
+pub fn attaches_command_hook(
+    harness: AgentHarness,
+    p: MentionPermission,
+    command_hook: bool,
+) -> bool {
+    if !command_hook {
+        return false;
+    }
+    let a = RuleArgs {
+        operator_bin: "/x",
+        command_hook: true,
+        ..Default::default()
+    };
+    probe_rules(harness, p, &a)
+        .iter()
+        .any(|x| x == "--settings")
+}
+
+/// TS `assertHarnessContract` — 실행 목록의 모든 하네스가 표에 구현돼 있는가. 반대 방향은 보지 않는다.
+pub fn assert_harness_contract(runnable: &[AgentHarness]) -> Result<(), PresetCheckError> {
+    match runnable.iter().find(|h| preset_of(**h).is_none()) {
+        Some(h) => Err(PresetCheckError::Contract(*h)),
+        None => Ok(()),
+    }
+}
+
+/// TS `chromeTurnFor` — 소유자가 켰고(`chrome_enabled`) 이 머신이 열 수 있을 때(`chrome_host`)만. 읽기 전용은 늘 닫는다.
+pub fn chrome_turn_for(
+    chrome_enabled: Option<bool>,
+    mention_permission: Option<MentionPermission>,
+    chrome_host: Option<bool>,
+) -> bool {
+    if mention_permission == Some(MentionPermission::Readonly) {
+        return false;
+    }
+    chrome_enabled == Some(true) && chrome_host == Some(true)
+}
+
+#[cfg(test)]
+mod helper_tests {
+    use super::*;
+    use AgentHarness::*;
+
+    #[test]
+    fn session_rules_follow_table() {
+        // claude·pi·omp 는 id 가 늘 있어야 하고, codex·opencode·kilo 는 첫 턴만 비어도 된다.
+        for h in [ClaudeCode, Pi, Omp] {
+            assert!(assert_valid_session(h, TurnMode::Mention, None, true).is_err());
+            assert!(preassigns_session_id(h).unwrap());
+        }
+        for h in [Codex, Opencode, Kilo] {
+            assert!(assert_valid_session(h, TurnMode::Interactive, None, true).is_ok());
+            assert!(assert_valid_session(h, TurnMode::Mention, None, false).is_err());
+            assert!(!preassigns_session_id(h).unwrap());
+        }
+        assert!(assert_valid_session(ClaudeCode, TurnMode::Mention, Some("s"), false).is_ok());
+        assert_eq!(
+            preassigns_session_id(Gemini),
+            Err(PresetCheckError::Unsupported(Gemini))
+        );
+        let e = assert_valid_session(ClaudeCode, TurnMode::Mention, None, false).unwrap_err();
+        assert!(
+            e.to_string()
+                .contains("harness=claude-code, mode=mention, isFirstTurn=false")
+        );
+    }
+
+    #[test]
+    fn hook_attachment_is_asked_of_the_preset() {
+        assert!(attaches_post_tool_hook(ClaudeCode, MentionPermission::Auto));
+        assert!(!attaches_post_tool_hook(
+            ClaudeCode,
+            MentionPermission::Readonly
+        ));
+        assert!(!attaches_post_tool_hook(Codex, MentionPermission::Auto));
+        assert!(attaches_command_hook(
+            ClaudeCode,
+            MentionPermission::Auto,
+            true
+        ));
+        assert!(!attaches_command_hook(
+            ClaudeCode,
+            MentionPermission::Auto,
+            false
+        ));
+        assert!(!attaches_command_hook(
+            ClaudeCode,
+            MentionPermission::Readonly,
+            true
+        ));
+        assert!(!attaches_command_hook(Pi, MentionPermission::Auto, true));
+    }
+
+    #[test]
+    fn contract_and_chrome() {
+        assert!(assert_harness_contract(&RUNNABLE_HARNESSES).is_ok());
+        assert_eq!(
+            assert_harness_contract(&[Codex, Gemini]),
+            Err(PresetCheckError::Contract(Gemini))
+        );
+        assert!(chrome_turn_for(
+            Some(true),
+            Some(MentionPermission::Auto),
+            Some(true)
+        ));
+        assert!(chrome_turn_for(Some(true), None, Some(true)));
+        assert!(!chrome_turn_for(
+            Some(true),
+            Some(MentionPermission::Readonly),
+            Some(true)
+        ));
+        assert!(!chrome_turn_for(None, None, Some(true)));
+        assert!(!chrome_turn_for(Some(true), None, None));
     }
 }
 
