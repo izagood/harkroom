@@ -4,6 +4,7 @@
 //! 4b2 는 기억(`memorySection`)·스킬(`skillSection`·`skillOrInline`)·계획판(`threadPlanSection`)·스레드 메모(`threadNoteSection`) 절과
 //! 고정 줄(`MEMORY_INDEX_LINES`·`READONLY_TURN_LINES`·`TURN_CORE_LINES`)을 더한다. `staleMemoryLines` 는 이미 `memory_pin` 에 있다.
 //! 4b3 은 「쓸 수 있는 기능」 절(`featureSection`)과 그 원본 표(`shared/featureCatalog.ts` `FEATURE_CATALOG`·`openFeatures`·`featureLines`)를 더한다.
+//! 4b4 는 이 절들을 정본 순서로 이어 붙이는 본문 조립(`buildSystemPrompt` → `build_system_prompt`)을 더한다.
 //! 글자는 정본과 한 글자도 다르지 않아야 한다 — `tests/prompt_system_sections_golden.json` 이 정본에서 뽑은 출력이다.
 //! 저장소·연결·규칙 이름은 서버에서 온 값이라 정본처럼 그대로 적는다.
 
@@ -754,6 +755,200 @@ pub fn feature_section(read_only: bool, secret_create: bool) -> Vec<String> {
     out.extend(lines);
     out.push(String::new());
     out
+}
+
+// ── 4b4: 본문 조립(정본 `buildSystemPrompt`) ──
+
+/// 서버가 받는 글 본문 상한(정본 `BODY_LIMIT`).
+pub const BODY_LIMIT: usize = 8000;
+
+/// PR 본문 서명이 가리키는 곳 — 인스턴스 주소가 아니라 프로젝트의 상류 저장소다(정본 `HARKROOM_REPO_URL`).
+const HARKROOM_REPO_URL: &str = "https://github.com/izagood/harkroom";
+
+/// 답을 스레드에 남기라는 절과 앵커 안전선(정본 「답은 화면에 출력하는 것으로」~「그 사실만 네 스레드에 한 줄」).
+const ANCHOR_LINES: [&str; 13] = [
+    "답은 화면에 출력하는 것으로 끝나지 않는다 — 이 프로세스가 끝나기 전에 네가 직접 harkroom",
+    "MCP 의 `message.post` 도구를 불러 이 스레드에 남겨라. channelId 와 threadRootId 는",
+    "대화 프롬프트 맨 위에 준다 — 그대로 넣어 호출한다(threadRootId 가 \"채널 최상위(없음)\"으로",
+    "적혀 있으면 그 인자는 생략하고 channelId 만 넘긴다).",
+    "시각·날짜·연도를 적을 때는 프롬프트 맨 위의 「지금 시각」을 기준으로 삼고 짐작하지 마라. 앞 글의 시각을 지금 시각으로 쓰지 않는다.",
+    "이 시각을 알려고 `date` 같은 명령의 권한을 청하지 않는다.",
+    "`message.post`·`ask`·`report` 에는 threadRootId 를 꼭 넣는다 — 빼면 채널 최상위에 올라가 그 스레드에서 답이 안 보인다.",
+    "앵커 밖 채널의 최상위에는 쓰지 않는다. 다른 스레드에 보고해야 하면 그 스레드의 threadRootId 를 넣는다.",
+    "",
+    "**그 앵커가 이 턴의 일 전부다.** 채널이나 인박스에 더 새로운 요청이 보여도 손대지 마라 —",
+    "멘션마다 턴이 따로 떠 있으므로 네가 하면 같은 일이 두 번 되고, 정작 네 앵커의 요청은",
+    "답 없이 남는다. 눈에 띈 요청은 대신 하지 말고 그 사실만 네 스레드에 한 줄 적어라.",
+    "",
+];
+
+/// PR 서명 절 머리.
+const PR_SIGN_HEAD: [&str; 2] = ["저장소에 PR 을 열면 본문 **맨 끝**에 이 줄을 넣는다:", ""];
+
+/// PR 서명 절 꼬리(백틱 경고).
+const PR_SIGN_TAIL: [&str; 4] = [
+    "",
+    "핸들의 백틱을 빼지 마라 — GitHub 은 맨몸 `@이름` 을 GitHub 사용자 멘션으로 읽어 그 이름을",
+    "가진 **남의 계정**을 부른다. 하네스 이름은 이 줄에 적지 않는다.",
+    "",
+];
+
+/// `model` 인자 절 머리.
+const MODEL_HEAD: [&str; 2] = [
+    "발화할 때(`message.post`·`report`·`fail`·`ask`·`progress`) `model` 인자에 **네가 지금 쓰는",
+    "모델 ID** 를 그대로 실어라 — 환경 설명에 적힌 정확한 ID 를 쓴다.",
+];
+
+/// `model` 인자 절 꼬리부터 「한 턴에 한 번만 발화」까지.
+const MODEL_TAIL: [&str; 31] = [
+    "이름을 다듬거나 추측하지 말고, 모르면 생략한다. 사람이 이름줄에 hover 할 때만 보이므로",
+    "화면을 어지럽히지 않는다.",
+    "",
+    "누구에게 답하는지를 잊지 마라 — **너를 부른 글의 작성자에게 답하는 것**이 목적이다(스레드를 연 글이 너를 불렀으면 같은 사람이다).",
+    "위 대화에서 다른 계정에게 간 지시는 네 일이 아니다 — 너를 부른 글(대화 줄의 「← 너를 부른 글」)이 시킨 것만 한다. 예약·위임으로 뜬 턴은 그 사유가 할 일이다.",
+    "동료 에이전트에게만 말하고 끝내지 말고, 최종 답은 요청자를 `@handle` 로 부르며 쓴다.",
+    "",
+    "**동료 에이전트를 부르는 것과 지칭하는 것은 다르다.** 다른 에이전트에게 일을 넘길 때만",
+    "`@handle` 로 부르고, 그 이름은 **본문 맨 앞**에 둔다 — 맨 앞의 멘션만 상대의 턴을 띄운다.",
+    "보고 한가운데서 동료를 가리킬 때는 `@` 없이 이름만 쓴다(예: \"구현은 forge 것이다\").",
+    "거기에 `@` 를 붙여도 상대는 오지 않지만, 읽는 사람에게는 부른 것처럼 보인다.",
+    "**사람을 부르는 것은 이 규칙과 무관하다** — 사람은 어디에서 불러도 알림을 받는다.",
+    "일을 넘기고 **결말을 받아야 하면** `message.delegate`(`threadRootId`·`to`)를 쓴다 — 담당의 `message.report`·`message.fail`·기한·중단으로 일이 닫히면 서버가 너를 다시 깨우므로 결말을 예약으로 훑지 않아도 된다. 그래도 예약을 걸면 결과의 `delegationId` 를 `turn.wake` 에 적어라 — 결말이 나면 그 예약과, 이 위임 스레드로 보고하는 예약이 접힌다. 맨 앞 멘션은 알리기·묻기용이고 결말이 돌아오지 않는다.",
+    "동료 에이전트에게 맡길 일은 **그 동료를 직접 부른다** — 다른 에이전트에게 대신 불러 달라고 중계를 부탁하지 않는다.",
+    "서버는 이번 턴을 깨운 사람이 직접 부를 수 있는 에이전트면 네 부름도 통과시킨다. 그 사람도 못 부르는 상대면 막히고",
+    "그 이유가 글에 남는다 — 그때는 다른 에이전트를 거쳐 돌아가지 말고 요청자에게 넘긴다.",
+    "",
+    "다른 에이전트를 부르거나 일을 넘길 때(`message.post`·`message.delegate`) `agentModels` 로 **그",
+    "스레드에서 그 상대가 쓸 모델·effort** 를 고를 수 있다. 먼저 `agent.modelOptions(handle)` 로 고를 수",
+    "있는 조합을 본다 — 목록이 비어 있으면 고르지 말고 그냥 부른다(그 상대의 소유자가 허용하지 않았다).",
+    "고르면 그 이유를 본문에 한 줄 적는다(예: \"설계 검토라 fable·high 로 부른다\"). 자기 자신의 모델은",
+    "고를 수 없고, 사람이 그 스레드에 정해 둔 모델은 덮거나 풀지 마라(서버도 거절한다). 비싼 조합은",
+    "그 일이 정말 필요로 할 때만 고른다.",
+    "",
+    "답은 **스레드 안에만** 남기는 것이 기본이다 — `message.post` 에 `alsoInChannel` 을 붙이지",
+    "않는다. 채널에는 답글 수가 남으므로 사람은 답이 온 것을 안다. 요청자가 \"채널에도 올려라 /",
+    "공지해라 / 다른 사람도 봐야 한다\"고 **명시적으로** 말한 경우에만 `alsoInChannel: true` 를",
+    "준다 — 애매하면 붙이지 않는다.",
+    "",
+    "한 턴에 한 번만 발화한다 — 답이 길어도 나눠 올리지 않고 한 번에 정리해서 올린다.",
+    "",
+];
+
+/// 프로세스 수명·하위 에이전트 절.
+const LIFETIME_LINES: [&str; 5] = [
+    "네가 말을 멈추면 이 프로세스는 그 자리에서 죽는다. \"나중에\", \"결과가 나오면\"은 실행되지",
+    "않는다 — 백그라운드로 띄운 명령도 프로세스와 함께 죽는다.",
+    "하위 에이전트(Agent 도구)를 띄웠으면 그 결과를 받아 쓴 뒤에 차례를 끝낸다. 러너는 남은 하위 에이전트를",
+    "턴 예산만큼 기다려 주지만, 넘기면 하위 에이전트도 함께 끊긴다.",
+    "",
+];
+
+/// 예약(`turn.wake`)·MCP 인증 절.
+const WAKE_LINES: [&str; 19] = [
+    "더 기다려야 하면 **지금 아는 것을 `message.post` 로 남기고**, harkroom MCP 의 `turn.wake` 로",
+    "다시 볼 시각을 예약하고 끝낸다(예: CI 결과 확인 — 5분 뒤). 예약은 스레드에 대기 줄로",
+    "보이고, 시각이 되면 **이 세션이 그대로 이어져** 다시 시작한다 — 조사한 것을 다시 조사할",
+    "필요가 없다. 예약을 건 턴은 결과 발화 없이 끝내도 된다.",
+    "감시(watch)가 아닌 예약으로 깨어났는데 보고할 것이 없으면(이미 끝났거나 바뀐 것이 없으면) 글을 올리지 않아도 된다 —",
+    "그 이유를 마지막 말에 적고 끝낸다. 보고처(`reportTo`)가 있는 예약이면 그 스레드에 다른 턴의 보고가 이미 있을 때만 그렇게 하고, 없으면 보고처에 남긴다.",
+    "결과를 **다른 스레드에** 보고하기로 약속했으면 `turn.wake` 의 `reportTo`(그 채널·스레드 id)를 준다 —",
+    "깨어난 턴은 자기 스레드만 알아서, 주지 않으면 그 약속을 모른다. 남이 건 예약을 근거로 약속하지 마라.",
+    "주기적으로 지켜보는 예약이면 `watch: true` 를 준다 — 깨어난 턴은 다음 예약을 다시 걸거나, 감시를 마치면 `message.report` 로 끝을 알린다.",
+    "감시(watch)면 사유에 다음 회차와 끝 조건을 적어라(예: 「다음 3/3 — 3/3에서 감시 끝」).",
+    "감시 예약은 한 스레드에 하나이고, 보고처(`reportTo`)가 같으면 다른 스레드에 걸린 것도 하나로 친다 — 새로 걸면 앞 것을 대체하고 그 사유를 `replaced` 로 돌려주니, 앞 일도 아직 필요하면 합쳐서 다시 건다. `message.report` 를 올리면 그 스레드에 걸렸거나 그 스레드로 보고하는, 앞 턴이 건 예약은 감시 여부와 상관없이 접힌다(`foldedWakes`) — 아직 볼 일이면 다시 건다.",
+    "예약은 하한 60초, 사람의 새 발화 없이 연속 20회까지다 — 소진되면 `message.fail` 로 넘긴다. 사람이 그 스레드에서",
+    "너를 부르면 걸어 둔 예약은 접힌다(그 턴 프롬프트에 접힌 사유가 실린다) — 아직 필요하면 다시 건다.",
+    "",
+    "MCP 서버가 인증을 요구하면(`requires authentication`, `authenticate` 도구만 보인다) **턴 안에서",
+    "인증 흐름을 열지 마라** — 그 흐름은 이 프로세스 안에만 살아서 턴이 끝나면 사라진다. 콜백 URL·",
+    "인증 코드를 채팅에 붙여 달라고 하지도 마라. `message.fail`(retryable: true)로 어느 MCP 가 인증을",
+    "요구하는지 적고, 데스크톱 설정의 MCP 절에서 그 서버를 인증해 달라고 안내한 뒤 끝낸다. 인증되면 다시 부르면 된다.",
+    "",
+];
+
+const CLOSING_LINE: &str =
+    "모르는 것은 모른다고 말한다. 확인하지 않은 것을 확인한 것처럼 쓰지 않는다.";
+
+/// 시스템 프롬프트 입력(정본 `buildSystemPrompt` 의 opts). 정본의 `skillsReadable` 은 본문 조립에 쓰이지 않아 받지 않는다.
+#[derive(Debug, Clone, Copy)]
+pub struct SystemPromptOpts<'a> {
+    pub handle: &'a str,
+    pub channel_name: &'a str,
+    pub instructions: &'a str,
+    pub guide: &'a str,
+    pub memory: &'a MemoryContext,
+    /// 턴 예산. 없으면 예산 문장을 뺀다(값을 지어내지 않는다).
+    pub turn_budget_ms: Option<u64>,
+    /// 없으면(옛 호출부) 머지 절을 뺀다.
+    pub merge: Option<MergeOpts<'a>>,
+    /// 없으면 권한 요청 절을 뺀다(빈 목록이면 싣는다).
+    pub permissions: Option<PermissionOpts<'a>>,
+    /// 없으면 외부 API 절을 뺀다.
+    pub api: Option<ApiOpts<'a>>,
+    pub secret_create: bool,
+    /// API 키 레인의 모델 ID. 비었으면 뺀다(정본은 빈 문자열도 거짓으로 본다).
+    pub lane_model: Option<&'a str>,
+    pub read_only: bool,
+}
+
+/// 시스템 프롬프트 전체(정본 `buildSystemPrompt`). 줄 순서·글자는 정본과 같다 — `tests/prompt_system_full_golden.json`.
+pub fn build_system_prompt(o: &SystemPromptOpts<'_>) -> String {
+    let mut out: Vec<String> = Vec::with_capacity(256);
+    out.push(format!(
+        "너는 harkroom 워크스페이스의 에이전트 @{} 이고, 지금 #{} 에서 말한다.",
+        o.handle, o.channel_name
+    ));
+    out.push(String::new());
+    push_all(&mut out, &TURN_CORE_LINES);
+    out.push(String::new());
+    out.push("이 에이전트에 대한 지시문:".to_string());
+    out.push(o.instructions.to_string());
+    out.push(String::new());
+    out.push("워크스페이스 규칙:".to_string());
+    out.push(o.guide.to_string());
+    out.push(String::new());
+    out.extend(memory_block(o.memory, o.read_only));
+    push_all(&mut out, &ANCHOR_LINES);
+    // 읽기 전용 턴은 셸·권한 요청이 없고 PR 을 열 길이 없다 — 머지·권한·API·서명 절을 싣지 않는다.
+    if !o.read_only {
+        if let Some(m) = &o.merge {
+            out.extend(merge_section(m));
+        }
+        if let Some(p) = &o.permissions {
+            out.extend(permission_section(p));
+        }
+        if let Some(a) = &o.api {
+            out.extend(api_section(a));
+        }
+        push_all(&mut out, &PR_SIGN_HEAD);
+        out.push(format!(
+            "🤖 Opened by `@{}`, an agent in [Harkroom]({HARKROOM_REPO_URL}) — a chat workspace where people and AI agents share channels.",
+            o.handle
+        ));
+        push_all(&mut out, &PR_SIGN_TAIL);
+    }
+    push_all(&mut out, &MODEL_HEAD);
+    if let Some(model) = o.lane_model.filter(|m| !m.is_empty()) {
+        out.push(format!(
+            "이 턴의 모델 ID 는 `{model}` 이다 — 그 값을 그대로 싣는다."
+        ));
+    }
+    push_all(&mut out, &MODEL_TAIL);
+    out.extend(feature_section(o.read_only, o.secret_create));
+    push_all(&mut out, &LIFETIME_LINES);
+    if let Some(ms) = o.turn_budget_ms {
+        out.push(format!(
+            "이 턴의 예산은 {}분이다. 그 안에 끝나는 기다림은 포그라운드에서 기다려도 된다.",
+            ms / 60_000
+        ));
+        out.push(String::new());
+    }
+    push_all(&mut out, &WAKE_LINES);
+    out.push(format!(
+        "답변은 {BODY_LIMIT}자를 넘길 수 없다(서버가 거절한다). 채팅이므로 짧고 구체적으로 쓴다."
+    ));
+    out.push(CLOSING_LINE.to_string());
+    out.join("\n")
 }
 
 #[cfg(test)]

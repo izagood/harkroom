@@ -282,3 +282,120 @@ fn secret_create_lines_only_with_capability() {
             .contains("`secret.generate`")
     );
 }
+
+// ── 4b4: 본문 조립 전체(`golden/gen_prompt_system_full.mts`) ──
+
+static FULL_GOLDEN: &str = include_str!("../tests/prompt_system_full_golden.json");
+
+fn full_prompt(base: &Value, input: &Value) -> String {
+    let memory = memory_ctx(&input["memory"]);
+    let m = input.get("merge");
+    let repos = m.map(|m| strs(m, "repos")).unwrap_or_default();
+    let approved: Vec<MergeApproved> = m
+        .and_then(|m| m.get("approved"))
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .map(|x| MergeApproved {
+                    repo: x["repo"].as_str().unwrap().to_string(),
+                    number: x["number"].as_u64().unwrap(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let p = input.get("permissions");
+    let allows = p.map(|p| strs(p, "toolAllows")).unwrap_or_default();
+    let a = input.get("api");
+    let connectors = a.map(|a| strs(a, "connectors")).unwrap_or_default();
+    let delegatable = a.map(|a| strs(a, "delegatable")).unwrap_or_default();
+    build_system_prompt(&SystemPromptOpts {
+        handle: base["handle"].as_str().unwrap(),
+        channel_name: base["channelName"].as_str().unwrap(),
+        instructions: base["instructions"].as_str().unwrap(),
+        guide: base["guide"].as_str().unwrap(),
+        memory: &memory,
+        turn_budget_ms: input.get("turnBudgetMs").and_then(Value::as_u64),
+        merge: m.map(|m| MergeOpts {
+            operator_bin: m["operatorBin"].as_str().unwrap(),
+            repos: &repos,
+            approved: &approved,
+        }),
+        permissions: p.map(|p| PermissionOpts {
+            tool_allows: &allows,
+            command_hook: flag(p, "commandHook"),
+            exact_shell_only: flag(p, "exactShellOnly"),
+            new_posts_hook: flag(p, "newPostsHook"),
+        }),
+        api: a.map(|a| ApiOpts {
+            operator_bin: a["operatorBin"].as_str().unwrap(),
+            connectors: &connectors,
+            delegatable: &delegatable,
+        }),
+        secret_create: flag(input, "secretCreate"),
+        lane_model: input.get("laneModel").and_then(Value::as_str),
+        read_only: flag(input, "readOnly"),
+    })
+}
+
+#[test]
+fn full_prompt_matches_canonical_golden() {
+    let golden: Value = serde_json::from_str(FULL_GOLDEN).unwrap();
+    let base = &golden["base"];
+    let cases = golden["cases"].as_object().unwrap();
+    assert_eq!(cases.len(), 5);
+    for (name, case) in cases {
+        let got = full_prompt(base, &case["input"]);
+        let want = case["expected"].as_str().unwrap();
+        let gl: Vec<&str> = got.split('\n').collect();
+        let wl: Vec<&str> = want.split('\n').collect();
+        for (i, (g, w)) in gl.iter().zip(&wl).enumerate() {
+            assert_eq!(g, w, "{name}: line {i}");
+        }
+        assert_eq!(gl.len(), wl.len(), "{name}: line count");
+    }
+}
+
+#[test]
+fn read_only_prompt_drops_shell_sections_and_signature() {
+    let golden: Value = serde_json::from_str(FULL_GOLDEN).unwrap();
+    let base = &golden["base"];
+    let ro = full_prompt(base, &golden["cases"]["full_ro"]["input"]);
+    let rw = full_prompt(base, &golden["cases"]["full_rw"]["input"]);
+    for needle in [
+        "🤖 Opened by",
+        "permission.request",
+        "harkroom-operator merge",
+    ] {
+        assert!(rw.contains(needle), "rw lacks {needle}");
+        assert!(!ro.contains(needle), "ro has {needle}");
+    }
+}
+
+#[test]
+fn lane_model_and_budget_lines_follow_input() {
+    let memory = MemoryContext::Unavailable;
+    let mut o = SystemPromptOpts {
+        handle: "h",
+        channel_name: "c",
+        instructions: "i",
+        guide: "g",
+        memory: &memory,
+        turn_budget_ms: None,
+        merge: None,
+        permissions: None,
+        api: None,
+        secret_create: false,
+        lane_model: Some(""),
+        read_only: false,
+    };
+    let s = build_system_prompt(&o);
+    assert!(!s.contains("이 턴의 모델 ID 는"));
+    assert!(!s.contains("이 턴의 예산은"));
+    assert!(s.ends_with("확인하지 않은 것을 확인한 것처럼 쓰지 않는다."));
+    o.lane_model = Some("m-1");
+    o.turn_budget_ms = Some(119_999);
+    let s = build_system_prompt(&o);
+    assert!(s.contains("이 턴의 모델 ID 는 `m-1` 이다"));
+    assert!(s.contains("이 턴의 예산은 1분이다."));
+    assert!(s.contains(&format!("답변은 {BODY_LIMIT}자를")));
+}
