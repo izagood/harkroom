@@ -16,7 +16,7 @@ pub enum TurnOwnership {
     Link,
 }
 
-fn seq(m: &Value) -> i64 {
+pub(crate) fn seq(m: &Value) -> i64 {
     m.get("seq")
         .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
         .unwrap_or(0)
