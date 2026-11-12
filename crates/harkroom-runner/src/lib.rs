@@ -82,6 +82,7 @@ pub mod turn_posts;
 pub mod turn_prep;
 pub mod turn_preset;
 pub mod turn_probe;
+pub mod turn_probe_io;
 pub mod turn_probe_records;
 pub mod turn_probe_state;
 pub mod turn_registry;
