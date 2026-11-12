@@ -175,7 +175,11 @@ pub fn list_pi_mcp_tools(
     }
 }
 
+/// 자식을 제 프로세스 그룹 우두머리로 띄우고, 끝낼 때 그룹째 죽인다 — 손자가 stdout 파이프를 쥐고 남아 읽기 스레드가
+/// 끝나지 않는 일을 막는다(security B3c 낮음 「pi mcp list join 시한」). 읽기 결과도 시한 안에서만 기다린다.
 fn run_capped(command: &Path, args: &[String], env: &Env, cwd: &Path) -> io::Result<String> {
+    use std::os::unix::process::CommandExt as _;
+    use std::sync::mpsc;
     let mut child = Command::new(command)
         .args(args)
         .env_clear()
@@ -184,30 +188,56 @@ fn run_capped(command: &Path, args: &[String], env: &Env, cwd: &Path) -> io::Res
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
+        .process_group(0)
         .spawn()?;
+    let pgid = child.id() as libc::pid_t;
+    let kill_group = || {
+        // SAFETY: 우리가 띄운 자식이 우두머리인 그룹에만 신호를 보낸다.
+        unsafe { libc::killpg(pgid, libc::SIGKILL) };
+    };
     let mut stdout = child.stdout.take().expect("piped");
-    let reader = std::thread::spawn(move || {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
         let mut buf = Vec::new();
         let r = (&mut stdout)
             .take(MCP_LIST_MAX_BYTES as u64 + 1)
             .read_to_end(&mut buf);
-        r.map(|_| buf)
+        let _ = tx.send(r.map(|_| buf));
     });
     let deadline = Instant::now() + MCP_LIST_TIMEOUT;
-    let status = loop {
-        if let Some(s) = child.try_wait()? {
-            break s;
+    // 끝났는지는 회수하지 않고(`WNOWAIT`) 본다 — 그룹을 걷기 전에 우두머리를 회수하면, 그 사이 같은 번호가 다른 그룹에
+    // 다시 쓰여 엉뚱한 그룹에 신호가 갈 틈이 생긴다(security #1947 낮음). 그룹을 걷은 **뒤에** 회수한다.
+    loop {
+        match exited_unreaped(pgid) {
+            Ok(true) => break,
+            Ok(false) => {}
+            Err(e) => {
+                // 오류 길에서도 그룹을 걷고 회수한 뒤 돌아간다 — 손자·좀비를 남기지 않는다(security #1947 낮음).
+                kill_group();
+                let _ = child.wait();
+                return Err(e);
+            }
         }
         if Instant::now() >= deadline {
-            let _ = child.kill();
+            kill_group();
             let _ = child.wait();
             return Err(io::Error::new(io::ErrorKind::TimedOut, "시한을 넘었다"));
         }
         std::thread::sleep(Duration::from_millis(20));
+    }
+    // 자식은 끝났다(아직 회수 전이라 그룹 번호가 살아 있다). 남은 손자가 파이프를 쥐었을 수 있으니 그룹을 걷고 나서 회수하고,
+    // 읽기 결과는 짧게만 기다린다.
+    kill_group();
+    let status = child.wait()?;
+    let buf = match rx.recv_timeout(READER_GRACE) {
+        Ok(r) => r?,
+        Err(_) => {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "출력 읽기가 끝나지 않았다",
+            ));
+        }
     };
-    let buf = reader
-        .join()
-        .map_err(|_| io::Error::other("읽기 스레드가 죽었다"))??;
     if buf.len() > MCP_LIST_MAX_BYTES {
         return Err(io::Error::other("출력이 상한을 넘었다"));
     }
@@ -216,6 +246,36 @@ fn run_capped(command: &Path, args: &[String], env: &Env, cwd: &Path) -> io::Res
     }
     Ok(String::from_utf8_lossy(&buf).into_owned())
 }
+
+/// 자식이 끝났는가 — 회수하지 않는다(`waitid(P_PID, WEXITED|WNOHANG|WNOWAIT)`).
+fn exited_unreaped(pid: libc::pid_t) -> io::Result<bool> {
+    // SAFETY: siginfo 는 0 으로 채운 지역 값이고, waitid 는 그 주소에만 쓴다.
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    loop {
+        let r = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                pid as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        };
+        if r == 0 {
+            break;
+        }
+        let e = io::Error::last_os_error();
+        // 신호에 끊긴 것은 다시 본다.
+        if e.kind() != io::ErrorKind::Interrupted {
+            return Err(e);
+        }
+    }
+    // WNOHANG 이고 아직 안 끝났으면 si_pid 가 0 으로 남는다.
+    // SAFETY: 위에서 0 으로 채웠고 waitid 가 성공했다.
+    Ok(unsafe { info.si_pid() } != 0)
+}
+
+/// 자식이 끝난 뒤 읽기 스레드를 기다리는 상한.
+const READER_GRACE: Duration = Duration::from_secs(2);
 
 /// `ensure_pi_home` 의 실패. `Display` 는 채팅으로 갈 수 있는 문구라 **로컬 경로를 싣지 않는다** — 경로는 `local_detail()`.
 #[derive(Debug)]

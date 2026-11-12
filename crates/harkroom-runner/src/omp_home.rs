@@ -78,8 +78,21 @@ pub const OMP_LANE_PROVIDER: &str = "harkroom-lane";
 /// `git init` 시한(정본 `timeout: 15_000`).
 pub const GIT_INIT_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// 기록 오류 문구 상한.
-pub const RECORDED_ERROR_MAX_BYTES: usize = 4096;
+/// 기록 오류 문구 상한 — 채팅 한 줄 몫(security B3c 낮음 「omp 기록 오류 문구 짧게」, 정본은 자르지 않는다).
+pub const RECORDED_ERROR_MAX_BYTES: usize = 1024;
+
+/// 기록 오류 문구에서 가릴 토큰 모양 — `Bearer <값>`·알려진 키 머리(`sk-`·`ghp_` 등)·32자 넘는 열쇠 같은 낱말.
+static RECORDED_ERROR_SECRET: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(
+        r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+|\b(?:sk|pk|rk)-[A-Za-z0-9_-]{8,}|\b(?:ghp|gho|ghu|ghs|ghr|github_pat|xox[abpr])[-_][A-Za-z0-9_-]{8,}|[A-Za-z0-9_-]{32,}",
+    )
+    .expect("고정 정규식")
+});
+
+/// 기록 오류 문구의 토큰 모양을 `***` 로 가린다.
+pub fn mask_recorded_error(msg: &str) -> String {
+    RECORDED_ERROR_SECRET.replace_all(msg, "***").into_owned()
+}
 
 /// 빈 cwd 와 그 위 폴더에 있으면 안 되는 이름(C2).
 pub const OMP_CWD_FORBIDDEN: [&str; 7] = [
@@ -702,7 +715,11 @@ pub fn read_omp_recorded_api_error(
         if at.is_none_or(|at| at < since_ms) {
             continue;
         }
-        found = Some(truncate_bytes(msg, RECORDED_ERROR_MAX_BYTES));
+        // 가린 뒤에 자른다 — 자르는 자리에 토큰 앞부분이 남지 않게.
+        found = Some(truncate_bytes(
+            &mask_recorded_error(msg),
+            RECORDED_ERROR_MAX_BYTES,
+        ));
     }
     found
 }
