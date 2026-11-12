@@ -69,6 +69,7 @@ pub mod skills_sync;
 pub mod thread_model;
 pub mod thread_note_pin;
 pub mod thread_plan_pin;
+pub mod turn_after;
 pub mod turn_command;
 pub mod turn_end;
 pub mod turn_env;
