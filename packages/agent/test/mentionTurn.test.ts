@@ -3661,7 +3661,7 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
   function fakeRelay() {
     const opened: {
       agentAccountId: string; channelId: string; threadRootId: string | null; harness: string;
-      claudeAccount?: string | null; claudePool?: string | null; claudePoolRank?: number;
+      claudeAccount?: string | null; claudePool?: string | null; claudePoolRank?: number; claudeAccountRank?: number | null;
     }[] = [];
     const bytes: Buffer[] = [];
     /** `bindInput` 으로 받은 PTY 통로들(#315). 세션 순서대로 쌓인다. */
@@ -3673,7 +3673,7 @@ describe('#141 릴레이 세션 (Phase 2 attach)', () => {
         openSession(input: {
           agentAccountId: string; channelId: string; threadRootId: string | null;
           harness: AgentHarness;
-          claudeAccount?: string | null; claudePool?: string | null; claudePoolRank?: number;
+          claudeAccount?: string | null; claudePool?: string | null; claudePoolRank?: number; claudeAccountRank?: number | null;
         }) {
           opened.push(input);
           return {
