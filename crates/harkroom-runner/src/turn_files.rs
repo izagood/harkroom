@@ -316,7 +316,12 @@ impl CodexMcpEnvPlan {
 }
 
 /// 조건 ①(예약 이름) · 문법 · ②(서버끼리 같은 이름에 다른 값이면 둘 다 argv)를 따라 옮길 이름을 고른다.
-pub fn plan_codex_mcp_env(servers: &[(String, McpServerEntry)]) -> CodexMcpEnvPlan {
+/// `base` 는 codex 가 받을 자식 env(`child_env` 결과)다 — 거기에 **같은 이름·다른 값**이 이미 있으면(예: 사람의 `GH_TOKEN`)
+/// 옮기면 codex 자신과 다른 MCP 가 바뀐 값을 보게 되므로 옮기지 않고 argv 에 남긴다(security #1952 낮음 1). 같은 값이면 옮겨도 그대로다.
+pub fn plan_codex_mcp_env(
+    servers: &[(String, McpServerEntry)],
+    base: &std::collections::BTreeMap<String, String>,
+) -> CodexMcpEnvPlan {
     let mut values: std::collections::BTreeMap<&str, Vec<&str>> = Default::default();
     for (_, entry) in servers {
         if let McpServerEntry::Stdio { env: Some(env), .. } = entry {
@@ -328,7 +333,8 @@ pub fn plan_codex_mcp_env(servers: &[(String, McpServerEntry)]) -> CodexMcpEnvPl
     let mut plan = CodexMcpEnvPlan::default();
     for (k, vs) in &values {
         let same = vs.windows(2).all(|w| w[0] == w[1]);
-        if same && is_env_name(k) && !is_reserved_mcp_env(k) {
+        let clashes_base = base.get(*k).is_some_and(|b| b != vs[0]);
+        if same && !clashes_base && is_env_name(k) && !is_reserved_mcp_env(k) {
             plan.moved.insert((*k).to_owned(), vs[0].to_owned());
         }
     }
@@ -344,7 +350,11 @@ pub fn plan_codex_mcp_env(servers: &[(String, McpServerEntry)]) -> CodexMcpEnvPl
 
 /// codex 자식 env 에 얹을 추가 MCP 의 비밀 값 — bearer 토큰과 나머지 HTTP 헤더 값(argv 에는 env 이름만).
 /// 정본 `codexBearerEnv` 는 bearer 만 옮겼다 — 나머지 헤더 값도 argv(`ps` 로 보인다)에서 뺀다(security #1945 낮음 2).
-pub fn codex_mcp_env(servers: &[(String, McpServerEntry)]) -> Vec<(String, String)> {
+/// `base` 는 [`plan_codex_mcp_env`] 와 같다.
+pub fn codex_mcp_env(
+    servers: &[(String, McpServerEntry)],
+    base: &std::collections::BTreeMap<String, String>,
+) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for (name, entry) in servers {
         if let McpServerEntry::Http { headers, .. } = entry {
@@ -358,7 +368,7 @@ pub fn codex_mcp_env(servers: &[(String, McpServerEntry)]) -> Vec<(String, Strin
         }
     }
     // stdio `env` 중 옮긴 값(이름 그대로 — codex `env_vars` 가 그 이름을 읽는다).
-    out.extend(plan_codex_mcp_env(servers).moved);
+    out.extend(plan_codex_mcp_env(servers, base).moved);
     out
 }
 
