@@ -18,6 +18,7 @@
 //! - `review_fork`: 턴 뒤 리뷰 포크(`reviewFork.ts` — 인자·결과 파싱·켜기 스위치·카운터·포크 실행, B3e-4). 턴 루프 연결은 B3e-7.
 //! - `provider_lane`: 전용 제공사 경로의 러너 절반(`providerLane.ts` — 턴 키 받기·턴 파일·lane/턴 MCP 설정). 턴 흐름에는 아직 안 붙였다.
 //! - `mcp`: `HarkroomAgentClient` 의 MCP 절반(`call()`·`inbox.poll`·`message.*`·기억·계획·bg) — 링크의 `mcp.request`.
+//! - `poll_loop`·`turn_registry`: 폴 루프와 턴 레지스트리·멘션 대기 장부(`main.ts` 루프·`stop.ts`·`idleStop.ts`·`turnRegistry.ts`·`mentionQueue.ts`, B4-1a). 스케줄러는 trait 뒤 — `mentionScheduler` 는 B4-1b.
 
 pub mod account_assign;
 pub mod adapter;
@@ -34,6 +35,7 @@ pub mod omp_home;
 pub mod opencode_home;
 pub mod pi_home;
 pub mod pi_lane;
+pub mod poll_loop;
 pub mod prompt;
 pub mod provider_lane;
 pub mod pty;
@@ -50,5 +52,6 @@ pub mod turn_env;
 pub mod turn_files;
 pub mod turn_notice;
 pub mod turn_preset;
+pub mod turn_registry;
 pub mod turn_rules;
 pub mod workspace_trust;
