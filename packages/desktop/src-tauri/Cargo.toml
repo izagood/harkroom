@@ -1,6 +1,6 @@
 [package]
 name = "harkroom-desktop"
-version = "0.4.540"
+version = "0.4.541"
 edition = "2021"
 
 [build-dependencies]
