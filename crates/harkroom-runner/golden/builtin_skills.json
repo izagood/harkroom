@@ -1,0 +1,9 @@
+{
+  "prefix": "harkroom-",
+  "skills": [
+    {
+      "slug": "harkroom-artifact",
+      "body": "---\nname: harkroom-artifact\ndescription: \"사람이 눈으로 볼 HTML(시안·보고서 페이지)을 harkroom 미리보기 카드로 올리는 절차\"\n---\n\n# harkroom 미리보기(artifact.publish)\n\n- 사람이 **눈으로 볼 HTML**(디자인 안·시안·보고서 페이지)은 harkroom MCP 의 `artifact.publish`(channelId·threadRootId·title·body·html)로 올린다 — 그 글이 이 턴의 발화다.\n- claude.ai 아티팩트 링크로 주지 않는다(그 계정으로 로그인한 사람만 연다). 사람은 앱 안 카드를 눌러 바로 본다(폰 포함).\n- 한 파일에 다 담는다. 페이지는 외부로 fetch 할 수 없고, 스크립트·스타일·폰트는 cdnjs·jsdelivr·Google Fonts 에서만 불러온다.\n- 같은 안을 고칠 때는 앞서 받은 `artifactId` 를 함께 줘서 다음 버전으로 올린다.\n"
+    }
+  ]
+}
