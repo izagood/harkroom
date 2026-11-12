@@ -93,12 +93,18 @@ struct Inner {
     /// `None` = 아직 디스크를 안 읽었다.
     snap: Option<Option<MemorySnapshot>>,
     hint: Option<(String, u128)>,
+    /// 서버 왕복마다 받는 번호표. 왕복은 잠금 밖에서 돌므로, 늦게 끝난 옛 왕복이 새 사본을 덮지 않게
+    /// 지금까지 반영한 번호보다 큰 것만 사본에 쓴다.
+    issued: u64,
+    committed: u64,
 }
 
 type Clock = Box<dyn Fn() -> u128 + Send + Sync>;
 type Log = Box<dyn Fn(&str) + Send + Sync>;
 
 /// 정본 `createMemoryCache`. 병렬 턴이 같이 쓰므로 안쪽은 잠근다(정본은 한 스레드 이벤트 루프).
+/// 잠금은 사본을 읽고 쓰는 동안만 쥔다 — 서버 왕복(`list_memory`·`get_memory_value`)을 기다리는 동안에는
+/// 놓는다. 쥔 채 기다리면 서버가 늦을 때 같은 러너의 다른 턴이 기억 읽기에서 줄을 선다.
 pub struct MemoryCache {
     state_dir: PathBuf,
     file: PathBuf,
@@ -163,6 +169,8 @@ impl MemoryCache {
             inner: Mutex::new(Inner {
                 snap: None,
                 hint: None,
+                issued: 0,
+                committed: 0,
             }),
         }
     }
@@ -196,7 +204,6 @@ impl MemoryCache {
 
     /// 정본 `read`. 사본이 없는데 서버도 못 읽으면 그 오류를 그대로 돌려준다.
     pub fn read<S: MemorySource>(&self, source: &S) -> Result<MemoryRead, S::Error> {
-        // 서버 왕복 동안에도 잠가 둔다 — 정본의 한 줄 이벤트 루프와 같이 사본 쓰기가 엇갈리지 않는다.
         let mut inner = self.lock();
         if inner.snap.is_none() {
             // 없거나 깨졌다 — 사본이 없는 것과 같다.
@@ -218,6 +225,10 @@ impl MemoryCache {
         {
             return Ok(view(c));
         }
+        inner.issued += 1;
+        let ticket = inner.issued;
+        // 서버 왕복 동안에는 잠금을 놓는다. 사본 쓰기는 아래에서 번호표로 순서를 지킨다.
+        drop(inner);
 
         let fetched = (|| {
             let listed = source.list_memory()?;
@@ -285,8 +296,13 @@ impl MemoryCache {
         match fetched {
             Ok((next, out)) => {
                 if let Some(next) = next {
-                    self.persist(&next);
-                    inner.snap = Some(Some(next));
+                    let mut inner = self.lock();
+                    // 더 늦게 시작한 왕복이 이미 사본을 썼으면 이 결과는 이번 턴에만 쓴다.
+                    if ticket > inner.committed {
+                        inner.committed = ticket;
+                        self.persist(&next);
+                        inner.snap = Some(Some(next));
+                    }
                 }
                 Ok(out)
             }

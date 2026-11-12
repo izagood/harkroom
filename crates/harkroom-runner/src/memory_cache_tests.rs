@@ -280,3 +280,51 @@ fn reads_snapshot_left_by_node_runner() {
     assert!(r.bg_cleanup);
     assert_eq!(r.stale.as_deref(), Some("2026-09-01T00:00:00.000Z"));
 }
+
+/// 목록 요청에서 신호를 보내고, 풀어 줄 때까지 멈춰 서는 느린 서버.
+struct Stalled {
+    entered: std::sync::mpsc::Sender<()>,
+    release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+}
+
+impl MemorySource for Stalled {
+    type Error = String;
+    fn list_memory(&self) -> Result<Value, String> {
+        self.entered.send(()).unwrap();
+        self.release.lock().unwrap().recv().unwrap();
+        Ok(json!({"rev": "r-old", "slugs": ["core"]}))
+    }
+    fn get_memory_value(&self, _: &str) -> Result<Option<String>, String> {
+        Ok(Some("OLD".into()))
+    }
+}
+
+#[test]
+fn slow_server_does_not_block_other_turns_and_late_result_does_not_overwrite() {
+    let (d, clock) = setup("stall");
+    let c = cache(&d, &clock);
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let slow = Stalled {
+        entered: entered_tx,
+        release: std::sync::Mutex::new(release_rx),
+    };
+    std::thread::scope(|s| {
+        let late = s.spawn(|| c.read(&slow).unwrap());
+        entered_rx.recv().unwrap();
+        // 느린 왕복이 서 있는 동안 다른 턴의 읽기가 줄 서지 않고 끝난다.
+        let fast = Fake::new(Some("NEW"), &["mem/a"], Some("r-new"));
+        assert_eq!(c.read(&fast).unwrap(), read(Some("NEW"), &["mem/a"]));
+        release_tx.send(()).unwrap();
+        // 늦게 끝난 옛 왕복은 자기 턴에는 받은 값을 준다.
+        assert_eq!(late.join().unwrap(), read(Some("OLD"), &[]));
+    });
+    // 사본은 나중에 시작한 왕복의 것이다.
+    let saved: Value =
+        serde_json::from_str(&fs::read_to_string(d.join(MEMORY_CACHE_FILE)).unwrap()).unwrap();
+    assert_eq!(saved["rev"], json!("r-new"));
+    c.note_rev(Some("r-new"));
+    let down = Fake::new(None, &[], None);
+    assert_eq!(c.read(&down).unwrap(), read(Some("NEW"), &["mem/a"]));
+    assert_eq!(down.calls(), (0, 0));
+}
