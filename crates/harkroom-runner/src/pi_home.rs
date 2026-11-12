@@ -208,8 +208,15 @@ fn run_capped(command: &Path, args: &[String], env: &Env, cwd: &Path) -> io::Res
     // 끝났는지는 회수하지 않고(`WNOWAIT`) 본다 — 그룹을 걷기 전에 우두머리를 회수하면, 그 사이 같은 번호가 다른 그룹에
     // 다시 쓰여 엉뚱한 그룹에 신호가 갈 틈이 생긴다(security #1947 낮음). 그룹을 걷은 **뒤에** 회수한다.
     loop {
-        if exited_unreaped(pgid)? {
-            break;
+        match exited_unreaped(pgid) {
+            Ok(true) => break,
+            Ok(false) => {}
+            Err(e) => {
+                // 오류 길에서도 그룹을 걷고 회수한 뒤 돌아간다 — 손자·좀비를 남기지 않는다(security #1947 낮음).
+                kill_group();
+                let _ = child.wait();
+                return Err(e);
+            }
         }
         if Instant::now() >= deadline {
             kill_group();
@@ -244,16 +251,23 @@ fn run_capped(command: &Path, args: &[String], env: &Env, cwd: &Path) -> io::Res
 fn exited_unreaped(pid: libc::pid_t) -> io::Result<bool> {
     // SAFETY: siginfo 는 0 으로 채운 지역 값이고, waitid 는 그 주소에만 쓴다.
     let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
-    let r = unsafe {
-        libc::waitid(
-            libc::P_PID,
-            pid as libc::id_t,
-            &mut info,
-            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
-        )
-    };
-    if r != 0 {
-        return Err(io::Error::last_os_error());
+    loop {
+        let r = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                pid as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        };
+        if r == 0 {
+            break;
+        }
+        let e = io::Error::last_os_error();
+        // 신호에 끊긴 것은 다시 본다.
+        if e.kind() != io::ErrorKind::Interrupted {
+            return Err(e);
+        }
     }
     // WNOHANG 이고 아직 안 끝났으면 si_pid 가 0 으로 남는다.
     // SAFETY: 위에서 0 으로 채웠고 waitid 가 성공했다.
