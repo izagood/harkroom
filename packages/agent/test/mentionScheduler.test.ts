@@ -68,7 +68,7 @@ function harness(opts: {
   /** `markRead` 가 불린 **호출** 단위 — 묶음 호출(L1) 회귀선이 본다. */
   const markReadCalls: number[][] = [];
   const posted: { channelId: string; body: string; anchor: string | null }[] = [];
-  const failed: { body: string; retryable: boolean }[] = [];
+  const failed: { body: string; retryable: boolean; reason?: string | null }[] = [];
   const notices: { channelId: string; anchor: string | null; notice: RunnerNotice }[] = [];
   const registry = new TurnRegistry();
   const scheduler = createMentionScheduler({
@@ -85,7 +85,7 @@ function harness(opts: {
       // 나갔나" 이고, 실패도 그 스레드에 나간 말이다. 종류는 `failed` 가 따로 담는다.
       fail: async (channelId, body, anchor, o) => {
         posted.push({ channelId, body, anchor });
-        failed.push({ body, retryable: o.retryable });
+        failed.push({ body, retryable: o.retryable, reason: (o as { reason?: string | null }).reason ?? null });
         return 1;
       },
     },
@@ -1329,9 +1329,15 @@ describe('계정 축 소진 통지', () => {
     expect(h.failed).toHaveLength(1);
     const body = h.failed[0]!.body;
     expect(body).toContain('11pm (Asia/Seoul) 에 풀립니다');
-    expect(body).toContain('gated: 설정 확인 화면에서 사람의 선택을 기다림');
-    expect(body).toContain('plum: 사용량 한도(11:10pm (Asia/Seoul) 에 풀림)');
-    expect(body).toContain('lychee: 사용량 한도(11pm (Asia/Seoul) 에 풀림)');
+    expect(body).toContain('계정 1: 설정 확인 화면에서 사람의 선택을 기다림');
+    expect(body).toContain('계정 2: 사용량 한도(11:10pm (Asia/Seoul) 에 풀림)');
+    expect(body).toContain('계정 3: 사용량 한도(11pm (Asia/Seoul) 에 풀림)');
+    // 계정 이름(계정 풀 폴더 이름)은 서버로 가는 본문·reason 에 싣지 않는다(#1039).
+    for (const name of ['gated', 'plum', 'lychee']) {
+      expect(body).not.toContain(name);
+      expect(String(h.failed[0]!.reason ?? '')).not.toContain(name);
+    }
+    expect(h.failed[0]!.reason).toContain('계정 1: 설정 확인 화면');
     expect(body).toContain('터미널에서 한 번 실행해');
     expect(body).not.toContain('collector');
     // 한도는 기다리면 낫는다 — 재시도 가능으로 남기고 읽음 처리한다(기존 갈래 그대로).

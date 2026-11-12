@@ -100,24 +100,34 @@ fn account_trail_appends_kinds_and_gate_hint() {
     assert_eq!(with_account_trail("본문", &[]), "본문");
     assert_eq!(account_trail_reason(&[]), None);
     let trail = [
-        fail(Some("a"), AccountFailureKind::Gate, None),
-        fail(Some("b"), AccountFailureKind::Quota, Some("11pm")),
+        fail(Some("pool-alice"), AccountFailureKind::Gate, None),
+        fail(Some("pool-bob"), AccountFailureKind::Quota, Some("11pm")),
         fail(None, AccountFailureKind::Credential, None),
-        fail(Some("d"), AccountFailureKind::Timeout, None),
+        fail(Some("pool-dana"), AccountFailureKind::Timeout, None),
     ];
     let t = with_account_trail("본문", &trail);
     let lines: Vec<&str> = t.lines().collect();
     assert_eq!(lines[0], "본문");
     assert_eq!(lines[1], "계정별 이유:");
-    assert_eq!(lines[2], "- a: 설정 확인 화면에서 사람의 선택을 기다림");
-    assert_eq!(lines[3], "- b: 사용량 한도(11pm 에 풀림)");
+    assert_eq!(
+        lines[2],
+        "- 계정 1: 설정 확인 화면에서 사람의 선택을 기다림"
+    );
+    assert_eq!(lines[3], "- 계정 2: 사용량 한도(11pm 에 풀림)");
     assert_eq!(lines[4], "- (기본 계정): 로그인이 풀림");
-    assert_eq!(lines[5], "- d: 입력창이 뜨지 않음(시간 초과)");
+    assert_eq!(lines[5], "- 계정 4: 입력창이 뜨지 않음(시간 초과)");
     assert!(lines[6].starts_with("설정 확인 화면에 선 계정은"));
     assert_eq!(
         account_trail_reason(&trail[1..2]).as_deref(),
-        Some("b: 사용량 한도(11pm 에 풀림)")
+        Some("계정 1: 사용량 한도(11pm 에 풀림)")
     );
+    // 계정 이름(계정 풀 폴더 이름)은 서버로 가는 본문·reason 에 싣지 않는다(#1039).
+    let reason = account_trail_reason(&trail).unwrap();
+    for name in ["pool-alice", "pool-bob", "pool-dana"] {
+        assert!(!t.contains(name), "{t}");
+        assert!(!reason.contains(name), "{reason}");
+    }
+    assert!(reason.starts_with("계정 1: 설정 확인 화면"), "{reason}");
     let no_gate = with_account_trail("x", &trail[1..]);
     assert!(!no_gate.contains("설정 확인 화면에 선 계정은"));
 }

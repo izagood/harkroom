@@ -608,9 +608,15 @@ export function threadModelRejectedNotice(model: string | null, effort: string |
     + `스레드 머리의 모델 칩에서 기본으로 되돌리거나 다른 모델을 골라 다시 불러 주세요. 하네스: ${why})`;
 }
 
-/** 계정 이유 한 칸의 말(종류만 — 화면 원문은 싣지 않는다, `claudeAccounts.ts::AccountFailureKind`). */
-function accountFailureText(f: AccountFailure): string {
-  const who = f.account ?? '(기본 계정)';
+/**
+ * 계정 이유 한 칸의 말(종류만 — 화면 원문은 싣지 않는다, `claudeAccounts.ts::AccountFailureKind`).
+ *
+ * **계정 이름을 싣지 않는다.** 이 말은 스레드 본문과 실패 카드 `reason` 으로 서버에 간다. 계정 이름은 계정 풀의 폴더
+ * 이름이라 사람 이름일 수 있다(#1039: 서버에는 계정 이름을 보내지 않는다). 그래서 `계정 N`(이 턴에서 **시도한 순서**,
+ * 1부터)으로 쓴다 — 어느 계정인지는 러너 로그의 「계정 전환: A → B」 줄이 같은 순서로 남긴다.
+ */
+function accountFailureText(f: AccountFailure, index: number): string {
+  const who = f.account === null ? '(기본 계정)' : `계정 ${index + 1}`;
   switch (f.kind) {
     case 'gate': return `${who}: 설정 확인 화면에서 사람의 선택을 기다림`;
     case 'quota': return f.resetsAt === null ? `${who}: 사용량 한도` : `${who}: 사용량 한도(${f.resetsAt} 에 풀림)`;
@@ -628,7 +634,7 @@ function accountFailureText(f: AccountFailure): string {
  */
 export function withAccountTrail(notice: string, trail: readonly AccountFailure[]): string {
   if (!trail.length) return notice;
-  const lines = trail.map((f) => `- ${accountFailureText(f)}`);
+  const lines = trail.map((f, i) => `- ${accountFailureText(f, i)}`);
   const gate = trail.some((f) => f.kind === 'gate')
     ? ['설정 확인 화면에 선 계정은 그 계정으로 claude 를 터미널에서 한 번 실행해 화면의 물음에 답하면 풀립니다. 그 뒤 다시 불러 주세요.']
     : [];
@@ -637,7 +643,7 @@ export function withAccountTrail(notice: string, trail: readonly AccountFailure[
 
 /** 실패 카드의 `reason` 한 줄 — 같은 사실을 짧게(종류만). */
 export function accountTrailReason(trail: readonly AccountFailure[]): string | null {
-  return trail.length ? trail.map(accountFailureText).join(' · ') : null;
+  return trail.length ? trail.map((f, i) => accountFailureText(f, i)).join(' · ') : null;
 }
 
 /** 재시도 통지에 싣는 사유의 최대 길이. 한 줄로 읽히는 만큼만 남긴다. */
