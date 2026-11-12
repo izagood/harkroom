@@ -32,7 +32,7 @@ const 부름 = {
   threadRootId: 't1',
   agentAccountId: 'agent-1',
   agentHandle: 'murmur',
-  accountLabel: 'aria',
+  claudePoolRank: 1, claudeAccountRank: 2,
 };
 
 describe('agent.attention 을 받은 데스크탑', () => {
@@ -88,7 +88,7 @@ describe('agent.attention 을 받은 데스크탑', () => {
     // 사람이 보던 화면을 갈아치우지 않는다. 그 사람은 지금 다른 것을 하고 있다.
     expect(useAppStore.getState().terminalTarget).toEqual(보던것);
     expect(useAppStore.getState().gates).toEqual([{
-      sessionId: 's1', agentAccountId: 'agent-1', agentHandle: 'murmur', accountLabel: 'aria',
+      sessionId: 's1', agentAccountId: 'agent-1', agentHandle: 'murmur', claudePoolRank: 1, claudeAccountRank: 2,
       channelId: 'c1', threadRootId: 't1', dismissed: false,
     }]);
   });

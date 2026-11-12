@@ -96,7 +96,8 @@ const p2OperatorToServer = [
   { type: 'pty.replay', runnerId: RUNNER, sessionId: 'ses-1', bytes: '' },
   { type: 'interactive.opened', runnerId: RUNNER, requestId: 'i1', sessionId: 'ses-1', created: true },
   { type: 'interactive.error', runnerId: RUNNER, requestId: 'i1', message: 'busy' },
-  { type: 'attention.required', runnerId: RUNNER, sessionId: 'ses-1', accountLabel: 'example', screen: 'Do you want to proceed?' },
+  { type: 'attention.required', runnerId: RUNNER, sessionId: 'ses-1', screen: 'Do you want to proceed?', claudePoolRank: 2, claudeAccountRank: 1 },
+  { type: 'attention.required', runnerId: RUNNER, sessionId: 'ses-2', screen: 'Do you want to proceed?', claudeAccountRank: null },
   { type: 'local.input', runnerId: RUNNER, sessionId: 'ses-1', gen: 3, bytes: 12 },
 ] satisfies OperatorToServerFrame[];
 

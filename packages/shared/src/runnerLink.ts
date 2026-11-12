@@ -360,7 +360,12 @@ export function wrapRunnerFrame(runnerId: string, frame: RelayRunnerFrame): Oper
     case 'interactive.error':
       return { type: 'interactive.error', runnerId, requestId: frame.requestId, message: frame.message };
     case 'attention.required':
-      return { type: 'attention.required', runnerId, sessionId: frame.sessionId, accountLabel: frame.accountLabel, screen: frame.screen };
+      // 계정 이름(`accountLabel`, 옛 러너)은 넘기지 않는다 — 순번만(칩 ③).
+      return {
+        type: 'attention.required', runnerId, sessionId: frame.sessionId, screen: frame.screen,
+        ...(frame.claudePoolRank !== undefined ? { claudePoolRank: frame.claudePoolRank } : {}),
+        ...(frame.claudeAccountRank !== undefined ? { claudeAccountRank: frame.claudeAccountRank } : {}),
+      };
     case 'local.input':
       return { type: 'local.input', runnerId, sessionId: frame.sessionId, gen: frame.gen, bytes: frame.bytes };
     default:
@@ -386,7 +391,11 @@ export function unwrapOperatorFrame(frame: OperatorToServerFrame): { runnerId: s
     case 'interactive.error':
       return { runnerId: frame.runnerId, frame: { type: 'interactive.error', requestId: frame.requestId, message: frame.message } };
     case 'attention.required':
-      return { runnerId: frame.runnerId, frame: { type: 'attention.required', sessionId: frame.sessionId, accountLabel: frame.accountLabel, screen: frame.screen } };
+      return { runnerId: frame.runnerId, frame: {
+        type: 'attention.required', sessionId: frame.sessionId, screen: frame.screen,
+        ...(frame.claudePoolRank !== undefined ? { claudePoolRank: frame.claudePoolRank } : {}),
+        ...(frame.claudeAccountRank !== undefined ? { claudeAccountRank: frame.claudeAccountRank } : {}),
+      } };
     case 'local.input':
       return { runnerId: frame.runnerId, frame: { type: 'local.input', sessionId: frame.sessionId, gen: frame.gen, bytes: frame.bytes } };
     default:

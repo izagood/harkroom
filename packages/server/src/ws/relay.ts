@@ -27,6 +27,7 @@ import type {
   RelayServerFrame,
   WriterDeniedReason,
 } from '@harkroom/shared';
+import { isAccountRank, isPoolRank } from '@harkroom/shared';
 
 /**
  * 소켓의 최소 표면. `@fastify/websocket` 의 소켓도 테스트의 가짜도 이 모양이면 된다 —
@@ -221,7 +222,9 @@ export interface RelayHubHooks {
     channelId: string;
     threadRootId: string | null;
     agentAccountId: string;
-    accountLabel: string;
+    /** 막힌 계정의 순번(칩 ③). 계정 이름은 받지 않는다. */
+    claudePoolRank?: number;
+    claudeAccountRank?: number | null;
   }) => void;
   /**
    * 사람을 불렀던 세션이 끝났다(2026-10-09). 앱은 관문 카드를 이것으로 닫는다 —
@@ -668,7 +671,10 @@ export function createRelayHub(
             channelId: session.channelId,
             threadRootId: session.threadRootId,
             agentAccountId,
-            accountLabel: typeof frame.accountLabel === 'string' ? frame.accountLabel : '(기본)',
+            // 옛 러너의 `accountLabel`(계정 폴더 이름)은 받자마자 버린다 — 순번만 넘긴다(칩 ③, #1039).
+            ...(isPoolRank(frame.claudePoolRank) ? { claudePoolRank: frame.claudePoolRank } : {}),
+            ...(frame.claudeAccountRank === null || isAccountRank(frame.claudeAccountRank)
+              ? { claudeAccountRank: frame.claudeAccountRank } : {}),
           });
           return;
         }

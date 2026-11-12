@@ -44,7 +44,9 @@ export interface GateItem {
   sessionId: string;
   agentAccountId: string;
   agentHandle: string;
-  accountLabel: string;
+  /** 막힌 계정의 풀·계정 순번(칩 ③). 이름은 서버에서 오지 않는다. */
+  claudePoolRank?: number;
+  claudeAccountRank?: number | null;
   channelId: string;
   threadRootId: string | null;
   /** [나중에]로 카드만 접었다. 턴 줄의 ⌨ 대기 표시는 남는다. */

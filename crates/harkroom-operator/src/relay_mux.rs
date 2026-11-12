@@ -103,8 +103,17 @@ pub fn wrap_runner_frame(runner_id: &str, f: &Value) -> Option<OperatorToServerF
         "attention.required" => OperatorToServerFrame::AttentionRequired {
             runner_id,
             session_id: s(f, "sessionId")?,
-            account_label: s(f, "accountLabel")?,
             screen: s(f, "screen")?,
+            // 계정 이름(`accountLabel`, 옛 러너)은 넘기지 않는다 — 순번만(칩 ③).
+            claude_pool_rank: f
+                .get("claudePoolRank")
+                .and_then(Value::as_u64)
+                .and_then(|n| u32::try_from(n).ok()),
+            claude_account_rank: match f.get("claudeAccountRank") {
+                None => None,
+                Some(Value::Null) => Some(None),
+                Some(v) => v.as_u64().and_then(|n| u32::try_from(n).ok()).map(Some),
+            },
         },
         "local.input" => OperatorToServerFrame::LocalInput {
             runner_id,

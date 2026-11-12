@@ -3007,7 +3007,8 @@ export type WsServerEvent =
    */
   | { type: 'agent.attention'; sessionId: string; channelId: string;
       threadRootId: string | null; agentAccountId: string; agentHandle: string;
-      accountLabel: string }
+      /** 막힌 계정의 풀·계정 **순번**(계정 칩 ③ — 서버에는 계정 이름을 보내지 않는다, #1039). 생략은 모른다. */
+      claudePoolRank?: number; claudeAccountRank?: number | null }
   /**
    * 사람을 불렀던 세션이 끝났다(2026-10-09). `agent.attention` 은 걸릴 때 한 번만 오므로,
    * 앱의 관문 카드는 이것(또는 사람이 그 터미널을 연 것)으로 닫힌다. 부른 적 없는 세션의
@@ -3476,10 +3477,12 @@ export type RelayRunnerFrame =
    * 사람이 앞에 있고, 후자는 **아직 아무도 모른다** — 그래서 후자만 앱이 화면을 띄운다.
    *
    * `screen` 은 `output` 과 **같은 규율로 base64** 다. 서버는 열지 않는다: 관문 화면에도
-   * 계정 이메일 같은 것이 실린다. `accountLabel` 은 "어느 계정이 막혔는지"를 사람에게
-   * 보여줄 재료다(계정 풀을 안 만든 러너는 `'(기본)'`).
+   * 계정 이메일 같은 것이 실린다. "어느 계정이 막혔는지"는 풀·계정 **순번**(`claudePoolRank`·`claudeAccountRank`,
+   * 칩 ③)으로만 싣는다 — 계정 이름은 폴더 이름이라 사람 이름일 수 있다(#1039). `accountLabel` 은 옛 러너가 보내던 칸이고
+   * 서버는 받자마자 버린다.
    */
-  | { type: 'attention.required'; sessionId: string; accountLabel: string; screen: string }
+  | { type: 'attention.required'; sessionId: string; screen: string;
+      claudePoolRank?: number; claudeAccountRank?: number | null; accountLabel?: string }
   /**
    * 로컬 직결로 들어온 입력의 **바이트 수**(R1). 오퍼레이터의 로컬 터미널 허브가 보낸다 —
    * 서버를 거치지 않은 입력도 detach 감사의 `inputBytes` 에 합쳐야 감사가 길에 따라 갈리지

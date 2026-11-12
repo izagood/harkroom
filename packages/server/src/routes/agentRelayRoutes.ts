@@ -148,7 +148,7 @@ export async function registerAgentRelayRoutes(
    */
   const onAttention = (ev: {
     sessionId: string; channelId: string; threadRootId: string | null;
-    agentAccountId: string; accountLabel: string;
+    agentAccountId: string; claudePoolRank?: number; claudeAccountRank?: number | null;
   }): void => {
     void (async () => {
       try {
@@ -168,7 +168,8 @@ export async function registerAgentRelayRoutes(
           threadRootId: ev.threadRootId,
           agentAccountId: ev.agentAccountId,
           agentHandle: row.handle,
-          accountLabel: ev.accountLabel,
+          ...(ev.claudePoolRank !== undefined ? { claudePoolRank: ev.claudePoolRank } : {}),
+          ...(ev.claudeAccountRank !== undefined ? { claudeAccountRank: ev.claudeAccountRank } : {}),
           audience: [row.owner_account_id],
         });
       } catch (err) {
