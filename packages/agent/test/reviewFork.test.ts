@@ -96,6 +96,25 @@ describe('reviewForkArgs', () => {
     expect(args.at(-2)).toBe('--disallowedTools');
   });
 
+  it('원 턴의 허락·금지 목록(가변 인자)과 --settings 는 버리고 포크 목록만 싣는다', () => {
+    const args = reviewForkArgs([
+      '-r', 'sess-1', '--permission-mode', 'auto',
+      '--disallowedTools', 'Bash(deny-a:*)', 'Edit(deny-b)',
+      '--allowedTools', 'mcp__harkroom__message_post', 'Bash(allow-x:*)',
+      '--settings', '{"hooks":{}}', '--allowed-tools=Bash(eq-form:*)', '--tools', 'Read',
+      '--mcp-config', '/tmp/mcp.json', '--model', 'm',
+    ], 'sess-1', null);
+    for (const gone of ['Bash(deny-a:*)', 'Edit(deny-b)', 'Bash(allow-x:*)', '{"hooks":{}}', '--settings', '--allowed-tools=Bash(eq-form:*)', '--tools', 'Read']) {
+      expect(args).not.toContain(gone);
+    }
+    expect(args.filter((a) => a === '--allowedTools')).toHaveLength(1);
+    expect(args.filter((a) => a === '--disallowedTools')).toHaveLength(1);
+    expect(args[args.indexOf('--allowedTools') + 1]).toBe(REVIEW_ALLOWED_TOOLS.join(','));
+    expect(args[args.indexOf('--mcp-config') + 1]).toBe('/tmp/mcp.json');
+    expect(args[args.indexOf('--model') + 1]).toBe('m');
+    expect(REVIEW_DISALLOWED_TOOLS).toEqual(expect.arrayContaining(['mcp__harkroom__permission_request', 'mcp__harkroom__grant_delegate']));
+  });
+
   it('첫 턴의 --session-id 도 뺀다', () => {
     const args = reviewForkArgs(['--session-id', 'abc', '--permission-mode', 'plan'], 'abc', null);
     expect(args).not.toContain('--session-id');
