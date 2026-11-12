@@ -452,3 +452,46 @@ fn default_spawn_kill_takes_down_the_whole_group() {
     );
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn default_spawn_normal_exit_also_takes_down_the_group() {
+    // security #1961 낮음: 자식이 정상으로 끝나도 stdout 을 쥔 손자가 남지 않고, 읽기가 끝나야 한다.
+    let dir = state_dir();
+    let mut c = default_spawn(
+        "/bin/sh",
+        &["-c".into(), "/bin/sleep 30 & echo $!; exit 0".into()],
+        &dir,
+        &[],
+    )
+    .unwrap();
+    let mut out = BufReader::new(c.take_stdout().unwrap());
+    let mut line = String::new();
+    out.read_line(&mut line).unwrap();
+    let grandchild: libc::pid_t = line.trim().parse().unwrap();
+    let t0 = Instant::now();
+    let code = loop {
+        if let Some(code) = c.try_wait().unwrap() {
+            break code;
+        }
+        assert!(t0.elapsed() < Duration::from_secs(3), "끝남을 못 봤다");
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    assert_eq!(code, Some(0));
+    // 손자가 죽었으니 파이프가 닫혀 읽기가 곧 끝난다.
+    let mut rest = String::new();
+    out.read_to_string(&mut rest).unwrap();
+    assert!(
+        t0.elapsed() < Duration::from_secs(3),
+        "읽기가 손자에 묶였다"
+    );
+    while unsafe { libc::kill(grandchild, 0) } == 0 && t0.elapsed() < Duration::from_secs(3) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    // SAFETY: 신호 0 은 살아 있는지만 본다.
+    assert_ne!(
+        unsafe { libc::kill(grandchild, 0) },
+        0,
+        "손자 프로세스가 남았다"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}

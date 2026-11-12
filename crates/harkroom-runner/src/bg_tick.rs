@@ -265,12 +265,15 @@ impl BgExecutor {
         }
         .map_err(|e| format!("띄우기 실패({})", e.kind()))?;
 
+        // 읽기는 채널로 받는다 — 자식이 끝난 뒤 남은 손자가 파이프를 쥐고 있어도 `READER_GRACE` 만 기다린다.
         let reader = child.take_stdout().map(|mut r| {
+            let (tx, rx) = std::sync::mpsc::channel();
             std::thread::spawn(move || {
                 let mut buf = Vec::new();
                 let _ = r.read_to_end(&mut buf);
-                String::from_utf8_lossy(&buf).into_owned()
-            })
+                let _ = tx.send(String::from_utf8_lossy(&buf).into_owned());
+            });
+            rx
         });
         let _ = child.feed_stdin(&bg_prompt(job));
         let timeout = self.deps.timeout.unwrap_or(BG_TIMEOUT);
@@ -292,7 +295,7 @@ impl BgExecutor {
             std::thread::sleep(Duration::from_millis(20));
         };
         let stdout = reader
-            .map(|h| h.join().unwrap_or_default())
+            .and_then(|rx| rx.recv_timeout(READER_GRACE).ok())
             .unwrap_or_default();
         let outcome = classify(
             &stdout,
@@ -423,6 +426,9 @@ pub fn classify(
     }
 }
 
+/// 자식이 끝난 뒤 읽기 스레드를 기다리는 상한.
+const READER_GRACE: Duration = Duration::from_secs(2);
+
 /// 자기 프로세스 그룹으로 띄운 자식 — 죽일 때 그룹째(`killpg`) 죽이고 거둔다.
 struct GroupChild(std::process::Child);
 
@@ -439,17 +445,30 @@ impl ForkChild for GroupChild {
         };
         stdin.write_all(text.as_bytes())
     }
+    /// 끝났는지는 회수하지 않고(`WNOWAIT`) 본다. 끝났으면 **회수 전에** 그룹을 걷어(손자 MCP 브릿지 등) 그 뒤 회수한다 —
+    /// 먼저 회수하면 그룹 번호가 재사용될 틈이 생기고, 남은 손자가 stdout 을 쥐어 읽기가 끝나지 않는다(security #1961 낮음).
     fn try_wait(&mut self) -> io::Result<Option<Option<i32>>> {
-        Ok(self.0.try_wait()?.map(|s| s.code()))
+        let pid = self.0.id() as libc::pid_t;
+        if !crate::pi_home::exited_unreaped(pid)? {
+            return Ok(None);
+        }
+        self.kill_group();
+        Ok(Some(self.0.wait()?.code()))
     }
     fn kill(&mut self) {
+        self.kill_group();
+        let _ = self.0.wait();
+    }
+}
+
+impl GroupChild {
+    /// 그룹째 SIGKILL — process_group(0) 이라 그룹 id = 자식 pid. 그룹이 없으면 자식만.
+    fn kill_group(&mut self) {
         let pid = self.0.id() as libc::pid_t;
-        // process_group(0) 이라 그룹 id = 자식 pid. 그룹이 없으면(이미 끝남) 자식만.
-        // SAFETY: killpg 는 신호만 보낸다 — 메모리를 건드리지 않는다.
+        // SAFETY: killpg 는 신호만 보낸다 — 메모리를 건드리지 않는다. 자식은 아직 회수 전이라 번호가 살아 있다.
         if pid <= 0 || unsafe { libc::killpg(pid, libc::SIGKILL) } != 0 {
             let _ = self.0.kill();
         }
-        let _ = self.0.wait();
     }
 }
 

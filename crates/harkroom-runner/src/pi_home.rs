@@ -248,7 +248,7 @@ fn run_capped(command: &Path, args: &[String], env: &Env, cwd: &Path) -> io::Res
 }
 
 /// 자식이 끝났는가 — 회수하지 않는다(`waitid(P_PID, WEXITED|WNOHANG|WNOWAIT)`).
-fn exited_unreaped(pid: libc::pid_t) -> io::Result<bool> {
+pub(crate) fn exited_unreaped(pid: libc::pid_t) -> io::Result<bool> {
     // SAFETY: siginfo 는 0 으로 채운 지역 값이고, waitid 는 그 주소에만 쓴다.
     let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
     loop {
