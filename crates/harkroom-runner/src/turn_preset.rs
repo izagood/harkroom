@@ -570,6 +570,25 @@ pub fn attaches_post_tool_hook(harness: AgentHarness, p: MentionPermission) -> b
         .is_some_and(|s| s.contains("PostToolUse"))
 }
 
+/// TS `attachesGateHook` — 이 턴에 물음 hook·Notification hook(「확인을 기다려 멈춤」 신호)이 실제로 붙는가.
+/// API 키 연결 턴(`provider_lane`)은 붙지 않는다.
+pub fn attaches_gate_hook(
+    harness: AgentHarness,
+    p: MentionPermission,
+    provider_lane: bool,
+) -> bool {
+    let a = RuleArgs {
+        operator_bin: "/x",
+        provider_lane,
+        ..Default::default()
+    };
+    let args = probe_rules(harness, p, &a);
+    args.iter()
+        .position(|x| x == "--settings")
+        .and_then(|i| args.get(i + 1))
+        .is_some_and(|s| s.contains("\"Notification\""))
+}
+
 /// TS `attachesCommandHook` — 이 턴에 「정확한 명령」 hook 이 실제로 붙는가.
 pub fn attaches_command_hook(
     harness: AgentHarness,
@@ -662,6 +681,22 @@ mod helper_tests {
             true
         ));
         assert!(!attaches_command_hook(Pi, MentionPermission::Auto, true));
+        assert!(attaches_gate_hook(
+            ClaudeCode,
+            MentionPermission::Auto,
+            false
+        ));
+        assert!(!attaches_gate_hook(
+            ClaudeCode,
+            MentionPermission::Auto,
+            true
+        ));
+        assert!(!attaches_gate_hook(
+            ClaudeCode,
+            MentionPermission::Readonly,
+            false
+        ));
+        assert!(!attaches_gate_hook(Codex, MentionPermission::Auto, false));
     }
 
     #[test]

@@ -32,6 +32,7 @@ pub mod codex_rules;
 pub mod config;
 pub mod fail_text;
 pub mod harness_memory;
+pub mod lane_guard;
 pub mod link;
 pub mod mcp;
 pub mod memory_cache;
