@@ -816,20 +816,23 @@ describe('message.fail — 실패의 계약', () => {
       // 차례 주인을 못 정했으니 admin 에게 더 가지 않는다(머리 주인 other 는 평소대로 답글 알림을 받는다).
       expect((await inboxOf(adminAccountId)).length).toBe(before + 1);
 
-      // 이름표 문법 밖(이메일 꼴)은 거절한다 — 계정 사실은 풀/계정 이름표뿐이다.
-      const email = await client.callTool({
-        name: 'message.fail',
-        arguments: { channelId, body: 'x', retryable: false, code: 'account_gate', account: 'me@example.com' },
-      });
-      expect(email.isError).toBe(true);
+      // 순번 밖(0·100·소수)은 거절한다 — 계정 사실은 순번뿐이다(칩 ②).
+      for (const bad of [0, 100, 1.5]) {
+        const res = await client.callTool({
+          name: 'message.fail',
+          arguments: { channelId, body: 'x', retryable: false, code: 'account_gate', claudeAccountRank: bad },
+        });
+        expect(res.isError).toBe(true);
+      }
 
       // 다른 실패에는 이름표·차례 주인이 따라 올라가지 않는다.
       const plain = text(await client.callTool({
         name: 'message.fail',
-        arguments: { channelId, threadRootId: root, body: 'x', retryable: true, mentionId: mention, account: 'work/plum' },
+        arguments: { channelId, threadRootId: root, body: 'x', retryable: true, mentionId: mention, account: 'work/plum', claudeAccountRank: 1 },
       })) as { message: { meta: Record<string, unknown> } };
       const f = readFailureMeta(plain.message.meta)!;
-      expect(f.account).toBeUndefined();
+      expect(f.claudeAccountRank).toBeUndefined();
+      expect(JSON.stringify(plain.message.meta)).not.toContain('plum');
       expect(f.awaitingAccountId).toBeUndefined();
     } finally {
       await client.close();
@@ -863,10 +866,13 @@ describe('message.fail — 실패의 계약', () => {
         name: 'message.fail',
         arguments: {
           channelId: priv, threadRootId: root, body: '비공개 채널의 관문 실패 본문', retryable: false,
-          code: 'account_gate', mentionId: mention, account: 'acct-1',
+          code: 'account_gate', mentionId: mention, account: 'acct-1', claudePoolRank: 2, claudeAccountRank: 1,
         },
       })) as { message: { id: string; meta: Record<string, unknown> } };
       expect(readFailureMeta(posted.message.meta)?.code).toBe('account_gate');
+      // 칩 ②: 순번만 남고 옛 러너의 이름표(`account`)는 받기만 하고 버린다.
+      expect(readFailureMeta(posted.message.meta)).toMatchObject({ claudePoolRank: 2, claudeAccountRank: 1 });
+      expect(JSON.stringify(posted.message.meta)).not.toContain('acct-1');
       expect(readFailureMeta(posted.message.meta)?.awaitingAccountId).toBeUndefined();
       const leaked = await pool.query(`select 1 from inbox where account_id = $1 and message_id = $2`, [leaver.accountId, posted.message.id]);
       expect(leaked.rowCount).toBe(0);

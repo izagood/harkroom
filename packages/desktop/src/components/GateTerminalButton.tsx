@@ -13,9 +13,9 @@ import { useT } from '../i18n/useT';
  * 맞춰 보고, 데몬에는 (풀, 계정) 이름만 넘긴다. 이 기기에서 열 수 없으면(웹·모바일·다른 오퍼레이터)
  * 버튼 대신 "<오퍼레이터>에서 열기" 문구를 보인다. 창은 사람이 누를 때만 연다.
  */
-export function GateTerminalButton({ label, agentId }: { label: string; agentId: string }) {
+export function GateTerminalButton({ poolRank, accountRank, agentId }: { poolRank?: number | undefined; accountRank: number; agentId: string }) {
   const t = useT();
-  const target = useGateTerminalTarget(label, agentId);
+  const target = useGateTerminalTarget(poolRank, accountRank, agentId);
   const [state, setState] = useState<'idle' | 'opening' | 'opened' | 'failed'>('idle');
 
   if (target.kind === 'unknown') return null;
@@ -63,7 +63,7 @@ export function GateTerminalButton({ label, agentId }: { label: string; agentId:
 }
 
 /** 사실을 모아 `resolveGateTerminalTarget` 에 넘긴다. 읽기 실패는 "모른다"가 아니라 그 사실의 부재로 둔다. */
-export function useGateTerminalTarget(label: string, agentId: string): GateTerminalTarget {
+export function useGateTerminalTarget(poolRank: number | undefined, accountRank: number, agentId: string): GateTerminalTarget {
   const [target, setTarget] = useState<GateTerminalTarget>({ kind: 'unknown' });
   useEffect(() => {
     let alive = true;
@@ -90,9 +90,9 @@ export function useGateTerminalTarget(label: string, agentId: string): GateTermi
         if (opId) operatorName = operatorNameOf((await Promise.resolve().then(() => getController().operators()).catch(() => null))?.find((o) => o.id === opId)) ?? null;
       }
       if (!alive) return;
-      setTarget(resolveGateTerminalTarget({ label, agentId, hasLocalSurface, agentIsLocal, operatorName, snapshot, localPool }));
+      setTarget(resolveGateTerminalTarget({ poolRank, accountRank, agentId, hasLocalSurface, agentIsLocal, operatorName, snapshot, localPool }));
     })();
     return () => { alive = false; };
-  }, [label, agentId]);
+  }, [poolRank, accountRank, agentId]);
   return target;
 }

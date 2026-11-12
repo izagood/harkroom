@@ -9,7 +9,7 @@ import { createWatch } from '../services/prWatch.js';
 import {
   ASK_BUNDLE_MAX_ITEMS, ASK_MAX_OPTIONS, ASK_MIN_OPTIONS, MAX_MESSAGE_BODY_CHARS,
   MODEL_ID_MAX, REPORT_MAX_ITEMS, REPORT_MAX_NEXT, TEAM_ROUND_LIMIT,
-  ACCOUNT_GATE_LABEL_PATTERN, FAILURE_CODES, type AccountView, type AskAudience, type AskMeta, type DelegationMeta, type FailureMeta,
+  FAILURE_CODES, type AccountView, type AskAudience, type AskMeta, type DelegationMeta, type FailureMeta,
   type MessageRow, type ModelMeta, type ReportMeta,
   ASK_TEXT_OPTION_ID,
   compareRelease,
@@ -66,7 +66,6 @@ import { listWorkItems, removeWorkItem, resolveWorkItemOwner, upsertWorkItem, WO
 import { workItemUpsertSchema } from '../routes/workItemRoutes.js';
 import { listTeams } from '../services/teams.js';
 import { listHandleGroups } from '../services/handleGroups.js';
-import { recordClaudeLane } from '../services/claudeLane.js';
 import { readAgentStop } from '../services/agents.js';
 import { recordRunnerVersion } from '../services/runnerVersion.js';
 import { recordUpload, resolveAttachmentFor } from '../services/attachments.js';
@@ -1391,13 +1390,19 @@ function buildMcpServer(
       laneCode: z.enum(PROVIDER_LANE_FAILURE_CODES).optional(),
       /**
        * `account_gate` 때만: 그 턴을 띄운 멘션(차례 주인을 정할 재료 — 서버가 확인한다)과 관문이 선
-       * 계정의 이름표(`풀/계정`). 러너의 자기 호출에는 원인 헤더가 없어서 멘션을 직접 싣는다.
+       * 계정의 풀·계정 **순번**. 러너의 자기 호출에는 원인 헤더가 없어서 멘션을 직접 싣는다.
        */
       mentionId: z.string().uuid().optional(),
-      account: z.string().regex(ACCOUNT_GATE_LABEL_PATTERN).optional(),
+      claudePoolRank: z.number().int().min(1).max(99).optional(),
+      claudeAccountRank: z.number().int().min(1).max(99).optional(),
+      /**
+       * 옛 러너가 싣던 계정 이름표. **받기만 하고 버린다**(칩 ②, 2026-11-12) — 폴더 이름이라 사람 이름일 수 있어
+       * 서버에 남기지 않는다. 키를 없애면 옛 러너의 관문 통지가 입력 오류로 통째로 사라지므로 칸은 남긴다.
+       */
+      account: z.string().max(80).optional(),
       model: MODEL_ARG,
     },
-  }, async ({ channelId, body, threadRootId, what, reason, retryable, code, laneCode, mentionId, account: gateAccount, model }) => {
+  }, async ({ channelId, body, threadRootId, what, reason, retryable, code, laneCode, mentionId, claudePoolRank, claudeAccountRank, model }) => {
     if (!(await assertChannelVisible(pool, channelId, account.id))) {
       return jsonResult({ error: { code: 'forbidden', message: 'not a member of this dm channel' } });
     }
@@ -1425,7 +1430,8 @@ function buildMcpServer(
       failure: {
         retryable, ...(what ? { what } : {}), ...(reason ? { reason } : {}), ...(code && keepCode ? { code } : {}),
         ...(awaiting ? { awaitingAccountId: awaiting } : {}),
-        ...(gate && gateAccount ? { account: gateAccount } : {}),
+        ...(gate && claudePoolRank !== undefined ? { claudePoolRank } : {}),
+        ...(gate && claudeAccountRank !== undefined ? { claudeAccountRank } : {}),
         // 까닭 코드는 그 표지에만 붙는다 — 다른 실패에 lane 사실이 따라 올라가지 않게.
         ...(code === 'provider_lane' && keepCode && laneCode ? { laneCode } : {}),
       },
@@ -1799,15 +1805,9 @@ function buildMcpServer(
     inputSchema: {
       timeoutMs: z.number().int().min(0).max(25_000).optional(),
       version: z.string().optional(),
-      // 러너가 기동 때 읽은 claude lane(5단계). **버전과 같은 자리로 온다** — 러너가
-      // 이미 25초마다 부르는 것이 이 도구 하나뿐이라, lane 만을 위한 엔드포인트를 두면
-      // 러너가 새 실패 지점을 하나 더 갖는다(못 보내면 폴까지 실패하는 것이 아니라,
-      // 폴은 되는데 lane 만 조용히 안 오는 상태를 따로 다뤄야 한다).
-      claudeLane: z.object({
-        pool: z.string().nullable(),
-        // 이름만 받는다 — 경로·이메일은 받지 않는다(러너 로그와 같은 규율).
-        accounts: z.array(z.string()).max(64),
-      }).optional(),
+      // 옛 러너가 기동 때 읽은 claude 계정 순서를 싣던 칸. **받기만 하고 버린다**(칩 ②, 2026-11-12) — 계정·풀
+      // 이름은 사람 이름일 수 있어 서버에 남기지 않는다(#1039). 키를 없애면 옛 러너의 폴이 입력 오류로 실패한다.
+      claudeLane: z.unknown().optional(),
       /**
        * 이 러너가 지금 쥔 항목(처리 중이라 아직 안 읽은 것, 2026-10-12 설계 B). 주면 서버가 그 항목에 임대를 걸고
        * 결과에서 뺀다 — 바쁜 러너가 같은 배치를 5초마다 다시 받지 않고 롱폴로 기다린다. 쥐지 않게 된 것은 이 폴에서
@@ -1825,17 +1825,11 @@ function buildMcpServer(
        */
       inboxReasons: z.array(z.string()).max(32).optional(),
     },
-  }, async ({ timeoutMs, version, claudeLane, lease, inboxReasons }) => {
+  }, async ({ timeoutMs, version, lease, inboxReasons }) => {
     // 버전이 오면 기록한다 — 배포가 넣어 준 빌드 시점 값이다(#129). 값이 바뀔 때만
     // 실제로 쓰이므로 이 핫 패스에 쓰기 비용이 없다(services/runnerVersion.ts 주석).
     if (version) {
       await recordRunnerVersion(pool, account.id, version);
-    }
-    // lane 도 같은 규칙이다 — 값이 바뀔 때만 쓴다(services/claudeLane.ts 주석).
-    // **사람 계정에는 쓰지 않는다**: 사람이 MCP 로 폴을 걸 수 있고, lane 은 러너에만
-    // 있는 개념이라 사람 계정에 행이 생기면 화면이 사람에게 계정 순서를 그린다.
-    if (claudeLane && account.kind === 'agent') {
-      await recordClaudeLane(pool, account.id, claudeLane);
     }
     // presence 를 여기서 표시하지 않는다 — `/mcp` 라우트가 요청마다 이미 했다.
     // 예전에는 이 자리가 유일한 mark 였고, 그것이 **일하는 중인 에이전트를 죽었다고

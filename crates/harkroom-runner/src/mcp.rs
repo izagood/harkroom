@@ -39,15 +39,13 @@ pub struct FailOpts {
     pub code: Option<String>,
     pub lane_code: Option<String>,
     pub mention_id: Option<String>,
-    pub account: Option<String>,
+    /// `account_gate` 때만 — 관문이 선 계정의 풀 순번(1부터). 이름은 싣지 않는다(칩 ②, #1039).
+    pub claude_pool_rank: Option<u32>,
+    /// `account_gate` 때만 — 그 풀 안 계정 순번(1부터).
+    pub claude_account_rank: Option<u32>,
 }
 
-/// `inbox.poll` 의 lane·임대 인자(정본 `pollInbox` 의 `claudeLane`·`lease`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ClaudeLane {
-    pub pool: Option<String>,
-    pub accounts: Vec<String>,
-}
+/// `inbox.poll` 의 임대 인자(정본 `pollInbox` 의 `lease`). 계정 순서(`claudeLane`)는 칩 ②부터 싣지 않는다.
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PollLease {
@@ -409,7 +407,6 @@ impl<L: RunnerLink> HarkroomMcpClient<L> {
     pub fn poll_inbox(
         &self,
         timeout_ms: u64,
-        lane: Option<&ClaudeLane>,
         lease: Option<&PollLease>,
     ) -> Result<Value, HarkroomError> {
         let mut args = json!({
@@ -417,9 +414,6 @@ impl<L: RunnerLink> HarkroomMcpClient<L> {
             "version": self.version,
             "inboxReasons": RUNNER_OPT_IN_INBOX_REASONS,
         });
-        if let Some(l) = lane {
-            args["claudeLane"] = json!({"pool": l.pool, "accounts": l.accounts});
-        }
         if let Some(l) = lease {
             args["lease"] = json!({"runnerId": l.runner_id, "holding": l.holding});
         }
@@ -542,7 +536,12 @@ impl<L: RunnerLink> HarkroomMcpClient<L> {
         put(&mut m, "code", &opts.code);
         put(&mut m, "laneCode", &opts.lane_code);
         put(&mut m, "mentionId", &opts.mention_id);
-        put(&mut m, "account", &opts.account);
+        if let Some(r) = opts.claude_pool_rank {
+            m.insert("claudePoolRank".into(), json!(r));
+        }
+        if let Some(r) = opts.claude_account_rank {
+            m.insert("claudeAccountRank".into(), json!(r));
+        }
         Self::seq_of(
             "message.fail",
             &self.call("message.fail", Value::Object(m))?,

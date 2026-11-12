@@ -12,6 +12,7 @@ use serde_json::Value;
 use crate::adapter::{AgentHarness, screen_gate_for};
 use crate::mention_target::MentionTarget;
 use crate::pty::AttentionKind;
+use crate::turn_notice::GateRanks;
 
 /// 정본 `humanCancelOf` — `operator`(고아 회수·물러나기)는 사람이 멈춘 일이 아니라 넘기지 않는다.
 pub fn human_cancel_of(canceled_by: Option<&str>) -> Option<&str> {
@@ -23,23 +24,21 @@ pub fn human_cancel_of(canceled_by: Option<&str>) -> Option<&str> {
 pub struct GateFailExtras {
     pub code: Option<&'static str>,
     pub mention_id: Option<String>,
-    /// **계정 id 만**(풀 이름은 사람 이름일 수 있다 — #1039).
-    pub account: Option<String>,
+    /// 풀·계정 **순번만**(칩 ② — 계정·풀 폴더 이름은 사람 이름일 수 있다, #1039).
+    pub claude_pool_rank: Option<u32>,
+    pub claude_account_rank: Option<u32>,
 }
 
 /// 턴 **시작** 관문에만 붙인다. 턴 도중 권한 확인은 명령 하나에 대한 물음이라 계정 관문이 아니다.
-pub fn gate_fail_extras(
-    kind: AttentionKind,
-    mention_id: &str,
-    account_id: Option<&str>,
-) -> GateFailExtras {
+pub fn gate_fail_extras(kind: AttentionKind, mention_id: &str, ranks: GateRanks) -> GateFailExtras {
     if kind != AttentionKind::Startup {
         return GateFailExtras::default();
     }
     GateFailExtras {
         code: Some("account_gate"),
         mention_id: Some(mention_id.to_string()),
-        account: account_id.filter(|a| !a.is_empty()).map(str::to_string),
+        claude_pool_rank: ranks.account.rank().and(ranks.pool),
+        claude_account_rank: ranks.account.rank(),
     }
 }
 

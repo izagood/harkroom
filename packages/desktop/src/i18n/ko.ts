@@ -1964,11 +1964,6 @@ export const ko = {
   // 원래 행 이름은 `연결` 이었다. 영어가 `Presence` 로 간 이유(`Connection` 은 소켓
   // 상태로 읽힌다)가 한국어에도 그대로 걸려 `생존` 으로 옮긴다 — 이 행이 답하는 것은
   // 소켓이 아니라 **그 에이전트가 지금 답하는가**이고, 코드가 그것을 `live` 라 부른다.
-  'profile.rows.claudeLane': '기동 때 읽은 claude 계정',
-  'profile.rows.claudeLaneEmpty': '{pool}이 비어 있다 — 시스템 기본 로그인으로 돈다',
-  'profile.rows.claudeLaneOrder': '{pool}: {accounts}',
-  'profile.rows.claudeLanePoolRoot': '기본 풀',
-  'profile.rows.claudeLaneUnknown': '신고가 없다 — 재기동하면 채워진다',
   'profile.rows.presence': '생존',
   'profile.rows.presenceNotResponding': '응답 없음',
   'profile.rows.presenceOnline': '온라인',
@@ -2262,8 +2257,10 @@ export const ko = {
   'claudeAccounts.pool.signedOutSummary': '{total}개 중 {count}개 로그인 풀림',
   'claudeAccounts.attention.openAria': '{account} 터미널 열기',
   'gate.card.title': '선택을 기다립니다',
-  'gate.card.line': '{account} 계정이 Claude Code 설정 화면에서 멈췄습니다. 터미널에서 답하면 이 턴이 다시 시작됩니다.',
-  'gate.notify.title': '{account} 계정이 선택을 기다립니다',
+  'gate.card.line': 'Claude Code 설정 화면에서 멈췄습니다({account}). 터미널에서 답하면 이 턴이 다시 시작됩니다.',
+  'gate.card.lineNoAccount': 'Claude Code 설정 화면에서 멈췄습니다. 그 머신의 터미널에서 답하면 이 턴이 다시 시작됩니다.',
+  'gate.notify.title': '선택을 기다립니다 · {account}',
+  'gate.notify.accountUnknown': '에이전트',
   'gate.notify.body': '@{agent} 가 설정 화면에서 멈췄습니다 — 눌러서 답하기',
   'gate.notify.bodyNoAgent': '에이전트가 설정 화면에서 멈췄습니다 — 눌러서 답하기',
   'gate.terminal.open': '터미널 열기',

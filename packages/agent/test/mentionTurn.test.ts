@@ -66,7 +66,6 @@ function defOf(overrides: Partial<AgentView> = {}): AgentView {
     instructions: '친절하게 답한다', harness: 'claude-code', model: null, effort: null,
     workingDir: '/repo', mentionPermission: 'auto', ownerAccountId: 'human-1', disabled: false, deleted: false,
     runnerVersion: null,
-    claudeLane: null,
     // #129: 종료 요청 없음이 기본이다. 종료를 검증하는 테스트가 이 값을 덮는다.
     stopRequestedAt: null,
     stopAckedAt: null,
@@ -86,7 +85,7 @@ function defOf(overrides: Partial<AgentView> = {}): AgentView {
 class FakeHarkroom implements MentionTurnHarkroom {
   messages: MessageRow[] = [];
   posts: { channelId: string; body: string; threadRootId: string | null }[] = [];
-  fails: { channelId: string; body: string; threadRootId: string | null; retryable: boolean; code?: string; mentionId?: string; account?: string }[] = [];
+  fails: { channelId: string; body: string; threadRootId: string | null; retryable: boolean; code?: string; mentionId?: string; account?: string; claudePoolRank?: number; claudeAccountRank?: number }[] = [];
   private seq = 0;
   def: AgentView;
   /** #80 테스트를 위해 readThread 호출 기록 */
@@ -148,13 +147,15 @@ class FakeHarkroom implements MentionTurnHarkroom {
     channelId: string,
     body: string,
     threadRootId: string | null,
-    opts: { retryable: boolean; what?: string; reason?: string; code?: string; mentionId?: string; account?: string },
+    opts: { retryable: boolean; what?: string; reason?: string; code?: string; mentionId?: string; account?: string; claudePoolRank?: number; claudeAccountRank?: number },
   ): Promise<number> {
     this.posts.push({ channelId, body, threadRootId });
     this.fails.push({
       channelId, body, threadRootId, retryable: opts.retryable,
       ...(opts.code ? { code: opts.code } : {}), ...(opts.mentionId ? { mentionId: opts.mentionId } : {}),
       ...(opts.account ? { account: opts.account } : {}),
+      ...(opts.claudePoolRank !== undefined ? { claudePoolRank: opts.claudePoolRank } : {}),
+      ...(opts.claudeAccountRank !== undefined ? { claudeAccountRank: opts.claudeAccountRank } : {}),
     });
     const m = this.seedFrom(ME.id, body, threadRootId);
     m.meta = { kind: 'failure', failure: { retryable: opts.retryable } };
@@ -5741,7 +5742,7 @@ describe('계정 관문 대기 — 계정당 하나, 표식이 지워지면 다�
     const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 안녕');
     const made = await makeDeps(fake, {
-      claudeAccount: 'acct-1', claudeConfigDir: '/x/acct-1', accountLabel: 'acct-1',
+      claudeAccount: 'acct-1', claudeConfigDir: '/x/acct-1', accountLabel: 'acct-1', claudePoolRank: 2, claudeAccountRank: 1,
       callsForHuman: true, attentionLedger: ledger, gateWatchMs: 20, ...extra,
     });
     return { fake, ...made };
@@ -5758,8 +5759,10 @@ describe('계정 관문 대기 — 계정당 하나, 표식이 지워지면 다�
     expect((err as AccountGateRequeueError).why).toBe('queued');
     expect((err as AccountGateRequeueError).configDir).toBe('/x/acct-1');
     expect(g.killed()).toBe(1);
-    // 그 스레드도 막혔다 — 관문 통지는 남는다. 턴 시작 관문이라 기계용 칸이 붙는다(계정 id 만).
-    expect(fake.fails.at(-1)).toMatchObject({ code: 'account_gate', mentionId: MENTION, account: 'acct-1' });
+    // 그 스레드도 막혔다 — 관문 통지는 남는다. 턴 시작 관문이라 기계용 칸이 붙는다(순번만 — 칩 ②).
+    expect(fake.fails.at(-1)).toMatchObject({ code: 'account_gate', mentionId: MENTION, claudePoolRank: 2, claudeAccountRank: 1 });
+    expect(fake.fails.at(-1)).not.toHaveProperty('account');
+    expect(JSON.stringify(fake.fails.at(-1))).not.toContain('acct-1');
   });
 
   it("기다리는 사이 표식이 지워지면 PTY 를 접고 'passed' 로 다시 띄우게 넘긴다 — 원장은 놓는다", async () => {

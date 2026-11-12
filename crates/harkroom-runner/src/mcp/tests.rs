@@ -181,21 +181,17 @@ fn poll_inbox_args_and_shape() {
         ok(json!({"entries":[]})),
     ]);
     let c = HarkroomMcpClient::new(&f, "0.4.9");
-    let lane = ClaudeLane {
-        pool: None,
-        accounts: vec!["a".into()],
-    };
     let lease = PollLease {
         runner_id: "r1".into(),
         holding: vec![3],
     };
-    c.poll_inbox(25_000, Some(&lane), Some(&lease)).unwrap();
+    c.poll_inbox(25_000, Some(&lease)).unwrap();
     assert_eq!(
         f.tool_calls()[0]["arguments"],
         json!({"timeoutMs":25000,"version":"0.4.9","inboxReasons":["delegation_update"],
-               "claudeLane":{"pool":null,"accounts":["a"]},"lease":{"runnerId":"r1","holding":[3]}})
+               "lease":{"runnerId":"r1","holding":[3]}})
     );
-    assert!(c.poll_inbox(1, None, None).is_err());
+    assert!(c.poll_inbox(1, None).is_err());
     assert!(
         !f.tool_calls()[1]["arguments"]
             .as_object()
@@ -213,12 +209,15 @@ fn fail_carries_only_present_fields() {
         code: Some("account_gate".into()),
         mention_id: Some("m".into()),
         what: Some(String::new()),
+        claude_pool_rank: Some(2),
+        claude_account_rank: Some(1),
         ..Default::default()
     };
     assert_eq!(c.fail("c", "b", Some("r"), &opts).unwrap(), 9);
     assert_eq!(
         f.tool_calls()[0]["arguments"],
-        json!({"channelId":"c","body":"b","retryable":true,"threadRootId":"r","code":"account_gate","mentionId":"m"})
+        json!({"channelId":"c","body":"b","retryable":true,"threadRootId":"r","code":"account_gate","mentionId":"m",
+               "claudePoolRank":2,"claudeAccountRank":1})
     );
 }
 

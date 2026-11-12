@@ -4,7 +4,8 @@ import { clearPlanOpenKeys } from '../lib/threadPlan';
 import { swapAskMention, type PlanAsk } from '../lib/planRef';
 import { planAskRecipient } from '@harkroom/shared';
 import type { MemoryEdit, MemoryEntry, MemoryRevision, MemoryAudit, MemoryBatchResult } from '../lib/memoryList';
-import { countsAsReply, notifyLevelOf, readFailureMeta, type InboxThreadState } from '@harkroom/shared';
+import { countsAsReply, isAccountRank, isPoolRank, notifyLevelOf, readFailureMeta, type InboxThreadState } from '@harkroom/shared';
+import { accountChipOf } from '../lib/accountChip';
 import { buildBoard, mineCount } from '../lib/inboxBoard';
 
 /** 보드 한 판의 재료 — `GET /inbox/board` 의 응답(`ApiClient.inboxBoard`). `truncated` 는 옛 시험 목이 안 줄 수 있다. */
@@ -1240,7 +1241,11 @@ export class Controller {
     // 나에게 온 차례가 아니면 울리지 않는다(채널을 `all` 로 둔 다른 사람에게는 남의 관문이다).
     if (!store.me || failure.awaitingAccountId !== store.me.id) return true;
     if (!usePrefsStore.getState().notifications.enabled) return true;
-    const label = failure.account ?? row.authorId;
+    // 이름은 오지 않는다(칩 ②) — 순번 칩 글로 부르고, 없으면 「계정」 자리 없이 에이전트로 묶는다.
+    const chip = isAccountRank(failure.claudeAccountRank)
+      ? accountChipOf(this.t(), isPoolRank(failure.claudePoolRank) ? failure.claudePoolRank : null, failure.claudeAccountRank)
+      : null;
+    const label = chip?.label ?? this.t()('gate.notify.accountUnknown');
     // 열쇠는 (에이전트, 이름표) — 이름표만 쓰면 다른 에이전트의 같은 이름표가 서로를 삼킨다.
     const key = `${row.authorId}\u0000${label}`;
     const at = Date.now();

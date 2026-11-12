@@ -19,7 +19,7 @@ const agent = (overrides: Partial<AgentView> = {}): AgentView => ({
   ...(acc('agent-1', 'alpha', 'agent', false, { ownerAccountId: ME_ID }) as unknown as AgentView),
   instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
   mentionPermission: 'auto', runnerVersion: null, stopRequestedAt: null, stopAckedAt: null,
-  lastTurnAt: null, claudeLane: null, assignment: null, invokeScope: 'community', credentialScope: 'none', invokers: [], delegates: [], mcpServers: [], ...overrides,
+  lastTurnAt: null, assignment: null, invokeScope: 'community', credentialScope: 'none', invokers: [], delegates: [], mcpServers: [], ...overrides,
 });
 
 function setup(over: Partial<Record<string, unknown>> = {}) {

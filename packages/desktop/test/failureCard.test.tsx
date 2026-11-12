@@ -134,9 +134,9 @@ describe('실패는 에이전트 주고받기에 접히지 않는다', () => {
 
 // 계정 관문(designer #1053 F1·F2): 실패가 아니라 내 차례다 — 선택 카드 모양, 계정을 말하는 한 줄.
 describe('FailureCard — 계정 관문', () => {
-  it('내 차례 모양·"선택을 기다립니다"·계정 이름을 굵게, 러너의 what·reason 은 그리지 않는다', () => {
+  it('내 차례 모양·"선택을 기다립니다"·계정 순번을 굵게, 러너의 what·reason 은 그리지 않는다', () => {
     const m = failMsg(failMeta({
-      retryable: false, code: 'account_gate', account: 'acct-1',
+      retryable: false, code: 'account_gate', claudePoolRank: 2, claudeAccountRank: 1,
       what: '하네스가 사람의 확인을 기다린다', reason: '그 터미널에서 화면의 물음에 답하면 이 턴이 그 자리에서 이어진다',
     }));
     render(<MessageItem message={m} />);
@@ -147,9 +147,16 @@ describe('FailureCard — 계정 관문', () => {
     expect(card.textContent).toContain('선택을 기다립니다');
     expect(card.textContent).not.toContain('끝내지 못했다');
     const line = screen.getByTestId('gate-card-line');
-    expect(line.querySelector('strong')?.textContent).toBe('acct-1');
+    expect(line.querySelector('strong')?.textContent).toBe('↓ 풀 2 · 계정 1');
     expect(line.textContent).toContain('다시 시작됩니다');
     expect(card.textContent).not.toContain('하네스');
+  });
+  it('순번이 없으면(옛 러너·기본 로그인) 계정 없이 말하는 줄', () => {
+    render(<MessageItem message={failMsg(failMeta({ retryable: false, code: 'account_gate' }))} />);
+    expect(screen.getByTestId('failure-card').getAttribute('data-gate')).toBe('true');
+    const line = screen.getByTestId('gate-card-line');
+    expect(line.querySelector('strong')).toBeNull();
+    expect(line.textContent).toContain('설정 화면에서 멈췄습니다');
   });
   it('관문이 아닌 실패는 그대로 빨간 실패 카드다', () => {
     render(<MessageItem message={failMsg(failMeta({ retryable: true, what: 'x' }))} />);

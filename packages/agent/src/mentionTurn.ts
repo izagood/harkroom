@@ -1082,14 +1082,21 @@ export function humanCancelOf(canceledBy: string | null): string | undefined {
  * 그때만 "그 계정의 설정 확인 화면이 사람을 기다린다"(서버가 🙋·차례 주인으로 읽는다)가 참이다.
  * 턴 **도중** 권한 확인(`'gate'`)은 명령 하나에 대한 물음이라 계정 관문이 아니다 — 붙이면 명령마다 🙋 가 선다.
  *
- * `account` 는 **계정 id 만** 싣는다(풀 이름은 사람 이름일 수 있다 — security, #1039). 화면은 이 id 를
- * 그 기기의 실제 계정 목록과 대조해 터미널 계정을 고른다(PR-4).
+ 계정은 **순번만** 싣는다(칩 ②, 2026-11-12). 계정 디렉터리 이름(옛 「계정 id」)도 풀 이름도 사람이 지은 폴더
+ * 이름이라 사람 이름일 수 있다(security #1039) — 서버에 이름을 남기지 않는다. 화면은 그 기기의 풀 순서에서 이
+ * 순번으로 계정을 다시 찾아 터미널을 연다(`desktop/lib/gateTerminal.ts`).
  */
 export function gateFailExtras(
-  kind: AttentionKind, mentionId: string, account: string | null,
-): Pick<FailOpts, 'code' | 'mentionId' | 'account'> {
+  kind: AttentionKind, mentionId: string, ranks: { claudePoolRank?: number; claudeAccountRank?: number | null },
+): Pick<FailOpts, 'code' | 'mentionId' | 'claudePoolRank' | 'claudeAccountRank'> {
   if (kind !== 'startup') return {};
-  return { code: 'account_gate', mentionId, ...(account ? { account } : {}) };
+  // 풀 순번은 계정 순번과 짝일 때만 싣는다 — 화면은 계정 순번 없이는 열 자리를 못 찾는다(Rust `gate_fail_extras` 와 같다).
+  if (typeof ranks.claudeAccountRank !== 'number') return { code: 'account_gate', mentionId };
+  return {
+    code: 'account_gate', mentionId,
+    ...(ranks.claudePoolRank !== undefined ? { claudePoolRank: ranks.claudePoolRank } : {}),
+    claudeAccountRank: ranks.claudeAccountRank,
+  };
 }
 
 export async function runMentionTurn(
@@ -2472,7 +2479,11 @@ export async function runMentionTurn(
     // 이 턴은 이제 **사람을 기다린다** — 기록이 안 자라는 것이 정상이다.
     // 정지 시계를 계속 재면 사람이 오기 전에 접힌다(위 `awaitingHuman` 주석).
     end.awaitingHuman = true;
+    // 원장 열쇠는 기기 안에서만 쓰니 이름 그대로다. 스레드에 남는 글에는 순번만 싣는다(칩 ②).
     const label = deps.accountLabel ?? '(기본)';
+    const gateRanks = deps.claudeAccount === null ? { claudeAccountRank: null }
+      : { ...(deps.claudePoolRank !== undefined ? { claudePoolRank: deps.claudePoolRank } : {}),
+          ...(deps.claudeAccountRank !== undefined ? { claudeAccountRank: deps.claudeAccountRank } : {}) };
     // 턴 시작 관문이면 그 계정에 표식을 세운다 — 다음 배정부터 맨 뒤로 간다(`accountAssign.ts`).
     if (kind === 'startup') deps.markAccountGate?.();
 
@@ -2494,11 +2505,11 @@ export async function runMentionTurn(
       end.gateNoticed = true;
       // 이 콜백은 `void` 다(pty.ts) — 던지면 PTY 쪽으로 새어 나가므로 삼킨다.
       // 말하지 못한 것으로 턴을 죽이지 않는다: 사람은 여전히 터미널로 닿을 수 있다.
-      void deps.harkroom.fail(channelId, gateNotice(label), anchor, {
+      void deps.harkroom.fail(channelId, gateNotice(gateRanks), anchor, {
         retryable: false,
         what: '하네스가 사람의 확인을 기다린다',
         reason: '그 터미널에서 화면의 물음에 답하면 이 턴이 그 자리에서 이어진다',
-        ...gateFailExtras(kind, mentionId, deps.claudeAccount ?? null),
+        ...gateFailExtras(kind, mentionId, gateRanks),
       }).catch((e: unknown) => {
         console.error(`[mentionTurn] ${key}: 관문 통지 발화 실패(턴은 그대로 기다린다):`,
           e instanceof Error ? e.message : e);
