@@ -62,6 +62,7 @@ pub mod rest;
 pub mod review_fork;
 pub mod session_store;
 pub mod skills_sync;
+pub mod thread_model;
 pub mod thread_note_pin;
 pub mod thread_plan_pin;
 pub mod turn_command;
