@@ -462,7 +462,7 @@ pub fn codex_lane_args(base_url: &str, extra_exclude: &[String]) -> Vec<String> 
 
 /// 0600 임시 파일(`create_new`·`O_NOFOLLOW`) → rename(security B3d-4a 낮음 3). 그 자리에 링크가 있어도 링크를 따라가
 /// 대상을 덮지 않고 링크째 바뀐다. 결과 파일은 늘 새로 만든 0600 이다(정본의 chmod 다시 걸기와 같은 끝 상태).
-fn write_private(path: &Path, body: &str) -> io::Result<()> {
+pub(crate) fn write_private(path: &Path, body: &str) -> io::Result<()> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static N: AtomicU64 = AtomicU64::new(0);
     let name = path

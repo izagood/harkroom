@@ -13,6 +13,7 @@
 //! - `pi_home`: pi 격리 상태 루트(`piHome.ts` — 링크·설정 고르기·MCP 표·읽기 전용 도구 목록, B3c-2c-1). lane 스레드 홈·`models.json` 은 `pi_lane`(B3c-2c-2).
 //! - `turn_rules`: 턴 권한 상수·hook 설정 빌더(`turn.ts` 앞 절반, B3d-1). 프리셋·`buildTurnCommand` 연결은 B3d-2.
 //! - `account_assign`: 스레드별 claude 계정 배정(`accountAssign.ts` 와 shared 조각, B3e-2). 턴 흐름 연결은 다음 조각.
+//! - `thread_note_pin`·`memory_cache`: 스레드 메모 고정과 러너 메모리 캐시(`threadNotePin.ts`·`memoryCache.ts`, B3e-1a). `prompt` 는 `escapeForPrompt` 조각.
 //! - `mcp`: `HarkroomAgentClient` 의 MCP 절반(`call()`·`inbox.poll`·`message.*`·기억·계획·bg) — 링크의 `mcp.request`.
 
 pub mod account_assign;
@@ -22,16 +23,19 @@ pub mod codex_rules;
 pub mod config;
 pub mod link;
 pub mod mcp;
+pub mod memory_cache;
 pub mod omp_home;
 pub mod opencode_home;
 pub mod pi_home;
 pub mod pi_lane;
+pub mod prompt;
 pub mod pty;
 pub mod pty_proc;
 pub mod pty_record;
 pub mod pty_turn;
 pub mod relay_session;
 pub mod rest;
+pub mod thread_note_pin;
 pub mod turn_command;
 pub mod turn_env;
 pub mod turn_files;
