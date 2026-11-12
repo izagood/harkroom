@@ -64,6 +64,11 @@ describe('169_drop_claude_account_names', () => {
     });
     // 실패 글이 아니면 같은 꼴이라도 건드리지 않는다.
     const plain = await seed(`${GATE_HEAD}alice)\n- alice: 사용량 한도`, { kind: 'note' });
+    // 이름이 없는 사유의 실패 카드는 **다시 쓰지도 않는다**(security 낮음 1) — 행 판(xmin)이 그대로다.
+    const noName = await seed('(답하지 못했습니다)', { kind: 'failure', failure: { retryable: true, reason: 'exit 1' } });
+    const xminOf = async (id: string): Promise<string> =>
+      (await pool.query('select xmin::text as x from message where id = $1', [id])).rows[0].x;
+    const noNameXmin = await xminOf(noName);
 
     await runMigrations(pool);
 
@@ -86,5 +91,8 @@ describe('169_drop_claude_account_names', () => {
     expect(JSON.stringify(t)).not.toMatch(/alice|bob-x/);
 
     expect((await row(plain)).body).toBe(`${GATE_HEAD}alice)\n- alice: 사용량 한도`);
+
+    expect((await row(noName)).meta.failure?.reason).toBe('exit 1');
+    expect(await xminOf(noName)).toBe(noNameXmin);
   });
 });
