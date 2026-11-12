@@ -10,7 +10,7 @@ struct FakeIo {
     reclaims: u32,
     can_watch: bool,
     arms: u32,
-    attention: Vec<(String, String)>,
+    attention: Vec<(String, GateRanks)>,
     logs: Vec<String>,
 }
 
@@ -37,9 +37,8 @@ impl GateIo for FakeIo {
     fn arm_gate_watch(&mut self) {
         self.arms += 1;
     }
-    fn needs_attention(&mut self, screen: &str, account_label: &str) {
-        self.attention
-            .push((screen.to_owned(), account_label.to_owned()));
+    fn needs_attention(&mut self, screen: &str, ranks: GateRanks) {
+        self.attention.push((screen.to_owned(), ranks));
     }
     fn log(&mut self, line: &str) {
         self.logs.push(line.to_owned());
@@ -141,10 +140,8 @@ fn startup_claims_ledger_marks_and_arms_watch() {
     assert_eq!(io.arms, 1);
     assert_eq!(gate.requeue, None);
     assert_eq!(io.reclaims, 0);
-    assert_eq!(
-        io.attention,
-        vec![("온보딩".to_owned(), "pool-a-acct1".to_owned())]
-    );
+    // 앱으로는 화면과 **순번**만 간다 — 원장 열쇠(계정 이름)는 싣지 않는다(칩 ③).
+    assert_eq!(io.attention, vec![("온보딩".to_owned(), ctx().ranks)]);
 
     // 같은 턴이 다시 불러도 원장을 다시 잡지 않고 감시도 두 번 걸지 않는다.
     call_human(

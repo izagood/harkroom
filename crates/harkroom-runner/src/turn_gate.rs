@@ -129,8 +129,9 @@ pub trait GateIo {
     fn can_watch_gate(&self) -> bool;
     /// 관문 감시 주기를 건다 — 주기마다 표식을 물어 [`gate_watch_tick`] 을 부른다.
     fn arm_gate_watch(&mut self);
-    /// 앱에 이 세션의 터미널을 열라고 알린다 — **화면은 여기로만** 간다.
-    fn needs_attention(&mut self, screen: &str, account_label: &str);
+    /// 앱에 이 세션의 터미널을 열라고 알린다 — **화면은 여기로만** 간다. 계정은 풀·계정 **순번**으로만 싣는다
+    /// (칩 ③ — 계정 이름은 서버로 보내지 않는다, #1039). 실구현은 `relay_session::SessionHandle::needs_attention`.
+    fn needs_attention(&mut self, screen: &str, ranks: GateRanks);
     /// 정본 `console.error` 몫.
     fn log(&mut self, line: &str);
 }
@@ -171,7 +172,7 @@ pub fn call_human(
             }
         }
     }
-    io.needs_attention(screen, &ctx.account_label);
+    io.needs_attention(screen, ctx.ranks);
     io.log(&format!(
         "사람 손이 필요하다({}, 계정={}) — 앱이 이 세션의 터미널을 연다",
         match kind {
