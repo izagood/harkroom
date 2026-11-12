@@ -6,7 +6,7 @@
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write as _};
-use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
@@ -78,7 +78,7 @@ impl fmt::Display for TurnFileError {
                 "HARKROOM_MCP_CONFIG 를 읽을 수 없다 — 오퍼레이터가 spawn 전에 쓰는 파일이다",
             ),
             Self::McpEntryInvalid { .. } => f.write_str(
-                "HARKROOM_MCP_CONFIG 의 MCP 항목 모양이 틀렸다 — command 또는 url 이 문자열이어야 한다",
+                "HARKROOM_MCP_CONFIG 의 MCP 항목이 틀렸다 — 이름은 소문자·숫자·`-` 1~64자, command 또는 url 은 문자열이어야 한다",
             ),
             Self::StateDirGone { .. } => f.write_str(
                 "상태 디렉터리가 사라졌다. 러너는 뜰 때 이 경로를 한 번 정하고 사는 동안 그대로 쓴다 — 도는 중에 그 디렉터리를 옮기면 없는 경로를 계속 붙잡는다. 앱을 재시작하면 새 경로로 다시 잡는다.",
@@ -155,13 +155,28 @@ pub fn parse_entry(name: &str, v: &Value) -> Result<McpServerEntry, TurnFileErro
     Ok(McpServerEntry::Stdio { command, args, env })
 }
 
+/// MCP 이름 문법 `^[a-z0-9-]{1,64}$`. 이름은 codex `-c mcp_servers.<이름>.*` TOML 키에 그대로 들어가므로,
+/// `.`·`=`·따옴표가 섞이면 다른 설정 키를 가리킬 수 있다(security B3d-4a 낮음 1).
+pub fn is_valid_mcp_name(name: &str) -> bool {
+    (1..=64).contains(&name.len())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
 /// 정본 `readExtraMcpServers` — harkroom·avcs(프리셋이 굽는다)를 뺀 추가 항목. 파일 순서를 지킨다.
+/// 정본과 달리 이름 문법(`is_valid_mcp_name`)에 어긋나는 항목은 그 이름으로 거절한다.
 pub fn read_extra_mcp_servers(path: &Path) -> Result<Vec<(String, McpServerEntry)>, TurnFileError> {
     let table = read_table(path)?;
     table
         .iter()
         .filter(|(name, _)| name.as_str() != "harkroom" && name.as_str() != "avcs")
-        .map(|(name, v)| Ok((name.clone(), parse_entry(name, v)?)))
+        .map(|(name, v)| {
+            if !is_valid_mcp_name(name) {
+                return Err(TurnFileError::McpEntryInvalid { name: name.clone() });
+            }
+            Ok((name.clone(), parse_entry(name, v)?))
+        })
         .collect()
 }
 
@@ -336,16 +351,36 @@ pub fn codex_lane_args(base_url: &str) -> Vec<String> {
         .collect()
 }
 
-/// 0600 으로 만들고(없을 때) 이미 있으면 chmod 로 다시 0600 — 정본과 같이 둘 다 한다.
+/// 0600 임시 파일(`create_new`·`O_NOFOLLOW`) → rename(security B3d-4a 낮음 3). 그 자리에 링크가 있어도 링크를 따라가
+/// 대상을 덮지 않고 링크째 바뀐다. 결과 파일은 늘 새로 만든 0600 이다(정본의 chmod 다시 걸기와 같은 끝 상태).
 fn write_private(path: &Path, body: &str) -> io::Result<()> {
-    let mut f = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(path)?;
-    f.write_all(body.as_bytes())?;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static N: AtomicU64 = AtomicU64::new(0);
+    let name = path
+        .file_name()
+        .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
+    let mut tmp_name = name.to_os_string();
+    tmp_name.push(format!(
+        ".{}.{}.tmp",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ));
+    let tmp = path.with_file_name(tmp_name);
+    let res = (|| {
+        let mut f = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&tmp)?;
+        f.write_all(body.as_bytes())?;
+        f.sync_all()?;
+        fs::rename(&tmp, path)
+    })();
+    if res.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    res
 }
 
 /// 정본 `writeSystemPromptFile` — 매 턴 최신 지시문을 `system-prompt.txt` 에(0600). 디렉터리가 사라졌으면 다시 만들지 않고 말한다.
