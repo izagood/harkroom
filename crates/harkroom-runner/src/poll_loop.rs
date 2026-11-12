@@ -25,12 +25,37 @@ pub const HANDOVER_HOLD_MS: i64 = 30 * 60_000;
 
 /// 정본 `stopRequestedForRunner`(#129) — 내 기동 시각보다 **나중에** 온 요청만 나를 향한 것이다.
 /// 파싱할 수 없는 값은 요청으로 보지 않는다(종료는 되돌리는 데 사람 손이 필요하다).
-/// 정본의 `Date.parse` 와 달리 `toISOString` 꼴(`…Z`)만 읽는다 — 서버가 그 꼴로 쓰고, 다른 꼴은 요청이 아니다로 떨어진다.
+/// `…Z` 꼴과 `±HH:MM` 꼴을 읽는다 — 서버는 `toISOString`(`…Z`)으로 쓰지만, 꼴이 바뀌어 못 읽으면 러너가 종료
+/// 요청을 못 보고 계속 돈다(끄는 장치라 실패 방향이 반대다, #1965 security 낮음).
 pub fn stop_requested_for_runner(stop_requested_at: Option<&str>, started_at_ms: i64) -> bool {
-    match stop_requested_at.and_then(crate::omp_home::parse_iso_utc_ms) {
+    match stop_requested_at.and_then(parse_iso_offset_ms) {
         Some(at) => at > started_at_ms,
         None => false,
     }
+}
+
+/// ISO 시각을 epoch ms 로 — `…Z` 는 [`crate::omp_home::parse_iso_utc_ms`], `…±HH:MM` 은 그 차이만큼 되돌린다.
+pub fn parse_iso_offset_ms(s: &str) -> Option<i64> {
+    if s.ends_with('Z') {
+        return crate::omp_home::parse_iso_utc_ms(s);
+    }
+    let split = s.len().checked_sub(6)?;
+    let (head, off) = (s.get(..split)?, s.get(split..)?);
+    let b = off.as_bytes();
+    let sign = match b[0] {
+        b'+' => 1,
+        b'-' => -1,
+        _ => return None,
+    };
+    if b[3] != b':' || !b[1..3].iter().chain(&b[4..6]).all(u8::is_ascii_digit) {
+        return None;
+    }
+    let (h, m): (i64, i64) = (off[1..3].parse().ok()?, off[4..6].parse().ok()?);
+    if h > 23 || m > 59 {
+        return None;
+    }
+    let utc = crate::omp_home::parse_iso_utc_ms(&format!("{head}Z"))?;
+    Some(utc - sign * (h * 60 + m) * 60_000)
 }
 
 /// 정본 `idleStopRequestedAt` — 빈 폴 응답에 `stopRequestedAt` **키가 있으면**(값이 `null` 이어도) 그것을 쓰고

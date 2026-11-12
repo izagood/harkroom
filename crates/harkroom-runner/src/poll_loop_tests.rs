@@ -35,11 +35,27 @@ fn stop_request_only_after_my_start() {
     assert!(!stop_requested_for_runner(Some(&iso(START)), START));
     assert!(!stop_requested_for_runner(Some(&iso(START - 1_000)), START));
     assert!(stop_requested_for_runner(Some(&iso(START + 1_000)), START));
-    // `Z` 아닌 꼴은 요청이 아니다(정본 Date.parse 보다 좁다 — 서버는 toISOString 으로 쓴다).
-    assert!(!stop_requested_for_runner(
-        Some("2030-01-01T00:00:00+09:00"),
+    // `±HH:MM` 꼴도 읽는다(#1965 security 낮음) — 같은 순간이면 같은 ms.
+    assert_eq!(
+        parse_iso_offset_ms("2030-01-01T09:00:00.250+09:00"),
+        parse_iso_offset_ms("2030-01-01T00:00:00.250Z")
+    );
+    assert_eq!(
+        parse_iso_offset_ms("2029-12-31T19:30:00-04:30"),
+        parse_iso_offset_ms("2030-01-01T00:00:00Z")
+    );
+    assert!(stop_requested_for_runner(
+        Some("2099-01-01T00:00:00+09:00"),
         START
     ));
+    for bad in [
+        "2030-01-01T00:00:00+0900",
+        "2030-01-01T00:00:00+24:00",
+        "2030-01-01T00:00:00*09:00",
+        "2030-01-01T00:00:00",
+    ] {
+        assert_eq!(parse_iso_offset_ms(bad), None, "{bad}");
+    }
 }
 
 #[test]
