@@ -619,7 +619,7 @@ describe('AgentsSettings — 계정 풀 ↔ 이 맥 배정', () => {
         baseUrl: BASE,
         agentSessions: vi.fn(async () => [{
           id: 's1', agentAccountId: AGENT_ID, startedAt: '2026-10-15T05:00:00Z',
-          claudePool: 'work', claudeAccount: 'lychee', claudePoolRank: 1,
+          claudePoolRank: 2, claudeAccountRank: 1,
         }]),
       },
       listAgents: vi.fn(async () => [agent]),
@@ -683,12 +683,12 @@ describe('AgentsSettings — 계정 풀 ↔ 이 맥 배정', () => {
     expect(await screen.findByLabelText('＋ 풀 추가')).toBeTruthy();
   });
 
-  it('③ 다른 머신이면 그 머신 이름과 최근 턴의 풀을 말하고, 옮기지 않고 배정 칸으로 데려간다', async () => {
+  it('③ 다른 머신이면 그 머신 이름과 최근 턴의 순번을 말하고(이름 없이 순번만 온 턴에서도 보인다), 옮기지 않고 배정 칸으로 데려간다', async () => {
     await open(makeAgent({ assignment: ASSIGNED_VM } as Partial<AgentView>));
     const el = await gate();
     expect(el.dataset.gate).toBe('elsewhere');
     expect(el.textContent).toMatch(/homelab-vm 에서 돈다/);
-    expect((await screen.findByTestId('agent-pool-gate-recent')).textContent).toBe('그 머신에서 최근 턴: work › lychee (1번 풀)');
+    expect((await screen.findByTestId('agent-pool-gate-recent')).textContent).toBe('그 머신에서 최근 턴: ↓ 풀 2 · 계정 1');
     expect(screen.queryByTestId('agent-pool-gate-run-here')).toBeNull();
 
     screen.getByTestId('agent-pool-gate-goto').click();

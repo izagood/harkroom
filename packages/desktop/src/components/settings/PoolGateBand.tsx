@@ -13,8 +13,13 @@
  */
 import type { PoolGate } from '../../lib/poolGate';
 import { useT } from '../../i18n/useT';
+import { accountChipOf } from '../../lib/accountChip';
 
-export interface RecentPoolTurn { pool: string; account: string | null; rank: number | null }
+/**
+ * 그 머신의 최근 턴이 실어 온 **순번**(`claudePoolRank`·`claudeAccountRank`, 계정 칩 ①). 이름은 서버로 오지 않는다(#1039).
+ * `account` 는 숫자=풀 안 계정 순번, `null`=시스템 기본 로그인, `undefined`=모름(옛 러너).
+ */
+export interface RecentPoolTurn { pool: number | null; account: number | null | undefined }
 
 export function PoolGateBand({
   gate, operatorName, recent, busy, canAct, canRunHere, onRunHere, onEnableHere, onGoToAssignment,
@@ -22,7 +27,7 @@ export function PoolGateBand({
   gate: PoolGate;
   /** ③ 의 오퍼레이터 이름. 모르면 `null`. */
   operatorName: string | null;
-  /** ③ 에서 그 머신의 최근 턴이 실어 온 풀(`claudePool`·`claudePoolRank`). 없으면 그 줄을 생략한다. */
+  /** ③ 에서 그 머신의 최근 턴이 실어 온 순번. 없거나 칩으로 그릴 것이 없으면 그 줄을 생략한다. */
   recent: RecentPoolTurn | null;
   busy: boolean;
   /** 배정을 바꿀 수 있는 사람인가(소유자·admin). 아니면 버튼 없이 이유만. */
@@ -41,6 +46,8 @@ export function PoolGateBand({
   // 할 일은 주 버튼(designer s1) — 띠가 말하는 "할 일 하나"가 눈에 서야 한다. ③ 의 이동은 옮기지 않으므로 보조 버튼.
   const primary = 'rounded-row bg-accent px-2 py-0.5 text-meta font-medium text-fg-on-strong hover:bg-accent-hover disabled:opacity-50';
   const secondary = 'rounded-row border border-border bg-surface px-2 py-0.5 text-meta font-medium text-fg hover:bg-surface-hover disabled:opacity-50';
+  // 턴 줄 칩과 같은 글(designer seq 63800 #1) — 「풀 2 · 계정 1」·「계정 1」·「기본 로그인」.
+  const recentChip = gate.kind === 'elsewhere' && recent ? accountChipOf(t, recent.pool, recent.account) : null;
   const message = gate.kind === 'unassigned'
     ? t('agents.run.poolGate.unassigned')
     : gate.kind === 'half'
@@ -50,11 +57,9 @@ export function PoolGateBand({
     <div className={`mt-1 space-y-1 rounded-md px-2 py-1.5 text-meta text-fg ${gate.kind === 'elsewhere' ? 'border border-border bg-surface-raised' : 'bg-warning-surface'}`} role="status"
       data-testid="agent-pool-gate" data-gate={gate.kind}>
       <p>{message}</p>
-      {gate.kind === 'elsewhere' && recent && (
-        <p className="text-fg-muted" data-testid="agent-pool-gate-recent">
-          {recent.rank !== null
-            ? t('agents.run.poolGate.recentRank', { pool: recent.pool, account: recent.account ?? '?', rank: recent.rank })
-            : t('agents.run.poolGate.recent', { pool: recent.pool, account: recent.account ?? '?' })}
+      {recentChip && (
+        <p className="text-fg-muted" data-testid="agent-pool-gate-recent" title={recentChip.title}>
+          {t('agents.run.poolGate.recent', { chip: recentChip.label })}
         </p>
       )}
       <div className="flex flex-wrap gap-2">

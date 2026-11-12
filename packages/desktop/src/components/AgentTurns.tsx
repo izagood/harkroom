@@ -32,7 +32,8 @@
  * 그리면** 사람은 폭주가 멈춘 줄 안다.
  */
 import { useState } from 'react';
-import { isAccountRank, isPoolRank, type AgentSessionView } from '@harkroom/shared';
+import type { AgentSessionView } from '@harkroom/shared';
+import { accountChipOf } from '../lib/accountChip';
 import type { AgentTurnsSnapshot } from '../lib/agentTurns';
 import { groupTurnsByThread } from '../lib/agentTurns';
 import { Menu } from './Menu';
@@ -323,28 +324,16 @@ export function AgentTurns({
                         숫자가 잘리면 안 되므로 칩은 `shrink-0`, 좁은 칸에서는 핸들이 먼저 잘린다.
                       */}
                       {(() => {
-                        const pool = isPoolRank(turn.claudePoolRank) ? turn.claudePoolRank : null;
-                        const acct = turn.claudeAccountRank;
-                        const known = acct === null || isAccountRank(acct);
-                        if (!known && !(pool !== null && pool > 1)) return null;
-                        const fell = pool !== null && pool > 1;
-                        const label = !known ? t('agentTurns.poolFallback', { n: pool! })
-                          : acct === null ? t('agentTurns.accountDefault')
-                          : `${fell ? '↓ ' : ''}${pool !== null
-                            ? t('agentTurns.accountChip', { pool, account: acct })
-                            : t('agentTurns.accountChipRoot', { account: acct })}`;
-                        const title = !known ? t('agentTurns.poolFallbackTitle', { n: pool! })
-                          : acct === null ? t('agentTurns.accountTitleDefault')
-                          : pool !== null ? t('agentTurns.accountTitle', { pool, account: acct })
-                          : t('agentTurns.accountTitleRoot', { account: acct });
+                        const chip = accountChipOf(t, turn.claudePoolRank, turn.claudeAccountRank);
+                        if (!chip) return null;
                         return (
                           <span data-testid={`agent-turn-account-${turn.sessionId}`}
-                            data-fallback={fell ? 'true' : undefined}
-                            title={fell && known ? `${title} · ${t('agentTurns.poolFallbackTitle', { n: pool! })}` : title}
-                            className={`shrink-0 rounded-sm px-1 tabular-nums ${fell
+                            data-fallback={chip.fell ? 'true' : undefined}
+                            title={chip.title}
+                            className={`shrink-0 rounded-sm px-1 tabular-nums ${chip.fell
                               ? 'bg-warning-surface text-warning'
                               : 'bg-surface-raised text-fg-muted'}`}>
-                            {label}
+                            {chip.label}
                           </span>
                         );
                       })()}

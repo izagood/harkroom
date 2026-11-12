@@ -40,7 +40,7 @@ import { hasOperatorLocalSurface, listLocalAgents, listLocalMcpServers, setLocal
 import type { SectionId } from './sections';
 import { poolGateEditable, poolGateOf } from '../../lib/poolGate';
 import { useAgentTurns } from '../../lib/agentTurns';
-import { isPoolRank } from '@harkroom/shared';
+import { isAccountRank, isPoolRank } from '@harkroom/shared';
 import { AgentScopeSection } from './AgentScopeSection';
 import { AgentGrantsSection, liveMergeCount, type MergeCount } from './AgentGrantsSection';
 import { AgentPickableSection } from './AgentPickableSection';
@@ -346,9 +346,11 @@ export function AgentsSettings({ targetId, onOpenSection }: { targetId?: string;
   const recentPoolTurn: RecentPoolTurn | null = (() => {
     if (!selected || poolGate?.kind !== 'elsewhere' || poolTurns.kind !== 'known') return null;
     const mine = poolTurns.turns
-      .filter((x) => x.agentAccountId === selected.id && typeof x.claudePool === 'string' && x.claudePool)
+      // 이름 칸(`claudePool`)은 서버가 늘 버린다(계정 칩 ①) — 순번이 실린 턴을 고른다(designer seq 63800 #1).
+      .filter((x) => x.agentAccountId === selected.id
+        && (x.claudeAccountRank === null || isAccountRank(x.claudeAccountRank) || isPoolRank(x.claudePoolRank)))
       .sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
-    return mine ? { pool: mine.claudePool!, account: mine.claudeAccount ?? null, rank: isPoolRank(mine.claudePoolRank) ? mine.claudePoolRank : null } : null;
+    return mine ? { pool: isPoolRank(mine.claudePoolRank) ? mine.claudePoolRank : null, account: mine.claudeAccountRank } : null;
   })();
   /**
    * 상세를 열고 있는 팀. `null` 이면 격자다 — `selected`(에이전트)와 **같은 짝**이고,
