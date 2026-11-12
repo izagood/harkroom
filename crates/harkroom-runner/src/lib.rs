@@ -28,6 +28,7 @@ pub mod bg_tick;
 pub mod codex_home;
 pub mod codex_rules;
 pub mod config;
+pub mod fail_text;
 pub mod link;
 pub mod mcp;
 pub mod memory_cache;
