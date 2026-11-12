@@ -205,9 +205,11 @@ fn run_capped(command: &Path, args: &[String], env: &Env, cwd: &Path) -> io::Res
         let _ = tx.send(r.map(|_| buf));
     });
     let deadline = Instant::now() + MCP_LIST_TIMEOUT;
-    let status = loop {
-        if let Some(s) = child.try_wait()? {
-            break s;
+    // 끝났는지는 회수하지 않고(`WNOWAIT`) 본다 — 그룹을 걷기 전에 우두머리를 회수하면, 그 사이 같은 번호가 다른 그룹에
+    // 다시 쓰여 엉뚱한 그룹에 신호가 갈 틈이 생긴다(security #1947 낮음). 그룹을 걷은 **뒤에** 회수한다.
+    loop {
+        if exited_unreaped(pgid)? {
+            break;
         }
         if Instant::now() >= deadline {
             kill_group();
@@ -215,9 +217,11 @@ fn run_capped(command: &Path, args: &[String], env: &Env, cwd: &Path) -> io::Res
             return Err(io::Error::new(io::ErrorKind::TimedOut, "시한을 넘었다"));
         }
         std::thread::sleep(Duration::from_millis(20));
-    };
-    // 자식은 끝났다. 남은 손자가 파이프를 쥐었을 수 있으니 그룹을 걷고, 읽기 결과는 짧게만 기다린다.
+    }
+    // 자식은 끝났다(아직 회수 전이라 그룹 번호가 살아 있다). 남은 손자가 파이프를 쥐었을 수 있으니 그룹을 걷고 나서 회수하고,
+    // 읽기 결과는 짧게만 기다린다.
     kill_group();
+    let status = child.wait()?;
     let buf = match rx.recv_timeout(READER_GRACE) {
         Ok(r) => r?,
         Err(_) => {
@@ -234,6 +238,26 @@ fn run_capped(command: &Path, args: &[String], env: &Env, cwd: &Path) -> io::Res
         return Err(io::Error::other(format!("종료 코드 {status}")));
     }
     Ok(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// 자식이 끝났는가 — 회수하지 않는다(`waitid(P_PID, WEXITED|WNOHANG|WNOWAIT)`).
+fn exited_unreaped(pid: libc::pid_t) -> io::Result<bool> {
+    // SAFETY: siginfo 는 0 으로 채운 지역 값이고, waitid 는 그 주소에만 쓴다.
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    let r = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            pid as libc::id_t,
+            &mut info,
+            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+        )
+    };
+    if r != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // WNOHANG 이고 아직 안 끝났으면 si_pid 가 0 으로 남는다.
+    // SAFETY: 위에서 0 으로 채웠고 waitid 가 성공했다.
+    Ok(unsafe { info.si_pid() } != 0)
 }
 
 /// 자식이 끝난 뒤 읽기 스레드를 기다리는 상한.
