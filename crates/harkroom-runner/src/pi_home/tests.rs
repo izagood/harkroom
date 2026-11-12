@@ -332,3 +332,26 @@ fn mcp_list_does_not_wait_for_grandchild_holding_stdout() {
     assert_eq!(out.trim(), "{}");
     assert!(started.elapsed() < Duration::from_secs(5));
 }
+
+#[test]
+fn exited_unreaped_surfaces_non_eintr_errors() {
+    // 내 자식이 아닌 번호(1번)는 ECHILD — 오류로 돌려주어 run_capped 가 걷기→회수 길로 가게 한다.
+    let e = exited_unreaped(1).unwrap_err();
+    assert_eq!(e.raw_os_error(), Some(libc::ECHILD));
+}
+
+#[test]
+fn exited_unreaped_sees_exit_without_reaping() {
+    let mut child = std::process::Command::new("/bin/sh")
+        .args(["-c", "exit 3"])
+        .spawn()
+        .unwrap();
+    let pid = child.id() as libc::pid_t;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !exited_unreaped(pid).unwrap() {
+        assert!(Instant::now() < deadline, "끝남을 못 봤다");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    // 회수하지 않았으므로 wait 가 종료 코드를 받는다.
+    assert_eq!(child.wait().unwrap().code(), Some(3));
+}
