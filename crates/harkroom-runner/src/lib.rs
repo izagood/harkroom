@@ -15,6 +15,7 @@
 //! - `account_assign`: 스레드별 claude 계정 배정(`accountAssign.ts` 와 shared 조각, B3e-2). 턴 흐름 연결은 다음 조각.
 //! - `thread_note_pin`·`memory_cache`: 스레드 메모 고정과 러너 메모리 캐시(`threadNotePin.ts`·`memoryCache.ts`, B3e-1a). `prompt` 는 `escapeForPrompt` 조각.
 //! - `bg_executor`: 백그라운드 회차의 순수 절반(`bgExecutor.ts` — 창·argv·지시문·MCP 설정·프롬프트, B3e-5a). 틱 루프는 B3e-5b.
+//! - `provider_lane`: 전용 제공사 경로의 러너 절반(`providerLane.ts` — 턴 키 받기·턴 파일·lane/턴 MCP 설정). 턴 흐름에는 아직 안 붙였다.
 //! - `mcp`: `HarkroomAgentClient` 의 MCP 절반(`call()`·`inbox.poll`·`message.*`·기억·계획·bg) — 링크의 `mcp.request`.
 
 pub mod account_assign;
@@ -32,6 +33,7 @@ pub mod opencode_home;
 pub mod pi_home;
 pub mod pi_lane;
 pub mod prompt;
+pub mod provider_lane;
 pub mod pty;
 pub mod pty_proc;
 pub mod pty_record;
