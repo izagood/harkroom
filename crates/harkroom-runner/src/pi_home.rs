@@ -178,6 +178,25 @@ pub fn list_pi_mcp_tools(
 /// 자식을 제 프로세스 그룹 우두머리로 띄우고, 끝낼 때 그룹째 죽인다 — 손자가 stdout 파이프를 쥐고 남아 읽기 스레드가
 /// 끝나지 않는 일을 막는다(security B3c 낮음 「pi mcp list join 시한」). 읽기 결과도 시한 안에서만 기다린다.
 fn run_capped(command: &Path, args: &[String], env: &Env, cwd: &Path) -> io::Result<String> {
+    run_capped_with(
+        command,
+        args,
+        env,
+        cwd,
+        MCP_LIST_MAX_BYTES,
+        MCP_LIST_TIMEOUT,
+    )
+}
+
+/// [`run_capped`] 의 상한·시한을 부르는 쪽이 정한다(opencode `session list`·`export` 도 같은 길로 묻는다).
+pub(crate) fn run_capped_with(
+    command: &Path,
+    args: &[String],
+    env: &Env,
+    cwd: &Path,
+    max_bytes: usize,
+    timeout: Duration,
+) -> io::Result<String> {
     use std::os::unix::process::CommandExt as _;
     use std::sync::mpsc;
     let mut child = Command::new(command)
@@ -200,11 +219,11 @@ fn run_capped(command: &Path, args: &[String], env: &Env, cwd: &Path) -> io::Res
     std::thread::spawn(move || {
         let mut buf = Vec::new();
         let r = (&mut stdout)
-            .take(MCP_LIST_MAX_BYTES as u64 + 1)
+            .take(max_bytes as u64 + 1)
             .read_to_end(&mut buf);
         let _ = tx.send(r.map(|_| buf));
     });
-    let deadline = Instant::now() + MCP_LIST_TIMEOUT;
+    let deadline = Instant::now() + timeout;
     // 끝났는지는 회수하지 않고(`WNOWAIT`) 본다 — 그룹을 걷기 전에 우두머리를 회수하면, 그 사이 같은 번호가 다른 그룹에
     // 다시 쓰여 엉뚱한 그룹에 신호가 갈 틈이 생긴다(security #1947 낮음). 그룹을 걷은 **뒤에** 회수한다.
     loop {
@@ -238,7 +257,7 @@ fn run_capped(command: &Path, args: &[String], env: &Env, cwd: &Path) -> io::Res
             ));
         }
     };
-    if buf.len() > MCP_LIST_MAX_BYTES {
+    if buf.len() > max_bytes {
         return Err(io::Error::other("출력이 상한을 넘었다"));
     }
     if !status.success() {
