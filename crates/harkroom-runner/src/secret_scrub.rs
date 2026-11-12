@@ -196,49 +196,82 @@ pub fn scrub_file(path: &Path, needles: &[String]) -> io::Result<usize> {
     Ok(replaced)
 }
 
+/// 가리기 결과 — 바꾼 곳 수와, 오류로 가리지 못한 파일 수.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ScrubTally {
+    pub replaced: usize,
+    pub failed: usize,
+}
+
+impl std::ops::AddAssign for ScrubTally {
+    fn add_assign(&mut self, o: Self) {
+        self.replaced += o.replaced;
+        self.failed += o.failed;
+    }
+}
+
 /// 정본 `scrubPath` — 파일이면 가리고, 디렉터리면 그 아래 **일반 파일**을 전부 가린다(security T1). 심링크는 따라가지
-/// 않고, 깊이와 파일 크기에 상한을 둔다. 크기로 건너뛴 파일은 `on_skip` 에 경로만 알린다(값은 아니다). 바꾼 횟수의 합.
+/// 않고, 깊이와 파일 크기에 상한을 둔다. 크기로 건너뛴 파일은 `on_skip` 에 경로만 알린다(값은 아니다).
+///
+/// **파일 하나가 실패해도 멈추지 않는다**(#2010 security 낮음): 권한·잠금·디스크 오류는 `on_error` 에 그 경로를 알리고
+/// 다음 파일로 간다 — 가운데서 멈추면 뒤 파일에 열쇠가 남는다(가리기가 열린 쪽으로 실패). 합계와 실패 수를 돌려준다.
 pub fn scrub_path(
     path: &Path,
     needles: &[String],
     on_skip: &mut dyn FnMut(&Path),
-) -> io::Result<usize> {
-    scrub_path_at(path, needles, on_skip, 0)
+    on_error: &mut dyn FnMut(&Path, &io::Error),
+) -> ScrubTally {
+    let mut tally = ScrubTally::default();
+    scrub_path_at(path, needles, on_skip, on_error, 0, &mut tally);
+    tally
 }
 
 fn scrub_path_at(
     path: &Path,
     needles: &[String],
     on_skip: &mut dyn FnMut(&Path),
+    on_error: &mut dyn FnMut(&Path, &io::Error),
     depth: usize,
-) -> io::Result<usize> {
+    tally: &mut ScrubTally,
+) {
     if needles.is_empty() {
-        return Ok(0);
+        return;
     }
     let Ok(info) = fs::symlink_metadata(path) else {
-        return Ok(0);
+        return;
     };
     let ft = info.file_type();
     if ft.is_file() {
         if info.len() > SCRUB_MAX_FILE_BYTES {
             on_skip(path);
-            return Ok(0);
+            return;
         }
-        return scrub_file(path, needles);
+        match scrub_file(path, needles) {
+            Ok(n) => tally.replaced += n,
+            Err(e) => {
+                tally.failed += 1;
+                on_error(path, &e);
+            }
+        }
+        return;
     }
     if !ft.is_dir() || depth >= SCRUB_MAX_DEPTH {
-        return Ok(0);
+        return;
     }
-    let Ok(rd) = fs::read_dir(path) else {
-        return Ok(0);
+    let rd = match fs::read_dir(path) {
+        Ok(rd) => rd,
+        Err(e) => {
+            // 디렉터리를 못 열면 그 아래는 하나도 못 가렸다 — 조용히 넘기지 않는다.
+            tally.failed += 1;
+            on_error(path, &e);
+            return;
+        }
     };
     let mut names: Vec<PathBuf> = rd.filter_map(|e| e.ok().map(|e| e.path())).collect();
     names.sort();
-    let mut total = 0;
     for p in names {
-        total += scrub_path_at(&p, needles, on_skip, depth + 1)?;
+        scrub_path_at(&p, needles, on_skip, on_error, depth + 1, tally);
     }
-    Ok(total)
 }
 
 /// 정본 `turnKeyNeedles` — 턴 열쇠 값들의 바늘.
@@ -253,12 +286,12 @@ pub fn turn_key_needles(values: &[&str]) -> Vec<String> {
 }
 
 /// 정본 `scrubTurnKeys` — 턴이 끝난 뒤 기록 경로마다 턴 열쇠를 가린다. 실패는 턴을 실패로 만들지 않는다(로그만).
-/// 로그에는 경로와 횟수만 남기고 값은 찍지 않는다. 바꾼 횟수의 합을 돌려준다.
-pub fn scrub_turn_keys(key: &str, paths: &[PathBuf], needles: &[String]) -> usize {
+/// 로그에는 경로·횟수·오류 종류만 남기고 값은 찍지 않는다. 합계와 실패 수를 돌려준다.
+pub fn scrub_turn_keys(key: &str, paths: &[PathBuf], needles: &[String]) -> ScrubTally {
+    let mut total = ScrubTally::default();
     if needles.is_empty() {
-        return 0;
+        return total;
     }
-    let mut total = 0;
     for path in paths {
         let mut skip = |p: &Path| {
             eprintln!(
@@ -266,20 +299,29 @@ pub fn scrub_turn_keys(key: &str, paths: &[PathBuf], needles: &[String]) -> usiz
                 p.display()
             );
         };
-        match scrub_path(path, needles, &mut skip) {
-            Ok(0) => {}
-            Ok(n) => {
-                eprintln!(
-                    "[mentionTurn] {key}: {}: 턴 열쇠 {n}곳을 가렸다",
-                    path.display()
-                );
-                total += n;
-            }
-            Err(e) => eprintln!(
-                "[mentionTurn] {key}: 턴 열쇠 가리기 실패({}) — {e}",
-                path.display()
-            ),
+        let mut err = |p: &Path, e: &io::Error| {
+            eprintln!(
+                "[mentionTurn] {key}: 턴 열쇠 가리기 실패({}) — {:?}",
+                p.display(),
+                e.kind()
+            );
+        };
+        let t = scrub_path(path, needles, &mut skip, &mut err);
+        if t.replaced > 0 {
+            eprintln!(
+                "[mentionTurn] {key}: {}: 턴 열쇠 {}곳을 가렸다",
+                path.display(),
+                t.replaced
+            );
         }
+        if t.failed > 0 {
+            eprintln!(
+                "[mentionTurn] {key}: {}: 실패 {}곳 — 나머지는 계속 가렸다",
+                path.display(),
+                t.failed
+            );
+        }
+        total += t;
     }
     total
 }

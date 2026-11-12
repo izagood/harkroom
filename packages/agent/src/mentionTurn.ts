@@ -2902,11 +2902,14 @@ export async function runMentionTurn(
   const sinceMs = turnStartMs;
   const scrubTurnKeys = async (paths: string[]): Promise<void> => {
     for (const path of paths) {
-      const n = await scrubPath(path, turnKeyNeedles).catch((e: unknown) => {
-        console.error(`[mentionTurn] ${key}: 턴 열쇠 가리기 실패(${path}) — ${e instanceof Error ? e.message : String(e)}`);
-        return 0;
+      const onError = (p: string, e: unknown) =>
+        console.error(`[mentionTurn] ${key}: 턴 열쇠 가리기 실패(${p}) — ${e instanceof Error ? e.message : String(e)}`);
+      const t = await scrubPath(path, turnKeyNeedles, undefined, onError).catch((e: unknown) => {
+        onError(path, e);
+        return { replaced: 0, failed: 1 };
       });
-      if (n) console.error(`[mentionTurn] ${key}: ${path}: 턴 열쇠 ${n}곳을 가렸다`);
+      if (t.replaced) console.error(`[mentionTurn] ${key}: ${path}: 턴 열쇠 ${t.replaced}곳을 가렸다`);
+      if (t.failed) console.error(`[mentionTurn] ${key}: ${path}: 실패 ${t.failed}곳 — 나머지는 계속 가렸다`);
     }
   };
 

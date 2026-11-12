@@ -88,12 +88,15 @@ export function createSecretLeases(deps: SecretLeaseDeps): SecretLeases {
     if (!sorted.length) return;
     const onSkip = (path: string) => log(`[secretLeases] ${path}: 64MB 를 넘어 가리지 않았다`);
     for (const path of h.transcripts) {
-      const n = await scrubPath(path, sorted, onSkip).catch((e: unknown) => {
-        log(`[secretLeases] 기록 가리기 실패(${path}) — ${e instanceof Error ? e.message : String(e)}`);
-        return 0;
+      const onError = (p: string, e: unknown) =>
+        log(`[secretLeases] 기록 가리기 실패(${p}) — ${e instanceof Error ? e.message : String(e)}`);
+      const t = await scrubPath(path, sorted, onSkip, onError).catch((e: unknown) => {
+        onError(path, e);
+        return { replaced: 0, failed: 1 };
       });
       // 값도 바늘 수도 찍지 않는다 — 몇 군데를 가렸는지만.
-      if (n) log(`[secretLeases] ${path}: 비밀 값 ${n}곳을 가렸다`);
+      if (t.replaced) log(`[secretLeases] ${path}: 비밀 값 ${t.replaced}곳을 가렸다`);
+      if (t.failed) log(`[secretLeases] ${path}: 실패 ${t.failed}곳 — 나머지는 계속 가렸다`);
     }
   };
 

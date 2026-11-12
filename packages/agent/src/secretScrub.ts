@@ -81,27 +81,41 @@ export const SCRUB_MAX_DEPTH = 4;
 /** 이보다 큰 파일은 읽지 않는다 — 기록 한 조각이 이만큼 크면 비정상이고, 통째로 메모리에 올리지 않는다. */
 export const SCRUB_MAX_FILE_BYTES = 64 * 1024 * 1024;
 
+/** 가리기 결과 — 바꾼 곳 수와, 오류로 가리지 못한 파일 수. */
+export interface ScrubTally { replaced: number; failed: number }
+
 /**
  * 파일이면 가리고, 디렉터리면 그 아래 **일반 파일**을 전부 가린다(security T1). claude 는 큰 도구 출력을
  * `<sessionId>/tool-results/*.txt` 에, 서브에이전트 전사를 `<sessionId>/subagents/` 에 jsonl 과 따로 남긴다 —
  * `cat` 같은 긴 출력으로 읽은 값은 jsonl 이 아니라 그쪽에 남는다. 심링크는 따라가지 않고(파일·디렉터리 모두),
- * 깊이와 파일 크기에 상한을 둔다. 바꾼 횟수의 합을 준다.
+ * 깊이와 파일 크기에 상한을 둔다.
+ *
+ * **파일 하나가 실패해도 멈추지 않는다**(#2010 security 낮음): 권한·잠금·디스크 오류는 `onError` 에 그 경로를
+ * 알리고 다음 파일로 간다 — 가운데서 멈추면 뒤 파일에 값이 남는다(가리기가 열린 쪽으로 실패). 합계와 실패 수를 준다.
  */
 export async function scrubPath(
-  path: string, needles: readonly string[], onSkip?: (path: string, reason: 'too_large') => void, depth = 0,
-): Promise<number> {
-  if (!needles.length) return 0;
+  path: string, needles: readonly string[], onSkip?: (path: string, reason: 'too_large') => void,
+  onError?: (path: string, err: unknown) => void, depth = 0,
+): Promise<ScrubTally> {
+  const tally: ScrubTally = { replaced: 0, failed: 0 };
+  if (!needles.length) return tally;
   let info;
-  try { info = await lstat(path); } catch { return 0; }
+  try { info = await lstat(path); } catch { return tally; }
   if (info.isFile()) {
     // 말없이 건너뛰지 않는다 — 가리지 못한 파일이 있다는 사실은 남아야 한다(경로만, 값은 아니다).
-    if (info.size > SCRUB_MAX_FILE_BYTES) { onSkip?.(path, 'too_large'); return 0; }
-    return scrubFile(path, needles);
+    if (info.size > SCRUB_MAX_FILE_BYTES) { onSkip?.(path, 'too_large'); return tally; }
+    try { tally.replaced = await scrubFile(path, needles); } catch (e) { tally.failed = 1; onError?.(path, e); }
+    return tally;
   }
-  if (!info.isDirectory() || depth >= SCRUB_MAX_DEPTH) return 0;
-  let total = 0;
-  for (const name of await readdir(path).catch(() => [] as string[])) {
-    total += await scrubPath(join(path, name), needles, onSkip, depth + 1);
+  if (!info.isDirectory() || depth >= SCRUB_MAX_DEPTH) return tally;
+  let names: string[];
+  try { names = await readdir(path); } catch (e) {
+    // 디렉터리를 못 열면 그 아래는 하나도 못 가렸다 — 조용히 넘기지 않는다.
+    tally.failed = 1; onError?.(path, e); return tally;
   }
-  return total;
+  for (const name of names.sort()) {
+    const t = await scrubPath(join(path, name), needles, onSkip, onError, depth + 1);
+    tally.replaced += t.replaced; tally.failed += t.failed;
+  }
+  return tally;
 }

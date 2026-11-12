@@ -79,12 +79,12 @@ describe('secretScrub', () => {
     mkdirSync(deep, { recursive: true });
     writeFileSync(join(deep, 'too-deep.txt'), VALUE);
     const n = await scrubPath(sess, scrubNeedles(Buffer.from(VALUE)));
-    expect(n).toBe(2);
+    expect(n).toEqual({ replaced: 2, failed: 0 });
     expect(readFileSync(tool, 'utf8')).toBe('long output\n***\nmore');
     expect(readFileSync(sub, 'utf8')).not.toContain(VALUE);
     expect(readFileSync(outside, 'utf8')).toBe(VALUE);
     expect(readFileSync(join(deep, 'too-deep.txt'), 'utf8')).toBe(VALUE);
-    expect(await scrubPath(join(root, 'nope'), scrubNeedles(Buffer.from(VALUE)))).toBe(0);
+    expect(await scrubPath(join(root, 'nope'), scrubNeedles(Buffer.from(VALUE)))).toEqual({ replaced: 0, failed: 0 });
   });
 
   it('64MB 를 넘는 파일은 건너뛰되 경로를 알린다', async () => {
@@ -93,7 +93,7 @@ describe('secretScrub', () => {
     writeFileSync(big, '');
     truncateSync(big, SCRUB_MAX_FILE_BYTES + 1);   // 희소 파일 — 디스크를 쓰지 않는다
     const skipped: string[] = [];
-    expect(await scrubPath(dir, scrubNeedles(Buffer.from(VALUE)), (p) => skipped.push(p))).toBe(0);
+    expect(await scrubPath(dir, scrubNeedles(Buffer.from(VALUE)), (p) => skipped.push(p))).toEqual({ replaced: 0, failed: 0 });
     expect(skipped).toEqual([big]);
   });
 
@@ -109,5 +109,29 @@ describe('secretScrub', () => {
     // U1 ② 꼬리 버퍼가 앞을 잘라 값의 뒤 절반으로 시작하는 꼬리
     const cut = `${VALUE.slice(VALUE.length / 2)}\r\n$ done`;
     expect(harnessTailNotice(cut, '', needles)).toBe('(마지막 출력에 비밀 값이 섞여 있어 싣지 않았다)');
+  });
+
+  it('#2010 security 낮음: 가운데 파일이 실패해도 뒤 파일은 가리고, 실패를 경로로 알리고 센다', async () => {
+    if (process.getuid?.() === 0) return; // root 는 권한 검사를 건너뛴다
+    const dir = mkdtempSync(join(tmpdir(), 'hk-midfail-'));
+    const a = join(dir, 'a.txt');
+    const locked = join(dir, 'b');
+    const c = join(dir, 'c.txt');
+    writeFileSync(a, VALUE);
+    mkdirSync(locked);
+    writeFileSync(join(locked, 'in.txt'), VALUE);
+    chmodSync(locked, 0o555); // 읽기는 되지만 임시 파일을 못 만든다
+    writeFileSync(c, VALUE);
+    const errs: string[] = [];
+    try {
+      const t = await scrubPath(dir, scrubNeedles(Buffer.from(VALUE)), undefined, (p) => errs.push(p));
+      expect(t).toEqual({ replaced: 2, failed: 1 });
+    } finally {
+      chmodSync(locked, 0o755);
+    }
+    expect(errs).toEqual([join(locked, 'in.txt')]);
+    expect(readFileSync(a, 'utf8')).toBe('***');
+    expect(readFileSync(c, 'utf8')).toBe('***');
+    expect(readFileSync(join(locked, 'in.txt'), 'utf8')).toBe(VALUE);
   });
 });
