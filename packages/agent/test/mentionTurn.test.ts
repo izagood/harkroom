@@ -3553,6 +3553,16 @@ describe('syncSkills 단독(#140)', () => {
     expect(await readdir(join(workspaceDir, '.claude', 'skills'))).toEqual(['harkroom-demo']);
   });
 
+  // security #1981 낮음 1: slug 는 경로 조각이다 — 서버 확인이 빠져도 러너가 모양이 틀린 slug 를 깔지 않는다.
+  it('slug 모양(^[a-z0-9-]{2,40}$)이 틀린 스킬은 깔지 않고 상태 디렉터리 밖에 쓰지 않는다', async () => {
+    const { stateDir, workspaceDir } = await dirs();
+    const bad = ['../escape', 'a/b', 'UPPER', 'x', 'a'.repeat(41), '.hidden', ''].map((slug) => ({ slug, body: '# bad' }));
+    await syncSkills(stateDir, workspaceDir, async () => [...bad, { slug: 'ok-1', body: '# ok' }], { builtins: [] });
+    expect(await readdir(join(stateDir, 'skills'))).toEqual(['ok-1']);
+    expect(await readdir(join(workspaceDir, '.claude', 'skills'))).toEqual(['ok-1']);
+    expect((await readdir(stateDir)).sort()).toEqual(['skills', 'workspaces']);
+  });
+
   it('기본 내장 목록(BUILTIN_SKILLS)이 실제로 깔린다', async () => {
     const { stateDir, workspaceDir } = await dirs();
     await syncSkills(stateDir, workspaceDir, async () => []);
@@ -3604,10 +3614,10 @@ describe('syncSkills 단독(#140)', () => {
 
   it('본문이 바뀌면 링크는 그대로 두고 파일만 갱신한다', async () => {
     const { stateDir, workspaceDir } = await dirs();
-    await syncSkills(stateDir, workspaceDir, async () => [{ slug: 's', body: '처음' }]);
-    const link = join(workspaceDir, '.claude', 'skills', 's');
+    await syncSkills(stateDir, workspaceDir, async () => [{ slug: 'ss', body: '처음' }]);
+    const link = join(workspaceDir, '.claude', 'skills', 'ss');
     const target = await readlink(link);
-    await syncSkills(stateDir, workspaceDir, async () => [{ slug: 's', body: '나중' }]);
+    await syncSkills(stateDir, workspaceDir, async () => [{ slug: 'ss', body: '나중' }]);
     expect(await readlink(link)).toBe(target);
     expect(await readFile(join(link, 'SKILL.md'), 'utf8')).toBe('나중');
   });

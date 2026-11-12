@@ -1,0 +1,233 @@
+[
+  {
+    "name": "plain",
+    "slug": "my-skill",
+    "body": "# Title\n\nbody",
+    "laneSafe": true,
+    "header": "---\nname: my-skill\ndescription: \"Title\"\n---\n# Title\n\nbody"
+  },
+  {
+    "name": "empty",
+    "slug": "my-skill",
+    "body": "",
+    "laneSafe": true,
+    "header": "---\nname: my-skill\ndescription: \"my-skill\"\n---\n"
+  },
+  {
+    "name": "blank_only",
+    "slug": "my-skill",
+    "body": "  \n\t\n",
+    "laneSafe": true,
+    "header": "---\nname: my-skill\ndescription: \"my-skill\"\n---\n  \n\t\n"
+  },
+  {
+    "name": "fm_ok",
+    "slug": "my-skill",
+    "body": "---\nname: x\ndescription: y\n---\nbody",
+    "laneSafe": true,
+    "header": "---\nname: x\ndescription: y\n---\nbody"
+  },
+  {
+    "name": "fm_blank_line",
+    "slug": "my-skill",
+    "body": "---\nname: x\n\ndescription: y\n---\n",
+    "laneSafe": true,
+    "header": "---\nname: x\n\ndescription: y\n---\n"
+  },
+  {
+    "name": "fm_allowed_tools",
+    "slug": "my-skill",
+    "body": "---\nname: x\nallowed-tools: Bash\n---\nbody",
+    "laneSafe": false,
+    "header": "---\nname: x\nallowed-tools: Bash\n---\nbody"
+  },
+  {
+    "name": "fm_quoted_key",
+    "slug": "my-skill",
+    "body": "---\n\"allowed-tools\": Bash\n---\n",
+    "laneSafe": false,
+    "header": "---\n\"allowed-tools\": Bash\n---\n"
+  },
+  {
+    "name": "fm_upper",
+    "slug": "my-skill",
+    "body": "---\nName: x\n---\n",
+    "laneSafe": false,
+    "header": "---\nName: x\n---\n"
+  },
+  {
+    "name": "fm_indented",
+    "slug": "my-skill",
+    "body": "---\n  name: x\n---\n",
+    "laneSafe": false,
+    "header": "---\n  name: x\n---\n"
+  },
+  {
+    "name": "fm_flow",
+    "slug": "my-skill",
+    "body": "---\n{allowed-tools: Bash}\n---\n",
+    "laneSafe": false,
+    "header": "---\n{allowed-tools: Bash}\n---\n"
+  },
+  {
+    "name": "fm_comment",
+    "slug": "my-skill",
+    "body": "---\n# c\nname: x\n---\n",
+    "laneSafe": false,
+    "header": "---\n# c\nname: x\n---\n"
+  },
+  {
+    "name": "fm_unclosed",
+    "slug": "my-skill",
+    "body": "---\nname: x\nbody",
+    "laneSafe": false,
+    "header": "---\nname: x\nbody"
+  },
+  {
+    "name": "fm_no_space",
+    "slug": "my-skill",
+    "body": "---\nname:x\n---\n",
+    "laneSafe": false,
+    "header": "---\nname:x\n---\n"
+  },
+  {
+    "name": "fm_key_only",
+    "slug": "my-skill",
+    "body": "---\nname:\n---\n",
+    "laneSafe": true,
+    "header": "---\nname:\n---\n"
+  },
+  {
+    "name": "fm_tab",
+    "slug": "my-skill",
+    "body": "---\ndescription:\tz\n---\n",
+    "laneSafe": true,
+    "header": "---\ndescription:\tz\n---\n"
+  },
+  {
+    "name": "fm_crlf",
+    "slug": "my-skill",
+    "body": "---\r\nname: x\r\nallowed-tools: B\r\n---\r\n",
+    "laneSafe": false,
+    "header": "---\r\nname: x\r\nallowed-tools: B\r\n---\r\n"
+  },
+  {
+    "name": "fm_crlf_ok",
+    "slug": "my-skill",
+    "body": "---\r\nname: x\r\n---\r\nbody",
+    "laneSafe": true,
+    "header": "---\r\nname: x\r\n---\r\nbody"
+  },
+  {
+    "name": "fm_cr_only",
+    "slug": "my-skill",
+    "body": "---\rname: x\rmodel: y\r---\r",
+    "laneSafe": false,
+    "header": "---\nname: my-skill\ndescription: \"---\\rname: x\\rmodel: y\\r---\"\n---\n---\rname: x\rmodel: y\r---\r"
+  },
+  {
+    "name": "bom_fm",
+    "slug": "my-skill",
+    "body": "﻿---\nmodel: z\n---\n",
+    "laneSafe": false,
+    "header": "﻿---\nmodel: z\n---\n"
+  },
+  {
+    "name": "leading_blank_fm",
+    "slug": "my-skill",
+    "body": "\n  \n---\nhooks: x\n---\n",
+    "laneSafe": false,
+    "header": "\n  \n---\nhooks: x\n---\n"
+  },
+  {
+    "name": "leading_space_dashes",
+    "slug": "my-skill",
+    "body": "   ---  \nname: a\n---\n",
+    "laneSafe": true,
+    "header": "   ---  \nname: a\n---\n"
+  },
+  {
+    "name": "leading_nbsp_line",
+    "slug": "my-skill",
+    "body": " \n---\nfoo: 1\n---\n",
+    "laneSafe": false,
+    "header": " \n---\nfoo: 1\n---\n"
+  },
+  {
+    "name": "close_with_space",
+    "slug": "my-skill",
+    "body": "---\nname: x\n--- \nmodel: y\n---\n",
+    "laneSafe": false,
+    "header": "---\nname: x\n--- \nmodel: y\n---\n"
+  },
+  {
+    "name": "dashes_later",
+    "slug": "my-skill",
+    "body": "intro\n---\nallowed-tools: x\n---\n",
+    "laneSafe": true,
+    "header": "---\nname: my-skill\ndescription: \"intro\"\n---\nintro\n---\nallowed-tools: x\n---\n"
+  },
+  {
+    "name": "heading_hashes",
+    "slug": "my-skill",
+    "body": "### \t Deep heading  \nmore",
+    "laneSafe": true,
+    "header": "---\nname: my-skill\ndescription: \"Deep heading\"\n---\n### \t Deep heading  \nmore"
+  },
+  {
+    "name": "heading_only_hashes",
+    "slug": "my-skill",
+    "body": "###\n\nreal first",
+    "laneSafe": true,
+    "header": "---\nname: my-skill\ndescription: \"real first\"\n---\n###\n\nreal first"
+  },
+  {
+    "name": "colon_quote",
+    "slug": "my-skill",
+    "body": "He said: \"hi\" # not comment\\path",
+    "laneSafe": true,
+    "header": "---\nname: my-skill\ndescription: \"He said: \\\"hi\\\" # not comment\\\\path\"\n---\nHe said: \"hi\" # not comment\\path"
+  },
+  {
+    "name": "long",
+    "slug": "my-skill",
+    "body": "ああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああ",
+    "laneSafe": true,
+    "header": "---\nname: my-skill\ndescription: \"ああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああ\"\n---\nああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああ"
+  },
+  {
+    "name": "emoji_long",
+    "slug": "my-skill",
+    "body": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+    "laneSafe": true,
+    "header": "---\nname: my-skill\ndescription: \"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"\n---\n😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+  },
+  {
+    "name": "control",
+    "slug": "my-skill",
+    "body": "a\u0001b\u001fc",
+    "laneSafe": true,
+    "header": "---\nname: my-skill\ndescription: \"a\\u0001b\\u001fc\"\n---\na\u0001b\u001fc"
+  },
+  {
+    "name": "crlf_plain",
+    "slug": "my-skill",
+    "body": "\r\n\r\n# T\r\nx",
+    "laneSafe": true,
+    "header": "---\nname: my-skill\ndescription: \"T\"\n---\n\r\n\r\n# T\r\nx"
+  },
+  {
+    "name": "nel",
+    "slug": "my-skill",
+    "body": "# t",
+    "laneSafe": true,
+    "header": "---\nname: my-skill\ndescription: \"# t\"\n---\n# t"
+  },
+  {
+    "name": "u2028",
+    "slug": "my-skill",
+    "body": "a b",
+    "laneSafe": true,
+    "header": "---\nname: my-skill\ndescription: \"a b\"\n---\na b"
+  }
+]
