@@ -2,7 +2,7 @@
 //! `providerLaneNotice`·`threadModelRejectedNotice`·`retryNotice`·`stallNotice`·`withAccountTrail`·`accountTrailReason`, B4-2).
 //!
 //! [`FailBody`] 는 결말 갈래(`mention_settle`)가 고른 **사실**이고, 사람이 읽는 문장은 여기서만 만든다. 계정 축 흔적에는
-//! 실패 **종류**만 싣는다 — 화면 원문·이메일은 싣지 않는다(계정 이름은 풀 폴더 이름).
+//! 실패 **종류**와 `계정 N`(시도 순서)만 싣는다 — 화면 원문·이메일·계정 이름(풀 폴더 이름)은 싣지 않는다.
 
 use crate::account_failover::{AccountFailure, AccountFailureKind};
 use crate::mention_settle::{FailBody, MAX_ATTEMPTS};
@@ -128,9 +128,14 @@ pub fn fail_body_text(body: &FailBody) -> String {
     }
 }
 
-/// 계정 이유 한 칸(종류만).
-fn account_failure_text(f: &AccountFailure) -> String {
-    let who = f.account.as_deref().unwrap_or("(기본 계정)");
+/// 계정 이유 한 칸(종류만). **계정 이름을 싣지 않는다** — 이 말은 스레드 본문과 실패 카드 `reason` 으로 서버에 가고,
+/// 계정 이름은 계정 풀의 폴더 이름이라 사람 이름일 수 있다(#1039). `계정 N`(이 턴에서 시도한 순서, 1부터)으로 쓰고,
+/// 어느 계정인지는 러너 로그의 전환 줄(`switch_log_line`)이 같은 순서로 남긴다. 정본 `prompt.ts::accountFailureText` 와 같다.
+fn account_failure_text(f: &AccountFailure, index: usize) -> String {
+    let who = match f.account {
+        None => "(기본 계정)".to_string(),
+        Some(_) => format!("계정 {}", index + 1),
+    };
     match f.kind {
         AccountFailureKind::Gate => format!("{who}: 설정 확인 화면에서 사람의 선택을 기다림"),
         AccountFailureKind::Quota => match &f.resets_at {
@@ -151,7 +156,8 @@ pub fn with_account_trail(notice: &str, trail: &[AccountFailure]) -> String {
     lines.extend(
         trail
             .iter()
-            .map(|f| format!("- {}", account_failure_text(f))),
+            .enumerate()
+            .map(|(i, f)| format!("- {}", account_failure_text(f, i))),
     );
     if trail.iter().any(|f| f.kind == AccountFailureKind::Gate) {
         lines.push(
@@ -170,7 +176,8 @@ pub fn account_trail_reason(trail: &[AccountFailure]) -> Option<String> {
     Some(
         trail
             .iter()
-            .map(account_failure_text)
+            .enumerate()
+            .map(|(i, f)| account_failure_text(f, i))
             .collect::<Vec<_>>()
             .join(" · "),
     )
