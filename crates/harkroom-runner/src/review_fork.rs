@@ -82,6 +82,8 @@ pub const REVIEW_DISALLOWED_TOOLS: &[&str] = &[
     "mcp__harkroom__automation_propose",
     "mcp__harkroom__automation_run",
     "mcp__harkroom__secret_mount",
+    "mcp__harkroom__permission_request",
+    "mcp__harkroom__grant_delegate",
 ];
 
 pub const REVIEW_PROMPT: &str = "[harkroom 리뷰] 이것은 사람에게 가는 턴이 아니다. 방금 대화를 돌아보고 **다음 턴의 네가 알아야 할 것**만 기억에 남겨라.
@@ -172,7 +174,25 @@ pub fn original_permission_mode(args: &[String]) -> Option<&str> {
     None
 }
 
-/// 원 턴의 argv 에서 세션·권한 인자를 빼고 리뷰 포크의 argv 를 만든다. 순수 함수다.
+/// 값 하나를 받는 인자 중 포크가 버리는 것 — 세션·권한 모드·원 턴의 hook 설정.
+const FORK_DROP_ONE: [&str; 5] = [
+    "--session-id",
+    "-r",
+    "--resume",
+    "--permission-mode",
+    "--settings",
+];
+/// 가변 인자(뒤따르는 `-` 아닌 토큰을 모두 값으로 먹는다) 중 포크가 버리는 것 — 원 턴의 허락·금지 목록.
+/// 포크는 자기 목록만 싣는다. 남기면 원 턴의 허락이 `dontAsk` 포크에 그대로 열린다.
+const FORK_DROP_VARIADIC: [&str; 5] = [
+    "--allowedTools",
+    "--allowed-tools",
+    "--disallowedTools",
+    "--disallowed-tools",
+    "--tools",
+];
+
+/// 원 턴의 argv 에서 세션·권한·허락 목록·hook 설정 인자를 빼고 리뷰 포크의 argv 를 만든다. 순수 함수다.
 ///
 /// 프롬프트는 stdin 으로 준다 — `--disallowedTools <tools...>` 가 가변 인자라 뒤의 위치 인자를 도구 이름으로 먹는다.
 /// stdin 이면 argv(`ps`)에도 안 뜬다.
@@ -181,13 +201,28 @@ pub fn review_fork_args(
     session_id: &str,
     system_prompt_copy: Option<&str>,
 ) -> Vec<String> {
-    const DROP: [&str; 4] = ["--session-id", "-r", "--resume", "--permission-mode"];
+    let is_eq_form = |a: &str, flags: &[&str]| {
+        flags
+            .iter()
+            .any(|f| a.strip_prefix(f).is_some_and(|r| r.starts_with('=')))
+    };
     let mut kept: Vec<String> = Vec::with_capacity(turn_args.len());
     let mut i = 0;
     while i < turn_args.len() {
         let a = &turn_args[i];
-        if DROP.contains(&a.as_str()) {
+        if FORK_DROP_ONE.contains(&a.as_str()) {
             i += 2;
+            continue;
+        }
+        if FORK_DROP_VARIADIC.contains(&a.as_str()) {
+            i += 1;
+            while i < turn_args.len() && !turn_args[i].starts_with('-') {
+                i += 1;
+            }
+            continue;
+        }
+        if is_eq_form(a, &FORK_DROP_ONE) || is_eq_form(a, &FORK_DROP_VARIADIC) {
+            i += 1;
             continue;
         }
         if a == "--append-system-prompt-file"

@@ -301,6 +301,54 @@ fn args_golden_matches_ts() {
     assert_eq!(args, want);
 }
 
+/// 원 턴(auto 멘션 턴)의 허락·금지 목록(가변 인자)·hook 설정은 포크에 넘어가지 않는다 — 포크 목록만 실린다.
+#[test]
+fn args_drop_original_allow_deny_and_settings() {
+    let turn = s(&[
+        "-r",
+        "sess-1",
+        "--permission-mode",
+        "auto",
+        "--disallowedTools",
+        "Bash(deny-a:*)",
+        "Edit(deny-b)",
+        "--allowedTools",
+        "mcp__harkroom__message_post",
+        "Bash(allow-x:*)",
+        "--settings",
+        "{\"hooks\":{}}",
+        "--allowed-tools=Bash(eq-form:*)",
+        "--tools",
+        "Read",
+        "--mcp-config",
+        "/tmp/mcp.json",
+        "--model",
+        "m",
+    ]);
+    let args = review_fork_args(&turn, "sess-1", None);
+    for gone in [
+        "Bash(deny-a:*)",
+        "Edit(deny-b)",
+        "Bash(allow-x:*)",
+        "{\"hooks\":{}}",
+        "--settings",
+        "--allowed-tools=Bash(eq-form:*)",
+        "--tools",
+        "Read",
+    ] {
+        assert!(
+            !args.iter().any(|a| a == gone),
+            "{gone} 가 남았다: {args:?}"
+        );
+    }
+    assert_eq!(args.iter().filter(|a| *a == "--allowedTools").count(), 1);
+    assert_eq!(args.iter().filter(|a| *a == "--disallowedTools").count(), 1);
+    let at = |k: &str| args[args.iter().position(|a| a == k).unwrap() + 1].clone();
+    assert_eq!(at("--allowedTools"), REVIEW_ALLOWED_TOOLS.join(","));
+    assert_eq!(at("--mcp-config"), "/tmp/mcp.json");
+    assert_eq!(at("--model"), "m");
+}
+
 #[test]
 fn allow_list_is_memory_only_and_speech_is_blocked() {
     assert!(!REVIEW_ALLOWED_TOOLS.iter().any(|t| {
@@ -314,6 +362,8 @@ fn allow_list_is_memory_only_and_speech_is_blocked() {
         "Bash",
         "Edit",
         "Write",
+        "mcp__harkroom__permission_request",
+        "mcp__harkroom__grant_delegate",
     ] {
         assert!(REVIEW_DISALLOWED_TOOLS.contains(&want), "{want}");
     }
