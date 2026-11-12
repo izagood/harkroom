@@ -796,12 +796,14 @@ describe('message.fail — 실패의 계약', () => {
         name: 'message.fail',
         arguments: {
           channelId, threadRootId: root, body: '계정 설정 확인 화면이 사람을 기다린다', retryable: false,
-          code: 'account_gate', mentionId: mention, account: 'work/acct-ddb9b523',
+          code: 'account_gate', mentionId: mention, account: 'work/acct-ddb9b523', claudePoolRank: 1, claudeAccountRank: 2,
         },
       })) as { message: { meta: Record<string, unknown> } };
       expect(readFailureMeta(posted.message.meta)).toMatchObject({
-        code: 'account_gate', awaitingAccountId: adminAccountId, account: 'work/acct-ddb9b523',
+        code: 'account_gate', awaitingAccountId: adminAccountId, claudePoolRank: 1, claudeAccountRank: 2,
       });
+      // 칩 ②: 옛 러너의 이름표(`account`)는 받기만 하고 버린다.
+      expect(JSON.stringify(posted.message.meta)).not.toContain('acct-ddb9b523');
       // 머리 주인이 아닌 차례 주인에게도 Inbox 가 간다.
       expect((await inboxOf(adminAccountId)).length).toBe(before + 1);
       expect((await inboxOf(adminAccountId)).at(-1)!.reason).toBe('thread_reply');
