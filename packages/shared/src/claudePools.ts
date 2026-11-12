@@ -194,7 +194,7 @@ export function agentPoolChain(cfg: ClaudePoolsConfig, agentId: string): string[
  *   만들었다 — 그때 빠뜨리면 "만들었는데 안 쓴다"가 된다).
  */
 export function orderAccounts(
-  cfg: ClaudePoolsConfig,
+  cfg: Pick<ClaudePoolsConfig, 'order'>,
   pool: string,
   found: string[],
 ): string[] {

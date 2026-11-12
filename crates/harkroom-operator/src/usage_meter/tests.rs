@@ -44,6 +44,7 @@ fn layout(pools: &[(&str, &[&str])]) -> Layout {
         default_pool: None,
         agents: Default::default(),
         assign: Default::default(),
+        order: Default::default(),
         strays: vec![],
         pools: pools
             .iter()

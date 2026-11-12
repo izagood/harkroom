@@ -48,6 +48,19 @@ describe('list', () => {
     expect(snap.pools[0]!.accounts.map((a) => a.name)).toEqual(['aria']);
   });
 
+  it('pools.json 의 order 를 싣는다 — 계정 목록은 이름순이라 화면이 러너 순서를 따로 안다(칩 ②)', async () => {
+    const root = await tmp();
+    await mkdir(join(root, 'work', 'aria'), { recursive: true });
+    await mkdir(join(root, 'work', 'zed'), { recursive: true });
+    await writeFile(join(root, 'pools.json'), JSON.stringify({ defaultPool: 'work', order: { work: ['zed', 'aria'] } }));
+    const snap = await port(root).list();
+    expect(snap.pools[0]!.accounts.map((a) => a.name)).toEqual(['aria', 'zed']);
+    expect(snap.order).toEqual({ work: ['zed', 'aria'] });
+    const flat = await tmp();
+    await mkdir(join(flat, 'aria'), { recursive: true });
+    expect((await port(flat).list()).order).toEqual({});
+  });
+
   it('로그인 상태를 계정마다 실어 준다 — 비밀값은 없다', async () => {
     const root = await tmp();
     await mkdir(join(root, 'aria'), { recursive: true });

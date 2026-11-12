@@ -14,6 +14,7 @@
  *
  * 순수 함수다 — 사실은 호출자가 모아 넘긴다(`useGateTerminalTarget`).
  */
+import { orderAccounts } from '@harkroom/shared/claudePools';
 import { agentPoolsOf, type ClaudeAccountsSnapshot } from './claudeAccounts';
 
 export type GateTerminalTarget =
@@ -51,7 +52,12 @@ export function resolveGateTerminalTarget(f: GateTerminalFacts): GateTerminalTar
   if (f.agentIsLocal === false) return { kind: 'elsewhere', operatorName: f.operatorName };
   if (f.agentIsLocal === null || f.snapshot === null) return { kind: 'unknown' };
   const snap = f.snapshot;
-  const accountsOf = (name: string) => snap.pools.find((p) => p.name === name)?.accounts.map((a) => a.name) ?? null;
+  // 스냅숏의 계정은 이름순이다. 러너는 풀 안 계정을 `orderAccounts`(`pools.json` 의 order 먼저 → 나머지 이름순)로
+  // 센다 — 같은 규칙으로 늘어놓아야 순번이 같은 계정을 가리킨다. order 가 없는 옛 오퍼레이터면 이름순 그대로다.
+  const accountsOf = (name: string) => {
+    const names = snap.pools.find((p) => p.name === name)?.accounts.map((a) => a.name);
+    return names ? orderAccounts({ order: snap.order ?? {} }, name, names) : null;
+  };
   // 러너와 같은 순서: 로컬 지정 풀(HARKROOM_CLAUDE_POOL) → 에이전트의 풀 순서(있는 풀만) → 기본 풀 → 평평한 뿌리.
   const chain = snap.mode === 'flat' ? []
     : f.localPool ? []

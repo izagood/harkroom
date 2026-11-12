@@ -20,14 +20,21 @@ describe('resolveGateTerminalTarget', () => {
     expect(resolveGateTerminalTarget(facts({ accountRank: 2 }))).toEqual({ kind: 'open', pool: 'work', account: 'plum' });
   });
   it('에이전트의 풀 순서에서 풀 순번 → 그 풀의 계정 순번', () => {
-    const s = snap({ work: ['acct-1', 'plum'], alice: ['max', 'lime'] }, { agents: { ag: ['alice', 'work'] } });
-    expect(resolveGateTerminalTarget(facts({ snapshot: s, poolRank: 1, accountRank: 2 }))).toEqual({ kind: 'open', pool: 'alice', account: 'lime' });
+    const s = snap({ work: ['acct-1', 'plum'], alice: ['lime', 'max'] }, { agents: { ag: ['alice', 'work'] } });
+    expect(resolveGateTerminalTarget(facts({ snapshot: s, poolRank: 1, accountRank: 2 }))).toEqual({ kind: 'open', pool: 'alice', account: 'max' });
     expect(resolveGateTerminalTarget(facts({ snapshot: s, poolRank: 2, accountRank: 1 }))).toEqual({ kind: 'open', pool: 'work', account: 'acct-1' });
   });
   it('이 기기의 풀 순서에 없는 자리는 바깥 순번이라도 이웃 풀로 새지 않는다', () => {
     // 이 기기에 없는 풀(gone)은 러너처럼 건너뛴다 — 그래서 2번은 work 다.
     const s = snap({ work: ['acct-1'], alice: ['max'] }, { agents: { ag: ['alice', 'gone', 'work'] } });
     expect(resolveGateTerminalTarget(facts({ snapshot: s, poolRank: 2 }))).toEqual({ kind: 'open', pool: 'work', account: 'acct-1' });
+  });
+  it('pools.json 의 order 가 있으면 러너처럼 그 순서(나머지는 이름순)로 센다 — 스냅숏 계정은 이름순이다', () => {
+    const s = snap({ work: ['acct-1', 'plum', 'zed'] }, { order: { work: ['zed', 'acct-1', 'gone'] } });
+    expect(resolveGateTerminalTarget(facts({ snapshot: s, accountRank: 1 }))).toEqual({ kind: 'open', pool: 'work', account: 'zed' });
+    expect(resolveGateTerminalTarget(facts({ snapshot: s, accountRank: 2 }))).toEqual({ kind: 'open', pool: 'work', account: 'acct-1' });
+    expect(resolveGateTerminalTarget(facts({ snapshot: s, accountRank: 3 }))).toEqual({ kind: 'open', pool: 'work', account: 'plum' });
+    expect(resolveGateTerminalTarget(facts({ snapshot: s, accountRank: 4 }))).toEqual({ kind: 'missing' });
   });
   it('목록 밖 순번이면 열지 않는다 — 에이전트가 고른 값을 믿지 않는다', () => {
     expect(resolveGateTerminalTarget(facts({ accountRank: 9 }))).toEqual({ kind: 'missing' });
