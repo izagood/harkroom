@@ -5,7 +5,7 @@
 
 use serde_json::Value;
 
-use crate::prompt::NON_UTTERANCE_KINDS;
+use crate::prompt::{MESSAGE_KIND_WAKE, NON_UTTERANCE_KINDS};
 
 /// 정본 `ownedByTurn` 의 `use` — 턴 id 가 안 적힌 글을 어떻게 볼지는 틀렸을 때의 해가 달라 묻는 쪽마다 다르다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,6 +61,22 @@ pub fn count_own_posts_since(
                 && owned_by_turn(m, turn_id, TurnOwnership::Count)
         })
         .count()
+}
+
+/// 정본 `hasOwnWakeSince` — 턴 시작 seq 뒤에 이 턴이 깨움 예약(대기 줄)을 걸었나. 대기 줄도 턴으로 가른다 — 같은 스레드를 다른 턴이
+/// 함께 볼 때 그 턴의 예약으로 내 침묵을 덮지 않게.
+pub fn has_own_wake_since(
+    messages: &[Value],
+    me_id: &str,
+    since_seq: i64,
+    turn_id: Option<&str>,
+) -> bool {
+    messages.iter().any(|m| {
+        m.get("authorId").and_then(Value::as_str) == Some(me_id)
+            && seq(m) > since_seq
+            && m.get("kind").and_then(Value::as_str) == Some(MESSAGE_KIND_WAKE)
+            && owned_by_turn(m, turn_id, TurnOwnership::Count)
+    })
 }
 
 #[cfg(test)]

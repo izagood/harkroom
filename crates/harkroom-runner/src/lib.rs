@@ -64,6 +64,7 @@ pub mod relay_session;
 pub mod rest;
 pub mod review_fork;
 pub mod session_store;
+pub mod silent_notice;
 pub mod skills_sync;
 pub mod thread_model;
 pub mod thread_note_pin;
