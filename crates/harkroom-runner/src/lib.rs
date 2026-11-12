@@ -12,10 +12,12 @@
 //! - `opencode_home`: opencode·kilo 격리 XDG 홈의 순수 절반(`opencodeHome.ts` — 권한 표·이름·모델 문법·JSONC). 잠금·홈 만들기는 다음 조각.
 //! - `pi_home`: pi 격리 상태 루트(`piHome.ts` — 링크·설정 고르기·MCP 표·읽기 전용 도구 목록, B3c-2c-1). lane 스레드 홈·`models.json` 은 `pi_lane`(B3c-2c-2).
 //! - `turn_rules`: 턴 권한 상수·hook 설정 빌더(`turn.ts` 앞 절반, B3d-1). 프리셋·`buildTurnCommand` 연결은 B3d-2.
+//! - `account_assign`: 스레드별 claude 계정 배정(`accountAssign.ts` 와 shared 조각, B3e-2). 턴 흐름 연결은 다음 조각.
 //! - `thread_note_pin`·`memory_cache`: 스레드 메모 고정과 러너 메모리 캐시(`threadNotePin.ts`·`memoryCache.ts`, B3e-1a). `prompt` 는 `escapeForPrompt` 조각.
 //! - `review_fork`: 턴 뒤 리뷰 포크(`reviewFork.ts` — 인자·결과 파싱·켜기 스위치·카운터·포크 실행, B3e-4). 턴 루프 연결은 B3e-7.
 //! - `mcp`: `HarkroomAgentClient` 의 MCP 절반(`call()`·`inbox.poll`·`message.*`·기억·계획·bg) — 링크의 `mcp.request`.
 
+pub mod account_assign;
 pub mod adapter;
 pub mod codex_home;
 pub mod codex_rules;
