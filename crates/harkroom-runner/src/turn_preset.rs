@@ -185,6 +185,7 @@ pub mod codex {
     use crate::adapter::{AgentHarness, ExecutionModel, Mode, execution_model_for};
     use crate::config::RUNNER_LINK_ENV_KEYS;
     use crate::turn_env::{RUNNER_TURN_CAUSE_ENV, RUNNER_TURN_ID_ENV, RUNNER_TURN_KEY_BRIDGE_ENV};
+    use crate::turn_files::CODEX_MCP_SHELL_EXCLUDE;
 
     pub const COMMAND: &str = "codex";
     pub const ALLOWS_NULL_SESSION_ON_FIRST_TURN: bool = true;
@@ -229,7 +230,13 @@ pub mod codex {
 
     /// avcs·harkroom 브릿지는 늘. `transport` 를 반드시 적는다(빠지면 MCP 설정 전체가 로드 실패, 0.154 실측).
     /// `env` 가 아니라 `env_vars`(이름만 — 값은 argv 에 안 오른다). `extra` 는 `codexMcpFlags` 결과(B3d-4)를 그대로 잇는다.
-    pub fn mcp(operator_bin: &str, turn_keys: bool, extra: &[String]) -> Vec<String> {
+    /// `mcp_secrets`: 추가 MCP 의 비밀 값(bearer·헤더)이 자식 env 에 실린다 — 셸에서 `HARKROOM_MCP_*` 를 거른다.
+    pub fn mcp(
+        operator_bin: &str,
+        turn_keys: bool,
+        mcp_secrets: bool,
+        extra: &[String],
+    ) -> Vec<String> {
         let mut env_vars: Vec<&str> = RUNNER_LINK_ENV_KEYS.to_vec();
         env_vars.push(RUNNER_TURN_CAUSE_ENV);
         env_vars.push(RUNNER_TURN_ID_ENV);
@@ -258,12 +265,19 @@ pub mod codex {
         ));
         out.push("-c".into());
         out.push(format!("mcp_servers.harkroom.env_vars={}", json(&env_vars)));
-        if turn_keys {
-            // 다리 열쇠는 브릿지에만 — 셸에는 거른다. 스냅숏·로그인 셸·코드 모드·tty 실행은 이 거르기를 지나므로 끈다.
+        if turn_keys || mcp_secrets {
+            // 다리 열쇠·추가 MCP 비밀은 브릿지·MCP 서버에만 — 셸에는 거른다. 스냅숏·로그인 셸·코드 모드·tty 실행은 이 거르기를 지나므로 끈다.
+            let mut exclude: Vec<&str> = Vec::new();
+            if turn_keys {
+                exclude.push(RUNNER_TURN_KEY_BRIDGE_ENV);
+            }
+            if mcp_secrets {
+                exclude.push(CODEX_MCP_SHELL_EXCLUDE);
+            }
             out.push("-c".into());
             out.push(format!(
                 "shell_environment_policy.exclude={}",
-                json(&[RUNNER_TURN_KEY_BRIDGE_ENV])
+                json(&exclude)
             ));
             out.extend(v(&[
                 "-c",
@@ -807,7 +821,7 @@ mod tests {
 
     #[test]
     fn codex_mcp_bridge_and_env_vars_names_only() {
-        let r = codex::mcp("/a b/op", false, &[]);
+        let r = codex::mcp("/a b/op", false, false, &[]);
         assert!(r.contains(&"mcp_servers.avcs.transport=\"stdio\"".to_string()));
         assert!(r.contains(&"mcp_servers.harkroom.command=\"/a b/op\"".to_string()));
         assert!(r.contains(&"mcp_servers.harkroom.args=[\"mcp-bridge\"]".to_string()));
@@ -822,6 +836,7 @@ mod tests {
         let k = codex::mcp(
             "/op",
             true,
+            false,
             &["-c".into(), "mcp_servers.x.url=\"u\"".into()],
         );
         let ev = k
@@ -834,6 +849,16 @@ mod tests {
         ));
         assert!(k.contains(&"features.unified_exec_tty=false".to_string()));
         assert_eq!(k.last().unwrap(), "mcp_servers.x.url=\"u\"");
+
+        // 추가 MCP 비밀만 있어도 셸 거르기·우회 길 끄기가 붙는다.
+        let m = codex::mcp("/op", false, true, &[]);
+        assert!(m.contains(&"shell_environment_policy.exclude=[\"HARKROOM_MCP_*\"]".to_string()));
+        assert!(m.contains(&"features.shell_snapshot=false".to_string()));
+        let both = codex::mcp("/op", true, true, &[]);
+        assert!(both.contains(
+            &"shell_environment_policy.exclude=[\"HARKROOM_TURN_BRIDGE_KEY\",\"HARKROOM_MCP_*\"]"
+                .to_string()
+        ));
     }
 
     #[test]

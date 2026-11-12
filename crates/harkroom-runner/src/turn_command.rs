@@ -18,7 +18,7 @@ use crate::omp_home::omp_dirs;
 use crate::pi_home::pi_sessions_dir;
 use crate::turn_env::{ChildEnvError, ChildEnvInput, TurnKeys, child_env, lane_gh_config_dir};
 use crate::turn_files::{
-    CODEX_LANE_BASE_URL_ENV, McpServerEntry, codex_bearer_env, codex_lane_args, codex_mcp_flags,
+    CODEX_LANE_BASE_URL_ENV, McpServerEntry, codex_lane_args, codex_mcp_env, codex_mcp_flags,
 };
 use crate::turn_preset::{
     PresetCheckError, RuleArgs, TurnMode, TurnPresetError, assert_valid_session, claude, codex,
@@ -356,7 +356,12 @@ pub fn build_turn_command(
                 },
                 rules: Vec::new(),
                 chrome: Vec::new(),
-                mcp: codex::mcp(o.operator_bin, turn_keys, &extra),
+                mcp: codex::mcp(
+                    o.operator_bin,
+                    turn_keys,
+                    !codex_mcp_env(o.extra_mcp_servers).is_empty(),
+                    &extra,
+                ),
                 lane,
                 model: codex::model(o.model),
                 effort: codex::effort(o.effort),
@@ -487,9 +492,9 @@ pub fn build_turn_command(
     input.turn_keys = o.turn_keys;
     input.opencode_turn_config = o.opencode_turn_config;
     let mut env = child_env(&input, parent_env, home)?;
-    // 하네스 MCP env(정본 `preset.mcpEnv`) — codex 만: 추가 MCP 의 bearer 토큰을 이름표 env 로.
+    // 하네스 MCP env(정본 `preset.mcpEnv`) — codex 만: 추가 MCP 의 bearer 토큰·헤더 값을 이름표 env 로(셸에서는 걸러짐).
     if h == AgentHarness::Codex {
-        env.extend(codex_bearer_env(o.extra_mcp_servers));
+        env.extend(codex_mcp_env(o.extra_mcp_servers));
     }
     if let Some(extra) = o.command_rule_env {
         env.extend(extra.iter().map(|(k, v)| (k.clone(), v.clone())));

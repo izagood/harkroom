@@ -250,20 +250,37 @@ pub fn codex_bearer_env_name(name: &str) -> String {
     format!("HARKROOM_MCP_BEARER_{up}")
 }
 
-/// 정본 `codexBearerEnv` — codex 자식 env 에 얹을 bearer 토큰(argv 에는 이름만).
-pub fn codex_bearer_env(servers: &[(String, McpServerEntry)]) -> Vec<(String, String)> {
+/// 추가 MCP 의 나머지 HTTP 헤더 값을 실을 env 이름(서버 이름 + 헤더 순번 — 서버끼리 겹치지 않는다).
+pub fn codex_header_env_name(name: &str, index: usize) -> String {
+    let base = codex_bearer_env_name(name);
+    let up = base.trim_start_matches("HARKROOM_MCP_BEARER_");
+    format!("HARKROOM_MCP_HDR_{up}_{index}")
+}
+
+/// codex 셸 env 에서 걸러 낼 패턴 — 추가 MCP 의 bearer·헤더 값(`HARKROOM_MCP_BEARER_*`·`HARKROOM_MCP_HDR_*`)과
+/// 그 밖의 `HARKROOM_MCP_*` 설정. MCP 서버는 `bearer_token_env_var`·`env_http_headers` 로 codex 자신의 env 에서 읽으므로
+/// 셸 거르기와 무관하다.
+pub const CODEX_MCP_SHELL_EXCLUDE: &str = "HARKROOM_MCP_*";
+
+/// codex 자식 env 에 얹을 추가 MCP 의 비밀 값 — bearer 토큰과 나머지 HTTP 헤더 값(argv 에는 env 이름만).
+/// 정본 `codexBearerEnv` 는 bearer 만 옮겼다 — 나머지 헤더 값도 argv(`ps` 로 보인다)에서 뺀다(security #1945 낮음 2).
+pub fn codex_mcp_env(servers: &[(String, McpServerEntry)]) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for (name, entry) in servers {
-        if let McpServerEntry::Http { headers, .. } = entry
-            && let (Some(b), _) = split_bearer(headers)
-        {
-            out.push((codex_bearer_env_name(name), b));
+        if let McpServerEntry::Http { headers, .. } = entry {
+            let (bearer, rest) = split_bearer(headers);
+            if let Some(b) = bearer {
+                out.push((codex_bearer_env_name(name), b));
+            }
+            for (i, (_, v)) in rest.into_iter().enumerate() {
+                out.push((codex_header_env_name(name, i), v));
+            }
         }
     }
     out
 }
 
-/// 정본 `codexMcpFlags` — `-c mcp_servers.<name>.*`. transport 를 늘 적는다. Bearer 토큰은 argv 에 굽지 않는다.
+/// 정본 `codexMcpFlags` — `-c mcp_servers.<name>.*`. transport 를 늘 적는다. Bearer 토큰·나머지 헤더 값은 argv 에 굽지 않는다.
 pub fn codex_mcp_flags(name: &str, entry: &McpServerEntry) -> Vec<String> {
     let key = format!("mcp_servers.{name}");
     let mut out = Vec::new();
@@ -280,7 +297,16 @@ pub fn codex_mcp_flags(name: &str, entry: &McpServerEntry) -> Vec<String> {
             ));
             c(format!("{key}.url={}", json_str(url)));
             if !rest.is_empty() {
-                c(format!("{key}.http_headers={}", toml_inline_table(&rest)));
+                // 값은 env 로(argv 에는 헤더 이름 → env 이름만).
+                let names: Vec<(String, String)> = rest
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (k, _))| (k.clone(), codex_header_env_name(name, i)))
+                    .collect();
+                c(format!(
+                    "{key}.env_http_headers={}",
+                    toml_inline_table(&names)
+                ));
             }
             if bearer.is_some() {
                 c(format!(
@@ -311,6 +337,7 @@ pub fn codex_lane_args(base_url: &str) -> Vec<String> {
         CODEX_LANE_KEY_ENV,
         CODEX_LANE_BASE_URL_ENV,
         RUNNER_TURN_KEY_BRIDGE_ENV,
+        CODEX_MCP_SHELL_EXCLUDE,
     ])
     .expect("문자열 배열 직렬화는 실패하지 않는다");
     let flags = [
