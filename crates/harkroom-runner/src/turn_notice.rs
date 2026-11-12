@@ -75,7 +75,7 @@ fn replace_all_literal(text: &str, needle: &str) -> String {
 }
 
 /// 정본 `maskWhole` — 마운트한 비밀 값을 통째로 가린다(긴 것부터 온다).
-fn mask_whole(text: &str, secrets: &[String]) -> String {
+pub(crate) fn mask_whole(text: &str, secrets: &[String]) -> String {
     let mut t = text.to_owned();
     for n in secrets {
         t = replace_all_literal(&t, n);
@@ -84,7 +84,7 @@ fn mask_whole(text: &str, secrets: &[String]) -> String {
 }
 
 /// 정본 `maskTokens` — 값을 모르는 토큰을 꼴로 가린다.
-fn mask_tokens(text: &str) -> String {
+pub(crate) fn mask_tokens(text: &str) -> String {
     let t = HARKROOM_TOKEN.replace_all(text, MASK);
     let t = BEARER.replace_all(&t, format!("${{1}}{MASK}").as_str());
     COMMON_TOKEN.replace_all(&t, MASK).into_owned()
@@ -162,7 +162,7 @@ pub fn harness_tail_notice(tail: &str, pat: &str, secrets: &[String]) -> Option<
 }
 
 /// 정본 `oneLine` — 통째 가림을 **자르기 전에** 하고, 한 줄로 접어 앞을 남긴다.
-fn one_line(text: &str, pat: &str, max: usize, secrets: &[String]) -> String {
+pub(crate) fn one_line(text: &str, pat: &str, max: usize, secrets: &[String]) -> String {
     let t = mask_whole(text, secrets);
     let t = replace_all_literal(&t, pat);
     let t = mask_tokens(&t).replace('`', "'");

@@ -69,3 +69,18 @@ fn float_seq_and_missing_fields() {
     ];
     assert_eq!(count_own_posts_since(&msgs, "me", 10, None), 1);
 }
+
+#[test]
+fn own_wake_since_counts_only_this_turns_wake_rows() {
+    let msgs = vec![
+        row("me", 5, "wake", Some("t1")),
+        row("me", 12, "text", Some("t1")),
+        row("other", 13, "wake", Some("t1")),
+        row("me", 14, "wake", Some("t2")),
+    ];
+    assert!(!has_own_wake_since(&msgs, "me", 10, Some("t1")));
+    assert!(has_own_wake_since(&msgs, "me", 10, Some("t2")));
+    assert!(has_own_wake_since(&msgs, "me", 4, Some("t1")));
+    let untagged = vec![row("me", 11, "wake", None)];
+    assert!(has_own_wake_since(&untagged, "me", 10, Some("t1")));
+}
