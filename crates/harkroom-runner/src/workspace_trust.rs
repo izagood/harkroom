@@ -85,7 +85,18 @@ pub fn trust_for_claude(workspace_dir: &str, path: &Path) -> io::Result<()> {
 }
 
 /// TS `trustForCodex` — TOML 파서 없이 **없으면 덧붙인다**(격리 홈의 파일이라 우리가 적은 것과 하네스의 UI 상태뿐이다).
+/// 경로는 TOML 기본 문자열 `"…"` 안에 그대로 들어가므로 `"`·`\`·제어 문자(개행 포함)가 있으면 적지 않고 거절한다 —
+/// 그런 경로는 다른 절·키를 끼워 넣을 수 있다(security B3d 낮음, 정본은 거르지 않는다).
 pub fn trust_for_codex(workspace_dir: &str, path: &Path) -> io::Result<()> {
+    if workspace_dir
+        .chars()
+        .any(|c| c == '"' || c == '\\' || c.is_control())
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "작업 폴더 경로에 따옴표·역슬래시·제어 문자가 있어 codex 신뢰를 적지 않는다",
+        ));
+    }
     let header = format!("[projects.\"{workspace_dir}\"]");
     edit_codex_config(path, |text| {
         if text.contains(&header) {
