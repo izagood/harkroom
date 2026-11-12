@@ -356,3 +356,49 @@ fn non_utf8_claude_config_dir_is_refused() {
     let a = build(&o).unwrap().args;
     assert!(a.iter().any(|x| x == "Edit(//cc/settings.json)"), "{a:?}");
 }
+
+/// security #1952 낮음 1: 추가 stdio MCP env 이름이 codex 자식 env(부모에서 물려받은 것)에 **다른 값**으로 이미 있으면
+/// 그 값은 argv 에 남기고 자식 env 의 사람 값은 덮지 않는다. 겹치지 않는 이름만 `env_vars` 로 옮긴다.
+#[test]
+fn codex_extra_stdio_env_does_not_override_parent_value() {
+    use crate::turn_files::McpServerEntry;
+    let extra = vec![(
+        "tool".to_string(),
+        McpServerEntry::Stdio {
+            command: "/bin/tool".into(),
+            args: vec![],
+            env: Some(vec![
+                ("MY_SERVICE_TOKEN".into(), "server".into()),
+                ("NEW_ONE".into(), "n".into()),
+            ]),
+        },
+    )];
+    let mut parent = env0();
+    parent.insert("MY_SERVICE_TOKEN".into(), "human".into());
+    let home = PathBuf::from("/codex");
+    let mut o = TurnCommandOptions::new(Codex, TurnMode::Mention, Auto, "/op");
+    o.codex_home = Some(&home);
+    o.extra_mcp_servers = &extra;
+    let p = build_turn_command(&o, &parent, Path::new("/h")).unwrap();
+    assert_eq!(
+        p.env.get("MY_SERVICE_TOKEN").map(String::as_str),
+        Some("human")
+    );
+    assert_eq!(p.env.get("NEW_ONE").map(String::as_str), Some("n"));
+    let joined = p.args.join(" ");
+    assert!(
+        joined.contains("mcp_servers.tool.env_vars=[\"NEW_ONE\"]"),
+        "{joined}"
+    );
+    assert!(
+        joined.contains("mcp_servers.tool.env=") && joined.contains("\"server\""),
+        "{joined}"
+    );
+    // 바탕에 없으면 둘 다 옮겨진다(argv 에 값 없음).
+    let p = build(&o).unwrap();
+    assert!(!p.args.join(" ").contains("\"server\""));
+    assert_eq!(
+        p.env.get("MY_SERVICE_TOKEN").map(String::as_str),
+        Some("server")
+    );
+}

@@ -74,7 +74,7 @@ fn stdio_flags_use_toml_inline_table() {
     };
     // 예약 이름이 아니고 겹치지 않으므로 값은 argv 에서 빠지고 이름만 `env_vars` 로(security #1945 낮음 2).
     let servers = vec![("github".to_string(), e.clone())];
-    let plan = plan_codex_mcp_env(&servers);
+    let plan = plan_codex_mcp_env(&servers, &Default::default());
     assert_eq!(
         codex_mcp_flags("github", &e, &plan),
         [
@@ -89,7 +89,7 @@ fn stdio_flags_use_toml_inline_table() {
         ]
     );
     assert_eq!(
-        codex_mcp_env(&servers),
+        codex_mcp_env(&servers, &Default::default()),
         [("GH_TOKEN".to_string(), "x".to_string())]
     );
     // 빈 계획(옮김 없음)이면 지금처럼 인라인 표.
@@ -131,7 +131,7 @@ fn bearer_goes_to_env_not_argv() {
     assert!(!flags.iter().any(|f| f.contains(".http_headers=")));
     let servers = vec![("slack-work".to_string(), e)];
     assert_eq!(
-        codex_mcp_env(&servers),
+        codex_mcp_env(&servers, &Default::default()),
         [
             (
                 "HARKROOM_MCP_BEARER_SLACK_WORK".to_string(),
@@ -156,7 +156,7 @@ fn header_values_never_reach_argv() {
         &"mcp_servers.vendor.env_http_headers={ \"X-Api-Key\" = \"HARKROOM_MCP_HDR_VENDOR_0\", \"Authorization\" = \"HARKROOM_MCP_HDR_VENDOR_1\" }"
             .to_string()
     ));
-    let env = codex_mcp_env(&[("vendor".to_string(), e)]);
+    let env = codex_mcp_env(&[("vendor".to_string(), e)], &Default::default());
     assert_eq!(
         env,
         [
@@ -178,7 +178,7 @@ fn header_values_never_reach_argv() {
         args: vec![],
         env: None,
     };
-    assert!(codex_mcp_env(&[("s".to_string(), s)]).is_empty());
+    assert!(codex_mcp_env(&[("s".to_string(), s)], &Default::default()).is_empty());
 }
 
 #[test]
@@ -355,7 +355,7 @@ fn stdio_env_plan_keeps_reserved_and_conflicting_names_in_argv() {
             stdio(&[("API_TOKEN", "b1"), ("SHARED", "same"), ("ONLY_B", "ob")]),
         ),
     ];
-    let plan = plan_codex_mcp_env(&servers);
+    let plan = plan_codex_mcp_env(&servers, &Default::default());
     assert_eq!(plan.moved_names(), ["ONLY_B", "SHARED"]);
     // 조건 ④: argv 에 남는 서버 이름만.
     assert_eq!(plan.argv_servers, ["a", "b"]);
@@ -377,7 +377,7 @@ fn stdio_env_plan_keeps_reserved_and_conflicting_names_in_argv() {
         "{fb:?}"
     );
     // 옮긴 값만 자식 env 로 — 예약·충돌 값은 env 에 싣지 않는다(codex 자신의 env 를 덮지 않음).
-    let env = codex_mcp_env(&servers);
+    let env = codex_mcp_env(&servers, &Default::default());
     assert_eq!(
         env,
         [
@@ -395,4 +395,40 @@ fn lane_exclude_carries_moved_names() {
         a.last().unwrap(),
         "shell_environment_policy.exclude=[\"HARKROOM_LANE_API_KEY\",\"HARKROOM_LANE_BASE_URL\",\"HARKROOM_TURN_BRIDGE_KEY\",\"HARKROOM_MCP_*\",\"SHARED\"]"
     );
+}
+
+/// security #1952 낮음 1: 옮길 이름이 codex 가 받을 자식 env 에 **다른 값**으로 이미 있으면 옮기지 않고 argv 에 남긴다
+/// (옮기면 codex 자신과 다른 MCP 가 바뀐 값을 본다). 같은 값이면 옮겨도 그대로이므로 옮긴다.
+#[test]
+fn stdio_env_plan_keeps_names_that_clash_with_child_env_in_argv() {
+    let servers = vec![(
+        "a".to_string(),
+        stdio(&[
+            ("GH_TOKEN", "server"),
+            ("SAME_AS_PARENT", "v"),
+            ("NEW_ONE", "n"),
+        ]),
+    )];
+    let base: std::collections::BTreeMap<String, String> = [
+        ("GH_TOKEN".to_string(), "human".to_string()),
+        ("SAME_AS_PARENT".to_string(), "v".to_string()),
+    ]
+    .into_iter()
+    .collect();
+    let plan = plan_codex_mcp_env(&servers, &base);
+    assert_eq!(plan.moved_names(), ["NEW_ONE", "SAME_AS_PARENT"]);
+    assert_eq!(plan.argv_servers, ["a"]);
+    let f = codex_mcp_flags("a", &servers[0].1, &plan);
+    let inline = f
+        .iter()
+        .find(|x| x.starts_with("mcp_servers.a.env="))
+        .unwrap();
+    assert!(inline.contains("GH_TOKEN") && !inline.contains("NEW_ONE"));
+    // 자식 env 에는 충돌 값을 싣지 않는다 — 사람의 값이 그대로 남는다.
+    let env = codex_mcp_env(&servers, &base);
+    assert!(env.iter().all(|(k, _)| k != "GH_TOKEN"), "{env:?}");
+    // 바탕이 비면 셋 다 옮긴다(앞 판과 같다).
+    let plain = plan_codex_mcp_env(&servers, &Default::default());
+    assert_eq!(plain.moved.len(), 3);
+    assert!(plain.argv_servers.is_empty());
 }

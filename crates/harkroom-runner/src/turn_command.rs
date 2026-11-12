@@ -312,6 +312,41 @@ pub fn build_turn_command(
         provider_lane,
         post_tool_since_seq: o.post_tool_since_seq,
     };
+    // PAT·턴 열쇠는 argv 에 올리지 않는다 — 자식 env 로만(spec §7).
+    let gh = lane_gh_config_dir(
+        h,
+        provider_lane,
+        o.tool_allows,
+        parent_env.get("XDG_CONFIG_HOME").map(String::as_str),
+        home,
+    );
+    let mut input = ChildEnvInput::new(h);
+    input.codex_home = if h == AgentHarness::Codex {
+        o.codex_home
+    } else {
+        None
+    };
+    input.opencode_home = if uses_xdg_home(h) {
+        o.opencode_home
+    } else {
+        None
+    };
+    input.pi_home = if uses_pi_home(h) { o.pi_home } else { None };
+    input.omp_home = omp_parts.map(|(oh, _, _)| oh);
+    input.omp_agent_dir = omp_parts.map(|(_, t, _)| t.agent_dir);
+    input.claude_config_dir = if h == AgentHarness::ClaudeCode {
+        o.claude_config_dir
+    } else {
+        None
+    };
+    input.cause_message_id = o.cause_message_id;
+    input.turn_id = o.turn_id;
+    input.provider_env = o.provider_env;
+    input.gh_config_dir = gh.as_deref();
+    input.turn_keys = o.turn_keys;
+    input.opencode_turn_config = o.opencode_turn_config;
+    // 하네스 자식 env 의 바탕 — 추가 MCP env 를 옮길지 판정할 때도 본다(같은 이름·다른 값이면 argv, security #1952 낮음 1).
+    let mut env = child_env(&input, parent_env, home)?;
     // 세션 id 없음은 위 `assert_valid_session` 이 「null 이 되는 하네스의 첫 턴」으로만 남겼다.
     let sid = o.session_id.unwrap_or_default();
     let parts = match h {
@@ -334,7 +369,7 @@ pub fn build_turn_command(
         },
         AgentHarness::Codex => {
             // 정본 `laneArgs` — 빈 주소도 없는 것으로 친다(`!baseUrl`).
-            let env_plan = plan_codex_mcp_env(o.extra_mcp_servers);
+            let env_plan = plan_codex_mcp_env(o.extra_mcp_servers, &env);
             if !env_plan.argv_servers.is_empty() {
                 // 조건 ④: 값이 argv 에 남는 서버의 **이름만** 로컬 로그에(값·env 이름 없이).
                 eprintln!(
@@ -369,7 +404,7 @@ pub fn build_turn_command(
                 mcp: codex::mcp(
                     o.operator_bin,
                     turn_keys,
-                    !codex_mcp_env(o.extra_mcp_servers).is_empty(),
+                    !codex_mcp_env(o.extra_mcp_servers, &env).is_empty(),
                     &moved_env,
                     &extra,
                 ),
@@ -469,43 +504,10 @@ pub fn build_turn_command(
     args.extend(parts.effort);
     args.extend(parts.prompt);
 
-    // PAT·턴 열쇠는 argv 에 올리지 않는다 — 자식 env 로만(spec §7).
-    let gh = lane_gh_config_dir(
-        h,
-        provider_lane,
-        o.tool_allows,
-        parent_env.get("XDG_CONFIG_HOME").map(String::as_str),
-        home,
-    );
-    let mut input = ChildEnvInput::new(h);
-    input.codex_home = if h == AgentHarness::Codex {
-        o.codex_home
-    } else {
-        None
-    };
-    input.opencode_home = if uses_xdg_home(h) {
-        o.opencode_home
-    } else {
-        None
-    };
-    input.pi_home = if uses_pi_home(h) { o.pi_home } else { None };
-    input.omp_home = omp_parts.map(|(oh, _, _)| oh);
-    input.omp_agent_dir = omp_parts.map(|(_, t, _)| t.agent_dir);
-    input.claude_config_dir = if h == AgentHarness::ClaudeCode {
-        o.claude_config_dir
-    } else {
-        None
-    };
-    input.cause_message_id = o.cause_message_id;
-    input.turn_id = o.turn_id;
-    input.provider_env = o.provider_env;
-    input.gh_config_dir = gh.as_deref();
-    input.turn_keys = o.turn_keys;
-    input.opencode_turn_config = o.opencode_turn_config;
-    let mut env = child_env(&input, parent_env, home)?;
     // 하네스 MCP env(정본 `preset.mcpEnv`) — codex 만: 추가 MCP 의 bearer 토큰·헤더 값을 이름표 env 로(셸에서는 걸러짐).
     if h == AgentHarness::Codex {
-        env.extend(codex_mcp_env(o.extra_mcp_servers));
+        let mcp_env = codex_mcp_env(o.extra_mcp_servers, &env);
+        env.extend(mcp_env);
     }
     if let Some(extra) = o.command_rule_env {
         env.extend(extra.iter().map(|(k, v)| (k.clone(), v.clone())));

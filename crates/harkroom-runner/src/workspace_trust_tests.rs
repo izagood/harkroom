@@ -240,3 +240,68 @@ fn codex_trust_refuses_toml_breaking_paths() {
             .contains("[projects.\"/w/한글 폴더\"]")
     );
 }
+
+/// 정본 `trustViaAdapter`(security 낮음 5): 장부 자리·형식은 어댑터 표가 정한다 — 하네스 이름으로 갈리지 않는다.
+#[test]
+fn trust_target_comes_from_adapter_table() {
+    use crate::adapter::AgentHarness as H;
+    let home = Path::new("/h");
+    let codex = Path::new("/c");
+    let cfg = Path::new("/acct");
+    assert_eq!(
+        trust_target(H::ClaudeCode, Some(cfg), codex, home).unwrap(),
+        Some(TrustTarget::ClaudeJson(PathBuf::from("/acct/.claude.json")))
+    );
+    // 계정 설정 폴더가 없으면 정본처럼 `<home>/.claude` 를 뿌리로.
+    assert_eq!(
+        trust_target(H::ClaudeCode, None, codex, home).unwrap(),
+        Some(TrustTarget::ClaudeJson(PathBuf::from(
+            "/h/.claude/.claude.json"
+        )))
+    );
+    assert_eq!(
+        trust_target(H::Codex, Some(cfg), codex, home).unwrap(),
+        Some(TrustTarget::CodexToml(PathBuf::from("/c/config.toml")))
+    );
+    // 신뢰 관문이 없는 하네스는 아무것도 쓰지 않는다.
+    for h in [H::Opencode, H::Kilo, H::Pi, H::Omp] {
+        assert_eq!(
+            trust_target(h, Some(cfg), codex, home).unwrap(),
+            None,
+            "{h:?}"
+        );
+    }
+    // 어댑터가 없는 하네스는 거절(정본 `adapterFor` throw).
+    assert!(trust_target(H::Gemini, Some(cfg), codex, home).is_err());
+}
+
+/// 어댑터 경로로 실제 장부에 적힌다 — claude 는 계정 설정 폴더의 `.claude.json`, codex 는 홈의 `config.toml`.
+#[test]
+fn ensure_via_adapter_writes_the_selected_ledger() {
+    use crate::adapter::AgentHarness as H;
+    let d = tmp("via-adapter");
+    let cfg = d.join("acct");
+    let codex = d.join("codex");
+    fs::create_dir_all(&cfg).unwrap();
+    fs::create_dir_all(&codex).unwrap();
+    ensure_workspace_trusted_via_adapter(H::ClaudeCode, "/w/x", Some(&cfg), &codex, &d);
+    let doc: Value =
+        serde_json::from_str(&fs::read_to_string(cfg.join(".claude.json")).unwrap()).unwrap();
+    assert_eq!(
+        doc["projects"]["/w/x"]["hasTrustDialogAccepted"],
+        Value::Bool(true)
+    );
+    ensure_workspace_trusted_via_adapter(H::Codex, "/w/x", Some(&cfg), &codex, &d);
+    assert!(
+        fs::read_to_string(codex.join("config.toml"))
+            .unwrap()
+            .contains("[projects.\"/w/x\"]")
+    );
+    // 관문 없는 하네스·어댑터 없는 하네스는 아무 파일도 만들지 않는다(어댑터 없음은 로그만).
+    let empty = d.join("empty");
+    fs::create_dir_all(&empty).unwrap();
+    ensure_workspace_trusted_via_adapter(H::Opencode, "/w/x", Some(&empty), &empty, &empty);
+    ensure_workspace_trusted_via_adapter(H::Gemini, "/w/x", Some(&empty), &empty, &empty);
+    assert_eq!(fs::read_dir(&empty).unwrap().count(), 0);
+    let _ = fs::remove_dir_all(&d);
+}

@@ -6,8 +6,8 @@
 //!
 //! 모든 `ensure_*` 는 **실패를 삼킨다**(로그만). 못 적었으면 관문이 뜨고 준비 대기가 상한에서 사람을 부른다 — 그 실패가 이미 사실을 말한다.
 //!
-//! 이 모듈에 없는 것: 어댑터 표에서 장부 자리를 고르는 일(`TrustTarget` 을 만드는 쪽 — B3d 턴 코어, #1932 의 `adapter.rs` 표),
-//! 계정 관문 기록 `markClaudeAccountGates`(오퍼레이터 crate `claude_login::mark_account_gates` 에 있다 — 공유 자리는 B3d 때 정한다).
+//! 어댑터 표에서 장부 자리를 고르는 일은 [`trust_target`](정본 `trustViaAdapter`, s8 B3e-7b)이 한다.
+//! 이 모듈에 없는 것: 계정 관문 기록 `markClaudeAccountGates`(오퍼레이터 crate `claude_login::mark_account_gates` 에 있다 — 공유 자리는 B3d 때 정한다).
 //! 아직 연결되지 않았다 — 오퍼레이터는 계속 node 러너를 띄운다.
 
 use std::collections::HashMap;
@@ -271,6 +271,49 @@ pub fn ensure_workspace_trusted(workspace_dir: &str, target: Option<&TrustTarget
         eprintln!(
             "[workspaceTrust] {workspace_dir} 신뢰 기록 실패(턴은 계속한다 — 대화상자가 뜨면 준비 대기가 상한에서 실패한다): {e}"
         );
+    }
+}
+
+/// TS `trustViaAdapter` — 장부의 자리와 형식을 **어댑터 표**(`adapter.rs` 의 `trust` 칸)에서 고른다. 하네스 이름으로 갈리지 않으므로
+/// 새 하네스는 표만 채우면 된다. `Ok(None)` 은 그 하네스에 신뢰 관문이 없다는 뜻이다(opencode·pi 등 — 아무것도 쓰지 않는다).
+/// `claude_config_dir` 가 없으면 정본처럼 `<home>/.claude` 를 뿌리로 쓴다. 어댑터가 없는 하네스는 `Unsupported`.
+pub fn trust_target(
+    harness: crate::adapter::AgentHarness,
+    claude_config_dir: Option<&Path>,
+    codex_home: &Path,
+    home: &Path,
+) -> Result<Option<TrustTarget>, crate::adapter::Unsupported> {
+    use crate::adapter::{TrustKind, TrustRoot, adapter_for};
+    let Some(ledger) = adapter_for(harness)?.trust else {
+        return Ok(None);
+    };
+    let root = match ledger.root {
+        TrustRoot::AccountConfigDir => claude_config_dir
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| home.join(".claude")),
+        TrustRoot::CodexHome => codex_home.to_path_buf(),
+    };
+    let path = root.join(ledger.file);
+    Ok(Some(match ledger.kind {
+        TrustKind::ClaudeJson => TrustTarget::ClaudeJson(path),
+        TrustKind::CodexToml => TrustTarget::CodexToml(path),
+    }))
+}
+
+/// 어댑터 표로 장부를 고른 뒤 [`ensure_workspace_trusted`] 로 적는다(정본 `ensureWorkspaceTrusted` → `trustViaAdapter`).
+/// **PTY 를 띄우기 전에** 부른다. 실패(어댑터 없음 포함)는 정본처럼 로그만 남기고 턴은 계속한다.
+pub fn ensure_workspace_trusted_via_adapter(
+    harness: crate::adapter::AgentHarness,
+    workspace_dir: &str,
+    claude_config_dir: Option<&Path>,
+    codex_home: &Path,
+    home: &Path,
+) {
+    match trust_target(harness, claude_config_dir, codex_home, home) {
+        Ok(t) => ensure_workspace_trusted(workspace_dir, t.as_ref()),
+        Err(e) => eprintln!(
+            "[workspaceTrust] {workspace_dir} 신뢰 기록 실패(턴은 계속한다 — 대화상자가 뜨면 준비 대기가 상한에서 실패한다): {e}"
+        ),
     }
 }
 
