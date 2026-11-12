@@ -22,6 +22,7 @@
 pub mod account_assign;
 pub mod adapter;
 pub mod bg_executor;
+pub mod bg_tick;
 pub mod codex_home;
 pub mod codex_rules;
 pub mod config;
