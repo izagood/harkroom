@@ -36,6 +36,7 @@ pub mod mention_admit;
 pub mod mention_ledger;
 pub mod mention_scheduler;
 pub mod mention_settle;
+pub mod mention_target;
 pub mod omp_home;
 pub mod opencode_home;
 pub mod pi_home;
