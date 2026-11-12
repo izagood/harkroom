@@ -351,6 +351,19 @@ describe('계정 관문 — OS 알림은 계정당 한 번', () => {
     expect(n.sent[0]!.target?.messageId).toBe('g1');
     expect(n.sent[0]!.body).toContain('@bot');
   });
+  it('순번이 없으면 꼬리 없는 제목(designer #1978-2)', async () => {
+    setFocus(false);
+    const n = fakeNotifier();
+    const { callbacks } = await started(n, [], [pref('c1', 'all')]);
+    const bare = msg('g0', 'c1', 9, '관문 통지', 'u2', {
+      threadRootId: 'root-1',
+      meta: { kind: 'failure', failure: { retryable: false, code: 'account_gate', awaitingAccountId: 'u1' } } as unknown as Record<string, unknown>,
+    });
+    callbacks.current!.onEvent({ type: 'message.created', message: bare, audience: 'all' });
+    await drained();
+    expect(n.sent).toHaveLength(1);
+    expect(n.sent[0]!.title).toBe('An agent is waiting for your choice');
+  });
 });
 
 describe('계정 관문 — 에이전트당 상한(security #1053)', () => {

@@ -22,10 +22,8 @@ export type GateTerminalTarget =
   | { kind: 'open'; pool: string; account: string }
   /** 다른 기기(또는 웹·모바일)에서만 열 수 있다. 이름을 모르면 `null`. */
   | { kind: 'elsewhere'; operatorName: string | null }
-  /** 이 기기의 오퍼레이터인데 그 이름의 계정이 없다(지워졌거나 이름표가 틀렸다). */
+  /** 이 기기의 오퍼레이터인데 그 순번의 계정이 이 기기 풀 순서에 없다(지워졌거나 풀이 바뀌었다). */
   | { kind: 'missing' }
-  /** 같은 이름의 계정이 여러 풀에 있고 그 에이전트의 풀로도 못 고른다. */
-  | { kind: 'ambiguous' }
   /** 아직 모른다(목록을 읽는 중). */
   | { kind: 'unknown' };
 
