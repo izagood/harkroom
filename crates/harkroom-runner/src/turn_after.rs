@@ -141,7 +141,7 @@ pub fn apply_after_turn(
         SilentPath::WakeProgress => {
             let said = io.last_said();
             let body = silent_wake_notice(said.as_deref(), f.pat, f.secrets);
-            io.progress(f.channel_id, &body, f.anchor)?;
+            io.progress(f.channel_id, clip_body(&body), f.anchor)?;
         }
         SilentPath::Nothing => {}
     }
