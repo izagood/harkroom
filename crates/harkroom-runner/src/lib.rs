@@ -57,6 +57,7 @@ pub mod review_fork;
 pub mod thread_note_pin;
 pub mod thread_plan_pin;
 pub mod turn_command;
+pub mod turn_end;
 pub mod turn_env;
 pub mod turn_files;
 pub mod turn_notice;
