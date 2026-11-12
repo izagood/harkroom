@@ -50,6 +50,7 @@ pub mod pi_lane;
 pub mod poll_loop;
 pub mod prompt;
 pub mod prompt_sections;
+pub mod prompt_system;
 pub mod prompt_turn;
 pub mod provider_lane;
 pub mod pty;
