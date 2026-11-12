@@ -92,12 +92,15 @@ describe('아래로 내려가기', () => {
     const scrollIntoView = spyScroll();
     arrive('u2');
 
-    await waitFor(() => expect(screen.getByTestId('channel-jump-to-bottom')).toBeTruthy());
+    // 버튼과 그 수는 한 렌더에 같이 서지 않을 수 있다(느린 CI 에서 버튼만 먼저 보여 흔들림 1회) — 수와 이름표까지 기다린다.
+    await waitFor(() => {
+      expect(screen.getByTestId('channel-jump-to-bottom')).toBeTruthy();
+      // 남의 새 줄은 수로 단다 — 스레드 알약과 같은 부품(2026-10-29).
+      expect(screen.getByText('새 글 1')).toBeTruthy();
+      expect(screen.getByTestId('channel-jump-to-bottom').getAttribute('aria-label')).toBe('최신 글로 이동, 새 글 1개');
+    });
     // **이것이 이슈의 핵심이다** — 줄이 늘었다고 화면이 움직여서는 안 된다.
     expect(scrollIntoView).not.toHaveBeenCalled();
-    // 남의 새 줄은 수로 단다 — 스레드 알약과 같은 부품(2026-10-29).
-    expect(screen.getByText('새 글 1')).toBeTruthy();
-    expect(screen.getByTestId('channel-jump-to-bottom').getAttribute('aria-label')).toBe('최신 글로 이동, 새 글 1개');
   });
 
   it('진행·깨움 줄은 새 글로 세지 않는다', async () => {

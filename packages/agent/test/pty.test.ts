@@ -397,7 +397,19 @@ describe('#337 runPtyTurn — 인터랙티브 턴의 재료(무기한·resize·k
     const ring = new RingBuffer(256 * 1024);
     const r = await runPtyTurn(plan('report-winch'), {
       cwd: process.cwd(), timeoutMs: 0, cols: 80, rows: 24, ring,
-      onSpawn: (controls) => { setTimeout(() => controls.resize(100, 50), 300); },
+      // 자식이 `ready` 를 찍은 뒤에 바꾼다 — 그 줄 바로 다음에 SIGWINCH 처리기가 걸린다. 고정 300ms 는 느린 CI 에서
+      // 처리기보다 먼저 신호가 가 사라졌다(exit 12, 흔들림 1회). 8초 안에 `ready` 가 없으면 그대로 두어 자식의 exit 12 가 원인을 말한다.
+      onSpawn: (controls) => {
+        const started = Date.now();
+        const tick = setInterval(() => {
+          if (ring.snapshot().toString().includes('ready 80x24')) {
+            clearInterval(tick);
+            controls.resize(100, 50);
+          } else if (Date.now() - started > 8_000) {
+            clearInterval(tick);
+          }
+        }, 20);
+      },
     });
     expect(r.exitCode).toBe(0);
     const out = ring.snapshot().toString();
