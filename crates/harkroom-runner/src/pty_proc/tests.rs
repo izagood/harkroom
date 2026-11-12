@@ -172,3 +172,32 @@ fn not_found_message_hides_local_path() {
     assert!(!format!("{}", SpawnError::NotFound(e.clone())).contains("secret-dir"));
     assert!(e.local_detail().contains("PATH=/opt/secret-dir/bin"));
 }
+
+#[test]
+fn reader_stops_on_flag_even_if_never_closed() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    // 쓰는 끝을 쥔 채 두는 파이프 = 손자가 slave 를 쥔 PTY 와 같은 모양(읽기 끝이 영영 안 닫힘).
+    let mut fds = [0; 2];
+    assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+    let reader = unsafe { File::from_raw_fd(fds[0]) };
+    let writer = unsafe { File::from_raw_fd(fds[1]) };
+    (&writer).write_all(b"hi").unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let (tx, rx) = std::sync::mpsc::channel();
+    let s2 = stop.clone();
+    std::thread::spawn(move || {
+        let mut got = Vec::new();
+        read_until_closed_or_stopped(reader, &s2, |c| got.extend_from_slice(c));
+        tx.send(got).unwrap();
+    });
+    assert!(
+        rx.recv_timeout(Duration::from_millis(300)).is_err(),
+        "깃발 전엔 끝나면 안 된다"
+    );
+    stop.store(true, Ordering::Release);
+    let got = rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("깃발 뒤엔 끝나야 한다");
+    assert_eq!(got, b"hi");
+    drop(writer);
+}

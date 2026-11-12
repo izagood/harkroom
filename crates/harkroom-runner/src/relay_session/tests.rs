@@ -287,3 +287,24 @@ fn wire_give_up_cancels_sessions_then_calls_previous_hook() {
         &["view:0", "prev-down", "cancel:operator", "prev-give-up"]
     );
 }
+
+#[test]
+fn interactive_error_text_hides_paths_and_control_chars() {
+    assert_eq!(
+        public_error_text("codex 는 인터랙티브를 지원하지 않는다"),
+        "codex 는 인터랙티브를 지원하지 않는다"
+    );
+    let shown = public_error_text(
+        "spawn 실패: /Users/someone/secret/bin/claude (\"~/x\") \u{1b}[31m빨강\n둘째 줄",
+    );
+    assert!(!shown.contains("/Users"), "{shown}");
+    assert!(!shown.contains("~/x"), "{shown}");
+    assert!(!shown.chars().any(char::is_control), "{shown}");
+    assert!(shown.contains("<경로>"), "{shown}");
+    let long = "가".repeat(INTERACTIVE_ERROR_MAX_CHARS + 50);
+    assert_eq!(
+        public_error_text(&long).chars().count(),
+        INTERACTIVE_ERROR_MAX_CHARS + 1
+    );
+    assert_eq!(public_error_text(" \n\t"), "인터랙티브 열기가 실패했다");
+}
