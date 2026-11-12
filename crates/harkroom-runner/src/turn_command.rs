@@ -144,6 +144,8 @@ pub enum TurnCommandError {
     TurnKeysNeedTurnConfig(AgentHarness),
     /// codex API 키 연결 턴(lane 덮어쓰기)은 B3d-4 전까지 조립하지 않는다.
     CodexLanePending,
+    /// 계정 설정 폴더 경로가 UTF-8 이 아니다 — 그대로 두면 설정 자기 수정 금지 규칙이 계정 폴더가 아니라 `~/.claude` 를 가리킨다(security #1944 낮음).
+    ClaudeConfigDirNotUtf8,
     Preset(TurnPresetError),
     Env(ChildEnvError),
 }
@@ -177,6 +179,9 @@ impl fmt::Display for TurnCommandError {
                 f,
                 "buildTurnCommand: {} 턴 열쇠에는 턴 설정 파일이 있어야 한다",
                 h.as_str()
+            ),
+            Self::ClaudeConfigDirNotUtf8 => f.write_str(
+                "buildTurnCommand: claude 계정 설정 폴더 경로가 UTF-8 이 아니다 — 설정 자기 수정 금지 규칙을 그 폴더에 걸 수 없다",
             ),
             Self::CodexLanePending => f.write_str(
                 "buildTurnCommand: codex API 키 연결 턴은 아직 Rust 러너가 조립하지 않는다(B3d-4)",
@@ -286,13 +291,17 @@ pub fn build_turn_command(
         effort: Vec<String>,
         prompt: Vec<String>,
     }
+    let claude_config_dir = match o.claude_config_dir {
+        Some(d) => Some(d.to_str().ok_or(TurnCommandError::ClaudeConfigDirNotUtf8)?),
+        None => None,
+    };
     let rule_args = RuleArgs {
         operator_bin: o.operator_bin,
         merge_repos: o.merge_repos,
         api_connectors: o.api_connectors,
         api_delegatable: o.api_delegatable,
         tool_allows: o.tool_allows,
-        claude_config_dir: o.claude_config_dir.and_then(|d| d.to_str()),
+        claude_config_dir,
         command_hook: o.command_hook,
         provider_lane,
         post_tool_since_seq: o.post_tool_since_seq,

@@ -296,3 +296,20 @@ fn gemini_is_unsupported_and_errors_carry_no_paths() {
     let msg = build(&o).unwrap_err().to_string();
     assert!(!msg.contains("secret"), "{msg}");
 }
+
+#[test]
+fn non_utf8_claude_config_dir_is_refused() {
+    use std::os::unix::ffi::OsStrExt;
+    // security(#1944 낮음): UTF-8 이 아닌 계정 폴더 경로를 `~/.claude` 로 떨어뜨리지 않고 거절한다.
+    let bad = Path::new(std::ffi::OsStr::from_bytes(b"/cc/\xff"));
+    let mut o = TurnCommandOptions::new(ClaudeCode, TurnMode::Mention, Auto, "/op");
+    o.session_id = Some("sid");
+    o.mcp_config_path = "/m.json";
+    o.claude_config_dir = Some(bad);
+    let e = build(&o).unwrap_err();
+    assert_eq!(e, TurnCommandError::ClaudeConfigDirNotUtf8);
+    assert!(!e.to_string().contains("/cc"));
+    o.claude_config_dir = Some(Path::new("/cc"));
+    let a = build(&o).unwrap().args;
+    assert!(a.iter().any(|x| x == "Edit(//cc/settings.json)"), "{a:?}");
+}
