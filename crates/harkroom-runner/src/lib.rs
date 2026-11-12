@@ -11,6 +11,7 @@
 //! - `relay_session`: 중계 세션 장부(`relay.ts` 의 세션 절반 — ring·replay·input·resize·뷰어 수·중단·인터랙티브 열기, B3b-2c).
 //! - `opencode_home`: opencode·kilo 격리 XDG 홈의 순수 절반(`opencodeHome.ts` — 권한 표·이름·모델 문법·JSONC). 잠금·홈 만들기는 다음 조각.
 //! - `pi_home`: pi 격리 상태 루트(`piHome.ts` — 링크·설정 고르기·MCP 표·읽기 전용 도구 목록, B3c-2c-1). lane 스레드 홈·`models.json` 은 `pi_lane`(B3c-2c-2).
+//! - `turn_rules`: 턴 권한 상수·hook 설정 빌더(`turn.ts` 앞 절반, B3d-1). 프리셋·`buildTurnCommand` 연결은 B3d-2.
 //! - `mcp`: `HarkroomAgentClient` 의 MCP 절반(`call()`·`inbox.poll`·`message.*`·기억·계획·bg) — 링크의 `mcp.request`.
 
 pub mod adapter;
@@ -30,4 +31,5 @@ pub mod pty_turn;
 pub mod relay_session;
 pub mod rest;
 pub mod turn_env;
+pub mod turn_rules;
 pub mod workspace_trust;
