@@ -83,6 +83,7 @@ pub mod turn_prep;
 pub mod turn_preset;
 pub mod turn_probe;
 pub mod turn_probe_records;
+pub mod turn_probe_state;
 pub mod turn_registry;
 pub mod turn_rules;
 pub mod workspace_trust;
