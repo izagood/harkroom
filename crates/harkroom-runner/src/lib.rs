@@ -14,6 +14,7 @@
 //! - `turn_rules`: 턴 권한 상수·hook 설정 빌더(`turn.ts` 앞 절반, B3d-1). 프리셋·`buildTurnCommand` 연결은 B3d-2.
 //! - `account_assign`: 스레드별 claude 계정 배정(`accountAssign.ts` 와 shared 조각, B3e-2). 턴 흐름 연결은 다음 조각.
 //! - `thread_note_pin`·`memory_cache`: 스레드 메모 고정과 러너 메모리 캐시(`threadNotePin.ts`·`memoryCache.ts`, B3e-1a). `prompt` 는 `escapeForPrompt` 조각.
+//! - `review_fork`: 턴 뒤 리뷰 포크(`reviewFork.ts` — 인자·결과 파싱·켜기 스위치·카운터·포크 실행, B3e-4). 턴 루프 연결은 B3e-7.
 //! - `provider_lane`: 전용 제공사 경로의 러너 절반(`providerLane.ts` — 턴 키 받기·턴 파일·lane/턴 MCP 설정). 턴 흐름에는 아직 안 붙였다.
 //! - `mcp`: `HarkroomAgentClient` 의 MCP 절반(`call()`·`inbox.poll`·`message.*`·기억·계획·bg) — 링크의 `mcp.request`.
 
@@ -38,6 +39,7 @@ pub mod pty_record;
 pub mod pty_turn;
 pub mod relay_session;
 pub mod rest;
+pub mod review_fork;
 pub mod thread_note_pin;
 pub mod thread_plan_pin;
 pub mod turn_command;
