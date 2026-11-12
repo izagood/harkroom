@@ -685,11 +685,19 @@ export function retryNotice(tried: number, max: number, reason: string | null): 
  * `retryable: false` 인 이유도 같다: 이 턴을 다시 부르는 것으로는 안 풀린다. 사람이 화면의
  * 물음에 답하면 **그 턴이 그 자리에서 이어진다** — 다시 부를 일 자체가 없다.
  *
- * 계정을 함께 적는다: 어느 계정의 하네스가 묻고 있는지가 사람이 열 화면을 고르는 재료다.
+ * 계정을 함께 적는다: 어느 계정의 하네스가 묻고 있는지가 사람이 열 화면을 고르는 재료다. 단 **순번만** 적는다
+ * (칩 ②, 2026-11-12) — 계정·풀 폴더 이름은 사람 이름일 수 있어 서버 글에 남기지 않는다(security #1039).
  */
-export function gateNotice(accountLabel: string): string {
+export function gateNotice(ranks: { claudePoolRank?: number; claudeAccountRank?: number | null }): string {
   return `(하네스가 확인을 기다려 진행이 멈췄습니다 — 이 스레드의 터미널을 열어 화면의 물음에 `
-    + `답해 주세요. 답하면 이 턴이 그 자리에서 이어집니다. 계정: ${accountLabel})`;
+    + `답해 주세요. 답하면 이 턴이 그 자리에서 이어집니다. 계정: ${gateRankLabel(ranks)})`;
+}
+
+/** 관문 글의 계정 줄 — 「풀 2 · 계정 1」·「계정 1」·「기본 로그인」·「모름」. 이름은 쓰지 않는다. */
+export function gateRankLabel(r: { claudePoolRank?: number; claudeAccountRank?: number | null }): string {
+  if (r.claudeAccountRank === null) return '기본 로그인';
+  if (r.claudeAccountRank === undefined) return '모름';
+  return r.claudePoolRank !== undefined ? `풀 ${r.claudePoolRank} · 계정 ${r.claudeAccountRank}` : `계정 ${r.claudeAccountRank}`;
 }
 
 /**

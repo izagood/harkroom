@@ -63,7 +63,7 @@ describe('스레드 상태 리액션', () => {
     const id = await seed(adminId, '부탁');
     const gate: FailureMeta = {
       kind: 'failure',
-      failure: { retryable: false, what: '계정 설정 확인 대기', code: 'account_gate', awaitingAccountId: adminId, account: 'work/acct-1' },
+      failure: { retryable: false, what: '계정 설정 확인 대기', code: 'account_gate', awaitingAccountId: adminId, claudeAccountRank: 1 },
     };
     await seed(botId, '관문', { root: id, meta: gate });
     expect(await refreshThreadStatus(pool, id, live()))

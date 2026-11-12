@@ -4,7 +4,8 @@ import { clearPlanOpenKeys } from '../lib/threadPlan';
 import { swapAskMention, type PlanAsk } from '../lib/planRef';
 import { planAskRecipient } from '@harkroom/shared';
 import type { MemoryEdit, MemoryEntry, MemoryRevision, MemoryAudit, MemoryBatchResult } from '../lib/memoryList';
-import { countsAsReply, notifyLevelOf, readFailureMeta, type InboxThreadState } from '@harkroom/shared';
+import { countsAsReply, isAccountRank, isPoolRank, notifyLevelOf, readFailureMeta, type InboxThreadState } from '@harkroom/shared';
+import { accountChipOf } from '../lib/accountChip';
 import { buildBoard, mineCount } from '../lib/inboxBoard';
 
 /** 보드 한 판의 재료 — `GET /inbox/board` 의 응답(`ApiClient.inboxBoard`). `truncated` 는 옛 시험 목이 안 줄 수 있다. */
@@ -1240,9 +1241,13 @@ export class Controller {
     // 나에게 온 차례가 아니면 울리지 않는다(채널을 `all` 로 둔 다른 사람에게는 남의 관문이다).
     if (!store.me || failure.awaitingAccountId !== store.me.id) return true;
     if (!usePrefsStore.getState().notifications.enabled) return true;
-    const label = failure.account ?? row.authorId;
+    // 이름은 오지 않는다(칩 ②) — 순번 칩 글로 부르고, 없으면 「계정」 자리 없이 에이전트로 묶는다.
+    const chip = isAccountRank(failure.claudeAccountRank)
+      ? accountChipOf(this.t(), isPoolRank(failure.claudePoolRank) ? failure.claudePoolRank : null, failure.claudeAccountRank)
+      : null;
+    const label = chip?.label ?? null;
     // 열쇠는 (에이전트, 이름표) — 이름표만 쓰면 다른 에이전트의 같은 이름표가 서로를 삼킨다.
-    const key = `${row.authorId}\u0000${label}`;
+    const key = `${row.authorId}\u0000${label ?? ''}`;
     const at = Date.now();
     const last = this.gateNotifiedAt.get(key);
     if (last !== undefined && at - last < GATE_NOTIFY_WINDOW_MS) return true;
@@ -1254,7 +1259,8 @@ export class Controller {
     await this.notifier.notify({
       // 원문(조직 설정 값)은 싣지 않는다 — 계정 이름표와 에이전트만.
       // 사람이 읽는 말이라 사전을 지난다(designer #1053 F3) — 한국어 화면에 영어 알림이 뜨지 않게.
-      title: this.t()('gate.notify.title', { account: label }) + this.communitySuffix(),
+      // 순번이 없으면 꼬리 없는 제목(designer #1978-2) — ko 「· 에이전트」 꼬리는 본문과 겹쳤다.
+      title: (label ? this.t()('gate.notify.title', { account: label }) : this.t()('gate.notify.titleNoAccount')) + this.communitySuffix(),
       // handle 을 모르면 `@…` 대신 "에이전트가"로 떨어진다(designer #1053 nit).
       body: author ? this.t()('gate.notify.body', { agent: author }) : this.t()('gate.notify.bodyNoAgent'),
       target: this.notificationTarget(row.id),

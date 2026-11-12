@@ -9,13 +9,13 @@ import { useT } from '../i18n/useT';
 /**
  * 계정 관문 실패 카드의 [터미널 열기](2026-10-02, 관문 대응 PR-4).
  *
- * 무엇을 열지는 `resolveGateTerminalTarget` 이 정한다 — meta 의 이름표를 **이 기기의 실제 계정 목록**과
- * 맞춰 보고, 데몬에는 (풀, 계정) 이름만 넘긴다. 이 기기에서 열 수 없으면(웹·모바일·다른 오퍼레이터)
+ * 무엇을 열지는 `resolveGateTerminalTarget` 이 정한다 — meta 의 풀·계정 순번을 **이 기기의 풀 순서**에서
+ * 찾고, 데몬에는 (풀, 계정) 이름만 넘긴다. 이 기기에서 열 수 없으면(웹·모바일·다른 오퍼레이터)
  * 버튼 대신 "<오퍼레이터>에서 열기" 문구를 보인다. 창은 사람이 누를 때만 연다.
  */
-export function GateTerminalButton({ label, agentId }: { label: string; agentId: string }) {
+export function GateTerminalButton({ poolRank, accountRank, agentId }: { poolRank?: number | undefined; accountRank: number; agentId: string }) {
   const t = useT();
-  const target = useGateTerminalTarget(label, agentId);
+  const target = useGateTerminalTarget(poolRank, accountRank, agentId);
   const [state, setState] = useState<'idle' | 'opening' | 'opened' | 'failed'>('idle');
 
   if (target.kind === 'unknown') return null;
@@ -28,13 +28,13 @@ export function GateTerminalButton({ label, agentId }: { label: string; agentId:
       </span>
     );
   }
-  if (target.kind === 'missing' || target.kind === 'ambiguous') {
+  if (target.kind === 'missing') {
     return (
       <button
         type="button"
         data-testid="gate-terminal-open"
         disabled
-        title={t(target.kind === 'missing' ? 'gate.terminal.missing' : 'gate.terminal.ambiguous')}
+        title={t('gate.terminal.missing')}
         className="rounded-row border border-border bg-surface-raised px-2 py-0.5 text-meta font-medium text-fg-muted opacity-60"
       >
         {t('gate.terminal.open')}
@@ -56,6 +56,9 @@ export function GateTerminalButton({ label, agentId }: { label: string; agentId:
       >
         {t('gate.terminal.open')}
       </button>
+      {/* 이 기기에서 순번으로 찾은 계정 이름(designer #1978-1) — 누르기 전에 어느 계정이 열리는지 보인다.
+          이름은 이 기기 데스크톱에서만 그린다(서버로 가지 않는다 — 원칙 A). */}
+      <span data-testid="gate-terminal-account" className="font-mono text-meta text-fg-muted">{target.account}</span>
       {state === 'opened' && <span className="text-meta text-fg-muted">{t('gate.terminal.opened')}</span>}
       {state === 'failed' && <span className="text-meta text-state-stuck">{t('gate.terminal.failed')}</span>}
     </span>
@@ -63,7 +66,7 @@ export function GateTerminalButton({ label, agentId }: { label: string; agentId:
 }
 
 /** 사실을 모아 `resolveGateTerminalTarget` 에 넘긴다. 읽기 실패는 "모른다"가 아니라 그 사실의 부재로 둔다. */
-export function useGateTerminalTarget(label: string, agentId: string): GateTerminalTarget {
+export function useGateTerminalTarget(poolRank: number | undefined, accountRank: number, agentId: string): GateTerminalTarget {
   const [target, setTarget] = useState<GateTerminalTarget>({ kind: 'unknown' });
   useEffect(() => {
     let alive = true;
@@ -90,9 +93,9 @@ export function useGateTerminalTarget(label: string, agentId: string): GateTermi
         if (opId) operatorName = operatorNameOf((await Promise.resolve().then(() => getController().operators()).catch(() => null))?.find((o) => o.id === opId)) ?? null;
       }
       if (!alive) return;
-      setTarget(resolveGateTerminalTarget({ label, agentId, hasLocalSurface, agentIsLocal, operatorName, snapshot, localPool }));
+      setTarget(resolveGateTerminalTarget({ poolRank, accountRank, agentId, hasLocalSurface, agentIsLocal, operatorName, snapshot, localPool }));
     })();
     return () => { alive = false; };
-  }, [label, agentId]);
+  }, [poolRank, accountRank, agentId]);
   return target;
 }

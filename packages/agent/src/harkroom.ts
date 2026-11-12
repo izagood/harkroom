@@ -106,8 +106,8 @@ function tagTransportError(err: unknown): never {
 /**
  * `message.fail` 의 선택 칸들. `code` 는 서버 `FAILURE_CODES` 의 부분집합이다.
  * - `account_gate`(2026-10-02, 서버 0.3.x #1039 부터): 턴 **시작** 때 계정 설정 확인 화면이 사람을
- *   기다린다. `mentionId`(그 턴을 띄운 멘션 — 서버가 차례 주인을 확인한다)·`account`(계정 id 만)와
- *   짝이다. **옛 서버는 모르는 code 값을 거절한다**(키는 걸러지지만 enum 값은 아니다) — 그래서 이
+ *   기다린다. `mentionId`(그 턴을 띄운 멘션 — 서버가 차례 주인을 확인한다)·`claudePoolRank`·`claudeAccountRank`
+ *   (순번만 — 계정·풀 이름은 사람 이름일 수 있어 보내지 않는다, 칩 ②)와 짝이다. **옛 서버는 모르는 code 값을 거절한다**(키는 걸러지지만 enum 값은 아니다) — 그래서 이
  *   값은 그 서버 릴리스 뒤에만 싣는다.
  */
 export interface FailOpts {
@@ -118,7 +118,10 @@ export interface FailOpts {
   /** `code: 'provider_lane'` 때만 — 허용 목록의 까닭 코드. */
   laneCode?: ProviderLaneFailureCode;
   mentionId?: string;
-  account?: string;
+  /** `account_gate` 때만 — 관문이 선 계정의 풀 순번(1부터). 생략은 뿌리 풀·모름. */
+  claudePoolRank?: number;
+  /** `account_gate` 때만 — 그 풀 안에서 계정 순번(1부터). 생략은 모름. */
+  claudeAccountRank?: number;
 }
 
 /**
@@ -643,23 +646,20 @@ export class HarkroomAgentClient {
   /**
    * timeoutMs 동안 park 한다. 새 항목이 없으면 빈 배치로 정상 반환된다.
    *
-   * `claudeLane` 은 기동 때 읽은 계정 순서다(5단계). **버전과 같은 자리로 실어 보낸다** —
-   * 값이 바뀔 때만 서버가 쓰므로(services/claudeLane.ts) 이 25초 루프에 쓰기 비용이 없고,
-   * 러너가 이미 거는 호출에 얹으면 lane 만을 위한 새 실패 지점이 생기지 않는다.
-   * claude 하네스가 아닌 러너는 넘기지 않는다 — 그러면 서버에 행이 안 생기고, 화면은
-   * 그것을 **모른다**로 그린다(없는 lane 을 빈 lane 으로 적으면 거짓이 된다).
-   */
-  /**
+   * 기동 때 읽은 계정 순서(`claudeLane`)는 **더 싣지 않는다**(칩 ②, 2026-11-12) — 계정·풀 이름은 사람 이름일 수 있어
+   * 서버에 남기지 않는다(#1039). 이 기기의 순서는 데스크톱이 오퍼레이터에게서 직접 읽는다.
+   *
+
    * `lease` 를 주면 서버가 `holding` 항목(처리 중이라 아직 안 읽은 것)에 임대를 걸고 결과에서 뺀다(설계 B). 바쁜
    * 러너도 같은 배치를 곧바로 다시 받지 않고 롱폴로 기다린다. 옛 서버는 이 인자를 무시한다.
    */
   pollInbox(
-    timeoutMs: number, claudeLane?: { pool: string | null; accounts: string[] },
+    timeoutMs: number,
     lease?: { runnerId: string; holding: number[] },
   ): Promise<InboxBatch> {
     return this.call<InboxBatch>('inbox.poll', {
       // `inboxReasons`: 이 러너가 아는 옵트인 사유(위임 재설계 v1). 알리지 않은 옛 러너에게 서버는 `mention` 으로 준다. 옛 서버는 무시한다.
-      timeoutMs, version: VERSION, inboxReasons: [...RUNNER_OPT_IN_INBOX_REASONS], ...(claudeLane ? { claudeLane } : {}), ...(lease ? { lease } : {}),
+      timeoutMs, version: VERSION, inboxReasons: [...RUNNER_OPT_IN_INBOX_REASONS], ...(lease ? { lease } : {}),
     });
   }
 
@@ -747,7 +747,8 @@ export class HarkroomAgentClient {
       ...(opts.code ? { code: opts.code } : {}),
       ...(opts.laneCode ? { laneCode: opts.laneCode } : {}),
       ...(opts.mentionId ? { mentionId: opts.mentionId } : {}),
-      ...(opts.account ? { account: opts.account } : {}),
+      ...(opts.claudePoolRank !== undefined ? { claudePoolRank: opts.claudePoolRank } : {}),
+      ...(opts.claudeAccountRank !== undefined ? { claudeAccountRank: opts.claudeAccountRank } : {}),
     });
     return res.message.seq;
   }

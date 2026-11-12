@@ -323,6 +323,9 @@ pub struct Layout {
     pub default_pool: Option<String>,
     pub agents: IndexMap<String, Vec<String>>,
     pub assign: IndexMap<String, Map<String, Value>>,
+    /// 풀별 계정 순서(`pools.json` 의 `order`). 평평한 구조면 비어 있다 — 화면이 러너의
+    /// `orderAccounts` 와 같은 순서로 관문 카드의 계정 순번을 다시 찾는다(칩 ②).
+    pub order: IndexMap<String, Vec<String>>,
     pub strays: Vec<String>,
     /// 계정이 없는 풀도 들어 있다.
     pub pools: Vec<(String, Vec<AccountDir>)>,
@@ -348,6 +351,7 @@ pub fn read_layout(root: &Path, pools_path: &Path) -> Layout {
             default_pool: None,
             agents: IndexMap::new(),
             assign: IndexMap::new(),
+            order: IndexMap::new(),
             strays: Vec::new(),
             pools: if accounts.is_empty() {
                 Vec::new()
@@ -372,6 +376,7 @@ pub fn read_layout(root: &Path, pools_path: &Path) -> Layout {
         default_pool: cfg.default_pool,
         agents: cfg.agents,
         assign: cfg.assign,
+        order: cfg.order,
         strays,
         pools,
     }
@@ -650,6 +655,7 @@ impl ClaudeAccounts {
             "defaultPool": layout.default_pool,
             "agents": map_json(&layout.agents),
             "assign": map_json(&layout.assign),
+            "order": map_json(&layout.order),
             "pools": pools,
             "strays": layout.strays,
         })

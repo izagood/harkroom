@@ -227,10 +227,47 @@ pub fn retry_reason(message: &str) -> Option<String> {
 }
 
 /// 정본 `gateNotice` — 관문 통지 본문. **화면을 싣지 않는다**(화면은 앱의 `attention.required` 로만 간다).
-pub fn gate_notice(account_label: &str) -> String {
+pub fn gate_notice(ranks: GateRanks) -> String {
     format!(
-        "(하네스가 확인을 기다려 진행이 멈췄습니다 — 이 스레드의 터미널을 열어 화면의 물음에 답해 주세요. 답하면 이 턴이 그 자리에서 이어집니다. 계정: {account_label})"
+        "(하네스가 확인을 기다려 진행이 멈췄습니다 — 이 스레드의 터미널을 열어 화면의 물음에 답해 주세요. 답하면 이 턴이 그 자리에서 이어집니다. 계정: {})",
+        gate_rank_label(ranks)
     )
+}
+
+/// 관문이 선 계정의 **순번**(칩 ②, 2026-11-12). 계정·풀 이름은 사람 이름일 수 있어 서버 글에 싣지 않는다(#1039).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GateRanks {
+    /// 풀 순서에서 몇 번째 풀인가(1부터). `None` 은 풀 순서 밖(지정 풀·뿌리)·모름.
+    pub pool: Option<u32>,
+    pub account: GateAccountRank,
+}
+
+/// 정본 `claudeAccountRank` 의 세 갈래 — 숫자·`null`(시스템 기본 로그인)·생략(모름).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GateAccountRank {
+    #[default]
+    Unknown,
+    DefaultLogin,
+    Rank(u32),
+}
+
+impl GateAccountRank {
+    pub fn rank(self) -> Option<u32> {
+        match self {
+            GateAccountRank::Rank(n) => Some(n),
+            _ => None,
+        }
+    }
+}
+
+/// 정본 `gateRankLabel` — 「풀 2 · 계정 1」·「계정 1」·「기본 로그인」·「모름」.
+pub fn gate_rank_label(r: GateRanks) -> String {
+    match (r.account, r.pool) {
+        (GateAccountRank::DefaultLogin, _) => "기본 로그인".into(),
+        (GateAccountRank::Unknown, _) => "모름".into(),
+        (GateAccountRank::Rank(a), Some(p)) => format!("풀 {p} · 계정 {a}"),
+        (GateAccountRank::Rank(a), None) => format!("계정 {a}"),
+    }
 }
 
 /// 관문 통지의 `message.fail` 칸(정본 `callHuman` 의 `what`·`reason`·`gateFailExtras`).
@@ -243,28 +280,26 @@ pub struct GateFail {
     /// 턴 시작 관문이면 `account_gate`(정본 `gateFailExtras`). 턴 도중 관문은 없음.
     pub code: Option<&'static str>,
     pub mention_id: Option<String>,
-    pub account: Option<String>,
+    /// 턴 시작 관문일 때만 — 풀·계정 순번(이름은 싣지 않는다).
+    pub claude_pool_rank: Option<u32>,
+    pub claude_account_rank: Option<u32>,
 }
 
 /// 관문 통지 한 장. `startup` 이면 계정 표식 칸을 채운다.
-pub fn gate_fail(
-    account_label: &str,
-    startup: bool,
-    mention_id: &str,
-    account: Option<&str>,
-) -> GateFail {
+pub fn gate_fail(ranks: GateRanks, startup: bool, mention_id: &str) -> GateFail {
     GateFail {
-        body: gate_notice(account_label),
+        body: gate_notice(ranks),
         what: "하네스가 사람의 확인을 기다린다",
         reason: "그 터미널에서 화면의 물음에 답하면 이 턴이 그 자리에서 이어진다",
         retryable: false,
         code: startup.then_some("account_gate"),
         mention_id: startup.then(|| mention_id.to_owned()),
-        account: if startup {
-            account.map(str::to_owned)
+        claude_pool_rank: if startup && ranks.account.rank().is_some() {
+            ranks.pool
         } else {
             None
         },
+        claude_account_rank: if startup { ranks.account.rank() } else { None },
     }
 }
 

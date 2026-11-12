@@ -244,6 +244,8 @@ fn list_marks_attention_and_auth_failure_only_when_active() {
     assert_eq!(v["mode"], json!("pools"));
     assert_eq!(v["defaultPool"], json!("work"));
     assert_eq!(v["agents"], json!({ "ag": ["work"] }));
+    // 칩 ②: 화면이 러너와 같은 계정 순서로 순번을 다시 찾도록 `order` 를 그대로 싣는다.
+    assert_eq!(v["order"], json!({ "work": ["a"] }));
     let a = &v["pools"][0]["accounts"][0];
     assert_eq!(a["attention"], json!({ "atMs": 5 }));
     assert!(
@@ -263,6 +265,7 @@ fn list_marks_attention_and_auth_failure_only_when_active() {
             "defaultPool",
             "agents",
             "assign",
+            "order",
             "pools",
             "strays"
         ]

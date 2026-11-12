@@ -1,5 +1,6 @@
 use super::*;
 use crate::mention_target::build_mention_target;
+use crate::turn_notice::GateAccountRank;
 use serde_json::json;
 
 fn mention() -> Value {
@@ -20,18 +21,30 @@ fn human_cancel_skips_operator_and_empty() {
 
 #[test]
 fn gate_extras_only_for_startup() {
+    let ranks = GateRanks {
+        pool: Some(2),
+        account: GateAccountRank::Rank(1),
+    };
     assert_eq!(
-        gate_fail_extras(AttentionKind::Gate, "m1", Some("a1")),
+        gate_fail_extras(AttentionKind::Gate, "m1", ranks),
         GateFailExtras::default()
     );
-    let e = gate_fail_extras(AttentionKind::Startup, "m1", Some("a1"));
+    let e = gate_fail_extras(AttentionKind::Startup, "m1", ranks);
     assert_eq!(e.code, Some("account_gate"));
     assert_eq!(e.mention_id.as_deref(), Some("m1"));
-    assert_eq!(e.account.as_deref(), Some("a1"));
     assert_eq!(
-        gate_fail_extras(AttentionKind::Startup, "m1", None).account,
-        None
+        (e.claude_pool_rank, e.claude_account_rank),
+        (Some(2), Some(1))
     );
+    let d = gate_fail_extras(
+        AttentionKind::Startup,
+        "m1",
+        GateRanks {
+            pool: None,
+            account: GateAccountRank::DefaultLogin,
+        },
+    );
+    assert_eq!((d.claude_pool_rank, d.claude_account_rank), (None, None));
 }
 
 #[test]

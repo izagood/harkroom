@@ -20,7 +20,7 @@ const agent = (): AgentView => ({
   ...(acc('agent-1', 'alpha', 'agent', false, { ownerAccountId: ME_ID }) as unknown as AgentView),
   instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
   mentionPermission: 'auto', runnerVersion: null, stopRequestedAt: null, stopAckedAt: null,
-  lastTurnAt: null, claudeLane: null, assignment: null, invokeScope: 'owner', credentialScope: 'none', invokers: [], delegates: [], mcpServers: [],
+  lastTurnAt: null, assignment: null, invokeScope: 'owner', credentialScope: 'none', invokers: [], delegates: [], mcpServers: [],
 });
 const tool = (rule: string, over: Partial<GrantRow> = {}): GrantRow => ({
   accountId: 'agent-1', capability: 'tool.allow', scope: `tool:${CH}:${rule}`, grantedBy: ME_ID, grantedAt: '2026-10-02T00:00:00Z', expiresAt: null, allowAgentCause: false, ...over,

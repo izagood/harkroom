@@ -21,7 +21,7 @@ const agent = (operatorId: string | null): AgentView => ({
   ...(acc('agent-1', 'alpha', 'agent', false, { ownerAccountId: ME_ID }) as unknown as AgentView),
   instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
   mentionPermission: 'auto', runnerVersion: null, stopRequestedAt: null, stopAckedAt: null,
-  lastTurnAt: null, claudeLane: null, invokeScope: 'owner', credentialScope: 'none', invokers: [], delegates: [], mcpServers: [],
+  lastTurnAt: null, invokeScope: 'owner', credentialScope: 'none', invokers: [], delegates: [], mcpServers: [],
   assignment: operatorId ? { agentId: 'agent-1', operatorId, assignedBy: ME_ID, assignedAt: '2026-10-01T00:00:00Z' } : null,
 });
 

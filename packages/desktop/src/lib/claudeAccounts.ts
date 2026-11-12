@@ -66,6 +66,11 @@ export interface ClaudeAccountsSnapshot {
   agents: Record<string, string[]>;
   /** 풀별 배정 기준(`pools.json` 의 `assign`). 옛 데몬은 싣지 않는다 — 없으면 기본값이다. */
   assign?: NonNullable<ClaudePoolsConfig['assign']>;
+  /**
+   * 풀별 계정 순서(`pools.json` 의 `order`). `pools[].accounts` 는 이름순이다. 칩 ②(2026-11-12) 전 오퍼레이터는
+   * 싣지 않는다 — 없으면 이름순으로 본다.
+   */
+  order?: Record<string, string[]>;
   pools: ClaudePoolView[];
   /** 풀 모드인데 뿌리에 남은 평평한 계정. UI 가 이전을 안내하는 근거다. */
   strays: string[];

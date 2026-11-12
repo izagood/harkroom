@@ -110,6 +110,12 @@ export interface ClaudeAccountsSnapshot {
   agents: Record<string, string[]>;
   /** 풀별 배정 기준(C ③). 빈 칸은 `DEFAULT_ASSIGN_THRESHOLDS`. */
   assign: NonNullable<ClaudePoolsConfig['assign']>;
+  /**
+   * 풀별 계정 순서(`pools.json` 의 `order`, 칩 ② 2026-11-12). `pools[].accounts` 는 **이름순**이고 러너는
+   * `orderAccounts`(이 순서 먼저 → 나머지 이름순)로 센다 — 관문 카드의 계정 순번을 이 기기에서 다시 찾을 때
+   * 화면이 같은 규칙을 쓰라고 싣는다. 평평한 구조면 비어 있다.
+   */
+  order: Record<string, string[]>;
   pools: ClaudePoolView[];
   /**
    * 풀 모드인데 뿌리에 남아 있는 **평평한 계정**. 사용자가 풀을 만든 순간 이것들은 계정
@@ -511,6 +517,8 @@ export interface ClaudeAccountsLayout {
   agents: Record<string, string[]>;
   /** 풀별 배정 기준(`pools.json` 의 `assign`). 평평한 구조면 비어 있다. */
   assign: NonNullable<ClaudePoolsConfig['assign']>;
+  /** 풀별 계정 순서(`ClaudePoolsConfig.order`). 평평한 구조면 비어 있다. */
+  order: Record<string, string[]>;
   strays: string[];
   /** 계정이 **없는 풀도 들어 있다** — 빈 풀을 화면에서 지우면 방금 만든 풀이 사라진다. */
   pools: { name: string; accounts: ClaudeAccountDir[] }[];
@@ -525,7 +533,7 @@ export async function readClaudeAccountsLayout(root: string): Promise<ClaudeAcco
     // 평평한 구조. 뿌리의 하위 디렉터리가 계정이고, 이름 없는 풀 하나로 보여 준다.
     const accounts = await dirsOf(root);
     return {
-      root, mode: 'flat', defaultPool: null, agents: {}, assign: {},
+      root, mode: 'flat', defaultPool: null, agents: {}, assign: {}, order: {},
       pools: accounts.length ? [{ name: '', accounts }] : [],
       strays: [],
     };
@@ -542,7 +550,7 @@ export async function readClaudeAccountsLayout(root: string): Promise<ClaudeAcco
     pools.push({ name, accounts: await dirsOf(dir) });
   }
   return {
-    root, mode: 'pools', defaultPool: cfg.defaultPool, agents: cfg.agents, assign: cfg.assign ?? {}, pools, strays,
+    root, mode: 'pools', defaultPool: cfg.defaultPool, agents: cfg.agents, assign: cfg.assign ?? {}, order: cfg.order, pools, strays,
   };
 }
 
@@ -664,6 +672,7 @@ export function createClaudeAccountsPort(opts: {
         defaultPool: layout.defaultPool,
         agents: layout.agents,
         assign: layout.assign,
+        order: layout.order,
         pools,
         strays: layout.strays,
       };

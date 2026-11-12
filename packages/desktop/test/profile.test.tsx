@@ -19,7 +19,6 @@ const agentView = (id: string, handle: string, over: Partial<AgentView> = {}): A
   id, handle, displayName: handle, kind: 'agent', isAdmin: false, role: 'member', assignment: null, invokeScope: 'community', credentialScope: 'none', invokers: [], delegates: [], mcpServers: [],
   instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
   mentionPermission: 'auto', ownerAccountId: ME, disabled: false, deleted: false, runnerVersion: null,
-  claudeLane: null,
   stopRequestedAt: null, stopAckedAt: null, lastTurnAt: null,
   status: 'available', statusText: null, avatarAttachmentId: null, ...over,
 });

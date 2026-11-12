@@ -58,7 +58,7 @@ const agent = (id: string): AgentView => ({
   ...(acc(id, id.replace('agent-', ''), 'agent', false, { ownerAccountId: ME }) as unknown as AgentView),
   instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
   mentionPermission: 'auto', runnerVersion: null, stopRequestedAt: null, stopAckedAt: null,
-  lastTurnAt: null, claudeLane: null, assignment: null, invokeScope: 'owner', credentialScope: 'none', invokers: [], delegates: [], mcpServers: [],
+  lastTurnAt: null, assignment: null, invokeScope: 'owner', credentialScope: 'none', invokers: [], delegates: [], mcpServers: [],
 });
 
 function setup() {

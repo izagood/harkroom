@@ -146,15 +146,55 @@ fn retry_reason_folds_and_cuts() {
 
 #[test]
 fn gate_fail_has_no_screen_and_startup_extras() {
-    let g = gate_fail("계정A", true, "m1", Some("acct"));
+    let ranks = GateRanks {
+        pool: Some(2),
+        account: GateAccountRank::Rank(1),
+    };
+    let g = gate_fail(ranks, true, "m1");
     assert_eq!(
         g.body,
-        "(하네스가 확인을 기다려 진행이 멈췄습니다 — 이 스레드의 터미널을 열어 화면의 물음에 답해 주세요. 답하면 이 턴이 그 자리에서 이어집니다. 계정: 계정A)"
+        "(하네스가 확인을 기다려 진행이 멈췄습니다 — 이 스레드의 터미널을 열어 화면의 물음에 답해 주세요. 답하면 이 턴이 그 자리에서 이어집니다. 계정: 풀 2 · 계정 1)"
     );
     assert!(!g.retryable);
     assert_eq!(g.code, Some("account_gate"));
     assert_eq!(g.mention_id.as_deref(), Some("m1"));
-    assert_eq!(g.account.as_deref(), Some("acct"));
-    let mid = gate_fail("계정A", false, "m1", Some("acct"));
-    assert_eq!((mid.code, mid.mention_id, mid.account), (None, None, None));
+    assert_eq!(
+        (g.claude_pool_rank, g.claude_account_rank),
+        (Some(2), Some(1))
+    );
+    let mid = gate_fail(ranks, false, "m1");
+    assert_eq!(
+        (
+            mid.code,
+            mid.mention_id,
+            mid.claude_pool_rank,
+            mid.claude_account_rank
+        ),
+        (None, None, None, None)
+    );
+    // 정본 gateRankLabel 과 같은 네 갈래 — 이름은 어디에도 없다.
+    assert_eq!(
+        gate_rank_label(GateRanks {
+            pool: None,
+            account: GateAccountRank::Rank(3)
+        }),
+        "계정 3"
+    );
+    assert_eq!(
+        gate_rank_label(GateRanks {
+            pool: Some(2),
+            account: GateAccountRank::DefaultLogin
+        }),
+        "기본 로그인"
+    );
+    assert_eq!(gate_rank_label(GateRanks::default()), "모름");
+    let d = gate_fail(
+        GateRanks {
+            pool: Some(2),
+            account: GateAccountRank::DefaultLogin,
+        },
+        true,
+        "m1",
+    );
+    assert_eq!((d.claude_pool_rank, d.claude_account_rank), (None, None));
 }

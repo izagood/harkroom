@@ -1,4 +1,5 @@
-import { readFailureMeta, type MessageRow } from '@harkroom/shared';
+import { isAccountRank, isPoolRank, readFailureMeta, type MessageRow } from '@harkroom/shared';
+import { accountChipOf } from '../lib/accountChip';
 import { useActiveStore } from '../state/communities';
 import { TerminalChip } from './TerminalChip';
 import { useT } from '../i18n/useT';
@@ -60,7 +61,14 @@ export function FailureCard({ message, inThread = false, onOpenSettings }: {
     카드(AskCard)의 내 차례 모양을 쓴다 — 빨간 "끝내지 못했다"는 고장으로 읽힌다(10-01 오독). 이유 줄도
     러너의 what·reason 대신 계정 이름을 말하는 한 줄로 대신한다(F2).
   */
-  const gate = failure.code === 'account_gate' && !!failure.account;
+  const gate = failure.code === 'account_gate';
+  /*
+    관문이 선 계정은 **순번**으로만 온다(칩 ②) — 글은 턴 줄 칩과 같은 `accountChipOf` 로 만든다(「풀 2 · 계정 1」).
+    순번이 없으면(옛 러너·기본 로그인) 계정 없이 말하는 줄로 물러선다. 옛 카드의 이름표는 169 가 지웠다.
+  */
+  const gateAccountRank = isAccountRank(failure.claudeAccountRank) ? failure.claudeAccountRank : null;
+  const gatePoolRank = isPoolRank(failure.claudePoolRank) ? failure.claudePoolRank : undefined;
+  const gateChip = gate && gateAccountRank !== null ? accountChipOf(t, gatePoolRank ?? null, gateAccountRank) : null;
   /*
     **API 키 연결 실패**(designer v3 ④). 턴이 아예 안 떴다 — 러너의 what·reason 대신 까닭 코드를 표(`laneCodes`)로
     사람 말로 바꾸고, 계정 로그인으로 넘어가지 않는다는 것을 같은 줄에 둔다. 고칠 곳은 이 맥의 에이전트 설정이다.
@@ -98,7 +106,9 @@ export function FailureCard({ message, inThread = false, onOpenSettings }: {
       </div>
       {gate ? (
         <p data-testid="gate-card-line" className="px-3 pt-1 text-body text-fg-muted">
-          {gateLine(t('gate.card.line', { account: GATE_ACCOUNT_SLOT }), failure.account!)}
+          {gateChip
+            ? gateLine(t('gate.card.line', { account: GATE_ACCOUNT_SLOT }), gateChip.label)
+            : t('gate.card.lineNoAccount')}
         </p>
       ) : lane ? (
         <p data-testid="lane-failure-line" data-lane-code={failure.laneCode ?? 'unknown'} className="px-3 pt-1 text-body text-fg-muted">
@@ -130,8 +140,8 @@ export function FailureCard({ message, inThread = false, onOpenSettings }: {
           **계정 관문**(2026-10-02, 관문 대응 PR-4): 턴 시작 때 그 계정의 설정 확인 화면이 사람을 기다린다.
           그 계정의 터미널을 열면 사람이 거기서 고르고, 러너가 같은 멘션을 다시 띄운다(#1047).
         */}
-        {failure.code === 'account_gate' && failure.account && (
-          <GateTerminalButton label={failure.account} agentId={message.authorId} />
+        {gate && gateAccountRank !== null && (
+          <GateTerminalButton poolRank={gatePoolRank} accountRank={gateAccountRank} agentId={message.authorId} />
         )}
         {/*
           다시 부르기는 **작성창을 채우는 방식**으로 둔다(완료 보고의 다음 제안 칩과 같은 규약):

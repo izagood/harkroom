@@ -222,7 +222,7 @@ describe('에이전트 절 — 원격 배정은 그 호스트 박동으로', () 
     ...(acc('a-infra', 'infra_bot', 'agent', false, { ownerAccountId: ME }) as unknown as AgentView),
     instructions: '', harness: 'claude-code', model: null, effort: null, workingDir: null,
     mentionPermission: 'auto', runnerVersion: null, stopRequestedAt: null, stopAckedAt: null,
-    lastTurnAt: null, claudeLane: null, invokeScope: 'owner', credentialScope: 'personal', invokers: [], delegates: [],
+    lastTurnAt: null, invokeScope: 'owner', credentialScope: 'personal', invokers: [], delegates: [],
     assignment: { agentId: 'a-infra', operatorId: 'op-vm', assignedBy: ME, assignedAt: '' } as never,
     mcpServers: ['jira', 'github'], ...over,
   });

@@ -425,22 +425,10 @@ console.log(claudeAccounts.length
 // (`withAccountFailover` 주석).
 const accountLane = claudeAccounts.length ? claudeAccounts : [null];
 
-// 폴이 나르는 신고값(5단계). **이름과 풀만** — 경로·이메일은 싣지 않는다(위 콘솔 한 줄과
-// 같은 규율). 기동 때 한 번 만들어 두는 이유는 이것이 러너가 사는 동안 바뀌지 않는
-// 사실이기 때문이다: 페일오버가 옮기는 머리는 여기 없고, 지금 도는 계정은 턴 줄(#694)이
-// 말한다. codex·gemini 러너가 이것을 보내도 서버가 harness 로 걸러 낸다
-// (`services/claudeLane.ts`) — 러너가 자기 하네스를 폴 루프에서 들고 있지 않기 때문이다.
-//
 // 멘션 턴의 축은 **턴마다 디스크에서 다시 읽는다**(`createLiveAccountLane`, 2026-09-30) — 지운
-// 계정이 배정 후보 자리를 차지해 한 계정만 쓰이던 결함. 그래서 신고값도 폴마다 그 마지막 값에서
-// 만든다(값이 바뀔 때만 서버가 쓴다).
+// 계정이 배정 후보 자리를 차지해 한 계정만 쓰이던 결함. 서버에는 이 순서를 보내지 않는다(칩 ②, 2026-11-12 —
+// 계정·풀 이름은 사람 이름일 수 있다). 화면 칩에는 순번만 간다(`accountRanks`).
 const liveLane = createLiveAccountLane({ initial: lane, load: loadLane });
-const claudeLaneReport = () => {
-  // lane 의 전용 디렉터리는 계정이 아니다 — 서버·화면의 계정 칩에 올리지 않는다.
-  if (providerLaneOn) return { pool: null, accounts: [] };
-  const now = liveLane.snapshot();
-  return { pool: now.pool, accounts: now.lane.flatMap((a) => (a ? [a.name] : [])) };
-};
 
 // 서버별로 갈리기 전 경로가 남아 있으면 **경고만** 한다 — 자동으로 옮기지 않는다.
 // 코드는 그 디렉터리가 *어느 서버의* 이 handle 것인지 알 방법이 없다(아래 레거시
@@ -843,7 +831,7 @@ while (running) {
   try {
     // 쥔 항목(도는 턴의 것)을 알려 서버가 다시 내주지 않게 한다(inbox 임대, 설계 B). 끝난 턴의 항목은 이 목록에서
     // 빠져 서버가 이 폴에서 풀고, 읽음 처리된 것은 어차피 안 나온다. 러너가 죽으면 서버 임대 시각이 지나 다시 나간다.
-    const batch = await harkroom.pollInbox(config.pollTimeoutMs, claudeLaneReport(),
+    const batch = await harkroom.pollInbox(config.pollTimeoutMs,
       config.inboxLease ? { runnerId: config.operatorLink.runnerId, holding: scheduler.holdingEntries() } : undefined);
     // 이 배치의 메모리 판본 — 사본과 같으면 첫 턴이 메모리를 왕복하지 않는다(`memoryCache.ts`).
     memoryCache.noteRev(batch.memoryRev);
