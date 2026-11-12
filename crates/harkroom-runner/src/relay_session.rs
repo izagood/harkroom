@@ -285,9 +285,11 @@ impl RelaySessions {
                 else {
                     return;
                 };
-                let hook = {
+                // 로그 줄은 잠금 안에서 만들기만 하고, 쓰기(밖의 처리자)는 잠금을 놓은 뒤에 한다(security B3b-2c 낮음).
+                let (hook, line) = {
                     let mut map = self.sessions.lock().unwrap();
                     let Some(l) = map.get_mut(sid) else { return };
+                    let mut line = None;
                     if l.viewer_count != count {
                         let mode = l.info.get("mode").and_then(Value::as_str).unwrap_or("?");
                         let thread = l
@@ -295,14 +297,17 @@ impl RelaySessions {
                             .get("threadRootId")
                             .and_then(Value::as_str)
                             .unwrap_or("-");
-                        (self.log)(&format!(
+                        line = Some(format!(
                             "[relay] 세션 {sid} ({mode}, 스레드 {thread}) 뷰어 {}→{count}",
                             l.viewer_count
                         ));
                         l.viewer_count = count;
                     }
-                    l.on_viewer_count.clone()
+                    (l.on_viewer_count.clone(), line)
                 };
+                if let Some(line) = line {
+                    (self.log)(&line);
+                }
                 if let Some(h) = hook {
                     guarded(|| h(count));
                 }

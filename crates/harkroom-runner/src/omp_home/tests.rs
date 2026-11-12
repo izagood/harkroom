@@ -492,3 +492,16 @@ fn unverified_notice_has_no_path() {
     assert!(n.contains("18.12.6"));
     assert!(!n.contains('/'));
 }
+
+#[test]
+fn recorded_api_error_masks_tokens() {
+    let m = mask_recorded_error(
+        "401: Authorization: Bearer abc.def-123 rejected; key sk-ant-api03-ABCDEFGHIJ ghp_ABCDEFGH1234 id 0123456789abcdef0123456789abcdef9 model gpt-5",
+    );
+    assert!(!m.contains("abc.def-123"), "{m}");
+    assert!(!m.contains("sk-ant"), "{m}");
+    assert!(!m.contains("ghp_"), "{m}");
+    assert!(!m.contains("0123456789abcdef"), "{m}");
+    assert!(m.contains("401: Authorization: ***"), "{m}");
+    assert!(m.contains("model gpt-5"), "{m}");
+}
