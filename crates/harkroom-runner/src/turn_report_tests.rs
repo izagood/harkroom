@@ -70,6 +70,8 @@ fn promise<'a>(r: &'a WakeReportTo) -> ReportPromise<'a> {
         reason: "CI 확인",
         anchor: "anc",
         anchor_channel_id: "c1",
+        pat: "",
+        secrets: &[],
     }
 }
 
@@ -118,12 +120,12 @@ fn off_anchor_notice_links_each_thread_once() {
 
 #[test]
 fn report_missed_notice_drops_reason_when_null() {
-    let with = report_missed_notice(Some("사유X"), "anc");
+    let with = report_missed_notice(Some("사유X"), "anc", "", &[]);
     assert!(with.contains("사유: 사유X"));
     assert!(
         with.ends_with("그 턴은 harkroom://message/anc 스레드에서 돌았다. 결과는 그쪽을 본다.")
     );
-    let without = report_missed_notice(None, "anc");
+    let without = report_missed_notice(None, "anc", "", &[]);
     assert!(!without.contains("사유"));
     assert!(
         without.starts_with(
@@ -224,4 +226,24 @@ fn off_anchor_evidence_swallows_read_errors() {
         off_anchor_evidence(&mut io, "k", "me", "c1", Some("anc"), 10, "t").as_deref(),
         Some("이 요청의 답은 다른 스레드에 올렸습니다: harkroom://message/r1")
     );
+}
+
+/// #2005 security 낮음: 사유는 가리고, 사유의 `@x` 는 멘션 꼴이 아니다(전각 ＠).
+#[test]
+fn report_missed_reason_is_masked_and_mentions_defused() {
+    let secret = "MOUNTEDsecretVALUE0123456789".to_string();
+    let pat = "hrkp_runnerpat_abcdefghijklmnop";
+    let n = report_missed_notice(
+        Some(&format!(
+            "@task_manager 에게 알릴 것 {pat} {secret}\n둘째 줄"
+        )),
+        "anc",
+        pat,
+        std::slice::from_ref(&secret),
+    );
+    let reason_line = n.lines().next().unwrap();
+    assert!(!reason_line.contains('@'), "{reason_line}");
+    assert!(reason_line.contains("＠task_manager"), "{reason_line}");
+    assert!(!n.contains(pat) && !n.contains(&secret), "{n}");
+    assert_eq!(n.lines().count(), 2, "사유는 한 줄로");
 }

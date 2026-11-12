@@ -17,6 +17,7 @@ use crate::mention_scheduler::WakeReportTo;
 use crate::mention_turn_parts::wrote_by_turn;
 use crate::prompt::{MESSAGE_KIND_WAKE, NON_UTTERANCE_KINDS};
 use crate::rest::RunnerLink;
+use crate::turn_notice::{NOTICE_LINE_MAX_CHARS, one_line};
 use crate::turn_posts::{TurnOwnership, owned_by_turn};
 
 /// 정본 `MESSAGE_PERMALINK_PREFIX`.
@@ -103,13 +104,21 @@ pub fn off_anchor_notice(posts: &[&Value]) -> Option<String> {
 
 /// 정본 `reportMissedNotice` — 약속한 보고처에 말없이 끝난 깨움 턴의 경고. `reason` 이 `None` 이면 사유를 싣지 않는다
 /// (앵커와 보고처의 채널이 다를 때 — 비공개 앵커의 사유가 공개 보고처로 옮겨 적히지 않게, #1208 security n2).
-pub fn report_missed_notice(reason: Option<&str>, anchor: &str) -> String {
+/// 사유는 에이전트가 예약에 쓴 자유 글이라 [`one_line`](PAT·마운트한 비밀·토큰 가림, 한 줄·길이)을 거치고 `@` 를 전각 `＠` 로
+/// 바꿔 멘션 꼴을 깬다(#2005 security 낮음, #1993 과 같은 규칙). 정본 `reportMissedNotice` 도 같이 고쳤다.
+pub fn report_missed_notice(
+    reason: Option<&str>,
+    anchor: &str,
+    pat: &str,
+    secrets: &[String],
+) -> String {
     let head = match reason {
         None => {
             "이 스레드에 보고하기로 한 예약이 깨어났지만 여기에 아무 말 없이 끝났다.".to_string()
         }
         Some(r) => format!(
-            "이 스레드에 보고하기로 한 예약이 깨어났지만 여기에 아무 말 없이 끝났다 — 사유: {r}"
+            "이 스레드에 보고하기로 한 예약이 깨어났지만 여기에 아무 말 없이 끝났다 — 사유: {}",
+            one_line(r, pat, NOTICE_LINE_MAX_CHARS, secrets).replace('@', "＠")
         ),
     };
     format!(
@@ -238,6 +247,9 @@ pub struct ReportPromise<'a> {
     /// 이 턴의 앵커(깨움 턴이 돈 스레드).
     pub anchor: &'a str,
     pub anchor_channel_id: &'a str,
+    /// 사유를 가릴 러너 PAT 와 마운트한 비밀.
+    pub pat: &'a str,
+    pub secrets: &'a [String],
 }
 
 /// 정본 `reportPromiseCheck` — 보고처에 말이 없으면 거기에 실패 카드를 남긴다. 다 못 읽었으면(`TooBusy`) 경고하지 않는다
@@ -263,7 +275,7 @@ pub fn report_promise_check(
         p.report_to.thread_root_id
     );
     let same_channel = p.report_to.channel_id == p.anchor_channel_id;
-    let notice = report_missed_notice(same_channel.then_some(p.reason), p.anchor);
+    let notice = report_missed_notice(same_channel.then_some(p.reason), p.anchor, p.pat, p.secrets);
     io.fail(
         &p.report_to.channel_id,
         &notice,
