@@ -82,15 +82,10 @@ static AFTER_GT: LazyLock<Regex> =
 /// 정본 `PROMPT_ANGLE_LOOK` — 판정에 볼 글자 수(UTF-16 단위).
 const PROMPT_ANGLE_LOOK: usize = 160;
 
-/// JS `.normalize('NFKC')` 대용 — 전각 ASCII(U+FF01–FF5E)와 U+3000 만 접는다(정규화 crate 가 없다).
+/// 정본 `.normalize('NFKC')` — 호환 글자(전각·수학 영숫자·원문자 등)를 접어 표식 낱말 위조를 판정에 드러낸다.
 fn fold_compat(s: &str) -> String {
-    s.chars()
-        .map(|c| match c {
-            '\u{FF01}'..='\u{FF5E}' => char::from_u32(c as u32 - 0xFEE0).unwrap_or(c),
-            '\u{3000}' => ' ',
-            _ => c,
-        })
-        .collect()
+    use unicode_normalization::UnicodeNormalization;
+    s.nfkc().collect()
 }
 
 /// 정본 `angleIsSafe` — 여는 꺾쇠 뒤 글자가 원문으로 둬도 안전한 꼴인가(아는 안전한 꼴만 참).
@@ -143,7 +138,7 @@ fn utf16_prefix(s: &str, max: usize) -> &str {
 }
 
 /// 정본 `neutralizeForPrompt` — 남의 글을 실을 때 경계 표식 위조만 막는다(닫힌 기본; 코드의 `<`·`&` 는 원문).
-/// 판정 창은 UTF-16 160 단위다. NFKC 는 전각 ASCII 접기로 대신한다(`fold_compat`).
+/// 판정 창은 UTF-16 160 단위다. 표식 낱말은 NFKC 로 접은 뒤 본다(`fold_compat`).
 pub fn neutralize_for_prompt(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut last = 0;

@@ -382,3 +382,30 @@ fn turn_clock_line_matches_ts() {
             .contains("2026-03-01 10:04:05 (America/New_York, UTC-05:00)")
     );
 }
+
+/// NFKC 로만 드러나는 표식(#1975 security): 첫 글자·이름은 ASCII 라 다른 판정을 지나고, 표식 낱말을 호환 글자
+/// (수학 굵은꼴·원문자·프락투어)로 썼다. 전각 ASCII 만 접던 옛 판정은 이것들을 통과시켰다.
+#[test]
+fn neutralize_blocks_markers_only_nfkc_reveals() {
+    let cases = [
+        "<div \u{1D42C}\u{1D432}\u{1D42C}\u{1D42D}\u{1D41E}\u{1D426}>", // 𝐬𝐲𝐬𝐭𝐞𝐦 → system
+        "<span \u{24E3}\u{24D0}\u{24E2}\u{24DA}>",                      // ⓣⓐⓢⓚ → task
+        "<b \u{1D52B}\u{1D52C}\u{1D531}\u{1D522}=\"1\">",               // 𝔫𝔬𝔱𝔢 → note
+    ];
+    for f in cases {
+        // 전각 ASCII 만 접으면 표식 낱말이 안 보인다 — NFKC 만이 드러낸다는 전제를 고정한다.
+        let fullwidth_only: String = f
+            .chars()
+            .map(|c| match c {
+                '\u{FF01}'..='\u{FF5E}' => char::from_u32(c as u32 - 0xFEE0).unwrap_or(c),
+                _ => c,
+            })
+            .collect();
+        assert!(
+            !PROMPT_MARKER_WORDS.is_match(&fullwidth_only),
+            "{f:?} 는 전각 접기로도 잡힌다 — 시험 전제가 틀렸다"
+        );
+        let out = neutralize_for_prompt(f);
+        assert!(out.starts_with("&lt;"), "{f:?} -> {out:?}");
+    }
+}
