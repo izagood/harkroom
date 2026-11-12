@@ -209,11 +209,10 @@ export interface TurnRelay {
      */
     acceptsInput: boolean;
     /**
-     * 이 턴이 쓰는 claude 계정과 그 풀(다중 계정 3단계). 관찰용이다 — 턴은 이 값을
-     * 읽지 않는다(`AgentSessionView.claudeAccount`).
+     * 이 턴이 쓰는 claude 계정·풀의 **순번**(계정 칩 A). 관찰용이다 — 턴은 이 값을 읽지 않는다.
+     * 이름은 싣지 않는다(`AgentSessionView.claudeAccountRank`).
      */
-    claudeAccount?: string | null;
-    claudePool?: string | null;
+    claudeAccountRank?: number | null;
     claudePoolRank?: number;
     /**
      * 지금 이 세션을 보고 있는 사람 수. **턴의 끝이 이 값에 걸려 있다**(2026-09-08):
@@ -322,6 +321,11 @@ export interface MentionTurnDeps {
    * 「↓ N번 풀」 칩이 러너 기기의 순서를 쓰게 한다. 생략은 모른다(화면이 자기 순서로 잰다).
    */
   claudePoolRank?: number;
+  /**
+   * 그 계정이 그 풀 안에서 몇 번째인가(1부터, 계정 칩 A). 화면 칩이 쓰는 값이다 — 서버에는 이름 대신 이 순번만 간다.
+   * 생략은 모른다(화면이 계정 칩을 그리지 않는다).
+   */
+  claudeAccountRank?: number | null;
   /** `harkroom-operator` 실행 파일 — 하네스의 harkroom MCP(`mcp-bridge`) 명령(스펙 2026-09-20 §5). */
   operatorBin: string;
   /** 「정확한 명령」 hook(H③b). 오퍼레이터 설정이 켰을 때만 true. */
@@ -2031,9 +2035,14 @@ export async function runMentionTurn(
     // **claude 턴에만 싣는다.** 계정 축은 claude 계정 풀이므로, codex·gemini 턴에 이
     // 이름을 실으면 화면이 그 턴과 아무 상관 없는 계정을 가리키게 된다 — 생략은 "모른다"
     // 이고, 모르는 것으로 남기는 편이 틀린 것을 단언하는 것보다 낫다.
-    claudeAccount: hasAccountPool(def.harness) ? deps.claudeAccount : undefined,
-    claudePool: hasAccountPool(def.harness) ? (deps.claudePool ?? null) : undefined,
-    ...(hasAccountPool(def.harness) && deps.claudePoolRank !== undefined ? { claudePoolRank: deps.claudePoolRank } : {}),
+    // 이름은 싣지 않는다 — 순번만(계정 칩 A, #1039). 계정 지정이 없으면(`claudeAccount === null`) 기본 로그인 `null`.
+    ...(hasAccountPool(def.harness)
+      ? {
+        ...(deps.claudeAccount === null ? { claudeAccountRank: null }
+          : deps.claudeAccountRank !== undefined ? { claudeAccountRank: deps.claudeAccountRank } : {}),
+        ...(deps.claudePoolRank !== undefined ? { claudePoolRank: deps.claudePoolRank } : {}),
+      }
+      : {}),
     onViewerCount,
     /*
       **사람이 [중단] 을 눌렀다**(3단계). 죽이는 것은 릴레이가 아니라 여기다 —

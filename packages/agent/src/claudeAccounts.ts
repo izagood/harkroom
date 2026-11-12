@@ -437,6 +437,29 @@ export interface LiveLaneValue {
   chain?: ClaudePoolLane[];
 }
 
+/**
+ * 화면 칩에 실을 **순번**(계정 칩 A, 2026-11-12). 서버에는 계정·풀 이름을 보내지 않는다(#1039) — 폴더 이름이라
+ * 사람 이름일 수 있다. 그래서 「풀 n · 계정 m」의 n·m 만 계산한다.
+ *
+ * - `claudePoolRank`: 그 풀이 풀 순서(`chain`)에서 몇 번째인가. 순서에 없으면(뿌리 풀·풀 하나뿐) 싣지 않는다.
+ * - `claudeAccountRank`: 그 계정이 **그 풀 안에서** 몇 번째인가. 풀이 순서에 있으면 그 풀의 계정 목록에서, 없으면
+ *   축(`lane`)에서 센다. `null` 계정(시스템 기본 로그인)은 `null`. 목록에서 못 찾으면 싣지 않는다(모른다).
+ */
+export function accountRanks(
+  snap: LiveLaneValue, account: { name: string; pool?: string | null } | null,
+): { claudePoolRank?: number; claudeAccountRank?: number | null } {
+  if (!account) return { claudeAccountRank: null };
+  const pool = account.pool ?? snap.pool ?? null;
+  const chain = snap.chain ?? [];
+  const idx = pool === null ? -1 : chain.findIndex((c) => c.pool === pool);
+  const list = idx >= 0 ? chain[idx]!.accounts : snap.lane.filter((a): a is ClaudeAccount => a !== null);
+  const at = list.findIndex((a) => a.name === account.name);
+  return {
+    ...(idx >= 0 ? { claudePoolRank: idx + 1 } : {}),
+    ...(at >= 0 ? { claudeAccountRank: at + 1 } : {}),
+  };
+}
+
 export interface LiveAccountLane {
   /** 지금 풀과 계정 축(디렉터리가 있는 계정만, 비면 `[null]`). 턴마다 부른다. */
   current(): Promise<LiveLaneValue>;

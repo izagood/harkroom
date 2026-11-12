@@ -206,22 +206,3 @@ export function useAgentPool(agentId: string | null): AgentPoolState {
     error,
   };
 }
-
-/**
- * 에이전트 id → 풀 순서(이 기기). 턴 줄의 「↓ 2번 풀」 칩이 쓴다 — 표면이 없거나 못 읽었으면 빈 맵이고,
- * 그때 칩은 서지 않는다(확인하지 않은 것을 단언하지 않는다).
- */
-export function useAgentPoolChains(): ReadonlyMap<string, string[]> {
-  const available = hasClaudeAccountsSurface();
-  const [snap, setSnap] = useState<ClaudeAccountsSnapshot | null>(null);
-  useEffect(() => {
-    if (!available) return;
-    let dead = false;
-    void listClaudeAccounts().then((s) => { if (!dead) setSnap(s); }, () => {});
-    return () => { dead = true; };
-  }, [available]);
-  return useMemo(
-    () => new Map(snap ? Object.keys(snap.agents).map((id) => [id, agentPoolsOf(snap, id)] as const) : []),
-    [snap],
-  );
-}

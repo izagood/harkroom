@@ -92,12 +92,19 @@ describe('PoolGateBand', () => {
     expect(screen.queryByTestId('agent-pool-gate-recent')).toBeNull();
   });
 
-  it('③ 그 머신의 최근 턴이 실어 온 풀이 있으면 한 줄 더 — 순위가 없으면 순위를 빼고 말한다', () => {
-    band({ kind: 'elsewhere', operatorId: 'op-vm' }, { recent: { pool: 'work', account: 'lychee', rank: 1 } });
-    expect(screen.getByTestId('agent-pool-gate-recent').textContent).toBe('그 머신에서 최근 턴: work › lychee (1번 풀)');
-    cleanup();
-    band({ kind: 'elsewhere', operatorId: 'op-vm' }, { recent: { pool: 'work', account: 'lychee', rank: null } });
-    expect(screen.getByTestId('agent-pool-gate-recent').textContent).toBe('그 머신에서 최근 턴: work › lychee');
+  it('③ 그 머신의 최근 턴이 실어 온 순번으로 한 줄 더 — 턴 줄 칩과 같은 글(이름 없음)', () => {
+    const line = (recent: { pool: number | null; account: number | null | undefined }) => {
+      cleanup();
+      band({ kind: 'elsewhere', operatorId: 'op-vm' }, { recent });
+      return screen.queryByTestId('agent-pool-gate-recent')?.textContent ?? null;
+    };
+    expect(line({ pool: 1, account: 2 })).toBe('그 머신에서 최근 턴: 풀 1 · 계정 2');
+    expect(line({ pool: 2, account: 1 })).toBe('그 머신에서 최근 턴: ↓ 풀 2 · 계정 1');
+    expect(line({ pool: null, account: 1 })).toBe('그 머신에서 최근 턴: 계정 1');
+    expect(line({ pool: null, account: null })).toBe('그 머신에서 최근 턴: 기본 로그인');
+    // 옛 러너가 풀 순번만 실었으면 내려왔을 때만 말하고, 아무것도 단언할 수 없으면 줄을 생략한다.
+    expect(line({ pool: 3, account: undefined })).toBe('그 머신에서 최근 턴: ↓ 풀 3');
+    expect(line({ pool: 1, account: undefined })).toBeNull();
   });
 
   it('④ 반쪽 — [이 맥 오퍼레이터에서 켜기] 체크 하나만', () => {

@@ -52,7 +52,7 @@ import { createInteractiveManager, type InteractiveManager } from './interactive
 import { createAttentionLedger } from './attentionLedger.js';
 import { TurnRegistry } from './turnRegistry.js';
 import { MentionQueue } from './mentionQueue.js';
-import { claudeAccountsRoot, createLiveAccountLane, loadClaudeAccountLane, presentAccounts, type ClaudeAccount } from './claudeAccounts.js';
+import { accountRanks, claudeAccountsRoot, createLiveAccountLane, loadClaudeAccountLane, presentAccounts, type ClaudeAccount } from './claudeAccounts.js';
 import { createAccountAssigner } from './accountAssign.js';
 import { clearAccountAttention, clearAccountCredentialFailure, isAttentionActive, markAccountCredentialFailed, markAccountNeedsAttention, readAccountAttention } from '@harkroom/shared/claudeGates';
 import { syncCodexAuth } from './codexHome.js';
@@ -587,6 +587,8 @@ interactive = createInteractiveManager({
   // 위의 configDir 와 갈리면 화면이 도는 계정과 다른 이름을 단언한다.
   claudeAccount: accountLane[0]?.name ?? null,
   claudePool: lane.pool ?? null,
+  // 화면 칩 순번(계정 칩 A) — 이름은 서버에 안 보낸다.
+  accountRanksOf: (account, pool) => accountRanks(liveLane.snapshot(), account === null ? null : { name: account, pool }),
   // 다만 **세션이 다른 계정에서 만들어졌으면 그 계정을 따른다** — 멘션 턴의 페일오버가 옮긴
   // 세션을 첫 계정으로 resume 하면 죽는다(`InteractiveTurnDeps.configDirOf`, 실측 2026-09-21).
   // 지운 계정은 따르지 않는다 — 없는 디렉터리로 띄우면 claude 가 그것을 다시 만든다
@@ -788,12 +790,8 @@ const scheduler = createMentionScheduler({
     claudePool: account?.pool ?? lane.pool ?? null,
     // 그 풀이 이 러너의 풀 순서에서 몇 번째인가(f3) — 원격 오퍼레이터의 턴도 화면이 이 기기의
     // 순서가 아니라 **러너가 쓴 순서**로 칩을 단다. 순서가 풀 하나뿐이거나 풀을 모르면 싣지 않는다.
-    ...(() => {
-      const chain = liveLane.snapshot().chain ?? [];
-      const pool = account?.pool ?? lane.pool ?? null;
-      const idx = pool === null ? -1 : chain.findIndex((c) => c.pool === pool);
-      return idx >= 0 ? { claudePoolRank: idx + 1 } : {};
-    })(),
+    // 화면 칩의 순번(계정 칩 A) — 이름은 서버에 안 보낸다. 순서가 풀 하나뿐이거나 풀을 모르면 풀 순번은 싣지 않는다.
+    ...accountRanks(liveLane.snapshot(), account ? { name: account.name, pool: account.pool ?? lane.pool ?? null } : null),
     // 사람을 부를 때 쓰는 이름과 원장(2026-09-08). **원장은 러너 수명 동안 하나다** —
     // 턴마다 새로 만들면 매번 "처음 부르는 계정"이 되어, 7개 스레드가 동시에 걸렸을 때
     // 창이 7개 뜬다. 관문은 계정 단위라 하나만 지나면 나머지가 함께 풀린다.

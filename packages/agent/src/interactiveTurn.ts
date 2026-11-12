@@ -97,9 +97,9 @@ export interface InteractiveRelay {
     mode?: 'mention' | 'interactive';
     /** 이 세션의 PTY 에 사람이 입력할 수 있는가(#369). 인터랙티브 턴은 stdinFile 이 없어 true 다. */
     acceptsInput: boolean;
-    /** 이 턴이 쓰는 claude 계정과 그 풀(다중 계정 3단계). 관찰용이다 — 턴은 읽지 않는다. */
-    claudeAccount?: string | null;
-    claudePool?: string | null;
+    /** 이 턴이 쓰는 claude 계정·풀의 **순번**(계정 칩 A). 관찰용이다 — 턴은 읽지 않는다. 이름은 싣지 않는다. */
+    claudeAccountRank?: number | null;
+    claudePoolRank?: number;
     onViewerCount?: (count: number) => void;
     /**
      * 사람이 이 **조종을 끝냈다**(#686 의 `session.cancel` 을 인터랙티브 턴에도 잇는다).
@@ -177,6 +177,11 @@ export interface InteractiveTurnDeps {
    */
   claudeAccount?: string | null;
   claudePool?: string | null;
+  /**
+   * 계정 이름·풀 → 화면 칩의 순번(계정 칩 A, `claudeAccounts.ts::accountRanks`). 서버에는 이름 대신 이것만 간다.
+   * 없으면 순번을 싣지 않는다(화면이 계정 칩을 그리지 않는다).
+   */
+  accountRanksOf?: (account: string | null, pool: string | null) => { claudePoolRank?: number; claudeAccountRank?: number | null };
   /**
    * 계정 이름 → 그 계정의 `CLAUDE_CONFIG_DIR`. 세션 기록에 **다른 계정**이 적혀 있으면(멘션 턴이
    * 페일오버로 lime→plum 에서 돌았다) 터미널은 그 계정에서 열어야 한다 — 세션 파일이 그 계정
@@ -440,8 +445,10 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
       // 이유: 판정의 근거는 턴의 이름이 아니라 fd 0 의 정체다(pty.ts::acceptsPtyInput).
       acceptsInput: acceptsPtyInput(plan),
       // 풀 표면이 있는 하네스에만 싣는다(`mentionTurn` 과 같은 근거). 판단은 어댑터가 한다.
-      claudeAccount: hasAccountPool(def.harness) ? claudeAccount : undefined,
-      claudePool: hasAccountPool(def.harness) ? (deps.claudePool ?? null) : undefined,
+      // 이름은 싣지 않는다 — 순번만(계정 칩 A, #1039).
+      ...(hasAccountPool(def.harness)
+        ? (claudeAccount === null ? { claudeAccountRank: null } : deps.accountRanksOf?.(claudeAccount, followed ? (rec.claudePool ?? null) : (deps.claudePool ?? null)) ?? {})
+        : {}),
       onViewerCount,
       onCancel,
     });
