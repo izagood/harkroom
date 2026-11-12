@@ -88,5 +88,6 @@ pub mod turn_probe_records;
 pub mod turn_probe_rest;
 pub mod turn_probe_state;
 pub mod turn_registry;
+pub mod turn_report;
 pub mod turn_rules;
 pub mod workspace_trust;
