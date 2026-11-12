@@ -33,6 +33,7 @@ pub mod config;
 pub mod fail_text;
 pub mod harness_errors;
 pub mod harness_memory;
+pub mod harness_records;
 pub mod lane_guard;
 pub mod link;
 pub mod mcp;
