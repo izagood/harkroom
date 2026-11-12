@@ -328,7 +328,7 @@ describe('터미널 대기 칩 (2026-10-09 배너 A안)', () => {
     const c = fakeController();
     useAppStore.getState().set({ ...사람과에이전트, dms: [dm('d-forge', 'forge', '2026-09-05T00:00:00.000Z')] });
     useAppStore.getState().raiseGate({
-      sessionId: 's1', agentAccountId: 'forge', agentHandle: 'forge', accountLabel: 'max', channelId: 'c1', threadRootId: 't1',
+      sessionId: 's1', agentAccountId: 'forge', agentHandle: 'forge', claudePoolRank: 1, claudeAccountRank: 2, channelId: 'c1', threadRootId: 't1',
     });
     renderDmPanel();
 

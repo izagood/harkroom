@@ -11,7 +11,7 @@ beforeEach(() => useAppStore.getState().reset());
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 const 관문 = {
-  sessionId: 's1', agentAccountId: 'agent-1', agentHandle: 'murmur', accountLabel: 'max',
+  sessionId: 's1', agentAccountId: 'agent-1', agentHandle: 'murmur', claudePoolRank: 1, claudeAccountRank: 2,
   channelId: 'c1', threadRootId: 't1',
 };
 
@@ -20,7 +20,8 @@ describe('관문 카드', () => {
     useAppStore.getState().raiseGate(관문);
     render(<GateCard />);
     expect(screen.getByTestId('gate-card').textContent).toContain('murmur');
-    expect(screen.getByTestId('gate-card').textContent).toContain('max');
+    // 계정은 순번 칩 글로(칩 ③) — 이름은 서버에서 오지 않는다.
+    expect(screen.getByTestId('gate-card').textContent).toContain('Pool 1 · Account 2');
 
     fireEvent.click(screen.getByTestId('gate-card-open'));
     expect(useAppStore.getState().terminalTarget).toEqual({ agentAccountId: 'agent-1', channelId: 'c1', threadRootId: 't1' });

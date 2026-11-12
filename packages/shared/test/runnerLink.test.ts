@@ -40,8 +40,14 @@ describe('runnerLink — 러너 프레임을 서버 채널 프레임으로', () 
     { type: 'replay', sessionId: 's1', data: '' },
     { type: 'interactive.opened', requestId: 'q', sessionId: 's1', created: true },
     { type: 'interactive.error', requestId: 'q', message: '거절' },
-    { type: 'attention.required', sessionId: 's1', accountLabel: 'work', screen: 'AA==' },
+    { type: 'attention.required', sessionId: 's1', screen: 'AA==', claudePoolRank: 2, claudeAccountRank: 1 },
+    { type: 'attention.required', sessionId: 's2', screen: 'AA==', claudeAccountRank: null },
   ];
+  // 칩 ③(#1039): 옛 러너가 보낸 계정 이름은 오퍼레이터가 서버로 넘기지 않는다.
+  it('attention.required 의 옛 accountLabel 은 넘기지 않는다', () => {
+    const wrapped = wrapRunnerFrame('r-1', { type: 'attention.required', sessionId: 's1', screen: '', accountLabel: 'pool-a-acct1' });
+    expect(JSON.stringify(wrapped)).not.toContain('pool-a-acct1');
+  });
   it.each(cases)('$type 이 runnerId 를 달고 갔다가 그대로 돌아온다', (frame) => {
     const wrapped = wrapRunnerFrame('r-1', frame);
     expect(wrapped).not.toBeNull();

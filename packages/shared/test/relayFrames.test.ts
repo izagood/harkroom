@@ -10,7 +10,7 @@ describe('attention 계약', () => {
     const f: RelayRunnerFrame = {
       type: 'attention.required',
       sessionId: 's1',
-      accountLabel: 'aria',
+      claudePoolRank: 1, claudeAccountRank: 2,
       screen: Buffer.from('WARNING: ...').toString('base64'),
     };
     expect(f.type).toBe('attention.required');
@@ -32,7 +32,7 @@ describe('attention 계약', () => {
       threadRootId: 't1',
       agentAccountId: 'a1',
       agentHandle: 'murmur',
-      accountLabel: 'aria',
+      claudePoolRank: 1, claudeAccountRank: 2,
     };
     expect(e.channelId).toBe('c1');
     expect(e.agentHandle).toBe('murmur');
@@ -48,7 +48,7 @@ describe('attention 계약', () => {
       threadRootId: null,
       agentAccountId: 'a1',
       agentHandle: 'murmur',
-      accountLabel: '(기본)',
+      claudeAccountRank: null,
     };
     expect(e.threadRootId).toBeNull();
   });

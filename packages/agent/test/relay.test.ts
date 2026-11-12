@@ -347,7 +347,7 @@ describe('#141 세션의 끝', () => {
     session.close();
     session.close();
     session.push(Buffer.from('late'));
-    session.needsAttention('screen', 'acct');
+    session.needsAttention('screen', { claudeAccountRank: 1 });
     expect(d.sent.filter((f) => f.type === 'session.ended')).toHaveLength(1);
     expect(d.sent.filter((f) => f.type === 'output' || f.type === 'attention.required')).toHaveLength(0);
   });

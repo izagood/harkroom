@@ -1129,7 +1129,6 @@ export const en = {
   'agentTurns.waiting': '⌨ waiting',
   'agentTurns.waitingTitle': 'This turn is waiting for you in the terminal — click to open it',
   'gate.title': '{handle} is waiting in the terminal',
-  'gate.account': 'account {account}',
   'gate.open': 'Open terminal',
   'gate.openFor': 'Open terminal: {handle}',
   'gate.later': 'Later',

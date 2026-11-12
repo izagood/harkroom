@@ -27,20 +27,33 @@ describe('attention.required 중계', () => {
     const { hub, 부름 } = 세운다();
     hub.onRunnerMessage('agent-1', JSON.stringify({ type: 'session.started', session: 세션 }));
     hub.onRunnerMessage('agent-1', JSON.stringify({
-      type: 'attention.required', sessionId: 's1', accountLabel: 'aria',
+      type: 'attention.required', sessionId: 's1', claudePoolRank: 2, claudeAccountRank: 1,
       screen: Buffer.from('WARNING').toString('base64'),
     }));
 
     expect(부름).toEqual([{
       sessionId: 's1', channelId: 'c1', threadRootId: 't1',
-      agentAccountId: 'agent-1', accountLabel: 'aria',
+      agentAccountId: 'agent-1', claudePoolRank: 2, claudeAccountRank: 1,
     }]);
+  });
+
+  // 칩 ③(#1039): 옛 러너가 보낸 계정 이름(`accountLabel`)은 받자마자 버린다. 꼴이 틀린 순번도 버린다.
+  it('옛 러너의 계정 이름은 버리고, 순번은 꼴이 맞을 때만 넘긴다', () => {
+    const { hub, 부름 } = 세운다();
+    hub.onRunnerMessage('agent-1', JSON.stringify({ type: 'session.started', session: 세션 }));
+    hub.onRunnerMessage('agent-1', JSON.stringify({
+      type: 'attention.required', sessionId: 's1', accountLabel: 'pool-a-acct1', claudePoolRank: 0, claudeAccountRank: 'x', screen: '',
+    }));
+    expect(부름).toEqual([{ sessionId: 's1', channelId: 'c1', threadRootId: 't1', agentAccountId: 'agent-1' }]);
+    expect(JSON.stringify(부름)).not.toContain('pool-a-acct1');
+    hub.onRunnerMessage('agent-1', JSON.stringify({ type: 'attention.required', sessionId: 's1', claudeAccountRank: null, screen: '' }));
+    expect(부름[1]).toMatchObject({ claudeAccountRank: null });
   });
 
   it('모르는 세션이면 아무것도 넘기지 않는다 — 채널을 모르면 열 패널이 없다', () => {
     const { hub, 부름 } = 세운다();
     hub.onRunnerMessage('agent-1', JSON.stringify({
-      type: 'attention.required', sessionId: '모르는세션', accountLabel: 'aria', screen: '',
+      type: 'attention.required', sessionId: '모르는세션', screen: '',
     }));
     expect(부름).toHaveLength(0);
   });
@@ -52,7 +65,7 @@ describe('attention.required 중계', () => {
     const 다른소켓: RelaySocket = { send: () => {}, close: () => {} };
     hub.addRunner('agent-2', 다른소켓);
     hub.onRunnerMessage('agent-2', JSON.stringify({
-      type: 'attention.required', sessionId: 's1', accountLabel: 'aria', screen: '',
+      type: 'attention.required', sessionId: 's1', screen: '',
     }));
     expect(부름).toHaveLength(0);
   });
@@ -63,7 +76,7 @@ describe('attention.required 중계', () => {
     const { hub, 부름 } = 세운다();
     hub.onRunnerMessage('agent-1', JSON.stringify({ type: 'session.started', session: 세션 }));
     hub.onRunnerMessage('agent-1', JSON.stringify({
-      type: 'attention.required', sessionId: 's1', accountLabel: 'aria',
+      type: 'attention.required', sessionId: 's1',
       screen: Buffer.from('비밀이 섞인 화면').toString('base64'),
     }));
     expect(JSON.stringify(부름)).not.toContain('비밀');
@@ -75,7 +88,7 @@ describe('attention.required 중계', () => {
     hub.addRunner('agent-1', { send: () => {}, close: () => {} });
     hub.onRunnerMessage('agent-1', JSON.stringify({ type: 'session.started', session: 세션 }));
     expect(() => hub.onRunnerMessage('agent-1', JSON.stringify({
-      type: 'attention.required', sessionId: 's1', accountLabel: 'aria', screen: '',
+      type: 'attention.required', sessionId: 's1', screen: '',
     }))).not.toThrow();
   });
 });
@@ -92,7 +105,7 @@ describe('관문 풀림 — 부른 세션이 끝나면 알린다 (2026-10-09)', 
   it('부른 적 있는 세션이 끝나면 좌표를 넘긴다 — 앱이 그 카드를 닫는다', () => {
     const { hub, 풀림 } = 세운다2();
     hub.onRunnerMessage('agent-1', JSON.stringify({
-      type: 'attention.required', sessionId: 's1', accountLabel: 'aria', screen: '',
+      type: 'attention.required', sessionId: 's1', screen: '',
     }));
     hub.onRunnerMessage('agent-1', JSON.stringify({ type: 'session.ended', sessionId: 's1' }));
     expect(풀림).toEqual([{ sessionId: 's1', channelId: 'c1', threadRootId: 't1', agentAccountId: 'agent-1' }]);
@@ -111,7 +124,7 @@ describe('관문 풀림 — 부른 세션이 끝나면 알린다 (2026-10-09)', 
 describe('관문 이벤트의 수신자 (2026-10-09)', () => {
   const 부름 = {
     type: 'agent.attention' as const, sessionId: 's1', channelId: 'c1', threadRootId: 't1',
-    agentAccountId: 'agent-1', agentHandle: 'aria', accountLabel: 'max', audience: ['owner-1'],
+    agentAccountId: 'agent-1', agentHandle: 'aria', claudePoolRank: 1, claudeAccountRank: 2, audience: ['owner-1'],
   };
   it('소유자에게만 간다 — 남의 앱에 배너가 뜨고 터미널이 열리면 안 된다', () => {
     expect(visibleTo(부름, 'owner-1')).toBe(true);
@@ -129,7 +142,7 @@ describe('관문 이벤트의 수신자 (2026-10-09)', () => {
 
 describe('관문 표시가 남지 않는다 — 러너가 사라질 때 (security n1·n2, 2026-10-09)', () => {
   const 부른다 = (hub: ReturnType<typeof createRelayHub>, agent = 'agent-1', sid = 's1') =>
-    hub.onRunnerMessage(agent, JSON.stringify({ type: 'attention.required', sessionId: sid, accountLabel: 'aria', screen: '' }));
+    hub.onRunnerMessage(agent, JSON.stringify({ type: 'attention.required', sessionId: sid, screen: '' }));
 
   it('재접속 announce 목록에 없는 세션은 풀린 것으로 낸다', () => {
     const 풀림: unknown[] = [];
