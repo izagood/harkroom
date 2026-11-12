@@ -106,17 +106,61 @@ fn bearer_goes_to_env_not_argv() {
                 .to_string()
         )
     );
-    assert!(
-        flags.contains(&"mcp_servers.slack-work.http_headers={ \"X-Team\" = \"t\" }".to_string())
-    );
+    assert!(flags.contains(
+        &"mcp_servers.slack-work.env_http_headers={ \"X-Team\" = \"HARKROOM_MCP_HDR_SLACK_WORK_0\" }"
+            .to_string()
+    ));
+    assert!(!flags.iter().any(|f| f.contains(".http_headers=")));
     let servers = vec![("slack-work".to_string(), e)];
     assert_eq!(
-        codex_bearer_env(&servers),
-        [(
-            "HARKROOM_MCP_BEARER_SLACK_WORK".to_string(),
-            "SECRET-1".to_string()
-        )]
+        codex_mcp_env(&servers),
+        [
+            (
+                "HARKROOM_MCP_BEARER_SLACK_WORK".to_string(),
+                "SECRET-1".to_string()
+            ),
+            ("HARKROOM_MCP_HDR_SLACK_WORK_0".to_string(), "t".to_string()),
+        ]
     );
+}
+
+#[test]
+fn header_values_never_reach_argv() {
+    let e = http(&[
+        ("X-Api-Key", "HDR-SECRET"),
+        ("Authorization", "Basic BASIC-SECRET"),
+    ]);
+    let flags = codex_mcp_flags("vendor", &e);
+    let joined = flags.join(" ");
+    assert!(!joined.contains("HDR-SECRET"));
+    assert!(!joined.contains("BASIC-SECRET"));
+    assert!(flags.contains(
+        &"mcp_servers.vendor.env_http_headers={ \"X-Api-Key\" = \"HARKROOM_MCP_HDR_VENDOR_0\", \"Authorization\" = \"HARKROOM_MCP_HDR_VENDOR_1\" }"
+            .to_string()
+    ));
+    let env = codex_mcp_env(&[("vendor".to_string(), e)]);
+    assert_eq!(
+        env,
+        [
+            (
+                "HARKROOM_MCP_HDR_VENDOR_0".to_string(),
+                "HDR-SECRET".to_string()
+            ),
+            (
+                "HARKROOM_MCP_HDR_VENDOR_1".to_string(),
+                "Basic BASIC-SECRET".to_string()
+            ),
+        ]
+    );
+    // 모든 이름이 셸 거르기 패턴 안에 든다.
+    assert!(env.iter().all(|(k, _)| k.starts_with("HARKROOM_MCP_")));
+    // stdio 는 비밀 env 를 만들지 않는다(env 는 아직 argv — B3e-6 남은 것).
+    let s = McpServerEntry::Stdio {
+        command: "c".into(),
+        args: vec![],
+        env: None,
+    };
+    assert!(codex_mcp_env(&[("s".to_string(), s)]).is_empty());
 }
 
 #[test]
@@ -167,7 +211,7 @@ fn lane_args_match_canon() {
     assert!(flags[6].starts_with("developer_instructions=\"이 대화의 답은"));
     assert_eq!(
         flags[11],
-        "shell_environment_policy.exclude=[\"HARKROOM_LANE_API_KEY\",\"HARKROOM_LANE_BASE_URL\",\"HARKROOM_TURN_BRIDGE_KEY\"]"
+        "shell_environment_policy.exclude=[\"HARKROOM_LANE_API_KEY\",\"HARKROOM_LANE_BASE_URL\",\"HARKROOM_TURN_BRIDGE_KEY\",\"HARKROOM_MCP_*\"]"
     );
     assert_eq!(flags.len(), 12);
 }
