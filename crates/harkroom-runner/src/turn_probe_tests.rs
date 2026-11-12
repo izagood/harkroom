@@ -369,3 +369,14 @@ fn exit_seen_mid_cycle_stops_at_next_check() {
         assert_eq!(io.calls.last().map(String::as_str), Some(last), "{after}");
     }
 }
+
+#[test]
+fn probe_state_debug_hides_screen_text() {
+    let probe = ProbeState {
+        screen_said: Some("sk-비밀값 아무개".into()),
+        ..ProbeState::default()
+    };
+    let dbg = format!("{probe:?}");
+    assert!(!dbg.contains("sk-비밀값"), "{dbg}");
+    assert!(dbg.contains("<가림 10자>"), "{dbg}");
+}

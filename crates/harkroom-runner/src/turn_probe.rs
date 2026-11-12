@@ -14,7 +14,10 @@ use crate::turn_end::{
 };
 
 /// 정본 `end` 객체 중 탐침 주기만 쓰는 몫과 턴의 고정값.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+///
+/// `Debug` 는 손으로 짠다 — `screen_said` 는 화면 원문(비밀·사람 이름이 섞일 수 있다)이라 길이만 찍는다.
+/// 스레드에 올릴 때는 [`crate::turn_notice::quoted_line`] 을 거친다.
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct ProbeState {
     /// 지난 주기에 서버 스레드를 못 읽었다(정본 `end.threadUnreadable`) — 같은 실패를 주기마다 적지 않는다.
     pub thread_unreadable: bool,
@@ -28,6 +31,25 @@ pub struct ProbeState {
     pub lane_nudged_at_ms: i64,
     /// 턴 시작 시각(정본 `turnStartedAtMs`) — 기록 끝을 읽을 기준.
     pub turn_started_at_ms: i64,
+}
+
+impl std::fmt::Debug for ProbeState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProbeState")
+            .field("thread_unreadable", &self.thread_unreadable)
+            .field("first_spoke_at_ms", &self.first_spoke_at_ms)
+            .field("screen_ended", &self.screen_ended)
+            .field(
+                "screen_said",
+                &self
+                    .screen_said
+                    .as_ref()
+                    .map(|s| format!("<가림 {}자>", s.chars().count())),
+            )
+            .field("lane_nudged_at_ms", &self.lane_nudged_at_ms)
+            .field("turn_started_at_ms", &self.turn_started_at_ms)
+            .finish()
+    }
 }
 
 /// 한 주기의 결말.
