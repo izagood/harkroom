@@ -161,6 +161,20 @@ pub fn attempt_once<L: RunnerLink, O>(
     }
 }
 
+/// 시도 하나 + 이 턴의 설정 파일. **순서를 꼴로 묶는다**: [`attempt_once`] 안의 정리 가드(턴 열쇠 거두기·임대 끝)와 그
+/// 앞의 기록 가리기가 끝난 **뒤에** [`TurnFiles`](crate::turn_mcp_plan::TurnFiles)(다리 열쇠가 든 턴 MCP 설정)를 지운다.
+/// 패닉이어도 같다 — 가드는 `attempt_once` 프레임 안에서 먼저 풀리고, `files` 는 이 프레임에서 그 뒤에 떨어진다.
+pub fn attempt_with_files<L: RunnerLink, O>(
+    files: crate::turn_mcp_plan::TurnFiles,
+    input: AttemptInput<'_, L, O>,
+    notice: &impl LeaseNotice,
+    gate: &mut dyn FnMut() -> Result<(), SpawnBlocked>,
+) -> Attempted<O> {
+    let out = attempt_once(input, notice, gate);
+    drop(files);
+    out
+}
+
 /// 비밀 값 파일 하나의 상한 — 이보다 크면 바늘을 만들지 않는다(정본은 상한이 없다; 값 파일은 작다).
 const LEASE_VALUE_MAX_BYTES: u64 = 1024 * 1024;
 

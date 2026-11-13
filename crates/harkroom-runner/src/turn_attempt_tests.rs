@@ -281,3 +281,88 @@ fn spawn_side_debug_shows_names_not_values() {
     );
     assert!(pty.args.iter().all(|a| !a.contains("tok-lane-secret-1")));
 }
+
+/// 임대 끝 알림 때 턴 설정 파일이 아직 있었는지 적는다.
+struct FileProbe<'a> {
+    file: &'a std::path::Path,
+    log: &'a Log,
+}
+
+impl LeaseNotice for FileProbe<'_> {
+    fn lease_ended(&self, _cause: &str) {
+        self.log
+            .push(&format!("lease_ended:file_present={}", self.file.exists()));
+    }
+}
+
+fn turn_files(root: &std::path::Path) -> (crate::turn_mcp_plan::TurnFiles, std::path::PathBuf) {
+    let dir = root.join(crate::provider_lane::TURN_MCP_DIR);
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("t1.json");
+    std::fs::write(&f, "{}").unwrap();
+    let plan = crate::turn_mcp_plan::TurnMcpPlan {
+        turn_keys: None,
+        mcp_config_path: f.clone(),
+        opencode_turn_config: None,
+        owned_turn_config: None,
+    };
+    (crate::turn_mcp_plan::TurnFiles::of(&plan, root, "t1"), f)
+}
+
+/// #2024 security: 턴 설정 파일은 정리 가드(열쇠 거두기·임대 끝)와 기록 가리기가 끝난 **뒤에** 지운다.
+#[test]
+fn turn_files_removed_after_guard_and_scrub() {
+    let root = std::env::temp_dir().join(format!("hk-attempt-files-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let (files, f) = turn_files(&root);
+    let link = Link::new(&[(TURN_KEYS_PATH, 200), (TURN_KEYS_END_PATH, 200)]);
+    let client = HarkroomRestClient::new(&link);
+    let log = Log::default();
+    let mut i = input(&client, &log);
+    let fp = f.clone();
+    let lg = &log;
+    i.after_run = Some(Box::new(move |_| {
+        lg.push(&format!("scrub:file_present={}", fp.exists()))
+    }));
+    let probe = FileProbe {
+        file: &f,
+        log: &log,
+    };
+    let r = attempt_with_files(files, i, &probe, &mut || Ok(()));
+    assert_eq!(r, Attempted::Ran("out"));
+    assert_eq!(
+        log.all(),
+        [
+            "mount",
+            "spawn",
+            "scrub:file_present=true",
+            "lease_ended:file_present=true"
+        ]
+    );
+    assert!(!f.exists(), "가드 뒤에 지웠다");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 패닉이어도 가드가 먼저 풀리고 파일은 그 뒤에 지워진다.
+#[test]
+fn turn_files_removed_after_guard_on_panic() {
+    let root = std::env::temp_dir().join(format!("hk-attempt-files-panic-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let (files, f) = turn_files(&root);
+    let link = Link::new(&[(TURN_KEYS_PATH, 200), (TURN_KEYS_END_PATH, 200)]);
+    let client = HarkroomRestClient::new(&link);
+    let log = Log::default();
+    let probe = FileProbe {
+        file: &f,
+        log: &log,
+    };
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut i = input(&client, &log);
+        i.spawn = Box::new(|_| panic!("pty died"));
+        attempt_with_files(files, i, &probe, &mut || Ok(()))
+    }));
+    assert!(res.is_err());
+    assert_eq!(log.all(), ["mount", "lease_ended:file_present=true"]);
+    assert!(!f.exists());
+    let _ = std::fs::remove_dir_all(&root);
+}

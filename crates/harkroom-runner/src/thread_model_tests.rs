@@ -99,3 +99,18 @@ fn root_from_key() {
     assert_eq!(root_from_thread_key("c1/_root"), None);
     assert_eq!(root_from_thread_key("c1/"), None);
 }
+
+/// 턴 연결 nit ②(#1982): 서버가 `source: agent` 로 돌려준 값도 argv 로 가므로 모양을 본다 — 틀리면 에이전트 설정 값으로.
+#[test]
+fn unsafe_agent_axis_also_falls_back() {
+    let (got, lines) = run(
+        Some(Box::new(|_| {
+            Ok(json!({"model":"--yolo","effort":"-x","source":{"model":"agent","effort":"agent"}}))
+        })),
+        Some("m1"),
+    );
+    assert_eq!(got.model.as_deref(), Some("sonnet"));
+    assert_eq!(got.effort.as_deref(), Some("medium"));
+    assert_eq!(got.source, src(AxisSource::Agent, AxisSource::Agent));
+    assert_eq!(lines.len(), 1);
+}

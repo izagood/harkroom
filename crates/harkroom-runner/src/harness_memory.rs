@@ -10,7 +10,7 @@
 
 use std::fs;
 use std::io::Read;
-use std::os::unix::fs::DirBuilderExt;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::time::UNIX_EPOCH;
@@ -82,7 +82,11 @@ fn read_entry(dir: &Path, name: &str) -> Option<HarnessMemoryFile> {
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX));
     // 앞 8KB만 읽는다 — 머리 2000자(UTF-16 단위 최대 6000바이트)는 그 안에 다 든다.
     let mut raw = Vec::with_capacity(READ_HEAD_BYTES);
-    fs::File::open(&path)
+    // 검사와 열기 사이에 링크로 바뀌어도 따라가지 않는다(턴 연결 nit ①) — `O_NOFOLLOW` 로 연다.
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&path)
         .ok()?
         .take(READ_HEAD_BYTES as u64)
         .read_to_end(&mut raw)
