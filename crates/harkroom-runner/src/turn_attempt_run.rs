@@ -9,8 +9,8 @@
 //! 이미 끝났다. 그래서 계정을 바꿔 다시 부를 때(`with_account_failover`) 다음 시도는 앞 시도의 정리가 끝난 뒤에 시작한다.
 //!
 //! 대상·계정에 따라 바뀌는 몫(명령 옵션·프롬프트·PTY 띄우기·결과 접기·턴 뒤 IO)은 [`AttemptParts`] 가 쥔다.
-//! lane 턴은 아직 받지 않는다 — 정본은 lane env 를 턴 MCP 계획 **앞에서** 받는데(opencode 턴 파일·lane 전용 설정), 그
-//! 순서는 다음 조각 몫이다. 그때까지 이 struct 는 lane 열쇠 단계를 켜지 않는다.
+//! lane 턴은 정본처럼 lane env 를 턴 MCP 계획 **앞에서** 받는다([`mount_lane_first`] — 관문을 먼저 보고, 가드가 시도 끝에
+//! 임대를 끝내고 lane 턴 파일을 거둔다). 그래서 띄우기 순서의 lane 키 단계는 켜지 않고, 받은 env 를 계획과 띄우기에 그대로 쓴다.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -27,6 +27,8 @@ use crate::turn_assemble::{Assembled, assemble_attempt, env_turn_keys};
 use crate::turn_attempt::{AttemptInput, Attempted, LeaseNotice, TurnSecrets};
 use crate::turn_attempt_live::LiveTurn;
 use crate::turn_env::TurnKeys as EnvTurnKeys;
+use crate::turn_lane_first::{LaneFirstError, LaneSource, mount_lane_first};
+use crate::turn_launch::LaunchStep;
 use crate::turn_launch::TranscriptHomes;
 use crate::turn_launch_io::{LaneEnv, SecretMountError};
 use crate::turn_life::TurnLife;
@@ -129,6 +131,8 @@ pub struct PtyTurnAttempt<'a, L: RunnerLink, N: LeaseNotice, P: AttemptParts> {
     /// 밖에서 바꿀 수 없다(시험만 같은 모듈 안에서 덮는다).
     new_turn_id: Box<dyn FnMut() -> String + 'a>,
     pub parts: RefCell<P>,
+    /// lane(API 키 연결) — 있으면 시도마다 턴 MCP 계획 앞에서 env 를 받는다.
+    lane: Option<&'a dyn LaneSource>,
 }
 
 /// 러너 전체에서 한 번 정하는 재료.
@@ -157,7 +161,14 @@ impl<'a, L: RunnerLink, N: LeaseNotice, P: AttemptParts> PtyTurnAttempt<'a, L, N
             pat: base.pat,
             new_turn_id: Box::new(random_uuid),
             parts: RefCell::new(parts),
+            lane: None,
         }
+    }
+
+    /// lane 턴으로 돈다 — 시도마다 턴 MCP 계획 앞에서 lane env 를 받는다.
+    pub fn with_lane(mut self, lane: &'a dyn LaneSource) -> Self {
+        self.lane = Some(lane);
+        self
     }
 }
 
@@ -189,10 +200,34 @@ impl<L: RunnerLink, N: LeaseNotice, P: AttemptParts> PtyTurnAttempt<'_, L, N, P>
         let prep = parts
             .borrow_mut()
             .prepare(target, account, is_last, turn_id);
+        // lane env 를 계획보다 먼저 받는다(정본 순서). 관문이 막았거나 받기가 실패하면 그 시도로 접는다.
+        let lane_hold = match self.lane {
+            None => None,
+            Some(l) => {
+                match mount_lane_first(l, self.notice, &prep.cause, self.harness, &mut || {
+                    live.gate()
+                }) {
+                    Ok(h) => Some(h),
+                    Err(e) => {
+                        let attempted = match e {
+                            LaneFirstError::Blocked(b) => Attempted::Blocked(b),
+                            LaneFirstError::Failed(code) => Attempted::SetupFailed {
+                                step: LaunchStep::LaneKeys,
+                                code,
+                            },
+                        };
+                        // 하네스도 비밀도 없다 — PAT 만으로 접는다.
+                        let s = TurnSecrets::build(self.pat, &[], None);
+                        return parts.borrow_mut().outcome(attempted, &s, live);
+                    }
+                }
+            }
+        };
+        let lane_env = lane_hold.as_ref().map(|h| h.env().clone());
         let mcp = TurnMcpInput {
             harness: self.harness,
             can_register_turn_keys: self.can_register_turn_keys,
-            provider_env: None,
+            provider_env: lane_env.as_ref(),
             state_dir: self.state_dir,
             mcp_config_path: self.mcp_config_path,
             turn_id,
@@ -233,6 +268,7 @@ impl<L: RunnerLink, N: LeaseNotice, P: AttemptParts> PtyTurnAttempt<'_, L, N, P>
         });
         let cause = prep.cause.clone();
         let spawn_turn_id = turn_id.to_string();
+        let spawn_lane_env = lane_env.clone();
         // 띄우는 자리에서 감시용 가림 목록을 지을 재료(값은 이 시도의 조립에서만 온다).
         let notice_keys = secrets.turn_key_values.clone();
         let notice_lease = secrets.lease_dir.clone();
@@ -248,7 +284,9 @@ impl<L: RunnerLink, N: LeaseNotice, P: AttemptParts> PtyTurnAttempt<'_, L, N, P>
                 Box::new(move || parts.borrow_mut().mount_secrets(&cause))
                     as crate::turn_launch_io::SecretsMount<'_>
             }),
-            spawn: Box::new(move |lane_env| {
+            spawn: Box::new(move |launch_env: LaneEnv| {
+                // lane 턴이면 계획 앞에서 받은 env, 아니면 띄우기 순서가 준 것(빈 env).
+                let lane_env = spawn_lane_env.unwrap_or(launch_env);
                 // 마운트 뒤(띄우기 직전)에 짓는다 — 비밀 단계가 이 닫개보다 먼저 돈다.
                 let keys_ref: Vec<&str> = notice_keys.iter().map(String::as_str).collect();
                 let notice =

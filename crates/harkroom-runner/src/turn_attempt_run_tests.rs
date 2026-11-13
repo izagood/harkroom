@@ -76,6 +76,10 @@ struct Parts {
     needles_had_secret: Vec<bool>,
     /// 띄우기 도중 패닉한다.
     panic_spawn: bool,
+    /// 띄울 때 받은 lane env 표지.
+    lane_envs: Vec<Option<String>>,
+    /// 걸자마자 사람이 [중단] 한다.
+    cancel_on_bind: bool,
     /// 띄울 때 받은 감시용 가림 목록에 마운트한 비밀·PAT 가 있었나.
     spawn_notice: Vec<bool>,
 }
@@ -90,6 +94,9 @@ impl AttemptParts for Parts {
         );
         if let Some(l) = &live {
             self.lives.push(Arc::clone(l));
+            if self.cancel_on_bind {
+                l.cancel("human-1");
+            }
         }
         self.bound = live;
     }
@@ -136,11 +143,12 @@ impl AttemptParts for Parts {
         turn_id: &str,
         keys: Option<&EnvTurnKeys>,
         mcp_config_path: &Path,
-        _lane_env: LaneEnv,
+        lane_env: LaneEnv,
         notice: NoticeSecrets,
         delivered: &mut bool,
     ) -> PtyOut {
         push(&self.log, format!("spawn {turn_id}"));
+        self.lane_envs.push(lane_env.get("HK_LANE").cloned());
         self.spawn_notice.push(
             notice.mounted.iter().any(|n| n == SECRET) && notice.pat == "hk_pat_secret_value_88",
         );
@@ -240,6 +248,8 @@ fn parts(w: &World, log: &Log, secrets: bool, exits: Vec<i32>) -> Parts {
         seen: Vec::new(),
         needles_had_secret: Vec::new(),
         panic_spawn: false,
+        lane_envs: Vec::new(),
+        cancel_on_bind: false,
         spawn_notice: Vec::new(),
     }
 }
@@ -266,6 +276,7 @@ fn attempt<'a>(
             format!("t-{n}")
         }),
         parts: RefCell::new(p),
+        lane: None,
     }
 }
 
@@ -525,4 +536,84 @@ fn real_constructor_draws_random_v4_turn_ids() {
     }
     let uniq: std::collections::BTreeSet<_> = ids.iter().collect();
     assert_eq!(uniq.len(), 3, "시도마다 다르다: {ids:?}");
+}
+
+// ---- lane env 는 턴 MCP 계획 앞에서 ----
+
+struct FakeLane(Log);
+impl crate::turn_lane_first::LaneSource for FakeLane {
+    fn env_for(
+        &self,
+        cause: &str,
+        _h: AgentHarness,
+    ) -> Result<LaneEnv, crate::provider_lane::LaneFileError> {
+        push(&self.0, format!("lane_env {cause}"));
+        Ok([("HK_LANE".to_string(), "on".to_string())].into())
+    }
+    fn release(&self, _env: &LaneEnv) -> std::io::Result<()> {
+        push(&self.0, "lane_release".into());
+        Ok(())
+    }
+}
+
+/// lane 턴: env 를 계획·열쇠 맡기기·띄우기보다 먼저 받고, 띄울 때 그 env 가 간다. 시도가 끝난 뒤(결과 접기 뒤) 임대를
+/// 끝내고 lane 턴 파일을 거둔다.
+#[test]
+fn lane_env_comes_before_plan_and_is_released_after() {
+    let w = world("lanefirst");
+    let log: Log = Log::default();
+    let link = Link(Arc::clone(&log));
+    let client = HarkroomRestClient::new(&link);
+    let notice = Notice {
+        log: Arc::clone(&log),
+        lease: w.lease.clone(),
+    };
+    let lane = FakeLane(Arc::clone(&log));
+    let mut a =
+        attempt(&w, &client, &notice, true, parts(&w, &log, false, vec![0])).with_lane(&lane);
+    let mut d = false;
+    assert!(a.run(&target(), None, true, &mut d).is_ok());
+    assert_eq!(
+        *log.lock().unwrap(),
+        [
+            "bind",
+            "prepare t-1 -",
+            "lane_env m1",
+            "keys t-1",
+            "spawn t-1",
+            "keys_end t-1",
+            "outcome",
+            "after",
+            "lease_ended m1",
+            "lane_release",
+            "unbind",
+        ]
+    );
+    assert_eq!(a.parts.borrow().lane_envs, [Some("on".to_string())]);
+}
+
+/// 관문이 막은 시도는 lane env 를 받지 않고 띄우지도 않는다.
+#[test]
+fn blocked_lane_attempt_mounts_nothing() {
+    let w = world("laneblocked");
+    let log: Log = Log::default();
+    let link = Link(Arc::clone(&log));
+    let client = HarkroomRestClient::new(&link);
+    let notice = Notice {
+        log: Arc::clone(&log),
+        lease: w.lease.clone(),
+    };
+    let lane = FakeLane(Arc::clone(&log));
+    let mut p = parts(&w, &log, false, vec![0]);
+    p.cancel_on_bind = true;
+    let mut a = attempt(&w, &client, &notice, true, p).with_lane(&lane);
+    let mut d = false;
+    assert!(a.run(&target(), None, true, &mut d).is_err());
+    let log = log.lock().unwrap().clone();
+    assert!(
+        !log.iter()
+            .any(|s| s.starts_with("lane_env") || s.starts_with("spawn")),
+        "{log:?}"
+    );
+    assert!(a.parts.borrow().lane_envs.is_empty());
 }
