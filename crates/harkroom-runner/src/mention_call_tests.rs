@@ -137,7 +137,7 @@ impl AgentLink for &Link {
 #[derive(Clone, Default)]
 struct Sched(Arc<Mutex<Vec<String>>>);
 impl SchedulerHooks for Sched {
-    fn notice_fenced(&mut self) {}
+    fn notice_fenced(&mut self, _thread_key: &str) {}
     fn turn_outcome(&mut self, _ok: bool) {}
     fn stop_requested(&mut self, _at: &str) {}
     fn executable_missing(&mut self) {}

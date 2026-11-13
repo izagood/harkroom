@@ -62,6 +62,7 @@ pub mod opencode_home;
 pub mod pi_home;
 pub mod pi_lane;
 pub mod poll_loop;
+pub mod poll_sched;
 pub mod prompt;
 pub mod prompt_sections;
 pub mod prompt_system;

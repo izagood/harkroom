@@ -237,7 +237,8 @@ pub trait PollSource {
 
 /// 멘션을 턴으로 바꾸는 쪽(정본 `createMentionScheduler`, B4-1b).
 pub trait Scheduler {
-    fn admit(&self, batch: &Value, ctx: &BatchContext) -> AdmitOutcome;
+    /// 고아·관문 상한 읽음 처리가 실패하면 `Err` — 폴 실패와 같이 물러났다 다시 붙는다(정본 `admit` 이 던지는 것).
+    fn admit(&self, batch: &Value, ctx: &BatchContext) -> Result<AdmitOutcome, HarkroomError>;
     /// 도는 턴이 쥔 entry.
     fn holding_entries(&self) -> Vec<i64>;
     /// 끝냈지만 읽음 처리를 못 한 entry(교체 러너가 턴 없이 읽음 처리만 한다).
@@ -332,7 +333,7 @@ impl PollLoop {
             }
         }
         let ctx = BatchContext::new(&channels, &accounts);
-        let outcome = sched.admit(&batch, &ctx);
+        let outcome = sched.admit(&batch, &ctx)?;
         // 띄운 것이 없는데 유예·막힘이 있으면 잠깐 쉰다 — 인플라이트 entry 는 미읽음이라 다음 폴이 바로 같은 배치를 준다.
         if outcome.started == 0 && outcome.deferred + outcome.blocked > 0 {
             return Ok(IDLE_ADMIT_SLEEP_MS);

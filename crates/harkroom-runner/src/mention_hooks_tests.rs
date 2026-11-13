@@ -28,7 +28,7 @@ struct Sched {
     outcomes: Vec<bool>,
 }
 impl SchedulerHooks for Sched {
-    fn notice_fenced(&mut self) {}
+    fn notice_fenced(&mut self, _thread_key: &str) {}
     fn turn_outcome(&mut self, ok: bool) {
         self.outcomes.push(ok);
     }

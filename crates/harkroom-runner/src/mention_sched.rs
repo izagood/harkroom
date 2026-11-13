@@ -12,6 +12,7 @@ use crate::mention_hooks::SchedulerHooks;
 /// 슬롯 놓기·턴 끝을 한 번씩 보장하는 감싸개.
 pub struct OnceRelease<S: SchedulerHooks> {
     pub inner: S,
+    key: String,
     slot: Option<String>,
     end: Option<(String, String)>,
 }
@@ -21,6 +22,7 @@ impl<S: SchedulerHooks> OnceRelease<S> {
     pub fn new(inner: S, thread_key: &str, slot_held: bool, mention_id: &str) -> Self {
         Self {
             inner,
+            key: thread_key.to_string(),
             slot: slot_held.then(|| thread_key.to_string()),
             end: Some((thread_key.to_string(), mention_id.to_string())),
         }
@@ -28,8 +30,10 @@ impl<S: SchedulerHooks> OnceRelease<S> {
 }
 
 impl<S: SchedulerHooks> SchedulerHooks for OnceRelease<S> {
-    fn notice_fenced(&mut self) {
-        self.inner.notice_fenced();
+    /// 부른 쪽의 열쇠가 아니라 이 멘션의 `Launch` 열쇠를 싣는다 — 표지가 다른 스레드로 가지 않는다.
+    fn notice_fenced(&mut self, _thread_key: &str) {
+        let key = self.key.clone();
+        self.inner.notice_fenced(&key);
     }
     fn turn_outcome(&mut self, ok: bool) {
         self.inner.turn_outcome(ok);
@@ -67,7 +71,8 @@ impl<S: SchedulerHooks> Drop for OnceRelease<S> {
 /// 스케줄러 고리로 가는 사건 — [`ChannelScheduler`] 가 보낸다.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SchedEvent {
-    Fenced,
+    /// 그 스레드 열쇠(`채널/앵커`).
+    Fenced(String),
     Outcome(bool),
     StopRequested(String),
     ExecutableMissing,
@@ -90,8 +95,8 @@ impl ChannelScheduler {
 }
 
 impl SchedulerHooks for ChannelScheduler {
-    fn notice_fenced(&mut self) {
-        self.send(SchedEvent::Fenced);
+    fn notice_fenced(&mut self, thread_key: &str) {
+        self.send(SchedEvent::Fenced(thread_key.to_string()));
     }
     fn turn_outcome(&mut self, ok: bool) {
         self.send(SchedEvent::Outcome(ok));
