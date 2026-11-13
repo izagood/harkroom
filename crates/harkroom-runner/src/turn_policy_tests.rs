@@ -124,6 +124,7 @@ fn thread_model() -> TurnModel {
 fn thread_model_rejected_needs_both_facts() {
     let mut e = err(Some("invalid model: opus"));
     e.marks.thread_model = Some(thread_model());
+    e.marks.harness_api_error_shown = Some("invalid model: opus".into());
     match e.into_turn_end() {
         TurnEnd::ThreadModelRejected { model, effort, .. } => {
             assert_eq!(
@@ -185,5 +186,59 @@ fn debug_hides_tail_and_api_line() {
     assert!(
         !d.contains("sk-secret-1") && !d.contains("secret-tail-2"),
         "{d}"
+    );
+}
+
+/// #2028 security 낮음: API 오류에 PAT·토큰 꼴이 있으면 모델 거절 실패 글에 안 실린다.
+#[test]
+fn thread_model_rejection_notice_carries_masked_api_error_only() {
+    use crate::turn_end::EndState;
+    use crate::turn_failure::{ExitFacts, FailFacts, StallInputs, failure_marks};
+    let pat = "hk_pat_secret_value_42";
+    let token = format!("ghp_{}", "b".repeat(36));
+    let raw = format!("400 invalid model opus (key {pat} {token})");
+    let end = EndState {
+        api_error: Some(raw.clone()),
+        ..EndState::default()
+    };
+    let f = FailFacts {
+        exit: ExitFacts {
+            exit_code: 1,
+            timed_out: false,
+            tail: "",
+        },
+        end: &end,
+        canceled_by: None,
+        fenced_out: false,
+        thread_unreadable: false,
+        turn_timeout_ms: 1,
+        harness_stall_ms: 1,
+    };
+    let stall = StallInputs {
+        watch_now: None,
+        screen_tail: "",
+        harness: crate::adapter::AgentHarness::ClaudeCode,
+        signal: None,
+    };
+    let tm = thread_model();
+    let mut e = err(None);
+    e.marks = failure_marks(&f, &stall, None, Some(&tm), pat, &[]);
+    let TurnEnd::ThreadModelRejected {
+        model,
+        effort,
+        api_error,
+    } = e.into_turn_end()
+    else {
+        panic!("모델 거절이어야 한다");
+    };
+    let notice = crate::fail_text::thread_model_rejected_notice(
+        model.as_deref(),
+        effort.as_deref(),
+        &api_error,
+    );
+    assert!(notice.contains("invalid model"), "{notice}");
+    assert!(
+        !notice.contains(pat) && !notice.contains(&token),
+        "{notice}"
     );
 }

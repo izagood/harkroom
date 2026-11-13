@@ -126,6 +126,9 @@ pub struct FailureMarks {
     /// 판정용 API 오류 줄(정본 `harnessApiError`) — 턴 도중 관측이 우선, 없으면 종료 뒤 기록 읽기.
     /// **스레드에 싣지 않는다** — 한도·자격증명·모델 거절 판정 재료다.
     pub harness_api_error: Option<String>,
+    /// 같은 줄을 **보이는 글용으로 가린 것**(`quoted_line` — 통째 가림·조각 검사·토큰 가림; 가린 뒤 비면
+    /// `MASKED_API_ERROR`). 스레드 모델 거절 실패 글은 이것만 싣는다(#2028 security 낮음).
+    pub harness_api_error_shown: Option<String>,
     pub stalled_ms: Option<u64>,
     pub stalled_screen: Option<StallScreen>,
     /// 가린 화면의 오류 줄 한 줄(정본 `harnessStalledScreenLine`) — 보이는 글로만 쓴다.
@@ -141,6 +144,10 @@ impl fmt::Debug for FailureMarks {
             .field(
                 "harness_api_error_len",
                 &self.harness_api_error.as_ref().map(String::len),
+            )
+            .field(
+                "harness_api_error_shown_len",
+                &self.harness_api_error_shown.as_ref().map(String::len),
             )
             .field("stalled_ms", &self.stalled_ms)
             .field("stalled_screen", &self.stalled_screen)
@@ -184,6 +191,14 @@ pub fn failure_marks(
             .flatten(),
         ..FailureMarks::default()
     };
+    m.harness_api_error_shown = m.harness_api_error.as_deref().map(|raw| {
+        let line = quoted_line(Some(raw), pat, secrets);
+        if line.is_empty() {
+            MASKED_API_ERROR.to_owned()
+        } else {
+            line
+        }
+    });
     if end.stalled {
         m.stalled_ms = Some(stalled_ms(f));
         m.stalled_screen = Some(stall_screen_of(

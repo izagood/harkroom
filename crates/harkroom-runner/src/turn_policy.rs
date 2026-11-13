@@ -189,7 +189,12 @@ impl TurnError for AttemptError {
             return TurnEnd::ThreadModelRejected {
                 model: tm.and_then(|t| t.model.clone()),
                 effort: tm.and_then(|t| t.effort.clone()),
-                api_error: self.marks.harness_api_error.clone().unwrap_or_default(),
+                // 보이는 글에는 가린 줄만(#2028 security 낮음) — 판정은 위에서 원문으로 끝났다.
+                api_error: self
+                    .marks
+                    .harness_api_error_shown
+                    .clone()
+                    .unwrap_or_else(|| crate::turn_end::MASKED_API_ERROR.to_owned()),
             };
         }
         if let Some(stall_ms) = self.marks.stalled_ms.filter(|ms| *ms > 0) {

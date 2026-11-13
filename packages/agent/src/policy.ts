@@ -239,10 +239,13 @@ export function isHarnessStall(err: unknown): { stallMs: number; screenLine: str
  */
 export function isThreadModelRejected(err: unknown): { model: string | null; effort: string | null; apiError: string } | null {
   if (!(err instanceof Error)) return null;
-  const e = err as Error & { harnessApiError?: unknown; threadModel?: { model: string | null; effort: string | null } };
+  const e = err as Error & { harnessApiError?: unknown; harnessApiErrorShown?: unknown; threadModel?: { model: string | null; effort: string | null } };
   if (!e.threadModel || typeof e.harnessApiError !== 'string') return null;
   if (!/\bmodel\b|effort|reasoning/i.test(e.harnessApiError)) return null;
-  return { model: e.threadModel.model, effort: e.threadModel.effort, apiError: e.harnessApiError };
+  // 판정은 원문으로, 돌려주는 `apiError` 는 **가린 줄**(`mentionTurn` 이 `quotedLine` 으로 붙인 것)만 — 이 값은 실패 카드
+  // 본문으로 스레드에 간다(#2028 security 낮음). 가린 줄이 없으면 원문 대신 자리 표지를 싣는다.
+  const shown = typeof e.harnessApiErrorShown === 'string' && e.harnessApiErrorShown ? e.harnessApiErrorShown : '(오류 줄은 가려졌다)';
+  return { model: e.threadModel.model, effort: e.threadModel.effort, apiError: shown };
 }
 
 /**
