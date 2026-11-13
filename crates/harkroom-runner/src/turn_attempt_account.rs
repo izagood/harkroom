@@ -7,6 +7,7 @@
 //! - [`LiveSlot`]: 펜스 잃음·[중단] 을 받는 쪽(스케줄러·오퍼레이터 신호)이 쥐는 손잡이. `bind_live` 가 지금 시도의
 //!   [`LiveTurn`] 을 걸고 놓는다. 펜스 잃음은 걸린 시도에만, [중단] 은 멘션 단위로도 남아 다음 시도의 관문이 본다.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -110,6 +111,78 @@ impl LiveSlot {
 
     pub fn is_bound(&self) -> bool {
         self.lock().live.is_some()
+    }
+
+    fn same(&self, other: &LiveSlot) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+/// 러너 전체의 [중단]·펜스 신호 길 — 멘션 id 마다 **새** [`LiveSlot`] 을 연다([`MentionSlots::open`]). 러너 전역 슬롯
+/// 하나를 쓰면 앞 멘션의 [중단] 이 다음 멘션을 영원히 막는다 — 그래서 슬롯은 멘션 하나(`run_one` 한 번)의 수명이고,
+/// [`MentionSlot`] 이 떨어지면 지도에서 빠진다. 열리지 않은 멘션에 온 신호는 버린다(`false`).
+#[derive(Clone, Default)]
+pub struct MentionSlots(Arc<Mutex<HashMap<String, LiveSlot>>>);
+
+impl MentionSlots {
+    fn lock(&self) -> MutexGuard<'_, HashMap<String, LiveSlot>> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// 이 멘션의 슬롯을 **새로** 연다(같은 id 의 옛 슬롯이 남아 있어도 바꾼다).
+    pub fn open(&self, mention_id: &str) -> MentionSlot {
+        let slot = LiveSlot::default();
+        self.lock().insert(mention_id.to_string(), slot.clone());
+        MentionSlot {
+            slots: self.clone(),
+            mention_id: mention_id.to_string(),
+            slot,
+        }
+    }
+
+    fn get(&self, mention_id: &str) -> Option<LiveSlot> {
+        self.lock().get(mention_id).cloned()
+    }
+
+    /// 사람이 그 멘션을 [중단] 했다. 열린 멘션이 아니면 `false`.
+    pub fn cancel(&self, mention_id: &str, by: &str) -> bool {
+        // 지도 잠금을 놓은 뒤 슬롯을 잠근다 — 잠금을 겹쳐 쥐지 않는다.
+        self.get(mention_id).map(|s| s.cancel(by)).is_some()
+    }
+
+    /// 그 멘션의 턴 임대를 잃었다. 열린 멘션이 아니면 `false`.
+    pub fn fence_lost(&self, mention_id: &str) -> bool {
+        self.get(mention_id).is_some_and(|s| s.fence_lost())
+    }
+
+    pub fn is_open(&self, mention_id: &str) -> bool {
+        self.lock().contains_key(mention_id)
+    }
+}
+
+/// 열린 멘션 하나의 슬롯 — `run_one` 한 번 동안 쥔다. 떨어지면 지도에서 뺀다(그사이 같은 id 로 새로 열렸으면 그것은 둔다).
+pub struct MentionSlot {
+    slots: MentionSlots,
+    mention_id: String,
+    slot: LiveSlot,
+}
+
+impl MentionSlot {
+    /// 이 멘션의 `AttemptParts` 가 `bind_live` 에 쓸 슬롯.
+    pub fn slot(&self) -> LiveSlot {
+        self.slot.clone()
+    }
+}
+
+impl Drop for MentionSlot {
+    fn drop(&mut self) {
+        let mut map = self.slots.lock();
+        if map
+            .get(&self.mention_id)
+            .is_some_and(|s| s.same(&self.slot))
+        {
+            map.remove(&self.mention_id);
+        }
     }
 }
 
