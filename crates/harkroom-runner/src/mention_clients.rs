@@ -5,6 +5,8 @@
 //! 턴 열쇠 맡기기·거두기([`AgentClients::attempt_base`] 의 REST)·임대 끝 알림·턴 임대 넘기기([`crate::mention_hooks::LinkHooks`])도
 //! 같은 묶음의 링크로 간다.
 //!
+//! 턴 뒤 IO([`AgentClients::after_turn`])도 묶음의 MCP 손님으로 돈다.
+//!
 //! 손님 칸은 비공개다. 멘션 실행 쪽 짓개는 손님을 따로 받지 않고 이 묶음만 받으므로, 다른 계정(다른 링크)의 손님이 끼어들
 //! 자리가 없다. 러너 하나가 에이전트 하나이고 링크는 그 에이전트의 것이다.
 
@@ -16,8 +18,12 @@ use crate::link::LinkClient;
 use crate::mcp::HarkroomMcpClient;
 use crate::mention_deps::LinkIo;
 use crate::rest::{HarkroomRestClient, RunnerLink};
+use crate::turn_after::SilentSaid;
+use crate::turn_attempt::TurnSecrets;
+use crate::turn_attempt_fold::{AfterInputs, run_after_turn};
 use crate::turn_attempt_run::AttemptBase;
 use crate::turn_prepare_io::McpPrepareIo;
+use crate::turn_success::AfterTurnPlan;
 
 /// 이 에이전트의 MCP·REST 손님(같은 링크).
 pub struct AgentClients<L: RunnerLink> {
@@ -51,6 +57,17 @@ impl<L: RunnerLink> AgentClients<L> {
     /// 준비가 스레드를 읽는 길.
     pub fn prepare_io(&self) -> McpPrepareIo<'_, L> {
         McpPrepareIo { client: &self.mcp }
+    }
+    /// 턴 뒤 IO(정본 `afterTurn` — 무발화·대기 통지·보고처 약속·앵커 밖 확인) — MCP 손님은 묶음의 것이다.
+    pub fn after_turn<'a>(
+        &'a self,
+        plan: &AfterTurnPlan,
+        secrets: &'a TurnSecrets,
+        i: &'a AfterInputs<'a>,
+        last_said: Box<dyn FnMut() -> Option<String> + 'a>,
+        silent_said: Box<dyn FnMut() -> SilentSaid + 'a>,
+    ) -> Result<(), String> {
+        run_after_turn(&self.mcp, plan, secrets, i, last_said, silent_said)
     }
     /// 멘션 deps 의 서버 길.
     pub fn link_io<'a>(

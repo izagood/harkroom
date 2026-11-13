@@ -47,6 +47,7 @@ pub mod mention_hooks;
 pub mod mention_ledger;
 pub mod mention_parts;
 pub mod mention_run;
+pub mod mention_sched;
 pub mod mention_scheduler;
 pub mod mention_settle;
 pub mod mention_target;

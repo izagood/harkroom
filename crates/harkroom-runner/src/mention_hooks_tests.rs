@@ -78,3 +78,40 @@ fn scheduler_parts_are_delegated() {
     assert_eq!(h.scheduler.outcomes, vec![true]);
     assert!(op.ended.borrow().is_empty(), "임대가 없으면 끝 알림도 없다");
 }
+
+#[test]
+fn held_lease_is_ended_on_drop_once() {
+    let op = Operator::default();
+    {
+        let mut h = LinkHooks::new(&op, Sched::default(), "k".into(), || 1);
+        h.lease_issued(
+            "men-2",
+            TurnLease {
+                id: "l".into(),
+                token: "t".into(),
+                expires_at: "x".into(),
+            },
+        );
+        // release_lease 없이 떨어진다(패닉 풀림과 같은 길).
+    }
+    assert_eq!(*op.ended.borrow(), vec!["men-2".to_string()]);
+
+    let op = Operator::default();
+    {
+        let mut h = LinkHooks::new(&op, Sched::default(), "k".into(), || 1);
+        h.lease_issued(
+            "men-3",
+            TurnLease {
+                id: "l".into(),
+                token: "t".into(),
+                expires_at: "x".into(),
+            },
+        );
+        h.release_lease();
+    }
+    assert_eq!(
+        *op.ended.borrow(),
+        vec!["men-3".to_string()],
+        "정상 길 뒤 Drop 은 다시 안 보낸다"
+    );
+}

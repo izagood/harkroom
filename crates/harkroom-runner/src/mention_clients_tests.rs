@@ -127,3 +127,54 @@ impl crate::mention_hooks::SchedulerHooks for NoSched {
     fn release_slot(&mut self, _k: &str) {}
     fn turn_ended(&mut self, _k: &str, _m: &str) {}
 }
+
+/// 턴 뒤 IO 도 묶음의 MCP 손님(그 에이전트 링크)으로만 간다.
+#[test]
+fn after_turn_goes_through_the_bundle_only() {
+    use crate::turn_after::SilentSaid;
+    use crate::turn_attempt::TurnSecrets;
+    use crate::turn_attempt_fold::AfterInputs;
+    use crate::turn_notice::NudgeCaller;
+    use crate::turn_success::{AfterTurnPlan, SilentPath};
+
+    let (mine, other) = (Link::default(), Link::default());
+    let a = AgentClients::new(&mine, "t");
+    let _b = AgentClients::new(&other, "t");
+    let secrets = TurnSecrets::build("pat-value-0123456789", &[], None);
+    let inputs = AfterInputs {
+        key: "k",
+        me_id: "me",
+        channel_id: "c",
+        anchor: Some("root"),
+        mention_id: "m",
+        caller: NudgeCaller::Human,
+        proxy_head: "",
+        record_proxy: false,
+        wake_reason: "",
+        background_wait_ms: 1,
+        turn_start_seq: 0,
+        turn_id: "t",
+        promise: None,
+    };
+    let plan = AfterTurnPlan {
+        silent: SilentPath::WakeProgress,
+        post_count: 0,
+        check_report_promise: false,
+        watch_missed: false,
+        delegation_report_missed: false,
+    };
+    a.after_turn(
+        &plan,
+        &secrets,
+        &inputs,
+        Box::new(|| None),
+        Box::new(SilentSaid::default),
+    )
+    .unwrap();
+    assert!(*mine.tool_calls.lock().unwrap() >= 1, "내 링크로 갔다");
+    assert_eq!(
+        *other.tool_calls.lock().unwrap(),
+        0,
+        "다른 링크는 쓰이지 않는다"
+    );
+}
