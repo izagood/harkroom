@@ -545,3 +545,64 @@ fn release_panic_during_unwind_does_not_abort() {
     );
     assert_eq!(failed, [LaunchStep::Secrets]);
 }
+
+fn tmp(tag: &str) -> PathBuf {
+    let d = std::env::temp_dir().join(format!("hk-launch-{tag}-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&d);
+    fs::create_dir_all(&d).unwrap();
+    d
+}
+
+/// 기록 찾기(claude) → 턴 끝 가리기가 쓰는 경로와 **같은** 경로(기록 파일 + `<sessionId>/`).
+#[test]
+fn claude_transcript_lookup_matches_record_paths() {
+    let root = tmp("find-claude");
+    let cfg = root.join("cfg");
+    let proj = cfg.join("projects").join("-w-x");
+    fs::create_dir_all(&proj).unwrap();
+    let sid = "11111111-2222-4333-8444-555555555555";
+    let file = proj.join(format!("{sid}.jsonl"));
+    fs::write(&file, "{}\n").unwrap();
+    let homes = TranscriptHomes {
+        claude_config_dir: Some(&cfg),
+        ..TranscriptHomes::default()
+    };
+    let (t, paths) = transcript_record_paths(AgentHarness::ClaudeCode, Some(sid), homes);
+    assert_eq!(t.as_deref(), Some(file.as_path()));
+    assert_eq!(
+        paths,
+        turn_record_paths(AgentHarness::ClaudeCode, Some(&file), Some(sid))
+    );
+    assert_eq!(paths, vec![file.clone(), proj.join(sid)]);
+    // 세션 id 가 없거나 경로 꼴이면 찾지 않는다.
+    assert!(
+        transcript_record_paths(AgentHarness::ClaudeCode, None, homes)
+            .1
+            .is_empty()
+    );
+    assert!(
+        transcript_record_paths(AgentHarness::ClaudeCode, Some("../x"), homes)
+            .1
+            .is_empty()
+    );
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// 기록 찾기(codex) → rollout 하나(옆 디렉터리 없음).
+#[test]
+fn codex_transcript_lookup_is_the_rollout_only() {
+    let root = tmp("find-codex");
+    let day = root.join("sessions").join("2026").join("11").join("13");
+    fs::create_dir_all(&day).unwrap();
+    let sid = "0199a2b3-c4d5-7e6f-8a9b-0c1d2e3f4a5b";
+    let file = day.join(format!("rollout-2026-11-13T09-00-00-{sid}.jsonl"));
+    fs::write(&file, "{}\n").unwrap();
+    let homes = TranscriptHomes {
+        codex_home: Some(&root),
+        ..TranscriptHomes::default()
+    };
+    let (t, paths) = transcript_record_paths(AgentHarness::Codex, Some(sid), homes);
+    assert_eq!(t.as_deref(), Some(file.as_path()));
+    assert_eq!(paths, vec![file]);
+    let _ = fs::remove_dir_all(&root);
+}

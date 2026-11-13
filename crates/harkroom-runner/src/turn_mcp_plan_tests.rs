@@ -448,3 +448,56 @@ fn pi_readonly_falls_back_to_builtins_when_discovery_fails_or_empty() {
     .unwrap();
     assert_eq!(other, "read,grep,find,ls", "다른 서버 도구는 열지 않는다");
 }
+
+/// 턴 연결 nit ⑦·정본 `rm(turnMcpConfig)`: 이 턴이 만든 설정(다리 열쇠가 든 턴 MCP 설정·opencode 턴 설정)은 턴 끝에
+/// 지운다 — 기본 설정·링크는 건드리지 않는다.
+#[test]
+fn turn_files_removed_at_turn_end_only_own_regular_files() {
+    let root = std::env::temp_dir().join(format!("hk-turn-files-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let mcp_dir = root.join(crate::provider_lane::TURN_MCP_DIR);
+    std::fs::create_dir_all(&mcp_dir).unwrap();
+    let turn_cfg = mcp_dir.join("t1.json");
+    std::fs::write(
+        &turn_cfg,
+        r#"{"env":{"HARKROOM_TURN_KEY_BRIDGE":"bridge-key-value"}}"#,
+    )
+    .unwrap();
+    let oc = root.join("oc-t1.json");
+    std::fs::write(&oc, "{}").unwrap();
+    let base = root.join("mcp.json");
+    std::fs::write(&base, "{}").unwrap();
+    let plan = TurnMcpPlan {
+        turn_keys: None,
+        mcp_config_path: turn_cfg.clone(),
+        opencode_turn_config: Some(oc.clone()),
+        owned_turn_config: Some(oc.clone()),
+    };
+    {
+        let _files = TurnFiles::of(&plan, &root, "t1");
+    }
+    assert!(!turn_cfg.exists() && !oc.exists(), "Drop 이 지운다");
+    assert!(base.exists());
+    // 기본 설정을 쓰는 턴은 그 파일을 지우지 않는다 · 링크는 따라가지 않는다.
+    let target = root.join("target.json");
+    std::fs::write(&target, "{}").unwrap();
+    std::os::unix::fs::symlink(&target, &turn_cfg).unwrap();
+    let plan = TurnMcpPlan {
+        turn_keys: None,
+        mcp_config_path: base.clone(),
+        opencode_turn_config: None,
+        owned_turn_config: None,
+    };
+    assert_eq!(TurnFiles::of(&plan, &root, "t1").remove_now(), 0);
+    let plan = TurnMcpPlan {
+        mcp_config_path: turn_cfg.clone(),
+        ..plan
+    };
+    assert_eq!(
+        TurnFiles::of(&plan, &root, "t1").remove_now(),
+        0,
+        "링크는 지우지 않는다"
+    );
+    assert!(base.exists() && target.exists());
+    let _ = std::fs::remove_dir_all(&root);
+}
