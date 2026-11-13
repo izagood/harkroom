@@ -10,6 +10,7 @@ struct Operator {
     ended: RefCell<Vec<String>>,
 }
 impl LeaseHandoff for Operator {
+    fn heartbeat(&self, _cause: &str) {}
     fn lease(&self, cause: &str, lease_id: &str, token: &str, _expires_at: &str) {
         self.leased
             .borrow_mut()
@@ -228,6 +229,7 @@ struct CheckingOperator {
     masked_at_end: RefCell<Option<bool>>,
 }
 impl LeaseHandoff for CheckingOperator {
+    fn heartbeat(&self, _cause: &str) {}
     fn lease(&self, _c: &str, _l: &str, _t: &str, _e: &str) {}
     fn lease_ended(&self, _cause: &str) {
         let body = std::fs::read_to_string(&self.transcript).unwrap();

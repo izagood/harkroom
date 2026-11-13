@@ -121,7 +121,7 @@ pub struct BaseInputs<'a> {
 }
 
 /// 멘션 하나를 돌린다.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::result_large_err)]
 pub fn run_mention_call<'a, L, S, H>(
     ledger: &Mutex<Ledger>,
     slots: &MentionSlots,
@@ -142,6 +142,7 @@ pub fn run_mention_call<'a, L, S, H>(
         &launch.anchor,
         &launch.bundled,
     );
+    let note_cause = target.mention_id.clone();
     let hooks = LinkHooks::new(
         clients.operator(),
         book,
@@ -213,11 +214,36 @@ pub fn run_mention_call<'a, L, S, H>(
                     }),
                 )
             });
-            let parts = build_parts(BundleParts {
+            let mut parts = build_parts(BundleParts {
                 io: clients.prepare_io(),
                 after: after_fn,
                 watch_loop: mention_watch_loop(clients, watch, slot.clone()),
                 slot,
+            });
+            // 시도마다 그 시도의 기록 경로를 장부에 적는다(정본 `noteTranscript`) — 결말이 끝 알림 전에 가린다. 경로는 그 시도의
+            // 세션 id·계정 폴더(`OutcomeCtx.ctx`)로 찾는다. 결과 접기는 띄운 시도마다 한 번 불린다.
+            let (harness, home) = (parts.harness, parts.home.clone());
+            let (omp, codex) = (parts.omp_home.clone(), parts.codex_home.clone());
+            let cause = note_cause.clone();
+            let mut fold = std::mem::replace(
+                &mut parts.outcome,
+                Box::new(|_, _, _, _, _| Err(crate::turn_policy::AttemptError::default())),
+            );
+            parts.outcome = Box::new(move |attempted, secrets, live, end, o| {
+                let (_, paths) = crate::turn_launch::transcript_record_paths(
+                    harness,
+                    o.ctx.session_id.as_deref(),
+                    crate::turn_launch::TranscriptHomes {
+                        claude_config_dir: o.ctx.claude_config_dir.as_deref(),
+                        home: Some(&home),
+                        omp_home: omp.as_deref(),
+                        codex_home: codex.as_deref(),
+                    },
+                );
+                for p in paths {
+                    book.note_transcript(&cause, p);
+                }
+                fold(attempted, secrets, live, end, o)
             });
             let ab: AttemptBase<'a, L, crate::mention_clients::KeepMentionLease> = clients
                 .attempt_base(
@@ -235,6 +261,51 @@ pub fn run_mention_call<'a, L, S, H>(
             }
         },
     );
+}
+
+/// [`run_mention_call`] 을 패닉에서 지킨다(C5 스케줄러가 부른다). 패닉이면 `run_one` 이 못 간 정리를 한다: 장부(멘션 장부)에서
+/// 그 멘션을 놓고, 임대 장부에 남았으면(이미 `LinkHooks` 패닉 Drop 이 놓았으면 없다) 박동을 멈추고 기록을 가린 뒤 끝을 알린다
+/// — 끝난 멘션의 박동이 계속 늘리지 않게. 패닉이었는지 돌려준다. 이 함수 자체는 패닉하지 않는다(독 든 잠금은 `into_inner`).
+#[allow(clippy::too_many_arguments)]
+pub fn run_mention_guarded<'a, L, S, H>(
+    ledger: &Mutex<Ledger>,
+    slots: &MentionSlots,
+    book: &'a LeaseBook,
+    clients: &'a AgentClients<L>,
+    launch: Launch,
+    sched: H,
+    i: CallInputs<'a, L, S>,
+    open_relay: impl FnOnce(&LiveSlot) -> Option<Arc<SessionHandle>>,
+) -> bool
+where
+    L: AgentLink + 'a,
+    S: PtyTurnSink + 'a,
+    H: SchedulerHooks,
+{
+    let lead = launch.lead_id();
+    let thread_key = launch.thread_key.clone();
+    let cause = build_mention_target(
+        &launch.lead_entry,
+        &launch.lead_mention,
+        &launch.anchor,
+        &launch.bundled,
+    )
+    .mention_id;
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run_mention_call(ledger, slots, book, clients, launch, sched, i, open_relay)
+    }));
+    if r.is_ok() {
+        return false;
+    }
+    if book.release(&cause) {
+        crate::mention_hooks::LeaseHandoff::lease_ended(clients.operator(), &cause);
+    }
+    ledger
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .release(lead, &thread_key);
+    eprintln!("[mentionScheduler] {thread_key}: 멘션 실행이 패닉했다 — 장부를 정리했다");
+    true
 }
 
 #[cfg(test)]

@@ -3,7 +3,6 @@
 //! 놓지도 다시 청하지도 않고, 결말이 놓는 갈래·패닉에서 한 번 놓는지(정본 `secretLeases`).
 use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -119,6 +118,7 @@ impl LeaseNotice for Link {
     }
 }
 impl LeaseHandoff for Link {
+    fn heartbeat(&self, _cause: &str) {}
     fn lease(&self, cause: &str, _lease_id: &str, _token: &str, _expires_at: &str) {
         push(&self.leased, cause.into());
     }
@@ -265,7 +265,7 @@ fn call<'a>(
     sched: Sched,
     seen: &'a RefCell<Seen>,
     call_after: bool,
-) {
+) -> bool {
     let (mine, other) = links;
     let slots = MentionSlots::default();
     let l = launch(ledger);
@@ -339,8 +339,10 @@ fn call<'a>(
             pat: "pat-value-0123456789",
         },
     };
-    run_mention_call(ledger, &slots, book, clients, l, sched, inputs, |_| None);
+    // C5 스케줄러가 부르는 입구(패닉 지킴)로 부른다.
+    let panicked = run_mention_guarded(ledger, &slots, book, clients, l, sched, inputs, |_| None);
     assert!(!slots.is_open("m7"), "멘션 자리는 호출 안에서 닫혔다");
+    panicked
 }
 
 /// ① 호출 자리가 쓰는 손님이 모두 묶음 것이다 — 준비 손님은 묶음의 MCP 손님(`ptr::eq`), after 닫개는 묶음의 MCP 손님(내 링크)으로만
@@ -476,19 +478,18 @@ fn panic_in_call_site_releases_each_once() {
     let seen = RefCell::new(Seen::default());
     let sched = Sched::default();
     let (ledger, book) = (fresh(), LeaseBook::default());
-    let r = catch_unwind(AssertUnwindSafe(|| {
-        call(
-            &w,
-            &ledger,
-            &book,
-            (&mine, &other),
-            &clients,
-            sched.clone(),
-            &seen,
-            false,
-        )
-    }));
-    assert!(r.is_err(), "패닉이 났다");
+    // 패닉은 지킴 입구가 받아 정리한다(스케줄러 스레드로 번지지 않는다).
+    let panicked = call(
+        &w,
+        &ledger,
+        &book,
+        (&mine, &other),
+        &clients,
+        sched.clone(),
+        &seen,
+        false,
+    );
+    assert!(panicked, "패닉이 났고 지킴 입구가 받았다");
 
     assert_eq!(got(&mine.leased), ["m7"], "임대는 받았었다");
     assert_eq!(
@@ -497,8 +498,19 @@ fn panic_in_call_site_releases_each_once() {
         "패닉에도 슬롯 → 턴 끝, 각 한 번"
     );
     assert_eq!(got(&mine.lease_ended), ["m7"], "패닉에도 임대 끝 한 번");
-    assert!(book.is_empty(), "패닉 길도 장부에서 지운다");
+    assert!(
+        book.is_empty(),
+        "패닉 길도 장부에서 지운다 — 끝난 멘션에 박동이 남지 않는다"
+    );
     assert_eq!(n(&other.lease_ended), 0);
+    // 멘션 장부도 놓였다 — 같은 스레드의 다음 멘션이 막히지 않는다.
+    assert!(
+        !ledger
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .thread_in_flight("c:t"),
+        "패닉 뒤 멘션 장부의 도는 중 표지를 지운다"
+    );
 }
 
 /// security C6 전 필수 1건: 시도 끝(띄우기 정리·lane 가드)은 멘션 임대를 끝내지 않는다 — 재시도·계정 전환 두 번에도

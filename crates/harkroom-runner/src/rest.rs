@@ -33,6 +33,13 @@ impl RunnerLink for LinkClient {
     }
 }
 
+/// 러너 링크를 공유 소유로 쓰는 손님(`AgentClients<Arc<LinkClient>>`).
+impl RunnerLink for std::sync::Arc<LinkClient> {
+    fn request(&self, req: LinkRequest) -> RunnerLinkResponse {
+        LinkClient::request(self, req)
+    }
+}
+
 /// 러너 링크를 빌려 쓰는 손님(`AgentClients<&LinkClient>`) — 같은 링크 하나를 MCP·REST·오퍼레이터 알림이 함께 쓴다.
 impl RunnerLink for &LinkClient {
     fn request(&self, req: LinkRequest) -> RunnerLinkResponse {

@@ -62,3 +62,25 @@ fn slot_not_held_is_not_released() {
     drop(OnceRelease::new(rec.clone(), "t", false, "m"));
     assert_eq!(*rec.0.lock().unwrap(), vec!["end:t:m"]);
 }
+
+/// 실물 스케줄러 hooks — 사건이 고리로 가고, 받는 쪽이 사라져도 패닉하지 않는다(패닉 풀림 중 Drop 에서도 불린다).
+#[test]
+fn channel_scheduler_delivers_and_never_panics() {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut s = ChannelScheduler(tx);
+    s.release_slot("t");
+    s.turn_ended("t", "m");
+    assert_eq!(rx.recv().unwrap(), SchedEvent::SlotReleased("t".into()));
+    assert_eq!(
+        rx.recv().unwrap(),
+        SchedEvent::TurnEnded {
+            thread_key: "t".into(),
+            mention_id: "m".into()
+        }
+    );
+    drop(rx);
+    s.release_slot("t");
+    s.turn_ended("t", "m");
+    s.turn_outcome(true);
+    drop(OnceRelease::new(s, "t", true, "m"));
+}
