@@ -17,7 +17,7 @@ use crate::link::LinkClient;
 use crate::mention_deps::MentionHooks;
 use crate::mention_settle::LeaseState;
 use crate::rest::TurnLease;
-use crate::secret_scrub::{scrub_file, scrub_needles};
+use crate::secret_scrub::{scrub_needles, scrub_path};
 use crate::turn_io::Timer;
 
 /// 스케줄러가 쥔 일.
@@ -159,17 +159,40 @@ impl LeaseBook {
         if needles.is_empty() {
             return;
         }
+        // 파일이면 그 파일, 폴더(claude 곁 `<sessionId>/` — tool-results·subagents)면 그 아래 일반 파일 전부(정본 `scrubPath`).
         for path in &e.transcripts {
-            match scrub_file(path, &needles) {
-                Ok(0) => {}
-                Ok(n) => eprintln!("[secretLeases] {}: 비밀 값 {n}곳을 가렸다", path.display()),
-                Err(err) => eprintln!(
-                    "[secretLeases] 기록 가리기 실패({}) — {:?}",
+            let t = scrub_path(
+                path,
+                &needles,
+                &mut |p| {
+                    eprintln!(
+                        "[secretLeases] {}: 크기 상한을 넘어 가리지 않았다",
+                        p.display()
+                    )
+                },
+                &mut |p, err| {
+                    eprintln!(
+                        "[secretLeases] 기록 가리기 실패({}) — {:?}",
+                        p.display(),
+                        err.kind()
+                    )
+                },
+            );
+            if t.replaced > 0 {
+                eprintln!(
+                    "[secretLeases] {}: 비밀 값 {}곳을 가렸다",
                     path.display(),
-                    err.kind()
-                ),
+                    t.replaced
+                );
             }
         }
+    }
+    /// 그 멘션에 적힌 기록 경로(시험·진단용 — 값이 아니라 경로).
+    pub fn transcripts(&self, cause: &str) -> Vec<PathBuf> {
+        self.map()
+            .get(cause)
+            .map(|e| e.transcripts.iter().cloned().collect())
+            .unwrap_or_default()
     }
     pub fn len(&self) -> usize {
         self.map().len()

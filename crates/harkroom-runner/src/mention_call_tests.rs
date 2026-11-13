@@ -537,3 +537,75 @@ fn attempt_scope_never_ends_the_mention_lease() {
         "시도 두 번이 끝나도 오퍼레이터 임대는 그대로"
     );
 }
+
+/// security ②: 시도마다 **그 시도의 계정 폴더** 기록을 적는다 — a1·a2 폴더가 다르면 둘 다 적히고, a1 때는 a1 것만.
+#[test]
+#[allow(clippy::result_large_err)]
+fn each_attempt_notes_its_own_account_folder_transcript() {
+    use crate::mention_parts::{LoopCtx, OutcomeCtx};
+    let w = world("note");
+    let (d1, d2) = (w.root.join("acct1"), w.root.join("acct2"));
+    for d in [&d1, &d2] {
+        let p = d.join("projects").join("p");
+        std::fs::create_dir_all(&p).unwrap();
+        std::fs::write(p.join("sess.jsonl"), "{}\n").unwrap();
+    }
+    let l = link(Read::Error);
+    let book = LeaseBook::default();
+    let mut hooks =
+        crate::mention_hooks::LinkHooks::new(&l, &book, Sched::default(), "k".into(), || 1);
+    crate::mention_deps::MentionHooks::lease_issued(
+        &mut hooks,
+        "m7",
+        crate::rest::TurnLease {
+            id: "l1".into(),
+            token: "t".into(),
+            expires_at: "x".into(),
+        },
+    );
+    let mut fold = noting_outcome(
+        &book,
+        "m7".into(),
+        NoteHomes {
+            harness: AgentHarness::ClaudeCode,
+            home: w.root.join("home"),
+            omp_home: None,
+            codex_home: None,
+        },
+        Box::new(|_a, _s, _l, _e, _o| Ok(crate::mention_run::TurnOk::default())),
+    );
+    let attempt = |dir: &Path| OutcomeCtx {
+        ctx: LoopCtx {
+            session_id: Some("sess".into()),
+            claude_config_dir: Some(dir.to_path_buf()),
+            ..LoopCtx::default()
+        },
+        ..OutcomeCtx::default()
+    };
+    let (secrets, live, end) = (
+        TurnSecrets::build("pat-value-0123456789", &[], None),
+        crate::turn_attempt_live::LiveTurn::default(),
+        crate::turn_end::EndState::default(),
+    );
+    let failed = || crate::turn_attempt::Attempted::SetupFailed {
+        step: crate::turn_launch::LaunchStep::TurnKeys,
+        code: "x".into(),
+    };
+    let _ = fold(failed(), &secrets, &live, &end, &attempt(&d1));
+    let after_a1 = book.transcripts("m7");
+    assert!(
+        !after_a1.is_empty() && after_a1.iter().all(|p| p.starts_with(&d1)),
+        "a1 때는 a1 폴더만: {after_a1:?}"
+    );
+    let _ = fold(failed(), &secrets, &live, &end, &attempt(&d2));
+    let all = book.transcripts("m7");
+    assert!(
+        all.iter().any(|p| p.starts_with(&d1)) && all.iter().any(|p| p.starts_with(&d2)),
+        "둘 다 적힌다: {all:?}"
+    );
+    assert!(
+        all.iter().all(|p| p.starts_with(&d1) || p.starts_with(&d2)),
+        "다른 폴더 없음"
+    );
+    drop(hooks);
+}

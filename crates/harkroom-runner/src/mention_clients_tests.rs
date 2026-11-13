@@ -181,3 +181,46 @@ fn after_turn_goes_through_the_bundle_only() {
         "다른 링크는 쓰이지 않는다"
     );
 }
+
+/// security ①: 박동은 **묶음의 링크**로만 간다 — 다른 에이전트 링크는 0건.
+#[test]
+fn heartbeat_goes_over_the_bundle_link_only() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    #[derive(Default)]
+    struct Op {
+        beats: AtomicU32,
+    }
+    impl crate::turn_attempt::LeaseNotice for Op {
+        fn lease_ended(&self, _c: &str) {}
+    }
+    impl crate::mention_hooks::LeaseHandoff for Op {
+        fn lease(&self, _c: &str, _l: &str, _t: &str, _e: &str) {}
+        fn lease_ended(&self, _c: &str) {}
+        fn heartbeat(&self, _c: &str) {
+            self.beats.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    #[derive(Clone, Default)]
+    struct BeatLink(Arc<Op>);
+    impl RunnerLink for BeatLink {
+        fn request(&self, _req: LinkRequest) -> RunnerLinkResponse {
+            panic!("박동 시험은 링크 요청을 하지 않는다")
+        }
+    }
+    impl AgentLink for BeatLink {
+        type Operator = Op;
+        fn operator(&self) -> &Op {
+            &self.0
+        }
+    }
+    let (mine, other) = (BeatLink::default(), BeatLink::default());
+    let a = AgentClients::new(mine.clone(), "t");
+    let _b = AgentClients::new(other.clone(), "t");
+    let life = a.lease_life(None);
+    (life.beat)("m7");
+    (life.beat)("m7");
+    assert_eq!(mine.0.beats.load(Ordering::SeqCst), 2, "내 링크로 박동");
+    assert_eq!(other.0.beats.load(Ordering::SeqCst), 0, "다른 링크는 0건");
+}

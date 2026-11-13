@@ -222,29 +222,21 @@ pub fn run_mention_call<'a, L, S, H>(
             });
             // 시도마다 그 시도의 기록 경로를 장부에 적는다(정본 `noteTranscript`) — 결말이 끝 알림 전에 가린다. 경로는 그 시도의
             // 세션 id·계정 폴더(`OutcomeCtx.ctx`)로 찾는다. 결과 접기는 띄운 시도마다 한 번 불린다.
-            let (harness, home) = (parts.harness, parts.home.clone());
-            let (omp, codex) = (parts.omp_home.clone(), parts.codex_home.clone());
-            let cause = note_cause.clone();
-            let mut fold = std::mem::replace(
+            let fold = std::mem::replace(
                 &mut parts.outcome,
                 Box::new(|_, _, _, _, _| Err(crate::turn_policy::AttemptError::default())),
             );
-            parts.outcome = Box::new(move |attempted, secrets, live, end, o| {
-                let (_, paths) = crate::turn_launch::transcript_record_paths(
-                    harness,
-                    o.ctx.session_id.as_deref(),
-                    crate::turn_launch::TranscriptHomes {
-                        claude_config_dir: o.ctx.claude_config_dir.as_deref(),
-                        home: Some(&home),
-                        omp_home: omp.as_deref(),
-                        codex_home: codex.as_deref(),
-                    },
-                );
-                for p in paths {
-                    book.note_transcript(&cause, p);
-                }
-                fold(attempted, secrets, live, end, o)
-            });
+            parts.outcome = noting_outcome(
+                book,
+                note_cause.clone(),
+                NoteHomes {
+                    harness: parts.harness,
+                    home: parts.home.clone(),
+                    omp_home: parts.omp_home.clone(),
+                    codex_home: parts.codex_home.clone(),
+                },
+                fold,
+            );
             let ab: AttemptBase<'a, L, crate::mention_clients::KeepMentionLease> = clients
                 .attempt_base(
                     base.harness,
@@ -261,6 +253,41 @@ pub fn run_mention_call<'a, L, S, H>(
             }
         },
     );
+}
+
+/// 기록 찾기에 쓰는 멘션 단위 홈(계정 폴더는 시도 문맥에서 온다).
+pub struct NoteHomes {
+    pub harness: crate::adapter::AgentHarness,
+    pub home: std::path::PathBuf,
+    pub omp_home: Option<std::path::PathBuf>,
+    pub codex_home: Option<std::path::PathBuf>,
+}
+
+/// 결과 접기를 감싸 시도마다 **그 시도의** 기록 경로(세션 id·계정 폴더 = `OutcomeCtx.ctx`)를 임대 장부에 적는다(정본
+/// `noteTranscript`). 결말이 끝 알림 전에 이 경로들을 가린다.
+#[allow(clippy::result_large_err)]
+pub fn noting_outcome<'a>(
+    book: &'a LeaseBook,
+    cause: String,
+    h: NoteHomes,
+    mut fold: crate::mention_parts::OutcomeFn<'a>,
+) -> crate::mention_parts::OutcomeFn<'a> {
+    Box::new(move |attempted, secrets, live, end, o| {
+        let (_, paths) = crate::turn_launch::transcript_record_paths(
+            h.harness,
+            o.ctx.session_id.as_deref(),
+            crate::turn_launch::TranscriptHomes {
+                claude_config_dir: o.ctx.claude_config_dir.as_deref(),
+                home: Some(&h.home),
+                omp_home: h.omp_home.as_deref(),
+                codex_home: h.codex_home.as_deref(),
+            },
+        );
+        for p in paths {
+            book.note_transcript(&cause, p);
+        }
+        fold(attempted, secrets, live, end, o)
+    })
 }
 
 /// [`run_mention_call`] 을 패닉에서 지킨다(C5 스케줄러가 부른다). 패닉이면 `run_one` 이 못 간 정리를 한다: 장부(멘션 장부)에서
