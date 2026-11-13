@@ -163,25 +163,26 @@ impl AttemptParts for Parts {
     fn bind_live(&mut self, live: Option<Arc<LiveTurn>>) {
         self.slot.bind(live);
     }
+    #[allow(clippy::result_large_err)]
     fn prepare(
         &mut self,
         _t: &MentionTarget,
         account: Option<&ClaudeAccount>,
         is_last: bool,
         _turn_id: &str,
-    ) -> AttemptPrep {
+    ) -> Result<AttemptPrep, AttemptError> {
         let a = AttemptAccount::of(account, is_last);
         let homes = a.homes(Some(Path::new("/home")), None, None);
         self.homes_dir = homes.claude_config_dir.clone();
         self.cur = Some(a);
-        AttemptPrep {
+        Ok(AttemptPrep {
             key: "k".into(),
             cause: "m1".into(),
             secrets: false,
             lease_dir: None,
             session_id: Some("s".into()),
             homes,
-        }
+        })
     }
     fn mount_secrets(&mut self, _c: &str) -> Result<(), SecretMountError> {
         unreachable!()

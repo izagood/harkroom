@@ -43,6 +43,7 @@ pub mod memory_pin;
 pub mod mention_admit;
 pub mod mention_deps;
 pub mod mention_ledger;
+pub mod mention_parts;
 pub mod mention_run;
 pub mod mention_scheduler;
 pub mod mention_settle;

@@ -110,13 +110,14 @@ impl AttemptParts for Parts {
         self.bound = live;
     }
 
+    #[allow(clippy::result_large_err)]
     fn prepare(
         &mut self,
         _t: &MentionTarget,
         account: Option<&ClaudeAccount>,
         _last: bool,
         turn_id: &str,
-    ) -> AttemptPrep {
+    ) -> Result<AttemptPrep, AttemptError> {
         push(
             &self.log,
             format!(
@@ -130,14 +131,14 @@ impl AttemptParts for Parts {
             prev_file_gone,
             ..Seen::default()
         });
-        AttemptPrep {
+        Ok(AttemptPrep {
             key: "k".into(),
             cause: "m1".into(),
             secrets: self.secrets,
             lease_dir: Some(self.lease.clone()),
             session_id: None,
             homes: OwnedHomes::default(),
-        }
+        })
     }
 
     fn mount_secrets(&mut self, cause: &str) -> Result<(), SecretMountError> {
