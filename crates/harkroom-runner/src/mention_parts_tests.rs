@@ -82,6 +82,12 @@ fn parts<'a>(
             guide: "GUIDE".into(),
             memory: MemoryContext::Unavailable,
             read_only: false,
+            turn_budget_ms: None,
+            merge: None,
+            permissions: None,
+            api: None,
+            secret_create: false,
+            lane_model: None,
         },
         Box::new(PtyTurnOptions::default),
         Sink,
@@ -243,4 +249,82 @@ fn watch_is_fresh_per_attempt() {
         &LiveTurn::default(),
     );
     assert!(r.is_ok());
+}
+
+/// security: 감시 루프는 띄우는 그 시도의 자리를 받는다 — a2 의 루프는 a2 자리에만 적고 a1 자리는 그대로다. 루프는 PTY 턴이
+/// 끝나면 멈춘다(시도 범위를 넘지 않는다).
+#[test]
+fn watch_loop_gets_this_attempts_watch() {
+    let w = world("loop");
+    let store = SessionStore::new(w.root.join("sessions.json"));
+    let stale = PathBuf::from("/x");
+    let mut p = parts(&w, &store, &stale, false);
+    p.watch_loop = Some(Box::new(|watch, _notice, stop| {
+        while !stop.load(std::sync::atomic::Ordering::SeqCst) {
+            watch.lock().unwrap().end.stalled_idle_ms += 1;
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        watch.lock().unwrap().end.spoke = true;
+    }));
+    let secrets = crate::turn_probe_records::NoticeSecrets::default();
+
+    p.bind_live(Some(Arc::new(LiveTurn::default())));
+    let a1 = p.attempt_watch();
+    run_beside(&p.attempt_watch(), &secrets, p.watch_loop.as_ref(), || {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    });
+    assert!(
+        a1.lock().unwrap().end.spoke,
+        "a1 루프는 a1 자리에 적고 멈췄다"
+    );
+    let a1_count = a1.lock().unwrap().end.stalled_idle_ms;
+
+    p.bind_live(None);
+    p.bind_live(Some(Arc::new(LiveTurn::default())));
+    let a2 = p.attempt_watch();
+    assert!(!Arc::ptr_eq(&a1, &a2), "a2 는 새 자리");
+    run_beside(&p.attempt_watch(), &secrets, p.watch_loop.as_ref(), || {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    });
+    assert!(a2.lock().unwrap().end.spoke, "a2 루프는 a2 자리에 적었다");
+    assert_eq!(
+        a1.lock().unwrap().end.stalled_idle_ms,
+        a1_count,
+        "a1 자리는 그대로"
+    );
+}
+
+/// 지시문의 머지·권한·API 절 재료가 채워지면 지시문 파일에 그 절이 실린다(빈칸이면 빠진다).
+#[test]
+fn system_prompt_sections_are_filled() {
+    let w = world("sys");
+    let store = SessionStore::new(w.root.join("sessions.json"));
+    let stale = PathBuf::from("/x");
+    let mut p = parts(&w, &store, &stale, false);
+    let bare = crate::prompt_system::build_system_prompt(&p.system.opts());
+    p.system.merge = Some(MergeInputs {
+        operator_bin: "/opt/OPBIN_MERGE".into(),
+        repos: vec!["owner/repo".into()],
+        approved: vec![],
+    });
+    p.system.permissions = Some(PermissionInputs::default());
+    p.system.api = Some(ApiInputs {
+        operator_bin: "/opt/OPBIN_API".into(),
+        ..ApiInputs::default()
+    });
+    p.prepare(&target(), None, true, "t-1").unwrap();
+    let file = p
+        .command_for("t-1")
+        .unwrap()
+        .system_prompt_file
+        .unwrap()
+        .to_string();
+    let body = std::fs::read_to_string(file).unwrap();
+    assert_eq!(
+        body,
+        crate::prompt_system::build_system_prompt(&p.system.opts())
+    );
+    assert!(body.contains("OPBIN_MERGE"), "머지 절");
+    assert!(body.len() > bare.len());
+    assert!(!bare.contains("OPBIN_MERGE"));
 }

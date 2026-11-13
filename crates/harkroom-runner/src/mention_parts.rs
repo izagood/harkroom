@@ -9,17 +9,20 @@
 //!   `outcome` 은 감시 자리의 끝 상태 사본을 받는다.
 //! - `bind_live`: 멘션 슬롯([`LiveSlot`]), `account_ranks`: [`account_ranks`](순번만).
 //!
-//! 감시 루프(`run_watch`)를 띄우는 일과 B4-5 스위치는 이 조각 밖이다.
+//! - 감시 루프: `spawn` 이 PTY 를 도는 동안 [`run_beside`] 로 옆 스레드에서 `watch_loop` 을 돈다 — 그 시도의 자리와 감시 목록으로.
+//!
+//! B4-5 스위치는 이 조각 밖이다.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::account_assign::ClaudeAccount;
 use crate::memory_pin::MemoryContext;
 use crate::mention_run::TurnOk;
 use crate::mention_target::MentionTarget;
-use crate::prompt_system::SystemPromptOpts;
+use crate::prompt_system::{ApiOpts, MergeApproved, MergeOpts, PermissionOpts, SystemPromptOpts};
 use crate::prompt_turn::TurnClock;
 use crate::pty_turn::{InjectPrompt, PtyTurnOptions, PtyTurnSink};
 use crate::session_store::SessionStore;
@@ -38,6 +41,7 @@ use crate::turn_parts::{attempt_command_for_account, turn_wake_of, write_turn_sy
 use crate::turn_policy::AttemptError;
 use crate::turn_prep::AccountAxis;
 use crate::turn_prepare::{PrepareInput, PrepareIo, Prepared, prepare_turn};
+use crate::turn_probe_records::NoticeSecrets;
 use crate::turn_run::PtyOut;
 use crate::turn_watch::{Watch, WatchSink};
 
@@ -52,6 +56,98 @@ pub struct SystemInputs {
     pub guide: String,
     pub memory: MemoryContext,
     pub read_only: bool,
+    /// 턴 예산(없으면 예산 문장을 뺀다).
+    pub turn_budget_ms: Option<u64>,
+    /// 머지 절(없으면 뺀다).
+    pub merge: Option<MergeInputs>,
+    /// 권한 요청 절(없으면 뺀다).
+    pub permissions: Option<PermissionInputs>,
+    /// 외부 API 절(없으면 뺀다).
+    pub api: Option<ApiInputs>,
+    pub secret_create: bool,
+    /// API 키 레인의 모델 ID.
+    pub lane_model: Option<String>,
+}
+
+/// 머지 절 재료(정본 `merge`).
+#[derive(Clone, Debug, Default)]
+pub struct MergeInputs {
+    pub operator_bin: String,
+    pub repos: Vec<String>,
+    pub approved: Vec<MergeApproved>,
+}
+
+/// 권한 요청 절 재료(정본 `permissions`).
+#[derive(Clone, Debug, Default)]
+pub struct PermissionInputs {
+    pub tool_allows: Vec<String>,
+    pub command_hook: bool,
+    pub exact_shell_only: bool,
+    pub new_posts_hook: bool,
+}
+
+/// 외부 API 절 재료(정본 `api`).
+#[derive(Clone, Debug, Default)]
+pub struct ApiInputs {
+    pub operator_bin: String,
+    pub connectors: Vec<String>,
+    pub delegatable: Vec<String>,
+}
+
+impl SystemInputs {
+    /// 정본 `buildSystemPrompt` 의 opts.
+    pub fn opts(&self) -> SystemPromptOpts<'_> {
+        SystemPromptOpts {
+            handle: &self.handle,
+            channel_name: &self.channel_name,
+            instructions: &self.instructions,
+            guide: &self.guide,
+            memory: &self.memory,
+            turn_budget_ms: self.turn_budget_ms,
+            merge: self.merge.as_ref().map(|m| MergeOpts {
+                operator_bin: &m.operator_bin,
+                repos: &m.repos,
+                approved: &m.approved,
+            }),
+            permissions: self.permissions.as_ref().map(|p| PermissionOpts {
+                tool_allows: &p.tool_allows,
+                command_hook: p.command_hook,
+                exact_shell_only: p.exact_shell_only,
+                new_posts_hook: p.new_posts_hook,
+            }),
+            api: self.api.as_ref().map(|a| ApiOpts {
+                operator_bin: &a.operator_bin,
+                connectors: &a.connectors,
+                delegatable: &a.delegatable,
+            }),
+            secret_create: self.secret_create,
+            lane_model: self.lane_model.as_deref(),
+            read_only: self.read_only,
+        }
+    }
+}
+
+/// 감시 루프 몸통 — 이 시도의 감시 자리·감시 통지 가림 목록·멈춤 신호를 받아 `run_watch`(실물 `ProbeIo`)를 돈다.
+pub type WatchLoopFn<'a> = Box<dyn Fn(&Watch, &NoticeSecrets, &AtomicBool) + Send + Sync + 'a>;
+
+/// `f`(PTY 턴)를 도는 동안 감시 루프를 옆 스레드에서 돈다 — 넘긴 `watch` 는 **그 시도의 자리**다. `f` 가 끝나면 멈춤 신호를
+/// 세우고 루프가 끝날 때까지 기다린다(시도 범위를 넘지 않는다).
+pub fn run_beside<R>(
+    watch: &Watch,
+    notice: &NoticeSecrets,
+    watch_loop: Option<&WatchLoopFn<'_>>,
+    f: impl FnOnce() -> R,
+) -> R {
+    let stop = AtomicBool::new(false);
+    std::thread::scope(|sc| {
+        if let Some(lf) = watch_loop {
+            let (w, st) = (watch.clone(), &stop);
+            sc.spawn(move || lf(&w, notice, st));
+        }
+        let out = f();
+        stop.store(true, Ordering::SeqCst);
+        out
+    })
 }
 
 /// 결과 접기 닫개 — 시도 결과·가림 목록·[중단] 자리·끝 상태 사본.
@@ -101,6 +197,8 @@ pub struct MentionParts<'a, P: PrepareIo, S: PtyTurnSink> {
     pub outcome: OutcomeFn<'a>,
     pub after: AfterFn<'a>,
     pub mount: MountFn<'a>,
+    /// 띄우는 동안 옆에서 돌 감시 루프(없으면 돌지 않는다 — 시험용).
+    pub watch_loop: Option<WatchLoopFn<'a>>,
     cur: Option<Current>,
 }
 
@@ -144,6 +242,7 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
             outcome,
             after,
             mount,
+            watch_loop: None,
             cur: None,
         }
     }
@@ -159,6 +258,11 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
             &c.cause,
             turn_id,
         ))
+    }
+
+    /// 이 시도의 감시 자리 — `spawn` 이 sink 와 감시 루프에 넘기는 것. `bind_live(Some)` 이 시도마다 새로 만든다.
+    pub fn attempt_watch(&self) -> Watch {
+        self.watch.clone()
     }
 
     /// 이 시도의 턴 프롬프트(주입 글). 준비 전이면 `None`.
@@ -210,25 +314,7 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             &mut new_id,
         )
         .map_err(|_| fail())?;
-        let sys = &self.system;
-        let file = write_turn_system_prompt(
-            &self.state_dir,
-            &SystemPromptOpts {
-                handle: &sys.handle,
-                channel_name: &sys.channel_name,
-                instructions: &sys.instructions,
-                guide: &sys.guide,
-                memory: &sys.memory,
-                turn_budget_ms: None,
-                merge: None,
-                permissions: None,
-                api: None,
-                secret_create: false,
-                lane_model: None,
-                read_only: sys.read_only,
-            },
-        )
-        .map_err(|e| {
+        let file = write_turn_system_prompt(&self.state_dir, &self.system.opts()).map_err(|e| {
             eprintln!("[mentionTurn] {}: 지시문 파일 쓰기 실패 — {e}", self.key);
             fail()
         })?;
@@ -263,7 +349,7 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
         let text = self.prompt().unwrap_or_default().to_string();
         // (`text` 는 소유본 — 아래에서 `inner` 를 빌리기 전에 꺼낸다.)
         opts.inject = opts.inject.map(|i| InjectPrompt { text, ..i });
-        let watch = self.watch.clone();
+        let watch = self.attempt_watch();
         let now = || {
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -292,27 +378,27 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             parent_env: &self.parent_env,
             home: Path::new(&self.home),
         };
-        // 감시 목록(`args.notice`)은 감시 루프가 쓴다 — 여기서는 sink 를 쌓기만 한다.
-        let _ = &args.notice;
-        let mut delivered_sink = DeliveredSink {
-            inner: &mut self.inner,
-            delivered,
-        };
-        let mut watch_sink = WatchSink {
-            inner: &mut delivered_sink,
-            watch,
-            now_ms: &now,
-        };
-        match args.relay {
-            Some(r) => {
-                let mut s = RelaySink {
-                    inner: &mut watch_sink,
-                    relay: r,
-                };
-                spawn_pty_turn(&cmd, pargs, opts, &mut s)
+        // 감시 루프는 **이 시도의 자리**(`self.watch`, `bind_live(Some)` 가 새로 만든 것)와 띄우는 자리에서 지은 감시 목록
+        // (`args.notice`)을 받아 PTY 옆에서 돈다.
+        let inner = &mut self.inner;
+        run_beside(&watch, &args.notice, self.watch_loop.as_ref(), || {
+            let mut delivered_sink = DeliveredSink { inner, delivered };
+            let mut watch_sink = WatchSink {
+                inner: &mut delivered_sink,
+                watch: watch.clone(),
+                now_ms: &now,
+            };
+            match args.relay {
+                Some(r) => {
+                    let mut s = RelaySink {
+                        inner: &mut watch_sink,
+                        relay: r,
+                    };
+                    spawn_pty_turn(&cmd, pargs, opts, &mut s)
+                }
+                None => spawn_pty_turn(&cmd, pargs, opts, &mut watch_sink),
             }
-            None => spawn_pty_turn(&cmd, pargs, opts, &mut watch_sink),
-        }
+        })
     }
 
     fn outcome(
