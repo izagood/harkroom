@@ -42,6 +42,7 @@ pub mod memory_cache;
 pub mod memory_pin;
 pub mod mention_admit;
 pub mod mention_admit_deps;
+pub mod mention_body;
 pub mod mention_call;
 pub mod mention_clients;
 pub mod mention_deps;

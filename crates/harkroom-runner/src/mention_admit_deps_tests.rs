@@ -366,3 +366,30 @@ fn thread_launcher_runs_each_mention_and_clears_its_pending_fence() {
         !slots.has_pending_fence("m1") && !slots.has_pending_fence("boom")
     }));
 }
+
+/// security nit(#2088): 잡은 뒤 띄우지 않고 놓으면(자리 없음 등) 그 칸도 빠진다 — 놓기·Drop 둘 다.
+#[test]
+fn releasing_without_launch_drops_that_cell() {
+    let l = link();
+    let c = clients(l);
+    let tc = claims(&c);
+    let mut got = Launched::default();
+    let mut deps = LinkAdmitDeps::new(&c, &tc, MentionSlots::default(), now, &mut got);
+    let ClaimHold::Held(claim) = deps.hold_claim("c", "root") else {
+        panic!("잡혀야 한다")
+    };
+    assert_eq!(deps.cell_count(), 1);
+    claim.release();
+    assert_eq!(deps.cell_count(), 0, "놓으면 뺀다");
+    let ClaimHold::Held(claim) = deps.hold_claim("c", "root") else {
+        panic!("잡혀야 한다")
+    };
+    drop(claim);
+    assert_eq!(deps.cell_count(), 0, "떨어지면 뺀다");
+    // 띄운 뒤 놓아도 새로 선 같은 열쇠의 칸은 건드리지 않는다.
+    let ClaimHold::Held(first) = deps.hold_claim("c", "root") else {
+        panic!("잡혀야 한다")
+    };
+    deps.launch(launch_of("m1", Some(first)));
+    assert_eq!(deps.cell_count(), 0, "띄우면 꺼낸다");
+}
