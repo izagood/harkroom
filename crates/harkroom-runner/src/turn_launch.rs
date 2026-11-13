@@ -59,8 +59,11 @@ pub enum Launched<O> {
 #[derive(Debug, PartialEq, Eq)]
 pub struct LaunchReport<O> {
     pub launched: Launched<O>,
-    /// 턴 열쇠를 실제로 맡겼다(정본 `turnKeysRegistered`) — 턴 끝에 거둘지 정한다.
+    /// 턴 열쇠를 실제로 맡겼다(정본 `turnKeysRegistered`).
     pub turn_keys_registered: bool,
+    /// `prepare` 를 **부른** 단계(성공·실패 모두). 턴 끝 [`release_launch`] 가 이것으로 거둔다 — 실패한 단계도 넣는다:
+    /// 서버가 열쇠를 받고 응답만 놓쳤거나 비밀이 반쯤 마운트됐을 수 있다(#2012 security ⑤).
+    pub attempted: Vec<LaunchStep>,
 }
 
 /// 정본 스폰 구간. `gate` 는 매번 지금의 수명·중단 상태로 [`spawn_gate`](crate::turn_probe_records::spawn_gate)를
@@ -76,6 +79,7 @@ pub fn launch<I: LaunchIo>(
         (plan.lane_keys, LaunchStep::LaneKeys),
     ];
     let mut turn_keys_registered = false;
+    let mut attempted = Vec::new();
     for (on, step) in steps {
         if !on {
             continue;
@@ -84,12 +88,15 @@ pub fn launch<I: LaunchIo>(
             return LaunchReport {
                 launched: Launched::Blocked(b),
                 turn_keys_registered,
+                attempted,
             };
         }
+        attempted.push(step);
         if io.prepare(step).is_err() {
             return LaunchReport {
                 launched: Launched::SetupFailed(step),
                 turn_keys_registered,
+                attempted,
             };
         }
         if step == LaunchStep::TurnKeys {
@@ -100,12 +107,36 @@ pub fn launch<I: LaunchIo>(
         return LaunchReport {
             launched: Launched::Blocked(b),
             turn_keys_registered,
+            attempted,
         };
     }
     LaunchReport {
         launched: Launched::Ran(io.spawn()),
         turn_keys_registered,
+        attempted,
     }
+}
+
+/// 준비 단계에서 받은 것을 거두는 일(정본 `settle` 의 `revokeTurnKeys`·`provider_env_done`·마운트 해제).
+pub trait LaunchRelease {
+    /// 단계 하나를 거둔다. **없는 것에도 무해해야 한다** — 맡기기·받기가 실패한 단계도 부른다.
+    fn release(&mut self, step: LaunchStep) -> Result<(), String>;
+}
+
+/// 턴 끝 정리 — [`LaunchReport::attempted`] 의 단계를 **거꾸로**(lane 키 → 비밀 → 턴 열쇠) 모두 거둔다.
+///
+/// [`Launched`] 의 갈래(`Ran`·`Blocked`·`SetupFailed`)와 상관없이 부른다(#2012 security ⑥) — 비밀을 받은 뒤 막히거나
+/// 다음 단계가 실패해도 마운트·lane 키가 남지 않는다. 한 단계가 실패해도 나머지를 계속 거두고, 실패한 단계 이름만
+/// 돌려준다(로그에는 단계 이름만, 오류 원문·값은 싣지 않는다).
+pub fn release_launch(attempted: &[LaunchStep], io: &mut impl LaunchRelease) -> Vec<LaunchStep> {
+    let mut failed = Vec::new();
+    for &step in attempted.iter().rev() {
+        if io.release(step).is_err() {
+            eprintln!("[mentionTurn] 턴 끝 정리 실패 — {step:?}(나머지는 계속 거둔다)");
+            failed.push(step);
+        }
+    }
+    failed
 }
 
 /// 턴 끝에 턴 열쇠를 가릴 **모든** 기록 경로(정본 `[transcript, ...(preassigns && !pi && !omp ? [dirname/sessionId] : [])]`).
