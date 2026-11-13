@@ -114,3 +114,31 @@ fn unsafe_agent_axis_also_falls_back() {
     assert_eq!(got.source, src(AxisSource::Agent, AxisSource::Agent));
     assert_eq!(lines.len(), 1);
 }
+
+/// security #2094 nit: 정의 쪽 값도 모양을 거른다 — `-` 로 시작하는 값은 다른 플래그가 되므로 비우고 로그를 남긴다(값은 싣지 않는다).
+#[test]
+fn definition_values_are_filtered_too() {
+    let mut logs = Vec::new();
+    let got = resolve_turn_model(
+        None::<fn(&str) -> Result<Value, String>>,
+        Some("--dangerously-skip-permissions"),
+        Some("high"),
+        None,
+        &mut |l| logs.push(l),
+    );
+    assert_eq!(got.model, None);
+    assert_eq!(got.effort.as_deref(), Some("high"));
+    assert_eq!(logs.len(), 1);
+    assert!(!logs[0].contains("dangerously"), "값은 로그에 싣지 않는다");
+    let ok = resolve_turn_model(
+        None::<fn(&str) -> Result<Value, String>>,
+        Some("opus"),
+        Some("high"),
+        None,
+        &mut |_| {},
+    );
+    assert_eq!(
+        (ok.model.as_deref(), ok.effort.as_deref()),
+        (Some("opus"), Some("high"))
+    );
+}
