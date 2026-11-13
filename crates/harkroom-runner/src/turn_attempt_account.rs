@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use crate::account_assign::ClaudeAccount;
+use crate::account_assign::{ClaudeAccount, ClaudePoolLane};
 use crate::turn_attempt_live::LiveTurn;
 use crate::turn_attempt_run::OwnedHomes;
 use crate::turn_command::TurnCommandOptions;
@@ -58,6 +58,37 @@ impl AttemptAccount {
             codex_home: codex_home.map(Path::to_path_buf),
         }
     }
+}
+
+/// 계정 축의 지금 모습(정본 `LiveLaneValue` 중 칩이 보는 몫).
+#[derive(Clone, Debug, Default)]
+pub struct LaneSnapshot {
+    /// 기동 때 정한 lane 의 풀(계정이 풀을 모를 때 쓴다).
+    pub pool: Option<String>,
+    /// 이 러너의 풀 순서.
+    pub chain: Vec<ClaudePoolLane>,
+    /// 지금 계정 축.
+    pub lane: Vec<Option<ClaudeAccount>>,
+}
+
+/// 칩 순번(정본 `accountRanks`) — **이름은 내지 않는다**(칩 ②, #1039). `(계정 순번, 풀 순번)`:
+/// 계정 순번은 `Some(None)` = 기본 로그인(계정 없음), `Some(Some(n))` = 그 풀(풀 순서에 없으면 지금 축) 안 n 번째,
+/// `None` = 모른다. 풀 순번은 풀 순서에 있을 때만 `Some(n)`.
+pub fn account_ranks(
+    snap: &LaneSnapshot,
+    account: Option<&ClaudeAccount>,
+) -> (Option<Option<u32>>, Option<u32>) {
+    let Some(a) = account else {
+        return (Some(None), None);
+    };
+    let pool = a.pool.as_ref().or(snap.pool.as_ref());
+    let idx = pool.and_then(|p| snap.chain.iter().position(|c| &c.pool == p));
+    let at = match idx {
+        Some(i) => snap.chain[i].accounts.iter().position(|x| x.name == a.name),
+        None => snap.lane.iter().flatten().position(|x| x.name == a.name),
+    };
+    let to_rank = |i: usize| u32::try_from(i + 1).ok();
+    (at.and_then(to_rank).map(Some), idx.and_then(to_rank))
 }
 
 /// 지금 시도의 [`LiveTurn`] 을 가리키는 손잡이 — 신호를 받는 쪽이 복제해 쥔다. **멘션 하나에 하나**(`run_one` 한 번)다.
