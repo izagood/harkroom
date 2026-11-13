@@ -20,15 +20,13 @@ use crate::turn_launch::{LaunchIo, LaunchRelease, LaunchStep};
 /// 하네스 env 에 얹을 lane 키(이름 → 값). 값이 들어 있다 — 찍지 않는다.
 pub type LaneEnv = BTreeMap<String, String>;
 
-/// `launch` 가 받은 lane env 를 `release` 가 거둘 수 있게 함께 쥐는 칸. 마운트 뒤 실패했는지도 함께 적는다.
+/// `launch` 가 받은 lane env 를 `release` 가 거둘 수 있게 함께 쥐는 칸.
 #[derive(Clone, Default)]
 pub struct LaneSlot(Rc<RefCell<LaneState>>);
 
 #[derive(Default)]
 struct LaneState {
     env: Option<LaneEnv>,
-    /// 오퍼레이터가 마운트한 뒤 검증·턴 파일에서 실패했다 — 키 파일이 임대 디렉터리에 남아 있을 수 있다.
-    mounted_then_failed: bool,
 }
 
 impl LaneSlot {
@@ -41,12 +39,6 @@ impl LaneSlot {
     fn get(&self) -> Option<LaneEnv> {
         self.0.borrow().env.clone()
     }
-    fn note_mounted_then_failed(&self) {
-        self.0.borrow_mut().mounted_then_failed = true;
-    }
-    fn take_mounted_then_failed(&self) -> bool {
-        std::mem::take(&mut self.0.borrow_mut().mounted_then_failed)
-    }
 }
 
 /// 실패 원인을 **로컬 로그에만** 남긴다(서버·글로는 단계 코드만 간다). 값은 원인 문구에 들지 않는다 — 경로·상태 코드뿐.
@@ -55,7 +47,24 @@ fn log_local(what: &str, detail: &dyn std::fmt::Display) {
 }
 
 /// 비밀 임대 마운트·끝내기(한 번만 쓰는 닫개).
-pub type SecretsMount<'a> = Box<dyn FnOnce() -> Result<(), String> + 'a>;
+pub type SecretsMount<'a> = Box<dyn FnOnce() -> Result<(), SecretMountError> + 'a>;
+
+/// 비밀 마운트 실패(#2018 security ⑧). **꼴로 막는다** — 접힌 코드와 경로만 담을 수 있어 비밀 값·이름이 문구에 들어갈
+/// 자리가 없다. 로컬 로그에만 찍힌다.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SecretMountError {
+    pub code: &'static str,
+    pub path: Option<std::path::PathBuf>,
+}
+
+impl std::fmt::Display for SecretMountError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.path {
+            Some(p) => write!(f, "{} ({})", self.code, p.display()),
+            None => f.write_str(self.code),
+        }
+    }
+}
 pub type SecretsEnd<'a> = Box<dyn FnOnce() + 'a>;
 /// 하네스 띄우기 — lane env(없으면 빈 것)를 받아 끝까지 돈다.
 pub type SpawnFn<'a, O> = Box<dyn FnOnce(LaneEnv) -> O + 'a>;
@@ -104,11 +113,8 @@ impl<L: RunnerLink, O> LaunchIo for RestLaunch<'_, L, O> {
                     }
                     // 서버·글로는 접힌 코드만(턴 연결 nit ⑤). 경로·원인은 로컬 로그로만.
                     Err(e) => {
+                        // 마운트 뒤 실패여도 키 파일은 턴 끝 임대 끝내기(`RestRelease::end_lease`)가 거둔다.
                         log_local("lane 키", &e.local_detail());
-                        if e.after_mount() {
-                            // 키 파일이 오퍼레이터 임대 디렉터리에 있을 수 있다 — 턴 끝에 그 임대를 끝낸다.
-                            self.lane_slot.note_mounted_then_failed();
-                        }
                         Err(e.lane_code().unwrap_or("lane_file").to_string())
                     }
                 }
@@ -132,10 +138,18 @@ pub struct RestRelease<'a, L: RunnerLink> {
     pub turn_id: String,
     pub lane: Option<&'a ProviderLane>,
     pub lane_slot: LaneSlot,
-    pub end_secrets: Option<SecretsEnd<'a>>,
-    /// 마운트 뒤 실패한 lane 의 임대를 끝낸다(오퍼레이터가 임대 디렉터리째 지운다). 비밀 단계를 거치지 않은 턴에도
-    /// 키 파일이 남지 않게 lane 거두기가 직접 부른다. 한 번만 쓴다.
-    pub end_lane_mount: Option<SecretsEnd<'a>>,
+    /// 이 턴의 임대를 끝낸다(정본 `secretLeases.release` → 오퍼레이터가 임대 디렉터리째 지운다). 비밀·lane 단계 중
+    /// 하나라도 **시도했으면** 갈래·성패와 상관없이 한 번 부른다(#2018 security ⑦) — 응답을 놓쳤지만 실제로는 마운트된
+    /// 경우, lane 은 성공했는데 비밀 단계가 없는 턴까지 덮는다. 오퍼레이터는 두 번째 끝내기에 무동작이다.
+    pub end_lease: Option<SecretsEnd<'a>>,
+}
+
+impl<L: RunnerLink> RestRelease<'_, L> {
+    fn end_lease_once(&mut self) {
+        if let Some(f) = self.end_lease.take() {
+            f();
+        }
+    }
 }
 
 impl<L: RunnerLink> LaunchRelease for RestRelease<'_, L> {
@@ -147,17 +161,11 @@ impl<L: RunnerLink> LaunchRelease for RestRelease<'_, L> {
                 "turn_keys".to_string()
             }),
             LaunchStep::Secrets => {
-                if let Some(f) = self.end_secrets.take() {
-                    f();
-                }
+                self.end_lease_once();
                 Ok(())
             }
             LaunchStep::LaneKeys => {
-                if self.lane_slot.take_mounted_then_failed()
-                    && let Some(f) = self.end_lane_mount.take()
-                {
-                    f();
-                }
+                self.end_lease_once();
                 // 받은 env 가 없으면(마운트 실패·두 번째 부름) 지울 턴 파일이 없다.
                 let (Some(lane), Some(env)) = (self.lane, self.lane_slot.take()) else {
                     return Ok(());
