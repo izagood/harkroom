@@ -8,6 +8,7 @@ import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
 import { postMessage, INBOX_PAGE_LIMIT } from '../src/services/messages.js';
 import { refreshThreadStatus } from '../src/services/threadStatus.js';
+import { brotliDecompressSync, gunzipSync } from 'node:zlib';
 
 let app: FastifyInstance;
 let stop: () => Promise<void>;
@@ -93,6 +94,24 @@ describe('GET /inbox 상한(A1)', () => {
   it('보드는 여전히 inbox 전부를 받는다', async () => {
     const res = await app.inject({ method: 'GET', url: '/inbox/board', headers: auth(adminToken) });
     expect((res.json().entries as unknown[]).length).toBeGreaterThan(INBOX_PAGE_LIMIT);
+  });
+
+  // 2026-11-13: 큰 보드는 받을 수 있으면 압축해 보낸다 — 풀면 압축 안 한 응답과 같은 JSON 이다.
+  it('보드는 Accept-Encoding 에 맞춰 br·gzip 으로 압축되고, 풀면 같은 몸통이다', async () => {
+    const plain = await app.inject({ method: 'GET', url: '/inbox/board', headers: auth(adminToken) });
+    expect(plain.headers['content-encoding']).toBeUndefined();
+    expect(plain.headers.vary).toMatch(/accept-encoding/i);
+    for (const [coding, unpack] of [['br', brotliDecompressSync], ['gzip', gunzipSync]] as const) {
+      const res = await app.inject({
+        method: 'GET', url: '/inbox/board', headers: { ...auth(adminToken), 'accept-encoding': coding },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-encoding']).toBe(coding);
+      expect(res.rawPayload.length).toBeLessThan(plain.rawPayload.length);
+      expect(JSON.parse(unpack(res.rawPayload).toString('utf8'))).toEqual(plain.json());
+      // 태그는 몸통 압축과 상관없이 같다 — 압축한 판에도 304 가 난다.
+      expect(res.headers.etag).toBe(plain.headers.etag);
+    }
   });
 });
 

@@ -6,7 +6,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { InboxEntry, InboxThreadState, MessageRow } from '@harkroom/shared';
 import { useActiveStore as useAppStore } from '../src/state/communities';
-import { BADGE_REFRESH_MS, Controller, OWN_ACTION_WINDOW_MS } from '../src/state/controller';
+import { BADGE_REFRESH_MS, BOARD_TRAILING_MS, Controller, OWN_ACTION_WINDOW_MS } from '../src/state/controller';
 import { buildBoard, mineCount } from '../src/lib/inboxBoard';
 import { fakeApi, fakeWsFactory, msg } from './helpers/fakeApi';
 
@@ -135,6 +135,7 @@ describe('보드와 배지가 조회 하나를 나눈다 (#1076 후속)', () => 
   });
 
   it('도는 중에 또 부르면 같은 약속을 받고, 끝난 뒤 한 번 더 받아 새 재료로 풀린다', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     const t0 = new Date(Date.now() - HOUR).toISOString();
     let n = 0;
     let release: (() => void) | null = null;
@@ -148,10 +149,70 @@ describe('보드와 배지가 조회 하나를 나눈다 (#1076 후속)', () => 
     const second = c.loadInboxBoard();
     expect(second).toBe(first);
     release!();
+    await vi.advanceTimersByTimeAsync(BOARD_TRAILING_MS);
     const got = await second;
     // 처음 것 + 도는 동안 부른 것의 뒤따름 하나 = 둘. 셋째는 없다.
     expect(fn.mock.calls.length).toBe(calls + 2);
     expect(got.entries[0]!.id).toBe(n);
+  });
+
+  // 2026-11-13: 큰 보드는 한 판이 수 MB·수 초다. 끝나자마자 다시 받으면 거의 늘 두 판이 연달아 나갔다.
+  it('뒤따름은 BOARD_TRAILING_MS 모은 뒤 한 번이고, 모으는 동안 온 신호도 그 한 번에 접힌다', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    const t0 = new Date(Date.now() - HOUR).toISOString();
+    let n = 0;
+    let release: (() => void) | null = null;
+    const { c, api, changed } = await boot(() => ({ entries: [entry(++n, 'r1', t0)], threads: [head('r1')], threadStates: [] }));
+    await vi.waitFor(() => expect(useAppStore.getState().inboxBoardRevision).toBe(1));
+    const fn = api.inboxBoard as ReturnType<typeof vi.fn>;
+    const calls = fn.mock.calls.length;
+    const original = fn.getMockImplementation()!;
+    fn.mockImplementationOnce(async () => { await new Promise<void>((r) => { release = r; }); return original(); });
+    const first = c.loadInboxBoard();
+    await changed();
+    release!();
+    // 첫 판은 받자마자 그린다.
+    await vi.waitFor(() => expect(useAppStore.getState().inboxBoardRevision).toBe(2));
+    expect(fn.mock.calls.length).toBe(calls + 1);
+    // 모으는 동안 신호가 더 와도 조회는 나가지 않는다.
+    for (let i = 0; i < 3; i++) await changed();
+    await vi.advanceTimersByTimeAsync(BOARD_TRAILING_MS - 100);
+    expect(fn.mock.calls.length).toBe(calls + 1);
+    await vi.advanceTimersByTimeAsync(200);
+    await first;
+    expect(fn.mock.calls.length).toBe(calls + 2);
+  });
+
+  it('보드를 여는 순간·내 동작 직후는 모으지 않고 바로 다시 받는다', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    const t0 = new Date(Date.now() - HOUR).toISOString();
+    let release: (() => void) | null = null;
+    const { c, api, changed } = await boot(() => ({ entries: [entry(1, 'r1', t0)], threads: [head('r1')], threadStates: [] }));
+    await vi.waitFor(() => expect(useAppStore.getState().inboxBoardRevision).toBe(1));
+    const fn = api.inboxBoard as ReturnType<typeof vi.fn>;
+    const calls = fn.mock.calls.length;
+    const original = fn.getMockImplementation()!;
+    fn.mockImplementationOnce(async () => { await new Promise<void>((r) => { release = r; }); return original(); });
+    const first = c.loadInboxBoard();
+    await changed();
+    release!();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fn.mock.calls.length).toBe(calls + 1);
+    // 모으는 중에 보드가 열린다 → 남은 시간을 기다리지 않고 뒤따름이 나간다.
+    c.setInboxBoardOpen(true);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fn.mock.calls.length).toBe(calls + 2);
+    await first;
+
+    // 내 동작 직후(OWN_ACTION_WINDOW_MS 안)에는 처음부터 모으지 않는다.
+    fn.mockImplementationOnce(async () => { await new Promise<void>((r) => { release = r; }); return original(); });
+    const again = c.loadInboxBoard();
+    await c.reply('봤어요', [], 'c1', 'r1');
+    await changed();
+    release!();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fn.mock.calls.length).toBe(calls + 4);
+    await again;
   });
 
   it('보드가 열면서 부르면 배지도 그 순간 보드와 맞춰진다', async () => {

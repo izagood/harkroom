@@ -18,6 +18,7 @@ import { extractUrls, queueLinkPreviewFetch } from '../services/linkPreview.js';
 import { axisValid, cleanAxis, clearThreadAgentModel, isChannelRoot, setThreadAgentModel } from '../services/threadAgentModels.js';
 import { agentModelInput, announceChange, checkOffered, emitChanged } from './threadAgentModelRoutes.js';
 import type { OperatorHub } from '../ws/operatorHub.js';
+import { sendJsonMaybeCompressed } from './compressBody.js';
 
 /** 서버 기동마다 새 값 — 배포로 보드 응답 모양이 바뀌어도 옛 태그가 304 를 받지 않게 `/inbox/board` ETag 에 섞는다. */
 const BOARD_ETAG_BOOT = randomUUID();
@@ -649,8 +650,8 @@ export async function registerMessageRoutes(app: FastifyInstance, pool: Pool, de
         if (head.body.length > BOARD_COMPACT_BODY_CHARS) head.body = Array.from(head.body).slice(0, BOARD_COMPACT_BODY_CHARS).join('');
       }
     }
-    const body = JSON.stringify({ entries, threads, threadStates, truncated });
-    return reply.type('application/json; charset=utf-8').send(body);
+    // 큰 계정에서 한 판이 수 MB다 — 받을 수 있으면 압축해 보낸다(`compressBody.ts`).
+    return sendJsonMaybeCompressed(req, reply, JSON.stringify({ entries, threads, threadStates, truncated }));
   });
 
   /**
