@@ -8,13 +8,17 @@
 //! 재시도·계정 전환으로 같은 멘션이 다시 돌면 장부의 답을 그대로 쓴다 — 서버는 멘션당 한 번만 주고 끝난 멘션의 재청은 409
 //! `lease_used` 다. 그래서 [`LinkHooks`] 의 `Drop` 은 **패닉 풀림 중일 때만** 놓는다 — 정상 길에서 놓을지는 결말(`settle`)이 정한다.
 
-use std::collections::HashMap;
-use std::sync::Mutex;
+use std::collections::{BTreeSet, HashMap};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use crate::link::LinkClient;
 use crate::mention_deps::MentionHooks;
 use crate::mention_settle::LeaseState;
 use crate::rest::TurnLease;
+use crate::secret_scrub::{scrub_file, scrub_needles};
+use crate::turn_io::Timer;
 
 /// 스케줄러가 쥔 일.
 pub trait SchedulerHooks {
@@ -50,24 +54,116 @@ pub enum Booked {
     Declined,
 }
 
-/// 러너 수명의 턴 임대 장부(정본 `secretLeases` 의 `held`) — 멘션 id → 받은 답. 토큰·임대 id 는 적지 않는다.
-/// 409·무응답은 적지 않는다(다음 시도가 다시 묻는다).
+/// 받은 임대의 수명 재료(정본 `secretLeases` 의 `beat`·`turnSecretsDir`).
+pub struct LeaseLife {
+    /// 박동 — 오퍼레이터에 임대 늘리기를 청한다(실물 `LinkClient::notify_secret_lease_heartbeat`). 실패는 다음 박동이 받는다.
+    pub beat: Arc<dyn Fn(&str) + Send + Sync>,
+    /// 박동 간격(정본 `LEASE_HEARTBEAT_MS` 4분 — 서버 갱신 폭 10분의 절반 아래).
+    pub every: Duration,
+    /// 오퍼레이터의 턴 비밀 폴더 뿌리 — `<뿌리>/<임대 id>/` 의 값으로 가림 바늘을 짓는다(정본 `needlesOf`).
+    pub secrets_dir: Option<PathBuf>,
+}
+
+/// 정본 `LEASE_HEARTBEAT_MS`.
+pub const LEASE_HEARTBEAT: Duration = Duration::from_secs(4 * 60);
+
+/// 장부 한 칸 — 답, 박동 시계, 임대 id(바늘 짓기용, 토큰 아님), 이 멘션이 쓴 기록 파일.
+struct Entry {
+    booked: Booked,
+    /// 받은 임대에만 선다. 칸이 빠지면(놓기·패닉 풀림) 떨어지며 멈춘다(`Timer` 의 Drop).
+    beat: Option<Timer>,
+    lease_id: Option<String>,
+    transcripts: BTreeSet<PathBuf>,
+}
+
+/// 러너 수명의 턴 임대 장부(정본 `secretLeases` 의 `held`) — 멘션 id → 받은 답. 토큰은 적지 않는다.
+/// 409·무응답은 적지 않는다(다음 시도가 다시 묻는다). 수명 재료([`LeaseLife`])가 있으면 받은 임대마다 박동을 걸고, 놓을 때
+/// 이 멘션의 기록을 **가린 뒤** 끝을 알린다(정본 `release`: `scrub(h)` → `notifyEnded`).
 #[derive(Default)]
-pub struct LeaseBook(Mutex<HashMap<String, Booked>>);
+pub struct LeaseBook {
+    map: Mutex<HashMap<String, Entry>>,
+    life: Option<LeaseLife>,
+}
 
 impl LeaseBook {
-    fn map(&self) -> std::sync::MutexGuard<'_, HashMap<String, Booked>> {
+    pub fn with_life(life: LeaseLife) -> Self {
+        Self {
+            map: Mutex::default(),
+            life: Some(life),
+        }
+    }
+    fn map(&self) -> std::sync::MutexGuard<'_, HashMap<String, Entry>> {
         // 맵 조작 도중 패닉하지 않는다 — 독이 들어도 값은 쓸 만하다(놓기를 멈추면 임대가 남는다).
-        self.0.lock().unwrap_or_else(|p| p.into_inner())
+        self.map.lock().unwrap_or_else(|p| p.into_inner())
     }
     pub fn get(&self, cause: &str) -> Option<Booked> {
-        self.map().get(cause).copied()
+        self.map().get(cause).map(|e| e.booked)
     }
-    fn put(&self, cause: &str, b: Booked) {
-        self.map().insert(cause.to_string(), b);
+    fn put(&self, cause: &str, b: Booked, lease_id: Option<&str>) {
+        let beat = match (b, &self.life) {
+            (Booked::Held, Some(l)) => {
+                let (f, c) = (Arc::clone(&l.beat), cause.to_string());
+                Some(Timer::every(l.every, move || {
+                    f(&c);
+                    true
+                }))
+            }
+            _ => None,
+        };
+        self.map().insert(
+            cause.to_string(),
+            Entry {
+                booked: b,
+                beat,
+                lease_id: lease_id.map(str::to_string),
+                transcripts: BTreeSet::new(),
+            },
+        );
     }
-    fn take(&self, cause: &str) -> Option<Booked> {
-        self.map().remove(cause)
+    /// 이 멘션의 턴이 쓴 기록 파일을 적는다(정본 `noteTranscript`) — 놓을 때 가린다. 장부에 없는 멘션이면 버린다.
+    pub fn note_transcript(&self, cause: &str, path: PathBuf) {
+        if let Some(e) = self.map().get_mut(cause) {
+            e.transcripts.insert(path);
+        }
+    }
+    /// 칸을 빼고(박동은 여기서 멈춘다) 받은 임대였으면 기록을 가린다. 끝 알림을 보낼지(`Held` 였나) 돌려준다.
+    fn release(&self, cause: &str) -> bool {
+        let Some(mut e) = self.map().remove(cause) else {
+            return false;
+        };
+        drop(e.beat.take());
+        if e.booked != Booked::Held {
+            return false;
+        }
+        self.scrub(&e);
+        true
+    }
+    /// 정본 `scrub` — 임대 폴더의 값으로 바늘을 짓고 적어 둔 기록을 가린다. 실패는 로컬 로그(경로·건수만)이고 끝 알림을 막지 않는다.
+    fn scrub(&self, e: &Entry) {
+        let (Some(root), Some(id)) = (
+            self.life.as_ref().and_then(|l| l.secrets_dir.as_ref()),
+            e.lease_id.as_deref(),
+        ) else {
+            return;
+        };
+        if e.transcripts.is_empty() || id.contains('/') || id.contains("..") {
+            return;
+        }
+        let needles = lease_needles(&root.join(id));
+        if needles.is_empty() {
+            return;
+        }
+        for path in &e.transcripts {
+            match scrub_file(path, &needles) {
+                Ok(0) => {}
+                Ok(n) => eprintln!("[secretLeases] {}: 비밀 값 {n}곳을 가렸다", path.display()),
+                Err(err) => eprintln!(
+                    "[secretLeases] 기록 가리기 실패({}) — {:?}",
+                    path.display(),
+                    err.kind()
+                ),
+            }
+        }
     }
     pub fn len(&self) -> usize {
         self.map().len()
@@ -75,6 +171,23 @@ impl LeaseBook {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+}
+
+/// 임대 폴더의 값들로 바늘(긴 것부터). 값은 이 함수 밖으로 나가지 않는다 — 바늘만.
+fn lease_needles(dir: &std::path::Path) -> Vec<String> {
+    let mut set = BTreeSet::new();
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for ent in rd.flatten() {
+            if ent.file_type().is_ok_and(|t| t.is_file())
+                && let Ok(v) = std::fs::read(ent.path())
+            {
+                set.extend(scrub_needles(&v));
+            }
+        }
+    }
+    let mut v: Vec<String> = set.into_iter().collect();
+    v.sort_by_key(|s| std::cmp::Reverse(s.len()));
+    v
 }
 
 /// [`MentionHooks`] 실물.
@@ -110,8 +223,9 @@ impl<'a, O: LeaseHandoff, S: SchedulerHooks> LinkHooks<'a, O, S> {
 
     /// 장부에서 지우고, 받은 임대였으면 끝을 알린다(정본 `release` — 거절이었으면 알릴 것이 없다).
     fn end(&mut self) {
+        // 박동 멈춤 → 기록 가리기 → 끝 알림(정본 차례).
         if let Some(cause) = self.cause.take()
-            && self.book.take(&cause) == Some(Booked::Held)
+            && self.book.release(&cause)
         {
             self.operator.lease_ended(&cause);
         }
@@ -133,12 +247,12 @@ impl<O: LeaseHandoff, S: SchedulerHooks> MentionHooks for LinkHooks<'_, O, S> {
     fn lease_issued(&mut self, cause: &str, lease: TurnLease) {
         self.operator
             .lease(cause, &lease.id, &lease.token, &lease.expires_at);
-        self.book.put(cause, Booked::Held);
+        self.book.put(cause, Booked::Held, Some(&lease.id));
         self.cause = Some(cause.to_string());
         self.log("턴 임대를 받아 오퍼레이터에 맡겼다");
     }
     fn lease_declined(&mut self, cause: &str) {
-        self.book.put(cause, Booked::Declined);
+        self.book.put(cause, Booked::Declined, None);
         self.cause = Some(cause.to_string());
     }
     fn release_lease(&mut self) {

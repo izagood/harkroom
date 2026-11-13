@@ -147,3 +147,126 @@ fn declined_is_booked_and_release_sends_nothing() {
     assert!(op.ended.borrow().is_empty());
     assert!(book.is_empty());
 }
+
+fn lease_of(id: &str) -> TurnLease {
+    TurnLease {
+        id: id.into(),
+        token: "tok".into(),
+        expires_at: "x".into(),
+    }
+}
+
+fn beating_book(
+    count: Arc<std::sync::atomic::AtomicU32>,
+    secrets_dir: Option<PathBuf>,
+) -> LeaseBook {
+    LeaseBook::with_life(LeaseLife {
+        beat: Arc::new(move |_c: &str| {
+            count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }),
+        every: Duration::from_millis(5),
+        secrets_dir,
+    })
+}
+
+/// security C6 전 필수 ①: 박동은 받은 임대에 걸리고, 결말(놓기)에서 멈춘다.
+#[test]
+fn heartbeat_runs_while_held_and_stops_on_release() {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    let n = Arc::new(AtomicU32::new(0));
+    let book = beating_book(n.clone(), None);
+    let op = Operator::default();
+    let mut h = LinkHooks::new(&op, &book, Sched::default(), "k".into(), || 1);
+    h.lease_issued("m1", lease_of("l1"));
+    std::thread::sleep(Duration::from_millis(60));
+    assert!(n.load(Ordering::SeqCst) >= 2, "쥔 동안 박동");
+    h.release_lease();
+    let after = n.load(Ordering::SeqCst);
+    std::thread::sleep(Duration::from_millis(60));
+    assert_eq!(n.load(Ordering::SeqCst), after, "놓은 뒤에는 멈춘다");
+    assert_eq!(*op.ended.borrow(), vec!["m1".to_string()]);
+}
+
+/// 거절된 멘션에는 박동을 걸지 않고 끝 알림도 없다.
+#[test]
+fn declined_has_no_heartbeat_and_no_end() {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    let n = Arc::new(AtomicU32::new(0));
+    let book = beating_book(n.clone(), None);
+    let op = Operator::default();
+    let mut h = LinkHooks::new(&op, &book, Sched::default(), "k".into(), || 1);
+    h.lease_declined("m1");
+    std::thread::sleep(Duration::from_millis(30));
+    h.release_lease();
+    assert_eq!(n.load(Ordering::SeqCst), 0);
+    assert!(op.ended.borrow().is_empty());
+}
+
+/// 패닉 풀림에서도 박동이 멈춘다(가드).
+#[test]
+fn heartbeat_stops_on_panic_unwind() {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    let n = Arc::new(AtomicU32::new(0));
+    let book = beating_book(n.clone(), None);
+    let op = Operator::default();
+    let r = catch_unwind(AssertUnwindSafe(|| {
+        let mut h = LinkHooks::new(&op, &book, Sched::default(), "k".into(), || 1);
+        h.lease_issued("m1", lease_of("l1"));
+        panic!("멘션 도중 패닉");
+    }));
+    assert!(r.is_err());
+    let after = n.load(Ordering::SeqCst);
+    std::thread::sleep(Duration::from_millis(60));
+    assert_eq!(n.load(Ordering::SeqCst), after, "패닉 뒤 박동 없음");
+    assert!(book.is_empty());
+}
+
+/// 끝 알림 때 기록을 읽는 오퍼레이터 — 그 순간 기록이 이미 가려졌는지 본다.
+struct CheckingOperator {
+    transcript: PathBuf,
+    secret: String,
+    masked_at_end: RefCell<Option<bool>>,
+}
+impl LeaseHandoff for CheckingOperator {
+    fn lease(&self, _c: &str, _l: &str, _t: &str, _e: &str) {}
+    fn lease_ended(&self, _cause: &str) {
+        let body = std::fs::read_to_string(&self.transcript).unwrap();
+        *self.masked_at_end.borrow_mut() = Some(!body.contains(&self.secret));
+    }
+}
+
+/// security C6 전 필수 ②(D7): 결말에서 이 멘션의 기록을 **가린 뒤** 끝을 알린다.
+#[test]
+fn records_are_scrubbed_before_the_end_notice() {
+    let root = std::env::temp_dir().join(format!("hk-lease-d7-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let secret = "supersecretvalue-0123456789";
+    let lease_dir = root.join("secrets").join("l1");
+    std::fs::create_dir_all(&lease_dir).unwrap();
+    std::fs::write(lease_dir.join("db-pass"), secret).unwrap();
+    let transcript = root.join("t.jsonl");
+    std::fs::write(&transcript, format!("{{\"echo\":\"{secret}\"}}\n")).unwrap();
+
+    let n = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let book = beating_book(n, Some(root.join("secrets")));
+    let op = CheckingOperator {
+        transcript: transcript.clone(),
+        secret: secret.into(),
+        masked_at_end: RefCell::new(None),
+    };
+    let mut h = LinkHooks::new(&op, &book, Sched::default(), "k".into(), || 1);
+    h.lease_issued("m1", lease_of("l1"));
+    book.note_transcript("m1", transcript.clone());
+    h.release_lease();
+    assert_eq!(
+        *op.masked_at_end.borrow(),
+        Some(true),
+        "끝 알림 순간 이미 가려짐"
+    );
+    assert!(
+        !std::fs::read_to_string(&transcript)
+            .unwrap()
+            .contains(secret)
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
