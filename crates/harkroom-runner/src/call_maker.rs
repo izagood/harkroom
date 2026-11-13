@@ -270,6 +270,13 @@ where
             home: home.clone(),
             promise,
         });
+        let argv = owned_argv(
+            &key,
+            c.harness,
+            system.read_only,
+            reads.turn_model.model.clone(),
+            reads.turn_model.effort.clone(),
+        );
         let outcome = OutcomeConfig {
             harness: c.harness,
             home,
@@ -313,6 +320,7 @@ where
             p.parent_env = c.parent_env.clone();
             p.slot = b.slot;
             p.watch_loop = Some(b.watch_loop);
+            p.argv = argv;
             p
         });
         CallInputs {
@@ -334,6 +342,38 @@ where
                 pat: &c.pat,
             },
         }
+    }
+}
+
+/// 그 멘션의 명령 칸 소유본(정본 `buildTurnCommand` 의 `model`·`effort`·`readonlyToolList`). 허용 도구·머지 저장소·API 는
+/// 지시문 입력에서 `with_argv` 가 싣는다.
+///
+/// 읽기 전용 목록: 글롭으로 좁히는 하네스(목록 명령이 없는 것)는 묻지 않고 바로 짓는다. 이름을 하네스에게 물어야 하는
+/// 하네스(pi)는 아직 묻는 길이 없어 `None` 으로 둔다 → 그 하네스의 읽기 전용 턴은 `ReadonlyToolListMissing` 으로 **띄우지
+/// 않는다**(닫히는 쪽, security L3d ① — 빈 목록이나 내장 도구만 여는 기본값으로 우회하지 않는다).
+pub fn owned_argv(
+    key: &str,
+    harness: AgentHarness,
+    read_only: bool,
+    model: Option<String>,
+    effort: Option<String>,
+) -> crate::mention_parts::OwnedArgv {
+    let perm = if read_only {
+        MentionPermission::Readonly
+    } else {
+        MentionPermission::Auto
+    };
+    let asks_harness =
+        crate::adapter::readonly_tools_for(harness).is_some_and(|s| s.list.is_some());
+    let readonly_tool_list = if asks_harness {
+        None
+    } else {
+        crate::turn_mcp_plan::turn_readonly_tools(key, harness, perm, |_| None)
+    };
+    crate::mention_parts::OwnedArgv {
+        model,
+        effort,
+        readonly_tool_list,
     }
 }
 

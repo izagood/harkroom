@@ -405,3 +405,112 @@ fn default_login_has_no_account_dir_and_finds_records_in_home() {
     );
     assert_eq!(parts.new_workspace_dir, "/ws/new");
 }
+
+fn argv_system() -> SystemInputs {
+    SystemInputs {
+        handle: "agent".into(),
+        channel_name: "general".into(),
+        instructions: String::new(),
+        guide: String::new(),
+        memory: crate::memory_pin::MemoryContext::Unavailable,
+        read_only: false,
+        turn_budget_ms: None,
+        merge: Some(crate::mention_parts::MergeInputs {
+            operator_bin: "/op".into(),
+            repos: vec!["o/r".into()],
+            approved: vec![],
+        }),
+        permissions: Some(crate::mention_parts::PermissionInputs {
+            tool_allows: vec!["Bash(git status)".into()],
+            ..Default::default()
+        }),
+        api: Some(crate::mention_parts::ApiInputs {
+            operator_bin: "/op".into(),
+            connectors: vec!["conn-1".into()],
+            delegatable: vec!["deleg-1".into()],
+        }),
+        secret_create: false,
+        lane_model: None,
+    }
+}
+
+/// security L3d ①: 명령 칸은 그 멘션의 것 — 허용 도구·머지 저장소·API 는 지시문 입력에서, 모델·effort 는 그 멘션 읽기에서.
+/// 허용 도구가 실제 argv 에 실린다.
+#[test]
+fn argv_carries_this_mentions_tool_allows_repos_api_and_model() {
+    use crate::turn_command::{TurnCommandOptions, build_turn_command};
+    let sys = argv_system();
+    let argv = owned_argv(
+        "c/t",
+        AgentHarness::ClaudeCode,
+        false,
+        Some("opus".into()),
+        Some("high".into()),
+    );
+    let mut base = TurnCommandOptions::new(
+        AgentHarness::ClaudeCode,
+        crate::turn_preset::TurnMode::Mention,
+        MentionPermission::Auto,
+        "/op",
+    );
+    base.mcp_config_path = "/m.json";
+    base.session_id = Some("sid");
+    let o = crate::mention_parts::with_argv(&base, &sys, &argv);
+    assert_eq!(o.tool_allows, ["Bash(git status)".to_string()]);
+    assert_eq!(o.merge_repos, ["o/r".to_string()]);
+    assert_eq!(o.api_connectors, ["conn-1".to_string()]);
+    assert_eq!(o.api_delegatable, ["deleg-1".to_string()]);
+    assert_eq!((o.model, o.effort), (Some("opus"), Some("high")));
+    let plan = build_turn_command(
+        &o,
+        &std::collections::BTreeMap::new(),
+        std::path::Path::new("/h"),
+    )
+    .unwrap();
+    assert!(
+        plan.args.iter().any(|a| a == "Bash(git status)"),
+        "허용 도구가 argv 에 있다: {:?}",
+        plan.args
+    );
+    assert!(plan.args.iter().any(|a| a == "opus"), "모델이 argv 에 있다");
+}
+
+/// security L3d ①: 이름을 하네스에게 물어야 하는 하네스(pi)는 읽기 전용 목록을 아직 못 지어 **띄우지 않는다** — 빈 목록·내장
+/// 도구만 여는 기본값으로 우회하지 않는다. 글롭 하네스(omp)는 묻지 않고 짓는다. 읽기 전용이 아니면 목록은 없다.
+#[test]
+fn readonly_list_is_never_defaulted_to_launch() {
+    use crate::turn_command::{TurnCommandError, TurnCommandOptions, build_turn_command};
+    let argv = owned_argv("c/t", AgentHarness::Pi, true, None, None);
+    assert_eq!(argv.readonly_tool_list, None);
+    let mut base = TurnCommandOptions::new(
+        AgentHarness::Pi,
+        crate::turn_preset::TurnMode::Mention,
+        MentionPermission::Readonly,
+        "/op",
+    );
+    base.mcp_config_path = "/m.json";
+    base.session_id = Some("sid");
+    base.pi_home = Some(std::path::Path::new("/pi"));
+    let mut sys = argv_system();
+    sys.read_only = true;
+    let o = crate::mention_parts::with_argv(&base, &sys, &argv);
+    let r = build_turn_command(
+        &o,
+        &std::collections::BTreeMap::new(),
+        std::path::Path::new("/h"),
+    );
+    assert!(
+        matches!(r, Err(TurnCommandError::ReadonlyToolListMissing(_))),
+        "{:?}",
+        r.err()
+    );
+    assert!(
+        owned_argv("c/t", AgentHarness::Omp, true, None, None)
+            .readonly_tool_list
+            .is_some()
+    );
+    assert_eq!(
+        owned_argv("c/t", AgentHarness::Omp, false, None, None).readonly_tool_list,
+        None
+    );
+}
