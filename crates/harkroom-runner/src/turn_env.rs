@@ -181,15 +181,31 @@ fn gh_rule(rule: &str) -> bool {
     rest.starts_with(|c: char| c.is_whitespace()) || rest == ":*)" || rest == ")"
 }
 
-/// 턴 열쇠 둘(정본 `TurnKeys`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// 턴 열쇠 둘(정본 `TurnKeys`). **`Debug` 는 값을 싣지 않는다**(손으로 짠다).
+#[derive(Clone, PartialEq, Eq)]
 pub struct TurnKeys {
     pub shell: String,
     pub bridge: String,
 }
 
+impl fmt::Debug for TurnKeys {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("TurnKeys(<가림>)")
+    }
+}
+
+/// env 맵을 **이름만** 보인다(값에 lane 키·PAT·턴 열쇠가 든다).
+pub(crate) struct EnvNames<'a>(pub &'a BTreeMap<String, String>);
+
+impl fmt::Debug for EnvNames<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list().entries(self.0.keys()).finish()
+    }
+}
+
 /// 정본 `childEnv` 의 `homes` 인자 + 이 조각에서 턴마다 덮어쓰는 두 값(`gate_file`·`codex_hook_spec`).
-#[derive(Debug, Clone)]
+/// **`Debug` 는 lane env 의 값과 턴 열쇠를 싣지 않는다**(손으로 짠다) — 하네스 env 로만 간다.
+#[derive(Clone)]
 pub struct ChildEnvInput<'a> {
     pub harness: AgentHarness,
     pub codex_home: Option<&'a Path>,
@@ -206,6 +222,16 @@ pub struct ChildEnvInput<'a> {
     pub opencode_turn_config: Option<&'a Path>,
     pub gate_file: Option<&'a Path>,
     pub codex_hook_spec: Option<&'a str>,
+}
+
+impl fmt::Debug for ChildEnvInput<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ChildEnvInput")
+            .field("harness", &self.harness)
+            .field("provider_env", &self.provider_env.map(EnvNames))
+            .field("turn_keys", &self.turn_keys.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl<'a> ChildEnvInput<'a> {

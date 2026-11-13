@@ -34,7 +34,8 @@ pub struct OmpThread<'a> {
 }
 
 /// TS `BuildTurnCommandOptions`. `promptCtx` 는 어느 프리셋도 argv 에 싣지 않아(#117 stdin 파일) 받지 않는다.
-#[derive(Debug, Clone)]
+/// **`Debug` 는 lane env·턴 열쇠·추가 MCP env 의 값을 싣지 않는다**(손으로 짠다).
+#[derive(Clone)]
 pub struct TurnCommandOptions<'a> {
     pub harness: AgentHarness,
     pub mode: TurnMode,
@@ -122,14 +123,52 @@ impl<'a> TurnCommandOptions<'a> {
     }
 }
 
-/// TS `TurnPlan`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// TS `TurnPlan`. `env` 에는 PAT·lane 키·턴 열쇠가 든다 — **`Debug` 는 env 이름만** 보인다(손으로 짠다).
+#[derive(Clone, PartialEq, Eq)]
 pub struct TurnPlan {
     pub command: &'static str,
     pub args: Vec<String>,
     pub env: BTreeMap<String, String>,
     pub stdin_file: Option<PathBuf>,
     pub cwd: Option<PathBuf>,
+}
+
+impl std::fmt::Debug for TurnPlan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TurnPlan")
+            .field("command", &self.command)
+            .field("args", &self.args)
+            .field("env", &crate::turn_env::EnvNames(&self.env))
+            .field("stdin_file", &self.stdin_file)
+            .field("cwd", &self.cwd)
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for TurnCommandOptions<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TurnCommandOptions")
+            .field("harness", &self.harness)
+            .field("mode", &self.mode)
+            .field(
+                "provider_env",
+                &self.provider_env.map(crate::turn_env::EnvNames),
+            )
+            .field("turn_keys", &self.turn_keys.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+impl TurnPlan {
+    /// PTY 로 띄울 계획 — **env 는 하네스 자식 env 로만** 간다(argv·프롬프트·로그에 싣지 않는다).
+    pub fn into_pty_plan(self) -> crate::pty_turn::PtyPlan {
+        crate::pty_turn::PtyPlan {
+            command: self.command.to_string(),
+            args: self.args,
+            env: self.env.into_iter().collect(),
+            stdin_file: self.stdin_file.map(|p| p.to_string_lossy().into_owned()),
+        }
+    }
 }
 
 /// 조립 거절. 하네스·빠진 칸 이름만 싣는다 — 값·경로는 싣지 않는다.
