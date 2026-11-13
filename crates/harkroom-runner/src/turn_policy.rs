@@ -108,6 +108,8 @@ pub struct AttemptError {
     pub not_delivered: Option<NotDelivered>,
     /// API 키 연결 준비 실패의 접힌 코드(정본 `ProviderLaneError`).
     pub lane_code: Option<String>,
+    /// 하네스 실행 파일이 없다(정본 `ExecutableNotFoundError`) — 턴 실패가 아니라 러너가 물러날 일(`before_fail` 이 본다).
+    pub executable_missing: bool,
 }
 
 impl std::fmt::Debug for AttemptError {
@@ -118,6 +120,7 @@ impl std::fmt::Debug for AttemptError {
             .field("marks", &self.marks)
             .field("not_delivered", &self.not_delivered)
             .field("lane_code", &self.lane_code)
+            .field("executable_missing", &self.executable_missing)
             .finish()
     }
 }
