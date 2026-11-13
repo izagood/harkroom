@@ -92,7 +92,7 @@ pub trait AgentLink: RunnerLink + Clone {
     fn operator(&self) -> &Self::Operator;
 }
 
-impl<'l> AgentLink for &'l LinkClient {
+impl AgentLink for &LinkClient {
     type Operator = LinkClient;
     fn operator(&self) -> &LinkClient {
         self

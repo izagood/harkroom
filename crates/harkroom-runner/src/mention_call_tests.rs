@@ -249,6 +249,7 @@ fn plan() -> AfterTurnPlan {
 
 fn quiet(_l: &str) {}
 
+#[allow(clippy::result_large_err)]
 /// 멘션 하나를 호출 자리로 돌린다. `call_after` 면 묶음이 넘긴 after 닫개를 한 번 불러 어느 링크로 가는지 본다.
 fn call<'a>(
     w: &'a World,
