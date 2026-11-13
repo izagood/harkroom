@@ -44,14 +44,14 @@ pub struct AfterData {
 }
 
 /// [`AfterInputs`] 의 소유본 — 보고처 약속은 아직 싣지 않는다(`promise: None`, C5).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct OwnedAfterInputs {
     pub key: String,
     pub me_id: String,
     pub channel_id: String,
     pub anchor: Option<String>,
     pub mention_id: String,
-    pub caller: Option<crate::turn_notice::NudgeCaller>,
+    pub caller: crate::turn_notice::NudgeCaller,
     pub proxy_head: String,
     pub record_proxy: bool,
     pub wake_reason: String,
@@ -68,9 +68,7 @@ impl OwnedAfterInputs {
             channel_id: &self.channel_id,
             anchor: self.anchor.as_deref(),
             mention_id: &self.mention_id,
-            caller: self
-                .caller
-                .unwrap_or(crate::turn_notice::NudgeCaller::Human),
+            caller: self.caller,
             proxy_head: &self.proxy_head,
             record_proxy: self.record_proxy,
             wake_reason: &self.wake_reason,
@@ -195,6 +193,11 @@ pub fn run_mention_call<'a, L, S, H>(
                         return Ok(());
                     }
                 };
+                // 묻기는 이 스레드로 했지만, 섞여 와도 이 스레드 글만 센다(준비 쪽 #2061·#2062 와 짝).
+                let rows: Vec<Value> = rows
+                    .into_iter()
+                    .filter(|m| crate::turn_prepare::in_thread(m, &ch, &root))
+                    .collect();
                 let d = after(a, &rows);
                 let inputs = d.inputs.view();
                 let said = d.last_said;

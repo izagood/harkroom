@@ -27,6 +27,8 @@ const SCREEN_TAIL_MAX: usize = 4096;
 pub struct WatchState {
     pub end: EndState,
     screen: Vec<u8>,
+    /// 지난 탐침 주기에 서버 스레드를 못 읽었다(정본 `end.threadUnreadable`) — 결과 접기가 본다.
+    pub thread_unreadable: bool,
     /// 이 시도의 PTY 손잡이 — 띄운 순간 sink 가 적는다. SIGTERM·Enter 는 이것으로만([`terminate_on_watch`]·[`write_on_watch`]).
     controls: Option<PtyControls>,
 }
@@ -42,6 +44,12 @@ impl std::fmt::Debug for WatchState {
 }
 
 impl WatchState {
+    /// 정지 판정용 화면 꼬리(ANSI 걷은 글). **판정 재료로만** 넘긴다 — 글로 나가는 길은 판정 함수의 가림
+    /// (`stall_screen_line`)을 지난다.
+    pub fn screen_text(&self) -> String {
+        strip_ansi(&decode_tail_text(&self.screen))
+    }
+
     /// 스레드에 올릴 화면 마지막 줄 — `NoticeSecrets` 의 `quoted_line` 만 거친다(비밀·토큰 가림, 다 가려지면 `None`).
     pub fn screen_line_for_post(&self, secrets: &NoticeSecrets) -> Option<String> {
         let text = strip_ansi(&decode_tail_text(&self.screen));
@@ -234,6 +242,7 @@ pub fn run_watch_guarded(
         let reclaimed = {
             let mut w = lock(watch);
             write_back(&mut w.end, &before, snap);
+            w.thread_unreadable = probe.thread_unreadable;
             w.end.reclaimed
         };
         cycles += 1;
