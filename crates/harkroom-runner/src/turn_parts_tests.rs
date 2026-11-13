@@ -137,3 +137,50 @@ fn attempt_command_sets_only_attempt_fields() {
     );
     let _: Option<&Value> = None;
 }
+
+/// security: 시도 명령은 시도 칸을 먼저, 계정 폴더를 마지막에 얹는다 — 기본 옵션에 남은 폴더가 아니라 이 시도 계정의
+/// 폴더가 남고, 계정이 없으면 폴더도 없다. 시도 칸은 그대로 산다.
+#[test]
+fn account_folder_is_applied_last() {
+    let stale = std::path::PathBuf::from("/acct/base-leftover");
+    let mut base = TurnCommandOptions::new(
+        AgentHarness::ClaudeCode,
+        TurnMode::Mention,
+        MentionPermission::Auto,
+        "/bin/op",
+    );
+    base.claude_config_dir = Some(&stale);
+    let rec = SessionRecord {
+        workspace_dir: "/w".into(),
+        session_id: Some("sess-9".into()),
+        harness: AgentHarness::ClaudeCode,
+        last_fed_seq: 0,
+        turns_run: 0,
+        claude_account: None,
+        claude_pool: Some(None),
+        unseen_own_after_seq: None,
+        canceled_by: None,
+    };
+    let session = TurnSession {
+        rec: rec.clone(),
+        stored: rec,
+        fresh_wake: false,
+        is_first_turn: true,
+    };
+    let a2 = AttemptAccount {
+        name: Some("a2".into()),
+        config_dir: Some("/acct/a2".into()),
+        pool: None,
+        calls_for_human: true,
+    };
+    let o = attempt_command_for_account(&base, &a2, &session, "/s/system-prompt.txt", "m1", "t-1");
+    assert_eq!(o.claude_config_dir, Some(std::path::Path::new("/acct/a2")));
+    assert_eq!(o.session_id, Some("sess-9"));
+    assert_eq!(o.system_prompt_file, Some("/s/system-prompt.txt"));
+    let none = AttemptAccount::default();
+    let o = attempt_command_for_account(&base, &none, &session, "/s/p", "m1", "t-1");
+    assert_eq!(
+        o.claude_config_dir, None,
+        "계정 없음이면 폴더 없음 — 기본 폴더가 남지 않는다"
+    );
+}
