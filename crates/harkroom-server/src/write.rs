@@ -24,9 +24,20 @@ pub const REQUIRED_PRIVILEGES: &[(&str, &str)] = &[
     // P4d — 인증 미들웨어의 기록(세션 연장 `RENEW_SESSION`, PAT 사용 시각).
     ("session", "UPDATE"),
     ("pat", "UPDATE"),
+    // P4a — 설정 PUT 둘·스킬 승인/비활성/사용 기록(`writes_settings.rs`).
+    ("agent_defaults", "UPDATE"),
+    ("mention_policy", "INSERT"),
+    ("mention_policy", "UPDATE"),
+    ("workspace_skill", "UPDATE"),
+    ("workspace_skill_usage", "INSERT"),
+    ("builtin_skill_usage", "INSERT"),
 ];
 /// 시퀀스 권한(시퀀스, 권한) — `event_outbox.id` 는 bigserial 이다. `audit_log.id` 는 identity 라 필요 없다.
-pub const REQUIRED_SEQUENCE_PRIVILEGES: &[(&str, &str)] = &[("event_outbox_id_seq", "USAGE")];
+pub const REQUIRED_SEQUENCE_PRIVILEGES: &[(&str, &str)] = &[
+    ("event_outbox_id_seq", "USAGE"),
+    ("workspace_skill_usage_id_seq", "USAGE"),
+    ("builtin_skill_usage_id_seq", "USAGE"),
+];
 
 /// 지금 연결된 역할에 없는 권한. 기동 기록용 — 비어 있어야 정상이다.
 pub async fn missing_privileges(pool: &PgPool) -> Result<Vec<String>, sqlx::Error> {
@@ -342,11 +353,16 @@ mod tests {
         assert_eq!(
             tables.into_iter().collect::<Vec<_>>(),
             [
+                "agent_defaults",
                 "audit_log",
+                "builtin_skill_usage",
                 "event_outbox",
                 "inbox_view_cursor",
+                "mention_policy",
                 "pat",
-                "session"
+                "session",
+                "workspace_skill",
+                "workspace_skill_usage"
             ],
             "넓힐 때는 homelab GRANT 와 이 시험을 같이 고친다"
         );

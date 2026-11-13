@@ -13,3 +13,4 @@ pub mod proxy;
 pub mod routes;
 pub mod schema;
 pub mod write;
+pub mod writes_settings;

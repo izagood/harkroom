@@ -153,15 +153,32 @@ pub struct AuthPools {
     pub write: Option<PgPool>,
 }
 
-/// 읽기와 기록을 같은 풀로 — 시험·도구용. 앞단은 [`resolve_with`] 를 쓴다.
+/// 읽기와 기록을 같은 풀로, 기록을 기다린 뒤 돌아온다 — 시험·도구용. 앞단 미들웨어는 [`resolve_with`] 에 `defer: true` 를 준다.
 pub async fn resolve(pool: &PgPool, headers: &HeaderMap) -> Result<Resolved, sqlx::Error> {
-    resolve_with(pool, Some(pool), headers).await
+    resolve_with(pool, Some(pool), headers, false).await
+}
+
+const TOUCH_PAT: &str = "update pat set last_used_at = now() \
+  where token_hash = $1 and (last_used_at is null or last_used_at < now() - interval '5 minutes')";
+
+/// 세션 연장·PAT 사용 시각 기록. `defer` 면 응답을 기다리게 하지 않고 따로 돌린다(P4a, security 가용성 권고) —
+/// 쓰기 풀(연결 2)이 붐벼도 인증된 요청이 그 줄을 기다리지 않는다. 실패는 원래부터 버린다(판정에 닿지 않는다).
+async fn record(w: &PgPool, sql: &'static str, hash: &str, defer: bool) {
+    if defer {
+        let (w, hash) = (w.clone(), hash.to_string());
+        tokio::spawn(async move {
+            let _ = sqlx::query(sql).bind(hash).execute(&w).await;
+        });
+    } else {
+        let _ = sqlx::query(sql).bind(hash).execute(w).await;
+    }
 }
 
 pub async fn resolve_with(
     pool: &PgPool,
     write: Option<&PgPool>,
     headers: &HeaderMap,
+    defer: bool,
 ) -> Result<Resolved, sqlx::Error> {
     let Some(raw) = bearer(headers) else {
         return Ok(Resolved::Ok(Box::default()));
@@ -232,7 +249,7 @@ pub async fn resolve_with(
     .await?;
     if let Some(a) = session {
         if let Some(w) = write {
-            let _ = sqlx::query(RENEW_SESSION).bind(&hash).execute(w).await;
+            record(w, RENEW_SESSION, &hash, defer).await;
         }
         return Ok(Resolved::Ok(Box::new(Auth {
             account: Some(a.into()),
@@ -253,13 +270,7 @@ pub async fn resolve_with(
     .await?;
     if let Some(a) = pat {
         if let Some(w) = write {
-            let _ = sqlx::query(
-                "update pat set last_used_at = now() \
-                  where token_hash = $1 and (last_used_at is null or last_used_at < now() - interval '5 minutes')",
-            )
-            .bind(&hash)
-            .execute(w)
-            .await;
+            record(w, TOUCH_PAT, &hash, defer).await;
         }
         return Ok(Resolved::Ok(Box::new(Auth {
             account: Some(a.into()),
@@ -293,7 +304,7 @@ const INTERNAL: &str = r#"{"error":{"code":"internal","message":"internal error"
 
 /// 옮긴 라우트에 거는 미들웨어: `axum::middleware::from_fn_with_state(AuthPools, auth::layer)`. 판정을 요청 extensions 에 `Auth` 로 넣는다.
 pub async fn layer(State(pools): State<AuthPools>, mut req: Request, next: Next) -> Response {
-    match resolve_with(&pools.read, pools.write.as_ref(), req.headers()).await {
+    match resolve_with(&pools.read, pools.write.as_ref(), req.headers(), true).await {
         Ok(Resolved::Ok(auth)) => {
             req.extensions_mut().insert(*auth);
             next.run(req).await
