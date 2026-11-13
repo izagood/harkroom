@@ -56,7 +56,7 @@ jobs:
   # Postgres 는 서버 시험과 같이 testcontainers 가 띄운다(ubuntu 러너에 Docker 가 있다).
   bus-e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -67,7 +67,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             crates/harkroom-bus/target
-          key: bus-e2e-${{ runner.os }}-${{ hashFiles('crates/harkroom-bus/Cargo.lock') }}
+            crates/harkroom-server/target
+          key: bus-e2e-${{ runner.os }}-${{ hashFiles('crates/harkroom-bus/Cargo.lock', 'crates/harkroom-server/Cargo.lock') }}
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6
         with:
           version: 11
@@ -83,3 +84,9 @@ jobs:
           HARKROOM_BUS_PUBLISH_BIN: ${{ github.workspace }}/crates/harkroom-bus/target/debug/examples/publish_lines
           # 바이너리가 없어 건너뛰면 통과로 보이므로, 이 잡에서는 건너뛰기를 실패로 친다.
           HARKROOM_BUS_E2E_REQUIRED: '1'
+      # 시험 바이너리를 먼저 지어 둔다 — 아래 vitest 시험의 제한 시간 안에서 컴파일하지 않게.
+      - run: cargo test --manifest-path crates/harkroom-server/Cargo.toml --locked --no-run
+      - name: Rust 앞단 인증·인가 판정이 실제 스키마에서 TS 와 같은가(tests/auth.rs·tests/perm.rs)
+        run: pnpm --filter @harkroom/server exec vitest run test/rustFrontDb.test.ts
+        env:
+          HARKROOM_RUST_DB_TESTS: '1'

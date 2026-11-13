@@ -1,5 +1,5 @@
 //! 인가 판정(`perm::can`·`require_cap`)이 TS `auth/permissions.ts::can()` 과 같은지 실제 Postgres 로 본다.
-//! `HARKROOM_TEST_DATABASE_URL`(TS 마이그레이션이 전부 적용된 DB)이 없으면 건너뛴다. 시험이 넣은 행은 끝에 지운다.
+//! `HARKROOM_TEST_DATABASE_URL`(TS 마이그레이션이 전부 적용된 DB)이 없으면 건너뛴다(CI 는 `bus-e2e` 잡이 `packages/server/test/rustFrontDb.test.ts` 로 DB 를 넘겨 돌린다). 시험이 넣은 행은 끝에 지운다.
 use harkroom_server::auth::{Account, Auth};
 use harkroom_server::perm::{Target, TargetKind, can, require_cap};
 use sqlx::PgPool;

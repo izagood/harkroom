@@ -1,4 +1,4 @@
-//! 인증 판정이 TS `auth/plugin.ts` 와 같은지 실제 Postgres 로 본다. `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 에는 DB 가 없다).
+//! 인증 판정이 TS `auth/plugin.ts` 와 같은지 실제 Postgres 로 본다. `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `bus-e2e` 잡이 `packages/server/test/rustFrontDb.test.ts` 로 DB 를 넘겨 돌린다).
 //! 그 DB 에는 TS 서버의 마이그레이션이 전부 적용돼 있어야 한다. 시험이 넣은 행은 끝에 지운다.
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
