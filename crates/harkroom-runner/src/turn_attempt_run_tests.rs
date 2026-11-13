@@ -751,3 +751,32 @@ fn lane_and_relay_guards_both_release_in_order() {
     );
     assert_eq!(a.parts.borrow().lane_envs, [Some("on".to_string())]);
 }
+
+/// security: lane + 비밀 턴에서도 임대 끝 알림은 한 번 — 띄우기 정리(비밀)와 lane 가드가 한 자리를 같이 쓴다.
+#[test]
+fn lane_and_secrets_end_lease_once() {
+    let w = world("leaseonce");
+    let log: Log = Log::default();
+    let link = Link(Arc::clone(&log));
+    let client = HarkroomRestClient::new(&link);
+    let notice = Notice {
+        log: Arc::clone(&log),
+        lease: w.lease.clone(),
+    };
+    let lane = FakeLane(Arc::clone(&log));
+    let mut a =
+        attempt(&w, &client, &notice, true, parts(&w, &log, true, vec![0])).with_lane(&lane);
+    let mut d = false;
+    assert!(a.run(&target(), None, true, &mut d).is_ok());
+    let log = log.lock().unwrap().clone();
+    assert_eq!(
+        log.iter().filter(|s| s.starts_with("lease_ended")).count(),
+        1,
+        "{log:?}"
+    );
+    assert!(
+        log.iter().any(|s| s == "mount m1"),
+        "비밀도 마운트한 턴이다"
+    );
+    assert!(log.iter().any(|s| s == "lane_release"));
+}

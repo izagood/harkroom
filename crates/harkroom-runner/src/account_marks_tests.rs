@@ -94,3 +94,28 @@ fn directory_in_place_is_left_alone() {
     mark_credential_failed(&t.0, 1);
     assert!(t.0.join(CLAUDE_AUTH_FILE).is_dir());
 }
+
+/// security nit: 표식 자리의 FIFO 에서 막히지 않고(없는 것으로 본다), 4KB 를 넘는 표식은 깨진 것으로 본다.
+#[test]
+fn fifo_and_oversized_markers_are_ignored() {
+    let t = tmp("fifo");
+    let p = t.0.join(CLAUDE_ATTENTION_FILE);
+    let c = std::ffi::CString::new(p.to_str().unwrap()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let dir = t.0.clone();
+    std::thread::spawn(move || {
+        let _ = tx.send(read_account_blocked(&dir));
+    });
+    let got = rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .expect("FIFO 에서 막히지 않는다");
+    assert!(got.is_none());
+    fs::remove_file(&p).unwrap();
+
+    let pad = " ".repeat(5000);
+    fs::write(&p, format!(r#"{{"kind":"gate","atMs":1{pad}}}"#)).unwrap();
+    assert!(read_account_blocked(&t.0).is_none(), "4KB 넘으면 버린다");
+    fs::write(&p, r#"{"kind":"gate","atMs":1}"#).unwrap();
+    assert!(read_account_blocked(&t.0).is_some());
+}

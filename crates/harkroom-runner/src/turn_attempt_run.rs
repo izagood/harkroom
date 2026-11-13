@@ -29,7 +29,7 @@ use crate::turn_attempt::{AttemptInput, Attempted, LeaseNotice, TurnSecrets};
 use crate::turn_attempt_live::LiveTurn;
 use crate::turn_attempt_relay::RelayAttempt;
 use crate::turn_env::TurnKeys as EnvTurnKeys;
-use crate::turn_lane_first::{LaneFirstError, LaneSource, mount_lane_first};
+use crate::turn_lane_first::{LaneFirstError, LaneSource, OnceLease, mount_lane_first};
 use crate::turn_launch::LaunchStep;
 use crate::turn_launch::TranscriptHomes;
 use crate::turn_launch_io::{LaneEnv, SecretMountError};
@@ -219,6 +219,8 @@ impl<L: RunnerLink, N: LeaseNotice, P: AttemptParts> PtyTurnAttempt<'_, L, N, P>
         delivered: &mut bool,
     ) -> Result<TurnOk, AttemptError> {
         let parts = &self.parts;
+        // 임대 끝 알림은 이 시도에서 한 번 — 띄우기 정리와 lane 가드가 이 자리를 같이 쓴다.
+        let lease_once = OnceLease::new(self.notice);
         let prep = parts
             .borrow_mut()
             .prepare(target, account, is_last, turn_id);
@@ -226,7 +228,7 @@ impl<L: RunnerLink, N: LeaseNotice, P: AttemptParts> PtyTurnAttempt<'_, L, N, P>
         let lane_hold = match self.lane {
             None => None,
             Some(l) => {
-                match mount_lane_first(l, self.notice, &prep.cause, self.harness, &mut || {
+                match mount_lane_first(l, &lease_once, &prep.cause, self.harness, &mut || {
                     live.gate()
                 }) {
                     Ok(h) => Some(h),
@@ -337,7 +339,7 @@ impl<L: RunnerLink, N: LeaseNotice, P: AttemptParts> PtyTurnAttempt<'_, L, N, P>
         run_attempt(
             setup,
             input,
-            self.notice,
+            &lease_once,
             live,
             |a, s| parts.borrow_mut().outcome(a, s, live),
             |s| parts.borrow_mut().after(s),
