@@ -144,7 +144,7 @@ fn entry_id(entry: &Value) -> i64 {
     entry.get("id").and_then(Value::as_i64).unwrap_or_default()
 }
 
-fn str_of<'a>(v: &'a Value, key: &str) -> &'a str {
+pub(crate) fn str_of<'a>(v: &'a Value, key: &str) -> &'a str {
     v.get(key).and_then(Value::as_str).unwrap_or_default()
 }
 

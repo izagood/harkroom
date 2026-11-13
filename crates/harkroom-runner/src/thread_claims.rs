@@ -5,10 +5,11 @@
 //! - **한 프로세스 안에서도 스레드당 하나다.** 놓기가 끝나기 전에 같은 스레드를 다시 잡으면 앞 턴의 놓기가 뒤 턴의 임대를
 //!   지운다(같은 holder) — 그래서 놓기가 끝날 때까지 `Busy`.
 //! - **잃으면 접는다**(펜스): 박동이 `Taken` 을 받으면 표지(`fenced`)가 서고(다시 내려가지 않는다) 박동이 멈추며, 걸어 둔
-//!   알림(`on_lost` — L2b 가 그 멘션 슬롯의 `fence_lost` 로 잇는다, #2042·#2071 길)을 한 번 부른다. 일시 오류(링크·5xx)로는
+//!   알림(`on_lost` — 그 멘션 슬롯의 `fence_lost` 로 잇는다, #2042·#2071 길)을 한 번 부른다. **`on_lost` 는 박동 시계 스레드
+//!   안에서 불린다 — 그 안에서 손잡이의 `release` 를 부르면 시계를 떨구며 제 스레드를 기다리는 교착이다.** 표지만 세운다. 일시 오류(링크·5xx)로는
 //!   울리지 않는다 — 잃었는지 모르는 것이지 잃은 것이 아니다.
 //! - **확인하지 못하면 띄우지 않는다**(fail-closed): 잡기 오류는 `Busy`(다음 폴에 다시 묻는다). 옛 서버(404)는 임대가 없는
-//!   것이라 잃을 일 없는 손잡이를 준다.
+//!   것이라 잃을 일 없는 손잡이를 준다 — 그 손잡이도 이 프로세스 안의 열쇠는 쥐고 놓기·Drop 에서 지운다.
 //! - **놓기는 날아가는 박동을 기다린다**(같은 잠금) — 놓은 뒤 도착한 박동이 임대를 되살리지 않게. 손잡이가 떨어지면(패닉
 //!   풀림 포함) 놓는다(Drop 가드). 놓기 실패는 로그만 — 만료(`ttl`)가 놓는다.
 
@@ -115,13 +116,17 @@ impl<C: ClaimClient + 'static> ThreadClaims<C> {
                 ClaimHold::Busy
             }
             ClaimOutcome::Unsupported => {
-                lock(&self.held).remove(&key);
+                // 열쇠는 쥔 채 둔다 — 이 러너 안의 스레드 잠금(놓기·Drop 이 지운다).
                 if !self.warned_unsupported.swap(true, Ordering::SeqCst) {
                     eprintln!(
                         "[threadClaims] 서버가 스레드 임대를 모른다(옛 서버) — 이 러너 안의 스레드 잠금만으로 띄운다"
                     );
                 }
-                ClaimHold::Held(Box::new(NoClaim))
+                ClaimHold::Held(Box::new(NoClaim {
+                    key,
+                    held: Arc::clone(&self.held),
+                    released: AtomicBool::new(false),
+                }))
             }
             ClaimOutcome::Held => {
                 ClaimHold::Held(Box::new(self.start(key, channel_id, root, on_lost)))
@@ -228,11 +233,25 @@ impl<C: ClaimClient> Drop for HeldClaim<C> {
     }
 }
 
-/// 옛 서버 — 잃을 임대가 없다.
-struct NoClaim;
+/// 옛 서버 — 잃을 임대가 없다. 이 프로세스 안의 스레드 잠금(열쇠)만 쥐고, 놓기·Drop 에서 지운다.
+struct NoClaim {
+    key: String,
+    held: Arc<Mutex<HashSet<String>>>,
+    released: AtomicBool,
+}
 
 impl ThreadClaimHandle for NoClaim {
-    fn release(&self) {}
+    fn release(&self) {
+        if !self.released.swap(true, Ordering::SeqCst) {
+            lock(&self.held).remove(&self.key);
+        }
+    }
+}
+
+impl Drop for NoClaim {
+    fn drop(&mut self) {
+        self.release();
+    }
 }
 
 #[cfg(test)]

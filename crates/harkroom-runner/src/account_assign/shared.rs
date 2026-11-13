@@ -428,14 +428,18 @@ fn read_marker(path: &Path, kind: AttentionKind, word: &str) -> Option<Attention
     Some(Attention { kind, at_ms })
 }
 
-/// `readAccountBlocked`: 관문 표식이 먼저, 없으면 로그인 풀림 표식. 없거나 깨졌으면 `None`.
-pub fn read_account_blocked(config_dir: &Path) -> Option<Attention> {
+/// `readAccountAttention`: 관문 표식만. 없거나 깨졌으면 `None`.
+pub fn read_account_attention(config_dir: &Path) -> Option<Attention> {
     read_marker(
         &config_dir.join(CLAUDE_ATTENTION_FILE),
         AttentionKind::Gate,
         "gate",
     )
-    .or_else(|| {
+}
+
+/// `readAccountBlocked`: 관문 표식이 먼저, 없으면 로그인 풀림 표식. 없거나 깨졌으면 `None`.
+pub fn read_account_blocked(config_dir: &Path) -> Option<Attention> {
+    read_account_attention(config_dir).or_else(|| {
         read_marker(
             &config_dir.join(CLAUDE_AUTH_FILE),
             AttentionKind::Credential,
