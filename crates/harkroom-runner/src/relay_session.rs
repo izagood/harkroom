@@ -533,6 +533,47 @@ impl SessionHandle {
         self.ledger.send(&frame);
     }
 
+    /// 시도 하나가 끝났다 — 그 시도의 PTY 입력 통로를 놓는다(세션은 멘션 내내 산다). 다음 시도가 `bind_input` 하기
+    /// 전까지 온 입력·크기는 버린다(엉뚱한 PTY 로 가지 않는다).
+    pub fn unbind_input(&self) {
+        if let Some(l) = self
+            .ledger
+            .sessions
+            .lock()
+            .unwrap()
+            .get_mut(&self.session_id)
+        {
+            l.writer = None;
+        }
+    }
+
+    /// 시도마다 바뀌는 계정 칩(순번만)을 고쳐 다시 알린다 — 같은 `sessionId` 의 `session.started` 를 서버는 덮어 받는다.
+    /// `account_rank`: `None` = 모른다(뺀다), `Some(None)` = 기본 로그인(null).
+    pub fn restate_account(&self, account_rank: Option<Option<u32>>, pool_rank: Option<u32>) {
+        if self.is_closed() {
+            return;
+        }
+        let info = {
+            let mut map = self.ledger.sessions.lock().unwrap();
+            let Some(l) = map.get_mut(&self.session_id) else {
+                return;
+            };
+            if let Some(o) = l.info.as_object_mut() {
+                o.remove("claudeAccountRank");
+                o.remove("claudePoolRank");
+                if let Some(a) = account_rank {
+                    o.insert("claudeAccountRank".into(), json!(a));
+                }
+                if let Some(r) = pool_rank {
+                    o.insert("claudePoolRank".into(), json!(r));
+                }
+            }
+            l.info.clone()
+        };
+        self.ledger
+            .send(&json!({"type": "session.started", "session": info}));
+    }
+
     /// 턴이 끝났다. 두 번째 호출은 아무 일도 하지 않는다.
     pub fn close(&self) {
         if self.closed.swap(true, Ordering::SeqCst) {

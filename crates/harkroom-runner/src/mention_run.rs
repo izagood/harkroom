@@ -100,15 +100,17 @@ where
     }
 }
 
-/// 실물 입구 — 멘션의 [중단]·펜스 신호 자리를 **첫 시도 전에** 열고([`MentionSlots::open`]), [`run_one`] 이 끝날 때까지
-/// (장부 `finally`·임대·자리 놓기까지) 쥔다. 턴(`make_turn`)은 그 자리를 받아 시도마다 `bind_live` 에 쓴다. 자리는 턴을
-/// 떨군 **뒤에** 떨군다 — 그 전에 온 [중단] 은 버려지지 않는다.
-pub fn run_mention<T, D>(
+/// 실물 입구 — 멘션의 [중단]·펜스 신호 자리를 **첫 시도 전에** 열고([`MentionSlots::open`]), 그 자리에 [중단] 이 닿는
+/// 중계 세션(`open_relay`, 멘션 하나에 하나 — 시도 사이에 온 [중단] 도 받는다)을 연 뒤, [`run_one`] 이 끝날 때까지
+/// (장부 `finally`·임대·자리 놓기까지) 쥔다. 턴(`make_turn`)은 그 자리와 세션을 받아 시도마다 `bind_live`·입력 통로에
+/// 쓴다. 떨구는 차례: 턴 → 중계 세션 → 자리.
+pub fn run_mention<T, D, R>(
     ledger: &Mutex<Ledger>,
     deps: &mut D,
     slots: &MentionSlots,
     launch: Launch,
-    make_turn: impl FnOnce(LiveSlot) -> T,
+    open_relay: impl FnOnce(&LiveSlot) -> R,
+    make_turn: impl FnOnce(LiveSlot, &R) -> T,
 ) where
     T: TurnAttempt,
     D: RunDeps<T::Err>,
@@ -121,9 +123,12 @@ pub fn run_mention<T, D>(
     )
     .mention_id;
     let held = slots.open(&mention_id);
-    let mut turn = make_turn(held.slot());
-    run_one(ledger, deps, &mut turn, launch);
-    drop(turn);
+    let relay = open_relay(&held.slot());
+    {
+        let mut turn = make_turn(held.slot(), &relay);
+        run_one(ledger, deps, &mut turn, launch);
+    }
+    drop(relay);
     drop(held);
 }
 
