@@ -32,11 +32,31 @@ pub struct RecordScrub<'a> {
     pub homes: TranscriptHomes<'a>,
 }
 
-/// 시도 하나가 쥐는 것 — 턴 설정 파일·가림 목록·기록 찾기 재료.
+/// 가림 목록을 지을 재료. 목록([`TurnSecrets`])은 **마운트 뒤·임대 끝 전**에 짓는다 — 하네스가 돈 뒤 정리 가드가
+/// 임대를 끝내기 전(`after_run` 자리). 시도 전에 지으면 임대 디렉터리가 아직 비어 있다.
+pub struct SecretsSource<'a> {
+    pub pat: &'a str,
+    pub turn_key_values: Vec<String>,
+    /// 이 턴의 임대 디렉터리(비밀 마운트가 쓰는 자리).
+    pub lease_dir: Option<std::path::PathBuf>,
+}
+
+impl SecretsSource<'_> {
+    fn build(&self, with_lease: bool) -> TurnSecrets {
+        let keys: Vec<&str> = self.turn_key_values.iter().map(String::as_str).collect();
+        let lease = if with_lease {
+            self.lease_dir.as_deref()
+        } else {
+            None
+        };
+        TurnSecrets::build(self.pat, &keys, lease)
+    }
+}
+
+/// 시도 하나가 쥐는 것 — 턴 설정 파일·가림 목록 재료·기록 찾기 재료.
 pub struct AttemptSetup<'a> {
     pub files: TurnFiles,
-    /// 결과 접기·턴 뒤 IO·기록 가리기가 **같이** 받는 목록.
-    pub secrets: &'a TurnSecrets,
+    pub secrets: SecretsSource<'a>,
     pub scrub: RecordScrub<'a>,
 }
 
@@ -56,15 +76,22 @@ pub fn run_attempt<'a, L: RunnerLink>(
         scrub,
     } = setup;
     let harness = input.harness;
+    // 하네스가 돈 뒤(마운트 뒤)·정리 가드 전(임대 끝 전)에 지은 목록을 여기 둔다 — 결과 접기·턴 뒤 IO 가 그대로 받는다.
+    let built: std::rc::Rc<std::cell::RefCell<Option<TurnSecrets>>> = std::rc::Rc::default();
+    let slot = std::rc::Rc::clone(&built);
+    let source = std::rc::Rc::new(secrets);
+    let src = std::rc::Rc::clone(&source);
     input.after_run = Some(Box::new(move |_out: &PtyOut| {
+        let s = src.build(true);
         let (transcript, _) = transcript_record_paths(harness, scrub.session_id, scrub.homes);
         let t = scrub_after_run(
             scrub.key,
             harness,
             transcript.as_deref(),
             scrub.session_id,
-            secrets,
+            &s,
         );
+        *slot.borrow_mut() = Some(s);
         if t.failed > 0 {
             eprintln!(
                 "[mentionTurn] {}: 기록 가리기 실패 {}곳",
@@ -73,9 +100,14 @@ pub fn run_attempt<'a, L: RunnerLink>(
         }
     }));
     let attempted = attempt_with_files(files, input, notice, &mut || live.gate());
-    let res = outcome(attempted, secrets);
+    // 막힘·준비 실패로 하네스가 돌지 않았으면 비밀이 하네스에 간 적이 없다 — PAT·턴 열쇠만으로 접는다.
+    let secrets = built
+        .borrow_mut()
+        .take()
+        .unwrap_or_else(|| source.build(false));
+    let res = outcome(attempted, &secrets);
     if res.is_ok()
-        && let Err(e) = after(secrets)
+        && let Err(e) = after(&secrets)
     {
         // 정본처럼 best-effort — 세션 상태는 이미 저장됐다. 사유는 로컬 로그에만(값은 들지 않는 MCP 오류 문장).
         eprintln!("[mentionTurn] {}: 턴 뒤 관측·통보 실패 — {e}", scrub.key);
