@@ -77,6 +77,9 @@ async fn open_write_pool() -> Option<sqlx::PgPool> {
         .filter(|u| !u.is_empty())?;
     let pool = match sqlx::postgres::PgPoolOptions::new()
         .max_connections(2)
+        // 연결을 기다리는 시한(sqlx 기본 30초) — 쓰기 풀이 막히면 쓰는 요청이 30초 매달리는 대신 3초 뒤 500 으로 끝난다.
+        // 인증 기록은 이 풀을 기다리지 않는다(`auth::record` 가 응답 뒤로 돌린다). P4a, security 가용성 권고.
+        .acquire_timeout(std::time::Duration::from_secs(3))
         .connect(&url)
         .await
     {

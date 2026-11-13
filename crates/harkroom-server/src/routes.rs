@@ -177,11 +177,39 @@ pub fn active<'a>(table: &'a [Moved], ts: &TsOverrides) -> Vec<&'a str> {
 }
 
 /// 쓰는 줄(P3~). 쓰기 풀이 있을 때만 마운트한다 — 읽기 전용 역할로 뜬 앞단에서 쓰기를 시도하지 않게.
-pub const MOVED_WRITE: &[Moved] = &[Moved {
-    key: "PUT /inbox/today/seen",
-    path: "/inbox/today/seen",
-    route: || axum::routing::put(crate::inbox_today::put_seen),
-}];
+pub const MOVED_WRITE: &[Moved] = &[
+    Moved {
+        key: "PUT /inbox/today/seen",
+        path: "/inbox/today/seen",
+        route: || axum::routing::put(crate::inbox_today::put_seen),
+    },
+    // P4a 가벼운 쓰기①(`writes_settings.rs`).
+    Moved {
+        key: "PUT /settings/agent-defaults",
+        path: "/settings/agent-defaults",
+        route: || axum::routing::put(crate::writes_settings::put_agent_defaults),
+    },
+    Moved {
+        key: "PUT /settings/mention-policy",
+        path: "/settings/mention-policy",
+        route: || axum::routing::put(crate::writes_settings::put_mention_policy),
+    },
+    Moved {
+        key: "POST /skills/usage",
+        path: "/skills/usage",
+        route: || axum::routing::post(crate::writes_settings::post_usage),
+    },
+    Moved {
+        key: "POST /skills/{slug}/approve",
+        path: "/skills/{slug}/approve",
+        route: || axum::routing::post(crate::writes_settings::approve_skill),
+    },
+    Moved {
+        key: "DELETE /skills/{slug}",
+        path: "/skills/{slug}",
+        route: || axum::routing::delete(crate::writes_settings::disable_skill),
+    },
+];
 
 /// 이번 기동에 실제로 마운트할 쓰는 줄.
 pub fn writes_for(state: &AppState) -> &'static [Moved] {

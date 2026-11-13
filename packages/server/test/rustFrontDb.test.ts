@@ -202,6 +202,14 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // P4d — 인증 미들웨어의 기록.
         `grant update on session to ${rw}`,
         `grant update on pat to ${rw}`,
+        // P4a — 설정·스킬.
+        `grant update on agent_defaults to ${rw}`,
+        `grant insert, update on mention_policy to ${rw}`,
+        `grant update on workspace_skill to ${rw}`,
+        `grant insert on workspace_skill_usage to ${rw}`,
+        `grant usage on sequence workspace_skill_usage_id_seq to ${rw}`,
+        `grant insert on builtin_skill_usage to ${rw}`,
+        `grant usage on sequence builtin_skill_usage_id_seq to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -226,6 +234,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         'GET /teams', 'GET /teams/{id}', 'GET /handle-groups', 'GET /handle-groups/{id}',
         'GET /skills', 'GET /skills/{slug}', 'GET /settings/agent-defaults', 'GET /settings/mention-policy',
         'GET /inbox/today/open', 'GET /inbox/today/done', 'PUT /inbox/today/seen',
+        'PUT /settings/agent-defaults', 'PUT /settings/mention-policy', 'POST /skills/usage',
+        'POST /skills/{slug}/approve', 'DELETE /skills/{slug}',
       ]) {
         expect(f.log(), key).toContain(`"${key}"`);
       }
@@ -293,6 +303,73 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       while (mine().length < 2 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
       await new Promise((r) => setTimeout(r, 500));
       expect(mine().length, JSON.stringify(busEvents)).toBe(2);
+
+      // S5.2 P4a — 설정·스킬 쓰기. 거절은 두 구현의 상태·코드를 견주고(문구는 zod 와 다르다), 성공은 Rust 로 쓰고 TS 로 다시 읽어
+      // 본문이 같은지 본다(같은 줄을 두 번 쓸 수 없는 것들이라).
+      const call = async (base: string, method: string, path: string, o: { token?: string; ct?: string; body?: string } = {}) => {
+        const headers: Record<string, string> = {};
+        if (o.token) headers.authorization = `Bearer ${o.token}`;
+        if (o.ct) headers['content-type'] = o.ct;
+        const res = await fetch(`${base}${path}`, { method, headers, body: o.body });
+        const text = await res.text();
+        const json = text ? JSON.parse(text) as Record<string, unknown> : {};
+        return { status: res.status, code: (json.error as { code?: string } | undefined)?.code, json };
+      };
+      const A = admin.token;
+      for (const [name, m, path, o] of [
+        ['defaults 멤버 → 403', 'PUT', '/settings/agent-defaults', { token: member.token, ct: J, body: '{}' }],
+        ['defaults 익명·깨진 json → 400(본문 먼저)', 'PUT', '/settings/agent-defaults', { ct: J, body: '{' }],
+        ['defaults 모르는 harness → 400', 'PUT', '/settings/agent-defaults', { token: A, ct: J, body: JSON.stringify({ harness: 'nope' }) }],
+        ['defaults harness null → 400', 'PUT', '/settings/agent-defaults', { token: A, ct: J, body: JSON.stringify({ harness: null }) }],
+        ['defaults 본문 없음 → 400', 'PUT', '/settings/agent-defaults', { token: A }],
+        ['policy 0 → 400', 'PUT', '/settings/mention-policy', { token: A, ct: J, body: '{"chainLimit":0}' }],
+        ['policy 소수 → 400', 'PUT', '/settings/mention-policy', { token: A, ct: J, body: '{"chainLimit":1.5}' }],
+        ['policy 멤버 → 403', 'PUT', '/settings/mention-policy', { token: member.token, ct: J, body: '{"chainLimit":5}' }],
+        ['usage 사람 → 400 invalid_account', 'POST', '/skills/usage', { token: member.token, ct: J, body: '{"slugs":[]}' }],
+        ['usage 모르는 키 → 400', 'POST', '/skills/usage', { token: agent.pat, ct: J, body: '{"slugs":[],"x":1}' }],
+        ['usage 익명 → 401', 'POST', '/skills/usage', { ct: J, body: '{"slugs":[]}' }],
+        ['approve 멤버 → 403', 'POST', '/skills/pending-one/approve', { token: member.token }],
+        ['approve 없음 → 404', 'POST', '/skills/no-such-skill/approve', { token: A }],
+        ['approve 이미 → 409', 'POST', '/skills/fresh-one/approve', { token: A }],
+        ['disable 이미 → 409', 'DELETE', '/skills/off-one', { token: A }],
+        ['disable 없음 → 404', 'DELETE', '/skills/no-such-skill', { token: A }],
+      ] as const) {
+        const [a, b] = [await call(tsUrl, m, path, o), await call(rsUrl, m, path, o)];
+        expect({ status: b.status, code: b.code }, name).toEqual({ status: a.status, code: a.code });
+      }
+      const auditBefore = Number((await db.pool.query<{ n: string }>('select coalesce(max(id), 0)::text as n from audit_log')).rows[0]!.n);
+      const defs = await call(rsUrl, 'PUT', '/settings/agent-defaults', { token: A, ct: J, body: JSON.stringify({ model: null, effort: 'low' }) });
+      expect(defs.json).toEqual({ harness: 'codex', model: null, effort: 'low' });
+      expect((await call(tsUrl, 'GET', '/settings/agent-defaults', { token: A })).json).toEqual(defs.json);
+      const pol = await call(rsUrl, 'PUT', '/settings/mention-policy', { token: A, ct: J, body: '{"chainLimit":20}' });
+      expect(pol.json).toEqual({ chainLimit: 20 });
+      expect((await call(tsUrl, 'GET', '/settings/mention-policy', { token: A })).json).toEqual(pol.json);
+      const audits = (await db.pool.query<{ action: string; actor_id: string; detail: unknown }>(
+        'select action, actor_id::text, detail from audit_log where id > $1 order by id', [auditBefore])).rows;
+      expect(audits).toEqual([
+        { action: 'agent.defaults.updated', actor_id: admin.accountId, detail: { before: { harness: 'codex', model: 'm-1', effort: 'high' }, after: defs.json } },
+        { action: 'mention.policy.updated', actor_id: admin.accountId, detail: { before: { chainLimit: 12 }, after: { chainLimit: 20 } } },
+      ]);
+      for (const [m, path, slug, ty] of [
+        ['POST', '/skills/pending-one/approve', 'pending-one', 'skill.approved'],
+        ['DELETE', '/skills/stale-one', 'stale-one', 'skill.disabled'],
+      ] as const) {
+        const r = await call(rsUrl, m, path, { token: A });
+        expect(r.status, path).toBe(200);
+        expect((await call(tsUrl, 'GET', `/skills/${slug}`, { token: A })).json, path).toEqual(r.json);
+        const until = Date.now() + 10_000;
+        const seen = () => busEvents.find((e) => e.type === ty && (e as { skill?: { slug?: string } }).skill?.slug === slug);
+        while (!seen() && Date.now() < until) await new Promise((res) => setTimeout(res, 100));
+        expect(seen(), `${ty} 이벤트가 버스로 와야 한다`).toBeTruthy();
+      }
+      const usageBody = JSON.stringify({ slugs: ['fresh-one', 'pending-one', 'off-one', 'harkroom-probe', 'BAD', 'fresh-one'] });
+      const [uRs, uTs] = [
+        await call(rsUrl, 'POST', '/skills/usage', { token: agent.pat, ct: J, body: usageBody }),
+        await call(tsUrl, 'POST', '/skills/usage', { token: agent.pat, ct: J, body: usageBody }),
+      ];
+      expect(uRs.status).toBe(200);
+      expect(uRs.json).toEqual(uTs.json);
+      expect(new Set((uRs.json as { recorded: string[] }).recorded)).toEqual(new Set(['fresh-one', 'pending-one', 'harkroom-probe']));
       await bus.stop();
 
       // S5.2 P4d — 옮긴 라우트를 지난 요청도 세션을 늘리고 PAT 사용 시각을 남긴다(쓰기 풀로). 읽기 역할로 하면 조용히 실패하던 것.
@@ -302,12 +379,22 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const res = await fetch(`${rsUrl}/settings/mention-policy`, { headers: { authorization: `Bearer ${token}` } });
         expect(res.status).toBe(200);
       }
-      const sess = await db.pool.query<{ left: number }>(
-        `select extract(epoch from (max(expires_at) - now()))::int / 86400 as left from session where account_id = $1`, [member.accountId]);
-      expect(sess.rows[0]!.left, '세션이 14일로 늘어야 한다').toBeGreaterThanOrEqual(13);
-      const used = await db.pool.query<{ fresh: boolean }>(
-        `select bool_and(last_used_at > now() - interval '1 minute') as fresh from pat where account_id = $1 and revoked_at is null`, [agent.accountId]);
-      expect(used.rows[0]!.fresh, 'PAT 사용 시각이 새로 찍혀야 한다').toBe(true);
+      // P4a — 이 기록은 응답 뒤에 돈다(`auth::record`), 잠깐 기다려 본다.
+      const recorded = async () => {
+        const sess = await db.pool.query<{ left: number }>(
+          `select extract(epoch from (max(expires_at) - now()))::int / 86400 as left from session where account_id = $1`, [member.accountId]);
+        const used = await db.pool.query<{ fresh: boolean }>(
+          `select bool_and(last_used_at > now() - interval '1 minute') as fresh from pat where account_id = $1 and revoked_at is null`, [agent.accountId]);
+        return { left: sess.rows[0]!.left, fresh: used.rows[0]!.fresh };
+      };
+      const until2 = Date.now() + 5_000;
+      let rec = await recorded();
+      while ((rec.left < 13 || !rec.fresh) && Date.now() < until2) {
+        await new Promise((res) => setTimeout(res, 100));
+        rec = await recorded();
+      }
+      expect(rec.left, '세션이 14일로 늘어야 한다').toBeGreaterThanOrEqual(13);
+      expect(rec.fresh, 'PAT 사용 시각이 새로 찍혀야 한다').toBe(true);
     } finally {
       front?.kill('SIGTERM');
       await app.close();
