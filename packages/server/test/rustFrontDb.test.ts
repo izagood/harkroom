@@ -212,6 +212,12 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant usage on sequence workspace_skill_usage_id_seq to ${rw}`,
         `grant insert on builtin_skill_usage to ${rw}`,
         `grant usage on sequence builtin_skill_usage_id_seq to ${rw}`,
+        // P4b — 팀·집합.
+        `grant insert, update, delete on agent_team to ${rw}`,
+        `grant insert, delete on agent_team_member to ${rw}`,
+        `grant insert, delete on agent_team_invoker to ${rw}`,
+        `grant insert, update, delete on handle_group to ${rw}`,
+        `grant insert, delete on handle_group_member to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -240,6 +246,11 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         'GET /inbox/today/open', 'GET /inbox/today/done', 'PUT /inbox/today/seen',
         'PUT /settings/agent-defaults', 'PUT /settings/mention-policy', 'POST /skills/usage',
         'POST /skills/{slug}/approve', 'DELETE /skills/{slug}',
+        'POST /teams', 'PATCH /teams/{id}', 'DELETE /teams/{id}', 'PUT /teams/{id}/scope', 'PUT /teams/{id}/lead',
+        'PUT /teams/{id}/invokers/{accountId}', 'DELETE /teams/{id}/invokers/{accountId}',
+        'PUT /teams/{id}/members/{accountId}', 'DELETE /teams/{id}/members/{accountId}',
+        'POST /handle-groups', 'PATCH /handle-groups/{id}', 'DELETE /handle-groups/{id}',
+        'POST /handle-groups/{id}/members', 'DELETE /handle-groups/{id}/members',
       ]) {
         expect(f.log(), key).toContain(`"${key}"`);
       }
@@ -391,6 +402,95 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       expect(uRs.status).toBe(200);
       expect(uRs.json).toEqual(uTs.json);
       expect(new Set((uRs.json as { recorded: string[] }).recorded)).toEqual(new Set(['fresh-one', 'pending-one', 'harkroom-probe']));
+
+      // S5.2 P4b — 팀·집합 쓰기. 거절은 두 구현의 상태·코드를 견주고(바꾸지 않는 요청만), 성공은 Rust 로 쓰고 TS 로 다시 읽는다.
+      // 성공 요청은 X-Forwarded-For 를 실어 감사 ip 가 trust-proxy 규칙으로 채워지는지도 본다.
+      const XFF = '203.0.113.9';
+      const callX = async (base: string, method: string, path: string, body?: unknown, token = A) => {
+        const headers: Record<string, string> = { authorization: `Bearer ${token}`, 'x-forwarded-for': XFF };
+        if (body !== undefined) headers['content-type'] = J;
+        const res = await fetch(`${base}${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+        const text = await res.text();
+        const json = text ? JSON.parse(text) as Record<string, unknown> : {};
+        return { status: res.status, code: (json.error as { code?: string } | undefined)?.code, json };
+      };
+      const ghost = '00000000-0000-4000-8000-000000000999';
+      for (const [name, m, path, body, token] of [
+        ['팀 만들기 잘못된 이름 → 400', 'POST', '/teams', { name: 'a' }, A],
+        ['팀 만들기 멤버·잘못된 이름', 'POST', '/teams', { name: 'a' }, member.token],
+        ['팀 만들기 이미 있는 팀 → 400', 'POST', '/teams', { name: 'SQUAD' }, A],
+        ['팀 만들기 계정 이름 → 400', 'POST', '/teams', { name: 'mem' }, A],
+        ['팀 이름 바꾸기 잘못된 이름 → 400', 'PATCH', `/teams/${squadId}`, { name: 'deleted-x' }, A],
+        ['팀 이름 바꾸기 없는 팀 → 404', 'PATCH', `/teams/${ghost}`, { name: 'zzz' }, A],
+        ['팀 이름 바꾸기 남의 팀 → 403', 'PATCH', `/teams/${squadId}`, { name: 'zzz' }, member.token],
+        ['팀 범위 모르는 값 → 400', 'PUT', `/teams/${squadId}/scope`, { invokeScope: 'all' }, A],
+        ['팀 범위 owner 인데 소유자 없음 → 400', 'PUT', `/teams/${squadId}/scope`, { invokeScope: 'owner', ownerAccountId: null }, A],
+        ['팀장 키 없음 → 400', 'PUT', `/teams/${squadId}/lead`, {}, A],
+        ['팀장 팀원 아님 → 400', 'PUT', `/teams/${squadId}/lead`, { accountId: member.accountId }, A],
+        ['팀원 사람 → 400', 'PUT', `/teams/${squadId}/members/${member.accountId}`, undefined, A],
+        ['팀원 없는 계정 → 404', 'PUT', `/teams/${squadId}/members/${ghost}`, undefined, A],
+        ['호출 허용 없는 팀 → 404', 'PUT', `/teams/${ghost}/invokers/${member.accountId}`, undefined, A],
+        ['호출 허용 없는 계정 → 404', 'PUT', `/teams/${squadId}/invokers/${ghost}`, undefined, A],
+        ['팀 지우기 없는 팀 → 404', 'DELETE', `/teams/${ghost}`, undefined, A],
+        ['집합 만들기 잘못된 본문', 'POST', '/handle-groups', { handle: 'x' }, member.token],
+        ['집합 만들기 이미 있는 집합 → 400', 'POST', '/handle-groups', { handle: 'CREW', displayName: 'x' }, A],
+        ['집합 만들기 계정 이름 → 400', 'POST', '/handle-groups', { handle: 'mem', displayName: 'x' }, A],
+        ['집합 이름 빈 값 → 400', 'PATCH', `/handle-groups/${crewId}`, { displayName: '' }, A],
+        ['집합 구성원 빈 배열 → 400', 'POST', `/handle-groups/${crewId}/members`, { accountIds: [] }, A],
+        ['집합 구성원 에이전트 → 400', 'POST', `/handle-groups/${crewId}/members`, { accountIds: [agent.accountId] }, A],
+        ['집합 구성원 없는 집합 → 404', 'DELETE', `/handle-groups/${ghost}/members`, { accountIds: [member.accountId] }, A],
+        ['집합 지우기 없는 집합 → 404', 'DELETE', `/handle-groups/${ghost}`, undefined, A],
+      ] as const) {
+        const [a, b] = [await callX(tsUrl, m, path, body, token), await callX(rsUrl, m, path, body, token)];
+        expect({ status: b.status, code: b.code }, name).toEqual({ status: a.status, code: a.code });
+      }
+      const auditMark = Number((await db.pool.query<{ n: string }>('select coalesce(max(id), 0)::text as n from audit_log')).rows[0]!.n);
+      const tsTeam = async (id: string) => (await callX(tsUrl, 'GET', `/teams/${id}`)).json as { team: Record<string, unknown>; members: { accountId: string }[]; invokers: string[] };
+      const made = await callX(rsUrl, 'POST', '/teams', { name: 'rteam' });
+      expect(made.status).toBe(201);
+      const rteam = String(made.json.id);
+      expect((await tsTeam(rteam)).team).toEqual(made.json);
+      const renamed = await callX(rsUrl, 'PATCH', `/teams/${rteam}`, { name: 'rteam2' });
+      expect(renamed.json.name).toBe('rteam2');
+      expect((await tsTeam(rteam)).team).toEqual(renamed.json);
+      const mem = await callX(rsUrl, 'PUT', `/teams/${rteam}/members/${bot2.accountId}`);
+      expect(mem.json).toEqual({ members: (await tsTeam(rteam)).members });
+      const lead = await callX(rsUrl, 'PUT', `/teams/${rteam}/lead`, { accountId: bot2.accountId });
+      expect(lead.json.leadAccountId).toBe(bot2.accountId);
+      expect((await tsTeam(rteam)).team).toEqual(lead.json);
+      expect((await callX(rsUrl, 'PUT', `/teams/${rteam}/scope`, { invokeScope: 'list' })).json.invokeScope).toBe('list');
+      expect((await callX(rsUrl, 'PUT', `/teams/${rteam}/invokers/${member.accountId}`)).json).toEqual({ invokers: [member.accountId] });
+      expect((await callX(rsUrl, 'DELETE', `/teams/${rteam}/invokers/${member.accountId}`)).json).toEqual({ invokers: [] });
+      // 팀원이 남은 채로 지운다 — 구성원 줄은 FK cascade 가 지운다(쓰기 역할의 DELETE 와 상관없이).
+      expect((await callX(rsUrl, 'DELETE', `/teams/${rteam}`)).status).toBe(204);
+      expect((await callX(tsUrl, 'GET', `/teams/${rteam}`)).status).toBe(404);
+      expect((await db.pool.query('select 1 from agent_team_member where team_id = $1', [rteam])).rowCount).toBe(0);
+      const grp = await callX(rsUrl, 'POST', '/handle-groups', { handle: 'rgroup', displayName: 'R' });
+      expect(grp.status).toBe(201);
+      const rgroup = String(grp.json.id);
+      const tsGroup = async () => (await callX(tsUrl, 'GET', `/handle-groups/${rgroup}`)).json as { group: Record<string, unknown>; members: string[] };
+      expect((await tsGroup()).group).toEqual(grp.json);
+      expect((await callX(rsUrl, 'POST', `/handle-groups/${rgroup}/members`, { accountIds: [member.accountId, member2.accountId] })).json)
+        .toEqual({ members: (await tsGroup()).members });
+      expect((await callX(rsUrl, 'DELETE', `/handle-groups/${rgroup}/members`, { accountIds: [member2.accountId] })).json).toEqual({ members: [member.accountId] });
+      const regrp = await callX(rsUrl, 'PATCH', `/handle-groups/${rgroup}`, { displayName: 'R2' });
+      expect((await tsGroup()).group).toEqual(regrp.json);
+      expect((await callX(rsUrl, 'DELETE', `/handle-groups/${rgroup}`)).status).toBe(204);
+      expect((await db.pool.query('select 1 from handle_group_member where group_id = $1', [rgroup])).rowCount).toBe(0);
+      const teamAudits = (await db.pool.query<{ action: string; ip: string | null; actor_id: string }>(
+        `select action, ip, actor_id::text from audit_log where id > $1 and (action like 'team.%' or action like 'handle_group.%') order by id`, [auditMark])).rows;
+      expect(teamAudits.map((r) => r.action)).toEqual([
+        'team.created', 'team.updated', 'team.member.added', 'team.lead.set', 'team.scope.set',
+        'team.invoker.added', 'team.invoker.removed', 'team.deleted',
+        'handle_group.created', 'handle_group.members.added', 'handle_group.members.removed', 'handle_group.updated', 'handle_group.deleted',
+      ]);
+      expect(new Set(teamAudits.map((r) => r.ip)), '감사 ip 가 trust-proxy 규칙으로 채워진다').toEqual(new Set([XFF]));
+      expect(new Set(teamAudits.map((r) => r.actor_id))).toEqual(new Set([admin.accountId]));
+      const until3 = Date.now() + 10_000;
+      const evs = () => busEvents.filter((e) => (e.type === 'agent_team.changed' && (e as { teamId?: string }).teamId === rteam)
+        || (e.type === 'handle_group.changed' && (e as { groupId?: string }).groupId === rgroup));
+      while (evs().length < 13 && Date.now() < until3) await new Promise((res) => setTimeout(res, 100));
+      expect(evs().length, '쓴 만큼 이벤트가 버스로 온다').toBe(13);
       await bus.stop();
 
       // S5.2 P4d — 옮긴 라우트를 지난 요청도 세션을 늘리고 PAT 사용 시각을 남긴다(쓰기 풀로). 읽기 역할로 하면 조용히 실패하던 것.

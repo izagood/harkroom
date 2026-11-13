@@ -63,11 +63,12 @@ fn reply_or_404(r: Result<Option<String>, Response>, msg: &str) -> Response {
 // ── 팀 ────────────────────────────────────────────────────────────────
 
 /// `listTeams`·`getTeam` 의 칸(`services/teams.ts::COLS`).
+#[macro_export]
 macro_rules! team_cols {
     () => {
         concat!(
             "t.id, t.name, t.created_by as \"createdBy\", ",
-            crate::iso!("t.created_at"),
+            $crate::iso!("t.created_at"),
             " as \"createdAt\", t.lead_account_id as \"leadAccountId\", t.invoke_scope as \"invokeScope\", ",
             "t.owner_account_id as \"ownerAccountId\", ",
             "(select count(*) from agent_team_member m where m.team_id = t.id)::int as \"memberCount\""
@@ -114,11 +115,12 @@ pub async fn team(
 
 // ── 핸들 집합 ─────────────────────────────────────────────────────────
 
+#[macro_export]
 macro_rules! group_cols {
     () => {
         concat!(
             "g.id, g.handle, g.display_name as \"displayName\", ",
-            crate::iso!("g.created_at"),
+            $crate::iso!("g.created_at"),
             " as \"createdAt\", ",
             "(select count(*) from handle_group_member m where m.group_id = g.id)::int as \"memberCount\""
         )

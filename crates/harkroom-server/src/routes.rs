@@ -211,6 +211,77 @@ pub const MOVED_WRITE: &[Moved] = &[
         path: "/skills/{slug}",
         route: || axum::routing::delete(crate::writes_settings::disable_skill),
     },
+    // P4b 팀·집합(`writes_teams.rs`·`writes_groups.rs`). 채널에 팀 넣기는 S5.3.
+    Moved {
+        key: "POST /teams",
+        path: "/teams",
+        route: || axum::routing::post(crate::writes_teams::create_team),
+    },
+    Moved {
+        key: "PATCH /teams/{id}",
+        path: "/teams/{id}",
+        route: || axum::routing::patch(crate::writes_teams::rename_team),
+    },
+    Moved {
+        key: "DELETE /teams/{id}",
+        path: "/teams/{id}",
+        route: || axum::routing::delete(crate::writes_teams::delete_team),
+    },
+    Moved {
+        key: "PUT /teams/{id}/scope",
+        path: "/teams/{id}/scope",
+        route: || axum::routing::put(crate::writes_teams::set_scope),
+    },
+    Moved {
+        key: "PUT /teams/{id}/lead",
+        path: "/teams/{id}/lead",
+        route: || axum::routing::put(crate::writes_teams::set_lead),
+    },
+    Moved {
+        key: "PUT /teams/{id}/invokers/{accountId}",
+        path: "/teams/{id}/invokers/{accountId}",
+        route: || axum::routing::put(crate::writes_teams::put_invoker),
+    },
+    Moved {
+        key: "DELETE /teams/{id}/invokers/{accountId}",
+        path: "/teams/{id}/invokers/{accountId}",
+        route: || axum::routing::delete(crate::writes_teams::delete_invoker),
+    },
+    Moved {
+        key: "PUT /teams/{id}/members/{accountId}",
+        path: "/teams/{id}/members/{accountId}",
+        route: || axum::routing::put(crate::writes_teams::put_member),
+    },
+    Moved {
+        key: "DELETE /teams/{id}/members/{accountId}",
+        path: "/teams/{id}/members/{accountId}",
+        route: || axum::routing::delete(crate::writes_teams::delete_member),
+    },
+    Moved {
+        key: "POST /handle-groups",
+        path: "/handle-groups",
+        route: || axum::routing::post(crate::writes_groups::create_group),
+    },
+    Moved {
+        key: "PATCH /handle-groups/{id}",
+        path: "/handle-groups/{id}",
+        route: || axum::routing::patch(crate::writes_groups::rename_group),
+    },
+    Moved {
+        key: "DELETE /handle-groups/{id}",
+        path: "/handle-groups/{id}",
+        route: || axum::routing::delete(crate::writes_groups::delete_group),
+    },
+    Moved {
+        key: "POST /handle-groups/{id}/members",
+        path: "/handle-groups/{id}/members",
+        route: || axum::routing::post(crate::writes_groups::add_members),
+    },
+    Moved {
+        key: "DELETE /handle-groups/{id}/members",
+        path: "/handle-groups/{id}/members",
+        route: || axum::routing::delete(crate::writes_groups::remove_members),
+    },
 ];
 
 /// 이번 기동에 실제로 마운트할 쓰는 줄.

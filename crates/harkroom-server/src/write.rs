@@ -31,6 +31,19 @@ pub const REQUIRED_PRIVILEGES: &[(&str, &str)] = &[
     ("workspace_skill", "UPDATE"),
     ("workspace_skill_usage", "INSERT"),
     ("builtin_skill_usage", "INSERT"),
+    // P4b — 팀·집합(`writes_teams.rs`·`writes_groups.rs`). 구성원 표는 부모를 지울 때 FK cascade 가 지운다(표 주인 권한).
+    ("agent_team", "INSERT"),
+    ("agent_team", "UPDATE"),
+    ("agent_team", "DELETE"),
+    ("agent_team_member", "INSERT"),
+    ("agent_team_member", "DELETE"),
+    ("agent_team_invoker", "INSERT"),
+    ("agent_team_invoker", "DELETE"),
+    ("handle_group", "INSERT"),
+    ("handle_group", "UPDATE"),
+    ("handle_group", "DELETE"),
+    ("handle_group_member", "INSERT"),
+    ("handle_group_member", "DELETE"),
 ];
 /// 시퀀스 권한(시퀀스, 권한) — `event_outbox.id` 는 bigserial 이다. `audit_log.id` 는 identity 라 필요 없다.
 pub const REQUIRED_SEQUENCE_PRIVILEGES: &[(&str, &str)] = &[
@@ -354,9 +367,14 @@ mod tests {
             tables.into_iter().collect::<Vec<_>>(),
             [
                 "agent_defaults",
+                "agent_team",
+                "agent_team_invoker",
+                "agent_team_member",
                 "audit_log",
                 "builtin_skill_usage",
                 "event_outbox",
+                "handle_group",
+                "handle_group_member",
                 "inbox_view_cursor",
                 "mention_policy",
                 "pat",
@@ -366,11 +384,19 @@ mod tests {
             ],
             "넓힐 때는 homelab GRANT 와 이 시험을 같이 고친다"
         );
+        // DELETE 는 P4b 의 팀·집합(과 그 구성원) 표에만 — homelab#353 목록과 같다. TRUNCATE·그 밖의 것은 없다.
+        const DELETE_OK: &[&str] = &[
+            "agent_team",
+            "agent_team_member",
+            "agent_team_invoker",
+            "handle_group",
+            "handle_group_member",
+        ];
         assert!(
-            REQUIRED_PRIVILEGES
-                .iter()
-                .all(|x| x.1 == "INSERT" || x.1 == "UPDATE"),
-            "DELETE·TRUNCATE 는 주지 않는다"
+            REQUIRED_PRIVILEGES.iter().all(|x| x.1 == "INSERT"
+                || x.1 == "UPDATE"
+                || (x.1 == "DELETE" && DELETE_OK.contains(&x.0))),
+            "DELETE 는 팀·집합 표에만, TRUNCATE 는 주지 않는다"
         );
     }
 
