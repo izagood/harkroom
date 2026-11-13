@@ -346,3 +346,142 @@ fn blocked_up_front_releases_nothing() {
     assert!(release_launch(&r.attempted, &mut io).is_empty());
     assert!(io.released.is_empty());
 }
+
+/// 거두기를 센다 — 정확히 한 번인지 본다.
+#[derive(Clone, Default)]
+struct Count(std::rc::Rc<std::cell::RefCell<Vec<LaunchStep>>>);
+
+impl LaunchRelease for Count {
+    fn release(&mut self, step: LaunchStep) -> Result<(), String> {
+        self.0.borrow_mut().push(step);
+        Ok(())
+    }
+}
+
+/// 띄우기에서 패닉하는 가짜.
+struct PanicIo;
+
+impl LaunchIo for PanicIo {
+    type Out = ();
+    fn prepare(&mut self, _: LaunchStep) -> Result<(), String> {
+        Ok(())
+    }
+    fn spawn(&mut self) {
+        panic!("harness blew up");
+    }
+}
+
+type GateFn = Box<dyn FnMut() -> Result<(), SpawnBlocked>>;
+
+#[test]
+fn guard_releases_once_on_every_branch() {
+    // Ran · Blocked(중간) · SetupFailed 각각 정확히 한 번.
+    let cases: Vec<(GateFn, Option<LaunchStep>)> = vec![
+        (Box::new(|| Ok(())), None),
+        (
+            Box::new({
+                let mut n = 0;
+                move || {
+                    n += 1;
+                    if n == 3 {
+                        Err(SpawnBlocked::FencedOut)
+                    } else {
+                        Ok(())
+                    }
+                }
+            }),
+            None,
+        ),
+        (Box::new(|| Ok(())), Some(LaunchStep::Secrets)),
+    ];
+    for (mut gate, fail_at) in cases {
+        let c = Count::default();
+        let mut guard = LaunchGuard::new(c.clone());
+        let mut io = Io {
+            fail_at,
+            ..Io::default()
+        };
+        let r = launch_guarded(ALL, &mut io, &mut *gate, &mut guard);
+        assert_eq!(guard.attempted(), r.attempted.as_slice());
+        let want: Vec<LaunchStep> = r.attempted.iter().rev().copied().collect();
+        assert!(guard.finish().is_empty());
+        assert_eq!(*c.0.borrow(), want, "{:?}", r.launched);
+    }
+}
+
+#[test]
+fn guard_releases_on_panic_in_spawn() {
+    let c = Count::default();
+    let c2 = c.clone();
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+        let mut guard = LaunchGuard::new(c2);
+        launch_guarded(ALL, &mut PanicIo, &mut || Ok(()), &mut guard);
+    }));
+    assert!(res.is_err());
+    assert_eq!(
+        *c.0.borrow(),
+        [
+            LaunchStep::LaneKeys,
+            LaunchStep::Secrets,
+            LaunchStep::TurnKeys
+        ],
+        "패닉해도 받은 것은 모두 한 번 거둔다"
+    );
+}
+
+#[test]
+fn guard_releases_on_early_return_and_not_twice() {
+    fn body(c: Count) -> Result<(), String> {
+        let mut guard = LaunchGuard::new(c);
+        let mut io = Io::default();
+        launch_guarded(ALL, &mut io, &mut || Ok(()), &mut guard);
+        Err("timeout".to_string())?; // 정리를 잊은 조기 반환
+        guard.finish();
+        Ok(())
+    }
+    let c = Count::default();
+    assert!(body(c.clone()).is_err());
+    assert_eq!(c.0.borrow().len(), 3, "Drop 이 한 번 거둔다");
+
+    // finish 뒤 Drop 은 다시 거두지 않는다.
+    let c = Count::default();
+    let mut guard = LaunchGuard::new(c.clone());
+    let mut io = Io::default();
+    launch_guarded(ALL, &mut io, &mut || Ok(()), &mut guard);
+    guard.finish();
+    assert_eq!(c.0.borrow().len(), 3);
+}
+
+#[test]
+fn turn_release_is_harmless_when_repeated_or_absent() {
+    let ends = Cell::new(0);
+    let secrets = Cell::new(0);
+    let lane = Cell::new(0);
+    let mut end_keys = || ends.set(ends.get() + 1);
+    let mut r = TurnRelease {
+        end_turn_keys: &mut end_keys,
+        end_secrets: Some(Box::new(|| secrets.set(secrets.get() + 1))),
+        provider_env_done: Some(Box::new(|| lane.set(lane.get() + 1))),
+    };
+    let all = [
+        LaunchStep::TurnKeys,
+        LaunchStep::Secrets,
+        LaunchStep::LaneKeys,
+    ];
+    assert!(release_launch(&all, &mut r).is_empty());
+    assert!(release_launch(&all, &mut r).is_empty());
+    assert_eq!((secrets.get(), lane.get()), (1, 1), "비밀·lane 은 한 번만");
+    assert_eq!(
+        ends.get(),
+        2,
+        "열쇠 끝은 모르는 턴에도 무해하니 그대로 보낸다"
+    );
+    // 비밀·lane 을 받지 않은 턴(닫개 없음)도 무해하다.
+    let mut end_keys = || {};
+    let mut r = TurnRelease {
+        end_turn_keys: &mut end_keys,
+        end_secrets: None,
+        provider_env_done: None,
+    };
+    assert!(release_launch(&all, &mut r).is_empty());
+}
