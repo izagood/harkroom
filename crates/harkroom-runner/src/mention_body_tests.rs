@@ -126,6 +126,8 @@ struct Maker {
     store: SessionStore,
     env: BTreeMap<String, String>,
     seen: Mutex<Vec<(&'static str, String, Vec<u64>)>>,
+    /// 짓개가 패닉할 자리(시험).
+    panic_at: Option<&'static str>,
 }
 
 impl Drop for Maker {
@@ -145,6 +147,7 @@ fn maker(tag: &str) -> Maker {
         root,
         env: BTreeMap::new(),
         seen: Mutex::default(),
+        panic_at: None,
     }
 }
 
@@ -157,6 +160,9 @@ fn approved(s: &SystemInputs) -> Vec<u64> {
 
 impl CallMaker<&'static Link, Sink> for Maker {
     fn system_context(&self, _t: &MentionTarget, _r: &MentionReads) -> SystemContext<'_> {
+        if self.panic_at == Some("system_context") {
+            panic!("짓개 패닉(시험)");
+        }
         SystemContext {
             handle: "agent",
             channel_name: "general",
@@ -179,6 +185,9 @@ impl CallMaker<&'static Link, Sink> for Maker {
         _reads: MentionReads,
         system: SystemInputs,
     ) -> CallInputs<'a, &'static Link, Sink> {
+        if self.panic_at == Some("call_inputs") {
+            panic!("짓개 패닉(시험)");
+        }
         let (mid, ch, root) = (
             target.mention_id.clone(),
             target.channel_id.clone(),
@@ -407,4 +416,49 @@ fn unreadable_definition_releases_without_launching() {
         "자리·턴 끝 각 한 번"
     );
     assert!(sh.book.get("m7").is_none(), "턴 임대는 받지 않았다");
+}
+
+/// security L3 ①: 띄우기 전 준비(짓개)가 패닉해도 정의 못 읽음과 같이 놓는다 — 장부 「도는 중」 풀림·임대 1·자리 1·턴 끝 1,
+/// 턴 임대는 받지 않았다. 지시문 문맥·`CallInputs` 두 자리 다.
+#[test]
+fn maker_panic_before_launch_releases_like_unreadable_definition() {
+    for at in ["system_context", "call_inputs"] {
+        let l = link(true);
+        let mut m = maker(&format!("panic-{at}"));
+        m.panic_at = Some(at);
+        let (sh, rx) = shared(l, m);
+        let released = Arc::new(AtomicU32::new(0));
+        let launch = launch_in(
+            &sh,
+            7,
+            "m7",
+            "t",
+            Some(Box::new(Claim(Arc::clone(&released)))),
+        );
+
+        assert_eq!(
+            run_body::<_, Sink, _>(&sh, launch),
+            BodyEnd::PreparePanicked,
+            "{at}"
+        );
+
+        assert!(
+            !sh.ledger.lock().unwrap().thread_in_flight("c:t"),
+            "{at}: 장부에서 놓았다"
+        );
+        assert_eq!(released.load(Ordering::SeqCst), 1, "{at}: 임대 1회");
+        let ev: Vec<SchedEvent> = rx.try_iter().collect();
+        assert_eq!(
+            ev,
+            vec![
+                SchedEvent::SlotReleased("c:t".into()),
+                SchedEvent::TurnEnded {
+                    thread_key: "c:t".into(),
+                    mention_id: "m7".into()
+                },
+            ],
+            "{at}: 자리·턴 끝 각 한 번"
+        );
+        assert!(sh.book.get("m7").is_none(), "{at}: 턴 임대는 받지 않았다");
+    }
 }
