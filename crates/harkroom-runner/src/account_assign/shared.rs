@@ -395,18 +395,29 @@ pub struct Attention {
     pub at_ms: f64,
 }
 
+/// 표식 파일 크기 상한 — 본문은 `{"kind","atMs"}` 뿐이다.
+const MARKER_MAX_BYTES: u64 = 4096;
+
 fn read_marker(path: &Path, kind: AttentionKind, word: &str) -> Option<Attention> {
-    // 표식 자리의 링크는 따라가지 않는다(`O_NOFOLLOW`) — 링크면 없는 것으로 본다.
+    // 표식 자리의 링크는 따라가지 않는다(`O_NOFOLLOW`) — 링크면 없는 것으로 본다. FIFO·장치에서 막히지 않게
+    // `O_NONBLOCK` 으로 열고, 연 뒤 일반 파일이 아니면 버린다. 표식은 작다 — 상한을 넘으면 깨진 것으로 본다.
     let text = {
         use std::io::Read;
         use std::os::unix::fs::OpenOptionsExt;
-        let mut f = fs::OpenOptions::new()
+        let f = fs::OpenOptions::new()
             .read(true)
-            .custom_flags(libc::O_NOFOLLOW)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
             .open(path)
             .ok()?;
+        let m = f.metadata().ok()?;
+        if !m.is_file() || m.len() > MARKER_MAX_BYTES {
+            return None;
+        }
         let mut t = String::new();
-        f.read_to_string(&mut t).ok()?;
+        f.take(MARKER_MAX_BYTES + 1).read_to_string(&mut t).ok()?;
+        if t.len() as u64 > MARKER_MAX_BYTES {
+            return None;
+        }
         t
     };
     let v: Value = serde_json::from_str(&text).ok()?;

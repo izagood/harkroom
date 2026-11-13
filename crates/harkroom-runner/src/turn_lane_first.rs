@@ -29,6 +29,30 @@ impl LaneSource for ProviderLane {
     }
 }
 
+/// 시도 하나에서 임대 끝 알림을 **한 번만** 보낸다 — 띄우기 정리(비밀 단계의 `end_lease`)와 [`LaneFirst`] 가 같은 이
+/// 자리를 쓴다. 그래서 lane + 비밀 턴에서도 `lease_ended` 는 한 번이다. 시도마다 새로 만든다.
+pub struct OnceLease<'a, N: LeaseNotice> {
+    inner: &'a N,
+    ended: std::cell::Cell<bool>,
+}
+
+impl<'a, N: LeaseNotice> OnceLease<'a, N> {
+    pub fn new(inner: &'a N) -> Self {
+        Self {
+            inner,
+            ended: std::cell::Cell::new(false),
+        }
+    }
+}
+
+impl<N: LeaseNotice> LeaseNotice for OnceLease<'_, N> {
+    fn lease_ended(&self, cause: &str) {
+        if !self.ended.replace(true) {
+            self.inner.lease_ended(cause);
+        }
+    }
+}
+
 /// 받지 못했다.
 #[derive(Debug, PartialEq, Eq)]
 pub enum LaneFirstError {
