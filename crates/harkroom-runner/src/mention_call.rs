@@ -43,7 +43,16 @@ pub struct AfterData {
     pub last_said: Option<String>,
 }
 
-/// [`AfterInputs`] 의 소유본 — 보고처 약속은 아직 싣지 않는다(`promise: None`, C5).
+/// 보고처 약속 소유본(깨움 턴만) — **그 멘션의** 깨움 줄에서만 짓는다(`mention_inputs::report_promise`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OwnedPromise {
+    pub report_to: crate::mention_scheduler::WakeReportTo,
+    pub base_seq: i64,
+    pub scheduled_turn_id: Option<String>,
+    pub reason: String,
+}
+
+/// [`AfterInputs`] 의 소유본.
 #[derive(Clone, Debug)]
 pub struct OwnedAfterInputs {
     pub key: String,
@@ -58,6 +67,7 @@ pub struct OwnedAfterInputs {
     pub background_wait_ms: u64,
     pub turn_start_seq: i64,
     pub turn_id: String,
+    pub promise: Option<OwnedPromise>,
 }
 
 impl OwnedAfterInputs {
@@ -75,7 +85,15 @@ impl OwnedAfterInputs {
             background_wait_ms: self.background_wait_ms,
             turn_start_seq: self.turn_start_seq,
             turn_id: &self.turn_id,
-            promise: None,
+            promise: self
+                .promise
+                .as_ref()
+                .map(|p| crate::turn_attempt_fold::PromiseInputs {
+                    report_to: &p.report_to,
+                    base_seq: p.base_seq,
+                    scheduled_turn_id: p.scheduled_turn_id.as_deref(),
+                    reason: &p.reason,
+                }),
         }
     }
 }

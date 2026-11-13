@@ -5,7 +5,7 @@
 //! [`AfterCtx`](그 시도의 `LoopCtx`), 거둔 하위 에이전트 수는 그 시도의 끝 상태. 설정([`AfterConfig`])은 멘션 단위 값만 쥔다.
 //! 손님은 없다 — 스레드 다시 읽기와 통지는 호출 자리가 묶음 손님으로 한다.
 //!
-//! 아직 없는 것: 보고처 약속(`promise`)은 `None` 이다(깨움 보고처 재료는 C5 스케줄러가 대기 줄에서 꺼낸다).
+//! 보고처 약속(`promise`)은 설정에 실려 온다 — 그 멘션의 깨움 줄에서만 짓는다(`mention_inputs::report_promise`).
 
 use std::path::PathBuf;
 
@@ -34,6 +34,8 @@ pub struct AfterConfig {
     pub harness: AgentHarness,
     /// 기본 로그인일 때 기록을 찾을 홈(계정 폴더는 시도 문맥에서 온다).
     pub home: Option<PathBuf>,
+    /// 보고처 약속 — 그 멘션의 깨움에서만(`mention_inputs::report_promise`).
+    pub promise: Option<crate::mention_call::OwnedPromise>,
 }
 
 fn last_said(c: &AfterConfig, a: &AfterCtx) -> Option<String> {
@@ -72,6 +74,7 @@ pub fn after_source<'a>(c: &'a AfterConfig) -> AfterSource<'a> {
             background_wait_ms: c.background_wait_ms,
             turn_start_seq: a.ctx.turn_start_seq,
             turn_id: a.ctx.turn_id.clone(),
+            promise: c.promise.clone(),
         },
         // 마지막 말은 시도 문맥(세션·계정 폴더·시작 시각)으로 읽는다.
         last_said: last_said(c, a),
