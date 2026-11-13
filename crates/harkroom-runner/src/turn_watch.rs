@@ -94,6 +94,10 @@ pub struct WatchSink<'a, S: PtyTurnSink> {
     pub inner: &'a mut S,
     pub watch: Watch,
     pub now_ms: &'a dyn Fn() -> i64,
+    /// 띄운 **바로 그 순간** 접어야 하는가(임대 잃음·[중단]) — 정본 `onSpawn` 의 `if (end.canceledBy || end.fencedOut)`.
+    /// 띄우기 전 관문(`spawn_gate`)과 이 콜백 사이(실행 파일 해석·forkpty)에 온 신호는 이때 써야 한다 — 감시 루프의 펜스
+    /// 확인은 손잡이가 없어 거두지 못하고 끝났고, 신호는 다시 오지 않는다. 없으면 보지 않는다.
+    pub stop_on_spawn: Option<&'a dyn Fn() -> bool>,
 }
 
 impl<S: PtyTurnSink> PromptHooks for WatchSink<'_, S> {
@@ -113,10 +117,16 @@ impl<S: PtyTurnSink> PromptHooks for WatchSink<'_, S> {
 
 impl<S: PtyTurnSink> PtyTurnSink for WatchSink<'_, S> {
     fn on_spawn(&mut self, controls: PtyControls) {
-        {
+        let kill = {
             let mut w = lock(&self.watch);
             w.end.has_controls = true;
             w.controls = Some(controls.clone());
+            // 손잡이를 잡은 같은 잠금 안에서 거둠을 적는다 — 감시 루프가 그사이 이 턴을 산 것으로 보지 않게.
+            self.stop_on_spawn.is_some_and(|stop| stop()) && w.end.reclaim()
+        };
+        if kill {
+            // SIGTERM 은 잠금 밖에서(`kill` 은 자리를 잠그지 않지만, 잠금 규칙을 하나로 둔다).
+            controls.kill(false);
         }
         self.inner.on_spawn(controls)
     }

@@ -476,3 +476,21 @@ fn account_ranks_are_positions_only() {
         "풀 순서가 없으면 축 순서"
     );
 }
+
+/// 띄운 순간 접기(`WatchSink::stop_on_spawn`)가 보는 값 — 걸린 시도의 임대 잃음·[중단], 시도 사이에 온 멘션 [중단].
+#[test]
+fn slot_stop_requested_sees_fence_and_cancel() {
+    let slot = LiveSlot::default();
+    assert!(!slot.stop_requested());
+    let live = Arc::new(LiveTurn::default());
+    slot.bind(Some(live.clone()));
+    assert!(!slot.stop_requested());
+    live.fence_lost();
+    assert!(slot.stop_requested(), "걸린 시도가 임대를 잃었다");
+
+    let slot = LiveSlot::default();
+    slot.cancel("human");
+    assert!(slot.stop_requested(), "시도 사이에 온 [중단]");
+    slot.bind(Some(Arc::new(LiveTurn::default())));
+    assert!(slot.stop_requested(), "다음 시도에도 남는다");
+}

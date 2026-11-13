@@ -140,6 +140,16 @@ impl LiveSlot {
         self.lock().canceled_by.clone()
     }
 
+    /// 지금 시도를 접어야 하는가 — 걸린 시도가 임대를 잃었거나, 이 멘션·그 시도에 [중단] 이 있다(띄운 순간 접기에 쓴다).
+    pub fn stop_requested(&self) -> bool {
+        let st = self.lock();
+        st.canceled_by.is_some()
+            || st
+                .live
+                .as_ref()
+                .is_some_and(|l| l.fenced_out() || l.canceled_by().is_some())
+    }
+
     pub fn is_bound(&self) -> bool {
         self.lock().live.is_some()
     }

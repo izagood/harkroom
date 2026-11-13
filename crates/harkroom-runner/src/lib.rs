@@ -115,4 +115,5 @@ pub mod turn_rules;
 pub mod turn_run;
 pub mod turn_success;
 pub mod turn_watch;
+pub mod turn_watch_loop;
 pub mod workspace_trust;

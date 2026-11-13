@@ -388,12 +388,15 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
         // 감시 루프는 **이 시도의 자리**(`self.watch`, `bind_live(Some)` 가 새로 만든 것)와 띄우는 자리에서 지은 감시 목록
         // (`args.notice`)을 받아 PTY 옆에서 돈다.
         let inner = &mut self.inner;
+        let slot = self.slot.clone();
+        let stop_on_spawn = move || slot.stop_requested();
         run_beside(&watch, &args.notice, self.watch_loop.as_ref(), || {
             let mut delivered_sink = DeliveredSink { inner, delivered };
             let mut watch_sink = WatchSink {
                 inner: &mut delivered_sink,
                 watch: watch.clone(),
                 now_ms: &now,
+                stop_on_spawn: Some(&stop_on_spawn),
             };
             match args.relay {
                 Some(r) => {
