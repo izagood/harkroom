@@ -83,7 +83,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
     const bin = `${dirname(MANIFEST)}/target/debug/harkroom-server-rs`;
 
     const db = await startTestDb();
-    const app = await buildServer({ pool: db.pool });
+    // 감사 `ip` 대조(trust-proxy) — 두 서버가 같은 규칙으로 루프백만 프록시로 믿는다(운영은 파드 대역 CIDR 하나).
+    const TRUST = ['127.0.0.1', '::1'];
+    const app = await buildServer({ pool: db.pool, trustProxy: TRUST });
     let front: ChildProcess | undefined;
     try {
       await app.listen({ port: 0, host: '127.0.0.1' });
@@ -226,7 +228,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       const port = await freePort();
       const f = await startFront(bin, {
         UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(port), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
+        TRUST_PROXY: TRUST.join(','),
       });
+      expect(f.log()).toContain('front: trust proxy 2 cidr(s)');
       front = f.child;
       // 앞단이 옮긴 줄을 **직접** 답하는지 — 모두 TS 로 넘기면 대조는 TS 끼리 비교해 늘 통과한다.
       for (const key of [
@@ -350,6 +354,23 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         { action: 'agent.defaults.updated', actor_id: admin.accountId, detail: { before: { harness: 'codex', model: 'm-1', effort: 'high' }, after: defs.json } },
         { action: 'mention.policy.updated', actor_id: admin.accountId, detail: { before: { chainLimit: 12 }, after: { chainLimit: 20 } } },
       ]);
+      // trust-proxy — 같은 X-Forwarded-For 를 두 서버에 보내면 감사 `ip` 가 같아야 한다. 맨 왼쪽(클라이언트가 마음대로 쓰는 칸)은
+      // 믿지 않는다: 소켓(루프백)만 믿고 그 바로 바깥 값에서 멈춘다.
+      for (const [xff, want] of [['203.0.113.7', '203.0.113.7'], ['6.6.6.6, 203.0.113.7', '203.0.113.7'], [undefined, null]] as const) {
+        const got: (string | null)[] = [];
+        for (const [base, n] of [[rsUrl, 31], [tsUrl, 32]] as const) {
+          const headers: Record<string, string> = { authorization: `Bearer ${A}`, 'content-type': J };
+          if (xff) headers['x-forwarded-for'] = xff;
+          const res = await fetch(`${base}/settings/mention-policy`, { method: 'PUT', headers, body: JSON.stringify({ chainLimit: n }) });
+          expect(res.status).toBe(200);
+          const row = await db.pool.query<{ ip: string | null }>(
+            `select ip from audit_log where action = 'mention.policy.updated' order by id desc limit 1`);
+          got.push(row.rows[0]!.ip);
+        }
+        expect(got[0], `XFF ${xff ?? '(없음)'}: Rust 와 TS 의 감사 ip`).toEqual(got[1]);
+        if (want) expect(got[0]).toBe(want);
+        else expect(got[0], 'XFF 가 없으면 소켓 주소(루프백)').toMatch(/127\.0\.0\.1|::1/);
+      }
       for (const [m, path, slug, ty] of [
         ['POST', '/skills/pending-one/approve', 'pending-one', 'skill.approved'],
         ['DELETE', '/skills/stale-one', 'stale-one', 'skill.disabled'],

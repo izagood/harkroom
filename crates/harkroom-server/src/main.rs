@@ -1,5 +1,5 @@
 //! `harkroom-server-rs` — env: `UPSTREAM_URL`(TS 서버, 예 `http://harkroom:3400`) · `DATABASE_URL` · `PORT`(기본 3500) ·
-//! `HARKROOM_FRONT_TS_ROUTES`(옮긴 줄을 TS 로 되돌림 — `"GET /accounts,GET /dms"` 또는 `*`, `routes.rs` 참고) ·
+//! `TRUST_PROXY`(감사 `ip` 규칙, TS 와 같은 꼴 — `trust_proxy.rs`) · `HARKROOM_FRONT_TS_ROUTES`(옮긴 줄을 TS 로 되돌림 — `"GET /accounts,GET /dms"` 또는 `*`, `routes.rs` 참고) ·
 //! `DATABASE_WRITE_URL`(쓰기 역할, P3 — 없거나 권한이 모자라면 쓰는 줄을 켜지 않고 그 요청은 TS 로 간다, `write.rs` 참고).
 use harkroom_server::{proxy, routes, schema, write};
 use std::net::SocketAddr;
@@ -47,10 +47,29 @@ async fn main() {
     if !unknown.is_empty() {
         eprintln!("front: HARKROOM_FRONT_TS_ROUTES names unknown route(s): {unknown:?}");
     }
+    // 감사 `ip` 규칙 — TS `TRUST_PROXY` 와 같은 꼴. 모르는 값이면 기동하지 않는다(TS 와 같다).
+    let trust =
+        match harkroom_server::trust_proxy::parse(std::env::var("TRUST_PROXY").ok().as_deref()) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("front: refusing to start — {e}");
+                std::process::exit(1);
+            }
+        };
+    eprintln!(
+        "front: trust proxy {}",
+        match &trust {
+            harkroom_server::trust_proxy::TrustProxy::None => "off".to_string(),
+            harkroom_server::trust_proxy::TrustProxy::All => "all (not recommended)".to_string(),
+            harkroom_server::trust_proxy::TrustProxy::Hops(n) => format!("{n} hops"),
+            harkroom_server::trust_proxy::TrustProxy::Cidrs(c) => format!("{} cidr(s)", c.len()),
+        }
+    );
     let state = routes::AppState {
         up: proxy::Upstream::new(&upstream),
         pool,
         write,
+        trust: std::sync::Arc::new(trust),
     };
     let mut active = routes::active(routes::MOVED, &ts);
     active.extend(routes::active(routes::writes_for(&state), &ts));

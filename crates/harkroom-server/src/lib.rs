@@ -12,5 +12,6 @@ pub mod perm;
 pub mod proxy;
 pub mod routes;
 pub mod schema;
+pub mod trust_proxy;
 pub mod write;
 pub mod writes_settings;
