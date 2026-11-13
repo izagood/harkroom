@@ -59,6 +59,58 @@ pub fn lane_env_allowed(key: &str) -> bool {
     LANE_ENV_ALLOW.contains(&key) || LANE_ENV_ALLOW_PREFIXES.iter().any(|p| key.starts_with(p))
 }
 
+/// 하네스 자식의 **부모 env 허용 목록**(L3d-2, security #2093 조건 ②). 러너 env 전체를 물려주지 않고 이 이름만 넘긴다 —
+/// 러너가 쥔 오퍼레이터 링크 열쇠(`HARKROOM_RUNNER_SECRET`)·옛 PAT(`HARKROOM_PAT`)·사람 셸에서 샌 토큰은 목록에 없어 자식에 닿지 않는다.
+///
+/// 정본 `childEnv` 는 러너 env 를 통째로 상속하고 [`HARNESS_ENV_DENYLIST`] 만 뺐다(하네스가 무엇을 읽는지 다 모른다는 이유).
+/// 여기서는 닫힌 쪽을 고른다: 기본 실행 환경(lane 목록과 같은 바탕) + 하네스 로그인 자리(`CODEX_HOME` — 홈·Keychain 은 `HOME`·`USER`
+/// 로 닿는다) + git ssh(`SSH_AUTH_SOCK`). 하네스 홈·턴 값은 [`child_env`] 가 이 위에 얹는다.
+/// 링크 열쇠는 일부러 뺀다 — 브릿지는 턴 열쇠(`HARKROOM_TURN_GRANT`·`HARKROOM_TURN_BRIDGE_KEY`)로 붙는다. 턴 열쇠를 못 맡긴 턴은
+/// 브릿지가 오퍼레이터에 못 붙는다(닫히는 쪽).
+pub const HARNESS_PARENT_ENV_ALLOW: [&str; 27] = [
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "TERM",
+    "COLORTERM",
+    "LANG",
+    "TMPDIR",
+    "TZ",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy",
+    "all_proxy",
+    "NODE_EXTRA_CA_CERTS",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "HARKROOM_OPERATOR_SOCKET",
+    "HARKROOM_RUNNER_ID",
+    "HARKROOM_MCP_READY_FILE",
+    "HARKROOM_OPERATOR_VERSION",
+    "CODEX_HOME",
+    "SSH_AUTH_SOCK",
+];
+
+pub fn harness_parent_env_allowed(key: &str) -> bool {
+    HARNESS_PARENT_ENV_ALLOW.contains(&key)
+        || LANE_ENV_ALLOW_PREFIXES.iter().any(|p| key.starts_with(p))
+}
+
+/// 러너 env 에서 하네스 자식에 넘길 이름만 고른다(`MakerConfig::parent_env` 를 채우는 자리). 값은 그대로 옮긴다.
+pub fn harness_parent_env(runner_env: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    runner_env
+        .iter()
+        .filter(|(k, _)| harness_parent_env_allowed(k))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect()
+}
+
 pub const RUNNER_TURN_CAUSE_ENV: &str = "HARKROOM_TURN_CAUSE";
 pub const RUNNER_TURN_ID_ENV: &str = "HARKROOM_TURN_ID";
 pub const RUNNER_GATE_FILE_ENV: &str = "HARKROOM_GATE_FILE";
