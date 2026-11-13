@@ -22,7 +22,8 @@ use crate::turn_io::Timer;
 
 /// 스케줄러가 쥔 일.
 pub trait SchedulerHooks {
-    fn notice_fenced(&mut self);
+    /// 임대를 잃어 접힌 턴 — `thread_key` 는 그 멘션의 스레드 열쇠(`채널/앵커`). 받는 쪽이 그 스레드에 표지를 단다.
+    fn notice_fenced(&mut self, thread_key: &str);
     fn turn_outcome(&mut self, ok: bool);
     fn stop_requested(&mut self, at: &str);
     fn executable_missing(&mut self);
@@ -288,7 +289,9 @@ impl<O: LeaseHandoff, S: SchedulerHooks> MentionHooks for LinkHooks<'_, O, S> {
         self.end();
     }
     fn notice_fenced(&mut self) {
-        self.scheduler.notice_fenced();
+        // 열쇠는 `OnceRelease` 가 자기 `Launch` 열쇠로 갈아 싣는다.
+        let key = self.key.clone();
+        self.scheduler.notice_fenced(&key);
     }
     fn turn_outcome(&mut self, ok: bool) {
         self.scheduler.turn_outcome(ok);

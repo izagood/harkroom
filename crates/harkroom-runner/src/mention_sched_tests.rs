@@ -6,7 +6,7 @@ use super::*;
 #[derive(Clone, Default)]
 struct Rec(Arc<Mutex<Vec<String>>>);
 impl SchedulerHooks for Rec {
-    fn notice_fenced(&mut self) {}
+    fn notice_fenced(&mut self, _thread_key: &str) {}
     fn turn_outcome(&mut self, _ok: bool) {}
     fn stop_requested(&mut self, _at: &str) {}
     fn executable_missing(&mut self) {}
@@ -83,4 +83,12 @@ fn channel_scheduler_delivers_and_never_panics() {
     s.turn_ended("t", "m");
     s.turn_outcome(true);
     drop(OnceRelease::new(s, "t", true, "m"));
+}
+
+#[test]
+fn fenced_carries_the_launch_thread_key() {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut o = OnceRelease::new(ChannelScheduler(tx), "c/a", false, "m");
+    o.notice_fenced("other/x");
+    assert_eq!(rx.recv().unwrap(), SchedEvent::Fenced("c/a".into()));
 }

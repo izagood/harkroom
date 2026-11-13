@@ -230,11 +230,11 @@ struct FakeScheduler {
 }
 
 impl Scheduler for FakeScheduler {
-    fn admit(&self, batch: &Value, ctx: &BatchContext) -> AdmitOutcome {
+    fn admit(&self, batch: &Value, ctx: &BatchContext) -> Result<AdmitOutcome, HarkroomError> {
         self.admitted
             .borrow_mut()
             .push((batch.clone(), ctx.clone()));
-        self.outcome.get()
+        Ok(self.outcome.get())
     }
     fn holding_entries(&self) -> Vec<i64> {
         vec![41]
