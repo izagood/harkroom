@@ -76,6 +76,12 @@ struct Parts {
     needles_had_secret: Vec<bool>,
     /// 띄우기 도중 패닉한다.
     panic_spawn: bool,
+    /// 띄울 때 받은 lane env 표지.
+    lane_envs: Vec<Option<String>>,
+    /// 걸자마자 사람이 [중단] 한다.
+    cancel_on_bind: bool,
+    /// 듣기를 놓는 순간 중계 세션에 입력을 넣어 본다(그때 입력 통로가 이미 놓였나).
+    probe_on_unbind: Option<(Arc<RelaySessions>, String)>,
     /// 중계 세션이 있으면 띄울 때 이 PTY 를 잇는다.
     pty: Option<Arc<RelayPty>>,
     /// 띄울 때 받은 감시용 가림 목록에 마운트한 비밀·PAT 가 있었나.
@@ -90,8 +96,17 @@ impl AttemptParts for Parts {
             &self.log,
             if live.is_some() { "bind" } else { "unbind" }.into(),
         );
+        if live.is_none()
+            && let Some((relay, sid)) = &self.probe_on_unbind
+        {
+            push(&self.log, "probe".into());
+            relay_input(relay, sid, b"probe");
+        }
         if let Some(l) = &live {
             self.lives.push(Arc::clone(l));
+            if self.cancel_on_bind {
+                l.cancel("human-1");
+            }
         }
         self.bound = live;
     }
@@ -138,12 +153,13 @@ impl AttemptParts for Parts {
         turn_id: &str,
         keys: Option<&EnvTurnKeys>,
         mcp_config_path: &Path,
-        _lane_env: LaneEnv,
+        lane_env: LaneEnv,
         notice: NoticeSecrets,
         relay: Option<&crate::turn_attempt_relay::RelayAttempt<'_>>,
         delivered: &mut bool,
     ) -> PtyOut {
         push(&self.log, format!("spawn {turn_id}"));
+        self.lane_envs.push(lane_env.get("HK_LANE").cloned());
         if let (Some(r), Some(pty)) = (relay, &self.pty) {
             r.session().bind_input(pty.clone());
         }
@@ -246,6 +262,9 @@ fn parts(w: &World, log: &Log, secrets: bool, exits: Vec<i32>) -> Parts {
         seen: Vec::new(),
         needles_had_secret: Vec::new(),
         panic_spawn: false,
+        lane_envs: Vec::new(),
+        cancel_on_bind: false,
+        probe_on_unbind: None,
         pty: None,
         spawn_notice: Vec::new(),
     }
@@ -274,6 +293,7 @@ fn attempt<'a>(
         }),
         parts: RefCell::new(p),
         relay: None,
+        lane: None,
     }
 }
 
@@ -605,4 +625,129 @@ fn relay_attempt_lives_in_attempt_scope() {
     );
     assert!(a.parts.borrow().bound.is_none());
     assert_eq!(relay.len(), 1, "세션은 멘션 것이라 열려 있다");
+}
+
+// ---- lane env 는 턴 MCP 계획 앞에서 ----
+
+struct FakeLane(Log);
+impl crate::turn_lane_first::LaneSource for FakeLane {
+    fn env_for(
+        &self,
+        cause: &str,
+        _h: AgentHarness,
+    ) -> Result<LaneEnv, crate::provider_lane::LaneFileError> {
+        push(&self.0, format!("lane_env {cause}"));
+        Ok([("HK_LANE".to_string(), "on".to_string())].into())
+    }
+    fn release(&self, _env: &LaneEnv) -> std::io::Result<()> {
+        push(&self.0, "lane_release".into());
+        Ok(())
+    }
+}
+
+/// lane 턴: env 를 계획·열쇠 맡기기·띄우기보다 먼저 받고, 띄울 때 그 env 가 간다. 시도가 끝난 뒤(결과 접기 뒤) 임대를
+/// 끝내고 lane 턴 파일을 거둔다.
+#[test]
+fn lane_env_comes_before_plan_and_is_released_after() {
+    let w = world("lanefirst");
+    let log: Log = Log::default();
+    let link = Link(Arc::clone(&log));
+    let client = HarkroomRestClient::new(&link);
+    let notice = Notice {
+        log: Arc::clone(&log),
+        lease: w.lease.clone(),
+    };
+    let lane = FakeLane(Arc::clone(&log));
+    let mut a =
+        attempt(&w, &client, &notice, true, parts(&w, &log, false, vec![0])).with_lane(&lane);
+    let mut d = false;
+    assert!(a.run(&target(), None, true, &mut d).is_ok());
+    assert_eq!(
+        *log.lock().unwrap(),
+        [
+            "bind",
+            "prepare t-1 -",
+            "lane_env m1",
+            "keys t-1",
+            "spawn t-1",
+            "keys_end t-1",
+            "outcome",
+            "after",
+            "lease_ended m1",
+            "lane_release",
+            "unbind",
+        ]
+    );
+    assert_eq!(a.parts.borrow().lane_envs, [Some("on".to_string())]);
+}
+
+/// 관문이 막은 시도는 lane env 를 받지 않고 띄우지도 않는다.
+#[test]
+fn blocked_lane_attempt_mounts_nothing() {
+    let w = world("laneblocked");
+    let log: Log = Log::default();
+    let link = Link(Arc::clone(&log));
+    let client = HarkroomRestClient::new(&link);
+    let notice = Notice {
+        log: Arc::clone(&log),
+        lease: w.lease.clone(),
+    };
+    let lane = FakeLane(Arc::clone(&log));
+    let mut p = parts(&w, &log, false, vec![0]);
+    p.cancel_on_bind = true;
+    let mut a = attempt(&w, &client, &notice, true, p).with_lane(&lane);
+    let mut d = false;
+    assert!(a.run(&target(), None, true, &mut d).is_err());
+    let log = log.lock().unwrap().clone();
+    assert!(
+        !log.iter()
+            .any(|s| s.starts_with("lane_env") || s.starts_with("spawn")),
+        "{log:?}"
+    );
+    assert!(a.parts.borrow().lane_envs.is_empty());
+}
+
+/// #2051 + #2053 함께: lane 턴 + 멘션 중계 세션. 차례 — 결과 접기 뒤 lane 가드(임대 끝 → lane 턴 파일) → 중계 가드(입력
+/// 통로 놓기) → 듣기 놓기. 듣기를 놓는 순간 넣은 입력은 그 시도 PTY 로 가지 않는다.
+#[test]
+fn lane_and_relay_guards_both_release_in_order() {
+    let w = world("lanerelay");
+    let log: Log = Log::default();
+    let link = Link(Arc::clone(&log));
+    let client = HarkroomRestClient::new(&link);
+    let notice = Notice {
+        log: Arc::clone(&log),
+        lease: w.lease.clone(),
+    };
+    let lane = FakeLane(Arc::clone(&log));
+    let relay = RelaySessions::new(None, Box::new(|_| {}));
+    let session = relay.open_session(OpenSessionInput {
+        agent_account_id: "agent".into(),
+        channel_id: "c".into(),
+        harness: "claude-code".into(),
+        accepts_input: true,
+        ..Default::default()
+    });
+    let sid = session.session_id().to_string();
+    let pty = Arc::new(RelayPty::default());
+    let mut p = parts(&w, &log, false, vec![0]);
+    p.pty = Some(pty.clone());
+    p.probe_on_unbind = Some((Arc::clone(&relay), sid));
+    let mut a = attempt(&w, &client, &notice, true, p)
+        .with_lane(&lane)
+        .with_relay(&session);
+    let mut d = false;
+    assert!(a.run(&target(), None, true, &mut d).is_ok());
+    let log = log.lock().unwrap().clone();
+    let tail: Vec<&str> = log.iter().rev().take(5).rev().map(String::as_str).collect();
+    assert_eq!(
+        tail,
+        ["after", "lease_ended m1", "lane_release", "unbind", "probe"],
+        "{log:?}"
+    );
+    assert!(
+        pty.0.lock().unwrap().is_empty(),
+        "듣기를 놓을 때는 입력 통로가 이미 놓였다"
+    );
+    assert_eq!(a.parts.borrow().lane_envs, [Some("on".to_string())]);
 }
