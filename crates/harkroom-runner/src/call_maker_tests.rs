@@ -136,7 +136,7 @@ fn cfg(tag: &str) -> (MakerConfig, Root) {
         home: root.join("home"),
         turn_timeout_ms: 1_800_000,
         harness_stall_ms: 600_000,
-        new_workspace_dir: "/ws/new".into(),
+        workspace_base_dir: root.join("ws"),
         me_id: "me".into(),
         claim_holder: "holder-1".into(),
         can_register_turn_keys: true,
@@ -403,7 +403,38 @@ fn default_login_has_no_account_dir_and_finds_records_in_home() {
         parts.parent_env.get("PATH").map(String::as_str),
         Some("/usr/bin")
     );
-    assert_eq!(parts.new_workspace_dir, "/ws/new");
+    assert!(
+        std::path::Path::new(&parts.new_workspace_dir).starts_with(&m.cfg.workspace_base_dir),
+        "작업 폴더는 뿌리 아래 스레드 폴더"
+    );
+}
+
+fn workspace_of(m: &RunnerMaker<&'static Link>, t: &MentionTarget) -> String {
+    let clients = m.clients();
+    let book = LeaseBook::default();
+    let reads = read_mention(&clients, t).unwrap();
+    let ctx = <RunnerMaker<_> as CallMaker<_, Sink>>::system_context(m, t, &reads);
+    let system = system_inputs(&reads, t, ctx);
+    let i: CallInputs<'_, _, Sink> = m.call_inputs(&clients, &book, t, reads, system);
+    (i.build_parts)(bundle(m)).new_workspace_dir
+}
+
+/// 스레드마다 작업 폴더가 따로다(정본 `resolveWorkspaceDir`) — 두 스레드는 다른 폴더, 같은 스레드는 다시 지어도 같은 폴더.
+#[test]
+fn each_thread_gets_its_own_workspace_dir() {
+    let (m, _l, _root) = maker("ws");
+    let w1 = workspace_of(&m, &target(1, None, "h"));
+    let w2 = workspace_of(&m, &target(2, None, "h"));
+    assert_ne!(w1, w2, "두 스레드가 한 폴더를 나눠 쓰지 않는다");
+    assert_eq!(
+        workspace_of(&m, &target(1, None, "h")),
+        w1,
+        "같은 스레드는 같은 폴더"
+    );
+    for w in [&w1, &w2] {
+        let p = std::path::Path::new(w);
+        assert!(p.is_dir() && p.starts_with(&m.cfg.workspace_base_dir));
+    }
 }
 
 fn argv_system() -> SystemInputs {
