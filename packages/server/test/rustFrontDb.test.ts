@@ -102,8 +102,38 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // created_at 은 마이크로초까지 있다 — `lastMessageAt` 글자꼴(::text)이 그대로 나와야 한다.
         await ok(app.inject({ method: 'POST', url: `/channels/${String(dm.id)}/messages`, headers: auth, payload: { body } }));
       }
-      await ok(app.inject({ method: 'POST', url: '/handle-groups', headers: auth, payload: { handle: 'crew', displayName: 'Crew' } }));
-      await ok(app.inject({ method: 'POST', url: '/teams', headers: auth, payload: { name: 'squad' } }));
+      const crew = await ok(app.inject({ method: 'POST', url: '/handle-groups', headers: auth, payload: { handle: 'crew', displayName: 'Crew' } }));
+      await ok(app.inject({ method: 'POST', url: '/handle-groups', headers: auth, payload: { handle: 'empty-crew', displayName: 'Empty' } }));
+      const squad = await ok(app.inject({ method: 'POST', url: '/teams', headers: auth, payload: { name: 'squad' } }));
+      await ok(app.inject({ method: 'POST', url: '/teams', headers: auth, payload: { name: 'alpha' } }));
+
+      // S5.2 P2 픽스처 — 팀(팀원·호출 허용)·집합(구성원 둘)·스킬(제안/승인/오래된 승인/비활성 + 사용)·설정.
+      const crewId = String((crew.group as Record<string, unknown> | undefined)?.id ?? crew.id);
+      const squadId = String((squad.team as Record<string, unknown> | undefined)?.id ?? squad.id);
+      const bot2 = await createAgent(app, admin.token, 'bot2');
+      const member2 = await createMember(app, admin.token, 'mem2');
+      await ok(app.inject({ method: 'POST', url: `/handle-groups/${crewId}/members`, headers: auth, payload: { accountIds: [member.accountId, member2.accountId, admin.accountId] } }));
+      for (const a of [agent.accountId, bot2.accountId]) {
+        await ok(app.inject({ method: 'PUT', url: `/teams/${squadId}/members/${a}`, headers: auth }));
+      }
+      await ok(app.inject({ method: 'PUT', url: `/teams/${squadId}/invokers/${member.accountId}`, headers: auth }));
+      await ok(app.inject({ method: 'PUT', url: `/teams/${squadId}/scope`, headers: auth, payload: { invokeScope: 'list' } }));
+      await db.pool.query(
+        `insert into workspace_skill (slug, body, proposed_by, proposed_at, approved_by, approved_at, disabled_at, flagged_at, flag_reason) values
+         ('pending-one', 'p', $1, now() - interval '1 day', null, null, null, now(), 'looks odd'),
+         ('fresh-one', 'f', $1, now() - interval '3 days', $2, now() - interval '2 days', null, null, null),
+         ('stale-one', 's', $1, now() - interval '40 days', $2, now() - interval '35 days', null, null, null),
+         ('used-old', 'u', $1, now() - interval '40 days', $2, now() - interval '30 days', null, null, null),
+         ('off-one', 'o', $1, now() - interval '50 days', $2, now() - interval '45 days', now() - interval '5 days', null, null)`,
+        [agent.accountId, admin.accountId],
+      );
+      await db.pool.query(
+        `insert into workspace_skill_usage (slug, account_id, used_at) values
+         ('used-old', $1, now() - interval '2 days'), ('used-old', $1, now() - interval '1 hour'), ('fresh-one', $1, now())`,
+        [agent.accountId],
+      );
+      await ok(app.inject({ method: 'PUT', url: '/settings/agent-defaults', headers: auth, payload: { harness: 'codex', model: 'm-1', effort: 'high' } }));
+      await ok(app.inject({ method: 'PUT', url: '/settings/mention-policy', headers: auth, payload: { chainLimit: 12 } }));
       await ok(app.inject({ method: 'PUT', url: '/mcp-servers/notes', headers: auth, payload: { credentialKind: 'community' } }));
       const audit = (await db.pool.query<{ n: string }>('select count(*)::text as n from audit_log')).rows[0]!.n;
       expect(Number(audit), 'audit_log 가 비면 /audit 대조가 빈 목록끼리 비교한다').toBeGreaterThan(3);
@@ -112,7 +142,11 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       const f = await startFront(bin, { UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(port), HARKROOM_FRONT_TS_ROUTES: '' });
       front = f.child;
       // 앞단이 옮긴 줄을 **직접** 답하는지 — 모두 TS 로 넘기면 대조는 TS 끼리 비교해 늘 통과한다.
-      for (const key of ['GET /accounts', 'GET /dms', 'GET /mcp-servers', 'GET /audit']) {
+      for (const key of [
+        'GET /accounts', 'GET /dms', 'GET /mcp-servers', 'GET /audit',
+        'GET /teams', 'GET /teams/{id}', 'GET /handle-groups', 'GET /handle-groups/{id}',
+        'GET /skills', 'GET /skills/{slug}', 'GET /settings/agent-defaults', 'GET /settings/mention-policy',
+      ]) {
         expect(f.log(), key).toContain(`"${key}"`);
       }
 
@@ -121,6 +155,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         HARKROOM_CONTRAST_RS_URL: `http://127.0.0.1:${port}`,
         HARKROOM_CONTRAST_TOKEN: admin.token,
         HARKROOM_CONTRAST_MEMBER_TOKEN: member.token,
+        HARKROOM_CONTRAST_TEAM_ID: squadId,
+        HARKROOM_CONTRAST_GROUP_ID: crewId,
       });
       expect(r.code, `${r.out}\n--- front log ---\n${f.log()}`).toBe(0);
       expect(r.out, r.out).not.toContain('skip: HARKROOM_CONTRAST');
