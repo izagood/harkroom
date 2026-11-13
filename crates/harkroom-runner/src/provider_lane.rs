@@ -243,6 +243,20 @@ impl LaneFileError {
         }
     }
 
+    /// 오퍼레이터가 **마운트한 뒤에** 난 실패인가 — 마운트 답(200)을 받은 다음의 검증·턴 파일 쓰기 실패.
+    /// 그 턴의 키 파일은 오퍼레이터 임대 디렉터리에 이미 있을 수 있으니, 호출자는 그 임대를 곧바로 끝낸다(#2017 security 낮음).
+    pub fn after_mount(&self) -> bool {
+        match self {
+            Self::Lane(e) => matches!(
+                e.code(),
+                "lane_unset" | "bad_base_url" | "bad_path" | "bad_value"
+            ),
+            // 턴 파일 이름·쓰기 실패는 마운트 답을 받은 뒤에만 난다.
+            Self::BadName { .. } | Self::Io { .. } => true,
+            _ => false,
+        }
+    }
+
     /// 접힌 lane 코드(있으면).
     pub fn lane_code(&self) -> Option<&'static str> {
         match self {
