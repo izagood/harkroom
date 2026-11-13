@@ -21,6 +21,9 @@ pub const REQUIRED_PRIVILEGES: &[(&str, &str)] = &[
     ("audit_log", "INSERT"),
     ("inbox_view_cursor", "INSERT"),
     ("inbox_view_cursor", "UPDATE"),
+    // P4d — 인증 미들웨어의 기록(세션 연장 `RENEW_SESSION`, PAT 사용 시각).
+    ("session", "UPDATE"),
+    ("pat", "UPDATE"),
 ];
 /// 시퀀스 권한(시퀀스, 권한) — `event_outbox.id` 는 bigserial 이다. `audit_log.id` 는 identity 라 필요 없다.
 pub const REQUIRED_SEQUENCE_PRIVILEGES: &[(&str, &str)] = &[("event_outbox_id_seq", "USAGE")];
@@ -333,12 +336,18 @@ mod tests {
     }
 
     #[test]
-    fn privilege_list_names_only_p3_tables() {
+    fn privilege_list_names_only_listed_tables() {
         let tables: std::collections::BTreeSet<_> =
             REQUIRED_PRIVILEGES.iter().map(|x| x.0).collect();
         assert_eq!(
             tables.into_iter().collect::<Vec<_>>(),
-            ["audit_log", "event_outbox", "inbox_view_cursor"],
+            [
+                "audit_log",
+                "event_outbox",
+                "inbox_view_cursor",
+                "pat",
+                "session"
+            ],
             "넓힐 때는 homelab GRANT 와 이 시험을 같이 고친다"
         );
         assert!(

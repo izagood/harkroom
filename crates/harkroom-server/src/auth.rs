@@ -145,7 +145,24 @@ fn agent_header(headers: &HeaderMap) -> Result<Option<&str>, ()> {
     first.to_str().map(Some).map_err(|_| ())
 }
 
+/// 인증 미들웨어가 받는 두 풀. 판정(읽기)은 `read`, 기록(세션 연장·PAT 사용 시각)은 `write` 로 한다 — 읽기 역할로는 그 기록이
+/// 조용히 실패한다(S5.2 P4d). `write` 가 없으면(쓰기 풀이 꺼진 앞단) 기록을 시도하지 않는다 — TS 로 가는 요청이 그대로 연장한다.
+#[derive(Clone)]
+pub struct AuthPools {
+    pub read: PgPool,
+    pub write: Option<PgPool>,
+}
+
+/// 읽기와 기록을 같은 풀로 — 시험·도구용. 앞단은 [`resolve_with`] 를 쓴다.
 pub async fn resolve(pool: &PgPool, headers: &HeaderMap) -> Result<Resolved, sqlx::Error> {
+    resolve_with(pool, Some(pool), headers).await
+}
+
+pub async fn resolve_with(
+    pool: &PgPool,
+    write: Option<&PgPool>,
+    headers: &HeaderMap,
+) -> Result<Resolved, sqlx::Error> {
     let Some(raw) = bearer(headers) else {
         return Ok(Resolved::Ok(Box::default()));
     };
@@ -214,7 +231,9 @@ pub async fn resolve(pool: &PgPool, headers: &HeaderMap) -> Result<Resolved, sql
     .fetch_optional(pool)
     .await?;
     if let Some(a) = session {
-        let _ = sqlx::query(RENEW_SESSION).bind(&hash).execute(pool).await;
+        if let Some(w) = write {
+            let _ = sqlx::query(RENEW_SESSION).bind(&hash).execute(w).await;
+        }
         return Ok(Resolved::Ok(Box::new(Auth {
             account: Some(a.into()),
             operator: None,
@@ -233,13 +252,15 @@ pub async fn resolve(pool: &PgPool, headers: &HeaderMap) -> Result<Resolved, sql
     .fetch_optional(pool)
     .await?;
     if let Some(a) = pat {
-        let _ = sqlx::query(
-            "update pat set last_used_at = now() \
-              where token_hash = $1 and (last_used_at is null or last_used_at < now() - interval '5 minutes')",
-        )
-        .bind(&hash)
-        .execute(pool)
-        .await;
+        if let Some(w) = write {
+            let _ = sqlx::query(
+                "update pat set last_used_at = now() \
+                  where token_hash = $1 and (last_used_at is null or last_used_at < now() - interval '5 minutes')",
+            )
+            .bind(&hash)
+            .execute(w)
+            .await;
+        }
         return Ok(Resolved::Ok(Box::new(Auth {
             account: Some(a.into()),
             operator: None,
@@ -270,9 +291,9 @@ const NOT_ASSIGNED: &str =
     r#"{"error":{"code":"not_assigned","message":"이 오퍼레이터에 배정되지 않은 에이전트다"}}"#;
 const INTERNAL: &str = r#"{"error":{"code":"internal","message":"internal error"}}"#;
 
-/// 옮긴 라우트에 거는 미들웨어: `axum::middleware::from_fn_with_state(pool, auth::layer)`. 판정을 요청 extensions 에 `Auth` 로 넣는다.
-pub async fn layer(State(pool): State<PgPool>, mut req: Request, next: Next) -> Response {
-    match resolve(&pool, req.headers()).await {
+/// 옮긴 라우트에 거는 미들웨어: `axum::middleware::from_fn_with_state(AuthPools, auth::layer)`. 판정을 요청 extensions 에 `Auth` 로 넣는다.
+pub async fn layer(State(pools): State<AuthPools>, mut req: Request, next: Next) -> Response {
+    match resolve_with(&pools.read, pools.write.as_ref(), req.headers()).await {
         Ok(Resolved::Ok(auth)) => {
             req.extensions_mut().insert(*auth);
             next.run(req).await

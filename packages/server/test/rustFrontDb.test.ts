@@ -199,6 +199,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant usage on sequence event_outbox_id_seq to ${rw}`,
         `grant insert on audit_log to ${rw}`,
         `grant insert, update on inbox_view_cursor to ${rw}`,
+        // P4d — 인증 미들웨어의 기록.
+        `grant update on session to ${rw}`,
+        `grant update on pat to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -291,6 +294,20 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       await new Promise((r) => setTimeout(r, 500));
       expect(mine().length, JSON.stringify(busEvents)).toBe(2);
       await bus.stop();
+
+      // S5.2 P4d — 옮긴 라우트를 지난 요청도 세션을 늘리고 PAT 사용 시각을 남긴다(쓰기 풀로). 읽기 역할로 하면 조용히 실패하던 것.
+      await db.pool.query(`update session set expires_at = now() + interval '1 day' where account_id = $1`, [member.accountId]);
+      await db.pool.query(`update pat set last_used_at = now() - interval '1 hour' where account_id = $1`, [agent.accountId]);
+      for (const token of [member.token, agent.pat]) {
+        const res = await fetch(`${rsUrl}/settings/mention-policy`, { headers: { authorization: `Bearer ${token}` } });
+        expect(res.status).toBe(200);
+      }
+      const sess = await db.pool.query<{ left: number }>(
+        `select extract(epoch from (max(expires_at) - now()))::int / 86400 as left from session where account_id = $1`, [member.accountId]);
+      expect(sess.rows[0]!.left, '세션이 14일로 늘어야 한다').toBeGreaterThanOrEqual(13);
+      const used = await db.pool.query<{ fresh: boolean }>(
+        `select bool_and(last_used_at > now() - interval '1 minute') as fresh from pat where account_id = $1 and revoked_at is null`, [agent.accountId]);
+      expect(used.rows[0]!.fresh, 'PAT 사용 시각이 새로 찍혀야 한다').toBe(true);
     } finally {
       front?.kill('SIGTERM');
       await app.close();
