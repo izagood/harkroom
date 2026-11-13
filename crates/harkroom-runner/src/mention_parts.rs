@@ -127,14 +127,29 @@ impl SystemInputs {
     }
 }
 
-/// 감시 루프 몸통 — 이 시도의 감시 자리·감시 통지 가림 목록·멈춤 신호를 받아 `run_watch`(실물 `ProbeIo`)를 돈다.
-pub type WatchLoopFn<'a> = Box<dyn Fn(&Watch, &NoticeSecrets, &AtomicBool) + Send + Sync + 'a>;
+/// 감시 루프가 받는 **이 시도의** 문맥 — 시도마다 바뀌는 값은 모두 여기로 인자로 온다(security ②-3c 조건 ①). 루프·짓개는
+/// 이 값을 바깥에 붙잡아 두지 않는다.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LoopCtx {
+    pub turn_id: String,
+    /// 이 시도가 이어 쓰는(또는 새로 여는) 하네스 세션 id. 첫 턴은 모를 수 있다.
+    pub session_id: Option<String>,
+    /// 띄운 시각(정본 `turnStartedAtMs`) — 기록은 이 뒤 것만 본다.
+    pub turn_started_at_ms: i64,
+    /// 이 턴에 먹인 스레드의 마지막 seq(정본 `turnStartSeq`) — 내 발화는 이 뒤 글만 센다.
+    pub turn_start_seq: i64,
+}
+
+/// 감시 루프 몸통 — 이 시도의 감시 자리·감시 통지 가림 목록·시도 문맥·멈춤 신호를 받아 `run_watch`(실물 `ProbeIo`)를 돈다.
+pub type WatchLoopFn<'a> =
+    Box<dyn Fn(&Watch, &NoticeSecrets, &LoopCtx, &AtomicBool) + Send + Sync + 'a>;
 
 /// `f`(PTY 턴)를 도는 동안 감시 루프를 옆 스레드에서 돈다 — 넘긴 `watch` 는 **그 시도의 자리**다. `f` 가 끝나면 멈춤 신호를
 /// 세우고 루프가 끝날 때까지 기다린다(시도 범위를 넘지 않는다).
 pub fn run_beside<R>(
     watch: &Watch,
     notice: &NoticeSecrets,
+    ctx: &LoopCtx,
     watch_loop: Option<&WatchLoopFn<'_>>,
     f: impl FnOnce() -> R,
 ) -> R {
@@ -150,7 +165,7 @@ pub fn run_beside<R>(
     std::thread::scope(|sc| {
         if let Some(lf) = watch_loop {
             let (w, st) = (watch.clone(), &stop);
-            sc.spawn(move || lf(&w, notice, st));
+            sc.spawn(move || lf(&w, notice, ctx, st));
         }
         let _stop = StopOnDrop(&stop);
         f()
@@ -390,7 +405,14 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
         let inner = &mut self.inner;
         let slot = self.slot.clone();
         let stop_on_spawn = move || slot.stop_requested();
-        run_beside(&watch, &args.notice, self.watch_loop.as_ref(), || {
+        let ctx = LoopCtx {
+            turn_id: args.turn_id.to_string(),
+            session_id: c.prepared.session.rec.session_id.clone(),
+            turn_started_at_ms: now(),
+            turn_start_seq: i64::try_from(crate::turn_prep::turn_start_seq(&c.prepared.fed.thread))
+                .unwrap_or(i64::MAX),
+        };
+        run_beside(&watch, &args.notice, &ctx, self.watch_loop.as_ref(), || {
             let mut delivered_sink = DeliveredSink { inner, delivered };
             let mut watch_sink = WatchSink {
                 inner: &mut delivered_sink,

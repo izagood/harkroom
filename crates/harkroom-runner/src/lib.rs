@@ -106,6 +106,7 @@ pub mod turn_prepare_io;
 pub mod turn_preset;
 pub mod turn_probe;
 pub mod turn_probe_io;
+pub mod turn_probe_make;
 pub mod turn_probe_records;
 pub mod turn_probe_rest;
 pub mod turn_probe_sink;

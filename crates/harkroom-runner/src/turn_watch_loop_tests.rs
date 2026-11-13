@@ -4,7 +4,7 @@ use std::sync::atomic::Ordering;
 
 use super::*;
 use crate::harness_records::RecordedTurnEnd;
-use crate::mention_parts::run_beside;
+use crate::mention_parts::{LoopCtx, run_beside};
 use crate::turn_end::{EndAction, EndState, StallProbe, StallVerdict};
 
 /// 받은 자리에만 적고, 정한 주기에 PTY 가 죽은 것으로 답하는 탐침.
@@ -68,7 +68,7 @@ fn notice(tag: &str) -> NoticeSecrets {
 fn each_run_builds_from_that_attempts_watch_and_notice() {
     let seen: Mutex<Vec<(Watch, String)>> = Mutex::default();
     let lf = watch_loop_fn(
-        Box::new(|w: &Watch, n: &NoticeSecrets| {
+        Box::new(|w: &Watch, n: &NoticeSecrets, _c: &LoopCtx| {
             seen.lock().unwrap().push((w.clone(), n.mounted[0].clone()));
             LoopParts {
                 io: Io {
@@ -86,8 +86,8 @@ fn each_run_builds_from_that_attempts_watch_and_notice() {
     );
     let (a1, a2) = (Watch::default(), Watch::default());
     let wait = || std::thread::sleep(Duration::from_millis(30));
-    run_beside(&a1, &notice("a1"), Some(&lf), wait);
-    run_beside(&a2, &notice("a2"), Some(&lf), wait);
+    run_beside(&a1, &notice("a1"), &LoopCtx::default(), Some(&lf), wait);
+    run_beside(&a2, &notice("a2"), &LoopCtx::default(), Some(&lf), wait);
 
     let seen = seen.lock().unwrap();
     assert_eq!(seen.len(), 2);
@@ -104,7 +104,7 @@ fn each_run_builds_from_that_attempts_watch_and_notice() {
 #[test]
 fn lost_fence_from_make_stops_on_that_attempts_slot() {
     let lf = watch_loop_fn(
-        Box::new(|w: &Watch, _n: &NoticeSecrets| LoopParts {
+        Box::new(|w: &Watch, _n: &NoticeSecrets, _c: &LoopCtx| LoopParts {
             io: Io {
                 watch: w.clone(),
                 cycles: 0,
@@ -124,7 +124,7 @@ fn lost_fence_from_make_stops_on_that_attempts_slot() {
     let a = Watch::default();
     a.lock().unwrap().end.has_controls = true;
     let stop = AtomicBool::new(false);
-    lf(&a, &notice("a"), &stop);
+    lf(&a, &notice("a"), &LoopCtx::default(), &stop);
     let w = a.lock().unwrap();
     assert!(w.end.reclaimed, "그 시도 자리에 거둠");
     assert_eq!(w.end.stalled_idle_ms, 0, "탐침은 돌지 않았다");
@@ -134,7 +134,7 @@ fn lost_fence_from_make_stops_on_that_attempts_slot() {
 #[test]
 fn ended_turn_from_make_stops_without_probing() {
     let lf = watch_loop_fn(
-        Box::new(|w: &Watch, _n: &NoticeSecrets| LoopParts {
+        Box::new(|w: &Watch, _n: &NoticeSecrets, _c: &LoopCtx| LoopParts {
             io: Io {
                 watch: w.clone(),
                 cycles: 0,
@@ -148,6 +148,11 @@ fn ended_turn_from_make_stops_without_probing() {
         Duration::from_millis(1),
     );
     let a = Watch::default();
-    lf(&a, &notice("a"), &AtomicBool::new(false));
+    lf(
+        &a,
+        &notice("a"),
+        &LoopCtx::default(),
+        &AtomicBool::new(false),
+    );
     assert_eq!(a.lock().unwrap().end.stalled_idle_ms, 0);
 }

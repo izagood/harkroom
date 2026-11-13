@@ -260,7 +260,7 @@ fn watch_loop_gets_this_attempts_watch() {
     let store = SessionStore::new(w.root.join("sessions.json"));
     let stale = PathBuf::from("/x");
     let mut p = parts(&w, &store, &stale, false);
-    p.watch_loop = Some(Box::new(|watch, _notice, stop| {
+    p.watch_loop = Some(Box::new(|watch, _notice, _ctx, stop| {
         while !stop.load(std::sync::atomic::Ordering::SeqCst) {
             watch.lock().unwrap().end.stalled_idle_ms += 1;
             std::thread::sleep(std::time::Duration::from_millis(1));
@@ -271,9 +271,15 @@ fn watch_loop_gets_this_attempts_watch() {
 
     p.bind_live(Some(Arc::new(LiveTurn::default())));
     let a1 = p.attempt_watch();
-    run_beside(&p.attempt_watch(), &secrets, p.watch_loop.as_ref(), || {
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    });
+    run_beside(
+        &p.attempt_watch(),
+        &secrets,
+        &LoopCtx::default(),
+        p.watch_loop.as_ref(),
+        || {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        },
+    );
     assert!(
         a1.lock().unwrap().end.spoke,
         "a1 루프는 a1 자리에 적고 멈췄다"
@@ -284,9 +290,15 @@ fn watch_loop_gets_this_attempts_watch() {
     p.bind_live(Some(Arc::new(LiveTurn::default())));
     let a2 = p.attempt_watch();
     assert!(!Arc::ptr_eq(&a1, &a2), "a2 는 새 자리");
-    run_beside(&p.attempt_watch(), &secrets, p.watch_loop.as_ref(), || {
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    });
+    run_beside(
+        &p.attempt_watch(),
+        &secrets,
+        &LoopCtx::default(),
+        p.watch_loop.as_ref(),
+        || {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        },
+    );
     assert!(a2.lock().unwrap().end.spoke, "a2 루프는 a2 자리에 적었다");
     assert_eq!(
         a1.lock().unwrap().end.stalled_idle_ms,
@@ -337,16 +349,20 @@ fn panic_in_turn_still_stops_watch_loop() {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let watch = Watch::default();
-        let lf: WatchLoopFn<'static> = Box::new(|_w, _n, stop| {
+        let lf: WatchLoopFn<'static> = Box::new(|_w, _n, _c, stop| {
             while !stop.load(std::sync::atomic::Ordering::SeqCst) {
                 std::thread::sleep(std::time::Duration::from_millis(1));
             }
         });
         let secrets = crate::turn_probe_records::NoticeSecrets::default();
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            run_beside(&watch, &secrets, Some(&lf), || -> () {
-                panic!("PTY 턴 도중 패닉")
-            })
+            run_beside(
+                &watch,
+                &secrets,
+                &LoopCtx::default(),
+                Some(&lf),
+                || -> () { panic!("PTY 턴 도중 패닉") },
+            )
         }));
         let _ = tx.send(r.is_err());
     });

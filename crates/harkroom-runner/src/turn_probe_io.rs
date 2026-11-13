@@ -51,18 +51,18 @@ pub struct SpokeKey {
 }
 
 /// 스레드를 읽는다(정본 `readThread`). 못 읽으면 `Err(사유)`.
-pub type ReadThread = Box<dyn FnMut() -> Result<Vec<Value>, String> + Send>;
+pub type ReadThread<'a> = Box<dyn FnMut() -> Result<Vec<Value>, String> + Send + 'a>;
 /// 하네스 기록이 말하는 차례 끝(`sinceMs` 이후). 못 읽으면 `None`.
-pub type ReadRecordedEnd = Box<dyn FnMut(i64) -> Option<RecordedTurnEnd> + Send>;
+pub type ReadRecordedEnd<'a> = Box<dyn FnMut(i64) -> Option<RecordedTurnEnd> + Send + 'a>;
 
 /// 탐침 한 주기의 바깥 일 실구현.
-pub struct TurnProbeIo<R: ProbeRecords, S: ProbeSink, T: TurnStateRecords, X: ProbeRest> {
+pub struct TurnProbeIo<'a, R: ProbeRecords, S: ProbeSink, T: TurnStateRecords, X: ProbeRest> {
     pub clock: fn() -> i64,
     /// PTY 가 죽었다 — PTY 루프 스레드가 세운다.
     pub exited: Arc<AtomicBool>,
     /// 턴이 끝났다([`crate::turn_io::TurnIo::ended`]) — 서 있으면 SIGTERM 을 보내지 않는다.
     pub ended: Arc<AtomicBool>,
-    pub read_thread: ReadThread,
+    pub read_thread: ReadThread<'a>,
     pub spoke_key: SpokeKey,
     pub records: R,
     pub record_state: RecordProbeState,
@@ -76,13 +76,13 @@ pub struct TurnProbeIo<R: ProbeRecords, S: ProbeSink, T: TurnStateRecords, X: Pr
     /// [`ProbeState::lane_nudged_at_ms`] 의 사본 — `probe_turn_state` 는 `ProbeState` 를 받지 않아 재촉 뒤 여기 옮겨 둔다.
     pub lane_nudged_at_ms: i64,
     pub cfg: EndConfig,
-    pub read_recorded_end: ReadRecordedEnd,
+    pub read_recorded_end: ReadRecordedEnd<'a>,
     /// PTY 에 SIGTERM(실구현 `PtyControls::kill(false)`).
     pub terminate: Arc<dyn Fn() + Send + Sync>,
     pub rest: X,
 }
 
-impl<R: ProbeRecords, S: ProbeSink, T: TurnStateRecords, X: ProbeRest> TurnProbeIo<R, S, T, X> {
+impl<R: ProbeRecords, S: ProbeSink, T: TurnStateRecords, X: ProbeRest> TurnProbeIo<'_, R, S, T, X> {
     fn kill(&self) {
         if !self.ended.load(Ordering::SeqCst) {
             (self.terminate)();
@@ -91,7 +91,7 @@ impl<R: ProbeRecords, S: ProbeSink, T: TurnStateRecords, X: ProbeRest> TurnProbe
 }
 
 impl<R: ProbeRecords, S: ProbeSink, T: TurnStateRecords, X: ProbeRest> ProbeIo
-    for TurnProbeIo<R, S, T, X>
+    for TurnProbeIo<'_, R, S, T, X>
 {
     fn now_ms(&self) -> i64 {
         (self.clock)()
