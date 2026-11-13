@@ -29,7 +29,7 @@ use crate::turn_end::EndState;
 use crate::turn_life::TurnLife;
 use crate::turn_notice::{
     DENIAL_NOTICE_MAX_PER_TURN, MAC_PERMISSION_NOTICE_MAX_PER_TURN, mac_permission_notice,
-    permission_denial_notice, quoted_line,
+    mask_tokens, mask_whole, permission_denial_notice, quoted_line, tail_has_secret_fragment,
 };
 
 /// 기록 탐침의 턴 장부(정본 `end.deniedSeen`·`denialNotices`·`macSeen`·`macNotices`·`mcpRejectedSeen`).
@@ -76,6 +76,23 @@ impl std::fmt::Debug for NoticeSecrets {
             .field("pat", &"<가림>")
             .field("mounted", &self.mounted.len())
             .finish()
+    }
+}
+
+impl NoticeSecrets {
+    /// 스레드에 올릴 통지 본문의 마지막 관문 — 마운트한 비밀·PAT 를 통째로 가리고 값을 모르는 토큰을 꼴로 가린다. 가린 뒤에도
+    /// 비밀의 12자 조각이 보이면 `None`(올리지 않는다). 통지 함수가 이미 가린 본문에도 한 번 더 건다 — sink 를 지나는 길은 이것뿐이다.
+    pub fn guard_body(&self, body: &str) -> Option<String> {
+        let mut all = self.mounted.clone();
+        if !self.pat.is_empty() {
+            all.push(self.pat.clone());
+        }
+        all.sort_by_key(|s| std::cmp::Reverse(s.len()));
+        let masked = mask_tokens(&mask_whole(body, &all));
+        if !all.is_empty() && tail_has_secret_fragment(&masked, &all) {
+            return None;
+        }
+        Some(masked)
     }
 }
 

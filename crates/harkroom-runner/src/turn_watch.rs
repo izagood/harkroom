@@ -17,7 +17,7 @@ use crate::pty_turn::{PromptHooks, PtyControls, PtyTurnSink};
 use crate::turn_end::{EndConfig, EndState};
 use crate::turn_probe::{CycleOutcome, ProbeIo, ProbeState, probe_cycle};
 use crate::turn_probe_records::{NoticeSecrets, screen_said_for_post};
-use crate::turn_probe_rest::ReclaimEnd;
+use crate::turn_probe_rest::{FenceCheck, ReclaimEnd, WritePty};
 
 /// 화면 꼬리 상한(바이트) — 마지막 줄을 거두는 데만 쓴다.
 const SCREEN_TAIL_MAX: usize = 4096;
@@ -27,6 +27,8 @@ const SCREEN_TAIL_MAX: usize = 4096;
 pub struct WatchState {
     pub end: EndState,
     screen: Vec<u8>,
+    /// 이 시도의 PTY 손잡이 — 띄운 순간 sink 가 적는다. SIGTERM·Enter 는 이것으로만([`terminate_on_watch`]·[`write_on_watch`]).
+    controls: Option<PtyControls>,
 }
 
 impl std::fmt::Debug for WatchState {
@@ -34,6 +36,7 @@ impl std::fmt::Debug for WatchState {
         f.debug_struct("WatchState")
             .field("end", &self.end)
             .field("screen_len", &self.screen.len())
+            .field("controls", &self.controls.is_some())
             .finish()
     }
 }
@@ -110,7 +113,11 @@ impl<S: PtyTurnSink> PromptHooks for WatchSink<'_, S> {
 
 impl<S: PtyTurnSink> PtyTurnSink for WatchSink<'_, S> {
     fn on_spawn(&mut self, controls: PtyControls) {
-        lock(&self.watch).end.has_controls = true;
+        {
+            let mut w = lock(&self.watch);
+            w.end.has_controls = true;
+            w.controls = Some(controls.clone());
+        }
         self.inner.on_spawn(controls)
     }
     fn on_output(&mut self, frame: &[u8]) {
@@ -136,6 +143,18 @@ impl<S: PtyTurnSink> PtyTurnSink for WatchSink<'_, S> {
     }
 }
 
+/// 감시 루프를 멈추는 것들. `stop` 은 시도 범위(`run_beside` 의 가드)가, `ended` 는 턴 끝이, `fence` 는 임대 잃음이 세운다.
+pub struct WatchStops<'s> {
+    pub stop: &'s AtomicBool,
+    /// 턴이 끝났다([`crate::turn_io::TurnIo::ended`]). 없으면 보지 않는다.
+    pub ended: Option<&'s AtomicBool>,
+    /// 펜스 — 듣고 있고 임대를 잃었으면 **자리 값**에 접고 멈춘다. 없으면 보지 않는다. `on_lost` 는 잠금 안에서 불리므로
+    /// 감시 자리를 다시 잠그지 않는 것만 해야 한다(실물 [`fence_reclaim`] 은 표지만 적는다).
+    pub fence: Option<&'s mut FenceCheck>,
+    /// 펜스로 거뒀을 때 보낼 SIGTERM(실물 [`terminate_on_watch`]) — 잠금을 놓은 **뒤에** 부른다.
+    pub terminate: Option<Arc<dyn Fn() + Send + Sync>>,
+}
+
 /// 탐침 주기를 돈다 — `probe_ms` 마다 한 번, `Stop`·`stop` 신호·PTY 종료까지. 돈 주기 수를 돌려준다.
 pub fn run_watch(
     watch: &Watch,
@@ -145,10 +164,56 @@ pub fn run_watch(
     probe_ms: Duration,
     stop: &AtomicBool,
 ) -> u32 {
+    run_watch_guarded(
+        watch,
+        probe,
+        cfg,
+        io,
+        probe_ms,
+        WatchStops {
+            stop,
+            ended: None,
+            fence: None,
+            terminate: None,
+        },
+    )
+}
+
+/// [`run_watch`] 에 턴 끝·펜스 확인을 더한 것. 주기마다 차례: 멈춤 신호 → 턴 끝 → **펜스**(감시 자리를 잠근 채 자리 값에 접는다 —
+/// 잠금 밖 사본이 아니다) → 탐침(잠금 밖) → 되쓰기 → 거뒀으면 멈춤. 펜스에 걸린 주기에는 탐침(발화 읽기·통지 글)이 돌지 않는다.
+pub fn run_watch_guarded(
+    watch: &Watch,
+    probe: &mut ProbeState,
+    cfg: &EndConfig,
+    io: &mut impl ProbeIo,
+    probe_ms: Duration,
+    mut stops: WatchStops<'_>,
+) -> u32 {
     let mut cycles = 0;
     loop {
         std::thread::sleep(probe_ms);
-        if stop.load(Ordering::SeqCst) {
+        if stops.stop.load(Ordering::SeqCst) {
+            return cycles;
+        }
+        if stops.ended.is_some_and(|e| e.load(Ordering::SeqCst)) {
+            return cycles;
+        }
+        if let Some(fence) = stops.fence.as_deref_mut()
+            && fence.listening.load(Ordering::SeqCst)
+            && (fence.lost)()
+        {
+            let kill = {
+                let mut w = lock(watch);
+                (fence.on_lost)(&mut w.end);
+                w.end.reclaimed
+            };
+            // SIGTERM 은 잠금을 놓은 뒤 — 손잡이를 꺼내려 같은 자리를 다시 잠근다.
+            if kill
+                && !stops.ended.is_some_and(|e| e.load(Ordering::SeqCst))
+                && let Some(t) = &stops.terminate
+            {
+                t();
+            }
             return cycles;
         }
         // 잠금 안에서는 상태만 꺼낸다 — 탐침 IO(스레드 읽기·통지 글·화면 줄 꺼내기)는 잠금 밖에서 돈다. 그래서 통지가 느려도
@@ -167,6 +232,46 @@ pub fn run_watch(
             return cycles;
         }
     }
+}
+
+/// 이 자리의 PTY 에 SIGTERM(`PtyControls::kill(false)` — 회수한 자식에는 쏘지 않는다). 아직 띄우지 않았으면 아무것도 하지 않는다.
+/// 잠금은 손잡이를 꺼내는 동안만 쥔다.
+pub fn terminate_on_watch(watch: &Watch) -> Arc<dyn Fn() + Send + Sync> {
+    let w = Arc::clone(watch);
+    Arc::new(move || {
+        let c = lock(&w).controls.clone();
+        if let Some(c) = c {
+            c.kill(false);
+        }
+    })
+}
+
+/// 이 자리의 PTY 에 바이트를 넣는다(재촉·Enter). 띄우지 않았거나 PTY 가 죽었으면 `false`.
+pub fn write_on_watch(watch: &Watch) -> WritePty {
+    let w = Arc::clone(watch);
+    Box::new(move |bytes: &[u8]| {
+        let c = {
+            let g = lock(&w);
+            if g.end.exited {
+                return false;
+            }
+            g.controls.clone()
+        };
+        match c {
+            Some(c) => {
+                c.write(bytes);
+                true
+            }
+            None => false,
+        }
+    })
+}
+
+/// 임대를 잃었을 때 접는 일 — 자리 값에 「거뒀다」만 적는다(SIGTERM 은 [`run_watch_guarded`] 가 잠금 밖에서).
+pub fn fence_reclaim() -> Box<dyn FnMut(&mut EndState) + Send> {
+    Box::new(|end: &mut EndState| {
+        end.reclaim();
+    })
 }
 
 #[cfg(test)]
