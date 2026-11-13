@@ -1,34 +1,281 @@
-//! `harkroom-runner-rs` — B3a 기동 뼈대: 설정을 읽고 오퍼레이터 링크에 붙는다. 폴 루프·턴은 B3d 에서 붙는다.
+//! `harkroom-runner-rs` — Rust 러너 기동(L3d-3b-2). 설정을 읽고 오퍼레이터 링크에 붙은 뒤 인박스 폴 루프를 돈다.
+//!
+//! **기본 러너는 node 다.** 이 실행 파일은 오퍼레이터가 에이전트별로 `runner: "rust"` 를 준 에이전트에만 띄운다(B4-5 스위치,
+//! C6 뒤). 이 파일이 들어와도 그 스위치가 켜지기 전에는 아무 에이전트도 이것으로 돌지 않는다.
+//!
+//! 물러나기 차례: 시그널·원격 종료 요청 → 폴 멈춤(`PollLoop::stop`) → 인박스 놓음 알림 → drain(턴 시한 + 5분까지만) →
+//! 남은 임대 장부 놓기(박동 멈춤·기록 가리기·끝 알림) → 링크 닫기.
 
-use harkroom_runner::config::{load_config, process_env};
-use harkroom_runner::link::{LinkClient, LinkOptions};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use harkroom_runner::adapter::AgentHarness;
+use harkroom_runner::call_maker::{Names, RunnerMaker, RunnerSink};
+use harkroom_runner::config::{load_config, process_env, turn_secrets_dir};
+use harkroom_runner::link::{LinkClient, LinkOptions};
+use harkroom_runner::mention_admit_deps::{MentionLauncher, ThreadLauncher};
+use harkroom_runner::mention_body::{BodyShared, body_fn};
+use harkroom_runner::mention_clients::AgentClients;
+use harkroom_runner::mention_hooks::{LeaseBook, LeaseHandoff};
+use harkroom_runner::mention_ledger::Ledger;
+use harkroom_runner::mention_sched::ChannelScheduler;
+use harkroom_runner::poll_admit::link_admit_fn;
+use harkroom_runner::poll_loop::{AdmitOutcome, BatchContext, LoopHooks, Me, PollLoop, Scheduler};
+use harkroom_runner::poll_sched::{RunnerScheduler, Running, spawn_event_pump};
+use harkroom_runner::rest::HarkroomError;
+use harkroom_runner::runner_boot::{BootFacts, agent_state_dir, maker_config, state_dir_names};
+use harkroom_runner::runner_wire::{BundlePoll, ExitPlan, LinkEvents, runner_exit_plan};
+use harkroom_runner::thread_claims::ThreadClaims;
+use harkroom_runner::turn_attempt_account::MentionSlots;
+use serde_json::Value;
+
+/// 서버에 알리는 러너 판.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+type Link = Arc<LinkClient>;
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn exit_with(plan: ExitPlan) -> ! {
+    for l in &plan.lines {
+        eprintln!("{l}");
+    }
+    std::process::exit(plan.code);
+}
+
+/// 시그널 표지 — 처리기는 표지만 세우고, 지키는 스레드가 폴 루프를 멈춘다(처리기 안에서 잠금을 잡지 않는다).
+static STOP_SIGNAL: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn on_signal(_sig: libc::c_int) {
+    STOP_SIGNAL.store(true, Ordering::SeqCst);
+}
+
+/// 배치마다 짓개의 이름 표를 고치고 받아들인다(이름 바뀜·채널 이름·계정 handle).
+struct NamingScheduler {
+    inner: RunnerScheduler,
+    maker: Arc<RunnerMaker<Link>>,
+    poll: Arc<PollLoop>,
+}
+
+impl Scheduler for NamingScheduler {
+    fn admit(&self, batch: &Value, ctx: &BatchContext) -> Result<AdmitOutcome, HarkroomError> {
+        self.maker.set_names(Names {
+            channel_names: ctx.channel_names.clone(),
+            handles: ctx.handles.clone(),
+            me_handle: self.poll.me().handle,
+            agent_ids: Some(ctx.agent_ids.clone()),
+        });
+        self.inner.admit(batch, ctx)
+    }
+    fn holding_entries(&self) -> Vec<i64> {
+        self.inner.holding_entries()
+    }
+    fn done_entries(&self) -> Vec<i64> {
+        self.inner.done_entries()
+    }
+    fn drain(&self) {
+        self.inner.drain();
+    }
+}
+
 fn main() {
-    let config = match load_config(&process_env()) {
+    let env = process_env();
+    let config = match load_config(&env) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("{e}");
             std::process::exit(1);
         }
     };
+    let started_at_ms = now_ms();
+    let provider_lane = env.get("HARKROOM_PROVIDER_LANE").map(String::as_str) == Some("1");
     let mut opts = LinkOptions::new(config.operator_link.clone());
-    opts.provider_lane = Some(std::env::var("HARKROOM_PROVIDER_LANE").as_deref() == Ok("1"));
-    // 지난 러너가 남긴 lane 턴 파일(키 파일 경로 — 값은 오퍼레이터 임대 폴더)을 기동 때 걷는다(정본 `main.ts` 655
-    // `sweepLaneTurnDir`). 비밀 마운트 폴더는 오퍼레이터가 자기 기동 때·60초마다 쓴다(`serve.rs`·`bridge.rs`).
+    opts.provider_lane = Some(provider_lane);
+    // 지난 러너가 남긴 lane 턴 파일을 기동 때 걷는다(정본 `main.ts` 655 `sweepLaneTurnDir`).
     harkroom_runner::provider_lane::sweep_lane_turn_dir(std::path::Path::new(&config.state_dir));
-    let link = LinkClient::new(opts);
+    let link: Link = LinkClient::new(opts);
     link.start();
-    // 정본 main.ts 와 같다: 10초 안에 못 붙어도 기동은 계속된다(뒤의 호출이 status 0 으로 거절된다).
     if !link.when_connected(Duration::from_secs(10)) {
         eprintln!("오퍼레이터 링크가 10초 안에 붙지 않았다 — 계속 재시도한다");
     }
+
+    let clients = Arc::new(AgentClients::new(Arc::clone(&link), VERSION));
+    let (me_id, me_handle) = match clients.mcp().me() {
+        Ok(v) => v,
+        Err(e) => {
+            if let Some(p) = runner_exit_plan(&e) {
+                exit_with(p);
+            }
+            eprintln!("내 계정을 읽지 못했다(상태 {:?}) — 물러난다", e.status);
+            std::process::exit(1);
+        }
+    };
+    let harness = clients
+        .rest()
+        .definition()
+        .ok()
+        .and_then(|d| {
+            d.get("harness")
+                .and_then(Value::as_str)
+                .and_then(AgentHarness::parse)
+        })
+        .unwrap_or(AgentHarness::ClaudeCode);
+
+    // 에이전트별 상태·작업 폴더 뿌리(정본 `resolveAgentStateDir`) — 작업 폴더 뿌리를 에이전트끼리 나누지 않는다.
+    let base = PathBuf::from(&config.state_dir);
+    let agent_state = agent_state_dir(
+        &base,
+        &me_id,
+        config.agent_instance.as_deref(),
+        &state_dir_names(&base),
+    );
+    // 스레드 임대 holder — 이 러너 프로세스 하나(같은 에이전트 러너 둘을 가른다).
+    let claim_holder = format!(
+        "{}-{}-{started_at_ms}",
+        config.operator_link.runner_id,
+        std::process::id()
+    );
+    let home = PathBuf::from(env.get("HOME").cloned().unwrap_or_default());
+    let maker_cfg = maker_config(
+        &config,
+        &env,
+        BootFacts {
+            harness,
+            me_id: &me_id,
+            claim_holder: &claim_holder,
+            agent_state,
+            home,
+        },
+    );
+    let report_link = Arc::clone(&link);
+    let maker = Arc::new(RunnerMaker::new(
+        maker_cfg,
+        Arc::clone(&clients),
+        Box::new(move |servers: &[String], at: i64| {
+            report_link.notify_mcp_auth_rejected(servers, at)
+        }),
+    ));
+
+    let ledger = Arc::new(Mutex::new(Ledger::new(&[], now_ms())));
+    let slots = MentionSlots::default();
+    // 턴 비밀 뿌리는 오퍼레이터가 준 값 그대로(없으면 임대 값 가리기만 건너뛴다).
+    let book = Arc::new(LeaseBook::with_life(
+        clients.lease_life(turn_secrets_dir(&env)),
+    ));
+    let (tx, rx) = std::sync::mpsc::channel();
+    let body = Arc::new(BodyShared {
+        ledger: Arc::clone(&ledger),
+        slots: slots.clone(),
+        book: Arc::clone(&book),
+        clients: maker.clients(),
+        sched: ChannelScheduler(tx),
+        maker: Arc::clone(&maker),
+    });
+    let launcher: Box<dyn MentionLauncher + Send> = Box::new(ThreadLauncher::new(
+        slots.clone(),
+        body_fn::<_, RunnerSink, _>(Arc::clone(&body)),
+    ));
+    let claims = Arc::new(ThreadClaims::new(
+        Arc::clone(&clients),
+        claim_holder.clone(),
+    ));
+    let running = Arc::new(Running::default());
+    let admit = link_admit_fn(Arc::clone(&clients), Arc::clone(&claims), slots, now_ms);
+    let drain_limit = Duration::from_millis(config.turn_timeout_ms) + Duration::from_secs(5 * 60);
+    let poll = Arc::new(PollLoop::new(
+        Me {
+            id: me_id.clone(),
+            handle: me_handle,
+        },
+        started_at_ms as i64,
+    ));
+    let sched = NamingScheduler {
+        inner: RunnerScheduler::new(ledger, admit, launcher, Arc::clone(&running))
+            .with_drain_limit(drain_limit),
+        maker: Arc::clone(&maker),
+        poll: Arc::clone(&poll),
+    };
+
+    let (stop_poll, lane_link) = (Arc::clone(&poll), Arc::clone(&link));
+    let on_lane_turn: Option<Box<dyn Fn(bool) + Send + Sync>> = if provider_lane {
+        Some(Box::new(move |ok| lane_link.notify_provider_lane_turn(ok)))
+    } else {
+        None
+    };
+    let events = Arc::new(LinkEvents::new(
+        Arc::clone(&clients),
+        Box::new(move |at: &str| {
+            stop_poll.consider_stop_request(Some(at));
+        }),
+        Box::new(|p: ExitPlan| exit_with(p)),
+        on_lane_turn,
+    ));
+    if let Err(e) = spawn_event_pump(rx, events, Arc::clone(&running)) {
+        eprintln!("스케줄러 사건 받는 쪽을 띄우지 못했다: {e}");
+        std::process::exit(1);
+    }
+
+    // SIGTERM·SIGINT → 폴 멈춤(도는 턴은 끝까지).
+    // SAFETY: 처리기는 원자 표지 하나만 세운다(비동기 시그널 안전).
+    unsafe {
+        libc::signal(libc::SIGTERM, on_signal as *const () as libc::sighandler_t);
+        libc::signal(libc::SIGINT, on_signal as *const () as libc::sighandler_t);
+    }
+    let watch_poll = Arc::clone(&poll);
+    let _ = std::thread::Builder::new()
+        .name("signal-watch".into())
+        .spawn(move || {
+            while !STOP_SIGNAL.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            eprintln!("[main] 종료 시그널 — 폴을 멈추고 도는 턴을 마친 뒤 물러난다");
+            watch_poll.stop();
+        });
+
     println!(
-        "harkroom-runner-rs: 오퍼레이터 {} (runner {}) — B3a 뼈대, 턴은 아직 돌지 않는다",
+        "harkroom-runner-rs: 오퍼레이터 {} (runner {}) — 인박스 폴을 시작한다",
         config.operator_link.socket_path, config.operator_link.runner_id
     );
-    // 턴 코어가 붙기 전까지는 링크만 붙잡고 있는다(오퍼레이터가 SIGTERM 으로 거둔다).
-    loop {
-        std::thread::park();
+    let src = BundlePoll::new(
+        Arc::clone(&clients),
+        config.poll_timeout_ms,
+        config
+            .inbox_lease
+            .then(|| config.operator_link.runner_id.clone()),
+    );
+    let stopped_link = Arc::clone(&link);
+    let note_maker = Arc::clone(&maker);
+    let note_rev = move |rev: Option<&str>| note_maker.note_memory_rev(rev);
+    let exit_if = |e: &HarkroomError| {
+        if let Some(p) = runner_exit_plan(e) {
+            exit_with(p);
+        }
+    };
+    let poll_stopped =
+        move |holding: &[i64], done: &[i64]| stopped_link.notify_poll_stopped(holding, done);
+    // 폴 멈춤 → 인박스 놓음 알림 → drain(시한) 은 `PollLoop::run` 안의 차례다.
+    poll.run(
+        &src,
+        &sched,
+        &LoopHooks {
+            note_memory_rev: &note_rev,
+            exit_if_unrecoverable: &exit_if,
+            notify_poll_stopped: &poll_stopped,
+        },
+    );
+    // drain 시한이 지나도 남은 임대를 놓는다(박동 멈춤 → 기록 가리기 → 끝 알림). 그 뒤 링크를 닫는다.
+    for cause in book.causes() {
+        if book.release(&cause) {
+            LeaseHandoff::lease_ended(&*link, &cause);
+        }
     }
+    link.stop();
+    println!("종료");
 }
