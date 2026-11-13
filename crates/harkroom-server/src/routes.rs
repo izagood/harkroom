@@ -22,6 +22,8 @@ pub struct AppState {
     pub pool: PgPool,
     /// 쓰기 풀(P3) — env `DATABASE_WRITE_URL` 이 있을 때만. 없으면 [`MOVED_WRITE`] 줄을 마운트하지 않는다(그 요청은 TS 로 간다).
     pub write: Option<PgPool>,
+    /// 감사 `ip` 를 고르는 규칙(env `TRUST_PROXY`, `trust_proxy.rs`). 기본은 안 믿음(소켓 주소).
+    pub trust: std::sync::Arc<crate::trust_proxy::TrustProxy>,
 }
 
 impl FromRef<AppState> for Upstream {

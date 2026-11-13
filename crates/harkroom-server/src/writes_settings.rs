@@ -6,6 +6,7 @@
 use crate::auth::{RequireAccount, RequireAdmin};
 use crate::directory::{internal, json_err, json_ok};
 use crate::routes::AppState;
+use crate::trust_proxy::TrustProxy;
 use crate::write::{AuditEntry, Body, read_body, record_audit};
 use axum::extract::{FromRequestParts, Path, Request, State};
 use axum::http::StatusCode;
@@ -61,10 +62,9 @@ where
     Ok((body, t, parts))
 }
 
-/// 감사의 ip 칸. TS 는 fastify `req.ip`(trustProxy hop 규칙)를 쓴다 — 앞단에는 아직 그 규칙이 없어 비워 둔다
-/// (`x-forwarded-for` 를 믿으면 위조된 값을 기록한다). 같은 규칙을 옮길 때 채운다.
-fn ip_of(_parts: &axum::http::request::Parts) -> Option<String> {
-    None
+/// 감사의 ip 칸 — TS 의 fastify `req.ip` 와 같은 규칙(env `TRUST_PROXY`, `trust_proxy.rs`).
+fn ip_of(parts: &axum::http::request::Parts, trust: &TrustProxy) -> Option<String> {
+    crate::trust_proxy::request_ip(parts, trust)
 }
 
 // ── 설정 ──────────────────────────────────────────────────────────────
@@ -157,7 +157,16 @@ pub async fn put_agent_defaults(State(st): State<AppState>, req: Request) -> Res
         Ok(a) => a,
         Err(e) => return internal(e),
     };
-    audit_change(pool, "agent.defaults.updated", &me, &parts, &before, &after).await;
+    audit_change(
+        pool,
+        &st.trust,
+        "agent.defaults.updated",
+        &me,
+        &parts,
+        &before,
+        &after,
+    )
+    .await;
     json_ok(after)
 }
 
@@ -212,12 +221,22 @@ pub async fn put_mention_policy(State(st): State<AppState>, req: Request) -> Res
         Ok(a) => a,
         Err(e) => return internal(e),
     };
-    audit_change(pool, "mention.policy.updated", &me, &parts, &before, &after).await;
+    audit_change(
+        pool,
+        &st.trust,
+        "mention.policy.updated",
+        &me,
+        &parts,
+        &before,
+        &after,
+    )
+    .await;
     json_ok(after)
 }
 
 async fn audit_change(
     pool: &PgPool,
+    trust: &TrustProxy,
     action: &str,
     me: &crate::auth::Account,
     parts: &axum::http::request::Parts,
@@ -225,7 +244,7 @@ async fn audit_change(
     after: &str,
 ) {
     let parse = |s: &str| serde_json::from_str::<Value>(s).unwrap_or(Value::Null);
-    let ip = ip_of(parts);
+    let ip = ip_of(parts, trust);
     record_audit(
         pool,
         AuditEntry {
