@@ -209,6 +209,13 @@ pub struct AfterCtx {
 }
 /// 비밀 마운트 닫개.
 pub type MountFn<'a> = Box<dyn FnMut(&str) -> Result<(), SecretMountError> + 'a>;
+
+/// 마운트 단계 실물 — **아무것도 하지 않는다.** 비밀 마운트는 오퍼레이터가 한다: 에이전트가 `secret.mount` 를 부르면
+/// 오퍼레이터가 임대 폴더에 0600 파일을 쓴다(`harkroom-operator/src/turn_secrets.rs` `mount`). 정본 러너에도 마운트 단계가 없다.
+/// 비밀 단계는 「이 턴에 임대가 있다」만 뜻한다 — 단계 자체를 빼면 띄우기 순서·실패 코드(#2018)가 바뀌어 남겨 둔다.
+pub fn no_mount<'a>() -> MountFn<'a> {
+    Box::new(|_cause: &str| Ok(()))
+}
 /// 시도마다 PTY 옵션(주입 글 틀 포함)을 새로 짓는다.
 pub type PtyOptsFn<'a> = Box<dyn Fn() -> PtyTurnOptions + 'a>;
 

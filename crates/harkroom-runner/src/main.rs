@@ -14,6 +14,9 @@ fn main() {
     };
     let mut opts = LinkOptions::new(config.operator_link.clone());
     opts.provider_lane = Some(std::env::var("HARKROOM_PROVIDER_LANE").as_deref() == Ok("1"));
+    // 지난 러너가 남긴 lane 턴 파일(키 파일 경로 — 값은 오퍼레이터 임대 폴더)을 기동 때 걷는다(정본 `main.ts` 655
+    // `sweepLaneTurnDir`). 비밀 마운트 폴더는 오퍼레이터가 자기 기동 때·60초마다 쓴다(`serve.rs`·`bridge.rs`).
+    harkroom_runner::provider_lane::sweep_lane_turn_dir(std::path::Path::new(&config.state_dir));
     let link = LinkClient::new(opts);
     link.start();
     // 정본 main.ts 와 같다: 10초 안에 못 붙어도 기동은 계속된다(뒤의 호출이 status 0 으로 거절된다).

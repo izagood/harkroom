@@ -272,3 +272,31 @@ fn records_are_scrubbed_before_the_end_notice() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// security: 결말 가리기는 폴더도 내려간다 — claude 곁 폴더(`<sessionId>/tool-results/…`)의 비밀이 결말에 가려진다.
+#[test]
+fn conclusion_scrub_walks_the_session_side_folder() {
+    let root = std::env::temp_dir().join(format!("hk-lease-dir-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let secret = "folder-secret-value-0123456789";
+    let lease_dir = root.join("secrets").join("l1");
+    std::fs::create_dir_all(&lease_dir).unwrap();
+    std::fs::write(lease_dir.join("token"), secret).unwrap();
+    let side = root.join("sess");
+    std::fs::create_dir_all(side.join("tool-results")).unwrap();
+    let out = side.join("tool-results").join("out.txt");
+    std::fs::write(&out, format!("printed {secret}\n")).unwrap();
+
+    let n = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let book = beating_book(n, Some(root.join("secrets")));
+    let op = Operator::default();
+    let mut h = LinkHooks::new(&op, &book, Sched::default(), "k".into(), || 1);
+    h.lease_issued("m1", lease_of("l1"));
+    book.note_transcript("m1", side.clone());
+    h.release_lease();
+    assert!(
+        !std::fs::read_to_string(&out).unwrap().contains(secret),
+        "곁 폴더 안 파일도 가려졌다"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}

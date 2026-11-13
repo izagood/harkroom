@@ -393,3 +393,10 @@ fn run_beside_raises_this_attempts_end_signal() {
         "패닉에도 선다"
     );
 }
+
+/// 마운트 단계 실물은 아무것도 하지 않는다(마운트는 오퍼레이터의 `secret.mount`).
+#[test]
+fn no_mount_is_a_noop() {
+    let mut m = no_mount();
+    assert!(m("m7").is_ok());
+}
