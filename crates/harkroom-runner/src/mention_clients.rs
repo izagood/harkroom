@@ -17,8 +17,10 @@ use crate::adapter::AgentHarness;
 use crate::link::LinkClient;
 use crate::mcp::HarkroomMcpClient;
 use crate::mention_deps::LinkIo;
+use crate::mention_hooks::LeaseHandoff;
 use crate::rest::{HarkroomRestClient, RunnerLink};
 use crate::turn_after::SilentSaid;
+use crate::turn_attempt::LeaseNotice;
 use crate::turn_attempt::TurnSecrets;
 use crate::turn_attempt_fold::{AfterInputs, run_after_turn};
 use crate::turn_attempt_run::AttemptBase;
@@ -84,7 +86,25 @@ impl<L: RunnerLink> AgentClients<L> {
     }
 }
 
-impl<'l> AgentClients<&'l LinkClient> {
+/// 에이전트 링크 — 손님을 지을 링크이자 오퍼레이터 알림(임대 넘기기·끝)이 가는 길. 실물은 `&LinkClient`.
+pub trait AgentLink: RunnerLink + Clone {
+    type Operator: LeaseNotice + LeaseHandoff;
+    fn operator(&self) -> &Self::Operator;
+}
+
+impl<'l> AgentLink for &'l LinkClient {
+    type Operator = LinkClient;
+    fn operator(&self) -> &LinkClient {
+        self
+    }
+}
+
+impl<L: AgentLink> AgentClients<L> {
+    /// 오퍼레이터 알림 길 — 묶음을 지은 그 링크.
+    pub fn operator(&self) -> &L::Operator {
+        self.link.operator()
+    }
+
     /// 시도 실물의 러너 재료 — 턴 열쇠 맡기기·거두기(REST)는 묶음의 REST 손님, 임대 끝 알림은 묶음의 링크.
     #[allow(clippy::too_many_arguments)]
     pub fn attempt_base<'a>(
@@ -95,10 +115,10 @@ impl<'l> AgentClients<&'l LinkClient> {
         mcp_config_path: &'a Path,
         runner_env: &'a BTreeMap<String, String>,
         pat: &'a str,
-    ) -> AttemptBase<'a, &'l LinkClient, LinkClient> {
+    ) -> AttemptBase<'a, L, L::Operator> {
         AttemptBase {
             client: &self.rest,
-            notice: self.link,
+            notice: self.link.operator(),
             harness,
             can_register_turn_keys,
             state_dir,

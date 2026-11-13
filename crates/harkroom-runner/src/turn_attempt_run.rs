@@ -151,7 +151,7 @@ pub struct PtyTurnAttempt<'a, L: RunnerLink, N: LeaseNotice, P: AttemptParts> {
     /// lane(API 키 연결) — 있으면 시도마다 턴 MCP 계획 앞에서 env 를 받는다.
     lane: Option<&'a dyn LaneSource>,
     /// 멘션 중계 세션(#2046 — `run_mention` 이 연 것). 있으면 시도마다 [`RelayAttempt`] 로 쥔다.
-    relay: Option<&'a SessionHandle>,
+    relay: Option<Arc<SessionHandle>>,
 }
 
 /// 시도 하나의 재료(`run` → `attempt`).
@@ -202,7 +202,9 @@ impl<'a, L: RunnerLink, N: LeaseNotice, P: AttemptParts> PtyTurnAttempt<'a, L, N
     }
 
     /// 멘션 중계 세션을 건다 — 시도마다 그 시도 범위에서 [`RelayAttempt`] 를 만든다.
-    pub fn with_relay(mut self, session: &'a SessionHandle) -> Self {
+    /// 세션은 공유 소유로 받는다 — `run_mention` 이 연 세션을 턴이 빌려 쥘 수 없어서(턴 타입이 그 호출 안 수명을 못 담는다)
+    /// 복제를 쥔다. 떨굼 차례(턴 → 중계 세션 → 자리)는 그대로다: 턴의 복제가 먼저 떨어지고 `run_mention` 의 것이 마지막이다.
+    pub fn with_relay(mut self, session: Arc<SessionHandle>) -> Self {
         self.relay = Some(session);
         self
     }
@@ -380,7 +382,10 @@ impl<L: RunnerLink, N: LeaseNotice, P: AttemptParts> TurnAttempt for PtyTurnAtte
         let _binding = LiveBinding(&self.parts);
         // 시도 범위 — `_binding` 과 같은 수명이고 먼저 떨어진다(입력 통로 놓기 → 듣기 놓기). 패닉에도 둘 다 지난다.
         let ranks = self.parts.borrow().account_ranks(account);
-        let relay = self.relay.map(|s| RelayAttempt::begin(s, ranks.0, ranks.1));
+        let relay = self
+            .relay
+            .as_deref()
+            .map(|s| RelayAttempt::begin(s, ranks.0, ranks.1));
         self.attempt(
             AttemptCtx {
                 turn_id: &turn_id,

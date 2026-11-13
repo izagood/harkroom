@@ -586,18 +586,18 @@ fn relay_attempt_lives_in_attempt_scope() {
         lease: w.lease.clone(),
     };
     let relay = RelaySessions::new(None, Box::new(|_| {}));
-    let session = relay.open_session(OpenSessionInput {
+    let session = Arc::new(relay.open_session(OpenSessionInput {
         agent_account_id: "agent".into(),
         channel_id: "c".into(),
         harness: "claude-code".into(),
         accepts_input: true,
         ..Default::default()
-    });
+    }));
     let sid = session.session_id().to_string();
     let (p1, p2) = (Arc::new(RelayPty::default()), Arc::new(RelayPty::default()));
     let mut parts1 = parts(&w, &log, false, vec![1, 0]);
     parts1.pty = Some(p1.clone());
-    let mut a = attempt(&w, &client, &notice, true, parts1).with_relay(&session);
+    let mut a = attempt(&w, &client, &notice, true, parts1).with_relay(Arc::clone(&session));
     let t = target();
     let mut d = false;
     assert!(a.run(&t, None, false, &mut d).is_err());
@@ -720,13 +720,13 @@ fn lane_and_relay_guards_both_release_in_order() {
     };
     let lane = FakeLane(Arc::clone(&log));
     let relay = RelaySessions::new(None, Box::new(|_| {}));
-    let session = relay.open_session(OpenSessionInput {
+    let session = Arc::new(relay.open_session(OpenSessionInput {
         agent_account_id: "agent".into(),
         channel_id: "c".into(),
         harness: "claude-code".into(),
         accepts_input: true,
         ..Default::default()
-    });
+    }));
     let sid = session.session_id().to_string();
     let pty = Arc::new(RelayPty::default());
     let mut p = parts(&w, &log, false, vec![0]);
@@ -734,7 +734,7 @@ fn lane_and_relay_guards_both_release_in_order() {
     p.probe_on_unbind = Some((Arc::clone(&relay), sid));
     let mut a = attempt(&w, &client, &notice, true, p)
         .with_lane(&lane)
-        .with_relay(&session);
+        .with_relay(Arc::clone(&session));
     let mut d = false;
     assert!(a.run(&target(), None, true, &mut d).is_ok());
     let log = log.lock().unwrap().clone();
