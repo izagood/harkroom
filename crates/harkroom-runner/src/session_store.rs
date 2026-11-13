@@ -105,7 +105,7 @@ impl SessionStore {
     /// 정본 `load`. 없으면 빈 상태(첫 기동은 정상), 못 읽으면 경고 뒤 빈 상태(러너가 못 뜨는 것보다 낫다),
     /// 파싱 실패·맵이 아닌 꼴이면 원본을 `.broken-<ms>` 로 치우고 빈 상태. 깨진 레코드는 그것만 버린다.
     pub fn load(&self) {
-        let loaded = match fs::read_to_string(&self.file) {
+        let loaded = match read_nofollow(&self.file) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => BTreeMap::new(),
             Err(e) => {
                 eprintln!(
@@ -183,6 +183,23 @@ impl SessionStore {
     }
 }
 
+/// 세션 파일 읽기 — 그 자리의 링크는 따라가지 않고(`O_NOFOLLOW`), FIFO 등에서 막히지 않게(`O_NONBLOCK`) 열어 일반 파일만
+/// 읽는다. 링크·일반 파일이 아닌 것은 「못 읽음」으로 다룬다(빈 상태로 시작 — 원본은 건드리지 않는다).
+fn read_nofollow(path: &Path) -> std::io::Result<String> {
+    use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
+    let f = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)?;
+    if !f.metadata()?.is_file() {
+        return Err(std::io::Error::other("일반 파일이 아니다"));
+    }
+    let mut s = String::new();
+    { f }.read_to_string(&mut s)?;
+    Ok(s)
+}
+
 /// 유일한 tmp 이름에 0o600 으로 다 쓴 뒤 rename — 쓰는 도중 죽어도 기존 파일은 온전하다.
 fn flush(file: &Path, sessions: &BTreeMap<String, SessionRecord>) -> std::io::Result<()> {
     use std::os::unix::fs::OpenOptionsExt;
@@ -203,6 +220,7 @@ fn flush(file: &Path, sessions: &BTreeMap<String, SessionRecord>) -> std::io::Re
             .write(true)
             .create_new(true)
             .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
             .open(&tmp)?;
         f.write_all(body.as_bytes())?;
         f.sync_all()?;
