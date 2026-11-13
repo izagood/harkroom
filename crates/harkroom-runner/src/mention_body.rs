@@ -64,54 +64,80 @@ pub enum BodyEnd {
     Ran { panicked: bool },
     /// 정의를 못 읽어 띄우지 않았다 — 장부·임대·자리를 놓았다.
     DefinitionUnreadable,
+    /// 띄우기 전 준비(읽기·지시문 입력·짓개)가 패닉했다 — 정의 못 읽음과 같이 놓았다.
+    PreparePanicked,
+}
+
+/// 띄우지 않고 끝낼 때의 정리(정의 못 읽음·준비 패닉): 장부에서 그 멘션을 놓고(시도 기록은 남는다, 읽음 처리 없음 — 다음
+/// 폴이 다시 받는다), 임대·자리·턴 끝을 `Launch::release_holds` 로 한 번 놓는다(자리·턴 끝은 스케줄러 고리). 패닉하지 않는다.
+fn give_back<L: AgentLink, M>(sh: &BodyShared<L, M>, mut launch: Launch) {
+    let (lead, key) = (launch.lead_id(), launch.thread_key.clone());
+    sh.ledger
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .release(lead, &key);
+    let (mut a, mut b) = (sh.sched.clone(), sh.sched.clone());
+    launch.release_holds(&mut |k| a.release_slot(k), &mut |k, m| b.turn_ended(k, m));
 }
 
 /// 멘션 하나의 몸통. `ThreadLauncher` 의 스레드 안에서 부른다.
-pub fn run_body<L, S, M>(sh: &BodyShared<L, M>, mut launch: Launch) -> BodyEnd
+///
+/// **몸통 전체가 지킴 안이다**(security L3 ①): 띄우기 전 준비(`read_mention`·`system_inputs`·`CallMaker`)는 이 함수의
+/// `catch_unwind` 안에서, 띄운 뒤는 [`run_mention_guarded`] 안에서 돈다. 준비가 패닉하면 `Launch` 는 아직 이 함수가 쥐고
+/// 있으므로 정의 못 읽음과 같은 정리([`give_back`])를 한다 — 멘션 장부 「도는 중」·턴 자리·턴 끝·임대가 남아 그 스레드가
+/// 러너 재시작까지 멈추는 길이 없다.
+pub fn run_body<L, S, M>(sh: &BodyShared<L, M>, launch: Launch) -> BodyEnd
 where
     L: AgentLink + 'static,
     S: PtyTurnSink,
     M: CallMaker<L, S>,
 {
-    let target = build_mention_target(
-        &launch.lead_entry,
-        &launch.lead_mention,
-        &launch.anchor,
-        &launch.bundled,
-    );
     let clients: &AgentClients<L> = &sh.clients;
-    let reads = match read_mention(clients, &target) {
-        Ok(r) => r,
-        Err(_) => {
+    let prepared = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let target = build_mention_target(
+            &launch.lead_entry,
+            &launch.lead_mention,
+            &launch.anchor,
+            &launch.bundled,
+        );
+        let reads = read_mention(clients, &target).ok()?;
+        let system = system_inputs(&reads, &target, sh.maker.system_context(&target, &reads));
+        Some(
+            sh.maker
+                .call_inputs(clients, &sh.book, &target, reads, system),
+        )
+    }));
+    match prepared {
+        Ok(Some(inputs)) => {
+            let panicked = run_mention_guarded(
+                &sh.ledger,
+                &sh.slots,
+                &sh.book,
+                clients,
+                launch,
+                sh.sched.clone(),
+                inputs,
+                |slot| sh.maker.open_relay(slot),
+            );
+            BodyEnd::Ran { panicked }
+        }
+        Ok(None) => {
             eprintln!(
                 "[mentionScheduler] {}: 정의를 못 읽어 띄우지 않는다 — 장부·임대·자리를 놓고 다음 폴에 다시 받는다",
                 launch.thread_key
             );
-            let (lead, key) = (launch.lead_id(), launch.thread_key.clone());
-            sh.ledger
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .release(lead, &key);
-            let (mut a, mut b) = (sh.sched.clone(), sh.sched.clone());
-            launch.release_holds(&mut |k| a.release_slot(k), &mut |k, m| b.turn_ended(k, m));
-            return BodyEnd::DefinitionUnreadable;
+            give_back(sh, launch);
+            BodyEnd::DefinitionUnreadable
         }
-    };
-    let system = system_inputs(&reads, &target, sh.maker.system_context(&target, &reads));
-    let inputs = sh
-        .maker
-        .call_inputs(clients, &sh.book, &target, reads, system);
-    let panicked = run_mention_guarded(
-        &sh.ledger,
-        &sh.slots,
-        &sh.book,
-        clients,
-        launch,
-        sh.sched.clone(),
-        inputs,
-        |slot| sh.maker.open_relay(slot),
-    );
-    BodyEnd::Ran { panicked }
+        Err(_) => {
+            eprintln!(
+                "[mentionScheduler] {}: 띄우기 전 준비가 패닉했다 — 장부·임대·자리를 놓고 다음 폴에 다시 받는다",
+                launch.thread_key
+            );
+            give_back(sh, launch);
+            BodyEnd::PreparePanicked
+        }
+    }
 }
 
 /// `ThreadLauncher` 에 넘길 몸통 닫개.
