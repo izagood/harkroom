@@ -11,7 +11,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use harkroom_runner::adapter::AgentHarness;
 use harkroom_runner::call_maker::{Names, RunnerMaker, RunnerSink};
 use harkroom_runner::config::{load_config, process_env, turn_secrets_dir};
 use harkroom_runner::link::{LinkClient, LinkOptions};
@@ -117,16 +116,7 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let harness = clients
-        .rest()
-        .definition()
-        .ok()
-        .and_then(|d| {
-            d.get("harness")
-                .and_then(Value::as_str)
-                .and_then(AgentHarness::parse)
-        })
-        .unwrap_or(AgentHarness::ClaudeCode);
+    // 하네스는 멘션마다 그 멘션이 읽은 정의에서 정한다(`call_maker::harness_of`) — 기동 때 가정하지 않는다.
 
     // 에이전트별 상태·작업 폴더 뿌리(정본 `resolveAgentStateDir`) — 작업 폴더 뿌리를 에이전트끼리 나누지 않는다.
     let base = PathBuf::from(&config.state_dir);
@@ -147,7 +137,6 @@ fn main() {
         &config,
         &env,
         BootFacts {
-            harness,
             me_id: &me_id,
             claim_holder: &claim_holder,
             agent_state,

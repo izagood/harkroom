@@ -50,7 +50,9 @@ impl RunnerLink for &'static Link {
             LinkRequest::Http { path, .. } => {
                 self.seen.lock().unwrap().push(path.clone());
                 let body = match path.as_str() {
-                    "/agent/config" => json!({"instructions": "지시", "stopRequestedAt": null}),
+                    "/agent/config" => {
+                        json!({"instructions": "지시", "stopRequestedAt": null, "harness": "claude-code"})
+                    }
                     // 두 스레드의 머지 승인 — 지시문에는 그 멘션 스레드 것만.
                     "/agent/merge-grants" => json!({"repos": [], "approvals": [
                         {"repo": "o/r", "number": 1, "channelId": "c1", "threadRootId": "t1"},
@@ -124,7 +126,6 @@ fn cfg(tag: &str) -> (MakerConfig, Root) {
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("state")).unwrap();
     let c = MakerConfig {
-        harness: AgentHarness::ClaudeCode,
         operator_bin: "/bin/op".into(),
         command_hook: true,
         post_tool_hook: false,
@@ -544,4 +545,43 @@ fn readonly_list_is_never_defaulted_to_launch() {
         owned_argv("c/t", AgentHarness::Omp, false, None, None).readonly_tool_list,
         None
     );
+}
+
+/// security C6 전 P1: 하네스는 그 멘션이 읽은 정의에서 — 기본값이 없다. codex 정의면 codex 로 짓고, 없거나 모르는 값이면
+/// 짓지 않는다(패닉 → 몸통 지킴이 놓는다). 패닉 문구에는 값이 없다.
+#[test]
+fn harness_comes_from_this_mentions_definition_without_default() {
+    assert_eq!(
+        harness_of(&json!({"harness": "codex"})),
+        AgentHarness::Codex
+    );
+    assert_eq!(
+        harness_of(&json!({"harness": "claude-code"})),
+        AgentHarness::ClaudeCode
+    );
+
+    let (m, _l, _root) = maker("def-harness");
+    let t = target(1, None, "h");
+    let clients = m.clients();
+    let book = LeaseBook::default();
+    let mut reads = read_mention(&clients, &t).unwrap();
+    reads.def["harness"] = json!("codex");
+    let ctx = <RunnerMaker<_> as CallMaker<_, Sink>>::system_context(&m, &t, &reads);
+    assert_eq!(ctx.harness, AgentHarness::Codex);
+    let system = system_inputs(&reads, &t, ctx);
+    let i: CallInputs<'_, _, Sink> = m.call_inputs(&clients, &book, &t, reads, system);
+    assert_eq!(i.base.harness, AgentHarness::Codex, "명령도 정의의 하네스");
+
+    for def in [json!({}), json!({"harness": "--evil-not-a-harness"})] {
+        let r = std::panic::catch_unwind(|| harness_of(&def));
+        let msg = r
+            .err()
+            .and_then(|e| {
+                e.downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
+            })
+            .expect("패닉해야 한다");
+        assert!(!msg.contains("evil"), "값을 싣지 않는다: {msg}");
+    }
 }

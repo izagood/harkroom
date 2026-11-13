@@ -9,7 +9,6 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::adapter::AgentHarness;
 use crate::call_maker::MakerConfig;
 use crate::config::{Env, RunnerConfig};
 use crate::turn_env::harness_parent_env;
@@ -53,7 +52,6 @@ pub fn workspace_base_dir(agent_state: &Path) -> PathBuf {
 
 /// 기동 때 정해지는 값.
 pub struct BootFacts<'a> {
-    pub harness: AgentHarness,
     pub me_id: &'a str,
     pub claim_holder: &'a str,
     pub agent_state: PathBuf,
@@ -65,7 +63,6 @@ pub fn maker_config(cfg: &RunnerConfig, env: &Env, f: BootFacts<'_>) -> MakerCon
     let runner_env: BTreeMap<String, String> =
         env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
     MakerConfig {
-        harness: f.harness,
         operator_bin: cfg.operator_bin.clone(),
         command_hook: cfg.command_hook,
         post_tool_hook: cfg.post_tool_hook,

@@ -78,7 +78,6 @@ fn maker_config_wires_the_allow_list_and_agent_dirs() {
         &cfg,
         &e,
         BootFacts {
-            harness: AgentHarness::ClaudeCode,
             me_id: "agent-1",
             claim_holder: "holder",
             agent_state: agent.clone(),
