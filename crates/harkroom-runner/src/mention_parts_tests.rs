@@ -328,3 +328,29 @@ fn system_prompt_sections_are_filled() {
     assert!(body.len() > bare.len());
     assert!(!bare.contains("OPBIN_MERGE"));
 }
+
+/// security: PTY 턴(`f`)이 패닉해도 멈춤 신호가 서서 감시 루프가 끝나고, 패닉은 제한 시간 안에 밖으로 나온다 — 그래서 바깥
+/// 정리 가드가 돈다(가드 차례 자체는 #2037·#2049·#2051 시험이 고정).
+#[test]
+fn panic_in_turn_still_stops_watch_loop() {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let watch = Watch::default();
+        let lf: WatchLoopFn<'static> = Box::new(|_w, _n, stop| {
+            while !stop.load(std::sync::atomic::Ordering::SeqCst) {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        });
+        let secrets = crate::turn_probe_records::NoticeSecrets::default();
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_beside(&watch, &secrets, Some(&lf), || -> () {
+                panic!("PTY 턴 도중 패닉")
+            })
+        }));
+        let _ = tx.send(r.is_err());
+    });
+    let panicked = rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("감시 루프가 끝나 패닉이 제한 시간 안에 밖으로 나온다");
+    assert!(panicked);
+}

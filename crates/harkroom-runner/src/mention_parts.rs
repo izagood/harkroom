@@ -138,15 +138,22 @@ pub fn run_beside<R>(
     watch_loop: Option<&WatchLoopFn<'_>>,
     f: impl FnOnce() -> R,
 ) -> R {
+    /// 떨어질 때(정상 끝·패닉 풀림 모두) 멈춤 신호를 세운다 — 패닉이어도 `scope` 가 감시 스레드를 끝없이 기다리지 않게,
+    /// 그래서 바깥 정리 가드(열쇠 거두기·임대 끝·입력 놓기·듣기 놓기)까지 풀림이 이어지게.
+    struct StopOnDrop<'s>(&'s AtomicBool);
+    impl Drop for StopOnDrop<'_> {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
     let stop = AtomicBool::new(false);
     std::thread::scope(|sc| {
         if let Some(lf) = watch_loop {
             let (w, st) = (watch.clone(), &stop);
             sc.spawn(move || lf(&w, notice, st));
         }
-        let out = f();
-        stop.store(true, Ordering::SeqCst);
-        out
+        let _stop = StopOnDrop(&stop);
+        f()
     })
 }
 
