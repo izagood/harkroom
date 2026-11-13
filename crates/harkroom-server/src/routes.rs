@@ -122,6 +122,17 @@ pub const MOVED: &[Moved] = &[
         path: "/settings/mention-policy",
         route: || axum::routing::get(crate::lists::mention_policy),
     },
+    // P4c 신고·차단 읽기(`writes_moderation.rs`).
+    Moved {
+        key: "GET /admin/reports",
+        path: "/admin/reports",
+        route: || axum::routing::get(crate::writes_moderation::list_reports),
+    },
+    Moved {
+        key: "GET /accounts/me/blocks",
+        path: "/accounts/me/blocks",
+        route: || axum::routing::get(crate::writes_moderation::list_blocks),
+    },
 ];
 
 /// `HARKROOM_FRONT_TS_ROUTES` 를 읽은 결과.
@@ -281,6 +292,22 @@ pub const MOVED_WRITE: &[Moved] = &[
         key: "DELETE /handle-groups/{id}/members",
         path: "/handle-groups/{id}/members",
         route: || axum::routing::delete(crate::writes_groups::remove_members),
+    },
+    // P4c 신고·차단(`writes_moderation.rs`). 신고 올리기(POST /messages/{id}/report)는 프로세스 메모리 상한 때문에 TS 에 남는다.
+    Moved {
+        key: "POST /admin/reports/{id}/resolve",
+        path: "/admin/reports/{id}/resolve",
+        route: || axum::routing::post(crate::writes_moderation::resolve_report),
+    },
+    Moved {
+        key: "PUT /accounts/me/blocks/{id}",
+        path: "/accounts/me/blocks/{id}",
+        route: || axum::routing::put(crate::writes_moderation::put_block),
+    },
+    Moved {
+        key: "DELETE /accounts/me/blocks/{id}",
+        path: "/accounts/me/blocks/{id}",
+        route: || axum::routing::delete(crate::writes_moderation::delete_block),
     },
 ];
 

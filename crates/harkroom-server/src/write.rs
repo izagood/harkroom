@@ -44,6 +44,10 @@ pub const REQUIRED_PRIVILEGES: &[(&str, &str)] = &[
     ("handle_group", "DELETE"),
     ("handle_group_member", "INSERT"),
     ("handle_group_member", "DELETE"),
+    // P4c — 신고 해결·차단(`writes_moderation.rs`). 신고 올리기는 TS 에 남아 message_report INSERT 는 앞단이 쓰지 않는다.
+    ("message_report", "UPDATE"),
+    ("account_block", "INSERT"),
+    ("account_block", "DELETE"),
 ];
 /// 시퀀스 권한(시퀀스, 권한) — `event_outbox.id` 는 bigserial 이다. `audit_log.id` 는 identity 라 필요 없다.
 pub const REQUIRED_SEQUENCE_PRIVILEGES: &[(&str, &str)] = &[
@@ -366,6 +370,7 @@ mod tests {
         assert_eq!(
             tables.into_iter().collect::<Vec<_>>(),
             [
+                "account_block",
                 "agent_defaults",
                 "agent_team",
                 "agent_team_invoker",
@@ -377,6 +382,7 @@ mod tests {
                 "handle_group_member",
                 "inbox_view_cursor",
                 "mention_policy",
+                "message_report",
                 "pat",
                 "session",
                 "workspace_skill",
@@ -384,8 +390,9 @@ mod tests {
             ],
             "넓힐 때는 homelab GRANT 와 이 시험을 같이 고친다"
         );
-        // DELETE 는 P4b 의 팀·집합(과 그 구성원) 표에만 — homelab#353 목록과 같다. TRUNCATE·그 밖의 것은 없다.
+        // DELETE 는 P4b 의 팀·집합(과 그 구성원)·P4c 차단 표에만 — homelab#353 목록과 같다. TRUNCATE·그 밖의 것은 없다.
         const DELETE_OK: &[&str] = &[
+            "account_block",
             "agent_team",
             "agent_team_member",
             "agent_team_invoker",

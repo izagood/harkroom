@@ -218,6 +218,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant insert, delete on agent_team_invoker to ${rw}`,
         `grant insert, update, delete on handle_group to ${rw}`,
         `grant insert, delete on handle_group_member to ${rw}`,
+        // P4c — 신고 해결·차단.
+        `grant update on message_report to ${rw}`,
+        `grant insert, delete on account_block to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -251,6 +254,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         'PUT /teams/{id}/members/{accountId}', 'DELETE /teams/{id}/members/{accountId}',
         'POST /handle-groups', 'PATCH /handle-groups/{id}', 'DELETE /handle-groups/{id}',
         'POST /handle-groups/{id}/members', 'DELETE /handle-groups/{id}/members',
+        'GET /admin/reports', 'GET /accounts/me/blocks',
+        'POST /admin/reports/{id}/resolve', 'PUT /accounts/me/blocks/{id}', 'DELETE /accounts/me/blocks/{id}',
       ]) {
         expect(f.log(), key).toContain(`"${key}"`);
       }
@@ -491,6 +496,62 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         || (e.type === 'handle_group.changed' && (e as { groupId?: string }).groupId === rgroup));
       while (evs().length < 13 && Date.now() < until3) await new Promise((res) => setTimeout(res, 100));
       expect(evs().length, '쓴 만큼 이벤트가 버스로 온다').toBe(13);
+
+      // S5.2 P4c — 신고 해결·차단(+ 그 읽기 둘). 신고 올리기는 TS 에 남는다(프로세스 메모리 상한).
+      const msgs = (await db.pool.query<{ id: string }>(
+        `select id::text from message where deleted_at is null and author_id <> $1 order by created_at, id limit 3`, [member.accountId])).rows.map((r) => r.id);
+      expect(msgs.length).toBe(3);
+      for (const [i, mid] of msgs.entries()) {
+        await db.pool.query(
+          `insert into message_report (message_id, reporter_id, reason, note, body_snapshot, created_at, resolved_at, resolved_by, resolution)
+           select $1, $2, $3, $4, m.body, now() - make_interval(mins => $5), case when $6 then now() end, case when $6 then $7::uuid end, case when $6 then 'dismissed' end
+             from message m where m.id = $1`,
+          [mid, member.accountId, ['spam', 'abuse', 'other'][i], i === 1 ? '메모' : null, 30 - i, i === 2, admin.accountId]);
+      }
+      const reportIds = (await db.pool.query<{ id: string }>('select id::text from message_report order by created_at, id')).rows.map((r) => r.id);
+      const page1 = await callX(tsUrl, 'GET', '/admin/reports?status=all&limit=1');
+      for (const path of [
+        '/admin/reports', '/admin/reports?status=all', '/admin/reports?status=resolved', '/admin/reports?status=all&limit=1',
+        `/admin/reports?status=all&after=${String(page1.json.nextAfter)}`, '/admin/reports?status=closed', '/admin/reports?after=nope',
+        '/admin/reports?limit=0', '/accounts/me/blocks',
+      ]) {
+        const [a, b] = [await callX(tsUrl, 'GET', path), await callX(rsUrl, 'GET', path)];
+        expect({ status: b.status, json: b.status === 400 ? b.code : b.json }, path)
+          .toEqual({ status: a.status, json: a.status === 400 ? a.code : a.json });
+      }
+      expect((await callX(rsUrl, 'GET', '/admin/reports', undefined, member.token)).status).toBe(403);
+      const openReport = reportIds[0]!;
+      for (const [name, m, path, body, token] of [
+        ['해결 멤버 → 403', 'POST', `/admin/reports/${openReport}/resolve`, { resolution: 'removed' }, member.token],
+        ['해결 모르는 처리 → 400', 'POST', `/admin/reports/${openReport}/resolve`, { resolution: 'deleted' }, A],
+        ['해결 없는 신고 → 404', 'POST', `/admin/reports/${ghost}/resolve`, { resolution: 'removed' }, A],
+        ['해결 이미 처리됨 → 404', 'POST', `/admin/reports/${reportIds[2]!}/resolve`, { resolution: 'removed' }, A],
+        ['해결 uuid 아님 → 400', 'POST', '/admin/reports/nope/resolve', { resolution: 'removed' }, A],
+        ['차단 에이전트 → 403', 'PUT', `/accounts/me/blocks/${member2.accountId}`, undefined, agent.pat],
+        ['차단 자기 자신 → 400', 'PUT', `/accounts/me/blocks/${member.accountId}`, undefined, member.token],
+        ['차단 없는 계정 → 404', 'PUT', `/accounts/me/blocks/${ghost}`, undefined, member.token],
+        ['차단 uuid 아님 → 400', 'PUT', '/accounts/me/blocks/nope', undefined, member.token],
+        ['차단 풀기 익명 → 401', 'DELETE', `/accounts/me/blocks/${member2.accountId}`, undefined, ''],
+      ] as const) {
+        const [a, b] = [await callX(tsUrl, m, path, body, token), await callX(rsUrl, m, path, body, token)];
+        expect({ status: b.status, code: b.code }, name).toEqual({ status: a.status, code: a.code });
+      }
+      const modMark = Number((await db.pool.query<{ n: string }>('select coalesce(max(id), 0)::text as n from audit_log')).rows[0]!.n);
+      expect((await callX(rsUrl, 'POST', `/admin/reports/${openReport}/resolve`, { resolution: 'removed' })).status).toBe(204);
+      const resolved = ((await callX(tsUrl, 'GET', '/admin/reports?status=resolved')).json.reports as Record<string, unknown>[])
+        .find((r) => r.id === openReport);
+      expect(resolved).toMatchObject({ resolution: 'removed', resolvedBy: admin.accountId });
+      expect((await callX(tsUrl, 'POST', `/admin/reports/${openReport}/resolve`, { resolution: 'removed' })).status, '두 번 처리되지 않는다').toBe(404);
+      const modAudit = (await db.pool.query<{ action: string; ip: string | null; detail: Record<string, unknown> }>(
+        `select action, ip, detail from audit_log where id > $1 and action = 'message.report.resolved'`, [modMark])).rows;
+      expect(modAudit).toEqual([{ action: 'message.report.resolved', ip: XFF, detail: { resolution: 'removed', messageId: msgs[0] } }]);
+      expect((await callX(rsUrl, 'PUT', `/accounts/me/blocks/${member2.accountId}`, undefined, member.token)).status).toBe(204);
+      expect((await callX(rsUrl, 'PUT', `/accounts/me/blocks/${member2.accountId}`, undefined, member.token)).status, '다시 막아도 204').toBe(204);
+      const tsBlocks = await callX(tsUrl, 'GET', '/accounts/me/blocks', undefined, member.token);
+      expect((tsBlocks.json.blocks as { accountId: string }[]).map((b) => b.accountId)).toEqual([member2.accountId]);
+      expect((await callX(rsUrl, 'GET', '/accounts/me/blocks', undefined, member.token)).json).toEqual(tsBlocks.json);
+      expect((await callX(rsUrl, 'DELETE', `/accounts/me/blocks/${member2.accountId}`, undefined, member.token)).status).toBe(204);
+      expect((await callX(tsUrl, 'GET', '/accounts/me/blocks', undefined, member.token)).json).toEqual({ blocks: [] });
       await bus.stop();
 
       // S5.2 P4d — 옮긴 라우트를 지난 요청도 세션을 늘리고 PAT 사용 시각을 남긴다(쓰기 풀로). 읽기 역할로 하면 조용히 실패하던 것.
