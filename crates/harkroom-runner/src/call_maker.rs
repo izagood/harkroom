@@ -1,0 +1,342 @@
+//! 실물 짓개(L3c-2) — [`RunnerMaker`] 가 [`CallMaker`] 를 채운다. 정본 `main.ts` 의 턴 deps 조립(멘션 하나의 러너 쪽 재료)이다.
+//!
+//! **멘션마다 새 값**(security L3c-2 ④): 짓개가 쥐는 것은 러너 수명 값(설정·세션 저장소·기억 캐시·이름 표·묶음 손님)뿐이다.
+//! 감시 입력·턴 뒤 설정(`AfterConfig`)·결과 접기 설정(`OutcomeConfig`)·명령 옵션은 `call_inputs` 한 번에 **소유본으로 새로**
+//! 짓고, 그 멘션의 닫개가 가져간다. 두 멘션이 동시에 지어도 서로의 값을 빌리지 않는다.
+//!
+//! - **서버 길은 묶음 하나뿐이다**: 기억은 짓개가 쥔 `Arc<AgentClients>` 의 MCP 로만 읽는다. 몸통(`BodyShared.clients`)은
+//!   [`RunnerMaker::clients`] 로 **같은 묶음**을 받아 쥔다(main.rs, L3d). 기억은 계정 단위(core·mem/*)라 채널 인자가 없다 —
+//!   그 에이전트 계정 것만 실린다.
+//! - **계정 축은 기본 로그인 하나**(`vec![None]`): 계정 폴더는 `None`, 기록 찾기는 홈 기본(`cfg.home`). 계정 풀 배정은 L3c-3.
+//! - **지시문 파일 자리는 그대로**(`state_dir`, 카드 답 대기) — `MentionParts::prepare` 가 쓴다.
+//! - 정본과 다른 점: 스레드별 기억 고정·recall(`plan_memory`)은 아직 안 이어져 있다 — 지시문에는 기억 캐시 읽기만 실린다.
+//!   PTY 옵션(작업 폴더·주입 틀)·부모 env 는 설정에서 받은 값 그대로다(main.rs 가 채운다, L3d).
+//!
+//! 아직 부르는 곳이 없다(main.rs 연결은 L3d). B4-5 스위치는 꺼져 있다.
+
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::PathBuf;
+use std::sync::{Arc, RwLock};
+
+use crate::adapter::{AgentHarness, MentionPermission};
+use crate::memory_cache::MemoryCache;
+use crate::memory_pin::MemoryContext;
+use crate::mention_body::CallMaker;
+use crate::mention_call::{BaseInputs, BundleParts, CallInputs};
+use crate::mention_clients::{AgentClients, AgentLink};
+use crate::mention_hooks::LeaseBook;
+use crate::mention_inputs::{MentionReads, SystemContext, report_promise};
+use crate::mention_ledger::thread_key;
+use crate::mention_parts::{MentionParts, SystemInputs, no_mount};
+use crate::mention_target::{MentionTarget, TargetWake};
+use crate::mention_turn_parts::{SilentCaller, silent_turn_caller};
+use crate::mention_watch::{MentionWatchInputs, PROBE_MS};
+use crate::pty_turn::{PtyTurnOptions, PtyTurnSink};
+use crate::session_store::SessionStore;
+use crate::turn_after_source::{AfterConfig, after_source_owned};
+use crate::turn_command::TurnCommandOptions;
+use crate::turn_end::EndConfig;
+use crate::turn_notice::NudgeCaller;
+use crate::turn_outcome_source::{OutcomeConfig, outcome_source_owned};
+use crate::turn_preset::TurnMode;
+use crate::turn_success::SuccessTarget;
+
+/// 러너 수명 설정(기동 때 한 번).
+#[derive(Clone, Debug)]
+pub struct MakerConfig {
+    pub harness: AgentHarness,
+    pub operator_bin: String,
+    pub command_hook: bool,
+    pub post_tool_hook: bool,
+    /// 상태 폴더 — 지시문 파일 자리(카드 답 대기, 지금 자리 그대로).
+    pub state_dir: PathBuf,
+    /// 오퍼레이터가 쓴 기본 MCP 설정(`HARKROOM_MCP_CONFIG`).
+    pub mcp_config_path: PathBuf,
+    pub runner_env: BTreeMap<String, String>,
+    /// 하네스 자식에 물려줄 부모 env(main.rs 가 채운다).
+    pub parent_env: BTreeMap<String, String>,
+    pub pat: String,
+    /// 기본 로그인의 홈 — 기록 찾기의 기준.
+    pub home: PathBuf,
+    pub turn_timeout_ms: u64,
+    pub harness_stall_ms: u64,
+    pub new_workspace_dir: String,
+    pub me_id: String,
+    /// 이 러너 프로세스의 스레드 임대 holder(기동 때 무작위, `ThreadClaims` 와 같은 값).
+    pub claim_holder: String,
+    pub can_register_turn_keys: bool,
+}
+
+/// 배치마다 갱신하는 이름 표 — 이름은 바뀔 수 있어 멘션을 지을 때 꺼낸 **사본**을 쓴다.
+#[derive(Clone, Debug, Default)]
+pub struct Names {
+    pub channel_names: HashMap<String, String>,
+    /// 계정 id → handle.
+    pub handles: HashMap<String, String>,
+    pub me_handle: String,
+    /// 에이전트 계정 id(모르면 `None` — 침묵 통지는 사람 쪽으로 틀린다).
+    pub agent_ids: Option<HashSet<String>>,
+}
+
+/// MCP 인증 거절 알림(정본 `mcp.authRejected`) — main.rs 가 링크로 잇는다.
+pub type ReportAuth = Box<dyn Fn(&[String], i64) + Send + Sync>;
+
+/// 실물 짓개.
+pub struct RunnerMaker<L: AgentLink> {
+    cfg: MakerConfig,
+    mcp_config: String,
+    clients: Arc<AgentClients<L>>,
+    store: SessionStore,
+    memory: MemoryCache,
+    names: RwLock<Names>,
+    report_auth: ReportAuth,
+}
+
+/// 실물 PTY sink — 기본 메서드만(감시·전달 표지는 `MentionParts` 가 감싼다).
+#[derive(Default)]
+pub struct RunnerSink;
+impl crate::pty_turn::PromptHooks for RunnerSink {}
+impl PtyTurnSink for RunnerSink {}
+
+fn now_u64() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn now_i64() -> i64 {
+    i64::try_from(now_u64()).unwrap_or(i64::MAX)
+}
+
+fn log_line(l: &str) {
+    eprintln!("{l}");
+}
+
+fn nudge_caller(c: SilentCaller) -> NudgeCaller {
+    match c {
+        SilentCaller::Agent => NudgeCaller::Agent,
+        SilentCaller::Human => NudgeCaller::Human,
+        SilentCaller::Delegated => NudgeCaller::Delegated,
+        SilentCaller::Wake => NudgeCaller::Wake,
+        SilentCaller::DelegationOutcome => NudgeCaller::DelegationOutcome,
+    }
+}
+
+/// 그 멘션의 깨움 사유(정본 `target.wake?.reason ?? ''`).
+fn wake_reason(t: &MentionTarget) -> String {
+    match &t.wake {
+        Some(TargetWake::Scheduled(w)) => w.reason.clone(),
+        Some(TargetWake::AskAnswered(w)) => w.reason.clone(),
+        Some(TargetWake::AskClosed(r)) => (*r).to_string(),
+        None => String::new(),
+    }
+}
+
+/// 그 멘션의 성공 판정 대상(정본 `target.wake`·`scheduledWake`·`wake.watch`·`delegatedBy`·보고처 약속).
+fn success_target(t: &MentionTarget, promise: bool) -> SuccessTarget {
+    SuccessTarget {
+        wake: t.wake.is_some(),
+        scheduled_wake: t.scheduled_wake(),
+        watch: matches!(&t.wake, Some(TargetWake::Scheduled(w)) if w.watch),
+        delegated_by: t.delegated_by.is_some(),
+        report_promise: promise,
+    }
+}
+
+impl<L: AgentLink> RunnerMaker<L> {
+    pub fn new(cfg: MakerConfig, clients: Arc<AgentClients<L>>, report_auth: ReportAuth) -> Self {
+        Self {
+            mcp_config: cfg.mcp_config_path.to_string_lossy().into_owned(),
+            store: SessionStore::new(cfg.state_dir.join("sessions.json")),
+            memory: MemoryCache::new(&cfg.state_dir),
+            names: RwLock::new(Names::default()),
+            clients,
+            cfg,
+            report_auth,
+        }
+    }
+
+    /// 몸통(`BodyShared.clients`)이 쥘 묶음 — 짓개와 **같은** 묶음이다(서버 길은 하나).
+    pub fn clients(&self) -> Arc<AgentClients<L>> {
+        Arc::clone(&self.clients)
+    }
+
+    /// 배치마다 이름 표를 바꾼다.
+    pub fn set_names(&self, n: Names) {
+        *self.names.write().unwrap_or_else(|p| p.into_inner()) = n;
+    }
+
+    /// 배치 머리의 기억 rev(정본 `noteRev`).
+    pub fn note_memory_rev(&self, rev: Option<&str>) {
+        self.memory.note_rev(rev);
+    }
+
+    fn names(&self) -> Names {
+        self.names.read().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
+    pub fn config(&self) -> &MakerConfig {
+        &self.cfg
+    }
+}
+
+impl<L, S> CallMaker<L, S> for RunnerMaker<L>
+where
+    L: AgentLink + Send + Sync,
+    S: PtyTurnSink + Default,
+{
+    fn system_context(&self, target: &MentionTarget, _reads: &MentionReads) -> SystemContext<'_> {
+        let n = self.names();
+        // 기억은 짓개가 쥔 묶음으로만 읽는다(그 에이전트 계정 것). 사본도 서버도 못 읽으면 기억 절을 「못 읽음」으로.
+        let memory = match self.memory.read(self.clients.mcp()) {
+            Ok(r) => MemoryContext::Read(r),
+            Err(e) => {
+                eprintln!("[mentionTurn] 기억을 못 읽었다 — 기억 절 없이 돈다: {e}");
+                MemoryContext::Unavailable
+            }
+        };
+        SystemContext {
+            handle: n.me_handle,
+            channel_name: n
+                .channel_names
+                .get(&target.channel_id)
+                .cloned()
+                .unwrap_or_default(),
+            memory,
+            operator_bin: &self.cfg.operator_bin,
+            harness: self.cfg.harness,
+            command_hook: self.cfg.command_hook,
+            post_tool_hook: self.cfg.post_tool_hook,
+            // 기본 로그인만 — API 키 레인은 L3c-3.
+            lane_model: None,
+            turn_budget_ms: self.cfg.turn_timeout_ms,
+        }
+    }
+
+    fn call_inputs<'a>(
+        &'a self,
+        _clients: &'a AgentClients<L>,
+        _book: &'a LeaseBook,
+        target: &MentionTarget,
+        reads: MentionReads,
+        system: SystemInputs,
+    ) -> CallInputs<'a, L, S> {
+        let c = &self.cfg;
+        let n = self.names();
+        let key = thread_key(&target.channel_id, Some(&target.thread_root_id));
+        let anchor = Some(target.thread_root_id.clone());
+        let caller = nudge_caller(silent_turn_caller(
+            n.agent_ids.as_ref(),
+            target,
+            std::slice::from_ref(&target.mention_row),
+        ));
+        let promise = report_promise(target);
+        let home = Some(c.home.clone());
+
+        let watch = MentionWatchInputs {
+            key: key.clone(),
+            me_id: c.me_id.clone(),
+            channel_id: target.channel_id.clone(),
+            anchor: anchor.clone(),
+            harness: c.harness,
+            home: home.clone(),
+            omp_home: None,
+            end_cfg: EndConfig {
+                stall_ms: i64::try_from(c.harness_stall_ms).unwrap_or(i64::MAX),
+                ..EndConfig::new(c.turn_timeout_ms)
+            },
+            // API 키 레인이 없다(기본 로그인) — 재촉 없음.
+            lane_tui: false,
+            caller,
+            report_auth: &*self.report_auth,
+            clock: now_i64,
+            probe_ms: PROBE_MS,
+        };
+        let after = after_source_owned(AfterConfig {
+            key: key.clone(),
+            me_id: c.me_id.clone(),
+            channel_id: target.channel_id.clone(),
+            anchor,
+            mention_id: target.mention_id.clone(),
+            caller,
+            // 대리 글은 API 키 연결 턴에만(정본 `recordProxy: providerEnv !== null`) — 기본 로그인은 끈다.
+            proxy_head: String::new(),
+            record_proxy: false,
+            wake_reason: wake_reason(target),
+            background_wait_ms: c.turn_timeout_ms,
+            target: success_target(target, promise.is_some()),
+            harness: c.harness,
+            home: home.clone(),
+            promise,
+        });
+        let outcome = OutcomeConfig {
+            harness: c.harness,
+            home,
+            turn_timeout_ms: c.turn_timeout_ms,
+            harness_stall_ms: c.harness_stall_ms,
+            turn_model: Some(reads.turn_model),
+            stop_requested_at: reads
+                .def
+                .get("stopRequestedAt")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned),
+        };
+        let (pkey, handles) = (key.clone(), n.handles);
+        let build_parts = Box::new(move |b: BundleParts<'a, L>| {
+            let perm = if system.read_only {
+                MentionPermission::Readonly
+            } else {
+                MentionPermission::Auto
+            };
+            let mut base =
+                TurnCommandOptions::new(c.harness, TurnMode::Mention, perm, &c.operator_bin);
+            base.mcp_config_path = &self.mcp_config;
+            base.command_hook = system.permissions.as_ref().is_some_and(|p| p.command_hook);
+            let mut p = MentionParts::with_parts(
+                b.io,
+                &self.store,
+                base,
+                system,
+                Box::new(PtyTurnOptions::default),
+                S::default(),
+                outcome_source_owned(outcome),
+                b.after,
+                no_mount(),
+            );
+            p.key = pkey;
+            p.me_id = c.me_id.clone();
+            p.handles = handles;
+            p.state_dir = c.state_dir.clone();
+            p.new_workspace_dir = c.new_workspace_dir.clone();
+            p.home = c.home.clone();
+            p.parent_env = c.parent_env.clone();
+            p.slot = b.slot;
+            p.watch_loop = Some(b.watch_loop);
+            p
+        });
+        CallInputs {
+            key,
+            // 기본 로그인 하나 — 계정 폴더 없음.
+            lane: Box::new(|_k, _a| vec![None]),
+            now: now_u64,
+            claim_holder: Some(&c.claim_holder),
+            log: &log_line,
+            watch,
+            after,
+            build_parts,
+            base: BaseInputs {
+                harness: c.harness,
+                can_register_turn_keys: c.can_register_turn_keys,
+                state_dir: &c.state_dir,
+                mcp_config_path: &c.mcp_config_path,
+                runner_env: &c.runner_env,
+                pat: &c.pat,
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "call_maker_tests.rs"]
+mod tests;
