@@ -396,7 +396,19 @@ pub struct Attention {
 }
 
 fn read_marker(path: &Path, kind: AttentionKind, word: &str) -> Option<Attention> {
-    let text = fs::read_to_string(path).ok()?;
+    // 표식 자리의 링크는 따라가지 않는다(`O_NOFOLLOW`) — 링크면 없는 것으로 본다.
+    let text = {
+        use std::io::Read;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path)
+            .ok()?;
+        let mut t = String::new();
+        f.read_to_string(&mut t).ok()?;
+        t
+    };
     let v: Value = serde_json::from_str(&text).ok()?;
     if v.get("kind").and_then(Value::as_str) != Some(word) {
         return None;
