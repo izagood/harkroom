@@ -117,6 +117,7 @@ fn real_launch_registers_mounts_spawns_and_releases_once() {
         lane: Some(&lane),
         lane_slot: slot.clone(),
         end_secrets: Some(Box::new(|| ended.set(ended.get() + 1))),
+        end_lane_mount: None,
     });
     let r = launch_guarded(ALL, &mut io, &mut || Ok(()), &mut guard);
     assert_eq!(
@@ -155,6 +156,7 @@ fn turn_keys_register_failure_still_ends_keys() {
         lane: None,
         lane_slot: slot,
         end_secrets: None,
+        end_lane_mount: None,
     });
     let r = launch_guarded(ALL, &mut io, &mut || Ok(()), &mut guard);
     assert_eq!(r.launched, Launched::SetupFailed(LaunchStep::TurnKeys));
@@ -203,6 +205,7 @@ fn lane_failure_returns_code_only_and_releases_earlier_steps() {
         lane: Some(&lane),
         lane_slot: slot,
         end_secrets: Some(Box::new(|| ended.set(ended.get() + 1))),
+        end_lane_mount: None,
     };
     let failed = crate::turn_launch::release_launch(
         &[
@@ -234,6 +237,7 @@ fn release_twice_is_harmless_and_end_failure_counts() {
         lane: Some(&lane),
         lane_slot: slot.clone(),
         end_secrets: Some(Box::new(|| ended.set(ended.get() + 1))),
+        end_lane_mount: None,
     };
     let all = [
         LaunchStep::TurnKeys,
@@ -267,4 +271,131 @@ fn lane_step_without_lane_closes() {
         io.prepare(LaunchStep::LaneKeys),
         Err("lane_off".to_string())
     );
+}
+
+/// 오퍼레이터가 키 파일을 임대 디렉터리에 마운트한 **뒤** 검증(`bad_path`)에서 실패한다.
+fn lane_mounted_then_bad(tag: &str) -> (ProviderLane, Tmp, std::path::PathBuf) {
+    let root = std::env::temp_dir().join(format!("hk-launch-io-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let lease_dir = root.join("turn-secrets").join("lease-9");
+    std::fs::create_dir_all(&lease_dir).unwrap();
+    let outside = root.join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    let ld = lease_dir.clone();
+    let out = outside.join("k");
+    let mut d = ProviderLaneDeps::new(Box::new(move |_| {
+        // 마운트: 키 파일을 임대 디렉터리에 둔다(오퍼레이터 몫). 답의 경로는 루트 밖이라 검증에서 떨어진다.
+        std::fs::write(ld.join("secret-1"), "tok-mounted-value-9\n").unwrap();
+        std::fs::write(&out, "x").unwrap();
+        HttpReply {
+            status: 200,
+            body: json!({ "lane": { "baseUrl": "https://gateway.example", "path": out.to_str().unwrap() } }).to_string(),
+        }
+    }));
+    d.turn_secrets_dir = Some(root.join("turn-secrets"));
+    (ProviderLane::new(d), Tmp(root), lease_dir)
+}
+
+/// #2017 security 낮음: 마운트 뒤 `bad_path` → 턴 끝에 키 파일이 남지 않는다.
+#[test]
+fn mount_then_bad_path_leaves_no_key_file() {
+    let link = Link::new(&[(TURN_KEYS_PATH, 200), (TURN_KEYS_END_PATH, 200)]);
+    let client = HarkroomRestClient::new(&link);
+    let (lane, _tmp, lease_dir) = lane_mounted_then_bad("badpath");
+    let slot = LaneSlot::default();
+    let lane_ends = Cell::new(0);
+    let mut io: RestLaunch<'_, &Link, ()> = RestLaunch {
+        client: &client,
+        turn: turn(),
+        lane: Some(&lane),
+        harness: AgentHarness::ClaudeCode,
+        cause: "m1",
+        lane_slot: slot.clone(),
+        mount_secrets: None,
+        spawn: Some(Box::new(|_| ())),
+    };
+    let ld = lease_dir.clone();
+    let mut guard = LaunchGuard::new(RestRelease {
+        client: &client,
+        turn_id: "t1".into(),
+        lane: Some(&lane),
+        lane_slot: slot,
+        end_secrets: None,
+        // 오퍼레이터 `leaseEnded` 와 같이 임대 디렉터리째 지운다.
+        end_lane_mount: Some(Box::new(|| {
+            lane_ends.set(lane_ends.get() + 1);
+            let _ = std::fs::remove_dir_all(&ld);
+        })),
+    });
+    let plan = LaunchPlan {
+        turn_keys: true,
+        secrets: false,
+        lane_keys: true,
+    };
+    let r = launch_guarded(plan, &mut io, &mut || Ok(()), &mut guard);
+    assert_eq!(r.launched, Launched::SetupFailed(LaunchStep::LaneKeys));
+    assert!(lease_dir.join("secret-1").exists(), "마운트는 일어났다");
+    assert!(guard.finish().is_empty());
+    assert_eq!(lane_ends.get(), 1);
+    assert!(
+        !lease_dir.join("secret-1").exists(),
+        "턴 끝에 키 파일이 남지 않는다"
+    );
+}
+
+/// 마운트 **전** 실패(오퍼레이터에 닿지 못함)는 끝낼 마운트가 없다.
+#[test]
+fn pre_mount_failure_does_not_end_lane_mount() {
+    let link = Link::new(&[]);
+    let client = HarkroomRestClient::new(&link);
+    let (lane, _tmp) = lane("premount", 0);
+    let slot = LaneSlot::default();
+    let lane_ends = Cell::new(0);
+    let mut io: RestLaunch<'_, &Link, ()> = RestLaunch {
+        client: &client,
+        turn: turn(),
+        lane: Some(&lane),
+        harness: AgentHarness::ClaudeCode,
+        cause: "m1",
+        lane_slot: slot.clone(),
+        mount_secrets: None,
+        spawn: None,
+    };
+    assert_eq!(
+        io.prepare(LaunchStep::LaneKeys),
+        Err("operator_unreachable".to_string())
+    );
+    let mut rel = RestRelease {
+        client: &client,
+        turn_id: "t1".into(),
+        lane: Some(&lane),
+        lane_slot: slot,
+        end_secrets: None,
+        end_lane_mount: Some(Box::new(|| lane_ends.set(lane_ends.get() + 1))),
+    };
+    assert!(rel.release(LaunchStep::LaneKeys).is_ok());
+    assert_eq!(lane_ends.get(), 0);
+}
+
+#[test]
+fn after_mount_classifies_codes() {
+    use crate::provider_lane::{LaneFileError, ProviderLaneError};
+    for c in ["lane_unset", "bad_base_url", "bad_path", "bad_value"] {
+        assert!(
+            LaneFileError::Lane(ProviderLaneError::new(c)).after_mount(),
+            "{c}"
+        );
+    }
+    for c in [
+        "harness_unsupported",
+        "no_turn_secrets_dir",
+        "harness_login_present",
+        "operator_unreachable",
+        "no_lease",
+    ] {
+        assert!(
+            !LaneFileError::Lane(ProviderLaneError::new(c)).after_mount(),
+            "{c}"
+        );
+    }
 }
