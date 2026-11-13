@@ -4129,14 +4129,19 @@ describe('하네스 API 에러를 세션 JSONL 에서 함께 싣는다 (2026-09-
     const sid = deps.store.get(SessionStore.threadKey(CHANNEL, null))!.sessionId!;
     const proj = join(configDir, 'projects', '-private-tmp-whatever-cwd');
     await mkdir(proj, { recursive: true });
-    await writeFile(join(proj, `${sid}.jsonl`), JSON.stringify({
-      type: 'assistant',
-      isApiErrorMessage: true,
-      message: {
-        role: 'assistant',
-        content: [{ type: 'text', text: "You've hit your session limit \u00b7 resets 3:00am (Asia/Seoul)" }],
-      },
-    }) + '\n');
+    // 하네스는 **이 턴 도중** 기록을 남긴다 — 종료 뒤 읽기는 이번 턴 시작 뒤 줄만 본다(2026-11-14).
+    runTurn.script = async () => {
+      await writeFile(join(proj, `${sid}.jsonl`), JSON.stringify({
+        type: 'assistant',
+        isApiErrorMessage: true,
+        timestamp: new Date().toISOString(),
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: "You've hit your session limit \u00b7 resets 3:00am (Asia/Seoul)" }],
+        },
+      }) + '\n');
+      return { exitCode: 1, timedOut: false, tail: '...hit your session limit' };
+    };
 
     const err = await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION })
       .then(() => null, (e: unknown) => e as Error & { harnessApiError?: string });
@@ -4145,6 +4150,32 @@ describe('하네스 API 에러를 세션 JSONL 에서 함께 싣는다 (2026-09-
     expect(err!.harnessApiError).toContain('resets 3:00am (Asia/Seoul)');
     // 그 필드가 실제로 판정을 낫게 만든다 — tail 만이었으면 resetsAt 이 null 이다.
     expect(isQuotaExhausted(err)).toEqual({ resetsAt: '3:00am (Asia/Seoul)' });
+  });
+
+  it('지난 턴의 한도 줄은 이번 턴 사실로 싣지 않는다 — 이번 턴 시작 뒤 줄만 (2026-11-14)', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const configDir = await mkdtemp(join(tmpdir(), 'mention-turn-cfg-'));
+    const { deps, runTurn } = await makeDeps(fake, { claudeConfigDir: configDir });
+    runTurn.script = async () => ({ exitCode: 1, timedOut: false, tail: 'some error' });
+    await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }))
+      .rejects.toThrow();
+    const sid = deps.store.get(SessionStore.threadKey(CHANNEL, null))!.sessionId!;
+    const proj = join(configDir, 'projects', '-private-tmp-whatever-cwd');
+    await mkdir(proj, { recursive: true });
+    // 세션을 이어 쓰는 파일에 **지난 턴**(한 시간 전)의 한도 줄이 남아 있다.
+    await writeFile(join(proj, `${sid}.jsonl`), JSON.stringify({
+      type: 'assistant',
+      isApiErrorMessage: true,
+      timestamp: new Date(Date.now() - 3_600_000).toISOString(),
+      message: { role: 'assistant', content: [{ type: 'text', text: "You've hit your session limit \u00b7 resets 3:00am" }] },
+    }) + '\n');
+
+    const err = await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION })
+      .then(() => null, (e: unknown) => e as Error & { harnessApiError?: string });
+
+    expect(err).not.toBeNull();
+    expect(err!.harnessApiError).toBeUndefined();
   });
 
   it('세션 파일이 없으면 필드 없이 던진다 — 읽기 실패가 실패 처리를 무너뜨리지 않는다', async () => {

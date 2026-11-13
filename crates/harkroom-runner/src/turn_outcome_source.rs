@@ -4,8 +4,8 @@
 //! **시도마다 바뀌는 값은 인자로만 온다**(mem/runner/per-attempt-state): 세션 id·계정 폴더는 그 시도의 `LoopCtx`, 화면 꼬리와
 //! 「스레드 못 읽음」은 그 시도의 감시 자리([`OutcomeCtx`]). 설정([`OutcomeConfig`])은 멘션 단위 값만 쥔다. 손님은 없다.
 //!
-//! - 종료 뒤 API 오류: 정본 `readLastApiError(harness, sessionId, { configDir })` — 그 시도의 세션·계정 폴더로 읽는다(시각 제한
-//!   없음, 정본과 같음). 원문은 판정용이고 글로 갈 때는 결과 접기의 가림(PAT·마운트 비밀)을 지난다.
+//! - 종료 뒤 API 오류: 정본 `readLastApiError(harness, sessionId, { configDir, sinceMs: turnStartedAtMs })` — 그 시도의 세션·계정
+//!   폴더로, 그 시도 시작 뒤 것만 읽는다. 원문은 판정용이고 글로 갈 때는 결과 접기의 가림(PAT·마운트 비밀)을 지난다.
 //! - 정지 화면: 판정 재료로만 넘긴다(`stall_screen_line` 이 가린 한 줄만 글로 간다). 화면 감시가 아직 없어 `watch_now` 는 `None`.
 
 use std::path::PathBuf;
@@ -43,7 +43,8 @@ pub fn recorded_after(c: &OutcomeConfig, o: &OutcomeCtx) -> Option<String> {
             config_dir: o.ctx.claude_config_dir.as_deref(),
             home: c.home.as_deref(),
         },
-        None,
+        // 이번 시도 것만 — 지난 턴의 한도 줄을 이번 시도 사실로 집지 않는다(#2042 꼴, node 와 같이).
+        Some(o.ctx.turn_started_at_ms),
     )
     .map(|e| e.text)
 }
