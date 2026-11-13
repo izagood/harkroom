@@ -113,6 +113,21 @@ describe('턴 열쇠로 링크에 붙기', () => {
     expect(ledger.lookup(SHELL)).toBeNull();
   });
 
+  it('러너가 죽으면 그 러너의 턴 열쇠로 브리지·셸 소켓 admit 이 거절된다', () => {
+    const { ledger, link } = setup();
+    expect(link.accept(fakeSocket().socket, keyHello('r-1', BRIDGE, 'bridge'), [])).toBe(true);
+    expect(link.accept(fakeSocket().socket, keyHello('r-1', SHELL, 'hook'), [])).toBe(true);
+    expect(link.accept(fakeSocket().socket, keyHello('r-1', SHELL, 'wrapper'), [])).toBe(true);
+    link.onRunnerExited('r-1');
+    expect(ledger.lookup(BRIDGE)).toBeNull();
+    expect(ledger.lookup(SHELL)).toBeNull();
+    for (const [key, kind] of [[BRIDGE, 'bridge'], [SHELL, 'hook'], [SHELL, 'wrapper']] as const) {
+      expect([kind, link.accept(fakeSocket().socket, keyHello('r-1', key, kind), [])]).toEqual([kind, false]);
+    }
+    // secret 으로도 못 붙는다(expected 도 지움).
+    expect(link.accept(fakeSocket().socket, { type: 'hello', version: 1, role: 'runner', runnerId: 'r-1', secret: 'link-secret', kind: 'bridge' }, [])).toBe(false);
+  });
+
   it('열쇠로 붙은 소켓의 요청은 cause·턴 id 를 장부 값으로 싣는다 — 셸이 지어 넣은 값은 버린다', async () => {
     const { link, seen } = setup();
     const s = fakeSocket();

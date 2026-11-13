@@ -417,6 +417,12 @@ impl RunnerLinkServer {
         }
     }
 
+    /// 러너 프로세스가 끝났다 — 그 러너의 턴 열쇠와 secret 을 거둔다(`forget`). 러너가 가드를 못 돌고 죽어도
+    /// 열쇠가 수명 상한까지 남지 않게 한다. 링크만 끊긴 것(재접속)에는 부르지 않는다 — 러너는 다시 붙으면 열쇠를 다시 맡긴다.
+    pub fn on_runner_exited(&self, runner_id: &str) {
+        self.forget(runner_id);
+    }
+
     pub fn is_linked(&self, runner_id: &str) -> bool {
         lock(&self.linked).contains_key(runner_id)
     }
@@ -1240,6 +1246,59 @@ mod tests {
             vec![],
             vec![]
         ));
+    }
+
+    /// 러너가 죽으면 그 러너의 턴 열쇠로 브리지·셸 소켓 admit 이 거절된다.
+    #[test]
+    fn runner_exit_rejects_its_turn_keys() {
+        let rec = Arc::new(Rec::default());
+        let ledger = Arc::new(Mutex::new(TurnKeyLedger::new(|| 0, |_| {})));
+        let srv = RunnerLinkServer::with_options(
+            Arc::clone(&rec) as Arc<dyn RunnerLinkHandler>,
+            Some(Arc::clone(&ledger)),
+            1 << 20,
+            Box::new(|| 0),
+        );
+        srv.expect("r1", "a1", "sec");
+        let bridge = "e".repeat(64);
+        let shell = "f".repeat(64);
+        let deposit = RunnerLinkRequest::HttpForward {
+            id: "d".into(),
+            method: "POST".into(),
+            path: crate::turn_keys::TURN_KEYS_PATH.into(),
+            body: Some(
+                json!({"turnId":"t1","cause":"m1","keys":{"bridge":bridge,"shell":shell}})
+                    .to_string(),
+            ),
+            body_base64: None,
+            content_type: None,
+        };
+        lock(&ledger).maybe_handle("r1", &deposit, RunnerLinkKind::Relay);
+        let keyed = |key: &str, kind: &str| json!({"type":"hello","version":1,"role":"runner","runnerId":"r1","turnKey":key,"kind":kind});
+        let admit = |h: &Value| {
+            srv.run(
+                Arc::new(FakeConn::default()),
+                Cursor::new(Vec::new()),
+                h,
+                vec![],
+                vec![],
+            )
+        };
+        // 살아 있는 동안은 연다.
+        assert!(admit(&keyed(&bridge, "bridge")));
+        assert!(admit(&keyed(&shell, "hook")));
+        assert!(admit(&keyed(&shell, "wrapper")));
+        srv.on_runner_exited("r1");
+        assert_eq!(lock(&ledger).size(), 0);
+        for h in [
+            keyed(&bridge, "bridge"),
+            keyed(&shell, "hook"),
+            keyed(&shell, "wrapper"),
+        ] {
+            assert!(!admit(&h), "죽은 러너의 열쇠로는 못 연다: {h}");
+        }
+        // secret 으로도 못 붙는다(expected 도 지움).
+        assert!(!admit(&hello("r1", "sec", Some("bridge"))));
     }
 
     #[test]

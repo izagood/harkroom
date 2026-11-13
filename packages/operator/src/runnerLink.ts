@@ -121,6 +121,11 @@ export interface RunnerLinkServer {
   /** 러너가 죽었다 — 그 secret 으로는 더 못 붙는다. */
   forget(runnerId: string): void;
   /**
+   * 러너 프로세스가 끝났다 — 그 러너의 턴 열쇠와 secret 을 거둔다(`forget`). 러너가 턴 끝 정리를 못 돌고 죽어도 열쇠가
+   * 수명 상한까지 남지 않게 한다. 링크만 끊긴 것(재접속)에는 부르지 않는다 — 러너는 다시 붙으면 열쇠를 다시 맡긴다.
+   */
+  onRunnerExited(runnerId: string): void;
+  /**
    * `DaemonServer` 가 첫 줄을 읽고 넘긴다. `pending` 은 같은 청크에 hello 뒤로 이미 풀린
    * 줄들이다 — 여기서 받지 않으면 그 줄들이 사라진다(첫 announce 가 정확히 그 자리에 온다).
    * `buffered` 는 그 뒤에 붙어 온 **아직 안 끝난 줄의 머리**다 — 큰 요청이 hello 와 한 청크로
@@ -220,14 +225,17 @@ export function createRunnerLinkServer(deps: RunnerLinkDeps): RunnerLinkServer {
     deps.onFrame(runnerId, agentId, value as RelayRunnerFrame);
   };
 
+  const forgetRunner = (runnerId: string): void => {
+    expected.delete(runnerId);
+    deps.turnKeys?.forgetRunner(runnerId);
+    const socket = linked.get(runnerId);
+    if (socket) { linked.delete(runnerId); socket.destroy(); }
+  };
+
   return {
     expect(runnerId, agentId, secret) { expected.set(runnerId, { agentId, secret }); },
-    forget(runnerId) {
-      expected.delete(runnerId);
-      deps.turnKeys?.forgetRunner(runnerId);
-      const socket = linked.get(runnerId);
-      if (socket) { linked.delete(runnerId); socket.destroy(); }
-    },
+    forget: forgetRunner,
+    onRunnerExited: forgetRunner,
 
     accept(socket, hello, pending, buffered) {
       const claim = checkRunnerHello(hello);
