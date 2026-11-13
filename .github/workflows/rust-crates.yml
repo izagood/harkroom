@@ -78,15 +78,15 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: cargo build --manifest-path crates/harkroom-bus/Cargo.toml --locked --example publish_lines
-      - name: Rust 가 커밋한 순서대로 WS 에 도착하는가
-        run: pnpm --filter @harkroom/server exec vitest run test/eventBusRustE2e.test.ts
+      # 시험 바이너리를 먼저 지어 둔다 — 아래 vitest 시험의 제한 시간 안에서 컴파일하지 않게.
+      - run: cargo test --manifest-path crates/harkroom-server/Cargo.toml --locked --no-run
+      # 두 파일을 **한 번의 vitest** 로 돌린다. 따로 돌리면 둘째 실행의 testcontainers 가 첫 실행이 남긴 Ryuk(정리 컨테이너)를
+      # 다시 쓰려다, 연결이 끊긴 뒤 ~10초 안에 스스로 내려가는 그 Ryuk 에 붙지 못해 `Failed to connect to Reaper` 로 죽는다
+      # (두 실행 사이가 10초 안쪽일 때만 — 캐시가 맞아 cargo 가 빨리 끝나면 난다).
+      - name: Rust 버스 순서 + Rust 앞단이 실제 스키마에서 TS 와 같은가(tests/auth.rs·perm.rs 판정 + tests/contrast.rs 대조)
+        run: pnpm --filter @harkroom/server exec vitest run test/eventBusRustE2e.test.ts test/rustFrontDb.test.ts
         env:
           HARKROOM_BUS_PUBLISH_BIN: ${{ github.workspace }}/crates/harkroom-bus/target/debug/examples/publish_lines
           # 바이너리가 없어 건너뛰면 통과로 보이므로, 이 잡에서는 건너뛰기를 실패로 친다.
           HARKROOM_BUS_E2E_REQUIRED: '1'
-      # 시험 바이너리를 먼저 지어 둔다 — 아래 vitest 시험의 제한 시간 안에서 컴파일하지 않게.
-      - run: cargo test --manifest-path crates/harkroom-server/Cargo.toml --locked --no-run
-      - name: Rust 앞단이 실제 스키마에서 TS 와 같은가(tests/auth.rs·perm.rs 판정 + tests/contrast.rs 대조)
-        run: pnpm --filter @harkroom/server exec vitest run test/rustFrontDb.test.ts
-        env:
           HARKROOM_RUST_DB_TESTS: '1'
