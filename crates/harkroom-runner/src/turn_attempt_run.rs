@@ -19,6 +19,7 @@ use std::sync::Arc;
 
 use crate::account_assign::ClaudeAccount;
 use crate::adapter::AgentHarness;
+use crate::link::random_uuid;
 use crate::mention_run::{TurnAttempt, TurnOk};
 use crate::mention_target::MentionTarget;
 use crate::rest::{HarkroomRestClient, OpenTurn, RunnerLink, TurnKeys};
@@ -118,9 +119,53 @@ pub struct PtyTurnAttempt<'a, L: RunnerLink, N: LeaseNotice, P: AttemptParts> {
     pub mcp_config_path: &'a Path,
     pub runner_env: &'a BTreeMap<String, String>,
     pub pat: &'a str,
-    /// 새 턴 id(정본 `randomUUID()`).
-    pub new_turn_id: Box<dyn FnMut() -> String + 'a>,
+    /// 새 턴 id — 실물은 [`PtyTurnAttempt::new`] 가 거는 무작위 v4([`random_uuid`], 정본 `randomUUID()`) 하나뿐이다.
+    /// 밖에서 바꿀 수 없다(시험만 같은 모듈 안에서 덮는다).
+    new_turn_id: Box<dyn FnMut() -> String + 'a>,
     pub parts: RefCell<P>,
+}
+
+/// 러너 전체에서 한 번 정하는 재료.
+pub struct AttemptBase<'a, L: RunnerLink, N: LeaseNotice> {
+    pub client: &'a HarkroomRestClient<L>,
+    pub notice: &'a N,
+    pub harness: AgentHarness,
+    pub can_register_turn_keys: bool,
+    pub state_dir: &'a Path,
+    pub mcp_config_path: &'a Path,
+    pub runner_env: &'a BTreeMap<String, String>,
+    pub pat: &'a str,
+}
+
+impl<'a, L: RunnerLink, N: LeaseNotice, P: AttemptParts> PtyTurnAttempt<'a, L, N, P> {
+    /// 턴 id 는 시도마다 무작위 v4 로 새로 뽑는다(카운터·고정값 아님).
+    pub fn new(base: AttemptBase<'a, L, N>, parts: P) -> Self {
+        Self {
+            client: base.client,
+            notice: base.notice,
+            harness: base.harness,
+            can_register_turn_keys: base.can_register_turn_keys,
+            state_dir: base.state_dir,
+            mcp_config_path: base.mcp_config_path,
+            runner_env: base.runner_env,
+            pat: base.pat,
+            new_turn_id: Box::new(random_uuid),
+            parts: RefCell::new(parts),
+        }
+    }
+}
+
+/// 이 시도의 [`LiveTurn`] 듣기를 **어느 길로 끝나든**(조립·띄우기 중 패닉 포함) 놓는다. 그때 `parts` 를 누가 빌리고
+/// 있으면(패닉이 빌린 자리 안에서 났고 아직 안 풀렸으면) 놓지 못한 것을 로그로만 남긴다 — `Drop` 에서 패닉하지 않는다.
+struct LiveBinding<'p, P: AttemptParts>(&'p RefCell<P>);
+
+impl<P: AttemptParts> Drop for LiveBinding<'_, P> {
+    fn drop(&mut self) {
+        match self.0.try_borrow_mut() {
+            Ok(mut p) => p.bind_live(None),
+            Err(_) => eprintln!("[mentionTurn] LiveTurn 듣기를 놓지 못했다(빌린 채 끝남)"),
+        }
+    }
 }
 
 impl<L: RunnerLink, N: LeaseNotice, P: AttemptParts> PtyTurnAttempt<'_, L, N, P> {
@@ -237,9 +282,8 @@ impl<L: RunnerLink, N: LeaseNotice, P: AttemptParts> TurnAttempt for PtyTurnAtte
         let turn_id = (self.new_turn_id)();
         let live = Arc::new(LiveTurn::new(TurnLife::default()));
         self.parts.borrow_mut().bind_live(Some(Arc::clone(&live)));
-        let res = self.attempt(&turn_id, &live, target, account, is_last_account, delivered);
-        self.parts.borrow_mut().bind_live(None);
-        res
+        let _binding = LiveBinding(&self.parts);
+        self.attempt(&turn_id, &live, target, account, is_last_account, delivered)
     }
 }
 

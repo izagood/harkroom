@@ -11,7 +11,10 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::provider_lane::LaneFileError;
-use crate::pty_turn::{PtyPlan, PtyTurnError, PtyTurnOptions, PtyTurnSink, run_pty_turn};
+use crate::pty::AttentionKind;
+use crate::pty_turn::{
+    PromptHooks, PtyControls, PtyPlan, PtyTurnError, PtyTurnOptions, PtyTurnSink, run_pty_turn,
+};
 use crate::rest::OpenTurn;
 use crate::turn_command::{TurnCommandError, TurnCommandOptions, build_turn_command};
 use crate::turn_env::TurnKeys as EnvTurnKeys;
@@ -106,17 +109,88 @@ pub fn pty_spawn<'a, S: PtyTurnSink + 'a>(
     sink: &'a mut S,
 ) -> SpawnFn<'a, PtyOut> {
     Box::new(move |lane_env: LaneEnv| {
-        let plan = pty_turn_plan(
+        spawn_pty_turn(
             &base,
-            &lane_env,
-            keys.as_ref(),
-            &mcp_config_path,
-            parent_env,
-            home,
+            PtyTurnArgs {
+                lane_env: &lane_env,
+                keys: keys.as_ref(),
+                mcp_config_path: &mcp_config_path,
+                parent_env,
+                home,
+            },
+            opts,
+            sink,
         )
-        .map_err(|e| PtyTurnError::Spawn(std::io::Error::other(format!("명령 조립 실패: {e}"))))?;
-        run_pty_turn(&plan, opts, sink)
     })
+}
+
+/// [`spawn_pty_turn`] 이 이 시도에서 받는 것.
+pub struct PtyTurnArgs<'x> {
+    pub lane_env: &'x LaneEnv,
+    pub keys: Option<&'x EnvTurnKeys>,
+    pub mcp_config_path: &'x str,
+    pub parent_env: &'x BTreeMap<String, String>,
+    pub home: &'x Path,
+}
+
+/// 이 시도의 PTY 턴 한 번 — `AttemptParts::spawn` 의 실물 몸통. 명령 조립 실패는 종류만 담은 오류로 접는다.
+pub fn spawn_pty_turn<S: PtyTurnSink>(
+    base: &TurnCommandOptions<'_>,
+    a: PtyTurnArgs<'_>,
+    opts: PtyTurnOptions,
+    sink: &mut S,
+) -> PtyOut {
+    let plan = pty_turn_plan(
+        base,
+        a.lane_env,
+        a.keys,
+        a.mcp_config_path,
+        a.parent_env,
+        a.home,
+    )
+    .map_err(|e| PtyTurnError::Spawn(std::io::Error::other(format!("명령 조립 실패: {e}"))))?;
+    run_pty_turn(&plan, opts, sink)
+}
+
+/// 프롬프트가 입력창에 들어간 순간(정본 `onInjected: () => deps.onPromptDelivered?.()`) `delivered` 를 세우는 sink 덧씌우개.
+/// 나머지 갈래는 안쪽 sink 에 그대로 넘긴다. `delivered` 는 관문 표식 지우기의 근거다(`run_one`).
+pub struct DeliveredSink<'s, S: PtyTurnSink> {
+    pub inner: &'s mut S,
+    pub delivered: &'s mut bool,
+}
+
+impl<S: PtyTurnSink> PromptHooks for DeliveredSink<'_, S> {
+    fn wait_for_ready(&mut self) -> bool {
+        self.inner.wait_for_ready()
+    }
+    fn wait_for_settled(&mut self, ready: bool, waited_ms: u64) {
+        self.inner.wait_for_settled(ready, waited_ms)
+    }
+    fn gate_signal(&mut self) -> u64 {
+        self.inner.gate_signal()
+    }
+    fn confirm_probe(&mut self) -> bool {
+        self.inner.confirm_probe()
+    }
+}
+
+impl<S: PtyTurnSink> PtyTurnSink for DeliveredSink<'_, S> {
+    fn on_spawn(&mut self, controls: PtyControls) {
+        self.inner.on_spawn(controls)
+    }
+    fn on_output(&mut self, frame: &[u8]) {
+        self.inner.on_output(frame)
+    }
+    fn on_injected(&mut self) {
+        *self.delivered = true;
+        self.inner.on_injected()
+    }
+    fn on_attention(&mut self, screen: &str, kind: AttentionKind) {
+        self.inner.on_attention(screen, kind)
+    }
+    fn on_turn_gate(&mut self, screen: &str) {
+        self.inner.on_turn_gate(screen)
+    }
 }
 
 #[cfg(test)]

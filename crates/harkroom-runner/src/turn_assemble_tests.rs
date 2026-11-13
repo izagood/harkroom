@@ -166,3 +166,86 @@ fn pty_plan_carries_lane_env_and_keys_in_env_only() {
     .unwrap();
     assert!(p.env.iter().all(|(k, _)| k != "ANTHROPIC_AUTH_TOKEN"));
 }
+
+#[derive(Default)]
+struct Rec {
+    injected: u32,
+    output: Vec<u8>,
+    gates: Vec<String>,
+}
+
+impl PromptHooks for Rec {
+    fn gate_signal(&mut self) -> u64 {
+        7
+    }
+    fn wait_for_ready(&mut self) -> bool {
+        false
+    }
+}
+
+impl PtyTurnSink for Rec {
+    fn on_output(&mut self, frame: &[u8]) {
+        self.output.extend_from_slice(frame);
+    }
+    fn on_injected(&mut self) {
+        self.injected += 1;
+    }
+    fn on_turn_gate(&mut self, screen: &str) {
+        self.gates.push(screen.into());
+    }
+}
+
+/// 주입 순간에만 `delivered` 가 선다(정본 `onInjected → onPromptDelivered`) · 나머지 갈래는 안쪽 sink 로 그대로 간다.
+#[test]
+fn delivered_sink_sets_flag_on_injection_and_forwards() {
+    let mut inner = Rec::default();
+    let mut delivered = false;
+    {
+        let mut s = DeliveredSink {
+            inner: &mut inner,
+            delivered: &mut delivered,
+        };
+        s.on_output(b"ready");
+        s.on_turn_gate("gate");
+        assert_eq!(s.gate_signal(), 7);
+        assert!(!s.wait_for_ready());
+        assert!(!*s.delivered, "출력·관문만으로는 서지 않는다");
+        s.on_injected();
+    }
+    assert!(delivered);
+    assert_eq!(inner.injected, 1);
+    assert_eq!(inner.output, b"ready");
+    assert_eq!(inner.gates, ["gate"]);
+}
+
+/// 명령 조립 실패는 띄우지 않고 종류만 담은 `Spawn` 오류다.
+#[test]
+fn spawn_pty_turn_folds_command_error() {
+    let t = tmp("spawnerr");
+    let env = BTreeMap::new();
+    let mut base = TurnCommandOptions::new(
+        AgentHarness::ClaudeCode,
+        TurnMode::Mention,
+        MentionPermission::Auto,
+        "/bin/harkroom-operator",
+    );
+    base.session_id = None;
+    let mut sink = Rec::default();
+    let r = spawn_pty_turn(
+        &base,
+        PtyTurnArgs {
+            lane_env: &LaneEnv::new(),
+            keys: None,
+            mcp_config_path: "/m.json",
+            parent_env: &env,
+            home: &t.0,
+        },
+        PtyTurnOptions::default(),
+        &mut sink,
+    );
+    match r {
+        Err(PtyTurnError::Spawn(e)) => assert!(e.to_string().starts_with("명령 조립 실패")),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(sink.injected, 0);
+}
