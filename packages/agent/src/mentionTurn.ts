@@ -2714,13 +2714,17 @@ export async function runMentionTurn(
 
   let result: TurnResult;
   let turnKeysRegistered = false;
+  /** 관문이 막아 하네스를 띄우지 않았다 — 이 시도의 하네스 API 오류는 있을 수 없다(아래 실패 경로). */
+  let neverSpawned = false;
   try {
     // 턴 열쇠를 맡긴 뒤에 띄운다. 못 맡기면 열쇠 없이 띄우지 않는다(닫히는 쪽) — 실패 카드로 간다.
     if (turnKeys && !canceledBeforeSpawn()) {
       await deps.harkroom.registerTurnKeys!({ turnId, cause: mentionId, keys: turnKeys });
       turnKeysRegistered = true;
     }
-    result = canceledBeforeSpawn() ?? await deps.runTurn(plan, {
+    const blocked = canceledBeforeSpawn();
+    if (blocked) neverSpawned = true;
+    result = blocked ?? await deps.runTurn(plan, {
       cwd: plan.cwd ?? rec.workspaceDir,
       // **0 = 무기한**(pty.ts 옵션 주석). TUI 턴의 시간 한도는 러너가 무발화로 잰다 —
       // PTY 쪽 시계는 프로세스 수명을 재는데, TUI 에서는 그 둘이 다른 사실이다.
@@ -3142,7 +3146,10 @@ export async function runMentionTurn(
     }
     // **턴 도중 관측이 우선이다.** 종료 뒤 읽기(`apiError`)는 sinceMs 가 없어 앞 턴의
     // 에러를 집을 수 있다 — 지금 턴의 사실을 이미 손에 쥐었으면 그것을 쓴다.
-    if (end.apiError) failure.harnessApiError = end.apiError;
+    // 띄우지 않은 시도(관문이 막음)는 하네스 API 오류를 싣지 않는다 — 세션 파일에서 읽은 것은 앞 시도의 것이고, 실으면
+    // 막힌 시도가 한도·자격증명 실패로 읽혀 계정 축이 다음 계정을 띄운다.
+    if (neverSpawned) { /* 싣지 않는다 */ }
+    else if (end.apiError) failure.harnessApiError = end.apiError;
     else if (apiError) failure.harnessApiError = apiError.text;
     // 보이는 글(모델 거절 실패 카드)에는 가린 줄만 싣는다(#2028 security 낮음) — 원문은 판정(한도·자격증명·거절)에만 쓴다.
     if (failure.harnessApiError !== undefined) {
