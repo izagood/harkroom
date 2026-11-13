@@ -193,3 +193,156 @@ fn scrub_turn_records_hits_transcript_and_sidecar() {
     );
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// 받은 것을 파일로 남기는 가짜 — 비밀 마운트는 실제 파일, 열쇠·lane 키는 표식 파일.
+struct FileIo {
+    dir: PathBuf,
+    fail_prepare: Option<LaunchStep>,
+    fail_release: Option<LaunchStep>,
+    released: Vec<LaunchStep>,
+}
+
+impl FileIo {
+    fn new(tag: &str) -> Self {
+        let dir = std::env::temp_dir().join(format!("hk-release-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        FileIo {
+            dir,
+            fail_prepare: None,
+            fail_release: None,
+            released: Vec::new(),
+        }
+    }
+    fn mark(&self, step: LaunchStep) -> PathBuf {
+        self.dir.join(format!("{step:?}"))
+    }
+    fn left(&self) -> Vec<String> {
+        let mut v: Vec<String> = fs::read_dir(&self.dir)
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().into_owned()))
+            .collect();
+        v.sort();
+        v
+    }
+}
+
+impl LaunchIo for FileIo {
+    type Out = ();
+    fn prepare(&mut self, step: LaunchStep) -> Result<(), String> {
+        // 실패해도 서버·디스크에는 반쯤 남았을 수 있다 — 표식을 먼저 남긴다.
+        fs::write(self.mark(step), b"x").unwrap();
+        if self.fail_prepare == Some(step) {
+            Err("lost reply".into())
+        } else {
+            Ok(())
+        }
+    }
+    fn spawn(&mut self) {}
+}
+
+impl LaunchRelease for FileIo {
+    fn release(&mut self, step: LaunchStep) -> Result<(), String> {
+        self.released.push(step);
+        if self.fail_release == Some(step) {
+            return Err("busy".into());
+        }
+        // 없는 것에도 무해하다.
+        match fs::remove_file(self.mark(step)) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+}
+
+/// #2012 security ⑥: 비밀을 받은 뒤 막힘 → 마운트가 남지 않는다.
+#[test]
+fn blocked_after_secrets_leaves_no_mount() {
+    let mut io = FileIo::new("blocked");
+    let n = Cell::new(0);
+    // 열쇠·비밀 앞은 통과, lane 키 앞에서 임대를 잃는다.
+    let r = launch(ALL, &mut io, &mut || {
+        n.set(n.get() + 1);
+        if n.get() == 3 {
+            Err(SpawnBlocked::FencedOut)
+        } else {
+            Ok(())
+        }
+    });
+    assert_eq!(r.launched, Launched::Blocked(SpawnBlocked::FencedOut));
+    assert_eq!(r.attempted, [LaunchStep::TurnKeys, LaunchStep::Secrets]);
+    assert_eq!(io.left(), ["Secrets", "TurnKeys"]);
+    assert!(release_launch(&r.attempted, &mut io).is_empty());
+    assert!(io.left().is_empty(), "마운트·열쇠가 남지 않는다");
+    assert_eq!(
+        io.released,
+        [LaunchStep::Secrets, LaunchStep::TurnKeys],
+        "거꾸로 거둔다"
+    );
+}
+
+/// #2012 security ⑤: 열쇠 맡기기가 Err 여도 거두기를 한 번 시도한다(응답만 놓쳤을 수 있다).
+#[test]
+fn turn_keys_err_still_revoked_once() {
+    let mut io = FileIo::new("keys");
+    io.fail_prepare = Some(LaunchStep::TurnKeys);
+    let r = launch(ALL, &mut io, &mut || Ok(()));
+    assert_eq!(r.launched, Launched::SetupFailed(LaunchStep::TurnKeys));
+    assert!(!r.turn_keys_registered);
+    assert_eq!(r.attempted, [LaunchStep::TurnKeys]);
+    release_launch(&r.attempted, &mut io);
+    assert_eq!(io.released, [LaunchStep::TurnKeys]);
+    assert!(io.left().is_empty());
+    // 다시 거둬도 무해하다(없는 열쇠).
+    assert!(release_launch(&r.attempted, &mut io).is_empty());
+}
+
+/// 준비 실패 뒤에도 그 전에 받은 것과 반쯤 받은 것을 거둔다.
+#[test]
+fn setup_failure_releases_earlier_and_partial_steps() {
+    let mut io = FileIo::new("setup");
+    io.fail_prepare = Some(LaunchStep::LaneKeys);
+    let r = launch(ALL, &mut io, &mut || Ok(()));
+    assert_eq!(r.launched, Launched::SetupFailed(LaunchStep::LaneKeys));
+    assert_eq!(
+        r.attempted,
+        [
+            LaunchStep::TurnKeys,
+            LaunchStep::Secrets,
+            LaunchStep::LaneKeys
+        ]
+    );
+    release_launch(&r.attempted, &mut io);
+    assert!(io.left().is_empty());
+}
+
+/// 한 단계 거두기가 실패해도 나머지를 거두고, 실패한 단계만 돌려준다.
+#[test]
+fn release_continues_past_failure() {
+    let mut io = FileIo::new("cont");
+    io.fail_release = Some(LaunchStep::Secrets);
+    let r = launch(ALL, &mut io, &mut || Ok(()));
+    assert_eq!(r.launched, Launched::Ran(()));
+    let failed = release_launch(&r.attempted, &mut io);
+    assert_eq!(failed, [LaunchStep::Secrets]);
+    assert_eq!(
+        io.released,
+        [
+            LaunchStep::LaneKeys,
+            LaunchStep::Secrets,
+            LaunchStep::TurnKeys
+        ]
+    );
+    assert_eq!(io.left(), ["Secrets"]);
+}
+
+/// 처음부터 막혔으면 거둘 것이 없다.
+#[test]
+fn blocked_up_front_releases_nothing() {
+    let mut io = FileIo::new("none");
+    let r = launch(ALL, &mut io, &mut || Err(SpawnBlocked::Canceled));
+    assert!(r.attempted.is_empty());
+    assert!(release_launch(&r.attempted, &mut io).is_empty());
+    assert!(io.released.is_empty());
+}
