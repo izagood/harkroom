@@ -467,8 +467,11 @@ pub fn spawn_server_link(
         let frames = std::sync::Arc::clone(&frames);
         let exit_link = link.clone();
         let exit_mux = std::sync::Arc::clone(&mux);
+        let exit_runner_link = std::sync::Arc::clone(&bridge.runner_link);
         state.set_on_runner_exit(Box::new(move |exit: &crate::runners::RunnerExit| {
             exit_mux.forget(&exit.incarnation_id);
+            // 러너 종료 때 그 러너의 턴 열쇠를 거둔다(runner id = incarnation id).
+            exit_runner_link.on_runner_exited(&exit.incarnation_id);
             let _ = exit_link.send(&OperatorToServerFrame::RunnerExited {
                 runner_id: exit.incarnation_id.clone(),
                 code: exit.code.map(i64::from),

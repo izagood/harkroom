@@ -556,6 +556,8 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     },
     options.host ?? nodeRunnerHost,
     (notice) => {
+      // 러너 종료 때 그 러너의 턴 열쇠를 거둔다(runnerId = incarnationId).
+      runnerLink.onRunnerExited(notice.incarnationId);
       serverRef.current?.broadcastRunnerExit(notice);
       for (const c of communities) {
         // 서버가 그 러너를 지운다 — 안 알리면 다음 hello 까지 죽은 러너가 서버 표에 남는다.
