@@ -47,6 +47,27 @@ pub trait CallMaker<L: AgentLink, S: PtyTurnSink>: Send + Sync {
     }
 }
 
+/// 짓개를 러너가 다른 자리(배치 이름 표 갱신)와 나눠 쥘 수 있게 — `Arc` 로 감싼 짓개도 짓개다.
+impl<L: AgentLink, S: PtyTurnSink, M: CallMaker<L, S>> CallMaker<L, S> for Arc<M> {
+    fn system_context(&self, target: &MentionTarget, reads: &MentionReads) -> SystemContext<'_> {
+        (**self).system_context(target, reads)
+    }
+    #[allow(clippy::result_large_err)]
+    fn call_inputs<'a>(
+        &'a self,
+        clients: &'a AgentClients<L>,
+        book: &'a LeaseBook,
+        target: &MentionTarget,
+        reads: MentionReads,
+        system: SystemInputs,
+    ) -> CallInputs<'a, L, S> {
+        (**self).call_inputs(clients, book, target, reads, system)
+    }
+    fn open_relay(&self, slot: &LiveSlot) -> Option<Arc<SessionHandle>> {
+        (**self).open_relay(slot)
+    }
+}
+
 /// 몸통이 러너 수명 동안 나눠 쥐는 것.
 pub struct BodyShared<L: AgentLink, M> {
     pub ledger: Arc<Mutex<Ledger>>,
