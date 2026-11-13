@@ -213,7 +213,10 @@ pub fn router(state: AppState, table: &[Moved], ts: &TsOverrides) -> Router {
     for (path, mr) in by_path {
         let mr = mr
             .route_layer(axum::middleware::from_fn_with_state(
-                state.pool.clone(),
+                crate::auth::AuthPools {
+                    read: state.pool.clone(),
+                    write: state.write.clone(),
+                },
                 crate::auth::layer,
             ))
             .fallback(proxy::forward);

@@ -313,7 +313,10 @@ async fn auth_matches_ts_plugin() {
             get(|RequireOperator(o, _): RequireOperator| async move { o.name }),
         )
         .layer(axum::middleware::from_fn_with_state(
-            pool.clone(),
+            auth::AuthPools {
+                read: pool.clone(),
+                write: Some(pool.clone()),
+            },
             auth::layer,
         ));
     let addr = serve(app).await;
