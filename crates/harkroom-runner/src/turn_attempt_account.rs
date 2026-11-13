@@ -5,7 +5,7 @@
 //!   ([`AttemptAccount::command`])과 기록 찾기 자리([`AttemptAccount::homes`])로 간다. 기본 명령 옵션에 무엇이 들어 있든
 //!   덮는다 — 계정이 없는 시도는 `None`(정본 `account?.configDir ?? null`), 앞 시도의 폴더가 남지 않는다.
 //! - [`LiveSlot`]: 펜스 잃음·[중단] 을 받는 쪽(스케줄러·오퍼레이터 신호)이 쥐는 손잡이. `bind_live` 가 지금 시도의
-//!   [`LiveTurn`] 을 걸고 놓는다 — 놓인 뒤 온 신호는 아무 시도에도 닿지 않는다(다음 시도의 `LiveTurn` 은 새것이다).
+//!   [`LiveTurn`] 을 걸고 놓는다. 펜스 잃음은 걸린 시도에만, [중단] 은 멘션 단위로도 남아 다음 시도의 관문이 본다.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -59,32 +59,57 @@ impl AttemptAccount {
     }
 }
 
-/// 지금 시도의 [`LiveTurn`] 을 가리키는 손잡이 — 신호를 받는 쪽이 복제해 쥔다.
+/// 지금 시도의 [`LiveTurn`] 을 가리키는 손잡이 — 신호를 받는 쪽이 복제해 쥔다. **멘션 하나에 하나**(`run_one` 한 번)다.
+///
+/// [중단] 은 멘션 단위로도 남는다: 시도 **사이**(앞 시도 놓기 ~ 다음 시도 걸기)에 온 [중단] 도 버리지 않고 적어 두었다가,
+/// 다음 시도를 걸 때 그 시도의 `LiveTurn` 에 먼저 싣는다 → 그 시도의 띄우기 관문(`spawn_gate`)이 막는다.
+/// 펜스 잃음은 시도 단위다(멘션 단위 펜스는 장부의 임대 판정이 따로 본다).
 #[derive(Clone, Default)]
-pub struct LiveSlot(Arc<Mutex<Option<Arc<LiveTurn>>>>);
+pub struct LiveSlot(Arc<Mutex<SlotState>>);
+
+#[derive(Default)]
+struct SlotState {
+    live: Option<Arc<LiveTurn>>,
+    /// 이 멘션에서 처음 [중단] 한 사람.
+    canceled_by: Option<String>,
+}
 
 impl LiveSlot {
-    fn lock(&self) -> MutexGuard<'_, Option<Arc<LiveTurn>>> {
+    fn lock(&self) -> MutexGuard<'_, SlotState> {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// `AttemptParts::bind_live` 의 몸통.
+    /// `AttemptParts::bind_live` 의 몸통. 걸 때 멘션 단위 [중단] 이 있으면 그 시도에 먼저 싣는다(같은 잠금 안 — 틈 없음).
     pub fn bind(&self, live: Option<Arc<LiveTurn>>) {
-        *self.lock() = live;
+        let mut st = self.lock();
+        if let (Some(l), Some(by)) = (&live, &st.canceled_by) {
+            l.cancel(by);
+        }
+        st.live = live;
     }
 
     /// 턴 임대를 잃었다 — 지금 걸린 시도에만. 걸린 것이 없으면 `false`.
     pub fn fence_lost(&self) -> bool {
-        self.lock().as_ref().map(|l| l.fence_lost()).is_some()
+        self.lock().live.as_ref().map(|l| l.fence_lost()).is_some()
     }
 
-    /// 사람이 [중단] 했다 — 지금 걸린 시도에만. 걸린 것이 없으면 `false`.
+    /// 사람이 [중단] 했다 — 멘션 단위로 남기고(처음 사람이 남는다), 지금 걸린 시도가 있으면 그 시도에도. 돌던 시도에
+    /// 닿았으면 `true`, 시도 사이였으면 `false`(그래도 다음 시도는 막힌다).
     pub fn cancel(&self, by: &str) -> bool {
-        self.lock().as_ref().map(|l| l.cancel(by)).is_some()
+        let mut st = self.lock();
+        if st.canceled_by.is_none() {
+            st.canceled_by = Some(by.to_string());
+        }
+        st.live.as_ref().map(|l| l.cancel(by)).is_some()
+    }
+
+    /// 이 멘션에서 [중단] 한 사람.
+    pub fn canceled_by(&self) -> Option<String> {
+        self.lock().canceled_by.clone()
     }
 
     pub fn is_bound(&self) -> bool {
-        self.lock().is_some()
+        self.lock().live.is_some()
     }
 }
 

@@ -83,23 +83,45 @@ fn homes_use_attempt_account_only() {
     );
 }
 
-/// 걸린 시도에만 닿고, 놓인 뒤의 신호는 어디에도 닿지 않는다.
+/// 펜스 잃음은 걸린 시도에만 닿고, 놓인 뒤의 펜스 신호는 버린다.
 #[test]
-fn live_slot_routes_to_bound_attempt_only() {
+fn live_slot_fence_is_per_attempt() {
     let slot = LiveSlot::default();
-    assert!(!slot.fence_lost() && !slot.cancel("h"));
+    assert!(!slot.fence_lost());
     let first = Arc::new(LiveTurn::default());
     slot.bind(Some(Arc::clone(&first)));
     assert!(slot.is_bound());
-    assert!(slot.cancel("human-1"));
     assert!(slot.fence_lost());
-    assert_eq!(first.canceled_by().as_deref(), Some("human-1"));
     assert!(first.fenced_out());
     slot.bind(None);
+    assert!(!slot.fence_lost(), "놓인 뒤 펜스 신호는 버린다");
     let second = Arc::new(LiveTurn::default());
-    assert!(!slot.cancel("late"), "놓인 뒤 신호는 버린다");
     slot.bind(Some(Arc::clone(&second)));
-    assert!(second.canceled_by().is_none() && !second.fenced_out());
+    assert!(!second.fenced_out());
+    assert!(slot.canceled_by().is_none());
+}
+
+/// [중단] 은 멘션 단위로 남는다 — 돌던 시도에 닿고, 시도 사이에 와도 다음에 걸리는 시도에 먼저 실린다. 처음 사람이 남는다.
+#[test]
+fn live_slot_cancel_sticks_for_the_mention() {
+    let slot = LiveSlot::default();
+    let first = Arc::new(LiveTurn::default());
+    slot.bind(Some(Arc::clone(&first)));
+    assert!(slot.cancel("human-1"), "돌던 시도에 닿았다");
+    assert_eq!(first.canceled_by().as_deref(), Some("human-1"));
+    slot.bind(None);
+    let second = Arc::new(LiveTurn::default());
+    slot.bind(Some(Arc::clone(&second)));
+    assert_eq!(second.canceled_by().as_deref(), Some("human-1"));
+    assert!(second.gate().is_err(), "다음 시도의 관문이 막는다");
+
+    let between = LiveSlot::default();
+    assert!(!between.cancel("human-2"), "시도 사이 — 돌던 시도는 없다");
+    assert!(!between.cancel("human-3"));
+    assert_eq!(between.canceled_by().as_deref(), Some("human-2"));
+    let next = Arc::new(LiveTurn::default());
+    between.bind(Some(Arc::clone(&next)));
+    assert_eq!(next.canceled_by().as_deref(), Some("human-2"));
 }
 
 // ---- PtyTurnAttempt 를 거친 계정 전환 ----
@@ -134,6 +156,7 @@ struct Parts {
     /// 이 번째 시도 도중 펜스를 잃는다.
     fence_on: Option<usize>,
     seen: Vec<Seen>,
+    outcomes: Vec<&'static str>,
 }
 
 impl AttemptParts for Parts {
@@ -194,11 +217,18 @@ impl AttemptParts for Parts {
     }
     fn outcome(
         &mut self,
-        _a: Attempted<PtyOut>,
+        a: Attempted<PtyOut>,
         _s: &TurnSecrets,
         live: &LiveTurn,
     ) -> Result<TurnOk, AttemptError> {
-        self.seen.last_mut().unwrap().fenced_out = live.fenced_out();
+        self.outcomes.push(match a {
+            Attempted::Blocked(_) => "blocked",
+            Attempted::Ran(_) => "ran",
+            Attempted::SetupFailed { .. } => "setup",
+        });
+        if matches!(a, Attempted::Ran(_)) {
+            self.seen.last_mut().unwrap().fenced_out = live.fenced_out();
+        }
         Err(AttemptError {
             message: "fail".into(),
             ..AttemptError::default()
@@ -245,6 +275,7 @@ fn config_dir_does_not_mix_across_attempts() {
             homes_dir: None,
             fence_on: Some(0),
             seen: Vec::new(),
+            outcomes: Vec::new(),
         },
     );
     let t = target();
@@ -281,5 +312,57 @@ fn config_dir_does_not_mix_across_attempts() {
             },
         ]
     );
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// security(#2039 다음): a1 끝 ~ a2 시작 사이에 온 [중단] → a2 를 띄우지 않는다(관문이 막음) · a2 도 놓인 채 끝난다.
+#[test]
+fn cancel_between_attempts_blocks_next_spawn() {
+    let root = std::env::temp_dir().join(format!("hk-attempt-cancel-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    let mcp = root.join("mcp.json");
+    fs::write(&mcp, "{}").unwrap();
+    let env = BTreeMap::new();
+    let link = NoLink;
+    let client = HarkroomRestClient::new(&link);
+    let slot = LiveSlot::default();
+    let mut a = PtyTurnAttempt::new(
+        AttemptBase {
+            client: &client,
+            notice: &NoNotice,
+            harness: AgentHarness::ClaudeCode,
+            can_register_turn_keys: false,
+            state_dir: &root,
+            mcp_config_path: &mcp,
+            runner_env: &env,
+            pat: "hk_pat_x",
+        },
+        Parts {
+            base_dir: PathBuf::from("/acct/base"),
+            slot: slot.clone(),
+            cur: None,
+            homes_dir: None,
+            fence_on: None,
+            seen: Vec::new(),
+            outcomes: Vec::new(),
+        },
+    );
+    let t = target();
+    let (a1, a2) = (acc("a1"), acc("a2"));
+    let mut d1 = false;
+    assert!(a.run(&t, Some(&a1), false, &mut d1).is_err());
+    assert!(!slot.is_bound());
+    assert!(!slot.cancel("human-1"), "시도 사이 — 돌던 시도는 없다");
+    let mut d2 = false;
+    assert!(a.run(&t, Some(&a2), true, &mut d2).is_err());
+    let p = a.parts.borrow();
+    assert_eq!(p.outcomes, ["ran", "blocked"], "a2 는 관문이 막았다");
+    assert_eq!(p.seen.len(), 1, "a2 는 띄우지 않았다");
+    assert_eq!(p.seen[0].account.as_deref(), Some("a1"));
+    assert!(!d2);
+    assert!(!slot.is_bound());
+    assert_eq!(slot.canceled_by().as_deref(), Some("human-1"));
+    drop(p);
     let _ = fs::remove_dir_all(&root);
 }
