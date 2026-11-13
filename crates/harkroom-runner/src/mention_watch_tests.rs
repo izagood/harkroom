@@ -21,9 +21,8 @@ impl RunnerLink for &NoLink {
 
 fn no_report(_s: &[String], _t: i64) {}
 
-fn inputs<'a>(client: &'a HarkroomMcpClient<&'a NoLink>) -> MentionWatchInputs<'a, &'a NoLink> {
+fn inputs<'a>() -> MentionWatchInputs<'a> {
     MentionWatchInputs {
-        client,
         key: "k".into(),
         me_id: "me".into(),
         channel_id: "c".into(),
@@ -43,11 +42,11 @@ fn inputs<'a>(client: &'a HarkroomMcpClient<&'a NoLink>) -> MentionWatchInputs<'
 #[test]
 fn fence_follows_the_opened_mention_slot_only() {
     let link = NoLink;
-    let client = HarkroomMcpClient::new(&link, "t");
+    let clients = AgentClients::new(&link, "t");
     let slots = MentionSlots::default();
     let m1 = slots.open("m1");
     let m2 = slots.open("m2");
-    let lf = mention_watch_loop(inputs(&client), m1.slot());
+    let lf = mention_watch_loop(&clients, inputs(), m1.slot());
 
     // 두 멘션에 시도가 하나씩 걸렸다. m2 만 임대를 잃는다 → m1 루프는 펜스에 걸리지 않는다.
     let (l1, l2) = (Arc::new(LiveTurn::default()), Arc::new(LiveTurn::default()));

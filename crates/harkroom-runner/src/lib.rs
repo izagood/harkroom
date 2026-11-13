@@ -41,6 +41,7 @@ pub mod mcp;
 pub mod memory_cache;
 pub mod memory_pin;
 pub mod mention_admit;
+pub mod mention_clients;
 pub mod mention_deps;
 pub mod mention_ledger;
 pub mod mention_parts;
