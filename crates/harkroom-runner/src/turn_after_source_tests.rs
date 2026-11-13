@@ -20,6 +20,7 @@ fn cfg() -> AfterConfig {
         target: SuccessTarget::default(),
         harness: AgentHarness::ClaudeCode,
         home: None,
+        promise: None,
     }
 }
 

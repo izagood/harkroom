@@ -45,6 +45,7 @@ pub mod mention_call;
 pub mod mention_clients;
 pub mod mention_deps;
 pub mod mention_hooks;
+pub mod mention_inputs;
 pub mod mention_ledger;
 pub mod mention_parts;
 pub mod mention_run;

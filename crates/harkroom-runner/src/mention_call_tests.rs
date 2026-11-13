@@ -292,6 +292,7 @@ fn call<'a>(
                 wake_reason: String::new(),
                 turn_start_seq: 0,
                 turn_id: "turn".into(),
+                promise: None,
             },
             last_said: None,
         }),
