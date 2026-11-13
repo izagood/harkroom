@@ -227,6 +227,47 @@ struct Current {
     cause: String,
 }
 
+/// 멘션마다 바뀌는 명령 칸의 소유본(지시문 입력에 없는 것). 띄울 때 [`with_argv`] 가 명령 옵션에 빌려 싣는다.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct OwnedArgv {
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    /// 읽기 전용 턴의 닫힌 도구 목록(목록을 쓰는 하네스만). 없으면 그 하네스의 읽기 전용 턴은 **띄우지 않는다**
+    /// (`ReadonlyToolListMissing` — 닫히는 쪽, 빈 목록으로 채우지 않는다).
+    pub readonly_tool_list: Option<String>,
+}
+
+/// 기본 명령 옵션에 그 멘션의 칸을 싣는다(정본 `buildTurnCommand` 의 `toolAllows`·`mergeRepos`·`apiConnectors`·
+/// `apiDelegatable`·`model`·`effort`·`readonlyToolList`). 허용 도구·머지 저장소·API 는 그 멘션 지시문 입력(`system`)의 것을
+/// 그대로 쓴다 — 지시문에 적힌 것과 argv 가 같은 출처다. 필드를 따로 빌려 `inner` 의 `&mut` 빌림과 겹치지 않는다.
+pub fn with_argv<'s>(
+    base: &TurnCommandOptions<'s>,
+    system: &'s SystemInputs,
+    argv: &'s OwnedArgv,
+) -> TurnCommandOptions<'s> {
+    let mut b = base.clone();
+    if let Some(p) = &system.permissions {
+        b.tool_allows = &p.tool_allows;
+    }
+    if let Some(m) = &system.merge {
+        b.merge_repos = &m.repos;
+    }
+    if let Some(a) = &system.api {
+        b.api_connectors = &a.connectors;
+        b.api_delegatable = &a.delegatable;
+    }
+    if argv.model.is_some() {
+        b.model = argv.model.as_deref();
+    }
+    if argv.effort.is_some() {
+        b.effort = argv.effort.as_deref();
+    }
+    if argv.readonly_tool_list.is_some() {
+        b.readonly_tool_list = argv.readonly_tool_list.as_deref();
+    }
+    b
+}
+
 /// 대상별 `AttemptParts` 실물.
 pub struct MentionParts<'a, P: PrepareIo, S: PtyTurnSink> {
     pub io: P,
@@ -256,6 +297,8 @@ pub struct MentionParts<'a, P: PrepareIo, S: PtyTurnSink> {
     pub mount: MountFn<'a>,
     /// 띄우는 동안 옆에서 돌 감시 루프(없으면 돌지 않는다 — 시험용).
     pub watch_loop: Option<WatchLoopFn<'a>>,
+    /// 멘션마다 바뀌는 명령 칸 중 지시문 입력에 없는 것(모델·effort·읽기 전용 목록)의 소유본.
+    pub argv: OwnedArgv,
     cur: Option<Current>,
     /// 이 시도가 띄울 때 지은 문맥 — 턴 뒤 IO 에 넘긴다(`spawn` 이 시도마다 새로 적는다).
     last_ctx: Option<LoopCtx>,
@@ -302,6 +345,7 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
             after,
             mount,
             watch_loop: None,
+            argv: OwnedArgv::default(),
             cur: None,
             last_ctx: None,
         }
@@ -311,7 +355,7 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
     pub fn command_for<'s>(&'s self, turn_id: &'s str) -> Option<TurnCommandOptions<'s>> {
         let c = self.cur.as_ref()?;
         Some(attempt_command_for_account(
-            &self.base,
+            &with_argv(&self.base, &self.system, &self.argv),
             &c.account,
             &c.prepared.session,
             &c.system_prompt_file,
@@ -425,7 +469,7 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             )));
         };
         let cmd = attempt_command_for_account(
-            &self.base,
+            &with_argv(&self.base, &self.system, &self.argv),
             &c.account,
             &c.prepared.session,
             &c.system_prompt_file,
