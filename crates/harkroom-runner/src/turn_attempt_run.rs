@@ -97,13 +97,14 @@ pub struct SpawnArgs<'x> {
 pub trait AttemptParts {
     /// 이 시도의 [`LiveTurn`] 을 펜스 잃음·[중단] 듣기에 건다. `None` 이면 놓는다(앞 시도의 것이 다음 시도를 막지 않게).
     fn bind_live(&mut self, live: Option<Arc<LiveTurn>>);
+    #[allow(clippy::result_large_err)]
     fn prepare(
         &mut self,
         target: &MentionTarget,
         account: Option<&ClaudeAccount>,
         is_last_account: bool,
         turn_id: &str,
-    ) -> AttemptPrep;
+    ) -> Result<AttemptPrep, AttemptError>;
     /// 이 턴의 비밀을 `lease_dir` 에 마운트한다(`prep.secrets` 일 때만 부른다).
     fn mount_secrets(&mut self, cause: &str) -> Result<(), SecretMountError>;
     /// PTY 턴을 끝까지 돈다 — 열쇠·MCP 설정 경로는 이 시도의 조립에서 온다(`pty_turn_plan`). 프롬프트가 입력창에 닿으면
@@ -234,9 +235,10 @@ impl<L: RunnerLink, N: LeaseNotice, P: AttemptParts> PtyTurnAttempt<'_, L, N, P>
         let parts = &self.parts;
         // 임대 끝 알림은 이 시도에서 한 번 — 띄우기 정리와 lane 가드가 이 자리를 같이 쓴다.
         let lease_once = OnceLease::new(self.notice);
+        // 준비 실패(스레드를 못 읽음·지시문 파일을 못 씀 등)는 아무것도 받기 전이라 그대로 접는다.
         let prep = parts
             .borrow_mut()
-            .prepare(target, account, is_last, turn_id);
+            .prepare(target, account, is_last, turn_id)?;
         // lane env 를 계획보다 먼저 받는다(정본 순서). 관문이 막았거나 받기가 실패하면 그 시도로 접는다.
         let lane_hold = match self.lane {
             None => None,
