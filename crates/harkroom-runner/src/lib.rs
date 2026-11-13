@@ -76,6 +76,7 @@ pub mod turn_attempt;
 pub mod turn_attempt_account;
 pub mod turn_attempt_fold;
 pub mod turn_attempt_live;
+pub mod turn_attempt_relay;
 pub mod turn_attempt_run;
 pub mod turn_command;
 pub mod turn_end;
