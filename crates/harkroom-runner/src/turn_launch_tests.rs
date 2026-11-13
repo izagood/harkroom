@@ -457,7 +457,10 @@ fn turn_release_is_harmless_when_repeated_or_absent() {
     let ends = Cell::new(0);
     let secrets = Cell::new(0);
     let lane = Cell::new(0);
-    let mut end_keys = || ends.set(ends.get() + 1);
+    let mut end_keys = || {
+        ends.set(ends.get() + 1);
+        Ok(())
+    };
     let mut r = TurnRelease {
         end_turn_keys: &mut end_keys,
         end_secrets: Some(Box::new(|| secrets.set(secrets.get() + 1))),
@@ -477,11 +480,68 @@ fn turn_release_is_harmless_when_repeated_or_absent() {
         "열쇠 끝은 모르는 턴에도 무해하니 그대로 보낸다"
     );
     // 비밀·lane 을 받지 않은 턴(닫개 없음)도 무해하다.
-    let mut end_keys = || {};
+    let mut end_keys = || Ok(());
     let mut r = TurnRelease {
         end_turn_keys: &mut end_keys,
         end_secrets: None,
         provider_env_done: None,
     };
     assert!(release_launch(&all, &mut r).is_empty());
+}
+
+/// #2014 security nit a: 열쇠 거두기 HTTP 실패는 `failed` 에 잡힌다.
+#[test]
+fn turn_keys_end_failure_is_counted() {
+    let mut end_keys = || Err("status 500".to_string());
+    let lane = Cell::new(0);
+    let mut r = TurnRelease {
+        end_turn_keys: &mut end_keys,
+        end_secrets: None,
+        provider_env_done: Some(Box::new(|| lane.set(lane.get() + 1))),
+    };
+    let failed = release_launch(&[LaunchStep::TurnKeys, LaunchStep::LaneKeys], &mut r);
+    assert_eq!(failed, [LaunchStep::TurnKeys]);
+    assert_eq!(lane.get(), 1, "나머지는 계속 거둔다");
+}
+
+/// release 가 패닉한다.
+struct PanicRelease(std::rc::Rc<std::cell::RefCell<Vec<LaunchStep>>>);
+
+impl LaunchRelease for PanicRelease {
+    fn release(&mut self, step: LaunchStep) -> Result<(), String> {
+        self.0.borrow_mut().push(step);
+        if step == LaunchStep::Secrets {
+            panic!("unmount blew up");
+        }
+        Ok(())
+    }
+}
+
+/// #2014 security nit b: 되감기 중 Drop 안에서 release 가 다시 패닉해도 abort 하지 않고, 나머지 단계를 거두며 그 단계를
+/// 실패로 센다.
+#[test]
+fn release_panic_during_unwind_does_not_abort() {
+    let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let s2 = seen.clone();
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+        let mut guard = LaunchGuard::new(PanicRelease(s2));
+        launch_guarded(ALL, &mut PanicIo, &mut || Ok(()), &mut guard);
+    }));
+    // 바깥 패닉(spawn)만 올라오고, 프로세스는 살아 있다.
+    assert!(res.is_err());
+    assert_eq!(
+        *seen.borrow(),
+        [
+            LaunchStep::LaneKeys,
+            LaunchStep::Secrets,
+            LaunchStep::TurnKeys
+        ]
+    );
+    // 패닉하지 않는 길에서도 실패로 센다.
+    let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let failed = release_launch(
+        &[LaunchStep::TurnKeys, LaunchStep::Secrets],
+        &mut PanicRelease(seen),
+    );
+    assert_eq!(failed, [LaunchStep::Secrets]);
 }

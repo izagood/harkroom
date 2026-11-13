@@ -567,14 +567,25 @@ impl<L: RunnerLink> HarkroomRestClient<L> {
         Ok(())
     }
 
-    /// 실패는 삼킨다 — 오퍼레이터가 수명 상한으로 쓴다.
-    pub fn end_turn_keys(&self, turn_id: &str) {
-        self.open_turn_keys.lock().unwrap().remove(turn_id);
-        self.forward(
-            "POST",
-            TURN_KEYS_END_PATH,
-            Some(&json!({ "turnId": turn_id })),
-        );
+    /// 턴 열쇠를 거둔다. 장부에서는 늘 지우고(다시 맡기기에서 빠진다), 오퍼레이터 답이 200 이 아니면 `Err` 로 돌려준다 —
+    /// 턴 끝 정리가 실패로 셀 수 있게(#2014 security nit a). 모르는 턴이면 오퍼레이터는 지울 것 없이 200 이다.
+    pub fn end_turn_keys(&self, turn_id: &str) -> Result<(), TurnKeyRegisterError> {
+        self.open_turn_keys
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(turn_id);
+        match self
+            .forward(
+                "POST",
+                TURN_KEYS_END_PATH,
+                Some(&json!({ "turnId": turn_id })),
+            )
+            .status
+        {
+            200 => Ok(()),
+            0 => Err(TurnKeyRegisterError { status: None }),
+            s => Err(TurnKeyRegisterError { status: Some(s) }),
+        }
     }
 
     /// 열린 턴의 열쇠를 다시 맡긴다 — 링크가 열릴 때마다 부른다(오퍼레이터가 바뀌면 장부가 비어 있다). 실패는 세기만 한다.
@@ -926,7 +937,11 @@ mod tests {
         assert!(!e.to_string().contains(&keys.bridge));
         // t3 는 맡기지 못했으니 장부에 없다 → 다시 맡기기는 t1·t2 둘
         assert_eq!(c.re_register_turn_keys(), (2, 0));
-        c.end_turn_keys("t1");
+        // 링크 끊김 → 거두기 실패로 돌려준다(장부에서는 지운다 — 아래 다시 맡기기는 t2 하나).
+        assert_eq!(
+            c.end_turn_keys("t1"),
+            Err(TurnKeyRegisterError { status: None })
+        );
         assert_eq!(
             last(&f),
             (
