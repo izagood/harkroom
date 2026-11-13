@@ -60,7 +60,8 @@ pub struct MakerConfig {
     pub home: PathBuf,
     pub turn_timeout_ms: u64,
     pub harness_stall_ms: u64,
-    pub new_workspace_dir: String,
+    /// 스레드별 작업 폴더의 뿌리(정본 `workspaceBaseDir`) — 멘션마다 그 스레드 폴더를 [`crate::workspace`] 로 짓는다.
+    pub workspace_base_dir: PathBuf,
     pub me_id: String,
     /// 이 러너 프로세스의 스레드 임대 holder(기동 때 무작위, `ThreadClaims` 와 같은 값).
     pub claim_holder: String,
@@ -270,6 +271,21 @@ where
             home: home.clone(),
             promise,
         });
+        // 그 스레드의 작업 폴더(정본 `resolveWorkspaceDir`) — 새 스레드마다 다른 폴더, 같은 스레드는 같은 폴더. 짓지 못하면 이 멘션은
+        // 띄우지 않는다: 준비 구간 패닉은 몸통 지킴(L3a)이 장부·자리·임대를 놓는다(다음 폴이 다시 받는다).
+        let workspace = crate::workspace::resolve_workspace_dir(
+            &c.workspace_base_dir,
+            &c.me_id,
+            &key,
+            reads
+                .def
+                .get("workingDir")
+                .and_then(serde_json::Value::as_str),
+            &crate::workspace::exec_command,
+        )
+        .unwrap_or_else(|e| panic!("작업 폴더를 짓지 못했다: {e}"))
+        .to_string_lossy()
+        .into_owned();
         let argv = owned_argv(
             &key,
             c.harness,
@@ -315,7 +331,7 @@ where
             p.me_id = c.me_id.clone();
             p.handles = handles;
             p.state_dir = c.state_dir.clone();
-            p.new_workspace_dir = c.new_workspace_dir.clone();
+            p.new_workspace_dir = workspace;
             p.home = c.home.clone();
             p.parent_env = c.parent_env.clone();
             p.slot = b.slot;
