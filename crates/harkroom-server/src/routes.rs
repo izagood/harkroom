@@ -133,6 +133,12 @@ pub const MOVED: &[Moved] = &[
         path: "/accounts/me/blocks",
         route: || axum::routing::get(crate::writes_moderation::list_blocks),
     },
+    // P4c-2 작업 항목 읽기(`writes_misc.rs`).
+    Moved {
+        key: "GET /work-items",
+        path: "/work-items",
+        route: || axum::routing::get(crate::writes_misc::list_items),
+    },
 ];
 
 /// `HARKROOM_FRONT_TS_ROUTES` 를 읽은 결과.
@@ -308,6 +314,32 @@ pub const MOVED_WRITE: &[Moved] = &[
         key: "DELETE /accounts/me/blocks/{id}",
         path: "/accounts/me/blocks/{id}",
         route: || axum::routing::delete(crate::writes_moderation::delete_block),
+    },
+    // P4c-2 작업 항목·스레드 임대·푸시 기기(`writes_misc.rs`). PUT /work-items 는 위임장 끝내기 때문에 TS 에 남는다.
+    Moved {
+        key: "DELETE /work-items/{id}",
+        path: "/work-items/{id}",
+        route: || axum::routing::delete(crate::writes_misc::delete_item),
+    },
+    Moved {
+        key: "POST /agent/thread-claims",
+        path: "/agent/thread-claims",
+        route: || axum::routing::post(crate::writes_misc::claim),
+    },
+    Moved {
+        key: "POST /agent/thread-claims/release",
+        path: "/agent/thread-claims/release",
+        route: || axum::routing::post(crate::writes_misc::release),
+    },
+    Moved {
+        key: "PUT /push/devices",
+        path: "/push/devices",
+        route: || axum::routing::put(crate::writes_misc::put_device),
+    },
+    Moved {
+        key: "DELETE /push/devices/current",
+        path: "/push/devices/current",
+        route: || axum::routing::delete(crate::writes_misc::delete_device),
     },
 ];
 

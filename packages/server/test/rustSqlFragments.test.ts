@@ -14,6 +14,8 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
   const want = {
     channel_visible_c_p1uuid: channelVisibleSql('c', '$1::uuid'),
     display_body_m: displayBodySql('m'),
+    // 작업 항목(`workItems.ts::actorSeesItemSql`) — 주인이 아닌 쪽이 볼 수 있는 스레드인지, 별칭 ac·두째 인자.
+    channel_visible_ac_p2uuid: channelVisibleSql('ac', '$2::uuid'),
   };
   const text = `${JSON.stringify(want, null, 2)}\n`;
   if (process.env.UPDATE_RUST_SQL_GOLDEN === '1') writeFileSync(GOLDEN, text);

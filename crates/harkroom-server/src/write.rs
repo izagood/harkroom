@@ -48,6 +48,14 @@ pub const REQUIRED_PRIVILEGES: &[(&str, &str)] = &[
     ("message_report", "UPDATE"),
     ("account_block", "INSERT"),
     ("account_block", "DELETE"),
+    // P4c-2 — 작업 항목 지우기·스레드 임대·푸시 기기(`writes_misc.rs`). work_item 은 지우기만(쓰기는 TS 에 남는다).
+    ("work_item", "DELETE"),
+    ("agent_thread_claim", "INSERT"),
+    ("agent_thread_claim", "UPDATE"),
+    ("agent_thread_claim", "DELETE"),
+    ("push_device", "INSERT"),
+    ("push_device", "UPDATE"),
+    ("push_device", "DELETE"),
 ];
 /// 시퀀스 권한(시퀀스, 권한) — `event_outbox.id` 는 bigserial 이다. `audit_log.id` 는 identity 라 필요 없다.
 pub const REQUIRED_SEQUENCE_PRIVILEGES: &[(&str, &str)] = &[
@@ -375,6 +383,7 @@ mod tests {
                 "agent_team",
                 "agent_team_invoker",
                 "agent_team_member",
+                "agent_thread_claim",
                 "audit_log",
                 "builtin_skill_usage",
                 "event_outbox",
@@ -384,15 +393,20 @@ mod tests {
                 "mention_policy",
                 "message_report",
                 "pat",
+                "push_device",
                 "session",
+                "work_item",
                 "workspace_skill",
                 "workspace_skill_usage"
             ],
             "넓힐 때는 homelab GRANT 와 이 시험을 같이 고친다"
         );
-        // DELETE 는 P4b 의 팀·집합(과 그 구성원)·P4c 차단 표에만 — homelab#353 목록과 같다. TRUNCATE·그 밖의 것은 없다.
+        // DELETE 는 P4b 의 팀·집합(과 그 구성원)·P4c 차단·작업 항목·임대·푸시 기기 표에만 — homelab#353 목록과 같다. TRUNCATE·그 밖의 것은 없다.
         const DELETE_OK: &[&str] = &[
             "account_block",
+            "agent_thread_claim",
+            "push_device",
+            "work_item",
             "agent_team",
             "agent_team_member",
             "agent_team_invoker",

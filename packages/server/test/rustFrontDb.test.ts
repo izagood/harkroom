@@ -221,6 +221,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // P4c — 신고 해결·차단.
         `grant update on message_report to ${rw}`,
         `grant insert, delete on account_block to ${rw}`,
+        // P4c-2 — 작업 항목 지우기·스레드 임대·푸시 기기.
+        `grant delete on work_item to ${rw}`,
+        `grant insert, update, delete on agent_thread_claim to ${rw}`,
+        `grant insert, update, delete on push_device to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -256,6 +260,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         'POST /handle-groups/{id}/members', 'DELETE /handle-groups/{id}/members',
         'GET /admin/reports', 'GET /accounts/me/blocks',
         'POST /admin/reports/{id}/resolve', 'PUT /accounts/me/blocks/{id}', 'DELETE /accounts/me/blocks/{id}',
+        'GET /work-items', 'DELETE /work-items/{id}', 'POST /agent/thread-claims', 'POST /agent/thread-claims/release',
+        'PUT /push/devices', 'DELETE /push/devices/current',
       ]) {
         expect(f.log(), key).toContain(`"${key}"`);
       }
@@ -552,6 +558,77 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       expect((await callX(rsUrl, 'GET', '/accounts/me/blocks', undefined, member.token)).json).toEqual(tsBlocks.json);
       expect((await callX(rsUrl, 'DELETE', `/accounts/me/blocks/${member2.accountId}`, undefined, member.token)).status).toBe(204);
       expect((await callX(tsUrl, 'GET', '/accounts/me/blocks', undefined, member.token)).json).toEqual({ blocks: [] });
+
+      // S5.2 P4c-2 — 작업 항목(읽기·지우기)·스레드 임대·푸시 기기. 작업 항목 쓰기(PUT)는 TS 에 남아 픽스처를 TS 로 만든다.
+      const wi = async (token: string, key: string, threadRootId: string | null = null) => (await callX(tsUrl, 'PUT', '/work-items',
+        { source: 'github', externalKey: key, title: `t-${key}`, state: 'mine', url: 'https://example.com/x', threadRootId }, token)).json.item as { id: string };
+      const memItem = await wi(member.token, 'm1');
+      await wi(member.token, 'm2');
+      const adminItem = await wi(A, 'a1');
+      for (const [path, token] of [
+        ['/work-items', member.token], ['/work-items?source=github', member.token], ['/work-items', A], ['/work-items', agent.pat],
+        ['/work-items?source=gitlab', member.token], ['/work-items?threadRootId=nope', member.token],
+      ] as const) {
+        const [a, b] = [await callX(tsUrl, 'GET', path, undefined, token), await callX(rsUrl, 'GET', path, undefined, token)];
+        expect({ status: b.status, json: b.status === 400 ? b.code : b.json }, path).toEqual({ status: a.status, json: a.status === 400 ? a.code : a.json });
+      }
+      const chan = (await db.pool.query<{ channel_id: string }>('select channel_id::text from message where id = $1', [msgs[0]])).rows[0]!.channel_id;
+      const claimBody = (holder: string, extra: Record<string, unknown> = {}) => ({ channelId: chan, threadRootId: msgs[0], holder, ...extra });
+      const T64 = 'AB'.repeat(32);
+      for (const [name, m, path, body, token] of [
+        ['항목 지우기 uuid 아님 → 400', 'DELETE', '/work-items/nope', undefined, member.token],
+        ['항목 지우기 없는 것 → 404', 'DELETE', `/work-items/${ghost}`, undefined, member.token],
+        ['항목 지우기 남의 보드 → 404', 'DELETE', `/work-items/${adminItem.id}`, undefined, member.token],
+        ['항목 지우기 에이전트·스레드 없는 주인 항목 → 404', 'DELETE', `/work-items/${adminItem.id}`, undefined, agent.pat],
+        ['임대 사람 → 403', 'POST', '/agent/thread-claims', claimBody('h'), member.token],
+        ['임대 본문 없음 → 400', 'POST', '/agent/thread-claims', undefined, agent.pat],
+        ['임대 ttl 작음 → 400', 'POST', '/agent/thread-claims', claimBody('h', { ttlSec: 5 }), agent.pat],
+        ['임대 놓기 holder 빔 → 400', 'POST', '/agent/thread-claims/release', claimBody(''), agent.pat],
+        ['푸시 PAT → 403', 'PUT', '/push/devices', { token: T64, platform: 'ios', env: 'sandbox' }, agent.pat],
+        ['푸시 익명 → 401', 'PUT', '/push/devices', { token: T64, platform: 'ios', env: 'sandbox' }, ''],
+        ['푸시 잘못된 토큰 → 400', 'PUT', '/push/devices', { token: 'zz', platform: 'ios', env: 'sandbox' }, member.token],
+        ['푸시 모르는 키 → 400', 'PUT', '/push/devices', { token: T64, platform: 'ios', env: 'sandbox', x: 1 }, member.token],
+        ['푸시 끄기 PAT → 403', 'DELETE', '/push/devices/current', undefined, agent.pat],
+      ] as const) {
+        const [a, b] = [await callX(tsUrl, m, path, body, token), await callX(rsUrl, m, path, body, token)];
+        expect({ status: b.status, code: b.code }, name).toEqual({ status: a.status, code: a.code });
+      }
+      // 지우기: Rust 로 지우면 TS 목록에서 빠지고, 주인에게 inbox.updated 가 버스로 온다.
+      const inboxBefore = busEvents.filter((e) => e.type === 'inbox.updated' && (e as { accountId?: string }).accountId === member.accountId).length;
+      expect((await callX(rsUrl, 'DELETE', `/work-items/${memItem.id}`, undefined, member.token)).status).toBe(204);
+      expect(((await callX(tsUrl, 'GET', '/work-items', undefined, member.token)).json.items as { id: string }[]).map((i) => i.id)).not.toContain(memItem.id);
+      const until4 = Date.now() + 10_000;
+      const inboxNow = () => busEvents.filter((e) => e.type === 'inbox.updated' && (e as { accountId?: string }).accountId === member.accountId).length;
+      while (inboxNow() <= inboxBefore && Date.now() < until4) await new Promise((res) => setTimeout(res, 100));
+      expect(inboxNow()).toBe(inboxBefore + 1);
+      // 임대: 두 서버가 같은 표를 본다 — Rust 가 잡으면 TS 의 다른 holder 는 409, 놓으면 TS 가 잡는다. 409 는 같은 expiresAt 을 싣는다.
+      const c1 = await fetch(`${rsUrl}/agent/thread-claims`, { method: 'POST', headers: { authorization: `Bearer ${agent.pat}`, 'content-type': J }, body: JSON.stringify(claimBody('h1', { ttlSec: 60 })) });
+      expect(c1.status).toBe(200);
+      expect(c1.headers.get('cache-control')).toBe('no-store');
+      const c1j = await c1.json() as { claimed: boolean; expiresAt: string };
+      expect(c1j.claimed).toBe(true);
+      const [tsBusy, rsBusy] = [
+        await callX(tsUrl, 'POST', '/agent/thread-claims', claimBody('h2'), agent.pat),
+        await callX(rsUrl, 'POST', '/agent/thread-claims', claimBody('h3'), agent.pat),
+      ];
+      expect(tsBusy).toMatchObject({ status: 409, code: 'thread_claimed' });
+      expect(rsBusy.json).toEqual(tsBusy.json);
+      expect(tsBusy.json.expiresAt).toBe(c1j.expiresAt);
+      expect((await callX(rsUrl, 'POST', '/agent/thread-claims/release', claimBody('h2'), agent.pat)).status, '남의 임대는 안 지운다').toBe(204);
+      expect((await callX(tsUrl, 'POST', '/agent/thread-claims', claimBody('h2'), agent.pat)).status).toBe(409);
+      expect((await callX(rsUrl, 'POST', '/agent/thread-claims/release', claimBody('h1'), agent.pat)).status).toBe(204);
+      expect((await callX(tsUrl, 'POST', '/agent/thread-claims', claimBody('h2'), agent.pat)).status).toBe(200);
+      // 푸시: Rust 로 등록 → TS 로 같은 토큰을 다시 등록하면 같은 줄이고 prefs 는 합쳐진다 → Rust 로 끄면 그 세션 줄이 사라진다.
+      const reg = await callX(rsUrl, 'PUT', '/push/devices', { token: T64, platform: 'ios', env: 'sandbox', prefs: { preview: true } }, member.token);
+      expect(reg.status).toBe(200);
+      expect(reg.json).toMatchObject({ platform: 'ios', env: 'sandbox', prefs: { mention: true, dm: true, threadReply: true, ask: true, preview: true, badge: true } });
+      expect(reg.json).not.toHaveProperty('token');
+      const reg2 = await callX(tsUrl, 'PUT', '/push/devices', { token: T64.toLowerCase(), platform: 'ios', env: 'production', prefs: { dm: false } }, member.token);
+      expect(reg2.json.id).toBe(reg.json.id);
+      expect(reg2.json.prefs).toEqual({ mention: true, dm: false, threadReply: true, ask: true, preview: true, badge: true });
+      expect(reg2.json.createdAt).toBe(reg.json.createdAt);
+      expect((await callX(rsUrl, 'DELETE', '/push/devices/current', undefined, member.token)).status).toBe(204);
+      expect((await db.pool.query('select 1 from push_device where account_id = $1', [member.accountId])).rowCount).toBe(0);
       await bus.stop();
 
       // S5.2 P4d — 옮긴 라우트를 지난 요청도 세션을 늘리고 PAT 사용 시각을 남긴다(쓰기 풀로). 읽기 역할로 하면 조용히 실패하던 것.
