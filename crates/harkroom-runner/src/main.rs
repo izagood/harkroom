@@ -4,7 +4,7 @@
 //! C6 뒤). 이 파일이 들어와도 그 스위치가 켜지기 전에는 아무 에이전트도 이것으로 돌지 않는다.
 //!
 //! 물러나기 차례: 시그널·원격 종료 요청 → 폴 멈춤(`PollLoop::stop`) → 인박스 놓음 알림 → drain(턴 시한 + 5분까지만) →
-//! 남은 임대 장부 놓기(박동 멈춤·기록 가리기·끝 알림) → 링크 닫기.
+//! 도는 턴에 물러남 표지(SIGTERM) → 10초 유예 → 남은 PTY 그룹에 SIGKILL → 남은 임대 장부 놓기(박동 멈춤·기록 가리기·끝 알림) → 링크 닫기.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -30,6 +30,9 @@ use harkroom_runner::runner_wire::{BundlePoll, ExitPlan, LinkEvents, runner_exit
 use harkroom_runner::thread_claims::ThreadClaims;
 use harkroom_runner::turn_attempt_account::MentionSlots;
 use serde_json::Value;
+
+/// 물러남 표지 뒤 SIGKILL 전 유예.
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
 
 /// 서버에 알리는 러너 판.
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -187,6 +190,7 @@ fn main() {
         claim_holder.clone(),
     ));
     let running = Arc::new(Running::default());
+    let shutdown_slots = slots.clone();
     let admit = link_admit_fn(Arc::clone(&clients), Arc::clone(&claims), slots, now_ms);
     let drain_limit = Duration::from_millis(config.turn_timeout_ms) + Duration::from_secs(5 * 60);
     let poll = Arc::new(PollLoop::new(
@@ -270,6 +274,18 @@ fn main() {
             notify_poll_stopped: &poll_stopped,
         },
     );
+    // drain 시한이 지나도 도는 턴이 있으면(P2): 물러남 표지 → 감시 루프가 SIGTERM → 10초 유예 → 남은 PTY 그룹에 SIGKILL.
+    // 기록 가리기(아래 임대 놓기)는 SIGKILL **뒤**다 — 하네스가 죽은 뒤에 가려야 덮어쓰기에 지지 않는다.
+    if shutdown_slots.stop_all() > 0 {
+        let left = running.wait_idle_for(SHUTDOWN_GRACE);
+        if left > 0 {
+            let killed = shutdown_slots.kill_all();
+            eprintln!(
+                "[shutdown] 유예가 지나도 턴 {left}개가 돈다 — PTY 그룹 {killed}개에 SIGKILL"
+            );
+            let _ = running.wait_idle_for(Duration::from_secs(2));
+        }
+    }
     // drain 시한이 지나도 남은 임대를 놓는다(박동 멈춤 → 기록 가리기 → 끝 알림). 그 뒤 링크를 닫는다.
     for cause in book.causes() {
         if book.release(&cause) {

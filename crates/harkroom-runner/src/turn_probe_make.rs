@@ -278,7 +278,8 @@ pub fn probe_make<'a, L: RunnerLink + 'a>(
                 ended: Some(ctx.ended.clone()),
                 fence: Some(FenceCheck {
                     listening: Arc::new(AtomicBool::new(true)),
-                    lost: Box::new(move || slot.fenced_out()),
+                    // 임대 잃음 또는 러너 물러남(P2) — 둘 다 같은 거둠·SIGTERM 길이다. 물러남은 임대 잃음 표지를 세우지 않는다.
+                    lost: Box::new(move || slot.fenced_out() || slot.stopping()),
                     on_lost: crate::turn_watch::fence_reclaim(),
                 }),
             }

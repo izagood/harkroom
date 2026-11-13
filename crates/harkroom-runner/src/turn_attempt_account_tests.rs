@@ -494,3 +494,112 @@ fn slot_stop_requested_sees_fence_and_cancel() {
     slot.bind(Some(Arc::new(LiveTurn::default())));
     assert!(slot.stop_requested(), "다음 시도에도 남는다");
 }
+
+/// security P2-5: SIGTERM 을 무시하는 자식(손자 포함) — 그룹 SIGKILL 뒤 그 그룹에 남은 프로세스가 없다.
+#[test]
+fn sigterm_ignoring_child_group_is_gone_after_group_sigkill() {
+    use std::os::unix::process::CommandExt;
+    let mut child = unsafe {
+        std::process::Command::new("sh")
+            .args(["-c", "trap '' TERM; sleep 60 & wait"])
+            .pre_exec(|| {
+                // forkpty 자식처럼 자기 그룹을 갖게 한다.
+                libc::setpgid(0, 0);
+                Ok(())
+            })
+            .spawn()
+            .unwrap()
+    };
+    let pid = child.id();
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let pgid = unsafe { libc::getpgid(pid as i32) };
+    unsafe { libc::killpg(pgid, libc::SIGTERM) };
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    assert!(
+        child.try_wait().unwrap().is_none(),
+        "SIGTERM 을 무시하고 산다"
+    );
+
+    assert_eq!(kill_process_group(pid), KillGroup::Sent);
+    let t = std::time::Instant::now();
+    while child.try_wait().unwrap().is_none() && t.elapsed() < std::time::Duration::from_secs(5) {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(child.try_wait().unwrap().is_some(), "자식이 죽었다");
+    // 그룹 전체(손자 sleep 포함)가 없다.
+    let mut gone = false;
+    for _ in 0..100 {
+        if unsafe { libc::killpg(pgid, 0) } != 0 {
+            gone = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(gone, "그룹에 남은 프로세스가 없다");
+}
+
+/// security P2-2: 러너 자신의 그룹이면 보내지 않는다. pid 0·1 은 거른다.
+#[test]
+fn never_kills_own_group_or_invalid_pids() {
+    assert_eq!(kill_process_group(std::process::id()), KillGroup::OwnGroup);
+    assert_eq!(kill_process_group(0), KillGroup::Invalid);
+    assert_eq!(kill_process_group(1), KillGroup::Invalid);
+    assert_eq!(kill_process_group(u32::MAX), KillGroup::Invalid);
+}
+
+/// security P2-3: 물러남은 `operator` [중단]으로 접고 임대 잃음(펜스)을 세우지 않는다 — 감시 루프는 `stopping` 으로 거둔다.
+/// 다음 시도도 막힌다.
+#[test]
+fn stop_all_marks_shutdown_as_operator_cancel_not_fence() {
+    let slots = MentionSlots::default();
+    let opened = slots.open("m1");
+    let s = opened.slot();
+    let live = Arc::new(crate::turn_attempt_live::LiveTurn::default());
+    s.bind(Some(Arc::clone(&live)));
+    assert!(!s.stopping());
+    assert_eq!(slots.stop_all(), 1);
+    assert!(s.stopping());
+    assert_eq!(live.canceled_by().as_deref(), Some(SHUTDOWN_CANCELED_BY));
+    assert!(!live.fenced_out(), "임대 잃음 표지는 없다");
+    assert!(s.stop_requested(), "다음 시도도 막힌다");
+}
+
+/// security P2-1: 스케줄러 사건 어느 것으로도 물러남이 서지 않는다(세우는 길은 `stop_all` 하나).
+#[test]
+fn no_scheduler_event_sets_stopping() {
+    use crate::mention_sched::SchedEvent;
+    use crate::poll_sched::{EventSink, Running, handle_event};
+    struct Nop;
+    impl EventSink for Nop {
+        fn release_turn_slot(&self, _k: &str) {}
+        fn notice_fenced(&self, _c: &str, _a: &str) {}
+        fn turn_outcome(&self, _ok: bool) {}
+        fn stop_requested(&self, _at: &str) {}
+        fn executable_missing(&self) {}
+    }
+    let slots = MentionSlots::default();
+    let opened = slots.open("m1");
+    let running = Running::default();
+    for e in [
+        SchedEvent::Fenced("c/t".into()),
+        SchedEvent::Outcome(false),
+        SchedEvent::StopRequested("2026-11-14T00:00:00Z".into()),
+        SchedEvent::ExecutableMissing,
+        SchedEvent::SlotReleased("c/t".into()),
+        SchedEvent::TurnEnded {
+            thread_key: "c/t".into(),
+            mention_id: "m1".into(),
+        },
+    ] {
+        handle_event(e, &Nop, &running);
+    }
+    assert!(!opened.slot().stopping());
+}
+
+/// 시도가 끝나면(PTY 없음) 물러날 때 SIGKILL 대상이 없다.
+#[test]
+fn kill_all_skips_slots_without_a_running_pty() {
+    let slots = MentionSlots::default();
+    let _opened = slots.open("m1");
+    assert_eq!(slots.kill_all(), 0);
+}
