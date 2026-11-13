@@ -76,6 +76,7 @@ pub mod secret_scrub;
 pub mod session_store;
 pub mod silent_notice;
 pub mod skills_sync;
+pub mod thread_claims;
 pub mod thread_model;
 pub mod thread_note_pin;
 pub mod thread_plan_pin;
