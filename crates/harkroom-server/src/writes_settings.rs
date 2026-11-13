@@ -25,18 +25,18 @@ const SKILL_USE_MAX_SLUGS: usize = 20;
 /// services/skills.ts `BUILTIN_SKILL_PREFIX`.
 const BUILTIN_SKILL_PREFIX: &str = "harkroom-";
 
-fn bad(msg: &str) -> Response {
+pub(crate) fn bad(msg: &str) -> Response {
     json_err(StatusCode::BAD_REQUEST, "invalid_request", msg)
 }
 
 /// zod `.max(n)` 은 UTF-16 단위로 센다.
-fn js_len(s: &str) -> usize {
+pub(crate) fn js_len(s: &str) -> usize {
     s.encode_utf16().count()
 }
 
 /// 쓰기 풀 — 마운트 조건이라 늘 있다.
 #[allow(clippy::result_large_err)] // 거절이 곧 axum 응답이다(CI clippy 1.99).
-fn write_pool(st: &AppState) -> Result<&PgPool, Response> {
+pub(crate) fn write_pool(st: &AppState) -> Result<&PgPool, Response> {
     st.write.as_ref().ok_or_else(|| {
         json_err(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -48,7 +48,7 @@ fn write_pool(st: &AppState) -> Result<&PgPool, Response> {
 
 /// 본문을 읽고(fastify) 추출기 하나를 돌린다(preHandler).
 #[allow(clippy::result_large_err)] // 거절이 곧 axum 응답이다(CI clippy 1.99).
-async fn body_then<T: FromRequestParts<()>>(
+pub(crate) async fn body_then<T: FromRequestParts<()>>(
     req: Request,
 ) -> Result<(Body, T, axum::http::request::Parts), Response>
 where
@@ -63,7 +63,7 @@ where
 }
 
 /// 감사의 ip 칸 — TS 의 fastify `req.ip` 와 같은 규칙(env `TRUST_PROXY`, `trust_proxy.rs`).
-fn ip_of(parts: &axum::http::request::Parts, trust: &TrustProxy) -> Option<String> {
+pub(crate) fn ip_of(parts: &axum::http::request::Parts, trust: &TrustProxy) -> Option<String> {
     crate::trust_proxy::request_ip(parts, trust)
 }
 
