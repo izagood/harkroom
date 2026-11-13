@@ -197,6 +197,63 @@ pub fn turn_mcp_plan(i: &TurnMcpInput<'_>) -> Result<TurnMcpPlan, LaneFileError>
     })
 }
 
+/// 이 턴이 만든 설정 파일(다리 열쇠가 든 턴 MCP 설정 `turn-mcp/<turn_id>.json`·opencode 턴 설정)을 **턴 끝에 지운다**
+/// (정본 `rm(turnMcpConfig)`, 턴 연결 nit ⑦ `owned_turn_config`). 어느 길로 끝나든(막힘·준비 실패·패닉) `Drop` 이 한 번 지운다.
+/// 일반 파일만 지운다 — 링크·디렉터리는 건드리지 않는다. 로그에는 경로만 남긴다(값은 없다).
+pub struct TurnFiles {
+    paths: Vec<PathBuf>,
+}
+
+impl TurnFiles {
+    pub fn of(plan: &TurnMcpPlan, state_dir: &Path, turn_id: &str) -> Self {
+        let mut paths = Vec::new();
+        if name_ok_for_file(turn_id) {
+            let turn_cfg = state_dir
+                .join(crate::provider_lane::TURN_MCP_DIR)
+                .join(format!("{turn_id}.json"));
+            if plan.mcp_config_path == turn_cfg {
+                paths.push(turn_cfg);
+            }
+        }
+        if let Some(p) = &plan.owned_turn_config {
+            paths.push(p.clone());
+        }
+        Self { paths }
+    }
+
+    /// 지금 지운다(두 번째 부름은 할 일이 없다). 지운 수를 돌려준다.
+    pub fn remove_now(&mut self) -> usize {
+        let mut n = 0;
+        for p in self.paths.drain(..) {
+            let Ok(m) = std::fs::symlink_metadata(&p) else {
+                continue;
+            };
+            if !m.file_type().is_file() {
+                continue;
+            }
+            match std::fs::remove_file(&p) {
+                Ok(()) => n += 1,
+                Err(e) => eprintln!(
+                    "[mentionTurn] 턴 설정 파일을 지우지 못했다({}) — {:?}",
+                    p.display(),
+                    e.kind()
+                ),
+            }
+        }
+        n
+    }
+}
+
+impl Drop for TurnFiles {
+    fn drop(&mut self) {
+        self.remove_now();
+    }
+}
+
+fn name_ok_for_file(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+}
+
 #[cfg(test)]
 #[path = "turn_mcp_plan_tests.rs"]
 mod tests;

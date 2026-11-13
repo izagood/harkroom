@@ -269,6 +269,56 @@ pub fn turn_record_paths(
     out
 }
 
+/// 기록을 찾을 홈들(정본 `deps.claudeConfigDir`·`ompHome`·`codexHome`).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TranscriptHomes<'a> {
+    pub claude_config_dir: Option<&'a Path>,
+    /// `~` — claude 설정 폴더가 없을 때 `~/.claude`.
+    pub home: Option<&'a Path>,
+    pub omp_home: Option<&'a Path>,
+    pub codex_home: Option<&'a Path>,
+}
+
+/// 정본 2955~2961 — 이 턴의 기록 파일: omp 는 `ompSessionFile`, 세션 id 를 미리 발급하는 하네스(claude)는
+/// `claudeSessionFilePath`, 사후에 찾는 하네스(codex, XDG 홈 아님)는 rollout. 못 찾으면 `None`.
+pub fn find_transcript(
+    harness: AgentHarness,
+    session_id: Option<&str>,
+    homes: TranscriptHomes<'_>,
+) -> Option<PathBuf> {
+    let sid = session_id.filter(|s| !s.is_empty())?;
+    if uses_omp_home(harness) {
+        return homes
+            .omp_home
+            .and_then(|h| crate::omp_home::omp_session_file(h, sid));
+    }
+    if preassigns_session_id(harness).unwrap_or(false) {
+        return crate::review_fork::claude_session_file_path(
+            sid,
+            homes.claude_config_dir,
+            homes.home,
+        );
+    }
+    if crate::adapter::discovers_session_id_after_turn(harness).unwrap_or(false)
+        && !crate::adapter::uses_xdg_home(harness)
+    {
+        let dir = crate::codex_home::codex_sessions_dir(homes.codex_home?);
+        return crate::harness_records::codex_rollout_file_for(&dir, sid);
+    }
+    None
+}
+
+/// 기록 찾기 → [`turn_record_paths`] — 턴 끝 가리기가 쓰는 **바로 그** 경로들(찾은 기록 파일 + 옆 `<sessionId>/`).
+pub fn transcript_record_paths(
+    harness: AgentHarness,
+    session_id: Option<&str>,
+    homes: TranscriptHomes<'_>,
+) -> (Option<PathBuf>, Vec<PathBuf>) {
+    let t = find_transcript(harness, session_id, homes);
+    let paths = turn_record_paths(harness, t.as_deref(), session_id);
+    (t, paths)
+}
+
 /// 턴 끝 가리기(정본 K3) — 이 턴의 모든 기록 경로에서 턴 열쇠를 가린다. 바늘이 없으면 아무것도 하지 않는다.
 pub fn scrub_turn_records(
     key: &str,
