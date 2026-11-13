@@ -50,11 +50,13 @@ pub fn recorded_after(c: &OutcomeConfig, o: &OutcomeCtx) -> Option<String> {
 }
 
 /// 결과 접기 닫개 실물.
+#[allow(clippy::result_large_err)]
 pub fn outcome_source(c: &OutcomeConfig) -> OutcomeFn<'_> {
     Box::new(move |attempted, secrets, live, end, o| fold_with(c, attempted, secrets, live, end, o))
 }
 
 /// 설정을 **소유하는** 결과 접기 — 멘션마다 새로 지은 설정을 그 멘션의 닫개가 가져간다(실물 짓개, security L3c-2 ④).
+#[allow(clippy::result_large_err)]
 pub fn outcome_source_owned<'a>(c: OutcomeConfig) -> OutcomeFn<'a> {
     Box::new(move |attempted, secrets, live, end, o| {
         fold_with(&c, attempted, secrets, live, end, o)

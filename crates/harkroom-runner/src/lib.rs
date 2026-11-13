@@ -28,6 +28,7 @@ pub mod account_marks;
 pub mod adapter;
 pub mod bg_executor;
 pub mod bg_tick;
+pub mod call_maker;
 pub mod codex_home;
 pub mod codex_rules;
 pub mod config;
