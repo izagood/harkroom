@@ -148,6 +148,7 @@ pub fn fastify_body(headers: &HeaderMap, bytes: &[u8]) -> Result<Body, Response>
 pub const BODY_LIMIT: usize = 1024 * 1024;
 
 /// 요청 본문을 fastify 처럼 읽는다(한도 → [`fastify_body`]).
+#[allow(clippy::result_large_err)] // 거절이 곧 axum 응답이다(CI clippy 1.99).
 pub async fn read_body(headers: &HeaderMap, body: axum::body::Body) -> Result<Body, Response> {
     let bytes = axum::body::to_bytes(body, BODY_LIMIT).await.map_err(|_| {
         json_err(
