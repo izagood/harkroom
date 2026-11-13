@@ -20,6 +20,8 @@ use std::collections::{BTreeMap, HashSet};
 pub struct AppState {
     pub up: Upstream,
     pub pool: PgPool,
+    /// 쓰기 풀(P3) — env `DATABASE_WRITE_URL` 이 있을 때만. 없으면 [`MOVED_WRITE`] 줄을 마운트하지 않는다(그 요청은 TS 로 간다).
+    pub write: Option<PgPool>,
 }
 
 impl FromRef<AppState> for Upstream {
@@ -35,6 +37,7 @@ impl FromRef<AppState> for PgPool {
 }
 
 /// 표의 한 줄. `key` 는 `"GET /accounts"` 꼴로 되돌림 env 에 쓰는 이름이고, `path` 는 axum 경로(`/x/{id}`)다.
+#[derive(Clone, Copy)]
 pub struct Moved {
     pub key: &'static str,
     pub path: &'static str,
@@ -173,10 +176,31 @@ pub fn active<'a>(table: &'a [Moved], ts: &TsOverrides) -> Vec<&'a str> {
         .collect()
 }
 
+/// 쓰는 줄(P3~). 쓰기 풀이 있을 때만 마운트한다 — 읽기 전용 역할로 뜬 앞단에서 쓰기를 시도하지 않게.
+pub const MOVED_WRITE: &[Moved] = &[Moved {
+    key: "PUT /inbox/today/seen",
+    path: "/inbox/today/seen",
+    route: || axum::routing::put(crate::inbox_today::put_seen),
+}];
+
+/// 이번 기동에 실제로 마운트할 쓰는 줄.
+pub fn writes_for(state: &AppState) -> &'static [Moved] {
+    if state.write.is_some() {
+        MOVED_WRITE
+    } else {
+        &[]
+    }
+}
+
 pub fn router(state: AppState, table: &[Moved], ts: &TsOverrides) -> Router {
     // 경로별로 메서드를 모은다. BTreeMap 이라 마운트 순서가 늘 같다.
     let mut by_path: BTreeMap<&str, MethodRouter<AppState>> = BTreeMap::new();
-    for m in table.iter().filter(|m| !ts.sends_to_ts(m.key)) {
+    let writes = writes_for(&state);
+    for m in table
+        .iter()
+        .chain(writes)
+        .filter(|m| !ts.sends_to_ts(m.key))
+    {
         let r = (m.route)();
         let merged = match by_path.remove(m.path) {
             Some(prev) => prev.merge(r),

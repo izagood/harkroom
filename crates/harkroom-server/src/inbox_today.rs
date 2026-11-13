@@ -1,6 +1,6 @@
 //! 인박스 「오늘」 읽기(S5.2 P2b) — TS `routes/inboxTodayRoutes.ts` 의 `GET /inbox/today/open`·`/done` 과
-//! `services/inboxToday.ts`(`openVersion`·`listTodayOpen`·`doneVersion`·`listTodayDone`·커서)를 옮긴다. `PUT /inbox/today/seen` 은
-//! 쓰기라 TS 에 남는다(P3 뒤).
+//! `services/inboxToday.ts`(`openVersion`·`listTodayOpen`·`doneVersion`·`listTodayDone`·커서)를 옮긴다. `PUT /inbox/today/seen`
+//! (`markSeen`) 은 쓰기 바탕(P3) 위에서 옮긴다 — 쓰기 풀이 있을 때만 마운트된다(`routes::MOVED_WRITE`).
 //!
 //! **「내 것만」.** 계정은 언제나 부른 사람(`RequireAccount`)이다 — 질의·몸통으로 받지 않는다. 가시성 술어(`channelVisibleSql`)와
 //! 시스템 글 본문(`displayBodySql`)은 TS 가 정본이고, 여기선 `golden/sql_fragments.json` 을 읽어 쓴다. 그 파일이 TS 출력과 같은지는
@@ -689,6 +689,98 @@ async fn done_body(
         "cursor": cursor,
         "cursorAt": last_at,
     }))
+}
+
+/// `PUT /inbox/today/seen` — TS 와 같은 순서로 거절한다: 본문(fastify, 익명도 400/415) → 401 → zod(400) → JS `Date`(500).
+/// seen 은 `greatest()` 로만 오르고 미래는 지금으로 자른다. 실제로 올랐으면 **같은 트랜잭션에서** `inbox.updated` 를 낸다
+/// (TS 는 쓰기 뒤 메모리로 낸다 — 여기선 outbox 라 롤백되면 이벤트도 없다).
+pub async fn put_seen(
+    State(st): State<crate::routes::AppState>,
+    req: axum::extract::Request,
+) -> Response {
+    use crate::write::{Body, read_body, zod_datetime_offset};
+    let (mut parts, body) = req.into_parts();
+    let body = match read_body(&parts.headers, body).await {
+        Ok(b) => b,
+        Err(r) => return r,
+    };
+    let me = match <RequireAccount as axum::extract::FromRequestParts<()>>::from_request_parts(
+        &mut parts,
+        &(),
+    )
+    .await
+    {
+        Ok(RequireAccount(me, _)) => me,
+        Err(r) => return r,
+    };
+    let up_to = match &body {
+        Body::Json(Value::Object(o)) => o.get("upTo"),
+        _ => None,
+    };
+    let iso = match up_to.and_then(Value::as_str).map(zod_datetime_offset) {
+        Some(Ok(Some(iso))) => iso,
+        Some(Ok(None)) => {
+            return json_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "internal error",
+            );
+        }
+        _ => {
+            return json_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "upTo must be an ISO datetime with offset",
+            );
+        }
+    };
+    let Some(write) = st.write.as_ref() else {
+        // 마운트 조건(쓰기 풀)이 있으니 여기 오지 않는다.
+        return json_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            "internal error",
+        );
+    };
+    match mark_seen(write, &me.id, &iso).await {
+        Ok(seen) => crate::directory::json_ok(json!({ "seenAt": seen }).to_string()),
+        Err(e) => internal(e),
+    }
+}
+
+/// TS `markSeen` + `emitEvent` — 돌려주는 값은 밀리초 ISO(UTC) 의 seenAt.
+async fn mark_seen(
+    pool: &PgPool,
+    account_id: &str,
+    up_to_iso: &str,
+) -> Result<String, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let (seen, changed): (String, bool) = sqlx::query_as(
+        "with prev as (select seen_at from inbox_view_cursor where account_id = $1::uuid), \
+         up as ( \
+           insert into inbox_view_cursor as v (account_id, seen_at) values ($1::uuid, least($2::timestamptz, now())) \
+           on conflict (account_id) do update \
+             set seen_at = greatest(v.seen_at, excluded.seen_at), \
+                 updated_at = case when excluded.seen_at > v.seen_at then now() else v.updated_at end \
+           returning v.seen_at) \
+         select to_char(date_trunc('milliseconds', up.seen_at) at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'), \
+                (select seen_at from prev) is null \
+                  or date_trunc('milliseconds', up.seen_at) <> date_trunc('milliseconds', (select seen_at from prev)) \
+           from up",
+    )
+    .bind(account_id)
+    .bind(up_to_iso)
+    .fetch_one(&mut *tx)
+    .await?;
+    if changed {
+        crate::write::emit_event(
+            &mut tx,
+            &json!({ "type": "inbox.updated", "accountId": account_id }),
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(seen)
 }
 
 #[cfg(test)]
