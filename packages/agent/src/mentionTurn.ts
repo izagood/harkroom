@@ -3066,8 +3066,11 @@ export async function runMentionTurn(
     //
     // **읽기가 실패해도 던지지 않는다.** 이 값은 판정을 더 좋게 만드는 재료이지 턴의 성패가
     // 아니다. 여기서 예외를 올리면 원래 하려던 실패 처리(통지·재시도 회계)까지 함께 무너진다.
+    // **이번 턴 것만 읽는다**(2026-11-14, security #2080 참고). 스레드 세션을 이어 쓰면 지난 턴의 한도 줄이 같은 파일에
+    // 남아 있어, 시각 제한 없이 읽으면 그것을 이번 턴의 사실로 집어 계정 축을 한 칸 더 돈다(#2042 와 같은 꼴). 턴 도중
+    // 관측(`probeApiError`)과 같은 기준선(`turnStartedAtMs`)을 쓴다.
     const apiError = await readLastApiError(def.harness, rec.sessionId, {
-      configDir: deps.claudeConfigDir,
+      configDir: deps.claudeConfigDir, sinceMs: turnStartedAtMs,
     }).catch(() => null);
     // **무발화는 tail 을 담지 않는다.** TUI 에서는 주입한 프롬프트가 에코돼 tail 에 섞이고,
     // 그것이 판정 재료가 되면 사람이 본문 한 줄로 러너를 죽일 수 있다(설계 §3-4). 무발화는
