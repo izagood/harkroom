@@ -99,6 +99,14 @@ impl AgentLink for &LinkClient {
     }
 }
 
+/// 러너가 쥔 링크(`LinkClient::new` 의 `Arc`) — 박동 시계처럼 러너 수명을 넘겨 쥐어야 하는 자리가 쓴다.
+impl AgentLink for std::sync::Arc<LinkClient> {
+    type Operator = LinkClient;
+    fn operator(&self) -> &LinkClient {
+        self
+    }
+}
+
 /// 시도 범위의 임대 끝 알림 자리 — **아무것도 보내지 않는다.** 턴 임대는 멘션 하나의 것이다: 정본은 임대 끝(`notifyEnded`)을
 /// `secretLeases.release` 한 곳(`secretLeases.ts` 130~137, `main.ts` 637)에서만 보내고, `release` 는 스케줄러가 **멘션 결말**에서만
 /// 부른다(`mentionTurn.ts` 에는 없다). 오퍼레이터는 끝 알림을 받으면 `(runner, cause)` 임대를 장부에서 빼고 서버에 end 를
@@ -113,6 +121,24 @@ impl LeaseNotice for KeepMentionLease {
 }
 
 static KEEP_MENTION_LEASE: KeepMentionLease = KeepMentionLease;
+
+impl<L: AgentLink + Send + Sync + 'static> AgentClients<L> {
+    /// 러너 수명 장부의 실물 재료 — 박동은 **이 묶음의 링크**로(`LeaseHandoff::heartbeat`), 비밀 뿌리는 오퍼레이터가 넘긴
+    /// `HARKROOM_TURN_SECRETS_DIR`(오퍼레이터 `serve.rs` 의 `turn-secrets`, 정본 `main.ts` 640 과 같은 값).
+    pub fn lease_life(
+        &self,
+        secrets_dir: Option<std::path::PathBuf>,
+    ) -> crate::mention_hooks::LeaseLife {
+        let link = self.link.clone();
+        crate::mention_hooks::LeaseLife {
+            beat: std::sync::Arc::new(move |cause: &str| {
+                crate::mention_hooks::LeaseHandoff::heartbeat(link.operator(), cause)
+            }),
+            every: crate::mention_hooks::LEASE_HEARTBEAT,
+            secrets_dir,
+        }
+    }
+}
 
 impl<L: AgentLink> AgentClients<L> {
     /// 오퍼레이터 알림 길 — 묶음을 지은 그 링크.

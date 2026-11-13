@@ -64,6 +64,55 @@ impl<S: SchedulerHooks> Drop for OnceRelease<S> {
     }
 }
 
+/// 스케줄러 고리로 가는 사건 — [`ChannelScheduler`] 가 보낸다.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SchedEvent {
+    Fenced,
+    Outcome(bool),
+    StopRequested(String),
+    ExecutableMissing,
+    SlotReleased(String),
+    TurnEnded {
+        thread_key: String,
+        mention_id: String,
+    },
+}
+
+/// [`SchedulerHooks`] 실물 — 멘션 스레드에서 스케줄러 고리로 사건을 보낸다. **패닉하지 않는다**: 받는 쪽이 사라졌으면(러너
+/// 종료 중) 보내기 실패를 버린다. 패닉 풀림 중 `Drop`(`OnceRelease`)에서 불려도 안전하다.
+#[derive(Clone)]
+pub struct ChannelScheduler(pub std::sync::mpsc::Sender<SchedEvent>);
+
+impl ChannelScheduler {
+    fn send(&self, e: SchedEvent) {
+        let _ = self.0.send(e);
+    }
+}
+
+impl SchedulerHooks for ChannelScheduler {
+    fn notice_fenced(&mut self) {
+        self.send(SchedEvent::Fenced);
+    }
+    fn turn_outcome(&mut self, ok: bool) {
+        self.send(SchedEvent::Outcome(ok));
+    }
+    fn stop_requested(&mut self, at: &str) {
+        self.send(SchedEvent::StopRequested(at.to_string()));
+    }
+    fn executable_missing(&mut self) {
+        self.send(SchedEvent::ExecutableMissing);
+    }
+    fn release_slot(&mut self, thread_key: &str) {
+        self.send(SchedEvent::SlotReleased(thread_key.to_string()));
+    }
+    fn turn_ended(&mut self, thread_key: &str, mention_id: &str) {
+        self.send(SchedEvent::TurnEnded {
+            thread_key: thread_key.to_string(),
+            mention_id: mention_id.to_string(),
+        });
+    }
+}
+
 #[cfg(test)]
 #[path = "mention_sched_tests.rs"]
 mod tests;

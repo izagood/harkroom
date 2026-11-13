@@ -34,6 +34,8 @@ pub trait SchedulerHooks {
 pub trait LeaseHandoff {
     fn lease(&self, cause: &str, lease_id: &str, token: &str, expires_at: &str);
     fn lease_ended(&self, cause: &str);
+    /// 임대 늘리기 박동(정본 `notifyHeartbeat` → `relay.notifySecretLeaseHeartbeat`).
+    fn heartbeat(&self, cause: &str);
 }
 
 impl LeaseHandoff for LinkClient {
@@ -42,6 +44,9 @@ impl LeaseHandoff for LinkClient {
     }
     fn lease_ended(&self, cause: &str) {
         self.notify_secret_lease_ended(cause);
+    }
+    fn heartbeat(&self, cause: &str) {
+        self.notify_secret_lease_heartbeat(cause);
     }
 }
 
@@ -127,7 +132,8 @@ impl LeaseBook {
         }
     }
     /// 칸을 빼고(박동은 여기서 멈춘다) 받은 임대였으면 기록을 가린다. 끝 알림을 보낼지(`Held` 였나) 돌려준다.
-    fn release(&self, cause: &str) -> bool {
+    /// 부르는 쪽(`LinkHooks` 결말, 패닉 뒤 정리)이 `true` 면 끝을 알린다.
+    pub fn release(&self, cause: &str) -> bool {
         let Some(mut e) = self.map().remove(cause) else {
             return false;
         };
@@ -146,7 +152,7 @@ impl LeaseBook {
         ) else {
             return;
         };
-        if e.transcripts.is_empty() || id.contains('/') || id.contains("..") {
+        if e.transcripts.is_empty() || id.is_empty() || id.contains('/') || id.contains("..") {
             return;
         }
         let needles = lease_needles(&root.join(id));
