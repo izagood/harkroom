@@ -73,7 +73,7 @@ pub fn attempt_command<'a>(
 }
 
 /// 시도의 명령 옵션 — **차례가 정해져 있다**: 시도 칸([`attempt_command`])을 먼저 얹고, 그 결과 위에 이 시도의 계정
-/// 폴더([`AttemptAccount::command`])를 **마지막에** 얹는다. 거꾸로면 기본 옵션의 폴더가 남는다.
+/// 폴더([`AttemptAccount::command`])를 **마지막에** 얹는다. 계정 단계를 빠뜨리면 기본 옵션의 폴더가 남는다.
 pub fn attempt_command_for_account<'a>(
     base: &TurnCommandOptions<'a>,
     account: &'a AttemptAccount,

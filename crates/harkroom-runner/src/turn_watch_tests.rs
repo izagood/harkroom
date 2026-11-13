@@ -175,3 +175,103 @@ fn watch_loop_runs_until_stop() {
         0
     );
 }
+
+/// 탐침 IO 가 도는 동안 감시 자리를 다른 쪽(sink·통지 글 짓기)이 잠글 수 있다.
+struct BusyIo {
+    watch: Watch,
+    secrets: NoticeSecrets,
+    posted: Vec<Option<String>>,
+    sink_wrote: bool,
+}
+
+impl ProbeIo for BusyIo {
+    fn now_ms(&self) -> i64 {
+        1_000
+    }
+    fn exited(&self) -> bool {
+        self.posted.len() >= 2
+    }
+    fn read_spoke(&mut self) -> Result<bool, String> {
+        // 통지 글을 짓듯 화면 줄을 꺼낸다 — 루프가 잠금을 쥐고 있었으면 여기서 막힌다(try_lock 실패).
+        let line = self
+            .watch
+            .try_lock()
+            .expect("탐침 IO 중에는 감시 잠금이 풀려 있다")
+            .screen_line_for_post(&self.secrets);
+        self.posted.push(line);
+        // 그사이 PTY 출력이 들어온다(sink 가 시각을 적는다).
+        self.watch.lock().unwrap().end.last_data_at_ms = 777;
+        self.sink_wrote = true;
+        Ok(false)
+    }
+    fn log_unreadable(&mut self, _r: &str) {}
+    fn probe_denials(&mut self, _e: &mut EndState) {}
+    fn probe_mac_permission(&mut self, _e: &mut EndState) {}
+    fn probe_mcp_auth(&mut self, _e: &mut EndState) {}
+    fn probe_api_error(&mut self, _e: &mut EndState) -> bool {
+        false
+    }
+    fn probe_turn_state(&mut self, _e: &mut EndState) {}
+    fn screen_idle_ended(&mut self, _n: i64) -> Option<bool> {
+        None
+    }
+    fn read_recorded_end(&mut self, _s: i64) -> Option<RecordedTurnEnd> {
+        None
+    }
+    fn screen_answer(&mut self) -> Option<String> {
+        None
+    }
+    fn log_screen_ended(&mut self) {}
+    fn nudge_or_expire(&mut self, _e: &mut EndState, _p: &mut ProbeState) {}
+    fn apply_end_action(&mut self, _a: EndAction) {}
+    fn stall_probe(&mut self, _e: &EndState, now_ms: i64) -> StallProbe {
+        StallProbe {
+            reads_transcript: true,
+            transcript_mtime_ms: None,
+            looks_unsent: false,
+            now_ms,
+        }
+    }
+    fn apply_stall(&mut self, _v: StallVerdict) {}
+}
+
+/// security nit: 탐침이 글을 짓는 주기에 출력이 계속 들어와도 막히지 않는다 — 탐침 IO 는 잠금 밖에서 돌고, 그사이 sink 가
+/// 적은 출력 시각은 주기가 끝나 돌려놓을 때 지워지지 않는다.
+#[test]
+fn probe_io_runs_outside_the_watch_lock() {
+    let watch: Watch = Arc::new(Mutex::new(WatchState {
+        end: EndState {
+            has_controls: true,
+            ..EndState::default()
+        },
+        screen: b"line one\nhello there\n".to_vec(),
+    }));
+    let mut io = BusyIo {
+        watch: Arc::clone(&watch),
+        secrets: NoticeSecrets::default(),
+        posted: vec![],
+        sink_wrote: false,
+    };
+    let mut probe = ProbeState::default();
+    let cfg = EndConfig::new(60_000);
+    let stop = AtomicBool::new(false);
+    let n = run_watch(
+        &watch,
+        &mut probe,
+        &cfg,
+        &mut io,
+        Duration::from_millis(1),
+        &stop,
+    );
+    assert!(n >= 1);
+    assert_eq!(
+        io.posted.first().cloned().flatten().as_deref(),
+        Some("hello there")
+    );
+    assert!(io.sink_wrote);
+    assert_eq!(
+        watch.lock().unwrap().end.last_data_at_ms,
+        777,
+        "sink 가 적은 시각이 남는다"
+    );
+}
