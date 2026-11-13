@@ -13,6 +13,9 @@ import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, createMember } from './helpers/fixtures.js';
 import { startTestDb } from './helpers/testDb.js';
 import { postMessage } from '../src/services/messages.js';
+import { startEventBus } from '../src/eventBus.js';
+import type { WorkspaceEvent } from '../src/events.js';
+import pg from 'pg';
 
 const ON = process.env.HARKROOM_RUST_DB_TESTS === '1';
 const MANIFEST = fileURLToPath(new URL('../../../crates/harkroom-server/Cargo.toml', import.meta.url));
@@ -186,18 +189,45 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       const audit = (await db.pool.query<{ n: string }>('select count(*)::text as n from audit_log')).rows[0]!.n;
       expect(Number(audit), 'audit_log 가 비면 /audit 대조가 빈 목록끼리 비교한다').toBeGreaterThan(3);
 
+      // S5.2 P3 — 쓰기 역할. **`write.rs::REQUIRED_PRIVILEGES` 만** 준다(homelab GRANT 와 같은 표). 넓은 권한으로 돌리면
+      // 앞단이 목록에 없는 표를 쓰기 시작해도 이 시험이 못 잡는다.
+      const rw = `front_rw_${Math.random().toString(36).slice(2, 10)}`;
+      await db.pool.query(`create role ${rw} login password '${rw}' nosuperuser nocreatedb nocreaterole nobypassrls connection limit 4`);
+      for (const q of [
+        `grant pg_read_all_data to ${rw}`,
+        `grant insert on event_outbox to ${rw}`,
+        `grant usage on sequence event_outbox_id_seq to ${rw}`,
+        `grant insert on audit_log to ${rw}`,
+        `grant insert, update on inbox_view_cursor to ${rw}`,
+      ]) await db.pool.query(q);
+      const writeUrl = new URL(db.uri);
+      writeUrl.username = rw;
+      writeUrl.password = rw;
+      // 앞단이 outbox 에 넣은 이벤트가 TS 버스(LISTEN)로 건너오는지.
+      const busEvents: WorkspaceEvent[] = [];
+      const bus = await startEventBus({
+        pool: db.pool,
+        connect: async () => { const c = new pg.Client({ connectionString: db.uri }); await c.connect(); return c; },
+        emit: (e) => { busEvents.push(e); },
+        log: () => {},
+      });
+
       const port = await freePort();
-      const f = await startFront(bin, { UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(port), HARKROOM_FRONT_TS_ROUTES: '' });
+      const f = await startFront(bin, {
+        UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(port), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
+      });
       front = f.child;
       // 앞단이 옮긴 줄을 **직접** 답하는지 — 모두 TS 로 넘기면 대조는 TS 끼리 비교해 늘 통과한다.
       for (const key of [
         'GET /accounts', 'GET /dms', 'GET /mcp-servers', 'GET /audit',
         'GET /teams', 'GET /teams/{id}', 'GET /handle-groups', 'GET /handle-groups/{id}',
         'GET /skills', 'GET /skills/{slug}', 'GET /settings/agent-defaults', 'GET /settings/mention-policy',
-        'GET /inbox/today/open', 'GET /inbox/today/done',
+        'GET /inbox/today/open', 'GET /inbox/today/done', 'PUT /inbox/today/seen',
       ]) {
         expect(f.log(), key).toContain(`"${key}"`);
       }
+      expect(f.log()).toContain('front: write pool on');
+      expect(f.log()).not.toContain('missing privileges');
 
       const r = await cargo(['test', '--test', 'contrast', '--', '--nocapture'], {
         HARKROOM_CONTRAST_TS_URL: tsUrl,
@@ -210,6 +240,57 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       expect(r.code, `${r.out}\n--- front log ---\n${f.log()}`).toBe(0);
       expect(r.out, r.out).not.toContain('skip: HARKROOM_CONTRAST');
       expect(r.out).toMatch(/contrast: [1-9]\d* case\(s\) compared/);
+
+      // S5.2 P3 — `PUT /inbox/today/seen` 대조. 거절은 상태·코드까지(문구는 zod 와 다르다), 성공은 본문까지 같아야 한다.
+      const rsUrl = `http://127.0.0.1:${port}`;
+      const put = async (base: string, o: { token?: string; ct?: string; body?: string }) => {
+        const headers: Record<string, string> = {};
+        if (o.token) headers.authorization = `Bearer ${o.token}`;
+        if (o.ct) headers['content-type'] = o.ct;
+        const res = await fetch(`${base}/inbox/today/seen`, { method: 'PUT', headers, body: o.body });
+        const text = await res.text();
+        const json = text ? JSON.parse(text) as { seenAt?: string; error?: { code: string } } : {};
+        return { status: res.status, code: json.error?.code, seenAt: json.seenAt };
+      };
+      const J = 'application/json';
+      const upTo = (s: string) => JSON.stringify({ upTo: s });
+      for (const [name, o] of [
+        ['익명·본문 없음 → 401', {}],
+        ['익명·빈 json → 400(본문이 인증보다 먼저)', { ct: J, body: '' }],
+        ['익명·깨진 json → 400', { ct: J, body: '{' }],
+        ['익명·모르는 형식 → 415', { ct: 'application/xml', body: '<a/>' }],
+        ['본문 없음 → 400', { token: agent.pat }],
+        ['text/plain → 400', { token: agent.pat, ct: 'text/plain', body: 'x' }],
+        ['배열 → 400', { token: agent.pat, ct: J, body: '[]' }],
+        ['upTo 숫자 → 400', { token: agent.pat, ct: J, body: JSON.stringify({ upTo: 1 }) }],
+        ['오프셋 없음 → 400', { token: agent.pat, ct: J, body: upTo('2026-11-13T09:00:00') }],
+        ['없는 날 → 400', { token: agent.pat, ct: J, body: upTo('2026-02-29T00:00:00Z') }],
+        ['오프셋 +24:00 → 500(JS Invalid Date)', { token: agent.pat, ct: J, body: upTo('2026-11-13T09:00+24:00') }],
+      ] as const) {
+        const [a, b] = [await put(tsUrl, o), await put(rsUrl, o)];
+        expect({ status: b.status, code: b.code }, name).toEqual({ status: a.status, code: a.code });
+      }
+      // 정상: mem 의 커서를 Rust 로 처음 세운다 → 이벤트 한 번. 같은 값을 TS 로 → 같은 값. 더 옛 값 → 그대로·이벤트 없음.
+      const t1 = '2026-11-13T09:00:00.123456+09:00';
+      const memSeen = await put(rsUrl, { token: member.token, ct: J, body: upTo(t1) });
+      expect(memSeen).toEqual({ status: 200, code: undefined, seenAt: '2026-11-13T00:00:00.123Z' });
+      expect(await put(tsUrl, { token: member.token, ct: J, body: upTo(t1) })).toEqual(memSeen);
+      expect(await put(rsUrl, { token: member.token, ct: J, body: upTo('2026-11-12T00:00:00Z') })).toEqual(memSeen);
+      // 미래는 지금으로 자른다.
+      const before = Date.now();
+      const fut = await put(rsUrl, { token: member.token, ct: J, body: upTo('2999-01-01T00:00:00Z') });
+      expect(fut.status).toBe(200);
+      expect(Date.parse(fut.seenAt!)).toBeGreaterThanOrEqual(before - 5_000);
+      expect(Date.parse(fut.seenAt!)).toBeLessThanOrEqual(Date.now());
+      const tsFut = await put(tsUrl, { token: member.token, ct: J, body: upTo('2999-01-01T00:00:00Z') });
+      expect(Date.parse(tsFut.seenAt!)).toBeGreaterThanOrEqual(Date.parse(fut.seenAt!));
+      // Rust 가 올린 두 번(처음·미래)만 버스로 건너온다 — 바뀌지 않은 PUT 은 이벤트가 없다.
+      const deadline = Date.now() + 10_000;
+      const mine = () => busEvents.filter((e) => e.type === 'inbox.updated' && (e as { accountId?: string }).accountId === member.accountId);
+      while (mine().length < 2 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
+      await new Promise((r) => setTimeout(r, 500));
+      expect(mine().length, JSON.stringify(busEvents)).toBe(2);
+      await bus.stop();
     } finally {
       front?.kill('SIGTERM');
       await app.close();

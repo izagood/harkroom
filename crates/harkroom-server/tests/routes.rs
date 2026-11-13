@@ -43,6 +43,7 @@ async fn front(table: &'static [Moved], ts: &str) -> String {
     let state = AppState {
         up: Upstream::new(&upstream().await),
         pool: lazy_pool(),
+        write: None,
     };
     let app = routes::router(state, table, &TsOverrides::parse(Some(ts)));
     format!("http://{}", serve(app).await)

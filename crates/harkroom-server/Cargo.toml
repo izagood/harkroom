@@ -13,6 +13,8 @@ path = "src/main.rs"
 
 # 버전은 `=` 로 고정한다. lock 의 모든 판은 공개 14일이 지난 것만 쓴다.
 [dependencies]
+# 이벤트 버스 쓰는 쪽(S5.0) — outbox 계약을 한 곳에 둔다(P3 쓰기 바탕).
+harkroom-bus = { path = "../harkroom-bus" }
 axum = { version = "=0.8.9", default-features = false, features = ["http1", "tokio"] }
 hex = "=0.4.3"
 http-body-util = "=0.1.5"

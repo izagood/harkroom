@@ -12,6 +12,8 @@ FROM rust:1.96-slim-trixie AS build
 WORKDIR /src
 
 # 의존만 먼저 받는다(소스가 바뀌어도 이 층은 캐시에 남는다).
+# 경로 의존(`harkroom-bus`, 이벤트 outbox 쓰는 쪽)도 같이 넘긴다 — 없으면 fetch 가 그 매니페스트를 못 찾는다.
+COPY crates/harkroom-bus crates/harkroom-bus
 COPY crates/harkroom-server/Cargo.toml crates/harkroom-server/Cargo.lock crates/harkroom-server/
 RUN cd crates/harkroom-server && cargo fetch --locked
 
