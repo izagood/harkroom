@@ -94,6 +94,15 @@ impl<O: LeaseHandoff, S: SchedulerHooks> MentionHooks for LinkHooks<'_, O, S> {
     }
 }
 
+impl<O: LeaseHandoff, S: SchedulerHooks> Drop for LinkHooks<'_, O, S> {
+    /// 패닉으로 `release_lease` 를 못 지났으면 여기서 끝을 알린다(정상 길에서는 이미 `take` 되어 아무것도 안 한다).
+    fn drop(&mut self) {
+        if let Some(cause) = self.held.take() {
+            self.operator.lease_ended(&cause);
+        }
+    }
+}
+
 #[cfg(test)]
 #[path = "mention_hooks_tests.rs"]
 mod tests;
