@@ -199,3 +199,23 @@ fn drain_waits_for_every_turn_end() {
     ender.join().unwrap();
     pump.join().unwrap();
 }
+
+/// security nit(#2091): 물러나기는 시한까지만 기다린다 — `TurnEnded` 가 오지 않아도 걸리지 않는다.
+#[test]
+fn drain_gives_up_after_its_limit() {
+    let (s, _seen, running) = scheduler(false);
+    let s = s.with_drain_limit(std::time::Duration::from_millis(50));
+    s.admit(&json!({"entries": []}), &BatchContext::default())
+        .unwrap();
+    let t = std::time::Instant::now();
+    s.drain();
+    assert!(
+        t.elapsed() < std::time::Duration::from_secs(5),
+        "시한 뒤 돌아온다"
+    );
+    assert_eq!(running.count(), 2, "끝나지 않은 멘션은 그대로 센다");
+    assert_eq!(
+        running.wait_idle_for(std::time::Duration::from_millis(1)),
+        2
+    );
+}
