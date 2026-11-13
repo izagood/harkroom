@@ -196,6 +196,7 @@ fn outcome_live_and_ranks() {
 
 /// security: 감시 자리는 시도마다 새것 — a1 이 남긴 API 오류·화면 꼬리가 a2 의 결과 접기·화면 줄에 섞이지 않는다.
 #[test]
+#[allow(clippy::result_large_err)]
 fn watch_is_fresh_per_attempt() {
     let w = world("fresh");
     let store = SessionStore::new(w.root.join("sessions.json"));
