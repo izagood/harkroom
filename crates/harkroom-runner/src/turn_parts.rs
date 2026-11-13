@@ -14,6 +14,7 @@ use serde_json::json;
 use crate::mention_target::{MentionTarget, TargetWake};
 use crate::prompt_system::{SystemPromptOpts, build_system_prompt};
 use crate::prompt_turn::{TurnWake, WakeWritten};
+use crate::turn_attempt_account::AttemptAccount;
 use crate::turn_command::TurnCommandOptions;
 use crate::turn_files::{TurnFileError, write_system_prompt_file};
 use crate::turn_prep::TurnSession;
@@ -69,6 +70,25 @@ pub fn attempt_command<'a>(
     o.cause_message_id = Some(cause);
     o.turn_id = Some(turn_id);
     o
+}
+
+/// 시도의 명령 옵션 — **차례가 정해져 있다**: 시도 칸([`attempt_command`])을 먼저 얹고, 그 결과 위에 이 시도의 계정
+/// 폴더([`AttemptAccount::command`])를 **마지막에** 얹는다. 거꾸로면 기본 옵션의 폴더가 남는다.
+pub fn attempt_command_for_account<'a>(
+    base: &TurnCommandOptions<'a>,
+    account: &'a AttemptAccount,
+    session: &'a TurnSession,
+    system_prompt_file: &'a str,
+    cause: &'a str,
+    turn_id: &'a str,
+) -> TurnCommandOptions<'a> {
+    account.command(&attempt_command(
+        base,
+        session,
+        system_prompt_file,
+        cause,
+        turn_id,
+    ))
 }
 
 #[cfg(test)]
