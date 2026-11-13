@@ -9,6 +9,7 @@
 // **admit 의 계약 한 줄: 턴 길이의 일을 절대 await 하지 않는다.** 유예 통지와 고아 entry 의
 // markRead 만 await 한다. 이 계약이 깨지면 폴 루프가 다시 턴에 묶여, 이 모듈이 존재하는
 // 이유 자체가 사라진다.
+import type { MentionRelay } from './mentionRelay.js';
 import { ProviderLaneError } from './providerLane.js';
 import type { FailOpts, InboxBatch } from './harkroom.js';
 import { ASK_TEXT_OPTION_ID, type MessageRow, type WakeReportTo } from '@harkroom/shared';
@@ -204,7 +205,11 @@ export interface MentionSchedulerDeps {
     isLastAccount: boolean;
     /** 이 시도의 프롬프트가 입력창에 들어갔다(`MentionTurnDeps.onPromptDelivered`). 관문 표식 지우기의 근거다. */
     onPromptDelivered?: () => void;
+    /** 이 멘션의 중계 세션(멘션 하나에 하나 — `mentionRelay.ts`). 있으면 턴은 이것으로 세션을 잡는다. */
+    relay?: MentionRelay;
   }): MentionTurnDeps;
+  /** 멘션 하나의 중계 세션을 연다(`runOne` 이 첫 시도 전에 열고 정리 뒤 닫는다). 없으면 턴이 시도마다 연다. */
+  mentionRelay?(): MentionRelay;
   hooks: {
     stopRequested(at: string): void;
     exitIfUnrecoverable(err: unknown): void;
@@ -636,6 +641,8 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
        */
       ...(viaEdit ? { editedMention: mention } : {}),
     };
+    // 멘션 하나에 중계 세션 하나 — 시도 사이에 온 [중단] 도 받아 다음 시도를 띄우기 전에 접는다.
+    const mentionRelay = deps.mentionRelay?.();
     try {
       const lane = deps.laneFor
         ? await deps.laneFor(threadKey, anchor)
@@ -679,7 +686,10 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
           */
           let delivered = false;
           return deps.runMentionTurn(
-            deps.buildTurnDeps({ ctx, mention, account, isLastAccount, onPromptDelivered: () => { delivered = true; } }), target,
+            deps.buildTurnDeps({
+              ctx, mention, account, isLastAccount, onPromptDelivered: () => { delivered = true; },
+              ...(mentionRelay ? { relay: mentionRelay } : {}),
+            }), target,
           ).then(
             (result) => {
               if (account && delivered) void deps.accountAttention?.clear(account).catch(() => undefined);
@@ -993,6 +1003,7 @@ export function createMentionScheduler(deps: MentionSchedulerDeps): MentionSched
       }
       inFlightThreads.delete(threadKey);
       deps.registry.unreserveMention(threadKey);
+      mentionRelay?.close();
     }
   }
 

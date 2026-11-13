@@ -34,6 +34,8 @@ import { acceptsPtyInput, composeSpawn, runPtyTurn } from '../src/pty.js';
 import type { PtyWriter, TurnResult } from '../src/pty.js';
 import type { RelayRunnerFrame } from '@harkroom/shared';
 import { createRelayClient, type RelayHandlers } from '../src/relay.js';
+import { createMentionRelay } from '../src/mentionRelay.js';
+import { accountFailureOf } from '../src/claudeAccounts.js';
 
 // PTY 계약 테스트가 쓰는 가짜 하네스(#369) — 이 파일에서는 `claude` 라는 이름의 shim 뒤에
 // 놓아 진짜 하네스 프리셋·진짜 spawn 경로를 그대로 태운다.
@@ -6163,5 +6165,81 @@ describe('하네스 기록의 API 오류로 곧바로 접는다 (2026-10-25)', (
     const t = await turn(null);
     expect(t.killed()).toBeNull();
     expect(t.err instanceof Error).toBe(false); // 실패로 던지지 않는다
+  });
+});
+
+/** 멘션 하나에 중계 세션 하나 — 시도 사이에 누른 [중단] 도 받는다(`mentionRelay.ts`). */
+describe('시도 사이 [중단]', () => {
+  it('a1 끝 ~ a2 시작 사이 [중단] → a2 를 띄우지 않는다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    let cancel: ((by: string) => void) | undefined;
+    const frames: string[] = [];
+    const mr = createMentionRelay({
+      openSession(input: { onCancel?: (by: string) => void }) {
+        cancel = input.onCancel;
+        frames.push('open');
+        return {
+          sessionId: 'm-1', push: () => {}, bindInput: () => {}, needsAttention: () => {},
+          close: () => { frames.push('close'); },
+          unbindInput: () => { frames.push('unbind'); },
+          restate: () => { frames.push('restate'); },
+        };
+      },
+    } as never);
+    const first = await makeDeps(fake, { relay: mr });
+    first.runTurn.script = async () => ({ exitCode: 1, timedOut: false, tail: '' });
+    await expect(runMentionTurn(first.deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION })).rejects.toThrow();
+    // a1 은 끝났고 a2 는 아직 — 사람이 [중단] 을 누른다(세션은 멘션 내내 열려 있다).
+    cancel?.('alice');
+    const second = await makeDeps(fake, { relay: mr });
+    let spawned = false;
+    second.runTurn.script = async () => { spawned = true; return { exitCode: 0, timedOut: false, tail: '' }; };
+    await expect(runMentionTurn(second.deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }))
+      .rejects.toThrow(/@alice 가 이 턴을 중단했다/);
+    expect(spawned).toBe(false);
+    mr.close();
+    expect(frames[0]).toBe('open');
+    expect(frames.filter((f) => f === 'open')).toHaveLength(1);
+    expect(frames.at(-1)).toBe('close');
+  });
+});
+
+/** 막힌 시도는 계정 전환 방아쇠가 아니다 — 앞 시도가 세션 파일에 남긴 한도 줄을 싣지 않는다. */
+describe('관문이 막은 시도의 API 오류', () => {
+  it('[중단] 으로 띄우지 않은 시도는 세션 파일의 한도 줄을 싣지 않는다 → 계정을 넘기지 않는다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const configDir = await mkdtemp(join(tmpdir(), 'mention-turn-cfg-'));
+    let cancelNext = false;
+    const relay = {
+      openSession(input: { onCancel?: (by: string) => void }) {
+        if (cancelNext) input.onCancel?.('alice');
+        return { sessionId: 'b-1', push: () => {}, bindInput: () => {}, needsAttention: () => {}, close: () => {} };
+      },
+    };
+    const { deps, runTurn } = await makeDeps(fake, { claudeConfigDir: configDir, relay });
+    runTurn.script = async () => ({ exitCode: 1, timedOut: false, tail: '' });
+    await expect(runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION })).rejects.toThrow();
+    // 앞 시도가 세션 파일에 한도 줄을 남겼다.
+    const sid = deps.store.get(SessionStore.threadKey(CHANNEL, null))!.sessionId!;
+    const proj = join(configDir, 'projects', '-private-tmp-whatever-cwd');
+    await mkdir(proj, { recursive: true });
+    await writeFile(join(proj, `${sid}.jsonl`), JSON.stringify({
+      type: 'assistant',
+      isApiErrorMessage: true,
+      message: { role: 'assistant', content: [{ type: 'text', text: "You've hit your session limit \u00b7 resets 3:00am" }] },
+    }) + '\n');
+    // 다음 시도는 [중단] 으로 막힌다.
+    cancelNext = true;
+    let spawned = false;
+    runTurn.script = async () => { spawned = true; return { exitCode: 0, timedOut: false, tail: '' }; };
+    const err = await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION })
+      .then(() => null, (e: unknown) => e as Error & { harnessApiError?: string });
+    expect(spawned).toBe(false);
+    expect(err).not.toBeNull();
+    expect(err!.message).toMatch(/@alice 가 이 턴을 중단했다/);
+    expect(err!.harnessApiError).toBeUndefined();
+    expect(accountFailureOf(err)).toBeNull();
   });
 });

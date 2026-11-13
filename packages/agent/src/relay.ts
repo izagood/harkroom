@@ -183,6 +183,10 @@ export interface OpenSession {
   needsAttention(screen: string, ranks: AttentionRanks): void;
   /** 턴이 끝났다. 세션을 닫고 서버에 알린다. */
   close(): void;
+  /** 시도 하나가 끝났다 — 그 시도의 PTY 입력 통로를 놓는다(세션은 멘션 내내 산다, `mentionRelay.ts`). */
+  unbindInput?(): void;
+  /** 시도마다 바뀌는 계정 칩(순번만)을 고쳐 같은 세션 id 로 다시 알린다. */
+  restate?(ranks: AttentionRanks): void;
 }
 
 /** 관문에 막힌 계정의 풀·계정 순번(칩 ③). 생략은 모른다, `claudeAccountRank: null` 은 기본 로그인. */
@@ -741,6 +745,17 @@ export function createRelayClient(opts: RelayClientOptions): RelayClient {
             // `output` 과 같은 규율 — 서버는 이 바이트를 열지 않는다.
             screen: Buffer.from(screen, 'utf8').toString('base64'),
           });
+        },
+        unbindInput() {
+          live.writer = null;
+        },
+        restate(ranks) {
+          if (closed) return;
+          delete info.claudeAccountRank;
+          delete info.claudePoolRank;
+          if (ranks.claudeAccountRank !== undefined) info.claudeAccountRank = ranks.claudeAccountRank;
+          if (ranks.claudePoolRank !== undefined) info.claudePoolRank = ranks.claudePoolRank;
+          send({ type: 'session.started', session: info });
         },
         close() {
           if (closed) return;

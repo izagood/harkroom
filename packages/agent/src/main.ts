@@ -16,6 +16,7 @@
 // mentionTurn.ts::runMentionTurn 에 있다: main.ts 는 top-level await 로 접속·설정 파일
 // 쓰기 같은 부작용을 곧바로 일으키므로, 그 흐름을 여기 두면 테스트가 import 하는 순간
 // 진짜 서버에 붙으려 든다.
+import { createMentionRelay } from './mentionRelay.js';
 import { PROVIDER_LANE_ENV } from '@harkroom/shared/providerLane';
 import { createProviderLane, ProviderLaneError, sweepLaneTurnDir, sweepTurnMcpDir, writeTurnMcpConfig } from './providerLane.js';
 import { resolveTurnModel } from './threadModel.js';
@@ -745,7 +746,8 @@ const scheduler = createMentionScheduler({
   runMentionTurn,
   // 계정별로 갈리는 두 필드(`claudeAccount`·`claudeConfigDir`)만 계정 축이 채운다 —
   // 나머지는 계정과 무관하므로 매번 같은 값이다.
-  buildTurnDeps: ({ ctx, mention, account, isLastAccount, onPromptDelivered }) => ({
+  mentionRelay: () => createMentionRelay(relay),
+  buildTurnDeps: ({ ctx, mention, account, isLastAccount, onPromptDelivered, relay: mentionRelay }) => ({
     ...(onPromptDelivered ? { onPromptDelivered } : {}),
     // 비밀 보관소 D7 — 이 턴의 기록 파일을 멘션 장부에 적는다(멘션이 끝날 때 가린다).
     noteTranscript: (cause: string, path: string) => {
@@ -803,7 +805,7 @@ const scheduler = createMentionScheduler({
     sweepCodexRules: sweepRules,
     turnTimeoutMs: config.turnTimeoutMs,
     harnessStallMs: config.harnessStallMs,
-    relay,
+    relay: mentionRelay ?? relay,
     // 하네스가 MCP 에 우리 토큰을 거절당하면 토큰 주인(오퍼레이터)에게 알린다(2026-10-01).
     reportMcpAuthRejected: (servers, turnStartedAtMs) => relay.notifyMcpAuthRejected(servers, turnStartedAtMs),
     // #337: 멘션 턴도 자기 존재를 등록해야 인터랙티브 open 이 그 PTY 에 합류한다.
