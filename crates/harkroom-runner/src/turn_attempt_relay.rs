@@ -35,9 +35,8 @@ impl<'s> RelayAttempt<'s> {
 
 impl Drop for RelayAttempt<'_> {
     fn drop(&mut self) {
-        // `unbind_input` 은 세션 맵 잠금 하나만 잡는다. 독 든 잠금이면 패닉하지 않고 건너뛴다.
-        let _ =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.session.unbind_input()));
+        // 세션 맵 잠금은 독이 들어도 값을 받아 쓴다 — 패닉 풀림 도중에도 여기서 다시 패닉하지 않는다.
+        self.session.unbind_input();
     }
 }
 

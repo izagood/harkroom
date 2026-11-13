@@ -22,10 +22,12 @@ use crate::adapter::AgentHarness;
 use crate::link::random_uuid;
 use crate::mention_run::{TurnAttempt, TurnOk};
 use crate::mention_target::MentionTarget;
+use crate::relay_session::SessionHandle;
 use crate::rest::{HarkroomRestClient, OpenTurn, RunnerLink, TurnKeys};
 use crate::turn_assemble::{Assembled, assemble_attempt, env_turn_keys};
 use crate::turn_attempt::{AttemptInput, Attempted, LeaseNotice, TurnSecrets};
 use crate::turn_attempt_live::LiveTurn;
+use crate::turn_attempt_relay::RelayAttempt;
 use crate::turn_env::TurnKeys as EnvTurnKeys;
 use crate::turn_lane_first::{LaneFirstError, LaneSource, mount_lane_first};
 use crate::turn_launch::LaunchStep;
@@ -95,6 +97,7 @@ pub trait AttemptParts {
     /// `notice` 는 **띄우는 이 자리(마운트 뒤)** 에서 지은 가림 목록이다 — 턴 sink·감시 루프가 화면·출력에서 거둔 말을
     /// 스레드에 올릴 때 이것으로만 가린다(정본 `secretNeedles(cause)` 를 그때 읽는 것과 같다). 턴 전에 지은 목록을 쓰면
     /// 마운트한 비밀이 빠진다(#2032 꼴).
+    #[allow(clippy::too_many_arguments)]
     fn spawn(
         &mut self,
         turn_id: &str,
@@ -102,8 +105,16 @@ pub trait AttemptParts {
         mcp_config_path: &Path,
         lane_env: LaneEnv,
         notice: NoticeSecrets,
+        relay: Option<&RelayAttempt<'_>>,
         delivered: &mut bool,
     ) -> PtyOut;
+    /// 이 시도 계정의 칩 순번(계정 순번·풀 순번) — 멘션 세션에 다시 알린다. 이름은 싣지 않는다. 모르면 `(None, None)`.
+    fn account_ranks(
+        &self,
+        _account: Option<&ClaudeAccount>,
+    ) -> (Option<Option<u32>>, Option<u32>) {
+        (None, None)
+    }
     /// 시도 결과를 접는다(`attempt_outcome` — `secrets.pat()`·`secrets.needles()` 로 가린다).
     #[allow(clippy::result_large_err)]
     fn outcome(
@@ -133,6 +144,8 @@ pub struct PtyTurnAttempt<'a, L: RunnerLink, N: LeaseNotice, P: AttemptParts> {
     pub parts: RefCell<P>,
     /// lane(API 키 연결) — 있으면 시도마다 턴 MCP 계획 앞에서 env 를 받는다.
     lane: Option<&'a dyn LaneSource>,
+    /// 멘션 중계 세션(#2046 — `run_mention` 이 연 것). 있으면 시도마다 [`RelayAttempt`] 로 쥔다.
+    relay: Option<&'a SessionHandle>,
 }
 
 /// 러너 전체에서 한 번 정하는 재료.
@@ -162,12 +175,19 @@ impl<'a, L: RunnerLink, N: LeaseNotice, P: AttemptParts> PtyTurnAttempt<'a, L, N
             new_turn_id: Box::new(random_uuid),
             parts: RefCell::new(parts),
             lane: None,
+            relay: None,
         }
     }
 
     /// lane 턴으로 돈다 — 시도마다 턴 MCP 계획 앞에서 lane env 를 받는다.
     pub fn with_lane(mut self, lane: &'a dyn LaneSource) -> Self {
         self.lane = Some(lane);
+        self
+    }
+
+    /// 멘션 중계 세션을 건다 — 시도마다 그 시도 범위에서 [`RelayAttempt`] 를 만든다.
+    pub fn with_relay(mut self, session: &'a SessionHandle) -> Self {
+        self.relay = Some(session);
         self
     }
 }
@@ -187,6 +207,7 @@ impl<P: AttemptParts> Drop for LiveBinding<'_, P> {
 
 impl<L: RunnerLink, N: LeaseNotice, P: AttemptParts> PtyTurnAttempt<'_, L, N, P> {
     #[allow(clippy::result_large_err)]
+    #[allow(clippy::too_many_arguments)]
     fn attempt(
         &self,
         turn_id: &str,
@@ -194,6 +215,7 @@ impl<L: RunnerLink, N: LeaseNotice, P: AttemptParts> PtyTurnAttempt<'_, L, N, P>
         target: &MentionTarget,
         account: Option<&ClaudeAccount>,
         is_last: bool,
+        relay: Option<&RelayAttempt<'_>>,
         delivered: &mut bool,
     ) -> Result<TurnOk, AttemptError> {
         let parts = &self.parts;
@@ -297,6 +319,7 @@ impl<L: RunnerLink, N: LeaseNotice, P: AttemptParts> PtyTurnAttempt<'_, L, N, P>
                     &mcp_path,
                     lane_env,
                     notice,
+                    relay,
                     delivered,
                 )
             }),
@@ -336,7 +359,18 @@ impl<L: RunnerLink, N: LeaseNotice, P: AttemptParts> TurnAttempt for PtyTurnAtte
         let live = Arc::new(LiveTurn::new(TurnLife::default()));
         self.parts.borrow_mut().bind_live(Some(Arc::clone(&live)));
         let _binding = LiveBinding(&self.parts);
-        self.attempt(&turn_id, &live, target, account, is_last_account, delivered)
+        // 시도 범위 — `_binding` 과 같은 수명이고 먼저 떨어진다(입력 통로 놓기 → 듣기 놓기). 패닉에도 둘 다 지난다.
+        let ranks = self.parts.borrow().account_ranks(account);
+        let relay = self.relay.map(|s| RelayAttempt::begin(s, ranks.0, ranks.1));
+        self.attempt(
+            &turn_id,
+            &live,
+            target,
+            account,
+            is_last_account,
+            relay.as_ref(),
+            delivered,
+        )
     }
 }
 

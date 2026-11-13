@@ -194,6 +194,7 @@ impl AttemptParts for Parts {
         _mcp: &Path,
         _lane_env: LaneEnv,
         _notice: NoticeSecrets,
+        _relay: Option<&crate::turn_attempt_relay::RelayAttempt<'_>>,
         _delivered: &mut bool,
     ) -> PtyOut {
         // 기본 옵션에는 남의 폴더가 들어 있다 — 시도의 계정이 덮어야 한다.

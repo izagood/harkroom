@@ -216,7 +216,7 @@ impl RelaySessions {
         let me = self.clone();
         let prev_give_up = std::mem::replace(&mut opts.on_rejected_give_up, Box::new(|| {}));
         opts.on_rejected_give_up = Box::new(move || {
-            let n = me.sessions.lock().unwrap().len();
+            let n = me.sessions.lock().unwrap_or_else(|e| e.into_inner()).len();
             (me.log)(&format!("[relay] 고아로 물러난다 — 열린 세션 {n}개 중단"));
             me.cancel_sessions();
             guarded(&prev_give_up);
@@ -238,14 +238,17 @@ impl RelaySessions {
     pub fn announce(&self) -> Vec<Value> {
         self.sessions
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .values()
             .map(|l| l.info.clone())
             .collect()
     }
 
     pub fn len(&self) -> usize {
-        self.sessions.lock().unwrap().len()
+        self.sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -257,7 +260,7 @@ impl RelaySessions {
         let hooks: Vec<ViewerHook> = self
             .sessions
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .values()
             .filter_map(|l| l.on_viewer_count.clone())
             .collect();
@@ -271,7 +274,7 @@ impl RelaySessions {
         let hooks: Vec<CancelHook> = self
             .sessions
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .values()
             .filter_map(|l| l.on_cancel.clone())
             .collect();
@@ -289,7 +292,12 @@ impl RelaySessions {
         match t {
             "replay.request" => {
                 let Some(sid) = sid else { return };
-                let snap = match self.sessions.lock().unwrap().get(sid) {
+                let snap = match self
+                    .sessions
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get(sid)
+                {
                     Some(l) => l.ring.snapshot(),
                     None => return,
                 };
@@ -323,7 +331,7 @@ impl RelaySessions {
                 };
                 // 로그 줄은 잠금 안에서 만들기만 하고, 쓰기(밖의 처리자)는 잠금을 놓은 뒤에 한다(security B3b-2c 낮음).
                 let (hook, line) = {
-                    let mut map = self.sessions.lock().unwrap();
+                    let mut map = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
                     let Some(l) = map.get_mut(sid) else { return };
                     let mut line = None;
                     if l.viewer_count != count {
@@ -357,7 +365,7 @@ impl RelaySessions {
                 let hook = self
                     .sessions
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(|e| e.into_inner())
                     .get(sid)
                     .and_then(|l| l.on_cancel.clone());
                 if let Some(h) = hook {
@@ -408,7 +416,12 @@ impl RelaySessions {
     }
 
     fn writer_of(&self, sid: &str) -> Option<Arc<dyn PtyInput>> {
-        self.sessions.lock().unwrap().get(sid)?.writer.clone()
+        self.sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(sid)?
+            .writer
+            .clone()
     }
 
     /// 턴 하나를 세션으로 연다(정본 `openSession`). 링크가 끊겨 있어도 성공한다(ring 은 계속 쌓인다).
@@ -435,17 +448,20 @@ impl RelaySessions {
             info.insert("claudePoolRank".into(), json!(r));
         }
         let info = Value::Object(info);
-        self.sessions.lock().unwrap().insert(
-            session_id.clone(),
-            Live {
-                info: info.clone(),
-                ring: RingBuffer::new(RING_CAP_BYTES),
-                writer: None,
-                viewer_count: 0,
-                on_viewer_count: input.on_viewer_count,
-                on_cancel: input.on_cancel,
-            },
-        );
+        self.sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(
+                session_id.clone(),
+                Live {
+                    info: info.clone(),
+                    ring: RingBuffer::new(RING_CAP_BYTES),
+                    writer: None,
+                    viewer_count: 0,
+                    on_viewer_count: input.on_viewer_count,
+                    on_cancel: input.on_cancel,
+                },
+            );
         self.send(&json!({"type": "session.started", "session": info}));
         SessionHandle {
             session_id,
@@ -480,7 +496,7 @@ impl SessionHandle {
             .ledger
             .sessions
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .get_mut(&self.session_id)
         {
             l.ring.push(chunk);
@@ -499,7 +515,7 @@ impl SessionHandle {
             .ledger
             .sessions
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .get_mut(&self.session_id)
         {
             l.writer = Some(writer);
@@ -540,7 +556,7 @@ impl SessionHandle {
             .ledger
             .sessions
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .get_mut(&self.session_id)
         {
             l.writer = None;
@@ -554,7 +570,11 @@ impl SessionHandle {
             return;
         }
         let info = {
-            let mut map = self.ledger.sessions.lock().unwrap();
+            let mut map = self
+                .ledger
+                .sessions
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             let Some(l) = map.get_mut(&self.session_id) else {
                 return;
             };
@@ -583,7 +603,7 @@ impl SessionHandle {
         self.ledger
             .sessions
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .remove(&self.session_id);
         self.ledger
             .send(&json!({"type": "session.ended", "sessionId": self.session_id}));
