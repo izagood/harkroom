@@ -6,6 +6,7 @@
 pub mod api;
 pub mod auth;
 pub mod directory;
+pub mod lists;
 pub mod perm;
 pub mod proxy;
 pub mod routes;

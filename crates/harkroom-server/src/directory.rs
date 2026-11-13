@@ -14,6 +14,7 @@ use axum::response::{IntoResponse, Response};
 use sqlx::PgPool;
 
 /// TS `Date#toISOString()` 꼴. PG `MS` 는 마이크로초를 버려 밀리초로 만든다 — node-pg 가 `Date` 로 읽으며 버리는 것과 같다.
+#[macro_export]
 macro_rules! iso {
     ($col:literal) => {
         concat!(
@@ -24,7 +25,7 @@ macro_rules! iso {
     };
 }
 
-fn json_ok(body: String) -> Response {
+pub(crate) fn json_ok(body: String) -> Response {
     (
         StatusCode::OK,
         [(header::CONTENT_TYPE, "application/json; charset=utf-8")],
@@ -33,7 +34,7 @@ fn json_ok(body: String) -> Response {
         .into_response()
 }
 
-fn json_err(status: StatusCode, code: &str, message: &str) -> Response {
+pub(crate) fn json_err(status: StatusCode, code: &str, message: &str) -> Response {
     let body = format!(
         r#"{{"error":{{"code":{},"message":{}}}}}"#,
         quote(code),
@@ -67,7 +68,7 @@ fn quote(s: &str) -> String {
 }
 
 /// DB 오류 → TS 의 오류 처리기와 같은 500 꼴. 원문은 싣지 않는다(앞단 `auth::layer` 와 같은 원칙).
-fn internal(e: sqlx::Error) -> Response {
+pub(crate) fn internal(e: sqlx::Error) -> Response {
     eprintln!(
         "front: directory query failed: {}",
         e.as_database_error().map_or("io", |_| "db")
@@ -81,7 +82,7 @@ fn internal(e: sqlx::Error) -> Response {
 
 // 거절이 곧 axum 응답이라 그대로 돌려준다(`perm::require_cap` 과 같은 까닭, CI clippy 1.99).
 #[allow(clippy::result_large_err)]
-async fn one_json(
+pub(crate) async fn one_json(
     pool: &PgPool,
     sql: &'static str,
     bind: Option<&str>,
@@ -227,7 +228,7 @@ pub fn parse_audit_query(raw: Option<&str>) -> Result<AuditQuery, &'static str> 
 }
 
 /// `application/x-www-form-urlencoded` 풀기(`+` 는 공백, `%xx` 는 바이트). 깨진 `%` 는 글자 그대로 둔다.
-fn form_pairs(raw: &str) -> Vec<(String, String)> {
+pub(crate) fn form_pairs(raw: &str) -> Vec<(String, String)> {
     fn dec(s: &str) -> String {
         let b = s.as_bytes();
         let mut out = Vec::with_capacity(b.len());

@@ -42,7 +42,7 @@ pub struct Moved {
     pub route: fn() -> MethodRouter<AppState>,
 }
 
-/// Rust 가 답하는 줄. 묶음마다 더한다 — P1 읽기① 디렉터리(`directory.rs`).
+/// Rust 가 답하는 줄. 묶음마다 더한다 — P1 읽기① 디렉터리(`directory.rs`) · P2 읽기② 목록(`lists.rs`).
 /// `/x/{id}` 꼴을 더하면 `tests/routes.rs::moved_params_do_not_shadow_ts_static_paths` 가 TS 고정 경로와의 겹침을 본다.
 pub const MOVED: &[Moved] = &[
     Moved {
@@ -64,6 +64,47 @@ pub const MOVED: &[Moved] = &[
         key: "GET /audit",
         path: "/audit",
         route: || axum::routing::get(crate::directory::audit),
+    },
+    // P2 읽기② 목록(`lists.rs`).
+    Moved {
+        key: "GET /teams",
+        path: "/teams",
+        route: || axum::routing::get(crate::lists::teams),
+    },
+    Moved {
+        key: "GET /teams/{id}",
+        path: "/teams/{id}",
+        route: || axum::routing::get(crate::lists::team),
+    },
+    Moved {
+        key: "GET /handle-groups",
+        path: "/handle-groups",
+        route: || axum::routing::get(crate::lists::handle_groups),
+    },
+    Moved {
+        key: "GET /handle-groups/{id}",
+        path: "/handle-groups/{id}",
+        route: || axum::routing::get(crate::lists::handle_group),
+    },
+    Moved {
+        key: "GET /skills",
+        path: "/skills",
+        route: || axum::routing::get(crate::lists::skills),
+    },
+    Moved {
+        key: "GET /skills/{slug}",
+        path: "/skills/{slug}",
+        route: || axum::routing::get(crate::lists::skill),
+    },
+    Moved {
+        key: "GET /settings/agent-defaults",
+        path: "/settings/agent-defaults",
+        route: || axum::routing::get(crate::lists::agent_defaults),
+    },
+    Moved {
+        key: "GET /settings/mention-policy",
+        path: "/settings/mention-policy",
+        route: || axum::routing::get(crate::lists::mention_policy),
     },
 ];
 
