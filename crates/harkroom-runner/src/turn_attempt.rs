@@ -202,26 +202,65 @@ pub fn lease_needles(dir: &std::path::Path) -> Vec<String> {
     v
 }
 
+/// 이 시도의 가림 재료 — **한 번 만들어 모든 자리에 같은 것을 넘긴다**(#2030 security): 결과 접기(`OutcomeFacts`)·턴 뒤
+/// 글(`AfterFacts`·`ReportPromise`)·기록 가리기(`scrub_after_run`)가 서로 다른 목록을 쓰면, 한쪽에서만 가려지는 값이 생긴다.
+///
+/// `needles` = 턴 열쇠 바늘 ∪ 임대 비밀 바늘(정본 `tailSecrets` = `turnKeyNeedles` + `secretNeedles`), 긴 것부터. 값은 이
+/// 값 밖으로 나가지 않는다 — 바늘(값의 여러 꼴)만. `Debug` 는 개수만 보인다.
+pub struct TurnSecrets {
+    pat: String,
+    needles: Vec<String>,
+}
+
+impl std::fmt::Debug for TurnSecrets {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TurnSecrets")
+            .field("pat_len", &self.pat.len())
+            .field("needles", &self.needles.len())
+            .finish()
+    }
+}
+
+impl TurnSecrets {
+    /// 턴을 띄우기 전, 열쇠·임대를 받은 뒤 한 번 만든다(임대가 끝나면 비밀 파일이 지워진다).
+    pub fn build(pat: &str, turn_key_values: &[&str], lease_dir: Option<&std::path::Path>) -> Self {
+        let mut all: std::collections::BTreeSet<String> =
+            crate::secret_scrub::turn_key_needles(turn_key_values)
+                .into_iter()
+                .collect();
+        if let Some(d) = lease_dir {
+            all.extend(lease_needles(d));
+        }
+        let mut needles: Vec<String> = all.into_iter().collect();
+        needles.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+        Self {
+            pat: pat.to_string(),
+            needles,
+        }
+    }
+
+    /// 러너 PAT — `OutcomeFacts.pat`·`AfterFacts.pat`·`ReportPromise.pat` 에 넘긴다.
+    pub fn pat(&self) -> &str {
+        &self.pat
+    }
+
+    /// 가림 바늘 — `OutcomeFacts.secrets`·`AfterFacts.secrets`·`ReportPromise.secrets`·기록 가리기에 **이것 하나만** 넘긴다.
+    pub fn needles(&self) -> &[String] {
+        &self.needles
+    }
+}
+
 /// 실제 `after_run` — 이 턴의 **모든** 기록 경로([`turn_record_paths`](crate::turn_launch::turn_record_paths): 기록 파일과
-/// `<sessionId>/`)를 턴 열쇠 바늘 + 임대 비밀 바늘로 가린다. 임대가 끝나기 전에 불려야 한다(`attempt_once` 가 그 순서를 지킨다).
+/// `<sessionId>/`)를 [`TurnSecrets`] 의 바늘로 가린다(결과 접기·턴 뒤 글과 같은 목록). 임대가 끝나기 전에 불려야 한다
+/// (`attempt_once` 가 그 순서를 지킨다).
 pub fn scrub_after_run(
     key: &str,
     harness: AgentHarness,
     transcript: Option<&std::path::Path>,
     session_id: Option<&str>,
-    turn_key_values: &[&str],
-    lease_dir: Option<&std::path::Path>,
+    secrets: &TurnSecrets,
 ) -> crate::secret_scrub::ScrubTally {
-    let mut needles: std::collections::BTreeSet<String> =
-        crate::secret_scrub::turn_key_needles(turn_key_values)
-            .into_iter()
-            .collect();
-    if let Some(d) = lease_dir {
-        needles.extend(lease_needles(d));
-    }
-    let mut needles: Vec<String> = needles.into_iter().collect();
-    needles.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
-    crate::turn_launch::scrub_turn_records(key, harness, transcript, session_id, &needles)
+    crate::turn_launch::scrub_turn_records(key, harness, transcript, session_id, secrets.needles())
 }
 
 #[cfg(test)]
