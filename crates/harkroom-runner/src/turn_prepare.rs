@@ -96,8 +96,19 @@ pub fn prepare_turn(
             .collect()
     };
     let (merged, gap_after_seq) = merge_thread_pages(&keep(oldest), &keep(latest), cursor);
-    let inbox_mention = t.wake.is_none().then_some(&t.mention_row);
-    let fed = fill_asked_rows(merged, inbox_mention, &t.bundled_rows, cursor);
+    // 부른 글·묶인 글도 이 스레드 글만 — 장부가 스레드 열쇠로 묶지만, 그 결함이 있어도 다른 스레드 글이 들어오지 않게.
+    let inbox_mention = t
+        .wake
+        .is_none()
+        .then_some(&t.mention_row)
+        .filter(|m| in_thread(m, &t.channel_id, &t.thread_root_id));
+    let bundled: Vec<Value> = t
+        .bundled_rows
+        .iter()
+        .filter(|m| in_thread(m, &t.channel_id, &t.thread_root_id))
+        .cloned()
+        .collect();
+    let fed = fill_asked_rows(merged, inbox_mention, &bundled, cursor);
     let prompt = build_turn_prompt(&TurnPromptInput {
         messages: &fed.thread,
         last_fed_seq: i64::try_from(cursor).unwrap_or(i64::MAX),
