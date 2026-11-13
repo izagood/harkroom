@@ -131,7 +131,10 @@ pub trait LaunchRelease {
 pub fn release_launch(attempted: &[LaunchStep], io: &mut impl LaunchRelease) -> Vec<LaunchStep> {
     let mut failed = Vec::new();
     for &step in attempted.iter().rev() {
-        if io.release(step).is_err() {
+        // 되감기 중(`LaunchGuard` 의 Drop)에 release 가 다시 패닉하면 프로세스가 abort 된다 — 단계마다 패닉을 받아 실패로
+        // 센다(#2014 security nit b). 패닉 문구는 싣지 않는다(값이 섞였을 수 있다).
+        let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| io.release(step)));
+        if !matches!(out, Ok(Ok(()))) {
             eprintln!("[mentionTurn] 턴 끝 정리 실패 — {step:?}(나머지는 계속 거둔다)");
             failed.push(step);
         }
@@ -216,7 +219,8 @@ pub fn launch_guarded<I: LaunchIo, R: LaunchRelease>(
 ///
 /// 비밀·lane 은 한 번 쓰면 비우는 닫개(`Option::take`)라 두 번 불러도 한 번만 돈다.
 pub struct TurnRelease<'a> {
-    pub end_turn_keys: &'a mut dyn FnMut(),
+    /// 열쇠 거두기 — 오퍼레이터 답이 200 이 아니면 `Err`(정리 실패로 센다).
+    pub end_turn_keys: &'a mut dyn FnMut() -> Result<(), String>,
     pub end_secrets: Option<Box<dyn FnOnce() + 'a>>,
     pub provider_env_done: Option<Box<dyn FnOnce() + 'a>>,
 }
@@ -224,7 +228,7 @@ pub struct TurnRelease<'a> {
 impl LaunchRelease for TurnRelease<'_> {
     fn release(&mut self, step: LaunchStep) -> Result<(), String> {
         match step {
-            LaunchStep::TurnKeys => (self.end_turn_keys)(),
+            LaunchStep::TurnKeys => return (self.end_turn_keys)(),
             LaunchStep::Secrets => {
                 if let Some(f) = self.end_secrets.take() {
                     f();
