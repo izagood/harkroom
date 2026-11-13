@@ -150,6 +150,11 @@ impl LiveSlot {
                 .is_some_and(|l| l.fenced_out() || l.canceled_by().is_some())
     }
 
+    /// 걸린 시도가 턴 임대를 잃었다(감시 루프의 펜스 확인). 걸린 시도가 없으면 `false`.
+    pub fn fenced_out(&self) -> bool {
+        self.lock().live.as_ref().is_some_and(|l| l.fenced_out())
+    }
+
     pub fn is_bound(&self) -> bool {
         self.lock().live.is_some()
     }

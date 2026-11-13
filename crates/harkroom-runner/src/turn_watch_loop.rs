@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
-use crate::mention_parts::WatchLoopFn;
+use crate::mention_parts::{LoopCtx, WatchLoopFn};
 use crate::turn_end::EndConfig;
 use crate::turn_probe::{ProbeIo, ProbeState};
 use crate::turn_probe_records::NoticeSecrets;
@@ -28,8 +28,9 @@ pub struct LoopParts<I: ProbeIo> {
     pub fence: Option<FenceCheck>,
 }
 
-/// 그 시도의 감시 자리·감시 목록을 받아 [`LoopParts`] 를 짓는다.
-pub type MakeLoop<'a, I> = Box<dyn Fn(&Watch, &NoticeSecrets) -> LoopParts<I> + Send + Sync + 'a>;
+/// 그 시도의 감시 자리·감시 목록·시도 문맥을 받아 [`LoopParts`] 를 짓는다.
+pub type MakeLoop<'a, I> =
+    Box<dyn Fn(&Watch, &NoticeSecrets, &LoopCtx) -> LoopParts<I> + Send + Sync + 'a>;
 
 /// 감시 루프 몸통을 짓는다. 돌 때마다 받은 자리·목록으로 `make` 를 불러 탐침 재료를 짓고, SIGTERM 도 그 자리의 손잡이로 보낸다.
 pub fn watch_loop_fn<'a, I: ProbeIo + 'a>(
@@ -38,8 +39,8 @@ pub fn watch_loop_fn<'a, I: ProbeIo + 'a>(
     probe_ms: Duration,
 ) -> WatchLoopFn<'a> {
     Box::new(
-        move |watch: &Watch, notice: &NoticeSecrets, stop: &AtomicBool| {
-            let mut p = make(watch, notice);
+        move |watch: &Watch, notice: &NoticeSecrets, ctx: &LoopCtx, stop: &AtomicBool| {
+            let mut p = make(watch, notice, ctx);
             run_watch_guarded(
                 watch,
                 &mut p.probe,

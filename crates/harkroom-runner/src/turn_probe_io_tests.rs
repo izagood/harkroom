@@ -99,7 +99,7 @@ fn now() -> i64 {
     1_000_000
 }
 
-type Io = TurnProbeIo<Rec, Sink, States, Rest>;
+type Io = TurnProbeIo<'static, Rec, Sink, States, Rest>;
 
 fn io(thread: Result<Vec<Value>, String>, kills: Arc<AtomicUsize>) -> Io {
     let thread = Mutex::new(Some(thread));
