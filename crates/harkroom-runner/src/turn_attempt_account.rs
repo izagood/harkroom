@@ -129,10 +129,18 @@ impl MentionSlots {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// 이 멘션의 슬롯을 **새로** 연다(같은 id 의 옛 슬롯이 남아 있어도 바꾼다).
+    /// 이 멘션의 슬롯을 **새로** 연다(같은 id 의 옛 슬롯이 남아 있어도 바꾼다). 같은 멘션은 동시에 두 번 돌지 않는다 —
+    /// 멘션의 스레드 열쇠(채널·앵커)가 정해져 있고 장부가 그 열쇠로 한 번에 하나만 띄운다(`Ledger::thread_in_flight`).
+    /// 그래도 열린 id 를 다시 열면 로그를 남긴다(겹치면 앞 실행의 [중단] 이 뒤 슬롯으로 간다).
     pub fn open(&self, mention_id: &str) -> MentionSlot {
         let slot = LiveSlot::default();
-        self.lock().insert(mention_id.to_string(), slot.clone());
+        if self
+            .lock()
+            .insert(mention_id.to_string(), slot.clone())
+            .is_some()
+        {
+            eprintln!("[mentionTurn] {mention_id}: 이미 열린 멘션 자리를 다시 열었다(겹친 실행)");
+        }
         MentionSlot {
             slots: self.clone(),
             mention_id: mention_id.to_string(),
@@ -158,6 +166,15 @@ impl MentionSlots {
     pub fn is_open(&self, mention_id: &str) -> bool {
         self.lock().contains_key(mention_id)
     }
+}
+
+/// relay 세션의 [중단] 갈고리(`OpenSessionInput::on_cancel`)로 넘길 닫개 — 슬롯을 **직접** 쥔다. 멘션 id 로 다시 찾지
+/// 않으므로 id 가 어긋나 [중단] 이 조용히 버려질 길이 없다.
+pub fn cancel_hook(slot: &LiveSlot) -> Arc<dyn Fn(&str) + Send + Sync> {
+    let slot = slot.clone();
+    Arc::new(move |by: &str| {
+        slot.cancel(by);
+    })
 }
 
 /// 열린 멘션 하나의 슬롯 — `run_one` 한 번 동안 쥔다. 떨어지면 지도에서 뺀다(그사이 같은 id 로 새로 열렸으면 그것은 둔다).

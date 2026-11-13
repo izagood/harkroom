@@ -624,3 +624,90 @@ impl TurnAttempt for Probe<'_> {
         self.t.run(target, account, is_last, delivered)
     }
 }
+
+/// 멘션 하나를 도는 동안 [중단] 을 보내 본다 — `run` 이 받은 대상의 `mention_id`(= `run_mention` 이 연 id)와 갈고리.
+struct CancelTurn {
+    slot: LiveSlot,
+    slots: MentionSlots,
+    by_id: Vec<bool>,
+    wrong_id: Vec<bool>,
+    hooked: Vec<Option<String>>,
+}
+
+impl TurnAttempt for CancelTurn {
+    type Err = Err;
+    fn run(
+        &mut self,
+        target: &MentionTarget,
+        _account: Option<&ClaudeAccount>,
+        _is_last: bool,
+        _delivered: &mut bool,
+    ) -> Result<TurnOk, Err> {
+        let live = Arc::new(LiveTurn::default());
+        self.slot.bind(Some(Arc::clone(&live)));
+        self.wrong_id.push(self.slots.cancel("m-other", "human-x"));
+        self.by_id
+            .push(self.slots.cancel(&target.mention_id, "human-1"));
+        crate::turn_attempt_account::cancel_hook(&self.slot)("human-2");
+        self.hooked.push(live.canceled_by());
+        self.slot.bind(None);
+        ok(None)
+    }
+}
+
+/// security ①: [중단] 을 보내는 쪽이 쓰는 id(대상의 `mention_id`)가 `run_mention` 이 연 id 와 같다 — 그 id 로 보낸
+/// [중단] 은 도는 시도에 닿고, 다른 id 는 버려진다. relay 갈고리는 슬롯을 직접 쥐어 id 를 거치지 않는다.
+#[test]
+fn cancel_by_target_mention_id_reaches_running_attempt() {
+    let s = setup();
+    let slots = MentionSlots::default();
+    let mut d = Fake {
+        lane: vec![acc("a")],
+        ..Fake::default()
+    };
+    let mut got = (vec![], vec![], vec![]);
+    struct Out<'o>(
+        CancelTurn,
+        &'o mut (Vec<bool>, Vec<bool>, Vec<Option<String>>),
+    );
+    impl Drop for Out<'_> {
+        fn drop(&mut self) {
+            *self.1 = (
+                self.0.by_id.clone(),
+                self.0.wrong_id.clone(),
+                self.0.hooked.clone(),
+            );
+        }
+    }
+    impl TurnAttempt for Out<'_> {
+        type Err = Err;
+        fn run(
+            &mut self,
+            t: &MentionTarget,
+            a: Option<&ClaudeAccount>,
+            l: bool,
+            d: &mut bool,
+        ) -> Result<TurnOk, Err> {
+            self.0.run(t, a, l, d)
+        }
+    }
+    run_mention(&s.ledger, &mut d, &slots, s.launch, |slot| {
+        Out(
+            CancelTurn {
+                slot,
+                slots: slots.clone(),
+                by_id: vec![],
+                wrong_id: vec![],
+                hooked: vec![],
+            },
+            &mut got,
+        )
+    });
+    assert_eq!(got.0, [true], "대상 mention_id 로 보낸 [중단] 이 닿는다");
+    assert_eq!(got.1, [false], "다른 id 는 버려진다");
+    assert_eq!(
+        got.2,
+        [Some("human-1".to_string())],
+        "처음 사람이 남는다(갈고리도 같은 시도에 닿음)"
+    );
+}

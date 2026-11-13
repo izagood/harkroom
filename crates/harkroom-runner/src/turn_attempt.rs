@@ -248,6 +248,14 @@ impl TurnSecrets {
     pub fn needles(&self) -> &[String] {
         &self.needles
     }
+
+    /// 턴 sink·감시 루프의 통지 가림 목록(같은 값).
+    pub fn notice_secrets(&self) -> crate::turn_probe_records::NoticeSecrets {
+        crate::turn_probe_records::NoticeSecrets {
+            pat: self.pat.clone(),
+            mounted: self.needles.clone(),
+        }
+    }
 }
 
 /// 실제 `after_run` — 이 턴의 **모든** 기록 경로([`turn_record_paths`](crate::turn_launch::turn_record_paths): 기록 파일과
