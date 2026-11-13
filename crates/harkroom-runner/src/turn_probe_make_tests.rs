@@ -58,7 +58,7 @@ fn a1_context_does_not_stay_in_the_a2_loop() {
     let link = NoLink;
     let client = HarkroomMcpClient::new(&link, "t");
     let cfg = config(&client, LiveSlot::default());
-    let make = probe_make(&cfg);
+    let make = probe_make(cfg);
     let (w1, w2) = (Watch::default(), Watch::default());
 
     let p1 = make(&w1, &notice("a1"), &ctx("a1", 10, 1_000));
@@ -100,7 +100,7 @@ fn fence_check_follows_the_bound_attempt() {
     let client = HarkroomMcpClient::new(&link, "t");
     let slot = LiveSlot::default();
     let cfg = config(&client, slot.clone());
-    let make = probe_make(&cfg);
+    let make = probe_make(cfg);
     let mut p = make(&Watch::default(), &notice("a"), &ctx("a", 1, 1));
     let live = Arc::new(LiveTurn::default());
     slot.bind(Some(live.clone()));
@@ -135,7 +135,7 @@ fn readers_use_the_attempts_account_folder() {
     let link = NoLink;
     let client = HarkroomMcpClient::new(&link, "t");
     let cfg = config(&client, LiveSlot::default());
-    let make = probe_make(&cfg);
+    let make = probe_make(cfg);
     let at = |dir: &std::path::Path| LoopCtx {
         session_id: Some("sess-x".into()),
         claude_config_dir: Some(dir.to_path_buf()),
@@ -178,7 +178,8 @@ fn a1_end_signal_does_not_stop_the_a2_loop() {
     let client = HarkroomMcpClient::new(&link, "t");
     let slot = LiveSlot::default();
     let cfg = config(&client, slot.clone());
-    let make = probe_make(&cfg);
+    let end_cfg = cfg.end_cfg;
+    let make = probe_make(cfg);
 
     let c1 = ctx("a1", 1, 1);
     let _p1 = make(&Watch::default(), &notice("a1"), &c1);
@@ -200,7 +201,7 @@ fn a1_end_signal_does_not_stop_the_a2_loop() {
     run_watch_guarded(
         &w2,
         &mut p2.probe,
-        &cfg.end_cfg,
+        &end_cfg,
         &mut p2.io,
         std::time::Duration::from_millis(1),
         crate::turn_watch::WatchStops {

@@ -155,12 +155,16 @@ fn records_of<L: RunnerLink>(c: &ProbeLoopConfig<'_, L>, ctx: &LoopCtx) -> Attem
 }
 
 /// 짓개 실물. 돌려준 닫개는 받은 `Watch`·`NoticeSecrets`·`LoopCtx` 와 `c`(멘션 설정)만 쓴다.
+///
+/// 설정은 **값으로** 받아 닫개가 쥔다 — `run_mention` 한 번에 하나를 지어 넘긴다(그 멘션의 슬롯과 함께).
 pub fn probe_make<'a, L: RunnerLink + 'a>(
-    c: &'a ProbeLoopConfig<'a, L>,
+    c: ProbeLoopConfig<'a, L>,
 ) -> MakeLoop<'a, AttemptProbeIo<'a, L>> {
     Box::new(
         move |watch: &Watch, notice: &NoticeSecrets, ctx: &LoopCtx| {
+            let c = &c;
             let client = c.client;
+            let report = c.report_auth;
             let (ch, root) = (c.channel_id.clone(), c.anchor.clone());
             let read_thread = Box::new(move || {
                 client
@@ -250,7 +254,7 @@ pub fn probe_make<'a, L: RunnerLink + 'a>(
                     channel_id: c.channel_id.clone(),
                     anchor: c.anchor.clone(),
                     secrets: notice.clone(),
-                    report_auth: Box::new(move |s: &[String]| (c.report_auth)(s, started)),
+                    report_auth: Box::new(move |s: &[String]| report(s, started)),
                 },
                 secrets: notice.clone(),
                 turn_state_records: records_of(c, ctx),
