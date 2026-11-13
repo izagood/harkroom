@@ -7,7 +7,8 @@
 //! 앞단 바이너리를 띄우고 픽스처를 넣은 뒤 이 시험을 부른다.
 mod common;
 
-use common::{Case, contrast};
+use axum::http::Method;
+use common::{Case, contrast, normalize, send};
 
 /// `admin`·`member` 은 `Authorization` 값(`Bearer …`)이다. 관리자는 `audit.read` 를 가진 사람, 멤버는 grant 가 없는 사람이다.
 /// `ids` 는 픽스처가 만든 팀·집합의 경로(`/teams/<HARKROOM_CONTRAST_TEAM_ID>`, `/handle-groups/<…_GROUP_ID>`)다.
@@ -29,6 +30,8 @@ fn cases<'a>(
         Case::get("anon /teams", "/teams"),
         Case::get("anon /handle-groups", "/handle-groups"),
         Case::get("anon /skills", "/skills"),
+        Case::get("anon /inbox/today/open", "/inbox/today/open"),
+        Case::get("anon /inbox/today/done", "/inbox/today/done"),
         Case::get("anon /settings/mention-policy", "/settings/mention-policy"),
         Case::get("anon /settings/agent-defaults", "/settings/agent-defaults"),
     ];
@@ -63,6 +66,28 @@ fn cases<'a>(
                 "/handle-groups/00000000-0000-0000-0000-000000000000",
             )),
             h(Case::get("/handle-groups notuuid", "/handle-groups/x")).ignore("/error/message"),
+            // P2b 인박스 「오늘」.
+            h(Case::get("/inbox/today/open", "/inbox/today/open")),
+            h(Case::get("/inbox/today/done", "/inbox/today/done")),
+            h(Case::get(
+                "/inbox/today/done limit=1",
+                "/inbox/today/done?limit=1",
+            )),
+            h(Case::get(
+                "/inbox/today/done limit=0",
+                "/inbox/today/done?limit=0",
+            ))
+            .ignore("/error/message"),
+            h(Case::get(
+                "/inbox/today/done limit=51",
+                "/inbox/today/done?limit=51",
+            ))
+            .ignore("/error/message"),
+            h(Case::get(
+                "/inbox/today/done since=garbage",
+                "/inbox/today/done?since=garbage",
+            ))
+            .ignore("/error/message"),
             h(Case::get("/skills", "/skills")),
             h(Case::get("/skills pending", "/skills?state=pending")),
             h(Case::get("/skills approved", "/skills?state=approved")),
@@ -110,6 +135,8 @@ fn cases<'a>(
             )),
             // 권한 판정이 먼저 — 멤버는 집합을 못 읽고(403), 잘못된 id 도 403.
             h(Case::get("member /handle-groups", "/handle-groups")),
+            h(Case::get("member /inbox/today/open", "/inbox/today/open")),
+            h(Case::get("member /inbox/today/done", "/inbox/today/done")),
             h(Case::get("member /handle-groups/x", "/handle-groups/x")),
             h(Case::get(
                 "member /settings/agent-defaults",
@@ -153,4 +180,87 @@ async fn ts_and_rust_answer_the_same() {
         "TS 와 Rust 의 답이 다르다:\n{}",
         diff.join("\n")
     );
+}
+
+/// P2b — `Case` 가 보지 않는 것: ETag 를 서로 바꿔 끼워도 304 인지(태그 재료가 같은지), 그리고 `nextCursor` 로 이어 받기.
+#[tokio::test]
+async fn inbox_today_etag_and_cursor_cross() {
+    let (Ok(ts), Ok(rs), Ok(tok)) = (
+        std::env::var("HARKROOM_CONTRAST_TS_URL"),
+        std::env::var("HARKROOM_CONTRAST_RS_URL"),
+        std::env::var("HARKROOM_CONTRAST_TOKEN"),
+    ) else {
+        eprintln!("skip: HARKROOM_CONTRAST_TS_URL / HARKROOM_CONTRAST_RS_URL unset");
+        return;
+    };
+    let (ts, rs) = (ts.trim_end_matches('/'), rs.trim_end_matches('/'));
+    let auth = format!("Bearer {tok}");
+    let mut tokens = vec![auth.clone()];
+    if let Ok(m) = std::env::var("HARKROOM_CONTRAST_MEMBER_TOKEN") {
+        tokens.push(format!("Bearer {m}"));
+    }
+    for a in &tokens {
+        for path in ["/inbox/today/open", "/inbox/today/done"] {
+            let h = [("authorization", a.as_str())];
+            let (s1, h1, _) = send(ts, Method::GET, path, &h, "").await;
+            let (s2, h2, _) = send(rs, Method::GET, path, &h, "").await;
+            assert_eq!((s1.as_u16(), s2.as_u16()), (200, 200), "{path}");
+            let e1 = h1
+                .get("etag")
+                .expect("ts etag")
+                .to_str()
+                .unwrap()
+                .to_string();
+            let e2 = h2
+                .get("etag")
+                .expect("rs etag")
+                .to_str()
+                .unwrap()
+                .to_string();
+            assert_eq!(e1, e2, "{path}: 태그가 다르다");
+            assert_eq!(
+                h1.get("cache-control"),
+                h2.get("cache-control"),
+                "{path}: cache-control"
+            );
+            // 교차: TS 의 태그를 Rust 에, Rust 의 태그를 TS 에 — 둘 다 304·본문 없음·같은 머리.
+            for (base, tag) in [(rs, &e1), (ts, &e2)] {
+                let list = format!("\"zzz\", {tag}");
+                for inm in [tag.as_str(), list.as_str()] {
+                    let hh = [("authorization", a.as_str()), ("if-none-match", inm)];
+                    let (s, hdr, body) = send(base, Method::GET, path, &hh, "").await;
+                    assert_eq!(s.as_u16(), 304, "{base}{path} If-None-Match {inm}");
+                    assert!(body.is_empty(), "{base}{path}: 304 에 본문");
+                    assert_eq!(
+                        hdr.get("etag").map(|v| v.to_str().unwrap()),
+                        Some(tag.as_str())
+                    );
+                }
+                // 다른 태그면 200.
+                let hh = [("authorization", a.as_str()), ("if-none-match", "\"nope\"")];
+                assert_eq!(send(base, Method::GET, path, &hh, "").await.0.as_u16(), 200);
+            }
+        }
+    }
+    // nextCursor 로 끝까지 이어 받기 — 매 쪽이 같아야 한다.
+    let h = [("authorization", auth.as_str())];
+    let mut path = "/inbox/today/done?limit=1".to_string();
+    let mut pages = 0;
+    loop {
+        let (s1, h1, t1) = send(ts, Method::GET, &path, &h, "").await;
+        let (s2, h2, t2) = send(rs, Method::GET, &path, &h, "").await;
+        let (a, b) = (normalize(s1, &h1, &t1, &[]), normalize(s2, &h2, &t2, &[]));
+        assert_eq!(a, b, "{path}");
+        pages += 1;
+        let v: serde_json::Value = serde_json::from_str(&t1).unwrap();
+        match v.get("nextCursor").and_then(|c| c.as_str()) {
+            Some(c) if pages < 50 => path = format!("/inbox/today/done?limit=1&since={c}"),
+            _ => break,
+        }
+    }
+    assert!(
+        pages >= 2,
+        "이어 받기를 한 번도 안 했다 — 픽스처에 끝난 것이 2개 이상 있어야 한다"
+    );
+    eprintln!("inbox today cross: {pages} page(s)");
 }

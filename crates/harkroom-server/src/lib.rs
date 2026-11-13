@@ -6,6 +6,7 @@
 pub mod api;
 pub mod auth;
 pub mod directory;
+pub mod inbox_today;
 pub mod lists;
 pub mod perm;
 pub mod proxy;
