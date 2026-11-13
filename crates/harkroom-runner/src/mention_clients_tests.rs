@@ -76,3 +76,54 @@ fn another_agents_link_is_never_used() {
         "다른 에이전트 링크는 쓰이지 않는다"
     );
 }
+
+/// 호출 자리가 쓰는 손님 전부 — 준비·멘션 deps(MCP·REST)·시도 실물(턴 열쇠 REST·임대 끝 알림)·턴 뒤 IO(MCP)·임대 넘기기(링크) —
+/// 가 한 묶음의 같은 손님·같은 링크다.
+#[test]
+fn call_site_clients_are_all_the_bundle() {
+    use crate::config::OperatorLink;
+    use crate::link::{LinkClient, LinkOptions};
+    let link = LinkClient::new(LinkOptions::new(OperatorLink {
+        socket_path: "/nonexistent".into(),
+        runner_id: "r".into(),
+        secret: "s".into(),
+    }));
+    let clients = AgentClients::new(&*link, "t");
+    let log = |_l: &str| {};
+    let (dir, env) = (
+        std::path::PathBuf::from("/x"),
+        std::collections::BTreeMap::new(),
+    );
+    let base = clients.attempt_base(
+        crate::adapter::AgentHarness::ClaudeCode,
+        false,
+        &dir,
+        &dir,
+        &env,
+        "",
+    );
+    let deps = clients.link_io(None, &log);
+    let hooks = crate::mention_hooks::LinkHooks::new(*clients.link(), NoSched, "k".into(), || 1);
+    assert!(std::ptr::eq(clients.prepare_io().client, clients.mcp()));
+    assert!(std::ptr::eq(deps.mcp, clients.mcp()));
+    assert!(std::ptr::eq(deps.rest, clients.rest()));
+    assert!(
+        std::ptr::eq(base.client, clients.rest()),
+        "턴 열쇠 REST = 묶음"
+    );
+    assert!(std::ptr::eq(base.notice, &*link), "임대 끝 알림 = 그 링크");
+    assert!(
+        std::ptr::eq(hooks.operator, &*link),
+        "임대 넘기기 = 그 링크"
+    );
+}
+
+struct NoSched;
+impl crate::mention_hooks::SchedulerHooks for NoSched {
+    fn notice_fenced(&mut self) {}
+    fn turn_outcome(&mut self, _ok: bool) {}
+    fn stop_requested(&mut self, _at: &str) {}
+    fn executable_missing(&mut self) {}
+    fn release_slot(&mut self, _k: &str) {}
+    fn turn_ended(&mut self, _k: &str, _m: &str) {}
+}

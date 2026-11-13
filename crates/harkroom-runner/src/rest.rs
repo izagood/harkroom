@@ -33,6 +33,13 @@ impl RunnerLink for LinkClient {
     }
 }
 
+/// 러너 링크를 빌려 쓰는 손님(`AgentClients<&LinkClient>`) — 같은 링크 하나를 MCP·REST·오퍼레이터 알림이 함께 쓴다.
+impl RunnerLink for &LinkClient {
+    fn request(&self, req: LinkRequest) -> RunnerLinkResponse {
+        LinkClient::request(self, req)
+    }
+}
+
 /// `http.forward` 의 답. **`Debug` 는 본문 길이만 보인다** — 본문에 토큰(턴 임대·lane 마운트)이 들 수 있다(security, B3a-2 낮음).
 #[derive(Clone, PartialEq, Eq)]
 pub struct HttpReply {
