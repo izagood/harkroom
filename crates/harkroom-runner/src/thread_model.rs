@@ -52,9 +52,20 @@ where
     F: FnOnce(&str) -> Result<Value, E>,
     E: std::fmt::Display,
 {
+    // 정의 쪽 값도 argv 로 간다 — 서버가 같은 모양을 검사하지만 러너에서도 한 겹 더 거른다(security #2094 nit). 어긋나면 비운다.
+    let def_axis = |v: Option<&str>, what: &str, log: &mut dyn FnMut(String)| -> Option<String> {
+        if safe_axis(v) {
+            v.map(str::to_owned)
+        } else {
+            log(format!(
+                "에이전트 정의의 {what} 값이 모양에 맞지 않아 쓰지 않는다"
+            ));
+            None
+        }
+    };
     let from_def = TurnModel {
-        model: def_model.map(str::to_owned),
-        effort: def_effort.map(str::to_owned),
+        model: def_axis(def_model, "model", log),
+        effort: def_axis(def_effort, "effort", log),
         source: TurnModelSource {
             model: AxisSource::Agent,
             effort: AxisSource::Agent,
