@@ -3,7 +3,7 @@
 //! - [`WatchSink`]: 띄운 순간 `has_controls`, 출력마다 `last_data_at_ms` 를 [`EndState`] 에 적는다. 화면 원문(꼬리)은
 //!   [`WatchState`] 안에만 쥔다 — `Debug` 는 길이만, 밖으로 내는 길은 [`WatchState::screen_line_for_post`] 하나이고
 //!   그것은 [`screen_said_for_post`](`NoticeSecrets` 의 `quoted_line`)를 거친 한 줄만 낸다.
-//! - [`run_watch`]: `probe_ms` 마다 잠그고 [`probe_cycle`] 을 한 번 돈다. `Stop`·멈춤 신호·PTY 종료면 끝낸다. 탐침이 글로
+//! - [`run_watch`]: `probe_ms` 마다 끝 상태를 잠깐 잠가 꺼내 [`probe_cycle`] 을 **잠금 밖에서** 한 번 돌고 돌려놓는다. `Stop`·멈춤 신호·PTY 종료면 끝낸다. 탐침이 글로
 //!   내는 것은 이미 가린 통지 함수만 지난다(`turn_probe_records`).
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -116,10 +116,19 @@ pub fn run_watch(
         if stop.load(Ordering::SeqCst) {
             return cycles;
         }
-        let out = {
+        // 잠금 안에서는 상태만 꺼낸다 — 탐침 IO(스레드 읽기·통지 글·화면 줄 꺼내기)는 잠금 밖에서 돈다. 그래서 통지가 느려도
+        // PTY 출력(`on_output`)이 막히지 않고, 탐침이 같은 자리를 다시 잠가도 교착이 없다.
+        let mut snap = lock(watch).end.clone();
+        let out = probe_cycle(&mut snap, probe, cfg, io);
+        {
+            // 돌려놓을 때 sink 가 그사이 적은 값(출력 시각·손잡이)은 지킨다.
             let mut w = lock(watch);
-            probe_cycle(&mut w.end, probe, cfg, io)
-        };
+            let last_data = w.end.last_data_at_ms.max(snap.last_data_at_ms);
+            let controls = w.end.has_controls || snap.has_controls;
+            w.end = snap;
+            w.end.last_data_at_ms = last_data;
+            w.end.has_controls = controls;
+        }
         cycles += 1;
         if out == CycleOutcome::Stop {
             return cycles;
