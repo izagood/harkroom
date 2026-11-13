@@ -91,7 +91,7 @@ fn parts<'a>(
         },
         Box::new(PtyTurnOptions::default),
         Sink,
-        Box::new(|_a, _s, _l, end| {
+        Box::new(|_a, _s, _l, end, _o| {
             assert_eq!(end.last_data_at_ms, 55, "감시 자리의 끝 상태 사본");
             Ok(TurnOk::default())
         }),
@@ -208,7 +208,7 @@ fn watch_is_fresh_per_attempt() {
     let store = SessionStore::new(w.root.join("sessions.json"));
     let stale = PathBuf::from("/x");
     let mut p = parts(&w, &store, &stale, false);
-    p.outcome = Box::new(|_a, _s, _l, end| {
+    p.outcome = Box::new(|_a, _s, _l, end, _o| {
         assert!(end.api_error.is_none(), "앞 시도의 API 오류가 없다");
         assert!(!end.exited && !end.spoke);
         Ok(TurnOk::default())

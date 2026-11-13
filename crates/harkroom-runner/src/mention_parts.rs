@@ -180,9 +180,23 @@ pub fn run_beside<R>(
 
 /// 결과 접기 닫개 — 시도 결과·가림 목록·[중단] 자리·끝 상태 사본.
 pub type OutcomeFn<'a> = Box<
-    dyn FnMut(Attempted<PtyOut>, &TurnSecrets, &LiveTurn, &EndState) -> Result<TurnOk, AttemptError>
+    dyn FnMut(
+            Attempted<PtyOut>,
+            &TurnSecrets,
+            &LiveTurn,
+            &EndState,
+            &OutcomeCtx,
+        ) -> Result<TurnOk, AttemptError>
         + 'a,
 >;
+
+/// 결과 접기가 받는 **그 시도의** 사실 — 시도 문맥, 감시 자리의 화면 꼬리(판정용), 서버 스레드를 못 읽었는가.
+#[derive(Clone, Debug, Default)]
+pub struct OutcomeCtx {
+    pub ctx: LoopCtx,
+    pub screen: String,
+    pub thread_unreadable: bool,
+}
 /// 턴 뒤 IO 닫개.
 pub type AfterFn<'a> = Box<dyn FnMut(&TurnSecrets, &AfterCtx) -> Result<(), String> + 'a>;
 
@@ -461,13 +475,17 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
         secrets: &TurnSecrets,
         live: &LiveTurn,
     ) -> Result<TurnOk, AttemptError> {
-        let end = self
-            .watch
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .end
-            .clone();
-        (self.outcome)(attempted, secrets, live, &end)
+        let (end, screen, thread_unreadable) = {
+            let w = self.watch.lock().unwrap_or_else(|e| e.into_inner());
+            (w.end.clone(), w.screen_text(), w.thread_unreadable)
+        };
+        let o = OutcomeCtx {
+            // 띄우지 못한 시도(문맥 없음)는 빈 문맥 — 기록을 읽을 세션도 없다.
+            ctx: self.last_ctx.clone().unwrap_or_default(),
+            screen,
+            thread_unreadable,
+        };
+        (self.outcome)(attempted, secrets, live, &end, &o)
     }
 
     fn after(&mut self, secrets: &TurnSecrets) -> Result<(), String> {

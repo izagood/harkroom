@@ -286,8 +286,12 @@ fn call<'a>(
                 anchor: Some("t".into()),
                 mention_id: "m7".into(),
                 background_wait_ms: 1,
+                caller: crate::turn_notice::NudgeCaller::Human,
+                proxy_head: String::new(),
+                record_proxy: false,
+                wake_reason: String::new(),
+                turn_start_seq: 0,
                 turn_id: "turn".into(),
-                ..OwnedAfterInputs::default()
             },
             last_said: None,
         }),
@@ -313,7 +317,7 @@ fn call<'a>(
                 system(),
                 Box::new(PtyTurnOptions::default),
                 Sink,
-                Box::new(|_a, _s, _l, _e| Ok(crate::mention_run::TurnOk::default())),
+                Box::new(|_a, _s, _l, _e, _o| Ok(crate::mention_run::TurnOk::default())),
                 b.after,
                 Box::new(|_| Ok(())),
             );

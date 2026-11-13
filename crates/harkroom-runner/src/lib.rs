@@ -103,6 +103,7 @@ pub mod turn_mcp_plan;
 pub mod turn_notice;
 pub mod turn_nudge_io;
 pub mod turn_outcome;
+pub mod turn_outcome_source;
 pub mod turn_parts;
 pub mod turn_policy;
 pub mod turn_posts;

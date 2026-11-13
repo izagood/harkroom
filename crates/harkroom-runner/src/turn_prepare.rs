@@ -62,7 +62,8 @@ pub enum PrepareError {
     ThreadUnreadable,
 }
 
-fn in_thread(m: &Value, channel_id: &str, root: &str) -> bool {
+/// 이 턴의 채널·스레드 글인가 — 준비의 두 페이지와 턴 뒤 다시 읽기가 같은 거르개를 쓴다.
+pub(crate) fn in_thread(m: &Value, channel_id: &str, root: &str) -> bool {
     let s = |k: &str| m.get(k).and_then(Value::as_str);
     s("channelId") == Some(channel_id)
         && (s("threadRootId") == Some(root)

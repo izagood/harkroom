@@ -65,7 +65,7 @@ pub fn after_source<'a>(c: &'a AfterConfig) -> AfterSource<'a> {
             channel_id: c.channel_id.clone(),
             anchor: c.anchor.clone(),
             mention_id: c.mention_id.clone(),
-            caller: Some(c.caller),
+            caller: c.caller,
             proxy_head: c.proxy_head.clone(),
             record_proxy: c.record_proxy,
             wake_reason: c.wake_reason.clone(),

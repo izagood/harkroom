@@ -248,6 +248,7 @@ fn probe_io_runs_outside_the_watch_lock() {
             ..EndState::default()
         },
         screen: b"line one\nhello there\n".to_vec(),
+        thread_unreadable: false,
         controls: None,
     }));
     let mut io = BusyIo {
