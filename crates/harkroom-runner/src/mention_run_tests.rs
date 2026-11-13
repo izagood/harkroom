@@ -120,6 +120,9 @@ struct Fake {
     ended: Vec<(String, String)>,
     /// 일어난 순서(정리 순서 확인용).
     order: Vec<&'static str>,
+    /// 정리 때 멘션 자리가 열려 있었나(`run_mention` 시험).
+    probe: Option<crate::turn_attempt_account::MentionSlots>,
+    open_at_release: Vec<bool>,
 }
 
 impl SettleDeps for Fake {
@@ -173,10 +176,16 @@ impl RunDeps<Err> for Fake {
         self.before_fail.push(err.clone());
     }
     fn release_slot(&mut self, thread_key: &str) {
+        if let Some(p) = &self.probe {
+            self.open_at_release.push(p.is_open("m7"));
+        }
         self.order.push("slot");
         self.slots.push(thread_key.into());
     }
     fn turn_ended(&mut self, thread_key: &str, mention_id: &str) {
+        if let Some(p) = &self.probe {
+            self.open_at_release.push(p.is_open("m7"));
+        }
         self.order.push("ended");
         self.ended.push((thread_key.into(), mention_id.into()));
     }
@@ -457,4 +466,161 @@ fn empty_lane_is_an_ordinary_failure_not_a_success() {
     assert!(t.seen.is_empty());
     assert!(d.outcomes.is_empty());
     assert!(matches!(d.fails[0].body, FailBody::Retry { .. }));
+}
+
+// ---- run_mention: 멘션 자리를 첫 시도 전에 열고 끝까지 쥔다 ----
+
+use crate::turn_attempt_account::{LiveSlot, MentionSlots};
+use crate::turn_attempt_live::LiveTurn;
+
+/// 시도마다 새 `LiveTurn` 을 자리에 걸고, 관문이 막으면 띄우지 않는 턴(실물 `PtyTurnAttempt` 의 흐름만).
+struct SlotTurn {
+    inner: Turn,
+    slot: LiveSlot,
+    slots: MentionSlots,
+    open_at_attempt: Vec<bool>,
+    /// 이 번째 시도가 끝난 뒤(다음 시도 전) [중단] 이 온다.
+    cancel_after: Option<usize>,
+    blocked: u32,
+}
+
+impl TurnAttempt for SlotTurn {
+    type Err = Err;
+    fn run(
+        &mut self,
+        target: &MentionTarget,
+        account: Option<&ClaudeAccount>,
+        is_last: bool,
+        delivered: &mut bool,
+    ) -> Result<TurnOk, Err> {
+        self.open_at_attempt.push(self.slots.is_open("m7"));
+        let live = Arc::new(LiveTurn::default());
+        self.slot.bind(Some(Arc::clone(&live)));
+        let out = if live.gate().is_err() {
+            self.blocked += 1;
+            self.inner
+                .seen
+                .push((account.map(|a| a.name.clone()), is_last));
+            Err(Err::Other("blocked"))
+        } else {
+            self.inner.run(target, account, is_last, delivered)
+        };
+        self.slot.bind(None);
+        if self.cancel_after == Some(self.inner.seen.len()) {
+            assert!(!self.slot.is_bound(), "시도 사이 — 걸린 시도는 없다");
+            assert!(self.slots.cancel("m7", "human-1"), "열린 멘션이라 받는다");
+        }
+        out
+    }
+}
+
+/// security: `open` 은 첫 시도 전에, 자리는 `run_one` 의 정리(자리 놓기·감시 끝)까지 열려 있고, 끝나면 닫힌다.
+#[test]
+fn run_mention_opens_before_first_attempt_and_holds_through_release() {
+    let s = setup();
+    let slots = MentionSlots::default();
+    let mut d = Fake {
+        lane: vec![acc("a")],
+        probe: Some(slots.clone()),
+        ..Fake::default()
+    };
+    let mut open_at_make = false;
+    run_mention(&s.ledger, &mut d, &slots, s.launch, |slot| {
+        open_at_make = slots.is_open("m7");
+        SlotTurn {
+            inner: turn(vec![(ok(None), true)]),
+            slot,
+            slots: slots.clone(),
+            open_at_attempt: vec![],
+            cancel_after: None,
+            blocked: 0,
+        }
+    });
+    assert!(open_at_make, "턴을 만들기 전에 열렸다");
+    assert_eq!(d.open_at_release, [true, true], "정리 때도 열려 있다");
+    assert!(!slots.is_open("m7"), "끝나면 닫힌다");
+    assert_eq!(d.order.last(), Some(&"ended"));
+}
+
+/// a1 한도 → a1 끝~a2 시작 사이 [중단] → a2 는 관문이 막아 띄우지 않고, 계정 축은 a3 로 가지 않는다 · 실패로 접힌다.
+#[test]
+fn run_mention_cancel_between_accounts_ends_axis() {
+    let s = setup();
+    let slots = MentionSlots::default();
+    let mut d = Fake {
+        lane: vec![acc("a1"), acc("a2"), acc("a3")],
+        ..Fake::default()
+    };
+    let mut seen = vec![];
+    let mut blocked = 0;
+    let mut opens = vec![];
+    run_mention(&s.ledger, &mut d, &slots, s.launch, |slot| {
+        SlotTurn {
+            inner: turn(vec![
+                (Err(Err::Quota), false),
+                (ok(None), true),
+                (ok(None), true),
+            ]),
+            slot,
+            slots: slots.clone(),
+            open_at_attempt: vec![],
+            cancel_after: Some(1),
+            blocked: 0,
+        }
+        .into_probe(&mut seen, &mut blocked, &mut opens)
+    });
+    assert_eq!(
+        seen,
+        vec![(Some("a1".into()), false), (Some("a2".into()), false)],
+        "a3 는 띄우지 않는다"
+    );
+    assert_eq!(blocked, 1);
+    assert_eq!(opens, [true, true]);
+    assert_eq!(d.fails.len(), 1, "막힌 시도의 실패로 접힌다");
+    assert!(!slots.is_open("m7"));
+}
+
+/// 시험용 — `run_one` 이 끝나 턴이 떨어질 때 본 것을 밖으로 옮긴다.
+struct Probe<'p> {
+    t: SlotTurn,
+    seen: &'p mut Vec<(Option<String>, bool)>,
+    blocked: &'p mut u32,
+    opens: &'p mut Vec<bool>,
+}
+
+impl SlotTurn {
+    fn into_probe<'p>(
+        self,
+        seen: &'p mut Vec<(Option<String>, bool)>,
+        blocked: &'p mut u32,
+        opens: &'p mut Vec<bool>,
+    ) -> Probe<'p> {
+        Probe {
+            t: self,
+            seen,
+            blocked,
+            opens,
+        }
+    }
+}
+
+impl Drop for Probe<'_> {
+    fn drop(&mut self) {
+        *self.seen = self.t.inner.seen.clone();
+        *self.blocked = self.t.blocked;
+        *self.opens = self.t.open_at_attempt.clone();
+    }
+}
+
+impl TurnAttempt for Probe<'_> {
+    type Err = Err;
+    fn run(
+        &mut self,
+        target: &MentionTarget,
+        account: Option<&ClaudeAccount>,
+        is_last: bool,
+        delivered: &mut bool,
+    ) -> Result<TurnOk, Err> {
+        self.t.run(target, account, is_last, delivered)
+    }
 }

@@ -21,6 +21,7 @@ use crate::mention_admit::Launch;
 use crate::mention_ledger::Ledger;
 use crate::mention_settle::{LeaseGate, LeaseState, SettleDeps, TurnEnd, lease_gate, settle};
 use crate::mention_target::{MentionTarget, build_mention_target};
+use crate::turn_attempt_account::{LiveSlot, MentionSlots};
 
 /// 턴이 답을 냈다(정본 `runMentionTurn` 의 반환 중 runOne 이 보는 몫).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -97,6 +98,33 @@ where
     if let Some((k, m)) = ended {
         deps.turn_ended(&k, &m);
     }
+}
+
+/// 실물 입구 — 멘션의 [중단]·펜스 신호 자리를 **첫 시도 전에** 열고([`MentionSlots::open`]), [`run_one`] 이 끝날 때까지
+/// (장부 `finally`·임대·자리 놓기까지) 쥔다. 턴(`make_turn`)은 그 자리를 받아 시도마다 `bind_live` 에 쓴다. 자리는 턴을
+/// 떨군 **뒤에** 떨군다 — 그 전에 온 [중단] 은 버려지지 않는다.
+pub fn run_mention<T, D>(
+    ledger: &Mutex<Ledger>,
+    deps: &mut D,
+    slots: &MentionSlots,
+    launch: Launch,
+    make_turn: impl FnOnce(LiveSlot) -> T,
+) where
+    T: TurnAttempt,
+    D: RunDeps<T::Err>,
+{
+    let mention_id = build_mention_target(
+        &launch.lead_entry,
+        &launch.lead_mention,
+        &launch.anchor,
+        &launch.bundled,
+    )
+    .mention_id;
+    let held = slots.open(&mention_id);
+    let mut turn = make_turn(held.slot());
+    run_one(ledger, deps, &mut turn, launch);
+    drop(turn);
+    drop(held);
 }
 
 fn run_body<T, D>(
