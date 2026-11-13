@@ -259,3 +259,53 @@ fn harness_path_appends_after() {
     assert_eq!(harness_path(Kilo, Some("/a"), h), "/a:/h/.kilo/bin");
     assert_eq!(harness_path(Kilo, None, h), "/h/.kilo/bin");
 }
+
+#[test]
+fn harness_parent_env_passes_only_allowed_names() {
+    let runner: BTreeMap<String, String> = [
+        ("PATH", "/usr/bin"),
+        ("HOME", "/h"),
+        ("LC_ALL", "C"),
+        ("XDG_CONFIG_HOME", "/h/.config"),
+        ("CODEX_HOME", "/h/.codex"),
+        ("SSH_AUTH_SOCK", "/tmp/ssh"),
+        ("HARKROOM_OPERATOR_SOCKET", "/tmp/op.sock"),
+        ("HARKROOM_RUNNER_ID", "r1"),
+        ("HARKROOM_RUNNER_SECRET", "link-secret-x"),
+        ("HARKROOM_PAT", "hk_pat_x"),
+        ("HARKROOM_TURN_SECRETS_DIR", "/s"),
+        ("HARKROOM_MCP_CONFIG", "/tmp/mcp.json"),
+        ("GITHUB_TOKEN", "ghp_x"),
+        ("ANTHROPIC_API_KEY", "sk-x"),
+        ("AWS_SECRET_ACCESS_KEY", "aws-x"),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_owned(), v.to_owned()))
+    .collect();
+    let got = harness_parent_env(&runner);
+    let keys: Vec<&str> = got.keys().map(String::as_str).collect();
+    assert_eq!(
+        keys,
+        [
+            "CODEX_HOME",
+            "HARKROOM_OPERATOR_SOCKET",
+            "HARKROOM_RUNNER_ID",
+            "HOME",
+            "LC_ALL",
+            "PATH",
+            "SSH_AUTH_SOCK",
+            "XDG_CONFIG_HOME",
+        ]
+    );
+    assert_eq!(got["PATH"], "/usr/bin");
+    for v in got.values() {
+        for bad in ["link-secret-x", "hk_pat_x", "ghp_x", "sk-x", "aws-x"] {
+            assert!(!v.contains(bad));
+        }
+    }
+    // 자식 env 끝까지: 턴 열쇠가 없는 턴에도 링크 열쇠·PAT 가 실리지 않는다.
+    let env = child_env(&ChildEnvInput::new(ClaudeCode), &got, Path::new(HOME)).unwrap();
+    assert!(!env.contains_key("HARKROOM_RUNNER_SECRET"));
+    assert!(!env.contains_key("HARKROOM_PAT"));
+    assert!(!env.contains_key("GITHUB_TOKEN"));
+}

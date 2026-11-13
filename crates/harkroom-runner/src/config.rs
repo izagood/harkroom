@@ -54,6 +54,16 @@ pub struct RunnerConfig {
 
 pub type Env = HashMap<String, String>;
 
+/// 오퍼레이터가 심는 턴 비밀 뿌리 env(`serve.rs` 의 `turn-secrets`, 정본 `main.ts` 640).
+pub const TURN_SECRETS_DIR_ENV: &str = "HARKROOM_TURN_SECRETS_DIR";
+
+/// 턴 비밀 뿌리(L3d-2, security 조건 ③) — 값은 **그대로** 경로로 쓴다(고치거나 기본값을 짓지 않는다). 없거나 빈 값이면 `None`:
+/// 그 러너는 임대 값 파일을 바늘로 쓰는 기록 가리기만 건너뛴다(`LeaseLife::secrets_dir`). PAT·턴 열쇠 가리기는 그대로 돈다.
+/// 빈 값을 `None` 으로 읽는 까닭: `""` 를 경로로 쓰면 러너 cwd 기준 상대 경로가 되어 엉뚱한 폴더를 바늘로 읽는다.
+pub fn turn_secrets_dir(env: &Env) -> Option<std::path::PathBuf> {
+    non_empty(env, TURN_SECRETS_DIR_ENV).map(std::path::PathBuf::from)
+}
+
 pub fn process_env() -> Env {
     std::env::vars().collect()
 }
@@ -299,7 +309,10 @@ mod tests {
 
 #[cfg(test)]
 mod debug_redaction_tests {
-    use super::OperatorLink;
+    use super::{Env, OperatorLink, TURN_SECRETS_DIR_ENV, turn_secrets_dir};
+    fn base() -> Env {
+        Env::new()
+    }
 
     #[test]
     fn debug_hides_link_secret() {
@@ -313,6 +326,22 @@ mod debug_redaction_tests {
         assert!(
             shown.contains("<redacted>") && shown.contains("r1"),
             "{shown}"
+        );
+    }
+
+    #[test]
+    fn turn_secrets_dir_is_value_as_is_or_none() {
+        let mut e = base();
+        assert_eq!(turn_secrets_dir(&e), None);
+        e.insert(TURN_SECRETS_DIR_ENV.into(), String::new());
+        assert_eq!(turn_secrets_dir(&e), None);
+        e.insert(
+            TURN_SECRETS_DIR_ENV.into(),
+            "/var/op data/turn-secrets/".into(),
+        );
+        assert_eq!(
+            turn_secrets_dir(&e),
+            Some(std::path::PathBuf::from("/var/op data/turn-secrets/"))
         );
     }
 }
