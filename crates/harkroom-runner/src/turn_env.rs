@@ -25,7 +25,7 @@ pub const HARNESS_ENV_DENYLIST: [&str; 5] = [
 ];
 
 /// API 키 연결 턴은 물려받지 않고 이 목록으로 짓는다(security W2, L1b).
-pub const LANE_ENV_ALLOW: [&str; 26] = [
+pub const LANE_ENV_ALLOW: [&str; 25] = [
     "PATH",
     "HOME",
     "USER",
@@ -49,7 +49,8 @@ pub const LANE_ENV_ALLOW: [&str; 26] = [
     "SSL_CERT_DIR",
     "HARKROOM_OPERATOR_SOCKET",
     "HARKROOM_RUNNER_ID",
-    "HARKROOM_RUNNER_SECRET",
+    // 링크 열쇠(`HARKROOM_RUNNER_SECRET`)는 넣지 않는다(security #2095 nit) — 부모 env 허용 목록에서 이미 빠졌지만, 이 목록에
+    // 남아 있으면 부모 env 짓기가 바뀌었을 때 lane 자식에게 다시 새는 길이 된다. 브릿지는 턴 열쇠로 붙는다.
     "HARKROOM_MCP_READY_FILE",
     "HARKROOM_OPERATOR_VERSION",
 ];
