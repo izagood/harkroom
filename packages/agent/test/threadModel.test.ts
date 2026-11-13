@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import { resolveTurnModel, rootFromThreadKey, usesThreadModel } from '../src/threadModel.js';
 import { isThreadModelRejected } from '../src/policy.js';
-import { threadModelRejectedNotice } from '../src/prompt.js';
+import { quotedLine, threadModelRejectedNotice } from '../src/prompt.js';
 
 const def = { model: 'sonnet', effort: 'medium' };
 
@@ -62,6 +62,20 @@ describe('isThreadModelRejected', () => {
     expect(isThreadModelRejected(failed({ harnessApiError: 'model not found' }))).toBeNull();
     expect(isThreadModelRejected(failed({ threadModel: tm, harnessApiError: 'Overloaded (529)' }))).toBeNull();
     expect(isThreadModelRejected(failed({ threadModel: tm }))).toBeNull();
+  });
+  it('#2028 security 낮음: 실패 글로 가는 apiError 는 가린 줄뿐이다 — 원문의 PAT·토큰은 실리지 않는다', () => {
+    const pat = 'hk_pat_secret_value_42';
+    const token = `ghp_${'b'.repeat(36)}`;
+    const raw = `There's an issue with the selected model (bogus) — key ${pat} ${token}`;
+    const shown = quotedLine(raw, pat, []);
+    const r = isThreadModelRejected(failed({ threadModel: tm, harnessApiError: raw, harnessApiErrorShown: shown }))!;
+    expect(r.apiError).toBe(shown);
+    const n = threadModelRejectedNotice(r.model, r.effort, r.apiError);
+    expect(n).toContain('selected model');
+    expect(n).not.toContain(pat);
+    expect(n).not.toContain(token);
+    // 가린 줄이 없으면 원문 대신 자리 표지.
+    expect(isThreadModelRejected(failed({ threadModel: tm, harnessApiError: raw }))!.apiError).toBe('(오류 줄은 가려졌다)');
   });
   it('통지는 할 일(칩에서 되돌리기)을 말하고 다시 시도하지 않는다고 밝힌다', () => {
     const n = threadModelRejectedNotice('opus', 'xhigh', 'x\ny');

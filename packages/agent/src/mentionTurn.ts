@@ -3096,7 +3096,7 @@ export async function runMentionTurn(
               : end.silenced
               ? `harness 무발화 ${deps.turnTimeoutMs}ms — 답 없이 시간 한도를 넘겼다`
               : `harness 종료 ${result.exitCode}${result.timedOut ? ' (timeout)' : ''}: ${result.tail}`,
-    ) as Error & { harnessApiError?: string; harnessStalledMs?: number; harnessStalledScreenLine?: string; harnessStalledScreen?: 'gate' | 'idle' | 'stuck'; threadModel?: TurnModel; fencedOut?: boolean };
+    ) as Error & { harnessApiError?: string; harnessApiErrorShown?: string; harnessStalledMs?: number; harnessStalledScreenLine?: string; harnessStalledScreen?: 'gate' | 'idle' | 'stuck'; threadModel?: TurnModel; fencedOut?: boolean };
     if (end.fencedOut) failure.fencedOut = true;
     /*
       **정지의 마지막 화면은 러너 로그에 남긴다**(2026-09-09).
@@ -3144,6 +3144,10 @@ export async function runMentionTurn(
     // 에러를 집을 수 있다 — 지금 턴의 사실을 이미 손에 쥐었으면 그것을 쓴다.
     if (end.apiError) failure.harnessApiError = end.apiError;
     else if (apiError) failure.harnessApiError = apiError.text;
+    // 보이는 글(모델 거절 실패 카드)에는 가린 줄만 싣는다(#2028 security 낮음) — 원문은 판정(한도·자격증명·거절)에만 쓴다.
+    if (failure.harnessApiError !== undefined) {
+      failure.harnessApiErrorShown = quotedLine(failure.harnessApiError, deps.runnerSecret, await tailSecrets()) || '(오류 줄은 가려졌다)';
+    }
     // 스레드 지정으로 돈 턴이면 그 값을 함께 넘긴다 — 하네스가 그 모델을 거절했을 때 스케줄러가
     // 재시도 대신 "지정 모델이 거절됐다" 로 크게 실패하는 재료다(결정 6, `policy.ts::isThreadModelRejected`).
     if (usesThreadModel(turnModel)) failure.threadModel = turnModel;

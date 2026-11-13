@@ -320,3 +320,47 @@ fn failed_cursor_advances_only_on_facts() {
     // 이미 돈 세션은 그대로.
     assert_eq!(failed_turn_cursor(false, 9, 3, true, false).turns_run, 3);
 }
+
+/// #2028 security 낮음: 보이는 글용 API 오류 줄은 가린 값 — PAT·토큰 꼴·마운트한 비밀이 빠지고, 가린 뒤 비면 「(오류 줄은 가려졌다)」.
+#[test]
+fn marks_shown_api_error_is_masked() {
+    let token = format!("ghp_{}", "a".repeat(36));
+    let end = EndState {
+        api_error: Some(format!("400 invalid model opus — key {PAT} {token}")),
+        ..EndState::default()
+    };
+    let f = facts(&end, "");
+    let m = failure_marks(&f, &stall_in(""), None, None, PAT, &[]);
+    let shown = m.harness_api_error_shown.clone().unwrap();
+    assert!(shown.contains("invalid model"), "{shown}");
+    assert!(!shown.contains(PAT) && !shown.contains(&token), "{shown}");
+    assert!(
+        m.harness_api_error.as_deref().unwrap().contains(PAT),
+        "판정용 원문은 그대로"
+    );
+    // 통째로 비밀이면 자리 표지.
+    let secret = "MOUNTEDsecretVALUE0123456789".to_string();
+    let end = EndState {
+        api_error: Some(secret.clone()),
+        ..EndState::default()
+    };
+    let f = facts(&end, "");
+    let m = failure_marks(
+        &f,
+        &stall_in(""),
+        None,
+        None,
+        PAT,
+        std::slice::from_ref(&secret),
+    );
+    let shown = m.harness_api_error_shown.unwrap();
+    assert!(!shown.contains(&secret), "{shown}");
+    // 가린 뒤 아무것도 안 남으면 자리 표지.
+    let end = EndState {
+        api_error: Some("   ".into()),
+        ..EndState::default()
+    };
+    let f = facts(&end, "");
+    let m = failure_marks(&f, &stall_in(""), None, None, PAT, &[]);
+    assert_eq!(m.harness_api_error_shown.as_deref(), Some(MASKED_API_ERROR));
+}
