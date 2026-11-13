@@ -81,7 +81,9 @@ fn lane_turn_builds_from_allow_list() {
     assert_eq!(env["HARKROOM_LANE_API_KEY"], "k");
     // 주소는 argv 조립에만 쓴다.
     assert!(!env.contains_key("HARKROOM_LANE_BASE_URL"));
-    assert_eq!(env["HARKROOM_RUNNER_SECRET"], "s");
+    // security #2095 nit: 부모 env 에 링크 열쇠가 있어도 lane 자식에게는 닿지 않는다(값으로도 없다).
+    assert!(!env.contains_key("HARKROOM_RUNNER_SECRET"));
+    assert!(!env.values().any(|v| v == "s"));
 }
 
 #[test]
