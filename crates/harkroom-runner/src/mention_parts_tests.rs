@@ -222,6 +222,7 @@ fn watch_is_fresh_per_attempt() {
             inner: &mut inner,
             watch: p.watch.clone(),
             now_ms: &now,
+            stop_on_spawn: None,
         };
         sink.on_output(b"A1_SCREEN_LINE You've hit your usage limit\n");
         let mut g = p.watch.lock().unwrap();

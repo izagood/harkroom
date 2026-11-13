@@ -74,6 +74,7 @@ fn sink_records_time_and_keeps_screen_inside() {
             inner: &mut inner,
             watch: Arc::clone(&watch),
             now_ms: &now,
+            stop_on_spawn: None,
         };
         s.on_output(b"working... token sk-live-zzzzzzzzzzzzzzzzzzzzzzzz\n");
     }
@@ -98,6 +99,7 @@ fn screen_line_goes_out_only_through_quoted_line() {
             inner: &mut inner,
             watch: Arc::clone(&watch),
             now_ms: &now,
+            stop_on_spawn: None,
         };
         s.on_output(b"\x1b[32mstarting\x1b[0m\n");
         s.on_output(format!("done with {secret} and {pat}\n").as_bytes());
@@ -123,6 +125,7 @@ fn screen_tail_is_bounded() {
         inner: &mut inner,
         watch: Arc::clone(&watch),
         now_ms: &now,
+        stop_on_spawn: None,
     };
     for _ in 0..100 {
         s.on_output(&[b'x'; 100]);
@@ -522,4 +525,75 @@ fn write_on_watch_needs_a_live_pty() {
     assert!(!write(b"\r"));
     // 띄우기 전 SIGTERM 은 아무것도 하지 않는다(패닉 없음).
     terminate_on_watch(&watch)();
+}
+
+/// security ②-2 nit: 띄우는 중(손잡이 없음) 임대를 잃으면 감시 루프의 펜스 확인은 거두지 못하고 끝난다(`reclaim()` 이 false) —
+/// 그 신호는 다시 오지 않으므로 띄운 **바로 그 순간**(`on_spawn`) 접어야 한다(정본 `onSpawn` 의 `canceledBy || fencedOut`).
+#[test]
+fn fence_lost_while_spawning_folds_right_after_spawn() {
+    use crate::pty_turn::{PtyPlan, PtyTurnOptions, run_pty_turn};
+
+    let watch = Watch::default();
+    let lost = Arc::new(AtomicBool::new(true));
+    let l = lost.clone();
+    let mut f = FenceCheck {
+        listening: Arc::new(AtomicBool::new(true)),
+        lost: Box::new(move || l.load(Ordering::SeqCst)),
+        on_lost: fence_reclaim(),
+    };
+    let mut io = Io {
+        cycles: Cell::new(0),
+        exit_at: u32::MAX,
+    };
+    run_watch_guarded(
+        &watch,
+        &mut ProbeState::default(),
+        &EndConfig::new(60_000),
+        &mut io,
+        Duration::from_millis(1),
+        WatchStops {
+            stop: &AtomicBool::new(false),
+            ended: None,
+            fence: Some(&mut f),
+            terminate: None,
+        },
+    );
+    assert!(
+        !lock(&watch).end.reclaimed,
+        "손잡이가 없어 루프는 거두지 못하고 끝났다"
+    );
+
+    // 이제 PTY 가 뜬다 — 띄운 순간 접혀야 한다.
+    let plan = PtyPlan {
+        command: "/bin/sleep".into(),
+        args: vec!["30".into()],
+        env: vec![("PATH".into(), "/usr/bin:/bin".into())],
+        stdin_file: None,
+    };
+    let l = lost.clone();
+    let stop = move || l.load(Ordering::SeqCst);
+    let mut rec = Rec::default();
+    let now = || 1;
+    let mut sink = WatchSink {
+        inner: &mut rec,
+        watch: watch.clone(),
+        now_ms: &now,
+        stop_on_spawn: Some(&stop),
+    };
+    let t = std::time::Instant::now();
+    run_pty_turn(
+        &plan,
+        PtyTurnOptions {
+            timeout_ms: 20_000,
+            ..PtyTurnOptions::default()
+        },
+        &mut sink,
+    )
+    .expect("turn");
+    assert!(
+        t.elapsed() < Duration::from_secs(10),
+        "띄운 직후 SIGTERM — 30초 sleep 이 끝나기를 기다리지 않았다: {:?}",
+        t.elapsed()
+    );
+    assert!(lock(&watch).end.reclaimed, "자리 값에 거둠");
 }
