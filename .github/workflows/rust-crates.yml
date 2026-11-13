@@ -86,7 +86,7 @@ jobs:
           HARKROOM_BUS_E2E_REQUIRED: '1'
       # 시험 바이너리를 먼저 지어 둔다 — 아래 vitest 시험의 제한 시간 안에서 컴파일하지 않게.
       - run: cargo test --manifest-path crates/harkroom-server/Cargo.toml --locked --no-run
-      - name: Rust 앞단 인증·인가 판정이 실제 스키마에서 TS 와 같은가(tests/auth.rs·tests/perm.rs)
+      - name: Rust 앞단이 실제 스키마에서 TS 와 같은가(tests/auth.rs·perm.rs 판정 + tests/contrast.rs 대조)
         run: pnpm --filter @harkroom/server exec vitest run test/rustFrontDb.test.ts
         env:
           HARKROOM_RUST_DB_TESTS: '1'

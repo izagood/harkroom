@@ -42,8 +42,30 @@ pub struct Moved {
     pub route: fn() -> MethodRouter<AppState>,
 }
 
-/// Rust 가 답하는 줄. P0 에서는 비어 있다 — P1(읽기 디렉터리)부터 묶음마다 더한다.
-pub const MOVED: &[Moved] = &[];
+/// Rust 가 답하는 줄. 묶음마다 더한다 — P1 읽기① 디렉터리(`directory.rs`).
+/// `/x/{id}` 꼴을 더하면 `tests/routes.rs::moved_params_do_not_shadow_ts_static_paths` 가 TS 고정 경로와의 겹침을 본다.
+pub const MOVED: &[Moved] = &[
+    Moved {
+        key: "GET /accounts",
+        path: "/accounts",
+        route: || axum::routing::get(crate::directory::accounts),
+    },
+    Moved {
+        key: "GET /dms",
+        path: "/dms",
+        route: || axum::routing::get(crate::directory::dms),
+    },
+    Moved {
+        key: "GET /mcp-servers",
+        path: "/mcp-servers",
+        route: || axum::routing::get(crate::directory::mcp_servers),
+    },
+    Moved {
+        key: "GET /audit",
+        path: "/audit",
+        route: || axum::routing::get(crate::directory::audit),
+    },
+];
 
 /// `HARKROOM_FRONT_TS_ROUTES` 를 읽은 결과.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
