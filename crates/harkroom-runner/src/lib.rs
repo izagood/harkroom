@@ -49,6 +49,7 @@ pub mod mention_scheduler;
 pub mod mention_settle;
 pub mod mention_target;
 pub mod mention_turn_parts;
+pub mod mention_watch;
 pub mod omp_home;
 pub mod opencode_home;
 pub mod pi_home;
