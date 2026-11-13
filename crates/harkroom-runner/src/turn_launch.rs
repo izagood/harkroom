@@ -139,6 +139,107 @@ pub fn release_launch(attempted: &[LaunchStep], io: &mut impl LaunchRelease) -> 
     failed
 }
 
+/// 턴 끝 정리를 **정확히 한 번** 부르는 가드(#2013 security: 예외·타임아웃·패닉 포함 모든 갈래).
+///
+/// [`launch_guarded`] 가 `prepare` 를 부르기 **직전에** 그 단계를 적는다 — `spawn` 이 패닉해도 그때까지 받은 것이
+/// 가드에 남는다. 정리는 [`LaunchGuard::finish`](정상 끝)나 `Drop`(조기 반환·`?`·패닉) 중 먼저 오는 쪽에서 한 번만
+/// 돈다. 두 번째 부름은 아무것도 하지 않는다.
+pub struct LaunchGuard<R: LaunchRelease> {
+    attempted: Vec<LaunchStep>,
+    release: R,
+    done: bool,
+}
+
+impl<R: LaunchRelease> LaunchGuard<R> {
+    pub fn new(release: R) -> Self {
+        Self {
+            attempted: Vec::new(),
+            release,
+            done: false,
+        }
+    }
+
+    /// 지금까지 `prepare` 를 부른 단계.
+    pub fn attempted(&self) -> &[LaunchStep] {
+        &self.attempted
+    }
+
+    /// 정상 끝의 정리. 실패한 단계 이름을 돌려준다. 이미 정리했으면 빈 것.
+    pub fn finish(mut self) -> Vec<LaunchStep> {
+        self.run()
+    }
+
+    fn run(&mut self) -> Vec<LaunchStep> {
+        if self.done {
+            return Vec::new();
+        }
+        self.done = true;
+        release_launch(&self.attempted, &mut self.release)
+    }
+}
+
+impl<R: LaunchRelease> Drop for LaunchGuard<R> {
+    fn drop(&mut self) {
+        // 패닉 중이어도 거둔다 — 거두기 자체가 다시 패닉하면 프로세스가 끝나므로, release 구현은 패닉하지 않아야 한다.
+        self.run();
+    }
+}
+
+/// [`launch`] 와 같은 순서·관문이되, 단계마다 `prepare` 직전에 `guard` 에 적는다.
+pub fn launch_guarded<I: LaunchIo, R: LaunchRelease>(
+    plan: LaunchPlan,
+    io: &mut I,
+    gate: &mut dyn FnMut() -> Result<(), SpawnBlocked>,
+    guard: &mut LaunchGuard<R>,
+) -> LaunchReport<I::Out> {
+    struct Noting<'a, I: LaunchIo, R: LaunchRelease> {
+        io: &'a mut I,
+        guard: &'a mut LaunchGuard<R>,
+    }
+    impl<I: LaunchIo, R: LaunchRelease> LaunchIo for Noting<'_, I, R> {
+        type Out = I::Out;
+        fn prepare(&mut self, step: LaunchStep) -> Result<(), String> {
+            self.guard.attempted.push(step);
+            self.io.prepare(step)
+        }
+        fn spawn(&mut self) -> I::Out {
+            self.io.spawn()
+        }
+    }
+    launch(plan, &mut Noting { io, guard }, gate)
+}
+
+/// 실제 턴 끝 정리 — 세 갈래 모두 **없는 것에도 무해**하다.
+/// - 턴 열쇠: 오퍼레이터 `/agent/turn-keys/end`(모르는 턴이면 지울 것이 없을 뿐 200) — 맡기기가 `Err` 였어도 부른다.
+/// - 비밀: 마운트한 임대를 끝낸다(정본 `secretLeases.release` — 임대가 없으면 아무것도 안 함).
+/// - lane 키: 제공사 env 를 거둔다(정본 `provider_env_done`).
+///
+/// 비밀·lane 은 한 번 쓰면 비우는 닫개(`Option::take`)라 두 번 불러도 한 번만 돈다.
+pub struct TurnRelease<'a> {
+    pub end_turn_keys: &'a mut dyn FnMut(),
+    pub end_secrets: Option<Box<dyn FnOnce() + 'a>>,
+    pub provider_env_done: Option<Box<dyn FnOnce() + 'a>>,
+}
+
+impl LaunchRelease for TurnRelease<'_> {
+    fn release(&mut self, step: LaunchStep) -> Result<(), String> {
+        match step {
+            LaunchStep::TurnKeys => (self.end_turn_keys)(),
+            LaunchStep::Secrets => {
+                if let Some(f) = self.end_secrets.take() {
+                    f();
+                }
+            }
+            LaunchStep::LaneKeys => {
+                if let Some(f) = self.provider_env_done.take() {
+                    f();
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 /// 턴 끝에 턴 열쇠를 가릴 **모든** 기록 경로(정본 `[transcript, ...(preassigns && !pi && !omp ? [dirname/sessionId] : [])]`).
 /// claude 는 jsonl 옆 `<sessionId>/` 에 큰 도구 출력(`tool-results`)·서브에이전트 전사(`subagents`)를 따로 남긴다.
 /// 기록 파일을 못 찾았으면(`None`) 빈 목록이다.
