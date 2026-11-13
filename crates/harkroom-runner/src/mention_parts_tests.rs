@@ -193,3 +193,53 @@ fn outcome_live_and_ranks() {
     );
     assert_eq!(p.account_ranks(None), (Some(None), None));
 }
+
+/// security: 감시 자리는 시도마다 새것 — a1 이 남긴 API 오류·화면 꼬리가 a2 의 결과 접기·화면 줄에 섞이지 않는다.
+#[test]
+fn watch_is_fresh_per_attempt() {
+    let w = world("fresh");
+    let store = SessionStore::new(w.root.join("sessions.json"));
+    let stale = PathBuf::from("/x");
+    let mut p = parts(&w, &store, &stale, false);
+    p.outcome = Box::new(|_a, _s, _l, end| {
+        assert!(end.api_error.is_none(), "앞 시도의 API 오류가 없다");
+        assert!(!end.exited && !end.spoke);
+        Ok(TurnOk::default())
+    });
+    // a1: 출력·API 오류를 남긴다.
+    p.bind_live(Some(Arc::new(LiveTurn::default())));
+    {
+        let now = || 1_i64;
+        let mut inner = Sink;
+        let mut sink = WatchSink {
+            inner: &mut inner,
+            watch: p.watch.clone(),
+            now_ms: &now,
+        };
+        sink.on_output(b"A1_SCREEN_LINE You've hit your usage limit\n");
+        let mut g = p.watch.lock().unwrap();
+        g.end.api_error = Some("You've hit your usage limit".into());
+        g.end.exited = true;
+        g.end.spoke = true;
+    }
+    p.bind_live(None);
+    // a2
+    p.bind_live(Some(Arc::new(LiveTurn::default())));
+    let line = p
+        .watch
+        .lock()
+        .unwrap()
+        .screen_line_for_post(&crate::turn_probe_records::NoticeSecrets::default());
+    assert!(line.is_none(), "a1 화면 줄이 없다: {line:?}");
+    let s = TurnSecrets::build("pat", &[], None);
+    let r = p.outcome(
+        Attempted::Ran(Ok(TurnResult {
+            exit_code: 0,
+            timed_out: false,
+            tail: String::new(),
+        })),
+        &s,
+        &LiveTurn::default(),
+    );
+    assert!(r.is_ok());
+}

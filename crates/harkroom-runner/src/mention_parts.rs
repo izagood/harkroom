@@ -169,6 +169,11 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
 
 impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
     fn bind_live(&mut self, live: Option<Arc<LiveTurn>>) {
+        if live.is_some() {
+            // 시도마다 새 감시 자리 — 앞 시도의 끝 상태(API 오류·종료·발화·정지 표지)와 화면 꼬리가 이 시도 판정에
+            // 섞이지 않게(#2036·#2042 와 같은 경계). sink·감시 루프·결과 접기는 이 시도 것을 쥔다.
+            self.watch = Watch::default();
+        }
         self.slot.bind(live);
     }
 
