@@ -62,6 +62,15 @@ impl Running {
             .wait_while(n, |n| *n > 0)
             .unwrap_or_else(|p| p.into_inner());
     }
+    /// 0 이 될 때까지 `limit` 만큼만 기다린다. 다 끝났으면 `0`, 시한이 지났으면 아직 도는 수.
+    pub fn wait_idle_for(&self, limit: std::time::Duration) -> usize {
+        let n = self.lock();
+        let (n, _) = self
+            .cv
+            .wait_timeout_while(n, limit, |n| *n > 0)
+            .unwrap_or_else(|p| p.into_inner());
+        *n
+    }
 }
 
 /// 사건을 밖으로 내보내는 곳(실물은 L3d: 서버 자리 놓기·표지 발화·제공자 줄·러너 종료 판정).
@@ -134,12 +143,17 @@ pub type AdmitFn = dyn Fn(&mut Ledger, &Value, &BatchContext, &mut LaunchQueue) 
     + Send
     + Sync;
 
+/// 물러날 때 도는 멘션을 기다리는 기본 시한 — 정본 턴 시한 기본값(30분) + 여유 5분.
+pub const DRAIN_LIMIT_DEFAULT: std::time::Duration = std::time::Duration::from_secs(35 * 60);
+
 /// [`Scheduler`] 실물.
 pub struct RunnerScheduler {
     ledger: Arc<Mutex<Ledger>>,
     admit: Box<AdmitFn>,
     launcher: Mutex<Box<dyn MentionLauncher + Send>>,
     running: Arc<Running>,
+    /// `drain` 이 기다리는 시한(security nit — `TurnEnded` 를 빠뜨리는 길이 생겨도 러너가 물러나지 못하고 걸리지 않게).
+    drain_limit: std::time::Duration,
 }
 
 impl RunnerScheduler {
@@ -154,7 +168,14 @@ impl RunnerScheduler {
             admit,
             launcher: Mutex::new(launcher),
             running,
+            drain_limit: DRAIN_LIMIT_DEFAULT,
         }
+    }
+
+    /// 물러날 때 기다릴 시한(턴 시한 + 여유로 준다).
+    pub fn with_drain_limit(mut self, limit: std::time::Duration) -> Self {
+        self.drain_limit = limit;
+        self
     }
 
     fn ledger(&self) -> std::sync::MutexGuard<'_, Ledger> {
@@ -184,7 +205,13 @@ impl Scheduler for RunnerScheduler {
         self.ledger().done_entries()
     }
     fn drain(&self) {
-        self.running.wait_idle();
+        let left = self.running.wait_idle_for(self.drain_limit);
+        if left > 0 {
+            eprintln!(
+                "[mentionScheduler] 물러나기: 시한({}초)이 지나도 멘션 {left}개가 아직 돈다 — 기다리지 않고 물러난다(임대는 만료가 놓는다)",
+                self.drain_limit.as_secs()
+            );
+        }
     }
 }
 
