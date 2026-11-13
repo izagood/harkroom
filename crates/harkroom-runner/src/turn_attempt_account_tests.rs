@@ -17,6 +17,7 @@ use crate::turn_env::TurnKeys as EnvTurnKeys;
 use crate::turn_launch_io::{LaneEnv, SecretMountError};
 use crate::turn_policy::AttemptError;
 use crate::turn_preset::TurnMode;
+use crate::turn_probe_records::NoticeSecrets;
 use crate::turn_run::PtyOut;
 
 fn acc(name: &str) -> ClaudeAccount {
@@ -192,6 +193,7 @@ impl AttemptParts for Parts {
         _keys: Option<&EnvTurnKeys>,
         _mcp: &Path,
         _lane_env: LaneEnv,
+        _notice: NoticeSecrets,
         _delivered: &mut bool,
     ) -> PtyOut {
         // 기본 옵션에는 남의 폴더가 들어 있다 — 시도의 계정이 덮어야 한다.

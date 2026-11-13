@@ -32,6 +32,7 @@ use crate::turn_launch_io::{LaneEnv, SecretMountError};
 use crate::turn_life::TurnLife;
 use crate::turn_mcp_plan::TurnMcpInput;
 use crate::turn_policy::AttemptError;
+use crate::turn_probe_records::NoticeSecrets;
 use crate::turn_run::{AttemptSetup, PtyOut, RecordScrub, run_attempt};
 
 /// 턴 MCP 설정을 준비하지 못했을 때의 문장(경로·원인은 로컬 로그에만).
@@ -88,12 +89,17 @@ pub trait AttemptParts {
     fn mount_secrets(&mut self, cause: &str) -> Result<(), SecretMountError>;
     /// PTY 턴을 끝까지 돈다 — 열쇠·MCP 설정 경로는 이 시도의 조립에서 온다(`pty_turn_plan`). 프롬프트가 입력창에 닿으면
     /// `delivered` 를 세운다.
+    ///
+    /// `notice` 는 **띄우는 이 자리(마운트 뒤)** 에서 지은 가림 목록이다 — 턴 sink·감시 루프가 화면·출력에서 거둔 말을
+    /// 스레드에 올릴 때 이것으로만 가린다(정본 `secretNeedles(cause)` 를 그때 읽는 것과 같다). 턴 전에 지은 목록을 쓰면
+    /// 마운트한 비밀이 빠진다(#2032 꼴).
     fn spawn(
         &mut self,
         turn_id: &str,
         keys: Option<&EnvTurnKeys>,
         mcp_config_path: &Path,
         lane_env: LaneEnv,
+        notice: NoticeSecrets,
         delivered: &mut bool,
     ) -> PtyOut;
     /// 시도 결과를 접는다(`attempt_outcome` — `secrets.pat()`·`secrets.needles()` 로 가린다).
@@ -227,6 +233,10 @@ impl<L: RunnerLink, N: LeaseNotice, P: AttemptParts> PtyTurnAttempt<'_, L, N, P>
         });
         let cause = prep.cause.clone();
         let spawn_turn_id = turn_id.to_string();
+        // 띄우는 자리에서 감시용 가림 목록을 지을 재료(값은 이 시도의 조립에서만 온다).
+        let notice_keys = secrets.turn_key_values.clone();
+        let notice_lease = secrets.lease_dir.clone();
+        let pat = self.pat;
         let input = AttemptInput {
             plan: launch,
             client: self.client,
@@ -239,11 +249,16 @@ impl<L: RunnerLink, N: LeaseNotice, P: AttemptParts> PtyTurnAttempt<'_, L, N, P>
                     as crate::turn_launch_io::SecretsMount<'_>
             }),
             spawn: Box::new(move |lane_env| {
+                // 마운트 뒤(띄우기 직전)에 짓는다 — 비밀 단계가 이 닫개보다 먼저 돈다.
+                let keys_ref: Vec<&str> = notice_keys.iter().map(String::as_str).collect();
+                let notice =
+                    TurnSecrets::build(pat, &keys_ref, notice_lease.as_deref()).notice_secrets();
                 parts.borrow_mut().spawn(
                     &spawn_turn_id,
                     keys.as_ref(),
                     &mcp_path,
                     lane_env,
+                    notice,
                     delivered,
                 )
             }),

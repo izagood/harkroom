@@ -354,3 +354,24 @@ fn done_unread_is_reread_without_turn() {
     assert_eq!(f.read.len(), 1);
     assert!(f.launches.borrow().is_empty());
 }
+
+/// security ②(run_one 연결): 같은 글을 가리키는 **다른** entry(고쳐 다시 부름 등)도 앞 실행이 도는 동안 띄우지 않는다 —
+/// 글의 스레드 열쇠가 같아 장부가 막는다. 그래서 같은 mention_id 의 [중단] 자리는 동시에 둘이 열리지 않는다.
+#[test]
+fn second_entry_for_same_message_is_blocked_while_running() {
+    let mut l = Ledger::default();
+    let mut f = Fake {
+        now: 1_000,
+        ..Fake::default()
+    };
+    let first = batch(vec![ent(1, "m1")], vec![msg("m1", "u1", "r")]);
+    assert_eq!(
+        admit(&mut l, &mut f, &first, &human_ctx()).unwrap().started,
+        1
+    );
+    let second = batch(vec![ent(2, "m1")], vec![msg("m1", "u1", "r")]);
+    let out = admit(&mut l, &mut f, &second, &human_ctx()).unwrap();
+    assert_eq!(out.started, 0);
+    assert_eq!(out.blocked, 1);
+    assert_eq!(f.launches.borrow().len(), 1);
+}

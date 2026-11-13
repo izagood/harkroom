@@ -9,6 +9,7 @@ use crate::link::LinkRequest;
 use crate::mention_target::build_mention_target;
 use crate::pty_turn::TurnResult;
 use crate::rest::{TURN_KEYS_END_PATH, TURN_KEYS_PATH};
+use crate::turn_probe_records::NoticeSecrets;
 
 type Log = Arc<Mutex<Vec<String>>>;
 
@@ -75,6 +76,8 @@ struct Parts {
     needles_had_secret: Vec<bool>,
     /// 띄우기 도중 패닉한다.
     panic_spawn: bool,
+    /// 띄울 때 받은 감시용 가림 목록에 마운트한 비밀·PAT 가 있었나.
+    spawn_notice: Vec<bool>,
 }
 
 const SECRET: &str = "sk-live-rrrrrrrrrrrrrrrrrrrrrrrrrr";
@@ -134,9 +137,13 @@ impl AttemptParts for Parts {
         keys: Option<&EnvTurnKeys>,
         mcp_config_path: &Path,
         _lane_env: LaneEnv,
+        notice: NoticeSecrets,
         delivered: &mut bool,
     ) -> PtyOut {
         push(&self.log, format!("spawn {turn_id}"));
+        self.spawn_notice.push(
+            notice.mounted.iter().any(|n| n == SECRET) && notice.pat == "hk_pat_secret_value_88",
+        );
         assert!(!self.panic_spawn, "띄우기 도중 패닉");
         let s = self.seen.last_mut().unwrap();
         assert_eq!(s.turn_id, turn_id);
@@ -233,6 +240,7 @@ fn parts(w: &World, log: &Log, secrets: bool, exits: Vec<i32>) -> Parts {
         seen: Vec::new(),
         needles_had_secret: Vec::new(),
         panic_spawn: false,
+        spawn_notice: Vec::new(),
     }
 }
 
