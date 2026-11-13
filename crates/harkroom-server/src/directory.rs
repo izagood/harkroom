@@ -174,7 +174,7 @@ pub struct AuditQuery {
 }
 
 /// zod `z.coerce.number()` 는 JS `Number(x)` 다. 여기선 그중 10진 꼴만 받는다(`0x10`·`1e2` 같은 꼴은 400 — TS 는 받는다, 화면은 쓰지 않는다).
-fn coerce_int(raw: &str) -> Option<i64> {
+pub(crate) fn coerce_int(raw: &str) -> Option<i64> {
     let t = raw.trim();
     if t.is_empty() {
         return Some(0); // Number("") === 0 → min(1) 에서 걸린다.

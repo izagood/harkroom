@@ -42,7 +42,7 @@ pub struct Moved {
     pub route: fn() -> MethodRouter<AppState>,
 }
 
-/// Rust 가 답하는 줄. 묶음마다 더한다 — P1 읽기① 디렉터리(`directory.rs`) · P2 읽기② 목록(`lists.rs`).
+/// Rust 가 답하는 줄. 묶음마다 더한다 — P1 읽기① 디렉터리(`directory.rs`) · P2 읽기② 목록(`lists.rs`) · P2b 인박스 「오늘」(`inbox_today.rs`).
 /// `/x/{id}` 꼴을 더하면 `tests/routes.rs::moved_params_do_not_shadow_ts_static_paths` 가 TS 고정 경로와의 겹침을 본다.
 pub const MOVED: &[Moved] = &[
     Moved {
@@ -64,6 +64,17 @@ pub const MOVED: &[Moved] = &[
         key: "GET /audit",
         path: "/audit",
         route: || axum::routing::get(crate::directory::audit),
+    },
+    // P2b 인박스 「오늘」(`inbox_today.rs`) — ETag/304.
+    Moved {
+        key: "GET /inbox/today/open",
+        path: "/inbox/today/open",
+        route: || axum::routing::get(crate::inbox_today::open),
+    },
+    Moved {
+        key: "GET /inbox/today/done",
+        path: "/inbox/today/done",
+        route: || axum::routing::get(crate::inbox_today::done),
     },
     // P2 읽기② 목록(`lists.rs`).
     Moved {
