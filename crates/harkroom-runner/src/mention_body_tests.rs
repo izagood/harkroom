@@ -164,8 +164,8 @@ impl CallMaker<&'static Link, Sink> for Maker {
             panic!("짓개 패닉(시험)");
         }
         SystemContext {
-            handle: "agent",
-            channel_name: "general",
+            handle: "agent".into(),
+            channel_name: "general".into(),
             memory: MemoryContext::Unavailable,
             operator_bin: "/bin/op",
             harness: AgentHarness::ClaudeCode,

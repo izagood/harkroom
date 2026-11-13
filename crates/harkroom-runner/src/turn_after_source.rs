@@ -52,7 +52,16 @@ fn last_said(c: &AfterConfig, a: &AfterCtx) -> Option<String> {
 
 /// 턴 뒤 재료 실물 — 설정은 빌려 쥐고, 돌려주는 재료는 소유본이다.
 pub fn after_source<'a>(c: &'a AfterConfig) -> AfterSource<'a> {
-    Box::new(move |a: &AfterCtx, rows: &[Value]| AfterData {
+    Box::new(move |a: &AfterCtx, rows: &[Value]| after_data(c, a, rows))
+}
+
+/// 설정을 **소유하는** 턴 뒤 재료 — 멘션마다 새로 지은 설정을 그 멘션의 닫개가 가져간다(실물 짓개, security L3c-2 ④).
+pub fn after_source_owned<'a>(c: AfterConfig) -> AfterSource<'a> {
+    Box::new(move |a: &AfterCtx, rows: &[Value]| after_data(&c, a, rows))
+}
+
+fn after_data(c: &AfterConfig, a: &AfterCtx, rows: &[Value]) -> AfterData {
+    AfterData {
         plan: after_turn_plan(
             rows,
             &c.me_id,
@@ -78,7 +87,7 @@ pub fn after_source<'a>(c: &'a AfterConfig) -> AfterSource<'a> {
         },
         // 마지막 말은 시도 문맥(세션·계정 폴더·시작 시각)으로 읽는다.
         last_said: last_said(c, a),
-    })
+    }
 }
 
 #[cfg(test)]

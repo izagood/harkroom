@@ -51,12 +51,26 @@ pub fn recorded_after(c: &OutcomeConfig, o: &OutcomeCtx) -> Option<String> {
 
 /// 결과 접기 닫개 실물.
 pub fn outcome_source(c: &OutcomeConfig) -> OutcomeFn<'_> {
-    #[allow(clippy::result_large_err)]
-    let f = move |attempted: Attempted<PtyOut>,
-                  secrets: &TurnSecrets,
-                  live: &LiveTurn,
-                  end: &EndState,
-                  o: &OutcomeCtx| {
+    Box::new(move |attempted, secrets, live, end, o| fold_with(c, attempted, secrets, live, end, o))
+}
+
+/// 설정을 **소유하는** 결과 접기 — 멘션마다 새로 지은 설정을 그 멘션의 닫개가 가져간다(실물 짓개, security L3c-2 ④).
+pub fn outcome_source_owned<'a>(c: OutcomeConfig) -> OutcomeFn<'a> {
+    Box::new(move |attempted, secrets, live, end, o| {
+        fold_with(&c, attempted, secrets, live, end, o)
+    })
+}
+
+#[allow(clippy::result_large_err)]
+fn fold_with(
+    c: &OutcomeConfig,
+    attempted: Attempted<PtyOut>,
+    secrets: &TurnSecrets,
+    live: &LiveTurn,
+    end: &EndState,
+    o: &OutcomeCtx,
+) -> Result<crate::mention_run::TurnOk, crate::turn_policy::AttemptError> {
+    {
         let api = recorded_after(c, o);
         let end = Mutex::new(end.clone());
         fold_outcome(
@@ -79,8 +93,7 @@ pub fn outcome_source(c: &OutcomeConfig) -> OutcomeFn<'_> {
                 stop_requested_at: c.stop_requested_at.clone(),
             },
         )
-    };
-    Box::new(f)
+    }
 }
 
 #[cfg(test)]

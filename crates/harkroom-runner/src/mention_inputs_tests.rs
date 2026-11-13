@@ -105,8 +105,8 @@ fn merge_approvals_are_this_threads_only() {
         &reads(),
         &target(None),
         SystemContext {
-            handle: "h",
-            channel_name: "task",
+            handle: "h".into(),
+            channel_name: "task".into(),
             memory: MemoryContext::Unavailable,
             operator_bin: "/bin/op",
             harness: AgentHarness::ClaudeCode,

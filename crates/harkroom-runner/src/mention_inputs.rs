@@ -71,8 +71,9 @@ pub fn read_mention<L: AgentLink>(
 
 /// 지시문 재료의 러너 쪽 값(정의에 없는 것).
 pub struct SystemContext<'a> {
-    pub handle: &'a str,
-    pub channel_name: &'a str,
+    /// 배치마다 바뀔 수 있는 값(이름 바뀜·채널 이름)이라 소유본이다 — 짓개가 잠금 안의 표에서 꺼내 넘긴다.
+    pub handle: String,
+    pub channel_name: String,
     pub memory: MemoryContext,
     pub operator_bin: &'a str,
     pub harness: AgentHarness,
@@ -113,8 +114,8 @@ pub fn system_inputs(
         }
     }
     SystemInputs {
-        handle: c.handle.to_string(),
-        channel_name: c.channel_name.to_string(),
+        handle: c.handle,
+        channel_name: c.channel_name,
         instructions: r
             .def
             .get("instructions")
