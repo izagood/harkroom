@@ -73,6 +73,8 @@ struct Parts {
     lives: Vec<Arc<LiveTurn>>,
     seen: Vec<Seen>,
     needles_had_secret: Vec<bool>,
+    /// 띄우기 도중 패닉한다.
+    panic_spawn: bool,
 }
 
 const SECRET: &str = "sk-live-rrrrrrrrrrrrrrrrrrrrrrrrrr";
@@ -135,6 +137,7 @@ impl AttemptParts for Parts {
         delivered: &mut bool,
     ) -> PtyOut {
         push(&self.log, format!("spawn {turn_id}"));
+        assert!(!self.panic_spawn, "띄우기 도중 패닉");
         let s = self.seen.last_mut().unwrap();
         assert_eq!(s.turn_id, turn_id);
         s.keys = keys.map(|k| (k.bridge.clone(), k.shell.clone()));
@@ -229,6 +232,7 @@ fn parts(w: &World, log: &Log, secrets: bool, exits: Vec<i32>) -> Parts {
         lives: Vec::new(),
         seen: Vec::new(),
         needles_had_secret: Vec::new(),
+        panic_spawn: false,
     }
 }
 
@@ -438,4 +442,79 @@ fn without_turn_keys_uses_base_config() {
     assert!(p.seen[0].keys.is_none());
     assert_eq!(p.seen[0].mcp_path, w.mcp);
     assert!(w.mcp.exists(), "기본 설정은 지우지 않는다");
+}
+
+/// security nit ①: 띄우기 도중 패닉해도 이 시도의 `LiveTurn` 듣기를 놓는다(drop 가드).
+#[test]
+fn panic_during_spawn_still_unbinds_live() {
+    let w = world("panic");
+    let log: Log = Log::default();
+    let link = Link(Arc::clone(&log));
+    let client = HarkroomRestClient::new(&link);
+    let notice = Notice {
+        log: Arc::clone(&log),
+        lease: w.lease.clone(),
+    };
+    let mut p = parts(&w, &log, false, vec![0]);
+    p.panic_spawn = true;
+    let mut a = attempt(&w, &client, &notice, true, p);
+    let t = target();
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut d = false;
+        let _ = a.run(&t, None, true, &mut d);
+    }));
+    assert!(r.is_err(), "패닉이 밖으로 나온다");
+    let log = log.lock().unwrap().clone();
+    assert_eq!(log.last().map(String::as_str), Some("unbind"), "{log:?}");
+    assert!(a.parts.borrow().bound.is_none(), "듣기를 놓았다");
+    assert!(
+        log.iter().any(|s| s == "keys_end t-1"),
+        "열쇠도 거뒀다: {log:?}"
+    );
+}
+
+/// security nit ②: 실물 생성자의 턴 id 는 시도마다 새로 뽑은 무작위 v4 다(카운터·고정값 아님).
+#[test]
+fn real_constructor_draws_random_v4_turn_ids() {
+    let w = world("uuid");
+    let log: Log = Log::default();
+    let link = Link(Arc::clone(&log));
+    let client = HarkroomRestClient::new(&link);
+    let notice = Notice {
+        log: Arc::clone(&log),
+        lease: w.lease.clone(),
+    };
+    let mut a = PtyTurnAttempt::new(
+        AttemptBase {
+            client: &client,
+            notice: &notice,
+            harness: AgentHarness::ClaudeCode,
+            can_register_turn_keys: true,
+            state_dir: &w.root,
+            mcp_config_path: &w.mcp,
+            runner_env: &w.env,
+            pat: "hk_pat_secret_value_88",
+        },
+        parts(&w, &log, false, vec![0, 0, 0]),
+    );
+    let t = target();
+    for _ in 0..3 {
+        let mut d = false;
+        assert!(a.run(&t, None, true, &mut d).is_ok());
+    }
+    let ids: Vec<String> = a
+        .parts
+        .borrow()
+        .seen
+        .iter()
+        .map(|s| s.turn_id.clone())
+        .collect();
+    let v4 =
+        regex::Regex::new("^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+            .unwrap();
+    for id in &ids {
+        assert!(v4.is_match(id), "v4 꼴: {id}");
+    }
+    let uniq: std::collections::BTreeSet<_> = ids.iter().collect();
+    assert_eq!(uniq.len(), 3, "시도마다 다르다: {ids:?}");
 }
