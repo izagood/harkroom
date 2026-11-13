@@ -139,3 +139,38 @@ fn relay_sink_pushes_output_and_forwards() {
     assert_eq!(out.len(), 1);
     assert_eq!(out[0]["data"], B64.encode(b"hello"));
 }
+
+/// security ②: `RelaySink` 와 `DeliveredSink` 를 겹쳐도 주입 신호가 둘 다 지난다 — `delivered` 가 서고 맨 안쪽 sink 도 받는다.
+#[test]
+fn relay_sink_over_delivered_sink_passes_injected_through() {
+    let (l, sent) = ledger();
+    let h = l.open_session(input());
+    let a = RelayAttempt::begin(&h, None, None);
+    let mut inner = Rec::default();
+    let mut delivered = false;
+    {
+        let mut d = crate::turn_assemble::DeliveredSink {
+            inner: &mut inner,
+            delivered: &mut delivered,
+        };
+        let mut s = RelaySink {
+            inner: &mut d,
+            relay: &a,
+        };
+        s.on_output(b"x");
+        assert!(!*s.inner.delivered);
+        s.on_injected();
+    }
+    assert!(delivered, "DeliveredSink 를 지났다");
+    assert_eq!(inner.injected, 1, "맨 안쪽까지 갔다");
+    assert_eq!(inner.out, b"x");
+    // security ③: 세션으로 나가는 것은 이 세션의 `output` 프레임뿐이다(새 수신자·다른 갈래 없음).
+    let kinds: Vec<String> = sent
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|f| f["type"].as_str().unwrap_or("").to_string())
+        .collect();
+    // 열기 + 시도 시작의 칩 다시 알림 + 출력.
+    assert_eq!(kinds, ["session.started", "session.started", "output"]);
+}
