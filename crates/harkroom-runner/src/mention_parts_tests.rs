@@ -95,7 +95,7 @@ fn parts<'a>(
             assert_eq!(end.last_data_at_ms, 55, "감시 자리의 끝 상태 사본");
             Ok(TurnOk::default())
         }),
-        Box::new(|_| Ok(())),
+        Box::new(|_, _| Ok(())),
         Box::new(|_| Ok(())),
     );
     p.key = "c1:root".into();

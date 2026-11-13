@@ -184,7 +184,15 @@ pub type OutcomeFn<'a> = Box<
         + 'a,
 >;
 /// 턴 뒤 IO 닫개.
-pub type AfterFn<'a> = Box<dyn FnMut(&TurnSecrets) -> Result<(), String> + 'a>;
+pub type AfterFn<'a> = Box<dyn FnMut(&TurnSecrets, &AfterCtx) -> Result<(), String> + 'a>;
+
+/// 턴 뒤 IO 가 받는 **그 시도의** 사실 — 시도 문맥과 끝 상태에서 꺼낸 거둔 하위 에이전트 수.
+#[derive(Clone, Debug, Default)]
+pub struct AfterCtx {
+    pub ctx: LoopCtx,
+    /// 하위 에이전트를 기다리다 거뒀다면 그 수(정본 `end.backgroundCut`).
+    pub background_cut: Option<usize>,
+}
 /// 비밀 마운트 닫개.
 pub type MountFn<'a> = Box<dyn FnMut(&str) -> Result<(), SecretMountError> + 'a>;
 /// 시도마다 PTY 옵션(주입 글 틀 포함)을 새로 짓는다.
@@ -228,6 +236,8 @@ pub struct MentionParts<'a, P: PrepareIo, S: PtyTurnSink> {
     /// 띄우는 동안 옆에서 돌 감시 루프(없으면 돌지 않는다 — 시험용).
     pub watch_loop: Option<WatchLoopFn<'a>>,
     cur: Option<Current>,
+    /// 이 시도가 띄울 때 지은 문맥 — 턴 뒤 IO 에 넘긴다(`spawn` 이 시도마다 새로 적는다).
+    last_ctx: Option<LoopCtx>,
 }
 
 impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
@@ -272,6 +282,7 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
             mount,
             watch_loop: None,
             cur: None,
+            last_ctx: None,
         }
     }
 
@@ -305,6 +316,8 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             // 시도마다 새 감시 자리 — 앞 시도의 끝 상태(API 오류·종료·발화·정지 표지)와 화면 꼬리가 이 시도 판정에
             // 섞이지 않게(#2036·#2042 와 같은 경계). sink·감시 루프·결과 접기는 이 시도 것을 쥔다.
             self.watch = Watch::default();
+            // 앞 시도의 문맥이 이 시도의 턴 뒤 IO 에 가지 않게(mem/runner/per-attempt-state).
+            self.last_ctx = None;
         }
         self.slot.bind(live);
     }
@@ -420,6 +433,7 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             claude_config_dir: c.account.config_dir.clone(),
             ended: Arc::new(AtomicBool::new(false)),
         };
+        self.last_ctx = Some(ctx.clone());
         run_beside(&watch, &args.notice, &ctx, self.watch_loop.as_ref(), || {
             let mut delivered_sink = DeliveredSink { inner, delivered };
             let mut watch_sink = WatchSink {
@@ -457,7 +471,23 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
     }
 
     fn after(&mut self, secrets: &TurnSecrets) -> Result<(), String> {
-        (self.after)(secrets)
+        let Some(ctx) = self.last_ctx.clone() else {
+            return Err("띄우지 않은 시도의 턴 뒤 IO".to_string());
+        };
+        let background_cut = self
+            .watch
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .end
+            .background_cut
+            .map(|n| n as usize);
+        (self.after)(
+            secrets,
+            &AfterCtx {
+                ctx,
+                background_cut,
+            },
+        )
     }
 
     fn account_ranks(&self, account: Option<&ClaudeAccount>) -> (Option<Option<u32>>, Option<u32>) {
