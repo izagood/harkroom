@@ -154,3 +154,47 @@ fn fresh_record_and_unreadable_thread() {
     assert_eq!(e, Some(PrepareError::ThreadUnreadable));
     assert!(!format!("{e:?}").contains("SECRET_ERROR_TEXT"));
 }
+
+/// security nit: 부른 글·묶인 글도 이 스레드 글만 채운다(장부 결함이 있어도 다른 스레드 글이 안 들어온다).
+#[test]
+fn asked_and_bundled_rows_from_other_threads_are_dropped() {
+    let handles = HashMap::new();
+    let empty = || Pages {
+        oldest: vec![],
+        latest: vec![],
+        fail: false,
+        asked: vec![],
+    };
+    let bodies = |p: &Prepared| -> String {
+        p.fed
+            .thread
+            .iter()
+            .map(|m| m["body"].as_str().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("|")
+    };
+
+    // 부른 글은 이 스레드 것, 묶인 글에 다른 채널·다른 스레드 글이 섞였다.
+    let mut t = target();
+    t.bundled_rows = vec![
+        msg("b1", 1, "c1", Some("root"), "SAME_THREAD_BUNDLED"),
+        msg("b2", 1, "c9", Some("root"), "OTHER_CHANNEL_BUNDLED"),
+        msg("b3", 1, "c1", Some("elsewhere"), "OTHER_THREAD_BUNDLED"),
+    ];
+    let p = prepare_turn(&mut empty(), input(&t, &handles), &mut ids()).unwrap();
+    let all = bodies(&p);
+    assert!(
+        all.contains("SAME_THREAD_BUNDLED") && all.contains("해 줘"),
+        "{all}"
+    );
+    assert!(!all.contains("OTHER_"), "{all}");
+    assert_eq!(p.fed.bundled_ids, ["b1"]);
+    assert!(!p.prompt.prompt.contains("OTHER_"));
+
+    // 부른 글 자체가 다른 채널 글이면 채우지 않는다.
+    let mut t = target();
+    t.mention_row = msg("m2", 2, "c9", Some("root"), "OTHER_CHANNEL_MENTION");
+    let p = prepare_turn(&mut empty(), input(&t, &handles), &mut ids()).unwrap();
+    assert!(!bodies(&p).contains("OTHER_CHANNEL_MENTION"));
+    assert!(!p.prompt.prompt.contains("OTHER_CHANNEL_MENTION"));
+}
