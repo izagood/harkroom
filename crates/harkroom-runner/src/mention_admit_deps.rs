@@ -22,7 +22,7 @@ use serde_json::json;
 
 use crate::account_assign::shared::{is_attention_active, read_account_attention};
 use crate::mcp::FailOpts;
-use crate::mention_admit::{AdmitDeps, AdmitNotice, ClaimHold, Launch};
+use crate::mention_admit::{AdmitDeps, AdmitNotice, ClaimHold, Launch, ThreadClaimHandle};
 use crate::mention_clients::AgentClients;
 use crate::mention_target::build_mention_target;
 use crate::rest::{RunnerLink, SlotOutcome};
@@ -132,6 +132,10 @@ impl FenceCell {
         }
     }
 
+    fn same(&self, other: &FenceCell) -> bool {
+        Arc::ptr_eq(&self.state, &other.state)
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, CellState> {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
@@ -173,8 +177,48 @@ pub struct LinkAdmitDeps<'a, L: RunnerLink + 'static, M: MentionLauncher> {
     slots: MentionSlots,
     now: fn() -> u64,
     launcher: M,
-    /// 이번 폴에 잡은 임대의 칸(채널·앵커 열쇠). `launch` 가 꺼내 대표 멘션을 적는다.
-    cells: HashMap<(String, String), FenceCell>,
+    /// 잡은 임대의 칸(채널·앵커 열쇠). `launch` 가 꺼내 대표 멘션을 적고, 띄우지 않고 놓으면 손잡이([`CellClaim`])가 뺀다.
+    cells: Cells,
+}
+
+type Cells = Arc<Mutex<HashMap<(String, String), FenceCell>>>;
+
+fn cells_lock(c: &Cells) -> std::sync::MutexGuard<'_, HashMap<(String, String), FenceCell>> {
+    c.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// 칸을 함께 쥔 임대 손잡이 — 놓이면(놓기·Drop) 아직 남은 **자기** 칸을 뺀다(받아들이기가 띄우지 않고 놓는 길, security nit).
+/// 같은 열쇠에 새 칸이 섰으면 그것은 둔다.
+struct CellClaim {
+    inner: Box<dyn ThreadClaimHandle>,
+    cells: Cells,
+    key: (String, String),
+    cell: FenceCell,
+}
+
+impl CellClaim {
+    fn drop_cell(&self) {
+        let mut m = cells_lock(&self.cells);
+        if m.get(&self.key).is_some_and(|c| c.same(&self.cell)) {
+            m.remove(&self.key);
+        }
+    }
+}
+
+impl ThreadClaimHandle for CellClaim {
+    fn release(&self) {
+        self.inner.release();
+        self.drop_cell();
+    }
+    fn fenced(&self) -> bool {
+        self.inner.fenced()
+    }
+}
+
+impl Drop for CellClaim {
+    fn drop(&mut self) {
+        self.drop_cell();
+    }
 }
 
 impl<'a, L: RunnerLink + 'static, M: MentionLauncher> LinkAdmitDeps<'a, L, M> {
@@ -191,8 +235,15 @@ impl<'a, L: RunnerLink + 'static, M: MentionLauncher> LinkAdmitDeps<'a, L, M> {
             slots,
             now,
             launcher,
-            cells: HashMap::new(),
+            cells: Cells::default(),
         }
+    }
+}
+
+impl<L: RunnerLink + 'static, M: MentionLauncher> LinkAdmitDeps<'_, L, M> {
+    /// 남은 칸 수(진단·시험용).
+    pub fn cell_count(&self) -> usize {
+        cells_lock(&self.cells).len()
     }
 }
 
@@ -277,12 +328,19 @@ impl<L: RunnerLink + 'static, M: MentionLauncher> AdmitDeps for LinkAdmitDeps<'_
     }
     fn hold_claim(&mut self, channel_id: &str, anchor: &str) -> ClaimHold {
         let cell = FenceCell::new(self.slots.clone());
-        let hold = self.claims.hold(channel_id, anchor, Some(cell.on_lost()));
-        if matches!(hold, ClaimHold::Held(_)) {
-            self.cells
-                .insert((channel_id.to_string(), anchor.to_string()), cell);
+        match self.claims.hold(channel_id, anchor, Some(cell.on_lost())) {
+            ClaimHold::Held(inner) => {
+                let key = (channel_id.to_string(), anchor.to_string());
+                cells_lock(&self.cells).insert(key.clone(), cell.clone());
+                ClaimHold::Held(Box::new(CellClaim {
+                    inner,
+                    cells: Arc::clone(&self.cells),
+                    key,
+                    cell,
+                }))
+            }
+            other => other,
         }
-        hold
     }
     fn acquire_slot(&mut self, key: &str) -> Option<SlotOutcome> {
         Some(self.clients.rest().acquire_turn_slot(key, None))
@@ -309,7 +367,8 @@ impl<L: RunnerLink + 'static, M: MentionLauncher> AdmitDeps for LinkAdmitDeps<'_
         )
         .mention_id;
         let channel = crate::mention_admit::str_of(&launch.lead_mention, "channelId").to_string();
-        if let Some(cell) = self.cells.remove(&(channel, launch.anchor.clone())) {
+        let cell = cells_lock(&self.cells).remove(&(channel, launch.anchor.clone()));
+        if let Some(cell) = cell {
             cell.bind(&mention_id);
         }
         // 손잡이가 이미 잃음을 알고 있으면(칸이 없던 길 포함) 같은 표지를 세운다 — 두 번 세워도 같다.
