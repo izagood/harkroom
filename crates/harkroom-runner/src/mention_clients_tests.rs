@@ -113,7 +113,8 @@ fn call_site_clients_are_all_the_bundle() {
         std::ptr::eq(base.client, clients.rest()),
         "턴 열쇠 REST = 묶음"
     );
-    assert!(std::ptr::eq(base.notice, &*link), "임대 끝 알림 = 그 링크");
+    // 시도 범위는 임대를 끝내지 않는다 — 끝 알림은 멘션 결말(`LinkHooks`)이 그 링크로 한 번 보낸다.
+    crate::turn_attempt::LeaseNotice::lease_ended(base.notice, "m");
     assert!(
         std::ptr::eq(hooks.operator, &*link),
         "임대 넘기기 = 그 링크"
