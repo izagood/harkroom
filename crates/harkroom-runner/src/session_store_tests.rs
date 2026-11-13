@@ -126,3 +126,45 @@ fn delete_removes_and_ignores_unknown() {
     assert!(again.get("a").is_none());
     assert!(again.get("b").is_some());
 }
+
+/// security(턴 준비 파일): 세션 파일 자리의 링크는 따라가지 않는다 — 읽기는 빈 상태로 시작하고 대상을 건드리지 않으며,
+/// 쓰기는 링크째 0600 새 파일로 바꾼다(대상은 그대로). FIFO 자리에서도 막히지 않는다.
+#[test]
+fn session_file_links_and_fifos_are_not_followed() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let dir = tmp_dir();
+    let outside = dir.join("outside.json");
+    std::fs::write(
+        &outside,
+        json!({ "k": { "workspaceDir": "/x" } }).to_string(),
+    )
+    .unwrap();
+    let f = dir.join("sessions.json");
+    symlink(&outside, &f).unwrap();
+    let s = SessionStore::new(&f);
+    s.load();
+    assert!(s.entries().is_empty(), "링크를 따라 읽지 않는다");
+    s.put("a", rec()).unwrap();
+    let m = std::fs::symlink_metadata(&f).unwrap();
+    assert!(!m.file_type().is_symlink(), "링크째 바뀐다");
+    assert_eq!(m.permissions().mode() & 0o777, 0o600);
+    assert!(
+        std::fs::read_to_string(&outside).unwrap().contains("/x"),
+        "대상은 그대로"
+    );
+
+    let fifo = dir.join("fifo.json");
+    let c = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let s = SessionStore::new(&fifo);
+        s.load();
+        let _ = tx.send(s.entries().len());
+    });
+    assert_eq!(
+        rx.recv_timeout(std::time::Duration::from_secs(2))
+            .expect("FIFO 에서 막히지 않는다"),
+        0
+    );
+}
