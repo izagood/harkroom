@@ -1,0 +1,156 @@
+//! TurnAttempt 연결 셋째 조각 — 하네스를 띄우는 **순서**와 턴 끝 **기록 가리기 경로**.
+//!
+//! 정본 `mentionTurn.ts` 의 스폰 구간(`canceledBeforeSpawn` → `registerTurnKeys` → `runTurn`)과 턴 끝
+//! `scrubTurnKeys([transcript, <sessionId>/])` 를 옮긴다. 정본보다 엄격한 점(security 조건 ④): 관문
+//! [`spawn_gate`] 를 **턴 열쇠 맡기기·비밀 받기·lane 키 받기·하네스 띄우기 각각의 바로 앞**에서 다시 본다 — 준비
+//! 도중 임대를 잃거나 사람이 [중단] 하면 그 뒤 단계는 하나도 하지 않는다(정본은 열쇠 맡기기와 띄우기 앞에서만 본다).
+//!
+//! 단계 실패는 닫히는 쪽이다 — 열쇠를 못 맡기면 열쇠 없이 띄우지 않고 실패로 간다. 실패 사유는 단계 이름만
+//! 돌려준다(오류 원문은 호출자가 로그로만 다룬다, 결과 글에 싣지 않는다).
+
+use std::path::{Path, PathBuf};
+
+use crate::adapter::{AgentHarness, uses_omp_home, uses_pi_home};
+use crate::secret_scrub::{ScrubTally, scrub_turn_keys};
+use crate::turn_preset::preassigns_session_id;
+use crate::turn_probe_records::SpawnBlocked;
+
+/// 띄우기 전 준비 단계(정본 순서).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LaunchStep {
+    /// 턴 열쇠를 서버에 맡긴다(정본 `registerTurnKeys`).
+    TurnKeys,
+    /// 이 턴에 마운트할 비밀을 받는다(정본 `secretLeases` 마운트).
+    Secrets,
+    /// 계정·제공사 lane 키를 받는다.
+    LaneKeys,
+}
+
+/// 이 턴에 필요한 준비 단계. 꺼진 단계는 건너뛴다(관문은 그래도 띄우기 앞에서 본다).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LaunchPlan {
+    pub turn_keys: bool,
+    pub secrets: bool,
+    pub lane_keys: bool,
+}
+
+/// 띄우기 순서가 바깥에 시키는 일.
+pub trait LaunchIo {
+    /// 하네스 한 번의 결과(정본 `TurnResult`).
+    type Out;
+    /// 준비 단계 하나. 실패면 `Err` — 그 뒤 단계와 띄우기를 하지 않는다.
+    fn prepare(&mut self, step: LaunchStep) -> Result<(), String>;
+    /// 하네스를 띄우고 끝날 때까지 돈다.
+    fn spawn(&mut self) -> Self::Out;
+}
+
+/// 띄우기 순서의 끝.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Launched<O> {
+    /// 하네스가 돌았다.
+    Ran(O),
+    /// 관문이 막았다 — 하네스는 존재한 적이 없다(정본 `{ exitCode: 143, tail: '' }` 길, 문장은 `canceledBy`·펜스가 정한다).
+    Blocked(SpawnBlocked),
+    /// 준비 단계가 실패했다 — 닫히는 쪽(띄우지 않는다).
+    SetupFailed(LaunchStep),
+}
+
+/// 띄우기 순서의 결과와, 턴 끝 정리에 필요한 사실.
+#[derive(Debug, PartialEq, Eq)]
+pub struct LaunchReport<O> {
+    pub launched: Launched<O>,
+    /// 턴 열쇠를 실제로 맡겼다(정본 `turnKeysRegistered`) — 턴 끝에 거둘지 정한다.
+    pub turn_keys_registered: bool,
+}
+
+/// 정본 스폰 구간. `gate` 는 매번 지금의 수명·중단 상태로 [`spawn_gate`](crate::turn_probe_records::spawn_gate)를
+/// 부르는 닫개다 — 준비 도중 바뀐 상태를 다음 단계 앞에서 본다.
+pub fn launch<I: LaunchIo>(
+    plan: LaunchPlan,
+    io: &mut I,
+    gate: &mut dyn FnMut() -> Result<(), SpawnBlocked>,
+) -> LaunchReport<I::Out> {
+    let steps = [
+        (plan.turn_keys, LaunchStep::TurnKeys),
+        (plan.secrets, LaunchStep::Secrets),
+        (plan.lane_keys, LaunchStep::LaneKeys),
+    ];
+    let mut turn_keys_registered = false;
+    for (on, step) in steps {
+        if !on {
+            continue;
+        }
+        if let Err(b) = gate() {
+            return LaunchReport {
+                launched: Launched::Blocked(b),
+                turn_keys_registered,
+            };
+        }
+        if io.prepare(step).is_err() {
+            return LaunchReport {
+                launched: Launched::SetupFailed(step),
+                turn_keys_registered,
+            };
+        }
+        if step == LaunchStep::TurnKeys {
+            turn_keys_registered = true;
+        }
+    }
+    if let Err(b) = gate() {
+        return LaunchReport {
+            launched: Launched::Blocked(b),
+            turn_keys_registered,
+        };
+    }
+    LaunchReport {
+        launched: Launched::Ran(io.spawn()),
+        turn_keys_registered,
+    }
+}
+
+/// 턴 끝에 턴 열쇠를 가릴 **모든** 기록 경로(정본 `[transcript, ...(preassigns && !pi && !omp ? [dirname/sessionId] : [])]`).
+/// claude 는 jsonl 옆 `<sessionId>/` 에 큰 도구 출력(`tool-results`)·서브에이전트 전사(`subagents`)를 따로 남긴다.
+/// 기록 파일을 못 찾았으면(`None`) 빈 목록이다.
+pub fn turn_record_paths(
+    harness: AgentHarness,
+    transcript: Option<&Path>,
+    session_id: Option<&str>,
+) -> Vec<PathBuf> {
+    let Some(t) = transcript else {
+        return Vec::new();
+    };
+    let mut out = vec![t.to_path_buf()];
+    let sidecar = preassigns_session_id(harness).unwrap_or(false)
+        && !uses_pi_home(harness)
+        && !uses_omp_home(harness);
+    if sidecar
+        && let Some(id) = session_id
+            .filter(|s| !s.is_empty() && !s.contains(['/', '\\']) && *s != ".." && *s != ".")
+        && let Some(dir) = t.parent()
+    {
+        out.push(dir.join(id));
+    }
+    out
+}
+
+/// 턴 끝 가리기(정본 K3) — 이 턴의 모든 기록 경로에서 턴 열쇠를 가린다. 바늘이 없으면 아무것도 하지 않는다.
+pub fn scrub_turn_records(
+    key: &str,
+    harness: AgentHarness,
+    transcript: Option<&Path>,
+    session_id: Option<&str>,
+    needles: &[String],
+) -> ScrubTally {
+    if needles.is_empty() {
+        return ScrubTally::default();
+    }
+    scrub_turn_keys(
+        key,
+        &turn_record_paths(harness, transcript, session_id),
+        needles,
+    )
+}
+
+#[cfg(test)]
+#[path = "turn_launch_tests.rs"]
+mod tests;
