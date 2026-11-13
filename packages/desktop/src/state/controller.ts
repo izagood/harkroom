@@ -107,6 +107,13 @@ export const EVENT_REFETCH_DEBOUNCE_MS = 400;
  * 내 동작의 결과일 가능성이 크고, 처리했는데 배지가 안 줄면 사람은 처리가 안 된 줄 안다(#1333 designer d1).
  */
 export const OWN_ACTION_WINDOW_MS = 10_000;
+/**
+ * 보드 조회가 도는 동안 신호가 오면, 끝난 뒤 **이만큼 모았다가** 한 번 더 받는다(`loadInboxBoard`, 2026-11-13).
+ * 큰 계정의 보드 응답은 수 MB·수 초라, 끝나자마자 다시 받으면 거의 늘 연달아 두 판이 나갔다 — 그 사이 에이전트 진행
+ * 글 하나로도 판 태그가 바뀌어 304 도 안 난다. 기다리는 동안 온 신호는 같은 한 번에 접힌다. 내 동작 직후·보드를 여는
+ * 순간·멈춤은 기다리지 않는다(`wakeBoardTrailing`).
+ */
+export const BOARD_TRAILING_MS = 3_000;
 
 /** 만들기의 API 키 연결 단계 결과(n19). 화면이 ✓/✕/– 상자로 그린다. `reason` 은 사람 말로 접은 오류다(값·경로 없음). */
 export interface CreateLaneResult {
@@ -141,6 +148,8 @@ export class Controller {
   /** 도는 중인 보드 조회 · 도는 동안 또 바뀌었나(`loadInboxBoard`). */
   private boardInFlight: Promise<InboxBoardData> | null = null;
   private boardDirty = false;
+  /** 뒤따름 조회 전 모으는 중이면 그 기다림을 바로 끝내는 손잡이(`wakeBoardTrailing`). */
+  private boardTrailingWake: (() => void) | null = null;
   /** 마지막 보드 재료 — 시간만 흘러도(나중에의 시각이 지나도) 수를 다시 세려고 들고 있다. */
   private mineInput: InboxBoardData | null = null;
   private mineTick: ReturnType<typeof setInterval> | null = null;
@@ -612,6 +621,7 @@ export class Controller {
     if (this.mineTick) { clearInterval(this.mineTick); this.mineTick = null; }
     this.clearOfflineTimer();
     if (this.badgeRefreshTimer) { clearTimeout(this.badgeRefreshTimer); this.badgeRefreshTimer = null; }
+    this.wakeBoardTrailing();
     if (this.unreadRefetchTimer) { clearTimeout(this.unreadRefetchTimer); this.unreadRefetchTimer = null; }
     if (this.leasesRefetchTimer) { clearTimeout(this.leasesRefetchTimer); this.leasesRefetchTimer = null; }
   }
@@ -1475,6 +1485,7 @@ export class Controller {
    */
   private noteOwnInboxAction(): void {
     this.ownActionUntil = Date.now() + OWN_ACTION_WINDOW_MS;
+    this.wakeBoardTrailing();
     if (this.badgeRefreshTimer && !this.stopped) {
       clearTimeout(this.badgeRefreshTimer);
       this.badgeRefreshTimer = null;
@@ -1489,6 +1500,24 @@ export class Controller {
   setInboxBoardOpen(open: boolean): void {
     this.boardOpenCount = Math.max(0, this.boardOpenCount + (open ? 1 : -1));
     if (open && this.badgeRefreshTimer) { clearTimeout(this.badgeRefreshTimer); this.badgeRefreshTimer = null; }
+    // 사람이 보드를 여는 순간 "불러오는 중"이 뒤따름의 모으기만큼 늘지 않게 한다.
+    if (open) this.wakeBoardTrailing();
+  }
+
+  /** 뒤따름 조회를 모으는 중이면 기다림을 끝내고 바로 받게 한다. 모으는 중이 아니면 아무것도 안 한다. */
+  private wakeBoardTrailing(): void {
+    const wake = this.boardTrailingWake;
+    this.boardTrailingWake = null;
+    wake?.();
+  }
+
+  /** `BOARD_TRAILING_MS` 동안 모은다. `wakeBoardTrailing` 이 부르면 그 자리에서 끝난다. */
+  private waitBoardTrailing(): Promise<void> {
+    if (Date.now() < this.ownActionUntil) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const timer = setTimeout(() => { this.boardTrailingWake = null; resolve(); }, BOARD_TRAILING_MS);
+      this.boardTrailingWake = () => { clearTimeout(timer); resolve(); };
+    });
   }
 
   /**
@@ -1497,6 +1526,8 @@ export class Controller {
    *
    * - 도는 중에 또 부르면 **같은 약속**을 돌려주고, 끝난 뒤 한 번 더 받아 그 결과로 풀린다 — 도는
    *   동안 바뀐 것(방금 누른 나중에 등)을 놓치지 않으면서 동시에 도는 조회는 늘 하나다.
+   * - 그 「한 번 더」는 곧바로가 아니라 `BOARD_TRAILING_MS` 모은 뒤다(꼬리 디바운스) — 모으는 동안 온 신호도
+   *   같은 한 번에 접힌다. 첫 판은 받자마자 그린다(배지·보드는 기다리지 않는다).
    * - 받을 때마다 배지를 다시 세고 `inboxBoardRevision` 을 올린다 — 열려 있는 보드는 그 수를 보고
    *   `inboxBoardSnapshot()` 을 그린다(따로 조회하지 않는다). 보드가 연 순간 부르면 배지도 그 순간
    *   보드와 맞춰진다(#1076 designer 메모).
@@ -1520,6 +1551,7 @@ export class Controller {
             const store = this.store.getState();
             store.set({ inboxBoardRevision: store.inboxBoardRevision + 1 });
           }
+          if (this.boardDirty && !this.stopped) await this.waitBoardTrailing();
         } while (this.boardDirty && !this.stopped);
         return data;
       } finally { this.boardInFlight = null; }
