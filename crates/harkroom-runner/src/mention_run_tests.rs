@@ -525,17 +525,24 @@ fn run_mention_opens_before_first_attempt_and_holds_through_release() {
         ..Fake::default()
     };
     let mut open_at_make = false;
-    run_mention(&s.ledger, &mut d, &slots, s.launch, |slot| {
-        open_at_make = slots.is_open("m7");
-        SlotTurn {
-            inner: turn(vec![(ok(None), true)]),
-            slot,
-            slots: slots.clone(),
-            open_at_attempt: vec![],
-            cancel_after: None,
-            blocked: 0,
-        }
-    });
+    run_mention(
+        &s.ledger,
+        &mut d,
+        &slots,
+        s.launch,
+        |_| (),
+        |slot, _| {
+            open_at_make = slots.is_open("m7");
+            SlotTurn {
+                inner: turn(vec![(ok(None), true)]),
+                slot,
+                slots: slots.clone(),
+                open_at_attempt: vec![],
+                cancel_after: None,
+                blocked: 0,
+            }
+        },
+    );
     assert!(open_at_make, "턴을 만들기 전에 열렸다");
     assert_eq!(d.open_at_release, [true, true], "정리 때도 열려 있다");
     assert!(!slots.is_open("m7"), "끝나면 닫힌다");
@@ -554,21 +561,28 @@ fn run_mention_cancel_between_accounts_ends_axis() {
     let mut seen = vec![];
     let mut blocked = 0;
     let mut opens = vec![];
-    run_mention(&s.ledger, &mut d, &slots, s.launch, |slot| {
-        SlotTurn {
-            inner: turn(vec![
-                (Err(Err::Quota), false),
-                (ok(None), true),
-                (ok(None), true),
-            ]),
-            slot,
-            slots: slots.clone(),
-            open_at_attempt: vec![],
-            cancel_after: Some(1),
-            blocked: 0,
-        }
-        .into_probe(&mut seen, &mut blocked, &mut opens)
-    });
+    run_mention(
+        &s.ledger,
+        &mut d,
+        &slots,
+        s.launch,
+        |_| (),
+        |slot, _| {
+            SlotTurn {
+                inner: turn(vec![
+                    (Err(Err::Quota), false),
+                    (ok(None), true),
+                    (ok(None), true),
+                ]),
+                slot,
+                slots: slots.clone(),
+                open_at_attempt: vec![],
+                cancel_after: Some(1),
+                blocked: 0,
+            }
+            .into_probe(&mut seen, &mut blocked, &mut opens)
+        },
+    );
     assert_eq!(
         seen,
         vec![(Some("a1".into()), false), (Some("a2".into()), false)],
@@ -691,18 +705,25 @@ fn cancel_by_target_mention_id_reaches_running_attempt() {
             self.0.run(t, a, l, d)
         }
     }
-    run_mention(&s.ledger, &mut d, &slots, s.launch, |slot| {
-        Out(
-            CancelTurn {
-                slot,
-                slots: slots.clone(),
-                by_id: vec![],
-                wrong_id: vec![],
-                hooked: vec![],
-            },
-            &mut got,
-        )
-    });
+    run_mention(
+        &s.ledger,
+        &mut d,
+        &slots,
+        s.launch,
+        |_| (),
+        |slot, _| {
+            Out(
+                CancelTurn {
+                    slot,
+                    slots: slots.clone(),
+                    by_id: vec![],
+                    wrong_id: vec![],
+                    hooked: vec![],
+                },
+                &mut got,
+            )
+        },
+    );
     assert_eq!(got.0, [true], "대상 mention_id 로 보낸 [중단] 이 닿는다");
     assert_eq!(got.1, [false], "다른 id 는 버려진다");
     assert_eq!(
@@ -710,4 +731,119 @@ fn cancel_by_target_mention_id_reaches_running_attempt() {
         [Some("human-1".to_string())],
         "처음 사람이 남는다(갈고리도 같은 시도에 닿음)"
     );
+}
+
+// ---- 멘션 단위 중계 세션 ----
+
+use crate::relay_session::{OpenSessionInput, RelaySessions, SessionHandle};
+
+/// 시도 사이에 중계 [중단] 프레임을 넣어 보는 턴.
+struct RelayTurn {
+    slot: LiveSlot,
+    relay: Arc<RelaySessions>,
+    session_id: String,
+    seen: Vec<Option<String>>,
+    blocked: u32,
+}
+
+impl TurnAttempt for RelayTurn {
+    type Err = Err;
+    fn run(
+        &mut self,
+        _t: &MentionTarget,
+        account: Option<&ClaudeAccount>,
+        _last: bool,
+        _d: &mut bool,
+    ) -> Result<TurnOk, Err> {
+        let live = Arc::new(LiveTurn::default());
+        self.slot.bind(Some(Arc::clone(&live)));
+        let out = if live.gate().is_err() {
+            self.blocked += 1;
+            Err(Err::Other("blocked"))
+        } else {
+            self.seen.push(account.map(|a| a.name.clone()));
+            Err(Err::Quota)
+        };
+        self.slot.bind(None);
+        if self.seen.len() == 1 && self.blocked == 0 {
+            // a1 끝 ~ a2 시작 사이: 사람이 [중단] 을 누른다 — 서버는 멘션 내내 열린 세션 id 로 프레임을 보낸다.
+            self.relay.on_frame(json!({
+                "type": "session.cancel",
+                "sessionId": self.session_id,
+                "byHandle": "human-1",
+            }));
+        }
+        out
+    }
+}
+
+/// 시도 사이 [중단] 도 받는다: 세션은 멘션 하나에 하나(첫 시도 전에 열고 정리 뒤 닫음)라, a1 끝~a2 시작 사이에 온 중계
+/// [중단] 프레임이 멘션 자리에 닿고 a2 는 관문이 막는다 · a3 는 안 간다 · 끝나면 세션이 닫힌다.
+#[test]
+fn relay_cancel_between_attempts_blocks_next() {
+    let s = setup();
+    let slots = MentionSlots::default();
+    let relay = RelaySessions::new(None, Box::new(|_| {}));
+    let mut d = Fake {
+        lane: vec![acc("a1"), acc("a2"), acc("a3")],
+        ..Fake::default()
+    };
+    let mut got: (Vec<Option<String>>, u32, usize) = (vec![], 0, 0);
+    struct Out<'o>(RelayTurn, &'o mut (Vec<Option<String>>, u32, usize));
+    impl Drop for Out<'_> {
+        fn drop(&mut self) {
+            *self.1 = (self.0.seen.clone(), self.0.blocked, self.0.relay.len());
+        }
+    }
+    impl TurnAttempt for Out<'_> {
+        type Err = Err;
+        fn run(
+            &mut self,
+            t: &MentionTarget,
+            a: Option<&ClaudeAccount>,
+            l: bool,
+            d: &mut bool,
+        ) -> Result<TurnOk, Err> {
+            self.0.run(t, a, l, d)
+        }
+    }
+    let r = Arc::clone(&relay);
+    run_mention(
+        &s.ledger,
+        &mut d,
+        &slots,
+        s.launch,
+        |slot| -> SessionHandle {
+            r.open_session(OpenSessionInput {
+                agent_account_id: "agent".into(),
+                channel_id: "c".into(),
+                thread_root_id: Some("t".into()),
+                harness: "claude-code".into(),
+                mode: None,
+                accepts_input: true,
+                claude_account_rank: None,
+                claude_pool_rank: None,
+                on_viewer_count: None,
+                on_cancel: Some(crate::turn_attempt_account::cancel_hook(slot)),
+            })
+        },
+        |slot, h: &SessionHandle| {
+            Out(
+                RelayTurn {
+                    slot,
+                    relay: Arc::clone(&relay),
+                    session_id: h.session_id().to_string(),
+                    seen: vec![],
+                    blocked: 0,
+                },
+                &mut got,
+            )
+        },
+    );
+    assert_eq!(got.0, [Some("a1".to_string())], "a1 만 띄웠다");
+    assert_eq!(got.1, 1, "a2 는 관문이 막았다");
+    assert_eq!(got.2, 1, "턴이 도는 동안 세션은 열려 있었다");
+    assert!(relay.is_empty(), "정리 뒤 세션이 닫혔다");
+    assert!(!slots.is_open("m7"));
+    assert_eq!(d.fails.len(), 1);
 }

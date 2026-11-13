@@ -335,3 +335,50 @@ fn interactive_error_text_hides_paths_and_control_chars() {
     );
     assert_eq!(public_error_text(" \n\t"), "인터랙티브 열기가 실패했다");
 }
+
+/// 멘션 단위 세션: 시도가 끝나면 그 시도의 입력 통로를 놓고(사이에 온 입력은 버림), 다음 시도의 통로로만 간다.
+#[test]
+fn unbind_input_between_attempts() {
+    let (l, _sent) = ledger(None);
+    let h = l.open_session(input());
+    let sid = h.session_id().to_string();
+    let a1 = Arc::new(FakePty::default());
+    h.bind_input(a1.clone());
+    l.on_frame(json!({"type": "input", "sessionId": sid, "data": B64.encode(b"one")}));
+    h.unbind_input();
+    l.on_frame(json!({"type": "input", "sessionId": sid, "data": B64.encode(b"between")}));
+    let a2 = Arc::new(FakePty::default());
+    h.bind_input(a2.clone());
+    l.on_frame(json!({"type": "input", "sessionId": sid, "data": B64.encode(b"two")}));
+    assert_eq!(*a1.written.lock().unwrap(), b"one");
+    assert_eq!(*a2.written.lock().unwrap(), b"two");
+}
+
+/// 계정 칩은 시도마다 고쳐 같은 세션 id 로 다시 알린다(순번만, 이름 없음).
+#[test]
+fn restate_account_resends_started_with_new_rank() {
+    let (l, sent) = ledger(None);
+    let h = l.open_session(OpenSessionInput {
+        claude_account_rank: Some(Some(1)),
+        claude_pool_rank: Some(1),
+        ..input()
+    });
+    h.restate_account(Some(Some(2)), None);
+    let frames = sent.lock().unwrap().clone();
+    let last = frames.last().unwrap();
+    assert_eq!(last["type"], "session.started");
+    assert_eq!(last["session"]["sessionId"], h.session_id());
+    assert_eq!(last["session"]["claudeAccountRank"], 2);
+    assert!(last["session"].get("claudePoolRank").is_none());
+    assert_eq!(
+        l.announce()[0]["claudeAccountRank"],
+        2,
+        "재접속 알림도 새 값"
+    );
+    h.close();
+    h.restate_account(Some(None), None);
+    assert_eq!(
+        sent.lock().unwrap().last().unwrap()["type"],
+        "session.ended"
+    );
+}
