@@ -163,6 +163,7 @@ fn no_nudge_outside_lane_with_viewers_pending_or_off_anchor_answer() {
 
 struct Built {
     rest: TurnProbeRest<FakeNudge>,
+    end: Arc<Mutex<EndState>>,
     terms: Arc<Mutex<usize>>,
     enters: Arc<Mutex<usize>>,
 }
@@ -172,12 +173,15 @@ fn built(end: EndState) -> Built {
     let enters = Arc::new(Mutex::new(0usize));
     let t = terms.clone();
     let e = enters.clone();
+    let end = Arc::new(Mutex::new(end));
+    let slot = end.clone();
     Built {
+        end,
         rest: TurnProbeRest {
             nudge: FakeNudge::default(),
             nudge_target: target(),
             nudge_wait_ms: LANE_NUDGE_WAIT_MS,
-            end: Arc::new(Mutex::new(end)),
+            on_reclaim: Arc::new(move || slot.lock().unwrap().on_reclaim_timer()),
             ended: Arc::new(AtomicBool::new(false)),
             terminate: Arc::new(move || *t.lock().unwrap() += 1),
             write_pty: Box::new(move |b| {
@@ -212,7 +216,7 @@ fn armed_reclaim_clock_terminates_live_turn_only() {
     rest.apply_end_action(EndAction::Arm { grace_ms: 10 });
     wait_until(|| *b.terms.lock().unwrap() > 0);
     assert_eq!(*b.terms.lock().unwrap(), 1);
-    assert!(rest.end.lock().unwrap().reclaimed);
+    assert!(b.end.lock().unwrap().reclaimed);
 
     // 끝난 턴이면 시계가 울려도 SIGTERM 을 보내지 않는다.
     let b2 = built(EndState {
@@ -233,6 +237,18 @@ fn armed_reclaim_clock_terminates_live_turn_only() {
     assert!(rest3.reclaim_timer.is_none());
     rest3.apply_end_action(EndAction::ReclaimNow { kill: true });
     assert_eq!(*b3.terms.lock().unwrap(), 1);
+
+    // 시계를 쥔 값이 떨어지면(시도 끝·패닉 풀림) 시계도 멈춘다.
+    let b4 = built(EndState {
+        has_controls: true,
+        ..EndState::default()
+    });
+    let mut rest4 = b4.rest;
+    rest4.apply_end_action(EndAction::Arm { grace_ms: 20 });
+    drop(rest4);
+    std::thread::sleep(Duration::from_millis(80));
+    assert_eq!(*b4.terms.lock().unwrap(), 0);
+    assert!(!b4.end.lock().unwrap().reclaimed);
 }
 
 #[test]
