@@ -500,3 +500,28 @@ fn panic_in_call_site_releases_each_once() {
     assert!(book.is_empty(), "패닉 길도 장부에서 지운다");
     assert_eq!(n(&other.lease_ended), 0);
 }
+
+/// security C6 전 필수 1건: 시도 끝(띄우기 정리·lane 가드)은 멘션 임대를 끝내지 않는다 — 재시도·계정 전환 두 번에도
+/// 오퍼레이터에 끝 알림이 가지 않는다. 끝은 멘션 결말 한 곳(`retries_reuse_one_lease_and_final_failure_ends_it_once`).
+#[test]
+fn attempt_scope_never_ends_the_mention_lease() {
+    let l = link(Read::Error);
+    let clients = AgentClients::new(&l, "t");
+    let env = std::collections::BTreeMap::new();
+    let p = std::path::Path::new("/x");
+    let base = clients.attempt_base(
+        crate::adapter::AgentHarness::ClaudeCode,
+        false,
+        p,
+        p,
+        &env,
+        "",
+    );
+    for _ in 0..2 {
+        crate::turn_attempt::LeaseNotice::lease_ended(base.notice, "m7");
+    }
+    assert!(
+        l.lease_ended.lock().unwrap().is_empty(),
+        "시도 두 번이 끝나도 오퍼레이터 임대는 그대로"
+    );
+}

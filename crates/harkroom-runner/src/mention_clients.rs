@@ -99,6 +99,21 @@ impl AgentLink for &LinkClient {
     }
 }
 
+/// 시도 범위의 임대 끝 알림 자리 — **아무것도 보내지 않는다.** 턴 임대는 멘션 하나의 것이다: 정본은 임대 끝(`notifyEnded`)을
+/// `secretLeases.release` 한 곳(`secretLeases.ts` 130~137, `main.ts` 637)에서만 보내고, `release` 는 스케줄러가 **멘션 결말**에서만
+/// 부른다(`mentionTurn.ts` 에는 없다). 오퍼레이터는 끝 알림을 받으면 `(runner, cause)` 임대를 장부에서 빼고 서버에 end 를
+/// 보낸다(`turn_leases.rs::ended`) — 시도마다 보내면 재시도·계정 전환의 다음 시도가 임대 없이 돈다. 그래서 시도 끝(띄우기
+/// 정리·lane 가드)은 이 자리로 보내 아무것도 하지 않고, 끝 알림은 [`crate::mention_hooks::LinkHooks`] 의 결말(`release_lease`·
+/// 패닉 Drop)에서 한 번만 간다. lane 턴 파일 지우기는 lane 가드가 그대로 한다.
+#[derive(Debug, Default)]
+pub struct KeepMentionLease;
+
+impl LeaseNotice for KeepMentionLease {
+    fn lease_ended(&self, _cause: &str) {}
+}
+
+static KEEP_MENTION_LEASE: KeepMentionLease = KeepMentionLease;
+
 impl<L: AgentLink> AgentClients<L> {
     /// 오퍼레이터 알림 길 — 묶음을 지은 그 링크.
     pub fn operator(&self) -> &L::Operator {
@@ -115,10 +130,11 @@ impl<L: AgentLink> AgentClients<L> {
         mcp_config_path: &'a Path,
         runner_env: &'a BTreeMap<String, String>,
         pat: &'a str,
-    ) -> AttemptBase<'a, L, L::Operator> {
+    ) -> AttemptBase<'a, L, KeepMentionLease> {
         AttemptBase {
             client: &self.rest,
-            notice: self.link.operator(),
+            // 시도 끝은 임대를 끝내지 않는다 — [`KeepMentionLease`].
+            notice: &KEEP_MENTION_LEASE,
             harness,
             can_register_turn_keys,
             state_dir,

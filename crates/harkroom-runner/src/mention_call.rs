@@ -219,14 +219,15 @@ pub fn run_mention_call<'a, L, S, H>(
                 watch_loop: mention_watch_loop(clients, watch, slot.clone()),
                 slot,
             });
-            let ab: AttemptBase<'a, L, L::Operator> = clients.attempt_base(
-                base.harness,
-                base.can_register_turn_keys,
-                base.state_dir,
-                base.mcp_config_path,
-                base.runner_env,
-                base.pat,
-            );
+            let ab: AttemptBase<'a, L, crate::mention_clients::KeepMentionLease> = clients
+                .attempt_base(
+                    base.harness,
+                    base.can_register_turn_keys,
+                    base.state_dir,
+                    base.mcp_config_path,
+                    base.runner_env,
+                    base.pat,
+                );
             let turn = PtyTurnAttempt::new(ab, parts);
             match relay {
                 Some(r) => turn.with_relay(Arc::clone(r)),
