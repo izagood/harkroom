@@ -211,13 +211,13 @@ fn scrub_after_run_covers_all_record_paths_with_key_and_secret_needles() {
     std::fs::write(&t, format!("{key} {secret}")).unwrap();
     std::fs::write(proj.join("sid").join("tool-results").join("o.txt"), &secret).unwrap();
     std::fs::write(proj.join("sid").join("subagents").join("a.jsonl"), &key).unwrap();
+    let secrets = TurnSecrets::build("", &[&key], Some(&lease));
     let tally = scrub_after_run(
         "k",
         AgentHarness::ClaudeCode,
         Some(&t),
         Some("sid"),
-        &[&key],
-        Some(&lease),
+        &secrets,
     );
     assert_eq!(tally.replaced, 4, "{tally:?}");
     for p in [
@@ -364,5 +364,63 @@ fn turn_files_removed_after_guard_on_panic() {
     assert!(res.is_err());
     assert_eq!(log.all(), ["mount", "lease_ended:file_present=true"]);
     assert!(!f.exists());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// #2030 security: 한 [`TurnSecrets`] 가 결과 접기(실패 문장)·턴 뒤 글·기록 가리기에 **같은 목록**으로 들어간다 —
+/// 임대 비밀과 턴 열쇠가 세 자리 모두에서 가려진다.
+#[test]
+fn one_turn_secrets_masks_failure_after_turn_text_and_records() {
+    use crate::turn_end::EndState;
+    use crate::turn_failure::{ExitFacts, FailFacts, pick_failure};
+    let root = std::env::temp_dir().join(format!("hk-turn-secrets-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let lease = root.join("lease");
+    std::fs::create_dir_all(&lease).unwrap();
+    let secret = format!("sk-live-{}", "q".repeat(30));
+    std::fs::write(lease.join("secret-1"), &secret).unwrap();
+    let key = format!("hkt_shell_{}", "w".repeat(30));
+    let pat = "hk_pat_secret_value_66";
+    let s = TurnSecrets::build(pat, &[&key], Some(&lease));
+
+    // ① 결과 접기 — 턴 도중 API 오류 문장.
+    let end = EndState {
+        api_error: Some(format!("401 {secret} {key} {pat}")),
+        ..EndState::default()
+    };
+    let f = FailFacts {
+        exit: ExitFacts {
+            exit_code: 1,
+            timed_out: false,
+            tail: "",
+        },
+        end: &end,
+        canceled_by: None,
+        fenced_out: false,
+        thread_unreadable: false,
+        turn_timeout_ms: 1,
+        harness_stall_ms: 1,
+    };
+    let msg = pick_failure(&f, s.pat(), s.needles()).message();
+    // ② 턴 뒤 글 — 예약 턴 끝말.
+    let said = format!("끝 {secret} {key} {pat}");
+    let wake = crate::silent_notice::silent_wake_notice(Some(&said), s.pat(), s.needles());
+    for text in [&msg, &wake] {
+        assert!(
+            !text.contains(&secret) && !text.contains(&key) && !text.contains(pat),
+            "{text}"
+        );
+    }
+    // ③ 기록 가리기.
+    let t = root.join("t.jsonl");
+    std::fs::write(&t, format!("{secret} {key}")).unwrap();
+    let tally = scrub_after_run("k", AgentHarness::Codex, Some(&t), None, &s);
+    assert_eq!(tally.replaced, 2);
+    // Debug 는 개수만.
+    let d = format!("{s:?}");
+    assert!(
+        !d.contains(pat) && !d.contains(&secret) && !d.contains(&key),
+        "{d}"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
