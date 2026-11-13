@@ -44,7 +44,6 @@ use crate::turn_success::SuccessTarget;
 /// 러너 수명 설정(기동 때 한 번).
 #[derive(Clone, Debug)]
 pub struct MakerConfig {
-    pub harness: AgentHarness,
     pub operator_bin: String,
     pub command_hook: bool,
     pub post_tool_hook: bool,
@@ -187,7 +186,7 @@ where
     L: AgentLink + Send + Sync,
     S: PtyTurnSink + Default,
 {
-    fn system_context(&self, target: &MentionTarget, _reads: &MentionReads) -> SystemContext<'_> {
+    fn system_context(&self, target: &MentionTarget, reads: &MentionReads) -> SystemContext<'_> {
         let n = self.names();
         // 기억은 짓개가 쥔 묶음으로만 읽는다(그 에이전트 계정 것). 사본도 서버도 못 읽으면 기억 절을 「못 읽음」으로.
         let memory = match self.memory.read(self.clients.mcp()) {
@@ -206,7 +205,7 @@ where
                 .unwrap_or_default(),
             memory,
             operator_bin: &self.cfg.operator_bin,
-            harness: self.cfg.harness,
+            harness: harness_of(&reads.def),
             command_hook: self.cfg.command_hook,
             post_tool_hook: self.cfg.post_tool_hook,
             // 기본 로그인만 — API 키 레인은 L3c-3.
@@ -224,6 +223,7 @@ where
         system: SystemInputs,
     ) -> CallInputs<'a, L, S> {
         let c = &self.cfg;
+        let harness = harness_of(&reads.def);
         let n = self.names();
         let key = thread_key(&target.channel_id, Some(&target.thread_root_id));
         let anchor = Some(target.thread_root_id.clone());
@@ -240,7 +240,7 @@ where
             me_id: c.me_id.clone(),
             channel_id: target.channel_id.clone(),
             anchor: anchor.clone(),
-            harness: c.harness,
+            harness,
             home: home.clone(),
             omp_home: None,
             end_cfg: EndConfig {
@@ -267,7 +267,7 @@ where
             wake_reason: wake_reason(target),
             background_wait_ms: c.turn_timeout_ms,
             target: success_target(target, promise.is_some()),
-            harness: c.harness,
+            harness,
             home: home.clone(),
             promise,
         });
@@ -288,13 +288,13 @@ where
         .into_owned();
         let argv = owned_argv(
             &key,
-            c.harness,
+            harness,
             system.read_only,
             reads.turn_model.model.clone(),
             reads.turn_model.effort.clone(),
         );
         let outcome = OutcomeConfig {
-            harness: c.harness,
+            harness,
             home,
             turn_timeout_ms: c.turn_timeout_ms,
             harness_stall_ms: c.harness_stall_ms,
@@ -313,7 +313,7 @@ where
                 MentionPermission::Auto
             };
             let mut base =
-                TurnCommandOptions::new(c.harness, TurnMode::Mention, perm, &c.operator_bin);
+                TurnCommandOptions::new(harness, TurnMode::Mention, perm, &c.operator_bin);
             base.mcp_config_path = &self.mcp_config;
             base.command_hook = system.permissions.as_ref().is_some_and(|p| p.command_hook);
             let mut p = MentionParts::with_parts(
@@ -350,7 +350,7 @@ where
             after,
             build_parts,
             base: BaseInputs {
-                harness: c.harness,
+                harness,
                 can_register_turn_keys: c.can_register_turn_keys,
                 state_dir: &c.state_dir,
                 mcp_config_path: &c.mcp_config_path,
@@ -359,6 +359,19 @@ where
             },
         }
     }
+}
+
+/// 그 멘션이 읽은 정의의 하네스(정본 `mentionTurn` 이 턴마다 `def.harness` 를 쓰는 것과 같다). 기본값은 없다 — 없거나 모르는
+/// 값이면 짓지 않는다: 준비 구간 패닉 → 몸통 지킴(L3a)이 장부·자리·턴 끝·임대를 놓는다. 패닉 문구는 상태 한 줄이고 값은 싣지 않는다.
+pub fn harness_of(def: &serde_json::Value) -> AgentHarness {
+    def.get("harness")
+        .and_then(serde_json::Value::as_str)
+        .and_then(AgentHarness::parse)
+        .unwrap_or_else(|| {
+            panic!(
+                "에이전트 정의의 하네스를 쓸 수 없다(없거나 모르는 값) — 이 멘션은 띄우지 않는다"
+            )
+        })
 }
 
 /// 그 멘션의 명령 칸 소유본(정본 `buildTurnCommand` 의 `model`·`effort`·`readonlyToolList`). 허용 도구·머지 저장소·API 는
