@@ -106,7 +106,9 @@ pub fn attempt_outcome(
             false,
             f,
         ),
-        // 하네스는 존재한 적 없다 — 정본 `{ exitCode: 143, timedOut: false, tail: '' }`.
+        // 하네스는 존재한 적 없다 — 정본 `{ exitCode: 143, timedOut: false, tail: '' }`. 이 시도의 하네스 API 오류도 있을 수
+        // 없다(기록에서 읽은 것은 앞 시도의 것) → 지운다. 그래서 막힌 시도는 계정 전환 방아쇠(한도·자격증명)가 되지 않고
+        // 계정 축은 여기서 끝난다 — [중단]·펜스 잃음 뒤에 다음 계정을 띄우지 않는다.
         Attempted::Blocked(_) => failed_or_ok(
             ExitFacts {
                 exit_code: 143,
@@ -115,7 +117,12 @@ pub fn attempt_outcome(
             },
             true,
             f,
-        ),
+        )
+        .map_err(|mut e| {
+            e.marks.harness_api_error = None;
+            e.marks.harness_api_error_shown = None;
+            e
+        }),
         Attempted::Ran(Err(PtyTurnError::NotDelivered(p))) => Err(AttemptError {
             message: p.to_string(),
             tail: p.tail,

@@ -192,3 +192,62 @@ fn api_error_on_thread_model_folds_to_masked_rejection() {
         other => panic!("{other:?}"),
     }
 }
+
+/// security(#2040 다음) ②: a2 가 [중단] 으로 막히면 계정 축은 a3 로 더 돌지 않는다 — 앞 시도 기록의 한도 줄이
+/// `recorded_after` 로 들어와도 막힌 시도는 계정 전환 방아쇠가 아니다.
+#[test]
+#[allow(clippy::result_large_err)]
+fn blocked_attempt_ends_account_axis() {
+    use crate::account_assign::ClaudeAccount;
+    use crate::account_failover::{AccountFailureClass, with_account_failover};
+    let accounts: Vec<Option<ClaudeAccount>> = ["a1", "a2", "a3"]
+        .iter()
+        .map(|n| {
+            Some(ClaudeAccount {
+                name: (*n).into(),
+                config_dir: std::path::PathBuf::from("/acct").join(n),
+                pool: None,
+            })
+        })
+        .collect();
+    let quota = "You've hit your usage limit · resets 5pm";
+    let end = EndState::default();
+    let mut called = Vec::new();
+    let out = with_account_failover(
+        &accounts,
+        |a, _last| {
+            let name = a.unwrap().name.clone();
+            called.push(name.clone());
+            let live = LiveTurn::default();
+            let mut f = facts(&end, &live, None);
+            f.recorded_after = Some(quota);
+            if name == "a1" {
+                // a1: 하네스가 돌다 한도에 걸렸다 — 계정 전환 방아쇠.
+                let e = EndState {
+                    api_error: Some(quota.into()),
+                    ..EndState::default()
+                };
+                let f = OutcomeFacts { end: &e, ..f };
+                let r = attempt_outcome(ran(1, ""), &f);
+                assert!(r.as_ref().unwrap_err().account_failure().is_some());
+                return r;
+            }
+            // a2: 시도 사이 [중단] — 관문이 막았다.
+            live.cancel("human-1");
+            let r = attempt_outcome(Attempted::Blocked(SpawnBlocked::Canceled), &f);
+            assert!(r.as_ref().unwrap_err().account_failure().is_none());
+            r
+        },
+        |_, _, _| {},
+    )
+    .unwrap();
+    assert_eq!(called, ["a1", "a2"], "a3 는 띄우지 않는다");
+    let err = out.unwrap_err();
+    assert!(
+        err.error.message.contains("human-1"),
+        "{}",
+        err.error.message
+    );
+    assert!(err.error.marks.harness_api_error.is_none());
+    assert_eq!(err.trail.len(), 1, "a1 의 한도만 흔적에 남는다");
+}

@@ -366,3 +366,52 @@ fn cancel_between_attempts_blocks_next_spawn() {
     drop(p);
     let _ = fs::remove_dir_all(&root);
 }
+
+/// security(#2040 다음) ①: 슬롯은 멘션마다 새로 — 앞 멘션의 [중단] 이 다음 멘션(다른 id·같은 id 다시 뜸)을 막지 않는다.
+#[test]
+fn mention_slots_are_fresh_per_mention() {
+    let slots = MentionSlots::default();
+    assert!(!slots.cancel("m1", "h"), "열리지 않은 멘션 신호는 버린다");
+
+    let m1 = slots.open("m1");
+    let live1 = Arc::new(LiveTurn::default());
+    m1.slot().bind(Some(Arc::clone(&live1)));
+    assert!(slots.cancel("m1", "human-1"));
+    assert_eq!(live1.canceled_by().as_deref(), Some("human-1"));
+    m1.slot().bind(None);
+    drop(m1);
+    assert!(!slots.is_open("m1"), "멘션이 끝나면 빠진다");
+
+    // 다음 멘션 — 앞 멘션의 [중단] 이 실리지 않는다.
+    let m2 = slots.open("m2");
+    let live2 = Arc::new(LiveTurn::default());
+    m2.slot().bind(Some(Arc::clone(&live2)));
+    assert!(live2.canceled_by().is_none() && live2.gate().is_ok());
+    // 같은 id 가 다시 떠도 새 슬롯이다.
+    let again = slots.open("m1");
+    let live3 = Arc::new(LiveTurn::default());
+    again.slot().bind(Some(Arc::clone(&live3)));
+    assert!(live3.gate().is_ok());
+    assert!(again.slot().canceled_by().is_none());
+    // m2 의 [중단] 은 m1 에 닿지 않는다.
+    assert!(slots.cancel("m2", "human-2"));
+    assert!(live3.canceled_by().is_none());
+    assert_eq!(live2.canceled_by().as_deref(), Some("human-2"));
+}
+
+/// 옛 손잡이가 늦게 떨어져도 같은 id 로 새로 연 슬롯은 지우지 않는다 · 펜스도 그 멘션에만.
+#[test]
+fn stale_mention_slot_drop_keeps_newer() {
+    let slots = MentionSlots::default();
+    let old = slots.open("m1");
+    let new = slots.open("m1");
+    drop(old);
+    assert!(slots.is_open("m1"));
+    let live = Arc::new(LiveTurn::default());
+    new.slot().bind(Some(Arc::clone(&live)));
+    assert!(slots.fence_lost("m1"));
+    assert!(live.fenced_out());
+    assert!(!slots.fence_lost("m2"));
+    drop(new);
+    assert!(!slots.is_open("m1"));
+}
