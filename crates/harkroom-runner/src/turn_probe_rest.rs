@@ -110,6 +110,10 @@ pub struct NudgeTarget {
     pub thread_root_id: Option<String>,
 }
 
+/// 회수 시계가 울렸을 때 끝 상태에 「거뒀다」를 적고 SIGTERM 을 보낼지 돌려준다(`EndState::on_reclaim_timer`).
+/// 실구현은 감시 자리(`turn_watch::Watch`)를 **직접** 잠가 적는다 — 사본에 적으면 감시 루프의 되쓰기에 덮인다.
+pub type ReclaimEnd = Arc<dyn Fn() -> bool + Send + Sync>;
+
 /// PTY 에 바이트를 넣는 일. 죽었으면 `false`.
 pub type WritePty = Box<dyn FnMut(&[u8]) -> bool + Send>;
 
@@ -118,8 +122,8 @@ pub struct TurnProbeRest<N: NudgeIo> {
     pub nudge: N,
     pub nudge_target: NudgeTarget,
     pub nudge_wait_ms: i64,
-    /// 탐침 주기와 회수 시계가 함께 보는 끝 상태.
-    pub end: Arc<Mutex<EndState>>,
+    /// 회수 시계가 울렸을 때 끝 상태(감시 자리)에 적는 닫개.
+    pub on_reclaim: ReclaimEnd,
     /// 턴이 끝났다([`crate::turn_io::TurnIo::ended`]) — 서 있으면 SIGTERM·Enter 를 보내지 않는다.
     pub ended: Arc<AtomicBool>,
     /// PTY 에 SIGTERM(실구현 `PtyControls::kill(false)` — 회수한 자식에는 쏘지 않는다).
@@ -129,7 +133,7 @@ pub struct TurnProbeRest<N: NudgeIo> {
     /// 이 하네스가 세션 기록을 읽을 줄 알고, 그 기록 mtime(ms). 못 읽으면 `None`.
     pub reads_transcript: bool,
     pub transcript_mtime_ms: Box<dyn FnMut() -> Option<i64> + Send>,
-    /// 서 있는 회수 시계.
+    /// 서 있는 회수 시계. [`Timer`] 는 떨어지면 꺼진다 — 이 값이 떨어지면(시도 끝·패닉 풀림) 시계도 멈춘다.
     pub reclaim_timer: Option<Timer>,
 }
 
@@ -164,7 +168,7 @@ impl<N: NudgeIo> ProbeRest for TurnProbeRest<N> {
                 if !self.live() {
                     return;
                 }
-                let end = self.end.clone();
+                let on_reclaim = self.on_reclaim.clone();
                 let ended = self.ended.clone();
                 let terminate = self.terminate.clone();
                 self.reclaim_timer =
@@ -173,10 +177,7 @@ impl<N: NudgeIo> ProbeRest for TurnProbeRest<N> {
                         if ended.load(Ordering::SeqCst) {
                             return;
                         }
-                        let kill = end
-                            .lock()
-                            .unwrap_or_else(|p| p.into_inner())
-                            .on_reclaim_timer();
+                        let kill = on_reclaim();
                         if kill && !ended.load(Ordering::SeqCst) {
                             terminate();
                         }

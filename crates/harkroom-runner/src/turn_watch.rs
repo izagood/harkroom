@@ -4,7 +4,9 @@
 //!   [`WatchState`] 안에만 쥔다 — `Debug` 는 길이만, 밖으로 내는 길은 [`WatchState::screen_line_for_post`] 하나이고
 //!   그것은 [`screen_said_for_post`](`NoticeSecrets` 의 `quoted_line`)를 거친 한 줄만 낸다.
 //! - [`run_watch`]: `probe_ms` 마다 끝 상태를 잠깐 잠가 꺼내 [`probe_cycle`] 을 **잠금 밖에서** 한 번 돌고 돌려놓는다. `Stop`·멈춤 신호·PTY 종료면 끝낸다. 탐침이 글로
-//!   내는 것은 이미 가린 통지 함수만 지난다(`turn_probe_records`).
+//!   내는 것은 이미 가린 통지 함수만 지난다(`turn_probe_records`). 돌려놓을 때 그사이 남이 적은 값과 한 번 서면 안 내려가는
+//!   표지(`reclaimed`·`stalled`·`exited`)를 지키고, 거둔 턴이면 멈춘다.
+//! - [`reclaim_on_watch`]: 회수 시계가 사본이 아니라 이 자리에 직접 적게 하는 닫개.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -15,6 +17,7 @@ use crate::pty_turn::{PromptHooks, PtyControls, PtyTurnSink};
 use crate::turn_end::{EndConfig, EndState};
 use crate::turn_probe::{CycleOutcome, ProbeIo, ProbeState, probe_cycle};
 use crate::turn_probe_records::{NoticeSecrets, screen_said_for_post};
+use crate::turn_probe_rest::ReclaimEnd;
 
 /// 화면 꼬리 상한(바이트) — 마지막 줄을 거두는 데만 쓴다.
 const SCREEN_TAIL_MAX: usize = 4096;
@@ -49,6 +52,38 @@ pub type Watch = Arc<Mutex<WatchState>>;
 
 fn lock(w: &Watch) -> MutexGuard<'_, WatchState> {
     w.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// 회수 시계가 감시 자리에 직접 적는 닫개([`crate::turn_probe_rest::TurnProbeRest::on_reclaim`]).
+pub fn reclaim_on_watch(watch: &Watch) -> ReclaimEnd {
+    let w = Arc::clone(watch);
+    Arc::new(move || lock(&w).end.on_reclaim_timer())
+}
+
+/// 탐침이 잠금 밖에 있는 사이 다른 쪽(sink·회수 시계·PTY 종료)이 자리에 적은 값을 지키며 사본을 돌려놓는다.
+///
+/// - 출력 시각은 큰 쪽, 손잡이는 OR.
+/// - **한 번 서면 안 내려가는 표지**(`reclaimed`·`stalled`·`exited`)는 OR — 시계가 거둔 것을 사본이 덮으면 임대를 잃은
+///   턴이 계속 돈다(#2040·#2042 펜스 경계와 같은 몫).
+/// - 그사이 시계가 울렸고(`reclaimed` 가 새로 섰다) 탐침이 시계를 새로 세우지 않았으면 `reclaim_armed` 를 내린다.
+fn write_back(slot: &mut EndState, before: &EndState, snap: EndState) {
+    let clock_fired = slot.reclaimed && !before.reclaimed;
+    let rearmed = snap.reclaim_armed
+        && (!before.reclaim_armed || snap.reclaim_grace_ms != before.reclaim_grace_ms);
+    let last_data = slot.last_data_at_ms.max(snap.last_data_at_ms);
+    let controls = slot.has_controls || snap.has_controls;
+    let reclaimed = slot.reclaimed || snap.reclaimed;
+    let stalled = slot.stalled || snap.stalled;
+    let exited = slot.exited || snap.exited;
+    *slot = snap;
+    slot.last_data_at_ms = last_data;
+    slot.has_controls = controls;
+    slot.reclaimed = reclaimed;
+    slot.stalled = stalled;
+    slot.exited = exited;
+    if clock_fired && !rearmed {
+        slot.reclaim_armed = false;
+    }
 }
 
 /// PTY 출력을 감시 자리에 적는 sink. 나머지 갈래는 안쪽 sink 로 그대로 넘긴다.
@@ -118,19 +153,17 @@ pub fn run_watch(
         }
         // 잠금 안에서는 상태만 꺼낸다 — 탐침 IO(스레드 읽기·통지 글·화면 줄 꺼내기)는 잠금 밖에서 돈다. 그래서 통지가 느려도
         // PTY 출력(`on_output`)이 막히지 않고, 탐침이 같은 자리를 다시 잠가도 교착이 없다.
-        let mut snap = lock(watch).end.clone();
+        let before = lock(watch).end.clone();
+        let mut snap = before.clone();
         let out = probe_cycle(&mut snap, probe, cfg, io);
-        {
-            // 돌려놓을 때 sink 가 그사이 적은 값(출력 시각·손잡이)은 지킨다.
+        let reclaimed = {
             let mut w = lock(watch);
-            let last_data = w.end.last_data_at_ms.max(snap.last_data_at_ms);
-            let controls = w.end.has_controls || snap.has_controls;
-            w.end = snap;
-            w.end.last_data_at_ms = last_data;
-            w.end.has_controls = controls;
-        }
+            write_back(&mut w.end, &before, snap);
+            w.end.reclaimed
+        };
         cycles += 1;
-        if out == CycleOutcome::Stop {
+        // 거둔 턴은 더 탐침하지 않는다 — SIGTERM 은 시계가 보냈고, 남은 일은 PTY 종료를 받은 settle 몫이다.
+        if out == CycleOutcome::Stop || reclaimed {
             return cycles;
         }
     }

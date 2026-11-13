@@ -275,3 +275,132 @@ fn probe_io_runs_outside_the_watch_lock() {
         "sink 가 적은 시각이 남는다"
     );
 }
+
+/// 탐침이 잠금 밖에서 도는 사이 회수 시계가 감시 자리에 「거뒀다」를 적는다.
+struct ClockFiresIo {
+    watch: Watch,
+    fired: bool,
+}
+
+impl ProbeIo for ClockFiresIo {
+    fn now_ms(&self) -> i64 {
+        1_000
+    }
+    fn exited(&self) -> bool {
+        false
+    }
+    fn read_spoke(&mut self) -> Result<bool, String> {
+        if !self.fired {
+            self.fired = true;
+            // 실물 시계 닫개 그대로 — 잠금 밖이라 막히지 않는다.
+            assert!(
+                reclaim_on_watch(&self.watch)(),
+                "손잡이가 있으면 SIGTERM 을 보내라고 한다"
+            );
+        }
+        Ok(false)
+    }
+    fn log_unreadable(&mut self, _r: &str) {}
+    fn probe_denials(&mut self, _e: &mut EndState) {}
+    fn probe_mac_permission(&mut self, _e: &mut EndState) {}
+    fn probe_mcp_auth(&mut self, _e: &mut EndState) {}
+    fn probe_api_error(&mut self, _e: &mut EndState) -> bool {
+        false
+    }
+    fn probe_turn_state(&mut self, _e: &mut EndState) {}
+    fn screen_idle_ended(&mut self, _n: i64) -> Option<bool> {
+        None
+    }
+    fn read_recorded_end(&mut self, _s: i64) -> Option<RecordedTurnEnd> {
+        None
+    }
+    fn screen_answer(&mut self) -> Option<String> {
+        None
+    }
+    fn log_screen_ended(&mut self) {}
+    fn nudge_or_expire(&mut self, _e: &mut EndState, _p: &mut ProbeState) {}
+    fn apply_end_action(&mut self, _a: EndAction) {}
+    fn stall_probe(&mut self, _e: &EndState, now_ms: i64) -> StallProbe {
+        StallProbe {
+            reads_transcript: true,
+            transcript_mtime_ms: Some(now_ms),
+            looks_unsent: false,
+            now_ms,
+        }
+    }
+    fn apply_stall(&mut self, _v: StallVerdict) {}
+}
+
+/// security 조건(#2068 검토): 탐침이 잠금 밖에 있는 사이 시계가 거두면, 되쓴 뒤에도 거둔 채이고 감시 루프가 멈춘다.
+/// 되쓰기에서 `reclaimed` 지키기를 빼면 이 시험은 끝없이 돈다(멈춤 신호 없이 `exited` 도 안 선다).
+#[test]
+fn clock_reclaim_during_probe_survives_write_back_and_stops_the_loop() {
+    let watch: Watch = Arc::new(Mutex::new(WatchState {
+        end: EndState {
+            has_controls: true,
+            reclaim_armed: true,
+            reclaim_grace_ms: 5_000,
+            ..EndState::default()
+        },
+        ..WatchState::default()
+    }));
+    let mut io = ClockFiresIo {
+        watch: Arc::clone(&watch),
+        fired: false,
+    };
+    let mut probe = ProbeState::default();
+    let cfg = EndConfig::new(60_000);
+    let stop = AtomicBool::new(false);
+    let watchdog = Arc::new(AtomicBool::new(false));
+    let n = std::thread::scope(|sc| {
+        let wd = Arc::clone(&watchdog);
+        let st = &stop;
+        sc.spawn(move || {
+            std::thread::sleep(Duration::from_secs(2));
+            if !wd.load(Ordering::SeqCst) {
+                st.store(true, Ordering::SeqCst);
+            }
+        });
+        let n = run_watch(
+            &watch,
+            &mut probe,
+            &cfg,
+            &mut io,
+            Duration::from_millis(1),
+            &stop,
+        );
+        watchdog.store(true, Ordering::SeqCst);
+        n
+    });
+    assert!(!stop.load(Ordering::SeqCst), "멈춤 신호 없이 스스로 멈춘다");
+    assert_eq!(n, 1, "시계가 거둔 주기에서 멈춘다");
+    let w = watch.lock().unwrap();
+    assert!(w.end.reclaimed, "사본 되쓰기가 「거뒀다」를 덮지 않는다");
+    assert!(!w.end.reclaim_armed, "울린 시계는 서 있지 않다");
+}
+
+/// 한 번 서면 안 내려가는 표지는 되쓰기에서 OR 로 지킨다 — 탐침이 새로 시계를 세웠으면 그 시계는 서 있다.
+#[test]
+fn write_back_keeps_sticky_flags_and_a_fresh_arm() {
+    let before = EndState {
+        has_controls: true,
+        ..EndState::default()
+    };
+    let mut slot = EndState {
+        stalled: true,
+        exited: true,
+        reclaimed: true,
+        last_data_at_ms: 9,
+        ..before.clone()
+    };
+    let snap = EndState {
+        reclaim_armed: true,
+        reclaim_grace_ms: 1_000,
+        last_data_at_ms: 3,
+        ..before.clone()
+    };
+    write_back(&mut slot, &before, snap);
+    assert!(slot.stalled && slot.exited && slot.reclaimed);
+    assert_eq!(slot.last_data_at_ms, 9);
+    assert!(slot.reclaim_armed, "탐침이 이번 주기에 새로 세운 시계");
+}
