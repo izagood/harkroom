@@ -76,6 +76,8 @@ struct Parts {
     needles_had_secret: Vec<bool>,
     /// 띄우기 도중 패닉한다.
     panic_spawn: bool,
+    /// 중계 세션이 있으면 띄울 때 이 PTY 를 잇는다.
+    pty: Option<Arc<RelayPty>>,
     /// 띄울 때 받은 감시용 가림 목록에 마운트한 비밀·PAT 가 있었나.
     spawn_notice: Vec<bool>,
 }
@@ -138,9 +140,13 @@ impl AttemptParts for Parts {
         mcp_config_path: &Path,
         _lane_env: LaneEnv,
         notice: NoticeSecrets,
+        relay: Option<&crate::turn_attempt_relay::RelayAttempt<'_>>,
         delivered: &mut bool,
     ) -> PtyOut {
         push(&self.log, format!("spawn {turn_id}"));
+        if let (Some(r), Some(pty)) = (relay, &self.pty) {
+            r.session().bind_input(pty.clone());
+        }
         self.spawn_notice.push(
             notice.mounted.iter().any(|n| n == SECRET) && notice.pat == "hk_pat_secret_value_88",
         );
@@ -240,6 +246,7 @@ fn parts(w: &World, log: &Log, secrets: bool, exits: Vec<i32>) -> Parts {
         seen: Vec::new(),
         needles_had_secret: Vec::new(),
         panic_spawn: false,
+        pty: None,
         spawn_notice: Vec::new(),
     }
 }
@@ -266,6 +273,7 @@ fn attempt<'a>(
             format!("t-{n}")
         }),
         parts: RefCell::new(p),
+        relay: None,
     }
 }
 
@@ -525,4 +533,76 @@ fn real_constructor_draws_random_v4_turn_ids() {
     }
     let uniq: std::collections::BTreeSet<_> = ids.iter().collect();
     assert_eq!(uniq.len(), 3, "시도마다 다르다: {ids:?}");
+}
+
+// ---- 시도 범위의 중계 세션 가드 ----
+
+use crate::relay_session::{OpenSessionInput, PtyInput, RelaySessions};
+use base64::Engine;
+
+#[derive(Default)]
+struct RelayPty(Mutex<Vec<u8>>);
+impl PtyInput for RelayPty {
+    fn write(&self, chunk: &[u8]) {
+        self.0.lock().unwrap().extend_from_slice(chunk);
+    }
+    fn resize(&self, _c: u16, _r: u16) {}
+}
+
+fn relay_input(l: &Arc<RelaySessions>, sid: &str, text: &[u8]) {
+    l.on_frame(json!({"type": "input", "sessionId": sid,
+        "data": base64::engine::general_purpose::STANDARD.encode(text)}));
+}
+
+/// security ①: `RelayAttempt` 는 `run` 의 시도 범위에서 만들어 `LiveBinding` 과 함께 떨어진다 — 정상 끝·패닉 둘 다,
+/// 시도가 끝난 뒤 온 입력은 그 시도 PTY 로 가지 않는다. 세션(멘션 것)은 열려 있다.
+#[test]
+fn relay_attempt_lives_in_attempt_scope() {
+    let w = world("relayscope");
+    let log: Log = Log::default();
+    let link = Link(Arc::clone(&log));
+    let client = HarkroomRestClient::new(&link);
+    let notice = Notice {
+        log: Arc::clone(&log),
+        lease: w.lease.clone(),
+    };
+    let relay = RelaySessions::new(None, Box::new(|_| {}));
+    let session = relay.open_session(OpenSessionInput {
+        agent_account_id: "agent".into(),
+        channel_id: "c".into(),
+        harness: "claude-code".into(),
+        accepts_input: true,
+        ..Default::default()
+    });
+    let sid = session.session_id().to_string();
+    let (p1, p2) = (Arc::new(RelayPty::default()), Arc::new(RelayPty::default()));
+    let mut parts1 = parts(&w, &log, false, vec![1, 0]);
+    parts1.pty = Some(p1.clone());
+    let mut a = attempt(&w, &client, &notice, true, parts1).with_relay(&session);
+    let t = target();
+    let mut d = false;
+    assert!(a.run(&t, None, false, &mut d).is_err());
+    relay_input(&relay, &sid, b"after-1");
+    // 다음 시도는 패닉한다 — 그래도 놓인다.
+    {
+        let mut p = a.parts.borrow_mut();
+        p.pty = Some(p2.clone());
+        p.panic_spawn = true;
+    }
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut d = false;
+        let _ = a.run(&t, None, true, &mut d);
+    }));
+    assert!(r.is_err());
+    relay_input(&relay, &sid, b"after-2");
+    assert!(
+        p1.0.lock().unwrap().is_empty(),
+        "정상 끝 뒤 입력은 a1 PTY 로 안 간다"
+    );
+    assert!(
+        p2.0.lock().unwrap().is_empty(),
+        "패닉 뒤 입력은 a2 PTY 로 안 간다"
+    );
+    assert!(a.parts.borrow().bound.is_none());
+    assert_eq!(relay.len(), 1, "세션은 멘션 것이라 열려 있다");
 }
