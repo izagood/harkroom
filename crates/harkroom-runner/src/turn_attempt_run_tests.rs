@@ -9,7 +9,6 @@ use crate::link::LinkRequest;
 use crate::mention_target::build_mention_target;
 use crate::pty_turn::TurnResult;
 use crate::rest::{TURN_KEYS_END_PATH, TURN_KEYS_PATH};
-use crate::turn_probe_records::NoticeSecrets;
 
 type Log = Arc<Mutex<Vec<String>>>;
 
@@ -148,16 +147,15 @@ impl AttemptParts for Parts {
         Ok(())
     }
 
-    fn spawn(
-        &mut self,
-        turn_id: &str,
-        keys: Option<&EnvTurnKeys>,
-        mcp_config_path: &Path,
-        lane_env: LaneEnv,
-        notice: NoticeSecrets,
-        relay: Option<&crate::turn_attempt_relay::RelayAttempt<'_>>,
-        delivered: &mut bool,
-    ) -> PtyOut {
+    fn spawn(&mut self, args: SpawnArgs<'_>, delivered: &mut bool) -> PtyOut {
+        let SpawnArgs {
+            turn_id,
+            keys,
+            mcp_config_path,
+            lane_env,
+            notice,
+            relay,
+        } = args;
         push(&self.log, format!("spawn {turn_id}"));
         self.lane_envs.push(lane_env.get("HK_LANE").cloned());
         if let (Some(r), Some(pty)) = (relay, &self.pty) {
@@ -779,4 +777,60 @@ fn lane_and_secrets_end_lease_once() {
         "비밀도 마운트한 턴이다"
     );
     assert!(log.iter().any(|s| s == "lane_release"));
+}
+
+/// security(멘션 단위 임대 전제): a1 비밀 턴 → 계정 전환 → a2 비밀 턴. a1 정리에서 임대가 끝난(비밀 파일이 지워진)
+/// 뒤에도 a2 는 같은 원인으로 다시 마운트하고, a2 의 가림 목록·감시 목록에 그 비밀이 있다.
+#[test]
+fn secrets_mount_again_after_account_switch() {
+    let w = world("remount");
+    let log: Log = Log::default();
+    let link = Link(Arc::clone(&log));
+    let client = HarkroomRestClient::new(&link);
+    let notice = Notice {
+        log: Arc::clone(&log),
+        lease: w.lease.clone(),
+    };
+    let mut a = attempt(
+        &w,
+        &client,
+        &notice,
+        true,
+        parts(&w, &log, true, vec![1, 0]),
+    );
+    let t = target();
+    let (a1, a2) = (account("a1"), account("a2"));
+    let mut d = false;
+    assert!(a.run(&t, Some(&a1), false, &mut d).is_err());
+    assert!(
+        !w.lease.exists(),
+        "a1 정리에서 임대가 끝나 비밀 파일이 지워졌다"
+    );
+    let mut d = false;
+    assert!(a.run(&t, Some(&a2), true, &mut d).is_ok());
+    let log = log.lock().unwrap().clone();
+    let ended_a1 = log.iter().position(|s| s == "lease_ended m1").unwrap();
+    let mounts: Vec<usize> = log
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| *s == "mount m1")
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(mounts.len(), 2, "{log:?}");
+    assert!(
+        mounts[1] > ended_a1,
+        "a2 는 a1 임대 끝 뒤에 다시 마운트한다"
+    );
+    assert_eq!(
+        log.iter().filter(|s| *s == "lease_ended m1").count(),
+        2,
+        "시도마다 한 번"
+    );
+    let p = a.parts.borrow();
+    assert_eq!(
+        p.needles_had_secret,
+        [true, true],
+        "a2 의 가림 목록에도 비밀"
+    );
+    assert_eq!(p.spawn_notice, [true, true], "a2 의 감시 목록에도 비밀");
 }

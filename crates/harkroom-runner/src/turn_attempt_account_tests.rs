@@ -12,12 +12,11 @@ use crate::mention_target::{MentionTarget, build_mention_target};
 use crate::pty_turn::TurnResult;
 use crate::rest::{HarkroomRestClient, RunnerLink};
 use crate::turn_attempt::{Attempted, LeaseNotice, TurnSecrets};
+use crate::turn_attempt_run::SpawnArgs;
 use crate::turn_attempt_run::{AttemptBase, AttemptParts, AttemptPrep, PtyTurnAttempt};
-use crate::turn_env::TurnKeys as EnvTurnKeys;
-use crate::turn_launch_io::{LaneEnv, SecretMountError};
+use crate::turn_launch_io::SecretMountError;
 use crate::turn_policy::AttemptError;
 use crate::turn_preset::TurnMode;
-use crate::turn_probe_records::NoticeSecrets;
 use crate::turn_run::PtyOut;
 
 fn acc(name: &str) -> ClaudeAccount {
@@ -187,16 +186,7 @@ impl AttemptParts for Parts {
     fn mount_secrets(&mut self, _c: &str) -> Result<(), SecretMountError> {
         unreachable!()
     }
-    fn spawn(
-        &mut self,
-        _turn_id: &str,
-        _keys: Option<&EnvTurnKeys>,
-        _mcp: &Path,
-        _lane_env: LaneEnv,
-        _notice: NoticeSecrets,
-        _relay: Option<&crate::turn_attempt_relay::RelayAttempt<'_>>,
-        _delivered: &mut bool,
-    ) -> PtyOut {
+    fn spawn(&mut self, _args: SpawnArgs<'_>, _delivered: &mut bool) -> PtyOut {
         // 기본 옵션에는 남의 폴더가 들어 있다 — 시도의 계정이 덮어야 한다.
         let mut b = base();
         b.claude_config_dir = Some(&self.base_dir);
@@ -417,4 +407,71 @@ fn stale_mention_slot_drop_keeps_newer() {
     assert!(!slots.fence_lost("m2"));
     drop(new);
     assert!(!slots.is_open("m1"));
+}
+
+fn pool_lane(pool: &str, names: &[&str]) -> ClaudePoolLane {
+    ClaudePoolLane {
+        pool: pool.into(),
+        accounts: names
+            .iter()
+            .map(|n| ClaudeAccount {
+                name: (*n).into(),
+                config_dir: PathBuf::from("/acct").join(n),
+                pool: Some(pool.into()),
+            })
+            .collect(),
+    }
+}
+
+/// security: 칩은 순번만 — 풀 순서·그 풀 안 순서(1부터), 계정 없음은 기본 로그인, 모르면 비움. 이름을 내는 길이 없다.
+#[test]
+fn account_ranks_are_positions_only() {
+    let snap = LaneSnapshot {
+        pool: Some("p1".into()),
+        chain: vec![
+            pool_lane("p1", &["alice", "bob"]),
+            pool_lane("p2", &["carol"]),
+        ],
+        lane: vec![],
+    };
+    let carol = ClaudeAccount {
+        name: "carol".into(),
+        config_dir: PathBuf::from("/acct/carol"),
+        pool: Some("p2".into()),
+    };
+    assert_eq!(account_ranks(&snap, Some(&carol)), (Some(Some(1)), Some(2)));
+    let bob_implicit = ClaudeAccount {
+        name: "bob".into(),
+        config_dir: PathBuf::from("/acct/bob"),
+        pool: None,
+    };
+    assert_eq!(
+        account_ranks(&snap, Some(&bob_implicit)),
+        (Some(Some(2)), Some(1)),
+        "풀을 모르면 lane 의 풀"
+    );
+    assert_eq!(
+        account_ranks(&snap, None),
+        (Some(None), None),
+        "기본 로그인"
+    );
+    let stranger = ClaudeAccount {
+        name: "zed".into(),
+        config_dir: PathBuf::from("/acct/zed"),
+        pool: Some("nope".into()),
+    };
+    assert_eq!(
+        account_ranks(&snap, Some(&stranger)),
+        (None, None),
+        "모르면 비움"
+    );
+    let flat = LaneSnapshot {
+        lane: vec![Some(bob_implicit.clone()), Some(carol.clone())],
+        ..LaneSnapshot::default()
+    };
+    assert_eq!(
+        account_ranks(&flat, Some(&carol)),
+        (Some(Some(2)), None),
+        "풀 순서가 없으면 축 순서"
+    );
 }

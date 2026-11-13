@@ -77,6 +77,21 @@ pub struct AttemptPrep {
     pub homes: OwnedHomes,
 }
 
+/// [`AttemptParts::spawn`] 이 이 시도에서 받는 것.
+pub struct SpawnArgs<'x> {
+    pub turn_id: &'x str,
+    /// 이 시도의 턴 열쇠(조립에서 온다).
+    pub keys: Option<&'x EnvTurnKeys>,
+    /// 이 시도의 턴 MCP 설정 경로.
+    pub mcp_config_path: &'x Path,
+    /// lane 턴이면 계획 앞에서 받은 env, 아니면 빈 env.
+    pub lane_env: LaneEnv,
+    /// 띄우는 자리(마운트 뒤)에서 지은 감시 통지 가림 목록 — 감시 루프는 이것으로만 가린다(#2045).
+    pub notice: NoticeSecrets,
+    /// 멘션 중계 세션의 이 시도 가드(있으면 sink 를 감싼다).
+    pub relay: Option<&'x RelayAttempt<'x>>,
+}
+
 /// 대상·계정에 따라 바뀌는 몫. 부르는 순서: `bind_live(Some)` → `prepare` → (`mount_secrets`) → `spawn` → `outcome` →
 /// (성공이면) `after` → `bind_live(None)`. 겹쳐 부르지 않는다.
 pub trait AttemptParts {
@@ -97,17 +112,7 @@ pub trait AttemptParts {
     /// `notice` 는 **띄우는 이 자리(마운트 뒤)** 에서 지은 가림 목록이다 — 턴 sink·감시 루프가 화면·출력에서 거둔 말을
     /// 스레드에 올릴 때 이것으로만 가린다(정본 `secretNeedles(cause)` 를 그때 읽는 것과 같다). 턴 전에 지은 목록을 쓰면
     /// 마운트한 비밀이 빠진다(#2032 꼴).
-    #[allow(clippy::too_many_arguments)]
-    fn spawn(
-        &mut self,
-        turn_id: &str,
-        keys: Option<&EnvTurnKeys>,
-        mcp_config_path: &Path,
-        lane_env: LaneEnv,
-        notice: NoticeSecrets,
-        relay: Option<&RelayAttempt<'_>>,
-        delivered: &mut bool,
-    ) -> PtyOut;
+    fn spawn(&mut self, args: SpawnArgs<'_>, delivered: &mut bool) -> PtyOut;
     /// 이 시도 계정의 칩 순번(계정 순번·풀 순번) — 멘션 세션에 다시 알린다. 이름은 싣지 않는다. 모르면 `(None, None)`.
     fn account_ranks(
         &self,
@@ -146,6 +151,16 @@ pub struct PtyTurnAttempt<'a, L: RunnerLink, N: LeaseNotice, P: AttemptParts> {
     lane: Option<&'a dyn LaneSource>,
     /// 멘션 중계 세션(#2046 — `run_mention` 이 연 것). 있으면 시도마다 [`RelayAttempt`] 로 쥔다.
     relay: Option<&'a SessionHandle>,
+}
+
+/// 시도 하나의 재료(`run` → `attempt`).
+struct AttemptCtx<'x> {
+    turn_id: &'x str,
+    live: &'x LiveTurn,
+    target: &'x MentionTarget,
+    account: Option<&'x ClaudeAccount>,
+    is_last: bool,
+    relay: Option<&'x RelayAttempt<'x>>,
 }
 
 /// 러너 전체에서 한 번 정하는 재료.
@@ -207,17 +222,15 @@ impl<P: AttemptParts> Drop for LiveBinding<'_, P> {
 
 impl<L: RunnerLink, N: LeaseNotice, P: AttemptParts> PtyTurnAttempt<'_, L, N, P> {
     #[allow(clippy::result_large_err)]
-    #[allow(clippy::too_many_arguments)]
-    fn attempt(
-        &self,
-        turn_id: &str,
-        live: &LiveTurn,
-        target: &MentionTarget,
-        account: Option<&ClaudeAccount>,
-        is_last: bool,
-        relay: Option<&RelayAttempt<'_>>,
-        delivered: &mut bool,
-    ) -> Result<TurnOk, AttemptError> {
+    fn attempt(&self, c: AttemptCtx<'_>, delivered: &mut bool) -> Result<TurnOk, AttemptError> {
+        let AttemptCtx {
+            turn_id,
+            live,
+            target,
+            account,
+            is_last,
+            relay,
+        } = c;
         let parts = &self.parts;
         // 임대 끝 알림은 이 시도에서 한 번 — 띄우기 정리와 lane 가드가 이 자리를 같이 쓴다.
         let lease_once = OnceLease::new(self.notice);
@@ -316,12 +329,14 @@ impl<L: RunnerLink, N: LeaseNotice, P: AttemptParts> PtyTurnAttempt<'_, L, N, P>
                 let notice =
                     TurnSecrets::build(pat, &keys_ref, notice_lease.as_deref()).notice_secrets();
                 parts.borrow_mut().spawn(
-                    &spawn_turn_id,
-                    keys.as_ref(),
-                    &mcp_path,
-                    lane_env,
-                    notice,
-                    relay,
+                    SpawnArgs {
+                        turn_id: &spawn_turn_id,
+                        keys: keys.as_ref(),
+                        mcp_config_path: &mcp_path,
+                        lane_env,
+                        notice,
+                        relay,
+                    },
                     delivered,
                 )
             }),
@@ -365,12 +380,14 @@ impl<L: RunnerLink, N: LeaseNotice, P: AttemptParts> TurnAttempt for PtyTurnAtte
         let ranks = self.parts.borrow().account_ranks(account);
         let relay = self.relay.map(|s| RelayAttempt::begin(s, ranks.0, ranks.1));
         self.attempt(
-            &turn_id,
-            &live,
-            target,
-            account,
-            is_last_account,
-            relay.as_ref(),
+            AttemptCtx {
+                turn_id: &turn_id,
+                live: &live,
+                target,
+                account,
+                is_last: is_last_account,
+                relay: relay.as_ref(),
+            },
             delivered,
         )
     }
