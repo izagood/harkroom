@@ -191,3 +191,93 @@ fn panic_in_spawn_still_ends_lease_once() {
     assert_eq!(log.all(), ["mount", "lease_ended:m1"]);
     assert_eq!(link.seen(), [TURN_KEYS_PATH, TURN_KEYS_END_PATH]);
 }
+
+/// after_run: 기록 파일 + `<sessionId>/` 의 tool-results·subagents 를 턴 열쇠 + 임대 비밀 바늘로 모두 가린다.
+#[test]
+fn scrub_after_run_covers_all_record_paths_with_key_and_secret_needles() {
+    let root = std::env::temp_dir().join(format!("hk-attempt-scrub-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let lease = root.join("lease");
+    std::fs::create_dir_all(&lease).unwrap();
+    let secret = format!("sk-{}", "z".repeat(30));
+    std::fs::write(lease.join("secret-1"), &secret).unwrap();
+    // 심링크·큰 파일은 바늘을 만들지 않는다.
+    std::os::unix::fs::symlink("/etc/hosts", lease.join("link")).unwrap();
+    let proj = root.join("proj");
+    std::fs::create_dir_all(proj.join("sid").join("tool-results")).unwrap();
+    std::fs::create_dir_all(proj.join("sid").join("subagents")).unwrap();
+    let key = format!("hkt_bridge_{}", "k".repeat(30));
+    let t = proj.join("sid.jsonl");
+    std::fs::write(&t, format!("{key} {secret}")).unwrap();
+    std::fs::write(proj.join("sid").join("tool-results").join("o.txt"), &secret).unwrap();
+    std::fs::write(proj.join("sid").join("subagents").join("a.jsonl"), &key).unwrap();
+    let tally = scrub_after_run(
+        "k",
+        AgentHarness::ClaudeCode,
+        Some(&t),
+        Some("sid"),
+        &[&key],
+        Some(&lease),
+    );
+    assert_eq!(tally.replaced, 4, "{tally:?}");
+    for p in [
+        t.clone(),
+        proj.join("sid/tool-results/o.txt"),
+        proj.join("sid/subagents/a.jsonl"),
+    ] {
+        let body = std::fs::read_to_string(&p).unwrap();
+        assert!(
+            !body.contains(&key) && !body.contains(&secret),
+            "{}",
+            p.display()
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 하네스 env 로 가는 값은 `Debug`(로그)에 실리지 않는다.
+#[test]
+fn spawn_side_debug_shows_names_not_values() {
+    use crate::turn_env::{ChildEnvInput, TurnKeys};
+    let lane: BTreeMap<String, String> = [(
+        "ANTHROPIC_AUTH_TOKEN".to_string(),
+        "tok-lane-secret-1".to_string(),
+    )]
+    .into();
+    let keys = TurnKeys {
+        shell: "shell-key-value-1".into(),
+        bridge: "bridge-key-value-1".into(),
+    };
+    let mut input = ChildEnvInput::new(AgentHarness::ClaudeCode);
+    input.provider_env = Some(&lane);
+    input.turn_keys = Some(&keys);
+    let d = format!("{input:?} {keys:?}");
+    assert!(d.contains("ANTHROPIC_AUTH_TOKEN"), "{d}");
+    for v in [
+        "tok-lane-secret-1",
+        "shell-key-value-1",
+        "bridge-key-value-1",
+    ] {
+        assert!(!d.contains(v), "{d}");
+    }
+    let plan = crate::turn_command::TurnPlan {
+        command: "claude",
+        args: vec!["-p".into()],
+        env: lane.clone(),
+        stdin_file: None,
+        cwd: None,
+    };
+    let d = format!("{plan:?}");
+    assert!(
+        d.contains("ANTHROPIC_AUTH_TOKEN") && !d.contains("tok-lane-secret-1"),
+        "{d}"
+    );
+    // PTY 계획에는 env 로만 간다 — argv 에는 없다.
+    let pty = plan.into_pty_plan();
+    assert!(
+        pty.env
+            .iter()
+            .any(|(k, v)| k == "ANTHROPIC_AUTH_TOKEN" && v == "tok-lane-secret-1")
+    );
+    assert!(pty.args.iter().all(|a| !a.contains("tok-lane-secret-1")));
+}

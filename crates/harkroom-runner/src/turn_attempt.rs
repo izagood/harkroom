@@ -161,6 +161,55 @@ pub fn attempt_once<L: RunnerLink, O>(
     }
 }
 
+/// 비밀 값 파일 하나의 상한 — 이보다 크면 바늘을 만들지 않는다(정본은 상한이 없다; 값 파일은 작다).
+const LEASE_VALUE_MAX_BYTES: u64 = 1024 * 1024;
+
+/// 정본 `secretLeases.needlesOf` — 그 턴 임대 디렉터리의 값 파일들로 바늘을 만든다(긴 것부터). 심링크·디렉터리·큰 파일은
+/// 건너뛴다. 값은 이 함수 밖으로 나가지 않는다 — 바늘(값의 여러 꼴)만 나간다.
+pub fn lease_needles(dir: &std::path::Path) -> Vec<String> {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut all: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for e in rd.flatten() {
+        let p = e.path();
+        let Ok(m) = std::fs::symlink_metadata(&p) else {
+            continue;
+        };
+        if !m.file_type().is_file() || m.len() > LEASE_VALUE_MAX_BYTES {
+            continue;
+        }
+        if let Ok(v) = std::fs::read(&p) {
+            all.extend(crate::secret_scrub::scrub_needles(&v));
+        }
+    }
+    let mut v: Vec<String> = all.into_iter().collect();
+    v.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+    v
+}
+
+/// 실제 `after_run` — 이 턴의 **모든** 기록 경로([`turn_record_paths`](crate::turn_launch::turn_record_paths): 기록 파일과
+/// `<sessionId>/`)를 턴 열쇠 바늘 + 임대 비밀 바늘로 가린다. 임대가 끝나기 전에 불려야 한다(`attempt_once` 가 그 순서를 지킨다).
+pub fn scrub_after_run(
+    key: &str,
+    harness: AgentHarness,
+    transcript: Option<&std::path::Path>,
+    session_id: Option<&str>,
+    turn_key_values: &[&str],
+    lease_dir: Option<&std::path::Path>,
+) -> crate::secret_scrub::ScrubTally {
+    let mut needles: std::collections::BTreeSet<String> =
+        crate::secret_scrub::turn_key_needles(turn_key_values)
+            .into_iter()
+            .collect();
+    if let Some(d) = lease_dir {
+        needles.extend(lease_needles(d));
+    }
+    let mut needles: Vec<String> = needles.into_iter().collect();
+    needles.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+    crate::turn_launch::scrub_turn_records(key, harness, transcript, session_id, &needles)
+}
+
 #[cfg(test)]
 #[path = "turn_attempt_tests.rs"]
 mod tests;
