@@ -75,15 +75,16 @@ where
         }
     };
     // 러너도 모양을 본다(security #967 ② 의 한 겹 더) — 이 값은 argv 로 가므로 `-` 시작은 다른 플래그가 된다.
-    let model = if got.source.model == AxisSource::Thread && !safe_axis(got.model.as_deref()) {
-        from_def.model.clone()
-    } else {
+    // **출처와 상관없이** 모든 축을 본다(턴 연결 nit ②, #1982) — 서버가 `source: agent` 로 돌려준 값도 argv 로 간다.
+    let model = if safe_axis(got.model.as_deref()) {
         got.model.clone()
-    };
-    let effort = if got.source.effort == AxisSource::Thread && !safe_axis(got.effort.as_deref()) {
-        from_def.effort.clone()
     } else {
+        from_def.model.clone()
+    };
+    let effort = if safe_axis(got.effort.as_deref()) {
         got.effort.clone()
+    } else {
+        from_def.effort.clone()
     };
     if model != got.model || effort != got.effort {
         log(format!(

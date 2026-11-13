@@ -13,7 +13,7 @@
 use std::collections::BTreeMap;
 use std::fs::{self, DirBuilder};
 use std::io;
-use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 use crate::adapter::{
@@ -211,6 +211,10 @@ fn ensure_private_dir(dir: &Path) -> io::Result<()> {
     }
     if meta.permissions().mode() & 0o077 != 0 {
         return Err(io::Error::other("group/other access"));
+    }
+    // 남의 폴더면 쓰지 않는다(턴 연결 nit ⑥) — 권한이 닫혀 있어도 주인이 다르면 그 사람이 읽는다.
+    if meta.uid() != unsafe { libc::geteuid() } {
+        return Err(io::Error::other("not owned by this user"));
     }
     Ok(())
 }
