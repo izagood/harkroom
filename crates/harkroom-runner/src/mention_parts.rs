@@ -488,6 +488,7 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
         // (`args.notice`)을 받아 PTY 옆에서 돈다.
         let inner = &mut self.inner;
         let slot = self.slot.clone();
+        let pty_slot = self.slot.clone();
         let stop_on_spawn = move || slot.stop_requested();
         let ctx = LoopCtx {
             turn_id: args.turn_id.to_string(),
@@ -499,8 +500,16 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             ended: Arc::new(AtomicBool::new(false)),
         };
         self.last_ctx = Some(ctx.clone());
-        run_beside(&watch, &args.notice, &ctx, self.watch_loop.as_ref(), || {
-            let mut delivered_sink = DeliveredSink { inner, delivered };
+        let out = run_beside(&watch, &args.notice, &ctx, self.watch_loop.as_ref(), || {
+            // 띄운 PTY 손잡이를 슬롯에 적는다 — 물러날 때 유예가 지나면 그 프로세스 그룹에 SIGKILL 한다(P2). 시도가 끝나면 비운다.
+            let mut pty_sink = SlotPtySink {
+                inner,
+                slot: &pty_slot,
+            };
+            let mut delivered_sink = DeliveredSink {
+                inner: &mut pty_sink,
+                delivered,
+            };
             let mut watch_sink = WatchSink {
                 inner: &mut delivered_sink,
                 watch: watch.clone(),
@@ -517,7 +526,9 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
                 }
                 None => spawn_pty_turn(&cmd, pargs, opts, &mut watch_sink),
             }
-        })
+        });
+        self.slot.set_pty(None);
+        out
     }
 
     fn outcome(
@@ -567,3 +578,43 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
 #[cfg(test)]
 #[path = "mention_parts_tests.rs"]
 mod tests;
+
+/// 띄운 순간의 PTY 손잡이를 멘션 슬롯에 적는 sink 덧씌우개(P2 물러나기 SIGKILL). 나머지 갈래는 안쪽 sink 로 넘긴다.
+struct SlotPtySink<'s, S: PtyTurnSink> {
+    inner: &'s mut S,
+    slot: &'s LiveSlot,
+}
+
+impl<S: PtyTurnSink> crate::pty_turn::PromptHooks for SlotPtySink<'_, S> {
+    fn wait_for_ready(&mut self) -> bool {
+        self.inner.wait_for_ready()
+    }
+    fn wait_for_settled(&mut self, ready: bool, waited_ms: u64) {
+        self.inner.wait_for_settled(ready, waited_ms)
+    }
+    fn gate_signal(&mut self) -> u64 {
+        self.inner.gate_signal()
+    }
+    fn confirm_probe(&mut self) -> bool {
+        self.inner.confirm_probe()
+    }
+}
+
+impl<S: PtyTurnSink> PtyTurnSink for SlotPtySink<'_, S> {
+    fn on_spawn(&mut self, controls: crate::pty_turn::PtyControls) {
+        self.slot.set_pty(Some(controls.clone()));
+        self.inner.on_spawn(controls)
+    }
+    fn on_output(&mut self, frame: &[u8]) {
+        self.inner.on_output(frame)
+    }
+    fn on_injected(&mut self) {
+        self.inner.on_injected()
+    }
+    fn on_attention(&mut self, screen: &str, kind: crate::pty::AttentionKind) {
+        self.inner.on_attention(screen, kind)
+    }
+    fn on_turn_gate(&mut self, screen: &str) {
+        self.inner.on_turn_gate(screen)
+    }
+}

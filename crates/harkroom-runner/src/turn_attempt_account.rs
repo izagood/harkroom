@@ -107,9 +107,33 @@ struct SlotState {
     /// 이 멘션의 **스레드** 임대(러너 사이 잠금, `thread_claims`)를 잃었다 — 한 번 서면 내려가지 않는다. 턴 임대 잃음
     /// ([`LiveSlot::fence_lost`])은 그 시도만의 것이라 다음 시도가 새 임대로 돌지만, 스레드 임대는 멘션 전체의 것이다.
     claim_lost: bool,
+    /// 러너가 물러나는 중이다 — **러너 자신의 물러나기 길(`MentionSlots::stop_all`) 하나만** 세운다(서버 사건·스레드 글로 서는 길
+    /// 없음). 감시 루프가 이것을 보고 기존 SIGTERM 길(거둠)을 탄다. 결과는 `canceled_by = operator` 로 접는다(통지 없음).
+    stopping: bool,
+    /// 지금 도는 시도의 PTY 손잡이 — 물러날 때 유예가 지나면 그 프로세스 그룹에 SIGKILL 한다. 시도가 끝나면 비운다.
+    pty: Option<crate::pty_turn::PtyControls>,
 }
 
 impl LiveSlot {
+    /// 띄운 시도의 PTY 손잡이를 적는다(없애면 `None`).
+    pub fn set_pty(&self, pty: Option<crate::pty_turn::PtyControls>) {
+        self.lock().pty = pty;
+    }
+
+    /// 물러남 표지(멘션 단위)를 세우고 `operator` 로 [중단] 한다 — 다음 시도도 막히고, 사람 [중단] 통지는 나가지 않는다.
+    fn stop_for_shutdown(&self) {
+        self.lock().stopping = true;
+        self.cancel(crate::turn_attempt_account::SHUTDOWN_CANCELED_BY);
+    }
+
+    /// 러너가 물러나는 중인가(감시 루프의 거둠 확인).
+    pub fn stopping(&self) -> bool {
+        self.lock().stopping
+    }
+
+    fn pty_pid(&self) -> Option<u32> {
+        self.lock().pty.as_ref().map(|c| c.pid())
+    }
     fn lock(&self) -> MutexGuard<'_, SlotState> {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
@@ -122,6 +146,9 @@ impl LiveSlot {
         }
         if let (Some(l), true) = (&live, st.claim_lost) {
             l.fence_lost();
+        }
+        if live.is_none() {
+            st.pty = None;
         }
         st.live = live;
     }
@@ -271,6 +298,26 @@ impl MentionSlots {
         self.get(mention_id).is_some_and(|s| s.fence_lost())
     }
 
+    /// 러너 물러나기 — 열린 슬롯 모두에 물러남 표지를 세운다(감시 루프가 SIGTERM 길을 탄다). 세운 수를 돌려준다.
+    /// **`main.rs` 의 물러나기 차례만 부른다**(security P2-1) — 스케줄러 사건·서버 응답으로 부르는 길이 없다.
+    pub fn stop_all(&self) -> usize {
+        let open: Vec<LiveSlot> = self.lock().values().cloned().collect();
+        for s in &open {
+            s.stop_for_shutdown();
+        }
+        open.len()
+    }
+
+    /// 물러나기 유예가 지난 뒤 — 아직 PTY 가 있는 슬롯마다 그 **프로세스 그룹**에 SIGKILL 한다(러너 자신의 그룹이면 안 보낸다).
+    /// 보낸 수를 돌려준다.
+    pub fn kill_all(&self) -> usize {
+        let open: Vec<LiveSlot> = self.lock().values().cloned().collect();
+        open.iter()
+            .filter_map(LiveSlot::pty_pid)
+            .filter(|pid| kill_process_group(*pid) == KillGroup::Sent)
+            .count()
+    }
+
     pub fn is_open(&self, mention_id: &str) -> bool {
         self.lock().contains_key(mention_id)
     }
@@ -314,3 +361,39 @@ impl Drop for MentionSlot {
 #[cfg(test)]
 #[path = "turn_attempt_account_tests.rs"]
 mod tests;
+
+/// 물러나기로 접은 턴의 [중단] 주체 — 사람이 아니라 통지가 나가지 않는다(정본 `humanCancelOf` 가 거른다).
+pub const SHUTDOWN_CANCELED_BY: &str = "operator";
+
+/// 프로세스 그룹 SIGKILL 결과.
+#[derive(Debug, PartialEq, Eq)]
+pub enum KillGroup {
+    Sent,
+    /// pid·pgid 가 0·1·음수거나 그룹을 못 읽었다.
+    Invalid,
+    /// 러너 자신의 그룹이다 — 보내면 러너·오퍼레이터가 같이 죽는다.
+    OwnGroup,
+}
+
+/// PTY 자식의 프로세스 그룹에만 SIGKILL(security P2-2). 그룹이 러너 자신의 것과 같으면 보내지 않는다.
+pub fn kill_process_group(pid: u32) -> KillGroup {
+    let Ok(pid) = i32::try_from(pid) else {
+        return KillGroup::Invalid;
+    };
+    if pid <= 1 {
+        return KillGroup::Invalid;
+    }
+    // SAFETY: 읽기 전용 시스템 호출 — 인자는 위에서 거른 양의 pid.
+    let pgid = unsafe { libc::getpgid(pid) };
+    if pgid <= 1 {
+        return KillGroup::Invalid;
+    }
+    // SAFETY: 인자 없는 읽기 호출.
+    if pgid == unsafe { libc::getpgrp() } {
+        eprintln!("[shutdown] PTY 자식의 그룹이 러너 자신의 것과 같다 — SIGKILL 을 보내지 않는다");
+        return KillGroup::OwnGroup;
+    }
+    // SAFETY: 위에서 1 보다 크고 러너 그룹이 아님을 확인한 그룹에만 보낸다.
+    unsafe { libc::killpg(pgid, libc::SIGKILL) };
+    KillGroup::Sent
+}

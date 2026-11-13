@@ -218,3 +218,24 @@ fn a1_end_signal_does_not_stop_the_a2_loop() {
         "a2 에 SIGTERM"
     );
 }
+
+/// P2: 러너 물러남(`stop_all`)도 감시 루프의 거둠 확인을 연다 — 같은 SIGTERM 길이다. 걸린 시도는 임대 잃음이 아니다.
+#[test]
+fn shutdown_stopping_opens_the_reclaim_check() {
+    use crate::turn_attempt_account::MentionSlots;
+    use crate::turn_attempt_live::LiveTurn;
+    let slots = MentionSlots::default();
+    let opened = slots.open("m1");
+    let slot = opened.slot();
+    let link = NoLink;
+    let client = HarkroomMcpClient::new(&link, "t");
+    let make = probe_make(config(&client, slot.clone()));
+    let mut p = make(&Watch::default(), &notice("a"), &ctx("a", 1, 1));
+    let live = Arc::new(LiveTurn::default());
+    slot.bind(Some(live.clone()));
+    let f = p.fence.as_mut().unwrap();
+    assert!(!(f.lost)());
+    slots.stop_all();
+    assert!((f.lost)(), "물러남이 거둠을 연다");
+    assert!(!live.fenced_out());
+}
