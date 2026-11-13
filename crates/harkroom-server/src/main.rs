@@ -1,5 +1,6 @@
-//! `harkroom-server-rs` — env: `UPSTREAM_URL`(TS 서버, 예 `http://harkroom:3400`) · `DATABASE_URL` · `PORT`(기본 3500).
-use harkroom_server::{proxy, schema};
+//! `harkroom-server-rs` — env: `UPSTREAM_URL`(TS 서버, 예 `http://harkroom:3400`) · `DATABASE_URL` · `PORT`(기본 3500) ·
+//! `HARKROOM_FRONT_TS_ROUTES`(옮긴 줄을 TS 로 되돌림 — `"GET /accounts,GET /dms"` 또는 `*`, `routes.rs` 참고).
+use harkroom_server::{proxy, routes, schema};
 use std::net::SocketAddr;
 
 #[tokio::main]
@@ -34,9 +35,23 @@ async fn main() {
         );
         std::process::exit(1);
     }
-    drop(pool);
-
-    let app = proxy::router(proxy::Upstream::new(&upstream));
+    let ts = routes::TsOverrides::parse(std::env::var("HARKROOM_FRONT_TS_ROUTES").ok().as_deref());
+    let unknown = ts.unknown(routes::MOVED);
+    if !unknown.is_empty() {
+        eprintln!("front: HARKROOM_FRONT_TS_ROUTES names unknown route(s): {unknown:?}");
+    }
+    eprintln!(
+        "front: rust routes {:?}",
+        routes::active(routes::MOVED, &ts)
+    );
+    let app = routes::router(
+        routes::AppState {
+            up: proxy::Upstream::new(&upstream),
+            pool,
+        },
+        routes::MOVED,
+        &ts,
+    );
     let listener = tokio::net::TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], port)))
         .await
         .expect("bind");
