@@ -19,7 +19,7 @@ use crate::mention_clients::{AgentClients, AgentLink};
 use crate::mention_deps::{LaneFn, MentionDeps};
 use crate::mention_hooks::{LeaseBook, LinkHooks, SchedulerHooks};
 use crate::mention_ledger::Ledger;
-use crate::mention_parts::{AfterFn, MentionParts, WatchLoopFn};
+use crate::mention_parts::{AfterCtx, AfterFn, MentionParts, WatchLoopFn};
 use crate::mention_run::run_mention;
 use crate::mention_sched::OnceRelease;
 use crate::mention_target::build_mention_target;
@@ -33,17 +33,58 @@ use crate::turn_attempt_fold::AfterInputs;
 use crate::turn_attempt_run::{AttemptBase, PtyTurnAttempt};
 use crate::turn_prepare_io::McpPrepareIo;
 use crate::turn_success::AfterTurnPlan;
+use serde_json::Value;
 
 /// 턴 뒤 IO 재료(손님 없음) — 계획·입력·마지막 말 읽개. 손님은 이 함수가 묶음에서 붙인다.
-pub struct AfterData<'a> {
+pub struct AfterData {
     pub plan: AfterTurnPlan,
-    pub inputs: AfterInputs<'a>,
-    pub last_said: Box<dyn FnMut() -> Option<String> + 'a>,
-    pub silent_said: Box<dyn FnMut() -> SilentSaid + 'a>,
+    pub inputs: OwnedAfterInputs,
+    /// 통지에 인용할 마지막 말(판정·통지 함수가 가린다).
+    pub last_said: Option<String>,
 }
 
-/// 턴 뒤 재료를 짓는다(C2 가 실물을 채운다).
-pub type AfterSource<'a> = Box<dyn FnMut(&TurnSecrets) -> Result<AfterData<'a>, String> + 'a>;
+/// [`AfterInputs`] 의 소유본 — 보고처 약속은 아직 싣지 않는다(`promise: None`, C5).
+#[derive(Clone, Debug, Default)]
+pub struct OwnedAfterInputs {
+    pub key: String,
+    pub me_id: String,
+    pub channel_id: String,
+    pub anchor: Option<String>,
+    pub mention_id: String,
+    pub caller: Option<crate::turn_notice::NudgeCaller>,
+    pub proxy_head: String,
+    pub record_proxy: bool,
+    pub wake_reason: String,
+    pub background_wait_ms: u64,
+    pub turn_start_seq: i64,
+    pub turn_id: String,
+}
+
+impl OwnedAfterInputs {
+    pub fn view(&self) -> AfterInputs<'_> {
+        AfterInputs {
+            key: &self.key,
+            me_id: &self.me_id,
+            channel_id: &self.channel_id,
+            anchor: self.anchor.as_deref(),
+            mention_id: &self.mention_id,
+            caller: self
+                .caller
+                .unwrap_or(crate::turn_notice::NudgeCaller::Human),
+            proxy_head: &self.proxy_head,
+            record_proxy: self.record_proxy,
+            wake_reason: &self.wake_reason,
+            background_wait_ms: self.background_wait_ms,
+            turn_start_seq: self.turn_start_seq,
+            turn_id: &self.turn_id,
+            promise: None,
+        }
+    }
+}
+
+/// 턴 뒤 재료를 짓는다 — 그 시도의 사실(`AfterCtx`)과 턴 뒤에 다시 읽은 앵커 스레드(시작 seq 뒤)를 받는다. 실물은
+/// [`crate::turn_after_source::after_source`].
+pub type AfterSource<'a> = Box<dyn FnMut(&AfterCtx, &[Value]) -> AfterData + 'a>;
 
 /// 이 함수가 묶음에서 지어 넘기는 몫.
 pub struct BundleParts<'a, L: AgentLink> {
@@ -138,9 +179,36 @@ pub fn run_mention_call<'a, L, S, H>(
         launch,
         open_relay,
         move |slot: LiveSlot, relay: &Option<Arc<SessionHandle>>| {
-            let after_fn: AfterFn<'a> = Box::new(move |s: &TurnSecrets| {
-                let d = after(s)?;
-                clients.after_turn(&d.plan, s, &d.inputs, d.last_said, d.silent_said)
+            let (ch, root) = (target.channel_id.clone(), target.thread_root_id.clone());
+            let after_fn: AfterFn<'a> = Box::new(move |s: &TurnSecrets, a: &AfterCtx| {
+                // 정본 `readThread(channelId, anchor, turnStartSeq)` — 묶음 손님으로. 못 읽으면 턴 뒤 IO 를 접는다(best-effort,
+                // 정본은 로그만 남기고 턴을 실패로 만들지 않는다).
+                let rows = match clients.mcp().read_thread(
+                    &ch,
+                    Some(&root),
+                    Some(a.ctx.turn_start_seq),
+                    crate::turn_prepare_io::THREAD_PAGE,
+                ) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("[mentionTurn] 턴 뒤 발화 확인 실패(통지 생략) — {e}");
+                        return Ok(());
+                    }
+                };
+                let d = after(a, &rows);
+                let inputs = d.inputs.view();
+                let said = d.last_said;
+                let said2 = said.clone();
+                clients.after_turn(
+                    &d.plan,
+                    s,
+                    &inputs,
+                    Box::new(move || said.clone()),
+                    Box::new(move || SilentSaid {
+                        last_said: said2.clone(),
+                        ..SilentSaid::default()
+                    }),
+                )
             });
             let parts = build_parts(BundleParts {
                 io: clients.prepare_io(),

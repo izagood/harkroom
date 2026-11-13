@@ -277,27 +277,19 @@ fn call<'a>(
         claim_holder: None,
         log: &quiet,
         watch: watch(),
-        after: Box::new(|_s| {
-            Ok(AfterData {
-                plan: plan(),
-                inputs: AfterInputs {
-                    key: "k",
-                    me_id: "me",
-                    channel_id: "c",
-                    anchor: Some("t"),
-                    mention_id: "m7",
-                    caller: NudgeCaller::Human,
-                    proxy_head: "",
-                    record_proxy: false,
-                    wake_reason: "",
-                    background_wait_ms: 1,
-                    turn_start_seq: 0,
-                    turn_id: "turn",
-                    promise: None,
-                },
-                last_said: Box::new(|| None),
-                silent_said: Box::new(SilentSaid::default),
-            })
+        after: Box::new(|_a, _rows| AfterData {
+            plan: plan(),
+            inputs: OwnedAfterInputs {
+                key: "k".into(),
+                me_id: "me".into(),
+                channel_id: "c".into(),
+                anchor: Some("t".into()),
+                mention_id: "m7".into(),
+                background_wait_ms: 1,
+                turn_id: "turn".into(),
+                ..OwnedAfterInputs::default()
+            },
+            last_said: None,
         }),
         build_parts: Box::new(move |mut b: BundleParts<'a, &'a Link>| {
             let mut s = seen.borrow_mut();
@@ -305,7 +297,7 @@ fn call<'a>(
             if call_after {
                 let (m0, o0) = (n(&mine.tools), n(&other.tools));
                 let secrets = TurnSecrets::build("pat-value-0123456789", &[], None);
-                let _ = (b.after)(&secrets);
+                let _ = (b.after)(&secrets, &crate::mention_parts::AfterCtx::default());
                 s.after_calls = Some((n(&mine.tools) - m0, n(&other.tools) - o0));
             }
             let base = TurnCommandOptions::new(
