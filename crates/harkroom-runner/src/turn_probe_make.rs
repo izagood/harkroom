@@ -1,8 +1,8 @@
 //! 감시 루프 짓개 실물 — [`probe_make`] 가 [`MakeLoop`] 을 돌려준다. 돌 때마다 `run_beside` 가 넘긴 **그 시도의** 감시 자리·
 //! 감시 목록·시도 문맥([`LoopCtx`])만으로 탐침 IO 를 짓는다(security ②-3c 조건 ①).
 //!
-//! - 쥐는 것: 멘션 단위로 바뀌지 않는 설정([`ProbeLoopConfig`] — MCP 손님·채널·앵커·하네스·폴더·멘션 슬롯)만.
-//!   시도마다 바뀌는 값(세션 id·턴 id·턴 시작 시각·시작 seq)은 이 값에 없다 — 인자로만 온다.
+//! - 쥐는 것: 멘션 단위로 바뀌지 않는 설정([`ProbeLoopConfig`] — MCP 손님·채널·앵커·하네스·홈·멘션 슬롯)만.
+//!   시도마다 바뀌는 값(세션 id·턴 id·턴 시작 시각·시작 seq·**계정 폴더**·**끝 신호**)은 이 값에 없다 — 인자로만 온다.
 //! - 감시 자리로 가는 것: 회수 시계([`reclaim_on_watch`]), SIGTERM([`terminate_on_watch`]), PTY 쓰기([`write_on_watch`]),
 //!   재촉 IO([`WatchNudgeIo`] 의 자리)는 모두 **받은 `Watch`** 로 짓는다(조건 ②).
 //! - 가림 목록: 통지 sink 의 `secrets` 와 탐침의 `secrets` 는 **받은 `NoticeSecrets`** 의 사본이다.
@@ -49,7 +49,6 @@ pub struct ProbeLoopConfig<'a, L: RunnerLink> {
     pub channel_id: String,
     pub anchor: Option<String>,
     pub harness: AgentHarness,
-    pub claude_config_dir: Option<PathBuf>,
     pub home: Option<PathBuf>,
     pub omp_home: Option<PathBuf>,
     pub end_cfg: EndConfig,
@@ -60,8 +59,6 @@ pub struct ProbeLoopConfig<'a, L: RunnerLink> {
     pub report_auth: &'a (dyn Fn(&[String], i64) + Send + Sync),
     /// 이 멘션의 슬롯(펜스).
     pub slot: LiveSlot,
-    /// 턴이 끝났다.
-    pub ended: Arc<AtomicBool>,
     pub clock: fn() -> i64,
 }
 
@@ -149,7 +146,7 @@ fn records_of<L: RunnerLink>(c: &ProbeLoopConfig<'_, L>, ctx: &LoopCtx) -> Attem
     AttemptRecords {
         harness: c.harness,
         session_id: ctx.session_id.clone(),
-        config_dir: c.claude_config_dir.clone(),
+        config_dir: ctx.claude_config_dir.clone(),
         home: c.home.clone(),
         omp_home: c.omp_home.clone(),
         since_ms: ctx.turn_started_at_ms,
@@ -220,7 +217,7 @@ pub fn probe_make<'a, L: RunnerLink + 'a>(
                 },
                 nudge_wait_ms: LANE_NUDGE_WAIT_MS,
                 on_reclaim: reclaim_on_watch(watch),
-                ended: c.ended.clone(),
+                ended: ctx.ended.clone(),
                 terminate: terminate_on_watch(watch),
                 write_pty: write_on_watch(watch),
                 reads_transcript: reads_session_transcript(c.harness),
@@ -236,8 +233,9 @@ pub fn probe_make<'a, L: RunnerLink + 'a>(
             let started = ctx.turn_started_at_ms;
             let io = TurnProbeIo {
                 clock: c.clock,
-                exited: Arc::new(AtomicBool::new(false)),
-                ended: c.ended.clone(),
+                // PTY 종료 = 이 시도의 끝 신호(`run_beside` 가 PTY 턴이 돌아올 때 세운다).
+                exited: ctx.ended.clone(),
+                ended: ctx.ended.clone(),
                 read_thread,
                 spoke_key: SpokeKey {
                     me_id: c.me_id.clone(),
@@ -273,7 +271,7 @@ pub fn probe_make<'a, L: RunnerLink + 'a>(
                     turn_started_at_ms: started,
                     ..ProbeState::default()
                 },
-                ended: Some(c.ended.clone()),
+                ended: Some(ctx.ended.clone()),
                 fence: Some(FenceCheck {
                     listening: Arc::new(AtomicBool::new(true)),
                     lost: Box::new(move || slot.fenced_out()),

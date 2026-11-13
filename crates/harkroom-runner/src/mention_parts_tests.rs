@@ -371,3 +371,25 @@ fn panic_in_turn_still_stops_watch_loop() {
         .expect("감시 루프가 끝나 패닉이 제한 시간 안에 밖으로 나온다");
     assert!(panicked);
 }
+
+/// 이 시도의 끝 신호는 PTY 턴이 끝나면(정상·패닉 모두) 선다 — 시계·SIGTERM·탐침 `exited()` 가 이것을 본다.
+#[test]
+fn run_beside_raises_this_attempts_end_signal() {
+    let secrets = crate::turn_probe_records::NoticeSecrets::default();
+    let ctx = LoopCtx::default();
+    assert!(!ctx.ended.load(std::sync::atomic::Ordering::SeqCst));
+    run_beside(&Watch::default(), &secrets, &ctx, None, || ());
+    assert!(ctx.ended.load(std::sync::atomic::Ordering::SeqCst));
+
+    let ctx = LoopCtx::default();
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run_beside(&Watch::default(), &secrets, &ctx, None, || -> () {
+            panic!("PTY 턴 도중 패닉")
+        })
+    }));
+    assert!(r.is_err());
+    assert!(
+        ctx.ended.load(std::sync::atomic::Ordering::SeqCst),
+        "패닉에도 선다"
+    );
+}

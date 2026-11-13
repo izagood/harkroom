@@ -129,7 +129,7 @@ impl SystemInputs {
 
 /// 감시 루프가 받는 **이 시도의** 문맥 — 시도마다 바뀌는 값은 모두 여기로 인자로 온다(security ②-3c 조건 ①). 루프·짓개는
 /// 이 값을 바깥에 붙잡아 두지 않는다.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 pub struct LoopCtx {
     pub turn_id: String,
     /// 이 시도가 이어 쓰는(또는 새로 여는) 하네스 세션 id. 첫 턴은 모를 수 있다.
@@ -138,6 +138,10 @@ pub struct LoopCtx {
     pub turn_started_at_ms: i64,
     /// 이 턴에 먹인 스레드의 마지막 seq(정본 `turnStartSeq`) — 내 발화는 이 뒤 글만 센다.
     pub turn_start_seq: i64,
+    /// **이 시도의** 계정 폴더(`AttemptAccount::config_dir`) — 기록 읽개는 이 폴더만 본다(#2039 와 같은 경계).
+    pub claude_config_dir: Option<PathBuf>,
+    /// **이 시도의** 「턴이 끝났다」 신호 — 시도마다 새로 짓는다. [`run_beside`] 가 PTY 턴이 끝날 때(정상·패닉 모두) 세운다.
+    pub ended: Arc<AtomicBool>,
 }
 
 /// 감시 루프 몸통 — 이 시도의 감시 자리·감시 통지 가림 목록·시도 문맥·멈춤 신호를 받아 `run_watch`(실물 `ProbeIo`)를 돈다.
@@ -155,9 +159,11 @@ pub fn run_beside<R>(
 ) -> R {
     /// 떨어질 때(정상 끝·패닉 풀림 모두) 멈춤 신호를 세운다 — 패닉이어도 `scope` 가 감시 스레드를 끝없이 기다리지 않게,
     /// 그래서 바깥 정리 가드(열쇠 거두기·임대 끝·입력 놓기·듣기 놓기)까지 풀림이 이어지게.
-    struct StopOnDrop<'s>(&'s AtomicBool);
+    struct StopOnDrop<'s>(&'s AtomicBool, &'s AtomicBool);
     impl Drop for StopOnDrop<'_> {
         fn drop(&mut self) {
+            // PTY 턴이 끝났다 — 이 시도의 끝 신호를 먼저 세우고(시계·SIGTERM 이 멈춘다) 감시 루프를 멈춘다.
+            self.1.store(true, Ordering::SeqCst);
             self.0.store(true, Ordering::SeqCst);
         }
     }
@@ -167,7 +173,7 @@ pub fn run_beside<R>(
             let (w, st) = (watch.clone(), &stop);
             sc.spawn(move || lf(&w, notice, ctx, st));
         }
-        let _stop = StopOnDrop(&stop);
+        let _stop = StopOnDrop(&stop, &ctx.ended);
         f()
     })
 }
@@ -411,6 +417,8 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             turn_started_at_ms: now(),
             turn_start_seq: i64::try_from(crate::turn_prep::turn_start_seq(&c.prepared.fed.thread))
                 .unwrap_or(i64::MAX),
+            claude_config_dir: c.account.config_dir.clone(),
+            ended: Arc::new(AtomicBool::new(false)),
         };
         run_beside(&watch, &args.notice, &ctx, self.watch_loop.as_ref(), || {
             let mut delivered_sink = DeliveredSink { inner, delivered };
