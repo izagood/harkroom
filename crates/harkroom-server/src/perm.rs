@@ -183,6 +183,8 @@ const INTERNAL: &str = r#"{"error":{"code":"internal","message":"internal error"
 /// - 거절은 403 `forbidden`, 문구 `<cap> 권한이 필요하다`.
 ///
 /// `cap` 은 `CAPABILITIES` 안의 것이어야 한다(라우트 표에 고정값으로만 쓴다). 모르는 값은 개발 실수라 debug 에서 터진다.
+// 거절이 곧 axum 응답이라 그대로 돌려준다(요청마다 한 번, 상자에 담을 이득이 없다).
+#[allow(clippy::result_large_err)]
 pub async fn require_cap(
     pool: &PgPool,
     auth: &Auth,
