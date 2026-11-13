@@ -104,6 +104,9 @@ struct SlotState {
     live: Option<Arc<LiveTurn>>,
     /// 이 멘션에서 처음 [중단] 한 사람.
     canceled_by: Option<String>,
+    /// 이 멘션의 **스레드** 임대(러너 사이 잠금, `thread_claims`)를 잃었다 — 한 번 서면 내려가지 않는다. 턴 임대 잃음
+    /// ([`LiveSlot::fence_lost`])은 그 시도만의 것이라 다음 시도가 새 임대로 돌지만, 스레드 임대는 멘션 전체의 것이다.
+    claim_lost: bool,
 }
 
 impl LiveSlot {
@@ -117,12 +120,24 @@ impl LiveSlot {
         if let (Some(l), Some(by)) = (&live, &st.canceled_by) {
             l.cancel(by);
         }
+        if let (Some(l), true) = (&live, st.claim_lost) {
+            l.fence_lost();
+        }
         st.live = live;
     }
 
     /// 턴 임대를 잃었다 — 지금 걸린 시도에만. 걸린 것이 없으면 `false`.
     pub fn fence_lost(&self) -> bool {
         self.lock().live.as_ref().map(|l| l.fence_lost()).is_some()
+    }
+
+    /// 이 멘션의 스레드 임대를 잃었다 — 멘션 단위로 남기고(다음 시도도 걸리는 순간 펜스), 지금 걸린 시도가 있으면 그 시도에도.
+    pub fn claim_lost(&self) {
+        let mut st = self.lock();
+        st.claim_lost = true;
+        if let Some(l) = &st.live {
+            l.fence_lost();
+        }
     }
 
     /// 사람이 [중단] 했다 — 멘션 단위로 남기고(처음 사람이 남는다), 지금 걸린 시도가 있으면 그 시도에도. 돌던 시도에
@@ -144,6 +159,7 @@ impl LiveSlot {
     pub fn stop_requested(&self) -> bool {
         let st = self.lock();
         st.canceled_by.is_some()
+            || st.claim_lost
             || st
                 .live
                 .as_ref()
@@ -168,24 +184,70 @@ impl LiveSlot {
 /// 하나를 쓰면 앞 멘션의 [중단] 이 다음 멘션을 영원히 막는다 — 그래서 슬롯은 멘션 하나(`run_one` 한 번)의 수명이고,
 /// [`MentionSlot`] 이 떨어지면 지도에서 빠진다. 열리지 않은 멘션에 온 신호는 버린다(`false`).
 #[derive(Clone, Default)]
-pub struct MentionSlots(Arc<Mutex<HashMap<String, LiveSlot>>>);
+pub struct MentionSlots {
+    map: Arc<Mutex<HashMap<String, LiveSlot>>>,
+    /// 슬롯이 열리기 **전에** 임대를 잃은 멘션 — 열 때 펜스 표지를 함께 세운다(틈 없음).
+    pending_fence: Arc<Mutex<std::collections::HashSet<String>>>,
+}
 
 impl MentionSlots {
     fn lock(&self) -> MutexGuard<'_, HashMap<String, LiveSlot>> {
-        self.0.lock().unwrap_or_else(|e| e.into_inner())
+        self.map.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn pending(&self) -> MutexGuard<'_, std::collections::HashSet<String>> {
+        self.pending_fence.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// 그 멘션의 스레드 임대를 잃었다 — 열린 슬롯이면 거기 세우고, 아직 안 열렸으면 기억했다가 열 때 세운다.
+    ///
+    /// **틈 없음**: [`Self::open`] 과 같은 차례(대기 표 → 지도)로 대기 표를 쥔 채 지도를 본다 — 「지도에 없음」을 본 뒤 기억하기
+    /// 전에 슬롯이 열려 표지를 놓치는 길이 없다. 슬롯 표지는 두 잠금을 놓은 뒤 세운다(슬롯 잠금을 겹쳐 쥐지 않는다).
+    pub fn fence_lost_or_hold(&self, mention_id: &str) {
+        let open = {
+            let mut pending = self.pending();
+            let open = self.get(mention_id);
+            if open.is_none() {
+                pending.insert(mention_id.to_string());
+            }
+            open
+        };
+        if let Some(s) = open {
+            s.claim_lost();
+        }
+    }
+
+    /// 그 멘션에 열기를 기다리는 펜스 표지가 있는가(진단·시험용).
+    pub fn has_pending_fence(&self, mention_id: &str) -> bool {
+        self.pending().contains(mention_id)
+    }
+
+    /// 그 멘션에 남은 대기 표지를 지운다 — 슬롯을 열지 못하고 끝난 멘션의 표지가 다음 시도(새 임대)에 남지 않게.
+    pub fn forget_pending_fence(&self, mention_id: &str) {
+        self.pending().remove(mention_id);
     }
 
     /// 이 멘션의 슬롯을 **새로** 연다(같은 id 의 옛 슬롯이 남아 있어도 바꾼다). 같은 멘션은 동시에 두 번 돌지 않는다 —
     /// 멘션의 스레드 열쇠(채널·앵커)가 정해져 있고 장부가 그 열쇠로 한 번에 하나만 띄운다(`Ledger::thread_in_flight`).
     /// 그래도 열린 id 를 다시 열면 로그를 남긴다(겹치면 앞 실행의 [중단] 이 뒤 슬롯으로 간다).
+    ///
+    /// 열기 전에 임대를 잃었으면([`Self::fence_lost_or_hold`]) 지도에 넣기 **전에** 표지를 세운다.
     pub fn open(&self, mention_id: &str) -> MentionSlot {
         let slot = LiveSlot::default();
-        if self
-            .lock()
-            .insert(mention_id.to_string(), slot.clone())
-            .is_some()
         {
-            eprintln!("[mentionTurn] {mention_id}: 이미 열린 멘션 자리를 다시 열었다(겹친 실행)");
+            let mut pending = self.pending();
+            if pending.remove(mention_id) {
+                slot.claim_lost();
+            }
+            if self
+                .lock()
+                .insert(mention_id.to_string(), slot.clone())
+                .is_some()
+            {
+                eprintln!(
+                    "[mentionTurn] {mention_id}: 이미 열린 멘션 자리를 다시 열었다(겹친 실행)"
+                );
+            }
         }
         MentionSlot {
             slots: self.clone(),

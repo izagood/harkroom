@@ -85,7 +85,15 @@ fn old_server_gives_a_claim_that_never_fences() {
     let tc = claims(&f);
     let c = held(tc.hold("c", "t", None));
     assert!(!c.fenced());
-    assert_eq!(tc.held_count(), 0);
+    // 옛 서버여도 이 프로세스 안에서는 스레드당 하나 — 쥔 동안 같은 스레드는 `Busy`(서버는 묻지 않는다).
+    assert_eq!(tc.held_count(), 1);
+    assert!(matches!(tc.hold("c", "t", None), ClaimHold::Busy));
+    c.release();
+    assert_eq!(tc.held_count(), 0, "놓으면 지운다");
+    let f2 = Fake::with(vec![Ok(ClaimOutcome::Unsupported)]);
+    let tc2 = claims(&f2);
+    drop(held(tc2.hold("c", "t", None)));
+    assert_eq!(tc2.held_count(), 0, "떨어지면(Drop) 지운다");
 }
 
 /// 펜스: 박동이 `Taken` 을 받으면 잃음 표지가 서고 알림이 한 번, 박동은 멈춘다.
