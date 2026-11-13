@@ -245,6 +245,7 @@ fn probe_io_runs_outside_the_watch_lock() {
             ..EndState::default()
         },
         screen: b"line one\nhello there\n".to_vec(),
+        controls: None,
     }));
     let mut io = BusyIo {
         watch: Arc::clone(&watch),
@@ -403,4 +404,122 @@ fn write_back_keeps_sticky_flags_and_a_fresh_arm() {
     assert!(slot.stalled && slot.exited && slot.reclaimed);
     assert_eq!(slot.last_data_at_ms, 9);
     assert!(slot.reclaim_armed, "탐침이 이번 주기에 새로 세운 시계");
+}
+
+fn fence(lost: bool) -> FenceCheck {
+    FenceCheck {
+        listening: Arc::new(AtomicBool::new(true)),
+        lost: Box::new(move || lost),
+        on_lost: fence_reclaim(),
+    }
+}
+
+#[test]
+fn lost_fence_reclaims_on_the_slot_and_stops_before_probing() {
+    let watch = Watch::default();
+    lock(&watch).end.has_controls = true;
+    let (tx, rx) = std::sync::mpsc::channel();
+    let w2 = watch.clone();
+    std::thread::spawn(move || {
+        let mut io = Io {
+            cycles: Cell::new(0),
+            exit_at: u32::MAX,
+        };
+        let stop = AtomicBool::new(false);
+        let mut f = fence(true);
+        let kills = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let (k, w3) = (kills.clone(), w2.clone());
+        // 실물 SIGTERM 처럼 손잡이를 꺼내려 같은 자리를 잠근다 — 잠금 안에서 불리면 여기서 멈춘다.
+        let terminate: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+            let _g = lock(&w3);
+            k.fetch_add(1, Ordering::SeqCst);
+        });
+        let n = run_watch_guarded(
+            &w2,
+            &mut ProbeState::default(),
+            &EndConfig::new(60_000),
+            &mut io,
+            Duration::from_millis(1),
+            WatchStops {
+                stop: &stop,
+                ended: None,
+                fence: Some(&mut f),
+                terminate: Some(terminate),
+            },
+        );
+        tx.send((n, io.cycles.get(), kills.load(Ordering::SeqCst)))
+            .unwrap();
+    });
+    let (n, probed, kills) = rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("펜스 접기가 잠금 안에서 SIGTERM 을 불러 멈췄다");
+    assert_eq!(n, 0, "펜스에 걸린 주기는 세지 않는다");
+    assert_eq!(
+        probed, 0,
+        "임대를 잃은 턴은 탐침(발화 읽기·통지)을 돌지 않는다"
+    );
+    assert_eq!(kills, 1);
+    assert!(lock(&watch).end.reclaimed, "자리 값에 거둠이 남는다");
+}
+
+#[test]
+fn ended_turn_stops_the_loop_without_probing() {
+    let watch = Watch::default();
+    let mut io = Io {
+        cycles: Cell::new(0),
+        exit_at: u32::MAX,
+    };
+    let stop = AtomicBool::new(false);
+    let ended = AtomicBool::new(true);
+    let n = run_watch_guarded(
+        &watch,
+        &mut ProbeState::default(),
+        &EndConfig::new(60_000),
+        &mut io,
+        Duration::from_millis(1),
+        WatchStops {
+            stop: &stop,
+            ended: Some(&ended),
+            fence: None,
+            terminate: None,
+        },
+    );
+    assert_eq!((n, io.cycles.get()), (0, 0));
+}
+
+#[test]
+fn held_fence_keeps_probing() {
+    let watch = Watch::default();
+    let mut io = Io {
+        cycles: Cell::new(0),
+        exit_at: 3,
+    };
+    let stop = AtomicBool::new(false);
+    let mut f = fence(false);
+    let n = run_watch_guarded(
+        &watch,
+        &mut ProbeState::default(),
+        &EndConfig::new(60_000),
+        &mut io,
+        Duration::from_millis(1),
+        WatchStops {
+            stop: &stop,
+            ended: None,
+            fence: Some(&mut f),
+            terminate: None,
+        },
+    );
+    assert!(n >= 3, "임대를 쥐고 있으면 탐침을 돈다: {n}");
+    assert!(!lock(&watch).end.reclaimed);
+}
+
+#[test]
+fn write_on_watch_needs_a_live_pty() {
+    let watch = Watch::default();
+    let mut write = write_on_watch(&watch);
+    assert!(!write(b"\r"), "띄우기 전에는 넣지 않는다");
+    lock(&watch).end.exited = true;
+    assert!(!write(b"\r"));
+    // 띄우기 전 SIGTERM 은 아무것도 하지 않는다(패닉 없음).
+    terminate_on_watch(&watch)();
 }
