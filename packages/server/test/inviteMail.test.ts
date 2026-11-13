@@ -70,7 +70,12 @@ describe('초대 메일', () => {
     expect(res.statusCode).toBe(201);
     expect(res.json().mail).toBe('failed');
     expect(res.json().token).toMatch(/^hrki_/);
-    expect(res.body).not.toContain('550');
+    // 사유(SMTP 코드·문구)가 응답에 없다 — 무작위 id·토큰은 빼고 본다(id 에 우연히 `550` 이 들어 지던 흔들림).
+    const { id: _id, token: _token, ...rest } = res.json() as Record<string, unknown>;
+    const visible = JSON.stringify(rest);
+    expect(visible).not.toContain('550');
+    expect(visible).not.toContain('mailbox unavailable');
+    expect(res.body).not.toContain('mailbox unavailable');
     const row = await pool.query(`select mail_status from invite where id = $1`, [res.json().id]);
     expect(row.rows[0].mail_status).toBe('failed');
   });
