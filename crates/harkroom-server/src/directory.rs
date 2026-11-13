@@ -79,6 +79,8 @@ fn internal(e: sqlx::Error) -> Response {
     )
 }
 
+// 거절이 곧 axum 응답이라 그대로 돌려준다(`perm::require_cap` 과 같은 까닭, CI clippy 1.99).
+#[allow(clippy::result_large_err)]
 async fn one_json(
     pool: &PgPool,
     sql: &'static str,
