@@ -1,5 +1,6 @@
 //! [`run_mention_call`] — 호출 자리의 손님이 모두 그 에이전트 묶음 것인지(security ③b-2c ①), 멘션 하나의 deps 가 그 호출
-//! 안에서 지어지고 떨어져 정상·패닉 모두에서 슬롯·턴 끝·임대 끝이 각 한 번인지(②).
+//! 안에서 지어지고 떨어져 정상·패닉 모두에서 슬롯·턴 끝이 각 한 번인지(②), 턴 임대는 러너 수명 장부가 쥐어 재시도 갈래에서
+//! 놓지도 다시 청하지도 않고, 결말이 놓는 갈래·패닉에서 한 번 놓는지(정본 `secretLeases`).
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -14,7 +15,7 @@ use crate::adapter::{AgentHarness, MentionPermission};
 use crate::link::LinkRequest;
 use crate::mcp::MCP_PROTOCOL_VERSION;
 use crate::memory_pin::MemoryContext;
-use crate::mention_hooks::LeaseHandoff;
+use crate::mention_hooks::{Booked, LeaseHandoff};
 use crate::mention_parts::SystemInputs;
 use crate::pty_turn::{PromptHooks, PtyTurnOptions};
 use crate::rest::RunnerLink;
@@ -167,6 +168,10 @@ fn launch(ledger: &Mutex<Ledger>) -> Launch {
     }
 }
 
+fn fresh() -> Mutex<Ledger> {
+    Mutex::new(Ledger::new(&[], 0))
+}
+
 fn no_report(_s: &[String], _t: i64) {}
 
 fn watch<'a>() -> MentionWatchInputs<'a> {
@@ -249,10 +254,12 @@ fn plan() -> AfterTurnPlan {
 
 fn quiet(_l: &str) {}
 
-#[allow(clippy::result_large_err)]
+#[allow(clippy::result_large_err, clippy::too_many_arguments)]
 /// 멘션 하나를 호출 자리로 돌린다. `call_after` 면 묶음이 넘긴 after 닫개를 한 번 불러 어느 링크로 가는지 본다.
 fn call<'a>(
     w: &'a World,
+    ledger: &Mutex<Ledger>,
+    book: &'a LeaseBook,
     links: (&'a Link, &'a Link),
     clients: &'a AgentClients<&'a Link>,
     sched: Sched,
@@ -260,9 +267,8 @@ fn call<'a>(
     call_after: bool,
 ) {
     let (mine, other) = links;
-    let ledger = Mutex::new(Ledger::new(&[], 0));
     let slots = MentionSlots::default();
-    let l = launch(&ledger);
+    let l = launch(ledger);
     let state: &'a Path = &w.state;
     let inputs = CallInputs {
         key: "c:t".into(),
@@ -337,7 +343,7 @@ fn call<'a>(
             pat: "pat-value-0123456789",
         },
     };
-    run_mention_call(&ledger, &slots, clients, l, sched, inputs, |_| None);
+    run_mention_call(ledger, &slots, book, clients, l, sched, inputs, |_| None);
     assert!(!slots.is_open("m7"), "멘션 자리는 호출 안에서 닫혔다");
 }
 
@@ -350,7 +356,17 @@ fn call_site_uses_only_the_bundle() {
     let clients = AgentClients::new(&mine, "t");
     let _b = AgentClients::new(&other, "t");
     let seen = RefCell::new(Seen::default());
-    call(&w, (&mine, &other), &clients, Sched::default(), &seen, true);
+    let (ledger, book) = (fresh(), LeaseBook::default());
+    call(
+        &w,
+        &ledger,
+        &book,
+        (&mine, &other),
+        &clients,
+        Sched::default(),
+        &seen,
+        true,
+    );
 
     let s = seen.borrow();
     assert_eq!(s.prepare_is_bundle, Some(true), "준비 = 묶음의 MCP 손님");
@@ -374,26 +390,85 @@ fn call_site_uses_only_the_bundle() {
     assert_eq!(n(&other.lease_ended), 0);
 }
 
-/// ② 정상 길(준비 실패로 접힘) — 슬롯·턴 끝·임대 끝이 각 한 번.
+/// ② 정상 길(준비 실패 → 재시도 갈래) — 슬롯·턴 끝은 각 한 번, 턴 임대는 **놓지 않고** 장부가 쥔다(정본 `secretLeases`:
+/// 재시도 갈래는 `release` 하지 않는다).
 #[test]
-fn normal_path_releases_each_once() {
+fn normal_path_releases_slot_once_and_keeps_lease_for_retry() {
     let w = world("normal");
     let (mine, other) = (link(Read::Error), link(Read::Error));
     let clients = AgentClients::new(&mine, "t");
     let seen = RefCell::new(Seen::default());
     let sched = Sched::default();
-    call(&w, (&mine, &other), &clients, sched.clone(), &seen, false);
+    let (ledger, book) = (fresh(), LeaseBook::default());
+    call(
+        &w,
+        &ledger,
+        &book,
+        (&mine, &other),
+        &clients,
+        sched.clone(),
+        &seen,
+        false,
+    );
 
     assert_eq!(
         got(&sched.0),
         ["slot c:t", "ended c:t m7"],
         "슬롯 → 턴 끝, 각 한 번"
     );
+    assert_eq!(n(&mine.lease_ended), 0, "재시도 갈래는 임대를 놓지 않는다");
+    assert_eq!(book.get("m7"), Some(Booked::Held), "장부가 쥔다");
+}
+
+/// 재시도 갈래 두 번 → 발급 1회·임대 끝 0회, 마지막 실패(시도 상한) → 임대 끝 1회·장부 빔. 되돌리면(Drop 이 정상 길에서도 놓으면)
+/// 둘째 시도가 다시 발급을 청한다(서버는 끝난 멘션에 409 `lease_used`).
+#[test]
+fn retries_reuse_one_lease_and_final_failure_ends_it_once() {
+    let w = world("retry");
+    let (mine, other) = (link(Read::Error), link(Read::Error));
+    let clients = AgentClients::new(&mine, "t");
+    let seen = RefCell::new(Seen::default());
+    let (ledger, book) = (fresh(), LeaseBook::default());
+
+    for _ in 0..2 {
+        call(
+            &w,
+            &ledger,
+            &book,
+            (&mine, &other),
+            &clients,
+            Sched::default(),
+            &seen,
+            false,
+        );
+    }
+    assert_eq!(got(&mine.http), ["POST /agent/turn-leases"], "발급은 한 번");
+    assert_eq!(got(&mine.leased), ["m7"], "오퍼레이터 맡김도 한 번");
+    assert_eq!(n(&mine.lease_ended), 0, "재시도 사이 임대 끝 없음");
+    assert_eq!(book.get("m7"), Some(Booked::Held));
+
+    call(
+        &w,
+        &ledger,
+        &book,
+        (&mine, &other),
+        &clients,
+        Sched::default(),
+        &seen,
+        false,
+    );
+    assert_eq!(
+        got(&mine.http),
+        ["POST /agent/turn-leases"],
+        "마지막 시도도 다시 청하지 않는다"
+    );
     assert_eq!(
         got(&mine.lease_ended),
         ["m7"],
-        "임대 끝 한 번(그 멘션 cause)"
+        "마지막 실패에 임대 끝 한 번"
     );
+    assert!(book.is_empty(), "장부에서 지웠다");
+    assert_eq!(n(&other.lease_ended), 0);
 }
 
 /// ② 호출 자리 안에서 패닉 — 그 멘션의 슬롯·턴 끝·임대 끝이 각 한 번(deps 가 이 호출 안에서 지어져 풀림 중 떨어진다).
@@ -404,8 +479,18 @@ fn panic_in_call_site_releases_each_once() {
     let clients = AgentClients::new(&mine, "t");
     let seen = RefCell::new(Seen::default());
     let sched = Sched::default();
+    let (ledger, book) = (fresh(), LeaseBook::default());
     let r = catch_unwind(AssertUnwindSafe(|| {
-        call(&w, (&mine, &other), &clients, sched.clone(), &seen, false)
+        call(
+            &w,
+            &ledger,
+            &book,
+            (&mine, &other),
+            &clients,
+            sched.clone(),
+            &seen,
+            false,
+        )
     }));
     assert!(r.is_err(), "패닉이 났다");
 
@@ -416,5 +501,6 @@ fn panic_in_call_site_releases_each_once() {
         "패닉에도 슬롯 → 턴 끝, 각 한 번"
     );
     assert_eq!(got(&mine.lease_ended), ["m7"], "패닉에도 임대 끝 한 번");
+    assert!(book.is_empty(), "패닉 길도 장부에서 지운다");
     assert_eq!(n(&other.lease_ended), 0);
 }

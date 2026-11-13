@@ -1,7 +1,9 @@
 //! `run_mention` 호출 자리(C1) — 멘션 하나를 실제로 돌리는 입구. 손님은 **에이전트 묶음([`AgentClients`])에서만** 꺼낸다.
 //!
 //! - deps(`MentionDeps` → [`LinkHooks`] → [`OnceRelease`])는 이 함수 한 번에 하나 짓고 이 함수 안에서 떨군다. 정상 길은
-//!   `run_one` 이 슬롯·턴 끝·임대 끝을 부르고, 패닉 길은 풀림 중 deps 가 떨어질 때 남은 것만 부른다(각 한 번).
+//!   `run_one` 이 슬롯·턴 끝·(결말이 놓는 갈래면) 임대 끝을 부르고, 패닉 길은 풀림 중 deps 가 떨어질 때 남은 것만 부른다(각 한 번).
+//! - 턴 임대는 러너 수명의 [`LeaseBook`] 이 쥔다(정본 `secretLeases`). 재시도 갈래는 놓지 않으므로 다음 호출이 장부의 임대를
+//!   그대로 쓴다(다시 발급 청하지 않음 — 서버는 멘션당 한 번만 준다).
 //! - 턴(`PtyTurnAttempt`)의 서버 길: 턴 열쇠 REST·임대 끝 알림은 [`AgentClients::attempt_base`], 준비는
 //!   [`AgentClients::prepare_io`], 감시 루프는 [`mention_watch_loop`](그 멘션 슬롯), 턴 뒤 IO 는 [`AgentClients::after_turn`].
 //!   이 넷은 이 함수가 지어 [`BundleParts`] 로 넘긴다 — 부르는 쪽(`build_parts`)은 손님 없는 재료(지시문·명령·결과 접기·
@@ -15,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use crate::mention_admit::Launch;
 use crate::mention_clients::{AgentClients, AgentLink};
 use crate::mention_deps::{LaneFn, MentionDeps};
-use crate::mention_hooks::{LinkHooks, SchedulerHooks};
+use crate::mention_hooks::{LeaseBook, LinkHooks, SchedulerHooks};
 use crate::mention_ledger::Ledger;
 use crate::mention_parts::{AfterFn, MentionParts, WatchLoopFn};
 use crate::mention_run::run_mention;
@@ -84,6 +86,7 @@ pub struct BaseInputs<'a> {
 pub fn run_mention_call<'a, L, S, H>(
     ledger: &Mutex<Ledger>,
     slots: &MentionSlots,
+    book: &'a LeaseBook,
     clients: &'a AgentClients<L>,
     launch: Launch,
     sched: H,
@@ -102,6 +105,7 @@ pub fn run_mention_call<'a, L, S, H>(
     );
     let hooks = LinkHooks::new(
         clients.operator(),
+        book,
         OnceRelease::new(
             sched,
             &launch.thread_key,

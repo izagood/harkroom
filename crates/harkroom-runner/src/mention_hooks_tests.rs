@@ -1,5 +1,6 @@
-//! [`LinkHooks`] — 턴 임대 토큰은 오퍼레이터 알림으로만 가고, 놓을 때 받은 cause 로 끝을 알린다.
+//! [`LinkHooks`] — 턴 임대 토큰은 오퍼레이터 알림으로만 가고, 러너 수명 장부가 쥐며, 놓을 때 받은 cause 로 끝을 알린다.
 use std::cell::RefCell;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use super::*;
 
@@ -43,7 +44,8 @@ impl SchedulerHooks for Sched {
 #[test]
 fn lease_goes_to_operator_and_release_ends_that_cause_once() {
     let op = Operator::default();
-    let mut h = LinkHooks::new(&op, Sched::default(), "k".into(), || 1);
+    let book = LeaseBook::default();
+    let mut h = LinkHooks::new(&op, &book, Sched::default(), "k".into(), || 1);
     h.lease_issued(
         "men-1",
         TurnLease {
@@ -56,7 +58,8 @@ fn lease_goes_to_operator_and_release_ends_that_cause_once() {
         *op.leased.borrow(),
         vec![("men-1".into(), "lease-1".into(), "tok-secret-value".into())]
     );
-    assert_eq!(h.held.as_deref(), Some("men-1"), "쥐는 것은 cause 뿐");
+    assert_eq!(h.cause.as_deref(), Some("men-1"), "쥐는 것은 cause 뿐");
+    assert_eq!(book.get("men-1"), Some(Booked::Held));
     h.release_lease();
     h.release_lease();
     assert_eq!(
@@ -64,12 +67,14 @@ fn lease_goes_to_operator_and_release_ends_that_cause_once() {
         vec!["men-1".to_string()],
         "끝 알림은 한 번"
     );
+    assert!(book.is_empty());
 }
 
 #[test]
 fn scheduler_parts_are_delegated() {
     let op = Operator::default();
-    let mut h = LinkHooks::new(&op, Sched::default(), "k".into(), || 1);
+    let book = LeaseBook::default();
+    let mut h = LinkHooks::new(&op, &book, Sched::default(), "k".into(), || 1);
     h.release_slot("t");
     h.turn_ended("t", "m");
     h.turn_outcome(true);
@@ -79,39 +84,66 @@ fn scheduler_parts_are_delegated() {
     assert!(op.ended.borrow().is_empty(), "임대가 없으면 끝 알림도 없다");
 }
 
-#[test]
-fn held_lease_is_ended_on_drop_once() {
-    let op = Operator::default();
-    {
-        let mut h = LinkHooks::new(&op, Sched::default(), "k".into(), || 1);
-        h.lease_issued(
-            "men-2",
-            TurnLease {
-                id: "l".into(),
-                token: "t".into(),
-                expires_at: "x".into(),
-            },
-        );
-        // release_lease 없이 떨어진다(패닉 풀림과 같은 길).
+fn lease() -> TurnLease {
+    TurnLease {
+        id: "l".into(),
+        token: "t".into(),
+        expires_at: "x".into(),
     }
-    assert_eq!(*op.ended.borrow(), vec!["men-2".to_string()]);
+}
 
+/// 정상 길에서 떨어지면 놓지 않는다(재시도 갈래 — 장부가 쥔다). 다음 호출은 장부의 답을 그대로 쓰고, 놓으면 한 번 끝을 알린다.
+#[test]
+fn normal_drop_keeps_lease_in_book_for_next_call() {
     let op = Operator::default();
+    let book = LeaseBook::default();
     {
-        let mut h = LinkHooks::new(&op, Sched::default(), "k".into(), || 1);
-        h.lease_issued(
-            "men-3",
-            TurnLease {
-                id: "l".into(),
-                token: "t".into(),
-                expires_at: "x".into(),
-            },
-        );
-        h.release_lease();
+        let mut h = LinkHooks::new(&op, &book, Sched::default(), "k".into(), || 1);
+        assert_eq!(h.prior_lease("men-2"), None);
+        h.lease_issued("men-2", lease());
     }
+    assert!(op.ended.borrow().is_empty(), "정상 Drop 은 놓지 않는다");
+    assert_eq!(book.get("men-2"), Some(Booked::Held));
+
+    let mut h = LinkHooks::new(&op, &book, Sched::default(), "k".into(), || 1);
     assert_eq!(
-        *op.ended.borrow(),
-        vec!["men-3".to_string()],
-        "정상 길 뒤 Drop 은 다시 안 보낸다"
+        h.prior_lease("men-2"),
+        Some(LeaseState::Ready),
+        "다시 청하지 않는다"
     );
+    h.release_lease();
+    drop(h);
+    assert_eq!(*op.ended.borrow(), vec!["men-2".to_string()]);
+    assert!(book.is_empty());
+}
+
+/// 패닉 풀림 중 떨어지면 한 번 놓는다(장부에서도 지운다).
+#[test]
+fn held_lease_is_ended_on_panic_drop_once() {
+    let op = Operator::default();
+    let book = LeaseBook::default();
+    let r = catch_unwind(AssertUnwindSafe(|| {
+        let mut h = LinkHooks::new(&op, &book, Sched::default(), "k".into(), || 1);
+        h.lease_issued("men-3", lease());
+        panic!("시험 패닉");
+    }));
+    assert!(r.is_err());
+    assert_eq!(*op.ended.borrow(), vec!["men-3".to_string()]);
+    assert!(book.is_empty());
+}
+
+/// 거절은 적어 두고(재시도마다 다시 묻지 않는다) 놓을 때 끝을 알리지 않는다(받은 임대가 없다).
+#[test]
+fn declined_is_booked_and_release_sends_nothing() {
+    let op = Operator::default();
+    let book = LeaseBook::default();
+    {
+        let mut h = LinkHooks::new(&op, &book, Sched::default(), "k".into(), || 1);
+        h.lease_declined("men-4");
+    }
+    let mut h = LinkHooks::new(&op, &book, Sched::default(), "k".into(), || 1);
+    assert_eq!(h.prior_lease("men-4"), Some(LeaseState::Declined));
+    h.release_lease();
+    assert!(op.ended.borrow().is_empty());
+    assert!(book.is_empty());
 }

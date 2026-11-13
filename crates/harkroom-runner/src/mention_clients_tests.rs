@@ -103,7 +103,9 @@ fn call_site_clients_are_all_the_bundle() {
         "",
     );
     let deps = clients.link_io(None, &log);
-    let hooks = crate::mention_hooks::LinkHooks::new(*clients.link(), NoSched, "k".into(), || 1);
+    let book = crate::mention_hooks::LeaseBook::default();
+    let hooks =
+        crate::mention_hooks::LinkHooks::new(*clients.link(), &book, NoSched, "k".into(), || 1);
     assert!(std::ptr::eq(clients.prepare_io().client, clients.mcp()));
     assert!(std::ptr::eq(deps.mcp, clients.mcp()));
     assert!(std::ptr::eq(deps.rest, clients.rest()));

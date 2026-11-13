@@ -75,6 +75,12 @@ pub trait MentionHooks {
     fn now(&self) -> u64;
     /// 받은 턴 임대를 넘긴다(정본 `secretLeases` — 오퍼레이터에 맡기기). 토큰은 글·로그에 싣지 않는다.
     fn lease_issued(&mut self, cause: &str, lease: TurnLease);
+    /// 이 멘션에 이미 받은 답(재시도·계정 전환 — 정본 `held.get(cause)`). 있으면 다시 발급을 청하지 않는다.
+    fn prior_lease(&mut self, _cause: &str) -> Option<LeaseState> {
+        None
+    }
+    /// 서버가 임대를 주지 않았다 — 적어 두고 재시도마다 다시 묻지 않는다.
+    fn lease_declined(&mut self, _cause: &str) {}
     /// 턴 임대 놓기(실패는 삼킨다).
     fn release_lease(&mut self);
     fn notice_fenced(&mut self);
@@ -166,6 +172,9 @@ impl<I: MentionIo, H: MentionHooks> RunDeps<AttemptError> for MentionDeps<'_, I,
         (self.lane)(thread_key, anchor)
     }
     fn acquire_lease(&mut self, mention_id: &str) -> LeaseState {
+        if let Some(prior) = self.hooks.prior_lease(mention_id) {
+            return prior;
+        }
         match self.io.issue_lease(mention_id) {
             LeaseOutcome::Lease(l) => {
                 self.hooks.lease_issued(mention_id, l);
@@ -173,7 +182,10 @@ impl<I: MentionIo, H: MentionHooks> RunDeps<AttemptError> for MentionDeps<'_, I,
             }
             LeaseOutcome::LeaseUsed => LeaseState::LeaseUsed,
             LeaseOutcome::Unreachable => LeaseState::Unreachable,
-            LeaseOutcome::None => LeaseState::Declined,
+            LeaseOutcome::None => {
+                self.hooks.lease_declined(mention_id);
+                LeaseState::Declined
+            }
         }
     }
     fn attention(&mut self, account: &ClaudeAccount, mark: Mark) {
