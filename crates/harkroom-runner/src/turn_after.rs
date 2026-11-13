@@ -223,6 +223,72 @@ fn silent_turn(f: &AfterFacts<'_>, io: &mut impl AfterIo) -> Result<(), String> 
     }
 }
 
+/// [`AfterIo`] 실구현 — **나르기만** 한다. 본문은 [`apply_after_turn`] 이 기존 문구 함수로 이미 만들었고, 여기서는
+/// 그 글을 MCP 로 보낼 뿐 새 문구를 만들거나 고치지 않는다. 지연 읽기(끝말·정황·보고처 확인)는 턴 연결이 닫개로 준다.
+pub struct McpAfterIo<'a, L: crate::rest::RunnerLink> {
+    pub client: &'a crate::mcp::HarkroomMcpClient<L>,
+    pub last_said: Box<dyn FnMut() -> Option<String> + 'a>,
+    pub silent_said: Box<dyn FnMut() -> SilentSaid + 'a>,
+    pub off_anchor: Box<dyn FnMut() -> Option<String> + 'a>,
+    pub report_promise: Box<dyn FnMut() -> Result<(), String> + 'a>,
+}
+
+impl<L: crate::rest::RunnerLink> AfterIo for McpAfterIo<'_, L> {
+    fn last_said(&mut self) -> Option<String> {
+        (self.last_said)()
+    }
+    fn silent_said(&mut self) -> SilentSaid {
+        (self.silent_said)()
+    }
+    fn off_anchor(&mut self) -> Option<String> {
+        (self.off_anchor)()
+    }
+    fn report_promise(&mut self) -> Result<(), String> {
+        (self.report_promise)()
+    }
+    fn post(&mut self, channel_id: &str, body: &str, anchor: Option<&str>) -> Result<(), String> {
+        self.client
+            .post(channel_id, body, anchor)
+            .map(|_| ())
+            .map_err(|e| e.message)
+    }
+    fn progress(
+        &mut self,
+        channel_id: &str,
+        body: &str,
+        anchor: Option<&str>,
+    ) -> Result<(), String> {
+        self.client
+            .progress(channel_id, body, anchor)
+            .map(|_| ())
+            .map_err(|e| e.message)
+    }
+    fn react(&mut self, channel_id: &str, message_id: &str, emoji: &str) -> Result<(), String> {
+        self.client
+            .add_reaction(channel_id, message_id, emoji)
+            .map_err(|e| e.message)
+    }
+    fn fail(
+        &mut self,
+        channel_id: &str,
+        body: &str,
+        anchor: Option<&str>,
+        opts: &FailOpts,
+    ) -> Result<(), String> {
+        self.client
+            .fail(channel_id, body, anchor, opts)
+            .map(|_| ())
+            .map_err(|e| e.message)
+    }
+    fn log(&mut self, line: &str) {
+        eprintln!("{line}");
+    }
+}
+
+#[cfg(test)]
+#[path = "turn_after_io_tests.rs"]
+mod io_tests;
+
 #[cfg(test)]
 #[path = "turn_after_tests.rs"]
 mod tests;

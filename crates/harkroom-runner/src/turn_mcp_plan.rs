@@ -97,8 +97,8 @@ where
     Some(readonly_tool_list(&spec, discovered.as_ref()))
 }
 
-/// [`turn_mcp_plan`] 의 입력.
-#[derive(Debug, Clone, Copy)]
+/// [`turn_mcp_plan`] 의 입력. **`Debug` 는 러너 env·lane env 의 값을 싣지 않는다**(손으로 짠다 — 이름만).
+#[derive(Clone, Copy)]
 pub struct TurnMcpInput<'a> {
     pub harness: AgentHarness,
     /// 서버에 턴 열쇠를 맡길 길이 있는가(정본 `deps.harkroom.registerTurnKeys` 가 있는가).
@@ -111,6 +111,23 @@ pub struct TurnMcpInput<'a> {
     pub turn_id: &'a str,
     /// 러너 env — 턴 열쇠가 없는 lane 턴의 브릿지 값을 lane 전용 MCP 설정 `env` 칸에 옮길 때만 읽는다.
     pub runner_env: &'a BTreeMap<String, String>,
+}
+
+impl std::fmt::Debug for TurnMcpInput<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TurnMcpInput")
+            .field("harness", &self.harness)
+            .field("can_register_turn_keys", &self.can_register_turn_keys)
+            .field(
+                "provider_env",
+                &self.provider_env.map(crate::turn_env::EnvNames),
+            )
+            .field("state_dir", &self.state_dir)
+            .field("mcp_config_path", &self.mcp_config_path)
+            .field("turn_id", &self.turn_id)
+            .field("runner_env", &crate::turn_env::EnvNames(self.runner_env))
+            .finish()
+    }
 }
 
 /// 턴 열쇠와 그 턴의 MCP 설정 자리.

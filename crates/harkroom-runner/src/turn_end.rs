@@ -43,7 +43,8 @@ impl EndConfig {
 }
 
 /// 정본 `end` 객체 중 판정이 보는 몫. 통지 중복 표(deniedSeen 등)·관문 몫은 그것을 쓰는 조각이 따로 갖는다.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// **`Debug` 는 API 오류 원문을 싣지 않는다**(손으로 짠다 — 길이만). 원문에 키·토큰 조각이 섞일 수 있다.
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct EndState {
     /// PTY 손잡이가 있다(정본 `end.controls !== null`).
     pub has_controls: bool,
@@ -78,6 +79,35 @@ pub struct EndState {
     pub reclaim_armed: bool,
     /// 지금 선 회수 시계의 유예(ms).
     pub reclaim_grace_ms: u64,
+}
+
+impl std::fmt::Debug for EndState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let len = |s: &Option<String>| s.as_ref().map(|v| format!("<{} bytes>", v.len()));
+        f.debug_struct("EndState")
+            .field("has_controls", &self.has_controls)
+            .field("exited", &self.exited)
+            .field("spoke", &self.spoke)
+            .field("viewers", &self.viewers)
+            .field("silenced", &self.silenced)
+            .field("reclaimed", &self.reclaimed)
+            .field("api_error", &len(&self.api_error))
+            .field("recorded_api_error", &len(&self.recorded_api_error))
+            .field("stalled", &self.stalled)
+            .field("stalled_idle_ms", &self.stalled_idle_ms)
+            .field("awaiting_human", &self.awaiting_human)
+            .field("finished", &self.finished)
+            .field("pending", &self.pending)
+            .field("background_since_ms", &self.background_since_ms)
+            .field("background_cut", &self.background_cut)
+            .field("last_life_ms", &self.last_life_ms)
+            .field("last_data_at_ms", &self.last_data_at_ms)
+            .field("tail", &self.tail)
+            .field("unsent_nudged", &self.unsent_nudged)
+            .field("reclaim_armed", &self.reclaim_armed)
+            .field("reclaim_grace_ms", &self.reclaim_grace_ms)
+            .finish()
+    }
 }
 
 /// [`reconsider_end`] 가 부르는 쪽에 시키는 시계 일.
