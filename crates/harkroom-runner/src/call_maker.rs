@@ -232,6 +232,7 @@ where
             harness: harness_of(&reads.def),
             command_hook: self.cfg.command_hook,
             post_tool_hook: self.cfg.post_tool_hook,
+            lane: self.provider_lane.is_some(),
             // lane 턴이면 그 턴 모델 id(정본 `laneModel: deps.providerEnv ? providerLaneModelId(turnModel.model) : null`).
             lane_model: self.provider_lane.as_ref().and_then(|_| {
                 crate::opencode_home::provider_lane_model_id(reads.turn_model.model.as_deref())

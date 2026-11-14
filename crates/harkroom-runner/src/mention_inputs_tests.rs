@@ -112,6 +112,7 @@ fn merge_approvals_are_this_threads_only() {
             harness: AgentHarness::ClaudeCode,
             command_hook: false,
             post_tool_hook: false,
+            lane: false,
             lane_model: None,
             turn_budget_ms: 1_800_000,
         },
@@ -123,5 +124,44 @@ fn merge_approvals_are_this_threads_only() {
     assert_eq!(
         (s.instructions.as_str(), s.secret_create, s.read_only),
         ("지시", true, false)
+    );
+}
+
+/// 명령 전체 규칙만 열리는 문장은 **lane 턴이면** 붙는다 — 모델 id 가 비어도(정본 `Boolean(deps.providerEnv) && usesXdgHome`).
+#[test]
+fn exact_shell_only_follows_lane_not_model_id() {
+    let ctx = |harness, lane, lane_model: Option<&str>| SystemContext {
+        handle: "h".into(),
+        channel_name: "task".into(),
+        memory: MemoryContext::Unavailable,
+        operator_bin: "/bin/op",
+        harness,
+        command_hook: false,
+        post_tool_hook: false,
+        lane,
+        lane_model: lane_model.map(str::to_string),
+        turn_budget_ms: 1_800_000,
+    };
+    let exact = |c| {
+        system_inputs(&reads(), &target(None), c)
+            .permissions
+            .unwrap()
+            .exact_shell_only
+    };
+    assert!(
+        exact(ctx(AgentHarness::Opencode, true, None)),
+        "lane·모델 없음"
+    );
+    assert!(
+        exact(ctx(AgentHarness::Opencode, true, Some("harkroom-lane/m"))),
+        "lane·모델 있음"
+    );
+    assert!(
+        !exact(ctx(AgentHarness::Opencode, false, None)),
+        "기본 로그인"
+    );
+    assert!(
+        !exact(ctx(AgentHarness::ClaudeCode, true, None)),
+        "xdg 아닌 하네스"
     );
 }

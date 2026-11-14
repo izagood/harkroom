@@ -79,6 +79,8 @@ pub struct SystemContext<'a> {
     pub harness: AgentHarness,
     pub command_hook: bool,
     pub post_tool_hook: bool,
+    /// API 키 연결 턴인가(정본 `Boolean(deps.providerEnv)`). 모델 id 가 비어도 lane 턴이다 — `lane_model` 로 가르지 않는다.
+    pub lane: bool,
     /// API 키 연결 턴이면 `Some(모델 id)`.
     pub lane_model: Option<String>,
     pub turn_budget_ms: u64,
@@ -134,7 +136,8 @@ pub fn system_inputs(
         permissions: Some(PermissionInputs {
             tool_allows: safe_tool_allows(&r.rules.rules),
             command_hook: attaches_command_hook(c.harness, perm, c.command_hook),
-            exact_shell_only: c.lane_model.is_some() && uses_xdg_home(c.harness),
+            // 정본 `Boolean(deps.providerEnv) && usesXdgHome(def.harness)` — 모델 id 유무와 상관없다.
+            exact_shell_only: c.lane && uses_xdg_home(c.harness),
             new_posts_hook: c.post_tool_hook && attaches_post_tool_hook(c.harness, perm),
         }),
         api: Some(ApiInputs {
