@@ -252,11 +252,11 @@ fn trust_target_comes_from_adapter_table() {
         trust_target(H::ClaudeCode, Some(cfg), codex, home).unwrap(),
         Some(TrustTarget::ClaudeJson(PathBuf::from("/acct/.claude.json")))
     );
-    // 계정 설정 폴더가 없으면 정본처럼 `<home>/.claude` 를 뿌리로.
+    // 계정 설정 폴더가 없으면(기본 로그인) claude 가 실제로 읽는 사람의 `<home>/.claude.json`(T2).
     assert_eq!(
         trust_target(H::ClaudeCode, None, codex, home).unwrap(),
-        Some(TrustTarget::ClaudeJson(PathBuf::from(
-            "/h/.claude/.claude.json"
+        Some(TrustTarget::PersonClaudeJson(PathBuf::from(
+            "/h/.claude.json"
         )))
     );
     assert_eq!(
@@ -303,5 +303,151 @@ fn ensure_via_adapter_writes_the_selected_ledger() {
     ensure_workspace_trusted_via_adapter(H::Opencode, "/w/x", Some(&empty), &empty, &empty);
     ensure_workspace_trusted_via_adapter(H::Gemini, "/w/x", Some(&empty), &empty, &empty);
     assert_eq!(fs::read_dir(&empty).unwrap().count(), 0);
+    let _ = fs::remove_dir_all(&d);
+}
+
+// ── T2: 기본 로그인 = 사람의 실제 파일 ──────────────────────────────────────────
+
+const PERSON_DOC: &str = r#"{
+  "numStartups": 7,
+  "zKey": {"b": 1, "a": 2},
+  "mcpServers": {"m": {"command": "x"}},
+  "projects": {"/old": {"allowedTools": ["Bash"], "hasTrustDialogAccepted": true}},
+  "aKey": "last"
+}"#;
+
+/// 기본 로그인: 어댑터 길이 `<home>/.claude.json` 에 그 폴더 한 칸만 더한다. 그 칸을 빼면 나머지는 키 순서까지 같다.
+/// `<home>/.claude/.claude.json` 은 만들지 않는다.
+#[test]
+fn person_trust_adds_only_this_workspace() {
+    use crate::adapter::AgentHarness as H;
+    let d = tmp("person");
+    let file = d.join(".claude.json");
+    fs::write(&file, PERSON_DOC).unwrap();
+    ensure_workspace_trusted_via_adapter(H::ClaudeCode, "/w/new", None, &d.join("codex"), &d);
+    let after = json(&file);
+    assert_eq!(
+        after["projects"]["/w/new"],
+        serde_json::json!({"hasTrustDialogAccepted": true})
+    );
+    let mut stripped = after.clone();
+    stripped["projects"]
+        .as_object_mut()
+        .unwrap()
+        .remove("/w/new");
+    let before: Value = serde_json::from_str(PERSON_DOC).unwrap();
+    assert_eq!(
+        serde_json::to_string(&stripped).unwrap(),
+        serde_json::to_string(&before).unwrap(),
+        "다른 키·값·순서는 그대로"
+    );
+    assert!(!d.join(".claude").join(".claude.json").exists());
+    // 이미 있으면 다시 쓰지 않는다
+    let m1 = fs::metadata(&file).unwrap().modified().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    ensure_workspace_trusted_via_adapter(H::ClaudeCode, "/w/new", None, &d.join("codex"), &d);
+    assert_eq!(fs::metadata(&file).unwrap().modified().unwrap(), m1);
+    // 임시 파일이 남지 않는다
+    assert_eq!(fs::read_dir(&d).unwrap().count(), 1);
+    let _ = fs::remove_dir_all(&d);
+}
+
+/// 깨진 파일·객체 아닌 문서는 바이트 그대로 남는다(빈 문서 위에 쓰지 않는다).
+#[test]
+fn person_trust_leaves_broken_file() {
+    let d = tmp("person-broken");
+    let file = d.join(".claude.json");
+    for body in [r#"{"numStartups": 7, "projects": {"#, "[1,2]", ""] {
+        fs::write(&file, body).unwrap();
+        assert!(trust_for_claude_person("/w/new", &file).is_err());
+        assert_eq!(fs::read_to_string(&file).unwrap(), body);
+    }
+    let _ = fs::remove_dir_all(&d);
+}
+
+/// 링크면 쓰지 않는다 — 링크는 링크로, 너머의 파일은 그대로.
+#[test]
+fn person_trust_skips_symlink() {
+    let d = tmp("person-link");
+    let real = d.join("real.json");
+    fs::write(&real, PERSON_DOC).unwrap();
+    let file = d.join(".claude.json");
+    std::os::unix::fs::symlink(&real, &file).unwrap();
+    assert!(trust_for_claude_person("/w/new", &file).is_err());
+    assert!(
+        fs::symlink_metadata(&file)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(fs::read_to_string(&real).unwrap(), PERSON_DOC);
+    let _ = fs::remove_dir_all(&d);
+}
+
+/// 읽은 뒤 하네스가 고치면(크기·mtime 바뀜) 다시 읽고 그 위에 고친다 — 하네스의 쓰기를 잃지 않는다.
+/// 매번 고치면 쓰지 않고 그만둔다.
+#[test]
+fn person_edit_rereads_when_harness_writes_meanwhile() {
+    let d = tmp("person-race");
+    let file = d.join(".claude.json");
+    fs::write(&file, r#"{"a": 1}"#).unwrap();
+    let mut first = true;
+    let r = edit_person_json(&file, |doc| {
+        if first {
+            first = false;
+            fs::write(&file, r#"{"a": 1, "harness": "wrote"}"#).unwrap();
+        }
+        doc.insert("mine".into(), Value::Bool(true));
+        true
+    })
+    .unwrap();
+    assert_eq!(r, PersonEdit::Written);
+    let v = json(&file);
+    assert_eq!(v["harness"], "wrote", "하네스의 쓰기가 남는다");
+    assert_eq!(v["mine"], true);
+
+    let mut n = 0;
+    let r = edit_person_json(&file, |doc| {
+        n += 1;
+        fs::write(&file, format!(r#"{{"a": 1, "n": "{}"}}"#, "x".repeat(n))).unwrap();
+        doc.insert("mine2".into(), Value::Bool(true));
+        true
+    })
+    .unwrap();
+    assert!(matches!(r, PersonEdit::Skipped(_)));
+    assert!(json(&file).get("mine2").is_none());
+    assert_eq!(
+        fs::read_dir(&d).unwrap().count(),
+        1,
+        "임시 파일이 남지 않는다"
+    );
+    let _ = fs::remove_dir_all(&d);
+}
+
+/// 기본 로그인 bypass: 사람의 `settings.json` 이 링크·깨짐이면 쓰지 않는다. 풀 계정 길은 그대로.
+#[test]
+fn person_bypass_is_strict() {
+    let d = tmp("person-bypass");
+    let home = d.join("home");
+    fs::create_dir_all(home.join(".claude")).unwrap();
+    let settings = home.join(".claude").join("settings.json");
+    fs::write(&settings, r#"{"theme": "dark", "#).unwrap();
+    ensure_dangerous_mode_accepted("claude-code", None, &home);
+    assert_eq!(
+        fs::read_to_string(&settings).unwrap(),
+        r#"{"theme": "dark", "#
+    );
+    fs::remove_file(&settings).unwrap();
+    let real = d.join("real-settings.json");
+    fs::write(&real, r#"{"theme": "dark"}"#).unwrap();
+    std::os::unix::fs::symlink(&real, &settings).unwrap();
+    ensure_dangerous_mode_accepted("claude-code", None, &home);
+    assert_eq!(fs::read_to_string(&real).unwrap(), r#"{"theme": "dark"}"#);
+    assert!(
+        fs::symlink_metadata(&settings)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
     let _ = fs::remove_dir_all(&d);
 }
