@@ -144,6 +144,7 @@ fn cfg(tag: &str) -> (MakerConfig, Root) {
         pty_record_dir: None,
         codex: None,
         opencode: None,
+        pi: None,
     };
     (c, Root(root))
 }

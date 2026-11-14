@@ -436,6 +436,10 @@ pub struct MentionParts<'a, P: PrepareIo, S: PtyTurnSink> {
     pub opencode_home: Option<PathBuf>,
     /// opencode·kilo 턴 직전 설정 다시 쓰기(o1, 정본 `readTurnMcp`). 없으면 하지 않는다(시험용).
     pub opencode: Option<crate::opencode_prep::OpencodePrep>,
+    /// pi 격리 루트(p2). 시도 명령 옵션에 싣는다 — 없으면 pi 턴은 조립에서 안 뜬다. lane 러너면 lane 루트다.
+    pub pi_home: Option<PathBuf>,
+    /// pi 턴 직전 루트 다시 쓰기(p2, 정본 `readTurnMcp`). 없으면 하지 않는다(시험용).
+    pub pi: Option<crate::pi_prep::PiPrep>,
     /// codex 턴 준비(c1 로그인 링크·남은 규칙 지우기, c2 승인 명령 규칙·hook). 없으면 하지 않는다(시험용).
     pub codex: Option<crate::codex_prep::CodexTurn>,
     pub pty_opts: PtyOptsFn<'a>,
@@ -519,6 +523,8 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
             codex: None,
             opencode_home: None,
             opencode: None,
+            pi_home: None,
+            pi: None,
             pty_opts,
             turn_timeout_ms: 0,
             inner,
@@ -561,6 +567,7 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
             AttemptHomes {
                 codex: self.codex_home.as_deref(),
                 opencode: self.opencode_home.as_deref(),
+                pi: self.pi_home.as_deref(),
                 opencode_turn_config: None,
             },
             turn_id,
@@ -925,6 +932,15 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
                 }
             }
         }
+        // pi 턴 직전 — 러너 루트의 `mcp.json`·`settings.json` 을 지금 MCP 표로 다시 쓴다(p2, 정본 `readTurnMcp`). 실패하면 띄우지 않는다.
+        if crate::adapter::uses_pi_home(self.harness)
+            && let Some(pi) = self.pi.as_ref()
+        {
+            pi.ensure().map_err(|e| {
+                eprintln!("[mentionTurn] {}: pi 홈 — {e}", self.key);
+                fail()
+            })?;
+        }
         // 하네스를 띄우기 전, **이 시도의 계정 폴더**로 작업 폴더 신뢰·bypass 수락을 적는다(정본 `mentionTurn.ts` 의 차례).
         crate::workspace_trust::prepare_harness_gates(
             self.harness,
@@ -1041,6 +1057,7 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             AttemptHomes {
                 codex: self.codex_home.as_deref(),
                 opencode: self.opencode_home.as_deref(),
+                pi: self.pi_home.as_deref(),
                 opencode_turn_config: args.opencode_turn_config,
             },
             args.turn_id,
@@ -1264,6 +1281,7 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
 struct AttemptHomes<'s> {
     codex: Option<&'s Path>,
     opencode: Option<&'s Path>,
+    pi: Option<&'s Path>,
     /// 계획이 지은 opencode 턴 설정(다리 열쇠 자리, `OPENCODE_CONFIG`) — `spawn` 만 안다. 빠지면 열쇠 opencode 턴은 조립에서 안 뜬다.
     opencode_turn_config: Option<&'s Path>,
 }
@@ -1286,6 +1304,7 @@ fn attempt_cmd<'s>(
     );
     cmd.codex_home = homes.codex;
     cmd.opencode_home = homes.opencode;
+    cmd.pi_home = homes.pi;
     cmd.opencode_turn_config = homes.opencode_turn_config;
     cmd
 }
