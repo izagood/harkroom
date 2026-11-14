@@ -62,6 +62,15 @@ impl OpencodePrep {
         Ok(())
     }
 
+    /// lane 러너의 그 앱 data 폴더에 로그인(`auth.json`, 링크든 파일이든)이 남아 있나(정본 `opencodeLaneLoginPresent`).
+    pub fn lane_login_present(&self, app: &XdgApp) -> bool {
+        let p = crate::opencode_home::opencode_dirs(&self.home)
+            .xdg_data_home
+            .join(app.dir)
+            .join("auth.json");
+        std::fs::symlink_metadata(p).is_ok()
+    }
+
     /// 턴 직전 — 그 하네스 앱의 설정을 지금 MCP 표로 다시 쓴다. lane 러너면 그 턴의 모델·채널 칸까지(정본 `readTurnMcp`).
     pub fn before_turn(
         &self,

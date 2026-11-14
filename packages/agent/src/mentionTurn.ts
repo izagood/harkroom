@@ -35,7 +35,7 @@ import type { ReviewFork } from './reviewFork.js';
 import { readLastAssistantText, readMacPermissionWaits, readMcpAuthRejections, readPermissionDenials, readTranscriptPendingBackground, readTranscriptTurnState, sessionTranscriptGrewSince, sessionTranscriptMtimeMs, type MacPermissionWait, type PermissionDenial } from './harnessErrors.js';
 import { ensureDangerousModeAccepted, ensureWorkspaceTrusted } from './workspaceTrust.js';
 import { codexSessionsDir } from './codexHome.js';
-import { laneRunModel, opencodeDirs, opencodeLaneAgentMatches, opencodeLaneAgentName, opencodeLaneModelMissing, providerLaneModelId } from './opencodeHome.js';
+import { laneRunModel, opencodeDirs, opencodeLaneAgentMatches, opencodeLaneAgentName, opencodeLaneLoginPresent, opencodeLaneModelMissing, providerLaneModelId } from './opencodeHome.js';
 import { ensurePiLaneThread, listPiMcpTools, PI_LANE_PROVIDER, piLaneLoginPresent, piSessionFile, readonlyToolList, writePiLaneModels } from './piHome.js';
 import { ensureOmpThread, findOmpBinary, OMP_LANE_PROVIDER, ompBinaryOk, ompUnverifiedBinaryNotice, ompCwdViolations, ompDirs, ompThreadDirs, sweepOmpThreadCwd, ompReadonlyToolList, ompSessionFile, readOmpRecordedApiError, writeOmpLaneModels, writeOmpSessionHeader, type OmpThreadDirs } from './ompHome.js';
 import { findOpencodeSessionId } from './opencodeSessions.js';
@@ -1628,6 +1628,10 @@ export async function runMentionTurn(
       console.warn(`[mentionTurn] ${key}: API 키 연결 턴 — 작업 폴더에 보호 이름이 있어 띄우지 않는다: ${found.join(', ')}`);
       throw new ProviderLaneError('workspace_protected');
     }
+  }
+  // opencode·kilo lane data 폴더에 로그인이 남아 있으면 키를 받기 **전에** 멈춘다 — 키와 다른 로그인이 한 자식에 같이 들지 않게(security o1 조건 2).
+  if (deps.providerEnv && usesXdgHome(def.harness) && await opencodeLaneLoginPresent(deps.opencodeHome, xdgAppFor(def.harness) ?? undefined)) {
+    throw new ProviderLaneError('harness_login_present');
   }
   // pi lane 홈에 로그인이 있으면 키를 받기 **전에** 멈춘다 — 같은 provider 이름의 로그인이 `models.json` 의 키를 이긴다(1.4.0 실측).
   if (deps.providerEnv && usesPiHome(def.harness) && turnPiHome && await piLaneLoginPresent(turnPiHome)) {

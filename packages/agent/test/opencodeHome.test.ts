@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ensureOpencodeHome, opencodeConfigFile, opencodeDirs, opencodeLaneModelMissing, laneRunModel, OPENCODE_LANE_AGENT, OPENCODE_LANE_PERMISSION, OPENCODE_READONLY_AGENT, providerLaneModelId, PROVIDER_LANE_MODEL_KEEP, stripJsonc, toOpencodeMcp,
   opencodeLaneHome, laneSkillPermission, laneOpencodeBashTable, opencodeLaneAgentName, opencodeLaneAgentMatches,
-  opencodeConfigLockPath, withConfigLock, LANE_INSTRUCTIONS_FILE,
+  opencodeConfigLockPath, withConfigLock, LANE_INSTRUCTIONS_FILE, opencodeLaneLoginPresent,
 } from '../src/opencodeHome.js';
 import { LANE_REPLY_INSTRUCTIONS } from '../src/laneReplyInstructions.js';
 import { allXdgApps, xdgAppFor } from '../src/adapters/index.js';
@@ -174,6 +174,19 @@ describe('Kilo(opencode 포크) — 같은 루트, 다른 이름표', () => {
 
 // 전용 제공사 경로(security ⓕ): provider 블록은 그 에이전트 홈에만, 키는 자식 env 로만.
 describe('lane 러너의 opencode 홈', () => {
+  it('data 폴더에 링크가 아닌 로그인 파일이 있으면 떼지 않고 거절한다 · 남은 로그인은 opencodeLaneLoginPresent 가 본다(security o1 조건 2)', async () => {
+    const f = await fixture();
+    const dataDir = join(opencodeDirs(f.home).XDG_DATA_HOME, 'opencode');
+    await mkdir(dataDir, { recursive: true });
+    await writeFile(join(dataDir, 'auth.json'), 'someone');
+    await expect(ensureOpencodeHome({
+      opencodeHome: f.home, mcpServers: BRIDGE, sourceConfig: f.sourceConfig, sourceData: f.sourceData,
+      providerLane: { model: null },
+    })).rejects.toThrow(/harness_login_present/);
+    expect(await readFile(join(dataDir, 'auth.json'), 'utf8')).toBe('someone');
+    expect(await opencodeLaneLoginPresent(f.home)).toBe(true);
+  });
+
   it('사람의 provider·모델·로그인을 물리지 않고 lane 블록 하나만 연다 — 주소·키 칸은 공유 설정에 없다', async () => {
     const f = await fixture();
     await ensureOpencodeHome({

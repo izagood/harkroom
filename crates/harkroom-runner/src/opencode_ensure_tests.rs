@@ -209,3 +209,28 @@ fn config_lock_takes_dead_owner_and_times_out_on_live() {
     );
     assert!(matches!(e, Err(EnsureError::LockTimeout)));
 }
+
+/// security o1 조건 2: lane 러너의 data 폴더에 링크가 아닌 로그인 파일이 있으면 떼지 않고 거절한다(파일은 그대로 둔다).
+#[test]
+fn lane_refuses_plain_login_file() {
+    let r = root("lanefile");
+    let (cfg, data) = person(&r);
+    let home = r.0.join("state/opencode-home");
+    let target = home.join("data/opencode");
+    fs::create_dir_all(&target).unwrap();
+    fs::write(target.join("auth.json"), "someone").unwrap();
+    let m = mcp();
+    let e = ensure_opencode_home(&EnsureOpencodeHome {
+        opencode_home: &home,
+        mcp_servers: &m,
+        app: &OPENCODE_APP,
+        user_config_dir: &cfg,
+        user_data_dir: &data,
+        provider_lane: Some(LaneHome::default()),
+    });
+    assert!(matches!(e, Err(EnsureError::LaneLoginPresent)));
+    assert_eq!(
+        fs::read_to_string(target.join("auth.json")).unwrap(),
+        "someone"
+    );
+}
