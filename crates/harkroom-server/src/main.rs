@@ -152,7 +152,8 @@ async fn main() {
             "front: rust core routes {:?} sockets {:?}",
             core_routes.http, core_routes.sockets
         );
-        core_routes.router
+        // 코어 줄과 같은 경로의 다른 메서드(예: 코어 `GET /channels/{id}/messages` 옆 TS `POST`)는 TS 로 — 405 가 나지 않게.
+        harkroom_server::route_table::ts_fallback(core_routes.router, state.up.clone())
     });
     eprintln!(
         "front: core {}",

@@ -916,6 +916,19 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         await c.arrayBuffer(); await d.arrayBuffer();
         for (const h of CORS_HEADERS) expect(d.headers.get(h), `${key} 인증 없음 ${h}`).toBe(c.headers.get(h));
       }
+      // 코어 줄과 같은 경로의 **다른 메서드**는 TS 가 답한다 — Rust 가 405 로 막지 않는다(`route_table::ts_fallback`).
+      // 예: 코어 `GET /channels/{id}/messages` 옆 TS `POST`(글 쓰기). 인증 없이 보내 바꾸는 것이 없게 하고, 상태가 TS 와 같아야 한다.
+      for (const path of new Set(coreKeys.map((k) => k.split(' ')[1]!))) {
+        const mine = new Set(coreKeys.filter((k) => k.endsWith(` ${path}`)).map((k) => k.split(' ')[0]!));
+        for (const method of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].filter((m) => !mine.has(m))) {
+          const [a, b] = [
+            await fetch(`${tsUrl}${fill(path)}`, { method, headers: { origin: CORS } }),
+            await fetch(`${rsUrl}${fill(path)}`, { method, headers: { origin: CORS } }),
+          ];
+          await a.arrayBuffer(); await b.arrayBuffer();
+          expect(b.status, `${method} ${path} — 코어 줄과 같은 경로의 다른 메서드는 TS 답 그대로`).toBe(a.status);
+        }
+      }
       // 같은 축의 다른 머리 차이(보안·캐시 머리 등) — 보고용으로 남긴다.
       console.log(`rust-front header diff (${headerDiffs.length}):\n${headerDiffs.join('\n')}`);
       // 프리플라이트(옮긴 줄의 OPTIONS 는 앞단이 TS 로 넘긴다 — 두 답이 같아야 한다).

@@ -178,3 +178,60 @@ fn schema_compare_refuses_missing_and_tolerates_newer() {
     assert!(c.missing.is_empty());
     assert_eq!(c.unknown, vec!["999_future.sql".to_string()]);
 }
+
+/// 코어 줄(`route_table::Table`)과 **같은 경로의 다른 메서드**는 TS 로 간다 — 405 가 아니다(`route_table::ts_fallback`).
+/// 코어가 `GET /channels/{id}/messages` 만 붙여도 같은 경로의 `POST`(글 쓰기)는 상류가 답해야 한다.
+#[tokio::test]
+async fn core_table_sends_other_methods_on_same_path_to_upstream() {
+    use harkroom_server::route_table::{Table, ts_fallback};
+    let up = serve(axum::Router::new().fallback(echo)).await;
+    let upstream = Upstream::new(&format!("http://{up}"));
+    let core = || {
+        Table::<()>::new()
+            .get("/channels/{id}/messages", || async { "rust" })
+            .map(|r| {
+                r.layer(axum::middleware::from_fn(
+                    |req, next: axum::middleware::Next| async move { next.run(req).await },
+                ))
+            })
+            .finish()
+            .router
+    };
+
+    // 고침 없이 — 같은 경로의 POST 는 코어가 405 로 막는다(이 시험이 무엇을 지키는지).
+    let bare = serve(core().merge(router(upstream.clone()))).await;
+    let (s, _, _) = send(bare, Method::POST, "/channels/c1/messages", &[], "{}").await;
+    assert_eq!(s, StatusCode::METHOD_NOT_ALLOWED);
+
+    let front = serve(ts_fallback(core(), upstream.clone()).merge(router(upstream))).await;
+    let (s, _, text) = send(front, Method::GET, "/channels/c1/messages", &[], "").await;
+    assert_eq!(
+        (s, text.as_str()),
+        (StatusCode::OK, "rust"),
+        "코어 줄은 Rust 가 답한다"
+    );
+    for m in [Method::POST, Method::PATCH, Method::PUT, Method::DELETE] {
+        let (s, h, text) = send(
+            front,
+            m.clone(),
+            "/channels/c1/messages?x=1",
+            &[("authorization", "Bearer t0k")],
+            "{\"body\":\"hi\"}",
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK, "{m} 는 405 가 아니라 상류로");
+        assert_eq!(h.get("x-from").unwrap(), "upstream");
+        let first = text.lines().next().unwrap();
+        assert!(
+            first.starts_with(&format!("{m} /channels/c1/messages?x=1")),
+            "{first}"
+        );
+        assert!(text.contains("authorization=Bearer t0k") && text.ends_with("{\"body\":\"hi\"}"));
+    }
+    // 코어에 없는 경로는 지금처럼 앞단 fallback 이 넘긴다.
+    let (s, h, _) = send(front, Method::GET, "/elsewhere", &[], "").await;
+    assert_eq!(
+        (s, h.get("x-from").unwrap().to_str().unwrap()),
+        (StatusCode::OK, "upstream")
+    );
+}
