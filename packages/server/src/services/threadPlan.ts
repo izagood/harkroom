@@ -82,17 +82,27 @@ interface ChildFacts {
   progress: PlanProgress | null;
 }
 
+function childFactsSql(viewerVisible: string): string {
+  return `select m.id, m.channel_id, p.doc,
+            (c.kind = 'standard' and c.visibility = 'public') as public_channel,
+            ${viewerVisible} as viewer_visible
+       from message m
+       join channel c on c.id = m.channel_id
+       left join thread_plan p on p.root_id = m.id
+      where m.id = any($1::uuid[]) and m.deleted_at is null and m.thread_root_id is null`;
+}
+
+/** 청중 기준(보는 사람 없음) `childFacts` 문장 — Rust 코어(`core/msg_list.rs`, S5.3 C1b-1b)가 골든으로 받는다. */
+export const CHILD_FACTS_AUDIENCE_SQL = childFactsSql('false');
+
+/** 목록 머리들의 계획(`attachPlanProgress`) — Rust 코어가 골든으로 받는다. */
+export const PLAN_PROGRESS_PLANS_SQL = `select root_id, channel_id, doc, rev, updated_at from thread_plan where root_id = any($1::uuid[])`;
+
 async function childFacts(db: Queryable, roots: string[], viewerId: string | null): Promise<Map<string, ChildFacts>> {
   const out = new Map<string, ChildFacts>();
   if (!roots.length) return out;
   const res = await db.query(
-    `select m.id, m.channel_id, p.doc,
-            (c.kind = 'standard' and c.visibility = 'public') as public_channel,
-            ${viewerId ? channelVisibleSql('c', '$2') : 'false'} as viewer_visible
-       from message m
-       join channel c on c.id = m.channel_id
-       left join thread_plan p on p.root_id = m.id
-      where m.id = any($1::uuid[]) and m.deleted_at is null and m.thread_root_id is null`,
+    childFactsSql(viewerId ? channelVisibleSql('c', '$2') : 'false'),
     viewerId ? [roots, viewerId] : [roots],
   );
   for (const r of res.rows as { id: string; channel_id: string; doc: PlanDoc | null; public_channel: boolean; viewer_visible: boolean }[]) {
@@ -387,7 +397,7 @@ export async function attachPlanProgress<T extends { id: string; channelId: stri
   const roots = rows.filter((r) => r.threadRootId === null && !r.deletedAt);
   if (!roots.length) return rows;
   const res = await db.query(
-    `select root_id, channel_id, doc, rev, updated_at from thread_plan where root_id = any($1::uuid[])`,
+    PLAN_PROGRESS_PLANS_SQL,
     [roots.map((r) => r.id)],
   );
   const plans = new Map((res.rows as { root_id: string; channel_id: string; doc: PlanDoc; rev: number; updated_at: Date }[]).map((r) => [r.root_id, r]));
