@@ -156,6 +156,18 @@ impl AssignmentDeps for SystemDeps {
     fn rust_runner_present(&self) -> bool {
         self.runners.rust_runner_present()
     }
+    /// B4-5e: 러너와 같은 env 로 계정 뿌리·`pools.json` 자리를 정하고 넓게 판정한다(`runner_pick::account_use_broad`).
+    fn claude_account_use(&self) -> crate::runner_pick::AccountUse {
+        let Ok(home) = std::env::var("HOME") else {
+            return crate::runner_pick::AccountUse::Unreadable;
+        };
+        let get = |k: &str| std::env::var(k).ok();
+        let root = crate::claude_accounts::claude_accounts_root(get, &home);
+        match crate::claude_accounts::pools_file_path(&root, get) {
+            Ok(pools) => crate::runner_pick::account_use_broad(&root, &pools),
+            Err(_) => crate::runner_pick::AccountUse::Unreadable,
+        }
+    }
     fn is_alive(&self, agent_id: &str) -> bool {
         self.runners
             .records()

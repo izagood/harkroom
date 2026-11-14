@@ -6,6 +6,7 @@
  * 이 파일이 `RunnerRegistry` 를 `AssignmentDeps` 로 감싼다. 조정기는 프로세스를 모르고
  * 레지스트리는 배정을 모른다 — 둘을 잇는 어댑터가 여기 하나다.
  */
+import { claudeAccountUse } from '@harkroom/shared/claudeAccountLane';
 import { createAssignmentReconciler, type AssignmentDeps } from './assignments.js';
 import { reapUnassignedAdopted } from './adoptedReap.js';
 import { psIdentityProbe, type ProcessIdentityProbe } from './adopt.js';
@@ -136,6 +137,8 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
       return info ? deps.host.kill(info.pid, 'SIGKILL') : false;
     },
     rustRunnerPresent: () => deps.registry.rustRunnerPresent(),
+    // 러너와 같은 풀 해석(`@harkroom/shared/claudeAccountLane`) — 러너 env 는 이 프로세스 env 위에 얹히므로 같은 env 로 본다.
+    claudeAccountUse: (agentId, forcedPool) => claudeAccountUse({ agentId, forcedPool }),
     isAlive: (agentId) => deps.registry.listRunners().some((r) => r.agentId === agentId && r.alive),
     listRunners: () => announceOf(deps.registry),
     loginPath,

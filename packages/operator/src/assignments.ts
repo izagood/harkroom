@@ -16,7 +16,7 @@ import { EX_CONFIG, type RunnerExitReason } from '@harkroom/shared';
 import type { AgentDefinition, RunnerAnnounce } from '@harkroom/shared/operatorProtocol';
 import { RUNNER_LINK_ENV } from '@harkroom/shared/runnerLink';
 import { runnerKindOf, type LocalAgentConfig } from './config.js';
-import { pickRunner, type RunnerPick } from './runnerPick.js';
+import { pickRunner, type AccountUse, type RunnerPick } from './runnerPick.js';
 
 export interface AssignmentDeps {
   /**
@@ -26,6 +26,10 @@ export interface AssignmentDeps {
   spawn(agentId: string, env: Record<string, string>, runnerId: string, pick?: RunnerPick): Promise<{ spawned: boolean; pid: number; runnerId: string }>;
   /** 오퍼레이터 옆에 Rust 러너 파일이 있는가(B4-5c). 없으면 `rust` 를 청한 에이전트도 node 로 돈다. 안 주면 없다. */
   rustRunnerPresent?: () => Promise<boolean>;
+  /**
+   * 이 에이전트의 러너가 계정 풀로 도는가(B4-5e, `claudeAccountUse`). **안 주면 `unreadable`** — 모르면 Rust 러너로 보내지 않는다.
+   */
+  claudeAccountUse?: (agentId: string, forcedPool: string | undefined) => Promise<AccountUse>;
   /** 시그널을 보냈는가. 러너가 없으면 false. SIGTERM 은 러너가 drain 으로 받는다(#551). */
   signal(agentId: string, signal: 'SIGTERM' | 'SIGKILL'): boolean;
   isAlive(agentId: string): boolean;
@@ -211,7 +215,13 @@ export function createAssignmentReconciler(deps: AssignmentDeps): AssignmentReco
       };
       // 러너 구현(B4-5c). `rust` 를 청했어도 풀·lane 에이전트는 node 로 떨어뜨린다(`runnerPick.ts` — 다른 계정·과금으로 바뀌지 않게).
       const wantsRust = runnerKindOf(local) === 'rust';
-      const pick = pickRunner(local, wantsRust ? await (deps.rustRunnerPresent?.() ?? Promise.resolve(false)).catch(() => false) : false);
+      const pick = wantsRust
+        ? pickRunner(
+          local,
+          await (deps.rustRunnerPresent?.() ?? Promise.resolve(false)).catch(() => false),
+          await (deps.claudeAccountUse?.(agentId, local?.claudePool) ?? Promise.resolve<AccountUse>('unreadable')).catch((): AccountUse => 'unreadable'),
+        )
+        : pickRunner(local, false, 'none');
       if (pick.fallback) deps.log(`러너: rust 를 청했지만 node 로 띄운다(${pick.fallback}): agent=${definition.handle}`);
       let result: Awaited<ReturnType<AssignmentDeps['spawn']>>;
       try {
