@@ -7,6 +7,7 @@ import {
   channelMembershipGate, channelPostGate, createChannel, deleteChannel,
   findDm, getChannelDoc, getChannelRow, getOrCreateDm, listChannelMembers, listChannels, removeChannelMember,
   updateChannel, updateChannelDoc, updateChannelPref, listChannelPrefs, renameSection, normalizeSectionName,
+  CHANNEL_DELETE_INFO_SQL, CHANNEL_MESSAGE_COUNT_SQL,
 } from '../services/channels.js';
 import {
   SectionLimitError, SectionNameTakenError, createChannelSection, deleteChannelSection, getChannelSection, listChannelSections,
@@ -998,10 +999,7 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
    */
   app.get('/channels/:id/delete-info', { preHandler: app.requireCap('channel.manage', { kind: 'channel', param: 'id' }) }, async (req, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
-    const channel = await pool.query(
-      `select id, name, kind, archived_at from channel where id = $1`,
-      [id],
-    );
+    const channel = await pool.query(CHANNEL_DELETE_INFO_SQL, [id]);
     if (!channel.rowCount) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
     }
@@ -1012,10 +1010,7 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     if (!row.archived_at) {
       return reply.code(409).send({ error: { code: 'not_archived', message: 'only archived channels can be deleted' } });
     }
-    const messageCountResult = await pool.query(
-      `select count(*)::int as cnt from message where channel_id = $1`,
-      [id],
-    );
+    const messageCountResult = await pool.query(CHANNEL_MESSAGE_COUNT_SQL, [id]);
     return { name: row.name ?? '', messageCount: messageCountResult.rows[0]!.cnt };
   });
 

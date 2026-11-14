@@ -9,6 +9,16 @@ function toPin({ pinnedBy, pinnedAt, ...message }: PinnedMessageRow): PinRow {
   return { messageId: message.id, channelId: message.channelId, pinnedBy, pinnedAt, message };
 }
 
+/** 핀 질의 문장. Rust 코어(`core/channels.rs`)가 `golden/sql_fragments.json` 으로 같은 문장을 읽는다. */
+export const SELECT_PINS_SQL = `select m.*, p.pinned_by as "pinnedBy", p.pinned_at as "pinnedAt"
+     from message_pin p
+     join lateral (
+       select ${MESSAGE_COLS} from message
+       where message.id = p.message_id and message.deleted_at is null
+     ) m on true
+     where p.channel_id = $1::uuid and ($2::uuid is null or p.message_id = $2::uuid)
+     order by p.pinned_at desc`;
+
 /**
  * 핀 목록 질의. `messageId` 를 주면 그 하나만 본다.
  *
@@ -23,17 +33,7 @@ function toPin({ pinnedBy, pinnedAt, ...message }: PinnedMessageRow): PinRow {
  * 본문이 핀 목록으로 샌다.
  */
 async function selectPins(pool: Pool, channelId: string, messageId: string | null): Promise<PinRow[]> {
-  const res = await pool.query(
-    `select m.*, p.pinned_by as "pinnedBy", p.pinned_at as "pinnedAt"
-     from message_pin p
-     join lateral (
-       select ${MESSAGE_COLS} from message
-       where message.id = p.message_id and message.deleted_at is null
-     ) m on true
-     where p.channel_id = $1 and ($2::uuid is null or p.message_id = $2::uuid)
-     order by p.pinned_at desc`,
-    [channelId, messageId],
-  );
+  const res = await pool.query(SELECT_PINS_SQL, [channelId, messageId]);
   return (res.rows as PinnedMessageRow[]).map(toPin);
 }
 

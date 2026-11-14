@@ -1,3 +1,4 @@
+import { LIST_CHANNELS_SQL } from '../src/services/channels.js';
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { startTestDb } from './helpers/testDb.js';
@@ -327,7 +328,9 @@ describe('channel pref', () => {
     expect(cols![1]).not.toContain('section');
     expect(cols![1]).not.toContain('sort_order');
 
-    const listBody = src.slice(src.indexOf('export async function listChannels')).slice(0, 700);
+    // 문장은 `LIST_CHANNELS_SQL` 상수로 나왔다(Rust 코어가 골든으로 같은 문장을 쓴다, S5.3 C1e-1) — 함수가 그 상수를 쓰는지도 본다.
+    expect(src.slice(src.indexOf('export async function listChannels')).slice(0, 300)).toContain('LIST_CHANNELS_SQL');
+    const listBody = LIST_CHANNELS_SQL;
     expect(listBody).toContain('order by name');
     expect(listBody).not.toContain('sort_order');
     expect(listBody).not.toContain('section');

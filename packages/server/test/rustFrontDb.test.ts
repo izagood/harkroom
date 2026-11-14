@@ -401,6 +401,76 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       const head = (await getMsg(`http://127.0.0.1:${port}`, work, admin.token)).body as Record<string, unknown>;
       expect((head.reactions as unknown[]).length, '리액션이 빈 목록끼리 비교하면 안 된다').toBe(2);
 
+      // S5.3 C1e-1 — 채널 읽기 GET 9줄(코어 `channels.rs`). 성공은 본문 전체(timestamptz 칸은 toISOString 꼴), 거절은 상태·코드까지.
+      for (const k of ['GET /channels', 'GET /reads', 'GET /channels/{id}/read', 'GET /channels/{id}/members', 'GET /channels/prefs',
+        'GET /channel-sections', 'GET /channels/{id}/auto-mentions', 'GET /channels/{id}/doc', 'GET /channels/{id}/scheduled',
+        'GET /channels/{id}/pins', 'GET /channels/{id}/delete-info']) {
+        expect(f.log()).toContain(`"${k}"`);
+      }
+      await ok(app.inject({ method: 'PATCH', url: `/channels/${todayId}/pref`, headers: auth, payload: { starred: true, notifyLevel: 'mentions' } }));
+      await ok(app.inject({ method: 'PATCH', url: `/channels/${String(priv.id)}/pref`, headers: auth, payload: { hidden: true } }));
+      await ok(app.inject({ method: 'POST', url: '/channel-sections', headers: auth, payload: { name: 'Work' } }));
+      await ok(app.inject({ method: 'PUT', url: `/channels/${todayId}/auto-mentions/${agent.accountId}`, headers: auth, payload: { mode: 'always' } }));
+      await db.pool.query(
+        `insert into channel_doc (channel_id, body, updated_by, updated_at) values ($1, '문서 본문', $2, now() - interval '2 hours')`,
+        [todayId, admin.accountId],
+      );
+      await db.pool.query(
+        `insert into scheduled_message (channel_id, author_id, body, send_at) values ($1, $2, '나중에', now() + interval '1 day'),
+           ($1, $3, '남의 예약', now() + interval '2 days')`,
+        [todayId, admin.accountId, member.accountId],
+      );
+      await db.pool.query(`update channel set archived_at = now() - interval '1 day' where id = $1`, [String(priv.id)]);
+      // 핀: 리액션이 붙은 글·스레드 답글 하나씩, 그리고 지운 글의 핀(조인에서 빠져야 한다).
+      const gonePin = await say('지울 핀');
+      await db.pool.query(
+        `insert into message_pin (message_id, channel_id, pinned_by, pinned_at) values
+           ($1, $4, $5, now() - interval '1 hour'), ($2, $4, $5, now()), ($3, $4, $5, now() - interval '2 hours')`,
+        [work, oldCard, gonePin, todayId, admin.accountId],
+      );
+      await db.pool.query(`update message set deleted_at = now() where id = $1`, [gonePin]);
+      const getJson = async (base: string, path: string, token?: string) => {
+        const res = await fetch(`${base}${path}`, { headers: token ? { authorization: `Bearer ${token}` } : {} });
+        const json = JSON.parse(await res.text()) as { error?: { code: string } };
+        return { status: res.status, code: json.error?.code, body: json.error ? undefined : json };
+      };
+      const privId = String(priv.id);
+      const missingCh = '0f8fad5b-d9cb-469f-a165-70867728950e';
+      for (const [path, token] of [
+        ['/channels', admin.token], ['/channels', member.token], ['/channels', agent.pat], ['/channels', undefined],
+        ['/reads', admin.token], ['/reads', member.token],
+        [`/channels/${todayId}/read`, member.token], [`/channels/${privId}/read`, member.token], [`/channels/${missingCh}/read`, admin.token],
+        ['/channels/not-a-uuid/read', admin.token],
+        [`/channels/${todayId}/members`, member.token], [`/channels/${privId}/members`, member.token], [`/channels/${privId}/members`, admin.token],
+        [`/channels/${missingCh}/members`, admin.token], [`/channels/${String(dm.id)}/members`, member.token],
+        ['/channels/prefs', admin.token], ['/channels/prefs', member.token],
+        ['/channel-sections', admin.token], ['/channel-sections', member.token],
+        [`/channels/${todayId}/auto-mentions`, member.token], [`/channels/${privId}/auto-mentions`, member.token],
+        [`/channels/${todayId}/doc`, member.token], [`/channels/${privId}/doc`, admin.token], [`/channels/${privId}/doc`, member.token],
+        [`/channels/${missingCh}/doc`, admin.token],
+        [`/channels/${todayId}/scheduled`, admin.token], [`/channels/${todayId}/scheduled`, member.token], [`/channels/${privId}/scheduled`, member.token],
+        [`/channels/${todayId}/pins`, member.token], [`/channels/${privId}/pins`, member.token], [`/channels/${privId}/pins`, admin.token],
+        ['/channels/not-a-uuid/pins', admin.token],
+        [`/channels/${privId}/delete-info`, admin.token], [`/channels/${privId}/delete-info`, member.token],
+        [`/channels/${privId}/delete-info`, undefined], [`/channels/${todayId}/delete-info`, admin.token],
+        [`/channels/${String(dm.id)}/delete-info`, admin.token], [`/channels/${missingCh}/delete-info`, admin.token],
+      ] as const) {
+        const [a, b] = [await getJson(tsUrl, path, token), await getJson(`http://127.0.0.1:${port}`, path, token)];
+        expect(b, `${path} ${token === admin.token ? 'admin' : token === member.token ? 'mem' : token ? 'agent' : 'anon'}`).toEqual(a);
+      }
+      // 빈 목록끼리 비교해 통과하지 않게 — 픽스처가 실제로 칸을 채웠는지.
+      const rs = `http://127.0.0.1:${port}`;
+      const prefsBody = (await getJson(rs, '/channels/prefs', admin.token)).body as { prefs: Record<string, unknown>[]; sections: unknown[] };
+      expect(prefsBody.prefs.some((p) => p.starredAt && p.notifyLevel === 'mentions'), '시각 칸이 찬 pref').toBe(true);
+      expect(prefsBody.sections.length).toBeGreaterThan(0);
+      expect(((await getJson(rs, `/channels/${todayId}/scheduled`, admin.token)).body as { scheduled: unknown[] }).scheduled).toHaveLength(1);
+      expect(((await getJson(rs, `/channels/${todayId}/auto-mentions`, member.token)).body as { autoMentions: unknown[] }).autoMentions).toHaveLength(1);
+      expect(((await getJson(rs, '/channels', admin.token)).body as { channels: Record<string, unknown>[] }).channels.some((c) => c.archivedAt), '보관 시각 칸').toBe(true);
+      const pinsBody = (await getJson(rs, `/channels/${todayId}/pins`, member.token)).body as { pins: { messageId: string; pinnedAt: string; message: { reactions: unknown[] } }[] };
+      expect(pinsBody.pins.map((p) => p.messageId), '지운 글의 핀은 빠지고 최근 핀이 먼저').toEqual([oldCard, work]);
+      expect(pinsBody.pins[1]!.message.reactions.length).toBeGreaterThan(0);
+      expect((await getJson(rs, `/channels/${privId}/delete-info`, admin.token)).body).toMatchObject({ name: 'today-private' });
+
       // S5.2 P3 — `PUT /inbox/today/seen` 대조. 거절은 상태·코드까지(문구는 zod 와 다르다), 성공은 본문까지 같아야 한다.
       const rsUrl = `http://127.0.0.1:${port}`;
       const put = async (base: string, o: { token?: string; ct?: string; body?: string }) => {

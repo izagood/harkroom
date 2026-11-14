@@ -29,11 +29,11 @@ export class SectionLimitError extends Error {
   constructor() { super(`at most ${MAX_SECTIONS_PER_ACCOUNT} sections per account`); }
 }
 
+/** 섹션 목록의 문장 — Rust 코어(`core/channels.rs`, S5.3 C1e-1)가 골든으로 받아 그대로 쓴다. */
+export const LIST_CHANNEL_SECTIONS_SQL = `select ${SECTION_COLUMNS} from channel_section where account_id = $1::uuid order by position, name`;
+
 export async function listChannelSections(db: Queryable, accountId: string): Promise<ChannelSectionRow[]> {
-  const res = await db.query<ChannelSectionRow>(
-    `select ${SECTION_COLUMNS} from channel_section where account_id = $1 order by position, name`,
-    [accountId],
-  );
+  const res = await db.query<ChannelSectionRow>(LIST_CHANNEL_SECTIONS_SQL, [accountId]);
   return res.rows;
 }
 

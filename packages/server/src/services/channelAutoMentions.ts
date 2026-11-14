@@ -13,10 +13,11 @@ const COLS = `m.channel_id as "channelId", m.agent_account_id as "agentAccountId
   m.mode, m.created_by as "createdBy", m.created_at as "createdAt"`;
 const FROM = `from channel_auto_mention m join account a on a.id = m.agent_account_id`;
 
+/** 자동 멘션 목록의 문장 — Rust 코어(`core/channels.rs`, S5.3 C1e-1)가 골든으로 받아 그대로 쓴다. */
+export const LIST_CHANNEL_AUTO_MENTIONS_SQL = `select ${COLS} ${FROM} where m.channel_id = $1::uuid order by a.handle`;
+
 export async function listChannelAutoMentions(pool: Pool, channelId: string): Promise<ChannelAutoMentionRow[]> {
-  const res = await pool.query<ChannelAutoMentionRow>(
-    `select ${COLS} ${FROM} where m.channel_id = $1 order by a.handle`, [channelId],
-  );
+  const res = await pool.query<ChannelAutoMentionRow>(LIST_CHANNEL_AUTO_MENTIONS_SQL, [channelId]);
   return res.rows;
 }
 
