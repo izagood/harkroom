@@ -106,7 +106,7 @@ pub struct LinkHandler {
     hub: Arc<LocalTerminalHub>,
     transport: Arc<dyn Transport>,
     base_url: String,
-    token: String,
+    token: crate::op_token::SharedToken,
     /// 턴 열쇠 장부(s21b-3a) — 맡기기·끝내기는 여기서 답하고 서버로 넘기지 않는다.
     turn_keys: Arc<Mutex<TurnKeyLedger>>,
     /// 동시 턴 상한(s21b-3a) — 프로세스 하나에 하나(`TurnSlots::process`).
@@ -187,7 +187,7 @@ impl MergeHandlers {
 struct LeaseIo {
     transport: Arc<dyn Transport>,
     base_url: String,
-    token: String,
+    token: crate::op_token::SharedToken,
     leases: Arc<Mutex<TurnLeases>>,
 }
 
@@ -218,7 +218,7 @@ impl LeaseIo {
         let headers = vec![
             (
                 "authorization".to_string(),
-                format!("Bearer {}", self.token),
+                format!("Bearer {}", self.token.get()),
             ),
             (crate::forward::AGENT_HEADER.to_string(), c.agent_id.clone()),
             ("content-type".to_string(), "application/json".to_string()),
@@ -258,7 +258,7 @@ impl LinkHandler {
         let headers = vec![
             (
                 "authorization".to_string(),
-                format!("Bearer {}", self.token),
+                format!("Bearer {}", self.token.get()),
             ),
             (
                 crate::forward::AGENT_HEADER.to_string(),
@@ -297,7 +297,7 @@ impl LinkHandler {
         let headers = vec![
             (
                 "authorization".to_string(),
-                format!("Bearer {}", self.token),
+                format!("Bearer {}", self.token.get()),
             ),
             (
                 crate::forward::AGENT_HEADER.to_string(),
@@ -318,7 +318,7 @@ impl LinkHandler {
     ) -> RunnerLinkResponse {
         let target = ForwardTarget {
             base_url: self.base_url.clone(),
-            token: self.token.clone(),
+            token: self.token.get(),
             agent_id: agent_id.to_string(),
         };
         forward(self.transport.as_ref(), &target, req, kind)
@@ -626,7 +626,7 @@ pub fn build_bridge(
     server: Arc<dyn ServerSend>,
     transport: Arc<dyn Transport>,
     base_url: String,
-    token: String,
+    token: crate::op_token::SharedToken,
     turn_keys: Arc<Mutex<TurnKeyLedger>>,
     slots: Arc<Mutex<TurnSlots>>,
     secrets: Option<crate::turn_secrets::SecretsRoot>,
@@ -742,7 +742,7 @@ mod tests {
             hub: Arc::clone(&b.hub),
             transport: Arc::new(FakeTransport::default()),
             base_url: String::new(),
-            token: String::new(),
+            token: String::new().into(),
             turn_keys: Arc::new(Mutex::new(TurnKeyLedger::new(|| 0, |_| {}))),
             slots: Arc::new(Mutex::new(TurnSlots::new(Some(1), || 0, |_| {}))),
             leases: Arc::new(Mutex::new(TurnLeases::new(|| 0))),
@@ -1061,7 +1061,7 @@ mod tests {
             hub: Arc::clone(&b.hub),
             transport: tr.clone(),
             base_url: String::new(),
-            token: String::new(),
+            token: String::new().into(),
             turn_keys: Arc::new(Mutex::new(TurnKeyLedger::new(|| 0, |_| {}))),
             slots: Arc::new(Mutex::new(TurnSlots::new(None, || 0, |_| {}))),
             leases: Arc::new(Mutex::new(TurnLeases::new(|| 0))),

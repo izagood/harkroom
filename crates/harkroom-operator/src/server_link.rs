@@ -99,7 +99,8 @@ pub type CloseHook = Box<dyn Fn(&str) + Send>;
 
 pub struct ServerLinkOptions {
     pub base_url: String,
-    pub token: String,
+    /// 접속할 때마다 읽는다 — 다시 등록이 바꾼 값으로 다음 접속이 간다(s9b).
+    pub token: crate::op_token::SharedToken,
     pub hello: Box<dyn Fn() -> OperatorToServerFrame + Send>,
     pub on_frame: Box<dyn Fn(ServerToOperatorFrame) + Send>,
     pub on_open: Option<Box<dyn Fn() + Send>>,
@@ -111,7 +112,7 @@ pub struct ServerLinkOptions {
 impl ServerLinkOptions {
     pub fn new(
         base_url: impl Into<String>,
-        token: impl Into<String>,
+        token: impl Into<crate::op_token::SharedToken>,
         hello: Box<dyn Fn() -> OperatorToServerFrame + Send>,
         on_frame: Box<dyn Fn(ServerToOperatorFrame) + Send>,
     ) -> Self {
@@ -144,6 +145,8 @@ impl std::fmt::Debug for ServerLinkOptions {
 pub struct ServerLink {
     connected: Arc<AtomicBool>,
     stopped: Arc<AtomicBool>,
+    /// 지금 연결을 내리고 다시 붙으라(s9b 다시 등록). 접속 직전에 지운다 — 새 연결을 잘못 끊지 않게.
+    kick: Arc<AtomicBool>,
     outbox: Arc<Mutex<Option<Sender<String>>>>,
 }
 
@@ -158,6 +161,7 @@ impl ServerLink {
         Self {
             connected: Arc::new(AtomicBool::new(false)),
             stopped: Arc::new(AtomicBool::new(false)),
+            kick: Arc::new(AtomicBool::new(false)),
             outbox: Arc::new(Mutex::new(None)),
         }
     }
@@ -168,6 +172,11 @@ impl ServerLink {
 
     pub fn stop(&self) {
         self.stopped.store(true, Ordering::SeqCst);
+    }
+
+    /// 지금 연결을 닫고 다시 붙게 한다(멈추지 않는다). 다음 접속은 옵션의 토큰 칸에서 **그때의** 값을 읽는다.
+    pub fn reconnect(&self) {
+        self.kick.store(true, Ordering::SeqCst);
     }
 
     /// 보냈는가(큐에 넣었는가)까지다 — 안 붙어 있으면 false.
@@ -191,7 +200,9 @@ impl ServerLink {
         let mut backoff = opts.initial_backoff_ms;
         let tick_ms = (opts.silence_ms / 3).min(10_000);
         while !self.stopped.load(Ordering::SeqCst) {
-            let reason = match dialer.dial(&url, &opts.token) {
+            // 이 접속은 이미 지금 토큰을 읽는다 — 앞서 온 다시 붙기 요청은 다 이뤄졌다.
+            self.kick.store(false, Ordering::SeqCst);
+            let reason = match dialer.dial(&url, &opts.token.get()) {
                 Err(e) => e,
                 Ok(mut conn) => {
                     backoff = opts.initial_backoff_ms;
@@ -243,6 +254,10 @@ impl ServerLink {
             if self.stopped.load(Ordering::SeqCst) {
                 conn.close();
                 return "stopped".to_string();
+            }
+            if self.kick.swap(false, Ordering::SeqCst) {
+                conn.close();
+                return "다시 등록 — 새 토큰으로 다시 붙는다".to_string();
             }
             while let Ok(text) = rx.try_recv() {
                 if let Err(e) = conn.send(&text) {
@@ -455,5 +470,76 @@ mod tests {
             ServerLinkOptions::new("https://h", "sekret-xyz", Box::new(hello), Box::new(|_| {}));
         let d = format!("{opts:?}");
         assert!(!d.contains("sekret-xyz") && d.contains("<redacted>"), "{d}");
+    }
+
+    /// s9b: 다시 등록 — 토큰 칸을 바꾸고 `reconnect` 하면 지금 연결을 닫고 새 값으로 다시 붙는다.
+    /// 접속 전에 남아 있던 다시 붙기 요청은 새 연결을 끊지 않는다.
+    #[test]
+    fn reconnect_redials_with_the_renewed_token() {
+        struct KickConn {
+            on_read: Option<Box<dyn FnOnce() + Send>>,
+        }
+        impl Conn for KickConn {
+            fn read(&mut self) -> ReadEvent {
+                if let Some(f) = self.on_read.take() {
+                    f();
+                }
+                ReadEvent::Idle
+            }
+            fn send(&mut self, _text: &str) -> Result<(), String> {
+                Ok(())
+            }
+            fn close(&mut self) {}
+        }
+        struct TokDialer {
+            conns: VecDeque<KickConn>,
+            link: ServerLink,
+            tokens: Vec<String>,
+        }
+        impl Dialer for TokDialer {
+            fn dial(&mut self, _url: &str, token: &str) -> Result<Box<dyn Conn>, String> {
+                self.tokens.push(token.to_string());
+                match self.conns.pop_front() {
+                    Some(c) => Ok(Box::new(c)),
+                    None => {
+                        self.link.stop();
+                        Err("done".into())
+                    }
+                }
+            }
+        }
+        let clock = FakeClock(Arc::new(AtomicU64::new(0)), Arc::new(Mutex::new(vec![])));
+        let link = ServerLink::new();
+        let token = crate::op_token::SharedToken::new("old");
+        let (l, t) = (link.clone(), token.clone());
+        let mut dialer = TokDialer {
+            conns: VecDeque::from([KickConn {
+                on_read: Some(Box::new(move || {
+                    t.set("new");
+                    l.reconnect();
+                })),
+            }]),
+            link: link.clone(),
+            tokens: vec![],
+        };
+        let reasons = Arc::new(Mutex::new(vec![]));
+        let r = reasons.clone();
+        let mut opts = ServerLinkOptions::new(
+            "https://h.example",
+            token,
+            Box::new(hello),
+            Box::new(|_| {}),
+        );
+        opts.on_close = Some(Box::new(move |why: &str| {
+            r.lock().unwrap().push(why.to_string())
+        }));
+        // 접속 전에 걸린 요청은 첫 연결을 끊지 않는다(접속 직전에 지운다).
+        link.reconnect();
+        link.run(&opts, &mut dialer, &clock);
+        assert_eq!(dialer.tokens, vec!["old", "new"]);
+        assert_eq!(
+            reasons.lock().unwrap()[0],
+            "다시 등록 — 새 토큰으로 다시 붙는다"
+        );
     }
 }

@@ -296,10 +296,12 @@ pub struct ServerState {
     register_transport: OnceLock<Arc<dyn crate::forward::Transport>>,
 }
 
-/// 서버 링크 제어(s9). `is_up` = 링크가 이미 떠 있는가(토큰을 쥐고 붙어 있거나 다시 붙는 중), `attach` = 없으면 지금 띄운다.
+/// 서버 링크 제어(s9). `is_up` = 링크가 이미 떠 있는가(토큰을 쥐고 붙어 있거나 다시 붙는 중), `attach` = 없으면 지금 띄운다,
+/// `renew` = 떠 있는 링크에 새로 쓴 토큰을 넣고 다시 붙인다(s9b, 넣었으면 true).
 pub struct LinkControl {
     pub is_up: Box<dyn Fn() -> bool + Send + Sync>,
     pub attach: Box<dyn Fn() + Send + Sync>,
+    pub renew: Box<dyn Fn() -> bool + Send + Sync>,
 }
 
 impl ServerState {
@@ -819,13 +821,6 @@ impl ServerState {
                         "이 daemon 에는 서버 링크가 배선되지 않았다",
                     )
                 })?;
-                // 다시 등록(토큰을 쥔 링크가 이미 떠 있다)은 아직 받지 않는다 — 새 토큰을 도는 링크·전달·청소에 갈아 끼우는 일은
-                // 따로 한다(s9b). claim 하기 **전에** 거절한다: 코드를 쓰지 않고, 서버가 옛 등록을 폐기하지도 않는다.
-                if (ctl.is_up)() {
-                    return Err(bad(
-                        "이 오퍼레이터는 이미 등록돼 서버에 붙어 있다 — 다시 등록은 아직 이 오퍼레이터에서 받지 않는다".into(),
-                    ));
-                }
                 let transport: Arc<dyn crate::forward::Transport> =
                     match self.register_transport.get() {
                         Some(t) => Arc::clone(t),
@@ -844,8 +839,17 @@ impl ServerState {
                     out["operatorId"].as_str().unwrap_or(""),
                     out["baseUrl"].as_str().unwrap_or("")
                 );
-                // 곧바로 붙는다(TS `onRegistered`) — 앱이 오퍼레이터를 다시 띄우지 않아도 「연결됨」이 된다.
-                (ctl.attach)();
+                // 곧바로 붙는다(TS `onRegistered` → `startOne`) — 앱이 오퍼레이터를 다시 띄우지 않아도 「연결됨」이 된다.
+                // 다시 등록이면(링크가 떠 있다) 서버가 옛 등록을 폐기했으니 새 토큰으로 갈아 끼우고 다시 붙는다(s9b).
+                if (ctl.is_up)() {
+                    if !(ctl.renew)() {
+                        eprintln!(
+                            "다시 등록: 도는 링크에 새 토큰을 넣지 못했다 — 오퍼레이터를 다시 띄우면 새 토큰으로 붙는다"
+                        );
+                    }
+                } else {
+                    (ctl.attach)();
+                }
                 Ok(out)
             }
             "operatorAgentRemove" => {
@@ -1859,7 +1863,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    /// s9: 첫 등록은 claim → 토큰 → 곧바로 링크를 띄운다. 링크가 떠 있으면(다시 등록) claim 하지 않고 거절한다.
+    /// s9: 첫 등록은 claim → 토큰 → 곧바로 링크를 띄운다. 다시 등록(링크가 떠 있다)은 claim 뒤 토큰만 갈아 끼운다(s9b).
     #[test]
     fn operator_register_claims_then_attaches_once() {
         use crate::forward::{HttpReply, Transport};
@@ -1910,6 +1914,7 @@ mod tests {
         assert_eq!(claim.0.load(Ordering::SeqCst), 0);
         let up = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let attached = Arc::new(AtomicUsize::new(0));
+        let renewed = Arc::new(AtomicUsize::new(0));
         state.set_link_control(LinkControl {
             is_up: {
                 let up = up.clone();
@@ -1922,17 +1927,25 @@ mod tests {
                     up.store(true, Ordering::SeqCst);
                 })
             },
+            renew: {
+                let renewed = renewed.clone();
+                Box::new(move || {
+                    renewed.fetch_add(1, Ordering::SeqCst);
+                    true
+                })
+            },
         });
         let out = state.dispatch("operatorRegister", Some(&req)).unwrap();
         assert_eq!(out["operatorId"], "op-1");
         assert_eq!(out["baseUrl"], url);
         assert_eq!(claim.0.load(Ordering::SeqCst), 1);
         assert_eq!(attached.load(Ordering::SeqCst), 1, "등록 뒤 곧바로 붙는다");
-        // 다시 등록 — 링크가 떠 있으면 claim 전에 거절한다(코드를 쓰지 않는다).
-        let e = state.dispatch("operatorRegister", Some(&req)).unwrap_err();
-        assert_eq!(e.code, DaemonErrorCode::BadPayload);
-        assert_eq!(claim.0.load(Ordering::SeqCst), 1);
-        assert_eq!(attached.load(Ordering::SeqCst), 1);
+        assert_eq!(renewed.load(Ordering::SeqCst), 0);
+        // 다시 등록(s9b) — 링크가 떠 있으면 claim 한 뒤 새로 띄우지 않고 토큰을 갈아 끼운다.
+        state.dispatch("operatorRegister", Some(&req)).unwrap();
+        assert_eq!(claim.0.load(Ordering::SeqCst), 2);
+        assert_eq!(attached.load(Ordering::SeqCst), 1, "링크는 하나다");
+        assert_eq!(renewed.load(Ordering::SeqCst), 1);
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -41,6 +41,7 @@ pub mod mcp_bridge;
 pub mod mcp_config;
 pub mod mcp_oauth;
 pub mod merge;
+pub mod op_token;
 pub mod pr_gate;
 pub mod provider_usage;
 pub mod relay_mux;
