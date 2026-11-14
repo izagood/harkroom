@@ -64,11 +64,12 @@ pub fn lane_env_allowed(key: &str) -> bool {
 /// 러너가 쥔 오퍼레이터 링크 열쇠(`HARKROOM_RUNNER_SECRET`)·옛 PAT(`HARKROOM_PAT`)·사람 셸에서 샌 토큰은 목록에 없어 자식에 닿지 않는다.
 ///
 /// 정본 `childEnv` 는 러너 env 를 통째로 상속하고 [`HARNESS_ENV_DENYLIST`] 만 뺐다(하네스가 무엇을 읽는지 다 모른다는 이유).
-/// 여기서는 닫힌 쪽을 고른다: 기본 실행 환경(lane 목록과 같은 바탕) + 하네스 로그인 자리(`CODEX_HOME` — 홈·Keychain 은 `HOME`·`USER`
-/// 로 닿는다) + git ssh(`SSH_AUTH_SOCK`). 하네스 홈·턴 값은 [`child_env`] 가 이 위에 얹는다.
+/// 여기서는 닫힌 쪽을 고른다: 기본 실행 환경(lane 목록과 같은 바탕) + git ssh(`SSH_AUTH_SOCK`). 로그인은 `HOME`·`USER`(Keychain)로
+/// 닿는다. `CODEX_HOME` 은 **넣지 않는다**(c1) — codex 홈은 러너가 정한 격리 홈만 쓴다([`child_env`]). 러너 env 의 값을 물려주면
+/// 사람 `~/.codex`(개인 config·MCP·세션)로 돈다. 하네스 홈·턴 값은 [`child_env`] 가 이 위에 얹는다.
 /// 링크 열쇠는 일부러 뺀다 — 브릿지는 턴 열쇠(`HARKROOM_TURN_GRANT`·`HARKROOM_TURN_BRIDGE_KEY`)로 붙는다. 턴 열쇠를 못 맡긴 턴은
 /// 브릿지가 오퍼레이터에 못 붙는다(닫히는 쪽).
-pub const HARNESS_PARENT_ENV_ALLOW: [&str; 27] = [
+pub const HARNESS_PARENT_ENV_ALLOW: [&str; 26] = [
     "PATH",
     "HOME",
     "USER",
@@ -94,7 +95,6 @@ pub const HARNESS_PARENT_ENV_ALLOW: [&str; 27] = [
     "HARKROOM_RUNNER_ID",
     "HARKROOM_MCP_READY_FILE",
     "HARKROOM_OPERATOR_VERSION",
-    "CODEX_HOME",
     "SSH_AUTH_SOCK",
 ];
 
@@ -321,6 +321,8 @@ pub enum ChildEnvError {
     LaneKeyNotAllowed { harness: AgentHarness, key: String },
     /// lane 턴의 홈 표지 이름을 모른다 — 사람 홈 설정이 실린다.
     LaneTestHomeUnknown { harness: AgentHarness },
+    /// codex 턴인데 격리 홈이 없다 — 띄우면 codex 가 사람 `~/.codex` 를 쓴다(c1). 턴을 띄우지 않는다.
+    CodexHomeMissing,
 }
 
 impl fmt::Display for ChildEnvError {
@@ -336,6 +338,12 @@ impl fmt::Display for ChildEnvError {
                 write!(
                     f,
                     "{harness:?} lane 턴의 홈 표지 이름을 모른다 — 사람 홈 설정이 실린다"
+                )
+            }
+            Self::CodexHomeMissing => {
+                write!(
+                    f,
+                    "codex_home_missing — codex 격리 홈이 없어 턴을 띄우지 않는다(사람 홈으로 돌지 않게)"
                 )
             }
         }
@@ -355,10 +363,16 @@ pub fn child_env(
     home: &Path,
 ) -> Result<BTreeMap<String, String>, ChildEnvError> {
     let h = input.harness;
+    // codex 는 격리 홈 없이 띄우지 않는다(c1) — `CODEX_HOME` 이 없으면 codex 는 `$HOME/.codex`(사람 것)를 쓴다.
+    if h == AgentHarness::Codex && input.codex_home.is_none() {
+        return Err(ChildEnvError::CodexHomeMissing);
+    }
     let mut env = parent.clone();
     for k in HARNESS_ENV_DENYLIST {
         env.remove(k);
     }
+    // 부모(러너) env 의 `CODEX_HOME` 은 어느 하네스에도 물려주지 않는다 — codex 는 아래에서 격리 홈만 얹는다.
+    env.remove("CODEX_HOME");
     // 턴마다 바뀌는 이름은 옛 값을 먼저 지운다 — 아래에서 이 턴의 값만 얹는다(security 낮음: 남의 턴 값 상속).
     for k in [
         RUNNER_TURN_CAUSE_ENV,

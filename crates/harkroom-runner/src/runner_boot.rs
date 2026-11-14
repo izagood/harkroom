@@ -81,6 +81,8 @@ pub fn maker_config(cfg: &RunnerConfig, env: &Env, f: BootFacts<'_>) -> MakerCon
         claim_holder: f.claim_holder.to_string(),
         // 지금 오퍼레이터는 턴 열쇠를 받는다(#2016). 맡기기에 실패한 턴은 브릿지가 못 붙는다(닫히는 쪽).
         can_register_turn_keys: true,
+        // main.rs 가 lane 여부를 정한 뒤 채운다(`RunnerMaker::set_codex`).
+        codex: None,
     }
 }
 

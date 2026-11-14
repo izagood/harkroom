@@ -142,6 +142,7 @@ fn cfg(tag: &str) -> (MakerConfig, Root) {
         claim_holder: "holder-1".into(),
         can_register_turn_keys: true,
         pty_record_dir: None,
+        codex: None,
     };
     (c, Root(root))
 }
@@ -585,4 +586,30 @@ fn harness_comes_from_this_mentions_definition_without_default() {
             .expect("패닉해야 한다");
         assert!(!msg.contains("evil"), "값을 싣지 않는다: {msg}");
     }
+}
+
+/// c1: 기동 때 정한 codex 격리 홈이 턴 부품까지 간다 — 빠지면 codex 턴은 `codex_home_missing` 으로 안 뜬다(사람 홈으로는 안 간다).
+#[test]
+fn codex_home_reaches_turn_parts() {
+    let (mut m, _l, root) = maker("codex-home");
+    let t = target(1, None, "h");
+    let parts_home = |m: &RunnerMaker<&'static Link>| {
+        let clients = m.clients();
+        let book = LeaseBook::default();
+        let mut reads = read_mention(&clients, &t).unwrap();
+        reads.def["harness"] = json!("codex");
+        let ctx = <RunnerMaker<_> as CallMaker<_, Sink>>::system_context(m, &t, &reads);
+        let system = system_inputs(&reads, &t, ctx);
+        let i: CallInputs<'_, _, Sink> = m.call_inputs(&clients, &book, &t, reads, system);
+        let parts = (i.build_parts)(bundle(m));
+        (parts.codex_home.clone(), parts.codex_prep.is_some())
+    };
+    assert_eq!(parts_home(&m), (None, false), "정하지 않으면 없다");
+    let home = root.0.join("state/codex-home");
+    m.set_codex(crate::codex_prep::CodexPrep {
+        home: home.clone(),
+        sync_auth: true,
+        env: Default::default(),
+    });
+    assert_eq!(parts_home(&m), (Some(home), true));
 }
