@@ -364,6 +364,8 @@ struct Current {
     /// 이 시도에 실은 스레드 계획판·메모 — 성공한 턴 뒤 `commit`.
     plan_pin: crate::thread_plan_pin::ThreadPlanPlan,
     note_pin: crate::thread_note_pin::ThreadNotePlan,
+    /// 이 시도에 실은 하네스 메모리 알림(없으면 그 하네스는 자리를 모른다) — 성공한 턴 뒤 `commit`.
+    harness_notice: Option<crate::harness_memory::HarnessMemoryNotice>,
 }
 
 /// 멘션마다 바뀌는 명령 칸의 소유본(지시문 입력에 없는 것). 띄울 때 [`with_argv`] 가 명령 옵션에 빌려 싣는다.
@@ -548,6 +550,7 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
     ) -> (
         crate::thread_plan_pin::ThreadPlanPlan,
         crate::thread_note_pin::ThreadNotePlan,
+        crate::thread_plan_pin::ThreadPlanState,
     ) {
         use crate::thread_note_pin::ThreadNoteState;
         use crate::thread_plan_pin::ThreadPlanState;
@@ -608,6 +611,47 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
                 s.is_first_turn,
                 &note,
             ),
+            plan,
+        )
+    }
+
+    /// 부른 글이 가리키는 계획 단계를 펼친다(정본 `planRefLines`) — 이 스레드의 계획판은 이미 받은 판을, 다른 스레드는
+    /// 뿌리마다 한 번 읽는다(같은 채널만). 고정이 없다 — 부른 글마다 싣는다.
+    fn plan_ref_lines_for(
+        &self,
+        prepared: &Prepared,
+        target: &MentionTarget,
+        anchor_plan: &crate::thread_plan_pin::ThreadPlanState,
+    ) -> Vec<String> {
+        let body = prepared
+            .fed
+            .thread
+            .iter()
+            .find(|m| {
+                m.get("id").and_then(serde_json::Value::as_str) == Some(target.mention_id.as_str())
+            })
+            .and_then(|m| m.get("body").and_then(serde_json::Value::as_str))
+            .unwrap_or("");
+        let anchor = Some(target.thread_root_id.as_str()).filter(|a| !a.is_empty());
+        let read = self.read_plan.as_ref().map(|f| {
+            move |root: &str| -> Result<Option<crate::thread_plan_pin::ThreadPlanSnapshot>, String> {
+                match f(root)? {
+                    // 모양 오류 원문에는 남이 쓴 계획판 글자가 섞일 수 있다 — 종류만(#2114 nit 와 같은 선).
+                    Some(v) => serde_json::from_value(v)
+                        .map(Some)
+                        .map_err(|_| "계획판 모양이 틀렸다".to_string()),
+                    None => Ok(None),
+                }
+            }
+        });
+        crate::thread_plan_pin::plan_ref_lines(
+            body,
+            anchor,
+            anchor_plan,
+            &target.channel_id,
+            read.as_ref()
+                .map(|r| r as crate::thread_plan_pin::ReadPlan<'_>),
+            &self.me_id,
         )
     }
 
@@ -718,9 +762,30 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
         let memory = self.plan_memory_for(&prepared, target);
         // 스레드 계획판·메모(정본 `planThreadPlan`·`planThreadNote`) — 새 세션 전문, 이어받으면 바뀐 때만. 앞머리 차례는
         // 정본과 같다: 기억 → 계획판 → 메모.
-        let (plan_pin, note_pin) = self.plan_thread_pins_for(&prepared, target);
+        let (plan_pin, note_pin, plan_state) = self.plan_thread_pins_for(&prepared, target);
+        let plan_refs = self.plan_ref_lines_for(&prepared, target, &plan_state);
+        // 하네스 파일 메모리 수확 알림(정본 U5 `planHarnessMemoryNotice`) — 그 자리를 아는 하네스만(claude). 깨움 세션은 싣지 않는다.
+        let harness_notice = match crate::adapter::file_memory_dir_under_config(self.harness) {
+            Some(root) if !prepared.session.fresh_wake => {
+                let dir = crate::harness_memory::claude_memory_dir(
+                    acc.config_dir.as_deref(),
+                    &self.home,
+                    &prepared.session.rec.workspace_dir,
+                    root,
+                );
+                Some(crate::harness_memory::plan_harness_memory_notice(
+                    &self.state_dir,
+                    &self.key,
+                    &crate::harness_memory::scan_harness_memory(&dir),
+                ))
+            }
+            _ => None,
+        };
+        let empty: Vec<String> = Vec::new();
+        let notice_lines = harness_notice.as_ref().map_or(&empty, |n| &n.lines);
         let mut head: Vec<String> = memory.turn_lines.clone();
-        for lines in [&plan_pin.lines, &note_pin.lines] {
+        // 앞머리 차례는 정본과 같다: 기억 → 계획판 → 계획 단계 펼치기 → 메모 → 하네스 메모리 알림.
+        for lines in [&plan_pin.lines, &plan_refs, &note_pin.lines, notice_lines] {
             if !lines.is_empty() {
                 head.push(String::new());
                 head.extend(lines.iter().cloned());
@@ -763,6 +828,7 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             memory,
             plan_pin,
             note_pin,
+            harness_notice,
         });
         Ok(AttemptPrep {
             key: self.key.clone(),
@@ -1002,6 +1068,9 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
                 c.memory.commit(ctx.session_id.as_deref());
                 c.plan_pin.commit(ctx.session_id.as_deref());
                 c.note_pin.commit(ctx.session_id.as_deref());
+                if let Some(n) = &c.harness_notice {
+                    n.commit();
+                }
             }
             if !c.memory.recalled.is_empty()
                 && let Some(f) = &self.record_recall
