@@ -85,6 +85,8 @@ struct Parts {
     pty: Option<Arc<RelayPty>>,
     /// 띄울 때 받은 감시용 가림 목록에 마운트한 비밀·PAT 가 있었나.
     spawn_notice: Vec<bool>,
+    /// lane 판정 재료(없으면 lane 턴은 `lane_setup` 으로 접힌다).
+    lane_pre: Option<LanePre>,
 }
 
 const SECRET: &str = "sk-live-rrrrrrrrrrrrrrrrrrrrrrrrrr";
@@ -138,6 +140,7 @@ impl AttemptParts for Parts {
             lease_dir: Some(self.lease.clone()),
             session_id: None,
             homes: OwnedHomes::default(),
+            lane_pre: self.lane_pre.clone(),
         })
     }
 
@@ -205,6 +208,13 @@ impl AttemptParts for Parts {
                 message: "blocked".into(),
                 ..AttemptError::default()
             }),
+            Attempted::SetupFailed { code, .. } => {
+                push(&self.log, format!("setup_failed {code}"));
+                Err(AttemptError {
+                    message: "setup".into(),
+                    ..AttemptError::default()
+                })
+            }
             _ => Err(AttemptError {
                 message: "fail".into(),
                 ..AttemptError::default()
@@ -223,6 +233,9 @@ struct World {
     mcp: PathBuf,
     lease: PathBuf,
     env: BTreeMap<String, String>,
+    /// lane 판정의 `~` 와 그 아래 작업 폴더.
+    home: PathBuf,
+    ws: PathBuf,
 }
 
 impl Drop for World {
@@ -242,7 +255,12 @@ fn world(tag: &str) -> World {
             .to_string(),
     )
     .unwrap();
+    let home = root.join("home");
+    let ws = home.join("ws");
+    fs::create_dir_all(&ws).unwrap();
     World {
+        home,
+        ws,
         lease: root.join("lease"),
         root,
         mcp,
@@ -266,6 +284,12 @@ fn parts(w: &World, log: &Log, secrets: bool, exits: Vec<i32>) -> Parts {
         probe_on_unbind: None,
         pty: None,
         spawn_notice: Vec::new(),
+        lane_pre: Some(LanePre {
+            model: None,
+            workspace_dir: w.ws.clone(),
+            home: w.home.clone(),
+            turn_pi_home: None,
+        }),
     }
 }
 
@@ -678,6 +702,67 @@ fn lane_env_comes_before_plan_and_is_released_after() {
         ]
     );
     assert_eq!(a.parts.borrow().lane_envs, [Some("on".to_string())]);
+}
+
+/// lane 판정(키 받기 전)이 막으면 env 를 받지 않고 계획·띄우기도 없이 그 코드로 접는다 — 작업 폴더 보호 이름, 재료 빠짐.
+#[test]
+fn lane_preflight_refuses_before_keys() {
+    for (tag, protect, pre) in [("laneprot", true, true), ("lanenopre", false, false)] {
+        let w = world(tag);
+        if protect {
+            fs::write(w.ws.join("CLAUDE.md"), "x").unwrap();
+        }
+        let log: Log = Log::default();
+        let link = Link(Arc::clone(&log));
+        let client = HarkroomRestClient::new(&link);
+        let notice = Notice {
+            log: Arc::clone(&log),
+            lease: w.lease.clone(),
+        };
+        let lane = FakeLane(Arc::clone(&log));
+        let mut p = parts(&w, &log, false, vec![0]);
+        if !pre {
+            p.lane_pre = None;
+        }
+        let mut a = attempt(&w, &client, &notice, true, p).with_lane(&lane);
+        let mut d = false;
+        assert!(a.run(&target(), None, true, &mut d).is_err());
+        let want = if protect {
+            "workspace_protected"
+        } else {
+            "lane_setup"
+        };
+        assert_eq!(
+            *log.lock().unwrap(),
+            [
+                "bind".to_string(),
+                "prepare t-1 -".into(),
+                "outcome".into(),
+                format!("setup_failed {want}"),
+                "unbind".into(),
+            ],
+            "{tag}"
+        );
+        assert!(a.parts.borrow().lane_envs.is_empty());
+    }
+}
+
+/// lane 이 아닌 턴은 판정 재료가 없어도 그대로 돈다.
+#[test]
+fn non_lane_attempt_ignores_missing_lane_pre() {
+    let w = world("nolanepre");
+    let log: Log = Log::default();
+    let link = Link(Arc::clone(&log));
+    let client = HarkroomRestClient::new(&link);
+    let notice = Notice {
+        log: Arc::clone(&log),
+        lease: w.lease.clone(),
+    };
+    let mut p = parts(&w, &log, false, vec![0]);
+    p.lane_pre = None;
+    let mut a = attempt(&w, &client, &notice, true, p);
+    let mut d = false;
+    assert!(a.run(&target(), None, true, &mut d).is_ok());
 }
 
 /// 관문이 막은 시도는 lane env 를 받지 않고 띄우지도 않는다.

@@ -819,6 +819,17 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             self.codex_home.as_deref(),
         );
         let session_id = prepared.session.rec.session_id.clone();
+        // lane 턴의 키 받기 전 판정 재료 — 시도 경로가 lane 일 때만 쓴다. pi 스레드 홈은 Rust 러너가 아직 짓지 않는다(None).
+        let lane_pre = Some(crate::turn_attempt_run::LanePre {
+            model: self
+                .argv
+                .model
+                .clone()
+                .or_else(|| self.base.model.map(str::to_string)),
+            workspace_dir: PathBuf::from(&prepared.session.rec.workspace_dir),
+            home: self.home.clone(),
+            turn_pi_home: None,
+        });
         self.prompt_file = Some(file.clone());
         self.cur = Some(Current {
             account: acc,
@@ -840,6 +851,7 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
                 .or_else(|| self.lease_dir_of.as_ref().and_then(|f| f())),
             session_id,
             homes: OwnedHomes { ..homes },
+            lane_pre,
         })
     }
 

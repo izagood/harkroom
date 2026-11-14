@@ -29,6 +29,7 @@ use crate::turn_attempt::{AttemptInput, Attempted, LeaseNotice, TurnSecrets};
 use crate::turn_attempt_live::LiveTurn;
 use crate::turn_attempt_relay::RelayAttempt;
 use crate::turn_env::TurnKeys as EnvTurnKeys;
+use crate::turn_env_plan::{LanePreflight, lane_preflight};
 use crate::turn_lane_first::{LaneFirstError, LaneSource, OnceLease, mount_lane_first};
 use crate::turn_launch::LaunchStep;
 use crate::turn_launch::TranscriptHomes;
@@ -75,6 +76,20 @@ pub struct AttemptPrep {
     pub lease_dir: Option<PathBuf>,
     pub session_id: Option<String>,
     pub homes: OwnedHomes,
+    /// lane 턴의 키 받기 전 판정 재료([`lane_preflight`]). lane 턴인데 `None` 이면 배선 빠짐 — 받지 않고 `lane_setup` 으로 접는다.
+    pub lane_pre: Option<LanePre>,
+}
+
+/// [`lane_preflight`] 의 소유본 재료 — `prepare` 가 이 시도의 세션·명령 칸에서 낸다.
+#[derive(Clone, Debug, Default)]
+pub struct LanePre {
+    /// 이 턴의 모델(명령 칸 `model`).
+    pub model: Option<String>,
+    pub workspace_dir: PathBuf,
+    /// 부모 사슬 검사의 끝(`~`).
+    pub home: PathBuf,
+    /// pi lane 턴의 스레드 홈. pi 가 아니거나 아직 모르면 `None`.
+    pub turn_pi_home: Option<PathBuf>,
 }
 
 /// [`AttemptParts::spawn`] 이 이 시도에서 받는 것.
@@ -224,6 +239,30 @@ impl<P: AttemptParts> Drop for LiveBinding<'_, P> {
 }
 
 impl<L: RunnerLink, N: LeaseNotice, P: AttemptParts> PtyTurnAttempt<'_, L, N, P> {
+    /// lane 턴의 키 받기 전 판정. 재료가 없으면 닫히는 쪽(`lane_setup`)이다.
+    fn lane_check(&self, prep: &AttemptPrep) -> Result<(), String> {
+        let Some(p) = prep.lane_pre.as_ref() else {
+            eprintln!(
+                "[mentionTurn] {}: API 키 연결 턴인데 판정 재료가 없다 — 키를 받지 않는다",
+                prep.key
+            );
+            return Err(crate::provider_lane::ProviderLaneError::new("lane_setup")
+                .code()
+                .to_string());
+        };
+        lane_preflight(&LanePreflight {
+            key: &prep.key,
+            harness: self.harness,
+            provider_lane: true,
+            model: p.model.as_deref(),
+            workspace_dir: &p.workspace_dir,
+            state_dir: self.state_dir,
+            home: &p.home,
+            turn_pi_home: p.turn_pi_home.as_deref(),
+        })
+        .map_err(|e| e.code().to_string())
+    }
+
     #[allow(clippy::result_large_err)]
     fn attempt(&self, c: AttemptCtx<'_>, delivered: &mut bool) -> Result<TurnOk, AttemptError> {
         let AttemptCtx {
@@ -245,6 +284,15 @@ impl<L: RunnerLink, N: LeaseNotice, P: AttemptParts> PtyTurnAttempt<'_, L, N, P>
         let lane_hold = match self.lane {
             None => None,
             Some(l) => {
+                // 키를 받기 **전에** 모델·작업 폴더 보호 이름·pi 홈 로그인을 잰다(정본 `mentionTurn.ts` 차례). 막히면 받지 않는다.
+                if let Err(code) = self.lane_check(&prep) {
+                    let attempted = Attempted::SetupFailed {
+                        step: LaunchStep::LaneKeys,
+                        code,
+                    };
+                    let s = TurnSecrets::build(self.pat, &[], None);
+                    return parts.borrow_mut().outcome(attempted, &s, live);
+                }
                 match mount_lane_first(l, &lease_once, &prep.cause, self.harness, &mut || {
                     live.gate()
                 }) {
