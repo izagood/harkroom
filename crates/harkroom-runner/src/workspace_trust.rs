@@ -428,8 +428,44 @@ pub fn prepare_harness_gates(
     let codex = codex_home
         .map(Path::to_path_buf)
         .unwrap_or_else(|| home.join(".codex"));
+    // 신뢰는 사람의 실제 설정에도 적힌다 — 작업 폴더(또는 그 실제 경로)가 루트·집·집의 상위면 그 넓은 자리를 신뢰로 열게
+    // 되므로 **두 키 모두** 적지 않는다(띄우기 검사보다 먼저 돈다, T4b security 막음 1).
+    if trust_too_wide(Path::new(workspace_dir), home) {
+        eprintln!(
+            "[workspaceTrust] 작업 폴더가 루트·집·집의 상위라 신뢰를 적지 않는다(턴은 계속한다 — 띄우기 검사가 거른다)"
+        );
+        ensure_bypass_accepted(harness.as_str(), claude_config_dir, home);
+        return;
+    }
     ensure_workspace_trusted_via_adapter(harness, workspace_dir, claude_config_dir, &codex, home);
+    // 하네스는 작업 폴더를 **실제 경로**로 풀어 신뢰를 찾는다(macOS `/tmp` → `/private/tmp`, 심링크가 섞인 집 등) — 풀린 경로가
+    // 다르면 그 키로도 적는다(같은 폴더 하나, 새 폴더를 열지 않는다). 못 풀면 적어 둔 키 하나로 둔다.
+    if let Some(real) = real_path_if_different(workspace_dir) {
+        ensure_workspace_trusted_via_adapter(harness, &real, claude_config_dir, &codex, home);
+    }
     ensure_bypass_accepted(harness.as_str(), claude_config_dir, home);
+}
+
+/// 신뢰로 열기엔 너무 넓은 자리인가 — 그 경로나 실제 경로가 루트이거나, 집(그 실제 경로 포함)이거나 집의 상위.
+pub fn trust_too_wide(workspace_dir: &Path, home: &Path) -> bool {
+    let mut paths = vec![workspace_dir.to_path_buf()];
+    if let Ok(real) = std::fs::canonicalize(workspace_dir) {
+        paths.push(real);
+    }
+    let mut homes = vec![home.to_path_buf()];
+    if let Ok(real) = std::fs::canonicalize(home) {
+        homes.push(real);
+    }
+    paths
+        .iter()
+        .any(|p| p.parent().is_none() || homes.iter().any(|h| h.starts_with(p)))
+}
+
+/// 작업 폴더의 실제 경로 — 적어 둔 경로와 다를 때만(같거나 못 풀면 `None`).
+pub fn real_path_if_different(workspace_dir: &str) -> Option<String> {
+    let real = std::fs::canonicalize(workspace_dir).ok()?;
+    let real = real.to_str()?.to_string();
+    (real != workspace_dir).then_some(real)
 }
 
 /// TS `ensureWorkspaceTrusted` — 이 턴의 워크스페이스를 하네스가 신뢰하게 한다. **PTY 를 띄우기 전에** 부른다.

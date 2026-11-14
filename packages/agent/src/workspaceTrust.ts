@@ -14,9 +14,9 @@
 // `mentionPermission: 'auto'` 에이전트는 이미 그 안에서 무엇이든 실행할 수 있다(스펙 §6 이
 // 그렇게 정했다). 즉 훅을 심어 실행하는 길은 이미 있는 길보다 넓지 않다. 신뢰가 정하는
 // 것은 "이 디렉터리를 작업 대상으로 인정하는가"이고, 러너가 그것을 만들었다는 사실이 곧 답이다.
-import { lstat, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, realpath, rename, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, isAbsolute, join, parse, relative, resolve } from 'node:path';
 
 import { markClaudeAccountGates } from '@harkroom/shared/claudeGates';
 
@@ -376,6 +376,20 @@ async function trustViaAdapter(opts: {
   else await trustForCodex(opts.workspaceDir, path);
 }
 
+/** 신뢰로 열기엔 너무 넓은 자리인가 — 그 경로나 실제 경로가 루트이거나, 집(실제 경로 포함)이거나 집의 상위. */
+export async function trustTooWide(workspaceDir: string, home: string): Promise<boolean> {
+  const paths = [resolve(workspaceDir)];
+  const realWs = await realpath(workspaceDir).catch(() => null);
+  if (realWs !== null) paths.push(realWs);
+  const homes = [resolve(home)];
+  const realHome = await realpath(home).catch(() => null);
+  if (realHome !== null) homes.push(realHome);
+  return paths.some((p) => parse(p).root === p || homes.some((h) => {
+    const rel = relative(p, h);
+    return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+  }));
+}
+
 /**
  * 이 턴이 쓸 워크스페이스를 하네스가 신뢰하게 한다. **PTY 를 띄우기 전에 부른다** —
  * 뜬 뒤에 적으면 그 턴은 이미 대화상자를 만난 뒤다.
@@ -391,7 +405,17 @@ export async function ensureWorkspaceTrusted(opts: {
   try {
     // **장부는 어댑터 표가 말한다.** 하네스 이름으로 갈리던 옛 분기는 지웠다(2026-09-18) —
     // 그 둘이 같은 답을 낸다는 것을 패리티 테스트가 증명했고, 기본 경로로 며칠 돌았다.
+    // 신뢰는 사람의 실제 설정에도 적힌다 — 작업 폴더(또는 그 실제 경로)가 루트·집·집의 상위면 그 넓은 자리를 신뢰로
+    // 열게 되므로 **두 키 모두** 적지 않는다(T4b security 막음 1).
+    if (await trustTooWide(opts.workspaceDir, opts.home ?? homedir())) {
+      console.error('[workspaceTrust] 작업 폴더가 루트·집·집의 상위라 신뢰를 적지 않는다(턴은 계속한다)');
+      return;
+    }
     await trustViaAdapter(opts);
+    // 하네스는 작업 폴더를 **실제 경로**로 풀어 신뢰를 찾는다(macOS `/tmp` → `/private/tmp`, 심링크가 섞인 집 등, 2026-11-14
+    // 실측) — 풀린 경로가 다르면 그 키로도 적는다. 같은 폴더 하나이고 새 폴더를 열지 않는다. 못 풀면 적어 둔 키 하나로 둔다.
+    const real = await realpath(opts.workspaceDir).catch(() => null);
+    if (real !== null && real !== opts.workspaceDir) await trustViaAdapter({ ...opts, workspaceDir: real });
   } catch (err) {
     // 위 주석의 이유로 삼킨다 — 다만 조용히는 아니다.
     console.error(

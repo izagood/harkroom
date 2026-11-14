@@ -485,3 +485,75 @@ fn prepare_gates_skip_relative_paths() {
     assert!(d.join(".claude.json").exists());
     assert!(!d.join(".claude").join(".claude.json").exists());
 }
+
+/// T4b: 작업 폴더 경로에 심링크가 섞이면(macOS `/tmp` → `/private/tmp` 등) 하네스가 찾는 실제 경로 키로도 신뢰를 적는다 —
+/// 같은 폴더 하나뿐(두 키), 다른 폴더는 열지 않는다.
+#[test]
+fn prepare_gates_trust_real_path_too() {
+    let d = tmp("realpath");
+    let real_parent = d.join("real");
+    fs::create_dir_all(real_parent.join("ws")).unwrap();
+    std::os::unix::fs::symlink(&real_parent, d.join("link")).unwrap();
+    let home = d.join("home");
+    fs::create_dir_all(&home).unwrap();
+    let via_link = d.join("link").join("ws");
+    let real = fs::canonicalize(&via_link).unwrap();
+    assert_ne!(via_link, real);
+    prepare_harness_gates(
+        crate::adapter::AgentHarness::ClaudeCode,
+        via_link.to_str().unwrap(),
+        None,
+        None,
+        &home,
+    );
+    let doc = json(&home.join(".claude.json"));
+    let projects = doc["projects"].as_object().unwrap();
+    assert_eq!(projects.len(), 2, "{projects:?}");
+    assert_eq!(
+        projects[via_link.to_str().unwrap()]["hasTrustDialogAccepted"],
+        true
+    );
+    assert_eq!(
+        projects[real.to_str().unwrap()]["hasTrustDialogAccepted"],
+        true
+    );
+    assert_eq!(
+        real_path_if_different(real.to_str().unwrap()),
+        None,
+        "이미 실제 경로면 한 키"
+    );
+    let _ = fs::remove_dir_all(&d);
+}
+
+/// T4b(security 막음 1): 작업 폴더가 루트·집·집의 상위를 가리키는 링크면(또는 그 자체면) 키를 하나도 적지 않는다.
+#[test]
+fn prepare_gates_refuse_root_and_home_links() {
+    let d = tmp("wide");
+    let home = d.join("home");
+    fs::create_dir_all(&home).unwrap();
+    std::os::unix::fs::symlink("/", d.join("to-root")).unwrap();
+    std::os::unix::fs::symlink(&home, d.join("to-home")).unwrap();
+    std::os::unix::fs::symlink(&d, d.join("to-home-parent")).unwrap();
+    for ws in [
+        d.join("to-root"),
+        d.join("to-home"),
+        d.join("to-home-parent"),
+        home.clone(),
+    ] {
+        prepare_harness_gates(
+            crate::adapter::AgentHarness::ClaudeCode,
+            ws.to_str().unwrap(),
+            None,
+            None,
+            &home,
+        );
+        let ledger = home.join(".claude.json");
+        let n = if ledger.exists() {
+            json(&ledger)["projects"].as_object().map_or(0, |m| m.len())
+        } else {
+            0
+        };
+        assert_eq!(n, 0, "{ws:?}");
+    }
+    let _ = fs::remove_dir_all(&d);
+}
