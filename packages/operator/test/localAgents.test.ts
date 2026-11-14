@@ -37,6 +37,24 @@ describe('localAgents', () => {
     await port.setProviderLane('https://example.com', 'a-1', null);
     expect((await port.list()).communities[0]!.agents['a-1']).toEqual({ workingDir: '~/y' });
   });
+  it('runner(B4-5a)는 set 으로 바뀌지 않고 옮겨진다 — 아는 값만 옮기고 모르는 값은 버린다', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'op-local-'));
+    const configPath = join(dir, 'operator.json');
+    const port = createLocalAgentsPort({ configPath, secrets: secretsWith([]), dataDir: dir, onChanged: () => {}, onRegistered: async () => {} });
+    // 손으로 켠 파일: a-1 은 rust, a-2 는 node, a-3 은 오타.
+    await writeConfig(configPath, { communities: { 'https://example.com': { agents: {
+      'a-1': { workingDir: '~/x', runner: 'rust' },
+      'a-2': { runner: 'node' },
+      'a-3': { runner: 'Rust' as never },
+    } } } });
+    await port.set('https://example.com', 'a-1', { workingDir: '~/y' });
+    await port.set('https://example.com', 'a-2', { claudePool: 'p' });
+    await port.set('https://example.com', 'a-3', { workingDir: '~/z' });
+    const agents = (await port.list()).communities[0]!.agents;
+    expect(agents['a-1']).toEqual({ workingDir: '~/y', runner: 'rust' });
+    expect(agents['a-2']).toEqual({ claudePool: 'p', runner: 'node' });
+    expect(agents['a-3']).toEqual({ workingDir: '~/z' });
+  });
   it('목록에 마지막 키 받기 결과를 싣는다 — 비어 있으면 칸이 없다', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'op-local-'));
     let status: Record<string, { at: string; ok: boolean }> = {};

@@ -294,6 +294,10 @@ impl LocalAgents {
             if let Some(l) = lane {
                 entry.insert("providerLane".into(), l);
             }
+            // runner 도 이 길로 바뀌지 않는다(B4-5a, TS `knownRunner`) — 아는 값만 옮기고 모르는 값은 버린다.
+            if let Some(k) = known_runner(agents.get(agent_id)) {
+                entry.insert("runner".into(), Value::String(k.as_str().into()));
+            }
             agents.insert(agent_id.to_string(), Value::Object(entry));
             Ok(true)
         })
@@ -387,6 +391,40 @@ fn agents_of<'a>(
         section.insert("agents".into(), json!({}));
     }
     section.get_mut("agents")?.as_object_mut()
+}
+
+/// 에이전트의 러너 구현(B4-5a, TS `RunnerKind`). 기본은 `Node` 다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunnerKind {
+    Node,
+    Rust,
+}
+
+impl RunnerKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RunnerKind::Node => "node",
+            RunnerKind::Rust => "rust",
+        }
+    }
+}
+
+/// TS `runnerKindOf` — 에이전트 항목의 `runner` 가 정확히 `"rust"` 일 때만 `Rust`, 항목·칸이 없거나 모르는 값이면 `Node`.
+/// 손으로 고친 파일의 오타가 새 길을 켜지 않게 켜는 쪽만 좁게 받는다. 오퍼레이터가 이것으로 러너를 고르는 것은 B4-5c 다.
+pub fn runner_kind_of(entry: Option<&Value>) -> RunnerKind {
+    match entry.and_then(|e| e.get("runner")).and_then(Value::as_str) {
+        Some("rust") => RunnerKind::Rust,
+        _ => RunnerKind::Node,
+    }
+}
+
+/// TS `knownRunner` — 파일에 이미 적힌 `runner` 중 옮겨 적을 값(아는 두 값만).
+fn known_runner(entry: Option<&Value>) -> Option<RunnerKind> {
+    match entry.and_then(|e| e.get("runner")).and_then(Value::as_str) {
+        Some("rust") => Some(RunnerKind::Rust),
+        Some("node") => Some(RunnerKind::Node),
+        _ => None,
+    }
 }
 
 /// `operatorAgentSet` 의 `config`(TS `OperatorLocalAgent` 중 이 길로 바뀌는 둘).
@@ -682,6 +720,62 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let mode = fs::metadata(la.config_path()).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
+    }
+
+    #[test]
+    fn runner_kind_is_rust_only_for_exact_rust() {
+        assert_eq!(
+            runner_kind_of(Some(&json!({"runner":"rust"}))),
+            RunnerKind::Rust
+        );
+        assert_eq!(runner_kind_of(None), RunnerKind::Node);
+        assert_eq!(runner_kind_of(Some(&json!({}))), RunnerKind::Node);
+        assert_eq!(
+            runner_kind_of(Some(&json!({"runner":"node"}))),
+            RunnerKind::Node
+        );
+        for v in [
+            json!("Rust"),
+            json!("RUST"),
+            json!(" rust"),
+            json!("rs"),
+            json!(""),
+            json!(1),
+            json!(true),
+            json!(null),
+            json!(["rust"]),
+            json!({"kind":"rust"}),
+        ] {
+            assert_eq!(
+                runner_kind_of(Some(&json!({ "runner": v }))),
+                RunnerKind::Node,
+                "{v}"
+            );
+        }
+    }
+
+    #[test]
+    fn set_carries_known_runner_and_drops_unknown() {
+        let r = root();
+        let la = LocalAgents::new(&r, URL);
+        fs::create_dir_all(Path::new(&r).join("operator")).unwrap();
+        fs::write(
+            la.config_path(),
+            r#"{"communities":{"https://a.example.com/":{"agents":{"a":{"runner":"rust"},"b":{"runner":"node"},"c":{"runner":"Rust"}}}}}"#,
+        )
+        .unwrap();
+        let w = AgentSetConfig {
+            working_dir: Some("/w".into()),
+            claude_pool: None,
+        };
+        for id in ["a", "b", "c"] {
+            la.set("https://a.example.com/", id, &w).unwrap();
+        }
+        let v = read(&la);
+        let agents = &v["communities"]["https://a.example.com/"]["agents"];
+        assert_eq!(agents["a"], json!({"workingDir":"/w","runner":"rust"}));
+        assert_eq!(agents["b"], json!({"workingDir":"/w","runner":"node"}));
+        assert_eq!(agents["c"], json!({"workingDir":"/w"}));
     }
 
     #[test]
