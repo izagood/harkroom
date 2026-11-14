@@ -1046,6 +1046,8 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
         cmd.gate_file = markers.gate.as_deref();
         cmd.mcp_ready_file = markers.mcp_ready.as_deref();
         cmd.codex_hook_spec = codex_rules.as_ref().and_then(|(_, s)| s.as_deref());
+        // opencode 턴 설정(다리 열쇠 자리, 정본 `turnConfigFile`) — 계획이 지은 파일을 명령에 싣는다. 빠지면 열쇠 턴은 조립에서 안 뜬다.
+        cmd.opencode_turn_config = args.opencode_turn_config;
         // PTY 옵션은 **이 시도의 값으로** 채운다(정본 `mentionTurn.ts` 의 `deps.runTurn(plan, {...})`) — 기본값(`/`·주입 없음)으로
         // 하네스가 뜨는 길을 남기지 않는다. 작업 폴더가 비었거나 상대 경로면 띄우지 않는다.
         let mut opts = attempt_pty_options(
