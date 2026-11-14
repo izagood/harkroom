@@ -20,13 +20,15 @@ fn lazy_pool() -> sqlx::PgPool {
         .unwrap()
 }
 
-async fn core_front() -> (String, Arc<Core>, Hub) {
+/// `send_timeout` — 쓰기 시한. 1013 시험은 길게 준다: 닫기 프레임도 가득 찬 TCP 버퍼 뒤에 서므로, 시한이 짧으면
+/// 클라이언트가 읽기 시작하기 전에 일꾼이 소켓을 버려 1013 대신 그냥 끊김이 온다(CI 에서 그렇게 빨갰다).
+async fn core_front(send_timeout: Duration) -> (String, Arc<Core>, Hub) {
     let hub = Hub::new();
     let timing = Timing {
         heartbeat: Duration::from_secs(3600),
         app_heartbeat: Duration::from_secs(3600),
         revalidate: Duration::from_secs(3600),
-        send_timeout: Duration::from_millis(500),
+        send_timeout,
     };
     let core = Core::new(lazy_pool(), hub.clone(), None, timing);
     let auth = harkroom_server::auth::AuthPools {
@@ -48,7 +50,7 @@ fn ticket(core: &Core) -> String {
 
 #[tokio::test]
 async fn a_client_that_does_not_read_is_closed_with_1013() {
-    let (base, core, hub) = core_front().await;
+    let (base, core, hub) = core_front(Duration::from_secs(60)).await;
     let (mut client, _) =
         tokio_tungstenite::connect_async(format!("{base}/ws?ticket={}", ticket(&core)))
             .await
@@ -88,7 +90,7 @@ async fn a_client_that_does_not_read_is_closed_with_1013() {
 
 #[tokio::test]
 async fn an_oversized_inbound_frame_ends_the_connection() {
-    let (base, core, _hub) = core_front().await;
+    let (base, core, _hub) = core_front(Duration::from_millis(500)).await;
     let (mut client, _) =
         tokio_tungstenite::connect_async(format!("{base}/ws?ticket={}", ticket(&core)))
             .await
@@ -118,7 +120,7 @@ async fn an_oversized_inbound_frame_ends_the_connection() {
 
 #[tokio::test]
 async fn a_client_that_never_reads_does_not_pin_the_socket_worker() {
-    let (base, core, hub) = core_front().await;
+    let (base, core, hub) = core_front(Duration::from_millis(500)).await;
     let (mut client, _) =
         tokio_tungstenite::connect_async(format!("{base}/ws?ticket={}", ticket(&core)))
             .await
