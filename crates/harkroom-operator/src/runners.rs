@@ -36,6 +36,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub struct RunnerLaunch {
     pub command: String,
     pub args: Vec<String>,
+    /// Rust 러너 사이드카의 절대 경로(B4-5c) — 오퍼레이터 실행 파일 옆 고정 이름(`serve.rs`). 없으면 모든 러너가 node 다.
+    pub rust_command: Option<String>,
 }
 
 /// `Debug` 는 손으로 쓴다 — `link_secret` 이 `{:?}` 로 새지 않게(장부 줄과 같은 이유).
@@ -46,6 +48,10 @@ pub struct RunnerRecord {
     pub incarnation_id: String,
     pub started_at_ms: i64,
     pub term_sent_at_ms: Option<i64>,
+    /// 이 러너를 띄운 구현(B4-5c). 채택한 러너는 모른다(`None`).
+    pub runner_impl: Option<crate::local_agents::RunnerKind>,
+    /// `rust` 를 청했는데 node 로 떨어뜨린 이유(`runner_pick.rs`).
+    pub runner_fallback: Option<crate::runner_pick::RunnerFallback>,
     /// 커널 시작 시각(초). 못 읽었으면 None — 그러면 다음 오퍼레이터가 채택하지 않는다(`adopt.rs`).
     pub boot_time_sec: Option<i64>,
     /// 러너 링크 secret(`HARKROOM_RUNNER_SECRET`). 장부에 실려 다음 오퍼레이터가 채택한 러너의 링크를 다시 받는다.
@@ -70,6 +76,8 @@ impl std::fmt::Debug for RunnerRecord {
                 &self.link_secret.as_ref().map(|_| "<redacted>"),
             )
             .field("adopted", &self.adopted)
+            .field("runner_impl", &self.runner_impl)
+            .field("runner_fallback", &self.runner_fallback)
             .field("log_path", &self.log_path)
             .finish()
     }
@@ -259,8 +267,9 @@ fn runner_command(
     launch: &RunnerLaunch,
     env: &[(String, String)],
     log: Option<&std::fs::File>,
+    kind: crate::local_agents::RunnerKind,
 ) -> Command {
-    let mut cmd = Command::new(&launch.command);
+    let mut cmd = Command::new(program_for(launch, kind));
     cmd.args(&launch.args);
     for k in COORDINATOR_OWNED_ENV {
         cmd.env_remove(k);
@@ -274,6 +283,14 @@ fn runner_command(
         _ => cmd.stdout(Stdio::null()).stderr(Stdio::null()),
     };
     cmd
+}
+
+/// 띄울 프로그램 — `Rust` 이고 `rust_command` 가 있을 때만 Rust 러너, 아니면 node 러너(B4-5c).
+fn program_for(launch: &RunnerLaunch, kind: crate::local_agents::RunnerKind) -> &str {
+    match (&launch.rust_command, kind) {
+        (Some(rs), crate::local_agents::RunnerKind::Rust) => rs,
+        _ => &launch.command,
+    }
 }
 
 impl RunnerTable {
@@ -462,8 +479,24 @@ impl RunnerTable {
         env: &[(String, String)],
         runner_id: Option<&str>,
     ) -> Result<SpawnOutcome, String> {
+        self.spawn_runner_with(
+            agent_id,
+            env,
+            runner_id,
+            crate::runner_pick::RunnerPick::NODE,
+        )
+    }
+
+    /// `spawn_runner` + 고른 러너 구현(B4-5c, 배정 조정기가 `runner_pick` 으로 정한 값).
+    pub fn spawn_runner_with(
+        self: &Arc<Self>,
+        agent_id: &str,
+        env: &[(String, String)],
+        runner_id: Option<&str>,
+        pick: crate::runner_pick::RunnerPick,
+    ) -> Result<SpawnOutcome, String> {
         let mut reaped = Vec::new();
-        let out = self.spawn_inner(agent_id, env, runner_id, &mut reaped);
+        let out = self.spawn_inner(agent_id, env, runner_id, pick, &mut reaped);
         self.finish_reaped(reaped);
         out
     }
@@ -473,6 +506,7 @@ impl RunnerTable {
         agent_id: &str,
         env: &[(String, String)],
         runner_id: Option<&str>,
+        pick: crate::runner_pick::RunnerPick,
         reaped: &mut Vec<crate::retiring::Reaped>,
     ) -> Result<SpawnOutcome, String> {
         // 회수 중 세대의 생사는 표 잠금을 쥐기 **전에** 잰다(security #1907 낮음).
@@ -516,7 +550,13 @@ impl RunnerTable {
                 &|l| eprintln!("{l}"),
             )
         });
-        let mut cmd = runner_command(launch, env, log.as_ref().map(|(f, _)| f));
+        // `rust` 는 고른 쪽(`runner_pick`)이 파일이 있는 것을 본 뒤에만 온다 — 여기서 다시 찾지 않는다.
+        let kind = if launch.rust_command.is_some() {
+            pick.kind
+        } else {
+            crate::local_agents::RunnerKind::Node
+        };
+        let mut cmd = runner_command(launch, env, log.as_ref().map(|(f, _)| f), kind);
         let spawned = cmd.spawn();
         // 오퍼레이터 쪽 사본은 spawn 성패와 상관없이 바로 닫는다 — 자식은 이미 자기 복제본을 받았다(TS `finally` close).
         drop(cmd);
@@ -540,6 +580,8 @@ impl RunnerTable {
                 .filter(|v| !v.is_empty()),
             adopted: false,
             log_path: log_path.clone(),
+            runner_impl: Some(kind),
+            runner_fallback: pick.fallback,
         };
         table.insert(agent_id.to_string(), record.clone());
         self.save_locked(&table);
@@ -680,7 +722,7 @@ impl RunnerTable {
         rows.sort_by_key(|r| r.started_at_ms);
         rows.into_iter()
             .map(|r| {
-                json!({
+                let mut row = json!({
                     "agentId": r.agent_id,
                     "pid": r.pid,
                     "incarnationId": r.incarnation_id,
@@ -688,9 +730,27 @@ impl RunnerTable {
                     "alive": signal_sent(r.pid, 0),
                     "termSentAtMs": r.term_sent_at_ms,
                     "adopted": r.adopted,
-                })
+                });
+                // B4-5c: 구현·떨어뜨린 이유. 모르면(채택한 러너) 싣지 않는다(TS `RunnerInfo` 와 같다).
+                if let Some(k) = r.runner_impl {
+                    row["runnerImpl"] = json!(k.as_str());
+                }
+                if let Some(f) = r.runner_fallback {
+                    row["runnerFallback"] = json!(f.as_str());
+                }
+                row
             })
             .collect()
+    }
+
+    /// 오퍼레이터 옆 Rust 러너가 실행할 수 있는 일반 파일로 있는가(B4-5c, TS `rustRunnerPresent`). 링크를 따라가지 않는다.
+    pub fn rust_runner_present(&self) -> bool {
+        use std::os::unix::fs::PermissionsExt;
+        let Some(path) = self.launch.as_ref().and_then(|l| l.rust_command.as_deref()) else {
+            return false;
+        };
+        std::fs::symlink_metadata(path)
+            .is_ok_and(|m| m.file_type().is_file() && m.permissions().mode() & 0o111 != 0)
     }
 
     /// 표의 기록 사본, 시작 순 — hello announce 가 쓴다.
@@ -728,6 +788,8 @@ impl RunnerTable {
             // secret 도 잇는다 — 다음 장부 쓰기가 빠뜨리면 두 번째 재시작에서 다시 잃는다.
             link_secret: entry.link_secret.clone().filter(|s| !s.is_empty()),
             adopted: true,
+            runner_impl: None,
+            runner_fallback: None,
             // 경로는 agentId 하나로 정해진다 — 채택한 러너의 꼬리도 읽는다(TS `logs.pathFor`).
             log_path: self
                 .log_dir
@@ -809,6 +871,7 @@ mod tests {
             Some(RunnerLaunch {
                 command: "/bin/sh".into(),
                 args: vec!["-c".into(), script.into()],
+                rust_command: None,
             }),
             Arc::new(move |e| {
                 let _ = tx.lock().unwrap().send(e);
@@ -961,11 +1024,67 @@ mod tests {
         assert!(t.spawn_runner("a2", &[], Some("")).is_err());
     }
 
+    /// B4-5c: 고른 구현에 따라 고정 경로 둘 중 하나를 띄운다 — rust_command 가 없으면 rust 를 골라도 node.
+    #[test]
+    fn program_for_picks_rust_command_only_when_rust_and_present() {
+        use crate::local_agents::RunnerKind;
+        let with = RunnerLaunch {
+            command: "/app/harkroom-runner".into(),
+            args: vec![],
+            rust_command: Some("/app/harkroom-runner-rs".into()),
+        };
+        assert_eq!(
+            program_for(&with, RunnerKind::Rust),
+            "/app/harkroom-runner-rs"
+        );
+        assert_eq!(program_for(&with, RunnerKind::Node), "/app/harkroom-runner");
+        let without = RunnerLaunch {
+            rust_command: None,
+            ..with
+        };
+        assert_eq!(
+            program_for(&without, RunnerKind::Rust),
+            "/app/harkroom-runner"
+        );
+    }
+
+    /// B4-5c: 실행 가능한 일반 파일만 「있다」 — 없는 파일·실행 비트 없음·링크는 없다.
+    #[test]
+    fn rust_runner_present_needs_executable_regular_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("op-rs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("harkroom-runner-rs");
+        let at = |p: &std::path::Path| {
+            RunnerTable::new(
+                Some(RunnerLaunch {
+                    command: "/x".into(),
+                    args: vec![],
+                    rust_command: Some(p.to_string_lossy().into_owned()),
+                }),
+                Arc::new(|_| {}),
+            )
+            .rust_runner_present()
+        };
+        assert!(!at(&file));
+        std::fs::write(&file, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(!at(&file));
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(at(&file));
+        let link = dir.join("link");
+        std::os::unix::fs::symlink(&file, &link).unwrap();
+        assert!(!at(&link));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn coordinator_owned_parent_env_is_removed_then_request_env_applies() {
         let launch = RunnerLaunch {
             command: "/bin/sh".into(),
             args: vec![],
+            rust_command: None,
         };
         let cmd = runner_command(
             &launch,
@@ -974,6 +1093,7 @@ mod tests {
                 ("X".into(), "1".into()),
             ],
             None,
+            crate::local_agents::RunnerKind::Node,
         );
         let envs: HashMap<String, Option<String>> = cmd
             .get_envs()
@@ -1027,6 +1147,7 @@ mod tests {
             launch: Some(RunnerLaunch {
                 command: "/bin/sh".into(),
                 args: vec!["-c".into(), script.into()],
+                rust_command: None,
             }),
             by_agent: Mutex::new(HashMap::new()),
             retiring: Mutex::new(crate::retiring::RetiringSet::new()),

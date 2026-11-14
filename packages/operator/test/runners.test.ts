@@ -194,3 +194,54 @@ async function 조건까지(fn: () => boolean, timeoutMs = 5000): Promise<void> 
   }
   throw new Error('조건이 시간 안에 성립하지 않았다');
 }
+
+describe('러너 구현 고르기(B4-5c) — 고정 경로 둘 중 하나', () => {
+  const fakeHost = (commands: string[]): RunnerHost => {
+    let pid = 500;
+    return {
+      spawn: (command) => { commands.push(command); return { pid: (pid += 1), on: () => {} } as never; },
+      kill: () => false,
+      now: () => 0,
+      bootTimeSec: () => Promise.resolve(null),
+    };
+  };
+  const launch = { command: '/app/MacOS/harkroom-runner', args: [], rustCommand: '/app/MacOS/harkroom-runner-rs' };
+
+  it('rust 를 고르면 rustCommand, 아니면 command 로 띄우고 상태에 구현·이유를 싣는다', async () => {
+    const commands: string[] = [];
+    const registry = new RunnerRegistry(launch, fakeHost(commands));
+    await registry.spawnRunner('a-rust', {}, undefined, { kind: 'rust' });
+    await registry.spawnRunner('a-node', {});
+    await registry.spawnRunner('a-lane', {}, undefined, { kind: 'node', fallback: 'rust_needs_provider_lane' });
+    expect(commands).toEqual(['/app/MacOS/harkroom-runner-rs', '/app/MacOS/harkroom-runner', '/app/MacOS/harkroom-runner']);
+    const info = Object.fromEntries(registry.listRunners().map((r) => [r.agentId, [r.runnerImpl, r.runnerFallback]]));
+    expect(info).toEqual({ 'a-rust': ['rust', undefined], 'a-node': ['node', undefined], 'a-lane': ['node', 'rust_needs_provider_lane'] });
+  });
+
+  it('rustCommand 가 없으면 rust 를 골라도 node 로 띄운다', async () => {
+    const commands: string[] = [];
+    const registry = new RunnerRegistry({ command: '/app/MacOS/harkroom-runner', args: [] }, fakeHost(commands));
+    await registry.spawnRunner('a', {}, undefined, { kind: 'rust' });
+    expect(commands).toEqual(['/app/MacOS/harkroom-runner']);
+    expect(registry.listRunners()[0]!.runnerImpl).toBe('node');
+    expect(await registry.rustRunnerPresent()).toBe(false);
+  });
+
+  it('rustRunnerPresent 는 실행 가능한 일반 파일만 본다 — 링크·없는 파일·실행 비트 없음은 false', async () => {
+    const { mkdtemp, writeFile, symlink, chmod } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const dir = await mkdtemp(join(tmpdir(), 'op-rs-'));
+    const file = join(dir, 'harkroom-runner-rs');
+    const at = (p: string) => new RunnerRegistry({ command: '/x', args: [], rustCommand: p }, nodeRunnerHost).rustRunnerPresent();
+    expect(await at(file)).toBe(false);
+    await writeFile(file, '#!/bin/sh\n');
+    await chmod(file, 0o644);
+    expect(await at(file)).toBe(false);
+    await chmod(file, 0o755);
+    expect(await at(file)).toBe(true);
+    const link = join(dir, 'link');
+    await symlink(file, link);
+    expect(await at(link)).toBe(false);
+  });
+});

@@ -394,8 +394,9 @@ fn agents_of<'a>(
 }
 
 /// 에이전트의 러너 구현(B4-5a, TS `RunnerKind`). 기본은 `Node` 다.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RunnerKind {
+    #[default]
     Node,
     Rust,
 }

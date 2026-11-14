@@ -19,6 +19,7 @@ impl AssignmentDeps for Fake {
         agent_id: &str,
         _env: &BTreeMap<String, String>,
         runner_id: &str,
+        _pick: crate::runner_pick::RunnerPick,
     ) -> Result<SpawnResult, SpawnError> {
         lock(&self.spawns).push((agent_id.into(), runner_id.into()));
         *lock(&self.alive) = true;

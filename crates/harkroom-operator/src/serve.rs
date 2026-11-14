@@ -29,6 +29,16 @@ fn flag<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
 }
 
 /// 성공하면 돌아오지 않는다(듣기 고리). 돌아오면 (stdout 한 줄, 종료 코드).
+/// 이 실행 파일과 같은 폴더의 `harkroom-runner-rs`(앱 번들의 `Contents/MacOS/`). 실행 파일 위치를 모르면 없다.
+fn rust_runner_beside_self() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    Some(dir.join(RUST_RUNNER_NAME).to_string_lossy().into_owned())
+}
+
+/// Rust 러너 사이드카 이름 — `tauri.conf.json` `externalBin` 의 `binaries/harkroom-runner-rs` 와 같다.
+pub const RUST_RUNNER_NAME: &str = "harkroom-runner-rs";
+
 pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
     let Some(base_url) = flag(args, "--base-url") else {
         return (
@@ -53,6 +63,9 @@ pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
         Some(c) if c.starts_with('/') => Some(RunnerLaunch {
             command: c.to_string(),
             args: Vec::new(),
+            // B4-5c: Rust 러너는 **이 오퍼레이터 실행 파일 옆의 고정 이름**으로만 찾는다(PATH·인자 경로 없음).
+            // 없으면 `rust` 를 청한 에이전트도 node 로 돈다(`runner_pick.rs`).
+            rust_command: rust_runner_beside_self(),
         }),
         Some(_) => {
             return (

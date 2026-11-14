@@ -122,9 +122,9 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
   };
 
   const runnerDeps = (community: { current: CommunityInstance | null }): AssignmentDeps => ({
-    async spawn(agentId, env, runnerId) {
+    async spawn(agentId, env, runnerId, pick) {
       const before = deps.registry.currentIncarnation(agentId);
-      const record = await deps.registry.spawnRunner(agentId, env, runnerId);
+      const record = await deps.registry.spawnRunner(agentId, env, runnerId, pick);
       const spawned = before !== record.incarnationId;
       // 서버는 hello 의 announce 사이에 뜬 러너를 이것으로 안다 — 없으면 그 러너의 프레임을 버린다.
       if (spawned) community.current?.notifyRunnerStarted(agentId, record.incarnationId);
@@ -135,6 +135,7 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
       const info = deps.registry.listRunners().find((r) => r.agentId === agentId);
       return info ? deps.host.kill(info.pid, 'SIGKILL') : false;
     },
+    rustRunnerPresent: () => deps.registry.rustRunnerPresent(),
     isAlive: (agentId) => deps.registry.listRunners().some((r) => r.agentId === agentId && r.alive),
     listRunners: () => announceOf(deps.registry),
     loginPath,

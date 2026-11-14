@@ -46,7 +46,10 @@ import {
   type RunnerInfo,
 } from '@harkroom/shared/daemonProtocol';
 
+import { lstat } from 'node:fs/promises';
 import { PROVIDER_LANE_ENV } from '@harkroom/shared/providerLane';
+import type { RunnerKind } from './config.js';
+import type { RunnerFallback, RunnerPick } from './runnerPick.js';
 import { RUNNER_LINK_ENV } from '@harkroom/shared/runnerLink';
 
 import { psIdentityProbe } from './adopt.js';
@@ -106,6 +109,10 @@ export interface RunnerRecord {
   linkSecret?: string;
   /** SIGTERM 을 보낸 때. 안 보냈으면 `null`. **관측이지 판단이 아니다.** */
   termSentAtMs: number | null;
+  /** 이 러너를 띄운 구현(B4-5c). 채택한 러너는 모른다(없음). */
+  runnerImpl?: RunnerKind;
+  /** `rust` 를 청했는데 node 로 떨어뜨린 이유(`runnerPick.ts`). */
+  runnerFallback?: RunnerFallback;
   /**
    * 자식 핸들. 종료 통지의 출처다.
    *
@@ -285,6 +292,8 @@ export interface RunnerLaunchSpec {
   command: string;
   /** 인자. **리터럴로 못박는다**(`#250` 의 경계) — 지금은 비어 있다. */
   args: readonly string[];
+  /** Rust 러너 사이드카의 절대 경로(B4-5c). 오퍼레이터 옆 고정 이름이다. 없으면 모든 러너가 node 다. 인자는 `args` 와 같다. */
+  rustCommand?: string;
 }
 
 /**
@@ -594,7 +603,7 @@ export class RunnerRegistry {
    * `incarnationId` 를 밖에서 줄 수 있다(스펙 2026-09-20 §5): 러너는 자기 id 를 env 로 받아
    * 오퍼레이터 링크에 hello 하므로, spawn **전에** 정해져 있어야 한다. 안 주면 여기서 만든다.
    */
-  async spawnRunner(agentId: string, env: Record<string, string>, incarnationId?: IncarnationId): Promise<RunnerRecord> {
+  async spawnRunner(agentId: string, env: Record<string, string>, incarnationId?: IncarnationId, pick: RunnerPick = { kind: 'node' }): Promise<RunnerRecord> {
     const existing = this.byAgent.get(agentId);
     if (existing && !existing.exited && this.host.kill(existing.pid, 0)) {
       // ── 중복을 안 띄운다 — **채택한 러너도 여기서 걸린다**(`#431` 2-c) ──────────
@@ -649,8 +658,10 @@ export class RunnerRegistry {
 
     let child: ChildProcess;
     try {
+      // 러너 구현(B4-5c). `rust` 는 고른 쪽(`runnerPick.ts`)이 파일이 있는 것을 본 뒤에만 온다 — 여기서 다시 찾지 않는다.
+      const command = pick.kind === 'rust' && this.launch.rustCommand ? this.launch.rustCommand : this.launch.command;
       child = this.host.spawn(
-        this.launch.command, this.launch.args, withUserEnv(env2), logHandle?.fd ?? null,
+        command, this.launch.args, withUserEnv(env2), logHandle?.fd ?? null,
       );
     } finally {
       // **daemon 쪽 사본은 즉시 닫는다.** 자식은 spawn 순간 자기 복제본을 받았으므로
@@ -672,6 +683,8 @@ export class RunnerRegistry {
       startedAtMs: this.host.now(),
       ...(env.HARKROOM_RUNNER_SECRET ? { linkSecret: env.HARKROOM_RUNNER_SECRET } : {}),
       termSentAtMs: null,
+      runnerImpl: pick.kind === 'rust' && this.launch.rustCommand ? 'rust' : 'node',
+      ...(pick.fallback ? { runnerFallback: pick.fallback } : {}),
       child,
       exited: false,
       // 아래에서 커널에게 물어 채운다. 못 채우면 `null` 이고, 그러면 다음 daemon 이
@@ -911,6 +924,8 @@ export class RunnerRegistry {
         alive: this.host.kill(record.pid, 0),
         termSentAtMs: record.termSentAtMs,
         adopted: record.adopted,
+        ...(record.runnerImpl ? { runnerImpl: record.runnerImpl } : {}),
+        ...(record.runnerFallback ? { runnerFallback: record.runnerFallback } : {}),
       });
     }
     return out;
@@ -923,6 +938,21 @@ export class RunnerRegistry {
       if (r.adopted && !r.exited) out.push({ agentId: r.agentId, incarnationId: r.incarnationId, pid: r.pid, bootTimeSec: r.bootTimeSec });
     }
     return out;
+  }
+
+  /**
+   * 오퍼레이터 옆 Rust 러너가 실행할 수 있는 일반 파일로 있는가(B4-5c). 없으면 `rust` 를 청한 에이전트도 node 로 돈다.
+   * 링크를 따라가지 않는다(`lstat`) — 번들 안의 고정 이름은 일반 파일이다.
+   */
+  async rustRunnerPresent(): Promise<boolean> {
+    const path = this.launch.rustCommand;
+    if (!path) return false;
+    try {
+      const st = await lstat(path);
+      return st.isFile() && (st.mode & 0o111) !== 0;
+    } catch {
+      return false;
+    }
   }
 
   /** 표에 있는 세대. 회귀선이 "늦은 exit 이 새 세대를 안 지웠다"를 재는 자리다. */

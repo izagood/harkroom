@@ -601,6 +601,10 @@ export interface RunnerInfo {
    * 무엇을 아는지와 무엇을 모르는지를 말할 뿐이고, 화면 문구는 `#443` 의 몫이다.
    */
   adopted: boolean;
+  /** 이 러너를 띄운 구현(B4-5c, `"node"`·`"rust"`). 옛 오퍼레이터·채택한 러너는 싣지 않는다. */
+  runnerImpl?: 'node' | 'rust';
+  /** 에이전트가 `rust` 를 청했는데 node 로 떨어뜨린 이유(`rust_needs_account_pool`·`rust_needs_provider_lane`·`rust_runner_missing`). */
+  runnerFallback?: string;
 }
 
 export interface ListRunnersResult {

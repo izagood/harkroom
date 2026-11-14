@@ -15,14 +15,17 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { EX_CONFIG, type RunnerExitReason } from '@harkroom/shared';
 import type { AgentDefinition, RunnerAnnounce } from '@harkroom/shared/operatorProtocol';
 import { RUNNER_LINK_ENV } from '@harkroom/shared/runnerLink';
-import type { LocalAgentConfig } from './config.js';
+import { runnerKindOf, type LocalAgentConfig } from './config.js';
+import { pickRunner, type RunnerPick } from './runnerPick.js';
 
 export interface AssignmentDeps {
   /**
    * 이미 살아 있으면 `spawned: false` 로 **기존** 것을 돌려준다(RunnerRegistry 의 멱등성) —
    * 그때 돌아오는 `runnerId` 는 여기서 준 것이 아니다. 새로 띄우면 준 id 그대로다.
    */
-  spawn(agentId: string, env: Record<string, string>, runnerId: string): Promise<{ spawned: boolean; pid: number; runnerId: string }>;
+  spawn(agentId: string, env: Record<string, string>, runnerId: string, pick?: RunnerPick): Promise<{ spawned: boolean; pid: number; runnerId: string }>;
+  /** 오퍼레이터 옆에 Rust 러너 파일이 있는가(B4-5c). 없으면 `rust` 를 청한 에이전트도 node 로 돈다. 안 주면 없다. */
+  rustRunnerPresent?: () => Promise<boolean>;
   /** 시그널을 보냈는가. 러너가 없으면 false. SIGTERM 은 러너가 drain 으로 받는다(#551). */
   signal(agentId: string, signal: 'SIGTERM' | 'SIGKILL'): boolean;
   isAlive(agentId: string): boolean;
@@ -206,9 +209,13 @@ export function createAssignmentReconciler(deps: AssignmentDeps): AssignmentReco
         // 늘 '0'/'1' 로 명시하는 이유는 위 줄과 같다.
         [PROVIDER_LANE_ENV]: readProviderLaneConfig(local?.providerLane) ? '1' : '0',
       };
+      // 러너 구현(B4-5c). `rust` 를 청했어도 풀·lane 에이전트는 node 로 떨어뜨린다(`runnerPick.ts` — 다른 계정·과금으로 바뀌지 않게).
+      const wantsRust = runnerKindOf(local) === 'rust';
+      const pick = pickRunner(local, wantsRust ? await (deps.rustRunnerPresent?.() ?? Promise.resolve(false)).catch(() => false) : false);
+      if (pick.fallback) deps.log(`러너: rust 를 청했지만 node 로 띄운다(${pick.fallback}): agent=${definition.handle}`);
       let result: Awaited<ReturnType<AssignmentDeps['spawn']>>;
       try {
-        result = await deps.spawn(agentId, env, runnerId);
+        result = await deps.spawn(agentId, env, runnerId, pick);
       } catch (err) {
         deps.link.forget(runnerId);
         if ((err as { code?: unknown }).code !== 'retiring') throw err;
@@ -235,7 +242,7 @@ export function createAssignmentReconciler(deps: AssignmentDeps): AssignmentReco
       // 안 띄웠으면 방금 적은 secret 은 아무 러너도 안 쓴다 — 남겨 두면 장부가 자라기만 한다.
       else deps.link.forget(runnerId);
       deps.log(result.spawned
-        ? `러너 spawn: agent=${definition.handle} pid=${result.pid}`
+        ? `러너 spawn: agent=${definition.handle} pid=${result.pid} runner=${pick.kind}`
         : `러너가 이미 있다 — 새로 안 띄운다: agent=${definition.handle} pid=${result.pid}`);
       return result.spawned ? 'spawned' : 'already';
     },

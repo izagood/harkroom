@@ -92,6 +92,7 @@ pub fn local_agent_of(entry: &Value) -> LocalAgent {
         working_dir: s("workingDir"),
         claude_pool: s("claudePool"),
         provider_lane: entry.get("providerLane").cloned(),
+        runner: crate::local_agents::runner_kind_of(Some(entry)),
     }
 }
 
@@ -120,9 +121,13 @@ impl AssignmentDeps for SystemDeps {
         agent_id: &str,
         env: &BTreeMap<String, String>,
         runner_id: &str,
+        pick: crate::runner_pick::RunnerPick,
     ) -> Result<SpawnResult, SpawnError> {
         let env: Vec<(String, String)> = env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-        match self.runners.spawn_runner(agent_id, &env, Some(runner_id)) {
+        match self
+            .runners
+            .spawn_runner_with(agent_id, &env, Some(runner_id), pick)
+        {
             Ok(SpawnOutcome::Started(r)) => {
                 (self.on_started)(agent_id, &r.incarnation_id);
                 Ok(SpawnResult {
@@ -148,6 +153,9 @@ impl AssignmentDeps for SystemDeps {
         }
     }
 
+    fn rust_runner_present(&self) -> bool {
+        self.runners.rust_runner_present()
+    }
     fn is_alive(&self, agent_id: &str) -> bool {
         self.runners
             .records()

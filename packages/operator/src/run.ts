@@ -110,6 +110,8 @@ export interface RunOptions {
    * 붙은 누구든 임의의 실행 파일을 daemon 권한으로 띄울 수 있다(`#250` 의 경계).
    */
   runnerCommand?: string;
+  /** Rust 러너 경로(시험용 주입). 없으면 오퍼레이터 옆 `harkroom-runner-rs`. 소켓 클라이언트는 못 정한다. */
+  rustRunnerCommand?: string;
   /**
    * 러너에게 줄 인자. **운영에서는 비어 있다** — 러너는 인자를 안 받고 환경변수로만
    * 설정된다(`runner_spawn` 의 계약). 이 자리는 회귀선이 오래 사는 자식(`sh -c 'sleep …'`)
@@ -195,6 +197,14 @@ export function defaultRunnerCommand(entryPath: string): string {
  *
  * `<appDataDir>/daemon/daemon-v1.sock` 이므로 두 단계 위가 `appDataDir` 다.
  */
+/**
+ * Rust 러너 사이드카의 경로 — 역시 **오퍼레이터 실행 파일 옆의 고정 이름**이다(B4-5c). PATH 를 찾지 않고 설정·클라이언트의
+ * 경로 문자열도 받지 않는다(`defaultRunnerCommand` 와 같은 경계). 어느 에이전트에 쓸지는 `runnerPick.ts` 가 정한다.
+ */
+export function defaultRustRunnerCommand(entryPath: string): string {
+  return resolve(dirname(resolve(entryPath)), 'harkroom-runner-rs');
+}
+
 export function appDataDirFromSocket(socketPath: string): string {
   return dirname(dirname(resolve(socketPath)));
 }
@@ -553,6 +563,8 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     {
       command: options.runnerCommand ?? defaultRunnerCommand(entryPath),
       args: options.runnerArgs ?? [],
+      // win32 에는 Rust 러너를 싣지 않는다 — 없으면 `rust` 를 청한 에이전트도 node 로 돈다(`runnerPick.ts`).
+      ...(process.platform === 'win32' ? {} : { rustCommand: options.rustRunnerCommand ?? defaultRustRunnerCommand(entryPath) }),
     },
     options.host ?? nodeRunnerHost,
     (notice) => {
