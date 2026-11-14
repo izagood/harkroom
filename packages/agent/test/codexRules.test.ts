@@ -94,14 +94,17 @@ describe('prepareCodexRules', () => {
   });
 });
 
-describe('sweepCodexRules — 규칙 파일을 쓰지 않는 길(security F1)', () => {
-  it('잰 판 밖·판을 못 읽음이면 남은 규칙 파일을 지우고, 잰 판이면 둔다', async () => {
+describe('sweepCodexRules — 승인 규칙 파일은 그것을 쓴 턴 동안만', () => {
+  it('판과 상관없이 남은 규칙 파일을 지운다 · 없어도 된다', async () => {
     await mkdir(join(home, 'rules'), { recursive: true });
-    for (const [v, kept] of [['codex-cli 0.154.0', true], ['codex-cli 0.155.0', false], [null, false]] as const) {
-      await writeFile(codexRulesPath(home), 'prefix_rule(pattern = ["ls"], decision = "allow")\n');
-      await sweepCodexRules(home, async () => v);
-      expect(await stat(codexRulesPath(home)).then(() => true, () => false)).toBe(kept);
-    }
+    await writeFile(codexRulesPath(home), 'prefix_rule(pattern = ["ls"], decision = "allow")\n');
+    await sweepCodexRules(home);
+    expect(await stat(codexRulesPath(home)).then(() => true, () => false)).toBe(false);
+    await sweepCodexRules(home);
+  });
+  it('지우지 못하면 던진다(부르는 쪽은 codex 를 띄우지 않는다)', async () => {
+    await mkdir(join(codexRulesPath(home), 'x'), { recursive: true });
+    await expect(sweepCodexRules(home)).rejects.toBeTruthy();
   });
 });
 
