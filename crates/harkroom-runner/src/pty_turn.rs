@@ -544,14 +544,41 @@ impl PromptInjector {
         if p.confirm_at.is_some_and(|d| now >= d) {
             p.confirm_at = None;
             if !hooks.confirm_probe() {
-                eprintln!(
-                    "[pty] 주입 {}ms 뒤에도 세션 기록에 사람 입력 줄이 없다 — 개행을 한 번 더 친다",
-                    c.within_ms
-                );
-                out.push(Action::Write(b"\r".to_vec()));
                 let grace = c
                     .resend_grace_ms
                     .unwrap_or_else(|| (c.within_ms as f64 / 3.0).round().max(50.0) as u64);
+                // **화면이 입력칸일 때만** 개행을 다시 친다(정본과 다름 — T4e security): 확인 창(신뢰·권한 물음)이 떠 있으면
+                // 개행이 그 창의 기본 선택을 눌러 버린다. 확인 창이면 치지 않고 곧바로 사람을 부른다(부를 곳이 있을 때만).
+                match resend_decision(
+                    &screen,
+                    self.opts.ready_pattern.as_ref(),
+                    self.opts.gate_pattern.as_ref(),
+                    self.opts.unsent_hint.as_ref(),
+                ) {
+                    Resend::Gate => {
+                        eprintln!(
+                            "[pty] 주입 {}ms 뒤에도 기록에 입력 줄이 없고 확인 창이 떠 있다 — 개행을 치지 않고 사람을 부른다",
+                            c.within_ms
+                        );
+                        if attention {
+                            out.push(Action::Attention(screen.clone(), AttentionKind::Gate));
+                        }
+                        return;
+                    }
+                    Resend::Input => {
+                        eprintln!(
+                            "[pty] 주입 {}ms 뒤에도 세션 기록에 사람 입력 줄이 없다 — 개행을 한 번 더 친다",
+                            c.within_ms
+                        );
+                        out.push(Action::Write(b"\r".to_vec()));
+                    }
+                    Resend::Unknown => {
+                        eprintln!(
+                            "[pty] 주입 {}ms 뒤에도 기록에 입력 줄이 없지만 화면이 입력칸이 아니다 — 개행을 치지 않는다",
+                            c.within_ms
+                        );
+                    }
+                }
                 p.grace_at = Some(now + grace);
             }
         }
@@ -562,6 +589,32 @@ impl PromptInjector {
             }
         }
     }
+}
+
+/// 주입 확인 재전송의 판정 — 확인 창이면 `Gate`(치지 않고 부른다), 입력칸이면 `Input`(친다), 그 밖은 `Unknown`(치지 않는다).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Resend {
+    Gate,
+    Input,
+    Unknown,
+}
+
+/// 화면이 무엇인가 — 확인 창이 먼저다(그 창도 준비 표시 `❯` 를 담는다).
+pub fn resend_decision(
+    screen: &str,
+    ready: Option<&Regex>,
+    gate: Option<&Regex>,
+    unsent: Option<&Regex>,
+) -> Resend {
+    if looks_like_gate(screen, gate, ready) {
+        return Resend::Gate;
+    }
+    if looks_ready_for_prompt(screen, ready)
+        || unsent.is_some_and(|u| u.is_match(&strip_ansi(screen)))
+    {
+        return Resend::Input;
+    }
+    Resend::Unknown
 }
 
 /// 턴 도중 관문을 누구에게 알리나 — 정본: `onTurnGate` 가 있으면 그것, 없으면 `onAttention(screen, 'gate')`.

@@ -570,3 +570,50 @@ fn run_pty_turn_refuses_link_to_root() {
     assert!(matches!(r, Err(PtyTurnError::Spawn(_))), "{r:?}");
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// T4e(security): 확인 창이 떠 있으면 재전송 개행을 치지 않는다(기본 선택이 눌리지 않게) — 곧바로 사람을 부른다.
+/// 정본은 화면을 보지 않고 친다(다른 동작).
+#[test]
+fn confirm_does_not_resend_on_gate_screen_and_calls_human() {
+    let mut o = opts("x");
+    o.attention = true;
+    o.gate_probe_ms = 60_000;
+    o.confirm = Some(ConfirmDelivery {
+        within_ms: 3_000,
+        resend_grace_ms: None,
+    });
+    let mut m = PromptInjector::new(o);
+    let mut h = Hooks::default();
+    m.on_data(0, READY, &mut h);
+    run(&mut m, &mut h, 1, 300);
+    m.on_data(1_000, GATE, &mut h);
+    let acts = run(&mut m, &mut h, 301, 6_000);
+    let w = writes(&acts);
+    assert!(
+        !w.iter().any(|(t, s)| *t >= 3_300 && s == "\r"),
+        "확인 창 위에서는 개행을 다시 치지 않는다: {w:?}"
+    );
+    assert!(
+        acts.iter()
+            .any(|(t, a)| *t == 3_300 && matches!(a, Action::Attention(_, AttentionKind::Gate))),
+        "그 자리에서 사람을 부른다"
+    );
+}
+
+/// T4e: 입력칸도 확인 창도 아닌 화면이면 재전송하지 않는다.
+#[test]
+fn resend_decision_reads_the_screen() {
+    use crate::pty_turn::{Resend, resend_decision};
+    assert_eq!(
+        resend_decision(&String::from_utf8_lossy(GATE), None, None, None),
+        Resend::Gate
+    );
+    assert_eq!(
+        resend_decision(&String::from_utf8_lossy(READY), None, None, None),
+        Resend::Input
+    );
+    assert_eq!(
+        resend_decision("Thinking… (esc to interrupt)", None, None, None),
+        Resend::Unknown
+    );
+}

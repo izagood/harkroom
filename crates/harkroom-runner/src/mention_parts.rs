@@ -176,6 +176,8 @@ pub fn attempt_pty_options(
         if let Some(ms) = facts.ready_min_ms {
             i.ready_min_ms = ms;
         }
+        // 사람을 부를 수 있다(정본 `onAttention: callHuman`) — 준비 대기가 확인 창·선택 화면에서 실패로 접히지 않고 사람을 부른다.
+        i.attention = true;
         // 주입이 먹혔는지 잰다(정본 `confirmDelivery`, 기본 `withinMs` 15초) — 증거는 `MarkerSink::confirm` 이 답한다.
         i.confirm = Some(crate::pty_turn::ConfirmDelivery {
             within_ms: CONFIRM_DELIVERY_WITHIN_MS,
@@ -267,6 +269,47 @@ pub type MountFn<'a> = Box<dyn FnMut(&str) -> Result<(), SecretMountError> + 'a>
 pub fn no_mount<'a>() -> MountFn<'a> {
     Box::new(|_cause: &str| Ok(()))
 }
+/// 관문 통지 닫개.
+pub type PostGateFailFn<'a> = Box<dyn Fn(&crate::turn_notice::GateFail) -> Result<(), String> + 'a>;
+
+/// 사람 부르기의 바깥 일(정본 `callHuman` 둘레) — 기본 로그인 길: 원장·계정 표식·관문 감시 없음, 통지는 스레드에, 화면은 앱으로.
+struct HumanIo<'x> {
+    post: Option<&'x PostGateFailFn<'x>>,
+    relay: Option<&'x crate::turn_attempt_relay::RelayAttempt<'x>>,
+    key: &'x str,
+}
+
+impl crate::turn_gate::GateIo for HumanIo<'_> {
+    fn mark_account_gate(&mut self) {}
+    fn post_gate_fail(&mut self, fail: crate::turn_notice::GateFail) {
+        if let Some(post) = self.post
+            && let Err(e) = post(&fail)
+        {
+            eprintln!(
+                "[mentionTurn] {}: 관문 통지 발화 실패(턴은 그대로 기다린다) — {e}",
+                self.key
+            );
+        }
+    }
+    fn ledger_claim(&mut self, _account_label: &str, _session_key: &str) -> Option<bool> {
+        None
+    }
+    fn reclaim(&mut self, _end: &mut crate::turn_end::EndState) {}
+    fn can_watch_gate(&self) -> bool {
+        false
+    }
+    fn arm_gate_watch(&mut self) {}
+    fn needs_attention(&mut self, screen: &str, ranks: crate::turn_notice::GateRanks) {
+        if let Some(r) = self.relay {
+            let (pool, account) = crate::turn_io::attention_ranks(ranks);
+            r.session().needs_attention(screen, pool, account);
+        }
+    }
+    fn log(&mut self, line: &str) {
+        eprintln!("[mentionTurn] {}: {line}", self.key);
+    }
+}
+
 /// 이 멘션의 임대 폴더를 묻는 닫개.
 pub type LeaseDirFn<'a> = Box<dyn Fn() -> Option<PathBuf> + 'a>;
 /// 시도마다 PTY 옵션(주입 글 틀 포함)을 새로 짓는다.
@@ -347,6 +390,8 @@ pub struct MentionParts<'a, P: PrepareIo, S: PtyTurnSink> {
     /// 이 멘션의 임대 폴더를 **시도를 준비할 때** 묻는다(임대는 짓개가 부품을 지은 뒤 받는다 — `LeaseBook::lease_dir`).
     /// `lease_dir` 가 있으면 그것이 먼저다.
     pub lease_dir_of: Option<LeaseDirFn<'a>>,
+    /// 관문 통지(정본 `harkroom.fail(gateNotice…)`) — 사람 부르기가 턴마다 한 번 스레드에 남긴다. 없으면 남기지 않는다.
+    pub post_gate_fail: Option<PostGateFailFn<'a>>,
     pub now: Option<TurnClock>,
     /// 시도를 준비할 때 그 순간의 시계를 잰다(정본 `now: new Date()` — 시도마다). `now` 가 있으면 그것이 먼저(시험용).
     pub clock: Option<fn() -> TurnClock>,
@@ -406,6 +451,7 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
             secrets: false,
             lease_dir: None,
             lease_dir_of: None,
+            post_gate_fail: None,
             now: None,
             clock: None,
             outcome,
@@ -625,6 +671,47 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
                 },
             )
         };
+        // 사람 부르기(정본 `callHuman`) — 이 시도의 감시 자리·멘션·계정 순번으로. 통지는 턴마다 한 번(`GateState`).
+        let gate_state = std::cell::RefCell::new(crate::turn_gate::GateState::default());
+        let human_ctx = crate::turn_gate::CallHumanCtx {
+            account_label: c
+                .account
+                .name
+                .clone()
+                .unwrap_or_else(|| "(기본)".to_string()),
+            ranks: crate::turn_notice::GateRanks {
+                pool: None,
+                account: if c.account.config_dir.is_none() {
+                    crate::turn_notice::GateAccountRank::DefaultLogin
+                } else {
+                    crate::turn_notice::GateAccountRank::Unknown
+                },
+            },
+            mention_id: c.cause.clone(),
+            session_key: ctx.session_id.clone().unwrap_or_else(|| self.key.clone()),
+        };
+        let (human_watch, human_post, human_relay, human_key) = (
+            watch.clone(),
+            self.post_gate_fail.as_ref(),
+            args.relay,
+            self.key.clone(),
+        );
+        let human = move |screen: &str, kind: crate::pty::AttentionKind| {
+            let mut w = human_watch.lock().unwrap_or_else(|e| e.into_inner());
+            let mut io = HumanIo {
+                post: human_post,
+                relay: human_relay,
+                key: &human_key,
+            };
+            crate::turn_gate::call_human(
+                &mut w.end,
+                &mut gate_state.borrow_mut(),
+                &human_ctx,
+                screen,
+                kind,
+                &mut io,
+            );
+        };
         let out = run_beside(&watch, &args.notice, &ctx, self.watch_loop.as_ref(), || {
             // 띄운 PTY 손잡이를 슬롯에 적는다 — 물러날 때 유예가 지나면 그 프로세스 그룹에 SIGKILL 한다(P2). 시도가 끝나면 비운다.
             let mut pty_sink = SlotPtySink {
@@ -647,6 +734,7 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
                 markers: &markers,
                 key: &marker_key,
                 confirm: Some(&confirm_probe),
+                human: Some(&human),
             };
             match args.relay {
                 Some(r) => {

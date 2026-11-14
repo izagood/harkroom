@@ -219,7 +219,7 @@ where
 
     fn call_inputs<'a>(
         &'a self,
-        _clients: &'a AgentClients<L>,
+        clients: &'a AgentClients<L>,
         book: &'a LeaseBook,
         target: &MentionTarget,
         reads: MentionReads,
@@ -312,6 +312,10 @@ where
         // 마운트한 비밀을 꼬리·통지·기록에서 가릴 바늘 자리(정본 `secretNeedles(cause)`) — 임대는 부품을 지은 뒤 받으므로 시도
         // 준비 때 묻는다.
         let lease_cause = target.mention_id.clone();
+        let (gate_channel, gate_anchor) = (
+            target.channel_id.clone(),
+            Some(target.thread_root_id.clone()),
+        );
         // 정본 `main.ts:76` `recordDir: config.ptyRecordDir`(`AGENT_PTY_RECORD_DIR`, 기본 끔).
         let record_dir = c.pty_record_dir.clone();
         let build_parts = Box::new(move |b: BundleParts<'a, L>| {
@@ -352,6 +356,20 @@ where
             // 턴 프롬프트의 「지금 시각」 줄 — 시도마다 그 순간을 잰다(정본 `now: new Date()`).
             p.clock = Some(crate::local_clock::turn_clock_now);
             p.lease_dir_of = Some(Box::new(move || book.lease_dir(&lease_cause)));
+            // 사람 부르기의 관문 통지(정본 `harkroom.fail(channelId, gateNotice, anchor, …)`) — 이 에이전트 묶음으로, 이 스레드에.
+            let (gate_mcp, gate_channel, gate_anchor) =
+                (clients.mcp(), gate_channel.clone(), gate_anchor.clone());
+            p.post_gate_fail = Some(Box::new(move |f| {
+                gate_mcp
+                    .fail(
+                        &gate_channel,
+                        &f.body,
+                        gate_anchor.as_deref(),
+                        &crate::turn_io::gate_fail_opts(f),
+                    )
+                    .map(|_| ())
+                    .map_err(|e| e.message)
+            }));
             p.turn_timeout_ms = c.turn_timeout_ms;
             p
         });

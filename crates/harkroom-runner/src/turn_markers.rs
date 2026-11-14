@@ -86,6 +86,9 @@ impl Drop for TurnMarkers {
     }
 }
 
+/// 사람 부르기 닫개(화면·갈래).
+pub type HumanCall<'s> = &'s dyn Fn(&str, AttentionKind);
+
 /// 표식을 답하는 sink 덧씌우개 — `wait_for_ready`·`wait_for_settled`·`gate_signal` 만 여기서 답하고 나머지는 안쪽으로 넘긴다.
 pub struct MarkerSink<'s, S: PtyTurnSink> {
     pub inner: &'s mut S,
@@ -94,6 +97,8 @@ pub struct MarkerSink<'s, S: PtyTurnSink> {
     pub key: &'s str,
     /// 주입이 먹혔는지의 증거(정본 `confirmDelivery.probe` = 턴 시작 뒤 세션 기록에 사람 입력 줄이 생겼나). 없으면 안쪽으로.
     pub confirm: Option<&'s dyn Fn() -> bool>,
+    /// 사람 부르기(정본 `onAttention: callHuman`) — 화면과 갈래를 받는다. 없으면 안쪽으로만.
+    pub human: Option<HumanCall<'s>>,
 }
 
 impl<S: PtyTurnSink> PromptHooks for MarkerSink<'_, S> {
@@ -145,6 +150,9 @@ impl<S: PtyTurnSink> PtyTurnSink for MarkerSink<'_, S> {
         self.inner.on_injected()
     }
     fn on_attention(&mut self, screen: &str, kind: AttentionKind) {
+        if let Some(f) = self.human {
+            f(screen, kind);
+        }
         self.inner.on_attention(screen, kind)
     }
     fn on_turn_gate(&mut self, screen: &str) {
