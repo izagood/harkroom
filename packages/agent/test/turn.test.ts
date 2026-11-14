@@ -1102,7 +1102,7 @@ describe('pi 의 argv', () => {
     expect(preassignsSessionId('pi')).toBe(true);
     const first = pi({ mentionPermission: 'auto' });
     const later = pi({ mentionPermission: 'auto', isFirstTurn: false });
-    expect(first.command).toBe('pi');
+    expect(pi({ mentionPermission: 'auto', piLaunch: { command: 'pi', pathPrepend: null } }).command).toBe('pi');
     expect(first.args.join(' ')).toContain('--session-id b2bc89d1-0000-4000-8000-000000000001');
     expect(later.args.join(' ')).toContain('--session-id b2bc89d1-0000-4000-8000-000000000001');
   });

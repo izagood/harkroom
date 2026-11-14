@@ -1348,15 +1348,17 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
     ) -> Option<std::collections::BTreeMap<String, Vec<String>>> {
         let spec = crate::adapter::readonly_tools_for(self.harness)?;
         let args: Vec<String> = spec.list?.iter().map(|a| a.to_string()).collect();
-        let command = crate::adapter::harness_command(self.harness).ok()?;
         let pi_home = self.cur.as_ref()?.pi_home(self.pi_home.as_deref())?;
-        let env = crate::pi_home::pi_mcp_list_env(
+        let mut env = crate::pi_home::pi_mcp_list_env(
             &self.parent_env,
             &self.home,
             Some(pi_home),
             bridge_key,
         );
-        crate::pi_home::list_pi_mcp_tools(Path::new(command), &args, &env, pi_home)
+        // 띄울 때와 같은 실행 파일로 묻는다 — 런처를 거치면 사람 설치 폴더를 건드린다(`pi_launch.rs`, security 감②).
+        let launch = crate::pi_launch::resolve_pi_launch(&env);
+        crate::pi_launch::apply_pi_launch_env(&mut env, &launch);
+        crate::pi_home::list_pi_mcp_tools(Path::new(&launch.command), &args, &env, pi_home)
     }
 
     fn set_readonly_tools(
