@@ -315,6 +315,10 @@ pub type RecallSearchFn<'a> = Box<
     dyn Fn(&str, &crate::memory_pin::RecallOpts) -> Result<crate::memory_pin::RecallResult, String>
         + 'a,
 >;
+/// `thread.note` 읽기 닫개(스레드 루트 id).
+pub type ReadNoteFn<'a> = Box<dyn Fn(&str) -> Result<Option<crate::mcp::ThreadNote>, String> + 'a>;
+/// `thread.plan` 읽기 닫개(스레드 루트 id) — 응답의 `plan` 그대로.
+pub type ReadPlanFn<'a> = Box<dyn Fn(&str) -> Result<Option<serde_json::Value>, String> + 'a>;
 /// `memory.recalled` 닫개.
 pub type RecordRecallFn<'a> = Box<dyn Fn(&[String]) -> Result<(), String> + 'a>;
 
@@ -357,6 +361,9 @@ struct Current {
     cause: String,
     /// 이 시도에 실은 기억 고정·recall — 성공한 턴 뒤 `commit`·`memory.recalled`.
     memory: crate::memory_pin::MemoryPlan,
+    /// 이 시도에 실은 스레드 계획판·메모 — 성공한 턴 뒤 `commit`.
+    plan_pin: crate::thread_plan_pin::ThreadPlanPlan,
+    note_pin: crate::thread_note_pin::ThreadNotePlan,
 }
 
 /// 멘션마다 바뀌는 명령 칸의 소유본(지시문 입력에 없는 것). 띄울 때 [`with_argv`] 가 명령 옵션에 빌려 싣는다.
@@ -432,6 +439,10 @@ pub struct MentionParts<'a, P: PrepareIo, S: PtyTurnSink> {
     pub recall_search: Option<RecallSearchFn<'a>>,
     /// 정본 `harkroom.recordRecall`(`memory.recalled`) — 성공한 턴 뒤, 실제로 실은 recall 만. 실패는 로그만.
     pub record_recall: Option<RecordRecallFn<'a>>,
+    /// 정본 `harkroom.readThreadNote`(`thread.note`) — 없거나 실패하면 이번 턴은 메모를 싣지 않는다.
+    pub read_note: Option<ReadNoteFn<'a>>,
+    /// 정본 `harkroom.readThreadPlan`(`thread.plan`) — 없거나 실패하면 이번 턴은 계획판을 싣지 않는다.
+    pub read_plan: Option<ReadPlanFn<'a>>,
     pub now: Option<TurnClock>,
     /// 시도를 준비할 때 그 순간의 시계를 잰다(정본 `now: new Date()` — 시도마다). `now` 가 있으면 그것이 먼저(시험용).
     pub clock: Option<fn() -> TurnClock>,
@@ -494,6 +505,8 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
             post_gate_fail: None,
             recall_search: None,
             record_recall: None,
+            read_note: None,
+            read_plan: None,
             now: None,
             clock: None,
             outcome,
@@ -524,6 +537,78 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
     /// 이 시도의 감시 자리 — `spawn` 이 sink 와 감시 루프에 넘기는 것. `bind_live(Some)` 이 시도마다 새로 만든다.
     pub fn attempt_watch(&self) -> Watch {
         self.watch.clone()
+    }
+
+    /// 이 시도의 스레드 계획판·메모 고정(정본 `planThreadPlan`·`planThreadNote`). 채널 최상위(앵커 없음)는 둘 다 없다.
+    /// 못 읽으면 그쪽만 「못 읽음」 — 싣지 않고 알린 판도 건드리지 않는다.
+    fn plan_thread_pins_for(
+        &self,
+        prepared: &Prepared,
+        target: &MentionTarget,
+    ) -> (
+        crate::thread_plan_pin::ThreadPlanPlan,
+        crate::thread_note_pin::ThreadNotePlan,
+    ) {
+        use crate::thread_note_pin::ThreadNoteState;
+        use crate::thread_plan_pin::ThreadPlanState;
+        let s = &prepared.session;
+        let anchor = Some(target.thread_root_id.as_str()).filter(|a| !a.is_empty());
+        let note = match (anchor, &self.read_note) {
+            (Some(a), Some(read)) => match read(a) {
+                Ok(Some(n)) => ThreadNoteState::Note(n),
+                Ok(None) => ThreadNoteState::Missing,
+                Err(e) => {
+                    eprintln!(
+                        "[mentionTurn] {}: 스레드 메모 조회 실패 — 이번 턴은 싣지 않는다: {e}",
+                        self.key
+                    );
+                    ThreadNoteState::Unavailable
+                }
+            },
+            _ => ThreadNoteState::Unavailable,
+        };
+        let plan = match (anchor, &self.read_plan) {
+            (Some(a), Some(read)) => match read(a) {
+                Ok(Some(v)) => match serde_json::from_value(v) {
+                    Ok(p) => ThreadPlanState::Plan(Box::new(p)),
+                    Err(_) => {
+                        // 오류 원문에는 남이 쓴 계획판 글자가 섞일 수 있다 — 종류만 남긴다(security #2114 nit).
+                        eprintln!(
+                            "[mentionTurn] {}: 계획판 모양이 틀렸다 — 이번 턴은 싣지 않는다",
+                            self.key
+                        );
+                        ThreadPlanState::Unavailable
+                    }
+                },
+                Ok(None) => ThreadPlanState::Missing,
+                Err(e) => {
+                    eprintln!(
+                        "[mentionTurn] {}: 계획판 조회 실패 — 이번 턴은 싣지 않는다: {e}",
+                        self.key
+                    );
+                    ThreadPlanState::Unavailable
+                }
+            },
+            _ => ThreadPlanState::Unavailable,
+        };
+        let sid = s.rec.session_id.as_deref();
+        (
+            crate::thread_plan_pin::plan_thread_plan(
+                &self.state_dir,
+                &self.key,
+                sid,
+                s.is_first_turn,
+                &self.me_id,
+                &plan,
+            ),
+            crate::thread_note_pin::plan_thread_note(
+                &self.state_dir,
+                &self.key,
+                sid,
+                s.is_first_turn,
+                &note,
+            ),
+        )
     }
 
     /// 이 시도의 기억 고정·recall(정본 `planMemory` 부르기).
@@ -631,8 +716,18 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
         // 기억 고정·recall(정본 `planMemory`) — 지시문에는 고정된 기억(core)을, 턴 프롬프트 앞머리에는 목록·recall 을 싣는다.
         let mut prepared = prepared;
         let memory = self.plan_memory_for(&prepared, target);
-        if !memory.turn_lines.is_empty() {
-            let head = memory.turn_lines.join("\n");
+        // 스레드 계획판·메모(정본 `planThreadPlan`·`planThreadNote`) — 새 세션 전문, 이어받으면 바뀐 때만. 앞머리 차례는
+        // 정본과 같다: 기억 → 계획판 → 메모.
+        let (plan_pin, note_pin) = self.plan_thread_pins_for(&prepared, target);
+        let mut head: Vec<String> = memory.turn_lines.clone();
+        for lines in [&plan_pin.lines, &note_pin.lines] {
+            if !lines.is_empty() {
+                head.push(String::new());
+                head.extend(lines.iter().cloned());
+            }
+        }
+        if !head.is_empty() {
+            let head = head.join("\n");
             prepared.prompt.prompt = format!(
                 "{}\n\n{}",
                 head.trim_start_matches('\n'),
@@ -666,6 +761,8 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             system_prompt_file: file.to_string_lossy().into_owned(),
             cause: target.mention_id.clone(),
             memory,
+            plan_pin,
+            note_pin,
         });
         Ok(AttemptPrep {
             key: self.key.clone(),
@@ -903,6 +1000,8 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
         {
             if !c.prepared.session.fresh_wake {
                 c.memory.commit(ctx.session_id.as_deref());
+                c.plan_pin.commit(ctx.session_id.as_deref());
+                c.note_pin.commit(ctx.session_id.as_deref());
             }
             if !c.memory.recalled.is_empty()
                 && let Some(f) = &self.record_recall
