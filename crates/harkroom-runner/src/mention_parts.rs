@@ -985,6 +985,8 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
         cmd.gate_file = markers.gate.as_deref();
         cmd.mcp_ready_file = markers.mcp_ready.as_deref();
         cmd.codex_hook_spec = codex_rules.as_ref().and_then(|(_, s)| s.as_deref());
+        // 기동 때 정한 codex 격리 홈을 명령 옵션에 싣는다 — 빠지면 codex 턴은 조립에서 `codexHome` 이 비어 안 뜬다(실물 턴 #2142).
+        cmd.codex_home = self.codex_home.as_deref();
         // PTY 옵션은 **이 시도의 값으로** 채운다(정본 `mentionTurn.ts` 의 `deps.runTurn(plan, {...})`) — 기본값(`/`·주입 없음)으로
         // 하네스가 뜨는 길을 남기지 않는다. 작업 폴더가 비었거나 상대 경로면 띄우지 않는다.
         let mut opts = attempt_pty_options(
