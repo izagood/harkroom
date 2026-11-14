@@ -143,6 +143,7 @@ fn cfg(tag: &str) -> (MakerConfig, Root) {
         can_register_turn_keys: true,
         pty_record_dir: None,
         codex: None,
+        opencode: None,
     };
     (c, Root(root))
 }
@@ -611,6 +612,36 @@ fn codex_home_reaches_turn_parts() {
         home: home.clone(),
         sync_auth: true,
         env: Default::default(),
+    });
+    assert_eq!(parts_home(&m), (Some(home), true));
+}
+
+/// o1: 기동 때 정한 opencode 홈·준비가 턴 부품까지 간다.
+#[test]
+fn opencode_home_reaches_turn_parts() {
+    let (mut m, _l, root) = maker("oc-home");
+    let t = target(1, None, "h");
+    let parts_home = |m: &RunnerMaker<&'static Link>| {
+        let clients = m.clients();
+        let book = LeaseBook::default();
+        let mut reads = read_mention(&clients, &t).unwrap();
+        reads.def["harness"] = json!("opencode");
+        let ctx = <RunnerMaker<_> as CallMaker<_, Sink>>::system_context(m, &t, &reads);
+        let system = system_inputs(&reads, &t, ctx);
+        let i: CallInputs<'_, _, Sink> = m.call_inputs(&clients, &book, &t, reads, system);
+        let parts = (i.build_parts)(bundle(m));
+        (parts.opencode_home.clone(), parts.opencode.is_some())
+    };
+    assert_eq!(parts_home(&m), (None, false));
+    let home = root.0.join("state/opencode-home");
+    m.set_opencode(crate::opencode_prep::OpencodePrep {
+        home: home.clone(),
+        lane: false,
+        mcp_config_path: root.0.join("state/mcp.json"),
+        user_xdg_config: None,
+        user_xdg_data: None,
+        user_home: root.0.join("home"),
+        skills_dir: None,
     });
     assert_eq!(parts_home(&m), (Some(home), true));
 }
