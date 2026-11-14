@@ -44,6 +44,9 @@ export const PI_ADAPTER: HarnessAdapter = {
   trust: null,
 
   mcpRegistration: 'account-config',
+  // 다리 열쇠를 하네스 env 로 준다 — pi 는 stdio MCP 자식에 env 를 통째로 넘긴다(실측). 셸 도구도 그 env 를 보지만(`getShellEnv`),
+  // 러너 링크 열쇠 대신 그 턴에 묶인 열쇠라 좁아진다. 턴 MCP 설정 파일을 주는 플래그가 pi 에는 없다(1.4.0 `--help`).
+  turnKeyDelivery: 'env-vars',
   systemPromptDelivery: 'flag-file',
   allowsNullSessionOnFirstTurn: false,
   supportedMentionPermissions: ['auto', 'readonly'],

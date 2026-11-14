@@ -230,6 +230,15 @@ fn turn_keys_by_delivery() {
     assert!(!env.contains_key("OPENCODE_CONFIG"));
     assert!(!env.contains_key(RUNNER_LINK_SECRET_ENV));
 
+    // pi 는 stdio MCP 자식에 env 를 통째로 넘긴다 — 다리 열쇠를 env 로 받고 링크 secret 은 없다.
+    let mut pi = ChildEnvInput::new(crate::adapter::AgentHarness::Pi);
+    pi.pi_home = Some(Path::new("/pi"));
+    pi.turn_keys = Some(&keys);
+    let env = child_env(&pi, &p, Path::new(HOME)).unwrap();
+    assert_eq!(env[RUNNER_TURN_KEY_BRIDGE_ENV], "br");
+    assert_eq!(env[RUNNER_TURN_KEY_SHELL_ENV], "sh");
+    assert!(!env.contains_key(RUNNER_LINK_SECRET_ENV));
+
     // 열쇠가 없는 턴은 링크 secret 을 그대로 둔다.
     let mut plain = ChildEnvInput::new(Codex);
     plain.codex_home = Some(Path::new(CODEX_ISO));
