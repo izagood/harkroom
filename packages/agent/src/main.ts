@@ -18,7 +18,7 @@
 // 진짜 서버에 붙으려 든다.
 import { createMentionRelay } from './mentionRelay.js';
 import { PROVIDER_LANE_ENV } from '@harkroom/shared/providerLane';
-import { createProviderLane, ProviderLaneError, sweepLaneMcpConfig, sweepLaneTurnDir, sweepTurnMcpDir, writeTurnMcpConfig } from './providerLane.js';
+import { createProviderLane, ensureProviderLaneClaudeDir, providerLaneIsDir, ProviderLaneError, sweepLaneMcpConfig, sweepLaneTurnDir, sweepTurnMcpDir, writeTurnMcpConfig } from './providerLane.js';
 import { resolveTurnModel } from './threadModel.js';
 import { idleStopRequestedAt } from './idleStop.js';
 import { execFile } from 'node:child_process';
@@ -406,7 +406,10 @@ const ompHome = await ensureOmpHome({ ompHome: ompHomeDir, mcpServers: startupMc
 // 전용 제공사 경로(`providerLane.ts`, security ⓒ): 오퍼레이터가 켰으면 계정 축은 **이 에이전트 전용 디렉터리 하나**다.
 // 풀·`~/.claude` 를 읽지 않으므로 페일오버·사용량 배정·로그인 경고에 이 에이전트가 들어가지 않고, 한 자식에 OAuth 와
 // 키가 같이 드는 일이 없다. 디렉터리는 비어 있어야 정상이다(로그인이 없다) — 키는 턴마다 env 로만 든다.
-if (providerLaneOn) await mkdir(providerLaneClaudeDir, { recursive: true, mode: 0o700 });
+// 만든 뒤 진짜 폴더·내 소유인지 본다 — 링크면 러너가 뜨지 않는다(`ensureProviderLaneClaudeDir`).
+if (providerLaneOn) await ensureProviderLaneClaudeDir(providerLaneClaudeDir);
+// lane 축은 고정이다 — 폴더가 사라져도 거르지 않고 다시 만든다(거르면 `[null]` = 사람의 기본 로그인). 비-lane 은 기본 판정.
+const laneIsDir = providerLaneOn ? providerLaneIsDir() : undefined;
 const providerLaneAccount: ClaudeAccount = { name: 'provider-lane', configDir: providerLaneClaudeDir, pool: null };
 const loadLane = async () => providerLaneOn
   ? { pool: null, accounts: [providerLaneAccount] }
@@ -429,7 +432,7 @@ const accountLane = claudeAccounts.length ? claudeAccounts : [null];
 // 멘션 턴의 축은 **턴마다 디스크에서 다시 읽는다**(`createLiveAccountLane`, 2026-09-30) — 지운
 // 계정이 배정 후보 자리를 차지해 한 계정만 쓰이던 결함. 서버에는 이 순서를 보내지 않는다(칩 ②, 2026-11-12 —
 // 계정·풀 이름은 사람 이름일 수 있다). 화면 칩에는 순번만 간다(`accountRanks`).
-const liveLane = createLiveAccountLane({ initial: lane, load: loadLane });
+const liveLane = createLiveAccountLane({ initial: lane, load: loadLane, ...(laneIsDir ? { isDir: laneIsDir } : {}) });
 
 // 서버별로 갈리기 전 경로가 남아 있으면 **경고만** 한다 — 자동으로 옮기지 않는다.
 // 코드는 그 디렉터리가 *어느 서버의* 이 handle 것인지 알 방법이 없다(아래 레거시
@@ -735,7 +738,7 @@ const scheduler = createMentionScheduler({
     key, await harkroom.definition()
       .then((d) => resolveTurnModel(harkroom, d, anchor ?? null))
       .then((m) => m.model, () => null),
-  )),
+  ), laneIsDir),
   // 사람이 지나야 하는 관문에 막힌 계정을 표시한다(설정 › Claude 계정의 [터미널 열기], 2026-10-01).
   accountAttention: {
     mark: (a) => markAccountNeedsAttention(a.configDir, Date.now()),
