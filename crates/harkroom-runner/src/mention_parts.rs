@@ -354,6 +354,9 @@ pub fn recall_query(
 
 /// 이 멘션의 임대 폴더를 묻는 닫개.
 pub type LeaseDirFn<'a> = Box<dyn Fn() -> Option<PathBuf> + 'a>;
+
+/// codex 턴 직전 준비(로그인 링크 맞추기·남은 규칙 지우기, `codex_prep`). `Err` 면 턴을 띄우지 않는다.
+pub type CodexPrepFn<'a> = Box<dyn Fn() -> Result<(), String> + 'a>;
 /// 시도마다 PTY 옵션(주입 글 틀 포함)을 새로 짓는다.
 pub type PtyOptsFn<'a> = Box<dyn Fn() -> PtyTurnOptions + 'a>;
 
@@ -429,6 +432,8 @@ pub struct MentionParts<'a, P: PrepareIo, S: PtyTurnSink> {
     pub home: PathBuf,
     pub omp_home: Option<PathBuf>,
     pub codex_home: Option<PathBuf>,
+    /// codex 턴 직전 준비(c1). 없으면 하지 않는다(시험용).
+    pub codex_prep: Option<CodexPrepFn<'a>>,
     pub pty_opts: PtyOptsFn<'a>,
     pub inner: S,
     pub watch: Watch,
@@ -507,6 +512,7 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
             home: PathBuf::new(),
             omp_home: None,
             codex_home: None,
+            codex_prep: None,
             pty_opts,
             turn_timeout_ms: 0,
             inner,
@@ -852,6 +858,15 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
                 },
             );
             crate::skills_sync::scrub_workspace_settings(ws);
+        }
+        // codex 턴 직전 준비(c1, 정본 `syncCodexAuth` → `sweepCodexRules`) — 로그인 링크는 실패해도 가고, 규칙 지우기 실패는 띄우지 않는다.
+        if self.harness == crate::adapter::AgentHarness::Codex
+            && let Some(prep) = self.codex_prep.as_ref()
+        {
+            prep().map_err(|e| {
+                eprintln!("[mentionTurn] {}: {e}", self.key);
+                fail()
+            })?;
         }
         // 하네스를 띄우기 전, **이 시도의 계정 폴더**로 작업 폴더 신뢰·bypass 수락을 적는다(정본 `mentionTurn.ts` 의 차례).
         crate::workspace_trust::prepare_harness_gates(

@@ -31,6 +31,7 @@ pub mod bg_executor;
 pub mod bg_tick;
 pub mod call_maker;
 pub mod codex_home;
+pub mod codex_prep;
 pub mod codex_rules;
 pub mod config;
 pub mod fail_text;

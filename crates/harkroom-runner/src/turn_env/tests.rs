@@ -36,7 +36,9 @@ fn per_turn_names_are_overwritten_or_removed() {
         (RUNNER_TURN_KEY_SHELL_ENV, "old-shell"),
         (RUNNER_TURN_KEY_BRIDGE_ENV, "old-bridge"),
     ]);
-    let env = child_env(&ChildEnvInput::new(Codex), &p, Path::new(HOME)).unwrap();
+    let mut ci = ChildEnvInput::new(Codex);
+    ci.codex_home = Some(Path::new(CODEX_ISO));
+    let env = child_env(&ci, &p, Path::new(HOME)).unwrap();
     assert_eq!(env[RUNNER_TURN_ID_ENV], "");
     assert_eq!(env[RUNNER_TURN_CAUSE_ENV], "");
     for k in [
@@ -49,6 +51,7 @@ fn per_turn_names_are_overwritten_or_removed() {
     }
 
     let mut i = ChildEnvInput::new(Codex);
+    i.codex_home = Some(Path::new(CODEX_ISO));
     i.turn_id = Some("t1");
     i.cause_message_id = Some("m1");
     i.gate_file = Some(Path::new("/new/gate"));
@@ -74,6 +77,7 @@ fn lane_turn_builds_from_allow_list() {
         ("HARKROOM_LANE_BASE_URL".to_owned(), "https://g".to_owned()),
     ]);
     let mut i = ChildEnvInput::new(Codex);
+    i.codex_home = Some(Path::new(CODEX_ISO));
     i.provider_env = Some(&lane);
     let env = child_env(&i, &p, Path::new(HOME)).unwrap();
     assert!(!env.contains_key("GITHUB_TOKEN"));
@@ -196,6 +200,7 @@ fn turn_keys_by_delivery() {
         bridge: "br".into(),
     };
     let mut c = ChildEnvInput::new(Codex);
+    c.codex_home = Some(Path::new(CODEX_ISO));
     c.turn_keys = Some(&keys);
     let env = child_env(&c, &p, Path::new(HOME)).unwrap();
     assert!(!env.contains_key(RUNNER_LINK_SECRET_ENV));
@@ -215,7 +220,9 @@ fn turn_keys_by_delivery() {
     assert!(!env.contains_key(RUNNER_TURN_KEY_BRIDGE_ENV));
 
     // 열쇠가 없는 턴은 링크 secret 을 그대로 둔다.
-    let env = child_env(&ChildEnvInput::new(Codex), &p, Path::new(HOME)).unwrap();
+    let mut plain = ChildEnvInput::new(Codex);
+    plain.codex_home = Some(Path::new(CODEX_ISO));
+    let env = child_env(&plain, &p, Path::new(HOME)).unwrap();
     assert_eq!(env[RUNNER_LINK_SECRET_ENV], "s");
 }
 
@@ -289,7 +296,6 @@ fn harness_parent_env_passes_only_allowed_names() {
     assert_eq!(
         keys,
         [
-            "CODEX_HOME",
             "HARKROOM_OPERATOR_SOCKET",
             "HARKROOM_RUNNER_ID",
             "HOME",
@@ -310,4 +316,35 @@ fn harness_parent_env_passes_only_allowed_names() {
     assert!(!env.contains_key("HARKROOM_RUNNER_SECRET"));
     assert!(!env.contains_key("HARKROOM_PAT"));
     assert!(!env.contains_key("GITHUB_TOKEN"));
+}
+
+/// 러너가 정한 codex 격리 홈(시험용 자리).
+const CODEX_ISO: &str = "/state/codex-home";
+
+/// c1: codex 자식은 러너가 정한 격리 홈만 쓴다 — 부모(러너) env 의 `CODEX_HOME`(사람 `~/.codex`)은 어느 하네스에도 안 간다.
+#[test]
+fn codex_child_uses_only_isolated_home() {
+    let p = parent(&[("CODEX_HOME", "/h/.codex"), ("PATH", "/usr/bin")]);
+    let mut ci = ChildEnvInput::new(Codex);
+    ci.codex_home = Some(Path::new(CODEX_ISO));
+    let env = child_env(&ci, &p, Path::new(HOME)).unwrap();
+    assert_eq!(env["CODEX_HOME"], CODEX_ISO);
+    // 다른 하네스에는 부모 값이 실리지 않는다(물려받으면 그 안에서 codex 를 부를 때 사람 홈이 된다).
+    for h in [ClaudeCode, crate::adapter::AgentHarness::Opencode] {
+        let env = child_env(&ChildEnvInput::new(h), &p, Path::new(HOME)).unwrap();
+        assert!(!env.contains_key("CODEX_HOME"), "{h:?}");
+    }
+    // 러너 env 를 고를 때부터 빠진다.
+    let runner: BTreeMap<String, String> =
+        [("CODEX_HOME".to_owned(), "/h/.codex".to_owned())].into();
+    assert!(harness_parent_env(&runner).is_empty());
+}
+
+/// c1: codex 턴인데 격리 홈이 없으면 env 를 만들지 않는다 — 띄우면 codex 가 `$HOME/.codex` 를 쓴다.
+#[test]
+fn codex_without_isolated_home_is_refused() {
+    let p = parent(&[("CODEX_HOME", "/h/.codex")]);
+    let e = child_env(&ChildEnvInput::new(Codex), &p, Path::new(HOME)).unwrap_err();
+    assert!(matches!(e, ChildEnvError::CodexHomeMissing));
+    assert!(e.to_string().starts_with("codex_home_missing"));
 }

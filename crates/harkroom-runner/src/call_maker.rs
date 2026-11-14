@@ -68,6 +68,8 @@ pub struct MakerConfig {
     pub can_register_turn_keys: bool,
     /// PTY 원시 출력 녹화 폴더(정본 `config.ptyRecordDir`, `AGENT_PTY_RECORD_DIR` 절대 경로, 기본 `None` = 끔). 폴더 0700·파일 0600.
     pub pty_record_dir: Option<PathBuf>,
+    /// codex 격리 홈(c1, 정본 `codexHome`) — main.rs 가 기동 때 정한다. 없으면 codex 턴은 `codex_home_missing` 으로 안 뜬다.
+    pub codex: Option<crate::codex_prep::CodexPrep>,
 }
 
 /// 배치마다 갱신하는 이름 표 — 이름은 바뀔 수 있어 멘션을 지을 때 꺼낸 **사본**을 쓴다.
@@ -198,6 +200,11 @@ impl<L: AgentLink> RunnerMaker<L> {
 
     fn names(&self) -> Names {
         self.names.read().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
+    /// codex 격리 홈을 정한다(c1, main.rs 가 기동 때 한 번).
+    pub fn set_codex(&mut self, codex: crate::codex_prep::CodexPrep) {
+        self.cfg.codex = Some(codex);
     }
 
     pub fn config(&self) -> &MakerConfig {
@@ -392,6 +399,16 @@ where
             p.new_workspace_dir = workspace;
             p.home = c.home.clone();
             p.parent_env = c.parent_env.clone();
+            if let Some(cx) = c.codex.clone() {
+                p.codex_home = Some(cx.home.clone());
+                let (base_path, home) = (c.parent_env.get("PATH").cloned(), c.home.clone());
+                p.codex_prep = Some(Box::new(move || {
+                    cx.run(&crate::codex_prep::SystemCodexDeps::new(
+                        base_path.as_deref(),
+                        &home,
+                    ))
+                }));
+            }
             p.slot = b.slot;
             p.watch_loop = Some(b.watch_loop);
             p.argv = argv;
