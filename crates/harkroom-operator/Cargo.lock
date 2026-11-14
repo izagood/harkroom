@@ -199,10 +199,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "harkroom-accounts"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "harkroom-operator"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "harkroom-accounts",
  "harkroom-proto",
  "harkroom-roots",
  "indexmap",

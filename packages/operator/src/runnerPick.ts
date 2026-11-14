@@ -1,26 +1,26 @@
 /**
- * 에이전트마다 러너 구현을 고른다(B4-5c). 정본 판정은 여기 한 곳이다 — Rust 오퍼레이터 `runner_pick.rs` 가 같은 표를 따른다.
+ * 에이전트마다 러너 구현을 고른다(B4-5c → L3c-3e). 정본 판정은 여기 한 곳이다 — Rust 오퍼레이터 `runner_pick.rs` 가 같은 표를 따른다.
  *
- * | 로컬 설정 | Rust 러너 파일 | 결과 |
+ * | 로컬 설정·에이전트 | Rust 러너 파일 | 결과 |
  * |---|---|---|
  * | `runner` 가 `"rust"` 가 아님(없음·모르는 값) | — | node |
- * | `"rust"` + 계정 풀(`claudePool`) | — | node, `rust_needs_account_pool` |
- * | `"rust"` + 러너의 풀 해석에서 계정이 나온다(`pools.json` 배정·기본 풀·뿌리 계정, B4-5e) | — | node, `rust_needs_account_pool` |
- * | `"rust"` + 그 해석을 못 한다(`pools.json` 깨짐·뿌리 못 읽음 등) | — | node, `rust_account_pool_unreadable` |
- * | `"rust"` + 전용 제공사 경로(`providerLane`) | — | node, `rust_needs_provider_lane` |
+ * | `"rust"` + 하네스가 허용 목록(`RUST_RUNNER_HARNESSES` = claude-code) 밖 | — | node, `rust_harness_unsupported` — Rust 러너는 codex·opencode·kilo·pi·omp 홈을 아직 배선하지 않았다. 홈 배선 조각에서 하나씩 목록에 더한다. 모르는 이름도 node |
+ * | `"rust"` + 러너의 풀 해석을 못 한다(`pools.json` 깨짐·뿌리 못 읽음 등) | — | node, `rust_account_pool_unreadable` |
  * | `"rust"` | 오퍼레이터 옆에 없음 | node, `rust_runner_missing` |
- * | `"rust"` | 있음 | rust |
+ * | `"rust"`(계정 풀·전용 제공사 경로 포함) | 있음 | rust |
  *
- * 풀·lane 에이전트를 떨어뜨리는 이유: Rust 러너는 아직 계정 풀·lane 을 모른다(L3c-3 몫). 그대로 돌리면 그 에이전트가
- * **사람의 기본 claude 로그인**으로 돌아 다른 계정·과금으로 조용히 바뀐다. L3c-3 이 들어오면 이 두 줄을 걷는다.
+ * 계정 풀·lane 에이전트도 이제 rust 다(L3c-3e): Rust 러너가 러너와 같은 풀 해석으로 계정 폴더를 고르고(L3c-3b), lane 러너는 그
+ * 에이전트 전용 폴더와 턴마다 받은 lane env 로만 돈다(L3c-3d). 「못 읽음은 node」는 그대로다 — 모르면 Rust 러너로 보내지 않는다.
  */
-import { readProviderLaneConfig } from '@harkroom/shared/providerLane';
 import { runnerKindOf, type LocalAgentConfig, type RunnerKind } from './config.js';
 
-export type RunnerFallback = 'rust_needs_account_pool' | 'rust_account_pool_unreadable' | 'rust_needs_provider_lane' | 'rust_runner_missing';
+export type RunnerFallback = 'rust_harness_unsupported' | 'rust_account_pool_unreadable' | 'rust_runner_missing';
 
 /** 러너가 계정 풀로 도는가(`@harkroom/shared/claudeAccountLane` 의 `claudeAccountUse`). */
 export type AccountUse = 'none' | 'pool' | 'unreadable';
+
+/** Rust 러너로 보내도 되는 하네스 — **허용 목록**이다(배선·시험을 마친 것만). 그 밖(모르는 이름 포함)은 node. */
+export const RUST_RUNNER_HARNESSES: readonly string[] = ['claude-code'];
 
 export interface RunnerPick {
   kind: RunnerKind;
@@ -28,13 +28,16 @@ export interface RunnerPick {
   fallback?: RunnerFallback;
 }
 
-export function pickRunner(local: LocalAgentConfig | undefined, rustRunnerPresent: boolean, accountUse: AccountUse): RunnerPick {
+export function pickRunner(
+  local: LocalAgentConfig | undefined,
+  rustRunnerPresent: boolean,
+  accountUse: AccountUse,
+  /** 서버 정의의 하네스(`definition.harness`). */
+  harness: string,
+): RunnerPick {
   if (runnerKindOf(local) !== 'rust') return { kind: 'node' };
-  if (local?.claudePool) return { kind: 'node', fallback: 'rust_needs_account_pool' };
-  // 러너가 실제로 고르는 계정(B4-5e). operator.json 에 `claudePool` 이 없어도 `pools.json` 기본 풀·배정으로 풀에 든다.
-  if (accountUse === 'pool') return { kind: 'node', fallback: 'rust_needs_account_pool' };
-  if (accountUse !== 'none') return { kind: 'node', fallback: 'rust_account_pool_unreadable' };
-  if (readProviderLaneConfig(local?.providerLane) !== null) return { kind: 'node', fallback: 'rust_needs_provider_lane' };
+  if (!RUST_RUNNER_HARNESSES.includes(harness)) return { kind: 'node', fallback: 'rust_harness_unsupported' };
+  if (accountUse === 'unreadable') return { kind: 'node', fallback: 'rust_account_pool_unreadable' };
   if (!rustRunnerPresent) return { kind: 'node', fallback: 'rust_runner_missing' };
   return { kind: 'rust' };
 }

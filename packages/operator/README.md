@@ -157,14 +157,12 @@ unix 소켓으로 말하는 것이고, 그 어느 것도 네이티브 애드온�
 
 ### Node 로 떨어지는 경우와 그 이유를 보는 곳
 
-`"rust"` 를 적어도 아래면 Node 러너로 띄운다(`src/runnerPick.ts`, Rust 오퍼레이터 `runner_pick.rs` 같은 표).
+계정 풀·전용 제공사 경로(lane)를 쓰는 에이전트도 Rust 러너로 돈다(L3c-3e) — Rust 러너가 같은 풀 해석으로 계정 폴더를 고르고, lane 러너는 그 에이전트 전용 폴더와 턴마다 받은 lane env 로만 돈다. `"rust"` 를 적어도 아래면 Node 러너로 띄운다(`src/runnerPick.ts`, Rust 오퍼레이터 `runner_pick.rs` 같은 표).
 
 | 이유(`runnerFallback`) | 언제 | 왜 |
 |---|---|---|
-| `rust_needs_account_pool` | 그 에이전트에 계정 풀(`claudePool`)이 있다 | Rust 러너는 아직 계정 풀을 모른다. 그대로 돌리면 사람의 기본 claude 로그인으로 돌아 **다른 계정·과금**이 된다 |
-| `rust_needs_account_pool` | `claudePool` 이 없어도 Node 러너가 계정 풀로 돈다 — `pools.json` 의 에이전트 배정·기본 풀(`defaultPool`), 또는 계정 뿌리(`<계정 뿌리>/<계정>`)의 계정. TS 오퍼레이터는 러너와 같은 해석(`@harkroom/shared/claudeAccountLane`)으로 재고, Rust 오퍼레이터는 계정 폴더나 `pools.json` 이 하나라도 있으면 떨어뜨린다 | 같은 이유 |
-| `rust_account_pool_unreadable` | 위 판정을 못 한다 — `pools.json` 이 깨졌거나 계정 뿌리를 읽지 못한다 | 모르면 Rust 러너로 보내지 않는다(닫힌 쪽) |
-| `rust_needs_provider_lane` | 전용 제공사 경로(`providerLane`)가 있다 | 같은 이유(lane 도 아직 없다) |
+| `rust_harness_unsupported` | 그 에이전트의 하네스가 허용 목록(지금은 `claude-code` 하나) 밖이다 — codex·opencode·kilo·pi·omp·모르는 이름 | Rust 러너는 그 하네스들의 홈을 아직 배선하지 않았다. 배선하는 조각에서 하나씩 목록에 더한다 |
+| `rust_account_pool_unreadable` | 러너의 계정 풀 해석을 못 한다 — `pools.json` 이 깨졌거나 계정 뿌리를 읽지 못한다(두 오퍼레이터 모두 `harkroom-accounts`·`@harkroom/shared/claudeAccountLane` 의 같은 해석) | 모르면 Rust 러너로 보내지 않는다(닫힌 쪽) |
 | `rust_runner_missing` | 오퍼레이터 실행 파일 옆에 `harkroom-runner-rs` 가 없다(실행 가능한 일반 파일만 「있다」) | 앱이 싣지 않은 판이거나 Windows |
 
 보는 곳은 둘이다.

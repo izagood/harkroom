@@ -220,8 +220,9 @@ export function createAssignmentReconciler(deps: AssignmentDeps): AssignmentReco
           local,
           await (deps.rustRunnerPresent?.() ?? Promise.resolve(false)).catch(() => false),
           await (deps.claudeAccountUse?.(agentId, local?.claudePool) ?? Promise.resolve<AccountUse>('unreadable')).catch((): AccountUse => 'unreadable'),
+          definition.harness,
         )
-        : pickRunner(local, false, 'none');
+        : pickRunner(local, false, 'none', definition.harness);
       if (pick.fallback) deps.log(`러너: rust 를 청했지만 node 로 띄운다(${pick.fallback}): agent=${definition.handle}`);
       let result: Awaited<ReturnType<AssignmentDeps['spawn']>>;
       try {

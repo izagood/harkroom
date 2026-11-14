@@ -212,10 +212,10 @@ describe('러너 구현 고르기(B4-5c) — 고정 경로 둘 중 하나', () =
     const registry = new RunnerRegistry(launch, fakeHost(commands));
     await registry.spawnRunner('a-rust', {}, undefined, { kind: 'rust' });
     await registry.spawnRunner('a-node', {});
-    await registry.spawnRunner('a-lane', {}, undefined, { kind: 'node', fallback: 'rust_needs_provider_lane' });
+    await registry.spawnRunner('a-lane', {}, undefined, { kind: 'node', fallback: 'rust_harness_unsupported' });
     expect(commands).toEqual(['/app/MacOS/harkroom-runner-rs', '/app/MacOS/harkroom-runner', '/app/MacOS/harkroom-runner']);
     const info = Object.fromEntries(registry.listRunners().map((r) => [r.agentId, [r.runnerImpl, r.runnerFallback]]));
-    expect(info).toEqual({ 'a-rust': ['rust', undefined], 'a-node': ['node', undefined], 'a-lane': ['node', 'rust_needs_provider_lane'] });
+    expect(info).toEqual({ 'a-rust': ['rust', undefined], 'a-node': ['node', undefined], 'a-lane': ['node', 'rust_harness_unsupported'] });
   });
 
   it('rustCommand 가 없으면 rust 를 골라도 node 로 띄운다', async () => {
