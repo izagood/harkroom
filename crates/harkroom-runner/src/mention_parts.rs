@@ -81,6 +81,8 @@ pub struct MergeInputs {
 #[derive(Clone, Debug, Default)]
 pub struct PermissionInputs {
     pub tool_allows: Vec<String>,
+    /// 이 에이전트의 모든 채널 승인 규칙의 합(서버 `reach`, 안전한 것만). `None` = 옛 서버 — codex 규칙 파일을 쓰지 않는다.
+    pub reach: Option<Vec<String>>,
     pub command_hook: bool,
     pub exact_shell_only: bool,
     pub new_posts_hook: bool,
@@ -355,8 +357,6 @@ pub fn recall_query(
 /// 이 멘션의 임대 폴더를 묻는 닫개.
 pub type LeaseDirFn<'a> = Box<dyn Fn() -> Option<PathBuf> + 'a>;
 
-/// codex 턴 직전 준비(로그인 링크 맞추기·남은 규칙 지우기, `codex_prep`). `Err` 면 턴을 띄우지 않는다.
-pub type CodexPrepFn<'a> = Box<dyn Fn() -> Result<(), String> + 'a>;
 /// 시도마다 PTY 옵션(주입 글 틀 포함)을 새로 짓는다.
 pub type PtyOptsFn<'a> = Box<dyn Fn() -> PtyTurnOptions + 'a>;
 
@@ -432,8 +432,8 @@ pub struct MentionParts<'a, P: PrepareIo, S: PtyTurnSink> {
     pub home: PathBuf,
     pub omp_home: Option<PathBuf>,
     pub codex_home: Option<PathBuf>,
-    /// codex 턴 직전 준비(c1). 없으면 하지 않는다(시험용).
-    pub codex_prep: Option<CodexPrepFn<'a>>,
+    /// codex 턴 준비(c1 로그인 링크·남은 규칙 지우기, c2 승인 명령 규칙·hook). 없으면 하지 않는다(시험용).
+    pub codex: Option<crate::codex_prep::CodexTurn>,
     pub pty_opts: PtyOptsFn<'a>,
     pub inner: S,
     pub watch: Watch,
@@ -512,7 +512,7 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
             home: PathBuf::new(),
             omp_home: None,
             codex_home: None,
-            codex_prep: None,
+            codex: None,
             pty_opts,
             turn_timeout_ms: 0,
             inner,
@@ -861,9 +861,9 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
         }
         // codex 턴 직전 준비(c1, 정본 `syncCodexAuth` → `sweepCodexRules`) — 로그인 링크는 실패해도 가고, 규칙 지우기 실패는 띄우지 않는다.
         if self.harness == crate::adapter::AgentHarness::Codex
-            && let Some(prep) = self.codex_prep.as_ref()
+            && let Some(cx) = self.codex.as_ref()
         {
-            prep().map_err(|e| {
+            cx.before_turn().map_err(|e| {
                 eprintln!("[mentionTurn] {}: {e}", self.key);
                 fail()
             })?;
@@ -949,6 +949,31 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             !args.lane_env.is_empty(),
             &mut crate::link::random_uuid,
         );
+        // 승인 명령 규칙·hook(c2, 정본 `mentionTurn.ts` 1690) — 턴 열쇠가 있는 auto codex 턴에만. 규칙은 **서버 승인 목록**
+        // (`permissions.tool_allows`·`reach`)에서만 온다. hook 신뢰를 확인하지 못하면 띄우지 않는다. 쓴 규칙 파일은 시도가 끝나면 지운다.
+        let codex_rules = if self.harness == crate::adapter::AgentHarness::Codex
+            && args.keys.is_some()
+            && self.base.mention_permission == crate::adapter::MentionPermission::Auto
+            && let Some(cx) = self.codex.as_ref()
+        {
+            let perms = self.system.permissions.clone().unwrap_or_default();
+            let spec = cx
+                .rules(
+                    Path::new(&c.prepared.session.rec.workspace_dir),
+                    &perms.tool_allows,
+                    perms.reach.as_deref(),
+                    self.base.operator_bin,
+                )
+                .map_err(|e| {
+                    eprintln!("[mentionTurn] {}: codex 승인 명령 규칙 — {e}", self.key);
+                    crate::pty_turn::PtyTurnError::Spawn(std::io::Error::other(
+                        "codex_rules_unavailable",
+                    ))
+                })?;
+            Some((cx.clone(), spec))
+        } else {
+            None
+        };
         let mut cmd = attempt_command_for_account(
             &with_argv(&self.base, &self.system, &self.argv),
             &c.account,
@@ -959,6 +984,7 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
         );
         cmd.gate_file = markers.gate.as_deref();
         cmd.mcp_ready_file = markers.mcp_ready.as_deref();
+        cmd.codex_hook_spec = codex_rules.as_ref().and_then(|(_, s)| s.as_deref());
         // PTY 옵션은 **이 시도의 값으로** 채운다(정본 `mentionTurn.ts` 의 `deps.runTurn(plan, {...})`) — 기본값(`/`·주입 없음)으로
         // 하네스가 뜨는 길을 남기지 않는다. 작업 폴더가 비었거나 상대 경로면 띄우지 않는다.
         let mut opts = attempt_pty_options(
@@ -1091,6 +1117,10 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             }
         });
         self.slot.set_pty(None);
+        // 이 시도가 쓴 승인 명령 규칙 파일을 지운다(c2) — 다음 턴은 그 턴의 서버 목록으로 다시 쓴다.
+        if let Some((cx, _)) = &codex_rules {
+            cx.end_turn();
+        }
         // 정지 화면 판정용 — 지우기(`markers` 떨어짐) 전에 읽는다(정본은 지운 뒤 읽어 늘 0, 모듈 머리 주석).
         self.last_gate = markers.gate_snapshot();
         out

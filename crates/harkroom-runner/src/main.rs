@@ -205,18 +205,16 @@ fn main() {
     // codex 격리 홈(c1, 정본 `main.ts` 361) — lane 러너는 lane 전용 자리, 아니면 `<state>/codex-home` 에 활성 계정 로그인 링크.
     // 이 홈이 없으면 codex 턴은 띄우지 않는다(`codex_home_missing`) — 사람 `~/.codex` 로 돌지 않게.
     {
-        use std::os::unix::fs::DirBuilderExt as _;
         let state_dir = maker.config().state_dir.clone();
         let codex = if provider_lane {
-            let home = state_dir.join("codex-provider-lane");
-            if let Err(e) = std::fs::DirBuilder::new()
-                .recursive(true)
-                .mode(0o700)
-                .create(&home)
-            {
-                eprintln!("codex lane 홈을 만들지 못했다 — 뜨지 않는다: {}", e.kind());
-                std::process::exit(1);
-            }
+            // claude lane 폴더와 같은 검사(security #2141 조건) — 링크·폴더 아님·남의 소유면 거절.
+            let home = match harkroom_runner::codex_prep::codex_lane_home(&state_dir) {
+                Ok(h) => h,
+                Err(e) => {
+                    eprintln!("codex lane 홈을 만들지 못했다 — 뜨지 않는다: {}", e.kind());
+                    std::process::exit(1);
+                }
+            };
             harkroom_runner::codex_prep::CodexPrep {
                 home,
                 sync_auth: false,
