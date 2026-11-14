@@ -9,6 +9,7 @@ pub mod events;
 pub mod operator;
 pub mod operator_frames;
 pub mod operator_hub;
+pub mod operator_rest;
 pub mod tickets;
 pub mod typing;
 pub mod ws;

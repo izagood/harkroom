@@ -350,7 +350,7 @@ fn handle(
             let Some(report) = frame.get("report").and_then(parse_gh_report) else {
                 return;
             };
-            let pool = core.pool.clone();
+            let pool = core.write.clone();
             tokio::spawn(async move {
                 let res = sqlx::query(
                     "insert into operator_gh_report (operator_id, logins, by_scope, default_gh_user, reach, reported_at) \
@@ -385,7 +385,7 @@ async fn write_status(
         "select owner_account_id::text from operator where id = $1::uuid and revoked_at is null",
     )
     .bind(op)
-    .fetch_optional(&core.pool)
+    .fetch_optional(&core.write)
     .await?;
     let Some(owner) = owner else { return Ok(()) };
     let mut machine_changed = false;
@@ -396,7 +396,7 @@ async fn write_status(
         )
         .bind(op)
         .bind(mixed)
-        .fetch_optional(&core.pool)
+        .fetch_optional(&core.write)
         .await?
         .is_some();
     }
@@ -429,7 +429,7 @@ async fn write_upgrade(
     .bind(from)
     .bind(to)
     .bind(error)
-    .fetch_optional(&core.pool)
+    .fetch_optional(&core.write)
     .await?;
     let Some(owner) = owner else { return Ok(()) };
     sqlx::query(
@@ -438,7 +438,7 @@ async fn write_upgrade(
     )
     .bind(op)
     .bind(UPGRADE_HISTORY_MAX)
-    .execute(&core.pool)
+    .execute(&core.write)
     .await?;
     core.events
         .emit(json!({ "type": "operator.changed", "operatorId": op, "audience": [owner] }));

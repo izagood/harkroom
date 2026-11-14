@@ -57,7 +57,15 @@ impl OpTiming {
 }
 
 pub struct OperatorCore {
+    /// 읽기 풀(토큰 재검증·목록).
     pub pool: PgPool,
+    /// 쓰기 풀(`DATABASE_WRITE_URL`) — operator 표·이력·gh 보고·배정 이동은 모두 이것으로 쓴다. 이 풀에
+    /// [`crate::write::OPERATOR_PRIVILEGES`] 가 다 있을 때만 이 코어가 선다(`main.rs`).
+    pub write: PgPool,
+    /// 감사 `ip` 규칙(TS `req.ip`).
+    pub trust: Arc<crate::trust_proxy::TrustProxy>,
+    /// 등록 코드(5분, 1회용) — TS `createRegisterCodes`.
+    pub codes: super::operator_rest::RegisterCodes,
     pub events: Hub,
     pub hub: OperatorHub,
     pub timing: OpTiming,
@@ -65,9 +73,21 @@ pub struct OperatorCore {
 }
 
 impl OperatorCore {
-    pub fn new(pool: PgPool, events: Hub, hub: OperatorHub, timing: OpTiming) -> Arc<Self> {
+    pub fn new(
+        pool: PgPool,
+        write: PgPool,
+        trust: Arc<crate::trust_proxy::TrustProxy>,
+        events: Hub,
+        hub: OperatorHub,
+        timing: OpTiming,
+    ) -> Arc<Self> {
         let core = Arc::new(Self {
             pool,
+            write,
+            trust,
+            codes: super::operator_rest::RegisterCodes::new(
+                super::operator_rest::REGISTER_CODE_TTL,
+            ),
             events,
             hub,
             timing,
@@ -89,14 +109,14 @@ impl OperatorCore {
         self.workers.load(Ordering::SeqCst)
     }
 
-    fn changed_all(&self, operator_id: &str) {
+    pub(super) fn changed_all(&self, operator_id: &str) {
         self.events.emit(
             json!({ "type": "operator.changed", "operatorId": operator_id, "audience": "all" }),
         );
     }
 
     fn touch_last_seen(&self, operator_id: &str) {
-        let pool = self.pool.clone();
+        let pool = self.write.clone();
         let id = operator_id.to_owned();
         // 실패해도 흐름을 막지 않는다(TS 와 같음) — 기다리지 않는다.
         tokio::spawn(async move {
@@ -145,7 +165,7 @@ fn spawn_version_writer(core: Arc<OperatorCore>) {
                 )
                 .bind(&operator_id)
                 .bind(version)
-                .fetch_optional(&core.pool)
+                .fetch_optional(&core.write)
                 .await;
                 match res {
                     Ok(Some(_)) => core.changed_all(&operator_id),
@@ -237,13 +257,23 @@ async fn run(core: Arc<OperatorCore>, socket: WebSocket, operator_id: String, to
 
 /// 오퍼레이터 라우터 — `HARKROOM_CORE=rust` 일 때 앞단 라우터에 합친다. 인증은 앞단 인증 층(오퍼레이터 토큰 `hkop_`)이다.
 pub fn router(core: Arc<OperatorCore>, auth: crate::auth::AuthPools) -> axum::Router {
+    use super::operator_rest as rest;
+    use axum::routing::{get, post};
     axum::Router::new()
+        .route("/operator", get(upgrade))
+        .route("/operators", get(rest::list))
+        .route("/operators/register-codes", post(rest::register_code))
+        .route("/operators/claim", post(rest::claim))
+        .route("/operators/self", get(rest::self_view))
+        .route("/operators/{id}/capabilities", get(rest::capabilities))
+        .route("/operators/{id}/upgrades", get(rest::upgrades))
         .route(
-            "/operator",
-            axum::routing::get(upgrade).route_layer(axum::middleware::from_fn_with_state(
-                auth,
-                crate::auth::layer,
-            )),
+            "/operators/{id}",
+            axum::routing::patch(rest::rename).delete(rest::revoke),
         )
+        .route_layer(axum::middleware::from_fn_with_state(
+            auth,
+            crate::auth::layer,
+        ))
         .with_state(core)
 }
