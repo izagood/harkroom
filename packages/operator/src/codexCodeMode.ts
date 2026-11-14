@@ -47,17 +47,27 @@ class P {
     if (typeof v !== 'string' || LONE_SURROGATE.test(v)) return null;
     return v;
   }
-  key(): 'cmd' | 'workdir' | null {
-    for (const k of ['cmd', 'workdir'] as const) if (this.word(k)) return k;
+  key(): 'cmd' | 'workdir' | 'max_output_tokens' | null {
+    for (const k of ['cmd', 'workdir', 'max_output_tokens'] as const) if (this.word(k)) return k;
     const save = this.i;
     const s = this.string();
-    if (s === 'cmd' || s === 'workdir') return s;
+    if (s === 'cmd' || s === 'workdir' || s === 'max_output_tokens') return s;
     this.i = save;
     return null;
   }
+  /** 10진 정수 리터럴 1~1,000,000(앞 0·부호·소수·지수 없음, security 01:51 조건 2). 출력 상한일 뿐이다. */
+  tokens(): number | null {
+    const m = /^[1-9][0-9]{0,6}/.exec(this.s.slice(this.i));
+    if (!m) return null;
+    const n = Number(m[0]);
+    if (n > 1_000_000) return null;
+    this.i += m[0].length;
+    if (/[0-9A-Za-z_$.]/.test(this.s[this.i] ?? '')) return null;
+    return n;
+  }
   object(): ExecCall | null {
     if (!this.lit('{')) return null;
-    const got: { cmd?: string; workdir?: string } = {};
+    const got: { cmd?: string; workdir?: string; max_output_tokens?: number } = {};
     for (;;) {
       this.ws();
       if (this.lit('}')) break;
@@ -66,10 +76,11 @@ class P {
       this.ws();
       if (!this.lit(':')) return null;
       this.ws();
-      const v = this.string();
+      const v = k === 'max_output_tokens' ? this.tokens() : this.string();
       if (v === null) return null;
       if (got[k] !== undefined) return null; // 같은 키 두 번 — JS 는 마지막 값을 쓴다.
-      got[k] = v;
+      if (k === 'max_output_tokens') got.max_output_tokens = v as number;
+      else got[k] = v as string;
       this.ws();
       if (this.lit(',')) continue;
       this.ws();

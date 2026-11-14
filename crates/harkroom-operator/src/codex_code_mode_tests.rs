@@ -42,6 +42,18 @@ fn shared_fixture_cases() {
         let got = check_codex_workdir(&input, &cmd, &home.to_string_lossy(), 1 << 20);
         let want_pass = c["expect"] == "pass";
         assert_eq!(got.is_none(), want_pass, "{name}");
+        if let Some(kind) = c["reason"].as_str() {
+            let want = if kind == "form" {
+                crate::codex_hook::codex_code_mode_reason(&cmd)
+            } else {
+                crate::codex_hook::CODEX_HOOK_WORKDIR_REASON.to_string()
+            };
+            let reason = got
+                .as_ref()
+                .and_then(|g| g.pointer("/hookSpecificOutput/permissionDecisionReason"))
+                .and_then(Value::as_str);
+            assert_eq!(reason, Some(want.as_str()), "{name}");
+        }
         seen += 1;
     }
     assert!(seen >= 20);

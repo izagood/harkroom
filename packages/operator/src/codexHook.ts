@@ -22,6 +22,14 @@ export const CODEX_RULES_RELATIVE = join('rules', 'harkroom.rules');
 export const CODEX_HOOK_WORKDIR_REASON =
   'harkroom: an owner-approved command runs only in this turn\'s working folder. Run it again without a different working directory (workdir).';
 
+/**
+ * code mode 셀 꼴에서 떨어진 **승인 명령**에 주는 거절 문구 — 모델이 방금 보낸 그 명령과 표준 꼴 하나만 담는다(security 01:51 조건 1).
+ * 승인 목록·판정 세부는 담지 않는다. 승인 명령에만 닿는 자리라 미승인 명령의 재시도를 부추기지 않는다.
+ */
+export function codexCodeModeReason(command: string): string {
+  return `harkroom: an owner-approved command must run alone in its own exec cell. Run it again exactly as: text(await tools.exec_command({cmd:${JSON.stringify(command)}}))`;
+}
+
 type HookInput = { tool_name?: unknown; tool_input?: { command?: unknown }; tool_use_id?: unknown; cwd?: unknown; transcript_path?: unknown };
 
 /** `workdir` 의 실제 경로가 턴 작업 폴더의 실제 경로와 같은가. 풀다 실패하면 던진다(거절). */
@@ -30,16 +38,19 @@ async function workdirIsCwd(cwd: string, workdir: string): Promise<boolean> {
   return (await realpath(isAbsolute(workdir) ? workdir : join(cwd, workdir))) === real;
 }
 
+/** code mode 판정 결과 — 통과 · 꼴에서 떨어짐(표준 꼴을 알려 준다) · 실행 위치가 다름. */
+type CodeModeVerdict = 'pass' | 'form' | 'workdir';
+
 /** code mode 판정 — hook 입력은 `command` 한 칸뿐이어야 하고, 꺼낸 `cmd` 는 그것과 정확히 같아야 한다. `workdir` 가 없으면 턴 폴더. */
-async function codeModeOk(input: HookInput, command: string, tail: string, id: string, cwd: string): Promise<boolean> {
+async function codeModeVerdict(input: HookInput, command: string, tail: string, id: string, cwd: string): Promise<CodeModeVerdict> {
   const ti = input.tool_input;
-  if (!ti || typeof ti !== 'object' || Array.isArray(ti) || Object.keys(ti).length !== 1 || !('command' in ti)) return false;
+  if (!ti || typeof ti !== 'object' || Array.isArray(ti) || Object.keys(ti).length !== 1 || !('command' in ti)) return 'form';
   const code = pendingExecCode(tail.split('\n'), id);
-  if (code === null) return false;
+  if (code === null) return 'form';
   const call = parseExecCell(code);
-  if (!call || call.cmd !== command) return false;
-  if (call.workdir === undefined) return true;
-  return call.workdir !== '' && workdirIsCwd(cwd, call.workdir);
+  if (!call || call.cmd !== command) return 'form';
+  if (call.workdir === undefined) return 'pass';
+  return call.workdir !== '' && (await workdirIsCwd(cwd, call.workdir)) ? 'pass' : 'workdir';
 }
 
 /** realpath 가 `root` 와 같거나 그 아래인가. */
@@ -90,7 +101,10 @@ export async function checkCodexWorkdir(input: HookInput, command: string, codex
     if (transcript === home || !isUnder(transcript, home)) return deny();
     const tail = await readTail(transcript, tailBytes);
     // code mode(`exec-…` id) — 이 턴의 출력 없는 exec 셀 하나를 정확한 꼴로 읽어 대조한다(`codexCodeMode`).
-    if (input.tool_use_id.startsWith('exec-')) return (await codeModeOk(input, command, tail, input.tool_use_id, input.cwd)) ? null : deny();
+    if (input.tool_use_id.startsWith('exec-')) {
+      const v = await codeModeVerdict(input, command, tail, input.tool_use_id, input.cwd);
+      return v === 'pass' ? null : v === 'form' ? laneDeny(codexCodeModeReason(command)) : deny();
+    }
     const matches: Record<string, unknown>[] = [];
     for (const line of tail.split('\n')) {
       if (!line.includes(input.tool_use_id)) continue;

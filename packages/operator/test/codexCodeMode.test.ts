@@ -5,10 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { checkCodexWorkdir } from '../src/codexHook.js';
+import { checkCodexWorkdir, CODEX_HOOK_WORKDIR_REASON, codexCodeModeReason } from '../src/codexHook.js';
 import { parseExecCell } from '../src/codexCodeMode.js';
 
-type Case = { name: string; lines: unknown[]; input: Record<string, unknown>; expect: 'pass' | 'deny' };
+type Case = { name: string; lines: unknown[]; input: Record<string, unknown>; expect: 'pass' | 'deny'; reason?: 'form' | 'workdir' };
 const FIXTURE = fileURLToPath(new URL('../../shared/test/fixtures/codex-code-mode-hook.json', import.meta.url));
 
 let root: string;
@@ -37,6 +37,10 @@ describe('공유 fixture — code mode 기록 꼴', () => {
     const input = fill(c.input) as Record<string, unknown> & { tool_input: { command: string } };
     const got = await checkCodexWorkdir(input, input.tool_input.command, home, 1 << 20);
     expect(got === null ? 'pass' : 'deny').toBe(c.expect);
+    if (c.reason) {
+      const want = c.reason === 'form' ? codexCodeModeReason(input.tool_input.command) : CODEX_HOOK_WORKDIR_REASON;
+      expect(got?.hookSpecificOutput.permissionDecisionReason).toBe(want);
+    }
   });
 });
 

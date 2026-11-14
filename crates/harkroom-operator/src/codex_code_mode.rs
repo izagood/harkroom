@@ -74,7 +74,7 @@ impl P<'_> {
         }
     }
     fn key(&mut self) -> Option<&'static str> {
-        for k in ["cmd", "workdir"] {
+        for k in ["cmd", "workdir", "max_output_tokens"] {
             if self.word(k) {
                 return Some(k);
             }
@@ -83,16 +83,41 @@ impl P<'_> {
         match self.string().as_deref() {
             Some("cmd") => Some("cmd"),
             Some("workdir") => Some("workdir"),
+            Some("max_output_tokens") => Some("max_output_tokens"),
             _ => {
                 self.i = save;
                 None
             }
         }
     }
+    /// 10진 정수 리터럴 1~1,000,000(앞 0·부호·소수·지수 없음, security 01:51 조건 2). 출력 상한일 뿐이다.
+    fn tokens(&mut self) -> Option<u32> {
+        let rest = &self.s[self.i..];
+        if !rest.first().is_some_and(|b| (b'1'..=b'9').contains(b)) {
+            return None;
+        }
+        let n = rest.iter().take_while(|b| b.is_ascii_digit()).count();
+        if n > 7 {
+            return None;
+        }
+        let v: u32 = std::str::from_utf8(&rest[..n]).ok()?.parse().ok()?;
+        if v > 1_000_000 {
+            return None;
+        }
+        if rest
+            .get(n)
+            .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b'$' || *b == b'.')
+        {
+            return None;
+        }
+        self.i += n;
+        Some(v)
+    }
     fn object(&mut self) -> Option<ExecCall> {
         if !self.lit("{") {
             return None;
         }
+        let mut tokens_seen = false;
         let (mut cmd, mut workdir) = (None, None);
         loop {
             self.ws();
@@ -105,12 +130,20 @@ impl P<'_> {
                 return None;
             }
             self.ws();
-            let v = self.string()?;
-            let slot = if k == "cmd" { &mut cmd } else { &mut workdir };
-            if slot.is_some() {
-                return None; // 같은 키 두 번 — JS 는 마지막 값을 쓴다.
+            if k == "max_output_tokens" {
+                self.tokens()?;
+                if tokens_seen {
+                    return None; // 같은 키 두 번
+                }
+                tokens_seen = true;
+            } else {
+                let v = self.string()?;
+                let slot = if k == "cmd" { &mut cmd } else { &mut workdir };
+                if slot.is_some() {
+                    return None; // 같은 키 두 번 — JS 는 마지막 값을 쓴다.
+                }
+                *slot = Some(v);
             }
-            *slot = Some(v);
             self.ws();
             if self.lit(",") {
                 continue;
