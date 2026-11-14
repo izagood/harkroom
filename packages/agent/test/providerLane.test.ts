@@ -1,8 +1,9 @@
-import { mkdtemp, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { createProviderLane, kiloLaneVersionOk, laneScrubsSubprocessEnv, PROVIDER_LANE_FIXED_ENV, LANE_MCP_CONFIG_FILE, opencodeLaneVersionOk, ProviderLaneError, sweepLaneTurnDir, sweepLaneMcpConfig, writeOpencodeLaneTurnConfig } from '../src/providerLane.js';
+import { createLiveAccountLane, presentAccounts, type ClaudeAccount } from '../src/claudeAccounts.js';
+import { createProviderLane, ensureProviderLaneClaudeDir, providerLaneIsDir, kiloLaneVersionOk, laneScrubsSubprocessEnv, PROVIDER_LANE_FIXED_ENV, LANE_MCP_CONFIG_FILE, opencodeLaneVersionOk, ProviderLaneError, sweepLaneTurnDir, sweepLaneMcpConfig, writeOpencodeLaneTurnConfig } from '../src/providerLane.js';
 
 async function setup(value = 'tok-123\n') {
   const root = await mkdtemp(join(tmpdir(), 'lane-'));
@@ -267,5 +268,59 @@ describe('writeOpencodeLaneTurnConfig', () => {
     await sweepLaneTurnDir(state);
     expect(await readdir(dir)).toEqual([]);
     await sweepLaneTurnDir(join(state, 'missing'));
+  });
+});
+
+// 2026-11-14 재현: lane 축을 `presentAccounts` 로 거르면 lane 폴더가 지워진 뒤 축이 `[null]`(사람의 기본 로그인)이 됐다.
+// lane 축은 고정이다 — 거르지 않고 다시 만들고, 진짜 폴더가 아니면 던진다(security, L3c-3d2·TS 같이).
+describe('lane 러너 계정 폴더 — 고정 축', () => {
+  async function laneSetup() {
+    const state = await mkdtemp(join(tmpdir(), 'lane-claude-'));
+    const dir = join(state, 'claude-provider-lane');
+    await ensureProviderLaneClaudeDir(dir);
+    const account: ClaudeAccount = { name: 'provider-lane', configDir: dir, pool: null };
+    return { state, dir, account };
+  }
+
+  it('없으면 0700 으로 만든다', async () => {
+    const state = await mkdtemp(join(tmpdir(), 'lane-claude-'));
+    const dir = join(state, 'claude-provider-lane');
+    await ensureProviderLaneClaudeDir(dir);
+    expect((await stat(dir)).mode & 0o777).toBe(0o700);
+  });
+
+  it('자리에 링크가 있으면 거절한다(링크 너머가 폴더여도) — 파일이어도 거절한다', async () => {
+    const state = await mkdtemp(join(tmpdir(), 'lane-claude-'));
+    const elsewhere = await mkdtemp(join(tmpdir(), 'human-claude-'));
+    const linked = join(state, 'claude-provider-lane');
+    await symlink(elsewhere, linked);
+    await expect(ensureProviderLaneClaudeDir(linked)).rejects.toMatchObject({ code: 'harness_login_present' });
+    const state2 = await mkdtemp(join(tmpdir(), 'lane-claude-'));
+    const file = join(state2, 'claude-provider-lane');
+    await writeFile(file, 'x');
+    await expect(ensureProviderLaneClaudeDir(file)).rejects.toMatchObject({ code: 'harness_login_present' });
+  });
+
+  it('폴더가 지워져도 축은 lane 계정 하나다 — [null](기본 로그인)이 되지 않고 폴더를 다시 만든다', async () => {
+    const { dir, account } = await laneSetup();
+    const isDir = providerLaneIsDir();
+    const live = createLiveAccountLane({ initial: { pool: null, accounts: [account] }, load: async () => ({ pool: null, accounts: [account] }), minIntervalMs: 0, isDir, log: () => {} });
+    await rm(dir, { recursive: true, force: true });
+    expect((await live.current()).lane).toEqual([account]);
+    expect(await presentAccounts([account], isDir)).toEqual([account]);
+    expect((await stat(dir)).isDirectory()).toBe(true);
+  });
+
+  it('(대조) 기본 판정으로 거르면 지워진 lane 폴더는 [null] 이 된다 — 그래서 lane 축에는 쓰지 않는다', async () => {
+    const { dir, account } = await laneSetup();
+    await rm(dir, { recursive: true, force: true });
+    expect(await presentAccounts([account])).toEqual([null]);
+  });
+
+  it('다시 만들 자리에 링크가 놓이면 축을 내지 않고 던진다(닫힌 쪽)', async () => {
+    const { dir, account } = await laneSetup();
+    await rm(dir, { recursive: true, force: true });
+    await symlink(await mkdtemp(join(tmpdir(), 'human-claude-')), dir);
+    await expect(presentAccounts([account], providerLaneIsDir())).rejects.toMatchObject({ code: 'harness_login_present' });
   });
 });

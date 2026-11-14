@@ -328,6 +328,32 @@ export async function sweepTurnMcpDir(stateDir: string): Promise<void> {
  * 그 턴의 주소·키를 못 받았다. **코드는 허용 목록으로 접어서 든다**(1c, security ③) — 오퍼레이터·서버가 준 문자열을 그대로
  * 들고 다니면 그것이 실패 카드·로그로 흘러간다. 문장에도 코드만 싣는다(주소·비밀 이름·경로 금지, 조건 ①).
  */
+/**
+ * lane 러너의 claude 계정 폴더(`providerLaneClaudeDir`)를 **그 자리의 진짜 폴더**로 둔다(security, L3c-3d2·TS 같이).
+ * 없으면 0700 으로 만들고, 만든 뒤 `lstat` 으로 다시 본다 — 링크(예: 사람의 `~/.claude` 를 가리킴)·폴더 아님·내 소유 아님이면
+ * 던진다(`harness_login_present` — 그 턴·러너를 띄우지 않는다). `mkdir recursive` 는 링크를 그대로 받아들이므로 이 검사가 필요하다.
+ */
+export async function ensureProviderLaneClaudeDir(dir: string): Promise<void> {
+  // 만들기 실패(자리에 파일 등)는 아래 검사가 가른다 — 무엇이 있든 진짜 폴더가 아니면 같은 코드로 거절한다.
+  await mkdir(dir, { recursive: true, mode: 0o700 }).catch(() => undefined);
+  const st = await lstat(dir).catch(() => null);
+  if (!st) throw new ProviderLaneError('harness_login_present');
+  const mine = typeof process.getuid !== 'function' || st.uid === process.getuid();
+  if (st.isSymbolicLink() || !st.isDirectory() || !mine) throw new ProviderLaneError('harness_login_present');
+}
+
+/**
+ * lane 러너의 계정 폴더 판정(`presentAccounts`·`createLiveAccountLane` 의 `isDir`). lane 축은 그 폴더 하나로 **고정**이다 —
+ * 폴더가 사라졌다고 거르면 축이 `[null]`(시스템 기본 로그인 = 사람의 `~/.claude`)이 되어 lane 키와 사람 로그인이 한 자식에
+ * 같이 든다(2026-11-14 재현). 그래서 거르지 않고 다시 만들고, 진짜 폴더가 아니면 던진다(닫힌 쪽).
+ */
+export function providerLaneIsDir(): (path: string) => Promise<boolean> {
+  return async (path) => {
+    await ensureProviderLaneClaudeDir(path);
+    return true;
+  };
+}
+
 export class ProviderLaneError extends Error {
   readonly code: ProviderLaneFailureCode;
   constructor(code: string) {
