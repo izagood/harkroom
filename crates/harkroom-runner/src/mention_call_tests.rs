@@ -338,6 +338,7 @@ fn call<'a>(
             mcp_config_path: state,
             runner_env: &w.env,
             pat: "pat-value-0123456789",
+            lane: None,
         },
     };
     // C5 스케줄러가 부르는 입구(패닉 지킴)로 부른다.

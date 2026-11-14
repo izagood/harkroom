@@ -136,6 +136,8 @@ pub struct BaseInputs<'a> {
     pub mcp_config_path: &'a std::path::Path,
     pub runner_env: &'a std::collections::BTreeMap<String, String>,
     pub pat: &'a str,
+    /// API 키 연결(lane) — 있으면 시도마다 턴 MCP 계획 앞에서 lane env 를 받는다(정본 `deps.providerEnv`, L3c-3d2).
+    pub lane: Option<&'a dyn crate::turn_lane_first::LaneSource>,
 }
 
 /// 멘션 하나를 돌린다.
@@ -265,6 +267,10 @@ pub fn run_mention_call<'a, L, S, H>(
                     base.pat,
                 );
             let turn = PtyTurnAttempt::new(ab, parts);
+            let turn = match base.lane {
+                Some(l) => turn.with_lane(l),
+                None => turn,
+            };
             match relay {
                 Some(r) => turn.with_relay(Arc::clone(r)),
                 None => turn,

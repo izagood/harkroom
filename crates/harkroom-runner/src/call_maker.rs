@@ -93,6 +93,8 @@ pub struct RunnerMaker<L: AgentLink> {
     memory: MemoryCache,
     /// 계정 축(L3c-3b). 없으면 기본 로그인 하나(`[None]`) — API 키 lane 러너는 L3c-3d 가 채운다.
     accounts: Option<Arc<crate::account_lane::AccountLaneHub>>,
+    /// API 키 연결(lane, 정본 `createProviderLane`) — lane 러너만 있다(L3c-3d2).
+    provider_lane: Option<Arc<crate::provider_lane::ProviderLane>>,
     names: RwLock<Names>,
     report_auth: ReportAuth,
 }
@@ -155,6 +157,7 @@ impl<L: AgentLink> RunnerMaker<L> {
             mcp_config: cfg.mcp_config_path.to_string_lossy().into_owned(),
             store: Arc::new(SessionStore::new(cfg.state_dir.join("sessions.json"))),
             accounts: None,
+            provider_lane: None,
             memory: MemoryCache::new(&cfg.state_dir),
             names: RwLock::new(Names::default()),
             clients,
@@ -171,6 +174,11 @@ impl<L: AgentLink> RunnerMaker<L> {
     /// 계정 축을 붙인다(기동 때 한 번, `Arc` 로 감싸기 전).
     pub fn set_accounts(&mut self, hub: crate::account_lane::AccountLaneHub) {
         self.accounts = Some(Arc::new(hub));
+    }
+
+    /// lane 을 붙인다(기동 때 한 번, lane 러너만).
+    pub fn set_provider_lane(&mut self, lane: crate::provider_lane::ProviderLane) {
+        self.provider_lane = Some(Arc::new(lane));
     }
 
     /// 몸통(`BodyShared.clients`)이 쥘 묶음 — 짓개와 **같은** 묶음이다(서버 길은 하나).
@@ -224,8 +232,10 @@ where
             harness: harness_of(&reads.def),
             command_hook: self.cfg.command_hook,
             post_tool_hook: self.cfg.post_tool_hook,
-            // 기본 로그인만 — API 키 레인은 L3c-3.
-            lane_model: None,
+            // lane 턴이면 그 턴 모델 id(정본 `laneModel: deps.providerEnv ? providerLaneModelId(turnModel.model) : null`).
+            lane_model: self.provider_lane.as_ref().and_then(|_| {
+                crate::opencode_home::provider_lane_model_id(reads.turn_model.model.as_deref())
+            }),
             turn_budget_ms: self.cfg.turn_timeout_ms,
         }
     }
@@ -250,6 +260,7 @@ where
         ));
         let promise = report_promise(target);
         let home = Some(c.home.clone());
+        let lane_on = self.provider_lane.is_some();
 
         let watch = MentionWatchInputs {
             key: key.clone(),
@@ -263,8 +274,8 @@ where
                 stall_ms: i64::try_from(c.harness_stall_ms).unwrap_or(i64::MAX),
                 ..EndConfig::new(c.turn_timeout_ms)
             },
-            // API 키 레인이 없다(기본 로그인) — 재촉 없음.
-            lane_tui: false,
+            // lane 의 TUI 하네스만 재촉한다(정본 `providerEnv !== null && usesTui`).
+            lane_tui: lane_on && crate::adapter::uses_tui_for_mention(harness).unwrap_or(false),
             caller,
             report_auth: &*self.report_auth,
             clock: now_i64,
@@ -277,9 +288,20 @@ where
             anchor,
             mention_id: target.mention_id.clone(),
             caller,
-            // 대리 글은 API 키 연결 턴에만(정본 `recordProxy: providerEnv !== null`) — 기본 로그인은 끈다.
-            proxy_head: String::new(),
-            record_proxy: false,
+            // 대리 글은 API 키 연결 턴에만(정본 `recordProxy: providerEnv !== null`) — 기본 로그인은 끈다. 머리는 부른 사람
+            // handle(정본 `proxyHead: \`@${callerHandle}\n\n\``) — 모르면 비운다.
+            proxy_head: if lane_on {
+                target
+                    .mention_row
+                    .get("authorId")
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(|id| n.handles.get(id))
+                    .map(|h| format!("@{h}\n\n"))
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            },
+            record_proxy: lane_on,
             wake_reason: wake_reason(target),
             background_wait_ms: c.turn_timeout_ms,
             target: success_target(target, promise.is_some()),
@@ -445,6 +467,10 @@ where
                 mcp_config_path: &c.mcp_config_path,
                 runner_env: &c.runner_env,
                 pat: &c.pat,
+                lane: self
+                    .provider_lane
+                    .as_deref()
+                    .map(|l| l as &dyn crate::turn_lane_first::LaneSource),
             },
         }
     }

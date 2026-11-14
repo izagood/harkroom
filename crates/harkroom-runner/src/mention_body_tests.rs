@@ -285,6 +285,7 @@ impl CallMaker<&'static Link, Sink> for Maker {
                 mcp_config_path: state,
                 runner_env: &self.env,
                 pat: "pat-value-0123456789",
+                lane: None,
             },
         }
     }
