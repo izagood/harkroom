@@ -1382,3 +1382,42 @@ describe('Claude in Chrome — 켜진 에이전트·열 수 있는 머신에서�
     expect(chromeTurnFor({ chromeEnabled: true, mentionPermission: 'auto' }, true)).toBe(true);
   });
 });
+
+describe('스레드별 지시문 파일(스레드 사이 지시문 섞임 방지)', () => {
+  it('같은 에이전트가 두 스레드에서 동시에 써도 파일이 다르고 서로 덮지 않는다 · 이름에 열쇠 원문이 없다', async () => {
+    const { mkdtemp, readFile: read, stat: st } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { basename, dirname } = await import('node:path');
+    const { writeThreadSystemPromptFile } = await import('../src/turn.js');
+    const dir = await mkdtemp(join(tmpdir(), 'hk-sp-'));
+    const [p1, p2] = await Promise.all([
+      writeThreadSystemPromptFile(dir, 'chan-1/root-aaaa', '스레드 1 지시'),
+      writeThreadSystemPromptFile(dir, 'chan-1/root-bbbb', '스레드 2 지시'),
+    ]);
+    expect(p1).not.toBe(p2);
+    expect(await read(p1, 'utf8')).toBe('스레드 1 지시');
+    expect(await read(p2, 'utf8')).toBe('스레드 2 지시');
+    expect(basename(p1)).not.toMatch(/root-aaaa|chan-1/);
+    expect((await st(p1)).mode & 0o777).toBe(0o600);
+    expect((await st(dirname(p1))).mode & 0o777).toBe(0o700);
+  });
+
+  it('기동 쓸기는 남은 스레드별 파일과 옛 한 파일을 지운다', async () => {
+    const { mkdtemp, readdir: rd, writeFile: wf, stat: st } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { writeThreadSystemPromptFile, sweepSystemPromptFiles, SYSTEM_PROMPT_DIR } = await import('../src/turn.js');
+    const dir = await mkdtemp(join(tmpdir(), 'hk-sp-sweep-'));
+    await writeThreadSystemPromptFile(dir, 'c/t1', 'a');
+    await writeThreadSystemPromptFile(dir, 'c/t2', 'b');
+    await wf(join(dir, 'system-prompt.txt'), 'old');
+    expect(await sweepSystemPromptFiles(dir)).toBe(3);
+    expect(await rd(join(dir, SYSTEM_PROMPT_DIR))).toEqual([]);
+    expect(await st(join(dir, 'system-prompt.txt')).then(() => true, () => false)).toBe(false);
+  });
+
+  it('상태 폴더가 사라졌으면 다시 만들지 않고 멈춘다', async () => {
+    const { tmpdir } = await import('node:os');
+    const { writeThreadSystemPromptFile } = await import('../src/turn.js');
+    await expect(writeThreadSystemPromptFile(join(tmpdir(), `없는-${Date.now()}`), 'c/t', 'x')).rejects.toThrow(/상태 디렉터리가 사라졌다/);
+  });
+});
