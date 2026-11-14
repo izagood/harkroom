@@ -817,7 +817,7 @@ fn lane_preflight_refuses_before_keys() {
     }
 }
 
-/// pi·omp lane 턴은 스레드 홈이 없으면 키를 받기 전에 `lane_setup` 으로 닫힌다(Rust 러너는 아직 그 홈을 짓지 않는다).
+/// pi·omp lane 턴은 스레드 홈이 없으면 키를 받기 전에 `lane_setup` 으로 닫힌다(pi 홈은 `prepare` 가 짓는다 — p2-2, omp 는 아직).
 /// pi 는 스레드 홈이 채워지면 이 줄을 지나 다음 판정으로 간다.
 #[test]
 fn pi_omp_lane_without_thread_home_refuses_before_keys() {
