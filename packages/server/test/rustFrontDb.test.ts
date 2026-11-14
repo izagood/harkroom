@@ -13,6 +13,9 @@ import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, createMember } from './helpers/fixtures.js';
 import { startTestDb } from './helpers/testDb.js';
 import { postMessage } from '../src/services/messages.js';
+import {
+  addChannelMember, audienceFor, channelListAudience, channelListLostAudience, createChannel, getOrCreateDm, removeChannelMember,
+} from '../src/services/channels.js';
 import { startEventBus } from '../src/eventBus.js';
 import type { WorkspaceEvent } from '../src/events.js';
 import pg from 'pg';
@@ -50,6 +53,56 @@ describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () 
       }
     }, 600_000);
   }
+});
+
+// S5.3 C1a — 받는 사람 계산(`core/audience.rs`)이 TS 함수와 같은 답인가. 픽스처는 TS 서비스 함수로 넣고 Rust 시험이 찍은 답과 맞춘다.
+// 멤버 순서는 TS 도 정하지 않으므로 정렬해 본다.
+describe.skipIf(!ON)('받는 사람 계산 — TS·Rust 같은 답', () => {
+  it('공개·비공개·DM·탈퇴자·admin·없는 채널', async () => {
+    const db = await startTestDb();
+    try {
+      const pool = db.pool;
+      const acct = async (handle: string, admin: boolean): Promise<string> => (await pool.query(
+        `insert into account(handle, display_name, kind, login_id, role, is_admin)
+         values ($1, $1, 'human', $1, $2, $3) returning id`, [handle, admin ? 'admin' : 'member', admin],
+      )).rows[0].id as string;
+      const admin = await acct('aud-admin', true);
+      const m1 = await acct('aud-m1', false);
+      const m2 = await acct('aud-m2', false);
+      const leaver = await acct('aud-leaver', false);
+      await acct('aud-outsider', false);
+      const pub = await createChannel(pool, { name: 'aud-pub' });
+      const priv = await createChannel(pool, { name: 'aud-priv', visibility: 'private', creatorId: m1 });
+      await addChannelMember(pool, priv.id, leaver);
+      await removeChannelMember(pool, priv.id, leaver);
+      // public 채널에 멤버로 들어간 사람이 있어도 전원이다.
+      await addChannelMember(pool, pub.id, m2);
+      const dm = await getOrCreateDm(pool, [m1, m2]);
+      const missing = '00000000-0000-4000-8000-000000000000';
+      const ids = [pub.id, priv.id, dm.id, missing];
+      const norm = (a: 'all' | string[]) => (a === 'all' ? a : [...a].sort());
+      const want: Record<string, unknown> = {};
+      for (const id of ids) {
+        want[id] = {
+          for: norm(await audienceFor(pool, id)),
+          list: norm(await channelListAudience(pool, id)),
+          lost: [...(await channelListLostAudience(pool, id))].sort(),
+        };
+      }
+      // 픽스처가 갈래를 실제로 가르는지(전부 'all' 이면 대조가 아무것도 못 잡는다).
+      expect(want[priv.id]).toMatchObject({ for: [m1], list: [admin, m1].sort() });
+      expect((want[dm.id] as { for: string[] }).for).toEqual([m1, m2].sort());
+      const r = await cargo(['test', '--test', 'audience', '--', '--nocapture'], {
+        HARKROOM_TEST_DATABASE_URL: db.uri, HARKROOM_AUDIENCE_CHANNELS: ids.join(','),
+      });
+      expect(r.code, r.out).toBe(0);
+      const line = r.out.split('\n').find((l) => l.startsWith('AUDIENCE_JSON '));
+      expect(line, r.out).toBeDefined();
+      expect(JSON.parse(line!.slice('AUDIENCE_JSON '.length))).toEqual(want);
+    } finally {
+      await db.stop();
+    }
+  }, 600_000);
 });
 
 /** 비어 있는 TCP 포트 하나. 닫은 뒤 앞단이 잡기까지 틈이 있지만 CI 러너 하나에서 겹칠 일은 드물다. */
