@@ -6,6 +6,7 @@
 //! 에이전트 presence(MCP `presence.ts`)는 C3 몫이라 지금 스냅샷에는 사람 소켓만 실린다.
 pub mod audience;
 pub mod events;
+pub mod operator_hub;
 pub mod tickets;
 pub mod typing;
 pub mod ws;
