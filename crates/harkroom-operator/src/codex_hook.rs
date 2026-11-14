@@ -200,6 +200,8 @@ pub fn check_codex_workdir(
     let Some(cwd) = str_of(input, "cwd").filter(|c| Path::new(c).is_absolute()) else {
         return deny();
     };
+    // code mode 셀 꼴에서 떨어졌나 — 그때는 workdir 문구가 아니라 표준 꼴을 알려 주는 문구로 거절한다(security 01:51 조건 1).
+    let form_failed = std::cell::Cell::new(false);
     let inner = || -> Option<bool> {
         let home = std::fs::canonicalize(codex_home).ok()?;
         let transcript = std::fs::canonicalize(transcript_path).ok()?;
@@ -207,6 +209,17 @@ pub fn check_codex_workdir(
             return Some(false);
         }
         let tail = read_tail(&transcript, tail_bytes).ok()?;
+        // code mode(`exec-…` id) — 이 턴의 출력 없는 exec 셀 하나를 정확한 꼴로 읽어 대조한다(`codex_code_mode`).
+        if id.starts_with("exec-") {
+            return Some(match code_mode_verdict(input, command, cwd, id, &tail) {
+                CodeModeVerdict::Pass => true,
+                CodeModeVerdict::Form => {
+                    form_failed.set(true);
+                    false
+                }
+                CodeModeVerdict::Workdir => false,
+            });
+        }
         let mut matches: Vec<serde_json::Map<String, Value>> = Vec::new();
         for line in tail.split('\n') {
             if !line.contains(id) {
@@ -252,21 +265,83 @@ pub fn check_codex_workdir(
             Some(Value::String(s)) if !s.is_empty() => s.as_str(),
             _ => return Some(false),
         };
-        let cwd_real = std::fs::canonicalize(cwd).ok()?;
-        let wd_path = Path::new(wd);
-        let (lexical, physical) = if wd_path.is_absolute() {
-            (lexical_join(Path::new("/"), wd_path), wd_path.to_path_buf())
-        } else {
-            (
-                lexical_join(Path::new(cwd), wd_path),
-                Path::new(cwd).join(wd_path),
-            )
-        };
-        let a = std::fs::canonicalize(lexical).ok()?;
-        let b = std::fs::canonicalize(physical).ok()?;
-        Some(a == cwd_real && b == cwd_real)
+        workdir_is_cwd(cwd, wd)
     };
-    if inner() == Some(true) { None } else { deny() }
+    if inner() == Some(true) {
+        None
+    } else if form_failed.get() {
+        Some(lane_deny(&codex_code_mode_reason(command)))
+    } else {
+        deny()
+    }
+}
+
+/// `workdir` 의 실제 경로(글자대로 푼 것·그대로 푼 것 둘 다)가 턴 작업 폴더의 실제 경로와 같은가. 풀다 실패하면 `None`(거절).
+fn workdir_is_cwd(cwd: &str, wd: &str) -> Option<bool> {
+    let cwd_real = std::fs::canonicalize(cwd).ok()?;
+    let wd_path = Path::new(wd);
+    let (lexical, physical) = if wd_path.is_absolute() {
+        (lexical_join(Path::new("/"), wd_path), wd_path.to_path_buf())
+    } else {
+        (
+            lexical_join(Path::new(cwd), wd_path),
+            Path::new(cwd).join(wd_path),
+        )
+    };
+    let a = std::fs::canonicalize(lexical).ok()?;
+    let b = std::fs::canonicalize(physical).ok()?;
+    Some(a == cwd_real && b == cwd_real)
+}
+
+/// code mode 판정 — hook 입력은 `command` 한 칸뿐이어야 하고, 꺼낸 `cmd` 는 그것과 바이트로 같아야 한다. `workdir` 가 없으면 턴 폴더.
+/// code mode 판정 결과(TS `CodeModeVerdict`).
+enum CodeModeVerdict {
+    Pass,
+    /// 꼴에서 떨어짐 — 표준 꼴을 알려 주는 문구로 거절한다.
+    Form,
+    /// 실행 위치가 턴 폴더가 아님 — workdir 문구로 거절한다.
+    Workdir,
+}
+
+/// TS `codexCodeModeReason` — 모델이 방금 보낸 그 명령과 표준 꼴 하나만 담는다. 승인 목록·판정 세부는 담지 않는다.
+pub fn codex_code_mode_reason(command: &str) -> String {
+    format!(
+        "harkroom: an owner-approved command must run alone in its own exec cell. Run it again exactly as: text(await tools.exec_command({{cmd:{}}}))",
+        serde_json::to_string(command).unwrap_or_default()
+    )
+}
+
+fn code_mode_verdict(
+    input: &Value,
+    command: &str,
+    cwd: &str,
+    id: &str,
+    tail: &str,
+) -> CodeModeVerdict {
+    let only_command = input
+        .get("tool_input")
+        .and_then(Value::as_object)
+        .is_some_and(|t| t.len() == 1 && t.contains_key("command"));
+    if !only_command {
+        return CodeModeVerdict::Form;
+    }
+    let lines: Vec<&str> = tail.split('\n').collect();
+    let Some(code) = crate::codex_code_mode::pending_exec_code(&lines, id) else {
+        return CodeModeVerdict::Form;
+    };
+    let Some(call) = crate::codex_code_mode::parse_exec_cell(&code) else {
+        return CodeModeVerdict::Form;
+    };
+    if call.cmd != command {
+        return CodeModeVerdict::Form;
+    }
+    match call.workdir.as_deref() {
+        None => CodeModeVerdict::Pass,
+        Some(wd) if !wd.is_empty() && workdir_is_cwd(cwd, wd) == Some(true) => {
+            CodeModeVerdict::Pass
+        }
+        Some(_) => CodeModeVerdict::Workdir,
+    }
 }
 
 /// TS `decideCodexHook` — 막으면 거절, 판단하지 않으면 `None`.

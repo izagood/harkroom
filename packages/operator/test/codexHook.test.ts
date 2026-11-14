@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { codexRulesFile, decodeCodexHookSpec, encodeCodexHookSpec, parseCodexRulesFile, type CodexHookSpec } from '@harkroom/shared/providerLane';
-import { checkCodexWorkdir, CODEX_HOOK_WORKDIR_REASON, decideCodexHook } from '../src/codexHook.js';
+import { checkCodexWorkdir, CODEX_HOOK_WORKDIR_REASON, codexCodeModeReason, decideCodexHook } from '../src/codexHook.js';
 import { LANE_HOOK_TAIL_REASON } from '../src/hookCli.js';
 
 const APPROVED = 'Bash(gh pr list -R cli/cli --limit 3)';
@@ -113,6 +113,18 @@ describe('decideCodexHook', () => {
   it('⑤ 규칙 밖 명령은 판단하지 않는다 — 기록을 읽지 않는다(구독형)', async () => {
     expect(await decideCodexHook(JSON.stringify(input({ tool_input: { command: 'ls -la' } })), spec())).toBeNull();
     expect(await decideCodexHook(JSON.stringify(input({ tool_name: 'mcp__harkroom__message_post', tool_input: {} })), spec())).toBeNull();
+  });
+
+  it('code mode: 승인 명령이 꼴에서 떨어지면 표준 꼴 안내 문구 · 미승인 명령은 안내하지 않는다(security 01:51 조건 1③)', async () => {
+    const tc = JSON.stringify({ timestamp: 't', type: 'turn_context', payload: {} });
+    const cell = (code: string) => JSON.stringify({ timestamp: 't', type: 'response_item', payload: { type: 'custom_tool_call', name: 'exec', call_id: 'call_x', input: code } });
+    const exec = (command: string) => JSON.stringify(input({ tool_input: { command }, tool_use_id: 'exec-1' }));
+    await writeTranscript(tc, cell(`text(ALL_TOOLS.length); text(await tools.exec_command({cmd:${JSON.stringify(CMD)}}));`));
+    const got = await decideCodexHook(exec(CMD), spec());
+    expect(got?.hookSpecificOutput.permissionDecisionReason).toBe(codexCodeModeReason(CMD));
+    expect(got?.hookSpecificOutput.permissionDecisionReason).not.toContain(APPROVED);
+    await writeTranscript(tc, cell('text(ALL_TOOLS.length); text(await tools.exec_command({cmd:"ls -la"}));'));
+    expect(await decideCodexHook(exec('ls -la'), spec())).toBeNull();
   });
 
   it('규칙에 맞아 밖으로 나갈 명령만 실행 위치를 본다', async () => {
