@@ -66,14 +66,10 @@ pub struct LaneSource {
 }
 
 impl LaneSource {
-    /// lane 러너의 축 — lane 전용 폴더 하나. 폴더를 0700 으로 만든다(정본 `mkdir(providerLaneClaudeDir, 0o700)`).
+    /// lane 러너의 축 — lane 전용 폴더 하나. 폴더를 0700 으로 만든다(정본 `mkdir(providerLaneClaudeDir, 0o700)`). 링크·남의 폴더면 `Err`.
     pub fn provider_lane(state_dir: &Path) -> std::io::Result<Self> {
-        use std::os::unix::fs::DirBuilderExt;
         let account = provider_lane_account(state_dir);
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(&account.config_dir)?;
+        ensure_lane_dir(&account.config_dir)?;
         Ok(LaneSource {
             root: account.config_dir.clone(),
             agent_id: String::new(),
@@ -173,6 +169,26 @@ struct LiveState {
     warned: Option<String>,
 }
 
+/// lane 폴더를 0700 으로 만들고(없으면) **링크가 아닌 진짜 폴더이며 내 소유**인지 본다. 아니면 `Err` — 그 자리에 링크가 놓이면
+/// `CLAUDE_CONFIG_DIR` 가 링크 너머(예: 사람의 `~/.claude`)를 가리킬 수 있다(#2129 security 조건). 닫힌 쪽: 호출자는 띄우지 않는다.
+pub fn ensure_lane_dir(dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt};
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)?;
+    let m = std::fs::symlink_metadata(dir)?;
+    let bad = |why: &str| Err(std::io::Error::other(why.to_owned()));
+    if m.file_type().is_symlink() || !m.is_dir() {
+        return bad("lane dir is not a real directory");
+    }
+    // SAFETY: geteuid 는 인자가 없고 실패하지 않는다.
+    if m.uid() != unsafe { libc::geteuid() } {
+        return bad("lane dir is not owned by this user");
+    }
+    Ok(())
+}
+
 /// 정본 `createLiveAccountLane` — 턴마다 다시 읽는 축.
 pub struct LiveAccountLane {
     source: LaneSource,
@@ -222,12 +238,14 @@ impl LiveAccountLane {
         // lane 러너: 축은 lane 전용 폴더 하나로 고정이다. 폴더가 사라져도 거르지 않고 다시 만든다 — 걸러서 `[None]`(기본 로그인)이
         // 되는 길을 막는다(L3c-3d, security 조건).
         if self.source.fixed.is_some() {
+            // 링크·남의 폴더면 여기선 로그만 — 턴은 `ProviderLane` 이 키를 받기 전에 거른다(`claude_dir`).
             for a in last.lane.iter().flatten() {
-                use std::os::unix::fs::DirBuilderExt;
-                let _ = std::fs::DirBuilder::new()
-                    .recursive(true)
-                    .mode(0o700)
-                    .create(&a.config_dir);
+                if let Err(e) = ensure_lane_dir(&a.config_dir) {
+                    (self.log)(&format!(
+                        "[claudeAccounts] lane 폴더를 쓸 수 없다({})",
+                        e.kind()
+                    ));
+                }
             }
             return last;
         }

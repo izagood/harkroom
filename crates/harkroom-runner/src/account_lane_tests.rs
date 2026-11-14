@@ -226,3 +226,15 @@ fn fallback_lane_is_lane_dir_for_lane_runner_and_default_login_otherwise() {
     assert_eq!(fallback_lane(&off, state), vec![None]);
     assert_eq!(fallback_lane(&BTreeMap::new(), state), vec![None]);
 }
+
+/// lane 축은 시작 때 lane 폴더 자리의 링크를 거절한다(#2129 security 조건) — 러너는 이 `Err` 로 뜨지 않는다
+#[test]
+fn lane_source_refuses_symlinked_lane_dir() {
+    let state = tmp("lane-symlink");
+    let target = state.join("someone-elses-claude");
+    std::fs::create_dir_all(&target).unwrap();
+    std::os::unix::fs::symlink(&target, state.join(PROVIDER_LANE_CLAUDE_DIR)).unwrap();
+    assert!(LaneSource::provider_lane(&state).is_err());
+    assert!(ensure_lane_dir(&state.join(PROVIDER_LANE_CLAUDE_DIR)).is_err());
+    let _ = std::fs::remove_dir_all(&state);
+}

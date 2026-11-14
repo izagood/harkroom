@@ -197,6 +197,8 @@ fn main() {
             result_link.notify_provider_lane_result(ok, code)
         }));
         deps.codex_home = Some(state_dir.join("codex-provider-lane"));
+        deps.claude_dir =
+            Some(harkroom_runner::account_lane::provider_lane_account(&state_dir).config_dir);
         deps.state_dir = Some(state_dir);
         maker.set_provider_lane(harkroom_runner::provider_lane::ProviderLane::new(deps));
     }
