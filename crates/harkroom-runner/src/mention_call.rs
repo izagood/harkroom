@@ -308,6 +308,7 @@ pub fn noting_outcome<'a>(
             },
         );
         for p in paths {
+            crate::cleanup_report::on_transcript(&cause, &p);
             book.note_transcript(&cause, p);
         }
         fold(attempted, secrets, live, end, o)
