@@ -942,3 +942,18 @@ fn attempt_command_carries_codex_home() {
         Some(Path::new("/state/codex-home"))
     );
 }
+
+/// o1: 기동 때 정한 opencode 격리 홈이 시도 명령 옵션까지 간다(`attempt_cmd`). 빠지면 opencode·kilo 턴은 조립에서 안 뜬다.
+#[test]
+fn attempt_command_carries_opencode_home() {
+    let w = world("ochome");
+    let store = SessionStore::new(w.root.join("sessions.json"));
+    let stale = PathBuf::from("/acct/STALE_BASE");
+    let mut p = parts(&w, &store, &stale, false);
+    p.opencode_home = Some(PathBuf::from("/state/opencode-home"));
+    p.prepare(&target(), None, true, "t-1").unwrap();
+    assert_eq!(
+        p.command_for("t-1").unwrap().opencode_home,
+        Some(Path::new("/state/opencode-home"))
+    );
+}

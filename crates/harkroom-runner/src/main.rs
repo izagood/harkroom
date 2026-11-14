@@ -241,6 +241,21 @@ fn main() {
             std::process::exit(1);
         }
         maker.set_codex(codex);
+        // opencode·kilo 격리 XDG 홈(o1, 정본 `main.ts` 369~378) — 기동 때 모든 XDG 앱 설정을 쓴다. 실패하면 뜨지 않는다.
+        let opencode = harkroom_runner::opencode_prep::OpencodePrep {
+            home: state_dir.join("opencode-home"),
+            lane: provider_lane,
+            mcp_config_path: maker.config().mcp_config_path.clone(),
+            user_xdg_config: env.get("XDG_CONFIG_HOME").cloned(),
+            user_xdg_data: env.get("XDG_DATA_HOME").cloned(),
+            user_home: maker.config().home.clone(),
+            skills_dir: Some(harkroom_runner::skills_sync::runner_skills_dir(&state_dir)),
+        };
+        if let Err(e) = opencode.boot() {
+            eprintln!("opencode 홈을 마련하지 못했다 — 뜨지 않는다: {e}");
+            std::process::exit(1);
+        }
+        maker.set_opencode(opencode);
     }
     match harkroom_runner::account_lane::AccountLaneHub::start(
         source,

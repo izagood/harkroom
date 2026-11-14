@@ -70,6 +70,8 @@ pub struct MakerConfig {
     pub pty_record_dir: Option<PathBuf>,
     /// codex 격리 홈(c1, 정본 `codexHome`) — main.rs 가 기동 때 정한다. 없으면 codex 턴은 `codex_home_missing` 으로 안 뜬다.
     pub codex: Option<crate::codex_prep::CodexPrep>,
+    /// opencode·kilo 격리 XDG 홈(o1, 정본 `opencodeHome`) — main.rs 가 기동 때 정한다. 없으면 그 하네스 턴은 조립에서 안 뜬다.
+    pub opencode: Option<crate::opencode_prep::OpencodePrep>,
 }
 
 /// 배치마다 갱신하는 이름 표 — 이름은 바뀔 수 있어 멘션을 지을 때 꺼낸 **사본**을 쓴다.
@@ -200,6 +202,11 @@ impl<L: AgentLink> RunnerMaker<L> {
 
     fn names(&self) -> Names {
         self.names.read().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
+    /// opencode·kilo 격리 홈을 정한다(o1, main.rs 가 기동 때 한 번).
+    pub fn set_opencode(&mut self, opencode: crate::opencode_prep::OpencodePrep) {
+        self.cfg.opencode = Some(opencode);
     }
 
     /// codex 격리 홈을 정한다(c1, main.rs 가 기동 때 한 번).
@@ -399,6 +406,10 @@ where
             p.new_workspace_dir = workspace;
             p.home = c.home.clone();
             p.parent_env = c.parent_env.clone();
+            if let Some(oc) = c.opencode.clone() {
+                p.opencode_home = Some(oc.home.clone());
+                p.opencode = Some(oc);
+            }
             if let Some(cx) = c.codex.clone() {
                 p.codex_home = Some(cx.home.clone());
                 p.codex = Some(crate::codex_prep::CodexTurn {

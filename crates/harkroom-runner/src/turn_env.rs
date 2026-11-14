@@ -323,6 +323,8 @@ pub enum ChildEnvError {
     LaneTestHomeUnknown { harness: AgentHarness },
     /// codex 턴인데 격리 홈이 없다 — 띄우면 codex 가 사람 `~/.codex` 를 쓴다(c1). 턴을 띄우지 않는다.
     CodexHomeMissing,
+    /// opencode·kilo 턴인데 격리 XDG 홈이 없다 — 띄우면 사람 `~/.config`·`~/.local/share` 를 쓴다(o1). 턴을 띄우지 않는다.
+    OpencodeHomeMissing,
 }
 
 impl fmt::Display for ChildEnvError {
@@ -338,6 +340,12 @@ impl fmt::Display for ChildEnvError {
                 write!(
                     f,
                     "{harness:?} lane 턴의 홈 표지 이름을 모른다 — 사람 홈 설정이 실린다"
+                )
+            }
+            Self::OpencodeHomeMissing => {
+                write!(
+                    f,
+                    "opencode_home_missing — opencode·kilo 격리 홈이 없어 턴을 띄우지 않는다(사람 XDG 로 돌지 않게)"
                 )
             }
             Self::CodexHomeMissing => {
@@ -366,6 +374,10 @@ pub fn child_env(
     // codex 는 격리 홈 없이 띄우지 않는다(c1) — `CODEX_HOME` 이 없으면 codex 는 `$HOME/.codex`(사람 것)를 쓴다.
     if h == AgentHarness::Codex && input.codex_home.is_none() {
         return Err(ChildEnvError::CodexHomeMissing);
+    }
+    // opencode·kilo 도 격리 XDG 홈 없이 띄우지 않는다(o1) — 없으면 부모의 `XDG_*`(사람 자리)가 그대로 간다.
+    if crate::adapter::uses_xdg_home(h) && input.opencode_home.is_none() {
+        return Err(ChildEnvError::OpencodeHomeMissing);
     }
     let mut env = parent.clone();
     for k in HARNESS_ENV_DENYLIST {

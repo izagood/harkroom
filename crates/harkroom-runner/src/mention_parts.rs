@@ -432,6 +432,10 @@ pub struct MentionParts<'a, P: PrepareIo, S: PtyTurnSink> {
     pub home: PathBuf,
     pub omp_home: Option<PathBuf>,
     pub codex_home: Option<PathBuf>,
+    /// opencode·kilo 격리 XDG 홈(o1). 시도 명령 옵션에 싣는다 — 없으면 그 하네스 턴은 조립에서 안 뜬다.
+    pub opencode_home: Option<PathBuf>,
+    /// opencode·kilo 턴 직전 설정 다시 쓰기(o1, 정본 `readTurnMcp`). 없으면 하지 않는다(시험용).
+    pub opencode: Option<crate::opencode_prep::OpencodePrep>,
     /// codex 턴 준비(c1 로그인 링크·남은 규칙 지우기, c2 승인 명령 규칙·hook). 없으면 하지 않는다(시험용).
     pub codex: Option<crate::codex_prep::CodexTurn>,
     pub pty_opts: PtyOptsFn<'a>,
@@ -513,6 +517,8 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
             omp_home: None,
             codex_home: None,
             codex: None,
+            opencode_home: None,
+            opencode: None,
             pty_opts,
             turn_timeout_ms: 0,
             inner,
@@ -552,7 +558,10 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
             &self.system,
             &self.argv,
             c,
-            self.codex_home.as_deref(),
+            AttemptHomes {
+                codex: self.codex_home.as_deref(),
+                opencode: self.opencode_home.as_deref(),
+            },
             turn_id,
         ))
     }
@@ -868,6 +877,27 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
                 fail()
             })?;
         }
+        // opencode·kilo 턴 직전 — 그 앱의 설정을 지금 MCP 표로 다시 쓴다(o1, 정본 `readTurnMcp`). 실패하면 띄우지 않는다.
+        if let (Some(oc), Some(app)) = (
+            self.opencode.as_ref(),
+            crate::adapter::xdg_app_for(self.harness),
+        ) {
+            let allows = self
+                .system
+                .permissions
+                .as_ref()
+                .map(|p| p.tool_allows.clone())
+                .unwrap_or_default();
+            oc.before_turn(
+                &app,
+                self.argv.model.as_deref(),
+                Some((target.channel_id.as_str(), allows.as_slice())),
+            )
+            .map_err(|e| {
+                eprintln!("[mentionTurn] {}: opencode 홈 — {e}", self.key);
+                fail()
+            })?;
+        }
         // 하네스를 띄우기 전, **이 시도의 계정 폴더**로 작업 폴더 신뢰·bypass 수락을 적는다(정본 `mentionTurn.ts` 의 차례).
         crate::workspace_trust::prepare_harness_gates(
             self.harness,
@@ -981,7 +1011,10 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             &self.system,
             &self.argv,
             c,
-            self.codex_home.as_deref(),
+            AttemptHomes {
+                codex: self.codex_home.as_deref(),
+                opencode: self.opencode_home.as_deref(),
+            },
             args.turn_id,
         );
         cmd.gate_file = markers.gate.as_deref();
@@ -1199,12 +1232,18 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
 
 /// 시도 하나의 명령 옵션(`spawn`·`command_for` 가 같이 쓴다) — 지시문 입력 칸(argv) → 시도 칸 → 계정 폴더 → codex 격리 홈.
 /// codex 홈을 여기서 싣지 않으면 codex 턴은 조립에서 `codexHome` 이 비어 뜨지 않는다(실물 턴에서 잡힘, #2142).
+/// 시도 명령에 싣는 하네스 홈들.
+struct AttemptHomes<'s> {
+    codex: Option<&'s Path>,
+    opencode: Option<&'s Path>,
+}
+
 fn attempt_cmd<'s>(
     base: &TurnCommandOptions<'s>,
     system: &'s SystemInputs,
     argv: &'s OwnedArgv,
     c: &'s Current,
-    codex_home: Option<&'s Path>,
+    homes: AttemptHomes<'s>,
     turn_id: &'s str,
 ) -> TurnCommandOptions<'s> {
     let mut cmd = attempt_command_for_account(
@@ -1215,7 +1254,8 @@ fn attempt_cmd<'s>(
         &c.cause,
         turn_id,
     );
-    cmd.codex_home = codex_home;
+    cmd.codex_home = homes.codex;
+    cmd.opencode_home = homes.opencode;
     cmd
 }
 

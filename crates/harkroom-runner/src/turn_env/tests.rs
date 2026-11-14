@@ -213,6 +213,7 @@ fn turn_keys_by_delivery() {
     assert!(!env.contains_key(RUNNER_TURN_KEY_BRIDGE_ENV));
 
     let mut oc = ChildEnvInput::new(Opencode);
+    oc.opencode_home = Some(Path::new("/oc"));
     oc.turn_keys = Some(&keys);
     oc.opencode_turn_config = Some(Path::new("/t/oc.json"));
     let env = child_env(&oc, &p, Path::new(HOME)).unwrap();
@@ -331,7 +332,9 @@ fn codex_child_uses_only_isolated_home() {
     assert_eq!(env["CODEX_HOME"], CODEX_ISO);
     // 다른 하네스에는 부모 값이 실리지 않는다(물려받으면 그 안에서 codex 를 부를 때 사람 홈이 된다).
     for h in [ClaudeCode, crate::adapter::AgentHarness::Opencode] {
-        let env = child_env(&ChildEnvInput::new(h), &p, Path::new(HOME)).unwrap();
+        let mut i = ChildEnvInput::new(h);
+        i.opencode_home = Some(Path::new("/state/opencode-home"));
+        let env = child_env(&i, &p, Path::new(HOME)).unwrap();
         assert!(!env.contains_key("CODEX_HOME"), "{h:?}");
     }
     // 러너 env 를 고를 때부터 빠진다.
@@ -347,4 +350,27 @@ fn codex_without_isolated_home_is_refused() {
     let e = child_env(&ChildEnvInput::new(Codex), &p, Path::new(HOME)).unwrap_err();
     assert!(matches!(e, ChildEnvError::CodexHomeMissing));
     assert!(e.to_string().starts_with("codex_home_missing"));
+}
+
+/// o1: opencode·kilo 자식은 러너가 정한 격리 XDG 홈만 쓴다 — 부모(러너) env 의 사람 XDG 자리는 덮인다. 홈이 없으면 env 를 짓지 않는다.
+#[test]
+fn opencode_child_uses_only_isolated_xdg_home() {
+    let p = parent(&[
+        ("XDG_CONFIG_HOME", "/h/.config"),
+        ("XDG_DATA_HOME", "/h/.local/share"),
+        ("XDG_STATE_HOME", "/h/.local/state"),
+    ]);
+    for h in [Opencode, crate::adapter::AgentHarness::Kilo] {
+        let mut i = ChildEnvInput::new(h);
+        i.opencode_home = Some(Path::new("/state/opencode-home"));
+        let env = child_env(&i, &p, Path::new(HOME)).unwrap();
+        assert_eq!(
+            env["XDG_CONFIG_HOME"], "/state/opencode-home/config",
+            "{h:?}"
+        );
+        assert_eq!(env["XDG_DATA_HOME"], "/state/opencode-home/data", "{h:?}");
+        assert_eq!(env["XDG_STATE_HOME"], "/state/opencode-home/state", "{h:?}");
+        let e = child_env(&ChildEnvInput::new(h), &p, Path::new(HOME)).unwrap_err();
+        assert!(matches!(e, ChildEnvError::OpencodeHomeMissing), "{h:?}");
+    }
 }

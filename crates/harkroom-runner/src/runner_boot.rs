@@ -83,6 +83,7 @@ pub fn maker_config(cfg: &RunnerConfig, env: &Env, f: BootFacts<'_>) -> MakerCon
         can_register_turn_keys: true,
         // main.rs 가 lane 여부를 정한 뒤 채운다(`RunnerMaker::set_codex`).
         codex: None,
+        opencode: None,
     }
 }
 
