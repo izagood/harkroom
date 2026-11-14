@@ -85,6 +85,10 @@ pub trait AssignmentDeps: Send + Sync {
     fn rust_runner_present(&self) -> bool {
         false
     }
+    /// 이 에이전트의 러너가 계정 풀로 돌 수 있는가(B4-5e). **기본은 `Unreadable`** — 모르면 Rust 러너로 보내지 않는다.
+    fn claude_account_use(&self) -> crate::runner_pick::AccountUse {
+        crate::runner_pick::AccountUse::Unreadable
+    }
     fn signal(&self, agent_id: &str, sig: Sig) -> bool;
     fn is_alive(&self, agent_id: &str) -> bool;
     fn list_runners(&self) -> Vec<Value>;
@@ -296,10 +300,15 @@ impl AssignmentReconciler {
         let env = self.runner_env(&runner_id, &secret, &mcp_path, local.as_ref());
         // 러너 구현(B4-5c). `rust` 를 청했어도 풀·lane 에이전트는 node 로 떨어뜨린다(`runner_pick.rs` — 다른 계정·과금으로 바뀌지 않게).
         let wants = crate::runner_pick::wants_rust(local.as_ref());
-        let pick = crate::runner_pick::pick_runner(
-            local.as_ref(),
-            wants && self.deps.rust_runner_present(),
-        );
+        let pick = if wants {
+            crate::runner_pick::pick_runner(
+                local.as_ref(),
+                self.deps.rust_runner_present(),
+                self.deps.claude_account_use(),
+            )
+        } else {
+            crate::runner_pick::RunnerPick::NODE
+        };
         if let Some(f) = pick.fallback {
             self.deps.log(&format!(
                 "러너: rust 를 청했지만 node 로 띄운다({}): agent={}",
@@ -640,6 +649,7 @@ mod tests {
         picks: Mutex<Vec<RunnerPick>>,
         logs: Mutex<Vec<String>>,
         rust_present: Mutex<bool>,
+        account_use: Mutex<crate::runner_pick::AccountUse>,
     }
 
     impl AssignmentDeps for Fake {
@@ -678,6 +688,9 @@ mod tests {
         }
         fn rust_runner_present(&self) -> bool {
             *self.rust_present.lock().unwrap()
+        }
+        fn claude_account_use(&self) -> crate::runner_pick::AccountUse {
+            *self.account_use.lock().unwrap()
         }
         fn is_alive(&self, agent_id: &str) -> bool {
             self.alive
@@ -850,6 +863,7 @@ mod tests {
         for (local, present, kind, fallback) in cases {
             let (f, r) = setup();
             *f.rust_present.lock().unwrap() = present;
+            *f.account_use.lock().unwrap() = crate::runner_pick::AccountUse::None;
             r.on_assign(
                 "https://srv",
                 def(CredentialScope::Community, None),
@@ -869,6 +883,40 @@ mod tests {
             if let Some(fb) = fallback {
                 assert!(logs.iter().any(|l| l.contains(fb.as_str())), "{logs:?}");
             }
+        }
+    }
+
+    /// B4-5e: operator.json 에 claudePool 이 없어도 계정 풀 판정이 Pool·Unreadable 이면 node. 판정을 안 주면(기본) 닫힌 쪽.
+    #[test]
+    fn runner_pick_uses_account_use_and_defaults_closed() {
+        use crate::local_agents::RunnerKind;
+        use crate::runner_pick::{AccountUse, RunnerFallback};
+        let rust_only = LocalAgent {
+            runner: RunnerKind::Rust,
+            ..Default::default()
+        };
+        for (set, want) in [
+            (Some(AccountUse::Pool), RunnerFallback::NeedsAccountPool),
+            (
+                Some(AccountUse::Unreadable),
+                RunnerFallback::AccountPoolUnreadable,
+            ),
+            (None, RunnerFallback::AccountPoolUnreadable),
+        ] {
+            let (f, r) = setup();
+            *f.rust_present.lock().unwrap() = true;
+            if let Some(u) = set {
+                *f.account_use.lock().unwrap() = u;
+            }
+            r.on_assign(
+                "https://srv",
+                def(CredentialScope::Community, None),
+                Some(rust_only.clone()),
+            )
+            .unwrap();
+            let picks = f.picks.lock().unwrap();
+            assert_eq!(picks[0].kind, RunnerKind::Node);
+            assert_eq!(picks[0].fallback, Some(want));
         }
     }
 
