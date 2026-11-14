@@ -3,7 +3,7 @@
 //! | 로컬 설정·에이전트 | Rust 러너 파일 | 결과 |
 //! |---|---|---|
 //! | `runner` 가 `"rust"` 가 아님(없음·모르는 값) | — | node |
-//! | `"rust"` + 하네스가 허용 목록(`RUST_RUNNER_HARNESSES` = claude-code·codex·opencode·kilo) 밖 | — | node, `rust_harness_unsupported` — Rust 러너는 pi·omp 를 아직 실물로 확인하지 않았다. 홈 배선 조각에서 하나씩 더한다. 모르는 이름도 node |
+//! | `"rust"` + 하네스가 허용 목록(`RUST_RUNNER_HARNESSES` = claude-code·codex·opencode·kilo·pi) 밖 | — | node, `rust_harness_unsupported` — Rust 러너는 omp 를 아직 실물로 확인하지 않았다. 홈 배선 조각에서 하나씩 더한다. 모르는 이름도 node |
 //! | `"rust"` + 러너의 풀 해석을 못 한다(`pools.json` 깨짐·뿌리 못 읽음 등) | — | node, `rust_account_pool_unreadable` |
 //! | `"rust"` | 오퍼레이터 옆에 없음 | node, `rust_runner_missing` |
 //! | `"rust"`(계정 풀·전용 제공사 경로 포함) | 있음 | rust |
@@ -34,7 +34,7 @@ impl From<harkroom_accounts::ClaudeAccountUse> for AccountUse {
 }
 
 /// Rust 러너로 보내도 되는 하네스 — **허용 목록**(TS `RUST_RUNNER_HARNESSES`). 배선·시험을 마친 것만 둔다.
-pub const RUST_RUNNER_HARNESSES: [&str; 4] = ["claude-code", "codex", "opencode", "kilo"];
+pub const RUST_RUNNER_HARNESSES: [&str; 5] = ["claude-code", "codex", "opencode", "kilo", "pi"];
 
 /// `rust` 를 청했는데 node 로 떨어뜨린 이유(TS `RunnerFallback`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,11 +158,10 @@ mod tests {
         );
     }
 
-    /// 허용 목록(claude-code·codex·opencode·kilo) 밖은 풀·lane·파일과 상관없이 node — pi·omp·모르는 이름 모두.
+    /// 허용 목록(claude-code·codex·opencode·kilo·pi) 밖은 풀·lane·파일과 상관없이 node — omp·모르는 이름 모두.
     #[test]
     fn only_allowed_harnesses_go_to_rust() {
         for h in [
-            "pi",
             "omp",
             "Codex",
             "OpenCode",
@@ -176,7 +175,7 @@ mod tests {
             assert_eq!(p.kind, RunnerKind::Node, "{h}");
             assert_eq!(p.fallback, Some(RunnerFallback::HarnessUnsupported), "{h}");
         }
-        for h in ["claude-code", "codex", "opencode", "kilo"] {
+        for h in ["claude-code", "codex", "opencode", "kilo", "pi"] {
             assert_eq!(
                 pick_runner(Some(&rust()), true, AccountUse::None, h).kind,
                 RunnerKind::Rust,
