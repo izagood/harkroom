@@ -290,6 +290,16 @@ pub struct ServerState {
     local_terminal: OnceLock<Arc<LocalTerminalHub>>,
     /// 작업 폴더 청소(s21c5-4). 없으면 `workspaceCleanup*` 요청은 배선 안 됨으로 답한다.
     workspace_cleanup: OnceLock<Arc<crate::workspace_cleanup::service::WorkspaceCleanup>>,
+    /// 등록(s9) 뒤 서버 링크를 띄우는 자리(TS `onRegistered` → `startOne`). 없으면 `operatorRegister` 는 claim 하지 않고 거절된다.
+    link_control: OnceLock<LinkControl>,
+    /// `operatorRegister` 가 claim 에 쓰는 HTTP. 시험은 가짜를 넣는다 — 없으면 ureq.
+    register_transport: OnceLock<Arc<dyn crate::forward::Transport>>,
+}
+
+/// 서버 링크 제어(s9). `is_up` = 링크가 이미 떠 있는가(토큰을 쥐고 붙어 있거나 다시 붙는 중), `attach` = 없으면 지금 띄운다.
+pub struct LinkControl {
+    pub is_up: Box<dyn Fn() -> bool + Send + Sync>,
+    pub attach: Box<dyn Fn() + Send + Sync>,
 }
 
 impl ServerState {
@@ -333,6 +343,8 @@ impl ServerState {
                 workspace_cleanup: OnceLock::new(),
                 on_runner_exit: OnceLock::new(),
                 local_terminal: OnceLock::new(),
+                link_control: OnceLock::new(),
+                register_transport: OnceLock::new(),
             }
         })
     }
@@ -373,6 +385,16 @@ impl ServerState {
 
     pub fn set_runner_link(&self, link: Arc<RunnerLinkServer>) {
         let _ = self.runner_link.set(link);
+    }
+
+    /// 등록 뒤 링크 제어를 배선한다(한 번만). `serve` 가 건다.
+    pub fn set_link_control(&self, ctl: LinkControl) {
+        let _ = self.link_control.set(ctl);
+    }
+
+    /// `operatorRegister` 의 HTTP 를 바꾼다(시험용, 한 번만).
+    pub fn set_register_transport(&self, t: Arc<dyn crate::forward::Transport>) {
+        let _ = self.register_transport.set(t);
     }
 
     fn agents_changed(&self) {
@@ -786,6 +808,44 @@ impl ServerState {
                 );
                 self.agents_changed();
                 Ok(json!({}))
+            }
+            // ── 등록(s9, TS `server.ts` 의 같은 칸) ────────────────────────────────────────────
+            "operatorRegister" => {
+                let local = self.local()?;
+                let input = crate::local_register::read_register_payload(payload)?;
+                let ctl = self.link_control.get().ok_or_else(|| {
+                    err(
+                        DaemonErrorCode::NoSuchRunner,
+                        "이 daemon 에는 서버 링크가 배선되지 않았다",
+                    )
+                })?;
+                // 다시 등록(토큰을 쥔 링크가 이미 떠 있다)은 아직 받지 않는다 — 새 토큰을 도는 링크·전달·청소에 갈아 끼우는 일은
+                // 따로 한다(s9b). claim 하기 **전에** 거절한다: 코드를 쓰지 않고, 서버가 옛 등록을 폐기하지도 않는다.
+                if (ctl.is_up)() {
+                    return Err(bad(
+                        "이 오퍼레이터는 이미 등록돼 서버에 붙어 있다 — 다시 등록은 아직 이 오퍼레이터에서 받지 않는다".into(),
+                    ));
+                }
+                let transport: Arc<dyn crate::forward::Transport> =
+                    match self.register_transport.get() {
+                        Some(t) => Arc::clone(t),
+                        None => Arc::new(crate::forward::UreqTransport::default()),
+                    };
+                let out = crate::local_register::register(
+                    local,
+                    transport.as_ref(),
+                    &input,
+                    &local_merge::hostname,
+                )?;
+                eprintln!(
+                    "등록: {} ({}) @ {}",
+                    out["name"].as_str().unwrap_or(""),
+                    out["operatorId"].as_str().unwrap_or(""),
+                    out["baseUrl"].as_str().unwrap_or("")
+                );
+                // 곧바로 붙는다(TS `onRegistered`) — 앱이 오퍼레이터를 다시 띄우지 않아도 「연결됨」이 된다.
+                (ctl.attach)();
+                Ok(out)
             }
             "operatorAgentRemove" => {
                 let local = self.local()?;
@@ -1795,6 +1855,83 @@ mod tests {
         // 읽기는 알리지 않는다.
         state.dispatch("operatorAgentsList", None).unwrap();
         assert_eq!(fired.load(Ordering::SeqCst), 2);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// s9: 첫 등록은 claim → 토큰 → 곧바로 링크를 띄운다. 링크가 떠 있으면(다시 등록) claim 하지 않고 거절한다.
+    #[test]
+    fn operator_register_claims_then_attaches_once() {
+        use crate::forward::{HttpReply, Transport};
+        struct Claim(AtomicUsize);
+        impl Transport for Claim {
+            fn send(
+                &self,
+                _m: &str,
+                _u: &str,
+                _h: &[(String, String)],
+                _b: Option<Vec<u8>>,
+            ) -> Result<HttpReply, String> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Ok(HttpReply {
+                    status: 201,
+                    content_type: "application/json".into(),
+                    body: json!({"operator": {"id": "op-1", "name": "mac"}, "token": "tok"})
+                        .to_string(),
+                })
+            }
+        }
+        let state = ServerState::new(
+            DaemonIdentity {
+                pid: 1,
+                started_at_ms: 0,
+                launch_nonce: String::new(),
+                entry_path: String::new(),
+                app_version: String::new(),
+            },
+            None,
+        );
+        let root = std::env::temp_dir().join(format!("hk-sock-reg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let url = "https://a.example.com";
+        let req = json!({"baseUrl": url, "code": "C0DE"});
+        state.set_local_agents(LocalAgents::new(&root.to_string_lossy(), url));
+        // 링크 제어가 없으면 claim 하지 않는다.
+        let claim = Arc::new(Claim(AtomicUsize::new(0)));
+        state.set_register_transport(claim.clone());
+        assert_eq!(
+            state
+                .dispatch("operatorRegister", Some(&req))
+                .unwrap_err()
+                .code,
+            DaemonErrorCode::NoSuchRunner
+        );
+        assert_eq!(claim.0.load(Ordering::SeqCst), 0);
+        let up = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let attached = Arc::new(AtomicUsize::new(0));
+        state.set_link_control(LinkControl {
+            is_up: {
+                let up = up.clone();
+                Box::new(move || up.load(Ordering::SeqCst))
+            },
+            attach: {
+                let (up, attached) = (up.clone(), attached.clone());
+                Box::new(move || {
+                    attached.fetch_add(1, Ordering::SeqCst);
+                    up.store(true, Ordering::SeqCst);
+                })
+            },
+        });
+        let out = state.dispatch("operatorRegister", Some(&req)).unwrap();
+        assert_eq!(out["operatorId"], "op-1");
+        assert_eq!(out["baseUrl"], url);
+        assert_eq!(claim.0.load(Ordering::SeqCst), 1);
+        assert_eq!(attached.load(Ordering::SeqCst), 1, "등록 뒤 곧바로 붙는다");
+        // 다시 등록 — 링크가 떠 있으면 claim 전에 거절한다(코드를 쓰지 않는다).
+        let e = state.dispatch("operatorRegister", Some(&req)).unwrap_err();
+        assert_eq!(e.code, DaemonErrorCode::BadPayload);
+        assert_eq!(claim.0.load(Ordering::SeqCst), 1);
+        assert_eq!(attached.load(Ordering::SeqCst), 1);
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -81,7 +81,11 @@ pub fn run_attempt<'a, L: RunnerLink>(
     let slot = std::rc::Rc::clone(&built);
     let source = std::rc::Rc::new(secrets);
     let src = std::rc::Rc::clone(&source);
-    input.after_run = Some(Box::new(move |_out: &PtyOut| {
+    let started = std::time::Instant::now();
+    input.after_run = Some(Box::new(move |out: &PtyOut| {
+        if let Some(line) = turn_end_line(scrub.key, started.elapsed().as_millis(), out) {
+            eprintln!("{line}");
+        }
         let s = src.build(true);
         let (transcript, _) = transcript_record_paths(harness, scrub.session_id, scrub.homes);
         let t = scrub_after_run(
@@ -113,6 +117,20 @@ pub fn run_attempt<'a, L: RunnerLink>(
         eprintln!("[mentionTurn] {}: 턴 뒤 관측·통보 실패 — {e}", scrub.key);
     }
     res
+}
+
+/// 정본 `#126` 턴 종료 줄 — `[mentionTurn] <key>: 턴 종료 (경과=<ms>ms, exitCode=<code | timeout (code)>)`.
+/// 하네스가 끝났을 때만 낸다(띄우기 실패는 그 오류가 따로 남는다). 경과는 시도 시작부터다.
+pub fn turn_end_line(key: &str, elapsed_ms: u128, out: &PtyOut) -> Option<String> {
+    let r = out.as_ref().ok()?;
+    let exit = if r.timed_out {
+        format!("timeout ({})", r.exit_code)
+    } else {
+        r.exit_code.to_string()
+    };
+    Some(format!(
+        "[mentionTurn] {key}: 턴 종료 (경과={elapsed_ms}ms, exitCode={exit})"
+    ))
 }
 
 #[cfg(test)]

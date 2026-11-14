@@ -95,6 +95,88 @@ impl LocalAgents {
         (!t.is_empty()).then(|| t.to_string())
     }
 
+    fn token_file(&self) -> PathBuf {
+        self.secrets_dir.join(format!(
+            "operator-token.{}",
+            community_root_hash(&self.community, 16)
+        ))
+    }
+
+    /// `raw_url` 이 이 뿌리의 커뮤니티면 정규화한 키를, 아니면 `bad-payload` 를 돌려준다(`operatorRegister` 가 claim 전에 본다).
+    pub fn own_community(&self, raw_url: &str) -> Result<String, DaemonError> {
+        let key = community_root_key(raw_url);
+        if key != self.community {
+            return Err(bad(format!(
+                "이 오퍼레이터는 {} 를 맡는다 — 다른 커뮤니티({key})로 등록할 수 없다",
+                self.community
+            )));
+        }
+        Ok(self.community.clone())
+    }
+
+    /// 이 커뮤니티 칸의 `operatorId`(다시 등록의 `replaces`). 없거나 비었으면 `None`.
+    pub fn operator_id(&self) -> Option<String> {
+        let config = self.read_config().ok()?;
+        config
+            .get("communities")?
+            .as_object()?
+            .iter()
+            .filter(|(raw, _)| community_root_key(raw) == self.community)
+            .find_map(|(_, s)| s.get("operatorId").and_then(Value::as_str))
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    }
+
+    /// 이 커뮤니티의 오퍼레이터 토큰을 쓴다(TS `fileSecrets.setToken`: 디렉터리 0700, 파일 0600, 토큰 + 개행).
+    /// 임시 파일에 쓰고 rename 한다 — 쓰다 끊겨도 반쪽 토큰이 남지 않는다.
+    pub fn save_token(&self, token: &str) -> Result<(), DaemonError> {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&self.secrets_dir)
+            .map_err(|e| internal(format!("secrets 디렉터리를 만들지 못했다: {e}")))?;
+        // 이미 있던 디렉터리도 0700 으로 맞춘다(TS mkdir 은 있던 것의 모드를 바꾸지 않지만, 토큰 자리는 좁은 쪽이 맞다).
+        let _ = fs::set_permissions(&self.secrets_dir, fs::Permissions::from_mode(0o700));
+        let file = self.token_file();
+        let tmp = file.with_extension(format!("tmp-{}", std::process::id()));
+        let res = (|| {
+            let _ = fs::remove_file(&tmp);
+            let mut f = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&tmp)?;
+            f.write_all(format!("{token}\n").as_bytes())?;
+            f.sync_all()?;
+            fs::rename(&tmp, &file)
+        })();
+        if let Err(e) = res {
+            let _ = fs::remove_file(&tmp);
+            return Err(internal(format!("오퍼레이터 토큰을 쓰지 못했다: {e}")));
+        }
+        Ok(())
+    }
+
+    /// 이 커뮤니티 칸의 `operatorId` 를 바꾼다. 칸이 없으면 만들고(`agents: {}`), 있던 `agents` 는 그대로 둔다.
+    pub fn set_operator_id(&self, operator_id: &str) -> Result<(), DaemonError> {
+        let community = self.community.clone();
+        self.modify(&community, |config| {
+            agents_of(config, &self.community, true).expect("만들었다");
+            let communities = config
+                .get_mut("communities")
+                .and_then(Value::as_object_mut)
+                .expect("agents_of 가 만들었다");
+            let section = communities
+                .iter_mut()
+                .find(|(k, _)| community_root_key(k) == self.community)
+                .and_then(|(_, v)| v.as_object_mut())
+                .expect("agents_of 가 만들었다");
+            section.insert("operatorId".into(), Value::String(operator_id.to_string()));
+            Ok(true)
+        })
+    }
+
     /// 토큰 파일이 있고 비어 있지 않은가(TS `getToken() !== null`).
     fn registered(&self, base_url: &str) -> bool {
         let file = self.secrets_dir.join(format!(
