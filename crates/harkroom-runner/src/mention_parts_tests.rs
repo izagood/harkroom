@@ -699,3 +699,19 @@ fn attempt_pty_options_ask_delivery_confirmation() {
     assert_eq!(c.within_ms, CONFIRM_DELIVERY_WITHIN_MS);
     assert_eq!(c.resend_grace_ms, None);
 }
+
+/// T4e: TUI 턴은 사람을 부를 수 있게 띄운다(정본 `onAttention`) — 준비 대기·주입 확인이 실패 대신 사람을 부른다.
+#[test]
+fn attempt_pty_options_can_call_human() {
+    let ws = std::env::temp_dir().join(format!("hk-t4e-{}", std::process::id()));
+    std::fs::create_dir_all(&ws).unwrap();
+    let o = attempt_pty_options(
+        PtyTurnOptions::at(PathBuf::new()),
+        AgentHarness::ClaudeCode,
+        ws.to_str().unwrap(),
+        "P".into(),
+        1,
+    )
+    .unwrap();
+    assert!(o.inject.unwrap().attention);
+}

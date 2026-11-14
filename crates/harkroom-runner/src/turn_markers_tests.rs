@@ -99,6 +99,7 @@ fn sink_answers_from_files_and_files_go_away_on_drop() {
             markers: &m,
             key: "k",
             confirm: None,
+            human: None,
         };
         // 브릿지가 표식을 만들기 전에는 안 섰다.
         assert!(!s.wait_for_ready());
@@ -131,6 +132,7 @@ fn sink_without_markers_defers_to_inner() {
         markers: &m,
         key: "k",
         confirm: None,
+        human: None,
     };
     assert!(s.wait_for_ready());
     assert_eq!(s.gate_signal(), 99);
@@ -148,9 +150,31 @@ fn sink_confirm_probe_uses_given_evidence() {
         markers: &m,
         key: "k",
         confirm: Some(&no),
+        human: None,
     };
     assert!(!s.confirm_probe(), "증거가 없으면 거짓");
     let yes = || true;
     s.confirm = Some(&yes);
     assert!(s.confirm_probe());
+}
+
+/// T4e: 사람 부르기는 `human` 이 받는다(정본 `onAttention: callHuman`).
+#[test]
+fn sink_attention_calls_human() {
+    let m = TurnMarkers::default();
+    let mut inner = Inner::default();
+    let seen = std::cell::RefCell::new(Vec::<(String, AttentionKind)>::new());
+    let human = |s: &str, k: AttentionKind| seen.borrow_mut().push((s.to_owned(), k));
+    let mut s = MarkerSink {
+        inner: &mut inner,
+        markers: &m,
+        key: "k",
+        confirm: None,
+        human: Some(&human),
+    };
+    s.on_attention("SCREEN", AttentionKind::Gate);
+    assert_eq!(
+        seen.borrow().as_slice(),
+        &[("SCREEN".to_string(), AttentionKind::Gate)]
+    );
 }
