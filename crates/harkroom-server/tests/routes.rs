@@ -45,6 +45,7 @@ async fn front(table: &'static [Moved], ts: &str) -> String {
         pool: lazy_pool(),
         write: None,
         trust: Default::default(),
+        cors: std::sync::Arc::new(harkroom_server::cors::Cors::from_env_value(None)),
     };
     let app = routes::router(state, table, &TsOverrides::parse(Some(ts)));
     format!("http://{}", serve(app).await)
@@ -339,4 +340,36 @@ fn moved_params_do_not_shadow_ts_static_paths() {
                 .to_string()
         ]
     );
+}
+
+/// 11-14 「Load failed」 장애 재발 막기 — 앞단이 직접 답하는 응답에 CORS 머리가 있어야 한다. 넘기는 응답은 TS 가 붙이므로 앞단은
+/// 손대지 않는다(이 시험의 상류는 머리를 안 붙이니 넘긴 응답엔 없어야 한다). CI 의 `rustFrontDb.test.ts` 가 실제 TS 와 값을 견준다.
+#[tokio::test]
+async fn moved_responses_carry_cors_and_proxied_ones_are_untouched() {
+    let f = front(TABLE, "").await;
+    let o = [("origin", "tauri://localhost")];
+    let (s, h, _) = send(&f, Method::GET, "/moved", &o, "").await;
+    assert_eq!(s, 200);
+    assert_eq!(
+        h.get("access-control-allow-origin").unwrap(),
+        "tauri://localhost"
+    );
+    assert_eq!(h.get("vary").unwrap(), "Origin");
+    assert!(
+        h.get("access-control-expose-headers")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .contains("x-harkroom-notified")
+    );
+    assert!(h.get("access-control-allow-credentials").is_none());
+    let (_, h, _) = send(&f, Method::GET, "/other", &o, "").await;
+    assert!(
+        h.get("access-control-allow-origin").is_none(),
+        "넘긴 응답은 앞단이 안 붙인다(TS 몫)"
+    );
+    // 출처가 없으면 Allow-Origin 은 없고 Vary·Expose 는 있다(@fastify/cors 와 같음).
+    let (_, h, _) = send(&f, Method::GET, "/moved", &[], "").await;
+    assert!(h.get("access-control-allow-origin").is_none());
+    assert_eq!(h.get("vary").unwrap(), "Origin");
 }

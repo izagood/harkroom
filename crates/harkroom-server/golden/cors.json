@@ -1,0 +1,22 @@
+{
+  "methods": [
+    "GET",
+    "POST",
+    "PUT",
+    "PATCH",
+    "DELETE"
+  ],
+  "allowedHeaders": [
+    "content-type",
+    "authorization",
+    "idempotency-key"
+  ],
+  "exposedHeaders": [
+    "x-harkroom-notified",
+    "x-harkroom-notified-count",
+    "x-harkroom-mention-edit-skipped",
+    "x-harkroom-avatar-source",
+    "retry-after"
+  ],
+  "maxAge": 600
+}
