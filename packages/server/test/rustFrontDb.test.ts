@@ -865,6 +865,15 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         for (const h of [...CORS_HEADERS, 'access-control-allow-methods', 'access-control-allow-headers', 'access-control-max-age']) {
           expect(b.headers.get(h), `preflight ${key} ${h}`).toBe(a.headers.get(h));
         }
+        // `Access-Control-Request-Method` 없는 프리플라이트 — TS(`@fastify/cors` strictPreflight)는 400 「Invalid Preflight Request」.
+        const [e, g] = [
+          await fetch(`${tsUrl}${fill(path)}`, { method: 'OPTIONS', headers: { origin: CORS } }),
+          await fetch(`${rsUrl}${fill(path)}`, { method: 'OPTIONS', headers: { origin: CORS } }),
+        ];
+        const [et, gt] = [await e.text(), await g.text()];
+        expect(g.status, `ACRM 없는 preflight ${key}`).toBe(e.status);
+        expect(gt, `ACRM 없는 preflight ${key} 본문`).toBe(et);
+        for (const h of CORS_HEADERS) expect(g.headers.get(h), `ACRM 없는 preflight ${key} ${h}`).toBe(e.headers.get(h));
         // 인증 없는 본 요청(401·403 등) — 인증 층보다 바깥에서 CORS 가 붙는가.
         const [c, d] = [
           await fetch(`${tsUrl}${fill(path)}`, { method, headers: { origin: CORS } }),
