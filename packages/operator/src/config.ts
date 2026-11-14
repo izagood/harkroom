@@ -10,6 +10,7 @@
  * 쓰지 않는다 — `claudeAccounts.ts` 가 `pools.json` 에 세운 것과 같은 단일 writer 규칙이다.
  */
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { ProviderLaneConfig } from '@harkroom/shared/providerLane';
@@ -126,6 +127,24 @@ export async function writeConfig(path: string, cfg: OperatorConfig): Promise<vo
     await rm(tmp, { force: true }).catch(() => undefined);
     throw err;
   }
+}
+
+/**
+ * 한 에이전트의 로컬 설정을 파일에서 지금 읽는다(배정 직전, `community.ts` `readLocal`). 없거나 깨졌으면 `undefined` —
+ * 부르는 쪽은 그때 메모리 값을 쓴다. 키는 `communityKey` 로 맞춘 커뮤니티 주소다.
+ *
+ * **동기로 읽는다** — 배정 프레임 처리 사이에 await 를 끼우면 바로 뒤의 `unassign` 이 먼저 조정기에 닿아 순서가 뒤집힌다
+ * (해제된 에이전트가 뜬다). 파일은 작고 배정은 드물다.
+ */
+export function readLocalAgent(path: string, baseUrl: string, agentId: string): LocalAgentConfig | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf8'));
+  } catch {
+    return undefined;
+  }
+  if (!isConfig(parsed)) return undefined;
+  return parsed.communities[baseUrl]?.agents?.[agentId];
 }
 
 /** 쓰기 전에 읽는다 — 없으면 빈 설정, **깨졌으면 던진다**(빈 설정으로 덮으면 사람이 고치던 내용과 에이전트 목록을 잃는다). */

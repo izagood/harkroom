@@ -4,7 +4,7 @@ import { mkdtemp, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { readConfig, readConfigForWrite, rememberOperatorId, runnerKindOf, updateConfig, writeConfig, type LocalAgentConfig, type OperatorConfig } from '../src/config.js';
+import { readConfig, readConfigForWrite, readLocalAgent, rememberOperatorId, runnerKindOf, updateConfig, writeConfig, type LocalAgentConfig, type OperatorConfig } from '../src/config.js';
 import { MERGE_SCOPE_RE } from '@harkroom/shared/daemonProtocol';
 import { fileSecrets } from '../src/secrets.js';
 
@@ -154,5 +154,20 @@ describe('README 의 operator.json 예시(B4-5d)', () => {
     const cfg = JSON.parse(block![1]!) as OperatorConfig;
     const agents = Object.values(cfg.communities)[0]!.agents;
     expect(Object.values(agents).map(runnerKindOf)).toEqual(['rust', 'node']);
+  });
+});
+
+describe('readLocalAgent — 배정 직전 파일에서 다시 읽기', () => {
+  it('손으로 고친 파일의 그 에이전트 칸을 지금 읽는다 · 없거나 깨졌으면 undefined', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'op-reread-'));
+    const path = join(dir, 'operator.json');
+    await writeFile(path, JSON.stringify({ communities: { 'https://example.com': { agents: { a: { workingDir: '/w' } } } } }));
+    expect(readLocalAgent(path, 'https://example.com', 'a')).toEqual({ workingDir: '/w' });
+    await writeFile(path, JSON.stringify({ communities: { 'https://example.com': { agents: { a: { workingDir: '/w', runner: 'rust' } } } } }));
+    expect(readLocalAgent(path, 'https://example.com', 'a')).toEqual({ workingDir: '/w', runner: 'rust' });
+    expect(readLocalAgent(path, 'https://example.com', 'b')).toBeUndefined();
+    expect(readLocalAgent(path, 'https://other.example.com', 'a')).toBeUndefined();
+    await writeFile(path, '{ broken');
+    expect(readLocalAgent(path, 'https://example.com', 'a')).toBeUndefined();
   });
 });

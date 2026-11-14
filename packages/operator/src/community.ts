@@ -28,6 +28,13 @@ export interface CommunityDeps {
   token: string;
   /** 이 커뮤니티에서 이 머신이 돌릴 수 있는 에이전트(로컬 설정). 키는 에이전트 id. */
   agents: Record<string, LocalAgentConfig>;
+  /**
+   * 배정 직전에 이 에이전트의 로컬 설정을 **파일에서 다시 읽는다**(B4-6 준비에서 찾은 빈틈). 손으로 고친 `operator.json`
+   * (`"runner": "rust"` 등)이 재배정만으로 반영되게 한다 — 메모리 표는 기동 때와 `operatorAgentSet` 때만 바뀐다.
+   * 못 읽거나 그 칸이 없으면 메모리 값을 쓴다(동의 검사는 메모리 표로 그대로 한다). 없으면 메모리 값만 쓴다.
+   * **동기**다 — 배정 처리 사이에 await 를 끼우면 뒤따르는 `unassign` 과 순서가 뒤집힌다.
+   */
+  readLocal?(agentId: string): LocalAgentConfig | undefined;
   reconciler: AssignmentReconciler;
   /**
    * 이번 연결의 배정 재전송이 끝났다(`assign.synced`) — 배정에 없는 채택 러너 회수(`adoptedReap.ts`)를 깨운다.
@@ -253,7 +260,9 @@ export function createCommunity(deps: CommunityDeps): CommunityInstance {
         assignments.set(frame.agentId, frame.definition);
         // 주인이 같은 에이전트가 붙으면 로그인 목록을 다음 박동까지 기다리지 않고 낸다(같은 값이면 보내지 않는다).
         beatGh();
-        const pending = deps.reconciler.onAssign(deps.baseUrl, frame.definition, local)
+        let fresh: LocalAgentConfig | undefined;
+        try { fresh = deps.readLocal?.(frame.agentId); } catch { fresh = undefined; }
+        const pending = deps.reconciler.onAssign(deps.baseUrl, frame.definition, fresh ?? local)
           .then((outcome) => {
             if (typeof outcome !== 'object') return;
             // 거절은 조용히 안 뜨는 것이 아니다 — 서버(와 배정한 사람)가 사유를 본다. 러너가 없었으니
