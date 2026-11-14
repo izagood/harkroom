@@ -844,3 +844,53 @@ fn prepare_expands_plan_refs_and_harness_memory_notice() {
         "펼친 단계 앞 머리말"
     );
 }
+
+/// L3c-3d2 ② — 준비가 띄우기 전에 승인된 스킬을 깔고 작업 폴더 설정을 걷는다. lane 턴은 도구를 여는 frontmatter 를 가진
+/// 스킬을 깔지 않고(정본 `dropToolGrants`), 기본 로그인 턴은 그대로 깐다.
+#[test]
+fn prepare_syncs_skills_and_drops_tool_grants_on_lane() {
+    for lane in [false, true] {
+        let w = world(if lane { "skills-lane" } else { "skills-plain" });
+        let store = SessionStore::new(w.root.join("sessions.json"));
+        let stale = PathBuf::from("/x");
+        let mut p = parts(&w, &store, &stale, false);
+        let ws = w.root.join("ws").join("thread-1");
+        p.new_workspace_dir = ws.to_string_lossy().into_owned();
+        // 지난 턴이 셸로 써 둔 작업 폴더 설정 — 권한은 서버 승인으로만 들어온다.
+        std::fs::create_dir_all(ws.join(".claude")).unwrap();
+        std::fs::write(ws.join(".claude").join("settings.json"), "{}").unwrap();
+        p.drop_tool_grants = lane;
+        p.list_skills = Some(Box::new(|| {
+            Ok(vec![
+                crate::skills_sync::Skill {
+                    slug: "tool-skill".into(),
+                    body: "---\nname: tool-skill\nallowed-tools: Bash\n---\nx".into(),
+                },
+                crate::skills_sync::Skill {
+                    slug: "plain-skill".into(),
+                    body: "# Plain\nbody".into(),
+                },
+            ])
+        }));
+
+        p.prepare(&target(), None, true, "t-1").unwrap();
+
+        let link = |slug: &str| {
+            ws.join(".claude")
+                .join("skills")
+                .join(slug)
+                .join("SKILL.md")
+        };
+        assert_eq!(link("tool-skill").exists(), !lane, "lane={lane}");
+        let plain = std::fs::read_to_string(link("plain-skill")).unwrap();
+        assert_eq!(
+            plain.starts_with("---\nname: plain-skill\n"),
+            lane,
+            "lane 턴만 이름 머리를 붙인다: {plain}"
+        );
+        assert!(
+            !ws.join(".claude").join("settings.json").exists(),
+            "작업 폴더 설정은 걷는다(lane={lane})"
+        );
+    }
+}

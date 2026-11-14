@@ -435,6 +435,22 @@ where
             p.read_plan = Some(Box::new(move |root| {
                 mcp.read_thread_plan(root).map_err(|e| e.to_string())
             }));
+            // 승인된 스킬(정본 `syncSkills(..., { dropToolGrants: Boolean(deps.providerEnv) })`) — lane 턴은 도구를 여는
+            // frontmatter 를 가진 스킬을 깔지 않는다.
+            let rest = clients.rest();
+            p.list_skills = Some(Box::new(move || {
+                rest.list_approved_skills()
+                    .map(|v| {
+                        v.into_iter()
+                            .map(|s| crate::skills_sync::Skill {
+                                slug: s.slug,
+                                body: s.body,
+                            })
+                            .collect()
+                    })
+                    .map_err(|e| e.message)
+            }));
+            p.drop_tool_grants = lane_on;
             p.turn_timeout_ms = c.turn_timeout_ms;
             p.lane = lane_snapshot;
             p
