@@ -951,7 +951,9 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
         );
         // 승인 명령 규칙·hook(c2, 정본 `mentionTurn.ts` 1690) — 턴 열쇠가 있는 auto codex 턴에만. 규칙은 **서버 승인 목록**
         // (`permissions.tool_allows`·`reach`)에서만 온다. hook 신뢰를 확인하지 못하면 띄우지 않는다. 쓴 규칙 파일은 시도가 끝나면 지운다.
+        // 규칙 파일은 TUI 로 뜨는 codex 에만 쓴다 — exec 계열은 쓰지 않는다(준비 단계의 지우기가 남은 것을 이미 걷었다).
         let codex_rules = if self.harness == crate::adapter::AgentHarness::Codex
+            && crate::adapter::uses_tui_for_mention(self.harness) == Ok(true)
             && args.keys.is_some()
             && self.base.mention_permission == crate::adapter::MentionPermission::Auto
             && let Some(cx) = self.codex.as_ref()

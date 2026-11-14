@@ -363,7 +363,9 @@ const { codexHome } = providerLaneOn
   : await syncCodexAuth(codexHomeDir);
 const syncCodexLink = providerLaneOn ? undefined : () => syncCodexAuth(codexHome);
 // 규칙 파일을 쓰지 않는 codex 길(읽기 전용·열쇠 없는 멘션, 대화형, 백그라운드) 앞에서 — 잰 판 밖이면 남은 규칙 파일을 지운다(security F1).
-const sweepRules = (): Promise<void> => sweepCodexRules(codexHome, () => harnessVersion('codex'), (line) => console.warn(line));
+// 승인 규칙 파일은 그것을 쓴 턴 동안만 둔다 — 기동 때 남은 것을 지운다(못 지우면 뜨지 않는다).
+const sweepRules = (): Promise<void> => sweepCodexRules(codexHome);
+await sweepRules();
 
 // opencode 도 같은 이유로 격리한다 — 다만 한 변수가 아니라 XDG 셋이고, MCP 는 argv 가 아니라
 // **설정 파일**로만 등록되므로 오퍼레이터가 쓴 표를 그 파일로 번역해 둔다(`opencodeHome.ts`).

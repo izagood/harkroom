@@ -256,38 +256,21 @@ fn old_server_or_home_inside_writable_writes_nothing() {
 }
 
 #[test]
-fn sweep_removes_only_outside_measured_version() {
+fn sweep_always_removes_and_fails_when_it_cannot() {
     let f = fx();
     fs::create_dir_all(f.home.join("rules")).unwrap();
-    for (v, kept) in [
-        (Some("codex-cli 0.154.0"), true),
-        (Some("codex-cli 0.155.0"), false),
-        (None, false),
-    ] {
-        fs::write(
-            codex_rules_path(&f.home),
-            "prefix_rule(pattern = [\"ls\"], decision = \"allow\")\n",
-        )
-        .unwrap();
-        sweep_codex_rules(
-            &f.home,
-            &Fake {
-                version: v,
-                ..fake()
-            },
-        )
-        .unwrap();
-        assert_eq!(codex_rules_path(&f.home).exists(), kept, "{v:?}");
-    }
-    // 지울 것이 없어도 오류가 아니다.
-    sweep_codex_rules(
-        &f.home,
-        &Fake {
-            version: None,
-            ..fake()
-        },
+    fs::write(
+        codex_rules_path(&f.home),
+        "prefix_rule(pattern = [\"ls\"], decision = \"allow\")\n",
     )
     .unwrap();
+    sweep_codex_rules(&f.home).unwrap();
+    assert!(!codex_rules_path(&f.home).exists(), "판과 상관없이 지운다");
+    // 지울 것이 없어도 오류가 아니다.
+    sweep_codex_rules(&f.home).unwrap();
+    // 지우지 못하면 오류 — 부르는 쪽은 띄우지 않는다.
+    fs::create_dir_all(codex_rules_path(&f.home).join("x")).unwrap();
+    assert!(sweep_codex_rules(&f.home).is_err());
 }
 
 #[test]

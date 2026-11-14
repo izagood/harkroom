@@ -475,7 +475,7 @@ export function createInteractiveManager(deps: InteractiveTurnDeps): Interactive
       claudeConfigDir,
       codexHome: deps.codexHome,
     });
-    // 대화형 codex 도 이 홈의 규칙 파일을 싣는다 — 잰 판 밖이면 지우고 뜬다(security F1, `codexRules.ts::sweepCodexRules`).
+    // 대화형 codex 는 규칙 파일을 쓰지 않는다 — 남은 것을 지우고 뜬다. 못 지우면 던져 띄우지 않는다(`codexRules.ts::sweepCodexRules`).
     if (commandRulesOf(def.harness) === 'codex-execpolicy') await deps.sweepCodexRules?.();
     // 계정 단위 관문도 같은 이유로 미리 지난다. 여기서도 부르는 이유는 인터랙티브 턴이
     // 그 계정의 **첫 턴일 수 있기** 때문이다 — 멘션 턴에만 두면 사람이 [터미널 열기]로
