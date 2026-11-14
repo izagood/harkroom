@@ -415,7 +415,7 @@ fn read_json(p: &Path) -> Value {
     serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap()
 }
 
-/// T1 — 기본 로그인(계정 없음): 띄우기 전 준비가 `<home>/.claude/.claude.json` 에 **이 턴의 작업 폴더 하나만** 신뢰로 적는다.
+/// T1·T2 — 기본 로그인(계정 없음): 띄우기 전 준비가 사람의 `<home>/.claude.json`(claude 가 실제로 읽는 자리)에 **이 턴의 작업 폴더 하나만** 신뢰로 적는다.
 /// 이미 있던 값(onboarding·다른 프로젝트)은 그대로이고 상위 폴더는 열지 않는다 · bypass 수락은 `<home>/.claude/settings.json`.
 #[test]
 fn prepare_trusts_only_this_workspace_default_login() {
@@ -427,7 +427,7 @@ fn prepare_trusts_only_this_workspace_default_login() {
     p.new_workspace_dir = ws.to_string_lossy().into_owned();
     let cfg = p.home.join(".claude");
     std::fs::create_dir_all(&cfg).unwrap();
-    let ledger = cfg.join(".claude.json");
+    let ledger = p.home.join(".claude.json");
     std::fs::write(
         &ledger,
         json!({"hasCompletedOnboarding": false, "projects": {"/other": {"x": 1}}}).to_string(),

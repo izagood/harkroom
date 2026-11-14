@@ -3,7 +3,19 @@
 import { mkdir, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync as mkdtempHomeSync } from 'node:fs';
+import { tmpdir as tmpdirForHome } from 'node:os';
+
+// 기본 로그인(`claudeConfigDir: null`) 신뢰는 사람의 실제 `~/.claude.json` 에 적힌다(2026-11-14 T2) — 이 파일의 턴들이
+// 진짜 집을 고치지 않게 HOME 을 임시 폴더로 돌린다(`os.homedir()` 는 HOME 을 따른다).
+const realHomeForTrust = process.env.HOME;
+beforeAll(() => {
+  process.env.HOME = mkdtempHomeSync(`${tmpdirForHome()}/interactive-turn-home-`);
+});
+afterAll(() => {
+  process.env.HOME = realHomeForTrust;
+});
 import type { AgentView, MessageRow } from '@harkroom/shared';
 import { createInteractiveManager, type InteractiveRelay, type InteractiveTurnDeps, type RunInteractiveTurn } from '../src/interactiveTurn.js';
 import { MentionQueue } from '../src/mentionQueue.js';

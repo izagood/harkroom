@@ -14,9 +14,9 @@
 // `mentionPermission: 'auto'` 에이전트는 이미 그 안에서 무엇이든 실행할 수 있다(스펙 §6 이
 // 그렇게 정했다). 즉 훅을 심어 실행하는 길은 이미 있는 길보다 넓지 않다. 신뢰가 정하는
 // 것은 "이 디렉터리를 작업 대상으로 인정하는가"이고, 러너가 그것을 만들었다는 사실이 곧 답이다.
-import { lstat, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 import { markClaudeAccountGates } from '@harkroom/shared/claudeGates';
 
@@ -29,6 +29,97 @@ import type { AgentHarness } from '@harkroom/shared';
  */
 function claudeConfigFile(configDir: string | null): string {
   return join(configDir ?? join(homedir(), '.claude'), '.claude.json');
+}
+
+/** `editPersonJson` 의 결말. `skipped` 는 쓰지 않았다는 뜻이다(까닭을 단다). */
+export type PersonEdit = 'written' | 'unchanged' | { skipped: string };
+
+type Stamp = { size: number; mtimeMs: number } | null;
+
+async function stampOf(path: string): Promise<Stamp> {
+  try {
+    const st = await lstat(path);
+    return { size: st.size, mtimeMs: st.mtimeMs };
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw err;
+  }
+}
+
+let personTmpSeq = 0;
+
+/**
+ * **사람의 실제 설정 파일**(기본 로그인의 `~/.claude.json`·`~/.claude/settings.json`)을 고친다(2026-11-14 T2). 하네스가
+ * 쉬지 않고 고치는 파일이고 MCP 설정·계정 상태가 같이 산다(security T2 ①~④):
+ * - 링크·일반 파일이 아니면 쓰지 않는다(rename 이 링크를 일반 파일로 바꾼다). 없으면 빈 문서로 새로 만든다.
+ * - 못 읽거나 깨졌거나 객체가 아니면 **쓰지 않는다** — 빈 문서 위에 쓰면 사람 설정 전체가 덮인다.
+ * - `edit` 가 `false` 면(이미 그 값) 쓰지 않는다. 다른 키·키 순서는 그대로다.
+ * - 같은 폴더 임시 파일(0600, 새로 만듦) → rename. rename 직전에 크기·mtime 이 읽을 때와 다르면 한 번 다시 읽고 고친다.
+ *   두 번째도 다르면 쓰지 않는다.
+ */
+export async function editPersonJson(
+  path: string,
+  edit: (doc: Record<string, unknown>) => boolean,
+): Promise<PersonEdit> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const before = await stampOf(path);
+    let doc: Record<string, unknown> = {};
+    if (before !== null) {
+      const st = await lstat(path);
+      if (!st.isFile()) return { skipped: '일반 파일이 아니다(링크 등)' };
+      let text: string;
+      try {
+        text = await readFile(path, 'utf8');
+      } catch {
+        return { skipped: '읽지 못했다' };
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        parsed = null;
+      }
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return { skipped: 'JSON 객체가 아니다(깨졌거나 쓰는 중)' };
+      }
+      doc = parsed as Record<string, unknown>;
+    }
+    if (!edit(doc)) return 'unchanged';
+    await mkdir(dirname(path), { recursive: true });
+    const tmp = join(dirname(path), `.${basename(path)}.hk-${process.pid}-${Date.now()}-${personTmpSeq++}.tmp`);
+    try {
+      await writeFile(tmp, JSON.stringify(doc, null, 2), { mode: 0o600, flag: 'wx' });
+      const now = await stampOf(path);
+      const same = (now === null && before === null)
+        || (now !== null && before !== null && now.size === before.size && now.mtimeMs === before.mtimeMs);
+      if (!same) {
+        await unlink(tmp).catch(() => {});
+        continue;
+      }
+      await rename(tmp, path);
+      return 'written';
+    } catch (err) {
+      await unlink(tmp).catch(() => {});
+      throw err;
+    }
+  }
+  return { skipped: '읽는 동안 하네스가 계속 고쳤다' };
+}
+
+function personEditOrThrow(r: PersonEdit): void {
+  if (typeof r === 'object') throw new Error(`사람 설정 파일을 고치지 않았다 — ${r.skipped}`);
+}
+
+/** 신뢰 한 칸을 넣는다. 이미 있으면 `false`. */
+function putTrust(doc: Record<string, unknown>, workspaceDir: string): boolean {
+  const projects = (doc.projects !== null && typeof doc.projects === 'object' && !Array.isArray(doc.projects)
+    ? doc.projects : {}) as Record<string, Record<string, unknown>>;
+  const prev = projects[workspaceDir];
+  const entry = prev !== null && typeof prev === 'object' && !Array.isArray(prev) ? prev : {};
+  if (entry.hasTrustDialogAccepted === true) return false;
+  projects[workspaceDir] = { ...entry, hasTrustDialogAccepted: true };
+  doc.projects = projects;
+  return true;
 }
 
 /**
@@ -128,7 +219,16 @@ function claudeSettingsFile(configDir: string | null): string {
  *
  * codex 에는 이 관문이 없다. 없는 파일을 만들지 않는다.
  */
-async function acceptDangerousModeForClaude(configDir: string | null): Promise<void> {
+async function acceptDangerousModeForClaude(configDir: string | null, home: string): Promise<void> {
+  if (configDir === null) {
+    // 기본 로그인의 `~/.claude/settings.json` 은 사람의 파일이라 엄격한 길로 적는다(security T2 ①②).
+    personEditOrThrow(await editPersonJson(join(home, '.claude', 'settings.json'), (doc) => {
+      if (doc.skipDangerousModePermissionPrompt === true) return false;
+      doc.skipDangerousModePermissionPrompt = true;
+      return true;
+    }));
+    return;
+  }
   const path = claudeSettingsFile(configDir);
   let doc: Record<string, unknown> = {};
   try {
@@ -205,10 +305,12 @@ export async function scrubAccountPermissionSettings(configDir: string): Promise
 export async function ensureDangerousModeAccepted(opts: {
   harness: AgentHarness;
   claudeConfigDir: string | null;
+  /** 시험용 — 기본은 `homedir()`. */
+  home?: string;
 }): Promise<void> {
   if (opts.harness !== 'claude-code') return;
   try {
-    await acceptDangerousModeForClaude(opts.claudeConfigDir);
+    await acceptDangerousModeForClaude(opts.claudeConfigDir, opts.home ?? homedir());
   } catch (err) {
     console.error(
       '[workspaceTrust] bypassPermissions 수락 기록 실패(턴은 계속한다 — 경고 화면이 뜨면 '
@@ -254,9 +356,18 @@ async function trustViaAdapter(opts: {
   workspaceDir: string;
   claudeConfigDir: string | null;
   codexHome: string;
+  home?: string;
 }): Promise<void> {
   const ledger = adapterFor(opts.harness).trust;
   if (ledger === null) return;
+  // config dir 이 없으면(기본 로그인) claude 는 `~/.claude.json` 을 읽는다 — `~/.claude/.claude.json` 이 아니다
+  // (claude 의 전역 설정 = `join(configDir || homedir, ".claude.json")`, 2026-11-14 탐침·번들 확인). 그 파일은 사람의
+  // 것이라 엄격한 길로 이 폴더 한 칸만 적는다.
+  if (ledger.root === 'account-config-dir' && opts.claudeConfigDir === null && ledger.kind === 'claude-json') {
+    const path = join(opts.home ?? homedir(), ledger.file);
+    personEditOrThrow(await editPersonJson(path, (doc) => putTrust(doc, opts.workspaceDir)));
+    return;
+  }
   const root = ledger.root === 'account-config-dir'
     ? (opts.claudeConfigDir ?? join(homedir(), '.claude'))
     : opts.codexHome;
@@ -274,6 +385,8 @@ export async function ensureWorkspaceTrusted(opts: {
   workspaceDir: string;
   claudeConfigDir: string | null;
   codexHome: string;
+  /** 시험용 — 기본은 `homedir()`. */
+  home?: string;
 }): Promise<void> {
   try {
     // **장부는 어댑터 표가 말한다.** 하네스 이름으로 갈리던 옛 분기는 지웠다(2026-09-18) —
@@ -282,7 +395,7 @@ export async function ensureWorkspaceTrusted(opts: {
   } catch (err) {
     // 위 주석의 이유로 삼킨다 — 다만 조용히는 아니다.
     console.error(
-      `[workspaceTrust] ${opts.workspaceDir} 신뢰 기록 실패(턴은 계속한다 — 대화상자가 뜨면 준비 대기가 상한에서 실패한다): `
+      `[workspaceTrust] 작업 폴더 신뢰 기록 실패(턴은 계속한다 — 대화상자가 뜨면 준비 대기가 상한에서 실패한다): `
         + (err instanceof Error ? err.message : String(err)),
     );
   }

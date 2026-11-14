@@ -2,12 +2,12 @@
 //
 // 이것이 없으면 TUI 턴은 신뢰 대화상자를 만나고, 러너는 답할 수 없어 무발화 한도까지
 // 매달린다. `-p` 는 이 대화상자를 묻지 않았으므로 실행 모델 교체가 새로 만든 요구다.
-import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { lstat, mkdir, mkdtemp, readdir, readFile, stat, symlink, unlink, writeFile } from 'node:fs/promises';
+import { existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ensureDangerousModeAccepted, ensureWorkspaceTrusted } from '../src/workspaceTrust.js';
+import { editPersonJson, ensureDangerousModeAccepted, ensureWorkspaceTrusted } from '../src/workspaceTrust.js';
 
 const WS = '/Users/someone/.harkroom-agent/agent-x/workspaces/harkroom-forge-abc';
 
@@ -218,3 +218,102 @@ describe('ensureDangerousModeAccepted — 계정 관문(첫 실행·auto mode �
   });
 });
 
+
+// ── T2(2026-11-14): 기본 로그인 = 사람의 실제 `~/.claude.json`
+//
+// claude 는 config dir 이 없으면 `~/.claude/.claude.json` 이 아니라 `~/.claude.json` 을 읽는다(탐침·번들 확인).
+// 그 파일은 하네스가 쉬지 않고 고치는 사람의 파일이라 엄격한 길(`editPersonJson`)로만 적는다.
+describe('ensureWorkspaceTrusted — 기본 로그인(사람의 ~/.claude.json)', () => {
+  const PERSON_DOC = JSON.stringify({
+    numStartups: 7,
+    zKey: { b: 1, a: 2 },
+    mcpServers: { m: { command: 'x' } },
+    projects: { '/old': { allowedTools: ['Bash'], hasTrustDialogAccepted: true } },
+    aKey: 'last',
+  }, null, 2);
+
+  it('그 폴더 한 칸만 더한다 — 나머지는 키 순서까지 같고 ~/.claude/.claude.json 은 만들지 않는다', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'trust-person-'));
+    const file = join(home, '.claude.json');
+    await writeFile(file, PERSON_DOC);
+    await ensureWorkspaceTrusted({ harness: 'claude-code', workspaceDir: '/w/new', claudeConfigDir: null, codexHome: '/unused', home });
+    const after = JSON.parse(await readFile(file, 'utf8'));
+    expect(after.projects['/w/new']).toEqual({ hasTrustDialogAccepted: true });
+    delete after.projects['/w/new'];
+    expect(JSON.stringify(after)).toBe(JSON.stringify(JSON.parse(PERSON_DOC)));
+    expect(existsSync(join(home, '.claude', '.claude.json'))).toBe(false);
+    // 이미 있으면 다시 쓰지 않는다 · 임시 파일이 남지 않는다
+    const m1 = (await stat(file)).mtimeMs;
+    await new Promise((r) => setTimeout(r, 20));
+    await ensureWorkspaceTrusted({ harness: 'claude-code', workspaceDir: '/w/new', claudeConfigDir: null, codexHome: '/unused', home });
+    expect((await stat(file)).mtimeMs).toBe(m1);
+    expect(await readdir(home)).toEqual(['.claude.json']);
+  });
+
+  it('깨진 파일·객체 아닌 문서는 바이트 그대로 남긴다 — 던지지도 않는다', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'trust-person-broken-'));
+    const file = join(home, '.claude.json');
+    for (const body of ['{"numStartups": 7, "projects": {', '[1,2]', '']) {
+      await writeFile(file, body);
+      await ensureWorkspaceTrusted({ harness: 'claude-code', workspaceDir: '/w/new', claudeConfigDir: null, codexHome: '/unused', home });
+      expect(await readFile(file, 'utf8')).toBe(body);
+    }
+  });
+
+  it('링크면 쓰지 않는다 — 링크는 링크로, 너머는 그대로', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'trust-person-link-'));
+    const real = join(home, 'real.json');
+    await writeFile(real, PERSON_DOC);
+    await symlink(real, join(home, '.claude.json'));
+    await ensureWorkspaceTrusted({ harness: 'claude-code', workspaceDir: '/w/new', claudeConfigDir: null, codexHome: '/unused', home });
+    expect((await lstat(join(home, '.claude.json'))).isSymbolicLink()).toBe(true);
+    expect(await readFile(real, 'utf8')).toBe(PERSON_DOC);
+  });
+
+  it('읽은 뒤 하네스가 고치면 다시 읽고 그 위에 고친다 · 매번 고치면 쓰지 않는다', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'trust-person-race-'));
+    const file = join(home, '.claude.json');
+    await writeFile(file, '{"a": 1}');
+    let first = true;
+    const r = await editPersonJson(file, (doc) => {
+      if (first) { first = false; writeFileSync(file, '{"a": 1, "harness": "wrote"}'); }
+      doc.mine = true;
+      return true;
+    });
+    expect(r).toBe('written');
+    const v = JSON.parse(await readFile(file, 'utf8'));
+    expect(v.harness).toBe('wrote');
+    expect(v.mine).toBe(true);
+    let n = 0;
+    const r2 = await editPersonJson(file, (doc) => {
+      n += 1;
+      writeFileSync(file, JSON.stringify({ a: 1, n: 'x'.repeat(n) }));
+      doc.mine2 = true;
+      return true;
+    });
+    expect(typeof r2).toBe('object');
+    expect(JSON.parse(await readFile(file, 'utf8')).mine2).toBeUndefined();
+    expect(await readdir(home)).toEqual(['.claude.json']);
+  });
+
+  it('bypass: 사람의 ~/.claude/settings.json 이 깨졌거나 링크면 쓰지 않는다', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'bypass-person-'));
+    await mkdir(join(home, '.claude'));
+    const settings = join(home, '.claude', 'settings.json');
+    await writeFile(settings, '{"theme": "dark", ');
+    await ensureDangerousModeAccepted({ harness: 'claude-code', claudeConfigDir: null, home });
+    expect(await readFile(settings, 'utf8')).toBe('{"theme": "dark", ');
+    await unlink(settings);
+    const real = join(home, 'real-settings.json');
+    await writeFile(real, '{"theme": "dark"}');
+    await symlink(real, settings);
+    await ensureDangerousModeAccepted({ harness: 'claude-code', claudeConfigDir: null, home });
+    expect(await readFile(real, 'utf8')).toBe('{"theme": "dark"}');
+    expect((await lstat(settings)).isSymbolicLink()).toBe(true);
+    // 정상 파일이면 키 하나만 더한다
+    await unlink(settings);
+    await writeFile(settings, '{"theme": "dark"}');
+    await ensureDangerousModeAccepted({ harness: 'claude-code', claudeConfigDir: null, home });
+    expect(JSON.parse(await readFile(settings, 'utf8'))).toEqual({ theme: 'dark', skipDangerousModePermissionPrompt: true });
+  });
+});

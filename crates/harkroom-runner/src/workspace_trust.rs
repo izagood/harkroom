@@ -24,6 +24,9 @@ use serde_json::{Map, Value};
 pub enum TrustTarget {
     /// claude `<config dir>/.claude.json` 의 `projects[dir].hasTrustDialogAccepted`.
     ClaudeJson(PathBuf),
+    /// 기본 로그인(`CLAUDE_CONFIG_DIR` 없음) claude 의 장부 — **사람의 실제 `<home>/.claude.json`**. claude 는 config dir 이
+    /// 없으면 `<home>/.claude/.claude.json` 이 아니라 이 파일을 읽는다. 쓰기는 [`edit_person_json`] 의 엄격한 길로만 한다.
+    PersonClaudeJson(PathBuf),
     /// codex `<CODEX_HOME>/config.toml` 의 `[projects."<dir>"] trust_level`.
     CodexToml(PathBuf),
 }
@@ -61,9 +64,106 @@ fn pretty(doc: Map<String, Value>) -> io::Result<String> {
     serde_json::to_string_pretty(&Value::Object(doc)).map_err(io::Error::other)
 }
 
-/// TS `trustForClaude` — **이미 적혀 있으면 쓰지 않는다**(같은 파일을 보는 하네스와 경합하고, 하네스의 다른 상태를 덮을 위험).
-pub fn trust_for_claude(workspace_dir: &str, path: &Path) -> io::Result<()> {
-    let mut doc = read_object(path);
+/// [`edit_person_json`] 의 결말.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PersonEdit {
+    Written,
+    /// 이미 그 값이라 쓰지 않았다.
+    Unchanged,
+    /// 링크·일반 파일 아님·못 읽음·깨짐·객체 아님, 또는 두 번 읽는 동안 하네스가 계속 고쳤다 — 쓰지 않았다.
+    Skipped(&'static str),
+}
+
+/// 파일이 지금 어떤 모습인가 — 읽은 뒤 rename 직전까지 하네스가 고쳤는지 본다. 없으면 `None`.
+fn stamp(path: &Path) -> io::Result<Option<(u64, Option<std::time::SystemTime>)>> {
+    match fs::symlink_metadata(path) {
+        Ok(m) => Ok(Some((m.len(), m.modified().ok()))),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+fn temp_beside(path: &Path) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static N: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    path.with_file_name(format!(
+        ".{name}.hk-{}-{nanos}-{}.tmp",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
+/// **사람의 실제 설정 파일**(기본 로그인 `<home>/.claude.json`·`<home>/.claude/settings.json`)을 고친다. 하네스가 쉬지 않고
+/// 고치는 파일이고 MCP 설정·계정 상태가 같이 산다(security T2 ①~④):
+/// - 링크·일반 파일이 아니면 쓰지 않는다(rename 이 링크를 일반 파일로 바꾼다). 없으면 빈 문서로 새로 만든다.
+/// - 못 읽거나 깨졌거나 객체가 아니면 **쓰지 않는다** — 빈 문서 위에 쓰면 사람 설정 전체가 덮인다.
+/// - `edit` 가 `false` 면(이미 그 값) 쓰지 않는다. 다른 키·키 순서는 그대로다(`preserve_order`).
+/// - 같은 폴더 임시 파일(0600, 새로 만듦) → rename. rename 직전에 크기·mtime 이 읽을 때와 다르면 한 번 다시 읽고 고친다.
+///   두 번째도 다르면 쓰지 않는다.
+pub fn edit_person_json(
+    path: &Path,
+    mut edit: impl FnMut(&mut Map<String, Value>) -> bool,
+) -> io::Result<PersonEdit> {
+    for _ in 0..2 {
+        let before = stamp(path)?;
+        let mut doc = match before {
+            None => Map::new(),
+            Some(_) => {
+                let m = fs::symlink_metadata(path)?;
+                if !m.file_type().is_file() {
+                    return Ok(PersonEdit::Skipped("일반 파일이 아니다(링크 등)"));
+                }
+                let Ok(text) = fs::read_to_string(path) else {
+                    return Ok(PersonEdit::Skipped("읽지 못했다"));
+                };
+                match serde_json::from_str::<Value>(&text) {
+                    Ok(Value::Object(m)) => m,
+                    _ => return Ok(PersonEdit::Skipped("JSON 객체가 아니다(깨졌거나 쓰는 중)")),
+                }
+            }
+        };
+        if !edit(&mut doc) {
+            return Ok(PersonEdit::Unchanged);
+        }
+        let text = pretty(doc)?;
+        mkdir_parent(path)?;
+        let tmp = temp_beside(path);
+        let wrote = (|| {
+            let mut f = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&tmp)?;
+            f.write_all(text.as_bytes())?;
+            f.sync_all()
+        })();
+        if let Err(e) = wrote {
+            let _ = fs::remove_file(&tmp);
+            return Err(e);
+        }
+        if stamp(path)? != before {
+            let _ = fs::remove_file(&tmp);
+            continue;
+        }
+        if let Err(e) = fs::rename(&tmp, path) {
+            let _ = fs::remove_file(&tmp);
+            return Err(e);
+        }
+        return Ok(PersonEdit::Written);
+    }
+    Ok(PersonEdit::Skipped("읽는 동안 하네스가 계속 고쳤다"))
+}
+
+/// 신뢰 한 칸을 문서에 넣는다. 이미 있으면 `false`. 다른 키·순서는 그대로다.
+fn put_trust(doc: &mut Map<String, Value>, workspace_dir: &str) -> bool {
     // 꺼내지 않고 복사한다 — 같은 키에 다시 넣어야 하네스가 쓴 키 순서가 그대로 남는다.
     let mut projects = match doc.get("projects") {
         Some(Value::Object(m)) => m.clone(),
@@ -74,11 +174,34 @@ pub fn trust_for_claude(workspace_dir: &str, path: &Path) -> io::Result<()> {
         _ => Map::new(),
     };
     if entry.get("hasTrustDialogAccepted") == Some(&Value::Bool(true)) {
-        return Ok(());
+        return false;
     }
     entry.insert("hasTrustDialogAccepted".into(), Value::Bool(true));
     projects.insert(workspace_dir.to_string(), Value::Object(entry));
     doc.insert("projects".into(), Value::Object(projects));
+    true
+}
+
+fn person_edit_result(r: io::Result<PersonEdit>) -> io::Result<()> {
+    match r? {
+        PersonEdit::Skipped(why) => Err(io::Error::other(format!(
+            "사람 설정 파일을 고치지 않았다 — {why}"
+        ))),
+        _ => Ok(()),
+    }
+}
+
+/// 기본 로그인 claude 의 신뢰 — 사람의 `<home>/.claude.json` 에 **이 작업 폴더 한 칸만**, 엄격한 길로 적는다.
+pub fn trust_for_claude_person(workspace_dir: &str, path: &Path) -> io::Result<()> {
+    person_edit_result(edit_person_json(path, |doc| put_trust(doc, workspace_dir)))
+}
+
+/// TS `trustForClaude` — **이미 적혀 있으면 쓰지 않는다**(같은 파일을 보는 하네스와 경합하고, 하네스의 다른 상태를 덮을 위험).
+pub fn trust_for_claude(workspace_dir: &str, path: &Path) -> io::Result<()> {
+    let mut doc = read_object(path);
+    if !put_trust(&mut doc, workspace_dir) {
+        return Ok(());
+    }
     mkdir_parent(path)?;
     // 0600 — 이 파일에는 MCP 설정과 사용 통계가 함께 산다.
     write_0600(path, &pretty(doc)?)
@@ -172,6 +295,20 @@ pub fn accept_dangerous_mode_for_claude(config_dir: &Path) -> io::Result<()> {
     write_0600(&path, &pretty(doc)?)
 }
 
+/// 기본 로그인 bypass 수락 — 사람의 `settings.json` 에 키 하나만, 엄격한 길([`edit_person_json`])로.
+pub fn accept_dangerous_mode_person(path: &Path) -> io::Result<()> {
+    person_edit_result(edit_person_json(path, |doc| {
+        if doc.get("skipDangerousModePermissionPrompt") == Some(&Value::Bool(true)) {
+            return false;
+        }
+        doc.insert(
+            "skipDangerousModePermissionPrompt".into(),
+            Value::Bool(true),
+        );
+        true
+    }))
+}
+
 /// TS `ACCOUNT_SETTINGS_KEEP_KEYS` — 풀 계정 settings 에서 **남길** 키(허용 목록). 나머지는 지운다.
 pub const ACCOUNT_SETTINGS_KEEP_KEYS: [&str; 4] = [
     "theme",
@@ -258,10 +395,12 @@ pub fn ensure_bypass_accepted(harness: &str, claude_config_dir: Option<&Path>, h
     if harness != "claude-code" {
         return;
     }
-    let dir = claude_config_dir
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| home.join(".claude"));
-    if let Err(e) = accept_dangerous_mode_for_claude(&dir) {
+    // 기본 로그인의 `<home>/.claude/settings.json` 은 사람의 파일이라 엄격한 길로 적는다(security T2 ①②).
+    let res = match claude_config_dir {
+        Some(dir) => accept_dangerous_mode_for_claude(dir),
+        None => accept_dangerous_mode_person(&home.join(".claude").join("settings.json")),
+    };
+    if let Err(e) = res {
         eprintln!(
             "[workspaceTrust] bypassPermissions 수락 기록 실패(턴은 계속한다 — 경고 화면이 뜨면 준비 대기가 상한에서 사람을 부른다): {e}"
         );
@@ -299,6 +438,7 @@ pub fn ensure_workspace_trusted(workspace_dir: &str, target: Option<&TrustTarget
     let res = match target {
         None => return,
         Some(TrustTarget::ClaudeJson(p)) => trust_for_claude(workspace_dir, p),
+        Some(TrustTarget::PersonClaudeJson(p)) => trust_for_claude_person(workspace_dir, p),
         Some(TrustTarget::CodexToml(p)) => trust_for_codex(workspace_dir, p),
     };
     if let Err(e) = res {
@@ -321,14 +461,18 @@ pub fn trust_target(
     let Some(ledger) = adapter_for(harness)?.trust else {
         return Ok(None);
     };
+    // config dir 이 없으면(기본 로그인) claude 는 `<home>/.claude.json` 을 읽는다 — `<home>/.claude/.claude.json` 이 아니다
+    // (claude 의 전역 설정 = `join(configDir || homedir, ".claude.json")`). 그 파일은 사람의 것이라 엄격한 길로 적는다.
+    let person = matches!(ledger.root, TrustRoot::AccountConfigDir) && claude_config_dir.is_none();
     let root = match ledger.root {
         TrustRoot::AccountConfigDir => claude_config_dir
             .map(Path::to_path_buf)
-            .unwrap_or_else(|| home.join(".claude")),
+            .unwrap_or_else(|| home.to_path_buf()),
         TrustRoot::CodexHome => codex_home.to_path_buf(),
     };
     let path = root.join(ledger.file);
     Ok(Some(match ledger.kind {
+        TrustKind::ClaudeJson if person => TrustTarget::PersonClaudeJson(path),
         TrustKind::ClaudeJson => TrustTarget::ClaudeJson(path),
         TrustKind::CodexToml => TrustTarget::CodexToml(path),
     }))
