@@ -1,5 +1,5 @@
 //! `harkroom-server-rs` — env: `UPSTREAM_URL`(TS 서버, 예 `http://harkroom:3400`) · `DATABASE_URL` · `PORT`(기본 3500) ·
-//! `HARKROOM_CORE`(`ts` 기본 · `rust` 면 `/ws`·`/ws-ticket` 을 답함, S5.3 C0) · `TRUST_PROXY`(감사 `ip` 규칙, TS 와 같은 꼴 — `trust_proxy.rs`) · `HARKROOM_FRONT_TS_ROUTES`(옮긴 줄을 TS 로 되돌림 — `"GET /accounts,GET /dms"` 또는 `*`, `routes.rs` 참고) ·
+//! `CORS_ORIGINS`(TS 와 같은 허용 출처, 비면 요청 출처를 돌려줌 — `cors.rs`) · `HARKROOM_CORE`(`ts` 기본 · `rust` 면 `/ws`·`/ws-ticket` 을 답함, S5.3 C0) · `TRUST_PROXY`(감사 `ip` 규칙, TS 와 같은 꼴 — `trust_proxy.rs`) · `HARKROOM_FRONT_TS_ROUTES`(옮긴 줄을 TS 로 되돌림 — `"GET /accounts,GET /dms"` 또는 `*`, `routes.rs` 참고) ·
 //! `DATABASE_WRITE_URL`(쓰기 역할, P3 — 없거나 권한이 모자라면 쓰는 줄을 켜지 않고 그 요청은 TS 로 간다, `write.rs` 참고).
 use harkroom_server::{proxy, routes, schema, write};
 use std::net::SocketAddr;
@@ -70,6 +70,9 @@ async fn main() {
         pool,
         write,
         trust: std::sync::Arc::new(trust),
+        cors: std::sync::Arc::new(harkroom_server::cors::Cors::from_env_value(
+            std::env::var("CORS_ORIGINS").ok().as_deref(),
+        )),
     };
     let mut active = routes::active(routes::MOVED, &ts);
     active.extend(routes::active(routes::writes_for(&state), &ts));
@@ -98,6 +101,7 @@ async fn main() {
                 read: state.pool.clone(),
                 write: state.write.clone(),
             },
+            state.cors.clone(),
         )
     });
     eprintln!(

@@ -438,14 +438,25 @@ impl Stream {
 }
 
 /// 코어 라우터 — `HARKROOM_CORE=rust` 일 때 앞단 라우터에 합친다. `/ws-ticket` 은 앞단 인증 층을 거친다(옮긴 줄과 같은 판정).
-pub fn router(core: Arc<Core>, auth: crate::auth::AuthPools) -> axum::Router {
+pub fn router(
+    core: Arc<Core>,
+    auth: crate::auth::AuthPools,
+    cors: Arc<crate::cors::Cors>,
+) -> axum::Router {
     axum::Router::new()
         .route(
             "/ws-ticket",
-            axum::routing::post(issue_ticket).route_layer(axum::middleware::from_fn_with_state(
-                auth,
-                crate::auth::layer,
-            )),
+            axum::routing::post(issue_ticket)
+                .route_layer(axum::middleware::from_fn_with_state(
+                    auth,
+                    crate::auth::layer,
+                ))
+                // 데스크톱은 이 주소를 교차 출처 `fetch`(Bearer)로 부른다 — 프리플라이트(OPTIONS)까지 이 층이 답하도록
+                // `layer`(메서드 밖)로 건다. 11-14 「Load failed」 장애와 같은 길.
+                .layer(axum::middleware::from_fn_with_state(
+                    cors,
+                    crate::cors::layer,
+                )),
         )
         .route("/ws", axum::routing::get(upgrade))
         .with_state(core)

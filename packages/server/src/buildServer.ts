@@ -306,6 +306,15 @@ function fastifyTrustProxy(t: TrustProxy): boolean | string[] | ((addr: string, 
  */
 export const CORS_PREFLIGHT_MAX_AGE_SEC = 600;
 
+/**
+ * CORS 값(아래 `cors` 등록이 쓴다). 상수로 뽑아 둔 까닭: Rust 앞단(`crates/harkroom-server/src/cors.rs`)이 자기가 답하는 응답에 **같은**
+ * 머리를 붙여야 한다 — 빠뜨리면 데스크톱(`tauri://localhost`)의 교차 출처 요청이 「Load failed」로 막힌다(11-14 0.4.635 판올림 장애).
+ * `test/rustCorsGolden.test.ts` 가 이 값과 앞단의 `golden/cors.json` 이 같은지 본다.
+ */
+export const CORS_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const;
+export const CORS_ALLOWED_HEADERS = ['content-type', 'authorization', 'idempotency-key'] as const;
+export const CORS_EXPOSED_HEADERS = [NOTIFIED_HEADER, NOTIFIED_COUNT_HEADER, MENTION_EDIT_SKIPPED_HEADER, AVATAR_SOURCE_HEADER, 'retry-after'] as const;
+
 export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const app = Fastify({
     // 기본값 false 를 유지한다 — 프록시가 없는데 신뢰하면 헤더 위조로 리밋이 무의미해진다.
@@ -402,15 +411,15 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     // 인증은 Origin 이 아니라 Bearer 토큰이 한다. 목록은 브라우저 클라이언트를 좁히는 추가 방어이고,
     // 미설정 시 반영(true)이 기본인 이유는 셀프호스트가 어떤 origin 으로 뜰지 서버가 모르기 때문이다.
     origin: deps.corsOrigins ?? true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-    allowedHeaders: ['content-type', 'authorization', 'idempotency-key'],
+    methods: [...CORS_METHODS],
+    allowedHeaders: [...CORS_ALLOWED_HEADERS],
     // 브라우저는 **기본적으로 응답 헤더를 스크립트에 넘기지 않는다** — 안전 목록
     // (content-type 등) 밖의 헤더는 여기에 적어야 `fetch` 가 읽을 수 있다. 부름의 결과를
     // 헤더로 싣기로 한 이상(`NOTIFIED_HEADER`) 이 줄이 없으면 데스크탑에서는 그 헤더가
     // 존재하지 않는 것과 같다 — 서버는 보냈다고 믿고 화면은 못 받는 조용한 실패다.
     // retry-after: 429 의 남은 시간(비밀 보관소 잠금 해제·보기). 본문 `retryAfterSec` 와 같은 값이다.
     // AVATAR_SOURCE_HEADER: 사진 원본과 함께 오는 원본 id·자른 자리(사진 맞추기).
-    exposedHeaders: [NOTIFIED_HEADER, NOTIFIED_COUNT_HEADER, MENTION_EDIT_SKIPPED_HEADER, AVATAR_SOURCE_HEADER, 'retry-after'],
+    exposedHeaders: [...CORS_EXPOSED_HEADERS],
     // 프리플라이트 결과를 브라우저가 캐시하게 한다. 없으면 Bearer 를 싣는 모든 요청 앞에 OPTIONS 가 1:1 로 붙는다.
     maxAge: CORS_PREFLIGHT_MAX_AGE_SEC,
   });

@@ -24,6 +24,8 @@ pub struct AppState {
     pub write: Option<PgPool>,
     /// 감사 `ip` 를 고르는 규칙(env `TRUST_PROXY`, `trust_proxy.rs`). 기본은 안 믿음(소켓 주소).
     pub trust: std::sync::Arc<crate::trust_proxy::TrustProxy>,
+    /// 앞단이 직접 답하는 응답의 CORS(env `CORS_ORIGINS`, TS 와 같은 값 — `cors.rs`).
+    pub cors: std::sync::Arc<crate::cors::Cors>,
 }
 
 impl FromRef<AppState> for Upstream {
@@ -378,6 +380,11 @@ pub fn router(state: AppState, table: &[Moved], ts: &TsOverrides) -> Router {
                     write: state.write.clone(),
                 },
                 crate::auth::layer,
+            ))
+            // CORS 는 인증 층 **바깥** — 401·403 에도 TS 와 같은 머리가 실려야 데스크톱이 오류를 읽는다(11-14 장애).
+            .route_layer(axum::middleware::from_fn_with_state(
+                state.cors.clone(),
+                crate::cors::layer,
             ))
             .fallback(proxy::forward);
         app = app.route(path, mr);

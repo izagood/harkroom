@@ -86,7 +86,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
     const db = await startTestDb();
     // 감사 `ip` 대조(trust-proxy) — 두 서버가 같은 규칙으로 루프백만 프록시로 믿는다(운영은 파드 대역 CIDR 하나).
     const TRUST = ['127.0.0.1', '::1'];
-    const app = await buildServer({ pool: db.pool, trustProxy: TRUST });
+    // CORS 대조 — 두 서버에 같은 허용 출처(데스크톱 앱의 출처)를 준다.
+    const CORS = 'tauri://localhost';
+    const app = await buildServer({ pool: db.pool, trustProxy: TRUST, corsOrigins: [CORS] });
     let front: ChildProcess | undefined;
     try {
       await app.listen({ port: 0, host: '127.0.0.1' });
@@ -242,7 +244,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       const port = await freePort();
       const f = await startFront(bin, {
         UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(port), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
-        TRUST_PROXY: TRUST.join(','),
+        TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS,
         // S5.3 C0 — 코어 /ws·/ws-ticket 을 켠다. 주기는 시험이 기다릴 수 있게 줄인다(기본값은 TS 와 같다).
         HARKROOM_CORE: 'rust', HARKROOM_WS_APP_HEARTBEAT_MS: '300', HARKROOM_WS_REVALIDATE_MS: '500',
       });
@@ -734,6 +736,60 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(code, '무효가 된 자격증명은 4401').toBe(4401);
       } finally {
         for (const s of socks) s.ws.terminate();
+      }
+
+      // 11-14 「Load failed」 장애 재발 막기 — 앞단이 답하는 **모든** 줄이 TS 와 같은 CORS 머리를 내는가. 줄 목록은 앞단 기동 기록에서
+      // 읽는다(새 줄이 생기면 저절로 들어온다). 요청은 바꾸는 것이 없게(없는 id·빈 본문) 보낸다 — 머리만 본다.
+      const keys = JSON.parse((/front: rust routes (\[.*\])/.exec(f.log()) ?? [])[1] ?? '[]') as string[];
+      expect(keys.length, '앞단 줄 목록을 읽어야 한다').toBeGreaterThan(40);
+      const CORS_HEADERS = ['access-control-allow-origin', 'access-control-expose-headers', 'access-control-allow-credentials'];
+      const VOLATILE = new Set(['date', 'content-length', 'connection', 'keep-alive', 'transfer-encoding']);
+      const headerDiffs: string[] = [];
+      const fill = (p: string) => p.replace(/\{slug\}/g, 'no-such-skill').replace(/\{[^}]+\}/g, '00000000-0000-4000-8000-000000000999');
+      for (const key of keys) {
+        const [method, path] = key.split(' ') as [string, string];
+        for (const origin of [CORS, 'https://evil.example']) {
+          const req = (base: string) => fetch(`${base}${fill(path)}`, { method, headers: { authorization: `Bearer ${A}`, origin } });
+          const [a, b] = [await req(tsUrl), await req(rsUrl)];
+          await a.arrayBuffer(); await b.arrayBuffer();
+          for (const h of CORS_HEADERS) expect(b.headers.get(h), `${key} ${origin} ${h}`).toBe(a.headers.get(h));
+          expect((b.headers.get('vary') ?? '').toLowerCase(), `${key} vary`).toContain('origin');
+          if (origin === CORS) {
+            expect(b.headers.get('access-control-allow-origin'), `${key} 허용 출처`).toBe(CORS);
+            const names = (r: Response) => new Set([...r.headers.keys()].filter((n) => !VOLATILE.has(n)));
+            const [na, nb] = [names(a), names(b)];
+            const onlyTs = [...na].filter((n) => !nb.has(n));
+            const onlyRs = [...nb].filter((n) => !na.has(n));
+            if (onlyTs.length || onlyRs.length) headerDiffs.push(`${key} (${a.status}/${b.status}) TS만: ${onlyTs.join(',') || '-'} · Rust만: ${onlyRs.join(',') || '-'}`);
+          } else {
+            expect(b.headers.get('access-control-allow-origin'), `${key} 목록 밖 출처`).toBeNull();
+          }
+        }
+      }
+      // 코어 `/ws-ticket`(C0)도 데스크톱이 교차 출처로 부른다 — 본 요청과 프리플라이트 둘 다 TS 와 같아야 한다.
+      for (const [method, headers] of [
+        ['POST', { authorization: `Bearer ${A}`, origin: CORS }],
+        ['OPTIONS', { origin: CORS, 'access-control-request-method': 'POST', 'access-control-request-headers': 'authorization' }],
+      ] as const) {
+        const [a, b] = [await fetch(`${tsUrl}/ws-ticket`, { method, headers }), await fetch(`${rsUrl}/ws-ticket`, { method, headers })];
+        await a.arrayBuffer(); await b.arrayBuffer();
+        expect(b.status, `${method} /ws-ticket`).toBe(a.status);
+        for (const h of [...CORS_HEADERS, 'access-control-allow-methods', 'access-control-allow-headers', 'access-control-max-age']) {
+          expect(b.headers.get(h), `${method} /ws-ticket ${h}`).toBe(a.headers.get(h));
+        }
+      }
+      // 같은 축의 다른 머리 차이(보안·캐시 머리 등) — 보고용으로 남긴다.
+      console.log(`rust-front header diff (${headerDiffs.length}):\n${headerDiffs.join('\n')}`);
+      // 프리플라이트(옮긴 줄의 OPTIONS 는 앞단이 TS 로 넘긴다 — 두 답이 같아야 한다).
+      for (const headers of [{ origin: CORS, 'access-control-request-method': 'PUT' }, { origin: CORS }] as Record<string, string>[]) {
+        const [a, b] = [
+          await fetch(`${tsUrl}/settings/mention-policy`, { method: 'OPTIONS', headers }),
+          await fetch(`${rsUrl}/settings/mention-policy`, { method: 'OPTIONS', headers }),
+        ];
+        expect(b.status).toBe(a.status);
+        for (const h of [...CORS_HEADERS, 'access-control-allow-methods', 'access-control-allow-headers', 'access-control-max-age']) {
+          expect(b.headers.get(h), `preflight ${h}`).toBe(a.headers.get(h));
+        }
       }
     } finally {
       front?.kill('SIGTERM');
