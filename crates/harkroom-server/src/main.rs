@@ -123,6 +123,15 @@ async fn main() {
         };
         let mut core_routes =
             harkroom_server::core::ws::routes(core.clone(), auth.clone(), state.cors.clone());
+        // C1b-1a — 메시지 읽기(`GET /messages/{id}`). 읽기 풀만 쓴다.
+        let reads = harkroom_server::core::msg_read::routes(
+            state.pool.clone(),
+            auth.clone(),
+            state.cors.clone(),
+        );
+        core_routes.router = core_routes.router.merge(reads.router);
+        core_routes.http.extend(reads.http);
+        core_routes.sockets.extend(reads.sockets);
         if let Some(write) = operator_write {
             // C2a — 오퍼레이터 소켓·REST. 허브는 프로세스에 하나이고 C2b~C5 의 소비자가 같은 것을 받는다.
             let operators = harkroom_server::core::operator::OperatorCore::new(

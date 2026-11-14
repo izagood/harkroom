@@ -6,6 +6,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 import { channelListVisibleSql, channelVisibleSql } from '../src/services/channels.js';
+import { MESSAGE_BY_ID_SQL } from '../src/services/messages.js';
 import { displayBodySql } from '../src/services/systemBody.js';
 
 const GOLDEN = fileURLToPath(new URL('../../../crates/harkroom-server/golden/sql_fragments.json', import.meta.url));
@@ -18,6 +19,8 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     channel_visible_ac_p2uuid: channelVisibleSql('ac', '$2::uuid'),
     // 받는 사람 계산(`core/audience.rs`, S5.3 C1a) — 목록 이벤트 수신자(`channelListAudience`·`channelListLostAudience`)의 술어.
     channel_list_visible_c_aid_aadmin: channelListVisibleSql('c', 'a.id', 'a.is_admin'),
+    // 링크 한 개 읽기(`core/msg_read.rs`, S5.3 C1b-1a) — `GET /messages/:id` 의 문장 전체(COLS 포함).
+    message_by_id: MESSAGE_BY_ID_SQL,
   };
   const text = `${JSON.stringify(want, null, 2)}\n`;
   if (process.env.UPDATE_RUST_SQL_GOLDEN === '1') writeFileSync(GOLDEN, text);
