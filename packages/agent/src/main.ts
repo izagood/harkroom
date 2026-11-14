@@ -36,7 +36,7 @@ import { avcsGuideFlag } from './avcsGuideFlag.js';
 import { createGuideCache, guideHeadForLog, isGuideText } from './guideCache.js';
 import { SessionStore } from './sessions.js';
 import { ensureNameLink, resolveAgentStateDir, runnerSkillsDir } from './stateDir.js';
-import { assertHarnessContract, buildTurnCommand, harnessPath, readExtraMcpServers, readMcpServers, writeSystemPromptFile, type McpServerEntry } from './turn.js';
+import { assertHarnessContract, buildTurnCommand, harnessPath, readExtraMcpServers, readMcpServers, sweepSystemPromptFiles, writeSystemPromptFile, type McpServerEntry } from './turn.js';
 import { BG_POLL_INTERVAL_MS, BG_SYSTEM_PROMPT, BgExecutor, writeBgMcpConfig } from './bgExecutor.js';
 import { createStoppableSleep } from './stoppableSleep.js';
 import { createRetreat, type Retreat } from './retreat.js';
@@ -655,6 +655,8 @@ const providerLane = providerLaneOn
 if (providerLane) await sweepLaneTurnDir(agentStateDir);
 // 지난 러너가 남긴 턴 MCP 설정(끝난 턴의 다리 열쇠)을 걷는다.
 await sweepTurnMcpDir(agentStateDir);
+// 지난 러너가 비정상 종료해 남긴 스레드별 지시문 파일을 쓸어 낸다(정상이면 턴 끝에 지워져 없다).
+await sweepSystemPromptFiles(agentStateDir);
 
 /**
  * 하네스 `--version` 출력. **기억하지 않고 턴마다 묻는다**(security F1) — opencode 는 러너 모르게 스스로 업데이트할 수 있다.

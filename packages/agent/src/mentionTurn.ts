@@ -19,7 +19,7 @@ import type { FailOpts, Me } from './harkroom.js';
 import { laneNudgeText, laneNudgeWanted, BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DELTA_MAX_MESSAGES, mergeThreadPages, DENIAL_NOTICE_MAX_PER_TURN, MAC_PERMISSION_NOTICE_MAX_PER_TURN, macPermissionNotice, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, stallScreenErrorLine, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, SILENT_ACK_EMOJI, silentTurnNotice, silentWakeNotice, backgroundCutNotice, reportMissedNotice, MESSAGE_KIND_WAKE, hasOwnReportSince, watchMissedNotice, delegationLeftOpen, DELEGATION_REPORT_MISSED_NOTICE } from './prompt.js';
 import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
 import { SessionStore, type SessionRecord } from './sessions.js';
-import { attachesCommandHook, attachesGateHook, attachesPostToolHook, buildTurnCommand, chromeTurnFor, harnessPath, turnKeyDelivery, safeToolAllows, preassignsSessionId, writePromptFile, writeSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
+import { attachesCommandHook, attachesGateHook, attachesPostToolHook, buildTurnCommand, chromeTurnFor, harnessPath, turnKeyDelivery, safeToolAllows, preassignsSessionId, writePromptFile, writeThreadSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
 import { screenGateFor, screenIdleFactsFor, readsBuiltinSkills } from './adapters/index.js';
 import { SCREEN_IDLE_END_MS, ScreenIdleWatch, screenAnswerLines } from './screenIdle.js';
 import { commandRulesOf, fileMemoryDirUnderConfig, discoversSessionIdAfterTurn, harnessCommand, hasAccountPool, injectionFactsFor, prefixesSystemPrompt, readonlyToolsFor, readsSessionTranscript, usesOmpHome, usesPiHome, usesTuiForMention, turnKeyDeliveryOf, usesXdgHome, waitsForMcpBeforePrompt, xdgAppFor } from './adapters/index.js';
@@ -1519,8 +1519,9 @@ export async function runMentionTurn(
   // 지시문은 argv 가 아니라 파일로 넘긴다(#92) — `ps` 로 다른 로컬 사용자에게 보이는 자리에
   // 대화·지시문을 올리지 않는다. **매 턴 다시 쓴다**: UI 로 지시문을 바꾸면 다음 턴부터
   // 반영돼야 하고(spec §3), channelName 이 프롬프트에 들어가므로 내용이 턴마다 다르다.
-  // 턴은 순차적으로 돈다(main.ts 의 for 루프가 await 한다) — 그래서 파일 하나로 충분하다.
-  const systemPromptFile = await writeSystemPromptFile(deps.stateDir, systemPrompt);
+  // 같은 에이전트의 턴이 스레드마다 동시에 돈다(병렬 스케줄러) — 파일은 **스레드마다 따로** 쓴다(스레드 사이 지시문 섞임 방지).
+  // 턴이 끝나면 아래 finally 가 지우고, 비정상 종료로 남은 것은 기동 때 `sweepSystemPromptFiles` 가 쓸어 낸다.
+  const systemPromptFile = await writeThreadSystemPromptFile(deps.stateDir, key, systemPrompt);
 
   // #140: 승인된 스킬 동기화 — 하네스가 뜨기 **전에** 끝나야 한다. await 을 빼면 이 턴의
   // 하네스는 아직 없는 스킬 디렉터리를 읽고, 스킬은 항상 한 턴 늦게 붙는다.
@@ -2863,6 +2864,7 @@ export async function runMentionTurn(
     if (turnKeysRegistered) await deps.harkroom.endTurnKeys?.(turnId);
     if (turnMcpConfig !== null) await rm(turnMcpConfig, { force: true }).catch(() => undefined);
     if (ownedTurnConfig !== null) await rm(ownedTurnConfig, { force: true }).catch(() => undefined);
+    await rm(systemPromptFile, { force: true }).catch(() => undefined);
   }
   // 꼬리는 실패 문장·로그로 흘러간다 — 열쇠 값을 여기서 한 번에 지운다(K3).
   if (turnKeyNeedles.length) result = { ...result, tail: scrubText(result.tail, turnKeyNeedles).text };

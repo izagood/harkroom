@@ -490,13 +490,18 @@ describe('runMentionTurn', () => {
   it('시스템 프롬프트에 턴 예산과 turn.wake 지시가 실려 간다', async () => {
     const fake = new FakeHarkroom(defOf());
     fake.seedFrom('human-1', '@forge 오래 걸리는 일');
-    const { deps, plans, turnOpts } = await makeDeps(fake);
+    const { deps, plans, runTurn } = await makeDeps(fake);
+    // 지시문 파일은 턴이 끝나면 지워진다(스레드별 파일) — 하네스가 도는 동안 읽는다.
+    let systemPrompt = '';
+    runTurn.script = async (plan) => {
+      systemPrompt = await readFile(plan.args[plan.args.indexOf('--append-system-prompt-file') + 1]!, 'utf8');
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
 
     await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
     const flag = plans[0]!.args.indexOf('--append-system-prompt-file');
     expect(flag).toBeGreaterThanOrEqual(0);
-    const systemPrompt = await readFile(plans[0]!.args[flag + 1]!, 'utf8');
     expect(systemPrompt).toContain('turn.wake');
     expect(systemPrompt).toContain(`${Math.floor(deps.turnTimeoutMs / 60_000)}분`);
   });
@@ -1890,21 +1895,41 @@ describe('runMentionTurn', () => {
   it('지시문을 argv 가 아니라 파일로 넘긴다 (#92)', async () => {
     const fake = new FakeHarkroom(defOf({ instructions: '절대-argv에-없어야-하는-지시문' }));
     fake.seedFrom('human-1', '@forge 안녕');
-    const { deps, plans, turnOpts } = await makeDeps(fake);
+    const { deps, plans, runTurn } = await makeDeps(fake);
+    // 그 경로의 파일에 지시문이 실제로 들어 있고, 퍼미션이 0600 이어야 한다 —
+    // argv 에서 빼면서 world-readable 파일에 두면 아무 의미가 없다. 파일은 턴이 끝나면 지워지므로 하네스가 도는 동안 본다.
+    const { readFile, stat } = await import('node:fs/promises');
+    let body = '';
+    let mode = 0;
+    runTurn.script = async (plan) => {
+      const p = plan.args[plan.args.indexOf('--append-system-prompt-file') + 1]!;
+      body = await readFile(p, 'utf8');
+      mode = (await stat(p)).mode & 0o777;
+      return { exitCode: 0, timedOut: false, tail: '' };
+    };
 
     await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
 
     const argv = plans[0]!.args.join(' ');
     expect(argv).not.toContain('절대-argv에-없어야-하는-지시문');
     expect(plans[0]!.args).toContain('--append-system-prompt-file');
+    expect(body).toContain('절대-argv에-없어야-하는-지시문');
+    expect(mode).toBe(0o600);
+  });
 
-    // 그 경로의 파일에 지시문이 실제로 들어 있고, 퍼미션이 0600 이어야 한다 —
-    // argv 에서 빼면서 world-readable 파일에 두면 아무 의미가 없다.
-    const i = plans[0]!.args.indexOf('--append-system-prompt-file');
-    const filePath = plans[0]!.args[i + 1]!;
-    const { readFile, stat } = await import('node:fs/promises');
-    expect(await readFile(filePath, 'utf8')).toContain('절대-argv에-없어야-하는-지시문');
-    expect((await stat(filePath)).mode & 0o777).toBe(0o600);
+  // 스레드 사이 지시문 섞임 방지 — 지시문 파일은 그 스레드 것이고(열쇠 원문 없는 해시 이름), 턴이 끝나면 없다.
+  it('지시문 파일은 스레드별이고 턴이 끝나면 지워진다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('human-1', '@forge 안녕');
+    const { deps, plans } = await makeDeps(fake);
+    const { stat } = await import('node:fs/promises');
+    const { systemPromptPathFor } = await import('../src/turn.js');
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    const filePath = plans[0]!.args[plans[0]!.args.indexOf('--append-system-prompt-file') + 1]!;
+    expect(filePath).toBe(systemPromptPathFor(deps.stateDir, SessionStore.threadKey(CHANNEL, null)));
+    expect(await stat(filePath).then(() => true, () => false)).toBe(false);
   });
 
   // 지시문 파일은 러너의 상태 디렉터리에 있어야 한다 — 에이전트 워크스페이스 안에 두면

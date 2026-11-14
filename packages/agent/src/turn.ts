@@ -10,8 +10,9 @@
 // claude 는 `--strict-mcp-config` 를 항상 받는다, gemini 는 이번 범위에서 미지원.
 import { CODEX_LANE_BASE_URL_ENV, codexLaneArgs, LANE_TEST_HOME_ENV, PROVIDER_LANE_ARGV_ONLY_KEYS, PROVIDER_LANE_FIXED_ENV, providerLaneKeys } from './providerLane.js';
 import { encodeLaneHookRules } from '@harkroom/shared/providerLane';
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
+import { createHash } from 'node:crypto';
 import { delimiter, join } from 'node:path';
 import {
   RUNNABLE_HARNESSES,
@@ -1522,6 +1523,50 @@ export async function writeSystemPromptFile(dir: string, systemPrompt: string): 
     throw err;
   }
   return filePath;
+}
+
+/** 스레드별 지시문 파일 자리(상태 폴더 아래, 0700). */
+export const SYSTEM_PROMPT_DIR = 'system-prompts';
+
+/**
+ * 그 스레드의 지시문 파일 경로 — 스레드 열쇠 sha256 앞 16자(열쇠 원문은 이름에 넣지 않는다). 같은 에이전트가 두 스레드에서
+ * 동시에 돌아도(병렬 스케줄러) 서로의 지시문을 덮지 않는다 — 스레드 사이 지시문 섞임 방지.
+ */
+export function systemPromptPathFor(dir: string, threadKey: string): string {
+  const name = createHash('sha256').update(threadKey).digest('hex').slice(0, 16);
+  return join(dir, SYSTEM_PROMPT_DIR, `${name}.txt`);
+}
+
+/**
+ * {@link writeSystemPromptFile} 의 스레드별 판. 상태 폴더가 사라졌으면 다시 만들지 않고 같은 말로 멈춘다(하위 폴더는 상태 폴더가
+ * 있을 때만 0700 으로 만든다). 턴이 끝나면 부르는 쪽이 지운다(`mentionTurn` 의 finally), 남은 것은 기동 때 쓸어 낸다.
+ */
+export async function writeThreadSystemPromptFile(dir: string, threadKey: string, systemPrompt: string): Promise<string> {
+  try {
+    await stat(dir);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException | null)?.code === 'ENOENT') throw new Error(상태디렉터리사라짐(dir));
+    throw err;
+  }
+  await mkdir(join(dir, SYSTEM_PROMPT_DIR), { recursive: true, mode: 0o700 });
+  const filePath = systemPromptPathFor(dir, threadKey);
+  await writeFile(filePath, systemPrompt, { encoding: 'utf8', mode: 0o600 });
+  await chmod(filePath, 0o600);
+  return filePath;
+}
+
+/** 기동 때 — 지난 프로세스가 비정상 종료해 남긴 스레드별 지시문 파일과 옛 에이전트당 한 파일(`system-prompt.txt`)을 지운다. */
+export async function sweepSystemPromptFiles(dir: string): Promise<number> {
+  let n = 0;
+  const names = await readdir(join(dir, SYSTEM_PROMPT_DIR)).catch(() => [] as string[]);
+  for (const name of names) {
+    await rm(join(dir, SYSTEM_PROMPT_DIR, name), { force: true }).then(() => { n += 1; }, () => undefined);
+  }
+  const legacy = join(dir, 'system-prompt.txt');
+  if (await stat(legacy).then(() => true, () => false)) {
+    await rm(legacy, { force: true }).then(() => { n += 1; }, () => undefined);
+  }
+  return n;
 }
 
 /**
