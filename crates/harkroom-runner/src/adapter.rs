@@ -397,7 +397,7 @@ static KILO: LazyLock<HarnessAdapter> = LazyLock::new(|| {
     opencode_like(
         AgentHarness::Kilo,
         "kilo",
-        None,
+        Some(TurnKeyDelivery::TurnConfigEnv),
         None,
         XdgApp {
             dir: "kilo",

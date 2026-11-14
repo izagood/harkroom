@@ -53,7 +53,7 @@ import { claudeMemoryDir, planHarnessMemoryNotice, scanHarnessMemory } from './h
 import { issueTurnKeys, turnKeyValues, type TurnKeys } from './turnKeys.js';
 import { scrubNeedles, scrubPath, scrubText } from './secretScrub.js';
 import { auxQueryEnv, piMcpListEnv } from './queryEnv.js';
-import { laneModelMissing, laneScrubsSubprocessEnv, writeOpencodeTurnMcpConfig, writeTurnMcpConfig, PROVIDER_LANE_FIXED_ENV, OMP_LANE_BASE_URL_ENV, OMP_LANE_KEY_FILE_ENV, PI_LANE_BASE_URL_ENV, PI_LANE_KEY_FILE_ENV, ProviderLaneError } from './providerLane.js';
+import { LANE_TURN_FILE_ENV, laneModelMissing, laneScrubsSubprocessEnv, writeOpencodeTurnMcpConfig, writeTurnMcpConfig, PROVIDER_LANE_FIXED_ENV, OMP_LANE_BASE_URL_ENV, OMP_LANE_KEY_FILE_ENV, PI_LANE_BASE_URL_ENV, PI_LANE_KEY_FILE_ENV, ProviderLaneError } from './providerLane.js';
 import { laneParentViolations, laneWorkspaceViolations } from './laneWorkspaceGuard.js';
 import { homedir } from 'node:os';
 
@@ -1693,7 +1693,7 @@ export async function runMentionTurn(
   // 러너 링크 secret 을 파일에 실었다. 운영 조립은 턴 열쇠를 늘 맡기므로(`HarkroomAgentClient.registerTurnKeys`) 여기 닿지 않는다.
   if (providerEnv && laneScrubsSubprocessEnv(def.harness) && !turnMcpConfig) throw new ProviderLaneError('turn_key_missing');
   // opencode: 다리 열쇠를 턴 설정 파일에 싣는다. API 키 연결 턴은 lane 턴 파일에 더해 쓰고(그 파일은 lane 이 치운다), 그 밖은 새 파일이다.
-  const laneTurnFile = providerEnv?.OPENCODE_CONFIG ?? null;
+  const laneTurnFile = providerEnv?.[LANE_TURN_FILE_ENV[def.harness] ?? 'OPENCODE_CONFIG'] ?? null;
   const opencodeTurnConfig = turnKeys && turnKeyDeliveryOf(def.harness) === 'turn-config-env'
     ? await writeOpencodeTurnMcpConfig(deps.stateDir, deps.mcpConfigPath, turnId, turnKeys.bridge, laneTurnFile)
     : null;

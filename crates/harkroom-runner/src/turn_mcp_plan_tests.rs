@@ -188,7 +188,7 @@ fn harness_without_delivery_gets_no_keys() {
     let dir = TempDir::new("kilo");
     let src = source(&dir);
     let env = runner_env();
-    for h in [AgentHarness::Kilo, AgentHarness::Pi, AgentHarness::Omp] {
+    for h in [AgentHarness::Pi, AgentHarness::Omp] {
         let plan = turn_mcp_plan(&input(h, true, None, &dir, &src, &env)).unwrap();
         assert!(plan.turn_keys.is_none(), "{h:?}");
         assert_eq!(plan.mcp_config_path, src);

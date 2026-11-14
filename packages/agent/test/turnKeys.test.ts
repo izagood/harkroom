@@ -82,9 +82,14 @@ describe('턴 열쇠 — 하네스 env', () => {
     expect(p.env[RUNNER_TURN_KEY_ENV.shell]).toBeUndefined();
     expect(p.env[RUNNER_TURN_KEY_ENV.bridge]).toBeUndefined();
   });
-  it('전달 길이 없는 하네스에 열쇠를 주면 조립을 거절한다', () => {
-    expect(turnKeyDelivery('kilo')).toBe(false);
-    expect(() => buildTurnCommand({ ...base, harness: 'kilo', sessionId: null, opencodeHome: '/state/kilo', turnKeys: keys })).toThrow(/다리 열쇠/);
+  it('kilo 는 턴 설정 파일을 KILO_CONFIG 로 받는다 — 링크 열쇠는 자식에 없다(OPENCODE_CONFIG 이름도 없다)', () => {
+    expect(turnKeyDelivery('kilo')).toBe(true);
+    const p = buildTurnCommand({ ...base, harness: 'kilo', sessionId: null, opencodeHome: '/state/kilo', turnKeys: keys, opencodeTurnConfig: '/state/turn-mcp/t.opencode.json' });
+    expect(p.env.KILO_CONFIG).toBe('/state/turn-mcp/t.opencode.json');
+    expect(p.env.OPENCODE_CONFIG).toBeUndefined();
+    expect(p.env[RUNNER_LINK_ENV.secret]).toBeUndefined();
+    // 턴 설정 없이 열쇠만 주면 조립을 거절한다(닫힌 쪽).
+    expect(() => buildTurnCommand({ ...base, harness: 'kilo', sessionId: null, opencodeHome: '/state/kilo', turnKeys: keys })).toThrow();
   });
 });
 
