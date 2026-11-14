@@ -172,7 +172,7 @@ describe('removeRebuildable', () => {
 
 import { parsePrList, parseWorktreePorcelain, githubSlug, isThreadDone } from '../src/workspaceCleanupScan.js';
 import { createCleanupOwners } from '../src/workspaceCleanupOwners.js';
-import { worktreeAddPaths, readCleanupReport, CLEANUP_REPORT_PATH } from '@harkroom/shared/workspaceCleanup';
+import { worktreeAddPaths, readCleanupReport, CLEANUP_REPORT_PATH, COMMAND_SEPARATOR } from '@harkroom/shared/workspaceCleanup';
 
 describe('관측 파서', () => {
   it('worktree porcelain — 첫 묶음이 main, detached 는 branch null', () => {
@@ -564,5 +564,80 @@ describe('F1 — 끄면 지우지 않는다(이미 나간 요청까지)', () => 
     await svc.setSettings({ enabled: false });
     expect((await o.live()).threads[K]!.deleteRequestedAt).toBeNull();
     expect(reply(await o.maybeHandle('run1', 'agentA', req({ threads: [] }), 'relay')).deleteThreads).toEqual([]);
+  });
+});
+
+describe('주인 있는 worktree 도 「머지하고 쉬는」 조건이면 넣는다(규칙 1 과 OR)', () => {
+  const OLD = '2026-09-20T00:00:00.000Z';
+  // 스레드 ✅ 아님 — 오래 이어지는 스레드. 규칙 1 로는 영영 안 들어간다.
+  const o = (x: Partial<ObservedWorktree> = {}) => wt({ clean: true, onlyRebuildableIgnored: true, lastActivityAt: OLD, ...x });
+  const notDone = (w: ObservedWorktree, extra: Partial<SweepFacts> = {}) => facts({ worktrees: [w], doneThreads: new Set(), ...extra });
+
+  it('스레드 ✅ 가 아니어도 PR 머지·head 일치·깨끗·오래 쉼이면 넣는다', () => {
+    const p = planSweep(emptyLedger(), notDone(o()), S, NOW);
+    expect(p.ledger.items[0]).toMatchObject({ state: 'listed', thread: T, actedBy: null });
+    expect(p.actions).toEqual([{ op: 'removeDeps', path: '/tmp/wt-a' }]);
+  });
+  it.each([
+    ['push 안 된 커밋·커밋 안 된 변경', { clean: false }],
+    ['깨끗한지 재지 못함', { clean: null }],
+    ['보존 기간 안에 손댐', { lastActivityAt: '2026-10-01T00:00:00.000Z' }],
+    ['PR head ≠ HEAD', { pr: { number: 1, state: 'merged' as const, headSha: 'old' } }],
+  ])('%s → 넣지 않는다', (_n, x) => {
+    expect(planSweep(emptyLedger(), notDone(o(x as Partial<ObservedWorktree>)), S, NOW).ledger.items).toEqual([]);
+  });
+  it('그 스레드에 새 턴이 와도 worktree 가 그대로 쉬고 있으면 되살리지 않고 기한에 지운다', () => {
+    const first = planSweep(emptyLedger(), notDone(o()), S, NOW).ledger;
+    const due = new Date('2026-10-14T00:00:00Z');
+    const p = planSweep(first, notDone(o(), { lastTurnAt: new Map([['c1/r1', '2026-10-10T00:00:00.000Z']]) }), S, due);
+    expect(p.actions).toEqual([{ op: 'delete', path: '/tmp/wt-a' }]);
+  });
+  it('worktree 자체에 새 활동(새 커밋으로 HEAD ≠ PR head, 넣은 뒤 손댐)이 있으면 되살린다', () => {
+    const first = planSweep(emptyLedger(), notDone(o()), S, NOW).ledger;
+    const due = new Date('2026-10-14T00:00:00Z');
+    const moved = planSweep(first, notDone(o({ headSha: 'new', clean: false })), S, due);
+    expect(moved.ledger.items).toEqual([]);
+    expect(moved.actions).toEqual([]);
+    const touched = planSweep(first, notDone(o({ lastActivityAt: '2026-10-08T00:00:00.000Z' })), S, due);
+    expect(touched.actions).toEqual([]);
+    expect(touched.ledger.events.at(-1)!.action).toBe('revived');
+  });
+  it('규칙 1(✅)로 넣은 것은 지금까지처럼 새 턴이면 되살린다', () => {
+    const first = planSweep(emptyLedger(), facts({ worktrees: [wt()] }), S, NOW).ledger;
+    const p = planSweep(first, facts({ worktrees: [wt()], lastTurnAt: new Map([['c1/r1', '2026-10-08T00:00:00.000Z']]) }), S, new Date('2026-10-14T00:00:00Z'));
+    expect(p.actions).toEqual([]);
+  });
+  it('push 안 된 변경이 있는 worktree 는 어떤 길로 넣었어도 지우지 않는다 — 지우기 직전 검사가 막고 ⚠ 보류', async () => {
+    for (const w of [o(), o({ thread: null }), wt()]) {
+      const listed = planSweep(emptyLedger(), facts({ worktrees: [w] }), S, NOW).ledger;
+      expect(listed.items[0]!.state).toBe('listed');
+      const plan = planSweep(listed, facts({ worktrees: [w] }), S, new Date('2026-10-14T00:00:00Z'));
+      expect(plan.actions).toContainEqual({ op: 'delete', path: '/tmp/wt-a' });
+      let removed = 0;
+      const out = await runSweep(plan, { check: async () => 'unpushed', remove: async () => { removed++; }, size: async () => 1, removeDeps: async () => {} }, new Set(), NOW);
+      expect(removed).toBe(0);
+      expect(out.items[0]).toMatchObject({ state: 'blocked', blockReason: 'unpushed' });
+    }
+  });
+});
+
+describe('worktreeAddPaths — 같은 명령 안의 cd·변수·git -C 로 경로를 푼다', () => {
+  const H = '/h';
+  it.each([
+    ['변수', 'W=/a/ws; git worktree add -q -b x $W/wt-1 origin/main', ['/a/ws/wt-1']],
+    ['중괄호 변수·따옴표', 'export W="/a/ws"; git worktree add -b x "${W}/wt-2"', ['/a/ws/wt-2']],
+    ['cd 뒤 상대 경로', 'cd /r/repo && git -c core.fsmonitor=false worktree add -q -b x ../repo-wt/b4 abc', ['/r/repo-wt/b4']],
+    ['git -C 가 cd 보다 앞선다', 'cd /elsewhere && git -C /r/repo worktree add wt-c', ['/r/repo/wt-c']],
+    ['변수로 cd', 'R=/r/repo; cd $R; git worktree add ./wt-d', ['/r/repo/wt-d']],
+    ['~ 변수', 'W=~/x; git worktree add $W/y', ['/h/x/y']],
+    ['/private/tmp 는 /tmp 로', 'cd /private/tmp && git -C /r worktree add /private/tmp/wt-e', ['/tmp/wt-e']],
+    ['모르는 변수', 'git worktree add -b x "$W"', []],
+    ['명령 치환', 'W=$(mktemp -d); git worktree add $W/z', []],
+    ['base 없는 상대 경로', 'git worktree add rel', []],
+  ])('%s', (_n, text, want) => {
+    expect(worktreeAddPaths(text, H)).toEqual(want);
+  });
+  it('앞 명령의 cd·변수는 다음 명령으로 넘어가지 않는다', () => {
+    expect(worktreeAddPaths(`cd /r/repo; W=/a${COMMAND_SEPARATOR}git worktree add $W/q${COMMAND_SEPARATOR}git worktree add rel`, H)).toEqual([]);
   });
 });
