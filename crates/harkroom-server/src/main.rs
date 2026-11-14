@@ -141,6 +141,15 @@ async fn main() {
         core_routes.router = core_routes.router.merge(channels.router);
         core_routes.http.extend(channels.http);
         core_routes.sockets.extend(channels.sockets);
+        // C1b-1b — 채널·스레드 목록(`GET /channels/{id}/messages`). 같은 경로의 `POST` 는 fallback 으로 TS.
+        let lists = harkroom_server::core::msg_list::routes(
+            state.pool.clone(),
+            auth.clone(),
+            state.cors.clone(),
+        );
+        core_routes.router = core_routes.router.merge(lists.router);
+        core_routes.http.extend(lists.http);
+        core_routes.sockets.extend(lists.sockets);
         if let Some(write) = operator_write {
             // C2a — 오퍼레이터 소켓·REST. 허브는 프로세스에 하나이고 C2b~C5 의 소비자가 같은 것을 받는다.
             let operators = harkroom_server::core::operator::OperatorCore::new(

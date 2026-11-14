@@ -7,6 +7,7 @@
 pub mod audience;
 pub mod channels;
 pub mod events;
+pub mod msg_list;
 pub mod msg_read;
 pub mod operator;
 pub mod operator_frames;

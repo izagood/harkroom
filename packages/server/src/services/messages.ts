@@ -2048,10 +2048,21 @@ export async function postMessage(
   }
 }
 
+/**
+ * 목록의 `hasMore` 문장 셋(채널·피드·스레드). `LIST_MESSAGES_SQL` 처럼 Rust 코어(`core/msg_list.rs`)가 골든으로 받는다.
+ */
+export const HAS_OLDER_SQL = {
+  channel: `select 1 from message where channel_id = $1::uuid and seq < $2 and deleted_at is null limit 1`,
+  feed: `select 1 from message m
+     where m.channel_id = $1::uuid and m.seq < $2 and ${FEED_ROW} and ${LIST_VISIBLE} limit 1`,
+  thread: `select 1 from message
+     where channel_id = $1::uuid and thread_root_id = $2::uuid and seq < $3 and deleted_at is null limit 1`,
+} as const;
+
 /** 주어진 seq 보다 오래된 메시지가 남아 있는가. 클라이언트의 '더 불러오기' 표시에 쓴다. */
 export async function hasOlderMessages(pool: Pool, channelId: string, oldestSeq: number): Promise<boolean> {
   const res = await pool.query(
-    `select 1 from message where channel_id = $1 and seq < $2 and deleted_at is null limit 1`,
+    HAS_OLDER_SQL.channel,
     [channelId, oldestSeq],
   );
   return (res.rowCount ?? 0) > 0;
@@ -2064,8 +2075,7 @@ export async function hasOlderMessages(pool: Pool, channelId: string, oldestSeq:
  */
 export async function hasOlderFeedMessages(pool: Pool, channelId: string, oldestSeq: number): Promise<boolean> {
   const res = await pool.query(
-    `select 1 from message m
-     where m.channel_id = $1 and m.seq < $2 and ${FEED_ROW} and ${LIST_VISIBLE} limit 1`,
+    HAS_OLDER_SQL.feed,
     [channelId, oldestSeq],
   );
   return (res.rowCount ?? 0) > 0;
@@ -2079,8 +2089,7 @@ export async function hasOlderThreadReplies(
   pool: Pool, channelId: string, threadRootId: string, oldestSeq: number,
 ): Promise<boolean> {
   const res = await pool.query(
-    `select 1 from message
-     where channel_id = $1 and thread_root_id = $2 and seq < $3 and deleted_at is null limit 1`,
+    HAS_OLDER_SQL.thread,
     [channelId, threadRootId, oldestSeq],
   );
   return (res.rowCount ?? 0) > 0;
@@ -3064,6 +3073,80 @@ export async function listMessages(
   return attachPlanProgress(pool, await listMessageRows(pool, channelId, opts));
 }
 
+/**
+ * 채널·스레드 목록(`GET /channels/:id/messages`)의 문장들 — `listMessageRows` 의 갈래마다 하나. Rust 코어
+ * (`crates/harkroom-server/src/core/msg_list.rs`, S5.3 C1b-1b)가 `golden/sql_fragments.json` 으로 받아 그대로 쓴다 —
+ * 고치면 `test/rustSqlFragments.test.ts` 가 골든 갱신을 요구한다. 자리표시자는 갈래마다 아래 호출의 인자 순서다.
+ * uuid 자리의 `::uuid` 는 Rust(sqlx 가 문자열을 text 로 보낸다)를 위한 것이다 — node-pg 에는 같은 뜻이다.
+ */
+export const LIST_MESSAGES_SQL = {
+  threadAround: `select * from (
+           (select ${LIST_COLS} from message m ${THREAD_STATS}
+            where m.channel_id = $1::uuid and m.id = $2::uuid and ${LIST_VISIBLE})
+           -- 루트는 아래 갈래(thread_root_id = $2::uuid)에 절대 걸리지 않으므로 중복이 없다.
+           -- union(중복 제거)은 json 컬럼에 등호가 없어 터진다 — union all 이어야 한다.
+           union all
+           (select * from (
+              (select ${REPLY_COLS} from message m
+               where m.channel_id = $1::uuid and m.thread_root_id = $2::uuid and m.seq <= $3 and ${LIST_VISIBLE}
+               order by m.seq desc limit $4)
+              union all
+              (select ${REPLY_COLS} from message m
+               where m.channel_id = $1::uuid and m.thread_root_id = $2::uuid and m.seq > $3 and ${LIST_VISIBLE}
+               order by m.seq limit $4)
+            ) thread_window)
+         ) window_rows
+         order by seq`,
+  threadBefore: `select * from (
+           select ${REPLY_COLS} from message m
+           where m.channel_id = $1::uuid and m.thread_root_id = $2::uuid and m.seq < $3 and ${LIST_VISIBLE}
+           order by m.seq desc limit $4
+         ) older
+         order by seq`,
+  threadSince: `select * from (
+           (select ${LIST_COLS} from message m ${THREAD_STATS}
+            where m.channel_id = $1::uuid and m.id = $2::uuid and m.seq > $3 and ${LIST_VISIBLE})
+           union all
+           (select ${REPLY_COLS} from message m
+            where m.channel_id = $1::uuid and m.thread_root_id = $2::uuid and m.seq > $3 and ${LIST_VISIBLE}
+            order by m.seq limit $4)
+         ) newer
+         order by seq limit $4`,
+  threadLatest: `select * from (
+        (select ${LIST_COLS} from message m ${THREAD_STATS}
+         where m.channel_id = $1::uuid and m.id = $2::uuid and ${LIST_VISIBLE})
+        union all
+        (select ${REPLY_COLS} from message m
+         where m.channel_id = $1::uuid and m.thread_root_id = $2::uuid and ${LIST_VISIBLE}
+         order by m.seq desc limit $3)
+      ) latest
+      order by seq`,
+  around: pageWithHeads(`
+         (select ${PAGE_COLS} from message m
+          where m.channel_id = $1::uuid and m.seq <= $2 and ${LIST_VISIBLE}
+          order by m.seq desc limit $3)
+         union all
+         (select ${PAGE_COLS} from message m
+          where m.channel_id = $1::uuid and m.seq > $2 and ${LIST_VISIBLE}
+          order by m.seq limit $3)`),
+  before: pageWithHeads(`
+         select ${PAGE_COLS} from message m
+         where m.channel_id = $1::uuid and m.seq < $2 and ${LIST_VISIBLE}
+         order by m.seq desc limit $3`),
+  beforeFeed: pageWithHeads(`
+         select ${PAGE_COLS} from message m
+         where m.channel_id = $1::uuid and m.seq < $2 and ${LIST_VISIBLE} and ${FEED_ROW}
+         order by m.seq desc limit $3`),
+  since: pageWithHeads(`
+       select ${PAGE_COLS} from message m
+       where m.channel_id = $1::uuid and m.seq > $2 and ${LIST_VISIBLE}
+       order by m.seq limit $3`),
+  latest: pageWithHeads(`
+       select ${PAGE_COLS} from message m
+       where m.channel_id = $1::uuid and ${LIST_VISIBLE}
+       order by m.seq desc limit $2`),
+} as const;
+
 async function listMessageRows(
   pool: Pool, channelId: string,
   opts: { since?: number; before?: number; around?: number; threadRootId?: string | null; limit?: number; feed?: boolean },
@@ -3079,23 +3162,7 @@ async function listMessageRows(
     if (opts.around !== undefined) {
       const half = Math.max(1, Math.ceil(limit / 2));
       const res = await pool.query(
-        `select * from (
-           (select ${LIST_COLS} from message m ${THREAD_STATS}
-            where m.channel_id = $1 and m.id = $2 and ${LIST_VISIBLE})
-           -- 루트는 아래 갈래(thread_root_id = $2)에 절대 걸리지 않으므로 중복이 없다.
-           -- union(중복 제거)은 json 컬럼에 등호가 없어 터진다 — union all 이어야 한다.
-           union all
-           (select * from (
-              (select ${REPLY_COLS} from message m
-               where m.channel_id = $1 and m.thread_root_id = $2 and m.seq <= $3 and ${LIST_VISIBLE}
-               order by m.seq desc limit $4)
-              union all
-              (select ${REPLY_COLS} from message m
-               where m.channel_id = $1 and m.thread_root_id = $2 and m.seq > $3 and ${LIST_VISIBLE}
-               order by m.seq limit $4)
-            ) thread_window)
-         ) window_rows
-         order by seq`,
+      LIST_MESSAGES_SQL.threadAround,
         [channelId, opts.threadRootId, opts.around, half],
       );
       return res.rows;
@@ -3108,12 +3175,7 @@ async function listMessageRows(
      */
     if (opts.before !== undefined) {
       const res = await pool.query(
-        `select * from (
-           select ${REPLY_COLS} from message m
-           where m.channel_id = $1 and m.thread_root_id = $2 and m.seq < $3 and ${LIST_VISIBLE}
-           order by m.seq desc limit $4
-         ) older
-         order by seq`,
+      LIST_MESSAGES_SQL.threadBefore,
         [channelId, opts.threadRootId, opts.before, limit],
       );
       return res.rows;
@@ -3123,15 +3185,7 @@ async function listMessageRows(
     // 작으므로 바깥 `order by seq limit` 은 예전 한 갈래(`m.id = $2 or m.thread_root_id = $2`)와 같은 행을 고른다.
     if (opts.since !== undefined && opts.since > 0) {
       const res = await pool.query(
-        `select * from (
-           (select ${LIST_COLS} from message m ${THREAD_STATS}
-            where m.channel_id = $1 and m.id = $2 and m.seq > $3 and ${LIST_VISIBLE})
-           union all
-           (select ${REPLY_COLS} from message m
-            where m.channel_id = $1 and m.thread_root_id = $2 and m.seq > $3 and ${LIST_VISIBLE}
-            order by m.seq limit $4)
-         ) newer
-         order by seq limit $4`,
+      LIST_MESSAGES_SQL.threadSince,
         [channelId, opts.threadRootId, opts.since, limit],
       );
       return res.rows;
@@ -3139,15 +3193,7 @@ async function listMessageRows(
     // `limit` 은 **답글에만** 건다. 전에는 `order by … limit` 이 union 전체에 걸려 답글이 limit
     // 을 넘는 스레드에서 루트가 잘려 나갔다(위 주석의 "항상 포함" 과 달리).
     const res = await pool.query(
-      `select * from (
-        (select ${LIST_COLS} from message m ${THREAD_STATS}
-         where m.channel_id = $1 and m.id = $2 and ${LIST_VISIBLE})
-        union all
-        (select ${REPLY_COLS} from message m
-         where m.channel_id = $1 and m.thread_root_id = $2 and ${LIST_VISIBLE}
-         order by m.seq desc limit $3)
-      ) latest
-      order by seq`,
+      LIST_MESSAGES_SQL.threadLatest,
       [channelId, opts.threadRootId, limit],
     );
     return res.rows;
@@ -3163,14 +3209,7 @@ async function listMessageRows(
   if (opts.around !== undefined) {
     const half = Math.max(1, Math.ceil(limit / 2));
     const res = await pool.query(
-      pageWithHeads(`
-         (select ${PAGE_COLS} from message m
-          where m.channel_id = $1 and m.seq <= $2 and ${LIST_VISIBLE}
-          order by m.seq desc limit $3)
-         union all
-         (select ${PAGE_COLS} from message m
-          where m.channel_id = $1 and m.seq > $2 and ${LIST_VISIBLE}
-          order by m.seq limit $3)`),
+      LIST_MESSAGES_SQL.around,
       [channelId, opts.around, half],
     );
     return res.rows;
@@ -3184,10 +3223,7 @@ async function listMessageRows(
   // 옛 서버는 이 인자를 모르고 버린다(zod strip) — 그러면 지금 갈래 그대로라 부르는 쪽이 나눌 필요가 없다.
   if (opts.before !== undefined) {
     const res = await pool.query(
-      pageWithHeads(`
-         select ${PAGE_COLS} from message m
-         where m.channel_id = $1 and m.seq < $2 and ${LIST_VISIBLE}${opts.feed ? ` and ${FEED_ROW}` : ''}
-         order by m.seq desc limit $3`),
+      opts.feed ? LIST_MESSAGES_SQL.beforeFeed : LIST_MESSAGES_SQL.before,
       [channelId, opts.before, limit],
     );
     return res.rows;
@@ -3195,20 +3231,14 @@ async function listMessageRows(
   const since = opts.since ?? 0;
   if (since > 0) {
     const res = await pool.query(
-      pageWithHeads(`
-       select ${PAGE_COLS} from message m
-       where m.channel_id = $1 and m.seq > $2 and ${LIST_VISIBLE}
-       order by m.seq limit $3`),
+      LIST_MESSAGES_SQL.since,
       [channelId, since, limit],
     );
     return res.rows;
   }
   // since 미지정(0): 오래된 200개가 아니라 최신 N개를 반환한다 (반환 순서는 seq 오름차순 유지)
   const res = await pool.query(
-    pageWithHeads(`
-       select ${PAGE_COLS} from message m
-       where m.channel_id = $1 and ${LIST_VISIBLE}
-       order by m.seq desc limit $2`),
+      LIST_MESSAGES_SQL.latest,
     [channelId, limit],
   );
   return res.rows;

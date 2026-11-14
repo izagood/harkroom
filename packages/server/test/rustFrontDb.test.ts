@@ -471,6 +471,71 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       expect(pinsBody.pins[1]!.message.reactions.length).toBeGreaterThan(0);
       expect((await getJson(rs, `/channels/${privId}/delete-info`, admin.token)).body).toMatchObject({ name: 'today-private' });
 
+      // S5.3 C1b-1b — `GET /channels/{id}/messages`(코어 `msg_list.rs`). 9갈래·hasMore·planProgress 를 본문 전체로 견준다.
+      // 거절은 상태·코드까지(문구는 zod 와 다르다).
+      expect(f.log()).toContain('"GET /channels/{id}/messages"');
+      // 계획판 픽스처 — work 의 계획이 자식 넷을 잇는다: 다른 공개 채널(계획 있음)·같은 채널(계획 없음)·비공개 채널(숨김)·지운 머리(숨김).
+      const other = await ok(app.inject({ method: 'POST', url: '/channels', headers: auth, payload: { name: 'plans-other' } }));
+      const childPub = await say('공개 자식', { ch: String(other.id) });
+      const childGone = await say('지울 자식');
+      await db.pool.query(`update message set deleted_at = now() where id = $1`, [childGone]);
+      const step = (id: string, groupId: string | null, state: string, dependsOn: string[] = []) =>
+        ({ id, groupId, title: id, state, links: [], dependsOn });
+      const plan = (rootId: string, channelId: string, doc: Record<string, unknown>) => db.pool.query(
+        `insert into thread_plan (root_id, channel_id, doc, rev, updated_at) values ($1, $2, $3::jsonb, 3, now() - interval '5 minutes')`,
+        [rootId, channelId, JSON.stringify(doc)],
+      );
+      await plan(childPub, String(other.id), {
+        goal: '자식', groups: [], steps: [step('s1', null, 'done'), step('s2', null, 'active'), step('s3', null, 'todo', ['s2'])],
+      });
+      await plan(work, todayId, {
+        goal: '부모',
+        groups: [
+          { id: 'g1', title: '내 단계', dependsOn: [] },
+          { id: 'g2', title: '공개 자식', linkedRootId: childPub, dependsOn: ['g1'] },
+          { id: 'g3', title: '같은 채널', linkedRootId: running, dependsOn: [] },
+          { id: 'g4', title: '비공개', linkedRootId: secret, dependsOn: [] },
+          { id: 'g5', title: '지운 것', linkedRootId: childGone, dependsOn: [] },
+        ],
+        steps: [step('s1', 'g1', 'done'), step('s2', 'g1', 'blocked'), step('s3', null, 'todo', ['s1'])],
+      });
+      // 계획만 있고 자식이 없는 머리 하나(stuck).
+      await plan(stuck, todayId, { goal: '혼자', groups: [], steps: [step('s1', null, 'active')] });
+      const seqOf = async (id: string) => Number((await db.pool.query<{ seq: string }>('select seq::text from message where id = $1', [id])).rows[0]!.seq);
+      const [workSeq, waitingSeq, cardSeq] = [await seqOf(work), await seqOf(waiting), await seqOf(oldCard)];
+      const lst = `/channels/${todayId}/messages`;
+      let planned = 0;
+      for (const [path, token] of [
+        [lst, member.token], [`${lst}?limit=3`, member.token], [`${lst}?limit=500`, admin.token],
+        [`${lst}?since=${workSeq}&limit=4`, member.token], [`${lst}?since=${waitingSeq}`, agent.pat],
+        [`${lst}?before=${waitingSeq}&limit=3`, member.token], [`${lst}?before=${waitingSeq}&feed=1&limit=3`, member.token],
+        [`${lst}?before=${waitingSeq}&feed=1`, admin.token],
+        [`${lst}?around=${waitingSeq}&limit=4`, member.token], [`${lst}?around=${workSeq}`, member.token],
+        [`${lst}?thread=${work}`, member.token], [`${lst}?thread=${work}&limit=1`, member.token],
+        [`${lst}?thread=${work}&before=${cardSeq + 5}&limit=1`, member.token], [`${lst}?thread=${work}&since=${workSeq}&limit=1`, member.token],
+        [`${lst}?thread=${work}&around=${cardSeq}&limit=2`, member.token], [`${lst}?thread=${work.toUpperCase()}`, member.token],
+        [`/channels/${String(other.id)}/messages`, member.token], [`/channels/${String(dm.id)}/messages?limit=1`, admin.token],
+        [`/channels/${privId}/messages`, agent.pat], [`/channels/${privId}/messages`, member.token], [`/channels/${privId}/messages`, admin.token],
+        [`/channels/${missingCh}/messages`, admin.token], ['/channels/not-a-uuid/messages', admin.token],
+        [`${lst}?before=3&since=1`, member.token], [`${lst}?feed=1`, member.token], [`${lst}?feed=1&since=3`, member.token],
+        [`${lst}?feed=true&before=3`, member.token], [`${lst}?feed=1&before=3&thread=${work}`, member.token],
+        [`${lst}?limit=0`, member.token], [`${lst}?limit=501`, member.token], [`${lst}?limit=1.5`, member.token],
+        [`${lst}?limit=1&limit=2`, member.token], [`${lst}?limit=`, member.token], [`${lst}?limit=%200x10`, member.token],
+        [`${lst}?since=-1`, member.token], [`${lst}?thread=nope`, member.token], [`${lst}?other=1&limit=2`, member.token],
+        [lst, undefined], [`${lst}?limit=0`, undefined],
+      ] as const) {
+        const [a, b] = [await getJson(tsUrl, path, token), await getJson(rs, path, token)];
+        expect(b, `${path} ${token === admin.token ? 'admin' : token === member.token ? 'mem' : token ? 'agent' : 'anon'}`).toEqual(a);
+        planned += ((b.body as { messages?: { planProgress?: unknown }[] } | undefined)?.messages ?? []).filter((m) => m.planProgress).length;
+      }
+      expect(planned, '계획판 진행률이 실제로 붙은 행').toBeGreaterThan(0);
+      const full = (await getJson(rs, `${lst}?limit=500`, member.token)).body as { messages: { id: string; planProgress?: Record<string, unknown> | null }[]; hasMore: boolean };
+      expect(full.hasMore).toBe(false);
+      expect((await getJson(rs, `${lst}?limit=3`, member.token)).body).toMatchObject({ hasMore: true });
+      // 공개 자식(1/3 끝)은 열리고, 비공개·지운 자식은 숨김으로 센다 — 값은 TS 와의 본문 대조가 지킨다. 여기서는 칸이 찼는지만.
+      expect(full.messages.find((m) => m.id === work)?.planProgress).toMatchObject({ rev: 3 });
+      expect(full.messages.find((m) => m.id === waiting)?.planProgress, '계획 없는 머리는 null').toBeNull();
+
       // S5.2 P3 — `PUT /inbox/today/seen` 대조. 거절은 상태·코드까지(문구는 zod 와 다르다), 성공은 본문까지 같아야 한다.
       const rsUrl = `http://127.0.0.1:${port}`;
       const put = async (base: string, o: { token?: string; ct?: string; body?: string }) => {
