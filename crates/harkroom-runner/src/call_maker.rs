@@ -369,6 +369,13 @@ where
             p.record_recall = Some(Box::new(move |keys| {
                 mcp.record_recall(keys).map_err(|e| e.to_string())
             }));
+            // 스레드 메모·계획판 읽기(정본 `readThreadNote`·`readThreadPlan`) — 이 에이전트 묶음으로만.
+            p.read_note = Some(Box::new(move |root| {
+                mcp.read_thread_note(root).map_err(|e| e.to_string())
+            }));
+            p.read_plan = Some(Box::new(move |root| {
+                mcp.read_thread_plan(root).map_err(|e| e.to_string())
+            }));
             p.turn_timeout_ms = c.turn_timeout_ms;
             p
         });
