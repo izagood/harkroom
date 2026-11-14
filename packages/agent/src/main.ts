@@ -18,7 +18,7 @@
 // 진짜 서버에 붙으려 든다.
 import { createMentionRelay } from './mentionRelay.js';
 import { PROVIDER_LANE_ENV } from '@harkroom/shared/providerLane';
-import { createProviderLane, ProviderLaneError, sweepLaneTurnDir, sweepTurnMcpDir, writeTurnMcpConfig } from './providerLane.js';
+import { createProviderLane, ProviderLaneError, sweepLaneMcpConfig, sweepLaneTurnDir, sweepTurnMcpDir, writeTurnMcpConfig } from './providerLane.js';
 import { resolveTurnModel } from './threadModel.js';
 import { idleStopRequestedAt } from './idleStop.js';
 import { execFile } from 'node:child_process';
@@ -655,6 +655,8 @@ const providerLane = providerLaneOn
 if (providerLane) await sweepLaneTurnDir(agentStateDir);
 // 지난 러너가 남긴 턴 MCP 설정(끝난 턴의 다리 열쇠)을 걷는다.
 await sweepTurnMcpDir(agentStateDir);
+// 옛 lane 대체 길(L3c-3c 에서 없앰)이 남긴 `lane-mcp.json` — 그때의 러너 링크 secret 이 들어 있다. lane 이 꺼져 있어도 지운다.
+await sweepLaneMcpConfig(agentStateDir);
 // 지난 러너가 비정상 종료해 남긴 스레드별 지시문 파일을 쓸어 낸다(정상이면 턴 끝에 지워져 없다).
 await sweepSystemPromptFiles(agentStateDir);
 

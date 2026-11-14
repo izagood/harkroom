@@ -128,13 +128,14 @@ fn claude_lane_turn_key_config_sets_always_load() {
     );
 }
 
+/// 턴 열쇠가 없는 claude lane 턴은 띄우지 않는다(`turn_key_missing`, L3c-3c) — 러너 링크 secret 을 싣는 옛 `lane-mcp.json` 을 쓰지 않는다
 #[test]
-fn lane_turn_without_turn_keys_uses_lane_mcp_config() {
+fn lane_turn_without_turn_keys_is_refused_and_writes_no_lane_config() {
     let dir = TempDir::new("lane-nokey");
     let src = source(&dir);
     let env = runner_env();
     let lane = BTreeMap::from([("ANTHROPIC_BASE_URL".into(), "https://gw".into())]);
-    let plan = turn_mcp_plan(&input(
+    let err = turn_mcp_plan(&input(
         AgentHarness::ClaudeCode,
         false,
         Some(&lane),
@@ -142,12 +143,9 @@ fn lane_turn_without_turn_keys_uses_lane_mcp_config() {
         &src,
         &env,
     ))
-    .unwrap();
-    assert!(plan.turn_keys.is_none());
-    assert_eq!(plan.mcp_config_path, dir.path().join("lane-mcp.json"));
-    let h = &read(&plan.mcp_config_path)["mcpServers"]["harkroom"];
-    assert_eq!(h["env"]["HARKROOM_RUNNER_SECRET"], json!("sec-1"));
-    assert!(h["env"].get(RUNNER_TURN_KEY_BRIDGE_ENV).is_none());
+    .unwrap_err();
+    assert!(err.to_string().contains("turn_key_missing"), "{err}");
+    assert!(!dir.path().join("lane-mcp.json").exists());
 }
 
 #[test]

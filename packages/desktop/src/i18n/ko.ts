@@ -1124,6 +1124,7 @@ export const ko = {
   'lane.code.harness_login_present.join': ' 또는 ',
   'lane.code.harness_login_present.thread': '<스레드>',
   'lane.code.lane_setup': '이 채널에서 opencode 를 띄울 권한 설정을 준비하지 못해 멈췄다 — 다시 불러 보고, 또 멈추면 에이전트 설정에서 [{action}]을 눌러라',
+  'lane.code.turn_key_missing': '이 턴의 연결 열쇠를 받지 못해 API 키 연결 턴을 띄우지 않았다 — 오퍼레이터를 다시 띄운 뒤 다시 불러 보라',
   'lane.code.harness_version.join': '·',
   'lane.code.bad_model': '모델 이름이 비었거나 쓸 수 없는 글자가 있다 — [이 에이전트만 따로]에서 gateway 가 받는 모델 이름을 그대로 넣어라(예: ExampleOrg/example-model)',
   'lane.code.interactive_unsupported': 'API 키로 도는 에이전트는 아직 터미널 열기를 지원하지 않는다',

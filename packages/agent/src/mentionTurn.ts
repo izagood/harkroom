@@ -52,7 +52,7 @@ import { planRefLines, planThreadPlan, type ThreadPlanState } from './threadPlan
 import { claudeMemoryDir, planHarnessMemoryNotice, scanHarnessMemory } from './harnessMemory.js';
 import { issueTurnKeys, turnKeyValues, type TurnKeys } from './turnKeys.js';
 import { scrubNeedles, scrubPath, scrubText } from './secretScrub.js';
-import { laneModelMissing, laneScrubsSubprocessEnv, writeOpencodeTurnMcpConfig, writeTurnMcpConfig, PROVIDER_LANE_FIXED_ENV, OMP_LANE_BASE_URL_ENV, OMP_LANE_KEY_FILE_ENV, PI_LANE_BASE_URL_ENV, PI_LANE_KEY_FILE_ENV, ProviderLaneError, writeLaneMcpConfig } from './providerLane.js';
+import { laneModelMissing, laneScrubsSubprocessEnv, writeOpencodeTurnMcpConfig, writeTurnMcpConfig, PROVIDER_LANE_FIXED_ENV, OMP_LANE_BASE_URL_ENV, OMP_LANE_KEY_FILE_ENV, PI_LANE_BASE_URL_ENV, PI_LANE_KEY_FILE_ENV, ProviderLaneError } from './providerLane.js';
 import { laneParentViolations, laneWorkspaceViolations } from './laneWorkspaceGuard.js';
 import { homedir } from 'node:os';
 
@@ -1695,6 +1695,9 @@ export async function runMentionTurn(
   const turnMcpConfig = turnKeys && turnKeyDeliveryOf(def.harness) === 'mcp-config-env'
     ? await writeTurnMcpConfig(deps.stateDir, deps.mcpConfigPath, turnId, turnKeys.bridge, { alwaysLoad: Boolean(providerEnv) && laneScrubsSubprocessEnv(def.harness) })
     : null;
+  // env 를 걷는 lane 턴(claude)은 브릿지가 턴 열쇠 MCP 설정으로만 붙는다. 그 설정이 없으면 띄우지 않는다(L3c-3c) — 옛 대체 길은
+  // 러너 링크 secret 을 파일에 실었다. 운영 조립은 턴 열쇠를 늘 맡기므로(`HarkroomAgentClient.registerTurnKeys`) 여기 닿지 않는다.
+  if (providerEnv && laneScrubsSubprocessEnv(def.harness) && !turnMcpConfig) throw new ProviderLaneError('turn_key_missing');
   // opencode: 다리 열쇠를 턴 설정 파일에 싣는다. API 키 연결 턴은 lane 턴 파일에 더해 쓰고(그 파일은 lane 이 치운다), 그 밖은 새 파일이다.
   const laneTurnFile = providerEnv?.OPENCODE_CONFIG ?? null;
   const opencodeTurnConfig = turnKeys && turnKeyDeliveryOf(def.harness) === 'turn-config-env'
@@ -1717,11 +1720,8 @@ export async function runMentionTurn(
     effort: turnModel.effort,
     mentionPermission: def.mentionPermission,
     // 턴 열쇠 턴(claude)은 그 턴만의 MCP 설정에 다리 열쇠를 싣는다 — lane 의 env 걷기 뒤에도 브릿지는 이 칸으로 붙는다.
-    // 턴 열쇠가 없는 lane 턴은 하위 프로세스 env 를 걷으므로(`PROVIDER_LANE_FIXED_ENV`) 브릿지에 줄 값을 lane 전용 MCP 설정의 `env` 칸으로 준다.
-    mcpConfigPath: turnMcpConfig
-      ?? (providerEnv && laneScrubsSubprocessEnv(def.harness)
-        ? await writeLaneMcpConfig(deps.stateDir, deps.mcpConfigPath)
-        : deps.mcpConfigPath),
+    // 턴 열쇠가 없는 lane 턴은 위에서 이미 멈췄다(`turn_key_missing`).
+    mcpConfigPath: turnMcpConfig ?? deps.mcpConfigPath,
     extraMcpServers,
     operatorBin: deps.operatorBin,
     mergeRepos,

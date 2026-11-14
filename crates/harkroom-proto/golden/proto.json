@@ -84,6 +84,7 @@
    "harness_version",
    "harness_login_present",
    "lane_setup",
+   "turn_key_missing",
    "no_lease",
    "forbidden",
    "bad_request",

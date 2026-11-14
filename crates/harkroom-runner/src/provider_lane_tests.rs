@@ -530,76 +530,24 @@ fn success_reports_ok_and_failure_reports_folded_code() {
     );
 }
 
-// ── writeLaneMcpConfig ──
+// ── sweepLaneMcpConfig(L3c-3c) ──
 
-fn source(servers: Value) -> (TempDir, PathBuf) {
-    let dir = TempDir::new("lane-mcp");
-    let path = dir.path().join("operator-mcp.json");
-    fs::write(&path, json!({ "mcpServers": servers }).to_string()).unwrap();
-    (dir, path)
-}
-
-fn harkroom() -> Value {
-    json!({ "command": "/x/harkroom-operator", "args": ["mcp-bridge"] })
-}
-
-fn env_of(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
-    pairs
-        .iter()
-        .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
-        .collect()
-}
-
-/// harkroom 항목 env 에 러너 secret 만 싣고, 0600 으로 상태 폴더에 쓴다 — lane 키·다른 항목은 건드리지 않는다
+/// 옛 대체 길이 남긴 `lane-mcp.json`(러너 링크 secret 이 든 파일)을 기동 때 지운다 — 없어도 조용하다
 #[test]
-fn lane_mcp_config_carries_only_runner_secret_at_0600() {
-    let (dir, path) = source(json!({
-        "harkroom": harkroom(),
-        "avcs": { "command": "avcs", "args": ["mcp"] },
-    }));
-    let out = write_lane_mcp_config(
-        dir.path(),
+fn sweep_lane_mcp_config_removes_old_file_and_is_quiet_when_absent() {
+    let dir = TempDir::new("lane-mcp-sweep");
+    let path = dir.path().join(LANE_MCP_CONFIG_FILE);
+    std::fs::write(
         &path,
-        &env_of(&[
-            ("HARKROOM_RUNNER_SECRET", "sec-1"),
-            ("ANTHROPIC_AUTH_TOKEN", "lane-key"),
-            ("HARKROOM_RUNNER_ID", "r1"),
-        ]),
+        r#"{"mcpServers":{"harkroom":{"env":{"HARKROOM_RUNNER_SECRET":"old"}}}}"#,
     )
     .unwrap();
-    assert_eq!(out, dir.path().join(LANE_MCP_CONFIG_FILE));
-    assert_eq!(mode(&out), 0o600);
-    let doc = read_doc(&out);
-    assert_eq!(
-        doc["mcpServers"]["harkroom"]["env"],
-        json!({ "HARKROOM_RUNNER_SECRET": "sec-1" })
-    );
-    // harkroom 도구는 처음부터 도구 목록에 — 다른 항목에는 달지 않는다.
-    assert_eq!(doc["mcpServers"]["harkroom"]["alwaysLoad"], json!(true));
-    assert!(!doc.to_string().contains("lane-key"));
-    assert_eq!(
-        doc["mcpServers"]["avcs"],
-        json!({ "command": "avcs", "args": ["mcp"] })
-    );
+    sweep_lane_mcp_config(dir.path());
+    assert!(!path.exists());
+    sweep_lane_mcp_config(dir.path());
 }
 
-/// 러너 secret 이 없거나 harkroom 항목이 없으면 던진다 — 조용히 브릿지가 끊긴 채 띄우지 않는다
-#[test]
-fn lane_mcp_config_fails_without_runner_secret_or_harkroom_entry() {
-    let (a_dir, a_path) = source(json!({ "harkroom": harkroom() }));
-    let err = write_lane_mcp_config(a_dir.path(), &a_path, &BTreeMap::new()).unwrap_err();
-    assert!(err.to_string().contains("HARKROOM_RUNNER_SECRET"));
-    let (b_dir, b_path) = source(json!({ "avcs": { "command": "avcs" } }));
-    let err = write_lane_mcp_config(
-        b_dir.path(),
-        &b_path,
-        &env_of(&[("HARKROOM_RUNNER_SECRET", "s")]),
-    )
-    .unwrap_err();
-    assert!(err.to_string().contains("harkroom"));
-}
-
-/// env 를 걷는 하네스만 이 길을 탄다
+/// env 를 걷는 하네스는 claude 하나다(턴 열쇠 없는 lane 턴을 거절하는 대상)
 #[test]
 fn only_env_scrubbing_harness_takes_this_path() {
     assert!(lane_scrubs_subprocess_env(AgentHarness::ClaudeCode));

@@ -103,12 +103,12 @@ export const PI_LANE_MEASURED_VERSIONS = ['1.4.0'] as const;
  * 오퍼레이터·서버가 준 문자열을 그대로 흘리지 않고, 모르는 것은 `unknown` 으로 접는다. base URL·비밀 이름·값 경로는
  * 코드가 아니므로 어디에도 실리지 않는다(조건 ①).
  *
- * - 러너가 정하는 것: `harness_unsupported`·`no_turn_secrets_dir`·`operator_unreachable`·`lane_unset`·`bad_base_url`·`bad_path`·`bad_value`·`bg_unsupported`·`bad_model`(opencode 모델이 `harkroom-lane/<id>` 꼴이 아님)·`workspace_protected`(작업 폴더에 다음 턴을 바꾸는 이름이 있음)·`harness_version`(옛 러너만 낸다 — 2026-10-25 부터 판으로 막지 않는다)·`harness_login_present`(codex lane 전용 홈에 계정 로그인 파일이 있음)·`lane_setup`(그 채널의 lane 권한 표를 쓰거나 확인하지 못함)
+ * - 러너가 정하는 것: `harness_unsupported`·`no_turn_secrets_dir`·`operator_unreachable`·`lane_unset`·`bad_base_url`·`bad_path`·`bad_value`·`bg_unsupported`·`bad_model`(opencode 모델이 `harkroom-lane/<id>` 꼴이 아님)·`workspace_protected`(작업 폴더에 다음 턴을 바꾸는 이름이 있음)·`harness_version`(옛 러너만 낸다 — 2026-10-25 부터 판으로 막지 않는다)·`harness_login_present`(codex lane 전용 홈에 계정 로그인 파일이 있음)·`lane_setup`(그 채널의 lane 권한 표를 쓰거나 확인하지 못함)·`turn_key_missing`(env 를 걷는 lane 턴에 턴 열쇠가 없음 — 띄우지 않는다)
  * - 오퍼레이터가 정하는 것: `no_lease`(재기동한 러너)·`forbidden`·`bad_request`·`unavailable`
  * - 서버 비밀 꺼내기가 정하는 것: `not_granted`·`grant_suspended`·`lease_invalid`·`not_found`·`secret_expired`·`secret_store_disabled`·`rate_limited`
  */
 export const PROVIDER_LANE_FAILURE_CODES = [
-  'harness_unsupported', 'no_turn_secrets_dir', 'operator_unreachable', 'lane_unset', 'bad_base_url', 'bad_path', 'bad_value', 'bg_unsupported', 'bad_model', 'workspace_protected', 'harness_version', 'harness_login_present', 'lane_setup',
+  'harness_unsupported', 'no_turn_secrets_dir', 'operator_unreachable', 'lane_unset', 'bad_base_url', 'bad_path', 'bad_value', 'bg_unsupported', 'bad_model', 'workspace_protected', 'harness_version', 'harness_login_present', 'lane_setup', 'turn_key_missing',
   'no_lease', 'forbidden', 'bad_request', 'unavailable',
   'not_granted', 'grant_suspended', 'lease_invalid', 'not_found', 'secret_expired', 'secret_store_disabled', 'rate_limited',
   'unknown',

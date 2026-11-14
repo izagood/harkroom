@@ -1648,6 +1648,7 @@ export const en = {
   'lane.code.harness_login_present.join': ' or ',
   'lane.code.harness_login_present.thread': '<thread>',
   'lane.code.lane_setup': 'Stopped: couldn\'t prepare this channel\'s opencode permission settings — call again, and if it stops again, use [{action}] in agent settings',
+  'lane.code.turn_key_missing': 'Didn\'t start the API-key turn: this turn\'s connection key was missing — restart the operator and call again',
   'lane.code.harness_version.join': ' or ',
   'lane.code.bad_model': 'Model name is empty or has characters it can\'t use — under [Customize for this agent], enter the model name exactly as the gateway takes it (e.g. ExampleOrg/example-model)',
   'lane.code.interactive_unsupported': 'Agents using an API key can\'t open a terminal yet',

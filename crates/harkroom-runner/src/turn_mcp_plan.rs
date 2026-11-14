@@ -23,8 +23,8 @@ use crate::opencode_home::{
 };
 use crate::pi_home::readonly_tool_list;
 use crate::provider_lane::{
-    LaneFileError, ProviderLaneError, lane_scrubs_subprocess_env, write_lane_mcp_config,
-    write_opencode_turn_mcp_config, write_turn_mcp_config,
+    LaneFileError, ProviderLaneError, lane_scrubs_subprocess_env, write_opencode_turn_mcp_config,
+    write_turn_mcp_config,
 };
 use crate::rest::{TurnKeys, issue_turn_keys};
 
@@ -183,8 +183,10 @@ pub fn turn_mcp_plan(i: &TurnMcpInput<'_>) -> Result<TurnMcpPlan, LaneFileError>
 
     let mcp_config_path = match turn_mcp_config {
         Some(p) => p,
+        // env 를 걷는 lane 턴(claude)은 턴 열쇠 MCP 설정으로만 브릿지가 붙는다 — 없으면 띄우지 않는다(정본 `turn_key_missing`, L3c-3c).
+        // 옛 대체 길은 러너 링크 secret 을 파일에 실었다.
         None if lane && lane_scrubs_subprocess_env(i.harness) => {
-            write_lane_mcp_config(i.state_dir, i.mcp_config_path, i.runner_env)?
+            return Err(ProviderLaneError::new("turn_key_missing").into());
         }
         None => i.mcp_config_path.to_path_buf(),
     };

@@ -102,6 +102,8 @@ fn main() {
     opts.provider_lane = Some(provider_lane);
     // 지난 러너가 남긴 lane 턴 파일을 기동 때 걷는다(정본 `main.ts` 655 `sweepLaneTurnDir`).
     harkroom_runner::provider_lane::sweep_lane_turn_dir(std::path::Path::new(&config.state_dir));
+    // 옛 lane 대체 길이 남긴 `lane-mcp.json`(그때의 러너 링크 secret)을 지운다(정본 `sweepLaneMcpConfig`, L3c-3c).
+    harkroom_runner::provider_lane::sweep_lane_mcp_config(std::path::Path::new(&config.state_dir));
     let link: Link = LinkClient::new(opts);
     link.start();
     if !link.when_connected(Duration::from_secs(10)) {

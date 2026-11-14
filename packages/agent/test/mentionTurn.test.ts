@@ -276,6 +276,12 @@ async function makeDeps(fake: FakeHarkroom, overrides: Partial<MentionTurnDeps> 
 }> {
   const store = new SessionStore(join(await mkdtemp(join(tmpdir(), 'mention-turn-')), 'sessions.json'));
   await store.load();
+  // API 키 연결 claude 턴은 운영처럼 턴 열쇠를 맡긴다(L3c-3c) — 운영 클라이언트에는 `registerTurnKeys` 가 늘 있고, 없으면 그 턴은
+  // `turn_key_missing` 으로 멈춘다(그 경우는 `턴 열쇠가 없는 API 키 연결 claude 턴` 시험이 따로 본다).
+  const keyless = fake as FakeHarkroom & { registerTurnKeys?: unknown; endTurnKeys?: unknown };
+  if (overrides.providerEnv && fake.def.harness === 'claude-code' && !keyless.registerTurnKeys) {
+    Object.assign(fake, { registerTurnKeys: async () => {}, endTurnKeys: async () => {} });
+  }
   // workingDir===null 경로(resolveWorkspaceDir)는 avcs 를 거치지 않고 실제 mkdir 을 한다
   // (fix round 2) — exec 가 완전히 fake 인 avcs 경로와 달리 진짜 쓰기 가능한 디렉터리가
   // 있어야 한다.
@@ -1328,6 +1334,31 @@ describe('runMentionTurn', () => {
 
     expect(fake.posts.map((p) => p.body)).toEqual([expect.stringContaining('하네스 기록에서 옮겨 올렸습니다')]);
     expect(fake.reactions.filter((r) => r.emoji === '✅')).toEqual([]);
+  });
+
+  it('턴 열쇠가 없는 API 키 연결 claude 턴은 띄우지 않는다 — 옛 lane-mcp.json(러너 secret)을 쓰지 않는다(L3c-3c)', async () => {
+    const fake = new FakeHarkroom(defOf({ harness: 'claude-code', model: 'ExampleOrg/example-model' }));
+    fake.seedFrom('human-1', '@forge 안녕').id = MENTION;
+    const { deps, plans } = await makeDeps(fake, { providerEnv: async () => ({}) });
+    // makeDeps 가 붙인 열쇠 맡기기를 걷어 옛 조립(열쇠 없음)을 흉내낸다.
+    delete (fake as { registerTurnKeys?: unknown }).registerTurnKeys;
+    const workspaceDir = join(deps.workspaceBaseDir, 'claude-lane-nokey');
+    await mkdir(workspaceDir, { recursive: true });
+    await deps.store.put(SessionStore.threadKey(CHANNEL, null), {
+      workspaceDir, sessionId: '00000000-0000-4000-8000-000000000001', harness: 'claude-code', lastFedSeq: 0, turnsRun: 0,
+    });
+    const mcpConfigPath = join(deps.workspaceBaseDir, 'mcp.json');
+    await writeFile(mcpConfigPath, JSON.stringify({ mcpServers: { harkroom: { type: 'stdio', command: '/opt/harkroom/harkroom-operator', args: ['mcp-bridge'] } } }));
+    vi.stubEnv('HARKROOM_RUNNER_SECRET', 'fake-runner-secret');
+    try {
+      // 실패는 던진다 — 실패 카드(`turn_key_missing`)는 위 단(스케줄러)이 이 코드로 세운다.
+      await expect(runMentionTurn({ ...deps, mcpConfigPath }, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }))
+        .rejects.toMatchObject({ name: 'ProviderLaneError', code: 'turn_key_missing' });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect(plans).toEqual([]);
+    await expect(readFile(join(deps.stateDir, 'lane-mcp.json'), 'utf8')).rejects.toThrow();
   });
 
   it('API 키 연결 codex 턴은 끝말을 기록에서 읽어 표째 옮기고, 구독 턴은 읽지 않는다', async () => {
