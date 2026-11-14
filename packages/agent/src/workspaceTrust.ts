@@ -14,7 +14,7 @@
 // `mentionPermission: 'auto'` 에이전트는 이미 그 안에서 무엇이든 실행할 수 있다(스펙 §6 이
 // 그렇게 정했다). 즉 훅을 심어 실행하는 길은 이미 있는 길보다 넓지 않다. 신뢰가 정하는
 // 것은 "이 디렉터리를 작업 대상으로 인정하는가"이고, 러너가 그것을 만들었다는 사실이 곧 답이다.
-import { lstat, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, realpath, rename, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
@@ -392,6 +392,10 @@ export async function ensureWorkspaceTrusted(opts: {
     // **장부는 어댑터 표가 말한다.** 하네스 이름으로 갈리던 옛 분기는 지웠다(2026-09-18) —
     // 그 둘이 같은 답을 낸다는 것을 패리티 테스트가 증명했고, 기본 경로로 며칠 돌았다.
     await trustViaAdapter(opts);
+    // 하네스는 작업 폴더를 **실제 경로**로 풀어 신뢰를 찾는다(macOS `/tmp` → `/private/tmp`, 심링크가 섞인 집 등, 2026-11-14
+    // 실측) — 풀린 경로가 다르면 그 키로도 적는다. 같은 폴더 하나이고 새 폴더를 열지 않는다. 못 풀면 적어 둔 키 하나로 둔다.
+    const real = await realpath(opts.workspaceDir).catch(() => null);
+    if (real !== null && real !== opts.workspaceDir) await trustViaAdapter({ ...opts, workspaceDir: real });
   } catch (err) {
     // 위 주석의 이유로 삼킨다 — 다만 조용히는 아니다.
     console.error(

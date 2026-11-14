@@ -429,7 +429,19 @@ pub fn prepare_harness_gates(
         .map(Path::to_path_buf)
         .unwrap_or_else(|| home.join(".codex"));
     ensure_workspace_trusted_via_adapter(harness, workspace_dir, claude_config_dir, &codex, home);
+    // 하네스는 작업 폴더를 **실제 경로**로 풀어 신뢰를 찾는다(macOS `/tmp` → `/private/tmp`, 심링크가 섞인 집 등) — 풀린 경로가
+    // 다르면 그 키로도 적는다(같은 폴더 하나, 새 폴더를 열지 않는다). 못 풀면 적어 둔 키 하나로 둔다.
+    if let Some(real) = real_path_if_different(workspace_dir) {
+        ensure_workspace_trusted_via_adapter(harness, &real, claude_config_dir, &codex, home);
+    }
     ensure_bypass_accepted(harness.as_str(), claude_config_dir, home);
+}
+
+/// 작업 폴더의 실제 경로 — 적어 둔 경로와 다를 때만(같거나 못 풀면 `None`).
+pub fn real_path_if_different(workspace_dir: &str) -> Option<String> {
+    let real = std::fs::canonicalize(workspace_dir).ok()?;
+    let real = real.to_str()?.to_string();
+    (real != workspace_dir).then_some(real)
 }
 
 /// TS `ensureWorkspaceTrusted` — 이 턴의 워크스페이스를 하네스가 신뢰하게 한다. **PTY 를 띄우기 전에** 부른다.

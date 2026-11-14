@@ -715,10 +715,14 @@ pub fn check_spawn_cwd(cwd: &Path) -> Result<(), &'static str> {
     if cwd.as_os_str().is_empty() || !cwd.is_absolute() {
         return Err("작업 폴더가 비었거나 절대 경로가 아니다 — 하네스를 띄우지 않는다");
     }
-    if cwd.parent().is_none() {
+    // 실제 경로로 풀어 본다 — 루트를 가리키는 링크·`/tmp/..` 같은 꼴도 루트로 잡는다(security T3 후속).
+    let Ok(real) = std::fs::canonicalize(cwd) else {
+        return Err("작업 폴더가 없다 — 하네스를 띄우지 않는다");
+    };
+    if cwd.parent().is_none() || real.parent().is_none() {
         return Err("작업 폴더가 루트(/)다 — 하네스를 띄우지 않는다");
     }
-    if !cwd.is_dir() {
+    if !real.is_dir() {
         return Err("작업 폴더가 없다 — 하네스를 띄우지 않는다");
     }
     Ok(())

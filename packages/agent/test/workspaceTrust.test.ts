@@ -2,7 +2,7 @@
 //
 // 이것이 없으면 TUI 턴은 신뢰 대화상자를 만나고, 러너는 답할 수 없어 무발화 한도까지
 // 매달린다. `-p` 는 이 대화상자를 묻지 않았으므로 실행 모델 교체가 새로 만든 요구다.
-import { lstat, mkdir, mkdtemp, readdir, readFile, stat, symlink, unlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readdir, readFile, realpath, stat, symlink, unlink, writeFile } from 'node:fs/promises';
 import { existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -315,5 +315,23 @@ describe('ensureWorkspaceTrusted — 기본 로그인(사람의 ~/.claude.json)'
     await writeFile(settings, '{"theme": "dark"}');
     await ensureDangerousModeAccepted({ harness: 'claude-code', claudeConfigDir: null, home });
     expect(JSON.parse(await readFile(settings, 'utf8'))).toEqual({ theme: 'dark', skipDangerousModePermissionPrompt: true });
+  });
+});
+
+// T4b(2026-11-14): 하네스는 작업 폴더를 실제 경로로 풀어 신뢰를 찾는다(macOS `/tmp` → `/private/tmp`).
+describe('ensureWorkspaceTrusted — 실제 경로 키도 적는다', () => {
+  it('심링크가 섞인 작업 폴더면 그 경로와 실제 경로 두 키(같은 폴더 하나)', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'trust-realpath-'));
+    await mkdir(join(base, 'real', 'ws'), { recursive: true });
+    await symlink(join(base, 'real'), join(base, 'link'));
+    const home = join(base, 'home');
+    await mkdir(home);
+    const viaLink = join(base, 'link', 'ws');
+    const real = await realpath(viaLink);
+    expect(real).not.toBe(viaLink);
+    await ensureWorkspaceTrusted({ harness: 'claude-code', workspaceDir: viaLink, claudeConfigDir: null, codexHome: '/unused', home });
+    const doc = JSON.parse(await readFile(join(home, '.claude.json'), 'utf8'));
+    expect(Object.keys(doc.projects).sort()).toEqual([real, viaLink].sort());
+    expect(doc.projects[real]).toEqual({ hasTrustDialogAccepted: true });
   });
 });

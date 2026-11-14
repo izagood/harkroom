@@ -556,3 +556,17 @@ fn run_pty_turn_refuses_root_or_bad_cwd() {
         assert!(matches!(r, Err(PtyTurnError::Spawn(_))), "{cwd:?}: {r:?}");
     }
 }
+
+/// T4b(security T3 후속): 루트를 가리키는 링크도 루트로 잡는다 — 실제 경로로 풀어 검사한다.
+#[test]
+fn run_pty_turn_refuses_link_to_root() {
+    let d = std::env::temp_dir().join(format!("hk-t4b-root-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    let link = d.join("to-root");
+    std::os::unix::fs::symlink("/", &link).unwrap();
+    let mut sink = Sink::default();
+    let r = run_pty_turn(&sh("echo SPAWNED"), PtyTurnOptions::at(link), &mut sink);
+    assert!(matches!(r, Err(PtyTurnError::Spawn(_))), "{r:?}");
+    let _ = std::fs::remove_dir_all(&d);
+}
