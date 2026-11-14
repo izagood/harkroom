@@ -28,6 +28,7 @@ fn notice(tag: &str) -> NoticeSecrets {
     NoticeSecrets {
         pat: "pat".into(),
         mounted: vec![format!("mounted-{tag}")],
+        lease_dir: None,
     }
 }
 

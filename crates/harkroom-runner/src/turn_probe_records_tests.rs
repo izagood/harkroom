@@ -61,6 +61,7 @@ fn secrets() -> NoticeSecrets {
     NoticeSecrets {
         pat: PAT.into(),
         mounted: vec![MOUNTED.into()],
+        lease_dir: None,
     }
 }
 
@@ -268,4 +269,32 @@ fn spawn_gate_stops_before_spawn_when_fenced_or_canceled() {
 fn notice_secrets_debug_hides_values() {
     let dbg = format!("{:?}", secrets());
     assert!(!dbg.contains(PAT) && !dbg.contains(MOUNTED), "{dbg}");
+}
+
+/// T3a: 띄운 **뒤** 임대 폴더에 생긴 값(턴 도중 `secret.mount`)도 통지에서 가린다 — 쓸 때 다시 읽는다(정본 `tailSecrets`).
+/// 다른 임대 폴더의 값은 이 통지와 상관없다(섞이지 않는다).
+#[test]
+fn notice_masks_values_mounted_after_spawn() {
+    let base = std::env::temp_dir().join(format!("hk-t3a-notice-{}", std::process::id()));
+    let mine = base.join("lease-mine");
+    let other = base.join("lease-other");
+    std::fs::create_dir_all(&mine).unwrap();
+    std::fs::create_dir_all(&other).unwrap();
+    let s = NoticeSecrets {
+        pat: PAT.into(),
+        mounted: vec![],
+        lease_dir: Some(mine.clone()),
+    };
+    // 띄운 뒤 마운트
+    std::fs::write(mine.join("API_KEY"), "LATE-MOUNTED-SECRET-VALUE-1234").unwrap();
+    std::fs::write(other.join("API_KEY"), "OTHER-LEASE-VALUE-ZZZZ-9999").unwrap();
+    let body = s
+        .guard_body("screen says LATE-MOUNTED-SECRET-VALUE-1234 and OTHER-LEASE-VALUE-ZZZZ-9999")
+        .unwrap();
+    assert!(!body.contains("LATE-MOUNTED-SECRET-VALUE-1234"), "{body}");
+    assert!(
+        body.contains("OTHER-LEASE-VALUE-ZZZZ-9999"),
+        "다른 임대 폴더는 안 읽는다: {body}"
+    );
+    let _ = std::fs::remove_dir_all(&base);
 }

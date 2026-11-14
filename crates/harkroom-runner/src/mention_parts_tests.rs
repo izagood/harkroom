@@ -569,3 +569,17 @@ fn attempt_pty_options_refuse_bad_workspace() {
         );
     }
 }
+
+/// T3a: 시도를 준비할 때 이 멘션의 임대 폴더를 묻는다 — 가림 바늘(꼬리·통지·기록)이 그 폴더를 본다.
+#[test]
+fn prepare_asks_lease_dir_for_this_mention() {
+    let w = world("lease");
+    let store = SessionStore::new(w.root.join("sessions.json"));
+    let stale = PathBuf::from("/x");
+    let mut p = parts(&w, &store, &stale, false);
+    let dir = w.root.join("lease-1");
+    let d2 = dir.clone();
+    p.lease_dir_of = Some(Box::new(move || Some(d2.clone())));
+    let prep = p.prepare(&target(), None, true, "t-1").unwrap();
+    assert_eq!(prep.lease_dir, Some(dir));
+}

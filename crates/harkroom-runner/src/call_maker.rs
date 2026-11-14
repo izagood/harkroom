@@ -219,7 +219,7 @@ where
     fn call_inputs<'a>(
         &'a self,
         _clients: &'a AgentClients<L>,
-        _book: &'a LeaseBook,
+        book: &'a LeaseBook,
         target: &MentionTarget,
         reads: MentionReads,
         system: SystemInputs,
@@ -308,6 +308,9 @@ where
                 .map(str::to_owned),
         };
         let (pkey, handles) = (key.clone(), n.handles);
+        // 마운트한 비밀을 꼬리·통지·기록에서 가릴 바늘 자리(정본 `secretNeedles(cause)`) — 임대는 부품을 지은 뒤 받으므로 시도
+        // 준비 때 묻는다.
+        let lease_cause = target.mention_id.clone();
         // 정본 `main.ts:76` `recordDir: config.ptyRecordDir`(`AGENT_PTY_RECORD_DIR`, 기본 끔).
         let record_dir = c.pty_record_dir.clone();
         let build_parts = Box::new(move |b: BundleParts<'a, L>| {
@@ -345,6 +348,7 @@ where
             p.slot = b.slot;
             p.watch_loop = Some(b.watch_loop);
             p.argv = argv;
+            p.lease_dir_of = Some(Box::new(move || book.lease_dir(&lease_cause)));
             p.turn_timeout_ms = c.turn_timeout_ms;
             p
         });

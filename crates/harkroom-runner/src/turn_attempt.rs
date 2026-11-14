@@ -210,6 +210,8 @@ pub fn lease_needles(dir: &std::path::Path) -> Vec<String> {
 pub struct TurnSecrets {
     pat: String,
     needles: Vec<String>,
+    /// 감시 통지가 쓸 때 다시 읽을 임대 폴더(값이 아니라 자리).
+    lease_dir: Option<std::path::PathBuf>,
 }
 
 impl std::fmt::Debug for TurnSecrets {
@@ -236,6 +238,7 @@ impl TurnSecrets {
         Self {
             pat: pat.to_string(),
             needles,
+            lease_dir: lease_dir.map(std::path::Path::to_path_buf),
         }
     }
 
@@ -254,6 +257,7 @@ impl TurnSecrets {
         crate::turn_probe_records::NoticeSecrets {
             pat: self.pat.clone(),
             mounted: self.needles.clone(),
+            lease_dir: self.lease_dir.clone(),
         }
     }
 }

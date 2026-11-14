@@ -133,6 +133,22 @@ impl LeaseBook {
         }
     }
     /// 칸을 빼고(박동은 여기서 멈춘다) 받은 임대였으면 기록을 가린다. 끝 알림을 보낼지(`Held` 였나) 돌려준다.
+    /// 그 멘션의 임대 폴더(`<턴 비밀 뿌리>/<임대 id>`) — 받은 임대(`Held`)이고 id 가 안전할 때만. 가림 바늘을 지을 자리이지
+    /// 토큰이 아니다. 다른 멘션·다른 에이전트의 폴더는 고를 수 없다(원인 → 그 원인의 임대 id 로만 짓는다).
+    pub fn lease_dir(&self, cause: &str) -> Option<PathBuf> {
+        let root = self.life.as_ref()?.secrets_dir.as_ref()?;
+        let m = self.map();
+        let e = m.get(cause)?;
+        if e.booked != Booked::Held {
+            return None;
+        }
+        let id = e.lease_id.as_deref()?;
+        // 오퍼레이터 `SecretsRoot::dir_of` 와 같은 선 — 경로 성분이 섞이면 짓지 않는다.
+        if id.is_empty() || id == "." || id.contains("..") || id.contains(['/', '\\', '\0']) {
+            return None;
+        }
+        Some(root.join(id))
+    }
     /// 아직 장부에 남은 멘션(물러날 때 drain 시한이 지나도 남은 임대 — `main.rs` 가 놓는다).
     pub fn causes(&self) -> Vec<String> {
         self.map().keys().cloned().collect()

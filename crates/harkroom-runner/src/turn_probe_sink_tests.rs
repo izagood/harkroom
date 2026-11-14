@@ -45,6 +45,7 @@ fn secrets() -> NoticeSecrets {
     NoticeSecrets {
         pat: PAT.into(),
         mounted: vec![MOUNTED.into()],
+        lease_dir: None,
     }
 }
 
