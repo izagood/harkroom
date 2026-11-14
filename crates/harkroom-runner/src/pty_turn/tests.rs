@@ -467,7 +467,7 @@ fn loop_injects_into_fake_tui_and_returns_last_frame() {
         PtyTurnOptions {
             timeout_ms: 10_000,
             inject: Some(o),
-            ..PtyTurnOptions::default()
+            ..PtyTurnOptions::at(std::env::temp_dir())
         },
         &mut sink,
     )
@@ -492,7 +492,7 @@ fn loop_timeout_terminates_and_reports_timed_out() {
         PtyTurnOptions {
             timeout_ms: 300,
             kill_grace_ms: 300,
-            ..PtyTurnOptions::default()
+            ..PtyTurnOptions::at(std::env::temp_dir())
         },
         &mut sink,
     )
@@ -514,7 +514,7 @@ fn loop_fails_undelivered_when_ready_never_shows() {
         &plan,
         PtyTurnOptions {
             inject: Some(o),
-            ..PtyTurnOptions::default()
+            ..PtyTurnOptions::at(std::env::temp_dir())
         },
         &mut sink,
     ) {
@@ -534,8 +534,25 @@ fn loop_missing_harness_is_not_found() {
     plan.command = "harkroom-no-such-harness".into();
     let mut sink = Sink::default();
     assert!(matches!(
-        run_pty_turn(&plan, PtyTurnOptions::default(), &mut sink),
+        run_pty_turn(&plan, PtyTurnOptions::at(std::env::temp_dir()), &mut sink),
         Err(super::PtyTurnError::NotFound(_))
     ));
     assert!(sink.spawned.is_none());
+}
+
+/// T3(security S1·S6): 띄우기 직전 검사 — 루트(`/`)·빈 값·상대 경로·없는 폴더면 실행 파일을 띄우지 않는다.
+#[test]
+fn run_pty_turn_refuses_root_or_bad_cwd() {
+    let plan = sh("echo SPAWNED");
+    let missing = std::env::temp_dir().join(format!("hk-t3-nope-{}", std::process::id()));
+    for cwd in [
+        PathBuf::from("/"),
+        PathBuf::new(),
+        PathBuf::from("rel"),
+        missing,
+    ] {
+        let mut sink = Sink::default();
+        let r = run_pty_turn(&plan, PtyTurnOptions::at(cwd.clone()), &mut sink);
+        assert!(matches!(r, Err(PtyTurnError::Spawn(_))), "{cwd:?}: {r:?}");
+    }
 }

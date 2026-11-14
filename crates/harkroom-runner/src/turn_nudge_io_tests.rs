@@ -64,7 +64,7 @@ fn spawn_echo(watch: &Watch, out: &Out) -> std::thread::JoinHandle<()> {
             &plan,
             PtyTurnOptions {
                 timeout_ms: 5_000,
-                ..PtyTurnOptions::default()
+                ..PtyTurnOptions::at(std::env::temp_dir())
             },
             &mut sink,
         );
