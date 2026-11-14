@@ -15,7 +15,8 @@ path = "src/main.rs"
 [dependencies]
 # 이벤트 버스 쓰는 쪽(S5.0) — outbox 계약을 한 곳에 둔다(P3 쓰기 바탕).
 harkroom-bus = { path = "../harkroom-bus" }
-axum = { version = "=0.8.9", default-features = false, features = ["http1", "tokio"] }
+axum = { version = "=0.8.9", default-features = false, features = ["http1", "tokio", "ws"] }
+getrandom = "=0.4.3"
 hex = "=0.4.3"
 http-body-util = "=0.1.5"
 hyper = { version = "=1.12.0", features = ["client", "http1"] }

@@ -16,6 +16,7 @@ import { postMessage } from '../src/services/messages.js';
 import { startEventBus } from '../src/eventBus.js';
 import type { WorkspaceEvent } from '../src/events.js';
 import pg from 'pg';
+import WebSocket from 'ws';
 
 const ON = process.env.HARKROOM_RUST_DB_TESTS === '1';
 const MANIFEST = fileURLToPath(new URL('../../../crates/harkroom-server/Cargo.toml', import.meta.url));
@@ -242,7 +243,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       const f = await startFront(bin, {
         UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(port), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
         TRUST_PROXY: TRUST.join(','),
+        // S5.3 C0 — 코어 /ws·/ws-ticket 을 켠다. 주기는 시험이 기다릴 수 있게 줄인다(기본값은 TS 와 같다).
+        HARKROOM_CORE: 'rust', HARKROOM_WS_APP_HEARTBEAT_MS: '300', HARKROOM_WS_REVALIDATE_MS: '500',
       });
+      expect(f.log()).toContain('front: core rust');
       expect(f.log()).toContain('front: trust proxy 2 cidr(s)');
       front = f.child;
       // 앞단이 옮긴 줄을 **직접** 답하는지 — 모두 TS 로 넘기면 대조는 TS 끼리 비교해 늘 통과한다.
@@ -654,6 +658,83 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       }
       expect(rec.left, '세션이 14일로 늘어야 한다').toBeGreaterThanOrEqual(13);
       expect(rec.fresh, 'PAT 사용 시각이 새로 찍혀야 한다').toBe(true);
+
+      // S5.3 C0 — `/ws`. 같은 시나리오를 TS 와 Rust 코어에 돌려 프레임을 견준다.
+      interface Sock { ws: WebSocket; frames: Record<string, unknown>[]; closed: Promise<number> }
+      const ticket = async (base: string, token: string): Promise<string> => {
+        const res = await fetch(`${base}/ws-ticket`, { method: 'POST', headers: { authorization: `Bearer ${token}` } });
+        expect(res.status, `${base} /ws-ticket`).toBe(200);
+        return String(((await res.json()) as { ticket: string }).ticket);
+      };
+      const open = (base: string, query: string): Promise<Sock> => new Promise((resolve, reject) => {
+        const ws = new WebSocket(`${base.replace('http', 'ws')}/ws${query}`);
+        const frames: Record<string, unknown>[] = [];
+        const closed = new Promise<number>((r) => ws.on('close', (code) => r(code)));
+        ws.on('message', (d) => frames.push(JSON.parse(String(d)) as Record<string, unknown>));
+        ws.on('open', () => resolve({ ws, frames, closed }));
+        ws.on('error', reject);
+      });
+      const waitFor = async (s: Sock, pred: (f: Record<string, unknown>) => boolean, ms = 5_000) => {
+        const until = Date.now() + ms;
+        while (Date.now() < until) {
+          const hit = s.frames.find(pred);
+          if (hit) return hit;
+          await new Promise((r) => setTimeout(r, 50));
+        }
+        return undefined;
+      };
+      const socks: Sock[] = [];
+      try {
+        // 티켓: 없음·두 번 쓰기는 4401(두 서버 같음).
+        for (const base of [tsUrl, rsUrl]) {
+          expect(await (await open(base, '')).closed, `${base} 티켓 없음`).toBe(4401);
+          const t = await ticket(base, member.token);
+          const first = await open(base, `?ticket=${encodeURIComponent(t)}`);
+          socks.push(first);
+          expect(await (await open(base, `?ticket=${encodeURIComponent(t)}`)).closed, `${base} 티켓 재사용`).toBe(4401);
+          const snap = await waitFor(first, (f) => f.type === 'presence.snapshot');
+          expect((snap?.online as string[]) ?? [], `${base} 스냅숏에 나`).toContain(member.accountId);
+        }
+        const [tsMem, rsMem] = socks as [Sock, Sock];
+        // 앱 hb 프레임(Rust 는 시험용으로 300ms).
+        expect(await waitFor(rsMem, (f) => f.type === 'hb'), 'hb 프레임').toMatchObject({ type: 'hb', intervalMs: 300 });
+        // 이벤트: Rust 가 쓴 것(outbox) → Rust 코어 소켓에 도착, TS 버스가 받은 것과 같은 모양. 남의 계정 이벤트는 오지 않는다.
+        const rsAdmin = await open(rsUrl, `?ticket=${encodeURIComponent(await ticket(rsUrl, A))}`);
+        socks.push(rsAdmin);
+        const grp2 = await callX(rsUrl, 'POST', '/handle-groups', { handle: 'wsgroup', displayName: 'W' });
+        expect(grp2.status).toBe(201);
+        const ev = await waitFor(rsMem, (f) => f.type === 'handle_group.changed' && f.groupId === grp2.json.id);
+        expect(ev, '코어 소켓이 outbox 이벤트를 받는다').toEqual({ type: 'handle_group.changed', groupId: grp2.json.id, audience: 'all' });
+        const seen = await callX(rsUrl, 'PUT', '/inbox/today/seen', { upTo: new Date().toISOString() }, member.token);
+        expect(seen.status).toBe(200);
+        expect(await waitFor(rsMem, (f) => f.type === 'inbox.updated'), '내 inbox.updated').toEqual({ type: 'inbox.updated', accountId: member.accountId });
+        await new Promise((r) => setTimeout(r, 300));
+        expect(rsAdmin.frames.filter((f) => f.type === 'inbox.updated' && f.accountId === member.accountId), '남의 inbox.updated 는 안 옴').toEqual([]);
+        // 입력 중: 공개 채널에서 member 가 치면 admin 은 [member], member 자신은 [] 를 받는다 — TS 와 같은 모양.
+        const pub = await callX(tsUrl, 'POST', '/channels', { name: 'ws-typing', visibility: 'public' });
+        const pubId = String((pub.json.channel as { id?: string } | undefined)?.id ?? pub.json.id);
+        const tsAdmin = await open(tsUrl, `?ticket=${encodeURIComponent(await ticket(tsUrl, A))}`);
+        socks.push(tsAdmin);
+        const typingFrames: Record<string, unknown>[][] = [];
+        for (const [memS, adminS] of [[tsMem, tsAdmin], [rsMem, rsAdmin]] as const) {
+          memS.ws.send(JSON.stringify({ type: 'typing', channelId: pubId }));
+          const toAdmin = await waitFor(adminS, (f) => f.type === 'typing.changed' && f.channelId === pubId);
+          const toMe = await waitFor(memS, (f) => f.type === 'typing.changed' && f.channelId === pubId);
+          typingFrames.push([toAdmin!, toMe!]);
+          memS.ws.send('not json');
+          memS.ws.send(JSON.stringify({ type: 'typing.stop', channelId: pubId }));
+        }
+        expect(typingFrames[1], 'Rust 입력 중 = TS 입력 중').toEqual(typingFrames[0]);
+        expect(typingFrames[1]![0]).toEqual({ type: 'typing.changed', channelId: pubId, accountIds: [member.accountId], audience: [admin.accountId] });
+        // 자격증명 재검증: 세션이 사라지면 4401 로 닫는다(Rust 시험 주기 500ms).
+        const rsMem2 = await open(rsUrl, `?ticket=${encodeURIComponent(await ticket(rsUrl, member2.token))}`);
+        socks.push(rsMem2);
+        await db.pool.query('delete from session where account_id = $1', [member2.accountId]);
+        const code = await Promise.race([rsMem2.closed, new Promise<number>((r) => setTimeout(() => r(-1), 5_000))]);
+        expect(code, '무효가 된 자격증명은 4401').toBe(4401);
+      } finally {
+        for (const s of socks) s.ws.terminate();
+      }
     } finally {
       front?.kill('SIGTERM');
       await app.close();
