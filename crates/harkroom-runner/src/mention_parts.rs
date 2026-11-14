@@ -259,6 +259,40 @@ pub type MountFn<'a> = Box<dyn FnMut(&str) -> Result<(), SecretMountError> + 'a>
 pub fn no_mount<'a>() -> MountFn<'a> {
     Box::new(|_cause: &str| Ok(()))
 }
+/// `memory.search`(recall 모드) 닫개.
+pub type RecallSearchFn<'a> = Box<
+    dyn Fn(&str, &crate::memory_pin::RecallOpts) -> Result<crate::memory_pin::RecallResult, String>
+        + 'a,
+>;
+/// `memory.recalled` 닫개.
+pub type RecordRecallFn<'a> = Box<dyn Fn(&[String]) -> Result<(), String> + 'a>;
+
+/// 정본 `recallQuery` — 앞 턴이 먹인 뒤의 남(나 아님·진행 글 아님)의 새 말 끝 셋, 1000자. 깨움 턴은 찾지 않는다(빈 값).
+pub fn recall_query(
+    thread: &[serde_json::Value],
+    last_fed_seq: u64,
+    me_id: &str,
+    wake: bool,
+) -> String {
+    if wake {
+        return String::new();
+    }
+    let picked: Vec<&str> = thread
+        .iter()
+        .filter(|m| {
+            m.get("seq")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0)
+                > last_fed_seq
+                && m.get("authorId").and_then(serde_json::Value::as_str) != Some(me_id)
+                && m.get("kind").and_then(serde_json::Value::as_str) != Some("progress")
+        })
+        .filter_map(|m| m.get("body").and_then(serde_json::Value::as_str))
+        .collect();
+    let start = picked.len().saturating_sub(3);
+    picked[start..].join("\n").chars().take(1000).collect()
+}
+
 /// 이 멘션의 임대 폴더를 묻는 닫개.
 pub type LeaseDirFn<'a> = Box<dyn Fn() -> Option<PathBuf> + 'a>;
 /// 시도마다 PTY 옵션(주입 글 틀 포함)을 새로 짓는다.
@@ -270,6 +304,8 @@ struct Current {
     prepared: Prepared,
     system_prompt_file: String,
     cause: String,
+    /// 이 시도에 실은 기억 고정·recall — 성공한 턴 뒤 `commit`·`memory.recalled`.
+    memory: crate::memory_pin::MemoryPlan,
 }
 
 /// 멘션마다 바뀌는 명령 칸의 소유본(지시문 입력에 없는 것). 띄울 때 [`with_argv`] 가 명령 옵션에 빌려 싣는다.
@@ -339,6 +375,10 @@ pub struct MentionParts<'a, P: PrepareIo, S: PtyTurnSink> {
     /// 이 멘션의 임대 폴더를 **시도를 준비할 때** 묻는다(임대는 짓개가 부품을 지은 뒤 받는다 — `LeaseBook::lease_dir`).
     /// `lease_dir` 가 있으면 그것이 먼저다.
     pub lease_dir_of: Option<LeaseDirFn<'a>>,
+    /// 정본 `harkroom.searchMemory`(recall 모드) — 없으면 recall 을 하지 않는다(기억 고정은 그대로).
+    pub recall_search: Option<RecallSearchFn<'a>>,
+    /// 정본 `harkroom.recordRecall`(`memory.recalled`) — 성공한 턴 뒤, 실제로 실은 recall 만. 실패는 로그만.
+    pub record_recall: Option<RecordRecallFn<'a>>,
     pub now: Option<TurnClock>,
     /// 시도를 준비할 때 그 순간의 시계를 잰다(정본 `now: new Date()` — 시도마다). `now` 가 있으면 그것이 먼저(시험용).
     pub clock: Option<fn() -> TurnClock>,
@@ -398,6 +438,8 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
             secrets: false,
             lease_dir: None,
             lease_dir_of: None,
+            recall_search: None,
+            record_recall: None,
             now: None,
             clock: None,
             outcome,
@@ -431,6 +473,56 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
     }
 
     /// 이 시도의 턴 프롬프트(주입 글). 준비 전이면 `None`.
+    /// 이 시도의 기억 고정·recall(정본 `planMemory` 부르기).
+    fn plan_memory_for(
+        &self,
+        prepared: &Prepared,
+        target: &MentionTarget,
+    ) -> crate::memory_pin::MemoryPlan {
+        let s = &prepared.session;
+        let query = recall_query(
+            &prepared.fed.thread,
+            s.rec.last_fed_seq,
+            &self.me_id,
+            turn_wake_of(target, None).is_some(),
+        );
+        let root_head = prepared
+            .fed
+            .thread
+            .iter()
+            .find(|m| {
+                m.get("id").and_then(serde_json::Value::as_str)
+                    == Some(target.thread_root_id.as_str())
+            })
+            .and_then(|m| m.get("body").and_then(serde_json::Value::as_str))
+            .map(|b| {
+                b.chars()
+                    .take(crate::memory_pin::RECALL_ROOT_HEAD_CHARS)
+                    .collect::<String>()
+            });
+        let search = self
+            .recall_search
+            .as_ref()
+            .map(|f| move |q: &str, o: &crate::memory_pin::RecallOpts| f(q, o));
+        let recall = match (&search, query.is_empty()) {
+            (Some(f), false) => Some(crate::memory_pin::Recall {
+                query,
+                search: f,
+                root_head,
+            }),
+            _ => None,
+        };
+        crate::memory_pin::plan_memory(
+            &self.state_dir,
+            &self.key,
+            s.rec.session_id.as_deref(),
+            s.is_first_turn,
+            &self.system.memory,
+            recall.as_ref(),
+            s.fresh_wake,
+        )
+    }
+
     pub fn prompt(&self) -> Option<&str> {
         self.cur.as_ref().map(|c| c.prepared.prompt.prompt.as_str())
     }
@@ -482,11 +574,23 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             &mut new_id,
         )
         .map_err(|_| fail())?;
-        let file = write_turn_system_prompt(&self.state_dir, &self.key, &self.system.opts())
-            .map_err(|e| {
-                eprintln!("[mentionTurn] {}: 지시문 파일 쓰기 실패 — {e}", self.key);
-                fail()
-            })?;
+        // 기억 고정·recall(정본 `planMemory`) — 지시문에는 고정된 기억(core)을, 턴 프롬프트 앞머리에는 목록·recall 을 싣는다.
+        let mut prepared = prepared;
+        let memory = self.plan_memory_for(&prepared, target);
+        if !memory.turn_lines.is_empty() {
+            let head = memory.turn_lines.join("\n");
+            prepared.prompt.prompt = format!(
+                "{}\n\n{}",
+                head.trim_start_matches('\n'),
+                prepared.prompt.prompt
+            );
+        }
+        let mut sys = self.system.opts();
+        sys.memory = &memory.system;
+        let file = write_turn_system_prompt(&self.state_dir, &self.key, &sys).map_err(|e| {
+            eprintln!("[mentionTurn] {}: 지시문 파일 쓰기 실패 — {e}", self.key);
+            fail()
+        })?;
         // 하네스를 띄우기 전, **이 시도의 계정 폴더**로 작업 폴더 신뢰·bypass 수락을 적는다(정본 `mentionTurn.ts` 의 차례).
         crate::workspace_trust::prepare_harness_gates(
             self.harness,
@@ -507,6 +611,7 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             prepared,
             system_prompt_file: file.to_string_lossy().into_owned(),
             cause: target.mention_id.clone(),
+            memory,
         });
         Ok(AttemptPrep {
             key: self.key.clone(),
@@ -668,13 +773,29 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             .end
             .background_cut
             .map(|n| n as usize);
-        (self.after)(
+        let res = (self.after)(
             secrets,
             &AfterCtx {
-                ctx,
+                ctx: ctx.clone(),
                 background_cut,
             },
-        )
+        );
+        // 성공한 턴만 — 알린 기억을 저장하고(깨움 세션은 저장하지 않는다) 실은 recall 을 센다(정본 `commit`·`recordRecall`).
+        if let Some(c) = &self.cur {
+            if !c.prepared.session.fresh_wake {
+                c.memory.commit(ctx.session_id.as_deref());
+            }
+            if !c.memory.recalled.is_empty()
+                && let Some(f) = &self.record_recall
+                && let Err(e) = f(&c.memory.recalled)
+            {
+                eprintln!(
+                    "[mentionTurn] {}: recall 집계 실패(턴은 계속한다) — {e}",
+                    self.key
+                );
+            }
+        }
+        res
     }
 
     fn account_ranks(&self, account: Option<&ClaudeAccount>) -> (Option<Option<u32>>, Option<u32>) {
