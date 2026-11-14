@@ -207,15 +207,41 @@ pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
                 default_gh_path(),
                 home.clone(),
             ));
-            let _link = spawn_server_link(
-                state.clone(),
-                LocalAgents::new(&root, base_url),
-                base_url.to_string(),
-                home.clone(),
-                flag(args, "--app-version").map(str::to_string),
-                std::path::Path::new(&root),
-                paths.socket_path.clone(),
-            );
+            // 서버 링크 — 토큰이 있으면 지금 띄우고, 없으면(등록 전) `operatorRegister` 가 claim 한 뒤 띄운다(s9, TS `startOne`).
+            // 한 프로세스에 링크는 하나다 — 이미 떠 있으면 다시 띄우지 않는다.
+            let link_slot: std::sync::Arc<std::sync::Mutex<Option<std::thread::JoinHandle<()>>>> =
+                std::sync::Arc::default();
+            let attach = {
+                let slot = std::sync::Arc::clone(&link_slot);
+                let weak = std::sync::Arc::downgrade(&state);
+                let (root, base_url, home) = (root.clone(), base_url.to_string(), home.clone());
+                let app_version = flag(args, "--app-version").map(str::to_string);
+                let socket_path = paths.socket_path.clone();
+                move || {
+                    let Some(state) = weak.upgrade() else { return };
+                    let mut slot = slot.lock().unwrap_or_else(|e| e.into_inner());
+                    if slot.is_some() {
+                        return;
+                    }
+                    *slot = spawn_server_link(
+                        state,
+                        LocalAgents::new(&root, &base_url),
+                        base_url.clone(),
+                        home.clone(),
+                        app_version.clone(),
+                        std::path::Path::new(&root),
+                        socket_path.clone(),
+                    );
+                }
+            };
+            attach();
+            state.set_link_control(crate::socket::LinkControl {
+                is_up: {
+                    let slot = std::sync::Arc::clone(&link_slot);
+                    Box::new(move || slot.lock().map(|s| s.is_some()).unwrap_or(true))
+                },
+                attach: Box::new(attach),
+            });
             println!(
                 "{}",
                 json!({"ok": true, "listening": paths.socket_path, "root": root, "pid": identity.pid})
@@ -235,7 +261,7 @@ pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
 }
 
 /// 서버 링크 스레드(s21a-2) — 이 커뮤니티의 토큰이 있으면 `wss://…/operator` 로 붙어 hello 를 올리고, 끊기면 backoff 로 다시 붙는다.
-/// 토큰이 없으면(등록 전) 띄우지 않는다 — 등록은 아직 TS 오퍼레이터 몫이다.
+/// 토큰이 없으면(등록 전) 띄우지 않는다 — `operatorRegister`(s9)가 claim 한 뒤 다시 부른다.
 /// 러너로 가는 프레임은 릴레이 다중화기로 넘기고(s21b-2), 나머지는 종류만 stderr 에 적는다(assign·unassign 처리는 s21c).
 /// 러너 링크도 여기서 배선한다 — 토큰이 없으면 러너 요청을 넘길 곳이 없으므로 러너 hello 는 앱 hello 로 검사돼 거절된다.
 /// 하네스 능력은 hello 마다 새로 잰다 — 사람이 그 사이 claude 를 설치·로그인했을 수 있다(TS community.ts).

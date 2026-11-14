@@ -361,3 +361,30 @@ fn after_turn_failure_keeps_ok() {
     );
     assert!(r.is_ok());
 }
+
+#[test]
+fn turn_end_line_matches_ts_shape() {
+    use crate::pty_turn::TurnResult;
+    let ok: PtyOut = Ok(TurnResult {
+        exit_code: 0,
+        timed_out: false,
+        tail: String::new(),
+    });
+    assert_eq!(
+        super::turn_end_line("c/a", 28_000, &ok).as_deref(),
+        Some("[mentionTurn] c/a: 턴 종료 (경과=28000ms, exitCode=0)")
+    );
+    let slow: PtyOut = Ok(TurnResult {
+        exit_code: 143,
+        timed_out: true,
+        tail: "x".into(),
+    });
+    assert_eq!(
+        super::turn_end_line("c/a", 5, &slow).as_deref(),
+        Some("[mentionTurn] c/a: 턴 종료 (경과=5ms, exitCode=timeout (143))")
+    );
+    let failed: PtyOut = Err(crate::pty_turn::PtyTurnError::Spawn(std::io::Error::other(
+        "no",
+    )));
+    assert_eq!(super::turn_end_line("c/a", 1, &failed), None);
+}

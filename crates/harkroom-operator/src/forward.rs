@@ -114,6 +114,13 @@ impl Default for UreqTransport {
     }
 }
 
+impl UreqTransport {
+    /// 다른 설정의 ureq 판(기본 판은 그대로다). 등록 claim 처럼 리다이렉트를 따라가면 안 되는 길이 쓴다.
+    pub fn from_agent(agent: ureq::Agent) -> Self {
+        Self { agent }
+    }
+}
+
 impl Transport for UreqTransport {
     fn send(
         &self,
