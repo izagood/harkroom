@@ -4,7 +4,7 @@ import { mkdtemp, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { readConfig, readConfigForWrite, rememberOperatorId, updateConfig, writeConfig, type OperatorConfig } from '../src/config.js';
+import { readConfig, readConfigForWrite, rememberOperatorId, runnerKindOf, updateConfig, writeConfig, type LocalAgentConfig, type OperatorConfig } from '../src/config.js';
 import { MERGE_SCOPE_RE } from '@harkroom/shared/daemonProtocol';
 import { fileSecrets } from '../src/secrets.js';
 
@@ -120,5 +120,27 @@ describe('MERGE_SCOPE_RE(s21d)', () => {
     expect(MERGE_SCOPE_RE.test('izagood/..x')).toBe(true);
     expect(MERGE_SCOPE_RE.test('izagood/.github')).toBe(true);
     expect(MERGE_SCOPE_RE.test('izagood/*')).toBe(true);
+  });
+});
+
+describe('runnerKindOf — 에이전트별 러너 구현(B4-5a)', () => {
+  it('정확히 "rust" 일 때만 rust 다', () => {
+    expect(runnerKindOf({ runner: 'rust' })).toBe('rust');
+  });
+  it('항목·칸이 없거나 node 거나 모르는 값이면 node 다', () => {
+    expect(runnerKindOf(undefined)).toBe('node');
+    expect(runnerKindOf({})).toBe('node');
+    expect(runnerKindOf({ workingDir: '/w' })).toBe('node');
+    expect(runnerKindOf({ runner: 'node' })).toBe('node');
+    for (const v of ['Rust', 'RUST', ' rust', 'rs', '', 1, true, null, ['rust'], { kind: 'rust' }]) {
+      expect(runnerKindOf({ runner: v } as unknown as LocalAgentConfig)).toBe('node');
+    }
+  });
+  it('파일에서 읽은 그대로 판정한다', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'op-runner-'));
+    const path = join(dir, 'operator.json');
+    await writeFile(path, JSON.stringify({ communities: { 'https://example.com': { agents: { a: { runner: 'rust' }, b: { runner: 'Rust' }, c: {} } } } }));
+    const agents = (await readConfig(path)).communities['https://example.com']!.agents;
+    expect([runnerKindOf(agents.a), runnerKindOf(agents.b), runnerKindOf(agents.c), runnerKindOf(agents.d)]).toEqual(['rust', 'node', 'node', 'node']);
   });
 });
