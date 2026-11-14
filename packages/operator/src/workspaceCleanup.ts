@@ -159,10 +159,19 @@ export function unownedPrMatches(w: Pick<ObservedWorktree, 'pr' | 'headSha'>): b
   return !!w.pr && w.pr.state !== 'open' && !!w.headSha && w.pr.headSha === w.headSha;
 }
 
-export function qualifiesUnowned(w: ObservedWorktree, settings: CleanupSettings, now: Date): boolean {
-  if (w.thread || !unownedPrMatches(w)) return false;
+/**
+ * 머지하고 쉬는 worktree(소유자 결정 2026-11-15): 주인이 있든 없든 PR 머지·닫힘 + PR head == HEAD + 깨끗(push 안 된 커밋·커밋 안 된
+ * 변경 없음) + 다시 만들 수 있는 무시 파일만 + 보존 기간보다 오래 손대지 않음. 주인 있는 worktree 의 규칙 1(스레드 ✅)과 OR 다 —
+ * 오래 이어지는 스레드는 ✅ 가 안 되고 턴이 계속 와서, 규칙 1 만으로는 그 스레드의 worktree 가 영영 안 지워졌다.
+ */
+export function qualifiesIdleMerged(w: ObservedWorktree, settings: CleanupSettings, now: Date): boolean {
+  if (!unownedPrMatches(w)) return false;
   if (w.clean !== true || w.onlyRebuildableIgnored !== true || !w.lastActivityAt) return false;
   return Date.parse(w.lastActivityAt) <= now.getTime() - clampGraceDays(settings.graceDays) * DAY_MS;
+}
+
+export function qualifiesUnowned(w: ObservedWorktree, settings: CleanupSettings, now: Date): boolean {
+  return !w.thread && qualifiesIdleMerged(w, settings, now);
 }
 
 export function planSweep(prev: CleanupLedger, facts: SweepFacts, settings: CleanupSettings, now: Date): SweepPlan {
@@ -181,7 +190,12 @@ export function planSweep(prev: CleanupLedger, facts: SweepFacts, settings: Clea
     return next;
   };
 
-  const step = (observed: CleanupItem, eligible: boolean, unowned: { activityAt: string | null; prMatches: boolean } | null = null) => {
+  /**
+   * `activity` — worktree 자신의 손댄 흔적(되살리기 판정용). `rule1` — 주인 있는 worktree 가 지금 규칙 1(PR 머지 + 스레드 ✅)을
+   * 만족하는가, `idle` — 지금 「머지하고 쉬는」 조건을 만족하는가.
+   */
+  const step = (observed: CleanupItem, eligible: boolean,
+    activity: { activityAt: string | null; prMatches: boolean; rule1: boolean; idle: boolean } | null = null) => {
     seen.add(observed.path);
     const old = byPath.get(observed.path);
     if (!old) {
@@ -205,12 +219,17 @@ export function planSweep(prev: CleanupLedger, facts: SweepFacts, settings: Clea
     // - 조건 1·2 가 깨짐(새 커밋으로 HEAD ≠ PR head, PR 다시 열림·못 읽음): 손댄 시각을 재지 못해도 이것만으로(security F1).
     //   여기서 돌아가므로 원장의 headSha 를 새 HEAD 로 덮지 않는다 — 덮으면 지우기 직전 HEAD 재확인이 새 커밋을 놓친다.
     // - 손댄 흔적(커밋·checkout·reset·다시 만든 worktree)이 넣은 뒤에 생김.
-    if (unowned && (old.state === 'listed' || old.state === 'blocked') && !old.thread && old.actedBy === null && old.listedAt
-      && (!unowned.prMatches || (unowned.activityAt !== null && unowned.activityAt > old.listedAt))) {
+    // 주인 있는 worktree 도 「머지하고 쉬는」 조건으로 넣었으면 같다(소유자 결정 2026-11-15). 지금 규칙 1(스레드 ✅)을 만족하는 것은
+    // 지금까지처럼 규칙 4(새 턴)로만 되살린다 — 규칙 1 은 HEAD 가 PR head 의 조상이어도 되고 손댄 시각을 보지 않는다.
+    if (activity && !(item.thread && activity.rule1)
+      && (old.state === 'listed' || old.state === 'blocked') && old.actedBy === null && old.listedAt
+      && (!activity.prMatches || (activity.activityAt !== null && activity.activityAt > old.listedAt))) {
       events.push(event(at, old, 'revived'));
       return;
     }
-    if ((item.state === 'listed' || item.state === 'blocked') && item.thread && item.listedAt) {
+    // 규칙 4(새 턴 → 되살리기)는 규칙 1 로 넣은 것에만. 「머지하고 쉬는」 조건을 지금도 만족하면 스레드에 턴이 와도 그 worktree 는
+    // 손대지 않은 것이다 — 긴 스레드에서 매 턴 되살아나 영영 안 지워지던 것을 막는다.
+    if ((item.state === 'listed' || item.state === 'blocked') && item.thread && item.listedAt && !(activity?.idle)) {
       const last = facts.lastTurnAt.get(threadKey(item.thread));
       if (last && last > item.listedAt) { // 규칙 4: 새 턴이 왔다 → 목록에서 뺀다
         events.push(event(at, item, 'revived'));
@@ -229,8 +248,10 @@ export function planSweep(prev: CleanupLedger, facts: SweepFacts, settings: Clea
       repo: w.repo, branch: w.branch, headSha: w.headSha, thread: w.thread, pr: w.pr,
       lastModifiedAt: w.lastModifiedAt, sizeBefore: w.size, sizeNow: w.size,
     };
-    step(item, w.thread ? qualifies(w, facts) : qualifiesUnowned(w, settings, now),
-      w.thread ? null : { activityAt: w.lastActivityAt ?? null, prMatches: unownedPrMatches(w) });
+    const rule1 = qualifies(w, facts);
+    const idle = qualifiesIdleMerged(w, settings, now);
+    step(item, w.thread ? rule1 || idle : idle,
+      { activityAt: w.lastActivityAt ?? null, prMatches: unownedPrMatches(w), rule1, idle });
   }
   for (const d of facts.idle) {
     step({ ...blank(d.path, d.kind), thread: d.thread, lastModifiedAt: d.lastModifiedAt, sizeBefore: d.size, sizeNow: d.size }, true);

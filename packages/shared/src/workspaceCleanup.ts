@@ -201,23 +201,89 @@ export function claudeProjectDirName(cwd: string): string {
   return cwd.replace(/[^A-Za-z0-9-]/g, '-');
 }
 
+/** 명령 글 하나의 경계 — `commandTexts` 가 명령 사이에 넣는다. 앞 명령의 `cd`·변수가 다음 명령의 경로를 풀지 않게 한다. */
+export const COMMAND_SEPARATOR = '\n\u0000\n';
+
+/** `.`·`..` 를 글자로 접는다(파일 시스템을 보지 않는다). 절대 경로만 받는다. */
+function collapseAbs(p: string): string {
+  const out: string[] = [];
+  for (const seg of p.split('/')) {
+    if (!seg || seg === '.') continue;
+    if (seg === '..') out.pop();
+    else out.push(seg);
+  }
+  return `/${out.join('/')}`;
+}
+
+function unquote(t: string): string {
+  return t.replace(/^(['"])(.*)\1$/, '$2').replace(/^["']|["']$/g, '');
+}
+
 /**
- * 세션 기록 글에서 `git worktree add` 의 대상 경로를 뽑는다(`-b x`·`--detach` 같은 플래그는 건너뛴다). 변수로 지은
- * 경로(`$W`)처럼 글에 절대 경로가 안 드러나면 못 뽑는다 — 그것은 주인 모름으로 남는다(사람이 고른다).
+ * 낱말 하나를 절대 경로로 푼다 — `$X`·`${X}` 는 앞서 대입한 절대 경로 변수로, `~/` 는 home 으로, 상대 경로는 `base` 로.
+ * 못 풀면(모르는 변수·명령 치환·base 없는 상대 경로) null.
+ */
+function resolveWord(raw: string, vars: ReadonlyMap<string, string>, home: string, base: string | null): string | null {
+  let t = unquote(raw);
+  if (/[`]|\$\(/.test(t)) return null;
+  let unknown = false;
+  t = t.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g, (_m, a: string | undefined, b: string | undefined) => {
+    const v = vars.get((a ?? b)!);
+    if (v === undefined) unknown = true;
+    return v ?? '';
+  });
+  if (unknown || t.includes('$') || !t) return null;
+  if (t === '~' || t.startsWith('~/')) t = `${home}${t.slice(1)}`;
+  if (!t.startsWith('/')) {
+    if (!base) return null;
+    t = `${base}/${t}`;
+  }
+  return normalizeCleanupPath(collapseAbs(t));
+}
+
+/** 한 명령 안 `worktree add` 앞부분에서 마지막 `cd` 자리와 절대 경로 변수들을 읽는다. */
+function shellContext(prefix: string, home: string): { cwd: string | null; vars: Map<string, string> } {
+  const vars = new Map<string, string>();
+  let cwd: string | null = null;
+  const re = /(?:^|[\s;&|(])(?:(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=("[^"\n]*"|'[^'\n]*'|[^\s;&|)]+)|cd\s+("[^"\n]*"|'[^'\n]*'|[^\s;&|)]+))/g;
+  for (const m of prefix.matchAll(re)) {
+    if (m[1] !== undefined) {
+      const v = resolveWord(m[2]!, vars, home, null);
+      if (v) vars.set(m[1], v);
+      else vars.delete(m[1]);
+    } else {
+      cwd = resolveWord(m[3]!, vars, home, cwd);
+    }
+  }
+  return { cwd, vars };
+}
+
+/**
+ * 세션 기록 글에서 `git worktree add` 의 대상 경로를 뽑는다(`-b x`·`--detach` 같은 플래그는 건너뛴다).
+ * 같은 명령 안에서 앞서 나온 것으로 상대 경로·변수를 푼다: 마지막 `cd <경로>`, `X=<절대 경로>`(`export` 포함), 같은 git 호출의
+ * `git -C <경로>`(cd 보다 앞선다). 그래도 못 풀면(모르는 변수·명령 치환) 뽑지 않는다 — 주인 모름으로 남거나 러너의
+ * 「새 worktree 가 정확히 하나」 비교가 메운다.
  */
 export function worktreeAddPaths(text: string, home: string): string[] {
   const out: string[] = [];
-  for (const m of text.matchAll(/worktree add\b([^"\n]{0,400})/g)) {
-    const toks = m[1]!.replace(/\\[nt]/g, ' ').split(/\s+/).filter(Boolean);
-    for (let i = 0; i < toks.length; i++) {
-      const t = toks[i]!;
-      if (t === '-b' || t === '-B' || t === '--reason') { i++; continue; }
-      if (t.startsWith('-')) continue;
-      if (/^[;&|]/.test(t)) break;
-      const clean = t.replace(/[;&|)]+$/, '');
-      if (clean.startsWith('/')) out.push(normalizeCleanupPath(clean));
-      else if (clean.startsWith('~/')) out.push(normalizeCleanupPath(`${home}/${clean.slice(2)}`));
-      break;
+  for (const cmd of text.split(COMMAND_SEPARATOR)) {
+    for (const m of cmd.matchAll(/worktree add\b([^\n]{0,400})/g)) {
+      const prefix = cmd.slice(0, m.index);
+      const ctx = shellContext(prefix, home);
+      // 같은 git 호출(마지막 명령 구분자 뒤)의 `-C <경로>`.
+      const call = prefix.slice(Math.max(prefix.lastIndexOf(';'), prefix.lastIndexOf('&'), prefix.lastIndexOf('|'), prefix.lastIndexOf('\n')) + 1);
+      const dashC = [...call.matchAll(/\s-C\s+("[^"\n]*"|'[^'\n]*'|\S+)/g)].pop();
+      const base = dashC ? resolveWord(dashC[1]!, ctx.vars, home, ctx.cwd) : ctx.cwd;
+      const toks = m[1]!.replace(/\\[nt]/g, ' ').split(/\s+/).filter(Boolean);
+      for (let i = 0; i < toks.length; i++) {
+        const t = toks[i]!;
+        if (t === '-b' || t === '-B' || t === '--reason') { i++; continue; }
+        if (t.startsWith('-')) continue;
+        if (/^[;&|]/.test(t)) break;
+        const p = resolveWord(t.replace(/[;&|)]+$/, ''), ctx.vars, home, base);
+        if (p) out.push(p);
+        break;
+      }
     }
   }
   return out;

@@ -115,7 +115,8 @@ export function resolveAgentStateDir(
     providerLaneClaudeDir: join(agentStateDir, 'claude-provider-lane'),
     providerLaneCodexDir: join(agentStateDir, 'codex-provider-lane'),
     providerLanePiDir: join(agentStateDir, 'pi-provider-lane'),
-    cleanupBackfillPath: join(agentStateDir, 'cleanup-backfill.json'),
+    // v2: 경로 풀기(`cd`·변수·`git -C`)가 생겨 쌓인 기록을 한 번 더 훑는다 — v1 표지만 있는 러너도 다시 돈다.
+    cleanupBackfillPath: join(agentStateDir, 'cleanup-backfill-v2.json'),
     legacyPath: join(baseDir, handle),
   };
 }

@@ -185,9 +185,10 @@ export function createWorkspaceCleanup(deps: WorkspaceCleanupDeps, base: Cleanup
         worktrees.push(w);
       }
     }
-    // 주인 모름 자동 후보(PR 머지·닫힘 + PR head == HEAD)만 더 잰다: 지우기 직전 검사와 같은 판정으로 깨끗한가, 언제 마지막으로 손댔나.
+    // 「머지하고 쉬는」 후보(PR 머지·닫힘 + PR head == HEAD)는 주인이 있든 없든 더 잰다: 지우기 직전 검사와 같은 판정으로 깨끗한가,
+    // 언제 마지막으로 손댔나(소유자 결정 2026-11-15 — 주인 있는 worktree 도 이것으로 넣고 되살린다).
     for (const w of worktrees) {
-      if (w.thread || !unownedPrMatches(w)) continue;
+      if (!unownedPrMatches(w)) continue;
       const probe: CleanupItem = {
         path: w.path, kind: 'worktree', state: 'unowned', repo: w.repo, branch: w.branch, headSha: w.headSha, thread: null, pr: w.pr,
         lastModifiedAt: w.lastModifiedAt, listedAt: null, deleteAfter: null, blockReason: null, actedBy: null, actedAt: null,

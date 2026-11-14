@@ -16,6 +16,7 @@ import { execFile } from 'node:child_process';
 import { lstat, readdir, readFile, realpath, rm } from 'node:fs/promises';
 import { join, relative, sep, isAbsolute } from 'node:path';
 import {
+  COMMAND_SEPARATOR,
   claudeProjectDirName,
   normalizeCleanupPath,
   worktreeAddPaths,
@@ -65,7 +66,7 @@ export function commandTexts(jsonl: string): string {
     if (!line.includes('worktree add')) continue;
     try { visit(JSON.parse(line), 0); } catch { /* 깨진 줄 */ }
   }
-  return out.join('\n');
+  return out.join(COMMAND_SEPARATOR);
 }
 
 /** 기록에 `worktree add` 가 있지만 절대 경로가 안 드러났는가(`"$W"` 같은 변수). */
@@ -203,19 +204,27 @@ export function createCleanupReporter(deps: CleanupReporterDeps): CleanupReporte
       if (!ref) return;
       const worktrees = new Set<string>();
       const info = o ? await o.info : null;
-      if (o && info?.repo) {
-        const after = await deps.listWorktrees(info.repo);
-        const current = new Set(after);
+      if (o) {
+        // 에이전트의 workingDir(저장소)이 없어도 본다 — 작업 폴더가 빈 스레드 폴더인 에이전트도 남의 저장소에 worktree 를
+        // 만든다(그 저장소를 따로 알 길이 없다). 그래서 경로 **자신**에게 묻는다: 그 경로가 속한 저장소의 worktree 목록에
+        // 그 경로가 있을 때만 이 스레드 것이다.
         let opaque = false;
         for (const t of transcripts) {
           let text = '';
           try { text = commandTexts(await readFile(t, 'utf8')); } catch { continue; }
-          for (const p of worktreeAddPaths(text, deps.home)) if (current.has(p)) worktrees.add(p);
+          for (const p of worktreeAddPaths(text, deps.home)) {
+            if (worktrees.has(p)) continue;
+            if ((await deps.listWorktrees(p)).includes(p)) worktrees.add(p);
+          }
           if (hasOpaqueWorktreeAdd(text, deps.home)) opaque = true;
         }
-        const before = await o.before;
-        const fresh = after.filter((p) => !before.has(p));
-        if (opaque && !o.overlapped && fresh.length === 1) worktrees.add(fresh[0]!);
+        // 경로가 글에 안 드러난 `worktree add` 는 에이전트 저장소의 앞뒤 비교로만 메운다(저장소를 알 때만).
+        if (info?.repo) {
+          const after = await deps.listWorktrees(info.repo);
+          const before = await o.before;
+          const fresh = after.filter((p) => !before.has(p));
+          if (opaque && !o.overlapped && fresh.length === 1) worktrees.add(fresh[0]!);
+        }
       }
       await send([{ ...ref, worktrees: [...worktrees], lastTurnAt: now().toISOString(), running: false, workspaceDir: workspaceDirAtEnd ?? info?.workspaceDir ?? null }]);
     },

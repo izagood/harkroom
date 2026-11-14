@@ -80,6 +80,28 @@ describe('reporter — worktree 주인', () => {
     await r.turnEnded(KEY, [t]);
     expect(sent.at(-1)!.threads[0]).toMatchObject({ worktrees: ['/tmp/wt-a'], running: false, workspaceDir: '/ws' });
   });
+  it('에이전트 저장소(workingDir)가 없어도 경로 자신에게 물어 주인을 붙인다 — cd·변수로 지은 경로도', async () => {
+    const d = await mkdtemp(join(tmpdir(), 'rep-'));
+    const t = join(d, 't.jsonl');
+    await writeFile(t, [
+      bash('cd /r/repo && git worktree add -q -b x ../repo-wt/b4 origin/main'),
+      bash('W=/s/ws; git -C /r/repo worktree add -b y $W/wt-b origin/main'),
+      bash('git -C /r/repo worktree add /tmp/wt-gone'),
+    ].join('\n'));
+    const asked: string[] = [];
+    const live = new Set(['/r/repo', '/r/repo-wt/b4', '/s/ws/wt-b']);
+    const sent: CleanupReport[] = [];
+    const r = createCleanupReporter({
+      send: async (rep) => { sent.push(rep); return { deleteThreads: [] }; },
+      // 그 경로가 속한 저장소의 목록 — 지워진 경로는 git 이 실패해 빈 목록이다.
+      listWorktrees: async (p) => { asked.push(p); return live.has(p) ? [...live] : []; },
+      home: '/h', now: () => new Date('2026-10-06T00:00:00Z'),
+    });
+    await r.turnStarted(KEY, { repo: null, workspaceDir: '/ws' });
+    await r.turnEnded(KEY, [t]);
+    expect(sent.at(-1)!.threads[0]).toMatchObject({ worktrees: ['/r/repo-wt/b4', '/s/ws/wt-b'], running: false });
+    expect(asked).toEqual(['/r/repo-wt/b4', '/s/ws/wt-b', '/tmp/wt-gone']);
+  });
   it('변수 경로 + 새 worktree 하나 + 겹친 턴 없음 → 그것, 겹쳤으면 주인 모름', async () => {
     const d = await mkdtemp(join(tmpdir(), 'rep-'));
     const t = join(d, 't.jsonl'); await writeFile(t, bash('git worktree add -b x "$W" origin/main'));
