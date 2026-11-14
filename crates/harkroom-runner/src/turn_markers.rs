@@ -92,6 +92,8 @@ pub struct MarkerSink<'s, S: PtyTurnSink> {
     pub markers: &'s TurnMarkers,
     /// 로그 머리(스레드 키). 경로는 로그에 싣지 않는다.
     pub key: &'s str,
+    /// 주입이 먹혔는지의 증거(정본 `confirmDelivery.probe` = 턴 시작 뒤 세션 기록에 사람 입력 줄이 생겼나). 없으면 안쪽으로.
+    pub confirm: Option<&'s dyn Fn() -> bool>,
 }
 
 impl<S: PtyTurnSink> PromptHooks for MarkerSink<'_, S> {
@@ -125,7 +127,10 @@ impl<S: PtyTurnSink> PromptHooks for MarkerSink<'_, S> {
         }
     }
     fn confirm_probe(&mut self) -> bool {
-        self.inner.confirm_probe()
+        match self.confirm {
+            Some(f) => f(),
+            None => self.inner.confirm_probe(),
+        }
     }
 }
 

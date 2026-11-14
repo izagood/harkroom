@@ -98,6 +98,7 @@ fn sink_answers_from_files_and_files_go_away_on_drop() {
             inner: &mut inner,
             markers: &m,
             key: "k",
+            confirm: None,
         };
         // 브릿지가 표식을 만들기 전에는 안 섰다.
         assert!(!s.wait_for_ready());
@@ -129,8 +130,27 @@ fn sink_without_markers_defers_to_inner() {
         inner: &mut inner,
         markers: &m,
         key: "k",
+        confirm: None,
     };
     assert!(s.wait_for_ready());
     assert_eq!(s.gate_signal(), 99);
     assert_eq!(m.gate_snapshot(), None);
+}
+
+/// T4d: 주입 확인 증거는 `confirm` 이 답한다(정본 `confirmDelivery.probe`) — 없으면 안쪽으로 넘긴다.
+#[test]
+fn sink_confirm_probe_uses_given_evidence() {
+    let m = TurnMarkers::default();
+    let mut inner = Inner::default();
+    let no = || false;
+    let mut s = MarkerSink {
+        inner: &mut inner,
+        markers: &m,
+        key: "k",
+        confirm: Some(&no),
+    };
+    assert!(!s.confirm_probe(), "증거가 없으면 거짓");
+    let yes = || true;
+    s.confirm = Some(&yes);
+    assert!(s.confirm_probe());
 }
