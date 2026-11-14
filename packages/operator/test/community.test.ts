@@ -315,3 +315,53 @@ describe('community — 로컬 설정이 바뀌면 능력을 다시 낸다', () 
     expect(c.syncedKeep()).toBeNull();
   });
 });
+
+// B4-6 준비에서 찾은 빈틈: 손으로 고친 operator.json(`"runner": "rust"`)이 재배정만으로는 반영되지 않았다(메모리 표만 썼다).
+// 배정 직전에 파일에서 다시 읽는다 — 못 읽거나 그 칸이 없으면 메모리 값.
+describe('배정 직전 로컬 설정 다시 읽기', () => {
+  const def = {
+    agentId: 'a-1', handle: 'murmur', harness: 'claude-code', instructions: '', model: null, effort: null,
+    mentionPermission: 'auto' as const, workingDirDefault: null, credentialScope: 'none' as const, ownerAccountId: null, mcpServers: [],
+  };
+  async function assignWith(readLocal?: (id: string) => import('../src/config.js').LocalAgentConfig | undefined) {
+    const got: (import('../src/config.js').LocalAgentConfig | undefined)[] = [];
+    let handlers: Parameters<LinkDialer>[2] | null = null;
+    const dial: LinkDialer = (_u, _t, h) => { handlers = h; h.onOpen({ send: () => {}, close: () => {} }); };
+    const { reconciler } = fakeReconciler();
+    const c = createCommunity({
+      baseUrl: 'https://example.com', token: 'hkop_x', agents: { 'a-1': { workingDir: '/mem' } },
+      ...(readLocal ? { readLocal } : {}),
+      reconciler: { ...reconciler, onAssign: async (_b, _d, local) => { got.push(local); return 'spawned'; } },
+      dial, schedule: () => {}, log: () => {},
+    });
+    c.start();
+    handlers!.onMessage(JSON.stringify({ type: 'assign', agentId: 'a-1', definition: def }));
+    await new Promise((r) => setTimeout(r, 0));
+    return got;
+  }
+
+  it('파일에서 다시 읽은 값으로 띄운다 — 손으로 적은 runner 가 재배정으로 반영된다', async () => {
+    expect(await assignWith(() => ({ workingDir: '/mem', runner: 'rust' }))).toEqual([{ workingDir: '/mem', runner: 'rust' }]);
+  });
+  it('읽기는 동기다 — assign 바로 뒤 unassign 의 순서가 뒤집히지 않는다', async () => {
+    const calls: string[] = [];
+    let handlers: Parameters<LinkDialer>[2] | null = null;
+    const dial: LinkDialer = (_u, _t, h) => { handlers = h; h.onOpen({ send: () => {}, close: () => {} }); };
+    const { reconciler } = fakeReconciler();
+    const c = createCommunity({
+      baseUrl: 'https://example.com', token: 'hkop_x', agents: { 'a-1': {} }, readLocal: () => ({ runner: 'rust' }),
+      reconciler: { ...reconciler, onAssign: async () => { calls.push('assign'); return 'spawned'; }, onUnassign: async () => { calls.push('unassign'); } },
+      dial, schedule: () => {}, log: () => {},
+    });
+    c.start();
+    handlers!.onMessage(JSON.stringify({ type: 'assign', agentId: 'a-1', definition: def }));
+    handlers!.onMessage(JSON.stringify({ type: 'unassign', agentId: 'a-1', drain: true }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toEqual(['assign', 'unassign']);
+  });
+  it('파일에 그 칸이 없거나 못 읽으면 메모리 값', async () => {
+    expect(await assignWith(() => undefined)).toEqual([{ workingDir: '/mem' }]);
+    expect(await assignWith(() => { throw new Error('EACCES'); })).toEqual([{ workingDir: '/mem' }]);
+    expect(await assignWith()).toEqual([{ workingDir: '/mem' }]);
+  });
+});

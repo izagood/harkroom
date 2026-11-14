@@ -12,7 +12,7 @@ import { reapUnassignedAdopted } from './adoptedReap.js';
 import { psIdentityProbe, type ProcessIdentityProbe } from './adopt.js';
 import { createCommunity, type CommunityDeps, type CommunityInstance } from './community.js';
 import { operatorVersion } from './version.js';
-import { communityKey, readConfig, rememberOperatorId } from './config.js';
+import { communityKey, readConfig, rememberOperatorId, readLocalAgent } from './config.js';
 import { ownsCommunity } from './communityRoots.js';
 import { createForwarder } from './forward.js';
 import { detectHarnesses, HARNESS_BINARIES } from './harnesses.js';
@@ -224,6 +224,8 @@ export async function startCommunities(deps: StartCommunitiesDeps): Promise<Comm
     const reconciler = createAssignmentReconciler(runnerDeps(ref));
     const community = createCommunity({
       baseUrl, token, agents, reconciler, log: deps.log,
+      // 배정 직전에 파일에서 다시 읽는다 — 손으로 고친 operator.json 이 재배정으로 반영된다(Rust 오퍼레이터와 같다).
+      readLocal: (agentId) => readLocalAgent(configPath, baseUrl, agentId),
       onSynced: reap,
       version: operatorVersion(deps.appVersion),
       heartbeat: deps.heartbeat,
