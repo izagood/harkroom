@@ -428,6 +428,14 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
                 eprintln!("[mentionTurn] {}: 지시문 파일 쓰기 실패 — {e}", self.key);
                 fail()
             })?;
+        // 하네스를 띄우기 전, **이 시도의 계정 폴더**로 작업 폴더 신뢰·bypass 수락을 적는다(정본 `mentionTurn.ts` 의 차례).
+        crate::workspace_trust::prepare_harness_gates(
+            self.harness,
+            &prepared.session.rec.workspace_dir,
+            acc.config_dir.as_deref(),
+            self.codex_home.as_deref(),
+            &self.home,
+        );
         let homes = acc.homes(
             Some(&self.home),
             self.omp_home.as_deref(),

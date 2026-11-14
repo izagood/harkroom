@@ -410,3 +410,87 @@ fn no_mount_is_a_noop() {
     let mut m = no_mount();
     assert!(m("m7").is_ok());
 }
+
+fn read_json(p: &Path) -> Value {
+    serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap()
+}
+
+/// T1 — 기본 로그인(계정 없음): 띄우기 전 준비가 `<home>/.claude/.claude.json` 에 **이 턴의 작업 폴더 하나만** 신뢰로 적는다.
+/// 이미 있던 값(onboarding·다른 프로젝트)은 그대로이고 상위 폴더는 열지 않는다 · bypass 수락은 `<home>/.claude/settings.json`.
+#[test]
+fn prepare_trusts_only_this_workspace_default_login() {
+    let w = world("trust-default");
+    let store = SessionStore::new(w.root.join("sessions.json"));
+    let stale = PathBuf::from("/x");
+    let mut p = parts(&w, &store, &stale, false);
+    let ws = w.root.join("ws").join("thread-1");
+    p.new_workspace_dir = ws.to_string_lossy().into_owned();
+    let cfg = p.home.join(".claude");
+    std::fs::create_dir_all(&cfg).unwrap();
+    let ledger = cfg.join(".claude.json");
+    std::fs::write(
+        &ledger,
+        json!({"hasCompletedOnboarding": false, "projects": {"/other": {"x": 1}}}).to_string(),
+    )
+    .unwrap();
+
+    p.prepare(&target(), None, true, "t-1").unwrap();
+
+    let doc = read_json(&ledger);
+    assert_eq!(
+        doc["hasCompletedOnboarding"],
+        json!(false),
+        "기본 로그인 onboarding 은 건드리지 않는다"
+    );
+    let projects = doc["projects"].as_object().unwrap();
+    assert_eq!(
+        projects.len(),
+        2,
+        "이 턴의 작업 폴더 하나만 더한다: {projects:?}"
+    );
+    assert_eq!(projects["/other"], json!({"x": 1}));
+    assert_eq!(
+        projects[ws.to_str().unwrap()],
+        json!({"hasTrustDialogAccepted": true})
+    );
+    let settings = read_json(&cfg.join("settings.json"));
+    assert_eq!(settings["skipDangerousModePermissionPrompt"], json!(true));
+}
+
+/// T1 — 계정 폴더가 있는 시도: 그 폴더의 장부에 적고 기본 집(`<home>/.claude`)은 건드리지 않는다. 계정 관문·설정 걷기는 아직 없다(L3c-3).
+#[test]
+fn prepare_trusts_in_attempt_account_folder() {
+    let w = world("trust-acct");
+    let store = SessionStore::new(w.root.join("sessions.json"));
+    let stale = PathBuf::from("/x");
+    let mut p = parts(&w, &store, &stale, false);
+    let ws = w.root.join("ws2");
+    p.new_workspace_dir = ws.to_string_lossy().into_owned();
+    let acc_dir = w.root.join("acct-a1");
+    std::fs::create_dir_all(&acc_dir).unwrap();
+    std::fs::write(
+        acc_dir.join("settings.json"),
+        json!({"permissions": {"allow": ["Bash"]}}).to_string(),
+    )
+    .unwrap();
+    let a = acct("a1", acc_dir.to_str().unwrap());
+
+    p.prepare(&target(), Some(&a), false, "t-1").unwrap();
+
+    let doc = read_json(&acc_dir.join(".claude.json"));
+    assert_eq!(
+        doc["projects"][ws.to_str().unwrap()]["hasTrustDialogAccepted"],
+        json!(true)
+    );
+    assert!(
+        doc.get("hasCompletedOnboarding").is_none(),
+        "계정 관문은 L3c-3"
+    );
+    let settings = read_json(&acc_dir.join("settings.json"));
+    assert_eq!(settings["skipDangerousModePermissionPrompt"], json!(true));
+    assert!(settings.get("permissions").is_some(), "설정 걷기는 L3c-3");
+    assert!(
+        !p.home.join(".claude").exists(),
+        "기본 집은 건드리지 않는다"
+    );
+}

@@ -241,14 +241,7 @@ pub fn ensure_dangerous_mode_accepted(
     if harness != "claude-code" {
         return;
     }
-    let dir = claude_config_dir
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| home.join(".claude"));
-    if let Err(e) = accept_dangerous_mode_for_claude(&dir) {
-        eprintln!(
-            "[workspaceTrust] bypassPermissions 수락 기록 실패(턴은 계속한다 — 경고 화면이 뜨면 준비 대기가 상한에서 사람을 부른다): {e}"
-        );
-    }
+    ensure_bypass_accepted(harness, claude_config_dir, home);
     let Some(pool_dir) = claude_config_dir else {
         return;
     };
@@ -257,6 +250,47 @@ pub fn ensure_dangerous_mode_accepted(
             "[workspaceTrust] 계정 설정 권한 키 걷기 실패(턴은 계속한다 — argv 의 Edit deny 와 분류기가 남는다): {e}"
         );
     }
+}
+
+/// [`ensure_dangerous_mode_accepted`] 의 첫 걸음만 — bypass 수락 기록(`settings.json`). claude 만, 실패는 로그만.
+/// 턴 준비([`prepare_harness_gates`])는 지금 이것만 부른다 — 풀 계정 설정 걷기와 계정 관문은 계정 풀(L3c-3)이 잇는다.
+pub fn ensure_bypass_accepted(harness: &str, claude_config_dir: Option<&Path>, home: &Path) {
+    if harness != "claude-code" {
+        return;
+    }
+    let dir = claude_config_dir
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| home.join(".claude"));
+    if let Err(e) = accept_dangerous_mode_for_claude(&dir) {
+        eprintln!(
+            "[workspaceTrust] bypassPermissions 수락 기록 실패(턴은 계속한다 — 경고 화면이 뜨면 준비 대기가 상한에서 사람을 부른다): {e}"
+        );
+    }
+}
+
+/// 턴 준비 관문 — **PTY 를 띄우기 전, 시도마다** 그 시도의 계정 폴더로 부른다(정본 `mentionTurn.ts` 의 차례: 신뢰 → bypass).
+/// 신뢰는 이 턴의 작업 폴더 **하나만** 적는다. codex 홈을 따로 받지 않았으면 codex 가 실제로 읽는 `<home>/.codex` 다.
+/// 실패는 모두 로그만 남기고 턴은 계속한다(경로·값은 로그에 싣지 않는다).
+/// 지금 하지 않는 것: 풀 계정 설정 걷기(`scrub_account_permission_settings`)·계정 관문(`hasCompletedOnboarding`) — L3c-3.
+pub fn prepare_harness_gates(
+    harness: crate::adapter::AgentHarness,
+    workspace_dir: &str,
+    claude_config_dir: Option<&Path>,
+    codex_home: Option<&Path>,
+    home: &Path,
+) {
+    // 상대 경로면(집을 모르는 짓개·빈 작업 폴더) 아무것도 적지 않는다 — 실행 폴더 아래에 장부를 만들지 않는다.
+    if !home.is_absolute() || !Path::new(workspace_dir).is_absolute() {
+        eprintln!(
+            "[workspaceTrust] 집 또는 작업 폴더가 절대 경로가 아니라 신뢰·bypass 기록을 건너뛴다(턴은 계속한다)"
+        );
+        return;
+    }
+    let codex = codex_home
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| home.join(".codex"));
+    ensure_workspace_trusted_via_adapter(harness, workspace_dir, claude_config_dir, &codex, home);
+    ensure_bypass_accepted(harness.as_str(), claude_config_dir, home);
 }
 
 /// TS `ensureWorkspaceTrusted` — 이 턴의 워크스페이스를 하네스가 신뢰하게 한다. **PTY 를 띄우기 전에** 부른다.
@@ -269,7 +303,7 @@ pub fn ensure_workspace_trusted(workspace_dir: &str, target: Option<&TrustTarget
     };
     if let Err(e) = res {
         eprintln!(
-            "[workspaceTrust] {workspace_dir} 신뢰 기록 실패(턴은 계속한다 — 대화상자가 뜨면 준비 대기가 상한에서 실패한다): {e}"
+            "[workspaceTrust] 작업 폴더 신뢰 기록 실패(턴은 계속한다 — 대화상자가 뜨면 준비 대기가 상한에서 실패한다): {e}"
         );
     }
 }
@@ -312,7 +346,7 @@ pub fn ensure_workspace_trusted_via_adapter(
     match trust_target(harness, claude_config_dir, codex_home, home) {
         Ok(t) => ensure_workspace_trusted(workspace_dir, t.as_ref()),
         Err(e) => eprintln!(
-            "[workspaceTrust] {workspace_dir} 신뢰 기록 실패(턴은 계속한다 — 대화상자가 뜨면 준비 대기가 상한에서 실패한다): {e}"
+            "[workspaceTrust] 작업 폴더 신뢰 기록 실패(턴은 계속한다 — 대화상자가 뜨면 준비 대기가 상한에서 실패한다): {e}"
         ),
     }
 }
