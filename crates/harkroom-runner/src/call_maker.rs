@@ -370,6 +370,23 @@ where
                     .map(|_| ())
                     .map_err(|e| e.message)
             }));
+            // 기억 recall(정본 `searchMemory(q, RECALL_MAX_ITEMS + 3, o)`)·실은 recall 세기(`memory.recalled`) — 이 에이전트 묶음으로만.
+            let mcp = clients.mcp();
+            p.recall_search = Some(Box::new(move |q, o| {
+                let v = mcp
+                    .search_memory(
+                        q,
+                        u32::try_from(crate::memory_pin::RECALL_MAX_ITEMS + 3).unwrap_or(5),
+                        &o.exclude,
+                        None,
+                        o.focus.as_deref(),
+                    )
+                    .map_err(|e| e.to_string())?;
+                serde_json::from_value(v).map_err(|e| e.to_string())
+            }));
+            p.record_recall = Some(Box::new(move |keys| {
+                mcp.record_recall(keys).map_err(|e| e.to_string())
+            }));
             p.turn_timeout_ms = c.turn_timeout_ms;
             p
         });
