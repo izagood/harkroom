@@ -89,8 +89,10 @@ pub struct RunnerMaker<L: AgentLink> {
     cfg: MakerConfig,
     mcp_config: String,
     clients: Arc<AgentClients<L>>,
-    store: SessionStore,
+    store: Arc<SessionStore>,
     memory: MemoryCache,
+    /// 계정 축(L3c-3b). 없으면 기본 로그인 하나(`[None]`) — API 키 lane 러너는 L3c-3d 가 채운다.
+    accounts: Option<Arc<crate::account_lane::AccountLaneHub>>,
     names: RwLock<Names>,
     report_auth: ReportAuth,
 }
@@ -151,13 +153,24 @@ impl<L: AgentLink> RunnerMaker<L> {
     pub fn new(cfg: MakerConfig, clients: Arc<AgentClients<L>>, report_auth: ReportAuth) -> Self {
         Self {
             mcp_config: cfg.mcp_config_path.to_string_lossy().into_owned(),
-            store: SessionStore::new(cfg.state_dir.join("sessions.json")),
+            store: Arc::new(SessionStore::new(cfg.state_dir.join("sessions.json"))),
+            accounts: None,
             memory: MemoryCache::new(&cfg.state_dir),
             names: RwLock::new(Names::default()),
             clients,
             cfg,
             report_auth,
         }
+    }
+
+    /// 스레드 기록 — 계정 축의 스레드 고정(`claudeAccount`·`claudePool`·세션 id)을 읽는 쪽과 같은 장부다.
+    pub fn store(&self) -> Arc<SessionStore> {
+        Arc::clone(&self.store)
+    }
+
+    /// 계정 축을 붙인다(기동 때 한 번, `Arc` 로 감싸기 전).
+    pub fn set_accounts(&mut self, hub: crate::account_lane::AccountLaneHub) {
+        self.accounts = Some(Arc::new(hub));
     }
 
     /// 몸통(`BodyShared.clients`)이 쥘 묶음 — 짓개와 **같은** 묶음이다(서버 길은 하나).
@@ -318,6 +331,12 @@ where
         );
         // 정본 `main.ts:76` `recordDir: config.ptyRecordDir`(`AGENT_PTY_RECORD_DIR`, 기본 끔).
         let record_dir = c.pty_record_dir.clone();
+        // 칩이 보는 계정 축(정본 `liveLane.snapshot()`) — 멘션마다 지금 값.
+        let lane_snapshot = self
+            .accounts
+            .as_ref()
+            .map(|h| h.snapshot())
+            .unwrap_or_default();
         let build_parts = Box::new(move |b: BundleParts<'a, L>| {
             let perm = if system.read_only {
                 MentionPermission::Readonly
@@ -395,12 +414,20 @@ where
                 mcp.read_thread_plan(root).map_err(|e| e.to_string())
             }));
             p.turn_timeout_ms = c.turn_timeout_ms;
+            p.lane = lane_snapshot;
             p
         });
         CallInputs {
             key,
-            // 기본 로그인 하나 — 계정 폴더 없음.
-            lane: Box::new(|_k, _a| vec![None]),
+            // 계정 축(L3c-3b): 스레드별 고르기 → 지운 계정 거르기. 축이 없는 러너(API 키 lane)는 기본 로그인 하나.
+            // 모델은 정본처럼 스레드 지정 → 정의 순으로 읽어 모델별 주간 창을 보게 해야 하지만, 이 판은 `weekly` 만 본다(모델 None).
+            lane: match self.accounts.as_ref() {
+                Some(hub) => {
+                    let hub = Arc::clone(hub);
+                    Box::new(move |k: &str, _a: &str| hub.lane_for(k, None))
+                }
+                None => Box::new(|_k: &str, _a: &str| vec![None]),
+            },
             now: now_u64,
             claim_holder: Some(&c.claim_holder),
             log: &log_line,

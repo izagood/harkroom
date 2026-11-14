@@ -311,6 +311,9 @@ pub fn read_pools_config(root: &Path, get: impl Fn(&str) -> Option<String>) -> O
     })
 }
 
+/// 풀 이름 문법에 맞으면서 JS `Object.prototype` 에 있는 이름(TS 가 이 풀의 순서를 읽다 던진다).
+pub const JS_PROTO_POOL_NAME: &str = "constructor";
+
 fn accounts_in(
     root: &Path,
     pool: &str,
@@ -327,6 +330,13 @@ fn accounts_in(
             .into_iter()
             .map(with_pool)
             .collect());
+    }
+    // TS `orderAccounts` 는 `cfg.order[pool]` 을 평범한 객체에서 읽어, 풀 이름이 `Object.prototype` 의 이름이면 함수를 받아
+    // 던진다. 풀 이름 문법(`[a-z0-9-]`)에 맞는 그런 이름은 `constructor` 하나다 — TS 처럼 거절한다(security 권고, L3c-3b).
+    if pool == JS_PROTO_POOL_NAME {
+        return Err(format!(
+            "풀 이름 {JS_PROTO_POOL_NAME} 은 쓸 수 없다 — 정본(TS)이 이 풀의 순서를 읽지 못한다"
+        ));
     }
     let found: Vec<String> = load_claude_accounts(&dir, None)?
         .into_iter()

@@ -255,7 +255,7 @@ fn build(m: &RunnerMaker<&'static Link>, t: &MentionTarget, turn: &str) -> Built
     );
     let parts = (i.build_parts)(bundle(m));
     assert!(
-        std::ptr::eq(parts.store, &m.store),
+        std::ptr::eq(parts.store, &*m.store),
         "세션 저장소는 짓개의 것"
     );
     assert_eq!(parts.base.mcp_config_path, m.mcp_config, "MCP 설정");

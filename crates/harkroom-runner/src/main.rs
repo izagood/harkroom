@@ -154,13 +154,42 @@ fn main() {
         },
     );
     let report_link = Arc::clone(&link);
-    let maker = Arc::new(RunnerMaker::new(
+    let lane_source = harkroom_runner::account_lane::LaneSource::from_env(
+        &maker_cfg.runner_env,
+        &maker_cfg.home,
+        &me_id,
+    );
+    let mut maker = RunnerMaker::new(
         maker_cfg,
         Arc::clone(&clients),
         Box::new(move |servers: &[String], at: i64| {
             report_link.notify_mcp_auth_rejected(servers, at)
         }),
-    ));
+    );
+    // claude 계정 축(L3c-3b, 정본 `loadLane`). API 키 lane 러너는 계정 풀을 쓰지 않는다(L3c-3d 가 lane 전용 폴더를 붙인다).
+    // 강제 풀이 없는 풀이면 정본처럼 뜨지 않는다 — 사람이 정한 풀 대신 기본 로그인으로 돌지 않게.
+    if !provider_lane {
+        match harkroom_runner::account_lane::AccountLaneHub::start(
+            lane_source,
+            maker.store(),
+            Arc::new(|l: &str| eprintln!("{l}")),
+        ) {
+            Ok(hub) => {
+                let s = hub.snapshot();
+                let n = s.lane.iter().flatten().count();
+                eprintln!(
+                    "claude 계정 {n}개 (풀: {})",
+                    s.pool.as_deref().unwrap_or("기본(뿌리)")
+                );
+                maker.set_accounts(hub);
+            }
+            Err(e) => {
+                eprintln!("claude 계정 축을 정하지 못했다 — 뜨지 않는다: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+    let maker = Arc::new(maker);
 
     let ledger = Arc::new(Mutex::new(Ledger::new(&[], now_ms())));
     let slots = MentionSlots::default();

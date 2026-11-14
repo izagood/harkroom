@@ -16,6 +16,8 @@ path = "src/main.rs"
 # 오퍼레이터와 같이 std::thread 구조다(tokio 없음).
 [dependencies]
 harkroom-proto = { path = "../harkroom-proto" }
+# claude 계정 풀 해석(L3c-3a) — 오퍼레이터의 러너 고르기와 같은 함수. 외부 의존은 serde_json 하나(이 lock 에 이미 있는 판).
+harkroom-accounts = { path = "../harkroom-accounts" }
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = { version = "=1.0.154", features = ["preserve_order"] }
 # 준비·관문 판정(pty.rs). 오퍼레이터·harkroom-screen lock 에 이미 있는 판이다(regex-automata 0.4.18·regex-syntax 0.8.11).
