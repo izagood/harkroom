@@ -17,6 +17,7 @@ use axum::response::Response;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
@@ -40,6 +41,8 @@ pub struct Core {
     sockets: Mutex<HashMap<u64, (String, mpsc::UnboundedSender<Out>)>>,
     pub allowed_origins: Option<Vec<String>>,
     pub timing: Timing,
+    /// 살아 있는 소켓 일꾼 수(계기·시험용) — 읽지 않는 클라이언트에게 묶여 일꾼이 남지 않는지 본다.
+    workers: Arc<AtomicUsize>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -47,6 +50,9 @@ pub struct Timing {
     pub heartbeat: Duration,
     pub app_heartbeat: Duration,
     pub revalidate: Duration,
+    /// C6-1: 프레임 하나를 소켓에 쓰는 데 기다리는 최대 시간. 넘으면(상대가 읽지 않아 TCP 창이 닫힘) 소켓을 버린다 —
+    /// TS heartbeat 의 `terminate()` 처럼 닫기 인사 없이 끊는다. 연결이 끝날 때 일꾼이 남아 있어도 이 시간 뒤에는 끊는다.
+    pub send_timeout: Duration,
 }
 
 impl Timing {
@@ -65,6 +71,7 @@ impl Timing {
             heartbeat: ms("HARKROOM_WS_HEARTBEAT_MS", 30_000),
             app_heartbeat: ms("HARKROOM_WS_APP_HEARTBEAT_MS", 20_000),
             revalidate: ms("HARKROOM_WS_REVALIDATE_MS", 60_000),
+            send_timeout: ms("HARKROOM_WS_SEND_TIMEOUT_MS", 10_000),
         }
     }
 }
@@ -115,9 +122,15 @@ impl Core {
             sockets: Mutex::new(HashMap::new()),
             allowed_origins,
             timing,
+            workers: Arc::new(AtomicUsize::new(0)),
         });
         spawn_credential_sweep(core.clone());
         core
+    }
+
+    /// 살아 있는 소켓 일꾼 수.
+    pub fn live_socket_workers(&self) -> usize {
+        self.workers.load(Ordering::SeqCst)
     }
 
     fn lock_conn(&self) -> std::sync::MutexGuard<'_, HashMap<String, usize>> {
@@ -312,7 +325,11 @@ async fn run(core: Arc<Core>, socket: WebSocket, origin: Option<String>, ticket:
         json!({ "type": "presence.snapshot", "online": online }).to_string(),
     ));
 
-    let (mut sink, mut stream) = futures_split(socket);
+    let (mut sink, mut stream, worker) = futures_split(
+        socket,
+        core.timing.send_timeout,
+        WorkerGuard::new(&core.workers),
+    );
     let (inbound_tx, mut inbound_rx) = mpsc::channel::<String>(INBOUND_QUEUE);
     {
         let core = core.clone();
@@ -385,6 +402,29 @@ async fn run(core: Arc<Core>, socket: WebSocket, origin: Option<String>, ticket:
             .emit(json!({ "type": "presence.changed", "accountId": account, "online": false }));
     }
     drop(out_tx);
+    // 일꾼에게 닫기 인사를 쓸 시간만 주고, 넘으면 부순다(TS `terminate()`) — 소켓·쌓인 줄이 남지 않게.
+    drop(sink);
+    let mut worker = worker;
+    if tokio::time::timeout(core.timing.send_timeout, &mut worker)
+        .await
+        .is_err()
+    {
+        worker.abort();
+    }
+}
+
+/// 일꾼이 살아 있는 동안 [`Core::live_socket_workers`] 를 하나 올려 둔다 — 끝나든 abort 되든 Drop 에서 내린다.
+struct WorkerGuard(Arc<AtomicUsize>);
+impl WorkerGuard {
+    fn new(n: &Arc<AtomicUsize>) -> Self {
+        n.fetch_add(1, Ordering::SeqCst);
+        Self(n.clone())
+    }
+}
+impl Drop for WorkerGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 /// 들어오는 프레임 — `{ type: 'typing' | 'typing.stop', channelId }` 만. 파싱 실패·모르는 꼴은 버린다(소켓은 산다).
@@ -416,25 +456,38 @@ async fn inbound(core: &Core, account: &str, raw: &str) {
 ///   상한이 없으면 읽지 않는 클라이언트 몫이 끝없이 쌓인다(허브의 `Lagged` 도 생기지 않는다 — 허브에서는 곧바로 이 줄로 옮겨지므로).
 /// - 닫기는 따로 오는 신호로, 쌓인 줄보다 **먼저** 보낸다(줄이 차서 닫는 경우에도 닫는 프레임이 나가게).
 /// - 받는 줄도 상한이 있다 — 차면 소켓 읽기를 멈춰 TCP 흐름 제어에 맡긴다.
-fn futures_split(socket: WebSocket) -> (Sink, Stream) {
+/// - 소켓에 쓰기는 **시한이 있다**(`send_timeout`). 끝까지 읽지 않는 상대면 쓰기가 TCP 창을 끝없이 기다리고, 그동안은 닫기 신호도
+///   보지 못한다 — 시한을 넘으면 그 자리에서 소켓을 버린다(연결 끊김). 닫기 프레임 쓰기에도 같은 시한.
+fn futures_split(
+    socket: WebSocket,
+    send_timeout: Duration,
+    guard: WorkerGuard,
+) -> (Sink, Stream, tokio::task::JoinHandle<()>) {
     let (in_tx, in_rx) = mpsc::channel(INBOUND_QUEUE);
     let (out_tx, mut out_rx) = mpsc::channel::<Message>(SEND_QUEUE);
     let (close_tx, mut close_rx) = tokio::sync::oneshot::channel::<(u16, &'static str)>();
-    tokio::spawn(async move {
+    let worker = tokio::spawn(async move {
+        let _guard = guard;
         let mut socket = socket;
         loop {
             tokio::select! {
                 biased;
                 c = &mut close_rx => {
                     if let Ok((code, reason)) = c {
-                        let _ = socket
-                            .send(Message::Close(Some(CloseFrame { code, reason: Utf8Bytes::from_static(reason) })))
-                            .await;
+                        let _ = tokio::time::timeout(
+                            send_timeout,
+                            socket.send(Message::Close(Some(CloseFrame { code, reason: Utf8Bytes::from_static(reason) }))),
+                        )
+                        .await;
                     }
                     break;
                 }
                 m = out_rx.recv() => match m {
-                    Some(m) => { if socket.send(m).await.is_err() { break; } }
+                    Some(m) => match tokio::time::timeout(send_timeout, socket.send(m)).await {
+                        Ok(Ok(())) => {}
+                        // 보내기 실패 또는 시한 넘김 — 소켓을 버린다.
+                        Ok(Err(_)) | Err(_) => break,
+                    },
                     None => break,
                 },
                 r = socket.recv() => {
@@ -450,6 +503,7 @@ fn futures_split(socket: WebSocket) -> (Sink, Stream) {
             close: Some(close_tx),
         },
         Stream(in_rx),
+        worker,
     )
 }
 

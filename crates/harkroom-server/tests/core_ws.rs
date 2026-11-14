@@ -1,5 +1,6 @@
 //! 코어 `/ws` 의 C6 전 조건(security, #2118 판정) — DB 없이 돈다(풀은 연결하지 않는 lazy 풀, 재검증은 길게).
 //! - C6-1: 읽지 않는 클라이언트는 나가는 줄 상한(`SEND_QUEUE`)을 넘기면 1013 으로 닫힌다(메모리가 끝없이 늘지 않는다).
+//! - C6-1: 끝까지 읽지 않는 클라이언트여도 서버 쪽 소켓 일꾼은 쓰기 시한(`send_timeout`) 뒤 끝난다(소켓·쌓인 줄이 남지 않는다).
 //! - C6-2: 받는 프레임 크기 상한(`MAX_INBOUND_BYTES`)을 넘는 프레임은 받지 않고 연결을 끝낸다.
 mod common;
 
@@ -25,13 +26,15 @@ async fn core_front() -> (String, Arc<Core>, Hub) {
         heartbeat: Duration::from_secs(3600),
         app_heartbeat: Duration::from_secs(3600),
         revalidate: Duration::from_secs(3600),
+        send_timeout: Duration::from_millis(500),
     };
     let core = Core::new(lazy_pool(), hub.clone(), None, timing);
     let auth = harkroom_server::auth::AuthPools {
         read: lazy_pool(),
         write: None,
     };
-    let app = ws::router(core.clone(), auth);
+    let cors = Arc::new(harkroom_server::cors::Cors::from_env_value(None));
+    let app = ws::router(core.clone(), auth, cors);
     let addr = common::serve(app).await;
     (format!("ws://{addr}"), core, hub)
 }
@@ -111,4 +114,41 @@ async fn an_oversized_inbound_frame_ends_the_connection() {
     .await
     .unwrap_or(false);
     assert!(ended, "상한 넘는 프레임 뒤에도 연결이 살아 있다");
+}
+
+#[tokio::test]
+async fn a_client_that_never_reads_does_not_pin_the_socket_worker() {
+    let (base, core, hub) = core_front().await;
+    let (mut client, _) =
+        tokio_tungstenite::connect_async(format!("{base}/ws?ticket={}", ticket(&core)))
+            .await
+            .unwrap();
+    loop {
+        let m = client.next().await.unwrap().unwrap();
+        if m.to_text().unwrap().contains("presence.snapshot") {
+            break;
+        }
+    }
+    assert_eq!(core.live_socket_workers(), 1);
+    // TCP 버퍼를 채우고 줄을 넘긴다 — 이후로 클라이언트는 **끝까지 읽지 않는다**(연결은 쥐고 있다).
+    let big = "x".repeat(64 * 1024);
+    for i in 0..(SEND_QUEUE * 8) {
+        hub.emit(json!({ "type": "presence.changed", "accountId": format!("a{i}"), "online": true, "pad": big }));
+        if i % 64 == 0 {
+            tokio::task::yield_now().await;
+        }
+    }
+    let gone = tokio::time::timeout(Duration::from_secs(15), async {
+        while core.live_socket_workers() != 0 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await;
+    assert!(
+        gone.is_ok(),
+        "읽지 않는 클라이언트에게 묶인 소켓 일꾼이 남아 있다(쓰기에 시한이 없다)"
+    );
+    // 접속 수도 내려갔다.
+    assert!(core.connections.lock().unwrap().is_empty());
+    drop(client);
 }
