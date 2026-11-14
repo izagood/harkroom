@@ -12,6 +12,7 @@ pub mod inbox_today;
 pub mod lists;
 pub mod perm;
 pub mod proxy;
+pub mod route_table;
 pub mod routes;
 pub mod schema;
 pub mod trust_proxy;

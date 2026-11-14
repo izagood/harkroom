@@ -86,6 +86,28 @@ async fn main() {
                 std::process::exit(1);
             }
         };
+    // C2a — 오퍼레이터 코어는 쓰기 풀에 오퍼레이터 권한이 다 있을 때만 선다. 아니면 `/operator`·`/operators*` 는 TS 에 남는다
+    // (소켓과 REST 는 한 허브를 나눠야 하므로 함께 옮기거나 함께 남긴다).
+    let operator_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            match write::missing_operator_privileges(w).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: operator core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: operator core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+    let operator_on = operator_write.is_some();
     let core_router = (core_mode == harkroom_server::core::CoreMode::Rust).then(|| {
         let hub = harkroom_server::core::events::Hub::new();
         harkroom_server::core::events::spawn_outbox_listener(state.pool.clone(), hub.clone());
@@ -95,19 +117,40 @@ async fn main() {
             harkroom_server::core::ws::parse_origins(std::env::var("CORS_ORIGINS").ok().as_deref()),
             harkroom_server::core::ws::Timing::from_env(),
         );
-        harkroom_server::core::ws::router(
-            core,
-            harkroom_server::auth::AuthPools {
-                read: state.pool.clone(),
-                write: state.write.clone(),
-            },
-            state.cors.clone(),
-        )
+        let auth = harkroom_server::auth::AuthPools {
+            read: state.pool.clone(),
+            write: state.write.clone(),
+        };
+        let mut core_routes =
+            harkroom_server::core::ws::routes(core.clone(), auth.clone(), state.cors.clone());
+        if let Some(write) = operator_write {
+            // C2a — 오퍼레이터 소켓·REST. 허브는 프로세스에 하나이고 C2b~C5 의 소비자가 같은 것을 받는다.
+            let operators = harkroom_server::core::operator::OperatorCore::new(
+                state.pool.clone(),
+                write,
+                state.trust.clone(),
+                core.hub.clone(),
+                harkroom_server::core::operator_hub::OperatorHub::new(),
+                harkroom_server::core::operator::OpTiming::from_env(),
+            );
+            let op = harkroom_server::core::operator::routes(operators, auth, state.cors.clone());
+            core_routes.router = core_routes.router.merge(op.router);
+            core_routes.http.extend(op.http);
+            core_routes.sockets.extend(op.sockets);
+        }
+        // CI 대조 시험이 이 줄을 읽어 여기 적힌 **모든** HTTP 줄의 CORS(본 요청·프리플라이트)를 TS 와 맞춰 본다(`route_table.rs`).
+        eprintln!(
+            "front: rust core routes {:?} sockets {:?}",
+            core_routes.http, core_routes.sockets
+        );
+        core_routes.router
     });
     eprintln!(
         "front: core {}",
-        if core_router.is_some() {
-            "rust (/ws, /ws-ticket)"
+        if core_router.is_some() && operator_on {
+            "rust (/ws, /ws-ticket, /operator, /operators*)"
+        } else if core_router.is_some() {
+            "rust (/ws, /ws-ticket; operator stays ts)"
         } else {
             "ts"
         }

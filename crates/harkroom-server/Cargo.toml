@@ -18,6 +18,8 @@ harkroom-bus = { path = "../harkroom-bus" }
 axum = { version = "=0.8.9", default-features = false, features = ["http1", "tokio", "ws"] }
 getrandom = "=0.4.3"
 hex = "=0.4.3"
+# 오퍼레이터 이름 정리(C2a) — shared `normalizeOperatorLabel` 의 유니코드 속성(\p{Extended_Pictographic} 등).
+regex = { version = "=1.12.3", default-features = false, features = ["std", "unicode-bool", "unicode-gencat", "unicode-perl"] }
 http-body-util = "=0.1.5"
 hyper = { version = "=1.12.0", features = ["client", "http1"] }
 hyper-util = { version = "=0.1.21", features = ["client-legacy", "http1", "tokio"] }

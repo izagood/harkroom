@@ -64,10 +64,38 @@ pub const REQUIRED_SEQUENCE_PRIVILEGES: &[(&str, &str)] = &[
     ("builtin_skill_usage_id_seq", "USAGE"),
 ];
 
+/// S5.3 C2a — 오퍼레이터 코어(`/operator`·`/operators*`)가 쓰는 권한. [`REQUIRED_PRIVILEGES`] 와 따로 둔다: 없으면 다른 쓰기는
+/// 그대로 켜고 오퍼레이터 표면만 TS 에 남긴다(homelab GRANT 를 늘리기 전에 이 판이 나가도 쓰기 전체가 꺼지지 않게).
+pub const OPERATOR_PRIVILEGES: &[(&str, &str)] = &[
+    ("operator", "INSERT"),
+    ("operator", "UPDATE"),
+    ("operator_upgrade", "INSERT"),
+    ("operator_upgrade", "DELETE"),
+    ("operator_gh_report", "INSERT"),
+    ("operator_gh_report", "UPDATE"),
+    ("agent_assignment", "UPDATE"),
+    ("secret_grant", "UPDATE"),
+    ("audit_log", "INSERT"),
+];
+pub const OPERATOR_SEQUENCE_PRIVILEGES: &[(&str, &str)] = &[("operator_upgrade_id_seq", "USAGE")];
+
+/// 오퍼레이터 코어 권한 중 빠진 것.
+pub async fn missing_operator_privileges(pool: &PgPool) -> Result<Vec<String>, sqlx::Error> {
+    missing_in(pool, OPERATOR_PRIVILEGES, OPERATOR_SEQUENCE_PRIVILEGES).await
+}
+
 /// 지금 연결된 역할에 없는 권한. 기동 기록용 — 비어 있어야 정상이다.
 pub async fn missing_privileges(pool: &PgPool) -> Result<Vec<String>, sqlx::Error> {
+    missing_in(pool, REQUIRED_PRIVILEGES, REQUIRED_SEQUENCE_PRIVILEGES).await
+}
+
+async fn missing_in(
+    pool: &PgPool,
+    tables: &[(&str, &str)],
+    sequences: &[(&str, &str)],
+) -> Result<Vec<String>, sqlx::Error> {
     let mut out = vec![];
-    for (t, p) in REQUIRED_PRIVILEGES {
+    for (t, p) in tables {
         let ok: bool = sqlx::query_scalar("select has_table_privilege($1, $2)")
             .bind(t)
             .bind(p)
@@ -77,7 +105,7 @@ pub async fn missing_privileges(pool: &PgPool) -> Result<Vec<String>, sqlx::Erro
             out.push(format!("{p} on {t}"));
         }
     }
-    for (s, p) in REQUIRED_SEQUENCE_PRIVILEGES {
+    for (s, p) in sequences {
         let ok: bool = sqlx::query_scalar("select has_sequence_privilege($1, $2)")
             .bind(s)
             .bind(p)

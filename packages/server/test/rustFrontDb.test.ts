@@ -38,12 +38,37 @@ function cargo(args: string[], env: Record<string, string>): Promise<{ code: num
   });
 }
 
+/** `write.rs::OPERATOR_PRIVILEGES`(+ 시퀀스) 만 가진 쓰기 역할 — homelab 이 운영 쓰기 역할에 더할 GRANT 와 같은 표. */
+const OPERATOR_GRANTS = [
+  'insert, update on operator',
+  'insert, delete on operator_upgrade',
+  'usage on sequence operator_upgrade_id_seq',
+  'insert, update on operator_gh_report',
+  'update on agent_assignment',
+  'update on secret_grant',
+  'insert on audit_log',
+];
+
+async function operatorWriteRole(db: { pool: pg.Pool; uri: string }): Promise<string> {
+  const rw = `op_rw_${Math.random().toString(36).slice(2, 10)}`;
+  await db.pool.query(`create role ${rw} login password '${rw}' nosuperuser nocreatedb nocreaterole nobypassrls connection limit 8`);
+  await db.pool.query(`grant pg_read_all_data to ${rw}`);
+  for (const g of OPERATOR_GRANTS) await db.pool.query(`grant ${g} to ${rw}`);
+  const u = new URL(db.uri);
+  u.username = rw;
+  u.password = rw;
+  return u.toString();
+}
+
 describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () => {
-  for (const name of ['auth', 'perm']) {
+  for (const name of ['auth', 'perm', 'operator']) {
     it(`tests/${name}.rs`, async () => {
       const db = await startTestDb();
       try {
-        const r = await cargo(['test', '--test', name, '--', '--nocapture'], { HARKROOM_TEST_DATABASE_URL: db.uri });
+        const env: Record<string, string> = { HARKROOM_TEST_DATABASE_URL: db.uri };
+        // C2a — 오퍼레이터 시험은 쓰기 풀을 `write.rs::OPERATOR_PRIVILEGES` 만 가진 역할로 돌린다(homelab GRANT 표가 모자라면 여기서 빨개진다).
+        if (name === 'operator') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db);
+        const r = await cargo(['test', '--test', name, '--', '--nocapture'], env);
         expect(r.code, r.out).toBe(0);
         // DB 가 없어 건너뛴 것을 통과로 읽지 않는다.
         expect(r.out, r.out).not.toContain('skip: HARKROOM_TEST_DATABASE_URL unset');
@@ -281,6 +306,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant delete on work_item to ${rw}`,
         `grant insert, update, delete on agent_thread_claim to ${rw}`,
         `grant insert, update, delete on push_device to ${rw}`,
+        // S5.3 C2a — 오퍼레이터 코어(`OPERATOR_PRIVILEGES`). 없으면 앞단은 `/operator`·`/operators*` 를 TS 에 남긴다.
+        ...OPERATOR_GRANTS.map((g) => `grant ${g} to ${rw}`),
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -302,6 +329,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         HARKROOM_CORE: 'rust', HARKROOM_WS_APP_HEARTBEAT_MS: '300', HARKROOM_WS_REVALIDATE_MS: '500',
       });
       expect(f.log()).toContain('front: core rust');
+      expect(f.log()).toContain('/operator, /operators*');
       expect(f.log()).toContain('front: trust proxy 2 cidr(s)');
       front = f.child;
       // 앞단이 옮긴 줄을 **직접** 답하는지 — 모두 TS 로 넘기면 대조는 TS 끼리 비교해 늘 통과한다.
@@ -793,8 +821,13 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
 
       // 11-14 「Load failed」 장애 재발 막기 — 앞단이 답하는 **모든** 줄이 TS 와 같은 CORS 머리를 내는가. 줄 목록은 앞단 기동 기록에서
       // 읽는다(새 줄이 생기면 저절로 들어온다). 요청은 바꾸는 것이 없게(없는 id·빈 본문) 보낸다 — 머리만 본다.
-      const keys = JSON.parse((/front: rust routes (\[.*\])/.exec(f.log()) ?? [])[1] ?? '[]') as string[];
-      expect(keys.length, '앞단 줄 목록을 읽어야 한다').toBeGreaterThan(40);
+      // 옮긴 줄(`front: rust routes`)과 코어 줄(`front: rust core routes` — `route_table.rs` 가 붙이면서 적는 표)을 **합쳐** 본다.
+      // 코어에 새 HTTP 줄이 붙으면 저절로 여기 들어온다(손으로 시험을 더하지 않는다 — 11-14 CORS 빠짐 두 번의 교훈).
+      const moved = JSON.parse((/front: rust routes (\[.*\])/.exec(f.log()) ?? [])[1] ?? '[]') as string[];
+      expect(moved.length, '앞단 줄 목록을 읽어야 한다').toBeGreaterThan(40);
+      const coreKeys = JSON.parse((/front: rust core routes (\[.*?\]) sockets/.exec(f.log()) ?? [])[1] ?? '[]') as string[];
+      expect(coreKeys, '코어 줄 목록(/ws-ticket·/operators*)을 읽어야 한다').toEqual(expect.arrayContaining(['POST /ws-ticket', 'GET /operators', 'DELETE /operators/{id}']));
+      const keys = [...moved, ...coreKeys];
       const CORS_HEADERS = ['access-control-allow-origin', 'access-control-expose-headers', 'access-control-allow-credentials'];
       const VOLATILE = new Set(['date', 'content-length', 'connection', 'keep-alive', 'transfer-encoding']);
       const headerDiffs: string[] = [];
@@ -819,17 +852,26 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           }
         }
       }
-      // 코어 `/ws-ticket`(C0)도 데스크톱이 교차 출처로 부른다 — 본 요청과 프리플라이트 둘 다 TS 와 같아야 한다.
-      for (const [method, headers] of [
-        ['POST', { authorization: `Bearer ${A}`, origin: CORS }],
-        ['OPTIONS', { origin: CORS, 'access-control-request-method': 'POST', 'access-control-request-headers': 'authorization' }],
-      ] as const) {
-        const [a, b] = [await fetch(`${tsUrl}/ws-ticket`, { method, headers }), await fetch(`${rsUrl}/ws-ticket`, { method, headers })];
+      // 같은 모든 줄의 프리플라이트 — 그 줄의 메서드를 ACRM 으로. 상태·CORS 머리가 TS 와 같아야 한다(TS 는 `@fastify/cors` 가 답한다).
+      for (const key of keys) {
+        const [method, path] = key.split(' ') as [string, string];
+        const headers = { origin: CORS, 'access-control-request-method': method, 'access-control-request-headers': 'authorization,content-type' };
+        const [a, b] = [
+          await fetch(`${tsUrl}${fill(path)}`, { method: 'OPTIONS', headers }),
+          await fetch(`${rsUrl}${fill(path)}`, { method: 'OPTIONS', headers }),
+        ];
         await a.arrayBuffer(); await b.arrayBuffer();
-        expect(b.status, `${method} /ws-ticket`).toBe(a.status);
+        expect(b.status, `preflight ${key}`).toBe(a.status);
         for (const h of [...CORS_HEADERS, 'access-control-allow-methods', 'access-control-allow-headers', 'access-control-max-age']) {
-          expect(b.headers.get(h), `${method} /ws-ticket ${h}`).toBe(a.headers.get(h));
+          expect(b.headers.get(h), `preflight ${key} ${h}`).toBe(a.headers.get(h));
         }
+        // 인증 없는 본 요청(401·403 등) — 인증 층보다 바깥에서 CORS 가 붙는가.
+        const [c, d] = [
+          await fetch(`${tsUrl}${fill(path)}`, { method, headers: { origin: CORS } }),
+          await fetch(`${rsUrl}${fill(path)}`, { method, headers: { origin: CORS } }),
+        ];
+        await c.arrayBuffer(); await d.arrayBuffer();
+        for (const h of CORS_HEADERS) expect(d.headers.get(h), `${key} 인증 없음 ${h}`).toBe(c.headers.get(h));
       }
       // 같은 축의 다른 머리 차이(보안·캐시 머리 등) — 보고용으로 남긴다.
       console.log(`rust-front header diff (${headerDiffs.length}):\n${headerDiffs.join('\n')}`);
