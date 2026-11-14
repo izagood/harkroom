@@ -256,6 +256,30 @@ fn main() {
             std::process::exit(1);
         }
         maker.set_opencode(opencode);
+        // pi 격리 루트(p2, 정본 `main.ts` 382~386) — lane 러너는 사람 로그인·제공자를 물려받지 않는 lane 루트(폴더 검사를 지나야 한다).
+        // 실패하면 뜨지 않는다 — 사람 `~/.pi/agent` 로 돌지 않게.
+        let pi_home = if provider_lane {
+            match harkroom_runner::pi_prep::pi_lane_root(&state_dir) {
+                Ok(h) => h,
+                Err(e) => {
+                    eprintln!("pi lane 홈을 만들지 못했다 — 뜨지 않는다: {}", e.kind());
+                    std::process::exit(1);
+                }
+            }
+        } else {
+            harkroom_runner::pi_prep::pi_home_dir(&state_dir)
+        };
+        let pi = harkroom_runner::pi_prep::PiPrep {
+            home: pi_home,
+            lane: provider_lane,
+            mcp_config_path: maker.config().mcp_config_path.clone(),
+            source_dir: harkroom_runner::pi_home::source_pi_dir(&env),
+        };
+        if let Err(e) = pi.ensure() {
+            eprintln!("pi 홈을 마련하지 못했다 — 뜨지 않는다: {e}");
+            std::process::exit(1);
+        }
+        maker.set_pi(pi);
     }
     match harkroom_runner::account_lane::AccountLaneHub::start(
         source,

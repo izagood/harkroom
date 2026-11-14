@@ -84,6 +84,7 @@ pub fn maker_config(cfg: &RunnerConfig, env: &Env, f: BootFacts<'_>) -> MakerCon
         // main.rs 가 lane 여부를 정한 뒤 채운다(`RunnerMaker::set_codex`).
         codex: None,
         opencode: None,
+        pi: None,
     }
 }
 

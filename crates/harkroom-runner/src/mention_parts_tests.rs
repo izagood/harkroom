@@ -977,9 +977,12 @@ fn attempt_command_carries_opencode_turn_config() {
         AttemptHomes {
             codex: None,
             opencode: None,
+            pi: Some(Path::new("/state/pi-home")),
             opencode_turn_config: Some(cfg),
         },
         "t-1",
     );
     assert_eq!(cmd.opencode_turn_config, Some(cfg));
+    // pi 루트도 시도 명령에 실린다(p2) — 빠지면 pi 턴은 조립에서 `MissingHome` 으로 안 뜬다.
+    assert_eq!(cmd.pi_home, Some(Path::new("/state/pi-home")));
 }

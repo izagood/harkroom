@@ -72,6 +72,8 @@ pub struct MakerConfig {
     pub codex: Option<crate::codex_prep::CodexPrep>,
     /// opencode·kilo 격리 XDG 홈(o1, 정본 `opencodeHome`) — main.rs 가 기동 때 정한다. 없으면 그 하네스 턴은 조립에서 안 뜬다.
     pub opencode: Option<crate::opencode_prep::OpencodePrep>,
+    /// pi 격리 홈(p2, 정본 `piHome`) — main.rs 가 기동 때 정한다. 없으면 pi 턴은 조립에서 안 뜬다(`MissingHome`).
+    pub pi: Option<crate::pi_prep::PiPrep>,
 }
 
 /// 배치마다 갱신하는 이름 표 — 이름은 바뀔 수 있어 멘션을 지을 때 꺼낸 **사본**을 쓴다.
@@ -207,6 +209,11 @@ impl<L: AgentLink> RunnerMaker<L> {
     /// opencode·kilo 격리 홈을 정한다(o1, main.rs 가 기동 때 한 번).
     pub fn set_opencode(&mut self, opencode: crate::opencode_prep::OpencodePrep) {
         self.cfg.opencode = Some(opencode);
+    }
+
+    /// pi 격리 홈을 정한다(p2, main.rs 가 기동 때 한 번).
+    pub fn set_pi(&mut self, pi: crate::pi_prep::PiPrep) {
+        self.cfg.pi = Some(pi);
     }
 
     /// codex 격리 홈을 정한다(c1, main.rs 가 기동 때 한 번).
@@ -409,6 +416,10 @@ where
             if let Some(oc) = c.opencode.clone() {
                 p.opencode_home = Some(oc.home.clone());
                 p.opencode = Some(oc);
+            }
+            if let Some(pi) = c.pi.clone() {
+                p.pi_home = Some(pi.home.clone());
+                p.pi = Some(pi);
             }
             if let Some(cx) = c.codex.clone() {
                 p.codex_home = Some(cx.home.clone());
