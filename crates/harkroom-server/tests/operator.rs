@@ -161,8 +161,45 @@ async fn fake_operator_against_real_schema() {
             read: pool.clone(),
             write: Some(write.clone()),
         },
+        Arc::new(harkroom_server::cors::Cors::from_env_value(Some(
+            "tauri://localhost",
+        ))),
     );
     let base = format!("http://{}", common::serve(app).await);
+
+    // ---- CORS — 데스크톱(`tauri://localhost`)은 `/operators*` 를 교차 출처로 부른다(401 에도 머리, 프리플라이트도 이 층이 답함) ----
+    let origin = ("origin", "tauri://localhost");
+    let (s, h, _) = common::send(&base, Method::GET, "/operators", &[origin], "").await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        h["access-control-allow-origin"], "tauri://localhost",
+        "401 에도 CORS"
+    );
+    for (method, path) in [
+        ("GET", "/operators"),
+        ("POST", "/operators/register-codes"),
+        (
+            "GET",
+            "/operators/00000000-0000-4000-8000-000000000999/capabilities",
+        ),
+        ("DELETE", "/operators/00000000-0000-4000-8000-000000000999"),
+    ] {
+        let (s, h, _) = common::send(
+            &base,
+            Method::OPTIONS,
+            path,
+            &[
+                origin,
+                ("access-control-request-method", method),
+                ("access-control-request-headers", "authorization"),
+            ],
+            "",
+        )
+        .await;
+        assert_eq!(s, StatusCode::NO_CONTENT, "preflight {method} {path}");
+        assert_eq!(h["access-control-allow-origin"], "tauri://localhost");
+        assert!(h.contains_key("access-control-allow-methods"));
+    }
 
     // ---- 등록 코드 → claim ----
     let (s, _) = req(&base, Method::POST, "/operators/register-codes", None, "{}").await;

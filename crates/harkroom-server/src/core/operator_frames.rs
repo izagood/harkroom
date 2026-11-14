@@ -39,8 +39,29 @@ fn hmac_sha256(key: &[u8], msg: &[u8]) -> [u8; 32] {
     outer.finalize().into()
 }
 
-/// TS `machineIdKey` — `hkdfSync('sha256', secret, salt=빈, info, 32)`. 비밀이 비면 None.
-pub fn machine_id_key(raw: Option<&str>) -> Option<[u8; 32]> {
+/// 머신 묶음표 키 — env `HARKROOM_MACHINE_ID_KEY` 의 64자리 hex(32바이트). **파생된 키만** 받는다: 값은 TS `machineIdKey`
+/// (`hkdfSync('sha256', HARKROOM_SECRET_KEY, salt=빈, 'harkroom operator machine id v1', 32)`)와 같은 바이트이고, 배포 쪽이 같은 HKDF 로
+/// 만들어 넣는다. 앞단은 비밀 보관소의 마스터 키(`HARKROOM_SECRET_KEY`)를 읽지 않는다 — 그 키로는 모든 비밀을 풀 수 있다.
+/// 꼴이 틀리면 None(경고 한 줄) — 그때는 `machine_id` 를 쓰지 않는다([`write_status`] 참고).
+pub fn machine_id_key_from_env(raw: Option<&str>) -> Option<[u8; 32]> {
+    let Some(raw) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+        eprintln!("core: HARKROOM_MACHINE_ID_KEY unset — operator machine_id writes are skipped");
+        return None;
+    };
+    let parsed = hex::decode(raw)
+        .ok()
+        .and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok());
+    if parsed.is_none() {
+        eprintln!(
+            "core: HARKROOM_MACHINE_ID_KEY is not 64 hex chars — operator machine_id writes are skipped"
+        );
+    }
+    parsed
+}
+
+/// TS `machineIdKey` 와 같은 파생 — 시험이 [`machine_id_key_from_env`] 에 넣을 값이 TS 와 바이트로 같은지 보는 데만 쓴다(앞단 코드는 부르지 않는다).
+#[cfg(test)]
+fn derive_machine_id_key(raw: Option<&str>) -> Option<[u8; 32]> {
     let secret = raw.map(str::trim).filter(|s| !s.is_empty())?;
     let prk = hmac_sha256(&[0u8; 32], secret.as_bytes());
     let mut info = b"harkroom operator machine id v1".to_vec();
@@ -48,13 +69,9 @@ pub fn machine_id_key(raw: Option<&str>) -> Option<[u8; 32]> {
     Some(hmac_sha256(&prk, &info))
 }
 
-/// TS `mixMachine` — 키가 있으면 HMAC, 없으면 sha256(`owner:digest`).
-pub fn mix_machine(key: Option<&[u8; 32]>, owner: &str, digest: &str) -> String {
-    let msg = format!("{owner}:{digest}");
-    match key {
-        Some(k) => hex::encode(hmac_sha256(k, msg.as_bytes())),
-        None => hex::encode(Sha256::digest(msg.as_bytes())),
-    }
+/// TS `mixMachine`(키가 있을 때) — HMAC-SHA256(키, `owner:digest`). 키 없는 sha256 갈래는 옮기지 않는다(키가 없으면 쓰지 않는다).
+pub fn mix_machine(key: &[u8; 32], owner: &str, digest: &str) -> String {
+    hex::encode(hmac_sha256(key, format!("{owner}:{digest}").as_bytes()))
 }
 
 /// TS `statusSignature` — 턴 수·자격 증명 상태·MCP 상태. 같음 비교에만 쓰므로 TS 와 바이트가 같을 필요는 없다.
@@ -389,8 +406,9 @@ async fn write_status(
     .await?;
     let Some(owner) = owner else { return Ok(()) };
     let mut machine_changed = false;
-    if let Some(m) = machine {
-        let mixed = mix_machine(key, &owner, &m);
+    // 키가 없으면 machine_id 를 쓰지 않는다 — 키 없는 sha256 으로 떨어지면 TS 가 적은 값(HMAC)과 갈려 「머신 바뀜」이 거짓으로 뜬다.
+    if let (Some(m), Some(k)) = (machine, key) {
+        let mixed = mix_machine(k, &owner, &m);
         machine_changed = sqlx::query(
             "update operator set machine_id = $2 where id = $1::uuid and machine_id is distinct from $2 returning id",
         )
@@ -452,21 +470,33 @@ mod tests {
     #[test]
     fn machine_mix_matches_node() {
         // node: hkdfSync('sha256', 'test-secret', '', 'harkroom operator machine id v1', 32) → createHmac(..).update('owner:'+'a'*64)
-        let key = machine_id_key(Some(" test-secret ")).unwrap();
+        let key = derive_machine_id_key(Some(" test-secret ")).unwrap();
         assert_eq!(
             hex::encode(key),
             "c57f31f721311623fb1f603b51fb5eba9315be057506ff27d45f2811b3495309"
         );
         let d = "a".repeat(64);
         assert_eq!(
-            mix_machine(Some(&key), "owner", &d),
+            mix_machine(&key, "owner", &d),
             "86b9d3f01f1b646b05c15076956da6879eae62b6bdabaeddc0d10596644e1a2d"
         );
+        assert!(derive_machine_id_key(Some("  ")).is_none());
+        // 배포가 넣는 env 값(파생 키 hex)을 그대로 읽으면 같은 키다.
         assert_eq!(
-            mix_machine(None, "owner", &d),
-            "1611ff724a47e40fd0dbf10cbe5372bff855bb5d5f9bc4884005e8f633f16002"
+            machine_id_key_from_env(Some(&format!(" {} ", hex::encode(key)))),
+            Some(key)
         );
-        assert!(machine_id_key(Some("  ")).is_none());
+        assert_eq!(machine_id_key_from_env(None), None);
+        assert_eq!(
+            machine_id_key_from_env(Some("test-secret")),
+            None,
+            "원문 비밀은 받지 않는다"
+        );
+        assert_eq!(
+            machine_id_key_from_env(Some(&"ab".repeat(31))),
+            None,
+            "31바이트"
+        );
     }
 
     #[test]

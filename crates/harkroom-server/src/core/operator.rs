@@ -96,8 +96,8 @@ impl OperatorCore {
         spawn_version_writer(core.clone());
         super::operator_frames::spawn(
             core.clone(),
-            super::operator_frames::machine_id_key(
-                std::env::var("HARKROOM_SECRET_KEY").ok().as_deref(),
+            super::operator_frames::machine_id_key_from_env(
+                std::env::var("HARKROOM_MACHINE_ID_KEY").ok().as_deref(),
             ),
             timing.status_min,
         );
@@ -259,11 +259,19 @@ async fn run(core: Arc<OperatorCore>, socket: WebSocket, operator_id: String, to
 }
 
 /// 오퍼레이터 라우터 — `HARKROOM_CORE=rust` 일 때 앞단 라우터에 합친다. 인증은 앞단 인증 층(오퍼레이터 토큰 `hkop_`)이다.
-pub fn router(core: Arc<OperatorCore>, auth: crate::auth::AuthPools) -> axum::Router {
+///
+/// `/operators*` REST 는 데스크톱이 교차 출처 `fetch`(Bearer)로 부른다(목록·등록 코드·능력·폐기). 그래서 CORS 층을 인증 층
+/// **바깥**에 `layer`(메서드 밖)로 건다 — 401·403 에도 머리가 실리고 프리플라이트(OPTIONS)도 이 층이 답한다(#2120 `/ws-ticket` 과 같은 길,
+/// 11-14 「Load failed」 장애를 되풀이하지 않게). `/operator` 소켓은 오퍼레이터 프로세스가 붙는 길이라 `/ws` 처럼 CORS 층이 없다.
+pub fn router(
+    core: Arc<OperatorCore>,
+    auth: crate::auth::AuthPools,
+    cors: Arc<crate::cors::Cors>,
+) -> axum::Router {
     use super::operator_rest as rest;
     use axum::routing::{get, post};
-    axum::Router::new()
-        .route("/operator", get(upgrade))
+    let auth_layer = || axum::middleware::from_fn_with_state(auth.clone(), crate::auth::layer);
+    let rest_routes = axum::Router::new()
         .route("/operators", get(rest::list))
         .route("/operators/register-codes", post(rest::register_code))
         .route("/operators/claim", post(rest::claim))
@@ -274,9 +282,14 @@ pub fn router(core: Arc<OperatorCore>, auth: crate::auth::AuthPools) -> axum::Ro
             "/operators/{id}",
             axum::routing::patch(rest::rename).delete(rest::revoke),
         )
-        .route_layer(axum::middleware::from_fn_with_state(
-            auth,
-            crate::auth::layer,
-        ))
+        .route_layer(auth_layer())
+        .layer(axum::middleware::from_fn_with_state(
+            cors,
+            crate::cors::layer,
+        ));
+    axum::Router::new()
+        .route("/operator", get(upgrade))
+        .route_layer(auth_layer())
+        .merge(rest_routes)
         .with_state(core)
 }

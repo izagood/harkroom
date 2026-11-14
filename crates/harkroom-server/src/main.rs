@@ -133,7 +133,11 @@ async fn main() {
                     harkroom_server::core::operator_hub::OperatorHub::new(),
                     harkroom_server::core::operator::OpTiming::from_env(),
                 );
-                ws.merge(harkroom_server::core::operator::router(operators, auth))
+                ws.merge(harkroom_server::core::operator::router(
+                    operators,
+                    auth,
+                    state.cors.clone(),
+                ))
             }
             None => ws,
         }

@@ -859,6 +859,29 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect(b.headers.get(h), `${method} /ws-ticket ${h}`).toBe(a.headers.get(h));
         }
       }
+      // C2a — 오퍼레이터 REST(`/operators*`)도 데스크톱이 교차 출처로 부른다. 앞단 줄 목록(`front: rust routes`)에는 없으므로 따로 본다.
+      // 본 요청(인증 있음·없음)과 프리플라이트가 TS 와 같은 상태·CORS 머리인가. 바꾸는 요청은 없는 id 로만 보낸다.
+      const OP_MISSING = '00000000-0000-4000-8000-000000000999';
+      const opCases: [string, string, Record<string, string>][] = [
+        ['GET', '/operators', { authorization: `Bearer ${A}`, origin: CORS }],
+        ['GET', '/operators', { origin: CORS }],
+        ['GET', '/operators', { authorization: `Bearer ${A}`, origin: 'https://evil.example' }],
+        ['GET', `/operators/${OP_MISSING}/capabilities`, { authorization: `Bearer ${A}`, origin: CORS }],
+        ['DELETE', `/operators/${OP_MISSING}`, { authorization: `Bearer ${A}`, origin: CORS }],
+        ['OPTIONS', '/operators', { origin: CORS, 'access-control-request-method': 'GET', 'access-control-request-headers': 'authorization' }],
+        ['OPTIONS', '/operators/register-codes', { origin: CORS, 'access-control-request-method': 'POST', 'access-control-request-headers': 'authorization,content-type' }],
+        ['OPTIONS', `/operators/${OP_MISSING}`, { origin: CORS, 'access-control-request-method': 'DELETE', 'access-control-request-headers': 'authorization' }],
+        ['OPTIONS', '/operators', { origin: CORS }],
+      ];
+      for (const [method, path, headers] of opCases) {
+        const [a, b] = [await fetch(`${tsUrl}${path}`, { method, headers }), await fetch(`${rsUrl}${path}`, { method, headers })];
+        await a.arrayBuffer(); await b.arrayBuffer();
+        const label = `${method} ${path} ${headers.origin}${headers.authorization ? ' auth' : ''}`;
+        expect(b.status, label).toBe(a.status);
+        for (const h of [...CORS_HEADERS, 'access-control-allow-methods', 'access-control-allow-headers', 'access-control-max-age']) {
+          expect(b.headers.get(h), `${label} ${h}`).toBe(a.headers.get(h));
+        }
+      }
       // 같은 축의 다른 머리 차이(보안·캐시 머리 등) — 보고용으로 남긴다.
       console.log(`rust-front header diff (${headerDiffs.length}):\n${headerDiffs.join('\n')}`);
       // 프리플라이트(옮긴 줄의 OPTIONS 는 앞단이 TS 로 넘긴다 — 두 답이 같아야 한다).
