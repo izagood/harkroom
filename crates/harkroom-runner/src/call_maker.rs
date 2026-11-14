@@ -426,7 +426,11 @@ where
                     let hub = Arc::clone(hub);
                     Box::new(move |k: &str, _a: &str| hub.lane_for(k, None))
                 }
-                None => Box::new(|_k: &str, _a: &str| vec![None]),
+                // 축 묶음이 없어도 lane 러너는 lane 전용 폴더로만 띄운다(기본 로그인 길 0, L3c-3d).
+                None => {
+                    let lane = crate::account_lane::fallback_lane(&c.runner_env, &c.state_dir);
+                    Box::new(move |_k: &str, _a: &str| lane.clone())
+                }
             },
             now: now_u64,
             claim_holder: Some(&c.claim_holder),

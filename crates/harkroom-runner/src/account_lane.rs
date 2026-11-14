@@ -16,6 +16,30 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+/// lane 러너의 계정 폴더 이름(정본 `stateDir.ts` `providerLaneClaudeDir` = `<상태 폴더>/claude-provider-lane`).
+pub const PROVIDER_LANE_CLAUDE_DIR: &str = "claude-provider-lane";
+/// lane 러너의 계정 이름(정본 `providerLaneAccount.name`).
+pub const PROVIDER_LANE_ACCOUNT: &str = "provider-lane";
+
+/// lane 러너의 계정 축 — **이 에이전트 전용 폴더 하나**(정본 `providerLaneAccount`, security ⓒ). 풀·`~/.claude` 를 읽지 않는다.
+/// 이 폴더는 비어 있어야 정상이다(로그인이 없다) — 키는 턴마다 env 로만 든다.
+pub fn provider_lane_account(state_dir: &Path) -> ClaudeAccount {
+    ClaudeAccount {
+        name: PROVIDER_LANE_ACCOUNT.to_string(),
+        config_dir: state_dir.join(PROVIDER_LANE_CLAUDE_DIR),
+        pool: None,
+    }
+}
+
+/// 이 러너의 기본 계정 축 — 축 묶음이 없을 때도 lane 러너는 **기본 로그인 축으로 띄우지 않는다**(L3c-3d, security 조건).
+pub fn fallback_lane(runner_env: &BTreeMap<String, String>, state_dir: &Path) -> Lane {
+    if runner_env.get("HARKROOM_PROVIDER_LANE").map(String::as_str) == Some("1") {
+        vec![Some(provider_lane_account(state_dir))]
+    } else {
+        vec![None]
+    }
+}
+
 /// 다시 읽기 최소 간격(정본 `minIntervalMs` 5초).
 pub const LANE_REFRESH_MIN: Duration = Duration::from_secs(5);
 
@@ -37,9 +61,33 @@ pub struct LaneSource {
     /// `HARKROOM_CLAUDE_ACCOUNTS`.
     pub order: Option<String>,
     pub env: BTreeMap<String, String>,
+    /// 있으면 디스크를 읽지 않고 늘 이 축이다(lane 러너 — 정본 `loadLane` 의 `providerLaneOn` 갈래).
+    pub fixed: Option<CurrentLane>,
 }
 
 impl LaneSource {
+    /// lane 러너의 축 — lane 전용 폴더 하나. 폴더를 0700 으로 만든다(정본 `mkdir(providerLaneClaudeDir, 0o700)`).
+    pub fn provider_lane(state_dir: &Path) -> std::io::Result<Self> {
+        use std::os::unix::fs::DirBuilderExt;
+        let account = provider_lane_account(state_dir);
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&account.config_dir)?;
+        Ok(LaneSource {
+            root: account.config_dir.clone(),
+            agent_id: String::new(),
+            forced_pool: None,
+            order: None,
+            env: BTreeMap::new(),
+            fixed: Some(CurrentLane {
+                pool: None,
+                lane: vec![Some(account)],
+                chain: None,
+            }),
+        })
+    }
+
     pub fn from_env(env: &BTreeMap<String, String>, home: &Path, agent_id: &str) -> Self {
         let get = |k: &str| env.get(k).cloned();
         LaneSource {
@@ -51,11 +99,15 @@ impl LaneSource {
                 .filter(|s| !s.is_empty()),
             order: env.get("HARKROOM_CLAUDE_ACCOUNTS").cloned(),
             env: env.clone(),
+            fixed: None,
         }
     }
 
     /// 정본 `loadClaudeAccountLane` → `CurrentLane`(계정이 없으면 축 `[None]`).
     pub fn load(&self) -> Result<CurrentLane, String> {
+        if let Some(f) = &self.fixed {
+            return Ok(f.clone());
+        }
         let l = harkroom_accounts::load_claude_account_lane(
             &self.root,
             &self.agent_id,
@@ -167,6 +219,18 @@ impl LiveAccountLane {
             st.read_at = Some(Instant::now());
         }
         let last = st.last.clone();
+        // lane 러너: 축은 lane 전용 폴더 하나로 고정이다. 폴더가 사라져도 거르지 않고 다시 만든다 — 걸러서 `[None]`(기본 로그인)이
+        // 되는 길을 막는다(L3c-3d, security 조건).
+        if self.source.fixed.is_some() {
+            for a in last.lane.iter().flatten() {
+                use std::os::unix::fs::DirBuilderExt;
+                let _ = std::fs::DirBuilder::new()
+                    .recursive(true)
+                    .mode(0o700)
+                    .create(&a.config_dir);
+            }
+            return last;
+        }
         CurrentLane {
             pool: last.pool,
             lane: present_accounts(last.lane),
@@ -226,7 +290,12 @@ impl AccountLaneHub {
 
     /// 이 스레드의 페일오버 순서(정본 `laneFor` → `presentAccounts`).
     pub fn lane_for(&self, thread_key: &str, model: Option<&str>) -> Lane {
-        present_accounts(self.assigner.lane_for(thread_key, model))
+        let lane = self.assigner.lane_for(thread_key, model);
+        // lane 러너는 거르지 않는다(위 `current` 와 같은 까닭) — 기본 로그인 칸이 끼면 안 된다.
+        if self.live.source.fixed.is_some() {
+            return lane;
+        }
+        present_accounts(lane)
     }
 
     pub fn snapshot(&self) -> LaneSnapshot {
