@@ -409,9 +409,9 @@ async fn run(core: Arc<Core>, socket: WebSocket, origin: Option<String>, ticket:
 }
 
 /// 일꾼이 살아 있는 동안 [`Core::live_socket_workers`] 를 하나 올려 둔다 — 끝나든 abort 되든 Drop 에서 내린다.
-struct WorkerGuard(Arc<AtomicUsize>);
+pub(super) struct WorkerGuard(Arc<AtomicUsize>);
 impl WorkerGuard {
-    fn new(n: &Arc<AtomicUsize>) -> Self {
+    pub(super) fn new(n: &Arc<AtomicUsize>) -> Self {
         n.fetch_add(1, Ordering::SeqCst);
         Self(n.clone())
     }
@@ -453,7 +453,7 @@ async fn inbound(core: &Core, account: &str, raw: &str) {
 /// - 받는 줄도 상한이 있다 — 차면 소켓 읽기를 멈춰 TCP 흐름 제어에 맡긴다.
 /// - 소켓에 쓰기는 **시한이 있다**(`send_timeout`). 끝까지 읽지 않는 상대면 쓰기가 TCP 창을 끝없이 기다리고, 그동안은 닫기 신호도
 ///   보지 못한다 — 시한을 넘으면 그 자리에서 소켓을 버린다(연결 끊김). 닫기 프레임 쓰기에도 같은 시한.
-fn futures_split(
+pub(super) fn futures_split(
     socket: WebSocket,
     send_timeout: Duration,
     guard: WorkerGuard,
@@ -502,13 +502,13 @@ fn futures_split(
     )
 }
 
-struct Sink {
+pub(super) struct Sink {
     tx: mpsc::Sender<Message>,
     close: Option<tokio::sync::oneshot::Sender<(u16, &'static str)>>,
 }
 impl Sink {
     /// 넣었으면 참. 줄이 찼으면(C6-1) 1013 으로 닫고 거짓, 쓰는 쪽이 끝났으면 거짓.
-    fn push(&mut self, m: Message) -> bool {
+    pub(super) fn push(&mut self, m: Message) -> bool {
         match self.tx.try_send(m) {
             Ok(()) => true,
             Err(mpsc::error::TrySendError::Full(_)) => {
@@ -518,15 +518,15 @@ impl Sink {
             Err(mpsc::error::TrySendError::Closed(_)) => false,
         }
     }
-    fn close(&mut self, code: u16, reason: &'static str) {
+    pub(super) fn close(&mut self, code: u16, reason: &'static str) {
         if let Some(tx) = self.close.take() {
             let _ = tx.send((code, reason));
         }
     }
 }
-struct Stream(mpsc::Receiver<Option<Result<Message, axum::Error>>>);
+pub(super) struct Stream(mpsc::Receiver<Option<Result<Message, axum::Error>>>);
 impl Stream {
-    async fn recv(&mut self) -> Option<Result<Message, axum::Error>> {
+    pub(super) async fn recv(&mut self) -> Option<Result<Message, axum::Error>> {
         self.0.recv().await.flatten()
     }
 }

@@ -95,19 +95,24 @@ async fn main() {
             harkroom_server::core::ws::parse_origins(std::env::var("CORS_ORIGINS").ok().as_deref()),
             harkroom_server::core::ws::Timing::from_env(),
         );
-        harkroom_server::core::ws::router(
-            core,
-            harkroom_server::auth::AuthPools {
-                read: state.pool.clone(),
-                write: state.write.clone(),
-            },
-            state.cors.clone(),
-        )
+        let auth = harkroom_server::auth::AuthPools {
+            read: state.pool.clone(),
+            write: state.write.clone(),
+        };
+        // C2a — 오퍼레이터 소켓(`/operator`). 허브는 프로세스에 하나이고 C2b~C5 의 소비자가 같은 것을 받는다.
+        let operators = harkroom_server::core::operator::OperatorCore::new(
+            state.pool.clone(),
+            core.hub.clone(),
+            harkroom_server::core::operator_hub::OperatorHub::new(),
+            harkroom_server::core::operator::OpTiming::from_env(),
+        );
+        harkroom_server::core::ws::router(core, auth.clone(), state.cors.clone())
+            .merge(harkroom_server::core::operator::router(operators, auth))
     });
     eprintln!(
         "front: core {}",
         if core_router.is_some() {
-            "rust (/ws, /ws-ticket)"
+            "rust (/ws, /ws-ticket, /operator)"
         } else {
             "ts"
         }

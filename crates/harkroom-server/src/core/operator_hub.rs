@@ -16,7 +16,7 @@ use tokio::sync::{broadcast, mpsc};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OpOut {
     Text(String),
-    Close(u16, String),
+    Close(u16, &'static str),
 }
 
 /// 파싱된 오퍼레이터 → 서버 프레임(TS `OperatorToServerFrame`). 본문의 깊은 검증은 받는 쪽 일이다.
@@ -532,7 +532,7 @@ impl OperatorHub {
         if let Some(prev) = previous {
             let _ = prev.tx.send(OpOut::Close(
                 4409,
-                "replaced by a newer operator connection".into(),
+                "replaced by a newer operator connection",
             ));
             let _ = self.closes.send(operator_id.to_owned());
         }
@@ -638,9 +638,9 @@ impl OperatorHub {
     }
 
     /// TS `disconnect` — 등록은 소켓 루프의 close 경로가 지운다.
-    pub fn disconnect(&self, operator_id: &str, code: u16, reason: &str) {
+    pub fn disconnect(&self, operator_id: &str, code: u16, reason: &'static str) {
         if let Some(e) = self.lock().live.get(operator_id) {
-            let _ = e.tx.send(OpOut::Close(code, reason.to_owned()));
+            let _ = e.tx.send(OpOut::Close(code, reason));
         }
     }
 
@@ -823,7 +823,7 @@ mod tests {
         let second = hub.add_operator("op1", tx2);
         assert_eq!(
             rx1.try_recv().unwrap(),
-            OpOut::Close(4409, "replaced by a newer operator connection".into())
+            OpOut::Close(4409, "replaced by a newer operator connection")
         );
         assert_eq!(closes.try_recv().unwrap(), "op1");
         // 앞 소켓의 늦은 프레임·detach 는 새 등록을 건드리지 않는다.
@@ -840,7 +840,7 @@ mod tests {
         hub.disconnect("op1", 4401, "revoked");
         assert_eq!(
             rx2.try_recv().unwrap(),
-            OpOut::Close(4401, "revoked".into())
+            OpOut::Close(4401, "revoked")
         );
         hub.detach(&second);
         assert!(!hub.is_online("op1"));
