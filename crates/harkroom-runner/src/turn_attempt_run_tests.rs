@@ -816,6 +816,54 @@ fn lane_preflight_refuses_before_keys() {
     }
 }
 
+/// pi·omp lane 턴은 스레드 홈이 없으면 키를 받기 전에 `lane_setup` 으로 닫힌다(Rust 러너는 아직 그 홈을 짓지 않는다).
+/// pi 는 스레드 홈이 채워지면 이 줄을 지나 다음 판정으로 간다.
+#[test]
+fn pi_omp_lane_without_thread_home_refuses_before_keys() {
+    for (tag, h, pi_home) in [
+        ("lanepi", AgentHarness::Pi, false),
+        ("laneomp", AgentHarness::Omp, false),
+        ("lanepihome", AgentHarness::Pi, true),
+    ] {
+        let w = world(tag);
+        let log: Log = Log::default();
+        let link = Link(Arc::clone(&log));
+        let client = HarkroomRestClient::new(&link);
+        let notice = Notice {
+            log: Arc::clone(&log),
+            lease: w.lease.clone(),
+        };
+        let lane = FakeLane(Arc::clone(&log));
+        let mut p = parts(&w, &log, false, vec![0]);
+        if pi_home {
+            let home = w.root.join("pi-thread");
+            fs::create_dir_all(&home).unwrap();
+            if let Some(pre) = p.lane_pre.as_mut() {
+                pre.turn_pi_home = Some(home);
+                // 모델이 비면 bad_model 로 접힌다 — 홈 줄을 지났다는 표지로 쓴다.
+                pre.model = None;
+            }
+        }
+        let mut a = attempt(&w, &client, &notice, true, p).with_lane(&lane);
+        a.harness = h;
+        let mut d = false;
+        assert!(a.run(&target(), None, true, &mut d).is_err());
+        let want = if pi_home { "bad_model" } else { "lane_setup" };
+        assert_eq!(
+            *log.lock().unwrap(),
+            [
+                "bind".to_string(),
+                "prepare t-1 -".into(),
+                "outcome".into(),
+                format!("setup_failed {want}"),
+                "unbind".into(),
+            ],
+            "{tag}"
+        );
+        assert!(a.parts.borrow().lane_envs.is_empty(), "{tag}");
+    }
+}
+
 /// lane 이 아닌 턴은 판정 재료가 없어도 그대로 돈다.
 #[test]
 fn non_lane_attempt_ignores_missing_lane_pre() {

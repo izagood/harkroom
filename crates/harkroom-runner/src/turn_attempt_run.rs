@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::account_assign::ClaudeAccount;
-use crate::adapter::AgentHarness;
+use crate::adapter::{AgentHarness, uses_omp_home, uses_pi_home};
 use crate::link::random_uuid;
 use crate::mention_run::{TurnAttempt, TurnOk};
 use crate::mention_target::MentionTarget;
@@ -253,6 +253,19 @@ impl<L: RunnerLink, N: LeaseNotice, P: AttemptParts> PtyTurnAttempt<'_, L, N, P>
                 .code()
                 .to_string());
         };
+        // pi·omp lane 턴은 스레드 홈(pi `ensure_pi_lane_thread`·omp 스레드 폴더)이 있어야 `models.json` 을 쓰고 띄운다. Rust 러너는
+        // 아직 그 홈을 짓지 않는다 — 키를 받은 뒤 명령 짓기(`MissingHome`)에서 접히는 대신, 키를 받기 **전에** 닫는다.
+        // 홈을 배선하면 pi 는 `turn_pi_home` 이 채워져 지나가고, omp 는 이 줄을 그 배선과 함께 바꾼다.
+        if (uses_pi_home(self.harness) && p.turn_pi_home.is_none()) || uses_omp_home(self.harness) {
+            eprintln!(
+                "[mentionTurn] {}: {} API 키 연결 턴 — 스레드 홈이 준비되지 않아 키를 받지 않는다",
+                prep.key,
+                self.harness.as_str()
+            );
+            return Err(crate::provider_lane::ProviderLaneError::new("lane_setup")
+                .code()
+                .to_string());
+        }
         lane_preflight(&LanePreflight {
             key: &prep.key,
             harness: self.harness,
