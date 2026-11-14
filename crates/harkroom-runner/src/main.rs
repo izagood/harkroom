@@ -166,27 +166,39 @@ fn main() {
             report_link.notify_mcp_auth_rejected(servers, at)
         }),
     );
-    // claude 계정 축(L3c-3b, 정본 `loadLane`). API 키 lane 러너는 계정 풀을 쓰지 않는다(L3c-3d 가 lane 전용 폴더를 붙인다).
-    // 강제 풀이 없는 풀이면 정본처럼 뜨지 않는다 — 사람이 정한 풀 대신 기본 로그인으로 돌지 않게.
-    if !provider_lane {
-        match harkroom_runner::account_lane::AccountLaneHub::start(
-            lane_source,
-            maker.store(),
-            Arc::new(|l: &str| eprintln!("{l}")),
-        ) {
-            Ok(hub) => {
-                let s = hub.snapshot();
-                let n = s.lane.iter().flatten().count();
-                eprintln!(
-                    "claude 계정 {n}개 (풀: {})",
-                    s.pool.as_deref().unwrap_or("기본(뿌리)")
-                );
-                maker.set_accounts(hub);
-            }
+    // claude 계정 축(L3c-3b·3d, 정본 `loadLane`). API 키 lane 러너는 계정 풀을 쓰지 않고 lane 전용 폴더 하나로 돈다 —
+    // 기본 로그인 축으로 하네스를 띄우는 길이 없다. 풀 해석이 실패하면(예: 없는 강제 풀) 정본처럼 뜨지 않는다.
+    let source = if provider_lane {
+        match harkroom_runner::account_lane::LaneSource::provider_lane(&maker.config().state_dir) {
+            Ok(s) => s,
             Err(e) => {
-                eprintln!("claude 계정 축을 정하지 못했다 — 뜨지 않는다: {e}");
+                eprintln!(
+                    "lane 전용 계정 폴더를 만들지 못했다 — 뜨지 않는다: {}",
+                    e.kind()
+                );
                 std::process::exit(1);
             }
+        }
+    } else {
+        lane_source
+    };
+    match harkroom_runner::account_lane::AccountLaneHub::start(
+        source,
+        maker.store(),
+        Arc::new(|l: &str| eprintln!("{l}")),
+    ) {
+        Ok(hub) => {
+            let s = hub.snapshot();
+            let n = s.lane.iter().flatten().count();
+            eprintln!(
+                "claude 계정 {n}개 (풀: {})",
+                s.pool.as_deref().unwrap_or("기본(뿌리)")
+            );
+            maker.set_accounts(hub);
+        }
+        Err(e) => {
+            eprintln!("claude 계정 축을 정하지 못했다 — 뜨지 않는다: {e}");
+            std::process::exit(1);
         }
     }
     let maker = Arc::new(maker);
