@@ -759,6 +759,18 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
     }
 }
 
+impl<P: PrepareIo, S: PtyTurnSink> MentionParts<'_, P, S> {
+    /// 이 멘션의 pi 홈(lane 이면 스레드 홈) — [`turn_pi_home_for`].
+    pub fn turn_pi_home_of(&self) -> Option<PathBuf> {
+        turn_pi_home_for(
+            self.harness,
+            self.pi.as_ref(),
+            self.pi_home.as_deref(),
+            &self.key,
+        )
+    }
+}
+
 impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
     fn lane_notice(&mut self, target: &MentionTarget, body: &str) {
         let anchor = Some(target.thread_root_id.as_str()).filter(|a| !a.is_empty());
@@ -1012,7 +1024,16 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
                 .clone()
                 .or_else(|| self.lease_dir_of.as_ref().and_then(|f| f())),
             session_id,
-            homes: OwnedHomes { ..homes },
+            // pi 기록은 이 시도의 홈(lane 이면 스레드 홈)의 `sessions/` 에서만 찾는다(정본 `piSessionFile(turnPiHome, ..)`).
+            homes: OwnedHomes {
+                pi_home: turn_pi_home_for(
+                    self.harness,
+                    self.pi.as_ref(),
+                    self.pi_home.as_deref(),
+                    &self.key,
+                ),
+                ..homes
+            },
             lane_pre,
         })
     }
@@ -1311,6 +1332,70 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
 
     fn account_ranks(&self, account: Option<&ClaudeAccount>) -> (Option<Option<u32>>, Option<u32>) {
         ranks_of(&self.lane, account)
+    }
+
+    fn needs_readonly_tool_query(&self) -> bool {
+        self.base.mention_permission == crate::adapter::MentionPermission::Readonly
+            && crate::adapter::readonly_tools_for(self.harness).is_some_and(|s| s.list.is_some())
+    }
+
+    /// 정본 `listPiMcpTools({ command, args: allowlist.list, env: piMcpListEnv(..), cwd })` — env 는 허용 목록 + 소켓·runnerId +
+    /// 그 턴의 다리 열쇠 + 이 시도의 pi 홈(lane 이면 스레드 홈)뿐이다. cwd 는 워크스페이스가 아니라 그 pi 홈이다(저장소의 `.pi/`
+    /// 를 안 보게). pi 홈을 모르면 묻지 않는다.
+    fn query_readonly_tools(
+        &self,
+        bridge_key: &str,
+    ) -> Option<std::collections::BTreeMap<String, Vec<String>>> {
+        let spec = crate::adapter::readonly_tools_for(self.harness)?;
+        let args: Vec<String> = spec.list?.iter().map(|a| a.to_string()).collect();
+        let command = crate::adapter::harness_command(self.harness).ok()?;
+        let pi_home = self.cur.as_ref()?.pi_home(self.pi_home.as_deref())?;
+        let env = crate::pi_home::pi_mcp_list_env(
+            &self.parent_env,
+            &self.home,
+            Some(pi_home),
+            bridge_key,
+        );
+        crate::pi_home::list_pi_mcp_tools(Path::new(command), &args, &env, pi_home)
+    }
+
+    fn set_readonly_tools(
+        &mut self,
+        discovered: Option<&std::collections::BTreeMap<String, Vec<String>>>,
+    ) {
+        let Some(spec) = crate::adapter::readonly_tools_for(self.harness) else {
+            return;
+        };
+        if discovered.is_none()
+            || spec
+                .mcp_servers
+                .iter()
+                .any(|s| discovered.and_then(|d| d.get(*s)).is_none_or(Vec::is_empty))
+        {
+            eprintln!(
+                "[mentionTurn] {}: 읽기 전용 — MCP 도구 이름을 못 받아 내장 읽기 도구만 연다",
+                self.key
+            );
+        }
+        self.argv.readonly_tool_list = Some(crate::pi_home::readonly_tool_list(&spec, discovered));
+    }
+}
+
+/// 이 멘션의 pi 홈(정본 `turnPiHome`) — lane 러너면 그 스레드 홈(`pi_lane_thread_home`, 짓는 것은 `prepare`), 아니면 러너 루트.
+/// pi 가 아니면 `None`. 사람의 `~/.pi` 는 돌려주지 않는다.
+pub(crate) fn turn_pi_home_for(
+    harness: crate::adapter::AgentHarness,
+    pi: Option<&crate::pi_prep::PiPrep>,
+    root: Option<&Path>,
+    key: &str,
+) -> Option<PathBuf> {
+    if !crate::adapter::uses_pi_home(harness) {
+        return None;
+    }
+    match pi {
+        Some(p) if p.lane => Some(crate::pi_lane::pi_lane_thread_home(&p.home, key)),
+        Some(p) => Some(p.home.clone()),
+        None => root.map(Path::to_path_buf),
     }
 }
 

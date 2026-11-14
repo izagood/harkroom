@@ -277,6 +277,8 @@ pub struct TranscriptHomes<'a> {
     pub home: Option<&'a Path>,
     pub omp_home: Option<&'a Path>,
     pub codex_home: Option<&'a Path>,
+    /// 이 턴의 pi 홈 — lane 이면 그 스레드 홈, 아니면 러너 루트(정본 `turnPiHome`). 사람의 `~/.pi` 는 여기 오지 않는다.
+    pub pi_home: Option<&'a Path>,
 }
 
 /// 정본 2955~2961 — 이 턴의 기록 파일: omp 는 `ompSessionFile`, 세션 id 를 미리 발급하는 하네스(claude)는
@@ -287,6 +289,12 @@ pub fn find_transcript(
     homes: TranscriptHomes<'_>,
 ) -> Option<PathBuf> {
     let sid = session_id.filter(|s| !s.is_empty())?;
+    // pi 도 세션 id 를 미리 주지만 기록은 claude 의 `projects/` 가 아니라 자기 홈의 `sessions/` 에 있다(정본 2965, security U2).
+    if uses_pi_home(harness) {
+        return homes
+            .pi_home
+            .and_then(|h| crate::pi_home::pi_session_file(h, sid));
+    }
     if uses_omp_home(harness) {
         return homes
             .omp_home

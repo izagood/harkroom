@@ -1105,3 +1105,34 @@ fn pi_lane_turn_model_writes_models_json_or_refuses() {
     );
     let _ = std::fs::remove_dir_all(&w.root);
 }
+
+/// p2-2b — 이 멘션의 pi 홈: lane 러너면 그 스레드 홈, 보통 러너면 러너 루트, pi 가 아니면 없음. 사람의 `~/.pi` 는 나오지 않는다.
+#[test]
+fn turn_pi_home_is_thread_home_on_lane_runner() {
+    use crate::adapter::AgentHarness;
+    let prep = |lane: bool| crate::pi_prep::PiPrep {
+        home: PathBuf::from("/state/pi-provider-lane"),
+        lane,
+        mcp_config_path: PathBuf::from("/state/mcp.json"),
+        source_dir: PathBuf::from("/h/.pi/agent"),
+    };
+    let lane = prep(true);
+    assert_eq!(
+        turn_pi_home_for(AgentHarness::Pi, Some(&lane), None, "c/t"),
+        Some(crate::pi_lane::pi_lane_thread_home(&lane.home, "c/t"))
+    );
+    assert_ne!(
+        turn_pi_home_for(AgentHarness::Pi, Some(&lane), None, "c/t"),
+        turn_pi_home_for(AgentHarness::Pi, Some(&lane), None, "c/u"),
+        "스레드마다 다른 홈"
+    );
+    let plain = prep(false);
+    assert_eq!(
+        turn_pi_home_for(AgentHarness::Pi, Some(&plain), None, "c/t"),
+        Some(plain.home.clone())
+    );
+    assert_eq!(
+        turn_pi_home_for(AgentHarness::ClaudeCode, Some(&plain), None, "c/t"),
+        None
+    );
+}

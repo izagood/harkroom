@@ -50,6 +50,7 @@ pub struct OwnedHomes {
     pub home: Option<PathBuf>,
     pub omp_home: Option<PathBuf>,
     pub codex_home: Option<PathBuf>,
+    pub pi_home: Option<PathBuf>,
 }
 
 impl OwnedHomes {
@@ -59,6 +60,7 @@ impl OwnedHomes {
             home: self.home.as_deref(),
             omp_home: self.omp_home.as_deref(),
             codex_home: self.codex_home.as_deref(),
+            pi_home: self.pi_home.as_deref(),
         }
     }
 }
@@ -151,6 +153,46 @@ pub trait AttemptParts {
     ) -> Result<TurnOk, AttemptError>;
     /// 성공한 턴 뒤 IO(`apply_after_turn`). 실패는 로그만.
     fn after(&mut self, secrets: &TurnSecrets) -> Result<(), String>;
+    /// 이 시도가 읽기 전용 도구 목록을 하네스에게 물어야 하는가(목록 명령이 있는 하네스 — pi — 의 읽기 전용 턴).
+    fn needs_readonly_tool_query(&self) -> bool {
+        false
+    }
+    /// 그 턴의 다리 열쇠로 하네스에게 MCP 도구 이름을 묻는다. 열쇠는 부르는 쪽([`list_with_turn_keys`])이 맡기고 거둔다.
+    fn query_readonly_tools(&self, _bridge_key: &str) -> Option<BTreeMap<String, Vec<String>>> {
+        None
+    }
+    /// 물은 결과(못 물었으면 `None` — 내장 읽기 도구만)로 이 시도의 닫힌 목록을 정한다.
+    fn set_readonly_tools(&mut self, _discovered: Option<&BTreeMap<String, Vec<String>>>) {}
+}
+
+/// 정본 `listToolsWithTurnKeys` — 턴 열쇠를 잠깐 맡기고 묻고 바로 거둔다. 맡기기가 실패하면 **묻지 않고** `None`(내장 읽기
+/// 도구로 닫힌다) — 러너 링크 열쇠로 되돌아가 묻는 길은 없다. 띄우기 바로 앞에서 같은 열쇠를 다시 맡긴다(같은 턴 id).
+pub fn list_with_turn_keys<T>(
+    key: &str,
+    register: impl FnOnce() -> Result<(), String>,
+    end: impl FnOnce() -> Result<(), String>,
+    list: impl FnOnce() -> Option<T>,
+) -> Option<T> {
+    if let Err(e) = register() {
+        eprintln!("[mentionTurn] {key}: 도구 묻기용 턴 열쇠를 못 맡겼다 — 묻지 않는다: {e}");
+        return None;
+    }
+    // 묻기가 패닉해도 거둔다.
+    struct End<F: FnOnce() -> Result<(), String>>(Option<F>, String);
+    impl<F: FnOnce() -> Result<(), String>> Drop for End<F> {
+        fn drop(&mut self) {
+            if let Some(f) = self.0.take()
+                && let Err(e) = f()
+            {
+                eprintln!(
+                    "[mentionTurn] {}: 도구 묻기 뒤 턴 열쇠를 못 거뒀다: {e}",
+                    self.1
+                );
+            }
+        }
+    }
+    let _end = End(Some(end), key.to_string());
+    list()
 }
 
 /// [`TurnAttempt`] 구현 — 러너 하나에 하나, 시도마다 `run`.
@@ -361,6 +403,27 @@ impl<L: RunnerLink, N: LeaseNotice, P: AttemptParts> PtyTurnAttempt<'_, L, N, P>
                     });
                 }
             };
+        // 읽기 전용 pi — 띄우기 전에 그 턴의 열쇠를 잠깐 맡겨 도구 이름을 묻는다(정본 `mentionTurn.ts` 1588). 열쇠가 없는 턴은
+        // 묻지 않는다(내장 읽기 도구만).
+        if parts.borrow().needs_readonly_tool_query() {
+            let discovered = assembled.turn.as_ref().and_then(|t| {
+                list_with_turn_keys(
+                    &prep.key,
+                    || {
+                        self.client
+                            .register_turn_keys(t.clone())
+                            .map_err(|e| e.to_string())
+                    },
+                    || {
+                        self.client
+                            .end_turn_keys(&t.turn_id)
+                            .map_err(|e| e.to_string())
+                    },
+                    || parts.borrow().query_readonly_tools(&t.keys.bridge),
+                )
+            });
+            parts.borrow_mut().set_readonly_tools(discovered.as_ref());
+        }
         let keys = env_turn_keys(&assembled.plan);
         let mcp_path = assembled.plan.mcp_config_path.clone();
         let oc_turn_config = assembled.plan.opencode_turn_config.clone();

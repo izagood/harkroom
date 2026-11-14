@@ -254,6 +254,7 @@ pub fn run_mention_call<'a, L, S, H>(
                     home: parts.home.clone(),
                     omp_home: parts.omp_home.clone(),
                     codex_home: parts.codex_home.clone(),
+                    pi_home: parts.turn_pi_home_of(),
                 },
                 fold,
             );
@@ -285,6 +286,8 @@ pub struct NoteHomes {
     pub home: std::path::PathBuf,
     pub omp_home: Option<std::path::PathBuf>,
     pub codex_home: Option<std::path::PathBuf>,
+    /// 이 멘션의 pi 홈(lane 이면 스레드 홈) — 기록 찾기가 이 안의 `sessions/` 만 본다.
+    pub pi_home: Option<std::path::PathBuf>,
 }
 
 /// 결과 접기를 감싸 시도마다 **그 시도의** 기록 경로(세션 id·계정 폴더 = `OutcomeCtx.ctx`)를 임대 장부에 적는다(정본
@@ -305,6 +308,7 @@ pub fn noting_outcome<'a>(
                 home: Some(&h.home),
                 omp_home: h.omp_home.as_deref(),
                 codex_home: h.codex_home.as_deref(),
+                pi_home: h.pi_home.as_deref(),
             },
         );
         for p in paths {
