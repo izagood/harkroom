@@ -102,6 +102,13 @@ pub fn mount_lane_first<'a, N: LeaseNotice>(
 ) -> Result<LaneFirst<'a, N>, LaneFirstError> {
     gate().map_err(LaneFirstError::Blocked)?;
     match lane.env_for(cause, harness) {
+        // 빈 env 는 받지 않는다 — 띄우는 쪽(`pty_turn_plan`)은 빈 lane env 를 「lane 아님」으로 읽어 부모 env 걷기·고정 env 를
+        // 건너뛴다. 실물 `ProviderLane` 은 성공이면 늘 한 칸 이상을 주지만, 그 약속이 깨져도 기본 로그인 env 로 뜨지 않게 닫는다.
+        Ok(env) if env.is_empty() => {
+            eprintln!("[mentionTurn] lane 키 받기 실패 — 빈 env");
+            notice.lease_ended(cause);
+            Err(LaneFirstError::Failed("lane_unset".to_string()))
+        }
         Ok(env) => Ok(LaneFirst {
             lane,
             notice,

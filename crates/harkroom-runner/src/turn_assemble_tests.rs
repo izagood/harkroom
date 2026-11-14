@@ -249,3 +249,87 @@ fn spawn_pty_turn_folds_command_error() {
     }
     assert_eq!(sink.injected, 0);
 }
+
+/// lane 턴의 자식 env 전체(⑦, L3c-3d2): 부모 env 는 lane 허용 목록만 남고(ssh 소켓·codex 홈·부모의 키 같은 것은 빠진다),
+/// claude 고정 env(하위 프로세스 env 걷기)가 서고, claude 폴더는 그 시도의 lane 전용 폴더다. 같은 부모로 lane 아닌 턴은
+/// 부모 값을 그대로 물려받고 고정 env 가 없다 — 둘의 차이가 lane 여부에서만 온다.
+#[test]
+fn lane_turn_child_env_is_lane_allow_list_plus_lane_dir() {
+    let mut base = TurnCommandOptions::new(
+        AgentHarness::ClaudeCode,
+        TurnMode::Mention,
+        MentionPermission::Auto,
+        "/op",
+    );
+    base.session_id = Some("11111111-2222-4333-8444-555555555555");
+    let lane_dir = Path::new("/state/claude-provider-lane");
+    base.claude_config_dir = Some(lane_dir);
+    let lane: LaneEnv = [
+        (
+            "ANTHROPIC_BASE_URL".to_string(),
+            "https://gw.example".to_string(),
+        ),
+        (
+            "ANTHROPIC_AUTH_TOKEN".to_string(),
+            "tok-lane-88".to_string(),
+        ),
+    ]
+    .into();
+    let parent: BTreeMap<String, String> = [
+        ("PATH", "/usr/bin"),
+        ("HOME", "/h"),
+        ("SSH_AUTH_SOCK", "/tmp/ssh.sock"),
+        ("CODEX_HOME", "/h/.codex"),
+        ("ANTHROPIC_API_KEY", "parent-key-88"),
+        ("CLAUDE_CONFIG_DIR", "/h/.claude"),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect();
+    for k in ["SSH_AUTH_SOCK", "CODEX_HOME"] {
+        assert!(
+            !crate::turn_env::lane_env_allowed(k),
+            "{k} 가 lane 허용 목록에 들어갔다"
+        );
+    }
+    let env_of = |lane: &LaneEnv| -> BTreeMap<String, String> {
+        pty_turn_plan(&base, lane, None, "/m.json", &parent, Path::new("/h"))
+            .unwrap()
+            .env
+            .into_iter()
+            .collect()
+    };
+
+    let on = env_of(&lane);
+    assert_eq!(
+        on.get("ANTHROPIC_AUTH_TOKEN").map(String::as_str),
+        Some("tok-lane-88")
+    );
+    assert_eq!(
+        on.get("ANTHROPIC_BASE_URL").map(String::as_str),
+        Some("https://gw.example")
+    );
+    assert_eq!(
+        on.get("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB")
+            .map(String::as_str),
+        Some("1")
+    );
+    assert_eq!(
+        on.get("CLAUDE_CONFIG_DIR").map(String::as_str),
+        Some("/state/claude-provider-lane"),
+        "기본 로그인 폴더가 lane 턴에 남았다"
+    );
+    for k in ["SSH_AUTH_SOCK", "CODEX_HOME", "ANTHROPIC_API_KEY"] {
+        assert!(!on.contains_key(k), "lane 턴에 부모 {k}");
+    }
+    assert!(on.values().all(|v| v != "parent-key-88"));
+    assert_eq!(on.get("PATH").map(String::as_str), Some("/usr/bin"));
+
+    let off = env_of(&LaneEnv::new());
+    assert_eq!(
+        off.get("SSH_AUTH_SOCK").map(String::as_str),
+        Some("/tmp/ssh.sock")
+    );
+    assert!(!off.contains_key("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"));
+    assert!(!off.contains_key("ANTHROPIC_AUTH_TOKEN"));
+}
