@@ -62,6 +62,7 @@ pub mod mention_target;
 pub mod mention_turn_parts;
 pub mod mention_watch;
 pub mod omp_home;
+pub mod opencode_ensure;
 pub mod opencode_home;
 pub mod pi_home;
 pub mod pi_lane;
