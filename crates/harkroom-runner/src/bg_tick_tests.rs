@@ -30,6 +30,7 @@ struct Rec {
     released: AtomicUsize,
     harness_reads: AtomicUsize,
     plan_releases: AtomicUsize,
+    plans_built: AtomicUsize,
     spawned: Mutex<Vec<Spawned>>,
     claims: AtomicUsize,
 }
@@ -100,6 +101,7 @@ struct Opts {
     hang: bool,
     spawn_fails: bool,
     timeout: Duration,
+    lane_on: bool,
 }
 
 impl Default for Opts {
@@ -117,6 +119,7 @@ impl Default for Opts {
             hang: false,
             spawn_fails: false,
             timeout: Duration::from_secs(5),
+            lane_on: false,
         }
     }
 }
@@ -138,6 +141,7 @@ fn make(o: Opts) -> (BgExecutor, Arc<Rec>, Arc<Mutex<String>>, PathBuf) {
     let harness = o.harness;
     let (out, code, hang, spawn_fails) = (o.out, o.code, o.hang, o.spawn_fails);
     let now = o.now;
+    let r4 = Arc::clone(&rec);
     let deps = BgExecutorDeps {
         harness: Box::new(move || {
             r1.harness_reads.fetch_add(1, Ordering::SeqCst);
@@ -145,6 +149,7 @@ fn make(o: Opts) -> (BgExecutor, Arc<Rec>, Arc<Mutex<String>>, PathBuf) {
         }),
         harkroom: Box::new(H(Arc::clone(&rec), o.job)),
         build_plan: Box::new(move |j, sid, _cwd| {
+            r4.plans_built.fetch_add(1, Ordering::SeqCst);
             let r = Arc::clone(&r2);
             Ok(BgPlan {
                 command: "claude".into(),
@@ -164,6 +169,7 @@ fn make(o: Opts) -> (BgExecutor, Arc<Rec>, Arc<Mutex<String>>, PathBuf) {
                 })),
             })
         }),
+        provider_lane_on: o.lane_on,
         slots: Box::new(S(Arc::clone(&rec), o.slot)),
         state_dir: dir.clone(),
         spawn: Some(Box::new(move |_cmd, args, cwd, env| {
@@ -494,4 +500,25 @@ fn default_spawn_normal_exit_also_takes_down_the_group() {
         "손자 프로세스가 남았다"
     );
     let _ = fs::remove_dir_all(&dir);
+}
+
+/// lane 러너의 백그라운드 회차는 plan 을 짓지도 띄우지도 않고 러너 실패로 닫힌다 — 기본 로그인으로 새지 않는다.
+#[test]
+fn lane_runner_refuses_bg_before_building_plan() {
+    let (ex, rec, _stdin, dir) = make(Opts {
+        lane_on: true,
+        ..Opts::default()
+    });
+    assert_eq!(ex.tick(), BgTickResult::Ran);
+    assert_eq!(
+        rec.plans_built.load(Ordering::SeqCst),
+        0,
+        "plan 을 짓지 않는다"
+    );
+    assert!(rec.spawned.lock().unwrap().is_empty(), "띄우지 않는다");
+    let o = outcome(&rec);
+    assert_eq!(o.status, BgStatus::Failed);
+    assert_eq!(o.error.as_deref(), Some("runner"));
+    assert!(!dir.join("bg").join(JOB_ID).exists(), "작업 폴더도 치운다");
+    assert_eq!(rec.released.load(Ordering::SeqCst), 1, "슬롯은 놓는다");
 }
