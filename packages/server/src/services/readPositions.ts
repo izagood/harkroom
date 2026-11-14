@@ -111,39 +111,39 @@ export interface ChannelReadState extends ReadState {
  * 아직 아무것도 읽지 않은 채널도 행을 준다(`lastReadSeq: 0`). 빠뜨리면 클라이언트가
  * "0 이다"와 "모른다"를 구분할 수 없어 배지를 그릴지 말지 판단할 수 없다.
  */
-export async function allReadStates(pool: Pool, accountId: string): Promise<ChannelReadState[]> {
-  const res = await pool.query(
-    `select
+/** 모든 채널 읽음 상태(`GET /reads`)의 문장 — Rust 코어(`core/channels.rs`, S5.3 C1e-1)가 골든으로 받아 그대로 쓴다. */
+export const ALL_READ_STATES_SQL = `select
        c.id as "channelId",
        (${UNREAD_BOUNDARY})::int as "lastReadSeq",
        (select count(*) from message m
          where m.channel_id = c.id
            and m.deleted_at is null
-           and m.author_id <> $1
+           and m.author_id <> $1::uuid
            and m.seq > (${UNREAD_BOUNDARY}))::int as unread
      from channel c
-     left join channel_read r on r.account_id = $1 and r.channel_id = c.id
-     where ${channelVisibleSql('c', '$1')}
-     order by c.id`,
-    [accountId],
-  );
+     left join channel_read r on r.account_id = $1::uuid and r.channel_id = c.id
+     where ${channelVisibleSql('c', '$1::uuid')}
+     order by c.id`;
+
+export async function allReadStates(pool: Pool, accountId: string): Promise<ChannelReadState[]> {
+  const res = await pool.query(ALL_READ_STATES_SQL, [accountId]);
   return res.rows;
 }
+
+/** 채널 하나 읽음 상태(`GET /channels/:id/read`)의 문장 — Rust 코어(C1e-1)가 골든으로 받는다. */
+export const READ_STATE_SQL = `select
+       (${UNREAD_BOUNDARY})::int as "lastReadSeq",
+       (select count(*) from message m
+         where m.channel_id = $2::uuid
+           and m.deleted_at is null            -- 지운 메시지는 미읽음이 아니다
+           and m.author_id <> $1::uuid         -- 내가 쓴 것도 아니다(발화마다 배지가 뜨면 안 된다)
+           and m.seq > (${UNREAD_BOUNDARY}))::int as unread
+     from (select 1) one
+     left join channel_read r on r.account_id = $1::uuid and r.channel_id = $2::uuid`;
 
 export async function readState(
   pool: Pool, opts: { accountId: string; channelId: string },
 ): Promise<ReadState> {
-  const res = await pool.query(
-    `select
-       (${UNREAD_BOUNDARY})::int as "lastReadSeq",
-       (select count(*) from message m
-         where m.channel_id = $2
-           and m.deleted_at is null            -- 지운 메시지는 미읽음이 아니다
-           and m.author_id <> $1               -- 내가 쓴 것도 아니다(발화마다 배지가 뜨면 안 된다)
-           and m.seq > (${UNREAD_BOUNDARY}))::int as unread
-     from (select 1) one
-     left join channel_read r on r.account_id = $1 and r.channel_id = $2`,
-    [opts.accountId, opts.channelId],
-  );
+  const res = await pool.query(READ_STATE_SQL, [opts.accountId, opts.channelId]);
   return res.rows[0] as ReadState;
 }

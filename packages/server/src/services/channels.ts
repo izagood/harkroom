@@ -154,13 +154,16 @@ export async function updateChannel(
  * admin 예외 자체는 `channelListVisibleSql` 이 갖는다 — 채널 목록 WS 이벤트(#284)의
  * 수신자도 같은 술어를 봐야 하기 때문이다. 여기에 인라인으로 두면 두 벌이 된다.
  */
+/**
+ * 채널 목록(`GET /channels`)의 문장. Rust 코어(`crates/harkroom-server/src/core/channels.rs`, S5.3 C1e-1)가
+ * `golden/sql_fragments.json` 으로 받아 그대로 쓴다 — 고치면 `test/rustSqlFragments.test.ts` 가 골든 갱신을 요구한다.
+ */
+export const LIST_CHANNELS_SQL = `select ${COLS} from channel c
+     where c.kind = 'standard' and ${channelListVisibleSql('c', '$1::uuid', '$2::bool')}
+     order by name`;
+
 export async function listChannels(pool: Pool, accountId: string, isAdmin = false): Promise<ChannelRow[]> {
-  const res = await pool.query(
-    `select ${COLS} from channel c
-     where c.kind = 'standard' and ${channelListVisibleSql('c', '$1', '$2::bool')}
-     order by name`,
-    [accountId, isAdmin],
-  );
+  const res = await pool.query(LIST_CHANNELS_SQL, [accountId, isAdmin]);
   return res.rows;
 }
 
@@ -244,13 +247,13 @@ export async function channelMemberIds(pool: Pool, channelId: string): Promise<s
 }
 
 /** 멤버 목록 화면용. handle 을 함께 준다 — 화면이 계정 목록을 따로 받아 맞출 필요가 없다. */
-export async function listChannelMembers(pool: Pool, channelId: string): Promise<ChannelMemberRow[]> {
-  const res = await pool.query(
-    `select m.account_id as "accountId", a.handle
+/** 멤버 목록의 문장 — Rust 코어(C1e-1)가 골든으로 받는다(`LIST_CHANNELS_SQL` 과 같은 약속). */
+export const LIST_CHANNEL_MEMBERS_SQL = `select m.account_id as "accountId", a.handle
      from channel_member m join account a on a.id = m.account_id
-     where m.channel_id = $1 order by a.handle`,
-    [channelId],
-  );
+     where m.channel_id = $1::uuid order by a.handle`;
+
+export async function listChannelMembers(pool: Pool, channelId: string): Promise<ChannelMemberRow[]> {
+  const res = await pool.query(LIST_CHANNEL_MEMBERS_SQL, [channelId]);
   return res.rows;
 }
 
@@ -498,14 +501,14 @@ export async function getChannelPref(
   return res.rows[0] ?? null;
 }
 
-export async function listChannelPrefs(pool: Pool, accountId: string): Promise<ChannelPrefRow[]> {
-  const res = await pool.query(
-    `select account_id as "accountId", channel_id as "channelId", muted_at as "mutedAt", starred_at as "starredAt",
+/** 채널 환경설정 목록의 문장 — Rust 코어(C1e-1)가 골든으로 받는다. */
+export const LIST_CHANNEL_PREFS_SQL = `select account_id as "accountId", channel_id as "channelId", muted_at as "mutedAt", starred_at as "starredAt",
             notify_level as "notifyLevel", section, section_id as "sectionId", sort_order as "sortOrder",
             hidden_at as "hiddenAt"
-     from channel_pref where account_id = $1`,
-    [accountId],
-  );
+     from channel_pref where account_id = $1::uuid`;
+
+export async function listChannelPrefs(pool: Pool, accountId: string): Promise<ChannelPrefRow[]> {
+  const res = await pool.query(LIST_CHANNEL_PREFS_SQL, [accountId]);
   return res.rows;
 }
 
@@ -714,13 +717,13 @@ export async function channelMembershipGate(
  * `assertChannelVisible`/`channelPostGate` 로 먼저 검사한다. 채널이 존재하지 않는 경우도
  * 호출부가 404 로 답한다(`assertChannelVisible` 이 그렇게 쓰이도록 만들어져 있다).
  */
-export async function getChannelDoc(pool: Pool, channelId: string): Promise<ChannelDoc> {
-  const res = await pool.query<ChannelDoc>(
-    `select d.channel_id as "channelId", d.body, d.updated_by as "updatedBy",
+/** 채널 문서 읽기의 문장 — Rust 코어(C1e-1)가 골든으로 받는다. */
+export const CHANNEL_DOC_SQL = `select d.channel_id as "channelId", d.body, d.updated_by as "updatedBy",
             d.updated_at as "updatedAt"
-     from channel_doc d where d.channel_id = $1`,
-    [channelId],
-  );
+     from channel_doc d where d.channel_id = $1::uuid`;
+
+export async function getChannelDoc(pool: Pool, channelId: string): Promise<ChannelDoc> {
+  const res = await pool.query<ChannelDoc>(CHANNEL_DOC_SQL, [channelId]);
   const row = res.rows[0];
   if (!row) return { channelId, body: '', updatedBy: null, updatedAt: null };
   // pg 가 timestamptz 를 Date 로 준다. 계약(`ChannelDoc`)은 문자열이므로 여기서 맞춘다 —

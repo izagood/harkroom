@@ -38,15 +38,15 @@ export async function scheduleMessage(
  * 자체가 보이지 않는다 — 보이면 초안과 다를 게 없다. `author_id` 조건을 호출부로
  * 올리지 않는 이유가 그것이다: 여기서 빠지면 모든 호출부가 새는 표면이 된다.
  */
+/** 예약 글 목록의 문장 — Rust 코어(`core/channels.rs`, S5.3 C1e-1)가 골든으로 받아 그대로 쓴다. */
+export const LIST_SCHEDULED_SQL = `select ${COLS} from scheduled_message
+     where channel_id = $1::uuid and author_id = $2::uuid
+     order by send_at`;
+
 export async function listScheduledMessages(
   pool: Pool, channelId: string, authorId: string,
 ): Promise<ScheduledMessageView[]> {
-  const res = await pool.query(
-    `select ${COLS} from scheduled_message
-     where channel_id = $1 and author_id = $2
-     order by send_at`,
-    [channelId, authorId],
-  );
+  const res = await pool.query(LIST_SCHEDULED_SQL, [channelId, authorId]);
   return res.rows;
 }
 

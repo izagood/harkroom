@@ -7,6 +7,11 @@ import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 import { channelListVisibleSql, channelVisibleSql } from '../src/services/channels.js';
 import { MESSAGE_BY_ID_SQL } from '../src/services/messages.js';
+import { CHANNEL_DOC_SQL, LIST_CHANNEL_MEMBERS_SQL, LIST_CHANNEL_PREFS_SQL, LIST_CHANNELS_SQL } from '../src/services/channels.js';
+import { ALL_READ_STATES_SQL, READ_STATE_SQL } from '../src/services/readPositions.js';
+import { LIST_CHANNEL_SECTIONS_SQL } from '../src/services/channelSections.js';
+import { LIST_CHANNEL_AUTO_MENTIONS_SQL } from '../src/services/channelAutoMentions.js';
+import { LIST_SCHEDULED_SQL } from '../src/services/scheduledMessages.js';
 import { displayBodySql } from '../src/services/systemBody.js';
 
 const GOLDEN = fileURLToPath(new URL('../../../crates/harkroom-server/golden/sql_fragments.json', import.meta.url));
@@ -21,6 +26,16 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     channel_list_visible_c_aid_aadmin: channelListVisibleSql('c', 'a.id', 'a.is_admin'),
     // 링크 한 개 읽기(`core/msg_read.rs`, S5.3 C1b-1a) — `GET /messages/:id` 의 문장 전체(COLS 포함).
     message_by_id: MESSAGE_BY_ID_SQL,
+    // 채널 읽기(`core/channels.rs`, S5.3 C1e-1) — 각 GET 의 문장 전체.
+    list_channels: LIST_CHANNELS_SQL,
+    all_read_states: ALL_READ_STATES_SQL,
+    read_state: READ_STATE_SQL,
+    list_channel_members: LIST_CHANNEL_MEMBERS_SQL,
+    list_channel_prefs: LIST_CHANNEL_PREFS_SQL,
+    list_channel_sections: LIST_CHANNEL_SECTIONS_SQL,
+    list_channel_auto_mentions: LIST_CHANNEL_AUTO_MENTIONS_SQL,
+    channel_doc: CHANNEL_DOC_SQL,
+    list_scheduled: LIST_SCHEDULED_SQL,
   };
   const text = `${JSON.stringify(want, null, 2)}\n`;
   if (process.env.UPDATE_RUST_SQL_GOLDEN === '1') writeFileSync(GOLDEN, text);
