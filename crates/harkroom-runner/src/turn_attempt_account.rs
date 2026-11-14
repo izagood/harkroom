@@ -56,6 +56,7 @@ impl AttemptAccount {
             home: home.map(Path::to_path_buf),
             omp_home: omp_home.map(Path::to_path_buf),
             codex_home: codex_home.map(Path::to_path_buf),
+            pi_home: None,
         }
     }
 }

@@ -569,6 +569,7 @@ fn each_attempt_notes_its_own_account_folder_transcript() {
         &book,
         "m7".into(),
         NoteHomes {
+            pi_home: None,
             harness: AgentHarness::ClaudeCode,
             home: w.root.join("home"),
             omp_home: None,

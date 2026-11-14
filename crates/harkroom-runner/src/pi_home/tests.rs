@@ -355,3 +355,58 @@ fn exited_unreaped_sees_exit_without_reaping() {
     // 회수하지 않았으므로 wait 가 종료 코드를 받는다.
     assert_eq!(child.wait().unwrap().code(), Some(3));
 }
+
+/// security p2-2b ① — `mcp list` env 는 #2151 조건 2 꼴: 허용 목록 + 소켓·runnerId + **그 턴의 다리 열쇠** + 이 턴의 pi 홈.
+/// 러너 링크 열쇠·셸 열쇠·그 밖의 `HARKROOM_*`·키 값은 들지 않는다.
+#[test]
+fn mcp_list_env_is_allowlist_plus_socket_runner_bridge_and_pi_home() {
+    let base: BTreeMap<String, String> = [
+        ("PATH", "/usr/bin"),
+        ("HOME", "/h"),
+        ("LANG", "C"),
+        ("LC_ALL", "C"),
+        ("XDG_CONFIG_HOME", "/h/.config"),
+        ("HARKROOM_OPERATOR_SOCKET", "/s.sock"),
+        ("HARKROOM_RUNNER_ID", "r1"),
+        ("HARKROOM_RUNNER_SECRET", "link-secret"),
+        ("HARKROOM_TURN_GRANT", "shell-key"),
+        ("HARKROOM_PI_LANE_KEY_FILE", "/k"),
+        ("OPENAI_API_KEY", "sk-x"),
+        ("PI_CODING_AGENT_DIR", "/h/.pi/agent"),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect();
+    let env = pi_mcp_list_env(
+        &base,
+        Path::new("/h"),
+        Some(Path::new("/lane/threads/t")),
+        "bridge-k",
+    );
+    let mut keys: Vec<&str> = env.keys().map(String::as_str).collect();
+    keys.sort();
+    assert_eq!(
+        keys,
+        [
+            "HARKROOM_OPERATOR_SOCKET",
+            "HARKROOM_RUNNER_ID",
+            "HARKROOM_TURN_BRIDGE_KEY",
+            "HOME",
+            "LANG",
+            "LC_ALL",
+            "PATH",
+            "PI_CODING_AGENT_DIR",
+            "XDG_CONFIG_HOME",
+        ]
+    );
+    assert_eq!(env["HARKROOM_TURN_BRIDGE_KEY"], "bridge-k");
+    assert_eq!(
+        env["PI_CODING_AGENT_DIR"], "/lane/threads/t",
+        "사람 ~/.pi 가 아니라 턴 홈"
+    );
+    assert_eq!(env["PATH"], "/usr/bin:/h/.pi/agent/bin");
+    let vals: Vec<&String> = env.values().collect();
+    for bad in ["link-secret", "shell-key", "sk-x", "/k"] {
+        assert!(!vals.iter().any(|v| v.as_str() == bad), "{bad}");
+    }
+}

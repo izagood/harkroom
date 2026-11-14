@@ -557,8 +557,8 @@ pub fn harness_of(def: &serde_json::Value) -> AgentHarness {
 /// 지시문 입력에서 `with_argv` 가 싣는다.
 ///
 /// 읽기 전용 목록: 글롭으로 좁히는 하네스(목록 명령이 없는 것)는 묻지 않고 바로 짓는다. 이름을 하네스에게 물어야 하는
-/// 하네스(pi)는 아직 묻는 길이 없어 `None` 으로 둔다 → 그 하네스의 읽기 전용 턴은 `ReadonlyToolListMissing` 으로 **띄우지
-/// 않는다**(닫히는 쪽, security L3d ① — 빈 목록이나 내장 도구만 여는 기본값으로 우회하지 않는다).
+/// 하네스(pi)는 여기서 `None` 으로 두고, 시도마다 그 턴의 열쇠를 맡긴 뒤 물어 채운다(`AttemptParts::set_readonly_tools`,
+/// p2-2b). 채우지 못한 채 띄우려 하면 `ReadonlyToolListMissing` 으로 **띄우지 않는다**(닫히는 쪽, security L3d ①).
 pub fn owned_argv(
     key: &str,
     harness: AgentHarness,

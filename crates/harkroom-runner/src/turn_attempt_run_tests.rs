@@ -16,8 +16,12 @@ fn push(log: &Log, s: String) {
     log.lock().unwrap().push(s);
 }
 
-/// 서버 길 — 열쇠 맡기기·거두기를 턴 id 와 함께 적는다.
-struct Link(Log);
+/// 서버 길 — 열쇠 맡기기·거두기를 턴 id 와 함께 적는다. 둘째 칸이 서 있으면 첫 맡기기 하나를 거절한다.
+struct Link(Log, std::sync::atomic::AtomicBool);
+
+fn link_of(log: Log) -> Link {
+    Link(log, std::sync::atomic::AtomicBool::new(false))
+}
 
 impl RunnerLink for &Link {
     fn request(&self, req: LinkRequest) -> RunnerLinkResponse {
@@ -32,9 +36,10 @@ impl RunnerLink for &Link {
             _ => "other",
         };
         push(&self.0, format!("{tag} {id}"));
+        let refuse = tag == "keys" && self.1.swap(false, std::sync::atomic::Ordering::SeqCst);
         RunnerLinkResponse::HttpResponse {
             id: "x".into(),
-            status: 200,
+            status: if refuse { 500 } else { 200 },
             body: "{}".into(),
         }
     }
@@ -87,6 +92,12 @@ struct Parts {
     spawn_notice: Vec<bool>,
     /// lane 판정 재료(없으면 lane 턴은 `lane_setup` 으로 접힌다).
     lane_pre: Option<LanePre>,
+    /// 읽기 전용 목록을 하네스에게 묻는 시도인가(pi 읽기 전용).
+    readonly_query: bool,
+    /// 물을 때 받은 다리 열쇠.
+    queried_bridge: Vec<String>,
+    /// 정한 목록의 묻기 결과(`None` = 못 물음).
+    readonly_set: Vec<Option<BTreeMap<String, Vec<String>>>>,
 }
 
 const SECRET: &str = "sk-live-rrrrrrrrrrrrrrrrrrrrrrrrrr";
@@ -231,6 +242,28 @@ impl AttemptParts for Parts {
         push(&self.log, "after".into());
         Ok(())
     }
+
+    fn needs_readonly_tool_query(&self) -> bool {
+        self.readonly_query
+    }
+
+    fn query_readonly_tools(&self, bridge_key: &str) -> Option<BTreeMap<String, Vec<String>>> {
+        push(&self.log, "query".into());
+        let mut m = BTreeMap::new();
+        m.insert("harkroom".to_string(), vec![bridge_key.to_string()]);
+        Some(m)
+    }
+
+    fn set_readonly_tools(&mut self, discovered: Option<&BTreeMap<String, Vec<String>>>) {
+        push(&self.log, "set_readonly".into());
+        if let Some(b) = discovered
+            .and_then(|d| d.get("harkroom"))
+            .and_then(|v| v.first())
+        {
+            self.queried_bridge.push(b.clone());
+        }
+        self.readonly_set.push(discovered.cloned());
+    }
 }
 
 struct World {
@@ -295,6 +328,9 @@ fn parts(w: &World, log: &Log, secrets: bool, exits: Vec<i32>) -> Parts {
             home: w.home.clone(),
             turn_pi_home: None,
         }),
+        readonly_query: false,
+        queried_bridge: Vec::new(),
+        readonly_set: Vec::new(),
     }
 }
 
@@ -350,7 +386,7 @@ fn pos(log: &[String], item: &str) -> usize {
 fn account_retry_gets_fresh_attempt_after_previous_cleanup() {
     let w = world("retry");
     let log: Log = Log::default();
-    let link = Link(Arc::clone(&log));
+    let link = link_of(Arc::clone(&log));
     let client = HarkroomRestClient::new(&link);
     let notice = Notice {
         log: Arc::clone(&log),
@@ -430,7 +466,7 @@ fn account_retry_gets_fresh_attempt_after_previous_cleanup() {
 fn previous_live_does_not_leak_into_next_attempt() {
     let w = world("live");
     let log: Log = Log::default();
-    let link = Link(Arc::clone(&log));
+    let link = link_of(Arc::clone(&log));
     let client = HarkroomRestClient::new(&link);
     let notice = Notice {
         log: Arc::clone(&log),
@@ -462,7 +498,7 @@ fn turn_mcp_failure_folds_to_fixed_message() {
     let w = world("mcpfail");
     fs::remove_file(&w.mcp).unwrap();
     let log: Log = Log::default();
-    let link = Link(Arc::clone(&log));
+    let link = link_of(Arc::clone(&log));
     let client = HarkroomRestClient::new(&link);
     let notice = Notice {
         log: Arc::clone(&log),
@@ -482,7 +518,7 @@ fn turn_mcp_failure_folds_to_fixed_message() {
 fn without_turn_keys_uses_base_config() {
     let w = world("nokeys");
     let log: Log = Log::default();
-    let link = Link(Arc::clone(&log));
+    let link = link_of(Arc::clone(&log));
     let client = HarkroomRestClient::new(&link);
     let notice = Notice {
         log: Arc::clone(&log),
@@ -513,7 +549,7 @@ fn without_turn_keys_uses_base_config() {
 fn panic_during_spawn_still_unbinds_live() {
     let w = world("panic");
     let log: Log = Log::default();
-    let link = Link(Arc::clone(&log));
+    let link = link_of(Arc::clone(&log));
     let client = HarkroomRestClient::new(&link);
     let notice = Notice {
         log: Arc::clone(&log),
@@ -542,7 +578,7 @@ fn panic_during_spawn_still_unbinds_live() {
 fn real_constructor_draws_random_v4_turn_ids() {
     let w = world("uuid");
     let log: Log = Log::default();
-    let link = Link(Arc::clone(&log));
+    let link = link_of(Arc::clone(&log));
     let client = HarkroomRestClient::new(&link);
     let notice = Notice {
         log: Arc::clone(&log),
@@ -608,7 +644,7 @@ fn relay_input(l: &Arc<RelaySessions>, sid: &str, text: &[u8]) {
 fn relay_attempt_lives_in_attempt_scope() {
     let w = world("relayscope");
     let log: Log = Log::default();
-    let link = Link(Arc::clone(&log));
+    let link = link_of(Arc::clone(&log));
     let client = HarkroomRestClient::new(&link);
     let notice = Notice {
         log: Arc::clone(&log),
@@ -682,7 +718,7 @@ impl crate::turn_lane_first::LaneSource for NoticeLane {
 fn lane_notice_is_posted_after_keys_once() {
     let w = world("lanenotice");
     let log: Log = Log::default();
-    let link = Link(Arc::clone(&log));
+    let link = link_of(Arc::clone(&log));
     let client = HarkroomRestClient::new(&link);
     let notice = Notice {
         log: Arc::clone(&log),
@@ -744,7 +780,7 @@ impl crate::turn_lane_first::LaneSource for FakeLane {
 fn lane_env_comes_before_plan_and_is_released_after() {
     let w = world("lanefirst");
     let log: Log = Log::default();
-    let link = Link(Arc::clone(&log));
+    let link = link_of(Arc::clone(&log));
     let client = HarkroomRestClient::new(&link);
     let notice = Notice {
         log: Arc::clone(&log),
@@ -783,7 +819,7 @@ fn lane_preflight_refuses_before_keys() {
             fs::write(w.ws.join("CLAUDE.md"), "x").unwrap();
         }
         let log: Log = Log::default();
-        let link = Link(Arc::clone(&log));
+        let link = link_of(Arc::clone(&log));
         let client = HarkroomRestClient::new(&link);
         let notice = Notice {
             log: Arc::clone(&log),
@@ -828,7 +864,7 @@ fn pi_omp_lane_without_thread_home_refuses_before_keys() {
     ] {
         let w = world(tag);
         let log: Log = Log::default();
-        let link = Link(Arc::clone(&log));
+        let link = link_of(Arc::clone(&log));
         let client = HarkroomRestClient::new(&link);
         let notice = Notice {
             log: Arc::clone(&log),
@@ -870,7 +906,7 @@ fn pi_omp_lane_without_thread_home_refuses_before_keys() {
 fn non_lane_attempt_ignores_missing_lane_pre() {
     let w = world("nolanepre");
     let log: Log = Log::default();
-    let link = Link(Arc::clone(&log));
+    let link = link_of(Arc::clone(&log));
     let client = HarkroomRestClient::new(&link);
     let notice = Notice {
         log: Arc::clone(&log),
@@ -888,7 +924,7 @@ fn non_lane_attempt_ignores_missing_lane_pre() {
 fn blocked_lane_attempt_mounts_nothing() {
     let w = world("laneblocked");
     let log: Log = Log::default();
-    let link = Link(Arc::clone(&log));
+    let link = link_of(Arc::clone(&log));
     let client = HarkroomRestClient::new(&link);
     let notice = Notice {
         log: Arc::clone(&log),
@@ -915,7 +951,7 @@ fn blocked_lane_attempt_mounts_nothing() {
 fn lane_and_relay_guards_both_release_in_order() {
     let w = world("lanerelay");
     let log: Log = Log::default();
-    let link = Link(Arc::clone(&log));
+    let link = link_of(Arc::clone(&log));
     let client = HarkroomRestClient::new(&link);
     let notice = Notice {
         log: Arc::clone(&log),
@@ -959,7 +995,7 @@ fn lane_and_relay_guards_both_release_in_order() {
 fn lane_and_secrets_end_lease_once() {
     let w = world("leaseonce");
     let log: Log = Log::default();
-    let link = Link(Arc::clone(&log));
+    let link = link_of(Arc::clone(&log));
     let client = HarkroomRestClient::new(&link);
     let notice = Notice {
         log: Arc::clone(&log),
@@ -989,7 +1025,7 @@ fn lane_and_secrets_end_lease_once() {
 fn secrets_mount_again_after_account_switch() {
     let w = world("remount");
     let log: Log = Log::default();
-    let link = Link(Arc::clone(&log));
+    let link = link_of(Arc::clone(&log));
     let client = HarkroomRestClient::new(&link);
     let notice = Notice {
         log: Arc::clone(&log),
@@ -1037,4 +1073,113 @@ fn secrets_mount_again_after_account_switch() {
         "a2 의 가림 목록에도 비밀"
     );
     assert_eq!(p.spawn_notice, [true, true], "a2 의 감시 목록에도 비밀");
+}
+
+/// security p2-2b ②·① — 읽기 전용 pi: 그 턴 열쇠를 맡긴다 → 묻는다(그 턴의 다리 열쇠로) → 거둔다 → 띄우기 앞에서 **같은** 턴
+/// 열쇠를 다시 맡긴다. 띄우는 열쇠와 물을 때 쓴 다리 열쇠가 같다.
+#[test]
+fn readonly_query_registers_lists_ends_then_reregisters() {
+    let w = world("ro-query");
+    let log: Log = Log::default();
+    let link = link_of(Arc::clone(&log));
+    let client = HarkroomRestClient::new(&link);
+    let notice = Notice {
+        log: Arc::clone(&log),
+        lease: w.lease.clone(),
+    };
+    let mut p = parts(&w, &log, false, vec![0]);
+    p.readonly_query = true;
+    let mut a = attempt(&w, &client, &notice, true, p);
+    let mut d = false;
+    assert!(a.run(&target(), None, true, &mut d).is_ok());
+    let log = log.lock().unwrap().clone();
+    let at = pos(&log, "query");
+    assert_eq!(
+        &log[at - 1..at + 5],
+        [
+            "keys t-1",
+            "query",
+            "keys_end t-1",
+            "set_readonly",
+            "keys t-1",
+            "spawn t-1"
+        ]
+    );
+    let p = a.parts.borrow();
+    let (spawn_bridge, spawn_shell) = p.seen[0].keys.clone().unwrap();
+    assert_eq!(
+        p.queried_bridge,
+        [spawn_bridge],
+        "그 턴의 다리 열쇠로 묻는다"
+    );
+    assert_ne!(
+        p.queried_bridge[0], spawn_shell,
+        "셸 열쇠는 묻기에 가지 않는다"
+    );
+}
+
+/// security p2-2b ③ — 맡기기가 실패하면 **묻지 않고** 내장 읽기 도구만으로 닫는다(거둘 것도 없다). 턴은 그 뒤 다시 맡겨 돈다.
+#[test]
+fn readonly_query_register_failure_does_not_ask() {
+    let w = world("ro-fail");
+    let log: Log = Log::default();
+    let link = Link(Arc::clone(&log), std::sync::atomic::AtomicBool::new(true));
+    let client = HarkroomRestClient::new(&link);
+    let notice = Notice {
+        log: Arc::clone(&log),
+        lease: w.lease.clone(),
+    };
+    let mut p = parts(&w, &log, false, vec![0]);
+    p.readonly_query = true;
+    let mut a = attempt(&w, &client, &notice, true, p);
+    let mut d = false;
+    let _ = a.run(&target(), None, true, &mut d);
+    let log = log.lock().unwrap().clone();
+    assert!(!log.iter().any(|s| s == "query"), "{log:?}");
+    let at = pos(&log, "set_readonly");
+    assert_eq!(log[at - 1], "keys t-1");
+    assert_eq!(a.parts.borrow().readonly_set, [None]);
+}
+
+/// 열쇠를 안 내는 턴(맡기는 길이 없다)은 묻지 않는다 — 러너 링크 열쇠로 묻는 길은 없다.
+#[test]
+fn readonly_query_without_turn_keys_does_not_ask() {
+    let w = world("ro-nokeys");
+    let log: Log = Log::default();
+    let link = link_of(Arc::clone(&log));
+    let client = HarkroomRestClient::new(&link);
+    let notice = Notice {
+        log: Arc::clone(&log),
+        lease: w.lease.clone(),
+    };
+    let mut p = parts(&w, &log, false, vec![0]);
+    p.readonly_query = true;
+    let mut a = attempt(&w, &client, &notice, false, p);
+    let mut d = false;
+    let _ = a.run(&target(), None, true, &mut d);
+    let log = log.lock().unwrap().clone();
+    assert!(
+        !log.iter().any(|s| s == "query" || s.starts_with("keys")),
+        "{log:?}"
+    );
+    assert_eq!(a.parts.borrow().readonly_set, [None]);
+}
+
+/// 묻기가 패닉해도 열쇠는 거둔다.
+#[test]
+fn list_with_turn_keys_ends_even_on_panic() {
+    let ended = std::cell::Cell::new(false);
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        list_with_turn_keys::<()>(
+            "k",
+            || Ok(()),
+            || {
+                ended.set(true);
+                Ok(())
+            },
+            || panic!("묻기 실패"),
+        )
+    }));
+    assert!(r.is_err());
+    assert!(ended.get());
 }

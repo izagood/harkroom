@@ -14,7 +14,8 @@
 //!   (정본 `writeFile` 은 링크를 따라간다). 이미 있던 파일도 0600 으로 맞춘다(정본은 새로 만들 때만).
 //! - 엉뚱한 곳을 가리키는 링크 오류의 `Display` 에는 파일 이름만 싣는다. 경로는 `local_detail()`(로컬 로그 전용)에만.
 //!
-//! 루트는 `pi_prep` 이 기동·턴 직전에 맞춘다(p2). lane 스레드 홈·읽기 전용 목록은 아직 배선하지 않았다 — 그 턴은 닫힌다.
+//! 루트는 `pi_prep` 이 기동·턴 직전에 맞춘다(p2). lane 스레드 홈은 `pi_lane`(p2-2a), 읽기 전용 목록 묻기는 턴 열쇠를 잠깐
+//! 맡겨 `pi_mcp_list_env` 로 묻는다(p2-2b, `turn_attempt_run::list_with_turn_keys`).
 
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
@@ -173,6 +174,67 @@ pub fn list_pi_mcp_tools(
             None
         }
     }
+}
+
+/// 부모 env 에서 보조 조회로 넘기는 이름(정본 `QUERY_ENV_KEYS`). 늘릴 때는 열쇠·토큰이 섞이지 않는지 본다.
+const QUERY_ENV_KEYS: [&str; 7] = ["PATH", "HOME", "USER", "LOGNAME", "LANG", "TMPDIR", "TZ"];
+
+fn is_query_env_key(k: &str) -> bool {
+    QUERY_ENV_KEYS.contains(&k) || k.starts_with("LC_") || k.starts_with("XDG_")
+}
+
+/// 정본 `auxQueryEnv` — 러너가 턴 밖에서 하네스 CLI 에 묻는 보조 조회의 env. 부모 env 를 펼치지 않고 허용 목록으로만
+/// 고르고(러너 링크 열쇠·턴 열쇠·그 밖의 `HARKROOM_*` 는 목록에 없다), 부르는 쪽의 칸·고정 스위치·하네스 PATH 를 얹는다.
+pub fn aux_query_env(
+    harness: crate::adapter::AgentHarness,
+    base: &BTreeMap<String, String>,
+    home: &Path,
+    extra: &[(&str, String)],
+) -> Env {
+    let mut env: Env = base
+        .iter()
+        .filter(|(k, _)| is_query_env_key(k))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    for (k, v) in extra {
+        env.insert((*k).to_string(), v.clone());
+    }
+    for (k, v) in crate::turn_env::provider_lane_fixed_env(harness) {
+        env.insert((*k).to_string(), (*v).to_string());
+    }
+    env.insert(
+        "PATH".into(),
+        crate::turn_env::harness_path(harness, base.get("PATH").map(String::as_str), home),
+    );
+    env
+}
+
+/// 정본 `piMcpListEnv` — pi `mcp list`(읽기 전용 턴 앞 도구 이름 묻기)의 env. 허용 목록 위에 소켓·runnerId 두 칸, **그 턴의
+/// 다리 열쇠**, pi 홈 자리만 얹는다. 러너 링크 열쇠(`HARKROOM_RUNNER_SECRET`)·셸 열쇠는 넣지 않는다 — 열쇠는 부르는 쪽이
+/// 이 조회 앞에 맡기고 뒤에 거둔다(`list_with_turn_keys`).
+pub fn pi_mcp_list_env(
+    base: &BTreeMap<String, String>,
+    home: &Path,
+    pi_home: Option<&Path>,
+    bridge_key: &str,
+) -> Env {
+    let mut extra: Vec<(&str, String)> = Vec::new();
+    for k in [
+        crate::config::RUNNER_LINK_ENV_KEYS[0],
+        crate::config::RUNNER_LINK_ENV_KEYS[1],
+    ] {
+        if let Some(v) = base.get(k).filter(|v| !v.is_empty()) {
+            extra.push((k, v.clone()));
+        }
+    }
+    extra.push((
+        crate::turn_env::RUNNER_TURN_KEY_BRIDGE_ENV,
+        bridge_key.to_string(),
+    ));
+    if let Some(h) = pi_home {
+        extra.push(("PI_CODING_AGENT_DIR", h.to_string_lossy().into_owned()));
+    }
+    aux_query_env(crate::adapter::AgentHarness::Pi, base, home, &extra)
 }
 
 /// 자식을 제 프로세스 그룹 우두머리로 띄우고, 끝낼 때 그룹째 죽인다 — 손자가 stdout 파이프를 쥐고 남아 읽기 스레드가

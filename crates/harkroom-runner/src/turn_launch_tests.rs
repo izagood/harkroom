@@ -606,3 +606,45 @@ fn codex_transcript_lookup_is_the_rollout_only() {
     assert_eq!(paths, vec![file]);
     let _ = fs::remove_dir_all(&root);
 }
+
+/// security p2-2b ④ — pi 기록은 **이 턴의 pi 홈**(lane 이면 스레드 홈)의 `sessions/` 안에서만 찾는다. claude 자리·사람의
+/// `~/.pi` 에 같은 이름이 있어도 보지 않는다. pi 홈을 모르면 찾지 않는다.
+#[test]
+fn pi_transcript_lookup_stays_in_turn_pi_home() {
+    let root = tmp("find-pi");
+    let sid = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    let thread = root.join("lane").join("threads").join("abc");
+    fs::create_dir_all(thread.join("sessions")).unwrap();
+    let file = thread
+        .join("sessions")
+        .join(format!("2026-11-15T00-00-00_{sid}.jsonl"));
+    fs::write(&file, "{}\n").unwrap();
+    // 사람 홈·claude 자리에 같은 세션 이름을 둔다 — 보면 안 된다.
+    let human = root.join("home").join(".pi").join("agent").join("sessions");
+    fs::create_dir_all(&human).unwrap();
+    fs::write(
+        human.join(format!("2099-01-01T00-00-00_{sid}.jsonl")),
+        "{}\n",
+    )
+    .unwrap();
+    let cfg = root.join("cfg").join("projects").join("-w");
+    fs::create_dir_all(&cfg).unwrap();
+    fs::write(cfg.join(format!("{sid}.jsonl")), "{}\n").unwrap();
+    let home = root.join("home");
+    let cfg_root = root.join("cfg");
+    let homes = TranscriptHomes {
+        claude_config_dir: Some(&cfg_root),
+        home: Some(&home),
+        pi_home: Some(&thread),
+        ..TranscriptHomes::default()
+    };
+    let (t, paths) = transcript_record_paths(AgentHarness::Pi, Some(sid), homes);
+    assert_eq!(t.as_deref(), Some(file.as_path()));
+    assert_eq!(paths, vec![file], "옆 디렉터리 없음");
+    let no_home = TranscriptHomes {
+        pi_home: None,
+        ..homes
+    };
+    assert_eq!(find_transcript(AgentHarness::Pi, Some(sid), no_home), None);
+    let _ = fs::remove_dir_all(&root);
+}
