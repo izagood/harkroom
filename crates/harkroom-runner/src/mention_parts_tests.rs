@@ -926,3 +926,19 @@ fn lane_notice_posts_one_progress_line_and_swallows_failure() {
     );
     assert_eq!(*seen.lock().unwrap(), [want.clone(), want]);
 }
+
+/// #2142 회귀: 기동 때 정한 codex 격리 홈이 **시도 명령 옵션**까지 간다(`spawn`·`command_for` 가 같은 `attempt_cmd` 를 쓴다).
+/// 빠지면 codex 턴은 조립에서 `codexHome` 이 비어 뜨지 않는다 — 부품(`codex_home`)까지만 보는 시험은 이것을 놓쳤다.
+#[test]
+fn attempt_command_carries_codex_home() {
+    let w = world("cxhome");
+    let store = SessionStore::new(w.root.join("sessions.json"));
+    let stale = PathBuf::from("/acct/STALE_BASE");
+    let mut p = parts(&w, &store, &stale, false);
+    p.codex_home = Some(PathBuf::from("/state/codex-home"));
+    p.prepare(&target(), None, true, "t-1").unwrap();
+    assert_eq!(
+        p.command_for("t-1").unwrap().codex_home,
+        Some(Path::new("/state/codex-home"))
+    );
+}
