@@ -305,3 +305,35 @@ fn ensure_via_adapter_writes_the_selected_ledger() {
     assert_eq!(fs::read_dir(&empty).unwrap().count(), 0);
     let _ = fs::remove_dir_all(&d);
 }
+
+/// T1 — 집이나 작업 폴더가 상대 경로면 아무것도 적지 않는다(실행 폴더 아래 장부를 만들지 않는다).
+#[test]
+fn prepare_gates_skip_relative_paths() {
+    let d = std::env::temp_dir().join(format!("hk-wt-rel-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    prepare_harness_gates(
+        crate::adapter::AgentHarness::ClaudeCode,
+        "rel/ws",
+        None,
+        None,
+        &d,
+    );
+    assert!(!d.join(".claude").exists());
+    prepare_harness_gates(
+        crate::adapter::AgentHarness::ClaudeCode,
+        "/abs/ws",
+        None,
+        None,
+        Path::new(""),
+    );
+    assert!(!Path::new(".claude").exists());
+    prepare_harness_gates(
+        crate::adapter::AgentHarness::ClaudeCode,
+        "/abs/ws",
+        None,
+        None,
+        &d,
+    );
+    assert!(d.join(".claude").join(".claude.json").exists());
+}
