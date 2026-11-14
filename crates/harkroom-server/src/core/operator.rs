@@ -250,7 +250,10 @@ async fn run(core: Arc<OperatorCore>, socket: WebSocket, operator_id: String, to
     // `/ws` 와 같이: 닫기 인사를 쓸 시간만 주고 넘으면 부순다.
     drop(sink);
     let mut worker = worker;
-    if tokio::time::timeout(core.timing.send_timeout, &mut worker).await.is_err() {
+    if tokio::time::timeout(core.timing.send_timeout, &mut worker)
+        .await
+        .is_err()
+    {
         worker.abort();
     }
 }

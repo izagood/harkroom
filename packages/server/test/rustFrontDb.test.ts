@@ -38,12 +38,37 @@ function cargo(args: string[], env: Record<string, string>): Promise<{ code: num
   });
 }
 
+/** `write.rs::OPERATOR_PRIVILEGES`(+ 시퀀스) 만 가진 쓰기 역할 — homelab 이 운영 쓰기 역할에 더할 GRANT 와 같은 표. */
+const OPERATOR_GRANTS = [
+  'insert, update on operator',
+  'insert, delete on operator_upgrade',
+  'usage on sequence operator_upgrade_id_seq',
+  'insert, update on operator_gh_report',
+  'update on agent_assignment',
+  'update on secret_grant',
+  'insert on audit_log',
+];
+
+async function operatorWriteRole(db: { pool: pg.Pool; uri: string }): Promise<string> {
+  const rw = `op_rw_${Math.random().toString(36).slice(2, 10)}`;
+  await db.pool.query(`create role ${rw} login password '${rw}' nosuperuser nocreatedb nocreaterole nobypassrls connection limit 8`);
+  await db.pool.query(`grant pg_read_all_data to ${rw}`);
+  for (const g of OPERATOR_GRANTS) await db.pool.query(`grant ${g} to ${rw}`);
+  const u = new URL(db.uri);
+  u.username = rw;
+  u.password = rw;
+  return u.toString();
+}
+
 describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () => {
-  for (const name of ['auth', 'perm']) {
+  for (const name of ['auth', 'perm', 'operator']) {
     it(`tests/${name}.rs`, async () => {
       const db = await startTestDb();
       try {
-        const r = await cargo(['test', '--test', name, '--', '--nocapture'], { HARKROOM_TEST_DATABASE_URL: db.uri });
+        const env: Record<string, string> = { HARKROOM_TEST_DATABASE_URL: db.uri };
+        // C2a — 오퍼레이터 시험은 쓰기 풀을 `write.rs::OPERATOR_PRIVILEGES` 만 가진 역할로 돌린다(homelab GRANT 표가 모자라면 여기서 빨개진다).
+        if (name === 'operator') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db);
+        const r = await cargo(['test', '--test', name, '--', '--nocapture'], env);
         expect(r.code, r.out).toBe(0);
         // DB 가 없어 건너뛴 것을 통과로 읽지 않는다.
         expect(r.out, r.out).not.toContain('skip: HARKROOM_TEST_DATABASE_URL unset');
@@ -281,6 +306,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant delete on work_item to ${rw}`,
         `grant insert, update, delete on agent_thread_claim to ${rw}`,
         `grant insert, update, delete on push_device to ${rw}`,
+        // S5.3 C2a — 오퍼레이터 코어(`OPERATOR_PRIVILEGES`). 없으면 앞단은 `/operator`·`/operators*` 를 TS 에 남긴다.
+        ...OPERATOR_GRANTS.map((g) => `grant ${g} to ${rw}`),
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -302,6 +329,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         HARKROOM_CORE: 'rust', HARKROOM_WS_APP_HEARTBEAT_MS: '300', HARKROOM_WS_REVALIDATE_MS: '500',
       });
       expect(f.log()).toContain('front: core rust');
+      expect(f.log()).toContain('/operator, /operators*');
       expect(f.log()).toContain('front: trust proxy 2 cidr(s)');
       front = f.child;
       // 앞단이 옮긴 줄을 **직접** 답하는지 — 모두 TS 로 넘기면 대조는 TS 끼리 비교해 늘 통과한다.

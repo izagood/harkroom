@@ -838,10 +838,7 @@ mod tests {
         ));
         assert!(matches!(rx2.try_recv().unwrap(), OpOut::Text(_)));
         hub.disconnect("op1", 4401, "revoked");
-        assert_eq!(
-            rx2.try_recv().unwrap(),
-            OpOut::Close(4401, "revoked")
-        );
+        assert_eq!(rx2.try_recv().unwrap(), OpOut::Close(4401, "revoked"));
         hub.detach(&second);
         assert!(!hub.is_online("op1"));
         assert_eq!(closes.try_recv().unwrap(), "op1");
