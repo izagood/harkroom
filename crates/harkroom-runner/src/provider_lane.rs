@@ -32,7 +32,7 @@ use crate::opencode_home::{
     PROVIDER_LANE_OPENCODE_PROVIDER, provider_lane_model_id, to_opencode_mcp,
 };
 use crate::rest::HttpReply;
-use crate::turn_env::{RUNNER_LINK_SECRET_ENV, RUNNER_TURN_KEY_BRIDGE_ENV};
+use crate::turn_env::RUNNER_TURN_KEY_BRIDGE_ENV;
 use crate::turn_files::write_private;
 use shared::{
     CODEX_LANE_MEASURED_VERSIONS, KILO_LANE_MEASURED_VERSIONS, OMP_LANE_MEASURED_VERSIONS,
@@ -58,7 +58,6 @@ pub const PI_LANE_KEY_FILE_ENV: &str = "HARKROOM_PI_LANE_KEY_FILE";
 /// lane 턴 파일 자리(러너 상태 폴더, 작업 폴더 밖, 0700).
 pub const LANE_TURN_DIR: &str = "lane-turn";
 /// 하위 프로세스 env 걷기가 브릿지에서 빼는 이름 — lane MCP 설정 `env` 칸으로 따로 준다. lane 키는 싣지 않는다(security X2).
-pub const LANE_BRIDGE_ENV_KEYS: [&str; 1] = [RUNNER_LINK_SECRET_ENV];
 /// lane 턴 전용 MCP 설정 파일 이름(러너 상태 폴더, 0600 — security X1).
 pub const LANE_MCP_CONFIG_FILE: &str = "lane-mcp.json";
 /// 턴 MCP 설정 자리(러너 상태 폴더, 0700). 파일은 턴마다 하나(0600).
@@ -223,10 +222,6 @@ pub enum LaneFileError {
     },
     /// harkroom 항목이 stdio 가 아니다(opencode 턴 설정).
     NotStdio,
-    /// 러너 env 에 브릿지 값이 없다(이름만 싣는다).
-    MissingRunnerEnv {
-        key: &'static str,
-    },
     Io {
         path: PathBuf,
         source: io::Error,
@@ -281,9 +276,6 @@ impl fmt::Display for LaneFileError {
             Self::NoHarkroom { what } => write!(f, "{what}: MCP 설정에 harkroom 이 없다"),
             Self::NotStdio => {
                 f.write_str("writeOpencodeTurnMcpConfig: harkroom 항목이 stdio 가 아니다")
-            }
-            Self::MissingRunnerEnv { key } => {
-                write!(f, "writeLaneMcpConfig: {key} 가 러너 env 에 없다")
             }
             Self::Io { source, .. } => write!(f, "lane 파일 입출력 실패: {}", source.kind()),
         }
@@ -396,6 +388,12 @@ pub fn sweep_lane_turn_dir(state_dir: &Path) {
     sweep_dir(&state_dir.join(LANE_TURN_DIR));
 }
 
+/// 정본 `sweepLaneMcpConfig` — 옛 lane 대체 길(L3c-3c 에서 없앰)이 남긴 `lane-mcp.json` 을 지운다. 그 파일에는 그때의 러너 링크
+/// secret 이 들어 있다. 실패는 삼킨다(다음 기동이 다시 지운다).
+pub fn sweep_lane_mcp_config(state_dir: &Path) {
+    let _ = fs::remove_file(state_dir.join(LANE_MCP_CONFIG_FILE));
+}
+
 /// 정본 `sweepTurnMcpDir` — 기동 때 지난 러너가 남긴 턴 MCP 설정을 걷는다.
 pub fn sweep_turn_mcp_dir(state_dir: &Path) {
     sweep_dir(&state_dir.join(TURN_MCP_DIR));
@@ -412,38 +410,6 @@ fn object_or_empty(v: Option<&Value>) -> Map<String, Value> {
         Some(Value::Object(m)) => m.clone(),
         _ => Map::new(),
     }
-}
-
-/// 정본 `writeLaneMcpConfig` — 오퍼레이터 MCP 설정을 바탕으로 lane 턴 전용 설정을 쓴다: harkroom 항목 `env` 칸에
-/// `LANE_BRIDGE_ENV_KEYS` 값을 싣고 `alwaysLoad` 를 단다. `env` 는 러너 env(정본 기본값 `process.env`)다.
-/// 같은 내용이면 다시 쓰지 않는다(n2).
-pub fn write_lane_mcp_config(
-    state_dir: &Path,
-    source_path: &Path,
-    env: &BTreeMap<String, String>,
-) -> Result<PathBuf, LaneFileError> {
-    let doc = read_json(source_path)?;
-    let mut harkroom = harkroom_entry(&doc).ok_or(LaneFileError::NoHarkroom {
-        what: "writeLaneMcpConfig",
-    })?;
-    let mut bridge_env = object_or_empty(harkroom.get("env"));
-    for key in LANE_BRIDGE_ENV_KEYS {
-        let value = env
-            .get(key)
-            .filter(|v| !v.is_empty())
-            .ok_or(LaneFileError::MissingRunnerEnv { key })?;
-        bridge_env.insert(key.into(), Value::String(value.clone()));
-    }
-    harkroom.insert("alwaysLoad".into(), Value::Bool(true));
-    harkroom.insert("env".into(), Value::Object(bridge_env));
-    let out = with_harkroom_in_place(doc, harkroom);
-    let path = state_dir.join(LANE_MCP_CONFIG_FILE);
-    let body = to_json(&out);
-    if fs::read_to_string(&path).ok().as_deref() == Some(body.as_str()) {
-        return Ok(path);
-    }
-    write_atomic(&path, &body)?;
-    Ok(path)
 }
 
 /// `{ ...doc, mcpServers: { ...doc.mcpServers, harkroom } }` — 있는 열쇠는 자리를 지킨다(`preserve_order` 의 insert).

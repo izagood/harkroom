@@ -256,39 +256,14 @@ export function laneScrubsSubprocessEnv(harness: AgentHarness): boolean {
 }
 
 /**
- * 하위 프로세스 env 걷기가 harkroom 브릿지(`mcp-bridge`)에서 빼는 이름(2026-10-24 실측 claude 2.1.309). 브릿지는 이것으로 오퍼레이터에
- * 러너임을 밝힌다 — 빠지면 lane 턴이 harkroom MCP 를 못 쓴다. 다른 `HARKROOM_*` 은 걷기 뒤에도 남는다(실측). 브릿지가 쓰는 이름만
- * 싣는다 — lane 키는 싣지 않는다(security X2).
+ * 옛 lane 턴 전용 MCP 설정 파일 이름(L3c-3c 에서 없앤 대체 길). 그 파일에는 러너 링크 secret 이 실렸다 — 기동 때 지운다
+ * (`sweepLaneMcpConfig`). 지금은 아무도 쓰지 않는다.
  */
-export const LANE_BRIDGE_ENV_KEYS = ['HARKROOM_RUNNER_SECRET'] as const;
-
-/** lane 턴 전용 MCP 설정 파일 이름(러너 상태 폴더, 작업 폴더 밖, 0600 — security X1). */
 export const LANE_MCP_CONFIG_FILE = 'lane-mcp.json';
 
-/**
- * 오퍼레이터가 쓴 MCP 설정을 바탕으로 lane 턴 전용 설정을 쓴다: harkroom 항목의 `env` 칸에 `LANE_BRIDGE_ENV_KEYS` 값을 싣는다.
- * 하네스는 이 칸을 env 걷기 **뒤에** 브릿지에 얹는다(실측). 임시 파일 → rename 으로 바꿔 끼운다(동시 lane 턴이 반쯤 쓴 파일을 읽지 않게).
- * harkroom 항목이 없거나 값이 없으면 던진다 — 그대로 띄우면 브릿지가 조용히 끊긴다.
- * harkroom 항목에는 `alwaysLoad` 를 단다 — 그 도구들이 처음부터 도구 목록에 오른다(도구 찾기를 거치지 않아도 답을 올릴 수 있게,
- * claude 2.1.310 실측). 다른 항목은 그대로 둔다.
- */
-export async function writeLaneMcpConfig(stateDir: string, sourcePath: string, env: NodeJS.ProcessEnv = process.env): Promise<string> {
-  const doc = JSON.parse(await readFile(sourcePath, 'utf8')) as { mcpServers?: Record<string, { env?: Record<string, string> } & Record<string, unknown>> };
-  const harkroom = doc.mcpServers?.harkroom;
-  if (!harkroom) throw new Error('writeLaneMcpConfig: MCP 설정에 harkroom 이 없다');
-  const extra: Record<string, string> = {};
-  for (const key of LANE_BRIDGE_ENV_KEYS) {
-    const value = env[key];
-    if (!value) throw new Error(`writeLaneMcpConfig: ${key} 가 러너 env 에 없다`);
-    extra[key] = value;
-  }
-  const out = { ...doc, mcpServers: { ...doc.mcpServers, harkroom: { ...harkroom, alwaysLoad: true, env: { ...(harkroom.env ?? {}), ...extra } } } };
-  const path = join(stateDir, LANE_MCP_CONFIG_FILE);
-  const body = JSON.stringify(out);
-  // 같으면 쓰지 않는다(n2) — 동시 lane 턴마다 같은 내용으로 바꿔 끼울 까닭이 없다.
-  if ((await readFile(path, 'utf8').catch(() => null)) === body) return path;
-  await writeAtomic(path, body);
-  return path;
+/** 기동 때 옛 `lane-mcp.json`(러너 링크 secret 이 든 파일)을 지운다. 실패는 삼킨다 — 다음 기동이 다시 지운다. */
+export async function sweepLaneMcpConfig(stateDir: string): Promise<void> {
+  await rm(join(stateDir, LANE_MCP_CONFIG_FILE), { force: true }).catch(() => undefined);
 }
 
 /** 턴 MCP 설정 자리(러너 상태 폴더, 작업 폴더 밖, 0700). 파일은 턴마다 하나(0600), 턴이 끝나면 지우고 기동 때 남은 것을 걷는다. */
@@ -305,7 +280,7 @@ export async function writeTurnMcpConfig(
   const doc = JSON.parse(await readFile(sourcePath, 'utf8')) as { mcpServers?: Record<string, { env?: Record<string, string> } & Record<string, unknown>> };
   const harkroom = doc.mcpServers?.harkroom;
   if (!harkroom) throw new Error('writeTurnMcpConfig: MCP 설정에 harkroom 이 없다');
-  // API 키 연결 턴은 lane MCP 설정과 같이 harkroom 도구를 처음부터 싣는다(`writeLaneMcpConfig` 의 `alwaysLoad` 주석).
+  // API 키 연결 턴은 harkroom 도구를 처음부터 싣는다 — 도구 찾기를 거치지 않아도 답을 올릴 수 있게(claude 2.1.310 실측).
   const out = { ...doc, mcpServers: { ...doc.mcpServers, harkroom: { ...harkroom, ...(opts.alwaysLoad ? { alwaysLoad: true } : {}), env: { ...(harkroom.env ?? {}), [RUNNER_TURN_KEY_ENV.bridge]: bridgeKey } } } };
   const dir = join(stateDir, TURN_MCP_DIR);
   await mkdir(dir, { recursive: true, mode: 0o700 });
