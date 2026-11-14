@@ -722,6 +722,10 @@ export const CHANNEL_DOC_SQL = `select d.channel_id as "channelId", d.body, d.up
             d.updated_at as "updatedAt"
      from channel_doc d where d.channel_id = $1::uuid`;
 
+/** `GET /channels/:id/delete-info` 의 두 문장(#155). Rust 코어(`core/channels.rs`)가 골든으로 같은 문장을 읽는다. */
+export const CHANNEL_DELETE_INFO_SQL = `select id, name, kind, archived_at from channel where id = $1::uuid`;
+export const CHANNEL_MESSAGE_COUNT_SQL = `select count(*)::int as cnt from message where channel_id = $1::uuid`;
+
 export async function getChannelDoc(pool: Pool, channelId: string): Promise<ChannelDoc> {
   const res = await pool.query<ChannelDoc>(CHANNEL_DOC_SQL, [channelId]);
   const row = res.rows[0];

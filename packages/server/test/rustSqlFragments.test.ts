@@ -7,11 +7,12 @@ import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 import { channelListVisibleSql, channelVisibleSql } from '../src/services/channels.js';
 import { MESSAGE_BY_ID_SQL } from '../src/services/messages.js';
-import { CHANNEL_DOC_SQL, LIST_CHANNEL_MEMBERS_SQL, LIST_CHANNEL_PREFS_SQL, LIST_CHANNELS_SQL } from '../src/services/channels.js';
+import { CHANNEL_DELETE_INFO_SQL, CHANNEL_MESSAGE_COUNT_SQL, CHANNEL_DOC_SQL, LIST_CHANNEL_MEMBERS_SQL, LIST_CHANNEL_PREFS_SQL, LIST_CHANNELS_SQL } from '../src/services/channels.js';
 import { ALL_READ_STATES_SQL, READ_STATE_SQL } from '../src/services/readPositions.js';
 import { LIST_CHANNEL_SECTIONS_SQL } from '../src/services/channelSections.js';
 import { LIST_CHANNEL_AUTO_MENTIONS_SQL } from '../src/services/channelAutoMentions.js';
 import { LIST_SCHEDULED_SQL } from '../src/services/scheduledMessages.js';
+import { SELECT_PINS_SQL } from '../src/services/pins.js';
 import { displayBodySql } from '../src/services/systemBody.js';
 
 const GOLDEN = fileURLToPath(new URL('../../../crates/harkroom-server/golden/sql_fragments.json', import.meta.url));
@@ -36,6 +37,9 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     list_channel_auto_mentions: LIST_CHANNEL_AUTO_MENTIONS_SQL,
     channel_doc: CHANNEL_DOC_SQL,
     list_scheduled: LIST_SCHEDULED_SQL,
+    select_pins: SELECT_PINS_SQL,
+    channel_delete_info: CHANNEL_DELETE_INFO_SQL,
+    channel_message_count: CHANNEL_MESSAGE_COUNT_SQL,
   };
   const text = `${JSON.stringify(want, null, 2)}\n`;
   if (process.env.UPDATE_RUST_SQL_GOLDEN === '1') writeFileSync(GOLDEN, text);

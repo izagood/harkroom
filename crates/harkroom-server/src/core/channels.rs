@@ -1,5 +1,5 @@
 //! S5.3 C1e-1 — 채널 읽기(GET) 9줄을 Rust 코어로. TS `routes/channelRoutes.ts` 의 같은 줄과 같은 문·순서·응답.
-//! 핀(`/channels/{id}/pins`)과 지우기 정보(`/channels/{id}/delete-info`)는 다음 조각이다.
+//! 핀(`/channels/{id}/pins`)과 지우기 정보(`/channels/{id}/delete-info`)까지 11줄.
 //!
 //! - 문장은 TS 정본을 `golden/sql_fragments.json` 으로 받아 그대로 쓴다(`list_channels` 등). TS 가 고치면
 //!   `rustSqlFragments.test.ts` 가 골든 갱신을 요구하므로 Rust 만 옛 문장을 도는 일이 없다.
@@ -64,6 +64,9 @@ struct Sql {
     auto_mentions: String,
     doc: String,
     scheduled: String,
+    pins: String,
+    delete_info: String,
+    message_count: String,
     visible: String,
     exists: &'static str,
 }
@@ -89,6 +92,27 @@ fn sql() -> &'static Sql {
             frag("list_scheduled"),
             &["sendAt", "createdAt", "canceledAt"],
         ),
+        // TS `toPin` — 평평한 행(메시지 칸 + pinnedBy·pinnedAt)을 `{ messageId, channelId, pinnedBy, pinnedAt, message }` 로.
+        // message 는 핀 두 칸을 뺀 나머지를 열 순서 그대로. 맨 겉 timestamptz(메시지 셋 + pinnedAt)만 toISOString 꼴.
+        pins: format!(
+            "select coalesce(json_agg(json_build_object(\
+               'messageId', r.v->'id', 'channelId', r.v->'channelId', \
+               'pinnedBy', r.v->'pinnedBy', 'pinnedAt', r.v->'pinnedAt', \
+               'message', (select json_object_agg(e.key, e.value order by e.ord) \
+                 from json_each(r.v) with ordinality as e(key, value, ord) \
+                 where e.key not in ('pinnedBy', 'pinnedAt'))) order by r.n), '[]'::json)::text \
+             from json_array_elements(({})::json) with ordinality as r(v, n)",
+            rows_sql(
+                frag("select_pins"),
+                &["createdAt", "editedAt", "deletedAt", "pinnedAt"],
+            )
+        ),
+        delete_info: format!(
+            "select json_build_object('name', t.name, 'kind', t.kind, 'archived', t.archived_at is not null)::text \
+             from ({}) t",
+            frag("channel_delete_info")
+        ),
+        message_count: format!("select t.cnt from ({}) t", frag("channel_message_count")),
         // TS `assertChannelVisible` — 술어는 TS 골든(`channelVisibleSql('c', '$1::uuid')`). 없는 채널은 행이 없다(막지 않음).
         visible: format!(
             "select {} as visible from channel c where c.id = $2::uuid",
@@ -337,6 +361,82 @@ pub async fn scheduled(
     }
 }
 
+/// `GET /channels/{id}/pins` — 볼 수 없으면 403, 지워진 메시지의 핀은 문장(조인 조건)에서 빠진다.
+pub async fn pins(
+    State(pool): State<Arc<PgPool>>,
+    RequireAccount(me, _): RequireAccount,
+    Path(id): Path<String>,
+) -> Response {
+    if let Some(r) = gated(&pool, &me.id, &id, "not a member of this dm channel").await {
+        return r;
+    }
+    let r = sqlx::query_scalar::<_, String>(sql().pins.as_str())
+        .bind(&id)
+        .bind(None::<String>)
+        .fetch_one(pool.as_ref())
+        .await;
+    match r {
+        Ok(r) => wrap("pins", &r),
+        Err(e) => internal(e),
+    }
+}
+
+/// `GET /channels/{id}/delete-info` — TS 순서: `requireCap('channel.manage', 채널)`(401·403) → id 400 → 404 →
+/// DM 이면 409 `cannot_delete_dm` → 보관 안 됐으면 409 `not_archived` → `{ name, messageCount }`.
+pub async fn delete_info(
+    State(pool): State<Arc<PgPool>>,
+    RequireAccount(_, auth): RequireAccount,
+    Path(id): Path<String>,
+) -> Response {
+    let target = crate::perm::Target {
+        kind: crate::perm::TargetKind::Channel,
+        id: &id,
+    };
+    if let Err(r) = crate::perm::require_cap(&pool, &auth, "channel.manage", Some(target)).await {
+        return r;
+    }
+    if !is_uuid(&id) {
+        return bad_id();
+    }
+    let row: Option<String> = match sqlx::query_scalar(sql().delete_info.as_str())
+        .bind(&id)
+        .fetch_optional(pool.as_ref())
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => return internal(e),
+    };
+    let Some(row) = row.and_then(|r| serde_json::from_str::<Value>(&r).ok()) else {
+        return json_err(StatusCode::NOT_FOUND, "not_found", "no such channel");
+    };
+    if row["kind"] != "standard" {
+        return json_err(
+            StatusCode::CONFLICT,
+            "cannot_delete_dm",
+            "DMs cannot be deleted",
+        );
+    }
+    if row["archived"] != true {
+        return json_err(
+            StatusCode::CONFLICT,
+            "not_archived",
+            "only archived channels can be deleted",
+        );
+    }
+    let count: i32 = match sqlx::query_scalar(sql().message_count.as_str())
+        .bind(&id)
+        .fetch_one(pool.as_ref())
+        .await
+    {
+        Ok(c) => c,
+        Err(e) => return internal(e),
+    };
+    json_ok(
+        serde_json::json!({ "name": row["name"].as_str().unwrap_or(""), "messageCount": count })
+            .to_string(),
+    )
+}
+
 /// 코어 라우터에 합칠 줄(`route_table.rs`). 인증 층은 메서드 안(`route_layer`), CORS 는 바깥(`layer`) — `msg_read.rs` 와 같은 길.
 pub fn routes(
     pool: PgPool,
@@ -354,6 +454,8 @@ pub fn routes(
         .get("/channels/{id}/auto-mentions", auto_mentions)
         .get("/channels/{id}/doc", doc)
         .get("/channels/{id}/scheduled", scheduled)
+        .get("/channels/{id}/pins", pins)
+        .get("/channels/{id}/delete-info", delete_info)
         .map(|r| {
             r.route_layer(axum::middleware::from_fn_with_state(
                 auth,
@@ -383,6 +485,8 @@ mod tests {
         assert!(s.scheduled.contains("author_id = $2::uuid"));
         assert!(s.prefs.contains("'mutedAt', 'starredAt', 'hiddenAt'"));
         assert!(s.reads.contains("false and json_typeof"), "시각 칸 없음");
+        assert!(s.pins.contains("'pinnedAt'") && s.pins.contains("message_pin p"));
+        assert!(s.message_count.contains("count(*)::int as cnt"));
     }
 
     #[test]
