@@ -298,3 +298,27 @@ fn notice_masks_values_mounted_after_spawn() {
     );
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// T3a(security 막음 1): 임대 폴더를 못 읽으면(권한 0000) 통지·화면 인용을 올리지 않는다. 폴더가 없으면(마운트 없음) 그대로 간다.
+#[test]
+fn notice_withheld_when_lease_unreadable() {
+    use std::os::unix::fs::PermissionsExt;
+    let base = std::env::temp_dir().join(format!("hk-t3a-blind-{}", std::process::id()));
+    let dir = base.join("lease");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("K"), "UNREADABLE-SECRET-VALUE-5678").unwrap();
+    let s = NoticeSecrets {
+        pat: PAT.into(),
+        mounted: vec![],
+        lease_dir: Some(dir.clone()),
+    };
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let blocked = s.guard_body("tail UNREADABLE-SECRET-VALUE-5678");
+    let quoted = screen_said_for_post(Some("said UNREADABLE-SECRET-VALUE-5678"), &s);
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(blocked, None, "못 읽으면 올리지 않는다");
+    assert_eq!(quoted, None, "화면 인용을 뺀다");
+    // 폴더가 없다 = 마운트한 것 없음 → 평소대로
+    std::fs::remove_dir_all(&base).unwrap();
+    assert_eq!(s.guard_body("plain").as_deref(), Some("plain"));
+}

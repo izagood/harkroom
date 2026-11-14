@@ -180,3 +180,30 @@ fn run_after_turn_masks_with_mounted_secrets() {
     assert!(body.contains("끝"), "{body}");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// T3a(security 막음 1): 임대 폴더를 못 읽으면(권한 0000) 무엇을 가릴지 모른다 — 실패 글에서 화면·API 오류 인용을 뺀다.
+#[test]
+fn fold_outcome_drops_quotes_when_lease_unreadable() {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, _) = mounted("blind");
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let s = TurnSecrets::build(PAT, &[], Some(&dir));
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(s.lease_unreadable());
+    let end = Mutex::new(EndState {
+        api_error: Some(format!("500 boom {SECRET}")),
+        ..EndState::default()
+    });
+    let live = LiveTurn::default();
+    let ran = Attempted::Ran(Ok(TurnResult {
+        exit_code: 1,
+        timed_out: false,
+        tail: format!("screen {SECRET}"),
+    }));
+    let e = fold_outcome(ran, &s, &live, &end, inputs(None)).unwrap_err();
+    assert_eq!(e.message, BLIND_FAILURE);
+    assert!(e.tail.is_empty());
+    assert!(!format!("{:?}", e.marks.harness_api_error_shown).contains(SECRET));
+    assert!(e.marks.stalled_screen_line.is_none());
+    let _ = std::fs::remove_dir_all(dir);
+}

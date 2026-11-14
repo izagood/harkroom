@@ -181,25 +181,55 @@ const LEASE_VALUE_MAX_BYTES: u64 = 1024 * 1024;
 /// 정본 `secretLeases.needlesOf` — 그 턴 임대 디렉터리의 값 파일들로 바늘을 만든다(긴 것부터). 심링크·디렉터리·큰 파일은
 /// 건너뛴다. 값은 이 함수 밖으로 나가지 않는다 — 바늘(값의 여러 꼴)만 나간다.
 pub fn lease_needles(dir: &std::path::Path) -> Vec<String> {
-    let Ok(rd) = std::fs::read_dir(dir) else {
-        return Vec::new();
+    lease_needles_scan(dir).0
+}
+
+/// 임대 폴더를 **못 읽었다**(권한·I/O 오류·일반 파일이 아닌 칸·상한 넘는 값·파일 하나 읽기 실패) — 무엇을 가려야 하는지
+/// 다 알지 못한다. 폴더가 없는 것(`NotFound` = 마운트한 것 없음)은 이것이 아니다. 받는 쪽은 화면·꼬리 인용을 빼고 고정 문구만
+/// 올린다(닫히는 쪽, T3a security 막음 1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LeaseUnreadable;
+
+/// [`lease_needles`] 의 닫히는 쪽 판 — 폴더 없음은 빈 목록, 하나라도 못 읽으면 [`LeaseUnreadable`].
+pub fn lease_needles_checked(dir: &std::path::Path) -> Result<Vec<String>, LeaseUnreadable> {
+    match lease_needles_scan(dir) {
+        (v, false) => Ok(v),
+        (_, true) => Err(LeaseUnreadable),
+    }
+}
+
+/// 읽을 수 있는 값으로 바늘을 짓고(긴 것부터), 못 읽은 것이 있었는지 함께 돌려준다 — 기록 가리기는 읽은 만큼이라도 가리고,
+/// 내보내는 글은 못 읽은 것이 있으면 인용을 뺀다.
+pub fn lease_needles_scan(dir: &std::path::Path) -> (Vec<String>, bool) {
+    let rd = match std::fs::read_dir(dir) {
+        Ok(rd) => rd,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (Vec::new(), false),
+        Err(_) => return (Vec::new(), true),
     };
+    let mut unreadable = false;
     let mut all: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    for e in rd.flatten() {
+    for e in rd {
+        let Ok(e) = e else {
+            unreadable = true;
+            continue;
+        };
         let p = e.path();
         let Ok(m) = std::fs::symlink_metadata(&p) else {
+            unreadable = true;
             continue;
         };
         if !m.file_type().is_file() || m.len() > LEASE_VALUE_MAX_BYTES {
+            unreadable = true;
             continue;
         }
-        if let Ok(v) = std::fs::read(&p) {
-            all.extend(crate::secret_scrub::scrub_needles(&v));
+        match std::fs::read(&p) {
+            Ok(v) => all.extend(crate::secret_scrub::scrub_needles(&v)),
+            Err(_) => unreadable = true,
         }
     }
     let mut v: Vec<String> = all.into_iter().collect();
     v.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
-    v
+    (v, unreadable)
 }
 
 /// 이 시도의 가림 재료 — **한 번 만들어 모든 자리에 같은 것을 넘긴다**(#2030 security): 결과 접기(`OutcomeFacts`)·턴 뒤
@@ -212,6 +242,8 @@ pub struct TurnSecrets {
     needles: Vec<String>,
     /// 감시 통지가 쓸 때 다시 읽을 임대 폴더(값이 아니라 자리).
     lease_dir: Option<std::path::PathBuf>,
+    /// 지을 때 임대 폴더를 못 읽었다 — 화면·꼬리 인용을 내보내지 않는다.
+    lease_unreadable: bool,
 }
 
 impl std::fmt::Debug for TurnSecrets {
@@ -230,8 +262,11 @@ impl TurnSecrets {
             crate::secret_scrub::turn_key_needles(turn_key_values)
                 .into_iter()
                 .collect();
+        let mut lease_unreadable = false;
         if let Some(d) = lease_dir {
-            all.extend(lease_needles(d));
+            let (n, bad) = lease_needles_scan(d);
+            all.extend(n);
+            lease_unreadable = bad;
         }
         let mut needles: Vec<String> = all.into_iter().collect();
         needles.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
@@ -239,7 +274,13 @@ impl TurnSecrets {
             pat: pat.to_string(),
             needles,
             lease_dir: lease_dir.map(std::path::Path::to_path_buf),
+            lease_unreadable,
         }
+    }
+
+    /// 임대 폴더를 못 읽어 무엇을 가릴지 모른다 — 결과 글·턴 뒤 글은 화면·꼬리 인용을 빼야 한다.
+    pub fn lease_unreadable(&self) -> bool {
+        self.lease_unreadable
     }
 
     /// 러너 PAT — `OutcomeFacts.pat`·`AfterFacts.pat`·`ReportPromise.pat` 에 넘긴다.

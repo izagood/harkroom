@@ -424,3 +424,30 @@ fn one_turn_secrets_masks_failure_after_turn_text_and_records() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// T3a: 임대 폴더 읽기 — 없음은 빈 목록, 못 읽음(권한·링크 칸)은 `LeaseUnreadable`.
+#[test]
+fn lease_needles_checked_tells_missing_from_unreadable() {
+    use std::os::unix::fs::PermissionsExt;
+    let base = std::env::temp_dir().join(format!("hk-t3a-chk-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    assert_eq!(lease_needles_checked(&base.join("none")), Ok(vec![]));
+    let d = base.join("perm");
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(d.join("K"), "SOME-SECRET-VALUE-ABCDEFG").unwrap();
+    assert!(
+        lease_needles_checked(&d)
+            .unwrap()
+            .iter()
+            .any(|n| n.contains("SOME-SECRET"))
+    );
+    std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let r = lease_needles_checked(&d);
+    std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(r, Err(LeaseUnreadable));
+    let l = base.join("link");
+    std::fs::create_dir_all(&l).unwrap();
+    std::os::unix::fs::symlink(d.join("K"), l.join("K")).unwrap();
+    assert_eq!(lease_needles_checked(&l), Err(LeaseUnreadable));
+    let _ = std::fs::remove_dir_all(&base);
+}

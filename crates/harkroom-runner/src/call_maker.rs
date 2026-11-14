@@ -10,9 +10,10 @@
 //! - **계정 축은 기본 로그인 하나**(`vec![None]`): 계정 폴더는 `None`, 기록 찾기는 홈 기본(`cfg.home`). 계정 풀 배정은 L3c-3.
 //! - **지시문 파일 자리는 그대로**(`state_dir`, 카드 답 대기) — `MentionParts::prepare` 가 쓴다.
 //! - 정본과 다른 점: 스레드별 기억 고정·recall(`plan_memory`)은 아직 안 이어져 있다 — 지시문에는 기억 캐시 읽기만 실린다.
-//!   PTY 옵션(작업 폴더·주입 틀)·부모 env 는 설정에서 받은 값 그대로다(main.rs 가 채운다, L3d).
+//!   PTY 옵션은 시도마다 `attempt_pty_options` 가 채우고(T3), 부모 env 는 main.rs 가 채운다.
+//! - 마운트한 비밀의 가림 자리는 시도를 준비할 때 임대 장부에서 받는다(`LeaseBook::lease_dir`, T3a).
 //!
-//! 아직 부르는 곳이 없다(main.rs 연결은 L3d). B4-5 스위치는 꺼져 있다.
+//! main.rs 가 부른다(L3d). B4-5 스위치는 꺼져 있다. 자리만 채운 곳의 정본 목록은 #2107 PR 본문에 있다.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
