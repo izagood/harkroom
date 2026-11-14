@@ -524,3 +524,36 @@ fn prepare_gates_trust_real_path_too() {
     );
     let _ = fs::remove_dir_all(&d);
 }
+
+/// T4b(security 막음 1): 작업 폴더가 루트·집·집의 상위를 가리키는 링크면(또는 그 자체면) 키를 하나도 적지 않는다.
+#[test]
+fn prepare_gates_refuse_root_and_home_links() {
+    let d = tmp("wide");
+    let home = d.join("home");
+    fs::create_dir_all(&home).unwrap();
+    std::os::unix::fs::symlink("/", d.join("to-root")).unwrap();
+    std::os::unix::fs::symlink(&home, d.join("to-home")).unwrap();
+    std::os::unix::fs::symlink(&d, d.join("to-home-parent")).unwrap();
+    for ws in [
+        d.join("to-root"),
+        d.join("to-home"),
+        d.join("to-home-parent"),
+        home.clone(),
+    ] {
+        prepare_harness_gates(
+            crate::adapter::AgentHarness::ClaudeCode,
+            ws.to_str().unwrap(),
+            None,
+            None,
+            &home,
+        );
+        let ledger = home.join(".claude.json");
+        let n = if ledger.exists() {
+            json(&ledger)["projects"].as_object().map_or(0, |m| m.len())
+        } else {
+            0
+        };
+        assert_eq!(n, 0, "{ws:?}");
+    }
+    let _ = fs::remove_dir_all(&d);
+}

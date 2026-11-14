@@ -335,3 +335,18 @@ describe('ensureWorkspaceTrusted — 실제 경로 키도 적는다', () => {
     expect(doc.projects[real]).toEqual({ hasTrustDialogAccepted: true });
   });
 });
+
+describe('ensureWorkspaceTrusted — 넓은 자리는 신뢰하지 않는다(T4b security)', () => {
+  it('루트·집·집의 상위로 가는 링크면 키 0개', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'trust-wide-'));
+    const home = join(base, 'home');
+    await mkdir(home);
+    await symlink('/', join(base, 'to-root'));
+    await symlink(home, join(base, 'to-home'));
+    await symlink(base, join(base, 'to-home-parent'));
+    for (const ws of [join(base, 'to-root'), join(base, 'to-home'), join(base, 'to-home-parent'), home]) {
+      await ensureWorkspaceTrusted({ harness: 'claude-code', workspaceDir: ws, claudeConfigDir: null, codexHome: '/unused', home });
+      expect(existsSync(join(home, '.claude.json'))).toBe(false);
+    }
+  });
+});
