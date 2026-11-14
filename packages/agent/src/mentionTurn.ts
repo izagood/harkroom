@@ -1576,6 +1576,11 @@ export async function runMentionTurn(
   // **허용 도구 목록으로 읽기 전용을 거는 하네스(pi)** — 턴 직전에 그 하네스에게 MCP 도구 이름을
   // 묻는다. MCP 이름에 `*` 가 안 먹어서(실측) 이름을 다 적어야 한다. 못 받으면 내장 읽기 도구만
   // 남긴다(`readonlyToolList`) — 답할 길을 잃는 쪽이 쓰기가 열리는 쪽보다 낫다. 로그엔 남긴다.
+  // 턴 열쇠(좁은 턴 자격). 맡기는 길이 있고 그 하네스에 다리 열쇠를 셸 밖으로 줄 길이 있을 때만 쓴다. 맡기기는 띄우기 바로 앞에서
+  // 한다 — 읽기 전용 pi 의 도구 묻기는 그 앞에 잠깐 맡겼다가 바로 거둔다(`listToolsWithTurnKeys`).
+  const turnKeys = deps.harkroom.registerTurnKeys && turnKeyDelivery(def.harness) ? issueTurnKeys() : null;
+  // API 키 연결 pi 턴은 턴 열쇠 없이 띄우지 않는다 — 다리가 러너 링크 열쇠로 붙는 길을 남기지 않는다(claude lane 과 같은 꼴).
+  if (deps.providerEnv && usesPiHome(def.harness) && !turnKeys) throw new ProviderLaneError('turn_key_missing');
   // pi API 키 연결 턴은 스레드마다 따로 쓰는 홈에서 돈다(`piHome.ts::ensurePiLaneThread`) — 그 턴의 `models.json` 이 키 파일 경로를
   // 담으므로 동시에 도는 턴끼리 덮지 않게. 루트는 사람 로그인을 링크하지 않는 lane 루트다(`main.ts`).
   const turnPiHome = deps.providerEnv && usesPiHome(def.harness) && deps.piHome ? await ensurePiLaneThread(deps.piHome, key) : deps.piHome;
@@ -1585,14 +1590,18 @@ export async function runMentionTurn(
     // 글롭이 먹는 하네스(omp)는 묻지 않는다 — 서버 이름으로 좁힌 글롭이 곧 목록이다(security R).
     turnReadonlyTools = ompReadonlyToolList(allowlist);
   } else if (allowlist && allowlist.list && def.mentionPermission === 'readonly') {
-    const discovered = await listPiMcpTools({
-      command: harnessCommand(def.harness),
-      args: allowlist.list,
-      env: piMcpListEnv(def.harness, process.env, turnPiHome),
-      // 워크스페이스가 아니라 러너 루트에서 묻는다 — 저장소의 `.pi/` 를 아예 안 보게(security 낮음).
-      // 이 명령은 `--no-approve` 를 받지 않는다(실측 `Unknown option`).
-      cwd: turnPiHome ?? rec.workspaceDir,
-    });
+    const listCwd = turnPiHome ?? rec.workspaceDir;
+    const discovered = turnKeys
+      ? await listToolsWithTurnKeys(deps.harkroom, { turnId, cause: mentionId, keys: turnKeys }, key, () => listPiMcpTools({
+        command: harnessCommand(def.harness),
+        args: allowlist.list as readonly string[],
+        env: piMcpListEnv(def.harness, process.env, turnPiHome, turnKeys.bridge),
+        // 워크스페이스가 아니라 러너 루트에서 묻는다 — 저장소의 `.pi/` 를 아예 안 보게(security 낮음).
+        // 이 명령은 `--no-approve` 를 받지 않는다(실측 `Unknown option`).
+        cwd: listCwd,
+      }))
+      // 턴 열쇠가 없는 옛 표면은 묻지 않는다 — 러너 링크 열쇠로 묻는 길은 없다(내장 읽기 도구만).
+      : null;
     if (discovered === null || allowlist.mcpServers.some((s) => !(discovered[s]?.length))) {
       console.warn(`[mentionTurn] ${key}: ${def.harness} 읽기 전용 — MCP 도구 이름을 못 받아 내장 읽기 도구만 연다 (${JSON.stringify(discovered)})`);
     }
@@ -1674,8 +1683,6 @@ export async function runMentionTurn(
       console.warn(`[mentionTurn] ${key}: 하네스 판 경고를 못 남겼다 — ${(err as Error).message}`);
     });
   }
-  // 턴 열쇠(좁은 턴 자격). 맡기는 길이 있고 그 하네스에 다리 열쇠를 셸 밖으로 줄 길이 있을 때만 쓴다 — 맡기기는 띄우기 바로 앞에서 한다.
-  const turnKeys = deps.harkroom.registerTurnKeys && turnKeyDelivery(def.harness) ? issueTurnKeys() : null;
   // 열쇠 값의 바늘(K3) — PTY 꼬리·통지·턴 기록에서 가린다. 턴이 끝나면 열쇠는 죽지만 디스크·채팅에 남길 이유는 없다.
   const turnKeyNeedles = turnKeyValues(turnKeys).flatMap((v) => scrubNeedles(Buffer.from(v, 'utf8')));
   // 승인 명령을 하네스 명령 규칙으로 연다(codex) — 턴 열쇠가 있는 auto 턴에만(셸 거르기·tty 끄기가 전제다). hook 신뢰를 확인하지
@@ -3413,4 +3420,29 @@ export function stallScreenOf(watch: ScreenIdleWatch | null, rawTail: string, ha
     return now === 'gate' ? 'gate' : now === 'idle' ? 'idle' : 'stuck';
   }
   return screenGateFor(harness).test(rawTail.replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, ' ')) ? 'gate' : 'stuck';
+}
+
+/**
+ * 턴 열쇠를 잠깐 맡기고 도구를 묻고 바로 거둔다(읽기 전용 pi). 맡기기가 실패하면 묻지 않고 `null` — 내장 읽기 도구로 닫는다.
+ * 러너 링크 열쇠로 되돌아가 묻는 길은 없다. 띄우기 바로 앞에서 같은 열쇠를 다시 맡긴다(같은 턴 id 는 앞 것을 버리고 다시 받는다).
+ */
+export async function listToolsWithTurnKeys<T>(
+  harkroom: Pick<MentionTurnHarkroom, 'registerTurnKeys' | 'endTurnKeys'>,
+  turn: { turnId: string; cause: string | null; keys: TurnKeys },
+  key: string,
+  list: () => Promise<T | null>,
+): Promise<T | null> {
+  try {
+    await harkroom.registerTurnKeys!(turn);
+  } catch (err) {
+    console.warn(`[mentionTurn] ${key}: 도구 묻기용 턴 열쇠를 못 맡겼다 — 묻지 않는다: ${(err as Error).message}`);
+    return null;
+  }
+  try {
+    return await list();
+  } finally {
+    await harkroom.endTurnKeys?.(turn.turnId).catch((err: unknown) => {
+      console.warn(`[mentionTurn] ${key}: 도구 묻기 뒤 턴 열쇠를 못 거뒀다: ${(err as Error).message}`);
+    });
+  }
 }

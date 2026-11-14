@@ -173,14 +173,16 @@ fn codex_env_var_delivery_issues_keys_without_config_file() {
     let dir = TempDir::new("codex");
     let src = source(&dir);
     let env = runner_env();
-    let plan = turn_mcp_plan(&input(AgentHarness::Codex, true, None, &dir, &src, &env)).unwrap();
-    assert!(
-        plan.turn_keys.is_some(),
-        "env 로 넘기는 하네스도 열쇠는 낸다"
-    );
-    assert_eq!(plan.mcp_config_path, src);
-    assert!(plan.opencode_turn_config.is_none());
-    assert!(!dir.path().join("turn-mcp").exists());
+    for h in [AgentHarness::Codex, AgentHarness::Pi] {
+        let plan = turn_mcp_plan(&input(h, true, None, &dir, &src, &env)).unwrap();
+        assert!(
+            plan.turn_keys.is_some(),
+            "env 로 넘기는 하네스도 열쇠는 낸다: {h:?}"
+        );
+        assert_eq!(plan.mcp_config_path, src);
+        assert!(plan.opencode_turn_config.is_none());
+        assert!(!dir.path().join("turn-mcp").exists());
+    }
 }
 
 #[test]
@@ -188,11 +190,9 @@ fn harness_without_delivery_gets_no_keys() {
     let dir = TempDir::new("kilo");
     let src = source(&dir);
     let env = runner_env();
-    for h in [AgentHarness::Pi, AgentHarness::Omp] {
-        let plan = turn_mcp_plan(&input(h, true, None, &dir, &src, &env)).unwrap();
-        assert!(plan.turn_keys.is_none(), "{h:?}");
-        assert_eq!(plan.mcp_config_path, src);
-    }
+    let plan = turn_mcp_plan(&input(AgentHarness::Omp, true, None, &dir, &src, &env)).unwrap();
+    assert!(plan.turn_keys.is_none(), "omp");
+    assert_eq!(plan.mcp_config_path, src);
 }
 
 #[test]

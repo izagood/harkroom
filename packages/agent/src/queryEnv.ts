@@ -1,5 +1,5 @@
 import type { AgentHarness } from '@harkroom/shared';
-import { RUNNER_LINK_ENV_KEYS } from '@harkroom/shared/runnerLink';
+import { RUNNER_LINK_ENV, RUNNER_TURN_KEY_ENV } from '@harkroom/shared/runnerLink';
 import { PROVIDER_LANE_FIXED_ENV } from './providerLane.js';
 import { harnessPath } from './turn.js';
 
@@ -36,19 +36,22 @@ function isQueryEnvKey(k: string): boolean {
 }
 
 /**
- * pi `mcp list`(읽기 전용 턴 앞 도구 이름 묻기)의 env. 허용 목록 위에 pi 홈 자리를 얹는다.
+ * pi `mcp list`(읽기 전용 턴 앞 도구 이름 묻기)의 env. 허용 목록 위에 pi 홈 자리와 다리가 붙을 칸만 얹는다.
  *
- * pi 는 이 명령에서 MCP 서버를 **실제로 띄워** 도구를 묻는다. harkroom 다리(`harkroom-operator mcp-bridge`)는 오퍼레이터 소켓에
- * 붙어야 `tools/list` 에 답하고, pi 는 턴 열쇠를 받는 길(`turnKeyDelivery`)이 없어 러너 링크 자격으로만 붙는다 — 그래서 이 조회에만
- * 링크 세 칸(`RUNNER_LINK_ENV_KEYS`)을 **이름을 짚어** 넘긴다. pi 가 턴 열쇠를 받게 되면 이 세 칸을 뺀다.
+ * pi 는 이 명령에서 MCP 서버를 **실제로 띄워** 도구를 묻는다. harkroom 다리는 오퍼레이터 소켓에 붙어야 `tools/list` 에 답한다 —
+ * 소켓·runnerId 두 칸과 **그 턴의 다리 열쇠**만 준다. 러너 링크 열쇠·셸 열쇠는 넣지 않는다(열쇠는 부르는 쪽이 이 조회 앞에 맡긴다).
  */
 export function piMcpListEnv(
-  harness: AgentHarness, base: NodeJS.ProcessEnv, piHome: string | undefined,
+  harness: AgentHarness, base: NodeJS.ProcessEnv, piHome: string | undefined, bridgeKey: string,
 ): Record<string, string> {
   const link: Record<string, string> = {};
-  for (const k of RUNNER_LINK_ENV_KEYS) {
+  for (const k of [RUNNER_LINK_ENV.socketPath, RUNNER_LINK_ENV.runnerId]) {
     const v = base[k];
     if (v) link[k] = v;
   }
-  return auxQueryEnv(harness, base, { ...link, ...(piHome ? { PI_CODING_AGENT_DIR: piHome } : {}) });
+  return auxQueryEnv(harness, base, {
+    ...link,
+    [RUNNER_TURN_KEY_ENV.bridge]: bridgeKey,
+    ...(piHome ? { PI_CODING_AGENT_DIR: piHome } : {}),
+  });
 }
