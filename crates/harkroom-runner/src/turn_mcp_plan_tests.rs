@@ -188,7 +188,7 @@ fn harness_without_delivery_gets_no_keys() {
     let dir = TempDir::new("kilo");
     let src = source(&dir);
     let env = runner_env();
-    for h in [AgentHarness::Kilo, AgentHarness::Pi, AgentHarness::Omp] {
+    for h in [AgentHarness::Pi, AgentHarness::Omp] {
         let plan = turn_mcp_plan(&input(h, true, None, &dir, &src, &env)).unwrap();
         assert!(plan.turn_keys.is_none(), "{h:?}");
         assert_eq!(plan.mcp_config_path, src);
@@ -249,6 +249,47 @@ fn opencode_lane_turn_config_is_lane_file_and_not_owned() {
         "lane 턴 파일 칸은 지킨다"
     );
     assert!(doc["mcp"]["harkroom"]["environment"][RUNNER_TURN_KEY_BRIDGE_ENV].is_string());
+}
+
+/// a′: kilo lane 턴 파일은 `KILO_CONFIG` 에서 읽고 그 파일에 다리 열쇠 칸을 합친다. 같은 lane env 의 `OPENCODE_CONFIG` 는 kilo 턴 파일이 아니다.
+#[test]
+fn kilo_lane_turn_config_is_read_from_kilo_config() {
+    let dir = TempDir::new("kilo-lane");
+    let src = source(&dir);
+    let env = runner_env();
+    let lane_file = dir.path().join("kilo-lane-turn.json");
+    let decoy = dir.path().join("oc-decoy.json");
+    fs::write(
+        &lane_file,
+        json!({ "model": "harkroom-lane/k" }).to_string(),
+    )
+    .unwrap();
+    fs::write(&decoy, json!({ "model": "decoy" }).to_string()).unwrap();
+    let lane = BTreeMap::from([
+        ("KILO_CONFIG".into(), lane_file.display().to_string()),
+        ("OPENCODE_CONFIG".into(), decoy.display().to_string()),
+    ]);
+    let plan = turn_mcp_plan(&input(
+        AgentHarness::Kilo,
+        true,
+        Some(&lane),
+        &dir,
+        &src,
+        &env,
+    ))
+    .unwrap();
+    assert_eq!(plan.opencode_turn_config.as_ref(), Some(&lane_file));
+    assert!(
+        plan.owned_turn_config.is_none(),
+        "lane 턴 파일은 lane 이 치운다"
+    );
+    let doc = read(&lane_file);
+    assert_eq!(doc["model"], json!("harkroom-lane/k"), "lane 칸은 지킨다");
+    assert!(doc["mcp"]["harkroom"]["environment"][RUNNER_TURN_KEY_BRIDGE_ENV].is_string());
+    assert!(
+        read(&decoy)["mcp"].is_null(),
+        "OPENCODE_CONFIG 파일은 건드리지 않는다"
+    );
 }
 
 #[test]

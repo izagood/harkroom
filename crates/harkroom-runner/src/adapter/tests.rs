@@ -132,7 +132,10 @@ fn index_lookups_match_source() {
         turn_key_delivery_of(Opencode),
         Some(TurnKeyDelivery::TurnConfigEnv)
     );
-    assert_eq!(turn_key_delivery_of(Kilo), None);
+    assert_eq!(
+        turn_key_delivery_of(Kilo),
+        Some(TurnKeyDelivery::TurnConfigEnv)
+    );
     assert_eq!(turn_key_delivery_of(Gemini), None);
 
     assert_eq!(

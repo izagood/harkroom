@@ -163,7 +163,12 @@ pub fn turn_mcp_plan(i: &TurnMcpInput<'_>) -> Result<TurnMcpPlan, LaneFileError>
 
     let lane_turn_file: Option<PathBuf> = i
         .provider_env
-        .and_then(|e| e.get("OPENCODE_CONFIG"))
+        .and_then(|e| {
+            e.get(
+                crate::provider_lane::lane_turn_file_env_name(i.harness)
+                    .unwrap_or("OPENCODE_CONFIG"),
+            )
+        })
         .filter(|v| !v.is_empty())
         .map(PathBuf::from);
     let opencode_turn_config = match (&turn_keys, delivery) {

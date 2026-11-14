@@ -8,7 +8,7 @@
 // 옮긴 것이다 — 스파이크(task-1)가 실측으로 확정했고, 초판의 추정 네 곳을 여기서 뒤집는다:
 // codex 에 `-a` 가 없다(sandbox 단독), codex MCP 는 파일이 아니라 턴별 `-c` 오버라이드,
 // claude 는 `--strict-mcp-config` 를 항상 받는다, gemini 는 이번 범위에서 미지원.
-import { CODEX_LANE_BASE_URL_ENV, codexLaneArgs, LANE_TEST_HOME_ENV, PROVIDER_LANE_ARGV_ONLY_KEYS, PROVIDER_LANE_FIXED_ENV, providerLaneKeys } from './providerLane.js';
+import { CODEX_LANE_BASE_URL_ENV, codexLaneArgs, LANE_TEST_HOME_ENV, LANE_TURN_FILE_ENV, PROVIDER_LANE_ARGV_ONLY_KEYS, PROVIDER_LANE_FIXED_ENV, providerLaneKeys } from './providerLane.js';
 import { encodeLaneHookRules } from '@harkroom/shared/providerLane';
 import { chmod, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -1334,8 +1334,11 @@ function childEnv(
     // codex 는 MCP 자식에 `env_vars` 로 이름 댄 것만 넘기므로 다리 열쇠도 하네스 env 에 둔다(셸에서는 `shell_environment_policy` 로 거른다).
     // claude 는 MCP 자식에 env 를 통째로 물려주므로 여기 두면 셸에도 보인다 — 턴 MCP 설정의 `env` 칸으로만 준다.
     if (turnKeyDeliveryOf(homes.harness) === 'env-vars') env[RUNNER_TURN_KEY_ENV.bridge] = homes.turnKeys.bridge;
-    // opencode 는 턴 설정 파일의 harkroom 항목 `environment` 로 다리에만 준다 — 그 파일을 이 턴의 설정으로 얹는다.
-    if (turnKeyDeliveryOf(homes.harness) === 'turn-config-env' && homes.opencodeTurnConfig) env.OPENCODE_CONFIG = homes.opencodeTurnConfig;
+    // opencode·kilo 는 턴 설정 파일의 harkroom 항목 `environment` 로 다리에만 준다 — 그 파일을 이 턴의 설정으로 얹는다
+    // (env 이름은 하네스마다: `OPENCODE_CONFIG`·`KILO_CONFIG`).
+    if (turnKeyDeliveryOf(homes.harness) === 'turn-config-env' && homes.opencodeTurnConfig) {
+      env[LANE_TURN_FILE_ENV[homes.harness] ?? 'OPENCODE_CONFIG'] = homes.opencodeTurnConfig;
+    }
   }
   // **PATH 밖에 설치되는 하네스의 자리를 뒤에 붙인다**(`harnessFallbackBinDirs`).
   // opencode 는 `~/.opencode/bin` 에 깔리고 PATH 는 사람의 셸 rc 에만 들어간다 — 러너는

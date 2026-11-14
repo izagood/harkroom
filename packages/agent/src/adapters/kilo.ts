@@ -25,8 +25,9 @@ import { OPENCODE_ADAPTER } from './opencode.js';
 
 export const KILO_ADAPTER: HarnessAdapter = {
   ...OPENCODE_ADAPTER,
-  // 턴 열쇠는 opencode 의 턴 설정 이름(`OPENCODE_CONFIG`)으로 준다 — kilo 는 그 이름을 안 읽으니 물려받지 않는다(옛 자격으로 돈다).
-  turnKeyDelivery: undefined,
+  // 턴 열쇠는 kilo 의 턴 설정 파일(`KILO_CONFIG`) harkroom 항목으로 준다 — opencode 와 같은 길, env 이름만 다르다.
+  // 실측(7.8.17): `KILO_CONFIG` 의 `mcp` 칸을 읽고, 같은 이름의 홈 설정 항목을 덮는다(턴 값이 이긴다).
+  turnKeyDelivery: 'turn-config-env',
   harness: 'kilo',
   command: 'kilo',
   screen: {

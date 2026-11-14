@@ -478,7 +478,10 @@ pub fn child_env(
             }
             Some(TurnKeyDelivery::TurnConfigEnv) => {
                 if let Some(p) = input.opencode_turn_config {
-                    set(&mut env, "OPENCODE_CONFIG", p);
+                    // env 이름은 하네스마다(`OPENCODE_CONFIG`·`KILO_CONFIG`, 정본 `LANE_TURN_FILE_ENV`).
+                    let name = crate::provider_lane::lane_turn_file_env_name(h)
+                        .unwrap_or("OPENCODE_CONFIG");
+                    set(&mut env, name, p);
                 }
             }
             _ => {}

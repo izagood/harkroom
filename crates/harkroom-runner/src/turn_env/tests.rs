@@ -220,6 +220,16 @@ fn turn_keys_by_delivery() {
     assert_eq!(env["OPENCODE_CONFIG"], "/t/oc.json");
     assert!(!env.contains_key(RUNNER_TURN_KEY_BRIDGE_ENV));
 
+    // kilo 는 같은 턴 설정을 `KILO_CONFIG` 로 받는다(7.8.17 실측) — `OPENCODE_CONFIG` 이름은 싣지 않는다.
+    let mut ki = ChildEnvInput::new(crate::adapter::AgentHarness::Kilo);
+    ki.opencode_home = Some(Path::new("/oc"));
+    ki.turn_keys = Some(&keys);
+    ki.opencode_turn_config = Some(Path::new("/t/oc.json"));
+    let env = child_env(&ki, &p, Path::new(HOME)).unwrap();
+    assert_eq!(env["KILO_CONFIG"], "/t/oc.json");
+    assert!(!env.contains_key("OPENCODE_CONFIG"));
+    assert!(!env.contains_key(RUNNER_LINK_SECRET_ENV));
+
     // 열쇠가 없는 턴은 링크 secret 을 그대로 둔다.
     let mut plain = ChildEnvInput::new(Codex);
     plain.codex_home = Some(Path::new(CODEX_ISO));
