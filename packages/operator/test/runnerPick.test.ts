@@ -1,5 +1,5 @@
-// 에이전트마다 러너 구현 고르기(B4-5c). 풀·lane 에이전트를 rust 로 돌리면 사람의 기본 claude 로그인으로 돈다 —
-// L3c-3 전까지는 node 로 떨어뜨린다.
+// 에이전트마다 러너 구현 고르기(B4-5c → L3c-3e). 계정 풀·lane 에이전트도 rust 로 돈다(Rust 러너가 풀·lane 폴더를 안다).
+// pi·omp 하네스는 Rust 러너가 홈을 아직 짓지 않아 node 로 둔다. 「못 읽음은 node」는 그대로다.
 import { describe, it, expect } from 'vitest';
 import { createAssignmentReconciler, type AssignmentDeps } from '../src/assignments.js';
 import { pickRunner, type AccountUse, type RunnerPick } from '../src/runnerPick.js';
@@ -13,22 +13,35 @@ const lane = { baseUrl: 'https://gateway.example', secretName: 'gw-key' };
 
 describe('pickRunner', () => {
   it('runner 가 rust 가 아니면 node 이고 이유가 없다', () => {
-    expect(pickRunner(undefined, true, 'none')).toEqual({ kind: 'node' });
-    expect(pickRunner({}, true, 'none')).toEqual({ kind: 'node' });
-    expect(pickRunner({ runner: 'node' }, true, 'none')).toEqual({ kind: 'node' });
-    expect(pickRunner({ runner: 'Rust' as never }, true, 'none')).toEqual({ kind: 'node' });
+    expect(pickRunner(undefined, true, 'none', 'claude-code')).toEqual({ kind: 'node' });
+    expect(pickRunner({}, true, 'none', 'claude-code')).toEqual({ kind: 'node' });
+    expect(pickRunner({ runner: 'node' }, true, 'none', 'claude-code')).toEqual({ kind: 'node' });
+    expect(pickRunner({ runner: 'Rust' as never }, true, 'none', 'claude-code')).toEqual({ kind: 'node' });
   });
   it('rust + 파일 있음 → rust', () => {
-    expect(pickRunner({ runner: 'rust', workingDir: '/w' }, true, 'none')).toEqual({ kind: 'rust' });
+    expect(pickRunner({ runner: 'rust', workingDir: '/w' }, true, 'none', 'claude-code')).toEqual({ kind: 'rust' });
   });
-  it('rust + 계정 풀 → node(rust_needs_account_pool)', () => {
-    expect(pickRunner({ runner: 'rust', claudePool: 'p' }, true, 'none')).toEqual({ kind: 'node', fallback: 'rust_needs_account_pool' });
+  it('rust + 계정 풀(operator.json·풀 해석 모두) → rust(L3c-3e)', () => {
+    expect(pickRunner({ runner: 'rust', claudePool: 'p' }, true, 'pool', 'claude-code')).toEqual({ kind: 'rust' });
+    expect(pickRunner({ runner: 'rust' }, true, 'pool', 'claude-code')).toEqual({ kind: 'rust' });
   });
-  it('rust + lane → node(rust_needs_provider_lane)', () => {
-    expect(pickRunner({ runner: 'rust', providerLane: lane }, true, 'none')).toEqual({ kind: 'node', fallback: 'rust_needs_provider_lane' });
+  it('rust + lane → rust(L3c-3e)', () => {
+    expect(pickRunner({ runner: 'rust', providerLane: lane }, true, 'none', 'claude-code')).toEqual({ kind: 'rust' });
+  });
+  it('rust + 하네스 pi·omp → node(rust_harness_unsupported) — 풀·lane·파일과 상관없이', () => {
+    for (const h of ['pi', 'omp']) {
+      expect(pickRunner({ runner: 'rust' }, true, 'none', h)).toEqual({ kind: 'node', fallback: 'rust_harness_unsupported' });
+      expect(pickRunner({ runner: 'rust', providerLane: lane }, true, 'pool', h)).toEqual({ kind: 'node', fallback: 'rust_harness_unsupported' });
+    }
+    for (const h of ['claude-code', 'codex', 'opencode', 'kilo']) {
+      expect(pickRunner({ runner: 'rust' }, true, 'none', h)).toEqual({ kind: 'rust' });
+    }
+  });
+  it('rust + 풀 해석 못 읽음 → node(rust_account_pool_unreadable) 그대로', () => {
+    expect(pickRunner({ runner: 'rust', claudePool: 'p' }, true, 'unreadable', 'claude-code')).toEqual({ kind: 'node', fallback: 'rust_account_pool_unreadable' });
   });
   it('rust + 파일 없음 → node(rust_runner_missing)', () => {
-    expect(pickRunner({ runner: 'rust' }, false, 'none')).toEqual({ kind: 'node', fallback: 'rust_runner_missing' });
+    expect(pickRunner({ runner: 'rust' }, false, 'none', 'claude-code')).toEqual({ kind: 'node', fallback: 'rust_runner_missing' });
   });
 });
 
@@ -54,17 +67,24 @@ describe('배정이 고른 러너를 spawn 에 넘긴다', () => {
     return { r: createAssignmentReconciler(deps), picks, logs, probed: () => probed };
   }
 
-  it('lane 에이전트 + rust → node 로 돌고 이유를 로그에 남긴다', async () => {
+  it('lane 에이전트 + rust → rust(L3c-3e)', async () => {
     const h = run(true);
     await h.r.onAssign('https://example.com', def, { runner: 'rust', providerLane: lane });
-    expect(h.picks).toEqual([{ kind: 'node', fallback: 'rust_needs_provider_lane' }]);
-    expect(h.logs.some((l) => l.includes('rust_needs_provider_lane') && l.includes('murmur'))).toBe(true);
-    expect(h.logs.some((l) => l.includes('runner=node'))).toBe(true);
+    expect(h.picks).toEqual([{ kind: 'rust' }]);
+    expect(h.logs.some((l) => l.includes('runner=rust'))).toBe(true);
   });
-  it('풀 에이전트 + rust → node', async () => {
-    const h = run(true);
+  it('풀 에이전트 + rust → rust(L3c-3e)', async () => {
+    const h = run(true, 'pool');
     await h.r.onAssign('https://example.com', def, { runner: 'rust', claudePool: 'p' });
-    expect(h.picks).toEqual([{ kind: 'node', fallback: 'rust_needs_account_pool' }]);
+    expect(h.picks).toEqual([{ kind: 'rust' }]);
+  });
+  it('pi·omp 에이전트 + rust → node 로 돌고 이유를 로그에 남긴다', async () => {
+    for (const harness of ['pi', 'omp']) {
+      const h = run(true);
+      await h.r.onAssign('https://example.com', { ...def, harness }, { runner: 'rust' });
+      expect(h.picks).toEqual([{ kind: 'node', fallback: 'rust_harness_unsupported' }]);
+      expect(h.logs.some((l) => l.includes('rust_harness_unsupported') && l.includes('murmur'))).toBe(true);
+    }
   });
   it('기본 로그인 에이전트 + rust + 파일 있음 → rust', async () => {
     const h = run(true);
@@ -78,10 +98,10 @@ describe('배정이 고른 러너를 spawn 에 넘긴다', () => {
     expect(h.picks).toEqual([{ kind: 'node' }]);
     expect(h.probed()).toBe(0);
   });
-  it('풀 해석 결과가 pool 이면 operator.json 에 claudePool 이 없어도 node(B4-5e)', async () => {
+  it('풀 해석 결과가 pool 이어도(operator.json 에 claudePool 없음) rust(L3c-3e)', async () => {
     const h = run(true, 'pool');
     await h.r.onAssign('https://example.com', def, { runner: 'rust' });
-    expect(h.picks).toEqual([{ kind: 'node', fallback: 'rust_needs_account_pool' }]);
+    expect(h.picks).toEqual([{ kind: 'rust' }]);
   });
   it('풀 해석을 주지 않은 배정은 닫힌 쪽 — node(rust_account_pool_unreadable)', async () => {
     const h = run(true, null);
@@ -108,10 +128,10 @@ describe('러너의 풀 해석으로 고른다(B4-5e)', () => {
   }
   const use = async (env: NodeJS.ProcessEnv, forcedPool?: string) => claudeAccountUse({ agentId: AGENT, forcedPool, env });
 
-  it('기본 풀만 있다(operator.json 에 claudePool 없음 — 실제로 흔한 모양) → pool → node', async () => {
+  it('기본 풀만 있다(operator.json 에 claudePool 없음 — 실제로 흔한 모양) → pool → rust(L3c-3e)', async () => {
     const env = await root({ pools: { defaultPool: 'work' }, dirs: ['work/acct-a', 'work/acct-b'] });
     expect(await use(env)).toBe('pool');
-    expect(pickRunner({ runner: 'rust' }, true, await use(env))).toEqual({ kind: 'node', fallback: 'rust_needs_account_pool' });
+    expect(pickRunner({ runner: 'rust' }, true, await use(env), 'claude-code')).toEqual({ kind: 'rust' });
   });
   it('에이전트 배정만 있다 → pool', async () => {
     const env = await root({ pools: { agents: { [AGENT]: ['p1'] } }, dirs: ['p1/acct-a'] });
@@ -120,7 +140,7 @@ describe('러너의 풀 해석으로 고른다(B4-5e)', () => {
   it('pools.json 이 깨졌다 → unreadable → node(rust_account_pool_unreadable)', async () => {
     const env = await root({ pools: '{ not json', dirs: ['work/acct-a'] });
     expect(await use(env)).toBe('unreadable');
-    expect(pickRunner({ runner: 'rust' }, true, 'unreadable')).toEqual({ kind: 'node', fallback: 'rust_account_pool_unreadable' });
+    expect(pickRunner({ runner: 'rust' }, true, 'unreadable', 'claude-code')).toEqual({ kind: 'node', fallback: 'rust_account_pool_unreadable' });
   });
   it('pools.json 없이 뿌리에 계정만 있다(암묵 풀) → pool', async () => {
     const env = await root({ dirs: ['acct-a'] });
@@ -129,13 +149,13 @@ describe('러너의 풀 해석으로 고른다(B4-5e)', () => {
   it('아무것도 없다(뿌리 없음) → none → rust', async () => {
     const env = { HARKROOM_CLAUDE_ACCOUNTS_DIR: join(tmpdir(), `op-acct-none-${process.pid}-${Date.now()}`) } as NodeJS.ProcessEnv;
     expect(await use(env)).toBe('none');
-    expect(pickRunner({ runner: 'rust' }, true, 'none')).toEqual({ kind: 'rust' });
+    expect(pickRunner({ runner: 'rust' }, true, 'none', 'claude-code')).toEqual({ kind: 'rust' });
   });
   it('배정된 풀이 비었다(계정 0) → none — 러너도 그때 기본 로그인으로 돈다', async () => {
     const env = await root({ pools: { defaultPool: 'empty' }, dirs: ['empty'] });
     expect(await use(env)).toBe('none');
   });
   it('배정이 모르면(deps 에 claudeAccountUse 가 없으면) 닫힌 쪽: node', async () => {
-    expect(pickRunner({ runner: 'rust' }, true, 'unreadable').kind).toBe('node');
+    expect(pickRunner({ runner: 'rust' }, true, 'unreadable', 'claude-code').kind).toBe('node');
   });
 });
