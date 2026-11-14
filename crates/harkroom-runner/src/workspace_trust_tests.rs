@@ -451,3 +451,37 @@ fn person_bypass_is_strict() {
     );
     let _ = fs::remove_dir_all(&d);
 }
+
+/// T1 — 집이나 작업 폴더가 상대 경로면 아무것도 적지 않는다(실행 폴더 아래 장부를 만들지 않는다).
+#[test]
+fn prepare_gates_skip_relative_paths() {
+    let d = std::env::temp_dir().join(format!("hk-wt-rel-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    prepare_harness_gates(
+        crate::adapter::AgentHarness::ClaudeCode,
+        "rel/ws",
+        None,
+        None,
+        &d,
+    );
+    assert!(!d.join(".claude").exists());
+    prepare_harness_gates(
+        crate::adapter::AgentHarness::ClaudeCode,
+        "/abs/ws",
+        None,
+        None,
+        Path::new(""),
+    );
+    assert!(!Path::new(".claude").exists());
+    prepare_harness_gates(
+        crate::adapter::AgentHarness::ClaudeCode,
+        "/abs/ws",
+        None,
+        None,
+        &d,
+    );
+    // 기본 로그인은 사람의 `<home>/.claude.json`(T2).
+    assert!(d.join(".claude.json").exists());
+    assert!(!d.join(".claude").join(".claude.json").exists());
+}
