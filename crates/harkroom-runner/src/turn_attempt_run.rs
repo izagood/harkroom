@@ -99,6 +99,8 @@ pub struct SpawnArgs<'x> {
     pub keys: Option<&'x EnvTurnKeys>,
     /// 이 시도의 턴 MCP 설정 경로.
     pub mcp_config_path: &'x Path,
+    /// opencode 턴 설정 파일(`OPENCODE_CONFIG`, 다리 열쇠 자리) — 계획이 지은 것. 없으면 그 하네스의 열쇠 턴은 조립에서 안 뜬다.
+    pub opencode_turn_config: Option<&'x Path>,
     /// lane 턴이면 계획 앞에서 받은 env, 아니면 빈 env.
     pub lane_env: LaneEnv,
     /// 띄우는 자리(마운트 뒤)에서 지은 감시 통지 가림 목록 — 감시 루프는 이것으로만 가린다(#2045).
@@ -361,6 +363,7 @@ impl<L: RunnerLink, N: LeaseNotice, P: AttemptParts> PtyTurnAttempt<'_, L, N, P>
             };
         let keys = env_turn_keys(&assembled.plan);
         let mcp_path = assembled.plan.mcp_config_path.clone();
+        let oc_turn_config = assembled.plan.opencode_turn_config.clone();
         let launch = assembled.launch_plan(prep.secrets, false);
         let Assembled {
             files,
@@ -407,6 +410,7 @@ impl<L: RunnerLink, N: LeaseNotice, P: AttemptParts> PtyTurnAttempt<'_, L, N, P>
                         turn_id: &spawn_turn_id,
                         keys: keys.as_ref(),
                         mcp_config_path: &mcp_path,
+                        opencode_turn_config: oc_turn_config.as_deref(),
                         lane_env,
                         notice,
                         relay,

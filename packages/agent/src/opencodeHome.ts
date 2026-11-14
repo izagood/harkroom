@@ -430,6 +430,14 @@ export function opencodeConfigLockPath(opencodeHome: string): string {
   return join(opencodeHome, '.config.lock');
 }
 
+/**
+ * lane 러너의 opencode data 폴더에 로그인(`auth.json`, 링크든 파일이든)이 남아 있나. 홈을 마련한 **뒤에** 본다 — 마련 단계가 링크는
+ * 떼므로 남은 것은 누가 넣은 로그인이다. 있으면 그 턴을 띄우지 않는다(`harness_login_present`).
+ */
+export async function opencodeLaneLoginPresent(opencodeHome: string, app: XdgApp = OPENCODE_APP): Promise<boolean> {
+  return (await lstat(join(opencodeDirs(opencodeHome).XDG_DATA_HOME, app.dir, 'auth.json')).catch(() => null)) !== null;
+}
+
 /** lane 홈의 답 규칙 파일 이름(설정 `instructions` 가 가리킨다). */
 export const LANE_INSTRUCTIONS_FILE = 'harkroom-lane-instructions.md';
 
@@ -545,7 +553,9 @@ async function ensureOpencodeHomeUnlocked(opts: {
     await mkdir(opencodeLaneHome(opencodeHome), { recursive: true, mode: 0o700 });
     // lane 에는 사람 로그인을 붙이지 않는다 — 한 자식에 로그인과 lane 키가 같이 들면 #374 가 막던 상황이다(ⓒ).
     // 전에 lane 이 아니던 에이전트라 링크가 남아 있으면 **링크만** 뗀다(사람 파일은 안 건드린다).
+    // 링크가 아닌 로그인 파일이 있으면 떼지 않고 거절한다(security o1 조건 2) — 누가 넣은 로그인이 lane 키와 한 자식에 같이 든다.
     const stat = await lstat(targetAuth).catch(() => null);
+    if (stat && !stat.isSymbolicLink()) throw new Error('harness_login_present: lane opencode data 폴더에 로그인 파일이 있다');
     if (stat?.isSymbolicLink()) await unlink(targetAuth);
     return opencodeHome;
   }

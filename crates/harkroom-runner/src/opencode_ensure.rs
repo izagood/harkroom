@@ -57,6 +57,8 @@ pub enum EnsureError {
     UnexpectedAuthLink,
     /// lane 설정 잠금을 시한 안에 잡지 못했다.
     LockTimeout,
+    /// lane 러너의 data 폴더에 링크가 아닌 로그인 파일이 있다 — 떼지 않고 거절한다(security o1 조건 2).
+    LaneLoginPresent,
 }
 
 impl std::fmt::Display for EnsureError {
@@ -67,6 +69,9 @@ impl std::fmt::Display for EnsureError {
                 "opencode 홈의 로그인 링크가 예상과 다르다 — 파일을 확인한 뒤 러너를 다시 띄워라",
             ),
             Self::LockTimeout => f.write_str("opencode 설정 잠금을 잡지 못했다"),
+            Self::LaneLoginPresent => {
+                f.write_str("harness_login_present — lane opencode data 폴더에 로그인 파일이 있다")
+            }
         }
     }
 }
@@ -255,8 +260,10 @@ fn ensure_unlocked(o: &EnsureOpencodeHome<'_>) -> Result<PathBuf, EnsureError> {
     if o.provider_lane.is_some() {
         private_dir(&opencode_lane_home(home))?;
         // lane 에는 사람 로그인을 붙이지 않는다(security ⓒ) — 남은 링크만 뗀다(사람 파일은 안 건드린다).
-        if fs::symlink_metadata(&target_auth).is_ok_and(|m| m.file_type().is_symlink()) {
-            fs::remove_file(&target_auth)?;
+        match fs::symlink_metadata(&target_auth) {
+            Ok(m) if m.file_type().is_symlink() => fs::remove_file(&target_auth)?,
+            Ok(_) => return Err(EnsureError::LaneLoginPresent),
+            Err(_) => {}
         }
         return Ok(home.to_path_buf());
     }

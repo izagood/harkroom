@@ -561,6 +561,7 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
             AttemptHomes {
                 codex: self.codex_home.as_deref(),
                 opencode: self.opencode_home.as_deref(),
+                opencode_turn_config: None,
             },
             turn_id,
         ))
@@ -897,6 +898,32 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
                 eprintln!("[mentionTurn] {}: opencode 홈 — {e}", self.key);
                 fail()
             })?;
+            if oc.lane {
+                // lane data 폴더에 로그인이 남아 있으면 띄우지 않는다(security o1 조건 2, 정본 `harness_login_present`).
+                if oc.lane_login_present(&app) {
+                    eprintln!(
+                        "[mentionTurn] {}: harness_login_present — lane opencode 로그인",
+                        self.key
+                    );
+                    return Err(fail());
+                }
+                // 쓴 뒤 확인(security U2, 정본 `opencodeLaneAgentMatches`) — auto 턴의 채널 칸이 지금 규칙과 같아야 띄운다.
+                if self.base.mention_permission == crate::adapter::MentionPermission::Auto {
+                    crate::turn_mcp_plan::opencode_lane_agent_verified(
+                        &oc.home,
+                        &target.channel_id,
+                        &allows,
+                        &app,
+                    )
+                    .map_err(|_| {
+                        eprintln!(
+                            "[mentionTurn] {}: lane_setup — lane 채널 칸 확인 실패",
+                            self.key
+                        );
+                        fail()
+                    })?;
+                }
+            }
         }
         // 하네스를 띄우기 전, **이 시도의 계정 폴더**로 작업 폴더 신뢰·bypass 수락을 적는다(정본 `mentionTurn.ts` 의 차례).
         crate::workspace_trust::prepare_harness_gates(
@@ -1014,6 +1041,7 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             AttemptHomes {
                 codex: self.codex_home.as_deref(),
                 opencode: self.opencode_home.as_deref(),
+                opencode_turn_config: args.opencode_turn_config,
             },
             args.turn_id,
         );
@@ -1236,6 +1264,8 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
 struct AttemptHomes<'s> {
     codex: Option<&'s Path>,
     opencode: Option<&'s Path>,
+    /// 계획이 지은 opencode 턴 설정(다리 열쇠 자리, `OPENCODE_CONFIG`) — `spawn` 만 안다. 빠지면 열쇠 opencode 턴은 조립에서 안 뜬다.
+    opencode_turn_config: Option<&'s Path>,
 }
 
 fn attempt_cmd<'s>(
@@ -1256,6 +1286,7 @@ fn attempt_cmd<'s>(
     );
     cmd.codex_home = homes.codex;
     cmd.opencode_home = homes.opencode;
+    cmd.opencode_turn_config = homes.opencode_turn_config;
     cmd
 }
 

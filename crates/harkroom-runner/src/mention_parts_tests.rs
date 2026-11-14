@@ -957,3 +957,29 @@ fn attempt_command_carries_opencode_home() {
         Some(Path::new("/state/opencode-home"))
     );
 }
+
+/// #2146 회귀: 계획이 지은 opencode 턴 설정(다리 열쇠 자리)이 시도 명령에 실린다(`spawn` 이 쓰는 `attempt_cmd`).
+/// 빠지면 열쇠 opencode 턴은 조립에서 `TurnKeysNeedTurnConfig` 로 안 뜬다 — 실물 턴에서 잡혔다.
+#[test]
+fn attempt_command_carries_opencode_turn_config() {
+    let w = world("octurn");
+    let store = SessionStore::new(w.root.join("sessions.json"));
+    let stale = PathBuf::from("/acct/STALE_BASE");
+    let mut p = parts(&w, &store, &stale, false);
+    p.prepare(&target(), None, true, "t-1").unwrap();
+    let cur = p.cur.as_ref().unwrap();
+    let cfg = Path::new("/state/turn-mcp/t-1.opencode.json");
+    let cmd = attempt_cmd(
+        &p.base,
+        &p.system,
+        &p.argv,
+        cur,
+        AttemptHomes {
+            codex: None,
+            opencode: None,
+            opencode_turn_config: Some(cfg),
+        },
+        "t-1",
+    );
+    assert_eq!(cmd.opencode_turn_config, Some(cfg));
+}

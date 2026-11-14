@@ -160,6 +160,7 @@ impl AttemptParts for Parts {
             turn_id,
             keys,
             mcp_config_path,
+            opencode_turn_config: _,
             lane_env,
             notice,
             relay,
