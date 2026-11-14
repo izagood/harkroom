@@ -321,6 +321,8 @@ pub type ReadNoteFn<'a> = Box<dyn Fn(&str) -> Result<Option<crate::mcp::ThreadNo
 pub type ReadPlanFn<'a> = Box<dyn Fn(&str) -> Result<Option<serde_json::Value>, String> + 'a>;
 /// 승인된 스킬 목록 닫개(정본 `harkroom.listApprovedSkills`). 실패는 던진다 — 빈 목록으로 뭉개면 있는 스킬이 지워진다.
 pub type ListSkillsFn<'a> = Box<dyn Fn() -> Result<Vec<crate::skills_sync::Skill>, String> + 'a>;
+/// 진행 줄 닫개(`message.progress` — channel·body·anchor). lane 판 경고 한 줄에 쓴다.
+pub type PostProgressFn<'a> = Box<dyn Fn(&str, &str, Option<&str>) -> Result<(), String> + 'a>;
 /// `memory.recalled` 닫개.
 pub type RecordRecallFn<'a> = Box<dyn Fn(&[String]) -> Result<(), String> + 'a>;
 
@@ -453,6 +455,8 @@ pub struct MentionParts<'a, P: PrepareIo, S: PtyTurnSink> {
     /// API 키 연결(lane) 턴 — 허용 목록(`name`·`description`) 밖 frontmatter 를 가진 스킬은 깔지 않는다
     /// (정본 `dropToolGrants: Boolean(deps.providerEnv)`, security 2026-10-23: `allowed-tools` 가 카드 없이 도구를 연다).
     pub drop_tool_grants: bool,
+    /// lane 판 경고를 스레드에 올리는 길(정본 `deps.harkroom.progress`). 없으면 로그만.
+    pub post_progress: Option<PostProgressFn<'a>>,
     pub now: Option<TurnClock>,
     /// 시도를 준비할 때 그 순간의 시계를 잰다(정본 `now: new Date()` — 시도마다). `now` 가 있으면 그것이 먼저(시험용).
     pub clock: Option<fn() -> TurnClock>,
@@ -519,6 +523,7 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
             read_plan: None,
             list_skills: None,
             drop_tool_grants: false,
+            post_progress: None,
             now: None,
             clock: None,
             outcome,
@@ -722,6 +727,24 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
 }
 
 impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
+    fn lane_notice(&mut self, target: &MentionTarget, body: &str) {
+        let anchor = Some(target.thread_root_id.as_str()).filter(|a| !a.is_empty());
+        let Some(post) = &self.post_progress else {
+            return;
+        };
+        // 정본 `.catch(...)` — 경고를 못 남겨도 턴은 간다. 오류 원문은 로그에만.
+        if let Err(e) = post(
+            &target.channel_id,
+            crate::turn_after::clip_body(body),
+            anchor,
+        ) {
+            eprintln!(
+                "[mentionTurn] {}: 하네스 판 경고를 못 남겼다 — {e}",
+                self.key
+            );
+        }
+    }
+
     fn bind_live(&mut self, live: Option<Arc<LiveTurn>>) {
         if live.is_some() {
             // 시도마다 새 감시 자리 — 앞 시도의 끝 상태(API 오류·종료·발화·정지 표지)와 화면 꼬리가 이 시도 판정에

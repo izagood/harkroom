@@ -112,6 +112,9 @@ pub struct SpawnArgs<'x> {
 pub trait AttemptParts {
     /// 이 시도의 [`LiveTurn`] 을 펜스 잃음·[중단] 듣기에 건다. `None` 이면 놓는다(앞 시도의 것이 다음 시도를 막지 않게).
     fn bind_live(&mut self, live: Option<Arc<LiveTurn>>);
+    /// lane 판 경고 한 줄을 스레드 진행 줄로 올린다(정본 `deps.harkroom.progress(channelId, notice, anchor)`). 실패해도 턴은
+    /// 간다 — 구현은 로그만 남긴다.
+    fn lane_notice(&mut self, _target: &MentionTarget, _body: &str) {}
     #[allow(clippy::result_large_err)]
     fn prepare(
         &mut self,
@@ -296,7 +299,13 @@ impl<L: RunnerLink, N: LeaseNotice, P: AttemptParts> PtyTurnAttempt<'_, L, N, P>
                 match mount_lane_first(l, &lease_once, &prep.cause, self.harness, &mut || {
                     live.gate()
                 }) {
-                    Ok(h) => Some(h),
+                    Ok(h) => {
+                        // 잰 판 밖이면 막지 않고 스레드에 경고 한 줄(정본 `providerNotice(mentionId)` — 멘션마다 한 번).
+                        if let Some(n) = l.take_notice(&prep.cause) {
+                            parts.borrow_mut().lane_notice(target, &n);
+                        }
+                        Some(h)
+                    }
                     Err(e) => {
                         let attempted = match e {
                             LaneFirstError::Blocked(b) => Attempted::Blocked(b),

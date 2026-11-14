@@ -18,6 +18,10 @@ use crate::turn_probe_records::SpawnBlocked;
 pub trait LaneSource {
     fn env_for(&self, cause: &str, harness: AgentHarness) -> Result<LaneEnv, LaneFileError>;
     fn release(&self, env: &LaneEnv) -> io::Result<()>;
+    /// 이 원인의 `env_for` 가 남긴 판 경고(한 번만). 기본은 없음.
+    fn take_notice(&self, _cause: &str) -> Option<String> {
+        None
+    }
 }
 
 impl LaneSource for ProviderLane {
@@ -26,6 +30,9 @@ impl LaneSource for ProviderLane {
     }
     fn release(&self, env: &LaneEnv) -> io::Result<()> {
         ProviderLane::release(self, env)
+    }
+    fn take_notice(&self, cause: &str) -> Option<String> {
+        ProviderLane::take_notice(self, cause)
     }
 }
 

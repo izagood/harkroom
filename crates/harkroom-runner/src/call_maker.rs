@@ -452,6 +452,14 @@ where
                     .map_err(|e| e.message)
             }));
             p.drop_tool_grants = lane_on;
+            // lane 판 경고 한 줄(정본 `deps.harkroom.progress`) — 이 에이전트 묶음으로.
+            let progress_mcp = clients.mcp();
+            p.post_progress = Some(Box::new(move |channel, body, anchor| {
+                progress_mcp
+                    .progress(channel, body, anchor)
+                    .map(|_| ())
+                    .map_err(|e| e.message)
+            }));
             p.turn_timeout_ms = c.turn_timeout_ms;
             p.lane = lane_snapshot;
             p

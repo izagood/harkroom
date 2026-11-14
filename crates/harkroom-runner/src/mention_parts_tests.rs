@@ -894,3 +894,35 @@ fn prepare_syncs_skills_and_drops_tool_grants_on_lane() {
         );
     }
 }
+
+/// lane 판 경고는 그 멘션의 채널·스레드 앵커로 진행 줄 하나가 된다(정본 `harkroom.progress(channelId, notice.slice(0,
+/// BODY_LIMIT), anchor)`). 올리기가 실패해도 던지지 않는다 — 턴은 간다. 길이 없으면 아무것도 하지 않는다.
+#[test]
+fn lane_notice_posts_one_progress_line_and_swallows_failure() {
+    use std::sync::{Arc, Mutex};
+    let w = world("lanenotice");
+    let store = SessionStore::new(w.root.join("s.json"));
+    let stale = w.root.join("stale");
+    type Seen = Vec<(String, usize, Option<String>)>;
+    let seen: Arc<Mutex<Seen>> = Arc::default();
+    let long = "가".repeat(crate::prompt_system::BODY_LIMIT + 10);
+    for fail in [false, true] {
+        let mut p = parts(&w, &store, &stale, false);
+        let s = Arc::clone(&seen);
+        p.post_progress = Some(Box::new(move |c, b, a| {
+            s.lock()
+                .unwrap()
+                .push((c.to_string(), b.chars().count(), a.map(str::to_string)));
+            if fail { Err("down".into()) } else { Ok(()) }
+        }));
+        p.lane_notice(&target(), &long);
+    }
+    let mut none = parts(&w, &store, &stale, false);
+    none.lane_notice(&target(), "x");
+    let want = (
+        "c1".to_string(),
+        crate::prompt_system::BODY_LIMIT,
+        Some("root".to_string()),
+    );
+    assert_eq!(*seen.lock().unwrap(), [want.clone(), want]);
+}

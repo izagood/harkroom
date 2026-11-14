@@ -92,6 +92,10 @@ struct Parts {
 const SECRET: &str = "sk-live-rrrrrrrrrrrrrrrrrrrrrrrrrr";
 
 impl AttemptParts for Parts {
+    fn lane_notice(&mut self, _t: &MentionTarget, body: &str) {
+        push(&self.log, format!("lane_notice {body}"));
+    }
+
     fn bind_live(&mut self, live: Option<Arc<LiveTurn>>) {
         push(
             &self.log,
@@ -653,6 +657,71 @@ fn relay_attempt_lives_in_attempt_scope() {
 // ---- lane env 는 턴 MCP 계획 앞에서 ----
 
 struct FakeLane(Log);
+/// 판 경고를 한 번 남기는 lane(정본 `takeNotice` — 꺼내면 지운다).
+struct NoticeLane(FakeLane, std::sync::Mutex<Option<String>>);
+impl crate::turn_lane_first::LaneSource for NoticeLane {
+    fn env_for(
+        &self,
+        cause: &str,
+        h: AgentHarness,
+    ) -> Result<LaneEnv, crate::provider_lane::LaneFileError> {
+        self.0.env_for(cause, h)
+    }
+    fn release(&self, env: &LaneEnv) -> std::io::Result<()> {
+        self.0.release(env)
+    }
+    fn take_notice(&self, cause: &str) -> Option<String> {
+        push(&self.0.0, format!("take_notice {cause}"));
+        self.1.lock().unwrap().take()
+    }
+}
+
+/// 키를 받은 바로 뒤 판 경고를 꺼내 진행 줄로 올리고(계획·띄우기 전), 시도가 다시 돌아도 같은 경고는 다시 올리지 않는다.
+#[test]
+fn lane_notice_is_posted_after_keys_once() {
+    let w = world("lanenotice");
+    let log: Log = Log::default();
+    let link = Link(Arc::clone(&log));
+    let client = HarkroomRestClient::new(&link);
+    let notice = Notice {
+        log: Arc::clone(&log),
+        lease: w.lease.clone(),
+    };
+    let lane = NoticeLane(
+        FakeLane(Arc::clone(&log)),
+        std::sync::Mutex::new(Some("판 밖".into())),
+    );
+    let mut a = attempt(
+        &w,
+        &client,
+        &notice,
+        true,
+        parts(&w, &log, false, vec![0, 0]),
+    )
+    .with_lane(&lane);
+    let mut d = false;
+    assert!(a.run(&target(), None, true, &mut d).is_ok());
+    let l = log.lock().unwrap().clone();
+    let at = |s: &str| {
+        l.iter()
+            .position(|x| x == s)
+            .unwrap_or_else(|| panic!("{s}: {l:?}"))
+    };
+    assert!(at("lane_env m1") < at("take_notice m1"));
+    assert!(at("take_notice m1") < at("lane_notice 판 밖"));
+    assert!(at("lane_notice 판 밖") < at("keys t-1"));
+    drop(l);
+    log.lock().unwrap().clear();
+    assert!(a.run(&target(), None, true, &mut d).is_ok());
+    assert!(
+        !log.lock()
+            .unwrap()
+            .iter()
+            .any(|x| x.starts_with("lane_notice")),
+        "두 번째는 꺼낼 경고가 없다"
+    );
+}
+
 impl crate::turn_lane_first::LaneSource for FakeLane {
     fn env_for(
         &self,
