@@ -3045,10 +3045,14 @@ export async function deleteMessage(
  * `deleted_at is null` 이 조건에 들어 있는 것이 핵심이다: 지워진 메시지는 본문을 담아
  * 돌려준 뒤 걸러 내는 것이 아니라 **애초에 없는 것**이 되어 404 로 떨어진다.
  */
+/**
+ * 링크 한 개 읽기(`GET /messages/:id`)의 문장. Rust 코어(`crates/harkroom-server/src/core/msg_read.rs`, S5.3 C1b-1a)가
+ * 이 문장을 `golden/sql_fragments.json` 으로 받아 그대로 쓴다 — 고치면 `test/rustSqlFragments.test.ts` 가 골든 갱신을 요구한다.
+ */
+export const MESSAGE_BY_ID_SQL = `select ${COLS} from message where id = $1::uuid and deleted_at is null`;
+
 export async function getMessageById(pool: Pool, messageId: string): Promise<MessageRow | null> {
-  const res = await pool.query(
-    `select ${COLS} from message where id = $1 and deleted_at is null`, [messageId],
-  );
+  const res = await pool.query(MESSAGE_BY_ID_SQL, [messageId]);
   return res.rows[0] ?? null;
 }
 

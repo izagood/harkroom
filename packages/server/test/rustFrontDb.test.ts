@@ -367,6 +367,40 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       expect(r.out, r.out).not.toContain('skip: HARKROOM_CONTRAST');
       expect(r.out).toMatch(/contrast: [1-9]\d* case\(s\) compared/);
 
+      // S5.3 C1b-1a — `GET /messages/{id}`(코어 `msg_read.rs`). 성공은 본문 전체가 같아야 한다(겉 시각은 toISOString 꼴,
+      // 리액션·첨부·상태 리액션 안의 시각은 PG 꼴 그대로). 거절은 상태·코드까지(문구는 zod 와 다르다).
+      expect(f.log()).toContain('"GET /messages/{id}"');
+      await db.pool.query(
+        `insert into message_reaction (message_id, account_id, emoji) values ($1, $2, '👀'), ($1, $3, '👀'), ($1, $2, '✅')`,
+        [work, admin.accountId, member.accountId],
+      );
+      await db.pool.query(`update message set edited_at = now() - interval '1 hour' where id = $1`, [oldCard]);
+      const gone = await say('지울 글');
+      await db.pool.query(`update message set deleted_at = now() where id = $1`, [gone]);
+      const getMsg = async (base: string, id: string, token?: string) => {
+        const res = await fetch(`${base}/messages/${id}`, { headers: token ? { authorization: `Bearer ${token}` } : {} });
+        const json = JSON.parse(await res.text()) as { error?: { code: string } };
+        return { status: res.status, code: json.error?.code, body: json.error ? undefined : json };
+      };
+      for (const [name, id, token] of [
+        ['리액션 붙은 머리', work, admin.token],
+        ['고친 답글', oldCard, member.token],
+        ['상태 리액션', waiting, member.token],
+        ['비공개 채널 — 멤버 아님 → 403', secret, member.token],
+        ['비공개 채널 — admin 도 멤버 아님 → 403', secret, admin.token],
+        ['비공개 채널 — 멤버', secret, agent.pat],
+        ['지운 글 → 404', gone, admin.token],
+        ['없는 id → 404', '0f8fad5b-d9cb-469f-a165-70867728950e', admin.token],
+        ['uuid 아님 → 400', 'not-a-uuid', admin.token],
+        ['익명 → 401', work, undefined],
+        ['익명·uuid 아님 → 401(인증이 먼저)', 'not-a-uuid', undefined],
+      ] as const) {
+        const [a, b] = [await getMsg(tsUrl, id, token), await getMsg(`http://127.0.0.1:${port}`, id, token)];
+        expect(b, name).toEqual(a);
+      }
+      const head = (await getMsg(`http://127.0.0.1:${port}`, work, admin.token)).body as Record<string, unknown>;
+      expect((head.reactions as unknown[]).length, '리액션이 빈 목록끼리 비교하면 안 된다').toBe(2);
+
       // S5.2 P3 — `PUT /inbox/today/seen` 대조. 거절은 상태·코드까지(문구는 zod 와 다르다), 성공은 본문까지 같아야 한다.
       const rsUrl = `http://127.0.0.1:${port}`;
       const put = async (base: string, o: { token?: string; ct?: string; body?: string }) => {
