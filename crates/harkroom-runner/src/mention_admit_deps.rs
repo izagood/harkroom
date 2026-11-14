@@ -348,8 +348,9 @@ impl<L: RunnerLink + 'static, M: MentionLauncher> AdmitDeps for LinkAdmitDeps<'_
     fn release_slot(&mut self, key: &str) {
         self.clients.rest().release_turn_slot(key);
     }
-    fn turn_started(&mut self, _key: &str, _message_id: &str) {
-        // 정본 `turnWatch.started` — 화면 끝 감시가 아직 없다.
+    fn turn_started(&mut self, key: &str, _message_id: &str) {
+        // 정본 `turnWatch.started` — 작업 폴더 정리 보고(장부에는 동기로 먼저 올린다).
+        crate::cleanup_report::on_turn_started(key);
     }
     fn mark_read(&mut self, ids: &[i64]) -> Result<(), String> {
         self.clients

@@ -99,7 +99,13 @@ pub fn split_thread_key(key: &str) -> Option<(&str, &str)> {
 pub fn handle_event(e: SchedEvent, sink: &dyn EventSink, running: &Running) {
     match e {
         SchedEvent::SlotReleased(key) => sink.release_turn_slot(&key),
-        SchedEvent::TurnEnded { .. } => running.ended(),
+        SchedEvent::TurnEnded {
+            thread_key,
+            mention_id,
+        } => {
+            running.ended();
+            crate::cleanup_report::on_turn_ended(&thread_key, &mention_id);
+        }
         SchedEvent::Fenced(key) => match split_thread_key(&key) {
             Some((channel, anchor)) => sink.notice_fenced(channel, anchor),
             None => eprintln!(

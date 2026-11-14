@@ -277,6 +277,7 @@ fn main() {
         }
     }
     let maker = Arc::new(maker);
+    install_cleanup_report(&maker, &clients);
 
     let ledger = Arc::new(Mutex::new(Ledger::new(&[], now_ms())));
     let slots = MentionSlots::default();
@@ -406,4 +407,58 @@ fn main() {
     }
     link.stop();
     println!("종료");
+}
+
+/// 작업 폴더 정리 보고(정본 `main.ts` `createCleanupReporter` 배선) — 턴 시작·끝·기동 한 번·30분 박동. 지우기는
+/// 작업 폴더 뿌리 안·세션 레코드가 있는 스레드만.
+fn install_cleanup_report(maker: &RunnerMaker<Link>, clients: &Arc<AgentClients<Link>>) {
+    use harkroom_runner::cleanup_report as cr;
+    let cfg = maker.config();
+    let (base, state, home) = (
+        cfg.workspace_base_dir.clone(),
+        cfg.state_dir.clone(),
+        cfg.home.clone(),
+    );
+    let env = cfg.runner_env.clone();
+    let accounts_root = harkroom_accounts::claude_accounts_root(|k| env.get(k).cloned(), &home);
+    let home_s = home.to_string_lossy().into_owned();
+    let store = maker.store();
+    let (send_c, ws_store, del_store) =
+        (Arc::clone(clients), Arc::clone(&store), Arc::clone(&store));
+    let (del_root, del_base) = (accounts_root.clone(), base.clone());
+    let reporter = cr::CleanupReporter::new(cr::CleanupDeps {
+        send: Box::new(move |r| send_c.rest().report_cleanup(r)),
+        list_worktrees: Box::new(cr::git_worktree_paths),
+        home: home_s.clone(),
+        workspace_dir_of: Box::new(move |k| ws_store.get(k).map(|r| r.workspace_dir)),
+        delete_thread: Some(Box::new(move |k| {
+            cr::delete_thread(
+                &del_store,
+                &del_base,
+                &cr::claude_project_roots_under(&del_root),
+                k,
+            )
+        })),
+        now_iso: Box::new(cr::now_iso),
+    });
+    if let Err(e) = cr::install(reporter) {
+        eprintln!("[cleanup] 정리 보고 일꾼을 띄우지 못했다: {e}");
+        return;
+    }
+    cr::backfill_once(
+        state.join(cr::CLEANUP_BACKFILL_MARKER),
+        Box::new(move || {
+            let sessions: Vec<(String, String)> = store
+                .entries()
+                .into_iter()
+                .map(|(k, r)| (k, r.workspace_dir))
+                .collect();
+            cr::collect_backfill(
+                &sessions,
+                &cr::claude_project_roots_under(&accounts_root),
+                &home_s,
+                &|p| cr::git_worktree_paths(p),
+            )
+        }),
+    );
 }
