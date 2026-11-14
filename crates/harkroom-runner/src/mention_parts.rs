@@ -237,6 +237,8 @@ pub struct OutcomeCtx {
     pub ctx: LoopCtx,
     pub screen: String,
     pub thread_unreadable: bool,
+    /// 「확인을 기다려 멈춤」 신호 파일의 그 시도 끝 값(T4c) — 신호를 심지 않은 시도는 `None`. 정지 화면 판정이 쓴다.
+    pub gate_signal: Option<crate::mention_turn_parts::GateSignal>,
 }
 /// 턴 뒤 IO 닫개.
 pub type AfterFn<'a> = Box<dyn FnMut(&TurnSecrets, &AfterCtx) -> Result<(), String> + 'a>;
@@ -352,6 +354,8 @@ pub struct MentionParts<'a, P: PrepareIo, S: PtyTurnSink> {
     cur: Option<Current>,
     /// 이 시도가 띄울 때 지은 문맥 — 턴 뒤 IO 에 넘긴다(`spawn` 이 시도마다 새로 적는다).
     last_ctx: Option<LoopCtx>,
+    /// 이 시도의 신호 파일을 PTY 턴이 끝난 직후(지우기 전) 읽은 값(T4c).
+    last_gate: Option<crate::mention_turn_parts::GateSignal>,
 }
 
 impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
@@ -401,6 +405,7 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
             prompt_file: None,
             cur: None,
             last_ctx: None,
+            last_gate: None,
         }
     }
 
@@ -436,6 +441,7 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             self.watch = Watch::default();
             // 앞 시도의 문맥이 이 시도의 턴 뒤 IO 에 가지 않게(mem/runner/per-attempt-state).
             self.last_ctx = None;
+            self.last_gate = None;
         }
         self.slot.bind(live);
     }
@@ -532,7 +538,18 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
                 "준비 없이 띄우려 했다",
             )));
         };
-        let cmd = attempt_command_for_account(
+        // 이 시도의 표식 파일(T4c, 정본 `mcpReadyFile`·`gateFile`) — 시도가 끝나면 `markers` 가 떨어지며 지운다.
+        let tui = crate::adapter::uses_tui_for_mention(self.harness).unwrap_or(false);
+        let markers = crate::turn_markers::TurnMarkers::plan(
+            &self.state_dir,
+            &self.key,
+            self.harness,
+            tui,
+            self.base.mention_permission,
+            !args.lane_env.is_empty(),
+            &mut crate::link::random_uuid,
+        );
+        let mut cmd = attempt_command_for_account(
             &with_argv(&self.base, &self.system, &self.argv),
             &c.account,
             &c.prepared.session,
@@ -540,9 +557,11 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             &c.cause,
             args.turn_id,
         );
+        cmd.gate_file = markers.gate.as_deref();
+        cmd.mcp_ready_file = markers.mcp_ready.as_deref();
         // PTY 옵션은 **이 시도의 값으로** 채운다(정본 `mentionTurn.ts` 의 `deps.runTurn(plan, {...})`) — 기본값(`/`·주입 없음)으로
         // 하네스가 뜨는 길을 남기지 않는다. 작업 폴더가 비었거나 상대 경로면 띄우지 않는다.
-        let opts = attempt_pty_options(
+        let mut opts = attempt_pty_options(
             base_opts,
             self.harness,
             &c.prepared.session.rec.workspace_dir,
@@ -550,6 +569,8 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             self.turn_timeout_ms,
         )
         .map_err(|why| crate::pty_turn::PtyTurnError::Spawn(std::io::Error::other(why)))?;
+        markers.apply(opts.inject.as_mut());
+        let marker_key = self.key.clone();
         let mcp = args.mcp_config_path.to_string_lossy().into_owned();
         let pargs = PtyTurnArgs {
             lane_env: &args.lane_env,
@@ -590,18 +611,26 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
                 now_ms: &now,
                 stop_on_spawn: Some(&stop_on_spawn),
             };
+            // 표식(MCP 준비·관문 신호)을 답하는 자리 — 나머지 갈래는 안쪽으로 넘긴다.
+            let mut marker_sink = crate::turn_markers::MarkerSink {
+                inner: &mut watch_sink,
+                markers: &markers,
+                key: &marker_key,
+            };
             match args.relay {
                 Some(r) => {
                     let mut s = RelaySink {
-                        inner: &mut watch_sink,
+                        inner: &mut marker_sink,
                         relay: r,
                     };
                     spawn_pty_turn(&cmd, pargs, opts, &mut s)
                 }
-                None => spawn_pty_turn(&cmd, pargs, opts, &mut watch_sink),
+                None => spawn_pty_turn(&cmd, pargs, opts, &mut marker_sink),
             }
         });
         self.slot.set_pty(None);
+        // 정지 화면 판정용 — 지우기(`markers` 떨어짐) 전에 읽는다(정본은 지운 뒤 읽어 늘 0, 모듈 머리 주석).
+        self.last_gate = markers.gate_snapshot();
         out
     }
 
@@ -620,6 +649,7 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             ctx: self.last_ctx.clone().unwrap_or_default(),
             screen,
             thread_unreadable,
+            gate_signal: self.last_gate,
         };
         (self.outcome)(attempted, secrets, live, &end, &o)
     }

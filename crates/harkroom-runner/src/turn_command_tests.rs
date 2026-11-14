@@ -402,3 +402,29 @@ fn codex_extra_stdio_env_does_not_override_parent_value() {
         Some("server")
     );
 }
+
+#[test]
+fn turn_marker_files_reach_child_env() {
+    // T4c: 표식 자리는 자식 env 로만 간다(argv 아님). 없으면 싣지 않는다.
+    let mut o = TurnCommandOptions::new(ClaudeCode, TurnMode::Mention, Auto, "/op");
+    o.session_id = Some("sid");
+    let p = build(&o).unwrap();
+    assert!(!p.env.contains_key("HARKROOM_GATE_FILE"));
+    assert!(!p.env.contains_key("HARKROOM_MCP_READY_FILE"));
+    o.gate_file = Some(Path::new("/st/gate-signal/g1"));
+    o.mcp_ready_file = Some(Path::new("/st/mcp-ready/m1"));
+    let p = build(&o).unwrap();
+    assert_eq!(
+        p.env.get("HARKROOM_GATE_FILE").map(String::as_str),
+        Some("/st/gate-signal/g1")
+    );
+    assert_eq!(
+        p.env.get("HARKROOM_MCP_READY_FILE").map(String::as_str),
+        Some("/st/mcp-ready/m1")
+    );
+    assert!(
+        !p.args
+            .iter()
+            .any(|x| x.contains("gate-signal") || x.contains("mcp-ready"))
+    );
+}

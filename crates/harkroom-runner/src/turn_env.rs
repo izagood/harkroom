@@ -115,6 +115,8 @@ pub fn harness_parent_env(runner_env: &BTreeMap<String, String>) -> BTreeMap<Str
 pub const RUNNER_TURN_CAUSE_ENV: &str = "HARKROOM_TURN_CAUSE";
 pub const RUNNER_TURN_ID_ENV: &str = "HARKROOM_TURN_ID";
 pub const RUNNER_GATE_FILE_ENV: &str = "HARKROOM_GATE_FILE";
+/// 브릿지가 첫 `tools/list` 답을 쓴 뒤 만드는 표식 파일(정본 `RUNNER_MCP_READY_FILE_ENV`, 오퍼레이터 `mcp_bridge::ENV_READY_FILE`).
+pub const RUNNER_MCP_READY_FILE_ENV: &str = "HARKROOM_MCP_READY_FILE";
 pub const CODEX_HOOK_SPEC_ENV: &str = "HARKROOM_CODEX_HOOK";
 pub const RUNNER_TURN_KEY_SHELL_ENV: &str = "HARKROOM_TURN_GRANT";
 pub const RUNNER_TURN_KEY_BRIDGE_ENV: &str = "HARKROOM_TURN_BRIDGE_KEY";
@@ -274,6 +276,8 @@ pub struct ChildEnvInput<'a> {
     pub turn_keys: Option<&'a TurnKeys>,
     pub opencode_turn_config: Option<&'a Path>,
     pub gate_file: Option<&'a Path>,
+    /// 이 턴의 MCP 준비 표식 자리(T4c) — 있으면 `HARKROOM_MCP_READY_FILE` 로 싣는다.
+    pub mcp_ready_file: Option<&'a Path>,
     pub codex_hook_spec: Option<&'a str>,
 }
 
@@ -304,6 +308,7 @@ impl<'a> ChildEnvInput<'a> {
             turn_keys: None,
             opencode_turn_config: None,
             gate_file: None,
+            mcp_ready_file: None,
             codex_hook_spec: None,
         }
     }
@@ -431,6 +436,9 @@ pub fn child_env(
     );
     if let Some(p) = input.gate_file {
         set(&mut env, RUNNER_GATE_FILE_ENV, p);
+    }
+    if let Some(p) = input.mcp_ready_file {
+        set(&mut env, RUNNER_MCP_READY_FILE_ENV, p);
     }
     if let Some(spec) = input.codex_hook_spec {
         env.insert(CODEX_HOOK_SPEC_ENV.into(), spec.into());

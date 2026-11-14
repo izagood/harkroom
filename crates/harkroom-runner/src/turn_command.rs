@@ -73,6 +73,10 @@ pub struct TurnCommandOptions<'a> {
     pub command_rule_env: Option<&'a BTreeMap<String, String>>,
     /// 정본 `extraMcpServers` — harkroom·avcs 를 뺀 에이전트 MCP(파일 순서). codex 만 argv 로 싣는다.
     pub extra_mcp_servers: &'a [(String, McpServerEntry)],
+    /// 「확인을 기다려 멈춤」 신호 파일(T4c, `HARKROOM_GATE_FILE`) — 물음 hook 이 붙는 TUI 턴에만.
+    pub gate_file: Option<&'a Path>,
+    /// MCP 준비 표식 파일(T4c, `HARKROOM_MCP_READY_FILE`) — 넣기 전에 브릿지를 기다리는 하네스의 TUI 턴에만.
+    pub mcp_ready_file: Option<&'a Path>,
 }
 
 impl<'a> TurnCommandOptions<'a> {
@@ -119,6 +123,8 @@ impl<'a> TurnCommandOptions<'a> {
             opencode_turn_config: None,
             command_rule_env: None,
             extra_mcp_servers: &[],
+            gate_file: None,
+            mcp_ready_file: None,
         }
     }
 }
@@ -384,6 +390,8 @@ pub fn build_turn_command(
     input.gh_config_dir = gh.as_deref();
     input.turn_keys = o.turn_keys;
     input.opencode_turn_config = o.opencode_turn_config;
+    input.gate_file = o.gate_file;
+    input.mcp_ready_file = o.mcp_ready_file;
     // 하네스 자식 env 의 바탕 — 추가 MCP env 를 옮길지 판정할 때도 본다(같은 이름·다른 값이면 argv, security #1952 낮음 1).
     let mut env = child_env(&input, parent_env, home)?;
     // 세션 id 없음은 위 `assert_valid_session` 이 「null 이 되는 하네스의 첫 턴」으로만 남겼다.
