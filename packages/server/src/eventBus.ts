@@ -23,7 +23,7 @@ const PRUNE_EVERY_MS = 10 * 60 * 1000;
 const RECONNECT_MS = [500, 1_000, 2_000, 5_000, 10_000];
 
 /** `audience` 로 받는 사람을 가르는 이벤트(`visibleTo` 의 같은 갈래). */
-const AUDIENCE_TYPES = new Set([
+export const AUDIENCE_TYPES: ReadonlySet<string> = new Set([
   'message.created', 'message.updated', 'message.deleted', 'reaction.added', 'reaction.removed', 'typing.changed',
   'channel.created', 'channel.updated', 'channel.deleted', 'channel.member_added', 'channel.member_removed',
   'handle_group.changed', 'agent_team.changed', 'grant.changed', 'operator.changed', 'agent_assignment.changed',
@@ -31,7 +31,7 @@ const AUDIENCE_TYPES = new Set([
   'agent.attention', 'agent.attention.cleared',
 ]);
 /** 계정 한 명에게만 가는 이벤트. */
-const ACCOUNT_TYPES = new Set(['inbox.updated', 'saved.changed']);
+export const ACCOUNT_TYPES: ReadonlySet<string> = new Set(['inbox.updated', 'saved.changed']);
 /** 모두에게 가는 이벤트(`visibleTo` 가 true 를 돌려주는 것). */
 const OPEN_TYPES = new Set([
   'presence.changed', 'status.changed', 'avatar.changed', 'workspace.icon.changed', 'account.handle_changed', 'lease.changed',

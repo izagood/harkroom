@@ -1,5 +1,5 @@
 //! `harkroom-server-rs` — env: `UPSTREAM_URL`(TS 서버, 예 `http://harkroom:3400`) · `DATABASE_URL` · `PORT`(기본 3500) ·
-//! `TRUST_PROXY`(감사 `ip` 규칙, TS 와 같은 꼴 — `trust_proxy.rs`) · `HARKROOM_FRONT_TS_ROUTES`(옮긴 줄을 TS 로 되돌림 — `"GET /accounts,GET /dms"` 또는 `*`, `routes.rs` 참고) ·
+//! `HARKROOM_CORE`(`ts` 기본 · `rust` 면 `/ws`·`/ws-ticket` 을 답함, S5.3 C0) · `TRUST_PROXY`(감사 `ip` 규칙, TS 와 같은 꼴 — `trust_proxy.rs`) · `HARKROOM_FRONT_TS_ROUTES`(옮긴 줄을 TS 로 되돌림 — `"GET /accounts,GET /dms"` 또는 `*`, `routes.rs` 참고) ·
 //! `DATABASE_WRITE_URL`(쓰기 역할, P3 — 없거나 권한이 모자라면 쓰는 줄을 켜지 않고 그 요청은 TS 로 간다, `write.rs` 참고).
 use harkroom_server::{proxy, routes, schema, write};
 use std::net::SocketAddr;
@@ -74,7 +74,45 @@ async fn main() {
     let mut active = routes::active(routes::MOVED, &ts);
     active.extend(routes::active(routes::writes_for(&state), &ts));
     eprintln!("front: rust routes {active:?}");
+    // S5.3 코어(C0) — `HARKROOM_CORE=rust` 일 때만 `/ws`·`/ws-ticket` 을 앞단이 답한다. 기본 `ts` 는 지금과 같다.
+    let core_mode =
+        match harkroom_server::core::parse_mode(std::env::var("HARKROOM_CORE").ok().as_deref()) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("front: refusing to start — {e}");
+                std::process::exit(1);
+            }
+        };
+    let core_router = (core_mode == harkroom_server::core::CoreMode::Rust).then(|| {
+        let hub = harkroom_server::core::events::Hub::new();
+        harkroom_server::core::events::spawn_outbox_listener(state.pool.clone(), hub.clone());
+        let core = harkroom_server::core::ws::Core::new(
+            state.pool.clone(),
+            hub,
+            harkroom_server::core::ws::parse_origins(std::env::var("CORS_ORIGINS").ok().as_deref()),
+            harkroom_server::core::ws::Timing::from_env(),
+        );
+        harkroom_server::core::ws::router(
+            core,
+            harkroom_server::auth::AuthPools {
+                read: state.pool.clone(),
+                write: state.write.clone(),
+            },
+        )
+    });
+    eprintln!(
+        "front: core {}",
+        if core_router.is_some() {
+            "rust (/ws, /ws-ticket)"
+        } else {
+            "ts"
+        }
+    );
     let app = routes::router(state, routes::MOVED, &ts);
+    let app = match core_router {
+        Some(c) => c.merge(app),
+        None => app,
+    };
     let listener = tokio::net::TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], port)))
         .await
         .expect("bind");

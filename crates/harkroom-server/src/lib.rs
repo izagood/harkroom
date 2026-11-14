@@ -5,6 +5,7 @@
 //! 여기로 오는 업그레이드 요청은 거절한다.
 pub mod api;
 pub mod auth;
+pub mod core;
 pub mod directory;
 pub mod inbox_today;
 pub mod lists;
