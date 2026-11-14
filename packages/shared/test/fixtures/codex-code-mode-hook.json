@@ -1,0 +1,1156 @@
+{
+ "about": "codex-cli 0.154.0 code mode PreToolUse 입력·기록 꼴(실측, 값은 자리표시). TS codexHook.test.ts 와 Rust codex_hook 시험이 같이 읽는다. {CWD}=턴 작업 폴더, {OTHER}=다른 폴더, {TRANSCRIPT}=codex 홈 아래 기록 파일.",
+ "cases": [
+  {
+   "name": "pass: bare await call",
+   "lines": [
+    {
+     "timestamp": "T0",
+     "type": "turn_context",
+     "payload": {
+      "cwd": "{CWD}",
+      "model": "<model>"
+     }
+    },
+    {
+     "timestamp": "T1",
+     "type": "response_item",
+     "payload": {
+      "type": "custom_tool_call",
+      "id": "ctc_<id>",
+      "status": "completed",
+      "call_id": "call_A",
+      "name": "exec",
+      "input": "await tools.exec_command({cmd:\"echo ok\"});",
+      "internal_chat_message_metadata_passthrough": {
+       "turn_id": "<turn>",
+       "create_time": 0
+      }
+     }
+    }
+   ],
+   "input": {
+    "session_id": "<s>",
+    "turn_id": "<t>",
+    "transcript_path": "{TRANSCRIPT}",
+    "cwd": "{CWD}",
+    "hook_event_name": "PreToolUse",
+    "model": "<model>",
+    "permission_mode": "bypassPermissions",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "echo ok"
+    },
+    "tool_use_id": "exec-11111111-2222-4333-8444-555555555555"
+   },
+   "expect": "pass"
+  },
+  {
+   "name": "pass: text wrapper as recorded by codex 0.154.0",
+   "lines": [
+    {
+     "timestamp": "T0",
+     "type": "turn_context",
+     "payload": {
+      "cwd": "{CWD}",
+      "model": "<model>"
+     }
+    },
+    {
+     "timestamp": "T1",
+     "type": "response_item",
+     "payload": {
+      "type": "custom_tool_call",
+      "id": "ctc_<id>",
+      "status": "completed",
+      "call_id": "call_A",
+      "name": "exec",
+      "input": "text(await tools.exec_command({cmd:\"echo ok\"}));\n",
+      "internal_chat_message_metadata_passthrough": {
+       "turn_id": "<turn>",
+       "create_time": 0
+      }
+     }
+    }
+   ],
+   "input": {
+    "session_id": "<s>",
+    "turn_id": "<t>",
+    "transcript_path": "{TRANSCRIPT}",
+    "cwd": "{CWD}",
+    "hook_event_name": "PreToolUse",
+    "model": "<model>",
+    "permission_mode": "bypassPermissions",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "echo ok"
+    },
+    "tool_use_id": "exec-11111111-2222-4333-8444-555555555555"
+   },
+   "expect": "pass"
+  },
+  {
+   "name": "pass: quoted keys and workdir equal to turn folder",
+   "lines": [
+    {
+     "timestamp": "T0",
+     "type": "turn_context",
+     "payload": {
+      "cwd": "{CWD}",
+      "model": "<model>"
+     }
+    },
+    {
+     "timestamp": "T1",
+     "type": "response_item",
+     "payload": {
+      "type": "custom_tool_call",
+      "id": "ctc_<id>",
+      "status": "completed",
+      "call_id": "call_A",
+      "name": "exec",
+      "input": "text(await tools.exec_command({\"cmd\": \"echo ok\", \"workdir\": \"{CWD}\"}))",
+      "internal_chat_message_metadata_passthrough": {
+       "turn_id": "<turn>",
+       "create_time": 0
+      }
+     }
+    }
+   ],
+   "input": {
+    "session_id": "<s>",
+    "turn_id": "<t>",
+    "transcript_path": "{TRANSCRIPT}",
+    "cwd": "{CWD}",
+    "hook_event_name": "PreToolUse",
+    "model": "<model>",
+    "permission_mode": "bypassPermissions",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "echo ok"
+    },
+    "tool_use_id": "exec-11111111-2222-4333-8444-555555555555"
+   },
+   "expect": "pass"
+  },
+  {
+   "name": "pass: json unicode escape",
+   "lines": [
+    {
+     "timestamp": "T0",
+     "type": "turn_context",
+     "payload": {
+      "cwd": "{CWD}",
+      "model": "<model>"
+     }
+    },
+    {
+     "timestamp": "T1",
+     "type": "response_item",
+     "payload": {
+      "type": "custom_tool_call",
+      "id": "ctc_<id>",
+      "status": "completed",
+      "call_id": "call_A",
+      "name": "exec",
+      "input": "await tools.exec_command({cmd:\"echo \\u006fk\"})",
+      "internal_chat_message_metadata_passthrough": {
+       "turn_id": "<turn>",
+       "create_time": 0
+      }
+     }
+    }
+   ],
+   "input": {
+    "session_id": "<s>",
+    "turn_id": "<t>",
+    "transcript_path": "{TRANSCRIPT}",
+    "cwd": "{CWD}",
+    "hook_event_name": "PreToolUse",
+    "model": "<model>",
+    "permission_mode": "bypassPermissions",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "echo ok"
+    },
+    "tool_use_id": "exec-11111111-2222-4333-8444-555555555555"
+   },
+   "expect": "pass"
+  },
+  {
+   "name": "deny: repeated key",
+   "lines": [
+    {
+     "timestamp": "T0",
+     "type": "turn_context",
+     "payload": {
+      "cwd": "{CWD}",
+      "model": "<model>"
+     }
+    },
+    {
+     "timestamp": "T1",
+     "type": "response_item",
+     "payload": {
+      "type": "custom_tool_call",
+      "id": "ctc_<id>",
+      "status": "completed",
+      "call_id": "call_A",
+      "name": "exec",
+      "input": "await tools.exec_command({cmd:\"echo ok\", cmd:\"echo other\"})",
+      "internal_chat_message_metadata_passthrough": {
+       "turn_id": "<turn>",
+       "create_time": 0
+      }
+     }
+    }
+   ],
+   "input": {
+    "session_id": "<s>",
+    "turn_id": "<t>",
+    "transcript_path": "{TRANSCRIPT}",
+    "cwd": "{CWD}",
+    "hook_event_name": "PreToolUse",
+    "model": "<model>",
+    "permission_mode": "bypassPermissions",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "echo ok"
+    },
+    "tool_use_id": "exec-11111111-2222-4333-8444-555555555555"
+   },
+   "expect": "deny"
+  },
+  {
+   "name": "deny: repeated key, last value equals hook command",
+   "lines": [
+    {
+     "timestamp": "T0",
+     "type": "turn_context",
+     "payload": {
+      "cwd": "{CWD}",
+      "model": "<model>"
+     }
+    },
+    {
+     "timestamp": "T1",
+     "type": "response_item",
+     "payload": {
+      "type": "custom_tool_call",
+      "id": "ctc_<id>",
+      "status": "completed",
+      "call_id": "call_A",
+      "name": "exec",
+      "input": "await tools.exec_command({cmd:\"echo other\", cmd:\"echo ok\"})",
+      "internal_chat_message_metadata_passthrough": {
+       "turn_id": "<turn>",
+       "create_time": 0
+      }
+     }
+    }
+   ],
+   "input": {
+    "session_id": "<s>",
+    "turn_id": "<t>",
+    "transcript_path": "{TRANSCRIPT}",
+    "cwd": "{CWD}",
+    "hook_event_name": "PreToolUse",
+    "model": "<model>",
+    "permission_mode": "bypassPermissions",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "echo ok"
+    },
+    "tool_use_id": "exec-11111111-2222-4333-8444-555555555555"
+   },
+   "expect": "deny"
+  },
+  {
+   "name": "deny: unknown key",
+   "lines": [
+    {
+     "timestamp": "T0",
+     "type": "turn_context",
+     "payload": {
+      "cwd": "{CWD}",
+      "model": "<model>"
+     }
+    },
+    {
+     "timestamp": "T1",
+     "type": "response_item",
+     "payload": {
+      "type": "custom_tool_call",
+      "id": "ctc_<id>",
+      "status": "completed",
+      "call_id": "call_A",
+      "name": "exec",
+      "input": "await tools.exec_command({cmd:\"echo ok\", sandbox_permissions:\"x\"})",
+      "internal_chat_message_metadata_passthrough": {
+       "turn_id": "<turn>",
+       "create_time": 0
+      }
+     }
+    }
+   ],
+   "input": {
+    "session_id": "<s>",
+    "turn_id": "<t>",
+    "transcript_path": "{TRANSCRIPT}",
+    "cwd": "{CWD}",
+    "hook_event_name": "PreToolUse",
+    "model": "<model>",
+    "permission_mode": "bypassPermissions",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "echo ok"
+    },
+    "tool_use_id": "exec-11111111-2222-4333-8444-555555555555"
+   },
+   "expect": "deny"
+  },
+  {
+   "name": "deny: non-string cmd",
+   "lines": [
+    {
+     "timestamp": "T0",
+     "type": "turn_context",
+     "payload": {
+      "cwd": "{CWD}",
+      "model": "<model>"
+     }
+    },
+    {
+     "timestamp": "T1",
+     "type": "response_item",
+     "payload": {
+      "type": "custom_tool_call",
+      "id": "ctc_<id>",
+      "status": "completed",
+      "call_id": "call_A",
+      "name": "exec",
+      "input": "await tools.exec_command({cmd:[\"echo\",\"ok\"]})",
+      "internal_chat_message_metadata_passthrough": {
+       "turn_id": "<turn>",
+       "create_time": 0
+      }
+     }
+    }
+   ],
+   "input": {
+    "session_id": "<s>",
+    "turn_id": "<t>",
+    "transcript_path": "{TRANSCRIPT}",
+    "cwd": "{CWD}",
+    "hook_event_name": "PreToolUse",
+    "model": "<model>",
+    "permission_mode": "bypassPermissions",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "echo ok"
+    },
+    "tool_use_id": "exec-11111111-2222-4333-8444-555555555555"
+   },
+   "expect": "deny"
+  },
+  {
+   "name": "deny: empty cmd",
+   "lines": [
+    {
+     "timestamp": "T0",
+     "type": "turn_context",
+     "payload": {
+      "cwd": "{CWD}",
+      "model": "<model>"
+     }
+    },
+    {
+     "timestamp": "T1",
+     "type": "response_item",
+     "payload": {
+      "type": "custom_tool_call",
+      "id": "ctc_<id>",
+      "status": "completed",
+      "call_id": "call_A",
+      "name": "exec",
+      "input": "await tools.exec_command({cmd:\"\"})",
+      "internal_chat_message_metadata_passthrough": {
+       "turn_id": "<turn>",
+       "create_time": 0
+      }
+     }
+    }
+   ],
+   "input": {
+    "session_id": "<s>",
+    "turn_id": "<t>",
+    "transcript_path": "{TRANSCRIPT}",
+    "cwd": "{CWD}",
+    "hook_event_name": "PreToolUse",
+    "model": "<model>",
+    "permission_mode": "bypassPermissions",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": ""
+    },
+    "tool_use_id": "exec-11111111-2222-4333-8444-555555555555"
+   },
+   "expect": "deny"
+  },
+  {
+   "name": "deny: single-quoted string",
+   "lines": [
+    {
+     "timestamp": "T0",
+     "type": "turn_context",
+     "payload": {
+      "cwd": "{CWD}",
+      "model": "<model>"
+     }
+    },
+    {
+     "timestamp": "T1",
+     "type": "response_item",
+     "payload": {
+      "type": "custom_tool_call",
+      "id": "ctc_<id>",
+      "status": "completed",
+      "call_id": "call_A",
+      "name": "exec",
+      "input": "await tools.exec_command({cmd:'echo ok'})",
+      "internal_chat_message_metadata_passthrough": {
+       "turn_id": "<turn>",
+       "create_time": 0
+      }
+     }
+    }
+   ],
+   "input": {
+    "session_id": "<s>",
+    "turn_id": "<t>",
+    "transcript_path": "{TRANSCRIPT}",
+    "cwd": "{CWD}",
+    "hook_event_name": "PreToolUse",
+    "model": "<model>",
+    "permission_mode": "bypassPermissions",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "echo ok"
+    },
+    "tool_use_id": "exec-11111111-2222-4333-8444-555555555555"
+   },
+   "expect": "deny"
+  },
+  {
+   "name": "deny: template string",
+   "lines": [
+    {
+     "timestamp": "T0",
+     "type": "turn_context",
+     "payload": {
+      "cwd": "{CWD}",
+      "model": "<model>"
+     }
+    },
+    {
+     "timestamp": "T1",
+     "type": "response_item",
+     "payload": {
+      "type": "custom_tool_call",
+      "id": "ctc_<id>",
+      "status": "completed",
+      "call_id": "call_A",
+      "name": "exec",
+      "input": "await tools.exec_command({cmd:`echo ok`})",
+      "internal_chat_message_metadata_passthrough": {
+       "turn_id": "<turn>",
+       "create_time": 0
+      }
+     }
+    }
+   ],
+   "input": {
+    "session_id": "<s>",
+    "turn_id": "<t>",
+    "transcript_path": "{TRANSCRIPT}",
+    "cwd": "{CWD}",
+    "hook_event_name": "PreToolUse",
+    "model": "<model>",
+    "permission_mode": "bypassPermissions",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "echo ok"
+    },
+    "tool_use_id": "exec-11111111-2222-4333-8444-555555555555"
+   },
+   "expect": "deny"
+  },
+  {
+   "name": "deny: non-json escape",
+   "lines": [
+    {
+     "timestamp": "T0",
+     "type": "turn_context",
+     "payload": {
+      "cwd": "{CWD}",
+      "model": "<model>"
+     }
+    },
+    {
+     "timestamp": "T1",
+     "type": "response_item",
+     "payload": {
+      "type": "custom_tool_call",
+      "id": "ctc_<id>",
+      "status": "completed",
+      "call_id": "call_A",
+      "name": "exec",
+      "input": "await tools.exec_command({cmd:\"echo \\x6fk\"})",
+      "internal_chat_message_metadata_passthrough": {
+       "turn_id": "<turn>",
+       "create_time": 0
+      }
+     }
+    }
+   ],
+   "input": {
+    "session_id": "<s>",
+    "turn_id": "<t>",
+    "transcript_path": "{TRANSCRIPT}",
+    "cwd": "{CWD}",
+    "hook_event_name": "PreToolUse",
+    "model": "<model>",
+    "permission_mode": "bypassPermissions",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "echo ok"
+    },
+    "tool_use_id": "exec-11111111-2222-4333-8444-555555555555"
+   },
+   "expect": "deny"
+  },
+  {
+   "name": "deny: comment",
+   "lines": [
+    {
+     "timestamp": "T0",
+     "type": "turn_context",
+     "payload": {
+      "cwd": "{CWD}",
+      "model": "<model>"
+     }
+    },
+    {
+     "timestamp": "T1",
+     "type": "response_item",
+     "payload": {
+      "type": "custom_tool_call",
+      "id": "ctc_<id>",
+      "status": "completed",
+      "call_id": "call_A",
+      "name": "exec",
+      "input": "await tools.exec_command({cmd:\"echo ok\"}) // x",
+      "internal_chat_message_metadata_passthrough": {
+       "turn_id": "<turn>",
+       "create_time": 0
+      }
+     }
+    }
+   ],
+   "input": {
+    "session_id": "<s>",
+    "turn_id": "<t>",
+    "transcript_path": "{TRANSCRIPT}",
+    "cwd": "{CWD}",
+    "hook_event_name": "PreToolUse",
+    "model": "<model>",
+    "permission_mode": "bypassPermissions",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "echo ok"
+    },
+    "tool_use_id": "exec-11111111-2222-4333-8444-555555555555"
+   },
+   "expect": "deny"
+  },
+  {
+   "name": "deny: non-ascii whitespace",
+   "lines": [
+    {
+     "timestamp": "T0",
+     "type": "turn_context",
+     "payload": {
+      "cwd": "{CWD}",
+      "model": "<model>"
+     }
+    },
+    {
+     "timestamp": "T1",
+     "type": "response_item",
+     "payload": {
+      "type": "custom_tool_call",
+      "id": "ctc_<id>",
+      "status": "completed",
+      "call_id": "call_A",
+      "name": "exec",
+      "input": "await tools.exec_command({cmd:\"echo ok\"})",
+      "internal_chat_message_metadata_passthrough": {
+       "turn_id": "<turn>",
+       "create_time": 0
+      }
+     }
+    }
+   ],
+   "input": {
+    "session_id": "<s>",
+    "turn_id": "<t>",
+    "transcript_path": "{TRANSCRIPT}",
+    "cwd": "{CWD}",
+    "hook_event_name": "PreToolUse",
+    "model": "<model>",
+    "permission_mode": "bypassPermissions",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "echo ok"
+    },
+    "tool_use_id": "exec-11111111-2222-4333-8444-555555555555"
+   },
+   "expect": "deny"
+  },
+  {
+   "name": "deny: second statement",
+   "lines": [
+    {
+     "timestamp": "T0",
+     "type": "turn_context",
+     "payload": {
+      "cwd": "{CWD}",
+      "model": "<model>"
+     }
+    },
+    {
+     "timestamp": "T1",
+     "type": "response_item",
+     "payload": {
+      "type": "custom_tool_call",
+      "id": "ctc_<id>",
+      "status": "completed",
+      "call_id": "call_A",
+      "name": "exec",
+      "input": "await tools.exec_command({cmd:\"echo ok\"}); await tools.exec_command({cmd:\"echo ok\"})",
+      "internal_chat_message_metadata_passthrough": {
+       "turn_id": "<turn>",
+       "create_time": 0
+      }
+     }
+    }
+   ],
+   "input": {
+    "session_id": "<s>",
+    "turn_id": "<t>",
+    "transcript_path": "{TRANSCRIPT}",
+    "cwd": "{CWD}",
+    "hook_event_name": "PreToolUse",
+    "model": "<model>",
+    "permission_mode": "bypassPermissions",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "echo ok"
+    },
+    "tool_use_id": "exec-11111111-2222-4333-8444-555555555555"
+   },
+   "expect": "deny"
+  },
+  {
+   "name": "deny: other wrapper function",
+   "lines": [
+    {
+     "timestamp": "T0",
+     "type": "turn_context",
+     "payload": {
+      "cwd": "{CWD}",
+      "model": "<model>"
+     }
+    },
+    {
+     "timestamp": "T1",
+     "type": "response_item",
+     "payload": {
+      "type": "custom_tool_call",
+      "id": "ctc_<id>",
+      "status": "completed",
+      "call_id": "call_A",
+      "name": "exec",
+      "input": "log(await tools.exec_command({cmd:\"echo ok\"}))",
+      "internal_chat_message_metadata_passthrough": {
+       "turn_id": "<turn>",
+       "create_time": 0
+      }
+     }
+    }
+   ],
+   "input": {
+    "session_id": "<s>",
+    "turn_id": "<t>",
+    "transcript_path": "{TRANSCRIPT}",
+    "cwd": "{CWD}",
+    "hook_event_name": "PreToolUse",
+    "model": "<model>",
+    "permission_mode": "bypassPermissions",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "echo ok"
+    },
+    "tool_use_id": "exec-11111111-2222-4333-8444-555555555555"
+   },
+   "expect": "deny"
+  },
+  {
+   "name": "deny: joined string",
+   "lines": [
+    {
+     "timestamp": "T0",
+     "type": "turn_context",
+     "payload": {
+      "cwd": "{CWD}",
+      "model": "<model>"
+     }
+    },
+    {
+     "timestamp": "T1",
+     "type": "response_item",
+     "payload": {
+      "type": "custom_tool_call",
+      "id": "ctc_<id>",
+      "status": "completed",
+      "call_id": "call_A",
+      "name": "exec",
+      "input": "await tools.exec_command({cmd:\"echo \" + \"ok\"})",
+      "internal_chat_message_metadata_passthrough": {
+       "turn_id": "<turn>",
+       "create_time": 0
+      }
+     }
+    }
+   ],
+   "input": {
+    "session_id": "<s>",
+    "turn_id": "<t>",
+    "transcript_path": "{TRANSCRIPT}",
+    "cwd": "{CWD}",
+    "hook_event_name": "PreToolUse",
+    "model": "<model>",
+    "permission_mode": "bypassPermissions",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "echo ok"
+    },
+    "tool_use_id": "exec-11111111-2222-4333-8444-555555555555"
+   },
+   "expect": "deny"
+  },
+  {
+   "name": "deny: workdir elsewhere",
+   "lines": [
+    {
+     "timestamp": "T0",
+     "type": "turn_context",
+     "payload": {
+      "cwd": "{CWD}",
+      "model": "<model>"
+     }
+    },
+    {
+     "timestamp": "T1",
+     "type": "response_item",
+     "payload": {
+      "type": "custom_tool_call",
+      "id": "ctc_<id>",
+      "status": "completed",
+      "call_id": "call_A",
+      "name": "exec",
+      "input": "await tools.exec_command({cmd:\"echo ok\", workdir:\"{OTHER}\"})",
+      "internal_chat_message_metadata_passthrough": {
+       "turn_id": "<turn>",
+       "create_time": 0
+      }
+     }
+    }
+   ],
+   "input": {
+    "session_id": "<s>",
+    "turn_id": "<t>",
+    "transcript_path": "{TRANSCRIPT}",
+    "cwd": "{CWD}",
+    "hook_event_name": "PreToolUse",
+    "model": "<model>",
+    "permission_mode": "bypassPermissions",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "echo ok"
+    },
+    "tool_use_id": "exec-11111111-2222-4333-8444-555555555555"
+   },
+   "expect": "deny"
+  },
+  {
+   "name": "deny: command differs from hook input",
+   "lines": [
+    {
+     "timestamp": "T0",
+     "type": "turn_context",
+     "payload": {
+      "cwd": "{CWD}",
+      "model": "<model>"
+     }
+    },
+    {
+     "timestamp": "T1",
+     "type": "response_item",
+     "payload": {
+      "type": "custom_tool_call",
+      "id": "ctc_<id>",
+      "status": "completed",
+      "call_id": "call_A",
+      "name": "exec",
+      "input": "await tools.exec_command({cmd:\"echo ok \"})",
+      "internal_chat_message_metadata_passthrough": {
+       "turn_id": "<turn>",
+       "create_time": 0
+      }
+     }
+    }
+   ],
+   "input": {
+    "session_id": "<s>",
+    "turn_id": "<t>",
+    "transcript_path": "{TRANSCRIPT}",
+    "cwd": "{CWD}",
+    "hook_event_name": "PreToolUse",
+    "model": "<model>",
+    "permission_mode": "bypassPermissions",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "echo ok"
+    },
+    "tool_use_id": "exec-11111111-2222-4333-8444-555555555555"
+   },
+   "expect": "deny"
+  },
+  {
+   "name": "deny: exec cell from an earlier turn",
+   "lines": [
+    {
+     "timestamp": "T0",
+     "type": "turn_context",
+     "payload": {
+      "cwd": "{CWD}",
+      "model": "<model>"
+     }
+    },
+    {
+     "timestamp": "T1",
+     "type": "response_item",
+     "payload": {
+      "type": "custom_tool_call",
+      "id": "ctc_<id>",
+      "status": "completed",
+      "call_id": "call_OLD",
+      "name": "exec",
+      "input": "await tools.exec_command({cmd:\"echo ok\"})",
+      "internal_chat_message_metadata_passthrough": {
+       "turn_id": "<turn>",
+       "create_time": 0
+      }
+     }
+    },
+    {
+     "timestamp": "T0",
+     "type": "turn_context",
+     "payload": {
+      "cwd": "{CWD}",
+      "model": "<model>"
+     }
+    }
+   ],
+   "input": {
+    "session_id": "<s>",
+    "turn_id": "<t>",
+    "transcript_path": "{TRANSCRIPT}",
+    "cwd": "{CWD}",
+    "hook_event_name": "PreToolUse",
+    "model": "<model>",
+    "permission_mode": "bypassPermissions",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "echo ok"
+    },
+    "tool_use_id": "exec-11111111-2222-4333-8444-555555555555"
+   },
+   "expect": "deny"
+  },
+  {
+   "name": "deny: exec cell already has output",
+   "lines": [
+    {
+     "timestamp": "T0",
+     "type": "turn_context",
+     "payload": {
+      "cwd": "{CWD}",
+      "model": "<model>"
+     }
+    },
+    {
+     "timestamp": "T1",
+     "type": "response_item",
+     "payload": {
+      "type": "custom_tool_call",
+      "id": "ctc_<id>",
+      "status": "completed",
+      "call_id": "call_A",
+      "name": "exec",
+      "input": "await tools.exec_command({cmd:\"echo ok\"})",
+      "internal_chat_message_metadata_passthrough": {
+       "turn_id": "<turn>",
+       "create_time": 0
+      }
+     }
+    },
+    {
+     "timestamp": "T2",
+     "type": "response_item",
+     "payload": {
+      "type": "custom_tool_call_output",
+      "id": "ctco_<id>",
+      "call_id": "call_A",
+      "output": [
+       {
+        "type": "input_text",
+        "text": "Script completed"
+       }
+      ]
+     }
+    }
+   ],
+   "input": {
+    "session_id": "<s>",
+    "turn_id": "<t>",
+    "transcript_path": "{TRANSCRIPT}",
+    "cwd": "{CWD}",
+    "hook_event_name": "PreToolUse",
+    "model": "<model>",
+    "permission_mode": "bypassPermissions",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "echo ok"
+    },
+    "tool_use_id": "exec-11111111-2222-4333-8444-555555555555"
+   },
+   "expect": "deny"
+  },
+  {
+   "name": "deny: tool id already completed",
+   "lines": [
+    {
+     "timestamp": "T0",
+     "type": "turn_context",
+     "payload": {
+      "cwd": "{CWD}",
+      "model": "<model>"
+     }
+    },
+    {
+     "timestamp": "T1",
+     "type": "response_item",
+     "payload": {
+      "type": "custom_tool_call",
+      "id": "ctc_<id>",
+      "status": "completed",
+      "call_id": "call_A",
+      "name": "exec",
+      "input": "await tools.exec_command({cmd:\"echo ok\"})",
+      "internal_chat_message_metadata_passthrough": {
+       "turn_id": "<turn>",
+       "create_time": 0
+      }
+     }
+    },
+    {
+     "timestamp": "T2",
+     "type": "event_msg",
+     "payload": {
+      "type": "item_completed",
+      "thread_id": "<thread>",
+      "turn_id": "<turn>",
+      "item": {
+       "type": "CommandExecution",
+       "id": "exec-11111111-2222-4333-8444-555555555555",
+       "command": [
+        "/bin/zsh",
+        "-lc",
+        "echo ok"
+       ],
+       "cwd": "file://{CWD}"
+      }
+     }
+    }
+   ],
+   "input": {
+    "session_id": "<s>",
+    "turn_id": "<t>",
+    "transcript_path": "{TRANSCRIPT}",
+    "cwd": "{CWD}",
+    "hook_event_name": "PreToolUse",
+    "model": "<model>",
+    "permission_mode": "bypassPermissions",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "echo ok"
+    },
+    "tool_use_id": "exec-11111111-2222-4333-8444-555555555555"
+   },
+   "expect": "deny"
+  },
+  {
+   "name": "deny: two running exec cells",
+   "lines": [
+    {
+     "timestamp": "T0",
+     "type": "turn_context",
+     "payload": {
+      "cwd": "{CWD}",
+      "model": "<model>"
+     }
+    },
+    {
+     "timestamp": "T1",
+     "type": "response_item",
+     "payload": {
+      "type": "custom_tool_call",
+      "id": "ctc_<id>",
+      "status": "completed",
+      "call_id": "call_A",
+      "name": "exec",
+      "input": "await tools.exec_command({cmd:\"echo ok\"})",
+      "internal_chat_message_metadata_passthrough": {
+       "turn_id": "<turn>",
+       "create_time": 0
+      }
+     }
+    },
+    {
+     "timestamp": "T1",
+     "type": "response_item",
+     "payload": {
+      "type": "custom_tool_call",
+      "id": "ctc_<id>",
+      "status": "completed",
+      "call_id": "call_B",
+      "name": "exec",
+      "input": "await tools.exec_command({cmd:\"echo ok\"})",
+      "internal_chat_message_metadata_passthrough": {
+       "turn_id": "<turn>",
+       "create_time": 0
+      }
+     }
+    }
+   ],
+   "input": {
+    "session_id": "<s>",
+    "turn_id": "<t>",
+    "transcript_path": "{TRANSCRIPT}",
+    "cwd": "{CWD}",
+    "hook_event_name": "PreToolUse",
+    "model": "<model>",
+    "permission_mode": "bypassPermissions",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "echo ok"
+    },
+    "tool_use_id": "exec-11111111-2222-4333-8444-555555555555"
+   },
+   "expect": "deny"
+  },
+  {
+   "name": "deny: extra tool_input field",
+   "lines": [
+    {
+     "timestamp": "T0",
+     "type": "turn_context",
+     "payload": {
+      "cwd": "{CWD}",
+      "model": "<model>"
+     }
+    },
+    {
+     "timestamp": "T1",
+     "type": "response_item",
+     "payload": {
+      "type": "custom_tool_call",
+      "id": "ctc_<id>",
+      "status": "completed",
+      "call_id": "call_A",
+      "name": "exec",
+      "input": "await tools.exec_command({cmd:\"echo ok\"})",
+      "internal_chat_message_metadata_passthrough": {
+       "turn_id": "<turn>",
+       "create_time": 0
+      }
+     }
+    }
+   ],
+   "input": {
+    "session_id": "<s>",
+    "turn_id": "<t>",
+    "transcript_path": "{TRANSCRIPT}",
+    "cwd": "{CWD}",
+    "hook_event_name": "PreToolUse",
+    "model": "<model>",
+    "permission_mode": "bypassPermissions",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "echo ok",
+     "workdir": "{CWD}"
+    },
+    "tool_use_id": "exec-11111111-2222-4333-8444-555555555555"
+   },
+   "expect": "deny"
+  },
+  {
+   "name": "deny: no turn start in tail",
+   "lines": [
+    {
+     "timestamp": "T1",
+     "type": "response_item",
+     "payload": {
+      "type": "custom_tool_call",
+      "id": "ctc_<id>",
+      "status": "completed",
+      "call_id": "call_A",
+      "name": "exec",
+      "input": "await tools.exec_command({cmd:\"echo ok\"})",
+      "internal_chat_message_metadata_passthrough": {
+       "turn_id": "<turn>",
+       "create_time": 0
+      }
+     }
+    }
+   ],
+   "input": {
+    "session_id": "<s>",
+    "turn_id": "<t>",
+    "transcript_path": "{TRANSCRIPT}",
+    "cwd": "{CWD}",
+    "hook_event_name": "PreToolUse",
+    "model": "<model>",
+    "permission_mode": "bypassPermissions",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "echo ok"
+    },
+    "tool_use_id": "exec-11111111-2222-4333-8444-555555555555"
+   },
+   "expect": "deny"
+  }
+ ]
+}
