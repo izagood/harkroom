@@ -87,6 +87,22 @@ impl<S: Clone + Send + Sync + 'static> Table<S> {
     }
 }
 
+/// 코어 줄과 **같은 경로의 다른 메서드**를 TS 로 넘긴다 — 경로마다 `MethodRouter` 의 「메서드 없음」 자리에 `proxy::forward` 를 단다.
+///
+/// 왜: axum 은 경로가 맞고 메서드가 없으면 405 를 낸다. 앞단 라우터(`routes.rs`)의 `.fallback(forward)` 는 **경로가 없을 때**만
+/// 불리므로, 코어가 `GET /channels/{id}/messages` 만 붙이면 같은 경로의 `POST`(글 쓰기)가 TS 로 가지 못하고 405 가 된다.
+/// 옮긴 줄(S5.2)은 `routes.rs` 가 경로마다 같은 일을 한다. 이미 자기 fallback 이 있는 경로는 건드리지 않는다(axum `default_fallback`).
+/// 코어 라우터를 다 합친 **뒤**, 앞단 라우터와 합치기 **전**에 한 번 부른다(`main.rs`).
+pub fn ts_fallback(router: Router, up: crate::proxy::Upstream) -> Router {
+    router.method_not_allowed_fallback(
+        move |ci: axum::extract::ConnectInfo<std::net::SocketAddr>,
+              req: axum::http::Request<axum::body::Body>| {
+            let up = up.clone();
+            async move { crate::proxy::forward(axum::extract::State(up), ci, req).await }
+        },
+    )
+}
+
 pub struct Routes<S> {
     pub router: Router<S>,
     /// `"METHOD /path"` — 교차 출처로 불리는 HTTP 줄.
