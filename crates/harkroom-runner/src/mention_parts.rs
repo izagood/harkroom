@@ -144,6 +144,9 @@ pub struct LoopCtx {
     pub ended: Arc<AtomicBool>,
 }
 
+/// 정본 `confirmDelivery.withinMs` 기본값 — 주입 뒤 이만큼 증거가 없으면 개행을 한 번 더 친다.
+pub const CONFIRM_DELIVERY_WITHIN_MS: u64 = 15_000;
+
 /// 이 시도의 PTY 옵션(정본 `mentionTurn.ts` 가 `runTurn` 에 넘기는 값):
 /// - `cwd` = 그 기록의 작업 폴더(`rec.workspaceDir`). 비었거나 상대 경로면 `Err` — 띄우지 않는다. pi·omp 의 턴 집(정본
 ///   `plan.cwd ?? rec.workspaceDir`)은 계획(`PtyPlan`)이 아직 `cwd` 를 나르지 않아 후속 PR 몫이다.
@@ -173,6 +176,11 @@ pub fn attempt_pty_options(
         if let Some(ms) = facts.ready_min_ms {
             i.ready_min_ms = ms;
         }
+        // 주입이 먹혔는지 잰다(정본 `confirmDelivery`, 기본 `withinMs` 15초) — 증거는 `MarkerSink::confirm` 이 답한다.
+        i.confirm = Some(crate::pty_turn::ConfirmDelivery {
+            within_ms: CONFIRM_DELIVERY_WITHIN_MS,
+            resend_grace_ms: None,
+        });
         Some(i)
     } else {
         None
@@ -598,6 +606,25 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             ended: Arc::new(AtomicBool::new(false)),
         };
         self.last_ctx = Some(ctx.clone());
+        // 정본 `sessionTranscriptGrewSince(harness, sessionId, turnStartedAtMs, { configDir })` — 이 시도의 계정 폴더·세션·시작 시각.
+        let (probe_harness, probe_session, probe_since, probe_config, probe_home) = (
+            self.harness,
+            ctx.session_id.clone(),
+            ctx.turn_started_at_ms,
+            ctx.claude_config_dir.clone(),
+            self.home.clone(),
+        );
+        let confirm_probe = move || {
+            crate::harness_errors::session_transcript_grew_since(
+                probe_harness,
+                probe_session.as_deref(),
+                probe_since,
+                crate::harness_errors::TranscriptDirs {
+                    config_dir: probe_config.as_deref(),
+                    home: Some(probe_home.as_path()),
+                },
+            )
+        };
         let out = run_beside(&watch, &args.notice, &ctx, self.watch_loop.as_ref(), || {
             // 띄운 PTY 손잡이를 슬롯에 적는다 — 물러날 때 유예가 지나면 그 프로세스 그룹에 SIGKILL 한다(P2). 시도가 끝나면 비운다.
             let mut pty_sink = SlotPtySink {
@@ -619,6 +646,7 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
                 inner: &mut watch_sink,
                 markers: &markers,
                 key: &marker_key,
+                confirm: Some(&confirm_probe),
             };
             match args.relay {
                 Some(r) => {
