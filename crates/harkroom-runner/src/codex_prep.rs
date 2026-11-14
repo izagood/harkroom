@@ -38,7 +38,7 @@ impl CodexPrep {
                 "[mentionTurn] codex 계정 링크 갱신 실패 — 직전 계정으로 돈다: {e}"
             ));
         }
-        sweep_codex_rules(&self.home, deps)
+        sweep_codex_rules(&self.home)
             .map_err(|e| format!("codex 규칙 파일을 지우지 못했다: {}", e.kind()))
     }
 }

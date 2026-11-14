@@ -232,6 +232,14 @@ fn main() {
                 env: env.clone(),
             }
         };
+        // 승인 규칙 파일은 그것을 쓴 턴 동안만 둔다 — 기동 때 남은 것을 지운다(못 지우면 뜨지 않는다).
+        if let Err(e) = harkroom_runner::codex_rules::sweep_codex_rules(&codex.home) {
+            eprintln!(
+                "codex 규칙 파일을 지우지 못했다 — 뜨지 않는다: {}",
+                e.kind()
+            );
+            std::process::exit(1);
+        }
         maker.set_codex(codex);
     }
     match harkroom_runner::account_lane::AccountLaneHub::start(

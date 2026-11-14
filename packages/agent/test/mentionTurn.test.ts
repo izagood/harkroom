@@ -6183,12 +6183,20 @@ describe('턴 열쇠(C안 P2) — 멘션 턴', () => {
     };
     const auto = await run('auto');
     expect(auto.prepared).toHaveLength(1);
-    expect(auto.swept).toBe(0);
+    expect(auto.swept).toBe(1); // 턴이 끝나면 그 턴이 쓴 규칙 파일을 지운다
     expect(auto.plans[0]!.env.HARKROOM_CODEX_HOOK).toBe('spec');
     const ro = await run('readonly');
     expect(ro.prepared).toHaveLength(0);
     expect(ro.swept).toBe(1);
     expect(ro.plans[0]!.env.HARKROOM_CODEX_HOOK).toBeUndefined();
+  });
+
+  it('규칙 파일을 쓰지 않는 codex 턴은 남은 규칙 파일을 못 지우면 하네스를 띄우지 않는다', async () => {
+    const fake = new KeyedHarkroom(defOf({ harness: 'codex', mentionPermission: 'readonly' }));
+    fake.seedFrom('human-1', '@forge 안녕');
+    const { deps, plans } = await makeDeps(fake, { sweepCodexRules: async () => { throw new Error('EACCES'); } });
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }).catch(() => undefined);
+    expect(plans).toHaveLength(0);
   });
 
   it('codex 승인 명령 규칙을 갖추지 못하면(hook 신뢰 확인 실패) 하네스를 띄우지 않는다', async () => {

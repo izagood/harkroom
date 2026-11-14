@@ -1687,10 +1687,11 @@ export async function runMentionTurn(
   const turnKeyNeedles = turnKeyValues(turnKeys).flatMap((v) => scrubNeedles(Buffer.from(v, 'utf8')));
   // 승인 명령을 하네스 명령 규칙으로 연다(codex) — 턴 열쇠가 있는 auto 턴에만(셸 거르기·tty 끄기가 전제다). hook 신뢰를 확인하지
   // 못하면 던진다 — 규칙 파일만 실린 채 hook 이 안 도는 턴을 띄우지 않는다.
-  const commandRuleEnv = turnKeys && def.mentionPermission === 'auto' && commandRulesOf(def.harness) === 'codex-execpolicy' && deps.prepareCodexRules
+  // 규칙 파일은 TUI 로 뜨는 codex 에만 쓴다 — exec 계열은 hook 신뢰를 읽지 않는 길이 있어 쓰지 않고, 띄우기 직전에 지운다(아래).
+  const commandRuleEnv = turnKeys && def.mentionPermission === 'auto' && commandRulesOf(def.harness) === 'codex-execpolicy' && usesTuiForMention(def.harness) && deps.prepareCodexRules
     ? await deps.prepareCodexRules({ workspaceDir: rec.workspaceDir, rules: toolAllows, reach: ruleSets.reach === null ? null : safeToolAllows(ruleSets.reach) })
     : null;
-  // 규칙 파일을 쓰지 않는 codex 턴(읽기 전용·열쇠 없음)도 잰 판 밖이면 남은 규칙 파일을 지우고 뜬다(security F1).
+  // 규칙 파일을 쓰지 않는 codex 턴(읽기 전용·열쇠 없음·exec 계열)은 남은 규칙 파일을 지우고 뜬다 — 못 지우면 던져 띄우지 않는다.
   if (!commandRuleEnv && commandRulesOf(def.harness) === 'codex-execpolicy') await deps.sweepCodexRules?.();
   const turnMcpConfig = turnKeys && turnKeyDeliveryOf(def.harness) === 'mcp-config-env'
     ? await writeTurnMcpConfig(deps.stateDir, deps.mcpConfigPath, turnId, turnKeys.bridge, { alwaysLoad: Boolean(providerEnv) && laneScrubsSubprocessEnv(def.harness) })
@@ -2865,6 +2866,12 @@ export async function runMentionTurn(
     if (turnMcpConfig !== null) await rm(turnMcpConfig, { force: true }).catch(() => undefined);
     if (ownedTurnConfig !== null) await rm(ownedTurnConfig, { force: true }).catch(() => undefined);
     await rm(systemPromptFile, { force: true }).catch(() => undefined);
+    // 이 턴이 쓴 승인 규칙 파일은 턴이 끝나면 지운다(그 턴 동안만). 실패는 로그만 — 다음 codex 턴이 띄우기 직전에 다시 지운다.
+    if (commandRuleEnv) {
+      await deps.sweepCodexRules?.().catch((err: unknown) => {
+        console.warn(`[mentionTurn] ${key}: 턴 뒤 규칙 파일을 지우지 못했다 — ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }
   }
   // 꼬리는 실패 문장·로그로 흘러간다 — 열쇠 값을 여기서 한 번에 지운다(K3).
   if (turnKeyNeedles.length) result = { ...result, tail: scrubText(result.tail, turnKeyNeedles).text };
