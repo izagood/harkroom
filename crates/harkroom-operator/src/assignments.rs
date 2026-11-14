@@ -827,7 +827,8 @@ mod tests {
         }
     }
 
-    /// L3c-3e: lane·풀 에이전트 + rust → rust. pi·omp → node(이유를 로그에). 파일 없음 → node. rust 안 청함 → node.
+    /// L3c-3e: lane·풀 claude 에이전트 + rust → rust. 허용 목록 밖(codex·opencode·kilo·pi·omp·모르는 이름) → node(이유를 로그에).
+    /// 파일 없음 → node. rust 안 청함 → node.
     #[test]
     fn runner_pick_opens_pool_and_lane_and_keeps_pi_omp_on_node() {
         use crate::local_agents::RunnerKind;
@@ -888,6 +889,38 @@ mod tests {
             ),
             (
                 rust_plain.clone(),
+                "codex",
+                AccountUse::None,
+                true,
+                RunnerKind::Node,
+                Some(RunnerFallback::HarnessUnsupported),
+            ),
+            (
+                rust_plain.clone(),
+                "opencode",
+                AccountUse::None,
+                true,
+                RunnerKind::Node,
+                Some(RunnerFallback::HarnessUnsupported),
+            ),
+            (
+                rust_plain.clone(),
+                "kilo",
+                AccountUse::None,
+                true,
+                RunnerKind::Node,
+                Some(RunnerFallback::HarnessUnsupported),
+            ),
+            (
+                rust_plain.clone(),
+                "new-harness",
+                AccountUse::None,
+                true,
+                RunnerKind::Node,
+                Some(RunnerFallback::HarnessUnsupported),
+            ),
+            (
+                rust_plain.clone(),
                 "claude-code",
                 AccountUse::None,
                 false,
@@ -941,12 +974,10 @@ mod tests {
             if let Some(u) = set {
                 *f.account_use.lock().unwrap() = u;
             }
-            r.on_assign(
-                "https://srv",
-                def(CredentialScope::Community, None),
-                Some(rust_only.clone()),
-            )
-            .unwrap();
+            let mut d = def(CredentialScope::Community, None);
+            d.harness = "claude-code".into();
+            r.on_assign("https://srv", d, Some(rust_only.clone()))
+                .unwrap();
             let picks = f.picks.lock().unwrap();
             assert_eq!(picks[0].kind, RunnerKind::Node);
             assert_eq!(

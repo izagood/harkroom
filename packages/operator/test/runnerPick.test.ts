@@ -1,5 +1,5 @@
 // 에이전트마다 러너 구현 고르기(B4-5c → L3c-3e). 계정 풀·lane 에이전트도 rust 로 돈다(Rust 러너가 풀·lane 폴더를 안다).
-// pi·omp 하네스는 Rust 러너가 홈을 아직 짓지 않아 node 로 둔다. 「못 읽음은 node」는 그대로다.
+// 하네스는 허용 목록(claude-code)만 rust — Rust 러너가 다른 하네스 홈을 아직 배선하지 않았다. 「못 읽음은 node」는 그대로다.
 import { describe, it, expect } from 'vitest';
 import { createAssignmentReconciler, type AssignmentDeps } from '../src/assignments.js';
 import { pickRunner, type AccountUse, type RunnerPick } from '../src/runnerPick.js';
@@ -28,14 +28,12 @@ describe('pickRunner', () => {
   it('rust + lane → rust(L3c-3e)', () => {
     expect(pickRunner({ runner: 'rust', providerLane: lane }, true, 'none', 'claude-code')).toEqual({ kind: 'rust' });
   });
-  it('rust + 하네스 pi·omp → node(rust_harness_unsupported) — 풀·lane·파일과 상관없이', () => {
-    for (const h of ['pi', 'omp']) {
+  it('rust + 허용 목록(claude-code) 밖 하네스 → node(rust_harness_unsupported) — 풀·lane·파일과 상관없이, 모르는 이름도', () => {
+    for (const h of ['pi', 'omp', 'codex', 'opencode', 'kilo', 'gemini', 'claude', '', 'new-harness']) {
       expect(pickRunner({ runner: 'rust' }, true, 'none', h)).toEqual({ kind: 'node', fallback: 'rust_harness_unsupported' });
       expect(pickRunner({ runner: 'rust', providerLane: lane }, true, 'pool', h)).toEqual({ kind: 'node', fallback: 'rust_harness_unsupported' });
     }
-    for (const h of ['claude-code', 'codex', 'opencode', 'kilo']) {
-      expect(pickRunner({ runner: 'rust' }, true, 'none', h)).toEqual({ kind: 'rust' });
-    }
+    expect(pickRunner({ runner: 'rust' }, true, 'none', 'claude-code')).toEqual({ kind: 'rust' });
   });
   it('rust + 풀 해석 못 읽음 → node(rust_account_pool_unreadable) 그대로', () => {
     expect(pickRunner({ runner: 'rust', claudePool: 'p' }, true, 'unreadable', 'claude-code')).toEqual({ kind: 'node', fallback: 'rust_account_pool_unreadable' });
@@ -78,8 +76,8 @@ describe('배정이 고른 러너를 spawn 에 넘긴다', () => {
     await h.r.onAssign('https://example.com', def, { runner: 'rust', claudePool: 'p' });
     expect(h.picks).toEqual([{ kind: 'rust' }]);
   });
-  it('pi·omp 에이전트 + rust → node 로 돌고 이유를 로그에 남긴다', async () => {
-    for (const harness of ['pi', 'omp']) {
+  it('허용 목록 밖 하네스 에이전트 + rust → node 로 돌고 이유를 로그에 남긴다(pi·omp·codex·opencode·kilo·모르는 이름)', async () => {
+    for (const harness of ['pi', 'omp', 'codex', 'opencode', 'kilo', 'new-harness']) {
       const h = run(true);
       await h.r.onAssign('https://example.com', { ...def, harness }, { runner: 'rust' });
       expect(h.picks).toEqual([{ kind: 'node', fallback: 'rust_harness_unsupported' }]);

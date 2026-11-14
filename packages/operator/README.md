@@ -161,7 +161,7 @@ unix 소켓으로 말하는 것이고, 그 어느 것도 네이티브 애드온�
 
 | 이유(`runnerFallback`) | 언제 | 왜 |
 |---|---|---|
-| `rust_harness_unsupported` | 그 에이전트의 하네스가 pi·omp 다 | Rust 러너는 pi·omp 홈을 아직 짓지 않는다(배선 뒤 푼다) |
+| `rust_harness_unsupported` | 그 에이전트의 하네스가 허용 목록(지금은 `claude-code` 하나) 밖이다 — codex·opencode·kilo·pi·omp·모르는 이름 | Rust 러너는 그 하네스들의 홈을 아직 배선하지 않았다. 배선하는 조각에서 하나씩 목록에 더한다 |
 | `rust_account_pool_unreadable` | 러너의 계정 풀 해석을 못 한다 — `pools.json` 이 깨졌거나 계정 뿌리를 읽지 못한다(두 오퍼레이터 모두 `harkroom-accounts`·`@harkroom/shared/claudeAccountLane` 의 같은 해석) | 모르면 Rust 러너로 보내지 않는다(닫힌 쪽) |
 | `rust_runner_missing` | 오퍼레이터 실행 파일 옆에 `harkroom-runner-rs` 가 없다(실행 가능한 일반 파일만 「있다」) | 앱이 싣지 않은 판이거나 Windows |
 
