@@ -12,16 +12,32 @@
 //! - **이 뿌리의 커뮤니티만 받는다.** Rust 오퍼레이터는 커뮤니티마다 프로세스다 — 남의 커뮤니티 코드는 claim 하기 **전에** 거절한다
 //!   (코드를 쓰지 않는다).
 //! - 토큰 파일은 임시 파일(0600)에 쓰고 rename 한다 — 쓰다 끊겨도 반쪽 토큰이 남지 않는다.
-use crate::forward::Transport;
+use crate::forward::{Transport, UreqTransport};
 use crate::local_agents::LocalAgents;
 use harkroom_proto::p3::{DaemonError, DaemonErrorCode};
 use serde_json::{Value, json};
+use std::time::Duration;
 
 fn bad(message: impl Into<String>) -> DaemonError {
     DaemonError {
         code: DaemonErrorCode::BadPayload,
         message: message.into(),
     }
+}
+
+/// claim 시한. 사람이 화면에서 기다리는 요청이다.
+pub const CLAIM_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// claim 전용 HTTP — 리다이렉트를 **따라가지 않는다**(`max_redirects(0)`). 요청 본문에 등록 코드가, 답에 토큰이 있다 —
+/// 307·308 을 따라가면 코드가 다른 곳으로 간다. 3xx 는 그대로 받아 「등록 실패(상태)」로 거절한다(`turn_api.rs` 와 같은 선).
+pub fn claim_transport() -> UreqTransport {
+    UreqTransport::from_agent(ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .max_redirects(0)
+            .timeout_global(Some(CLAIM_TIMEOUT))
+            .build(),
+    ))
 }
 
 /// 등록 요청. `name` 은 앞뒤 공백을 걷은 뒤 비어 있지 않을 때만 있다.
@@ -322,6 +338,62 @@ mod tests {
         let no_tok = Fake::new(200, json!({"operator": {"id": "x", "name": "n"}}));
         let e = register(&l, &no_tok, &input(URL), &|| "h".into()).unwrap_err();
         assert_eq!(e.message, "등록 실패(200): 서버가 토큰을 주지 않았다");
+    }
+
+    /// 리다이렉트(3xx)는 따라가지 않고 거절한다 — 토큰도 operatorId 도 쓰지 않는다.
+    #[test]
+    fn redirect_is_refused_and_writes_nothing() {
+        for status in [301, 302, 307, 308] {
+            let (d, l) = root();
+            let fake = Fake::new(
+                status,
+                json!({"operator": {"id": "x", "name": "n"}, "token": "t"}),
+            );
+            let e = register(&l, &fake, &input(URL), &|| "h".into()).unwrap_err();
+            assert_eq!(e.code, DaemonErrorCode::BadPayload);
+            assert!(
+                e.message.starts_with(&format!("등록 실패({status})")),
+                "{}",
+                e.message
+            );
+            assert!(l.operator_token().is_none());
+            assert!(!d.path().join("operator/operator.json").exists());
+            assert_eq!(fake.seen.lock().unwrap().len(), 1, "한 번만 보낸다");
+        }
+    }
+
+    /// 실제 claim transport 가 3xx 를 따라가지 않는다 — 로컬 리스너가 307 을 주고, 두 번째 접속이 오지 않는다.
+    #[test]
+    fn claim_transport_does_not_follow_redirects() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let srv = std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = s.read(&mut buf);
+            let _ = s.write_all(
+                format!("HTTP/1.1 307 Temporary Redirect\r\nLocation: http://127.0.0.1:{port}/elsewhere\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .as_bytes(),
+            );
+            drop(s);
+            listener.set_nonblocking(true).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            listener.accept().is_ok()
+        });
+        let r = claim_transport()
+            .send(
+                "POST",
+                &format!("http://127.0.0.1:{port}/operators/claim"),
+                &[("content-type".into(), "application/json".into())],
+                Some(b"{\"code\":\"c\"}".to_vec()),
+            )
+            .unwrap();
+        assert_eq!(r.status, 307);
+        assert!(
+            !srv.join().unwrap(),
+            "리다이렉트를 따라 다시 접속하지 않는다"
+        );
     }
 
     #[test]

@@ -829,7 +829,8 @@ impl ServerState {
                 let transport: Arc<dyn crate::forward::Transport> =
                     match self.register_transport.get() {
                         Some(t) => Arc::clone(t),
-                        None => Arc::new(crate::forward::UreqTransport::default()),
+                        // 리다이렉트를 따라가지 않는 claim 전용 판(security #2139).
+                        None => Arc::new(crate::local_register::claim_transport()),
                     };
                 let out = crate::local_register::register(
                     local,
