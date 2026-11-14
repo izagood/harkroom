@@ -455,6 +455,7 @@ name = "harkroom-server"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "futures-util",
  "getrandom 0.4.3",
  "harkroom-bus",
  "hex",
@@ -466,6 +467,7 @@ dependencies = [
  "sha2 0.10.9",
  "sqlx",
  "tokio",
+ "tokio-tungstenite",
  "ts-rs",
 ]
 
