@@ -85,11 +85,17 @@ struct Parts {
     pty: Option<Arc<RelayPty>>,
     /// 띄울 때 받은 감시용 가림 목록에 마운트한 비밀·PAT 가 있었나.
     spawn_notice: Vec<bool>,
+    /// lane 판정 재료(없으면 lane 턴은 `lane_setup` 으로 접힌다).
+    lane_pre: Option<LanePre>,
 }
 
 const SECRET: &str = "sk-live-rrrrrrrrrrrrrrrrrrrrrrrrrr";
 
 impl AttemptParts for Parts {
+    fn lane_notice(&mut self, _t: &MentionTarget, body: &str) {
+        push(&self.log, format!("lane_notice {body}"));
+    }
+
     fn bind_live(&mut self, live: Option<Arc<LiveTurn>>) {
         push(
             &self.log,
@@ -138,6 +144,7 @@ impl AttemptParts for Parts {
             lease_dir: Some(self.lease.clone()),
             session_id: None,
             homes: OwnedHomes::default(),
+            lane_pre: self.lane_pre.clone(),
         })
     }
 
@@ -205,6 +212,13 @@ impl AttemptParts for Parts {
                 message: "blocked".into(),
                 ..AttemptError::default()
             }),
+            Attempted::SetupFailed { code, .. } => {
+                push(&self.log, format!("setup_failed {code}"));
+                Err(AttemptError {
+                    message: "setup".into(),
+                    ..AttemptError::default()
+                })
+            }
             _ => Err(AttemptError {
                 message: "fail".into(),
                 ..AttemptError::default()
@@ -223,6 +237,9 @@ struct World {
     mcp: PathBuf,
     lease: PathBuf,
     env: BTreeMap<String, String>,
+    /// lane 판정의 `~` 와 그 아래 작업 폴더.
+    home: PathBuf,
+    ws: PathBuf,
 }
 
 impl Drop for World {
@@ -242,7 +259,12 @@ fn world(tag: &str) -> World {
             .to_string(),
     )
     .unwrap();
+    let home = root.join("home");
+    let ws = home.join("ws");
+    fs::create_dir_all(&ws).unwrap();
     World {
+        home,
+        ws,
         lease: root.join("lease"),
         root,
         mcp,
@@ -266,6 +288,12 @@ fn parts(w: &World, log: &Log, secrets: bool, exits: Vec<i32>) -> Parts {
         probe_on_unbind: None,
         pty: None,
         spawn_notice: Vec::new(),
+        lane_pre: Some(LanePre {
+            model: None,
+            workspace_dir: w.ws.clone(),
+            home: w.home.clone(),
+            turn_pi_home: None,
+        }),
     }
 }
 
@@ -629,6 +657,71 @@ fn relay_attempt_lives_in_attempt_scope() {
 // ---- lane env 는 턴 MCP 계획 앞에서 ----
 
 struct FakeLane(Log);
+/// 판 경고를 한 번 남기는 lane(정본 `takeNotice` — 꺼내면 지운다).
+struct NoticeLane(FakeLane, std::sync::Mutex<Option<String>>);
+impl crate::turn_lane_first::LaneSource for NoticeLane {
+    fn env_for(
+        &self,
+        cause: &str,
+        h: AgentHarness,
+    ) -> Result<LaneEnv, crate::provider_lane::LaneFileError> {
+        self.0.env_for(cause, h)
+    }
+    fn release(&self, env: &LaneEnv) -> std::io::Result<()> {
+        self.0.release(env)
+    }
+    fn take_notice(&self, cause: &str) -> Option<String> {
+        push(&self.0.0, format!("take_notice {cause}"));
+        self.1.lock().unwrap().take()
+    }
+}
+
+/// 키를 받은 바로 뒤 판 경고를 꺼내 진행 줄로 올리고(계획·띄우기 전), 시도가 다시 돌아도 같은 경고는 다시 올리지 않는다.
+#[test]
+fn lane_notice_is_posted_after_keys_once() {
+    let w = world("lanenotice");
+    let log: Log = Log::default();
+    let link = Link(Arc::clone(&log));
+    let client = HarkroomRestClient::new(&link);
+    let notice = Notice {
+        log: Arc::clone(&log),
+        lease: w.lease.clone(),
+    };
+    let lane = NoticeLane(
+        FakeLane(Arc::clone(&log)),
+        std::sync::Mutex::new(Some("판 밖".into())),
+    );
+    let mut a = attempt(
+        &w,
+        &client,
+        &notice,
+        true,
+        parts(&w, &log, false, vec![0, 0]),
+    )
+    .with_lane(&lane);
+    let mut d = false;
+    assert!(a.run(&target(), None, true, &mut d).is_ok());
+    let l = log.lock().unwrap().clone();
+    let at = |s: &str| {
+        l.iter()
+            .position(|x| x == s)
+            .unwrap_or_else(|| panic!("{s}: {l:?}"))
+    };
+    assert!(at("lane_env m1") < at("take_notice m1"));
+    assert!(at("take_notice m1") < at("lane_notice 판 밖"));
+    assert!(at("lane_notice 판 밖") < at("keys t-1"));
+    drop(l);
+    log.lock().unwrap().clear();
+    assert!(a.run(&target(), None, true, &mut d).is_ok());
+    assert!(
+        !log.lock()
+            .unwrap()
+            .iter()
+            .any(|x| x.starts_with("lane_notice")),
+        "두 번째는 꺼낼 경고가 없다"
+    );
+}
+
 impl crate::turn_lane_first::LaneSource for FakeLane {
     fn env_for(
         &self,
@@ -678,6 +771,115 @@ fn lane_env_comes_before_plan_and_is_released_after() {
         ]
     );
     assert_eq!(a.parts.borrow().lane_envs, [Some("on".to_string())]);
+}
+
+/// lane 판정(키 받기 전)이 막으면 env 를 받지 않고 계획·띄우기도 없이 그 코드로 접는다 — 작업 폴더 보호 이름, 재료 빠짐.
+#[test]
+fn lane_preflight_refuses_before_keys() {
+    for (tag, protect, pre) in [("laneprot", true, true), ("lanenopre", false, false)] {
+        let w = world(tag);
+        if protect {
+            fs::write(w.ws.join("CLAUDE.md"), "x").unwrap();
+        }
+        let log: Log = Log::default();
+        let link = Link(Arc::clone(&log));
+        let client = HarkroomRestClient::new(&link);
+        let notice = Notice {
+            log: Arc::clone(&log),
+            lease: w.lease.clone(),
+        };
+        let lane = FakeLane(Arc::clone(&log));
+        let mut p = parts(&w, &log, false, vec![0]);
+        if !pre {
+            p.lane_pre = None;
+        }
+        let mut a = attempt(&w, &client, &notice, true, p).with_lane(&lane);
+        let mut d = false;
+        assert!(a.run(&target(), None, true, &mut d).is_err());
+        let want = if protect {
+            "workspace_protected"
+        } else {
+            "lane_setup"
+        };
+        assert_eq!(
+            *log.lock().unwrap(),
+            [
+                "bind".to_string(),
+                "prepare t-1 -".into(),
+                "outcome".into(),
+                format!("setup_failed {want}"),
+                "unbind".into(),
+            ],
+            "{tag}"
+        );
+        assert!(a.parts.borrow().lane_envs.is_empty());
+    }
+}
+
+/// pi·omp lane 턴은 스레드 홈이 없으면 키를 받기 전에 `lane_setup` 으로 닫힌다(Rust 러너는 아직 그 홈을 짓지 않는다).
+/// pi 는 스레드 홈이 채워지면 이 줄을 지나 다음 판정으로 간다.
+#[test]
+fn pi_omp_lane_without_thread_home_refuses_before_keys() {
+    for (tag, h, pi_home) in [
+        ("lanepi", AgentHarness::Pi, false),
+        ("laneomp", AgentHarness::Omp, false),
+        ("lanepihome", AgentHarness::Pi, true),
+    ] {
+        let w = world(tag);
+        let log: Log = Log::default();
+        let link = Link(Arc::clone(&log));
+        let client = HarkroomRestClient::new(&link);
+        let notice = Notice {
+            log: Arc::clone(&log),
+            lease: w.lease.clone(),
+        };
+        let lane = FakeLane(Arc::clone(&log));
+        let mut p = parts(&w, &log, false, vec![0]);
+        if pi_home {
+            let home = w.root.join("pi-thread");
+            fs::create_dir_all(&home).unwrap();
+            if let Some(pre) = p.lane_pre.as_mut() {
+                pre.turn_pi_home = Some(home);
+                // 모델이 비면 bad_model 로 접힌다 — 홈 줄을 지났다는 표지로 쓴다.
+                pre.model = None;
+            }
+        }
+        let mut a = attempt(&w, &client, &notice, true, p).with_lane(&lane);
+        a.harness = h;
+        let mut d = false;
+        assert!(a.run(&target(), None, true, &mut d).is_err());
+        let want = if pi_home { "bad_model" } else { "lane_setup" };
+        assert_eq!(
+            *log.lock().unwrap(),
+            [
+                "bind".to_string(),
+                "prepare t-1 -".into(),
+                "outcome".into(),
+                format!("setup_failed {want}"),
+                "unbind".into(),
+            ],
+            "{tag}"
+        );
+        assert!(a.parts.borrow().lane_envs.is_empty(), "{tag}");
+    }
+}
+
+/// lane 이 아닌 턴은 판정 재료가 없어도 그대로 돈다.
+#[test]
+fn non_lane_attempt_ignores_missing_lane_pre() {
+    let w = world("nolanepre");
+    let log: Log = Log::default();
+    let link = Link(Arc::clone(&log));
+    let client = HarkroomRestClient::new(&link);
+    let notice = Notice {
+        log: Arc::clone(&log),
+        lease: w.lease.clone(),
+    };
+    let mut p = parts(&w, &log, false, vec![0]);
+    p.lane_pre = None;
+    let mut a = attempt(&w, &client, &notice, true, p);
+    let mut d = false;
+    assert!(a.run(&target(), None, true, &mut d).is_ok());
 }
 
 /// 관문이 막은 시도는 lane env 를 받지 않고 띄우지도 않는다.

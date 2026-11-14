@@ -182,6 +182,26 @@ fn main() {
     } else {
         lane_source
     };
+    // API 키 연결(정본 `main.ts` 645 `createProviderLane`, L3c-3d2) — lane 러너만. 턴마다 오퍼레이터에 그 턴 키를
+    // 마운트하고(REST `PROVIDER_LANE_MOUNT_PATH`) 하네스 env 에만 넣는다. codex lane 홈은 lane 전용 자리(정본
+    // `providerLaneCodexDir`) — 거기 로그인(auth.json)이 있으면 띄우지 않는다.
+    if provider_lane {
+        let (mount_clients, result_link) = (Arc::clone(&clients), Arc::clone(&link));
+        let state_dir = maker.config().state_dir.clone();
+        let mut deps =
+            harkroom_runner::provider_lane::ProviderLaneDeps::new(Box::new(move |cause: &str| {
+                mount_clients.rest().mount_provider_lane(cause)
+            }));
+        deps.turn_secrets_dir = turn_secrets_dir(&env);
+        deps.report = Some(Box::new(move |ok, code| {
+            result_link.notify_provider_lane_result(ok, code)
+        }));
+        deps.codex_home = Some(state_dir.join("codex-provider-lane"));
+        deps.claude_dir =
+            Some(harkroom_runner::account_lane::provider_lane_account(&state_dir).config_dir);
+        deps.state_dir = Some(state_dir);
+        maker.set_provider_lane(harkroom_runner::provider_lane::ProviderLane::new(deps));
+    }
     match harkroom_runner::account_lane::AccountLaneHub::start(
         source,
         maker.store(),

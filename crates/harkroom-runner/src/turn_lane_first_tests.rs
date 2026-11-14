@@ -94,3 +94,24 @@ fn panic_still_releases() {
     assert!(r.is_err());
     assert_eq!(*log.0.borrow(), ["env_for m1", "lease_ended m1", "release"]);
 }
+
+/// 빈 env 로 「성공」하면 받지 않는다 — 띄우는 쪽이 빈 env 를 lane 아님으로 읽어 기본 로그인 env 로 뜨는 길을 닫는다(⑦).
+#[test]
+fn empty_env_is_refused_as_lane_unset() {
+    struct Empty<'l>(&'l Log);
+    impl LaneSource for Empty<'_> {
+        fn env_for(&self, cause: &str, _h: AgentHarness) -> Result<LaneEnv, LaneFileError> {
+            self.0.0.borrow_mut().push(format!("env_for {cause}"));
+            Ok(LaneEnv::new())
+        }
+        fn release(&self, _env: &LaneEnv) -> io::Result<()> {
+            self.0.0.borrow_mut().push("release".into());
+            Ok(())
+        }
+    }
+    let log = Log::default();
+    let lane = Empty(&log);
+    let r = mount_lane_first(&lane, &log, "m1", AgentHarness::ClaudeCode, &mut || Ok(()));
+    assert_eq!(r.err(), Some(LaneFirstError::Failed("lane_unset".into())));
+    assert_eq!(*log.0.borrow(), ["env_for m1", "lease_ended m1"]);
+}

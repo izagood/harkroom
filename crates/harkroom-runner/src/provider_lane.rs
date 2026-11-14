@@ -543,6 +543,9 @@ pub struct ProviderLaneDeps {
     pub harness_version: Option<HarnessVersionFn>,
     /// codex lane 전용 `CODEX_HOME`. 여기에 `auth.json` 이 있으면 띄우지 않는다(`harness_login_present`).
     pub codex_home: Option<PathBuf>,
+    /// lane 러너의 claude 폴더(`<상태>/claude-provider-lane`). 있으면 키를 받기 전에 링크가 아닌 내 폴더인지 본다 —
+    /// 아니면 띄우지 않는다(`harness_login_present` — 링크 너머의 로그인이 닿을 수 있다, #2129 security 조건).
+    pub claude_dir: Option<PathBuf>,
 }
 
 impl ProviderLaneDeps {
@@ -554,6 +557,7 @@ impl ProviderLaneDeps {
             state_dir: None,
             harness_version: None,
             codex_home: None,
+            claude_dir: None,
         }
     }
 }
@@ -686,6 +690,16 @@ impl ProviderLane {
                         .insert(cause.to_owned(), notice);
                 }
             }
+        }
+        // lane claude 폴더 검사도 키를 꺼내기 전에(띄우지 않을 턴이 임대를 받지 않게).
+        if let Some(dir) = non_empty(&self.deps.claude_dir)
+            && let Err(e) = crate::account_lane::ensure_lane_dir(dir)
+        {
+            eprintln!(
+                "[providerLane] lane 폴더를 쓸 수 없다({}) — 띄우지 않는다",
+                e.kind()
+            );
+            return fail("harness_login_present");
         }
         // codex lane 홈 검사는 키를 꺼내기 **전에** 한다 — 띄우지 않을 턴이 임대를 받지 않게(security n1).
         let uses_codex_key = keys_include(harness, CODEX_LANE_KEY_ENV);

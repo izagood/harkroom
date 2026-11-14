@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::account_assign::ClaudeAccount;
-use crate::adapter::AgentHarness;
+use crate::adapter::{AgentHarness, uses_omp_home, uses_pi_home};
 use crate::link::random_uuid;
 use crate::mention_run::{TurnAttempt, TurnOk};
 use crate::mention_target::MentionTarget;
@@ -29,6 +29,7 @@ use crate::turn_attempt::{AttemptInput, Attempted, LeaseNotice, TurnSecrets};
 use crate::turn_attempt_live::LiveTurn;
 use crate::turn_attempt_relay::RelayAttempt;
 use crate::turn_env::TurnKeys as EnvTurnKeys;
+use crate::turn_env_plan::{LanePreflight, lane_preflight};
 use crate::turn_lane_first::{LaneFirstError, LaneSource, OnceLease, mount_lane_first};
 use crate::turn_launch::LaunchStep;
 use crate::turn_launch::TranscriptHomes;
@@ -75,6 +76,20 @@ pub struct AttemptPrep {
     pub lease_dir: Option<PathBuf>,
     pub session_id: Option<String>,
     pub homes: OwnedHomes,
+    /// lane 턴의 키 받기 전 판정 재료([`lane_preflight`]). lane 턴인데 `None` 이면 배선 빠짐 — 받지 않고 `lane_setup` 으로 접는다.
+    pub lane_pre: Option<LanePre>,
+}
+
+/// [`lane_preflight`] 의 소유본 재료 — `prepare` 가 이 시도의 세션·명령 칸에서 낸다.
+#[derive(Clone, Debug, Default)]
+pub struct LanePre {
+    /// 이 턴의 모델(명령 칸 `model`).
+    pub model: Option<String>,
+    pub workspace_dir: PathBuf,
+    /// 부모 사슬 검사의 끝(`~`).
+    pub home: PathBuf,
+    /// pi lane 턴의 스레드 홈. pi 가 아니거나 아직 모르면 `None`.
+    pub turn_pi_home: Option<PathBuf>,
 }
 
 /// [`AttemptParts::spawn`] 이 이 시도에서 받는 것.
@@ -97,6 +112,9 @@ pub struct SpawnArgs<'x> {
 pub trait AttemptParts {
     /// 이 시도의 [`LiveTurn`] 을 펜스 잃음·[중단] 듣기에 건다. `None` 이면 놓는다(앞 시도의 것이 다음 시도를 막지 않게).
     fn bind_live(&mut self, live: Option<Arc<LiveTurn>>);
+    /// lane 판 경고 한 줄을 스레드 진행 줄로 올린다(정본 `deps.harkroom.progress(channelId, notice, anchor)`). 실패해도 턴은
+    /// 간다 — 구현은 로그만 남긴다.
+    fn lane_notice(&mut self, _target: &MentionTarget, _body: &str) {}
     #[allow(clippy::result_large_err)]
     fn prepare(
         &mut self,
@@ -224,6 +242,43 @@ impl<P: AttemptParts> Drop for LiveBinding<'_, P> {
 }
 
 impl<L: RunnerLink, N: LeaseNotice, P: AttemptParts> PtyTurnAttempt<'_, L, N, P> {
+    /// lane 턴의 키 받기 전 판정. 재료가 없으면 닫히는 쪽(`lane_setup`)이다.
+    fn lane_check(&self, prep: &AttemptPrep) -> Result<(), String> {
+        let Some(p) = prep.lane_pre.as_ref() else {
+            eprintln!(
+                "[mentionTurn] {}: API 키 연결 턴인데 판정 재료가 없다 — 키를 받지 않는다",
+                prep.key
+            );
+            return Err(crate::provider_lane::ProviderLaneError::new("lane_setup")
+                .code()
+                .to_string());
+        };
+        // pi·omp lane 턴은 스레드 홈(pi `ensure_pi_lane_thread`·omp 스레드 폴더)이 있어야 `models.json` 을 쓰고 띄운다. Rust 러너는
+        // 아직 그 홈을 짓지 않는다 — 키를 받은 뒤 명령 짓기(`MissingHome`)에서 접히는 대신, 키를 받기 **전에** 닫는다.
+        // 홈을 배선하면 pi 는 `turn_pi_home` 이 채워져 지나가고, omp 는 이 줄을 그 배선과 함께 바꾼다.
+        if (uses_pi_home(self.harness) && p.turn_pi_home.is_none()) || uses_omp_home(self.harness) {
+            eprintln!(
+                "[mentionTurn] {}: {} API 키 연결 턴 — 스레드 홈이 준비되지 않아 키를 받지 않는다",
+                prep.key,
+                self.harness.as_str()
+            );
+            return Err(crate::provider_lane::ProviderLaneError::new("lane_setup")
+                .code()
+                .to_string());
+        }
+        lane_preflight(&LanePreflight {
+            key: &prep.key,
+            harness: self.harness,
+            provider_lane: true,
+            model: p.model.as_deref(),
+            workspace_dir: &p.workspace_dir,
+            state_dir: self.state_dir,
+            home: &p.home,
+            turn_pi_home: p.turn_pi_home.as_deref(),
+        })
+        .map_err(|e| e.code().to_string())
+    }
+
     #[allow(clippy::result_large_err)]
     fn attempt(&self, c: AttemptCtx<'_>, delivered: &mut bool) -> Result<TurnOk, AttemptError> {
         let AttemptCtx {
@@ -245,10 +300,25 @@ impl<L: RunnerLink, N: LeaseNotice, P: AttemptParts> PtyTurnAttempt<'_, L, N, P>
         let lane_hold = match self.lane {
             None => None,
             Some(l) => {
+                // 키를 받기 **전에** 모델·작업 폴더 보호 이름·pi 홈 로그인을 잰다(정본 `mentionTurn.ts` 차례). 막히면 받지 않는다.
+                if let Err(code) = self.lane_check(&prep) {
+                    let attempted = Attempted::SetupFailed {
+                        step: LaunchStep::LaneKeys,
+                        code,
+                    };
+                    let s = TurnSecrets::build(self.pat, &[], None);
+                    return parts.borrow_mut().outcome(attempted, &s, live);
+                }
                 match mount_lane_first(l, &lease_once, &prep.cause, self.harness, &mut || {
                     live.gate()
                 }) {
-                    Ok(h) => Some(h),
+                    Ok(h) => {
+                        // 잰 판 밖이면 막지 않고 스레드에 경고 한 줄(정본 `providerNotice(mentionId)` — 멘션마다 한 번).
+                        if let Some(n) = l.take_notice(&prep.cause) {
+                            parts.borrow_mut().lane_notice(target, &n);
+                        }
+                        Some(h)
+                    }
                     Err(e) => {
                         let attempted = match e {
                             LaneFirstError::Blocked(b) => Attempted::Blocked(b),

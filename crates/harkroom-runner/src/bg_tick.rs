@@ -124,6 +124,10 @@ pub struct BgExecutorDeps {
     pub harness: Box<BgHarnessFn>,
     pub harkroom: Box<dyn BgHarkroom>,
     pub build_plan: Box<BgBuildPlan>,
+    /// API 키 연결(lane) 러너인가. 백그라운드 턴은 아직 lane 값을 받지 않는다 — 켜져 있으면 plan 을 짓기 전에
+    /// `bg_unsupported` 로 거절한다(정본 `buildPlan` 의 `throw new ProviderLaneError('bg_unsupported')`). 짓개가
+    /// 기본 로그인으로 띄우는 일을 막는 자리라 짓개가 아니라 실행기가 쥔다.
+    pub provider_lane_on: bool,
     pub slots: Box<dyn BgSlots>,
     pub state_dir: PathBuf,
     pub spawn: Option<Box<ForkSpawn>>,
@@ -256,6 +260,9 @@ impl BgExecutor {
             .mode(0o700)
             .create(cwd)
             .map_err(|e| format!("작업 폴더를 못 만들었다({})", e.kind()))?;
+        if self.deps.provider_lane_on {
+            return Err("bg_unsupported".into());
+        }
         let plan = (self.deps.build_plan)(job, session_id, cwd)?;
         *release = plan.release;
         let args = bg_executor_args(&plan.args, session_id).map_err(|e| e.to_string())?;

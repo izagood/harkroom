@@ -648,3 +648,56 @@ fn env_name_tables_match_reused_turn_env_tables() {
     assert_eq!(lane_turn_file_env(AgentHarness::Kilo), Some("KILO_CONFIG"));
     assert_eq!(lane_turn_file_env(AgentHarness::ClaudeCode), None);
 }
+
+/// lane claude 폴더 자리에 링크가 놓이면 키를 받기 전에 거절한다(#2129 security 조건) — 진짜 폴더면 그대로 간다
+#[test]
+fn lane_claude_dir_symlink_is_refused_before_mount() {
+    let t = setup("tok-123\n");
+    let mounted = Arc::new(AtomicUsize::new(0));
+    let lane_with = |claude_dir: PathBuf| {
+        let m = mounted.clone();
+        let lane = lane_at("https://gateway.example", &t.path);
+        let mut d = deps(
+            Box::new(move |_| {
+                m.fetch_add(1, Ordering::SeqCst);
+                reply(200, json!({ "lane": lane }))
+            }),
+            &t.secrets_dir,
+        );
+        d.claude_dir = Some(claude_dir);
+        ProviderLane::new(d)
+    };
+    // 링크(너머는 사람의 기본 로그인 폴더 흉내) — 거절, 마운트 0.
+    let home = t.root.path().join("fake-home-claude");
+    fs::create_dir_all(&home).unwrap();
+    let linked = t.root.path().join("claude-provider-lane");
+    std::os::unix::fs::symlink(&home, &linked).unwrap();
+    assert_eq!(
+        code_of(lane_with(linked.clone()).env_for("m1", AgentHarness::ClaudeCode)),
+        "harness_login_present"
+    );
+    assert_eq!(mounted.load(Ordering::SeqCst), 0);
+    // 폴더가 아닌 파일도 거절.
+    let file = t.root.path().join("lane-file");
+    fs::write(&file, "").unwrap();
+    assert_eq!(
+        code_of(lane_with(file).env_for("m2", AgentHarness::ClaudeCode)),
+        "harness_login_present"
+    );
+    assert_eq!(mounted.load(Ordering::SeqCst), 0);
+    // 없으면 0700 으로 만들고 간다.
+    let fresh = t.root.path().join("st").join("claude-provider-lane");
+    assert!(
+        lane_with(fresh.clone())
+            .env_for("m3", AgentHarness::ClaudeCode)
+            .is_ok()
+    );
+    assert_eq!(mounted.load(Ordering::SeqCst), 1);
+    assert_eq!(mode(&fresh), 0o700);
+    assert!(
+        !fs::symlink_metadata(&fresh)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+}

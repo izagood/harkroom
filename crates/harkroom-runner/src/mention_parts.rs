@@ -319,6 +319,10 @@ pub type RecallSearchFn<'a> = Box<
 pub type ReadNoteFn<'a> = Box<dyn Fn(&str) -> Result<Option<crate::mcp::ThreadNote>, String> + 'a>;
 /// `thread.plan` 읽기 닫개(스레드 루트 id) — 응답의 `plan` 그대로.
 pub type ReadPlanFn<'a> = Box<dyn Fn(&str) -> Result<Option<serde_json::Value>, String> + 'a>;
+/// 승인된 스킬 목록 닫개(정본 `harkroom.listApprovedSkills`). 실패는 던진다 — 빈 목록으로 뭉개면 있는 스킬이 지워진다.
+pub type ListSkillsFn<'a> = Box<dyn Fn() -> Result<Vec<crate::skills_sync::Skill>, String> + 'a>;
+/// 진행 줄 닫개(`message.progress` — channel·body·anchor). lane 판 경고 한 줄에 쓴다.
+pub type PostProgressFn<'a> = Box<dyn Fn(&str, &str, Option<&str>) -> Result<(), String> + 'a>;
 /// `memory.recalled` 닫개.
 pub type RecordRecallFn<'a> = Box<dyn Fn(&[String]) -> Result<(), String> + 'a>;
 
@@ -445,6 +449,14 @@ pub struct MentionParts<'a, P: PrepareIo, S: PtyTurnSink> {
     pub read_note: Option<ReadNoteFn<'a>>,
     /// 정본 `harkroom.readThreadPlan`(`thread.plan`) — 없거나 실패하면 이번 턴은 계획판을 싣지 않는다.
     pub read_plan: Option<ReadPlanFn<'a>>,
+    /// 정본 `syncSkills` 의 목록 읽기 — 있으면 띄우기 전에 스킬을 깔고 작업 폴더 설정을 걷는다(`scrubWorkspaceSettings`).
+    /// 없으면 둘 다 하지 않는다(시험용).
+    pub list_skills: Option<ListSkillsFn<'a>>,
+    /// API 키 연결(lane) 턴 — 허용 목록(`name`·`description`) 밖 frontmatter 를 가진 스킬은 깔지 않는다
+    /// (정본 `dropToolGrants: Boolean(deps.providerEnv)`, security 2026-10-23: `allowed-tools` 가 카드 없이 도구를 연다).
+    pub drop_tool_grants: bool,
+    /// lane 판 경고를 스레드에 올리는 길(정본 `deps.harkroom.progress`). 없으면 로그만.
+    pub post_progress: Option<PostProgressFn<'a>>,
     pub now: Option<TurnClock>,
     /// 시도를 준비할 때 그 순간의 시계를 잰다(정본 `now: new Date()` — 시도마다). `now` 가 있으면 그것이 먼저(시험용).
     pub clock: Option<fn() -> TurnClock>,
@@ -509,6 +521,9 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
             record_recall: None,
             read_note: None,
             read_plan: None,
+            list_skills: None,
+            drop_tool_grants: false,
+            post_progress: None,
             now: None,
             clock: None,
             outcome,
@@ -712,6 +727,24 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
 }
 
 impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
+    fn lane_notice(&mut self, target: &MentionTarget, body: &str) {
+        let anchor = Some(target.thread_root_id.as_str()).filter(|a| !a.is_empty());
+        let Some(post) = &self.post_progress else {
+            return;
+        };
+        // 정본 `.catch(...)` — 경고를 못 남겨도 턴은 간다. 오류 원문은 로그에만.
+        if let Err(e) = post(
+            &target.channel_id,
+            crate::turn_after::clip_body(body),
+            anchor,
+        ) {
+            eprintln!(
+                "[mentionTurn] {}: 하네스 판 경고를 못 남겼다 — {e}",
+                self.key
+            );
+        }
+    }
+
     fn bind_live(&mut self, live: Option<Arc<LiveTurn>>) {
         if live.is_some() {
             // 시도마다 새 감시 자리 — 앞 시도의 끝 상태(API 오류·종료·발화·정지 표지)와 화면 꼬리가 이 시도 판정에
@@ -805,6 +838,21 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             eprintln!("[mentionTurn] {}: 지시문 파일 쓰기 실패 — {e}", self.key);
             fail()
         })?;
+        // 승인된 스킬 동기화(#140) → 작업 폴더 설정 걷기 — 하네스가 뜨기 **전에** 끝나야 이 턴에 붙는다(정본 차례: 지시문 파일 →
+        // `syncSkills` → `scrubWorkspaceSettings`). 실패는 안에서 삼키고 stderr 로만 — 턴은 그대로 간다.
+        if let Some(list) = self.list_skills.as_ref() {
+            let ws = Path::new(&prepared.session.rec.workspace_dir);
+            crate::skills_sync::sync_skills(
+                &self.state_dir,
+                ws,
+                list,
+                crate::skills_sync::SyncSkillsOpts {
+                    drop_tool_grants: self.drop_tool_grants,
+                    builtins: None,
+                },
+            );
+            crate::skills_sync::scrub_workspace_settings(ws);
+        }
         // 하네스를 띄우기 전, **이 시도의 계정 폴더**로 작업 폴더 신뢰·bypass 수락을 적는다(정본 `mentionTurn.ts` 의 차례).
         crate::workspace_trust::prepare_harness_gates(
             self.harness,
@@ -819,6 +867,17 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             self.codex_home.as_deref(),
         );
         let session_id = prepared.session.rec.session_id.clone();
+        // lane 턴의 키 받기 전 판정 재료 — 시도 경로가 lane 일 때만 쓴다. pi 스레드 홈은 Rust 러너가 아직 짓지 않는다(None).
+        let lane_pre = Some(crate::turn_attempt_run::LanePre {
+            model: self
+                .argv
+                .model
+                .clone()
+                .or_else(|| self.base.model.map(str::to_string)),
+            workspace_dir: PathBuf::from(&prepared.session.rec.workspace_dir),
+            home: self.home.clone(),
+            turn_pi_home: None,
+        });
         self.prompt_file = Some(file.clone());
         self.cur = Some(Current {
             account: acc,
@@ -840,6 +899,7 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
                 .or_else(|| self.lease_dir_of.as_ref().and_then(|f| f())),
             session_id,
             homes: OwnedHomes { ..homes },
+            lane_pre,
         })
     }
 

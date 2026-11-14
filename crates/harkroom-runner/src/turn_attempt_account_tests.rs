@@ -182,6 +182,7 @@ impl AttemptParts for Parts {
             lease_dir: None,
             session_id: Some("s".into()),
             homes,
+            lane_pre: None,
         })
     }
     fn mount_secrets(&mut self, _c: &str) -> Result<(), SecretMountError> {

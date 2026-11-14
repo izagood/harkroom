@@ -171,6 +171,7 @@ impl CallMaker<&'static Link, Sink> for Maker {
             harness: AgentHarness::ClaudeCode,
             command_hook: false,
             post_tool_hook: false,
+            lane: false,
             lane_model: None,
             turn_budget_ms: 60_000,
         }
@@ -285,6 +286,7 @@ impl CallMaker<&'static Link, Sink> for Maker {
                 mcp_config_path: state,
                 runner_env: &self.env,
                 pat: "pat-value-0123456789",
+                lane: None,
             },
         }
     }
