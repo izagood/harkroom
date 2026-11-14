@@ -144,3 +144,15 @@ describe('runnerKindOf — 에이전트별 러너 구현(B4-5a)', () => {
     expect([runnerKindOf(agents.a), runnerKindOf(agents.b), runnerKindOf(agents.c), runnerKindOf(agents.d)]).toEqual(['rust', 'node', 'node', 'node']);
   });
 });
+
+describe('README 의 operator.json 예시(B4-5d)', () => {
+  it('JSON 으로 읽히고, runner:"rust" 칸만 rust 다', async () => {
+    const readme = await readFile(new URL('../README.md', import.meta.url), 'utf8');
+    const section = readme.slice(readme.indexOf('## 에이전트마다 Rust 러너 켜기'));
+    const block = /```json\n([\s\S]*?)\n```/.exec(section);
+    expect(block).not.toBeNull();
+    const cfg = JSON.parse(block![1]!) as OperatorConfig;
+    const agents = Object.values(cfg.communities)[0]!.agents;
+    expect(Object.values(agents).map(runnerKindOf)).toEqual(['rust', 'node']);
+  });
+});
