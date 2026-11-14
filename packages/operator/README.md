@@ -119,6 +119,59 @@ unix 소켓으로 말하는 것이고, 그 어느 것도 네이티브 애드온�
 `scripts/build-sidecars.mjs` 가 daemon 에 `nativeDeps: []` 를 주는 것도 같은 판단의 다른 쪽
 면이다 — external 목록이 비어 있으면 번들에 못 들어가는 것을 눈감아 줄 여지 자체가 없다.
 
+## 에이전트마다 Rust 러너 켜기 (B4-5)
+
+기본은 모든 에이전트가 Node 러너(`harkroom-runner`)로 돈다. 한 에이전트만 Rust 러너(`harkroom-runner-rs`)로 돌리려면
+**`operator.json` 의 그 에이전트 칸에 `"runner": "rust"` 를 손으로 적는다.** 켜는 길은 이 파일 하나다 — 소켓 요청
+(`operatorAgentSet`)·앱 화면·서버의 에이전트 정의로는 바뀌지 않는다. `operatorAgentSet` 은 이미 적힌 `"rust"`·`"node"` 를
+지우지 않고 옮겨 적는다(앱에서 작업 디렉터리를 고쳐도 꺼지지 않는다).
+
+파일은 `<데이터 디렉터리>/operator/operator.json` 이고, 키는 커뮤니티 주소와 에이전트 계정 id 다.
+
+```json
+{
+  "communities": {
+    "https://harkroom.example.com": {
+      "agents": {
+        "00000000-0000-4000-8000-000000000001": { "workingDir": "~/dev/project", "runner": "rust" },
+        "00000000-0000-4000-8000-000000000002": { "workingDir": "~/dev/other" }
+      }
+    }
+  }
+}
+```
+
+- 값은 정확히 `"rust"` 일 때만 켜진다. 칸이 없거나 `"node"` 거나 그 밖의 값(`"Rust"`·`"rs"` 등)이면 Node 러너다.
+- 지우면(또는 `"node"`) 다음에 뜨는 러너부터 Node 로 돌아간다.
+
+### 언제 적용되나 — 그 에이전트의 러너가 **새로 뜰 때**
+
+오퍼레이터는 러너를 띄우는 순간에만 구현을 고른다. 이미 떠 있는 러너는 파일을 고쳐도 그대로 돈다.
+
+| 하는 일 | 적용되나 |
+|---|---|
+| 그 에이전트의 배정을 풀었다가 다시 건다 | ✓ — 러너가 물러나고(SIGTERM) 새로 뜬다. **확실한 길이다** |
+| 앱을 새 판으로 올린다 | ✓ — 앞 세대 러너는 회수되고 새로 뜬다 |
+| 같은 판의 오퍼레이터만 다시 띄운다 | ✗ 그대로일 수 있다 — 살아 있던 러너를 **채택**하고 새로 띄우지 않는다(위 「고아 재발견」) |
+| 러너가 스스로 끝난 뒤 다시 뜬다 | ✓ |
+
+### Node 로 떨어지는 경우와 그 이유를 보는 곳
+
+`"rust"` 를 적어도 아래면 Node 러너로 띄운다(`src/runnerPick.ts`, Rust 오퍼레이터 `runner_pick.rs` 같은 표).
+
+| 이유(`runnerFallback`) | 언제 | 왜 |
+|---|---|---|
+| `rust_needs_account_pool` | 그 에이전트에 계정 풀(`claudePool`)이 있다 | Rust 러너는 아직 계정 풀을 모른다. 그대로 돌리면 사람의 기본 claude 로그인으로 돌아 **다른 계정·과금**이 된다 |
+| `rust_needs_provider_lane` | 전용 제공사 경로(`providerLane`)가 있다 | 같은 이유(lane 도 아직 없다) |
+| `rust_runner_missing` | 오퍼레이터 실행 파일 옆에 `harkroom-runner-rs` 가 없다(실행 가능한 일반 파일만 「있다」) | 앱이 싣지 않은 판이거나 Windows |
+
+보는 곳은 둘이다.
+
+- **오퍼레이터 로그**(`<데이터 디렉터리>/operator/operator-v1.log`): 떨어질 때
+  `러너: rust 를 청했지만 node 로 띄운다(<이유>): agent=<handle>` 한 줄, 띄울 때마다 `러너 spawn: agent=<handle> pid=<pid> runner=<node|rust>`.
+- **소켓 `listRunners` 응답**: 러너마다 `runnerImpl`(`"node"`·`"rust"`, 실제로 띄운 쪽)과 떨어졌으면 `runnerFallback`(위 이유).
+  채택한 러너·옛 오퍼레이터가 띄운 러너에는 두 칸이 없다. 앱 화면에는 아직 나오지 않는다.
+
 ## 명령 (`src/cli.ts`)
 
 | 명령 | 하는 일 |
