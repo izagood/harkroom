@@ -827,7 +827,7 @@ mod tests {
         }
     }
 
-    /// L3c-3e: lane·풀 claude 에이전트 + rust → rust. 허용 목록 밖(codex·opencode·kilo·pi·omp·모르는 이름) → node(이유를 로그에).
+    /// L3c-3e: lane·풀 claude 에이전트 + rust → rust. 허용 목록 밖(pi·omp·모르는 이름) → node(이유를 로그에).
     /// 파일 없음 → node. rust 안 청함 → node.
     #[test]
     fn runner_pick_opens_pool_and_lane_and_keeps_pi_omp_on_node() {
@@ -908,16 +908,16 @@ mod tests {
                 "kilo",
                 AccountUse::None,
                 true,
-                RunnerKind::Node,
-                Some(RunnerFallback::HarnessUnsupported),
+                RunnerKind::Rust,
+                None,
             ),
             (
                 rust_plain.clone(),
                 "kilo",
                 AccountUse::None,
                 true,
-                RunnerKind::Node,
-                Some(RunnerFallback::HarnessUnsupported),
+                RunnerKind::Rust,
+                None,
             ),
             (
                 rust_plain.clone(),
