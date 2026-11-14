@@ -10,6 +10,7 @@
 //!
 //! **TS 와 다른 점**: `deps` 의 비동기 함수(`operatorOwnerId`·`mcpConfig`·hook·chrome)는 동기 함수다 — 실패를 deps 가
 //! TS 의 `.catch` 기본값(commandHook 꺼짐·postToolHook 켜짐·chrome 닫힘)으로 바꿔 돌려준다.
+use crate::runner_pick::RunnerPick;
 use harkroom_proto::p2::{AgentDefinition, CredentialScope};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
@@ -37,6 +38,8 @@ pub struct LocalAgent {
     pub claude_pool: Option<String>,
     /// 날 값(`providerLane`). 켜짐 판정은 `read_provider_lane_config` 로 한다.
     pub provider_lane: Option<Value>,
+    /// 러너 구현(B4-5a `runner`, `runner_kind_of`). env 에는 안 실리고 `runner_pick` 이 읽는다.
+    pub runner: crate::local_agents::RunnerKind,
 }
 
 fn lane_on(local: Option<&LocalAgent>) -> bool {
@@ -76,7 +79,12 @@ pub trait AssignmentDeps: Send + Sync {
         agent_id: &str,
         env: &BTreeMap<String, String>,
         runner_id: &str,
+        pick: RunnerPick,
     ) -> Result<SpawnResult, SpawnError>;
+    /// 오퍼레이터 옆에 Rust 러너 파일이 있는가(B4-5c). 없으면 `rust` 를 청한 에이전트도 node 로 돈다.
+    fn rust_runner_present(&self) -> bool {
+        false
+    }
     fn signal(&self, agent_id: &str, sig: Sig) -> bool;
     fn is_alive(&self, agent_id: &str) -> bool;
     fn list_runners(&self) -> Vec<Value>;
@@ -286,7 +294,20 @@ impl AssignmentReconciler {
         }
         self.deps.link_expect(&runner_id, &agent_id, &secret);
         let env = self.runner_env(&runner_id, &secret, &mcp_path, local.as_ref());
-        let result = match self.deps.spawn(&agent_id, &env, &runner_id) {
+        // 러너 구현(B4-5c). `rust` 를 청했어도 풀·lane 에이전트는 node 로 떨어뜨린다(`runner_pick.rs` — 다른 계정·과금으로 바뀌지 않게).
+        let wants = crate::runner_pick::wants_rust(local.as_ref());
+        let pick = crate::runner_pick::pick_runner(
+            local.as_ref(),
+            wants && self.deps.rust_runner_present(),
+        );
+        if let Some(f) = pick.fallback {
+            self.deps.log(&format!(
+                "러너: rust 를 청했지만 node 로 띄운다({}): agent={}",
+                f.as_str(),
+                definition.handle
+            ));
+        }
+        let result = match self.deps.spawn(&agent_id, &env, &runner_id, pick) {
             Ok(r) => r,
             Err(err) => {
                 self.deps.link_forget(&runner_id);
@@ -322,7 +343,12 @@ impl AssignmentReconciler {
             self.deps.link_forget(&runner_id);
         }
         self.deps.log(&if result.spawned {
-            format!("러너 spawn: agent={} pid={}", definition.handle, result.pid)
+            format!(
+                "러너 spawn: agent={} pid={} runner={}",
+                definition.handle,
+                result.pid,
+                pick.kind.as_str()
+            )
         } else {
             format!(
                 "러너가 이미 있다 — 새로 안 띄운다: agent={} pid={}",
@@ -611,6 +637,9 @@ mod tests {
         chrome: Mutex<bool>,
         n: Mutex<u32>,
         owner_asked: Mutex<u32>,
+        picks: Mutex<Vec<RunnerPick>>,
+        logs: Mutex<Vec<String>>,
+        rust_present: Mutex<bool>,
     }
 
     impl AssignmentDeps for Fake {
@@ -619,7 +648,9 @@ mod tests {
             agent_id: &str,
             env: &BTreeMap<String, String>,
             runner_id: &str,
+            pick: RunnerPick,
         ) -> Result<SpawnResult, SpawnError> {
+            self.picks.lock().unwrap().push(pick);
             if let Some(e) = self.spawn_err.lock().unwrap().take() {
                 return Err(e);
             }
@@ -644,6 +675,9 @@ mod tests {
         fn signal(&self, agent_id: &str, sig: Sig) -> bool {
             self.signals.lock().unwrap().push((agent_id.into(), sig));
             true
+        }
+        fn rust_runner_present(&self) -> bool {
+            *self.rust_present.lock().unwrap()
         }
         fn is_alive(&self, agent_id: &str) -> bool {
             self.alive
@@ -689,7 +723,9 @@ mod tests {
                 .push((at, Some(task), flag.clone()));
             Box::new(move || *flag.lock().unwrap() = true)
         }
-        fn log(&self, _line: &str) {}
+        fn log(&self, line: &str) {
+            self.logs.lock().unwrap().push(line.to_string());
+        }
         fn now_ms(&self) -> u64 {
             *self.now.lock().unwrap()
         }
@@ -766,6 +802,76 @@ mod tests {
         }
     }
 
+    /// B4-5c: lane·풀 에이전트 + rust → node 로 돌고 이유를 로그에 남긴다. 기본 로그인 + rust + 파일 있음 → rust.
+    #[test]
+    fn runner_pick_falls_back_for_lane_and_pool_and_uses_rust_otherwise() {
+        use crate::local_agents::RunnerKind;
+        use crate::runner_pick::RunnerFallback;
+        let cases = [
+            (
+                LocalAgent {
+                    runner: RunnerKind::Rust,
+                    ..lane()
+                },
+                true,
+                RunnerKind::Node,
+                Some(RunnerFallback::NeedsProviderLane),
+            ),
+            (
+                LocalAgent {
+                    runner: RunnerKind::Rust,
+                    claude_pool: Some("p".into()),
+                    ..Default::default()
+                },
+                true,
+                RunnerKind::Node,
+                Some(RunnerFallback::NeedsAccountPool),
+            ),
+            (
+                LocalAgent {
+                    runner: RunnerKind::Rust,
+                    ..Default::default()
+                },
+                false,
+                RunnerKind::Node,
+                Some(RunnerFallback::RunnerMissing),
+            ),
+            (
+                LocalAgent {
+                    runner: RunnerKind::Rust,
+                    ..Default::default()
+                },
+                true,
+                RunnerKind::Rust,
+                None,
+            ),
+            (LocalAgent::default(), true, RunnerKind::Node, None),
+        ];
+        for (local, present, kind, fallback) in cases {
+            let (f, r) = setup();
+            *f.rust_present.lock().unwrap() = present;
+            r.on_assign(
+                "https://srv",
+                def(CredentialScope::Community, None),
+                Some(local.clone()),
+            )
+            .unwrap();
+            let picks = f.picks.lock().unwrap();
+            assert_eq!(picks.len(), 1, "{local:?}");
+            assert_eq!(picks[0].kind, kind, "{local:?}");
+            assert_eq!(picks[0].fallback, fallback, "{local:?}");
+            let logs = f.logs.lock().unwrap();
+            assert!(
+                logs.iter()
+                    .any(|l| l.contains(&format!("runner={}", kind.as_str()))),
+                "{logs:?}"
+            );
+            if let Some(fb) = fallback {
+                assert!(logs.iter().any(|l| l.contains(fb.as_str())), "{logs:?}");
+            }
+        }
+    }
+
     #[test]
     fn assign_env_has_link_and_no_url_or_pat() {
         let (f, r) = setup();
@@ -773,6 +879,7 @@ mod tests {
             working_dir: Some("/w".into()),
             claude_pool: Some("p".into()),
             provider_lane: None,
+            runner: Default::default(),
         };
         let out = r
             .on_assign(
