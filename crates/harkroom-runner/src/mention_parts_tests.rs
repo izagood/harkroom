@@ -677,3 +677,25 @@ fn prepare_pins_memory_and_recall_into_prompt() {
     let sys = std::fs::read_to_string(file).unwrap();
     assert!(sys.contains("CORE_MEMORY_TEXT"), "지시문에 core");
 }
+
+/// T4d: TUI 턴은 주입 확인을 건다(정본 `confirmDelivery`, 15초) — exec 턴은 주입 자체가 없다.
+#[test]
+fn attempt_pty_options_ask_delivery_confirmation() {
+    let ws = std::env::temp_dir().join(format!("hk-t4d-{}", std::process::id()));
+    std::fs::create_dir_all(&ws).unwrap();
+    let o = attempt_pty_options(
+        PtyTurnOptions::at(PathBuf::new()),
+        AgentHarness::ClaudeCode,
+        ws.to_str().unwrap(),
+        "P".into(),
+        1,
+    )
+    .unwrap();
+    let c = o
+        .inject
+        .unwrap()
+        .confirm
+        .expect("TUI 턴은 주입 확인을 건다");
+    assert_eq!(c.within_ms, CONFIRM_DELIVERY_WITHIN_MS);
+    assert_eq!(c.resend_grace_ms, None);
+}
