@@ -6,6 +6,8 @@
 // - `harkroom-operator-rs` — Rust 오퍼레이터(S2 A4②, `crates/harkroom-operator`). Node 가 아니라 Mach-O 다.
 //   앱은 스위치 `HARKROOM_OPERATOR_IMPL=rust` 일 때만 이것을 띄운다(기본 Node). `sign-app.mjs` 가 내용으로 Mach-O 를
 //   찾아 서명하므로 서명 쪽은 손대지 않는다.
+// - `harkroom-runner-rs` — Rust 러너(B4-5b, `crates/harkroom-runner`). 역시 Mach-O 다. **싣기만 하고 아무도 띄우지 않는다** —
+//   오퍼레이터가 에이전트마다 러너를 고르는 것은 B4-5c 다. 그 전까지 앱의 모든 턴은 지금처럼 `harkroom-runner`(Node)로 돈다.
 //
 // ## 왜 스크립트를 둘로 나누지 않고 하나로 묶었는가
 //
@@ -58,7 +60,8 @@ async function main() {
     target,
   });
 
-  const operatorRs = buildRustOperator(target);
+  const operatorRs = buildRustSidecar(target, 'harkroom-operator', 'harkroom-operator-rs');
+  const runnerRs = buildRustSidecar(target, 'harkroom-runner', 'harkroom-runner-rs');
 
   console.log(`러너 사이드카 빌드 완료: ${runner.outfile}`);
   console.log(`  구워 넣은 버전: ${version}`);
@@ -67,23 +70,24 @@ async function main() {
   console.log('  네이티브 의존: 없음 (PTY 는 러너의 일이다)');
   console.log(`  구워 넣은 버전: ${version}`);
   console.log(`Rust operator 사이드카 빌드 완료: ${operatorRs}`);
+  console.log(`Rust runner 사이드카 빌드 완료: ${runnerRs}`);
 }
 
 /**
- * Rust 오퍼레이터를 `tauri build` 와 **같은 triple** 로 만들어 `binaries/harkroom-operator-rs-<triple>` 에 둔다.
+ * Rust 사이드카(`crates/<crate>` 의 `<bin>`)를 `tauri build` 와 **같은 triple** 로 만들어 `binaries/<bin>-<triple>` 에 둔다.
  *
  * `crates/*` 는 cargo workspace 가 아니다 — crate 디렉터리에서 자기 `Cargo.lock` 으로 `--locked` 빌드한다.
  * triple 을 명시하는 이유는 `node-pty` prebuild 와 같다: `tauri build --target` 과 갈리면 다른 아키텍처가 실린다.
  */
-function buildRustOperator(target) {
-  const crateDir = join(repoRoot, 'crates', 'harkroom-operator');
-  execFileSync('cargo', ['build', '--release', '--locked', '--target', target.triple, '--bin', 'harkroom-operator-rs'], {
+function buildRustSidecar(target, crate, bin) {
+  const crateDir = join(repoRoot, 'crates', crate);
+  execFileSync('cargo', ['build', '--release', '--locked', '--target', target.triple, '--bin', bin], {
     cwd: crateDir,
     stdio: 'inherit',
   });
   mkdirSync(binariesDir, { recursive: true });
-  const built = join(crateDir, 'target', target.triple, 'release', 'harkroom-operator-rs');
-  const outfile = join(binariesDir, `harkroom-operator-rs-${target.triple}`);
+  const built = join(crateDir, 'target', target.triple, 'release', bin);
+  const outfile = join(binariesDir, `${bin}-${target.triple}`);
   copyFileSync(built, outfile);
   chmodSync(outfile, 0o755);
   return outfile;
