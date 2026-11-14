@@ -77,6 +77,8 @@ pub struct TurnCommandOptions<'a> {
     pub gate_file: Option<&'a Path>,
     /// MCP 준비 표식 파일(T4c, `HARKROOM_MCP_READY_FILE`) — 넣기 전에 브릿지를 기다리는 하네스의 TUI 턴에만.
     pub mcp_ready_file: Option<&'a Path>,
+    /// codex 턴 hook 판정 값(c2, `HARKROOM_CODEX_HOOK_SPEC`) — 규칙 파일을 쓴 auto 턴에만. 서버 승인 목록에서만 나온다.
+    pub codex_hook_spec: Option<&'a str>,
 }
 
 impl<'a> TurnCommandOptions<'a> {
@@ -125,6 +127,7 @@ impl<'a> TurnCommandOptions<'a> {
             extra_mcp_servers: &[],
             gate_file: None,
             mcp_ready_file: None,
+            codex_hook_spec: None,
         }
     }
 }
@@ -391,6 +394,11 @@ pub fn build_turn_command(
     input.turn_keys = o.turn_keys;
     input.opencode_turn_config = o.opencode_turn_config;
     input.gate_file = o.gate_file;
+    input.codex_hook_spec = if h == AgentHarness::Codex {
+        o.codex_hook_spec
+    } else {
+        None
+    };
     input.mcp_ready_file = o.mcp_ready_file;
     // 하네스 자식 env 의 바탕 — 추가 MCP env 를 옮길지 판정할 때도 본다(같은 이름·다른 값이면 argv, security #1952 낮음 1).
     let mut env = child_env(&input, parent_env, home)?;

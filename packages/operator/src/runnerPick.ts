@@ -4,7 +4,7 @@
  * | 로컬 설정·에이전트 | Rust 러너 파일 | 결과 |
  * |---|---|---|
  * | `runner` 가 `"rust"` 가 아님(없음·모르는 값) | — | node |
- * | `"rust"` + 하네스가 허용 목록(`RUST_RUNNER_HARNESSES` = claude-code) 밖 | — | node, `rust_harness_unsupported` — Rust 러너는 codex·opencode·kilo·pi·omp 홈을 아직 배선하지 않았다. 홈 배선 조각에서 하나씩 목록에 더한다. 모르는 이름도 node |
+ * | `"rust"` + 하네스가 허용 목록(`RUST_RUNNER_HARNESSES` = claude-code·codex) 밖 | — | node, `rust_harness_unsupported` — Rust 러너는 opencode·kilo·pi·omp 홈을 아직 배선하지 않았다. 홈 배선 조각에서 하나씩 목록에 더한다. 모르는 이름도 node |
  * | `"rust"` + 러너의 풀 해석을 못 한다(`pools.json` 깨짐·뿌리 못 읽음 등) | — | node, `rust_account_pool_unreadable` |
  * | `"rust"` | 오퍼레이터 옆에 없음 | node, `rust_runner_missing` |
  * | `"rust"`(계정 풀·전용 제공사 경로 포함) | 있음 | rust |
@@ -20,7 +20,7 @@ export type RunnerFallback = 'rust_harness_unsupported' | 'rust_account_pool_unr
 export type AccountUse = 'none' | 'pool' | 'unreadable';
 
 /** Rust 러너로 보내도 되는 하네스 — **허용 목록**이다(배선·시험을 마친 것만). 그 밖(모르는 이름 포함)은 node. */
-export const RUST_RUNNER_HARNESSES: readonly string[] = ['claude-code'];
+export const RUST_RUNNER_HARNESSES: readonly string[] = ['claude-code', 'codex'];
 
 export interface RunnerPick {
   kind: RunnerKind;

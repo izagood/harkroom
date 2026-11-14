@@ -135,6 +135,7 @@ pub fn system_inputs(
         }),
         permissions: Some(PermissionInputs {
             tool_allows: safe_tool_allows(&r.rules.rules),
+            reach: r.rules.reach.as_deref().map(safe_tool_allows),
             command_hook: attaches_command_hook(c.harness, perm, c.command_hook),
             // 정본 `Boolean(deps.providerEnv) && usesXdgHome(def.harness)` — 모델 id 유무와 상관없다.
             exact_shell_only: c.lane && uses_xdg_home(c.harness),

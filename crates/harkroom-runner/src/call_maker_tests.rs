@@ -455,6 +455,7 @@ fn argv_system() -> SystemInputs {
             approved: vec![],
         }),
         permissions: Some(crate::mention_parts::PermissionInputs {
+            reach: None,
             tool_allows: vec!["Bash(git status)".into()],
             ..Default::default()
         }),
@@ -602,7 +603,7 @@ fn codex_home_reaches_turn_parts() {
         let system = system_inputs(&reads, &t, ctx);
         let i: CallInputs<'_, _, Sink> = m.call_inputs(&clients, &book, &t, reads, system);
         let parts = (i.build_parts)(bundle(m));
-        (parts.codex_home.clone(), parts.codex_prep.is_some())
+        (parts.codex_home.clone(), parts.codex.is_some())
     };
     assert_eq!(parts_home(&m), (None, false), "정하지 않으면 없다");
     let home = root.0.join("state/codex-home");
