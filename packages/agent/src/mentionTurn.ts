@@ -52,6 +52,7 @@ import { planRefLines, planThreadPlan, type ThreadPlanState } from './threadPlan
 import { claudeMemoryDir, planHarnessMemoryNotice, scanHarnessMemory } from './harnessMemory.js';
 import { issueTurnKeys, turnKeyValues, type TurnKeys } from './turnKeys.js';
 import { scrubNeedles, scrubPath, scrubText } from './secretScrub.js';
+import { auxQueryEnv, piMcpListEnv } from './queryEnv.js';
 import { laneModelMissing, laneScrubsSubprocessEnv, writeOpencodeTurnMcpConfig, writeTurnMcpConfig, PROVIDER_LANE_FIXED_ENV, OMP_LANE_BASE_URL_ENV, OMP_LANE_KEY_FILE_ENV, PI_LANE_BASE_URL_ENV, PI_LANE_KEY_FILE_ENV, ProviderLaneError } from './providerLane.js';
 import { laneParentViolations, laneWorkspaceViolations } from './laneWorkspaceGuard.js';
 import { homedir } from 'node:os';
@@ -68,21 +69,13 @@ const SCREEN_TAIL_CHARS = 4_000;
 const OPENCODE_QUIET_MS = 20_000;
 
 /**
- * 러너가 턴 밖에서 opencode(·kilo)에 묻는 조회(`session list`·`export`)의 env.
- *
- * - **PATH 도 하네스의 것**이어야 명령이 ENOENT 로 죽지 않는다(#864).
- * - **프로젝트 설정을 끈다**(lane 턴과 같은 스위치, `PROVIDER_LANE_FIXED_ENV`). 조회는 cwd 가 턴 작업 폴더라
- *   거기 프로젝트 설정을 읽는데, 러너가 그것을 읽을 까닭이 없다 — 조회에 필요한 것은 격리 홈뿐이다.
+ * 러너가 턴 밖에서 opencode(·kilo)에 묻는 조회(`session list`·`export`)의 env — 허용 목록으로 짓는다(`auxQueryEnv`).
+ * 격리 홈(XDG 자리)과 그 하네스의 스위치만 얹는다. 러너 링크 열쇠·턴 열쇠는 들어가지 않는다.
  */
 export function opencodeQueryEnv(
   harness: AgentHarness, dirs: Record<string, string>, base: NodeJS.ProcessEnv,
 ): Record<string, string> {
-  return {
-    ...base,
-    ...dirs,
-    ...(PROVIDER_LANE_FIXED_ENV[harness] ?? {}),
-    PATH: harnessPath(harness, base.PATH),
-  } as Record<string, string>;
+  return auxQueryEnv(harness, base, dirs);
 }
 
 /** runMentionTurn 이 요구하는 harkroom 표면. HarkroomAgentClient 의 부분집합이라 실제 클래스를
@@ -1595,11 +1588,7 @@ export async function runMentionTurn(
     const discovered = await listPiMcpTools({
       command: harnessCommand(def.harness),
       args: allowlist.list,
-      env: {
-        ...process.env,
-        ...(turnPiHome ? { PI_CODING_AGENT_DIR: turnPiHome } : {}),
-        PATH: harnessPath(def.harness, process.env.PATH),
-      } as Record<string, string>,
+      env: piMcpListEnv(def.harness, process.env, turnPiHome),
       // 워크스페이스가 아니라 러너 루트에서 묻는다 — 저장소의 `.pi/` 를 아예 안 보게(security 낮음).
       // 이 명령은 `--no-approve` 를 받지 않는다(실측 `Unknown option`).
       cwd: turnPiHome ?? rec.workspaceDir,
