@@ -78,7 +78,7 @@ pub struct WireInputs {
     pub app_data: PathBuf,
     pub home: String,
     pub base_url: String,
-    pub token: String,
+    pub token: crate::op_token::SharedToken,
     pub runner_link: Arc<RunnerLinkServer>,
     pub owners_slot: Arc<OnceLock<Arc<CleanupOwners>>>,
 }
@@ -128,7 +128,7 @@ pub fn wire(w: WireInputs) -> Arc<WorkspaceCleanup> {
             forward: Box::new(move |agent_id, req| {
                 let target = crate::forward::ForwardTarget {
                     base_url: base_url.clone(),
-                    token: token.clone(),
+                    token: token.get(),
                     agent_id: agent_id.to_string(),
                 };
                 crate::forward::forward(&tr, &target, req, RunnerLinkKind::Relay)

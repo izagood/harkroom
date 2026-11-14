@@ -209,7 +209,7 @@ pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
             ));
             // 서버 링크 — 토큰이 있으면 지금 띄우고, 없으면(등록 전) `operatorRegister` 가 claim 한 뒤 띄운다(s9, TS `startOne`).
             // 한 프로세스에 링크는 하나다 — 이미 떠 있으면 다시 띄우지 않는다.
-            let link_slot: std::sync::Arc<std::sync::Mutex<Option<std::thread::JoinHandle<()>>>> =
+            let link_slot: std::sync::Arc<std::sync::Mutex<Option<LinkHandle>>> =
                 std::sync::Arc::default();
             let attach = {
                 let slot = std::sync::Arc::clone(&link_slot);
@@ -235,12 +235,27 @@ pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
                 }
             };
             attach();
+            let renew_cfg = LocalAgents::new(&root, base_url);
             state.set_link_control(crate::socket::LinkControl {
                 is_up: {
                     let slot = std::sync::Arc::clone(&link_slot);
                     Box::new(move || slot.lock().map(|s| s.is_some()).unwrap_or(true))
                 },
                 attach: Box::new(attach),
+                // 다시 등록 — `register` 가 방금 쓴 토큰 파일을 읽어 도는 링크에 넣는다(값을 요청 길로 들고 다니지 않는다).
+                renew: {
+                    let slot = std::sync::Arc::clone(&link_slot);
+                    Box::new(move || {
+                        let slot = slot.lock().unwrap_or_else(|e| e.into_inner());
+                        match (slot.as_ref(), renew_cfg.operator_token()) {
+                            (Some(h), Some(t)) => {
+                                h.renew(&t);
+                                true
+                            }
+                            _ => false,
+                        }
+                    })
+                },
             });
             println!(
                 "{}",
@@ -313,7 +328,7 @@ pub fn spawn_server_link(
     version: Option<String>,
     root: &std::path::Path,
     socket_path: String,
-) -> Option<std::thread::JoinHandle<()>> {
+) -> Option<LinkHandle> {
     use crate::harnesses::detect_harnesses;
     use crate::hello::{announce_of, build_hello, capabilities, read_login_path};
     use crate::server_link::{ServerLink, ServerLinkOptions, SystemClock};
@@ -324,7 +339,10 @@ pub fn spawn_server_link(
 
     let secrets_root = root.join("turn-secrets");
     let operator_dir = root.join("operator");
-    let Some(token) = local.operator_token() else {
+    let Some(token) = local
+        .operator_token()
+        .map(crate::op_token::SharedToken::new)
+    else {
         eprintln!(
             "서버 링크를 띄우지 않는다 — 이 커뮤니티의 오퍼레이터 토큰이 없다(등록 전): {base_url}"
         );
@@ -636,6 +654,8 @@ pub fn spawn_server_link(
     });
     let self_url = base_url.clone();
     let self_token = token.clone();
+    let handle_token = token.clone();
+    let handle_link = link.clone();
     let mut opts = ServerLinkOptions::new(base_url.clone(), token, hello, on_frame);
     let url_open = base_url.clone();
     opts.on_open = Some(Box::new(move || {
@@ -646,7 +666,7 @@ pub fn spawn_server_link(
         let (owner, u, t) = (
             std::sync::Arc::clone(&owner),
             self_url.clone(),
-            self_token.clone(),
+            self_token.get(),
         );
         let _ = std::thread::Builder::new()
             .name("operators-self".into())
@@ -661,10 +681,32 @@ pub fn spawn_server_link(
         close_frames.reset_synced();
         eprintln!("서버와 끊겼다: {base_url} — {reason}")
     }));
-    std::thread::Builder::new()
+    let thread = std::thread::Builder::new()
         .name("server-link".into())
         .spawn(move || {
             link.run(&opts, &mut WsDialer::default(), &SystemClock);
         })
-        .ok()
+        .ok()?;
+    Some(LinkHandle {
+        _thread: thread,
+        link: handle_link,
+        token: handle_token,
+    })
+}
+
+/// 떠 있는 서버 링크(s9b). 다시 등록은 `token` 칸에 새 값을 넣고 `link.reconnect()` 로 지금 연결을 내린다 —
+/// 링크·전달·청소·self 조회가 모두 이 칸을 나눠 가진다.
+pub struct LinkHandle {
+    _thread: std::thread::JoinHandle<()>,
+    pub link: crate::server_link::ServerLink,
+    pub token: crate::op_token::SharedToken,
+}
+
+impl LinkHandle {
+    /// 새 토큰으로 갈아 끼우고 다시 붙는다(TS `startOne`: 토큰이 바뀌면 내리고 새 토큰으로 다시 붙는다).
+    /// 러너는 그대로 산다 — 새 연결의 hello 가 살아 있는 러너를 알리고, assign 이 멱등으로 다시 잡는다.
+    pub fn renew(&self, token: &str) {
+        self.token.set(token);
+        self.link.reconnect();
+    }
 }
