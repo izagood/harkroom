@@ -38,6 +38,7 @@ pub mod harness_memory;
 pub mod harness_records;
 pub mod lane_guard;
 pub mod link;
+pub mod local_clock;
 pub mod mcp;
 pub mod memory_cache;
 pub mod memory_pin;

@@ -583,3 +583,30 @@ fn prepare_asks_lease_dir_for_this_mention() {
     let prep = p.prepare(&target(), None, true, "t-1").unwrap();
     assert_eq!(prep.lease_dir, Some(dir));
 }
+
+fn fixed_clock() -> crate::prompt_turn::TurnClock {
+    crate::prompt_turn::TurnClock {
+        now_ms: 1_794_640_000_000,
+        time_zone: "Asia/Seoul".into(),
+        utc_offset_minutes: 540,
+    }
+}
+
+/// T4a: 시도를 준비할 때 시계를 재 턴 프롬프트에 「지금 시각」 줄이 실린다(정본 `now: new Date()`). 시계가 없으면 줄도 없다.
+#[test]
+fn prepare_puts_turn_clock_line_into_prompt() {
+    let w = world("clock");
+    let store = SessionStore::new(w.root.join("sessions.json"));
+    let stale = PathBuf::from("/x");
+    let mut p = parts(&w, &store, &stale, false);
+    p.prepare(&target(), None, true, "t-0").unwrap();
+    assert!(!p.prompt().unwrap().contains("지금 시각(이 턴을 시작한 때)"));
+    p.clock = Some(fixed_clock);
+    p.prepare(&target(), None, true, "t-1").unwrap();
+    let prompt = p.prompt().unwrap();
+    assert!(
+        prompt.contains("지금 시각(이 턴을 시작한 때):")
+            && prompt.contains("(Asia/Seoul, UTC+09:00)"),
+        "{prompt}"
+    );
+}
