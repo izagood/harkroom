@@ -91,12 +91,53 @@ class P {
   }
 }
 
+/** 꼴 ③의 이름으로 받지 않는 낱말 — 가림·바꿔치기 꼴을 원천 차단한다(security 01:28 조건 2). */
+export const RESERVED_NAMES: ReadonlySet<string> = new Set(['text', 'tools', 'globalThis', 'await', 'async', 'arguments', 'eval', 'undefined', 'NaN', 'Infinity', 'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger', 'default', 'delete', 'do', 'else', 'enum', 'export', 'extends', 'false', 'finally', 'for', 'function', 'if', 'implements', 'import', 'in', 'instanceof', 'interface', 'let', 'new', 'null', 'package', 'private', 'protected', 'public', 'return', 'static', 'super', 'switch', 'this', 'throw', 'true', 'try', 'typeof', 'var', 'void', 'while', 'with', 'yield']);
+
+/** ASCII 식별자 하나. 예약 이름이면 null. */
+function ident(p: P): string | null {
+  const m = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(p.s.slice(p.i));
+  if (!m) return null;
+  if (RESERVED_NAMES.has(m[0])) return null;
+  p.i += m[0].length;
+  return m[0];
+}
+
+/** 꼴 ③: `(const|let) <이름> = await tools.exec_command({…});` + `text(<같은 이름>);` 정확히 두 문장. */
+function declThenText(p: P): ExecCall | null {
+  if (!p.word('const') && !p.word('let')) return null;
+  const before = p.i;
+  p.ws();
+  if (p.i === before) return null;
+  const name = ident(p);
+  if (!name) return null;
+  p.ws();
+  if (!p.lit('=')) return null;
+  p.ws();
+  if (!p.word('await')) return null;
+  p.ws();
+  const call = p.call();
+  if (!call) return null;
+  p.ws();
+  if (p.lit(';')) p.ws();
+  if (!p.word('text')) return null;
+  p.ws();
+  if (!p.lit('(')) return null;
+  p.ws();
+  if (!p.word(name)) return null;
+  p.ws();
+  return p.lit(')') ? call : null;
+}
+
 /** exec 셀의 코드 전체가 허용한 꼴 하나일 때만 그 호출을 돌려준다. */
 export function parseExecCell(code: string): ExecCall | null {
   const p = new P(code);
   p.ws();
   let call: ExecCall | null;
-  if (p.word('text')) {
+  if (p.s.startsWith('const', p.i) || p.s.startsWith('let', p.i)) {
+    call = declThenText(p);
+    if (!call) return null;
+  } else if (p.word('text')) {
     p.ws();
     if (!p.lit('(')) return null;
     p.ws();

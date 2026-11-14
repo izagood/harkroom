@@ -142,6 +142,126 @@ impl P<'_> {
     }
 }
 
+/// 꼴 ③의 이름으로 받지 않는 낱말 — 가림·바꿔치기 꼴을 원천 차단한다(security 01:28 조건 2).
+pub const RESERVED_NAMES: &[&str] = &[
+    "text",
+    "tools",
+    "globalThis",
+    "await",
+    "async",
+    "arguments",
+    "eval",
+    "undefined",
+    "NaN",
+    "Infinity",
+    "break",
+    "case",
+    "catch",
+    "class",
+    "const",
+    "continue",
+    "debugger",
+    "default",
+    "delete",
+    "do",
+    "else",
+    "enum",
+    "export",
+    "extends",
+    "false",
+    "finally",
+    "for",
+    "function",
+    "if",
+    "implements",
+    "import",
+    "in",
+    "instanceof",
+    "interface",
+    "let",
+    "new",
+    "null",
+    "package",
+    "private",
+    "protected",
+    "public",
+    "return",
+    "static",
+    "super",
+    "switch",
+    "this",
+    "throw",
+    "true",
+    "try",
+    "typeof",
+    "var",
+    "void",
+    "while",
+    "with",
+    "yield",
+];
+
+impl P<'_> {
+    /// ASCII 식별자 하나. 예약 이름이면 `None`.
+    fn ident(&mut self) -> Option<String> {
+        let rest = &self.s[self.i..];
+        let first = *rest.first()?;
+        if !(first.is_ascii_alphabetic() || first == b'_' || first == b'$') {
+            return None;
+        }
+        let n = rest
+            .iter()
+            .take_while(|b| b.is_ascii_alphanumeric() || **b == b'_' || **b == b'$')
+            .count();
+        let name = std::str::from_utf8(&rest[..n]).ok()?;
+        if RESERVED_NAMES.contains(&name) {
+            return None;
+        }
+        self.i += n;
+        Some(name.to_string())
+    }
+
+    /// 꼴 ③: `(const|let) <이름> = await tools.exec_command({…});` + `text(<같은 이름>);` 정확히 두 문장.
+    fn decl_then_text(&mut self) -> Option<ExecCall> {
+        if !self.word("const") && !self.word("let") {
+            return None;
+        }
+        let before = self.i;
+        self.ws();
+        if self.i == before {
+            return None;
+        }
+        let name = self.ident()?;
+        self.ws();
+        if !self.lit("=") {
+            return None;
+        }
+        self.ws();
+        if !self.word("await") {
+            return None;
+        }
+        self.ws();
+        let call = self.call()?;
+        self.ws();
+        if self.lit(";") {
+            self.ws();
+        }
+        if !self.word("text") {
+            return None;
+        }
+        self.ws();
+        if !self.lit("(") {
+            return None;
+        }
+        self.ws();
+        if !self.word(&name) {
+            return None;
+        }
+        self.ws();
+        self.lit(")").then_some(call)
+    }
+}
+
 /// exec 셀의 코드 전체가 허용한 꼴 하나일 때만 그 호출을 돌려준다.
 pub fn parse_exec_cell(code: &str) -> Option<ExecCall> {
     let mut p = P {
@@ -149,7 +269,9 @@ pub fn parse_exec_cell(code: &str) -> Option<ExecCall> {
         i: 0,
     };
     p.ws();
-    let call = if p.word("text") {
+    let call = if p.s[p.i..].starts_with(b"const") || p.s[p.i..].starts_with(b"let") {
+        p.decl_then_text()?
+    } else if p.word("text") {
         p.ws();
         if !p.lit("(") {
             return None;
