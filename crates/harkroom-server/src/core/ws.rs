@@ -537,23 +537,39 @@ pub fn router(
     auth: crate::auth::AuthPools,
     cors: Arc<crate::cors::Cors>,
 ) -> axum::Router {
-    axum::Router::new()
-        .route(
-            "/ws-ticket",
-            axum::routing::post(issue_ticket)
-                .route_layer(axum::middleware::from_fn_with_state(
-                    auth,
-                    crate::auth::layer,
-                ))
-                // 데스크톱은 이 주소를 교차 출처 `fetch`(Bearer)로 부른다 — 프리플라이트(OPTIONS)까지 이 층이 답하도록
-                // `layer`(메서드 밖)로 건다. 11-14 「Load failed」 장애와 같은 길.
-                .layer(axum::middleware::from_fn_with_state(
-                    cors,
-                    crate::cors::layer,
-                )),
-        )
-        .route("/ws", axum::routing::get(upgrade))
-        .with_state(core)
+    routes(core, auth, cors).router
+}
+
+/// [`router`] 와 같은 것에 줄 목록을 곁들인다(앞단 기동 기록 → CI CORS 대조, `route_table.rs`).
+pub fn routes(
+    core: Arc<Core>,
+    auth: crate::auth::AuthPools,
+    cors: Arc<crate::cors::Cors>,
+) -> crate::route_table::Routes<()> {
+    use crate::route_table::Table;
+    // 데스크톱은 `/ws-ticket` 을 교차 출처 `fetch`(Bearer)로 부른다 — 프리플라이트(OPTIONS)까지 이 층이 답하도록 CORS 를
+    // 인증 층 바깥에 `layer`(메서드 밖)로 건다. 11-14 「Load failed」 장애와 같은 길.
+    let rest = Table::<Arc<Core>>::new()
+        .post("/ws-ticket", issue_ticket)
+        .map(|r| {
+            r.route_layer(axum::middleware::from_fn_with_state(
+                auth,
+                crate::auth::layer,
+            ))
+            .layer(axum::middleware::from_fn_with_state(
+                cors,
+                crate::cors::layer,
+            ))
+        });
+    let t = Table::<Arc<Core>>::new()
+        .socket("/ws", upgrade)
+        .merge(rest)
+        .finish();
+    crate::route_table::Routes {
+        router: t.router.with_state(core),
+        http: t.http,
+        sockets: t.sockets,
+    }
 }
 
 #[cfg(test)]

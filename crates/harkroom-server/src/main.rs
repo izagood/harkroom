@@ -121,26 +121,29 @@ async fn main() {
             read: state.pool.clone(),
             write: state.write.clone(),
         };
-        let ws = harkroom_server::core::ws::router(core.clone(), auth.clone(), state.cors.clone());
-        match operator_write {
+        let mut core_routes =
+            harkroom_server::core::ws::routes(core.clone(), auth.clone(), state.cors.clone());
+        if let Some(write) = operator_write {
             // C2a — 오퍼레이터 소켓·REST. 허브는 프로세스에 하나이고 C2b~C5 의 소비자가 같은 것을 받는다.
-            Some(write) => {
-                let operators = harkroom_server::core::operator::OperatorCore::new(
-                    state.pool.clone(),
-                    write,
-                    state.trust.clone(),
-                    core.hub.clone(),
-                    harkroom_server::core::operator_hub::OperatorHub::new(),
-                    harkroom_server::core::operator::OpTiming::from_env(),
-                );
-                ws.merge(harkroom_server::core::operator::router(
-                    operators,
-                    auth,
-                    state.cors.clone(),
-                ))
-            }
-            None => ws,
+            let operators = harkroom_server::core::operator::OperatorCore::new(
+                state.pool.clone(),
+                write,
+                state.trust.clone(),
+                core.hub.clone(),
+                harkroom_server::core::operator_hub::OperatorHub::new(),
+                harkroom_server::core::operator::OpTiming::from_env(),
+            );
+            let op = harkroom_server::core::operator::routes(operators, auth, state.cors.clone());
+            core_routes.router = core_routes.router.merge(op.router);
+            core_routes.http.extend(op.http);
+            core_routes.sockets.extend(op.sockets);
         }
+        // CI 대조 시험이 이 줄을 읽어 여기 적힌 **모든** HTTP 줄의 CORS(본 요청·프리플라이트)를 TS 와 맞춰 본다(`route_table.rs`).
+        eprintln!(
+            "front: rust core routes {:?} sockets {:?}",
+            core_routes.http, core_routes.sockets
+        );
+        core_routes.router
     });
     eprintln!(
         "front: core {}",

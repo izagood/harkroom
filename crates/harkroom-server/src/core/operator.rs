@@ -268,28 +268,42 @@ pub fn router(
     auth: crate::auth::AuthPools,
     cors: Arc<crate::cors::Cors>,
 ) -> axum::Router {
+    routes(core, auth, cors).router
+}
+
+/// [`router`] 와 같은 것에 줄 목록을 곁들인다(앞단 기동 기록 → CI CORS 대조, `route_table.rs`).
+pub fn routes(
+    core: Arc<OperatorCore>,
+    auth: crate::auth::AuthPools,
+    cors: Arc<crate::cors::Cors>,
+) -> crate::route_table::Routes<()> {
     use super::operator_rest as rest;
-    use axum::routing::{get, post};
+    use crate::route_table::Table;
     let auth_layer = || axum::middleware::from_fn_with_state(auth.clone(), crate::auth::layer);
-    let rest_routes = axum::Router::new()
-        .route("/operators", get(rest::list))
-        .route("/operators/register-codes", post(rest::register_code))
-        .route("/operators/claim", post(rest::claim))
-        .route("/operators/self", get(rest::self_view))
-        .route("/operators/{id}/capabilities", get(rest::capabilities))
-        .route("/operators/{id}/upgrades", get(rest::upgrades))
-        .route(
-            "/operators/{id}",
-            axum::routing::patch(rest::rename).delete(rest::revoke),
-        )
-        .route_layer(auth_layer())
-        .layer(axum::middleware::from_fn_with_state(
-            cors,
-            crate::cors::layer,
-        ));
-    axum::Router::new()
-        .route("/operator", get(upgrade))
-        .route_layer(auth_layer())
+    let rest_routes = Table::<Arc<OperatorCore>>::new()
+        .get("/operators", rest::list)
+        .post("/operators/register-codes", rest::register_code)
+        .post("/operators/claim", rest::claim)
+        .get("/operators/self", rest::self_view)
+        .get("/operators/{id}/capabilities", rest::capabilities)
+        .get("/operators/{id}/upgrades", rest::upgrades)
+        .patch("/operators/{id}", rest::rename)
+        .delete("/operators/{id}", rest::revoke)
+        .map(|r| {
+            r.route_layer(auth_layer())
+                .layer(axum::middleware::from_fn_with_state(
+                    cors,
+                    crate::cors::layer,
+                ))
+        });
+    let t = Table::<Arc<OperatorCore>>::new()
+        .socket("/operator", upgrade)
+        .map(|r| r.route_layer(auth_layer()))
         .merge(rest_routes)
-        .with_state(core)
+        .finish();
+    crate::route_table::Routes {
+        router: t.router.with_state(core),
+        http: t.http,
+        sockets: t.sockets,
+    }
 }

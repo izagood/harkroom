@@ -821,8 +821,13 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
 
       // 11-14 「Load failed」 장애 재발 막기 — 앞단이 답하는 **모든** 줄이 TS 와 같은 CORS 머리를 내는가. 줄 목록은 앞단 기동 기록에서
       // 읽는다(새 줄이 생기면 저절로 들어온다). 요청은 바꾸는 것이 없게(없는 id·빈 본문) 보낸다 — 머리만 본다.
-      const keys = JSON.parse((/front: rust routes (\[.*\])/.exec(f.log()) ?? [])[1] ?? '[]') as string[];
-      expect(keys.length, '앞단 줄 목록을 읽어야 한다').toBeGreaterThan(40);
+      // 옮긴 줄(`front: rust routes`)과 코어 줄(`front: rust core routes` — `route_table.rs` 가 붙이면서 적는 표)을 **합쳐** 본다.
+      // 코어에 새 HTTP 줄이 붙으면 저절로 여기 들어온다(손으로 시험을 더하지 않는다 — 11-14 CORS 빠짐 두 번의 교훈).
+      const moved = JSON.parse((/front: rust routes (\[.*\])/.exec(f.log()) ?? [])[1] ?? '[]') as string[];
+      expect(moved.length, '앞단 줄 목록을 읽어야 한다').toBeGreaterThan(40);
+      const coreKeys = JSON.parse((/front: rust core routes (\[.*?\]) sockets/.exec(f.log()) ?? [])[1] ?? '[]') as string[];
+      expect(coreKeys, '코어 줄 목록(/ws-ticket·/operators*)을 읽어야 한다').toEqual(expect.arrayContaining(['POST /ws-ticket', 'GET /operators', 'DELETE /operators/{id}']));
+      const keys = [...moved, ...coreKeys];
       const CORS_HEADERS = ['access-control-allow-origin', 'access-control-expose-headers', 'access-control-allow-credentials'];
       const VOLATILE = new Set(['date', 'content-length', 'connection', 'keep-alive', 'transfer-encoding']);
       const headerDiffs: string[] = [];
@@ -847,40 +852,26 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           }
         }
       }
-      // 코어 `/ws-ticket`(C0)도 데스크톱이 교차 출처로 부른다 — 본 요청과 프리플라이트 둘 다 TS 와 같아야 한다.
-      for (const [method, headers] of [
-        ['POST', { authorization: `Bearer ${A}`, origin: CORS }],
-        ['OPTIONS', { origin: CORS, 'access-control-request-method': 'POST', 'access-control-request-headers': 'authorization' }],
-      ] as const) {
-        const [a, b] = [await fetch(`${tsUrl}/ws-ticket`, { method, headers }), await fetch(`${rsUrl}/ws-ticket`, { method, headers })];
+      // 같은 모든 줄의 프리플라이트 — 그 줄의 메서드를 ACRM 으로. 상태·CORS 머리가 TS 와 같아야 한다(TS 는 `@fastify/cors` 가 답한다).
+      for (const key of keys) {
+        const [method, path] = key.split(' ') as [string, string];
+        const headers = { origin: CORS, 'access-control-request-method': method, 'access-control-request-headers': 'authorization,content-type' };
+        const [a, b] = [
+          await fetch(`${tsUrl}${fill(path)}`, { method: 'OPTIONS', headers }),
+          await fetch(`${rsUrl}${fill(path)}`, { method: 'OPTIONS', headers }),
+        ];
         await a.arrayBuffer(); await b.arrayBuffer();
-        expect(b.status, `${method} /ws-ticket`).toBe(a.status);
+        expect(b.status, `preflight ${key}`).toBe(a.status);
         for (const h of [...CORS_HEADERS, 'access-control-allow-methods', 'access-control-allow-headers', 'access-control-max-age']) {
-          expect(b.headers.get(h), `${method} /ws-ticket ${h}`).toBe(a.headers.get(h));
+          expect(b.headers.get(h), `preflight ${key} ${h}`).toBe(a.headers.get(h));
         }
-      }
-      // C2a — 오퍼레이터 REST(`/operators*`)도 데스크톱이 교차 출처로 부른다. 앞단 줄 목록(`front: rust routes`)에는 없으므로 따로 본다.
-      // 본 요청(인증 있음·없음)과 프리플라이트가 TS 와 같은 상태·CORS 머리인가. 바꾸는 요청은 없는 id 로만 보낸다.
-      const OP_MISSING = '00000000-0000-4000-8000-000000000999';
-      const opCases: [string, string, Record<string, string>][] = [
-        ['GET', '/operators', { authorization: `Bearer ${A}`, origin: CORS }],
-        ['GET', '/operators', { origin: CORS }],
-        ['GET', '/operators', { authorization: `Bearer ${A}`, origin: 'https://evil.example' }],
-        ['GET', `/operators/${OP_MISSING}/capabilities`, { authorization: `Bearer ${A}`, origin: CORS }],
-        ['DELETE', `/operators/${OP_MISSING}`, { authorization: `Bearer ${A}`, origin: CORS }],
-        ['OPTIONS', '/operators', { origin: CORS, 'access-control-request-method': 'GET', 'access-control-request-headers': 'authorization' }],
-        ['OPTIONS', '/operators/register-codes', { origin: CORS, 'access-control-request-method': 'POST', 'access-control-request-headers': 'authorization,content-type' }],
-        ['OPTIONS', `/operators/${OP_MISSING}`, { origin: CORS, 'access-control-request-method': 'DELETE', 'access-control-request-headers': 'authorization' }],
-        ['OPTIONS', '/operators', { origin: CORS }],
-      ];
-      for (const [method, path, headers] of opCases) {
-        const [a, b] = [await fetch(`${tsUrl}${path}`, { method, headers }), await fetch(`${rsUrl}${path}`, { method, headers })];
-        await a.arrayBuffer(); await b.arrayBuffer();
-        const label = `${method} ${path} ${headers.origin}${headers.authorization ? ' auth' : ''}`;
-        expect(b.status, label).toBe(a.status);
-        for (const h of [...CORS_HEADERS, 'access-control-allow-methods', 'access-control-allow-headers', 'access-control-max-age']) {
-          expect(b.headers.get(h), `${label} ${h}`).toBe(a.headers.get(h));
-        }
+        // 인증 없는 본 요청(401·403 등) — 인증 층보다 바깥에서 CORS 가 붙는가.
+        const [c, d] = [
+          await fetch(`${tsUrl}${fill(path)}`, { method, headers: { origin: CORS } }),
+          await fetch(`${rsUrl}${fill(path)}`, { method, headers: { origin: CORS } }),
+        ];
+        await c.arrayBuffer(); await d.arrayBuffer();
+        for (const h of CORS_HEADERS) expect(d.headers.get(h), `${key} 인증 없음 ${h}`).toBe(c.headers.get(h));
       }
       // 같은 축의 다른 머리 차이(보안·캐시 머리 등) — 보고용으로 남긴다.
       console.log(`rust-front header diff (${headerDiffs.length}):\n${headerDiffs.join('\n')}`);
