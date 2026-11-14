@@ -6,6 +6,7 @@
 //   cd crates/harkroom-runner && cargo build --locked --bin harkroom-runner-rs
 //   HARKROOM_RUNNER_RS_BIN=$PWD/target/debug/harkroom-runner-rs npx vitest run test/rustRunnerUnderTsOperator.test.ts
 import { describe, it, expect } from 'vitest';
+import { closeSync, existsSync, openSync, readFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { createServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -23,8 +24,11 @@ describe.skipIf(!BIN)('진짜 Rust 러너가 TS 오퍼레이터 링크에 붙는
     // 소켓 경로는 짧아야 한다(macOS 104자) — tmpdir 바로 아래.
     const dir = await mkdtemp(join(tmpdir(), 'b45c-'));
     const sock = join(dir, 'op.sock');
-    const logs: string[] = [];
-    const link = createRunnerLinkServer({ onFrame: () => {}, log: (l) => logs.push(l) });
+    const logs2: string[] = [];
+    // 붙은 사실은 **사건으로** 받는다. 이 시험의 링크는 요청에 답하지 않으므로 러너는 붙은 뒤 「내 계정을 읽지 못했다」로
+    // 곧 물러난다 — 그 뒤 `isLinked` 를 물으면 이미 false 일 수 있다(CI 에서 그렇게 졌다).
+    const attached: string[] = [];
+    const link = createRunnerLinkServer({ onFrame: () => {}, onRelayAttach: (id) => attached.push(id), log: (l) => logs2.push(l) });
     // DaemonServer 가 하는 것처럼 첫 줄(hello)을 link.accept 로 넘긴다.
     const server = createServer((socket: Socket) => {
       const dec = new NdjsonDecoder();
@@ -38,7 +42,14 @@ describe.skipIf(!BIN)('진짜 Rust 러너가 TS 오퍼레이터 링크에 붙는
     });
     await new Promise<void>((r) => server.listen(sock, r));
 
-    const registry = new RunnerRegistry({ command: '/nonexistent/harkroom-runner', args: [], rustCommand: BIN! }, nodeRunnerHost);
+    // 러너 자신의 출력을 파일로 받는다 — 붙지 못하면 그 꼬리를 실패 문구에 싣는다(CI 에서 원인을 보려고).
+    const logPath = join(dir, 'runner.log');
+    const logs = {
+      open: () => { const fd = openSync(logPath, 'a'); return { fd, path: logPath, close: () => closeSync(fd) }; },
+      pathFor: () => logPath,
+      tail: async () => [],
+    };
+    const registry = new RunnerRegistry({ command: '/nonexistent/harkroom-runner', args: [], rustCommand: BIN! }, nodeRunnerHost, () => {}, null, logs);
     expect(await registry.rustRunnerPresent()).toBe(true);
     const runnerId = randomUUID();
     const secret = randomBytes(24).toString('base64url');
@@ -55,10 +66,11 @@ describe.skipIf(!BIN)('진짜 Rust 러너가 TS 오퍼레이터 링크에 붙는
       }, runnerId, { kind: 'rust' });
       expect(rec.runnerImpl).toBe('rust');
       const deadline = Date.now() + 10_000;
-      while (!link.isLinked(runnerId) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
-      expect(link.isLinked(runnerId)).toBe(true);
-      expect(link.agentOf(runnerId)).toBe('agent-rs');
-      expect(registry.listRunners()[0]).toMatchObject({ agentId: 'agent-rs', alive: true, runnerImpl: 'rust' });
+      while (!attached.includes(runnerId) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 20));
+      const tail = () => (existsSync(logPath) ? readFileSync(logPath, 'utf8').slice(-2000) : '(로그 없음)');
+      // hello 가 secret 검사를 지나 relay 로 붙었다. 거절이면 attach 가 없고 링크 로그에 거절 줄이 남는다.
+      expect(attached, `러너 출력:\n${tail()}\n링크 로그:\n${logs2.join('\n')}`).toEqual([runnerId]);
+      expect(logs2.filter((l) => /거절/.test(l))).toEqual([]);
     } finally {
       registry.killRunner('agent-rs');
       link.close();
