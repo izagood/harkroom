@@ -14,6 +14,7 @@ use std::sync::Mutex;
 use crate::adapter::AgentHarness;
 use crate::harness_errors::{TranscriptDirs, read_last_api_error};
 use crate::mention_parts::{OutcomeCtx, OutcomeFn};
+use crate::mention_turn_parts::StallSignal;
 use crate::thread_model::TurnModel;
 use crate::turn_attempt::{Attempted, TurnSecrets};
 use crate::turn_attempt_fold::{OutcomeInputs, fold_outcome};
@@ -74,6 +75,11 @@ fn fold_with(
 ) -> Result<crate::mention_run::TurnOk, crate::turn_policy::AttemptError> {
     {
         let api = recorded_after(c, o);
+        // 신호를 심은 시도만(정본 `gateFile === null ? null : { ...gateSignalOf(gateFile), lastProgressAtMs: end.lastDataAtMs }`).
+        let signal = o.gate_signal.map(|g| StallSignal {
+            last_at_ms: g.last_at_ms,
+            last_progress_at_ms: u64::try_from(end.last_data_at_ms).ok().filter(|n| *n > 0),
+        });
         let end = Mutex::new(end.clone());
         fold_outcome(
             attempted,
@@ -88,7 +94,7 @@ fn fold_with(
                     watch_now: None,
                     screen_tail: &o.screen,
                     harness: c.harness,
-                    signal: None,
+                    signal,
                 },
                 recorded_after: api.as_deref(),
                 turn_model: c.turn_model.as_ref(),
