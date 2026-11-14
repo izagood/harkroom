@@ -107,6 +107,7 @@ fn screen_line_goes_out_only_through_quoted_line() {
     let secrets = NoticeSecrets {
         pat: pat.into(),
         mounted: vec![secret.into()],
+        lease_dir: None,
     };
     let w = watch.lock().unwrap();
     let line = w.screen_line_for_post(&secrets).unwrap();

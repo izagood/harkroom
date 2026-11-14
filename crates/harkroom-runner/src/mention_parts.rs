@@ -257,6 +257,8 @@ pub type MountFn<'a> = Box<dyn FnMut(&str) -> Result<(), SecretMountError> + 'a>
 pub fn no_mount<'a>() -> MountFn<'a> {
     Box::new(|_cause: &str| Ok(()))
 }
+/// 이 멘션의 임대 폴더를 묻는 닫개.
+pub type LeaseDirFn<'a> = Box<dyn Fn() -> Option<PathBuf> + 'a>;
 /// 시도마다 PTY 옵션(주입 글 틀 포함)을 새로 짓는다.
 pub type PtyOptsFn<'a> = Box<dyn Fn() -> PtyTurnOptions + 'a>;
 
@@ -332,6 +334,9 @@ pub struct MentionParts<'a, P: PrepareIo, S: PtyTurnSink> {
     pub lane: LaneSnapshot,
     pub secrets: bool,
     pub lease_dir: Option<PathBuf>,
+    /// 이 멘션의 임대 폴더를 **시도를 준비할 때** 묻는다(임대는 짓개가 부품을 지은 뒤 받는다 — `LeaseBook::lease_dir`).
+    /// `lease_dir` 가 있으면 그것이 먼저다.
+    pub lease_dir_of: Option<LeaseDirFn<'a>>,
     pub now: Option<TurnClock>,
     pub outcome: OutcomeFn<'a>,
     pub after: AfterFn<'a>,
@@ -386,6 +391,7 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
             lane: LaneSnapshot::default(),
             secrets: false,
             lease_dir: None,
+            lease_dir_of: None,
             now: None,
             outcome,
             after,
@@ -497,7 +503,10 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             key: self.key.clone(),
             cause: target.mention_id.clone(),
             secrets: self.secrets,
-            lease_dir: self.lease_dir.clone(),
+            lease_dir: self
+                .lease_dir
+                .clone()
+                .or_else(|| self.lease_dir_of.as_ref().and_then(|f| f())),
             session_id,
             homes: OwnedHomes { ..homes },
         })

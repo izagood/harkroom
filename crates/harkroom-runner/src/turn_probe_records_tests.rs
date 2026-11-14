@@ -61,6 +61,7 @@ fn secrets() -> NoticeSecrets {
     NoticeSecrets {
         pat: PAT.into(),
         mounted: vec![MOUNTED.into()],
+        lease_dir: None,
     }
 }
 
@@ -268,4 +269,56 @@ fn spawn_gate_stops_before_spawn_when_fenced_or_canceled() {
 fn notice_secrets_debug_hides_values() {
     let dbg = format!("{:?}", secrets());
     assert!(!dbg.contains(PAT) && !dbg.contains(MOUNTED), "{dbg}");
+}
+
+/// T3a: 띄운 **뒤** 임대 폴더에 생긴 값(턴 도중 `secret.mount`)도 통지에서 가린다 — 쓸 때 다시 읽는다(정본 `tailSecrets`).
+/// 다른 임대 폴더의 값은 이 통지와 상관없다(섞이지 않는다).
+#[test]
+fn notice_masks_values_mounted_after_spawn() {
+    let base = std::env::temp_dir().join(format!("hk-t3a-notice-{}", std::process::id()));
+    let mine = base.join("lease-mine");
+    let other = base.join("lease-other");
+    std::fs::create_dir_all(&mine).unwrap();
+    std::fs::create_dir_all(&other).unwrap();
+    let s = NoticeSecrets {
+        pat: PAT.into(),
+        mounted: vec![],
+        lease_dir: Some(mine.clone()),
+    };
+    // 띄운 뒤 마운트
+    std::fs::write(mine.join("API_KEY"), "LATE-MOUNTED-SECRET-VALUE-1234").unwrap();
+    std::fs::write(other.join("API_KEY"), "OTHER-LEASE-VALUE-ZZZZ-9999").unwrap();
+    let body = s
+        .guard_body("screen says LATE-MOUNTED-SECRET-VALUE-1234 and OTHER-LEASE-VALUE-ZZZZ-9999")
+        .unwrap();
+    assert!(!body.contains("LATE-MOUNTED-SECRET-VALUE-1234"), "{body}");
+    assert!(
+        body.contains("OTHER-LEASE-VALUE-ZZZZ-9999"),
+        "다른 임대 폴더는 안 읽는다: {body}"
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// T3a(security 막음 1): 임대 폴더를 못 읽으면(권한 0000) 통지·화면 인용을 올리지 않는다. 폴더가 없으면(마운트 없음) 그대로 간다.
+#[test]
+fn notice_withheld_when_lease_unreadable() {
+    use std::os::unix::fs::PermissionsExt;
+    let base = std::env::temp_dir().join(format!("hk-t3a-blind-{}", std::process::id()));
+    let dir = base.join("lease");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("K"), "UNREADABLE-SECRET-VALUE-5678").unwrap();
+    let s = NoticeSecrets {
+        pat: PAT.into(),
+        mounted: vec![],
+        lease_dir: Some(dir.clone()),
+    };
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let blocked = s.guard_body("tail UNREADABLE-SECRET-VALUE-5678");
+    let quoted = screen_said_for_post(Some("said UNREADABLE-SECRET-VALUE-5678"), &s);
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(blocked, None, "못 읽으면 올리지 않는다");
+    assert_eq!(quoted, None, "화면 인용을 뺀다");
+    // 폴더가 없다 = 마운트한 것 없음 → 평소대로
+    std::fs::remove_dir_all(&base).unwrap();
+    assert_eq!(s.guard_body("plain").as_deref(), Some("plain"));
 }

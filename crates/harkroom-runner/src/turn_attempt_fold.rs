@@ -46,7 +46,7 @@ pub fn fold_outcome(
     i: OutcomeInputs<'_>,
 ) -> Result<TurnOk, AttemptError> {
     let end = end.lock().unwrap_or_else(|e| e.into_inner());
-    attempt_outcome(
+    let res = attempt_outcome(
         attempted,
         &OutcomeFacts {
             end: &end,
@@ -61,7 +61,27 @@ pub fn fold_outcome(
             secrets: secrets.needles(),
             stop_requested_at: i.stop_requested_at,
         },
-    )
+    );
+    if secrets.lease_unreadable() {
+        // 임대 폴더를 못 읽어 무엇을 가릴지 모른다 — 화면·꼬리·API 오류 인용을 빼고 고정 문구만 남긴다(T3a security 막음 1).
+        return res.map_err(blind_failure);
+    }
+    res
+}
+
+/// 가림 재료 없이 접힌 실패에서 화면에서 온 글자를 모두 뺀다.
+pub const BLIND_FAILURE: &str =
+    "턴이 실패했다 — 마운트한 비밀을 가릴 재료를 읽지 못해 화면·오류 인용을 뺐다";
+
+fn blind_failure(mut e: AttemptError) -> AttemptError {
+    e.message = BLIND_FAILURE.to_owned();
+    e.tail.clear();
+    e.marks.harness_api_error_shown = e
+        .marks
+        .harness_api_error_shown
+        .map(|_| crate::turn_end::MASKED_API_ERROR.to_owned());
+    e.marks.stalled_screen_line = None;
+    e
 }
 
 /// 보고처 약속(깨움 턴만) — 가림 목록을 뺀 몫.
@@ -95,9 +115,14 @@ pub fn run_after_turn<'a, L: RunnerLink>(
     plan: &AfterTurnPlan,
     secrets: &'a TurnSecrets,
     i: &'a AfterInputs<'a>,
-    last_said: Box<dyn FnMut() -> Option<String> + 'a>,
-    silent_said: Box<dyn FnMut() -> SilentSaid + 'a>,
+    mut last_said: Box<dyn FnMut() -> Option<String> + 'a>,
+    mut silent_said: Box<dyn FnMut() -> SilentSaid + 'a>,
 ) -> Result<(), String> {
+    if secrets.lease_unreadable() {
+        // 임대 폴더를 못 읽었다 — 하네스의 말·화면 인용을 싣지 않는다(고정 문구만 남는다).
+        last_said = Box::new(|| None);
+        silent_said = Box::new(SilentSaid::default);
+    }
     let facts = AfterFacts {
         key: i.key,
         channel_id: i.channel_id,

@@ -68,6 +68,8 @@ pub struct NoticeSecrets {
     pub pat: String,
     /// 마운트한 비밀·턴 열쇠 값. 통째 가림과 12자 조각 검사에 쓴다.
     pub mounted: Vec<String>,
+    /// 이 멘션의 임대 폴더 — 턴 **도중** `secret.mount` 로 생긴 값을 쓸 때마다 다시 읽는다([`NoticeSecrets::mounted_now`]).
+    pub lease_dir: Option<std::path::PathBuf>,
 }
 
 impl std::fmt::Debug for NoticeSecrets {
@@ -80,10 +82,25 @@ impl std::fmt::Debug for NoticeSecrets {
 }
 
 impl NoticeSecrets {
+    /// 지금 가릴 값 — 띄울 때 지은 것 ∪ 임대 폴더를 **지금** 다시 읽은 것(정본 `tailSecrets` 는 쓸 때 `secretNeedles(cause)` 를
+    /// 읽는다 — 띄운 뒤 마운트한 값도 가린다). 긴 것부터.
+    ///
+    /// 임대 폴더를 **못 읽으면**(권한·I/O 오류 등 — 폴더 없음은 아님) `None` — 무엇을 가릴지 모르니 화면·꼬리 인용을 내보내지
+    /// 않는다(닫히는 쪽, T3a security 막음 1).
+    pub fn mounted_now(&self) -> Option<Vec<String>> {
+        let mut all: std::collections::BTreeSet<String> = self.mounted.iter().cloned().collect();
+        if let Some(d) = &self.lease_dir {
+            all.extend(crate::turn_attempt::lease_needles_checked(d).ok()?);
+        }
+        let mut v: Vec<String> = all.into_iter().collect();
+        v.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+        Some(v)
+    }
     /// 스레드에 올릴 통지 본문의 마지막 관문 — 마운트한 비밀·PAT 를 통째로 가리고 값을 모르는 토큰을 꼴로 가린다. 가린 뒤에도
     /// 비밀의 12자 조각이 보이면 `None`(올리지 않는다). 통지 함수가 이미 가린 본문에도 한 번 더 건다 — sink 를 지나는 길은 이것뿐이다.
     pub fn guard_body(&self, body: &str) -> Option<String> {
-        let mut all = self.mounted.clone();
+        // 임대 폴더를 못 읽으면 올리지 않는다(가리지 못한 본문은 내보내지 않는다).
+        let mut all = self.mounted_now()?;
         if !self.pat.is_empty() {
             all.push(self.pat.clone());
         }
@@ -138,7 +155,9 @@ pub fn probe_denials(
     let body = cap(permission_denial_notice(
         &fresh,
         &secrets.pat,
-        &secrets.mounted,
+        &secrets
+            .mounted_now()
+            .unwrap_or_else(|| secrets.mounted.clone()),
     ));
     if let Err(e) = sink.progress(&body) {
         sink.log(&format!("권한 거부 통지 실패 — {e}"));
@@ -171,7 +190,9 @@ pub fn probe_mac_permission(
     let body = cap(mac_permission_notice(
         &fresh,
         &secrets.pat,
-        &secrets.mounted,
+        &secrets
+            .mounted_now()
+            .unwrap_or_else(|| secrets.mounted.clone()),
     ));
     if let Err(e) = sink.progress(&body) {
         sink.log(&format!("macOS 권한 통지 실패 — {e}"));
@@ -211,7 +232,13 @@ pub fn probe_api_error(
     secrets: &NoticeSecrets,
 ) -> Option<bool> {
     if let Some(recorded) = records.recorded_api_error()
-        && let Some(kill) = end.on_recorded_api_error(&recorded, &secrets.pat, &secrets.mounted)
+        && let Some(kill) = end.on_recorded_api_error(
+            &recorded,
+            &secrets.pat,
+            &secrets
+                .mounted_now()
+                .unwrap_or_else(|| secrets.mounted.clone()),
+        )
     {
         sink.log("하네스가 기록에 API 오류를 남겼다 — 회수한다");
         return Some(kill);
@@ -225,7 +252,8 @@ pub fn probe_api_error(
 /// 화면에서 거둔 말(원문)을 스레드에 올릴 한 줄로 — [`quoted_line`](통째 가림·조각 검사·토큰 가림)을 거친다
 /// (security 22:35 조건 ①). 가린 뒤 남는 것이 없으면 `None`(올리지 않는다).
 pub fn screen_said_for_post(raw: Option<&str>, secrets: &NoticeSecrets) -> Option<String> {
-    let line = quoted_line(raw, &secrets.pat, &secrets.mounted);
+    // 임대 폴더를 못 읽으면 화면 인용을 빼고 올린다.
+    let line = quoted_line(raw, &secrets.pat, &secrets.mounted_now()?);
     (!line.is_empty()).then_some(line)
 }
 

@@ -300,3 +300,29 @@ fn conclusion_scrub_walks_the_session_side_folder() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// T3a: 그 멘션의 임대 폴더는 받은 임대(`Held`)이고 id 가 안전할 때만 — 거절·다른 멘션·이상한 id·뿌리 없음은 `None`.
+#[test]
+fn lease_dir_only_for_held_cause_with_safe_id() {
+    let n = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let root = PathBuf::from("/secrets-root");
+    let book = beating_book(n.clone(), Some(root.clone()));
+    book.put("m1", Booked::Held, Some("lease-1"));
+    book.put("m2", Booked::Declined, None);
+    book.put("m3", Booked::Held, Some("../x"));
+    book.put("m4", Booked::Held, Some(""));
+    book.put("m5", Booked::Held, Some("."));
+    assert_eq!(book.lease_dir("m1"), Some(root.join("lease-1")));
+    assert_eq!(book.lease_dir("m2"), None, "거절된 멘션");
+    assert_eq!(book.lease_dir("m3"), None, "id 에 .. 이 들면");
+    assert_eq!(book.lease_dir("m4"), None, "빈 id");
+    assert_eq!(book.lease_dir("m5"), None, "뿌리 자신");
+    assert_eq!(book.lease_dir("other"), None, "장부에 없는 멘션");
+    let bare = beating_book(n, None);
+    bare.put("m1", Booked::Held, Some("lease-1"));
+    assert_eq!(bare.lease_dir("m1"), None, "턴 비밀 뿌리 없음");
+    for c in ["m1", "m2", "m3", "m4", "m5"] {
+        book.release(c);
+    }
+    bare.release("m1");
+}
