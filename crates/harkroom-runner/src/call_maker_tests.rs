@@ -417,7 +417,7 @@ fn workspace_of(m: &RunnerMaker<&'static Link>, t: &MentionTarget) -> String {
     let ctx = <RunnerMaker<_> as CallMaker<_, Sink>>::system_context(m, t, &reads);
     let system = system_inputs(&reads, t, ctx);
     let i: CallInputs<'_, _, Sink> = m.call_inputs(&clients, &book, t, reads, system);
-    (i.build_parts)(bundle(m)).new_workspace_dir
+    (i.build_parts)(bundle(m)).new_workspace_dir.clone()
 }
 
 /// 스레드마다 작업 폴더가 따로다(정본 `resolveWorkspaceDir`) — 두 스레드는 다른 폴더, 같은 스레드는 다시 지어도 같은 폴더.

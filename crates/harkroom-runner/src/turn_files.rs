@@ -6,6 +6,7 @@
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write as _};
+use std::os::unix::fs::DirBuilderExt as _;
 use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::{Path, PathBuf};
 
@@ -502,9 +503,41 @@ pub(crate) fn write_private(path: &Path, body: &str) -> io::Result<()> {
     res
 }
 
-/// 정본 `writeSystemPromptFile` — 매 턴 최신 지시문을 `system-prompt.txt` 에(0600). 디렉터리가 사라졌으면 다시 만들지 않고 말한다.
-pub fn write_system_prompt_file(dir: &Path, system_prompt: &str) -> Result<PathBuf, TurnFileError> {
-    let path = dir.join("system-prompt.txt");
+/// 스레드별 지시문 파일 자리(상태 폴더 아래, 0700).
+pub const SYSTEM_PROMPT_DIR: &str = "system-prompts";
+/// 옛 자리(에이전트당 한 파일) — 기동 때 쓸어 낸다.
+const LEGACY_SYSTEM_PROMPT_FILE: &str = "system-prompt.txt";
+
+/// 그 스레드의 지시문 파일 경로 — 스레드 열쇠 sha256 앞 16자(열쇠 원문은 이름에 넣지 않는다). 같은 에이전트가 두 스레드에서 동시에
+/// 돌아도 서로의 지시문을 덮지 않는다(스레드 사이 지시문 섞임 방지).
+pub fn system_prompt_path(dir: &Path, thread_key: &str) -> PathBuf {
+    use sha2::{Digest, Sha256};
+    let d = Sha256::digest(thread_key.as_bytes());
+    let name: String = d.iter().take(8).map(|b| format!("{b:02x}")).collect();
+    dir.join(SYSTEM_PROMPT_DIR).join(format!("{name}.txt"))
+}
+
+/// 정본 `writeSystemPromptFile` — 매 턴 최신 지시문을 **그 스레드의** 파일에(0600). 상태 폴더가 사라졌으면 다시 만들지 않고 말한다
+/// (스레드별 하위 폴더는 상태 폴더가 있을 때만 0700 으로 만든다).
+pub fn write_system_prompt_file(
+    dir: &Path,
+    thread_key: &str,
+    system_prompt: &str,
+) -> Result<PathBuf, TurnFileError> {
+    if !dir.is_dir() {
+        return Err(TurnFileError::StateDirGone {
+            dir: dir.to_path_buf(),
+        });
+    }
+    let sub = dir.join(SYSTEM_PROMPT_DIR);
+    if let Err(source) = fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&sub)
+    {
+        return Err(TurnFileError::Io { path: sub, source });
+    }
+    let path = system_prompt_path(dir, thread_key);
     match write_private(&path, system_prompt) {
         Ok(()) => Ok(path),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Err(TurnFileError::StateDirGone {
@@ -512,6 +545,36 @@ pub fn write_system_prompt_file(dir: &Path, system_prompt: &str) -> Result<PathB
         }),
         Err(source) => Err(TurnFileError::Io { path, source }),
     }
+}
+
+/// 턴(멘션)이 끝나면 그 스레드의 지시문 파일을 지운다. 없으면 아무 일도 없다.
+pub fn remove_system_prompt_file(path: &Path) {
+    if let Err(e) = fs::remove_file(path)
+        && e.kind() != io::ErrorKind::NotFound
+    {
+        eprintln!("[turnFiles] 지시문 파일을 지우지 못했다({:?})", e.kind());
+    }
+}
+
+/// 기동 때 — 지난 프로세스가 비정상 종료해 남긴 지시문 파일(스레드별 폴더 안의 것과 옛 에이전트당 한 파일)을 쓸어 낸다.
+/// 지운 수를 돌려준다. 폴더 안의 링크·하위 폴더는 따라가지 않는다(파일만 지운다).
+pub fn sweep_system_prompt_files(dir: &Path) -> usize {
+    let mut n = 0;
+    if let Ok(rd) = fs::read_dir(dir.join(SYSTEM_PROMPT_DIR)) {
+        for e in rd.flatten() {
+            if e.file_type().is_ok_and(|t| t.is_file() || t.is_symlink())
+                && fs::remove_file(e.path()).is_ok()
+            {
+                n += 1;
+            }
+        }
+    }
+    if fs::symlink_metadata(dir.join(LEGACY_SYSTEM_PROMPT_FILE)).is_ok()
+        && fs::remove_file(dir.join(LEGACY_SYSTEM_PROMPT_FILE)).is_ok()
+    {
+        n += 1;
+    }
+    n
 }
 
 /// 정본 `writePromptFile` — stdin 리다이렉션용 `stdin-prompt.txt`(0600, #92).

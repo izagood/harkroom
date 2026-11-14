@@ -237,10 +237,12 @@ fn lane_args_match_canon() {
 #[test]
 fn prompt_files_are_0600_even_when_preexisting() {
     let d = tmp("prompt");
-    let pre = d.join("system-prompt.txt");
+    let pre = system_prompt_path(&d, "c/t");
+    fs::create_dir_all(pre.parent().unwrap()).unwrap();
     fs::write(&pre, "old").unwrap();
     fs::set_permissions(&pre, fs::Permissions::from_mode(0o644)).unwrap();
-    let p = write_system_prompt_file(&d, "새 지시").unwrap();
+    let p = write_system_prompt_file(&d, "c/t", "새 지시").unwrap();
+    assert_eq!(p, pre);
     assert_eq!(fs::read_to_string(&p).unwrap(), "새 지시");
     assert_eq!(
         fs::metadata(&p).unwrap().permissions().mode() & 0o777,
@@ -253,7 +255,7 @@ fn prompt_files_are_0600_even_when_preexisting() {
         0o600
     );
     let gone = d.join("moved-away");
-    let e = write_system_prompt_file(&gone, "x").unwrap_err();
+    let e = write_system_prompt_file(&gone, "c/t", "x").unwrap_err();
     assert!(matches!(e, TurnFileError::StateDirGone { .. }));
     assert!(!e.to_string().contains("moved-away"));
 }
@@ -431,4 +433,53 @@ fn stdio_env_plan_keeps_names_that_clash_with_child_env_in_argv() {
     let plain = plan_codex_mcp_env(&servers, &Default::default());
     assert_eq!(plain.moved.len(), 3);
     assert!(plain.argv_servers.is_empty());
+}
+
+/// 스레드 사이 지시문 섞임 방지: 같은 에이전트가 두 스레드에서 동시에 돌아도 파일이 다르고 서로 덮지 않는다. 이름에 스레드 열쇠
+/// 원문이 없다. 지우면 없다.
+#[test]
+fn system_prompt_files_are_per_thread_and_removed() {
+    let d = tmp("prompt-thread");
+    let (k1, k2) = ("chan-1/root-aaaa", "chan-1/root-bbbb");
+    let p1 = std::thread::scope(|s| {
+        let h1 = s.spawn(|| write_system_prompt_file(&d, k1, "스레드 1 지시").unwrap());
+        let h2 = s.spawn(|| write_system_prompt_file(&d, k2, "스레드 2 지시").unwrap());
+        let (p1, p2) = (h1.join().unwrap(), h2.join().unwrap());
+        assert_ne!(p1, p2, "스레드마다 다른 파일");
+        assert_eq!(fs::read_to_string(&p2).unwrap(), "스레드 2 지시");
+        p1
+    });
+    assert_eq!(
+        fs::read_to_string(&p1).unwrap(),
+        "스레드 1 지시",
+        "한쪽이 다른 쪽을 덮지 않는다"
+    );
+    let name = p1.file_name().unwrap().to_string_lossy().into_owned();
+    assert!(
+        !name.contains("root-aaaa") && !name.contains("chan-1"),
+        "열쇠 원문 없음: {name}"
+    );
+    assert_eq!(
+        fs::metadata(p1.parent().unwrap())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700
+    );
+    remove_system_prompt_file(&p1);
+    assert!(!p1.exists(), "턴이 끝나면 없다");
+    remove_system_prompt_file(&p1); // 두 번 지워도 조용하다.
+}
+
+/// 기동 때 쓸어 내기 — 스레드별 폴더에 남은 파일과 옛 에이전트당 한 파일을 지운다.
+#[test]
+fn startup_sweep_removes_leftover_prompt_files() {
+    let d = tmp("prompt-sweep");
+    write_system_prompt_file(&d, "c/t1", "a").unwrap();
+    write_system_prompt_file(&d, "c/t2", "b").unwrap();
+    fs::write(d.join("system-prompt.txt"), "old").unwrap();
+    assert_eq!(sweep_system_prompt_files(&d), 3);
+    assert_eq!(fs::read_dir(d.join(SYSTEM_PROMPT_DIR)).unwrap().count(), 0);
+    assert!(!d.join("system-prompt.txt").exists());
 }

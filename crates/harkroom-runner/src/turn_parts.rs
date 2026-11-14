@@ -47,12 +47,13 @@ pub fn turn_wake_of(target: &MentionTarget, already_reported: Option<String>) ->
     }
 }
 
-/// 이 턴의 지시문을 지어 `system-prompt.txt` 에 쓴다(0600·링크 안 따라감).
+/// 이 턴의 지시문을 지어 **그 스레드의** 지시문 파일에 쓴다(0600·링크 안 따라감).
 pub fn write_turn_system_prompt(
     state_dir: &Path,
+    thread_key: &str,
     opts: &SystemPromptOpts<'_>,
 ) -> Result<PathBuf, TurnFileError> {
-    write_system_prompt_file(state_dir, &build_system_prompt(opts))
+    write_system_prompt_file(state_dir, thread_key, &build_system_prompt(opts))
 }
 
 /// 러너 기본 명령 옵션 위에 이 시도의 세션·지시문 파일·원인·턴 id 를 얹는다.

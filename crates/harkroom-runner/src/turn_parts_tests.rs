@@ -79,9 +79,11 @@ fn system_prompt_file_is_private_and_verbatim() {
     std::fs::create_dir_all(&dir).unwrap();
     let outside = dir.join("outside.txt");
     std::fs::write(&outside, "KEEP").unwrap();
-    symlink(&outside, dir.join("system-prompt.txt")).unwrap();
+    let link = crate::turn_files::system_prompt_path(&dir, "c/t");
+    std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+    symlink(&outside, &link).unwrap();
     let memory = MemoryContext::Unavailable;
-    let p = write_turn_system_prompt(&dir, &opts(&memory)).unwrap();
+    let p = write_turn_system_prompt(&dir, "c/t", &opts(&memory)).unwrap();
     let body = std::fs::read_to_string(&p).unwrap();
     assert_eq!(body, build_system_prompt(&opts(&memory)));
     assert!(body.contains("이 에이전트에 대한 지시문:\nOWNER_INSTRUCTIONS_TEXT"));

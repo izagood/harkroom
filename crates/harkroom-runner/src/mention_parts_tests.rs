@@ -150,6 +150,16 @@ fn prepare_then_command_uses_attempt_account_folder() {
     // 다음 시도(계정 없음) — 앞 시도 계정 폴더도, 기본 폴더도 남지 않는다.
     p.prepare(&target(), None, true, "t-2").unwrap();
     assert_eq!(p.command_for("t-2").unwrap().claude_config_dir, None);
+
+    // 지시문 파일은 그 스레드 것(열쇠 해시 이름)이고, 멘션이 끝나면(값이 떨어지면) 없다.
+    let file = PathBuf::from(p.command_for("t-2").unwrap().system_prompt_file.unwrap());
+    assert_eq!(
+        file,
+        crate::turn_files::system_prompt_path(&p.state_dir, &p.key)
+    );
+    assert!(file.exists());
+    drop(p);
+    assert!(!file.exists(), "턴이 끝나면 지시문 파일이 없다");
 }
 
 /// 준비 실패는 종류만 담은 오류(서버 오류 원문 없음) — 띄우기 전이라 아무것도 받지 않았다.

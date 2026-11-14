@@ -129,6 +129,11 @@ fn main() {
         config.agent_instance.as_deref(),
         &state_dir_names(&base),
     );
+    // 지난 프로세스가 비정상 종료해 남긴 스레드별 지시문 파일을 쓸어 낸다(정상 종료면 멘션 끝에 지워져 없다).
+    let swept = harkroom_runner::turn_files::sweep_system_prompt_files(&agent_state);
+    if swept > 0 {
+        eprintln!("[main] 지난 실행이 남긴 지시문 파일 {swept}개를 지웠다");
+    }
     // 스레드 임대 holder — 이 러너 프로세스 하나(같은 에이전트 러너 둘을 가른다).
     let claim_holder = format!(
         "{}-{}-{started_at_ms}",
