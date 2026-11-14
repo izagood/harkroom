@@ -149,6 +149,11 @@ pub fn turn_mcp_plan(i: &TurnMcpInput<'_>) -> Result<TurnMcpPlan, LaneFileError>
     let delivery = turn_key_delivery_of(i.harness);
     let turn_keys = (i.can_register_turn_keys && delivery.is_some()).then(issue_turn_keys);
     let lane = i.provider_env.is_some();
+    // API 키 연결 pi 턴은 턴 열쇠 없이 띄우지 않는다 — 다리가 러너 링크 열쇠로 붙는 길을 남기지 않는다(정본 `mentionTurn.ts` 1582,
+    // claude lane 과 같은 꼴). 파일을 쓰기 전에 닫는다.
+    if lane && crate::adapter::uses_pi_home(i.harness) && turn_keys.is_none() {
+        return Err(ProviderLaneError::new("turn_key_missing").into());
+    }
 
     let turn_mcp_config = match (&turn_keys, delivery) {
         (Some(k), Some(TurnKeyDelivery::McpConfigEnv)) => Some(write_turn_mcp_config(

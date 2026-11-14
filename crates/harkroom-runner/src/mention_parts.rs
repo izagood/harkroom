@@ -373,6 +373,16 @@ struct Current {
     note_pin: crate::thread_note_pin::ThreadNotePlan,
     /// 이 시도에 실은 하네스 메모리 알림(없으면 그 하네스는 자리를 모른다) — 성공한 턴 뒤 `commit`.
     harness_notice: Option<crate::harness_memory::HarnessMemoryNotice>,
+    /// pi API 키 연결 턴의 스레드 홈(p2-2, 정본 `ensurePiLaneThread(piHome, key)`) — 그 턴의 `models.json` 이 키 파일 경로를
+    /// 담으므로 동시에 도는 턴끼리 덮지 않게 스레드마다 가른다. pi 가 아니거나 lane 러너가 아니면 `None`(러너 루트에서 돈다).
+    turn_pi_home: Option<PathBuf>,
+}
+
+impl Current {
+    /// 이 시도의 pi 홈 — lane 이면 스레드 홈, 아니면 러너 루트.
+    fn pi_home<'s>(&'s self, root: Option<&'s Path>) -> Option<&'s Path> {
+        self.turn_pi_home.as_deref().or(root)
+    }
 }
 
 /// 멘션마다 바뀌는 명령 칸의 소유본(지시문 입력에 없는 것). 띄울 때 [`with_argv`] 가 명령 옵션에 빌려 싣는다.
@@ -567,7 +577,7 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
             AttemptHomes {
                 codex: self.codex_home.as_deref(),
                 opencode: self.opencode_home.as_deref(),
-                pi: self.pi_home.as_deref(),
+                pi: c.pi_home(self.pi_home.as_deref()),
                 opencode_turn_config: None,
             },
             turn_id,
@@ -933,6 +943,9 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             }
         }
         // pi 턴 직전 — 러너 루트의 `mcp.json`·`settings.json` 을 지금 MCP 표로 다시 쓴다(p2, 정본 `readTurnMcp`). 실패하면 띄우지 않는다.
+        // lane 러너면 이어서 이 스레드의 홈을 짓는다(p2-2, 정본 `mentionTurn.ts` 1586) — 루트의 `settings.json`·`mcp.json` 을
+        // 베끼고 링크로 남은 로그인·제공자는 뗀다. 못 지으면 띄우지 않는다.
+        let mut turn_pi_home = None;
         if crate::adapter::uses_pi_home(self.harness)
             && let Some(pi) = self.pi.as_ref()
         {
@@ -940,6 +953,18 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
                 eprintln!("[mentionTurn] {}: pi 홈 — {e}", self.key);
                 fail()
             })?;
+            if pi.lane {
+                let home =
+                    crate::pi_lane::ensure_pi_lane_thread(&pi.home, &self.key).map_err(|e| {
+                        eprintln!(
+                            "[mentionTurn] {}: pi lane 스레드 홈 — {}",
+                            self.key,
+                            e.local_detail()
+                        );
+                        fail()
+                    })?;
+                turn_pi_home = Some(home);
+            }
         }
         // 하네스를 띄우기 전, **이 시도의 계정 폴더**로 작업 폴더 신뢰·bypass 수락을 적는다(정본 `mentionTurn.ts` 의 차례).
         crate::workspace_trust::prepare_harness_gates(
@@ -955,7 +980,7 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             self.codex_home.as_deref(),
         );
         let session_id = prepared.session.rec.session_id.clone();
-        // lane 턴의 키 받기 전 판정 재료 — 시도 경로가 lane 일 때만 쓴다. pi 스레드 홈은 Rust 러너가 아직 짓지 않는다(None).
+        // lane 턴의 키 받기 전 판정 재료 — 시도 경로가 lane 일 때만 쓴다. pi 스레드 홈은 위에서 지은 것(lane 러너의 pi 만).
         let lane_pre = Some(crate::turn_attempt_run::LanePre {
             model: self
                 .argv
@@ -964,7 +989,7 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
                 .or_else(|| self.base.model.map(str::to_string)),
             workspace_dir: PathBuf::from(&prepared.session.rec.workspace_dir),
             home: self.home.clone(),
-            turn_pi_home: None,
+            turn_pi_home: turn_pi_home.clone(),
         });
         self.prompt_file = Some(file.clone());
         self.cur = Some(Current {
@@ -976,6 +1001,7 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             plan_pin,
             note_pin,
             harness_notice,
+            turn_pi_home,
         });
         Ok(AttemptPrep {
             key: self.key.clone(),
@@ -1049,6 +1075,16 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
         } else {
             None
         };
+        // pi API 키 연결 턴(p2-2, 정본 `mentionTurn.ts` 1678) — 그 스레드 홈의 `models.json` 에 주소와 키 파일 경로만 쓰고
+        // (키 값은 들지 않는다) 하네스에는 `<lane provider>/<id>` 를 모델로 준다. 주소·키 파일·홈·모델이 하나라도 없으면 띄우지 않는다.
+        let pi_lane_model = pi_lane_turn_model(
+            &self.key,
+            self.harness,
+            &args.lane_env,
+            c.turn_pi_home.as_deref(),
+            self.argv.model.as_deref().or(self.base.model),
+        )
+        .map_err(|code| crate::pty_turn::PtyTurnError::Spawn(std::io::Error::other(code)))?;
         let mut cmd = attempt_cmd(
             &self.base,
             &self.system,
@@ -1057,11 +1093,14 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             AttemptHomes {
                 codex: self.codex_home.as_deref(),
                 opencode: self.opencode_home.as_deref(),
-                pi: self.pi_home.as_deref(),
+                pi: c.pi_home(self.pi_home.as_deref()),
                 opencode_turn_config: args.opencode_turn_config,
             },
             args.turn_id,
         );
+        if let Some(m) = pi_lane_model.as_deref() {
+            cmd.model = Some(m);
+        }
         cmd.gate_file = markers.gate.as_deref();
         cmd.mcp_ready_file = markers.mcp_ready.as_deref();
         cmd.codex_hook_spec = codex_rules.as_ref().and_then(|(_, s)| s.as_deref());
@@ -1273,6 +1312,47 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
     fn account_ranks(&self, account: Option<&ClaudeAccount>) -> (Option<Option<u32>>, Option<u32>) {
         ranks_of(&self.lane, account)
     }
+}
+
+/// pi API 키 연결 턴의 띄우기 직전 몫(p2-2, 정본 `mentionTurn.ts` 1678) — 그 스레드 홈의 `models.json` 에 주소와 키 파일 경로만
+/// 쓰고(키 값은 들지 않는다) 하네스에 줄 모델 이름 `<lane provider>/<id>` 를 돌려준다. pi 가 아니거나 lane env 가 없으면 `None`.
+/// 주소·키 파일·스레드 홈·모델이 하나라도 없거나 쓰지 못하면 오류 코드(`lane_unset`·`bad_model`·`lane_setup`) — 띄우지 않는다.
+pub(crate) fn pi_lane_turn_model(
+    key: &str,
+    harness: crate::adapter::AgentHarness,
+    lane_env: &crate::turn_launch_io::LaneEnv,
+    turn_pi_home: Option<&Path>,
+    model: Option<&str>,
+) -> Result<Option<String>, &'static str> {
+    use crate::turn_env_plan::{LaneHarnessModel, lane_harness_model};
+    if !crate::adapter::uses_pi_home(harness) || lane_env.is_empty() {
+        return Ok(None);
+    }
+    let m = lane_harness_model(harness, Some(lane_env), turn_pi_home, model).map_err(|e| {
+        eprintln!("[mentionTurn] {key}: pi lane 모델 — {}", e.code());
+        e.code()
+    })?;
+    let (LaneHarnessModel::Pi(hm), Some(home)) = (&m, turn_pi_home) else {
+        eprintln!("[mentionTurn] {key}: pi lane 모델 — lane_unset");
+        return Err("lane_unset");
+    };
+    let models = [hm.model_id.clone()];
+    crate::pi_lane::write_pi_lane_models(
+        home,
+        &crate::pi_lane::PiLane {
+            base_url: &hm.base_url,
+            key_path: &hm.key_path,
+            models: &models,
+        },
+    )
+    .map_err(|e| {
+        eprintln!(
+            "[mentionTurn] {key}: pi lane models.json — {}",
+            e.local_detail()
+        );
+        "lane_setup"
+    })?;
+    Ok(m.run_model(true, harness, model))
 }
 
 /// 시도 하나의 명령 옵션(`spawn`·`command_for` 가 같이 쓴다) — 지시문 입력 칸(argv) → 시도 칸 → 계정 폴더 → codex 격리 홈.

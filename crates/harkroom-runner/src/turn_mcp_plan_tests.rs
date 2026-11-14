@@ -540,3 +540,34 @@ fn turn_files_removed_at_turn_end_only_own_regular_files() {
     assert!(base.exists() && target.exists());
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// p2-2: API 키 연결 pi 턴은 턴 열쇠 없이 띄우지 않는다(정본 `turn_key_missing`) — 열쇠가 있으면 지난다.
+#[test]
+fn pi_lane_turn_needs_turn_keys() {
+    let dir = TempDir::new("pi-lane-nokey");
+    let src = source(&dir);
+    let env = runner_env();
+    let lane = BTreeMap::from([("HARKROOM_PI_LANE_BASE_URL".into(), "https://gw".into())]);
+    let err = turn_mcp_plan(&input(
+        AgentHarness::Pi,
+        false,
+        Some(&lane),
+        &dir,
+        &src,
+        &env,
+    ))
+    .unwrap_err();
+    assert!(err.to_string().contains("turn_key_missing"), "{err}");
+    let plan = turn_mcp_plan(&input(
+        AgentHarness::Pi,
+        true,
+        Some(&lane),
+        &dir,
+        &src,
+        &env,
+    ))
+    .unwrap();
+    assert!(plan.turn_keys.is_some());
+    // lane 이 아닌 pi 는 열쇠가 없어도 그대로 돈다.
+    assert!(turn_mcp_plan(&input(AgentHarness::Pi, false, None, &dir, &src, &env)).is_ok());
+}

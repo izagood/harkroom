@@ -986,3 +986,122 @@ fn attempt_command_carries_opencode_turn_config() {
     // pi 루트도 시도 명령에 실린다(p2) — 빠지면 pi 턴은 조립에서 `MissingHome` 으로 안 뜬다.
     assert_eq!(cmd.pi_home, Some(Path::new("/state/pi-home")));
 }
+
+/// p2-2: pi lane 러너면 `prepare` 가 스레드 홈(`<lane 루트>/threads/<해시>`)을 짓고, 키 받기 전 판정 재료와 시도 명령에 그 홈을
+/// 싣는다. lane 이 아니면 러너 루트 그대로다(스레드 홈을 짓지 않는다).
+#[test]
+fn pi_lane_prepare_builds_thread_home_and_carries_it() {
+    for lane in [true, false] {
+        let w = world(if lane { "pilane" } else { "pinolane" });
+        let store = SessionStore::new(w.root.join("sessions.json"));
+        let stale = PathBuf::from("/acct/STALE_BASE");
+        let mut p = parts(&w, &store, &stale, false);
+        p.harness = AgentHarness::Pi;
+        let state = w.root.join("state");
+        std::fs::create_dir_all(&state).unwrap();
+        let person = w.root.join("person-pi");
+        std::fs::create_dir_all(&person).unwrap();
+        let mcp = state.join("mcp.json");
+        std::fs::write(
+            &mcp,
+            r#"{"mcpServers":{"harkroom":{"command":"/bin/op","args":["mcp-bridge"]}}}"#,
+        )
+        .unwrap();
+        let root = if lane {
+            crate::pi_prep::pi_lane_root(&state).unwrap()
+        } else {
+            crate::pi_prep::pi_home_dir(&state)
+        };
+        p.pi_home = Some(root.clone());
+        p.pi = Some(crate::pi_prep::PiPrep {
+            home: root.clone(),
+            lane,
+            mcp_config_path: mcp,
+            source_dir: person,
+        });
+        let prep = p.prepare(&target(), None, true, "t-1").unwrap();
+        let thread = crate::pi_lane::pi_lane_thread_home(&root, &p.key);
+        let got = p.command_for("t-1").unwrap().pi_home.map(Path::to_path_buf);
+        if lane {
+            assert!(
+                thread.join("settings.json").is_file(),
+                "스레드 홈에 설정을 베낀다"
+            );
+            assert_eq!(
+                prep.lane_pre.unwrap().turn_pi_home.as_deref(),
+                Some(thread.as_path())
+            );
+            assert_eq!(got, Some(thread));
+        } else {
+            assert!(
+                !root.join("threads").exists(),
+                "lane 이 아니면 스레드 홈을 짓지 않는다"
+            );
+            assert_eq!(prep.lane_pre.unwrap().turn_pi_home, None);
+            assert_eq!(got, Some(root));
+        }
+    }
+}
+
+/// p2-2: pi lane 턴의 띄우기 직전 — 스레드 홈의 `models.json` 에 주소와 키 **파일 경로**만 쓰고 모델은 `harkroom-lane/<id>`.
+/// 홈·주소·모델이 없거나 주소가 틀리면 띄우지 않는다. pi 가 아니거나 lane env 가 없으면 아무것도 쓰지 않는다.
+#[test]
+fn pi_lane_turn_model_writes_models_json_or_refuses() {
+    use crate::provider_lane::{PI_LANE_BASE_URL_ENV, PI_LANE_KEY_FILE_ENV};
+    let w = world("pilanemodel");
+    let home = w.root.join("thread");
+    std::fs::create_dir_all(&home).unwrap();
+    let key_file = w.root.join("lane-key");
+    std::fs::write(&key_file, "SECRET_KEY_VALUE").unwrap();
+    let env = |url: &str| -> crate::turn_launch_io::LaneEnv {
+        BTreeMap::from([
+            (PI_LANE_BASE_URL_ENV.to_string(), url.to_string()),
+            (
+                PI_LANE_KEY_FILE_ENV.to_string(),
+                key_file.to_string_lossy().into_owned(),
+            ),
+        ])
+    };
+    let ok = env("https://gw.example");
+    let pi = AgentHarness::Pi;
+    // pi 가 아니거나 lane env 가 비면 할 일이 없다.
+    assert_eq!(
+        pi_lane_turn_model("k", AgentHarness::ClaudeCode, &ok, Some(&home), Some("m")),
+        Ok(None)
+    );
+    assert_eq!(
+        pi_lane_turn_model("k", pi, &BTreeMap::new(), Some(&home), Some("m")),
+        Ok(None)
+    );
+    assert!(!home.join("models.json").exists());
+    // 닫히는 쪽.
+    assert_eq!(
+        pi_lane_turn_model("k", pi, &ok, None, Some("m")),
+        Err("lane_unset")
+    );
+    assert_eq!(
+        pi_lane_turn_model("k", pi, &ok, Some(&home), None),
+        Err("bad_model")
+    );
+    assert_eq!(
+        pi_lane_turn_model("k", pi, &env("http://gw.example"), Some(&home), Some("m")),
+        Err("lane_setup")
+    );
+    assert!(!home.join("models.json").exists());
+    // 쓴다.
+    let m = pi_lane_turn_model("k", pi, &ok, Some(&home), Some("org/model-1")).unwrap();
+    assert_eq!(m.as_deref(), Some("harkroom-lane/org/model-1"));
+    let path = home.join("models.json");
+    let body = std::fs::read_to_string(&path).unwrap();
+    assert!(!body.contains("SECRET_KEY_VALUE"), "키 값은 들지 않는다");
+    let v: Value = serde_json::from_str(&body).unwrap();
+    let prov = &v["providers"]["harkroom-lane"];
+    assert_eq!(prov["baseUrl"], "https://gw.example/v1");
+    assert_eq!(prov["apiKey"], format!("!cat '{}'", key_file.display()));
+    assert_eq!(prov["models"], json!([{ "id": "org/model-1" }]));
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    let _ = std::fs::remove_dir_all(&w.root);
+}

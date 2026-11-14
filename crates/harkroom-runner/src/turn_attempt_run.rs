@@ -255,9 +255,9 @@ impl<L: RunnerLink, N: LeaseNotice, P: AttemptParts> PtyTurnAttempt<'_, L, N, P>
                 .code()
                 .to_string());
         };
-        // pi·omp lane 턴은 스레드 홈(pi `ensure_pi_lane_thread`·omp 스레드 폴더)이 있어야 `models.json` 을 쓰고 띄운다. Rust 러너는
-        // 아직 그 홈을 짓지 않는다 — 키를 받은 뒤 명령 짓기(`MissingHome`)에서 접히는 대신, 키를 받기 **전에** 닫는다.
-        // 홈을 배선하면 pi 는 `turn_pi_home` 이 채워져 지나가고, omp 는 이 줄을 그 배선과 함께 바꾼다.
+        // pi·omp lane 턴은 스레드 홈(pi `ensure_pi_lane_thread`·omp 스레드 폴더)이 있어야 `models.json` 을 쓰고 띄운다. pi 는
+        // `prepare` 가 지은 `turn_pi_home` 이 있으면 지나간다(p2-2). omp 는 Rust 러너가 아직 그 폴더를 짓지 않는다 — 키를 받은 뒤
+        // 명령 짓기(`MissingHome`)에서 접히는 대신, 키를 받기 **전에** 닫는다. omp 는 이 줄을 그 배선과 함께 바꾼다.
         if (uses_pi_home(self.harness) && p.turn_pi_home.is_none()) || uses_omp_home(self.harness) {
             eprintln!(
                 "[mentionTurn] {}: {} API 키 연결 턴 — 스레드 홈이 준비되지 않아 키를 받지 않는다",
