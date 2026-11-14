@@ -299,6 +299,8 @@ pub struct MentionParts<'a, P: PrepareIo, S: PtyTurnSink> {
     pub watch_loop: Option<WatchLoopFn<'a>>,
     /// 멘션마다 바뀌는 명령 칸 중 지시문 입력에 없는 것(모델·effort·읽기 전용 목록)의 소유본.
     pub argv: OwnedArgv,
+    /// 이 멘션이 쓴 스레드별 지시문 파일 — 멘션이 끝나면(값이 떨어지면) 지운다.
+    prompt_file: Option<PathBuf>,
     cur: Option<Current>,
     /// 이 시도가 띄울 때 지은 문맥 — 턴 뒤 IO 에 넘긴다(`spawn` 이 시도마다 새로 적는다).
     last_ctx: Option<LoopCtx>,
@@ -346,6 +348,7 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
             mount,
             watch_loop: None,
             argv: OwnedArgv::default(),
+            prompt_file: None,
             cur: None,
             last_ctx: None,
         }
@@ -420,16 +423,18 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             &mut new_id,
         )
         .map_err(|_| fail())?;
-        let file = write_turn_system_prompt(&self.state_dir, &self.system.opts()).map_err(|e| {
-            eprintln!("[mentionTurn] {}: 지시문 파일 쓰기 실패 — {e}", self.key);
-            fail()
-        })?;
+        let file = write_turn_system_prompt(&self.state_dir, &self.key, &self.system.opts())
+            .map_err(|e| {
+                eprintln!("[mentionTurn] {}: 지시문 파일 쓰기 실패 — {e}", self.key);
+                fail()
+            })?;
         let homes = acc.homes(
             Some(&self.home),
             self.omp_home.as_deref(),
             self.codex_home.as_deref(),
         );
         let session_id = prepared.session.rec.session_id.clone();
+        self.prompt_file = Some(file.clone());
         self.cur = Some(Current {
             account: acc,
             prepared,
@@ -616,5 +621,14 @@ impl<S: PtyTurnSink> PtyTurnSink for SlotPtySink<'_, S> {
     }
     fn on_turn_gate(&mut self, screen: &str) {
         self.inner.on_turn_gate(screen)
+    }
+}
+
+impl<P: PrepareIo, S: PtyTurnSink> Drop for MentionParts<'_, P, S> {
+    /// 멘션(턴)이 끝나면 그 스레드의 지시문 파일을 지운다 — 정상·패닉 풀림 모두.
+    fn drop(&mut self) {
+        if let Some(p) = self.prompt_file.take() {
+            crate::turn_files::remove_system_prompt_file(&p);
+        }
     }
 }
