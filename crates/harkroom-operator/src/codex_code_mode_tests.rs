@@ -68,6 +68,7 @@ fn parser_accepts_only_the_two_forms() {
         "tools . exec_command({cmd:\"a\"})",
         "tools.exec_command({workdir:\"/w\"})",
         "tools.exec_command({cmd:\"a\",})x",
+        "tools.exec_command({cmd:\"\\ud800\"})",
     ] {
         assert_eq!(parse_exec_cell(bad), None, "{bad}");
     }
