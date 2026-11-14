@@ -263,7 +263,7 @@ impl CallMaker<&'static Link, Sink> for Maker {
                     &self.store,
                     base,
                     system,
-                    Box::new(PtyTurnOptions::default),
+                    Box::new(|| PtyTurnOptions::at(std::env::temp_dir())),
                     Sink,
                     Box::new(|_a, _s, _l, _e, _o| Ok(crate::mention_run::TurnOk::default())),
                     b.after,

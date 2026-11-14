@@ -144,6 +144,47 @@ pub struct LoopCtx {
     pub ended: Arc<AtomicBool>,
 }
 
+/// 이 시도의 PTY 옵션(정본 `mentionTurn.ts` 가 `runTurn` 에 넘기는 값):
+/// - `cwd` = 그 기록의 작업 폴더(`rec.workspaceDir`). 비었거나 상대 경로면 `Err` — 띄우지 않는다. pi·omp 의 턴 집(정본
+///   `plan.cwd ?? rec.workspaceDir`)은 계획(`PtyPlan`)이 아직 `cwd` 를 나르지 않아 후속 PR 몫이다.
+/// - `timeout_ms` = TUI 면 0(무기한 — 시한은 무발화 시계), 아니면 `turn_timeout_ms`.
+/// - `inject` = TUI 면 이 시도의 프롬프트와 어댑터 표의 준비 표지(`injection_facts_for`), 아니면 없음(`exec` 은 stdin 이 프롬프트).
+/// - 크기·유예·묶음·기록 자리는 `base`(정본 기본값) 그대로.
+pub fn attempt_pty_options(
+    base: PtyTurnOptions,
+    harness: crate::adapter::AgentHarness,
+    workspace_dir: &str,
+    prompt: String,
+    turn_timeout_ms: u64,
+) -> Result<PtyTurnOptions, &'static str> {
+    let cwd = PathBuf::from(workspace_dir);
+    crate::pty_turn::check_spawn_cwd(&cwd)?;
+    let tui =
+        crate::adapter::uses_tui_for_mention(harness).map_err(|_| "이 하네스는 어댑터가 없다")?;
+    let inject = if tui {
+        let facts = crate::adapter::injection_facts_for(harness)
+            .map_err(|_| "이 하네스는 어댑터가 없다")?;
+        let mut i = InjectPrompt {
+            text: prompt,
+            ready_pattern: Some(facts.ready_pattern.clone()),
+            unsent_hint: facts.unsent_hint.cloned(),
+            ..InjectPrompt::default()
+        };
+        if let Some(ms) = facts.ready_min_ms {
+            i.ready_min_ms = ms;
+        }
+        Some(i)
+    } else {
+        None
+    };
+    Ok(PtyTurnOptions {
+        cwd,
+        timeout_ms: if tui { 0 } else { turn_timeout_ms },
+        inject,
+        ..base
+    })
+}
+
 /// 감시 루프 몸통 — 이 시도의 감시 자리·감시 통지 가림 목록·시도 문맥·멈춤 신호를 받아 `run_watch`(실물 `ProbeIo`)를 돈다.
 pub type WatchLoopFn<'a> =
     Box<dyn Fn(&Watch, &NoticeSecrets, &LoopCtx, &AtomicBool) + Send + Sync + 'a>;
@@ -299,6 +340,8 @@ pub struct MentionParts<'a, P: PrepareIo, S: PtyTurnSink> {
     pub watch_loop: Option<WatchLoopFn<'a>>,
     /// 멘션마다 바뀌는 명령 칸 중 지시문 입력에 없는 것(모델·effort·읽기 전용 목록)의 소유본.
     pub argv: OwnedArgv,
+    /// 정본 `deps.turnTimeoutMs` — TUI 가 아닌(`exec`) 하네스의 PTY 시한. TUI 는 0(무기한, 시한은 무발화 시계가 잰다).
+    pub turn_timeout_ms: u64,
     /// 이 멘션이 쓴 스레드별 지시문 파일 — 멘션이 끝나면(값이 떨어지면) 지운다.
     prompt_file: Option<PathBuf>,
     cur: Option<Current>,
@@ -336,6 +379,7 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
             omp_home: None,
             codex_home: None,
             pty_opts,
+            turn_timeout_ms: 0,
             inner,
             watch: Watch::default(),
             slot: LiveSlot::default(),
@@ -464,10 +508,8 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
     }
 
     fn spawn(&mut self, args: SpawnArgs<'_>, delivered: &mut bool) -> PtyOut {
-        let mut opts = (self.pty_opts)();
+        let base_opts = (self.pty_opts)();
         let text = self.prompt().unwrap_or_default().to_string();
-        // (`text` 는 소유본 — 아래에서 `inner` 를 빌리기 전에 꺼낸다.)
-        opts.inject = opts.inject.map(|i| InjectPrompt { text, ..i });
         let watch = self.attempt_watch();
         let now = || {
             std::time::SystemTime::now()
@@ -489,6 +531,16 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             &c.cause,
             args.turn_id,
         );
+        // PTY 옵션은 **이 시도의 값으로** 채운다(정본 `mentionTurn.ts` 의 `deps.runTurn(plan, {...})`) — 기본값(`/`·주입 없음)으로
+        // 하네스가 뜨는 길을 남기지 않는다. 작업 폴더가 비었거나 상대 경로면 띄우지 않는다.
+        let opts = attempt_pty_options(
+            base_opts,
+            self.harness,
+            &c.prepared.session.rec.workspace_dir,
+            text,
+            self.turn_timeout_ms,
+        )
+        .map_err(|why| crate::pty_turn::PtyTurnError::Spawn(std::io::Error::other(why)))?;
         let mcp = args.mcp_config_path.to_string_lossy().into_owned();
         let pargs = PtyTurnArgs {
             lane_env: &args.lane_env,

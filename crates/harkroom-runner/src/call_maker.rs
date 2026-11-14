@@ -65,6 +65,8 @@ pub struct MakerConfig {
     /// 이 러너 프로세스의 스레드 임대 holder(기동 때 무작위, `ThreadClaims` 와 같은 값).
     pub claim_holder: String,
     pub can_register_turn_keys: bool,
+    /// PTY 원시 출력 녹화 폴더(정본 `config.ptyRecordDir`, `AGENT_PTY_RECORD_DIR` 절대 경로, 기본 `None` = 끔). 폴더 0700·파일 0600.
+    pub pty_record_dir: Option<PathBuf>,
 }
 
 /// 배치마다 갱신하는 이름 표 — 이름은 바뀔 수 있어 멘션을 지을 때 꺼낸 **사본**을 쓴다.
@@ -306,6 +308,8 @@ where
                 .map(str::to_owned),
         };
         let (pkey, handles) = (key.clone(), n.handles);
+        // 정본 `main.ts:76` `recordDir: config.ptyRecordDir`(`AGENT_PTY_RECORD_DIR`, 기본 끔).
+        let record_dir = c.pty_record_dir.clone();
         let build_parts = Box::new(move |b: BundleParts<'a, L>| {
             let perm = if system.read_only {
                 MentionPermission::Readonly
@@ -321,7 +325,11 @@ where
                 &self.store,
                 base,
                 system,
-                Box::new(PtyTurnOptions::default),
+                // 작업 폴더는 시도마다 `attempt_pty_options` 가 채운다 — 여기서는 비워 둬, 빠뜨리면 띄우기 직전 검사에 걸린다.
+                Box::new(move || PtyTurnOptions {
+                    record_dir: record_dir.clone(),
+                    ..PtyTurnOptions::at(PathBuf::new())
+                }),
                 S::default(),
                 outcome_source_owned(outcome),
                 b.after,
@@ -337,6 +345,7 @@ where
             p.slot = b.slot;
             p.watch_loop = Some(b.watch_loop);
             p.argv = argv;
+            p.turn_timeout_ms = c.turn_timeout_ms;
             p
         });
         CallInputs {

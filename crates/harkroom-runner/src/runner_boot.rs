@@ -75,6 +75,7 @@ pub fn maker_config(cfg: &RunnerConfig, env: &Env, f: BootFacts<'_>) -> MakerCon
         pat: cfg.operator_link.secret.clone(),
         home: f.home,
         turn_timeout_ms: cfg.turn_timeout_ms,
+        pty_record_dir: cfg.pty_record_dir.as_ref().map(PathBuf::from),
         harness_stall_ms: cfg.harness_stall_ms,
         me_id: f.me_id.to_string(),
         claim_holder: f.claim_holder.to_string(),

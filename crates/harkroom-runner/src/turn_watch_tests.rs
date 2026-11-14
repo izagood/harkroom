@@ -586,7 +586,7 @@ fn fence_lost_while_spawning_folds_right_after_spawn() {
         &plan,
         PtyTurnOptions {
             timeout_ms: 20_000,
-            ..PtyTurnOptions::default()
+            ..PtyTurnOptions::at(std::env::temp_dir())
         },
         &mut sink,
     )

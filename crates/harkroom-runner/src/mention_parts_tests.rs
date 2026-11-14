@@ -89,7 +89,7 @@ fn parts<'a>(
             secret_create: false,
             lane_model: None,
         },
-        Box::new(PtyTurnOptions::default),
+        Box::new(|| PtyTurnOptions::at(std::env::temp_dir())),
         Sink,
         Box::new(|_a, _s, _l, end, _o| {
             assert_eq!(end.last_data_at_ms, 55, "감시 자리의 끝 상태 사본");
@@ -493,4 +493,79 @@ fn prepare_trusts_in_attempt_account_folder() {
         !p.home.join(".claude").exists(),
         "기본 집은 건드리지 않는다"
     );
+}
+
+// ── T3: PTY 옵션은 이 시도의 값으로 ─────────────────────────────────────────────
+
+fn ws_dir(tag: &str) -> PathBuf {
+    let d = std::env::temp_dir().join(format!("hk-t3-{tag}-{}", std::process::id()));
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+/// TUI(claude): cwd = 작업 폴더 · 시한 0 · 주입 = 이 시도의 프롬프트(그것만) + 어댑터 준비 표지. 크기 등은 기본값 그대로.
+#[test]
+fn attempt_pty_options_fill_cwd_inject_timeout() {
+    let ws = ws_dir("tui");
+    let base = PtyTurnOptions::at(PathBuf::new());
+    let (cols, rows) = (base.cols, base.rows);
+    let o = attempt_pty_options(
+        base,
+        AgentHarness::ClaudeCode,
+        ws.to_str().unwrap(),
+        "PROMPT_TEXT".into(),
+        1234,
+    )
+    .unwrap();
+    assert_eq!(o.cwd, ws);
+    assert_eq!(o.timeout_ms, 0, "TUI 는 무기한(무발화 시계가 잰다)");
+    let i = o.inject.expect("TUI 턴은 프롬프트를 주입한다");
+    assert_eq!(i.text, "PROMPT_TEXT", "주입 글자는 턴 프롬프트뿐");
+    let facts = crate::adapter::injection_facts_for(AgentHarness::ClaudeCode).unwrap();
+    assert_eq!(
+        i.ready_pattern.as_ref().map(|r| r.as_str()),
+        Some(facts.ready_pattern.as_str())
+    );
+    assert_eq!((o.cols, o.rows), (cols, rows));
+}
+
+/// TUI 가 아닌 하네스(`exec`): 주입 없음(stdin 이 프롬프트) · 시한 = 턴 시한. TUI 하네스는 모두 주입이 있다.
+#[test]
+fn attempt_pty_options_inject_follows_execution_model() {
+    let ws = ws_dir("exec");
+    for h in AgentHarness::ALL {
+        let Ok(tui) = crate::adapter::uses_tui_for_mention(h) else {
+            continue;
+        };
+        let o = attempt_pty_options(
+            PtyTurnOptions::at(PathBuf::new()),
+            h,
+            ws.to_str().unwrap(),
+            "P".into(),
+            1234,
+        )
+        .unwrap();
+        assert_eq!(o.inject.is_some(), tui, "{h:?}");
+        assert_eq!(o.timeout_ms, if tui { 0 } else { 1234 }, "{h:?}");
+        assert_eq!(o.cwd, ws);
+    }
+}
+
+/// 작업 폴더가 비었거나·상대 경로거나·루트(`/`)거나·없으면 띄우지 않는다(security S1·S6).
+#[test]
+fn attempt_pty_options_refuse_bad_workspace() {
+    let missing = std::env::temp_dir().join(format!("hk-t3-missing-{}", std::process::id()));
+    for ws in ["", "rel/ws", "/", missing.to_str().unwrap()] {
+        assert!(
+            attempt_pty_options(
+                PtyTurnOptions::at(PathBuf::new()),
+                AgentHarness::ClaudeCode,
+                ws,
+                "P".into(),
+                1
+            )
+            .is_err(),
+            "{ws:?}"
+        );
+    }
 }

@@ -141,6 +141,7 @@ fn cfg(tag: &str) -> (MakerConfig, Root) {
         me_id: "me".into(),
         claim_holder: "holder-1".into(),
         can_register_turn_keys: true,
+        pty_record_dir: None,
     };
     (c, Root(root))
 }

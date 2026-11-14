@@ -603,10 +603,12 @@ pub struct PtyTurnOptions {
     pub inject: Option<InjectPrompt>,
 }
 
-impl Default for PtyTurnOptions {
-    fn default() -> Self {
+impl PtyTurnOptions {
+    /// 작업 폴더를 **반드시** 받는다 — 기본 `/` 로 하네스가 뜨는 길을 컴파일로 막는다(T3 security S1, C6 ✗: 루트에서 실제 로그인으로 떴다).
+    /// 나머지 칸은 정본 기본값. 띄우기 직전 [`run_pty_turn`] 이 [`check_spawn_cwd`] 로 다시 본다.
+    pub fn at(cwd: PathBuf) -> Self {
         Self {
-            cwd: PathBuf::from("/"),
+            cwd,
             cols: 120,
             rows: 40,
             timeout_ms: 0,
@@ -707,11 +709,27 @@ impl Drop for StopOnDrop {
 }
 
 /// 정본 `runPtyTurn`. 실행 파일 부재·프롬프트 미전달만 `Err` 이고, 끝남·시간 한도는 `TurnResult` 로 돌려준다.
+/// 띄우기 직전 작업 폴더 검사(T3 security S1·S2) — 절대 경로 · 실제 있는 폴더 · 루트(`/`) 아님. 아니면 띄우지 않는다.
+/// 오류 글에는 경로를 싣지 않는다.
+pub fn check_spawn_cwd(cwd: &Path) -> Result<(), &'static str> {
+    if cwd.as_os_str().is_empty() || !cwd.is_absolute() {
+        return Err("작업 폴더가 비었거나 절대 경로가 아니다 — 하네스를 띄우지 않는다");
+    }
+    if cwd.parent().is_none() {
+        return Err("작업 폴더가 루트(/)다 — 하네스를 띄우지 않는다");
+    }
+    if !cwd.is_dir() {
+        return Err("작업 폴더가 없다 — 하네스를 띄우지 않는다");
+    }
+    Ok(())
+}
+
 pub fn run_pty_turn<S: PtyTurnSink>(
     plan: &PtyPlan,
     opts: PtyTurnOptions,
     sink: &mut S,
 ) -> Result<TurnResult, PtyTurnError> {
+    check_spawn_cwd(&opts.cwd).map_err(|why| PtyTurnError::Spawn(std::io::Error::other(why)))?;
     let (command, args) = compose_spawn(&plan.command, &plan.args, plan.stdin_file.as_deref());
     let spec = SpawnSpec {
         harness: &plan.command,

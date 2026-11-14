@@ -240,7 +240,7 @@ fn spawn_pty_turn_folds_command_error() {
             parent_env: &env,
             home: &t.0,
         },
-        PtyTurnOptions::default(),
+        PtyTurnOptions::at(std::env::temp_dir()),
         &mut sink,
     );
     match r {
