@@ -7,6 +7,7 @@
 //! - `last_seen_at` 은 30초에 한 번만 쓰고, 끊길 때 쓰지 않은 프레임이 있었으면 한 번 더 쓴다(TS `LAST_SEEN_WRITE_MS`).
 //! - 토큰 재검증 60초: TS 는 같은 프로세스의 DELETE·계정 삭제가 허브를 직접 불러 끊는다. 코어가 이 프로세스로 오면 TS 쪽
 //!   라우트가 이 허브에 닿지 못하므로, 여기서 주기적으로 `revoked_at`·토큰을 다시 보고 4401 로 끊는다(`/ws` 의 재검증과 같은 몫).
+//! - 박동·업그레이드 단계·gh 보고는 `operator_frames` 가 적는다.
 //! - hello 의 버전을 `operator.version` 에 적고, 바뀌었으면 `operator.changed`(TS 와 같음).
 use super::events::Hub;
 use super::operator_hub::{OpOut, OperatorHub};
@@ -29,6 +30,8 @@ pub struct OpTiming {
     pub revalidate: Duration,
     /// 소켓 쓰기 시한 — `/ws` 와 같은 env(`HARKROOM_WS_SEND_TIMEOUT_MS`)·기본값(C6-1).
     pub send_timeout: Duration,
+    /// 박동을 DB·이벤트로 처리하는 최소 간격(TS `STATUS_MIN_INTERVAL_MS`).
+    pub status_min: Duration,
 }
 
 impl OpTiming {
@@ -48,6 +51,7 @@ impl OpTiming {
             last_seen_write: ms("HARKROOM_OPERATOR_LAST_SEEN_MS", 30_000),
             revalidate: ms("HARKROOM_OPERATOR_REVALIDATE_MS", 60_000),
             send_timeout: ms("HARKROOM_WS_SEND_TIMEOUT_MS", 10_000),
+            status_min: ms("HARKROOM_OPERATOR_STATUS_MIN_MS", 10_000),
         }
     }
 }
@@ -70,6 +74,13 @@ impl OperatorCore {
             workers: Arc::new(AtomicUsize::new(0)),
         });
         spawn_version_writer(core.clone());
+        super::operator_frames::spawn(
+            core.clone(),
+            super::operator_frames::machine_id_key(
+                std::env::var("HARKROOM_SECRET_KEY").ok().as_deref(),
+            ),
+            timing.status_min,
+        );
         core
     }
 

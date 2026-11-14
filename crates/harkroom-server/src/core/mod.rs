@@ -7,6 +7,7 @@
 pub mod audience;
 pub mod events;
 pub mod operator;
+pub mod operator_frames;
 pub mod operator_hub;
 pub mod tickets;
 pub mod typing;
