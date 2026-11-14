@@ -338,6 +338,8 @@ pub struct MentionParts<'a, P: PrepareIo, S: PtyTurnSink> {
     /// `lease_dir` 가 있으면 그것이 먼저다.
     pub lease_dir_of: Option<LeaseDirFn<'a>>,
     pub now: Option<TurnClock>,
+    /// 시도를 준비할 때 그 순간의 시계를 잰다(정본 `now: new Date()` — 시도마다). `now` 가 있으면 그것이 먼저(시험용).
+    pub clock: Option<fn() -> TurnClock>,
     pub outcome: OutcomeFn<'a>,
     pub after: AfterFn<'a>,
     pub mount: MountFn<'a>,
@@ -393,6 +395,7 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
             lease_dir: None,
             lease_dir_of: None,
             now: None,
+            clock: None,
             outcome,
             after,
             mount,
@@ -467,7 +470,7 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
                 new_workspace_dir: &self.new_workspace_dir,
                 me_id: &self.me_id,
                 handles: &self.handles,
-                now: self.now.clone(),
+                now: self.now.clone().or_else(|| self.clock.map(|f| f())),
                 wake: turn_wake_of(target, None),
             },
             &mut new_id,

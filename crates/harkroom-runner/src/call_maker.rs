@@ -349,6 +349,8 @@ where
             p.slot = b.slot;
             p.watch_loop = Some(b.watch_loop);
             p.argv = argv;
+            // 턴 프롬프트의 「지금 시각」 줄 — 시도마다 그 순간을 잰다(정본 `now: new Date()`).
+            p.clock = Some(crate::local_clock::turn_clock_now);
             p.lease_dir_of = Some(Box::new(move || book.lease_dir(&lease_cause)));
             p.turn_timeout_ms = c.turn_timeout_ms;
             p
