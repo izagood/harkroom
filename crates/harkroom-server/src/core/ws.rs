@@ -122,28 +122,23 @@ impl Core {
         self.sockets.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// TS `announceTyping` — 받는 사람마다 자기를 뺀 목록. 수신자는 `audienceFor`(public standard 면 지금 붙은 전원, 아니면 멤버).
+    /// TS `announceTyping` — 받는 사람마다 자기를 뺀 목록. 수신자는 [`audience_for`](super::audience::audience_for) 하나
+    /// (전원이면 지금 붙은 사람, 아니면 멤버) — 여기에 사본을 두지 않는다(TS 에서 사본이 비멤버에게 입력 중을 흘렸다).
     async fn announce_typing(&self, channel: &str) {
-        let row: Option<(String, String)> =
-            sqlx::query_as("select kind, visibility from channel where id = $1::uuid")
-                .bind(channel)
-                .fetch_optional(&self.pool)
-                .await
-                .ok()
-                .flatten();
-        let Some((kind, visibility)) = row else {
-            return;
-        };
-        let recipients: Vec<String> = if kind == "standard" && visibility == "public" {
-            self.lock_conn().keys().cloned().collect()
-        } else {
-            sqlx::query_scalar(
-                "select account_id::text from channel_member where channel_id = $1::uuid",
-            )
+        let exists: Option<i32> = sqlx::query_scalar("select 1 from channel where id = $1::uuid")
             .bind(channel)
-            .fetch_all(&self.pool)
+            .fetch_optional(&self.pool)
             .await
-            .unwrap_or_default()
+            .ok()
+            .flatten();
+        if exists.is_none() {
+            return;
+        }
+        let recipients: Vec<String> = match super::audience::audience_for(&self.pool, channel).await
+        {
+            Ok(super::audience::Audience::All) => self.lock_conn().keys().cloned().collect(),
+            Ok(super::audience::Audience::Accounts(ids)) => ids,
+            Err(_) => return,
         };
         let who = self.typing.who(channel);
         for r in recipients {

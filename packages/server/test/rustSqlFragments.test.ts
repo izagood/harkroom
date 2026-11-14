@@ -5,7 +5,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
-import { channelVisibleSql } from '../src/services/channels.js';
+import { channelListVisibleSql, channelVisibleSql } from '../src/services/channels.js';
 import { displayBodySql } from '../src/services/systemBody.js';
 
 const GOLDEN = fileURLToPath(new URL('../../../crates/harkroom-server/golden/sql_fragments.json', import.meta.url));
@@ -16,6 +16,8 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     display_body_m: displayBodySql('m'),
     // 작업 항목(`workItems.ts::actorSeesItemSql`) — 주인이 아닌 쪽이 볼 수 있는 스레드인지, 별칭 ac·두째 인자.
     channel_visible_ac_p2uuid: channelVisibleSql('ac', '$2::uuid'),
+    // 받는 사람 계산(`core/audience.rs`, S5.3 C1a) — 목록 이벤트 수신자(`channelListAudience`·`channelListLostAudience`)의 술어.
+    channel_list_visible_c_aid_aadmin: channelListVisibleSql('c', 'a.id', 'a.is_admin'),
   };
   const text = `${JSON.stringify(want, null, 2)}\n`;
   if (process.env.UPDATE_RUST_SQL_GOLDEN === '1') writeFileSync(GOLDEN, text);
