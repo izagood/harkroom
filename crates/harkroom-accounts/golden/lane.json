@@ -1,0 +1,1018 @@
+{
+  "cases": [
+    {
+      "name": "no-root",
+      "expected": {
+        "lane": {
+          "pool": null,
+          "accounts": []
+        },
+        "use": "none"
+      }
+    },
+    {
+      "name": "empty-root",
+      "dirs": [
+        "accounts"
+      ],
+      "expected": {
+        "lane": {
+          "pool": null,
+          "accounts": []
+        },
+        "use": "none"
+      }
+    },
+    {
+      "name": "root-is-file",
+      "files": {
+        "accounts": "x"
+      },
+      "expected": {
+        "lane": {
+          "pool": null,
+          "accounts": []
+        },
+        "use": "unreadable"
+      }
+    },
+    {
+      "name": "implicit",
+      "dirs": [
+        "accounts/b",
+        "accounts/a",
+        "accounts/Bad",
+        "accounts/a_b",
+        "accounts/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "accounts/.hidden"
+      ],
+      "files": {
+        "accounts/.DS_Store": "",
+        "accounts/file-x": ""
+      },
+      "expected": {
+        "lane": {
+          "pool": null,
+          "accounts": [
+            {
+              "name": "a",
+              "configDir": "<tmp>/accounts/a"
+            },
+            {
+              "name": "b",
+              "configDir": "<tmp>/accounts/b"
+            }
+          ]
+        },
+        "use": "pool"
+      }
+    },
+    {
+      "name": "implicit-order",
+      "dirs": [
+        "accounts/a",
+        "accounts/b",
+        "accounts/c"
+      ],
+      "env": {
+        "HARKROOM_CLAUDE_ACCOUNTS": " c, a ,,a"
+      },
+      "expected": {
+        "lane": {
+          "pool": null,
+          "accounts": [
+            {
+              "name": "c",
+              "configDir": "<tmp>/accounts/c"
+            },
+            {
+              "name": "a",
+              "configDir": "<tmp>/accounts/a"
+            },
+            {
+              "name": "a",
+              "configDir": "<tmp>/accounts/a"
+            }
+          ]
+        },
+        "use": "pool"
+      }
+    },
+    {
+      "name": "implicit-order-missing",
+      "dirs": [
+        "accounts/a",
+        "accounts/b"
+      ],
+      "env": {
+        "HARKROOM_CLAUDE_ACCOUNTS": "a,zz,yy"
+      },
+      "expected": {
+        "lane": {
+          "error": "HARKROOM_CLAUDE_ACCOUNTS 에 없는 계정이 있다: zz, yy. <tmp>/accounts 아래에 있는 계정은 a, b 이다."
+        },
+        "use": "unreadable"
+      }
+    },
+    {
+      "name": "implicit-order-missing-empty",
+      "dirs": [
+        "accounts"
+      ],
+      "env": {
+        "HARKROOM_CLAUDE_ACCOUNTS": "a"
+      },
+      "expected": {
+        "lane": {
+          "error": "HARKROOM_CLAUDE_ACCOUNTS 에 없는 계정이 있다: a. <tmp>/accounts 아래에 있는 계정은 (없음) 이다."
+        },
+        "use": "unreadable"
+      }
+    },
+    {
+      "name": "implicit-links",
+      "dirs": [
+        "accounts/a",
+        "ext/acct"
+      ],
+      "files": {
+        "ext/file": ""
+      },
+      "links": {
+        "accounts/linked": "ext/acct",
+        "accounts/broken": "ext/missing",
+        "accounts/tofile": "ext/file"
+      },
+      "expected": {
+        "lane": {
+          "pool": null,
+          "accounts": [
+            {
+              "name": "a",
+              "configDir": "<tmp>/accounts/a"
+            },
+            {
+              "name": "linked",
+              "configDir": "<tmp>/accounts/linked"
+            }
+          ]
+        },
+        "use": "pool"
+      }
+    },
+    {
+      "name": "forced",
+      "dirs": [
+        "accounts/p1/a",
+        "accounts/p1/b",
+        "accounts/p2/c"
+      ],
+      "files": {
+        "accounts/pools.json": "{\"order\":{\"p2\":[\"c\"]},\"agents\":{\"00000000-aaaa-4bbb-8ccc-000000000001\":[\"p1\"]},\"defaultPool\":\"p1\"}"
+      },
+      "agentId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "forcedPool": "p2",
+      "expected": {
+        "lane": {
+          "pool": "p2",
+          "accounts": [
+            {
+              "name": "c",
+              "configDir": "<tmp>/accounts/p2/c",
+              "pool": "p2"
+            }
+          ]
+        },
+        "use": "pool"
+      }
+    },
+    {
+      "name": "forced-missing",
+      "dirs": [
+        "accounts/p1/a"
+      ],
+      "files": {
+        "accounts/pools.json": "{}"
+      },
+      "agentId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "forcedPool": "nope",
+      "expected": {
+        "lane": {
+          "error": "HARKROOM_CLAUDE_POOL 이 없는 풀을 가리킨다: nope. <tmp>/accounts 아래에 있는 풀은 p1 이다."
+        },
+        "use": "unreadable"
+      }
+    },
+    {
+      "name": "forced-missing-no-pools",
+      "dirs": [
+        "accounts"
+      ],
+      "files": {
+        "accounts/pools.json": "{}"
+      },
+      "agentId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "forcedPool": "nope",
+      "expected": {
+        "lane": {
+          "error": "HARKROOM_CLAUDE_POOL 이 없는 풀을 가리킨다: nope. <tmp>/accounts 아래에 있는 풀은 (없음) 이다."
+        },
+        "use": "unreadable"
+      }
+    },
+    {
+      "name": "forced-empty-string",
+      "dirs": [
+        "accounts/p1/a"
+      ],
+      "files": {
+        "accounts/pools.json": "{\"defaultPool\":\"p1\"}"
+      },
+      "agentId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "forcedPool": "",
+      "expected": {
+        "lane": {
+          "pool": "p1",
+          "accounts": [
+            {
+              "name": "a",
+              "configDir": "<tmp>/accounts/p1/a",
+              "pool": "p1"
+            }
+          ],
+          "chain": [
+            {
+              "pool": "p1",
+              "accounts": [
+                {
+                  "name": "a",
+                  "configDir": "<tmp>/accounts/p1/a",
+                  "pool": "p1"
+                }
+              ]
+            }
+          ]
+        },
+        "use": "pool"
+      }
+    },
+    {
+      "name": "forced-with-order",
+      "dirs": [
+        "accounts/p1/a",
+        "accounts/p1/b"
+      ],
+      "files": {
+        "accounts/pools.json": "{\"order\":{\"p1\":[\"a\",\"b\"]}}"
+      },
+      "env": {
+        "HARKROOM_CLAUDE_ACCOUNTS": "b"
+      },
+      "agentId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "forcedPool": "p1",
+      "expected": {
+        "lane": {
+          "pool": "p1",
+          "accounts": [
+            {
+              "name": "b",
+              "configDir": "<tmp>/accounts/p1/b",
+              "pool": "p1"
+            }
+          ]
+        },
+        "use": "pool"
+      }
+    },
+    {
+      "name": "forced-with-order-missing",
+      "dirs": [
+        "accounts/p1/a"
+      ],
+      "files": {
+        "accounts/pools.json": "{}"
+      },
+      "env": {
+        "HARKROOM_CLAUDE_ACCOUNTS": "zz"
+      },
+      "agentId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "forcedPool": "p1",
+      "expected": {
+        "lane": {
+          "error": "HARKROOM_CLAUDE_ACCOUNTS 에 없는 계정이 있다: zz. <tmp>/accounts/p1 아래에 있는 계정은 a 이다."
+        },
+        "use": "unreadable"
+      }
+    },
+    {
+      "name": "assigned-chain",
+      "dirs": [
+        "accounts/p1/a",
+        "accounts/p1/b",
+        "accounts/p1/c",
+        "accounts/p2/d"
+      ],
+      "files": {
+        "accounts/pools.json": "{\"order\":{\"p1\":[\"b\",\"ghost\",\"a\"]},\"agents\":{\"00000000-aaaa-4bbb-8ccc-000000000001\":[\"p2\",\"gone\",\"p1\"]},\"defaultPool\":\"p1\"}"
+      },
+      "agentId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "expected": {
+        "lane": {
+          "pool": "p2",
+          "accounts": [
+            {
+              "name": "d",
+              "configDir": "<tmp>/accounts/p2/d",
+              "pool": "p2"
+            }
+          ],
+          "chain": [
+            {
+              "pool": "p2",
+              "accounts": [
+                {
+                  "name": "d",
+                  "configDir": "<tmp>/accounts/p2/d",
+                  "pool": "p2"
+                }
+              ]
+            },
+            {
+              "pool": "p1",
+              "accounts": [
+                {
+                  "name": "b",
+                  "configDir": "<tmp>/accounts/p1/b",
+                  "pool": "p1"
+                },
+                {
+                  "name": "a",
+                  "configDir": "<tmp>/accounts/p1/a",
+                  "pool": "p1"
+                },
+                {
+                  "name": "c",
+                  "configDir": "<tmp>/accounts/p1/c",
+                  "pool": "p1"
+                }
+              ]
+            }
+          ]
+        },
+        "use": "pool"
+      }
+    },
+    {
+      "name": "assigned-first-empty",
+      "dirs": [
+        "accounts/p0",
+        "accounts/p1/a"
+      ],
+      "files": {
+        "accounts/pools.json": "{\"agents\":{\"00000000-aaaa-4bbb-8ccc-000000000001\":[\"p0\",\"p1\"]}}"
+      },
+      "agentId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "expected": {
+        "lane": {
+          "pool": "p1",
+          "accounts": [
+            {
+              "name": "a",
+              "configDir": "<tmp>/accounts/p1/a",
+              "pool": "p1"
+            }
+          ],
+          "chain": [
+            {
+              "pool": "p0",
+              "accounts": []
+            },
+            {
+              "pool": "p1",
+              "accounts": [
+                {
+                  "name": "a",
+                  "configDir": "<tmp>/accounts/p1/a",
+                  "pool": "p1"
+                }
+              ]
+            }
+          ]
+        },
+        "use": "pool"
+      }
+    },
+    {
+      "name": "assigned-all-empty",
+      "dirs": [
+        "accounts/p0",
+        "accounts/p3"
+      ],
+      "files": {
+        "accounts/pools.json": "{\"agents\":{\"00000000-aaaa-4bbb-8ccc-000000000001\":[\"p0\",\"p3\"]},\"defaultPool\":\"p1\"}"
+      },
+      "agentId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "expected": {
+        "lane": {
+          "pool": "p0",
+          "accounts": [],
+          "chain": [
+            {
+              "pool": "p0",
+              "accounts": []
+            },
+            {
+              "pool": "p3",
+              "accounts": []
+            }
+          ]
+        },
+        "use": "none"
+      }
+    },
+    {
+      "name": "assigned-all-missing-falls-to-default",
+      "dirs": [
+        "accounts/p1/a"
+      ],
+      "files": {
+        "accounts/pools.json": "{\"agents\":{\"00000000-aaaa-4bbb-8ccc-000000000001\":[\"gone\",\"gone2\"]},\"defaultPool\":\"p1\"}"
+      },
+      "agentId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "expected": {
+        "lane": {
+          "pool": "p1",
+          "accounts": [
+            {
+              "name": "a",
+              "configDir": "<tmp>/accounts/p1/a",
+              "pool": "p1"
+            }
+          ],
+          "chain": [
+            {
+              "pool": "p1",
+              "accounts": [
+                {
+                  "name": "a",
+                  "configDir": "<tmp>/accounts/p1/a",
+                  "pool": "p1"
+                }
+              ]
+            }
+          ]
+        },
+        "use": "pool"
+      }
+    },
+    {
+      "name": "assigned-legacy-string",
+      "dirs": [
+        "accounts/p1/a"
+      ],
+      "files": {
+        "accounts/pools.json": "{\"agents\":{\"00000000-aaaa-4bbb-8ccc-000000000001\":\"p1\"}}"
+      },
+      "agentId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "expected": {
+        "lane": {
+          "pool": "p1",
+          "accounts": [
+            {
+              "name": "a",
+              "configDir": "<tmp>/accounts/p1/a",
+              "pool": "p1"
+            }
+          ],
+          "chain": [
+            {
+              "pool": "p1",
+              "accounts": [
+                {
+                  "name": "a",
+                  "configDir": "<tmp>/accounts/p1/a",
+                  "pool": "p1"
+                }
+              ]
+            }
+          ]
+        },
+        "use": "pool"
+      }
+    },
+    {
+      "name": "assigned-bad-names-and-dupes",
+      "dirs": [
+        "accounts/p1/a",
+        "accounts/p2/b"
+      ],
+      "files": {
+        "accounts/pools.json": "{\"agents\":{\"00000000-aaaa-4bbb-8ccc-000000000001\":[\"P1\",\"../x\",\"p2\",7,\"p2\",\"p1\"]}}"
+      },
+      "agentId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "expected": {
+        "lane": {
+          "pool": "p2",
+          "accounts": [
+            {
+              "name": "b",
+              "configDir": "<tmp>/accounts/p2/b",
+              "pool": "p2"
+            }
+          ],
+          "chain": [
+            {
+              "pool": "p2",
+              "accounts": [
+                {
+                  "name": "b",
+                  "configDir": "<tmp>/accounts/p2/b",
+                  "pool": "p2"
+                }
+              ]
+            },
+            {
+              "pool": "p1",
+              "accounts": [
+                {
+                  "name": "a",
+                  "configDir": "<tmp>/accounts/p1/a",
+                  "pool": "p1"
+                }
+              ]
+            }
+          ]
+        },
+        "use": "pool"
+      }
+    },
+    {
+      "name": "assigned-truncated-at-16",
+      "dirs": [
+        "accounts/p1/a",
+        "accounts/p2/b"
+      ],
+      "files": {
+        "accounts/pools.json": "{\"agents\":{\"00000000-aaaa-4bbb-8ccc-000000000001\":[\"p1\",\"p1\",\"x0\",\"x1\",\"x2\",\"x3\",\"x4\",\"x5\",\"x6\",\"x7\",\"x8\",\"x9\",\"x10\",\"x11\",\"x12\",\"x13\",\"x14\",\"p2\"]}}"
+      },
+      "agentId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "expected": {
+        "lane": {
+          "pool": "p1",
+          "accounts": [
+            {
+              "name": "a",
+              "configDir": "<tmp>/accounts/p1/a",
+              "pool": "p1"
+            }
+          ],
+          "chain": [
+            {
+              "pool": "p1",
+              "accounts": [
+                {
+                  "name": "a",
+                  "configDir": "<tmp>/accounts/p1/a",
+                  "pool": "p1"
+                }
+              ]
+            }
+          ]
+        },
+        "use": "pool"
+      }
+    },
+    {
+      "name": "other-agent-assigned-uses-default",
+      "dirs": [
+        "accounts/p1/a",
+        "accounts/p2/b"
+      ],
+      "files": {
+        "accounts/pools.json": "{\"agents\":{\"00000000-aaaa-4bbb-8ccc-000000000002\":[\"p2\"]},\"defaultPool\":\"p1\"}"
+      },
+      "agentId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "expected": {
+        "lane": {
+          "pool": "p1",
+          "accounts": [
+            {
+              "name": "a",
+              "configDir": "<tmp>/accounts/p1/a",
+              "pool": "p1"
+            }
+          ],
+          "chain": [
+            {
+              "pool": "p1",
+              "accounts": [
+                {
+                  "name": "a",
+                  "configDir": "<tmp>/accounts/p1/a",
+                  "pool": "p1"
+                }
+              ]
+            }
+          ]
+        },
+        "use": "pool"
+      }
+    },
+    {
+      "name": "default-order",
+      "dirs": [
+        "accounts/p1/d",
+        "accounts/p1/a",
+        "accounts/p1/c",
+        "accounts/p1/b"
+      ],
+      "files": {
+        "accounts/pools.json": "{\"order\":{\"p1\":[\"c\",\"ghost\",\"a\",\"Bad\",\"c\"]},\"defaultPool\":\"p1\"}"
+      },
+      "agentId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "expected": {
+        "lane": {
+          "pool": "p1",
+          "accounts": [
+            {
+              "name": "c",
+              "configDir": "<tmp>/accounts/p1/c",
+              "pool": "p1"
+            },
+            {
+              "name": "a",
+              "configDir": "<tmp>/accounts/p1/a",
+              "pool": "p1"
+            },
+            {
+              "name": "c",
+              "configDir": "<tmp>/accounts/p1/c",
+              "pool": "p1"
+            },
+            {
+              "name": "b",
+              "configDir": "<tmp>/accounts/p1/b",
+              "pool": "p1"
+            },
+            {
+              "name": "d",
+              "configDir": "<tmp>/accounts/p1/d",
+              "pool": "p1"
+            }
+          ],
+          "chain": [
+            {
+              "pool": "p1",
+              "accounts": [
+                {
+                  "name": "c",
+                  "configDir": "<tmp>/accounts/p1/c",
+                  "pool": "p1"
+                },
+                {
+                  "name": "a",
+                  "configDir": "<tmp>/accounts/p1/a",
+                  "pool": "p1"
+                },
+                {
+                  "name": "c",
+                  "configDir": "<tmp>/accounts/p1/c",
+                  "pool": "p1"
+                },
+                {
+                  "name": "b",
+                  "configDir": "<tmp>/accounts/p1/b",
+                  "pool": "p1"
+                },
+                {
+                  "name": "d",
+                  "configDir": "<tmp>/accounts/p1/d",
+                  "pool": "p1"
+                }
+              ]
+            }
+          ]
+        },
+        "use": "pool"
+      }
+    },
+    {
+      "name": "default-missing",
+      "dirs": [
+        "accounts/p1/a"
+      ],
+      "files": {
+        "accounts/pools.json": "{\"defaultPool\":\"gone\"}"
+      },
+      "agentId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "expected": {
+        "lane": {
+          "pool": null,
+          "accounts": []
+        },
+        "use": "none"
+      }
+    },
+    {
+      "name": "default-bad-name",
+      "dirs": [
+        "accounts/p1/a"
+      ],
+      "files": {
+        "accounts/pools.json": "{\"defaultPool\":\"../p1\"}"
+      },
+      "agentId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "expected": {
+        "lane": {
+          "pool": null,
+          "accounts": []
+        },
+        "use": "none"
+      }
+    },
+    {
+      "name": "default-empty-pool",
+      "dirs": [
+        "accounts/p3"
+      ],
+      "files": {
+        "accounts/pools.json": "{\"defaultPool\":\"p3\"}"
+      },
+      "agentId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "expected": {
+        "lane": {
+          "pool": "p3",
+          "accounts": [],
+          "chain": [
+            {
+              "pool": "p3",
+              "accounts": []
+            }
+          ]
+        },
+        "use": "none"
+      }
+    },
+    {
+      "name": "pools-no-default",
+      "dirs": [
+        "accounts/p1/a"
+      ],
+      "files": {
+        "accounts/pools.json": "{}"
+      },
+      "agentId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "expected": {
+        "lane": {
+          "pool": null,
+          "accounts": []
+        },
+        "use": "none"
+      }
+    },
+    {
+      "name": "pools-broken",
+      "dirs": [
+        "accounts/p1/a"
+      ],
+      "files": {
+        "accounts/pools.json": "{not json"
+      },
+      "agentId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "expected": {
+        "lane": {
+          "pool": null,
+          "accounts": []
+        },
+        "use": "unreadable"
+      }
+    },
+    {
+      "name": "pools-array",
+      "dirs": [
+        "accounts/p1/a"
+      ],
+      "files": {
+        "accounts/pools.json": "[1,2]"
+      },
+      "agentId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "expected": {
+        "lane": {
+          "pool": null,
+          "accounts": []
+        },
+        "use": "none"
+      }
+    },
+    {
+      "name": "pools-null",
+      "dirs": [
+        "accounts/p1/a"
+      ],
+      "files": {
+        "accounts/pools.json": "null"
+      },
+      "agentId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "expected": {
+        "lane": {
+          "pool": null,
+          "accounts": []
+        },
+        "use": "none"
+      }
+    },
+    {
+      "name": "pools-is-dir",
+      "dirs": [
+        "accounts/p1/a",
+        "accounts/pools.json"
+      ],
+      "agentId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "expected": {
+        "lane": {
+          "pool": null,
+          "accounts": [
+            {
+              "name": "p1",
+              "configDir": "<tmp>/accounts/p1"
+            }
+          ]
+        },
+        "use": "unreadable"
+      }
+    },
+    {
+      "name": "pool-links",
+      "dirs": [
+        "ext/pool/a",
+        "ext/acct",
+        "accounts/p1/b"
+      ],
+      "files": {
+        "accounts/pools.json": "{\"defaultPool\":\"linked\"}"
+      },
+      "links": {
+        "accounts/linked": "ext/pool",
+        "accounts/p1/c": "ext/acct",
+        "accounts/p1/dead": "ext/none"
+      },
+      "agentId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "expected": {
+        "lane": {
+          "pool": "linked",
+          "accounts": [
+            {
+              "name": "a",
+              "configDir": "<tmp>/accounts/linked/a",
+              "pool": "linked"
+            }
+          ],
+          "chain": [
+            {
+              "pool": "linked",
+              "accounts": [
+                {
+                  "name": "a",
+                  "configDir": "<tmp>/accounts/linked/a",
+                  "pool": "linked"
+                }
+              ]
+            }
+          ]
+        },
+        "use": "pool"
+      }
+    },
+    {
+      "name": "per-community",
+      "dirs": [
+        "accounts/p1/a"
+      ],
+      "files": {
+        "community/claude-pools.json": "{\"defaultPool\":\"p1\"}"
+      },
+      "env": {
+        "HARKROOM_OPERATOR_PER_COMMUNITY": "1",
+        "HARKROOM_OPERATOR_ROOT": "<tmp>/community/../community"
+      },
+      "agentId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "expected": {
+        "lane": {
+          "pool": "p1",
+          "accounts": [
+            {
+              "name": "a",
+              "configDir": "<tmp>/accounts/p1/a",
+              "pool": "p1"
+            }
+          ],
+          "chain": [
+            {
+              "pool": "p1",
+              "accounts": [
+                {
+                  "name": "a",
+                  "configDir": "<tmp>/accounts/p1/a",
+                  "pool": "p1"
+                }
+              ]
+            }
+          ]
+        },
+        "use": "pool"
+      }
+    },
+    {
+      "name": "per-community-ignores-root-pools",
+      "dirs": [
+        "accounts/p1/a"
+      ],
+      "files": {
+        "accounts/pools.json": "{\"defaultPool\":\"p1\"}"
+      },
+      "env": {
+        "HARKROOM_OPERATOR_PER_COMMUNITY": "1",
+        "HARKROOM_OPERATOR_ROOT": "<tmp>/community"
+      },
+      "agentId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "expected": {
+        "lane": {
+          "pool": null,
+          "accounts": [
+            {
+              "name": "p1",
+              "configDir": "<tmp>/accounts/p1"
+            }
+          ]
+        },
+        "use": "pool"
+      }
+    },
+    {
+      "name": "per-community-relative-root",
+      "dirs": [
+        "accounts/p1/a"
+      ],
+      "files": {
+        "accounts/pools.json": "{\"defaultPool\":\"p1\"}"
+      },
+      "env": {
+        "HARKROOM_OPERATOR_PER_COMMUNITY": "1",
+        "HARKROOM_OPERATOR_ROOT": "rel/community"
+      },
+      "agentId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "expected": {
+        "lane": {
+          "pool": null,
+          "accounts": [
+            {
+              "name": "p1",
+              "configDir": "<tmp>/accounts/p1"
+            }
+          ]
+        },
+        "use": "unreadable"
+      }
+    },
+    {
+      "name": "per-community-switch-not-1",
+      "dirs": [
+        "accounts/p1/a"
+      ],
+      "files": {
+        "accounts/pools.json": "{\"defaultPool\":\"p1\"}",
+        "community/claude-pools.json": "{}"
+      },
+      "env": {
+        "HARKROOM_OPERATOR_PER_COMMUNITY": "true",
+        "HARKROOM_OPERATOR_ROOT": "<tmp>/community"
+      },
+      "agentId": "00000000-aaaa-4bbb-8ccc-000000000001",
+      "expected": {
+        "lane": {
+          "pool": "p1",
+          "accounts": [
+            {
+              "name": "a",
+              "configDir": "<tmp>/accounts/p1/a",
+              "pool": "p1"
+            }
+          ],
+          "chain": [
+            {
+              "pool": "p1",
+              "accounts": [
+                {
+                  "name": "a",
+                  "configDir": "<tmp>/accounts/p1/a",
+                  "pool": "p1"
+                }
+              ]
+            }
+          ]
+        },
+        "use": "pool"
+      }
+    }
+  ]
+}
