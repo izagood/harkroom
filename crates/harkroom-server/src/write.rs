@@ -76,6 +76,22 @@ pub const OPERATOR_PRIVILEGES: &[(&str, &str)] = &[
     ("agent_assignment", "UPDATE"),
     ("secret_grant", "UPDATE"),
     ("audit_log", "INSERT"),
+    // S5.3 C6c-3 — Rust 릴레이(`relay_live.rs`)가 쓰는 표(security r3, fail-closed). 하나라도 빠지면 오퍼레이터 표면 전체가 TS 에 남는다
+    // — 릴레이만 Rust 로 오고 사본·presence 가 조용히 비는 반쪽 상태를 만들지 않는다. homelab Job 의 양방향 검사에도 같은 줄이 있어야 한다.
+    ("relay_hub", "SELECT"),
+    ("relay_hub", "INSERT"),
+    ("relay_hub", "UPDATE"),
+    ("relay_hub", "DELETE"),
+    ("agent_session_live", "SELECT"),
+    ("agent_session_live", "INSERT"),
+    ("agent_session_live", "UPDATE"),
+    ("agent_session_live", "DELETE"),
+    ("agent_presence", "SELECT"),
+    ("agent_presence", "INSERT"),
+    ("agent_presence", "UPDATE"),
+    // r2 — 세션 쓰기의 멤버십·스레드 뿌리 확인(같은 INSERT 안의 exists).
+    ("channel_member", "SELECT"),
+    ("message", "SELECT"),
 ];
 pub const OPERATOR_SEQUENCE_PRIVILEGES: &[(&str, &str)] = &[("operator_upgrade_id_seq", "USAGE")];
 
@@ -428,6 +444,25 @@ mod tests {
             fastify_body(&h(Some("application/x-www-form-urlencoded")), b"").unwrap(),
             Body::None
         );
+    }
+
+    #[test]
+    fn operator_privileges_cover_relay_tables() {
+        // security C6c r3 — Rust 릴레이가 쓰는 표의 s/i/u/d 가 오퍼레이터 묶음에 있어야 한다(하나라도 빠지면 묶음 전체가 꺼진다).
+        for t in ["relay_hub", "agent_session_live"] {
+            for p in ["SELECT", "INSERT", "UPDATE", "DELETE"] {
+                assert!(OPERATOR_PRIVILEGES.contains(&(t, p)), "{t} {p}");
+            }
+        }
+        for p in ["SELECT", "INSERT", "UPDATE"] {
+            assert!(
+                OPERATOR_PRIVILEGES.contains(&("agent_presence", p)),
+                "agent_presence {p}"
+            );
+        }
+        for t in ["channel_member", "message"] {
+            assert!(OPERATOR_PRIVILEGES.contains(&(t, "SELECT")), "{t} SELECT");
+        }
     }
 
     #[test]

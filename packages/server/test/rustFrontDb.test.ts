@@ -54,6 +54,10 @@ const OPERATOR_GRANTS = [
   'update on agent_assignment',
   'update on secret_grant',
   'insert on audit_log',
+  // C6c-3 — Rust 릴레이의 세션 사본·presence(security r3). select 는 `pg_read_all_data` 가 주지만 운영 역할에는 따로 준다.
+  'select, insert, update, delete on relay_hub',
+  'select, insert, update, delete on agent_session_live',
+  'select, insert, update on agent_presence',
 ];
 
 /** `loops/wake.rs::WAKE_PRIVILEGES`(+ 시퀀스) 만 가진 쓰기 역할 — homelab 이 운영 쓰기 역할에 더할 GRANT 와 같은 표(S5.3 C5b). */
@@ -115,13 +119,13 @@ async function operatorWriteRole(db: { pool: pg.Pool; uri: string }, grants: rea
 }
 
 describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () => {
-  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention', 'mandate_idle', 'permission_expire', 'bg', 'bg_produce', 'outbox_prune', 'turn_lease', 'inbox_list', 'decide_core_db']) {
+  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention', 'mandate_idle', 'permission_expire', 'bg', 'bg_produce', 'outbox_prune', 'turn_lease', 'inbox_list', 'decide_core_db', 'relay_live']) {
     it(`tests/${name}.rs`, async () => {
       const db = await startTestDb();
       try {
         const env: Record<string, string> = { HARKROOM_TEST_DATABASE_URL: db.uri };
         // C2a — 오퍼레이터 시험은 쓰기 풀을 `write.rs::OPERATOR_PRIVILEGES` 만 가진 역할로 돌린다(homelab GRANT 표가 모자라면 여기서 빨개진다).
-        if (name === 'operator') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db);
+        if (name === 'operator' || name === 'relay_live') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db);
         // C5b — 예약 깨움 sweep 도 `WAKE_PRIVILEGES` 만 가진 역할로 돌린다.
         if (name === 'wake') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, WAKE_GRANTS);
         // C5c — 보존 정리도 `RETENTION_PRIVILEGES` 만 가진 역할로.

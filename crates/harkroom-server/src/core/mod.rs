@@ -35,6 +35,7 @@ pub mod operator_hub;
 pub mod operator_rest;
 pub mod relay;
 pub mod relay_link;
+pub mod relay_live;
 pub mod relay_routes;
 pub mod tickets;
 pub mod turn_lease;
