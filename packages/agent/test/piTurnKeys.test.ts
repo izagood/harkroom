@@ -80,7 +80,7 @@ describe('도구 묻기용 턴 열쇠 — 맡기고 묻고 거둔다', () => {
 describe('mentionTurn 배선', () => {
   const src = readFileSync(new URL('../src/mentionTurn.ts', import.meta.url), 'utf8');
   it('API 키 연결 pi 턴은 턴 열쇠 없이 띄우지 않는다(turn_key_missing)', () => {
-    expect(src).toContain("if (deps.providerEnv && usesPiHome(def.harness) && !turnKeys) throw new ProviderLaneError('turn_key_missing');");
+    expect(src).toContain("if (deps.providerEnv && (usesPiHome(def.harness) || usesOmpHome(def.harness)) && !turnKeys) throw new ProviderLaneError('turn_key_missing');");
   });
   it('pi 도구 묻기는 턴 열쇠로만 — 열쇠가 없으면 묻지 않는다', () => {
     const call = src.slice(src.indexOf('const discovered = turnKeys'));

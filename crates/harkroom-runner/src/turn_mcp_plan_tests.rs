@@ -190,8 +190,9 @@ fn harness_without_delivery_gets_no_keys() {
     let dir = TempDir::new("kilo");
     let src = source(&dir);
     let env = runner_env();
+    // omp 도 env 로 넘기는 하네스다 — 열쇠는 내고 설정 파일은 안 쓴다.
     let plan = turn_mcp_plan(&input(AgentHarness::Omp, true, None, &dir, &src, &env)).unwrap();
-    assert!(plan.turn_keys.is_none(), "omp");
+    assert!(plan.turn_keys.is_some(), "omp");
     assert_eq!(plan.mcp_config_path, src);
 }
 
@@ -570,4 +571,36 @@ fn pi_lane_turn_needs_turn_keys() {
     assert!(plan.turn_keys.is_some());
     // lane 이 아닌 pi 는 열쇠가 없어도 그대로 돈다.
     assert!(turn_mcp_plan(&input(AgentHarness::Pi, false, None, &dir, &src, &env)).is_ok());
+}
+
+/// o1: omp(lane 전용)도 턴 열쇠 없이 띄우지 않는다 — 열쇠가 있으면 지나고, 다리 열쇠는 env 로만(설정 파일 안 씀).
+#[test]
+fn omp_lane_turn_needs_turn_keys() {
+    let dir = TempDir::new("omp-lane-nokey");
+    let src = source(&dir);
+    let env = runner_env();
+    let lane = BTreeMap::from([("HARKROOM_OMP_LANE_BASE_URL".into(), "https://gw".into())]);
+    let err = turn_mcp_plan(&input(
+        AgentHarness::Omp,
+        false,
+        Some(&lane),
+        &dir,
+        &src,
+        &env,
+    ))
+    .unwrap_err();
+    assert!(err.to_string().contains("turn_key_missing"), "{err}");
+    assert!(!dir.path().join("turn-mcp").exists(), "거절은 파일 쓰기 전");
+    let plan = turn_mcp_plan(&input(
+        AgentHarness::Omp,
+        true,
+        Some(&lane),
+        &dir,
+        &src,
+        &env,
+    ))
+    .unwrap();
+    assert!(plan.turn_keys.is_some());
+    assert!(plan.opencode_turn_config.is_none());
+    assert!(!dir.path().join("turn-mcp").exists());
 }

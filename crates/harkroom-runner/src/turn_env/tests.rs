@@ -239,6 +239,17 @@ fn turn_keys_by_delivery() {
     assert_eq!(env[RUNNER_TURN_KEY_SHELL_ENV], "sh");
     assert!(!env.contains_key(RUNNER_LINK_SECRET_ENV));
 
+    // omp 도 env 로 받는다(HOME 을 옮기는 하네스) — 링크 secret 은 없다.
+    let mut om = ChildEnvInput::new(crate::adapter::AgentHarness::Omp);
+    om.omp_home = Some(Path::new("/omp"));
+    om.turn_keys = Some(&keys);
+    if let Ok(env) = child_env(&om, &p, Path::new(HOME)) {
+        assert_eq!(env[RUNNER_TURN_KEY_BRIDGE_ENV], "br");
+        assert!(!env.contains_key(RUNNER_LINK_SECRET_ENV));
+    } else {
+        panic!("omp child env");
+    }
+
     // 열쇠가 없는 턴은 링크 secret 을 그대로 둔다.
     let mut plain = ChildEnvInput::new(Codex);
     plain.codex_home = Some(Path::new(CODEX_ISO));

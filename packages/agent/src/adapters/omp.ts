@@ -45,6 +45,9 @@ export const OMP_ADAPTER: HarnessAdapter = {
   trust: null,
 
   mcpRegistration: 'account-config',
+  // 다리 열쇠를 하네스 env 로 준다 — omp 는 stdio MCP 자식에 env 를 통째로 넘긴다(18.12.6 실측). 셸도 그 env 를 보지만 러너 링크
+  // 열쇠 대신 그 턴에 묶인 열쇠라 좁아진다(pi 와 같은 꼴). 턴별 MCP 설정 길은 없다 — `--config` 오버레이는 MCP 서버를 받지 않는다(실측).
+  turnKeyDelivery: 'env-vars',
   systemPromptDelivery: 'flag-file',
   allowsNullSessionOnFirstTurn: false,
   supportedMentionPermissions: ['auto', 'readonly'],
