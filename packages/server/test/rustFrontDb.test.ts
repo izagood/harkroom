@@ -61,6 +61,9 @@ const WAKE_GRANTS = [
   'usage on sequence event_outbox_id_seq',
 ];
 
+/** `loops/retention.rs::RETENTION_PRIVILEGES` 만 가진 쓰기 역할(S5.3 C5c). */
+const RETENTION_GRANTS = ['delete on idempotency_key', 'delete on session'];
+
 async function operatorWriteRole(db: { pool: pg.Pool; uri: string }, grants: readonly string[] = OPERATOR_GRANTS): Promise<string> {
   const rw = `op_rw_${Math.random().toString(36).slice(2, 10)}`;
   await db.pool.query(`create role ${rw} login password '${rw}' nosuperuser nocreatedb nocreaterole nobypassrls connection limit 8`);
@@ -73,7 +76,7 @@ async function operatorWriteRole(db: { pool: pg.Pool; uri: string }, grants: rea
 }
 
 describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () => {
-  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener']) {
+  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention']) {
     it(`tests/${name}.rs`, async () => {
       const db = await startTestDb();
       try {
@@ -82,6 +85,8 @@ describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () 
         if (name === 'operator') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db);
         // C5b — 예약 깨움 sweep 도 `WAKE_PRIVILEGES` 만 가진 역할로 돌린다.
         if (name === 'wake') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, WAKE_GRANTS);
+        // C5c — 보존 정리도 `RETENTION_PRIVILEGES` 만 가진 역할로.
+        if (name === 'retention') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, RETENTION_GRANTS);
         const r = await cargo(['test', '--test', name, '--', '--nocapture'], env);
         expect(r.code, r.out).toBe(0);
         // DB 가 없어 건너뛴 것을 통과로 읽지 않는다.
@@ -136,6 +141,52 @@ describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () 
                 (select count(*)::int from message where channel_id = $2 and meta->'wake' ? 'firedAt') as stamped`, [a, c])).rows[0];
       expect(counts).toEqual({ inbox: 200, distinct_inbox: 200, fired: 200, stamped: 200 });
       console.log(`wake-dual: rust ${m![1]} / ts ${200 - Number(m![1])}`);
+    } finally {
+      await db.stop();
+    }
+  }, 600_000);
+
+  // C5c — 만료 30일 지난 세션 20000건(배치 20번 분량)을 TS sweep(`createRetentionSweeper`, 지우기 켬)과 Rust sweep 이 **문지기 없이 동시에** 지워도
+  // 지운 수의 합이 정확히 20000 이고(두 번 세지 않음) 남길 줄은 남는다. 이 sweep 은 skip locked 가 아니라 ctid 배치 delete 라 멱등이 바닥이다.
+  it('보존 정리 — TS·Rust 동시 sweep 에도 지운 수 합이 정확하고 남길 줄은 남는다', async () => {
+    const db = await startTestDb();
+    try {
+      const a = (await db.pool.query<{ id: string }>(
+        `insert into account(handle, display_name, kind) values ('ret_dual', 'ret_dual', 'agent') returning id`)).rows[0]!.id;
+      await db.pool.query(
+        `insert into session(token_hash, account_id, expires_at)
+         select 'dual-old-' || g, $1::uuid, now() - interval '31 days' from generate_series(1, 20000) g
+         union all select 'dual-keep', $1::uuid, now() - interval '29 days'`, [a]);
+      const { createRetentionSweeper } = await import('../src/services/retention.js');
+      const ts = createRetentionSweeper(db.pool, { log: () => {}, deleteEnabled: true });
+      const old = async () => Number((await db.pool.query(
+        `select count(*)::int as n from session where account_id = $1 and expires_at < now() - interval '30 days'`, [a])).rows[0].n);
+      const rust = cargo(['test', '--test', 'retention', '--', '--nocapture'], {
+        HARKROOM_TEST_DATABASE_URL: db.uri,
+        HARKROOM_TEST_WRITE_DATABASE_URL: await operatorWriteRole(db, RETENTION_GRANTS),
+        HARKROOM_RETENTION_DUAL: a,
+      });
+      const t0 = Date.now();
+      while (Number((await db.pool.query(
+        `select count(*)::int as n from pg_stat_activity where application_name = 'harkroom-retention-dual'`)).rows[0].n) === 0) {
+        if (Date.now() - t0 > 540_000) throw new Error('rust side never connected');
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      let tsDeleted = 0;
+      while (await old() > 0) tsDeleted += (await ts.sweep()).reduce((n, x) => n + x.deleted, 0);
+      const r = await rust;
+      expect(r.code, r.out).toBe(0);
+      const m = r.out.match(/retention-dual rust deleted (\d+) overlapped (\d+)/);
+      expect(m, r.out).not.toBeNull();
+      expect(tsDeleted + Number(m![1])).toBe(20000);
+      // 실제로 겹쳤는지 — Rust 가 지울 줄이 남은 동안 sweep 을 돌렸어야 한다(둘이 같은 ctid 묶음을 고르므로 Rust 가 줄 잠금에서
+      // 기다린 뒤 0 건일 수 있다 — 그래도 겹친 것이고, 판정은 합이 정확한가다).
+      expect(Number(m![2]), r.out).toBeGreaterThan(0);
+      expect(tsDeleted).toBeGreaterThan(0);
+      const left = (await db.pool.query<{ token_hash: string }>(
+        `select token_hash from session where account_id = $1`, [a])).rows.map((x) => x.token_hash);
+      expect(left).toEqual(['dual-keep']);
+      console.log(`retention-dual: rust ${m![1]} (overlapped sweeps ${m![2]}) / ts ${tsDeleted}`);
     } finally {
       await db.stop();
     }
@@ -482,7 +533,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       // S5.2 P3 — 쓰기 역할. **`write.rs::REQUIRED_PRIVILEGES` 만** 준다(homelab GRANT 와 같은 표). 넓은 권한으로 돌리면
       // 앞단이 목록에 없는 표를 쓰기 시작해도 이 시험이 못 잡는다.
       const rw = `front_rw_${Math.random().toString(36).slice(2, 10)}`;
-      await db.pool.query(`create role ${rw} login password '${rw}' nosuperuser nocreatedb nocreaterole nobypassrls connection limit 4`);
+      // connection limit = 쓰기 풀 2 + 루프 문지기 풀 2 + 루프 sweep 풀 3 (S5.3 C5c — 운영 역할 한도도 이만큼 받아야 한다).
+      await db.pool.query(`create role ${rw} login password '${rw}' nosuperuser nocreatedb nocreaterole nobypassrls connection limit 7`);
       for (const q of [
         `grant pg_read_all_data to ${rw}`,
         `grant insert on event_outbox to ${rw}`,
@@ -523,6 +575,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant update (deleted_at, also_in_channel) on message to ${rw}`,
         // S5.3 C5b — 예약 깨움 루프(`loops/wake.rs::WAKE_PRIVILEGES`). 없으면 「loop wake off」 — 루프는 TS 에 남는다.
         ...WAKE_GRANTS.map((g) => `grant ${g} to ${rw}`),
+        // S5.3 C5c — 보존 정리 루프(`loops/retention.rs::RETENTION_PRIVILEGES`).
+        ...RETENTION_GRANTS.map((g) => `grant ${g} to ${rw}`),
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -570,6 +624,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       expect(f.log()).toContain('front: write pool on');
       expect(f.log()).not.toContain('missing privileges');
       expect(f.log()).toContain('front: loop wake on');
+      expect(f.log()).toContain('front: loop retention on (delete=false');
 
       const r = await cargo(['test', '--test', 'contrast', '--', '--nocapture'], {
         HARKROOM_CONTRAST_TS_URL: tsUrl,
