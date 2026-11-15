@@ -80,6 +80,8 @@ const MANDATE_IDLE_GRANTS = [
 /** `loops/permission_expire.rs::PERMISSION_EXPIRE_PRIVILEGES`(+ 시퀀스) 만 가진 쓰기 역할(S5.3 C5c-2b). */
 /** `loops/bg.rs::BG_PRIVILEGES` 만 가진 쓰기 역할(S5.3 C5c-3a). */
 const BG_GRANTS = ['update (status, error, finished_at) on bg_job'];
+/** `loops/bg_produce.rs::BG_PRODUCE_PRIVILEGES` 만 가진 쓰기 역할(S5.3 C5c-3b-1) — 넣는 칸만. */
+const BG_PRODUCE_GRANTS = ['insert (account_id, kind, day, input) on bg_job'];
 
 const PERMISSION_EXPIRE_GRANTS = [
   'update (status, decided_at) on permission_request',
@@ -102,7 +104,7 @@ async function operatorWriteRole(db: { pool: pg.Pool; uri: string }, grants: rea
 }
 
 describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () => {
-  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention', 'mandate_idle', 'permission_expire', 'bg']) {
+  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention', 'mandate_idle', 'permission_expire', 'bg', 'bg_produce']) {
     it(`tests/${name}.rs`, async () => {
       const db = await startTestDb();
       try {
@@ -119,6 +121,8 @@ describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () 
         if (name === 'permission_expire') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, PERMISSION_EXPIRE_GRANTS);
         // C5c-3a — 백그라운드 회차 닫기도 `BG_PRIVILEGES` 만 가진 역할로.
         if (name === 'bg') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, BG_GRANTS);
+        // C5c-3b-1 — 백그라운드 회차 생산도 `BG_PRODUCE_PRIVILEGES` 만 가진 역할로.
+        if (name === 'bg_produce') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, BG_PRODUCE_GRANTS);
         const r = await cargo(['test', '--test', name, '--', '--nocapture'], env);
         expect(r.code, r.out).toBe(0);
         // DB 가 없어 건너뛴 것을 통과로 읽지 않는다.
@@ -283,6 +287,71 @@ describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () 
       expect(kept).toBe(1500);
       expect(Number(m![3]), r.out).toBeGreaterThan(0);
       console.log(`bg-dual: rust ${m![1]}+${m![2]} (overlapped ${m![3]}) / ts ${tsT}+${tsE}`);
+    } finally {
+      await db.stop();
+    }
+  }, 600_000);
+
+  // C5c-3b-1 — 같은 시드에 Rust `produce_distill` 과 TS `produceDistillJobs` 를 차례로 돌려 생긴 bg_job 줄(account·kind·day·input)이 같다.
+  // 경우: 메모 있음 · 메모 없고 사람 글 있음 / 들어감 — 사람 글 없음 · 비공개 채널 비멤버 · 다른 하네스 · done 1시간 / 빠짐.
+  it('bg 증류 생산 — TS·Rust 가 같은 시드에서 같은 줄을 넣는다', async () => {
+    const db = await startTestDb();
+    try {
+      const q = async <T extends Record<string, unknown>>(sql: string, args: unknown[] = []) => (await db.pool.query<T>(sql, args)).rows;
+      const acct = async (handle: string, kind: string) =>
+        (await q<{ id: string }>(
+          `insert into account(handle, display_name, kind, login_id) values ($1, $1, $2, case when $2 = 'human' then $1 end) returning id`, [handle, kind]))[0]!.id;
+      const cfg = async (id: string, harness: string) => q(
+        `insert into agent_config (account_id, bg_enabled, harness) values ($1, true, $2)
+         on conflict (account_id) do update set bg_enabled = true, harness = $2`, [id, harness]);
+      const human = await acct('bgp_h', 'human');
+      const a = await acct('bgp_x', 'agent');
+      await cfg(a, 'claude-code');
+      const cx = await acct('bgp_cx', 'agent');
+      await cfg(cx, 'codex');
+      const ch = async (vis: string) => (await q<{ id: string }>(
+        `insert into channel(name, kind, visibility) values ('bgp-' || gen_random_uuid(), 'standard', $1) returning id`, [vis]))[0]!.id;
+      const pub = await ch('public');
+      const priv = await ch('private');
+      const thread = async (channel: string, author: string, opts: { note?: boolean; humanReply?: boolean; doneAgo: string }) => {
+        const root = (await q<{ id: string }>(
+          `insert into message(channel_id, author_id, body, kind) values ($1, $2, '보고', 'user') returning id`, [channel, author]))[0]!.id;
+        if (opts.humanReply) {
+          await q(`insert into message(channel_id, author_id, body, kind, thread_root_id) values ($1, $2, '정정', 'user', $3)`, [channel, human, root]);
+        }
+        if (opts.note) await q(`insert into thread_note (account_id, thread_root_id, body) values ($1, $2, '메모')`, [author, root]);
+        await q(`insert into thread_status (root_id, status, emoji, account_id, updated_at) values ($1, 'done', '✅', $2, now() - $3::interval)`,
+          [root, author, opts.doneAgo]);
+        return root;
+      };
+      const withNote = await thread(pub, a, { note: true, doneAgo: '48 hours' });
+      const corrected = await thread(pub, a, { humanReply: true, doneAgo: '50 hours' });
+      const selfOnly = await thread(pub, a, { doneAgo: '52 hours' });
+      const hidden = await thread(priv, a, { note: true, doneAgo: '54 hours' });
+      const otherHarness = await thread(pub, cx, { note: true, doneAgo: '56 hours' });
+      const fresh = await thread(pub, a, { note: true, doneAgo: '1 hour' });
+
+      const dump = async () => (await q<{ account_id: string; kind: string; day: string; input: { threadIds: string[] } }>(
+        `select account_id, kind, day::text as day, input from bg_job order by account_id, kind`))
+        .map((r) => ({ ...r, input: { threadIds: [...r.input.threadIds] } }));
+      const rust = await cargo(['test', '--test', 'bg_produce', '--', '--nocapture'], {
+        HARKROOM_TEST_DATABASE_URL: db.uri,
+        HARKROOM_TEST_WRITE_DATABASE_URL: await operatorWriteRole(db, BG_PRODUCE_GRANTS),
+        HARKROOM_BG_PRODUCE_ONLY: '1',
+      });
+      expect(rust.code, rust.out).toBe(0);
+      expect(rust.out, rust.out).toMatch(/bg-produce rust queued 1 day \d{4}-\d{2}-\d{2}/);
+      const rs = await dump();
+      await q(`delete from bg_job`);
+      // TS 는 앱 시계로 돈다 — 같은 KST 날짜의 04:00(창 안)으로 맞춘다. done 시각은 이 차이(최대 하루)보다 넉넉히 떨어뜨렸다.
+      const day = (await q<{ d: string }>(`select (now() at time zone 'Asia/Seoul')::date::text as d`))[0]!.d;
+      const { produceDistillJobs } = await import('../src/services/bgJobs.js');
+      const tsOut = await produceDistillJobs(db.pool, new Date(`${day}T04:00:00+09:00`), { HARKROOM_BACKGROUND_ENABLED: '1' });
+      expect(tsOut.queued).toBe(1);
+      const ts = await dump();
+      expect(rs).toEqual(ts);
+      expect(rs).toEqual([{ account_id: a, kind: 'distill', day, input: { threadIds: [corrected, withNote] } }]);
+      for (const x of [selfOnly, hidden, otherHarness, fresh]) expect(rs[0]!.input.threadIds).not.toContain(x);
     } finally {
       await db.stop();
     }
