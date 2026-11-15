@@ -93,6 +93,8 @@ pub struct McpWrites {
     pub grant: Option<PgPool>,
     /// `thread.note`(B2-1) — `note::THREAD_NOTE_PRIVILEGES`.
     pub note: Option<PgPool>,
+    /// 기억 쓰기(C4b B1a) — [`super::mem_writes::MEMORY_WRITE_PRIVILEGES`]. [`super::mem_writes::answer`] 가 본다.
+    pub memory: Option<PgPool>,
 }
 
 /// JS `Number.MAX_SAFE_INTEGER` — 이 밖의 수는 TS 에서 값이 뭉개진다. Rust 는 같은 결과를 낼 수 없으니 TS 로 넘긴다.

@@ -104,7 +104,7 @@ fn first_line(text: &str, max: usize) -> Option<String> {
 }
 
 /// TS `MEMORY_SLUG_REGEX`(services/memory.ts) + 길이 255. 맞지 않으면 TS 가 `invalid_slug` 로 답한다 — Rust 는 그 글을 따라 쓰지 않고 넘긴다.
-fn valid_slug(slug: &str) -> bool {
+pub(super) fn valid_slug(slug: &str) -> bool {
     static R: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let re = R.get_or_init(|| {
         regex::Regex::new(r"^core$|^mem/[a-z0-9][a-z0-9_-]{0,63}((/[a-z0-9][a-z0-9_-]{0,63})*)$")

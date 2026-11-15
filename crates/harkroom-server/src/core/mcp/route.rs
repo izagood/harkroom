@@ -17,14 +17,26 @@ use std::net::SocketAddr;
 /// TS `MCP_BODY_LIMIT_BYTES` = `2 * ARTIFACT_PUBLISH_ARG_MAX_BYTES(2MiB) + 512KiB` (mcpPlugin.ts · services/artifacts.ts).
 pub const BODY_LIMIT: usize = 2 * 2 * 1024 * 1024 + 512 * 1024;
 
-/// 읽기([`super::tools::SERVED`]) + 쓰기([`super::writes::SERVED`], C4b).
-pub fn served() -> &'static [&'static str] {
-    static S: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
-    S.get_or_init(|| {
+/// Rust 가 답하는 도구 — 읽기([`super::tools::SERVED`]) + 리액션 쓰기([`super::writes::SERVED`], C4b) + 기억 쓰기([`super::mem_writes::SERVED`], C4b B1a).
+/// 기억 쓰기는 쓰기 풀이 있을 때만 갈림에 싣는다([`super::writes::McpWrites::memory`]).
+pub fn served(mem_write: bool) -> &'static [&'static str] {
+    static BASE: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
+    static ALL: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
+    if !mem_write {
+        return BASE.get_or_init(|| {
+            super::tools::SERVED
+                .iter()
+                .chain(super::writes::SERVED)
+                .copied()
+                .collect()
+        });
+    }
+    ALL.get_or_init(|| {
         super::tools::SERVED
             .iter()
             .chain(super::writes::SERVED)
             .chain(super::grant_writes::SERVED)
+            .chain(super::mem_writes::SERVED)
             .copied()
             .collect()
     })
@@ -100,10 +112,16 @@ pub async fn handle(
             {
                 return r;
             }
+            if let Some(r) =
+                super::mem_writes::answer(&pool, writes.memory.as_ref(), &me, tool, &args).await
+            {
+                return r;
+            }
             super::tools::answer(&pool, &me, tool, &args, cause.as_deref()).await
         })
     };
-    if let Some(r) = serve(&up, ci, &parts.headers, &bytes, served(), &tools).await {
+    let served = served(writes.memory.is_some());
+    if let Some(r) = serve(&up, ci, &parts.headers, &bytes, served, &tools).await {
         return r;
     }
     proxy::forward(State(up), ci, Request::from_parts(parts, Body::from(bytes))).await
