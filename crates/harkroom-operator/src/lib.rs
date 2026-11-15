@@ -19,6 +19,7 @@ pub mod bridge;
 pub mod callback_page;
 pub mod claude_accounts;
 pub mod claude_login;
+pub mod claude_terminal;
 pub mod claude_usage_poller;
 pub mod codex_accounts;
 pub mod codex_code_mode;
