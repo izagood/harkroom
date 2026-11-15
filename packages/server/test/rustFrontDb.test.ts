@@ -1277,6 +1277,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant insert on mandate to ${rw}`,
         `grant update (last_activity_at) on mandate to ${rw}`,
         `grant update (mandate_id) on message to ${rw}`,
+        // S5.3 C1c-3b — 사람 답글의 깨움 선점(fired_at·message.meta 는 아래 깨움 루프 줄에 이미 있다).
+        `grant update (canceled_at, canceled_by_message_id) on agent_wake to ${rw}`,
         // S5.3 C5b — 예약 깨움 루프(`loops/wake.rs::WAKE_PRIVILEGES`). 없으면 「loop wake off」 — 루프는 TS 에 남는다.
         ...WAKE_GRANTS.map((g) => `grant ${g} to ${rw}`),
         // S5.3 C5c — 보존 정리 루프(`loops/retention.rs::RETENTION_PRIVILEGES`).
@@ -3536,7 +3538,23 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           audit: shape((await db.pool.query(
             `select g.action, g.actor_id::text as actor, g.detail - 'mandateId' - 'rootMessageId' - 'threadRootId' as detail
                from audit_log g join message m on g.target = m.mandate_id::text where m.id = $1`, [id])).rows),
+          // C1c-3b — 이 스레드의 깨움이 접혔나(이 답 때문에)·깨었나, 대기 줄 meta 의 닫힌 시각, 깨움 inbox.
+          wakes: (await db.pool.query(
+            `select w.fired_at is not null as fired, w.canceled_at is not null as canceled, w.canceled_by_message_id is not distinct from $1::uuid as by_reply,
+                    m.meta->'wake' ? 'firedAt' as stamped_fired, m.meta->'wake' ? 'canceledAt' as stamped_canceled,
+                    (select coalesce(array_agg(i.reason order by i.id), '{}') from inbox i where i.message_id = m.id) as wake_inbox
+               from agent_wake w join message m on m.id = w.message_id
+              where m.thread_root_id = (select thread_root_id from message where id = $1)`, [id])).rows,
         } : {};
+        // 머리 하나와 그 스레드에 BOT2 가 걸어 둔 열린 깨움 하나(보고처 = 그 스레드).
+        const withWake = async () => {
+          const root = await direct(member.accountId, '질문');
+          const w = (await db.pool.query<{ id: string }>(
+            `insert into message (channel_id, thread_root_id, author_id, body, kind, meta) values ($1, $2, $3, '다시 볼게', 'user', $4::jsonb) returning id::text as id`,
+            [todayId, root, bot2.accountId, JSON.stringify({ wake: { reportTo: { channelId: todayId, threadRootId: root } } })])).rows[0]!.id;
+          await db.pool.query(`insert into agent_wake (account_id, channel_id, message_id, wake_at) values ($1, $2, $3, now() + interval '1 hour')`, [bot2.accountId, todayId, w]);
+          return root;
+        };
         // [이름, 머리 만들기(base → 머리 id), 답 본문(머리 id → payload), 답하는 사람]
         type Scene = [string, (base: string) => Promise<string>, (root: string) => Record<string, unknown>, string, ('ts' | undefined)?];
         const SCENES: Scene[] = [
@@ -3549,6 +3567,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['위임 잇기', async (b) => (await send(b, { body: '@bot 맡아 줘' }, A)).id!, () => ({}), A],
           ['키 없는 머리 → owner_reply 위임', async () => direct(admin.accountId, '계획'), (r) => ({ body: '@bot 이어서', threadRootId: r }), A],
           ['alsoInChannel', async () => direct(member.accountId, '질문'), (r) => ({ body: '채널에도', threadRootId: r, alsoInChannel: true }), A],
+          ['열린 깨움 → 지금 깨움', withWake, (r) => ({ body: '다시 봐 줘', threadRootId: r }), A],
+          ['열린 깨움 + 부름 → 접음', withWake, (r) => ({ body: '@bot2 지금 봐', threadRootId: r }), A],
           ['없는 머리 → bad_thread', async () => '00000000-0000-4000-8000-000000000000', (r) => ({ body: '답', threadRootId: r }), A],
           ['지워진 머리 → TS 몫', async () => { const id = await direct(member.accountId, '지울 글'); await db.pool.query(`update message set deleted_at = now() where id = $1`, [id]); return id; }, (r) => ({ body: '답', threadRootId: r }), A, 'ts'],
           ['열린 카드 스레드 → TS 몫', async () => { const id = await direct(member.accountId, '물음'); await db.pool.query(
@@ -3572,7 +3592,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             const r = await send(base, body, token);
             const until = Date.now() + 10_000;
             const mine = () => evs().slice(before).filter((e) =>
-              (e.type === 'message.created' && (e as { message: { id: string } }).message.id === r.id) || e.type === 'inbox.updated');
+              (e.type === 'message.created' && (e as { message: { id: string } }).message.id === r.id) || e.type === 'inbox.updated'
+              || e.type === 'thread.reportWakes.changed'
+              || (e.type === 'message.updated' && !!(e as { message: { meta?: { wake?: unknown } } }).message.meta?.wake));
             while (r.status === 201 && !mine().some((e) => e.type === 'message.created') && Date.now() < until) await new Promise((res) => setTimeout(res, 100));
             await settle();
             if (side === 'ts' && own !== tsBus && own().slice(busBefore).some((e) => e.type === 'message.created' && (e as { message: { id: string } }).message.id === r.id)) handedOnRust.push(name);
@@ -3600,6 +3622,12 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(by('키 없는 머리 → owner_reply 위임').mandate).toEqual([{ owner: 'ADMIN', delegator: 'ADMIN', on_root: true, root_keyed: true }]);
         expect(by('키 없는 머리 → owner_reply 위임').audit.map((a) => a.detail.via)).toEqual(['owner_reply']);
         expect(by('alsoInChannel').message.alsoInChannel).toBe(true);
+        type W = { wakes: Record<string, unknown>[]; events: { type: string }[] };
+        const woke = (tsOut as (Row & W)[]).find((x) => x.name === '열린 깨움 → 지금 깨움')!;
+        expect(woke.wakes).toEqual([{ fired: true, canceled: false, by_reply: false, stamped_fired: true, stamped_canceled: false, wake_inbox: ['wake'] }]);
+        expect(woke.events.map((e) => e.type)).toEqual(['inbox.updated', 'thread.reportWakes.changed', 'message.updated', 'message.created', 'inbox.updated']);
+        const folded = (tsOut as (Row & W)[]).find((x) => x.name === '열린 깨움 + 부름 → 접음')!;
+        expect(folded.wakes).toEqual([{ fired: false, canceled: true, by_reply: true, stamped_fired: false, stamped_canceled: true, wake_inbox: [] }]);
         expect(by('없는 머리 → bad_thread').status).toBe(400);
         expect(by('지워진 머리 → TS 몫').status).toBe(201);
         expect(by('열린 카드 스레드 → TS 몫').status).toBe(201);
