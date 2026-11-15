@@ -145,6 +145,7 @@ fn cfg(tag: &str) -> (MakerConfig, Root) {
         codex: None,
         opencode: None,
         pi: None,
+        omp: None,
     };
     (c, Root(root))
 }

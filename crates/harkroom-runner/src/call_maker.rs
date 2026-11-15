@@ -74,6 +74,8 @@ pub struct MakerConfig {
     pub opencode: Option<crate::opencode_prep::OpencodePrep>,
     /// pi 격리 홈(p2, 정본 `piHome`) — main.rs 가 기동 때 정한다. 없으면 pi 턴은 조립에서 안 뜬다(`MissingHome`).
     pub pi: Option<crate::pi_prep::PiPrep>,
+    /// omp 러너 전용 홈(o2, 정본 `ompHome`) — main.rs 가 기동 때 정한다. 없으면 omp 턴은 준비에서 안 뜬다.
+    pub omp: Option<crate::omp_prep::OmpPrep>,
 }
 
 /// 배치마다 갱신하는 이름 표 — 이름은 바뀔 수 있어 멘션을 지을 때 꺼낸 **사본**을 쓴다.
@@ -216,6 +218,11 @@ impl<L: AgentLink> RunnerMaker<L> {
         self.cfg.pi = Some(pi);
     }
 
+    /// omp 러너 전용 홈을 정한다(o2, main.rs 가 기동 때 한 번).
+    pub fn set_omp(&mut self, omp: crate::omp_prep::OmpPrep) {
+        self.cfg.omp = Some(omp);
+    }
+
     /// codex 격리 홈을 정한다(c1, main.rs 가 기동 때 한 번).
     pub fn set_codex(&mut self, codex: crate::codex_prep::CodexPrep) {
         self.cfg.codex = Some(codex);
@@ -291,7 +298,8 @@ where
             anchor: anchor.clone(),
             harness,
             home: home.clone(),
-            omp_home: None,
+            // omp 기록(`sessions/`)은 러너 omp 홈에서만 찾는다(정본 `ompSessionFile(deps.ompHome, ..)`).
+            omp_home: c.omp.as_ref().map(|o| o.home.clone()),
             end_cfg: EndConfig {
                 stall_ms: i64::try_from(c.harness_stall_ms).unwrap_or(i64::MAX),
                 ..EndConfig::new(c.turn_timeout_ms)
@@ -420,6 +428,10 @@ where
             if let Some(pi) = c.pi.clone() {
                 p.pi_home = Some(pi.home.clone());
                 p.pi = Some(pi);
+            }
+            if let Some(omp) = c.omp.clone() {
+                p.omp_home = Some(omp.home.clone());
+                p.omp = Some(omp);
             }
             if let Some(cx) = c.codex.clone() {
                 p.codex_home = Some(cx.home.clone());

@@ -85,6 +85,7 @@ pub fn maker_config(cfg: &RunnerConfig, env: &Env, f: BootFacts<'_>) -> MakerCon
         codex: None,
         opencode: None,
         pi: None,
+        omp: None,
     }
 }
 

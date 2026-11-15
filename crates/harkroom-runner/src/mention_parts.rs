@@ -376,6 +376,8 @@ struct Current {
     /// pi API 키 연결 턴의 스레드 홈(p2-2, 정본 `ensurePiLaneThread(piHome, key)`) — 그 턴의 `models.json` 이 키 파일 경로를
     /// 담으므로 동시에 도는 턴끼리 덮지 않게 스레드마다 가른다. pi 가 아니거나 lane 러너가 아니면 `None`(러너 루트에서 돈다).
     turn_pi_home: Option<PathBuf>,
+    /// omp 턴의 스레드 자리(o2) — 빈 cwd·스레드 agentDir. omp 가 아니면 `None`.
+    omp_thread: Option<crate::omp_home::OmpThreadDirs>,
 }
 
 impl Current {
@@ -450,6 +452,8 @@ pub struct MentionParts<'a, P: PrepareIo, S: PtyTurnSink> {
     pub pi_home: Option<PathBuf>,
     /// pi 턴 직전 루트 다시 쓰기(p2, 정본 `readTurnMcp`). 없으면 하지 않는다(시험용).
     pub pi: Option<crate::pi_prep::PiPrep>,
+    /// omp 턴 직전 루트 다시 쓰기·스레드 자리(o2, 정본 `mentionTurn.ts` 1655~1676). 없으면 omp 턴은 준비에서 안 뜬다.
+    pub omp: Option<crate::omp_prep::OmpPrep>,
     /// codex 턴 준비(c1 로그인 링크·남은 규칙 지우기, c2 승인 명령 규칙·hook). 없으면 하지 않는다(시험용).
     pub codex: Option<crate::codex_prep::CodexTurn>,
     pub pty_opts: PtyOptsFn<'a>,
@@ -535,6 +539,7 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
             opencode: None,
             pi_home: None,
             pi: None,
+            omp: None,
             pty_opts,
             turn_timeout_ms: 0,
             inner,
@@ -578,6 +583,7 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
                 codex: self.codex_home.as_deref(),
                 opencode: self.opencode_home.as_deref(),
                 pi: c.pi_home(self.pi_home.as_deref()),
+                omp: self.omp_home.as_deref(),
                 opencode_turn_config: None,
             },
             turn_id,
@@ -978,6 +984,41 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
                 turn_pi_home = Some(home);
             }
         }
+        // omp 턴 직전(o2, 정본 `mentionTurn.ts` 1655~1669) — 러너 루트를 지금 MCP 표로 다시 쓰고, 스레드마다 고정한 빈 cwd 를 짓고,
+        // 남은 것을 옮기고, cwd 와 그 위 폴더에 저장소 설정 이름이 있으면 거절하고, 세션 헤더를 그 cwd 로 미리 쓴다.
+        // 홈이 없거나 하나라도 못 하면 띄우지 않는다(정본은 던진다).
+        let mut omp_thread = None;
+        if crate::adapter::uses_omp_home(self.harness) {
+            let Some(omp) = self.omp.as_ref() else {
+                eprintln!("[mentionTurn] {}: omp 턴인데 omp 홈이 없다", self.key);
+                return Err(fail());
+            };
+            let Some(sid) = prepared.session.rec.session_id.as_deref() else {
+                eprintln!("[mentionTurn] {}: omp 턴인데 세션 id 가 없다", self.key);
+                return Err(fail());
+            };
+            omp.ensure().map_err(|e| {
+                eprintln!("[mentionTurn] {}: omp 홈 — {e}", self.key);
+                fail()
+            })?;
+            let t = omp
+                .prepare_thread(
+                    &self.key,
+                    sid,
+                    self.parent_env.get("PATH").map(String::as_str),
+                )
+                .map_err(|e| {
+                    eprintln!("[mentionTurn] {}: omp 스레드 자리 — {e}", self.key);
+                    fail()
+                })?;
+            // 읽기 전용 omp — 글롭이 먹어 묻지 않는다. 서버 이름으로 좁힌 글롭이 곧 목록이다(정본 1594, security R).
+            if self.base.mention_permission == crate::adapter::MentionPermission::Readonly
+                && let Some(spec) = crate::adapter::readonly_tools_for(self.harness)
+            {
+                self.argv.readonly_tool_list = Some(crate::omp_home::omp_readonly_tool_list(&spec));
+            }
+            omp_thread = Some(t);
+        }
         // 하네스를 띄우기 전, **이 시도의 계정 폴더**로 작업 폴더 신뢰·bypass 수락을 적는다(정본 `mentionTurn.ts` 의 차례).
         crate::workspace_trust::prepare_harness_gates(
             self.harness,
@@ -1002,6 +1043,7 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             workspace_dir: PathBuf::from(&prepared.session.rec.workspace_dir),
             home: self.home.clone(),
             turn_pi_home: turn_pi_home.clone(),
+            omp_thread_ready: omp_thread.is_some(),
         });
         self.prompt_file = Some(file.clone());
         self.cur = Some(Current {
@@ -1014,6 +1056,7 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             note_pin,
             harness_notice,
             turn_pi_home,
+            omp_thread,
         });
         Ok(AttemptPrep {
             key: self.key.clone(),
@@ -1106,6 +1149,16 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             self.argv.model.as_deref().or(self.base.model),
         )
         .map_err(|code| crate::pty_turn::PtyTurnError::Spawn(std::io::Error::other(code)))?;
+        // omp 턴(o2, 정본 `mentionTurn.ts` 1670~1676) — omp 는 lane 으로만 돈다. 그 스레드 agentDir 의 `models.yml` 에 주소와 키 파일
+        // 경로만 쓰고(키 값은 들지 않는다) 하네스에는 `<lane provider>/<id>` 를 준다. 하나라도 없으면 띄우지 않는다.
+        let omp_lane_model = omp_lane_turn_model(
+            &self.key,
+            self.harness,
+            &args.lane_env,
+            c.omp_thread.as_ref(),
+            self.argv.model.as_deref().or(self.base.model),
+        )
+        .map_err(|code| crate::pty_turn::PtyTurnError::Spawn(std::io::Error::other(code)))?;
         let mut cmd = attempt_cmd(
             &self.base,
             &self.system,
@@ -1115,11 +1168,12 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
                 codex: self.codex_home.as_deref(),
                 opencode: self.opencode_home.as_deref(),
                 pi: c.pi_home(self.pi_home.as_deref()),
+                omp: self.omp_home.as_deref(),
                 opencode_turn_config: args.opencode_turn_config,
             },
             args.turn_id,
         );
-        if let Some(m) = pi_lane_model.as_deref() {
+        if let Some(m) = pi_lane_model.as_deref().or(omp_lane_model.as_deref()) {
             cmd.model = Some(m);
         }
         cmd.gate_file = markers.gate.as_deref();
@@ -1442,6 +1496,48 @@ pub(crate) fn pi_lane_turn_model(
     Ok(m.run_model(true, harness, model))
 }
 
+/// omp 턴의 띄우기 직전 몫(o2, 정본 `mentionTurn.ts` 1670~1676) — 그 스레드 agentDir 의 `models.yml` 에 주소와 키 파일 경로만
+/// 쓰고(키 값은 들지 않는다) 하네스에 줄 모델 이름 `<lane provider>/<id>` 를 돌려준다. omp 가 아니면 `None`. omp 는 lane 으로만
+/// 돌아 lane env 가 비어도 `lane_unset` 이다. 스레드 자리가 없거나 쓰지 못하면 `lane_setup` — 띄우지 않는다.
+pub(crate) fn omp_lane_turn_model(
+    key: &str,
+    harness: crate::adapter::AgentHarness,
+    lane_env: &crate::turn_launch_io::LaneEnv,
+    thread: Option<&crate::omp_home::OmpThreadDirs>,
+    model: Option<&str>,
+) -> Result<Option<String>, &'static str> {
+    use crate::turn_env_plan::{LaneHarnessModel, lane_harness_model};
+    if !crate::adapter::uses_omp_home(harness) {
+        return Ok(None);
+    }
+    let Some(t) = thread else {
+        eprintln!("[mentionTurn] {key}: omp lane 모델 — 스레드 자리 없음");
+        return Err("lane_setup");
+    };
+    let env = (!lane_env.is_empty()).then_some(lane_env);
+    let m = lane_harness_model(harness, env, None, model).map_err(|e| {
+        eprintln!("[mentionTurn] {key}: omp lane 모델 — {}", e.code());
+        e.code()
+    })?;
+    let LaneHarnessModel::Omp(hm) = &m else {
+        return Err("lane_unset");
+    };
+    let models = [hm.model_id.clone()];
+    crate::omp_home::write_omp_lane_models(
+        &t.agent_dir,
+        &crate::omp_home::OmpLane {
+            base_url: &hm.base_url,
+            key_path: &hm.key_path,
+            models: &models,
+        },
+    )
+    .map_err(|e| {
+        eprintln!("[mentionTurn] {key}: omp lane models.yml — {e}");
+        "lane_setup"
+    })?;
+    Ok(m.run_model(true, harness, model))
+}
+
 /// 시도 하나의 명령 옵션(`spawn`·`command_for` 가 같이 쓴다) — 지시문 입력 칸(argv) → 시도 칸 → 계정 폴더 → codex 격리 홈.
 /// codex 홈을 여기서 싣지 않으면 codex 턴은 조립에서 `codexHome` 이 비어 뜨지 않는다(실물 턴에서 잡힘, #2142).
 /// 시도 명령에 싣는 하네스 홈들.
@@ -1449,6 +1545,7 @@ struct AttemptHomes<'s> {
     codex: Option<&'s Path>,
     opencode: Option<&'s Path>,
     pi: Option<&'s Path>,
+    omp: Option<&'s Path>,
     /// 계획이 지은 opencode 턴 설정(다리 열쇠 자리, `OPENCODE_CONFIG`) — `spawn` 만 안다. 빠지면 열쇠 opencode 턴은 조립에서 안 뜬다.
     opencode_turn_config: Option<&'s Path>,
 }
@@ -1473,6 +1570,15 @@ fn attempt_cmd<'s>(
     cmd.opencode_home = homes.opencode;
     cmd.pi_home = homes.pi;
     cmd.opencode_turn_config = homes.opencode_turn_config;
+    // omp: 러너 홈·스레드 자리·작업 폴더(조립이 cwd 가 작업 폴더 밖인지 본다). 스레드 자리가 없으면 조립에서 안 뜬다.
+    if let Some(t) = c.omp_thread.as_ref() {
+        cmd.omp_home = homes.omp;
+        cmd.omp_thread = Some(crate::turn_command::OmpThread {
+            cwd: &t.cwd,
+            agent_dir: &t.agent_dir,
+        });
+        cmd.workspace_dir = Some(Path::new(&c.prepared.session.rec.workspace_dir));
+    }
     cmd
 }
 
