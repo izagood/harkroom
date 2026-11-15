@@ -1,0 +1,508 @@
+//! S5.3 C3a-3b-2 — 「누구를 부르나」 판정. TS `services/messages.ts` 의 `resolveMentionCalls`(1074행)를 옮긴다.
+//!
+//! - 본문 파싱은 [`super::mention_parse`](C3a-3a, TS 와 골든 대조), 호출 게이트는 [`super::invoke_gate`](C3a-3b-1)를 쓴다.
+//! - **사슬 상한**: 에이전트 글(또는 사슬에 묶인 글)이면 `mention_policy.chain_limit`(없으면 shared `MENTION_CHAIN_LIMIT` = 8)과
+//!   사슬 시작 뒤 24시간(`CHAIN_BACKSTOP_MS`)으로 막는다. 막힌 것은 에이전트 부름만 — 사람 부름은 막지 않는다.
+//! - **principal**(이번 턴을 깨운 사람): 에이전트 글의 막힌 계정 부름을 그 사람 권한으로 다시 잰다(`mayInvoke(대상, principal)`).
+//!   스위치 `HARKROOM_PRINCIPAL_INVOKE`(off·0·false 면 그림자만)와 하루 상한 200(최근 24시간 `invokedAsPrincipal` 글 수).
+//! - 읽기만 한다(inbox 넣기는 C3a-3b-3). 모든 조회는 받은 연결 하나로 — 글 쓰기 트랜잭션 안에서 부른다.
+//! - **오류는 그대로 돌려준다**(`?`). DB 오류를 「부를 수 있음」·「상한 아래」로 읽지 않는다 — TS 처럼 글 쓰기 전체를 실패시키는 것은
+//!   호출부 몫이다(security #2182 조건).
+use super::invoke_gate::{self, Ctx, TeamFacts, Via};
+use super::mention_parse::{
+    Target, TargetKind, head_mention_run_end, mentioned_handles, mentioned_ids, normalize_mentions,
+    split_mention_calls,
+};
+use serde_json::{Map, Value, json};
+use sqlx::PgConnection;
+use std::collections::{HashMap, HashSet};
+
+/// shared `MENTION_CHAIN_LIMIT`.
+pub const MENTION_CHAIN_LIMIT: i64 = 8;
+/// shared `CHAIN_BACKSTOP_MS`(chainStall.ts) — 24시간.
+pub const CHAIN_BACKSTOP_MS: i64 = 24 * 60 * 60_000;
+/// TS `PRINCIPAL_INVOKE_DAILY_CAP`(invokePrincipal.ts).
+pub const PRINCIPAL_INVOKE_DAILY_CAP: i64 = 200;
+/// shared `CHANNEL_MENTION_HANDLE`.
+pub const CHANNEL_MENTION_HANDLE: &str = "channel";
+
+/// TS `principalInvokeEnabled` — 비었거나 모르는 값이면 켬. `off`·`0`·`false` 만 끔.
+pub fn principal_invoke_enabled(raw: Option<&str>) -> bool {
+    let v = raw.unwrap_or("").trim().to_lowercase();
+    !(v == "off" || v == "0" || v == "false")
+}
+
+pub struct Principal<'a> {
+    pub id: &'a str,
+}
+
+pub struct Input<'a> {
+    pub body: &'a str,
+    pub channel_id: &'a str,
+    pub author_id: &'a str,
+    pub author_is_agent: bool,
+    pub mention_depth: i64,
+    pub chain_bound: bool,
+    /// 사슬 시작 시각(밀리초). 없으면 나이로 막지 않는다.
+    pub chain_started_at_ms: Option<i64>,
+    pub reply_grant_thread_id: Option<&'a str>,
+    pub principal: Option<Principal<'a>>,
+    /// 지금(밀리초) — TS `Date.now()`. 시험이 고정할 수 있게 받는다.
+    pub now_ms: i64,
+    /// `HARKROOM_PRINCIPAL_INVOKE` 판정 결과.
+    pub principal_invoke_enabled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TeamPlan {
+    pub team_id: String,
+    pub recipients: Vec<String>,
+    pub via_lead: bool,
+}
+
+/// TS `ResolvedMentionCalls`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Resolved {
+    pub normalized_body: String,
+    /// 계정으로 처리한 이름(본문 글자 기준, 소문자).
+    pub account_handles: HashSet<String>,
+    pub called_ids: Vec<String>,
+    pub capped_ids: HashSet<String>,
+    pub denied_ids: HashSet<String>,
+    pub team_plans: Vec<TeamPlan>,
+    pub target_call: Vec<Target>,
+    pub channel_called: bool,
+    /// 글 `meta` 에 얹는 칸 — TS 와 같은 키 순서.
+    pub call_meta: Map<String, Value>,
+}
+
+#[derive(Clone)]
+struct Acct {
+    id: String,
+    handle: String,
+    kind: String,
+}
+
+async fn accounts_by_handles(
+    conn: &mut PgConnection,
+    handles: &[String],
+) -> Result<Vec<Acct>, sqlx::Error> {
+    if handles.is_empty() {
+        return Ok(vec![]);
+    }
+    let rows: Vec<(String, String, String)> = sqlx::query_as(
+        "select id::text, lower(handle) as handle, kind from account \
+          where lower(handle) = any($1) and deleted_at is null",
+    )
+    .bind(handles)
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, handle, kind)| Acct { id, handle, kind })
+        .collect())
+}
+
+async fn accounts_by_ids(
+    conn: &mut PgConnection,
+    ids: &[String],
+) -> Result<Vec<Acct>, sqlx::Error> {
+    if ids.is_empty() {
+        return Ok(vec![]);
+    }
+    let rows: Vec<(String, String, String)> = sqlx::query_as(
+        "select id::text, lower(handle) as handle, kind from account \
+          where id = any($1::uuid[]) and deleted_at is null",
+    )
+    .bind(ids)
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, handle, kind)| Acct { id, handle, kind })
+        .collect())
+}
+
+/// TS `getMentionPolicy` — 행이 없으면 상수.
+async fn chain_limit(conn: &mut PgConnection) -> Result<i64, sqlx::Error> {
+    let v: Option<i32> =
+        sqlx::query_scalar("select chain_limit from mention_policy where id = true")
+            .fetch_optional(&mut *conn)
+            .await?;
+    Ok(v.map(i64::from).unwrap_or(MENTION_CHAIN_LIMIT))
+}
+
+/// TS `principalInvokesToday`.
+async fn principal_invokes_today(
+    conn: &mut PgConnection,
+    principal: &str,
+    now_ms: i64,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar(
+        "select count(*)::int8 from message \
+          where principal_account_id = $1::uuid and created_at > to_timestamp($2::float8 / 1000) \
+            and deleted_at is null and meta ? 'invokedAsPrincipal'",
+    )
+    .bind(principal)
+    .bind((now_ms - 24 * 60 * 60_000) as f64)
+    .fetch_one(&mut *conn)
+    .await
+}
+
+/// (id, 이름, 팀장, 범위, 소유자).
+type TeamRow = (String, String, Option<String>, String, Option<String>);
+
+struct Team {
+    id: String,
+    name: String,
+    lead: Option<String>,
+    scope: String,
+    owner: Option<String>,
+}
+
+async fn team_where(
+    conn: &mut PgConnection,
+    q: &'static str,
+    arg: &str,
+) -> Result<Option<Team>, sqlx::Error> {
+    let r: Option<TeamRow> = sqlx::query_as(q)
+        .bind(arg)
+        .fetch_optional(&mut *conn)
+        .await?;
+    Ok(r.map(|(id, name, lead, scope, owner)| Team {
+        id,
+        name,
+        lead,
+        scope,
+        owner,
+    }))
+}
+
+const TEAM_COLS_BY_NAME: &str = "select t.id::text, t.name, t.lead_account_id::text, t.invoke_scope, t.owner_account_id::text \
+     from agent_team t where lower(t.name) = lower($1)";
+const TEAM_COLS_BY_ID: &str = "select t.id::text, t.name, t.lead_account_id::text, t.invoke_scope, t.owner_account_id::text \
+     from agent_team t where t.id = $1::uuid";
+
+/// TS `listTeamMembers` — (계정, handle, 비활성) handle 순.
+async fn team_members(
+    conn: &mut PgConnection,
+    team: &str,
+) -> Result<Vec<(String, String, bool)>, sqlx::Error> {
+    sqlx::query_as(
+        "select tm.agent_account_id::text, a.handle, a.disabled_at is not null \
+           from agent_team_member tm join account a on a.id = tm.agent_account_id \
+          where tm.team_id = $1::uuid order by a.handle",
+    )
+    .bind(team)
+    .fetch_all(&mut *conn)
+    .await
+}
+
+/// TS `getHandleGroupByHandle` 의 id 만.
+async fn group_id_by_handle(
+    conn: &mut PgConnection,
+    handle: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar("select g.id::text from handle_group g where lower(g.handle) = lower($1)")
+        .bind(handle)
+        .fetch_optional(&mut *conn)
+        .await
+}
+
+fn target_key(t: &Target) -> String {
+    format!("{}:{}", t.kind.as_str(), t.id)
+}
+
+/// TS `resolveMentionCalls`.
+pub async fn resolve(conn: &mut PgConnection, input: &Input<'_>) -> Result<Resolved, sqlx::Error> {
+    let caps_chain = input.author_is_agent || input.chain_bound;
+    let limit = if caps_chain {
+        chain_limit(conn).await?
+    } else {
+        MENTION_CHAIN_LIMIT
+    };
+    let body_handles = mentioned_handles(input.body);
+    let mentioned = accounts_by_handles(conn, &body_handles).await?;
+    let mut handle_to_id: HashMap<String, String> = HashMap::new();
+    for a in &mentioned {
+        handle_to_id.insert(a.handle.clone(), a.id.clone());
+    }
+    let mut name_to_token = handle_to_id.clone();
+    for h in &body_handles {
+        if h == CHANNEL_MENTION_HANDLE || name_to_token.contains_key(h) {
+            continue;
+        }
+        if let Some(g) = group_id_by_handle(conn, h).await? {
+            name_to_token.insert(h.clone(), format!("group:{g}"));
+            continue;
+        }
+        if let Some(t) = team_where(conn, TEAM_COLS_BY_NAME, h).await? {
+            name_to_token.insert(h.clone(), format!("team:{}", t.id));
+        }
+    }
+    let normalized = normalize_mentions(input.body, &name_to_token);
+
+    let chain_aged = caps_chain
+        && input
+            .chain_started_at_ms
+            .is_some_and(|s| input.now_ms - s >= CHAIN_BACKSTOP_MS);
+    let chain_capped = caps_chain && (input.mention_depth >= limit || chain_aged);
+
+    let known: HashSet<&str> = mentioned.iter().map(|a| a.id.as_str()).collect();
+    let raw_ids: Vec<String> = mentioned_ids(&normalized)
+        .into_iter()
+        .filter(|id| !known.contains(id.as_str()))
+        .collect();
+    let token_accounts = accounts_by_ids(conn, &raw_ids).await?;
+    let called_accounts: Vec<Acct> = mentioned.iter().cloned().chain(token_accounts).collect();
+    let agent_ids: HashSet<String> = called_accounts
+        .iter()
+        .filter(|a| a.kind == "agent")
+        .map(|a| a.id.clone())
+        .collect();
+    let split = split_mention_calls(&normalized, input.author_is_agent, |id| {
+        agent_ids.contains(id)
+    });
+
+    let mut capped: HashSet<String> = HashSet::new();
+    if chain_capped {
+        for id in &split.call {
+            if id != input.author_id && agent_ids.contains(id) {
+                capped.insert(id.clone());
+            }
+        }
+    }
+    let capped_handles: Vec<String> = called_accounts
+        .iter()
+        .filter(|a| capped.contains(&a.id))
+        .map(|a| a.handle.clone())
+        .collect();
+
+    // 호출 게이트 — 행 순서 그대로(TS `Map` 순서).
+    let gate_ids: Vec<String> = split
+        .call
+        .iter()
+        .filter(|id| *id != input.author_id && !capped.contains(*id))
+        .cloned()
+        .collect();
+    let gate_facts = invoke_gate::invoke_facts_ordered(conn, &gate_ids).await?;
+    let mut denied_order: Vec<String> = vec![];
+    for f in &gate_facts {
+        let ctx = Ctx {
+            caller_id: input.author_id,
+            channel_id: input.channel_id,
+            via: Via::Mention,
+            reply_grant_thread_id: input.reply_grant_thread_id,
+        };
+        if !invoke_gate::may_invoke(conn, f, &ctx).await? {
+            denied_order.push(f.agent_id.clone());
+        }
+    }
+
+    let mut principal_shadow: Option<Value> = None;
+    let mut invoked_as_principal: Option<Value> = None;
+    let mut denied_principal: Option<&'static str> = None;
+    if input.author_is_agent && !denied_order.is_empty() {
+        match &input.principal {
+            None => denied_principal = Some("none"),
+            Some(p) => {
+                let mut opened: Vec<String> = vec![];
+                for id in &denied_order {
+                    if let Some(f) = gate_facts.iter().find(|f| &f.agent_id == id) {
+                        let ctx = Ctx {
+                            caller_id: p.id,
+                            channel_id: input.channel_id,
+                            via: Via::Mention,
+                            reply_grant_thread_id: None,
+                        };
+                        if invoke_gate::may_invoke(conn, f, &ctx).await? {
+                            opened.push(id.clone());
+                        }
+                    }
+                }
+                let record = (!opened.is_empty()).then(|| {
+                    json!({
+                        "principalId": p.id,
+                        "handles": called_accounts.iter().filter(|a| opened.contains(&a.id)).map(|a| a.handle.clone()).collect::<Vec<_>>(),
+                        "ids": opened,
+                    })
+                });
+                if let Some(rec) = record {
+                    if !input.principal_invoke_enabled {
+                        principal_shadow = Some(rec);
+                    } else if principal_invokes_today(conn, p.id, input.now_ms).await?
+                        < PRINCIPAL_INVOKE_DAILY_CAP
+                    {
+                        let ids: Vec<String> = rec["ids"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|v| v.as_str().map(str::to_string))
+                            .collect();
+                        denied_order.retain(|d| !ids.contains(d));
+                        invoked_as_principal = Some(rec);
+                    } else {
+                        denied_principal = Some("capped");
+                    }
+                }
+                if !denied_order.is_empty() && denied_principal.is_none() {
+                    denied_principal = Some("denied");
+                }
+            }
+        }
+    }
+    let denied: HashSet<String> = denied_order.iter().cloned().collect();
+    let mut denied_handles: Vec<String> = called_accounts
+        .iter()
+        .filter(|a| denied.contains(&a.id))
+        .map(|a| a.handle.clone())
+        .collect();
+
+    // 팀 부름도 insert 앞에서 판정한다(068) — 누구를 깨울지(`team_plans`)까지.
+    let mut team_plans: Vec<TeamPlan> = vec![];
+    for target in &split.target_call {
+        if target.kind != TargetKind::Team {
+            continue;
+        }
+        let Some(team) = team_where(conn, TEAM_COLS_BY_ID, &target.id).await? else {
+            continue;
+        };
+        let tf = TeamFacts {
+            team_id: team.id.clone(),
+            invoke_scope: team.scope.clone(),
+            owner_account_id: team.owner.clone(),
+        };
+        if !invoke_gate::may_invoke_team(conn, &tf, input.author_id, input.channel_id).await? {
+            if !denied_handles.contains(&team.name) {
+                denied_handles.push(team.name.clone());
+            }
+            continue;
+        }
+        let awake: Vec<(String, String, bool)> = team_members(conn, &team.id)
+            .await?
+            .into_iter()
+            .filter(|(id, _, disabled)| !disabled && id != input.author_id)
+            .collect();
+        let member_ids: Vec<String> = awake.iter().map(|(id, _, _)| id.clone()).collect();
+        let member_facts = invoke_gate::invoke_facts(conn, &member_ids).await?;
+        let mut allowed: Vec<String> = vec![];
+        for (id, _, _) in &awake {
+            let ok = match member_facts.get(id) {
+                None => true,
+                Some(f) => {
+                    let ctx = Ctx {
+                        caller_id: input.author_id,
+                        channel_id: input.channel_id,
+                        via: Via::Team,
+                        reply_grant_thread_id: None,
+                    };
+                    invoke_gate::may_invoke(conn, f, &ctx).await?
+                }
+            };
+            if ok {
+                allowed.push(id.clone());
+            }
+        }
+        let lead = team
+            .lead
+            .as_deref()
+            .and_then(|l| awake.iter().find(|(id, _, _)| id == l));
+        if let Some((lead_id, _, _)) = lead
+            && allowed.contains(lead_id)
+        {
+            team_plans.push(TeamPlan {
+                team_id: team.id.clone(),
+                recipients: vec![lead_id.clone()],
+                via_lead: true,
+            });
+            continue;
+        }
+        for (id, handle, _) in &awake {
+            if !allowed.contains(id) && !denied_handles.contains(handle) {
+                denied_handles.push(handle.clone());
+            }
+        }
+        team_plans.push(TeamPlan {
+            team_id: team.id.clone(),
+            recipients: allowed,
+            via_lead: false,
+        });
+    }
+
+    let mut ref_ids_for_meta: Vec<String> = split
+        .reference
+        .iter()
+        .filter(|id| *id != input.author_id)
+        .cloned()
+        .collect();
+    ref_ids_for_meta.extend(split.target_ref.iter().map(target_key));
+
+    let account_handles: HashSet<String> = handle_to_id.keys().cloned().collect();
+    let channel_called = if input.author_is_agent {
+        mentioned_handles(&normalized[..head_mention_run_end(&normalized)])
+            .iter()
+            .any(|h| h == CHANNEL_MENTION_HANDLE)
+    } else {
+        body_handles.iter().any(|h| h == CHANNEL_MENTION_HANDLE)
+    };
+
+    let mut meta = Map::new();
+    if !capped_handles.is_empty() {
+        meta.insert("mentionChainCapped".into(), json!(capped_handles));
+        meta.insert("mentionChainLimit".into(), json!(limit));
+        if input.mention_depth < limit {
+            meta.insert("mentionChainReason".into(), json!("age"));
+        }
+    }
+    if !denied_handles.is_empty() {
+        meta.insert("mentionDenied".into(), json!(denied_handles));
+    }
+    if let Some(v) = principal_shadow {
+        meta.insert("mentionPrincipalShadow".into(), v);
+    }
+    if let Some(v) = invoked_as_principal {
+        meta.insert("invokedAsPrincipal".into(), v);
+    }
+    if let Some(r) = denied_principal
+        && !denied.is_empty()
+    {
+        meta.insert("mentionDeniedPrincipal".into(), json!(r));
+    }
+    if !ref_ids_for_meta.is_empty() {
+        meta.insert("mentionRefs".into(), json!(ref_ids_for_meta));
+    }
+    let target_call: Vec<Target> = split.target_call.clone();
+    Ok(Resolved {
+        normalized_body: normalized,
+        account_handles,
+        called_ids: split.call,
+        capped_ids: capped,
+        denied_ids: denied,
+        team_plans,
+        target_call,
+        channel_called,
+        call_meta: meta,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn principal_switch_like_ts() {
+        assert!(principal_invoke_enabled(None));
+        assert!(principal_invoke_enabled(Some("")));
+        assert!(principal_invoke_enabled(Some("on")));
+        for off in ["off", "0", "false", " OFF ", "False"] {
+            assert!(!principal_invoke_enabled(Some(off)), "{off}");
+        }
+    }
+
+    #[test]
+    fn constants_like_ts() {
+        assert_eq!(MENTION_CHAIN_LIMIT, 8);
+        assert_eq!(CHAIN_BACKSTOP_MS, 86_400_000);
+        assert_eq!(PRINCIPAL_INVOKE_DAILY_CAP, 200);
+    }
+}
