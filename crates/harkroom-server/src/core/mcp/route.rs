@@ -71,9 +71,12 @@ pub async fn handle(
     let Ok(bytes) = to_bytes(body, BODY_LIMIT).await else {
         return json(StatusCode::PAYLOAD_TOO_LARGE, TOO_LARGE);
     };
+    let cause = super::reads3::cause_from(&parts.headers);
     let tools = |tool: &'static str, args: serde_json::Value| -> AnswerFut {
-        let (pool, me) = (pool.clone(), me.clone());
-        Box::pin(async move { super::tools::answer(&pool, &me, tool, &args).await })
+        let (pool, me, cause) = (pool.clone(), me.clone(), cause.clone());
+        Box::pin(
+            async move { super::tools::answer(&pool, &me, tool, &args, cause.as_deref()).await },
+        )
     };
     if let Some(r) = serve(&up, ci, &parts.headers, &bytes, SERVED, &tools).await {
         return r;

@@ -25,6 +25,9 @@ pub const SERVED: &[&str] = &[
     "thread.note.list",
     // C4a-5
     "memory.revisions",
+    // C4a-6a
+    "workitem.list",
+    "automation.list",
 ];
 
 /// 입력 스키마가 없는 도구 — SDK 는 `arguments` 를 레코드(객체)로만 받고, 없어도(`null`) 받는다. 스키마가 있는 도구는
@@ -275,7 +278,14 @@ fn guide(mode: &str, avcs: bool) -> Option<&'static str> {
 }
 
 /// 도구 하나의 답(`result` 글자). `None` 이면 TS 로.
-pub async fn answer(pool: &PgPool, me: &Account, tool: &str, args: &Value) -> Option<String> {
+/// `cause` 는 요청의 `x-harkroom-cause`(TS mcpPlugin 처럼 uuid 꼴 하나만, [`super::reads3::cause_from`]).
+pub async fn answer(
+    pool: &PgPool,
+    me: &Account,
+    tool: &str,
+    args: &Value,
+    cause: Option<&str>,
+) -> Option<String> {
     match tool {
         // `mode: z.enum(['resident','turn']).optional()` · `avcs: z.unknown().optional()` — 정확히 `false` 일 때만 avcs 절을 뺀다.
         "workspace.guide" => {
@@ -330,6 +340,9 @@ pub async fn answer(pool: &PgPool, me: &Account, tool: &str, args: &Value) -> Op
                 .then(|| text_result(one))
         }
         "message.read" => message_read(pool, me, args).await,
+        "workitem.list" | "automation.list" => {
+            super::reads3::answer(pool, me, tool, args, cause).await
+        }
         "memory.list" | "secret.list" | "thread.note.list" | "memory.revisions" => {
             super::reads2::answer(pool, me, tool, args).await
         }
