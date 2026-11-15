@@ -5,6 +5,7 @@
 use harkroom_server::loops::retention::{
     RETENTION_BATCH, RETENTION_PRIVILEGES, Retention, delete_enabled,
 };
+use harkroom_server::loops::{GateResult, Side, run_gated};
 use sqlx::PgPool;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::str::FromStr;
@@ -171,4 +172,28 @@ async fn retention_sweep_like_ts() {
             .await
             .unwrap();
     assert_eq!(keys, vec!["ret-keep"]);
+
+    // C5 조건 — 문지기 풀과 sweep 풀이 각각 연결 하나뿐이어도 sweep 이 돈다(잠금 연결을 쥔 채 같은 풀에서 빌리지 않는다).
+    sqlx::query(
+        "insert into session(token_hash, account_id, expires_at) \
+         select 'ret-gated-' || g, $1::uuid, now() - interval '31 days' from generate_series(1, 5) g",
+    )
+    .bind(&acct)
+    .execute(&admin)
+    .await
+    .unwrap();
+    let one = || {
+        PgPoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(std::time::Duration::from_secs(3))
+            .connect(&write_url)
+    };
+    let (gate1, work1) = (one().await.unwrap(), one().await.unwrap());
+    let mut st = Retention::new(true);
+    let r = run_gated(&gate1, "retention", Side::Ts, || async {
+        st.sweep(&work1, |_| {}).await.map(|_| ())
+    })
+    .await;
+    assert!(matches!(r, GateResult::Ran), "{r:?}");
+    assert_eq!(old_sessions(&admin, &acct).await, 0);
 }

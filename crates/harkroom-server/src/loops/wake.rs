@@ -176,13 +176,15 @@ pub async fn sweep(pool: &PgPool) -> Result<usize, sqlx::Error> {
 
 /// 15초마다 문지기 아래서 sweep. 주인이 `ts`(기본)면 tick 마다 잠금·주인만 보고 건너뛴다.
 /// 한 tick 은 문지기 연결 1 + sweep 연결 1(+이벤트 1)을 쓴다 — 풀은 3 이상이어야 한다(`main.rs`).
-pub fn spawn(pool: PgPool) -> tokio::task::JoinHandle<()> {
+/// 루프를 띄운다. `gate` 는 문지기(잠금) 연결 전용 풀, `pool` 은 sweep 이 쓰는 풀 — 잠금 연결을 쥔 채 같은 풀에서 sweep 연결을
+/// 빌리면 작은 풀에서 sweep 이 연결을 못 얻는다(C5 조건). 주인이 `rust` 일 때만 실제로 돈다.
+pub fn spawn(gate: PgPool, pool: PgPool) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut every = tokio::time::interval(WAKE_SWEEP_INTERVAL);
         every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             every.tick().await;
-            match run_gated(&pool, "wake", Side::Rust, || async {
+            match run_gated(&gate, "wake", Side::Rust, || async {
                 sweep(&pool).await.map(|_| ())
             })
             .await

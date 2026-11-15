@@ -385,7 +385,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       // S5.2 P3 — 쓰기 역할. **`write.rs::REQUIRED_PRIVILEGES` 만** 준다(homelab GRANT 와 같은 표). 넓은 권한으로 돌리면
       // 앞단이 목록에 없는 표를 쓰기 시작해도 이 시험이 못 잡는다.
       const rw = `front_rw_${Math.random().toString(36).slice(2, 10)}`;
-      await db.pool.query(`create role ${rw} login password '${rw}' nosuperuser nocreatedb nocreaterole nobypassrls connection limit 4`);
+      // connection limit = 쓰기 풀 2 + 루프 문지기 풀 2 + 루프 sweep 풀 3 (S5.3 C5c — 운영 역할 한도도 이만큼 받아야 한다).
+      await db.pool.query(`create role ${rw} login password '${rw}' nosuperuser nocreatedb nocreaterole nobypassrls connection limit 7`);
       for (const q of [
         `grant pg_read_all_data to ${rw}`,
         `grant insert on event_outbox to ${rw}`,

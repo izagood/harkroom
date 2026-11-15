@@ -112,7 +112,8 @@ impl Retention {
 }
 
 /// 루프를 띄운다 — 첫 sweep 은 [`RETENTION_FIRST_DELAY`] 뒤, 그 뒤 한 시간마다. 주인이 `rust` 일 때만 실제로 돈다.
-pub fn spawn(pool: PgPool, delete_enabled: bool) -> tokio::task::JoinHandle<()> {
+/// `gate` 는 문지기(잠금) 연결 전용 풀, `pool` 은 sweep 이 쓰는 풀이다(wake 와 같은 까닭).
+pub fn spawn(gate: PgPool, pool: PgPool, delete_enabled: bool) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         tokio::time::sleep(RETENTION_FIRST_DELAY).await;
         let mut every = tokio::time::interval(RETENTION_SWEEP_INTERVAL);
@@ -122,7 +123,7 @@ pub fn spawn(pool: PgPool, delete_enabled: bool) -> tokio::task::JoinHandle<()> 
             every.tick().await;
             let st = &mut state;
             let p = &pool;
-            match run_gated(&pool, "retention", Side::Rust, || async move {
+            match run_gated(&gate, "retention", Side::Rust, || async move {
                 st.sweep(p, |m| eprintln!("{m}")).await.map(|_| ())
             })
             .await

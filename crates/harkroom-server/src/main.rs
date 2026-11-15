@@ -354,14 +354,21 @@ async fn spawn_loops() {
     else {
         return;
     };
-    let pool = match sqlx::postgres::PgPoolOptions::new()
-        .max_connections(3)
-        .acquire_timeout(std::time::Duration::from_secs(10))
-        .connect(&url)
-        .await
-    {
-        Ok(p) => p,
-        Err(_) => {
+    // 풀 둘 — 문지기(잠금) 연결 전용 `gate` 와 sweep 이 쓰는 `pool`. 잠금 연결을 쥔 채 같은 풀에서 sweep 연결을 빌리면 루프가 겹칠 때
+    // 풀이 바닥나 sweep 이 acquire 시한에 걸린다. gate 는 루프 수만큼(한 루프는 tick 하나에 잠금 연결 하나), pool 은 sweep 몫(wake 는
+    // 한 건 트랜잭션 + 커밋 뒤 이벤트 = 2).
+    let open = |max: u32| {
+        sqlx::postgres::PgPoolOptions::new()
+            .max_connections(max)
+            .acquire_timeout(std::time::Duration::from_secs(10))
+            .connect(&url)
+    };
+    let (gate, pool) = match (
+        open(LOOP_GATE_CONNECTIONS).await,
+        open(LOOP_SWEEP_CONNECTIONS).await,
+    ) {
+        (Ok(g), Ok(p)) => (g, p),
+        _ => {
             eprintln!("front: loops off — connect failed");
             return;
         }
@@ -369,12 +376,12 @@ async fn spawn_loops() {
     match write::missing_in(&pool, wake::WAKE_PRIVILEGES, wake::WAKE_SEQUENCE_PRIVILEGES).await {
         Ok(m) if m.is_empty() => {
             eprintln!("front: loop wake on (runs only while server_loop owner is rust)");
-            wake::spawn(pool.clone());
+            wake::spawn(gate.clone(), pool.clone());
         }
         Ok(m) => eprintln!("front: loop wake off — missing privileges {m:?}"),
         Err(e) => eprintln!("front: loop wake off — privilege check failed: {e}"),
     }
-    // C5c — 보존 기간 정리. 한 시간에 한 번이라 wake 와 같은 풀(3)을 나눠 쓴다(겹치면 기다릴 뿐 요청 풀은 안 막는다).
+    // C5c — 보존 기간 정리.
     match write::missing_in(&pool, retention::RETENTION_PRIVILEGES, &[]).await {
         Ok(m) if m.is_empty() => {
             let del = retention::delete_enabled(
@@ -383,12 +390,17 @@ async fn spawn_loops() {
             eprintln!(
                 "front: loop retention on (delete={del}; runs only while server_loop owner is rust)"
             );
-            retention::spawn(pool, del);
+            retention::spawn(gate, pool, del);
         }
         Ok(m) => eprintln!("front: loop retention off — missing privileges {m:?}"),
         Err(e) => eprintln!("front: loop retention off — privilege check failed: {e}"),
     }
 }
+
+/// Rust 로 옮긴 루프 수(wake·retention) — 문지기 풀 크기. 루프를 더하면 같이 올린다.
+const LOOP_GATE_CONNECTIONS: u32 = 2;
+/// sweep 풀 크기.
+const LOOP_SWEEP_CONNECTIONS: u32 = 3;
 
 /// Ctrl-C 또는 SIGTERM 에서 멈춘다. 컨테이너에서 이 바이너리는 PID 1 이라 처리기가 없는 SIGTERM 은 무시되고,
 /// k8s·`docker stop` 은 유예 시간을 다 기다린 뒤 SIGKILL 로 끊는다(롤링 배포마다 그만큼 늦어진다).
