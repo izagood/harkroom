@@ -603,3 +603,226 @@ async fn deny_vs_channel_delete_no_deadlock() {
     let r = d.await.unwrap().expect("decision finishes without 40P01");
     assert!(r.is_none(), "request row went with the channel");
 }
+
+// ───────────── C3b-3b 거절 ─────────────
+use harkroom_server::core::decide_core::{DenyArgs, DenyOutcome, decide_deny, deny_pool};
+
+/// 거절이 요청 줄·카드 글·감사를 한 번에 쓰고, 다시 누르면 `already_decided`, 남이 누르면 `forbidden`(아무것도 안 씀).
+#[tokio::test]
+async fn deny_writes_request_card_audit_together() {
+    let Some(url) = db_url() else { return };
+    let pool = PgPool::connect(&url).await.unwrap();
+    let f = fixture(&pool, "list").await;
+    let (req, card) = request_with_card(&pool, &f).await;
+    // 명단 밖 사람 → forbidden, 줄은 pending 그대로.
+    let stranger = account(&pool, &format!("dc-s-{}", tag()), "human", "member").await;
+    let out = decide_deny(
+        &pool,
+        DenyArgs {
+            agent_id: &f.agent,
+            request_id: &req,
+            actor_id: &stranger,
+            bundle_message_id: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        matches!(
+            out,
+            DenyOutcome::Refused {
+                status: 403,
+                code: "forbidden",
+                ..
+            }
+        ),
+        "{out:?}"
+    );
+    let st: String =
+        sqlx::query_scalar("select status from permission_request where id = $1::uuid")
+            .bind(&req)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(st, "pending");
+    // 다른 에이전트 경로 → not_found.
+    let out = decide_deny(
+        &pool,
+        DenyArgs {
+            agent_id: &f.owner,
+            request_id: &req,
+            actor_id: &f.actor,
+            bundle_message_id: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        matches!(out, DenyOutcome::Refused { status: 404, .. }),
+        "{out:?}"
+    );
+    // 명단의 사람(소유자 아님) → 거절됨.
+    let out = decide_deny(
+        &pool,
+        DenyArgs {
+            agent_id: &f.agent,
+            request_id: &req,
+            actor_id: &f.actor,
+            bundle_message_id: Some(&card),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        out,
+        DenyOutcome::Denied {
+            card_message_id: Some(card.clone()),
+            as_owner: false
+        }
+    );
+    let (st, by, ge, gm): (String, Option<String>, Option<String>, Option<String>) = sqlx::query_as(
+        "select status, decided_by::text, grant_expires_at::text, grant_mode from permission_request where id = $1::uuid",
+    )
+    .bind(&req).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        (st.as_str(), by.as_deref(), ge, gm),
+        ("denied", Some(f.actor.as_str()), None, None)
+    );
+    let meta: Value =
+        sqlx::query_scalar("select meta->'permissionRequest' from message where id = $1::uuid")
+            .bind(&card)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(meta["status"], "denied");
+    assert_eq!(meta["decidedBy"], json!(f.actor));
+    assert_eq!(meta["decidedByOwner"], json!(false));
+    assert_eq!(
+        meta["decidedVia"],
+        json!({"kind": "bundle", "bundleMessageId": card})
+    );
+    assert!(meta["decidedAt"].as_str().unwrap().ends_with('Z'));
+    let detail: Value = sqlx::query_scalar(
+        "select detail from audit_log where action = 'permission.denied' and detail->>'requestId' = $1",
+    )
+    .bind(&req).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        detail,
+        json!({"requestId": req, "kind": "tool", "target": "Bash(x)", "channelId": f.channel,
+               "asOwner": false, "via": "bundle", "bundleMessageId": card})
+    );
+    // 다시 → already_decided.
+    let out = decide_deny(
+        &pool,
+        DenyArgs {
+            agent_id: &f.agent,
+            request_id: &req,
+            actor_id: &f.owner,
+            bundle_message_id: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        matches!(
+            out,
+            DenyOutcome::Refused {
+                code: "already_decided",
+                ..
+            }
+        ),
+        "{out:?}"
+    );
+}
+
+/// 감사 INSERT 가 실패하면 요청 줄·카드 글도 되돌린다(한 tx).
+#[tokio::test]
+async fn deny_audit_failure_rolls_back_all() {
+    let Some(url) = db_url() else { return };
+    let pool = PgPool::connect(&url).await.unwrap();
+    let f = fixture(&pool, "list").await;
+    let (req, card) = request_with_card(&pool, &f).await;
+    let mut tx = pool.begin().await.unwrap();
+    let locked = lock_request(&mut tx, &req).await.unwrap().unwrap();
+    // 감사 줄이 들어갈 수 없게 — 이 tx 안에서만 check 제약을 걸어(되돌리면 사라짐) 감사 INSERT 를 실패시킨다.
+    sqlx::query("alter table audit_log add constraint dc_block check (action <> 'permission.denied') not valid")
+        .execute(&mut *tx).await.unwrap();
+    let r = harkroom_server::core::decide_core::deny_write(
+        &mut tx,
+        &locked,
+        DenyArgs {
+            agent_id: &f.agent,
+            request_id: &req,
+            actor_id: &f.owner,
+            bundle_message_id: None,
+        },
+        true,
+    )
+    .await;
+    assert!(r.is_err(), "{r:?}");
+    tx.rollback().await.unwrap();
+    let st: String =
+        sqlx::query_scalar("select status from permission_request where id = $1::uuid")
+            .bind(&req)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(st, "pending");
+    let meta: Value =
+        sqlx::query_scalar("select meta->'permissionRequest' from message where id = $1::uuid")
+            .bind(&card)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(meta, json!({}));
+}
+
+/// 두 겹 검사: 표·칸 권한이 다 있어도 잠금 함수 EXECUTE 가 없으면 `None`, 주면 `Some`. 칸 권한이 빠져도 `None`.
+#[tokio::test]
+async fn deny_pool_needs_both_layers() {
+    let Some(url) = db_url() else { return };
+    let pool = PgPool::connect(&url).await.unwrap();
+    let role = format!("dc_dn_{}", tag());
+    for q in [
+        format!("create role {role} login password '{role}' nosuperuser"),
+        format!("grant pg_read_all_data to {role}"),
+        format!(
+            "grant update (status, decided_at, decided_by, grant_expires_at) on permission_request to {role}"
+        ),
+        format!("grant update (meta) on message to {role}"),
+        format!("grant insert on audit_log to {role}"),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(q))
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    let mut u = url::Url::parse(&url).unwrap();
+    u.set_username(&role).unwrap();
+    u.set_password(Some(&role)).unwrap();
+    let w = PgPool::connect(u.as_str()).await.unwrap();
+    // grant_mode 칸 없음 → None.
+    assert!(deny_pool(&w).await.is_none());
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "grant update (grant_mode) on permission_request to {role}"
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    // 표·칸 다 있음, EXECUTE 없음 → None.
+    assert!(deny_pool(&w).await.is_none());
+    let grant =
+        format!("grant execute on function permission_decide_lock(uuid, uuid, uuid) to {role}");
+    sqlx::query(sqlx::AssertSqlSafe(grant))
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(deny_pool(&w).await.is_some());
+    w.close().await;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "revoke execute on function permission_decide_lock(uuid, uuid, uuid) from {role}"
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+}
