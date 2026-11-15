@@ -149,6 +149,24 @@ export function silentTurnNotice(opts: {
 
 
 /**
+ * **TUI 하네스가 차례를 마치지 않고 혼자 꺼진 턴인가**(2026-11-16). 러너가 거두지 않았고(`reclaimed`), 기록 꼬리가 `end_turn` 이
+ * 아니고(`finished`), 화면으로도 끝을 읽지 못했는데(`screenEnded`) 프로세스가 끝났다. codex 는 SIGTERM 을 받으면 exit 0 으로 나가서
+ * 정상 종료 갈래로 들어왔고, 에이전트가 부른 턴이면 ✅ 가 달려 부른 쪽은 끝난 일로 읽었다. exec 하네스는 프로세스 끝이 곧 차례 끝이라 뺀다.
+ * PTY 손잡이(`hadPty`)가 있었던 턴만 본다 — 손잡이가 없으면 러너는 거둘 수도 없었으니 「거두지 않았다」가 「혼자 꺼졌다」를 뜻하지 않는다.
+ */
+export function quitBeforeFinishing(end: { usesTui: boolean; hadPty: boolean; reclaimed: boolean; finished: boolean; screenEnded: boolean }): boolean {
+  return end.usesTui && end.hadPty && !end.reclaimed && !end.finished && !end.screenEnded;
+}
+
+/** 혼자 꺼진 TUI 턴의 실패 글(`quitBeforeFinishing`). 마지막 말은 `silentTurnNotice` 와 같은 규칙으로 가린다. */
+export function quitEarlyNotice(lastSaid: string | null, pat: string, secrets?: readonly string[]): string {
+  const said = quotedLine(lastSaid, pat, secrets);
+  return said
+    ? `하네스가 차례를 마치지 않고 꺼졌습니다. 마지막 말: "${said}" — 다시 부르면 이어서 합니다.`
+    : '하네스가 차례를 마치지 않고 꺼졌습니다 — 다시 부르면 이어서 합니다.';
+}
+
+/**
  * **하위 에이전트를 기다리다 거둔 턴의 통지**(2026-10-16). 러너는 차례를 끝낸 턴에 백그라운드 하위 에이전트가
  * 남아 있으면 거두지 않고 기다린다(`mentionTurn.ts` 의 `backgroundWaitMs`). 그 상한이 차서 거뒀을 때 남는 글이다 —
  * 하위 에이전트는 하네스와 같은 프로세스 안에서 돌아 함께 끝난다. 사람이 "아직 작업 중"으로 믿고 기다리지

@@ -100,7 +100,7 @@ pub static DEFAULT_READY_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
 pub static DEFAULT_GATE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(concat!(
         r"(?m)Do you want to (?:proceed|continue)\?|requires confirmation|Press enter to continue",
-        r"|Enter\s*to\s*(?:confirm|continue)|Connect a provider",
+        r"|Enter\s*to\s*(?:confirm|continue)|Connect a provider|MCP\s*server\s*to\s*run\s*tool",
         r"|[❯›](?:[^\x{a0}\n][^\n]*)?✔|^\s*[❯›]\s*[0-9]+\.\s",
     ))
     .expect("gate pattern")
@@ -461,6 +461,19 @@ mod tests {
         let modal = fixture("opencode-connect-provider-modal.txt");
         assert!(looks_ready_for_prompt(&modal, Some(&oc)));
         assert!(looks_like_gate(&modal, None, Some(&oc)));
+    }
+
+    /// codex MCP 도구 승인 창(codex-cli 0.154 실측). TUI 는 줄을 커서 이동(`CSI n;1H`)으로 놓아 ANSI 를 걷으면 한 줄로 붙는다 —
+    /// 줄 머리를 보는 번호 패턴(`^\s*›\s*1.`)은 이 꼴에서 맞지 않는다. 그린 화면(fixture)과 날 바이트 둘 다 관문이어야 한다.
+    #[test]
+    fn codex_mcp_approval_is_gate_in_raw_bytes_too() {
+        assert!(looks_like_gate(
+            &fixture("codex-tui-mcp-approval.txt"),
+            None,
+            None
+        ));
+        let raw = "\x1b[2m\u{203a} call the ping tool\x1b[0m\x1b[17;1H\u{2022} Calling fake.ping({})\x1b[20;1H  \x1b[2mField 1/1\x1b[21;1H\x1b[22m  Allow the fake MCP server to run tool \"ping\"?\x1b[22;1H  \x1b[1m\x1b[38;5;6;49m\u{203a} 1. Allow                   Run the tool and continue.\x1b[23;1H\x1b[22m\x1b[39;49m    2. Allow for this session\x1b[26;1H  enter to submit | esc to cancel\x1b]0;[ ! ] Action Required | ws\x07";
+        assert!(looks_like_gate(raw, None, None));
     }
 
     #[test]

@@ -57,7 +57,7 @@ pub struct AskState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum To {
+pub(crate) enum To {
     Human,
     Account(String),
 }
@@ -66,21 +66,13 @@ enum To {
 #[derive(Debug, Clone)]
 pub(super) struct Ask {
     pub(super) options: Vec<String>,
-    to: To,
+    pub(super) to: To,
     pub(super) mirror_of: Option<String>,
     pub(super) answered: bool,
     pub(super) closed: bool,
 }
 
 impl Ask {
-    /// TS `resolveBundleItem` 의 `mayAnswer` — 사람 앞 물음이거나, 이름으로 정한 받는 사람이 그 계정일 때.
-    pub(super) fn addressed_to(&self, account: &str) -> bool {
-        match &self.to {
-            To::Human => true,
-            To::Account(id) => id == account,
-        }
-    }
-
     /// TS `ask.to.kind === 'human'`.
     pub(super) fn is_to_human(&self) -> bool {
         self.to == To::Human
@@ -488,7 +480,7 @@ fn reply(o: Outcome) -> Response {
 }
 
 /// JS `String.prototype.trim` 이 지우는 것(유니코드 공백 + BOM).
-fn js_trim(s: &str) -> &str {
+pub(crate) fn js_trim(s: &str) -> &str {
     s.trim_matches(|c: char| c.is_whitespace() || c == '\u{FEFF}')
 }
 

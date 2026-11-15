@@ -235,3 +235,41 @@ fn background_cut_and_silent_wake_lines() {
         "(예약된 확인 턴이 발화 없이 끝났습니다 — 하네스의 마지막 말: \"새 소식 없음\")"
     );
 }
+
+// 정본 `quitBeforeFinishing`·`quitEarlyNotice`.
+#[test]
+fn quit_before_finishing_needs_tui_pty_and_no_end() {
+    assert!(quit_before_finishing(true, true, false, false, false));
+    assert!(
+        !quit_before_finishing(false, true, false, false, false),
+        "exec 하네스는 프로세스 끝이 차례 끝"
+    );
+    assert!(
+        !quit_before_finishing(true, false, false, false, false),
+        "PTY 가 없던 턴"
+    );
+    assert!(
+        !quit_before_finishing(true, true, true, false, false),
+        "러너가 거둔 턴"
+    );
+    assert!(
+        !quit_before_finishing(true, true, false, true, false),
+        "기록 end_turn"
+    );
+    assert!(
+        !quit_before_finishing(true, true, false, false, true),
+        "화면으로 끝을 앎"
+    );
+}
+
+#[test]
+fn quit_early_notice_quotes_last_said_or_says_bare() {
+    assert_eq!(
+        quit_early_notice(Some("확인하는 중"), "hk_pat_x", &[]),
+        "하네스가 차례를 마치지 않고 꺼졌습니다. 마지막 말: \"확인하는 중\" — 다시 부르면 이어서 합니다."
+    );
+    assert_eq!(
+        quit_early_notice(None, "hk_pat_x", &[]),
+        "하네스가 차례를 마치지 않고 꺼졌습니다 — 다시 부르면 이어서 합니다."
+    );
+}

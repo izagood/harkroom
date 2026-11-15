@@ -112,6 +112,9 @@ pub enum SilentPath {
     BackgroundCut { count: usize },
     /// 발화도 새 예약도 없이 끝났다 — `silent_turn_notice`(앵커 밖 정황·대리 글 포함).
     SilentTurn,
+    /// 발화도 새 예약도 없는데 TUI 하네스가 차례를 마치지 않고 혼자 꺼졌다(`quit_before_finishing`) — `quit_early_notice` 를
+    /// 재시도 가능한 실패 줄로 남긴다(정본 2026-11-16).
+    QuitEarly,
     /// 예약 시각에 깬 턴이 다시 예약만 걸고 끝났다 — 멘션(대기 줄)에 ✅.
     WakeAck,
     /// 카드 답으로 깬 턴이 다시 예약만 걸고 끝났다 — `silent_wake_notice` progress 한 줄.
@@ -132,6 +135,17 @@ pub struct AfterTurnPlan {
     pub watch_missed: bool,
     /// `DELEGATION_REPORT_MISSED_NOTICE` 를 실패 줄(재시도 가능)로 남긴다.
     pub delegation_report_missed: bool,
+}
+
+impl AfterTurnPlan {
+    /// 침묵 갈래를 혼자 꺼진 턴으로 바꾼다 — `quit` 은 [`crate::silent_notice::quit_before_finishing`] 의 답이다.
+    /// 정본은 침묵 갈래(발화·새 예약 없음) 앞에서만 이 판정을 본다. 다른 갈래(하위 에이전트 거둠·예약만 건 턴·발화)는 그대로다.
+    pub fn quit_early_if(mut self, quit: bool) -> Self {
+        if quit && self.silent == SilentPath::SilentTurn {
+            self.silent = SilentPath::QuitEarly;
+        }
+        self
+    }
 }
 
 /// 정본 정상 종료 갈래의 고르기. `after` 는 턴 시작 seq 뒤로 다시 읽은 앵커 스레드, `background_cut` 은 거둔 하위 에이전트 수.

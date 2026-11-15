@@ -149,6 +149,8 @@ pub struct MergeHandlers {
     pub pr_status: crate::turn_pr_status::TurnPrStatus,
     /// 외부 API 래퍼 `api.call`(s21b-3d-2, TS turnApi). 받은 토큰 캐시를 들고 있어 한 벌만 둔다.
     pub api: crate::turn_api::TurnApi,
+    /// gh 계정 보고(D1)의 장부 — 머지 길이 서버로 보내는 `/agent/merge-checks`·`/agent/merge-results` 에서만 채운다.
+    pub gh_ledger: Arc<crate::gh_report::GhLedger>,
 }
 
 impl MergeHandlers {
@@ -183,6 +185,7 @@ impl MergeHandlers {
             },
             pr_status: crate::turn_pr_status::TurnPrStatus { gate, tokens, home },
             api: crate::turn_api::TurnApi::system(),
+            gh_ledger: Arc::default(),
         }
     }
 }
@@ -496,9 +499,14 @@ impl RunnerLinkHandler for LinkHandler {
         if let Some(m) = &self.merge {
             let post = |p: &str, body: String| self.server_post(agent_id, p, body);
             let log = |l: &str| eprintln!("{l}");
+            // 머지 길만 장부에 적는다(TS run.ts `noteGhUse`) — `pr.status`·`api.call` 은 적지 않는다.
+            let merge_post = |p: &str, body: String| {
+                m.gh_ledger.note_merge_post(p, &body);
+                self.server_post(agent_id, p, body)
+            };
             if let Some(r) = m
                 .merge
-                .maybe_handle(agent_id, &req, lease.as_ref(), &post, &log)
+                .maybe_handle(agent_id, &req, lease.as_ref(), &merge_post, &log)
             {
                 return Some(r);
             }

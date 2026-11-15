@@ -13,6 +13,7 @@ pub mod audience;
 pub mod channels;
 pub mod content_scan;
 pub mod events;
+pub mod inbox_read;
 pub mod invoke_gate;
 pub mod mandate_stamp;
 pub mod mcp;
@@ -30,6 +31,7 @@ pub mod operator_frames;
 pub mod operator_hub;
 pub mod operator_rest;
 pub mod tickets;
+pub mod turn_lease;
 pub mod typing;
 pub mod ws;
 
