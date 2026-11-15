@@ -21,7 +21,7 @@ import { TEAM_BY_ID_SQL, TEAM_BY_NAME_SQL, TEAM_MEMBERS_SQL } from '../src/servi
 import { MENTION_POLICY_SQL } from '../src/services/mentionPolicy.js';
 import { PRINCIPAL_INVOKES_SQL } from '../src/services/invokePrincipal.js';
 import { ENQUEUE_INBOX_PUSH_MANY_SQL, INBOX_PUSH_REASON_LIST, PUSH_AGENT_REPLY_DELAY_SEC } from '../src/services/push/pushJobs.js';
-import { HAS_OLDER_SQL, INBOX_TEAM_ROSTER_SQL, LIST_INBOX_SQL, LIST_MESSAGES_SQL, MESSAGE_BY_ID_SQL, READ_LIST_ROW_SQL, SEARCH_MESSAGES_SQL } from '../src/services/messages.js';
+import { HAS_OLDER_SQL, INBOX_FOLDED_WAKES_SQL, INBOX_HANDED_SQL, INBOX_STARTED_IN_SQL, INBOX_TEAM_ROSTER_SQL, LIST_INBOX_SQL, LIST_MESSAGES_SQL, MESSAGE_BY_ID_SQL, READ_LIST_ROW_SQL, SEARCH_MESSAGES_SQL } from '../src/services/messages.js';
 import { POST_CHANNEL_KIND_SQL, POST_IDEMPOTENCY_FIND_SQL, POST_IDEMPOTENCY_INSERT_SQL, POST_INSERT_SQL, POST_ROOT_AUTHOR_SQL, POST_THREAD_ROOT_OF_SQL, SEQ_LOCK_CLASS, SEQ_LOCK_SQL } from '../src/services/messages.js';
 import { ATTACH_FIND_SQL, ATTACH_UPDATE_SQL } from '../src/services/attachments.js';
 import { CHAT_APPROVAL_GUARD_WORDS } from '../src/services/chatApproval.js';
@@ -170,6 +170,10 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     // 받은함 목록(`core/inbox_list.rs`, S5.3 C6a-3a) — `GET /inbox` 갈래 다섯과 팀 명단, 완성 문장째.
     ...Object.fromEntries(Object.entries(LIST_INBOX_SQL).map(([k, v]) => [`list_inbox_${k}`, v])),
     inbox_team_roster: INBOX_TEAM_ROSTER_SQL,
+    // 받은함 덧붙임(C6a-3b) — 넘겨받은 일·접힌 깨움·시작한 곳.
+    inbox_handed: INBOX_HANDED_SQL,
+    inbox_folded_wakes: INBOX_FOLDED_WAKES_SQL,
+    inbox_started_in: INBOX_STARTED_IN_SQL,
   };
   const text = `${JSON.stringify(want, null, 2)}\n`;
   if (process.env.UPDATE_RUST_SQL_GOLDEN === '1') writeFileSync(GOLDEN, text);

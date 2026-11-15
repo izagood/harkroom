@@ -3555,6 +3555,42 @@ export const INBOX_TEAM_ROSTER_SQL = `select t.id, t.name, tm.agent_account_id a
         where t.id = any($1::uuid[])
         order by a.handle`;
 
+/**
+ * 받은함 덧붙임 문장(C6a-3b) — `listInbox` 가 쓰고, Rust 앞단(`core/inbox_list.rs`)이 골든으로 같은 바이트를 읽는다.
+ * 계정·id 목록 자리는 형을 적는다(`$1::uuid`·`::uuid[]`) — Rust 는 글자로 묶는다. node-pg 에는 동작이 같다.
+ */
+export const INBOX_HANDED_SQL = `select d.message_id, a.handle as "leadHandle", t.name as "teamName",
+              d.deadline_at as "deadlineAt"
+         from team_delegation d
+         join account a on a.id = d.lead_account_id
+         left join agent_team t on t.id = d.team_id
+        where d.message_id = any($1::uuid[])`;
+
+export const INBOX_FOLDED_WAKES_SQL = `select w.canceled_by_message_id as by, wm.body as reason, w.wake_at as "wakeAt",
+              wm.meta->'wake'->'reportTo' as "reportTo"
+         from agent_wake w join message wm on wm.id = w.message_id
+        where w.account_id = $1::uuid and w.canceled_by_message_id = any($2::uuid[])
+        order by w.wake_at`;
+
+export const INBOX_STARTED_IN_SQL = `select m.id as "messageId", d.channel_id as "channelId", d.thread_root_id as "threadRootId"
+         from message m
+         join account a on a.id = m.author_id and a.kind = 'agent'
+         join mandate d on d.id = coalesce(m.mandate_id,
+                (select w.mandate_id from agent_wake w where w.message_id = m.id and w.account_id = $1::uuid
+                  order by w.created_at desc limit 1))
+         join agent_config me on me.account_id = $1::uuid and me.owner_account_id = d.owner_account_id
+         join message r on r.id = d.root_message_id and r.deleted_at is null
+         join channel sc on sc.id = d.channel_id
+        where m.id = any($2::uuid[])
+          and d.thread_root_id is not null and d.ended_at is null
+          and d.thread_root_id <> coalesce(m.thread_root_id, m.id)
+          and exists (select 1 from inbox hi
+                        join message h on h.id = hi.message_id
+                        join account ha on ha.id = h.author_id and ha.kind = 'human'
+                       where hi.account_id = $1::uuid and h.deleted_at is null
+                         and h.channel_id = d.channel_id and coalesce(h.thread_root_id, h.id) = d.thread_root_id)
+          and ${channelVisibleSql('sc', '$1::uuid')}`;
+
 export async function listInbox(
   pool: Pool, accountId: string,
   opts: { unreadOnly?: boolean; compact?: boolean; sinceId?: number; skipLeased?: boolean; newestLimit?: number; beforeId?: number },
@@ -3645,15 +3681,7 @@ export async function listInbox(
   if (handedIds.length) {
     const handed = await pool.query<{
       message_id: string; leadHandle: string; teamName: string | null; deadlineAt: string;
-    }>(
-      `select d.message_id, a.handle as "leadHandle", t.name as "teamName",
-              d.deadline_at as "deadlineAt"
-         from team_delegation d
-         join account a on a.id = d.lead_account_id
-         left join agent_team t on t.id = d.team_id
-        where d.message_id = any($1)`,
-      [[...new Set(handedIds)]],
-    );
+    }>(INBOX_HANDED_SQL, [[...new Set(handedIds)]]);
     const byMessage = new Map(handed.rows.map((r) => [r.message_id, r]));
     for (const row of rows) {
       const found = row.reason === 'team_delegated' ? byMessage.get(row.messageId) : undefined;
@@ -3677,12 +3705,7 @@ export async function listInbox(
   const callIds = [...new Set(rows.filter((r) => r.reason !== 'wake').map((r) => r.messageId))];
   if (callIds.length) {
     const folded = await pool.query<{ by: string; reason: string; wakeAt: string; reportTo: unknown }>(
-      `select w.canceled_by_message_id as by, wm.body as reason, w.wake_at as "wakeAt",
-              wm.meta->'wake'->'reportTo' as "reportTo"
-         from agent_wake w join message wm on wm.id = w.message_id
-        where w.account_id = $1 and w.canceled_by_message_id = any($2)
-        order by w.wake_at`,
-      [accountId, callIds],
+      INBOX_FOLDED_WAKES_SQL, [accountId, callIds],
     );
     const byCall = new Map<string, NonNullable<InboxEntry['canceledWakes']>>();
     for (const r of folded.rows) {
@@ -3717,25 +3740,7 @@ export async function listInbox(
   const startIds = [...new Set(rows.filter((r) => r.reason !== 'ask_answered' && r.reason !== 'ask_closed').map((r) => r.messageId))];
   if (startIds.length) {
     const started = await pool.query<{ messageId: string; channelId: string; threadRootId: string }>(
-      `select m.id as "messageId", d.channel_id as "channelId", d.thread_root_id as "threadRootId"
-         from message m
-         join account a on a.id = m.author_id and a.kind = 'agent'
-         join mandate d on d.id = coalesce(m.mandate_id,
-                (select w.mandate_id from agent_wake w where w.message_id = m.id and w.account_id = $1
-                  order by w.created_at desc limit 1))
-         join agent_config me on me.account_id = $1 and me.owner_account_id = d.owner_account_id
-         join message r on r.id = d.root_message_id and r.deleted_at is null
-         join channel sc on sc.id = d.channel_id
-        where m.id = any($2::uuid[])
-          and d.thread_root_id is not null and d.ended_at is null
-          and d.thread_root_id <> coalesce(m.thread_root_id, m.id)
-          and exists (select 1 from inbox hi
-                        join message h on h.id = hi.message_id
-                        join account ha on ha.id = h.author_id and ha.kind = 'human'
-                       where hi.account_id = $1 and h.deleted_at is null
-                         and h.channel_id = d.channel_id and coalesce(h.thread_root_id, h.id) = d.thread_root_id)
-          and ${channelVisibleSql('sc', '$1')}`,
-      [accountId, startIds],
+      INBOX_STARTED_IN_SQL, [accountId, startIds],
     );
     const byMessage = new Map(started.rows.map((r) => [r.messageId, { channelId: r.channelId, threadRootId: r.threadRootId }]));
     for (const row of rows) {
