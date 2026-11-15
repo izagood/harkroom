@@ -2147,6 +2147,19 @@ export interface EditMessageOutcome {
  *
  * thread_reply·dm·기다림 선점·위임 닫기는 하지 않는다 — 수정은 새 답이 아니다.
  */
+/**
+ * 글 고치기(`PATCH /channels/:id/messages/:messageId`)의 문장들 — Rust 코어(`core/msg_edit.rs`, S5.3 C3a-3c)가
+ * `golden/sql_fragments.json` 으로 받아 그대로 쓴다. 고치면 `test/rustSqlFragments.test.ts` 가 골든 갱신을 요구한다.
+ */
+export const EDIT_FIND_SQL = `select m.author_id, m.kind, m.body, m.meta, m.mention_depth as depth, m.created_at,
+              (a.kind = 'agent') as author_is_agent
+         from message m join account a on a.id = m.author_id
+        where m.id = $1::uuid and m.channel_id = $2::uuid and m.deleted_at is null
+        for update of m`;
+export const EDIT_UPDATE_SQL = `update message set body = $2, meta = $3::jsonb, edited_at = now() where id = $1::uuid returning ${COLS}`;
+export const EDIT_INBOX_ALREADY_SQL = `select distinct account_id from inbox where message_id = $1::uuid`;
+export const EDIT_VIA_EDIT_SQL = `update inbox set via_edit = true where message_id = $1::uuid and account_id = any($2::uuid[])`;
+
 export async function editMessage(
   pool: Pool, args: { channelId: string; messageId: string; actorId: string; body: string },
 ): Promise<EditMessageOutcome | MutationRefusal> {
@@ -2154,14 +2167,7 @@ export async function editMessage(
   try {
     await client.query('begin');
     // 행을 잠근다 — 같은 메시지를 두 번 빠르게 고치면 판정·inbox 넣기가 서로 엇갈려 두 번 부를 수 있다.
-    const found = await client.query(
-      `select m.author_id, m.kind, m.body, m.meta, m.mention_depth as depth, m.created_at,
-              (a.kind = 'agent') as author_is_agent
-         from message m join account a on a.id = m.author_id
-        where m.id = $1 and m.channel_id = $2 and m.deleted_at is null
-        for update of m`,
-      [args.messageId, args.channelId],
-    );
+    const found = await client.query(EDIT_FIND_SQL, [args.messageId, args.channelId]);
     if (!found.rowCount) {
       await client.query('rollback');
       return 'not_found';
@@ -2216,17 +2222,12 @@ export async function editMessage(
         ...(calls.callMeta.mentionRefs ? { mentionRefs: calls.callMeta.mentionRefs } : {}),
       };
 
-    const updated = await client.query(
-      `update message set body = $2, meta = $3, edited_at = now() where id = $1 returning ${COLS}`,
-      [args.messageId, calls.normalizedBody, JSON.stringify(meta)],
-    );
+    const updated = await client.query(EDIT_UPDATE_SQL, [args.messageId, calls.normalizedBody, JSON.stringify(meta)]);
 
     let fresh: string[] = [];
     if (invoke) {
       const already = new Set(
-        (await client.query<{ account_id: string }>(
-          `select distinct account_id from inbox where message_id = $1`, [args.messageId],
-        )).rows.map((r) => r.account_id),
+        (await client.query<{ account_id: string }>(EDIT_INBOX_ALREADY_SQL, [args.messageId])).rows.map((r) => r.account_id),
       );
       const notified = new Set(already);
       await fanOutCalls(client, { channelId: args.channelId, authorId: args.actorId, messageId: args.messageId }, calls, notified);
@@ -2237,10 +2238,7 @@ export async function editMessage(
         같은 트랜잭션이라 찍기 전의 항목을 누가 읽을 수도 없다.
       */
       if (fresh.length) {
-        await client.query(
-          `update inbox set via_edit = true where message_id = $1 and account_id = any($2::uuid[])`,
-          [args.messageId, fresh],
-        );
+        await client.query(EDIT_VIA_EDIT_SQL, [args.messageId, fresh]);
       }
     }
     await client.query('commit');

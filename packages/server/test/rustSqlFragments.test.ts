@@ -14,6 +14,7 @@ import { LIST_SCHEDULED_SQL } from '../src/services/scheduledMessages.js';
 import { SELECT_PINS_SQL } from '../src/services/pins.js';
 import { AGENT_INVOKER_SQL, CHANNEL_SCOPE_SQL, ELIGIBLE_DELEGATE_SQL, INVOKE_FACTS_SQL, TEAM_INVOKER_SQL } from '../src/services/invokeGate.js';
 import { HAS_REPLY_GRANT_SQL } from '../src/services/replyGrants.js';
+import { EDIT_FIND_SQL, EDIT_INBOX_ALREADY_SQL, EDIT_UPDATE_SQL, EDIT_VIA_EDIT_SQL } from '../src/services/messages.js';
 import { ACCOUNTS_BY_HANDLES_SQL, ACCOUNTS_BY_IDS_SQL, FAN_OUT_AUDIENCE_SQL, INSERT_INBOX_MANY_SQL, REVEAL_HIDDEN_SQL, REVEAL_REASONS } from '../src/services/messages.js';
 import { GROUP_BY_HANDLE_SQL, GROUP_MEMBERS_SQL } from '../src/services/handleGroups.js';
 import { TEAM_BY_ID_SQL, TEAM_BY_NAME_SQL, TEAM_MEMBERS_SQL } from '../src/services/teams.js';
@@ -36,6 +37,11 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     channel_list_visible_c_aid_aadmin: channelListVisibleSql('c', 'a.id', 'a.is_admin'),
     // 링크 한 개 읽기(`core/msg_read.rs`, S5.3 C1b-1a) — `GET /messages/:id` 의 문장 전체(COLS 포함).
     message_by_id: MESSAGE_BY_ID_SQL,
+    // 글 고치기(`core/msg_edit.rs`, S5.3 C3a-3c).
+    edit_find: EDIT_FIND_SQL,
+    edit_update: EDIT_UPDATE_SQL,
+    edit_inbox_already: EDIT_INBOX_ALREADY_SQL,
+    edit_via_edit: EDIT_VIA_EDIT_SQL,
     // 누구를 부르나·호출함 쓰기(`core/mention_calls.rs`·`mention_fanout.rs`, S5.3 C3a-3b). 목록·수는 JSON 글자로 싣는다.
     mc_accounts_by_handles: ACCOUNTS_BY_HANDLES_SQL,
     mc_accounts_by_ids: ACCOUNTS_BY_IDS_SQL,

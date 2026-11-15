@@ -992,6 +992,12 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant update (meta) on message to ${rw}`,
         // S5.3 C3a-2 — 지우기·채널에도 보이기(`msg_delete.rs::MESSAGE_DELETE_PRIVILEGES`). 칸 권한 둘. 없으면 「message delete core off」.
         `grant update (deleted_at, also_in_channel) on message to ${rw}`,
+        // S5.3 C3a-3c — 글 고치기(`msg_edit.rs::MESSAGE_EDIT_PRIVILEGES`). 없으면 「message edit core off」(아래에서 그 길도 본다).
+        `grant update (body, meta, edited_at) on message to ${rw}`,
+        `grant insert on inbox to ${rw}`,
+        `grant update (via_edit) on inbox to ${rw}`,
+        `grant insert on push_job to ${rw}`,
+        `grant update (hidden_at) on channel_pref to ${rw}`,
         // S5.3 C5b — 예약 깨움 루프(`loops/wake.rs::WAKE_PRIVILEGES`). 없으면 「loop wake off」 — 루프는 TS 에 남는다.
         ...WAKE_GRANTS.map((g) => `grant ${g} to ${rw}`),
         // S5.3 C5c — 보존 정리 루프(`loops/retention.rs::RETENTION_PRIVILEGES`).
@@ -2187,6 +2193,140 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(txRows.find((r) => r.id === txReply)?.also, '거두기가 되돌아갔다(앞에서 켜 둔 값 그대로)').toBe(true);
         // 권한을 돌려준 뒤에는 정상으로 지워진다.
         expect((await callX(rsUrl, 'DELETE', msgPath(todayId, txMsg))).status).toBe(200);
+      }
+
+      // S5.3 C3a-3c — 글 고치기(코어 `msg_edit.rs`). TS·Rust 에 **각자의 글**로 같은 시나리오를 돌려 응답(상태·코드·헤더·본문 모양)·
+      // 이벤트·inbox 행(via_edit)을 견준다. 그다음 고치기 권한이 없는 앞단은 이 줄을 붙이지 않고 TS 로 넘기는지 본다.
+      {
+        const EDIT = 'PATCH /channels/{id}/messages/{messageId}';
+        expect(f.log()).toContain(`"${EDIT}"`);
+        expect(f.log()).not.toContain('message edit core off');
+        const ePath = (ch: string, m: string) => `/channels/${ch}/messages/${m}`;
+        const side = async () => {
+          const mine = await say('고칠 글', { author: admin.accountId });
+          const old = await say('오래된 글', { author: admin.accountId });
+          await db.pool.query(`update message set created_at = now() - interval '25 hours' where id = $1`, [old]);
+          const agentMsg = await say('에이전트 글');
+          const sys = await say('시스템 글', { author: admin.accountId });
+          await db.pool.query(`update message set kind = 'system' where id = $1`, [sys]);
+          const gone = await say('지울 글', { author: admin.accountId });
+          await db.pool.query(`update message set deleted_at = now() where id = $1`, [gone]);
+          return { mine, old, agentMsg, sys, gone };
+        };
+        type Side = Awaited<ReturnType<typeof side>>;
+        const T = await side();
+        const R = await side();
+        const tsEvents: WorkspaceEvent[] = [];
+        const offTs = onEvent((e) => { tsEvents.push(e); });
+        const labelOf = (sd: Side) => (v: unknown) => {
+          for (const [k, id] of Object.entries(sd)) if (v === id) return k.toUpperCase();
+          return v;
+        };
+        const shape = (sd: Side) => (v: unknown): unknown => {
+          if (Array.isArray(v)) return v.map(shape(sd));
+          if (v && typeof v === 'object') {
+            const o: Record<string, unknown> = {};
+            for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+              o[k] = /At$/.test(k) ? (x === null ? null : typeof x) : k === 'seq' ? typeof x : shape(sd)(x);
+            }
+            return o;
+          }
+          return labelOf(sd)(v);
+        };
+        const edit = async (base: string, path: string, body: unknown, token: string = A) => {
+          const headers: Record<string, string> = { authorization: `Bearer ${token}`, 'content-type': J };
+          const res = await fetch(`${base}${path}`, { method: 'PATCH', headers, body: JSON.stringify(body) });
+          const text = await res.text();
+          const json = text ? JSON.parse(text) as Record<string, unknown> : {};
+          return {
+            status: res.status, code: (json.error as { code?: string } | undefined)?.code, json,
+            count: res.headers.get('x-harkroom-notified-count'), notified: res.headers.get('x-harkroom-notified'),
+            skipped: res.headers.get('x-harkroom-mention-edit-skipped'),
+          };
+        };
+        const run = async (base: string, sd: Side) => {
+          const out: unknown[] = [];
+          const step = async (name: string, path: string, body: unknown, token?: string) => {
+            const r = await edit(base, path, body, token);
+            out.push({ step: name, status: r.status, code: r.code, count: r.count, notified: r.notified, skipped: r.skipped, body: r.json.error ? null : shape(sd)(r.json) });
+          };
+          await step('새 멘션 → 부름', ePath(todayId, sd.mine), { body: '고침 @mem 봐 줘' });
+          await step('같은 멘션 다시 → 새로 받은 사람 없음', ePath(todayId, sd.mine), { body: '또 고침 @mem' });
+          await step('멘션 뺌', ePath(todayId, sd.mine), { body: '멘션 없음' });
+          await step('24h 지난 글에 멘션 → too_old', ePath(todayId, sd.old), { body: '늦은 @mem' });
+          await step('에이전트 글 → agent_author', ePath(todayId, sd.agentMsg), { body: '@mem 에이전트가 고침' }, agent.pat);
+          await step('남의 글 → 403', ePath(todayId, sd.mine), { body: 'x' }, member.token);
+          await step('시스템 글 → 403', ePath(todayId, sd.sys), { body: 'x' });
+          await step('지운 글 → 404', ePath(todayId, sd.gone), { body: 'x' });
+          await step('빈 본문 → 400', ePath(todayId, sd.mine), { body: '' });
+          await step('8001자 → 400', ePath(todayId, sd.mine), { body: 'a'.repeat(8001) });
+          await step('본문 없음 → 400', ePath(todayId, sd.mine), {});
+          await step('비공개 비멤버 → 403', ePath(String(priv.id), secret), { body: 'x' }, member.token);
+          await step('다른 채널 경로 → 404', ePath(String(dm.id), sd.mine), { body: 'x' });
+          await step('uuid 아님 → 400', ePath(todayId, 'x'), { body: 'x' });
+          return out;
+        };
+        const tsOut = await run(tsUrl, T);
+        const rsOut = await run(rsUrl, R);
+        expect(rsOut).toEqual(tsOut);
+        const st = (n: string) => (tsOut as { step: string; count: string | null; skipped: string | null }[]).find((o) => o.step === n);
+        expect(st('새 멘션 → 부름')?.count, '부름이 실제로 inbox 를 만든다').toBe('1');
+        expect(st('24h 지난 글에 멘션 → too_old')?.skipped).toBe('too_old');
+        expect(st('에이전트 글 → agent_author')?.skipped).toBe('agent_author');
+        const anon = async (base: string) => (await fetch(`${base}${ePath(todayId, T.mine)}`, { method: 'PATCH', headers: { 'content-type': J }, body: '{"body":"x"}' })).status;
+        expect(await anon(rsUrl), '익명 → 401').toBe(await anon(tsUrl));
+        // inbox 행 — 사유·via_edit 이 같은 자리에.
+        const inboxOf = async (sd: Side) => (await db.pool.query<{ k: string; reason: string; via: boolean }>(
+          `select k, i.reason, i.via_edit as via from jsonb_each_text($1::jsonb) j(k, id) join inbox i on i.message_id = j.id::uuid order by k, i.id`,
+          [JSON.stringify(sd)])).rows;
+        const tInbox = await inboxOf(T);
+        expect(await inboxOf(R)).toEqual(tInbox);
+        expect(tInbox).toContainEqual({ k: 'mine', reason: 'mention', via: true });
+        // 이벤트 — 종류·받는 사람.
+        const mineOf = (evs: WorkspaceEvent[], sd: Side) => evs.filter((e) => {
+          const o = e as { message?: { id?: string } };
+          return o.message ? Object.values(sd).includes(o.message.id as string) : false;
+        }).map((e) => ({ type: e.type, id: labelOf(sd)((e as { message: { id: string } }).message.id) }));
+        const want = mineOf(tsEvents, T);
+        offTs();
+        const until6 = Date.now() + 10_000;
+        while (mineOf(busEvents, R).length < want.length && Date.now() < until6) await new Promise((res) => setTimeout(res, 100));
+        expect(mineOf(busEvents, R)).toEqual(want);
+        expect(want.length, '고친 글마다 message.updated').toBe(5);
+        // 한 트랜잭션 — 호출함 쓰기가 실패하면(앞단 역할의 inbox 넣기 권한을 잠시 거둠) 고치기도 되돌아간다.
+        const txEdit = await say('트랜잭션 고치기', { author: admin.accountId });
+        await db.pool.query(`revoke insert on inbox from ${rw}`);
+        try {
+          expect((await edit(rsUrl, ePath(todayId, txEdit), { body: '부름 @mem' })).status, '호출함 쓰기 실패면 500').toBe(500);
+        } finally {
+          await db.pool.query(`grant insert on inbox to ${rw}`);
+        }
+        const txRow = (await db.pool.query<{ body: string; edited: boolean }>(
+          `select body, edited_at is not null as edited from message where id = $1`, [txEdit])).rows[0]!;
+        expect(txRow, '본문·고친 시각이 그대로').toEqual({ body: '트랜잭션 고치기', edited: false });
+        // 고치기 권한이 없는 앞단 — 스위치가 rust 여도 이 줄을 붙이지 않고(기동 기록), 같은 요청은 TS 가 답한다.
+        await db.pool.query(`revoke update (body, meta, edited_at) on message from ${rw}`);
+        // 앞단 둘이 같은 역할로 붙으므로 시험 역할의 연결 한도를 잠시 푼다(이 시험 DB 에서만).
+        await db.pool.query(`alter role ${rw} connection limit -1`);
+        const port2 = await freePort();
+        let front2: ChildProcess | undefined;
+        try {
+          const f2 = await startFront(bin, {
+            UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(port2), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
+            TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust',
+          });
+          front2 = f2.child;
+          const until7 = Date.now() + 10_000;
+          while (!f2.log().includes('front: rust core routes') && Date.now() < until7) await new Promise((res) => setTimeout(res, 100));
+          expect(f2.log()).toContain('message edit core off — missing privileges');
+          expect(f2.log()).not.toContain(`"${EDIT}"`);
+          const viaFront = await edit(`http://127.0.0.1:${port2}`, ePath(todayId, T.mine), { body: 'TS 가 받는다' });
+          expect(viaFront.status, '권한이 없으면 TS 가 받아 200').toBe(200);
+          expect((viaFront.json as { body?: string }).body).toBe('TS 가 받는다');
+        } finally {
+          front2?.kill('SIGTERM');
+          await db.pool.query(`grant update (body, meta, edited_at) on message to ${rw}`);
+        }
       }
       await bus.stop();
 
