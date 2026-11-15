@@ -39,9 +39,10 @@ fn reads_version_with_path_and_home_only() {
     let t = tmpdir();
     fake(&t, "opencode", "1.18.32");
     let path = format!("{}:/usr/bin:/bin", t.0.join("bin").display());
-    let got = read_harness_version(AgentHarness::Opencode, Some(&path), &t.0, None, None);
+    let got = read_harness_version(AgentHarness::Opencode, Some(&path), &t.0, None, None, None);
     assert_eq!(got.as_deref(), Some("1.18.32"));
-    let (_, env) = version_query(AgentHarness::Opencode, Some(&path), &t.0, None, None).unwrap();
+    let (_, env) =
+        version_query(AgentHarness::Opencode, Some(&path), &t.0, None, None, None).unwrap();
     let mut keys: Vec<_> = env.keys().cloned().collect();
     keys.sort();
     assert_eq!(keys, vec!["HOME".to_string(), "PATH".to_string()]);
@@ -53,17 +54,19 @@ fn omp_asks_with_runner_omp_home() {
     fake(&t, "omp", "omp/18.12.6");
     let path = format!("{}:/usr/bin:/bin", t.0.join("bin").display());
     let oh = t.0.join("state/omp-home");
-    let (_, env) = version_query(AgentHarness::Omp, Some(&path), &t.0, Some(&oh), None).unwrap();
+    let (_, env) =
+        version_query(AgentHarness::Omp, Some(&path), &t.0, Some(&oh), None, None).unwrap();
     assert_eq!(
         env["HOME"],
         crate::omp_home::omp_dirs(&oh).home.to_string_lossy()
     );
     assert_eq!(
-        read_harness_version(AgentHarness::Omp, Some(&path), &t.0, Some(&oh), None).as_deref(),
+        read_harness_version(AgentHarness::Omp, Some(&path), &t.0, Some(&oh), None, None)
+            .as_deref(),
         Some("omp/18.12.6")
     );
     // omp 홈을 모르면 묻지 않는다(사람 HOME 으로 묻지 않게).
-    assert!(version_query(AgentHarness::Omp, Some(&path), &t.0, None, None).is_none());
+    assert!(version_query(AgentHarness::Omp, Some(&path), &t.0, None, None, None).is_none());
 }
 
 #[test]
@@ -71,12 +74,12 @@ fn missing_binary_or_empty_output_is_none() {
     let t = tmpdir();
     let path = format!("{}:/usr/bin:/bin", t.0.join("bin").display());
     assert_eq!(
-        read_harness_version(AgentHarness::Kilo, Some(&path), &t.0, None, None),
+        read_harness_version(AgentHarness::Kilo, Some(&path), &t.0, None, None, None),
         None
     );
     fake(&t, "kilo", "");
     assert_eq!(
-        read_harness_version(AgentHarness::Kilo, Some(&path), &t.0, None, None),
+        read_harness_version(AgentHarness::Kilo, Some(&path), &t.0, None, None, None),
         None
     );
 }
@@ -89,21 +92,80 @@ fn codex_asks_with_runner_codex_home_or_not_at_all() {
     fake(&t, "codex", "codex-cli 0.154.0");
     let path = format!("{}:/usr/bin:/bin", t.0.join("bin").display());
     let ch = t.0.join("state/codex-provider-lane");
-    let (_, env) = version_query(AgentHarness::Codex, Some(&path), &t.0, None, Some(&ch)).unwrap();
+    let (_, env) = version_query(
+        AgentHarness::Codex,
+        Some(&path),
+        &t.0,
+        None,
+        Some(&ch),
+        None,
+    )
+    .unwrap();
     let mut keys: Vec<_> = env.keys().cloned().collect();
     keys.sort();
     assert_eq!(keys, vec!["CODEX_HOME", "HOME", "PATH"]);
     assert_eq!(env["CODEX_HOME"], ch.to_string_lossy());
     assert_eq!(
-        read_harness_version(AgentHarness::Codex, Some(&path), &t.0, None, Some(&ch)).as_deref(),
+        read_harness_version(
+            AgentHarness::Codex,
+            Some(&path),
+            &t.0,
+            None,
+            Some(&ch),
+            None
+        )
+        .as_deref(),
         Some("codex-cli 0.154.0")
     );
     // 홈 모르면 묻지 않는다.
-    assert!(version_query(AgentHarness::Codex, Some(&path), &t.0, None, None).is_none());
-    assert!(read_harness_version(AgentHarness::Codex, Some(&path), &t.0, None, None).is_none());
+    assert!(version_query(AgentHarness::Codex, Some(&path), &t.0, None, None, None).is_none());
+    assert!(
+        read_harness_version(AgentHarness::Codex, Some(&path), &t.0, None, None, None).is_none()
+    );
     // codex 가 아닌 하네스엔 CODEX_HOME 을 싣지 않는다.
     fake(&t, "opencode", "1.18.32");
-    let (_, env) =
-        version_query(AgentHarness::Opencode, Some(&path), &t.0, None, Some(&ch)).unwrap();
+    let (_, env) = version_query(
+        AgentHarness::Opencode,
+        Some(&path),
+        &t.0,
+        None,
+        Some(&ch),
+        None,
+    )
+    .unwrap();
     assert!(!env.contains_key("CODEX_HOME"));
+}
+
+/// pi 는 `PI_CODING_AGENT_DIR` 가 없으면 `--version` 에도 사람 `$HOME/.pi/agent` 를 건드린다(빈 HOME 실측) — 러너 pi 홈을
+/// `PI_CODING_AGENT_DIR` 로 주고, 모르면 묻지 않는다.
+#[test]
+fn pi_asks_with_runner_pi_home_or_not_at_all() {
+    let t = tmpdir();
+    fake(&t, "pi", "1.4.0");
+    let path = format!("{}:/usr/bin:/bin", t.0.join("bin").display());
+    let ph = t.0.join("state/pi-provider-lane");
+    let (_, env) =
+        version_query(AgentHarness::Pi, Some(&path), &t.0, None, None, Some(&ph)).unwrap();
+    let mut keys: Vec<_> = env.keys().cloned().collect();
+    keys.sort();
+    assert_eq!(keys, vec!["HOME", "PATH", "PI_CODING_AGENT_DIR"]);
+    assert_eq!(env["PI_CODING_AGENT_DIR"], ph.to_string_lossy());
+    assert_eq!(
+        read_harness_version(AgentHarness::Pi, Some(&path), &t.0, None, None, Some(&ph)).as_deref(),
+        Some("1.4.0")
+    );
+    // 홈 모르면 묻지 않는다.
+    assert!(version_query(AgentHarness::Pi, Some(&path), &t.0, None, None, None).is_none());
+    // pi 가 아닌 하네스엔 싣지 않는다(omp 도 같은 변수를 쓰지만 판 묻기는 HOME 만 옮긴다).
+    fake(&t, "opencode", "1.18.32");
+    let (_, env) = version_query(
+        AgentHarness::Opencode,
+        Some(&path),
+        &t.0,
+        None,
+        None,
+        Some(&ph),
+    )
+    .unwrap();
+    assert!(!env.contains_key("PI_CODING_AGENT_DIR"));
 }

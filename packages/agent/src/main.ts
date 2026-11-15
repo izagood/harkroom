@@ -61,6 +61,7 @@ import { harnessVersionEnv } from './harnessVersionEnv.js';
 import { allXdgApps, commandRulesOf, turnKeyDeliveryOf, usesCodexHome, usesOmpHome, usesPiHome, usesXdgHome, xdgAppFor } from './adapters/index.js';
 import { issueTurnKeys } from './turnKeys.js';
 import { ensurePiHome } from './piHome.js';
+import { applyPiLaunchEnv, resolvePiLaunch } from './piLaunch.js';
 import { ensureOmpHome, ompDirs } from './ompHome.js';
 import { ensureOpencodeHome } from './opencodeHome.js';
 import { createMentionScheduler, type BatchContext } from './mentionScheduler.js';
@@ -674,16 +675,25 @@ function harnessVersion(harness: AgentHarness): Promise<string | null> {
   return new Promise((resolve) => {
     const bin = harnessBinaryName(harness);
     if (!bin) return resolve(null);
-    // omp 는 러너 omp 홈의 HOME, codex 는 러너 codex 홈을 `CODEX_HOME` 으로(`harnessVersionEnv` — 사람 `~/.codex/tmp` 를 건드리지 않게).
+    // omp 는 러너 omp 홈의 HOME, codex 는 러너 codex 홈을 `CODEX_HOME`, pi 는 러너 pi 홈을 `PI_CODING_AGENT_DIR` 로(`harnessVersionEnv` — 사람 홈을 건드리지 않게).
     const env = harnessVersionEnv({
       path: harnessPath(harness, process.env.PATH),
       home: process.env.HOME,
       ...(usesOmpHome(harness) ? { ompHome: ompDirs(ompHomeDir).home } : {}),
       codexHome,
       codex: usesCodexHome(harness),
+      piHome,
+      pi: usesPiHome(harness),
     });
     if (!env) return resolve(null);
-    execFile(bin, ['--version'], {
+    // pi 는 띄울 때와 같이 release 실행 파일로 묻는다 — 런처를 거치면 사람 `install/` 을 건드린다(`piLaunch.ts`).
+    let cmd: string = bin;
+    if (usesPiHome(harness)) {
+      const launch = resolvePiLaunch(env);
+      applyPiLaunchEnv(env, launch);
+      cmd = launch.command;
+    }
+    execFile(cmd, ['--version'], {
       env, timeout: 15_000,
     }, (err, stdout) => {
       const out = String(stdout ?? '').trim();

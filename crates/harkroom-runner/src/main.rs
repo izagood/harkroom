@@ -206,6 +206,8 @@ fn main() {
             let omp_home = state_dir.join("omp-home");
             // lane 러너의 codex 홈(아래 `codex_lane_home` 과 같은 자리) — 판 묻기도 사람 `~/.codex` 가 아니라 여기를 쓴다.
             let codex_home = state_dir.join("codex-provider-lane");
+            // lane 러너의 pi 루트(`pi_prep::pi_lane_root` 와 같은 자리) — 판 묻기도 사람 `~/.pi/agent` 가 아니라 여기를 쓴다.
+            let pi_home = state_dir.join("pi-provider-lane");
             deps.harness_version = Some(Box::new(move |h| {
                 harkroom_runner::lane_version::read_harness_version(
                     h,
@@ -213,6 +215,7 @@ fn main() {
                     &home,
                     Some(&omp_home),
                     Some(&codex_home),
+                    Some(&pi_home),
                 )
             }));
         }
