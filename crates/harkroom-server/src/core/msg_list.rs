@@ -563,46 +563,13 @@ async fn exists(
 }
 
 /// `GET /channels/{id}/messages`.
-pub async fn list_messages(
-    State(pool): State<Arc<PgPool>>,
-    RequireAccount(me, _): RequireAccount,
-    Path(id): Path<String>,
-    RawQuery(raw): RawQuery,
-) -> Response {
-    if !is_uuid(&id) {
-        return json_err(
-            StatusCode::BAD_REQUEST,
-            "invalid_request",
-            "id: invalid uuid",
-        );
-    }
-    let q = match parse_query(raw.as_deref()) {
-        Ok(q) => q,
-        Err(m) => return json_err(StatusCode::BAD_REQUEST, "invalid_request", m),
-    };
+/// 갈래를 골라 행을 읽고 `planProgress` 를 붙인다 — REST 목록과 MCP `message.read`(S5.3 C4a-3)가 같이 쓴다.
+async fn fetch_rows(pool: &PgPool, id: &str, q: &Query) -> Result<Vec<Row>, sqlx::Error> {
     let s = sql();
-    let pool = pool.as_ref();
-    let visible: Option<bool> = match sqlx::query_scalar(s.visible.as_str())
-        .bind(&me.id)
-        .bind(&id)
-        .fetch_optional(pool)
-        .await
-    {
-        Ok(v) => v,
-        Err(e) => return internal(e),
-    };
-    if visible == Some(false) {
-        return json_err(
-            StatusCode::FORBIDDEN,
-            "forbidden",
-            "not a member of this dm channel",
-        );
-    }
-
     let limit = q.limit.unwrap_or(200).min(500);
     let half = ((limit + 1) / 2).max(1);
     let base = |text: &'static str| {
-        sqlx::query_as::<_, (String, String, i64, Option<String>, bool)>(text).bind(id.as_str())
+        sqlx::query_as::<_, (String, String, i64, Option<String>, bool)>(text).bind(id)
     };
     let fetched = if let Some(t) = q.thread.as_deref() {
         if let Some(a) = q.around {
@@ -657,18 +624,78 @@ pub async fn list_messages(
                 is_root,
             })
             .collect(),
+        Err(e) => return Err(e),
+    };
+    // 연결은 진행률 붙이기 동안만 쥔다 — 읽기 풀은 작아서(outbox 리스너가 하나를 쥔다) 쥔 채 뒤의 hasMore 를 풀에 물으면 서로 기다린다.
+    {
+        let mut conn = pool.acquire().await?;
+        attach_plan_progress(&mut conn, &mut rows).await?;
+    }
+
+    Ok(rows)
+}
+
+/// MCP `message.read` — TS `listMessages(pool, channelId, { since, limit, threadRootId })` 의 행 JSON 글자들(가시성은 부른 쪽이 본다).
+pub(crate) async fn rows_for_mcp(
+    pool: &PgPool,
+    channel: &str,
+    since: Option<i64>,
+    limit: Option<i64>,
+    thread: Option<String>,
+) -> Result<Vec<String>, sqlx::Error> {
+    let q = Query {
+        since,
+        limit,
+        thread,
+        ..Query::default()
+    };
+    Ok(fetch_rows(pool, channel, &q)
+        .await?
+        .into_iter()
+        .map(|r| r.body)
+        .collect())
+}
+
+pub async fn list_messages(
+    State(pool): State<Arc<PgPool>>,
+    RequireAccount(me, _): RequireAccount,
+    Path(id): Path<String>,
+    RawQuery(raw): RawQuery,
+) -> Response {
+    if !is_uuid(&id) {
+        return json_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "id: invalid uuid",
+        );
+    }
+    let q = match parse_query(raw.as_deref()) {
+        Ok(q) => q,
+        Err(m) => return json_err(StatusCode::BAD_REQUEST, "invalid_request", m),
+    };
+    let s = sql();
+    let pool = pool.as_ref();
+    let visible: Option<bool> = match sqlx::query_scalar(s.visible.as_str())
+        .bind(&me.id)
+        .bind(&id)
+        .fetch_optional(pool)
+        .await
+    {
+        Ok(v) => v,
         Err(e) => return internal(e),
     };
-    // 연결은 진행률 붙이기 동안만 쥔다 — 읽기 풀은 작아서(outbox 리스너가 하나를 쥔다) 쥔 채 아래 hasMore 를 풀에 물으면 서로 기다린다.
-    {
-        let mut conn = match pool.acquire().await {
-            Ok(c) => c,
-            Err(e) => return internal(e),
-        };
-        if let Err(e) = attach_plan_progress(&mut conn, &mut rows).await {
-            return internal(e);
-        }
+    if visible == Some(false) {
+        return json_err(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "not a member of this dm channel",
+        );
     }
+
+    let rows = match fetch_rows(pool, &id, &q).await {
+        Ok(r) => r,
+        Err(e) => return internal(e),
+    };
 
     // hasMore — 스레드는 그 스레드 답글로만(since·around 면 false), 채널은 첫 행 seq 로(피드면 본문에 설 줄로).
     let has_more = if let Some(t) = q.thread.as_deref() {

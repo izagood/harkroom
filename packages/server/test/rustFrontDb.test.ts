@@ -558,6 +558,37 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(b.core, `${name} — 누가 답했나`).toBe(answeredByRust ? 'mcp' : null);
         expect(a.core, 'TS 는 이 표지를 달지 않는다').toBeNull();
       }
+      // message.read — 본문 멘션 되돌리기(계정·집합·팀·모르는 id)와 시스템 줄(relatedAccountId), 스레드·since·limit 갈래.
+      const readCh = String((await ok(app.inject({ method: 'POST', url: '/channels', headers: auth, payload: { name: 'mcp-read' } }))).id);
+      await ok(app.inject({ method: 'POST', url: `/channels/${readCh}/members`, headers: auth, payload: { accountId: agent.accountId } }));
+      const readRoot = await say('@mem @crew @squad 부름 "따옴표" \\ 끝', { ch: readCh });
+      // 모르는 계정 토큰 — 게시가 받는 길이 없어(받는 사람 행이 깨진다) 본문을 직접 덧붙인다.
+      await db.pool.query(`update message set body = body || ' <@00000000-0000-4000-8000-000000000000>' where id = $1`, [readRoot]);
+      await say('답글 @bot2', { ch: readCh, root: readRoot });
+      const sys = await say('시스템 줄', { ch: readCh });
+      await db.pool.query(`update message set kind = 'system' where id = $1`, [sys]);
+      const readSeq = (await db.pool.query<{ seq: string }>(`select seq::text from message where id = $1`, [readRoot])).rows[0]!.seq;
+      for (const [name, args, answeredByRust] of [
+        ['message.read', { channelId: readCh }, true],
+        ['message.read limit', { channelId: readCh, limit: 1 }, true],
+        ['message.read since', { channelId: readCh, since: Number(readSeq) }, true],
+        ['message.read since 0', { channelId: readCh, since: 0 }, true],
+        ['message.read 스레드', { channelId: readCh, threadRootId: readRoot }, true],
+        ['message.read 많은 글 채널', { channelId: todayId, limit: 500 }, true],
+        ['message.read 비공개·멤버 아님 → forbidden', { channelId: privId }, true],
+        ['message.read 없는 채널', { channelId: missingCh }, true],
+        ['message.read limit 0 → TS', { channelId: readCh, limit: 0 }, false],
+        ['message.read limit 501 → TS', { channelId: readCh, limit: 501 }, false],
+        ['message.read limit 소수 → TS', { channelId: readCh, limit: 1.5 }, false],
+        ['message.read since 음수 → TS', { channelId: readCh, since: -1 }, false],
+        ['message.read 스레드 uuid 아님 → TS', { channelId: readCh, threadRootId: 'x' }, false],
+      ] as const) {
+        const [a, b] = [await mcpCall(tsUrl, agent.pat, 'message.read', args), await mcpCall(`http://127.0.0.1:${port}`, agent.pat, 'message.read', args)];
+        expect({ status: b.status, type: b.type, text: b.text }, name).toEqual({ status: a.status, type: a.type, text: a.text });
+        expect(b.core, `${name} — 누가 답했나`).toBe(answeredByRust ? 'mcp' : null);
+      }
+      const readText = (await mcpCall(`http://127.0.0.1:${port}`, agent.pat, 'message.read', { channelId: readCh })).text;
+      for (const want of ['@mem', '@crew', '@squad', '@bot2', 'relatedAccountId', '<@00000000-0000-4000-8000-000000000000>']) expect(readText).toContain(want);
       // 빈 값끼리 비교해 통과하지 않게 — 문서·목록이 실제로 실렸는지.
       const docText = (await mcpCall(`http://127.0.0.1:${port}`, agent.pat, 'channel.doc', { channelId: todayId })).text;
       expect(docText).toContain('문서 본문');
