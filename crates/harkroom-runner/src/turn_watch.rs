@@ -31,6 +31,8 @@ pub struct WatchState {
     pub thread_unreadable: bool,
     /// 이 시도의 PTY 손잡이 — 띄운 순간 sink 가 적는다. SIGTERM·Enter 는 이것으로만([`terminate_on_watch`]·[`write_on_watch`]).
     controls: Option<PtyControls>,
+    /// 화면 끝 감시(정본 `idleWatch`) — TUI 이고 어댑터에 `screen.busy` 가 있는 하네스만([`WatchState::arm_screen_idle`]).
+    idle: Option<harkroom_screen::ScreenIdleWatch>,
 }
 
 impl std::fmt::Debug for WatchState {
@@ -39,11 +41,46 @@ impl std::fmt::Debug for WatchState {
             .field("end", &self.end)
             .field("screen_len", &self.screen.len())
             .field("controls", &self.controls.is_some())
+            .field("screen_idle", &self.idle.is_some())
             .finish()
     }
 }
 
 impl WatchState {
+    /// 화면 끝 감시를 건다(정본 `usesTui ? screenIdleFactsFor(h) : null`). 이미 걸려 있으면 그대로 둔다.
+    pub fn arm_screen_idle(&mut self, facts: &'static harkroom_screen::ScreenFacts) {
+        if self.idle.is_none() {
+            self.idle = Some(harkroom_screen::ScreenIdleWatch::new(facts));
+        }
+    }
+    /// 일하는 중을 본 뒤 입력창이 `SCREEN_IDLE_END_MS` 이어졌는가. 감시가 없으면 `None`(정본 `idleWatch === null`).
+    pub fn screen_idle_ended(&self, now_ms: i64) -> Option<bool> {
+        self.idle.as_ref().map(|w| {
+            w.ended(
+                u64::try_from(now_ms).unwrap_or(0),
+                harkroom_screen::SCREEN_IDLE_END_MS,
+            )
+        })
+    }
+    /// 끝난 화면에서 답으로 보이는 줄(정본 `screenAnswerLines(...).join('\n')`). 판정 재료 — 글로 나갈 때는 침묵 통지의 가림을 지난다.
+    pub fn screen_answer(&self, cwd: Option<&str>) -> Option<String> {
+        let w = self.idle.as_ref()?;
+        let lines = harkroom_screen::screen_answer_lines(
+            &w.text(),
+            w.facts(),
+            w.busy_text(),
+            cwd,
+            harkroom_screen::SCREEN_ANSWER_MAX_LINES,
+        );
+        let joined = lines.join("\n");
+        (!joined.is_empty()).then_some(joined)
+    }
+    /// 재촉을 넣었다 — 일하는 중을 다시 본 뒤에야 끝을 말한다(정본 `idleWatch?.rearm()`).
+    pub fn rearm_screen_idle(&mut self) {
+        if let Some(w) = self.idle.as_mut() {
+            w.rearm();
+        }
+    }
     /// 정지 판정용 화면 꼬리(ANSI 걷은 글). **판정 재료로만** 넘긴다 — 글로 나가는 길은 판정 함수의 가림
     /// (`stall_screen_line`)을 지난다.
     pub fn screen_text(&self) -> String {
@@ -60,6 +97,11 @@ impl WatchState {
 
 /// 공유 감시 자리.
 pub type Watch = Arc<Mutex<WatchState>>;
+
+/// 감시 자리 잠금(독이 든 잠금도 연다) — 탐침 IO 가 화면 감시를 읽을 때 쓴다.
+pub fn lock_watch(w: &Watch) -> MutexGuard<'_, WatchState> {
+    lock(w)
+}
 
 fn lock(w: &Watch) -> MutexGuard<'_, WatchState> {
     w.lock().unwrap_or_else(|e| e.into_inner())
@@ -141,7 +183,11 @@ impl<S: PtyTurnSink> PtyTurnSink for WatchSink<'_, S> {
     fn on_output(&mut self, frame: &[u8]) {
         {
             let mut w = lock(&self.watch);
-            w.end.last_data_at_ms = (self.now_ms)();
+            let now = (self.now_ms)();
+            w.end.last_data_at_ms = now;
+            if let Some(idle) = w.idle.as_mut() {
+                idle.feed(frame, u64::try_from(now).unwrap_or(0));
+            }
             w.screen.extend_from_slice(frame);
             let over = w.screen.len().saturating_sub(SCREEN_TAIL_MAX);
             if over > 0 {
@@ -155,6 +201,12 @@ impl<S: PtyTurnSink> PtyTurnSink for WatchSink<'_, S> {
     }
     fn on_attention(&mut self, screen: &str, kind: AttentionKind) {
         self.inner.on_attention(screen, kind)
+    }
+    fn on_resize(&mut self, cols: u16, rows: u16) {
+        if let Some(idle) = lock(&self.watch).idle.as_mut() {
+            idle.resize(cols, rows);
+        }
+        self.inner.on_resize(cols, rows)
     }
     fn on_turn_gate(&mut self, screen: &str) {
         self.inner.on_turn_gate(screen)

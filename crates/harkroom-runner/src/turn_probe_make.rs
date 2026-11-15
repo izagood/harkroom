@@ -257,6 +257,18 @@ pub type AttemptProbeIo<'a, L> = TurnProbeIo<
     TurnProbeRest<WatchNudgeIo<'a>>,
 >;
 
+/// 정본 `usesTui ? screenIdleFactsFor(h) : null` — TUI 이고 어댑터에 `screen.busy` 가 있는 하네스만 화면 끝 감시를 건다.
+fn arm_screen_idle(watch: &Watch, h: AgentHarness) -> Option<Watch> {
+    if !crate::adapter::uses_tui_for_mention(h).unwrap_or(false) {
+        return None;
+    }
+    crate::adapter::screen_idle_facts_for(h)?;
+    let facts = harkroom_screen::facts_for(harkroom_screen::Harness::from_name(h.as_str())?);
+    facts.busy.as_ref()?;
+    crate::turn_watch::lock_watch(watch).arm_screen_idle(facts);
+    Some(watch.clone())
+}
+
 fn records_of<L: RunnerLink>(c: &ProbeLoopConfig<'_, L>, ctx: &LoopCtx) -> AttemptRecords {
     AttemptRecords {
         harness: c.harness,
@@ -395,7 +407,14 @@ pub fn probe_make<'a, L: RunnerLink + 'a>(
                 opencode_quiet_ms: OPENCODE_QUIET_MS,
                 lane_nudged_at_ms: 0,
                 cfg: c.end_cfg,
+                // 기록 확인 읽개(`read_harness_turn_end`)는 작업 폴더·codex 홈을 이 설정에 실은 뒤 잇는다 — 그전에는
+                // 정본의 「못 읽으면 화면을 따른다」 길이다.
                 read_recorded_end: Box::new(|_since| None),
+                screen_watch: arm_screen_idle(watch, c.harness),
+                workspace_dir: c
+                    .opencode
+                    .as_ref()
+                    .map(|q| q.cwd.to_string_lossy().into_owned()),
                 terminate: terminate_on_watch(watch),
                 rest,
             };

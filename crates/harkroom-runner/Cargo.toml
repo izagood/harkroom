@@ -16,6 +16,8 @@ path = "src/main.rs"
 # 오퍼레이터와 같이 std::thread 구조다(tokio 없음).
 [dependencies]
 harkroom-proto = { path = "../harkroom-proto" }
+# 화면 끝 감시(`ScreenIdleWatch`) — TS `screenIdle.ts` 의 Rust 판.
+harkroom-screen = { path = "../harkroom-screen" }
 # claude 계정 풀 해석(L3c-3a) — 오퍼레이터의 러너 고르기와 같은 함수. 외부 의존은 serde_json 하나(이 lock 에 이미 있는 판).
 harkroom-accounts = { path = "../harkroom-accounts" }
 serde = { version = "=1.0.228", features = ["derive"] }

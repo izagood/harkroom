@@ -737,6 +737,8 @@ pub trait PtyTurnSink: PromptHooks {
     fn on_injected(&mut self) {}
     fn on_attention(&mut self, _screen: &str, _kind: AttentionKind) {}
     fn on_turn_gate(&mut self, _screen: &str) {}
+    /// 사람이 붙어 창 크기를 바꿨다 — 화면 판정도 같은 크기로 그린다(정본 `bindInput` 의 `resize`, security #1581 n2).
+    fn on_resize(&mut self, _cols: u16, _rows: u16) {}
 }
 
 enum Event {
@@ -911,6 +913,7 @@ pub fn run_pty_turn<S: PtyTurnSink>(
                 if let Some(rec) = recorder.as_mut() {
                     rec.resize(c, r);
                 }
+                sink.on_resize(c, r);
             }
             Some(Event::Mark(v)) => {
                 if exited.is_none()
