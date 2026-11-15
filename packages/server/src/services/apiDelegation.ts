@@ -215,17 +215,22 @@ export async function revokeDelegation(pool: Pool, a: { agentId: string; grantId
   return { ok: true };
 }
 
-/** 에이전트가 보는 자기 api.call 줄과 자기가 다시 준 줄. 값·키는 없다. */
-export async function listDelegations(pool: Pool, agentId: string) {
-  const mine = (await pool.query(
-    `select g.id, c.name as connector, g.limits, g.delegate_depth as "delegateDepth", g.expires_at as "expiresAt",
+/**
+ * `listDelegations` 의 두 문장 — Rust 코어(MCP `grant.list`, S5.3 C4b)가 `golden/sql_fragments.json` 으로 받아 그대로 쓴다.
+ * 고치면 `test/rustSqlFragments.test.ts` 가 골든 갱신을 요구한다. `::uuid` 는 Rust(sqlx 가 문자열을 text 로 보낸다)를 위한 것이다.
+ */
+export const LIST_DELEGATIONS_MINE_SQL = `select g.id, c.name as connector, g.limits, g.delegate_depth as "delegateDepth", g.expires_at as "expiresAt",
             g.write_needs_human_cause as "writeNeedsHumanCause", g.suspend_reason as "suspendReason", g.parent_grant_id is not null as delegated
        from account_grant g join api_connector c on g.scope = 'connector:' || c.id::text
-      where g.account_id = $1 and g.capability = 'api.call' order by c.name`, [agentId])).rows;
-  const given = (await pool.query(
-    `select g.id, a.handle as "to", c.name as connector, g.limits, g.delegate_depth as "delegateDepth", g.expires_at as "expiresAt",
+      where g.account_id = $1::uuid and g.capability = 'api.call' order by c.name`;
+export const LIST_DELEGATIONS_GIVEN_SQL = `select g.id, a.handle as "to", c.name as connector, g.limits, g.delegate_depth as "delegateDepth", g.expires_at as "expiresAt",
             g.suspend_reason as "suspendReason"
        from account_grant g join api_connector c on g.scope = 'connector:' || c.id::text join account a on a.id = g.account_id
-      where g.granted_by = $1 and g.parent_grant_id is not null order by c.name, a.handle`, [agentId])).rows;
+      where g.granted_by = $1::uuid and g.parent_grant_id is not null order by c.name, a.handle`;
+
+/** 에이전트가 보는 자기 api.call 줄과 자기가 다시 준 줄. 값·키는 없다. */
+export async function listDelegations(pool: Pool, agentId: string) {
+  const mine = (await pool.query(LIST_DELEGATIONS_MINE_SQL, [agentId])).rows;
+  const given = (await pool.query(LIST_DELEGATIONS_GIVEN_SQL, [agentId])).rows;
   return { mine, given };
 }

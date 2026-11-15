@@ -1507,6 +1507,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         ['automation.list 자동화 글', 'automation.list', {}, true, { 'x-harkroom-cause': autoPost }],
         ['automation.list 에이전트 글', 'automation.list', {}, true, { 'x-harkroom-cause': agentCause }],
         ['automation.list 배열 인자 → TS', 'automation.list', [], false, { 'x-harkroom-cause': cause }],
+        // `inputSchema: {}` 라 인자가 없으면 SDK 검증 오류(C4a-6a 에서 Rust 가 답하던 것을 C4b 에서 고침).
+        ['automation.list 인자 없음 → TS', 'automation.list', undefined, false, { 'x-harkroom-cause': cause }],
       ] as const) {
         const [a, b] = [
           await mcpCall(tsUrl, agent.pat, tool, args, 1, extra as Record<string, string>),
@@ -1522,6 +1524,45 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       const auText = (await mcpCall(rsUrl4, agent.pat, 'automation.list', {}, 1, { 'x-harkroom-cause': cause })).text;
       for (const want of ['아침 정리', '멈춘 것', 'too_many_failures', 'failed', '…', 'Asia/Seoul']) expect(auText).toContain(want);
       for (const gone of ['승인 전', '지운 것']) expect(auText).not.toContain(gone);
+
+      // S5.3 C4b — grant.list(위임 줄 mine·given + 명령 허용 줄 toolRules·hiddenToolRules). 규칙이 있는 에이전트(agent)와 없는 에이전트(bot2,
+      // 다시 받은 위임 줄 하나만)를 둘 다 대조한다. active 는 Rust 가 harkroom_proto 의 판정(TS 골든 고정)으로 낸다.
+      const conn = (await db.pool.query<{ id: string }>(
+        `insert into api_connector (name, owner_account_id, base_url, auth_kind, methods) values ('grant-conn', $1, 'https://api.example.com', 'none', '{GET,POST}') returning id`,
+        [owner])).rows[0]!.id;
+      const parentGrant = (await db.pool.query<{ id: string }>(
+        `insert into account_grant (account_id, capability, scope, granted_by, limits, delegate_depth, expires_at)
+         values ($1, 'api.call', $2, $3, '{"methods": ["GET"], "pathPrefix": "/api/"}', 1, now() + interval '20 days') returning id`,
+        [agent.accountId, `connector:${conn}`, owner])).rows[0]!.id;
+      await db.pool.query(
+        `insert into account_grant (account_id, capability, scope, granted_by, limits, parent_grant_id)
+         values ($1, 'api.call', $2, $3, '{"methods": ["GET"], "pathPrefix": "/api/x"}', $4)`,
+        [bot2.accountId, `connector:${conn}`, agent.accountId, parentGrant]);
+      const allow = (ch: string, rule: string, expires: string | null = null) => db.pool.query(
+        `insert into account_grant (account_id, capability, scope, granted_by, expires_at) values ($1, 'tool.allow', $2, $3, $4::timestamptz)`,
+        [agent.accountId, `tool:${ch}:${rule}`, owner, expires]);
+      await allow(todayId, 'Bash(kubectl get pods:*)', new Date(Date.now() + 7 * 86400_000).toISOString());
+      await allow(todayId, 'Bash(kubectl  get  pods)');
+      await allow(readCh, 'Bash(*)');
+      await allow(readCh, 'mcp__other__tool');
+      await allow(String(dm.id), 'Bash(ls -la)');
+      await allow(todayId, 'Bash(git status)', new Date(Date.now() - 86400_000).toISOString());
+      for (const [name, token, args, answeredByRust] of [
+        ['grant.list 규칙 있음', agent.pat, {}, true],
+        ['grant.list 인자 없음 → TS(검증 오류)', agent.pat, undefined, false],
+        ['grant.list 규칙 없음(다시 받은 위임만)', bot2.pat, {}, true],
+        ['grant.list 배열 인자 → TS', agent.pat, [], false],
+      ] as const) {
+        const [a, b] = [await mcpCall(tsUrl, token, 'grant.list', args), await mcpCall(rsUrl4, token, 'grant.list', args)];
+        expect({ status: b.status, type: b.type, text: b.text }, name).toEqual({ status: a.status, type: a.type, text: a.text });
+        expect(b.core, `${name} — 누가 답했나`).toBe(answeredByRust ? 'mcp' : null);
+      }
+      // 빈 값끼리 비교해 통과하지 않게 — 줄이 실렸고, active 가 참·거짓 둘 다 나오며, 못 보는 채널 규칙은 개수만.
+      const glText = (await mcpCall(rsUrl4, agent.pat, 'grant.list', {})).text;
+      for (const want of ['grant-conn', 'pathPrefix', 'kubectl get pods:*', 'active\\":true', 'active\\":false', 'hiddenToolRules\\":1', 'mcp__other__tool']) expect(glText).toContain(want);
+      for (const gone of ['ls -la', 'git status']) expect(glText).not.toContain(gone);
+      const gl2 = (await mcpCall(rsUrl4, bot2.pat, 'grant.list', {})).text;
+      for (const want of ['toolRules\\":[]', 'hiddenToolRules\\":0', 'pathPrefix']) expect(gl2).toContain(want);
 
       // S5.3 C4a-6b — message.search. 본문 멘션 되돌리기·시스템 줄·스코프(채널·스레드)·거르기(보낸 사람·첨부)·정렬·쪽(51개 → hasMore,
       // 천장 1000)·못 보는 채널(결과에서 빠짐 · 범위로 주면 forbidden). `@`·기간·틀린 꼴은 TS 로 넘긴다.

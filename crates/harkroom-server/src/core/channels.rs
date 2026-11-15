@@ -31,7 +31,7 @@ pub(crate) fn frag(k: &str) -> &'static str {
 
 /// TS 문장을 감싸 「행 배열 JSON 텍스트」 하나를 내는 문장. `ts` 에 적은 칸은 JS `toISOString()` 꼴로 바꾼다(null 은 null).
 /// 행 순서는 TS 문장의 `order by` 그대로(정렬된 부분 질의를 `json_agg` 로 모으고, 펼칠 때 `with ordinality` 순서를 지킨다).
-fn rows_sql(golden_sql: &str, ts: &[&str]) -> String {
+pub(crate) fn rows_sql(golden_sql: &str, ts: &[&str]) -> String {
     let is_ts = if ts.is_empty() {
         "false".to_string()
     } else {

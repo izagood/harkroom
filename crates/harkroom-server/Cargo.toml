@@ -20,6 +20,8 @@ getrandom = "=0.4.3"
 hex = "=0.4.3"
 # 오퍼레이터 이름 정리(C2a) — shared `normalizeOperatorLabel` 의 유니코드 속성(\p{Extended_Pictographic} 등).
 regex = { version = "=1.13.1", default-features = false, features = ["std", "unicode-bool", "unicode-gencat", "unicode-perl"] }
+# MCP `grant.list`(S5.3 C4b)의 명령 허용 규칙 판정 — 서버·hook·오퍼레이터가 같은 판정(TS 골든 고정)을 쓴다. 사본을 두지 않는다.
+harkroom-proto = { path = "../harkroom-proto" }
 http-body-util = "=0.1.5"
 hyper = { version = "=1.12.0", features = ["client", "http1"] }
 hyper-util = { version = "=0.1.21", features = ["client-legacy", "http1", "tokio"] }

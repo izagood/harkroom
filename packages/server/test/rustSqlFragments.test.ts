@@ -25,6 +25,8 @@ import { HAS_OLDER_SQL, LIST_MESSAGES_SQL, MESSAGE_BY_ID_SQL, READ_LIST_ROW_SQL,
 import { CHILD_FACTS_AUDIENCE_SQL, PLAN_PROGRESS_PLANS_SQL } from '../src/services/threadPlan.js';
 import { displayBodySql } from '../src/services/systemBody.js';
 import { BG_AGENT_ON_SQL, BG_DAILY_LOCK_SQL, BG_ENQUEUE_SQL, BG_EXISTS_SQL, BG_PAUSED_SQL, CLEANUP_CANDIDATES_SQL, DISTILL_CANDIDATES_SQL, ORGANIZE_CANDIDATES_SQL } from '../src/services/bgJobs.js';
+import { LIST_DELEGATIONS_GIVEN_SQL, LIST_DELEGATIONS_MINE_SQL } from '../src/services/apiDelegation.js';
+import { LIST_TOOL_RULES_SQL } from '../src/services/permissionRequests.js';
 
 const GOLDEN = fileURLToPath(new URL('../../../crates/harkroom-server/golden/sql_fragments.json', import.meta.url));
 
@@ -40,6 +42,10 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     bg_distill_candidates: DISTILL_CANDIDATES_SQL,
     bg_cleanup_candidates: CLEANUP_CANDIDATES_SQL,
     bg_organize_candidates: ORGANIZE_CANDIDATES_SQL,
+    // MCP `grant.list`(`core/mcp/reads4.rs`, S5.3 C4b) — 위임 둘·명령 허용 하나, 완성 문장째.
+    list_delegations_mine: LIST_DELEGATIONS_MINE_SQL,
+    list_delegations_given: LIST_DELEGATIONS_GIVEN_SQL,
+    list_tool_rules: LIST_TOOL_RULES_SQL,
     display_body_m: displayBodySql('m'),
     // 작업 항목(`workItems.ts::actorSeesItemSql`) — 주인이 아닌 쪽이 볼 수 있는 스레드인지, 별칭 ac·두째 인자.
     channel_visible_ac_p2uuid: channelVisibleSql('ac', '$2::uuid'),

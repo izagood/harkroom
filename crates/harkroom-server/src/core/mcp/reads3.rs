@@ -2,7 +2,7 @@
 //! `rustFrontDb.test.ts` 의 MCP 줄), zod 가 그대로 받는 인자만, DB 오류·모르는 꼴은 TS 로.
 use super::reads2::{js_truthy, jsonb_as_js};
 use super::respond::text_result;
-use super::tools::{err, no_input, opt_uuid};
+use super::tools::{err, opt_uuid};
 use crate::auth::Account;
 use serde_json::Value;
 use sqlx::PgPool;
@@ -182,8 +182,8 @@ async fn automation_list(
     args: &Value,
     cause: Option<&str>,
 ) -> Option<String> {
-    // `inputSchema: {}` — 빈 모양의 객체라 SDK 는 인자 객체를 받는다. 객체·null 이 아니면 TS 로.
-    if !no_input(args) {
+    // `inputSchema: {}` — 빈 모양이라도 스키마가 있으면 SDK 는 `arguments` 가 객체여야 받는다. 없으면(null) 검증 오류라 TS 로.
+    if !args.is_object() {
         return None;
     }
     let refuse = |code: &str| Some(err(code, refusal(code)?));
