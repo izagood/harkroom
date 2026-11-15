@@ -1627,6 +1627,18 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       expect(await rowsOf(rsMsgW), 'Rust 행 = TS 행').toEqual(await rowsOf(tsMsgW));
       expect(await rowsOf(rsMsgW)).toEqual([{ emoji: '🫡', source: 'user' }]);
 
+      // W1 — 쓰기를 시작한 뒤의 오류는 TS 로 넘기지 않는다. 쓰기 역할에서 insert 권한을 잠깐 거두면 insert 가 실패한다 →
+      // Rust 가 `internal` 로 답하고(core=mcp), TS 가 대신 쓰지 않았으니 행이 없어야 한다.
+      const w1Msg = await say('W1 쓰기 실패', { ch: readCh });
+      await db.pool.query(`revoke insert on message_reaction from ${rw}`);
+      try {
+        const w1 = await mcpCall(rsUrl4, agent.pat, 'message.react', { channelId: readCh, messageId: w1Msg, emoji: '🧪' });
+        expect(w1.core, 'W1 — Rust 가 답한다').toBe('mcp');
+        expect(w1.text).toContain('\\"code\\":\\"internal\\"');
+        expect((await db.pool.query(`select 1 from message_reaction where message_id = $1`, [w1Msg])).rowCount, 'TS 가 대신 쓰지 않았다').toBe(0);
+      } finally {
+        await db.pool.query(`grant insert on message_reaction to ${rw}`);
+      }
       // Rust 만 쓴 줄 — DB 에 남고 이벤트(outbox)가 TS 와 같은 모양으로 나간다.
       const rustOnly = await say('Rust 만 리액션', { ch: readCh });
       const outboxBefore = (await db.pool.query<{ n: number }>(`select count(*)::int as n from event_outbox`)).rows[0]!.n;
