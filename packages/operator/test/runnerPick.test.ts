@@ -20,8 +20,15 @@ describe('pickRunner', () => {
     }
     expect(wantsRust({ runner: 'node' })).toBe(false);
   });
-  it('s9①: runner 칸이 없으면(항목이 없거나 모르는 값이어도) 기본 rust — 허용 목록 하네스 + 파일 있음', () => {
-    for (const local of [undefined, {}, { workingDir: '/w' }, { runner: 'Rust' as never }]) {
+  it('s9①: 모르는 runner 값(오타)은 node — 기본 rust 를 켜지 않는다(security #2166)', () => {
+    for (const v of ['Rust', 'rs', '', 1]) {
+      const local = { runner: v as never };
+      expect(wantsRust(local)).toBe(false);
+      expect(pickRunner(local, true, 'none', 'claude-code')).toEqual({ kind: 'node' });
+    }
+  });
+  it('s9①: runner 칸이 없으면(항목이 없어도) 기본 rust — 허용 목록 하네스 + 파일 있음', () => {
+    for (const local of [undefined, {}, { workingDir: '/w' }]) {
       expect(wantsRust(local)).toBe(true);
       for (const h of RUST_RUNNER_HARNESSES) expect(pickRunner(local, true, 'none', h)).toEqual({ kind: 'rust' });
       expect(pickRunner(local, true, 'pool', 'claude-code')).toEqual({ kind: 'rust' });

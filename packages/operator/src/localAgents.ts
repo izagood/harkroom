@@ -8,7 +8,7 @@
  */
 import type { OperatorAgentsListResult, OperatorLocalAgent, OperatorRegisterResult } from '@harkroom/shared/daemonProtocol';
 import { register as claimAndSave } from './cli.js';
-import { communityKey, knownRunner, readConfig, updateConfig, type LocalAgentConfig } from './config.js';
+import { communityKey, runnerKindOf, readConfig, updateConfig, type LocalAgentConfig } from './config.js';
 import type { OperatorSecrets } from './secrets.js';
 import type { ProviderLaneConfig } from '@harkroom/shared/providerLane';
 
@@ -72,7 +72,8 @@ export function createLocalAgentsPort(deps: {
         // lane 은 이 길로 바뀌지 않는다 — 옛 앱이 작업 디렉터리만 고쳐도 lane 이 지워지지 않게 있던 값을 그대로 옮긴다.
         const lane = section.agents[agentId]?.providerLane;
         // runner 도 이 길로 바뀌지 않는다(B4-5a) — 앱이 작업 디렉터리를 고쳐도 손으로 켠 Rust 러너가 꺼지지 않게 옮긴다.
-        const runner = knownRunner(section.agents[agentId]);
+        // 모르는 값은 'node' 로 옮겨 적는다 — 지우면 기본 rust 가 켜진다(security #2166).
+        const runner = runnerKindOf(section.agents[agentId]);
         section.agents[agentId] = {
           ...(cfg.workingDir ? { workingDir: cfg.workingDir } : {}),
           ...(cfg.claudePool ? { claudePool: cfg.claudePool } : {}),

@@ -128,12 +128,13 @@ describe('runnerKindOf — 에이전트별 러너 구현(B4-5a)', () => {
     expect(runnerKindOf({ runner: 'rust' })).toBe('rust');
     expect(runnerKindOf({ runner: 'node' })).toBe('node');
   });
-  it('항목·칸이 없거나 모르는 값이면 안 적음(undefined = 기본)이다', () => {
+  it('항목·칸이 없거나 null 이면 안 적음(undefined = 기본), 모르는 값은 node(security #2166)', () => {
     expect(runnerKindOf(undefined)).toBeUndefined();
     expect(runnerKindOf({})).toBeUndefined();
     expect(runnerKindOf({ workingDir: '/w' })).toBeUndefined();
-    for (const v of ['Rust', 'RUST', ' rust', 'rs', '', 1, true, null, ['rust'], { kind: 'rust' }]) {
-      expect(runnerKindOf({ runner: v } as unknown as LocalAgentConfig)).toBeUndefined();
+    expect(runnerKindOf({ runner: null } as unknown as LocalAgentConfig)).toBeUndefined();
+    for (const v of ['Rust', 'RUST', ' rust', 'rs', '', 1, true, ['rust'], { kind: 'rust' }]) {
+      expect(runnerKindOf({ runner: v } as unknown as LocalAgentConfig)).toBe('node');
     }
   });
   it('파일에서 읽은 그대로 판정한다', async () => {
@@ -141,7 +142,7 @@ describe('runnerKindOf — 에이전트별 러너 구현(B4-5a)', () => {
     const path = join(dir, 'operator.json');
     await writeFile(path, JSON.stringify({ communities: { 'https://example.com': { agents: { a: { runner: 'rust' }, b: { runner: 'Rust' }, c: {} } } } }));
     const agents = (await readConfig(path)).communities['https://example.com']!.agents;
-    expect([runnerKindOf(agents.a), runnerKindOf(agents.b), runnerKindOf(agents.c), runnerKindOf(agents.d)]).toEqual(['rust', undefined, undefined, undefined]);
+    expect([runnerKindOf(agents.a), runnerKindOf(agents.b), runnerKindOf(agents.c), runnerKindOf(agents.d)]).toEqual(['rust', 'node', undefined, undefined]);
   });
 });
 

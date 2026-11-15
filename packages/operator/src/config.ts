@@ -43,7 +43,14 @@ export type RunnerKind = 'node' | 'rust';
  * `undefined`(안 적음 = 기본). 기본은 s9① 부터 rust 이고(`runnerPick.ts`), 되돌림은 정확한 `"node"` 뿐이다.
  */
 export function runnerKindOf(entry: LocalAgentConfig | undefined): RunnerKind | undefined {
-  return knownRunner(entry);
+  // 칸이 없거나 null 이면 기본(rust). 정확히 "rust"·"node" 는 그대로. 그 밖에 무엇이든 적혀 있으면(오타 "Node"·"rs"·숫자)
+  // 기본을 끄려던 뜻으로 보고 node — 오타가 새 길을 켜지 않게(B4-5a, security #2166).
+  const v = (entry as { runner?: unknown } | undefined)?.runner;
+  if (v === undefined || v === null) return undefined;
+  const known = knownRunner(entry);
+  if (known) return known;
+  console.log('[operator] runner 칸의 값을 모른다 — node 러너로 띄운다("rust"·"node" 만 안다)');
+  return 'node';
 }
 
 /** 파일에 이미 적힌 `runner` 중 옮겨 적을 값 — 아는 두 값만 옮기고 모르는 값은 버린다(버리면 `node` 와 같다). */
