@@ -2,11 +2,13 @@
 //!
 //! | 로컬 설정·에이전트 | Rust 러너 파일 | 결과 |
 //! |---|---|---|
-//! | `runner` 가 `"rust"` 가 아님(없음·모르는 값) | — | node |
-//! | `"rust"` + 하네스가 허용 목록(`RUST_RUNNER_HARNESSES` = claude-code·codex·opencode·kilo·pi·omp) 밖 | — | node, `rust_harness_unsupported` — 모르는 이름도 node |
-//! | `"rust"` + 러너의 풀 해석을 못 한다(`pools.json` 깨짐·뿌리 못 읽음 등) | — | node, `rust_account_pool_unreadable` |
-//! | `"rust"` | 오퍼레이터 옆에 없음 | node, `rust_runner_missing` |
-//! | `"rust"`(계정 풀·전용 제공사 경로 포함) | 있음 | rust |
+//! | `runner` 가 정확히 `"node"` | — | node(되돌림, 이유 없음) |
+//! | `"rust"`·없음(모르는 값 포함) + 하네스가 허용 목록(`RUST_RUNNER_HARNESSES` = claude-code·codex·opencode·kilo·pi·omp) 밖 | — | node, `rust_harness_unsupported` — 모르는 이름도 node |
+//! | `"rust"`·없음 + 러너의 풀 해석을 못 한다(`pools.json` 깨짐·뿌리 못 읽음 등) | — | node, `rust_account_pool_unreadable` |
+//! | `"rust"`·없음 | 오퍼레이터 옆에 없음 | node, `rust_runner_missing` |
+//! | `"rust"`·없음(계정 풀·전용 제공사 경로 포함) | 있음 | rust |
+//!
+//! s9①: 기본은 rust 다 — `runner` 칸이 없는 에이전트도 위 조건을 모두 넘으면 rust 로 돈다. `runner: "node"` 로 되돌린다.
 //!
 //! 계정 풀·lane 에이전트도 이제 rust 다(L3c-3e): Rust 러너가 러너와 같은 풀 해석(`harkroom-accounts`)으로 계정 폴더를 고르고
 //! (L3c-3b), lane 러너는 그 에이전트 전용 폴더와 턴마다 받은 lane env 로만 돈다(L3c-3d). 「못 읽음은 node」는 그대로다.
@@ -37,7 +39,7 @@ impl From<harkroom_accounts::ClaudeAccountUse> for AccountUse {
 pub const RUST_RUNNER_HARNESSES: [&str; 6] =
     ["claude-code", "codex", "opencode", "kilo", "pi", "omp"];
 
-/// `rust` 를 청했는데 node 로 떨어뜨린 이유(TS `RunnerFallback`).
+/// rust 대상(청함·기본)인데 node 로 떨어뜨린 이유(TS `RunnerFallback`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunnerFallback {
     HarnessUnsupported,
@@ -75,9 +77,9 @@ impl RunnerPick {
     }
 }
 
-/// `rust` 를 청했는가 — 이때만 파일·풀 해석을 본다.
+/// rust 대상인가 — `runner: "node"` 로 되돌리지 않았으면 그렇다(s9① 기본 rust). 이때만 파일·풀 해석을 본다.
 pub fn wants_rust(local: Option<&LocalAgent>) -> bool {
-    local.is_some_and(|l| l.runner == RunnerKind::Rust)
+    local.and_then(|l| l.runner) != Some(RunnerKind::Node)
 }
 
 /// TS `pickRunner`. `harness` 는 서버 정의의 하네스 이름이다.
@@ -112,26 +114,63 @@ mod tests {
 
     fn rust() -> LocalAgent {
         LocalAgent {
-            runner: RunnerKind::Rust,
+            runner: Some(RunnerKind::Rust),
             ..Default::default()
         }
     }
 
+    fn node() -> LocalAgent {
+        LocalAgent {
+            runner: Some(RunnerKind::Node),
+            ..Default::default()
+        }
+    }
+
+    /// 명시한 `"node"` 는 파일·풀·하네스와 상관없이 node, 이유 없음.
     #[test]
-    fn not_rust_is_node_without_reason() {
-        assert_eq!(
-            pick_runner(None, true, AccountUse::None, "claude-code"),
-            RunnerPick::NODE
-        );
-        assert_eq!(
-            pick_runner(
-                Some(&LocalAgent::default()),
-                true,
-                AccountUse::None,
-                "claude-code"
-            ),
-            RunnerPick::NODE
-        );
+    fn explicit_node_is_node_without_reason() {
+        for h in ["claude-code", "codex", "gemini"] {
+            for u in [AccountUse::None, AccountUse::Pool, AccountUse::Unreadable] {
+                assert_eq!(pick_runner(Some(&node()), true, u, h), RunnerPick::NODE);
+            }
+        }
+        assert!(!wants_rust(Some(&node())));
+    }
+
+    /// s9①: `runner` 칸이 없으면(로컬 항목 자체가 없어도) 기본 rust — 조건을 못 넘으면 같은 이유로 node.
+    #[test]
+    fn absent_runner_defaults_to_rust() {
+        let absent = LocalAgent::default();
+        assert_eq!(absent.runner, None);
+        assert!(wants_rust(Some(&absent)) && wants_rust(None));
+        for local in [Some(&absent), None] {
+            for h in RUST_RUNNER_HARNESSES {
+                assert_eq!(
+                    pick_runner(local, true, AccountUse::None, h),
+                    RunnerPick {
+                        kind: RunnerKind::Rust,
+                        fallback: None
+                    },
+                    "{h}"
+                );
+            }
+            assert_eq!(
+                pick_runner(local, true, AccountUse::Pool, "claude-code").kind,
+                RunnerKind::Rust
+            );
+            assert_eq!(
+                pick_runner(local, false, AccountUse::None, "claude-code").fallback,
+                Some(RunnerFallback::RunnerMissing)
+            );
+            assert_eq!(
+                pick_runner(local, true, AccountUse::None, "gemini").fallback,
+                Some(RunnerFallback::HarnessUnsupported)
+            );
+            assert_eq!(
+                pick_runner(local, true, AccountUse::Unreadable, "claude-code").fallback,
+                Some(RunnerFallback::AccountPoolUnreadable)
+            );
+        }
     }
 
     /// L3c-3e: 계정 풀·lane 에이전트도 rust 다.

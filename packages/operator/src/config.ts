@@ -28,22 +28,22 @@ export interface LocalAgentConfig {
    */
   providerLane?: ProviderLaneConfig;
   /**
-   * 이 에이전트의 턴을 돌릴 러너 구현(B4-5a). `"rust"` 일 때만 Rust 러너이고, **없거나 그 밖의 값이면 Node 러너**다
-   * (`runnerKindOf`). 손으로 적는 칸이다 — `operatorAgentSet` 은 이 값을 바꾸지 않고 있던 값을 그대로 옮긴다.
-   * 오퍼레이터가 이 칸을 보고 러너를 고르는 것은 B4-5c 다. 그 전까지는 적혀 있어도 모든 턴이 Node 러너로 돈다.
+   * 이 에이전트의 턴을 돌릴 러너 구현(B4-5a). s9① 부터 **기본 rust** 다 — 없거나 모르는 값이면 기본을 따르고(`runnerPick.ts`
+   * 의 조건을 못 넘으면 node), 정확히 `"node"` 면 Node 러너로 되돌린다(`runnerKindOf`). 손으로 적는 칸이다 —
+   * `operatorAgentSet` 은 이 값을 바꾸지 않고 있던 값을 그대로 옮긴다.
    */
   runner?: RunnerKind;
 }
 
-/** 러너 구현. 기본은 `node` 다. */
+/** 러너 구현. 칸이 없으면 기본(rust, 조건을 못 넘으면 node)을 따른다 — `runnerPick.ts`. */
 export type RunnerKind = 'node' | 'rust';
 
 /**
- * 이 에이전트 항목의 러너 구현 — `runner` 가 정확히 `"rust"` 일 때만 `rust`, 항목이 없거나 칸이 없거나 모르는 값이면 `node`.
- * 손으로 고친 파일의 오타(`"Rust"`·`"rs"`·숫자)가 새 길을 켜지 않게, 켜는 쪽만 좁게 받는다.
+ * 이 에이전트 항목에 **적힌** 러너 구현 — 정확히 `"rust"`·`"node"` 만 그 값, 항목·칸이 없거나 모르는 값(`"Rust"`·`"rs"`·숫자)이면
+ * `undefined`(안 적음 = 기본). 기본은 s9① 부터 rust 이고(`runnerPick.ts`), 되돌림은 정확한 `"node"` 뿐이다.
  */
-export function runnerKindOf(entry: LocalAgentConfig | undefined): RunnerKind {
-  return (entry as { runner?: unknown } | undefined)?.runner === 'rust' ? 'rust' : 'node';
+export function runnerKindOf(entry: LocalAgentConfig | undefined): RunnerKind | undefined {
+  return knownRunner(entry);
 }
 
 /** 파일에 이미 적힌 `runner` 중 옮겨 적을 값 — 아는 두 값만 옮기고 모르는 값은 버린다(버리면 `node` 와 같다). */

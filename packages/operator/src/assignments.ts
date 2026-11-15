@@ -15,8 +15,8 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { EX_CONFIG, type RunnerExitReason } from '@harkroom/shared';
 import type { AgentDefinition, RunnerAnnounce } from '@harkroom/shared/operatorProtocol';
 import { RUNNER_LINK_ENV } from '@harkroom/shared/runnerLink';
-import { runnerKindOf, type LocalAgentConfig } from './config.js';
-import { pickRunner, type AccountUse, type RunnerPick } from './runnerPick.js';
+import type { LocalAgentConfig } from './config.js';
+import { pickRunner, wantsRust, type AccountUse, type RunnerPick } from './runnerPick.js';
 
 export interface AssignmentDeps {
   /**
@@ -213,9 +213,8 @@ export function createAssignmentReconciler(deps: AssignmentDeps): AssignmentReco
         // 늘 '0'/'1' 로 명시하는 이유는 위 줄과 같다.
         [PROVIDER_LANE_ENV]: readProviderLaneConfig(local?.providerLane) ? '1' : '0',
       };
-      // 러너 구현(B4-5c). `rust` 를 청했어도 풀·lane 에이전트는 node 로 떨어뜨린다(`runnerPick.ts` — 다른 계정·과금으로 바뀌지 않게).
-      const wantsRust = runnerKindOf(local) === 'rust';
-      const pick = wantsRust
+      // 러너 구현(B4-5c → s9①). `runner: "node"` 가 아니면 rust 대상 — 허용 목록 밖·풀 해석 못 읽음·파일 없음이면 node(`runnerPick.ts`).
+      const pick = wantsRust(local)
         ? pickRunner(
           local,
           await (deps.rustRunnerPresent?.() ?? Promise.resolve(false)).catch(() => false),
@@ -223,7 +222,7 @@ export function createAssignmentReconciler(deps: AssignmentDeps): AssignmentReco
           definition.harness,
         )
         : pickRunner(local, false, 'none', definition.harness);
-      if (pick.fallback) deps.log(`러너: rust 를 청했지만 node 로 띄운다(${pick.fallback}): agent=${definition.handle}`);
+      if (pick.fallback) deps.log(`러너: rust 대상이지만 node 로 띄운다(${pick.fallback}): agent=${definition.handle}`);
       let result: Awaited<ReturnType<AssignmentDeps['spawn']>>;
       try {
         result = await deps.spawn(agentId, env, runnerId, pick);

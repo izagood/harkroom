@@ -492,13 +492,10 @@ impl RunnerKind {
     }
 }
 
-/// TS `runnerKindOf` — 에이전트 항목의 `runner` 가 정확히 `"rust"` 일 때만 `Rust`, 항목·칸이 없거나 모르는 값이면 `Node`.
-/// 손으로 고친 파일의 오타가 새 길을 켜지 않게 켜는 쪽만 좁게 받는다. 오퍼레이터가 이것으로 러너를 고르는 것은 B4-5c 다.
-pub fn runner_kind_of(entry: Option<&Value>) -> RunnerKind {
-    match entry.and_then(|e| e.get("runner")).and_then(Value::as_str) {
-        Some("rust") => RunnerKind::Rust,
-        _ => RunnerKind::Node,
-    }
+/// TS `runnerKindOf` — 에이전트 항목에 **적힌** 러너: 정확히 `"rust"`·`"node"` 만 `Some`, 항목·칸이 없거나 모르는 값이면 `None`.
+/// `None` 은 「안 적음」이고 기본(s9① 부터 rust, 조건을 못 넘으면 node)을 따른다 — `runner_pick.rs`. 되돌림은 정확한 `"node"` 뿐이다.
+pub fn runner_kind_of(entry: Option<&Value>) -> Option<RunnerKind> {
+    known_runner(entry)
 }
 
 /// TS `knownRunner` — 파일에 이미 적힌 `runner` 중 옮겨 적을 값(아는 두 값만).
@@ -806,16 +803,16 @@ mod tests {
     }
 
     #[test]
-    fn runner_kind_is_rust_only_for_exact_rust() {
+    fn runner_kind_is_some_only_for_exact_values() {
         assert_eq!(
             runner_kind_of(Some(&json!({"runner":"rust"}))),
-            RunnerKind::Rust
+            Some(RunnerKind::Rust)
         );
-        assert_eq!(runner_kind_of(None), RunnerKind::Node);
-        assert_eq!(runner_kind_of(Some(&json!({}))), RunnerKind::Node);
+        assert_eq!(runner_kind_of(None), None);
+        assert_eq!(runner_kind_of(Some(&json!({}))), None);
         assert_eq!(
             runner_kind_of(Some(&json!({"runner":"node"}))),
-            RunnerKind::Node
+            Some(RunnerKind::Node)
         );
         for v in [
             json!("Rust"),
@@ -829,11 +826,7 @@ mod tests {
             json!(["rust"]),
             json!({"kind":"rust"}),
         ] {
-            assert_eq!(
-                runner_kind_of(Some(&json!({ "runner": v }))),
-                RunnerKind::Node,
-                "{v}"
-            );
+            assert_eq!(runner_kind_of(Some(&json!({ "runner": v }))), None, "{v}");
         }
     }
 

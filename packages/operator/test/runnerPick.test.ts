@@ -1,8 +1,8 @@
 // 에이전트마다 러너 구현 고르기(B4-5c → L3c-3e). 계정 풀·lane 에이전트도 rust 로 돈다(Rust 러너가 풀·lane 폴더를 안다).
-// 하네스는 허용 목록(claude-code)만 rust — Rust 러너가 다른 하네스 홈을 아직 배선하지 않았다. 「못 읽음은 node」는 그대로다.
+// 하네스는 허용 목록(claude-code·codex·opencode·kilo·pi·omp)만 rust. s9①: runner 칸이 없으면 기본 rust, "node" 로 되돌린다 — Rust 러너가 다른 하네스 홈을 아직 배선하지 않았다. 「못 읽음은 node」는 그대로다.
 import { describe, it, expect } from 'vitest';
 import { createAssignmentReconciler, type AssignmentDeps } from '../src/assignments.js';
-import { pickRunner, type AccountUse, type RunnerPick } from '../src/runnerPick.js';
+import { pickRunner, wantsRust, RUST_RUNNER_HARNESSES, type AccountUse, type RunnerPick } from '../src/runnerPick.js';
 import { claudeAccountUse } from '@harkroom/shared/claudeAccountLane';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -12,11 +12,26 @@ import type { AgentDefinition } from '@harkroom/shared/operatorProtocol';
 const lane = { baseUrl: 'https://gateway.example', secretName: 'gw-key' };
 
 describe('pickRunner', () => {
-  it('runner 가 rust 가 아니면 node 이고 이유가 없다', () => {
-    expect(pickRunner(undefined, true, 'none', 'claude-code')).toEqual({ kind: 'node' });
-    expect(pickRunner({}, true, 'none', 'claude-code')).toEqual({ kind: 'node' });
-    expect(pickRunner({ runner: 'node' }, true, 'none', 'claude-code')).toEqual({ kind: 'node' });
-    expect(pickRunner({ runner: 'Rust' as never }, true, 'none', 'claude-code')).toEqual({ kind: 'node' });
+  it('runner: "node" 면 파일·풀·하네스와 상관없이 node 이고 이유가 없다(되돌림)', () => {
+    for (const h of ['claude-code', 'codex', 'gemini']) {
+      for (const u of ['none', 'pool', 'unreadable'] as const) {
+        expect(pickRunner({ runner: 'node' }, true, u, h)).toEqual({ kind: 'node' });
+      }
+    }
+    expect(wantsRust({ runner: 'node' })).toBe(false);
+  });
+  it('s9①: runner 칸이 없으면(항목이 없거나 모르는 값이어도) 기본 rust — 허용 목록 하네스 + 파일 있음', () => {
+    for (const local of [undefined, {}, { workingDir: '/w' }, { runner: 'Rust' as never }]) {
+      expect(wantsRust(local)).toBe(true);
+      for (const h of RUST_RUNNER_HARNESSES) expect(pickRunner(local, true, 'none', h)).toEqual({ kind: 'rust' });
+      expect(pickRunner(local, true, 'pool', 'claude-code')).toEqual({ kind: 'rust' });
+    }
+  });
+  it('s9①: runner 칸이 없어도 조건을 못 넘으면 같은 이유로 node', () => {
+    expect(pickRunner({}, false, 'none', 'claude-code')).toEqual({ kind: 'node', fallback: 'rust_runner_missing' });
+    expect(pickRunner({}, true, 'none', 'gemini')).toEqual({ kind: 'node', fallback: 'rust_harness_unsupported' });
+    expect(pickRunner({}, true, 'unreadable', 'claude-code')).toEqual({ kind: 'node', fallback: 'rust_account_pool_unreadable' });
+    expect(pickRunner(undefined, false, 'none', 'claude-code')).toEqual({ kind: 'node', fallback: 'rust_runner_missing' });
   });
   it('rust + 파일 있음 → rust', () => {
     expect(pickRunner({ runner: 'rust', workingDir: '/w' }, true, 'none', 'claude-code')).toEqual({ kind: 'rust' });
@@ -95,11 +110,22 @@ describe('배정이 고른 러너를 spawn 에 넘긴다', () => {
     expect(h.picks).toEqual([{ kind: 'rust' }]);
     expect(h.logs.some((l) => l.includes('runner=rust'))).toBe(true);
   });
-  it('rust 를 청하지 않으면 파일을 찾아보지도 않는다', async () => {
+  it('runner: "node" 면 파일을 찾아보지도 않는다', async () => {
     const h = run(true);
-    await h.r.onAssign('https://example.com', def, { workingDir: '/w' });
+    await h.r.onAssign('https://example.com', def, { workingDir: '/w', runner: 'node' });
     expect(h.picks).toEqual([{ kind: 'node' }]);
     expect(h.probed()).toBe(0);
+  });
+  it('s9①: runner 칸 없음 + 파일 있음 → rust(기본)', async () => {
+    const h = run(true);
+    await h.r.onAssign('https://example.com', def, { workingDir: '/w' });
+    expect(h.picks).toEqual([{ kind: 'rust' }]);
+    expect(h.probed()).toBe(1);
+  });
+  it('s9①: runner 칸 없음 + 파일 없음 → node(rust_runner_missing)', async () => {
+    const h = run(false);
+    await h.r.onAssign('https://example.com', def, {});
+    expect(h.picks).toEqual([{ kind: 'node', fallback: 'rust_runner_missing' }]);
   });
   it('풀 해석 결과가 pool 이어도(operator.json 에 claudePool 없음) rust(L3c-3e)', async () => {
     const h = run(true, 'pool');

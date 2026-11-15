@@ -124,16 +124,16 @@ describe('MERGE_SCOPE_RE(s21d)', () => {
 });
 
 describe('runnerKindOf — 에이전트별 러너 구현(B4-5a)', () => {
-  it('정확히 "rust" 일 때만 rust 다', () => {
+  it('정확히 "rust"·"node" 일 때만 그 값이다', () => {
     expect(runnerKindOf({ runner: 'rust' })).toBe('rust');
-  });
-  it('항목·칸이 없거나 node 거나 모르는 값이면 node 다', () => {
-    expect(runnerKindOf(undefined)).toBe('node');
-    expect(runnerKindOf({})).toBe('node');
-    expect(runnerKindOf({ workingDir: '/w' })).toBe('node');
     expect(runnerKindOf({ runner: 'node' })).toBe('node');
+  });
+  it('항목·칸이 없거나 모르는 값이면 안 적음(undefined = 기본)이다', () => {
+    expect(runnerKindOf(undefined)).toBeUndefined();
+    expect(runnerKindOf({})).toBeUndefined();
+    expect(runnerKindOf({ workingDir: '/w' })).toBeUndefined();
     for (const v of ['Rust', 'RUST', ' rust', 'rs', '', 1, true, null, ['rust'], { kind: 'rust' }]) {
-      expect(runnerKindOf({ runner: v } as unknown as LocalAgentConfig)).toBe('node');
+      expect(runnerKindOf({ runner: v } as unknown as LocalAgentConfig)).toBeUndefined();
     }
   });
   it('파일에서 읽은 그대로 판정한다', async () => {
@@ -141,19 +141,19 @@ describe('runnerKindOf — 에이전트별 러너 구현(B4-5a)', () => {
     const path = join(dir, 'operator.json');
     await writeFile(path, JSON.stringify({ communities: { 'https://example.com': { agents: { a: { runner: 'rust' }, b: { runner: 'Rust' }, c: {} } } } }));
     const agents = (await readConfig(path)).communities['https://example.com']!.agents;
-    expect([runnerKindOf(agents.a), runnerKindOf(agents.b), runnerKindOf(agents.c), runnerKindOf(agents.d)]).toEqual(['rust', 'node', 'node', 'node']);
+    expect([runnerKindOf(agents.a), runnerKindOf(agents.b), runnerKindOf(agents.c), runnerKindOf(agents.d)]).toEqual(['rust', undefined, undefined, undefined]);
   });
 });
 
 describe('README 의 operator.json 예시(B4-5d)', () => {
-  it('JSON 으로 읽히고, runner:"rust" 칸만 rust 다', async () => {
+  it('JSON 으로 읽히고, 칸 없음은 기본·runner:"node" 는 node 다', async () => {
     const readme = await readFile(new URL('../README.md', import.meta.url), 'utf8');
-    const section = readme.slice(readme.indexOf('## 에이전트마다 Rust 러너 켜기'));
+    const section = readme.slice(readme.indexOf('## 에이전트마다 러너 고르기'));
     const block = /```json\n([\s\S]*?)\n```/.exec(section);
     expect(block).not.toBeNull();
     const cfg = JSON.parse(block![1]!) as OperatorConfig;
     const agents = Object.values(cfg.communities)[0]!.agents;
-    expect(Object.values(agents).map(runnerKindOf)).toEqual(['rust', 'node']);
+    expect(Object.values(agents).map(runnerKindOf)).toEqual([undefined, 'node']);
   });
 });
 

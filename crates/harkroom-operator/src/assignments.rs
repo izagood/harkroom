@@ -38,8 +38,8 @@ pub struct LocalAgent {
     pub claude_pool: Option<String>,
     /// 날 값(`providerLane`). 켜짐 판정은 `read_provider_lane_config` 로 한다.
     pub provider_lane: Option<Value>,
-    /// 러너 구현(B4-5a `runner`, `runner_kind_of`). env 에는 안 실리고 `runner_pick` 이 읽는다.
-    pub runner: crate::local_agents::RunnerKind,
+    /// 적힌 러너 구현(B4-5a `runner`, `runner_kind_of`). `None` 은 안 적음 = 기본 rust(s9①). env 에는 안 실리고 `runner_pick` 이 읽는다.
+    pub runner: Option<crate::local_agents::RunnerKind>,
 }
 
 fn lane_on(local: Option<&LocalAgent>) -> bool {
@@ -360,7 +360,7 @@ impl AssignmentReconciler {
         }
         if let Some(f) = pick.fallback {
             self.deps.log(&format!(
-                "러너: rust 를 청했지만 node 로 띄운다({}): agent={}",
+                "러너: rust 대상이지만 node 로 띄운다({}): agent={}",
                 f.as_str(),
                 definition.handle
             ));
@@ -881,22 +881,22 @@ mod tests {
     }
 
     /// L3c-3e: lane·풀 claude 에이전트 + rust → rust. 허용 목록 밖(모르는 이름) → node(이유를 로그에).
-    /// 파일 없음 → node. rust 안 청함 → node.
+    /// 파일 없음 → node. `runner` 안 적음 → 기본 rust(s9①). `"node"` → node.
     #[test]
     fn runner_pick_opens_pool_and_lane_and_keeps_pi_omp_on_node() {
         use crate::local_agents::RunnerKind;
         use crate::runner_pick::{AccountUse, RunnerFallback};
         let rust_lane = LocalAgent {
-            runner: RunnerKind::Rust,
+            runner: Some(RunnerKind::Rust),
             ..lane()
         };
         let rust_pool = LocalAgent {
-            runner: RunnerKind::Rust,
+            runner: Some(RunnerKind::Rust),
             claude_pool: Some("p".into()),
             ..Default::default()
         };
         let rust_plain = LocalAgent {
-            runner: RunnerKind::Rust,
+            runner: Some(RunnerKind::Rust),
             ..Default::default()
         };
         let cases = [
@@ -988,8 +988,29 @@ mod tests {
                 RunnerKind::Node,
                 Some(RunnerFallback::RunnerMissing),
             ),
+            // s9①: `runner` 안 적음 → 기본 rust, 파일 없음이면 같은 이유로 node.
             (
                 LocalAgent::default(),
+                "claude-code",
+                AccountUse::None,
+                true,
+                RunnerKind::Rust,
+                None,
+            ),
+            (
+                LocalAgent::default(),
+                "claude-code",
+                AccountUse::None,
+                false,
+                RunnerKind::Node,
+                Some(RunnerFallback::RunnerMissing),
+            ),
+            // `runner: "node"` 되돌림 → 이유 없이 node.
+            (
+                LocalAgent {
+                    runner: Some(RunnerKind::Node),
+                    ..Default::default()
+                },
                 "claude-code",
                 AccountUse::None,
                 true,
@@ -1026,7 +1047,7 @@ mod tests {
         use crate::local_agents::RunnerKind;
         use crate::runner_pick::{AccountUse, RunnerFallback};
         let rust_only = LocalAgent {
-            runner: RunnerKind::Rust,
+            runner: Some(RunnerKind::Rust),
             ..Default::default()
         };
         for set in [Some(AccountUse::Unreadable), None] {
