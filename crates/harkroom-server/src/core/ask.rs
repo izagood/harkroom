@@ -38,8 +38,7 @@ pub const ASK_TEXT_OPTION_ID: &str = "__text__";
 pub const ASK_TEXT_MAX_CHARS: usize = 2000;
 const ASK_MIN_OPTIONS: usize = 2;
 const ASK_MAX_OPTIONS: usize = 5;
-/// 본문 상한 — TS(Fastify) 기본 1MiB 와 같다.
-const BODY_LIMIT: usize = 1 << 20;
+use crate::write::BODY_LIMIT;
 const LABEL: &str = "ask";
 
 /// 이 카드들의 결정은 Rust 가 하지 않는다(C3b-3). TS `askTakesText` 가 보는 표지와 같다.
@@ -474,8 +473,7 @@ enum Answer {
 }
 
 /// TS 의 zod union(`{optionId}` 또는 `{text}`) — 다른 칸은 무시한다.
-fn parse_answer(bytes: &[u8]) -> Option<Answer> {
-    let v: Value = serde_json::from_slice(bytes).ok()?;
+fn parse_answer(v: &Value) -> Option<Answer> {
     let o = v.as_object()?;
     match (o.get("optionId"), o.get("text")) {
         (Some(Value::String(id)), None) => {
@@ -568,6 +566,30 @@ async fn to_ts(
     .await
 }
 
+/// 본문을 fastify 처럼 읽는다(한도 413 → 형식 400/415, `write::fastify_body`). 넘길 때 쓰려고 바이트도 돌려준다.
+/// TS 처럼 인증보다 앞서지는 않는다 — 인증은 `route_layer` 라 익명은 본문과 상관없이 401 이다(`msg_edit`·`msg_delete` 와 같다).
+#[allow(clippy::result_large_err)] // 거절이 곧 axum 응답이다(CI clippy 1.99).
+async fn read_bytes(
+    headers: &axum::http::HeaderMap,
+    body: Body,
+) -> Result<(axum::body::Bytes, Option<Value>), Response> {
+    let bytes = to_bytes(body, BODY_LIMIT).await.map_err(|_| {
+        json_err(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "fst_err_ctp_body_too_large",
+            "Request body is too large",
+        )
+    })?;
+    let parsed = crate::write::fastify_body(headers, &bytes)?;
+    Ok((
+        bytes,
+        match parsed {
+            crate::write::Body::Json(v) => Some(v),
+            _ => None,
+        },
+    ))
+}
+
 /// `POST /channels/{id}/messages/{messageId}/ask-answer`.
 pub async fn answer(
     State(st): State<Arc<AskState>>,
@@ -580,12 +602,15 @@ pub async fn answer(
         return bad_request();
     }
     let (parts, body) = req.into_parts();
-    let Ok(bytes) = to_bytes(body, BODY_LIMIT).await else {
-        return bad_request();
+    let bytes = match read_bytes(&parts.headers, body).await {
+        Ok((b, Some(v))) => match parse_answer(&v) {
+            Some(a) => (b, a),
+            None => return bad_request(),
+        },
+        Ok(_) => return bad_request(),
+        Err(r) => return r,
     };
-    let Some(ans) = parse_answer(&bytes) else {
-        return bad_request();
-    };
+    let (bytes, ans) = bytes;
     if let Some(r) = gate(&st, &me.id, &id, &message).await {
         return r;
     }
@@ -621,8 +646,9 @@ pub async fn close(
         return bad_request();
     }
     let (parts, body) = req.into_parts();
-    let Ok(bytes) = to_bytes(body, BODY_LIMIT).await else {
-        return bad_request();
+    let bytes = match read_bytes(&parts.headers, body).await {
+        Ok((b, _)) => b,
+        Err(r) => return r,
     };
     if let Some(r) = gate(&st, &me.id, &id, &message).await {
         return r;
@@ -721,19 +747,27 @@ mod tests {
     #[test]
     fn body_union() {
         assert!(matches!(
-            parse_answer(br#"{"optionId":"a"}"#),
+            parse_answer(&serde_json::from_slice(br#"{"optionId":"a"}"#).unwrap()),
             Some(Answer::Option(_))
         ));
         assert!(
-            matches!(parse_answer(br#"{"text":"  hi  "}"#), Some(Answer::Text(t)) if t == "hi")
+            matches!(parse_answer(&serde_json::from_slice(br#"{"text":"  hi  "}"#).unwrap()), Some(Answer::Text(t)) if t == "hi")
         );
-        assert!(parse_answer(br#"{"optionId":"a","text":"x"}"#).is_none());
-        assert!(parse_answer(br#"{"optionId":""}"#).is_none());
-        assert!(parse_answer(br#"{"text":"   "}"#).is_none());
-        assert!(parse_answer(br#"{"text":"a\u0000b"}"#).is_none());
-        assert!(parse_answer(br#"{"text":"x","optionId":null}"#).is_none());
-        assert!(parse_answer(b"[]").is_none());
+        assert!(
+            parse_answer(&serde_json::from_slice(br#"{"optionId":"a","text":"x"}"#).unwrap())
+                .is_none()
+        );
+        assert!(parse_answer(&serde_json::from_slice(br#"{"optionId":""}"#).unwrap()).is_none());
+        assert!(parse_answer(&serde_json::from_slice(br#"{"text":"   "}"#).unwrap()).is_none());
+        assert!(
+            parse_answer(&serde_json::from_slice(br#"{"text":"a\u0000b"}"#).unwrap()).is_none()
+        );
+        assert!(
+            parse_answer(&serde_json::from_slice(br#"{"text":"x","optionId":null}"#).unwrap())
+                .is_none()
+        );
+        assert!(parse_answer(&json!([])).is_none());
         let long = format!(r#"{{"text":"{}"}}"#, "가".repeat(ASK_TEXT_MAX_CHARS + 1));
-        assert!(parse_answer(long.as_bytes()).is_none());
+        assert!(parse_answer(&serde_json::from_str(&long).unwrap()).is_none());
     }
 }
