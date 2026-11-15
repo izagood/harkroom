@@ -23,6 +23,7 @@ pub const SERVED: &[&str] = &[
     // C4b-ask — 묶음 카드 한 줄 닫기. 선택 카드 쓰기 풀(`ASK_PRIVILEGES`)이 있을 때만.
     "message.askBundleResolve",
     "message.askBundle",
+    "bg.complete",
 ];
 
 /// `inbox.read`(C4b ④-a) 쓰기 역할의 권한 — 읽음 시각 칸 하나만 고친다. 없으면 `main.rs` 가 풀을 비워 TS 가 답한다.
@@ -41,6 +42,8 @@ pub struct McpWrites {
     pub ask: Option<PgPool>,
     /// `message.askBundle` 있던 묶음에 줄 더하기(C3b-2b-2) — `ask_bundle_add::ASK_BUNDLE_ADD_PRIVILEGES`.
     pub bundle: Option<PgPool>,
+    /// `bg.complete`(러너 길) — [`super::bg_complete::BG_COMPLETE_PRIVILEGES`].
+    pub bg_complete: Option<PgPool>,
 }
 
 /// JS `Number.MAX_SAFE_INTEGER` — 이 밖의 수는 TS 에서 값이 뭉개진다. Rust 는 같은 결과를 낼 수 없으니 TS 로 넘긴다.
@@ -92,6 +95,13 @@ pub async fn answer(
             return Some(None);
         };
         return Some(bundle_add(read, write, me, args, cause).await);
+    }
+    if tool == "bg.complete" {
+        // 러너 길만 — 회차의 턴·일반 턴은 TS 가 답한다(admit 도 러너 꼴만 받는다).
+        let Some(write) = writes.bg_complete.as_ref().filter(|_| runner) else {
+            return Some(None);
+        };
+        return Some(super::bg_complete::complete(write, &me.id, args).await);
     }
     if tool == "inbox.read" {
         let Some(write) = writes.inbox.as_ref() else {

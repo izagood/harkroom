@@ -13,6 +13,7 @@ pub mod audience;
 pub mod channels;
 pub mod content_scan;
 pub mod events;
+pub mod inbox_list;
 pub mod inbox_read;
 pub mod invoke_gate;
 pub mod mandate_stamp;
@@ -32,7 +33,9 @@ pub mod operator_hub;
 pub mod operator_rest;
 pub mod tickets;
 pub mod turn_lease;
+pub mod turn_lease_routes;
 pub mod typing;
+pub mod wake_preempt;
 pub mod ws;
 
 /// `HARKROOM_CORE` — 모르는 값이면 기동을 멈춘다(조용히 켜지거나 꺼지지 않게).
