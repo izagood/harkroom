@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 
 /// JS 정규식 `\s` 의 집합(ECMAScript WhiteSpace + LineTerminator).
-const JS_WS: &str = r"\t\n\x0B\x0C\r \x{A0}\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}\x{FEFF}";
+pub(crate) const JS_WS: &str = r"\t\n\x0B\x0C\r \x{A0}\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}\x{FEFF}";
 /// TS `HANDLE_PATTERN`.
 const HANDLE: &str = "[a-zA-Z0-9_-]{2,32}";
 /// TS `MESSAGE_PERMALINK_PREFIX`.
@@ -438,6 +438,22 @@ pub fn normalize_mentions(body: &str, accounts: &HashMap<String, String>) -> Str
         }
     }
     out
+}
+
+/// shared `UNKNOWN_ACCOUNT_LABEL` — 지금 이름으로 못 바꾼 토큰 자리.
+pub const UNKNOWN_ACCOUNT_LABEL: &str = "알 수 없음";
+
+/// TS `renderMentions` — 저장된 토큰을 지금 handle 로, 모르는 것은 `@알 수 없음`([`UNKNOWN_ACCOUNT_LABEL`]).
+pub fn render_mentions(body: &str, id_to_handle: &HashMap<String, String>) -> String {
+    ANY_TOKEN
+        .replace_all(body, |c: &Captures| {
+            let key = c.get(1).or_else(|| c.get(2)).map_or("", |m| m.as_str());
+            match id_to_handle.get(key) {
+                Some(h) if !h.is_empty() => format!("@{h}"),
+                _ => format!("@{UNKNOWN_ACCOUNT_LABEL}"),
+            }
+        })
+        .into_owned()
 }
 
 /// TS `denormalizeMentions` — 저장된 토큰을 지금 handle 로(모르는 id 는 그대로). 키는 계정 id 또는 `team:<id>`·`group:<id>`.
