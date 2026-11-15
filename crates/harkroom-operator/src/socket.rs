@@ -982,6 +982,19 @@ impl ServerState {
                 eprintln!("계정 삭제: {pool}/{account}");
                 Ok(json!({}))
             }
+            "claudeAccountOpenTerminal" => {
+                let port = self.accounts()?;
+                let (pool, account) = claude_accounts::read_account_ref(payload).map_err(bad)?;
+                crate::claude_terminal::open_terminal(
+                    port.root(),
+                    &pool,
+                    &account,
+                    &crate::claude_terminal::os_open_in_terminal,
+                )
+                .map_err(bad)?;
+                eprintln!("계정 터미널 열기: {pool}/{account}");
+                Ok(json!({}))
+            }
             "claudePoolRemove" => {
                 let port = self.accounts()?;
                 let pool = claude_accounts::read_pool_ref(payload).map_err(bad)?;

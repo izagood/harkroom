@@ -113,7 +113,9 @@ pub fn sse(id: &str, result: &str) -> Response<Body> {
 
 #[derive(Debug, PartialEq)]
 pub enum Admit {
-    Yes,
+    /// 받음. `bg_enabled` 는 TS 가 `bg.claim` 에 한해 실어 주는 `backgroundEnabled()` 값 — 글자 그대로 `true` 일 때만 참이다
+    /// (없음·다른 꼴은 거짓 → `bg.claim` 은 TS 가 답한다). 켜짐의 출처를 TS 하나로 둔다(security 02:21 KST #1).
+    Yes { bg_enabled: bool },
     /// 거절 — 도구 답의 `content[0].text`(TS 가 지은 `{"error":…}` 글자). 답은 [`text_result`] 로 다시 감싼다.
     No(String),
     /// 확인을 못 했다 → TS 로 넘긴다.
@@ -161,7 +163,9 @@ pub async fn admit(
         return Admit::Unknown;
     };
     match v.get("admitted").and_then(Value::as_bool) {
-        Some(true) => Admit::Yes,
+        Some(true) => Admit::Yes {
+            bg_enabled: v.get("bgEnabled").and_then(Value::as_bool) == Some(true),
+        },
         Some(false) => match v.get("result") {
             Some(r) => match r.pointer("/content/0/text").and_then(Value::as_str) {
                 Some(t) => Admit::No(t.to_owned()),
