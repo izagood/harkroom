@@ -26,6 +26,7 @@ import { validateToolRule } from '@harkroom/shared';
 
 import { executionModelFor, readonlyToolsFor, turnKeyDeliveryOf, usesOmpHome, usesPiHome, usesXdgHome } from './adapters/index.js';
 import { piSessionsDir } from './piHome.js';
+import { applyPiLaunchEnv, resolvePiLaunch, type PiLaunch } from './piLaunch.js';
 import { ompDirs } from './ompHome.js';
 import { OPENCODE_LANE_AGENT, OPENCODE_READONLY_AGENT, opencodeDirs, opencodeLaneHome } from './opencodeHome.js';
 
@@ -130,6 +131,8 @@ export interface BuildTurnCommandOptions {
   ompHome?: string;
   /** omp 턴의 cwd·agentDir — 스레드마다 고정한 자리(`ompHome.ts::ompThreadDirs`, B4·G1). */
   ompThread?: { cwd: string; agentDir: string };
+  /** pi 를 띄울 실행 파일(`piLaunch.ts`). 비우면 자식 PATH 로 찾는다 — 시험이 호스트 설치에 기대지 않게 꽂는 칸. */
+  piLaunch?: PiLaunch;
   /** omp 가 `--add-dir` 로 붙일 작업 폴더. omp 는 cwd 가 작업 폴더가 아니라서 따로 받는다. */
   workspaceDir?: string;
   /**
@@ -1097,10 +1100,7 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
   // PAT 는 절대 argv 에 올리지 않는다 — 자식 프로세스 env 로만 준다. `ps` 로 argv 는 다른
   // 사용자에게도 보이지만 env 는 보이지 않는다(spec §7, task-1 실측 확인).
   // stdinFile 도 argv 에서 빼는 이유와 같다(#117). null 이면 PTY stdin 을 그대로 쓴다.
-  return {
-    command: preset.command,
-    args,
-    env: {
+  const env: Record<string, string> = {
       ...childEnv({
       harness: opts.harness,
       codexHome: opts.harness === 'codex' ? opts.codexHome : null,
@@ -1118,7 +1118,19 @@ export function buildTurnCommand(opts: BuildTurnCommandOptions): TurnPlan {
       }),
       ...(preset.mcpEnv?.(opts.extraMcpServers ?? {}) ?? {}),
       ...(opts.commandRuleEnv ?? {}),
-    },
+  };
+  // pi 는 런처(`<agent>/bin/pi`)를 거치지 않고 release 실행 파일을 직접 띄운다 — 런처가 싣는 관리 자리 이름이 사람 설치 폴더를
+  // 건드리게 해서다(`piLaunch.ts`, security 감②). 자식이 받을 PATH 로 찾는다. 못 풀면 지금처럼 `pi`.
+  let command = preset.command;
+  if (usesPiHome(opts.harness)) {
+    const launch = opts.piLaunch ?? resolvePiLaunch(env);
+    command = launch.command;
+    applyPiLaunchEnv(env, launch);
+  }
+  return {
+    command,
+    args,
+    env,
     stdinFile: opts.stdinFile ?? null,
     ...(omp ? { cwd: opts.ompThread!.cwd } : {}),
   };

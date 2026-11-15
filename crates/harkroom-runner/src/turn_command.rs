@@ -135,7 +135,7 @@ impl<'a> TurnCommandOptions<'a> {
 /// TS `TurnPlan`. `env` 에는 PAT·lane 키·턴 열쇠가 든다 — **`Debug` 는 env 이름만** 보인다(손으로 짠다).
 #[derive(Clone, PartialEq, Eq)]
 pub struct TurnPlan {
-    pub command: &'static str,
+    pub command: String,
     pub args: Vec<String>,
     pub env: BTreeMap<String, String>,
     pub stdin_file: Option<PathBuf>,
@@ -568,8 +568,18 @@ pub fn build_turn_command(
         env.extend(extra.iter().map(|(k, v)| (k.clone(), v.clone())));
     }
 
+    // pi 는 런처(`<agent>/bin/pi`)를 거치지 않고 release 실행 파일을 직접 띄운다 — 런처가 싣는 관리 자리 이름이 사람 설치
+    // 폴더를 건드리게 해서다(`pi_launch.rs`, security 감②). 자식이 받을 PATH 로 찾는다. 못 풀면 지금처럼 `pi`.
+    let command = if uses_pi_home(h) {
+        let launch = crate::pi_launch::resolve_pi_launch(&env);
+        crate::pi_launch::apply_pi_launch_env(&mut env, &launch);
+        launch.command
+    } else {
+        parts.command.to_string()
+    };
+
     Ok(TurnPlan {
-        command: parts.command,
+        command,
         args,
         env,
         stdin_file: o.stdin_file.map(Path::to_path_buf),

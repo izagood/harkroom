@@ -261,7 +261,7 @@ fn spawn_side_debug_shows_names_not_values() {
         assert!(!d.contains(v), "{d}");
     }
     let plan = crate::turn_command::TurnPlan {
-        command: "claude",
+        command: "claude".to_string(),
         args: vec!["-p".into()],
         env: lane.clone(),
         stdin_file: None,

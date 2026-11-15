@@ -37,6 +37,8 @@ function 계획(harness: (typeof RUNNABLE_HARNESSES)[number]): string {
     // claude 는 지시문을 **파일로만** 받는다(`#92`, argv 노출 방지) — 없으면 던진다.
     // 이 값도 `command` 에는 영향을 주지 않는다.
     systemPromptFile: '/tmp/system-prompt.txt',
+    // pi 의 release 실행 파일 해석(`piLaunch.ts`)은 호스트 설치에 기댄다 — 여기서는 표의 이름을 잰다.
+    piLaunch: { command: 'pi', pathPrepend: null },
     promptCtx: '본문',
     model: null,
     effort: null,

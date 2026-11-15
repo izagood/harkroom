@@ -53,6 +53,8 @@ function plan(harness: AgentHarness, over: Partial<BuildTurnCommandOptions> = {}
     codexHome: join(dir, 'codex-home'),
     opencodeHome: join(dir, 'opencode-home'),
     piHome: join(dir, 'pi-home'),
+    // pi 의 release 실행 파일 해석(`piLaunch.ts`)은 호스트 설치에 기댄다 — 여기서는 표의 이름을 잰다.
+    piLaunch: { command: 'pi', pathPrepend: null },
     ompHome: join(dir, 'omp-home'),
     ompThread: { cwd: join(dir, 'omp-home', 'cwd', 't', 'cwd'), agentDir: join(dir, 'omp-home', 'cwd', 't', 'agent') },
     workspaceDir: join(dir, 'ws'),

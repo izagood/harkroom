@@ -36,6 +36,7 @@ import { readLastAssistantText, readMacPermissionWaits, readMcpAuthRejections, r
 import { ensureDangerousModeAccepted, ensureWorkspaceTrusted } from './workspaceTrust.js';
 import { codexSessionsDir } from './codexHome.js';
 import { laneRunModel, opencodeDirs, opencodeLaneAgentMatches, opencodeLaneAgentName, opencodeLaneLoginPresent, opencodeLaneModelMissing, providerLaneModelId } from './opencodeHome.js';
+import { applyPiLaunchEnv, resolvePiLaunch, type PiLaunch } from './piLaunch.js';
 import { ensurePiLaneThread, listPiMcpTools, PI_LANE_PROVIDER, piLaneLoginPresent, piSessionFile, readonlyToolList, writePiLaneModels } from './piHome.js';
 import { ensureOmpThread, findOmpBinary, OMP_LANE_PROVIDER, ompBinaryOk, ompUnverifiedBinaryNotice, ompCwdViolations, ompDirs, ompThreadDirs, sweepOmpThreadCwd, ompReadonlyToolList, ompSessionFile, readOmpRecordedApiError, writeOmpLaneModels, writeOmpSessionHeader, type OmpThreadDirs } from './ompHome.js';
 import { findOpencodeSessionId } from './opencodeSessions.js';
@@ -289,6 +290,8 @@ export interface MentionTurnDeps {
   opencodeHome: string;
   /** pi 의 러너 전용 상태 루트(`piHome.ts`). pi 를 안 돌리는 테스트는 비워 둔다. */
   piHome?: string;
+  /** pi 를 띄울·물을 실행 파일. 비우면 그 env 의 PATH 로 찾는다(`piLaunch.ts`) — 시험이 꽂는 칸. */
+  piLaunch?: PiLaunch;
   /** omp 의 러너 전용 상태 루트(`ompHome.ts`). omp 를 안 돌리는 테스트는 비워 둔다. */
   ompHome?: string;
   /**
@@ -1592,14 +1595,19 @@ export async function runMentionTurn(
   } else if (allowlist && allowlist.list && def.mentionPermission === 'readonly') {
     const listCwd = turnPiHome ?? rec.workspaceDir;
     const discovered = turnKeys
-      ? await listToolsWithTurnKeys(deps.harkroom, { turnId, cause: mentionId, keys: turnKeys }, key, () => listPiMcpTools({
-        command: harnessCommand(def.harness),
-        args: allowlist.list as readonly string[],
-        env: piMcpListEnv(def.harness, process.env, turnPiHome, turnKeys.bridge),
-        // 워크스페이스가 아니라 러너 루트에서 묻는다 — 저장소의 `.pi/` 를 아예 안 보게(security 낮음).
-        // 이 명령은 `--no-approve` 를 받지 않는다(실측 `Unknown option`).
-        cwd: listCwd,
-      }))
+      ? await listToolsWithTurnKeys(deps.harkroom, { turnId, cause: mentionId, keys: turnKeys }, key, () => {
+        const env = piMcpListEnv(def.harness, process.env, turnPiHome, turnKeys.bridge);
+        // 띄울 때와 같은 실행 파일로 묻는다 — 런처를 거치면 사람 설치 폴더를 건드린다(`piLaunch.ts`, security 감②).
+        const launch = deps.piLaunch ?? resolvePiLaunch(env);
+        return listPiMcpTools({
+          command: launch.command,
+          args: allowlist.list as readonly string[],
+          env: applyPiLaunchEnv(env, launch),
+          // 워크스페이스가 아니라 러너 루트에서 묻는다 — 저장소의 `.pi/` 를 아예 안 보게(security 낮음).
+          // 이 명령은 `--no-approve` 를 받지 않는다(실측 `Unknown option`).
+          cwd: listCwd,
+        });
+      })
       // 턴 열쇠가 없는 옛 표면은 묻지 않는다 — 러너 링크 열쇠로 묻는 길은 없다(내장 읽기 도구만).
       : null;
     if (discovered === null || allowlist.mcpServers.some((s) => !(discovered[s]?.length))) {
@@ -1735,6 +1743,7 @@ export async function runMentionTurn(
     codexHome: deps.codexHome,
     opencodeHome: deps.opencodeHome,
     piHome: turnPiHome,
+    piLaunch: deps.piLaunch,
     ompHome: deps.ompHome,
     ompThread,
     workspaceDir: rec.workspaceDir,

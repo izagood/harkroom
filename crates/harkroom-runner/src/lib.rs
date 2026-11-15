@@ -68,6 +68,7 @@ pub mod opencode_home;
 pub mod opencode_prep;
 pub mod pi_home;
 pub mod pi_lane;
+pub mod pi_launch;
 pub mod pi_prep;
 pub mod poll_admit;
 pub mod poll_loop;
