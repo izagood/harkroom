@@ -16,7 +16,7 @@ import { mkdir, readdir, rm, symlink, writeFile, lstat, readlink } from 'node:fs
 import { dirname, join } from 'node:path';
 import type { AgentHarness, AgentView, InboxCanceledWake, InboxDelegatedBy, InboxDelegationOutcome, InboxDelegationSummary, InboxTeamCall, MessageRow, WakeReportTo } from '@harkroom/shared';
 import type { FailOpts, Me } from './harkroom.js';
-import { laneNudgeText, laneNudgeWanted, BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DELTA_MAX_MESSAGES, mergeThreadPages, DENIAL_NOTICE_MAX_PER_TURN, MAC_PERMISSION_NOTICE_MAX_PER_TURN, macPermissionNotice, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, stallScreenErrorLine, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, SILENT_ACK_EMOJI, silentTurnNotice, silentWakeNotice, backgroundCutNotice, reportMissedNotice, MESSAGE_KIND_WAKE, hasOwnReportSince, watchMissedNotice, delegationLeftOpen, DELEGATION_REPORT_MISSED_NOTICE } from './prompt.js';
+import { laneNudgeText, laneNudgeWanted, BODY_LIMIT, buildSystemPrompt, buildTurnPrompt, DELTA_MAX_MESSAGES, mergeThreadPages, DENIAL_NOTICE_MAX_PER_TURN, MAC_PERMISSION_NOTICE_MAX_PER_TURN, macPermissionNotice, gateNotice, guardInjectedPrompt, type MemoryContext, countOwnPostsSince, harnessTailNotice, stallScreenErrorLine, hasOwnWakeSince, offAnchorNotice, offAnchorPosts, permissionDenialNotice, quotedLine, SILENT_ACK_EMOJI, silentTurnNotice, silentWakeNotice, backgroundCutNotice, reportMissedNotice, MESSAGE_KIND_WAKE, hasOwnReportSince, watchMissedNotice, delegationLeftOpen, DELEGATION_REPORT_MISSED_NOTICE, quitBeforeFinishing, quitEarlyNotice } from './prompt.js';
 import { resolveTurnModel, usesThreadModel, type TurnModel } from './threadModel.js';
 import { SessionStore, type SessionRecord } from './sessions.js';
 import { attachesCommandHook, attachesGateHook, attachesPostToolHook, buildTurnCommand, chromeTurnFor, harnessPath, turnKeyDelivery, safeToolAllows, preassignsSessionId, writePromptFile, writeThreadSystemPromptFile, type McpServerEntry, type TurnPlan } from './turn.js';
@@ -3269,6 +3269,15 @@ export async function runMentionTurn(
         pat: deps.runnerSecret, secrets: await tailSecrets(),
       });
       await deps.harkroom.post(channelId, body.slice(0, BODY_LIMIT), anchor);
+    } else if (postCount === 0 && !hasOwnWakeSince(after, deps.me.id, turnStartSeq, turnId)
+      && quitBeforeFinishing({ usesTui, hadPty: end.controls !== null, reclaimed: end.reclaimed, finished: end.finished, screenEnded: end.screenEnded })) {
+      // **TUI 하네스가 차례를 마치지 않고 혼자 꺼졌다**(2026-11-16, `quitBeforeFinishing` 주석). exit 0 이라도 끝낸 턴이 아니다 —
+      // ✅·「답 없음」 대신 실패(재시도 가능)로 남겨 부른 쪽이 끝난 일로 읽지 않게 한다. 넘겨받은 일이면 위임도 「실패」로 닫힌다.
+      const lastSaid = await (deps.readLastSaid ?? readLastAssistantText)(def.harness, rec.sessionId, {
+        configDir: deps.claudeConfigDir, sinceMs: turnStartedAtMs,
+      }).catch(() => null);
+      console.log(`[mentionTurn] ${key}: 하네스가 차례를 마치지 않고 혼자 꺼졌다(exit ${result.exitCode}) — 실패 줄을 남긴다`);
+      await deps.harkroom.fail(channelId, quitEarlyNotice(lastSaid, deps.runnerSecret, await tailSecrets()).slice(0, BODY_LIMIT), anchor, { retryable: true, mentionId });
     } else if (postCount === 0 && !hasOwnWakeSince(after, deps.me.id, turnStartSeq, turnId)) {
       // 여기는 정상 종료 경로뿐이다(실패는 위에서 던졌다). 정상 종료했는데 스스로 발화하지 않았다 — 이유는 하나로 좁혀지지 않는다
       // (쓸 말이 없었거나, 안전 거부(exit 0)이거나). 옛 reply.ts::extractReply 가 안전

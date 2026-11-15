@@ -293,6 +293,27 @@ async fn main() {
         }
         _ => None,
     };
+    // C6a-1 — 인박스 읽음 표시(`POST /inbox/read`). 쓰기 풀에 그 칸 권한이 있을 때만 — 아니면 TS 에 남는다.
+    let inbox_read_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::inbox_read as ir;
+            match write::missing_in(w, ir::INBOX_READ_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: inbox read core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: inbox read core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     let operator_on = operator_write.is_some();
     let core_router = (core_mode == harkroom_server::core::CoreMode::Rust).then(|| {
         let hub = harkroom_server::core::events::Hub::new();
@@ -415,12 +436,23 @@ async fn main() {
             core_routes.http.extend(post.http);
             core_routes.sockets.extend(post.sockets);
         }
+        // C6a-1 — 인박스 읽음 표시. 쓰기 풀에 그 권한이 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = inbox_read_write {
+            let ir = harkroom_server::core::inbox_read::routes(
+                harkroom_server::core::inbox_read::InboxReadState { write },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(ir.router);
+            core_routes.http.extend(ir.http);
+            core_routes.sockets.extend(ir.sockets);
+        }
         // C4a-1 — `POST /mcp`. 에이전트 게이트·본문 한도(TS 와 같다) 뒤, Rust 가 답하는 읽기 도구(C4a-3)가 아니면 원래 바이트를 TS 로 투명 전달한다.
         let mcp = harkroom_server::core::mcp::route::routes(
             state.up.clone(),
             state.pool.clone(),
-            // C4b — 도구 묶음마다 그 권한이 다 있는 쓰기 풀일 때만 Rust 가 답한다(리액션 · inbox.read).
-            // C3b-2b — `ASK_PRIVILEGES` 가 다 있는 쓰기 풀일 때만 `message.askBundleResolve` 를 Rust 가 답한다.
+            // C4b — 도구 묶음마다 그 권한이 다 있는 쓰기 풀일 때만 Rust 가 답한다(리액션 · inbox.read ·
+            // 선택 카드 → `message.askBundleResolve`).
             harkroom_server::core::mcp::writes::McpWrites {
                 react: mcp_react_write,
                 inbox: inbox_write,

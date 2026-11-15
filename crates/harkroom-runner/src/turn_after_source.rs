@@ -15,6 +15,7 @@ use crate::adapter::AgentHarness;
 use crate::harness_errors::{TranscriptDirs, read_last_assistant_text};
 use crate::mention_call::{AfterData, AfterSource, OwnedAfterInputs};
 use crate::mention_parts::AfterCtx;
+use crate::silent_notice::quit_before_finishing;
 use crate::turn_notice::NudgeCaller;
 use crate::turn_success::{SuccessTarget, after_turn_plan};
 
@@ -69,7 +70,15 @@ fn after_data(c: &AfterConfig, a: &AfterCtx, rows: &[Value]) -> AfterData {
             Some(&a.ctx.turn_id),
             a.background_cut,
             c.target,
-        ),
+        )
+        // 혼자 꺼진 TUI 턴은 침묵 통지(✅·「답 없음」) 대신 실패다(정본 `quitBeforeFinishing`). 어댑터가 없는 하네스는 여기까지 오지 못한다.
+        .quit_early_if(quit_before_finishing(
+            crate::adapter::uses_tui_for_mention(c.harness).unwrap_or(false),
+            a.had_pty,
+            a.reclaimed,
+            a.finished,
+            a.screen_ended,
+        )),
         inputs: OwnedAfterInputs {
             key: c.key.clone(),
             me_id: c.me_id.clone(),

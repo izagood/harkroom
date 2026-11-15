@@ -43,7 +43,7 @@ fn ts_patterns_are_the_ones_this_table_was_translated_from() {
 fn classify_matches_ts_for_every_fixture_and_harness() {
     let g = golden();
     let rows = g["classify"].as_array().unwrap();
-    assert_eq!(rows.len(), 30 * 6, "fixture 30개 × 하네스 6");
+    assert_eq!(rows.len(), 31 * 6, "fixture 31개 × 하네스 6");
     for r in rows {
         let h = Harness::from_name(r["harness"].as_str().unwrap()).unwrap();
         let f = r["fixture"].as_str().unwrap();

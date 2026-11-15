@@ -28,12 +28,13 @@ import { CHAT_APPROVAL_GUARD_WORDS } from '../src/services/chatApproval.js';
 import { MANDATE_REPLY_CONTINUE_SQL, MANDATE_KEYLESS_OWN_SQL, MANDATE_KEYLESS_ROOT_SQL, MANDATE_KEYLESS_TOUCH_SQL, MANDATE_KEYLESS_INSERT_SQL, MANDATE_KEYLESS_FIND_SQL, MANDATE_KEYLESS_ROOT_SET_SQL, MANDATE_DELEGATED_AGENTS_SQL, MANDATE_OWN_AGENT_SQL, MANDATE_ROOT_INSERT_SQL, MESSAGE_SET_MANDATE_SQL } from '../src/services/mandates.js';
 import { DECIDER_CHANNEL_SQL, DECIDER_LIST_SQL, DECIDER_ROW_SQL, DECIDER_SEEN_SQL } from '../src/services/deciders.js';
 import { URL_CANDIDATE_SOURCE } from '@harkroom/shared';
-import { ACCEPT_ROOT_SQL, BUNDLE_REPLY_SQL, BUNDLE_RESOLVE_SQL, DECISION_CARD_SQL, IRREVERSIBLE_WORDS, READ_BUNDLE_SQL } from '../src/services/askBundles.js';
+import { ACCEPT_ROOT_SQL, DECISION_CARD_SQL, IRREVERSIBLE_WORDS, READ_BUNDLE_SQL } from '../src/services/askBundles.js';
 import { CHILD_FACTS_AUDIENCE_SQL, PLAN_PROGRESS_PLANS_SQL } from '../src/services/threadPlan.js';
 import { displayBodySql } from '../src/services/systemBody.js';
 import { BG_AGENT_ON_SQL, BG_DAILY_LOCK_SQL, BG_ENQUEUE_SQL, BG_EXISTS_SQL, BG_PAUSED_SQL, CLEANUP_CANDIDATES_SQL, DISTILL_CANDIDATES_SQL, ORGANIZE_CANDIDATES_SQL } from '../src/services/bgJobs.js';
 import { LIST_DELEGATIONS_GIVEN_SQL, LIST_DELEGATIONS_MINE_SQL } from '../src/services/apiDelegation.js';
 import { LIST_TOOL_RULES_SQL } from '../src/services/permissionRequests.js';
+import { LEASE_INBOX_MAX_AGE_MS, LEASE_MAX_MS, LEASE_MAX_REISSUES, LEASE_REISSUE_STALE_MS, LEASE_RENEW_MS, LEASE_TTL_MS, TURN_LEASE_CAUSE_SQL, TURN_LEASE_CLAIM_MOVED_SQL, TURN_LEASE_END_PRIOR_SQL, TURN_LEASE_END_SQL, TURN_LEASE_INSERT_SQL, TURN_LEASE_PRIOR_SQL, TURN_LEASE_RENEW_SQL, TURN_LEASE_USED_SQL } from '../src/services/secretAccess.js';
 
 const GOLDEN = fileURLToPath(new URL('../../../crates/harkroom-server/golden/sql_fragments.json', import.meta.url));
 
@@ -53,6 +54,16 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     list_delegations_mine: LIST_DELEGATIONS_MINE_SQL,
     list_delegations_given: LIST_DELEGATIONS_GIVEN_SQL,
     list_tool_rules: LIST_TOOL_RULES_SQL,
+    // 턴 임대(`core/turn_lease.rs`, S5.3 C6b) — 문장 전체와 시간 상수(ms·횟수는 문자열로).
+    turn_lease_cause: TURN_LEASE_CAUSE_SQL,
+    turn_lease_used: TURN_LEASE_USED_SQL,
+    turn_lease_prior: TURN_LEASE_PRIOR_SQL,
+    turn_lease_claim_moved: TURN_LEASE_CLAIM_MOVED_SQL,
+    turn_lease_end_prior: TURN_LEASE_END_PRIOR_SQL,
+    turn_lease_insert: TURN_LEASE_INSERT_SQL,
+    turn_lease_end: TURN_LEASE_END_SQL,
+    turn_lease_renew: TURN_LEASE_RENEW_SQL,
+    turn_lease_consts: [LEASE_TTL_MS, LEASE_MAX_MS, LEASE_RENEW_MS, LEASE_INBOX_MAX_AGE_MS, LEASE_REISSUE_STALE_MS, LEASE_MAX_REISSUES].join(','),
     display_body_m: displayBodySql('m'),
     // 작업 항목(`workItems.ts::actorSeesItemSql`) — 주인이 아닌 쪽이 볼 수 있는 스레드인지, 별칭 ac·두째 인자.
     channel_visible_ac_p2uuid: channelVisibleSql('ac', '$2::uuid'),
@@ -149,8 +160,6 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     bundle_accept_root: ACCEPT_ROOT_SQL,
     bundle_irreversible_source: IRREVERSIBLE_WORDS.source,
     bundle_irreversible_flags: IRREVERSIBLE_WORDS.flags,
-    bundle_reply: BUNDLE_REPLY_SQL,
-    bundle_resolve: BUNDLE_RESOLVE_SQL,
   };
   const text = `${JSON.stringify(want, null, 2)}\n`;
   if (process.env.UPDATE_RUST_SQL_GOLDEN === '1') writeFileSync(GOLDEN, text);

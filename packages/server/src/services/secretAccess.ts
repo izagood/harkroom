@@ -52,6 +52,45 @@ export const LEASE_REISSUE_STALE_MS = Math.ceil(TURN_LEASE_HEARTBEAT_MS * 1.5);
 /** 부름당 다시 주기 최대 횟수 — 처음 발급까지 합쳐 임대 행은 최대 3개다. */
 export const LEASE_MAX_REISSUES = 2;
 
+/**
+ * 턴 임대 문장들 — Rust 코어(`crates/harkroom-server/src/core/turn_lease.rs`, S5.3 C6b)가 `golden/sql_fragments.json` 으로 받아
+ * 그대로 쓴다. 고치면 `test/rustSqlFragments.test.ts` 가 골든 갱신을 요구한다.
+ */
+export const TURN_LEASE_CAUSE_SQL = `select m.channel_id as "channelId", coalesce(m.thread_root_id, m.id) as "threadRootId",
+              -- 위임 키(133, W1): cause 글의 위임, 없으면 그 글이 연 깨움 행의 위임. 이 에이전트의 지금 소유자가 위임 소유자일 때만.
+              (select d.id from mandate d join agent_config c on c.account_id = i.account_id
+                where c.owner_account_id = d.owner_account_id
+                  -- 위임 후속 보고로 깬 턴은 그 글의 위임을 잇지 않는다.
+                  and not exists (select 1 from inbox fu where fu.account_id = i.account_id and fu.message_id = m.id and fu.reason = 'delegation_followup')
+                  and d.id = coalesce(m.mandate_id,
+                    (select w.mandate_id from agent_wake w where w.message_id = m.id and w.account_id = i.account_id
+                      order by w.created_at desc limit 1))) as "mandateId",
+              ${PRINCIPAL_FROM_CAUSE_SQL} as "principalId",
+              i.created_at as "inboxAt"
+         from inbox i join message m on m.id = i.message_id
+         join account a on a.id = m.author_id
+        where i.account_id = $1::uuid and i.message_id = $2::uuid and i.read_at is null and i.created_at > $3::timestamptz and m.deleted_at is null
+        order by i.created_at
+        limit 1`;
+export const TURN_LEASE_USED_SQL = `select 1 from secret_turn_lease where agent_id = $1::uuid and cause_message_id = $2::uuid`;
+export const TURN_LEASE_PRIOR_SQL = `select id, operator_id as "operatorId", ended_at is not null as ended, coalesce(last_renewed_at, created_at) as "lastBeat",
+                count(*) over ()::int as total
+           from secret_turn_lease where agent_id = $1::uuid and cause_message_id = $2::uuid
+          order by created_at desc limit 1`;
+export const TURN_LEASE_CLAIM_MOVED_SQL = `select 1 from agent_thread_claim
+          where agent_id = $1::uuid and channel_id = $2::uuid and thread_root_id = $3::uuid and holder = $4
+            and expires_at > now() and claimed_at > $5::timestamptz`;
+export const TURN_LEASE_END_PRIOR_SQL = `update secret_turn_lease set ended_at = $2::timestamptz where id = $1::uuid and ended_at is null`;
+export const TURN_LEASE_INSERT_SQL = `insert into secret_turn_lease (token_hash, agent_id, operator_id, cause_message_id, channel_id, thread_root_id, created_at, expires_at, mandate_id, principal_account_id, last_renewed_at, reissue_of)
+       values ($1, $2::uuid, $3::uuid, $4::uuid, $5::uuid, $6::uuid, $7::timestamptz, $8::timestamptz, $9::uuid, $10::uuid, $7::timestamptz, $11::uuid) returning id`;
+export const TURN_LEASE_END_SQL = `update secret_turn_lease set ended_at = now()
+      where id = $1::uuid and token_hash = $2 and agent_id = $3::uuid and ended_at is null`;
+export const TURN_LEASE_RENEW_SQL = `update secret_turn_lease
+        set expires_at = greatest(expires_at, least($4::timestamptz + make_interval(secs => $5::float8), created_at + make_interval(secs => $6::float8))),
+            last_renewed_at = $4::timestamptz
+      where id = $1::uuid and token_hash = $2 and agent_id = $3::uuid and operator_id = $7::uuid and ended_at is null and expires_at > $4::timestamptz
+      returning expires_at as "expiresAt"`;
+
 const sha256 = (s: string): string => createHash('sha256').update(s, 'utf8').digest('hex');
 
 export type LeaseIssue =
@@ -81,26 +120,11 @@ export async function issueTurnLease(
     // 같은 (에이전트, 멘션) 의 동시 발급을 줄 세운다 — 둘 다 "살아 있는 임대 없음"을 보면 둘이 생긴다.
     await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [`lease:${args.agentId}:${args.causeMessageId}`]);
     const msg = await client.query(
-      `select m.channel_id as "channelId", coalesce(m.thread_root_id, m.id) as "threadRootId",
-              -- 위임 키(133, W1): cause 글의 위임, 없으면 그 글이 연 깨움 행의 위임. 이 에이전트의 지금 소유자가 위임 소유자일 때만.
-              (select d.id from mandate d join agent_config c on c.account_id = i.account_id
-                where c.owner_account_id = d.owner_account_id
-                  -- 위임 후속 보고로 깬 턴은 그 글의 위임을 잇지 않는다.
-                  and not exists (select 1 from inbox fu where fu.account_id = i.account_id and fu.message_id = m.id and fu.reason = 'delegation_followup')
-                  and d.id = coalesce(m.mandate_id,
-                    (select w.mandate_id from agent_wake w where w.message_id = m.id and w.account_id = i.account_id
-                      order by w.created_at desc limit 1))) as "mandateId",
-              ${PRINCIPAL_FROM_CAUSE_SQL} as "principalId",
-              i.created_at as "inboxAt"
-         from inbox i join message m on m.id = i.message_id
-         join account a on a.id = m.author_id
-        where i.account_id = $1 and i.message_id = $2 and i.read_at is null and i.created_at > $3 and m.deleted_at is null
-        order by i.created_at
-        limit 1`,
+      TURN_LEASE_CAUSE_SQL,
       [args.agentId, args.causeMessageId, new Date(now.getTime() - LEASE_INBOX_MAX_AGE_MS)]);
     if (!msg.rowCount) { await client.query('rollback'); return { ok: false, code: 'not_invoked' }; }
     const used = await client.query(
-      `select 1 from secret_turn_lease where agent_id = $1 and cause_message_id = $2`,
+      TURN_LEASE_USED_SQL,
       [args.agentId, args.causeMessageId]);
     // 부름당 한 번이 원칙이다. 예외는 하나(157): **같은 오퍼레이터**가 다시 물었고, 옛 임대가 끝나지 않은 채 **박동이 끊겼고**
     // (러너가 다시 떴다), 다시 주기가 남았을 때 — 옛 임대를 끝내고 새로 준다. 판정(읽지 않은 부름·6시간·지운 글)은 위에서 처음과
@@ -108,10 +132,7 @@ export async function issueTurnLease(
     let reissue: { oldLeaseId: string; sinceLastBeatSec: number; via: 'thread_claim' | 'stale_beat' } | null = null;
     if (used.rowCount) {
       const prior = (await client.query<{ id: string; operatorId: string; ended: boolean; lastBeat: Date; total: number }>(
-        `select id, operator_id as "operatorId", ended_at is not null as ended, coalesce(last_renewed_at, created_at) as "lastBeat",
-                count(*) over ()::int as total
-           from secret_turn_lease where agent_id = $1 and cause_message_id = $2
-          order by created_at desc limit 1`,
+        TURN_LEASE_PRIOR_SQL,
         [args.agentId, args.causeMessageId])).rows[0];
       const stale = !!prior && now.getTime() - new Date(prior.lastBeat).getTime() >= LEASE_REISSUE_STALE_MS;
       // 박동 문턱(6분)을 기다리지 않아도 되는 증거: **묻는 러너가 이 스레드의 임대를 옛 임대의 마지막 박동 뒤에 잡았다.**
@@ -119,15 +140,13 @@ export async function issueTurnLease(
       // 임대를 쥐고 있어 남이 잡을 수 없다(409). 그러니 넘겨받았다는 사실이 곧 옛 턴이 없다는 뜻이다. 응답을 못 받아 아무도
       // 쓰지 못한 임대도, 재기동으로 끊긴 턴의 임대도 이 조건으로 바로 풀린다.
       const claimMoved = !!prior && !prior.ended && !!args.claimHolder && ((await client.query(
-        `select 1 from agent_thread_claim
-          where agent_id = $1 and channel_id = $2 and thread_root_id = $3 and holder = $4
-            and expires_at > now() and claimed_at > $5`,
+        TURN_LEASE_CLAIM_MOVED_SQL,
         [args.agentId, (msg.rows[0] as { channelId: string }).channelId, (msg.rows[0] as { threadRootId: string }).threadRootId, args.claimHolder, prior.lastBeat],
       )).rowCount ?? 0) > 0;
       if (!prior || prior.ended || prior.operatorId !== args.operatorId || !(stale || claimMoved) || prior.total > LEASE_MAX_REISSUES) {
         await client.query('rollback'); return { ok: false, code: 'lease_used' };
       }
-      await client.query(`update secret_turn_lease set ended_at = $2 where id = $1 and ended_at is null`, [prior.id, now]);
+      await client.query(TURN_LEASE_END_PRIOR_SQL, [prior.id, now]);
       reissue = { oldLeaseId: prior.id, sinceLastBeatSec: Math.round((now.getTime() - new Date(prior.lastBeat).getTime()) / 1000), via: stale ? 'stale_beat' : 'thread_claim' };
     }
     const token = randomBytes(32).toString('base64url');
@@ -144,8 +163,7 @@ export async function issueTurnLease(
       mandateId = automationMandate?.mandateId ?? null;
     }
     const ins = await client.query(
-      `insert into secret_turn_lease (token_hash, agent_id, operator_id, cause_message_id, channel_id, thread_root_id, created_at, expires_at, mandate_id, principal_account_id, last_renewed_at, reissue_of)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $7, $11) returning id`,
+      TURN_LEASE_INSERT_SQL,
       [sha256(token), args.agentId, args.operatorId, args.causeMessageId, channelId, threadRootId, now, expiresAt, mandateId, principalId, reissue?.oldLeaseId ?? null]);
     await client.query('commit');
     if (automationMandate) await auditAutomationMandateCreated(pool, automationMandate).catch(() => {});
@@ -162,8 +180,7 @@ export async function issueTurnLease(
 /** 턴이 끝났다. 토큰이 맞아야 한다 — 남의 임대를 끝내 러너가 다시 받게 만드는 길을 막는다. */
 export async function endTurnLease(pool: Pool, args: { leaseId: string; token: string; agentId: string }): Promise<boolean> {
   const r = await pool.query(
-    `update secret_turn_lease set ended_at = now()
-      where id = $1 and token_hash = $2 and agent_id = $3 and ended_at is null`,
+    TURN_LEASE_END_SQL,
     [args.leaseId, sha256(args.token), args.agentId]);
   return (r.rowCount ?? 0) > 0;
 }
@@ -177,11 +194,7 @@ export async function renewTurnLease(
 ): Promise<{ expiresAt: string } | null> {
   const now = args.now ?? new Date();
   const r = await pool.query(
-    `update secret_turn_lease
-        set expires_at = greatest(expires_at, least($4::timestamptz + make_interval(secs => $5), created_at + make_interval(secs => $6))),
-            last_renewed_at = $4
-      where id = $1 and token_hash = $2 and agent_id = $3 and operator_id = $7 and ended_at is null and expires_at > $4
-      returning expires_at as "expiresAt"`,
+    TURN_LEASE_RENEW_SQL,
     [args.leaseId, sha256(args.token), args.agentId, now, LEASE_RENEW_MS / 1000, LEASE_MAX_MS / 1000, args.operatorId]);
   const row = r.rows[0] as { expiresAt: Date } | undefined;
   return row ? { expiresAt: new Date(row.expiresAt).toISOString() } : null;

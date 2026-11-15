@@ -130,6 +130,13 @@ describe('턴 도중의 확인 관문', () => {
     expect(looksLikeGate(`${관문화면}\n\u276f\u00a0`)).toBe(false);
   });
 
+  it('codex MCP 도구 승인 창은 관문이다 — 커서 이동으로 놓인 날 바이트에서도', () => {
+    // codex-cli 0.154 실측. ANSI 를 걷으면 줄이 붙어 번호 패턴(`^\s*›\s*1.`)이 맞지 않는다 — 문구로 잡는다.
+    expect(looksLikeGate(readFileSync(join(fixtures, 'codex-tui-mcp-approval.txt'), 'utf8'))).toBe(true);
+    const raw = '\x1b[2m\u203a call the ping tool\x1b[0m\x1b[17;1H\u2022 Calling fake.ping({})\x1b[20;1H  \x1b[2mField 1/1\x1b[21;1H\x1b[22m  Allow the fake MCP server to run tool "ping"?\x1b[22;1H  \x1b[1m\x1b[38;5;6;49m\u203a 1. Allow                   Run the tool and continue.\x1b[23;1H\x1b[22m\x1b[39;49m    2. Allow for this session\x1b[26;1H  enter to submit | esc to cancel\x1b]0;[ ! ] Action Required | ws\x07';
+    expect(looksLikeGate(raw)).toBe(true);
+  });
+
   it('아무 물음도 없는 출력은 관문이 아니다', () => {
     expect(looksLikeGate('빌드 중입니다\n41 files changed\n')).toBe(false);
   });

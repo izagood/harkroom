@@ -267,6 +267,12 @@ pub struct AfterCtx {
     pub screen_said: Option<String>,
     /// 화면으로 끝을 안 턴의 하네스 기록 끝말(`end.screen_record_said`).
     pub screen_record_said: Option<String>,
+    /// PTY 손잡이가 섰었다(정본 `end.controls !== null`) — 혼자 꺼진 턴 판정(`quit_before_finishing`)의 재료.
+    pub had_pty: bool,
+    /// 러너가 이 턴을 거뒀다(정본 `end.reclaimed`).
+    pub reclaimed: bool,
+    /// 하네스 기록 꼬리가 이 턴의 `end_turn` 이었다(정본 `end.finished`).
+    pub finished: bool,
 }
 /// 비밀 마운트 닫개.
 pub type MountFn<'a> = Box<dyn FnMut(&str) -> Result<(), SecretMountError> + 'a>;
@@ -1395,13 +1401,24 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
         let Some(ctx) = self.last_ctx.clone() else {
             return Err("띄우지 않은 시도의 턴 뒤 IO".to_string());
         };
-        let (background_cut, screen_ended, screen_said, screen_record_said) = {
+        let (
+            background_cut,
+            screen_ended,
+            screen_said,
+            screen_record_said,
+            had_pty,
+            reclaimed,
+            finished,
+        ) = {
             let w = self.watch.lock().unwrap_or_else(|e| e.into_inner());
             (
                 w.end.background_cut.map(|n| n as usize),
                 w.end.screen_ended,
                 w.end.screen_said.clone(),
                 w.end.screen_record_said.clone(),
+                w.end.has_controls,
+                w.end.reclaimed,
+                w.end.finished,
             )
         };
         let res = (self.after)(
@@ -1412,6 +1429,9 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
                 screen_ended,
                 screen_said,
                 screen_record_said,
+                had_pty,
+                reclaimed,
+                finished,
             },
         );
         // 성공한 턴만(턴 뒤 IO 까지 끝난 때) — 알린 기억을 저장하고(깨움 세션은 저장하지 않는다) 실은 recall 을 센다(정본
