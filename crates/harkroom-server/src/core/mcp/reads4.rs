@@ -139,6 +139,35 @@ mod tests {
         );
     }
 
+    /// security 조건(C4b) — server 빌드(server 의 regex·의존 그래프) 위에서 TS 정본 판정 골든(`harkroom-operator/golden/tool_rules.json`,
+    /// TS `validateToolRule` 이 낸 값)을 다시 돌린다. `active` 가 보는 두 칸(ok·정규형 rule)이 한 글자도 다르지 않아야 한다.
+    #[test]
+    fn tool_rules_ts_golden_on_server_build() {
+        let g: Value = serde_json::from_str(include_str!(
+            "../../../../harkroom-operator/golden/tool_rules.json"
+        ))
+        .unwrap();
+        let mut n = 0;
+        for c in g["rules"].as_array().unwrap() {
+            let input = c["input"].as_str().unwrap();
+            let want = &c["want"];
+            match validate_tool_rule(input) {
+                ToolRuleVerdict::Ok { rule, .. } => {
+                    assert_eq!(want["ok"], true, "{input}");
+                    assert_eq!(want["rule"], rule.as_str(), "{input}");
+                    assert_eq!(rule_active(true, input), rule == input, "{input}");
+                }
+                ToolRuleVerdict::Refused(code) => {
+                    assert_eq!(want["ok"], false, "{input}");
+                    assert_eq!(want["code"], code, "{input}");
+                    assert!(!rule_active(true, input), "{input}");
+                }
+            }
+            n += 1;
+        }
+        assert!(n > 50, "골든 사례가 너무 적다: {n}");
+    }
+
     #[test]
     fn active_uses_shared_verdict() {
         assert!(rule_active(true, "Bash(kubectl get pods:*)"));
