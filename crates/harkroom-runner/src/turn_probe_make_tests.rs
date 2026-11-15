@@ -47,6 +47,7 @@ fn config<'a>(
         omp_home: None,
         codex_home: None,
         opencode: None,
+        workspace_dir: None,
         end_cfg: EndConfig::new(60_000),
         lane_tui: false,
         caller: NudgeCaller::Human,
@@ -522,4 +523,43 @@ fn lane_harness_said_reads_codex_rollout_under_codex_home_only() {
         None
     );
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 화면 끝의 기록 확인(정본 `readHarnessTurnEnd`): codex 는 러너 codex 홈 `sessions/` 에서 작업 폴더로 세션을 찾고,
+/// 홈이 없으면 읽지 않는다(사람 `~/.codex` 로 넘어가지 않는다).
+#[test]
+fn recorded_end_reader_reads_codex_under_codex_home_only() {
+    let tmp = Tmp::new("rec-end");
+    let (home, ws) = (tmp.0.join("codex"), tmp.0.join("ws"));
+    let day = home.join("sessions/2026/11/15");
+    std::fs::create_dir_all(&day).unwrap();
+    std::fs::create_dir_all(&ws).unwrap();
+    let sid = "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5c";
+    let meta =
+        serde_json::json!({"type":"session_meta","payload":{"id":sid,"cwd":ws.to_string_lossy()}});
+    let done = serde_json::json!({"type":"event_msg","timestamp":"2026-11-15T11:00:05.000Z",
+        "payload":{"type":"task_complete"}});
+    std::fs::write(
+        day.join(format!("rollout-2026-11-15T11-00-00-{sid}.jsonl")),
+        format!("{meta}\n{done}\n"),
+    )
+    .unwrap();
+    let since = 1_763_204_400_000; // 2026-11-15T11:00:00Z
+    let link = NoLink;
+    let client = HarkroomMcpClient::new(&link, "t");
+    let mut c = config(&client, LiveSlot::default());
+    c.harness = AgentHarness::Codex;
+    c.workspace_dir = Some(ws.clone());
+    let mut first = ctx("a", 1, since);
+    first.session_id = None; // 첫 턴 — 작업 폴더로 찾는다.
+    // 홈이 없으면 읽지 않는다.
+    assert_eq!(recorded_end_reader(&c, &first)(since), None);
+    c.codex_home = Some(home);
+    assert_eq!(
+        recorded_end_reader(&c, &first)(since),
+        Some(crate::harness_records::RecordedTurnEnd::Ended)
+    );
+    // 기록 끝을 안 쓰는 하네스(claude)는 묻지 않는다.
+    c.harness = AgentHarness::ClaudeCode;
+    assert_eq!(recorded_end_reader(&c, &first)(since), None);
 }

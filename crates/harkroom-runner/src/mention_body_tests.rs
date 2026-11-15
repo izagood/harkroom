@@ -217,6 +217,7 @@ impl CallMaker<&'static Link, Sink> for Maker {
                 omp_home: None,
                 codex_home: None,
                 opencode: None,
+                workspace_dir: None,
                 end_cfg: EndConfig::new(60_000),
                 lane_tui: false,
                 caller: NudgeCaller::Human,
