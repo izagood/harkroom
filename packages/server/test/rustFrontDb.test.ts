@@ -2162,13 +2162,23 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           const o = e as { messageId?: string; message?: { id?: string } };
           return idsOf(sd, handed).includes((o.messageId ?? o.message?.id) as string);
         }).map((e) => shape(sd)(JSON.parse(JSON.stringify(e))));
-        const want = mineOf(tsEvents, T);
-        const until = Date.now() + 10_000;
-        while (mineOf(busEvents, R).length < want.length && Date.now() < until) await new Promise((res) => setTimeout(res, 100));
-        expect(mineOf(busEvents, R)).toEqual(want);
-        const handedT = mineOf(tsEvents, T, true);
+        // 스레드 상태 리액션(👀 등, `threadStatus.ts` watcher)은 답·닫기 쓰기가 아니라 그 `message.updated` 를 들은 TS watcher 가 뒤에 단다 —
+        // R 쪽도 outbox → TS 버스를 거쳐 TS watcher 가 달아 `tsEvents` 에 난다. 쓰기 이벤트와 떼어 따로 견준다(나는 때가 watcher 에 달렸다).
+        const isStatus = (e: unknown) => /^reaction\./.test(String((e as { type?: unknown }).type));
+        const writes = (evs: unknown[]) => evs.filter((e) => !isStatus(e));
+        const statusOf = (evs: unknown[]) => evs.filter(isStatus).map((e) => JSON.stringify(e)).sort();
+        const settle = async (ok: () => boolean) => {
+          const until = Date.now() + 10_000;
+          while (!ok() && Date.now() < until) await new Promise((res) => setTimeout(res, 100));
+        };
+        const want = writes(mineOf(tsEvents, T));
+        await settle(() => mineOf(busEvents, R).length >= want.length);
+        expect(mineOf(busEvents, R), 'Rust 가 낸 쓰기 이벤트 = TS').toEqual(want);
+        await settle(() => statusOf(mineOf(tsEvents, R)).length >= statusOf(mineOf(tsEvents, T)).length);
+        expect(statusOf(mineOf(tsEvents, R)), '상태 리액션(TS watcher)도 같다').toEqual(statusOf(mineOf(tsEvents, T)));
+        const handedT = writes(mineOf(tsEvents, T, true));
         expect(handedT.length, '머지 표지 카드는 TS 가 답해 이벤트가 난다').toBeGreaterThan(0);
-        expect(mineOf(tsEvents, R, true), '넘긴 카드는 TS 가 처리했다').toEqual(handedT);
+        expect(writes(mineOf(tsEvents, R, true)), '넘긴 카드는 TS 가 처리했다').toEqual(handedT);
         expect(mineOf(busEvents, R, true), '넘긴 카드는 Rust outbox 에 없다').toEqual([]);
         offTs();
         // 거절 — 상태·코드.
