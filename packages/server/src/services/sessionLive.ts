@@ -15,6 +15,10 @@ import { isAccountRank, isPoolRank, type AgentSessionView } from '@harkroom/shar
  * - ①″ 행마다 이 허브의 epoch 를 싣고 `relay_hub.seen_at` 을 박동으로 갱신한다. 쓸기는 seen_at 이 TTL 을 넘긴 허브만 지운다
  *   — 시작하는 인스턴스가 「죽었다」고 짐작해 다른 허브의 줄을 지우지 않는다.
  *
+ * - r1 박동은 `insert … on conflict do update` 다. DB 가 끊기거나 이벤트 루프가 멈춰 TTL 을 넘기면 다른 허브가 이 허브 줄을 쓸고
+ *   행도 cascade 로 사라진다. 그때 박동이 줄을 새로 넣고(xmax = 0), 이 허브가 쓴 세션(메모리 사본 `mine`)을 다시 쓴다
+ *   — 재시작 전까지 사본이 비어 C5f 가 「안 돈다」고 오판하지 않게 한다.
+ *
  * 쓰기는 들어온 순서대로 하나씩 한다(started 뒤의 ended 가 먼저 닿으면 유령 행이 남는다). 실패는 기록만 하고 릴레이를 막지 않는다.
  */
 export interface SessionLiveStore {
@@ -33,6 +37,8 @@ export interface SessionLiveStore {
   flush(): Promise<void>;
   /** 쓸기를 한 번 돌린다(시험용). */
   sweepDead(): Promise<number>;
+  /** 박동을 한 번 돌린다(시험용). 허브 줄이 없어졌다 다시 넣었으면 true. */
+  beatOnce(): Promise<boolean>;
 }
 
 /** 허브 박동 주기와 생존 TTL. TTL 은 박동 셋을 놓쳐야 넘는다. */
@@ -42,10 +48,12 @@ export const RELAY_HUB_TTL_SEC = 90;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** 허용 목록 칸만 꺼낸다. 틀린 모양이면 null(쓰지 않는다 — 없는 것을 있다고 하지 않는다). */
-export function liveRow(session: AgentSessionView): {
+export interface LiveRow {
   sessionId: string; channelId: string; threadRootId: string | null; harness: string;
   mode: 'mention' | 'interactive' | null; startedAt: string | null; poolRank: number | null; accountRank: number | null;
-} | null {
+}
+
+export function liveRow(session: AgentSessionView): LiveRow | null {
   const s = session as unknown as Record<string, unknown>;
   const sessionId = s.sessionId;
   if (typeof sessionId !== 'string' || sessionId.length < 1 || sessionId.length > 128) return null;
@@ -76,15 +84,15 @@ export function createSessionLiveStore(
   let chain: Promise<void> = Promise.resolve();
   let beat: ReturnType<typeof setInterval> | null = null;
   let live = false;
+  // 이 허브가 쓴 행의 메모리 사본(허용 목록 칸만 — 이름·키는 여기에도 없다). 허브 줄이 쓸려 나갔을 때 다시 쓰는 데만 쓴다.
+  const mine = new Map<string, { operatorId: string; agentAccountId: string; row: LiveRow }>();
 
   const enqueue = (what: string, fn: () => Promise<unknown>) => {
     if (!live) return;
     chain = chain.then(fn).then(() => undefined, (err) => onError(err, what));
   };
 
-  const upsert = async (operatorId: string, agentAccountId: string, session: AgentSessionView) => {
-    const r = liveRow(session);
-    if (!r) return;
+  const writeRow = async (operatorId: string, agentAccountId: string, r: LiveRow) => {
     await pool.query(
       `insert into agent_session_live
          (session_id, agent_account_id, operator_id, channel_id, thread_root_id, harness, mode, started_at,
@@ -99,6 +107,32 @@ export function createSessionLiveStore(
       [r.sessionId, agentAccountId, operatorId, r.channelId, r.threadRootId, r.harness, r.mode, r.startedAt,
         r.poolRank, r.accountRank, epoch],
     );
+  };
+
+  const upsert = async (operatorId: string, agentAccountId: string, session: AgentSessionView) => {
+    const r = liveRow(session);
+    if (!r) return;
+    // 남의 에이전트가 같은 세션 id 를 보내면 DB 처럼 사본의 주인도 바꾸지 않는다.
+    const had = mine.get(r.sessionId);
+    if (had && had.agentAccountId !== agentAccountId) return;
+    mine.set(r.sessionId, { operatorId, agentAccountId, row: r });
+    await writeRow(operatorId, agentAccountId, r);
+  };
+
+  const beatOnce = async (): Promise<boolean> => {
+    const res = await pool.query<{ inserted: boolean }>(
+      `insert into relay_hub (hub_epoch, impl) values ($1, 'ts')
+         on conflict (hub_epoch) do update set seen_at = now()
+       returning (xmax = 0) as inserted`,
+      [epoch],
+    );
+    const revived = res.rows[0]?.inserted === true;
+    if (revived) {
+      // 줄이 쓸려 나갔었다 — 행도 cascade 로 사라졌으니 이 허브가 든 세션을 다시 쓴다.
+      for (const m of [...mine.values()]) await writeRow(m.operatorId, m.agentAccountId, m.row);
+    }
+    await sweepDead();
+    return revived;
   };
 
   const sweepDead = async (): Promise<number> => {
@@ -116,10 +150,7 @@ export function createSessionLiveStore(
       live = true;
       await sweepDead().catch((err) => onError(err, 'sweep'));
       beat = setInterval(() => {
-        enqueue('beat', async () => {
-          await pool.query(`update relay_hub set seen_at = now() where hub_epoch = $1`, [epoch]);
-          await sweepDead();
-        });
+        enqueue('beat', beatOnce);
       }, opts.beatMs ?? RELAY_HUB_BEAT_MS);
       beat.unref?.();
     },
@@ -128,18 +159,23 @@ export function createSessionLiveStore(
       beat = null;
       await chain;
       live = false;
+      mine.clear();
       await pool.query(`delete from relay_hub where hub_epoch = $1`, [epoch]).catch((err) => onError(err, 'stop'));
     },
     started(operatorId, agentAccountId, session) {
       enqueue('started', () => upsert(operatorId, agentAccountId, session));
     },
     ended(agentAccountId, sessionId) {
-      enqueue('ended', () => pool.query(
-        `delete from agent_session_live where session_id = $1 and agent_account_id = $2`, [sessionId, agentAccountId]));
+      enqueue('ended', () => {
+        if (mine.get(sessionId)?.agentAccountId === agentAccountId) mine.delete(sessionId);
+        return pool.query(
+          `delete from agent_session_live where session_id = $1 and agent_account_id = $2`, [sessionId, agentAccountId]);
+      });
     },
     replaced(operatorId, agentAccountId, sessions) {
       enqueue('replaced', async () => {
         const keep = sessions.map((s) => liveRow(s)?.sessionId).filter((x): x is string => typeof x === 'string');
+        for (const [id, m] of mine) if (m.agentAccountId === agentAccountId && !keep.includes(id)) mine.delete(id);
         await pool.query(
           // announce 는 러너가 진실의 원천이다(같은 에이전트의 러너는 하나 — 4409). 허브를 가리지 않고 목록 밖을 지운다.
           `delete from agent_session_live
@@ -150,14 +186,18 @@ export function createSessionLiveStore(
       });
     },
     runnerGone(operatorId, agentAccountId) {
-      enqueue('runnerGone', () => pool.query(
-        `delete from agent_session_live where agent_account_id = $1 and operator_id = $2 and hub_epoch = $3`,
-        [agentAccountId, operatorId, epoch]));
+      enqueue('runnerGone', () => {
+        for (const [id, m] of mine) if (m.agentAccountId === agentAccountId && m.operatorId === operatorId) mine.delete(id);
+        return pool.query(
+          `delete from agent_session_live where agent_account_id = $1 and operator_id = $2 and hub_epoch = $3`,
+          [agentAccountId, operatorId, epoch]);
+      });
     },
     flush() {
       return chain;
     },
     sweepDead,
+    beatOnce,
   };
 }
 
