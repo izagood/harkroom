@@ -1115,6 +1115,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant update (body, meta, edited_at) on message to ${rw}`,
         `grant insert on inbox to ${rw}`,
         `grant update (via_edit) on inbox to ${rw}`,
+        // C4b ④-a — MCP inbox.read(`writes.rs::INBOX_READ_PRIVILEGES`).
+        `grant update (read_at) on inbox to ${rw}`,
         `grant insert on push_job to ${rw}`,
         `grant update (hidden_at) on channel_pref to ${rw}`,
         // S5.3 C1c-1 — 글 올리기 뼈대(`msg_post.rs::MESSAGE_POST_PRIVILEGES`). 없으면 「message post core off」(아래에서 그 길도 본다).
@@ -1659,6 +1661,35 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       const r2 = await mcpCall(rsUrl4, agent.pat, 'message.unreact', { channelId: readCh, messageId: rustOnly, emoji: '🎉' });
       expect(r2.core).toBe('mcp');
       expect((await db.pool.query(`select 1 from message_reaction where message_id = $1 and emoji = '🎉'`, [rustOnly])).rowCount).toBe(0);
+
+      // S5.3 C4b ④-a — inbox.read. TS·Rust 가 각자 같은 꼴의 항목(내 안 읽은 둘 · 내 이미 읽은 것 · 남의 것)을 읽음으로 하고,
+      // 답 글자(`{"read":2}`)와 행(읽음 시각이 생긴 것)이 같은지 본다. 실수 꼴·안전 범위 밖·빈 배열은 TS 가 답한다.
+      const inboxMsg = await say('inbox.read 대상', { ch: readCh });
+      const inboxSet = async () => {
+        const ins = async (acct: string, read: boolean) => Number((await db.pool.query<{ id: string }>(
+          `insert into inbox (account_id, message_id, reason, read_at) values ($1, $2, 'mention', ${read ? 'now()' : 'null'}) returning id`,
+          [acct, inboxMsg])).rows[0]!.id);
+        return [await ins(agent.accountId, false), await ins(agent.accountId, false), await ins(agent.accountId, true), await ins(bot2.accountId, false)];
+      };
+      const readRows = async (ids: number[]) => (await db.pool.query<{ read: boolean }>(
+        `select read_at is not null as read from inbox where id = any($1) order by id`, [ids])).rows.map((r) => r.read);
+      const [tsIds, rsIds] = [await inboxSet(), await inboxSet()];
+      const ir = [await mcpCall(tsUrl, agent.pat, 'inbox.read', { ids: tsIds }), await mcpCall(rsUrl4, agent.pat, 'inbox.read', { ids: rsIds })];
+      expect({ status: ir[1]!.status, type: ir[1]!.type, text: ir[1]!.text }, 'inbox.read').toEqual({ status: ir[0]!.status, type: ir[0]!.type, text: ir[0]!.text });
+      expect(ir[1]!.core, 'inbox.read — Rust 가 답한다').toBe('mcp');
+      expect(ir[1]!.text).toContain('read\\":2');
+      expect(await readRows(rsIds), 'Rust 행 = TS 행').toEqual(await readRows(tsIds));
+      expect(await readRows(rsIds)).toEqual([true, true, true, false]);
+      for (const [name, args] of [
+        ['inbox.read 실수 꼴 → TS', { ids: [1.5] }],
+        ['inbox.read 안전 범위 밖 → TS', { ids: [9007199254740993] }],
+        ['inbox.read 빈 배열 → TS', { ids: [] }],
+        ['inbox.read 인자 없음 → TS', undefined],
+      ] as const) {
+        const [a, b] = [await mcpCall(tsUrl, agent.pat, 'inbox.read', args), await mcpCall(rsUrl4, agent.pat, 'inbox.read', args)];
+        expect({ status: b.status, type: b.type, text: b.text }, name).toEqual({ status: a.status, type: a.type, text: a.text });
+        expect(b.core, `${name} — 누가 답했나`).toBe(null);
+      }
 
       // S5.3 C4a-6b — message.search. 본문 멘션 되돌리기·시스템 줄·스코프(채널·스레드)·거르기(보낸 사람·첨부)·정렬·쪽(51개 → hasMore,
       // 천장 1000)·못 보는 채널(결과에서 빠짐 · 범위로 주면 forbidden). `@`·기간·틀린 꼴은 TS 로 넘긴다.
