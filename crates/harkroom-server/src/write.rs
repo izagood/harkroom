@@ -90,6 +90,22 @@ pub async fn missing_privileges(pool: &PgPool) -> Result<Vec<String>, sqlx::Erro
 }
 
 /// 표·시퀀스 권한 중 빠진 것 — 코어 쓰기 줄(C3a 리액션 등)이 자기 목록으로 부른다.
+#[derive(Debug, PartialEq, Eq)]
+enum PrivilegeTarget<'a> {
+    Table(&'a str),
+    Column(&'a str, &'a str),
+}
+
+/// 권한 표의 대상 — `"message.meta"` 는 칸, `"message"` 는 표.
+fn privilege_target(t: &str) -> PrivilegeTarget<'_> {
+    match t.split_once('.') {
+        Some((table, column)) if !table.is_empty() && !column.is_empty() => {
+            PrivilegeTarget::Column(table, column)
+        }
+        _ => PrivilegeTarget::Table(t),
+    }
+}
+
 pub async fn missing_in(
     pool: &PgPool,
     tables: &[(&str, &str)],
@@ -97,11 +113,25 @@ pub async fn missing_in(
 ) -> Result<Vec<String>, sqlx::Error> {
     let mut out = vec![];
     for (t, p) in tables {
-        let ok: bool = sqlx::query_scalar("select has_table_privilege($1, $2)")
-            .bind(t)
-            .bind(p)
-            .fetch_one(pool)
-            .await?;
+        // `"표.칸"` 이면 그 칸의 권한만 본다(`has_column_privilege` 는 표 전체 권한도 참으로 본다) — 코드가 실제로 고치는
+        // 칸만큼 좁게 GRANT 할 수 있게(security #2167).
+        let ok: bool = match privilege_target(t) {
+            PrivilegeTarget::Column(table, column) => {
+                sqlx::query_scalar("select has_column_privilege($1, $2, $3)")
+                    .bind(table)
+                    .bind(column)
+                    .bind(p)
+                    .fetch_one(pool)
+                    .await?
+            }
+            PrivilegeTarget::Table(table) => {
+                sqlx::query_scalar("select has_table_privilege($1, $2)")
+                    .bind(table)
+                    .bind(p)
+                    .fetch_one(pool)
+                    .await?
+            }
+        };
         if !ok {
             out.push(format!("{p} on {t}"));
         }
@@ -497,5 +527,27 @@ mod tests {
         ] {
             assert_eq!(zod_datetime_offset(bad), Err(()), "{bad}");
         }
+    }
+}
+
+#[cfg(test)]
+mod privilege_target_tests {
+    use super::*;
+
+    #[test]
+    fn dotted_entry_is_a_column_check() {
+        assert_eq!(
+            privilege_target("message.meta"),
+            PrivilegeTarget::Column("message", "meta")
+        );
+        assert_eq!(
+            privilege_target("message"),
+            PrivilegeTarget::Table("message")
+        );
+        assert_eq!(privilege_target(".meta"), PrivilegeTarget::Table(".meta"));
+        assert_eq!(
+            privilege_target("message."),
+            PrivilegeTarget::Table("message.")
+        );
     }
 }
