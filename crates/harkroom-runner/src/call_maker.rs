@@ -449,12 +449,14 @@ where
                 p.omp = Some(omp);
             }
             if let Some(cx) = c.codex.clone() {
+                let codex_home = cx.home.clone();
                 p.codex_home = Some(cx.home.clone());
                 p.codex = Some(crate::codex_prep::CodexTurn {
                     prep: cx,
                     deps: std::sync::Arc::new(crate::codex_prep::SystemCodexDeps::new(
                         c.parent_env.get("PATH").map(String::as_str),
                         &c.home,
+                        &codex_home,
                     )),
                 });
             }

@@ -57,7 +57,8 @@ import { accountRanks, claudeAccountsRoot, createLiveAccountLane, loadClaudeAcco
 import { createAccountAssigner } from './accountAssign.js';
 import { clearAccountAttention, clearAccountCredentialFailure, isAttentionActive, markAccountCredentialFailed, markAccountNeedsAttention, readAccountAttention } from '@harkroom/shared/claudeGates';
 import { syncCodexAuth } from './codexHome.js';
-import { allXdgApps, commandRulesOf, turnKeyDeliveryOf, usesOmpHome, usesPiHome, usesXdgHome, xdgAppFor } from './adapters/index.js';
+import { harnessVersionEnv } from './harnessVersionEnv.js';
+import { allXdgApps, commandRulesOf, turnKeyDeliveryOf, usesCodexHome, usesOmpHome, usesPiHome, usesXdgHome, xdgAppFor } from './adapters/index.js';
 import { issueTurnKeys } from './turnKeys.js';
 import { ensurePiHome } from './piHome.js';
 import { ensureOmpHome, ompDirs } from './ompHome.js';
@@ -673,9 +674,17 @@ function harnessVersion(harness: AgentHarness): Promise<string | null> {
   return new Promise((resolve) => {
     const bin = harnessBinaryName(harness);
     if (!bin) return resolve(null);
+    // omp 는 러너 omp 홈의 HOME, codex 는 러너 codex 홈을 `CODEX_HOME` 으로(`harnessVersionEnv` — 사람 `~/.codex/tmp` 를 건드리지 않게).
+    const env = harnessVersionEnv({
+      path: harnessPath(harness, process.env.PATH),
+      home: process.env.HOME,
+      ...(usesOmpHome(harness) ? { ompHome: ompDirs(ompHomeDir).home } : {}),
+      codexHome,
+      codex: usesCodexHome(harness),
+    });
+    if (!env) return resolve(null);
     execFile(bin, ['--version'], {
-      // omp 는 natives 캐시를 `$HOME/.omp` 에서 실행 코드로 싣는다(security C3) — 판을 물을 때도 러너 홈을 준다.
-      env: { PATH: harnessPath(harness, process.env.PATH), ...(usesOmpHome(harness) ? { HOME: ompDirs(ompHomeDir).home } : process.env.HOME ? { HOME: process.env.HOME } : {}) }, timeout: 15_000,
+      env, timeout: 15_000,
     }, (err, stdout) => {
       const out = String(stdout ?? '').trim();
       if (err || !out) return resolve(null);

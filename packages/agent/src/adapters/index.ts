@@ -306,6 +306,11 @@ export function usesOmpHome(harness: AgentHarness): boolean {
   return env.includes('PI_CODING_AGENT_DIR') && env.includes('HOME');
 }
 
+/** 이 하네스가 홈을 `CODEX_HOME` 으로 옮기는가(codex) — 판 묻기(`--version`)도 그 홈을 준다(`harnessVersionEnv`). */
+export function usesCodexHome(harness: AgentHarness): boolean {
+  return configDirEnvOf(harness).includes('CODEX_HOME');
+}
+
 function configDirEnvOf(harness: AgentHarness): readonly string[] {
   const adapter = ADAPTERS[harness];
   return adapter === 'unsupported' ? [] : adapter.account?.configDirEnv ?? [];

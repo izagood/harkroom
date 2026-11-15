@@ -105,25 +105,37 @@ impl CodexTurn {
 pub struct SystemCodexDeps {
     path: String,
     home: PathBuf,
+    /// 러너 codex 홈 — 판 묻기의 `CODEX_HOME`(codex 는 `--version` 에도 `$CODEX_HOME/tmp/arg0` 를 쓴다. 없으면 사람 `~/.codex`).
+    codex_home: PathBuf,
 }
 
 impl SystemCodexDeps {
-    pub fn new(base_path: Option<&str>, home: &Path) -> Self {
+    pub fn new(base_path: Option<&str>, home: &Path, codex_home: &Path) -> Self {
         SystemCodexDeps {
             path: crate::turn_env::harness_path(AgentHarness::Codex, base_path, home),
             home: home.to_path_buf(),
+            codex_home: codex_home.to_path_buf(),
         }
+    }
+
+    /// `codex --version` 을 물을 env — PATH·HOME·러너 `CODEX_HOME` 셋뿐.
+    pub fn version_env(&self) -> Env {
+        [
+            ("PATH".to_string(), self.path.clone()),
+            ("HOME".to_string(), self.home.to_string_lossy().into_owned()),
+            (
+                "CODEX_HOME".to_string(),
+                self.codex_home.to_string_lossy().into_owned(),
+            ),
+        ]
+        .into()
     }
 }
 
 impl CodexRulesDeps for SystemCodexDeps {
     fn version(&self) -> Option<String> {
         let bin = crate::pty_proc::resolve_executable("codex", Some(&self.path))?;
-        let env: Env = [
-            ("PATH".to_string(), self.path.clone()),
-            ("HOME".to_string(), self.home.to_string_lossy().into_owned()),
-        ]
-        .into();
+        let env = self.version_env();
         crate::pi_home::run_capped_with(
             &bin,
             &["--version".to_string()],
