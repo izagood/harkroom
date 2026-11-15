@@ -1042,6 +1042,39 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       const noteText = (await mcpCall(rsUrl4, agent.pat, 'thread.note.list', {})).text;
       for (const want of ['첫 줄', '…', 'flagged\\":true', '오늘 채널 메모']) expect(noteText).toContain(want);
       expect(noteText).not.toContain('숨길 본문');
+
+      // S5.3 C4a-5 — security 지적(#2185): flag_reason 이 빈 글자인 메모는 TS 에서 본문 첫 줄을 보이고(`? '' :` 의 거짓) flagged 는 참
+      // (`!== null`). 그리고 memory.revisions — 빈 칸은 키째 빠지고, chars 는 UTF-16 길이, detail 은 jsonb 키 순서 그대로.
+      const emptyFlagRoot = await say('빈 표시 메모의 스레드', { ch: readCh });
+      await db.pool.query(
+        `insert into thread_note (account_id, thread_root_id, body, flag_reason, updated_at) values ($1, $2, '빈 표시라 보이는 본문', '', now() + interval '1 minute')`,
+        [agent.accountId, emptyFlagRoot]);
+      await db.pool.query(
+        `insert into agent_memory_revision (account_id, slug, value, description, updated_at, replaced_at, reason, detail, kind, flagged) values
+           ($1, 'mem/a', 'a😀b', '옛 요약', now() - interval '3 days', now() - interval '2 days', null, null, 'topic', false),
+           ($1, 'mem/a', '합친 판', '', now() - interval '2 days', now() - interval '1 day', 'merge', '{"from": ["mem/x", "mem/y"], "n": 2}', null, false),
+           ($1, 'mem/a', '걸린 판', null, now() - interval '1 day', now() - interval '1 hour', 'restore', '{}', 'procedure', true),
+           ($1, 'mem/a', '같은 시각 둘', null, now() - interval '1 day', now() - interval '1 hour', null, 'null', null, false),
+           ($1, 'core', 'c0', null, now() - interval '1 day', now() - interval '1 hour', null, null, null, false)`,
+        [agent.accountId]);
+      for (const [name, tool, args, answeredByRust] of [
+        ['thread.note.list 빈 flag_reason', 'thread.note.list', {}, true],
+        ['memory.revisions', 'memory.revisions', { slug: 'mem/a' }, true],
+        ['memory.revisions core', 'memory.revisions', { slug: 'core' }, true],
+        ['memory.revisions 판 없음', 'memory.revisions', { slug: 'mem/none' }, true],
+        ['memory.revisions 모르는 키는 버린다', 'memory.revisions', { slug: 'mem/a', x: 1 }, true],
+        ['memory.revisions slug 꼴 틀림 → TS(invalid_slug)', 'memory.revisions', { slug: 'Mem/A' }, false],
+        ['memory.revisions 빈 slug → TS', 'memory.revisions', { slug: '' }, false],
+        ['memory.revisions 수 slug → TS', 'memory.revisions', { slug: 1 }, false],
+        ['memory.revisions 인자 없음 → TS', 'memory.revisions', undefined, false],
+      ] as const) {
+        const [a, b] = [await mcpCall(tsUrl, agent.pat, tool, args), await mcpCall(rsUrl4, agent.pat, tool, args)];
+        expect({ status: b.status, type: b.type, text: b.text }, name).toEqual({ status: a.status, type: a.type, text: a.text });
+        expect(b.core, `${name} — 누가 답했나`).toBe(answeredByRust ? 'mcp' : null);
+      }
+      expect((await mcpCall(rsUrl4, agent.pat, 'thread.note.list', {})).text).toContain('빈 표시라 보이는 본문');
+      const revText = (await mcpCall(rsUrl4, agent.pat, 'memory.revisions', { slug: 'mem/a' })).text;
+      for (const want of ['mem/x', 'merge', 'restore', 'flagged', 'chars\\":4', 'detail\\":{}']) expect(revText).toContain(want);
       // 빈 값끼리 비교해 통과하지 않게 — 문서·목록이 실제로 실렸는지.
       const docText = (await mcpCall(`http://127.0.0.1:${port}`, agent.pat, 'channel.doc', { channelId: todayId })).text;
       expect(docText).toContain('문서 본문');
