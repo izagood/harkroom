@@ -55,15 +55,20 @@ type BundleRow = { id: string; channelId: string; threadRootId: string | null; a
 
 /** 사본의 `link` 가 아니라 **원본 meta** 로 잰다 — 사본은 모을 때의 값이고 옛 묶음·새 묶음이 다를 수 있다. */
 async function isDecisionCard(pool: Pool, rootId: string): Promise<boolean> {
-  return ((await pool.query(`select 1 from message where id = $1 and (meta ? 'permissionRequest' or meta ? 'mergeDenial')`, [rootId])).rowCount ?? 0) > 0;
+  return ((await pool.query(DECISION_CARD_SQL, [rootId])).rowCount ?? 0) > 0;
 }
 
+/**
+ * 묶음 카드 REST(답·추천대로)의 문장 — Rust 코어(`core/ask_bundle.rs`, S5.3 C3b-2a)가 골든으로 받는다(`bundle_*`).
+ * Rust 는 무형 인자를 text 로 보내므로 받는 쪽에서 캐스트한다.
+ */
+export const DECISION_CARD_SQL = `select 1 from message where id = $1::uuid and (meta ? 'permissionRequest' or meta ? 'mergeDenial')`;
+export const READ_BUNDLE_SQL = `select id, meta, channel_id as "channelId", thread_root_id as "threadRootId", author_id as "authorId"
+       from message where id = $1::uuid and deleted_at is null`;
+export const ACCEPT_ROOT_SQL = `select meta, body from message where id = $1::uuid and deleted_at is null`;
+
 async function readBundle(pool: Pool, bundleId: string): Promise<BundleRow | null> {
-  const res = await pool.query(
-    `select id, meta, channel_id as "channelId", thread_root_id as "threadRootId", author_id as "authorId"
-       from message where id = $1 and deleted_at is null`,
-    [bundleId],
-  );
+  const res = await pool.query(READ_BUNDLE_SQL, [bundleId]);
   const row = res.rows[0] as { id: string; meta: Record<string, unknown>; channelId: string; threadRootId: string | null; authorId: string | null } | undefined;
   const bundle = row ? readAskBundleMeta(row.meta) : null;
   if (!row || !bundle) return null;
@@ -159,7 +164,7 @@ async function announceBundledRoots(pool: Pool, rootIds: string[]): Promise<void
  * - 물어본 쪽이 `irreversible: true` 를 실었으면 그대로 믿는다.
  * - 그 밖에는 물음·본문·선택지 글자에 그 낱말이 있으면 뺀다(에이전트가 표시를 잊어도 막히게).
  */
-const IRREVERSIBLE_WORDS = /머지|병합|merge|배포|deploy|릴리스|릴리즈|release|롤아웃|rollout|비밀|secret|토큰|token|자격|credential|권한|permission|grant|삭제|delete|drop|force[- ]?push/i;
+export const IRREVERSIBLE_WORDS = /머지|병합|merge|배포|deploy|릴리스|릴리즈|release|롤아웃|rollout|비밀|secret|토큰|token|자격|credential|권한|permission|grant|삭제|delete|drop|force[- ]?push/i;
 
 export function isIrreversible(meta: Record<string, unknown>, body: string): boolean {
   if (meta.permissionRequest || meta.mergeDenial) return true;
@@ -242,7 +247,7 @@ export async function acceptRecommended(pool: Pool, args: {
   const results: { rootId: string; outcome: AcceptOutcome; code?: string }[] = [];
   for (const item of bundle.items) {
     if (item.link || await isDecisionCard(pool, item.rootId)) { results.push({ rootId: item.rootId, outcome: 'skipped_link' }); continue; }
-    const found = await pool.query(`select meta, body from message where id = $1 and deleted_at is null`, [item.rootId]);
+    const found = await pool.query(ACCEPT_ROOT_SQL, [item.rootId]);
     const row = found.rows[0] as { meta: Record<string, unknown>; body: string } | undefined;
     const ask = row ? readAskMeta(row.meta) : null;
     if (!row || !ask || !isAskOpen(ask)) { results.push({ rootId: item.rootId, outcome: 'resolved' }); continue; }
