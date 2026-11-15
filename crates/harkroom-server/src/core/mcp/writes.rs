@@ -14,7 +14,14 @@ use serde_json::Value;
 use sqlx::PgPool;
 
 /// 이 묶음에서 Rust 가 답하는 쓰기 도구.
-pub const SERVED: &[&str] = &["message.react", "message.unreact", "inbox.read", "bg.claim"];
+pub const SERVED: &[&str] = &[
+    "message.react",
+    "message.unreact",
+    "inbox.read",
+    "bg.claim",
+    // C4b-ask — 묶음 카드 한 줄 닫기. 선택 카드 쓰기 풀(`ASK_PRIVILEGES`)이 있을 때만.
+    "message.askBundleResolve",
+];
 
 /// `inbox.read`(C4b ④-a) 쓰기 역할의 권한 — 읽음 시각 칸 하나만 고친다. 없으면 `main.rs` 가 풀을 비워 TS 가 답한다.
 pub const INBOX_READ_PRIVILEGES: &[(&str, &str)] = &[("inbox.read_at", "UPDATE")];
@@ -28,6 +35,8 @@ pub struct McpWrites {
     pub inbox: Option<PgPool>,
     /// `bg.claim` — [`super::bg_claim::BG_CLAIM_PRIVILEGES`].
     pub bg: Option<PgPool>,
+    /// `message.askBundleResolve` — C3b-1 `ASK_PRIVILEGES`.
+    pub ask: Option<PgPool>,
 }
 
 /// JS `Number.MAX_SAFE_INTEGER` — 이 밖의 수는 TS 에서 값이 뭉개진다. Rust 는 같은 결과를 낼 수 없으니 TS 로 넘긴다.
@@ -79,6 +88,12 @@ pub async fn answer(
         };
         return Some(inbox_read(write, me, args).await);
     }
+    if tool == "message.askBundleResolve" {
+        let Some(write) = writes.ask.as_ref() else {
+            return Some(None);
+        };
+        return Some(bundle_resolve(read, write, me, args).await);
+    }
     let Some(write) = writes.react.as_ref() else {
         return Some(None);
     };
@@ -117,6 +132,40 @@ async fn inbox_read(write: &PgPool, me: &Account, args: &Value) -> Option<String
             Err(_) => internal(),
         },
     )
+}
+
+/// `note: z.string().min(1).max(1000).optional()` — UTF-16 길이. 칸이 있는데 꼴이 틀리면 zod 오류라 TS 로(`Err`).
+fn note_arg(args: &Value) -> Result<Option<&str>, ()> {
+    match args.get("note") {
+        None => Ok(None),
+        Some(v) => v
+            .as_str()
+            .filter(|s| (1..=1000).contains(&s.encode_utf16().count()))
+            .map(Some)
+            .ok_or(()),
+    }
+}
+
+/// `message.askBundleResolve` — TS `resolveBundleItem`([`crate::core::ask_bundle_resolve`]).
+async fn bundle_resolve(
+    read: &PgPool,
+    write: &PgPool,
+    me: &Account,
+    args: &Value,
+) -> Option<String> {
+    use crate::core::ask_bundle_resolve::{Resolved, refusal_message, resolve};
+    let bundle = uuid_arg(args, "bundleId")?;
+    let root = uuid_arg(args, "rootId")?;
+    let reply = uuid_arg(args, "replyMessageId")?;
+    let note = note_arg(args).ok()?;
+    match resolve(read, write, &me.id, bundle, root, reply, note)
+        .await
+        .ok()?
+    {
+        Resolved::Refused(code) => Some(err(code, refusal_message(code))),
+        Resolved::Bundle(row) => Some(ok_text(&format!("{{\"message\":{row}}}"))),
+        Resolved::Failed => Some(internal()),
+    }
 }
 
 async fn react(

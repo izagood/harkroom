@@ -385,6 +385,7 @@ async fn main() {
             core_routes.sockets.extend(edit.sockets);
         }
         // C3b-1 — 선택 카드 답하기·닫기. 권한·머지 카드와 못 읽는 카드는 핸들러가 TS 로 넘긴다.
+        let mcp_ask_write = ask_write.clone();
         if let Some(write) = ask_write {
             let ask = harkroom_server::core::ask::routes(
                 harkroom_server::core::ask::AskState {
@@ -418,11 +419,13 @@ async fn main() {
         let mcp = harkroom_server::core::mcp::route::routes(
             state.up.clone(),
             state.pool.clone(),
-            // C4b — 도구 묶음마다 그 권한이 다 있는 쓰기 풀일 때만 Rust 가 답한다(리액션 · inbox.read).
+            // C4b — 도구 묶음마다 그 권한이 다 있는 쓰기 풀일 때만 Rust 가 답한다(리액션 · inbox.read ·
+            // 선택 카드 → `message.askBundleResolve`).
             harkroom_server::core::mcp::writes::McpWrites {
                 react: mcp_react_write,
                 inbox: inbox_write,
                 bg: bg_write,
+                ask: mcp_ask_write,
             },
             auth.clone(),
             state.cors.clone(),
