@@ -30,6 +30,8 @@ sqlx = { version = "=0.9.0", default-features = false, features = ["postgres", "
 tokio = { version = "=1.48.0", features = ["macros", "rt-multi-thread", "net", "signal", "time"] }
 # 서버 ↔ UI 타입(P6)의 TS 생성. 생성 import 의 `.js` 는 아래 `TS_RS_IMPORT_EXTENSION` 참고.
 ts-rs = "=12.0.1"
+# 링크 판정(C3a-3a) — shared `isDrawnLink` 의 `new URL()` 과 같은 WHATWG 파서. 이미 잠금 파일에 있던 판.
+url = "=2.5.8"
 
 [dev-dependencies]
 # /ws 시험 클라이언트(앞단 의존 axum ws 가 이미 쓰는 판).

@@ -1,0 +1,2456 @@
+{
+  "accounts": {
+    "forge": "11111111-1111-4111-8111-111111111111",
+    "murmur": "22222222-2222-4222-8222-222222222222",
+    "alex": "33333333-3333-4333-8333-333333333333",
+    "ops": "group:44444444-4444-4444-8444-444444444444",
+    "devteam": "team:55555555-5555-4555-8555-555555555555"
+  },
+  "agents": [
+    "11111111-1111-4111-8111-111111111111",
+    "22222222-2222-4222-8222-222222222222"
+  ],
+  "cases": [
+    {
+      "body": "",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "",
+          "lang": null,
+          "raw": ""
+        }
+      ],
+      "scanText": "",
+      "handles": [],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "",
+      "denormalized": "",
+      "splitHuman": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "hello",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "hello",
+          "lang": null,
+          "raw": "hello"
+        }
+      ],
+      "scanText": "hello",
+      "handles": [],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "hello",
+      "denormalized": "hello",
+      "splitHuman": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "@forge",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "@forge",
+          "lang": null,
+          "raw": "@forge"
+        }
+      ],
+      "scanText": "@forge",
+      "handles": [
+        "forge"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "@forge",
+      "normalized": "<@11111111-1111-4111-8111-111111111111>",
+      "denormalized": "@forge",
+      "splitHuman": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "@forge 일 좀",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "@forge 일 좀",
+          "lang": null,
+          "raw": "@forge 일 좀"
+        }
+      ],
+      "scanText": "@forge 일 좀",
+      "handles": [
+        "forge"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "@forge",
+      "normalized": "<@11111111-1111-4111-8111-111111111111> 일 좀",
+      "denormalized": "@forge 일 좀",
+      "splitHuman": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "@Forge @MURMUR 둘 다",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "@Forge @MURMUR 둘 다",
+          "lang": null,
+          "raw": "@Forge @MURMUR 둘 다"
+        }
+      ],
+      "scanText": "@Forge @MURMUR 둘 다",
+      "handles": [
+        "forge",
+        "murmur"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "@Forge @MURMUR",
+      "normalized": "<@11111111-1111-4111-8111-111111111111> <@22222222-2222-4222-8222-222222222222> 둘 다",
+      "denormalized": "@forge @murmur 둘 다",
+      "splitHuman": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111",
+          "22222222-2222-4222-8222-222222222222"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111",
+          "22222222-2222-4222-8222-222222222222"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "@forge\n@murmur\n본문",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "@forge\n@murmur\n본문",
+          "lang": null,
+          "raw": "@forge\n@murmur\n본문"
+        }
+      ],
+      "scanText": "@forge\n@murmur\n본문",
+      "handles": [
+        "forge",
+        "murmur"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "@forge\n@murmur",
+      "normalized": "<@11111111-1111-4111-8111-111111111111>\n<@22222222-2222-4222-8222-222222222222>\n본문",
+      "denormalized": "@forge\n@murmur\n본문",
+      "splitHuman": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111",
+          "22222222-2222-4222-8222-222222222222"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111",
+          "22222222-2222-4222-8222-222222222222"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "보고: 구현은 @forge 것이고 @alex 확인",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "보고: 구현은 @forge 것이고 @alex 확인",
+          "lang": null,
+          "raw": "보고: 구현은 @forge 것이고 @alex 확인"
+        }
+      ],
+      "scanText": "보고: 구현은 @forge 것이고 @alex 확인",
+      "handles": [
+        "forge",
+        "alex"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "보고: 구현은 <@11111111-1111-4111-8111-111111111111> 것이고 <@33333333-3333-4333-8333-333333333333> 확인",
+      "denormalized": "보고: 구현은 @forge 것이고 @alex 확인",
+      "splitHuman": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111",
+          "33333333-3333-4333-8333-333333333333"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [
+          "33333333-3333-4333-8333-333333333333"
+        ],
+        "ref": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "@murmur 구현은 @forge 것이다",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "@murmur 구현은 @forge 것이다",
+          "lang": null,
+          "raw": "@murmur 구현은 @forge 것이다"
+        }
+      ],
+      "scanText": "@murmur 구현은 @forge 것이다",
+      "handles": [
+        "murmur",
+        "forge"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "@murmur",
+      "normalized": "<@22222222-2222-4222-8222-222222222222> 구현은 <@11111111-1111-4111-8111-111111111111> 것이다",
+      "denormalized": "@murmur 구현은 @forge 것이다",
+      "splitHuman": {
+        "call": [
+          "22222222-2222-4222-8222-222222222222",
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [
+          "22222222-2222-4222-8222-222222222222"
+        ],
+        "ref": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "@forge 다시 @forge",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "@forge 다시 @forge",
+          "lang": null,
+          "raw": "@forge 다시 @forge"
+        }
+      ],
+      "scanText": "@forge 다시 @forge",
+      "handles": [
+        "forge"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "@forge",
+      "normalized": "<@11111111-1111-4111-8111-111111111111> 다시 <@11111111-1111-4111-8111-111111111111>",
+      "denormalized": "@forge 다시 @forge",
+      "splitHuman": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "@devteam 보고 바람",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "@devteam 보고 바람",
+          "lang": null,
+          "raw": "@devteam 보고 바람"
+        }
+      ],
+      "scanText": "@devteam 보고 바람",
+      "handles": [
+        "devteam"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "@devteam",
+      "normalized": "<@team:55555555-5555-4555-8555-555555555555> 보고 바람",
+      "denormalized": "@devteam 보고 바람",
+      "splitHuman": {
+        "call": [],
+        "ref": [],
+        "targetCall": [
+          {
+            "kind": "team",
+            "id": "55555555-5555-4555-8555-555555555555"
+          }
+        ],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [],
+        "targetCall": [
+          {
+            "kind": "team",
+            "id": "55555555-5555-4555-8555-555555555555"
+          }
+        ],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "보고 끝 — @devteam 참고",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "보고 끝 — @devteam 참고",
+          "lang": null,
+          "raw": "보고 끝 — @devteam 참고"
+        }
+      ],
+      "scanText": "보고 끝 — @devteam 참고",
+      "handles": [
+        "devteam"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "보고 끝 — <@team:55555555-5555-4555-8555-555555555555> 참고",
+      "denormalized": "보고 끝 — @devteam 참고",
+      "splitHuman": {
+        "call": [],
+        "ref": [],
+        "targetCall": [
+          {
+            "kind": "team",
+            "id": "55555555-5555-4555-8555-555555555555"
+          }
+        ],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": [
+          {
+            "kind": "team",
+            "id": "55555555-5555-4555-8555-555555555555"
+          }
+        ]
+      }
+    },
+    {
+      "body": "@ops 공지",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "@ops 공지",
+          "lang": null,
+          "raw": "@ops 공지"
+        }
+      ],
+      "scanText": "@ops 공지",
+      "handles": [
+        "ops"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "@ops",
+      "normalized": "<@group:44444444-4444-4444-8444-444444444444> 공지",
+      "denormalized": "@ops 공지",
+      "splitHuman": {
+        "call": [],
+        "ref": [],
+        "targetCall": [
+          {
+            "kind": "group",
+            "id": "44444444-4444-4444-8444-444444444444"
+          }
+        ],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [],
+        "targetCall": [
+          {
+            "kind": "group",
+            "id": "44444444-4444-4444-8444-444444444444"
+          }
+        ],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "중간에 @ops 공지",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "중간에 @ops 공지",
+          "lang": null,
+          "raw": "중간에 @ops 공지"
+        }
+      ],
+      "scanText": "중간에 @ops 공지",
+      "handles": [
+        "ops"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "중간에 <@group:44444444-4444-4444-8444-444444444444> 공지",
+      "denormalized": "중간에 @ops 공지",
+      "splitHuman": {
+        "call": [],
+        "ref": [],
+        "targetCall": [
+          {
+            "kind": "group",
+            "id": "44444444-4444-4444-8444-444444444444"
+          }
+        ],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [],
+        "targetCall": [
+          {
+            "kind": "group",
+            "id": "44444444-4444-4444-8444-444444444444"
+          }
+        ],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "@channel 모두",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "@channel 모두",
+          "lang": null,
+          "raw": "@channel 모두"
+        }
+      ],
+      "scanText": "@channel 모두",
+      "handles": [
+        "channel"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "@channel",
+      "normalized": "@channel 모두",
+      "denormalized": "@channel 모두",
+      "splitHuman": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "me@example.com 메일",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "me@example.com 메일",
+          "lang": null,
+          "raw": "me@example.com 메일"
+        }
+      ],
+      "scanText": "me@example.com 메일",
+      "handles": [],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "me@example.com 메일",
+      "denormalized": "me@example.com 메일",
+      "splitHuman": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "a@forge b",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "a@forge b",
+          "lang": null,
+          "raw": "a@forge b"
+        }
+      ],
+      "scanText": "a@forge b",
+      "handles": [],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "a@forge b",
+      "denormalized": "a@forge b",
+      "splitHuman": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "(@forge) [@alex] \"@murmur\"",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "(@forge) [@alex] \"@murmur\"",
+          "lang": null,
+          "raw": "(@forge) [@alex] \"@murmur\""
+        }
+      ],
+      "scanText": "(@forge) [@alex] \"@murmur\"",
+      "handles": [
+        "forge",
+        "alex",
+        "murmur"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "(<@11111111-1111-4111-8111-111111111111>) [<@33333333-3333-4333-8333-333333333333>] \"<@22222222-2222-4222-8222-222222222222>\"",
+      "denormalized": "(@forge) [@alex] \"@murmur\"",
+      "splitHuman": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111",
+          "33333333-3333-4333-8333-333333333333",
+          "22222222-2222-4222-8222-222222222222"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [
+          "33333333-3333-4333-8333-333333333333"
+        ],
+        "ref": [
+          "11111111-1111-4111-8111-111111111111",
+          "22222222-2222-4222-8222-222222222222"
+        ],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "@unknownperson 오타",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "@unknownperson 오타",
+          "lang": null,
+          "raw": "@unknownperson 오타"
+        }
+      ],
+      "scanText": "@unknownperson 오타",
+      "handles": [
+        "unknownperson"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "@unknownperson",
+      "normalized": "@unknownperson 오타",
+      "denormalized": "@unknownperson 오타",
+      "splitHuman": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "@f 한 글자",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "@f 한 글자",
+          "lang": null,
+          "raw": "@f 한 글자"
+        }
+      ],
+      "scanText": "@f 한 글자",
+      "handles": [],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "@f 한 글자",
+      "denormalized": "@f 한 글자",
+      "splitHuman": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "@abcdefghijabcdefghijabcdefghijabcd 긴 이름",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "@abcdefghijabcdefghijabcdefghijabcd 긴 이름",
+          "lang": null,
+          "raw": "@abcdefghijabcdefghijabcdefghijabcd 긴 이름"
+        }
+      ],
+      "scanText": "@abcdefghijabcdefghijabcdefghijabcd 긴 이름",
+      "handles": [
+        "abcdefghijabcdefghijabcdefghijab"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "@abcdefghijabcdefghijabcdefghijab",
+      "normalized": "@abcdefghijabcdefghijabcdefghijabcd 긴 이름",
+      "denormalized": "@abcdefghijabcdefghijabcdefghijabcd 긴 이름",
+      "splitHuman": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "@forge-bot_x 붙은 이름",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "@forge-bot_x 붙은 이름",
+          "lang": null,
+          "raw": "@forge-bot_x 붙은 이름"
+        }
+      ],
+      "scanText": "@forge-bot_x 붙은 이름",
+      "handles": [
+        "forge-bot_x"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "@forge-bot_x",
+      "normalized": "@forge-bot_x 붙은 이름",
+      "denormalized": "@forge-bot_x 붙은 이름",
+      "splitHuman": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "`@forge` 인라인 코드",
+      "segments": [
+        {
+          "kind": "inlineCode",
+          "text": "@forge",
+          "lang": null,
+          "raw": "`@forge`"
+        },
+        {
+          "kind": "plain",
+          "text": " 인라인 코드",
+          "lang": null,
+          "raw": " 인라인 코드"
+        }
+      ],
+      "scanText": " 인라인 코드",
+      "handles": [],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "`@forge` 인라인 코드",
+      "denormalized": "`@forge` 인라인 코드",
+      "splitHuman": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "앞 `코드 @forge` 뒤 @alex",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "앞 ",
+          "lang": null,
+          "raw": "앞 "
+        },
+        {
+          "kind": "inlineCode",
+          "text": "코드 @forge",
+          "lang": null,
+          "raw": "`코드 @forge`"
+        },
+        {
+          "kind": "plain",
+          "text": " 뒤 @alex",
+          "lang": null,
+          "raw": " 뒤 @alex"
+        }
+      ],
+      "scanText": "앞 \n 뒤 @alex",
+      "handles": [
+        "alex"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "앞 `코드 @forge` 뒤 <@33333333-3333-4333-8333-333333333333>",
+      "denormalized": "앞 `코드 @forge` 뒤 @alex",
+      "splitHuman": {
+        "call": [
+          "33333333-3333-4333-8333-333333333333"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [
+          "33333333-3333-4333-8333-333333333333"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "``@forge`` 이중 백틱",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "``@forge`` 이중 백틱",
+          "lang": null,
+          "raw": "``@forge`` 이중 백틱"
+        }
+      ],
+      "scanText": "``@forge`` 이중 백틱",
+      "handles": [
+        "forge"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "``<@11111111-1111-4111-8111-111111111111>`` 이중 백틱",
+      "denormalized": "``@forge`` 이중 백틱",
+      "splitHuman": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "```\n@forge in fence\n```\n@alex 밖",
+      "segments": [
+        {
+          "kind": "codeBlock",
+          "text": "@forge in fence",
+          "lang": null,
+          "raw": "```\n@forge in fence\n```"
+        },
+        {
+          "kind": "plain",
+          "text": "@alex 밖",
+          "lang": null,
+          "raw": "@alex 밖"
+        }
+      ],
+      "scanText": "@alex 밖",
+      "handles": [
+        "alex"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "```\n@forge in fence\n```\n<@33333333-3333-4333-8333-333333333333> 밖",
+      "denormalized": "```\n@forge in fence\n```\n@alex 밖",
+      "splitHuman": {
+        "call": [
+          "33333333-3333-4333-8333-333333333333"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [
+          "33333333-3333-4333-8333-333333333333"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "```ts\nconst a = \"@forge\";\n```",
+      "segments": [
+        {
+          "kind": "codeBlock",
+          "text": "const a = \"@forge\";",
+          "lang": "ts",
+          "raw": "```ts\nconst a = \"@forge\";\n```"
+        }
+      ],
+      "scanText": "",
+      "handles": [],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "```ts\nconst a = \"@forge\";\n```",
+      "denormalized": "```ts\nconst a = \"@forge\";\n```",
+      "splitHuman": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "```\n@forge 닫히지 않은 펜스",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "```\n@forge 닫히지 않은 펜스",
+          "lang": null,
+          "raw": "```\n@forge 닫히지 않은 펜스"
+        }
+      ],
+      "scanText": "```\n@forge 닫히지 않은 펜스",
+      "handles": [
+        "forge"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "```\n<@11111111-1111-4111-8111-111111111111> 닫히지 않은 펜스",
+      "denormalized": "```\n@forge 닫히지 않은 펜스",
+      "splitHuman": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "```a```\n@forge",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "```a```\n@forge",
+          "lang": null,
+          "raw": "```a```\n@forge"
+        }
+      ],
+      "scanText": "```a```\n@forge",
+      "handles": [
+        "forge"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "```a```\n<@11111111-1111-4111-8111-111111111111>",
+      "denormalized": "```a```\n@forge",
+      "splitHuman": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "  ```\n@forge\n  ``` x\n@murmur",
+      "segments": [
+        {
+          "kind": "codeBlock",
+          "text": "@forge",
+          "lang": null,
+          "raw": "  ```\n@forge\n  ``` x"
+        },
+        {
+          "kind": "plain",
+          "text": "@murmur",
+          "lang": null,
+          "raw": "@murmur"
+        }
+      ],
+      "scanText": "@murmur",
+      "handles": [
+        "murmur"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "  ```\n@forge\n  ``` x\n<@22222222-2222-4222-8222-222222222222>",
+      "denormalized": "  ```\n@forge\n  ``` x\n@murmur",
+      "splitHuman": {
+        "call": [
+          "22222222-2222-4222-8222-222222222222"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [
+          "22222222-2222-4222-8222-222222222222"
+        ],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "> @forge 인용\n@alex 평문",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "> @forge 인용\n@alex 평문",
+          "lang": null,
+          "raw": "> @forge 인용\n@alex 평문"
+        }
+      ],
+      "scanText": "\n@alex 평문",
+      "handles": [
+        "alex"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "> @forge 인용\n<@33333333-3333-4333-8333-333333333333> 평문",
+      "denormalized": "> @forge 인용\n@alex 평문",
+      "splitHuman": {
+        "call": [
+          "33333333-3333-4333-8333-333333333333"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [
+          "33333333-3333-4333-8333-333333333333"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "> 인용 `코드` @forge\n본문",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "> 인용 ",
+          "lang": null,
+          "raw": "> 인용 "
+        },
+        {
+          "kind": "inlineCode",
+          "text": "코드",
+          "lang": null,
+          "raw": "`코드`"
+        },
+        {
+          "kind": "plain",
+          "text": " @forge\n본문",
+          "lang": null,
+          "raw": " @forge\n본문"
+        }
+      ],
+      "scanText": "\n본문",
+      "handles": [],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "> 인용 `코드` @forge\n본문",
+      "denormalized": "> 인용 `코드` @forge\n본문",
+      "splitHuman": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "   > 세 칸 인용 @forge",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "   > 세 칸 인용 @forge",
+          "lang": null,
+          "raw": "   > 세 칸 인용 @forge"
+        }
+      ],
+      "scanText": "",
+      "handles": [],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "   > 세 칸 인용 @forge",
+      "denormalized": "   > 세 칸 인용 @forge",
+      "splitHuman": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "    > 네 칸은 인용 아님 @forge",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "    > 네 칸은 인용 아님 @forge",
+          "lang": null,
+          "raw": "    > 네 칸은 인용 아님 @forge"
+        }
+      ],
+      "scanText": "    > 네 칸은 인용 아님 @forge",
+      "handles": [
+        "forge"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "    > 네 칸은 인용 아님 <@11111111-1111-4111-8111-111111111111>",
+      "denormalized": "    > 네 칸은 인용 아님 @forge",
+      "splitHuman": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "> 인용\r\n@forge 다음",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "> 인용\r\n@forge 다음",
+          "lang": null,
+          "raw": "> 인용\r\n@forge 다음"
+        }
+      ],
+      "scanText": "> 인용\r\n@forge 다음",
+      "handles": [
+        "forge"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "> 인용\r\n<@11111111-1111-4111-8111-111111111111> 다음",
+      "denormalized": "> 인용\r\n@forge 다음",
+      "splitHuman": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "> CRLF 인용 @forge\r\n끝",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "> CRLF 인용 @forge\r\n끝",
+          "lang": null,
+          "raw": "> CRLF 인용 @forge\r\n끝"
+        }
+      ],
+      "scanText": "> CRLF 인용 @forge\r\n끝",
+      "handles": [
+        "forge"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "> CRLF 인용 <@11111111-1111-4111-8111-111111111111>\r\n끝",
+      "denormalized": "> CRLF 인용 @forge\r\n끝",
+      "splitHuman": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "https://x.com/@forge/status/1",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "https://x.com/@forge/status/1",
+          "lang": null,
+          "raw": "https://x.com/@forge/status/1"
+        }
+      ],
+      "scanText": "",
+      "handles": [],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "https://x.com/@forge/status/1",
+      "denormalized": "https://x.com/@forge/status/1",
+      "splitHuman": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "보세요 https://x.com/@forge. 그리고 @alex",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "보세요 https://x.com/@forge. 그리고 @alex",
+          "lang": null,
+          "raw": "보세요 https://x.com/@forge. 그리고 @alex"
+        }
+      ],
+      "scanText": "보세요 \n. 그리고 @alex",
+      "handles": [
+        "alex"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "보세요 https://x.com/@forge. 그리고 <@33333333-3333-4333-8333-333333333333>",
+      "denormalized": "보세요 https://x.com/@forge. 그리고 @alex",
+      "splitHuman": {
+        "call": [
+          "33333333-3333-4333-8333-333333333333"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [
+          "33333333-3333-4333-8333-333333333333"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "[@forge](https://x.io) 링크 이름표",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "[@forge](https://x.io) 링크 이름표",
+          "lang": null,
+          "raw": "[@forge](https://x.io) 링크 이름표"
+        }
+      ],
+      "scanText": "[@forge](\n) 링크 이름표",
+      "handles": [
+        "forge"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "[<@11111111-1111-4111-8111-111111111111>](https://x.io) 링크 이름표",
+      "denormalized": "[@forge](https://x.io) 링크 이름표",
+      "splitHuman": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "cc:@forge 평문",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "cc:@forge 평문",
+          "lang": null,
+          "raw": "cc:@forge 평문"
+        }
+      ],
+      "scanText": "cc:@forge 평문",
+      "handles": [
+        "forge"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "cc:<@11111111-1111-4111-8111-111111111111> 평문",
+      "denormalized": "cc:@forge 평문",
+      "splitHuman": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "mailto:@forge 스킴",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "mailto:@forge 스킴",
+          "lang": null,
+          "raw": "mailto:@forge 스킴"
+        }
+      ],
+      "scanText": "mailto:@forge 스킴",
+      "handles": [
+        "forge"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "mailto:<@11111111-1111-4111-8111-111111111111> 스킴",
+      "denormalized": "mailto:@forge 스킴",
+      "splitHuman": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "javascript:@forge",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "javascript:@forge",
+          "lang": null,
+          "raw": "javascript:@forge"
+        }
+      ],
+      "scanText": "javascript:@forge",
+      "handles": [
+        "forge"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "javascript:<@11111111-1111-4111-8111-111111111111>",
+      "denormalized": "javascript:@forge",
+      "splitHuman": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "http:@forge",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "http:@forge",
+          "lang": null,
+          "raw": "http:@forge"
+        }
+      ],
+      "scanText": "",
+      "handles": [],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "http:@forge",
+      "denormalized": "http:@forge",
+      "splitHuman": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "https://example.org/A_(@forge) 괄호",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "https://example.org/A_(@forge) 괄호",
+          "lang": null,
+          "raw": "https://example.org/A_(@forge) 괄호"
+        }
+      ],
+      "scanText": ") 괄호",
+      "handles": [],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "https://example.org/A_(@forge) 괄호",
+      "denormalized": "https://example.org/A_(@forge) 괄호",
+      "splitHuman": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "harkroom://message/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee @forge",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "harkroom://message/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee @forge",
+          "lang": null,
+          "raw": "harkroom://message/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee @forge"
+        }
+      ],
+      "scanText": " @forge",
+      "handles": [
+        "forge"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "harkroom://message/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee <@11111111-1111-4111-8111-111111111111>",
+      "denormalized": "harkroom://message/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee @forge",
+      "splitHuman": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "harkroom://message/not-a-uuid@forge",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "harkroom://message/not-a-uuid@forge",
+          "lang": null,
+          "raw": "harkroom://message/not-a-uuid@forge"
+        }
+      ],
+      "scanText": "harkroom://message/not-a-uuid@forge",
+      "handles": [],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "harkroom://message/not-a-uuid@forge",
+      "denormalized": "harkroom://message/not-a-uuid@forge",
+      "splitHuman": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "> 참고 https://x.com/@forge 겹침\n@murmur",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "> 참고 https://x.com/@forge 겹침\n@murmur",
+          "lang": null,
+          "raw": "> 참고 https://x.com/@forge 겹침\n@murmur"
+        }
+      ],
+      "scanText": "\n@murmur",
+      "handles": [
+        "murmur"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "> 참고 https://x.com/@forge 겹침\n<@22222222-2222-4222-8222-222222222222>",
+      "denormalized": "> 참고 https://x.com/@forge 겹침\n@murmur",
+      "splitHuman": {
+        "call": [
+          "22222222-2222-4222-8222-222222222222"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [
+          "22222222-2222-4222-8222-222222222222"
+        ],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "한국어 앞@forge 붙음",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "한국어 앞@forge 붙음",
+          "lang": null,
+          "raw": "한국어 앞@forge 붙음"
+        }
+      ],
+      "scanText": "한국어 앞@forge 붙음",
+      "handles": [
+        "forge"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "한국어 앞<@11111111-1111-4111-8111-111111111111> 붙음",
+      "denormalized": "한국어 앞@forge 붙음",
+      "splitHuman": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "이모지😀@forge 와 😀 @murmur",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "이모지😀@forge 와 😀 @murmur",
+          "lang": null,
+          "raw": "이모지😀@forge 와 😀 @murmur"
+        }
+      ],
+      "scanText": "이모지😀@forge 와 😀 @murmur",
+      "handles": [
+        "forge",
+        "murmur"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "이모지😀<@11111111-1111-4111-8111-111111111111> 와 😀 <@22222222-2222-4222-8222-222222222222>",
+      "denormalized": "이모지😀@forge 와 😀 @murmur",
+      "splitHuman": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111",
+          "22222222-2222-4222-8222-222222222222"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [
+          "11111111-1111-4111-8111-111111111111",
+          "22222222-2222-4222-8222-222222222222"
+        ],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "　@forge 전각 공백 머리",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "　@forge 전각 공백 머리",
+          "lang": null,
+          "raw": "　@forge 전각 공백 머리"
+        }
+      ],
+      "scanText": "　@forge 전각 공백 머리",
+      "handles": [
+        "forge"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "　@forge",
+      "normalized": "　<@11111111-1111-4111-8111-111111111111> 전각 공백 머리",
+      "denormalized": "　@forge 전각 공백 머리",
+      "splitHuman": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "﻿@forge BOM 머리",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "﻿@forge BOM 머리",
+          "lang": null,
+          "raw": "﻿@forge BOM 머리"
+        }
+      ],
+      "scanText": "﻿@forge BOM 머리",
+      "handles": [
+        "forge"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "﻿@forge",
+      "normalized": "﻿<@11111111-1111-4111-8111-111111111111> BOM 머리",
+      "denormalized": "﻿@forge BOM 머리",
+      "splitHuman": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "@forge NEL 머리",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "@forge NEL 머리",
+          "lang": null,
+          "raw": "@forge NEL 머리"
+        }
+      ],
+      "scanText": "@forge NEL 머리",
+      "handles": [
+        "forge"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "<@11111111-1111-4111-8111-111111111111> NEL 머리",
+      "denormalized": "@forge NEL 머리",
+      "splitHuman": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "@forge @murmur 줄 구분자",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "@forge @murmur 줄 구분자",
+          "lang": null,
+          "raw": "@forge @murmur 줄 구분자"
+        }
+      ],
+      "scanText": "@forge @murmur 줄 구분자",
+      "handles": [
+        "forge",
+        "murmur"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "@forge @murmur",
+      "normalized": "<@11111111-1111-4111-8111-111111111111> <@22222222-2222-4222-8222-222222222222> 줄 구분자",
+      "denormalized": "@forge @murmur 줄 구분자",
+      "splitHuman": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111",
+          "22222222-2222-4222-8222-222222222222"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111",
+          "22222222-2222-4222-8222-222222222222"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "<@11111111-1111-4111-8111-111111111111> 이미 토큰",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "<@11111111-1111-4111-8111-111111111111> 이미 토큰",
+          "lang": null,
+          "raw": "<@11111111-1111-4111-8111-111111111111> 이미 토큰"
+        }
+      ],
+      "scanText": "<@11111111-1111-4111-8111-111111111111> 이미 토큰",
+      "handles": [
+        "11111111-1111-4111-8111-11111111"
+      ],
+      "ids": [
+        "11111111-1111-4111-8111-111111111111"
+      ],
+      "targets": [],
+      "head": "<@11111111-1111-4111-8111-111111111111>",
+      "normalized": "<@11111111-1111-4111-8111-111111111111> 이미 토큰",
+      "denormalized": "@forge 이미 토큰",
+      "splitHuman": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "본문 <@22222222-2222-4222-8222-222222222222> 지칭 토큰",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "본문 <@22222222-2222-4222-8222-222222222222> 지칭 토큰",
+          "lang": null,
+          "raw": "본문 <@22222222-2222-4222-8222-222222222222> 지칭 토큰"
+        }
+      ],
+      "scanText": "본문 <@22222222-2222-4222-8222-222222222222> 지칭 토큰",
+      "handles": [
+        "22222222-2222-4222-8222-22222222"
+      ],
+      "ids": [
+        "22222222-2222-4222-8222-222222222222"
+      ],
+      "targets": [],
+      "head": "",
+      "normalized": "본문 <@22222222-2222-4222-8222-222222222222> 지칭 토큰",
+      "denormalized": "본문 @murmur 지칭 토큰",
+      "splitHuman": {
+        "call": [
+          "22222222-2222-4222-8222-222222222222"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [
+          "22222222-2222-4222-8222-222222222222"
+        ],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "<@team:55555555-5555-4555-8555-555555555555> 팀 토큰 머리",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "<@team:55555555-5555-4555-8555-555555555555> 팀 토큰 머리",
+          "lang": null,
+          "raw": "<@team:55555555-5555-4555-8555-555555555555> 팀 토큰 머리"
+        }
+      ],
+      "scanText": "<@team:55555555-5555-4555-8555-555555555555> 팀 토큰 머리",
+      "handles": [
+        "team"
+      ],
+      "ids": [],
+      "targets": [
+        {
+          "kind": "team",
+          "id": "55555555-5555-4555-8555-555555555555"
+        }
+      ],
+      "head": "<@team:55555555-5555-4555-8555-555555555555>",
+      "normalized": "<@team:55555555-5555-4555-8555-555555555555> 팀 토큰 머리",
+      "denormalized": "@devteam 팀 토큰 머리",
+      "splitHuman": {
+        "call": [],
+        "ref": [],
+        "targetCall": [
+          {
+            "kind": "team",
+            "id": "55555555-5555-4555-8555-555555555555"
+          }
+        ],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [],
+        "targetCall": [
+          {
+            "kind": "team",
+            "id": "55555555-5555-4555-8555-555555555555"
+          }
+        ],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "끝에 <@team:55555555-5555-4555-8555-555555555555> 와 <@group:44444444-4444-4444-8444-444444444444>",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "끝에 <@team:55555555-5555-4555-8555-555555555555> 와 <@group:44444444-4444-4444-8444-444444444444>",
+          "lang": null,
+          "raw": "끝에 <@team:55555555-5555-4555-8555-555555555555> 와 <@group:44444444-4444-4444-8444-444444444444>"
+        }
+      ],
+      "scanText": "끝에 <@team:55555555-5555-4555-8555-555555555555> 와 <@group:44444444-4444-4444-8444-444444444444>",
+      "handles": [
+        "team",
+        "group"
+      ],
+      "ids": [],
+      "targets": [
+        {
+          "kind": "team",
+          "id": "55555555-5555-4555-8555-555555555555"
+        },
+        {
+          "kind": "group",
+          "id": "44444444-4444-4444-8444-444444444444"
+        }
+      ],
+      "head": "",
+      "normalized": "끝에 <@team:55555555-5555-4555-8555-555555555555> 와 <@group:44444444-4444-4444-8444-444444444444>",
+      "denormalized": "끝에 @devteam 와 @ops",
+      "splitHuman": {
+        "call": [],
+        "ref": [],
+        "targetCall": [
+          {
+            "kind": "team",
+            "id": "55555555-5555-4555-8555-555555555555"
+          },
+          {
+            "kind": "group",
+            "id": "44444444-4444-4444-8444-444444444444"
+          }
+        ],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [],
+        "targetCall": [
+          {
+            "kind": "group",
+            "id": "44444444-4444-4444-8444-444444444444"
+          }
+        ],
+        "targetRef": [
+          {
+            "kind": "team",
+            "id": "55555555-5555-4555-8555-555555555555"
+          }
+        ]
+      }
+    },
+    {
+      "body": "@forge @devteam @ops 머리 셋 뒤 @murmur @devteam",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "@forge @devteam @ops 머리 셋 뒤 @murmur @devteam",
+          "lang": null,
+          "raw": "@forge @devteam @ops 머리 셋 뒤 @murmur @devteam"
+        }
+      ],
+      "scanText": "@forge @devteam @ops 머리 셋 뒤 @murmur @devteam",
+      "handles": [
+        "forge",
+        "devteam",
+        "ops",
+        "murmur"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "@forge @devteam @ops",
+      "normalized": "<@11111111-1111-4111-8111-111111111111> <@team:55555555-5555-4555-8555-555555555555> <@group:44444444-4444-4444-8444-444444444444> 머리 셋 뒤 <@22222222-2222-4222-8222-222222222222> <@team:55555555-5555-4555-8555-555555555555>",
+      "denormalized": "@forge @devteam @ops 머리 셋 뒤 @murmur @devteam",
+      "splitHuman": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111",
+          "22222222-2222-4222-8222-222222222222"
+        ],
+        "ref": [],
+        "targetCall": [
+          {
+            "kind": "team",
+            "id": "55555555-5555-4555-8555-555555555555"
+          },
+          {
+            "kind": "group",
+            "id": "44444444-4444-4444-8444-444444444444"
+          }
+        ],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [
+          "22222222-2222-4222-8222-222222222222"
+        ],
+        "targetCall": [
+          {
+            "kind": "team",
+            "id": "55555555-5555-4555-8555-555555555555"
+          },
+          {
+            "kind": "group",
+            "id": "44444444-4444-4444-8444-444444444444"
+          }
+        ],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "@forge,@murmur 쉼표",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "@forge,@murmur 쉼표",
+          "lang": null,
+          "raw": "@forge,@murmur 쉼표"
+        }
+      ],
+      "scanText": "@forge,@murmur 쉼표",
+      "handles": [
+        "forge",
+        "murmur"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "@forge",
+      "normalized": "<@11111111-1111-4111-8111-111111111111>,<@22222222-2222-4222-8222-222222222222> 쉼표",
+      "denormalized": "@forge,@murmur 쉼표",
+      "splitHuman": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111",
+          "22222222-2222-4222-8222-222222222222"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [
+          "22222222-2222-4222-8222-222222222222"
+        ],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "@forge@murmur 붙여 씀",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "@forge@murmur 붙여 씀",
+          "lang": null,
+          "raw": "@forge@murmur 붙여 씀"
+        }
+      ],
+      "scanText": "@forge@murmur 붙여 씀",
+      "handles": [
+        "forge"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "@forge@murmur",
+      "normalized": "<@11111111-1111-4111-8111-111111111111>@murmur 붙여 씀",
+      "denormalized": "@forge@murmur 붙여 씀",
+      "splitHuman": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "\n\n  @forge 앞 빈 줄",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "\n\n  @forge 앞 빈 줄",
+          "lang": null,
+          "raw": "\n\n  @forge 앞 빈 줄"
+        }
+      ],
+      "scanText": "\n\n  @forge 앞 빈 줄",
+      "handles": [
+        "forge"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "\n\n  @forge",
+      "normalized": "\n\n  <@11111111-1111-4111-8111-111111111111> 앞 빈 줄",
+      "denormalized": "\n\n  @forge 앞 빈 줄",
+      "splitHuman": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "line1\n```\ncode @forge\n```\nline2 @murmur\n```\nopen only @alex",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "line1",
+          "lang": null,
+          "raw": "line1"
+        },
+        {
+          "kind": "codeBlock",
+          "text": "code @forge",
+          "lang": null,
+          "raw": "```\ncode @forge\n```"
+        },
+        {
+          "kind": "plain",
+          "text": "line2 @murmur\n```\nopen only @alex",
+          "lang": null,
+          "raw": "line2 @murmur\n```\nopen only @alex"
+        }
+      ],
+      "scanText": "line1\nline2 @murmur\n```\nopen only @alex",
+      "handles": [
+        "murmur",
+        "alex"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "line1\n```\ncode @forge\n```\nline2 <@22222222-2222-4222-8222-222222222222>\n```\nopen only <@33333333-3333-4333-8333-333333333333>",
+      "denormalized": "line1\n```\ncode @forge\n```\nline2 @murmur\n```\nopen only @alex",
+      "splitHuman": {
+        "call": [
+          "22222222-2222-4222-8222-222222222222",
+          "33333333-3333-4333-8333-333333333333"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [
+          "33333333-3333-4333-8333-333333333333"
+        ],
+        "ref": [
+          "22222222-2222-4222-8222-222222222222"
+        ],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "`a` `b @forge` c @alex `",
+      "segments": [
+        {
+          "kind": "inlineCode",
+          "text": "a",
+          "lang": null,
+          "raw": "`a`"
+        },
+        {
+          "kind": "plain",
+          "text": " ",
+          "lang": null,
+          "raw": " "
+        },
+        {
+          "kind": "inlineCode",
+          "text": "b @forge",
+          "lang": null,
+          "raw": "`b @forge`"
+        },
+        {
+          "kind": "plain",
+          "text": " c @alex `",
+          "lang": null,
+          "raw": " c @alex `"
+        }
+      ],
+      "scanText": " \n c @alex `",
+      "handles": [
+        "alex"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "`a` `b @forge` c <@33333333-3333-4333-8333-333333333333> `",
+      "denormalized": "`a` `b @forge` c @alex `",
+      "splitHuman": {
+        "call": [
+          "33333333-3333-4333-8333-333333333333"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [
+          "33333333-3333-4333-8333-333333333333"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "``a` @forge 앞 이중 백틱",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "``a` @forge 앞 이중 백틱",
+          "lang": null,
+          "raw": "``a` @forge 앞 이중 백틱"
+        }
+      ],
+      "scanText": "``a` @forge 앞 이중 백틱",
+      "handles": [
+        "forge"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "``a` <@11111111-1111-4111-8111-111111111111> 앞 이중 백틱",
+      "denormalized": "``a` @forge 앞 이중 백틱",
+      "splitHuman": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "x`a``@forge` 닫는 쪽 이중 백틱",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "x`a``@forge` 닫는 쪽 이중 백틱",
+          "lang": null,
+          "raw": "x`a``@forge` 닫는 쪽 이중 백틱"
+        }
+      ],
+      "scanText": "x`a``@forge` 닫는 쪽 이중 백틱",
+      "handles": [
+        "forge"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "x`a``<@11111111-1111-4111-8111-111111111111>` 닫는 쪽 이중 백틱",
+      "denormalized": "x`a``@forge` 닫는 쪽 이중 백틱",
+      "splitHuman": {
+        "call": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [],
+        "ref": [
+          "11111111-1111-4111-8111-111111111111"
+        ],
+        "targetCall": [],
+        "targetRef": []
+      }
+    },
+    {
+      "body": "https://x.com/@forge 링크가 인용보다 앞\n> @murmur 인용\n@alex",
+      "segments": [
+        {
+          "kind": "plain",
+          "text": "https://x.com/@forge 링크가 인용보다 앞\n> @murmur 인용\n@alex",
+          "lang": null,
+          "raw": "https://x.com/@forge 링크가 인용보다 앞\n> @murmur 인용\n@alex"
+        }
+      ],
+      "scanText": " 링크가 인용보다 앞\n\n\n@alex",
+      "handles": [
+        "alex"
+      ],
+      "ids": [],
+      "targets": [],
+      "head": "",
+      "normalized": "https://x.com/@forge 링크가 인용보다 앞\n> @murmur 인용\n<@33333333-3333-4333-8333-333333333333>",
+      "denormalized": "https://x.com/@forge 링크가 인용보다 앞\n> @murmur 인용\n@alex",
+      "splitHuman": {
+        "call": [
+          "33333333-3333-4333-8333-333333333333"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      },
+      "splitAgent": {
+        "call": [
+          "33333333-3333-4333-8333-333333333333"
+        ],
+        "ref": [],
+        "targetCall": [],
+        "targetRef": []
+      }
+    }
+  ]
+}
