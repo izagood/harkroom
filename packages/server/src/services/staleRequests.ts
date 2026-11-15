@@ -3,6 +3,7 @@ import type { FailureMeta } from '@harkroom/shared';
 import { postMessage } from './messages.js';
 import { audienceFor, channelVisibleSql } from './channels.js';
 import { emitEvent, emitPosted } from '../events.js';
+import { runGated } from './loopGate.js';
 
 /**
  * **아무도 집지 않은 요청을 서버가 그 스레드에 말한다**(마이그레이션 049).
@@ -298,7 +299,7 @@ export function createStaleRequestSweeper(pool: Pool, opts: {
   return {
     startSweep(app) {
       if (sweepInterval) return;
-      sweepInterval = setInterval(() => { void sweep(); }, STALE_SWEEP_INTERVAL_MS);
+      sweepInterval = setInterval(() => { void runGated(pool, 'stale', sweep); }, STALE_SWEEP_INTERVAL_MS);
       sweepInterval.unref?.();
       app.addHook('onClose', async () => {
         if (sweepInterval) {

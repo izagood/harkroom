@@ -3,6 +3,7 @@ import type { MessageRow, ReportWakeView, WakeReportTo } from '@harkroom/shared'
 import { BAD_THREAD_MESSAGE, getMessageById, postMessage, verifiedCauseLink } from './messages.js';
 import { audienceFor, channelVisibleSql } from './channels.js';
 import { emitEvent } from '../events.js';
+import { runGated } from './loopGate.js';
 
 /**
  * 깨움(wake) — 에이전트가 자기를 나중에 깨우는 예약. 마이그레이션 040 의 주석이 왜
@@ -743,7 +744,7 @@ export function createAgentWakeSweeper(pool: Pool): {
   return {
     startSweep(app) {
       if (sweepInterval) return;
-      sweepInterval = setInterval(() => { void sweep(); }, WAKE_SWEEP_INTERVAL_MS);
+      sweepInterval = setInterval(() => { void runGated(pool, 'wake', sweep); }, WAKE_SWEEP_INTERVAL_MS);
       app.addHook('onClose', () => {
         if (sweepInterval) clearInterval(sweepInterval);
         sweepInterval = null;
