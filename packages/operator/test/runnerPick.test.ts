@@ -2,7 +2,7 @@
 // 하네스는 허용 목록(claude-code·codex·opencode·kilo·pi·omp)만 rust. s9①: runner 칸이 없으면 기본 rust, "node" 로 되돌린다 — Rust 러너가 다른 하네스 홈을 아직 배선하지 않았다. 「못 읽음은 node」는 그대로다.
 import { describe, it, expect } from 'vitest';
 import { createAssignmentReconciler, type AssignmentDeps } from '../src/assignments.js';
-import { pickRunner, wantsRust, RUST_RUNNER_HARNESSES, type AccountUse, type RunnerPick } from '../src/runnerPick.js';
+import { pickRunner, wantsRust, RUST_RUNNER_HARNESSES, type AccountUse, type RunnerPick, ABSENT_RUNNER_DEFAULTS_TO_RUST } from '../src/runnerPick.js';
 import { claudeAccountUse } from '@harkroom/shared/claudeAccountLane';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -20,14 +20,16 @@ describe('pickRunner', () => {
     }
     expect(wantsRust({ runner: 'node' }, false)).toBe(false);
   });
-  it('s9①「단계」: 칸 없음은 node 가 없을 때만 rust 대상 — node 있으면 node(이유 없음)', () => {
-    expect(wantsRust({}, true)).toBe(false);
-    expect(wantsRust(undefined, true)).toBe(false);
-    expect(pickRunner({}, true, 'none', 'claude-code', true)).toEqual({ kind: 'node' });
-    expect(wantsRust({}, false)).toBe(true);
-    expect(pickRunner({}, true, 'none', 'claude-code', false)).toEqual({ kind: 'rust' });
-    expect(wantsRust({ runner: 'rust' }, true)).toBe(true);
-    expect(wantsRust({ runner: 'node' }, false)).toBe(false);
+  it('칸 없음은 node 가 있어도 기본 rust 대상(ABSENT_RUNNER_DEFAULTS_TO_RUST) — 조건 못 넘으면 이유 단 node · 명시 node 는 node', () => {
+    expect(ABSENT_RUNNER_DEFAULTS_TO_RUST).toBe(true);
+    for (const nodePresent of [true, false]) {
+      expect(wantsRust({}, nodePresent)).toBe(true);
+      expect(wantsRust(undefined, nodePresent)).toBe(true);
+      expect(pickRunner({}, true, 'none', 'claude-code', nodePresent)).toEqual({ kind: 'rust' });
+      expect(wantsRust({ runner: 'node' }, nodePresent)).toBe(false);
+    }
+    expect(pickRunner({}, false, 'none', 'claude-code', true)).toEqual({ kind: 'node', fallback: 'rust_runner_missing' });
+    expect(pickRunner({}, true, 'none', 'gemini', true)).toEqual({ kind: 'node', fallback: 'rust_harness_unsupported' });
   });
   it('s9①: 모르는 runner 값(오타)은 node — 기본 rust 를 켜지 않는다(security #2166)', () => {
     for (const v of ['Rust', 'rs', '', 1]) {
@@ -132,13 +134,14 @@ describe('배정이 고른 러너를 spawn 에 넘긴다', () => {
     expect(h.picks).toEqual([{ kind: 'node' }]);
     expect(h.probed()).toBe(0);
   });
-  it('s9①「단계」: TS 오퍼레이터는 node 위에서 돈다 — runner 칸 없음은 파일이 있어도 node(이유 없음), 파일도 안 잰다', async () => {
-    for (const present of [true, false]) {
-      const h = run(present);
-      await h.r.onAssign('https://example.com', def, { workingDir: '/w' });
-      expect(h.picks).toEqual([{ kind: 'node' }]);
-      expect(h.probed()).toBe(0);
-    }
+  it('runner 칸 없음 + 파일 있음 → rust(기본) · 파일 없음 → node(rust_runner_missing)', async () => {
+    const a = run(true);
+    await a.r.onAssign('https://example.com', def, { workingDir: '/w' });
+    expect(a.picks).toEqual([{ kind: 'rust' }]);
+    expect(a.probed()).toBe(1);
+    const b = run(false);
+    await b.r.onAssign('https://example.com', def, {});
+    expect(b.picks).toEqual([{ kind: 'node', fallback: 'rust_runner_missing' }]);
   });
   it('풀 해석 결과가 pool 이어도(operator.json 에 claudePool 없음) rust(L3c-3e)', async () => {
     const h = run(true, 'pool');

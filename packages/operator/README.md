@@ -119,9 +119,12 @@ unix 소켓으로 말하는 것이고, 그 어느 것도 네이티브 애드온�
 `scripts/build-sidecars.mjs` 가 daemon 에 `nativeDeps: []` 를 주는 것도 같은 판단의 다른 쪽
 면이다 — external 목록이 비어 있으면 번들에 못 들어가는 것을 눈감아 줄 여지 자체가 없다.
 
-## 에이전트마다 러너 고르기 — node 없으면 기본 rust (B4-5 → s9①)
+## 에이전트마다 러너 고르기 — 기본 rust (B4-5 → s9①)
 
-**단계 전환(소유자 결정 11-15): `runner` 칸이 없는 에이전트는 node 가 있으면 지금처럼 Node 러너, node 가 없을 때만 Rust 러너(`harkroom-runner-rs`)로 돈다.** 명시 `"rust"` 는 node 가 있어도 Rust 다. 운영 전체를 기본 Rust 로 바꾸는 것은 전수 시험 뒤에 따로 한다. Rust 대상이어도 아래
+**기본 rust, `runner: "node"` 로 되돌림.** `runner` 칸이 없는 에이전트는 node 가 있어도 Rust 러너(`harkroom-runner-rs`)로 돈다(Rust 러너 전수 시험 통과 뒤 전환).
+**되돌리는 순서**: ① 급할 때 바로 — 그 에이전트 칸에 `"runner": "node"` 를 적고 재배정한다(앱 판 그대로, 즉시). ② 전체를 되돌리려면
+코드의 `ABSENT_RUNNER_DEFAULTS_TO_RUST` 를 `false` 로 바꾸는 PR → 새 앱 판 → 앱 업데이트가 든다(상수라 바로 안 바뀐다). 그러면 node 가
+없을 때만 Rust 다. Rust 대상이어도 아래
 「Node 로 떨어지는 경우」(허용 목록 밖 하네스·풀 해석 못 읽음·러너 파일 없음)면 Node 러너(`harkroom-runner`)다. 한 에이전트를
 Node 러너로 되돌리려면 **`operator.json` 의 그 에이전트 칸에 `"runner": "node"` 를 손으로 적는다.** 바꾸는 길은 이 파일
 하나다 — 소켓 요청(`operatorAgentSet`)·앱 화면·서버의 에이전트 정의로는 바뀌지 않는다. `operatorAgentSet` 은 이미 적힌
@@ -142,8 +145,8 @@ Node 러너로 되돌리려면 **`operator.json` 의 그 에이전트 칸에 `"r
 }
 ```
 
-- 기본(node 없을 때 rust)은 칸이 **없거나 `null`** 일 때만이다. 정확히 `"rust"`·`"node"` 는 그대로이고, 그 밖의 값(`"Node"`·`"rs"`·숫자 등)은 **node** 로 본다 — 무언가 적었다면 기본을 끄려던 뜻으로 읽고, 오타가 새 길을 켜지 않게 한다. 앱이 작업 디렉터리를 고칠 때도 그런 값은 `"node"` 로 옮겨 적는다.
-- `"node"` 를 지우면 다음에 뜨는 러너부터 기본으로 돌아간다(node 있으면 node, 없으면 rust).
+- 기본(rust)은 칸이 **없거나 `null`** 일 때만이다. 정확히 `"rust"`·`"node"` 는 그대로이고, 그 밖의 값(`"Node"`·`"rs"`·숫자 등)은 **node** 로 본다 — 무언가 적었다면 기본을 끄려던 뜻으로 읽고, 오타가 새 길을 켜지 않게 한다. 앱이 작업 디렉터리를 고칠 때도 그런 값은 `"node"` 로 옮겨 적는다.
+- `"node"` 를 지우면 다음에 뜨는 러너부터 기본(rust)으로 돌아간다.
 - 명시 `"node"` 인데 node 가 없으면 Rust 로 넘기지 않고 띄우지 않는다(`runner_node_missing` 으로 서버에 남는다) — 「Rust 에서 문제가 나서 되돌린」 뜻일 수 있어서다.
 
 ### 언제 적용되나 — 그 에이전트의 러너가 **새로 뜰 때**

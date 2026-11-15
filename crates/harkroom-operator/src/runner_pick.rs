@@ -77,13 +77,18 @@ impl RunnerPick {
     }
 }
 
-/// rust 대상인가(이때만 파일·풀 해석을 본다). 「단계」(소유자 결정 11-15): 명시 `"rust"` 는 rust, 명시 `"node"`(모르는 값 포함)는
-/// node, 칸이 없으면 **node 가 없을 때만** rust — node 가 있으면 지금처럼 node 다. 운영 전체 전환은 전수 시험 뒤.
+/// `runner` 칸이 없는 에이전트의 기본이 Rust 인가. `true` = node 가 있어도 기본 Rust(Rust 러너 전수 시험 통과 뒤 전환).
+/// 급할 때 바로 되돌리는 길은 에이전트별 `"runner": "node"` + 재배정이다. 이 상수를 `false` 로 돌리는 전체 되돌리기는 PR·새 앱 판·
+/// 업데이트가 든다(그러면 「단계」 — node 가 없을 때만 Rust).
+pub const ABSENT_RUNNER_DEFAULTS_TO_RUST: bool = true;
+
+/// rust 대상인가(이때만 파일·풀 해석을 본다). 명시 `"rust"` 는 rust, 명시 `"node"`(모르는 값 포함)는 node, 칸이 없으면 기본 rust
+/// ([`ABSENT_RUNNER_DEFAULTS_TO_RUST`], 끄면 node 가 없을 때만 rust). Rust 조건(허용 하네스·풀 읽힘·파일)을 못 넘으면 [`pick_runner`] 가 이유를 단 node 로 떨어뜨린다.
 pub fn wants_rust(local: Option<&LocalAgent>, node_present: bool) -> bool {
     match local.and_then(|l| l.runner) {
         Some(RunnerKind::Rust) => true,
         Some(RunnerKind::Node) => false,
-        None => !node_present,
+        None => ABSENT_RUNNER_DEFAULTS_TO_RUST || !node_present,
     }
 }
 
@@ -254,20 +259,37 @@ mod tests {
     }
 
     #[test]
-    fn staged_default_rust_only_without_node() {
+    fn absent_runner_defaults_to_rust_even_with_node() {
+        const { assert!(ABSENT_RUNNER_DEFAULTS_TO_RUST) };
         let absent = LocalAgent::default();
-        // node 있음: 칸 없음은 node(이유 없음), 명시 rust 는 rust.
-        assert!(!wants_rust(Some(&absent), true) && !wants_rust(None, true));
+        // node 있음·없음 모두: 칸 없음은 rust 대상, 명시 node 는 node.
+        for node_present in [true, false] {
+            assert!(wants_rust(Some(&absent), node_present) && wants_rust(None, node_present));
+            assert!(!wants_rust(Some(&node()), node_present));
+            assert_eq!(
+                pick_runner(
+                    Some(&absent),
+                    true,
+                    AccountUse::None,
+                    "claude-code",
+                    node_present
+                )
+                .kind,
+                RunnerKind::Rust
+            );
+        }
+        // 조건을 못 넘으면 이유를 단 node.
         assert_eq!(
-            pick_runner(Some(&absent), true, AccountUse::None, "claude-code", true),
+            pick_runner(Some(&absent), false, AccountUse::None, "claude-code", true).fallback,
+            Some(RunnerFallback::RunnerMissing)
+        );
+        assert_eq!(
+            pick_runner(Some(&absent), true, AccountUse::None, "gemini", true).fallback,
+            Some(RunnerFallback::HarnessUnsupported)
+        );
+        assert_eq!(
+            pick_runner(Some(&node()), true, AccountUse::None, "claude-code", true),
             RunnerPick::NODE
         );
-        assert_eq!(
-            pick_runner(Some(&rust()), true, AccountUse::None, "claude-code", true).kind,
-            RunnerKind::Rust
-        );
-        // node 없음: 칸 없음은 rust 대상, 명시 node 는 여전히 node.
-        assert!(wants_rust(Some(&absent), false) && wants_rust(None, false));
-        assert!(!wants_rust(Some(&node()), false));
     }
 }

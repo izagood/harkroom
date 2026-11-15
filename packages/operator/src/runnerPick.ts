@@ -30,13 +30,19 @@ export interface RunnerPick {
   fallback?: RunnerFallback;
 }
 
-/** rust 대상인가 — `runner: "node"` 로 되돌리지 않았으면 그렇다(s9① 기본 rust). 이때만 파일·풀 해석을 본다. */
+/**
+ * `runner` 칸이 없는 에이전트의 기본이 Rust 인가(Rust `ABSENT_RUNNER_DEFAULTS_TO_RUST` 와 같은 값). `true` = node 가 있어도 기본 Rust.
+ * 급할 때 바로 되돌리는 길은 에이전트별 `"runner": "node"` + 재배정이다. 이 상수를 `false` 로 돌리는 전체 되돌리기는 PR·새 앱 판·업데이트가
+ * 든다(그러면 「단계」 — node 가 없을 때만 Rust).
+ */
+export const ABSENT_RUNNER_DEFAULTS_TO_RUST = true;
+
+/** rust 대상인가 — 명시 rust → rust, 명시 node(모르는 값 포함) → node, 칸 없음 → 기본 rust. 이때만 파일·풀 해석을 본다. */
 export function wantsRust(local: LocalAgentConfig | undefined, nodePresent: boolean): boolean {
-  // 「단계」(소유자 결정 11-15): 명시 rust → rust, 명시 node(모르는 값 포함) → node, 칸 없음 → node 가 없을 때만 rust.
   const kind = runnerKindOf(local);
   if (kind === 'rust') return true;
   if (kind === 'node') return false;
-  return !nodePresent;
+  return ABSENT_RUNNER_DEFAULTS_TO_RUST || !nodePresent;
 }
 
 export function pickRunner(
