@@ -1393,6 +1393,59 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       const auText = (await mcpCall(rsUrl4, agent.pat, 'automation.list', {}, 1, { 'x-harkroom-cause': cause })).text;
       for (const want of ['아침 정리', '멈춘 것', 'too_many_failures', 'failed', '…', 'Asia/Seoul']) expect(auText).toContain(want);
       for (const gone of ['승인 전', '지운 것']) expect(auText).not.toContain(gone);
+
+      // S5.3 C4a-6b — message.search. 본문 멘션 되돌리기·시스템 줄·스코프(채널·스레드)·거르기(보낸 사람·첨부)·정렬·쪽(51개 → hasMore,
+      // 천장 1000)·못 보는 채널(결과에서 빠짐 · 범위로 주면 forbidden). `@`·기간·틀린 꼴은 TS 로 넘긴다.
+      const searchCh = String((await ok(app.inject({ method: 'POST', url: '/channels', headers: auth, payload: { name: 'mcp-search' } }))).id);
+      await ok(app.inject({ method: 'POST', url: `/channels/${searchCh}/members`, headers: auth, payload: { accountId: agent.accountId } }));
+      for (let i = 0; i < 53; i += 1) await say(`대량검색어 ${i} 줄`, { ch: searchCh });
+      const searchRoot = await say('스레드검색 머리 @mem', { ch: searchCh });
+      await say('스레드검색 답글', { ch: searchCh, root: searchRoot });
+      await say('스레드검색 남의 글', { ch: searchCh, author: admin.accountId });
+      await say('100%_퍼센트 밑줄', { ch: searchCh });
+      // 에이전트가 못 보는 곳 — 관리자와 멤버의 DM(비공개 채널 today-private 에는 에이전트가 멤버로 들어 있다).
+      await say('비밀검색어 못 보는 곳', { ch: String(dm.id), author: admin.accountId });
+      for (const [name, args, answeredByRust] of [
+        ['message.search', { query: '부름' }, true],
+        ['message.search 시스템 줄', { query: '시스템' }, true],
+        ['message.search 최신순', { query: '스레드검색', sort: 'recent' }, true],
+        ['message.search 관련도(명시)', { query: '스레드검색', sort: 'relevance' }, true],
+        ['message.search 채널', { query: '스레드검색', channelId: searchCh }, true],
+        ['message.search 스레드(루트 포함)', { query: '스레드검색', threadRootId: searchRoot }, true],
+        ['message.search 보낸 사람', { query: '스레드검색', authorIds: [admin.accountId] }, true],
+        ['message.search 보낸 사람 빈 배열', { query: '스레드검색', authorIds: [] }, true],
+        ['message.search 첨부만', { query: '스레드검색', hasAttachment: true }, true],
+        ['message.search 첨부 false', { query: '스레드검색', hasAttachment: false }, true],
+        ['message.search 51개 → hasMore', { query: '대량검색어' }, true],
+        ['message.search 둘째 쪽', { query: '대량검색어', offset: 50 }, true],
+        ['message.search 천장', { query: '대량검색어', offset: 1000 }, true],
+        ['message.search like 메타문자', { query: '100%_' }, true],
+        ['message.search 낱말 없음', { query: '!!!' }, true],
+        ['message.search 두 글자 중간', { query: '검색' }, true],
+        ['message.search 못 보는 채널의 글', { query: '비밀검색어' }, true],
+        ['message.search 비공개·멤버 아님 → forbidden', { query: '비밀검색어', channelId: privId }, true],
+        ['message.search 없는 채널', { query: 'x', channelId: missingCh }, true],
+        ['message.search 모르는 키는 버린다', { query: '부름', extra: 1 }, true],
+        ['message.search @ → TS', { query: '@bot2' }, false],
+        ['message.search after → TS', { query: '부름', after: '2026-01-01T00:00:00Z' }, false],
+        ['message.search before → TS', { query: '부름', before: '2026-01-01T00:00:00+09:00' }, false],
+        ['message.search 빈 질의 → TS', { query: '' }, false],
+        ['message.search 정렬 틀림 → TS', { query: '부름', sort: 'old' }, false],
+        ['message.search offset 1001 → TS', { query: '부름', offset: 1001 }, false],
+        ['message.search 보낸 사람 uuid 아님 → TS', { query: '부름', authorIds: ['x'] }, false],
+        ['message.search 첨부 문자열 → TS', { query: '부름', hasAttachment: 'true' }, false],
+        ['message.search 질의 없음 → TS', {}, false],
+      ] as const) {
+        const [a, b] = [await mcpCall(tsUrl, agent.pat, 'message.search', args), await mcpCall(rsUrl4, agent.pat, 'message.search', args)];
+        expect({ status: b.status, type: b.type, text: b.text }, name).toEqual({ status: a.status, type: a.type, text: a.text });
+        expect(b.core, `${name} — 누가 답했나`).toBe(answeredByRust ? 'mcp' : null);
+      }
+      // 빈 값끼리 비교해 통과하지 않게.
+      const seText = (await mcpCall(rsUrl4, agent.pat, 'message.search', { query: '부름' })).text;
+      for (const want of ['@mem', '@crew', '@squad', 'hasMore\\":false']) expect(seText).toContain(want);
+      expect((await mcpCall(rsUrl4, agent.pat, 'message.search', { query: '대량검색어' })).text).toContain('hasMore\\":true');
+      expect((await mcpCall(rsUrl4, agent.pat, 'message.search', { query: '시스템' })).text).toContain('relatedAccountId');
+      expect((await mcpCall(rsUrl4, agent.pat, 'message.search', { query: '비밀검색어' })).text).not.toContain('못 보는 곳');
       // 빈 값끼리 비교해 통과하지 않게 — 문서·목록이 실제로 실렸는지.
       const docText = (await mcpCall(`http://127.0.0.1:${port}`, agent.pat, 'channel.doc', { channelId: todayId })).text;
       expect(docText).toContain('문서 본문');
