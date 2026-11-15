@@ -25,9 +25,9 @@ pub const TURN_ID_HEADER: &str = "x-harkroom-turn-id";
 pub const COMMAND_FILES_HEADER: &str = "x-harkroom-command-files";
 pub const AGENT_HEADER: &str = "x-harkroom-agent";
 
-/// 러너 코어가 `http.forward` 로 부르는 (메서드, 경로) 전부. 출처: `packages/agent/src/harkroom.ts`(rest 10 + 직접 8)
-/// ·`turnKeys.ts`(2, 그중 하나는 harkroom.ts 와 겹치지 않는다) — 합 19. 오퍼레이터 자체 전달(turnApi·turnCommand·
-/// turnPrStatus·turnPeek·prWatchPoller)은 러너 링크를 거치지 않으므로 여기 없다.
+/// 러너 코어가 `http.forward` 로 부르는 (메서드, 경로) 중 **서버에 실제 있는 것**. 출처: `packages/agent/src/harkroom.ts`
+/// (rest 10 + 직접 8)·`turnKeys.ts` — 러너가 부르는 19개 중 [`LOCAL_ONLY`] 6개를 뺀 13개. 오퍼레이터 자체 전달(turnApi·
+/// turnCommand·turnPrStatus·turnPeek·prWatchPoller)은 러너 링크를 거치지 않으므로 여기 없다.
 pub const REST_ALLOW: &[(&str, &str)] = &[
     ("GET", "/agent/config"),
     ("GET", "/agent/thread-model"),
@@ -42,6 +42,11 @@ pub const REST_ALLOW: &[(&str, &str)] = &[
     ("POST", "/agent/turn-leases"),
     ("POST", "/agent/thread-claims"),
     ("POST", "/agent/thread-claims/release"),
+];
+
+/// 러너가 부르지만 **오퍼레이터가 로컬에서 답하는** 길(op-lane, security 67974 b). 서버에는 이 길이 없다 —
+/// 로컬 처리기가 비켜 가도(설정·배선 빠짐) 서버로 넘기지 않고 [`rest_allowed`] 에서 `not_allowed` 로 닫힌다.
+pub const LOCAL_ONLY: &[(&str, &str)] = &[
     ("POST", "/agent/cleanup-report"),
     ("POST", "/agent/turn-slots"),
     ("POST", "/agent/turn-slots/release"),
@@ -624,6 +629,29 @@ mod tests {
         assert_eq!(f.calls.lock().unwrap()[0].3.as_deref(), Some(&b"hi"[..]));
     }
 
+    /// 로컬 전용 길은 처리기가 비켜 가도 서버로 넘어가지 않는다(security 67974 b).
+    #[test]
+    fn local_only_paths_never_forward() {
+        let f = Fake::replying(200, "", "{}");
+        for (m, p) in LOCAL_ONLY {
+            assert!(!rest_allowed(m, p), "{m} {p}");
+            let req = RunnerLinkRequest::HttpForward {
+                id: "h".into(),
+                method: (*m).into(),
+                path: (*p).into(),
+                body: Some("{}".into()),
+                body_base64: None,
+                content_type: None,
+            };
+            let r = forward(&f, &target(), req, RunnerLinkKind::Relay);
+            assert!(
+                matches!(r, RunnerLinkResponse::HttpResponse { status: 403, .. }),
+                "{m} {p}"
+            );
+        }
+        assert!(f.calls.lock().unwrap().is_empty());
+    }
+
     /// TS 정본(러너 코어)에서 `http.forward` 경로를 다시 뽑아 [`REST_ALLOW`] 와 같은지 본다.
     /// 러너가 새 REST 를 부르기 시작하면 여기서 깨진다 — 목록에 더할지 security 와 정한다.
     #[test]
@@ -710,8 +738,14 @@ mod tests {
         }
         let want: std::collections::BTreeSet<(String, String)> = REST_ALLOW
             .iter()
+            .chain(LOCAL_ONLY)
             .map(|(m, p)| (m.to_string(), p.to_string()))
             .collect();
-        assert_eq!(found, want, "TS 러너가 부르는 REST 와 허용 목록이 다르다");
+        assert_eq!(
+            found, want,
+            "TS 러너가 부르는 REST 와 허용 목록 + 로컬 전용 목록이 다르다"
+        );
+        // 두 목록은 겹치지 않는다 — 로컬 전용 길이 허용 목록에 다시 들어가면 서버로 새는 길이 열린다.
+        assert!(REST_ALLOW.iter().all(|e| !LOCAL_ONLY.contains(e)));
     }
 }

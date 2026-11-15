@@ -539,6 +539,16 @@ impl AssignmentFrames {
     pub fn is_assigned(&self, agent_id: &str) -> bool {
         lock(&self.assigned).contains(agent_id)
     }
+
+    /// TS `community.laneMismatch` — 러너 모드가 그 에이전트의 지금 설정과 다른가(op-lane 턴 자리 막기).
+    pub fn lane_mismatch(&self, runner_id: &str, agent_id: &str) -> bool {
+        self.reconciler.lane_mismatch(runner_id, agent_id)
+    }
+
+    /// TS `community.noteRunnerLane` — 러너가 relay 로 알린 제 모드.
+    pub fn note_runner_lane(&self, runner_id: &str, on: bool) {
+        self.reconciler.note_runner_lane(runner_id, on);
+    }
 }
 
 #[cfg(test)]

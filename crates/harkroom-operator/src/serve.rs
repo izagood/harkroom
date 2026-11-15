@@ -358,6 +358,8 @@ pub fn spawn_server_link(
     // 배정 조정기가 쓸 몫(s21c-1b-2b) — 같은 이유로 먼저 떼어 둔다.
     let assign_cfg = local.clone();
     let assign_cfg_adopt = local.clone();
+    // API 키 연결(op-lane)이 쓸 몫 — lane 설정은 부를 때마다 이것으로 operator.json 을 다시 읽는다.
+    let lane_cfg = local.clone();
     let assign_login_path = login_path.clone();
     let secrets_dir = secrets_root.to_string_lossy().into_owned();
     let merge_home = home.clone();
@@ -518,6 +520,31 @@ pub fn spawn_server_link(
         let frames = std::sync::Arc::clone(&frames);
         let local_of = std::sync::Arc::clone(&local_of);
         let _ = on_locals.set(Box::new(move || frames.set_locals(&*local_of)));
+    }
+    // API 키 연결(op-lane, TS run.ts laneTurnGate·providerLaneMount) — 막기 판정은 조정기, lane 설정은 operator.json 에서 매번.
+    {
+        struct Lane {
+            frames: std::sync::Arc<crate::community::AssignmentFrames>,
+            cfg: LocalAgents,
+        }
+        impl crate::provider_lane_mount::LanePorts for Lane {
+            fn mismatch(&self, runner_id: &str, agent_id: &str) -> bool {
+                self.frames.lane_mismatch(runner_id, agent_id)
+            }
+            fn note_mode(&self, runner_id: &str, on: bool) {
+                self.frames.note_runner_lane(runner_id, on);
+            }
+            fn lane_of(&self, agent_id: &str) -> Option<crate::local_agents::ProviderLane> {
+                self.cfg
+                    .agent_entry(agent_id)?
+                    .get("providerLane")
+                    .and_then(crate::local_agents::read_provider_lane_config)
+            }
+        }
+        let _ = bridge.lane.set(std::sync::Arc::new(Lane {
+            frames: std::sync::Arc::clone(&frames),
+            cfg: lane_cfg,
+        }));
     }
     // 러너 종료 → 다중화기 잊기 · 서버에 `runner.exited` · 배정이면 조정기가 다시 띄울지 판단(TS run.ts onExit).
     {
