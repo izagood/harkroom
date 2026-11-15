@@ -86,6 +86,13 @@ const BG_GRANTS = ['update (status, error, finished_at) on bg_job'];
 /** `loops/bg_produce.rs::BG_PRODUCE_PRIVILEGES` 만 가진 쓰기 역할(S5.3 C5c-3b-1) — 넣는 칸만. */
 const BG_PRODUCE_GRANTS = ['insert (account_id, kind, day, input) on bg_job'];
 
+/** `core/turn_lease.rs::TURN_LEASE_PRIVILEGES` 만 가진 쓰기 역할(S5.3 C6b) — 임대 행 넣기와 세 칸 고치기. */
+const TURN_LEASE_GRANTS = [
+  'insert on secret_turn_lease',
+  'update (ended_at, expires_at, last_renewed_at) on secret_turn_lease',
+  'insert on audit_log',
+];
+
 const PERMISSION_EXPIRE_GRANTS = [
   'update (status, decided_at) on permission_request',
   'update (meta) on message',
@@ -107,7 +114,7 @@ async function operatorWriteRole(db: { pool: pg.Pool; uri: string }, grants: rea
 }
 
 describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () => {
-  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention', 'mandate_idle', 'permission_expire', 'bg', 'bg_produce', 'outbox_prune']) {
+  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention', 'mandate_idle', 'permission_expire', 'bg', 'bg_produce', 'outbox_prune', 'turn_lease']) {
     it(`tests/${name}.rs`, async () => {
       const db = await startTestDb();
       try {
@@ -128,6 +135,8 @@ describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () 
         if (name === 'bg_produce') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, BG_PRODUCE_GRANTS);
         // C5c-4 — outbox 정리도 `OUTBOX_PRUNE_PRIVILEGES` 만 가진 역할로.
         if (name === 'outbox_prune') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, OUTBOX_PRUNE_GRANTS);
+        // C6b — 턴 임대도 `TURN_LEASE_PRIVILEGES` 만 가진 역할로.
+        if (name === 'turn_lease') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, TURN_LEASE_GRANTS);
         const r = await cargo(['test', '--test', name, '--', '--nocapture'], env);
         expect(r.code, r.out).toBe(0);
         // DB 가 없어 건너뛴 것을 통과로 읽지 않는다.
@@ -584,6 +593,76 @@ describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () 
                   where p.agent_id = $1 and i.account_id = $1 and i.reason = 'ask_closed') as distinct_wakes`, [a])).rows[0];
       expect(counts).toEqual({ expired: 500, closed: 500, audits: 500, distinct_audits: 500, wakes: 500, distinct_wakes: 500 });
       console.log(`permission-expire-dual: rust ${m![1]} (overlapped sweeps ${m![2]}) / ts ${tsExpired}`);
+    } finally {
+      await db.stop();
+    }
+  }, 600_000);
+});
+
+// S5.3 C6b — 턴 임대 동시 발급. TS `issueTurnLease` 와 Rust `core::turn_lease::issue` 가 같은 DB 에서 같은 부름들을 두고 맞붙어도
+// 부름마다 살아 있는 임대는 정확히 하나다(같은 advisory 열쇠로 줄을 선다). 양쪽은 출발 잠금으로 같이 출발해 같은 차례로 넷씩 청한다 — 열쇠가 어긋나면
+// 살아 있는 임대 유일 색인의 23505 가 어느 한쪽에서 터져 실패한다(망가뜨리기 시험으로 확인). 한쪽이 받으면 다른 쪽은 lease_used 다.
+describe.skipIf(!ON)('턴 임대 — TS·Rust 동시 발급', () => {
+  it('부름 300개를 양쪽이 동시에 청해도 부름마다 임대 하나', async () => {
+    const N = 300;
+    const db = await startTestDb();
+    try {
+      const q1 = async (sql: string, args: unknown[] = []) => (await db.pool.query<{ id: string }>(sql, args)).rows[0]!.id;
+      const human = await q1(`insert into account(handle, display_name, kind, login_id) values ('tl_h', 'tl_h', 'human', 'tl_h') returning id`);
+      const agent = await q1(`insert into account(handle, display_name, kind) values ('tl_a', 'tl_a', 'agent') returning id`);
+      const op = await q1(`insert into operator(owner_account_id, name, token_hash) values ($1, 'op', 'x') returning id`, [human]);
+      const ch = await q1(`insert into channel(name, kind) values ('tl-dual', 'standard') returning id`);
+      await db.pool.query(
+        `with m as (insert into message(channel_id, author_id, body, kind)
+                    select $1, $2, 'm' || g, 'user' from generate_series(1, ${N}) g returning id)
+         insert into inbox(account_id, message_id, reason) select $3, id, 'mention' from m`, [ch, human, agent]);
+      const causes = (await db.pool.query<{ id: string }>(
+        `select message_id as id from inbox where account_id = $1 order by created_at, message_id`, [agent])).rows.map((r) => r.id);
+      const { issueTurnLease } = await import('../src/services/secretAccess.js');
+      const rust = cargo(['test', '--test', 'turn_lease', '--', '--nocapture'], {
+        HARKROOM_TEST_DATABASE_URL: db.uri,
+        HARKROOM_TEST_WRITE_DATABASE_URL: await operatorWriteRole(db, TURN_LEASE_GRANTS),
+        HARKROOM_TURN_LEASE_DUAL: `${agent}:${op}`,
+      });
+      // 출발 잠금 — Rust 가 이 잠금을 기다리기 시작하면 풀고 양쪽이 같이 출발한다.
+      const gate = await db.pool.connect();
+      await gate.query(`select pg_advisory_lock(hashtext('turn-lease-dual-start'))`);
+      const t0 = Date.now();
+      while (Number((await db.pool.query(
+        `select count(*)::int as n from pg_locks where locktype = 'advisory' and not granted`)).rows[0].n) === 0) {
+        if (Date.now() - t0 > 540_000) { gate.release(); throw new Error('rust side never reached the start gate'); }
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      await gate.query(`select pg_advisory_unlock(hashtext('turn-lease-dual-start'))`);
+      gate.release();
+      let tsIssued = 0; let tsUsed = 0;
+      // 넷씩 나란히 — TS 쪽 안에서도 겹친다.
+      for (let i = 0; i < causes.length; i += 4) {
+        const out = await Promise.all(causes.slice(i, i + 4).map((c) =>
+          issueTurnLease(db.pool, { agentId: agent, operatorId: op, causeMessageId: c })));
+        for (const o of out) {
+          if (o.ok) tsIssued += 1;
+          else if (o.code === 'lease_used') tsUsed += 1;
+          else throw new Error(`unexpected ${o.code}`);
+        }
+      }
+      const r = await rust;
+      expect(r.code, r.out).toBe(0);
+      const m = r.out.match(/turn-lease-dual rust issued (\d+) used (\d+) other (\d+)/);
+      expect(m, r.out).not.toBeNull();
+      const [rsIssued, rsUsed, rsOther] = [Number(m![1]), Number(m![2]), Number(m![3])];
+      expect(rsOther).toBe(0);
+      // 받은 수 합 = 부름 수, 거절 수 합 = 부름 수(한쪽이 받으면 다른 쪽은 거절).
+      expect(tsIssued + rsIssued).toBe(N);
+      expect(tsUsed + rsUsed).toBe(N);
+      // 누가 더 받는지는 지연에 달렸다(같은 차례라 앞선 쪽이 대개 다 받고 뒤쪽은 열쇠에서 기다린 뒤 lease_used). 겹침 자체는
+      // 열쇠를 어긋나게 한 망가뜨리기 시험이 23505 로 빨개지는 것으로 확인했다.
+      const rows = (await db.pool.query(
+        `select count(*)::int as total, count(distinct cause_message_id)::int as causes,
+                count(*) filter (where ended_at is null)::int as live
+           from secret_turn_lease where agent_id = $1`, [agent])).rows[0];
+      expect(rows).toEqual({ total: N, causes: N, live: N });
+      console.log(`turn-lease-dual: rust ${rsIssued} / ts ${tsIssued}`);
     } finally {
       await db.stop();
     }
