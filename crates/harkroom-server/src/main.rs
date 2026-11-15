@@ -262,6 +262,7 @@ async fn main() {
         core_routes.http.extend(lists.http);
         core_routes.sockets.extend(lists.sockets);
         // C3a-1 — 리액션 쓰기(`PUT`·`DELETE …/reactions/{emoji}`). 쓰기 풀에 그 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+        let mcp_react_write = react_write.clone();
         if let Some(write) = react_write {
             let react = harkroom_server::core::msg_react::routes(
                 harkroom_server::core::msg_react::ReactState {
@@ -323,6 +324,8 @@ async fn main() {
         let mcp = harkroom_server::core::mcp::route::routes(
             state.up.clone(),
             state.pool.clone(),
+            // C4b — 리액션 쓰기 권한이 다 있는 쓰기 풀일 때만 MCP `message.react`·`unreact` 를 Rust 가 답한다.
+            mcp_react_write,
             auth.clone(),
             state.cors.clone(),
         );

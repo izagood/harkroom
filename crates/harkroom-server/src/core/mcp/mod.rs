@@ -15,6 +15,7 @@ pub mod respond;
 pub mod route;
 pub mod search;
 pub mod tools;
+pub mod writes;
 
 use serde_json::{Value, json};
 
