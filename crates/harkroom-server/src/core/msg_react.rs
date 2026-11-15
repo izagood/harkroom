@@ -26,7 +26,8 @@ pub const MESSAGE_REACTION_PRIVILEGES: &[(&str, &str)] = &[
     ("message_reaction", "INSERT"),
     ("message_reaction", "UPDATE"),
     ("message_reaction", "DELETE"),
-    ("message", "UPDATE"),
+    // 글은 `meta`(✅ 대기 줄 확인 시각)만 고친다 — 칸 권한 `update (meta) on message` 로 충분하다.
+    ("message.meta", "UPDATE"),
     ("event_outbox", "INSERT"),
 ];
 pub const MESSAGE_REACTION_SEQUENCE_PRIVILEGES: &[(&str, &str)] =
