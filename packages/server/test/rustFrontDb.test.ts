@@ -78,6 +78,9 @@ const MANDATE_IDLE_GRANTS = [
 ];
 
 /** `loops/permission_expire.rs::PERMISSION_EXPIRE_PRIVILEGES`(+ 시퀀스) 만 가진 쓰기 역할(S5.3 C5c-2b). */
+/** `loops/bg.rs::BG_PRIVILEGES` 만 가진 쓰기 역할(S5.3 C5c-3a). */
+const BG_GRANTS = ['update (status, error, finished_at) on bg_job'];
+
 const PERMISSION_EXPIRE_GRANTS = [
   'update (status, decided_at) on permission_request',
   'update (meta) on message',
@@ -99,7 +102,7 @@ async function operatorWriteRole(db: { pool: pg.Pool; uri: string }, grants: rea
 }
 
 describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () => {
-  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention', 'mandate_idle', 'permission_expire']) {
+  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention', 'mandate_idle', 'permission_expire', 'bg']) {
     it(`tests/${name}.rs`, async () => {
       const db = await startTestDb();
       try {
@@ -114,6 +117,8 @@ describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () 
         if (name === 'mandate_idle') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, MANDATE_IDLE_GRANTS);
         // C5c-2b — 권한 요청 만료도 `PERMISSION_EXPIRE_PRIVILEGES` 만 가진 역할로.
         if (name === 'permission_expire') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, PERMISSION_EXPIRE_GRANTS);
+        // C5c-3a — 백그라운드 회차 닫기도 `BG_PRIVILEGES` 만 가진 역할로.
+        if (name === 'bg') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, BG_GRANTS);
         const r = await cargo(['test', '--test', name, '--', '--nocapture'], env);
         expect(r.code, r.out).toBe(0);
         // DB 가 없어 건너뛴 것을 통과로 읽지 않는다.
@@ -214,6 +219,70 @@ describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () 
         `select token_hash from session where account_id = $1`, [a])).rows.map((x) => x.token_hash);
       expect(left).toEqual(['dual-keep']);
       console.log(`retention-dual: rust ${m![1]} (overlapped sweeps ${m![2]}) / ts ${tsDeleted}`);
+    } finally {
+      await db.stop();
+    }
+  }, 600_000);
+
+  // C5c-3a — 지난 일감 3000개(죽은 running 1500 + 어제 queued 1500)를 TS `close`(스위치 켬)와 Rust `loops::bg::close` 가 **문지기 없이
+  // 동시에** 닫아도 닫은 수의 합이 정확히 3000 이다(한 줄은 한 번만 닫힌다). 겹침은 줄 잠금으로 확실히 만든다 — 두 쪽이 같은 줄에서 기다리다 함께 풀린다. 이 sweep 은 skip locked 가 아니라 조건부 update 라,
+  // 늦은 쪽은 줄 잠금을 기다린 뒤 조건(status)을 다시 보고 건너뛴다.
+  it('bg 회차 닫기 — TS·Rust 동시 닫기에도 닫은 수 합이 정확하다', async () => {
+    const db = await startTestDb();
+    try {
+      // (account, kind, day) 유일 — 에이전트 1000명 × (running 하나·queued 하나·남을 것 하나).
+      await db.pool.query(
+        `insert into account(handle, display_name, kind) select 'bgd' || g, 'bgd' || g, 'agent' from generate_series(1, 1500) g`);
+      const ids = (await db.pool.query<{ id: string }>(`select id from account where handle like 'bgd%'`)).rows.map((r) => r.id);
+      await db.pool.query(
+        `insert into bg_job (account_id, kind, day, status, claimed_at)
+         select a, 'distill', (now() at time zone 'Asia/Seoul')::date, 'running', now() - interval '20 minutes' from unnest($1::uuid[]) a
+         union all select a, 'cleanup', (now() at time zone 'Asia/Seoul')::date - 1, 'queued', null from unnest($1::uuid[]) a
+         union all select a, 'organize', (now() at time zone 'Asia/Seoul')::date, 'queued', null from unnest($1::uuid[]) a`, [ids]);
+      const { createBgJobSweeper } = await import('../src/services/bgJobs.js');
+      const ts = createBgJobSweeper(db.pool, { HARKROOM_BACKGROUND_ENABLED: '1' });
+      const left = async () => Number((await db.pool.query(
+        `select count(*)::int as n from bg_job where (status = 'running' and claimed_at < now() - interval '15 minutes')
+            or (status = 'queued' and day < (now() at time zone 'Asia/Seoul')::date)`)).rows[0].n);
+      const holder = await db.pool.connect();
+      await holder.query('begin');
+      await holder.query(`select id from bg_job where (status = 'running' and claimed_at < now() - interval '15 minutes')
+                             or (status = 'queued' and day < (now() at time zone 'Asia/Seoul')::date) for update`);
+      const tsFirst = ts.close();
+      const rust = cargo(['test', '--test', 'bg', '--', '--nocapture'], {
+        HARKROOM_TEST_DATABASE_URL: db.uri,
+        HARKROOM_TEST_WRITE_DATABASE_URL: await operatorWriteRole(db, BG_GRANTS),
+        HARKROOM_BG_DUAL: ids[0]!,
+      });
+      const t0 = Date.now();
+      while (Number((await db.pool.query(
+        `select count(*)::int as n from pg_stat_activity where application_name = 'harkroom-bg-dual'`)).rows[0].n) === 0) {
+        if (Date.now() - t0 > 540_000) throw new Error('rust side never connected');
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      // TS 의 close 와 Rust 의 close 가 둘 다 줄 잠금에서 기다리는가.
+      while (Number((await db.pool.query(
+        `select count(*)::int as n from pg_stat_activity where wait_event_type = 'Lock' and query like 'update bg_job%'`)).rows[0].n) < 2) {
+        if (Date.now() - t0 > 540_000) throw new Error('both sides never waited on the row locks');
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      // 겹침을 확실히 만든다: 닫힐 줄을 모두 잠근 채 두 쪽이 다 잠금에서 기다릴 때까지 둔 뒤 놓는다.
+      let tsT = 0; let tsE = 0;
+      await holder.query('commit');
+      holder.release();
+      const first = await tsFirst;
+      tsT += first.timeout; tsE += first.expired;
+      while (await left() > 0) { const c = await ts.close(); tsT += c.timeout; tsE += c.expired; }
+      const r = await rust;
+      expect(r.code, r.out).toBe(0);
+      const m = r.out.match(/bg-dual rust timeout (\d+) expired (\d+) overlapped (\d+)/);
+      expect(m, r.out).not.toBeNull();
+      expect(tsT + Number(m![1])).toBe(1500);
+      expect(tsE + Number(m![2])).toBe(1500);
+      const kept = Number((await db.pool.query(`select count(*)::int as n from bg_job where status = 'queued' and kind = 'organize'`)).rows[0].n);
+      expect(kept).toBe(1500);
+      expect(Number(m![3]), r.out).toBeGreaterThan(0);
+      console.log(`bg-dual: rust ${m![1]}+${m![2]} (overlapped ${m![3]}) / ts ${tsT}+${tsE}`);
     } finally {
       await db.stop();
     }
@@ -883,8 +952,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       // S5.2 P3 — 쓰기 역할. **`write.rs::REQUIRED_PRIVILEGES` 만** 준다(homelab GRANT 와 같은 표). 넓은 권한으로 돌리면
       // 앞단이 목록에 없는 표를 쓰기 시작해도 이 시험이 못 잡는다.
       const rw = `front_rw_${Math.random().toString(36).slice(2, 10)}`;
-      // connection limit = 쓰기 풀 2 + 루프 문지기 풀 4(루프 수) + 루프 sweep 풀 3 (S5.3 C5c-2b — 운영 역할 한도도 이만큼 받아야 한다).
-      await db.pool.query(`create role ${rw} login password '${rw}' nosuperuser nocreatedb nocreaterole nobypassrls connection limit 9`);
+      // connection limit = 쓰기 풀 2 + 루프 문지기 풀 5(루프 수) + 루프 sweep 풀 3 (S5.3 C5c-3a — 운영 역할 한도도 이만큼 받아야 한다).
+      await db.pool.query(`create role ${rw} login password '${rw}' nosuperuser nocreatedb nocreaterole nobypassrls connection limit 10`);
       for (const q of [
         `grant pg_read_all_data to ${rw}`,
         `grant insert on event_outbox to ${rw}`,
@@ -931,6 +1000,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         ...MANDATE_IDLE_GRANTS.map((g) => `grant ${g} to ${rw}`),
         // S5.3 C5c-2b — 권한 요청 만료 루프(`loops/permission_expire.rs::PERMISSION_EXPIRE_PRIVILEGES`).
         ...PERMISSION_EXPIRE_GRANTS.map((g) => `grant ${g} to ${rw}`),
+        // S5.3 C5c-3a — 백그라운드 회차 닫기(`loops/bg.rs::BG_PRIVILEGES`).
+        ...BG_GRANTS.map((g) => `grant ${g} to ${rw}`),
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -981,6 +1052,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       expect(f.log()).toContain('front: loop retention on (delete=false');
       expect(f.log()).toContain('front: loop mandate.idle on');
       expect(f.log()).toContain('front: loop permission.expire on');
+      expect(f.log()).toContain('front: loop bg on (enabled=false');
 
       const r = await cargo(['test', '--test', 'contrast', '--', '--nocapture'], {
         HARKROOM_CONTRAST_TS_URL: tsUrl,

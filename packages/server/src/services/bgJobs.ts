@@ -453,16 +453,18 @@ export interface SweepHost {
 export const BG_SWEEP_INTERVAL_MS = 60_000;
 
 /**
- * 뼈대 sweep. 스위치가 꺼져 있으면 아무것도 안 한다. 지금 하는 일은 닫기뿐이다 — 집고 죽은 회차(timeout)와
- * 지난 날의 집히지 않은 일감(expired). 종류별 생산자는 BG3 에서 이 자리에 붙는다.
+ * bg 루프 — 두 몫으로 나뉜다(S5.3 C5c-3a). 문지기 이름도 둘이다:
+ * - `bg`(닫기): 집고 죽은 회차(timeout)와 지난 날의 집히지 않은 일감(expired)을 닫는다. Rust `loops/bg.rs` 가 같은 일을 한다.
+ * - `bg.produce`(생산): distill·cleanup·organize 생산자를 한 시간에 한 번. 아직 TS 만 한다(C5c-3b 에서 옮긴다).
+ * 둘 다 스위치(`HARKROOM_BACKGROUND_ENABLED=1`)가 꺼져 있으면 아무것도 안 한다. `sweep(now)` 은 둘을 차례로(시험·호출부 그대로).
  */
-export function createBgJobSweeper(pool: Pool, env: NodeJS.ProcessEnv = process.env): { startSweep(app: SweepHost): void; sweep(now?: Date): Promise<void> } {
+export function createBgJobSweeper(pool: Pool, env: NodeJS.ProcessEnv = process.env): {
+  startSweep(app: SweepHost): void; sweep(now?: Date): Promise<void>; produce(now?: Date): Promise<void>; close(now?: Date): Promise<{ timeout: number; expired: number }>;
+} {
   let timer: ReturnType<typeof setInterval> | null = null;
-  let running = false;
   let lastProducedAt = 0;
-  const sweep = async (now: Date = new Date()) => {
-    if (!backgroundEnabled(env) || running) return;
-    running = true;
+  const produce = async (now: Date = new Date()) => {
+    if (!backgroundEnabled(env)) return;
     try {
       // 생산(BG3)은 한 시간에 한 번. (에이전트, 종류, 날짜) 유일이라 더 자주 돌아도 늘지 않지만 질의를 아낀다.
       if (now.getTime() - lastProducedAt >= DISTILL_PRODUCE_INTERVAL_MS) {
@@ -474,28 +476,43 @@ export function createBgJobSweeper(pool: Pool, env: NodeJS.ProcessEnv = process.
         const o = await produceOrganizeJobs(pool, now, env);
         if (o.queued || Object.keys(o.refused).length) console.log(`bg: organize queued=${o.queued} refused=${JSON.stringify(o.refused)}`);
       }
-      await pool.query(
+    } catch (err) {
+      // 던지면 처리 안 된 거절로 프로세스가 죽는다(agentWakes sweep 과 같은 이유) — 다음 주기에 다시 한다.
+      console.error('bg job produce error:', err);
+    }
+  };
+  /** 닫은 수(timeout·expired)를 돌려준다 — 시험이 TS·Rust 동시 닫기의 합을 센다. 실패는 기록만 하고 0. */
+  const close = async (now: Date = new Date()): Promise<{ timeout: number; expired: number }> => {
+    if (!backgroundEnabled(env)) return { timeout: 0, expired: 0 };
+    try {
+      const t = await pool.query(
         `update bg_job set status = 'failed', error = 'timeout', finished_at = now()
          where status = 'running' and claimed_at < $1`,
         [new Date(now.getTime() - BG_STALE_RUNNING_MS)],
       );
-      await pool.query(
+      const e = await pool.query(
         `update bg_job set status = 'skipped', error = 'expired', finished_at = now()
          where status = 'queued' and day < $1::date`,
         [kstDay(now)],
       );
+      return { timeout: t.rowCount ?? 0, expired: e.rowCount ?? 0 };
     } catch (err) {
-      // 던지면 처리 안 된 거절로 프로세스가 죽는다(agentWakes sweep 과 같은 이유) — 다음 주기에 다시 한다.
       console.error('bg job sweep error:', err);
-    } finally {
-      running = false;
+      return { timeout: 0, expired: 0 };
     }
   };
+  // 프로세스 안 겹침은 문지기의 같은 이름 `busy` 가 막는다. 직접 부르는 `sweep` 은 시험·호출부용이다.
+  const sweep = async (now: Date = new Date()) => { await produce(now); await close(now); };
   return {
     sweep,
+    produce,
+    close,
     startSweep(app) {
       if (timer) return;
-      timer = setInterval(() => { void runGated(pool, 'bg', sweep); }, BG_SWEEP_INTERVAL_MS);
+      timer = setInterval(() => {
+        void runGated(pool, 'bg.produce', () => produce());
+        void runGated(pool, 'bg', () => close());
+      }, BG_SWEEP_INTERVAL_MS);
       timer.unref?.();
       app.addHook('onClose', () => { if (timer) clearInterval(timer); timer = null; });
     },

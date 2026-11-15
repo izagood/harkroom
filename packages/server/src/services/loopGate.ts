@@ -34,7 +34,7 @@ export type GateResult = 'ran' | 'locked' | 'not_owner' | 'busy' | 'error';
 /** 루프 이름 — Rust `loops::LOOP_NAMES` 와 같아야 한다. 주인 표(`server_loop.name`)의 키다. */
 export const LOOP_NAMES = [
   'wake', 'delegation.deadline', 'automation', 'scheduled', 'push',
-  'permission.expire', 'mandate.idle', 'bg', 'retention', 'stale',
+  'permission.expire', 'mandate.idle', 'bg', 'retention', 'stale', 'bg.produce',
 ] as const;
 export type LoopName = typeof LOOP_NAMES[number];
 
