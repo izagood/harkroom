@@ -13,6 +13,7 @@ import { CI_CARD_ONCE_ONLY_MESSAGE, checkNamesForBody, insertApprovalFromDenial,
 import { carryBundleItem, getMessageById, postMessage, recordAskAnswer, syncAskMirrors, wakeAsker } from './messages.js';
 import { systemI18n } from './systemI18n.js';
 import { mayDecideFor, mayDecideSql } from './deciders.js';
+import { runGated } from './loopGate.js';
 
 /**
  * 에이전트 권한 요청 → 소유자 승인 → 적용(스레드 f61af808, 소유자 D1~D4 10-07).
@@ -1039,7 +1040,7 @@ export function createPermissionExpirySweeper(pool: Pool, opts: { now?: () => Da
   return {
     startSweep(app) {
       if (sweepInterval) return;
-      sweepInterval = setInterval(() => { void sweep(); }, PERMISSION_EXPIRE_SWEEP_INTERVAL_MS);
+      sweepInterval = setInterval(() => { void runGated(pool, 'permission.expire', sweep); }, PERMISSION_EXPIRE_SWEEP_INTERVAL_MS);
       app.addHook('onClose', () => {
         if (sweepInterval) clearInterval(sweepInterval);
         sweepInterval = null;

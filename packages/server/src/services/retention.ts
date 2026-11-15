@@ -1,5 +1,6 @@
 import type { Pool } from 'pg';
 import type { SweepHost } from './delegations.js';
+import { runGated } from './loopGate.js';
 
 /**
  * 자라기만 하던 표의 보존 기간 정리(2026-10-13 쿼리 개선 Q5-c, 소유자 결정 #task 9cb9fdcd 「데이터 정리만(추천대로)」).
@@ -75,7 +76,7 @@ export function createRetentionSweeper(pool: Pool, opts: { log?: (msg: string) =
 
   const tick = () => {
     // 실패는 다음 시각에 다시 한다 — 정리는 늦어도 해가 없다. 오류 문구만 남긴다(행 내용 없음).
-    void sweep().catch((err: unknown) => console.error('retention sweep error:', err instanceof Error ? err.message : err));
+    void runGated(pool, 'retention', sweep, { onError: (err) => console.error('retention sweep error:', err instanceof Error ? err.message : err) });
   };
 
   return {

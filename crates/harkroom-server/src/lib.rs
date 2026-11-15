@@ -10,6 +10,7 @@ pub mod cors;
 pub mod directory;
 pub mod inbox_today;
 pub mod lists;
+pub mod loops;
 pub mod perm;
 pub mod proxy;
 pub mod route_table;

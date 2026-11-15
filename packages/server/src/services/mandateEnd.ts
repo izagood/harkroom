@@ -4,6 +4,7 @@ import { emitEvent } from '../events.js';
 import { audienceFor } from './channels.js';
 import { MANDATE_IDLE_MS } from './mandates.js';
 import { getMessageById } from './messages.js';
+import { runGated } from './loopGate.js';
 
 /**
  * 위임의 끝(3판). 위임은 세 길로 끝난다:
@@ -130,7 +131,7 @@ export function createMandateIdleSweeper(pool: Pool, opts: { now?: () => Date } 
   return {
     startSweep(app) {
       if (sweepInterval) return;
-      sweepInterval = setInterval(() => { void sweep(); }, MANDATE_IDLE_SWEEP_INTERVAL_MS);
+      sweepInterval = setInterval(() => { void runGated(pool, 'mandate.idle', sweep); }, MANDATE_IDLE_SWEEP_INTERVAL_MS);
       app.addHook('onClose', () => {
         if (sweepInterval) clearInterval(sweepInterval);
         sweepInterval = null;

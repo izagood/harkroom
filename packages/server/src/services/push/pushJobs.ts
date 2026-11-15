@@ -16,6 +16,7 @@ import {
   type PushReason,
 } from './payload.js';
 import type { SweepHost } from '../scheduledMessages.js';
+import { runGated } from '../loopGate.js';
 
 /** inbox 사유 가운데 사람의 폰을 울리는 것(결정 4). 나머지는 에이전트에게만 가는 사유다. */
 const INBOX_PUSH_REASONS = new Set<string>(['mention', 'thread_reply', 'dm']);
@@ -415,7 +416,7 @@ export function createPushSweeper(pool: Pool, deps: {
   return {
     startSweep(app) {
       if (!deps.transport || interval) return;
-      interval = setInterval(() => { void sweep(); }, SWEEP_INTERVAL_MS);
+      interval = setInterval(() => { void runGated(pool, 'push', sweep); }, SWEEP_INTERVAL_MS);
       interval.unref?.();
       app.addHook('onClose', async () => {
         if (interval) { clearInterval(interval); interval = null; }

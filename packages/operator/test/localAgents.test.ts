@@ -37,7 +37,7 @@ describe('localAgents', () => {
     await port.setProviderLane('https://example.com', 'a-1', null);
     expect((await port.list()).communities[0]!.agents['a-1']).toEqual({ workingDir: '~/y' });
   });
-  it('runner(B4-5a)는 set 으로 바뀌지 않고 옮겨진다 — 아는 값만 옮기고 모르는 값은 버린다', async () => {
+  it('runner(B4-5a)는 set 으로 바뀌지 않고 옮겨진다 — 모르는 값은 node 로 옮겨 적는다(지우면 기본 rust 가 켜진다)', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'op-local-'));
     const configPath = join(dir, 'operator.json');
     const port = createLocalAgentsPort({ configPath, secrets: secretsWith([]), dataDir: dir, onChanged: () => {}, onRegistered: async () => {} });
@@ -53,7 +53,7 @@ describe('localAgents', () => {
     const agents = (await port.list()).communities[0]!.agents;
     expect(agents['a-1']).toEqual({ workingDir: '~/y', runner: 'rust' });
     expect(agents['a-2']).toEqual({ claudePool: 'p', runner: 'node' });
-    expect(agents['a-3']).toEqual({ workingDir: '~/z' });
+    expect(agents['a-3']).toEqual({ workingDir: '~/z', runner: 'node' });
   });
   it('목록에 마지막 키 받기 결과를 싣는다 — 비어 있으면 칸이 없다', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'op-local-'));
