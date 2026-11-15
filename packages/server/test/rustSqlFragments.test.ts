@@ -28,7 +28,7 @@ import { CHAT_APPROVAL_GUARD_WORDS } from '../src/services/chatApproval.js';
 import { MANDATE_DELEGATED_AGENTS_SQL, MANDATE_OWN_AGENT_SQL, MANDATE_ROOT_INSERT_SQL, MESSAGE_SET_MANDATE_SQL } from '../src/services/mandates.js';
 import { DECIDER_CHANNEL_SQL, DECIDER_LIST_SQL, DECIDER_ROW_SQL, DECIDER_SEEN_SQL } from '../src/services/deciders.js';
 import { URL_CANDIDATE_SOURCE } from '@harkroom/shared';
-import { ACCEPT_ROOT_SQL, DECISION_CARD_SQL, IRREVERSIBLE_WORDS, READ_BUNDLE_SQL } from '../src/services/askBundles.js';
+import { ACCEPT_ROOT_SQL, BUNDLE_REPLY_SQL, BUNDLE_RESOLVE_SQL, DECISION_CARD_SQL, IRREVERSIBLE_WORDS, READ_BUNDLE_SQL } from '../src/services/askBundles.js';
 import { CHILD_FACTS_AUDIENCE_SQL, PLAN_PROGRESS_PLANS_SQL } from '../src/services/threadPlan.js';
 import { displayBodySql } from '../src/services/systemBody.js';
 import { BG_AGENT_ON_SQL, BG_DAILY_LOCK_SQL, BG_ENQUEUE_SQL, BG_EXISTS_SQL, BG_PAUSED_SQL, CLEANUP_CANDIDATES_SQL, DISTILL_CANDIDATES_SQL, ORGANIZE_CANDIDATES_SQL } from '../src/services/bgJobs.js';
@@ -140,6 +140,8 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     bundle_accept_root: ACCEPT_ROOT_SQL,
     bundle_irreversible_source: IRREVERSIBLE_WORDS.source,
     bundle_irreversible_flags: IRREVERSIBLE_WORDS.flags,
+    bundle_reply: BUNDLE_REPLY_SQL,
+    bundle_resolve: BUNDLE_RESOLVE_SQL,
   };
   const text = `${JSON.stringify(want, null, 2)}\n`;
   if (process.env.UPDATE_RUST_SQL_GOLDEN === '1') writeFileSync(GOLDEN, text);

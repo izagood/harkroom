@@ -3036,6 +3036,164 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const txAsk = (await db.pool.query<{ ask: Record<string, unknown> }>(`select meta->'ask' as ask from message where id = $1`, [txCard])).rows[0]!.ask;
         expect(txAsk.answeredWith ?? null, '답이 되돌아갔다').toBeNull();
       }
+      // S5.3 C3b-2b — MCP `message.askBundleResolve`(코어 `ask_bundle_resolve.rs`): 관리 에이전트가 사람이 묶음 스레드에 쓴 글로 줄을 닫는다.
+      // 에이전트가 사람의 결정을 지어내지 못하게 하는 자리 — 「닫은 이름 = 근거 글을 쓴 사람」, 근거 글이 그 묶음 스레드의 사람 글인지
+      // (id 만 믿지 않기), 그 사람이 원본에 답할 권리가 있는지. TS·Rust 에 각자의 묶음으로 같은 시나리오를 돌려 답·원본 meta·깨움·이벤트를
+      // 견준다. 백스톱·모르는 kind 원본은 Rust 가 정하지 않고 TS 로 넘긴다.
+      {
+        const H = { kind: 'human' };
+        const opts = [{ id: 'a', label: '가' }, { id: 'b', label: '나' }];
+        const card = (body: string, ask: Record<string, unknown> = {}, top: Record<string, unknown> = {}) =>
+          say(body, { meta: { kind: 'ask', ask: { prompt: '어느 쪽?', options: opts, to: H, ...ask }, ...top } });
+        const bundleOf = (roots: string[], o: { author?: string; link?: string[] } = {}) => say('묶음', {
+          author: o.author ?? agent.accountId,
+          meta: { kind: 'askBundle', askBundle: { items: roots.map((rootId) => ({ rootId, askerId: null, channelId: todayId, threadRootId: null, prompt: '어느 쪽?', options: opts, ...(o.link?.includes(rootId) ? { link: true } : {}) })) } },
+        });
+        const side = async () => {
+          const plain = await card('글로 닫을 카드');
+          // 사람 앞 열린 카드 — 근거 글 검사만으로 막혀야 하는 줄(받는 사람 검사로는 막히지 않는다).
+          const open = await card('사람 앞 열린 카드');
+          const toMem = await card('멤버 앞 카드', { to: { kind: 'account', accountId: member.accountId } });
+          const toMem2 = await card('멤버 앞 카드2', { to: { kind: 'account', accountId: member.accountId } });
+          const perm = await card('권한 표지 카드', {}, { permissionRequest: { status: 'pending' } });
+          const linked = await card('링크 줄 카드');
+          const backstop = await card('백스톱 카드', {}, { chainBackstop: { agentId: admin.accountId } });
+          const odd = await say('모르는 종류', { meta: { kind: 'askSomethingNew', ask: { prompt: 'x', options: opts, to: H } } });
+          const spare = await card('남의 묶음 줄');
+          const B = await bundleOf([plain, open, toMem, toMem2, perm, linked], { link: [linked] });
+          // 넘길 줄은 따로 — TS 가 닫으면 그 묶음의 `message.updated` 도 TS 에서 난다(넘긴 쪽 이벤트로 센다).
+          const Bh = await bundleOf([backstop, odd]);
+          const theirs = await bundleOf([spare], { author: admin.accountId });
+          const replyA = await say('가로 해 주세요', { root: B, author: admin.accountId });
+          const replyM = await say('저는 나', { root: B, author: member.accountId });
+          const agentReply = await say('사람인 척', { root: B });
+          const elsewhere = await say('다른 스레드의 사람 글', { author: admin.accountId });
+          const replyH = await say('넘길 줄 답', { root: Bh, author: admin.accountId });
+          return { plain, open, toMem, toMem2, perm, linked, backstop, odd, spare, B, Bh, theirs, replyA, replyM, agentReply, elsewhere, replyH };
+        };
+        type Side = Awaited<ReturnType<typeof side>>;
+        const T = await side();
+        const R = await side();
+        const tsEvents: WorkspaceEvent[] = [];
+        const offTs = onEvent((e) => { tsEvents.push(e); });
+        const labelOf = (sd: Side) => (v: unknown) => {
+          for (const [k, id] of Object.entries(sd)) if (v === id) return k.toUpperCase();
+          if (v === agent.accountId) return 'AGENT';
+          if (v === admin.accountId) return 'ADMIN';
+          if (v === member.accountId) return 'MEMBER';
+          return v;
+        };
+        const shape = (sd: Side) => (v: unknown): unknown => {
+          if (Array.isArray(v)) return v.map(shape(sd));
+          if (v && typeof v === 'object') {
+            const o: Record<string, unknown> = {};
+            for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+              o[k] = /At$/.test(k) ? (x === null ? null : typeof x) : k === 'seq' ? typeof x : shape(sd)(x);
+            }
+            return o;
+          }
+          return labelOf(sd)(v);
+        };
+        // SSE 한 줄의 도구 답 글자 → JSON.
+        const toolJson = (text: string) => {
+          const line = text.split('\n').find((l) => l.startsWith('data: '))!;
+          const rpc = JSON.parse(line.slice(6)) as { result?: { content?: { text: string }[] } };
+          return JSON.parse(rpc.result!.content![0]!.text) as unknown;
+        };
+        const missing = '00000000-0000-4000-8000-000000000000';
+        const run = async (base: string, sd: Side) => {
+          const out: { step: string; core: string | null; body: unknown }[] = [];
+          const step = async (name: string, args: unknown) => {
+            const r = await mcpCall(base, agent.pat, 'message.askBundleResolve', args);
+            expect(r.status, name).toBe(200);
+            let body: unknown;
+            try { body = shape(sd)(toolJson(r.text)); } catch { body = 'not-a-tool-result'; }
+            out.push({ step: name, core: r.core, body });
+          };
+          const go = (rootId: string, replyMessageId: string, extra: Record<string, unknown> = {}) => ({ bundleId: sd.B, rootId, replyMessageId, ...extra });
+          await step('사람 글로 닫음', go(sd.plain, sd.replyA, { note: '  가로 하자  ' }));
+          await step('다시 → 닫힘', go(sd.plain, sd.replyA));
+          await step('받는 사람의 글로 닫음', go(sd.toMem, sd.replyM));
+          await step('권리 없는 사람의 글 → 거절', go(sd.toMem2, sd.replyA));
+          await step('에이전트 글(남의 이름 지어내기) → 거절', go(sd.open, sd.agentReply));
+          await step('다른 스레드의 사람 글 → 거절', go(sd.open, sd.elsewhere));
+          await step('없는 글 → 거절', go(sd.open, missing));
+          await step('남의 묶음 → 거절', { bundleId: sd.theirs, rootId: sd.spare, replyMessageId: sd.replyA });
+          await step('없는 묶음', { bundleId: missing, rootId: sd.plain, replyMessageId: sd.replyA });
+          await step('묶음 아닌 글', { bundleId: sd.plain, rootId: sd.plain, replyMessageId: sd.replyA });
+          await step('줄 아님', go(sd.spare, sd.replyA));
+          await step('권한 줄 → 거절', go(sd.perm, sd.replyA));
+          await step('링크 줄 → 거절', go(sd.linked, sd.replyA));
+          await step('백스톱 줄 → TS', { bundleId: sd.Bh, rootId: sd.backstop, replyMessageId: sd.replyH });
+          await step('모르는 kind 줄 → TS', { bundleId: sd.Bh, rootId: sd.odd, replyMessageId: sd.replyH });
+          await step('빈 note → TS(zod)', go(sd.toMem2, sd.replyM, { note: '' }));
+          await step('uuid 아님 → TS(zod)', go('x', sd.replyM));
+          return out;
+        };
+        const tsOut = await run(tsUrl, T);
+        const rsOut = await run(rsUrl, R);
+        const strip = (o: { step: string; body: unknown }[]) => o.map(({ step, body }) => ({ step, body }));
+        expect(strip(rsOut)).toEqual(strip(tsOut));
+        const TS_STEPS = ['백스톱 줄 → TS', '모르는 kind 줄 → TS', '빈 note → TS(zod)', 'uuid 아님 → TS(zod)'];
+        for (const o of rsOut) expect(o.core, `${o.step} — 누가 답했나`).toBe(TS_STEPS.includes(o.step) ? null : 'mcp');
+        const codeOf = (n: string) => ((tsOut.find((o) => o.step === n)!.body as { error?: { code: string } }).error?.code ?? 'ok');
+        expect(Object.fromEntries(tsOut.map((o) => [o.step, codeOf(o.step)]))).toMatchObject({
+          '사람 글로 닫음': 'ok', '다시 → 닫힘': 'bundle_item_resolved', '받는 사람의 글로 닫음': 'ok',
+          '권리 없는 사람의 글 → 거절': 'bundle_reply_invalid', '에이전트 글(남의 이름 지어내기) → 거절': 'bundle_reply_invalid',
+          '다른 스레드의 사람 글 → 거절': 'bundle_reply_invalid', '없는 글 → 거절': 'bundle_reply_invalid',
+          '남의 묶음 → 거절': 'bundle_not_yours', '없는 묶음': 'bundle_not_found', '묶음 아닌 글': 'bundle_not_found',
+          '줄 아님': 'bundle_item_not_found', '권한 줄 → 거절': 'bundle_item_link', '링크 줄 → 거절': 'bundle_item_link',
+          '백스톱 줄 → TS': 'ok', '모르는 kind 줄 → TS': 'mirror_not_found',
+        });
+        // 원본 meta — 닫은 이름은 근거 글을 쓴 사람, 요지를 쓴 이름은 에이전트, note 는 다듬어 실린다.
+        const metaOf = async (sd: Side) => (await db.pool.query<{ k: string; ask: unknown }>(
+          `select k, m.meta->'ask' as ask from jsonb_each_text($1::jsonb) j(k, id) join message m on m.id = j.id::uuid
+            where m.meta ? 'ask' order by k`,
+          [JSON.stringify(sd)])).rows.map((r) => ({ k: r.k, ask: shape(sd)(r.ask) }));
+        const tMeta = await metaOf(T);
+        expect(await metaOf(R)).toEqual(tMeta);
+        expect(tMeta.find((x) => x.k === 'plain')?.ask).toMatchObject({ closedBy: 'ADMIN', closedReason: 'replied', replyMessageId: 'REPLYA', replyNote: '가로 하자', replyNoteBy: 'AGENT' });
+        expect(tMeta.find((x) => x.k === 'toMem')?.ask).toMatchObject({ closedBy: 'MEMBER' });
+        for (const k of ['toMem2', 'open']) expect((tMeta.find((x) => x.k === k)?.ask as { closedAt?: unknown }).closedAt ?? null, `${k} — 거절된 줄은 열린 채`).toBeNull();
+        // 깨움 — 물어본 쪽(원본 작성자 = 에이전트)은 닫은 사람과 다르니 `ask_closed` 줄이 선다.
+        const wakes = async (sd: Side) => (await db.pool.query<{ m: string; r: string }>(
+          `select message_id::text as m, reason as r from inbox where message_id = any($1::uuid[]) and reason = 'ask_closed' order by id`,
+          [Object.values(sd)])).rows.map((r) => ({ m: labelOf(sd)(r.m), r: r.r }));
+        const tWakes = await wakes(T);
+        expect(tWakes.length, '닫힌 줄마다 깨움').toBeGreaterThan(0);
+        expect(await wakes(R)).toEqual(tWakes);
+        // 이벤트 — `message.updated` 만. 넘긴 줄(백스톱·모르는 kind)의 이벤트는 TS 에서 나고 Rust outbox 에 없다.
+        const HANDED = ['backstop', 'odd', 'Bh'];
+        const writesOf = (evs: WorkspaceEvent[], sd: Side, handed: boolean) => evs.filter((e) => {
+          if (e.type !== 'message.updated') return false;
+          const id = (e as { message: { id: string } }).message.id;
+          return Object.entries(sd).some(([k, v]) => v === id && HANDED.includes(k) === handed);
+        }).map((e) => shape(sd)(JSON.parse(JSON.stringify(e))));
+        const want = writesOf(tsEvents, T, false);
+        expect(want.length, '닫은 원본마다 message.updated').toBeGreaterThan(0);
+        const until = Date.now() + 10_000;
+        while (writesOf(busEvents, R, false).length < want.length && Date.now() < until) await new Promise((res) => setTimeout(res, 100));
+        expect(writesOf(busEvents, R, false), 'Rust 가 낸 쓰기 이벤트 = TS').toEqual(want);
+        const handedT = writesOf(tsEvents, T, true);
+        expect(handedT.length, '넘긴 줄도 TS 가 닫아 이벤트가 난다').toBeGreaterThan(0);
+        expect(writesOf(tsEvents, R, true), '넘긴 줄은 TS 가 처리했다').toEqual(handedT);
+        expect(writesOf(busEvents, R, true), '넘긴 줄은 Rust outbox 에 없다').toEqual([]);
+        offTs();
+        // 한 트랜잭션 — outbox 넣기가 실패하면 닫기가 되돌아간다(도구 오류 internal, TS 로 다시 돌지 않는다).
+        const txCard = await card('트랜잭션 줄');
+        const txB = await bundleOf([txCard]);
+        const txReply = await say('가', { root: txB, author: admin.accountId });
+        await db.pool.query(`revoke insert on event_outbox from ${rw}`);
+        try {
+          const r = await mcpCall(rsUrl, agent.pat, 'message.askBundleResolve', { bundleId: txB, rootId: txCard, replyMessageId: txReply });
+          expect(r.core).toBe('mcp');
+          expect(r.text).toContain('\\"code\\":\\"internal\\"');
+        } finally {
+          await db.pool.query(`grant insert on event_outbox to ${rw}`);
+        }
+        const txAsk = (await db.pool.query<{ ask: Record<string, unknown> }>(`select meta->'ask' as ask from message where id = $1`, [txCard])).rows[0]!.ask;
+        expect(txAsk.closedAt ?? null, '닫기가 되돌아갔다').toBeNull();
+      }
       // S5.3 C1c-1 — 글 올리기 뼈대(코어 `msg_post.rs`). 사람·세션·최상위·DM 아님·부름·URL·승인 낱말·링크 없는 글만 Rust 가 올리고,
       // 나머지는 읽은 바이트 그대로 TS 로 넘긴다. TS·Rust 에 같은 시나리오를 돌려 응답(상태·코드·헤더·본문 모양)과 이벤트를 견주고,
       // 넘긴 글은 그 `message.created` 가 TS 쪽(`onEvent`)에만 있고 Rust outbox(`busEvents`)에는 없는 것으로 「TS 가 올렸다」를 본다.

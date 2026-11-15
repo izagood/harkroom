@@ -67,6 +67,32 @@ export const READ_BUNDLE_SQL = `select id, meta, channel_id as "channelId", thre
        from message where id = $1::uuid and deleted_at is null`;
 export const ACCEPT_ROOT_SQL = `select meta, body from message where id = $1::uuid and deleted_at is null`;
 
+/**
+ * `message.askBundleResolve` 의 문장 — Rust 코어(`core/ask_bundle_resolve.rs`, S5.3 C3b-2b)가 골든으로 받는다(`bundle_reply`·`bundle_resolve`).
+ * 닫기 문장은 `returning` 없이 두고 쓰는 쪽이 붙인다(TS 는 `COLS`, Rust 는 id·작성자). Rust 는 무형 인자를 text 로 보내므로 받는 쪽에서 캐스트한다.
+ */
+export const BUNDLE_REPLY_SQL = `select m.id, m.author_id as "authorId" from message m join account a on a.id = m.author_id
+      where m.id = $1::uuid and m.deleted_at is null and a.kind = 'human'
+        and m.channel_id = $2::uuid and (m.thread_root_id = $3::uuid or m.id = $3::uuid)`;
+export const BUNDLE_RESOLVE_SQL = `update message
+        set meta = jsonb_set(
+            jsonb_set(
+              jsonb_set(
+                jsonb_set(
+                  jsonb_set(
+                    jsonb_set(meta::jsonb, '{ask,closedAt}', to_jsonb(now())),
+                    '{ask,closedBy}', to_jsonb($2::text)),
+                  '{ask,closedReason}', to_jsonb('replied'::text)),
+                '{ask,replyMessageId}', to_jsonb($3::text)),
+              '{ask,replyNote}', to_jsonb($4::text)),
+            '{ask,replyNoteBy}', to_jsonb($5::text))
+      where id = $1::uuid
+        and deleted_at is null
+        and meta->'ask'->>'answeredWith' is null
+        and meta->'ask'->>'closedAt' is null
+        and not (meta ? 'permissionRequest')
+        and not (meta ? 'mergeDenial')`;
+
 async function readBundle(pool: Pool, bundleId: string): Promise<BundleRow | null> {
   const res = await pool.query(READ_BUNDLE_SQL, [bundleId]);
   const row = res.rows[0] as { id: string; meta: Record<string, unknown>; channelId: string; threadRootId: string | null; authorId: string | null } | undefined;
@@ -287,9 +313,7 @@ export async function resolveBundleItem(pool: Pool, args: {
 
   const bundleRoot = bundle.threadRootId ?? bundle.id;
   const reply = (await pool.query(
-    `select m.id, m.author_id as "authorId" from message m join account a on a.id = m.author_id
-      where m.id = $1 and m.deleted_at is null and a.kind = 'human'
-        and m.channel_id = $2 and (m.thread_root_id = $3 or m.id = $3)`,
+    BUNDLE_REPLY_SQL,
     [args.replyMessageId, bundle.channelId, bundleRoot],
   )).rows[0] as { id: string; authorId: string } | undefined;
   if (!reply) return { ok: false, code: 'bundle_reply_invalid' };
@@ -303,25 +327,7 @@ export async function resolveBundleItem(pool: Pool, args: {
 
   const note = (args.note ?? '').trim().slice(0, 1000);
   const closed = (await pool.query(
-    `update message
-        set meta = jsonb_set(
-            jsonb_set(
-              jsonb_set(
-                jsonb_set(
-                  jsonb_set(
-                    jsonb_set(meta::jsonb, '{ask,closedAt}', to_jsonb(now())),
-                    '{ask,closedBy}', to_jsonb($2::text)),
-                  '{ask,closedReason}', to_jsonb('replied'::text)),
-                '{ask,replyMessageId}', to_jsonb($3::text)),
-              '{ask,replyNote}', to_jsonb($4::text)),
-            '{ask,replyNoteBy}', to_jsonb($5::text))
-      where id = $1
-        and deleted_at is null
-        and meta->'ask'->>'answeredWith' is null
-        and meta->'ask'->>'closedAt' is null
-        and not (meta ? 'permissionRequest')
-        and not (meta ? 'mergeDenial')
-      returning ${COLS}`,
+    `${BUNDLE_RESOLVE_SQL}\n      returning ${COLS}`,
     [args.rootId, reply.authorId, reply.id, note, args.callerId],
   )).rows[0] as MessageRow | undefined;
   if (!closed) return { ok: false, code: 'bundle_item_resolved' };

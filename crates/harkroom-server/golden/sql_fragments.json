@@ -93,5 +93,7 @@
   "bundle_decision_card": "select 1 from message where id = $1::uuid and (meta ? 'permissionRequest' or meta ? 'mergeDenial')",
   "bundle_accept_root": "select meta, body from message where id = $1::uuid and deleted_at is null",
   "bundle_irreversible_source": "머지|병합|merge|배포|deploy|릴리스|릴리즈|release|롤아웃|rollout|비밀|secret|토큰|token|자격|credential|권한|permission|grant|삭제|delete|drop|force[- ]?push",
-  "bundle_irreversible_flags": "i"
+  "bundle_irreversible_flags": "i",
+  "bundle_reply": "select m.id, m.author_id as \"authorId\" from message m join account a on a.id = m.author_id\n      where m.id = $1::uuid and m.deleted_at is null and a.kind = 'human'\n        and m.channel_id = $2::uuid and (m.thread_root_id = $3::uuid or m.id = $3::uuid)",
+  "bundle_resolve": "update message\n        set meta = jsonb_set(\n            jsonb_set(\n              jsonb_set(\n                jsonb_set(\n                  jsonb_set(\n                    jsonb_set(meta::jsonb, '{ask,closedAt}', to_jsonb(now())),\n                    '{ask,closedBy}', to_jsonb($2::text)),\n                  '{ask,closedReason}', to_jsonb('replied'::text)),\n                '{ask,replyMessageId}', to_jsonb($3::text)),\n              '{ask,replyNote}', to_jsonb($4::text)),\n            '{ask,replyNoteBy}', to_jsonb($5::text))\n      where id = $1::uuid\n        and deleted_at is null\n        and meta->'ask'->>'answeredWith' is null\n        and meta->'ask'->>'closedAt' is null\n        and not (meta ? 'permissionRequest')\n        and not (meta ? 'mergeDenial')"
 }

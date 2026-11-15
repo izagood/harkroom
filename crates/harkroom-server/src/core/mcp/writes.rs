@@ -14,7 +14,12 @@ use serde_json::Value;
 use sqlx::PgPool;
 
 /// 이 묶음에서 Rust 가 답하는 쓰기 도구.
-pub const SERVED: &[&str] = &["message.react", "message.unreact", "inbox.read"];
+pub const SERVED: &[&str] = &[
+    "message.react",
+    "message.unreact",
+    "inbox.read",
+    "message.askBundleResolve",
+];
 
 /// `inbox.read`(C4b ④-a) 쓰기 역할의 권한 — 읽음 시각 칸 하나만 고친다. 없으면 `main.rs` 가 풀을 비워 TS 가 답한다.
 pub const INBOX_READ_PRIVILEGES: &[(&str, &str)] = &[("inbox.read_at", "UPDATE")];
@@ -26,6 +31,8 @@ pub struct McpWrites {
     pub react: Option<PgPool>,
     /// `inbox.read` — [`INBOX_READ_PRIVILEGES`].
     pub inbox: Option<PgPool>,
+    /// `message.askBundleResolve`(C3b-2b) — 선택 카드 줄(C3b-1 `ASK_PRIVILEGES`)과 같은 권한.
+    pub ask: Option<PgPool>,
 }
 
 /// JS `Number.MAX_SAFE_INTEGER` — 이 밖의 수는 TS 에서 값이 뭉개진다. Rust 는 같은 결과를 낼 수 없으니 TS 로 넘긴다.
@@ -59,6 +66,12 @@ pub async fn answer(
     if !SERVED.contains(&tool) {
         return None;
     }
+    if tool == "message.askBundleResolve" {
+        let Some(write) = writes.ask.as_ref() else {
+            return Some(None);
+        };
+        return Some(bundle_resolve(read, write, me, args).await);
+    }
     if tool == "inbox.read" {
         let Some(write) = writes.inbox.as_ref() else {
             return Some(None);
@@ -69,6 +82,26 @@ pub async fn answer(
         return Some(None);
     };
     Some(react(read, write, me, tool, args).await)
+}
+
+/// `message.askBundleResolve`(C3b-2b) — 본체는 [`crate::core::ask_bundle_resolve`]. 넘길 원본·쓰기 전 DB 오류는 `None`(→ TS).
+async fn bundle_resolve(
+    read: &PgPool,
+    write: &PgPool,
+    me: &Account,
+    args: &Value,
+) -> Option<String> {
+    use crate::core::ask_bundle_resolve::{Resolved, parse_args, resolve};
+    let (bundle, root, reply, note) = parse_args(args)?;
+    match resolve(read, write, me, bundle, root, reply, note).await {
+        Ok(Resolved::Handoff) => None,
+        Ok(Resolved::Refused(r)) => Some(err(r.0, r.message())),
+        Ok(Resolved::Bundle(row)) => Some(ok_text(&format!(
+            "{{\"message\":{}}}",
+            super::respond::minify(&row)
+        ))),
+        Err(_) => Some(internal()),
+    }
 }
 
 /// `ids: z.array(z.number().int()).min(1).max(200)` 중 Rust 가 같은 값으로 읽는 것 — JSON 정수이고 JS 안전 범위 안.

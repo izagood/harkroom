@@ -72,6 +72,16 @@ pub(super) struct Ask {
     pub(super) closed: bool,
 }
 
+impl Ask {
+    /// TS `resolveBundleItem` 의 `mayAnswer` — 사람 앞 물음이거나, 이름으로 정한 받는 사람이 그 계정일 때.
+    pub(super) fn addressed_to(&self, account: &str) -> bool {
+        match &self.to {
+            To::Human => true,
+            To::Account(id) => id == account,
+        }
+    }
+}
+
 /// TS `isPermissionCardMeta`.
 fn is_permission_card_meta(meta: &Value) -> bool {
     meta.get("permissionRequest").is_some_and(Value::is_object)
