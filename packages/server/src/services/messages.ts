@@ -34,7 +34,7 @@ import { attachPlanProgress } from './threadPlan.js';
  * 마이그레이션이 게시를 기다리거나 그 반대가 된다. classid 를 따로 두면 그 방이
  * 아예 갈라져 충돌이 원리적으로 불가능하다.
  */
-const SEQ_LOCK_CLASS = 0x6d736571; // 'mseq'
+export const SEQ_LOCK_CLASS = 0x6d736571; // 'mseq'
 
 /**
  * 채널 하나를 가리키는 32비트 objid. `hashtext` 로 uuid 를 접는다 — Postgres 내장이라
@@ -44,8 +44,10 @@ const SEQ_LOCK_CLASS = 0x6d736571; // 'mseq'
  * 정확성은 그대로다 — 락은 성능 장치이지 가시성 판정이 아니다. 반대 방향(같은 채널이
  * 다른 락을 잡는 것)은 일어날 수 없으므로 결함이 되살아나지 않는다.
  */
+/** seq 락 문장 — Rust 코어(`core/msg_post.rs`, S5.3 C1c-1)가 골든으로 받는다(`post_seq_lock`·`post_seq_lock_class`). */
+export const SEQ_LOCK_SQL = 'select pg_advisory_xact_lock($1, hashtext($2))';
 export const lockChannelForSeq = (client: PoolClient, channelId: string): Promise<unknown> =>
-  client.query('select pg_advisory_xact_lock($1, hashtext($2))', [SEQ_LOCK_CLASS, channelId]);
+  client.query(SEQ_LOCK_SQL, [SEQ_LOCK_CLASS, channelId]);
 
 /** 회신권 판정과 닫기를 (작성자, 스레드) 단위로 직렬화한다 — `postMessage` 의 주석 참고. */
 const REPLY_LOCK_CLASS = 0x6d72706c; // 'mrpl'
@@ -1588,6 +1590,17 @@ export async function fanOutCalls(
   }
 }
 
+/**
+ * `postMessage` 의 쓰기 문장 셋 — Rust 코어(`core/msg_post.rs`, S5.3 C1c-1)가 골든으로 받아 그대로 쓴다(`post_*`).
+ * Rust 는 무형 인자를 text 로 보내므로 받는 쪽에서 캐스트한다(Postgres 는 같은 값으로 읽는다).
+ */
+export const POST_IDEMPOTENCY_FIND_SQL = `select message_id from idempotency_key
+         where key = $1 and author_id = $2::uuid and channel_id = $3::uuid`;
+export const POST_INSERT_SQL = `insert into message (channel_id, thread_root_id, author_id, body, kind, meta, also_in_channel, mention_depth, cause_message_id, stall_depth, chain_started_at)
+       values ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6::jsonb, $7::bool, $8::int, $9::uuid, $10::int, $11::timestamptz) returning id`;
+export const POST_CHANNEL_KIND_SQL = `select kind from channel where id = $1::uuid`;
+export const POST_IDEMPOTENCY_INSERT_SQL = `insert into idempotency_key (key, message_id, author_id, channel_id) values ($1, $2::uuid, $3::uuid, $4::uuid)`;
+
 export async function postMessage(
   pool: Pool, input: PostMessageInput,
 ): Promise<PostMessageResult> {
@@ -1731,8 +1744,7 @@ export async function postMessage(
       // key는 클라이언트가 고르는 값이라 전역 유일하지 않다. 재생은 같은 author가 같은 채널로
       // 보낸 재시도일 때만이며, 그 범위를 벗어난 조회는 남의 메시지를 읽는 경로가 된다.
       const dup = await client.query(
-        `select message_id from idempotency_key
-         where key = $1 and author_id = $2 and channel_id = $3`,
+        POST_IDEMPOTENCY_FIND_SQL,
         [input.idempotencyKey, input.authorId, input.channelId],
       );
       if (dup.rowCount) {
@@ -1750,8 +1762,7 @@ export async function postMessage(
       ? await verifiedCauseLink(client, input.authorId, input.chainCause)
       : null;
     const inserted = await client.query(
-      `insert into message (channel_id, thread_root_id, author_id, body, kind, meta, also_in_channel, mention_depth, cause_message_id, stall_depth, chain_started_at)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) returning id`,
+      POST_INSERT_SQL,
       [input.channelId, input.threadRootId ?? null, input.authorId, calls.normalizedBody,
        input.kind ?? 'user',
        // 막힌 호출은 **그 메시지에 남는다** — 조용히 사라지면 사람은 "왜 아무도 안 왔나"를
@@ -1788,7 +1799,7 @@ export async function postMessage(
 
     if (input.idempotencyKey) {
       await client.query(
-        `insert into idempotency_key (key, message_id, author_id, channel_id) values ($1, $2, $3, $4)`,
+        POST_IDEMPOTENCY_INSERT_SQL,
         [input.idempotencyKey, message.id, input.authorId, input.channelId],
       );
     }
@@ -1928,7 +1939,7 @@ export async function postMessage(
 
     // DM 도 같은 기준이다(위 문단). 둘만 있는 방이라 진행 한 줄이 그대로 상대의
     // 알림이 되고, 상대가 에이전트면 턴까지 뜬다 — 스레드보다 오히려 더 곧장 닿는다.
-    const channel = await client.query(`select kind from channel where id = $1`, [input.channelId]);
+    const channel = await client.query(POST_CHANNEL_KIND_SQL, [input.channelId]);
     if (channel.rows[0]?.kind === 'dm' && isReply) {
       const members = await client.query(
         `select account_id from channel_member where channel_id = $1 and account_id <> $2`,

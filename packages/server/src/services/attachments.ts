@@ -48,6 +48,12 @@ export async function recordUpload(
 
 export type AttachFailure = 'not_found' | 'not_yours' | 'already_attached';
 
+/** 첨부 잇기 문장 둘 — Rust 코어(`core/msg_post.rs`, S5.3 C1c-1)가 골든으로 받는다(`attach_find`·`attach_update`). */
+export const ATTACH_FIND_SQL = `select id, uploader_id, message_id from attachment where id = any($1::uuid[]) for update`;
+export const ATTACH_UPDATE_SQL = `update attachment a set message_id = $1::uuid, attached_at = now()
+     from unnest($2::uuid[]) with ordinality as t(id, ord)
+     where a.id = t.id`;
+
 /**
  * 업로드들을 메시지에 붙인다. 메시지 생성과 같은 트랜잭션에서 돌아야 한다 — 따로 돌면
  * 메시지는 있는데 첨부가 없는 순간이 보인다.
@@ -60,10 +66,7 @@ export async function attachToMessage(
 ): Promise<AttachFailure | null> {
   if (!args.attachmentIds.length) return null;
 
-  const found = await client.query(
-    `select id, uploader_id, message_id from attachment where id = any($1::uuid[]) for update`,
-    [args.attachmentIds],
-  );
+  const found = await client.query(ATTACH_FIND_SQL, [args.attachmentIds]);
   if (found.rowCount !== args.attachmentIds.length) return 'not_found';
   for (const row of found.rows) {
     // 남의 업로드를 붙이면 올린 적 없는 파일을 자기 것으로 게시할 수 있다.
@@ -73,12 +76,7 @@ export async function attachToMessage(
   }
 
   // 주어진 순서를 보존한다 — 사용자가 고른 순서가 화면 순서여야 한다.
-  await client.query(
-    `update attachment a set message_id = $1, attached_at = now()
-     from unnest($2::uuid[]) with ordinality as t(id, ord)
-     where a.id = t.id`,
-    [args.messageId, args.attachmentIds],
-  );
+  await client.query(ATTACH_UPDATE_SQL, [args.messageId, args.attachmentIds]);
   return null;
 }
 

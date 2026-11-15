@@ -1117,6 +1117,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant update (via_edit) on inbox to ${rw}`,
         `grant insert on push_job to ${rw}`,
         `grant update (hidden_at) on channel_pref to ${rw}`,
+        // S5.3 C1c-1 — 글 올리기 뼈대(`msg_post.rs::MESSAGE_POST_PRIVILEGES`). 없으면 「message post core off」(아래에서 그 길도 본다).
+        `grant insert on message to ${rw}`,
+        `grant insert on idempotency_key to ${rw}`,
+        `grant update (message_id, attached_at) on attachment to ${rw}`,
         // S5.3 C5b — 예약 깨움 루프(`loops/wake.rs::WAKE_PRIVILEGES`). 없으면 「loop wake off」 — 루프는 TS 에 남는다.
         ...WAKE_GRANTS.map((g) => `grant ${g} to ${rw}`),
         // S5.3 C5c — 보존 정리 루프(`loops/retention.rs::RETENTION_PRIVILEGES`).
@@ -2684,6 +2688,147 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         } finally {
           front2?.kill('SIGTERM');
           await db.pool.query(`grant update (meta) on message to ${rw}`);
+        }
+      }
+      // S5.3 C1c-1 — 글 올리기 뼈대(코어 `msg_post.rs`). 사람·세션·최상위·DM 아님·부름·URL·승인 낱말·링크 없는 글만 Rust 가 올리고,
+      // 나머지는 읽은 바이트 그대로 TS 로 넘긴다. TS·Rust 에 같은 시나리오를 돌려 응답(상태·코드·헤더·본문 모양)과 이벤트를 견주고,
+      // 넘긴 글은 그 `message.created` 가 TS 쪽(`onEvent`)에만 있고 Rust outbox(`busEvents`)에는 없는 것으로 「TS 가 올렸다」를 본다.
+      {
+        const POST = 'POST /channels/{id}/messages';
+        expect(f.log()).toContain(`"${POST}"`);
+        expect(f.log()).not.toContain('message post core off');
+        const mPath = (ch: string) => `/channels/${ch}/messages`;
+        const upload = async (who: string, name: string) => (await db.pool.query<{ id: string }>(
+          `insert into attachment (uploader_id, filename, content_type, size_bytes, storage_key) values ($1, $2, 'text/plain', 1, $3) returning id`,
+          [who, name, `test/${name}-${Math.random().toString(36).slice(2)}`])).rows[0]!.id;
+        const side = async (tag: string) => ({
+          att1: await upload(admin.accountId, 'a1.txt'),
+          att2: await upload(admin.accountId, 'a2.txt'),
+          others: await upload(member.accountId, 'm.txt'),
+          root: await say(`${tag} 머리`, { author: admin.accountId }),
+          key: `c1c1-${tag}-${Date.now()}`,
+        });
+        type Side = Awaited<ReturnType<typeof side>>;
+        const T = await side('t');
+        const R = await side('r');
+        const tsEvents: WorkspaceEvent[] = [];
+        const offTs = onEvent((e) => { tsEvents.push(e); });
+        const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+        const shape = (sd: Side) => (v: unknown): unknown => {
+          if (Array.isArray(v)) return v.map(shape(sd));
+          if (v && typeof v === 'object') {
+            const o: Record<string, unknown> = {};
+            for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+              o[k] = /At$/.test(k) ? (x === null ? null : typeof x) : k === 'seq' ? typeof x : shape(sd)(x);
+            }
+            return o;
+          }
+          if (typeof v !== 'string') return v;
+          let out = v;
+          for (const [k, id] of Object.entries(sd)) if (k !== 'key') out = out.split(id).join(k.toUpperCase());
+          return out.replace(UUID_RE, '<uuid>');
+        };
+        const send = async (base: string, path: string, body: unknown, token: string = A, key?: string) => {
+          const headers: Record<string, string> = { authorization: `Bearer ${token}`, 'content-type': J };
+          if (key) headers['idempotency-key'] = key;
+          const res = await fetch(`${base}${path}`, { method: 'POST', headers, body: JSON.stringify(body) });
+          const text = await res.text();
+          const json = text ? JSON.parse(text) as Record<string, unknown> : {};
+          return { status: res.status, code: (json.error as { code?: string } | undefined)?.code, json, count: res.headers.get('x-harkroom-notified-count') };
+        };
+        const HANDED = ['TS: 승인 낱말', 'TS: 메시지 링크', 'TS: URL', 'TS: 멘션', 'TS: 스레드 답글', 'TS: DM', 'TS: 에이전트(PAT)', 'TS: 모델 지정 키'];
+        const run = async (base: string, sd: Side) => {
+          const out: { step: string; status: number; code?: string; count: string | null; body: unknown; id?: string }[] = [];
+          const step = async (name: string, path: string, body: unknown, token?: string, key?: string) => {
+            const r = await send(base, path, body, token, key);
+            out.push({ step: name, status: r.status, code: r.code, count: r.count, body: r.json.error ? null : shape(sd)(r.json), id: r.json.error ? undefined : r.json.id as string });
+          };
+          await step('평범한 글', mPath(todayId), { body: '안녕 C1c-1', alsoInChannel: true });
+          await step('첨부 둘(고른 순서)', mPath(todayId), { body: '', attachmentIds: [sd.att2, sd.att1] });
+          await step('재시도 키 첫 번', mPath(todayId), { body: '한 번만' }, A, sd.key);
+          await step('재시도 키 다시 → 재생 200', mPath(todayId), { body: '한 번만' }, A, sd.key);
+          await step('남의 첨부 → 400', mPath(todayId), { body: 'x', attachmentIds: [sd.others] });
+          await step('이미 붙은 첨부 → 400', mPath(todayId), { body: 'x', attachmentIds: [sd.att1] });
+          await step('없는 첨부 → 400', mPath(todayId), { body: 'x', attachmentIds: ['0b6f8d2e-3c1a-4f5e-9a7b-1c2d3e4f5a6b'] });
+          await step('빈 본문 → 400', mPath(todayId), { body: '' });
+          await step('공백뿐 → 400', mPath(todayId), { body: ' \n　' });
+          await step('8001자 → 400', mPath(todayId), { body: 'a'.repeat(8001) });
+          await step('첨부 uuid 아님 → 400', mPath(todayId), { body: 'x', attachmentIds: ['x'] });
+          await step('alsoInChannel 글자 → 400', mPath(todayId), { body: 'x', alsoInChannel: 'yes' });
+          await step('비공개 비멤버 → 403', mPath(String(priv.id)), { body: 'x' }, member.token);
+          await step('채널 uuid 아님 → 400', mPath('x'), { body: 'x' });
+          await step('TS: 승인 낱말', mPath(todayId), { body: '승인합니다' });
+          await step('TS: 메시지 링크', mPath(todayId), { body: `이것 harkroom://message/${sd.root}` });
+          await step('TS: URL', mPath(todayId), { body: '자료 https://example.com/a' });
+          await step('TS: 멘션', mPath(todayId), { body: '@mem 봐 줘' });
+          await step('TS: 스레드 답글', mPath(todayId), { body: '답글', threadRootId: sd.root });
+          await step('TS: DM', mPath(String(dm.id)), { body: 'DM 글' });
+          await step('TS: 에이전트(PAT)', mPath(todayId), { body: '에이전트 글' }, agent.pat);
+          await step('TS: 모델 지정 키', mPath(todayId), { body: '모델', agentModels: [] });
+          return out;
+        };
+        const tsOut = await run(tsUrl, T);
+        const rsOut = await run(rsUrl, R);
+        const strip = (o: typeof tsOut) => o.map(({ id: _id, ...rest }) => rest);
+        expect(strip(rsOut)).toEqual(strip(tsOut));
+        const st = (o: typeof tsOut, n: string) => o.find((x) => x.step === n)!;
+        expect(st(tsOut, '평범한 글').status).toBe(201);
+        expect(st(tsOut, '평범한 글').count).toBe('0');
+        expect(st(tsOut, '재시도 키 다시 → 재생 200').count, '재생은 헤더 없음').toBeNull();
+        expect(st(rsOut, '재시도 키 다시 → 재생 200').id, 'Rust 재생도 같은 글').toBe(st(rsOut, '재시도 키 첫 번').id);
+        expect(st(tsOut, 'TS: 승인 낱말').status).toBe(201);
+        expect((st(tsOut, '첨부 둘(고른 순서)').body as { attachments: { id: string }[] }).attachments.map((a) => a.id).sort()).toEqual(['ATT1', 'ATT2']);
+        // 이벤트 — Rust 가 맡은 글은 outbox 에, 넘긴 글은 TS 에서. 모양·받는 사람이 TS 와 같다.
+        const created = (evs: WorkspaceEvent[], ids: string[], sd: Side) => evs
+          .filter((e) => e.type === 'message.created' && ids.includes((e as { message: { id: string } }).message.id))
+          .map((e) => shape(sd)(JSON.parse(JSON.stringify(e))));
+        const idsOf = (o: typeof tsOut, handed: boolean) => o.filter((x) => x.status === 201 && HANDED.includes(x.step) === handed).map((x) => x.id!);
+        const want = created(tsEvents, idsOf(tsOut, false), T);
+        expect(want.length, '맡은 글마다 message.created').toBe(3);
+        const until8 = Date.now() + 10_000;
+        while (created(busEvents, idsOf(rsOut, false), R).length < want.length && Date.now() < until8) await new Promise((res) => setTimeout(res, 100));
+        expect(created(busEvents, idsOf(rsOut, false), R), 'Rust 가 낸 message.created = TS').toEqual(want);
+        const handedT = created(tsEvents, idsOf(tsOut, true), T);
+        expect(handedT.length, '넘긴 글도 올라갔다').toBe(idsOf(tsOut, true).length);
+        expect(created(tsEvents, idsOf(rsOut, true), R), '넘긴 글은 TS 가 올렸다').toEqual(handedT);
+        expect(created(busEvents, idsOf(rsOut, true), R), '넘긴 글은 Rust outbox 에 없다').toEqual([]);
+        offTs();
+        const anon = async (base: string) => (await fetch(`${base}${mPath(todayId)}`, { method: 'POST', headers: { 'content-type': J }, body: '{"body":"x"}' })).status;
+        expect(await anon(rsUrl), '익명 → 401').toBe(await anon(tsUrl));
+        // 한 트랜잭션 — outbox 넣기가 실패하면 글·첨부·재시도 키가 남지 않는다.
+        const txAtt = await upload(admin.accountId, 'tx.txt');
+        await db.pool.query(`revoke insert on event_outbox from ${rw}`);
+        try {
+          expect((await send(rsUrl, mPath(todayId), { body: 'C1c-1 트랜잭션 글', attachmentIds: [txAtt] }, A, 'c1c1-tx')).status, '이벤트 실패면 500').toBe(500);
+        } finally {
+          await db.pool.query(`grant insert on event_outbox to ${rw}`);
+        }
+        const left = (await db.pool.query<{ msgs: number; att: string | null; keys: number }>(
+          `select (select count(*)::int from message where body = 'C1c-1 트랜잭션 글') as msgs,
+                  (select message_id::text from attachment where id = $1) as att,
+                  (select count(*)::int from idempotency_key where key = 'c1c1-tx') as keys`, [txAtt])).rows[0];
+        expect(left, '글·첨부 잇기·재시도 키 모두 되돌아갔다').toEqual({ msgs: 0, att: null, keys: 0 });
+        // 올리기 권한이 없는 앞단 — 스위치가 rust 여도 이 줄을 붙이지 않고(기동 기록), 같은 요청은 TS 가 답한다.
+        await db.pool.query(`revoke insert on idempotency_key from ${rw}`);
+        await db.pool.query(`alter role ${rw} connection limit -1`);
+        const port3 = await freePort();
+        let front3: ChildProcess | undefined;
+        try {
+          const f3 = await startFront(bin, {
+            UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(port3), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
+            TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust',
+          });
+          front3 = f3.child;
+          const until9 = Date.now() + 10_000;
+          while (!f3.log().includes('front: rust core routes') && Date.now() < until9) await new Promise((res) => setTimeout(res, 100));
+          expect(f3.log()).toContain('message post core off — missing privileges');
+          expect(f3.log()).not.toContain(`"${POST}"`);
+          const viaFront = await send(`http://127.0.0.1:${port3}`, mPath(todayId), { body: 'TS 가 올린다' });
+          expect(viaFront.status, '권한이 없으면 TS 가 받아 201').toBe(201);
+          expect((viaFront.json as { body?: string }).body).toBe('TS 가 올린다');
+        } finally {
+          front3?.kill('SIGTERM');
+          await db.pool.query(`grant insert on idempotency_key to ${rw}`);
         }
       }
       await bus.stop();
