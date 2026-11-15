@@ -15,11 +15,21 @@
  */
 import type pg from 'pg';
 import { emitEvent, type WorkspaceEvent } from './events.js';
+import { runGated } from './services/loopGate.js';
 
 export const EVENT_OUTBOX_CHANNEL = 'harkroom_event_outbox';
 /** 한 시간 지난 줄은 걷는다 — 모든 프로세스가 이미 읽었을 시간이다. */
 export const EVENT_OUTBOX_RETAIN_MS = 60 * 60 * 1000;
 const PRUNE_EVERY_MS = 10 * 60 * 1000;
+
+/**
+ * 한 시간 지난 outbox 줄을 지운다 — 지운 수. Rust `loops/outbox_prune.rs` 와 같은 조건이다(S5.3 C5c-4). 두 쪽이 겹쳐 돌아도
+ * 멱등이다(늦은 쪽은 줄 잠금을 기다린 뒤 이미 지워진 줄을 건너뛴다). 평소에는 문지기(`outbox.prune`)가 한쪽만 돌린다.
+ */
+export async function pruneEventOutbox(pool: pg.Pool): Promise<number> {
+  const r = await pool.query('delete from event_outbox where created_at < now() - make_interval(secs => $1)', [EVENT_OUTBOX_RETAIN_MS / 1000]);
+  return r.rowCount ?? 0;
+}
 const RECONNECT_MS = [500, 1_000, 2_000, 5_000, 10_000];
 
 /** `audience` 로 받는 사람을 가르는 이벤트(`visibleTo` 의 같은 갈래). */
@@ -133,9 +143,11 @@ export async function startEventBus(deps: EventBusDeps): Promise<EventBus> {
     reconnectTimer.unref?.();
   };
 
+  // 문지기 아래서 — 주인(`server_loop` 의 `outbox.prune`)이 ts 일 때만 이 프로세스가 지운다(rust 면 Rust 앞단이 지운다).
   const prune = setInterval(() => {
-    deps.pool.query('delete from event_outbox where created_at < now() - make_interval(secs => $1)', [EVENT_OUTBOX_RETAIN_MS / 1000])
-      .catch((err: unknown) => log(`event bus: 걷기 실패: ${err instanceof Error ? err.message : String(err)}`));
+    void runGated(deps.pool, 'outbox.prune', () => pruneEventOutbox(deps.pool), {
+      onError: (err: unknown) => log(`event bus: 걷기 실패: ${err instanceof Error ? err.message : String(err)}`),
+    });
   }, PRUNE_EVERY_MS);
   prune.unref?.();
 

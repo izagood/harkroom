@@ -67,6 +67,9 @@ const WAKE_GRANTS = [
 /** `loops/retention.rs::RETENTION_PRIVILEGES` 만 가진 쓰기 역할(S5.3 C5c). */
 const RETENTION_GRANTS = ['delete on idempotency_key', 'delete on session'];
 
+/** `loops/outbox_prune.rs::OUTBOX_PRUNE_PRIVILEGES` 만 가진 쓰기 역할(S5.3 C5c-4). */
+const OUTBOX_PRUNE_GRANTS = ['delete on event_outbox'];
+
 /** `loops/mandate_idle.rs::MANDATE_IDLE_PRIVILEGES`(+ 시퀀스) 만 가진 쓰기 역할(S5.3 C5c-2a). */
 const MANDATE_IDLE_GRANTS = [
   'update (ended_at, end_reason) on mandate',
@@ -104,7 +107,7 @@ async function operatorWriteRole(db: { pool: pg.Pool; uri: string }, grants: rea
 }
 
 describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () => {
-  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention', 'mandate_idle', 'permission_expire', 'bg', 'bg_produce']) {
+  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention', 'mandate_idle', 'permission_expire', 'bg', 'bg_produce', 'outbox_prune']) {
     it(`tests/${name}.rs`, async () => {
       const db = await startTestDb();
       try {
@@ -123,6 +126,8 @@ describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () 
         if (name === 'bg') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, BG_GRANTS);
         // C5c-3b-1 — 백그라운드 회차 생산도 `BG_PRODUCE_PRIVILEGES` 만 가진 역할로.
         if (name === 'bg_produce') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, BG_PRODUCE_GRANTS);
+        // C5c-4 — outbox 정리도 `OUTBOX_PRUNE_PRIVILEGES` 만 가진 역할로.
+        if (name === 'outbox_prune') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, OUTBOX_PRUNE_GRANTS);
         const r = await cargo(['test', '--test', name, '--', '--nocapture'], env);
         expect(r.code, r.out).toBe(0);
         // DB 가 없어 건너뛴 것을 통과로 읽지 않는다.
@@ -223,6 +228,69 @@ describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () 
         `select token_hash from session where account_id = $1`, [a])).rows.map((x) => x.token_hash);
       expect(left).toEqual(['dual-keep']);
       console.log(`retention-dual: rust ${m![1]} (overlapped sweeps ${m![2]}) / ts ${tsDeleted}`);
+    } finally {
+      await db.stop();
+    }
+  }, 600_000);
+
+  // C5c-4 — 한 시간 지난 outbox 줄 20000건을 TS `pruneEventOutbox` 와 Rust `loops::outbox_prune::prune` 이 **문지기 없이 동시에** 지워도
+  // 지운 수의 합이 정확히 20000 이고 남길 줄(30분)은 남는다. 이 sweep 은 조건 delete 라 늦은 쪽은 줄 잠금을 기다린 뒤 이미 지운 줄을 건너뛴다.
+  it('outbox 정리 — TS·Rust 동시 sweep 에도 지운 수 합이 정확하고 남길 줄은 남는다', async () => {
+    const db = await startTestDb();
+    try {
+      const tag = 'op-dual';
+      // 남길 줄은 30분 — Rust 시험 빌드를 기다리는 동안(최대 9분) 한 시간을 넘기지 않는다.
+      await db.pool.query(
+        `insert into event_outbox(event, created_at)
+         select jsonb_build_object('t', $1::text, 'k', 'old-' || g), now() - interval '61 minutes' from generate_series(1, 20000) g
+         union all select jsonb_build_object('t', $1::text, 'k', 'keep'), now() - interval '30 minutes'`, [tag]);
+      const { pruneEventOutbox } = await import('../src/eventBus.js');
+      const old = async () => Number((await db.pool.query(
+        `select count(*)::int as n from event_outbox where event->>'t' = $1 and created_at < now() - interval '1 hour'`, [tag])).rows[0].n);
+      const lockWaiters = async () => Number((await db.pool.query(
+        `select count(*)::int as n from pg_stat_activity where wait_event_type = 'Lock' and query like 'delete from event_outbox%'`)).rows[0].n);
+      // 겹침을 확실히 만든다 — 줄 잠금을 먼저 쥐고(풀 밖 연결이라 idle-in-transaction 시한이 없다), Rust 와 TS 의 delete 가 **둘 다** 그
+      // 잠금에서 기다리는 것을 본 뒤 놓는다. 두 쪽이 같은 줄을 동시에 지우고, 늦은 쪽은 이미 지운 줄을 건너뛴다.
+      const holder = new pg.Client({ connectionString: db.uri });
+      await holder.connect();
+      let tsDeleted = 0;
+      let rust: ReturnType<typeof cargo>;
+      try {
+        await holder.query('begin');
+        await holder.query(`select id from event_outbox where event->>'t' = $1 for update`, [tag]);
+        rust = cargo(['test', '--test', 'outbox_prune', '--', '--nocapture'], {
+          HARKROOM_TEST_DATABASE_URL: db.uri,
+          HARKROOM_TEST_WRITE_DATABASE_URL: await operatorWriteRole(db, OUTBOX_PRUNE_GRANTS),
+          HARKROOM_OUTBOX_PRUNE_DUAL: tag,
+        });
+        const t0 = Date.now();
+        while (Number((await db.pool.query(
+          `select count(*)::int as n from pg_stat_activity where application_name = 'harkroom-outbox-prune-dual' and wait_event_type = 'Lock'`)).rows[0].n) === 0) {
+          if (Date.now() - t0 > 540_000) throw new Error('rust delete never waited on the row lock');
+          await new Promise((r) => setTimeout(r, 20));
+        }
+        const tsPrune = pruneEventOutbox(db.pool);
+        const t1 = Date.now();
+        while (await lockWaiters() < 2) {
+          if (Date.now() - t1 > 10_000) throw new Error('ts delete never waited on the row lock');
+          await new Promise((r) => setTimeout(r, 20));
+        }
+        await holder.query('rollback');
+        tsDeleted += await tsPrune;
+      } finally {
+        await holder.end();
+      }
+      while (await old() > 0) tsDeleted += await pruneEventOutbox(db.pool);
+      const r = await rust;
+      expect(r.code, r.out).toBe(0);
+      const m = r.out.match(/outbox-prune-dual rust deleted (\d+) overlapped (\d+)/);
+      expect(m, r.out).not.toBeNull();
+      expect(tsDeleted + Number(m![1])).toBe(20000);
+      expect(Number(m![2]), r.out).toBeGreaterThan(0);
+      const left = (await db.pool.query<{ k: string }>(
+        `select event->>'k' as k from event_outbox where event->>'t' = $1`, [tag])).rows.map((x) => x.k);
+      expect(left).toEqual(['keep']);
+      console.log(`outbox-prune-dual: rust ${m![1]} (overlapped sweeps ${m![2]}) / ts ${tsDeleted}`);
     } finally {
       await db.stop();
     }
@@ -1071,8 +1139,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       // S5.2 P3 — 쓰기 역할. **`write.rs::REQUIRED_PRIVILEGES` 만** 준다(homelab GRANT 와 같은 표). 넓은 권한으로 돌리면
       // 앞단이 목록에 없는 표를 쓰기 시작해도 이 시험이 못 잡는다.
       const rw = `front_rw_${Math.random().toString(36).slice(2, 10)}`;
-      // connection limit = 쓰기 풀 2 + 루프 문지기 풀 6(루프 수) + 루프 sweep 풀 3 (S5.3 C5c-3b-2 — 운영 역할 한도도 이만큼 받아야 한다).
-      await db.pool.query(`create role ${rw} login password '${rw}' nosuperuser nocreatedb nocreaterole nobypassrls connection limit 11`);
+      // connection limit = 쓰기 풀 2 + 루프 문지기 풀 7(루프 수) + 루프 sweep 풀 3 (S5.3 C5c-4 — 운영 역할 한도도 이만큼 받아야 한다).
+      await db.pool.query(`create role ${rw} login password '${rw}' nosuperuser nocreatedb nocreaterole nobypassrls connection limit 12`);
       for (const q of [
         `grant pg_read_all_data to ${rw}`,
         `grant insert on event_outbox to ${rw}`,
@@ -1139,6 +1207,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         ...BG_GRANTS.map((g) => `grant ${g} to ${rw}`),
         // S5.3 C5c-3b-2 — 백그라운드 회차 생산(`loops/bg_produce.rs::BG_PRODUCE_PRIVILEGES`). 없으면 「loop bg.produce off」.
         ...BG_PRODUCE_GRANTS.map((g) => `grant ${g} to ${rw}`),
+        // S5.3 C5c-4 — outbox 정리(`loops/outbox_prune.rs::OUTBOX_PRUNE_PRIVILEGES`). 없으면 「loop outbox.prune off」.
+        ...OUTBOX_PRUNE_GRANTS.map((g) => `grant ${g} to ${rw}`),
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -1191,6 +1261,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       expect(f.log()).toContain('front: loop bg.produce on (enabled=false');
       expect(f.log()).toContain('front: loop permission.expire on');
       expect(f.log()).toContain('front: loop bg on (enabled=false');
+      expect(f.log()).toContain('front: loop outbox.prune on');
 
       const r = await cargo(['test', '--test', 'contrast', '--', '--nocapture'], {
         HARKROOM_CONTRAST_TS_URL: tsUrl,
