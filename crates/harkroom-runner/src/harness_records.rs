@@ -441,6 +441,8 @@ pub struct HarnessLastSaidOpts<'a> {
     pub since_ms: i64,
     /// codex 기록 자리(러너 codex 홈의 `sessions/`). 없으면 codex 길은 `None` — 다른 홈을 뒤지지 않는다.
     pub codex_sessions_dir: Option<&'a Path>,
+    /// 그 스레드 작업 폴더 — codex 세션 id 를 아직 모르는 첫 턴은 이 폴더로 이 턴의 rollout 을 찾는다(`find_codex_session_id`).
+    pub cwd: Option<&'a Path>,
     pub opencode: OpencodeCall<'a>,
 }
 
@@ -451,7 +453,13 @@ pub fn read_harness_last_said(
 ) -> Option<String> {
     match last_said_record_of(harness)? {
         LastSaidRecord::CodexRollout => {
-            let file = codex_rollout_file_for(opts.codex_sessions_dir?, opts.session_id?)?;
+            let dir = opts.codex_sessions_dir?;
+            // 새 스레드의 첫 턴은 세션 id 를 아직 모른다 — 작업 폴더·이 턴 시각으로 rollout 을 찾는다(차례 끝 읽개와 같은 길).
+            let id = match opts.session_id {
+                Some(id) => id.to_string(),
+                None => find_codex_session_id(dir, opts.cwd?, opts.since_ms)?,
+            };
+            let file = codex_rollout_file_for(dir, &id)?;
             last_said_from_codex_rollout(&read_whole(&file)?, opts.since_ms)
         }
         LastSaidRecord::OpencodeExport => {

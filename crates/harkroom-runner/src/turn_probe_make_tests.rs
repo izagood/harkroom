@@ -491,6 +491,7 @@ fn lane_harness_said_reads_codex_rollout_under_codex_home_only() {
             Some(sid),
             since,
             Some(root.as_path()),
+            None,
             None
         )
         .as_deref(),
@@ -498,7 +499,7 @@ fn lane_harness_said_reads_codex_rollout_under_codex_home_only() {
     );
     // 홈이 없으면 읽지 않는다.
     assert_eq!(
-        lane_harness_said(AgentHarness::Codex, Some(sid), since, None, None),
+        lane_harness_said(AgentHarness::Codex, Some(sid), since, None, None, None),
         None
     );
     // opencode 는 조회 자리 없이는 묻지 않는다. 끝말 기록이 없는 하네스(claude)는 언제나 None.
@@ -508,6 +509,7 @@ fn lane_harness_said_reads_codex_rollout_under_codex_home_only() {
             None,
             since,
             Some(root.as_path()),
+            None,
             None
         ),
         None
@@ -518,6 +520,7 @@ fn lane_harness_said_reads_codex_rollout_under_codex_home_only() {
             Some(sid),
             since,
             Some(root.as_path()),
+            None,
             None
         ),
         None
@@ -562,4 +565,68 @@ fn recorded_end_reader_reads_codex_under_codex_home_only() {
     // 기록 끝을 안 쓰는 하네스(claude)는 묻지 않는다.
     c.harness = AgentHarness::ClaudeCode;
     assert_eq!(recorded_end_reader(&c, &first)(since), None);
+}
+
+/// rs3 회귀(구독 codex, 새 스레드 첫 턴): 세션 id 를 아직 몰라 rollout 을 못 찾았다(기록 끝말 None → 화면 답으로 떨어짐).
+/// 작업 폴더·이 턴 시각으로 rollout 을 찾아 끝말을 읽는다.
+#[test]
+fn codex_said_finds_first_turn_rollout_by_workspace() {
+    let root = std::env::temp_dir().join(format!("hk-said-first-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let ws = root.join("ws");
+    std::fs::create_dir_all(&ws).unwrap();
+    let sid = "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a6c";
+    let day = root.join("home/sessions/2026/11/16");
+    std::fs::create_dir_all(&day).unwrap();
+    let meta = serde_json::json!({"type":"session_meta","timestamp":"2026-11-15T15:55:56.000Z",
+        "payload":{"id":sid,"cwd":ws.to_string_lossy(),"timestamp":"2026-11-15T15:55:56.000Z"}});
+    let msg = serde_json::json!({"type":"response_item","timestamp":"2026-11-15T15:56:05.000Z",
+        "payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"첫 줄\nif (a < b) return \"<div>x</div>\";"}]}});
+    std::fs::write(
+        day.join(format!("rollout-2026-11-16T00-55-56-{sid}.jsonl")),
+        format!("{meta}\n{msg}\n"),
+    )
+    .unwrap();
+    let since = 1_763_221_000_000; // 2026-11-15T15:36:40Z — 이 턴 전
+    let home = root.join("home");
+    // 세션 id 없음 + 작업 폴더 있음 → 찾는다.
+    let got = lane_harness_said(
+        AgentHarness::Codex,
+        None,
+        since,
+        Some(home.as_path()),
+        None,
+        Some(ws.as_path()),
+    );
+    assert_eq!(
+        got.as_deref(),
+        Some("첫 줄\nif (a < b) return \"<div>x</div>\";")
+    );
+    // 작업 폴더도 모르면 짐작하지 않는다.
+    assert_eq!(
+        lane_harness_said(
+            AgentHarness::Codex,
+            None,
+            since,
+            Some(home.as_path()),
+            None,
+            None
+        ),
+        None
+    );
+    // 다른 폴더의 rollout 은 고르지 않는다.
+    let other = root.join("other");
+    std::fs::create_dir_all(&other).unwrap();
+    assert_eq!(
+        lane_harness_said(
+            AgentHarness::Codex,
+            None,
+            since,
+            Some(home.as_path()),
+            None,
+            Some(other.as_path())
+        ),
+        None
+    );
+    let _ = std::fs::remove_dir_all(&root);
 }
