@@ -46,6 +46,7 @@ import { createCredentialSweep, DEFAULT_REVALIDATE_MS, originAllowed } from '../
 import { retryWhileDbUnreachable } from '../db/retry.js';
 import { createHeartbeat } from '../ws/heartbeat.js';
 import type { OperatorHub } from '../ws/operatorHub.js';
+import { createSessionLiveStore, type SessionLiveStore } from '../services/sessionLive.js';
 
 /** 내가 소유한 에이전트 계정들. admin 은 이 질의를 타지 않는다('all' 이다). */
 async function ownedAgentIds(pool: Pool, accountId: string): Promise<string[]> {
@@ -127,6 +128,8 @@ export interface AgentRelayDeps {
    * 되고, 그 조용한 no-op 이 정확히 이 버그의 모양이었다.
    */
   agentPresence: AgentPresence;
+  /** C6c-2 살아 있는 세션 사본. 시험만 주입한다(기본은 이 풀로 만든다). */
+  sessionLive?: SessionLiveStore;
 }
 
 /**
@@ -252,6 +255,13 @@ export async function registerAgentRelayRoutes(
   /** 세션 id 로만 오는 문(attach·cancel)은 누구의 러너인지 모른다 — 진행 중인 등록 전부를 기다린다. */
   const allSettled = (): Promise<unknown> => Promise.allSettled([...settling.values()]);
 
+  // S5.3 C6c-2 — 살아 있는 세션을 DB 에도 남긴다(메모리 허브가 여전히 정본). 허브 epoch·박동·쓸기는 store 가 맡는다.
+  const sessionLive: SessionLiveStore = deps.sessionLive ?? createSessionLiveStore(pool, {
+    onError: (err, what) => app.log.warn({ err, what }, 'agent_session_live write failed'),
+  });
+  await sessionLive.start().catch((err) => app.log.warn({ err }, 'relay hub registration failed'));
+  app.addHook('onClose', async () => { await sessionLive.stop(); });
+
   const register = (operatorId: string, runnerId: string, agentId: string): void => {
     const key = runnerKey(operatorId, runnerId);
     if (known.has(key)) return;
@@ -294,7 +304,11 @@ export async function registerAgentRelayRoutes(
     const entry = known.get(key);
     if (!entry) return;
     known.delete(key);
-    void entry.then((e) => e?.detach());
+    void entry.then((e) => {
+      if (!e) return;
+      e.detach();
+      sessionLive.runnerGone(operatorId, e.agentId);
+    });
   };
 
   deps.operatorHub.onFrame((operatorId, frame) => {
@@ -314,6 +328,11 @@ export async function registerAgentRelayRoutes(
       // 프레임이 왔다 = 이 에이전트가 살아 있다. 턴 중에는 이것이 유일한 신호다(inbox.poll 이 안 나간다).
       deps.agentPresence.mark(e.agentId);
       hub.onRunnerFrame(e.agentId, inner.frame);
+      // C6c-2: 살아 있는 세션 사본. 주인(agentId)은 프레임 본문이 아니라 배정을 확인한 링크의 것이다(security C6c ①′).
+      const f = inner.frame;
+      if (f.type === 'announce' && Array.isArray(f.sessions)) sessionLive.replaced(operatorId, e.agentId, f.sessions);
+      else if (f.type === 'session.started' && f.session) sessionLive.started(operatorId, e.agentId, f.session);
+      else if (f.type === 'session.ended' && typeof f.sessionId === 'string') sessionLive.ended(e.agentId, f.sessionId);
     });
   });
   deps.operatorHub.onClose((operatorId) => {
