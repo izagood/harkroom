@@ -1012,14 +1012,22 @@ mod tests {
                 RunnerKind::Node,
                 Some(RunnerFallback::RunnerMissing),
             ),
-            // s9①「단계」: `runner` 안 적음 + node 있음 → 지금처럼 node(이유 없이). node 없을 때는 아래 시험들.
+            // `runner` 안 적음 → node 가 있어도 기본 rust(`ABSENT_RUNNER_DEFAULTS_TO_RUST`), 파일 없음이면 같은 이유로 node.
             (
                 LocalAgent::default(),
                 "claude-code",
                 AccountUse::None,
                 true,
-                RunnerKind::Node,
+                RunnerKind::Rust,
                 None,
+            ),
+            (
+                LocalAgent::default(),
+                "claude-code",
+                AccountUse::None,
+                false,
+                RunnerKind::Node,
+                Some(RunnerFallback::RunnerMissing),
             ),
             // `runner: "node"` 되돌림 → 이유 없이 node.
             (
@@ -1311,8 +1319,8 @@ mod tests {
     }
 
     #[test]
-    fn absent_runner_with_node_present_stays_node() {
-        // 「단계」: node 가 있으면 칸 없는 에이전트는 지금처럼 node — Rust 러너 파일·풀이 다 갖춰져도.
+    fn absent_runner_with_node_present_takes_rust_default() {
+        // node 가 있어도 칸 없는 에이전트는 기본 Rust(전수 시험 통과 뒤 전환).
         use crate::local_agents::RunnerKind;
         use crate::runner_pick::AccountUse;
         let (f, r) = setup();
@@ -1323,7 +1331,7 @@ mod tests {
         r.on_assign("u", d, Some(LocalAgent::default())).unwrap();
         let picks = f.picks.lock().unwrap();
         assert_eq!(picks.len(), 1);
-        assert_eq!(picks[0].kind, RunnerKind::Node);
+        assert_eq!(picks[0].kind, RunnerKind::Rust);
         assert_eq!(picks[0].fallback, None);
     }
 
