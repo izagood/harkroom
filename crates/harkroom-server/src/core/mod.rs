@@ -11,6 +11,7 @@ pub mod audience;
 pub mod channels;
 pub mod content_scan;
 pub mod events;
+pub mod inbox_list;
 pub mod inbox_read;
 pub mod invoke_gate;
 pub mod mandate_stamp;
