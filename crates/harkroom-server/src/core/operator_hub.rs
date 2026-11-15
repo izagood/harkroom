@@ -484,6 +484,19 @@ pub struct OperatorHub {
     state: Arc<Mutex<State>>,
     frames: broadcast::Sender<(String, Frame)>,
     closes: broadcast::Sender<String>,
+    link: Arc<Mutex<Option<mpsc::UnboundedSender<LinkEvent>>>>,
+}
+
+/// 릴레이 전용 피드(C6c-3). 프레임과 close 를 **한 줄로, 빠짐없이** 낸다.
+///
+/// broadcast(4096칸)는 받는 쪽이 밀리면 `Lagged` 로 앞 프레임을 건너뛴다 — 박동·버전 같은 소비자는 다음 값이 앞 값을
+/// 덮으니 괜찮지만, 릴레이는 그 프레임이 PTY 바이트라 조용히 빠지면 화면이 깨진다. 그래서 릴레이는 broadcast 를 쓰지 않고
+/// 이 mpsc 를 받는다. 받는 쪽(`relay_link`)은 DB 를 기다리지 않고 키별 일꾼에 나눠 주기만 하므로 이 줄은 곧바로 비워진다.
+/// 프레임과 close 가 같은 줄이라 「close 뒤에 같은 오퍼레이터의 새 hello」 순서도 그대로다.
+#[derive(Debug, Clone)]
+pub enum LinkEvent {
+    Frame(String, Frame),
+    Close(String),
 }
 
 impl Default for OperatorHub {
@@ -504,6 +517,20 @@ impl OperatorHub {
             state: Arc::default(),
             frames: broadcast::channel(4096).0,
             closes: broadcast::channel(256).0,
+            link: Arc::default(),
+        }
+    }
+
+    /// 릴레이 피드를 연다(프로세스에 하나 — 다시 부르면 앞 피드는 닫힌다).
+    pub fn link_feed(&self) -> mpsc::UnboundedReceiver<LinkEvent> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        *self.link.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx);
+        rx
+    }
+
+    fn feed(&self, ev: LinkEvent) {
+        if let Some(tx) = &*self.link.lock().unwrap_or_else(|e| e.into_inner()) {
+            let _ = tx.send(ev);
         }
     }
 
@@ -535,6 +562,7 @@ impl OperatorHub {
                 "replaced by a newer operator connection",
             ));
             let _ = self.closes.send(operator_id.to_owned());
+            self.feed(LinkEvent::Close(operator_id.to_owned()));
         }
         Registration {
             operator_id: operator_id.to_owned(),
@@ -557,6 +585,7 @@ impl OperatorHub {
         };
         if removed {
             let _ = self.closes.send(reg.operator_id.clone());
+            self.feed(LinkEvent::Close(reg.operator_id.clone()));
         }
     }
 
@@ -634,7 +663,9 @@ impl OperatorHub {
                 _ => {}
             }
         }
-        let _ = self.frames.send((id.clone(), Arc::new(frame)));
+        let frame = Arc::new(frame);
+        self.feed(LinkEvent::Frame(id.clone(), frame.clone()));
+        let _ = self.frames.send((id.clone(), frame));
     }
 
     /// TS `disconnect` — 등록은 소켓 루프의 close 경로가 지운다.
