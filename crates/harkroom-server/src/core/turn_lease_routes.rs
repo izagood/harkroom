@@ -214,6 +214,7 @@ pub async fn issue(
 }
 
 /// `/end`·`/renew` 공통 — 거르기와 (lease id, token).
+#[allow(clippy::result_large_err)] // 거절이 곧 axum 응답이다(CI clippy).
 async fn lease_and_token(id: &str, req: Request) -> Result<(String, String), Response> {
     let (parts, body) = req.into_parts();
     let (_, v) = read_body(&parts.headers, body).await?;

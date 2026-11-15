@@ -3748,7 +3748,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           [agent.accountId, sd.auto, [sd.cause, sd.auto]])).rows;
         expect(await rows(R)).toEqual(await rows(T));
         const audits = async (sd: Side) => (await db.pool.query(
-          `select action, actor_id = $1 as actor, target = $1 as target, ip, (select array_agg(k order by k) from jsonb_object_keys(detail) k) as keys,
+          `select action, actor_id = $1::uuid as actor, target = $1::text as target, ip, (select array_agg(k order by k) from jsonb_object_keys(detail) k) as keys,
                   detail::text ~ 'token' as token_word
              from audit_log where action like 'secret.lease.%' and detail->>'causeMessageId' = any($2::text[]) order by id`,
           [agent.accountId, [sd.cause, sd.cold, sd.auto]])).rows;
