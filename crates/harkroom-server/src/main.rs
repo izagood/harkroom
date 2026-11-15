@@ -107,6 +107,29 @@ async fn main() {
         }
         _ => None,
     };
+    let react_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::msg_react as r;
+            match write::missing_in(
+                w,
+                r::MESSAGE_REACTION_PRIVILEGES,
+                r::MESSAGE_REACTION_SEQUENCE_PRIVILEGES,
+            )
+            .await
+            {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: reaction core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!("front: reaction core off — privilege check failed: {e}");
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     let operator_on = operator_write.is_some();
     let core_router = (core_mode == harkroom_server::core::CoreMode::Rust).then(|| {
         let hub = harkroom_server::core::events::Hub::new();
@@ -150,6 +173,20 @@ async fn main() {
         core_routes.router = core_routes.router.merge(lists.router);
         core_routes.http.extend(lists.http);
         core_routes.sockets.extend(lists.sockets);
+        // C3a-1 — 리액션 쓰기(`PUT`·`DELETE …/reactions/{emoji}`). 쓰기 풀에 그 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = react_write {
+            let react = harkroom_server::core::msg_react::routes(
+                harkroom_server::core::msg_react::ReactState {
+                    read: state.pool.clone(),
+                    write,
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(react.router);
+            core_routes.http.extend(react.http);
+            core_routes.sockets.extend(react.sockets);
+        }
         if let Some(write) = operator_write {
             // C2a — 오퍼레이터 소켓·REST. 허브는 프로세스에 하나이고 C2b~C5 의 소비자가 같은 것을 받는다.
             let operators = harkroom_server::core::operator::OperatorCore::new(

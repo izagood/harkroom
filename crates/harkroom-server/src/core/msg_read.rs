@@ -53,8 +53,26 @@ fn sql() -> &'static Sql {
     })
 }
 
+/// TS `getMessageById` — 지운 것·없는 것은 None. 응답 JSON 문자열 그대로(C3a 리액션의 `message.updated` 가 같은 모양을 싣는다).
+pub(crate) async fn message_by_id(pool: &PgPool, id: &str) -> sqlx::Result<Option<String>> {
+    sqlx::query_scalar(sql().by_id.as_str())
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+}
+
+/// TS `assertChannelVisible` — 없는 채널은 막지 않는다(`get_message` 와 같은 판정).
+pub(crate) async fn channel_visible(pool: &PgPool, me: &str, channel: &str) -> sqlx::Result<bool> {
+    let v: Option<bool> = sqlx::query_scalar(sql().visible.as_str())
+        .bind(me)
+        .bind(channel)
+        .fetch_optional(pool)
+        .await?;
+    Ok(v != Some(false))
+}
+
 /// zod `z.string().uuid()`(3.x) 와 같은 판정 — 8-4-4-4-12 의 16진수, 대소문자 무관.
-fn is_uuid(s: &str) -> bool {
+pub(crate) fn is_uuid(s: &str) -> bool {
     let b = s.as_bytes();
     b.len() == 36
         && b.iter().enumerate().all(|(i, c)| match i {
