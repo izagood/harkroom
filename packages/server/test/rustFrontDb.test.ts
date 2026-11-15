@@ -799,6 +799,75 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       }
       const readText = (await mcpCall(`http://127.0.0.1:${port}`, agent.pat, 'message.read', { channelId: readCh })).text;
       for (const want of ['@mem', '@crew', '@squad', '@bot2', 'relatedAccountId', '<@00000000-0000-4000-8000-000000000000>']) expect(readText).toContain(want);
+
+      // S5.3 C4a-4 — memory.list · secret.list · thread.note.list. 픽스처: 기억(요약·걸린 판·보관), 비밀(채널 한정 둘·파일·값 없음·만료),
+      // 스레드 메모(여러 줄·긴 한글·걸린 메모·못 보는 채널), 그리고 bgCleanup 이 참일 수 있는 에이전트(→ TS).
+      await db.pool.query(
+        `insert into agent_memory (account_id, slug, value, kind, description, flagged_at, flag_reason, archived_at) values
+           ($1, 'core', 'c', 'topic', null, null, null, null),
+           ($1, 'mem/a', 'a', 'topic', '언제 "여는지" 한 줄', null, null, null),
+           ($1, 'mem/b', 'b', 'procedure', '걸린 요약', now(), 'odd', null),
+           ($1, 'mem/z-old', 'z', 'topic', null, null, null, now())`,
+        [agent.accountId]);
+      const owner = (await db.pool.query<{ o: string }>(`select owner_account_id as o from agent_config where account_id = $1`, [agent.accountId])).rows[0]!.o;
+      const sec = async (name: string, kind: string, o: { filename?: string; desc?: string; expired?: boolean; sealed?: boolean } = {}) =>
+        (await db.pool.query<{ id: string }>(
+          `insert into secret (name, kind, filename, description, owner_account_id, expires_at) values ($1, $2, $3, $4, $5, $6) returning id`,
+          [name, kind, o.filename ?? null, o.desc ?? '', owner, o.expired ? new Date(Date.now() - 3600_000) : null])).rows[0]!.id;
+      for (const [name, kind, o, channels] of [
+        ['b-token', 'text', { desc: '배포 토큰' }, [null, todayId]],
+        ['a-key', 'file', { filename: 'id.pem' }, [readCh]],
+        ['c-empty', 'text', { sealed: false }, [null]],
+        ['d-expired', 'text', { expired: true }, [null]],
+      ] as const) {
+        const id = await sec(name, kind, o);
+        await db.pool.query(`insert into secret_version (secret_id, version, sealed, size_bytes) values ($1, 1, $2, 1)`, [id, 'sealed' in o && !o.sealed ? null : 'x']);
+        for (const ch of channels) await db.pool.query(`insert into secret_grant (secret_id, agent_id, channel_id, granted_by) values ($1, $2, $3, $4)`, [id, agent.accountId, ch, owner]);
+      }
+      const longRoot = await say(`${'가'.repeat(70)}😀 끝`, { ch: readCh });
+      const flaggedRoot = await say('걸린 메모의 스레드', { ch: readCh });
+      await db.pool.query(
+        `insert into thread_note (account_id, thread_root_id, body, flag_reason, updated_at) values
+           ($1, $2, E'\n  \n  첫 줄 \n둘째 줄', null, now() - interval '3 hours'),
+           ($1, $3, $5, null, now() - interval '2 hours'),
+           ($1, $4, '숨길 본문', 'looks odd', now() - interval '1 hour'),
+           ($1, $6, '오늘 채널 메모', null, now())`,
+        [agent.accountId, readRoot, longRoot, flaggedRoot, `﻿${'나'.repeat(130)}`, work]);
+      await db.pool.query(`update agent_config set bg_enabled = true, harness = 'claude-code' where account_id = $1`, [bot2.accountId]);
+      for (const [name, token, tool, args, answeredByRust] of [
+        ['memory.list', agent.pat, 'memory.list', {}, true],
+        ['memory.list 인자 없음', agent.pat, 'memory.list', undefined, true],
+        ['memory.list 배열 인자 → TS', agent.pat, 'memory.list', [], false],
+        ['memory.list 기억 없는 에이전트(bgCleanup 참일 수 있음) → TS', bot2.pat, 'memory.list', {}, false],
+        ['secret.list', agent.pat, 'secret.list', {}, true],
+        ['secret.list 받은 것 없음', bot2.pat, 'secret.list', {}, true],
+        ['secret.list 문자열 인자 → TS', agent.pat, 'secret.list', 'x', false],
+        ['thread.note.list', agent.pat, 'thread.note.list', {}, true],
+        ['thread.note.list 채널', agent.pat, 'thread.note.list', { channelId: readCh }, true],
+        ['thread.note.list 없는 채널', agent.pat, 'thread.note.list', { channelId: missingCh }, true],
+        ['thread.note.list limit 1', agent.pat, 'thread.note.list', { limit: 1 }, true],
+        ['thread.note.list limit 100', agent.pat, 'thread.note.list', { limit: 100 }, true],
+        ['thread.note.list limit 0 → TS', agent.pat, 'thread.note.list', { limit: 0 }, false],
+        ['thread.note.list limit 101 → TS', agent.pat, 'thread.note.list', { limit: 101 }, false],
+        ['thread.note.list uuid 아님 → TS', agent.pat, 'thread.note.list', { channelId: 'x' }, false],
+        ['thread.note.list 인자 없음 → TS', agent.pat, 'thread.note.list', undefined, false],
+      ] as const) {
+        const [a, b] = [await mcpCall(tsUrl, token, tool, args), await mcpCall(`http://127.0.0.1:${port}`, token, tool, args)];
+        expect({ status: b.status, type: b.type, text: b.text }, name).toEqual({ status: a.status, type: a.type, text: a.text });
+        expect(b.core, `${name} — 누가 답했나`).toBe(answeredByRust ? 'mcp' : null);
+      }
+      // 빈 값끼리 비교해 통과하지 않게.
+      const rsUrl4 = `http://127.0.0.1:${port}`;
+      const memText = (await mcpCall(rsUrl4, agent.pat, 'memory.list', {})).text;
+      for (const want of ['mem/a', '여는지', 'rev\\":\\"']) expect(memText).toContain(want);
+      expect(memText).not.toContain('mem/z-old');
+      expect(memText).not.toContain('걸린 요약');
+      const secText = (await mcpCall(rsUrl4, agent.pat, 'secret.list', {})).text;
+      for (const want of ['b-token', 'a-key', 'id.pem', todayId]) expect(secText).toContain(want);
+      for (const gone of ['c-empty', 'd-expired']) expect(secText).not.toContain(gone);
+      const noteText = (await mcpCall(rsUrl4, agent.pat, 'thread.note.list', {})).text;
+      for (const want of ['첫 줄', '…', 'flagged\\":true', '오늘 채널 메모']) expect(noteText).toContain(want);
+      expect(noteText).not.toContain('숨길 본문');
       // 빈 값끼리 비교해 통과하지 않게 — 문서·목록이 실제로 실렸는지.
       const docText = (await mcpCall(`http://127.0.0.1:${port}`, agent.pat, 'channel.doc', { channelId: todayId })).text;
       expect(docText).toContain('문서 본문');

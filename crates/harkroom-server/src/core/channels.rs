@@ -23,7 +23,7 @@ fn golden() -> &'static Value {
     })
 }
 
-fn frag(k: &str) -> &'static str {
+pub(crate) fn frag(k: &str) -> &'static str {
     golden()[k]
         .as_str()
         .unwrap_or_else(|| panic!("golden fragment {k}"))

@@ -19,11 +19,15 @@ pub const SERVED: &[&str] = &[
     "channel.list",
     "channel.doc",
     "message.read",
+    // C4a-4
+    "memory.list",
+    "secret.list",
+    "thread.note.list",
 ];
 
 /// 입력 스키마가 없는 도구 — SDK 는 `arguments` 를 레코드(객체)로만 받고, 없어도(`null`) 받는다. 스키마가 있는 도구는
 /// `arguments` 가 없으면 검증 오류라 각 도구가 `as_object()` 에서 TS 로 넘긴다.
-fn no_input(args: &Value) -> bool {
+pub(super) fn no_input(args: &Value) -> bool {
     args.is_object() || args.is_null()
 }
 
@@ -35,7 +39,7 @@ fn uuid_arg<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
         .filter(|s| crate::core::channels::is_uuid(s))
 }
 
-fn err(code: &str, message: &str) -> String {
+pub(super) fn err(code: &str, message: &str) -> String {
     text_result(&format!(
         "{{\"error\":{{\"code\":{},\"message\":{}}}}}",
         Value::from(code),
@@ -71,7 +75,7 @@ const ACCOUNT_LIST_SQL: &str = "select json_build_object(\
  'groups', coalesce((select json_agg(t) from (select g.id, g.handle from handle_group g order by g.handle) t), '[]'::json))::text";
 
 /// zod `z.number().int().min(lo).max(hi).optional()` — 없으면 `Some(None)`, 맞으면 `Some(Some(n))`, 틀리면 `None`(→ TS).
-fn opt_int(args: &Value, key: &str, lo: i64, hi: i64) -> Option<Option<i64>> {
+pub(super) fn opt_int(args: &Value, key: &str, lo: i64, hi: i64) -> Option<Option<i64>> {
     match args.get(key) {
         None => Some(None),
         Some(v) => v.as_i64().filter(|n| (lo..=hi).contains(n)).map(Some),
@@ -79,7 +83,7 @@ fn opt_int(args: &Value, key: &str, lo: i64, hi: i64) -> Option<Option<i64>> {
 }
 
 /// `z.string().uuid().optional()`.
-fn opt_uuid(args: &Value, key: &str) -> Option<Option<String>> {
+pub(super) fn opt_uuid(args: &Value, key: &str) -> Option<Option<String>> {
     match args.get(key) {
         None => Some(None),
         Some(v) => v
@@ -324,6 +328,9 @@ pub async fn answer(pool: &PgPool, me: &Account, tool: &str, args: &Value) -> Op
                 .then(|| text_result(one))
         }
         "message.read" => message_read(pool, me, args).await,
+        "memory.list" | "secret.list" | "thread.note.list" => {
+            super::reads2::answer(pool, me, tool, args).await
+        }
         _ => None,
     }
 }
