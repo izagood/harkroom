@@ -32,7 +32,7 @@ export interface RunnerPick {
 
 /** rust 대상인가 — `runner: "node"` 로 되돌리지 않았으면 그렇다(s9① 기본 rust). 이때만 파일·풀 해석을 본다. */
 export function wantsRust(local: LocalAgentConfig | undefined, nodePresent: boolean): boolean {
-  // 「단계」(jaebin 11-15): 명시 rust → rust, 명시 node(모르는 값 포함) → node, 칸 없음 → node 가 없을 때만 rust.
+  // 「단계」(소유자 결정 11-15): 명시 rust → rust, 명시 node(모르는 값 포함) → node, 칸 없음 → node 가 없을 때만 rust.
   const kind = runnerKindOf(local);
   if (kind === 'rust') return true;
   if (kind === 'node') return false;

@@ -77,7 +77,7 @@ impl RunnerPick {
     }
 }
 
-/// rust 대상인가(이때만 파일·풀 해석을 본다). 「단계」(jaebin 11-15): 명시 `"rust"` 는 rust, 명시 `"node"`(모르는 값 포함)는
+/// rust 대상인가(이때만 파일·풀 해석을 본다). 「단계」(소유자 결정 11-15): 명시 `"rust"` 는 rust, 명시 `"node"`(모르는 값 포함)는
 /// node, 칸이 없으면 **node 가 없을 때만** rust — node 가 있으면 지금처럼 node 다. 운영 전체 전환은 전수 시험 뒤.
 pub fn wants_rust(local: Option<&LocalAgent>, node_present: bool) -> bool {
     match local.and_then(|l| l.runner) {

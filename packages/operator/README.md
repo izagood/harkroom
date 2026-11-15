@@ -121,7 +121,7 @@ unix 소켓으로 말하는 것이고, 그 어느 것도 네이티브 애드온�
 
 ## 에이전트마다 러너 고르기 — node 없으면 기본 rust (B4-5 → s9①)
 
-**단계 전환(jaebin 11-15): `runner` 칸이 없는 에이전트는 node 가 있으면 지금처럼 Node 러너, node 가 없을 때만 Rust 러너(`harkroom-runner-rs`)로 돈다.** 명시 `"rust"` 는 node 가 있어도 Rust 다. 운영 전체를 기본 Rust 로 바꾸는 것은 전수 시험 뒤에 따로 한다. Rust 대상이어도 아래
+**단계 전환(소유자 결정 11-15): `runner` 칸이 없는 에이전트는 node 가 있으면 지금처럼 Node 러너, node 가 없을 때만 Rust 러너(`harkroom-runner-rs`)로 돈다.** 명시 `"rust"` 는 node 가 있어도 Rust 다. 운영 전체를 기본 Rust 로 바꾸는 것은 전수 시험 뒤에 따로 한다. Rust 대상이어도 아래
 「Node 로 떨어지는 경우」(허용 목록 밖 하네스·풀 해석 못 읽음·러너 파일 없음)면 Node 러너(`harkroom-runner`)다. 한 에이전트를
 Node 러너로 되돌리려면 **`operator.json` 의 그 에이전트 칸에 `"runner": "node"` 를 손으로 적는다.** 바꾸는 길은 이 파일
 하나다 — 소켓 요청(`operatorAgentSet`)·앱 화면·서버의 에이전트 정의로는 바뀌지 않는다. `operatorAgentSet` 은 이미 적힌
