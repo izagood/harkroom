@@ -32,7 +32,8 @@ export interface RunnerPick {
 
 /**
  * `runner` 칸이 없는 에이전트의 기본이 Rust 인가(Rust `ABSENT_RUNNER_DEFAULTS_TO_RUST` 와 같은 값). `true` = node 가 있어도 기본 Rust.
- * `false` 로 돌리면 「단계」(node 가 없을 때만 Rust) — 전체 되돌리기 스위치. 한 에이전트만 되돌리려면 `"runner": "node"`.
+ * 급할 때 바로 되돌리는 길은 에이전트별 `"runner": "node"` + 재배정이다. 이 상수를 `false` 로 돌리는 전체 되돌리기는 PR·새 앱 판·업데이트가
+ * 든다(그러면 「단계」 — node 가 없을 때만 Rust).
  */
 export const ABSENT_RUNNER_DEFAULTS_TO_RUST = true;
 
