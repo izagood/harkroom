@@ -17,7 +17,7 @@ import {
   addChannelMember, audienceFor, channelListAudience, channelListLostAudience, createChannel, getOrCreateDm, removeChannelMember,
 } from '../src/services/channels.js';
 import { startEventBus } from '../src/eventBus.js';
-import type { WorkspaceEvent } from '../src/events.js';
+import { onEvent, type WorkspaceEvent } from '../src/events.js';
 import pg from 'pg';
 import WebSocket from 'ws';
 
@@ -308,6 +308,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant insert, update, delete on push_device to ${rw}`,
         // S5.3 C2a — 오퍼레이터 코어(`OPERATOR_PRIVILEGES`). 없으면 앞단은 `/operator`·`/operators*` 를 TS 에 남긴다.
         ...OPERATOR_GRANTS.map((g) => `grant ${g} to ${rw}`),
+        // S5.3 C3a-1 — 리액션 쓰기(`msg_react.rs::MESSAGE_REACTION_PRIVILEGES`). 없으면 앞단은 리액션 줄을 TS 에 남긴다.
+        `grant insert, update, delete on message_reaction to ${rw}`,
+        `grant update on message to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -885,7 +888,6 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       expect(reg2.json.createdAt).toBe(reg.json.createdAt);
       expect((await callX(rsUrl, 'DELETE', '/push/devices/current', undefined, member.token)).status).toBe(204);
       expect((await db.pool.query('select 1 from push_device where account_id = $1', [member.accountId])).rowCount).toBe(0);
-      await bus.stop();
 
       // S5.2 P4d — 옮긴 라우트를 지난 요청도 세션을 늘리고 PAT 사용 시각을 남긴다(쓰기 풀로). 읽기 역할로 하면 조용히 실패하던 것.
       await db.pool.query(`update session set expires_at = now() + interval '1 day' where account_id = $1`, [member.accountId]);
@@ -910,6 +912,132 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       }
       expect(rec.left, '세션이 14일로 늘어야 한다').toBeGreaterThanOrEqual(13);
       expect(rec.fresh, 'PAT 사용 시각이 새로 찍혀야 한다').toBe(true);
+
+      // S5.3 C3a-1 — 리액션 쓰기(코어 `msg_react.rs`). 같은 시나리오를 TS 와 Rust 에 **각자의 글**로 돌려 응답·남은 행·이벤트
+      // (이름·모양·받는 사람·순서)를 견준다. TS 이벤트는 프로세스 안(`onEvent`), Rust 이벤트는 outbox → 버스(`busEvents`)로 받는다.
+      {
+        const RX = '/channels/{id}/messages/{messageId}/reactions/{emoji}';
+        expect(f.log()).toContain(`"PUT ${RX}"`);
+        expect(f.log()).toContain(`"DELETE ${RX}"`);
+        expect(f.log()).not.toContain('reaction core off');
+        const rxPath = (ch: string, m: string, e: string) => `/channels/${ch}/messages/${m}/reactions/${encodeURIComponent(e)}`;
+        const dmId = String(dm.id);
+        const wakeMsg = async () => {
+          const id = await say('깨움 줄', { author: admin.accountId });
+          await db.pool.query(
+            `update message set kind = 'wake', meta = jsonb_build_object('kind', 'wake', 'wake', jsonb_build_object('agentId', $2::text)) where id = $1`,
+            [id, agent.accountId],
+          );
+          return id;
+        };
+        const side = async () => ({
+          msg: await say('리액션 받을 글'), wake: await wakeMsg(),
+          dmMsg: await say('DM 리액션', { ch: dmId, author: admin.accountId }),
+        });
+        const T = await side();
+        const R = await side();
+        const tsEvents: WorkspaceEvent[] = [];
+        const offTs = onEvent((e) => { tsEvents.push(e); });
+        const FILL = ['😀', '😁', '😂', '🤣', '😃', '😄', '😅', '😆', '😉', '😊', '😋', '😎', '😍', '😘', '🥰', '😗', '😙', '😚'];
+        const run = async (base: string, s: { msg: string; wake: string; dmMsg: string }) => {
+          const out: { step: string; status: number; code?: string; json: Record<string, unknown> }[] = [];
+          const step = async (name: string, m: string, path: string) => {
+            const r = await callX(base, m, path);
+            out.push({ step: name, status: r.status, code: r.code, json: r.json });
+          };
+          await step('PUT 추가', 'PUT', rxPath(todayId, s.msg, '👍'));
+          await step('PUT 다시(멱등)', 'PUT', rxPath(todayId, s.msg, '👍'));
+          // 서버가 단 상태 리액션은 사람이 같은 것을 누르면 사람 것이 된다(한도에는 그때부터 센다).
+          await db.pool.query(`insert into message_reaction (message_id, account_id, emoji, source) values ($1, $2, '⏳', 'status')`, [s.msg, admin.accountId]);
+          await step('PUT 상태 리액션 올리기', 'PUT', rxPath(todayId, s.msg, '⏳'));
+          for (const e of FILL) await step(`PUT 채우기 ${e}`, 'PUT', rxPath(todayId, s.msg, e));
+          await step('PUT 21번째 → 409', 'PUT', rxPath(todayId, s.msg, '🙂'));
+          await step('PUT 한도에서 이미 누른 것 → 200', 'PUT', rxPath(todayId, s.msg, '👍'));
+          await step('DELETE 사람 리액션', 'DELETE', rxPath(todayId, s.msg, '👍'));
+          await db.pool.query(`insert into message_reaction (message_id, account_id, emoji, source) values ($1, $2, '🛑', 'status')`, [s.msg, admin.accountId]);
+          await step('DELETE 상태 리액션만 있음 → 204·남음·이벤트 없음', 'DELETE', rxPath(todayId, s.msg, '🛑'));
+          await step('DELETE 없는 것 → 204', 'DELETE', rxPath(todayId, s.msg, '🎉'));
+          await step('PUT ✅ 깨움 줄', 'PUT', rxPath(todayId, s.wake, '✅'));
+          await step('PUT ✅ 깨움 줄 다시(시각 안 덮음)', 'PUT', rxPath(todayId, s.wake, '✅'));
+          await step('PUT DM(받는 사람 목록)', 'PUT', rxPath(dmId, s.dmMsg, '👀'));
+          await step('DELETE DM', 'DELETE', rxPath(dmId, s.dmMsg, '👀'));
+          return out;
+        };
+        const tsOut = await run(tsUrl, T);
+        const rsOut = await run(rsUrl, R);
+        expect(rsOut).toEqual(tsOut);
+        expect(tsOut.find((o) => o.step === 'PUT 21번째 → 409')?.status).toBe(409);
+        // 남은 행 — 이모지·출처가 같아야 한다(상태 🛑 는 남는다).
+        const rows = async (ids: string[]) => (await db.pool.query<{ i: number; emoji: string; source: string }>(
+          `select array_position($1::uuid[], message_id) as i, emoji, source from message_reaction
+            where message_id = any($1::uuid[]) order by 1, emoji, source`, [ids])).rows;
+        const tRows = await rows([T.msg, T.wake, T.dmMsg]);
+        expect(await rows([R.msg, R.wake, R.dmMsg])).toEqual(tRows);
+        expect(tRows.filter((r) => r.i === 1).length, '👍 를 뗀 뒤 19 + 상태 🛑').toBe(20);
+        expect(tRows).toContainEqual({ i: 1, emoji: '🛑', source: 'status' });
+        expect(tRows).toContainEqual({ i: 1, emoji: '⏳', source: 'user' });
+        const checked = async (id: string) => (await db.pool.query<{ c: string | null }>(`select meta->'wake'->>'checkedAt' as c from message where id = $1`, [id])).rows[0]!.c;
+        expect(await checked(R.wake)).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+        expect(await checked(T.wake)).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+        // 이벤트 — 글 id·계정은 자리표로 바꿔 견준다. message.updated 의 본문은 칸 이름과 깨움 확인 시각만 본다(시각·id 는 다르다).
+        const norm = (s: { msg: string; wake: string; dmMsg: string }) => (e: WorkspaceEvent) => {
+          const o = JSON.parse(JSON.stringify(e)) as Record<string, unknown>;
+          const label = (id: unknown) => (id === s.msg ? 'MSG' : id === s.wake ? 'WAKE' : id === s.dmMsg ? 'DM' : null);
+          if (o.type === 'message.updated') {
+            const m = o.message as Record<string, unknown>;
+            const wake = (m.meta as { wake?: { checkedAt?: unknown } }).wake;
+            return { type: o.type, audience: o.audience, id: label(m.id), kind: m.kind, keys: Object.keys(m).sort(), checkedAt: typeof wake?.checkedAt };
+          }
+          return { ...o, messageId: label(o.messageId) };
+        };
+        const mineOf = (evs: WorkspaceEvent[], s: { msg: string; wake: string; dmMsg: string }) => evs.filter((e) => {
+          const o = e as { messageId?: string; message?: { id?: string } };
+          const id = o.messageId ?? o.message?.id;
+          return id === s.msg || id === s.wake || id === s.dmMsg;
+        }).map(norm(s));
+        const want = mineOf(tsEvents, T);
+        offTs();
+        const until4 = Date.now() + 10_000;
+        while (mineOf(busEvents, R).length < want.length && Date.now() < until4) await new Promise((res) => setTimeout(res, 100));
+        expect(mineOf(busEvents, R)).toEqual(want);
+        // 빈 것끼리 비교하지 않게 — 그리고 상태 🛑 떼기·두 번째 ✅ 는 이벤트가 없다.
+        expect(want.map((e) => e.type)).toEqual([
+          'reaction.added', 'reaction.added', 'reaction.added', ...FILL.map(() => 'reaction.added'), 'reaction.added',
+          'reaction.removed', 'reaction.removed',
+          'reaction.added', 'message.updated', 'reaction.added',
+          'reaction.added', 'reaction.removed',
+        ]);
+        expect(want.find((e) => e.type === 'message.updated')).toMatchObject({ id: 'WAKE', kind: 'wake', checkedAt: 'string' });
+        expect(want.at(-1)?.audience, 'DM 은 구성원 목록').toEqual(expect.arrayContaining([admin.accountId, member.accountId]));
+        expect(want.at(-1)?.audience).toEqual(await audienceFor(db.pool, dmId));
+        expect(want[0]?.audience).toEqual(await audienceFor(db.pool, todayId));
+        // 거절 — 바꾸지 않는 요청만, 상태·코드를 견준다(문구는 zod 와 다르다).
+        const zz = '0f8fad5b-d9cb-469f-a165-70867728950e';
+        for (const [name, m, path, token] of [
+          ['PUT 이모지 아님 → 400', 'PUT', rxPath(todayId, T.msg, 'abc'), A],
+          ['PUT 이모지+글자 → 400', 'PUT', rxPath(todayId, T.msg, '👍a'), A],
+          ['PUT 33자 → 400', 'PUT', rxPath(todayId, T.msg, 'a'.repeat(33)), A],
+          ['PUT uuid 아님 → 400', 'PUT', rxPath('not-a-uuid', T.msg, '👍'), A],
+          ['PUT 비공개 채널 멤버 아님 → 403', 'PUT', rxPath(String(priv.id), secret, '👍'), member.token],
+          ['PUT 비공개 채널 admin 도 멤버 아님 → 403', 'PUT', rxPath(String(priv.id), secret, '👍'), A],
+          ['DELETE 비공개 채널 멤버 아님 → 403', 'DELETE', rxPath(String(priv.id), secret, '👍'), member.token],
+          ['PUT 다른 채널의 글 → 404', 'PUT', rxPath(dmId, T.msg, '👍'), A],
+          ['PUT 없는 글 → 404', 'PUT', rxPath(todayId, zz, '👍'), A],
+          ['PUT 없는 채널 → 404', 'PUT', rxPath(ghost, T.msg, '👍'), A],
+          ['PUT 지운 글 → 404', 'PUT', rxPath(todayId, gone, '👍'), A],
+          ['DELETE uuid 아님 → 400', 'DELETE', rxPath(todayId, 'x', '👍'), A],
+        ] as const) {
+          const [a, b] = [await callX(tsUrl, m, path, undefined, token), await callX(rsUrl, m, path, undefined, token)];
+          expect({ status: b.status, code: b.code }, name).toEqual({ status: a.status, code: a.code });
+        }
+        for (const m of ['PUT', 'DELETE']) {
+          const p = rxPath(todayId, T.msg, '👍');
+          const [a, b] = [await fetch(`${tsUrl}${p}`, { method: m }), await fetch(`${rsUrl}${p}`, { method: m })];
+          expect(b.status, `${m} 익명 → 401`).toBe(a.status);
+        }
+        expect((await rows([T.msg])).length, '거절은 행을 바꾸지 않는다').toBe(20);
+      }
+      await bus.stop();
 
       // S5.3 C0 — `/ws`. 같은 시나리오를 TS 와 Rust 코어에 돌려 프레임을 견준다.
       interface Sock { ws: WebSocket; frames: Record<string, unknown>[]; closed: Promise<number> }
