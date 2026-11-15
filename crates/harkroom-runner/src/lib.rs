@@ -40,6 +40,7 @@ pub mod harness_errors;
 pub mod harness_memory;
 pub mod harness_records;
 pub mod lane_guard;
+pub mod lane_version;
 pub mod link;
 pub mod local_clock;
 pub mod mcp;

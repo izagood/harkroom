@@ -199,6 +199,20 @@ fn main() {
         deps.codex_home = Some(state_dir.join("codex-provider-lane"));
         deps.claude_dir =
             Some(harkroom_runner::account_lane::provider_lane_account(&state_dir).config_dir);
+        // 하네스 판(정본 `main.ts` 655 `harnessVersion`) — 턴마다 `--version` 을 묻는다. 없으면 잰 하네스도 늘 「판을 읽지 못함」이었다.
+        {
+            let base_path = env.get("PATH").cloned();
+            let home = maker.config().home.clone();
+            let omp_home = state_dir.join("omp-home");
+            deps.harness_version = Some(Box::new(move |h| {
+                harkroom_runner::lane_version::read_harness_version(
+                    h,
+                    base_path.as_deref(),
+                    &home,
+                    Some(&omp_home),
+                )
+            }));
+        }
         deps.state_dir = Some(state_dir);
         maker.set_provider_lane(harkroom_runner::provider_lane::ProviderLane::new(deps));
     }
