@@ -5,6 +5,8 @@
 //!   HOME 을 준다. pi 는 런처를 거치지 않고 release 실행 파일로 묻는다(#2155 — 사람 `install/` 을 건드리지 않게).
 //! - codex 는 `--version` 에도 `$CODEX_HOME/tmp/arg0` 에 도우미 링크·잠금을 만든다(없으면 `~/.codex`) — **러너 codex 홈을 `CODEX_HOME`**
 //!   으로 준다. 러너 codex 홈을 모르면 묻지 않는다(사람 `~/.codex` 를 건드리지 않게).
+//! - pi 는 `PI_CODING_AGENT_DIR` 가 없으면 `--version` 에도 사람 `$HOME/.pi/agent` 를 건드린다(빈 HOME 실측) — **러너 pi 홈을
+//!   `PI_CODING_AGENT_DIR`**(lane 이면 lane 루트)로 준다. 러너 pi 홈을 모르면 묻지 않는다.
 //! - 못 띄우거나 출력이 비면 `None` — 판 확인은 막지 않고 경고만 낸다(`provider_lane`).
 
 use std::path::{Path, PathBuf};
@@ -24,10 +26,16 @@ pub fn version_query(
     home: &Path,
     omp_home: Option<&Path>,
     codex_home: Option<&Path>,
+    pi_home: Option<&Path>,
 ) -> Option<(PathBuf, Env)> {
     let bin = harness_command(harness).ok()?;
     let codex_home = if harness == AgentHarness::Codex {
         Some(codex_home?)
+    } else {
+        None
+    };
+    let pi_home = if uses_pi_home(harness) {
+        Some(pi_home?)
     } else {
         None
     };
@@ -44,6 +52,12 @@ pub fn version_query(
     .into();
     if let Some(ch) = codex_home {
         env.insert("CODEX_HOME".to_string(), ch.to_string_lossy().into_owned());
+    }
+    if let Some(ph) = pi_home {
+        env.insert(
+            "PI_CODING_AGENT_DIR".to_string(),
+            ph.to_string_lossy().into_owned(),
+        );
     }
     let command = if uses_pi_home(harness) {
         let launch = crate::pi_launch::resolve_pi_launch(&env);
@@ -63,8 +77,9 @@ pub fn read_harness_version(
     home: &Path,
     omp_home: Option<&Path>,
     codex_home: Option<&Path>,
+    pi_home: Option<&Path>,
 ) -> Option<String> {
-    let (exe, env) = version_query(harness, base_path, home, omp_home, codex_home)?;
+    let (exe, env) = version_query(harness, base_path, home, omp_home, codex_home, pi_home)?;
     let out = crate::pi_home::run_capped_with(
         &exe,
         &["--version".to_string()],
