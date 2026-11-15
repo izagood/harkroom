@@ -3680,7 +3680,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         for (const k of ['POST /agent/turn-leases', 'POST /agent/turn-leases/{id}/end', 'POST /agent/turn-leases/{id}/renew']) expect(f.log()).toContain(`"${k}"`);
         expect(f.log()).not.toContain('turn lease core off');
         const op = await registerOperator(app, A, 'tl-op');
-        await db.pool.query(`insert into agent_assignment (agent_id, operator_id, assigned_by) values ($1, $2, $3)`, [agent.accountId, op.operatorId, admin.accountId]);
+        await db.pool.query(`insert into agent_assignment (agent_id, operator_id, assigned_by) values ($1, $2, $3) on conflict (agent_id) do update set operator_id = excluded.operator_id, assigned_by = excluded.assigned_by`, [agent.accountId, op.operatorId, admin.accountId]);
         const ch = String((await ok(app.inject({ method: 'POST', url: '/channels', headers: auth, payload: { name: 'turn-lease' } }))).id);
         await ok(app.inject({ method: 'POST', url: `/channels/${ch}/members`, headers: auth, payload: { accountId: agent.accountId } }));
         const autoId = (await db.pool.query(
