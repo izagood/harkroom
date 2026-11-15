@@ -34,6 +34,7 @@ pub mod operator_frames;
 pub mod operator_hub;
 pub mod operator_rest;
 pub mod relay;
+pub mod relay_attention;
 pub mod relay_link;
 pub mod relay_live;
 pub mod relay_routes;

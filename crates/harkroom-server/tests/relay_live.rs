@@ -416,3 +416,82 @@ async fn failed_rewrite_is_retried_next_beat() {
     assert_eq!(ids, vec!["s1", "s2"]);
     live.stop().await;
 }
+
+/// ⓓ 관문 알림 — 소유자에게만, 소유자를 모르면 내지 않는다(TS `onAttention`·`onAttentionCleared`).
+#[tokio::test]
+async fn attention_goes_to_owner_only() {
+    use harkroom_server::core::relay::Attention;
+    use harkroom_server::core::relay_attention::emit_attention;
+    let Ok(url) = std::env::var("HARKROOM_TEST_DATABASE_URL") else {
+        eprintln!("skip: HARKROOM_TEST_DATABASE_URL unset");
+        return;
+    };
+    let admin = PgPool::connect(&url).await.unwrap();
+    let write = match std::env::var("HARKROOM_TEST_WRITE_DATABASE_URL") {
+        Ok(w) => PgPool::connect(&w).await.unwrap(),
+        Err(_) => admin.clone(),
+    };
+    let tag = format!("ra{}", std::process::id());
+    let owner = account(&admin, &format!("{tag}-h"), "human").await;
+    let agent = account(&admin, &format!("{tag}-a"), "agent").await;
+    let stray = account(&admin, &format!("{tag}-s"), "agent").await;
+    sqlx::query(
+        "insert into agent_config(account_id, owner_account_id) values ($1::uuid, $2::uuid)",
+    )
+    .bind(&agent)
+    .bind(&owner)
+    .execute(&admin)
+    .await
+    .unwrap();
+    let top: i64 = sqlx::query_scalar("select coalesce(max(id), 0) from event_outbox")
+        .fetch_one(&admin)
+        .await
+        .unwrap();
+    let raised = |a: &str| Attention::Raised {
+        session_id: "s1".into(),
+        channel_id: "c".into(),
+        thread_root_id: None,
+        agent_account_id: a.into(),
+        claude_pool_rank: None,
+        claude_account_rank: None,
+    };
+    assert!(
+        emit_attention(&admin, &write, &raised(&agent))
+            .await
+            .unwrap()
+    );
+    let cleared = Attention::Cleared {
+        session_id: "s1".into(),
+        channel_id: "c".into(),
+        thread_root_id: None,
+        agent_account_id: agent.clone(),
+    };
+    assert!(emit_attention(&admin, &write, &cleared).await.unwrap());
+    // 설정 없는 에이전트·uuid 아닌 id 는 내지 않는다.
+    assert!(
+        !emit_attention(&admin, &write, &raised(&stray))
+            .await
+            .unwrap()
+    );
+    assert!(
+        !emit_attention(&admin, &write, &raised("nope"))
+            .await
+            .unwrap()
+    );
+    let ev: Vec<String> =
+        sqlx::query_scalar("select event::text from event_outbox where id > $1 order by id")
+            .bind(top)
+            .fetch_all(&admin)
+            .await
+            .unwrap();
+    let ev: Vec<Value> = ev
+        .iter()
+        .map(|s| serde_json::from_str(s).unwrap())
+        .collect();
+    assert_eq!(ev.len(), 2);
+    assert_eq!(ev[0]["type"], "agent.attention");
+    assert_eq!(ev[0]["agentHandle"], format!("{tag}-a"));
+    assert_eq!(ev[0]["audience"], json!([owner]));
+    assert_eq!(ev[1]["type"], "agent.attention.cleared");
+    assert_eq!(ev[1]["audience"], json!([owner]));
+}

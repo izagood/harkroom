@@ -331,6 +331,7 @@ fn not_found_session() -> Response {
 }
 
 /// 세션 id 로 오는 문(attach·cancel)의 앞부분 — 등록이 끝나기를 기다리고, 세션을 찾고, 인가한다.
+#[allow(clippy::result_large_err)]
 async fn gate(core: &RelayCore, me: &Account, sid: &str) -> Result<Session, Response> {
     core.link.all_settled().await;
     let Some(session) = core.link.relay().get_session(sid) else {
