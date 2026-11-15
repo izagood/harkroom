@@ -33,6 +33,7 @@ pub mod operator;
 pub mod operator_frames;
 pub mod operator_hub;
 pub mod operator_rest;
+pub mod relay;
 pub mod tickets;
 pub mod turn_lease;
 pub mod turn_lease_routes;
