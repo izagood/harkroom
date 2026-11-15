@@ -9,7 +9,7 @@ description = "Per-community operator root rule and operators.json index (P5) �
 
 # 버전은 `=` 로 고정한다(Rust 전환 계획의 약속). 올리는 것은 따로 PR 로.
 [dependencies]
-serde = { version = "=1.0.228", features = ["derive"] }
+serde = { version = "=1.0.229", features = ["derive"] }
 sha2 = "=0.10.9"
 
 [dev-dependencies]
