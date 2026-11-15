@@ -47,7 +47,7 @@ import { createPushSweeper, type PushHealth } from './services/push/pushJobs.js'
 import { registerAutomationRoutes } from './routes/automationRoutes.js';
 import { registerWs } from './ws/wsPlugin.js';
 import { registerMcp } from './mcp/mcpPlugin.js';
-import { createAgentPresence } from './mcp/presence.js';
+import { createAgentPresence, persistAgentPresence } from './mcp/presence.js';
 import { startThreadStatusWatcher } from './services/threadStatus.js';
 import { startThreadPlanWatcher } from './services/threadPlanWatcher.js';
 import { Lifecycle } from './lifecycle.js';
@@ -599,6 +599,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const agentPresence = createAgentPresence({
     ttlMs: deps.agentPresenceTtlMs ?? 30_000,
     now: deps.now,
+    // C6c-1: Rust `/ws` 의 presence.snapshot 이 같은 에이전트를 싣도록 DB 에도 남긴다(판정은 메모리 그대로).
+    persist: persistAgentPresence(deps.pool),
+    onPersistError: (err) => app.log.warn({ err }, 'agent presence persist failed'),
   });
   agentPresence.startSweep(app);
 

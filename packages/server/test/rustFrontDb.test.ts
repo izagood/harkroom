@@ -3881,6 +3881,18 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         }
         return undefined;
       };
+      // S5.3 C6c-1 — 에이전트 presence 합집합. TS `/mcp` 를 한 번 불러 mark → TS 가 `agent_presence` 에 묶어 쓴 것을 Rust 가 읽는다.
+      // 만료된 줄(bot2)은 두 서버 모두 싣지 않는다(DB 시계 기준).
+      await db.pool.query(`delete from agent_presence where account_id = $1`, [agent.accountId]);
+      expect((await mcpCall(tsUrl, agent.pat, 'account.me', {}, 900)).status).toBe(200);
+      for (let i = 0; i < 100; i++) {
+        if ((await db.pool.query(`select 1 from agent_presence where account_id = $1 and expires_at > now()`, [agent.accountId])).rowCount) break;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      // TS 가 한 번도 못 본 에이전트에 만료된 줄만 둔다(bot2 는 앞에서 TS 를 불러 메모리에 살아 있을 수 있다).
+      const stale = (await db.pool.query<{ id: string }>(
+        `insert into account(handle, display_name, kind) values ('c6c1_stale', 'c6c1_stale', 'agent') returning id`)).rows[0]!.id;
+      await db.pool.query(`insert into agent_presence (account_id, expires_at) values ($1, now() - interval '1 minute')`, [stale]);
       const socks: Sock[] = [];
       try {
         // 티켓: 없음·두 번 쓰기는 4401(두 서버 같음).
@@ -3892,6 +3904,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect(await (await open(base, `?ticket=${encodeURIComponent(t)}`)).closed, `${base} 티켓 재사용`).toBe(4401);
           const snap = await waitFor(first, (f) => f.type === 'presence.snapshot');
           expect((snap?.online as string[]) ?? [], `${base} 스냅숏에 나`).toContain(member.accountId);
+          expect((snap?.online as string[]) ?? [], `${base} 스냅숏에 폴한 에이전트(C6c-1)`).toContain(agent.accountId);
+          expect((snap?.online as string[]) ?? [], `${base} 만료된 에이전트는 없음`).not.toContain(stale);
         }
         const [tsMem, rsMem] = socks as [Sock, Sock];
         // 앱 hb 프레임(Rust 는 시험용으로 300ms).
