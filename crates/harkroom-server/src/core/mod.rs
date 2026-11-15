@@ -30,6 +30,7 @@ pub mod operator_rest;
 pub mod tickets;
 pub mod turn_lease;
 pub mod typing;
+pub mod wake_preempt;
 pub mod ws;
 
 /// `HARKROOM_CORE` — 모르는 값이면 기동을 멈춘다(조용히 켜지거나 꺼지지 않게).

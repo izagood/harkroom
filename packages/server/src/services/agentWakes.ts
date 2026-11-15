@@ -302,15 +302,14 @@ function closedWatchView(row: ClosedWatchRow): ClosedWatchWake {
  *
  * 처음 값을 지킨다 — 줄이 닫히는 일은 한 번뿐이고 뒤늦은 호출이 시각을 고치면 안 된다.
  */
+export const STAMP_WAKE_CLOSED_SQL = `update message set meta = jsonb_set(meta, array['wake', $3::text], to_jsonb($2::text))
+      where id = any($1::uuid[]) and jsonb_typeof(meta->'wake') = 'object' and meta->'wake'->>($3::text) is null`;
+
 async function stampWakeClosed(
   db: Pick<Pool, 'query'>, messageIds: readonly string[], field: 'firedAt' | 'canceledAt',
 ): Promise<void> {
   if (!messageIds.length) return;
-  await db.query(
-    `update message set meta = jsonb_set(meta, array['wake', $3::text], to_jsonb($2::text))
-      where id = any($1::uuid[]) and jsonb_typeof(meta->'wake') = 'object' and meta->'wake'->>($3::text) is null`,
-    [messageIds, new Date().toISOString(), field],
-  );
+  await db.query(STAMP_WAKE_CLOSED_SQL, [messageIds, new Date().toISOString(), field]);
 }
 
 /** 닫힌 대기 줄을 `message.updated` 로 알린다. 커밋 뒤에 부른다. 신호가 실패해도 닫힘은 이미 끝났다 — 다음 읽기가 맞춘다. */
@@ -430,6 +429,23 @@ export async function foldWakesForDelegation(
 }
 
 /**
+ * `preemptWakesForThread` 의 문장들 — Rust 앞단(`core/wake_preempt.rs`, S5.3 C1c-3b)이 골든으로 받는다. 자리표에 형을 붙인 것 말고는
+ * 옮기기 전 문장 그대로다.
+ */
+export const PREEMPT_DUE_SQL = `select w.id, w.account_id, w.message_id, m.meta->'wake'->'reportTo' as report_to from agent_wake w
+       join message m on m.id = w.message_id
+      where coalesce(m.thread_root_id, m.id) = $1::uuid
+        and w.account_id <> $2::uuid
+        and w.fired_at is null
+        and w.canceled_at is null
+      order by w.wake_at
+      for update of w`;
+export const PREEMPT_CANCEL_SQL = `update agent_wake set canceled_at = now(), canceled_by_message_id = $2::uuid where id = $1::uuid`;
+export const PREEMPT_FIRE_INBOX_SQL = `insert into inbox (account_id, message_id, reason)
+       select w.account_id, w.message_id, 'wake' from agent_wake w where w.id = $1::uuid`;
+export const PREEMPT_FIRE_SQL = `update agent_wake set fired_at = now() where id = $1::uuid`;
+
+/**
  * 사람이 그 스레드에서 말하면 **기다림은 그 자리에서 끝난다**(2026-09-10).
  *
  * 왜 필요한가: 예약은 "이 시각까지 볼 것이 없다"는 에이전트의 추측이고, 사람의 새 발화는
@@ -480,15 +496,7 @@ export async function preemptWakesForThread(
   // 깨움 메시지에서 되찾는다. `for update` 는 sweep 과의 경합용이다: 그쪽이 먼저
   // 잡았으면 잠금을 기다린 뒤 술어가 다시 평가돼 이 행은 빠진다(이미 fired 다).
   const due = await client.query<{ id: string; account_id: string; message_id: string; report_to: unknown }>(
-    `select w.id, w.account_id, w.message_id, m.meta->'wake'->'reportTo' as report_to from agent_wake w
-       join message m on m.id = w.message_id
-      where coalesce(m.thread_root_id, m.id) = $1
-        and w.account_id <> $2
-        and w.fired_at is null
-        and w.canceled_at is null
-      order by w.wake_at
-      for update of w`,
-    [args.threadRootId, args.authorId],
+    PREEMPT_DUE_SQL, [args.threadRootId, args.authorId],
   );
 
   const woke: string[] = [];
@@ -497,21 +505,14 @@ export async function preemptWakesForThread(
     if (report) args.reportTouched?.push(report);
     args.wakeRowsTouched?.push(row.message_id);
     if (args.notified.has(row.account_id)) {
-      await client.query(
-        `update agent_wake set canceled_at = now(), canceled_by_message_id = $2 where id = $1`,
-        [row.id, args.messageId],
-      );
+      await client.query(PREEMPT_CANCEL_SQL, [row.id, args.messageId]);
       await stampWakeClosed(client, [row.message_id], 'canceledAt');
       continue;
     }
     // sweep 과 **같은 생 insert** 다(`insertInbox` 가 아니다) — 자기가 자기를 부르는
     // 항목이라 남의 화면(숨김 되돌리기)을 건드릴 일이 없다. 그 이유는 sweep 주석에 있다.
-    await client.query(
-      `insert into inbox (account_id, message_id, reason)
-       select w.account_id, w.message_id, 'wake' from agent_wake w where w.id = $1`,
-      [row.id],
-    );
-    await client.query(`update agent_wake set fired_at = now() where id = $1`, [row.id]);
+    await client.query(PREEMPT_FIRE_INBOX_SQL, [row.id]);
+    await client.query(PREEMPT_FIRE_SQL, [row.id]);
     await stampWakeClosed(client, [row.message_id], 'firedAt');
     woke.push(row.account_id);
   }

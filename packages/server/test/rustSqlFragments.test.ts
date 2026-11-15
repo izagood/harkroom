@@ -35,6 +35,7 @@ import { BG_AGENT_ON_SQL, BG_DAILY_LOCK_SQL, BG_ENQUEUE_SQL, BG_EXISTS_SQL, BG_P
 import { LIST_DELEGATIONS_GIVEN_SQL, LIST_DELEGATIONS_MINE_SQL } from '../src/services/apiDelegation.js';
 import { LIST_TOOL_RULES_SQL } from '../src/services/permissionRequests.js';
 import { LEASE_INBOX_MAX_AGE_MS, LEASE_MAX_MS, LEASE_MAX_REISSUES, LEASE_REISSUE_STALE_MS, LEASE_RENEW_MS, LEASE_TTL_MS, TURN_LEASE_CAUSE_SQL, TURN_LEASE_CLAIM_MOVED_SQL, TURN_LEASE_END_PRIOR_SQL, TURN_LEASE_END_SQL, TURN_LEASE_INSERT_SQL, TURN_LEASE_PRIOR_SQL, TURN_LEASE_RENEW_SQL, TURN_LEASE_USED_SQL } from '../src/services/secretAccess.js';
+import { PREEMPT_CANCEL_SQL, PREEMPT_DUE_SQL, PREEMPT_FIRE_INBOX_SQL, PREEMPT_FIRE_SQL, STAMP_WAKE_CLOSED_SQL } from '../src/services/agentWakes.js';
 
 const GOLDEN = fileURLToPath(new URL('../../../crates/harkroom-server/golden/sql_fragments.json', import.meta.url));
 
@@ -150,6 +151,12 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     mandate_keyless_insert: MANDATE_KEYLESS_INSERT_SQL,
     mandate_keyless_find: MANDATE_KEYLESS_FIND_SQL,
     mandate_keyless_root_set: MANDATE_KEYLESS_ROOT_SET_SQL,
+    // 사람 답글의 깨움 선점(`core/wake_preempt.rs`, S5.3 C1c-3b) — `preemptWakesForThread` 와 `stampWakeClosed`.
+    preempt_due: PREEMPT_DUE_SQL,
+    preempt_cancel: PREEMPT_CANCEL_SQL,
+    preempt_fire_inbox: PREEMPT_FIRE_INBOX_SQL,
+    preempt_fire: PREEMPT_FIRE_SQL,
+    stamp_wake_closed: STAMP_WAKE_CLOSED_SQL,
     decider_row: DECIDER_ROW_SQL,
     decider_seen: DECIDER_SEEN_SQL,
     decider_list: DECIDER_LIST_SQL,
