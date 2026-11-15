@@ -1916,7 +1916,13 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           const reply = await say(`${tag} 사람 답`, { ch: readCh, root: bundle, author: admin.accountId });
           const agentReply = await say(`${tag} 에이전트 답`, { ch: readCh, root: bundle });
           const elsewhere = await say(`${tag} 다른 스레드 사람 글`, { ch: readCh, author: admin.accountId });
-          return { root, answered, perm, linked, toMem, plain, bundle, notMine, reply, agentReply, elsewhere };
+          // Rust 가 정하지 않고 TS 로 넘기는 원본(hand_to_ts — 백스톱·권한 거울 표지). 넘긴 줄의 쓰기·이벤트는 TS 에서 나므로
+          // 위 묶음·bot2 깨움과 섞이지 않게 따로 묶고 에이전트가 세운다(깨움은 에이전트 앞).
+          const backstop = await say(`${tag} 백스톱 원본`, { ch: readCh, meta: cardMeta({}, { chainBackstop: { agentId: bot2.accountId } }) });
+          const pmirror = await say(`${tag} 권한 거울 원본`, { ch: readCh, meta: cardMeta({}, { permissionMirror: { requestId: missingCh } }) });
+          const hBundle = await say(`${tag} 넘김 묶음`, { ch: readCh, meta: { kind: 'askBundle', askBundle: { items: [item(backstop), item(pmirror)] } } });
+          const hReply = await say(`${tag} 넘김 사람 답`, { ch: readCh, root: hBundle, author: admin.accountId });
+          return { root, answered, perm, linked, toMem, plain, bundle, notMine, reply, agentReply, elsewhere, backstop, pmirror, hBundle, hReply };
         };
         type Fx = Awaited<ReturnType<typeof fixture>>;
         const [fT, fR] = [await fixture('T'), await fixture('R')];
@@ -1925,7 +1931,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           .reduce((s, [v, k]) => s.split(v).join(k), t)
           .replace(/\d{4}-\d\d-\d\dT[\d:.]+(Z|[+-]\d\d:\d\d)/g, '<ts>')
           .replace(/(\\*"seq\\*":)\d+/g, '$1"<seq>"')
-          .replace(/(T|R) (원본|답한 원본|권한 원본|링크 줄 원본|mem 앞 원본|카드 아님|묶음|남의 묶음|사람 답|에이전트 답|다른 스레드 사람 글)/g, '$2');
+          .replace(/(T|R) (원본|답한 원본|권한 원본|링크 줄 원본|mem 앞 원본|카드 아님|묶음|남의 묶음|사람 답|에이전트 답|다른 스레드 사람 글|백스톱 원본|권한 거울 원본|넘김 묶음|넘김 사람 답)/g, '$2');
         const cases: [string, (x: Fx) => unknown, boolean][] = [
           ['없는 묶음', (x) => ({ bundleId: missingCh, rootId: x.root, replyMessageId: x.reply }), true],
           ['남의 묶음', (x) => ({ bundleId: x.notMine, rootId: x.root, replyMessageId: x.reply }), true],
@@ -1938,6 +1944,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['답한 원본', (x) => ({ bundleId: x.bundle, rootId: x.answered, replyMessageId: x.reply }), true],
           ['mem 앞 원본에 admin 글', (x) => ({ bundleId: x.bundle, rootId: x.toMem, replyMessageId: x.reply }), true],
           ['카드 아닌 원본', (x) => ({ bundleId: x.bundle, rootId: x.plain, replyMessageId: x.reply }), true],
+          // hand_to_ts — 이 검사를 끄면 Rust 가 닫아 core 가 'mcp' 가 된다(빨강).
+          ['백스톱 원본 → TS', (x) => ({ bundleId: x.hBundle, rootId: x.backstop, replyMessageId: x.hReply }), false],
+          ['권한 거울 원본 → TS', (x) => ({ bundleId: x.hBundle, rootId: x.pmirror, replyMessageId: x.hReply }), false],
           ['note 빈 글 → TS(zod)', (x) => ({ bundleId: x.bundle, rootId: x.root, replyMessageId: x.reply, note: '' }), false],
           ['note 숫자 → TS(zod)', (x) => ({ bundleId: x.bundle, rootId: x.root, replyMessageId: x.reply, note: 1 }), false],
           ['uuid 아님 → TS', (x) => ({ bundleId: 'x', rootId: x.root, replyMessageId: x.reply }), false],

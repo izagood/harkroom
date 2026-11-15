@@ -1,6 +1,8 @@
 //! 묶음 카드 한 줄 닫기(S5.3 C4b — MCP `message.askBundleResolve`). TS `services/askBundles.ts` 의 `resolveBundleItem` 과 같은 판정·글자.
 //!
 //! - 판정(묶음·줄·사람 글·원본)은 읽기 풀로 TS 와 같은 차례로 본다. 여기서 DB 오류면 `Err` — 부르는 쪽이 TS 로 넘긴다(아직 안 썼다).
+//! - 원본이 권한 거울·백스톱 표지·권한 요청 줄의 카드(또는 그 거울)이거나 `mirrorOf` 를 못 읽으면 Rust 는 정하지 않고 TS 로
+//!   넘긴다([`Resolved::Handoff`], C3b-1 [`super::ask::hand_to_ts`] 와 같은 닫힌 판정 — 묶음 줄 답하기 C3b-2a 와 같은 경계).
 //! - 쓰기(원본 닫기 → `message.updated` → 물어본 쪽 깨움 → 거울·묶음 맞추기)는 **한 트랜잭션**이다. TS 는 줄마다 따로 커밋하지만,
 //!   닫기 조건(`answeredWith`·`closedAt` 없음, 권한·머지 거절 카드 아님)은 같은 `update … where` 한 문장이라 경합 결과는 같다.
 //! - 쓰기를 시작한 뒤의 오류는 [`Resolved::Failed`] — 부르는 쪽이 고정 `internal` 로 답한다(security W1, TS 로 넘기지 않는다).
@@ -56,6 +58,8 @@ pub enum Resolved {
     Bundle(String),
     /// 쓰기를 시작한 뒤의 오류.
     Failed,
+    /// 원본을 Rust 가 정하지 않는다 — 아직 아무것도 안 썼으니 TS 가 처음부터 답한다.
+    Handoff,
 }
 
 /// JS 참값(`item.link || …`).
@@ -84,14 +88,15 @@ fn bundle_items(meta: &Value) -> Option<&Vec<Value>> {
         .then_some(items)
 }
 
-/// 판정까지 — 쓰기 전. `Ok(Err(code))` 는 거절, `Ok(Ok(..))` 는 닫을 원본·글쓴이.
+/// 판정까지 — 쓰기 전. `Ok(Err(Refused|Handoff))` 는 거절·넘김, `Ok(Ok(..))` 는 닫을 원본·글쓴이.
 async fn check(
     read: &PgPool,
     caller: &str,
     bundle_id: &str,
     root_id: &str,
     reply_id: &str,
-) -> sqlx::Result<Result<(String, String), &'static str>> {
+) -> sqlx::Result<Result<(String, String), Resolved>> {
+    use Resolved::Refused;
     // readBundle
     let row: Option<(Value, String, Option<String>, Option<String>)> = sqlx::query_as(
         "select meta, channel_id::text, thread_root_id::text, author_id::text \
@@ -101,19 +106,19 @@ async fn check(
     .fetch_optional(read)
     .await?;
     let Some((meta, channel, thread_root, author)) = row else {
-        return Ok(Err("bundle_not_found"));
+        return Ok(Err(Refused("bundle_not_found")));
     };
     let Some(items) = bundle_items(&meta) else {
-        return Ok(Err("bundle_not_found"));
+        return Ok(Err(Refused("bundle_not_found")));
     };
     if author.as_deref() != Some(caller) {
-        return Ok(Err("bundle_not_yours"));
+        return Ok(Err(Refused("bundle_not_yours")));
     }
     let Some(item) = items
         .iter()
         .find(|i| i.get("rootId").and_then(Value::as_str) == Some(root_id))
     else {
-        return Ok(Err("bundle_item_not_found"));
+        return Ok(Err(Refused("bundle_item_not_found")));
     };
     // isDecisionCard — 사본의 link 가 아니라 원본 meta 로도 잰다.
     if js_truthy(item.get("link"))
@@ -127,7 +132,7 @@ async fn check(
             n.is_some()
         }
     {
-        return Ok(Err("bundle_item_link"));
+        return Ok(Err(Refused("bundle_item_link")));
     }
     let bundle_root = thread_root.unwrap_or_else(|| bundle_id.to_owned());
     // id 는 DB 에서 읽은 것을 쓴다 — 대문자 uuid 가 와도 TS(`reply.id`)처럼 소문자로 적힌다.
@@ -142,22 +147,27 @@ async fn check(
     .fetch_optional(read)
     .await?;
     let Some((reply_author, reply_id)) = reply else {
-        return Ok(Err("bundle_reply_invalid"));
+        return Ok(Err(Refused("bundle_reply_invalid")));
     };
     let mut conn = read.acquire().await?;
     let Some((ask, root_channel, _)) = read_ask_row(&mut conn, root_id).await? else {
-        return Ok(Err("mirror_not_found"));
+        return Ok(Err(Refused("mirror_not_found")));
     };
     drop(conn);
+    // 읽히는 카드라도 권한 거울·백스톱 표지·권한 요청 줄의 카드(또는 그 거울)면 Rust 가 닫지 않는다 — C3b-1·C3b-2a 와 같은
+    // 닫힌 판정([`super::ask::hand_to_ts`]). 아직 안 썼으니 TS 가 처음부터 답한다. 못 읽는 원본은 위에서 TS 와 같은 거절로 끝났다.
+    if super::ask::hand_to_ts(read, root_id).await? {
+        return Ok(Err(Resolved::Handoff));
+    }
     if ask.answered || ask.closed {
-        return Ok(Err("bundle_item_resolved"));
+        return Ok(Err(Refused("bundle_item_resolved")));
     }
     let may_answer = match &ask.to {
         To::Human => true,
         To::Account(a) => *a == reply_author,
     };
     if !may_answer || !super::channels::visible(read, &reply_author, &root_channel).await? {
-        return Ok(Err("bundle_reply_invalid"));
+        return Ok(Err(Refused("bundle_reply_invalid")));
     }
     Ok(Ok((reply_author, reply_id)))
 }
@@ -174,7 +184,7 @@ pub async fn resolve(
 ) -> sqlx::Result<Resolved> {
     let (reply_author, reply_id) = match check(read, caller, bundle_id, root_id, reply_id).await? {
         Ok(v) => v,
-        Err(code) => return Ok(Resolved::Refused(code)),
+        Err(r) => return Ok(r),
     };
     // zod 가 1000 UTF-16 단위까지만 받으므로 trim 뒤 slice(0, 1000) 은 늘 그대로다.
     let note = js_trim(note.unwrap_or(""));

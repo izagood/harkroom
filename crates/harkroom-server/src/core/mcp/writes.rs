@@ -182,6 +182,8 @@ async fn bundle_resolve(
             Some(ok_text(&format!("{{\"message\":{row}}}")))
         }
         Resolved::Failed => Some(internal()),
+        // 원본을 Rust 가 정하지 않는다(권한 거울·백스톱 등) — 쓰기 전이라 TS 가 답한다.
+        Resolved::Handoff => None,
     }
 }
 
