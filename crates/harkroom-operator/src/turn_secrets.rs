@@ -266,6 +266,44 @@ fn mount(cx: &Ctx<'_>, name: &str) -> Outcome {
     Ok(Value::Object(out))
 }
 
+/// lane 마운트(op-lane, TS `turnSecrets.mountFor`) — `secret.mount` 와 같은 길로 값을 그 임대 폴더에 0600 으로 쓰고
+/// **경로만** 돌려준다. 실패는 코드 하나(값·이름 없음). 경로는 늘 `<root>/<lease id>/<secret id>` 다.
+pub fn mount_for(
+    lease: &TurnLease,
+    root: &SecretsRoot,
+    post: Post<'_>,
+    log: &dyn Fn(&str),
+    name: &str,
+) -> Result<PathBuf, String> {
+    let new_id = || String::new();
+    let cx = Ctx {
+        lease,
+        root,
+        post,
+        new_id: &new_id,
+        log,
+    };
+    // 경로는 그 임대 폴더 안이어야 한다(security 67974 c) — 턴 끝(`secret.leaseEnded`)에 그 폴더째 지워진다.
+    let inside = root.dir_of(&lease.lease_id);
+    match mount(&cx, name) {
+        Ok(v) => v
+            .get("path")
+            .and_then(Value::as_str)
+            .map(PathBuf::from)
+            .filter(|p| {
+                inside
+                    .as_ref()
+                    .is_some_and(|d| p.parent() == Some(d.as_path()))
+            })
+            .ok_or_else(|| "mount_failed".to_string()),
+        Err(v) => Err(v
+            .pointer("/error/code")
+            .and_then(Value::as_str)
+            .unwrap_or("unavailable")
+            .to_string()),
+    }
+}
+
 /// 서버 REST 를 임대와 함께 부른다(TS `post`). `secret_in_body` 는 import 면 `already_granted` 로 바꿔 안내한다(n3·n5).
 fn post(cx: &Ctx<'_>, path: &str, body: Map<String, Value>, importing: bool) -> Outcome {
     let Ok((status, text)) = (cx.post)(path, with_lease(cx.lease, body)) else {

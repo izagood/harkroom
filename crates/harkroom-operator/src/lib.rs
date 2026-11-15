@@ -44,6 +44,7 @@ pub mod mcp_oauth;
 pub mod merge;
 pub mod op_token;
 pub mod pr_gate;
+pub mod provider_lane_mount;
 pub mod provider_usage;
 pub mod relay_mux;
 pub mod retiring;

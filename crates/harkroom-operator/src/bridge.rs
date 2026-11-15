@@ -5,6 +5,7 @@
 //! 러너 링크를 `OnceLock<Weak<_>>` 로 늦게 받는다 — 강한 참조 고리를 만들지 않는다.
 use crate::forward::{ForwardTarget, Transport, forward, strip_link_only_fields};
 use crate::local_terminal::{LocalTerminalDeps, LocalTerminalHub};
+use crate::provider_lane_mount::{GateLog, LanePorts};
 use crate::relay_mux::{RelayMux, RelayMuxDeps};
 use crate::runner_link::{RunnerLinkHandler, RunnerLinkServer};
 use crate::server_link::ServerLink;
@@ -123,6 +124,10 @@ pub struct LinkHandler {
     poll_stopped: Arc<OnceLock<PollStoppedHook>>,
     /// 작업 폴더 청소의 주인 장부(s21c5-4) — relay 의 정리 보고를 받는다. serve 가 건다.
     cleanup_owners: Arc<OnceLock<Arc<CleanupOwners>>>,
+    /// API 키 연결(op-lane) 판정 재료 — serve 가 배정 조정기·로컬 설정에 건다. 비어 있으면 새 턴 자리를 막는다.
+    lane: Arc<OnceLock<Arc<dyn LanePorts>>>,
+    /// lane 막기 로그(러너당 한 번).
+    lane_gate_log: GateLog,
 }
 
 /// (agent id, **링크 세션의 인증된** runner id, holding, done).
@@ -340,6 +345,15 @@ impl RunnerLinkHandler for LinkHandler {
             }
             return;
         }
+        // 러너가 알린 제 API 키 연결 모드(TS run.ts `providerLane.mode` → `noteRunnerLane`). 꼴은 링크가 이미 걸렀다.
+        if notice.get("type").and_then(Value::as_str) == Some("providerLane.mode") {
+            if let (Some(p), Some(on)) =
+                (self.lane.get(), notice.get("on").and_then(Value::as_bool))
+            {
+                p.note_mode(runner_id, on);
+            }
+            return;
+        }
         let s = |k: &str| notice.get(k).and_then(Value::as_str).unwrap_or("");
         let cause = s("cause").to_string();
         let (c, renew) = match s("type") {
@@ -433,7 +447,37 @@ impl RunnerLinkHandler for LinkHandler {
             CommandStep::Forward(r) => return Some(self.forward_to_server(agent_id, r, kind)),
             CommandStep::Pass(r) => r,
         };
+        // lane 턴 자리 막기(TS run.ts 순서: turnCommand → laneTurnGate → turnSlots, security ⓒ·67974 a).
+        let lane = self.lane.get().map(Arc::as_ref);
+        if let Some(r) = crate::provider_lane_mount::gate(
+            runner_id,
+            agent_id,
+            &req,
+            kind,
+            lane,
+            &self.lane_gate_log,
+            &|l| eprintln!("{l}"),
+        ) {
+            return Some(r);
+        }
         if let Some(r) = lock(&self.slots).maybe_handle(runner_id, &req, kind) {
+            return Some(r);
+        }
+        // lane 마운트(TS run.ts 순서: turnSlots → providerLaneMount → turnSecrets). 설정은 부를 때마다 operator.json 에서 읽는다.
+        let lane_of = || lane.and_then(|p| p.lane_of(agent_id));
+        let lane_mount = |cause: &str, name: &str| -> Result<std::path::PathBuf, String> {
+            let lease = lock(&self.leases).lookup_for(runner_id, agent_id, Some(cause));
+            let (Some(lease), Some(root)) = (lease, self.secrets.as_ref()) else {
+                return Err("no_lease".into());
+            };
+            let post = |p: &str, body: String| self.server_post(agent_id, p, body);
+            crate::turn_secrets::mount_for(&lease, root, &post, &|l| eprintln!("{l}"), name)
+        };
+        if let Some(r) =
+            crate::provider_lane_mount::mount(agent_id, &req, kind, &lane_of, &lane_mount, &|l| {
+                eprintln!("{l}")
+            })
+        {
             return Some(r);
         }
         // 비밀 도구(TS turnSecrets — run.ts 순서: turnSlots → providerLaneMount → turnSecrets). 값은 임대 폴더로만 나간다.
@@ -528,6 +572,8 @@ pub struct Bridge {
     pub cleanup_owners: Arc<OnceLock<Arc<CleanupOwners>>>,
     /// 로컬 터미널 허브 — 소켓 서버(앱 구독)와 서버 프레임(`local.view`·`local.writer`)이 같은 것을 쓴다.
     pub hub: Arc<LocalTerminalHub>,
+    /// API 키 연결 판정 재료를 걸 자리(op-lane) — serve 가 배정 조정기를 세운 뒤 건다. 걸기 전에는 새 턴 자리를 막는다.
+    pub lane: Arc<OnceLock<Arc<dyn LanePorts>>>,
 }
 
 /// 서버가 내린 로컬 직결 키를 허브에 넣는다(TS community.ts `applyLocal`). `local.view`·`local.writer` 가 아니면 false.
@@ -646,6 +692,7 @@ pub fn build_bridge(
     );
     let poll_stopped: Arc<OnceLock<PollStoppedHook>> = Arc::new(OnceLock::new());
     let cleanup_owners: Arc<OnceLock<Arc<CleanupOwners>>> = Arc::new(OnceLock::new());
+    let lane: Arc<OnceLock<Arc<dyn LanePorts>>> = Arc::new(OnceLock::new());
     let leases = Arc::new(Mutex::new(TurnLeases::system()));
     if let Some(root) = secrets.clone() {
         spawn_lease_sweeper(Arc::downgrade(&leases), root, LEASE_SWEEP_EVERY);
@@ -664,6 +711,8 @@ pub fn build_bridge(
         merge,
         poll_stopped: Arc::clone(&poll_stopped),
         cleanup_owners: Arc::clone(&cleanup_owners),
+        lane: Arc::clone(&lane),
+        lane_gate_log: GateLog::default(),
     });
     // 턴 열쇠 장부(s21b-3a) — 하네스의 bridge·hook·wrapper 소켓이 맡긴 열쇠로 붙는다.
     let runner_link = RunnerLinkServer::new(handler, Some(turn_keys));
@@ -674,6 +723,7 @@ pub fn build_bridge(
         poll_stopped,
         cleanup_owners,
         hub,
+        lane,
     }
 }
 
@@ -682,6 +732,23 @@ mod tests {
     use super::*;
     use crate::forward::HttpReply;
     use serde_json::json;
+
+    /// 모드가 설정과 맞는 판정 재료 — 기존 시험은 lane 막기에 걸리지 않는다.
+    struct InSync;
+    impl LanePorts for InSync {
+        fn mismatch(&self, _: &str, _: &str) -> bool {
+            false
+        }
+        fn note_mode(&self, _: &str, _: bool) {}
+        fn lane_of(&self, _: &str) -> Option<crate::local_agents::ProviderLane> {
+            None
+        }
+    }
+    fn lane_in_sync() -> Arc<OnceLock<Arc<dyn LanePorts>>> {
+        let l: Arc<OnceLock<Arc<dyn LanePorts>>> = Arc::new(OnceLock::new());
+        let _ = l.set(Arc::new(InSync));
+        l
+    }
 
     #[derive(Default)]
     struct FakeServer(Mutex<Vec<Value>>);
@@ -751,6 +818,8 @@ mod tests {
             merge: None,
             poll_stopped: Arc::new(OnceLock::new()),
             cleanup_owners: Arc::new(OnceLock::new()),
+            lane: lane_in_sync(),
+            lane_gate_log: GateLog::default(),
         };
         h.on_frame(
             "r1",
@@ -784,6 +853,8 @@ mod tests {
             merge: None,
             poll_stopped: Arc::new(OnceLock::new()),
             cleanup_owners: Arc::new(OnceLock::new()),
+            lane: lane_in_sync(),
+            lane_gate_log: GateLog::default(),
         };
         let call = |name: &str| -> RunnerLinkRequest {
             serde_json::from_value(json!({"type":"mcp.request","id":"q","cause":"c1",
@@ -842,6 +913,8 @@ mod tests {
             merge: None,
             poll_stopped: Arc::new(OnceLock::new()),
             cleanup_owners: Arc::new(OnceLock::new()),
+            lane: lane_in_sync(),
+            lane_gate_log: GateLog::default(),
         };
         let req: RunnerLinkRequest = serde_json::from_value(json!({
             "type":"mcp.request","id":"q1","payload":{"jsonrpc":"2.0","id":1,"method":"x"}
@@ -887,6 +960,8 @@ mod tests {
             merge: None,
             poll_stopped: Arc::new(OnceLock::new()),
             cleanup_owners: Arc::new(OnceLock::new()),
+            lane: lane_in_sync(),
+            lane_gate_log: GateLog::default(),
         };
         // 링크가 미리 채운 commandFiles 는 서버 머리에 실리지 않는다(사전 2).
         let req: RunnerLinkRequest = serde_json::from_value(json!({
@@ -976,6 +1051,8 @@ mod tests {
             merge: None,
             poll_stopped: Arc::new(OnceLock::new()),
             cleanup_owners: Arc::new(OnceLock::new()),
+            lane: lane_in_sync(),
+            lane_gate_log: GateLog::default(),
         };
         let keys = json!({"turnId":"t1","keys":{"bridge":"a".repeat(64),"shell":"b".repeat(64)}});
         assert_eq!(
@@ -1070,6 +1147,8 @@ mod tests {
             merge: None,
             poll_stopped: hook,
             cleanup_owners: Arc::new(OnceLock::new()),
+            lane: lane_in_sync(),
+            lane_gate_log: GateLog::default(),
         };
         // 본문에 다른 runnerId 를 실어도 세션 id(r1)로 간다.
         h.on_notice(
@@ -1103,6 +1182,8 @@ mod tests {
             merge: None,
             poll_stopped: Arc::new(OnceLock::new()),
             cleanup_owners: Arc::new(OnceLock::new()),
+            lane: lane_in_sync(),
+            lane_gate_log: GateLog::default(),
         };
         h.on_notice(
             "r1",
@@ -1135,6 +1216,179 @@ mod tests {
             json!({"type":"secret.leaseEnded","cause":"nope"}),
         );
         assert_eq!(calls.len(), 2);
+    }
+
+    /// 비밀 꺼내기(`/agent/secrets/reveal`)에 값을 주는 가짜 서버.
+    #[derive(Default)]
+    struct RevealTransport(Mutex<Vec<String>>);
+    impl Transport for RevealTransport {
+        fn send(
+            &self,
+            _method: &str,
+            url: &str,
+            _headers: &[(String, String)],
+            _body: Option<Vec<u8>>,
+        ) -> Result<HttpReply, String> {
+            self.0.lock().unwrap().push(url.into());
+            let body = if url.ends_with("/agent/secrets/reveal") {
+                // "sk-lane-value"
+                r#"{"secret":{"id":"sec-1","name":"lane-key","kind":"text","version":1},"valueBase64":"c2stbGFuZS12YWx1ZQ=="}"#
+            } else {
+                "{}"
+            };
+            Ok(HttpReply {
+                status: 200,
+                content_type: "application/json".into(),
+                body: body.into(),
+            })
+        }
+    }
+
+    struct TestLane {
+        mismatch: std::sync::atomic::AtomicBool,
+        noted: Mutex<Vec<(String, bool)>>,
+    }
+    impl LanePorts for TestLane {
+        fn mismatch(&self, _: &str, _: &str) -> bool {
+            self.mismatch.load(std::sync::atomic::Ordering::SeqCst)
+        }
+        fn note_mode(&self, runner_id: &str, on: bool) {
+            self.noted.lock().unwrap().push((runner_id.into(), on));
+        }
+        fn lane_of(&self, _: &str) -> Option<crate::local_agents::ProviderLane> {
+            Some(crate::local_agents::ProviderLane {
+                base_url: "https://g.example.com/anthropic".into(),
+                secret_name: "lane-key".into(),
+            })
+        }
+    }
+
+    /// op-lane: 사슬 순서(막기 → 자리 → 마운트)·값은 임대 폴더 0600 파일로만·턴 끝에 폴더째 지움(security 67974 a·c).
+    #[test]
+    fn lane_gate_and_mount_run_locally_and_turn_end_drops_the_key_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("hk-lane-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let tr = Arc::new(RevealTransport::default());
+        let (_srv, _tr0, b) = bridge();
+        let lane = Arc::new(TestLane {
+            mismatch: std::sync::atomic::AtomicBool::new(true),
+            noted: Mutex::new(Vec::new()),
+        });
+        let cell: Arc<OnceLock<Arc<dyn LanePorts>>> = Arc::new(OnceLock::new());
+        let _ = cell.set(lane.clone());
+        let h = LinkHandler {
+            mux: Arc::clone(&b.mux),
+            hub: Arc::clone(&b.hub),
+            transport: tr.clone(),
+            base_url: "https://h.example".into(),
+            token: "op".into(),
+            turn_keys: Arc::new(Mutex::new(TurnKeyLedger::new(|| 0, |_| {}))),
+            slots: Arc::new(Mutex::new(TurnSlots::new(Some(1), || 0, |_| {}))),
+            leases: Arc::new(Mutex::new(TurnLeases::new(|| 0))),
+            secrets: Some(crate::turn_secrets::SecretsRoot { root: dir.clone() }),
+            peek: Arc::new(TurnPeek::new(|| 0)),
+            merge: None,
+            poll_stopped: Arc::new(OnceLock::new()),
+            cleanup_owners: Arc::new(OnceLock::new()),
+            lane: cell,
+            lane_gate_log: GateLog::default(),
+        };
+        let relay = RunnerLinkKind::Relay;
+        // 러너가 알린 모드는 조정기로 간다.
+        h.on_notice("r1", "a1", json!({"type":"providerLane.mode","on":true}));
+        assert_eq!(*lane.noted.lock().unwrap(), vec![("r1".to_string(), true)]);
+        // 모드가 다르면 새 턴 자리는 409 이고 자리를 잡지 않는다(상한 1 이 그대로 남는다).
+        let take = fwd("/agent/turn-slots", json!({"key":"k1"}));
+        assert_eq!(
+            status_of(h.on_request("r1", "a1", take.clone(), relay)),
+            409
+        );
+        lane.mismatch
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(status_of(h.on_request("r1", "a1", take, relay)), 200);
+        // 마운트 — 임대가 없으면 409 no_lease, 서버로 넘기지 않는다.
+        let m = fwd("/agent/provider-lane/mount", json!({"cause":"c1"}));
+        assert_eq!(status_of(h.on_request("r1", "a1", m.clone(), relay)), 409);
+        // 브릿지 소켓은 403.
+        assert_eq!(
+            status_of(h.on_request("r1", "a1", m.clone(), RunnerLinkKind::Bridge)),
+            403
+        );
+        // 임대가 서면 값은 <root>/<lease>/<secret id> 0600 파일로, 응답은 주소·경로뿐.
+        h.on_notice(
+            "r1",
+            "a1",
+            json!({"type":"secret.lease","cause":"c1","leaseId":"L1","token":"tk","expiresAt":"2099-01-01T00:00:00.000Z"}),
+        );
+        let body = match h.on_request("r1", "a1", m, relay) {
+            Some(RunnerLinkResponse::HttpResponse {
+                status: 200, body, ..
+            }) => body,
+            other => panic!("{other:?}"),
+        };
+        assert!(
+            !body.contains("sk-lane-value"),
+            "값이 응답에 실렸다: {body}"
+        );
+        let v: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["lane"]["baseUrl"], "https://g.example.com/anthropic");
+        let path = std::path::PathBuf::from(v["lane"]["path"].as_str().unwrap());
+        assert_eq!(path, dir.join("L1").join("sec-1"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "sk-lane-value");
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        // 남의 에이전트로는 그 임대를 못 쓴다.
+        let other = fwd("/agent/provider-lane/mount", json!({"cause":"c1"}));
+        assert_eq!(status_of(h.on_request("r1", "a2", other, relay)), 409);
+        // 서버에는 reveal 만 나갔다(마운트 길 자체는 안 나간다).
+        assert!(
+            tr.0.lock()
+                .unwrap()
+                .iter()
+                .all(|u| u.ends_with("/agent/secrets/reveal"))
+        );
+        // 턴 끝 — 임대 폴더째 지운다.
+        h.on_notice("r1", "a1", json!({"type":"secret.leaseEnded","cause":"c1"}));
+        assert!(!dir.join("L1").exists(), "턴 끝에 키 파일이 남았다");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 판정 재료가 걸리기 전(serve 배선 전)에는 새 턴 자리를 막고, 마운트는 `{lane:null}` 이다.
+    #[test]
+    fn unwired_lane_blocks_new_slots_fail_closed() {
+        let (_srv, _tr, b) = bridge();
+        let h = LinkHandler {
+            mux: Arc::clone(&b.mux),
+            hub: Arc::clone(&b.hub),
+            transport: Arc::new(FakeTransport::default()),
+            base_url: "https://h.example".into(),
+            token: "op".into(),
+            turn_keys: Arc::new(Mutex::new(TurnKeyLedger::new(|| 0, |_| {}))),
+            slots: Arc::new(Mutex::new(TurnSlots::new(Some(1), || 0, |_| {}))),
+            leases: Arc::new(Mutex::new(TurnLeases::new(|| 0))),
+            secrets: None,
+            peek: Arc::new(TurnPeek::new(|| 0)),
+            merge: None,
+            poll_stopped: Arc::new(OnceLock::new()),
+            cleanup_owners: Arc::new(OnceLock::new()),
+            lane: Arc::new(OnceLock::new()),
+            lane_gate_log: GateLog::default(),
+        };
+        let relay = RunnerLinkKind::Relay;
+        let take = fwd("/agent/turn-slots", json!({"key":"k1"}));
+        assert_eq!(status_of(h.on_request("r1", "a1", take, relay)), 409);
+        let m = fwd("/agent/provider-lane/mount", json!({"cause":"c1"}));
+        match h.on_request("r1", "a1", m, relay) {
+            Some(RunnerLinkResponse::HttpResponse {
+                status: 200, body, ..
+            }) => {
+                assert_eq!(body, r#"{"lane":null}"#)
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
