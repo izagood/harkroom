@@ -51,15 +51,14 @@ fn sql() -> &'static Sql {
     })
 }
 
-/// 잠그는 문장들 — 순서는 [`LOCK_ORDER`] 그대로 [`lock_basis`] 가 부른다.
-pub const LOCK_CHANNEL: &str = "select id from channel where id = $1::uuid for share";
-pub const LOCK_ACCOUNTS: &str =
-    "select id from account where id = any($1::uuid[]) order by id for share";
-pub const LOCK_AGENT_CONFIG: &str =
-    "select account_id from agent_config where account_id = $1::uuid for share";
-pub const LOCK_INVOKER: &str =
-    "select 1 from agent_invoker where agent_id = $1::uuid and account_id = $2::uuid for key share";
-pub const LOCK_MEMBER: &str = "select 1 from channel_member where channel_id = $1::uuid and account_id = $2::uuid for key share";
+/// 잠금 함수(마이그레이션 `173_permission_decide_lock.sql`, security A안). 쓰기 역할에 다섯 표의 UPDATE 칸을 주지 않고
+/// SECURITY DEFINER 함수가 [`LOCK_ORDER`] 순으로 잠근다 — 문장과 순서는 함수 본문에 있고, 시험이 그 본문을 대조한다.
+pub const LOCK_FN: &str = "select permission_decide_lock($1::uuid, $2::uuid, $3::uuid)";
+/// 잠금 함수 서명 — `has_function_privilege` 로 쓰기 역할의 EXECUTE 를 본다.
+pub const LOCK_FN_SIGNATURE: &str = "permission_decide_lock(uuid, uuid, uuid)";
+/// 마이그레이션 본문(시험·골든용).
+pub const LOCK_FN_MIGRATION: &str =
+    include_str!("../../../../packages/server/src/db/migrations/173_permission_decide_lock.sql");
 
 /// 시험이 대조하는 잠금 순서(표 이름). 요청 줄은 호출자가 이 뒤에 `for update` 한다.
 pub const LOCK_ORDER: [&str; 5] = [
@@ -122,43 +121,32 @@ impl Default for Checks {
     }
 }
 
-/// 판정 근거가 될 줄을 [`LOCK_ORDER`] 순으로 잠근다. 호출자의 tx 안에서만 부른다.
+/// 판정 근거가 될 줄을 [`LOCK_ORDER`] 순으로 잠근다(잠금 함수 한 번). 호출자의 tx 안에서만 부른다.
 pub async fn lock_basis(
     conn: &mut PgConnection,
     agent: &str,
     actor: &str,
     channel: Option<&str>,
 ) -> sqlx::Result<()> {
-    if let Some(ch) = channel {
-        sqlx::query(LOCK_CHANNEL)
-            .bind(ch)
-            .fetch_optional(&mut *conn)
-            .await?;
-    }
-    let mut ids = vec![agent.to_owned(), actor.to_owned()];
-    ids.sort();
-    ids.dedup();
-    sqlx::query(LOCK_ACCOUNTS)
-        .bind(&ids)
-        .fetch_all(&mut *conn)
-        .await?;
-    sqlx::query(LOCK_AGENT_CONFIG)
-        .bind(agent)
-        .fetch_optional(&mut *conn)
-        .await?;
-    sqlx::query(LOCK_INVOKER)
+    sqlx::query(LOCK_FN)
         .bind(agent)
         .bind(actor)
-        .fetch_optional(&mut *conn)
+        .bind(channel)
+        .execute(&mut *conn)
         .await?;
-    if let Some(ch) = channel {
-        sqlx::query(LOCK_MEMBER)
-            .bind(ch)
-            .bind(actor)
-            .fetch_optional(&mut *conn)
-            .await?;
-    }
     Ok(())
+}
+
+/// 쓰기 역할이 잠금 함수를 부를 수 있나(두 겹 권한 검사의 한 칸). 거짓이면 결정 풀을 `None` 으로 두어 TS 가 맡는다.
+pub async fn has_lock_fn_privilege(pool: &sqlx::PgPool) -> sqlx::Result<bool> {
+    let ok: Option<bool> = sqlx::query_scalar(
+        "select case when to_regprocedure($1) is null then false \
+                else has_function_privilege($1, 'EXECUTE') end",
+    )
+    .bind(LOCK_FN_SIGNATURE)
+    .fetch_one(pool)
+    .await?;
+    Ok(ok == Some(true))
 }
 
 type Row = (
@@ -585,9 +573,98 @@ pub const UNKNOWN_OPTION_MESSAGE: &str = "a permission card takes approve_mandat
 
 /// 요청 줄을 **마지막에** `for update` 로 잠그고 다시 읽는다(잠금 순서 6단계). 호출자는 돌려받은 agent·channel 을 처음 읽은
 /// 값과 대조해 다르면 판정을 다시 한다(잠그기 전 읽은 값으로 판정하지 않는다).
-pub const LOCK_REQUEST: &str = "select agent_id::text, channel_id::text, kind, status, \
-     expires_at <= now() as expired, mandate_id::text, denial_id::text, card_message_id::text \
+pub const LOCK_REQUEST: &str = "select agent_id::text as agent_id, channel_id::text as channel_id, kind, status, \
+     expires_at <= now() as expired, mandate_id::text as mandate_id, denial_id::text as denial_id, \
+     card_message_id::text as card_message_id \
      from permission_request where id = $1::uuid for update";
+
+/// [`LOCK_REQUEST`] 가 돌려준 줄.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LockedRequest {
+    pub agent_id: String,
+    pub channel_id: Option<String>,
+    pub kind: String,
+    pub status: String,
+    pub expired: bool,
+    pub mandate_id: Option<String>,
+    pub denial_id: Option<String>,
+    pub card_message_id: Option<String>,
+}
+
+type LockedRow = (
+    String,
+    Option<String>,
+    String,
+    String,
+    bool,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
+/// 요청 줄을 [`LOCK_REQUEST`] 로 마지막에 잠그고 읽는다.
+pub async fn lock_request(
+    conn: &mut PgConnection,
+    request_id: &str,
+) -> sqlx::Result<Option<LockedRequest>> {
+    let r: Option<LockedRow> = sqlx::query_as(LOCK_REQUEST)
+        .bind(request_id)
+        .fetch_optional(conn)
+        .await?;
+    Ok(r.map(
+        |(agent_id, channel_id, kind, status, expired, mandate_id, denial_id, card_message_id)| {
+            LockedRequest {
+                agent_id,
+                channel_id,
+                kind,
+                status,
+                expired,
+                mandate_id,
+                denial_id,
+                card_message_id,
+            }
+        },
+    ))
+}
+
+/// 요청 줄을 잠근 뒤의 다시 대조(security C3b-3 조건 ①).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Recheck {
+    /// 잠근 값으로도 같은 결정을 Rust 가 맡는다 — 쓰기로 간다.
+    Go(Decision),
+    /// agent·channel 이 처음 읽은 값과 다르다 — 판정을 **처음부터** 다시 한다(잠금도 다시).
+    Restart,
+    /// 잠근 값으로 보니 Rust 가 맡지 않는 꼴(kind·mandate·denial 이 바뀜) — tx 를 되돌리고 TS 로 넘긴다(쓰기 전).
+    HandToTs,
+    /// 요청 줄이 사라졌다.
+    Gone,
+}
+
+/// 처음 읽은 agent·channel 과 잠근 줄을 대조하고, 잠근 kind·mandate_id·denial_id 로 [`rust_takes`] 를 **다시** 돌린다.
+/// status·만료는 이 뒤 쓰기 단계가 TS 와 같은 문구로 가른다(여기서 보지 않음).
+pub fn recheck_locked(
+    first_agent: &str,
+    first_channel: Option<&str>,
+    locked: Option<&LockedRequest>,
+    shape: Shape<'_>,
+) -> Recheck {
+    let Some(r) = locked else {
+        return Recheck::Gone;
+    };
+    if r.agent_id != first_agent || r.channel_id.as_deref() != first_channel {
+        return Recheck::Restart;
+    }
+    let again = Shape {
+        kind: r.kind.as_str(),
+        has_mandate: r.mandate_id.is_some(),
+        has_denial: r.denial_id.is_some(),
+        ..shape
+    };
+    match rust_takes(again) {
+        Some(d) => Recheck::Go(d),
+        None => Recheck::HandToTs,
+    }
+}
 
 /// 결정 감사(`permission.denied`·`permission.approved`)의 detail — TS `decidePermissionRequest` 의 `recordAudit` 와 같은 칸만 싣는다.
 /// 3b·3c 는 이것을 결정과 **같은 tx** 에 INSERT 한다(감사가 실패하면 결정도 실패 → `internal`, TS 로 넘기지 않음).
@@ -643,4 +720,271 @@ pub fn audit_detail(a: &AuditDetail<'_>) -> Value {
         o["bundleMessageId"] = serde_json::json!(b);
     }
     o
+}
+
+// ───────────────────────── C3b-3b 거절(deny) — 쓰기 · 두 겹 검사 · 입구(붙는 길 없음) ─────────────────────────
+
+/// 거절 쓰기 역할의 표·칸 권한 — 요청 줄의 결정 칸 `UPDATE`, 카드 글 `meta` `UPDATE`, 감사 `INSERT`.
+/// 이것과 [`has_lock_fn_privilege`] 가 **둘 다** 참일 때만 [`deny_pool`] 이 풀을 준다(두 겹 검사).
+pub const DENY_PRIVILEGES: &[(&str, &str)] = &[
+    ("permission_request.status", "UPDATE"),
+    ("permission_request.decided_at", "UPDATE"),
+    ("permission_request.decided_by", "UPDATE"),
+    ("permission_request.grant_expires_at", "UPDATE"),
+    ("permission_request.grant_mode", "UPDATE"),
+    ("message.meta", "UPDATE"),
+    ("audit_log", "INSERT"),
+];
+
+/// 두 겹 검사: 표·칸 권한([`DENY_PRIVILEGES`]) **그리고** 잠금 함수 EXECUTE([`has_lock_fn_privilege`]). 하나라도 없거나
+/// 검사가 실패하면 `None` — 거절은 TS 가 맡는다(잠금 없는 판정 길로 Rust 가 결정하는 일은 없다).
+pub async fn deny_pool(pool: &sqlx::PgPool) -> Option<sqlx::PgPool> {
+    match crate::write::missing_in(pool, DENY_PRIVILEGES, &[]).await {
+        Ok(m) if m.is_empty() => {}
+        Ok(m) => {
+            eprintln!("front: permission deny core off — missing privileges {m:?}");
+            return None;
+        }
+        Err(e) => {
+            eprintln!(
+                "front: permission deny core off — privilege check failed ({})",
+                e.as_database_error().map_or("io", |_| "db")
+            );
+            return None;
+        }
+    }
+    match has_lock_fn_privilege(pool).await {
+        Ok(true) => Some(pool.clone()),
+        Ok(false) => {
+            eprintln!("front: permission deny core off — no EXECUTE on {LOCK_FN_SIGNATURE}");
+            None
+        }
+        Err(e) => {
+            eprintln!(
+                "front: permission deny core off — lock fn check failed ({})",
+                e.as_database_error().map_or("io", |_| "db")
+            );
+            None
+        }
+    }
+}
+
+/// [`Recheck::Restart`] 로 판정을 처음부터 다시 하는 횟수의 상한. 넘기면 `internal`(TS 로 넘기지 않음 — C3b-3 ①-4 와 같은 까닭).
+pub const MAX_RESTARTS: usize = 2;
+
+/// 거절 입구의 인자. `agent_id` 는 경로의 에이전트, `actor_id` 는 누른 사람.
+#[derive(Debug, Clone, Copy)]
+pub struct DenyArgs<'a> {
+    pub agent_id: &'a str,
+    pub request_id: &'a str,
+    pub actor_id: &'a str,
+    /// `via: { kind: 'bundle' }` 로 왔으면 그 묶음 글 id. chat·mirror 는 처음부터 TS([`rust_takes`]).
+    pub bundle_message_id: Option<&'a str>,
+}
+
+/// 거절 입구가 끝낸 꼴.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DenyOutcome {
+    /// 쓰고 커밋했다. 카드 답(에이전트 깨우기)·`message.updated` 는 커밋 뒤 호출자 몫(TS `recordAskAnswer` 와 같은 자리).
+    Denied {
+        card_message_id: Option<String>,
+        as_owner: bool,
+    },
+    /// TS 와 같은 거절(상태 코드·code·문구).
+    Refused {
+        status: u16,
+        code: &'static str,
+        message: String,
+    },
+    /// 쓰기 전에 TS 로 넘긴다(되돌렸음) — 만료 카드 닫기·Rust 가 맡지 않는 꼴로 바뀐 요청.
+    HandToTs,
+}
+
+/// 거절 입구가 실패한 꼴 — 둘 다 호출자는 `internal`(쓰기 tx 안에서 났으므로 TS 로 넘기지 않음).
+#[derive(Debug)]
+pub enum DenyError {
+    Lock(LockRetryError),
+    /// [`MAX_RESTARTS`] 번 다시 해도 요청 줄의 agent·channel 이 잠그는 사이에 바뀌었다.
+    RestartsExhausted,
+}
+
+fn refused(status: u16, code: &'static str, message: impl Into<String>) -> DenyOutcome {
+    DenyOutcome::Refused {
+        status,
+        code,
+        message: message.into(),
+    }
+}
+
+fn not_found() -> DenyOutcome {
+    refused(
+        404,
+        "not_found",
+        "no such permission request for this agent",
+    )
+}
+
+/// 요청 줄을 잠근 **뒤**, 같은 tx 안에서 거절을 쓴다: 상태 대조 → 요청 줄 → 카드 글 → 감사(security 조건: 한 tx).
+/// 상태 대조 문구·순서는 TS `decidePermissionRequest` 와 같다. 만료는 카드를 닫는 일이 TS 에 있으므로 쓰기 전에 넘긴다.
+pub async fn deny_write(
+    conn: &mut PgConnection,
+    locked: &LockedRequest,
+    args: DenyArgs<'_>,
+    as_owner: bool,
+) -> sqlx::Result<DenyOutcome> {
+    match locked.status.as_str() {
+        "obsolete" => {
+            return Ok(refused(
+                409,
+                "pr_closed",
+                "that pull request was already merged or closed — this card is closed",
+            ));
+        }
+        "superseded" => {
+            return Ok(refused(
+                409,
+                "superseded",
+                "the agent asked again — decide on the newer card",
+            ));
+        }
+        "pending" => {}
+        s => {
+            return Ok(refused(
+                409,
+                "already_decided",
+                format!("this request is already {s}"),
+            ));
+        }
+    }
+    if locked.expired {
+        return Ok(DenyOutcome::HandToTs);
+    }
+    let (target, channel_id, thread_root_id, now): (
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+    ) = sqlx::query_as(DENY_UPDATE_REQUEST)
+        .bind(args.request_id)
+        .bind(args.actor_id)
+        .fetch_one(&mut *conn)
+        .await?;
+    if let Some(card) = locked.card_message_id.as_deref() {
+        let mut patch = serde_json::json!({
+            "status": "denied", "decidedAt": now, "decidedBy": args.actor_id,
+        });
+        if let Some(b) = args.bundle_message_id {
+            patch["decidedVia"] = serde_json::json!({ "kind": "bundle", "bundleMessageId": b });
+        }
+        patch["decidedByOwner"] = Value::Bool(as_owner);
+        sqlx::query(DENY_UPDATE_CARD)
+            .bind(card)
+            .bind(patch.to_string())
+            .execute(&mut *conn)
+            .await?;
+    }
+    let detail = audit_detail(&AuditDetail {
+        request_id: args.request_id,
+        kind: locked.kind.as_str(),
+        target: target.as_str(),
+        channel_id: channel_id.as_deref(),
+        as_owner,
+        thread_root_id: thread_root_id.as_deref(),
+        grant_expires_at: None,
+        grant_mode: None,
+        bundle_message_id: args.bundle_message_id,
+    });
+    sqlx::query(DENY_AUDIT)
+        .bind(args.actor_id)
+        .bind(args.agent_id)
+        .bind(detail.to_string())
+        .execute(&mut *conn)
+        .await?;
+    Ok(DenyOutcome::Denied {
+        card_message_id: locked.card_message_id.clone(),
+        as_owner,
+    })
+}
+
+/// 요청 줄 결정 칸 — TS 와 같은 칸(`grant_expires_at`·`grant_mode` 는 null). 시각은 DB `now()` 하나를 카드에도 쓴다.
+pub const DENY_UPDATE_REQUEST: &str = "update permission_request set status = 'denied', decided_at = now(), \
+     decided_by = $2::uuid, grant_expires_at = null, grant_mode = null where id = $1::uuid \
+     returning target, channel_id::text, thread_root_id::text, \
+     to_char(now() at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"')";
+/// 카드 글 meta — TS 와 같은 jsonb_set.
+pub const DENY_UPDATE_CARD: &str = "update message set meta = jsonb_set(meta, '{permissionRequest}', \
+     (meta->'permissionRequest') || $2::jsonb) where id = $1::uuid and meta ? 'permissionRequest'";
+/// 감사 — 같은 tx 에 넣는다(실패하면 결정도 되돌림 → `internal`).
+pub const DENY_AUDIT: &str = "insert into audit_log (action, actor_id, target, detail) \
+     values ('permission.denied', $1::uuid, $2, $3::jsonb)";
+
+/// 요청 줄을 잠그지 않고 읽는다(잠금 순서 1단계).
+const PEEK_REQUEST: &str =
+    "select agent_id::text, channel_id::text from permission_request where id = $1::uuid";
+
+/// 한 시도(새 tx): 엿보기 → 근거 잠금·판정 → 요청 줄 잠금·다시 대조 → 쓰기 → 커밋. `None` = [`Recheck::Restart`].
+async fn deny_attempt(
+    pool: &sqlx::PgPool,
+    args: DenyArgs<'_>,
+) -> sqlx::Result<Option<DenyOutcome>> {
+    if !is_uuid(args.request_id) || !is_uuid(args.agent_id) || !is_uuid(args.actor_id) {
+        return Ok(Some(not_found()));
+    }
+    let mut tx = pool.begin().await?;
+    let first: Option<(String, Option<String>)> = sqlx::query_as(PEEK_REQUEST)
+        .bind(args.request_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let Some((agent, channel)) = first else {
+        return Ok(Some(not_found()));
+    };
+    if agent != args.agent_id {
+        return Ok(Some(not_found()));
+    }
+    let v = may_decide_for_locked(&mut tx, &agent, args.actor_id, channel.as_deref()).await?;
+    let locked = lock_request(&mut tx, args.request_id).await?;
+    let shape = Shape {
+        option: "deny",
+        kind: "",
+        has_mandate: false,
+        has_denial: false,
+        has_once: false,
+        via_chat: false,
+        via_mirror: false,
+    };
+    let d = match recheck_locked(&agent, channel.as_deref(), locked.as_ref(), shape) {
+        Recheck::Go(d) => d,
+        Recheck::Restart => return Ok(None),
+        Recheck::HandToTs => return Ok(Some(DenyOutcome::HandToTs)),
+        Recheck::Gone => return Ok(Some(not_found())),
+    };
+    let as_owner = match after_verdict(&v, d) {
+        AfterVerdict::Forbidden => return Ok(Some(refused(403, "forbidden", FORBIDDEN_MESSAGE))),
+        AfterVerdict::HandToTs => return Ok(Some(DenyOutcome::HandToTs)),
+        AfterVerdict::Go { as_owner } => as_owner,
+    };
+    let Some(locked) = locked else {
+        return Ok(Some(not_found()));
+    };
+    let out = deny_write(&mut tx, &locked, args, as_owner).await?;
+    if matches!(out, DenyOutcome::Denied { .. }) {
+        tx.commit().await?;
+    }
+    Ok(Some(out))
+}
+
+/// 거절 입구(붙는 길 없음 — 라우트·MCP 연결은 다음 조각). 시도마다 새 tx 이고, 40P01·55P03 은 [`retry_lock_once`] 로 한 번,
+/// [`Recheck::Restart`] 는 [`MAX_RESTARTS`] 번까지 다시 한다. 둘 다 넘기면 [`DenyError`] → 호출자 `internal`.
+pub async fn decide_deny(
+    pool: &sqlx::PgPool,
+    args: DenyArgs<'_>,
+) -> Result<DenyOutcome, DenyError> {
+    for _ in 0..=MAX_RESTARTS {
+        match retry_lock_once(|| deny_attempt(pool, args)).await {
+            Ok(Some(out)) => return Ok(out),
+            Ok(None) => continue,
+            Err(e) => return Err(DenyError::Lock(e)),
+        }
+    }
+    Err(DenyError::RestartsExhausted)
 }
