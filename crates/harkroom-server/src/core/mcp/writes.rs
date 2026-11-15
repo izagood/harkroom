@@ -5,6 +5,7 @@
 //!   도구 답 모양의 거절로 끝나고 여기까지 오지 않는다.
 //! - 쓰기 풀은 그 줄의 권한이 다 있을 때만 있다(`main.rs` 의 `react_write`). 없으면 `None` — TS 가 답한다.
 //! - 쓰기 중 DB 오류로 `None` 을 내면 TS 가 같은 요청을 다시 돈다. 리액션은 같은 결과로 수렴한다(`on conflict` · 없는 것 떼기도 성공).
+use super::respond::minify;
 use super::tools::{err, uuid_arg};
 use crate::auth::Account;
 use crate::core::msg_react::{
@@ -14,7 +15,14 @@ use serde_json::Value;
 use sqlx::PgPool;
 
 /// 이 묶음에서 Rust 가 답하는 쓰기 도구.
-pub const SERVED: &[&str] = &["message.react", "message.unreact", "inbox.read", "bg.claim"];
+pub const SERVED: &[&str] = &[
+    "message.react",
+    "message.unreact",
+    "inbox.read",
+    "bg.claim",
+    // C4b-ask — 묶음 카드 한 줄 닫기. 선택 카드 쓰기 풀(`ASK_PRIVILEGES`)이 있을 때만.
+    "message.askBundleResolve",
+];
 
 /// `inbox.read`(C4b ④-a) 쓰기 역할의 권한 — 읽음 시각 칸 하나만 고친다. 없으면 `main.rs` 가 풀을 비워 TS 가 답한다.
 pub const INBOX_READ_PRIVILEGES: &[(&str, &str)] = &[("inbox.read_at", "UPDATE")];
@@ -28,6 +36,8 @@ pub struct McpWrites {
     pub inbox: Option<PgPool>,
     /// `bg.claim` — [`super::bg_claim::BG_CLAIM_PRIVILEGES`].
     pub bg: Option<PgPool>,
+    /// `message.askBundleResolve` — C3b-1 `ASK_PRIVILEGES`.
+    pub ask: Option<PgPool>,
 }
 
 /// JS `Number.MAX_SAFE_INTEGER` — 이 밖의 수는 TS 에서 값이 뭉개진다. Rust 는 같은 결과를 낼 수 없으니 TS 로 넘긴다.
@@ -79,6 +89,12 @@ pub async fn answer(
         };
         return Some(inbox_read(write, me, args).await);
     }
+    if tool == "message.askBundleResolve" {
+        let Some(write) = writes.ask.as_ref() else {
+            return Some(None);
+        };
+        return Some(bundle_resolve(read, write, me, args).await);
+    }
     let Some(write) = writes.react.as_ref() else {
         return Some(None);
     };
@@ -117,6 +133,46 @@ async fn inbox_read(write: &PgPool, me: &Account, args: &Value) -> Option<String
             Err(_) => internal(),
         },
     )
+}
+
+/// `note: z.string().min(1).max(1000).optional()` — UTF-16 길이. 칸이 있는데 꼴이 틀리면 zod 오류라 TS 로(`Err`).
+fn note_arg(args: &Value) -> Result<Option<&str>, ()> {
+    match args.get("note") {
+        None => Ok(None),
+        Some(v) => v
+            .as_str()
+            .filter(|s| (1..=1000).contains(&s.encode_utf16().count()))
+            .map(Some)
+            .ok_or(()),
+    }
+}
+
+/// `message.askBundleResolve` — TS `resolveBundleItem`([`crate::core::ask_bundle_resolve`]).
+async fn bundle_resolve(
+    read: &PgPool,
+    write: &PgPool,
+    me: &Account,
+    args: &Value,
+) -> Option<String> {
+    use crate::core::ask_bundle_resolve::{Resolved, refusal_message, resolve};
+    let bundle = uuid_arg(args, "bundleId")?;
+    let root = uuid_arg(args, "rootId")?;
+    let reply = uuid_arg(args, "replyMessageId")?;
+    let note = note_arg(args).ok()?;
+    match resolve(read, write, &me.id, bundle, root, reply, note)
+        .await
+        .ok()?
+    {
+        Resolved::Refused(code) => Some(err(code, refusal_message(code))),
+        Resolved::Bundle(row) => {
+            // 행은 Postgres `json` 글자 — 공백만 지운다(읽기 도구와 같다). meta 의 수 표기가 JS 와 갈릴 수 있으면 `jsonb_as_js` 가 None
+            // 이지만, 쓰기는 이미 끝났으니 TS 로 넘기지 않고 공백만 지운 글자로 답한다(묶음 meta 에는 수가 없다).
+            let row = minify(&row);
+            let row = super::reads2::jsonb_as_js(&row).unwrap_or(row);
+            Some(ok_text(&format!("{{\"message\":{row}}}")))
+        }
+        Resolved::Failed => Some(internal()),
+    }
 }
 
 async fn react(

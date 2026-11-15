@@ -57,7 +57,7 @@ pub struct AskState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum To {
+pub(crate) enum To {
     Human,
     Account(String),
 }
@@ -66,7 +66,7 @@ enum To {
 #[derive(Debug, Clone)]
 pub(super) struct Ask {
     pub(super) options: Vec<String>,
-    to: To,
+    pub(super) to: To,
     pub(super) mirror_of: Option<String>,
     pub(super) answered: bool,
     pub(super) closed: bool,
@@ -473,7 +473,7 @@ fn reply(o: Outcome) -> Response {
 }
 
 /// JS `String.prototype.trim` 이 지우는 것(유니코드 공백 + BOM).
-fn js_trim(s: &str) -> &str {
+pub(crate) fn js_trim(s: &str) -> &str {
     s.trim_matches(|c: char| c.is_whitespace() || c == '\u{FEFF}')
 }
 

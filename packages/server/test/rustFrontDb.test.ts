@@ -1888,6 +1888,126 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         if (prevBg === undefined) delete process.env.HARKROOM_BACKGROUND_ENABLED; else process.env.HARKROOM_BACKGROUND_ENABLED = prevBg;
       }
 
+      // S5.3 C4b-ask — message.askBundleResolve. TS·Rust 가 **각자의 묶음·원본**으로 같은 시나리오를 돌리고, 답 글자(id·시각만 자리표로)·
+      // 원본 meta·깨움 inbox·실시간 이벤트를 견준다. 묶음 줄(TS askBundleItem 모양)은 meta 로 직접 세운다 — askBundle 은 아직 TS 다.
+      {
+        const bOpts = [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }];
+        const cardMeta = (extra: Record<string, unknown> = {}, top: Record<string, unknown> = {}) =>
+          ({ kind: 'ask', ask: { prompt: '고를까?', options: bOpts, to: { kind: 'human' }, ...extra }, ...top });
+        const fixture = async (tag: string) => {
+          const root = await say(`${tag} 원본`, { ch: readCh, author: bot2.accountId, meta: cardMeta() });
+          const answered = await say(`${tag} 답한 원본`, { ch: readCh, author: bot2.accountId, meta: cardMeta({ answeredWith: 'a' }) });
+          const perm = await say(`${tag} 권한 원본`, { ch: readCh, author: bot2.accountId, meta: cardMeta({}, { permissionRequest: { kind: 'tool' } }) });
+          const linked = await say(`${tag} 링크 줄 원본`, { ch: readCh, author: bot2.accountId, meta: cardMeta() });
+          const toMem = await say(`${tag} mem 앞 원본`, { ch: readCh, author: bot2.accountId, meta: cardMeta({ to: { kind: 'account', accountId: member.accountId } }) });
+          const plain = await say(`${tag} 카드 아님`, { ch: readCh, author: bot2.accountId });
+          const item = (rootId: string, extra: Record<string, unknown> = {}) => ({ rootId, prompt: '고를까?', options: bOpts, ...extra });
+          const items = [item(root), item(answered), item(perm), item(linked, { link: { kind: 'permission' } }), item(toMem), item(plain)];
+          const bundle = await say(`${tag} 묶음`, { ch: readCh, meta: { kind: 'askBundle', askBundle: { items } } });
+          const notMine = await say(`${tag} 남의 묶음`, { ch: readCh, author: bot2.accountId, meta: { kind: 'askBundle', askBundle: { items } } });
+          const reply = await say(`${tag} 사람 답`, { ch: readCh, root: bundle, author: admin.accountId });
+          const agentReply = await say(`${tag} 에이전트 답`, { ch: readCh, root: bundle });
+          const elsewhere = await say(`${tag} 다른 스레드 사람 글`, { ch: readCh, author: admin.accountId });
+          return { root, answered, perm, linked, toMem, plain, bundle, notMine, reply, agentReply, elsewhere };
+        };
+        type Fx = Awaited<ReturnType<typeof fixture>>;
+        const [fT, fR] = [await fixture('T'), await fixture('R')];
+        const ids = (x: Fx) => Object.entries(x).map(([k, v]) => [v, `<${k}>`] as const);
+        const normText = (t: string, x: Fx) => ids(x)
+          .reduce((s, [v, k]) => s.split(v).join(k), t)
+          .replace(/\d{4}-\d\d-\d\dT[\d:.]+(Z|[+-]\d\d:\d\d)/g, '<ts>')
+          .replace(/(\\*"seq\\*":)\d+/g, '$1"<seq>"')
+          .replace(/(T|R) (원본|답한 원본|권한 원본|링크 줄 원본|mem 앞 원본|카드 아님|묶음|남의 묶음|사람 답|에이전트 답|다른 스레드 사람 글)/g, '$2');
+        const cases: [string, (x: Fx) => unknown, boolean][] = [
+          ['없는 묶음', (x) => ({ bundleId: missingCh, rootId: x.root, replyMessageId: x.reply }), true],
+          ['남의 묶음', (x) => ({ bundleId: x.notMine, rootId: x.root, replyMessageId: x.reply }), true],
+          ['묶음 아닌 글', (x) => ({ bundleId: x.plain, rootId: x.root, replyMessageId: x.reply }), true],
+          ['줄 없음', (x) => ({ bundleId: x.bundle, rootId: x.reply, replyMessageId: x.reply }), true],
+          ['권한 원본', (x) => ({ bundleId: x.bundle, rootId: x.perm, replyMessageId: x.reply }), true],
+          ['링크 줄', (x) => ({ bundleId: x.bundle, rootId: x.linked, replyMessageId: x.reply }), true],
+          ['에이전트 글', (x) => ({ bundleId: x.bundle, rootId: x.root, replyMessageId: x.agentReply }), true],
+          ['다른 스레드 글', (x) => ({ bundleId: x.bundle, rootId: x.root, replyMessageId: x.elsewhere }), true],
+          ['답한 원본', (x) => ({ bundleId: x.bundle, rootId: x.answered, replyMessageId: x.reply }), true],
+          ['mem 앞 원본에 admin 글', (x) => ({ bundleId: x.bundle, rootId: x.toMem, replyMessageId: x.reply }), true],
+          ['카드 아닌 원본', (x) => ({ bundleId: x.bundle, rootId: x.plain, replyMessageId: x.reply }), true],
+          ['note 빈 글 → TS(zod)', (x) => ({ bundleId: x.bundle, rootId: x.root, replyMessageId: x.reply, note: '' }), false],
+          ['note 숫자 → TS(zod)', (x) => ({ bundleId: x.bundle, rootId: x.root, replyMessageId: x.reply, note: 1 }), false],
+          ['uuid 아님 → TS', (x) => ({ bundleId: 'x', rootId: x.root, replyMessageId: x.reply }), false],
+          ['인자 없음 → TS', () => undefined, false],
+          ['닫기', (x) => ({ bundleId: x.bundle, rootId: x.root, replyMessageId: x.reply, note: '  A 로 가자  ' }), true],
+          ['다시 닫기', (x) => ({ bundleId: x.bundle, rootId: x.root, replyMessageId: x.reply }), true],
+        ];
+        const seenB: WorkspaceEvent[] = [];
+        const offB = onEvent((e) => { seenB.push(e); });
+        const busFromB = busEvents.length;
+        for (const [name, args, byRust] of cases) {
+          const a = await mcpCall(tsUrl, agent.pat, 'message.askBundleResolve', args(fT));
+          const b = await mcpCall(rsUrl4, agent.pat, 'message.askBundleResolve', args(fR));
+          expect({ status: b.status, type: b.type, text: normText(b.text, fR) }, name)
+            .toEqual({ status: a.status, type: a.type, text: normText(a.text, fT) });
+          expect(b.core, `${name} — 누가 답했나`).toBe(byRust ? 'mcp' : null);
+        }
+        // 빈 것끼리 같아 통과하지 않게 — 거절 코드와 성공 모양을 Rust 답에서 따로 본다.
+        const rsB = (args: unknown) => mcpCall(rsUrl4, agent.pat, 'message.askBundleResolve', args);
+        for (const [code, args] of [
+          ['bundle_not_found', { bundleId: missingCh, rootId: fR.root, replyMessageId: fR.reply }],
+          ['bundle_not_yours', { bundleId: fR.notMine, rootId: fR.root, replyMessageId: fR.reply }],
+          ['bundle_item_not_found', { bundleId: fR.bundle, rootId: fR.reply, replyMessageId: fR.reply }],
+          ['bundle_item_link', { bundleId: fR.bundle, rootId: fR.perm, replyMessageId: fR.reply }],
+          ['bundle_reply_invalid', { bundleId: fR.bundle, rootId: fR.toMem, replyMessageId: fR.reply }],
+          ['bundle_item_resolved', { bundleId: fR.bundle, rootId: fR.answered, replyMessageId: fR.reply }],
+          ['mirror_not_found', { bundleId: fR.bundle, rootId: fR.plain, replyMessageId: fR.reply }],
+        ] as const) {
+          const r = await rsB(args);
+          expect(r.core, code).toBe('mcp');
+          expect(r.text, code).toContain(`\\"code\\":\\"${code}\\"`);
+        }
+        // 원본 meta — 닫은 이름은 글쓴 사람(admin), 요지는 다듬어 실리고 요지를 옮긴 쪽은 에이전트.
+        const askOf = async (id: string) => (await db.pool.query<{ ask: Record<string, unknown> }>(
+          `select meta->'ask' as ask from message where id = $1`, [id])).rows[0]!.ask;
+        const strip = (a: Record<string, unknown>, x: Fx) => ({ ...a, closedAt: typeof a.closedAt, replyMessageId: a.replyMessageId === x.reply });
+        expect(strip(await askOf(fR.root), fR), 'Rust 원본 = TS 원본').toEqual(strip(await askOf(fT.root), fT));
+        expect(await askOf(fR.root)).toMatchObject({ closedBy: admin.accountId, closedReason: 'replied', replyNote: 'A 로 가자', replyNoteBy: agent.accountId });
+        // 원본을 세운 쪽(bot2) 깨움 — 양쪽 다 ask_closed 한 줄.
+        const woke = async (id: string) => (await db.pool.query<{ reason: string }>(
+          `select reason from inbox where account_id = $1 and message_id = $2`, [bot2.accountId, id])).rows.map((r) => r.reason);
+        expect(await woke(fR.root)).toEqual(await woke(fT.root));
+        expect(await woke(fR.root)).toEqual(['ask_closed']);
+        // 실시간 이벤트 — TS(onEvent) 와 Rust(outbox → 버스)를 audience 까지 견준다. 상태 리액션(TS 감시자가 message.updated 를 듣고
+        // 다는 것)은 Rust 쪽에서도 TS 프로세스가 내므로 쓰기 이벤트와 따로 둔다(C3b-1 대조와 같은 까닭).
+        const mine = (list: WorkspaceEvent[], x: Fx) => list
+          .filter((e) => !e.type.startsWith('reaction.'))
+          .filter((e) => { const s = JSON.stringify(e); return s.includes(x.root) || s.includes(x.bundle) || (e.type === 'inbox.updated' && (e as { accountId?: string }).accountId === bot2.accountId); })
+          .map((e) => JSON.parse(normText(JSON.stringify(e), x)) as unknown)
+          // 묶음 맞추기의 차례는 TS·Rust 모두 정하지 않는다(order by 없음) — 차례 말고 모음으로 견준다.
+          .sort((p, q) => JSON.stringify(p).localeCompare(JSON.stringify(q)));
+        const untilB = Date.now() + 5000;
+        while (mine(busEvents.slice(busFromB), fR).length < mine(seenB, fT).length && Date.now() < untilB) await new Promise((r) => setTimeout(r, 50));
+        offB();
+        expect(mine(seenB, fT).length, 'TS 이벤트가 있다').toBeGreaterThanOrEqual(3);
+        expect(mine(busEvents.slice(busFromB), fR), 'Rust 이벤트 = TS 이벤트').toEqual(mine(seenB, fT));
+
+        // W1 — 쓰기 뒤 오류는 TS 로 넘기지 않는다. meta 고치기 권한을 잠깐 거두면 update 가 실패 → Rust internal, 원본은 열린 채.
+        const w1 = await fixture('W');
+        await db.pool.query(`revoke update (meta) on message from ${rw}`);
+        try {
+          const r = await rsB({ bundleId: w1.bundle, rootId: w1.root, replyMessageId: w1.reply });
+          expect(r.core, 'W1 — Rust 가 답한다').toBe('mcp');
+          expect(r.text).toContain('\\"code\\":\\"internal\\"');
+          expect((await askOf(w1.root)).closedAt, 'TS 가 대신 닫지 않았다').toBeUndefined();
+        } finally {
+          await db.pool.query(`grant update (meta) on message to ${rw}`);
+        }
+
+        // 대문자 replyMessageId — 원본 meta 에는 입력 글자가 아니라 DB 의 id(소문자)가 적힌다. TS(`reply.id`)와 같다.
+        const [uT, uR] = [await fixture('UT'), await fixture('UR')];
+        const upper = (x: Fx) => ({ bundleId: x.bundle, rootId: x.root, replyMessageId: x.reply.toUpperCase() });
+        expect((await mcpCall(tsUrl, agent.pat, 'message.askBundleResolve', upper(uT))).core, '대문자 — TS').toBeNull();
+        expect((await rsB(upper(uR))).core, '대문자 — Rust 가 답한다').toBe('mcp');
+        expect((await askOf(uT.root)).replyMessageId, 'TS 는 소문자로 적는다').toBe(uT.reply);
+        expect((await askOf(uR.root)).replyMessageId, 'Rust 도 소문자로 적는다').toBe(uR.reply);
+      }
+
       // S5.3 C4a-6b — message.search. 본문 멘션 되돌리기·시스템 줄·스코프(채널·스레드)·거르기(보낸 사람·첨부)·정렬·쪽(51개 → hasMore,
       // 천장 1000)·못 보는 채널(결과에서 빠짐 · 범위로 주면 forbidden). `@`·기간·틀린 꼴은 TS 로 넘긴다.
       const searchCh = String((await ok(app.inject({ method: 'POST', url: '/channels', headers: auth, payload: { name: 'mcp-search' } }))).id);
