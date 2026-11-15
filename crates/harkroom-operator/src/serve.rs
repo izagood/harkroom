@@ -366,6 +366,8 @@ pub fn spawn_server_link(
     // 작업 폴더 청소가 쓸 몫(s21c5-4) — 같은 이유로 먼저 떼어 둔다.
     let cleanup_cfg = local.clone();
     let cleanup_home = home.clone();
+    // PR 감시 폴러가 쓸 몫 — 같은 이유로 먼저 떼어 둔다(에이전트 목록은 tick 마다 operator.json 에서 다시 읽는다).
+    let watch_cfg = local.clone();
     // 능력(`{agentIds, harnesses}`)은 hello 와 설정 변경 알림이 같이 쓴다 — 매번 새로 잰다.
     let caps: std::sync::Arc<dyn Fn() -> serde_json::Value + Send + Sync> =
         std::sync::Arc::new(move || {
@@ -397,6 +399,19 @@ pub fn spawn_server_link(
             });
         }));
     }
+    // 머지·`pr.status` 의 gh 계정은 이 커뮤니티 `operator.json` 의 `merge`(TS run.ts `ghUserFor`). 부를 때마다 다시 읽는다.
+    // PR 감시 폴러도 같은 한 벌을 쓴다(TS run.ts 의 `prFirstSeen` 공유).
+    let merge_handlers = {
+        let cfg = merge_cfg;
+        crate::bridge::MergeHandlers::system(
+            crate::local_merge::default_gh_path(),
+            merge_home,
+            std::sync::Arc::new(move |repo: &str| {
+                let c = cfg.read_config().ok()?;
+                crate::local_merge::pick_merge_gh_user(c.get("merge"), repo)
+            }),
+        )
+    };
     // 러너 링크·다중화기·서버 전달(s21b-2). 러너 요청은 이 커뮤니티의 오퍼레이터 토큰으로 서버에 넘긴다.
     let bridge = crate::bridge::build_bridge(
         std::sync::Arc::new(link.clone()),
@@ -414,19 +429,21 @@ pub fn spawn_server_link(
             }
             Some(r)
         },
-        {
-            // 머지·`pr.status` 의 gh 계정은 이 커뮤니티 `operator.json` 의 `merge`(TS run.ts `ghUserFor`). 부를 때마다 다시 읽는다.
-            let cfg = merge_cfg;
-            Some(crate::bridge::MergeHandlers::system(
-                crate::local_merge::default_gh_path(),
-                merge_home,
-                std::sync::Arc::new(move |repo: &str| {
-                    let c = cfg.read_config().ok()?;
-                    crate::local_merge::pick_merge_gh_user(c.get("merge"), repo)
-                }),
-            ))
-        },
+        Some(merge_handlers.clone()),
     );
+    // PR 감시 폴러(위임 재설계 P5, TS run.ts `createPrWatchPoller(...).start()`) — `pr.status` 와 같은 gh 길·같은 「처음 본 시각」.
+    // 서버 스위치가 꺼지면 due 가 비어 gh 를 부르지 않는다. 프로세스와 함께 산다(TS 처럼 멈추지 않는다).
+    crate::pr_watch_poller::PrWatchPoller {
+        pr: merge_handlers.pr_status.clone(),
+        http: crate::pr_watch_poller::agent_http(
+            std::sync::Arc::new(crate::forward::UreqTransport::default()),
+            base_url.clone(),
+            token.clone(),
+        ),
+        agent_ids: std::sync::Arc::new(move || watch_cfg.agent_ids()),
+        log: std::sync::Arc::new(|line: &str| eprintln!("{line}")),
+    }
+    .start();
     state.set_runner_link(std::sync::Arc::clone(&bridge.runner_link));
     // 앱의 `terminal*` 요청이 같은 허브를 쓴다(s21c-4).
     state.set_local_terminal(std::sync::Arc::clone(&bridge.hub));
