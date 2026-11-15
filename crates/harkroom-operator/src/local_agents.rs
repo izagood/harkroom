@@ -376,8 +376,8 @@ impl LocalAgents {
             if let Some(l) = lane {
                 entry.insert("providerLane".into(), l);
             }
-            // runner 도 이 길로 바뀌지 않는다(B4-5a, TS `knownRunner`) — 아는 값만 옮기고 모르는 값은 버린다.
-            if let Some(k) = known_runner(agents.get(agent_id)) {
+            // runner 도 이 길로 바뀌지 않는다(B4-5a) — 모르는 값은 `node` 로 옮겨 적는다(지우면 기본 rust 가 켜진다).
+            if let Some(k) = runner_kind_of(agents.get(agent_id)) {
                 entry.insert("runner".into(), Value::String(k.as_str().into()));
             }
             agents.insert(agent_id.to_string(), Value::Object(entry));
@@ -492,13 +492,22 @@ impl RunnerKind {
     }
 }
 
-/// TS `runnerKindOf` — 에이전트 항목의 `runner` 가 정확히 `"rust"` 일 때만 `Rust`, 항목·칸이 없거나 모르는 값이면 `Node`.
-/// 손으로 고친 파일의 오타가 새 길을 켜지 않게 켜는 쪽만 좁게 받는다. 오퍼레이터가 이것으로 러너를 고르는 것은 B4-5c 다.
-pub fn runner_kind_of(entry: Option<&Value>) -> RunnerKind {
-    match entry.and_then(|e| e.get("runner")).and_then(Value::as_str) {
-        Some("rust") => RunnerKind::Rust,
-        _ => RunnerKind::Node,
+/// TS `runnerKindOf` — 에이전트 항목에 **적힌** 러너: 정확히 `"rust"`·`"node"` 만 `Some`, 항목·칸이 없거나 모르는 값이면 `None`.
+/// `None` 은 「안 적음」이고 기본(s9① 부터 rust, 조건을 못 넘으면 node)을 따른다 — `runner_pick.rs`. 되돌림은 정확한 `"node"` 뿐이다.
+///
+/// 칸이 **없거나 null** 이면 `None`(기본 rust). 정확히 `"rust"`·`"node"` 는 그대로. 그 밖에 무엇이든 적혀 있으면(오타
+/// `"Node"`·`"rs"`·숫자 등) 기본을 끄려던 뜻으로 보고 **node** 로 본다 — 오타가 새 길을 켜지 않게(B4-5a, security #2166).
+pub fn runner_kind_of(entry: Option<&Value>) -> Option<RunnerKind> {
+    let raw = entry.and_then(|e| e.get("runner"))?;
+    if raw.is_null() {
+        return None;
     }
+    Some(known_runner(entry).unwrap_or_else(|| {
+        eprintln!(
+            "[operator] runner 칸의 값을 모른다 — node 러너로 띄운다(\"rust\"·\"node\" 만 안다)"
+        );
+        RunnerKind::Node
+    }))
 }
 
 /// TS `knownRunner` — 파일에 이미 적힌 `runner` 중 옮겨 적을 값(아는 두 값만).
@@ -806,16 +815,16 @@ mod tests {
     }
 
     #[test]
-    fn runner_kind_is_rust_only_for_exact_rust() {
+    fn runner_kind_is_some_only_for_exact_values() {
         assert_eq!(
             runner_kind_of(Some(&json!({"runner":"rust"}))),
-            RunnerKind::Rust
+            Some(RunnerKind::Rust)
         );
-        assert_eq!(runner_kind_of(None), RunnerKind::Node);
-        assert_eq!(runner_kind_of(Some(&json!({}))), RunnerKind::Node);
+        assert_eq!(runner_kind_of(None), None);
+        assert_eq!(runner_kind_of(Some(&json!({}))), None);
         assert_eq!(
             runner_kind_of(Some(&json!({"runner":"node"}))),
-            RunnerKind::Node
+            Some(RunnerKind::Node)
         );
         for v in [
             json!("Rust"),
@@ -825,20 +834,22 @@ mod tests {
             json!(""),
             json!(1),
             json!(true),
-            json!(null),
             json!(["rust"]),
             json!({"kind":"rust"}),
         ] {
+            // 무언가 적었으면 기본을 끄려던 뜻 — 모르는 값은 node(security #2166).
             assert_eq!(
                 runner_kind_of(Some(&json!({ "runner": v }))),
-                RunnerKind::Node,
+                Some(RunnerKind::Node),
                 "{v}"
             );
         }
+        // null 은 안 적은 것과 같다.
+        assert_eq!(runner_kind_of(Some(&json!({ "runner": null }))), None);
     }
 
     #[test]
-    fn set_carries_known_runner_and_drops_unknown() {
+    fn set_carries_known_runner_and_writes_unknown_as_node() {
         let r = root();
         let la = LocalAgents::new(&r, URL);
         fs::create_dir_all(Path::new(&r).join("operator")).unwrap();
@@ -858,7 +869,8 @@ mod tests {
         let agents = &v["communities"]["https://a.example.com/"]["agents"];
         assert_eq!(agents["a"], json!({"workingDir":"/w","runner":"rust"}));
         assert_eq!(agents["b"], json!({"workingDir":"/w","runner":"node"}));
-        assert_eq!(agents["c"], json!({"workingDir":"/w"}));
+        // 모르는 값을 지우면 기본 rust 가 켜진다 — node 로 옮겨 적는다.
+        assert_eq!(agents["c"], json!({"workingDir":"/w","runner":"node"}));
     }
 
     #[test]
