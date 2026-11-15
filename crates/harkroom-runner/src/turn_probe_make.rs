@@ -13,8 +13,11 @@
 //!   말없이 끝난 API 키 연결 턴이 [`crate::turn_probe::ProbeIo::nudge_or_expire`] 까지 간다. 조회 env 는 **허용 목록**
 //!   ([`crate::pi_home::aux_query_env`], 정본 #2147 `opencodeQueryEnv`)이라 러너 링크 열쇠·턴 열쇠가 들어가지 않는다.
 //!
+//! - 재촉 판정의 마지막 말은 claude 기록(`read_last_assistant_text`)을 먼저, 없으면 API 키 연결 턴에 한해 하네스 자체 기록
+//!   ([`lane_harness_said`] — codex rollout·opencode/kilo export)을 본다(정본 `recordSaid ?? harnessSaid`).
+//!
 //! 아직 없는 것: 화면 끝 감시가 없어(`screen_idle_ended` 가 `None`) 하네스 자체 기록의 차례 끝(`read_recorded_end`)은 불리지
-//! 않는다 — `None` 으로 둔다. codex/opencode 의 마지막 말도 아직 잇지 않는다(claude 기록만).
+//! 않는다 — `None` 으로 둔다.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -22,12 +25,13 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use crate::adapter::{AgentHarness, harness_command, reads_session_transcript, uses_xdg_home};
+use crate::adapter::{LastSaidRecord, last_said_record_of};
 use crate::config::Env;
 use crate::harness_errors::{
     MacPermissionWait, PermissionDenial, TranscriptDirs, read_last_assistant_text,
     session_transcript_mtime_ms,
 };
-use crate::harness_records::OpencodeCall;
+use crate::harness_records::{HarnessLastSaidOpts, OpencodeCall, read_harness_last_said};
 use crate::mcp::HarkroomMcpClient;
 use crate::mention_parts::LoopCtx;
 use crate::opencode_home::opencode_dirs;
@@ -108,6 +112,45 @@ pub fn opencode_query(
     })
 }
 
+/// 정본 `readLaneHarnessSaid` — 화면으로 끝을 아는 하네스(codex·opencode·kilo)의 이 턴 끝말을 하네스 자체 기록에서 읽는다.
+/// 부르는 쪽이 API 키 연결 턴에만 부른다(구독 턴은 기록 대리 게시를 켜지 않아 화면 답을 그대로 둔다). 기록 자리가 없으면
+/// (codex 홈·opencode 조회 자리 없음) `None` — 짐작으로 다른 홈을 뒤지지 않는다.
+pub fn lane_harness_said(
+    harness: AgentHarness,
+    session_id: Option<&str>,
+    since_ms: i64,
+    codex_home: Option<&Path>,
+    opencode: Option<&OpencodeQuery>,
+) -> Option<String> {
+    let record = last_said_record_of(harness)?;
+    let codex_dir = match (record, codex_home) {
+        (LastSaidRecord::CodexRollout, None) => return None,
+        (_, home) => home
+            .map(crate::codex_home::codex_sessions_dir)
+            .unwrap_or_default(),
+    };
+    // codex 길은 opencode 조회를 쓰지 않는다 — 빈 자리를 넘겨도 불리지 않는다.
+    let unused = OpencodeQuery {
+        command: PathBuf::new(),
+        env: Env::new(),
+        cwd: PathBuf::new(),
+    };
+    let oc = match (record, opencode) {
+        (LastSaidRecord::OpencodeExport, None) => return None,
+        (_, Some(q)) => q,
+        (_, None) => &unused,
+    };
+    read_harness_last_said(
+        harness,
+        &HarnessLastSaidOpts {
+            session_id,
+            since_ms,
+            codex_sessions_dir: &codex_dir,
+            opencode: oc.call(),
+        },
+    )
+}
+
 /// 멘션 단위 설정 — 시도마다 바뀌는 값은 넣지 않는다.
 pub struct ProbeLoopConfig<'a, L: RunnerLink> {
     pub client: &'a HarkroomMcpClient<L>,
@@ -118,6 +161,8 @@ pub struct ProbeLoopConfig<'a, L: RunnerLink> {
     pub harness: AgentHarness,
     pub home: Option<PathBuf>,
     pub omp_home: Option<PathBuf>,
+    /// codex 격리 홈 — lane 턴의 codex 끝말([`lane_harness_said`])을 찾는 자리. 그 밖은 `None`.
+    pub codex_home: Option<PathBuf>,
     /// opencode·kilo 차례 끝 조회 자리([`opencode_query`]). 그 밖의 하네스는 `None`.
     pub opencode: Option<Arc<OpencodeQuery>>,
     pub end_cfg: EndConfig,
@@ -248,6 +293,7 @@ pub fn probe_make<'a, L: RunnerLink + 'a>(
                     .map_err(|e| e.to_string())
             });
             let said_records = records_of(c, ctx);
+            let (lane_said, codex_home) = (c.lane_tui, c.codex_home.clone());
             let (key, me, ch2, root2, start_seq, turn_id) = (
                 c.key.clone(),
                 c.me_id.clone(),
@@ -263,12 +309,26 @@ pub fn probe_make<'a, L: RunnerLink + 'a>(
                 c.caller,
                 watch.clone(),
                 Box::new(move || {
+                    let r = &said_records;
                     read_last_assistant_text(
-                        said_records.harness,
-                        said_records.session_id.as_deref(),
-                        said_records.dirs(),
-                        Some(said_records.since_ms),
+                        r.harness,
+                        r.session_id.as_deref(),
+                        r.dirs(),
+                        Some(r.since_ms),
                     )
+                    .or_else(|| {
+                        lane_said
+                            .then(|| {
+                                lane_harness_said(
+                                    r.harness,
+                                    r.session_id.as_deref(),
+                                    r.since_ms,
+                                    codex_home.as_deref(),
+                                    r.opencode.as_deref(),
+                                )
+                            })
+                            .flatten()
+                    })
                 }),
                 Box::new(move || {
                     let mut io = client;
