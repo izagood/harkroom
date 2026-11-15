@@ -8,6 +8,7 @@ pub mod ask;
 pub mod ask_sync;
 pub mod audience;
 pub mod channels;
+pub mod content_scan;
 pub mod events;
 pub mod invoke_gate;
 pub mod mcp;
