@@ -363,6 +363,10 @@ pub fn spawn_server_link(
     let assign_login_path = login_path.clone();
     let secrets_dir = secrets_root.to_string_lossy().into_owned();
     let merge_home = home.clone();
+    // gh 계정 보고(D1)가 쓸 몫 — 로컬 에이전트 유무·`merge` 설정·gh 로그인(이름뿐).
+    let gh_cfg = local.clone();
+    let gh_home = home.clone();
+    let gh_ledger = std::sync::Arc::new(crate::gh_report::GhLedger::default());
     // 작업 폴더 청소가 쓸 몫(s21c5-4) — 같은 이유로 먼저 떼어 둔다.
     let cleanup_cfg = local.clone();
     let cleanup_home = home.clone();
@@ -401,16 +405,19 @@ pub fn spawn_server_link(
     }
     // 머지·`pr.status` 의 gh 계정은 이 커뮤니티 `operator.json` 의 `merge`(TS run.ts `ghUserFor`). 부를 때마다 다시 읽는다.
     // PR 감시 폴러도 같은 한 벌을 쓴다(TS run.ts 의 `prFirstSeen` 공유).
+    // gh 계정 보고 장부는 머지 길만 채운다(TS `noteGhUse`) — 폴러는 `pr_status` 만 쓰므로 장부에 닿지 않는다.
     let merge_handlers = {
         let cfg = merge_cfg;
-        crate::bridge::MergeHandlers::system(
+        let mut h = crate::bridge::MergeHandlers::system(
             crate::local_merge::default_gh_path(),
             merge_home,
             std::sync::Arc::new(move |repo: &str| {
                 let c = cfg.read_config().ok()?;
                 crate::local_merge::pick_merge_gh_user(c.get("merge"), repo)
             }),
-        )
+        );
+        h.gh_ledger = std::sync::Arc::clone(&gh_ledger);
+        h
     };
     // 러너 링크·다중화기·서버 전달(s21b-2). 러너 요청은 이 커뮤니티의 오퍼레이터 토큰으로 서버에 넘긴다.
     let bridge = crate::bridge::build_bridge(
@@ -638,6 +645,66 @@ pub fn spawn_server_link(
             }
         });
     }
+    // gh 계정 보고(D1, TS community.ts `beatGh`) — 붙을 때·주인 같은 배정이 올 때·박동(30초)마다. 같은 값이면 보내지 않는다.
+    let (gh_kick, gh_rx) = std::sync::mpsc::channel::<()>();
+    let gh_reporter = std::sync::Arc::new(crate::gh_report::GhReporter::new(gh_ledger));
+    {
+        struct Ports {
+            cfg: LocalAgents,
+            home: String,
+            logins: crate::gh_report::LoginsCache,
+            frames: std::sync::Arc<crate::community::AssignmentFrames>,
+            owner: std::sync::Arc<crate::community::OwnerCell>,
+            link: crate::server_link::ServerLink,
+        }
+        impl crate::gh_report::GhReportPorts for Ports {
+            fn has_local_agents(&self) -> bool {
+                !self.cfg.agent_ids().is_empty()
+            }
+            fn merge_config(&self) -> Option<serde_json::Value> {
+                self.cfg.read_config().ok()?.get("merge").cloned()
+            }
+            fn logins(&self) -> Vec<String> {
+                self.logins.get(std::time::Instant::now(), || {
+                    crate::gh_report::read_gh_logins(
+                        &crate::local_merge::default_exec(),
+                        &crate::local_merge::default_gh_path(),
+                        &self.home,
+                    )
+                })
+            }
+            fn own_agent_attached(&self) -> bool {
+                // 주인을 못 읽으면(None) 싣지 않는다.
+                let me = self.owner.wait(Duration::from_secs(10));
+                self.frames.own_agent_attached(me.as_deref())
+            }
+            fn send(&self, report: serde_json::Value) -> bool {
+                self.link.send(&OperatorToServerFrame::GhReport { report })
+            }
+        }
+        let ports = Ports {
+            cfg: gh_cfg,
+            home: gh_home,
+            logins: crate::gh_report::LoginsCache::default(),
+            frames: std::sync::Arc::clone(&frames),
+            owner: std::sync::Arc::clone(&owner),
+            link: link.clone(),
+        };
+        let reporter = std::sync::Arc::clone(&gh_reporter);
+        let _ = std::thread::Builder::new()
+            .name("gh-report".into())
+            .spawn(move || {
+                use std::sync::mpsc::RecvTimeoutError;
+                while let Ok(()) | Err(RecvTimeoutError::Timeout) =
+                    gh_rx.recv_timeout(Duration::from_secs(30))
+                {
+                    if ports.link.connected() {
+                        reporter.beat(&ports);
+                    }
+                }
+            });
+    }
+    let open_gh_kick = gh_kick.clone();
     let runners_state = state.clone();
     let hello_mux = std::sync::Arc::clone(&mux);
     let hello = Box::new(move || {
@@ -655,6 +722,13 @@ pub fn spawn_server_link(
     let on_frame = Box::new(move |frame: harkroom_proto::p2::ServerToOperatorFrame| {
         // 배정 프레임은 조정기로(작업 스레드에서 차례로 처리한다).
         if frames.on_frame(&frame, &*local_of) {
+            // 주인이 같은 에이전트가 붙으면 로그인 목록을 다음 박동까지 기다리지 않고 낸다(TS `beatGh`).
+            if matches!(
+                frame,
+                harkroom_proto::p2::ServerToOperatorFrame::Assign { .. }
+            ) {
+                let _ = gh_kick.send(());
+            }
             // 재전송 묶음 끝 — 배정에 없는 채택 러너 회수(①b). `ps` 를 부르므로 링크 스레드 밖에서 한다.
             if matches!(
                 frame,
@@ -720,6 +794,9 @@ pub fn spawn_server_link(
             });
         // 재접속 사이에 놓친 세션 목록을 다시 낸다(TS community.ts onOpen).
         mux.resync();
+        // gh 보고는 다시 붙으면 잊고 곧바로 낸다 — 서버가 첫 값을 받게(TS `lastGh = null`).
+        gh_reporter.reset();
+        let _ = open_gh_kick.send(());
     }));
     opts.on_close = Some(Box::new(move |reason: &str| {
         close_frames.reset_synced();

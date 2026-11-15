@@ -318,6 +318,9 @@ enum Job {
 pub struct AssignmentFrames {
     tx: Mutex<Sender<Job>>,
     assigned: Arc<Mutex<HashSet<String>>>,
+    /// 받아들인 배정의 주인(`definition.ownerAccountId`) — gh 계정 보고가 머신 값을 실어도 되나 잰다(TS `assignments`).
+    /// 거절된 배정은 작업 스레드가 `assigned` 와 함께 여기서도 지운다(security L1 — 안 붙은 주인 에이전트로 머신 값을 싣지 않게).
+    owners: Arc<Mutex<std::collections::HashMap<String, Option<String>>>>,
     reconciler: Arc<AssignmentReconciler>,
     /// 회수 기준(s21c-2c-1b-2, TS community.ts `syncedKeep`) — 이번 연결에서 받은 「남길 것」. 못 받았으면 None.
     synced: Mutex<SyncedState>,
@@ -398,6 +401,8 @@ impl AssignmentFrames {
         let assigned = Arc::new(Mutex::new(HashSet::new()));
         let worker_rec = Arc::clone(&reconciler);
         let worker_set = Arc::clone(&assigned);
+        let owners = Arc::new(Mutex::new(std::collections::HashMap::new()));
+        let worker_owners = Arc::clone(&owners);
         let _ = std::thread::Builder::new()
             .name("assignments".into())
             .spawn(move || {
@@ -409,6 +414,7 @@ impl AssignmentFrames {
                                 Ok(AssignOutcome::Refused(reason)) => {
                                     // 거절은 조용히 안 뜨는 것이 아니다 — 서버가 사유를 본다. runnerId 는 이 통지만을 위한 새 값.
                                     lock(&worker_set).remove(&agent_id);
+                                    lock(&worker_owners).remove(&agent_id);
                                     send(OperatorToServerFrame::RunnerExited {
                                         runner_id: new_id(),
                                         code: None,
@@ -437,6 +443,7 @@ impl AssignmentFrames {
         Arc::new(Self {
             tx: Mutex::new(tx),
             assigned,
+            owners,
             reconciler,
             synced: Mutex::new(SyncedState::default()),
         })
@@ -499,11 +506,13 @@ impl AssignmentFrames {
                     return true;
                 };
                 lock(&self.assigned).insert(agent_id.clone());
+                lock(&self.owners).insert(agent_id.clone(), definition.owner_account_id.clone());
                 self.push(Job::Assign(Box::new(definition.clone()), l));
                 true
             }
             ServerToOperatorFrame::Unassign { agent_id, drain } => {
                 lock(&self.assigned).remove(agent_id);
+                lock(&self.owners).remove(agent_id);
                 self.push(Job::Unassign(agent_id.clone(), *drain));
                 true
             }
@@ -538,6 +547,16 @@ impl AssignmentFrames {
         for id in ids {
             self.reconciler.set_local(&id, local(&id));
         }
+    }
+
+    /// TS `ownAgentAttached` — 받아들인 배정 중 하나라도 주인이 `me` 와 같은가. 배정이 없거나 `me` 가 없으면 false.
+    pub fn own_agent_attached(&self, me: Option<&str>) -> bool {
+        let Some(me) = me else {
+            return false;
+        };
+        lock(&self.owners)
+            .values()
+            .any(|o| o.as_deref() == Some(me))
     }
 
     pub fn is_assigned(&self, agent_id: &str) -> bool {
