@@ -14,7 +14,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 
 /// 이 묶음에서 Rust 가 답하는 쓰기 도구.
-pub const SERVED: &[&str] = &["message.react", "message.unreact", "inbox.read"];
+pub const SERVED: &[&str] = &["message.react", "message.unreact", "inbox.read", "bg.claim"];
 
 /// `inbox.read`(C4b ④-a) 쓰기 역할의 권한 — 읽음 시각 칸 하나만 고친다. 없으면 `main.rs` 가 풀을 비워 TS 가 답한다.
 pub const INBOX_READ_PRIVILEGES: &[(&str, &str)] = &[("inbox.read_at", "UPDATE")];
@@ -26,6 +26,8 @@ pub struct McpWrites {
     pub react: Option<PgPool>,
     /// `inbox.read` — [`INBOX_READ_PRIVILEGES`].
     pub inbox: Option<PgPool>,
+    /// `bg.claim` — [`super::bg_claim::BG_CLAIM_PRIVILEGES`].
+    pub bg: Option<PgPool>,
 }
 
 /// JS `Number.MAX_SAFE_INTEGER` — 이 밖의 수는 TS 에서 값이 뭉개진다. Rust 는 같은 결과를 낼 수 없으니 TS 로 넘긴다.
@@ -55,9 +57,21 @@ pub async fn answer(
     me: &Account,
     tool: &str,
     args: &Value,
+    runner: bool,
 ) -> Option<Option<String>> {
     if !SERVED.contains(&tool) {
         return None;
+    }
+    if tool == "bg.claim" {
+        // 러너가 아니면(`runner_only`) TS 가 답한다. 켜짐은 `route::serve` 가 admit 값으로 이미 걸렀다.
+        let Some(write) = writes.bg.as_ref().filter(|_| runner) else {
+            return Some(None);
+        };
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_millis() as i64;
+        return Some(super::bg_claim::claim(read, write, &me.id, now_ms).await);
     }
     if tool == "inbox.read" {
         let Some(write) = writes.inbox.as_ref() else {

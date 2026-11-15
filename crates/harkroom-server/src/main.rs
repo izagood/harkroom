@@ -140,6 +140,32 @@ async fn main() {
         }
         _ => None,
     };
+    // C4b ④-a(2/2) — MCP `bg.claim`. 쓰기 풀에 bg_job 고르기·집기 권한이 있을 때만 — 아니면 TS 에 남는다.
+    let bg_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            match write::missing_in(
+                w,
+                harkroom_server::core::mcp::bg_claim::BG_CLAIM_PRIVILEGES,
+                &[],
+            )
+            .await
+            {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: mcp bg.claim core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: mcp bg.claim core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     let react_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
             use harkroom_server::core::msg_react as r;
@@ -396,6 +422,7 @@ async fn main() {
             harkroom_server::core::mcp::writes::McpWrites {
                 react: mcp_react_write,
                 inbox: inbox_write,
+                bg: bg_write,
             },
             auth.clone(),
             state.cors.clone(),

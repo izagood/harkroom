@@ -10,7 +10,7 @@ import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { buildServer } from '../src/buildServer.js';
-import { bootstrapAdmin, createAgent, createMember } from './helpers/fixtures.js';
+import { bootstrapAdmin, createAgent, createMember, registerOperator } from './helpers/fixtures.js';
 import { startTestDb } from './helpers/testDb.js';
 import { fanOutCalls, postMessage, resolveMentionCalls } from '../src/services/messages.js';
 import { writeFileSync as writeCases } from 'node:fs';
@@ -1185,6 +1185,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant update (via_edit) on inbox to ${rw}`,
         // C4b ④-a — MCP inbox.read(`writes.rs::INBOX_READ_PRIVILEGES`).
         `grant update (read_at) on inbox to ${rw}`,
+        // C4b ④-a(2/2) — MCP bg.claim(`bg_claim.rs::BG_CLAIM_PRIVILEGES`).
+        `grant select on bg_job to ${rw}`,
+        `grant update (status, claimed_at) on bg_job to ${rw}`,
         `grant insert on push_job to ${rw}`,
         `grant update (hidden_at) on channel_pref to ${rw}`,
         // S5.3 C1c-1 — 글 올리기 뼈대(`msg_post.rs::MESSAGE_POST_PRIVILEGES`). 없으면 「message post core off」(아래에서 그 길도 본다).
@@ -1764,6 +1767,44 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const [a, b] = [await mcpCall(tsUrl, agent.pat, 'inbox.read', args), await mcpCall(rsUrl4, agent.pat, 'inbox.read', args)];
         expect({ status: b.status, type: b.type, text: b.text }, name).toEqual({ status: a.status, type: a.type, text: a.text });
         expect(b.core, `${name} — 누가 답했나`).toBe(null);
+      }
+
+      // S5.3 C4b ④-a(2/2) — bg.claim. 켜짐은 TS admit 의 `bgEnabled` 로만 안다(꺼짐 → TS 가 `disabled`). 러너가 아닌 꼴(PAT·cause·턴 id)은
+      // TS 가 `runner_only` 로 답한다. 켜진 러너면 Rust 가 답하고 글자가 TS 와 같다 — 창 밖이면 outside_window, 창 안이면 일감이 없어 none
+      // (시각을 주입할 수 없어 창 안의 집기·distill digest 는 `bg_claim.rs` 단위 시험이 본다).
+      const bgOp = await registerOperator(app, admin.token, 'bg-mac');
+      await db.pool.query(`insert into agent_assignment (agent_id, operator_id, assigned_by) values ($1, $2, $3)`, [agent.accountId, bgOp.operatorId, admin.accountId]);
+      const asRunner = { 'x-harkroom-agent': agent.accountId };
+      const bgPair = async (token: string, extra: Record<string, string>) =>
+        [await mcpCall(tsUrl, token, 'bg.claim', {}, 1, extra), await mcpCall(rsUrl4, token, 'bg.claim', {}, 1, extra)];
+      const prevBg = process.env.HARKROOM_BACKGROUND_ENABLED;
+      try {
+        delete process.env.HARKROOM_BACKGROUND_ENABLED;
+        for (const [name, token, extra, code] of [
+          ['bg.claim 꺼짐 → TS(disabled)', bgOp.token, asRunner, 'disabled'],
+          ['bg.claim PAT → TS(runner_only)', agent.pat, {}, 'runner_only'],
+        ] as const) {
+          const [a, b] = await bgPair(token, extra);
+          expect({ status: b!.status, type: b!.type, text: b!.text }, name).toEqual({ status: a!.status, type: a!.type, text: a!.text });
+          expect(b!.core, `${name} — 누가 답했나`).toBe(null);
+          expect(a!.text, name).toContain(code);
+        }
+        process.env.HARKROOM_BACKGROUND_ENABLED = '1';
+        for (const [name, extra] of [
+          ['bg.claim cause 턴 → TS', { ...asRunner, 'x-harkroom-cause': 'mention:x' }],
+          ['bg.claim 턴 id → TS', { ...asRunner, 'x-harkroom-turn-id': 'turn-1' }],
+          ['bg.claim 빈 턴 id 도 턴 → TS', { ...asRunner, 'x-harkroom-turn-id': '' }],
+        ] as const) {
+          const [a, b] = await bgPair(bgOp.token, extra);
+          expect({ status: b!.status, type: b!.type, text: b!.text }, name).toEqual({ status: a!.status, type: a!.type, text: a!.text });
+          expect(b!.core, `${name} — 누가 답했나`).toBe(null);
+        }
+        const [a, b] = await bgPair(bgOp.token, asRunner);
+        expect({ status: b!.status, type: b!.type, text: b!.text }, 'bg.claim 켜진 러너').toEqual({ status: a!.status, type: a!.type, text: a!.text });
+        expect(b!.core, 'bg.claim 켜진 러너 — Rust 가 답한다').toBe('mcp');
+        expect(b!.text).toMatch(/outside_window|none/);
+      } finally {
+        if (prevBg === undefined) delete process.env.HARKROOM_BACKGROUND_ENABLED; else process.env.HARKROOM_BACKGROUND_ENABLED = prevBg;
       }
 
       // S5.3 C4a-6b — message.search. 본문 멘션 되돌리기·시스템 줄·스코프(채널·스레드)·거르기(보낸 사람·첨부)·정렬·쪽(51개 → hasMore,

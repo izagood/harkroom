@@ -90,7 +90,7 @@ import { completePlanStep, linkPlanCard, linkPlanGroup, type PlanHookResult } fr
 import { planDocSchema, planItemShape } from '../services/threadPlanSchema.js';
 import { clearPlanAuto, setPlanAuto } from '../services/threadPlanAuto.js';
 import {
-  BG_MAX_WRITES, bgClaimPayload, bgCleanupOn, claimBgJob, completeBgJob, getBgJob, recordBgChange, releaseBgWrite, reserveBgWrite,
+  backgroundEnabled, BG_MAX_WRITES, bgClaimPayload, bgCleanupOn, claimBgJob, completeBgJob, getBgJob, recordBgChange, releaseBgWrite, reserveBgWrite,
 } from '../services/bgJobs.js';
 import { withWriteOrigin } from '../services/writeOrigin.js';
 import { listGrantedSecrets } from '../services/secretAccess.js';
@@ -3298,6 +3298,8 @@ export async function registerMcp(
         (args && typeof args === 'object' ? args : {}) as Record<string, unknown>);
       if ('error' in gate) return { admitted: false, result: jsonResult({ error: gate.error }) };
     }
+    // bg.claim 은 켜짐(전역 스위치)을 같이 알려 준다 — Rust 앞단이 자기 env 가 아니라 이 값으로만 답한다(켜짐의 출처를 하나로).
+    if (tool === 'bg.claim') return { admitted: true, bgEnabled: backgroundEnabled() };
     return { admitted: true };
   });
 }
