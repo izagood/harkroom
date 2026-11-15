@@ -12,6 +12,7 @@ pub mod reads2;
 pub mod reads3;
 pub mod respond;
 pub mod route;
+pub mod search;
 pub mod tools;
 
 use serde_json::{Value, json};

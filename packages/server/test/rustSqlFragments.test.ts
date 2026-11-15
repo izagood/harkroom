@@ -20,7 +20,7 @@ import { TEAM_BY_ID_SQL, TEAM_BY_NAME_SQL, TEAM_MEMBERS_SQL } from '../src/servi
 import { MENTION_POLICY_SQL } from '../src/services/mentionPolicy.js';
 import { PRINCIPAL_INVOKES_SQL } from '../src/services/invokePrincipal.js';
 import { ENQUEUE_INBOX_PUSH_MANY_SQL, INBOX_PUSH_REASON_LIST, PUSH_AGENT_REPLY_DELAY_SEC } from '../src/services/push/pushJobs.js';
-import { HAS_OLDER_SQL, LIST_MESSAGES_SQL, MESSAGE_BY_ID_SQL, READ_LIST_ROW_SQL } from '../src/services/messages.js';
+import { HAS_OLDER_SQL, LIST_MESSAGES_SQL, MESSAGE_BY_ID_SQL, READ_LIST_ROW_SQL, SEARCH_MESSAGES_SQL } from '../src/services/messages.js';
 import { CHILD_FACTS_AUDIENCE_SQL, PLAN_PROGRESS_PLANS_SQL } from '../src/services/threadPlan.js';
 import { displayBodySql } from '../src/services/systemBody.js';
 
@@ -82,6 +82,8 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     // 계획판 진행률(`attachPlanProgress`·`childFacts`) — 목록 머리에 붙이는 두 문장.
     plan_progress_plans: PLAN_PROGRESS_PLANS_SQL,
     plan_progress_children: CHILD_FACTS_AUDIENCE_SQL,
+    // 검색(`core/mcp/search.rs`, S5.3 C4a-6b) — MCP `message.search` 의 정렬 두 갈래, 완성 문장째.
+    ...Object.fromEntries(Object.entries(SEARCH_MESSAGES_SQL).map(([k, v]) => [`search_messages_${k}`, v])),
   };
   const text = `${JSON.stringify(want, null, 2)}\n`;
   if (process.env.UPDATE_RUST_SQL_GOLDEN === '1') writeFileSync(GOLDEN, text);

@@ -28,6 +28,8 @@ pub const SERVED: &[&str] = &[
     // C4a-6a
     "workitem.list",
     "automation.list",
+    // C4a-6b
+    "message.search",
 ];
 
 /// 입력 스키마가 없는 도구 — SDK 는 `arguments` 를 레코드(객체)로만 받고, 없어도(`null`) 받는다. 스키마가 있는 도구는
@@ -170,10 +172,17 @@ async fn message_read(pool: &PgPool, me: &Account, args: &Value) -> Option<Strin
             .iter()
             .map(|r| minify(r))
             .collect();
+    let arr = denormalize_marked(pool, &rows).await?;
+    Some(text_result(&format!("{{\"messages\":{arr}}}")))
+}
+
+/// TS `markSystemLines(await denormalizeBodies(pool, rows))` — 행 JSON 글자들([`minify`] 뒤)을 받아 배열 글자 `[…]` 를 낸다.
+/// `message.read`·`message.search` 가 같이 쓴다. 모르는 꼴·DB 오류는 `None`(→ TS).
+pub(super) async fn denormalize_marked(pool: &PgPool, rows: &[String]) -> Option<String> {
     // 본문마다 (범위, 본문). 본문이 문자열이 아닌 행은 모르는 꼴이니 TS 로.
     let mut bodies = Vec::with_capacity(rows.len());
     let (mut ids, mut groups, mut teams) = (Vec::new(), Vec::new(), Vec::new());
-    for r in &rows {
+    for r in rows {
         let (a, z) = top_string_span(r, "body")?;
         let body: String = serde_json::from_str(&r[a..z]).ok()?;
         for c in mention_re().captures_iter(&body) {
@@ -223,7 +232,7 @@ async fn message_read(pool: &PgPool, me: &Account, args: &Value) -> Option<Strin
             names.insert(format!("{prefix}{id}"), name);
         }
     }
-    let mut out = String::from("{\"messages\":[");
+    let mut out = String::from("[");
     for (i, (r, (a, z, body))) in rows.iter().zip(bodies).enumerate() {
         if i > 0 {
             out.push(',');
@@ -255,8 +264,8 @@ async fn message_read(pool: &PgPool, me: &Account, args: &Value) -> Option<Strin
         }
         out.push_str(&row);
     }
-    out.push_str("]}");
-    Some(text_result(&out))
+    out.push(']');
+    Some(out)
 }
 
 /// `workspace.guide` 의 글 — TS `guideFor(mode, { avcs })` 넷을 `golden/mcp_guide.json` 으로 받는다
@@ -340,6 +349,7 @@ pub async fn answer(
                 .then(|| text_result(one))
         }
         "message.read" => message_read(pool, me, args).await,
+        "message.search" => super::search::answer(pool, me, args).await,
         "workitem.list" | "automation.list" => {
             super::reads3::answer(pool, me, tool, args, cause).await
         }
