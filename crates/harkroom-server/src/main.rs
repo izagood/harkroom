@@ -140,6 +140,27 @@ async fn main() {
         }
         _ => None,
     };
+    // C3b-1 — 선택 카드 답하기·닫기. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 `ASK_PRIVILEGES` 가 다 있을 때만.
+    let ask_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::ask as a;
+            match write::missing_in(w, a::ASK_PRIVILEGES, a::ASK_SEQUENCE_PRIVILEGES).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: ask card core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: ask card core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // C3a-3c — 글 고치기. 위 블록들과 같이 쓰기 역할에 그 권한이 **하나라도 없으면** 붙이지 않는다(그 경로는 TS 가 받는다).
     let edit_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -282,6 +303,21 @@ async fn main() {
             core_routes.router = core_routes.router.merge(edit.router);
             core_routes.http.extend(edit.http);
             core_routes.sockets.extend(edit.sockets);
+        }
+        // C3b-1 — 선택 카드 답하기·닫기. 권한·머지 카드와 못 읽는 카드는 핸들러가 TS 로 넘긴다.
+        if let Some(write) = ask_write {
+            let ask = harkroom_server::core::ask::routes(
+                harkroom_server::core::ask::AskState {
+                    read: state.pool.clone(),
+                    write,
+                    up: state.up.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(ask.router);
+            core_routes.http.extend(ask.http);
+            core_routes.sockets.extend(ask.sockets);
         }
         // C4a-1 — `POST /mcp`. 에이전트 게이트·본문 한도(TS 와 같다) 뒤, Rust 가 답하는 읽기 도구(C4a-3)가 아니면 원래 바이트를 TS 로 투명 전달한다.
         let mcp = harkroom_server::core::mcp::route::routes(
