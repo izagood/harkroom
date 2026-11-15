@@ -235,9 +235,10 @@ async fn main() {
             core_routes.http.extend(del.http);
             core_routes.sockets.extend(del.sockets);
         }
-        // C4a-1 — `POST /mcp`. 에이전트 게이트·본문 한도(TS 와 같다) 뒤 원래 바이트를 TS 로 투명 전달한다. 아직 Rust 가 답하는 도구는 없다.
+        // C4a-1 — `POST /mcp`. 에이전트 게이트·본문 한도(TS 와 같다) 뒤, Rust 가 답하는 읽기 도구(C4a-3)가 아니면 원래 바이트를 TS 로 투명 전달한다.
         let mcp = harkroom_server::core::mcp::route::routes(
             state.up.clone(),
+            state.pool.clone(),
             auth.clone(),
             state.cors.clone(),
         );

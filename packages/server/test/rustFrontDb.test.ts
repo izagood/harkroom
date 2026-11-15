@@ -526,6 +526,41 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const [a, b] = [await getJson(tsUrl, path, token), await getJson(`http://127.0.0.1:${port}`, path, token)];
         expect(b, `${path} ${token === admin.token ? 'admin' : token === member.token ? 'mem' : token ? 'agent' : 'anon'}`).toEqual(a);
       }
+      // S5.3 C4a-3 — MCP 읽기 도구를 Rust 가 답한다. 같은 JSON-RPC 요청을 TS `/mcp` 와 앞단에 보내 **SSE 글자 그대로**(키 순서·
+      // 이스케이프까지) 비교한다. Rust 가 답한 것은 `x-harkroom-core: mcp` 로 가른다 — 인자 모양이 zod 와 다르면 Rust 는 TS 로 넘긴다.
+      const mcpCall = async (base: string, token: string, name: string, args: unknown, id: unknown = 1) => {
+        const params = args === undefined ? { name } : { name, arguments: args };
+        const res = await fetch(`${base}/mcp`, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${token}`, accept: 'application/json, text/event-stream', 'content-type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params }),
+        });
+        return { status: res.status, type: res.headers.get('content-type'), text: await res.text(), core: res.headers.get('x-harkroom-core') };
+      };
+      for (const [name, tool, args, answeredByRust, id] of [
+        ['account.me', 'account.me', {}, true, 1],
+        ['account.me 인자 없음', 'account.me', undefined, true, 'str-id'],
+        ['account.me 배열 인자 → TS', 'account.me', [], false, 2],
+        ['channel.list', 'channel.list', {}, true, 3],
+        ['channel.doc 문서 있음', 'channel.doc', { channelId: todayId }, true, 4],
+        ['channel.doc 문서 없음(DM)', 'channel.doc', { channelId: String(dm.id) }, true, 5],
+        ['channel.doc 없는 채널 → 빈 문서', 'channel.doc', { channelId: missingCh }, true, 6],
+        ['channel.doc 비공개·멤버 아님 → forbidden', 'channel.doc', { channelId: privId }, true, 7],
+        ['channel.doc 모르는 키는 버린다', 'channel.doc', { channelId: todayId, extra: 1 }, true, 8],
+        ['channel.doc uuid 아님 → TS', 'channel.doc', { channelId: 'nope' }, false, 9],
+        ['channel.doc 문자열 인자 → TS', 'channel.doc', todayId, false, 10],
+        ['channel.doc 인자 없음 → TS', 'channel.doc', undefined, false, 11],
+      ] as const) {
+        const [a, b] = [await mcpCall(tsUrl, agent.pat, tool, args, id), await mcpCall(`http://127.0.0.1:${port}`, agent.pat, tool, args, id)];
+        expect({ status: b.status, type: b.type, text: b.text }, name).toEqual({ status: a.status, type: a.type, text: a.text });
+        expect(b.core, `${name} — 누가 답했나`).toBe(answeredByRust ? 'mcp' : null);
+        expect(a.core, 'TS 는 이 표지를 달지 않는다').toBeNull();
+      }
+      // 빈 값끼리 비교해 통과하지 않게 — 문서·목록이 실제로 실렸는지.
+      const docText = (await mcpCall(`http://127.0.0.1:${port}`, agent.pat, 'channel.doc', { channelId: todayId })).text;
+      expect(docText).toContain('문서 본문');
+      expect((await mcpCall(`http://127.0.0.1:${port}`, agent.pat, 'channel.list', {})).text).toContain('today');
+
       // 빈 목록끼리 비교해 통과하지 않게 — 픽스처가 실제로 칸을 채웠는지.
       const rs = `http://127.0.0.1:${port}`;
       const prefsBody = (await getJson(rs, '/channels/prefs', admin.token)).body as { prefs: Record<string, unknown>[]; sections: unknown[] };

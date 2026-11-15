@@ -123,7 +123,7 @@ fn sql() -> &'static Sql {
 }
 
 /// zod `z.string().uuid()`(3.x) 와 같은 판정 — 8-4-4-4-12 의 16진수, 대소문자 무관.
-fn is_uuid(s: &str) -> bool {
+pub(crate) fn is_uuid(s: &str) -> bool {
     let b = s.as_bytes();
     b.len() == 36
         && b.iter().enumerate().all(|(i, c)| match i {
@@ -151,7 +151,7 @@ async fn rows(pool: &PgPool, sql: &'static str, binds: &[&str]) -> Result<String
 }
 
 /// TS `assertChannelVisible` — 없는 채널은 true(뒤 단계가 404 로 답한다).
-async fn visible(pool: &PgPool, me: &str, channel: &str) -> Result<bool, sqlx::Error> {
+pub(crate) async fn visible(pool: &PgPool, me: &str, channel: &str) -> Result<bool, sqlx::Error> {
     let v: Option<bool> = sqlx::query_scalar(sql().visible.as_str())
         .bind(me)
         .bind(channel)
@@ -166,6 +166,20 @@ async fn exists(pool: &PgPool, channel: &str) -> Result<bool, sqlx::Error> {
         .fetch_optional(pool)
         .await?;
     Ok(v.is_some())
+}
+
+/// MCP `channel.list`(S5.3 C4a-3) — REST `GET /channels` 와 같은 문장. 답은 Postgres `json` 글자(공백 있음) 그대로.
+pub(crate) async fn list_text(pool: &PgPool, me: &str, is_admin: bool) -> sqlx::Result<String> {
+    sqlx::query_scalar::<_, String>(sql().channels.as_str())
+        .bind(me)
+        .bind(is_admin)
+        .fetch_one(pool)
+        .await
+}
+
+/// MCP `channel.doc` — REST 와 같은 문장의 행 배열 글자(0 또는 1행).
+pub(crate) async fn doc_rows_text(pool: &PgPool, channel: &str) -> sqlx::Result<String> {
+    rows(pool, &sql().doc, &[channel]).await
 }
 
 fn wrap(key: &str, rows: &str) -> Response {
