@@ -21,6 +21,7 @@ pub mod inbox_thread;
 pub mod invoke_gate;
 pub mod mandate_stamp;
 pub mod mcp;
+pub mod mem_search;
 pub mod mention_calls;
 pub mod mention_fanout;
 pub mod mention_parse;
