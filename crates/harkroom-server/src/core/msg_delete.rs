@@ -80,11 +80,6 @@ fn ok_json(body: String) -> Response {
         .into_response()
 }
 
-async fn emit(write: &PgPool, event: &Value) -> Result<(), sqlx::Error> {
-    let mut conn = write.acquire().await?;
-    crate::write::emit_event(&mut conn, event).await.map(|_| ())
-}
-
 /// 지우지 않은 메시지의 (작성자, 스레드 머리) — 채널이 다르거나 없으면 None.
 async fn find(
     write: &PgPool,
@@ -101,34 +96,36 @@ async fn find(
     .await
 }
 
-/// 「채널에도 보이기」 칸을 바꾸고 그 메시지(TS `COLS` 모양)를 돌려준다. `edited_at` 은 건드리지 않는다(사람이 글을 고친 것이 아니다).
-async fn set_also(write: &PgPool, message: &str, on: bool) -> Result<Option<String>, sqlx::Error> {
-    sqlx::query("update message set also_in_channel = $2 where id = $1::uuid")
-        .bind(message)
-        .bind(on)
-        .execute(write)
-        .await?;
-    message_by_id(write, message).await
-}
-
-/// `message.updated` 를 내고 그 행을 200 으로 돌려준다(거두기·올리기·자리표시자 모두 같은 꼴).
-async fn updated(st: &DeleteState, channel: &str, row: String) -> Response {
-    let Ok(message) = serde_json::from_str::<Value>(&row) else {
-        return json_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            "internal error",
-        );
-    };
+/// 「채널에도 보이기」 칸을 바꾸고, 고친 행(TS `COLS` 모양)을 같은 트랜잭션에서 다시 읽어 `message.updated` 를 outbox 에 넣은 뒤
+/// 커밋한다 — 이벤트 넣기가 실패하면 칸도 되돌아가 「바뀌었는데 다른 화면은 모른다」가 생기지 않는다. `edited_at` 은 건드리지 않는다.
+async fn set_also(st: &DeleteState, channel: &str, message: &str, on: bool) -> Response {
+    // 받는 사람은 채널에 묶인 것이라 쓰기 전에 읽어도 같다(읽기 풀).
     let audience = match audience_for(&st.read, channel).await {
         Ok(a) => a.to_json(),
         Err(e) => return internal(e),
     };
-    let ev = json!({ "type": "message.updated", "message": message, "audience": audience });
-    if let Err(e) = emit(&st.write, &ev).await {
-        return internal(e);
+    let r: Result<Option<String>, sqlx::Error> = async {
+        let mut tx = st.write.begin().await?;
+        sqlx::query("update message set also_in_channel = $2 where id = $1::uuid")
+            .bind(message)
+            .bind(on)
+            .execute(&mut *tx)
+            .await?;
+        let Some(row) = message_by_id(&mut *tx, message).await? else {
+            return Ok(None);
+        };
+        let value: Value = serde_json::from_str(&row).map_err(|e| sqlx::Error::Decode(e.into()))?;
+        let ev = json!({ "type": "message.updated", "message": value, "audience": audience });
+        crate::write::emit_event(&mut tx, &ev).await?;
+        tx.commit().await?;
+        Ok(Some(row))
     }
-    ok_json(row)
+    .await;
+    match r {
+        Ok(Some(row)) => ok_json(row),
+        Ok(None) => no_message(),
+        Err(e) => internal(e),
+    }
 }
 
 /// `DELETE /channels/{id}/messages/{messageId}/also-in-channel` — 작성자 또는 admin. 이미 꺼져 있어도 같은 결과(멱등).
@@ -157,11 +154,7 @@ pub async fn recall(
             "only the author or an admin can recall",
         );
     }
-    match set_also(&st.write, &message, false).await {
-        Ok(Some(row)) => updated(&st, &id, row).await,
-        Ok(None) => no_message(),
-        Err(e) => internal(e),
-    }
+    set_also(&st, &id, &message, false).await
 }
 
 /// `PUT /channels/{id}/messages/{messageId}/also-in-channel` — 작성자만, 스레드 답만, 보관된 채널은 거절. 이미 켜져 있어도 같은 결과.
@@ -213,11 +206,7 @@ pub async fn promote(
             "only a thread reply can be posted to the channel",
         );
     }
-    match set_also(&st.write, &message, true).await {
-        Ok(Some(row)) => updated(&st, &id, row).await,
-        Ok(None) => no_message(),
-        Err(e) => internal(e),
-    }
+    set_also(&st, &id, &message, true).await
 }
 
 /// `DELETE /channels/{id}/messages/{messageId}` — 작성자 또는 admin. 자리표시자가 남으면 200 + 그 행, 아니면 204.
@@ -247,59 +236,50 @@ pub async fn delete(
             "only the author or an admin can delete",
         );
     }
-    if let Err(e) = sqlx::query("update message set deleted_at = now() where id = $1::uuid")
-        .bind(&message)
-        .execute(&st.write)
-        .await
-    {
-        return internal(e);
-    }
-    // 지운 것이 머리면 그 자리가 남았나, 답글이면 마지막 답글이어서 머리까지 사라졌나 — 둘 다 목록에 묻는다.
-    let (tombstone, root_gone) = match &root {
-        None => match read_list_row(&st.write, &id, &message).await {
-            Ok(t) => (t, None),
-            Err(e) => return internal(e),
-        },
-        Some(r) => match read_list_row(&st.write, &id, r).await {
-            Ok(Some(_)) => (None, None),
-            Ok(None) => (None, Some(r.clone())),
-            Err(e) => return internal(e),
-        },
-    };
     let audience = match audience_for(&st.read, &id).await {
         Ok(a) => a.to_json(),
         Err(e) => return internal(e),
     };
-    let tomb_value = match &tombstone {
-        Some(t) => match serde_json::from_str::<Value>(t) {
-            Ok(v) => Some(v),
-            Err(_) => {
-                return json_err(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "internal",
-                    "internal error",
-                );
+    // 지우기·자리표시자 판정·이벤트를 한 트랜잭션으로 — 이벤트 넣기가 실패하면 지우기도 되돌아간다(다른 화면에 지운 본문이 남지 않게).
+    let r: Result<Option<String>, sqlx::Error> = async {
+        let mut tx = st.write.begin().await?;
+        sqlx::query("update message set deleted_at = now() where id = $1::uuid")
+            .bind(&message)
+            .execute(&mut *tx)
+            .await?;
+        // 지운 것이 머리면 그 자리가 남았나, 답글이면 마지막 답글이어서 머리까지 사라졌나 — 둘 다 목록에 묻는다.
+        let (tombstone, root_gone) = match &root {
+            None => (read_list_row(&mut tx, &id, &message).await?, None),
+            Some(r) => match read_list_row(&mut tx, &id, r).await? {
+                Some(_) => (None, None),
+                None => (None, Some(r.clone())),
+            },
+        };
+        let first = match &tombstone {
+            Some(t) => {
+                let v: Value =
+                    serde_json::from_str(t).map_err(|e| sqlx::Error::Decode(e.into()))?;
+                json!({ "type": "message.updated", "message": v, "audience": audience })
             }
-        },
-        None => None,
-    };
-    let first = match &tomb_value {
-        Some(v) => json!({ "type": "message.updated", "message": v, "audience": audience }),
-        None => json!({
-            "type": "message.deleted", "channelId": id, "messageId": message, "audience": audience,
-        }),
-    };
-    if let Err(e) = emit(&st.write, &first).await {
-        return internal(e);
-    }
-    if let Some(gone) = &root_gone {
-        let ev = json!({
-            "type": "message.deleted", "channelId": id, "messageId": gone, "audience": audience,
-        });
-        if let Err(e) = emit(&st.write, &ev).await {
-            return internal(e);
+            None => json!({
+                "type": "message.deleted", "channelId": id, "messageId": message, "audience": audience,
+            }),
+        };
+        crate::write::emit_event(&mut tx, &first).await?;
+        if let Some(gone) = &root_gone {
+            let ev = json!({
+                "type": "message.deleted", "channelId": id, "messageId": gone, "audience": audience,
+            });
+            crate::write::emit_event(&mut tx, &ev).await?;
         }
+        tx.commit().await?;
+        Ok(tombstone)
     }
+    .await;
+    let tombstone = match r {
+        Ok(t) => t,
+        Err(e) => return internal(e),
+    };
     // 본문은 남기지 않는다 — 감사에 복사하면 삭제가 삭제가 아니다.
     let (parts, _) = req.into_parts();
     let ip = crate::trust_proxy::request_ip(&parts, &st.trust);
