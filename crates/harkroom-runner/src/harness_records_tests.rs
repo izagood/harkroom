@@ -284,7 +284,7 @@ fn codex_session_find_by_cwd_and_file_lookup() {
         session_id: None,
         cwd: &ws,
         since_ms: T0,
-        codex_sessions_dir: &sessions,
+        codex_sessions_dir: Some(&sessions),
         omp_home: None,
     };
     assert_eq!(
@@ -360,7 +360,7 @@ fn opencode_commands_run_in_workspace() {
     let opts = HarnessLastSaidOpts {
         session_id: None,
         since_ms: T0,
-        codex_sessions_dir: &tmp.0,
+        codex_sessions_dir: Some(&tmp.0),
         opencode: call,
     };
     assert_eq!(
@@ -397,7 +397,7 @@ fn codex_last_said_via_session_file() {
     let mut opts = HarnessLastSaidOpts {
         session_id: Some(ID),
         since_ms: T0,
-        codex_sessions_dir: &sessions,
+        codex_sessions_dir: Some(&sessions),
         opencode: call,
     };
     assert_eq!(
@@ -415,7 +415,7 @@ fn omp_turn_end_via_session_file() {
         session_id: Some(ID),
         cwd: &tmp.0,
         since_ms: T0,
-        codex_sessions_dir: &tmp.0,
+        codex_sessions_dir: Some(&tmp.0),
         omp_home: None,
     };
     // omp 홈이 없으면 모른다.

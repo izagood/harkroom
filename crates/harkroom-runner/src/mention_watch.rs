@@ -37,6 +37,8 @@ pub struct MentionWatchInputs<'a> {
     pub codex_home: Option<PathBuf>,
     /// opencode·kilo 차례 끝 조회 자리(`turn_probe_make::opencode_query`).
     pub opencode: Option<std::sync::Arc<crate::turn_probe_make::OpencodeQuery>>,
+    /// 그 스레드 작업 폴더(화면 끝의 기록 확인용). 작업 폴더를 정한 뒤 채운다.
+    pub workspace_dir: Option<std::path::PathBuf>,
     pub end_cfg: EndConfig,
     pub lane_tui: bool,
     pub caller: NudgeCaller,
@@ -63,6 +65,7 @@ pub fn mention_watch_loop<'a, L: RunnerLink + 'a>(
         omp_home: i.omp_home,
         codex_home: i.codex_home,
         opencode: i.opencode,
+        workspace_dir: i.workspace_dir,
         end_cfg,
         lane_tui: i.lane_tui,
         caller: i.caller,

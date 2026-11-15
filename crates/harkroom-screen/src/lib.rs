@@ -268,6 +268,10 @@ impl ScreenIdleWatch {
         screen.rows(0, cols.get()).collect::<Vec<_>>().join("\n")
     }
 
+    /// 이 감시가 그리는 하네스 화면 계약.
+    pub fn facts(&self) -> &'static ScreenFacts {
+        self.facts
+    }
     pub fn busy_text(&self) -> Option<&str> {
         self.last_busy_text.as_deref()
     }

@@ -16,8 +16,8 @@
 //! - 재촉 판정의 마지막 말은 claude 기록(`read_last_assistant_text`)을 먼저, 없으면 API 키 연결 턴에 한해 하네스 자체 기록
 //!   ([`lane_harness_said`] — codex rollout·opencode/kilo export)을 본다(정본 `recordSaid ?? harnessSaid`).
 //!
-//! 아직 없는 것: 화면 끝 감시가 없어(`screen_idle_ended` 가 `None`) 하네스 자체 기록의 차례 끝(`read_recorded_end`)은 불리지
-//! 않는다 — `None` 으로 둔다.
+//! - 화면 끝 감시(TUI·어댑터에 일하는 중 표지가 있는 하네스)가 끝이라 하면 하네스 자체 기록의 차례 끝([`recorded_end_reader`] —
+//!   codex rollout·omp 세션)으로 확인한다. 기록이 일하는 중이라 하면 끝이 아니고, 못 읽으면 화면을 따른다.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -123,12 +123,7 @@ pub fn lane_harness_said(
     opencode: Option<&OpencodeQuery>,
 ) -> Option<String> {
     let record = last_said_record_of(harness)?;
-    let codex_dir = match (record, codex_home) {
-        (LastSaidRecord::CodexRollout, None) => return None,
-        (_, home) => home
-            .map(crate::codex_home::codex_sessions_dir)
-            .unwrap_or_default(),
-    };
+    let codex_dir = codex_home.map(crate::codex_home::codex_sessions_dir);
     // codex 길은 opencode 조회를 쓰지 않는다 — 빈 자리를 넘겨도 불리지 않는다.
     let unused = OpencodeQuery {
         command: PathBuf::new(),
@@ -145,7 +140,7 @@ pub fn lane_harness_said(
         &HarnessLastSaidOpts {
             session_id,
             since_ms,
-            codex_sessions_dir: &codex_dir,
+            codex_sessions_dir: codex_dir.as_deref(),
             opencode: oc.call(),
         },
     )
@@ -165,6 +160,8 @@ pub struct ProbeLoopConfig<'a, L: RunnerLink> {
     pub codex_home: Option<PathBuf>,
     /// opencode·kilo 차례 끝 조회 자리([`opencode_query`]). 그 밖의 하네스는 `None`.
     pub opencode: Option<Arc<OpencodeQuery>>,
+    /// 그 스레드의 작업 폴더 — 화면 끝을 기록으로 확인할 때(codex 첫 턴) 세션을 이 폴더로 찾는다.
+    pub workspace_dir: Option<PathBuf>,
     pub end_cfg: EndConfig,
     /// API 키 연결 턴이고 TUI 하네스다.
     pub lane_tui: bool,
@@ -256,6 +253,46 @@ pub type AttemptProbeIo<'a, L> = TurnProbeIo<
     AttemptRecords,
     TurnProbeRest<WatchNudgeIo<'a>>,
 >;
+
+/// 정본 `usesTui ? screenIdleFactsFor(h) : null` — TUI 이고 어댑터에 `screen.busy` 가 있는 하네스만 화면 끝 감시를 건다.
+fn arm_screen_idle(watch: &Watch, h: AgentHarness) -> Option<Watch> {
+    if !crate::adapter::uses_tui_for_mention(h).unwrap_or(false) {
+        return None;
+    }
+    crate::adapter::screen_idle_facts_for(h)?;
+    let facts = harkroom_screen::facts_for(harkroom_screen::Harness::from_name(h.as_str())?);
+    facts.busy.as_ref()?;
+    crate::turn_watch::lock_watch(watch).arm_screen_idle(facts);
+    Some(watch.clone())
+}
+
+/// 정본 `readHarnessTurnEnd(def.harness, { sessionId, cwd, sinceMs, codexSessionsDir(deps.codexHome), ompHome })`.
+/// codex 는 러너 codex 홈의 `sessions/` 만, omp 는 러너 omp 홈만 본다 — 자리가 없으면 `None`(화면을 따른다).
+fn recorded_end_reader<'r, L: RunnerLink>(
+    c: &ProbeLoopConfig<'_, L>,
+    ctx: &LoopCtx,
+) -> crate::turn_probe_io::ReadRecordedEnd<'r> {
+    let harness = c.harness;
+    let session_id = ctx.session_id.clone();
+    let cwd = c.workspace_dir.clone().unwrap_or_default();
+    let codex_dir = c
+        .codex_home
+        .as_deref()
+        .map(crate::codex_home::codex_sessions_dir);
+    let omp_home = c.omp_home.clone();
+    Box::new(move |since_ms| {
+        crate::harness_records::read_harness_turn_end(
+            harness,
+            &crate::harness_records::HarnessTurnEndOpts {
+                session_id: session_id.as_deref(),
+                cwd: &cwd,
+                since_ms,
+                codex_sessions_dir: codex_dir.as_deref(),
+                omp_home: omp_home.as_deref(),
+            },
+        )
+    })
+}
 
 fn records_of<L: RunnerLink>(c: &ProbeLoopConfig<'_, L>, ctx: &LoopCtx) -> AttemptRecords {
     AttemptRecords {
@@ -395,7 +432,13 @@ pub fn probe_make<'a, L: RunnerLink + 'a>(
                 opencode_quiet_ms: OPENCODE_QUIET_MS,
                 lane_nudged_at_ms: 0,
                 cfg: c.end_cfg,
-                read_recorded_end: Box::new(|_since| None),
+                // 화면이 끝이라 할 때만 불린다 — 기록이 일하는 중이라 하면 끝이 아니다. 못 읽으면 화면을 따른다.
+                read_recorded_end: recorded_end_reader(c, ctx),
+                screen_watch: arm_screen_idle(watch, c.harness),
+                workspace_dir: c
+                    .opencode
+                    .as_ref()
+                    .map(|q| q.cwd.to_string_lossy().into_owned()),
                 terminate: terminate_on_watch(watch),
                 rest,
             };

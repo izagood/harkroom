@@ -304,6 +304,7 @@ where
             codex_home: c.codex.as_ref().map(|x| x.home.clone()),
             // 작업 폴더를 정한 뒤 채운다(아래).
             opencode: None,
+            workspace_dir: None,
             end_cfg: EndConfig {
                 stall_ms: i64::try_from(c.harness_stall_ms).unwrap_or(i64::MAX),
                 ..EndConfig::new(c.turn_timeout_ms)
@@ -367,6 +368,7 @@ where
             std::path::Path::new(&workspace),
         )
         .map(std::sync::Arc::new);
+        watch.workspace_dir = Some(std::path::PathBuf::from(&workspace));
         let argv = owned_argv(
             &key,
             harness,

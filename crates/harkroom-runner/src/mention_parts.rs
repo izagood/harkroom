@@ -1666,6 +1666,9 @@ impl<S: PtyTurnSink> PtyTurnSink for SlotPtySink<'_, S> {
     fn on_attention(&mut self, screen: &str, kind: crate::pty::AttentionKind) {
         self.inner.on_attention(screen, kind)
     }
+    fn on_resize(&mut self, cols: u16, rows: u16) {
+        self.inner.on_resize(cols, rows)
+    }
     fn on_turn_gate(&mut self, screen: &str) {
         self.inner.on_turn_gate(screen)
     }

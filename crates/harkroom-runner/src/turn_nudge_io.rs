@@ -91,7 +91,7 @@ impl NudgeIo for WatchNudgeIo<'_> {
         }));
     }
     fn rearm_screen_watch(&mut self) {
-        // 화면 끝 감시는 아직 없다(`screen_idle_ended` 가 `None`) — 다시 걸 것이 없다.
+        crate::turn_watch::lock_watch(&self.watch).rearm_screen_idle();
     }
     fn log(&mut self, line: &str) {
         eprintln!("[mentionTurn] {}: {line}", self.key);

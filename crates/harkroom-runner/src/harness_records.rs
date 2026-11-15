@@ -439,7 +439,8 @@ fn read_whole(path: &Path) -> Option<String> {
 pub struct HarnessLastSaidOpts<'a> {
     pub session_id: Option<&'a str>,
     pub since_ms: i64,
-    pub codex_sessions_dir: &'a Path,
+    /// codex 기록 자리(러너 codex 홈의 `sessions/`). 없으면 codex 길은 `None` — 다른 홈을 뒤지지 않는다.
+    pub codex_sessions_dir: Option<&'a Path>,
     pub opencode: OpencodeCall<'a>,
 }
 
@@ -450,7 +451,7 @@ pub fn read_harness_last_said(
 ) -> Option<String> {
     match last_said_record_of(harness)? {
         LastSaidRecord::CodexRollout => {
-            let file = codex_rollout_file_for(opts.codex_sessions_dir, opts.session_id?)?;
+            let file = codex_rollout_file_for(opts.codex_sessions_dir?, opts.session_id?)?;
             last_said_from_codex_rollout(&read_whole(&file)?, opts.since_ms)
         }
         LastSaidRecord::OpencodeExport => {
@@ -468,7 +469,8 @@ pub struct HarnessTurnEndOpts<'a> {
     pub session_id: Option<&'a str>,
     pub cwd: &'a Path,
     pub since_ms: i64,
-    pub codex_sessions_dir: &'a Path,
+    /// codex 기록 자리. 없으면 codex 길은 `None`.
+    pub codex_sessions_dir: Option<&'a Path>,
     /// omp 턴만 있다.
     pub omp_home: Option<&'a Path>,
 }
@@ -484,11 +486,12 @@ pub fn read_harness_turn_end(
             turn_end_from_omp_session(&read_tail(&file)?, opts.since_ms)
         }
         TurnEndRecord::CodexRollout => {
+            let dir = opts.codex_sessions_dir?;
             let id = match opts.session_id {
                 Some(id) => id.to_string(),
-                None => find_codex_session_id(opts.codex_sessions_dir, opts.cwd, opts.since_ms)?,
+                None => find_codex_session_id(dir, opts.cwd, opts.since_ms)?,
             };
-            let file = codex_rollout_file_for(opts.codex_sessions_dir, &id)?;
+            let file = codex_rollout_file_for(dir, &id)?;
             turn_end_from_codex_rollout(&read_tail(&file)?, opts.since_ms)
         }
     }

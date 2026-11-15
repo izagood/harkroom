@@ -77,6 +77,10 @@ pub struct TurnProbeIo<'a, R: ProbeRecords, S: ProbeSink, T: TurnStateRecords, X
     pub lane_nudged_at_ms: i64,
     pub cfg: EndConfig,
     pub read_recorded_end: ReadRecordedEnd<'a>,
+    /// 화면 끝 감시가 걸린 감시 자리(정본 `idleWatch`) — 없으면 화면으로 끝을 읽지 않는다.
+    pub screen_watch: Option<crate::turn_watch::Watch>,
+    /// 화면 답 줄에서 뺄 작업 폴더(정본 `rec.workspaceDir`).
+    pub workspace_dir: Option<String>,
     /// PTY 에 SIGTERM(실구현 `PtyControls::kill(false)`).
     pub terminate: Arc<dyn Fn() + Send + Sync>,
     pub rest: X,
@@ -164,14 +168,16 @@ impl<R: ProbeRecords, S: ProbeSink, T: TurnStateRecords, X: ProbeRest> ProbeIo
             )),
         }
     }
-    fn screen_idle_ended(&mut self, _now_ms: i64) -> Option<bool> {
-        None
+    fn screen_idle_ended(&mut self, now_ms: i64) -> Option<bool> {
+        let w = self.screen_watch.as_ref()?;
+        crate::turn_watch::lock_watch(w).screen_idle_ended(now_ms)
     }
     fn read_recorded_end(&mut self, since_ms: i64) -> Option<RecordedTurnEnd> {
         (self.read_recorded_end)(since_ms)
     }
     fn screen_answer(&mut self) -> Option<String> {
-        None
+        let w = self.screen_watch.as_ref()?;
+        crate::turn_watch::lock_watch(w).screen_answer(self.workspace_dir.as_deref())
     }
     fn log_screen_ended(&mut self) {
         self.sink.log("화면이 차례 끝을 말했다");

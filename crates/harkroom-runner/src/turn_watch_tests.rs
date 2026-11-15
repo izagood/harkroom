@@ -251,6 +251,7 @@ fn probe_io_runs_outside_the_watch_lock() {
         screen: b"line one\nhello there\n".to_vec(),
         thread_unreadable: false,
         controls: None,
+        idle: None,
     }));
     let mut io = BusyIo {
         watch: Arc::clone(&watch),
@@ -598,4 +599,19 @@ fn fence_lost_while_spawning_folds_right_after_spawn() {
         t.elapsed()
     );
     assert!(lock(&watch).end.reclaimed, "자리 값에 거둠");
+}
+
+#[test]
+fn screen_idle_watch_is_none_until_armed_and_rearm_needs_busy_again() {
+    let mut w = WatchState::default();
+    // 감시가 없으면 화면으로 끝을 읽지 않는다(정본 `idleWatch === null`).
+    assert_eq!(w.screen_idle_ended(10_000), None);
+    assert_eq!(w.screen_answer(None), None);
+    let facts = harkroom_screen::facts_for(harkroom_screen::Harness::Codex);
+    assert!(facts.busy.is_some());
+    w.arm_screen_idle(facts);
+    // 일하는 중을 아직 못 봤다 — 끝이 아니다.
+    assert_eq!(w.screen_idle_ended(10_000), Some(false));
+    w.rearm_screen_idle();
+    assert_eq!(w.screen_idle_ended(1_000_000), Some(false));
 }

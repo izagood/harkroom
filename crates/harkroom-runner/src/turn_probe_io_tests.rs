@@ -131,6 +131,8 @@ fn io(thread: Result<Vec<Value>, String>, kills: Arc<AtomicUsize>) -> Io {
         lane_nudged_at_ms: 0,
         cfg: EndConfig::new(600_000),
         read_recorded_end: Box::new(|_| None),
+        screen_watch: None,
+        workspace_dir: None,
         terminate: Arc::new(move || {
             kills.fetch_add(1, Ordering::SeqCst);
         }),
