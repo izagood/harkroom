@@ -5,6 +5,7 @@
 //!   도구 답 모양의 거절로 끝나고 여기까지 오지 않는다.
 //! - 쓰기 풀은 그 줄의 권한이 다 있을 때만 있다(`main.rs` 의 `react_write`). 없으면 `None` — TS 가 답한다.
 //! - 쓰기 중 DB 오류로 `None` 을 내면 TS 가 같은 요청을 다시 돈다. 리액션은 같은 결과로 수렴한다(`on conflict` · 없는 것 떼기도 성공).
+use super::respond::minify;
 use super::tools::{err, uuid_arg};
 use crate::auth::Account;
 use crate::core::msg_react::{
@@ -163,7 +164,13 @@ async fn bundle_resolve(
         .ok()?
     {
         Resolved::Refused(code) => Some(err(code, refusal_message(code))),
-        Resolved::Bundle(row) => Some(ok_text(&format!("{{\"message\":{row}}}"))),
+        Resolved::Bundle(row) => {
+            // 행은 Postgres `json` 글자 — 공백만 지운다(읽기 도구와 같다). meta 의 수 표기가 JS 와 갈릴 수 있으면 `jsonb_as_js` 가 None
+            // 이지만, 쓰기는 이미 끝났으니 TS 로 넘기지 않고 공백만 지운 글자로 답한다(묶음 meta 에는 수가 없다).
+            let row = minify(&row);
+            let row = super::reads2::jsonb_as_js(&row).unwrap_or(row);
+            Some(ok_text(&format!("{{\"message\":{row}}}")))
+        }
         Resolved::Failed => Some(internal()),
     }
 }
