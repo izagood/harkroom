@@ -114,6 +114,32 @@ async fn main() {
         }
         _ => None,
     };
+    // C4b ④-a — MCP `inbox.read`. 쓰기 풀에 읽음 시각 칸 권한이 있을 때만 — 아니면 TS 에 남는다.
+    let inbox_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            match write::missing_in(
+                w,
+                harkroom_server::core::mcp::writes::INBOX_READ_PRIVILEGES,
+                &[],
+            )
+            .await
+            {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: mcp inbox.read core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: mcp inbox.read core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     let react_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
             use harkroom_server::core::msg_react as r;
@@ -366,8 +392,11 @@ async fn main() {
         let mcp = harkroom_server::core::mcp::route::routes(
             state.up.clone(),
             state.pool.clone(),
-            // C4b — 리액션 쓰기 권한이 다 있는 쓰기 풀일 때만 MCP `message.react`·`unreact` 를 Rust 가 답한다.
-            mcp_react_write,
+            // C4b — 도구 묶음마다 그 권한이 다 있는 쓰기 풀일 때만 Rust 가 답한다(리액션 · inbox.read).
+            harkroom_server::core::mcp::writes::McpWrites {
+                react: mcp_react_write,
+                inbox: inbox_write,
+            },
             auth.clone(),
             state.cors.clone(),
         );

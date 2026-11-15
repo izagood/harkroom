@@ -34,8 +34,8 @@ pub fn served() -> &'static [&'static str] {
 pub struct McpState {
     pub up: Upstream,
     pub pool: sqlx::PgPool,
-    /// 리액션 쓰기 풀(C4b) — 그 줄의 권한이 다 있을 때만. 없으면 쓰는 도구는 TS 가 답한다.
-    pub react_write: Option<sqlx::PgPool>,
+    /// 쓰기 풀(C4b) — 도구 묶음마다 그 권한이 다 있을 때만. 없으면 그 묶음은 TS 가 답한다.
+    pub writes: super::writes::McpWrites,
 }
 
 const AGENT_ONLY: &str = r#"{"error":{"code":"agent_only","message":"MCP surface requires an agent PAT or an operator assignment"}}"#;
@@ -54,11 +54,7 @@ fn json(status: StatusCode, body: &'static str) -> Response<Body> {
 }
 
 pub async fn handle(
-    State(McpState {
-        up,
-        pool,
-        react_write,
-    }): State<McpState>,
+    State(McpState { up, pool, writes }): State<McpState>,
     ci: ConnectInfo<SocketAddr>,
     req: Request<Body>,
 ) -> Response<Body> {
@@ -88,10 +84,9 @@ pub async fn handle(
     };
     let cause = super::reads3::cause_from(&parts.headers);
     let tools = |tool: &'static str, args: serde_json::Value| -> AnswerFut {
-        let (pool, me, cause, write) =
-            (pool.clone(), me.clone(), cause.clone(), react_write.clone());
+        let (pool, me, cause, writes) = (pool.clone(), me.clone(), cause.clone(), writes.clone());
         Box::pin(async move {
-            if let Some(r) = super::writes::answer(&pool, write.as_ref(), &me, tool, &args).await {
+            if let Some(r) = super::writes::answer(&pool, &writes, &me, tool, &args).await {
                 return r;
             }
             super::tools::answer(&pool, &me, tool, &args, cause.as_deref()).await
@@ -149,7 +144,7 @@ pub async fn serve(
 pub fn routes(
     up: Upstream,
     pool: sqlx::PgPool,
-    react_write: Option<sqlx::PgPool>,
+    writes: super::writes::McpWrites,
     auth: crate::auth::AuthPools,
     cors: std::sync::Arc<crate::cors::Cors>,
 ) -> crate::route_table::Routes<()> {
@@ -168,11 +163,7 @@ pub fn routes(
         })
         .finish();
     crate::route_table::Routes {
-        router: t.router.with_state(McpState {
-            up,
-            pool,
-            react_write,
-        }),
+        router: t.router.with_state(McpState { up, pool, writes }),
         http: t.http,
         sockets: t.sockets,
     }

@@ -14,7 +14,22 @@ use serde_json::Value;
 use sqlx::PgPool;
 
 /// 이 묶음에서 Rust 가 답하는 쓰기 도구.
-pub const SERVED: &[&str] = &["message.react", "message.unreact"];
+pub const SERVED: &[&str] = &["message.react", "message.unreact", "inbox.read"];
+
+/// `inbox.read`(C4b ④-a) 쓰기 역할의 권한 — 읽음 시각 칸 하나만 고친다. 없으면 `main.rs` 가 풀을 비워 TS 가 답한다.
+pub const INBOX_READ_PRIVILEGES: &[(&str, &str)] = &[("inbox.read_at", "UPDATE")];
+
+/// 도구 묶음마다의 쓰기 풀 — 그 묶음의 권한이 다 있을 때만 `Some`. 없는 묶음의 도구는 TS 가 답한다.
+#[derive(Clone, Default)]
+pub struct McpWrites {
+    /// `message.react`·`unreact` — `msg_react::MESSAGE_REACTION_PRIVILEGES`.
+    pub react: Option<PgPool>,
+    /// `inbox.read` — [`INBOX_READ_PRIVILEGES`].
+    pub inbox: Option<PgPool>,
+}
+
+/// JS `Number.MAX_SAFE_INTEGER` — 이 밖의 수는 TS 에서 값이 뭉개진다. Rust 는 같은 결과를 낼 수 없으니 TS 로 넘긴다.
+const JS_SAFE_INT: i64 = 9_007_199_254_740_991;
 
 /// TS `{ emoji }`·`{ ok: true }` 와 같은 글자.
 fn ok_text(v: &str) -> String {
@@ -36,7 +51,7 @@ fn emoji_arg(args: &Value) -> Option<&str> {
 
 pub async fn answer(
     read: &PgPool,
-    write: Option<&PgPool>,
+    writes: &McpWrites,
     me: &Account,
     tool: &str,
     args: &Value,
@@ -44,10 +59,50 @@ pub async fn answer(
     if !SERVED.contains(&tool) {
         return None;
     }
-    let Some(write) = write else {
+    if tool == "inbox.read" {
+        let Some(write) = writes.inbox.as_ref() else {
+            return Some(None);
+        };
+        return Some(inbox_read(write, me, args).await);
+    }
+    let Some(write) = writes.react.as_ref() else {
         return Some(None);
     };
     Some(react(read, write, me, tool, args).await)
+}
+
+/// `ids: z.array(z.number().int()).min(1).max(200)` 중 Rust 가 같은 값으로 읽는 것 — JSON 정수이고 JS 안전 범위 안.
+/// `1.0` 같은 실수 꼴·안전 범위 밖·다른 꼴은 `None`(TS 로 — zod 가 받든 거절하든 TS 의 답이 정본이다).
+fn inbox_ids(args: &Value) -> Option<Vec<i64>> {
+    let a = args.get("ids")?.as_array()?;
+    if !(1..=200).contains(&a.len()) {
+        return None;
+    }
+    a.iter()
+        .map(|v| {
+            v.as_i64()
+                .filter(|n| (-JS_SAFE_INT..=JS_SAFE_INT).contains(n))
+        })
+        .collect()
+}
+
+/// TS `markInboxRead` — 자기 inbox 의 아직 안 읽은 항목만 읽음으로. 같은 요청을 두 번 돌아도 두 번째는 0 이라 결과가 수렴하지만,
+/// 답의 `read` 수가 달라지므로 쓰기 오류는 TS 로 넘기지 않고 `internal` 로 답한다(security W1).
+async fn inbox_read(write: &PgPool, me: &Account, args: &Value) -> Option<String> {
+    let ids = inbox_ids(args)?;
+    Some(
+        match sqlx::query(
+            "update inbox set read_at = now() where account_id = $1::uuid and id = any($2) and read_at is null",
+        )
+        .bind(&me.id)
+        .bind(&ids)
+        .execute(write)
+        .await
+        {
+            Ok(r) => ok_text(&format!("{{\"read\":{}}}", r.rows_affected())),
+            Err(_) => internal(),
+        },
+    )
 }
 
 async fn react(
@@ -104,6 +159,33 @@ mod tests {
         }
     }
 
+    #[test]
+    fn inbox_ids_takes_safe_integers_only() {
+        use serde_json::json;
+        assert_eq!(inbox_ids(&json!({"ids": [1, 2]})), Some(vec![1, 2]));
+        assert_eq!(
+            inbox_ids(&json!({"ids": [-9_007_199_254_740_991_i64]})),
+            Some(vec![-JS_SAFE_INT])
+        );
+        assert_eq!(inbox_ids(&json!({"ids": []})), None);
+        assert_eq!(inbox_ids(&json!({"ids": [1.0]})), None);
+        assert_eq!(
+            inbox_ids(&json!({"ids": [9_007_199_254_740_992_i64]})),
+            None
+        );
+        assert_eq!(inbox_ids(&json!({"ids": ["1"]})), None);
+        assert_eq!(inbox_ids(&json!({"ids": vec![1; 201]})), None);
+        assert_eq!(inbox_ids(&json!({})), None);
+    }
+
+    #[test]
+    fn inbox_sql_follows_ts_source() {
+        let svc = include_str!("../../../../../packages/server/src/services/messages.ts");
+        assert!(svc.contains(
+            "`update inbox set read_at = now() where account_id = $1 and id = any($2) and read_at is null`,"
+        ));
+    }
+
     /// 거절 문구·답 모양을 TS 원본과 맞춘다.
     #[test]
     fn texts_follow_ts_source() {
@@ -116,6 +198,8 @@ mod tests {
             "return jsonResult({ emoji });",
             "if (removed === 'status_kept') return jsonResult({ ok: true });",
             "emoji: z.string().min(1).max(32),",
+            "inputSchema: { ids: z.array(z.number().int()).min(1).max(200) },",
+            "return jsonResult({ read });",
         ] {
             assert!(mcp.contains(want), "{want}");
         }
