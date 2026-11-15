@@ -97,7 +97,17 @@ pub const OPERATOR_SEQUENCE_PRIVILEGES: &[(&str, &str)] = &[("operator_upgrade_i
 
 /// 오퍼레이터 코어 권한 중 빠진 것.
 pub async fn missing_operator_privileges(pool: &PgPool) -> Result<Vec<String>, sqlx::Error> {
-    missing_in(pool, OPERATOR_PRIVILEGES, OPERATOR_SEQUENCE_PRIVILEGES).await
+    let mut out = missing_in(pool, OPERATOR_PRIVILEGES, OPERATOR_SEQUENCE_PRIVILEGES).await?;
+    // C6c-3 — 릴레이 cancel 뒤 정리(`turn_settle`)도 같은 묶음이다. 빠지면 cancel 은 되는데 위임·예약이 열린 채 남는다(fail-closed).
+    out.extend(
+        missing_in(
+            pool,
+            crate::core::turn_settle::SETTLE_CANCEL_PRIVILEGES,
+            &[("event_outbox_id_seq", "USAGE")],
+        )
+        .await?,
+    );
+    Ok(out)
 }
 
 /// 지금 연결된 역할에 없는 권한. 기동 기록용 — 비어 있어야 정상이다.

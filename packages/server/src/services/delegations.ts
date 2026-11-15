@@ -376,6 +376,39 @@ export async function closeDelegationsForReply(
 }
 
 /**
+ * `cancelDelegationsFor`·`notifyIfSettled` 의 문장들 — Rust 릴레이의 중단 정리(`core/turn_settle.rs`, S5.3 C6c-3)가 골든으로 받는다.
+ * 자리표에 형을 붙인 것과 Rust 가 text 로 읽도록 칸을 `::text` 로 돌려준 것 말고는 옮기기 전 문장 그대로다.
+ */
+export const CANCEL_AS_DELEGATE_SQL = `select i.delegation_id::text as delegation_id
+       from team_delegation_item i
+       join team_delegation d on d.id = i.delegation_id
+      where i.delegate_account_id = $1::uuid and i.outcome is null and d.thread_root_id = $2::uuid
+      order by d.created_at
+      for update of d`;
+export const CANCEL_DELEGATE_ITEM_SQL = `update team_delegation_item set outcome = 'canceled', closed_at = now()
+        where delegation_id = $1::uuid and delegate_account_id = $2::uuid and outcome is null`;
+export const CANCEL_AS_LEAD_SQL = `select id::text as id from team_delegation
+      where lead_account_id = $1::uuid and thread_root_id = $2::uuid and notified_at is null
+      for update`;
+export const CANCEL_LEAD_ITEMS_SQL = `update team_delegation_item set outcome = 'canceled', closed_at = now()
+        where delegation_id = $1::uuid and outcome is null`;
+export const CANCEL_LEAD_META_SQL = `update message m set meta = jsonb_set(m.meta::jsonb, '{delegation,open}', '[]'::jsonb)
+         from team_delegation d
+        where d.id = $1::uuid and m.id = d.message_id and m.meta->>'kind' = 'delegation'`;
+export const CANCEL_LEAD_MARK_SQL = `update team_delegation set notified_at = now() where id = $1::uuid`;
+export const SETTLED_STILL_SQL = `select delegate_account_id::text as delegate_account_id from team_delegation_item
+      where delegation_id = $1::uuid and outcome is null
+      order by delegate_account_id`;
+export const SETTLED_META_SQL = `update message m
+        set meta = jsonb_set(m.meta::jsonb, '{delegation,open}', $2::jsonb)
+       from team_delegation d
+      where d.id = $1::uuid and m.id = d.message_id and m.meta->>'kind' = 'delegation'`;
+export const SETTLED_MARK_SQL = `update team_delegation set notified_at = now()
+      where id = $1::uuid and notified_at is null
+      returning lead_account_id::text as lead_account_id, message_id::text as message_id, thread_root_id::text as thread_root_id`;
+export const SETTLED_INBOX_SQL = `insert into inbox (account_id, message_id, reason) values ($1::uuid, $2::uuid, 'delegation_done')`;
+
+/**
  * **사람이 중단한 턴의 의무를 닫는다**(051). 중단 라우트가 같은 트랜잭션으로 부른다.
  *
  * 이것이 없으면 중단된 턴의 의무는 **기한이 지나야** `timeout` 으로 닫히고, 팀장은 10분 뒤에
@@ -407,18 +440,12 @@ export async function cancelDelegationsFor(
 
   // ① 이 계정이 **팀원**인 미결 의무.
   const asDelegate = await client.query<{ delegation_id: string }>(
-    `select i.delegation_id
-       from team_delegation_item i
-       join team_delegation d on d.id = i.delegation_id
-      where i.delegate_account_id = $1 and i.outcome is null and d.thread_root_id = $2
-      order by d.created_at
-      for update of d`,
+    CANCEL_AS_DELEGATE_SQL,
     [args.accountId, args.threadRootId],
   );
   for (const row of asDelegate.rows) {
     const closed = await client.query(
-      `update team_delegation_item set outcome = 'canceled', closed_at = now()
-        where delegation_id = $1 and delegate_account_id = $2 and outcome is null`,
+      CANCEL_DELEGATE_ITEM_SQL,
       [row.delegation_id, args.accountId],
     );
     if (!closed.rowCount) continue;
@@ -428,26 +455,21 @@ export async function cancelDelegationsFor(
 
   // ② 이 계정이 **팀장**인 미결 위임. 깨우지 않는다(위 문단 ②).
   const asLead = await client.query<{ id: string }>(
-    `select id from team_delegation
-      where lead_account_id = $1 and thread_root_id = $2 and notified_at is null
-      for update`,
+    CANCEL_AS_LEAD_SQL,
     [args.accountId, args.threadRootId],
   );
   for (const row of asLead.rows) {
     await client.query(
-      `update team_delegation_item set outcome = 'canceled', closed_at = now()
-        where delegation_id = $1 and outcome is null`,
+      CANCEL_LEAD_ITEMS_SQL,
       [row.id],
     );
     // `notifyIfSettled` 를 쓰지 않는다 — 그 함수는 깨우는 것이 일이다. 여기서는 meta 를
     // 비우고 깃발만 찍는다(깨움 없이 닫는 유일한 자리다).
     await client.query(
-      `update message m set meta = jsonb_set(m.meta::jsonb, '{delegation,open}', '[]'::jsonb)
-         from team_delegation d
-        where d.id = $1 and m.id = d.message_id and m.meta->>'kind' = 'delegation'`,
+      CANCEL_LEAD_META_SQL,
       [row.id],
     );
-    await client.query(`update team_delegation set notified_at = now() where id = $1`, [row.id]);
+    await client.query(CANCEL_LEAD_MARK_SQL, [row.id]);
   }
 
   return woke;
@@ -473,24 +495,17 @@ async function notifyIfSettled(
    * 표가 정본이고 이 값은 그 파생이라, 어긋날 여지를 남기지 않는다.
    */
   const still = await client.query<{ delegate_account_id: string }>(
-    `select delegate_account_id from team_delegation_item
-      where delegation_id = $1 and outcome is null
-      order by delegate_account_id`,
+    SETTLED_STILL_SQL,
     [delegationId],
   );
   await client.query(
-    `update message m
-        set meta = jsonb_set(m.meta::jsonb, '{delegation,open}', $2::jsonb)
-       from team_delegation d
-      where d.id = $1 and m.id = d.message_id and m.meta->>'kind' = 'delegation'`,
+    SETTLED_META_SQL,
     [delegationId, JSON.stringify(still.rows.map((r) => r.delegate_account_id))],
   );
   if (still.rowCount) return null;
 
   const marked = await client.query<{ lead_account_id: string; message_id: string; thread_root_id: string }>(
-    `update team_delegation set notified_at = now()
-      where id = $1 and notified_at is null
-      returning lead_account_id, message_id, thread_root_id`,
+    SETTLED_MARK_SQL,
     [delegationId],
   );
   if (!marked.rowCount) return null;
@@ -504,7 +519,7 @@ async function notifyIfSettled(
   // 그것으로 결말 목록을 되찾는다. 새 메시지를 만들지 않는 이유도 같다: 스레드에
   // "결말이 났다"는 줄이 하나 더 생기면 그 대화를 읽는 사람에게 소음이다.
   await client.query(
-    `insert into inbox (account_id, message_id, reason) values ($1, $2, 'delegation_done')`,
+    SETTLED_INBOX_SQL,
     [row.lead_account_id, row.message_id],
   );
   return row.lead_account_id;

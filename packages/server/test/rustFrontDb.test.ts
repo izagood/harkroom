@@ -58,6 +58,14 @@ const OPERATOR_GRANTS = [
   'select, insert, update, delete on relay_hub',
   'select, insert, update, delete on agent_session_live',
   'select, insert, update on agent_presence',
+  // C6c-3 — cancel 뒤 위임 의무·예약 닫기(`turn_settle.rs::SETTLE_CANCEL_PRIVILEGES`).
+  'update (notified_at) on team_delegation',
+  'update (outcome, closed_at) on team_delegation_item',
+  'update (canceled_at, canceled_by_message_id) on agent_wake',
+  'update (meta) on message',
+  'insert on inbox',
+  'insert on event_outbox',
+  'usage on sequence event_outbox_id_seq',
 ];
 
 /** `loops/wake.rs::WAKE_PRIVILEGES`(+ 시퀀스) 만 가진 쓰기 역할 — homelab 이 운영 쓰기 역할에 더할 GRANT 와 같은 표(S5.3 C5b). */
