@@ -373,6 +373,18 @@ export const BG_HARNESS = 'claude-code';
 export const CLEANUP_WEEKLY_MIN_ITEMS = 60;
 export const CLEANUP_WEEKLY_MS = 7 * 24 * 60 * 60 * 1000;
 
+/** 정리 후보 — 실행기 하네스의 살아 있는 에이전트마다 core 길이·살아 있는 항목·journal 수·지난 7일 정리 여부. `$1` = 지금 − `CLEANUP_WEEKLY_MS`, `$2` = `BG_HARNESS`. */
+export const CLEANUP_CANDIDATES_SQL = `select a.id as account_id,
+            coalesce((select char_length(value) from agent_memory where account_id = a.id and slug = 'core'), 0)::int as core_len,
+            (select count(*) from agent_memory where account_id = a.id and archived_at is null)::int as active,
+            (select count(*) from agent_memory where account_id = a.id and kind = 'journal' and archived_at is null)::int as journals,
+            exists (select 1 from bg_job j where j.account_id = a.id and j.kind = 'cleanup' and j.created_at > $1::timestamptz) as recent
+       from account a
+      where a.kind = 'agent' and a.deleted_at is null
+        -- 실행기가 집는 하네스만 — 다른 하네스는 신호로 지금처럼 정리한다(bgCleanupOn 과 같은 판정).
+        and exists (select 1 from agent_config ac where ac.account_id = a.id and ac.harness = $2)
+        and exists (select 1 from agent_memory m where m.account_id = a.id)`;
+
 /**
  * 정리 생산자(BG5) — 주간 정리(C3)와 정리 신호를 옮겨 온 것. 에이전트마다:
  * - 정리 신호가 켜졌으면(core 2,600자↑·항목 180↑·journal 이 곧 밀려남 — 러너 `memorySignals` 와 같은 문턱) 그날,
@@ -385,16 +397,7 @@ export async function produceCleanupJobs(pool: Pool, now: Date = new Date(), env
   if (!backgroundEnabled(env)) return out;
   if (new Date(now.getTime() + KST_OFFSET_MS).getUTCHours() >= BG_WINDOW_KST[1]) return out;
   const r = await pool.query<{ account_id: string; core_len: number; active: number; journals: number; recent: boolean }>(
-    `select a.id as account_id,
-            coalesce((select char_length(value) from agent_memory where account_id = a.id and slug = 'core'), 0)::int as core_len,
-            (select count(*) from agent_memory where account_id = a.id and archived_at is null)::int as active,
-            (select count(*) from agent_memory where account_id = a.id and kind = 'journal' and archived_at is null)::int as journals,
-            exists (select 1 from bg_job j where j.account_id = a.id and j.kind = 'cleanup' and j.created_at > $1) as recent
-       from account a
-      where a.kind = 'agent' and a.deleted_at is null
-        -- 실행기가 집는 하네스만 — 다른 하네스는 신호로 지금처럼 정리한다(bgCleanupOn 과 같은 판정).
-        and exists (select 1 from agent_config ac where ac.account_id = a.id and ac.harness = $2)
-        and exists (select 1 from agent_memory m where m.account_id = a.id)`,
+    CLEANUP_CANDIDATES_SQL,
     [new Date(now.getTime() - CLEANUP_WEEKLY_MS), BG_HARNESS],
   );
   for (const row of r.rows) {
@@ -416,20 +419,8 @@ export const ORGANIZE_MIN_CHANGES = 15;
 export const ORGANIZE_MAX_GAP_MS = 14 * 24 * 60 * 60 * 1000;
 export const ORGANIZE_MIN_GAP_MS = 7 * 24 * 60 * 60 * 1000;
 
-/**
- * organize 생산자(P2, 설계 dfad81b8 4절) — 주간 구조 정리: 분야 접두(`mem/<area>/…`)·목차(`mem/map`)·모순 해소.
- * 시간이 아니라 **작업량** 기준이다 — 마지막 organize(어떤 결말이든) 뒤의 기억 변경(새 기억 + 밀려난 이전 판)을 센다.
- * - 7일 안에 organize 가 있었으면 넣지 않는다.
- * - 변경 ≥15건이면 넣고, 아니면 마지막 organize 뒤 14일이 지났고 변경이 1건 이상일 때 넣는다(변경 0이면 건너뜀).
- * - 실행기가 집는 하네스(BG_HARNESS)만, 기억이 있는 살아 있는 에이전트만. 토글·3연속 실패·하루 상한은 enqueue 가 본다.
- * 창(03~07 KST)이 끝난 뒤엔 넣지 않는다.
- */
-export async function produceOrganizeJobs(pool: Pool, now: Date = new Date(), env: NodeJS.ProcessEnv = process.env): Promise<{ queued: number; refused: Record<string, number> }> {
-  const out = { queued: 0, refused: {} as Record<string, number> };
-  if (!backgroundEnabled(env)) return out;
-  if (new Date(now.getTime() + KST_OFFSET_MS).getUTCHours() >= BG_WINDOW_KST[1]) return out;
-  const r = await pool.query<{ account_id: string; last_at: Date | null; changes: number }>(
-    `with last as (
+/** organize 후보 — 7일 안에 organize 가 없던 에이전트의 마지막 organize 시각과 그 뒤 기억 변경 수. `$1` = 지금, `$2` = `BG_HARNESS`. */
+export const ORGANIZE_CANDIDATES_SQL = `with last as (
        select a.id as account_id,
               (select max(j.created_at) from bg_job j where j.account_id = a.id and j.kind = 'organize') as last_at
          from account a
@@ -449,7 +440,22 @@ export async function produceOrganizeJobs(pool: Pool, now: Date = new Date(), en
                 and r.replaced_at > coalesce(l.last_at, '-infinity'::timestamptz)
                 and (r.run_id is null or not exists (select 1 from bg_job oj where oj.id = r.run_id and oj.kind = 'organize'))))::int as changes
        from last l
-      where l.last_at is null or l.last_at < $1::timestamptz - interval '7 days'`,
+      where l.last_at is null or l.last_at < $1::timestamptz - interval '7 days'`;
+
+/**
+ * organize 생산자(P2, 설계 dfad81b8 4절) — 주간 구조 정리: 분야 접두(`mem/<area>/…`)·목차(`mem/map`)·모순 해소.
+ * 시간이 아니라 **작업량** 기준이다 — 마지막 organize(어떤 결말이든) 뒤의 기억 변경(새 기억 + 밀려난 이전 판)을 센다.
+ * - 7일 안에 organize 가 있었으면 넣지 않는다.
+ * - 변경 ≥15건이면 넣고, 아니면 마지막 organize 뒤 14일이 지났고 변경이 1건 이상일 때 넣는다(변경 0이면 건너뜀).
+ * - 실행기가 집는 하네스(BG_HARNESS)만, 기억이 있는 살아 있는 에이전트만. 토글·3연속 실패·하루 상한은 enqueue 가 본다.
+ * 창(03~07 KST)이 끝난 뒤엔 넣지 않는다.
+ */
+export async function produceOrganizeJobs(pool: Pool, now: Date = new Date(), env: NodeJS.ProcessEnv = process.env): Promise<{ queued: number; refused: Record<string, number> }> {
+  const out = { queued: 0, refused: {} as Record<string, number> };
+  if (!backgroundEnabled(env)) return out;
+  if (new Date(now.getTime() + KST_OFFSET_MS).getUTCHours() >= BG_WINDOW_KST[1]) return out;
+  const r = await pool.query<{ account_id: string; last_at: Date | null; changes: number }>(
+    ORGANIZE_CANDIDATES_SQL,
     [now, BG_HARNESS],
   );
   for (const row of r.rows) {

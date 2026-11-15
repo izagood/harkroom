@@ -389,7 +389,9 @@ async fn open_write_pool() -> Option<sqlx::PgPool> {
 /// 서버 루프 전용 풀(3)을 따로 연다 — 루프 tick 은 문지기 연결 1 + sweep 연결 1 + 이벤트 연결 1 을 쓰는데 쓰기 풀은 2 이고
 /// 요청과 나눠 쓴다. 이 풀이 막혀도 요청은 막히지 않는다. 권한([`loops::wake::WAKE_PRIVILEGES`])이 모자라면 띄우지 않는다(TS 에 남는다).
 async fn spawn_loops() {
-    use harkroom_server::loops::{bg, mandate_idle, permission_expire, retention, wake};
+    use harkroom_server::loops::{
+        bg, bg_produce, mandate_idle, permission_expire, retention, wake,
+    };
     let Some(url) = std::env::var("DATABASE_WRITE_URL")
         .ok()
         .filter(|u| !u.is_empty())
@@ -469,24 +471,39 @@ async fn spawn_loops() {
         Ok(m) => eprintln!("front: loop permission.expire off — missing privileges {m:?}"),
         Err(e) => eprintln!("front: loop permission.expire off — privilege check failed: {e}"),
     }
-    // C5c-3a — 백그라운드 회차 닫기(생산자는 TS `bg.produce` 에 남는다). 스위치는 TS 와 같은 env.
+    // C5c-3a — 백그라운드 회차 닫기. 스위치는 TS 와 같은 env.
+    let bg_on =
+        bg::background_enabled(std::env::var("HARKROOM_BACKGROUND_ENABLED").ok().as_deref());
     match write::missing_in(&pool, bg::BG_PRIVILEGES, &[]).await {
         Ok(m) if m.is_empty() => {
-            let on = bg::background_enabled(
-                std::env::var("HARKROOM_BACKGROUND_ENABLED").ok().as_deref(),
-            );
             eprintln!(
-                "front: loop bg on (enabled={on}; runs only while server_loop owner is rust)"
+                "front: loop bg on (enabled={bg_on}; runs only while server_loop owner is rust)"
             );
-            bg::spawn(gate, pool, on);
+            bg::spawn(gate.clone(), pool.clone(), bg_on);
         }
         Ok(m) => eprintln!("front: loop bg off — missing privileges {m:?}"),
         Err(e) => eprintln!("front: loop bg off — privilege check failed: {e}"),
     }
+    // C5c-3b-2 — 백그라운드 회차 생산(distill → cleanup → organize, 1시간에 한 번). 문지기 이름 `bg.produce` — 주인이 rust 일 때만 돈다.
+    match write::missing_in(&pool, bg_produce::BG_PRODUCE_PRIVILEGES, &[]).await {
+        Ok(m) if m.is_empty() => {
+            let max = bg_produce::daily_max(
+                std::env::var("HARKROOM_BACKGROUND_DAILY_MAX")
+                    .ok()
+                    .as_deref(),
+            );
+            eprintln!(
+                "front: loop bg.produce on (enabled={bg_on}; runs only while server_loop owner is rust)"
+            );
+            bg_produce::spawn(gate, pool, bg_on, max);
+        }
+        Ok(m) => eprintln!("front: loop bg.produce off — missing privileges {m:?}"),
+        Err(e) => eprintln!("front: loop bg.produce off — privilege check failed: {e}"),
+    }
 }
 
-/// Rust 로 옮긴 루프 수(wake·retention·mandate.idle·permission.expire·bg) — 문지기 풀 크기. 루프를 더하면 같이 올린다.
-const LOOP_GATE_CONNECTIONS: u32 = 5;
+/// Rust 로 옮긴 루프 수(wake·retention·mandate.idle·permission.expire·bg·bg.produce) — 문지기 풀 크기. 루프를 더하면 같이 올린다.
+const LOOP_GATE_CONNECTIONS: u32 = 6;
 /// sweep 풀 크기.
 const LOOP_SWEEP_CONNECTIONS: u32 = 3;
 

@@ -2,8 +2,10 @@
 //! `HARKROOM_TEST_DATABASE_URL` 이 없으면 건너뛴다(CI 는 `packages/server/test/rustFrontDb.test.ts` 가 넘긴다).
 //! - `HARKROOM_TEST_WRITE_DATABASE_URL` 이 있으면 넣기는 그 역할(`BG_PRODUCE_PRIVILEGES` 만 가진 쓰기 역할)로 돈다.
 //! - `HARKROOM_BG_PRODUCE_ONLY` 가 있으면 대조 모드 — TS 가 깔아 둔 시드에 증류 생산만 한 번 돌리고 끝난다(판정은 TS 쪽).
+//!   상한은 `HARKROOM_BG_PRODUCE_MAX`(없으면 50, TS `backgroundDailyMax` 와 같은 해석).
 use harkroom_server::loops::bg_produce::{
-    BG_PRODUCE_PRIVILEGES, Enqueue, Producer, Tick, enqueue, produce_distill,
+    BG_PRODUCE_PRIVILEGES, Enqueue, Producer, Tick, enqueue, produce_cleanup, produce_distill,
+    produce_organize,
 };
 use serde_json::json;
 use sqlx::PgPool;
@@ -108,7 +110,11 @@ async fn bg_produce_like_ts() {
 
     if std::env::var("HARKROOM_BG_PRODUCE_ONLY").is_ok() {
         let tick = tick_in_window(&w).await;
-        let r = produce_distill(&w, &tick, true, 50).await.unwrap();
+        // 동시 상한 시험은 상한을 env 로 받는다(TS 와 같은 해석).
+        let max = harkroom_server::loops::bg_produce::daily_max(
+            std::env::var("HARKROOM_BG_PRODUCE_MAX").ok().as_deref(),
+        );
+        let r = produce_distill(&w, &tick, true, max).await.unwrap();
         println!("bg-produce rust queued {} day {}", r.queued, tick.day);
         return;
     }
@@ -222,4 +228,116 @@ async fn bg_produce_like_ts() {
             .unwrap(),
         Enqueue::Refused("agent_off")
     );
+
+    // 정리·organize — 살아 있는 기억 60개(주간 문턱)·지난 organize 없음·변경 60 → cleanup {reasons:[weekly]} + organize {changes:60}.
+    let e = agent(&admin, "bgp_e", true).await;
+    sqlx::query(
+        "insert into agent_memory (account_id, slug, value, kind) \
+         select $1::uuid, 'mem/t' || g, 'v', 'topic' from generate_series(1, 60) g",
+    )
+    .bind(&e)
+    .execute(&admin)
+    .await
+    .unwrap();
+    assert_eq!(
+        produce_cleanup(&w, &tick, true, 1000).await.unwrap().queued,
+        1
+    );
+    assert_eq!(
+        produce_organize(&w, &tick, true, 1000)
+            .await
+            .unwrap()
+            .queued,
+        1
+    );
+    let mut got = jobs(&admin, &e).await;
+    got.sort_by(|x, y| x.0.cmp(&y.0));
+    assert_eq!(
+        got,
+        vec![
+            (
+                "cleanup".to_string(),
+                tick.day.clone(),
+                json!({ "reasons": ["weekly"] })
+            ),
+            (
+                "organize".to_string(),
+                tick.day.clone(),
+                json!({ "changes": 60 })
+            ),
+        ]
+    );
+    // 창 밖·스위치 꺼짐이면 질의도 넣기도 없다.
+    assert_eq!(
+        produce_cleanup(&w, &late, true, 1000).await.unwrap().queued,
+        0
+    );
+    assert_eq!(
+        produce_organize(&w, &tick, false, 1000)
+            .await
+            .unwrap()
+            .queued,
+        0
+    );
+}
+
+/// security 낮은 지적(3b-1) — 세션 DateStyle·TimeZone 이 달라도 Tick 의 날짜(잠금 키 `'bg_job_daily:'||day`)와 「24시간 전」이 같다.
+#[tokio::test]
+async fn tick_ignores_session_datestyle() {
+    let Ok(url) = std::env::var("HARKROOM_TEST_DATABASE_URL") else {
+        eprintln!("skip: HARKROOM_TEST_DATABASE_URL unset");
+        return;
+    };
+    let plain = PgPool::connect(&url).await.unwrap();
+    let odd = PgPoolOptions::new()
+        .max_connections(1)
+        .after_connect(|c, _| {
+            Box::pin(async move {
+                sqlx::query("set datestyle = 'SQL, DMY'")
+                    .execute(&mut *c)
+                    .await?;
+                sqlx::query("set timezone = 'America/New_York'")
+                    .execute(&mut *c)
+                    .await?;
+                Ok(())
+            })
+        })
+        .connect(&url)
+        .await
+        .unwrap();
+    let style: String = sqlx::query_scalar("show datestyle")
+        .fetch_one(&odd)
+        .await
+        .unwrap();
+    assert_eq!(style, "SQL, DMY");
+    let (a, b) = (
+        Tick::read(&plain).await.unwrap(),
+        Tick::read(&odd).await.unwrap(),
+    );
+    assert_eq!(a.day, b.day);
+    assert!(
+        a.day.len() == 10 && a.day.as_bytes()[4] == b'-',
+        "{}",
+        a.day
+    );
+    for t in [
+        &a.done_cutoff,
+        &a.now,
+        &a.week_cutoff,
+        &b.done_cutoff,
+        &b.now,
+        &b.week_cutoff,
+    ] {
+        assert!(t.ends_with('Z') && t.as_bytes()[10] == b'T', "{t}");
+    }
+    // 두 세션이 서로의 글자를 같은 시각으로 읽는다(1초 안 — 두 번 읽은 사이).
+    let gap: f64 = sqlx::query_scalar(
+        "select abs(extract(epoch from $1::timestamptz - $2::timestamptz))::float8",
+    )
+    .bind(&a.done_cutoff)
+    .bind(&b.done_cutoff)
+    .fetch_one(&odd)
+    .await
+    .unwrap();
+    assert!(gap < 1.0, "{gap}");
 }
