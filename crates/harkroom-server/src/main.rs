@@ -161,6 +161,33 @@ async fn main() {
         }
         _ => None,
     };
+    // C1c-1 — 글 올리기(사람 최상위 글 뼈대). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 `MESSAGE_POST_PRIVILEGES` 가 다 있을 때만.
+    let post_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::msg_post as p;
+            match write::missing_in(
+                w,
+                p::MESSAGE_POST_PRIVILEGES,
+                p::MESSAGE_POST_SEQUENCE_PRIVILEGES,
+            )
+            .await
+            {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: message post core off — missing privileges {m:?}");
+                    None
+                }
+                Err(err) => {
+                    eprintln!(
+                        "front: message post core off — privilege check failed ({})",
+                        err.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // C3a-3c — 글 고치기. 위 블록들과 같이 쓰기 역할에 그 권한이 **하나라도 없으면** 붙이지 않는다(그 경로는 TS 가 받는다).
     let edit_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -318,6 +345,21 @@ async fn main() {
             core_routes.router = core_routes.router.merge(ask.router);
             core_routes.http.extend(ask.http);
             core_routes.sockets.extend(ask.sockets);
+        }
+        // C1c-1 — 글 올리기(`POST /channels/{id}/messages`). 맡지 않는 글은 핸들러가 읽은 바이트 그대로 TS 로 넘긴다.
+        if let Some(write) = post_write {
+            let post = harkroom_server::core::msg_post::routes(
+                harkroom_server::core::msg_post::PostState {
+                    read: state.pool.clone(),
+                    write,
+                    up: state.up.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(post.router);
+            core_routes.http.extend(post.http);
+            core_routes.sockets.extend(post.sockets);
         }
         // C4a-1 — `POST /mcp`. 에이전트 게이트·본문 한도(TS 와 같다) 뒤, Rust 가 답하는 읽기 도구(C4a-3)가 아니면 원래 바이트를 TS 로 투명 전달한다.
         let mcp = harkroom_server::core::mcp::route::routes(

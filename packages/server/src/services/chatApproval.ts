@@ -48,6 +48,21 @@ const APPROVE_KO = /(?<![미무불비])(?:승인|허락)(?!\s*(?:요청|대기|�
 const APPROVE_EN = /\b(?:approve|approved|approves)\b/;
 const DENY = /거절|\b(?:deny|denied|denies)\b/;
 const BYPASS = /바이패스|\bbypass/;
+
+/**
+ * 글 승인 판정이 **볼 수도 있는** 글을 가르는 넓은 체(S5.3 C1c-1). 위 정규식들은 하나같이 이 낱말 중 하나를 글자 그대로 품어야
+ * 맞는다(`APPROVE_KO` 승인·허락·머지·진행, `APPROVE_EN` approve, `DENY` 거절·deny·denied·denies, `BYPASS` 바이패스·bypass) —
+ * 링크(`MESSAGE_LINK`)는 `harkroom://message/` 를 품는다. 그래서 소문자로 바꾼 본문에 이 중 하나도 없으면 `parseChatApproval`·
+ * `parseAskPick` 의 카드 지목은 반드시 null·빈 목록이다. Rust 코어(`core/msg_post.rs`)는 이 목록을 골든으로 받아,
+ * 하나라도 있으면 판정하지 않고 그 글을 TS 로 넘긴다(앞뒤 문맥을 보는 정규식을 Rust 로 똑같이 옮기지 않는다).
+ * 넓게 잡는 쪽만 안전하다 — 낱말을 빼려면 위 정규식이 그 낱말 없이 맞는 길이 없는지부터 본다(`chatApproval.test.ts` 가 지킨다).
+ */
+export const CHAT_APPROVAL_GUARD_WORDS = ['승인', '허락', '머지', '진행', 'approve', '거절', 'deny', 'deni', '바이패스', 'bypass', 'harkroom://message/'] as const;
+/** 이 글을 글 승인 판정이 볼 수도 있는가 — [`CHAT_APPROVAL_GUARD_WORDS`] 의 넓은 체. */
+export function mayBeChatApproval(body: string): boolean {
+  const low = body.toLowerCase();
+  return CHAT_APPROVAL_GUARD_WORDS.some((w) => low.includes(w));
+}
 /**
  * 부정·거부·보류·미루기(「말고」·「없이」(security n14 — 「승인 없이 진행해」)·「하지 마」·「보류」·「취소」·「잠깐」·「기다려」·「아니」·「못」·「금지」·「불가」·「거부」·「중지」·
  * 「멈춰」·「나중」·「이따」·「다음에」) — 「안 해」·「않」 같은 부정 활용도 같이 막는다. 넓게 잡는다 — 잘못 막으면 카드에서 정하면

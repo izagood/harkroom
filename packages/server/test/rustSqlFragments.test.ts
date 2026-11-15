@@ -22,6 +22,10 @@ import { MENTION_POLICY_SQL } from '../src/services/mentionPolicy.js';
 import { PRINCIPAL_INVOKES_SQL } from '../src/services/invokePrincipal.js';
 import { ENQUEUE_INBOX_PUSH_MANY_SQL, INBOX_PUSH_REASON_LIST, PUSH_AGENT_REPLY_DELAY_SEC } from '../src/services/push/pushJobs.js';
 import { HAS_OLDER_SQL, LIST_MESSAGES_SQL, MESSAGE_BY_ID_SQL, READ_LIST_ROW_SQL, SEARCH_MESSAGES_SQL } from '../src/services/messages.js';
+import { POST_CHANNEL_KIND_SQL, POST_IDEMPOTENCY_FIND_SQL, POST_IDEMPOTENCY_INSERT_SQL, POST_INSERT_SQL, SEQ_LOCK_CLASS, SEQ_LOCK_SQL } from '../src/services/messages.js';
+import { ATTACH_FIND_SQL, ATTACH_UPDATE_SQL } from '../src/services/attachments.js';
+import { CHAT_APPROVAL_GUARD_WORDS } from '../src/services/chatApproval.js';
+import { URL_CANDIDATE_SOURCE } from '@harkroom/shared';
 import { CHILD_FACTS_AUDIENCE_SQL, PLAN_PROGRESS_PLANS_SQL } from '../src/services/threadPlan.js';
 import { displayBodySql } from '../src/services/systemBody.js';
 import { BG_AGENT_ON_SQL, BG_DAILY_LOCK_SQL, BG_ENQUEUE_SQL, BG_EXISTS_SQL, BG_PAUSED_SQL, CLEANUP_CANDIDATES_SQL, DISTILL_CANDIDATES_SQL, ORGANIZE_CANDIDATES_SQL } from '../src/services/bgJobs.js';
@@ -100,6 +104,18 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     plan_progress_children: CHILD_FACTS_AUDIENCE_SQL,
     // 검색(`core/mcp/search.rs`, S5.3 C4a-6b) — MCP `message.search` 의 정렬 두 갈래, 완성 문장째.
     ...Object.fromEntries(Object.entries(SEARCH_MESSAGES_SQL).map(([k, v]) => [`search_messages_${k}`, v])),
+    // 사람 최상위 글 올리기(`core/msg_post.rs`, S5.3 C1c-1) — seq 락·재시도 키·insert·첨부 잇기, 그리고 TS 로 넘길 글을 가르는 두 체
+    // (링크 미리보기 URL 후보 정규식, 글 승인 넓은 체 낱말).
+    post_seq_lock: SEQ_LOCK_SQL,
+    post_seq_lock_class: String(SEQ_LOCK_CLASS),
+    post_idempotency_find: POST_IDEMPOTENCY_FIND_SQL,
+    post_insert: POST_INSERT_SQL,
+    post_idempotency_insert: POST_IDEMPOTENCY_INSERT_SQL,
+    post_channel_kind: POST_CHANNEL_KIND_SQL,
+    attach_find: ATTACH_FIND_SQL,
+    attach_update: ATTACH_UPDATE_SQL,
+    url_candidate_source: URL_CANDIDATE_SOURCE,
+    chat_approval_guard_words: JSON.stringify([...CHAT_APPROVAL_GUARD_WORDS]),
   };
   const text = `${JSON.stringify(want, null, 2)}\n`;
   if (process.env.UPDATE_RUST_SQL_GOLDEN === '1') writeFileSync(GOLDEN, text);

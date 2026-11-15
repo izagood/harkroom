@@ -17,6 +17,7 @@ pub mod mention_parse;
 pub mod msg_delete;
 pub mod msg_edit;
 pub mod msg_list;
+pub mod msg_post;
 pub mod msg_react;
 pub mod msg_read;
 pub mod operator;
