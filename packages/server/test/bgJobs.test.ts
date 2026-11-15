@@ -598,5 +598,21 @@ describe('bg_job (BG1)', () => {
       // bg cause 가 아니면 회차 관문을 지나지 않는다.
       expect((await admit({}, 'message.post', { channelId: ch, body: 'x' })).json()).toEqual({ admitted: true });
     });
+
+    it('/mcp/admit(S5.3 C4b ④-a): bg.claim 에만 전역 스위치(bgEnabled)를 싣는다 — Rust 앞단의 켜짐 출처', async () => {
+      const a = await agent('bg-admit-switch');
+      const admit = (tool: string) => app.inject({
+        method: 'POST', url: '/mcp/admit', headers: asAgent(a.accountId, {}), payload: { tool, arguments: {} },
+      });
+      expect((await admit('bg.claim')).json()).toEqual({ admitted: true, bgEnabled: true });
+      process.env.HARKROOM_BACKGROUND_ENABLED = '0';
+      try {
+        expect((await admit('bg.claim')).json()).toEqual({ admitted: true, bgEnabled: false });
+        // 다른 도구에는 싣지 않는다.
+        expect((await admit('memory.get')).json()).toEqual({ admitted: true });
+      } finally {
+        process.env.HARKROOM_BACKGROUND_ENABLED = '1';
+      }
+    });
   });
 });

@@ -1,5 +1,6 @@
 //! S5.3 C1c-2a — 사람이 세션으로 쓴 **새 스레드 머리**의 위임(TS `services/mandates.ts::stampHumanMandate` 의 `threadRootId` 없는
-//! 갈래)과 그 갈래가 부르는 `deciders.ts::mayDecideFor`. 답글 갈래(머리의 위임 잇기·`mandateForKeylessRoot`)는 C1c-3 몫이다.
+//! 갈래)과 그 갈래가 부르는 `deciders.ts::mayDecideFor`. 답글 갈래(머리의 위임 잇기·`mandateForKeylessRoot`)는 C1c-3a 의
+//! [`stamp_reply`] 다.
 //!
 //! - 받은 계정(`notified`) 중 작성자 소유 에이전트가 있으면 주인 = 작성자. 없으면 받은 에이전트 중 이 사람이 이 채널에서 카드를
 //!   **정할 수 있는**(소유자 아님) 첫 에이전트의 소유자가 주인, 작성자는 맡긴 사람이다(C-3). 둘 다 아니면 위임이 없다.
@@ -18,6 +19,13 @@ struct Sql {
     decider_seen: String,
     decider_list: String,
     decider_channel: String,
+    reply_continue: String,
+    keyless_own: String,
+    keyless_root: String,
+    keyless_touch: String,
+    keyless_insert: String,
+    keyless_find: String,
+    keyless_root_set: String,
 }
 
 fn sql() -> &'static Sql {
@@ -49,11 +57,34 @@ fn sql() -> &'static Sql {
             decider_seen: frag("decider_seen"),
             decider_list: frag("decider_list"),
             decider_channel: frag("decider_channel"),
+            // 고치는 문장의 `returning id`(uuid)는 글자로 받으려고 감싼다(데이터를 고치는 with 는 맨 위에서만 된다 — 여기가 맨 위다).
+            reply_continue: format!(
+                "with r as ({}) select r.id::text from r",
+                frag("mandate_reply_continue")
+            ),
+            keyless_own: frag("mandate_keyless_own"),
+            keyless_root: format!(
+                "with r as ({}) select r.\"mandateId\"::text, r.\"ownAuthor\" from r",
+                frag("mandate_keyless_root")
+            ),
+            keyless_touch: format!(
+                "with r as ({}) select r.id::text from r",
+                frag("mandate_keyless_touch")
+            ),
+            keyless_insert: format!(
+                "with r as ({}) select r.id::text from r",
+                frag("mandate_keyless_insert")
+            ),
+            keyless_find: format!(
+                "select r.id::text from ({}) r",
+                frag("mandate_keyless_find")
+            ),
+            keyless_root_set: frag("mandate_keyless_root_set"),
         }
     })
 }
 
-/// 새로 만든 위임 — TS `MandateCreated`(via 'root').
+/// 새로 만든 위임 — TS `MandateCreated`(via 'root' 새 머리 · 'owner_reply' 키 없는 머리에 주인이 답함).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Created {
     pub mandate_id: String,
@@ -61,6 +92,7 @@ pub struct Created {
     pub root_message_id: String,
     pub channel_id: String,
     pub delegator_id: Option<String>,
+    pub via: &'static str,
 }
 
 impl Created {
@@ -71,7 +103,7 @@ impl Created {
         d.insert("rootMessageId".into(), json!(self.root_message_id));
         d.insert("channelId".into(), json!(self.channel_id));
         d.insert("threadRootId".into(), json!(self.root_message_id));
-        d.insert("via".into(), json!("root"));
+        d.insert("via".into(), json!(self.via));
         if let Some(del) = &self.delegator_id {
             d.insert("ownerId".into(), json!(self.owner_id));
             d.insert("delegatorId".into(), json!(del));
@@ -201,7 +233,113 @@ pub async fn stamp_root(
         owner_id: owner,
         root_message_id: message_id.to_owned(),
         channel_id: channel.to_owned(),
+        via: "root",
     }))
+}
+
+/// TS `stampHumanMandate` 의 답글 갈래. 머리의 위임을 그 주인·맡긴 사람이 답하면 잇고, 없으면 [`keyless_root`].
+/// 돌려주는 것은 (이 글에 적은 위임 id, 새로 만든 위임).
+pub async fn stamp_reply(
+    conn: &mut PgConnection,
+    message_id: &str,
+    author: &str,
+    channel: &str,
+    root_id: &str,
+    notified: &[String],
+) -> Result<Option<Created>, sqlx::Error> {
+    let s = sql();
+    let now = super::operator_hub::now_iso();
+    let mut created = None;
+    let mut mandate: Option<String> = sqlx::query_scalar(s.reply_continue.as_str())
+        .bind(root_id)
+        .bind(author)
+        .bind(&now)
+        .fetch_optional(&mut *conn)
+        .await?;
+    if mandate.is_none() {
+        (mandate, created) = keyless_root(conn, author, channel, root_id, notified, &now).await?;
+    }
+    let Some(mandate) = mandate else {
+        return Ok(None);
+    };
+    sqlx::query(s.set_mandate.as_str())
+        .bind(message_id)
+        .bind(&mandate)
+        .execute(&mut *conn)
+        .await?;
+    Ok(created)
+}
+
+/// TS `mandateForKeylessRoot` — 위임 키가 없는 머리(키 이전 글·자기 에이전트를 안 부른 머리)에 주인이 자기 에이전트를 부르며 답하면
+/// 머리를 뿌리로 위임을 만든다. 머리 행을 잠가 같은 머리의 동시 답글을 줄 세운다.
+async fn keyless_root(
+    conn: &mut PgConnection,
+    author: &str,
+    channel: &str,
+    root_id: &str,
+    notified: &[String],
+    now: &str,
+) -> Result<(Option<String>, Option<Created>), sqlx::Error> {
+    if notified.is_empty() {
+        return Ok((None, None));
+    }
+    let s = sql();
+    let own = sqlx::query(s.keyless_own.as_str())
+        .bind(notified)
+        .bind(author)
+        .fetch_optional(&mut *conn)
+        .await?
+        .is_some();
+    if !own {
+        return Ok((None, None));
+    }
+    let root: Option<(Option<String>, Option<bool>)> = sqlx::query_as(s.keyless_root.as_str())
+        .bind(root_id)
+        .bind(channel)
+        .bind(author)
+        .fetch_optional(&mut *conn)
+        .await?;
+    let Some((root_mandate, Some(true))) = root else {
+        return Ok((None, None));
+    };
+    if let Some(m) = root_mandate {
+        let id: Option<String> = sqlx::query_scalar(s.keyless_touch.as_str())
+            .bind(&m)
+            .bind(author)
+            .bind(now)
+            .fetch_optional(&mut *conn)
+            .await?;
+        return Ok((id, None));
+    }
+    let inserted: Option<String> = sqlx::query_scalar(s.keyless_insert.as_str())
+        .bind(author)
+        .bind(root_id)
+        .bind(channel)
+        .bind(now)
+        .fetch_optional(&mut *conn)
+        .await?;
+    let made: Option<String> = sqlx::query_scalar(s.keyless_find.as_str())
+        .bind(root_id)
+        .bind(author)
+        .fetch_optional(&mut *conn)
+        .await?;
+    let Some(made) = made else {
+        return Ok((None, None));
+    };
+    let created = (inserted.as_deref() == Some(made.as_str())).then(|| Created {
+        mandate_id: made.clone(),
+        owner_id: author.to_owned(),
+        root_message_id: root_id.to_owned(),
+        channel_id: channel.to_owned(),
+        delegator_id: None,
+        via: "owner_reply",
+    });
+    sqlx::query(s.keyless_root_set.as_str())
+        .bind(root_id)
+        .bind(&made)
+        .execute(&mut *conn)
+        .await?;
+    Ok((Some(made), created))
 }
 
 #[cfg(test)]
@@ -223,6 +361,7 @@ mod tests {
             root_message_id: "r".into(),
             channel_id: "c".into(),
             delegator_id: None,
+            via: "root",
         };
         assert_eq!(
             c.audit_detail(),

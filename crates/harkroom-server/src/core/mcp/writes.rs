@@ -18,6 +18,7 @@ pub const SERVED: &[&str] = &[
     "message.react",
     "message.unreact",
     "inbox.read",
+    "bg.claim",
     "message.askBundleResolve",
 ];
 
@@ -31,6 +32,8 @@ pub struct McpWrites {
     pub react: Option<PgPool>,
     /// `inbox.read` — [`INBOX_READ_PRIVILEGES`].
     pub inbox: Option<PgPool>,
+    /// `bg.claim` — [`super::bg_claim::BG_CLAIM_PRIVILEGES`].
+    pub bg: Option<PgPool>,
     /// `message.askBundleResolve`(C3b-2b) — 선택 카드 줄(C3b-1 `ASK_PRIVILEGES`)과 같은 권한.
     pub ask: Option<PgPool>,
 }
@@ -62,9 +65,21 @@ pub async fn answer(
     me: &Account,
     tool: &str,
     args: &Value,
+    runner: bool,
 ) -> Option<Option<String>> {
     if !SERVED.contains(&tool) {
         return None;
+    }
+    if tool == "bg.claim" {
+        // 러너가 아니면(`runner_only`) TS 가 답한다. 켜짐은 `route::serve` 가 admit 값으로 이미 걸렀다.
+        let Some(write) = writes.bg.as_ref().filter(|_| runner) else {
+            return Some(None);
+        };
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_millis() as i64;
+        return Some(super::bg_claim::claim(read, write, &me.id, now_ms).await);
     }
     if tool == "message.askBundleResolve" {
         let Some(write) = writes.ask.as_ref() else {
