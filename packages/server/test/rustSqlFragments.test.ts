@@ -14,21 +14,30 @@ import { LIST_SCHEDULED_SQL } from '../src/services/scheduledMessages.js';
 import { SELECT_PINS_SQL } from '../src/services/pins.js';
 import { AGENT_INVOKER_SQL, CHANNEL_SCOPE_SQL, ELIGIBLE_DELEGATE_SQL, INVOKE_FACTS_SQL, TEAM_INVOKER_SQL } from '../src/services/invokeGate.js';
 import { HAS_REPLY_GRANT_SQL } from '../src/services/replyGrants.js';
+import { EDIT_FIND_SQL, EDIT_INBOX_ALREADY_SQL, EDIT_UPDATE_SQL, EDIT_VIA_EDIT_SQL } from '../src/services/messages.js';
 import { ACCOUNTS_BY_HANDLES_SQL, ACCOUNTS_BY_IDS_SQL, FAN_OUT_AUDIENCE_SQL, INSERT_INBOX_MANY_SQL, REVEAL_HIDDEN_SQL, REVEAL_REASONS } from '../src/services/messages.js';
 import { GROUP_BY_HANDLE_SQL, GROUP_MEMBERS_SQL } from '../src/services/handleGroups.js';
 import { TEAM_BY_ID_SQL, TEAM_BY_NAME_SQL, TEAM_MEMBERS_SQL } from '../src/services/teams.js';
 import { MENTION_POLICY_SQL } from '../src/services/mentionPolicy.js';
 import { PRINCIPAL_INVOKES_SQL } from '../src/services/invokePrincipal.js';
 import { ENQUEUE_INBOX_PUSH_MANY_SQL, INBOX_PUSH_REASON_LIST, PUSH_AGENT_REPLY_DELAY_SEC } from '../src/services/push/pushJobs.js';
-import { HAS_OLDER_SQL, LIST_MESSAGES_SQL, MESSAGE_BY_ID_SQL, READ_LIST_ROW_SQL } from '../src/services/messages.js';
+import { HAS_OLDER_SQL, LIST_MESSAGES_SQL, MESSAGE_BY_ID_SQL, READ_LIST_ROW_SQL, SEARCH_MESSAGES_SQL } from '../src/services/messages.js';
 import { CHILD_FACTS_AUDIENCE_SQL, PLAN_PROGRESS_PLANS_SQL } from '../src/services/threadPlan.js';
 import { displayBodySql } from '../src/services/systemBody.js';
+import { BG_AGENT_ON_SQL, BG_DAILY_LOCK_SQL, BG_ENQUEUE_SQL, BG_EXISTS_SQL, BG_PAUSED_SQL, DISTILL_CANDIDATES_SQL } from '../src/services/bgJobs.js';
 
 const GOLDEN = fileURLToPath(new URL('../../../crates/harkroom-server/golden/sql_fragments.json', import.meta.url));
 
 it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
   const want = {
     channel_visible_c_p1uuid: channelVisibleSql('c', '$1::uuid'),
+    // bg 생산(`loops/bg_produce.rs`, S5.3 C5c-3b) — 일감 넣기와 증류 후보, 문장 전체.
+    bg_paused: BG_PAUSED_SQL,
+    bg_agent_on: BG_AGENT_ON_SQL,
+    bg_daily_lock: BG_DAILY_LOCK_SQL,
+    bg_enqueue: BG_ENQUEUE_SQL,
+    bg_exists: BG_EXISTS_SQL,
+    bg_distill_candidates: DISTILL_CANDIDATES_SQL,
     display_body_m: displayBodySql('m'),
     // 작업 항목(`workItems.ts::actorSeesItemSql`) — 주인이 아닌 쪽이 볼 수 있는 스레드인지, 별칭 ac·두째 인자.
     channel_visible_ac_p2uuid: channelVisibleSql('ac', '$2::uuid'),
@@ -36,6 +45,11 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     channel_list_visible_c_aid_aadmin: channelListVisibleSql('c', 'a.id', 'a.is_admin'),
     // 링크 한 개 읽기(`core/msg_read.rs`, S5.3 C1b-1a) — `GET /messages/:id` 의 문장 전체(COLS 포함).
     message_by_id: MESSAGE_BY_ID_SQL,
+    // 글 고치기(`core/msg_edit.rs`, S5.3 C3a-3c).
+    edit_find: EDIT_FIND_SQL,
+    edit_update: EDIT_UPDATE_SQL,
+    edit_inbox_already: EDIT_INBOX_ALREADY_SQL,
+    edit_via_edit: EDIT_VIA_EDIT_SQL,
     // 누구를 부르나·호출함 쓰기(`core/mention_calls.rs`·`mention_fanout.rs`, S5.3 C3a-3b). 목록·수는 JSON 글자로 싣는다.
     mc_accounts_by_handles: ACCOUNTS_BY_HANDLES_SQL,
     mc_accounts_by_ids: ACCOUNTS_BY_IDS_SQL,
@@ -82,6 +96,8 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     // 계획판 진행률(`attachPlanProgress`·`childFacts`) — 목록 머리에 붙이는 두 문장.
     plan_progress_plans: PLAN_PROGRESS_PLANS_SQL,
     plan_progress_children: CHILD_FACTS_AUDIENCE_SQL,
+    // 검색(`core/mcp/search.rs`, S5.3 C4a-6b) — MCP `message.search` 의 정렬 두 갈래, 완성 문장째.
+    ...Object.fromEntries(Object.entries(SEARCH_MESSAGES_SQL).map(([k, v]) => [`search_messages_${k}`, v])),
   };
   const text = `${JSON.stringify(want, null, 2)}\n`;
   if (process.env.UPDATE_RUST_SQL_GOLDEN === '1') writeFileSync(GOLDEN, text);

@@ -2147,6 +2147,19 @@ export interface EditMessageOutcome {
  *
  * thread_reply·dm·기다림 선점·위임 닫기는 하지 않는다 — 수정은 새 답이 아니다.
  */
+/**
+ * 글 고치기(`PATCH /channels/:id/messages/:messageId`)의 문장들 — Rust 코어(`core/msg_edit.rs`, S5.3 C3a-3c)가
+ * `golden/sql_fragments.json` 으로 받아 그대로 쓴다. 고치면 `test/rustSqlFragments.test.ts` 가 골든 갱신을 요구한다.
+ */
+export const EDIT_FIND_SQL = `select m.author_id, m.kind, m.body, m.meta, m.mention_depth as depth, m.created_at,
+              (a.kind = 'agent') as author_is_agent
+         from message m join account a on a.id = m.author_id
+        where m.id = $1::uuid and m.channel_id = $2::uuid and m.deleted_at is null
+        for update of m`;
+export const EDIT_UPDATE_SQL = `update message set body = $2, meta = $3::jsonb, edited_at = now() where id = $1::uuid returning ${COLS}`;
+export const EDIT_INBOX_ALREADY_SQL = `select distinct account_id from inbox where message_id = $1::uuid`;
+export const EDIT_VIA_EDIT_SQL = `update inbox set via_edit = true where message_id = $1::uuid and account_id = any($2::uuid[])`;
+
 export async function editMessage(
   pool: Pool, args: { channelId: string; messageId: string; actorId: string; body: string },
 ): Promise<EditMessageOutcome | MutationRefusal> {
@@ -2154,14 +2167,7 @@ export async function editMessage(
   try {
     await client.query('begin');
     // 행을 잠근다 — 같은 메시지를 두 번 빠르게 고치면 판정·inbox 넣기가 서로 엇갈려 두 번 부를 수 있다.
-    const found = await client.query(
-      `select m.author_id, m.kind, m.body, m.meta, m.mention_depth as depth, m.created_at,
-              (a.kind = 'agent') as author_is_agent
-         from message m join account a on a.id = m.author_id
-        where m.id = $1 and m.channel_id = $2 and m.deleted_at is null
-        for update of m`,
-      [args.messageId, args.channelId],
-    );
+    const found = await client.query(EDIT_FIND_SQL, [args.messageId, args.channelId]);
     if (!found.rowCount) {
       await client.query('rollback');
       return 'not_found';
@@ -2216,17 +2222,12 @@ export async function editMessage(
         ...(calls.callMeta.mentionRefs ? { mentionRefs: calls.callMeta.mentionRefs } : {}),
       };
 
-    const updated = await client.query(
-      `update message set body = $2, meta = $3, edited_at = now() where id = $1 returning ${COLS}`,
-      [args.messageId, calls.normalizedBody, JSON.stringify(meta)],
-    );
+    const updated = await client.query(EDIT_UPDATE_SQL, [args.messageId, calls.normalizedBody, JSON.stringify(meta)]);
 
     let fresh: string[] = [];
     if (invoke) {
       const already = new Set(
-        (await client.query<{ account_id: string }>(
-          `select distinct account_id from inbox where message_id = $1`, [args.messageId],
-        )).rows.map((r) => r.account_id),
+        (await client.query<{ account_id: string }>(EDIT_INBOX_ALREADY_SQL, [args.messageId])).rows.map((r) => r.account_id),
       );
       const notified = new Set(already);
       await fanOutCalls(client, { channelId: args.channelId, authorId: args.actorId, messageId: args.messageId }, calls, notified);
@@ -2237,10 +2238,7 @@ export async function editMessage(
         같은 트랜잭션이라 찍기 전의 항목을 누가 읽을 수도 없다.
       */
       if (fresh.length) {
-        await client.query(
-          `update inbox set via_edit = true where message_id = $1 and account_id = any($2::uuid[])`,
-          [args.messageId, fresh],
-        );
+        await client.query(EDIT_VIA_EDIT_SQL, [args.messageId, fresh]);
       }
     }
     await client.query('commit');
@@ -3949,20 +3947,20 @@ const SEARCH_MATCH = `(
       )
     )`;
 
-export async function searchMessages(
-  pool: Pool, requesterId: string, query: string, scope: SearchScope = {},
-): Promise<SearchPage> {
-  const limit = Math.min(scope.limit ?? 50, 100);
-  const offset = Math.max(scope.offset ?? 0, 0);
-  const authorIds = scope.authorIds?.length ? scope.authorIds.slice(0, SEARCH_MAX_AUTHORS) : null;
+/**
+ * 검색 문장 — 정렬 두 갈래의 **완성 문장**. 인자: $1 질의(정본으로 맞춘 것) · $2 limit+1 · $3 요청자 · $4 채널 · $5 스레드 ·
+ * $6 offset · $7 보낸 사람들 · $8·$9 기간 · $10 첨부만. Rust 앞단(MCP `message.search`, S5.3 C4a-6b)이
+ * `golden/sql_fragments.json` 으로 같은 글자를 읽는다 — 그래서 uuid 칸은 문장 안에서 `::uuid` 로 캐스트한다
+ * (Rust 는 글자 타입으로 바인드한다. node-pg 는 타입을 정하지 않고 보내므로 TS 에는 차이가 없다).
+ */
+function searchMessagesSql(sort: 'relevance' | 'recent'): string {
   // 정렬은 닫힌 두 값 중 하나다 — 문자열을 SQL 에 그대로 잇지 않고 여기서 고른다.
-  const order = scope.sort === 'recent'
+  const order = sort === 'recent'
     ? `m.created_at desc, m.seq desc`
     : `(m.search @@ ${PREFIX_TSQUERY}) desc,
               ts_rank(m.search, ${PREFIX_TSQUERY}) desc,
               m.seq desc`;
-  const res = await pool.query(
-    `select m.id, m.seq::int as seq, m.channel_id as "channelId", m.thread_root_id as "threadRootId",
+  return `select m.id, m.seq::int as seq, m.channel_id as "channelId", m.thread_root_id as "threadRootId",
        m.author_id as "authorId", m.body, m.kind, m.meta, m.created_at as "createdAt",
        m.edited_at as "editedAt", '[]'::json as reactions,
        -- 결과 카드가 사진·파일을 그릴 수 있게 첨부 요약을 싣는다(S1). 이 하위 질의는 **아래 where 를
@@ -3983,13 +3981,13 @@ export async function searchMessages(
        -- 검색은 채널 목록을 우회해 본문에 바로 닿는 표면이다. 여기만 넓으면 목록에도
        -- 배지에도 없는 private 채널의 발언이 검색 결과로 통째로 나온다 — 그래서 목록·배지와
        -- **같은 술어**를 쓴다. admin 예외 없다(결과가 곧 메시지 본문이다).
-       and ${channelVisibleSql('c', '$3')}
+       and ${channelVisibleSql('c', '$3::uuid')}
        -- 스코프는 가시성 **위에** 얹는 별개 조건이다. null 이면 절이 상수로 접혀 전역 검색의
        -- 계획이 그대로 남는다 — 기존 동작을 건드리지 않는다.
-       and ($4::uuid is null or m.channel_id = $4)
+       and ($4::uuid is null or m.channel_id = $4::uuid)
        -- 스레드 스코프는 루트 자신을 포함한다 — 루트에 있는 말을 못 찾으면 "이 스레드에서
        -- 찾기"가 아니다(listMessages 의 스레드 분기와 같은 문장).
-       and ($5::uuid is null or m.id = $5 or m.thread_root_id = $5)
+       and ($5::uuid is null or m.id = $5::uuid or m.thread_root_id = $5::uuid)
        -- 거르기(S1)도 같은 자리다: 가시성·스코프 **위에** 얹는 and 뿐이라 결과를 좁히기만 한다
        -- (security S1 ①). null 이면 상수로 접혀 계획이 그대로 남는다.
        and ($7::uuid[] is null or m.author_id = any($7::uuid[]))
@@ -4003,7 +4001,22 @@ export async function searchMessages(
      -- 페이지는 offset 이다(seq 커서가 아니다): 순서가 seq 가 아니라 rank 이므로 seq 커서는
      -- 이 정렬에서 뜻이 없다.
      order by ${order}
-     limit $2 offset $6`,
+     limit $2 offset $6`;
+}
+
+export const SEARCH_MESSAGES_SQL = {
+  relevance: searchMessagesSql('relevance'),
+  recent: searchMessagesSql('recent'),
+} as const;
+
+export async function searchMessages(
+  pool: Pool, requesterId: string, query: string, scope: SearchScope = {},
+): Promise<SearchPage> {
+  const limit = Math.min(scope.limit ?? 50, 100);
+  const offset = Math.max(scope.offset ?? 0, 0);
+  const authorIds = scope.authorIds?.length ? scope.authorIds.slice(0, SEARCH_MAX_AUTHORS) : null;
+  const res = await pool.query(
+    SEARCH_MESSAGES_SQL[scope.sort === 'recent' ? 'recent' : 'relevance'],
     [
       query, limit + 1, requesterId, scope.channelId ?? null, scope.threadRootId ?? null, offset,
       authorIds, scope.after ?? null, scope.before ?? null, scope.hasAttachment ?? null,

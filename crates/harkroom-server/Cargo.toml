@@ -32,6 +32,15 @@ tokio = { version = "=1.48.0", features = ["macros", "rt-multi-thread", "net", "
 ts-rs = "=12.0.1"
 # 링크 판정(C3a-3a) — shared `isDrawnLink` 의 `new URL()` 과 같은 WHATWG 파서. 이미 잠금 파일에 있던 판.
 url = "=2.5.8"
+# 비밀 값 열기(S5.3 keyring) — TS `secretKeyring.ts` 의 v2 봉투를 연다. 열기만 하므로 난수(getrandom) 기능은 끄고,
+# 키 스케줄·GHASH 상태를 지우는 `zeroize` 기능을 켠다.
+aes-gcm = { version = "=0.11.1", default-features = false, features = ["aes", "alloc", "zeroize"] }
+base64 = "=0.22.1"
+hkdf = "=0.13.0"
+hmac = { version = "=0.13.0", features = ["zeroize"] }
+# HKDF·HMAC 0.13 은 digest 0.11 을 쓴다 — 위의 sha2 0.10(digest 0.10)과 따로 둔다. 이미 잠금 파일에 있던 판.
+sha2_011 = { package = "sha2", version = "=0.11.0", features = ["zeroize"] }
+zeroize = "=1.9.1"
 
 [dev-dependencies]
 # /ws 시험 클라이언트(앞단 의존 axum ws 가 이미 쓰는 판).

@@ -7,6 +7,8 @@
 //! 3. 주인이면 sweep 을 돌리고, 끝나면(실패해도) 같은 연결에서 잠금을 푼다.
 //!
 //! class·키·순서가 TS 와 같아야 겹침이 0 이다. 옮긴 루프: [`wake`](C5b) · [`retention`](C5c) · [`mandate_idle`](C5c-2a) · [`permission_expire`](C5c-2b).
+pub mod bg;
+pub mod bg_produce;
 pub mod mandate_idle;
 pub mod permission_expire;
 pub mod retention;
@@ -19,7 +21,7 @@ use std::future::Future;
 pub const LOOP_LOCK_CLASS: i32 = 0x4c4f_4f50;
 
 /// 루프 이름 — TS `LOOP_NAMES` 와 같아야 한다(`server_loop.name` 의 키).
-pub const LOOP_NAMES: [&str; 10] = [
+pub const LOOP_NAMES: [&str; 11] = [
     "wake",
     "delegation.deadline",
     "automation",
@@ -30,6 +32,7 @@ pub const LOOP_NAMES: [&str; 10] = [
     "bg",
     "retention",
     "stale",
+    "bg.produce",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

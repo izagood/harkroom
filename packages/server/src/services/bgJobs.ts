@@ -75,13 +75,30 @@ const SELECT_JOB = `select id, account_id as "accountId", kind, to_char(day, 'YY
   writes, tokens, duration_ms as "durationMs", created_at as "createdAt", claimed_at as "claimedAt", finished_at as "finishedAt"
   from bg_job`;
 
+/*
+ * 생산 몫(enqueue·생산자)의 문장은 상수로 둔다 — Rust 앞단(`loops/bg_produce.rs`, S5.3 C5c-3b)이 골든 파일
+ * (`crates/harkroom-server/golden/sql_fragments.json`)로 **같은 글자**를 쓴다(`test/rustSqlFragments.test.ts` 가 대조).
+ * 자리표마다 형을 적는 이유: Rust 는 값을 글자로 넘긴다 — 형을 적지 않으면 uuid·timestamptz 칸과 비교가 안 된다.
+ */
+/** 최근 결말 n개(n = `BG_PAUSE_AFTER_FAILURES`). */
+export const BG_PAUSED_SQL = `select status from bg_job where account_id = $1::uuid and kind = $2 and status in ('done', 'failed', 'skipped')
+     order by created_at desc limit $3`;
+/** 소유자 토글(132). 줄이 없으면 꺼짐. */
+export const BG_AGENT_ON_SQL = `select bg_enabled from agent_config where account_id = $1::uuid`;
+/** 날짜별 하루 상한을 한 트랜잭션 안에서 직렬화한다(security n4). */
+export const BG_DAILY_LOCK_SQL = `select pg_advisory_xact_lock(hashtext('bg_job_daily:' || $1))`;
+/** 하루 상한 안이고 (에이전트, 종류, 날짜)가 없을 때만 넣는다. */
+export const BG_ENQUEUE_SQL = `insert into bg_job (account_id, kind, day, input)
+       select $1::uuid, $2, $3::date, $4::jsonb
+       where (select count(*) from bg_job where day = $3::date) < $5
+       on conflict (account_id, kind, day) do nothing
+       returning id`;
+/** 넣지 못했을 때 까닭 가르기 — 이미 있음(exists) / 하루 상한(daily_cap). */
+export const BG_EXISTS_SQL = `select 1 from bg_job where account_id = $1::uuid and kind = $2 and day = $3::date`;
+
 /** 최근 3회가 모두 실패면 멈춘 상태다. */
 export async function bgPaused(pool: Pool, accountId: string, kind: BgKind): Promise<boolean> {
-  const r = await pool.query<{ status: string }>(
-    `select status from bg_job where account_id = $1 and kind = $2 and status in ('done', 'failed', 'skipped')
-     order by created_at desc limit $3`,
-    [accountId, kind, BG_PAUSE_AFTER_FAILURES],
-  );
+  const r = await pool.query<{ status: string }>(BG_PAUSED_SQL, [accountId, kind, BG_PAUSE_AFTER_FAILURES]);
   return r.rows.length === BG_PAUSE_AFTER_FAILURES && r.rows.every((x) => x.status === 'failed');
 }
 
@@ -97,7 +114,7 @@ export async function enqueueBgJob(
   const day = kstDay(now);
   if (await bgPaused(pool, input.accountId, input.kind)) return { refused: 'paused' };
   // 소유자의 「백그라운드 정리」 토글(132). 꺼진 에이전트에는 넣지 않는다.
-  const on = await pool.query<{ bg_enabled: boolean }>(`select bg_enabled from agent_config where account_id = $1`, [input.accountId]);
+  const on = await pool.query<{ bg_enabled: boolean }>(BG_AGENT_ON_SQL, [input.accountId]);
   // 행이 없으면 끔으로 본다(144 기본 끔과 같은 쪽, security n1) — 켜진 것이 확인된 에이전트에만 넣는다.
   if (!on.rows[0]?.bg_enabled) return { refused: 'agent_off' };
   // 하루 상한은 날짜별 advisory 잠금으로 직렬화한다(security n4) — 두 생산자가 동시에 세면 상한을 넘긴다.
@@ -105,13 +122,9 @@ export async function enqueueBgJob(
   let r: { rows: { id: string }[] };
   try {
     await client.query('begin');
-    await client.query(`select pg_advisory_xact_lock(hashtext('bg_job_daily:' || $1))`, [day]);
+    await client.query(BG_DAILY_LOCK_SQL, [day]);
     r = await client.query<{ id: string }>(
-      `insert into bg_job (account_id, kind, day, input)
-       select $1, $2, $3::date, $4::jsonb
-       where (select count(*) from bg_job where day = $3::date) < $5
-       on conflict (account_id, kind, day) do nothing
-       returning id`,
+      BG_ENQUEUE_SQL,
       [input.accountId, input.kind, day, JSON.stringify(input.input), backgroundDailyMax(env)],
     );
     await client.query('commit');
@@ -122,7 +135,7 @@ export async function enqueueBgJob(
     client.release();
   }
   if (!r.rows[0]) {
-    const exists = await pool.query(`select 1 from bg_job where account_id = $1 and kind = $2 and day = $3::date`, [input.accountId, input.kind, day]);
+    const exists = await pool.query(BG_EXISTS_SQL, [input.accountId, input.kind, day]);
     return { refused: exists.rowCount ? 'exists' : 'daily_cap' };
   }
   return { job: (await getBgJob(pool, r.rows[0].id))! };
@@ -265,6 +278,40 @@ export async function buildDistillDigest(pool: Pool, accountId: string, rootId: 
   return out.join('\n');
 }
 
+/** 증류 후보 — 에이전트마다 오래된 done 스레드 n개. `$1` = 지금 − `DISTILL_DONE_AGE_MS`, `$2` = `DISTILL_MAX_THREADS`, `$3` = `BG_HARNESS`. */
+export const DISTILL_CANDIDATES_SQL = `with pairs as (
+       select n.account_id, n.thread_root_id as root_id, true as has_note
+         from thread_note n where n.archived_at is null and n.flag_reason is null
+       union
+       select distinct m.author_id, coalesce(m.thread_root_id, m.id), false
+         from message m join account a on a.id = m.author_id and a.kind = 'agent'
+        where m.deleted_at is null and m.created_at > $1::timestamptz - interval '${DISTILL_LOOKBACK}'
+     ), cand as (
+       select p.account_id, p.root_id, s.updated_at, bool_or(p.has_note) as has_note
+         from pairs p
+         join account a on a.id = p.account_id and a.kind = 'agent' and a.deleted_at is null
+         join agent_config ac on ac.account_id = a.id and ac.harness = $3
+         join thread_status s on s.root_id = p.root_id
+         join message rm on rm.id = p.root_id and rm.deleted_at is null and rm.thread_root_id is null
+         join channel c on c.id = rm.channel_id
+        where s.status = 'done' and s.updated_at < $1::timestamptz
+          and ${channelVisibleSql('c', 'p.account_id')}
+          and not exists (
+            select 1 from bg_job j
+             where j.account_id = p.account_id and j.kind = 'distill' and j.status = 'done'
+               and j.finished_at > s.updated_at and j.input->'threadIds' ? p.root_id::text)
+        group by p.account_id, p.root_id, s.updated_at
+     )
+     select account_id, (array_agg(root_id order by updated_at, root_id))[1:$2] as threads
+       from cand
+      where has_note
+         or exists (select 1 from message h join account ha on ha.id = h.author_id and ha.kind = 'human'
+                     where (h.id = cand.root_id or h.thread_root_id = cand.root_id) and h.deleted_at is null and h.kind = 'user')
+         or exists (select 1 from message f
+                     where (f.id = cand.root_id or f.thread_root_id = cand.root_id) and f.deleted_at is null
+                       and f.author_id = cand.account_id and f.meta->>'kind' = 'failure')
+      group by account_id`;
+
 /**
  * 증류 생산자(BG3 + P1). done 으로 24h 넘게 머문 스레드 가운데, 에이전트마다
  * - 스레드 메모가 있는 것(보관·쓰기 검사 걸림 제외), 또는
@@ -281,38 +328,7 @@ export async function produceDistillJobs(pool: Pool, now: Date = new Date(), env
   if (!backgroundEnabled(env)) return out;
   if (new Date(now.getTime() + KST_OFFSET_MS).getUTCHours() >= BG_WINDOW_KST[1]) return out;
   const r = await pool.query<{ account_id: string; threads: string[] }>(
-    `with pairs as (
-       select n.account_id, n.thread_root_id as root_id, true as has_note
-         from thread_note n where n.archived_at is null and n.flag_reason is null
-       union
-       select distinct m.author_id, coalesce(m.thread_root_id, m.id), false
-         from message m join account a on a.id = m.author_id and a.kind = 'agent'
-        where m.deleted_at is null and m.created_at > $1::timestamptz - interval '${DISTILL_LOOKBACK}'
-     ), cand as (
-       select p.account_id, p.root_id, s.updated_at, bool_or(p.has_note) as has_note
-         from pairs p
-         join account a on a.id = p.account_id and a.kind = 'agent' and a.deleted_at is null
-         join agent_config ac on ac.account_id = a.id and ac.harness = $3
-         join thread_status s on s.root_id = p.root_id
-         join message rm on rm.id = p.root_id and rm.deleted_at is null and rm.thread_root_id is null
-         join channel c on c.id = rm.channel_id
-        where s.status = 'done' and s.updated_at < $1
-          and ${channelVisibleSql('c', 'p.account_id')}
-          and not exists (
-            select 1 from bg_job j
-             where j.account_id = p.account_id and j.kind = 'distill' and j.status = 'done'
-               and j.finished_at > s.updated_at and j.input->'threadIds' ? p.root_id::text)
-        group by p.account_id, p.root_id, s.updated_at
-     )
-     select account_id, (array_agg(root_id order by updated_at, root_id))[1:$2] as threads
-       from cand
-      where has_note
-         or exists (select 1 from message h join account ha on ha.id = h.author_id and ha.kind = 'human'
-                     where (h.id = cand.root_id or h.thread_root_id = cand.root_id) and h.deleted_at is null and h.kind = 'user')
-         or exists (select 1 from message f
-                     where (f.id = cand.root_id or f.thread_root_id = cand.root_id) and f.deleted_at is null
-                       and f.author_id = cand.account_id and f.meta->>'kind' = 'failure')
-      group by account_id`,
+    DISTILL_CANDIDATES_SQL,
     [new Date(now.getTime() - DISTILL_DONE_AGE_MS), DISTILL_MAX_THREADS, BG_HARNESS],
   );
   for (const row of r.rows) {
@@ -453,16 +469,18 @@ export interface SweepHost {
 export const BG_SWEEP_INTERVAL_MS = 60_000;
 
 /**
- * 뼈대 sweep. 스위치가 꺼져 있으면 아무것도 안 한다. 지금 하는 일은 닫기뿐이다 — 집고 죽은 회차(timeout)와
- * 지난 날의 집히지 않은 일감(expired). 종류별 생산자는 BG3 에서 이 자리에 붙는다.
+ * bg 루프 — 두 몫으로 나뉜다(S5.3 C5c-3a). 문지기 이름도 둘이다:
+ * - `bg`(닫기): 집고 죽은 회차(timeout)와 지난 날의 집히지 않은 일감(expired)을 닫는다. Rust `loops/bg.rs` 가 같은 일을 한다.
+ * - `bg.produce`(생산): distill·cleanup·organize 생산자를 한 시간에 한 번. 아직 TS 만 한다(C5c-3b 에서 옮긴다).
+ * 둘 다 스위치(`HARKROOM_BACKGROUND_ENABLED=1`)가 꺼져 있으면 아무것도 안 한다. `sweep(now)` 은 둘을 차례로(시험·호출부 그대로).
  */
-export function createBgJobSweeper(pool: Pool, env: NodeJS.ProcessEnv = process.env): { startSweep(app: SweepHost): void; sweep(now?: Date): Promise<void> } {
+export function createBgJobSweeper(pool: Pool, env: NodeJS.ProcessEnv = process.env): {
+  startSweep(app: SweepHost): void; sweep(now?: Date): Promise<void>; produce(now?: Date): Promise<void>; close(now?: Date): Promise<{ timeout: number; expired: number }>;
+} {
   let timer: ReturnType<typeof setInterval> | null = null;
-  let running = false;
   let lastProducedAt = 0;
-  const sweep = async (now: Date = new Date()) => {
-    if (!backgroundEnabled(env) || running) return;
-    running = true;
+  const produce = async (now: Date = new Date()) => {
+    if (!backgroundEnabled(env)) return;
     try {
       // 생산(BG3)은 한 시간에 한 번. (에이전트, 종류, 날짜) 유일이라 더 자주 돌아도 늘지 않지만 질의를 아낀다.
       if (now.getTime() - lastProducedAt >= DISTILL_PRODUCE_INTERVAL_MS) {
@@ -474,28 +492,43 @@ export function createBgJobSweeper(pool: Pool, env: NodeJS.ProcessEnv = process.
         const o = await produceOrganizeJobs(pool, now, env);
         if (o.queued || Object.keys(o.refused).length) console.log(`bg: organize queued=${o.queued} refused=${JSON.stringify(o.refused)}`);
       }
-      await pool.query(
+    } catch (err) {
+      // 던지면 처리 안 된 거절로 프로세스가 죽는다(agentWakes sweep 과 같은 이유) — 다음 주기에 다시 한다.
+      console.error('bg job produce error:', err);
+    }
+  };
+  /** 닫은 수(timeout·expired)를 돌려준다 — 시험이 TS·Rust 동시 닫기의 합을 센다. 실패는 기록만 하고 0. */
+  const close = async (now: Date = new Date()): Promise<{ timeout: number; expired: number }> => {
+    if (!backgroundEnabled(env)) return { timeout: 0, expired: 0 };
+    try {
+      const t = await pool.query(
         `update bg_job set status = 'failed', error = 'timeout', finished_at = now()
          where status = 'running' and claimed_at < $1`,
         [new Date(now.getTime() - BG_STALE_RUNNING_MS)],
       );
-      await pool.query(
+      const e = await pool.query(
         `update bg_job set status = 'skipped', error = 'expired', finished_at = now()
          where status = 'queued' and day < $1::date`,
         [kstDay(now)],
       );
+      return { timeout: t.rowCount ?? 0, expired: e.rowCount ?? 0 };
     } catch (err) {
-      // 던지면 처리 안 된 거절로 프로세스가 죽는다(agentWakes sweep 과 같은 이유) — 다음 주기에 다시 한다.
       console.error('bg job sweep error:', err);
-    } finally {
-      running = false;
+      return { timeout: 0, expired: 0 };
     }
   };
+  // 프로세스 안 겹침은 문지기의 같은 이름 `busy` 가 막는다. 직접 부르는 `sweep` 은 시험·호출부용이다.
+  const sweep = async (now: Date = new Date()) => { await produce(now); await close(now); };
   return {
     sweep,
+    produce,
+    close,
     startSweep(app) {
       if (timer) return;
-      timer = setInterval(() => { void runGated(pool, 'bg', sweep); }, BG_SWEEP_INTERVAL_MS);
+      timer = setInterval(() => {
+        void runGated(pool, 'bg.produce', () => produce());
+        void runGated(pool, 'bg', () => close());
+      }, BG_SWEEP_INTERVAL_MS);
       timer.unref?.();
       app.addHook('onClose', () => { if (timer) clearInterval(timer); timer = null; });
     },

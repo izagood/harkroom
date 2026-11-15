@@ -161,6 +161,33 @@ async fn main() {
         }
         _ => None,
     };
+    // C3a-3c — 글 고치기. 위 블록들과 같이 쓰기 역할에 그 권한이 **하나라도 없으면** 붙이지 않는다(그 경로는 TS 가 받는다).
+    let edit_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::msg_edit as e;
+            match write::missing_in(
+                w,
+                e::MESSAGE_EDIT_PRIVILEGES,
+                e::MESSAGE_EDIT_SEQUENCE_PRIVILEGES,
+            )
+            .await
+            {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: message edit core off — missing privileges {m:?}");
+                    None
+                }
+                Err(err) => {
+                    eprintln!(
+                        "front: message edit core off — privilege check failed ({})",
+                        err.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     let delete_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
             use harkroom_server::core::msg_delete as d;
@@ -262,6 +289,20 @@ async fn main() {
             core_routes.router = core_routes.router.merge(del.router);
             core_routes.http.extend(del.http);
             core_routes.sockets.extend(del.sockets);
+        }
+        // C3a-3c — 글 고치기(`PATCH /channels/{id}/messages/{messageId}`). 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = edit_write {
+            let edit = harkroom_server::core::msg_edit::routes(
+                harkroom_server::core::msg_edit::EditState {
+                    read: state.pool.clone(),
+                    write,
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(edit.router);
+            core_routes.http.extend(edit.http);
+            core_routes.sockets.extend(edit.sockets);
         }
         // C3b-1 — 선택 카드 답하기·닫기. 권한·머지 카드와 못 읽는 카드는 핸들러가 TS 로 넘긴다.
         if let Some(write) = ask_write {
@@ -384,7 +425,7 @@ async fn open_write_pool() -> Option<sqlx::PgPool> {
 /// 서버 루프 전용 풀(3)을 따로 연다 — 루프 tick 은 문지기 연결 1 + sweep 연결 1 + 이벤트 연결 1 을 쓰는데 쓰기 풀은 2 이고
 /// 요청과 나눠 쓴다. 이 풀이 막혀도 요청은 막히지 않는다. 권한([`loops::wake::WAKE_PRIVILEGES`])이 모자라면 띄우지 않는다(TS 에 남는다).
 async fn spawn_loops() {
-    use harkroom_server::loops::{mandate_idle, permission_expire, retention, wake};
+    use harkroom_server::loops::{bg, mandate_idle, permission_expire, retention, wake};
     let Some(url) = std::env::var("DATABASE_WRITE_URL")
         .ok()
         .filter(|u| !u.is_empty())
@@ -459,15 +500,29 @@ async fn spawn_loops() {
             eprintln!(
                 "front: loop permission.expire on (runs only while server_loop owner is rust)"
             );
-            permission_expire::spawn(gate, pool);
+            permission_expire::spawn(gate.clone(), pool.clone());
         }
         Ok(m) => eprintln!("front: loop permission.expire off — missing privileges {m:?}"),
         Err(e) => eprintln!("front: loop permission.expire off — privilege check failed: {e}"),
     }
+    // C5c-3a — 백그라운드 회차 닫기(생산자는 TS `bg.produce` 에 남는다). 스위치는 TS 와 같은 env.
+    match write::missing_in(&pool, bg::BG_PRIVILEGES, &[]).await {
+        Ok(m) if m.is_empty() => {
+            let on = bg::background_enabled(
+                std::env::var("HARKROOM_BACKGROUND_ENABLED").ok().as_deref(),
+            );
+            eprintln!(
+                "front: loop bg on (enabled={on}; runs only while server_loop owner is rust)"
+            );
+            bg::spawn(gate, pool, on);
+        }
+        Ok(m) => eprintln!("front: loop bg off — missing privileges {m:?}"),
+        Err(e) => eprintln!("front: loop bg off — privilege check failed: {e}"),
+    }
 }
 
-/// Rust 로 옮긴 루프 수(wake·retention·mandate.idle·permission.expire) — 문지기 풀 크기. 루프를 더하면 같이 올린다.
-const LOOP_GATE_CONNECTIONS: u32 = 4;
+/// Rust 로 옮긴 루프 수(wake·retention·mandate.idle·permission.expire·bg) — 문지기 풀 크기. 루프를 더하면 같이 올린다.
+const LOOP_GATE_CONNECTIONS: u32 = 5;
 /// sweep 풀 크기.
 const LOOP_SWEEP_CONNECTIONS: u32 = 3;
 
