@@ -45,10 +45,55 @@ pub fn transport_ok(h: &HeaderMap) -> bool {
     }
 }
 
-/// `tools/call` 하나의 답 — SDK 의 SSE 모양(무상태라 `mcp-session-id`·이벤트 id 없음).
-pub fn sse(id: &Value, result: &Value) -> Response<Body> {
-    let msg = json!({ "result": result, "jsonrpc": "2.0", "id": id });
-    let body = format!("event: message\ndata: {msg}\n\n");
+/// JSON-RPC `id` 를 SDK(`JSON.stringify`)와 같은 글자로 — 문자열과 정수만. 소수·그 밖은 `None`(→ TS).
+pub fn id_text(id: &Value) -> Option<String> {
+    match id {
+        Value::String(_) => Some(id.to_string()),
+        Value::Number(n) if n.is_i64() || n.is_u64() => Some(n.to_string()),
+        _ => None,
+    }
+}
+
+/// TS `jsonResult` 의 글자 그대로 — `{"content":[{"type":"text","text":<inner 를 JSON 문자열로>}]}`.
+/// serde 의 문자열 이스케이프는 `JSON.stringify` 와 같다(`"`·`\\`·제어 문자, 소문자 `\u00xx`, 비 ASCII 는 그대로).
+pub fn text_result(inner: &str) -> String {
+    format!(
+        "{{\"content\":[{{\"type\":\"text\",\"text\":{}}}]}}",
+        Value::String(inner.to_owned())
+    )
+}
+
+/// JSON 글자에서 문자열 밖 공백만 지운다 — 키 순서를 그대로 둔 채 `JSON.stringify` 꼴(공백 없음)로. Postgres 의 `json` 출력
+/// (`json_build_object` 의 `" : "`, `json_agg` 의 `", \n "`)을 TS 가 node-pg 로 읽어 다시 쓴 글자와 맞춘다.
+pub fn minify(json: &str) -> String {
+    let mut out = String::with_capacity(json.len());
+    let (mut in_str, mut esc) = (false, false);
+    for c in json.chars() {
+        if in_str {
+            out.push(c);
+            if esc {
+                esc = false;
+            } else if c == '\\' {
+                esc = true;
+            } else if c == '"' {
+                in_str = false;
+            }
+        } else if c == '"' {
+            in_str = true;
+            out.push(c);
+        } else if !c.is_ascii_whitespace() {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// `tools/call` 하나의 답 — SDK 의 SSE 모양(무상태라 `mcp-session-id`·이벤트 id 없음). 바깥 키 순서도 SDK 와 같다
+/// (`{ result, jsonrpc, id }` — Protocol 이 답을 그 순서로 짓는다).
+pub fn sse(id: &str, result: &str) -> Response<Body> {
+    let body = format!(
+        "event: message\ndata: {{\"result\":{result},\"jsonrpc\":\"2.0\",\"id\":{id}}}\n\n"
+    );
     let mut r = Response::new(Body::from(body));
     *r.status_mut() = StatusCode::OK;
     let h = r.headers_mut();
@@ -61,14 +106,16 @@ pub fn sse(id: &Value, result: &Value) -> Response<Body> {
         HeaderValue::from_static("no-cache, no-transform"),
     );
     h.insert("x-accel-buffering", HeaderValue::from_static("no"));
+    // 누가 답했는지 — 대조 시험이 「Rust 가 정말 답했나」를 이것으로 본다(같은 글자면 넘긴 것과 구별이 안 된다). 값은 고정이다.
+    h.insert("x-harkroom-core", HeaderValue::from_static("mcp"));
     r
 }
 
 #[derive(Debug, PartialEq)]
 pub enum Admit {
     Yes,
-    /// 거절 — 도구 답 모양(`content[0].text = {"error":…}`) 그대로.
-    No(Value),
+    /// 거절 — 도구 답의 `content[0].text`(TS 가 지은 `{"error":…}` 글자). 답은 [`text_result`] 로 다시 감싼다.
+    No(String),
     /// 확인을 못 했다 → TS 로 넘긴다.
     Unknown,
 }
@@ -116,10 +163,11 @@ pub async fn admit(
     match v.get("admitted").and_then(Value::as_bool) {
         Some(true) => Admit::Yes,
         Some(false) => match v.get("result") {
-            Some(r) if r.pointer("/content/0/text").is_some_and(Value::is_string) => {
-                Admit::No(r.clone())
-            }
-            _ => Admit::Unknown,
+            Some(r) => match r.pointer("/content/0/text").and_then(Value::as_str) {
+                Some(t) => Admit::No(t.to_owned()),
+                None => Admit::Unknown,
+            },
+            None => Admit::Unknown,
         },
         None => Admit::Unknown,
     }

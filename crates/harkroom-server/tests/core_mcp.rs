@@ -5,7 +5,7 @@ mod common;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode};
 use harkroom_server::auth::{Account, Auth};
-use harkroom_server::core::mcp::route::{BODY_LIMIT, handle};
+use harkroom_server::core::mcp::route::{AnswerFut, BODY_LIMIT, McpState, handle};
 use harkroom_server::proxy::Upstream;
 use http_body_util::BodyExt;
 use std::time::Duration;
@@ -90,7 +90,13 @@ async fn front() -> String {
     let app = axum::Router::new()
         .route("/mcp", axum::routing::post(handle))
         .route_layer(axum::middleware::from_fn(fake_auth))
-        .with_state(upstream);
+        .with_state(McpState {
+            up: upstream,
+            // 이 시험들의 요청은 Rust 가 답하는 도구에 닿지 않는다(닿아도 입장 확인이 TS 흉내에서 끝난다) — 연결하지 않는 풀.
+            pool: sqlx::postgres::PgPoolOptions::new()
+                .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+                .unwrap(),
+        });
     format!("http://{}", common::serve(app).await)
 }
 
@@ -284,12 +290,17 @@ fn mcp_headers(extra: &[(&'static str, &'static str)]) -> axum::http::HeaderMap 
 
 const CALL: &str = r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"channel.list","arguments":{"q":1}}}"#;
 
-fn stub(tool: &'static str, args: &serde_json::Value) -> Option<serde_json::Value> {
-    Some(serde_json::json!({"content":[{"type":"text","text":format!("{tool}:{args}")}]}))
+fn stub(tool: &'static str, args: serde_json::Value) -> AnswerFut {
+    Box::pin(async move {
+        Some(
+            serde_json::json!({"content":[{"type":"text","text":format!("{tool}:{args}")}]})
+                .to_string(),
+        )
+    })
 }
 
-fn none(_: &'static str, _: &serde_json::Value) -> Option<serde_json::Value> {
-    None
+fn none(_: &'static str, _: serde_json::Value) -> AnswerFut {
+    Box::pin(async { None })
 }
 
 async fn sse_text(r: axum::response::Response) -> (String, String) {

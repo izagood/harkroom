@@ -526,6 +526,83 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const [a, b] = [await getJson(tsUrl, path, token), await getJson(`http://127.0.0.1:${port}`, path, token)];
         expect(b, `${path} ${token === admin.token ? 'admin' : token === member.token ? 'mem' : token ? 'agent' : 'anon'}`).toEqual(a);
       }
+      // S5.3 C4a-3 — MCP 읽기 도구를 Rust 가 답한다. 같은 JSON-RPC 요청을 TS `/mcp` 와 앞단에 보내 **SSE 글자 그대로**(키 순서·
+      // 이스케이프까지) 비교한다. Rust 가 답한 것은 `x-harkroom-core: mcp` 로 가른다 — 인자 모양이 zod 와 다르면 Rust 는 TS 로 넘긴다.
+      const mcpCall = async (base: string, token: string, name: string, args: unknown, id: unknown = 1) => {
+        const params = args === undefined ? { name } : { name, arguments: args };
+        const res = await fetch(`${base}/mcp`, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${token}`, accept: 'application/json, text/event-stream', 'content-type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params }),
+        });
+        return { status: res.status, type: res.headers.get('content-type'), text: await res.text(), core: res.headers.get('x-harkroom-core') };
+      };
+      for (const [name, tool, args, answeredByRust, id] of [
+        ['workspace.guide', 'workspace.guide', {}, true, 20],
+        ['workspace.guide turn', 'workspace.guide', { mode: 'turn' }, true, 21],
+        ['workspace.guide turn avcs=false', 'workspace.guide', { mode: 'turn', avcs: false }, true, 22],
+        ['workspace.guide avcs=0 은 전문', 'workspace.guide', { avcs: 0 }, true, 23],
+        ['workspace.guide 인자 없음 → TS(검증 오류)', 'workspace.guide', undefined, false, 24],
+        ['workspace.guide 모르는 mode → TS', 'workspace.guide', { mode: 'x' }, false, 25],
+        ['workspace.guide mode null → TS', 'workspace.guide', { mode: null }, false, 26],
+        ['account.me', 'account.me', {}, true, 1],
+        ['account.me 인자 없음', 'account.me', undefined, true, 'str-id'],
+        ['account.me 배열 인자 → TS', 'account.me', [], false, 2],
+        ['channel.list', 'channel.list', {}, true, 3],
+        ['account.list', 'account.list', {}, true, 12],
+        ['account.list 문자열 인자 → TS', 'account.list', 'x', false, 13],
+        ['channel.doc 문서 있음', 'channel.doc', { channelId: todayId }, true, 4],
+        ['channel.doc 문서 없음(DM)', 'channel.doc', { channelId: String(dm.id) }, true, 5],
+        ['channel.doc 없는 채널 → 빈 문서', 'channel.doc', { channelId: missingCh }, true, 6],
+        ['channel.doc 비공개·멤버 아님 → forbidden', 'channel.doc', { channelId: privId }, true, 7],
+        ['channel.doc 모르는 키는 버린다', 'channel.doc', { channelId: todayId, extra: 1 }, true, 8],
+        ['channel.doc uuid 아님 → TS', 'channel.doc', { channelId: 'nope' }, false, 9],
+        ['channel.doc 문자열 인자 → TS', 'channel.doc', todayId, false, 10],
+        ['channel.doc 인자 없음 → TS', 'channel.doc', undefined, false, 11],
+      ] as const) {
+        const [a, b] = [await mcpCall(tsUrl, agent.pat, tool, args, id), await mcpCall(`http://127.0.0.1:${port}`, agent.pat, tool, args, id)];
+        expect({ status: b.status, type: b.type, text: b.text }, name).toEqual({ status: a.status, type: a.type, text: a.text });
+        expect(b.core, `${name} — 누가 답했나`).toBe(answeredByRust ? 'mcp' : null);
+        expect(a.core, 'TS 는 이 표지를 달지 않는다').toBeNull();
+      }
+      // message.read — 본문 멘션 되돌리기(계정·집합·팀·모르는 id)와 시스템 줄(relatedAccountId), 스레드·since·limit 갈래.
+      const readCh = String((await ok(app.inject({ method: 'POST', url: '/channels', headers: auth, payload: { name: 'mcp-read' } }))).id);
+      await ok(app.inject({ method: 'POST', url: `/channels/${readCh}/members`, headers: auth, payload: { accountId: agent.accountId } }));
+      const readRoot = await say('@mem @crew @squad 부름 "따옴표" \\ 끝', { ch: readCh });
+      // 모르는 계정 토큰 — 게시가 받는 길이 없어(받는 사람 행이 깨진다) 본문을 직접 덧붙인다.
+      await db.pool.query(`update message set body = body || ' <@00000000-0000-4000-8000-000000000000>' where id = $1`, [readRoot]);
+      await say('답글 @bot2', { ch: readCh, root: readRoot });
+      const sys = await say('시스템 줄', { ch: readCh });
+      await db.pool.query(`update message set kind = 'system' where id = $1`, [sys]);
+      const readSeq = (await db.pool.query<{ seq: string }>(`select seq::text from message where id = $1`, [readRoot])).rows[0]!.seq;
+      for (const [name, args, answeredByRust] of [
+        ['message.read', { channelId: readCh }, true],
+        ['message.read limit', { channelId: readCh, limit: 1 }, true],
+        ['message.read since', { channelId: readCh, since: Number(readSeq) }, true],
+        ['message.read since 0', { channelId: readCh, since: 0 }, true],
+        ['message.read 스레드', { channelId: readCh, threadRootId: readRoot }, true],
+        ['message.read 많은 글 채널', { channelId: todayId, limit: 500 }, true],
+        ['message.read 비공개·멤버 아님 → forbidden', { channelId: privId }, true],
+        ['message.read 없는 채널', { channelId: missingCh }, true],
+        ['message.read limit 0 → TS', { channelId: readCh, limit: 0 }, false],
+        ['message.read limit 501 → TS', { channelId: readCh, limit: 501 }, false],
+        ['message.read limit 소수 → TS', { channelId: readCh, limit: 1.5 }, false],
+        ['message.read since 음수 → TS', { channelId: readCh, since: -1 }, false],
+        ['message.read 스레드 uuid 아님 → TS', { channelId: readCh, threadRootId: 'x' }, false],
+      ] as const) {
+        const [a, b] = [await mcpCall(tsUrl, agent.pat, 'message.read', args), await mcpCall(`http://127.0.0.1:${port}`, agent.pat, 'message.read', args)];
+        expect({ status: b.status, type: b.type, text: b.text }, name).toEqual({ status: a.status, type: a.type, text: a.text });
+        expect(b.core, `${name} — 누가 답했나`).toBe(answeredByRust ? 'mcp' : null);
+      }
+      const readText = (await mcpCall(`http://127.0.0.1:${port}`, agent.pat, 'message.read', { channelId: readCh })).text;
+      for (const want of ['@mem', '@crew', '@squad', '@bot2', 'relatedAccountId', '<@00000000-0000-4000-8000-000000000000>']) expect(readText).toContain(want);
+      // 빈 값끼리 비교해 통과하지 않게 — 문서·목록이 실제로 실렸는지.
+      const docText = (await mcpCall(`http://127.0.0.1:${port}`, agent.pat, 'channel.doc', { channelId: todayId })).text;
+      expect(docText).toContain('문서 본문');
+      expect((await mcpCall(`http://127.0.0.1:${port}`, agent.pat, 'channel.list', {})).text).toContain('today');
+      const listText = (await mcpCall(`http://127.0.0.1:${port}`, agent.pat, 'account.list', {})).text;
+      for (const want of ['squad', 'crew', 'leadAccountId', 'bot2']) expect(listText).toContain(want);
+
       // 빈 목록끼리 비교해 통과하지 않게 — 픽스처가 실제로 칸을 채웠는지.
       const rs = `http://127.0.0.1:${port}`;
       const prefsBody = (await getJson(rs, '/channels/prefs', admin.token)).body as { prefs: Record<string, unknown>[]; sections: unknown[] };

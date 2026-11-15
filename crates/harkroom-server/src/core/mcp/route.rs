@@ -1,10 +1,10 @@
-//! C4a-1 — `POST /mcp` 를 코어가 받는 자리. **아직 어떤 도구도 Rust 가 답하지 않는다**: 게이트·본문 한도를 TS 와 같게 세운 뒤
+//! C4a-1 — `POST /mcp` 를 코어가 받는 자리. 게이트·본문 한도를 TS 와 같게 세운 뒤, Rust 가 답하는 도구([`SERVED`], C4a-3 부터)가 아니면
 //! 원래 바이트와 헤더를 그대로 TS 로 넘기고 답(SSE 포함)을 버퍼 없이 흘려 돌려준다([`crate::proxy::forward`]).
 //!
 //! 이 줄이 없을 때도 앞단은 `/mcp` 를 `fallback(forward)` 로 TS 에 넘겼다 — 그러니 이 단계의 값은 셋뿐이다:
 //! 1. 에이전트가 아닌 요청을 **본문을 읽기 전에** 앞단에서 끊는다(TS `onRequest` 와 같은 401/403 `agent_only`).
 //! 2. 본문을 TS 와 같은 한도로 모은다(넘으면 413, TS fastify 와 같은 꼴) — 다음 단계에서 [`super::dispatch`] 가 읽을 바이트.
-//! 3. 갈라 보내는 자리([`SERVED`] · [`super::dispatch`]). 지금 `SERVED` 는 비어 있어 모두 TS 다.
+//! 3. 갈라 보내는 자리([`SERVED`] · [`super::dispatch`] · [`serve`]).
 //!
 //! 긴 폴(`inbox.poll` 이 서버에서 머무는 것)은 끊기지 않는다 — 상류 클라이언트(`proxy::Upstream`)와 앞단 서버 어디에도 요청 시간
 //! 제한이 없다(TS 쪽 제한이 그대로 정본).
@@ -17,8 +17,15 @@ use std::net::SocketAddr;
 /// TS `MCP_BODY_LIMIT_BYTES` = `2 * ARTIFACT_PUBLISH_ARG_MAX_BYTES(2MiB) + 512KiB` (mcpPlugin.ts · services/artifacts.ts).
 pub const BODY_LIMIT: usize = 2 * 2 * 1024 * 1024 + 512 * 1024;
 
-/// Rust 가 답하는 도구. 비어 있으면 본문을 해석하지도 않는다(모두 TS).
-pub const SERVED: &[&str] = &[];
+/// Rust 가 답하는 도구([`super::tools::SERVED`]). 그 밖은 본문을 갈림까지만 보고 TS 로.
+pub const SERVED: &[&str] = super::tools::SERVED;
+
+/// 라우트 상태 — 상류(TS)와 읽기 풀.
+#[derive(Clone)]
+pub struct McpState {
+    pub up: Upstream,
+    pub pool: sqlx::PgPool,
+}
 
 const AGENT_ONLY: &str = r#"{"error":{"code":"agent_only","message":"MCP surface requires an agent PAT or an operator assignment"}}"#;
 /// fastify `FST_ERR_CTP_BODY_TOO_LARGE` 를 TS 오류 처리기(buildServer.ts)가 소문자 code 로 내보낸 꼴.
@@ -36,7 +43,7 @@ fn json(status: StatusCode, body: &'static str) -> Response<Body> {
 }
 
 pub async fn handle(
-    State(up): State<Upstream>,
+    State(McpState { up, pool }): State<McpState>,
     ci: ConnectInfo<SocketAddr>,
     req: Request<Body>,
 ) -> Response<Body> {
@@ -46,11 +53,11 @@ pub async fn handle(
         .get::<crate::auth::Auth>()
         .cloned()
         .unwrap_or_default();
-    match &auth.account {
-        Some(a) if a.kind == "agent" => {}
+    let me = match auth.account {
+        Some(a) if a.kind == "agent" => a,
         Some(_) => return json(StatusCode::FORBIDDEN, AGENT_ONLY),
         None => return json(StatusCode::UNAUTHORIZED, AGENT_ONLY),
-    }
+    };
     let (parts, body) = req.into_parts();
     // fastify 처럼 Content-Length 가 한도를 넘으면 읽지 않고 413. 길이가 없으면(chunked) 읽으며 센다.
     let declared = parts
@@ -64,19 +71,19 @@ pub async fn handle(
     let Ok(bytes) = to_bytes(body, BODY_LIMIT).await else {
         return json(StatusCode::PAYLOAD_TOO_LARGE, TOO_LARGE);
     };
-    if let Some(r) = serve(&up, ci, &parts.headers, &bytes, SERVED, &answer).await {
+    let tools = |tool: &'static str, args: serde_json::Value| -> AnswerFut {
+        let (pool, me) = (pool.clone(), me.clone());
+        Box::pin(async move { super::tools::answer(&pool, &me, tool, &args).await })
+    };
+    if let Some(r) = serve(&up, ci, &parts.headers, &bytes, SERVED, &tools).await {
         return r;
     }
     proxy::forward(State(up), ci, Request::from_parts(parts, Body::from(bytes))).await
 }
 
-/// Rust 가 도구를 답하는 함수의 꼴 — `None` 이면 답하지 않는다(TS 로).
-pub type Answer = dyn Fn(&'static str, &serde_json::Value) -> Option<serde_json::Value> + Sync;
-
-/// C4a-2: 아직 아무 도구도 답하지 않는다(C4a-3 에서 읽기 도구가 들어온다).
-fn answer(_tool: &'static str, _args: &serde_json::Value) -> Option<serde_json::Value> {
-    None
-}
+pub type AnswerFut = std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send>>;
+/// Rust 가 도구를 답하는 함수의 꼴(도구 이름·인자) — 답은 `result` 의 JSON 글자. `None` 이면 답하지 않는다(TS 로).
+pub type Answer<'f> = dyn Fn(&'static str, serde_json::Value) -> AnswerFut + Sync + 'f;
 
 /// 한 요청을 Rust 가 답할 수 있으면 답을, 아니면 `None`(→ 원래 바이트를 TS 로). 순서: 갈림(`served`) → 전송 조건 → 입장 확인(TS) → 도구.
 /// 입장 확인이 거절하면 그 거절을 도구 답으로 싣는다(TS 의 감싸기와 같은 결과). 확인을 못 하면 TS 로 넘긴다.
@@ -86,7 +93,7 @@ pub async fn serve(
     headers: &axum::http::HeaderMap,
     bytes: &[u8],
     served: &[&str],
-    answer: &Answer,
+    answer: &Answer<'_>,
 ) -> Option<Response<Body>> {
     if served.is_empty() || !super::respond::transport_ok(headers) {
         return None;
@@ -96,31 +103,35 @@ pub async fn serve(
         return None;
     };
     // 알림(id 없음)은 SDK 가 202 로 받는다 — tools/call 은 요청이어야 하니 모양이 다르면 TS 로.
-    let id = v
-        .get("id")
-        .filter(|i| i.is_string() || i.is_number())?
-        .clone();
+    let id = super::respond::id_text(v.get("id")?)?;
+    // 없으면 `null` — 입력 스키마가 있는 도구는 SDK 가 검증 오류를 내므로(TS 로), 없는 도구만 받는다(`tools::no_input`).
     let args = v
         .pointer("/params/arguments")
         .cloned()
-        .unwrap_or_else(|| serde_json::json!({}));
+        .unwrap_or(serde_json::Value::Null);
     match super::respond::admit(up, ci, headers, name, &args).await {
         super::respond::Admit::Yes => {}
-        super::respond::Admit::No(result) => return Some(super::respond::sse(&id, &result)),
+        super::respond::Admit::No(text) => {
+            return Some(super::respond::sse(
+                &id,
+                &super::respond::text_result(&text),
+            ));
+        }
         super::respond::Admit::Unknown => return None,
     }
-    let result = answer(name, &args)?;
+    let result = answer(name, args).await?;
     Some(super::respond::sse(&id, &result))
 }
 
 /// 코어 라우터 줄 — 표(`route_table`)로 붙여 CORS 대조 목록에 실린다. 같은 경로의 다른 메서드는 `ts_fallback` 으로 TS.
 pub fn routes(
     up: Upstream,
+    pool: sqlx::PgPool,
     auth: crate::auth::AuthPools,
     cors: std::sync::Arc<crate::cors::Cors>,
 ) -> crate::route_table::Routes<()> {
     use crate::route_table::Table;
-    let t = Table::<Upstream>::new()
+    let t = Table::<McpState>::new()
         .post("/mcp", handle)
         .map(|r| {
             r.route_layer(axum::middleware::from_fn_with_state(
@@ -134,7 +145,7 @@ pub fn routes(
         })
         .finish();
     crate::route_table::Routes {
-        router: t.router.with_state(up),
+        router: t.router.with_state(McpState { up, pool }),
         http: t.http,
         sockets: t.sockets,
     }

@@ -131,7 +131,10 @@ export function leakGuardHook(guard: SecretLeakGuard) {
   return async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     if (req.account?.kind !== 'agent') return;
     if (req.method !== 'POST' && req.method !== 'PUT' && req.method !== 'PATCH') return;
-    if (req.url === '/mcp' || req.url.startsWith('/mcp?')) return;
+    // `/mcp/admit`(S5.3 C4a) 도 라우트 안에서 같은 검사를 하고 `admitted:false` 로 답한다 — 여기서도 막으면 차단 기록이
+    // 두 번 남는다(admit 에서 한 번, Rust 가 TS `/mcp` 로 넘긴 뒤 또 한 번).
+    const path = req.url.split('?')[0];
+    if (path === '/mcp' || path === '/mcp/admit') return;
     // 문자열 본문(`text/plain` — fastify 기본 파서가 문자열로 준다)도 본다(security N1).
     if (req.body === undefined || req.body === null || (typeof req.body !== 'object' && typeof req.body !== 'string')) return;
     const hits = await guard.findInTexts(req.account.id, collectStrings(req.body));
