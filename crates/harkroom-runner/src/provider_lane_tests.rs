@@ -701,3 +701,16 @@ fn lane_claude_dir_symlink_is_refused_before_mount() {
             .is_symlink()
     );
 }
+
+#[test]
+fn unmeasured_notice_drops_at_sign() {
+    let n = lane_unmeasured_notice(
+        AgentHarness::Opencode,
+        Some("1.2.3 @security build\nx"),
+        &["1.0.0"],
+    );
+    assert!(!n.contains('@'), "{n}");
+    assert!(n.contains("1.2.3 security build"), "{n}");
+    let n = lane_unmeasured_notice(AgentHarness::Opencode, Some("@@@"), &[]);
+    assert!(n.contains("판을 읽지 못함"), "{n}");
+}

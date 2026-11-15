@@ -153,7 +153,7 @@ pub fn lane_unmeasured_notice(
             units += c.len_utf16();
             units <= 64
         })
-        .filter(|c| (' '..='~').contains(c))
+        .filter(|c| (' '..='~').contains(c) && *c != '@')
         .collect();
     let seen = if seen.is_empty() {
         "판을 읽지 못함"

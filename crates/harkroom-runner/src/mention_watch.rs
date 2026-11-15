@@ -33,6 +33,8 @@ pub struct MentionWatchInputs<'a> {
     pub harness: AgentHarness,
     pub home: Option<PathBuf>,
     pub omp_home: Option<PathBuf>,
+    /// codex 격리 홈(정본 `deps.codexHome`) — lane 턴의 codex 끝말(`sessions/` rollout)을 여기서만 찾는다.
+    pub codex_home: Option<PathBuf>,
     /// opencode·kilo 차례 끝 조회 자리(`turn_probe_make::opencode_query`).
     pub opencode: Option<std::sync::Arc<crate::turn_probe_make::OpencodeQuery>>,
     pub end_cfg: EndConfig,
@@ -59,6 +61,7 @@ pub fn mention_watch_loop<'a, L: RunnerLink + 'a>(
         harness: i.harness,
         home: i.home,
         omp_home: i.omp_home,
+        codex_home: i.codex_home,
         opencode: i.opencode,
         end_cfg,
         lane_tui: i.lane_tui,

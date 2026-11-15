@@ -45,6 +45,7 @@ fn config<'a>(
         harness: AgentHarness::ClaudeCode,
         home: None,
         omp_home: None,
+        codex_home: None,
         opencode: None,
         end_cfg: EndConfig::new(60_000),
         lane_tui: false,
@@ -465,4 +466,60 @@ fn probe_make_records_carry_the_query() {
         Some("/ws".into())
     );
     assert!(r.state_view().opencode.is_some());
+}
+
+/// lane 턴 끝말(정본 `readLaneHarnessSaid`): codex 는 러너 codex 홈의 rollout 에서, 홈이 없으면 짐작하지 않는다.
+#[test]
+fn lane_harness_said_reads_codex_rollout_under_codex_home_only() {
+    let root = std::env::temp_dir().join(format!("hk-lane-said-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let sid = "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
+    let day = root.join("sessions/2026/11/15");
+    std::fs::create_dir_all(&day).unwrap();
+    let line = serde_json::json!({"type":"response_item","timestamp":"2026-11-15T11:00:05.000Z",
+        "payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"끝말"}]}});
+    std::fs::write(
+        day.join(format!("rollout-2026-11-15T11-00-00-{sid}.jsonl")),
+        format!("{line}\n"),
+    )
+    .unwrap();
+    let since = 1_763_204_400_000; // 2026-11-15T11:00:00Z
+    assert_eq!(
+        lane_harness_said(
+            AgentHarness::Codex,
+            Some(sid),
+            since,
+            Some(root.as_path()),
+            None
+        )
+        .as_deref(),
+        Some("끝말")
+    );
+    // 홈이 없으면 읽지 않는다.
+    assert_eq!(
+        lane_harness_said(AgentHarness::Codex, Some(sid), since, None, None),
+        None
+    );
+    // opencode 는 조회 자리 없이는 묻지 않는다. 끝말 기록이 없는 하네스(claude)는 언제나 None.
+    assert_eq!(
+        lane_harness_said(
+            AgentHarness::Opencode,
+            None,
+            since,
+            Some(root.as_path()),
+            None
+        ),
+        None
+    );
+    assert_eq!(
+        lane_harness_said(
+            AgentHarness::ClaudeCode,
+            Some(sid),
+            since,
+            Some(root.as_path()),
+            None
+        ),
+        None
+    );
+    let _ = std::fs::remove_dir_all(&root);
 }

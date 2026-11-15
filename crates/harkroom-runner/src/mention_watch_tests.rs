@@ -30,6 +30,7 @@ fn inputs<'a>() -> MentionWatchInputs<'a> {
         harness: AgentHarness::ClaudeCode,
         home: None,
         omp_home: None,
+        codex_home: None,
         opencode: None,
         end_cfg: EndConfig::new(60_000),
         lane_tui: false,

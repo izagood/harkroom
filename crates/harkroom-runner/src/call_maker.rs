@@ -300,6 +300,8 @@ where
             home: home.clone(),
             // omp 기록(`sessions/`)은 러너 omp 홈에서만 찾는다(정본 `ompSessionFile(deps.ompHome, ..)`).
             omp_home: c.omp.as_ref().map(|o| o.home.clone()),
+            // codex 끝말(rollout)은 러너 codex 홈에서만 찾는다(정본 `codexSessionsDir(deps.codexHome)`).
+            codex_home: c.codex.as_ref().map(|x| x.home.clone()),
             // 작업 폴더를 정한 뒤 채운다(아래).
             opencode: None,
             end_cfg: EndConfig {
