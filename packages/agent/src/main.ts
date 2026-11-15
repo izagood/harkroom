@@ -58,7 +58,7 @@ import { createAccountAssigner } from './accountAssign.js';
 import { clearAccountAttention, clearAccountCredentialFailure, isAttentionActive, markAccountCredentialFailed, markAccountNeedsAttention, readAccountAttention } from '@harkroom/shared/claudeGates';
 import { syncCodexAuth } from './codexHome.js';
 import { harnessVersionEnv } from './harnessVersionEnv.js';
-import { allXdgApps, commandRulesOf, turnKeyDeliveryOf, usesOmpHome, usesPiHome, usesXdgHome, xdgAppFor } from './adapters/index.js';
+import { allXdgApps, commandRulesOf, turnKeyDeliveryOf, usesCodexHome, usesOmpHome, usesPiHome, usesXdgHome, xdgAppFor } from './adapters/index.js';
 import { issueTurnKeys } from './turnKeys.js';
 import { ensurePiHome } from './piHome.js';
 import { ensureOmpHome, ompDirs } from './ompHome.js';
@@ -680,7 +680,7 @@ function harnessVersion(harness: AgentHarness): Promise<string | null> {
       home: process.env.HOME,
       ...(usesOmpHome(harness) ? { ompHome: ompDirs(ompHomeDir).home } : {}),
       codexHome,
-      codex: harness === 'codex',
+      codex: usesCodexHome(harness),
     });
     if (!env) return resolve(null);
     execFile(bin, ['--version'], {
