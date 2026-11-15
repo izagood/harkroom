@@ -17,7 +17,7 @@ harkroom-proto = { path = "../harkroom-proto" }
 # claude 계정 풀 해석(L3c-3a) — 러너·TS 오퍼레이터와 같은 함수로 「풀 해석을 못 읽음」을 잰다(L3c-3e).
 harkroom-accounts = { path = "../harkroom-accounts" }
 harkroom-roots = { path = "../harkroom-roots" }
-serde = { version = "=1.0.228", features = ["derive"] }
+serde = { version = "=1.0.229", features = ["derive"] }
 # 출력 JSON 의 키 순서를 TS(`{...out, merged, exit}`)와 똑같이 지키려고 preserve_order 를 켠다.
 serde_json = { version = "=1.0.154", features = ["preserve_order"] }
 indexmap = "=2.14.2"
