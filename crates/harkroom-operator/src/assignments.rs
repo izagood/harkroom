@@ -85,6 +85,11 @@ pub trait AssignmentDeps: Send + Sync {
     fn rust_runner_present(&self) -> bool {
         false
     }
+    /// node 러너를 띄울 수 있는가 — 러너가 물려받는 PATH 에 `node` 가 있는가(s9). node 러너는 `#!/usr/bin/env node`
+    /// 스크립트라 node 가 없으면 127 로 곧장 죽고, 재기동 백오프가 끝없이 돈다. 기본은 있다고 본다(시험·옛 길 그대로).
+    fn node_present(&self) -> bool {
+        true
+    }
     /// 이 에이전트의 러너가 계정 풀로 돌 수 있는가(B4-5e). **기본은 `Unreadable`** — 모르면 Rust 러너로 보내지 않는다.
     fn claude_account_use(
         &self,
@@ -226,8 +231,13 @@ impl AssignmentReconciler {
                     st.assigned.get(&id).cloned()
                 };
                 let Some(cur) = now else { return };
-                if let Err(e) = me.on_assign(&cur.base_url, cur.definition, cur.local) {
-                    me.deps.log(&format!("다시 띄우기 실패: {e}"));
+                match me.on_assign(&cur.base_url, cur.definition, cur.local) {
+                    Err(e) => me.deps.log(&format!("다시 띄우기 실패: {e}")),
+                    // 다시 띄우다 거절됐다(node 없음 등) — 더 예약하지 않는다(끝없는 재기동 고리를 끊는다).
+                    Ok(AssignOutcome::Refused(r)) => me
+                        .deps
+                        .log(&format!("다시 띄우지 않는다: agent={id} — {r}")),
+                    Ok(_) => {}
                 }
             }),
             ms,
@@ -304,19 +314,50 @@ impl AssignmentReconciler {
         let env = self.runner_env(&runner_id, &secret, &mcp_path, local.as_ref());
         // 러너 구현(B4-5c → L3c-3e). pi·omp 하네스·풀 해석 못 읽음·파일 없음이면 node 다(`runner_pick.rs`).
         let wants = crate::runner_pick::wants_rust(local.as_ref());
-        let pick = if wants {
+        let account_use = || {
+            self.deps.claude_account_use(
+                &agent_id,
+                local.as_ref().and_then(|l| l.claude_pool.as_deref()),
+            )
+        };
+        let mut pick = if wants {
             crate::runner_pick::pick_runner(
                 local.as_ref(),
                 self.deps.rust_runner_present(),
-                self.deps.claude_account_use(
-                    &agent_id,
-                    local.as_ref().and_then(|l| l.claude_pool.as_deref()),
-                ),
+                account_use(),
                 &definition.harness,
             )
         } else {
             crate::runner_pick::RunnerPick::NODE
         };
+        // node 러너로 가는데 node 가 없다(s9) — 띄우면 127 로 죽고 끝없이 다시 뜬다. Rust 러너 조건(허용 하네스·풀 읽힘·
+        // 파일 있음)을 넘으면 Rust 로, 못 넘으면 띄우지 않고 거절해 서버에 사유를 남긴다(조용히 돌지 않게).
+        if pick.kind == crate::local_agents::RunnerKind::Node && !self.deps.node_present() {
+            let rust = crate::runner_pick::pick_runner(
+                Some(&LocalAgent {
+                    runner: crate::local_agents::RunnerKind::Rust,
+                    ..local.clone().unwrap_or_default()
+                }),
+                self.deps.rust_runner_present(),
+                account_use(),
+                &definition.harness,
+            );
+            if rust.kind == crate::local_agents::RunnerKind::Rust {
+                self.deps.log(&format!(
+                    "러너: node 가 없어 Rust 러너로 띄운다: agent={}",
+                    definition.handle
+                ));
+                pick = rust;
+            } else {
+                self.deps.link_forget(&runner_id);
+                self.deps.log(&format!(
+                    "러너를 띄우지 않는다: agent={} — node 가 없고 Rust 러너 조건도 못 넘었다({})",
+                    definition.handle,
+                    rust.fallback.map_or("unknown", |f| f.as_str())
+                ));
+                return Ok(AssignOutcome::Refused("runner_node_missing".into()));
+            }
+        }
         if let Some(f) = pick.fallback {
             self.deps.log(&format!(
                 "러너: rust 를 청했지만 node 로 띄운다({}): agent={}",
@@ -330,7 +371,14 @@ impl AssignmentReconciler {
                 self.deps.link_forget(&runner_id);
                 let msg = match err {
                     SpawnError::Retiring(m) => m,
-                    SpawnError::Other(m) => return Err(m),
+                    SpawnError::Other(m) => {
+                        // 조용히 안 뜨지 않게 — 거절로 돌려 서버에 사유를 남긴다(s9). 원문(경로 등)은 로그에만.
+                        self.deps.log(&format!(
+                            "러너를 띄우지 못했다: agent={} — {m}",
+                            definition.handle
+                        ));
+                        return Ok(AssignOutcome::Refused("runner_spawn_failed".into()));
+                    }
                 };
                 // 앞 세대 러너는 우리 표에 없어 죽어도 통지가 없다 — 되풀이해 물어야 자리가 비었을 때 띄운다.
                 self.deps.log(&format!(
@@ -657,6 +705,8 @@ mod tests {
         picks: Mutex<Vec<RunnerPick>>,
         logs: Mutex<Vec<String>>,
         rust_present: Mutex<bool>,
+        /// `Some(false)` 면 node 가 없다(기본은 있음).
+        node_missing: Mutex<bool>,
         account_use: Mutex<crate::runner_pick::AccountUse>,
     }
 
@@ -696,6 +746,9 @@ mod tests {
         }
         fn rust_runner_present(&self) -> bool {
             *self.rust_present.lock().unwrap()
+        }
+        fn node_present(&self) -> bool {
+            !*self.node_missing.lock().unwrap()
         }
         fn claude_account_use(
             &self,
@@ -1162,14 +1215,66 @@ mod tests {
     }
 
     #[test]
-    fn other_spawn_error_is_returned() {
+    fn other_spawn_error_is_a_visible_refusal() {
+        // 실행 파일이 없는 등 띄우기 실패는 조용히 끝나지 않는다 — 거절 사유로 서버에 간다(s9).
         let (f, r) = setup();
         *f.spawn_err.lock().unwrap() = Some(SpawnError::Other("boom".into()));
-        let e = r
+        let out = r
             .on_assign("u", def(CredentialScope::Community, None), None)
-            .unwrap_err();
-        assert_eq!(e, "boom");
+            .unwrap();
+        assert_eq!(out, AssignOutcome::Refused("runner_spawn_failed".into()));
         assert_eq!(f.forgets.lock().unwrap().len(), 1);
+        assert!(f.logs.lock().unwrap().iter().any(|l| l.contains("boom")));
+    }
+
+    #[test]
+    fn node_missing_moves_to_rust_when_rust_can_run() {
+        use crate::local_agents::RunnerKind;
+        use crate::runner_pick::AccountUse;
+        let (f, r) = setup();
+        *f.node_missing.lock().unwrap() = true;
+        *f.rust_present.lock().unwrap() = true;
+        *f.account_use.lock().unwrap() = AccountUse::None;
+        // 칸 없음(node 기본) 에이전트도, node 를 청한 에이전트도 node 가 없으면 Rust 로.
+        let mut d = def(CredentialScope::Community, None);
+        d.harness = "claude-code".into();
+        let out = r.on_assign("u", d, Some(LocalAgent::default())).unwrap();
+        assert_ne!(out, AssignOutcome::Refused("runner_node_missing".into()));
+        let picks = f.picks.lock().unwrap();
+        assert_eq!(picks.len(), 1);
+        assert_eq!(picks[0].kind, RunnerKind::Rust);
+        assert!(
+            f.logs
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|l| l.contains("node 가 없어 Rust 러너로"))
+        );
+    }
+
+    #[test]
+    fn node_missing_and_rust_impossible_is_refused_not_spawned() {
+        use crate::runner_pick::AccountUse;
+        for (present, use_, harness) in [
+            (false, AccountUse::None, "claude-code"),
+            (true, AccountUse::Unreadable, "claude-code"),
+            (true, AccountUse::None, "gemini"),
+        ] {
+            let (f, r) = setup();
+            *f.node_missing.lock().unwrap() = true;
+            *f.rust_present.lock().unwrap() = present;
+            *f.account_use.lock().unwrap() = use_;
+            let mut d = def(CredentialScope::Community, None);
+            d.harness = harness.into();
+            let out = r.on_assign("u", d, Some(LocalAgent::default())).unwrap();
+            assert_eq!(
+                out,
+                AssignOutcome::Refused("runner_node_missing".into()),
+                "{harness}"
+            );
+            assert!(f.picks.lock().unwrap().is_empty(), "띄우지 않는다");
+            assert_eq!(f.forgets.lock().unwrap().len(), 1);
+        }
     }
 
     #[test]
