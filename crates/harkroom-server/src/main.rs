@@ -218,6 +218,27 @@ async fn main() {
         }
         _ => None,
     };
+    // C4b — MCP `delegation.close` 의 쓰기(`writes::DELEGATION_CLOSE_PRIVILEGES`). 다 있을 때만 — 아니면 그 도구는 TS 가 답한다.
+    let mcp_deleg_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::mcp::writes as mw;
+            match write::missing_in(w, mw::DELEGATION_CLOSE_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: mcp delegation.close off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: mcp delegation.close off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // C3b-1 — 선택 카드 답하기·닫기. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 `ASK_PRIVILEGES` 가 다 있을 때만.
     let ask_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -514,13 +535,14 @@ async fn main() {
             state.up.clone(),
             state.pool.clone(),
             // C4b — 도구 묶음마다 그 권한이 다 있는 쓰기 풀일 때만 Rust 가 답한다(리액션 · inbox.read ·
-            // 선택 카드 → `message.askBundleResolve`).
+            // 선택 카드 → `message.askBundleResolve` · delegation.close).
             harkroom_server::core::mcp::writes::McpWrites {
                 react: mcp_react_write,
                 inbox: inbox_write,
                 bg: bg_write,
                 ask: mcp_ask_write,
                 bg_complete: bg_complete_write,
+                delegation: mcp_deleg_write,
             },
             auth.clone(),
             state.cors.clone(),

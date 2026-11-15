@@ -184,7 +184,17 @@ describe('본문 거절 (D5)', () => {
       expect(r.statusCode).toBe(400);
       expect(r.json().error.code).toBe('not_admissible');
     }
-    expect((await admit(auth(agent.pat), { tool: 'message.post', arguments: { channelId, body: 'clean' } })).json()).toEqual({ admitted: true });
+    expect((await admit(auth(agent.pat), { tool: 'message.post', arguments: { channelId, body: 'clean' } })).json()).toEqual({ admitted: true, registered: true });
+    // 조건부 등록 도구(S5.3 C4b) — 스위치가 꺼져 있으면 TS 가 그 도구를 싣지 않으니 registered 는 거짓이다(Rust 는 그때 답하지 않는다).
+    const prevV2 = process.env.HARKROOM_DELEGATION_V2;
+    try {
+      delete process.env.HARKROOM_DELEGATION_V2;
+      expect((await admit(auth(agent.pat), { tool: 'delegation.close', arguments: {} })).json()).toEqual({ admitted: true, registered: false });
+      process.env.HARKROOM_DELEGATION_V2 = '1';
+      expect((await admit(auth(agent.pat), { tool: 'delegation.close', arguments: {} })).json()).toEqual({ admitted: true, registered: true });
+    } finally {
+      if (prevV2 === undefined) delete process.env.HARKROOM_DELEGATION_V2; else process.env.HARKROOM_DELEGATION_V2 = prevV2;
+    }
     // 비밀이 든 인자 — REST 본문 관문(leakGuardHook)은 /mcp/admit 을 건너뛰고 라우트 안 검사가 거절을 도구 답 모양으로 낸다.
     // 차단 기록은 한 번만(관문이 같이 보면 Rust 가 TS /mcp 로 넘긴 뒤 또 남아 두 건이 되었다 — security C4a-2 지적).
     const before = await blockedCount();
