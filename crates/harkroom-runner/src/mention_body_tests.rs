@@ -215,6 +215,7 @@ impl CallMaker<&'static Link, Sink> for Maker {
                 harness: AgentHarness::ClaudeCode,
                 home: None,
                 omp_home: None,
+                opencode: None,
                 end_cfg: EndConfig::new(60_000),
                 lane_tui: false,
                 caller: NudgeCaller::Human,
