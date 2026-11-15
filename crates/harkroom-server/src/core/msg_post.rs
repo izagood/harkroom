@@ -9,7 +9,7 @@
 //!   고친 본문으로 넣은 뒤 [`super::mention_fanout::fan_out_calls`] 로 inbox·푸시 줄을 넣는다. 새 머리의 위임은
 //!   [`super::mandate_stamp::stamp_root`]. 받은 사람마다 `inbox.updated`, 응답 헤더에 받은 사람 수·id(TS 와 같은 순서).
 //! - **답글**(C1c-3a): 트랜잭션 첫 줄에서 머리가 이 채널의 최상위 글인지(아니면 400 `bad_thread`), seq 락 뒤에서 이 스레드가
-//!   아직 TS 몫인지([`TS_THREAD_SQL`] — 지워진 머리·담당 위임·카드 답으로 읽힐 글이면 되돌리고 TS 로) 본다. 맡으면 머리·
+//!   아직 TS 몫인지([`TS_THREAD_SQL`] — 담당 위임·카드 답으로 읽힐 글이면 되돌리고 TS 로) 본다. 맡으면 머리·
 //!   `alsoInChannel` 을 넣고, 부름 뒤 머리의 위임을 잇고([`super::mandate_stamp::stamp_reply`]), 머리 주인에게 호출 게이트를 지난
 //!   `thread_reply` 를 넣는다(TS 와 같이 위임 판정 **뒤**).
 //! - **깨움 선점**(C1c-3b): 그 뒤 이 스레드의 남의 열린 깨움을 접거나(이 글이 부른 계정) 지금 깨운다([`super::wake_preempt`]).
@@ -30,6 +30,7 @@ use super::mention_fanout::{self, Post};
 use super::msg_edit::{
     MAX_MESSAGE_BODY_CHARS, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS,
 };
+use super::msg_list::read_list_row;
 use super::msg_read::{is_uuid, message_by_id};
 use super::wake_preempt;
 use crate::auth::{RequireAccount, Via};
@@ -66,8 +67,16 @@ pub const MESSAGE_POST_PRIVILEGES: &[(&str, &str)] = &[
     ("agent_wake.canceled_at", "UPDATE"),
     ("agent_wake.canceled_by_message_id", "UPDATE"),
     ("message.meta", "UPDATE"),
+    // C1c-3d 담당 사람 글의 위임 활동 — 기한 밀기(`touchDelegationDeadline`)와 v1 대기 중 update.
+    ("team_delegation.deadline_at", "UPDATE"),
+    ("team_delegation_item.last_activity_at", "UPDATE"),
+    ("team_delegation_item.update_pending_message_id", "UPDATE"),
+    ("team_delegation_item.update_pending_at", "UPDATE"),
 ];
 pub const MESSAGE_POST_SEQUENCE_PRIVILEGES: &[(&str, &str)] = &[("event_outbox_id_seq", "USAGE")];
+
+/// TS `DELEGATION_SILENCE_SEC` — 담당 글 하나가 기한을 이만큼 뒤로 민다.
+const DELEGATION_SILENCE_SEC: i32 = 10 * 60;
 
 /// zod `attachmentIds.max(10)`.
 const MAX_ATTACHMENTS: usize = 10;
@@ -82,6 +91,7 @@ pub struct PostState {
 struct Sql {
     gate: String,
     channel_kind: String,
+    dm_peers: String,
     lock: String,
     lock_class: i32,
     dup: String,
@@ -92,18 +102,20 @@ struct Sql {
     guard_words: Vec<String>,
     root_of: String,
     root_author: String,
+    deleg_touch: String,
+    deleg_pending: String,
 }
 
 /// C1c-3a 갈래 판정(TS 동작이 아니라 **어느 쪽이 맡을지**) — 이 스레드에 답하면 TS 가 아직 Rust 에 없는 부수효과를 내는가.
 /// 하나라도 참이면 트랜잭션을 버리고 TS 로 넘긴다. 조건은 그 부수효과의 문장보다 넓게(같거나 더 많이 걸리게) 잡는다:
-/// 지워진 머리(`rootBack`) · 작성자가 담당인 열린·보고된 위임 항목(`closeDelegationsForReply` V2 의 활동 갱신) ·
-/// 열린 선택 카드인데 글이 **카드 답으로 읽힐 수 있음**(`$3` 이 거짓 — TS `applyChatApproval` 의 글로 고르기, 받는 쪽·종류와
+/// 작성자가 담당인 열린·보고된 위임 항목인데 위임 스위치를 모름(`$4` 가 거짓 — [`delegation_v2`] 가 `None`. 알면 C1c-3d 부터 Rust 가
+/// `closeDelegationsForReply` 의 사람 글 갈래를 한다) ·
+/// (지워진 머리는 C1c-3d 부터 Rust 가 `rootBack` 까지 맡는다.) 열린 선택 카드인데 글이 **카드 답으로 읽힐 수 있음**(`$3` 이 거짓 — TS `applyChatApproval` 의 글로 고르기, 받는 쪽·종류와
 /// 무관하게 카드 전부). 글이 물음뿐이면([`question_only`]) 고르기가 될 수 없어 Rust 가 맡고 카드를 `replied` 로 닫는다(C1c-3c).
 /// 쓰기 트랜잭션 안 seq 락 뒤에서 읽는다 — TS 가 같은 판정을 하는 때와 같은 창이다.
-const TS_THREAD_SQL: &str = "select exists(select 1 from message where id = $1::uuid and deleted_at is not null) \
-     or exists(select 1 from team_delegation_item i join team_delegation d on d.id = i.delegation_id \
+const TS_THREAD_SQL: &str = "select (not $4::bool and exists(select 1 from team_delegation_item i join team_delegation d on d.id = i.delegation_id \
                 where d.thread_root_id = $1::uuid and i.delegate_account_id = $2::uuid \
-                  and (i.outcome is null or i.outcome = 'reported')) \
+                  and (i.outcome is null or i.outcome = 'reported'))) \
      or (not $3::bool and exists(select 1 from message where (id = $1::uuid or thread_root_id = $1::uuid) \
                 and deleted_at is null and meta->>'kind' = 'ask' \
                 and meta->'ask'->>'answeredWith' is null and meta->'ask'->>'closedAt' is null))";
@@ -123,6 +135,18 @@ fn question_only(body: &str) -> bool {
     body.contains('?') || body.contains('？')
 }
 
+/// TS `delegationV2Enabled`(`HARKROOM_DELEGATION_V2`)을 Rust 가 읽는 법 — **값이 없으면 모른다**(`None`).
+/// TS 는 없으면 꺼짐(v0)으로 보지만, 앞단 컨테이너에 이 변수가 빠진 채 TS 만 켜져 있으면 두 서버가 다르게 군다. 그래서 Rust 는
+/// 값이 있을 때만 위임 갈래를 맡고(`1`·`on`·`true` → v1, 그 밖의 값 → v0 — TS 와 같은 낱말), 없으면 지금처럼 TS 로 넘긴다.
+/// TS 와 같이 부를 때마다 읽는다.
+fn delegation_v2(raw: Option<&str>) -> Option<bool> {
+    let v = raw?.trim().to_lowercase();
+    if v.is_empty() {
+        return None;
+    }
+    Some(matches!(v.as_str(), "1" | "on" | "true"))
+}
+
 fn sql() -> &'static Sql {
     static S: OnceLock<Sql> = OnceLock::new();
     S.get_or_init(|| {
@@ -136,6 +160,10 @@ fn sql() -> &'static Sql {
         Sql {
             gate: frag("channel_post_gate"),
             channel_kind: format!("select k.kind from ({}) k", frag("post_channel_kind")),
+            dm_peers: format!(
+                "select p.account_id::text from ({}) p",
+                frag("post_dm_peers")
+            ),
             lock: frag("post_seq_lock"),
             lock_class: frag("post_seq_lock_class").parse().expect("seq lock class"),
             dup: format!(
@@ -152,6 +180,8 @@ fn sql() -> &'static Sql {
             guard_words: serde_json::from_str(&frag("chat_approval_guard_words"))
                 .expect("chat_approval_guard_words"),
             root_of: frag("post_thread_root_of"),
+            deleg_touch: frag("delegation_touch_deadline"),
+            deleg_pending: frag("delegation_v2_update_pending"),
             root_author: format!(
                 "select r.author_id::text, r.deleted_at is not null from ({}) r",
                 frag("post_root_author")
@@ -338,6 +368,7 @@ async fn post_in_tx(
     input: &PostBody,
     idempotency_key: Option<&str>,
     audience: &Value,
+    is_dm: bool,
 ) -> Result<Outcome, sqlx::Error> {
     let s = sql();
     let (body, attachment_ids) = (input.body.as_str(), input.attachment_ids.as_slice());
@@ -363,11 +394,13 @@ async fn post_in_tx(
         .bind(channel)
         .execute(&mut *tx)
         .await?;
+    let v2 = delegation_v2(std::env::var("HARKROOM_DELEGATION_V2").ok().as_deref());
     if let Some(r) = root {
         let ts: bool = sqlx::query_scalar(TS_THREAD_SQL)
             .bind(r)
             .bind(author)
             .bind(question_only(body))
+            .bind(v2.is_some())
             .fetch_one(&mut *tx)
             .await?;
         if ts {
@@ -454,14 +487,38 @@ async fn post_in_tx(
         None => mandate_stamp::stamp_root(&mut tx, &id, author, channel, &called).await?,
         Some(r) => mandate_stamp::stamp_reply(&mut tx, &id, author, channel, r, &called).await?,
     };
-    if let Some(r) = root {
-        thread_reply(&mut tx, r, author, channel, &id, &mut notified_set).await?;
+    // TS `deletedRoot` — 머리가 지워져 있었으면 커밋 뒤 목록에 다시 물어 `message.updated` 로 되돌린다(아래).
+    let deleted_root = match root {
+        Some(r) => thread_reply(&mut tx, r, author, channel, &id, &mut notified_set).await?,
+        None => false,
+    };
+    // TS 와 같이 `thread_reply` 뒤 — DM 이면 상대에게 `dm`(사람 글은 언제나 답글로 세어지고 시스템 줄이 아니다).
+    if is_dm {
+        dm_notify(&mut tx, channel, author, root, &id, &mut notified_set).await?;
     }
     // TS 와 같이 부름·`thread_reply` 를 다 넣은 뒤 — 이 글이 부른 계정의 깨움은 접고 나머지는 깨운다.
     let preempted = match root {
         Some(r) => wake_preempt::preempt(&mut tx, r, author, &id, &notified_set).await?,
         None => wake_preempt::Preempted::default(),
     };
+    // TS `closeDelegationsForReply`(선점 뒤, 같은 tx) — 사람 글은 결과(`report`·`fail`)가 아니라 닫지 않고 깨우지 않는다:
+    // 기한만 밀고, v1 이면 「대기 중 update」로 적는다(턴 끝에 TS 스위퍼가 넘긴 쪽에 보낸다). 스위치를 모르면 위 가드가 이미 TS 로 넘겼다.
+    if let (Some(r), Some(on)) = (root, v2) {
+        sqlx::query(s.deleg_touch.as_str())
+            .bind(author)
+            .bind(r)
+            .bind(DELEGATION_SILENCE_SEC)
+            .execute(&mut *tx)
+            .await?;
+        if on {
+            sqlx::query(s.deleg_pending.as_str())
+                .bind(author)
+                .bind(r)
+                .bind(&id)
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
     let notified = notified_in_order(&mut tx, &id, &notified_set).await?;
     // TS 는 선점 신호를 `postMessage` 안(커밋 뒤)에서, `message.created` 는 라우트가 그 뒤에 낸다 — 같은 순서로 outbox 에.
     wake_preempt::announce(&mut tx, &preempted).await?;
@@ -472,6 +529,19 @@ async fn post_in_tx(
         &json!({ "type": "message.created", "message": row_value, "audience": audience }),
     )
     .await?;
+    // TS `emitPosted` — 지워진 머리에 답이 달리면 그 머리가 목록에 되돌아온다. `message.created` **뒤**, 같은 audience,
+    // `message.updated` 로(새 말이 아니다). TS 는 커밋 뒤 `readListRow` 로 읽는다 — 같은 tx 안 이 자리에서 읽으면 같은 행이고,
+    // 롤백되면 신호도 함께 사라진다. 목록에 안 보이면(`LIST_VISIBLE` 이 거르면) 내지 않는다.
+    if let (true, Some(r)) = (deleted_root, root)
+        && let Some(back) = read_list_row(&mut tx, channel, r).await?
+    {
+        let back: Value = serde_json::from_str(&back).map_err(|e| sqlx::Error::Decode(e.into()))?;
+        crate::write::emit_event(
+            &mut tx,
+            &json!({ "type": "message.updated", "message": back, "audience": audience }),
+        )
+        .await?;
+    }
     for a in &notified {
         crate::write::emit_event(&mut tx, &json!({ "type": "inbox.updated", "accountId": a }))
             .await?;
@@ -510,6 +580,7 @@ async fn notified_in_order(
 /// TS 의 머리 주인 `thread_reply` — 작성자 아닌, 아직 안 받은 머리 주인에게. 에이전트면 직접 멘션과 같은 호출 게이트
 /// (via mention, 호출자 = 작성자, 회신권 스레드 = 머리)를 지나야 하고, 사람은 facts 에 없어 그대로 받는다.
 /// 사람 글은 언제나 답글로 세어지고 시스템 줄이 아니다(`isReply`·`isSystemLine`).
+/// 돌려주는 값은 머리가 지워져 있었는가(TS `deletedRoot`) — 머리 주인 판정과 상관없이 같은 행에서 읽는다.
 async fn thread_reply(
     conn: &mut sqlx::PgConnection,
     root: &str,
@@ -517,16 +588,17 @@ async fn thread_reply(
     channel: &str,
     message_id: &str,
     notified: &mut HashSet<String>,
-) -> Result<(), sqlx::Error> {
+) -> Result<bool, sqlx::Error> {
     let row: Option<(Option<String>, bool)> = sqlx::query_as(sql().root_author.as_str())
         .bind(root)
         .fetch_optional(&mut *conn)
         .await?;
+    let deleted = row.as_ref().is_some_and(|(_, d)| *d);
     let Some((Some(owner), _)) = row else {
-        return Ok(());
+        return Ok(deleted);
     };
     if owner == author || notified.contains(&owner) {
-        return Ok(());
+        return Ok(deleted);
     }
     let facts = invoke_gate::invoke_facts(conn, std::slice::from_ref(&owner)).await?;
     if let Some(f) = facts.get(&owner) {
@@ -537,11 +609,49 @@ async fn thread_reply(
             reply_grant_thread_id: Some(root),
         };
         if !invoke_gate::may_invoke(conn, f, &ctx).await? {
-            return Ok(());
+            return Ok(deleted);
         }
     }
     mention_fanout::insert_inbox_many(conn, &[owner], message_id, "thread_reply", notified, None)
-        .await
+        .await?;
+    Ok(deleted)
+}
+
+/// TS 의 DM 알림 — 작성자 말고 그 방의 멤버 중 아직 안 받은 계정에게 `dm`. 에이전트면 `thread_reply` 와 같은 호출 게이트
+/// (via mention, 호출자 = 작성자, 회신권 스레드 = 머리 또는 없음)를 지나야 하고, 사람은 facts 에 없어 그대로 받는다.
+async fn dm_notify(
+    conn: &mut sqlx::PgConnection,
+    channel: &str,
+    author: &str,
+    root: Option<&str>,
+    message_id: &str,
+    notified: &mut HashSet<String>,
+) -> Result<(), sqlx::Error> {
+    let peers: Vec<String> = sqlx::query_scalar(sql().dm_peers.as_str())
+        .bind(channel)
+        .bind(author)
+        .fetch_all(&mut *conn)
+        .await?;
+    let facts = invoke_gate::invoke_facts(conn, &peers).await?;
+    let mut to: Vec<String> = Vec::new();
+    for p in peers {
+        if notified.contains(&p) {
+            continue;
+        }
+        if let Some(f) = facts.get(&p) {
+            let ctx = invoke_gate::Ctx {
+                caller_id: author,
+                channel_id: channel,
+                via: invoke_gate::Via::Mention,
+                reply_grant_thread_id: root,
+            };
+            if !invoke_gate::may_invoke(conn, f, &ctx).await? {
+                continue;
+            }
+        }
+        to.push(p);
+    }
+    mention_fanout::insert_inbox_many(conn, &to, message_id, "dm", notified, None).await
 }
 
 fn json_response(status: StatusCode, row: String) -> Response {
@@ -618,7 +728,7 @@ pub async fn post(
         }
         _ => {}
     }
-    // DM 은 받는 사람에게 `dm` 알림이 간다(C1c-3 몫).
+    // DM 은 받는 사람에게 `dm` 알림이 간다(C1c-3d 부터 Rust 가 넣는다 — [`dm_notify`]).
     let kind: Option<String> = match sqlx::query_scalar(sql().channel_kind.as_str())
         .bind(&id)
         .fetch_optional(&st.read)
@@ -627,9 +737,7 @@ pub async fn post(
         Ok(k) => k,
         Err(e) => return internal(e),
     };
-    if kind.as_deref() == Some("dm") {
-        return to_ts(st.up.clone(), peer, parts, bytes).await;
-    }
+    let is_dm = kind.as_deref() == Some("dm");
     let audience = match audience_for(&st.read, &id).await {
         Ok(a) => a.to_json(),
         Err(e) => return internal(e),
@@ -639,7 +747,7 @@ pub async fn post(
         .get("idempotency-key")
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
-    match post_in_tx(&st, &id, &me.id, &input, key.as_deref(), &audience).await {
+    match post_in_tx(&st, &id, &me.id, &input, key.as_deref(), &audience, is_dm).await {
         Err(e) => internal(e),
         // 세 사유를 400 하나로 합친다 — TS 와 같이, 남의 업로드 id 가 있는지 알리는 신호가 되지 않게.
         Ok(Outcome::ToTs) => to_ts(st.up.clone(), peer, parts, bytes).await,
@@ -735,6 +843,19 @@ mod tests {
         assert!(s.insert.contains("insert into message"));
         assert!(attach_find_raw().contains("for update"));
         assert!(s.guard_words.iter().any(|w| w == "harkroom://message/"));
+    }
+
+    #[test]
+    fn delegation_v2_unset_means_unknown() {
+        // 값이 없거나 비면 모른다 → TS 로 넘긴다. 있으면 TS `delegationV2Enabled` 와 같은 낱말로 갈린다.
+        assert_eq!(delegation_v2(None), None);
+        assert_eq!(delegation_v2(Some("  ")), None);
+        for on in ["1", "on", "TRUE", " On "] {
+            assert_eq!(delegation_v2(Some(on)), Some(true), "{on}");
+        }
+        for off in ["0", "off", "false", "yes"] {
+            assert_eq!(delegation_v2(Some(off)), Some(false), "{off}");
+        }
     }
 
     #[test]

@@ -1604,6 +1604,8 @@ export const POST_IDEMPOTENCY_FIND_SQL = `select message_id from idempotency_key
 export const POST_INSERT_SQL = `insert into message (channel_id, thread_root_id, author_id, body, kind, meta, also_in_channel, mention_depth, cause_message_id, stall_depth, chain_started_at)
        values ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6::jsonb, $7::bool, $8::int, $9::uuid, $10::int, $11::timestamptz) returning id`;
 export const POST_CHANNEL_KIND_SQL = `select kind from channel where id = $1::uuid`;
+/** DM 의 상대(작성자 말고 그 방의 멤버) — `dm` 알림 받을 사람. Rust 글 올리기 줄도 같은 문장을 쓴다(골든). */
+export const POST_DM_PEERS_SQL = `select account_id from channel_member where channel_id = $1::uuid and account_id <> $2::uuid`;
 export const POST_IDEMPOTENCY_INSERT_SQL = `insert into idempotency_key (key, message_id, author_id, channel_id) values ($1, $2::uuid, $3::uuid, $4::uuid)`;
 
 export async function postMessage(
@@ -1946,10 +1948,7 @@ export async function postMessage(
     // 알림이 되고, 상대가 에이전트면 턴까지 뜬다 — 스레드보다 오히려 더 곧장 닿는다.
     const channel = await client.query(POST_CHANNEL_KIND_SQL, [input.channelId]);
     if (channel.rows[0]?.kind === 'dm' && isReply) {
-      const members = await client.query(
-        `select account_id from channel_member where channel_id = $1 and account_id <> $2`,
-        [input.channelId, input.authorId],
-      );
+      const members = await client.query(POST_DM_PEERS_SQL, [input.channelId, input.authorId]);
       // 상대가 에이전트면 호출 게이트를 지난다(바로 위 스레드 답글과 같은 이유). 사람은 facts 에 없어 그대로 받는다.
       const dmFacts = await invokeFactsFor(client, members.rows.map((r) => r.account_id));
       const dmRecipients: string[] = [];
