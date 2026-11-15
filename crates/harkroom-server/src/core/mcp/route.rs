@@ -64,6 +64,7 @@ pub async fn handle(
         .get::<crate::auth::Auth>()
         .cloned()
         .unwrap_or_default();
+    let has_operator = auth.operator.is_some();
     let me = match auth.account {
         Some(a) if a.kind == "agent" => a,
         Some(_) => return json(StatusCode::FORBIDDEN, AGENT_ONLY),
@@ -83,10 +84,11 @@ pub async fn handle(
         return json(StatusCode::PAYLOAD_TOO_LARGE, TOO_LARGE);
     };
     let cause = super::reads3::cause_from(&parts.headers);
+    let runner = super::bg_claim::runner(has_operator, &parts.headers);
     let tools = |tool: &'static str, args: serde_json::Value| -> AnswerFut {
         let (pool, me, cause, writes) = (pool.clone(), me.clone(), cause.clone(), writes.clone());
         Box::pin(async move {
-            if let Some(r) = super::writes::answer(&pool, &writes, &me, tool, &args).await {
+            if let Some(r) = super::writes::answer(&pool, &writes, &me, tool, &args, runner).await {
                 return r;
             }
             super::tools::answer(&pool, &me, tool, &args, cause.as_deref()).await
@@ -127,7 +129,12 @@ pub async fn serve(
         .cloned()
         .unwrap_or(serde_json::Value::Null);
     match super::respond::admit(up, ci, headers, name, &args).await {
-        super::respond::Admit::Yes => {}
+        // `bg.claim` 은 TS 의 스위치가 켜졌다고 들었을 때만 — 아니면 TS 가 답한다(`disabled` 는 TS 가 정본).
+        super::respond::Admit::Yes { bg_enabled } => {
+            if name == "bg.claim" && !bg_enabled {
+                return None;
+            }
+        }
         super::respond::Admit::No(text) => {
             return Some(super::respond::sse(
                 &id,
