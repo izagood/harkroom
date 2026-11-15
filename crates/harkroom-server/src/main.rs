@@ -166,6 +166,33 @@ async fn main() {
         }
         _ => None,
     };
+    // C3b-2b-2 — MCP `message.askBundle` 있던 묶음에 줄 더하기. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 묶음 푸시까지 그 권한이 다 있을 때만.
+    let bundle_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::ask_bundle_add as b;
+            match write::missing_in(
+                w,
+                b::ASK_BUNDLE_ADD_PRIVILEGES,
+                b::ASK_BUNDLE_ADD_SEQUENCE_PRIVILEGES,
+            )
+            .await
+            {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: ask bundle add core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: ask bundle add core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // C3b-1 — 선택 카드 답하기·닫기. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 `ASK_PRIVILEGES` 가 다 있을 때만.
     let ask_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -394,11 +421,12 @@ async fn main() {
             state.up.clone(),
             state.pool.clone(),
             // C4b — 도구 묶음마다 그 권한이 다 있는 쓰기 풀일 때만 Rust 가 답한다(리액션 · inbox.read).
-            // C3b-2b — `ASK_PRIVILEGES` 가 다 있는 쓰기 풀일 때만 `message.askBundleResolve` 를 Rust 가 답한다.
+            // C3b-2b — `ASK_PRIVILEGES` 가 다 있는 쓰기 풀일 때만 `message.askBundleResolve`, 묶음 푸시 권한까지 있으면 `message.askBundle`(있던 묶음) 을 Rust 가 답한다.
             harkroom_server::core::mcp::writes::McpWrites {
                 react: mcp_react_write,
                 inbox: inbox_write,
                 ask: mcp_ask_write,
+                bundle: bundle_write,
             },
             auth.clone(),
             state.cors.clone(),

@@ -659,21 +659,21 @@ export const REVEAL_REASONS: ReadonlySet<InboxEntry['reason']> = new Set(['menti
  * (security F1 — 턴이 도는 사이 채널에서 빠진 사람의 Inbox 에 그 채널 글 본문이 실리지 않게). 아니면 `null` — 에이전트가
  * 아무 메시지 id 나 대서 남의 Inbox 에 "내 차례"를 꽂지 못하게 한다.
  */
-export async function gateAwaitingAccount(
-  pool: Pool, agentId: string, channelId: string, mentionId: string,
-): Promise<string | null> {
-  const res = await pool.query(
-    `select m.author_id
+/** `gateAwaitingAccount` 의 문장 — Rust 코어(`core/ask_bundle_add.rs`, S5.3 C3b-2b-2)가 골든으로 받는다(`gate_awaiting`). */
+export const GATE_AWAITING_SQL = `select m.author_id::text as author_id
        from inbox i
        join message m on m.id = i.message_id
        join account a on a.id = m.author_id
        join channel c on c.id = m.channel_id
-      where i.account_id = $1 and i.message_id = $2 and m.channel_id = $3
+      where i.account_id = $1::uuid and i.message_id = $2::uuid and m.channel_id = $3::uuid
         and a.kind = 'human' and m.deleted_at is null
         and ${channelVisibleSql('c', 'm.author_id')}
-      limit 1`,
-    [agentId, mentionId, channelId],
-  );
+      limit 1`;
+
+export async function gateAwaitingAccount(
+  pool: Pool, agentId: string, channelId: string, mentionId: string,
+): Promise<string | null> {
+  const res = await pool.query(GATE_AWAITING_SQL, [agentId, mentionId, channelId]);
   return (res.rows[0]?.author_id as string | undefined) ?? null;
 }
 
@@ -2874,12 +2874,12 @@ export async function syncAskBundles(pool: Pool, rootId: string): Promise<void> 
  * 묶음 카드에 담을 줄 하나를 원본에서 만든다. 사본은 물음 한 줄과 선택지뿐이다 — 상태는 원본에서 읽는다.
  * 원본이 없거나 물음이 아니면 null.
  */
+/** `askBundleItemFor` 의 원본 읽기 — Rust 코어(`core/ask_bundle_add.rs`)가 골든으로 받는다(`bundle_item_root`). */
+export const ASK_BUNDLE_ITEM_SQL = `select meta, body, channel_id as "channelId", thread_root_id as "threadRootId", author_id as "authorId"
+       from message where id = $1::uuid and deleted_at is null`;
+
 export async function askBundleItemFor(pool: Pool, rootId: string): Promise<AskBundleItem | null> {
-  const res = await pool.query(
-    `select meta, body, channel_id as "channelId", thread_root_id as "threadRootId", author_id as "authorId"
-       from message where id = $1 and deleted_at is null`,
-    [rootId],
-  );
+  const res = await pool.query(ASK_BUNDLE_ITEM_SQL, [rootId]);
   const row = res.rows[0] as { meta: Record<string, unknown>; body: string; channelId: string; threadRootId: string | null; authorId: string | null } | undefined;
   const ask = row ? readAskMeta(row.meta) : null;
   if (!row || !ask) return null;

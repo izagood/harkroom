@@ -93,6 +93,10 @@ export const BUNDLE_RESOLVE_SQL = `update message
         and not (meta ? 'permissionRequest')
         and not (meta ? 'mergeDenial')`;
 
+/** 있던 묶음의 줄 바꾸기 — Rust 코어(`core/ask_bundle_add.rs`)가 골든으로 받는다(`bundle_items_update`). `returning` 은 쓰는 쪽이 붙인다. */
+export const BUNDLE_ITEMS_UPDATE_SQL = `update message set meta = jsonb_set(meta::jsonb, '{askBundle,items}', $2::jsonb)
+      where id = $1::uuid and deleted_at is null`;
+
 async function readBundle(pool: Pool, bundleId: string): Promise<BundleRow | null> {
   const res = await pool.query(READ_BUNDLE_SQL, [bundleId]);
   const row = res.rows[0] as { id: string; meta: Record<string, unknown>; channelId: string; threadRootId: string | null; authorId: string | null } | undefined;
@@ -159,8 +163,7 @@ export async function upsertAskBundle(pool: Pool, args: {
   const items = [...byRoot.values()];
   if (items.length > ASK_BUNDLE_MAX_ITEMS) return { ok: false, code: 'bundle_full' };
   const updated = (await pool.query(
-    `update message set meta = jsonb_set(meta::jsonb, '{askBundle,items}', $2::jsonb)
-      where id = $1 and deleted_at is null returning ${COLS}`,
+    `${BUNDLE_ITEMS_UPDATE_SQL} returning ${COLS}`,
     [existing.id, JSON.stringify(items)],
   )).rows[0] as MessageRow | undefined;
   if (!updated) return { ok: false, code: 'bundle_not_found' };

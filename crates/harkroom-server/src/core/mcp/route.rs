@@ -86,7 +86,9 @@ pub async fn handle(
     let tools = |tool: &'static str, args: serde_json::Value| -> AnswerFut {
         let (pool, me, cause, writes) = (pool.clone(), me.clone(), cause.clone(), writes.clone());
         Box::pin(async move {
-            if let Some(r) = super::writes::answer(&pool, &writes, &me, tool, &args).await {
+            if let Some(r) =
+                super::writes::answer(&pool, &writes, &me, tool, &args, cause.as_deref()).await
+            {
                 return r;
             }
             super::tools::answer(&pool, &me, tool, &args, cause.as_deref()).await

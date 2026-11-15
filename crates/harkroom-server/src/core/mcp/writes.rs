@@ -19,6 +19,7 @@ pub const SERVED: &[&str] = &[
     "message.unreact",
     "inbox.read",
     "message.askBundleResolve",
+    "message.askBundle",
 ];
 
 /// `inbox.read`(C4b ④-a) 쓰기 역할의 권한 — 읽음 시각 칸 하나만 고친다. 없으면 `main.rs` 가 풀을 비워 TS 가 답한다.
@@ -33,6 +34,8 @@ pub struct McpWrites {
     pub inbox: Option<PgPool>,
     /// `message.askBundleResolve`(C3b-2b) — 선택 카드 줄(C3b-1 `ASK_PRIVILEGES`)과 같은 권한.
     pub ask: Option<PgPool>,
+    /// `message.askBundle` 있던 묶음에 줄 더하기(C3b-2b-2) — `ask_bundle_add::ASK_BUNDLE_ADD_PRIVILEGES`.
+    pub bundle: Option<PgPool>,
 }
 
 /// JS `Number.MAX_SAFE_INTEGER` — 이 밖의 수는 TS 에서 값이 뭉개진다. Rust 는 같은 결과를 낼 수 없으니 TS 로 넘긴다.
@@ -62,9 +65,16 @@ pub async fn answer(
     me: &Account,
     tool: &str,
     args: &Value,
+    cause: Option<&str>,
 ) -> Option<Option<String>> {
     if !SERVED.contains(&tool) {
         return None;
+    }
+    if tool == "message.askBundle" {
+        let Some(write) = writes.bundle.as_ref() else {
+            return Some(None);
+        };
+        return Some(bundle_add(read, write, me, args, cause).await);
     }
     if tool == "message.askBundleResolve" {
         let Some(write) = writes.ask.as_ref() else {
@@ -82,6 +92,41 @@ pub async fn answer(
         return Some(None);
     };
     Some(react(read, write, me, tool, args).await)
+}
+
+/// `message.askBundle` 있던 묶음에 줄 더하기(C3b-2b-2) — 본체는 [`crate::core::ask_bundle_add`]. 새 묶음·넘길 원본·쓰기 전 DB 오류는
+/// `None`(→ TS).
+async fn bundle_add(
+    read: &PgPool,
+    write: &PgPool,
+    me: &Account,
+    args: &Value,
+    cause: Option<&str>,
+) -> Option<String> {
+    use crate::core::ask_bundle_add::{Added, add, parse_args, refusal_message};
+    let a = parse_args(args)?;
+    match add(read, write, me, &a, cause).await {
+        Ok(Added::Handoff) => None,
+        Ok(Added::Forbidden) => Some(err("forbidden", "not a member of this dm channel")),
+        Ok(Added::Refused(code, root)) => Some(ok_text(&match root {
+            Some(r) => format!(
+                "{{\"error\":{{\"code\":{},\"message\":{},\"rootId\":{}}}}}",
+                Value::from(code),
+                Value::from(refusal_message(code)),
+                Value::from(r)
+            ),
+            None => format!(
+                "{{\"error\":{{\"code\":{},\"message\":{}}}}}",
+                Value::from(code),
+                Value::from(refusal_message(code))
+            ),
+        })),
+        Ok(Added::Bundle(row)) => Some(ok_text(&format!(
+            "{{\"message\":{},\"updated\":true}}",
+            super::respond::minify(&row)
+        ))),
+        Err(_) => Some(internal()),
+    }
 }
 
 /// `message.askBundleResolve`(C3b-2b) — 본체는 [`crate::core::ask_bundle_resolve`]. 넘길 원본·쓰기 전 DB 오류는 `None`(→ TS).

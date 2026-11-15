@@ -80,6 +80,11 @@ impl Ask {
             To::Account(id) => id == account,
         }
     }
+
+    /// TS `ask.to.kind === 'human'`.
+    pub(super) fn is_to_human(&self) -> bool {
+        self.to == To::Human
+    }
 }
 
 /// TS `isPermissionCardMeta`.
