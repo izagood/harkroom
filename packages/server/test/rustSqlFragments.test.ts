@@ -23,12 +23,20 @@ import { ENQUEUE_INBOX_PUSH_MANY_SQL, INBOX_PUSH_REASON_LIST, PUSH_AGENT_REPLY_D
 import { HAS_OLDER_SQL, LIST_MESSAGES_SQL, MESSAGE_BY_ID_SQL, READ_LIST_ROW_SQL, SEARCH_MESSAGES_SQL } from '../src/services/messages.js';
 import { CHILD_FACTS_AUDIENCE_SQL, PLAN_PROGRESS_PLANS_SQL } from '../src/services/threadPlan.js';
 import { displayBodySql } from '../src/services/systemBody.js';
+import { BG_AGENT_ON_SQL, BG_DAILY_LOCK_SQL, BG_ENQUEUE_SQL, BG_EXISTS_SQL, BG_PAUSED_SQL, DISTILL_CANDIDATES_SQL } from '../src/services/bgJobs.js';
 
 const GOLDEN = fileURLToPath(new URL('../../../crates/harkroom-server/golden/sql_fragments.json', import.meta.url));
 
 it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
   const want = {
     channel_visible_c_p1uuid: channelVisibleSql('c', '$1::uuid'),
+    // bg 생산(`loops/bg_produce.rs`, S5.3 C5c-3b) — 일감 넣기와 증류 후보, 문장 전체.
+    bg_paused: BG_PAUSED_SQL,
+    bg_agent_on: BG_AGENT_ON_SQL,
+    bg_daily_lock: BG_DAILY_LOCK_SQL,
+    bg_enqueue: BG_ENQUEUE_SQL,
+    bg_exists: BG_EXISTS_SQL,
+    bg_distill_candidates: DISTILL_CANDIDATES_SQL,
     display_body_m: displayBodySql('m'),
     // 작업 항목(`workItems.ts::actorSeesItemSql`) — 주인이 아닌 쪽이 볼 수 있는 스레드인지, 별칭 ac·두째 인자.
     channel_visible_ac_p2uuid: channelVisibleSql('ac', '$2::uuid'),
