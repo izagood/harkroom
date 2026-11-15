@@ -49,11 +49,20 @@ const OPERATOR_GRANTS = [
   'insert on audit_log',
 ];
 
-async function operatorWriteRole(db: { pool: pg.Pool; uri: string }): Promise<string> {
+/** `loops/wake.rs::WAKE_PRIVILEGES`(+ 시퀀스) 만 가진 쓰기 역할 — homelab 이 운영 쓰기 역할에 더할 GRANT 와 같은 표(S5.3 C5b). */
+const WAKE_GRANTS = [
+  'update (fired_at) on agent_wake',
+  'insert on inbox',
+  'update (meta) on message',
+  'insert on event_outbox',
+  'usage on sequence event_outbox_id_seq',
+];
+
+async function operatorWriteRole(db: { pool: pg.Pool; uri: string }, grants: readonly string[] = OPERATOR_GRANTS): Promise<string> {
   const rw = `op_rw_${Math.random().toString(36).slice(2, 10)}`;
   await db.pool.query(`create role ${rw} login password '${rw}' nosuperuser nocreatedb nocreaterole nobypassrls connection limit 8`);
   await db.pool.query(`grant pg_read_all_data to ${rw}`);
-  for (const g of OPERATOR_GRANTS) await db.pool.query(`grant ${g} to ${rw}`);
+  for (const g of grants) await db.pool.query(`grant ${g} to ${rw}`);
   const u = new URL(db.uri);
   u.username = rw;
   u.password = rw;
@@ -61,13 +70,15 @@ async function operatorWriteRole(db: { pool: pg.Pool; uri: string }): Promise<st
 }
 
 describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () => {
-  for (const name of ['auth', 'perm', 'operator', 'loops']) {
+  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake']) {
     it(`tests/${name}.rs`, async () => {
       const db = await startTestDb();
       try {
         const env: Record<string, string> = { HARKROOM_TEST_DATABASE_URL: db.uri };
         // C2a — 오퍼레이터 시험은 쓰기 풀을 `write.rs::OPERATOR_PRIVILEGES` 만 가진 역할로 돌린다(homelab GRANT 표가 모자라면 여기서 빨개진다).
         if (name === 'operator') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db);
+        // C5b — 예약 깨움 sweep 도 `WAKE_PRIVILEGES` 만 가진 역할로 돌린다.
+        if (name === 'wake') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, WAKE_GRANTS);
         const r = await cargo(['test', '--test', name, '--', '--nocapture'], env);
         expect(r.code, r.out).toBe(0);
         // DB 가 없어 건너뛴 것을 통과로 읽지 않는다.
@@ -78,6 +89,54 @@ describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () 
       }
     }, 600_000);
   }
+
+  // C5b — 같은 깨움 200건을 TS sweep(`createAgentWakeSweeper`)과 Rust sweep(`loops::wake::sweep`)이 **문지기 없이 동시에** 쓸어도
+  // 한 깨움은 한 번만 뜬다(skip locked + fired_at). 문지기가 평소 한쪽만 돌리지만, 주인을 바꾸는 순간 겹쳐도 안전하다는 바닥이다.
+  it('예약 깨움 — TS·Rust 동시 sweep 에도 200건이 정확히 한 번씩 뜬다', async () => {
+    const db = await startTestDb();
+    try {
+      const agent = await db.pool.query<{ id: string }>(
+        `insert into account(handle, display_name, kind) values ('wake_dual', 'wake_dual', 'agent') returning id`);
+      const ch = await db.pool.query<{ id: string }>(`insert into channel(name, kind) values ('wake-dual', 'standard') returning id`);
+      const a = agent.rows[0]!.id; const c = ch.rows[0]!.id;
+      await db.pool.query(
+        `with m as (
+           insert into message(channel_id, author_id, body, kind, meta)
+           select $2, $1, 'w' || g, 'wake', '{"wake":{}}'::jsonb from generate_series(1, 200) g returning id)
+         insert into agent_wake(account_id, channel_id, message_id, wake_at)
+         select $1, $2, m.id, now() - interval '1 minute' from m`, [a, c]);
+      const { createAgentWakeSweeper } = await import('../src/services/agentWakes.js');
+      const ts = createAgentWakeSweeper(db.pool);
+      const due = async () => Number((await db.pool.query(
+        `select count(*)::int as n from agent_wake where fired_at is null and canceled_at is null and wake_at <= now()`)).rows[0].n);
+      const rust = cargo(['test', '--test', 'wake', '--', '--nocapture'], {
+        HARKROOM_TEST_DATABASE_URL: db.uri,
+        HARKROOM_TEST_WRITE_DATABASE_URL: await operatorWriteRole(db, WAKE_GRANTS),
+        HARKROOM_WAKE_DUAL: '1',
+      });
+      // Rust 쪽이 연결을 연 뒤에 TS 도 쓸기 시작한다(컴파일 시간 동안 TS 가 혼자 다 쓸지 않게).
+      const t0 = Date.now();
+      while (Number((await db.pool.query(
+        `select count(*)::int as n from pg_stat_activity where application_name = 'harkroom-wake-dual'`)).rows[0].n) === 0) {
+        if (Date.now() - t0 > 540_000) throw new Error('rust side never connected');
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      while (await due() > 0) await ts.sweep();
+      const r = await rust;
+      expect(r.code, r.out).toBe(0);
+      const m = r.out.match(/wake-dual rust fired (\d+)/);
+      expect(m, r.out).not.toBeNull();
+      const counts = (await db.pool.query(
+        `select (select count(*)::int from inbox where account_id = $1 and reason = 'wake') as inbox,
+                (select count(distinct message_id)::int from inbox where account_id = $1) as distinct_inbox,
+                (select count(*)::int from agent_wake where account_id = $1 and fired_at is not null) as fired,
+                (select count(*)::int from message where channel_id = $2 and meta->'wake' ? 'firedAt') as stamped`, [a, c])).rows[0];
+      expect(counts).toEqual({ inbox: 200, distinct_inbox: 200, fired: 200, stamped: 200 });
+      console.log(`wake-dual: rust ${m![1]} / ts ${200 - Number(m![1])}`);
+    } finally {
+      await db.stop();
+    }
+  }, 600_000);
 });
 
 // S5.3 C1a — 받는 사람 계산(`core/audience.rs`)이 TS 함수와 같은 답인가. 픽스처는 TS 서비스 함수로 넣고 Rust 시험이 찍은 답과 맞춘다.
@@ -314,6 +373,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant update (meta) on message to ${rw}`,
         // S5.3 C3a-2 — 지우기·채널에도 보이기(`msg_delete.rs::MESSAGE_DELETE_PRIVILEGES`). 칸 권한 둘. 없으면 「message delete core off」.
         `grant update (deleted_at, also_in_channel) on message to ${rw}`,
+        // S5.3 C5b — 예약 깨움 루프(`loops/wake.rs::WAKE_PRIVILEGES`). 없으면 「loop wake off」 — 루프는 TS 에 남는다.
+        ...WAKE_GRANTS.map((g) => `grant ${g} to ${rw}`),
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -360,6 +421,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       }
       expect(f.log()).toContain('front: write pool on');
       expect(f.log()).not.toContain('missing privileges');
+      expect(f.log()).toContain('front: loop wake on');
 
       const r = await cargo(['test', '--test', 'contrast', '--', '--nocapture'], {
         HARKROOM_CONTRAST_TS_URL: tsUrl,
