@@ -77,6 +77,16 @@ const MANDATE_IDLE_GRANTS = [
   'usage on sequence event_outbox_id_seq',
 ];
 
+/** `loops/permission_expire.rs::PERMISSION_EXPIRE_PRIVILEGES`(+ 시퀀스) 만 가진 쓰기 역할(S5.3 C5c-2b). */
+const PERMISSION_EXPIRE_GRANTS = [
+  'update (status, decided_at) on permission_request',
+  'update (meta) on message',
+  'insert on inbox',
+  'insert on audit_log',
+  'insert on event_outbox',
+  'usage on sequence event_outbox_id_seq',
+];
+
 async function operatorWriteRole(db: { pool: pg.Pool; uri: string }, grants: readonly string[] = OPERATOR_GRANTS): Promise<string> {
   const rw = `op_rw_${Math.random().toString(36).slice(2, 10)}`;
   await db.pool.query(`create role ${rw} login password '${rw}' nosuperuser nocreatedb nocreaterole nobypassrls connection limit 8`);
@@ -89,7 +99,7 @@ async function operatorWriteRole(db: { pool: pg.Pool; uri: string }, grants: rea
 }
 
 describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () => {
-  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention', 'mandate_idle']) {
+  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention', 'mandate_idle', 'permission_expire']) {
     it(`tests/${name}.rs`, async () => {
       const db = await startTestDb();
       try {
@@ -102,6 +112,8 @@ describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () 
         if (name === 'retention') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, RETENTION_GRANTS);
         // C5c-2a — 위임 idle 끝도 `MANDATE_IDLE_PRIVILEGES` 만 가진 역할로.
         if (name === 'mandate_idle') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, MANDATE_IDLE_GRANTS);
+        // C5c-2b — 권한 요청 만료도 `PERMISSION_EXPIRE_PRIVILEGES` 만 가진 역할로.
+        if (name === 'permission_expire') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, PERMISSION_EXPIRE_GRANTS);
         const r = await cargo(['test', '--test', name, '--', '--nocapture'], env);
         expect(r.code, r.out).toBe(0);
         // DB 가 없어 건너뛴 것을 통과로 읽지 않는다.
@@ -252,6 +264,70 @@ describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () 
                   where d.owner_account_id = $1 and g.action = 'mandate.ended') as distinct_audits`, [a])).rows[0];
       expect(counts).toEqual({ ended: 500, live: 0, audits: 500, distinct_audits: 500 });
       console.log(`mandate-idle-dual: rust ${m![1]} (overlapped sweeps ${m![2]}) / ts ${tsEnded}`);
+    } finally {
+      await db.stop();
+    }
+  }, 600_000);
+
+  // C5c-2b — 시한 지난 권한 요청 500건(묶음 10번 분량, 각자 열린 카드 하나)을 TS sweep(`expirePermissionRequests`)과 Rust sweep 이
+  // **문지기 없이 동시에** 만료해도 한 요청은 한 번만 만료된다(skip locked + status = 'pending') — 만료 수 합 500 · 감사 500(요청마다 하나) ·
+  // 카드 전부 expired 로 닫힘 · 카드마다 에이전트 깨움(ask_closed) 정확히 하나.
+  it('권한 요청 만료 — TS·Rust 동시 sweep 에도 500건이 정확히 한 번씩 만료된다', async () => {
+    const db = await startTestDb();
+    try {
+      const a = (await db.pool.query<{ id: string }>(
+        `insert into account(handle, display_name, kind) values ('pe_dual', 'pe_dual', 'agent') returning id`)).rows[0]!.id;
+      const c = (await db.pool.query<{ id: string }>(`insert into channel(name, kind) values ('pe-dual', 'standard') returning id`)).rows[0]!.id;
+      await db.pool.query(
+        `with r as (insert into permission_request(agent_id, kind, target, reason, channel_id, thread_root_id, expires_at)
+                    select $1, 'tool', 'Bash(n' || g || ')', 'x', $2, gen_random_uuid(), now() - interval '1 minute'
+                      from generate_series(1, 500) g returning id),
+              m as (insert into message(channel_id, author_id, body, kind, meta)
+                    select $2, $1, 'card', 'user', jsonb_build_object(
+                      'permissionRequest', jsonb_build_object('requestId', r.id::text, 'status', 'pending'),
+                      'ask', jsonb_build_object('question', 'q', 'options', jsonb_build_array('ok'), 'reqId', r.id::text))
+                      from r returning id)
+         select count(*) from m`, [a, c]);
+      // 같은 문장의 CTE 가 넣은 줄은 바깥 update 에 안 보인다 — 카드 잇기는 따로.
+      await db.pool.query(
+        `update permission_request p set card_message_id = g.id from message g
+          where p.agent_id = $1 and g.channel_id = $2 and g.meta->'ask'->>'reqId' = p.id::text`, [a, c]);
+      const { expirePermissionRequests } = await import('../src/services/permissionRequests.js');
+      const due = async () => Number((await db.pool.query(
+        `select count(*)::int as n from permission_request where agent_id = $1 and status = 'pending'`, [a])).rows[0].n);
+      const rust = cargo(['test', '--test', 'permission_expire', '--', '--nocapture'], {
+        HARKROOM_TEST_DATABASE_URL: db.uri,
+        HARKROOM_TEST_WRITE_DATABASE_URL: await operatorWriteRole(db, PERMISSION_EXPIRE_GRANTS),
+        HARKROOM_PERMISSION_EXPIRE_DUAL: a,
+      });
+      const t0 = Date.now();
+      while (Number((await db.pool.query(
+        `select count(*)::int as n from pg_stat_activity where application_name = 'harkroom-permission-expire-dual'`)).rows[0].n) === 0) {
+        if (Date.now() - t0 > 540_000) throw new Error('rust side never connected');
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      let tsExpired = 0;
+      while (await due() > 0) tsExpired += await expirePermissionRequests(db.pool, { now: new Date() });
+      const r = await rust;
+      expect(r.code, r.out).toBe(0);
+      const m = r.out.match(/permission-expire-dual rust expired (\d+) overlapped (\d+)/);
+      expect(m, r.out).not.toBeNull();
+      expect(tsExpired + Number(m![1])).toBe(500);
+      const counts = (await db.pool.query(
+        `select (select count(*)::int from permission_request where agent_id = $1 and status = 'expired') as expired,
+                (select count(*)::int from message g join permission_request p on p.card_message_id = g.id
+                  where p.agent_id = $1 and g.meta->'ask'->>'closedReason' = 'expired'
+                    and g.meta->'permissionRequest'->>'status' = 'expired') as closed,
+                (select count(*)::int from audit_log g join permission_request p on g.detail->>'requestId' = p.id::text
+                  where p.agent_id = $1 and g.action = 'permission.expired') as audits,
+                (select count(distinct g.detail->>'requestId')::int from audit_log g join permission_request p on g.detail->>'requestId' = p.id::text
+                  where p.agent_id = $1 and g.action = 'permission.expired') as distinct_audits,
+                (select count(*)::int from inbox i join permission_request p on p.card_message_id = i.message_id
+                  where p.agent_id = $1 and i.account_id = $1 and i.reason = 'ask_closed') as wakes,
+                (select count(distinct i.message_id)::int from inbox i join permission_request p on p.card_message_id = i.message_id
+                  where p.agent_id = $1 and i.account_id = $1 and i.reason = 'ask_closed') as distinct_wakes`, [a])).rows[0];
+      expect(counts).toEqual({ expired: 500, closed: 500, audits: 500, distinct_audits: 500, wakes: 500, distinct_wakes: 500 });
+      console.log(`permission-expire-dual: rust ${m![1]} (overlapped sweeps ${m![2]}) / ts ${tsExpired}`);
     } finally {
       await db.stop();
     }
@@ -704,8 +780,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       // S5.2 P3 — 쓰기 역할. **`write.rs::REQUIRED_PRIVILEGES` 만** 준다(homelab GRANT 와 같은 표). 넓은 권한으로 돌리면
       // 앞단이 목록에 없는 표를 쓰기 시작해도 이 시험이 못 잡는다.
       const rw = `front_rw_${Math.random().toString(36).slice(2, 10)}`;
-      // connection limit = 쓰기 풀 2 + 루프 문지기 풀 3(루프 수) + 루프 sweep 풀 3 (S5.3 C5c-2a — 운영 역할 한도도 이만큼 받아야 한다).
-      await db.pool.query(`create role ${rw} login password '${rw}' nosuperuser nocreatedb nocreaterole nobypassrls connection limit 8`);
+      // connection limit = 쓰기 풀 2 + 루프 문지기 풀 4(루프 수) + 루프 sweep 풀 3 (S5.3 C5c-2b — 운영 역할 한도도 이만큼 받아야 한다).
+      await db.pool.query(`create role ${rw} login password '${rw}' nosuperuser nocreatedb nocreaterole nobypassrls connection limit 9`);
       for (const q of [
         `grant pg_read_all_data to ${rw}`,
         `grant insert on event_outbox to ${rw}`,
@@ -750,6 +826,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         ...RETENTION_GRANTS.map((g) => `grant ${g} to ${rw}`),
         // S5.3 C5c-2a — 위임 idle 끝 루프(`loops/mandate_idle.rs::MANDATE_IDLE_PRIVILEGES`).
         ...MANDATE_IDLE_GRANTS.map((g) => `grant ${g} to ${rw}`),
+        // S5.3 C5c-2b — 권한 요청 만료 루프(`loops/permission_expire.rs::PERMISSION_EXPIRE_PRIVILEGES`).
+        ...PERMISSION_EXPIRE_GRANTS.map((g) => `grant ${g} to ${rw}`),
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -799,6 +877,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       expect(f.log()).toContain('front: loop wake on');
       expect(f.log()).toContain('front: loop retention on (delete=false');
       expect(f.log()).toContain('front: loop mandate.idle on');
+      expect(f.log()).toContain('front: loop permission.expire on');
 
       const r = await cargo(['test', '--test', 'contrast', '--', '--nocapture'], {
         HARKROOM_CONTRAST_TS_URL: tsUrl,
