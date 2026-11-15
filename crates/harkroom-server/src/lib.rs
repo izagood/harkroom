@@ -16,6 +16,9 @@ pub mod proxy;
 pub mod route_table;
 pub mod routes;
 pub mod schema;
+// 비밀 값 열기(S5.3) — 아직 어디에도 붙이지 않는다. 붙이는 PR(C5e-2·MCP 본문 거절)에서 이 allow 를 지운다.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) mod secrets;
 pub mod trust_proxy;
 pub mod write;
 pub mod writes_groups;
