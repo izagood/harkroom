@@ -64,12 +64,12 @@ enum To {
 
 /// TS `readAskMeta` 가 돌려주는 것 중 여기서 쓰는 칸.
 #[derive(Debug, Clone)]
-struct Ask {
-    options: Vec<String>,
+pub(super) struct Ask {
+    pub(super) options: Vec<String>,
     to: To,
-    mirror_of: Option<String>,
-    answered: bool,
-    closed: bool,
+    pub(super) mirror_of: Option<String>,
+    pub(super) answered: bool,
+    pub(super) closed: bool,
 }
 
 /// TS `isPermissionCardMeta`.
@@ -81,7 +81,7 @@ fn is_permission_card_meta(meta: &Value) -> bool {
 }
 
 /// TS shared `readAskMeta` — 못 알아보면 None.
-fn read_ask_meta(meta: &Value) -> Option<Ask> {
+pub(super) fn read_ask_meta(meta: &Value) -> Option<Ask> {
     if meta.get("kind").and_then(Value::as_str) != Some("ask") {
         return None;
     }
@@ -150,7 +150,7 @@ async fn is_permission_request_card(pool: &PgPool, id: &str) -> sqlx::Result<boo
 }
 
 /// 이 카드를 TS 에 넘기나 — 닫힌 쪽: 확신할 수 없으면 넘긴다.
-async fn hand_to_ts(pool: &PgPool, id: &str) -> sqlx::Result<bool> {
+pub(super) async fn hand_to_ts(pool: &PgPool, id: &str) -> sqlx::Result<bool> {
     let Some(meta) = meta_of(pool, id).await? else {
         return Ok(true);
     };
@@ -187,7 +187,7 @@ async fn is_human(conn: &mut PgConnection, id: &str) -> sqlx::Result<bool> {
 }
 
 /// TS `readAskRow` — (ask, channelId, meta).
-async fn read_ask_row(
+pub(super) async fn read_ask_row(
     conn: &mut PgConnection,
     id: &str,
 ) -> sqlx::Result<Option<(Ask, String, Value)>> {
@@ -201,7 +201,7 @@ async fn read_ask_row(
 }
 
 #[derive(Debug)]
-enum Outcome {
+pub(super) enum Outcome {
     NotFound,
     Forbidden,
     UnknownOption,
@@ -216,6 +216,7 @@ async fn answer_ask_row(
     option: &str,
     actor: &str,
     text: Option<&str>,
+    answered_via: Option<&str>,
 ) -> sqlx::Result<Option<String>> {
     // 직접 쓴 답만 `answeredText` 를 싣는다 — 보통 답의 meta 모양은 그대로다(TS 와 같은 문장 둘).
     const ANSWERED: &str = "update message set meta = jsonb_set(jsonb_set(jsonb_set(meta::jsonb, '{ask,answeredWith}', to_jsonb($2::text)), \
@@ -228,10 +229,16 @@ async fn answer_ask_row(
           where id = $1::uuid and deleted_at is null and meta->'ask'->>'answeredWith' is null \
             and meta->'ask'->>'closedReason' is distinct from 'superseded' \
           returning author_id::text";
-    let sql = if text.is_some() {
-        ANSWERED_TEXT
-    } else {
-        ANSWERED
+    // 묶음 「추천대로 일괄」의 답 — 사람이 그 줄을 골라 누르지 않았다는 표지(TS `answeredVia`, security F1). 직접 쓴 답과는 겹치지 않는다.
+    const ANSWERED_VIA: &str = "update message set meta = jsonb_set(jsonb_set(jsonb_set(jsonb_set(meta::jsonb, '{ask,answeredWith}', to_jsonb($2::text)), \
+                '{ask,answeredBy}', to_jsonb($3::text)), '{ask,answeredAt}', to_jsonb(now())), '{ask,answeredVia}', to_jsonb($4::text)) \
+          where id = $1::uuid and deleted_at is null and meta->'ask'->>'answeredWith' is null \
+            and meta->'ask'->>'closedReason' is distinct from 'superseded' \
+          returning author_id::text";
+    let sql = match (text, answered_via) {
+        (Some(_), _) => ANSWERED_TEXT,
+        (None, Some(_)) => ANSWERED_VIA,
+        (None, None) => ANSWERED,
     };
     let mut q = sqlx::query_scalar::<_, Option<String>>(sql)
         .bind(id)
@@ -239,6 +246,8 @@ async fn answer_ask_row(
         .bind(actor);
     if let Some(t) = text {
         q = q.bind(t);
+    } else if let Some(v) = answered_via {
+        q = q.bind(v);
     }
     let Some(author) = q.fetch_optional(&mut *conn).await? else {
         return Ok(None);
@@ -272,13 +281,14 @@ async fn close_ask_row(
 }
 
 /// TS `recordAskAnswer`(라우트가 부르는 꼴 — `viaPermissionDecision`·`answeredVia`·`skipWakeIfInboxFor` 없음).
-async fn record_ask_answer(
+pub(super) async fn record_ask_answer(
     read: &PgPool,
     conn: &mut PgConnection,
     id: &str,
     actor: &str,
     option: &str,
     written: Option<&str>,
+    answered_via: Option<&str>,
 ) -> sqlx::Result<Outcome> {
     let Some(meta) = meta_of(&mut *conn, id).await? else {
         return Ok(Outcome::NotFound);
@@ -318,7 +328,7 @@ async fn record_ask_answer(
         if !channel_visible(read, actor, &root_channel).await? {
             return Ok(Outcome::Forbidden);
         }
-        let root_row = answer_ask_row(conn, root, option, actor, written).await?;
+        let root_row = answer_ask_row(conn, root, option, actor, written, answered_via).await?;
         if root_row.is_some() {
             announce_updated(conn, root).await?;
         }
@@ -331,7 +341,7 @@ async fn record_ask_answer(
             None => Outcome::NotFound,
         });
     }
-    let Some(row) = answer_ask_row(conn, id, option, actor, written).await? else {
+    let Some(row) = answer_ask_row(conn, id, option, actor, written, answered_via).await? else {
         return Ok(Outcome::AlreadyAnswered);
     };
     if ask.mirror_of.is_none() {
@@ -552,7 +562,7 @@ where
     }
 }
 
-async fn to_ts(
+pub(super) async fn to_ts(
     up: Upstream,
     peer: SocketAddr,
     parts: axum::http::request::Parts,
@@ -569,7 +579,7 @@ async fn to_ts(
 /// 본문을 fastify 처럼 읽는다(한도 413 → 형식 400/415, `write::fastify_body`). 넘길 때 쓰려고 바이트도 돌려준다.
 /// TS 처럼 인증보다 앞서지는 않는다 — 인증은 `route_layer` 라 익명은 본문과 상관없이 401 이다(`msg_edit`·`msg_delete` 와 같다).
 #[allow(clippy::result_large_err)] // 거절이 곧 axum 응답이다(CI clippy 1.99).
-async fn read_bytes(
+pub(super) async fn read_bytes(
     headers: &axum::http::HeaderMap,
     body: Body,
 ) -> Result<(axum::body::Bytes, Option<Value>), Response> {
@@ -624,10 +634,20 @@ pub async fn answer(
         Box::pin(async move {
             match &ans {
                 Answer::Text(t) => {
-                    record_ask_answer(read, conn, &message, &actor, ASK_TEXT_OPTION_ID, Some(t))
-                        .await
+                    record_ask_answer(
+                        read,
+                        conn,
+                        &message,
+                        &actor,
+                        ASK_TEXT_OPTION_ID,
+                        Some(t),
+                        None,
+                    )
+                    .await
                 }
-                Answer::Option(o) => record_ask_answer(read, conn, &message, &actor, o, None).await,
+                Answer::Option(o) => {
+                    record_ask_answer(read, conn, &message, &actor, o, None, None).await
+                }
             }
         })
     })
@@ -675,6 +695,15 @@ pub fn routes(
     let t = Table::<Arc<AskState>>::new()
         .post("/channels/{id}/messages/{messageId}/ask-answer", answer)
         .post("/channels/{id}/messages/{messageId}/ask-close", close)
+        // C3b-2a — 묶음 카드 REST. 같은 표·같은 칸을 쓰므로 같은 잠금(`ASK_PRIVILEGES`)으로 함께 붙는다.
+        .post(
+            "/channels/{id}/messages/{messageId}/ask-bundle/answer",
+            super::ask_bundle::answer,
+        )
+        .post(
+            "/channels/{id}/messages/{messageId}/ask-bundle/accept-recommended",
+            super::ask_bundle::accept_recommended,
+        )
         .map(|r| {
             r.route_layer(axum::middleware::from_fn_with_state(
                 auth,

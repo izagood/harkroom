@@ -88,5 +88,10 @@
   "decider_row": "select c.owner_account_id as \"ownerAccountId\", coalesce(c.invoke_scope, 'community') as scope, c.user_decide as \"userDecide\",\n            (a.disabled_at is not null or a.deleted_at is not null) as \"agentOff\",\n            p.kind as \"actorKind\", p.role as \"actorRole\", (p.disabled_at is not null or p.deleted_at is not null) as \"actorOff\"\n       from agent_config c join account a on a.id = c.account_id\n       left join account p on p.id = $2::uuid\n      where c.account_id = $1::uuid",
   "decider_seen": "select ((ch.kind = 'standard' and ch.visibility = 'public')\n     or exists (select 1 from channel_member cm_vis\n                 where cm_vis.channel_id = ch.id and cm_vis.account_id = $2::uuid)) as ok from channel ch where ch.id = $1::uuid",
   "decider_list": "select 1 from agent_invoker where agent_id = $1::uuid and account_id = $2::uuid",
-  "decider_channel": "select 1 from channel_member m join channel ch on ch.id = m.channel_id\n          where m.channel_id = $1::uuid and m.account_id = $2::uuid and ch.kind <> 'dm'"
+  "decider_channel": "select 1 from channel_member m join channel ch on ch.id = m.channel_id\n          where m.channel_id = $1::uuid and m.account_id = $2::uuid and ch.kind <> 'dm'",
+  "bundle_read": "select id, meta, channel_id as \"channelId\", thread_root_id as \"threadRootId\", author_id as \"authorId\"\n       from message where id = $1::uuid and deleted_at is null",
+  "bundle_decision_card": "select 1 from message where id = $1::uuid and (meta ? 'permissionRequest' or meta ? 'mergeDenial')",
+  "bundle_accept_root": "select meta, body from message where id = $1::uuid and deleted_at is null",
+  "bundle_irreversible_source": "머지|병합|merge|배포|deploy|릴리스|릴리즈|release|롤아웃|rollout|비밀|secret|토큰|token|자격|credential|권한|permission|grant|삭제|delete|drop|force[- ]?push",
+  "bundle_irreversible_flags": "i"
 }

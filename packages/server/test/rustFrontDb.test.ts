@@ -2887,6 +2887,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           while (!f2.log().includes('front: rust core routes') && Date.now() < until2) await new Promise((res) => setTimeout(res, 100));
           expect(f2.log()).toContain('ask card core off — missing privileges');
           expect(f2.log()).not.toContain(`"POST ${ASKP}/ask-answer"`);
+          // C3b-2a — 묶음 카드 REST 도 같은 잠금이라 함께 빠진다.
+          expect(f2.log()).not.toContain(`"POST ${ASKP}/ask-bundle/answer"`);
           const viaFront = await callX(`http://127.0.0.1:${port2}`, 'POST', ans(todayId, lateCard), { optionId: 'b' });
           expect(viaFront.status, '권한이 없으면 TS 가 받아 200').toBe(200);
           expect(((viaFront.json as { meta?: { ask?: { answeredWith?: string } } }).meta?.ask?.answeredWith)).toBe('b');
@@ -2894,6 +2896,145 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           front2?.kill('SIGTERM');
           await db.pool.query(`grant update (meta) on message to ${rw}`);
         }
+      }
+      // S5.3 C3b-2a — 묶음 카드 REST(코어 `ask_bundle.rs`): 한 줄에 답·「추천대로」. TS·Rust 에 **각자의 묶음·원본 카드**로 같은 시나리오를
+      // 돌려 응답·원본 meta·깨움·이벤트를 견준다. 권한 줄·모르는 kind 줄·`once` 가 실린 답은 Rust 가 정하지 않고 TS 로 넘긴다 —
+      // 줄마다 따로 재는지(같은 묶음 안 평범한 줄은 Rust 가 답한다)도 본다.
+      {
+        const ASKP = '/channels/{id}/messages/{messageId}';
+        for (const k of [`POST ${ASKP}/ask-bundle/answer`, `POST ${ASKP}/ask-bundle/accept-recommended`]) expect(f.log()).toContain(`"${k}"`);
+        const H = { kind: 'human' };
+        const opts = (rec?: 'a' | 'b') => [{ id: 'a', label: '가', ...(rec === 'a' ? { recommended: true } : {}) }, { id: 'b', label: '나', ...(rec === 'b' ? { recommended: true } : {}) }];
+        const card = (body: string, ask: Record<string, unknown>, top: Record<string, unknown> = {}) =>
+          say(body, { meta: { kind: 'ask', ask: { prompt: '어느 쪽?', options: opts(), to: H, ...ask }, ...top } });
+        const bundleOf = (roots: string[], linkOf: string[] = []) => say('묶음', {
+          author: admin.accountId,
+          meta: { kind: 'askBundle', askBundle: { items: roots.map((rootId) => ({ rootId, askerId: null, channelId: todayId, threadRootId: null, prompt: '어느 쪽?', options: opts(), ...(linkOf.includes(rootId) ? { link: true } : {}) })) } },
+        });
+        const side = async () => {
+          const plain = await card('묶음 줄 카드', {});
+          const plain2 = await card('묶음 줄 카드2', {});
+          const toMem = await card('멤버 앞 카드', { to: { kind: 'account', accountId: member.accountId } });
+          const perm = await card('권한 표지 카드', {}, { permissionRequest: { status: 'pending' } });
+          const odd = await say('모르는 종류', { meta: { kind: 'askSomethingNew', ask: { prompt: 'x', options: opts(), to: H } } });
+          // 연쇄 백스톱 카드 — TS 는 평범하게 답하지만(선택지가 곧 서버 결정) Rust 는 그 결정을 정하지 않는다 → 넘긴 길로 TS 가 답해야 한다.
+          const backstop = await card('백스톱 카드', {}, { chainBackstop: { agentId: admin.accountId } });
+          const src = await card('거울의 원본', {});
+          const mirror = await card('거울 카드', { mirrorOf: src });
+          const recB = await card('추천 b', { options: opts('b') });
+          const deploy = await card('배포할까요', { options: opts('a') });
+          const noRec = await card('추천 없음', {});
+          const done = await card('이미 답한 카드', { options: opts('a'), answeredWith: 'a', answeredBy: admin.accountId, answeredAt: new Date().toISOString() });
+          const mergeCard = await card('머지 표지', { options: opts('a') }, { mergeDenial: { repo: 'example/x' } });
+          const linked = await card('링크 줄', { options: opts('a') });
+          const recA2 = await card('추천 a 둘째', { options: opts('a') });
+          const odd2 = await say('모르는 종류2', { meta: { kind: 'askSomethingNew', ask: { prompt: 'x', options: opts('a'), to: H } } });
+          const B1 = await bundleOf([plain, plain2, toMem, perm, odd, mirror]);
+          // 백스톱 줄은 따로 — TS 가 답하면 그 묶음의 `message.updated` 도 TS 에서 난다(넘긴 쪽 이벤트로 센다).
+          const B4 = await bundleOf([backstop]);
+          const B2 = await bundleOf([recB, deploy, noRec, done, mergeCard, linked], [linked]);
+          const B3 = await bundleOf([recA2, odd2]);
+          return { plain, plain2, toMem, perm, odd, backstop, src, mirror, recB, deploy, noRec, done, mergeCard, linked, recA2, odd2, B1, B2, B3, B4 };
+        };
+        type Side = Awaited<ReturnType<typeof side>>;
+        const T = await side();
+        const R = await side();
+        const tsEvents: WorkspaceEvent[] = [];
+        const offTs = onEvent((e) => { tsEvents.push(e); });
+        const labelOf = (sd: Side) => (v: unknown) => {
+          for (const [k, id] of Object.entries(sd)) if (v === id) return k.toUpperCase();
+          return v;
+        };
+        const shape = (sd: Side) => (v: unknown): unknown => {
+          if (Array.isArray(v)) return v.map(shape(sd));
+          if (v && typeof v === 'object') {
+            const o: Record<string, unknown> = {};
+            for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+              o[k] = /At$/.test(k) ? (x === null ? null : typeof x) : k === 'seq' ? typeof x : shape(sd)(x);
+            }
+            return o;
+          }
+          return labelOf(sd)(v);
+        };
+        const bAns = (m: string) => `/channels/${todayId}/messages/${m}/ask-bundle/answer`;
+        const bAcc = (m: string) => `/channels/${todayId}/messages/${m}/ask-bundle/accept-recommended`;
+        const run = async (base: string, sd: Side) => {
+          const out: { step: string; status: number; code?: string; body: unknown }[] = [];
+          const step = async (name: string, path: string, body: unknown, token = A) => {
+            const r = await callX(base, 'POST', path, body, token);
+            out.push({ step: name, status: r.status, code: r.code, body: r.status === 200 ? shape(sd)(r.json) : null });
+          };
+          await step('줄에 답', bAns(sd.B1), { rootId: sd.plain, optionId: 'a' });
+          await step('다시 → 409', bAns(sd.B1), { rootId: sd.plain, optionId: 'b' });
+          await step('없는 선택지 → 400', bAns(sd.B1), { rootId: sd.plain2, optionId: 'z' });
+          await step('묶음에 없는 줄 → 404', bAns(sd.B1), { rootId: sd.recB, optionId: 'a' });
+          await step('남에게 온 줄 → 403', bAns(sd.B1), { rootId: sd.toMem, optionId: 'a' });
+          await step('거울 줄 → 403', bAns(sd.B1), { rootId: sd.mirror, optionId: 'a' });
+          await step('권한 줄 → TS', bAns(sd.B1), { rootId: sd.perm, optionId: 'a' });
+          await step('모르는 kind 줄 → TS', bAns(sd.B1), { rootId: sd.odd, optionId: 'a' });
+          await step('백스톱 줄 → TS', bAns(sd.B4), { rootId: sd.backstop, optionId: 'a' });
+          await step('once 실림 → TS', bAns(sd.B1), { rootId: sd.plain2, optionId: 'a', once: { number: 1, headSha: 'x' } });
+          await step('같은 묶음의 평범한 줄은 그대로', bAns(sd.B1), { rootId: sd.plain2, optionId: 'b' });
+          await step('묶음 아님 → 404', bAns(sd.plain), { rootId: sd.plain, optionId: 'a' });
+          await step('본문 틀림 → 400', bAns(sd.B1), { rootId: 'x', optionId: 'a' });
+          await step('비멤버 비공개 → 403', `/channels/${String(priv.id)}/messages/${sd.B1}/ask-bundle/answer`, { rootId: sd.plain, optionId: 'a' }, member.token);
+          await step('추천대로', bAcc(sd.B2), {});
+          await step('추천대로 다시', bAcc(sd.B2), {});
+          await step('넘길 줄이 섞인 추천대로 → TS', bAcc(sd.B3), {});
+          await step('추천대로 묶음 아님 → 404', bAcc(sd.recB), {});
+          return out;
+        };
+        const tsOut = await run(tsUrl, T);
+        const rsOut = await run(rsUrl, R);
+        expect(rsOut).toEqual(tsOut);
+        const st = (n: string) => tsOut.find((o) => o.step === n)!;
+        expect(st('줄에 답').status).toBe(200);
+        expect(st('다시 → 409').status).toBe(409);
+        expect((st('추천대로').body as { results: { rootId: string; outcome: string }[] }).results).toEqual([
+          { rootId: 'RECB', outcome: 'answered' }, { rootId: 'DEPLOY', outcome: 'skipped_irreversible' },
+          { rootId: 'NOREC', outcome: 'skipped_no_recommendation' }, { rootId: 'DONE', outcome: 'resolved' },
+          { rootId: 'MERGECARD', outcome: 'skipped_link' }, { rootId: 'LINKED', outcome: 'skipped_link' },
+        ]);
+        // 원본 meta(시각 칸은 있음/없음만) — 「추천대로」의 답에는 `answeredVia` 가 붙는다.
+        const metaOf = async (sd: Side) => (await db.pool.query<{ k: string; ask: unknown }>(
+          `select k, m.meta->'ask' as ask from jsonb_each_text($1::jsonb) j(k, id) join message m on m.id = j.id::uuid where k not like 'B%' order by k`,
+          [JSON.stringify(sd)])).rows.map((r) => ({ k: r.k, ask: shape(sd)(r.ask) }));
+        const tMeta = await metaOf(T);
+        expect(await metaOf(R)).toEqual(tMeta);
+        expect((tMeta.find((x) => x.k === 'recB')?.ask as { answeredVia?: string }).answeredVia).toBe('bundle_bulk');
+        // 깨움 — 물어본 쪽 inbox 줄.
+        const wakes = async (sd: Side) => (await db.pool.query<{ m: string; r: string }>(
+          `select message_id::text as m, reason as r from inbox where message_id = any($1::uuid[]) and reason in ('ask_answered', 'ask_closed') order by id`,
+          [Object.values(sd)])).rows.map((r) => ({ m: labelOf(sd)(r.m), r: r.r }));
+        expect(await wakes(R)).toEqual(await wakes(T));
+        // 이벤트 — 쓰기(`message.updated`)만, 이름·모양·받는 사람·순서. 넘긴 줄(권한·모르는 kind·once·B3)은 TS 에서 나고 Rust outbox 에 없다.
+        const HANDED = ['perm', 'odd', 'backstop', 'recA2', 'odd2', 'B3', 'B4'];
+        const writesOf = (evs: WorkspaceEvent[], sd: Side, handed: boolean) => evs.filter((e) => {
+          if (e.type !== 'message.updated') return false;
+          const id = (e as { message: { id: string } }).message.id;
+          return Object.entries(sd).some(([k, v]) => v === id && HANDED.includes(k) === handed);
+        }).map((e) => shape(sd)(JSON.parse(JSON.stringify(e))));
+        const want = writesOf(tsEvents, T, false);
+        expect(want.length, '답한 줄마다 원본·묶음 message.updated').toBeGreaterThan(0);
+        const until = Date.now() + 10_000;
+        while (writesOf(busEvents, R, false).length < want.length && Date.now() < until) await new Promise((res) => setTimeout(res, 100));
+        expect(writesOf(busEvents, R, false), 'Rust 가 낸 쓰기 이벤트 = TS').toEqual(want);
+        const handedT = writesOf(tsEvents, T, true);
+        expect(handedT.length, '넘긴 줄도 TS 가 답해 이벤트가 난다').toBeGreaterThan(0);
+        expect(writesOf(tsEvents, R, true), '넘긴 줄은 TS 가 처리했다').toEqual(handedT);
+        expect(writesOf(busEvents, R, true), '넘긴 줄은 Rust outbox 에 없다').toEqual([]);
+        offTs();
+        // 한 트랜잭션 — outbox 넣기가 실패하면 답이 되돌아간다.
+        const txCard = await card('트랜잭션 묶음 줄', {});
+        const txB = await bundleOf([txCard]);
+        await db.pool.query(`revoke insert on event_outbox from ${rw}`);
+        try {
+          expect((await callX(rsUrl, 'POST', bAns(txB), { rootId: txCard, optionId: 'a' })).status, '이벤트 실패면 500').toBe(500);
+        } finally {
+          await db.pool.query(`grant insert on event_outbox to ${rw}`);
+        }
+        const txAsk = (await db.pool.query<{ ask: Record<string, unknown> }>(`select meta->'ask' as ask from message where id = $1`, [txCard])).rows[0]!.ask;
+        expect(txAsk.answeredWith ?? null, '답이 되돌아갔다').toBeNull();
       }
       // S5.3 C1c-1 — 글 올리기 뼈대(코어 `msg_post.rs`). 사람·세션·최상위·DM 아님·부름·URL·승인 낱말·링크 없는 글만 Rust 가 올리고,
       // 나머지는 읽은 바이트 그대로 TS 로 넘긴다. TS·Rust 에 같은 시나리오를 돌려 응답(상태·코드·헤더·본문 모양)과 이벤트를 견주고,
