@@ -434,6 +434,19 @@ pub fn probe_make<'a, L: RunnerLink + 'a>(
                 cfg: c.end_cfg,
                 // 화면이 끝이라 할 때만 불린다 — 기록이 일하는 중이라 하면 끝이 아니다. 못 읽으면 화면을 따른다.
                 read_recorded_end: recorded_end_reader(c, ctx),
+                read_harness_said: {
+                    let r = records_of(c, ctx);
+                    let codex_home = c.codex_home.clone();
+                    Box::new(move || {
+                        lane_harness_said(
+                            r.harness,
+                            r.session_id.as_deref(),
+                            r.since_ms,
+                            codex_home.as_deref(),
+                            r.opencode.as_deref(),
+                        )
+                    })
+                },
                 screen_watch: arm_screen_idle(watch, c.harness),
                 workspace_dir: c
                     .opencode

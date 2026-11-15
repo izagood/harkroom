@@ -624,7 +624,7 @@ fn agent_called_screen_ended_turn_proxies_the_screen_answer() {
     use crate::turn_notice::NudgeCaller;
     let answer = "S2 단독 답 첫 줄\n두 번째 줄 <div> && 원문";
     // 구독 codex: 기록 끝말(claude 기록 읽개) 없음 · 화면으로 끝남 · 화면 답 있음.
-    let said = silent_said_of(None, true, Some(answer.to_string()));
+    let said = silent_said_of(None, true, Some(answer.to_string()), None);
     assert!(said.screen_ended);
     assert_eq!(said.screen_answer.as_deref(), Some(answer));
     let secrets: Vec<String> = vec![];
@@ -648,7 +648,50 @@ fn agent_called_screen_ended_turn_proxies_the_screen_answer() {
         other => panic!("답을 옮겨야 한다: {other:?}"),
     }
     // 기록이 말해 주면 화면 끝·화면 답은 싣지 않는다(정본 `recordSaid === null` 조건).
-    let rec = silent_said_of(Some("기록 끝말".into()), true, Some(answer.into()));
+    let rec = silent_said_of(
+        Some("기록 끝말".into()),
+        true,
+        Some(answer.into()),
+        Some("하네스 끝말".into()),
+    );
     assert!(!rec.screen_ended && rec.screen_answer.is_none());
     assert_eq!(rec.last_said.as_deref(), Some("기록 끝말"));
+}
+
+/// rs2 회귀(구독 codex S2): 화면 답 추출은 `</div>` 를 경로로 보고 코드 줄을 버렸다(첫 줄만 올라감). 하네스 자체 기록
+/// (codex rollout `last_agent_message`)이 있으면 그 두 줄을 그대로 옮긴다.
+#[test]
+fn screen_ended_turn_prefers_harness_record_words_over_screen_lines() {
+    use crate::silent_notice::{SilentTurnInput, SilentTurnNotice, silent_turn_notice};
+    use crate::turn_notice::NudgeCaller;
+    let record = "rs2 S2-P 화면 답\nif (a < b && c > d) return \"<div>x</div>\";";
+    // 화면 답 추출이 실제로 코드 줄을 버린다(경로 꼴 `/d`).
+    let facts = harkroom_screen::facts_for(harkroom_screen::Harness::Codex);
+    let lines = harkroom_screen::screen_answer_lines(record, facts, None, None, 40);
+    assert_eq!(lines, vec!["rs2 S2-P 화면 답".to_string()]);
+    let said = silent_said_of(None, true, Some(lines.join("\n")), Some(record.into()));
+    assert_eq!(said.record_answer.as_deref(), Some(record));
+    let secrets: Vec<String> = vec![];
+    let notice = silent_turn_notice(&SilentTurnInput {
+        caller: NudgeCaller::Agent,
+        last_said: said.last_said.as_deref(),
+        off_anchor: None,
+        pat: "",
+        secrets: &secrets,
+        screen_answer: said.screen_answer.as_deref(),
+        proxy_head: "",
+        record_answer: said.record_answer.as_deref(),
+        screen_ended: said.screen_ended,
+        record_proxy: false,
+    });
+    match notice {
+        SilentTurnNotice::Post { body, proxied } => {
+            assert!(proxied);
+            assert!(
+                body.contains("if (a < b && c > d) return \"<div>x</div>\";"),
+                "{body}"
+            );
+        }
+        other => panic!("기록 끝말을 옮겨야 한다: {other:?}"),
+    }
 }

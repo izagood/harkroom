@@ -34,6 +34,7 @@ fn actx(turn: &str, seq: i64, cut: Option<usize>) -> AfterCtx {
         background_cut: cut,
         screen_ended: false,
         screen_said: None,
+        screen_record_said: None,
     }
 }
 

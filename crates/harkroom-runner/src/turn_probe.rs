@@ -90,6 +90,11 @@ pub trait ProbeIo {
     fn read_recorded_end(&mut self, since_ms: i64) -> Option<RecordedTurnEnd>;
     /// 화면에서 거둔 답 줄(정본 `screenAnswerLines(...).join('\n') || null`).
     fn screen_answer(&mut self) -> Option<String>;
+    /// 화면으로 끝을 안 턴의 **하네스 자체 기록** 끝말(codex rollout `last_agent_message`·opencode/kilo export) — 화면 답 추출은
+    /// 경로처럼 보이는 줄(`</div>` 등)을 버리므로, 기록이 있으면 대리 글은 이것을 옮긴다. 못 읽으면 `None`.
+    fn harness_said(&mut self) -> Option<String> {
+        None
+    }
     /// 화면이 끝을 말했다고 적는다(정본 `console.log`).
     fn log_screen_ended(&mut self);
     /// 정본 `nudgeOrExpire` — 재촉을 보냈으면 `probe.lane_nudged_at_ms` 를 세운다.
@@ -191,6 +196,9 @@ pub fn probe_cycle(
         // 턴 뒤 침묵 통지가 읽는 자리에도 적는다(정본은 같은 `end` 객체) — 빠지면 에이전트가 부른 턴의 화면 답이 ✅ 로 버려진다.
         end.screen_ended = true;
         end.screen_said = probe.screen_said.clone();
+        if probe.lane_nudged_at_ms == 0 {
+            end.screen_record_said = io.harness_said().filter(|s| !s.trim().is_empty());
+        }
         io.log_screen_ended();
     }
     if spoke == Some(false) {

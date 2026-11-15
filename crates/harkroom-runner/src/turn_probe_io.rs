@@ -77,6 +77,8 @@ pub struct TurnProbeIo<'a, R: ProbeRecords, S: ProbeSink, T: TurnStateRecords, X
     pub lane_nudged_at_ms: i64,
     pub cfg: EndConfig,
     pub read_recorded_end: ReadRecordedEnd<'a>,
+    /// 하네스 자체 기록 끝말 읽개([`crate::turn_probe_make::lane_harness_said`]) — 화면 끝 때만 부른다.
+    pub read_harness_said: Box<dyn FnMut() -> Option<String> + 'a>,
     /// 화면 끝 감시가 걸린 감시 자리(정본 `idleWatch`) — 없으면 화면으로 끝을 읽지 않는다.
     pub screen_watch: Option<crate::turn_watch::Watch>,
     /// 화면 답 줄에서 뺄 작업 폴더(정본 `rec.workspaceDir`).
@@ -178,6 +180,9 @@ impl<R: ProbeRecords, S: ProbeSink, T: TurnStateRecords, X: ProbeRest> ProbeIo
     fn screen_answer(&mut self) -> Option<String> {
         let w = self.screen_watch.as_ref()?;
         crate::turn_watch::lock_watch(w).screen_answer(self.workspace_dir.as_deref())
+    }
+    fn harness_said(&mut self) -> Option<String> {
+        (self.read_harness_said)()
     }
     fn log_screen_ended(&mut self) {
         self.sink.log("화면이 차례 끝을 말했다");

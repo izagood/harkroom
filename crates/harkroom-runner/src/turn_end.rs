@@ -83,6 +83,8 @@ pub struct EndState {
     pub screen_ended: bool,
     /// 화면으로 끝을 안 턴의 입력창 위 답 줄(정본 `end.screenSaid`). 판정 재료 — 글로 나갈 때는 침묵 통지의 가림을 지난다.
     pub screen_said: Option<String>,
+    /// 화면으로 끝을 안 턴의 하네스 자체 기록 끝말(codex rollout·opencode export). 판정 재료 — 글로 나갈 때는 침묵 통지의 가림을 지난다.
+    pub screen_record_said: Option<String>,
 }
 
 impl std::fmt::Debug for EndState {
@@ -112,6 +114,7 @@ impl std::fmt::Debug for EndState {
             .field("reclaim_grace_ms", &self.reclaim_grace_ms)
             .field("screen_ended", &self.screen_ended)
             .field("screen_said", &len(&self.screen_said))
+            .field("screen_record_said", &len(&self.screen_record_said))
             .finish()
     }
 }
