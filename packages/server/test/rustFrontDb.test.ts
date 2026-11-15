@@ -905,11 +905,11 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       }
       // S5.3 C4a-3 — MCP 읽기 도구를 Rust 가 답한다. 같은 JSON-RPC 요청을 TS `/mcp` 와 앞단에 보내 **SSE 글자 그대로**(키 순서·
       // 이스케이프까지) 비교한다. Rust 가 답한 것은 `x-harkroom-core: mcp` 로 가른다 — 인자 모양이 zod 와 다르면 Rust 는 TS 로 넘긴다.
-      const mcpCall = async (base: string, token: string, name: string, args: unknown, id: unknown = 1) => {
+      const mcpCall = async (base: string, token: string, name: string, args: unknown, id: unknown = 1, extra: Record<string, string> = {}) => {
         const params = args === undefined ? { name } : { name, arguments: args };
         const res = await fetch(`${base}/mcp`, {
           method: 'POST',
-          headers: { authorization: `Bearer ${token}`, accept: 'application/json, text/event-stream', 'content-type': 'application/json' },
+          headers: { authorization: `Bearer ${token}`, accept: 'application/json, text/event-stream', 'content-type': 'application/json', ...extra },
           body: JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params }),
         });
         return { status: res.status, type: res.headers.get('content-type'), text: await res.text(), core: res.headers.get('x-harkroom-core') };
@@ -1075,6 +1075,70 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       expect((await mcpCall(rsUrl4, agent.pat, 'thread.note.list', {})).text).toContain('빈 표시라 보이는 본문');
       const revText = (await mcpCall(rsUrl4, agent.pat, 'memory.revisions', { slug: 'mem/a' })).text;
       for (const want of ['mem/x', 'merge', 'restore', 'flagged', 'chars\\":4', 'detail\\":{}']) expect(revText).toContain(want);
+
+      // S5.3 C4a-6a — workitem.list(주인 보드 중 내가 볼 수 있는 스레드에 붙은 것) · automation.list(이 턴을 시킨 사람 = 소유자의
+      // 승인된 자동화, 원인은 `x-harkroom-cause` 로 판정 — 없음·남의 것·1시간 넘음·자동화 글·에이전트 글).
+      // 에이전트가 못 보는 스레드 — 관리자와 멤버의 DM(에이전트는 그 DM 의 멤버가 아니다).
+      const privRoot = await say('DM 머리', { ch: String(dm.id), author: admin.accountId });
+      await db.pool.query(
+        `insert into work_item (owner_account_id, source, external_key, url, title, state, thread_root_id, updated_by, updated_at) values
+           ($1, 'github', 'izagood/x#1', 'https://example.com/pr/1', 'PR "하나"', 'active', $2, $3, now() - interval '3 hours'),
+           ($1, 'jira', 'RC-1', null, '스레드 없는 티켓', 'mine', null, $1, now() - interval '2 hours'),
+           ($1, 'avcs', 'repo/abcdef012345', null, 'DM 일감', null, $4, $1, now() - interval '1 hour'),
+           ($1, 'other', 'k-2', null, '오늘 채널 일감', 'done', $5, null, now())`,
+        [owner, readRoot, agent.accountId, privRoot, work]);
+      await db.pool.query(
+        `insert into automation (owner_id, channel_id, name, body, trigger, enabled, paused_reason, approved_at, deleted_at, created_at) values
+           ($1, $2, '아침 정리', $3, '{"kind": "cron", "cron": "0 9 * * 1", "tz": "Asia/Seoul"}', true, null, now(), null, now() - interval '4 hours'),
+           ($1, $2, '멈춘 것', '짧은 본문', '{"kind": "event", "events": ["repo.merged"], "n": 3}', false, 'too_many_failures', now(), null, now() - interval '3 hours'),
+           ($1, $2, '승인 전', '본문', '{"kind": "cron"}', true, null, null, null, now() - interval '2 hours'),
+           ($1, $2, '지운 것', '본문', '{"kind": "cron"}', true, null, now(), now(), now() - interval '1 hour')`,
+        [owner, todayId, `${'가'.repeat(205)}`]);
+      const autoIds = (await db.pool.query<{ id: string; name: string }>(`select id, name from automation where owner_id = $1`, [owner])).rows;
+      const paused = autoIds.find((r) => r.name === '멈춘 것')!.id;
+      await db.pool.query(
+        `insert into automation_run (automation_id, event_key, trigger_kind, status, created_at) values
+           ($1, 'e1', 'event', 'sent', now() - interval '30 minutes'), ($1, 'e2', 'event', 'failed', now() - interval '10 minutes')`,
+        [paused]);
+      const ownerHandle = (await db.pool.query<{ h: string }>(`select handle as h from account where id = $1`, [owner])).rows[0]!.h;
+      void ownerHandle;
+      const cause = await say('@bot 자동화 목록 보여 줘', { author: owner });
+      const staleCause = await say('@bot 옛 부탁', { author: owner });
+      await db.pool.query(`update message set created_at = now() - interval '2 hours' where id = $1`, [staleCause]);
+      const autoPost = await say('@bot 자동화가 쓴 글', { author: owner, meta: { automation: { id: autoIds[0]!.id } } });
+      const agentCause = await say('@bot 에이전트가 부른 글', { author: bot2.accountId });
+      for (const [name, tool, args, answeredByRust, extra] of [
+        ['workitem.list', 'workitem.list', {}, true, {}],
+        ['workitem.list source', 'workitem.list', { source: 'github' }, true, {}],
+        ['workitem.list 스레드', 'workitem.list', { threadRootId: readRoot }, true, {}],
+        ['workitem.list 못 보는 스레드', 'workitem.list', { threadRootId: privRoot }, true, {}],
+        ['workitem.list 모르는 source → TS', 'workitem.list', { source: 'nope' }, false, {}],
+        ['workitem.list uuid 아님 → TS', 'workitem.list', { threadRootId: 'x' }, false, {}],
+        ['workitem.list 인자 없음 → TS', 'workitem.list', undefined, false, {}],
+        ['automation.list 원인', 'automation.list', {}, true, { 'x-harkroom-cause': cause }],
+        ['automation.list 원인(대문자)', 'automation.list', {}, true, { 'x-harkroom-cause': cause.toUpperCase() }],
+        ['automation.list 원인 없음', 'automation.list', {}, true, {}],
+        ['automation.list 원인 꼴 아님', 'automation.list', {}, true, { 'x-harkroom-cause': `bg:${cause}` }],
+        ['automation.list 나를 안 부른 글', 'automation.list', {}, true, { 'x-harkroom-cause': work }],
+        ['automation.list 1시간 넘음', 'automation.list', {}, true, { 'x-harkroom-cause': staleCause }],
+        ['automation.list 자동화 글', 'automation.list', {}, true, { 'x-harkroom-cause': autoPost }],
+        ['automation.list 에이전트 글', 'automation.list', {}, true, { 'x-harkroom-cause': agentCause }],
+        ['automation.list 배열 인자 → TS', 'automation.list', [], false, { 'x-harkroom-cause': cause }],
+      ] as const) {
+        const [a, b] = [
+          await mcpCall(tsUrl, agent.pat, tool, args, 1, extra as Record<string, string>),
+          await mcpCall(rsUrl4, agent.pat, tool, args, 1, extra as Record<string, string>),
+        ];
+        expect({ status: b.status, type: b.type, text: b.text }, name).toEqual({ status: a.status, type: a.type, text: a.text });
+        expect(b.core, `${name} — 누가 답했나`).toBe(answeredByRust ? 'mcp' : null);
+      }
+      // 빈 값끼리 비교해 통과하지 않게.
+      const wiText = (await mcpCall(rsUrl4, agent.pat, 'workitem.list', {})).text;
+      for (const want of ['izagood/x#1', '오늘 채널 일감']) expect(wiText).toContain(want);
+      for (const gone of ['스레드 없는 티켓', 'DM 일감']) expect(wiText).not.toContain(gone);
+      const auText = (await mcpCall(rsUrl4, agent.pat, 'automation.list', {}, 1, { 'x-harkroom-cause': cause })).text;
+      for (const want of ['아침 정리', '멈춘 것', 'too_many_failures', 'failed', '…', 'Asia/Seoul']) expect(auText).toContain(want);
+      for (const gone of ['승인 전', '지운 것']) expect(auText).not.toContain(gone);
       // 빈 값끼리 비교해 통과하지 않게 — 문서·목록이 실제로 실렸는지.
       const docText = (await mcpCall(`http://127.0.0.1:${port}`, agent.pat, 'channel.doc', { channelId: todayId })).text;
       expect(docText).toContain('문서 본문');
