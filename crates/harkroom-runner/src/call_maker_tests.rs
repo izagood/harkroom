@@ -204,6 +204,7 @@ fn after_ctx(turn: &str) -> AfterCtx {
         screen_ended: false,
         screen_said: None,
         screen_record_said: None,
+        ..AfterCtx::default()
     }
 }
 

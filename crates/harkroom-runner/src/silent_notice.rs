@@ -323,6 +323,32 @@ pub fn silent_turn_notice(i: &SilentTurnInput<'_>) -> SilentTurnNotice {
     }
 }
 
+/// 정본 `quitBeforeFinishing` — **TUI 하네스가 차례를 마치지 않고 혼자 꺼진 턴인가**(2026-11-16).
+/// 러너가 거두지 않았고(`reclaimed`), 기록 꼬리가 `end_turn` 이 아니고(`finished`), 화면으로도 끝을 읽지 못했는데(`screen_ended`)
+/// 프로세스가 끝났다. codex 는 SIGTERM 에 exit 0 으로 나가 정상 종료 갈래로 들어왔고, 에이전트 호출이면 ✅ 가 달렸다.
+/// exec 하네스는 프로세스 끝이 곧 차례 끝이라 뺀다. PTY 손잡이(`had_pty`)가 없던 턴은 러너가 거둘 수도 없었으니 보지 않는다.
+pub fn quit_before_finishing(
+    uses_tui: bool,
+    had_pty: bool,
+    reclaimed: bool,
+    finished: bool,
+    screen_ended: bool,
+) -> bool {
+    uses_tui && had_pty && !reclaimed && !finished && !screen_ended
+}
+
+/// 정본 `quitEarlyNotice` — 혼자 꺼진 TUI 턴의 실패 글. 마지막 말은 침묵 통지와 같은 규칙으로 가린다.
+pub fn quit_early_notice(last_said: Option<&str>, pat: &str, secrets: &[String]) -> String {
+    let said = quoted_line(last_said, pat, secrets);
+    if said.is_empty() {
+        "하네스가 차례를 마치지 않고 꺼졌습니다 — 다시 부르면 이어서 합니다.".to_string()
+    } else {
+        format!(
+            "하네스가 차례를 마치지 않고 꺼졌습니다. 마지막 말: \"{said}\" — 다시 부르면 이어서 합니다."
+        )
+    }
+}
+
 /// 정본 `backgroundCutNotice` — 하위 에이전트를 기다리다 턴을 거뒀다는 글.
 pub fn background_cut_notice(
     count: usize,
