@@ -174,6 +174,29 @@ fn refused_assign_tells_server_with_reason() {
 }
 
 #[test]
+fn refused_assign_does_not_count_as_an_attached_owner_agent() {
+    // security L1: 거절된 배정의 주인을 「이 커뮤니티에 붙은 주인 에이전트」로 치면 gh 보고가 머신 값(logins)을 싣는다.
+    let (f, frames, _sent) = setup();
+    *lock(&f.owner) = Some("me".into());
+    let some = |_: &str| Some(LocalAgent::default());
+    frames.on_frame(
+        &assign(def("a2", CredentialScope::Personal, Some("someone-else"))),
+        &some,
+    );
+    assert!(frames.flush(WAIT));
+    assert!(lock(&f.spawns).is_empty(), "거절됐다");
+    assert!(!frames.own_agent_attached(Some("someone-else")));
+
+    // 받아들인 배정은 그대로 센다.
+    frames.on_frame(
+        &assign(def("a3", CredentialScope::Community, Some("me"))),
+        &some,
+    );
+    assert!(frames.flush(WAIT));
+    assert!(frames.own_agent_attached(Some("me")));
+}
+
+#[test]
 fn restart_runs_after_preceding_assign_and_unassign_stops_exit_routing() {
     let (f, frames, _sent) = setup();
     let some = |_: &str| Some(LocalAgent::default());
