@@ -347,7 +347,7 @@ async fn open_write_pool() -> Option<sqlx::PgPool> {
 /// 서버 루프 전용 풀(3)을 따로 연다 — 루프 tick 은 문지기 연결 1 + sweep 연결 1 + 이벤트 연결 1 을 쓰는데 쓰기 풀은 2 이고
 /// 요청과 나눠 쓴다. 이 풀이 막혀도 요청은 막히지 않는다. 권한([`loops::wake::WAKE_PRIVILEGES`])이 모자라면 띄우지 않는다(TS 에 남는다).
 async fn spawn_loops() {
-    use harkroom_server::loops::wake;
+    use harkroom_server::loops::{retention, wake};
     let Some(url) = std::env::var("DATABASE_WRITE_URL")
         .ok()
         .filter(|u| !u.is_empty())
@@ -369,10 +369,24 @@ async fn spawn_loops() {
     match write::missing_in(&pool, wake::WAKE_PRIVILEGES, wake::WAKE_SEQUENCE_PRIVILEGES).await {
         Ok(m) if m.is_empty() => {
             eprintln!("front: loop wake on (runs only while server_loop owner is rust)");
-            wake::spawn(pool);
+            wake::spawn(pool.clone());
         }
         Ok(m) => eprintln!("front: loop wake off — missing privileges {m:?}"),
         Err(e) => eprintln!("front: loop wake off — privilege check failed: {e}"),
+    }
+    // C5c — 보존 기간 정리. 한 시간에 한 번이라 wake 와 같은 풀(3)을 나눠 쓴다(겹치면 기다릴 뿐 요청 풀은 안 막는다).
+    match write::missing_in(&pool, retention::RETENTION_PRIVILEGES, &[]).await {
+        Ok(m) if m.is_empty() => {
+            let del = retention::delete_enabled(
+                std::env::var("HARKROOM_RETENTION_DELETE").ok().as_deref(),
+            );
+            eprintln!(
+                "front: loop retention on (delete={del}; runs only while server_loop owner is rust)"
+            );
+            retention::spawn(pool, del);
+        }
+        Ok(m) => eprintln!("front: loop retention off — missing privileges {m:?}"),
+        Err(e) => eprintln!("front: loop retention off — privilege check failed: {e}"),
     }
 }
 
