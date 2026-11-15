@@ -209,16 +209,7 @@ fn spawn_credential_sweep(core: Arc<Core>) {
             if hashes.is_empty() {
                 continue;
             }
-            let valid: Result<Vec<String>, _> = sqlx::query_scalar(
-                "select s.token_hash from session s join account a on a.id = s.account_id \
-                  where s.token_hash = any($1) and s.expires_at > now() and a.deleted_at is null \
-                 union all \
-                 select p.token_hash from pat p join account a on a.id = p.account_id \
-                  where p.token_hash = any($1) and p.revoked_at is null and a.deleted_at is null and a.kind = 'agent'",
-            )
-            .bind(&hashes)
-            .fetch_all(&core.pool)
-            .await;
+            let valid = valid_credentials(&core.pool, &hashes).await;
             let Ok(valid) = valid else { continue };
             let valid: HashSet<String> = valid.into_iter().collect();
             let mut s = core.lock_sockets();
@@ -232,6 +223,23 @@ fn spawn_credential_sweep(core: Arc<Core>) {
             });
         }
     });
+}
+
+/// 아직 유효한 자격증명 해시(TS `createCredentialSweep` 의 질의) — `/ws`·`/agent-attach`(C6c-3)가 같은 판정을 쓴다.
+pub async fn valid_credentials(
+    pool: &PgPool,
+    hashes: &[String],
+) -> Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar(
+        "select s.token_hash from session s join account a on a.id = s.account_id \
+          where s.token_hash = any($1) and s.expires_at > now() and a.deleted_at is null \
+         union all \
+         select p.token_hash from pat p join account a on a.id = p.account_id \
+          where p.token_hash = any($1) and p.revoked_at is null and a.deleted_at is null and a.kind = 'agent'",
+    )
+    .bind(hashes)
+    .fetch_all(pool)
+    .await
 }
 
 /// 지금 온라인인 에이전트(C6c-1) — TS `presence.online()` 의 짝. 만료는 DB 시계로 본다.
@@ -430,9 +438,9 @@ async fn run(core: Arc<Core>, socket: WebSocket, origin: Option<String>, ticket:
 }
 
 /// 일꾼이 살아 있는 동안 [`Core::live_socket_workers`] 를 하나 올려 둔다 — 끝나든 abort 되든 Drop 에서 내린다.
-pub(super) struct WorkerGuard(Arc<AtomicUsize>);
+pub(crate) struct WorkerGuard(Arc<AtomicUsize>);
 impl WorkerGuard {
-    pub(super) fn new(n: &Arc<AtomicUsize>) -> Self {
+    pub(crate) fn new(n: &Arc<AtomicUsize>) -> Self {
         n.fetch_add(1, Ordering::SeqCst);
         Self(n.clone())
     }
@@ -474,7 +482,7 @@ async fn inbound(core: &Core, account: &str, raw: &str) {
 /// - 받는 줄도 상한이 있다 — 차면 소켓 읽기를 멈춰 TCP 흐름 제어에 맡긴다.
 /// - 소켓에 쓰기는 **시한이 있다**(`send_timeout`). 끝까지 읽지 않는 상대면 쓰기가 TCP 창을 끝없이 기다리고, 그동안은 닫기 신호도
 ///   보지 못한다 — 시한을 넘으면 그 자리에서 소켓을 버린다(연결 끊김). 닫기 프레임 쓰기에도 같은 시한.
-pub(super) fn futures_split(
+pub(crate) fn futures_split(
     socket: WebSocket,
     send_timeout: Duration,
     guard: WorkerGuard,
@@ -523,13 +531,13 @@ pub(super) fn futures_split(
     )
 }
 
-pub(super) struct Sink {
+pub(crate) struct Sink {
     tx: mpsc::Sender<Message>,
     close: Option<tokio::sync::oneshot::Sender<(u16, &'static str)>>,
 }
 impl Sink {
     /// 넣었으면 참. 줄이 찼으면(C6-1) 1013 으로 닫고 거짓, 쓰는 쪽이 끝났으면 거짓.
-    pub(super) fn push(&mut self, m: Message) -> bool {
+    pub(crate) fn push(&mut self, m: Message) -> bool {
         match self.tx.try_send(m) {
             Ok(()) => true,
             Err(mpsc::error::TrySendError::Full(_)) => {
@@ -539,15 +547,15 @@ impl Sink {
             Err(mpsc::error::TrySendError::Closed(_)) => false,
         }
     }
-    pub(super) fn close(&mut self, code: u16, reason: &'static str) {
+    pub(crate) fn close(&mut self, code: u16, reason: &'static str) {
         if let Some(tx) = self.close.take() {
             let _ = tx.send((code, reason));
         }
     }
 }
-pub(super) struct Stream(mpsc::Receiver<Option<Result<Message, axum::Error>>>);
+pub(crate) struct Stream(mpsc::Receiver<Option<Result<Message, axum::Error>>>);
 impl Stream {
-    pub(super) async fn recv(&mut self) -> Option<Result<Message, axum::Error>> {
+    pub(crate) async fn recv(&mut self) -> Option<Result<Message, axum::Error>> {
         self.0.recv().await.flatten()
     }
 }
