@@ -2,6 +2,7 @@ import type { Pool, PoolClient } from 'pg';
 import type { ScheduledMessageView } from '@harkroom/shared';
 import { postMessage } from './messages.js';
 import { channelPostGate } from './channels.js';
+import { runGated } from './loopGate.js';
 
 export const SCHEDULE_MAX_DAYS = 30;
 export const SWEEP_INTERVAL_MS = 15_000;
@@ -202,7 +203,7 @@ export function createScheduledMessageSweeper(pool: Pool): {
   return {
     startSweep(app) {
       if (sweepInterval) return;
-      sweepInterval = setInterval(() => { void sweep(); }, SWEEP_INTERVAL_MS);
+      sweepInterval = setInterval(() => { void runGated(pool, 'scheduled', sweep); }, SWEEP_INTERVAL_MS);
       sweepInterval.unref?.();
       // 앱이 닫히면 interval 도 접는다 — 남겨 두면 테스트 프로세스가 끝나지 않고
       // 닫힌 풀에 질의가 날아간다.

@@ -15,6 +15,7 @@ import {
 } from '@harkroom/shared';
 
 import { channelVisibleSql } from './channels.js';
+import { runGated } from './loopGate.js';
 
 export const BG_KINDS = ['distill', 'cleanup', 'organize'] as const;
 export type BgKind = typeof BG_KINDS[number];
@@ -494,7 +495,7 @@ export function createBgJobSweeper(pool: Pool, env: NodeJS.ProcessEnv = process.
     sweep,
     startSweep(app) {
       if (timer) return;
-      timer = setInterval(() => { void sweep(); }, BG_SWEEP_INTERVAL_MS);
+      timer = setInterval(() => { void runGated(pool, 'bg', sweep); }, BG_SWEEP_INTERVAL_MS);
       timer.unref?.();
       app.addHook('onClose', () => { if (timer) clearInterval(timer); timer = null; });
     },

@@ -6,6 +6,7 @@ import { postMessage } from './messages.js';
 import { getMentionPolicy } from './mentionPolicy.js';
 import { endAutomationMandates, endAutomationMandatesTx } from './automationMandates.js';
 import { channelPostGate } from './channels.js';
+import { runGated } from './loopGate.js';
 
 /**
  * 자동화(마이그레이션 064). 트리거가 **회차(run)를 만들고**, 발송 단계가 그 회차를
@@ -833,7 +834,7 @@ export function createAutomationSweeper(pool: Pool, opts: { now?: () => Date } =
   return {
     startSweep(app) {
       if (sweepInterval) return;
-      sweepInterval = setInterval(() => { void sweep(); }, SWEEP_INTERVAL_MS);
+      sweepInterval = setInterval(() => { void runGated(pool, 'automation', sweep); }, SWEEP_INTERVAL_MS);
       sweepInterval.unref?.();
       app.addHook('onClose', async () => {
         if (sweepInterval) { clearInterval(sweepInterval); sweepInterval = null; }

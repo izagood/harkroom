@@ -6,6 +6,7 @@ import {
 import { channelVisibleSql } from './channels.js';
 import { invokeFactsFor, mayInvoke } from './invokeGate.js';
 import { announceReportWakes, announceWakeRows, foldWakesForDelegation } from './agentWakes.js';
+import { runGated } from './loopGate.js';
 
 /**
  * 위임 왕복(마이그레이션 050) — **팀장이 넘긴 일이 끝나면 팀장이 다시 깬다.**
@@ -840,7 +841,7 @@ export function createDelegationDeadlineSweeper(pool: Pool, opts: {
   return {
     startSweep(app) {
       if (sweepInterval) return;
-      sweepInterval = setInterval(() => { void sweep(); }, DELEGATION_SWEEP_INTERVAL_MS);
+      sweepInterval = setInterval(() => { void runGated(pool, 'delegation.deadline', sweep); }, DELEGATION_SWEEP_INTERVAL_MS);
       sweepInterval.unref?.();
       app.addHook('onClose', async () => {
         if (sweepInterval) {
