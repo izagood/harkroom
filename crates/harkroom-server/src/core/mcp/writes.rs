@@ -21,6 +21,11 @@ fn ok_text(v: &str) -> String {
     super::respond::text_result(v)
 }
 
+/// 쓰기를 시작한 뒤의 DB 오류(security W1). 사유를 되비추지 않는 고정 문장이다.
+fn internal() -> String {
+    err("internal", "the write failed; it was not retried")
+}
+
 /// `emoji: z.string().min(1).max(32)` — UTF-16 길이.
 fn emoji_arg(args: &Value) -> Option<&str> {
     args.get("emoji")?.as_str().filter(|e| {
@@ -64,16 +69,20 @@ async fn react(
     {
         return Some(err("forbidden", "not a member of this dm channel"));
     }
+    // 여기부터 쓰기다(security W1) — 오류가 나도 TS 로 넘기지 않는다(넘기면 TS 가 같은 쓰기를 한 번 더 한다). 도구 오류로 답한다.
     if tool == "message.unreact" {
-        remove_reaction(read, write, &me.id, channel, message, emoji)
-            .await
-            .ok()?;
-        return Some(ok_text("{\"ok\":true}"));
+        return Some(
+            match remove_reaction(read, write, &me.id, channel, message, emoji).await {
+                Ok(()) => ok_text("{\"ok\":true}"),
+                Err(_) => internal(),
+            },
+        );
     }
-    match add_reaction(read, write, &me.id, channel, message, emoji)
-        .await
-        .ok()?
-    {
+    let added = match add_reaction(read, write, &me.id, channel, message, emoji).await {
+        Ok(v) => v,
+        Err(_) => return Some(internal()),
+    };
+    match added {
         AddOutcome::Added => Some(ok_text(&format!("{{\"emoji\":{}}}", Value::from(emoji)))),
         AddOutcome::NotFound => Some(err("not_found", "no such message in this channel")),
         AddOutcome::TooMany => Some(err(

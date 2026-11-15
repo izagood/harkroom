@@ -1588,6 +1588,45 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect({ status: b.status, type: b.type, text: b.text }, name).toEqual({ status: a.status, type: a.type, text: a.text });
         expect(b.core, `${name} — 누가 답했나`).toBe(answeredByRust ? 'mcp' : null);
       }
+      // W7 — 거부 길마다 Rust 가 답했는지와 거절 코드를 따로 본다. 「못 보는 DM」 은 에이전트가 정말 멤버가 아닌지부터 확인한다.
+      expect((await db.pool.query(`select 1 from channel_member where channel_id = $1 and account_id = $2`, [String(dm.id), agent.accountId])).rowCount).toBe(0);
+      for (const [tool, args, code] of [
+        ['message.react', { channelId: String(dm.id), messageId: reactMsg, emoji: '👍' }, 'forbidden'],
+        ['message.unreact', { channelId: String(dm.id), messageId: reactMsg, emoji: '👍' }, 'forbidden'],
+        ['message.react', { channelId: readCh, messageId: missingCh, emoji: '👍' }, 'not_found'],
+        ['message.react', { channelId: readCh, messageId: fullMsg, emoji: '🥳' }, 'too_many_reactions'],
+        ['message.react', { channelId: readCh, messageId: reactMsg, emoji: 'abc' }, 'bad_request'],
+      ] as const) {
+        const r = await mcpCall(rsUrl4, agent.pat, tool, args);
+        expect(r.core, `${tool} ${code} — Rust 가 답한다`).toBe('mcp');
+        expect(r.text, `${tool} ${code}`).toContain(`\\"code\\":\\"${code}\\"`);
+      }
+      // W5 — TS 와 Rust 가 각자 다른 글에 같은 달기·떼기를 하고, 행과 실시간 알림(구독자에게 가는 이벤트)이 같은지 본다.
+      // TS 는 자기 프로세스에서 바로 내고(onEvent), Rust 는 outbox → TS 버스로 건너온다(busEvents).
+      const tsMsgW = await say('TS 가 리액션', { ch: readCh });
+      const rsMsgW = await say('Rust 가 리액션', { ch: readCh });
+      const seenTs: WorkspaceEvent[] = [];
+      const offW = onEvent((e) => { seenTs.push(e); });
+      const busFrom = busEvents.length;
+      for (const [base, m] of [[tsUrl, tsMsgW], [rsUrl4, rsMsgW]] as const) {
+        await mcpCall(base, agent.pat, 'message.react', { channelId: readCh, messageId: m, emoji: '🙌' });
+        await mcpCall(base, agent.pat, 'message.unreact', { channelId: readCh, messageId: m, emoji: '🙌' });
+        await mcpCall(base, agent.pat, 'message.react', { channelId: readCh, messageId: m, emoji: '🫡' });
+      }
+      const until = Date.now() + 5000;
+      const fromRs = () => busEvents.slice(busFrom).filter((e) => (e as { messageId?: string }).messageId === rsMsgW);
+      while (fromRs().length < 3 && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
+      offW();
+      const norm = (list: WorkspaceEvent[], m: string) => list
+        .filter((e) => (e as { messageId?: string }).messageId === m)
+        .map((e) => JSON.parse(JSON.stringify(e).split(m).join('<msg>')) as unknown);
+      expect(norm(fromRs(), rsMsgW), 'Rust 이벤트 = TS 이벤트').toEqual(norm(seenTs, tsMsgW));
+      expect(norm(seenTs, tsMsgW)).toHaveLength(3);
+      const rowsOf = async (m: string) => (await db.pool.query<{ emoji: string; source: string }>(
+        `select emoji, source from message_reaction where message_id = $1 order by emoji`, [m])).rows;
+      expect(await rowsOf(rsMsgW), 'Rust 행 = TS 행').toEqual(await rowsOf(tsMsgW));
+      expect(await rowsOf(rsMsgW)).toEqual([{ emoji: '🫡', source: 'user' }]);
+
       // Rust 만 쓴 줄 — DB 에 남고 이벤트(outbox)가 TS 와 같은 모양으로 나간다.
       const rustOnly = await say('Rust 만 리액션', { ch: readCh });
       const outboxBefore = (await db.pool.query<{ n: number }>(`select count(*)::int as n from event_outbox`)).rows[0]!.n;
