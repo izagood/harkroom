@@ -24,6 +24,7 @@ pub const SERVED: &[&str] = &[
     "memory.lease",
     "memory.archive",
     "memory.unarchive",
+    "memory.search",
 ];
 
 /// 쓰기 역할에 필요한 권한(표·칸, 권한). 칸 권한은 코드가 실제로 고치는 칸만이다. `select … for update` 는 그 표의 칸 하나에
@@ -149,6 +150,7 @@ pub async fn answer(
         "memory.lease" => lease(write, me, args).await,
         "memory.archive" => archive(write, me, args).await,
         "memory.unarchive" => unarchive(write, me, args).await,
+        "memory.search" => super::mem_recall::search(read, write, me, args).await,
         _ => None,
     })
 }

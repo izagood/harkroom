@@ -11,6 +11,7 @@
 pub mod bg_claim;
 pub mod bg_complete;
 pub mod grant_writes;
+pub mod mem_recall;
 pub mod mem_writes;
 pub mod note;
 pub mod reads2;
