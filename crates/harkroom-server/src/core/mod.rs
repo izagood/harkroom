@@ -31,6 +31,7 @@ pub mod operator_hub;
 pub mod operator_rest;
 pub mod tickets;
 pub mod turn_lease;
+pub mod turn_lease_routes;
 pub mod typing;
 pub mod ws;
 
