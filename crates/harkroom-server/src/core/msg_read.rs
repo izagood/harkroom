@@ -54,10 +54,14 @@ fn sql() -> &'static Sql {
 }
 
 /// TS `getMessageById` — 지운 것·없는 것은 None. 응답 JSON 문자열 그대로(C3a 리액션의 `message.updated` 가 같은 모양을 싣는다).
-pub(crate) async fn message_by_id(pool: &PgPool, id: &str) -> sqlx::Result<Option<String>> {
+/// 풀이든 트랜잭션 연결이든 받는다 — 쓰기 줄(`msg_delete.rs`)은 고친 행을 같은 트랜잭션 안에서 다시 읽는다.
+pub(crate) async fn message_by_id<'e, E: sqlx::PgExecutor<'e>>(
+    ex: E,
+    id: &str,
+) -> sqlx::Result<Option<String>> {
     sqlx::query_scalar(sql().by_id.as_str())
         .bind(id)
-        .fetch_optional(pool)
+        .fetch_optional(ex)
         .await
 }
 

@@ -439,7 +439,10 @@ struct Row {
 }
 
 /// TS `attachPlanProgress` — 머리 행마다 `planProgress`(계획 없으면 null). 쿼리는 최대 둘(계획들, 연결 자식들).
-async fn attach_plan_progress(pool: &PgPool, rows: &mut [Row]) -> Result<(), sqlx::Error> {
+async fn attach_plan_progress(
+    conn: &mut sqlx::PgConnection,
+    rows: &mut [Row],
+) -> Result<(), sqlx::Error> {
     let roots: Vec<String> = rows
         .iter()
         .filter(|r| r.is_root)
@@ -451,7 +454,7 @@ async fn attach_plan_progress(pool: &PgPool, rows: &mut [Row]) -> Result<(), sql
     let s = sql();
     let plan_rows: Vec<(String, String, String, i64, String)> = sqlx::query_as(s.plans.as_str())
         .bind(&roots)
-        .fetch_all(pool)
+        .fetch_all(&mut *conn)
         .await?;
     let mut plans: HashMap<String, (String, Value, i64, String)> = HashMap::new();
     let mut children: Vec<String> = Vec::new();
@@ -470,7 +473,7 @@ async fn attach_plan_progress(pool: &PgPool, rows: &mut [Row]) -> Result<(), sql
         let child_rows: Vec<(String, String, Option<String>, bool)> =
             sqlx::query_as(s.children.as_str())
                 .bind(&children)
-                .fetch_all(pool)
+                .fetch_all(&mut *conn)
                 .await?;
         let none = HashMap::new();
         for (id, channel, doc, public) in child_rows {
@@ -521,7 +524,7 @@ async fn attach_plan_progress(pool: &PgPool, rows: &mut [Row]) -> Result<(), sql
 /// TS `readListRow` — 목록에 보이는 모양 그대로 한 행(자리표시자 포함, 머리면 `planProgress` 까지). 목록에서 사라졌으면 None.
 /// 지우기(`msg_delete.rs`)가 「지운 자리가 남았나」를 판정 규칙을 다시 쓰지 않고 묻는 길이다.
 pub(crate) async fn read_list_row(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     channel: &str,
     id: &str,
 ) -> Result<Option<String>, sqlx::Error> {
@@ -530,7 +533,7 @@ pub(crate) async fn read_list_row(
     )
     .bind(channel)
     .bind(id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *conn)
     .await?;
     let Some((body, id, seq, thread_root_id, is_root)) = got else {
         return Ok(None);
@@ -542,7 +545,7 @@ pub(crate) async fn read_list_row(
         thread_root_id,
         is_root,
     }];
-    attach_plan_progress(pool, &mut rows).await?;
+    attach_plan_progress(conn, &mut rows).await?;
     let [row] = rows;
     Ok(Some(row.body))
 }
@@ -656,8 +659,15 @@ pub async fn list_messages(
             .collect(),
         Err(e) => return internal(e),
     };
-    if let Err(e) = attach_plan_progress(pool, &mut rows).await {
-        return internal(e);
+    // 연결은 진행률 붙이기 동안만 쥔다 — 읽기 풀은 작아서(outbox 리스너가 하나를 쥔다) 쥔 채 아래 hasMore 를 풀에 물으면 서로 기다린다.
+    {
+        let mut conn = match pool.acquire().await {
+            Ok(c) => c,
+            Err(e) => return internal(e),
+        };
+        if let Err(e) = attach_plan_progress(&mut conn, &mut rows).await {
+            return internal(e);
+        }
     }
 
     // hasMore — 스레드는 그 스레드 답글로만(since·around 면 false), 채널은 첫 행 seq 로(피드면 본문에 설 줄로).

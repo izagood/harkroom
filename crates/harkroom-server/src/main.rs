@@ -40,6 +40,10 @@ async fn main() {
         std::process::exit(1);
     }
     let write = open_write_pool().await;
+    // C5b — 서버 루프(예약 깨움). 주인이 `rust` 일 때만 실제로 돈다(`server_loop`, 기본 `ts`).
+    if write.is_some() {
+        spawn_loops().await;
+    }
     let ts = routes::TsOverrides::parse(std::env::var("HARKROOM_FRONT_TS_ROUTES").ok().as_deref());
     let known: Vec<routes::Moved> = routes::MOVED
         .iter()
@@ -126,7 +130,10 @@ async fn main() {
                     None
                 }
                 Err(e) => {
-                    eprintln!("front: reaction core off — privilege check failed: {e}");
+                    eprintln!(
+                        "front: reaction core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
                     None
                 }
             }
@@ -149,7 +156,10 @@ async fn main() {
                     None
                 }
                 Err(e) => {
-                    eprintln!("front: message delete core off — privilege check failed: {e}");
+                    eprintln!(
+                        "front: message delete core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
                     None
                 }
             }
@@ -331,6 +341,38 @@ async fn open_write_pool() -> Option<sqlx::PgPool> {
             );
             None
         }
+    }
+}
+
+/// 서버 루프 전용 풀(3)을 따로 연다 — 루프 tick 은 문지기 연결 1 + sweep 연결 1 + 이벤트 연결 1 을 쓰는데 쓰기 풀은 2 이고
+/// 요청과 나눠 쓴다. 이 풀이 막혀도 요청은 막히지 않는다. 권한([`loops::wake::WAKE_PRIVILEGES`])이 모자라면 띄우지 않는다(TS 에 남는다).
+async fn spawn_loops() {
+    use harkroom_server::loops::wake;
+    let Some(url) = std::env::var("DATABASE_WRITE_URL")
+        .ok()
+        .filter(|u| !u.is_empty())
+    else {
+        return;
+    };
+    let pool = match sqlx::postgres::PgPoolOptions::new()
+        .max_connections(3)
+        .acquire_timeout(std::time::Duration::from_secs(10))
+        .connect(&url)
+        .await
+    {
+        Ok(p) => p,
+        Err(_) => {
+            eprintln!("front: loops off — connect failed");
+            return;
+        }
+    };
+    match write::missing_in(&pool, wake::WAKE_PRIVILEGES, wake::WAKE_SEQUENCE_PRIVILEGES).await {
+        Ok(m) if m.is_empty() => {
+            eprintln!("front: loop wake on (runs only while server_loop owner is rust)");
+            wake::spawn(pool);
+        }
+        Ok(m) => eprintln!("front: loop wake off — missing privileges {m:?}"),
+        Err(e) => eprintln!("front: loop wake off — privilege check failed: {e}"),
     }
 }
 
