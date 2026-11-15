@@ -1183,7 +1183,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         ['account.list', 'account.list', {}, true, 12],
         ['account.list 문자열 인자 → TS', 'account.list', 'x', false, 13],
         ['channel.doc 문서 있음', 'channel.doc', { channelId: todayId }, true, 4],
-        ['channel.doc 문서 없음(DM)', 'channel.doc', { channelId: String(dm.id) }, true, 5],
+        // 볼 수 있는데 문서가 없는 채널 — today-private 은 에이전트가 멤버이고 문서를 넣지 않았다(멤버 아닌 DM 은 아래 forbidden 줄이 본다).
+        ['channel.doc 문서 없음(볼 수 있는 비공개 채널)', 'channel.doc', { channelId: privId }, true, 5],
         ['channel.doc 없는 채널 → 빈 문서', 'channel.doc', { channelId: missingCh }, true, 6],
         ['channel.doc 멤버 아닌 DM → forbidden', 'channel.doc', { channelId: String(dm.id) }, true, 7],
         ['channel.doc 모르는 키는 버린다', 'channel.doc', { channelId: todayId, extra: 1 }, true, 8],
@@ -1448,6 +1449,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       expect((await mcpCall(rsUrl4, agent.pat, 'message.search', { query: '비밀검색어' })).text).not.toContain('못 보는 곳');
       // forbidden 갈래를 실제로 타는지 — TS 와 같다는 것만으로는 둘 다 성공해도 통과한다. 에이전트는 이 DM(관리자·멤버)의 멤버가 아니다
       // (비공개 채널 today-private 에는 멤버라 그 채널로는 이 갈래가 닿지 않는다).
+      // 빈 문서 갈래도 실제로 타는지(forbidden 이 아니라 빈 문서).
+      const emptyDoc = await mcpCall(rsUrl4, agent.pat, 'channel.doc', { channelId: privId });
+      expect(emptyDoc.core).toBe('mcp');
+      expect(emptyDoc.text).toContain(`\\"channelId\\":\\"${privId}\\",\\"body\\":\\"\\",\\"updatedBy\\":null`);
       for (const [tool, args] of [
         ['channel.doc', { channelId: String(dm.id) }],
         ['message.read', { channelId: String(dm.id) }],
