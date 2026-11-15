@@ -14,6 +14,7 @@ import { LIST_SCHEDULED_SQL } from '../src/services/scheduledMessages.js';
 import { SELECT_PINS_SQL } from '../src/services/pins.js';
 import { AGENT_INVOKER_SQL, CHANNEL_SCOPE_SQL, ELIGIBLE_DELEGATE_SQL, INVOKE_FACTS_SQL, TEAM_INVOKER_SQL } from '../src/services/invokeGate.js';
 import { HAS_REPLY_GRANT_SQL } from '../src/services/replyGrants.js';
+import { ASK_CLOSE_BY_REPLY_SQL } from '../src/services/messages.js';
 import { EDIT_FIND_SQL, EDIT_INBOX_ALREADY_SQL, EDIT_UPDATE_SQL, EDIT_VIA_EDIT_SQL } from '../src/services/messages.js';
 import { ACCOUNTS_BY_HANDLES_SQL, ACCOUNTS_BY_IDS_SQL, FAN_OUT_AUDIENCE_SQL, INSERT_INBOX_MANY_SQL, REVEAL_HIDDEN_SQL, REVEAL_REASONS } from '../src/services/messages.js';
 import { GROUP_BY_HANDLE_SQL, GROUP_MEMBERS_SQL } from '../src/services/handleGroups.js';
@@ -21,7 +22,7 @@ import { TEAM_BY_ID_SQL, TEAM_BY_NAME_SQL, TEAM_MEMBERS_SQL } from '../src/servi
 import { MENTION_POLICY_SQL } from '../src/services/mentionPolicy.js';
 import { PRINCIPAL_INVOKES_SQL } from '../src/services/invokePrincipal.js';
 import { ENQUEUE_INBOX_PUSH_MANY_SQL, INBOX_PUSH_REASON_LIST, PUSH_AGENT_REPLY_DELAY_SEC } from '../src/services/push/pushJobs.js';
-import { HAS_OLDER_SQL, LIST_MESSAGES_SQL, MESSAGE_BY_ID_SQL, READ_LIST_ROW_SQL, SEARCH_MESSAGES_SQL } from '../src/services/messages.js';
+import { HAS_OLDER_SQL, INBOX_FOLDED_WAKES_SQL, INBOX_HANDED_SQL, INBOX_STARTED_IN_SQL, INBOX_TEAM_ROSTER_SQL, LIST_INBOX_SQL, LIST_MESSAGES_SQL, MESSAGE_BY_ID_SQL, READ_LIST_ROW_SQL, SEARCH_MESSAGES_SQL } from '../src/services/messages.js';
 import { POST_CHANNEL_KIND_SQL, POST_IDEMPOTENCY_FIND_SQL, POST_IDEMPOTENCY_INSERT_SQL, POST_INSERT_SQL, POST_ROOT_AUTHOR_SQL, POST_THREAD_ROOT_OF_SQL, SEQ_LOCK_CLASS, SEQ_LOCK_SQL } from '../src/services/messages.js';
 import { ATTACH_FIND_SQL, ATTACH_UPDATE_SQL } from '../src/services/attachments.js';
 import { CHAT_APPROVAL_GUARD_WORDS } from '../src/services/chatApproval.js';
@@ -35,6 +36,7 @@ import { BG_AGENT_ON_SQL, BG_DAILY_LOCK_SQL, BG_ENQUEUE_SQL, BG_EXISTS_SQL, BG_P
 import { LIST_DELEGATIONS_GIVEN_SQL, LIST_DELEGATIONS_MINE_SQL } from '../src/services/apiDelegation.js';
 import { LIST_TOOL_RULES_SQL } from '../src/services/permissionRequests.js';
 import { LEASE_INBOX_MAX_AGE_MS, LEASE_MAX_MS, LEASE_MAX_REISSUES, LEASE_REISSUE_STALE_MS, LEASE_RENEW_MS, LEASE_TTL_MS, TURN_LEASE_CAUSE_SQL, TURN_LEASE_CLAIM_MOVED_SQL, TURN_LEASE_END_PRIOR_SQL, TURN_LEASE_END_SQL, TURN_LEASE_INSERT_SQL, TURN_LEASE_PRIOR_SQL, TURN_LEASE_RENEW_SQL, TURN_LEASE_USED_SQL } from '../src/services/secretAccess.js';
+import { PREEMPT_CANCEL_SQL, PREEMPT_DUE_SQL, PREEMPT_FIRE_INBOX_SQL, PREEMPT_FIRE_SQL, STAMP_WAKE_CLOSED_SQL } from '../src/services/agentWakes.js';
 
 const GOLDEN = fileURLToPath(new URL('../../../crates/harkroom-server/golden/sql_fragments.json', import.meta.url));
 
@@ -150,6 +152,14 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     mandate_keyless_insert: MANDATE_KEYLESS_INSERT_SQL,
     mandate_keyless_find: MANDATE_KEYLESS_FIND_SQL,
     mandate_keyless_root_set: MANDATE_KEYLESS_ROOT_SET_SQL,
+    // 사람 답글의 깨움 선점(`core/wake_preempt.rs`, S5.3 C1c-3b) — `preemptWakesForThread` 와 `stampWakeClosed`.
+    preempt_due: PREEMPT_DUE_SQL,
+    preempt_cancel: PREEMPT_CANCEL_SQL,
+    preempt_fire_inbox: PREEMPT_FIRE_INBOX_SQL,
+    preempt_fire: PREEMPT_FIRE_SQL,
+    stamp_wake_closed: STAMP_WAKE_CLOSED_SQL,
+    // 사람 답글로 카드 닫기(`core/ask_reply_close.rs`, S5.3 C1c-3c) — `closeAsksByReply`.
+    ask_close_by_reply: ASK_CLOSE_BY_REPLY_SQL,
     decider_row: DECIDER_ROW_SQL,
     decider_seen: DECIDER_SEEN_SQL,
     decider_list: DECIDER_LIST_SQL,
@@ -160,6 +170,13 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     bundle_accept_root: ACCEPT_ROOT_SQL,
     bundle_irreversible_source: IRREVERSIBLE_WORDS.source,
     bundle_irreversible_flags: IRREVERSIBLE_WORDS.flags,
+    // 받은함 목록(`core/inbox_list.rs`, S5.3 C6a-3a) — `GET /inbox` 갈래 다섯과 팀 명단, 완성 문장째.
+    ...Object.fromEntries(Object.entries(LIST_INBOX_SQL).map(([k, v]) => [`list_inbox_${k}`, v])),
+    inbox_team_roster: INBOX_TEAM_ROSTER_SQL,
+    // 받은함 덧붙임(C6a-3b) — 넘겨받은 일·접힌 깨움·시작한 곳.
+    inbox_handed: INBOX_HANDED_SQL,
+    inbox_folded_wakes: INBOX_FOLDED_WAKES_SQL,
+    inbox_started_in: INBOX_STARTED_IN_SQL,
   };
   const text = `${JSON.stringify(want, null, 2)}\n`;
   if (process.env.UPDATE_RUST_SQL_GOLDEN === '1') writeFileSync(GOLDEN, text);

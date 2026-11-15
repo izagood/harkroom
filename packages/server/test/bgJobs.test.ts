@@ -591,12 +591,12 @@ describe('bg_job (BG1)', () => {
       expect(refusal(await admit(bg, 'message.post', { channelId: ch, body: 'x' }))).toBe('bg_tool_not_allowed');
       expect(refusal(await admit(bg, 'message.read', { channelId: ch }))).toBe('bg_thread_not_in_input');
       expect(refusal(await admit(bg, 'thread.note', { threadRootId: root, body: 'x' }))).toBe('bg_note_read_only');
-      expect((await admit(bg, 'message.read', { channelId: ch, threadRootId: root })).json()).toEqual({ admitted: true });
+      expect((await admit(bg, 'message.read', { channelId: ch, threadRootId: root })).json()).toEqual({ admitted: true, registered: true });
       // 닫힌 회차는 거절.
       await pool.query(`update bg_job set status = 'done' where id = $1`, [jobId]);
       expect(refusal(await admit(bg, 'message.read', { channelId: ch, threadRootId: root }))).toBe('bg_job_not_running');
       // bg cause 가 아니면 회차 관문을 지나지 않는다.
-      expect((await admit({}, 'message.post', { channelId: ch, body: 'x' })).json()).toEqual({ admitted: true });
+      expect((await admit({}, 'message.post', { channelId: ch, body: 'x' })).json()).toEqual({ admitted: true, registered: true });
     });
 
     it('/mcp/admit(S5.3 C4b ④-a): bg.claim 에만 전역 스위치(bgEnabled)를 싣는다 — Rust 앞단의 켜짐 출처', async () => {
@@ -609,9 +609,29 @@ describe('bg_job (BG1)', () => {
       try {
         expect((await admit('bg.claim')).json()).toEqual({ admitted: true, bgEnabled: false });
         // 다른 도구에는 싣지 않는다.
-        expect((await admit('memory.get')).json()).toEqual({ admitted: true });
+        expect((await admit('memory.get')).json()).toEqual({ admitted: true, registered: true });
       } finally {
         process.env.HARKROOM_BACKGROUND_ENABLED = '1';
+      }
+    });
+
+    it('/mcp/admit(S5.3 C4b ④-a): bg.complete 는 러너 꼴(오퍼레이터 · cause·턴 id 헤더 없음)만 받는다 — 그 밖은 not_admissible', async () => {
+      const a = await agent('bg-admit-complete');
+      const admit = (headers: Record<string, string>) => app.inject({
+        method: 'POST', url: '/mcp/admit', headers, payload: { tool: 'bg.complete', arguments: { jobId: a.accountId, status: 'done' } },
+      });
+      expect((await admit(asAgent(a.accountId))).json()).toEqual({ admitted: true, registered: true });
+      for (const [name, headers] of [
+        ['① PAT', auth(a.pat)],
+        ['② 꼴이 틀린 cause 도 있음', asAgent(a.accountId, { 'x-harkroom-cause': 'nope' })],
+        ['③ cause 가 붙은 일반 턴', asAgent(a.accountId, { 'x-harkroom-cause': `mention:${a.accountId}` })],
+        ['④ bg 회차 턴', asAgent(a.accountId, { 'x-harkroom-cause': `bg:${a.accountId}` })],
+        ['⑤ 턴 id', asAgent(a.accountId, { 'x-harkroom-turn-id': a.accountId })],
+        ['⑥ 빈 턴 id', asAgent(a.accountId, { 'x-harkroom-turn-id': '' })],
+      ] as const) {
+        const r = await admit(headers);
+        expect(r.statusCode, name).toBe(400);
+        expect(r.json().error.code, name).toBe('not_admissible');
       }
     });
   });

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { createAgentPresence } from '../src/mcp/presence.js';
+import { createAgentPresence, PERSIST_EVERY_MS } from '../src/mcp/presence.js';
 import { onEvent } from '../src/events.js';
 import type { WorkspaceEvent } from '../src/events.js';
 
@@ -205,5 +205,37 @@ describe('agent presence', () => {
     presence.online();
 
     expect(presence.size()).toBe(0);
+  });
+
+  // S5.3 C6c-1 — DB 쓰기는 같은 에이전트당 PERSIST_EVERY_MS 에 한 번, 실패하면 다음 폴에 다시 쓴다.
+  it('persists a poll at most once per interval and retries after a failure', async () => {
+    let t = 0;
+    const calls: [string, number][] = [];
+    let fail = false;
+    const errors: unknown[] = [];
+    const presence = createAgentPresence({
+      ttlMs: 30_000,
+      now: () => t,
+      persist: async (id, ttl) => { calls.push([id, ttl]); if (fail) throw new Error('db down'); },
+      onPersistError: (e) => errors.push(e),
+    });
+    presence.mark('a');
+    presence.mark('a');
+    presence.mark('b');
+    expect(calls).toEqual([['a', 30_000], ['b', 30_000]]);
+    t = PERSIST_EVERY_MS - 1;
+    presence.mark('a');
+    expect(calls).toHaveLength(2);
+    t = PERSIST_EVERY_MS;
+    fail = true;
+    presence.mark('a');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toHaveLength(3);
+    expect(errors).toHaveLength(1);
+    fail = false;
+    presence.mark('a');
+    expect(calls).toHaveLength(4);
+    // 판정은 메모리 그대로다.
+    expect(presence.online().sort()).toEqual(['a', 'b']);
   });
 });

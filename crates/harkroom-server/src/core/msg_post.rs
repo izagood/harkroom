@@ -9,9 +9,11 @@
 //!   고친 본문으로 넣은 뒤 [`super::mention_fanout::fan_out_calls`] 로 inbox·푸시 줄을 넣는다. 새 머리의 위임은
 //!   [`super::mandate_stamp::stamp_root`]. 받은 사람마다 `inbox.updated`, 응답 헤더에 받은 사람 수·id(TS 와 같은 순서).
 //! - **답글**(C1c-3a): 트랜잭션 첫 줄에서 머리가 이 채널의 최상위 글인지(아니면 400 `bad_thread`), seq 락 뒤에서 이 스레드가
-//!   아직 TS 몫인지([`TS_THREAD_SQL`] — 지워진 머리·열린 깨움·담당 위임·열린 카드면 되돌리고 TS 로) 본다. 맡으면 머리·
+//!   아직 TS 몫인지([`TS_THREAD_SQL`] — 지워진 머리·담당 위임·카드 답으로 읽힐 글이면 되돌리고 TS 로) 본다. 맡으면 머리·
 //!   `alsoInChannel` 을 넣고, 부름 뒤 머리의 위임을 잇고([`super::mandate_stamp::stamp_reply`]), 머리 주인에게 호출 게이트를 지난
 //!   `thread_reply` 를 넣는다(TS 와 같이 위임 판정 **뒤**).
+//! - **깨움 선점**(C1c-3b): 그 뒤 이 스레드의 남의 열린 깨움을 접거나(이 글이 부른 계정) 지금 깨운다([`super::wake_preempt`]).
+//!   신호(`inbox.updated`·`thread.reportWakes.changed`·대기 줄 `message.updated`)는 TS 처럼 `message.created` 앞에 outbox 로.
 //! - 순서(TS 와 같다): 본문 읽기(413·400·415) → 인증(401, `route_layer`) → 경로·본문 검사(400) → 쓰기 게이트(403 `forbidden`·
 //!   `channel_archived`) → **쓰기 트랜잭션 하나**: seq 락(TS `lockChannelForSeq`) → 재시도 키 재생(200, 헤더 없음) → insert →
 //!   첨부 잇기(실패면 되돌리고 400 `bad_attachment`) → 다시 읽기 → 재시도 키 기록 → 부름 넣기 → 위임 → `message.created`·
@@ -19,6 +21,7 @@
 //! - **어느 단계든 `Err` 면 트랜잭션을 버리고 500** — 글도 첨부도 남지 않는다.
 //! - 문장은 전부 TS 상수를 골든으로 받는다(`post_*`·`attach_*`·`channel_post_gate`·`url_candidate_source`·
 //!   `chat_approval_guard_words`). 쓰기 권한은 [`MESSAGE_POST_PRIVILEGES`] — 하나라도 없으면 `main.rs` 가 이 줄을 붙이지 않는다.
+use super::ask_reply_close;
 use super::audience::audience_for;
 use super::invoke_gate;
 use super::mandate_stamp;
@@ -28,6 +31,7 @@ use super::msg_edit::{
     MAX_MESSAGE_BODY_CHARS, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS,
 };
 use super::msg_read::{is_uuid, message_by_id};
+use super::wake_preempt;
 use crate::auth::{RequireAccount, Via};
 use crate::directory::{internal, json_err};
 use crate::proxy::Upstream;
@@ -57,6 +61,11 @@ pub const MESSAGE_POST_PRIVILEGES: &[(&str, &str)] = &[
     ("mandate.last_activity_at", "UPDATE"),
     ("message.mandate_id", "UPDATE"),
     ("audit_log", "INSERT"),
+    // C1c-3b 깨움 선점(`wake_preempt`) — 접기·깨우기와 대기 줄 meta 의 닫힌 시각.
+    ("agent_wake.fired_at", "UPDATE"),
+    ("agent_wake.canceled_at", "UPDATE"),
+    ("agent_wake.canceled_by_message_id", "UPDATE"),
+    ("message.meta", "UPDATE"),
 ];
 pub const MESSAGE_POST_SEQUENCE_PRIVILEGES: &[(&str, &str)] = &[("event_outbox_id_seq", "USAGE")];
 
@@ -87,19 +96,32 @@ struct Sql {
 
 /// C1c-3a 갈래 판정(TS 동작이 아니라 **어느 쪽이 맡을지**) — 이 스레드에 답하면 TS 가 아직 Rust 에 없는 부수효과를 내는가.
 /// 하나라도 참이면 트랜잭션을 버리고 TS 로 넘긴다. 조건은 그 부수효과의 문장보다 넓게(같거나 더 많이 걸리게) 잡는다:
-/// 지워진 머리(`rootBack`) · 작성자 아닌 계정의 열린 깨움(`preemptWakesForThread`) · 작성자가 담당인 열린·보고된 위임 항목
-/// (`closeDelegationsForReply` V2 의 활동 갱신) · 열린 선택 카드(`closeAsksByReply`, 받는 쪽·종류와 무관하게 전부).
+/// 지워진 머리(`rootBack`) · 작성자가 담당인 열린·보고된 위임 항목(`closeDelegationsForReply` V2 의 활동 갱신) ·
+/// 열린 선택 카드인데 글이 **카드 답으로 읽힐 수 있음**(`$3` 이 거짓 — TS `applyChatApproval` 의 글로 고르기, 받는 쪽·종류와
+/// 무관하게 카드 전부). 글이 물음뿐이면([`question_only`]) 고르기가 될 수 없어 Rust 가 맡고 카드를 `replied` 로 닫는다(C1c-3c).
 /// 쓰기 트랜잭션 안 seq 락 뒤에서 읽는다 — TS 가 같은 판정을 하는 때와 같은 창이다.
 const TS_THREAD_SQL: &str = "select exists(select 1 from message where id = $1::uuid and deleted_at is not null) \
-     or exists(select 1 from agent_wake w join message m on m.id = w.message_id \
-                where coalesce(m.thread_root_id, m.id) = $1::uuid and w.account_id <> $2::uuid \
-                  and w.fired_at is null and w.canceled_at is null) \
      or exists(select 1 from team_delegation_item i join team_delegation d on d.id = i.delegation_id \
                 where d.thread_root_id = $1::uuid and i.delegate_account_id = $2::uuid \
                   and (i.outcome is null or i.outcome = 'reported')) \
-     or exists(select 1 from message where (id = $1::uuid or thread_root_id = $1::uuid) and channel_id = $3::uuid \
+     or (not $3::bool and exists(select 1 from message where (id = $1::uuid or thread_root_id = $1::uuid) \
                 and deleted_at is null and meta->>'kind' = 'ask' \
-                and meta->'ask'->>'answeredWith' is null and meta->'ask'->>'closedAt' is null)";
+                and meta->'ask'->>'answeredWith' is null and meta->'ask'->>'closedAt' is null))";
+
+/// 이 글이 TS `parseAskPick` 에서 **반드시 null** 인가(카드 답이 될 수 없는가) — 넓게 TS 로 보내는 쪽으로만 틀린다.
+/// TS 는 코드·인용 줄·링크·멘션을 걷어 낸 나머지에 `?`·`？` 가 있으면 null(`QUESTION`)이다. 여기서는 걷어 낼 거리(백틱·`>` 인용 줄)가
+/// 하나라도 있으면 거짓으로 두고, 없을 때 본문에 물음표가 있으면 참이다. URL·메시지 링크 글은 이미 [`ts_body`] 로 TS 에 간다.
+/// 멘션 토큰(`<@uuid>`)에는 물음표가 들 수 없다.
+fn question_only(body: &str) -> bool {
+    // JS `^` 는 m 플래그에서 \n·\r·U+2028·U+2029 뒤 모두에서 줄을 시작한다 — 같은 경계로 자른다.
+    let quoted = body
+        .split(['\n', '\r', '\u{2028}', '\u{2029}'])
+        .any(|l| l.trim_start_matches([' ', '\t']).starts_with('>'));
+    if body.contains('`') || quoted {
+        return false;
+    }
+    body.contains('?') || body.contains('？')
+}
 
 fn sql() -> &'static Sql {
     static S: OnceLock<Sql> = OnceLock::new();
@@ -345,7 +367,7 @@ async fn post_in_tx(
         let ts: bool = sqlx::query_scalar(TS_THREAD_SQL)
             .bind(r)
             .bind(author)
-            .bind(channel)
+            .bind(question_only(body))
             .fetch_one(&mut *tx)
             .await?;
         if ts {
@@ -435,7 +457,14 @@ async fn post_in_tx(
     if let Some(r) = root {
         thread_reply(&mut tx, r, author, channel, &id, &mut notified_set).await?;
     }
+    // TS 와 같이 부름·`thread_reply` 를 다 넣은 뒤 — 이 글이 부른 계정의 깨움은 접고 나머지는 깨운다.
+    let preempted = match root {
+        Some(r) => wake_preempt::preempt(&mut tx, r, author, &id, &notified_set).await?,
+        None => wake_preempt::Preempted::default(),
+    };
     let notified = notified_in_order(&mut tx, &id, &notified_set).await?;
+    // TS 는 선점 신호를 `postMessage` 안(커밋 뒤)에서, `message.created` 는 라우트가 그 뒤에 낸다 — 같은 순서로 outbox 에.
+    wake_preempt::announce(&mut tx, &preempted).await?;
     // 내보내는 행은 위임 키 앞에서 읽은 것 그대로다(TS 와 같다 — 행 칸에 위임 키는 없다).
     let row_value: Value = serde_json::from_str(&row).map_err(|e| sqlx::Error::Decode(e.into()))?;
     crate::write::emit_event(
@@ -446,6 +475,14 @@ async fn post_in_tx(
     for a in &notified {
         crate::write::emit_event(&mut tx, &json!({ "type": "inbox.updated", "accountId": a }))
             .await?;
+    }
+    // TS 라우트는 `inbox.updated` 뒤에 `closeAsksByReply` 를 부른다 — 이 답보다 앞선 열린 카드를 `replied` 로 닫는다.
+    if let Some(r) = root {
+        let seq = row_value
+            .get("seq")
+            .and_then(Value::as_i64)
+            .ok_or(sqlx::Error::RowNotFound)?;
+        ask_reply_close::close_by_reply(&mut tx, r, channel, seq, author, &id).await?;
     }
     tx.commit().await?;
     Ok(Outcome::Posted {
@@ -698,6 +735,29 @@ mod tests {
         assert!(s.insert.contains("insert into message"));
         assert!(attach_find_raw().contains("for update"));
         assert!(s.guard_words.iter().any(|w| w == "harkroom://message/"));
+    }
+
+    #[test]
+    fn question_only_is_narrow() {
+        for b in [
+            "그게 뭐야?",
+            "왜？",
+            "<@0b6f8d2e-3c1a-4f5e-9a7b-1c2d3e4f5a6b> 이건 어떻게 돼?",
+        ] {
+            assert!(question_only(b), "{b}");
+        }
+        for b in [
+            "A 로",
+            "1번",
+            "`왜?` 는 말고 B",
+            "> 이거 뭐야?\nB 로",
+            "  > 인용?\n2",
+            "B 로\r> 뭐야?",
+            "B\u{2028}> 뭐?",
+            "",
+        ] {
+            assert!(!question_only(b), "{b}");
+        }
     }
 
     #[test]

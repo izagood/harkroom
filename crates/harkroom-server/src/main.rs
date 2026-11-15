@@ -166,6 +166,32 @@ async fn main() {
         }
         _ => None,
     };
+    // C4b ④-a(2/2) — MCP `bg.complete`(러너 길). 쓰기 풀에 회차 닫기·메모 보관 권한이 있을 때만 — 아니면 TS 에 남는다.
+    let bg_complete_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            match write::missing_in(
+                w,
+                harkroom_server::core::mcp::bg_complete::BG_COMPLETE_PRIVILEGES,
+                &[],
+            )
+            .await
+            {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: mcp bg.complete core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: mcp bg.complete core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     let react_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
             use harkroom_server::core::msg_react as r;
@@ -184,6 +210,27 @@ async fn main() {
                 Err(e) => {
                     eprintln!(
                         "front: reaction core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+    // C4b — MCP `delegation.close` 의 쓰기(`writes::DELEGATION_CLOSE_PRIVILEGES`). 다 있을 때만 — 아니면 그 도구는 TS 가 답한다.
+    let mcp_deleg_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::mcp::writes as mw;
+            match write::missing_in(w, mw::DELEGATION_CLOSE_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: mcp delegation.close off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: mcp delegation.close off — privilege check failed ({})",
                         e.as_database_error().map_or("io", |_| "db")
                     );
                     None
@@ -314,6 +361,54 @@ async fn main() {
         }
         _ => None,
     };
+    // C6b-2 — 턴 임대 세 줄(`/agent/turn-leases*`). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 `TURN_LEASE_PRIVILEGES` 가 다 있을 때만.
+    let lease_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::turn_lease as l;
+            match write::missing_in(w, l::TURN_LEASE_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: turn lease core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: turn lease core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+    // C6a-2 — 스레드 처리 상태(`PUT /inbox/threads/{rootId}`). 쓰기 풀에 그 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+    let inbox_thread_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::inbox_thread as it;
+            match write::missing_in(
+                w,
+                it::INBOX_THREAD_PRIVILEGES,
+                it::INBOX_THREAD_SEQUENCE_PRIVILEGES,
+            )
+            .await
+            {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: inbox thread core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: inbox thread core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     let operator_on = operator_write.is_some();
     let core_router = (core_mode == harkroom_server::core::CoreMode::Rust).then(|| {
         let hub = harkroom_server::core::events::Hub::new();
@@ -406,6 +501,7 @@ async fn main() {
             core_routes.sockets.extend(edit.sockets);
         }
         // C3b-1 — 선택 카드 답하기·닫기. 권한·머지 카드와 못 읽는 카드는 핸들러가 TS 로 넘긴다.
+        let mcp_ask_write = ask_write.clone();
         if let Some(write) = ask_write {
             let ask = harkroom_server::core::ask::routes(
                 harkroom_server::core::ask::AskState {
@@ -446,15 +542,48 @@ async fn main() {
             core_routes.http.extend(ir.http);
             core_routes.sockets.extend(ir.sockets);
         }
+        // C6b-2 — 턴 임대 발급·늘리기·끝내기. 자동화 회차 글(위임장 ⑤b)은 핸들러가 TS 로 넘긴다.
+        if let Some(write) = lease_write {
+            let leases = harkroom_server::core::turn_lease_routes::routes(
+                harkroom_server::core::turn_lease_routes::LeaseState {
+                    write,
+                    up: state.up.clone(),
+                    trust: state.trust.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(leases.router);
+            core_routes.http.extend(leases.http);
+            core_routes.sockets.extend(leases.sockets);
+        }
+        // C6a-2 — 스레드 처리 상태. 쓰기 풀에 그 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = inbox_thread_write {
+            let it = harkroom_server::core::inbox_thread::routes(
+                harkroom_server::core::inbox_thread::InboxThreadState {
+                    read: state.pool.clone(),
+                    write,
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(it.router);
+            core_routes.http.extend(it.http);
+            core_routes.sockets.extend(it.sockets);
+        }
         // C4a-1 — `POST /mcp`. 에이전트 게이트·본문 한도(TS 와 같다) 뒤, Rust 가 답하는 읽기 도구(C4a-3)가 아니면 원래 바이트를 TS 로 투명 전달한다.
         let mcp = harkroom_server::core::mcp::route::routes(
             state.up.clone(),
             state.pool.clone(),
-            // C4b — 도구 묶음마다 그 권한이 다 있는 쓰기 풀일 때만 Rust 가 답한다(리액션 · inbox.read).
+            // C4b — 도구 묶음마다 그 권한이 다 있는 쓰기 풀일 때만 Rust 가 답한다(리액션 · inbox.read ·
+            // 선택 카드 → `message.askBundleResolve` · delegation.close).
             harkroom_server::core::mcp::writes::McpWrites {
                 react: mcp_react_write,
                 inbox: inbox_write,
                 bg: bg_write,
+                ask: mcp_ask_write,
+                bg_complete: bg_complete_write,
+                delegation: mcp_deleg_write,
             },
             auth.clone(),
             state.cors.clone(),

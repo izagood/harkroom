@@ -148,7 +148,16 @@ export async function bgGate(
   return { write: true, job, args };
 }
 
-/** `/mcp/admit` 이 받지 않는 도구 — 회차 쓰기 상한·회차 닫기는 예약·부수효과가 도구 안에 있어 따로 떼어 확인할 수 없다. */
+/**
+ * 이 요청 시점에 TS 가 그 도구를 `/mcp` 에 싣는가(조건부 등록). Rust 코어는 `/mcp/admit` 답의 `registered` 로만 이것을 안다 — 앞단이
+ * TS 와 같은 env 를 받는다는 보장이 없으니 스스로 env 를 읽지 않는다(S5.3 C4b). 조건부로 싣는 도구가 늘면 여기에 더한다.
+ */
+export function toolRegisteredNow(tool: string): boolean {
+  if (tool === 'delegation.close') return delegationV2Enabled();
+  return true;
+}
+
+/** `/mcp/admit` 이 받지 않는 도구 — 회차 쓰기 상한·회차 닫기는 예약·부수효과가 도구 안에 있어 따로 떼어 확인할 수 없다. 예외: 러너 꼴의 bg.complete(admit 안 `bgRunnerComplete`). */
 const ADMIT_REFUSED = new Set([...BG_WRITE_TOOLS, 'bg.complete']);
 
 /** 미리보기 제목을 파일명으로 — 받은 파일이 무엇인지 보이게. 경로 성분·제어문자는 `displayName` 이 한 번 더 지운다. */
@@ -3280,7 +3289,11 @@ export async function registerMcp(
       return reply.code(400).send({ error: { code: 'bad_request', message: 'tool is required' } });
     }
     const tool = body.tool;
-    if (ADMIT_REFUSED.has(tool)) {
+    // bg.complete 는 러너 꼴만 받는다(security 조건 #1) — 오퍼레이터를 거쳤고 cause·턴 id 헤더가 **아예 없다**(꼴이 틀린 값도
+    // 「있음」). 그 회차의 턴(`bg:` cause)·일반 턴은 지금처럼 거절 → Rust 가 TS 로 넘기고 `/mcp` 가 답한다.
+    const bgRunnerComplete = tool === 'bg.complete' && !!req.operator
+      && req.headers[CAUSE_HEADER] === undefined && req.headers[TURN_ID_HEADER] === undefined;
+    if (ADMIT_REFUSED.has(tool) && !bgRunnerComplete) {
       return reply.code(400).send({ error: { code: 'not_admissible', message: `${tool} is not answered outside /mcp` } });
     }
     const args = body.arguments ?? {};
@@ -3300,7 +3313,7 @@ export async function registerMcp(
     }
     // bg.claim 은 켜짐(전역 스위치)을 같이 알려 준다 — Rust 앞단이 자기 env 가 아니라 이 값으로만 답한다(켜짐의 출처를 하나로).
     if (tool === 'bg.claim') return { admitted: true, bgEnabled: backgroundEnabled() };
-    return { admitted: true };
+    return { admitted: true, registered: toolRegisteredNow(tool) };
   });
 }
 

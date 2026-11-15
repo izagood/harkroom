@@ -115,7 +115,7 @@ async function operatorWriteRole(db: { pool: pg.Pool; uri: string }, grants: rea
 }
 
 describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () => {
-  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention', 'mandate_idle', 'permission_expire', 'bg', 'bg_produce', 'outbox_prune', 'turn_lease', 'decide_core_db']) {
+  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention', 'mandate_idle', 'permission_expire', 'bg', 'bg_produce', 'outbox_prune', 'turn_lease', 'inbox_list', 'decide_core_db']) {
     it(`tests/${name}.rs`, async () => {
       const db = await startTestDb();
       try {
@@ -1255,6 +1255,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         ...OPERATOR_GRANTS.map((g) => `grant ${g} to ${rw}`),
         // S5.3 C3a-1 — 리액션 쓰기(`msg_react.rs::MESSAGE_REACTION_PRIVILEGES`). 없으면 앞단은 리액션 줄을 TS 에 남긴다.
         `grant insert, update, delete on message_reaction to ${rw}`,
+        // S5.3 C4b — MCP delegation.close(`writes.rs::DELEGATION_CLOSE_PRIVILEGES`). 고치는 칸의 UPDATE 만 준다(읽는 칸의 SELECT 는 위 pg_read_all_data). 없으면 그 도구는 TS 가 답한다.
+        `grant update (outcome, closed_reason, closed_at, update_pending_message_id, update_pending_at) on team_delegation_item to ${rw}`,
+        `grant update (notified_at) on team_delegation to ${rw}`,
         // 칸 권한만 — 앞단이 `has_column_privilege` 로 알아보고 리액션 줄을 붙여야 한다(아래 「reaction core off」 없음).
         `grant update (meta) on message to ${rw}`,
         // S5.3 C3a-2 — 지우기·채널에도 보이기(`msg_delete.rs::MESSAGE_DELETE_PRIVILEGES`). 칸 권한 둘. 없으면 「message delete core off」.
@@ -1268,6 +1271,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // C4b ④-a(2/2) — MCP bg.claim(`bg_claim.rs::BG_CLAIM_PRIVILEGES`).
         `grant select on bg_job to ${rw}`,
         `grant update (status, claimed_at) on bg_job to ${rw}`,
+        // C4b ④-a(2/2) — MCP bg.complete 러너 길(`bg_complete.rs::BG_COMPLETE_PRIVILEGES`).
+        `grant update (summary, error, tokens, duration_ms, finished_at) on bg_job to ${rw}`,
+        `grant select (account_id, thread_root_id, archived_at) on thread_note to ${rw}`,
+        `grant update (archived_at, archived_by_run) on thread_note to ${rw}`,
         `grant insert on push_job to ${rw}`,
         `grant update (hidden_at) on channel_pref to ${rw}`,
         // S5.3 C1c-1 — 글 올리기 뼈대(`msg_post.rs::MESSAGE_POST_PRIVILEGES`). 없으면 「message post core off」(아래에서 그 길도 본다).
@@ -1278,6 +1285,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant insert on mandate to ${rw}`,
         `grant update (last_activity_at) on mandate to ${rw}`,
         `grant update (mandate_id) on message to ${rw}`,
+        // S5.3 C1c-3b — 사람 답글의 깨움 선점(fired_at·message.meta 는 아래 깨움 루프 줄에 이미 있다).
+        `grant update (canceled_at, canceled_by_message_id) on agent_wake to ${rw}`,
         // S5.3 C5b — 예약 깨움 루프(`loops/wake.rs::WAKE_PRIVILEGES`). 없으면 「loop wake off」 — 루프는 TS 에 남는다.
         ...WAKE_GRANTS.map((g) => `grant ${g} to ${rw}`),
         // S5.3 C5c — 보존 정리 루프(`loops/retention.rs::RETENTION_PRIVILEGES`).
@@ -1294,6 +1303,11 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         ...OUTBOX_PRUNE_GRANTS.map((g) => `grant ${g} to ${rw}`),
         // S5.3 C6a-1 — 인박스 읽음 표시(`core/inbox_read.rs::INBOX_READ_PRIVILEGES`). 칸 권한 하나. 없으면 「inbox read core off」.
         `grant update (read_at) on inbox to ${rw}`,
+        // S5.3 C6b-2 — 턴 임대 세 줄(`core/turn_lease.rs::TURN_LEASE_PRIVILEGES`). 없으면 「turn lease core off」.
+        ...TURN_LEASE_GRANTS.map((g) => `grant ${g} to ${rw}`),
+        // S5.3 C6a-2 — 스레드 처리 상태(`core/inbox_thread.rs::INBOX_THREAD_PRIVILEGES`). 없으면 「inbox thread core off」.
+        `grant insert, delete on inbox_thread_state to ${rw}`,
+        `grant update (state, until, updated_at) on inbox_thread_state to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -1805,6 +1819,91 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       } finally {
         await db.pool.query(`grant insert on message_reaction to ${rw}`);
       }
+      // S5.3 C4b — delegation.close. TS 가 조건부로 싣는 도구(env HARKROOM_DELEGATION_V2)라 admit 의 `registered` 로만 Rust 가 답한다.
+      // TS·Rust 가 각자 같은 꼴의 위임 묶음(내가 낸 것 둘 + 남이 낸 것 하나)에 같은 일을 하고, 답 글자와 남은 행을 비교한다.
+      const mkDelegations = async (label: string) => {
+        const root = await say(`${label} 위임 스레드`, { ch: readCh });
+        const mine = (await db.pool.query<{ id: string }>(
+          `insert into team_delegation (message_id, lead_account_id, channel_id, thread_root_id, deadline_at, kind)
+           values ($1, $2, $3, $1, now() + interval '1 day', 'delegate') returning id`, [root, agent.accountId, readCh])).rows[0]!.id;
+        const mine2 = (await db.pool.query<{ id: string }>(
+          `insert into team_delegation (message_id, lead_account_id, channel_id, thread_root_id, deadline_at, kind)
+           values ($1, $2, $3, $1, now() + interval '1 day', 'delegate') returning id`, [root, agent.accountId, readCh])).rows[0]!.id;
+        const theirs = (await db.pool.query<{ id: string }>(
+          `insert into team_delegation (message_id, lead_account_id, channel_id, thread_root_id, deadline_at, kind)
+           values ($1, $2, $3, $1, now() + interval '1 day', 'delegate') returning id`, [root, bot2.accountId, readCh])).rows[0]!.id;
+        await db.pool.query(
+          `insert into team_delegation_item (delegation_id, delegate_account_id) values ($1, $3), ($2, $4), ($5, $3)`,
+          [mine, mine2, bot2.accountId, admin.accountId, theirs]);
+        return { root, mine, mine2, theirs };
+      };
+      const itemRows = async (d: { mine: string; mine2: string; theirs: string }) => (await db.pool.query<{ k: string; outcome: string | null; closed_reason: string | null; closed: boolean; notified: boolean }>(
+        `select case i.delegation_id when $1 then 'mine' when $2 then 'mine2' else 'theirs' end as k, i.outcome, i.closed_reason,
+                i.closed_at is not null as closed, d.notified_at is not null as notified
+           from team_delegation_item i join team_delegation d on d.id = i.delegation_id
+          where i.delegation_id = any(array[$1, $2, $3]::uuid[]) order by k`,
+        [d.mine, d.mine2, d.theirs])).rows;
+      const DT = await mkDelegations('TS');
+      const DR = await mkDelegations('Rust');
+      const prevV2 = process.env.HARKROOM_DELEGATION_V2;
+      try {
+        // 스위치 꺼짐 — TS 는 이 도구를 싣지 않는다 → Rust 도 답하지 않고 TS 의 「도구 없음」이 그대로 나간다.
+        delete process.env.HARKROOM_DELEGATION_V2;
+        {
+          const a = await mcpCall(tsUrl, agent.pat, 'delegation.close', { threadRootId: DT.root });
+          const b = await mcpCall(rsUrl4, agent.pat, 'delegation.close', { threadRootId: DR.root });
+          expect({ status: b.status, type: b.type, text: b.text.split(DR.root).join('<root>') }, 'V2 꺼짐 → TS 의 도구 없음')
+            .toEqual({ status: a.status, type: a.type, text: a.text.split(DT.root).join('<root>') });
+          expect(b.core, 'V2 꺼짐 — Rust 는 답하지 않는다').toBeNull();
+          expect(b.text).toContain('delegation.close');
+        }
+        process.env.HARKROOM_DELEGATION_V2 = '1';
+        const steps = (d: typeof DT) => [
+          ['모르는 담당 → not_found', { threadRootId: d.root, delegate: 'no-such-handle' }],
+          ['담당 하나만(@ 붙임)', { threadRootId: d.root, delegate: '@bot2' }],
+          ['나머지 전부', { threadRootId: d.root }],
+          ['다시(이미 닫힘 → 0)', { threadRootId: d.root }],
+          ['남의 위임 id → 닫히지 않음(0)', { threadRootId: d.root, delegationId: d.theirs }],
+          ['uuid 아님 → TS', { threadRootId: 'x' }],
+          ['delegate 101자 → TS', { threadRootId: d.root, delegate: 'x'.repeat(101) }],
+        ] as const;
+        const tsSteps = steps(DT);
+        const rsSteps = steps(DR);
+        for (let i = 0; i < tsSteps.length; i++) {
+          const [name, ta] = tsSteps[i]!;
+          const [, ra] = rsSteps[i]!;
+          const a = await mcpCall(tsUrl, agent.pat, 'delegation.close', ta);
+          const b = await mcpCall(rsUrl4, agent.pat, 'delegation.close', ra);
+          expect({ status: b.status, type: b.type, text: b.text }, `delegation.close ${name}`).toEqual({ status: a.status, type: a.type, text: a.text });
+          expect(b.core, `delegation.close ${name} — 누가 답했나`).toBe(name.endsWith('→ TS') ? null : 'mcp');
+        }
+        // W7 — 거부·빈 길을 Rust 쪽에서 따로 본다(bot2 는 이 위임 묶음의 리드가 아니다 — 픽스처에서 확인).
+        expect((await db.pool.query(`select 1 from team_delegation where id = $1 and lead_account_id = $2`, [DR.theirs, agent.accountId])).rowCount).toBe(0);
+        const nf = await mcpCall(rsUrl4, agent.pat, 'delegation.close', { threadRootId: DR.root, delegate: 'no-such-handle' });
+        expect(nf.core).toBe('mcp');
+        expect(nf.text).toContain('\\"code\\":\\"not_found\\"');
+        const theirs = await mcpCall(rsUrl4, agent.pat, 'delegation.close', { threadRootId: DR.root, delegationId: DR.theirs });
+        expect(theirs.core).toBe('mcp');
+        expect(theirs.text).toContain('closed\\":0');
+        // 행 — TS 와 Rust 가 같은 결과(내 것 둘은 delegator_close·알림 처리, 남의 것은 그대로).
+        expect(await itemRows(DR), 'Rust 행 = TS 행').toEqual(await itemRows(DT));
+        expect((await itemRows(DR)).find((r) => r.k === 'theirs')).toMatchObject({ outcome: null, closed: false });
+        expect((await itemRows(DR)).filter((r) => r.k !== 'theirs').every((r) => r.closed_reason === 'delegator_close' && r.notified)).toBe(true);
+        // W1 — 쓰기를 시작한 뒤 오류: 쓰기 역할에서 칸 권한을 잠깐 거두면 Rust 가 internal 로 답하고 TS 가 대신 닫지 않는다.
+        const DW = await mkDelegations('W1');
+        await db.pool.query(`revoke update (outcome) on team_delegation_item from ${rw}`);
+        try {
+          const w1 = await mcpCall(rsUrl4, agent.pat, 'delegation.close', { threadRootId: DW.root });
+          expect(w1.core, 'W1 — Rust 가 답한다').toBe('mcp');
+          expect(w1.text).toContain('\\"code\\":\\"internal\\"');
+          expect((await itemRows(DW)).every((r) => r.outcome === null && !r.closed), 'TS 가 대신 닫지 않았다').toBe(true);
+        } finally {
+          await db.pool.query(`grant update (outcome) on team_delegation_item to ${rw}`);
+        }
+      } finally {
+        if (prevV2 === undefined) delete process.env.HARKROOM_DELEGATION_V2; else process.env.HARKROOM_DELEGATION_V2 = prevV2;
+      }
+
       // Rust 만 쓴 줄 — DB 에 남고 이벤트(outbox)가 TS 와 같은 모양으로 나간다.
       const rustOnly = await say('Rust 만 리액션', { ch: readCh });
       const outboxBefore = (await db.pool.query<{ n: number }>(`select count(*)::int as n from event_outbox`)).rows[0]!.n;
@@ -1887,6 +1986,191 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(b!.text).toMatch(/outside_window|none/);
       } finally {
         if (prevBg === undefined) delete process.env.HARKROOM_BACKGROUND_ENABLED; else process.env.HARKROOM_BACKGROUND_ENABLED = prevBg;
+      }
+
+      // S5.3 C4b-ask — message.askBundleResolve. TS·Rust 가 **각자의 묶음·원본**으로 같은 시나리오를 돌리고, 답 글자(id·시각만 자리표로)·
+      // 원본 meta·깨움 inbox·실시간 이벤트를 견준다. 묶음 줄(TS askBundleItem 모양)은 meta 로 직접 세운다 — askBundle 은 아직 TS 다.
+      {
+        const bOpts = [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }];
+        const cardMeta = (extra: Record<string, unknown> = {}, top: Record<string, unknown> = {}) =>
+          ({ kind: 'ask', ask: { prompt: '고를까?', options: bOpts, to: { kind: 'human' }, ...extra }, ...top });
+        const fixture = async (tag: string) => {
+          const root = await say(`${tag} 원본`, { ch: readCh, author: bot2.accountId, meta: cardMeta() });
+          const answered = await say(`${tag} 답한 원본`, { ch: readCh, author: bot2.accountId, meta: cardMeta({ answeredWith: 'a' }) });
+          const perm = await say(`${tag} 권한 원본`, { ch: readCh, author: bot2.accountId, meta: cardMeta({}, { permissionRequest: { kind: 'tool' } }) });
+          const linked = await say(`${tag} 링크 줄 원본`, { ch: readCh, author: bot2.accountId, meta: cardMeta() });
+          const toMem = await say(`${tag} mem 앞 원본`, { ch: readCh, author: bot2.accountId, meta: cardMeta({ to: { kind: 'account', accountId: member.accountId } }) });
+          const plain = await say(`${tag} 카드 아님`, { ch: readCh, author: bot2.accountId });
+          const item = (rootId: string, extra: Record<string, unknown> = {}) => ({ rootId, prompt: '고를까?', options: bOpts, ...extra });
+          const items = [item(root), item(answered), item(perm), item(linked, { link: { kind: 'permission' } }), item(toMem), item(plain)];
+          const bundle = await say(`${tag} 묶음`, { ch: readCh, meta: { kind: 'askBundle', askBundle: { items } } });
+          const notMine = await say(`${tag} 남의 묶음`, { ch: readCh, author: bot2.accountId, meta: { kind: 'askBundle', askBundle: { items } } });
+          const reply = await say(`${tag} 사람 답`, { ch: readCh, root: bundle, author: admin.accountId });
+          const agentReply = await say(`${tag} 에이전트 답`, { ch: readCh, root: bundle });
+          const elsewhere = await say(`${tag} 다른 스레드 사람 글`, { ch: readCh, author: admin.accountId });
+          // Rust 가 정하지 않고 TS 로 넘기는 원본(hand_to_ts — 백스톱·권한 거울 표지). 넘긴 줄의 쓰기·이벤트는 TS 에서 나므로
+          // 위 묶음·bot2 깨움과 섞이지 않게 따로 묶고 에이전트가 세운다(깨움은 에이전트 앞).
+          const backstop = await say(`${tag} 백스톱 원본`, { ch: readCh, meta: cardMeta({}, { chainBackstop: { agentId: bot2.accountId } }) });
+          const pmirror = await say(`${tag} 권한 거울 원본`, { ch: readCh, meta: cardMeta({}, { permissionMirror: { requestId: missingCh } }) });
+          const hBundle = await say(`${tag} 넘김 묶음`, { ch: readCh, meta: { kind: 'askBundle', askBundle: { items: [item(backstop), item(pmirror)] } } });
+          const hReply = await say(`${tag} 넘김 사람 답`, { ch: readCh, root: hBundle, author: admin.accountId });
+          return { root, answered, perm, linked, toMem, plain, bundle, notMine, reply, agentReply, elsewhere, backstop, pmirror, hBundle, hReply };
+        };
+        type Fx = Awaited<ReturnType<typeof fixture>>;
+        const [fT, fR] = [await fixture('T'), await fixture('R')];
+        const ids = (x: Fx) => Object.entries(x).map(([k, v]) => [v, `<${k}>`] as const);
+        const normText = (t: string, x: Fx) => ids(x)
+          .reduce((s, [v, k]) => s.split(v).join(k), t)
+          .replace(/\d{4}-\d\d-\d\dT[\d:.]+(Z|[+-]\d\d:\d\d)/g, '<ts>')
+          .replace(/(\\*"seq\\*":)\d+/g, '$1"<seq>"')
+          .replace(/(T|R) (원본|답한 원본|권한 원본|링크 줄 원본|mem 앞 원본|카드 아님|묶음|남의 묶음|사람 답|에이전트 답|다른 스레드 사람 글|백스톱 원본|권한 거울 원본|넘김 묶음|넘김 사람 답)/g, '$2');
+        const cases: [string, (x: Fx) => unknown, boolean][] = [
+          ['없는 묶음', (x) => ({ bundleId: missingCh, rootId: x.root, replyMessageId: x.reply }), true],
+          ['남의 묶음', (x) => ({ bundleId: x.notMine, rootId: x.root, replyMessageId: x.reply }), true],
+          ['묶음 아닌 글', (x) => ({ bundleId: x.plain, rootId: x.root, replyMessageId: x.reply }), true],
+          ['줄 없음', (x) => ({ bundleId: x.bundle, rootId: x.reply, replyMessageId: x.reply }), true],
+          ['권한 원본', (x) => ({ bundleId: x.bundle, rootId: x.perm, replyMessageId: x.reply }), true],
+          ['링크 줄', (x) => ({ bundleId: x.bundle, rootId: x.linked, replyMessageId: x.reply }), true],
+          ['에이전트 글', (x) => ({ bundleId: x.bundle, rootId: x.root, replyMessageId: x.agentReply }), true],
+          ['다른 스레드 글', (x) => ({ bundleId: x.bundle, rootId: x.root, replyMessageId: x.elsewhere }), true],
+          ['답한 원본', (x) => ({ bundleId: x.bundle, rootId: x.answered, replyMessageId: x.reply }), true],
+          ['mem 앞 원본에 admin 글', (x) => ({ bundleId: x.bundle, rootId: x.toMem, replyMessageId: x.reply }), true],
+          ['카드 아닌 원본', (x) => ({ bundleId: x.bundle, rootId: x.plain, replyMessageId: x.reply }), true],
+          // hand_to_ts — 이 검사를 끄면 Rust 가 닫아 core 가 'mcp' 가 된다(빨강).
+          ['백스톱 원본 → TS', (x) => ({ bundleId: x.hBundle, rootId: x.backstop, replyMessageId: x.hReply }), false],
+          ['권한 거울 원본 → TS', (x) => ({ bundleId: x.hBundle, rootId: x.pmirror, replyMessageId: x.hReply }), false],
+          ['note 빈 글 → TS(zod)', (x) => ({ bundleId: x.bundle, rootId: x.root, replyMessageId: x.reply, note: '' }), false],
+          ['note 숫자 → TS(zod)', (x) => ({ bundleId: x.bundle, rootId: x.root, replyMessageId: x.reply, note: 1 }), false],
+          ['uuid 아님 → TS', (x) => ({ bundleId: 'x', rootId: x.root, replyMessageId: x.reply }), false],
+          ['인자 없음 → TS', () => undefined, false],
+          ['닫기', (x) => ({ bundleId: x.bundle, rootId: x.root, replyMessageId: x.reply, note: '  A 로 가자  ' }), true],
+          ['다시 닫기', (x) => ({ bundleId: x.bundle, rootId: x.root, replyMessageId: x.reply }), true],
+        ];
+        const seenB: WorkspaceEvent[] = [];
+        const offB = onEvent((e) => { seenB.push(e); });
+        const busFromB = busEvents.length;
+        for (const [name, args, byRust] of cases) {
+          const a = await mcpCall(tsUrl, agent.pat, 'message.askBundleResolve', args(fT));
+          const b = await mcpCall(rsUrl4, agent.pat, 'message.askBundleResolve', args(fR));
+          expect({ status: b.status, type: b.type, text: normText(b.text, fR) }, name)
+            .toEqual({ status: a.status, type: a.type, text: normText(a.text, fT) });
+          expect(b.core, `${name} — 누가 답했나`).toBe(byRust ? 'mcp' : null);
+        }
+        // 빈 것끼리 같아 통과하지 않게 — 거절 코드와 성공 모양을 Rust 답에서 따로 본다.
+        const rsB = (args: unknown) => mcpCall(rsUrl4, agent.pat, 'message.askBundleResolve', args);
+        for (const [code, args] of [
+          ['bundle_not_found', { bundleId: missingCh, rootId: fR.root, replyMessageId: fR.reply }],
+          ['bundle_not_yours', { bundleId: fR.notMine, rootId: fR.root, replyMessageId: fR.reply }],
+          ['bundle_item_not_found', { bundleId: fR.bundle, rootId: fR.reply, replyMessageId: fR.reply }],
+          ['bundle_item_link', { bundleId: fR.bundle, rootId: fR.perm, replyMessageId: fR.reply }],
+          ['bundle_reply_invalid', { bundleId: fR.bundle, rootId: fR.toMem, replyMessageId: fR.reply }],
+          ['bundle_item_resolved', { bundleId: fR.bundle, rootId: fR.answered, replyMessageId: fR.reply }],
+          ['mirror_not_found', { bundleId: fR.bundle, rootId: fR.plain, replyMessageId: fR.reply }],
+        ] as const) {
+          const r = await rsB(args);
+          expect(r.core, code).toBe('mcp');
+          expect(r.text, code).toContain(`\\"code\\":\\"${code}\\"`);
+        }
+        // 원본 meta — 닫은 이름은 글쓴 사람(admin), 요지는 다듬어 실리고 요지를 옮긴 쪽은 에이전트.
+        const askOf = async (id: string) => (await db.pool.query<{ ask: Record<string, unknown> }>(
+          `select meta->'ask' as ask from message where id = $1`, [id])).rows[0]!.ask;
+        const strip = (a: Record<string, unknown>, x: Fx) => ({ ...a, closedAt: typeof a.closedAt, replyMessageId: a.replyMessageId === x.reply });
+        expect(strip(await askOf(fR.root), fR), 'Rust 원본 = TS 원본').toEqual(strip(await askOf(fT.root), fT));
+        expect(await askOf(fR.root)).toMatchObject({ closedBy: admin.accountId, closedReason: 'replied', replyNote: 'A 로 가자', replyNoteBy: agent.accountId });
+        // 원본을 세운 쪽(bot2) 깨움 — 양쪽 다 ask_closed 한 줄.
+        const woke = async (id: string) => (await db.pool.query<{ reason: string }>(
+          `select reason from inbox where account_id = $1 and message_id = $2`, [bot2.accountId, id])).rows.map((r) => r.reason);
+        expect(await woke(fR.root)).toEqual(await woke(fT.root));
+        expect(await woke(fR.root)).toEqual(['ask_closed']);
+        // 실시간 이벤트 — TS(onEvent) 와 Rust(outbox → 버스)를 audience 까지 견준다. 상태 리액션(TS 감시자가 message.updated 를 듣고
+        // 다는 것)은 Rust 쪽에서도 TS 프로세스가 내므로 쓰기 이벤트와 따로 둔다(C3b-1 대조와 같은 까닭).
+        const mine = (list: WorkspaceEvent[], x: Fx) => list
+          .filter((e) => !e.type.startsWith('reaction.'))
+          .filter((e) => { const s = JSON.stringify(e); return s.includes(x.root) || s.includes(x.bundle) || (e.type === 'inbox.updated' && (e as { accountId?: string }).accountId === bot2.accountId); })
+          .map((e) => JSON.parse(normText(JSON.stringify(e), x)) as unknown)
+          // 묶음 맞추기의 차례는 TS·Rust 모두 정하지 않는다(order by 없음) — 차례 말고 모음으로 견준다.
+          .sort((p, q) => JSON.stringify(p).localeCompare(JSON.stringify(q)));
+        const untilB = Date.now() + 5000;
+        while (mine(busEvents.slice(busFromB), fR).length < mine(seenB, fT).length && Date.now() < untilB) await new Promise((r) => setTimeout(r, 50));
+        offB();
+        expect(mine(seenB, fT).length, 'TS 이벤트가 있다').toBeGreaterThanOrEqual(3);
+        expect(mine(busEvents.slice(busFromB), fR), 'Rust 이벤트 = TS 이벤트').toEqual(mine(seenB, fT));
+
+        // W1 — 쓰기 뒤 오류는 TS 로 넘기지 않는다. meta 고치기 권한을 잠깐 거두면 update 가 실패 → Rust internal, 원본은 열린 채.
+        const w1 = await fixture('W');
+        await db.pool.query(`revoke update (meta) on message from ${rw}`);
+        try {
+          const r = await rsB({ bundleId: w1.bundle, rootId: w1.root, replyMessageId: w1.reply });
+          expect(r.core, 'W1 — Rust 가 답한다').toBe('mcp');
+          expect(r.text).toContain('\\"code\\":\\"internal\\"');
+          expect((await askOf(w1.root)).closedAt, 'TS 가 대신 닫지 않았다').toBeUndefined();
+        } finally {
+          await db.pool.query(`grant update (meta) on message to ${rw}`);
+        }
+
+        // 대문자 replyMessageId — 원본 meta 에는 입력 글자가 아니라 DB 의 id(소문자)가 적힌다. TS(`reply.id`)와 같다.
+        const [uT, uR] = [await fixture('UT'), await fixture('UR')];
+        const upper = (x: Fx) => ({ bundleId: x.bundle, rootId: x.root, replyMessageId: x.reply.toUpperCase() });
+        expect((await mcpCall(tsUrl, agent.pat, 'message.askBundleResolve', upper(uT))).core, '대문자 — TS').toBeNull();
+        expect((await rsB(upper(uR))).core, '대문자 — Rust 가 답한다').toBe('mcp');
+        expect((await askOf(uT.root)).replyMessageId, 'TS 는 소문자로 적는다').toBe(uT.reply);
+        expect((await askOf(uR.root)).replyMessageId, 'Rust 도 소문자로 적는다').toBe(uR.reply);
+      }
+
+      // S5.3 C4b ④-a(2/2) — bg.complete 러너 길(security 조건 셋). 러너면 Rust 가 닫고, 회차의 턴·일반 턴은 TS 가 답한다.
+      // 골든 ① 남의 계정 회차(not_found) ② 이미 닫힌 회차(not_running) ③ cause 턴(TS) ④ bg 회차 턴(TS). 닫기 + distill 메모 보관은 한 tx.
+      {
+        const job = async (owner: string, day: string, status: string, kind = 'distill', input: unknown = {}) =>
+          String((await db.pool.query(`insert into bg_job (account_id, kind, day, status, input) values ($1, $2, $3, $4, $5) returning id`,
+            [owner, kind, day, status, JSON.stringify(input)])).rows[0].id);
+        const cPair = async (args: unknown, extra: Record<string, string>, token = bgOp.token) =>
+          [await mcpCall(tsUrl, token, 'bg.complete', args, 1, extra), await mcpCall(rsUrl4, token, 'bg.complete', args, 1, extra)];
+        const foreign = await job(admin.accountId, '2001-01-01', 'running');
+        const closed = await job(agent.accountId, '2001-01-02', 'done');
+        for (const [name, args, extra, core, code] of [
+          ['bg.complete ① 남의 계정 회차 → not_found', { jobId: foreign, status: 'done' }, asRunner, 'mcp', 'not_found'],
+          ['bg.complete ② 이미 닫힌 회차 → not_running', { jobId: closed, status: 'failed', error: 'x' }, asRunner, 'mcp', 'not_running'],
+          ['bg.complete ③ cause 턴 → TS', { jobId: closed, status: 'done' }, { ...asRunner, 'x-harkroom-cause': foreign }, null, 'not_your_job'],
+          ['bg.complete 꼴 틀린 cause 도 → TS', { jobId: closed, status: 'done' }, { ...asRunner, 'x-harkroom-cause': 'mention:x' }, null, ''],
+          ['bg.complete ④ bg 회차 턴 → TS', { jobId: closed, status: 'done' }, { ...asRunner, 'x-harkroom-cause': `bg:${closed}` }, null, 'bg_job_not_running'],
+          ['bg.complete 턴 id → TS', { jobId: closed, status: 'done' }, { ...asRunner, 'x-harkroom-turn-id': foreign }, null, 'not_your_job'],
+          ['bg.complete 빈 턴 id 도 → TS', { jobId: closed, status: 'done' }, { ...asRunner, 'x-harkroom-turn-id': '' }, null, ''],
+          ['bg.complete 틀린 인자 → TS', { jobId: closed, status: 'running' }, asRunner, null, ''],
+        ] as const) {
+          const [a, b] = await cPair(args, extra);
+          expect({ status: b!.status, type: b!.type, text: b!.text }, name).toEqual({ status: a!.status, type: a!.type, text: a!.text });
+          expect(b!.core, `${name} — 누가 답했나`).toBe(core);
+          expect(a!.text, name).toContain(code);
+        }
+        const [, pb] = await cPair({ jobId: closed, status: 'done' }, {}, agent.pat);
+        expect(pb!.core, 'bg.complete PAT → TS').toBe(null);
+        // 닫기 + 메모 보관 — TS 가 하나, Rust 가 하나를 닫아 결과(글자·행)를 맞댄다. 남의 계정 메모·입력 밖 스레드 메모는 그대로.
+        const r1 = await say('bg 증류 스레드 1'), r2 = await say('bg 증류 스레드 2'), r3 = await say('입력 밖 스레드');
+        for (const r of [r1, r2, r3]) await db.pool.query(`insert into thread_note (account_id, thread_root_id, body) values ($1, $2, 'n')`, [agent.accountId, r]);
+        await db.pool.query(`insert into thread_note (account_id, thread_root_id, body) values ($1, $2, 'n')`, [admin.accountId, r2]);
+        const jt = await job(agent.accountId, '2001-01-03', 'running', 'distill', { threadIds: [r1] });
+        const jr = await job(agent.accountId, '2001-01-04', 'running', 'distill', { threadIds: [r2] });
+        const args = (id: string) => ({ jobId: id, status: 'done', summary: '기억 2건 😀', tokens: 12, durationMs: 345 });
+        const ta = await mcpCall(tsUrl, bgOp.token, 'bg.complete', args(jt), 1, asRunner);
+        const rb = await mcpCall(rsUrl4, bgOp.token, 'bg.complete', args(jr), 1, asRunner);
+        expect({ status: rb.status, type: rb.type, text: rb.text }, 'bg.complete 닫기').toEqual({ status: ta.status, type: ta.type, text: ta.text });
+        expect(rb.core, 'bg.complete 닫기 — Rust 가 답한다').toBe('mcp');
+        const row = async (id: string) => (await db.pool.query(
+          `select status, summary, error, tokens, duration_ms, finished_at is not null as fin from bg_job where id = $1`, [id])).rows[0];
+        expect(await row(jr), 'bg.complete 닫은 행').toEqual(await row(jt));
+        expect((await row(jr)).status).toBe('done');
+        const notes = (await db.pool.query(
+          `select account_id, thread_root_id, archived_at is not null as arch, archived_by_run from thread_note where thread_root_id = any($1::uuid[])`,
+          [[r1, r2, r3]])).rows;
+        const note = (acc: string, r: string) => notes.find((n) => n.account_id === acc && n.thread_root_id === r);
+        expect(note(agent.accountId, r1), 'TS 가 보관').toMatchObject({ arch: true, archived_by_run: jt });
+        expect(note(agent.accountId, r2), 'Rust 가 보관').toMatchObject({ arch: true, archived_by_run: jr });
+        expect(note(agent.accountId, r3), '입력 밖 스레드는 그대로').toMatchObject({ arch: false });
+        expect(note(admin.accountId, r2), '남의 계정 메모는 그대로').toMatchObject({ arch: false });
+        // 두 번 닫기 — 덮지 않는다.
+        const [a2, b2] = await cPair({ jobId: jr, status: 'failed' }, asRunner);
+        expect({ text: b2!.text, core: b2!.core }, 'bg.complete 두 번 닫기').toEqual({ text: a2!.text, core: 'mcp' });
+        expect((await row(jr)).status).toBe('done');
       }
 
       // S5.3 C4a-6b — message.search. 본문 멘션 되돌리기·시스템 줄·스코프(채널·스레드)·거르기(보낸 사람·첨부)·정렬·쪽(51개 → hasMore,
@@ -3381,7 +3665,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       }
 
       // S5.3 C1c-3a — 사람 답글. 머리를 서버마다 새로 세우고(직접 넣거나 그 서버로 올려) 답을 TS·Rust 에 돌려 응답·글·inbox
-      // (`thread_reply`)·위임(잇기·키 없는 머리)·감사·이벤트를 견준다. 아직 TS 몫인 스레드(지워진 머리·열린 카드)도 두 쪽이 같다.
+      // (`thread_reply`)·위임(잇기·키 없는 머리)·감사·이벤트를 견준다. 아직 TS 몫인 스레드(지워진 머리)도 두 쪽이 같다. C1c-3c — 글 답으로 카드 닫기(거울·묶음 포함).
       {
         const mPath = `/channels/${todayId}/messages`;
         const saved = (await db.pool.query<{ id: string; scope: string }>(
@@ -3417,7 +3701,48 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           audit: shape((await db.pool.query(
             `select g.action, g.actor_id::text as actor, g.detail - 'mandateId' - 'rootMessageId' - 'threadRootId' as detail
                from audit_log g join message m on g.target = m.mandate_id::text where m.id = $1`, [id])).rows),
+          // C1c-3b — 이 스레드의 깨움이 접혔나(이 답 때문에)·깨었나, 대기 줄 meta 의 닫힌 시각, 깨움 inbox.
+          wakes: (await db.pool.query(
+            `select w.fired_at is not null as fired, w.canceled_at is not null as canceled, w.canceled_by_message_id is not distinct from $1::uuid as by_reply,
+                    m.meta->'wake' ? 'firedAt' as stamped_fired, m.meta->'wake' ? 'canceledAt' as stamped_canceled,
+                    (select coalesce(array_agg(i.reason order by i.id), '{}') from inbox i where i.message_id = m.id) as wake_inbox
+               from agent_wake w join message m on m.id = w.message_id
+              where m.thread_root_id = (select thread_root_id from message where id = $1)`, [id])).rows,
+          // C1c-3c — 이 스레드의 카드와 그 거울: 닫힘 사유·닫은 사람·이 답으로 닫혔나·물어본 쪽 깨움.
+          asks: shape((await db.pool.query(
+            `with t as (select thread_root_id as r from message where id = $1)
+             select m.body, m.meta->'ask'->>'closedReason' as reason, m.meta->'ask'->>'closedBy' as by,
+                    m.meta->'ask'->>'replyMessageId' is not distinct from $1::text as by_reply, m.meta->'ask' ? 'closedAt' as closed,
+                    (select coalesce(array_agg(i.account_id::text || ':' || i.reason order by i.id), '{}') from inbox i where i.message_id = m.id) as inbox
+               from message m, t
+              where m.meta->>'kind' = 'ask'
+                and (m.thread_root_id = t.r or m.meta->'ask'->>'mirrorOf' in (select id::text from message where thread_root_id = t.r))
+              order by m.body`, [id])).rows),
         } : {};
+        // 머리 하나와 그 스레드에 BOT2 가 걸어 둔 열린 깨움 하나(보고처 = 그 스레드).
+        const withWake = async () => {
+          const root = await direct(member.accountId, '질문');
+          const w = (await db.pool.query<{ id: string }>(
+            `insert into message (channel_id, thread_root_id, author_id, body, kind, meta) values ($1, $2, $3, '다시 볼게', 'user', $4::jsonb) returning id::text as id`,
+            [todayId, root, bot2.accountId, JSON.stringify({ wake: { reportTo: { channelId: todayId, threadRootId: root } } })])).rows[0]!.id;
+          await db.pool.query(`insert into agent_wake (account_id, channel_id, message_id, wake_at) values ($1, $2, $3, now() + interval '1 hour')`, [bot2.accountId, todayId, w]);
+          return root;
+        };
+        // C1c-3c — 머리 하나와 그 스레드에 BOT2 가 세운 열린 카드 하나(+ 다른 자리의 거울·묶음 카드).
+        const withAsk = (ask: Record<string, unknown>, extra: Record<string, unknown> = {}, mirror = false) => async () => {
+          const root = await direct(member.accountId, '물음');
+          const meta = (a: Record<string, unknown>) => JSON.stringify({ kind: 'ask', ...extra, ask: { prompt: '고를래?', options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }], ...a } });
+          const card = (await db.pool.query<{ id: string }>(
+            `insert into message (channel_id, thread_root_id, author_id, body, kind, meta) values ($1, $2, $3, '고를래?', 'user', $4::jsonb) returning id::text as id`,
+            [todayId, root, bot2.accountId, meta(ask)])).rows[0]!.id;
+          if (mirror) {
+            await db.pool.query(`insert into message (channel_id, author_id, body, kind, meta) values ($1, $2, '거울', 'user', $3::jsonb)`,
+              [todayId, agent.accountId, meta({ ...ask, mirrorOf: card })]);
+            await db.pool.query(`insert into message (channel_id, author_id, body, kind, meta) values ($1, $2, '묶음', 'user', $3::jsonb)`,
+              [todayId, agent.accountId, JSON.stringify({ kind: 'askBundle', askBundle: { items: [{ rootId: card }] } })]);
+          }
+          return root;
+        };
         // [이름, 머리 만들기(base → 머리 id), 답 본문(머리 id → payload), 답하는 사람]
         type Scene = [string, (base: string) => Promise<string>, (root: string) => Record<string, unknown>, string, ('ts' | undefined)?];
         const SCENES: Scene[] = [
@@ -3430,12 +3755,17 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['위임 잇기', async (b) => (await send(b, { body: '@bot 맡아 줘' }, A)).id!, () => ({}), A],
           ['키 없는 머리 → owner_reply 위임', async () => direct(admin.accountId, '계획'), (r) => ({ body: '@bot 이어서', threadRootId: r }), A],
           ['alsoInChannel', async () => direct(member.accountId, '질문'), (r) => ({ body: '채널에도', threadRootId: r, alsoInChannel: true }), A],
+          ['열린 깨움 → 지금 깨움', withWake, (r) => ({ body: '다시 봐 줘', threadRootId: r }), A],
+          ['열린 깨움 + 부름 → 접음', withWake, (r) => ({ body: '@bot2 지금 봐', threadRootId: r }), A],
           ['없는 머리 → bad_thread', async () => '00000000-0000-4000-8000-000000000000', (r) => ({ body: '답', threadRootId: r }), A],
           ['지워진 머리 → TS 몫', async () => { const id = await direct(member.accountId, '지울 글'); await db.pool.query(`update message set deleted_at = now() where id = $1`, [id]); return id; }, (r) => ({ body: '답', threadRootId: r }), A, 'ts'],
-          ['열린 카드 스레드 → TS 몫', async () => { const id = await direct(member.accountId, '물음'); await db.pool.query(
-            `insert into message (channel_id, thread_root_id, author_id, body, kind, meta) values ($1, $2, $3, '고를래?', 'user', $4::jsonb)`,
-            [todayId, id, bot2.accountId, JSON.stringify({ kind: 'ask', ask: { to: { kind: 'human' }, options: [{ id: 'a', label: 'A' }] } })]); return id; },
-          (r) => ({ body: 'A 로', threadRootId: r }), A, 'ts'],
+          ['열린 카드 + 물음 → 글 답으로 닫음', withAsk({ to: { kind: 'human' } }), (r) => ({ body: '그게 뭐야?', threadRootId: r }), A],
+          ['열린 카드 + 고르는 글 → TS 몫', withAsk({ to: { kind: 'human' } }), (r) => ({ body: 'A 로', threadRootId: r }), A, 'ts'],
+          ['열린 카드 + 인용 속 물음 → TS 몫', withAsk({ to: { kind: 'human' } }), (r) => ({ body: '> 뭐야?\nB 로', threadRootId: r }), A, 'ts'],
+          ['나에게 간 카드 → 닫음', withAsk({ to: { kind: 'account', accountId: admin.accountId } }), (r) => ({ body: 'B 는 뭐가 달라?', threadRootId: r }), A],
+          ['남에게 간 카드 → 그대로', withAsk({ to: { kind: 'account', accountId: member2.accountId } }), (r) => ({ body: '내 생각엔?', threadRootId: r }), A],
+          ['권한 요청 카드 → 그대로', withAsk({ to: { kind: 'human' } }, { permissionRequest: { rule: 'x' } }), (r) => ({ body: '이건 뭐지?', threadRootId: r }), A],
+          ['카드 + 거울 + 묶음 → 같이 닫음', withAsk({ to: { kind: 'human' } }, {}, true), (r) => ({ body: '어떤 차이야?', threadRootId: r }), A],
           ['머리 id 가 null → 400', async () => '', () => ({ body: '답', threadRootId: null }), A],
         ];
         // TS 몫 갈래는 Rust 서버에서도 TS 가 올리므로 그 장면의 이벤트는 TS 버스에서 읽는다(Rust outbox 에 없어야 한다).
@@ -3453,7 +3783,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             const r = await send(base, body, token);
             const until = Date.now() + 10_000;
             const mine = () => evs().slice(before).filter((e) =>
-              (e.type === 'message.created' && (e as { message: { id: string } }).message.id === r.id) || e.type === 'inbox.updated');
+              (e.type === 'message.created' && (e as { message: { id: string } }).message.id === r.id) || e.type === 'inbox.updated'
+              || e.type === 'thread.reportWakes.changed'
+              || (e.type === 'message.updated' && !!(e as { message: { meta?: { wake?: unknown } } }).message.meta?.wake)
+              || (e.type === 'message.updated' && ['ask', 'askBundle'].includes(String((e as { message: { meta?: { kind?: unknown } } }).message.meta?.kind))));
             while (r.status === 201 && !mine().some((e) => e.type === 'message.created') && Date.now() < until) await new Promise((res) => setTimeout(res, 100));
             await settle();
             if (side === 'ts' && own !== tsBus && own().slice(busBefore).some((e) => e.type === 'message.created' && (e as { message: { id: string } }).message.id === r.id)) handedOnRust.push(name);
@@ -3481,9 +3814,26 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(by('키 없는 머리 → owner_reply 위임').mandate).toEqual([{ owner: 'ADMIN', delegator: 'ADMIN', on_root: true, root_keyed: true }]);
         expect(by('키 없는 머리 → owner_reply 위임').audit.map((a) => a.detail.via)).toEqual(['owner_reply']);
         expect(by('alsoInChannel').message.alsoInChannel).toBe(true);
+        type W = { wakes: Record<string, unknown>[]; events: { type: string }[] };
+        const woke = (tsOut as (Row & W)[]).find((x) => x.name === '열린 깨움 → 지금 깨움')!;
+        expect(woke.wakes).toEqual([{ fired: true, canceled: false, by_reply: false, stamped_fired: true, stamped_canceled: false, wake_inbox: ['wake'] }]);
+        expect(woke.events.map((e) => e.type)).toEqual(['inbox.updated', 'thread.reportWakes.changed', 'message.updated', 'message.created', 'inbox.updated']);
+        const folded = (tsOut as (Row & W)[]).find((x) => x.name === '열린 깨움 + 부름 → 접음')!;
+        expect(folded.wakes).toEqual([{ fired: false, canceled: true, by_reply: true, stamped_fired: false, stamped_canceled: true, wake_inbox: [] }]);
         expect(by('없는 머리 → bad_thread').status).toBe(400);
         expect(by('지워진 머리 → TS 몫').status).toBe(201);
-        expect(by('열린 카드 스레드 → TS 몫').status).toBe(201);
+        type K = { asks: { body: string; reason: string | null; by: string | null; by_reply: boolean; closed: boolean; inbox: string[] }[]; events: { type: string }[] };
+        const asks = (n: string) => (tsOut as (Row & K)[]).find((x) => x.name === n)!;
+        expect(asks('열린 카드 + 물음 → 글 답으로 닫음').asks).toEqual([{ body: '고를래?', reason: 'replied', by: 'ADMIN', by_reply: true, closed: true, inbox: [] }]);
+        expect(asks('열린 카드 + 물음 → 글 답으로 닫음').events.map((e) => e.type)).toEqual(['message.created', 'inbox.updated', 'message.updated']);
+        expect(asks('열린 카드 + 고르는 글 → TS 몫').asks[0]!.closed).toBe(false);
+        expect(asks('나에게 간 카드 → 닫음').asks[0]!.reason).toBe('replied');
+        expect(asks('남에게 간 카드 → 그대로').asks[0]!.closed).toBe(false);
+        expect(asks('권한 요청 카드 → 그대로').asks[0]!.closed).toBe(false);
+        expect(asks('카드 + 거울 + 묶음 → 같이 닫음').asks).toEqual([
+          { body: '거울', reason: 'replied', by: 'ADMIN', by_reply: false, closed: true, inbox: ['BOT:ask_closed'] },
+          { body: '고를래?', reason: 'replied', by: 'ADMIN', by_reply: true, closed: true, inbox: [] },
+        ]);
         for (const r of saved) await db.pool.query(`update agent_config set invoke_scope = $2 where account_id = $1`, [r.id, r.scope]);
       }
 
@@ -3552,6 +3902,179 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         await new Promise((res) => setTimeout(res, 500));
         expect(busEvents.slice(busBefore).filter((e) => e.type === 'inbox.updated'), '읽음 표시는 이벤트가 없다').toEqual([]);
       }
+
+      // S5.3 C6b-2 — 턴 임대 세 줄(`core/turn_lease_routes.rs`). 임대는 한 번 쓰면 상태가 바뀌므로 TS·Rust 에 **각자의 부름**을 주고
+      // 같은 차례로 청해 상태·코드·본문 꼴·no-store·감사 줄을 견준다. 자동화 회차 글은 Rust 가 손대지 않고 TS 로 넘긴다 — 결과가 TS 와 같아야 한다.
+      {
+        for (const k of ['POST /agent/turn-leases', 'POST /agent/turn-leases/{id}/end', 'POST /agent/turn-leases/{id}/renew']) expect(f.log()).toContain(`"${k}"`);
+        expect(f.log()).not.toContain('turn lease core off');
+        const op = await registerOperator(app, A, 'tl-op');
+        await db.pool.query(`insert into agent_assignment (agent_id, operator_id, assigned_by) values ($1, $2, $3) on conflict (agent_id) do update set operator_id = excluded.operator_id, assigned_by = excluded.assigned_by`, [agent.accountId, op.operatorId, admin.accountId]);
+        const ch = String((await ok(app.inject({ method: 'POST', url: '/channels', headers: auth, payload: { name: 'turn-lease' } }))).id);
+        await ok(app.inject({ method: 'POST', url: `/channels/${ch}/members`, headers: auth, payload: { accountId: agent.accountId } }));
+        const autoId = (await db.pool.query(
+          `insert into automation (owner_id, channel_id, name, body, trigger, approved_at, enabled, mandate_session_at) values ($1, $2, 'tl', '@x', $3, now(), true, now()) returning id`,
+          [admin.accountId, ch, JSON.stringify({ kind: 'schedule', freq: 'weekly', weekdays: [1], time: '09:00', tz: 'Asia/Seoul' })])).rows[0].id as string;
+        let n = 0;
+        const mention = async (o: { invoked?: boolean; automation?: boolean } = {}) => {
+          n += 1;
+          const id = (await db.pool.query(`insert into message (channel_id, author_id, body, kind, meta) values ($1, $2, $3, 'user', $4) returning id`,
+            [ch, admin.accountId, `부름 ${n}`, JSON.stringify(o.automation ? { automation: { id: autoId, name: 'tl', trigger: 'schedule', runId: 'x' } } : {})])).rows[0].id as string;
+          if (o.invoked !== false) await db.pool.query(`insert into inbox (account_id, message_id, reason) values ($1, $2, 'mention')`, [agent.accountId, id]);
+          if (o.automation) {
+            await db.pool.query(`insert into automation_run (automation_id, event_key, trigger_kind, status, message_id, initiated_by) values ($1, $2, 'schedule', 'sent', $3, null)`,
+              [autoId, `tl${n}`, id]);
+          }
+          return id;
+        };
+        const side = async () => ({ cause: await mention(), cold: await mention({ invoked: false }), auto: await mention({ automation: true }) });
+        type Side = Awaited<ReturnType<typeof side>>;
+        const T = await side();
+        const R = await side();
+        const lc = async (base: string, path: string, body: unknown, who: 'agent' | 'human' | 'anon' = 'agent') => {
+          const headers: Record<string, string> = { 'x-forwarded-for': XFF, 'content-type': J };
+          if (who === 'agent') { headers.authorization = `Bearer ${op.token}`; headers['x-harkroom-agent'] = agent.accountId; }
+          if (who === 'human') headers.authorization = `Bearer ${A}`;
+          const res = await fetch(`${base}${path}`, { method: 'POST', headers, body: JSON.stringify(body) });
+          const text = await res.text();
+          const json = text ? JSON.parse(text) as Record<string, unknown> : {};
+          return { status: res.status, code: (json.error as { code?: string } | undefined)?.code, json, noStore: res.headers.get('cache-control') === 'no-store' };
+        };
+        const shapeOf = (v: unknown): unknown => v && typeof v === 'object' && !Array.isArray(v)
+          ? Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, k === 'error' ? x : shapeOf(x)]))
+          : typeof v;
+        const run = async (base: string, sd: Side) => {
+          const out: Record<string, unknown> = {};
+          const rec = (k: string, r: Awaited<ReturnType<typeof lc>>) => { out[k] = { status: r.status, code: r.code, noStore: r.noStore, body: r.status < 300 ? shapeOf(r.json) : undefined }; return r; };
+          rec('익명 → 401', await lc(base, '/agent/turn-leases', { causeMessageId: sd.cause }, 'anon'));
+          rec('사람 세션 → 403', await lc(base, '/agent/turn-leases', { causeMessageId: sd.cause }, 'human'));
+          rec('본문 없음 → 400', await lc(base, '/agent/turn-leases', {}));
+          rec('claimHolder 빈 글자 → 400', await lc(base, '/agent/turn-leases', { causeMessageId: sd.cause, claimHolder: '' }));
+          rec('안 불림 → 403', await lc(base, '/agent/turn-leases', { causeMessageId: sd.cold }));
+          const got = rec('발급 → 200', await lc(base, '/agent/turn-leases', { causeMessageId: sd.cause, claimHolder: 'runner-1' }));
+          const lease = (got.json as { lease: { id: string; token: string } }).lease;
+          rec('같은 부름 다시 → 409', await lc(base, '/agent/turn-leases', { causeMessageId: sd.cause }));
+          rec('늘리기 → 200', await lc(base, `/agent/turn-leases/${lease.id}/renew`, { token: lease.token }));
+          rec('늘리기 틀린 토큰 → 404', await lc(base, `/agent/turn-leases/${lease.id}/renew`, { token: 'nope' }));
+          rec('늘리기 사람 → 403', await lc(base, `/agent/turn-leases/${lease.id}/renew`, { token: lease.token }, 'human'));
+          rec('끝내기 잘못된 id → 400', await lc(base, '/agent/turn-leases/x/end', { token: lease.token }));
+          rec('끝내기 토큰 없음 → 400', await lc(base, `/agent/turn-leases/${lease.id}/end`, {}));
+          rec('끝내기 틀린 토큰 → 404', await lc(base, `/agent/turn-leases/${lease.id}/end`, { token: 'nope' }));
+          rec('끝내기 → 204', await lc(base, `/agent/turn-leases/${lease.id}/end`, { token: lease.token }));
+          rec('다시 끝내기 → 404', await lc(base, `/agent/turn-leases/${lease.id}/end`, { token: lease.token }));
+          rec('끝난 뒤 늘리기 → 404', await lc(base, `/agent/turn-leases/${lease.id}/renew`, { token: lease.token }));
+          rec('자동화 회차 글(TS 가 판정) → 200', await lc(base, '/agent/turn-leases', { causeMessageId: sd.auto }));
+          return out;
+        };
+        const rsBase = `http://127.0.0.1:${port}`;
+        const [tsOut, rsOut] = [await run(tsUrl, T), await run(rsBase, R)];
+        expect(rsOut).toEqual(tsOut);
+        // 쓴 것도 같다: 임대 행(끝남·연장·다시 주기 칸·위임장 유무)과 감사 줄(행위·칸 이름·ip). 토큰·해시는 감사에 없다.
+        const rows = async (sd: Side) => (await db.pool.query(
+          `select (cause_message_id = $2) as auto, ended_at is not null as ended, last_renewed_at > created_at as renewed,
+                  mandate_id is not null as mandate, reissue_of is not null as reissued
+             from secret_turn_lease where agent_id = $1 and cause_message_id = any($3::uuid[]) order by created_at`,
+          [agent.accountId, sd.auto, [sd.cause, sd.auto]])).rows;
+        expect(await rows(R)).toEqual(await rows(T));
+        const audits = async (sd: Side) => (await db.pool.query(
+          `select action, actor_id = $1::uuid as actor, target = $1::text as target, ip, (select array_agg(k order by k) from jsonb_object_keys(detail) k) as keys,
+                  detail::text ~ 'token' as token_word
+             from audit_log where action like 'secret.lease.%' and detail->>'causeMessageId' = any($2::text[]) order by id`,
+          [agent.accountId, [sd.cause, sd.cold, sd.auto]])).rows;
+        const [ta, ra] = [await audits(T), await audits(R)];
+        expect(ra).toEqual(ta);
+        expect(ra.map((r) => r.action)).toEqual(['secret.lease.issued', 'secret.lease.conflict', 'secret.lease.issued']);
+        expect(ra.every((r) => r.token_word === false)).toBe(true);
+      }
+
+      // S5.3 C6a-2 — 스레드 하나의 내 처리 상태(코어 `inbox_thread.rs`). TS·Rust 에 각자의 머리로 같은 시나리오를 돌려 응답·남은 행을 견주고,
+      // 성공한 PUT 마다 `inbox.updated` 가 한 번씩 나는지(TS 는 프로세스 안 버스, Rust 는 outbox → LISTEN) 본다. 거절은 상태·코드만.
+      {
+        expect(f.log()).toContain('"PUT /inbox/threads/{rootId}"');
+        expect(f.log()).not.toContain('inbox thread core off');
+        const sec = (ms: number) => new Date(Math.floor(ms / 1000) * 1000).toISOString();
+        const until1 = sec(Date.now() + 2 * 86_400_000);
+        const until2 = sec(Date.now() + 3 * 86_400_000).replace('.000Z', 'Z'); // 밀리초 없는 꼴도 받는다.
+        const row = async (root: string) => (await db.pool.query<{ state: string; until: string | null }>(
+          `select state, to_char(until at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as until
+             from inbox_thread_state where account_id = $1 and root_id = $2`, [member.accountId, root])).rows;
+        const tsEvents: WorkspaceEvent[] = [];
+        const off = onEvent((e) => { if (e.type === 'inbox.updated') tsEvents.push(e); });
+        const busBefore = busEvents.length;
+        const run = async (base: string) => {
+          const root = await say(`C6a-2 머리 ${base}`, { author: admin.accountId });
+          const out: unknown[] = [];
+          for (const body of [
+            { state: 'done' },
+            { state: 'later', until: until1 },
+            { state: 'later', until: until2, extra: 1 },
+            { state: 'done' },
+            { state: null },
+            { state: null },
+          ]) {
+            const r = await callX(base, 'PUT', `/inbox/threads/${root}`, body, member.token);
+            const st = r.json.state as Record<string, unknown> | null | undefined;
+            out.push({
+              status: r.status,
+              state: st && { ...st, rootId: st.rootId === root, updatedAt: typeof st.updatedAt === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(st.updatedAt) },
+              keys: Object.keys(r.json),
+            }, await row(root));
+          }
+          return out;
+        };
+        const [tsOut, rsOut] = [await run(tsUrl), await run(rsUrl)];
+        expect(rsOut).toEqual(tsOut);
+        expect(tsOut[0]).toEqual({ status: 200, state: { rootId: true, state: 'done', until: null, updatedAt: true }, keys: ['state'] });
+        expect(tsOut[3]).toEqual([{ state: 'later', until: until1.replace('.000Z', 'Z') }]);
+        expect(tsOut[4]).toEqual({ status: 200, state: { rootId: true, state: 'later', until: until2.replace('Z', '.000Z'), updatedAt: true }, keys: ['state'] });
+        expect(tsOut[9]).toEqual([]);
+        expect(tsOut[10]).toEqual({ status: 200, state: null, keys: ['state'] });
+        // 거절 — 행을 바꾸지 않는 요청만.
+        const root = await say('C6a-2 거절 머리', { author: admin.accountId });
+        const reply = await say('C6a-2 답글', { root, author: admin.accountId });
+        const gone = await say('C6a-2 지운 머리', { author: admin.accountId });
+        await db.pool.query(`update message set deleted_at = now() where id = $1`, [gone]);
+        const hidden = await say('C6a-2 비공개 머리', { ch: privId, author: admin.accountId });
+        const P = (id: string) => `/inbox/threads/${id}`;
+        for (const [name, path, body, token] of [
+          ['익명 → 401', P(root), { state: 'done' }, ''],
+          ['rootId uuid 아님 → 400', P('x'), { state: 'done' }, member.token],
+          ['본문 빈 객체 → 400', P(root), {}, member.token],
+          ['state 모름 → 400', P(root), { state: 'nope' }, member.token],
+          ['later 에 until 없음 → 400', P(root), { state: 'later' }, member.token],
+          ['until 오프셋 꼴 → 400', P(root), { state: 'later', until: '2099-01-01T00:00:00+09:00' }, member.token],
+          ['until 날짜만 → 400', P(root), { state: 'later', until: '2099-01-01' }, member.token],
+          ['until 숫자 → 400', P(root), { state: 'later', until: Date.now() + 86_400_000 }, member.token],
+          ['until 지난 시각 → 400 bad_until', P(root), { state: 'later', until: '2020-01-01T00:00:00Z' }, member.token],
+          ['until 91일 → 400 bad_until', P(root), { state: 'later', until: sec(Date.now() + 91 * 86_400_000) }, member.token],
+          ['배열 본문 → 400', P(root), [1], member.token],
+          ['없는 머리 → 404', P(ghost), { state: 'done' }, member.token],
+          ['지운 머리 → 404', P(gone), { state: 'done' }, member.token],
+          ['못 보는 채널 → 403', P(hidden), { state: 'done' }, member.token],
+          ['답글 → 400 not_root', P(reply), { state: 'done' }, member.token],
+        ] as const) {
+          const [a, b] = [await callX(tsUrl, 'PUT', path, body, token), await callX(rsUrl, 'PUT', path, body, token)];
+          expect({ status: b.status, code: b.code }, name).toEqual({ status: a.status, code: a.code });
+        }
+        for (const id of [root, reply, hidden]) expect(await row(id), '거절은 행을 만들지 않는다').toEqual([]);
+        for (const [name, init] of [
+          ['익명·본문 없음 → 401', {}],
+          ['본문 없음 → 400', { headers: { authorization: `Bearer ${member.token}` } }],
+          ['익명·깨진 json → 400', { headers: { 'content-type': J }, body: '{' }],
+          ['익명·모르는 형식 → 415', { headers: { 'content-type': 'application/xml' }, body: '<a/>' }],
+        ] as const) {
+          const [a, b] = [await fetch(`${tsUrl}${P(root)}`, { method: 'PUT', ...init }), await fetch(`${rsUrl}${P(root)}`, { method: 'PUT', ...init })];
+          expect(b.status, name).toBe(a.status);
+        }
+        // 성공 여섯 번 → 이벤트 여섯 번(지우기·없는 줄 지우기 포함, TS 와 같다). 거절은 이벤트가 없다.
+        const rsEvents = () => busEvents.slice(busBefore).filter((e) => e.type === 'inbox.updated');
+        const deadline = Date.now() + 10_000;
+        while (rsEvents().length < 6 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
+        await new Promise((r) => setTimeout(r, 500));
+        off();
+        expect(tsEvents).toEqual(Array.from({ length: 6 }, () => ({ type: 'inbox.updated', accountId: member.accountId })));
+        expect(rsEvents()).toEqual(tsEvents);
+      }
       await bus.stop();
 
       // S5.3 C0 — `/ws`. 같은 시나리오를 TS 와 Rust 코어에 돌려 프레임을 견준다.
@@ -3578,6 +4101,18 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         }
         return undefined;
       };
+      // S5.3 C6c-1 — 에이전트 presence 합집합. TS `/mcp` 를 한 번 불러 mark → TS 가 `agent_presence` 에 묶어 쓴 것을 Rust 가 읽는다.
+      // 만료된 줄(bot2)은 두 서버 모두 싣지 않는다(DB 시계 기준).
+      await db.pool.query(`delete from agent_presence where account_id = $1`, [agent.accountId]);
+      expect((await mcpCall(tsUrl, agent.pat, 'account.me', {}, 900)).status).toBe(200);
+      for (let i = 0; i < 100; i++) {
+        if ((await db.pool.query(`select 1 from agent_presence where account_id = $1 and expires_at > now()`, [agent.accountId])).rowCount) break;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      // TS 가 한 번도 못 본 에이전트에 만료된 줄만 둔다(bot2 는 앞에서 TS 를 불러 메모리에 살아 있을 수 있다).
+      const stale = (await db.pool.query<{ id: string }>(
+        `insert into account(handle, display_name, kind) values ('c6c1_stale', 'c6c1_stale', 'agent') returning id`)).rows[0]!.id;
+      await db.pool.query(`insert into agent_presence (account_id, expires_at) values ($1, now() - interval '1 minute')`, [stale]);
       const socks: Sock[] = [];
       try {
         // 티켓: 없음·두 번 쓰기는 4401(두 서버 같음).
@@ -3589,6 +4124,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect(await (await open(base, `?ticket=${encodeURIComponent(t)}`)).closed, `${base} 티켓 재사용`).toBe(4401);
           const snap = await waitFor(first, (f) => f.type === 'presence.snapshot');
           expect((snap?.online as string[]) ?? [], `${base} 스냅숏에 나`).toContain(member.accountId);
+          expect((snap?.online as string[]) ?? [], `${base} 스냅숏에 폴한 에이전트(C6c-1)`).toContain(agent.accountId);
+          expect((snap?.online as string[]) ?? [], `${base} 만료된 에이전트는 없음`).not.toContain(stale);
         }
         const [tsMem, rsMem] = socks as [Sock, Sock];
         // 앱 hb 프레임(Rust 는 시험용으로 300ms).

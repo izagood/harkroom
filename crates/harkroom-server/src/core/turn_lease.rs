@@ -9,7 +9,7 @@
 //!   (TS 가 쓴 행과 같은 정밀도 — 만료 시각 글자가 같은 꼴로 나온다).
 //! - 자동화 위임장(⑤b, `automationMandateForCause`)은 옮기지 않는다: 원인 글이 자동화 회차 글이면 아무것도 쓰지 않고
 //!   [`Issue::Handoff`] 를 돌려준다 — 부르는 쪽이 그 요청을 TS 로 넘긴다(C3b-1 의 권한·머지 카드와 같은 꼴).
-//! - 배선은 C6b-2 — 이 PR 에서는 아무 경로도 이 함수를 부르지 않는다.
+//! - 배선은 [`super::turn_lease_routes`](C6b-2).
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde_json::Value;
@@ -121,7 +121,8 @@ pub struct Reissue {
     pub via: &'static str,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// 평문 `token` 은 응답 한 곳에만 나간다 — `Debug` 는 손으로 써서 가린다(로그·tracing 에 `{:?}` 로 새지 않게).
+#[derive(Clone, PartialEq, Eq)]
 pub struct Issued {
     pub lease_id: String,
     pub token: String,
@@ -131,6 +132,20 @@ pub struct Issued {
     pub expires_at: String,
     pub waited_sec: i64,
     pub reissue: Option<Reissue>,
+}
+
+impl std::fmt::Debug for Issued {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Issued")
+            .field("lease_id", &self.lease_id)
+            .field("token", &"<redacted>")
+            .field("channel_id", &self.channel_id)
+            .field("thread_root_id", &self.thread_root_id)
+            .field("expires_at", &self.expires_at)
+            .field("waited_sec", &self.waited_sec)
+            .field("reissue", &self.reissue)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -371,6 +386,21 @@ mod tests {
             sha256_hex("abc"),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
+    }
+
+    #[test]
+    fn debug_hides_token() {
+        let i = Issued {
+            lease_id: "l".into(),
+            token: "SECRET-TOKEN".into(),
+            channel_id: "c".into(),
+            thread_root_id: "t".into(),
+            expires_at: "e".into(),
+            waited_sec: 0,
+            reissue: None,
+        };
+        let d = format!("{:?}", Issue::Ok(i));
+        assert!(!d.contains("SECRET-TOKEN") && d.contains("<redacted>"));
     }
 
     #[test]

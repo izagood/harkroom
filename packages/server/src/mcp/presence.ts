@@ -1,7 +1,7 @@
 import { emitEvent } from '../events.js';
 
 /**
- * 에이전트의 온라인 presence. 인메모리이고 DB 에 남기지 않는다.
+ * 에이전트의 온라인 presence. 판정은 인메모리로 하고, Rust 앞단을 위해 DB(`agent_presence`)에도 묶어서 남긴다(C6c-1).
  *
  * 에이전트는 WebSocket 을 쓰지 않고 inbox.poll (최대 25초 long-poll) 을 계속 부르는 것이
  * 유일한 주기 신호다. 폴 자체가 presence 신호이므로 폴이 오면 mark() 하고, TTL 이 지나면
@@ -52,6 +52,24 @@ export interface AgentPresence {
 }
 
 /**
+ * DB 쓰기 간격(S5.3 C6c-1). 폴은 최대 25초 long-poll 이지만 러너 프레임·/mcp 요청마다도 mark 가 오므로 묶는다.
+ * DB 의 만료는 메모리보다 최대 이만큼 이르다(마이그레이션 171 주석).
+ */
+export const PERSIST_EVERY_MS = 10_000;
+
+/** `agent_presence` 에 한 줄 쓴다 — 만료는 DB 시계(`now()`) 기준이라 TS·Rust 가 같은 시계로 판정한다. */
+export function persistAgentPresence(pool: { query: (sql: string, params: unknown[]) => Promise<unknown> }) {
+  return async (accountId: string, ttlMs: number): Promise<void> => {
+    await pool.query(
+      `insert into agent_presence (account_id, expires_at, updated_at)
+       values ($1, now() + make_interval(secs => $2::double precision / 1000), now())
+       on conflict (account_id) do update set expires_at = excluded.expires_at, updated_at = now()`,
+      [accountId, ttlMs],
+    );
+  };
+}
+
+/**
  * 스윕 인터벌을 정리해 줄 수 있는 것. fastify 의 `FastifyInstance` 를 그대로 받지 않고
  * 필요한 만큼만 좁게 요구한다 — 이 모듈은 순수하게 유지해 `presence.test.ts` 가 서버를
  * 띄우지 않고 만료를 검증할 수 있어야 한다.
@@ -66,8 +84,32 @@ export interface SweepHost {
  * @param opts.ttlMs - 에이전트 온라인 상태의 수명(밀리초). 기본 30초.
  * @param opts.now - 현재 시각을 반환하는 함수. 테스트에서만 주입한다.
  */
-export function createAgentPresence(opts: { ttlMs: number; now?: () => number }): AgentPresence {
+export function createAgentPresence(opts: {
+  ttlMs: number;
+  now?: () => number;
+  /**
+   * S5.3 C6c-1 — 폴을 DB(`agent_presence`)에도 남기는 손잡이. Rust 앞단이 같은 에이전트 목록을 읽게 하려는 것이고,
+   * 판정(`online`·`offlineSince`)은 여전히 이 메모리가 한다(호출처 5곳이 동기 인터페이스 그대로다).
+   * 같은 에이전트는 [`PERSIST_EVERY_MS`] 에 한 번만 부른다. 실패해도 폴은 막지 않는다(`onPersistError` 로만 알린다).
+   */
+  persist?: (accountId: string, ttlMs: number) => Promise<void>;
+  onPersistError?: (err: unknown) => void;
+}): AgentPresence {
   const now = opts.now ?? Date.now;
+  // accountId → 마지막으로 persist 를 부른 시각
+  const persistedAt = new Map<string, number>();
+  const persist = (accountId: string) => {
+    if (!opts.persist) return;
+    const t = now();
+    const last = persistedAt.get(accountId);
+    if (last !== undefined && t - last < PERSIST_EVERY_MS) return;
+    persistedAt.set(accountId, t);
+    opts.persist(accountId, opts.ttlMs).catch((err) => {
+      // 다음 폴에 다시 쓰도록 표시를 지운다.
+      persistedAt.delete(accountId);
+      opts.onPersistError?.(err);
+    });
+  };
   // accountId → 만료 시각
   const byAgent = new Map<string, number>();
   /**
@@ -88,6 +130,7 @@ export function createAgentPresence(opts: { ttlMs: number; now?: () => number })
     for (const [accountId, expires] of seen) {
       if (expires <= t) {
         seen.delete(accountId);
+        persistedAt.delete(accountId);
         // **만료 시각으로 찍는다, 지금이 아니라.** 스윕은 최대 TTL/2 늦게 오므로 `t` 로
         // 찍으면 그만큼 오프라인이 짧아 보이고, 그 오차가 곧 유예의 오차가 된다.
         offlineAt.set(accountId, expires);
@@ -116,6 +159,7 @@ export function createAgentPresence(opts: { ttlMs: number; now?: () => number })
       const wasPresent = byAgent.has(accountId);
       byAgent.set(accountId, now() + opts.ttlMs);
       offlineAt.delete(accountId);
+      persist(accountId);
       if (!wasPresent) {
         emitEvent({ type: 'presence.changed', accountId, online: true });
       }

@@ -3,16 +3,20 @@
 //!
 //! C0 가 담는 것: POST `/ws-ticket` · GET `/ws`(TS `ws/wsPlugin.ts`·`tickets.ts`·`heartbeat.ts`·`appHeartbeat.ts`·`socketLifetime.ts`·
 //! `credentials.ts`·`typing.ts`) · 이벤트 공급(outbox LISTEN → 프로세스 안 팬아웃, TS `eventBus.ts` 와 같은 순서·모양 검사).
-//! 에이전트 presence(MCP `presence.ts`)는 C3 몫이라 지금 스냅샷에는 사람 소켓만 실린다.
+//! 에이전트 presence 는 TS `presence.ts` 가 폴마다 묶어 쓰는 `agent_presence`(C6c-1)를 읽어 스냅샷에 합친다.
 pub mod ask;
 pub mod ask_bundle;
+pub mod ask_bundle_resolve;
+pub mod ask_reply_close;
 pub mod ask_sync;
 pub mod audience;
 pub mod channels;
 pub mod content_scan;
 pub mod decide_core;
 pub mod events;
+pub mod inbox_list;
 pub mod inbox_read;
+pub mod inbox_thread;
 pub mod invoke_gate;
 pub mod mandate_stamp;
 pub mod mcp;
@@ -31,7 +35,9 @@ pub mod operator_hub;
 pub mod operator_rest;
 pub mod tickets;
 pub mod turn_lease;
+pub mod turn_lease_routes;
 pub mod typing;
+pub mod wake_preempt;
 pub mod ws;
 
 /// `HARKROOM_CORE` — 모르는 값이면 기동을 멈춘다(조용히 켜지거나 꺼지지 않게).
