@@ -8,8 +8,8 @@
 //! - `contrast`: TS `mayDecideFor` 대조 — 사례는 `HARKROOM_DECIDE_CASES`(TS 가 깔고 넘김). 답을 `DECIDE_CORE_JSON` 한 줄로 찍고,
 //!   같은지·스위치를 끄면 달라지는지는 TS 쪽이 맞춰 본다.
 use harkroom_server::core::decide_core::{
-    Checks, DecideScope, LockRetryError, Verdict, is_retryable_lock_error, may_decide_for_locked,
-    may_decide_for_with, retry_lock_once,
+    Checks, DecideScope, LockRetryError, Verdict, has_lock_fn_privilege, is_retryable_lock_error,
+    lock_basis, lock_request, may_decide_for_locked, may_decide_for_with, retry_lock_once,
 };
 use serde_json::{Value, json};
 use sqlx::{PgPool, Postgres, Transaction};
@@ -406,37 +406,200 @@ async fn contrast() {
 
 /// 잠그는 select(`for share`·`for key share`)는 PG 에서 그 표의 **UPDATE 권한(칸 하나 이상)**을 요구한다. 읽기 권한만 가진 역할은
 /// 판정 잠금에서 42501 로 막힌다 — 3b·3c 의 「두 겹 잠금」 권한 목록에 잠그는 표마다 UPDATE 칸이 들어가야 한다는 근거.
+/// A안(security) — 읽기만 가진 역할은 잠금 함수의 EXECUTE 가 없으면 `has_lock_fn_privilege` 가 거짓이고(→ 풀 `None`, TS),
+/// EXECUTE 만 받으면 다섯 표의 UPDATE 칸 없이도 잠근다. 표를 직접 `for share` 하는 것은 여전히 42501(칸을 주지 않았다는 증거).
 #[tokio::test]
-async fn lock_needs_update_privilege() {
+async fn lock_fn_privilege_gates_rust() {
     let Some(url) = db_url() else { return };
     let pool = PgPool::connect(&url).await.unwrap();
     let f = fixture(&pool, "list").await;
     let role = format!("dc_ro_{}", tag());
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        "create role {role} login password '{role}' nosuperuser"
-    )))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        "grant pg_read_all_data to {role}"
-    )))
-    .execute(&pool)
-    .await
-    .unwrap();
+    for q in [
+        format!("create role {role} login password '{role}' nosuperuser"),
+        format!("grant pg_read_all_data to {role}"),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(q))
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
     let mut u = url::Url::parse(&url).unwrap();
     u.set_username(&role).unwrap();
     u.set_password(Some(&role)).unwrap();
     let ro = PgPool::connect(u.as_str()).await.unwrap();
+    // EXECUTE 없음(PUBLIC 회수) → 거짓 · 부르면 42501.
+    assert!(!has_lock_fn_privilege(&ro).await.unwrap());
     let mut d = ro.begin().await.unwrap();
-    let e = may_decide_for_locked(&mut d, &f.agent, &f.actor, Some(&f.channel))
+    let e = lock_basis(&mut d, &f.agent, &f.actor, Some(&f.channel))
         .await
-        .expect_err("read-only role must not take row locks");
+        .expect_err("no EXECUTE");
     assert_eq!(
         e.as_database_error().and_then(|x| x.code()).as_deref(),
         Some("42501"),
         "{e}"
     );
     d.rollback().await.unwrap();
+    // EXECUTE 만 줌 → 참 · 판정까지 됨 · 표 직접 잠금은 여전히 42501.
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "grant execute on function permission_decide_lock(uuid, uuid, uuid) to {role}"
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert!(has_lock_fn_privilege(&ro).await.unwrap());
+    let mut d = ro.begin().await.unwrap();
+    let v = may_decide_for_locked(&mut d, &f.agent, &f.actor, Some(&f.channel))
+        .await
+        .unwrap();
+    assert_eq!(v.ok, Some(false));
+    let e = sqlx::query("select id from channel where id = $1::uuid for share")
+        .bind(&f.channel)
+        .execute(&mut *d)
+        .await
+        .expect_err("table lock still needs UPDATE");
+    assert_eq!(
+        e.as_database_error().and_then(|x| x.code()).as_deref(),
+        Some("42501")
+    );
+    d.rollback().await.unwrap();
     ro.close().await;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "revoke execute on function permission_decide_lock(uuid, uuid, uuid) from {role}"
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+}
+
+/// 권한 카드 하나(에이전트가 쓴 카드 글 + 그 요청 줄).
+async fn request_with_card(pool: &PgPool, f: &Fx) -> (String, String) {
+    let card: String = sqlx::query_scalar(
+        "insert into message(channel_id, author_id, body, kind, meta) \
+         values ($1::uuid, $2::uuid, 'card', 'user', '{\"kind\":\"ask\",\"permissionRequest\":{}}'::jsonb) returning id::text",
+    )
+    .bind(&f.channel)
+    .bind(&f.agent)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let req: String = sqlx::query_scalar(
+        "insert into permission_request(agent_id, kind, target, reason, channel_id, thread_root_id, card_message_id, expires_at) \
+         values ($1::uuid, 'tool', 'Bash(x)', 'r', $2::uuid, $3::uuid, $3::uuid, now() + interval '1 hour') returning id::text",
+    )
+    .bind(&f.agent)
+    .bind(&f.channel)
+    .bind(&card)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    (req, card)
+}
+
+/// 채널 삭제의 전체 꼴 — channel for update → member → message(→ 요청 줄 card_message_id null) → channel(→ 요청 줄 cascade).
+fn channel_delete_full(c: &str) -> Vec<(&'static str, Vec<String>)> {
+    vec![
+        (
+            "select id from channel where id = $1::uuid for update",
+            vec![c.into()],
+        ),
+        (
+            "delete from channel_member where channel_id = $1::uuid",
+            vec![c.into()],
+        ),
+        (
+            "delete from message where channel_id = $1::uuid",
+            vec![c.into()],
+        ),
+        ("delete from channel where id = $1::uuid", vec![c.into()]),
+    ]
+}
+
+/// security C3b-3 조건 ② — 요청 줄 `for update` 까지 잡은 결정과 채널 삭제(message DELETE 포함)를 동시에 돌려도 교착(40P01)이 없다.
+/// 두 차례: 결정이 먼저(삭제가 기다렸다가 끝남) · 삭제가 먼저(결정이 기다렸다가 요청 줄이 사라짐 → `None`).
+#[tokio::test]
+async fn deny_vs_channel_delete_no_deadlock() {
+    let Some(url) = db_url() else { return };
+    let pool = PgPool::connect(&url).await.unwrap();
+    // 1) 결정이 먼저.
+    let f = fixture(&pool, "channel").await;
+    let (req, card) = request_with_card(&pool, &f).await;
+    let mut d = pool.begin().await.unwrap();
+    lock_basis(&mut d, &f.agent, &f.actor, Some(&f.channel))
+        .await
+        .unwrap();
+    let r = lock_request(&mut d, &req)
+        .await
+        .unwrap()
+        .expect("request row");
+    assert_eq!(r.card_message_id.as_deref(), Some(card.as_str()));
+    let p = pool.clone();
+    let c = f.channel.clone();
+    let w = tokio::spawn(async move {
+        let mut w = p.begin().await.unwrap();
+        sqlx::query("set local lock_timeout = '5s'")
+            .execute(&mut *w)
+            .await
+            .unwrap();
+        let r = run_writer(&mut w, &channel_delete_full(&c)).await;
+        if r.is_ok() {
+            w.commit().await.unwrap();
+        }
+        r
+    });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(
+        !w.is_finished(),
+        "channel delete must wait for the decision"
+    );
+    // 3b 의 쓰기 꼴: 요청 줄 → 카드 글(expirePermissionRequests 와 같은 차례).
+    sqlx::query(
+        "update permission_request set status = 'denied', decided_at = now() where id = $1::uuid",
+    )
+    .bind(&req)
+    .execute(&mut *d)
+    .await
+    .unwrap();
+    sqlx::query("update message set meta = meta || '{\"x\":1}'::jsonb where id = $1::uuid")
+        .bind(&card)
+        .execute(&mut *d)
+        .await
+        .unwrap();
+    d.commit().await.unwrap();
+    w.await
+        .unwrap()
+        .expect("channel delete finishes without 40P01");
+
+    // 2) 삭제가 먼저 — message·channel 까지 지운 채 커밋 전, 결정이 들어온다.
+    let f = fixture(&pool, "channel").await;
+    let (req, _) = request_with_card(&pool, &f).await;
+    let mut w = pool.begin().await.unwrap();
+    run_writer(&mut w, &channel_delete_full(&f.channel))
+        .await
+        .unwrap();
+    let p = pool.clone();
+    let (a, h, c, rq) = (
+        f.agent.clone(),
+        f.actor.clone(),
+        f.channel.clone(),
+        req.clone(),
+    );
+    let d = tokio::spawn(async move {
+        let mut d = p.begin().await.unwrap();
+        sqlx::query("set local lock_timeout = '5s'")
+            .execute(&mut *d)
+            .await
+            .unwrap();
+        lock_basis(&mut d, &a, &h, Some(&c)).await?;
+        let r = lock_request(&mut d, &rq).await?;
+        d.rollback().await.unwrap();
+        Ok::<_, sqlx::Error>(r)
+    });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(
+        !d.is_finished(),
+        "decision must wait for the channel delete"
+    );
+    w.commit().await.unwrap();
+    let r = d.await.unwrap().expect("decision finishes without 40P01");
+    assert!(r.is_none(), "request row went with the channel");
 }

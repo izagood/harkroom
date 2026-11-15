@@ -1,9 +1,9 @@
 //! C3b-3a 판정 코어(`core::decide_core`) — DB 없이 볼 수 있는 표·골든·잠금 순서. DB 대조·동시성 시험은 `HARKROOM_TEST_DATABASE_URL`
 //! 이 있을 때 도는 쪽에 둔다.
 use harkroom_server::core::decide_core::{
-    AfterVerdict, Decision, FORBIDDEN_MESSAGE, LOCK_ACCOUNTS, LOCK_AGENT_CONFIG, LOCK_CHANNEL,
-    LOCK_INVOKER, LOCK_MEMBER, LOCK_ORDER, LOCK_REQUEST, Shape, UNKNOWN_OPTION_MESSAGE, Verdict,
-    after_verdict, option_decision, rust_takes,
+    AfterVerdict, Decision, FORBIDDEN_MESSAGE, LOCK_FN, LOCK_FN_MIGRATION, LOCK_FN_SIGNATURE,
+    LOCK_ORDER, LOCK_REQUEST, LockedRequest, Recheck, Shape, UNKNOWN_OPTION_MESSAGE, Verdict,
+    after_verdict, option_decision, recheck_locked, rust_takes,
 };
 
 const TS_DECISIONS: &str = include_str!("../../../packages/server/src/services/decisions.ts");
@@ -157,7 +157,8 @@ fn after_verdict_table() {
     }
 }
 
-/// 잠금 순서는 하나다 — 표(`LOCK_ORDER`)·문장·`lock_basis` 의 부르는 차례가 같아야 한다(security C3b-3 ①-3).
+/// 잠금 순서는 하나다 — 표(`LOCK_ORDER`)와 잠금 함수 본문(마이그레이션)의 `perform … for …` 차례·세기가 같아야 한다
+/// (security C3b-3 ①-3, A안 조건 3). `lock_basis` 는 그 함수를 한 번 부를 뿐이다.
 #[test]
 fn lock_order_is_fixed() {
     assert_eq!(
@@ -170,44 +171,113 @@ fn lock_order_is_fixed() {
             "channel_member"
         ]
     );
-    let stmts = [
-        LOCK_CHANNEL,
-        LOCK_ACCOUNTS,
-        LOCK_AGENT_CONFIG,
-        LOCK_INVOKER,
-        LOCK_MEMBER,
-    ];
-    for (t, s) in LOCK_ORDER.iter().zip(stmts) {
-        assert!(s.contains(&format!(" from {t} ")), "{t}: {s}");
+    let sql = LOCK_FN_MIGRATION.to_lowercase();
+    let body = sql
+        .split("as $$")
+        .nth(1)
+        .and_then(|b| b.split("$$;").next())
+        .expect("function body");
+    let performs: Vec<&str> = body
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.starts_with("perform "))
+        .collect();
+    assert_eq!(performs.len(), LOCK_ORDER.len(), "{performs:#?}");
+    for (t, s) in LOCK_ORDER.iter().zip(&performs) {
+        assert!(s.contains(&format!(" from public.{t} ")), "{t}: {s}");
     }
-    // 세기: account·channel·agent_config = for share, DELETE 로만 빠지는 줄 = for key share.
-    for s in [LOCK_CHANNEL, LOCK_ACCOUNTS, LOCK_AGENT_CONFIG] {
-        assert!(s.ends_with(" for share"), "{s}");
+    // 세기: channel·account·agent_config = for share, DELETE 로만 빠지는 줄 = for key share.
+    for s in &performs[..3] {
+        assert!(s.ends_with(" for share;"), "{s}");
     }
-    for s in [LOCK_INVOKER, LOCK_MEMBER] {
-        assert!(s.ends_with(" for key share"), "{s}");
+    for s in &performs[3..] {
+        assert!(s.ends_with(" for key share;"), "{s}");
     }
-    assert!(LOCK_ACCOUNTS.contains("order by id"));
+    assert!(performs[1].contains("order by id"));
+    // 함수 성질: SECURITY DEFINER · search_path 고정 · void · 아무것도 고치지 않음 · PUBLIC EXECUTE 회수.
+    for need in [
+        "security definer",
+        "set search_path = pg_catalog, public",
+        "returns void",
+        "revoke all on function permission_decide_lock(uuid, uuid, uuid) from public;",
+    ] {
+        assert!(sql.contains(need), "missing: {need}");
+    }
+    for bad in ["update ", "insert ", "delete ", "execute ", "grant "] {
+        assert!(!body.contains(bad), "lock fn must only lock: {bad}");
+    }
+    assert!(LOCK_FN.starts_with("select permission_decide_lock("));
+    assert_eq!(
+        LOCK_FN_SIGNATURE,
+        "permission_decide_lock(uuid, uuid, uuid)"
+    );
     assert!(LOCK_REQUEST.ends_with(" for update"));
-    // lock_basis 본문에서 문장을 부르는 차례.
-    let body = RS_SRC
+    // lock_basis 는 잠금 함수만 부른다(표마다 잠그는 문장이 돌아오면 빨강).
+    let lb = RS_SRC
         .split("pub async fn lock_basis")
         .nth(1)
         .unwrap()
         .split("\n}\n")
         .next()
         .unwrap();
-    let pos: Vec<usize> = [
-        "LOCK_CHANNEL",
-        "LOCK_ACCOUNTS",
-        "LOCK_AGENT_CONFIG",
-        "LOCK_INVOKER",
-        "LOCK_MEMBER",
-    ]
-    .iter()
-    .map(|n| body.find(n).unwrap_or_else(|| panic!("{n} not called")))
-    .collect();
-    assert!(pos.windows(2).all(|w| w[0] < w[1]), "{pos:?}");
+    assert!(lb.contains("LOCK_FN") && !lb.contains("for share"), "{lb}");
+}
+
+fn locked(agent: &str, channel: Option<&str>, kind: &str) -> LockedRequest {
+    LockedRequest {
+        agent_id: agent.into(),
+        channel_id: channel.map(Into::into),
+        kind: kind.into(),
+        status: "pending".into(),
+        expired: false,
+        mandate_id: None,
+        denial_id: None,
+        card_message_id: None,
+    }
+}
+
+/// security C3b-3 조건 ① — 요청 줄을 마지막에 잠근 뒤 잠근 값으로 다시 대조한다.
+#[test]
+fn recheck_after_request_lock() {
+    let sh = shape("approve", "tool");
+    let base = locked("a", Some("c"), "tool");
+    assert_eq!(
+        recheck_locked("a", Some("c"), Some(&base), sh),
+        Recheck::Go(Decision::Approve)
+    );
+    assert_eq!(recheck_locked("a", Some("c"), None, sh), Recheck::Gone);
+    // agent·channel 이 바뀌면 처음부터.
+    assert_eq!(
+        recheck_locked("x", Some("c"), Some(&base), sh),
+        Recheck::Restart
+    );
+    assert_eq!(
+        recheck_locked("a", Some("d"), Some(&base), sh),
+        Recheck::Restart
+    );
+    assert_eq!(recheck_locked("a", None, Some(&base), sh), Recheck::Restart);
+    // 잠근 값의 kind·mandate·denial 로 rust_takes 를 다시 — 바뀌면 TS.
+    assert_eq!(
+        recheck_locked("a", Some("c"), Some(&locked("a", Some("c"), "command")), sh),
+        Recheck::HandToTs
+    );
+    let mut m = base.clone();
+    m.mandate_id = Some("m".into());
+    assert_eq!(
+        recheck_locked("a", Some("c"), Some(&m), sh),
+        Recheck::HandToTs
+    );
+    let mut d = base.clone();
+    d.denial_id = Some("d".into());
+    assert_eq!(
+        recheck_locked("a", Some("c"), Some(&d), sh),
+        Recheck::HandToTs
+    );
+    // deny 는 denial 이 생겨도 Rust.
+    assert_eq!(
+        recheck_locked("a", Some("c"), Some(&d), shape("deny", "tool")),
+        Recheck::Go(Decision::Deny)
+    );
 }
 
 /// 망가뜨리기 스위치는 기본 꺼진 feature 뒤에만 있다 — release 빌드에 들어가지 않는다.

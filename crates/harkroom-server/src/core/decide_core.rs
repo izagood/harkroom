@@ -51,15 +51,14 @@ fn sql() -> &'static Sql {
     })
 }
 
-/// 잠그는 문장들 — 순서는 [`LOCK_ORDER`] 그대로 [`lock_basis`] 가 부른다.
-pub const LOCK_CHANNEL: &str = "select id from channel where id = $1::uuid for share";
-pub const LOCK_ACCOUNTS: &str =
-    "select id from account where id = any($1::uuid[]) order by id for share";
-pub const LOCK_AGENT_CONFIG: &str =
-    "select account_id from agent_config where account_id = $1::uuid for share";
-pub const LOCK_INVOKER: &str =
-    "select 1 from agent_invoker where agent_id = $1::uuid and account_id = $2::uuid for key share";
-pub const LOCK_MEMBER: &str = "select 1 from channel_member where channel_id = $1::uuid and account_id = $2::uuid for key share";
+/// 잠금 함수(마이그레이션 `171_permission_decide_lock.sql`, security A안). 쓰기 역할에 다섯 표의 UPDATE 칸을 주지 않고
+/// SECURITY DEFINER 함수가 [`LOCK_ORDER`] 순으로 잠근다 — 문장과 순서는 함수 본문에 있고, 시험이 그 본문을 대조한다.
+pub const LOCK_FN: &str = "select permission_decide_lock($1::uuid, $2::uuid, $3::uuid)";
+/// 잠금 함수 서명 — `has_function_privilege` 로 쓰기 역할의 EXECUTE 를 본다.
+pub const LOCK_FN_SIGNATURE: &str = "permission_decide_lock(uuid, uuid, uuid)";
+/// 마이그레이션 본문(시험·골든용).
+pub const LOCK_FN_MIGRATION: &str =
+    include_str!("../../../../packages/server/src/db/migrations/171_permission_decide_lock.sql");
 
 /// 시험이 대조하는 잠금 순서(표 이름). 요청 줄은 호출자가 이 뒤에 `for update` 한다.
 pub const LOCK_ORDER: [&str; 5] = [
@@ -122,43 +121,32 @@ impl Default for Checks {
     }
 }
 
-/// 판정 근거가 될 줄을 [`LOCK_ORDER`] 순으로 잠근다. 호출자의 tx 안에서만 부른다.
+/// 판정 근거가 될 줄을 [`LOCK_ORDER`] 순으로 잠근다(잠금 함수 한 번). 호출자의 tx 안에서만 부른다.
 pub async fn lock_basis(
     conn: &mut PgConnection,
     agent: &str,
     actor: &str,
     channel: Option<&str>,
 ) -> sqlx::Result<()> {
-    if let Some(ch) = channel {
-        sqlx::query(LOCK_CHANNEL)
-            .bind(ch)
-            .fetch_optional(&mut *conn)
-            .await?;
-    }
-    let mut ids = vec![agent.to_owned(), actor.to_owned()];
-    ids.sort();
-    ids.dedup();
-    sqlx::query(LOCK_ACCOUNTS)
-        .bind(&ids)
-        .fetch_all(&mut *conn)
-        .await?;
-    sqlx::query(LOCK_AGENT_CONFIG)
-        .bind(agent)
-        .fetch_optional(&mut *conn)
-        .await?;
-    sqlx::query(LOCK_INVOKER)
+    sqlx::query(LOCK_FN)
         .bind(agent)
         .bind(actor)
-        .fetch_optional(&mut *conn)
+        .bind(channel)
+        .execute(&mut *conn)
         .await?;
-    if let Some(ch) = channel {
-        sqlx::query(LOCK_MEMBER)
-            .bind(ch)
-            .bind(actor)
-            .fetch_optional(&mut *conn)
-            .await?;
-    }
     Ok(())
+}
+
+/// 쓰기 역할이 잠금 함수를 부를 수 있나(두 겹 권한 검사의 한 칸). 거짓이면 결정 풀을 `None` 으로 두어 TS 가 맡는다.
+pub async fn has_lock_fn_privilege(pool: &sqlx::PgPool) -> sqlx::Result<bool> {
+    let ok: Option<bool> = sqlx::query_scalar(
+        "select case when to_regprocedure($1) is null then false \
+                else has_function_privilege($1, 'EXECUTE') end",
+    )
+    .bind(LOCK_FN_SIGNATURE)
+    .fetch_one(pool)
+    .await?;
+    Ok(ok == Some(true))
 }
 
 type Row = (
@@ -585,9 +573,98 @@ pub const UNKNOWN_OPTION_MESSAGE: &str = "a permission card takes approve_mandat
 
 /// 요청 줄을 **마지막에** `for update` 로 잠그고 다시 읽는다(잠금 순서 6단계). 호출자는 돌려받은 agent·channel 을 처음 읽은
 /// 값과 대조해 다르면 판정을 다시 한다(잠그기 전 읽은 값으로 판정하지 않는다).
-pub const LOCK_REQUEST: &str = "select agent_id::text, channel_id::text, kind, status, \
-     expires_at <= now() as expired, mandate_id::text, denial_id::text, card_message_id::text \
+pub const LOCK_REQUEST: &str = "select agent_id::text as agent_id, channel_id::text as channel_id, kind, status, \
+     expires_at <= now() as expired, mandate_id::text as mandate_id, denial_id::text as denial_id, \
+     card_message_id::text as card_message_id \
      from permission_request where id = $1::uuid for update";
+
+/// [`LOCK_REQUEST`] 가 돌려준 줄.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LockedRequest {
+    pub agent_id: String,
+    pub channel_id: Option<String>,
+    pub kind: String,
+    pub status: String,
+    pub expired: bool,
+    pub mandate_id: Option<String>,
+    pub denial_id: Option<String>,
+    pub card_message_id: Option<String>,
+}
+
+type LockedRow = (
+    String,
+    Option<String>,
+    String,
+    String,
+    bool,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
+/// 요청 줄을 [`LOCK_REQUEST`] 로 마지막에 잠그고 읽는다.
+pub async fn lock_request(
+    conn: &mut PgConnection,
+    request_id: &str,
+) -> sqlx::Result<Option<LockedRequest>> {
+    let r: Option<LockedRow> = sqlx::query_as(LOCK_REQUEST)
+        .bind(request_id)
+        .fetch_optional(conn)
+        .await?;
+    Ok(r.map(
+        |(agent_id, channel_id, kind, status, expired, mandate_id, denial_id, card_message_id)| {
+            LockedRequest {
+                agent_id,
+                channel_id,
+                kind,
+                status,
+                expired,
+                mandate_id,
+                denial_id,
+                card_message_id,
+            }
+        },
+    ))
+}
+
+/// 요청 줄을 잠근 뒤의 다시 대조(security C3b-3 조건 ①).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Recheck {
+    /// 잠근 값으로도 같은 결정을 Rust 가 맡는다 — 쓰기로 간다.
+    Go(Decision),
+    /// agent·channel 이 처음 읽은 값과 다르다 — 판정을 **처음부터** 다시 한다(잠금도 다시).
+    Restart,
+    /// 잠근 값으로 보니 Rust 가 맡지 않는 꼴(kind·mandate·denial 이 바뀜) — tx 를 되돌리고 TS 로 넘긴다(쓰기 전).
+    HandToTs,
+    /// 요청 줄이 사라졌다.
+    Gone,
+}
+
+/// 처음 읽은 agent·channel 과 잠근 줄을 대조하고, 잠근 kind·mandate_id·denial_id 로 [`rust_takes`] 를 **다시** 돌린다.
+/// status·만료는 이 뒤 쓰기 단계가 TS 와 같은 문구로 가른다(여기서 보지 않음).
+pub fn recheck_locked(
+    first_agent: &str,
+    first_channel: Option<&str>,
+    locked: Option<&LockedRequest>,
+    shape: Shape<'_>,
+) -> Recheck {
+    let Some(r) = locked else {
+        return Recheck::Gone;
+    };
+    if r.agent_id != first_agent || r.channel_id.as_deref() != first_channel {
+        return Recheck::Restart;
+    }
+    let again = Shape {
+        kind: r.kind.as_str(),
+        has_mandate: r.mandate_id.is_some(),
+        has_denial: r.denial_id.is_some(),
+        ..shape
+    };
+    match rust_takes(again) {
+        Some(d) => Recheck::Go(d),
+        None => Recheck::HandToTs,
+    }
+}
 
 /// 결정 감사(`permission.denied`·`permission.approved`)의 detail — TS `decidePermissionRequest` 의 `recordAudit` 와 같은 칸만 싣는다.
 /// 3b·3c 는 이것을 결정과 **같은 tx** 에 INSERT 한다(감사가 실패하면 결정도 실패 → `internal`, TS 로 넘기지 않음).
