@@ -204,12 +204,15 @@ fn main() {
             let base_path = env.get("PATH").cloned();
             let home = maker.config().home.clone();
             let omp_home = state_dir.join("omp-home");
+            // lane 러너의 codex 홈(아래 `codex_lane_home` 과 같은 자리) — 판 묻기도 사람 `~/.codex` 가 아니라 여기를 쓴다.
+            let codex_home = state_dir.join("codex-provider-lane");
             deps.harness_version = Some(Box::new(move |h| {
                 harkroom_runner::lane_version::read_harness_version(
                     h,
                     base_path.as_deref(),
                     &home,
                     Some(&omp_home),
+                    Some(&codex_home),
                 )
             }));
         }

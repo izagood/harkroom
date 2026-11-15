@@ -174,3 +174,57 @@ fn codex_lane_home_refuses_link_and_file() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// 승인 규칙 판 확인의 `codex --version` env — PATH·HOME·러너 `CODEX_HOME` 셋뿐(사람 `~/.codex/tmp` 를 건드리지 않게).
+#[test]
+fn version_env_carries_runner_codex_home() {
+    let d = SystemCodexDeps::new(
+        Some("/usr/bin:/bin"),
+        Path::new("/h"),
+        Path::new("/s/codex-home"),
+    );
+    let env = d.version_env();
+    let mut keys: Vec<_> = env.keys().cloned().collect();
+    keys.sort();
+    assert_eq!(keys, vec!["CODEX_HOME", "HOME", "PATH"]);
+    assert_eq!(env["CODEX_HOME"], "/s/codex-home");
+    assert_eq!(env["HOME"], "/h");
+}
+
+/// security #2141·68487: 판을 못 읽으면 규칙 파일을 **쓰지 않는** 닫힌 갈래다(판 확인을 건너뛰고 쓰지 않는다).
+#[test]
+fn unreadable_version_writes_no_rules() {
+    struct NoVersion;
+    impl CodexRulesDeps for NoVersion {
+        fn version(&self) -> Option<String> {
+            None
+        }
+        fn list_hooks(
+            &self,
+            _h: &Path,
+            _c: &Path,
+        ) -> Result<Vec<CodexHookListEntry>, ListHooksError> {
+            Ok(vec![])
+        }
+        fn writable_roots(&self, ws: &Path) -> Vec<PathBuf> {
+            vec![ws.to_path_buf()]
+        }
+    }
+    let root = tmp("nover");
+    let (home, ws) = (root.join("codex-home"), root.join("ws"));
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::create_dir_all(&home).unwrap();
+    let turn = CodexTurn {
+        prep: CodexPrep {
+            home: home.clone(),
+            sync_auth: false,
+            env: Env::new(),
+        },
+        deps: std::sync::Arc::new(NoVersion),
+    };
+    let reach = s(&["Bash(git status)"]);
+    let spec = turn.rules(&ws, &reach, Some(&reach), "/bin/op").unwrap();
+    assert!(spec.is_none());
+    assert!(!codex_rules_path(&home).exists());
+    let _ = std::fs::remove_dir_all(&root);
+}
