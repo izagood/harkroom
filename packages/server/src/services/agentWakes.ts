@@ -389,6 +389,18 @@ export async function foldWakesOnReport(
   return res.rows.map(closedWatchView);
 }
 
+/** `foldWakesForDelegation` 의 문장 — Rust 중단 정리(`core/turn_settle.rs`)가 골든으로 받는다(자리표 형·text 칸만 더함). */
+export const FOLD_WAKES_FOR_DELEGATION_SQL = `update agent_wake w set canceled_at = now(), canceled_by_message_id = $4::uuid
+       from message m
+      where m.id = w.message_id
+        and w.account_id = $2::uuid
+        and w.fired_at is null
+        and w.canceled_at is null
+        and (m.meta->'wake'->>'delegationId' = $1::text
+          or (not (m.meta->'wake' ? 'delegationId')
+              and coalesce(lower(m.meta->'wake'->'reportTo'->>'threadRootId'), coalesce(m.thread_root_id, m.id)::text) = $3::text))
+      returning m.meta->'wake'->'reportTo' as report_to, m.id::text as message_id`;
+
 /**
  * **위임의 결말이 그 일을 기다리던 예약을 접는다**(2026-11-06). 넘긴 쪽은 결말로 깨어나므로 예약으로 다시 볼 이유가 사라졌다 —
  * 두면 끝난 일을 또 확인해 같은 보고를 되풀이한다.
@@ -408,16 +420,7 @@ export async function foldWakesForDelegation(
   },
 ): Promise<void> {
   const res = await client.query<{ report_to: unknown; message_id: string }>(
-    `update agent_wake w set canceled_at = now(), canceled_by_message_id = $4
-       from message m
-      where m.id = w.message_id
-        and w.account_id = $2
-        and w.fired_at is null
-        and w.canceled_at is null
-        and (m.meta->'wake'->>'delegationId' = $1::text
-          or (not (m.meta->'wake' ? 'delegationId')
-              and coalesce(lower(m.meta->'wake'->'reportTo'->>'threadRootId'), coalesce(m.thread_root_id, m.id)::text) = $3::text))
-      returning m.meta->'wake'->'reportTo' as report_to, m.id as message_id`,
+    FOLD_WAKES_FOR_DELEGATION_SQL,
     [args.delegationId, args.leadAccountId, args.threadRootId, args.messageId],
   );
   await stampWakeClosed(client, res.rows.map((r) => r.message_id), 'canceledAt');
@@ -519,6 +522,16 @@ export async function preemptWakesForThread(
   return woke;
 }
 
+/** `cancelWakesForTurn` 의 문장 — Rust 중단 정리(`core/turn_settle.rs`)가 골든으로 받는다(자리표 형·text 칸만 더함). */
+export const CANCEL_WAKES_FOR_TURN_SQL = `update agent_wake w set canceled_at = now()
+       from message m
+      where m.id = w.message_id
+        and coalesce(m.thread_root_id, m.id) = $1::uuid
+        and w.account_id = $2::uuid
+        and w.fired_at is null
+        and w.canceled_at is null
+      returning m.meta->'wake'->'reportTo' as report_to, m.id::text as message_id`;
+
 /**
  * **사람이 멈춘 턴의 예약을 접는다**(2026-10-29, 턴 중단). 중단 경로(`turnCancel.ts`)가 같은 트랜잭션으로 부른다.
  *
@@ -540,14 +553,7 @@ export async function cancelWakesForTurn(
   },
 ): Promise<number> {
   const res = await client.query<{ report_to: unknown; message_id: string }>(
-    `update agent_wake w set canceled_at = now()
-       from message m
-      where m.id = w.message_id
-        and coalesce(m.thread_root_id, m.id) = $1
-        and w.account_id = $2
-        and w.fired_at is null
-        and w.canceled_at is null
-      returning m.meta->'wake'->'reportTo' as report_to, m.id as message_id`,
+    CANCEL_WAKES_FOR_TURN_SQL,
     [args.threadRootId, args.accountId],
   );
   await stampWakeClosed(client, res.rows.map((r) => r.message_id), 'canceledAt');

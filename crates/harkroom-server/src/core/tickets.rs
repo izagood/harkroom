@@ -10,12 +10,13 @@ pub struct Claim {
     pub credential_hash: String,
 }
 
-pub struct TicketStore {
+/// 받는 값(`C`)은 `/ws` 의 [`Claim`] 이 기본이고, `/agent-attach`(C6c-3)는 세션 id 를 더 싣는다.
+pub struct TicketStore<C = Claim> {
     ttl: Duration,
-    live: Mutex<HashMap<String, (Claim, Instant)>>,
+    live: Mutex<HashMap<String, (C, Instant)>>,
 }
 
-impl TicketStore {
+impl<C> TicketStore<C> {
     pub fn new(ttl: Duration) -> Self {
         Self {
             ttl,
@@ -23,7 +24,7 @@ impl TicketStore {
         }
     }
 
-    pub fn issue(&self, claim: Claim) -> String {
+    pub fn issue(&self, claim: C) -> String {
         let mut b = [0u8; 32];
         getrandom::fill(&mut b).expect("os random");
         let token = format!("hrkt_{}", crate::inbox_today::b64url(&b));
@@ -34,7 +35,7 @@ impl TicketStore {
         token
     }
 
-    pub fn consume(&self, ticket: &str) -> Option<Claim> {
+    pub fn consume(&self, ticket: &str) -> Option<C> {
         let (claim, exp) = self
             .live
             .lock()
@@ -57,12 +58,12 @@ mod tests {
 
     #[test]
     fn one_shot_and_expiry() {
-        let s = TicketStore::new(Duration::from_secs(30));
+        let s: TicketStore = TicketStore::new(Duration::from_secs(30));
         let t = s.issue(c());
         assert!(t.starts_with("hrkt_") && t.len() == 5 + 43);
         assert_eq!(s.consume(&t), Some(c()));
         assert_eq!(s.consume(&t), None, "1회용");
-        let s = TicketStore::new(Duration::from_millis(0));
+        let s: TicketStore = TicketStore::new(Duration::from_millis(0));
         let t = s.issue(c());
         assert_eq!(s.consume(&t), None, "만료");
     }

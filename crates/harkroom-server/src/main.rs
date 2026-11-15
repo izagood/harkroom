@@ -458,6 +458,25 @@ async fn main() {
         _ => None,
     };
     let operator_on = operator_write.is_some();
+    // C6c-3 — 릴레이 세션 사본은 오퍼레이터 코어와 함께만 선다(한 스위치). 허브 줄을 못 넣으면 사본 없이 릴레이만 돈다(TS 와 같음).
+    let relay_live = match &operator_write {
+        Some(w) => match harkroom_server::core::relay_live::SessionLive::start(
+            w.clone(),
+            harkroom_server::core::relay_live::LiveOpts::default(),
+        )
+        .await
+        {
+            Ok(l) => Some(l),
+            Err(e) => {
+                eprintln!(
+                    "front: relay session copy off ({})",
+                    e.as_database_error().map_or("io", |_| "db")
+                );
+                None
+            }
+        },
+        None => None,
+    };
     let core_router = (core_mode == harkroom_server::core::CoreMode::Rust).then(|| {
         let hub = harkroom_server::core::events::Hub::new();
         harkroom_server::core::events::spawn_outbox_listener(
@@ -643,18 +662,59 @@ async fn main() {
         core_routes.sockets.extend(mcp.sockets);
         if let Some(write) = operator_write {
             // C2a — 오퍼레이터 소켓·REST. 허브는 프로세스에 하나이고 C2b~C5 의 소비자가 같은 것을 받는다.
+            let op_hub = harkroom_server::core::operator_hub::OperatorHub::new();
             let operators = harkroom_server::core::operator::OperatorCore::new(
                 state.pool.clone(),
-                write,
+                write.clone(),
                 state.trust.clone(),
                 core.hub.clone(),
-                harkroom_server::core::operator_hub::OperatorHub::new(),
+                op_hub.clone(),
                 harkroom_server::core::operator::OpTiming::from_env(),
             );
-            let op = harkroom_server::core::operator::routes(operators, auth, state.cors.clone());
+            let op = harkroom_server::core::operator::routes(
+                operators,
+                auth.clone(),
+                state.cors.clone(),
+            );
             core_routes.router = core_routes.router.merge(op.router);
             core_routes.http.extend(op.http);
             core_routes.sockets.extend(op.sockets);
+            // C6c-3 — 에이전트 릴레이(`/agent-sessions*`·`/agent-attach`). 러너 소켓이 이 허브에 붙으므로 오퍼레이터와 **함께만** 옮긴다.
+            {
+                use harkroom_server::core::{
+                    relay, relay_attention, relay_link, relay_live, relay_routes, turn_settle,
+                };
+                let hub = relay::RelayHub::new(Some(relay_attention::attention_hook(
+                    state.pool.clone(),
+                    write.clone(),
+                )));
+                let presence = relay_live::PresenceMark::new(
+                    write.clone(),
+                    Some(relay_attention::online_hook(write.clone())),
+                    relay_live::LiveOpts::default().on_error,
+                );
+                // ⓖ — offline 은 스윕이 낸다(TS `startSweep`). 프로세스와 함께 산다.
+                presence.start_sweep();
+                let link = relay_link::RelayLink::spawn(
+                    hub,
+                    op_hub,
+                    relay_link::db_assign_check(state.pool.clone()),
+                    relay_live::link_hooks(relay_live, Some(presence)),
+                );
+                let rc = relay_routes::RelayCore::new(
+                    state.pool.clone(),
+                    write.clone(),
+                    state.trust.clone(),
+                    link,
+                    core.allowed_origins.clone(),
+                    harkroom_server::core::ws::Timing::from_env(),
+                    turn_settle::settle_hook(write),
+                );
+                let r = relay_routes::routes(rc, auth, state.cors.clone());
+                core_routes.router = core_routes.router.merge(r.router);
+                core_routes.http.extend(r.http);
+                core_routes.sockets.extend(r.sockets);
+            }
         }
         // CI 대조 시험이 이 줄을 읽어 여기 적힌 **모든** HTTP 줄의 CORS(본 요청·프리플라이트)를 TS 와 맞춰 본다(`route_table.rs`).
         eprintln!(
@@ -667,7 +727,7 @@ async fn main() {
     eprintln!(
         "front: core {}",
         if core_router.is_some() && operator_on {
-            "rust (/ws, /ws-ticket, /operator, /operators*)"
+            "rust (/ws, /ws-ticket, /operator, /operators*, /agent-sessions*, /agent-attach)"
         } else if core_router.is_some() {
             "rust (/ws, /ws-ticket; operator stays ts)"
         } else {

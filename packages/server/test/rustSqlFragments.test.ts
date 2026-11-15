@@ -37,7 +37,8 @@ import { BG_AGENT_ON_SQL, BG_DAILY_LOCK_SQL, BG_ENQUEUE_SQL, BG_EXISTS_SQL, BG_P
 import { LIST_DELEGATIONS_GIVEN_SQL, LIST_DELEGATIONS_MINE_SQL } from '../src/services/apiDelegation.js';
 import { LIST_TOOL_RULES_SQL } from '../src/services/permissionRequests.js';
 import { LEASE_INBOX_MAX_AGE_MS, LEASE_MAX_MS, LEASE_MAX_REISSUES, LEASE_REISSUE_STALE_MS, LEASE_RENEW_MS, LEASE_TTL_MS, TURN_LEASE_CAUSE_SQL, TURN_LEASE_CLAIM_MOVED_SQL, TURN_LEASE_END_PRIOR_SQL, TURN_LEASE_END_SQL, TURN_LEASE_INSERT_SQL, TURN_LEASE_PRIOR_SQL, TURN_LEASE_RENEW_SQL, TURN_LEASE_USED_SQL } from '../src/services/secretAccess.js';
-import { PREEMPT_CANCEL_SQL, PREEMPT_DUE_SQL, PREEMPT_FIRE_INBOX_SQL, PREEMPT_FIRE_SQL, STAMP_WAKE_CLOSED_SQL } from '../src/services/agentWakes.js';
+import { CANCEL_WAKES_FOR_TURN_SQL, FOLD_WAKES_FOR_DELEGATION_SQL, PREEMPT_CANCEL_SQL, PREEMPT_DUE_SQL, PREEMPT_FIRE_INBOX_SQL, PREEMPT_FIRE_SQL, STAMP_WAKE_CLOSED_SQL } from '../src/services/agentWakes.js';
+import { CANCEL_AS_DELEGATE_SQL, CANCEL_AS_LEAD_SQL, CANCEL_DELEGATE_ITEM_SQL, CANCEL_LEAD_ITEMS_SQL, CANCEL_LEAD_MARK_SQL, CANCEL_LEAD_META_SQL, SETTLED_INBOX_SQL, SETTLED_MARK_SQL, SETTLED_META_SQL, SETTLED_STILL_SQL } from '../src/services/delegations.js';
 
 const GOLDEN = fileURLToPath(new URL('../../../crates/harkroom-server/golden/sql_fragments.json', import.meta.url));
 
@@ -160,6 +161,19 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     preempt_fire_inbox: PREEMPT_FIRE_INBOX_SQL,
     preempt_fire: PREEMPT_FIRE_SQL,
     stamp_wake_closed: STAMP_WAKE_CLOSED_SQL,
+    // 턴 중단 뒤 정리(`core/turn_settle.rs`, S5.3 C6c-3) — `settleCanceledTurn` 의 위임 의무·예약 닫기.
+    cancel_as_delegate: CANCEL_AS_DELEGATE_SQL,
+    cancel_delegate_item: CANCEL_DELEGATE_ITEM_SQL,
+    cancel_as_lead: CANCEL_AS_LEAD_SQL,
+    cancel_lead_items: CANCEL_LEAD_ITEMS_SQL,
+    cancel_lead_meta: CANCEL_LEAD_META_SQL,
+    cancel_lead_mark: CANCEL_LEAD_MARK_SQL,
+    settled_still: SETTLED_STILL_SQL,
+    settled_meta: SETTLED_META_SQL,
+    settled_mark: SETTLED_MARK_SQL,
+    settled_inbox: SETTLED_INBOX_SQL,
+    fold_wakes_for_delegation: FOLD_WAKES_FOR_DELEGATION_SQL,
+    cancel_wakes_for_turn: CANCEL_WAKES_FOR_TURN_SQL,
     // 사람 답글로 카드 닫기(`core/ask_reply_close.rs`, S5.3 C1c-3c) — `closeAsksByReply`.
     ask_close_by_reply: ASK_CLOSE_BY_REPLY_SQL,
     // 사람 답글의 위임 활동(`core/msg_post.rs`, S5.3 C1c-3d) — `touchDelegationDeadline`·v1 대기 중 update.
