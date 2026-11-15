@@ -96,7 +96,10 @@ pub async fn serve(
         return None;
     };
     // 알림(id 없음)은 SDK 가 202 로 받는다 — tools/call 은 요청이어야 하니 모양이 다르면 TS 로.
-    let id = v.get("id").filter(|i| i.is_string() || i.is_number())?.clone();
+    let id = v
+        .get("id")
+        .filter(|i| i.is_string() || i.is_number())?
+        .clone();
     let args = v
         .pointer("/params/arguments")
         .cloned()

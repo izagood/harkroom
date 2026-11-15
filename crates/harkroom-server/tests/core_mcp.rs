@@ -220,3 +220,212 @@ async fn sse_streams_without_buffering() {
         .unwrap();
     assert_eq!(frame.into_data().unwrap(), "data: one\n\n");
 }
+
+// ── C4a-2 `serve` — 갈림 → 전송 조건 → 입장 확인(TS `/mcp/admit`) → 도구 답(SSE) ──
+
+/// `/mcp/admit` 를 흉내 낸다 — 답 모양은 `mode` 로 고른다. 받은 헤더·본문은 `seen` 에 남긴다.
+async fn admit_upstream(
+    mode: &'static str,
+    seen: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+) -> Upstream {
+    let app = axum::Router::new().route(
+        "/mcp/admit",
+        axum::routing::post(move |req: Request<Body>| {
+            let seen = seen.clone();
+            async move {
+                let (parts, body) = req.into_parts();
+                let body = to_bytes(body, 1 << 20).await.unwrap();
+                let mut s = seen.lock().unwrap();
+                for (k, v) in &parts.headers {
+                    s.push(format!("{k}={}", v.to_str().unwrap_or("?")));
+                }
+                s.push(format!("body={}", String::from_utf8_lossy(&body)));
+                drop(s);
+                let (status, text) = match mode {
+                    "yes" => (200, r#"{"admitted":true}"#),
+                    "no" => (
+                        200,
+                        r#"{"admitted":false,"result":{"content":[{"type":"text","text":"{\"error\":\"not_admissible\"}"}]}}"#,
+                    ),
+                    "bad_shape" => (200, r#"{"admitted":false,"result":{}}"#),
+                    "not_json" => (200, "nope"),
+                    _ => (500, r#"{"error":"boom"}"#),
+                };
+                axum::response::Response::builder()
+                    .status(status)
+                    .header("content-type", "application/json")
+                    .body(Body::from(text))
+                    .unwrap()
+            }
+        }),
+    );
+    Upstream::new(&format!("http://{}", common::serve(app).await))
+}
+
+fn ci() -> axum::extract::ConnectInfo<std::net::SocketAddr> {
+    axum::extract::ConnectInfo("127.0.0.1:9".parse().unwrap())
+}
+
+fn mcp_headers(extra: &[(&'static str, &'static str)]) -> axum::http::HeaderMap {
+    let mut h = axum::http::HeaderMap::new();
+    h.insert(
+        "accept",
+        "application/json, text/event-stream".parse().unwrap(),
+    );
+    h.insert("content-type", "application/json".parse().unwrap());
+    h.insert("authorization", "Bearer t".parse().unwrap());
+    h.insert("x-harkroom-turn-id", "turn-1".parse().unwrap());
+    h.insert("x-not-forwarded", "1".parse().unwrap());
+    for (k, v) in extra {
+        h.insert(*k, v.parse().unwrap());
+    }
+    h
+}
+
+const CALL: &str = r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"channel.list","arguments":{"q":1}}}"#;
+
+fn stub(tool: &'static str, args: &serde_json::Value) -> Option<serde_json::Value> {
+    Some(serde_json::json!({"content":[{"type":"text","text":format!("{tool}:{args}")}]}))
+}
+
+fn none(_: &'static str, _: &serde_json::Value) -> Option<serde_json::Value> {
+    None
+}
+
+async fn sse_text(r: axum::response::Response) -> (String, String) {
+    assert_eq!(r.status(), StatusCode::OK);
+    let ct = r.headers()["content-type"].to_str().unwrap().to_string();
+    assert_eq!(r.headers()["cache-control"], "no-cache, no-transform");
+    let b = to_bytes(r.into_body(), 1 << 20).await.unwrap();
+    (ct, String::from_utf8(b.to_vec()).unwrap())
+}
+
+#[tokio::test]
+async fn serve_answers_after_admit_yes_in_sdk_sse_shape() {
+    use harkroom_server::core::mcp::route::serve;
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let up = admit_upstream("yes", seen.clone()).await;
+    let r = serve(
+        &up,
+        ci(),
+        &mcp_headers(&[]),
+        CALL.as_bytes(),
+        &["channel.list"],
+        &stub,
+    )
+    .await
+    .expect("rust answers");
+    let (ct, text) = sse_text(r).await;
+    assert_eq!(ct, "text/event-stream");
+    let data = text
+        .strip_prefix("event: message\ndata: ")
+        .and_then(|s| s.strip_suffix("\n\n"))
+        .unwrap_or_else(|| panic!("{text}"));
+    let v: serde_json::Value = serde_json::from_str(data).unwrap();
+    assert_eq!(v["jsonrpc"], "2.0");
+    assert_eq!(v["id"], 7);
+    assert_eq!(v["result"]["content"][0]["text"], r#"channel.list:{"q":1}"#);
+    // 입장 확인에는 자격·회차 표지만 실리고 본문은 도구 이름·인자다.
+    let seen = seen.lock().unwrap().join("\n");
+    assert!(seen.contains("authorization=Bearer t"), "{seen}");
+    assert!(seen.contains("x-harkroom-turn-id=turn-1"), "{seen}");
+    assert!(!seen.contains("x-not-forwarded"), "{seen}");
+    assert!(
+        seen.contains(r#"body={"arguments":{"q":1},"tool":"channel.list"}"#),
+        "{seen}"
+    );
+}
+
+#[tokio::test]
+async fn serve_returns_admit_refusal_as_tool_answer_without_calling_tool() {
+    use harkroom_server::core::mcp::route::serve;
+    let up = admit_upstream("no", Default::default()).await;
+    let r = serve(
+        &up,
+        ci(),
+        &mcp_headers(&[]),
+        CALL.as_bytes(),
+        &["channel.list"],
+        &|_, _| panic!("tool must not run after refusal"),
+    )
+    .await
+    .expect("refusal is answered by rust");
+    let (_, text) = sse_text(r).await;
+    assert!(text.contains(r#"not_admissible"#), "{text}");
+    assert!(text.contains(r#""id":7"#), "{text}");
+}
+
+#[tokio::test]
+async fn serve_hands_to_ts_when_admit_is_unknown() {
+    use harkroom_server::core::mcp::route::serve;
+    for mode in ["error", "bad_shape", "not_json"] {
+        let up = admit_upstream(mode, Default::default()).await;
+        let r = serve(
+            &up,
+            ci(),
+            &mcp_headers(&[]),
+            CALL.as_bytes(),
+            &["channel.list"],
+            &move |_, _| panic!("tool must not run when admit is unknown ({mode})"),
+        )
+        .await;
+        assert!(r.is_none(), "{mode}");
+    }
+}
+
+#[tokio::test]
+async fn serve_hands_to_ts_before_admit_when_not_ours() {
+    use harkroom_server::core::mcp::route::serve;
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let up = admit_upstream("yes", seen.clone()).await;
+    let h = mcp_headers(&[]);
+    // 갈림 밖 · 빈 목록 · 전송 조건 실패 · 알림(id 없음) · 깨진 JSON — 모두 입장 확인 전에 TS 로.
+    let notif = r#"{"jsonrpc":"2.0","method":"tools/call","params":{"name":"channel.list"}}"#;
+    let cases: [(&axum::http::HeaderMap, &str, &[&str]); 4] = [
+        (&h, CALL, &["message.post"]),
+        (&h, CALL, &[]),
+        (&h, notif, &["channel.list"]),
+        (&h, "{", &["channel.list"]),
+    ];
+    for (hh, body, served) in cases {
+        assert!(
+            serve(&up, ci(), hh, body.as_bytes(), served, &stub)
+                .await
+                .is_none(),
+            "{body} {served:?}"
+        );
+    }
+    let bad_accept = mcp_headers(&[("accept", "application/json")]);
+    assert!(
+        serve(
+            &up,
+            ci(),
+            &bad_accept,
+            CALL.as_bytes(),
+            &["channel.list"],
+            &stub
+        )
+        .await
+        .is_none()
+    );
+    let bad_ver = mcp_headers(&[("mcp-protocol-version", "1999-01-01")]);
+    assert!(
+        serve(
+            &up,
+            ci(),
+            &bad_ver,
+            CALL.as_bytes(),
+            &["channel.list"],
+            &stub
+        )
+        .await
+        .is_none()
+    );
+    assert!(seen.lock().unwrap().is_empty(), "admit must not be asked");
+    // 입장 확인은 통과했지만 도구가 답하지 않으면(None) 역시 TS 로.
+    assert!(
+        serve(&up, ci(), &h, CALL.as_bytes(), &["channel.list"], &none)
+            .await
+            .is_none()
+    );
+}

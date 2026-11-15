@@ -147,10 +147,7 @@ mod tests {
             ("content-type", "application/json; charset=utf-8"),
         ];
         assert!(transport_ok(&h(&ok)));
-        assert!(!transport_ok(&h(&[
-            ("accept", "text/event-stream"),
-            ok[1]
-        ])));
+        assert!(!transport_ok(&h(&[("accept", "text/event-stream"), ok[1]])));
         assert!(!transport_ok(&h(&[ok[0], ("content-type", "text/plain")])));
         assert!(!transport_ok(&h(&[
             ok[0],

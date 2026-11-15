@@ -573,5 +573,30 @@ describe('bg_job (BG1)', () => {
         if (got.job === null) expect(['outside_window', 'none']).toContain(got.reason);
       } finally { await r.close(); }
     });
+
+    it('/mcp/admit(S5.3 C4a-2): 같은 허용 목록을 Rust 앞에서도 적용한다 — 오퍼레이터 자격일 때만 bg cause 를 본다', async () => {
+      const a = await agent('bg-admit');
+      const ch = (await app.inject({ method: 'POST', url: '/channels', headers: auth(admin.token), payload: { name: 'bg-admit' } })).json().id as string;
+      const root = (await app.inject({ method: 'POST', url: `/channels/${ch}/messages`, headers: auth(admin.token), payload: { body: 'input' } })).json().id as string;
+      const jobId = await runningJob(a.accountId, [root]);
+      const admit = (extra: Record<string, string>, tool: string, args: Record<string, unknown>) => app.inject({
+        method: 'POST', url: '/mcp/admit', headers: asAgent(a.accountId, extra), payload: { tool, arguments: args },
+      });
+      const bg = { [CAUSE_HEADER]: `bg:${jobId}` };
+      const refusal = (r: { json(): { admitted: boolean; result: { content: { text: string }[] } } }) => {
+        const j = r.json();
+        expect(j.admitted).toBe(false);
+        return JSON.parse(j.result.content[0]!.text).error.code as string;
+      };
+      expect(refusal(await admit(bg, 'message.post', { channelId: ch, body: 'x' }))).toBe('bg_tool_not_allowed');
+      expect(refusal(await admit(bg, 'message.read', { channelId: ch }))).toBe('bg_thread_not_in_input');
+      expect(refusal(await admit(bg, 'thread.note', { threadRootId: root, body: 'x' }))).toBe('bg_note_read_only');
+      expect((await admit(bg, 'message.read', { channelId: ch, threadRootId: root })).json()).toEqual({ admitted: true });
+      // 닫힌 회차는 거절.
+      await pool.query(`update bg_job set status = 'done' where id = $1`, [jobId]);
+      expect(refusal(await admit(bg, 'message.read', { channelId: ch, threadRootId: root }))).toBe('bg_job_not_running');
+      // bg cause 가 아니면 회차 관문을 지나지 않는다.
+      expect((await admit({}, 'message.post', { channelId: ch, body: 'x' })).json()).toEqual({ admitted: true });
+    });
   });
 });

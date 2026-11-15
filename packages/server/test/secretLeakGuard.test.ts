@@ -170,4 +170,28 @@ describe('본문 거절 (D5)', () => {
     expect((await app.inject({ method: 'PATCH', url: `/secrets/${id}`, headers: auth(alice.token), payload: { description: `it is ${PW}` } })).json().error.code).toBe('secret_in_description');
     expect((await app.inject({ method: 'PUT', url: `/secrets/${id}/value`, headers: auth(alice.token), payload: { value: 'db password' } })).json().error.code).toBe('secret_in_description');
   });
+
+  it('/mcp/admit(S5.3 C4a-2): 에이전트만 · 거절 도구는 not_admissible · 비밀이 든 인자는 들어가지 못한다', async () => {
+    const admit = (headers: Record<string, string>, payload: unknown) =>
+      app.inject({ method: 'POST', url: '/mcp/admit', headers, payload: payload as Record<string, unknown> });
+    expect((await admit({}, { tool: 'message.post' })).statusCode).toBe(401);
+    const human = await admit(auth(alice.token), { tool: 'message.post' });
+    expect(human.statusCode).toBe(403);
+    expect(human.json().error.code).toBe('agent_only');
+    expect((await admit(auth(agent.pat), {})).json().error.code).toBe('bad_request');
+    for (const tool of ['memory.set', 'memory.archive', 'memory.merge', 'bg.complete']) {
+      const r = await admit(auth(agent.pat), { tool });
+      expect(r.statusCode).toBe(400);
+      expect(r.json().error.code).toBe('not_admissible');
+    }
+    expect((await admit(auth(agent.pat), { tool: 'message.post', arguments: { channelId, body: 'clean' } })).json()).toEqual({ admitted: true });
+    // 비밀이 든 인자 — REST 본문 관문(leakGuardHook)이 /mcp/admit 본문도 먼저 본다 → 400 secret_in_body.
+    // Rust 는 200 이 아니면 Unknown 으로 보고 원래 요청을 TS /mcp 로 넘기므로, 결과는 TS 감싸기의 거절과 같다.
+    const before = await blockedCount();
+    const leak = await admit(auth(agent.pat), { tool: 'message.post', arguments: { channelId, body: `x ${VALUE}` } });
+    expect(leak.statusCode).toBe(400);
+    expect(leak.json().error.code).toBe('secret_in_body');
+    expect(leak.body).not.toContain(VALUE);
+    expect(await blockedCount()).toBeGreaterThan(before);
+  });
 });
