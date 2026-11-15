@@ -74,6 +74,29 @@ pub async fn audience_for(pool: &PgPool, channel: &str) -> sqlx::Result<Audience
     Ok(Audience::Accounts(ids))
 }
 
+/// [`audience_for`] 를 받은 연결 하나로 — 트랜잭션 연결을 쥔 채 같은 풀에서 또 빌리지 않으려고(`core/ask_sync.rs`).
+/// 답은 [`audience_for`] 와 같다(같은 두 질의).
+pub async fn audience_on(conn: &mut sqlx::PgConnection, channel: &str) -> sqlx::Result<Audience> {
+    let kv: Option<(String, String)> =
+        sqlx::query_as("select kind, visibility from channel where id = $1::uuid")
+            .bind(channel)
+            .fetch_optional(&mut *conn)
+            .await?;
+    let Some((kind, visibility)) = kv else {
+        return Ok(Audience::All);
+    };
+    if is_public_standard(&kind, &visibility) {
+        return Ok(Audience::All);
+    }
+    let ids: Vec<String> = sqlx::query_scalar(
+        "select account_id::text from channel_member where channel_id = $1::uuid",
+    )
+    .bind(channel)
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(Audience::Accounts(ids))
+}
+
 fn list_sql(negate: bool) -> &'static str {
     static YES: OnceLock<String> = OnceLock::new();
     static NO: OnceLock<String> = OnceLock::new();
