@@ -19,7 +19,9 @@ import type { SweepHost } from '../scheduledMessages.js';
 import { runGated } from '../loopGate.js';
 
 /** inbox 사유 가운데 사람의 폰을 울리는 것(결정 4). 나머지는 에이전트에게만 가는 사유다. */
-const INBOX_PUSH_REASONS = new Set<string>(['mention', 'thread_reply', 'dm']);
+/** inbox 푸시를 거는 사유(Rust 코어가 골든으로 받는다). */
+export const INBOX_PUSH_REASON_LIST = ['mention', 'thread_reply', 'dm'] as const;
+const INBOX_PUSH_REASONS = new Set<string>(INBOX_PUSH_REASON_LIST);
 
 /** prefs 의 어느 스위치가 이 사유를 켜고 끄나. */
 const PREF_KEY: Record<PushReason, 'mention' | 'threadReply' | 'dm' | 'ask'> = {
@@ -77,21 +79,24 @@ export async function enqueueInboxPush(
  * 질의를 하나씩 내던 것을 한 번으로 줄인다 — 이 질의는 채널 seq 락을 쥔 채 돌므로(`postMessage`) 줄 수록 같은 채널의
  * 다음 글이 덜 기다린다. 규칙(사유·사람만·기기 있는 사람만·늦춤)은 위 함수와 같다.
  */
+/** `enqueueInboxPushMany` 의 문장 — Rust 코어(`core/mention_fanout.rs`, S5.3 C3a-3b)가 골든으로 받는다. */
+export const ENQUEUE_INBOX_PUSH_MANY_SQL = `insert into push_job (account_id, message_id, inbox_id, reason, not_before)
+     select r.account_id, $3::uuid, r.inbox_id, $4,
+            now() + case when $4 <> 'dm' and ${agentPlainSql('m', 'au')} and ${mineThreadSql('m', 'r.account_id')}
+                         then make_interval(secs => $5::float8) else interval '15 seconds' end
+       from unnest($1::uuid[], $2::bigint[]) with ordinality as r(account_id, inbox_id, ord)
+       join message m on m.id = $3::uuid
+       join account au on au.id = m.author_id
+      where exists (select 1 from account where id = r.account_id and kind = 'human')
+        and exists (select 1 from push_device where account_id = r.account_id)
+      order by r.ord`;
+
 export async function enqueueInboxPushMany(
   client: PoolClient | Pool, rows: { inboxId: string | number; accountId: string }[], messageId: string, reason: string,
 ): Promise<void> {
   if (!rows.length || !INBOX_PUSH_REASONS.has(reason)) return;
   await client.query(
-    `insert into push_job (account_id, message_id, inbox_id, reason, not_before)
-     select r.account_id, $3, r.inbox_id, $4,
-            now() + case when $4 <> 'dm' and ${agentPlainSql('m', 'au')} and ${mineThreadSql('m', 'r.account_id')}
-                         then make_interval(secs => $5) else interval '15 seconds' end
-       from unnest($1::uuid[], $2::bigint[]) with ordinality as r(account_id, inbox_id, ord)
-       join message m on m.id = $3
-       join account au on au.id = m.author_id
-      where exists (select 1 from account where id = r.account_id and kind = 'human')
-        and exists (select 1 from push_device where account_id = r.account_id)
-      order by r.ord`,
+    ENQUEUE_INBOX_PUSH_MANY_SQL,
     [rows.map((r) => r.accountId), rows.map((r) => String(r.inboxId)), messageId, reason, PUSH_AGENT_REPLY_DELAY_SEC],
   );
 }

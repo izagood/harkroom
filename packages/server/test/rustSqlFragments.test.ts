@@ -14,6 +14,12 @@ import { LIST_SCHEDULED_SQL } from '../src/services/scheduledMessages.js';
 import { SELECT_PINS_SQL } from '../src/services/pins.js';
 import { AGENT_INVOKER_SQL, CHANNEL_SCOPE_SQL, ELIGIBLE_DELEGATE_SQL, INVOKE_FACTS_SQL, TEAM_INVOKER_SQL } from '../src/services/invokeGate.js';
 import { HAS_REPLY_GRANT_SQL } from '../src/services/replyGrants.js';
+import { ACCOUNTS_BY_HANDLES_SQL, ACCOUNTS_BY_IDS_SQL, FAN_OUT_AUDIENCE_SQL, INSERT_INBOX_MANY_SQL, REVEAL_HIDDEN_SQL, REVEAL_REASONS } from '../src/services/messages.js';
+import { GROUP_BY_HANDLE_SQL, GROUP_MEMBERS_SQL } from '../src/services/handleGroups.js';
+import { TEAM_BY_ID_SQL, TEAM_BY_NAME_SQL, TEAM_MEMBERS_SQL } from '../src/services/teams.js';
+import { MENTION_POLICY_SQL } from '../src/services/mentionPolicy.js';
+import { PRINCIPAL_INVOKES_SQL } from '../src/services/invokePrincipal.js';
+import { ENQUEUE_INBOX_PUSH_MANY_SQL, INBOX_PUSH_REASON_LIST, PUSH_AGENT_REPLY_DELAY_SEC } from '../src/services/push/pushJobs.js';
 import { HAS_OLDER_SQL, LIST_MESSAGES_SQL, MESSAGE_BY_ID_SQL, READ_LIST_ROW_SQL } from '../src/services/messages.js';
 import { CHILD_FACTS_AUDIENCE_SQL, PLAN_PROGRESS_PLANS_SQL } from '../src/services/threadPlan.js';
 import { displayBodySql } from '../src/services/systemBody.js';
@@ -30,6 +36,23 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     channel_list_visible_c_aid_aadmin: channelListVisibleSql('c', 'a.id', 'a.is_admin'),
     // 링크 한 개 읽기(`core/msg_read.rs`, S5.3 C1b-1a) — `GET /messages/:id` 의 문장 전체(COLS 포함).
     message_by_id: MESSAGE_BY_ID_SQL,
+    // 누구를 부르나·호출함 쓰기(`core/mention_calls.rs`·`mention_fanout.rs`, S5.3 C3a-3b). 목록·수는 JSON 글자로 싣는다.
+    mc_accounts_by_handles: ACCOUNTS_BY_HANDLES_SQL,
+    mc_accounts_by_ids: ACCOUNTS_BY_IDS_SQL,
+    mc_group_by_handle: GROUP_BY_HANDLE_SQL,
+    mc_group_members: GROUP_MEMBERS_SQL,
+    mc_team_by_id: TEAM_BY_ID_SQL,
+    mc_team_by_name: TEAM_BY_NAME_SQL,
+    mc_team_members: TEAM_MEMBERS_SQL,
+    mc_mention_policy: MENTION_POLICY_SQL,
+    mc_principal_invokes: PRINCIPAL_INVOKES_SQL,
+    mc_insert_inbox_many: INSERT_INBOX_MANY_SQL,
+    mc_reveal_hidden: REVEAL_HIDDEN_SQL,
+    mc_fan_out_audience: FAN_OUT_AUDIENCE_SQL,
+    mc_enqueue_inbox_push_many: ENQUEUE_INBOX_PUSH_MANY_SQL,
+    mc_reveal_reasons: JSON.stringify([...REVEAL_REASONS]),
+    mc_inbox_push_reasons: JSON.stringify([...INBOX_PUSH_REASON_LIST]),
+    mc_push_agent_reply_delay_sec: String(PUSH_AGENT_REPLY_DELAY_SEC),
     // 호출 게이트(`core/invoke_gate.rs`, S5.3 C3a-3b) — 누가 누구를 부를 수 있나.
     invoke_facts: INVOKE_FACTS_SQL,
     invoke_agent_invoker: AGENT_INVOKER_SQL,

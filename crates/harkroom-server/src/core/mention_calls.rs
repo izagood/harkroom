@@ -16,6 +16,61 @@ use super::mention_parse::{
 use serde_json::{Map, Value, json};
 use sqlx::PgConnection;
 use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
+
+fn golden(k: &str) -> String {
+    static G: OnceLock<Value> = OnceLock::new();
+    let v = G.get_or_init(|| {
+        serde_json::from_str(include_str!("../../golden/sql_fragments.json"))
+            .expect("golden/sql_fragments.json")
+    });
+    v[k].as_str()
+        .unwrap_or_else(|| panic!("golden fragment {k}"))
+        .to_string()
+}
+
+/// 이 모듈이 쓰는 문장 — 전부 TS 상수(`messages.ts`·`teams.ts`·`handleGroups.ts`·`mentionPolicy.ts`·`invokePrincipal.ts`)를 골든으로
+/// 받아 감싼다. 값·조건·순서는 TS 그대로이고, 감싸는 쪽은 칸을 text 로 읽기만 한다.
+struct Sql {
+    accounts_by_handles: String,
+    accounts_by_ids: String,
+    group_by_handle: String,
+    team_by_id: String,
+    team_by_name: String,
+    team_members: String,
+    policy: String,
+    principal_invokes: String,
+}
+
+fn sql() -> &'static Sql {
+    static S: OnceLock<Sql> = OnceLock::new();
+    S.get_or_init(|| {
+        let team = |k: &str| {
+            format!(
+                "select t.id::text, t.name, t.\"leadAccountId\"::text, t.\"invokeScope\", t.\"ownerAccountId\"::text from ({}) t",
+                golden(k)
+            )
+        };
+        let accounts =
+            |k: &str| format!("select a.id::text, a.handle, a.kind from ({}) a", golden(k));
+        Sql {
+            accounts_by_handles: accounts("mc_accounts_by_handles"),
+            accounts_by_ids: accounts("mc_accounts_by_ids"),
+            group_by_handle: format!("select g.id::text from ({}) g", golden("mc_group_by_handle")),
+            team_by_id: team("mc_team_by_id"),
+            team_by_name: team("mc_team_by_name"),
+            team_members: format!(
+                "select m.\"accountId\"::text, m.handle, m.disabled from ({}) m order by m.handle",
+                golden("mc_team_members")
+            ),
+            policy: format!("select p.chain_limit from ({}) p", golden("mc_mention_policy")),
+            principal_invokes: format!(
+                "select q.n::int8 from ({}) q",
+                golden("mc_principal_invokes")
+            ),
+        }
+    })
+}
 
 /// shared `MENTION_CHAIN_LIMIT`.
 pub const MENTION_CHAIN_LIMIT: i64 = 8;
@@ -90,13 +145,10 @@ async fn accounts_by_handles(
     if handles.is_empty() {
         return Ok(vec![]);
     }
-    let rows: Vec<(String, String, String)> = sqlx::query_as(
-        "select id::text, lower(handle) as handle, kind from account \
-          where lower(handle) = any($1) and deleted_at is null",
-    )
-    .bind(handles)
-    .fetch_all(&mut *conn)
-    .await?;
+    let rows: Vec<(String, String, String)> = sqlx::query_as(sql().accounts_by_handles.as_str())
+        .bind(handles)
+        .fetch_all(&mut *conn)
+        .await?;
     Ok(rows
         .into_iter()
         .map(|(id, handle, kind)| Acct { id, handle, kind })
@@ -110,13 +162,10 @@ async fn accounts_by_ids(
     if ids.is_empty() {
         return Ok(vec![]);
     }
-    let rows: Vec<(String, String, String)> = sqlx::query_as(
-        "select id::text, lower(handle) as handle, kind from account \
-          where id = any($1::uuid[]) and deleted_at is null",
-    )
-    .bind(ids)
-    .fetch_all(&mut *conn)
-    .await?;
+    let rows: Vec<(String, String, String)> = sqlx::query_as(sql().accounts_by_ids.as_str())
+        .bind(ids)
+        .fetch_all(&mut *conn)
+        .await?;
     Ok(rows
         .into_iter()
         .map(|(id, handle, kind)| Acct { id, handle, kind })
@@ -125,10 +174,9 @@ async fn accounts_by_ids(
 
 /// TS `getMentionPolicy` — 행이 없으면 상수.
 async fn chain_limit(conn: &mut PgConnection) -> Result<i64, sqlx::Error> {
-    let v: Option<i32> =
-        sqlx::query_scalar("select chain_limit from mention_policy where id = true")
-            .fetch_optional(&mut *conn)
-            .await?;
+    let v: Option<i32> = sqlx::query_scalar(sql().policy.as_str())
+        .fetch_optional(&mut *conn)
+        .await?;
     Ok(v.map(i64::from).unwrap_or(MENTION_CHAIN_LIMIT))
 }
 
@@ -138,15 +186,19 @@ async fn principal_invokes_today(
     principal: &str,
     now_ms: i64,
 ) -> Result<i64, sqlx::Error> {
-    sqlx::query_scalar(
-        "select count(*)::int8 from message \
-          where principal_account_id = $1::uuid and created_at > to_timestamp($2::float8 / 1000) \
-            and deleted_at is null and meta ? 'invokedAsPrincipal'",
+    // TS 는 `now - 24h` 를 Date 로 넘긴다 — 같은 순간을 ISO 글자로 넘긴다(문장이 `$2::timestamptz`).
+    let since = now_ms - 24 * 60 * 60_000;
+    let iso: String = sqlx::query_scalar(
+        "select to_char(to_timestamp($1::float8 / 1000) at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"')",
     )
-    .bind(principal)
-    .bind((now_ms - 24 * 60 * 60_000) as f64)
+    .bind(since as f64)
     .fetch_one(&mut *conn)
-    .await
+    .await?;
+    sqlx::query_scalar(sql().principal_invokes.as_str())
+        .bind(principal)
+        .bind(iso)
+        .fetch_one(&mut *conn)
+        .await
 }
 
 /// (id, 이름, 팀장, 범위, 소유자).
@@ -178,24 +230,15 @@ async fn team_where(
     }))
 }
 
-const TEAM_COLS_BY_NAME: &str = "select t.id::text, t.name, t.lead_account_id::text, t.invoke_scope, t.owner_account_id::text \
-     from agent_team t where lower(t.name) = lower($1)";
-const TEAM_COLS_BY_ID: &str = "select t.id::text, t.name, t.lead_account_id::text, t.invoke_scope, t.owner_account_id::text \
-     from agent_team t where t.id = $1::uuid";
-
 /// TS `listTeamMembers` — (계정, handle, 비활성) handle 순.
 async fn team_members(
     conn: &mut PgConnection,
     team: &str,
 ) -> Result<Vec<(String, String, bool)>, sqlx::Error> {
-    sqlx::query_as(
-        "select tm.agent_account_id::text, a.handle, a.disabled_at is not null \
-           from agent_team_member tm join account a on a.id = tm.agent_account_id \
-          where tm.team_id = $1::uuid order by a.handle",
-    )
-    .bind(team)
-    .fetch_all(&mut *conn)
-    .await
+    sqlx::query_as(sql().team_members.as_str())
+        .bind(team)
+        .fetch_all(&mut *conn)
+        .await
 }
 
 /// TS `getHandleGroupByHandle` 의 id 만.
@@ -203,7 +246,7 @@ async fn group_id_by_handle(
     conn: &mut PgConnection,
     handle: &str,
 ) -> Result<Option<String>, sqlx::Error> {
-    sqlx::query_scalar("select g.id::text from handle_group g where lower(g.handle) = lower($1)")
+    sqlx::query_scalar(sql().group_by_handle.as_str())
         .bind(handle)
         .fetch_optional(&mut *conn)
         .await
@@ -236,7 +279,7 @@ pub async fn resolve(conn: &mut PgConnection, input: &Input<'_>) -> Result<Resol
             name_to_token.insert(h.clone(), format!("group:{g}"));
             continue;
         }
-        if let Some(t) = team_where(conn, TEAM_COLS_BY_NAME, h).await? {
+        if let Some(t) = team_where(conn, sql().team_by_name.as_str(), h).await? {
             name_to_token.insert(h.clone(), format!("team:{}", t.id));
         }
     }
@@ -364,7 +407,7 @@ pub async fn resolve(conn: &mut PgConnection, input: &Input<'_>) -> Result<Resol
         if target.kind != TargetKind::Team {
             continue;
         }
-        let Some(team) = team_where(conn, TEAM_COLS_BY_ID, &target.id).await? else {
+        let Some(team) = team_where(conn, sql().team_by_id.as_str(), &target.id).await? else {
             continue;
         };
         let tf = TeamFacts {
