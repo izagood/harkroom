@@ -1301,6 +1301,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant update (read_at) on inbox to ${rw}`,
         // S5.3 C6b-2 — 턴 임대 세 줄(`core/turn_lease.rs::TURN_LEASE_PRIVILEGES`). 없으면 「turn lease core off」.
         ...TURN_LEASE_GRANTS.map((g) => `grant ${g} to ${rw}`),
+        // S5.3 C6a-2 — 스레드 처리 상태(`core/inbox_thread.rs::INBOX_THREAD_PRIVILEGES`). 없으면 「inbox thread core off」.
+        `grant insert, delete on inbox_thread_state to ${rw}`,
+        `grant update (state, until, updated_at) on inbox_thread_state to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -3846,6 +3849,94 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(ra.every((r) => r.token_word === false)).toBe(true);
       }
 
+      // S5.3 C6a-2 — 스레드 하나의 내 처리 상태(코어 `inbox_thread.rs`). TS·Rust 에 각자의 머리로 같은 시나리오를 돌려 응답·남은 행을 견주고,
+      // 성공한 PUT 마다 `inbox.updated` 가 한 번씩 나는지(TS 는 프로세스 안 버스, Rust 는 outbox → LISTEN) 본다. 거절은 상태·코드만.
+      {
+        expect(f.log()).toContain('"PUT /inbox/threads/{rootId}"');
+        expect(f.log()).not.toContain('inbox thread core off');
+        const sec = (ms: number) => new Date(Math.floor(ms / 1000) * 1000).toISOString();
+        const until1 = sec(Date.now() + 2 * 86_400_000);
+        const until2 = sec(Date.now() + 3 * 86_400_000).replace('.000Z', 'Z'); // 밀리초 없는 꼴도 받는다.
+        const row = async (root: string) => (await db.pool.query<{ state: string; until: string | null }>(
+          `select state, to_char(until at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as until
+             from inbox_thread_state where account_id = $1 and root_id = $2`, [member.accountId, root])).rows;
+        const tsEvents: WorkspaceEvent[] = [];
+        const off = onEvent((e) => { if (e.type === 'inbox.updated') tsEvents.push(e); });
+        const busBefore = busEvents.length;
+        const run = async (base: string) => {
+          const root = await say(`C6a-2 머리 ${base}`, { author: admin.accountId });
+          const out: unknown[] = [];
+          for (const body of [
+            { state: 'done' },
+            { state: 'later', until: until1 },
+            { state: 'later', until: until2, extra: 1 },
+            { state: 'done' },
+            { state: null },
+            { state: null },
+          ]) {
+            const r = await callX(base, 'PUT', `/inbox/threads/${root}`, body, member.token);
+            const st = r.json.state as Record<string, unknown> | null | undefined;
+            out.push({
+              status: r.status,
+              state: st && { ...st, rootId: st.rootId === root, updatedAt: typeof st.updatedAt === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(st.updatedAt) },
+              keys: Object.keys(r.json),
+            }, await row(root));
+          }
+          return out;
+        };
+        const [tsOut, rsOut] = [await run(tsUrl), await run(rsUrl)];
+        expect(rsOut).toEqual(tsOut);
+        expect(tsOut[0]).toEqual({ status: 200, state: { rootId: true, state: 'done', until: null, updatedAt: true }, keys: ['state'] });
+        expect(tsOut[3]).toEqual([{ state: 'later', until: until1.replace('.000Z', 'Z') }]);
+        expect(tsOut[4]).toEqual({ status: 200, state: { rootId: true, state: 'later', until: until2.replace('Z', '.000Z'), updatedAt: true }, keys: ['state'] });
+        expect(tsOut[9]).toEqual([]);
+        expect(tsOut[10]).toEqual({ status: 200, state: null, keys: ['state'] });
+        // 거절 — 행을 바꾸지 않는 요청만.
+        const root = await say('C6a-2 거절 머리', { author: admin.accountId });
+        const reply = await say('C6a-2 답글', { root, author: admin.accountId });
+        const gone = await say('C6a-2 지운 머리', { author: admin.accountId });
+        await db.pool.query(`update message set deleted_at = now() where id = $1`, [gone]);
+        const hidden = await say('C6a-2 비공개 머리', { ch: privId, author: admin.accountId });
+        const P = (id: string) => `/inbox/threads/${id}`;
+        for (const [name, path, body, token] of [
+          ['익명 → 401', P(root), { state: 'done' }, ''],
+          ['rootId uuid 아님 → 400', P('x'), { state: 'done' }, member.token],
+          ['본문 빈 객체 → 400', P(root), {}, member.token],
+          ['state 모름 → 400', P(root), { state: 'nope' }, member.token],
+          ['later 에 until 없음 → 400', P(root), { state: 'later' }, member.token],
+          ['until 오프셋 꼴 → 400', P(root), { state: 'later', until: '2099-01-01T00:00:00+09:00' }, member.token],
+          ['until 날짜만 → 400', P(root), { state: 'later', until: '2099-01-01' }, member.token],
+          ['until 숫자 → 400', P(root), { state: 'later', until: Date.now() + 86_400_000 }, member.token],
+          ['until 지난 시각 → 400 bad_until', P(root), { state: 'later', until: '2020-01-01T00:00:00Z' }, member.token],
+          ['until 91일 → 400 bad_until', P(root), { state: 'later', until: sec(Date.now() + 91 * 86_400_000) }, member.token],
+          ['배열 본문 → 400', P(root), [1], member.token],
+          ['없는 머리 → 404', P(ghost), { state: 'done' }, member.token],
+          ['지운 머리 → 404', P(gone), { state: 'done' }, member.token],
+          ['못 보는 채널 → 403', P(hidden), { state: 'done' }, member.token],
+          ['답글 → 400 not_root', P(reply), { state: 'done' }, member.token],
+        ] as const) {
+          const [a, b] = [await callX(tsUrl, 'PUT', path, body, token), await callX(rsUrl, 'PUT', path, body, token)];
+          expect({ status: b.status, code: b.code }, name).toEqual({ status: a.status, code: a.code });
+        }
+        for (const id of [root, reply, hidden]) expect(await row(id), '거절은 행을 만들지 않는다').toEqual([]);
+        for (const [name, init] of [
+          ['익명·본문 없음 → 401', {}],
+          ['본문 없음 → 400', { headers: { authorization: `Bearer ${member.token}` } }],
+          ['익명·깨진 json → 400', { headers: { 'content-type': J }, body: '{' }],
+          ['익명·모르는 형식 → 415', { headers: { 'content-type': 'application/xml' }, body: '<a/>' }],
+        ] as const) {
+          const [a, b] = [await fetch(`${tsUrl}${P(root)}`, { method: 'PUT', ...init }), await fetch(`${rsUrl}${P(root)}`, { method: 'PUT', ...init })];
+          expect(b.status, name).toBe(a.status);
+        }
+        // 성공 여섯 번 → 이벤트 여섯 번(지우기·없는 줄 지우기 포함, TS 와 같다). 거절은 이벤트가 없다.
+        const rsEvents = () => busEvents.slice(busBefore).filter((e) => e.type === 'inbox.updated');
+        const deadline = Date.now() + 10_000;
+        while (rsEvents().length < 6 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
+        await new Promise((r) => setTimeout(r, 500));
+        off();
+        expect(tsEvents).toEqual(Array.from({ length: 6 }, () => ({ type: 'inbox.updated', accountId: member.accountId })));
+        expect(rsEvents()).toEqual(tsEvents);
+      }
       await bus.stop();
 
       // S5.3 C0 — `/ws`. 같은 시나리오를 TS 와 Rust 코어에 돌려 프레임을 견준다.
