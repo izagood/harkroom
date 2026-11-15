@@ -37,6 +37,9 @@ export interface SecretKeyring {
 }
 
 const KID = /^[a-z0-9][a-z0-9_-]{0,31}$/;
+const SALT_LEN = 16;
+const IV_LEN = 12;
+const TAG_LEN = 16;
 
 /** 키 파일 내용 → 32바이트. 아니면 null. 앞뒤 공백(줄바꿈)은 무시한다. */
 export function parseKey(raw: string): Buffer | null {
@@ -71,9 +74,9 @@ export function createSecretKeyring(keys: ReadonlyMap<string, Buffer>, activeKid
     kids: [...keys.keys()],
     seal(plain, a) {
       const aad = aadBytes(activeKid, a);
-      const salt = randomBytes(16);
-      const iv = randomBytes(12);
-      const c = createCipheriv('aes-256-gcm', derive(active, salt, aad), iv);
+      const salt = randomBytes(SALT_LEN);
+      const iv = randomBytes(IV_LEN);
+      const c = createCipheriv('aes-256-gcm', derive(active, salt, aad), iv, { authTagLength: TAG_LEN });
       c.setAAD(aad);
       const ct = Buffer.concat([c.update(plain), c.final()]);
       return ['v2', activeKid, salt.toString('base64'), iv.toString('base64'),
@@ -86,10 +89,15 @@ export function createSecretKeyring(keys: ReadonlyMap<string, Buffer>, activeKid
       const kek = keys.get(kid);
       if (!kek) return null;
       try {
+        // 길이는 seal 이 쓰는 그대로만 받는다(salt 16·iv 12·tag 16바이트) — Rust 쪽 열기와 같은 규칙.
+        const saltB = Buffer.from(salt, 'base64');
+        const ivB = Buffer.from(iv, 'base64');
+        const tagB = Buffer.from(tag, 'base64');
+        if (saltB.length !== SALT_LEN || ivB.length !== IV_LEN || tagB.length !== TAG_LEN) return null;
         const aad = aadBytes(kid, a);
-        const d = createDecipheriv('aes-256-gcm', derive(kek, Buffer.from(salt, 'base64'), aad), Buffer.from(iv, 'base64'));
+        const d = createDecipheriv('aes-256-gcm', derive(kek, saltB, aad), ivB, { authTagLength: TAG_LEN });
         d.setAAD(aad);
-        d.setAuthTag(Buffer.from(tag, 'base64'));
+        d.setAuthTag(tagB);
         return Buffer.concat([d.update(Buffer.from(ct, 'base64')), d.final()]);
       } catch {
         return null;
