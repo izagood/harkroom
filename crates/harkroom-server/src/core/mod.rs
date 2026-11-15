@@ -10,6 +10,7 @@ pub mod events;
 pub mod invoke_gate;
 pub mod mcp;
 pub mod mention_calls;
+pub mod mention_fanout;
 pub mod mention_parse;
 pub mod msg_delete;
 pub mod msg_list;

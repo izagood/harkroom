@@ -623,7 +623,31 @@ const FEED_ROW = `(m.thread_root_id is null or m.also_in_channel)`;
  * DM 을 숨기는 일이 첫 메시지에 무너진다 — #376 이 거부한 (C) "안 읽음이 생기면 나타난다"가
  * 사실상 그것이다.
  */
-const REVEAL_REASONS: ReadonlySet<InboxEntry['reason']> = new Set(['mention', 'thread_reply']);
+/**
+ * 「누구를 부르나」·호출함 쓰기의 문장들 — Rust 코어(`crates/harkroom-server/src/core/mention_calls.rs`·`mention_fanout.rs`,
+ * S5.3 C3a-3b)가 `golden/sql_fragments.json` 으로 받아 그대로 쓴다. 고치면 `test/rustSqlFragments.test.ts` 가 골든 갱신을 요구한다.
+ */
+export const ACCOUNTS_BY_HANDLES_SQL = `select id, lower(handle) as handle, kind from account
+          where lower(handle) = any($1) and deleted_at is null`;
+export const ACCOUNTS_BY_IDS_SQL = `select id, lower(handle) as handle, kind from account
+          where id = any($1::uuid[]) and deleted_at is null`;
+export const INSERT_INBOX_MANY_SQL = `insert into inbox (account_id, message_id, reason, team_id)
+     select a.id, $2::uuid, $3, $4::uuid
+       from unnest($1::uuid[]) with ordinality as a(id, ord)
+      where not exists (
+        select 1 from account_block b join message m on m.id = $2::uuid
+         where b.blocker_id = a.id and b.blocked_id = m.author_id)
+      order by a.ord
+     returning id, account_id`;
+export const REVEAL_HIDDEN_SQL = `update channel_pref set hidden_at = null
+        where account_id = any($1::uuid[]) and hidden_at is not null
+          and channel_id = (select channel_id from message where id = $2::uuid)`;
+export const FAN_OUT_AUDIENCE_SQL = `select a.id from account a, channel c
+      where c.id = $1::uuid and a.id <> $2::uuid
+        and ($3::uuid[] is null or a.id = any($3::uuid[]))
+        and ${channelVisibleSql('c', 'a.id')}`;
+
+export const REVEAL_REASONS: ReadonlySet<InboxEntry['reason']> = new Set(['mention', 'thread_reply']);
 
 /**
  * `account_gate` 실패의 **차례 주인**(2026-10-02, 관문 대응 안 2) — 그 턴을 띄운 멘션을 쓴 사람.
@@ -698,14 +722,7 @@ async function insertInboxMany(
    * 자리라 멘션·DM·스레드 답글·팀·집합이 한꺼번에 막히고, 푸시·숨김 되돌리기도 따라 빠진다.
    */
   const inserted = await client.query<{ id: string; account_id: string }>(
-    `insert into inbox (account_id, message_id, reason, team_id)
-     select a.id, $2, $3, $4
-       from unnest($1::uuid[]) with ordinality as a(id, ord)
-      where not exists (
-        select 1 from account_block b join message m on m.id = $2
-         where b.blocker_id = a.id and b.blocked_id = m.author_id)
-      order by a.ord
-     returning id, account_id`,
+    INSERT_INBOX_MANY_SQL,
     [accountIds, messageId, reason, teamId ?? null],
   );
   if (!inserted.rowCount) return;
@@ -737,9 +754,7 @@ async function insertInboxMany(
    */
   if (REVEAL_REASONS.has(reason)) {
     await client.query(
-      `update channel_pref set hidden_at = null
-        where account_id = any($1::uuid[]) and hidden_at is not null
-          and channel_id = (select channel_id from message where id = $2)`,
+      REVEAL_HIDDEN_SQL,
       [got, messageId],
     );
   }
@@ -783,10 +798,7 @@ async function fanOutMention(
 ): Promise<void> {
   if (candidateIds !== null && candidateIds.length === 0) return;
   const audience = await client.query<{ id: string }>(
-    `select a.id from account a, channel c
-      where c.id = $1 and a.id <> $2
-        and ($3::uuid[] is null or a.id = any($3))
-        and ${channelVisibleSql('c', 'a.id')}`,
+    FAN_OUT_AUDIENCE_SQL,
     [input.channelId, input.authorId, candidateIds],
   );
   // 호출 게이트(스펙 2026-09-20 §6). 사람은 스코프가 없다 — facts 에 없으면 그대로 통과. 여기서
@@ -1118,8 +1130,7 @@ export async function resolveMentionCalls(
         // 계정마다 다시 물으면 부른 수만큼 왕복이 늘고, 그 왕복은 게시 경로에 붙는다.
         // 삭제된 계정은 뺀다(061) — 이름은 그대로 잡혀 있으므로 빼지 않으면 `@handle` 이
         // 명부에 없는 에이전트를 부르고, 아무도 읽지 않는 인박스 항목이 쌓인다.
-        `select id, lower(handle) as handle, kind from account
-          where lower(handle) = any($1) and deleted_at is null`,
+        ACCOUNTS_BY_HANDLES_SQL,
         [bodyHandles],
       )).rows as { id: string; handle: string; kind: 'human' | 'agent' }[]
     : [];
@@ -1189,8 +1200,7 @@ export async function resolveMentionCalls(
   const rawIds = mentionedIds(normalizedBody).filter((id) => !knownIds.has(id));
   const tokenAccounts = rawIds.length
     ? (await client.query(
-        `select id, lower(handle) as handle, kind from account
-          where id = any($1::uuid[]) and deleted_at is null`,
+        ACCOUNTS_BY_IDS_SQL,
         [rawIds],
       )).rows as { id: string; handle: string; kind: 'human' | 'agent' }[]
     : [];
@@ -1378,7 +1388,7 @@ export async function resolveMentionCalls(
  * `notified` 에 이미 든 계정은 건너뛴다: 게시는 빈 집합으로, 수정은 **그 메시지로 이미 inbox 를
  * 받은 계정**으로 시작한다(같은 메시지로 두 번 부르지 않는다).
  */
-async function fanOutCalls(
+export async function fanOutCalls(
   client: PoolClient,
   ctx: { channelId: string; authorId: string; messageId: string },
   r: ResolvedMentionCalls,

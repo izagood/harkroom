@@ -102,10 +102,13 @@ export function principalInvokeEnabled(env: NodeJS.ProcessEnv = process.env): bo
 export const PRINCIPAL_INVOKE_DAILY_CAP = 200;
 
 /** 최근 24시간 동안 이 principal 의 권한으로 부름을 연 에이전트 글 수. */
+/** 최근 24시간 principal 부름 수의 문장(`$2` = 지금 − 24h) — Rust 코어(`core/mention_calls.rs`, S5.3 C3a-3b)가 골든으로 받는다. */
+export const PRINCIPAL_INVOKES_SQL = `select count(*)::int as n from message
+      where principal_account_id = $1::uuid and created_at > $2::timestamptz and deleted_at is null and meta ? 'invokedAsPrincipal'`;
+
 export async function principalInvokesToday(client: Q, principalId: string, now = new Date()): Promise<number> {
   const r = await client.query<{ n: number }>(
-    `select count(*)::int as n from message
-      where principal_account_id = $1 and created_at > $2 and deleted_at is null and meta ? 'invokedAsPrincipal'`,
+    PRINCIPAL_INVOKES_SQL,
     [principalId, new Date(now.getTime() - 24 * 60 * 60_000)]);
   return r.rows[0]?.n ?? 0;
 }

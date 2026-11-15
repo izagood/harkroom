@@ -8,8 +8,11 @@ import { MENTION_CHAIN_LIMIT, type MentionPolicy } from '@harkroom/shared';
  * 뒤에도 그 프로세스가 옛 값으로 막거나 풀어 준다(서버가 여러 대면 대마다 다르다).
  * 행이 없으면(마이그레이션 전 스냅숏 같은 드문 경우) 기본값으로 떨어진다.
  */
+/** 정책 읽기의 문장 — Rust 코어(`core/mention_calls.rs`, S5.3 C3a-3b)가 골든으로 받는다. */
+export const MENTION_POLICY_SQL = `select chain_limit from mention_policy where id = true`;
+
 export async function getMentionPolicy(db: Pool | PoolClient): Promise<MentionPolicy> {
-  const res = await db.query(`select chain_limit from mention_policy where id = true`);
+  const res = await db.query(MENTION_POLICY_SQL);
   return { chainLimit: (res.rows[0]?.chain_limit as number | undefined) ?? MENTION_CHAIN_LIMIT };
 }
 

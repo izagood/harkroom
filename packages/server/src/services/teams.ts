@@ -29,15 +29,22 @@ export async function listTeams(db: Queryable): Promise<AgentTeamRow[]> {
   return res.rows;
 }
 
+/** 팀 조회의 문장 — Rust 코어(`core/mention_calls.rs`, S5.3 C3a-3b)가 골든으로 받는다. */
+export const TEAM_BY_ID_SQL = `select ${COLS} from agent_team t where t.id = $1::uuid`;
+export const TEAM_BY_NAME_SQL = `select ${COLS} from agent_team t where lower(t.name) = lower($1)`;
+export const TEAM_MEMBERS_SQL = `select tm.agent_account_id as "accountId", a.handle, a.disabled_at is not null as disabled
+     from agent_team_member tm
+     join account a on a.id = tm.agent_account_id
+     where tm.team_id = $1::uuid
+     order by a.handle`;
+
 export async function getTeam(db: Queryable, teamId: string): Promise<AgentTeamRow | null> {
-  const res = await db.query(`select ${COLS} from agent_team t where t.id = $1`, [teamId]);
+  const res = await db.query(TEAM_BY_ID_SQL, [teamId]);
   return res.rows[0] ?? null;
 }
 
 export async function getTeamByName(db: Queryable, name: string): Promise<AgentTeamRow | null> {
-  const res = await db.query(
-    `select ${COLS} from agent_team t where lower(t.name) = lower($1)`, [name],
-  );
+  const res = await db.query(TEAM_BY_NAME_SQL, [name]);
   return res.rows[0] ?? null;
 }
 
@@ -116,14 +123,7 @@ export async function deleteTeam(db: Queryable, teamId: string): Promise<AgentTe
  * 미리 말할 수 있다.
  */
 export async function listTeamMembers(db: Queryable, teamId: string): Promise<AgentTeamMemberRow[]> {
-  const res = await db.query(
-    `select tm.agent_account_id as "accountId", a.handle, a.disabled_at is not null as disabled
-     from agent_team_member tm
-     join account a on a.id = tm.agent_account_id
-     where tm.team_id = $1
-     order by a.handle`,
-    [teamId],
-  );
+  const res = await db.query(TEAM_MEMBERS_SQL, [teamId]);
   return res.rows;
 }
 

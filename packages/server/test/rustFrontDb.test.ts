@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, createMember } from './helpers/fixtures.js';
 import { startTestDb } from './helpers/testDb.js';
-import { postMessage, resolveMentionCalls } from '../src/services/messages.js';
+import { fanOutCalls, postMessage, resolveMentionCalls } from '../src/services/messages.js';
 import { writeFileSync as writeCases } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join as joinPath } from 'node:path';
@@ -627,6 +627,109 @@ describe.skipIf(!ON)('누구를 부르나 — TS·Rust 같은 판정', () => {
       const line = r.out.split('\n').find((l) => l.startsWith('MENTION_CALLS_JSON '));
       expect(line, r.out).toBeDefined();
       const got = JSON.parse(line!.slice('MENTION_CALLS_JSON '.length)) as unknown[];
+      for (let i = 0; i < cases.length; i++) expect(got[i], `사례 ${i}: ${cases[i]!.body}`).toEqual(want[i]);
+    } finally {
+      client.release();
+      await db.stop();
+    }
+  }, 600_000);
+});
+
+// S5.3 C3a-3b-3 — 호출함 쓰기(`core/mention_fanout.rs`)가 TS `fanOutCalls` 와 같은 줄을 남기는가. 사례마다 트랜잭션 안에서 글 행을 넣고
+// 판정→팬아웃을 돌린 뒤 inbox(받는 사람·사유·팀)·push_job·숨김 해제를 읽고 롤백한다. 같은 사례를 Rust 시험이 돌려 찍은 답과 맞춘다.
+describe.skipIf(!ON)('호출함 쓰기 — TS·Rust 같은 줄', () => {
+  it('계정·@channel·집합·팀(팀장/팀원)·차단·숨김 해제·푸시·중복 부름 · 권한 없으면 오류', async () => {
+    const db = await startTestDb();
+    const client = await db.pool.connect();
+    try {
+      const q = (sql: string, args: unknown[] = []) => client.query(sql, args);
+      const acct = async (handle: string, kind: 'human' | 'agent', admin = false) => (await q(
+        `insert into account(handle, display_name, kind, login_id, role, is_admin)
+         values ($1, $1, $2, case when $2 = 'human' then $1 end, $3, $4) returning id`,
+        [handle, kind, admin ? 'admin' : 'member', admin])).rows[0].id as string;
+      const h1 = await acct('fo-h1', 'human', true);
+      const h2 = await acct('fo-h2', 'human');
+      const h3 = await acct('fo-h3', 'human');
+      const h4 = await acct('fo-h4', 'human');
+      const h5 = await acct('fo-h5', 'human');
+      const agent = async (handle: string, scope: string) => {
+        const id = await acct(handle, 'agent');
+        await q(`insert into agent_config(account_id, owner_account_id, invoke_scope) values ($1, $2, $3)`, [id, h1, scope]);
+        return id;
+      };
+      const botc = await agent('fo-botc', 'community');
+      const boto = await agent('fo-boto', 'owner');
+      const ch = (await createChannel(db.pool, { name: 'fo-room' })).id;
+      const team = async (name: string, lead: string | null, members: string[]) => {
+        const id = (await q(`insert into agent_team(name, created_by, invoke_scope, owner_account_id) values ($1, $2, 'community', $2) returning id`,
+          [name, h1])).rows[0].id as string;
+        for (const m of members) await q(`insert into agent_team_member(team_id, agent_account_id) values ($1, $2)`, [id, m]);
+        if (lead) await q(`update agent_team set lead_account_id = $2 where id = $1`, [id, lead]);
+        return id;
+      };
+      await team('fo-squad', botc, [botc, boto]);
+      await team('fo-crowd', null, [botc, boto]);
+      const g = (await q(`insert into handle_group(handle, display_name) values ('fo-crew', 'Crew') returning id`)).rows[0].id as string;
+      for (const m of [h1, h2, h3, h4, h5]) await q(`insert into handle_group_member(group_id, account_id) values ($1, $2)`, [g, m]);
+      // h3 는 이 채널을 숨겼다(부름이면 되살아난다). h4 는 폰이 있다(사람이면 push_job). h5 는 botc 를 막았다(botc 글은 안 받는다).
+      await q(`insert into channel_pref (account_id, channel_id, hidden_at) values ($1, $2, now())`, [h3, ch]);
+      await q(`insert into session(token_hash, account_id, expires_at) values ('fo-sess', $1, now() + interval '1 day')`, [h4]);
+      await q(`insert into push_device (account_id, session_token_hash, platform, apns_env, token, prefs)
+               values ($1, 'fo-sess', 'ios', 'sandbox', $2, '{}'::jsonb)`, [h4, 'a'.repeat(64)]);
+      await q(`insert into account_block (blocker_id, blocked_id) values ($1, $2)`, [h5, botc]);
+      const base = { channelId: ch, principalId: null as string | null, threadRootId: null as string | null };
+      const cases = [
+        { ...base, body: '@fo-h2 @fo-h3 @fo-h4 @fo-h5 @fo-boto 봐', authorId: botc, authorIsAgent: true },
+        { ...base, body: '@channel 공지', authorId: h1, authorIsAgent: false },
+        { ...base, body: '@fo-crew 모여', authorId: botc, authorIsAgent: true },
+        { ...base, body: '@fo-squad @fo-botc 함께', authorId: h1, authorIsAgent: false },
+        { ...base, body: '@fo-crowd 해 줘', authorId: h2, authorIsAgent: false },
+        { ...base, body: '@fo-squad 해 줘', authorId: h4, authorIsAgent: false },
+        { ...base, body: '@fo-h2 @fo-h2 두 번 @fo-h1', authorId: h1, authorIsAgent: false },
+        { ...base, body: '@fo-boto 일', authorId: botc, authorIsAgent: true, principalId: h1 },
+      ];
+      const want: unknown[] = [];
+      for (const c of cases) {
+        await q('begin');
+        try {
+          const mid = (await q(`insert into message (channel_id, author_id, body, kind, thread_root_id) values ($1, $2, $3, 'user', $4) returning id`,
+            [c.channelId, c.authorId, c.body, c.threadRootId])).rows[0].id as string;
+          const r = await resolveMentionCalls(client, {
+            body: c.body, channelId: c.channelId, authorId: c.authorId, authorIsAgent: c.authorIsAgent, mentionDepth: 0,
+            chainBound: false, chainStartedAt: null, replyGrantThreadId: null,
+            principal: c.principalId ? { id: c.principalId, causeReasons: [] } : null,
+          });
+          await fanOutCalls(client, { channelId: c.channelId, authorId: c.authorId, messageId: mid }, r, new Set());
+          const inbox = (await q(`select account_id, reason, team_id from inbox where message_id = $1 order by id`, [mid])).rows
+            .map((x) => `${x.account_id}:${x.reason}:${x.team_id ?? '-'}`);
+          const push = (await q(`select account_id, reason from push_job where message_id = $1 order by inbox_id`, [mid])).rows
+            .map((x) => `${x.account_id}:${x.reason}`);
+          const revealed = (await q(`select account_id::text from channel_pref where channel_id = $1 and hidden_at is null order by account_id`, [c.channelId])).rows
+            .map((x) => x.account_id as string);
+          want.push({ inbox, push, revealed });
+        } finally {
+          await q('rollback');
+        }
+      }
+      // 픽스처가 갈래를 실제로 가르는지 — 팀장 항목(팀 실림)·푸시·숨김 해제·차단·중복 제거가 다 나와야 한다.
+      const rows = want as { inbox: string[]; push: string[]; revealed: string[] }[];
+      expect(rows.some((w) => w.inbox.some((l) => /:team_mention:[0-9a-f-]{36}$/.test(l))), '팀장 항목에 팀').toBe(true);
+      expect(rows.some((w) => w.push.length > 0), '푸시 줄').toBe(true);
+      expect(rows.some((w) => w.revealed.includes(h3)), '숨김 해제').toBe(true);
+      expect(rows[0]!.inbox.some((l) => l.startsWith(h5)), '막은 사람은 안 받는다').toBe(false);
+      expect(rows[0]!.inbox.some((l) => l.startsWith(boto)), 'owner 게이트에 막힘').toBe(false);
+      expect(rows[6]!.inbox.filter((l) => l.startsWith(h2)).length, '두 번 불러도 한 줄').toBe(1);
+      const file = joinPath(tmpdir(), `fanout-cases-${process.pid}.json`);
+      writeCases(file, JSON.stringify(cases));
+      const r = await cargo(['test', '--test', 'mention_fanout', '--', '--nocapture', '--test-threads=1'], {
+        HARKROOM_TEST_DATABASE_URL: db.uri, HARKROOM_FANOUT_CASES: file,
+      });
+      expect(r.code, r.out).toBe(0);
+      expect(r.out, '권한 없으면 오류를 돌려준다').toContain('FANOUT_ERR_OK');
+      // 두 시험이 한 출력에 섞이므로 줄 머리가 아니라 표지 뒤를 읽는다.
+      const line = r.out.split('\n').find((l) => l.includes('FANOUT_JSON '));
+      expect(line, r.out).toBeDefined();
+      const got = JSON.parse(line!.slice(line!.indexOf('FANOUT_JSON ') + 'FANOUT_JSON '.length)) as unknown[];
       for (let i = 0; i < cases.length; i++) expect(got[i], `사례 ${i}: ${cases[i]!.body}`).toEqual(want[i]);
     } finally {
       client.release();

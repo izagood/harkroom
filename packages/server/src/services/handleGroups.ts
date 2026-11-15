@@ -15,6 +15,10 @@ import type { HandleGroupRow, HandleGroupMemberRow } from '@harkroom/shared';
 const COLS = `g.id, g.handle, g.display_name as "displayName", g.created_at as "createdAt",
   (select count(*) from handle_group_member m where m.group_id = g.id)::int as "memberCount"`;
 
+/** 이름·구성원 조회의 문장 — Rust 코어(`core/mention_calls.rs`·`mention_fanout.rs`, S5.3 C3a-3b)가 골든으로 받는다. */
+export const GROUP_BY_HANDLE_SQL = `select ${COLS} from handle_group g where lower(g.handle) = lower($1)`;
+export const GROUP_MEMBERS_SQL = `select group_id as "groupId", account_id as "accountId" from handle_group_member where group_id = $1::uuid`;
+
 export async function listHandleGroups(pool: Pool): Promise<HandleGroupRow[]> {
   const res = await pool.query(`select ${COLS} from handle_group g order by g.handle`);
   return res.rows;
@@ -28,7 +32,7 @@ export async function getHandleGroup(pool: Pool, id: string): Promise<HandleGrou
 export async function getHandleGroupByHandle(
   pool: Pool | PoolClient, handle: string,
 ): Promise<HandleGroupRow | null> {
-  const res = await pool.query(`select ${COLS} from handle_group g where lower(g.handle) = lower($1)`, [handle]);
+  const res = await pool.query(GROUP_BY_HANDLE_SQL, [handle]);
   return res.rowCount ? res.rows[0] : null;
 }
 
@@ -76,10 +80,7 @@ export async function deleteHandleGroup(pool: Pool, id: string): Promise<boolean
 export async function listHandleGroupMembers(
   pool: Pool | PoolClient, groupId: string,
 ): Promise<HandleGroupMemberRow[]> {
-  const res = await pool.query(
-    `select group_id as "groupId", account_id as "accountId" from handle_group_member where group_id = $1`,
-    [groupId],
-  );
+  const res = await pool.query(GROUP_MEMBERS_SQL, [groupId]);
   return res.rows;
 }
 
