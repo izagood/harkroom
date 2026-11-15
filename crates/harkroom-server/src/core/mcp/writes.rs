@@ -23,7 +23,49 @@ pub const SERVED: &[&str] = &[
     // C4b-ask — 묶음 카드 한 줄 닫기. 선택 카드 쓰기 풀(`ASK_PRIVILEGES`)이 있을 때만.
     "message.askBundleResolve",
     "bg.complete",
+    "delegation.close",
 ];
+
+/// TS 가 조건부로 싣는 도구 — `/mcp/admit` 이 `registered: true` 라고 답했을 때만 Rust 가 답한다([`super::route::serve`]).
+/// `delegation.close` 는 TS env `HARKROOM_DELEGATION_V2` 가 켜졌을 때만 실린다. 앞단은 그 env 를 읽지 않는다.
+pub const NEEDS_REGISTERED: &[&str] = &["delegation.close"];
+
+/// `delegation.close` 의 쓰기 권한(표, 권한) — 고치는 칸(UPDATE)과, update 의 where·set 식·returning 이 읽는 칸(SELECT)만(security W6).
+/// SELECT 가 빠지면 풀은 켜지는데 거래 안에서 늘 실패해 `internal` 로만 답한다 — 그래서 SELECT 도 여기서 본다. 빠지면 `main.rs` 가
+/// 이 도구를 켜지 않아 TS 에 남는다. 읽는 칸 목록은 [`CLOSE_ITEMS_SQL`]·[`NOTIFY_DELEGATIONS_SQL`] 에서 시험이 뽑아 맞춘다.
+/// homelab 의 앞단 쓰기 역할 GRANT 와 같아야 한다.
+pub const DELEGATION_CLOSE_PRIVILEGES: &[(&str, &str)] = &[
+    ("team_delegation_item.outcome", "UPDATE"),
+    ("team_delegation_item.closed_reason", "UPDATE"),
+    ("team_delegation_item.closed_at", "UPDATE"),
+    ("team_delegation_item.update_pending_message_id", "UPDATE"),
+    ("team_delegation_item.update_pending_at", "UPDATE"),
+    ("team_delegation.notified_at", "UPDATE"),
+    ("team_delegation_item.delegation_id", "SELECT"),
+    ("team_delegation_item.delegate_account_id", "SELECT"),
+    ("team_delegation_item.outcome", "SELECT"),
+    ("team_delegation_item.closed_at", "SELECT"),
+    ("team_delegation.id", "SELECT"),
+    ("team_delegation.lead_account_id", "SELECT"),
+    ("team_delegation.thread_root_id", "SELECT"),
+    ("team_delegation.notified_at", "SELECT"),
+];
+
+/// 위임 줄 닫기 — TS `closeDelegationByDelegator` 와 같은 문장(`$1::uuid` 만 더함).
+pub const CLOSE_ITEMS_SQL: &str = "update team_delegation_item i \
+            set outcome = 'closed', closed_reason = 'delegator_close', closed_at = coalesce(i.closed_at, now()), \
+                update_pending_message_id = null, update_pending_at = null \
+           from team_delegation d \
+          where d.id = i.delegation_id and d.lead_account_id = $1::uuid and d.thread_root_id = $2::uuid \
+            and ($3::uuid is null or d.id = $3::uuid) \
+            and ($4::uuid is null or i.delegate_account_id = $4::uuid) \
+            and (i.outcome is null or i.outcome = 'reported') \
+          returning i.delegation_id::text";
+
+/// 다 닫힌 위임 묶음에 알림 처리 — TS `markSettledQuietly` 와 같은 문장.
+pub const NOTIFY_DELEGATIONS_SQL: &str = "update team_delegation d set notified_at = now() \
+              where d.id = any($1::uuid[]) and d.notified_at is null \
+                and not exists (select 1 from team_delegation_item i where i.delegation_id = d.id and i.outcome is null)";
 
 /// `inbox.read`(C4b ④-a) 쓰기 역할의 권한 — 읽음 시각 칸 하나만 고친다. 없으면 `main.rs` 가 풀을 비워 TS 가 답한다.
 pub const INBOX_READ_PRIVILEGES: &[(&str, &str)] = &[("inbox.read_at", "UPDATE")];
@@ -41,6 +83,8 @@ pub struct McpWrites {
     pub ask: Option<PgPool>,
     /// `bg.complete`(러너 길) — [`super::bg_complete::BG_COMPLETE_PRIVILEGES`].
     pub bg_complete: Option<PgPool>,
+    /// `delegation.close` — [`DELEGATION_CLOSE_PRIVILEGES`].
+    pub delegation: Option<PgPool>,
 }
 
 /// JS `Number.MAX_SAFE_INTEGER` — 이 밖의 수는 TS 에서 값이 뭉개진다. Rust 는 같은 결과를 낼 수 없으니 TS 로 넘긴다.
@@ -104,6 +148,12 @@ pub async fn answer(
             return Some(None);
         };
         return Some(bundle_resolve(read, write, me, args).await);
+    }
+    if tool == "delegation.close" {
+        let Some(write) = writes.delegation.as_ref() else {
+            return Some(None);
+        };
+        return Some(delegation_close(write, me, args).await);
     }
     let Some(write) = writes.react.as_ref() else {
         return Some(None);
@@ -187,6 +237,84 @@ async fn bundle_resolve(
     }
 }
 
+/// zod `z.string().min(1).max(100)` — UTF-16 길이. 없으면 `Some(None)`, 꼴이 틀리면 `None`(→ TS).
+fn opt_str_arg(args: &Value, key: &str, max: usize) -> Option<Option<String>> {
+    match args.get(key) {
+        None => Some(None),
+        Some(Value::String(s)) => {
+            let n = s.encode_utf16().count();
+            (1..=max).contains(&n).then(|| Some(s.clone()))
+        }
+        Some(_) => None,
+    }
+}
+
+/// `delegation.close`(TS mcpPlugin 의 같은 도구 + `closeDelegationByDelegator`·`markSettledQuietly`) — 위임자가 이 스레드에서 낸 열린·보고된
+/// 의무를 닫는다. 아무도 깨우지 않고 이벤트·감사도 없다(TS 와 같다). 남의 위임은 `lead_account_id = 나` 조건에 걸려 닫히지 않는다(`closed: 0`).
+async fn delegation_close(write: &PgPool, me: &Account, args: &Value) -> Option<String> {
+    args.as_object()?;
+    let thread = uuid_arg(args, "threadRootId")?;
+    let delegation = super::tools::opt_uuid(args, "delegationId")?;
+    let delegate = opt_str_arg(args, "delegate", 100)?;
+    // 쓰기 전 읽기 — 실패하면 TS 로 넘겨도 된다(아직 아무것도 쓰지 않았다).
+    let delegate_id: Option<String> = match delegate {
+        None => None,
+        Some(h) => {
+            // TS `delegate.replace(/^@/, '')` — 맨 앞 `@` 하나만 뗀다.
+            let handle = h.strip_prefix('@').unwrap_or(&h);
+            let found: Option<String> = sqlx::query_scalar(
+                "select id::text from account where handle = $1 and deleted_at is null",
+            )
+            .bind(handle)
+            .fetch_optional(write)
+            .await
+            .ok()?;
+            match found {
+                Some(id) => Some(id),
+                None => return Some(err("not_found", "unknown delegate")),
+            }
+        }
+    };
+    // 여기부터 쓰기다(security W1) — 한 트랜잭션. 오류가 나면 되돌리고 TS 로 넘기지 않는다(넘기면 TS 가 다시 닫는다).
+    match close_tx(
+        write,
+        &me.id,
+        thread,
+        delegation.as_deref(),
+        delegate_id.as_deref(),
+    )
+    .await
+    {
+        Ok(n) => Some(ok_text(&format!("{{\"closed\":{n}}}"))),
+        Err(_) => Some(internal()),
+    }
+}
+
+async fn close_tx(
+    write: &PgPool,
+    me: &str,
+    thread: &str,
+    delegation: Option<&str>,
+    delegate: Option<&str>,
+) -> Result<u64, sqlx::Error> {
+    let mut tx = write.begin().await?;
+    let ids: Vec<String> = sqlx::query_scalar(CLOSE_ITEMS_SQL)
+        .bind(me)
+        .bind(thread)
+        .bind(delegation)
+        .bind(delegate)
+        .fetch_all(&mut *tx)
+        .await?;
+    if !ids.is_empty() {
+        sqlx::query(NOTIFY_DELEGATIONS_SQL)
+            .bind(&ids)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(ids.len() as u64)
+}
+
 async fn react(
     read: &PgPool,
     write: &PgPool,
@@ -266,6 +394,97 @@ mod tests {
         assert!(svc.contains(
             "`update inbox set read_at = now() where account_id = $1 and id = any($2) and read_at is null`,"
         ));
+    }
+
+    /// `delegation.close` 의 문장·문구를 TS 원본과 맞춘다(값 비교는 대조 시험이 한다).
+    #[test]
+    fn delegation_close_follows_ts_source() {
+        let dl = include_str!("../../../../../packages/server/src/services/delegations.ts");
+        for want in [
+            "set outcome = 'closed', closed_reason = 'delegator_close', closed_at = coalesce(i.closed_at, now()),\n            update_pending_message_id = null, update_pending_at = null",
+            "where d.id = i.delegation_id and d.lead_account_id = $1 and d.thread_root_id = $2",
+            "and ($3::uuid is null or d.id = $3::uuid)\n        and ($4::uuid is null or i.delegate_account_id = $4::uuid)\n        and (i.outcome is null or i.outcome = 'reported')",
+            "`update team_delegation d set notified_at = now()\n      where d.id = any($1::uuid[]) and d.notified_at is null\n        and not exists (select 1 from team_delegation_item i where i.delegation_id = d.id and i.outcome is null)`,",
+        ] {
+            assert!(dl.contains(want), "{want}");
+        }
+        let mcp = include_str!("../../../../../packages/server/src/mcp/mcpPlugin.ts");
+        for want in [
+            "`select id from account where handle = $1 and deleted_at is null`, [delegate.replace(/^@/, '')]);",
+            "if (!r.rowCount) return jsonResult({ error: { code: 'not_found', message: 'unknown delegate' } });",
+            "return jsonResult({ closed });",
+            "delegate: z.string().min(1).max(100).optional(),",
+            "if (tool === 'delegation.close') return delegationV2Enabled();",
+        ] {
+            assert!(mcp.contains(want), "{want}");
+        }
+    }
+
+    /// 두 update 가 읽는 칸(별칭 `i.`·`d.` 로 쓴 것 = where·set 식·returning)마다 SELECT 가, 고치는 칸마다 UPDATE 가 목록에 있다.
+    /// 문장에 칸을 더하고 목록을 안 고치면 빨개진다 — 운영 역할에 SELECT 가 없을 때 풀이 켜져 늘 `internal` 이 되는 것을 막는다.
+    #[test]
+    fn delegation_close_privileges_cover_sql() {
+        let has = |t: &str, p: &str| DELEGATION_CLOSE_PRIVILEGES.contains(&(t, p));
+        let mut read = vec![];
+        for sql in [CLOSE_ITEMS_SQL, NOTIFY_DELEGATIONS_SQL] {
+            let b = sql.as_bytes();
+            for (k, w) in sql.char_indices() {
+                if !(w == 'i' || w == 'd') || b.get(k + 1) != Some(&b'.') {
+                    continue;
+                }
+                if k > 0 && (b[k - 1].is_ascii_alphanumeric() || b[k - 1] == b'_') {
+                    continue;
+                }
+                let col: String = sql[k + 2..]
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                    .collect();
+                let table = if w == 'i' {
+                    "team_delegation_item"
+                } else {
+                    "team_delegation"
+                };
+                read.push(format!("{table}.{col}"));
+            }
+        }
+        read.sort();
+        read.dedup();
+        assert_eq!(
+            read,
+            [
+                "team_delegation.id",
+                "team_delegation.lead_account_id",
+                "team_delegation.notified_at",
+                "team_delegation.thread_root_id",
+                "team_delegation_item.closed_at",
+                "team_delegation_item.delegate_account_id",
+                "team_delegation_item.delegation_id",
+                "team_delegation_item.outcome",
+            ],
+            "칸 뽑기가 문장을 다 읽었다"
+        );
+        for c in &read {
+            assert!(has(c, "SELECT"), "SELECT on {c}");
+        }
+        for c in [
+            "outcome",
+            "closed_reason",
+            "closed_at",
+            "update_pending_message_id",
+            "update_pending_at",
+        ] {
+            assert!(CLOSE_ITEMS_SQL.contains(&format!("{c} = ")), "{c}");
+            assert!(
+                has(&format!("team_delegation_item.{c}"), "UPDATE"),
+                "UPDATE on {c}"
+            );
+        }
+        assert!(has("team_delegation.notified_at", "UPDATE"));
+        assert_eq!(
+            DELEGATION_CLOSE_PRIVILEGES.len(),
+            read.len() + 6,
+            "목록에 남는 칸이 없다"
+        );
     }
 
     /// 거절 문구·답 모양을 TS 원본과 맞춘다.
