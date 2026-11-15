@@ -32,6 +32,8 @@ fn actx(turn: &str, seq: i64, cut: Option<usize>) -> AfterCtx {
             ..LoopCtx::default()
         },
         background_cut: cut,
+        screen_ended: false,
+        screen_said: None,
     }
 }
 

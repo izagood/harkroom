@@ -201,6 +201,8 @@ fn after_ctx(turn: &str) -> AfterCtx {
             ..LoopCtx::default()
         },
         background_cut: None,
+        screen_ended: false,
+        screen_said: None,
     }
 }
 
