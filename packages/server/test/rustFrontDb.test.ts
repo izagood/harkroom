@@ -3397,7 +3397,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           const json = text ? JSON.parse(text) as Record<string, unknown> : {};
           return { status: res.status, code: (json.error as { code?: string } | undefined)?.code, json, count: res.headers.get('x-harkroom-notified-count') };
         };
-        const HANDED = ['TS: 승인 낱말', 'TS: 메시지 링크', 'TS: URL', 'TS: DM', 'TS: 에이전트(PAT)', 'TS: 모델 지정 키'];
+        const HANDED = ['TS: 승인 낱말', 'TS: 메시지 링크', 'TS: URL', 'TS: 에이전트(PAT)', 'TS: 모델 지정 키'];
         const run = async (base: string, sd: Side) => {
           const out: { step: string; status: number; code?: string; count: string | null; body: unknown; id?: string }[] = [];
           const step = async (name: string, path: string, body: unknown, token?: string, key?: string) => {
@@ -3423,7 +3423,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           await step('TS: URL', mPath(todayId), { body: '자료 https://example.com/a' });
           // C1c-3a 부터 Rust 가 맡는다(자세한 대조는 아래 사람 답글 블록).
           await step('스레드 답글', mPath(todayId), { body: '답글', threadRootId: sd.root });
-          await step('TS: DM', mPath(String(dm.id)), { body: 'DM 글' });
+          // C1c-3d 부터 Rust 가 맡는다(`dm` 알림 — 자세한 대조는 아래 사람 답글 블록).
+          await step('DM', mPath(String(dm.id)), { body: 'DM 글' });
           await step('TS: 에이전트(PAT)', mPath(todayId), { body: '에이전트 글' }, agent.pat);
           await step('TS: 모델 지정 키', mPath(todayId), { body: '모델', agentModels: [] });
           return out;
@@ -3445,7 +3446,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           .map((e) => shape(sd)(JSON.parse(JSON.stringify(e))));
         const idsOf = (o: typeof tsOut, handed: boolean) => o.filter((x) => x.status === 201 && HANDED.includes(x.step) === handed).map((x) => x.id!);
         const want = created(tsEvents, idsOf(tsOut, false), T);
-        expect(want.length, '맡은 글마다 message.created(C1c-3a 부터 스레드 답글 포함)').toBe(4);
+        expect(want.length, '맡은 글마다 message.created(C1c-3a 부터 스레드 답글, C1c-3d 부터 DM 포함)').toBe(5);
         const until8 = Date.now() + 10_000;
         while (created(busEvents, idsOf(rsOut, false), R).length < want.length && Date.now() < until8) await new Promise((res) => setTimeout(res, 100));
         expect(created(busEvents, idsOf(rsOut, false), R), 'Rust 가 낸 message.created = TS').toEqual(want);
@@ -3592,13 +3593,17 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           }
           return typeof v === 'string' ? v.replace(UUID_RE, (id) => names.get(id) ?? '<uuid>') : v;
         };
-        const send = async (base: string, payload: Record<string, unknown>, token: string) => {
-          const res = await fetch(`${base}${mPath}`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': J }, body: JSON.stringify(payload) });
+        const send = async (base: string, payload: Record<string, unknown>, token: string, ch?: string) => {
+          const res = await fetch(`${base}${ch ? `/channels/${ch}/messages` : mPath}`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': J }, body: JSON.stringify(payload) });
           const json = await res.json() as Record<string, unknown>;
           return { status: res.status, count: res.headers.get('x-harkroom-notified-count'), ids: shape(res.headers.get('x-harkroom-notified')), id: json.id as string | undefined, message: shape(json) };
         };
-        const direct = async (author: string, body: string) => (await db.pool.query<{ id: string }>(
-          `insert into message (channel_id, author_id, body, kind) values ($1, $2, $3, 'user') returning id::text as id`, [todayId, author, body])).rows[0]!.id;
+        const direct = async (author: string, body: string, ch = todayId) => (await db.pool.query<{ id: string }>(
+          `insert into message (channel_id, author_id, body, kind) values ($1, $2, $3, 'user') returning id::text as id`, [ch, author, body])).rows[0]!.id;
+        // C1c-3d — DM 알림. 사람끼리(관리자·멤버), 사람↔누구나 에이전트(BOT2), 사람↔주인만 에이전트(멤버·BOT).
+        const dmMem = (await getOrCreateDm(db.pool, [admin.accountId, member.accountId])).id;
+        const dmBot2 = (await getOrCreateDm(db.pool, [admin.accountId, bot2.accountId])).id;
+        const dmBot = (await getOrCreateDm(db.pool, [member.accountId, agent.accountId])).id;
         const settle = () => new Promise((res) => setTimeout(res, 300));
         const facts = async (id: string | undefined) => id ? {
           inbox: shape((await db.pool.query(`select account_id::text as who, reason from inbox where message_id = $1 order by id`, [id])).rows),
@@ -3652,7 +3657,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           return root;
         };
         // [이름, 머리 만들기(base → 머리 id), 답 본문(머리 id → payload), 답하는 사람]
-        type Scene = [string, (base: string) => Promise<string>, (root: string) => Record<string, unknown>, string, ('ts' | undefined)?];
+        type Scene = [string, (base: string) => Promise<string>, (root: string) => Record<string, unknown>, string, ('ts' | undefined)?, string?];
         const SCENES: Scene[] = [
           ['남의 머리에 답 → thread_reply', async () => direct(member.accountId, '질문'), (r) => ({ body: '답', threadRootId: r }), A],
           ['자기 머리에 답 → 아무도', async () => direct(admin.accountId, '혼잣말'), (r) => ({ body: '덧붙임', threadRootId: r }), A],
@@ -3674,13 +3679,18 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['남에게 간 카드 → 그대로', withAsk({ to: { kind: 'account', accountId: member2.accountId } }), (r) => ({ body: '내 생각엔?', threadRootId: r }), A],
           ['권한 요청 카드 → 그대로', withAsk({ to: { kind: 'human' } }, { permissionRequest: { rule: 'x' } }), (r) => ({ body: '이건 뭐지?', threadRootId: r }), A],
           ['카드 + 거울 + 묶음 → 같이 닫음', withAsk({ to: { kind: 'human' } }, {}, true), (r) => ({ body: '어떤 차이야?', threadRootId: r }), A],
+          ['DM 최상위 → 상대에게 dm', async () => '', () => ({ body: '안녕' }), A, undefined, dmMem],
+          ['DM 답글 → 머리 주인 thread_reply 만', async () => direct(member.accountId, 'DM 질문', dmMem), (r) => ({ body: '답', threadRootId: r }), A, undefined, dmMem],
+          ['DM 답글(자기 머리) → 상대에게 dm', async () => direct(admin.accountId, 'DM 혼잣말', dmMem), (r) => ({ body: '덧붙임', threadRootId: r }), A, undefined, dmMem],
+          ['DM 에이전트(누구나) → dm', async () => '', () => ({ body: '봐 줘' }), A, undefined, dmBot2],
+          ['DM 에이전트(주인만) → 게이트 막힘', async () => '', () => ({ body: '봐 줘' }), member.token, undefined, dmBot],
           ['머리 id 가 null → 400', async () => '', () => ({ body: '답', threadRootId: null }), A],
         ];
         // TS 몫 갈래는 Rust 서버에서도 TS 가 올리므로 그 장면의 이벤트는 TS 버스에서 읽는다(Rust outbox 에 없어야 한다).
         const handedOnRust: string[] = [];
         const run = async (base: string, own: () => WorkspaceEvent[], tsBus: () => WorkspaceEvent[]) => {
           const out: unknown[] = [];
-          for (const [name, mkRoot, payload, token, side] of SCENES) {
+          for (const [name, mkRoot, payload, token, side, ch] of SCENES) {
             const evs = side === 'ts' ? tsBus : own;
             const root = await mkRoot(base);
             await settle();
@@ -3688,7 +3698,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             const body = Object.keys(p).length ? p : { body: '추가로', threadRootId: root };
             const before = evs().length;
             const busBefore = own().length;
-            const r = await send(base, body, token);
+            const r = await send(base, body, token, ch);
             const until = Date.now() + 10_000;
             const mine = () => evs().slice(before).filter((e) =>
               (e.type === 'message.created' && (e as { message: { id: string } }).message.id === r.id) || e.type === 'inbox.updated'
@@ -3730,6 +3740,11 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const folded = (tsOut as (Row & W)[]).find((x) => x.name === '열린 깨움 + 부름 → 접음')!;
         expect(folded.wakes).toEqual([{ fired: false, canceled: true, by_reply: true, stamped_fired: false, stamped_canceled: true, wake_inbox: [] }]);
         expect(by('없는 머리 → bad_thread').status).toBe(400);
+        expect(by('DM 최상위 → 상대에게 dm').inbox).toEqual([{ who: 'MEM', reason: 'dm' }]);
+        expect(by('DM 답글 → 머리 주인 thread_reply 만').inbox).toEqual([{ who: 'MEM', reason: 'thread_reply' }]);
+        expect(by('DM 답글(자기 머리) → 상대에게 dm').inbox).toEqual([{ who: 'MEM', reason: 'dm' }]);
+        expect(by('DM 에이전트(누구나) → dm').inbox).toEqual([{ who: 'BOT2', reason: 'dm' }]);
+        expect(by('DM 에이전트(주인만) → 게이트 막힘').count).toBe('0');
         expect(by('지워진 머리 → 되살림(rootBack)').status).toBe(201);
         // C1c-3d — 되돌아온 머리는 `message.created` **뒤** `message.updated` 로(자리표시자, 답글 수에 이 답이 들어 있음).
         type B = { events: { type: string; message?: { deletedAt?: unknown; replyCount?: unknown } }[] };

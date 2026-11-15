@@ -83,6 +83,7 @@ pub struct PostState {
 struct Sql {
     gate: String,
     channel_kind: String,
+    dm_peers: String,
     lock: String,
     lock_class: i32,
     dup: String,
@@ -136,6 +137,10 @@ fn sql() -> &'static Sql {
         Sql {
             gate: frag("channel_post_gate"),
             channel_kind: format!("select k.kind from ({}) k", frag("post_channel_kind")),
+            dm_peers: format!(
+                "select p.account_id::text from ({}) p",
+                frag("post_dm_peers")
+            ),
             lock: frag("post_seq_lock"),
             lock_class: frag("post_seq_lock_class").parse().expect("seq lock class"),
             dup: format!(
@@ -338,6 +343,7 @@ async fn post_in_tx(
     input: &PostBody,
     idempotency_key: Option<&str>,
     audience: &Value,
+    is_dm: bool,
 ) -> Result<Outcome, sqlx::Error> {
     let s = sql();
     let (body, attachment_ids) = (input.body.as_str(), input.attachment_ids.as_slice());
@@ -459,6 +465,10 @@ async fn post_in_tx(
         Some(r) => thread_reply(&mut tx, r, author, channel, &id, &mut notified_set).await?,
         None => false,
     };
+    // TS 와 같이 `thread_reply` 뒤 — DM 이면 상대에게 `dm`(사람 글은 언제나 답글로 세어지고 시스템 줄이 아니다).
+    if is_dm {
+        dm_notify(&mut tx, channel, author, root, &id, &mut notified_set).await?;
+    }
     // TS 와 같이 부름·`thread_reply` 를 다 넣은 뒤 — 이 글이 부른 계정의 깨움은 접고 나머지는 깨운다.
     let preempted = match root {
         Some(r) => wake_preempt::preempt(&mut tx, r, author, &id, &notified_set).await?,
@@ -562,6 +572,43 @@ async fn thread_reply(
     Ok(deleted)
 }
 
+/// TS 의 DM 알림 — 작성자 말고 그 방의 멤버 중 아직 안 받은 계정에게 `dm`. 에이전트면 `thread_reply` 와 같은 호출 게이트
+/// (via mention, 호출자 = 작성자, 회신권 스레드 = 머리 또는 없음)를 지나야 하고, 사람은 facts 에 없어 그대로 받는다.
+async fn dm_notify(
+    conn: &mut sqlx::PgConnection,
+    channel: &str,
+    author: &str,
+    root: Option<&str>,
+    message_id: &str,
+    notified: &mut HashSet<String>,
+) -> Result<(), sqlx::Error> {
+    let peers: Vec<String> = sqlx::query_scalar(sql().dm_peers.as_str())
+        .bind(channel)
+        .bind(author)
+        .fetch_all(&mut *conn)
+        .await?;
+    let facts = invoke_gate::invoke_facts(conn, &peers).await?;
+    let mut to: Vec<String> = Vec::new();
+    for p in peers {
+        if notified.contains(&p) {
+            continue;
+        }
+        if let Some(f) = facts.get(&p) {
+            let ctx = invoke_gate::Ctx {
+                caller_id: author,
+                channel_id: channel,
+                via: invoke_gate::Via::Mention,
+                reply_grant_thread_id: root,
+            };
+            if !invoke_gate::may_invoke(conn, f, &ctx).await? {
+                continue;
+            }
+        }
+        to.push(p);
+    }
+    mention_fanout::insert_inbox_many(conn, &to, message_id, "dm", notified, None).await
+}
+
 fn json_response(status: StatusCode, row: String) -> Response {
     (
         status,
@@ -636,7 +683,7 @@ pub async fn post(
         }
         _ => {}
     }
-    // DM 은 받는 사람에게 `dm` 알림이 간다(C1c-3 몫).
+    // DM 은 받는 사람에게 `dm` 알림이 간다(C1c-3d 부터 Rust 가 넣는다 — [`dm_notify`]).
     let kind: Option<String> = match sqlx::query_scalar(sql().channel_kind.as_str())
         .bind(&id)
         .fetch_optional(&st.read)
@@ -645,9 +692,7 @@ pub async fn post(
         Ok(k) => k,
         Err(e) => return internal(e),
     };
-    if kind.as_deref() == Some("dm") {
-        return to_ts(st.up.clone(), peer, parts, bytes).await;
-    }
+    let is_dm = kind.as_deref() == Some("dm");
     let audience = match audience_for(&st.read, &id).await {
         Ok(a) => a.to_json(),
         Err(e) => return internal(e),
@@ -657,7 +702,7 @@ pub async fn post(
         .get("idempotency-key")
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
-    match post_in_tx(&st, &id, &me.id, &input, key.as_deref(), &audience).await {
+    match post_in_tx(&st, &id, &me.id, &input, key.as_deref(), &audience, is_dm).await {
         Err(e) => internal(e),
         // 세 사유를 400 하나로 합친다 — TS 와 같이, 남의 업로드 id 가 있는지 알리는 신호가 되지 않게.
         Ok(Outcome::ToTs) => to_ts(st.up.clone(), peer, parts, bytes).await,

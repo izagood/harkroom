@@ -88,6 +88,7 @@
   "post_root_author": "select author_id, deleted_at from message where id = $1::uuid",
   "post_idempotency_insert": "insert into idempotency_key (key, message_id, author_id, channel_id) values ($1, $2::uuid, $3::uuid, $4::uuid)",
   "post_channel_kind": "select kind from channel where id = $1::uuid",
+  "post_dm_peers": "select account_id from channel_member where channel_id = $1::uuid and account_id <> $2::uuid",
   "attach_find": "select id, uploader_id, message_id from attachment where id = any($1::uuid[]) for update",
   "attach_update": "update attachment a set message_id = $1::uuid, attached_at = now()\n     from unnest($2::uuid[]) with ordinality as t(id, ord)\n     where a.id = t.id",
   "url_candidate_source": "[a-zA-Z][a-zA-Z0-9+.-]*:[^\\s]+",
