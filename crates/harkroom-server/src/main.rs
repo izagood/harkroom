@@ -123,7 +123,10 @@ async fn main() {
                     None
                 }
                 Err(e) => {
-                    eprintln!("front: reaction core off — privilege check failed: {e}");
+                    eprintln!(
+                        "front: reaction core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
                     None
                 }
             }
@@ -146,7 +149,10 @@ async fn main() {
                     None
                 }
                 Err(e) => {
-                    eprintln!("front: message delete core off — privilege check failed: {e}");
+                    eprintln!(
+                        "front: message delete core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
                     None
                 }
             }

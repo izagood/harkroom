@@ -1162,6 +1162,31 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect(b.status, `${m} ${p} 익명 → 401`).toBe(a.status);
         }
         expect((await rowsOf(T)).find((r) => r.k === 'keep')?.deleted, '거절은 행을 바꾸지 않는다').toBe(false);
+        // 쓰기와 이벤트는 한 트랜잭션 — outbox 넣기가 실패하면 지우기·채널로 올리기·거두기도 되돌아가야 한다(다른 화면에 지운 본문이 남지 않게).
+        // 앞단 쓰기 역할의 outbox 권한을 잠시 거두어 이벤트 넣기를 실패시킨다.
+        const txMsg = await say('트랜잭션 머리', { author: admin.accountId });
+        const txReply = await say('트랜잭션 답글', { root: txMsg, author: admin.accountId });
+        await db.pool.query(`revoke insert on event_outbox from ${rw}`);
+        try {
+          for (const [name, m, path] of [
+            ['DELETE 글', 'DELETE', msgPath(todayId, txMsg)],
+            ['PUT also', 'PUT', alsoPath(todayId, txReply)],
+          ] as const) {
+            const r = await callX(rsUrl, m, path);
+            expect(r.status, `${name} — 이벤트 실패면 500`).toBe(500);
+          }
+          await db.pool.query(`update message set also_in_channel = true where id = $1`, [txReply]);
+          expect((await callX(rsUrl, 'DELETE', alsoPath(todayId, txReply))).status, 'DELETE also — 이벤트 실패면 500').toBe(500);
+        } finally {
+          await db.pool.query(`grant insert on event_outbox to ${rw}`);
+        }
+        const txRows = (await db.pool.query<{ id: string; deleted: boolean; also: boolean }>(
+          `select id, deleted_at is not null as deleted, also_in_channel as also from message where id = any($1::uuid[])`,
+          [[txMsg, txReply]])).rows;
+        expect(txRows.find((r) => r.id === txMsg)?.deleted, '지우기가 되돌아갔다').toBe(false);
+        expect(txRows.find((r) => r.id === txReply)?.also, '거두기가 되돌아갔다(앞에서 켜 둔 값 그대로)').toBe(true);
+        // 권한을 돌려준 뒤에는 정상으로 지워진다.
+        expect((await callX(rsUrl, 'DELETE', msgPath(todayId, txMsg))).status).toBe(200);
       }
       await bus.stop();
 
