@@ -2990,12 +2990,15 @@ export async function promoteToChannel(
  * 한 행을 `THREAD_STATS` 로 곧장 읽으므로 페이지 갈래(`REPLY_COLS`·`pageWithHeads`)의 **기준값**이기도 하다 —
  * `listMessagesPlanCost.test.ts` 가 페이지의 행마다 이것과 견준다.
  */
+/**
+ * `readListRow` 의 문장. Rust 코어(`crates/harkroom-server/src/core/msg_list.rs`·`msg_delete.rs`, S5.3 C3a-2)가
+ * `golden/sql_fragments.json` 으로 받아 그대로 쓴다 — 고치면 `test/rustSqlFragments.test.ts` 가 골든 갱신을 요구한다.
+ */
+export const READ_LIST_ROW_SQL = `select ${LIST_COLS} from message m ${THREAD_STATS}
+     where m.channel_id = $1::uuid and m.id = $2::uuid and ${LIST_VISIBLE}`;
+
 export async function readListRow(pool: Pool, channelId: string, messageId: string): Promise<MessageRow | null> {
-  const res = await pool.query(
-    `select ${LIST_COLS} from message m ${THREAD_STATS}
-     where m.channel_id = $1 and m.id = $2 and ${LIST_VISIBLE}`,
-    [channelId, messageId],
-  );
+  const res = await pool.query(READ_LIST_ROW_SQL, [channelId, messageId]);
   // 목록 행과 같은 모양이어야 한다 — 루트면 계획판 진행률도 붙인다(listMessages 와 같은 판정).
   const row = (res.rows[0] as MessageRow | undefined) ?? null;
   return row ? (await attachPlanProgress(pool, [row]))[0]! : null;

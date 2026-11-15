@@ -32,6 +32,7 @@ struct Sql {
     plans: String,
     children: String,
     visible: String,
+    read_list_row: String,
 }
 
 /// 갈래 문장을 감싼다 — 행마다 (본문 json, id, seq, 머리인가). 갈래는 모두 seq 오름차순으로 끝나므로 겉 `order by` 가 같은 순서다.
@@ -89,6 +90,7 @@ fn sql() -> &'static Sql {
                 "select {} as visible from channel c where c.id = $2::uuid",
                 frag("channel_visible_c_p1uuid")
             ),
+            read_list_row: wrap(&frag("read_list_row")),
         }
     })
 }
@@ -514,6 +516,35 @@ async fn attach_plan_progress(pool: &PgPool, rows: &mut [Row]) -> Result<(), sql
         }
     }
     Ok(())
+}
+
+/// TS `readListRow` — 목록에 보이는 모양 그대로 한 행(자리표시자 포함, 머리면 `planProgress` 까지). 목록에서 사라졌으면 None.
+/// 지우기(`msg_delete.rs`)가 「지운 자리가 남았나」를 판정 규칙을 다시 쓰지 않고 묻는 길이다.
+pub(crate) async fn read_list_row(
+    pool: &PgPool,
+    channel: &str,
+    id: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    let got = sqlx::query_as::<_, (String, String, i64, Option<String>, bool)>(
+        sql().read_list_row.as_str(),
+    )
+    .bind(channel)
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+    let Some((body, id, seq, thread_root_id, is_root)) = got else {
+        return Ok(None);
+    };
+    let mut rows = [Row {
+        body,
+        id,
+        seq,
+        thread_root_id,
+        is_root,
+    }];
+    attach_plan_progress(pool, &mut rows).await?;
+    let [row] = rows;
+    Ok(Some(row.body))
 }
 
 async fn exists(

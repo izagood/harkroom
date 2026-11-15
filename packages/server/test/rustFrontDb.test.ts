@@ -312,6 +312,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant insert, update, delete on message_reaction to ${rw}`,
         // 칸 권한만 — 앞단이 `has_column_privilege` 로 알아보고 리액션 줄을 붙여야 한다(아래 「reaction core off」 없음).
         `grant update (meta) on message to ${rw}`,
+        // S5.3 C3a-2 — 지우기·채널에도 보이기(`msg_delete.rs::MESSAGE_DELETE_PRIVILEGES`). 칸 권한 둘. 없으면 「message delete core off」.
+        `grant update (deleted_at, also_in_channel) on message to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -1037,6 +1039,129 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect(b.status, `${m} 익명 → 401`).toBe(a.status);
         }
         expect((await rows([T.msg])).length, '거절은 행을 바꾸지 않는다').toBe(20);
+      }
+
+      // S5.3 C3a-2 — 지우기·「채널에도 보이기」 켜고 끄기(코어 `msg_delete.rs`). 리액션과 같이 TS·Rust 에 **각자의 글**로 같은 시나리오를
+      // 돌려 응답(상태·코드·본문 모양)·이벤트(이름·모양·받는 사람·순서)·남은 행·감사를 견준다.
+      {
+        const DEL = '/channels/{id}/messages/{messageId}';
+        const ALSO = `${DEL}/also-in-channel`;
+        for (const k of [`DELETE ${DEL}`, `DELETE ${ALSO}`, `PUT ${ALSO}`]) expect(f.log()).toContain(`"${k}"`);
+        expect(f.log()).not.toContain('message delete core off');
+        const msgPath = (ch: string, m: string) => `/channels/${ch}/messages/${m}`;
+        const alsoPath = (ch: string, m: string) => `${msgPath(ch, m)}/also-in-channel`;
+        const side = async () => {
+          const lone = await say('혼자인 머리', { author: admin.accountId });
+          const head = await say('답글 남는 머리', { author: admin.accountId });
+          const keep = await say('남는 답글', { root: head, author: member.accountId });
+          const head2 = await say('마지막 답글과 사라질 머리', { author: admin.accountId });
+          const last = await say('마지막 답글', { root: head2, author: admin.accountId });
+          const reply = await say('채널로 올릴 답글', { root: head, author: admin.accountId });
+          const memberMsg = await say('멤버 글', { author: member.accountId });
+          return { lone, head, keep, head2, last, reply, memberMsg };
+        };
+        type Side = Awaited<ReturnType<typeof side>>;
+        const T = await side();
+        const R = await side();
+        const tsEvents: WorkspaceEvent[] = [];
+        const offTs = onEvent((e) => { tsEvents.push(e); });
+        const labelOf = (sd: Side) => (v: unknown) => {
+          for (const [k, id] of Object.entries(sd)) if (v === id) return k.toUpperCase();
+          return v;
+        };
+        // 본문은 모양만 견준다 — id 는 자리표로, 시각은 있음/없음으로, seq 는 수인지만.
+        const shape = (sd: Side) => (v: unknown): unknown => {
+          const lab = labelOf(sd);
+          if (Array.isArray(v)) return v.map(shape(sd));
+          if (v && typeof v === 'object') {
+            const o: Record<string, unknown> = {};
+            for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+              o[k] = /At$/.test(k) ? (x === null ? null : typeof x) : k === 'seq' ? typeof x : shape(sd)(x);
+            }
+            return o;
+          }
+          return lab(v);
+        };
+        const run = async (base: string, sd: Side) => {
+          const out: { step: string; status: number; code?: string; body: unknown }[] = [];
+          const step = async (name: string, m: string, path: string, token = A) => {
+            const r = await callX(base, m, path, undefined, token);
+            out.push({ step: name, status: r.status, code: r.code, body: Object.keys(r.json).length ? shape(sd)(r.json) : null });
+          };
+          await step('PUT 답글을 채널로', 'PUT', alsoPath(todayId, sd.reply));
+          await step('PUT 다시(멱등)', 'PUT', alsoPath(todayId, sd.reply));
+          await step('PUT 머리 → 400 not_thread_reply', 'PUT', alsoPath(todayId, sd.lone));
+          await step('PUT 남의 답글 → 403', 'PUT', alsoPath(todayId, sd.keep));
+          await step('DELETE also 멤버가 남의 것 → 403', 'DELETE', alsoPath(todayId, sd.reply), member.token);
+          await step('DELETE also 거두기', 'DELETE', alsoPath(todayId, sd.reply));
+          await step('DELETE also 다시(멱등)', 'DELETE', alsoPath(todayId, sd.reply));
+          await step('DELETE also admin 이 남의 것', 'DELETE', alsoPath(todayId, sd.keep));
+          await step('DELETE 멤버가 남의 글 → 403', 'DELETE', msgPath(todayId, sd.lone), member.token);
+          await step('DELETE 혼자인 머리 → 204', 'DELETE', msgPath(todayId, sd.lone));
+          await step('DELETE 지운 글 → 404', 'DELETE', msgPath(todayId, sd.lone));
+          await step('DELETE 답글 남는 머리 → 200 자리표시자', 'DELETE', msgPath(todayId, sd.head));
+          await step('DELETE 머리2 → 200 자리표시자', 'DELETE', msgPath(todayId, sd.head2));
+          await step('DELETE 마지막 답글 → 204(머리도 사라짐)', 'DELETE', msgPath(todayId, sd.last));
+          await step('DELETE admin 이 멤버 글 → 204', 'DELETE', msgPath(todayId, sd.memberMsg));
+          await step('DELETE 지운 머리에 also → 404', 'DELETE', alsoPath(todayId, sd.lone));
+          return out;
+        };
+        const tsOut = await run(tsUrl, T);
+        const rsOut = await run(rsUrl, R);
+        expect(rsOut).toEqual(tsOut);
+        const st = (step: string) => tsOut.find((o) => o.step === step);
+        expect(st('DELETE 답글 남는 머리 → 200 자리표시자')?.status).toBe(200);
+        expect(st('DELETE 마지막 답글 → 204(머리도 사라짐)')?.status).toBe(204);
+        expect((st('PUT 답글을 채널로')?.body as { alsoInChannel?: boolean }).alsoInChannel).toBe(true);
+        // 남은 행 — 지운 시각·채널에도 보이기가 같은 자리에 같은 값.
+        const rowsOf = async (sd: Side) => (await db.pool.query<{ k: string; deleted: boolean; also: boolean }>(
+          `select k, m.deleted_at is not null as deleted, m.also_in_channel as also
+             from jsonb_each_text($1::jsonb) j(k, id) join message m on m.id = j.id::uuid order by k`, [JSON.stringify(sd)])).rows;
+        expect(await rowsOf(R)).toEqual(await rowsOf(T));
+        // 이벤트.
+        const mineOf = (evs: WorkspaceEvent[], sd: Side) => evs.filter((e) => {
+          const o = e as { messageId?: string; message?: { id?: string } };
+          const id = o.messageId ?? o.message?.id;
+          return Object.values(sd).includes(id as string);
+        }).map((e) => shape(sd)(JSON.parse(JSON.stringify(e))));
+        const want = mineOf(tsEvents, T);
+        offTs();
+        const until5 = Date.now() + 10_000;
+        while (mineOf(busEvents, R).length < want.length && Date.now() < until5) await new Promise((res) => setTimeout(res, 100));
+        expect(mineOf(busEvents, R)).toEqual(want);
+        expect(want.map((e) => (e as { type: string }).type)).toEqual([
+          'message.updated', 'message.updated', 'message.updated', 'message.updated', 'message.updated',
+          'message.deleted', 'message.updated', 'message.updated', 'message.deleted', 'message.deleted', 'message.deleted',
+        ]);
+        // 마지막 답글을 지우면 그 답글 다음에 자리표시자로 서 있던 머리도 `message.deleted`.
+        expect(want.slice(-3).map((e) => (e as { messageId?: string }).messageId)).toEqual(['LAST', 'HEAD2', 'MEMBERMSG']);
+        // 감사 — 지우기마다 한 줄, 본문 없이 `{ channelId }`.
+        const audits = async (sd: Side) => (await db.pool.query<{ t: string; d: unknown }>(
+          `select target as t, detail as d from audit_log where action = 'message.deleted' and target = any($1::text[]) order by id`,
+          [Object.values(sd)])).rows.map((r) => ({ t: labelOf(sd)(r.t), d: r.d }));
+        const tAud = await audits(T);
+        expect(await audits(R)).toEqual(tAud);
+        expect(tAud.map((a) => a.t)).toEqual(['LONE', 'HEAD', 'HEAD2', 'LAST', 'MEMBERMSG']);
+        // 거절 — 바꾸지 않는 요청만, 상태·코드(문구는 zod 와 다르다).
+        for (const [name, m, path, token] of [
+          ['DELETE uuid 아님 → 400', 'DELETE', msgPath(todayId, 'x'), A],
+          ['DELETE also uuid 아님 → 400', 'DELETE', alsoPath('nope', T.reply), A],
+          ['PUT also uuid 아님 → 400', 'PUT', alsoPath(todayId, 'x'), A],
+          ['DELETE 비공개 채널 멤버 아님 → 403', 'DELETE', msgPath(String(priv.id), secret), member.token],
+          ['PUT also 비공개 채널 멤버 아님 → 403', 'PUT', alsoPath(String(priv.id), secret), member.token],
+          ['PUT also 보관된 채널 → 403 channel_archived', 'PUT', alsoPath(String(priv.id), secret), A],
+          ['DELETE 다른 채널의 글 → 404', 'DELETE', msgPath(String(dm.id), T.keep), A],
+          ['DELETE 없는 채널 → 404', 'DELETE', msgPath(ghost, T.keep), A],
+          ['PUT also 없는 글 → 404', 'PUT', alsoPath(todayId, ghost), A],
+        ] as const) {
+          const [a, b] = [await callX(tsUrl, m, path, undefined, token), await callX(rsUrl, m, path, undefined, token)];
+          expect({ status: b.status, code: b.code }, name).toEqual({ status: a.status, code: a.code });
+        }
+        for (const [m, p] of [['DELETE', msgPath(todayId, T.keep)], ['PUT', alsoPath(todayId, T.keep)], ['DELETE', alsoPath(todayId, T.keep)]] as const) {
+          const [a, b] = [await fetch(`${tsUrl}${p}`, { method: m }), await fetch(`${rsUrl}${p}`, { method: m })];
+          expect(b.status, `${m} ${p} 익명 → 401`).toBe(a.status);
+        }
+        expect((await rowsOf(T)).find((r) => r.k === 'keep')?.deleted, '거절은 행을 바꾸지 않는다').toBe(false);
       }
       await bus.stop();
 
