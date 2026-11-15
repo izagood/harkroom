@@ -542,6 +542,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "harkroom-proto"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "harkroom-server"
 version = "0.1.0"
 dependencies = [
@@ -551,6 +560,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.3",
  "harkroom-bus",
+ "harkroom-proto",
  "hex",
  "hkdf",
  "hmac",

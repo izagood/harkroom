@@ -1272,18 +1272,23 @@ export async function releaseGrant(
 }
 
 /**
+ * `listToolRules` 의 문장 — Rust 코어(MCP `grant.list`, S5.3 C4b)가 `golden/sql_fragments.json` 으로 받아 그대로 쓴다(`$1::uuid` 나 ·
+ * `$2::timestamptz` 지금). 고치면 `test/rustSqlFragments.test.ts` 가 골든 갱신을 요구한다.
+ */
+export const LIST_TOOL_RULES_SQL = `select scope, expires_at as "expiresAt",
+            ${mayDecideSql('account_grant.account_id', 'account_grant.granted_by', "nullif(split_part(account_grant.scope, ':', 2), '')::uuid")} as "mayDecide"
+       from account_grant
+      where account_id = $1::uuid and capability = 'tool.allow' and left(scope, 5) = 'tool:' and (expires_at is null or expires_at > $2::timestamptz)
+      order by scope`;
+
+/**
  * `grant.list` 의 명령 허용 — 이 에이전트의 만료 안 된 tool.allow 줄 전부. `active` 는 지금 턴에 실제로 실리는지(`toolAllowsFor` 와 같은 판정)이고,
  * 옛 넓은 규칙처럼 거짓인 줄도 내려놓을 수 있게 보여 준다. 규칙 글자는 지금 볼 수 있는 채널 것만 싣고, 나머지는 개수만 준다(다른 턴·채널로 글자가 새지 않게).
  */
 export async function listToolRules(pool: Pool, agentId: string, now = new Date()): Promise<{
   toolRules: { channelId: string; rule: string; expiresAt: string | null; active: boolean }[]; hiddenToolRules: number;
 }> {
-  const rows = (await pool.query<{ scope: string; expiresAt: Date | null; mayDecide: boolean }>(
-    `select scope, expires_at as "expiresAt",
-            ${mayDecideSql('account_grant.account_id', 'account_grant.granted_by', "nullif(split_part(account_grant.scope, ':', 2), '')::uuid")} as "mayDecide"
-       from account_grant
-      where account_id = $1 and capability = 'tool.allow' and left(scope, 5) = 'tool:' and (expires_at is null or expires_at > $2)
-      order by scope`, [agentId, now])).rows;
+  const rows = (await pool.query<{ scope: string; expiresAt: Date | null; mayDecide: boolean }>(LIST_TOOL_RULES_SQL, [agentId, now])).rows;
   const visible = new Map<string, boolean>();
   const toolRules: { channelId: string; rule: string; expiresAt: string | null; active: boolean }[] = [];
   let hiddenToolRules = 0;
