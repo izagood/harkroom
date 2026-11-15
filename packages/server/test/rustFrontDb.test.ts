@@ -2197,6 +2197,30 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(txAsk.answeredWith ?? null, '답이 되돌아갔다').toBeNull();
         expect(txAsk.closedAt ?? null, '닫힘이 되돌아갔다').toBeNull();
         expect((await callX(rsUrl, 'POST', ans(todayId, txCard), { optionId: 'a' })).status).toBe(200);
+        // 카드 쓰기 권한이 없는 앞단 — 스위치가 rust 여도 이 줄을 붙이지 않고(기동 기록), 같은 요청은 TS 가 답한다.
+        const lateCard = await say('@admin 둘째 앞단 카드', { meta: askMeta(H) });
+        await db.pool.query(`revoke update (meta) on message from ${rw}`);
+        // 앞단 둘이 같은 역할로 붙으므로 시험 역할의 연결 한도를 잠시 푼다(이 시험 DB 에서만).
+        await db.pool.query(`alter role ${rw} connection limit -1`);
+        const port2 = await freePort();
+        let front2: ChildProcess | undefined;
+        try {
+          const f2 = await startFront(bin, {
+            UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(port2), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
+            TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust',
+          });
+          front2 = f2.child;
+          const until2 = Date.now() + 10_000;
+          while (!f2.log().includes('front: rust core routes') && Date.now() < until2) await new Promise((res) => setTimeout(res, 100));
+          expect(f2.log()).toContain('ask card core off — missing privileges');
+          expect(f2.log()).not.toContain(`"POST ${ASKP}/ask-answer"`);
+          const viaFront = await callX(`http://127.0.0.1:${port2}`, 'POST', ans(todayId, lateCard), { optionId: 'b' });
+          expect(viaFront.status, '권한이 없으면 TS 가 받아 200').toBe(200);
+          expect(((viaFront.json as { meta?: { ask?: { answeredWith?: string } } }).meta?.ask?.answeredWith)).toBe('b');
+        } finally {
+          front2?.kill('SIGTERM');
+          await db.pool.query(`grant update (meta) on message to ${rw}`);
+        }
       }
       await bus.stop();
 
