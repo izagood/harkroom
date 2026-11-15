@@ -105,11 +105,11 @@ pub fn attention_hook(read: PgPool, write: PgPool) -> AttentionHook {
     })
 }
 
-/// presence 가 만료(또는 처음)에서 살아났을 때 — TS `presence.changed { online: true }`.
+/// presence 가 만료(또는 처음)에서 살아났을 때, 스윕이 만료를 찾았을 때 — TS `presence.changed { online }`.
 pub fn online_hook(write: PgPool) -> OnlineHook {
-    Arc::new(move |agent: &str| {
+    Arc::new(move |agent: &str, online: bool| {
         let write = write.clone();
-        let ev = json!({ "type": "presence.changed", "accountId": agent, "online": true });
+        let ev = json!({ "type": "presence.changed", "accountId": agent, "online": online });
         tokio::spawn(async move {
             let r = async {
                 let mut conn = write.acquire().await?;

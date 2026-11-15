@@ -220,8 +220,10 @@ async fn session_live_and_presence_against_real_schema() {
         write.clone(),
         Duration::from_secs(30),
         Duration::from_secs(10),
-        Some(Arc::new(move |a: &str| {
-            o.lock().unwrap().push(a.to_owned())
+        Some(Arc::new(move |a: &str, on: bool| {
+            o.lock()
+                .unwrap()
+                .push(format!("{}{a}", if on { "+" } else { "-" }))
         })),
         Arc::new(|_, e| panic!("presence write failed: {e}")),
     );
@@ -244,7 +246,7 @@ async fn session_live_and_presence_against_real_schema() {
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    assert_eq!(*online.lock().unwrap(), vec![other.clone()]);
+    assert_eq!(*online.lock().unwrap(), vec![format!("+{other}")]);
     let alive: bool = sqlx::query_scalar(
         "select expires_at > now() from agent_presence where account_id = $1::uuid",
     )
@@ -253,6 +255,38 @@ async fn session_live_and_presence_against_real_schema() {
     .await
     .unwrap();
     assert!(alive);
+
+    // ---- ⓖ 스윕: DB 에서 만료된 것만 offline, 한 번만 ----
+    online.lock().unwrap().clear();
+    assert!(p.sweep_once().await.unwrap().is_empty(), "둘 다 살아 있다");
+    sqlx::query("update agent_presence set expires_at = now() - interval '1 second' where account_id = $1::uuid")
+        .bind(&other)
+        .execute(&admin)
+        .await
+        .unwrap();
+    assert_eq!(p.sweep_once().await.unwrap(), vec![other.clone()]);
+    assert_eq!(*online.lock().unwrap(), vec![format!("-{other}")]);
+    assert!(
+        p.sweep_once().await.unwrap().is_empty(),
+        "같은 만료를 두 번 내지 않는다"
+    );
+    // 다른 서버(TS 폴)가 늘려 놓은 에이전트는 만료가 아니다 — 판정은 DB 시계다.
+    sqlx::query("update agent_presence set expires_at = now() + interval '30 seconds' where account_id = $1::uuid")
+        .bind(&agent)
+        .execute(&admin)
+        .await
+        .unwrap();
+    assert!(p.sweep_once().await.unwrap().is_empty());
+    // 만료 뒤 다음 프레임은 묶음 표시 없이 곧바로 쓰고 online 을 다시 낸다.
+    online.lock().unwrap().clear();
+    p.mark(&other);
+    for _ in 0..50 {
+        if !online.lock().unwrap().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(*online.lock().unwrap(), vec![format!("+{other}")]);
 
     // ---- runnerGone·announce ----
     live.beat_once().await.unwrap();

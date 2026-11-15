@@ -671,6 +671,8 @@ async fn main() {
                     Some(relay_attention::online_hook(write.clone())),
                     relay_live::LiveOpts::default().on_error,
                 );
+                // ⓖ — offline 은 스윕이 낸다(TS `startSweep`). 프로세스와 함께 산다.
+                presence.start_sweep();
                 let link = relay_link::RelayLink::spawn(
                     hub,
                     op_hub,

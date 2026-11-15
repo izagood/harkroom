@@ -49,6 +49,10 @@ pub struct LinkHooks {
 
 /// 확인이 DB 에 닿지 못할 때 다시 해 보는 한도(TS `deadlineMs: 60_000`).
 pub const CHECK_DEADLINE: Duration = Duration::from_secs(60);
+/// ⓕ 러너 하나의 밀린 프레임 상한. 일꾼이 배정 확인(최대 [`CHECK_DEADLINE`])을 기다리는 동안 그 러너의 프레임은 쌓인다 —
+/// 넘으면 그 러너를 잊고 **그 오퍼레이터 연결만** 끊는다(1013). 오퍼레이터가 다시 붙어 hello·announce·재생으로 화면을 되살린다.
+/// 프레임을 조용히 버리지는 않는다(빠진 채 이어 붙지 않는다). 상한은 폭주 시험(10,000)보다 넉넉하다.
+pub const WORKER_BACKLOG_CAP: usize = 65_536;
 
 /// 기본 배정 확인 — 읽기 풀로 `agent_assignment` 를 본다. uuid 모양이 아니면 조회하지 않고 「배정 아님」.
 pub fn db_assign_check(pool: sqlx::PgPool) -> AssignCheck {
@@ -191,6 +195,8 @@ type Key = (String, String);
 struct Worker {
     epoch: u64,
     tx: mpsc::UnboundedSender<Work>,
+    /// 일꾼이 아직 꺼내지 않은 프레임 수(ⓕ 상한).
+    pending: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 #[derive(Default)]
@@ -209,11 +215,23 @@ pub struct RelayLink {
     ops: OperatorHub,
     check: AssignCheck,
     hooks: LinkHooks,
+    cap: usize,
 }
 
 impl RelayLink {
     /// 피드를 열고 배선 루프를 띄운다. 프로세스에 하나.
     pub fn spawn(relay: RelayHub, ops: OperatorHub, check: AssignCheck, hooks: LinkHooks) -> Self {
+        Self::spawn_capped(relay, ops, check, hooks, WORKER_BACKLOG_CAP)
+    }
+
+    /// [`spawn`] 에 러너별 밀림 상한을 준다(시험용).
+    pub fn spawn_capped(
+        relay: RelayHub,
+        ops: OperatorHub,
+        check: AssignCheck,
+        hooks: LinkHooks,
+        cap: usize,
+    ) -> Self {
         let mut feed = ops.link_feed();
         let link = Self {
             state: Arc::default(),
@@ -221,6 +239,7 @@ impl RelayLink {
             ops,
             check,
             hooks,
+            cap,
         };
         let l = link.clone();
         tokio::spawn(async move {
@@ -285,8 +304,27 @@ impl RelayLink {
                     return;
                 };
                 // 모르는 러너의 프레임은 버린다 — `runner.started` 없이 온 것이거나 이미 물러난 러너다.
-                if let Some(w) = self.lock().workers.get(&(op.to_owned(), rid)) {
-                    let _ = w.tx.send(Work::Frame(inner));
+                use std::sync::atomic::Ordering;
+                let over = {
+                    let st = self.lock();
+                    let Some(w) = st.workers.get(&(op.to_owned(), rid.clone())) else {
+                        return;
+                    };
+                    if w.pending.fetch_add(1, Ordering::SeqCst) >= self.cap {
+                        w.pending.fetch_sub(1, Ordering::SeqCst);
+                        true
+                    } else {
+                        let _ = w.tx.send(Work::Frame(inner));
+                        false
+                    }
+                };
+                if over {
+                    // ⓕ — 그 러너를 잊고 그 오퍼레이터만 끊는다. 다시 붙으면 hello 가 다시 등록한다.
+                    eprintln!(
+                        "core: relay runner backlog over cap — disconnecting operator (operator {op}, runner {rid})"
+                    );
+                    self.unregister(op, &rid);
+                    self.ops.disconnect(op, 1013, "relay backlog");
                 }
             }
         }
@@ -295,6 +333,7 @@ impl RelayLink {
     fn register(&self, op: &str, runner: &str, agent: &str) {
         let key: Key = (op.to_owned(), runner.to_owned());
         let (tx, rx) = mpsc::unbounded_channel();
+        let pending = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let (done_tx, done_rx) = watch::channel(false);
         let epoch = {
             let mut st = self.lock();
@@ -303,13 +342,23 @@ impl RelayLink {
             }
             st.next_epoch += 1;
             let epoch = st.next_epoch;
-            st.workers.insert(key.clone(), Worker { epoch, tx });
+            st.workers.insert(
+                key.clone(),
+                Worker {
+                    epoch,
+                    tx,
+                    pending: pending.clone(),
+                },
+            );
             st.settling.insert(agent.to_owned(), done_rx);
             epoch
         };
         let link = self.clone();
         let agent = agent.to_owned();
-        tokio::spawn(async move { link.run_worker(key, epoch, agent, rx, done_tx).await });
+        tokio::spawn(async move {
+            link.run_worker(key, epoch, agent, rx, done_tx, pending)
+                .await
+        });
     }
 
     fn unregister(&self, op: &str, runner: &str) {
@@ -346,6 +395,7 @@ impl RelayLink {
         agent: String,
         mut rx: mpsc::UnboundedReceiver<Work>,
         done: watch::Sender<bool>,
+        pending: Arc<std::sync::atomic::AtomicUsize>,
     ) {
         let (op, runner) = key.clone();
         let reg = match self.check_assigned(&op, &agent).await {
@@ -380,6 +430,7 @@ impl RelayLink {
         while let Some(w) = rx.recv().await {
             match w {
                 Work::Frame(f) => {
+                    pending.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
                     if reg.is_none() {
                         continue;
                     }
@@ -448,6 +499,10 @@ mod tests {
     }
 
     fn rig(check: AssignCheck) -> Rig {
+        rig_capped(check, WORKER_BACKLOG_CAP)
+    }
+
+    fn rig_capped(check: AssignCheck, cap: usize) -> Rig {
         let ops = OperatorHub::new();
         let (tx, out) = mpsc::unbounded_channel();
         let reg = ops.add_operator(OP, tx);
@@ -462,7 +517,7 @@ mod tests {
                 g.fetch_add(1, Ordering::SeqCst);
             })),
         };
-        let link = RelayLink::spawn(RelayHub::new(None), ops.clone(), check, hooks);
+        let link = RelayLink::spawn_capped(RelayHub::new(None), ops.clone(), check, hooks, cap);
         Rig {
             ops,
             reg,
@@ -609,6 +664,47 @@ mod tests {
     }
 
     /// task_manager 게이트: broadcast(4096) 를 넘는 폭주에도 PTY 프레임이 하나도 빠지지 않는다.
+    /// ⓕ — 배정 확인이 밀린 사이 한 러너의 프레임이 상한을 넘으면 그 러너를 잊고 그 오퍼레이터만 1013 으로 끊는다.
+    /// 상한 안의 프레임은 확인이 끝난 뒤 하나도 빠지지 않는다(조용히 버리지 않는다).
+    #[tokio::test]
+    async fn runner_backlog_over_cap_disconnects_that_operator() {
+        let mut r = rig_capped(check_with(200, true), 3);
+        started(&r, "r1");
+        for i in 0..3 {
+            send(
+                &r,
+                json!({ "type": "pty.output", "runnerId": "r1", "sessionId": "s1", "bytes": format!("{i}") }),
+            );
+        }
+        settle().await;
+        let mut closed = None;
+        while let Ok(o) = r.out.try_recv() {
+            if let OpOut::Close(c, _) = o {
+                closed = Some(c);
+            }
+        }
+        assert_eq!(closed, None, "상한 안에서는 끊지 않는다");
+        send(
+            &r,
+            json!({ "type": "pty.output", "runnerId": "r1", "sessionId": "s1", "bytes": "3" }),
+        );
+        settle().await;
+        while let Ok(o) = r.out.try_recv() {
+            if let OpOut::Close(c, _) = o {
+                closed = Some(c);
+            }
+        }
+        assert_eq!(closed, Some(1013), "넘치면 그 오퍼레이터를 끊는다");
+        r.link.settled(AG).await;
+        settle().await;
+        assert_eq!(
+            r.seen.load(Ordering::SeqCst),
+            3,
+            "상한 안의 3개는 순서대로 다 들어간다"
+        );
+        assert_eq!(r.gone.load(Ordering::SeqCst), 1, "그 러너는 물러난다");
+    }
+
     #[tokio::test]
     async fn burst_beyond_broadcast_capacity_loses_no_bytes() {
         let r = rig(check_with(0, true));

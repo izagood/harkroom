@@ -169,8 +169,8 @@ enum Op {
     Stop(oneshot::Sender<()>),
 }
 
-/// 에이전트가 다시 온라인이 됐을 때(`presence.changed online` 자리).
-pub type OnlineHook = Arc<dyn Fn(&str) + Send + Sync>;
+/// 에이전트 presence 가 바뀌었을 때(`presence.changed` 자리) — `(agent, online)`.
+pub type OnlineHook = Arc<dyn Fn(&str, bool) + Send + Sync>;
 pub type ErrorHook = Arc<dyn Fn(&str, &sqlx::Error) + Send + Sync>;
 
 /// 살아 있는 세션 사본(TS `SessionLiveStore`). 복제해 나눠 쓴다 — 일꾼은 하나다.
@@ -589,7 +589,9 @@ pub struct PresenceMark {
     ttl: Duration,
     every: Duration,
     last: Mutex<HashMap<String, Instant>>,
-    /// 만료돼 있던(또는 처음 보는) 에이전트가 다시 살아났을 때 — `presence.changed online` 을 낸다.
+    /// 이 프로세스가 online 으로 본 에이전트 — 스윕이 만료를 찾을 대상(TS `byAgent` 의 키).
+    watched: Mutex<std::collections::HashSet<String>>,
+    /// 만료돼 있던(또는 처음 보는) 에이전트가 다시 살아났을 때 `(agent, true)`, 스윕이 만료를 찾았을 때 `(agent, false)`.
     on_online: Option<OnlineHook>,
     on_error: ErrorHook,
 }
@@ -617,6 +619,7 @@ impl PresenceMark {
             ttl,
             every,
             last: Mutex::new(HashMap::new()),
+            watched: Mutex::new(Default::default()),
             on_online,
             on_error,
         })
@@ -647,7 +650,7 @@ impl PresenceMark {
             match me.write(&agent).await {
                 Ok(true) => {
                     if let Some(h) = &me.on_online {
-                        h(&agent);
+                        h(&agent, true);
                     }
                 }
                 Ok(false) => {}
@@ -665,6 +668,10 @@ impl PresenceMark {
 
     /// 한 줄 쓴다. 만료돼 있었거나 줄이 없었으면 true(다시 온라인이 됐다).
     pub async fn write(&self, agent: &str) -> Result<bool, sqlx::Error> {
+        self.watched
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(agent.to_owned());
         sqlx::query_scalar(
             "with prev as (select expires_at from agent_presence where account_id = $1::uuid)
              insert into agent_presence (account_id, expires_at, updated_at)
@@ -676,6 +683,59 @@ impl PresenceMark {
         .bind(self.ttl.as_secs_f64())
         .fetch_one(&self.pool)
         .await
+    }
+
+    /// 스윕 한 번(TS `sweep`): 이 프로세스가 본 에이전트 중 DB 에서 만료된 것을 찾아 `(agent, false)` 를 낸다.
+    /// 판정은 DB 시계 하나다 — 다른 서버(TS 폴)가 그사이 늘려 놨으면 만료가 아니다. 낸 에이전트는 대상에서 빼고
+    /// 묶음 표시도 지운다(다음 프레임은 곧바로 쓰고 online 을 다시 낸다). 줄이 없어진 에이전트도 만료로 본다.
+    pub async fn sweep_once(&self) -> Result<Vec<String>, sqlx::Error> {
+        let ids: Vec<String> = self
+            .watched
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .cloned()
+            .collect();
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+        let expired: Vec<String> = sqlx::query_scalar(
+            "select w.id::text from unnest($1::uuid[]) as w(id)
+             where not exists (select 1 from agent_presence p where p.account_id = w.id and p.expires_at > now())",
+        )
+        .bind(&ids)
+        .fetch_all(&self.pool)
+        .await?;
+        {
+            let mut w = self.watched.lock().unwrap_or_else(|e| e.into_inner());
+            let mut last = self.last.lock().unwrap_or_else(|e| e.into_inner());
+            for a in &expired {
+                w.remove(a);
+                last.remove(a);
+            }
+        }
+        if let Some(h) = &self.on_online {
+            for a in &expired {
+                h(a, false);
+            }
+        }
+        Ok(expired)
+    }
+
+    /// 스윕 시계(TS `startSweep`, TTL/2 마다). 실패는 `on_error` 로만 알리고 다음 회차에 다시 본다.
+    pub fn start_sweep(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
+        let me = self.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(me.ttl / 2);
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            tick.tick().await;
+            loop {
+                tick.tick().await;
+                if let Err(e) = me.sweep_once().await {
+                    (me.on_error)("presence_sweep", &e);
+                }
+            }
+        })
     }
 }
 
