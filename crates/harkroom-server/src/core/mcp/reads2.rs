@@ -114,7 +114,7 @@ fn valid_slug(slug: &str) -> bool {
 }
 
 /// JS 참·거짓(`...(x ? { k: x } : {})` 갈래).
-fn js_truthy(v: &Value) -> bool {
+pub(super) fn js_truthy(v: &Value) -> bool {
     match v {
         Value::Null => false,
         Value::Bool(b) => *b,
@@ -126,7 +126,7 @@ fn js_truthy(v: &Value) -> bool {
 
 /// jsonb 값을 node-pg 가 읽어 `JSON.stringify` 한 글자로 — 키 순서는 jsonb 출력 그대로(공백만 지운다). 정수가 아닌 수나
 /// 2^53 을 넘는 수가 있으면 JS 의 수 표기와 갈릴 수 있으니 `None`(→ TS).
-fn jsonb_as_js(text: &str) -> Option<String> {
+pub(super) fn jsonb_as_js(text: &str) -> Option<String> {
     fn ok(v: &Value) -> bool {
         match v {
             Value::Number(n) => n.as_i64().is_some_and(|i| i.unsigned_abs() <= (1u64 << 53)),

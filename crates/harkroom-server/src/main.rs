@@ -389,7 +389,7 @@ async fn open_write_pool() -> Option<sqlx::PgPool> {
 /// 서버 루프 전용 풀(3)을 따로 연다 — 루프 tick 은 문지기 연결 1 + sweep 연결 1 + 이벤트 연결 1 을 쓰는데 쓰기 풀은 2 이고
 /// 요청과 나눠 쓴다. 이 풀이 막혀도 요청은 막히지 않는다. 권한([`loops::wake::WAKE_PRIVILEGES`])이 모자라면 띄우지 않는다(TS 에 남는다).
 async fn spawn_loops() {
-    use harkroom_server::loops::{mandate_idle, permission_expire, retention, wake};
+    use harkroom_server::loops::{bg, mandate_idle, permission_expire, retention, wake};
     let Some(url) = std::env::var("DATABASE_WRITE_URL")
         .ok()
         .filter(|u| !u.is_empty())
@@ -464,15 +464,29 @@ async fn spawn_loops() {
             eprintln!(
                 "front: loop permission.expire on (runs only while server_loop owner is rust)"
             );
-            permission_expire::spawn(gate, pool);
+            permission_expire::spawn(gate.clone(), pool.clone());
         }
         Ok(m) => eprintln!("front: loop permission.expire off — missing privileges {m:?}"),
         Err(e) => eprintln!("front: loop permission.expire off — privilege check failed: {e}"),
     }
+    // C5c-3a — 백그라운드 회차 닫기(생산자는 TS `bg.produce` 에 남는다). 스위치는 TS 와 같은 env.
+    match write::missing_in(&pool, bg::BG_PRIVILEGES, &[]).await {
+        Ok(m) if m.is_empty() => {
+            let on = bg::background_enabled(
+                std::env::var("HARKROOM_BACKGROUND_ENABLED").ok().as_deref(),
+            );
+            eprintln!(
+                "front: loop bg on (enabled={on}; runs only while server_loop owner is rust)"
+            );
+            bg::spawn(gate, pool, on);
+        }
+        Ok(m) => eprintln!("front: loop bg off — missing privileges {m:?}"),
+        Err(e) => eprintln!("front: loop bg off — privilege check failed: {e}"),
+    }
 }
 
-/// Rust 로 옮긴 루프 수(wake·retention·mandate.idle·permission.expire) — 문지기 풀 크기. 루프를 더하면 같이 올린다.
-const LOOP_GATE_CONNECTIONS: u32 = 4;
+/// Rust 로 옮긴 루프 수(wake·retention·mandate.idle·permission.expire·bg) — 문지기 풀 크기. 루프를 더하면 같이 올린다.
+const LOOP_GATE_CONNECTIONS: u32 = 5;
 /// sweep 풀 크기.
 const LOOP_SWEEP_CONNECTIONS: u32 = 3;
 

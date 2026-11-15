@@ -9,8 +9,10 @@
 //! - 모든 도구를 감싸는 층: 비밀 본문 거절(leakGuard) · 백그라운드 회차 허용 목록(`BG_ALLOWED_TOOLS`) · 쓰기 출처 ·
 //!   presence mark(요청마다). Rust 가 도구를 받으려면 이 넷을 같이 가져야 한다.
 pub mod reads2;
+pub mod reads3;
 pub mod respond;
 pub mod route;
+pub mod search;
 pub mod tools;
 
 use serde_json::{Value, json};

@@ -48,6 +48,20 @@ describe('v2 봉투 (085, 보안 검토 M3·M4)', () => {
     expect(rotated.open(sealed.replace('v2.k1.', 'v2.k2.'), aad)).toBeNull();
   });
 
+  it('봉투 칸의 길이가 seal 과 다르면 풀리지 않는다(salt 16·iv 12·tag 16바이트)', () => {
+    const ring = createSecretKeyring(new Map([['k1', keyA]]), 'k1');
+    const sealed = ring.seal(Buffer.from('v'), aad);
+    const withField = (i: number, f: (b: Buffer) => Buffer) => {
+      const p = sealed.split('.');
+      p[i] = f(Buffer.from(p[i]!, 'base64')).toString('base64');
+      return p.join('.');
+    };
+    expect(ring.open(withField(4, (b) => b.subarray(0, 12)), aad)).toBeNull();
+    expect(ring.open(withField(3, (b) => Buffer.concat([b, Buffer.alloc(4)])), aad)).toBeNull();
+    expect(ring.open(withField(2, (b) => b.subarray(0, 15)), aad)).toBeNull();
+    expect(ring.open(sealed, aad)?.toString()).toBe('v');
+  });
+
   /**
    * 키 확인값(KCV)의 **고정 테스트 벡터.** harkroom-gate(`recoveryKey.ts`)도 같은 값을 시험한다 — 공식이
    * 갈리면 복구 키로 다시 봉인한 맞는 키를 서버가 기동에서 막는다. 바꾸지 마라.
