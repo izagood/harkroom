@@ -22,6 +22,7 @@ import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
 import { operatorRunnerFactory } from './helpers/operatorRunner.js';
+import { listLiveSessions } from '../src/services/sessionLive.js';
 
 let app: FastifyInstance;
 let stop: () => Promise<void>;
@@ -36,9 +37,11 @@ const HEARTBEAT_MS = 120;
 
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
 
+let livePool: Pool;
 beforeAll(async () => {
   const db = await startTestDb();
   stop = db.stop;
+  livePool = db.pool as Pool;
   app = await buildServer({ pool: db.pool as Pool, wsHeartbeatMs: HEARTBEAT_MS });
   ({ token: adminToken } = await bootstrapAdmin(app));
   ({ accountId: agentId } = await createAgent(app, adminToken, 'wedgedrunner'));
@@ -102,5 +105,20 @@ describe('러너 릴레이는 하트비트를 받는다', () => {
     runner.wedge();
 
     await waitForAsync(async () => !(await listed('wedged-1')), 5000);
+  });
+
+  // S5.3 C6c-2 — 오퍼레이터 링크로 온 세션이 agent_session_live 사본에도 서고(주인=링크의 에이전트), 끝·러너 퇴장에 사라진다.
+  it('mirrors operator-link sessions into agent_session_live', async () => {
+    const live = async () => (await listLiveSessions(livePool, [agentId])).map((x) => x.sessionId);
+    const ch = '00000000-0000-4000-8000-00000000c6c2';
+    const runner = await runners.connect(agentId);
+    runner.send({ type: 'announce', sessions: [{ ...session('live-1'), channelId: ch, threadRootId: null }] });
+    await waitForAsync(async () => (await live()).includes('live-1'));
+    runner.send({ type: 'session.started', session: { ...session('live-2'), channelId: ch, threadRootId: null } });
+    await waitForAsync(async () => (await live()).includes('live-2'));
+    runner.send({ type: 'session.ended', sessionId: 'live-1' });
+    await waitForAsync(async () => !(await live()).includes('live-1'));
+    runner.wedge();
+    await waitForAsync(async () => (await live()).length === 0, 5000);
   });
 });
