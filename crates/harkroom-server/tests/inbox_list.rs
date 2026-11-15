@@ -16,14 +16,15 @@ async fn id(pool: &PgPool, sql: &str, binds: &[&str]) -> String {
 async fn account(pool: &PgPool, handle: &str, kind: &str) -> String {
     id(
         pool,
-        "insert into account(handle, display_name, kind) values ($1, $1, $2) returning id::text",
+        "insert into account(handle, display_name, kind, login_id) values ($1, $1, $2, case when $2 = 'human' then $1 end) returning id::text",
         &[handle, kind],
     )
     .await
 }
 
-/// 키가 나오는 차례(TS 객체의 키 순서와 같아야 한다).
+/// 키가 나오는 차례(TS 객체의 키 순서와 같아야 한다). `json_object_agg` 는 `"k" : v` 꼴로 쓰므로 키 뒤 공백을 접어서 찾는다.
 fn key_order(body: &str, keys: &[&str]) -> Vec<usize> {
+    let body = body.replace("\" : ", "\":");
     keys.iter()
         .map(|k| {
             body.find(&format!("\"{k}\":"))
