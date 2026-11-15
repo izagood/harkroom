@@ -61,7 +61,7 @@ async function operatorWriteRole(db: { pool: pg.Pool; uri: string }): Promise<st
 }
 
 describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () => {
-  for (const name of ['auth', 'perm', 'operator', 'loops']) {
+  for (const name of ['auth', 'perm', 'operator', 'loops', 'outbox_listener']) {
     it(`tests/${name}.rs`, async () => {
       const db = await startTestDb();
       try {

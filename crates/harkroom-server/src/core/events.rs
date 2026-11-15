@@ -134,11 +134,14 @@ impl Hub {
     }
 }
 
-/// outbox 공급 — `LISTEN harkroom_event_outbox` → id 로 다시 읽어 모양을 보고 허브로. 끊기면 sqlx 가 다시 붙는다.
-pub fn spawn_outbox_listener(pool: PgPool, hub: Hub) {
+/// outbox 공급 — `LISTEN harkroom_event_outbox` → id 로 다시 읽어 모양을 보고 허브로. 끊기면 다시 붙는다.
+///
+/// 듣는 연결은 **풀 밖의 전용 연결**이다(`listen_url` 로 따로 연다). 읽기 풀에서 빌리면 그 하나를 늘 쥐어, 작은 풀(앞단 읽기 풀)에서는
+/// 요청이 쓸 연결이 줄고 「연결을 쥔 채 같은 풀에 또 묻는」 길 하나로 요청이 시한까지 매달린다(C3a-2b 에서 드러남). 다시 읽기는 `pool` 로 한다.
+pub fn spawn_outbox_listener(pool: PgPool, listen_url: String, hub: Hub) {
     tokio::spawn(async move {
         loop {
-            let mut listener = match sqlx::postgres::PgListener::connect_with(&pool).await {
+            let mut listener = match sqlx::postgres::PgListener::connect(&listen_url).await {
                 Ok(l) => l,
                 Err(e) => {
                     eprintln!(

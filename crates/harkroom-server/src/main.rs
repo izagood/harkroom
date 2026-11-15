@@ -13,8 +13,11 @@ async fn main() {
         .and_then(|p| p.parse().ok())
         .unwrap_or(3500);
 
+    // 읽기 풀 4 · 연결 기다리는 시한 3초(쓰기 풀과 같다 — 막히면 30초 매달리지 않고 500). outbox 리스너는 이 풀 밖의 전용 연결이다
+    // (`core::events::spawn_outbox_listener`). 파드당 연결: 읽기 4 + 리스너 1 + 쓰기 2 = 7 — DB 역할 한도는 그보다 커야 한다.
     let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(2)
+        .max_connections(4)
+        .acquire_timeout(std::time::Duration::from_secs(3))
         .connect(&db)
         .await
         .expect("database");
@@ -156,7 +159,11 @@ async fn main() {
     let operator_on = operator_write.is_some();
     let core_router = (core_mode == harkroom_server::core::CoreMode::Rust).then(|| {
         let hub = harkroom_server::core::events::Hub::new();
-        harkroom_server::core::events::spawn_outbox_listener(state.pool.clone(), hub.clone());
+        harkroom_server::core::events::spawn_outbox_listener(
+            state.pool.clone(),
+            db.clone(),
+            hub.clone(),
+        );
         let core = harkroom_server::core::ws::Core::new(
             state.pool.clone(),
             hub,
