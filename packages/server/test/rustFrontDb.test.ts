@@ -1299,6 +1299,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         ...OUTBOX_PRUNE_GRANTS.map((g) => `grant ${g} to ${rw}`),
         // S5.3 C6a-1 — 인박스 읽음 표시(`core/inbox_read.rs::INBOX_READ_PRIVILEGES`). 칸 권한 하나. 없으면 「inbox read core off」.
         `grant update (read_at) on inbox to ${rw}`,
+        // S5.3 C6b-2 — 턴 임대 세 줄(`core/turn_lease.rs::TURN_LEASE_PRIVILEGES`). 없으면 「turn lease core off」.
+        ...TURN_LEASE_GRANTS.map((g) => `grant ${g} to ${rw}`),
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -3759,6 +3761,91 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         await new Promise((res) => setTimeout(res, 500));
         expect(busEvents.slice(busBefore).filter((e) => e.type === 'inbox.updated'), '읽음 표시는 이벤트가 없다').toEqual([]);
       }
+
+      // S5.3 C6b-2 — 턴 임대 세 줄(`core/turn_lease_routes.rs`). 임대는 한 번 쓰면 상태가 바뀌므로 TS·Rust 에 **각자의 부름**을 주고
+      // 같은 차례로 청해 상태·코드·본문 꼴·no-store·감사 줄을 견준다. 자동화 회차 글은 Rust 가 손대지 않고 TS 로 넘긴다 — 결과가 TS 와 같아야 한다.
+      {
+        for (const k of ['POST /agent/turn-leases', 'POST /agent/turn-leases/{id}/end', 'POST /agent/turn-leases/{id}/renew']) expect(f.log()).toContain(`"${k}"`);
+        expect(f.log()).not.toContain('turn lease core off');
+        const op = await registerOperator(app, A, 'tl-op');
+        await db.pool.query(`insert into agent_assignment (agent_id, operator_id, assigned_by) values ($1, $2, $3) on conflict (agent_id) do update set operator_id = excluded.operator_id, assigned_by = excluded.assigned_by`, [agent.accountId, op.operatorId, admin.accountId]);
+        const ch = String((await ok(app.inject({ method: 'POST', url: '/channels', headers: auth, payload: { name: 'turn-lease' } }))).id);
+        await ok(app.inject({ method: 'POST', url: `/channels/${ch}/members`, headers: auth, payload: { accountId: agent.accountId } }));
+        const autoId = (await db.pool.query(
+          `insert into automation (owner_id, channel_id, name, body, trigger, approved_at, enabled, mandate_session_at) values ($1, $2, 'tl', '@x', $3, now(), true, now()) returning id`,
+          [admin.accountId, ch, JSON.stringify({ kind: 'schedule', freq: 'weekly', weekdays: [1], time: '09:00', tz: 'Asia/Seoul' })])).rows[0].id as string;
+        let n = 0;
+        const mention = async (o: { invoked?: boolean; automation?: boolean } = {}) => {
+          n += 1;
+          const id = (await db.pool.query(`insert into message (channel_id, author_id, body, kind, meta) values ($1, $2, $3, 'user', $4) returning id`,
+            [ch, admin.accountId, `부름 ${n}`, JSON.stringify(o.automation ? { automation: { id: autoId, name: 'tl', trigger: 'schedule', runId: 'x' } } : {})])).rows[0].id as string;
+          if (o.invoked !== false) await db.pool.query(`insert into inbox (account_id, message_id, reason) values ($1, $2, 'mention')`, [agent.accountId, id]);
+          if (o.automation) {
+            await db.pool.query(`insert into automation_run (automation_id, event_key, trigger_kind, status, message_id, initiated_by) values ($1, $2, 'schedule', 'sent', $3, null)`,
+              [autoId, `tl${n}`, id]);
+          }
+          return id;
+        };
+        const side = async () => ({ cause: await mention(), cold: await mention({ invoked: false }), auto: await mention({ automation: true }) });
+        type Side = Awaited<ReturnType<typeof side>>;
+        const T = await side();
+        const R = await side();
+        const lc = async (base: string, path: string, body: unknown, who: 'agent' | 'human' | 'anon' = 'agent') => {
+          const headers: Record<string, string> = { 'x-forwarded-for': XFF, 'content-type': J };
+          if (who === 'agent') { headers.authorization = `Bearer ${op.token}`; headers['x-harkroom-agent'] = agent.accountId; }
+          if (who === 'human') headers.authorization = `Bearer ${A}`;
+          const res = await fetch(`${base}${path}`, { method: 'POST', headers, body: JSON.stringify(body) });
+          const text = await res.text();
+          const json = text ? JSON.parse(text) as Record<string, unknown> : {};
+          return { status: res.status, code: (json.error as { code?: string } | undefined)?.code, json, noStore: res.headers.get('cache-control') === 'no-store' };
+        };
+        const shapeOf = (v: unknown): unknown => v && typeof v === 'object' && !Array.isArray(v)
+          ? Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, k === 'error' ? x : shapeOf(x)]))
+          : typeof v;
+        const run = async (base: string, sd: Side) => {
+          const out: Record<string, unknown> = {};
+          const rec = (k: string, r: Awaited<ReturnType<typeof lc>>) => { out[k] = { status: r.status, code: r.code, noStore: r.noStore, body: r.status < 300 ? shapeOf(r.json) : undefined }; return r; };
+          rec('익명 → 401', await lc(base, '/agent/turn-leases', { causeMessageId: sd.cause }, 'anon'));
+          rec('사람 세션 → 403', await lc(base, '/agent/turn-leases', { causeMessageId: sd.cause }, 'human'));
+          rec('본문 없음 → 400', await lc(base, '/agent/turn-leases', {}));
+          rec('claimHolder 빈 글자 → 400', await lc(base, '/agent/turn-leases', { causeMessageId: sd.cause, claimHolder: '' }));
+          rec('안 불림 → 403', await lc(base, '/agent/turn-leases', { causeMessageId: sd.cold }));
+          const got = rec('발급 → 200', await lc(base, '/agent/turn-leases', { causeMessageId: sd.cause, claimHolder: 'runner-1' }));
+          const lease = (got.json as { lease: { id: string; token: string } }).lease;
+          rec('같은 부름 다시 → 409', await lc(base, '/agent/turn-leases', { causeMessageId: sd.cause }));
+          rec('늘리기 → 200', await lc(base, `/agent/turn-leases/${lease.id}/renew`, { token: lease.token }));
+          rec('늘리기 틀린 토큰 → 404', await lc(base, `/agent/turn-leases/${lease.id}/renew`, { token: 'nope' }));
+          rec('늘리기 사람 → 403', await lc(base, `/agent/turn-leases/${lease.id}/renew`, { token: lease.token }, 'human'));
+          rec('끝내기 잘못된 id → 400', await lc(base, '/agent/turn-leases/x/end', { token: lease.token }));
+          rec('끝내기 토큰 없음 → 400', await lc(base, `/agent/turn-leases/${lease.id}/end`, {}));
+          rec('끝내기 틀린 토큰 → 404', await lc(base, `/agent/turn-leases/${lease.id}/end`, { token: 'nope' }));
+          rec('끝내기 → 204', await lc(base, `/agent/turn-leases/${lease.id}/end`, { token: lease.token }));
+          rec('다시 끝내기 → 404', await lc(base, `/agent/turn-leases/${lease.id}/end`, { token: lease.token }));
+          rec('끝난 뒤 늘리기 → 404', await lc(base, `/agent/turn-leases/${lease.id}/renew`, { token: lease.token }));
+          rec('자동화 회차 글(TS 가 판정) → 200', await lc(base, '/agent/turn-leases', { causeMessageId: sd.auto }));
+          return out;
+        };
+        const rsBase = `http://127.0.0.1:${port}`;
+        const [tsOut, rsOut] = [await run(tsUrl, T), await run(rsBase, R)];
+        expect(rsOut).toEqual(tsOut);
+        // 쓴 것도 같다: 임대 행(끝남·연장·다시 주기 칸·위임장 유무)과 감사 줄(행위·칸 이름·ip). 토큰·해시는 감사에 없다.
+        const rows = async (sd: Side) => (await db.pool.query(
+          `select (cause_message_id = $2) as auto, ended_at is not null as ended, last_renewed_at > created_at as renewed,
+                  mandate_id is not null as mandate, reissue_of is not null as reissued
+             from secret_turn_lease where agent_id = $1 and cause_message_id = any($3::uuid[]) order by created_at`,
+          [agent.accountId, sd.auto, [sd.cause, sd.auto]])).rows;
+        expect(await rows(R)).toEqual(await rows(T));
+        const audits = async (sd: Side) => (await db.pool.query(
+          `select action, actor_id = $1::uuid as actor, target = $1::text as target, ip, (select array_agg(k order by k) from jsonb_object_keys(detail) k) as keys,
+                  detail::text ~ 'token' as token_word
+             from audit_log where action like 'secret.lease.%' and detail->>'causeMessageId' = any($2::text[]) order by id`,
+          [agent.accountId, [sd.cause, sd.cold, sd.auto]])).rows;
+        const [ta, ra] = [await audits(T), await audits(R)];
+        expect(ra).toEqual(ta);
+        expect(ra.map((r) => r.action)).toEqual(['secret.lease.issued', 'secret.lease.conflict', 'secret.lease.issued']);
+        expect(ra.every((r) => r.token_word === false)).toBe(true);
+      }
+
       await bus.stop();
 
       // S5.3 C0 — `/ws`. 같은 시나리오를 TS 와 Rust 코어에 돌려 프레임을 견준다.
