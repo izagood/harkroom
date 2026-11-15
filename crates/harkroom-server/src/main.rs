@@ -294,6 +294,27 @@ async fn main() {
         _ => None,
     };
     // C3b-1 — 선택 카드 답하기·닫기. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 `ASK_PRIVILEGES` 가 다 있을 때만.
+    // C4b B2-1 — MCP `thread.note`. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 `THREAD_NOTE_PRIVILEGES` 가 다 있을 때만.
+    let note_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::mcp::note as n;
+            match write::missing_in(w, n::THREAD_NOTE_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: thread note core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: thread note core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     let ask_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
             use harkroom_server::core::ask as a;
@@ -630,7 +651,7 @@ async fn main() {
             state.up.clone(),
             state.pool.clone(),
             // C4b — 도구 묶음마다 그 권한이 다 있는 쓰기 풀일 때만 Rust 가 답한다(리액션 · inbox.read ·
-            // 선택 카드 → `message.askBundleResolve` · 묶음 푸시 권한까지 있으면 `message.askBundle`(있던 묶음) · delegation.close · 권한 좁히기).
+            // 선택 카드 → `message.askBundleResolve` · 묶음 푸시 권한까지 있으면 `message.askBundle`(있던 묶음) · delegation.close · 권한 좁히기 · thread.note).
             harkroom_server::core::mcp::writes::McpWrites {
                 react: mcp_react_write,
                 inbox: inbox_write,
@@ -640,6 +661,7 @@ async fn main() {
                 bg_complete: bg_complete_write,
                 delegation: mcp_deleg_write,
                 grant: grant_write,
+                note: note_write,
             },
             auth.clone(),
             state.cors.clone(),

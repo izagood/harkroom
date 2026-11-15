@@ -15,6 +15,7 @@ import { SELECT_PINS_SQL } from '../src/services/pins.js';
 import { AGENT_INVOKER_SQL, CHANNEL_SCOPE_SQL, ELIGIBLE_DELEGATE_SQL, INVOKE_FACTS_SQL, TEAM_INVOKER_SQL } from '../src/services/invokeGate.js';
 import { HAS_REPLY_GRANT_SQL } from '../src/services/replyGrants.js';
 import { ASK_CLOSE_BY_REPLY_SQL } from '../src/services/messages.js';
+import { DELEGATION_TOUCH_DEADLINE_SQL, DELEGATION_V2_UPDATE_PENDING_SQL } from '../src/services/delegations.js';
 import { EDIT_FIND_SQL, EDIT_INBOX_ALREADY_SQL, EDIT_UPDATE_SQL, EDIT_VIA_EDIT_SQL } from '../src/services/messages.js';
 import { ACCOUNTS_BY_HANDLES_SQL, ACCOUNTS_BY_IDS_SQL, FAN_OUT_AUDIENCE_SQL, INSERT_INBOX_MANY_SQL, REVEAL_HIDDEN_SQL, REVEAL_REASONS } from '../src/services/messages.js';
 import { GROUP_BY_HANDLE_SQL, GROUP_MEMBERS_SQL } from '../src/services/handleGroups.js';
@@ -23,7 +24,7 @@ import { MENTION_POLICY_SQL } from '../src/services/mentionPolicy.js';
 import { PRINCIPAL_INVOKES_SQL } from '../src/services/invokePrincipal.js';
 import { ENQUEUE_INBOX_PUSH_MANY_SQL, INBOX_PUSH_REASON_LIST, PUSH_AGENT_REPLY_DELAY_SEC } from '../src/services/push/pushJobs.js';
 import { HAS_OLDER_SQL, INBOX_FOLDED_WAKES_SQL, INBOX_HANDED_SQL, INBOX_STARTED_IN_SQL, INBOX_TEAM_ROSTER_SQL, LIST_INBOX_SQL, LIST_MESSAGES_SQL, MESSAGE_BY_ID_SQL, READ_LIST_ROW_SQL, SEARCH_MESSAGES_SQL } from '../src/services/messages.js';
-import { POST_CHANNEL_KIND_SQL, POST_IDEMPOTENCY_FIND_SQL, POST_IDEMPOTENCY_INSERT_SQL, POST_INSERT_SQL, POST_ROOT_AUTHOR_SQL, POST_THREAD_ROOT_OF_SQL, SEQ_LOCK_CLASS, SEQ_LOCK_SQL } from '../src/services/messages.js';
+import { POST_CHANNEL_KIND_SQL, POST_DM_PEERS_SQL, POST_IDEMPOTENCY_FIND_SQL, POST_IDEMPOTENCY_INSERT_SQL, POST_INSERT_SQL, POST_ROOT_AUTHOR_SQL, POST_THREAD_ROOT_OF_SQL, SEQ_LOCK_CLASS, SEQ_LOCK_SQL } from '../src/services/messages.js';
 import { ATTACH_FIND_SQL, ATTACH_UPDATE_SQL } from '../src/services/attachments.js';
 import { CHAT_APPROVAL_GUARD_WORDS } from '../src/services/chatApproval.js';
 import { MANDATE_REPLY_CONTINUE_SQL, MANDATE_KEYLESS_OWN_SQL, MANDATE_KEYLESS_ROOT_SQL, MANDATE_KEYLESS_TOUCH_SQL, MANDATE_KEYLESS_INSERT_SQL, MANDATE_KEYLESS_FIND_SQL, MANDATE_KEYLESS_ROOT_SET_SQL, MANDATE_DELEGATED_AGENTS_SQL, MANDATE_OWN_AGENT_SQL, MANDATE_ROOT_INSERT_SQL, MESSAGE_SET_MANDATE_SQL } from '../src/services/mandates.js';
@@ -138,6 +139,7 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     post_root_author: POST_ROOT_AUTHOR_SQL,
     post_idempotency_insert: POST_IDEMPOTENCY_INSERT_SQL,
     post_channel_kind: POST_CHANNEL_KIND_SQL,
+    post_dm_peers: POST_DM_PEERS_SQL,
     attach_find: ATTACH_FIND_SQL,
     attach_update: ATTACH_UPDATE_SQL,
     url_candidate_source: URL_CANDIDATE_SOURCE,
@@ -162,6 +164,9 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     stamp_wake_closed: STAMP_WAKE_CLOSED_SQL,
     // 사람 답글로 카드 닫기(`core/ask_reply_close.rs`, S5.3 C1c-3c) — `closeAsksByReply`.
     ask_close_by_reply: ASK_CLOSE_BY_REPLY_SQL,
+    // 사람 답글의 위임 활동(`core/msg_post.rs`, S5.3 C1c-3d) — `touchDelegationDeadline`·v1 대기 중 update.
+    delegation_touch_deadline: DELEGATION_TOUCH_DEADLINE_SQL,
+    delegation_v2_update_pending: DELEGATION_V2_UPDATE_PENDING_SQL,
     decider_row: DECIDER_ROW_SQL,
     decider_seen: DECIDER_SEEN_SQL,
     decider_list: DECIDER_LIST_SQL,

@@ -25,6 +25,7 @@ pub const SERVED: &[&str] = &[
     "message.askBundle",
     "bg.complete",
     "delegation.close",
+    "thread.note",
 ];
 
 /// TS 가 조건부로 싣는 도구 — `/mcp/admit` 이 `registered: true` 라고 답했을 때만 Rust 가 답한다([`super::route::serve`]).
@@ -90,6 +91,8 @@ pub struct McpWrites {
     pub delegation: Option<PgPool>,
     /// `grant.revoke`·`permission.revoke` — `grant_writes::GRANT_REVOKE_PRIVILEGES`.
     pub grant: Option<PgPool>,
+    /// `thread.note`(B2-1) — `note::THREAD_NOTE_PRIVILEGES`.
+    pub note: Option<PgPool>,
 }
 
 /// JS `Number.MAX_SAFE_INTEGER` — 이 밖의 수는 TS 에서 값이 뭉개진다. Rust 는 같은 결과를 낼 수 없으니 TS 로 넘긴다.
@@ -148,6 +151,13 @@ pub async fn answer(
             return Some(None);
         };
         return Some(super::bg_complete::complete(write, &me.id, args).await);
+    }
+    // B2-1 — 메모는 자기 권한 묶음(`note::THREAD_NOTE_PRIVILEGES`)의 풀로만.
+    if tool == "thread.note" {
+        let Some(w) = writes.note.as_ref() else {
+            return Some(None);
+        };
+        return Some(super::note::answer(read, w, me, args).await);
     }
     if tool == "inbox.read" {
         let Some(write) = writes.inbox.as_ref() else {
@@ -412,7 +422,13 @@ mod tests {
     fn served_are_writes_in_registry() {
         for n in SERVED {
             let s = super::super::find(n).expect(n);
-            assert_eq!(s.access, super::super::Access::Write, "{n}");
+            // `thread.note` 는 body 에 따라 읽기·쓰기가 갈리는 도구(Access 표의 ReadSide)다.
+            let want = if *n == "thread.note" {
+                super::super::Access::ReadSide
+            } else {
+                super::super::Access::Write
+            };
+            assert_eq!(s.access, want, "{n}");
         }
     }
 
