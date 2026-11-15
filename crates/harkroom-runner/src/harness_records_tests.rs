@@ -360,6 +360,7 @@ fn opencode_commands_run_in_workspace() {
     let opts = HarnessLastSaidOpts {
         session_id: None,
         since_ms: T0,
+        cwd: None,
         codex_sessions_dir: Some(&tmp.0),
         opencode: call,
     };
@@ -397,6 +398,7 @@ fn codex_last_said_via_session_file() {
     let mut opts = HarnessLastSaidOpts {
         session_id: Some(ID),
         since_ms: T0,
+        cwd: None,
         codex_sessions_dir: Some(&sessions),
         opencode: call,
     };

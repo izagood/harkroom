@@ -121,6 +121,7 @@ pub fn lane_harness_said(
     since_ms: i64,
     codex_home: Option<&Path>,
     opencode: Option<&OpencodeQuery>,
+    cwd: Option<&Path>,
 ) -> Option<String> {
     let record = last_said_record_of(harness)?;
     let codex_dir = codex_home.map(crate::codex_home::codex_sessions_dir);
@@ -141,6 +142,7 @@ pub fn lane_harness_said(
             session_id,
             since_ms,
             codex_sessions_dir: codex_dir.as_deref(),
+            cwd,
             opencode: oc.call(),
         },
     )
@@ -331,6 +333,7 @@ pub fn probe_make<'a, L: RunnerLink + 'a>(
             });
             let said_records = records_of(c, ctx);
             let (lane_said, codex_home) = (c.lane_tui, c.codex_home.clone());
+            let said_cwd = c.workspace_dir.clone();
             let (key, me, ch2, root2, start_seq, turn_id) = (
                 c.key.clone(),
                 c.me_id.clone(),
@@ -362,6 +365,7 @@ pub fn probe_make<'a, L: RunnerLink + 'a>(
                                     r.since_ms,
                                     codex_home.as_deref(),
                                     r.opencode.as_deref(),
+                                    said_cwd.as_deref(),
                                 )
                             })
                             .flatten()
@@ -437,6 +441,7 @@ pub fn probe_make<'a, L: RunnerLink + 'a>(
                 read_harness_said: {
                     let r = records_of(c, ctx);
                     let codex_home = c.codex_home.clone();
+                    let cwd = c.workspace_dir.clone();
                     Box::new(move || {
                         lane_harness_said(
                             r.harness,
@@ -444,6 +449,7 @@ pub fn probe_make<'a, L: RunnerLink + 'a>(
                             r.since_ms,
                             codex_home.as_deref(),
                             r.opencode.as_deref(),
+                            cwd.as_deref(),
                         )
                     })
                 },
