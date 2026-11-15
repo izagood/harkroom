@@ -6,7 +6,8 @@
 //! 2. 잡은 채로 `server_loop` 에서 주인을 읽는다(줄이 없으면 `ts`). 내가 주인이 아니면 건너뛴다.
 //! 3. 주인이면 sweep 을 돌리고, 끝나면(실패해도) 같은 연결에서 잠금을 푼다.
 //!
-//! class·키·순서가 TS 와 같아야 겹침이 0 이다. 옮긴 루프: [`wake`](C5b) · [`retention`](C5c).
+//! class·키·순서가 TS 와 같아야 겹침이 0 이다. 옮긴 루프: [`wake`](C5b) · [`retention`](C5c) · [`mandate_idle`](C5c-2a).
+pub mod mandate_idle;
 pub mod retention;
 pub mod wake;
 
