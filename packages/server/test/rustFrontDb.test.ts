@@ -357,6 +357,56 @@ describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () 
     }
   }, 600_000);
 
+  // C5c-3b-2 — 하루 상한은 TS·Rust 가 **동시에** 생산해도 지켜진다: 후보 에이전트 10, 상한 3. 날짜 advisory 잠금을 시험이 먼저 쥐고 두 쪽이
+  // 다 그 잠금에서 기다릴 때 놓는다(겹침을 확실히). 넣은 줄 합이 정확히 3 — 상한 비교가 `<` 가 아니면(예: `<=`) 4 가 되어 빨개진다.
+  it('bg 생산 하루 상한 — TS·Rust 동시 생산에도 상한을 넘지 않는다', async () => {
+    const db = await startTestDb();
+    try {
+      const q = async <T extends Record<string, unknown>>(sql: string, args: unknown[] = []) => (await db.pool.query<T>(sql, args)).rows;
+      const ch = (await q<{ id: string }>(`insert into channel(name, kind, visibility) values ('bgcap', 'standard', 'public') returning id`))[0]!.id;
+      for (let i = 0; i < 10; i++) {
+        const a = (await q<{ id: string }>(`insert into account(handle, display_name, kind) values ($1, $1, 'agent') returning id`, [`bgcap${i}`]))[0]!.id;
+        await q(`insert into agent_config (account_id, bg_enabled, harness) values ($1, true, 'claude-code')
+                 on conflict (account_id) do update set bg_enabled = true, harness = 'claude-code'`, [a]);
+        const root = (await q<{ id: string }>(`insert into message(channel_id, author_id, body, kind) values ($1, $2, '보고', 'user') returning id`, [ch, a]))[0]!.id;
+        await q(`insert into thread_note (account_id, thread_root_id, body) values ($1, $2, '메모')`, [a, root]);
+        await q(`insert into thread_status (root_id, status, emoji, account_id, updated_at) values ($1, 'done', '✅', $2, now() - interval '48 hours')`, [root, a]);
+      }
+      const day = (await q<{ d: string }>(`select to_char(now() at time zone 'Asia/Seoul', 'YYYY-MM-DD') as d`))[0]!.d;
+      const holder = await db.pool.connect();
+      await holder.query('begin');
+      await holder.query(`select pg_advisory_xact_lock(hashtext('bg_job_daily:' || $1))`, [day]);
+      const { produceDistillJobs } = await import('../src/services/bgJobs.js');
+      const env = { HARKROOM_BACKGROUND_ENABLED: '1', HARKROOM_BACKGROUND_DAILY_MAX: '3' };
+      const tsRun = produceDistillJobs(db.pool, new Date(`${day}T04:00:00+09:00`), env);
+      const rust = cargo(['test', '--test', 'bg_produce', '--', '--nocapture'], {
+        HARKROOM_TEST_DATABASE_URL: db.uri,
+        HARKROOM_TEST_WRITE_DATABASE_URL: await operatorWriteRole(db, BG_PRODUCE_GRANTS),
+        HARKROOM_BG_PRODUCE_ONLY: '1',
+        HARKROOM_BG_PRODUCE_MAX: '3',
+      });
+      const t0 = Date.now();
+      while (Number((await q<{ n: number }>(
+        `select count(*)::int as n from pg_stat_activity where wait_event_type = 'Lock' and query like 'select pg_advisory_xact_lock%'`))[0]!.n) < 2) {
+        if (Date.now() - t0 > 540_000) throw new Error('both sides never waited on the day lock');
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      await holder.query('commit');
+      holder.release();
+      const tsOut = await tsRun;
+      const r = await rust;
+      expect(r.code, r.out).toBe(0);
+      const m = r.out.match(/bg-produce rust queued (\d+) day/);
+      expect(m, r.out).not.toBeNull();
+      const rows = Number((await q<{ n: number }>(`select count(*)::int as n from bg_job where day = $1::date`, [day]))[0]!.n);
+      expect(rows).toBe(3);
+      expect(tsOut.queued + Number(m![1])).toBe(3);
+      console.log(`bg-cap: rust ${m![1]} / ts ${tsOut.queued} (refused ts ${JSON.stringify(tsOut.refused)})`);
+    } finally {
+      await db.stop();
+    }
+  }, 600_000);
+
   // C5c-2a — 7일 넘은 위임 500건(묶음 3번 분량, 각자 살아 있는 줄 하나)을 TS sweep(`endIdleMandates`)과 Rust sweep 이 **문지기 없이 동시에**
   // 끝내도 한 위임은 한 번만 끝난다(skip locked + ended_at is null) — 끝낸 수 합 500 · 감사 500 · 위임마다 감사 한 줄 · 줄 전부 revoked.
   it('위임 idle 끝 — TS·Rust 동시 sweep 에도 500건이 정확히 한 번씩 끝난다', async () => {
@@ -1021,8 +1071,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       // S5.2 P3 — 쓰기 역할. **`write.rs::REQUIRED_PRIVILEGES` 만** 준다(homelab GRANT 와 같은 표). 넓은 권한으로 돌리면
       // 앞단이 목록에 없는 표를 쓰기 시작해도 이 시험이 못 잡는다.
       const rw = `front_rw_${Math.random().toString(36).slice(2, 10)}`;
-      // connection limit = 쓰기 풀 2 + 루프 문지기 풀 5(루프 수) + 루프 sweep 풀 3 (S5.3 C5c-3a — 운영 역할 한도도 이만큼 받아야 한다).
-      await db.pool.query(`create role ${rw} login password '${rw}' nosuperuser nocreatedb nocreaterole nobypassrls connection limit 10`);
+      // connection limit = 쓰기 풀 2 + 루프 문지기 풀 6(루프 수) + 루프 sweep 풀 3 (S5.3 C5c-3b-2 — 운영 역할 한도도 이만큼 받아야 한다).
+      await db.pool.query(`create role ${rw} login password '${rw}' nosuperuser nocreatedb nocreaterole nobypassrls connection limit 11`);
       for (const q of [
         `grant pg_read_all_data to ${rw}`,
         `grant insert on event_outbox to ${rw}`,
@@ -1077,6 +1127,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         ...PERMISSION_EXPIRE_GRANTS.map((g) => `grant ${g} to ${rw}`),
         // S5.3 C5c-3a — 백그라운드 회차 닫기(`loops/bg.rs::BG_PRIVILEGES`).
         ...BG_GRANTS.map((g) => `grant ${g} to ${rw}`),
+        // S5.3 C5c-3b-2 — 백그라운드 회차 생산(`loops/bg_produce.rs::BG_PRODUCE_PRIVILEGES`). 없으면 「loop bg.produce off」.
+        ...BG_PRODUCE_GRANTS.map((g) => `grant ${g} to ${rw}`),
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -1126,6 +1178,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       expect(f.log()).toContain('front: loop wake on');
       expect(f.log()).toContain('front: loop retention on (delete=false');
       expect(f.log()).toContain('front: loop mandate.idle on');
+      expect(f.log()).toContain('front: loop bg.produce on (enabled=false');
       expect(f.log()).toContain('front: loop permission.expire on');
       expect(f.log()).toContain('front: loop bg on (enabled=false');
 

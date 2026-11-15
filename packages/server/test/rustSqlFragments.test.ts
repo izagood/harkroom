@@ -24,7 +24,7 @@ import { ENQUEUE_INBOX_PUSH_MANY_SQL, INBOX_PUSH_REASON_LIST, PUSH_AGENT_REPLY_D
 import { HAS_OLDER_SQL, LIST_MESSAGES_SQL, MESSAGE_BY_ID_SQL, READ_LIST_ROW_SQL, SEARCH_MESSAGES_SQL } from '../src/services/messages.js';
 import { CHILD_FACTS_AUDIENCE_SQL, PLAN_PROGRESS_PLANS_SQL } from '../src/services/threadPlan.js';
 import { displayBodySql } from '../src/services/systemBody.js';
-import { BG_AGENT_ON_SQL, BG_DAILY_LOCK_SQL, BG_ENQUEUE_SQL, BG_EXISTS_SQL, BG_PAUSED_SQL, DISTILL_CANDIDATES_SQL } from '../src/services/bgJobs.js';
+import { BG_AGENT_ON_SQL, BG_DAILY_LOCK_SQL, BG_ENQUEUE_SQL, BG_EXISTS_SQL, BG_PAUSED_SQL, CLEANUP_CANDIDATES_SQL, DISTILL_CANDIDATES_SQL, ORGANIZE_CANDIDATES_SQL } from '../src/services/bgJobs.js';
 
 const GOLDEN = fileURLToPath(new URL('../../../crates/harkroom-server/golden/sql_fragments.json', import.meta.url));
 
@@ -38,6 +38,8 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     bg_enqueue: BG_ENQUEUE_SQL,
     bg_exists: BG_EXISTS_SQL,
     bg_distill_candidates: DISTILL_CANDIDATES_SQL,
+    bg_cleanup_candidates: CLEANUP_CANDIDATES_SQL,
+    bg_organize_candidates: ORGANIZE_CANDIDATES_SQL,
     display_body_m: displayBodySql('m'),
     // 작업 항목(`workItems.ts::actorSeesItemSql`) — 주인이 아닌 쪽이 볼 수 있는 스레드인지, 별칭 ac·두째 인자.
     channel_visible_ac_p2uuid: channelVisibleSql('ac', '$2::uuid'),
@@ -102,4 +104,30 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
   const text = `${JSON.stringify(want, null, 2)}\n`;
   if (process.env.UPDATE_RUST_SQL_GOLDEN === '1') writeFileSync(GOLDEN, text);
   expect(readFileSync(GOLDEN, 'utf8')).toBe(text);
+});
+
+// S5.3 C5c-3b-2 — bg 생산 문턱은 Rust 가 상수로 따로 든다(`loops/bg_produce.rs`). TS 값과 하나라도 다르면 두 쪽 판정이 갈린다.
+it('bg 생산 문턱 상수가 TS 와 같다', async () => {
+  const { readFileSync } = await import('node:fs');
+  const shared = await import('@harkroom/shared');
+  const bg = await import('../src/services/bgJobs.js');
+  const rs = readFileSync(fileURLToPath(new URL('../../../crates/harkroom-server/src/loops/bg_produce.rs', import.meta.url)), 'utf8');
+  const num = (name: string): number => {
+    const m = new RegExp(`pub const ${name}: \\w+ = ([^;]+);`).exec(rs);
+    expect(m, name).not.toBeNull();
+    // `7 * 24 * 60 * 60`·`14.0 * 24.0 …` 같은 곱만 쓴다.
+    return m![1]!.split('*').map((x) => Number(x.trim())).reduce((a, b) => a * b, 1);
+  };
+  expect(num('MEMORY_CORE_WARN_CHARS')).toBe(shared.MEMORY_CORE_WARN_CHARS);
+  expect(num('MEMORY_ITEMS_WARN_COUNT')).toBe(shared.MEMORY_ITEMS_WARN_COUNT);
+  expect(num('MAX_JOURNAL_MEMORIES_PER_ACCOUNT')).toBe(shared.MAX_JOURNAL_MEMORIES_PER_ACCOUNT);
+  expect(num('JOURNAL_EXPIRING_WINDOW')).toBe(shared.JOURNAL_EXPIRING_WINDOW);
+  expect(num('CLEANUP_WEEKLY_MIN_ITEMS')).toBe(bg.CLEANUP_WEEKLY_MIN_ITEMS);
+  expect(num('CLEANUP_WEEKLY_SECS') * 1000).toBe(bg.CLEANUP_WEEKLY_MS);
+  expect(num('ORGANIZE_MIN_CHANGES')).toBe(bg.ORGANIZE_MIN_CHANGES);
+  expect(num('ORGANIZE_MAX_GAP_SECS') * 1000).toBe(bg.ORGANIZE_MAX_GAP_MS);
+  expect(num('BG_PAUSE_AFTER_FAILURES')).toBe(bg.BG_PAUSE_AFTER_FAILURES);
+  expect(num('BG_WINDOW_END_KST')).toBe(bg.BG_WINDOW_KST[1]);
+  expect(num('DISTILL_MAX_THREADS')).toBe(bg.DISTILL_MAX_THREADS);
+  expect(num('PRODUCE_INTERVAL_SECS') * 1000).toBe(bg.DISTILL_PRODUCE_INTERVAL_MS);
 });
