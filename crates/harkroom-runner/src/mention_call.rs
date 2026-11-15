@@ -223,14 +223,23 @@ pub fn run_mention_call<'a, L, S, H>(
                 let inputs = d.inputs.view();
                 let said = d.last_said;
                 let said2 = said.clone();
-                let (screen_ended, screen_said) = (a.screen_ended, a.screen_said.clone());
+                let (screen_ended, screen_said, harness_said) = (
+                    a.screen_ended,
+                    a.screen_said.clone(),
+                    a.screen_record_said.clone(),
+                );
                 clients.after_turn(
                     &d.plan,
                     s,
                     &inputs,
                     Box::new(move || said.clone()),
                     Box::new(move || {
-                        silent_said_of(said2.clone(), screen_ended, screen_said.clone())
+                        silent_said_of(
+                            said2.clone(),
+                            screen_ended,
+                            screen_said.clone(),
+                            harness_said.clone(),
+                        )
                     }),
                 )
             });
@@ -374,13 +383,18 @@ pub fn silent_said_of(
     record_said: Option<String>,
     screen_ended: bool,
     screen_said: Option<String>,
+    harness_said: Option<String>,
 ) -> SilentSaid {
     let record_said = record_said.filter(|s| !s.is_empty());
     let no_record = record_said.is_none();
+    // 화면으로 끝을 안 하네스의 자체 기록 끝말 — 화면 답보다 먼저 옮긴다(화면 답 추출은 `</div>` 같은 줄을 경로로 보고 버린다).
+    let harness_said = harness_said.filter(|s| no_record && !s.trim().is_empty());
     SilentSaid {
-        last_said: record_said.or_else(|| screen_said.clone()),
+        last_said: record_said
+            .or_else(|| harness_said.clone())
+            .or_else(|| screen_said.clone()),
         screen_answer: if no_record { screen_said } else { None },
-        record_answer: None,
+        record_answer: harness_said,
         screen_ended: no_record && screen_ended,
     }
 }

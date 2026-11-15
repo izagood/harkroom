@@ -203,6 +203,7 @@ fn after_ctx(turn: &str) -> AfterCtx {
         background_cut: None,
         screen_ended: false,
         screen_said: None,
+        screen_record_said: None,
     }
 }
 
