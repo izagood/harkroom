@@ -777,6 +777,9 @@ impl<P: PrepareIo, S: PtyTurnSink> MentionParts<'_, P, S> {
     }
 }
 
+/// omp 실행 파일 경고는 러너마다 스레드에 한 번만 싣는다(정본 `ompNoticeShown`) — 로그에는 매 턴.
+static OMP_NOTICE_SHOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
     fn lane_notice(&mut self, target: &MentionTarget, body: &str) {
         let anchor = Some(target.thread_root_id.as_str()).filter(|a| !a.is_empty());
@@ -883,6 +886,23 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
                 prepared.prompt.prompt
             );
         }
+        // omp 는 저장소 밖 빈 폴더에서 뜬다(security B4) — 셸이 거기서 시작하므로 작업 폴더를 본문 맨 앞에 알린다(정본 1557~1560).
+        if crate::adapter::uses_omp_home(self.harness) {
+            let ws = &prepared.session.rec.workspace_dir;
+            let leftovers = self.omp.as_ref().map(|o| {
+                format!(
+                    " 빈 폴더에 남긴 파일은 다음 턴 전에 {} 로 옮겨진다.",
+                    crate::omp_home::omp_thread_dirs(&o.home, &self.key)
+                        .leftovers
+                        .display()
+                )
+            });
+            let note = format!(
+                "(작업 폴더는 {ws} 이다. 셸은 빈 폴더에서 시작하니 파일·명령은 그 경로에서 다뤄라.{})",
+                leftovers.unwrap_or_default()
+            );
+            prepared.prompt.prompt = format!("{note}\n\n{}", prepared.prompt.prompt);
+        }
         let mut sys = self.system.opts();
         sys.memory = &memory.system;
         let file = write_turn_system_prompt(&self.state_dir, &self.key, &sys).map_err(|e| {
@@ -988,6 +1008,7 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
         // 남은 것을 옮기고, cwd 와 그 위 폴더에 저장소 설정 이름이 있으면 거절하고, 세션 헤더를 그 cwd 로 미리 쓴다.
         // 홈이 없거나 하나라도 못 하면 띄우지 않는다(정본은 던진다).
         let mut omp_thread = None;
+        let mut omp_notice: Option<String> = None;
         if crate::adapter::uses_omp_home(self.harness) {
             let Some(omp) = self.omp.as_ref() else {
                 eprintln!("[mentionTurn] {}: omp 턴인데 omp 홈이 없다", self.key);
@@ -997,6 +1018,27 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
                 eprintln!("[mentionTurn] {}: omp 턴인데 세션 id 가 없다", self.key);
                 return Err(fail());
             };
+            // 판 확인(C1, 정본 1657~1663): PTY 가 띄울 실행 파일이 확인한 판의 공식 바이너리인지 본다 — 아니어도 막지 않고
+            // 경고한다(security G2). 로그에는 매 턴, 스레드에는 러너마다 한 번.
+            let path = crate::turn_env::harness_path(
+                self.harness,
+                self.parent_env.get("PATH").map(String::as_str),
+                &self.home,
+            );
+            if let Some(bin) = crate::omp_home::find_omp_binary(Some(&path)) {
+                if crate::omp_home::omp_binary_ok(&bin, &crate::omp_home::platform_key()) {
+                    eprintln!(
+                        "[mentionTurn] {}: omp 실행 파일 판 확인 — 공식 바이너리",
+                        self.key
+                    );
+                } else {
+                    let notice = crate::omp_home::omp_unverified_binary_notice();
+                    eprintln!("[mentionTurn] {}: {notice}", self.key);
+                    if !OMP_NOTICE_SHOWN.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                        omp_notice = Some(notice);
+                    }
+                }
+            }
             omp.ensure().map_err(|e| {
                 eprintln!("[mentionTurn] {}: omp 홈 — {e}", self.key);
                 fail()
@@ -1018,6 +1060,9 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
                 self.argv.readonly_tool_list = Some(crate::omp_home::omp_readonly_tool_list(&spec));
             }
             omp_thread = Some(t);
+        }
+        if let Some(n) = omp_notice {
+            self.lane_notice(target, &n);
         }
         // 하네스를 띄우기 전, **이 시도의 계정 폴더**로 작업 폴더 신뢰·bypass 수락을 적는다(정본 `mentionTurn.ts` 의 차례).
         crate::workspace_trust::prepare_harness_gates(
