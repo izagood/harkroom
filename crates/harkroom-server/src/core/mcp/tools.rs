@@ -23,6 +23,8 @@ pub const SERVED: &[&str] = &[
     "memory.list",
     "secret.list",
     "thread.note.list",
+    // C4a-5
+    "memory.revisions",
 ];
 
 /// 입력 스키마가 없는 도구 — SDK 는 `arguments` 를 레코드(객체)로만 받고, 없어도(`null`) 받는다. 스키마가 있는 도구는
@@ -328,7 +330,7 @@ pub async fn answer(pool: &PgPool, me: &Account, tool: &str, args: &Value) -> Op
                 .then(|| text_result(one))
         }
         "message.read" => message_read(pool, me, args).await,
-        "memory.list" | "secret.list" | "thread.note.list" => {
+        "memory.list" | "secret.list" | "thread.note.list" | "memory.revisions" => {
             super::reads2::answer(pool, me, tool, args).await
         }
         _ => None,

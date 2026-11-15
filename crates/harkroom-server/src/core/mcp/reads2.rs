@@ -103,6 +103,109 @@ fn first_line(text: &str, max: usize) -> Option<String> {
     Some(out)
 }
 
+/// TS `MEMORY_SLUG_REGEX`(services/memory.ts) + 길이 255. 맞지 않으면 TS 가 `invalid_slug` 로 답한다 — Rust 는 그 글을 따라 쓰지 않고 넘긴다.
+fn valid_slug(slug: &str) -> bool {
+    static R: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = R.get_or_init(|| {
+        regex::Regex::new(r"^core$|^mem/[a-z0-9][a-z0-9_-]{0,63}((/[a-z0-9][a-z0-9_-]{0,63})*)$")
+            .expect("slug re")
+    });
+    !slug.is_empty() && slug.len() <= 255 && re.is_match(slug)
+}
+
+/// JS 참·거짓(`...(x ? { k: x } : {})` 갈래).
+fn js_truthy(v: &Value) -> bool {
+    match v {
+        Value::Null => false,
+        Value::Bool(b) => *b,
+        Value::Number(n) => n.as_f64().is_some_and(|f| f != 0.0),
+        Value::String(s) => !s.is_empty(),
+        _ => true,
+    }
+}
+
+/// jsonb 값을 node-pg 가 읽어 `JSON.stringify` 한 글자로 — 키 순서는 jsonb 출력 그대로(공백만 지운다). 정수가 아닌 수나
+/// 2^53 을 넘는 수가 있으면 JS 의 수 표기와 갈릴 수 있으니 `None`(→ TS).
+fn jsonb_as_js(text: &str) -> Option<String> {
+    fn ok(v: &Value) -> bool {
+        match v {
+            Value::Number(n) => n.as_i64().is_some_and(|i| i.unsigned_abs() <= (1u64 << 53)),
+            Value::Array(a) => a.iter().all(ok),
+            Value::Object(o) => o.values().all(ok),
+            _ => true,
+        }
+    }
+    let v: Value = serde_json::from_str(text).ok()?;
+    ok(&v).then(|| minify(text))
+}
+
+/// `memory.revisions` — TS `listMemoryRevisions` 문장 + 도구의 map(빈 칸은 키째 뺀다, `chars` 는 UTF-16 길이).
+async fn memory_revisions(pool: &PgPool, me: &Account, args: &Value) -> Option<String> {
+    // `slug: z.string().min(1)` — 모양이 틀리거나 판정에 걸리면 TS 로.
+    let slug = args.as_object()?.get("slug")?.as_str()?;
+    if !valid_slug(slug) {
+        return None;
+    }
+    type R = (
+        i32,
+        String,
+        Option<String>,
+        String,
+        String,
+        bool,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    );
+    let rows: Vec<R> = sqlx::query_as(
+        "select id::int, value, description, \
+           to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'), \
+           to_char(replaced_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'), \
+           flagged, reason, detail::text, kind \
+         from agent_memory_revision where account_id = $1::uuid and slug = $2 \
+         order by replaced_at desc, id desc",
+    )
+    .bind(&me.id)
+    .bind(slug)
+    .fetch_all(pool)
+    .await
+    .ok()?;
+    let mut out = String::from("{\"revisions\":[");
+    for (i, (id, value, description, updated, replaced, flagged, reason, detail, kind)) in
+        rows.into_iter().enumerate()
+    {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str(&format!(
+            "{{\"id\":{id},\"updatedAt\":{},\"replacedAt\":{},\"chars\":{}",
+            Value::from(updated),
+            Value::from(replaced),
+            value.encode_utf16().count()
+        ));
+        let opt = |k: &str, v: Option<String>, out: &mut String| {
+            if let Some(v) = v.filter(|v| !v.is_empty()) {
+                out.push_str(&format!(",\"{k}\":{}", Value::from(v)));
+            }
+        };
+        opt("kind", kind, &mut out);
+        opt("description", description, &mut out);
+        opt("reason", reason, &mut out);
+        if let Some(d) = detail {
+            let v: Value = serde_json::from_str(&d).ok()?;
+            if js_truthy(&v) {
+                out.push_str(&format!(",\"detail\":{}", jsonb_as_js(&d)?));
+            }
+        }
+        if flagged {
+            out.push_str(",\"flagged\":true");
+        }
+        out.push('}');
+    }
+    out.push_str("]}");
+    Some(text_result(&out))
+}
+
 pub(super) async fn answer(
     pool: &PgPool,
     me: &Account,
@@ -133,6 +236,7 @@ pub(super) async fn answer(
                 .ok()?;
             Some(text_result(&format!("{{\"secrets\":{}}}", minify(&rows))))
         }
+        "memory.revisions" => memory_revisions(pool, me, args).await,
         "thread.note.list" => {
             args.as_object()?;
             let channel = opt_uuid(args, "channelId")?;
@@ -158,7 +262,8 @@ pub(super) async fn answer(
                 if i > 0 {
                     out.push(',');
                 }
-                let note = if flag.is_some() {
+                // TS: `noteFirstLine: r.flag_reason ? '' : …`(빈 글자는 거짓 — 본문을 보인다) · `flagged: r.flag_reason !== null`.
+                let note = if flag.as_deref().is_some_and(|f| !f.is_empty()) {
                     String::new()
                 } else {
                     first_line(&body, 120)?
@@ -204,6 +309,29 @@ mod tests {
         assert_eq!(first_line("a😀bcd", 4).as_deref(), Some("a😀…"));
     }
 
+    #[test]
+    fn slug_and_truthiness_follow_ts() {
+        for ok in ["core", "mem/a", "mem/a-b/c_d", "mem/0"] {
+            assert!(valid_slug(ok), "{ok}");
+        }
+        for bad in [
+            "", "Core", "mem/", "mem/A", "mem/a.b", "mem//a", "x", "mem/-a", "core/x",
+        ] {
+            assert!(!valid_slug(bad), "{bad}");
+        }
+        assert!(
+            !js_truthy(&serde_json::json!(""))
+                && !js_truthy(&Value::Null)
+                && !js_truthy(&serde_json::json!(0))
+        );
+        assert!(js_truthy(&serde_json::json!({})) && js_truthy(&serde_json::json!([])));
+        assert_eq!(
+            jsonb_as_js(r#"{"from": ["mem/a", "mem/b"]}"#).as_deref(),
+            Some(r#"{"from":["mem/a","mem/b"]}"#)
+        );
+        assert_eq!(jsonb_as_js(r#"{"n": 1.5}"#), None);
+    }
+
     /// 문장을 TS 원본과 맞춘다 — TS 가 칸·조건을 바꾸면 여기서 깨진다(값 비교는 대조 시험이 한다).
     #[test]
     fn statements_follow_ts_source() {
@@ -234,5 +362,16 @@ mod tests {
         ));
         assert!(tn.contains("rootFirstLine: firstLine(r.root_body ?? '', 80),\n    noteFirstLine: r.flag_reason ? '' : firstLine(r.body, 120),"));
         assert!(tn.contains("return line.length > max ? `${line.slice(0, max - 1)}…` : line;"));
+        assert!(tn.contains("noteFirstLine: r.flag_reason ? '' : firstLine(r.body, 120),\n    flagged: r.flag_reason !== null,"));
+        assert!(mem.contains("const MEMORY_SLUG_REGEX = /^core$|^mem\\/[a-z0-9][a-z0-9_-]{0,63}((\\/[a-z0-9][a-z0-9_-]{0,63})*)$/;"));
+        assert!(mem.contains(
+            "return slug.length > 0 && slug.length <= 255 && MEMORY_SLUG_REGEX.test(slug);"
+        ));
+        assert!(mem.contains("`select id::int as id, value, description, updated_at as \"updatedAt\", replaced_at as \"replacedAt\", flagged, reason, detail, kind\n     from agent_memory_revision where account_id = $1 and slug = $2\n     order by replaced_at desc, id desc`"));
+        assert!(mcp.contains("id: r.id, updatedAt: r.updatedAt.toISOString(), replacedAt: r.replacedAt.toISOString(), chars: r.value.length, ...(r.kind ? { kind: r.kind } : {}),"));
+        assert!(mcp.contains("...(r.description ? { description: r.description } : {}), ...(r.reason ? { reason: r.reason } : {}),"));
+        assert!(mcp.contains(
+            "...(r.detail ? { detail: r.detail } : {}), ...(r.flagged ? { flagged: true } : {}),"
+        ));
     }
 }
