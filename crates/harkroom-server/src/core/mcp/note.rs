@@ -70,6 +70,15 @@ fn json(v: Value) -> String {
     super::respond::text_result(&v.to_string())
 }
 
+/// 키 순서를 TS 객체 리터럴 그대로 둔 JSON 객체 글자 — `serde_json::Map` 은 키를 abc 순으로 늘어놓는다.
+fn obj(pairs: &[(&str, String)]) -> String {
+    let body: Vec<String> = pairs
+        .iter()
+        .map(|(k, v)| format!("{}:{v}", Value::from(*k)))
+        .collect();
+    format!("{{{}}}", body.join(","))
+}
+
 fn internal() -> String {
     err("internal", "the write failed; it was not retried")
 }
@@ -138,22 +147,29 @@ pub async fn answer(read: &PgPool, write: &PgPool, me: &Account, args: &Value) -
         {
             Ok(Set::Conflict(now)) => conflict(now),
             Ok(Set::Done(at)) => {
-                let mut v = serde_json::json!({ "ok": true, "updatedAt": at });
+                // TS `{ ok, updatedAt, ...(flag ? { flagged: { reason, rules }, notice } : {}) }` — 그 키 순서.
+                let mut pairs = vec![
+                    ("ok", "true".to_string()),
+                    ("updatedAt", Value::from(at).to_string()),
+                ];
                 if let Some(f) = flag {
-                    let m = v.as_object_mut().expect("object");
-                    m.insert(
-                        "flagged".into(),
-                        serde_json::json!({ "reason": f.reason, "rules": f.rules }),
-                    );
-                    m.insert(
-                        "notice".into(),
+                    pairs.push((
+                        "flagged",
+                        obj(&[
+                            ("reason", Value::from(f.reason.as_str()).to_string()),
+                            ("rules", serde_json::json!(f.rules).to_string()),
+                        ]),
+                    ));
+                    pairs.push((
+                        "notice",
                         Value::from(format!(
                             "저장했지만 쓰기 검사에 걸렸다({}) — 다음 턴에 싣지 않는다. 남의 글을 옮겼거나 비밀 값을 넣었다면 빼고 다시 써라.",
                             f.reason
-                        )),
-                    );
+                        ))
+                        .to_string(),
+                    ));
                 }
-                json(v)
+                super::respond::text_result(&obj(&pairs))
             }
             Err(_) => internal(),
         },
@@ -176,14 +192,15 @@ async fn read_note(read: &PgPool, me: &str, root: &str) -> Option<String> {
     let Some((body, at, flag)) = row else {
         return Some(json(serde_json::json!({ "note": null })));
     };
-    let mut note = serde_json::json!({ "body": body, "updatedAt": at });
-    // TS `note.flagReason ? … : {}` — 빈 문자열은 거짓이다.
+    // TS `{ body, updatedAt, ...(note.flagReason ? { flagged: { reason } } : {}) }` — 그 키 순서. 빈 문자열은 거짓이다.
+    let mut pairs = vec![
+        ("body", Value::from(body).to_string()),
+        ("updatedAt", Value::from(at).to_string()),
+    ];
     if let Some(r) = flag.filter(|r| !r.is_empty()) {
-        note.as_object_mut()
-            .expect("object")
-            .insert("flagged".into(), serde_json::json!({ "reason": r }));
+        pairs.push(("flagged", obj(&[("reason", Value::from(r).to_string())])));
     }
-    Some(json(serde_json::json!({ "note": note })))
+    Some(super::respond::text_result(&obj(&[("note", obj(&pairs))])))
 }
 
 enum Set {
@@ -257,9 +274,13 @@ fn conflict(now: Option<String>) -> String {
         None => "그 사이 메모가 지워졌거나 아직 없다. 새로 쓸 거면 ifUpdatedAt: null 로 써라."
             .to_string(),
     };
-    json(serde_json::json!({
-        "error": { "code": "conflict", "updatedAt": now, "message": message }
-    }))
+    // TS `{ error: { code, updatedAt, message } }` — 그 키 순서.
+    let inner = obj(&[
+        ("code", Value::from("conflict").to_string()),
+        ("updatedAt", Value::from(now).to_string()),
+        ("message", Value::from(message).to_string()),
+    ]);
+    super::respond::text_result(&obj(&[("error", inner)]))
 }
 
 #[cfg(test)]
