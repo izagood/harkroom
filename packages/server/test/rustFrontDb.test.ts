@@ -64,6 +64,16 @@ const WAKE_GRANTS = [
 /** `loops/retention.rs::RETENTION_PRIVILEGES` 만 가진 쓰기 역할(S5.3 C5c). */
 const RETENTION_GRANTS = ['delete on idempotency_key', 'delete on session'];
 
+/** `loops/mandate_idle.rs::MANDATE_IDLE_PRIVILEGES`(+ 시퀀스) 만 가진 쓰기 역할(S5.3 C5c-2a). */
+const MANDATE_IDLE_GRANTS = [
+  'update (ended_at, end_reason) on mandate',
+  'update (revoked_at) on mandate_line',
+  'update (meta) on message',
+  'insert on audit_log',
+  'insert on event_outbox',
+  'usage on sequence event_outbox_id_seq',
+];
+
 async function operatorWriteRole(db: { pool: pg.Pool; uri: string }, grants: readonly string[] = OPERATOR_GRANTS): Promise<string> {
   const rw = `op_rw_${Math.random().toString(36).slice(2, 10)}`;
   await db.pool.query(`create role ${rw} login password '${rw}' nosuperuser nocreatedb nocreaterole nobypassrls connection limit 8`);
@@ -76,7 +86,7 @@ async function operatorWriteRole(db: { pool: pg.Pool; uri: string }, grants: rea
 }
 
 describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () => {
-  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention']) {
+  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention', 'mandate_idle']) {
     it(`tests/${name}.rs`, async () => {
       const db = await startTestDb();
       try {
@@ -87,6 +97,8 @@ describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () 
         if (name === 'wake') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, WAKE_GRANTS);
         // C5c — 보존 정리도 `RETENTION_PRIVILEGES` 만 가진 역할로.
         if (name === 'retention') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, RETENTION_GRANTS);
+        // C5c-2a — 위임 idle 끝도 `MANDATE_IDLE_PRIVILEGES` 만 가진 역할로.
+        if (name === 'mandate_idle') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, MANDATE_IDLE_GRANTS);
         const r = await cargo(['test', '--test', name, '--', '--nocapture'], env);
         expect(r.code, r.out).toBe(0);
         // DB 가 없어 건너뛴 것을 통과로 읽지 않는다.
@@ -187,6 +199,56 @@ describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () 
         `select token_hash from session where account_id = $1`, [a])).rows.map((x) => x.token_hash);
       expect(left).toEqual(['dual-keep']);
       console.log(`retention-dual: rust ${m![1]} (overlapped sweeps ${m![2]}) / ts ${tsDeleted}`);
+    } finally {
+      await db.stop();
+    }
+  }, 600_000);
+
+  // C5c-2a — 7일 넘은 위임 500건(묶음 3번 분량, 각자 살아 있는 줄 하나)을 TS sweep(`endIdleMandates`)과 Rust sweep 이 **문지기 없이 동시에**
+  // 끝내도 한 위임은 한 번만 끝난다(skip locked + ended_at is null) — 끝낸 수 합 500 · 감사 500 · 위임마다 감사 한 줄 · 줄 전부 revoked.
+  it('위임 idle 끝 — TS·Rust 동시 sweep 에도 500건이 정확히 한 번씩 끝난다', async () => {
+    const db = await startTestDb();
+    try {
+      const a = (await db.pool.query<{ id: string }>(
+        `insert into account(handle, display_name, kind) values ('mi_dual', 'mi_dual', 'agent') returning id`)).rows[0]!.id;
+      const c = (await db.pool.query<{ id: string }>(`insert into channel(name, kind) values ('mi-dual', 'standard') returning id`)).rows[0]!.id;
+      await db.pool.query(
+        `with r as (insert into message(channel_id, author_id, body, kind)
+                    select $2, $1, 'm' || g, 'user' from generate_series(1, 500) g returning id),
+              m as (insert into mandate(owner_account_id, delegator_account_id, root_message_id, channel_id, thread_root_id, last_activity_at)
+                    select $1, $1, r.id, $2, r.id, now() - interval '8 days' from r returning id)
+         insert into mandate_line(mandate_id, cap, scope, granted_by, via) select m.id, 'tool', 'Bash(git status)', $1, 'button' from m`, [a, c]);
+      const { endIdleMandates } = await import('../src/services/mandateEnd.js');
+      const open = async () => Number((await db.pool.query(
+        `select count(*)::int as n from mandate where owner_account_id = $1 and ended_at is null`, [a])).rows[0].n);
+      const rust = cargo(['test', '--test', 'mandate_idle', '--', '--nocapture'], {
+        HARKROOM_TEST_DATABASE_URL: db.uri,
+        HARKROOM_TEST_WRITE_DATABASE_URL: await operatorWriteRole(db, MANDATE_IDLE_GRANTS),
+        HARKROOM_MANDATE_IDLE_DUAL: a,
+      });
+      const t0 = Date.now();
+      while (Number((await db.pool.query(
+        `select count(*)::int as n from pg_stat_activity where application_name = 'harkroom-mandate-idle-dual'`)).rows[0].n) === 0) {
+        if (Date.now() - t0 > 540_000) throw new Error('rust side never connected');
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      let tsEnded = 0;
+      while (await open() > 0) tsEnded += await endIdleMandates(db.pool, { limit: 20 });
+      const r = await rust;
+      expect(r.code, r.out).toBe(0);
+      const m = r.out.match(/mandate-idle-dual rust ended (\d+) overlapped (\d+)/);
+      expect(m, r.out).not.toBeNull();
+      expect(tsEnded + Number(m![1])).toBe(500);
+      const counts = (await db.pool.query(
+        `select (select count(*)::int from mandate where owner_account_id = $1 and end_reason = 'idle') as ended,
+                (select count(*)::int from mandate_line l join mandate d on d.id = l.mandate_id
+                  where d.owner_account_id = $1 and l.revoked_at is null) as live,
+                (select count(*)::int from audit_log g join mandate d on g.target = d.id::text
+                  where d.owner_account_id = $1 and g.action = 'mandate.ended') as audits,
+                (select count(distinct g.target)::int from audit_log g join mandate d on g.target = d.id::text
+                  where d.owner_account_id = $1 and g.action = 'mandate.ended') as distinct_audits`, [a])).rows[0];
+      expect(counts).toEqual({ ended: 500, live: 0, audits: 500, distinct_audits: 500 });
+      console.log(`mandate-idle-dual: rust ${m![1]} (overlapped sweeps ${m![2]}) / ts ${tsEnded}`);
     } finally {
       await db.stop();
     }
@@ -533,8 +595,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       // S5.2 P3 — 쓰기 역할. **`write.rs::REQUIRED_PRIVILEGES` 만** 준다(homelab GRANT 와 같은 표). 넓은 권한으로 돌리면
       // 앞단이 목록에 없는 표를 쓰기 시작해도 이 시험이 못 잡는다.
       const rw = `front_rw_${Math.random().toString(36).slice(2, 10)}`;
-      // connection limit = 쓰기 풀 2 + 루프 문지기 풀 2 + 루프 sweep 풀 3 (S5.3 C5c — 운영 역할 한도도 이만큼 받아야 한다).
-      await db.pool.query(`create role ${rw} login password '${rw}' nosuperuser nocreatedb nocreaterole nobypassrls connection limit 7`);
+      // connection limit = 쓰기 풀 2 + 루프 문지기 풀 3(루프 수) + 루프 sweep 풀 3 (S5.3 C5c-2a — 운영 역할 한도도 이만큼 받아야 한다).
+      await db.pool.query(`create role ${rw} login password '${rw}' nosuperuser nocreatedb nocreaterole nobypassrls connection limit 8`);
       for (const q of [
         `grant pg_read_all_data to ${rw}`,
         `grant insert on event_outbox to ${rw}`,
@@ -577,6 +639,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         ...WAKE_GRANTS.map((g) => `grant ${g} to ${rw}`),
         // S5.3 C5c — 보존 정리 루프(`loops/retention.rs::RETENTION_PRIVILEGES`).
         ...RETENTION_GRANTS.map((g) => `grant ${g} to ${rw}`),
+        // S5.3 C5c-2a — 위임 idle 끝 루프(`loops/mandate_idle.rs::MANDATE_IDLE_PRIVILEGES`).
+        ...MANDATE_IDLE_GRANTS.map((g) => `grant ${g} to ${rw}`),
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -625,6 +689,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       expect(f.log()).not.toContain('missing privileges');
       expect(f.log()).toContain('front: loop wake on');
       expect(f.log()).toContain('front: loop retention on (delete=false');
+      expect(f.log()).toContain('front: loop mandate.idle on');
 
       const r = await cargo(['test', '--test', 'contrast', '--', '--nocapture'], {
         HARKROOM_CONTRAST_TS_URL: tsUrl,

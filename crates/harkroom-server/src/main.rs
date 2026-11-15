@@ -348,7 +348,7 @@ async fn open_write_pool() -> Option<sqlx::PgPool> {
 /// 서버 루프 전용 풀(3)을 따로 연다 — 루프 tick 은 문지기 연결 1 + sweep 연결 1 + 이벤트 연결 1 을 쓰는데 쓰기 풀은 2 이고
 /// 요청과 나눠 쓴다. 이 풀이 막혀도 요청은 막히지 않는다. 권한([`loops::wake::WAKE_PRIVILEGES`])이 모자라면 띄우지 않는다(TS 에 남는다).
 async fn spawn_loops() {
-    use harkroom_server::loops::{retention, wake};
+    use harkroom_server::loops::{mandate_idle, retention, wake};
     let Some(url) = std::env::var("DATABASE_WRITE_URL")
         .ok()
         .filter(|u| !u.is_empty())
@@ -391,15 +391,30 @@ async fn spawn_loops() {
             eprintln!(
                 "front: loop retention on (delete={del}; runs only while server_loop owner is rust)"
             );
-            retention::spawn(gate, pool, del);
+            retention::spawn(gate.clone(), pool.clone(), del);
         }
         Ok(m) => eprintln!("front: loop retention off — missing privileges {m:?}"),
         Err(e) => eprintln!("front: loop retention off — privilege check failed: {e}"),
     }
+    // C5c-2a — 위임 idle 끝.
+    match write::missing_in(
+        &pool,
+        mandate_idle::MANDATE_IDLE_PRIVILEGES,
+        mandate_idle::MANDATE_IDLE_SEQUENCE_PRIVILEGES,
+    )
+    .await
+    {
+        Ok(m) if m.is_empty() => {
+            eprintln!("front: loop mandate.idle on (runs only while server_loop owner is rust)");
+            mandate_idle::spawn(gate, pool);
+        }
+        Ok(m) => eprintln!("front: loop mandate.idle off — missing privileges {m:?}"),
+        Err(e) => eprintln!("front: loop mandate.idle off — privilege check failed: {e}"),
+    }
 }
 
-/// Rust 로 옮긴 루프 수(wake·retention) — 문지기 풀 크기. 루프를 더하면 같이 올린다.
-const LOOP_GATE_CONNECTIONS: u32 = 2;
+/// Rust 로 옮긴 루프 수(wake·retention·mandate.idle) — 문지기 풀 크기. 루프를 더하면 같이 올린다.
+const LOOP_GATE_CONNECTIONS: u32 = 3;
 /// sweep 풀 크기.
 const LOOP_SWEEP_CONNECTIONS: u32 = 3;
 
