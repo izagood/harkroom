@@ -3704,10 +3704,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['DM 에이전트(주인만) → 게이트 막힘', async () => '', () => ({ body: '봐 줘' }), member.token, undefined, dmBot],
           ['머리 id 가 null → 400', async () => '', () => ({ body: '답', threadRootId: null }), A],
           // 앞단에 `HARKROOM_DELEGATION_V2` 가 없으면 스위치를 모르니 TS 로(아래에서 값을 준 앞단으로 v0·v1 을 견준다).
-          ['담당 사람 글, 스위치 모름 → TS 몫', withDelegation, (r) => ({ body: '진행 중', threadRootId: r }), A, 'ts'],
+          ['담당 사람 글, 스위치 모름 → TS 몫', withDelegation, (r) => ({ body: '작업하는 중', threadRootId: r }), A, 'ts'],
         ];
         const DELEG_SCENES: Scene[] = [
-          ['담당 사람 글 → 위임 활동', withDelegation, (r) => ({ body: '진행 중', threadRootId: r }), A],
+          ['담당 사람 글 → 위임 활동', withDelegation, (r) => ({ body: '작업하는 중', threadRootId: r }), A],
           ['담당 사람 물음 → 위임 활동', withDelegation, (r) => ({ body: '이거 맞아?', threadRootId: r }), A],
         ];
         // TS 몫 갈래는 Rust 서버에서도 TS 가 올리므로 그 장면의 이벤트는 TS 버스에서 읽는다(Rust outbox 에 없어야 한다).
@@ -3748,22 +3748,33 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const prevV2 = process.env.HARKROOM_DELEGATION_V2;
         await db.pool.query(`alter role ${rw} connection limit -1`);
         for (const mode of ['1', '0']) {
-          const portD = await freePort();
+          let portD = 0;
           let frontD: ChildProcess | undefined;
           try {
             process.env.HARKROOM_DELEGATION_V2 = mode;
-            const fd = await startFront(bin, {
-              UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(portD), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
-              TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust', HARKROOM_DELEGATION_V2: mode,
-            });
+            // `freePort` 는 고른 포트를 닫았다가 넘기므로 그 사이 남이 잡을 수 있다(AddrInUse) — 그때만 새 포트로 다시 띄운다.
+            let fd: Awaited<ReturnType<typeof startFront>> | undefined;
+            for (let attempt = 0; !fd; attempt += 1) {
+              portD = await freePort();
+              try {
+                fd = await startFront(bin, {
+                  UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(portD), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
+                  TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust', HARKROOM_DELEGATION_V2: mode,
+                });
+              } catch (err) {
+                if (attempt >= 2 || !String(err).includes('AddrInUse')) throw err;
+              }
+            }
             frontD = fd.child;
             const untilD = Date.now() + 10_000;
             while (!fd.log().includes('front: rust core routes') && Date.now() < untilD) await new Promise((res) => setTimeout(res, 100));
             const tsD = await run(tsUrl, tsGet, tsGet, DELEG_SCENES);
+            const tsBefore = tsEvents.length;
             const rsD = await run(`http://127.0.0.1:${portD}`, () => busEvents, tsGet, DELEG_SCENES);
-            // 띄운 앞단의 outbox 이벤트는 이 버스에 늦게 닿아 견주지 않는다 — 위임 활동은 이벤트를 내지 않고, 글 이벤트는 위 본 대조가 본다.
-            const noEv = (xs: unknown[]) => xs.map((x) => ({ ...(x as Record<string, unknown>), events: undefined }));
-            expect(noEv(rsD), `HARKROOM_DELEGATION_V2=${mode}`).toEqual(noEv(tsD));
+            // 띄운 앞단이 **직접** 맡았는지 — 장면 본문이 글 승인 가드 낱말(「진행」 등)에 걸리면 `ts_body` 가 위임 갈래 전에 TS 로 넘겨
+            // 대조가 TS 끼리가 된다. TS 가 맡았으면 그 글의 `message.created` 가 TS 쪽(`onEvent`)에 생긴다.
+            expect(tsEvents.slice(tsBefore).filter((e) => e.type === 'message.created'), `HARKROOM_DELEGATION_V2=${mode} 는 Rust 가 맡는다`).toEqual([]);
+            expect(rsD, `HARKROOM_DELEGATION_V2=${mode}`).toEqual(tsD);
             delegOut[mode] = tsD;
           } finally {
             frontD?.kill('SIGTERM');
