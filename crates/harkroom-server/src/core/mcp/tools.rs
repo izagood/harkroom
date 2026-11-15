@@ -13,6 +13,7 @@ use sqlx::PgPool;
 
 /// 이 단계에서 Rust 가 답하는 도구.
 pub const SERVED: &[&str] = &[
+    "workspace.guide",
     "account.me",
     "account.list",
     "channel.list",
@@ -20,9 +21,10 @@ pub const SERVED: &[&str] = &[
     "message.read",
 ];
 
-/// 입력 스키마가 없는 도구 — SDK 는 `arguments` 를 레코드(객체)로만 받는다. 없으면 `{}` 로 들어온다.
+/// 입력 스키마가 없는 도구 — SDK 는 `arguments` 를 레코드(객체)로만 받고, 없어도(`null`) 받는다. 스키마가 있는 도구는
+/// `arguments` 가 없으면 검증 오류라 각 도구가 `as_object()` 에서 TS 로 넘긴다.
 fn no_input(args: &Value) -> bool {
-    args.is_object()
+    args.is_object() || args.is_null()
 }
 
 /// `z.string().uuid()`(zod 3) 인 필수 칸.
@@ -248,9 +250,38 @@ async fn message_read(pool: &PgPool, me: &Account, args: &Value) -> Option<Strin
     Some(text_result(&out))
 }
 
+/// `workspace.guide` 의 글 — TS `guideFor(mode, { avcs })` 넷을 `golden/mcp_guide.json` 으로 받는다
+/// (`packages/server/test/rustMcpGuideGolden.test.ts` 가 TS 와 같은지 본다).
+fn guide(mode: &str, avcs: bool) -> Option<&'static str> {
+    static G: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
+    let g = G.get_or_init(|| {
+        serde_json::from_str(include_str!("../../../golden/mcp_guide.json"))
+            .expect("golden/mcp_guide.json")
+    });
+    let key = match (mode, avcs) {
+        ("resident", true) => "resident",
+        ("resident", false) => "resident_no_avcs",
+        ("turn", true) => "turn",
+        ("turn", false) => "turn_no_avcs",
+        _ => return None,
+    };
+    g.get(key)?.as_str()
+}
+
 /// 도구 하나의 답(`result` 글자). `None` 이면 TS 로.
 pub async fn answer(pool: &PgPool, me: &Account, tool: &str, args: &Value) -> Option<String> {
     match tool {
+        // `mode: z.enum(['resident','turn']).optional()` · `avcs: z.unknown().optional()` — 정확히 `false` 일 때만 avcs 절을 뺀다.
+        "workspace.guide" => {
+            let o = args.as_object()?;
+            let mode = match o.get("mode") {
+                None => "resident",
+                Some(Value::String(m)) if m == "resident" || m == "turn" => m.as_str(),
+                Some(_) => return None,
+            };
+            let g = guide(mode, o.get("avcs") != Some(&Value::Bool(false)))?;
+            Some(text_result(&format!("{{\"guide\":{}}}", Value::from(g))))
+        }
         "account.me" => no_input(args).then(|| text_result(&account_text(me))),
         "account.list" => {
             if !no_input(args) {
@@ -315,6 +346,8 @@ mod tests {
         assert!(no_input(&serde_json::json!({"extra": 1})));
         assert!(!no_input(&serde_json::json!([])));
         assert!(!no_input(&serde_json::json!("x")));
+        assert!(no_input(&Value::Null));
+        assert_eq!(uuid_arg(&Value::Null, "channelId"), None);
         let id = "0b7f3f92-3fa6-494a-8ab3-76d0d2a6a1c0";
         assert_eq!(
             uuid_arg(&serde_json::json!({"channelId": id, "x": 1}), "channelId"),
@@ -373,6 +406,20 @@ mod tests {
         assert!(teams.contains("`select ${COLS} from agent_team t order by t.name`"));
         let groups = include_str!("../../../../../packages/server/src/services/handleGroups.ts");
         assert!(groups.contains("`select ${COLS} from handle_group g order by g.handle`"));
+    }
+
+    #[test]
+    fn guide_golden_has_all_four() {
+        for (m, a) in [
+            ("resident", true),
+            ("resident", false),
+            ("turn", true),
+            ("turn", false),
+        ] {
+            assert!(guide(m, a).is_some_and(|g| g.ends_with('\n')), "{m} {a}");
+        }
+        assert_ne!(guide("turn", true), guide("turn", false));
+        assert_eq!(guide("other", true), None);
     }
 
     #[test]

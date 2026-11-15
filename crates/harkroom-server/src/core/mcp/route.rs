@@ -104,10 +104,11 @@ pub async fn serve(
     };
     // 알림(id 없음)은 SDK 가 202 로 받는다 — tools/call 은 요청이어야 하니 모양이 다르면 TS 로.
     let id = super::respond::id_text(v.get("id")?)?;
+    // 없으면 `null` — 입력 스키마가 있는 도구는 SDK 가 검증 오류를 내므로(TS 로), 없는 도구만 받는다(`tools::no_input`).
     let args = v
         .pointer("/params/arguments")
         .cloned()
-        .unwrap_or_else(|| serde_json::json!({}));
+        .unwrap_or(serde_json::Value::Null);
     match super::respond::admit(up, ci, headers, name, &args).await {
         super::respond::Admit::Yes => {}
         super::respond::Admit::No(text) => {

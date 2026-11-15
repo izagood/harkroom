@@ -538,6 +538,13 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         return { status: res.status, type: res.headers.get('content-type'), text: await res.text(), core: res.headers.get('x-harkroom-core') };
       };
       for (const [name, tool, args, answeredByRust, id] of [
+        ['workspace.guide', 'workspace.guide', {}, true, 20],
+        ['workspace.guide turn', 'workspace.guide', { mode: 'turn' }, true, 21],
+        ['workspace.guide turn avcs=false', 'workspace.guide', { mode: 'turn', avcs: false }, true, 22],
+        ['workspace.guide avcs=0 은 전문', 'workspace.guide', { avcs: 0 }, true, 23],
+        ['workspace.guide 인자 없음 → TS(검증 오류)', 'workspace.guide', undefined, false, 24],
+        ['workspace.guide 모르는 mode → TS', 'workspace.guide', { mode: 'x' }, false, 25],
+        ['workspace.guide mode null → TS', 'workspace.guide', { mode: null }, false, 26],
         ['account.me', 'account.me', {}, true, 1],
         ['account.me 인자 없음', 'account.me', undefined, true, 'str-id'],
         ['account.me 배열 인자 → TS', 'account.me', [], false, 2],
