@@ -45,6 +45,7 @@ fn config<'a>(
         harness: AgentHarness::ClaudeCode,
         home: None,
         omp_home: None,
+        opencode: None,
         end_cfg: EndConfig::new(60_000),
         lane_tui: false,
         caller: NudgeCaller::Human,
@@ -239,4 +240,229 @@ fn shutdown_stopping_opens_the_reclaim_check() {
     slots.stop_all();
     assert!((f.lost)(), "물러남이 거둠을 연다");
     assert!(!live.fenced_out());
+}
+
+// ───────────────────────── opencode·kilo 차례 끝 조회(r-nudge) ─────────────────────────
+
+struct Tmp(std::path::PathBuf);
+impl Tmp {
+    fn new(tag: &str) -> Self {
+        let p = std::env::temp_dir().join(format!(
+            "hk-probe-make-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&p).unwrap();
+        Self(std::fs::canonicalize(&p).unwrap())
+    }
+}
+impl Drop for Tmp {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// 러너 부모 env 에 열쇠가 섞여 있다고 놓는다 — 조회 env 에 하나도 가면 안 된다.
+fn parent_with_keys(path: &str) -> BTreeMap<String, String> {
+    [
+        ("PATH", path),
+        ("HOME", "/h"),
+        ("LANG", "C.UTF-8"),
+        ("XDG_DATA_HOME", "/human/data"),
+        ("HARKROOM_RUNNER_SECRET", "runner-secret-x"),
+        ("HARKROOM_TURN_BRIDGE_KEY", "bridge-key-x"),
+        ("HARKROOM_RUNNER_SOCKET", "/sock"),
+        ("OPENAI_API_KEY", "api-key-x"),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect()
+}
+
+#[test]
+fn opencode_query_env_is_the_allow_list_plus_isolated_xdg() {
+    let parent = parent_with_keys("/usr/bin:/bin");
+    let env = opencode_query_env(
+        AgentHarness::Opencode,
+        &parent,
+        Path::new("/h"),
+        Path::new("/oc"),
+    );
+    for k in [
+        "HARKROOM_RUNNER_SECRET",
+        "HARKROOM_TURN_BRIDGE_KEY",
+        "HARKROOM_RUNNER_SOCKET",
+        "OPENAI_API_KEY",
+    ] {
+        assert!(!env.contains_key(k), "{k} 가 조회 env 에 들어갔다");
+    }
+    assert!(!env.values().any(|v| v.ends_with("-x")), "열쇠 값이 샜다");
+    // 격리 홈 자리가 사람 XDG 를 덮는다.
+    assert_eq!(env["XDG_CONFIG_HOME"], "/oc/config");
+    assert_eq!(env["XDG_DATA_HOME"], "/oc/data");
+    assert_eq!(env["XDG_STATE_HOME"], "/oc/state");
+    // 프로젝트 설정 끄기 스위치와 하네스 PATH(설치 관례 자리 덧붙임).
+    assert_eq!(env["OPENCODE_DISABLE_PROJECT_CONFIG"], "1");
+    assert_eq!(env["PATH"], "/usr/bin:/bin:/h/.opencode/bin");
+    assert_eq!(env["LANG"], "C.UTF-8");
+}
+
+#[test]
+fn opencode_query_only_for_xdg_harnesses_with_a_home() {
+    let parent = parent_with_keys("/usr/bin");
+    let (h, ws) = (Path::new("/h"), Path::new("/ws"));
+    let oc = Some(Path::new("/oc"));
+    assert!(opencode_query(AgentHarness::ClaudeCode, &parent, h, oc, ws).is_none());
+    assert!(opencode_query(AgentHarness::Omp, &parent, h, oc, ws).is_none());
+    assert!(opencode_query(AgentHarness::Opencode, &parent, h, None, ws).is_none());
+    let k = opencode_query(AgentHarness::Kilo, &parent, h, oc, ws).unwrap();
+    assert_eq!(k.command, PathBuf::from("kilo"));
+    assert_eq!(k.cwd, PathBuf::from("/ws"));
+    assert_eq!(k.env["KILO_DISABLE_PROJECT_CONFIG"], "1");
+}
+
+/// 가짜 `opencode` — 작업 폴더에서 불렸을 때만 목록을 내고, 받은 env 이름을 파일에 적는다.
+fn fake_opencode(tmp: &Path, ws: &Path, started: i64) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let bin = tmp.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let t = started + 1_000;
+    let list = serde_json::json!([{"id":"ses_1","directory":ws.to_string_lossy(),"created":t}]);
+    let exp = serde_json::json!({"info":{},"messages":[
+        {"info":{"role":"user"}},
+        {"info":{"role":"assistant","time":{"created":t,"completed":t+1},"finish":"stop"},"parts":[]}
+    ]});
+    std::fs::write(tmp.join("list.json"), list.to_string()).unwrap();
+    std::fs::write(tmp.join("export.json"), exp.to_string()).unwrap();
+    let script = bin.join("opencode");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\n/usr/bin/env > \"{d}/env.$1\"\n[ \"$(pwd -P)\" = \"{ws}\" ] || {{ echo '[]'; exit 0; }}\ncase \"$1\" in\n  session) cat \"{d}/list.json\";;\n  export) [ \"$2\" = ses_1 ] && cat \"{d}/export.json\";;\nesac\n",
+            ws = ws.display(),
+            d = tmp.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    bin
+}
+
+fn attempt_records(harness: AgentHarness, q: Option<OpencodeQuery>, since: i64) -> AttemptRecords {
+    AttemptRecords {
+        harness,
+        session_id: None,
+        config_dir: None,
+        home: None,
+        omp_home: None,
+        since_ms: since,
+        now: || 0,
+        opencode: q.map(Arc::new),
+    }
+}
+
+/// #2159 실물에서 Rust 러너 opencode lane 턴이 멈춘 자리 — 조회가 이어져 있으면 「끝났다」를 알아 재촉(`nudge_or_expire`)으로 간다.
+#[test]
+fn silent_opencode_turn_is_seen_ended_through_the_query() {
+    use crate::turn_end::EndState;
+    use crate::turn_probe_state::{TurnStateCtx, TurnStateNote, TurnStateProbe, probe_turn_state};
+    let tmp = Tmp::new("oc");
+    let ws = tmp.0.join("ws");
+    std::fs::create_dir_all(&ws).unwrap();
+    let started = 1_700_000_000_000;
+    let bin = fake_opencode(&tmp.0, &ws, started);
+    let parent = parent_with_keys(&format!("{}:/usr/bin:/bin", bin.display()));
+    let q = opencode_query(
+        AgentHarness::Opencode,
+        &parent,
+        &tmp.0,
+        Some(&tmp.0.join("oc")),
+        &ws,
+    )
+    .unwrap();
+
+    let ctx = TurnStateCtx {
+        harness: AgentHarness::Opencode,
+        turn_started_at_ms: started,
+        lane_nudged_at_ms: 0,
+        opencode_quiet_ms: OPENCODE_QUIET_MS,
+    };
+    let quiet_since = started + 5_000;
+    let mut end = EndState {
+        last_data_at_ms: quiet_since,
+        ..EndState::default()
+    };
+    let mut now = || quiet_since + OPENCODE_QUIET_MS;
+
+    // 조회 없음(이 PR 전) — 모른다. 끝을 못 알아 재촉까지 가지 않는다.
+    let mut none = attempt_records(AgentHarness::Opencode, None, started);
+    probe_turn_state(
+        &mut end,
+        &mut TurnStateProbe::default(),
+        &ctx,
+        &EndConfig::new(60_000),
+        &mut now,
+        &|| false,
+        &mut none,
+    );
+    assert!(!end.finished);
+
+    // 조회 있음 — 끝났다.
+    let mut recs = attempt_records(AgentHarness::Opencode, Some(q), started);
+    let note = probe_turn_state(
+        &mut end,
+        &mut TurnStateProbe::default(),
+        &ctx,
+        &EndConfig::new(60_000),
+        &mut now,
+        &|| false,
+        &mut recs,
+    );
+    assert_eq!(note, TurnStateNote::OpencodeEnded);
+    assert!(end.finished);
+
+    // 조회 자식이 받은 env — 열쇠 없음(되돌려 부모 env 를 통째로 주면 빨강).
+    for which in ["session", "export"] {
+        let got = std::fs::read_to_string(tmp.0.join(format!("env.{which}"))).unwrap();
+        for k in [
+            "HARKROOM_RUNNER_SECRET",
+            "HARKROOM_TURN_BRIDGE_KEY",
+            "HARKROOM_RUNNER_SOCKET",
+            "OPENAI_API_KEY",
+        ] {
+            assert!(
+                !got.contains(&format!("{k}=")),
+                "{which} 조회에 {k} 가 갔다"
+            );
+        }
+        assert!(!got.contains("-x\n"), "{which} 조회에 열쇠 값이 갔다");
+        assert!(got.contains(&format!(
+            "XDG_DATA_HOME={}",
+            tmp.0.join("oc/data").display()
+        )));
+    }
+}
+
+/// 짓개가 멘션 설정의 조회 자리를 시도 기록에 넘긴다(빠뜨리면 `opencode: None` 으로 돌아가 다시 멈춘다).
+#[test]
+fn probe_make_records_carry_the_query() {
+    let link = NoLink;
+    let client = HarkroomMcpClient::new(&link, "t");
+    let mut c = config(&client, LiveSlot::default());
+    let q = OpencodeQuery {
+        command: "opencode".into(),
+        env: Env::new(),
+        cwd: "/ws".into(),
+    };
+    c.harness = AgentHarness::Opencode;
+    c.opencode = Some(Arc::new(q));
+    let r = records_of(&c, &ctx("a", 1, 10));
+    assert_eq!(
+        r.opencode.as_deref().map(|q| q.cwd.clone()),
+        Some("/ws".into())
+    );
+    assert!(r.state_view().opencode.is_some());
 }

@@ -9,20 +9,28 @@
 //! - 펜스: 멘션 슬롯의 지금 걸린 시도가 임대를 잃었는가([`LiveSlot::fenced_out`]). 감시 루프는 이것을 감시 자리를 쥐지 않은 채
 //!   묻는다 — 잠금 차례 watch → slot 을 거스르는 길이 없다.
 //!
+//! - opencode·kilo 의 차례 끝은 `opencode export` 조회([`OpencodeQuery`])로 묻는다(정본 `probeOpencodeTurnState`) — 그래야
+//!   말없이 끝난 API 키 연결 턴이 [`crate::turn_probe::ProbeIo::nudge_or_expire`] 까지 간다. 조회 env 는 **허용 목록**
+//!   ([`crate::pi_home::aux_query_env`], 정본 #2147 `opencodeQueryEnv`)이라 러너 링크 열쇠·턴 열쇠가 들어가지 않는다.
+//!
 //! 아직 없는 것: 화면 끝 감시가 없어(`screen_idle_ended` 가 `None`) 하네스 자체 기록의 차례 끝(`read_recorded_end`)은 불리지
-//! 않는다 — `None` 으로 둔다. opencode 조회·codex/opencode 의 마지막 말도 아직 잇지 않는다(claude 기록만).
+//! 않는다 — `None` 으로 둔다. codex/opencode 의 마지막 말도 아직 잇지 않는다(claude 기록만).
 
-use std::path::PathBuf;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use crate::adapter::{AgentHarness, reads_session_transcript};
+use crate::adapter::{AgentHarness, harness_command, reads_session_transcript, uses_xdg_home};
+use crate::config::Env;
 use crate::harness_errors::{
     MacPermissionWait, PermissionDenial, TranscriptDirs, read_last_assistant_text,
     session_transcript_mtime_ms,
 };
+use crate::harness_records::OpencodeCall;
 use crate::mcp::HarkroomMcpClient;
 use crate::mention_parts::LoopCtx;
+use crate::opencode_home::opencode_dirs;
 use crate::rest::RunnerLink;
 use crate::turn_attempt_account::LiveSlot;
 use crate::turn_end::{EndConfig, Tail};
@@ -41,6 +49,65 @@ use crate::turn_report::off_anchor_evidence;
 use crate::turn_watch::{Watch, reclaim_on_watch, terminate_on_watch, write_on_watch};
 use crate::turn_watch_loop::{LoopParts, MakeLoop};
 
+/// 러너가 턴 밖에서 opencode·kilo 에 묻는 조회(`session list`·`export`)의 자리 — 소유본. 정본 `mentionTurn.ts` 의
+/// `{ command: harnessCommand(h), env: opencodeQueryEnv(h, opencodeDirs(opencodeHome), process.env), cwd: rec.workspaceDir }`.
+#[derive(Clone)]
+pub struct OpencodeQuery {
+    pub command: PathBuf,
+    pub env: Env,
+    pub cwd: PathBuf,
+}
+
+impl OpencodeQuery {
+    pub fn call(&self) -> OpencodeCall<'_> {
+        OpencodeCall {
+            command: &self.command,
+            env: &self.env,
+            cwd: &self.cwd,
+        }
+    }
+}
+
+/// 정본 `opencodeQueryEnv` — 허용 목록(#2147) 위에 격리 홈의 세 XDG 자리만 얹는다. 러너 링크 열쇠·턴 열쇠·그 밖의
+/// `HARKROOM_*` 는 `parent` 에 있어도 들어가지 않는다(security #2147 조건 ②: 부모·`runner_env` 통째 금지).
+pub fn opencode_query_env(
+    harness: AgentHarness,
+    parent: &BTreeMap<String, String>,
+    home: &Path,
+    opencode_home: &Path,
+) -> Env {
+    let d = opencode_dirs(opencode_home);
+    let s = |p: &Path| p.to_string_lossy().into_owned();
+    crate::pi_home::aux_query_env(
+        harness,
+        parent,
+        home,
+        &[
+            ("XDG_CONFIG_HOME", s(&d.xdg_config_home)),
+            ("XDG_DATA_HOME", s(&d.xdg_data_home)),
+            ("XDG_STATE_HOME", s(&d.xdg_state_home)),
+        ],
+    )
+}
+
+/// opencode·kilo 턴이고 격리 홈이 정해졌을 때만 조회 자리를 짓는다. 그 밖은 `None`(차례 끝 조회를 하지 않는다).
+pub fn opencode_query(
+    harness: AgentHarness,
+    parent: &BTreeMap<String, String>,
+    home: &Path,
+    opencode_home: Option<&Path>,
+    workspace_dir: &Path,
+) -> Option<OpencodeQuery> {
+    if !uses_xdg_home(harness) {
+        return None;
+    }
+    Some(OpencodeQuery {
+        command: PathBuf::from(harness_command(harness).ok()?),
+        env: opencode_query_env(harness, parent, home, opencode_home?),
+        cwd: workspace_dir.to_path_buf(),
+    })
+}
+
 /// 멘션 단위 설정 — 시도마다 바뀌는 값은 넣지 않는다.
 pub struct ProbeLoopConfig<'a, L: RunnerLink> {
     pub client: &'a HarkroomMcpClient<L>,
@@ -51,6 +118,8 @@ pub struct ProbeLoopConfig<'a, L: RunnerLink> {
     pub harness: AgentHarness,
     pub home: Option<PathBuf>,
     pub omp_home: Option<PathBuf>,
+    /// opencode·kilo 차례 끝 조회 자리([`opencode_query`]). 그 밖의 하네스는 `None`.
+    pub opencode: Option<Arc<OpencodeQuery>>,
     pub end_cfg: EndConfig,
     /// API 키 연결 턴이고 TUI 하네스다.
     pub lane_tui: bool,
@@ -71,6 +140,7 @@ pub struct AttemptRecords {
     pub omp_home: Option<PathBuf>,
     pub since_ms: i64,
     pub now: fn() -> i64,
+    pub opencode: Option<Arc<OpencodeQuery>>,
 }
 
 impl AttemptRecords {
@@ -95,7 +165,7 @@ impl AttemptRecords {
             harness: self.harness,
             session_id: self.session_id.as_deref(),
             dirs: self.dirs(),
-            opencode: None,
+            opencode: self.opencode.as_deref().map(OpencodeQuery::call),
         }
     }
 }
@@ -151,6 +221,7 @@ fn records_of<L: RunnerLink>(c: &ProbeLoopConfig<'_, L>, ctx: &LoopCtx) -> Attem
         omp_home: c.omp_home.clone(),
         since_ms: ctx.turn_started_at_ms,
         now: c.clock,
+        opencode: c.opencode.clone(),
     }
 }
 

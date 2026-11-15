@@ -33,6 +33,8 @@ pub struct MentionWatchInputs<'a> {
     pub harness: AgentHarness,
     pub home: Option<PathBuf>,
     pub omp_home: Option<PathBuf>,
+    /// opencode·kilo 차례 끝 조회 자리(`turn_probe_make::opencode_query`).
+    pub opencode: Option<std::sync::Arc<crate::turn_probe_make::OpencodeQuery>>,
     pub end_cfg: EndConfig,
     pub lane_tui: bool,
     pub caller: NudgeCaller,
@@ -57,6 +59,7 @@ pub fn mention_watch_loop<'a, L: RunnerLink + 'a>(
         harness: i.harness,
         home: i.home,
         omp_home: i.omp_home,
+        opencode: i.opencode,
         end_cfg,
         lane_tui: i.lane_tui,
         caller: i.caller,

@@ -291,7 +291,7 @@ where
         let home = Some(c.home.clone());
         let lane_on = self.provider_lane.is_some();
 
-        let watch = MentionWatchInputs {
+        let mut watch = MentionWatchInputs {
             key: key.clone(),
             me_id: c.me_id.clone(),
             channel_id: target.channel_id.clone(),
@@ -300,6 +300,8 @@ where
             home: home.clone(),
             // omp 기록(`sessions/`)은 러너 omp 홈에서만 찾는다(정본 `ompSessionFile(deps.ompHome, ..)`).
             omp_home: c.omp.as_ref().map(|o| o.home.clone()),
+            // 작업 폴더를 정한 뒤 채운다(아래).
+            opencode: None,
             end_cfg: EndConfig {
                 stall_ms: i64::try_from(c.harness_stall_ms).unwrap_or(i64::MAX),
                 ..EndConfig::new(c.turn_timeout_ms)
@@ -354,6 +356,15 @@ where
         .unwrap_or_else(|e| panic!("작업 폴더를 짓지 못했다: {e}"))
         .to_string_lossy()
         .into_owned();
+        // opencode·kilo 차례 끝 조회(정본 `probeOpencodeTurnState`) — 그 스레드 작업 폴더에서, 허용 목록 env 로 묻는다(#2147).
+        watch.opencode = crate::turn_probe_make::opencode_query(
+            harness,
+            &c.parent_env,
+            &c.home,
+            c.opencode.as_ref().map(|o| o.home.as_path()),
+            std::path::Path::new(&workspace),
+        )
+        .map(std::sync::Arc::new);
         let argv = owned_argv(
             &key,
             harness,
