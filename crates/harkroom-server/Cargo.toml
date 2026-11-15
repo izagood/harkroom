@@ -23,8 +23,15 @@ regex = { version = "=1.13.1", default-features = false, features = ["std", "uni
 # MCP `grant.list`(S5.3 C4b)의 명령 허용 규칙 판정 — 서버·hook·오퍼레이터가 같은 판정(TS 골든 고정)을 쓴다. 사본을 두지 않는다.
 harkroom-proto = { path = "../harkroom-proto" }
 http-body-util = "=0.1.5"
-hyper = { version = "=1.12.0", features = ["client", "http1"] }
-hyper-util = { version = "=0.1.21", features = ["client-legacy", "http1", "tokio"] }
+hyper = { version = "=1.12.0", features = ["client", "http1", "http2"] }
+hyper-util = { version = "=0.1.21", features = ["client-legacy", "http1", "http2", "tokio"] }
+# APNs 전송(C5e-1) — HTTP/2 over TLS + ES256 JWT. rustls·ring·webpki-roots 는 오퍼레이터와 같은 판이다(이미 쓰는 판).
+# ring 은 P-256 고정 길이 서명(P1363)을 바로 낸다 — APNs 는 DER 서명을 거절한다.
+bytes = "=1.12.1"
+ring = "=0.17.14"
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring", "tls12", "logging"] }
+webpki-roots = "=1.0.11"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
 sha2 = "=0.10.9"
@@ -51,6 +58,8 @@ breakage-tests = []
 
 [dev-dependencies]
 harkroom-server = { path = ".", features = ["breakage-tests"] }
+# 가짜 APNs(h2c) 서버(C5e-1 시험).
+hyper = { version = "=1.12.0", features = ["server", "http2"] }
 # /ws 시험 클라이언트(앞단 의존 axum ws 가 이미 쓰는 판).
 tokio-tungstenite = "=0.29.0"
 futures-util = { version = "=0.3.34", default-features = false, features = ["sink", "std"] }
