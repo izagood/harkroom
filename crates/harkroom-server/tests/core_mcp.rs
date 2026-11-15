@@ -91,6 +91,7 @@ async fn front() -> String {
         .route("/mcp", axum::routing::post(handle))
         .route_layer(axum::middleware::from_fn(fake_auth))
         .with_state(McpState {
+            react_write: None,
             up: upstream,
             // 이 시험들의 요청은 Rust 가 답하는 도구에 닿지 않는다(닿아도 입장 확인이 TS 흉내에서 끝난다) — 연결하지 않는 풀.
             pool: sqlx::postgres::PgPoolOptions::new()

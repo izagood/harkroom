@@ -1567,6 +1567,98 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       for (const gone of ['ls -la', 'git status']) expect(glText).not.toContain(gone);
       const gl2 = (await mcpCall(rsUrl4, bot2.pat, 'grant.list', {})).text;
       for (const want of ['toolRules\\":[]', 'hiddenToolRules\\":0', 'pathPrefix']) expect(gl2).toContain(want);
+      // S5.3 C4b-w1 — 쓰기 도구 message.react·unreact. 같은 요청을 TS·Rust 에 차례로 보내 답 글자를 비교한다(리액션은 같은 결과로
+      // 수렴한다 — 두 번째 달기는 on conflict, 떼기는 없는 것도 성공). 그다음 Rust 만 쓴 줄로 DB·이벤트를 따로 본다.
+      const reactMsg = await say('리액션 받을 글', { ch: readCh });
+      const fullMsg = await say('한도 찬 글', { ch: readCh });
+      const many = ['😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂', '🙂', '🙃', '😉', '😊', '😇', '🥰', '😍', '🤩', '😘', '😗', '😚', '😙'];
+      for (const e of many) {
+        await db.pool.query(`insert into message_reaction (message_id, account_id, emoji) values ($1, $2, $3)`, [fullMsg, agent.accountId, e]);
+      }
+      for (const [name, tool, args, answeredByRust] of [
+        ['message.react', 'message.react', { channelId: readCh, messageId: reactMsg, emoji: '👍' }, true],
+        ['message.react 이모지 아님', 'message.react', { channelId: readCh, messageId: reactMsg, emoji: 'abc' }, true],
+        ['message.react 33자 → TS(zod)', 'message.react', { channelId: readCh, messageId: reactMsg, emoji: '👍'.repeat(17) }, false],
+        ['message.react 못 보는 DM', 'message.react', { channelId: String(dm.id), messageId: reactMsg, emoji: '👍' }, true],
+        ['message.react 없는 글', 'message.react', { channelId: readCh, messageId: missingCh, emoji: '👍' }, true],
+        ['message.react 한도 참', 'message.react', { channelId: readCh, messageId: fullMsg, emoji: '🥳' }, true],
+        ['message.react 이미 단 것은 한도 밖', 'message.react', { channelId: readCh, messageId: fullMsg, emoji: '😀' }, true],
+        ['message.react uuid 아님 → TS', 'message.react', { channelId: 'x', messageId: reactMsg, emoji: '👍' }, false],
+        ['message.unreact', 'message.unreact', { channelId: readCh, messageId: reactMsg, emoji: '👍' }, true],
+        ['message.unreact 못 보는 DM', 'message.unreact', { channelId: String(dm.id), messageId: reactMsg, emoji: '👍' }, true],
+        ['message.unreact 인자 없음 → TS', 'message.unreact', undefined, false],
+      ] as const) {
+        const [a, b] = [await mcpCall(tsUrl, agent.pat, tool, args), await mcpCall(rsUrl4, agent.pat, tool, args)];
+        expect({ status: b.status, type: b.type, text: b.text }, name).toEqual({ status: a.status, type: a.type, text: a.text });
+        expect(b.core, `${name} — 누가 답했나`).toBe(answeredByRust ? 'mcp' : null);
+      }
+      // W7 — 거부 길마다 Rust 가 답했는지와 거절 코드를 따로 본다. 「못 보는 DM」 은 에이전트가 정말 멤버가 아닌지부터 확인한다.
+      expect((await db.pool.query(`select 1 from channel_member where channel_id = $1 and account_id = $2`, [String(dm.id), agent.accountId])).rowCount).toBe(0);
+      for (const [tool, args, code] of [
+        ['message.react', { channelId: String(dm.id), messageId: reactMsg, emoji: '👍' }, 'forbidden'],
+        ['message.unreact', { channelId: String(dm.id), messageId: reactMsg, emoji: '👍' }, 'forbidden'],
+        ['message.react', { channelId: readCh, messageId: missingCh, emoji: '👍' }, 'not_found'],
+        ['message.react', { channelId: readCh, messageId: fullMsg, emoji: '🥳' }, 'too_many_reactions'],
+        ['message.react', { channelId: readCh, messageId: reactMsg, emoji: 'abc' }, 'bad_request'],
+      ] as const) {
+        const r = await mcpCall(rsUrl4, agent.pat, tool, args);
+        expect(r.core, `${tool} ${code} — Rust 가 답한다`).toBe('mcp');
+        expect(r.text, `${tool} ${code}`).toContain(`\\"code\\":\\"${code}\\"`);
+      }
+      // W5 — TS 와 Rust 가 각자 다른 글에 같은 달기·떼기를 하고, 행과 실시간 알림(구독자에게 가는 이벤트)이 같은지 본다.
+      // TS 는 자기 프로세스에서 바로 내고(onEvent), Rust 는 outbox → TS 버스로 건너온다(busEvents).
+      const tsMsgW = await say('TS 가 리액션', { ch: readCh });
+      const rsMsgW = await say('Rust 가 리액션', { ch: readCh });
+      const seenTs: WorkspaceEvent[] = [];
+      const offW = onEvent((e) => { seenTs.push(e); });
+      const busFrom = busEvents.length;
+      for (const [base, m] of [[tsUrl, tsMsgW], [rsUrl4, rsMsgW]] as const) {
+        await mcpCall(base, agent.pat, 'message.react', { channelId: readCh, messageId: m, emoji: '🙌' });
+        await mcpCall(base, agent.pat, 'message.unreact', { channelId: readCh, messageId: m, emoji: '🙌' });
+        await mcpCall(base, agent.pat, 'message.react', { channelId: readCh, messageId: m, emoji: '🫡' });
+      }
+      const until = Date.now() + 5000;
+      const fromRs = () => busEvents.slice(busFrom).filter((e) => (e as { messageId?: string }).messageId === rsMsgW);
+      while (fromRs().length < 3 && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
+      offW();
+      const norm = (list: WorkspaceEvent[], m: string) => list
+        .filter((e) => (e as { messageId?: string }).messageId === m)
+        .map((e) => JSON.parse(JSON.stringify(e).split(m).join('<msg>')) as unknown);
+      expect(norm(fromRs(), rsMsgW), 'Rust 이벤트 = TS 이벤트').toEqual(norm(seenTs, tsMsgW));
+      expect(norm(seenTs, tsMsgW)).toHaveLength(3);
+      const rowsOf = async (m: string) => (await db.pool.query<{ emoji: string; source: string }>(
+        `select emoji, source from message_reaction where message_id = $1 order by emoji`, [m])).rows;
+      expect(await rowsOf(rsMsgW), 'Rust 행 = TS 행').toEqual(await rowsOf(tsMsgW));
+      expect(await rowsOf(rsMsgW)).toEqual([{ emoji: '🫡', source: 'user' }]);
+
+      // W1 — 쓰기를 시작한 뒤의 오류는 TS 로 넘기지 않는다. 쓰기 역할에서 insert 권한을 잠깐 거두면 insert 가 실패한다 →
+      // Rust 가 `internal` 로 답하고(core=mcp), TS 가 대신 쓰지 않았으니 행이 없어야 한다.
+      const w1Msg = await say('W1 쓰기 실패', { ch: readCh });
+      await db.pool.query(`revoke insert on message_reaction from ${rw}`);
+      try {
+        const w1 = await mcpCall(rsUrl4, agent.pat, 'message.react', { channelId: readCh, messageId: w1Msg, emoji: '🧪' });
+        expect(w1.core, 'W1 — Rust 가 답한다').toBe('mcp');
+        expect(w1.text).toContain('\\"code\\":\\"internal\\"');
+        expect((await db.pool.query(`select 1 from message_reaction where message_id = $1`, [w1Msg])).rowCount, 'TS 가 대신 쓰지 않았다').toBe(0);
+      } finally {
+        await db.pool.query(`grant insert on message_reaction to ${rw}`);
+      }
+      // Rust 만 쓴 줄 — DB 에 남고 이벤트(outbox)가 TS 와 같은 모양으로 나간다.
+      const rustOnly = await say('Rust 만 리액션', { ch: readCh });
+      const outboxBefore = (await db.pool.query<{ n: number }>(`select count(*)::int as n from event_outbox`)).rows[0]!.n;
+      const r1 = await mcpCall(rsUrl4, agent.pat, 'message.react', { channelId: readCh, messageId: rustOnly, emoji: '🎉' });
+      expect(r1.core).toBe('mcp');
+      expect(r1.text).toContain('emoji\\":\\"🎉');
+      expect((await db.pool.query(`select 1 from message_reaction where message_id = $1 and account_id = $2 and emoji = '🎉' and source = 'user'`,
+        [rustOnly, agent.accountId])).rowCount).toBe(1);
+      const ev = (await db.pool.query<{ event: Record<string, unknown> }>(
+        `select event from event_outbox where event->>'type' = 'reaction.added' and event->>'messageId' = $1 order by id desc limit 1`,
+        [rustOnly])).rows[0]!.event;
+      expect(ev).toMatchObject({ type: 'reaction.added', channelId: readCh, messageId: rustOnly, emoji: '🎉', accountId: agent.accountId });
+      expect((await db.pool.query<{ n: number }>(`select count(*)::int as n from event_outbox`)).rows[0]!.n).toBeGreaterThan(outboxBefore);
+      const r2 = await mcpCall(rsUrl4, agent.pat, 'message.unreact', { channelId: readCh, messageId: rustOnly, emoji: '🎉' });
+      expect(r2.core).toBe('mcp');
+      expect((await db.pool.query(`select 1 from message_reaction where message_id = $1 and emoji = '🎉'`, [rustOnly])).rowCount).toBe(0);
 
       // S5.3 C4a-6b — message.search. 본문 멘션 되돌리기·시스템 줄·스코프(채널·스레드)·거르기(보낸 사람·첨부)·정렬·쪽(51개 → hasMore,
       // 천장 1000)·못 보는 채널(결과에서 빠짐 · 범위로 주면 forbidden). `@`·기간·틀린 꼴은 TS 로 넘긴다.

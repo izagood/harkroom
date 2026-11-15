@@ -81,6 +81,87 @@ async fn emit(write: &PgPool, event: &Value) -> Result<(), sqlx::Error> {
 }
 
 /// `PUT /channels/{id}/messages/{messageId}/reactions/{emoji}`.
+/// 리액션 달기의 본체(REST `PUT` 과 MCP `message.react` 가 같이 쓴다) — 이모지·가시성 판정은 부른 쪽이 먼저 한다.
+#[derive(Debug, PartialEq, Eq)]
+pub enum AddOutcome {
+    Added,
+    NotFound,
+    TooMany,
+}
+
+pub async fn add_reaction(
+    read: &PgPool,
+    write: &PgPool,
+    me: &str,
+    id: &str,
+    message: &str,
+    emoji: &str,
+) -> Result<AddOutcome, sqlx::Error> {
+    // TS `messageIsHere` — 삭제된 메시지에 붙으면 되살아난 것처럼 보인다.
+    let here: Option<i32> = sqlx::query_scalar(
+        "select 1 from message where id = $1::uuid and channel_id = $2::uuid and deleted_at is null",
+    )
+    .bind(message)
+    .bind(id)
+    .fetch_optional(write)
+    .await?;
+    if here.is_none() {
+        return Ok(AddOutcome::NotFound);
+    }
+    // 이미 눌러 둔 것은 한도에 걸리지 않는다. 상태 리액션(`source = 'status'`)은 세지 않는다.
+    let mine: Vec<String> = sqlx::query_scalar(
+        "select emoji from message_reaction where message_id = $1::uuid and account_id = $2::uuid and source = 'user'",
+    )
+    .bind(message)
+    .bind(me)
+    .fetch_all(write)
+    .await?;
+    if !mine.iter().any(|m| m == emoji) && mine.len() as i64 >= MAX_REACTIONS_PER_ACTOR {
+        return Ok(AddOutcome::TooMany);
+    }
+    sqlx::query(
+        "insert into message_reaction (message_id, account_id, emoji) values ($1::uuid, $2::uuid, $3) \
+         on conflict (message_id, account_id, emoji) do update set source = 'user' \
+           where message_reaction.source = 'status'",
+    )
+    .bind(message)
+    .bind(me)
+    .bind(emoji)
+    .execute(write)
+    .await?;
+    let audience = audience_for(read, id).await?.to_json();
+    let added = json!({
+        "type": "reaction.added", "channelId": id, "messageId": message, "emoji": emoji,
+        "accountId": me, "audience": audience,
+    });
+    emit(write, &added).await?;
+    // TS `stampWakeChecked` — 줄 주인이 자기 대기 줄에 ✅ 를 달면 첫 확인 시각을 적는다.
+    if emoji == WAKE_CHECKED_EMOJI {
+        let stamped = sqlx::query(
+            "update message set meta = jsonb_set(meta, '{wake,checkedAt}', \
+               to_jsonb(to_char(now() at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'))) \
+             where id = $1::uuid and channel_id = $2::uuid and author_id = $3::uuid and kind = 'wake' \
+               and deleted_at is null and jsonb_typeof(meta->'wake') = 'object' and meta->'wake'->>'checkedAt' is null",
+        )
+        .bind(message)
+        .bind(id)
+        .bind(me)
+        .execute(write)
+        .await?
+        .rows_affected()
+            == 1;
+        if stamped {
+            let row = message_by_id(write, message).await?;
+            if let Some(row) = row.and_then(|r| serde_json::from_str::<Value>(&r).ok()) {
+                let updated =
+                    json!({ "type": "message.updated", "message": row, "audience": audience });
+                emit(write, &updated).await?;
+            }
+        }
+    }
+    Ok(AddOutcome::Added)
+}
+
 pub async fn put_reaction(
     State(st): State<Arc<ReactState>>,
     RequireAccount(me, _): RequireAccount,
@@ -101,107 +182,32 @@ pub async fn put_reaction(
         Ok(false) => return forbidden(),
         Err(e) => return internal(e),
     }
-    // TS `messageIsHere` — 삭제된 메시지에 붙으면 되살아난 것처럼 보인다.
-    let here: Option<i32> = match sqlx::query_scalar(
-        "select 1 from message where id = $1::uuid and channel_id = $2::uuid and deleted_at is null",
-    )
-    .bind(&message)
-    .bind(&id)
-    .fetch_optional(&st.write)
-    .await
-    {
-        Ok(v) => v,
-        Err(e) => return internal(e),
-    };
-    if here.is_none() {
-        return json_err(
-            StatusCode::NOT_FOUND,
-            "not_found",
-            "no such message in this channel",
-        );
-    }
-    // 이미 눌러 둔 것은 한도에 걸리지 않는다. 상태 리액션(`source = 'status'`)은 세지 않는다.
-    let mine: Vec<String> = match sqlx::query_scalar(
-        "select emoji from message_reaction where message_id = $1::uuid and account_id = $2::uuid and source = 'user'",
-    )
-    .bind(&message)
-    .bind(&me.id)
-    .fetch_all(&st.write)
-    .await
-    {
-        Ok(v) => v,
-        Err(e) => return internal(e),
-    };
-    if !mine.contains(&emoji) && mine.len() as i64 >= MAX_REACTIONS_PER_ACTOR {
-        // TS 는 이 경우만 맨 겉에도 `code` 를 싣는다.
-        let body = json!({
-            "code": "too_many_reactions",
-            "error": {
-                "code": "too_many_reactions",
-                "message": format!("at most {MAX_REACTIONS_PER_ACTOR} reactions per message"),
-            },
-        });
-        return (
-            StatusCode::CONFLICT,
-            [(header::CONTENT_TYPE, "application/json; charset=utf-8")],
-            body.to_string(),
-        )
-            .into_response();
-    }
-    if let Err(e) = sqlx::query(
-        "insert into message_reaction (message_id, account_id, emoji) values ($1::uuid, $2::uuid, $3) \
-         on conflict (message_id, account_id, emoji) do update set source = 'user' \
-           where message_reaction.source = 'status'",
-    )
-    .bind(&message)
-    .bind(&me.id)
-    .bind(&emoji)
-    .execute(&st.write)
-    .await
-    {
-        return internal(e);
-    }
-    let audience = match audience_for(&st.read, &id).await {
-        Ok(a) => a.to_json(),
-        Err(e) => return internal(e),
-    };
-    let added = json!({
-        "type": "reaction.added", "channelId": id, "messageId": message, "emoji": emoji,
-        "accountId": me.id, "audience": audience,
-    });
-    if let Err(e) = emit(&st.write, &added).await {
-        return internal(e);
-    }
-    // TS `stampWakeChecked` — 줄 주인이 자기 대기 줄에 ✅ 를 달면 첫 확인 시각을 적는다.
-    if emoji == WAKE_CHECKED_EMOJI {
-        let stamped = match sqlx::query(
-            "update message set meta = jsonb_set(meta, '{wake,checkedAt}', \
-               to_jsonb(to_char(now() at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'))) \
-             where id = $1::uuid and channel_id = $2::uuid and author_id = $3::uuid and kind = 'wake' \
-               and deleted_at is null and jsonb_typeof(meta->'wake') = 'object' and meta->'wake'->>'checkedAt' is null",
-        )
-        .bind(&message)
-        .bind(&id)
-        .bind(&me.id)
-        .execute(&st.write)
-        .await
-        {
-            Ok(r) => r.rows_affected() == 1,
-            Err(e) => return internal(e),
-        };
-        if stamped {
-            let row = match message_by_id(&st.write, &message).await {
-                Ok(r) => r,
-                Err(e) => return internal(e),
-            };
-            if let Some(row) = row.and_then(|r| serde_json::from_str::<Value>(&r).ok()) {
-                let updated =
-                    json!({ "type": "message.updated", "message": row, "audience": audience });
-                if let Err(e) = emit(&st.write, &updated).await {
-                    return internal(e);
-                }
-            }
+    match add_reaction(&st.read, &st.write, &me.id, &id, &message, &emoji).await {
+        Ok(AddOutcome::Added) => {}
+        Ok(AddOutcome::NotFound) => {
+            return json_err(
+                StatusCode::NOT_FOUND,
+                "not_found",
+                "no such message in this channel",
+            );
         }
+        Ok(AddOutcome::TooMany) => {
+            // TS 는 이 경우만 맨 겉에도 `code` 를 싣는다.
+            let body = json!({
+                "code": "too_many_reactions",
+                "error": {
+                    "code": "too_many_reactions",
+                    "message": format!("at most {MAX_REACTIONS_PER_ACTOR} reactions per message"),
+                },
+            });
+            return (
+                StatusCode::CONFLICT,
+                [(header::CONTENT_TYPE, "application/json; charset=utf-8")],
+                body.to_string(),
+            )
+                .into_response();
+        }
+        Err(e) => return internal(e),
     }
     (
         StatusCode::OK,
@@ -209,6 +215,39 @@ pub async fn put_reaction(
         json!({ "emoji": emoji }).to_string(),
     )
         .into_response()
+}
+
+/// 리액션 떼기의 본체(REST `DELETE` 와 MCP `message.unreact` 가 같이 쓴다) — 가시성 판정은 부른 쪽이 먼저 한다.
+pub async fn remove_reaction(
+    read: &PgPool,
+    write: &PgPool,
+    me: &str,
+    id: &str,
+    message: &str,
+    emoji: &str,
+) -> Result<(), sqlx::Error> {
+    let kept: bool = sqlx::query_scalar(
+        "with del as ( \
+           delete from message_reaction where message_id = $1::uuid and account_id = $2::uuid and emoji = $3 and source = 'user' \
+         ) \
+         select exists (select 1 from message_reaction \
+                         where message_id = $1::uuid and account_id = $2::uuid and emoji = $3 and source = 'status')",
+    )
+    .bind(message)
+    .bind(me)
+    .bind(emoji)
+    .fetch_one(write)
+    .await?;
+    // 서버가 단 상태 리액션이 남았으면 이벤트를 내지 않는다 — 내면 화면이 남은 리액션을 지운다.
+    if !kept {
+        let audience = audience_for(read, id).await?.to_json();
+        let removed = json!({
+            "type": "reaction.removed", "channelId": id, "messageId": message, "emoji": emoji,
+            "accountId": me, "audience": audience,
+        });
+        emit(write, &removed).await?;
+    }
+    Ok(())
 }
 
 /// `DELETE /channels/{id}/messages/{messageId}/reactions/{emoji}` — 없는 것을 떼는 것도 204(TS 와 같다, 존재 확인을 하지 않는다).
@@ -225,35 +264,8 @@ pub async fn delete_reaction(
         Ok(false) => return forbidden(),
         Err(e) => return internal(e),
     }
-    let kept: bool = match sqlx::query_scalar(
-        "with del as ( \
-           delete from message_reaction where message_id = $1::uuid and account_id = $2::uuid and emoji = $3 and source = 'user' \
-         ) \
-         select exists (select 1 from message_reaction \
-                         where message_id = $1::uuid and account_id = $2::uuid and emoji = $3 and source = 'status')",
-    )
-    .bind(&message)
-    .bind(&me.id)
-    .bind(&emoji)
-    .fetch_one(&st.write)
-    .await
-    {
-        Ok(v) => v,
-        Err(e) => return internal(e),
-    };
-    // 서버가 단 상태 리액션이 남았으면 이벤트를 내지 않는다 — 내면 화면이 남은 리액션을 지운다.
-    if !kept {
-        let audience = match audience_for(&st.read, &id).await {
-            Ok(a) => a.to_json(),
-            Err(e) => return internal(e),
-        };
-        let removed = json!({
-            "type": "reaction.removed", "channelId": id, "messageId": message, "emoji": emoji,
-            "accountId": me.id, "audience": audience,
-        });
-        if let Err(e) = emit(&st.write, &removed).await {
-            return internal(e);
-        }
+    if let Err(e) = remove_reaction(&st.read, &st.write, &me.id, &id, &message, &emoji).await {
+        return internal(e);
     }
     StatusCode::NO_CONTENT.into_response()
 }

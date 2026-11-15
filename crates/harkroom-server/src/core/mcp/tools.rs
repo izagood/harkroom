@@ -41,7 +41,7 @@ pub(super) fn no_input(args: &Value) -> bool {
 }
 
 /// `z.string().uuid()`(zod 3) 인 필수 칸.
-fn uuid_arg<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
+pub(super) fn uuid_arg<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
     args.as_object()?
         .get(key)?
         .as_str()

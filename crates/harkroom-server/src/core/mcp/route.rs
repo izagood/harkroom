@@ -1,10 +1,10 @@
-//! C4a-1 — `POST /mcp` 를 코어가 받는 자리. 게이트·본문 한도를 TS 와 같게 세운 뒤, Rust 가 답하는 도구([`SERVED`], C4a-3 부터)가 아니면
+//! C4a-1 — `POST /mcp` 를 코어가 받는 자리. 게이트·본문 한도를 TS 와 같게 세운 뒤, Rust 가 답하는 도구([`served`], C4a-3 부터)가 아니면
 //! 원래 바이트와 헤더를 그대로 TS 로 넘기고 답(SSE 포함)을 버퍼 없이 흘려 돌려준다([`crate::proxy::forward`]).
 //!
 //! 이 줄이 없을 때도 앞단은 `/mcp` 를 `fallback(forward)` 로 TS 에 넘겼다 — 그러니 이 단계의 값은 셋뿐이다:
 //! 1. 에이전트가 아닌 요청을 **본문을 읽기 전에** 앞단에서 끊는다(TS `onRequest` 와 같은 401/403 `agent_only`).
 //! 2. 본문을 TS 와 같은 한도로 모은다(넘으면 413, TS fastify 와 같은 꼴) — 다음 단계에서 [`super::dispatch`] 가 읽을 바이트.
-//! 3. 갈라 보내는 자리([`SERVED`] · [`super::dispatch`] · [`serve`]).
+//! 3. 갈라 보내는 자리([`served`] · [`super::dispatch`] · [`serve`]).
 //!
 //! 긴 폴(`inbox.poll` 이 서버에서 머무는 것)은 끊기지 않는다 — 상류 클라이언트(`proxy::Upstream`)와 앞단 서버 어디에도 요청 시간
 //! 제한이 없다(TS 쪽 제한이 그대로 정본).
@@ -17,14 +17,25 @@ use std::net::SocketAddr;
 /// TS `MCP_BODY_LIMIT_BYTES` = `2 * ARTIFACT_PUBLISH_ARG_MAX_BYTES(2MiB) + 512KiB` (mcpPlugin.ts · services/artifacts.ts).
 pub const BODY_LIMIT: usize = 2 * 2 * 1024 * 1024 + 512 * 1024;
 
-/// Rust 가 답하는 도구([`super::tools::SERVED`]). 그 밖은 본문을 갈림까지만 보고 TS 로.
-pub const SERVED: &[&str] = super::tools::SERVED;
+/// 읽기([`super::tools::SERVED`]) + 쓰기([`super::writes::SERVED`], C4b).
+pub fn served() -> &'static [&'static str] {
+    static S: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
+    S.get_or_init(|| {
+        super::tools::SERVED
+            .iter()
+            .chain(super::writes::SERVED)
+            .copied()
+            .collect()
+    })
+}
 
 /// 라우트 상태 — 상류(TS)와 읽기 풀.
 #[derive(Clone)]
 pub struct McpState {
     pub up: Upstream,
     pub pool: sqlx::PgPool,
+    /// 리액션 쓰기 풀(C4b) — 그 줄의 권한이 다 있을 때만. 없으면 쓰는 도구는 TS 가 답한다.
+    pub react_write: Option<sqlx::PgPool>,
 }
 
 const AGENT_ONLY: &str = r#"{"error":{"code":"agent_only","message":"MCP surface requires an agent PAT or an operator assignment"}}"#;
@@ -43,7 +54,11 @@ fn json(status: StatusCode, body: &'static str) -> Response<Body> {
 }
 
 pub async fn handle(
-    State(McpState { up, pool }): State<McpState>,
+    State(McpState {
+        up,
+        pool,
+        react_write,
+    }): State<McpState>,
     ci: ConnectInfo<SocketAddr>,
     req: Request<Body>,
 ) -> Response<Body> {
@@ -73,12 +88,16 @@ pub async fn handle(
     };
     let cause = super::reads3::cause_from(&parts.headers);
     let tools = |tool: &'static str, args: serde_json::Value| -> AnswerFut {
-        let (pool, me, cause) = (pool.clone(), me.clone(), cause.clone());
-        Box::pin(
-            async move { super::tools::answer(&pool, &me, tool, &args, cause.as_deref()).await },
-        )
+        let (pool, me, cause, write) =
+            (pool.clone(), me.clone(), cause.clone(), react_write.clone());
+        Box::pin(async move {
+            if let Some(r) = super::writes::answer(&pool, write.as_ref(), &me, tool, &args).await {
+                return r;
+            }
+            super::tools::answer(&pool, &me, tool, &args, cause.as_deref()).await
+        })
     };
-    if let Some(r) = serve(&up, ci, &parts.headers, &bytes, SERVED, &tools).await {
+    if let Some(r) = serve(&up, ci, &parts.headers, &bytes, served(), &tools).await {
         return r;
     }
     proxy::forward(State(up), ci, Request::from_parts(parts, Body::from(bytes))).await
@@ -130,6 +149,7 @@ pub async fn serve(
 pub fn routes(
     up: Upstream,
     pool: sqlx::PgPool,
+    react_write: Option<sqlx::PgPool>,
     auth: crate::auth::AuthPools,
     cors: std::sync::Arc<crate::cors::Cors>,
 ) -> crate::route_table::Routes<()> {
@@ -148,7 +168,11 @@ pub fn routes(
         })
         .finish();
     crate::route_table::Routes {
-        router: t.router.with_state(McpState { up, pool }),
+        router: t.router.with_state(McpState {
+            up,
+            pool,
+            react_write,
+        }),
         http: t.http,
         sockets: t.sockets,
     }
