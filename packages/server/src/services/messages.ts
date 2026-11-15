@@ -3483,21 +3483,23 @@ const BOARD_COMPACT_KEEP_SQL = `i.id in (
           where i2.account_id = $1 and m2.deleted_at is null) r
         where r.rn <= ${BOARD_COMPACT_LATEST} or r.rr = 1 or r.pinned)`;
 
-export async function listInbox(
-  pool: Pool, accountId: string,
-  opts: { unreadOnly?: boolean; compact?: boolean; sinceId?: number; skipLeased?: boolean; newestLimit?: number; beforeId?: number },
-): Promise<InboxEntry[]> {
-  // 상한(`newestLimit`)이면 **최신 N줄**을 id 내림차순으로 자른 뒤 아래에서 오름차순으로 되돌린다 — 응답 순서는 그대로다.
-  const params: unknown[] = [accountId];
-  const sinceParam = opts.sinceId !== undefined ? `$${params.push(opts.sinceId)}` : null;
-  const beforeParam = opts.beforeId !== undefined ? `$${params.push(opts.beforeId)}` : null;
-  const limitParam = opts.newestLimit !== undefined ? `$${params.push(opts.newestLimit)}` : null;
+/**
+ * `listInbox` 의 기본 SELECT 를 짓는다(S5.3 C6a-3a). 자리는 `$1` = 계정, 그 뒤로 켠 것만 since → before → limit 순이다.
+ * Rust 앞단(`core/inbox_list.rs`)이 `GET /inbox` 갈래별 완성 문장(`LIST_INBOX_SQL`)을 골든으로 받는다 — 그래서 계정 자리는
+ * `$1::uuid` 로 적는다(Rust 는 글자로 묶는다. node-pg 에는 차이가 없다).
+ */
+export function listInboxSql(opts: {
+  unreadOnly?: boolean; compact?: boolean; since?: boolean; before?: boolean; newest?: boolean; skipLeased?: boolean;
+}): string {
+  let n = 1;
+  const sinceParam = opts.since ? `$${++n}` : null;
+  const beforeParam = opts.before ? `$${++n}` : null;
+  const limitParam = opts.newest ? `$${++n}` : null;
   const bodySql = opts.compact
     ? `left(${displayBodySql('m')}, ${BOARD_COMPACT_BODY_CHARS}) as body,
             length(${displayBodySql('m')}) > ${BOARD_COMPACT_BODY_CHARS} as "bodyTruncated"`
     : `${displayBodySql('m')} as body`;
-  const res = await pool.query(
-    `select i.id::int as id, i.message_id as "messageId", i.reason, i.read_at as "readAt",
+  return `select i.id::int as id, i.message_id as "messageId", i.reason, i.read_at as "readAt",
             m.channel_id as "channelId",
             -- 줄이 네 가지를 말할 재료(#488 C2): 누가 · 무슨 말 · 무엇을 · 언제·어디.
             -- 이미 message 를 join 하고 있었으므로 컬럼만 더한다 — 새 왕복이 없다.
@@ -3523,17 +3525,50 @@ export async function listInbox(
      --
      -- 러너의 inbox.poll 도 이 함수를 쓴다 → 나간 채널의 부름으로는 **턴이 뜨지 않는다**.
      -- 의도다: 그 턴은 그 채널을 읽지도 거기에 쓰지도 못한다.
-     where i.account_id = $1 and m.deleted_at is null
-       and ${channelVisibleSql('c', '$1')}
+     where i.account_id = $1::uuid and m.deleted_at is null
+       and ${channelVisibleSql('c', '$1::uuid')}
        ${opts.unreadOnly ? 'and i.read_at is null' : ''}
        ${opts.compact ? `and ${BOARD_COMPACT_KEEP_SQL}` : ''}
        ${sinceParam ? `and i.id > ${sinceParam}::bigint` : ''}
        ${beforeParam ? `and i.id < ${beforeParam}::bigint` : ''}
        ${opts.skipLeased ? 'and (i.claimed_until is null or i.claimed_until < now())' : ''}
-     ${limitParam ? `order by i.id desc limit ${limitParam}::int` : 'order by i.id'}`,
-    params,
-  );
-  if (limitParam) res.rows.reverse();
+     ${limitParam ? `order by i.id desc limit ${limitParam}::int` : 'order by i.id'}`;
+}
+
+/** `GET /inbox` 의 갈래(`unread`·`since`·상한 페이지)별 완성 문장 — Rust 코어가 골든으로 받는다(`rustSqlFragments.test.ts`). */
+export const LIST_INBOX_SQL = {
+  unread: listInboxSql({ unreadOnly: true }),
+  unreadSince: listInboxSql({ unreadOnly: true, since: true }),
+  since: listInboxSql({ since: true }),
+  newest: listInboxSql({ newest: true }),
+  newestBefore: listInboxSql({ newest: true, before: true }),
+};
+
+/** 팀 부름의 명단(047) — `$1` = 팀 id 배열. Rust 코어(`core/inbox_list.rs`)도 이 문장을 쓴다. */
+export const INBOX_TEAM_ROSTER_SQL = `select t.id, t.name, tm.agent_account_id as "accountId", a.handle,
+              nullif(split_part(coalesce(ac.instructions, ''), E'\n', 1), '') as specialty,
+              a.disabled_at is not null as disabled
+         from agent_team t
+         join agent_team_member tm on tm.team_id = t.id
+         join account a on a.id = tm.agent_account_id
+         left join agent_config ac on ac.account_id = a.id
+        where t.id = any($1::uuid[])
+        order by a.handle`;
+
+export async function listInbox(
+  pool: Pool, accountId: string,
+  opts: { unreadOnly?: boolean; compact?: boolean; sinceId?: number; skipLeased?: boolean; newestLimit?: number; beforeId?: number },
+): Promise<InboxEntry[]> {
+  // 상한(`newestLimit`)이면 **최신 N줄**을 id 내림차순으로 자른 뒤 아래에서 오름차순으로 되돌린다 — 응답 순서는 그대로다.
+  const params: unknown[] = [accountId];
+  if (opts.sinceId !== undefined) params.push(opts.sinceId);
+  if (opts.beforeId !== undefined) params.push(opts.beforeId);
+  if (opts.newestLimit !== undefined) params.push(opts.newestLimit);
+  const res = await pool.query(listInboxSql({
+    unreadOnly: opts.unreadOnly, compact: opts.compact, skipLeased: opts.skipLeased,
+    since: opts.sinceId !== undefined, before: opts.beforeId !== undefined, newest: opts.newestLimit !== undefined,
+  }), params);
+  if (opts.newestLimit !== undefined) res.rows.reverse();
 
   /**
    * 팀 부름에 **명단을 붙인다**(047). 팀장은 이것으로 누구에게 무엇을 넘길지 판단한다 —
@@ -3552,18 +3587,7 @@ export async function listInbox(
   const rows = res.rows as (InboxEntry & { teamId?: string | null })[];
   const teamIds = [...new Set(rows.map((r) => r.teamId).filter((id): id is string => typeof id === 'string'))];
   if (teamIds.length) {
-    const teams = await pool.query(
-      `select t.id, t.name, tm.agent_account_id as "accountId", a.handle,
-              nullif(split_part(coalesce(ac.instructions, ''), E'\n', 1), '') as specialty,
-              a.disabled_at is not null as disabled
-         from agent_team t
-         join agent_team_member tm on tm.team_id = t.id
-         join account a on a.id = tm.agent_account_id
-         left join agent_config ac on ac.account_id = a.id
-        where t.id = any($1)
-        order by a.handle`,
-      [teamIds],
-    );
+    const teams = await pool.query(INBOX_TEAM_ROSTER_SQL, [teamIds]);
     const byTeam = new Map<string, InboxTeamCall>();
     for (const row of teams.rows) {
       let call = byTeam.get(row.id);
