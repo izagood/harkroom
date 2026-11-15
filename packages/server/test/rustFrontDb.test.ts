@@ -2049,6 +2049,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       expect(rec.left, '세션이 14일로 늘어야 한다').toBeGreaterThanOrEqual(13);
       expect(rec.fresh, 'PAT 사용 시각이 새로 찍혀야 한다').toBe(true);
 
+      // 대조 블록의 이벤트 거르기 — 리액션 이벤트는 요청한 계정 것만 남긴다. TS 의 스레드 상태 watcher 가 뒤에 다는 상태 리액션
+      // (`reaction.*`, accountId = 상태 주인 에이전트)은 요청의 쓰기가 아니고, Rust 가 맡은 쪽에서는 outbox(`busEvents`)에 없다.
+      const byActor = (actor: string) => (e: WorkspaceEvent) =>
+        !/^reaction\./.test(e.type) || (e as { accountId?: string }).accountId === actor;
       // S5.3 C3a-1 — 리액션 쓰기(코어 `msg_react.rs`). 같은 시나리오를 TS 와 Rust 에 **각자의 글**로 돌려 응답·남은 행·이벤트
       // (이름·모양·받는 사람·순서)를 견준다. TS 이벤트는 프로세스 안(`onEvent`), Rust 이벤트는 outbox → 버스(`busEvents`)로 받는다.
       {
@@ -2126,10 +2130,12 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           }
           return { ...o, messageId: label(o.messageId) };
         };
+        // 요청이 낸 쓰기만 — 스레드 상태 리액션(`threadStatus.ts` watcher)은 `message.updated`·상태 이모지 떼기를 듣고 TS 쪽에서 **뒤에**
+        // 달며(T 에만 생기고 나는 때가 watcher 에 달렸다), 그 `accountId` 는 상태 주인 에이전트다. 이 시나리오의 리액션은 전부 admin 이 한다.
         const mineOf = (evs: WorkspaceEvent[], s: { msg: string; wake: string; dmMsg: string }) => evs.filter((e) => {
           const o = e as { messageId?: string; message?: { id?: string } };
           const id = o.messageId ?? o.message?.id;
-          return id === s.msg || id === s.wake || id === s.dmMsg;
+          return (id === s.msg || id === s.wake || id === s.dmMsg) && byActor(admin.accountId)(e);
         }).map(norm(s));
         const want = mineOf(tsEvents, T);
         offTs();
@@ -2252,10 +2258,11 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
              from jsonb_each_text($1::jsonb) j(k, id) join message m on m.id = j.id::uuid order by k`, [JSON.stringify(sd)])).rows;
         expect(await rowsOf(R)).toEqual(await rowsOf(T));
         // 이벤트.
+        // 요청이 낸 쓰기만 — 지우기·채널로 올리기가 낸 `message.*` 뒤에 TS watcher 가 다는 상태 리액션은 뺀다(리액션 블록과 같은 까닭).
         const mineOf = (evs: WorkspaceEvent[], sd: Side) => evs.filter((e) => {
           const o = e as { messageId?: string; message?: { id?: string } };
           const id = o.messageId ?? o.message?.id;
-          return Object.values(sd).includes(id as string);
+          return Object.values(sd).includes(id as string) && byActor(admin.accountId)(e);
         }).map((e) => shape(sd)(JSON.parse(JSON.stringify(e))));
         const want = mineOf(tsEvents, T);
         offTs();
