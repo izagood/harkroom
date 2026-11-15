@@ -89,7 +89,8 @@ pub async fn missing_privileges(pool: &PgPool) -> Result<Vec<String>, sqlx::Erro
     missing_in(pool, REQUIRED_PRIVILEGES, REQUIRED_SEQUENCE_PRIVILEGES).await
 }
 
-async fn missing_in(
+/// 표·시퀀스 권한 중 빠진 것 — 코어 쓰기 줄(C3a 리액션 등)이 자기 목록으로 부른다.
+pub async fn missing_in(
     pool: &PgPool,
     tables: &[(&str, &str)],
     sequences: &[(&str, &str)],
