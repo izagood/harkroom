@@ -130,8 +130,9 @@ async fn check(
         return Ok(Err("bundle_item_link"));
     }
     let bundle_root = thread_root.unwrap_or_else(|| bundle_id.to_owned());
-    let reply: Option<String> = sqlx::query_scalar(
-        "select m.author_id::text from message m join account a on a.id = m.author_id \
+    // id 는 DB 에서 읽은 것을 쓴다 — 대문자 uuid 가 와도 TS(`reply.id`)처럼 소문자로 적힌다.
+    let reply: Option<(String, String)> = sqlx::query_as(
+        "select m.author_id::text, m.id::text from message m join account a on a.id = m.author_id \
           where m.id = $1::uuid and m.deleted_at is null and a.kind = 'human' \
             and m.channel_id = $2::uuid and (m.thread_root_id = $3::uuid or m.id = $3::uuid)",
     )
@@ -140,7 +141,7 @@ async fn check(
     .bind(&bundle_root)
     .fetch_optional(read)
     .await?;
-    let Some(reply_author) = reply else {
+    let Some((reply_author, reply_id)) = reply else {
         return Ok(Err("bundle_reply_invalid"));
     };
     let mut conn = read.acquire().await?;
@@ -158,7 +159,7 @@ async fn check(
     if !may_answer || !super::channels::visible(read, &reply_author, &root_channel).await? {
         return Ok(Err("bundle_reply_invalid"));
     }
-    Ok(Ok((reply_author, reply_id.to_owned())))
+    Ok(Ok((reply_author, reply_id)))
 }
 
 /// TS `resolveBundleItem`. 판정 중 DB 오류는 `Err`(TS 로 넘겨도 된다 — 아직 안 썼다).

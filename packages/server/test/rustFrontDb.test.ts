@@ -1917,6 +1917,14 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         } finally {
           await db.pool.query(`grant update (meta) on message to ${rw}`);
         }
+
+        // 대문자 replyMessageId — 원본 meta 에는 입력 글자가 아니라 DB 의 id(소문자)가 적힌다. TS(`reply.id`)와 같다.
+        const [uT, uR] = [await fixture('UT'), await fixture('UR')];
+        const upper = (x: Fx) => ({ bundleId: x.bundle, rootId: x.root, replyMessageId: x.reply.toUpperCase() });
+        expect((await mcpCall(tsUrl, agent.pat, 'message.askBundleResolve', upper(uT))).core, '대문자 — TS').toBeNull();
+        expect((await rsB(upper(uR))).core, '대문자 — Rust 가 답한다').toBe('mcp');
+        expect((await askOf(uT.root)).replyMessageId, 'TS 는 소문자로 적는다').toBe(uT.reply);
+        expect((await askOf(uR.root)).replyMessageId, 'Rust 도 소문자로 적는다').toBe(uR.reply);
       }
 
       // S5.3 C4a-6b — message.search. 본문 멘션 되돌리기·시스템 줄·스코프(채널·스레드)·거르기(보낸 사람·첨부)·정렬·쪽(51개 → hasMore,
