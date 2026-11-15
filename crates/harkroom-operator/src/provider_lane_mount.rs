@@ -131,7 +131,9 @@ pub fn mount(
             200,
             json!({"lane": {"baseUrl": lane.base_url, "path": path.to_string_lossy()}}),
         )),
-        Err(code) => {
+        Err(raw) => {
+            // 형식 밖 코드(서버가 낸 긴 글·경로 등)는 `unavailable` 로 접는다 — 로그·응답에 원문을 싣지 않는다.
+            let code = mount_failure_code(&raw);
             // 거절 코드는 비밀이 아니다 — 러너가 실패 통지에 싣는다. 이름·주소는 찍지 않는다.
             log(&format!(
                 "provider-lane: agent={agent_id} 비밀을 못 꺼냈다 — {code}"
@@ -139,6 +141,20 @@ pub fn mount(
             let status = if code == "no_lease" { 409 } else { 502 };
             Some(refuse(req, status, &code))
         }
+    }
+}
+
+/// 마운트 실패 코드는 `^[a-z0-9_]{1,64}$` 만 그대로 싣고, 그 밖은 `unavailable` 로 접는다.
+fn mount_failure_code(raw: &str) -> String {
+    let ok = !raw.is_empty()
+        && raw.len() <= 64
+        && raw
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+    if ok {
+        raw.to_string()
+    } else {
+        "unavailable".to_string()
     }
 }
 
@@ -329,5 +345,34 @@ mod tests {
                 "{l}"
             );
         }
+    }
+
+    #[test]
+    fn mount_failure_code_outside_format_folds_to_unavailable() {
+        let ok = fwd("POST", PROVIDER_LANE_MOUNT_PATH, r#"{"cause":"c1"}"#);
+        let long = "a".repeat(65);
+        for raw in [
+            "Bad Code",
+            "/path/to/secret",
+            "x@host",
+            "",
+            long.as_str(),
+            "코드",
+        ] {
+            let lines = RefCell::new(Vec::<String>::new());
+            let mf = |_: &str, _: &str| -> Result<PathBuf, String> { Err(raw.into()) };
+            let (s, b) = parts(mount("a", &ok, RunnerLinkKind::Relay, &lane, &mf, &|l| {
+                lines.borrow_mut().push(l.into())
+            }));
+            assert_eq!(
+                (s, b),
+                (502, json!({"error": {"code": "unavailable"}})),
+                "{raw}"
+            );
+            if !raw.is_empty() {
+                assert!(!lines.borrow().join("\n").contains(raw), "{raw}");
+            }
+        }
+        assert_eq!(mount_failure_code(&"a".repeat(64)), "a".repeat(64));
     }
 }

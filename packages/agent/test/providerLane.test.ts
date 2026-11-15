@@ -324,3 +324,13 @@ describe('lane 러너 계정 폴더 — 고정 축', () => {
     await expect(presentAccounts([account], providerLaneIsDir())).rejects.toMatchObject({ code: 'harness_login_present' });
   });
 });
+
+describe('laneUnmeasuredNotice', () => {
+  it('drops @ so a version string cannot mention anyone', async () => {
+    const { laneUnmeasuredNotice } = await import('../src/providerLane.js');
+    const n = laneUnmeasuredNotice('opencode', '1.2.3 @security build\nsecond', ['1.0.0']);
+    expect(n).not.toContain('@');
+    expect(n).toContain('1.2.3 security build');
+    expect(laneUnmeasuredNotice('opencode', '@@@', [])).toContain('판을 읽지 못함');
+  });
+});

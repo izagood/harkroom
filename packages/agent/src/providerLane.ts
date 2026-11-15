@@ -201,7 +201,7 @@ const PROVIDER_LANE_MEASURED: Partial<Record<AgentHarness, { ok: (raw: string | 
  * 판 출력은 한 줄 64자까지만 싣는다 — 하네스가 낸 글자를 그대로 흘리지 않게.
  */
 export function laneUnmeasuredNotice(harness: AgentHarness, raw: string | null, measured: readonly string[]): string {
-  const seen = (raw ?? '').trim().split(/\r?\n/)[0]!.slice(0, 64).replace(/[^\x20-\x7e]/g, '') || '판을 읽지 못함';
+  const seen = (raw ?? '').trim().split(/\r?\n/)[0]!.slice(0, 64).replace(/[^\x20-\x7e]|@/g, '') || '판을 읽지 못함';
   return `⚠ ${harness} ${seen} — 이 판에서 API 키 연결 격리를 확인하지 않았다(확인한 판: ${measured.join(' · ')}). 턴은 그대로 진행한다.`;
 }
 
