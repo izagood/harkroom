@@ -187,6 +187,15 @@ async fn main() {
             core_routes.http.extend(react.http);
             core_routes.sockets.extend(react.sockets);
         }
+        // C4a-1 — `POST /mcp`. 에이전트 게이트·본문 한도(TS 와 같다) 뒤 원래 바이트를 TS 로 투명 전달한다. 아직 Rust 가 답하는 도구는 없다.
+        let mcp = harkroom_server::core::mcp::route::routes(
+            state.up.clone(),
+            auth.clone(),
+            state.cors.clone(),
+        );
+        core_routes.router = core_routes.router.merge(mcp.router);
+        core_routes.http.extend(mcp.http);
+        core_routes.sockets.extend(mcp.sockets);
         if let Some(write) = operator_write {
             // C2a — 오퍼레이터 소켓·REST. 허브는 프로세스에 하나이고 C2b~C5 의 소비자가 같은 것을 받는다.
             let operators = harkroom_server::core::operator::OperatorCore::new(

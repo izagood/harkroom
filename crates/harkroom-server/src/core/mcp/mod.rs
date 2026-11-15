@@ -1,4 +1,4 @@
-//! C4a 뼈대 — MCP(`POST /mcp`, TS `mcp/mcpPlugin.ts`)를 Rust 코어로 옮기는 자리. 아직 라우트를 붙이지 않는다.
+//! C4a 뼈대 — MCP(`POST /mcp`, TS `mcp/mcpPlugin.ts`)를 Rust 코어로 옮기는 자리. 라우트는 [`route`] (C4a-1: 게이트·한도 뒤 전부 TS 로 투명 전달).
 //!
 //! TS 쪽 사실(옮길 때 지킬 계약):
 //! - 전송은 streamable HTTP **무상태**다(`sessionIdGenerator: undefined`, mcpPlugin.ts `registerMcp`). 요청마다 서버·전송을 새로 만들고
@@ -8,6 +8,8 @@
 //! - 도구의 실패는 JSON-RPC 오류가 아니라 **성공 결과** `content[0].text = {"error":{code,message}}` 다([`tool_error`]).
 //! - 모든 도구를 감싸는 층: 비밀 본문 거절(leakGuard) · 백그라운드 회차 허용 목록(`BG_ALLOWED_TOOLS`) · 쓰기 출처 ·
 //!   presence mark(요청마다). Rust 가 도구를 받으려면 이 넷을 같이 가져야 한다.
+pub mod route;
+
 use serde_json::{Value, json};
 
 /// 도구가 무엇을 하는가 — 갈라 보낼 때 Rust 가 받을 수 있는지의 첫 판정.
