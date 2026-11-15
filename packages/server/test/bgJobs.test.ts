@@ -614,5 +614,25 @@ describe('bg_job (BG1)', () => {
         process.env.HARKROOM_BACKGROUND_ENABLED = '1';
       }
     });
+
+    it('/mcp/admit(S5.3 C4b ④-a): bg.complete 는 러너 꼴(오퍼레이터 · cause·턴 id 헤더 없음)만 받는다 — 그 밖은 not_admissible', async () => {
+      const a = await agent('bg-admit-complete');
+      const admit = (headers: Record<string, string>) => app.inject({
+        method: 'POST', url: '/mcp/admit', headers, payload: { tool: 'bg.complete', arguments: { jobId: a.accountId, status: 'done' } },
+      });
+      expect((await admit(asAgent(a.accountId))).json()).toEqual({ admitted: true });
+      for (const [name, headers] of [
+        ['① PAT', auth(a.pat)],
+        ['② 꼴이 틀린 cause 도 있음', asAgent(a.accountId, { 'x-harkroom-cause': 'nope' })],
+        ['③ cause 가 붙은 일반 턴', asAgent(a.accountId, { 'x-harkroom-cause': `mention:${a.accountId}` })],
+        ['④ bg 회차 턴', asAgent(a.accountId, { 'x-harkroom-cause': `bg:${a.accountId}` })],
+        ['⑤ 턴 id', asAgent(a.accountId, { 'x-harkroom-turn-id': a.accountId })],
+        ['⑥ 빈 턴 id', asAgent(a.accountId, { 'x-harkroom-turn-id': '' })],
+      ] as const) {
+        const r = await admit(headers);
+        expect(r.statusCode, name).toBe(400);
+        expect(r.json().error.code, name).toBe('not_admissible');
+      }
+    });
   });
 });

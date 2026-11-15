@@ -6,12 +6,14 @@
 //! 에이전트 presence(MCP `presence.ts`)는 C3 몫이라 지금 스냅샷에는 사람 소켓만 실린다.
 pub mod ask;
 pub mod ask_bundle;
+pub mod ask_bundle_resolve;
 pub mod ask_sync;
 pub mod audience;
 pub mod channels;
 pub mod content_scan;
 pub mod decide_core;
 pub mod events;
+pub mod inbox_list;
 pub mod inbox_read;
 pub mod invoke_gate;
 pub mod mandate_stamp;
@@ -31,7 +33,9 @@ pub mod operator_hub;
 pub mod operator_rest;
 pub mod tickets;
 pub mod turn_lease;
+pub mod turn_lease_routes;
 pub mod typing;
+pub mod wake_preempt;
 pub mod ws;
 
 /// `HARKROOM_CORE` — 모르는 값이면 기동을 멈춘다(조용히 켜지거나 꺼지지 않게).
