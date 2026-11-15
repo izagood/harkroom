@@ -124,6 +124,33 @@ const BG_WRITE_TOOLS = new Set(['memory.set', 'memory.archive', 'memory.merge'])
 /** cause 헤더의 백그라운드 꼴 `bg:<jobId>`. */
 const BG_CAUSE_RE = /^bg:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 
+type BgJobRow = NonNullable<Awaited<ReturnType<typeof getBgJob>>>;
+/** 백그라운드 회차 관문의 앞부분 — 허용 목록·회차 상태·입력 스레드. 쓰기(기억)면 상한 예약은 부른 쪽이 한다. `/mcp` 와 `/mcp/admit` 이 같이 쓴다. */
+export async function bgGate(
+  pool: Pool, accountId: string, bgJobId: string, toolName: string, args: Record<string, unknown>,
+): Promise<{ error: { code: string; message: string } } | { write: false } | { write: true; job: BgJobRow; args: Record<string, unknown> }> {
+  const refused = (code: string, message: string) => ({ error: { code, message } });
+  if (!BG_ALLOWED_TOOLS.has(toolName)) return refused('bg_tool_not_allowed', `백그라운드 회차에서는 ${toolName} 을 쓸 수 없다`);
+  const job = await getBgJob(pool, bgJobId);
+  if (!job || job.accountId !== accountId || job.status !== 'running') {
+    return refused('bg_job_not_running', '이 백그라운드 회차는 이미 닫혔거나 이 계정의 것이 아니다');
+  }
+  const threads = new Set(job.input.threadIds ?? []);
+  if (toolName === 'message.read' || toolName === 'thread.note' || toolName === 'thread.plan') {
+    if (typeof args.threadRootId !== 'string' || !threads.has(args.threadRootId)) {
+      return refused('bg_thread_not_in_input', '이 회차의 입력 스레드만 읽을 수 있다');
+    }
+    if (toolName === 'thread.note' && args.body !== undefined) return refused('bg_note_read_only', '백그라운드 회차에서 스레드 메모는 읽기만 한다');
+    if (toolName === 'thread.plan' && args.plan !== undefined) return refused('bg_plan_read_only', '백그라운드 회차에서 계획판은 읽기만 한다');
+    return { write: false };
+  }
+  if (toolName === 'bg.complete' || !BG_WRITE_TOOLS.has(toolName)) return { write: false };
+  return { write: true, job, args };
+}
+
+/** `/mcp/admit` 이 받지 않는 도구 — 회차 쓰기 상한·회차 닫기는 예약·부수효과가 도구 안에 있어 따로 떼어 확인할 수 없다. */
+const ADMIT_REFUSED = new Set([...BG_WRITE_TOOLS, 'bg.complete']);
+
 /** 미리보기 제목을 파일명으로 — 받은 파일이 무엇인지 보이게. 경로 성분·제어문자는 `displayName` 이 한 번 더 지운다. */
 function slugFilename(title: string): string {
   const slug = title.replace(/[\\/:*?"<>|\x00-\x1f]+/g, ' ').trim().replace(/\s+/g, '-').slice(0, 80);
@@ -520,23 +547,10 @@ function buildMcpServer(
       return register(name, config, async (...a: unknown[]) => withWriteOrigin({ runId: bgJobId, turnId }, async () => {
         if (!bgJobId) return run(...a);
         const refused = (code: string, message: string) => jsonResult({ error: { code, message } });
-        if (!BG_ALLOWED_TOOLS.has(toolName)) return refused('bg_tool_not_allowed', `백그라운드 회차에서는 ${toolName} 을 쓸 수 없다`);
-        const job = await getBgJob(pool, bgJobId);
-        if (!job || job.accountId !== account.id || job.status !== 'running') {
-          return refused('bg_job_not_running', '이 백그라운드 회차는 이미 닫혔거나 이 계정의 것이 아니다');
-        }
-        const args = (a[0] ?? {}) as Record<string, unknown>;
-        const threads = new Set(job.input.threadIds ?? []);
-        if (toolName === 'message.read' || toolName === 'thread.note' || toolName === 'thread.plan') {
-          if (typeof args.threadRootId !== 'string' || !threads.has(args.threadRootId)) {
-            return refused('bg_thread_not_in_input', '이 회차의 입력 스레드만 읽을 수 있다');
-          }
-          if (toolName === 'thread.note' && args.body !== undefined) return refused('bg_note_read_only', '백그라운드 회차에서 스레드 메모는 읽기만 한다');
-          if (toolName === 'thread.plan' && args.plan !== undefined) return refused('bg_plan_read_only', '백그라운드 회차에서 계획판은 읽기만 한다');
-          return run(...a);
-        }
-        if (toolName === 'bg.complete') return run(...a);
-        if (!BG_WRITE_TOOLS.has(toolName)) return run(...a);
+        const gate = await bgGate(pool, account.id, bgJobId, toolName, (a[0] ?? {}) as Record<string, unknown>);
+        if ('error' in gate) return jsonResult({ error: gate.error });
+        if (!gate.write) return run(...a);
+        const { job, args } = gate;
         const slug = String(toolName === 'memory.merge' ? args.into : args.slug);
         if (slug === 'core' || (Array.isArray(args.from) && args.from.includes('core'))) {
           return refused('bg_core_forbidden', '백그라운드 회차는 core 를 쓰지 못한다 — 매 턴 실리는 자리다');
@@ -3240,6 +3254,51 @@ export async function registerMcp(
         reply.raw.end(JSON.stringify({ error: { code: 'internal', message: 'mcp transport failure' } }));
       }
     }
+  });
+  /**
+   * Rust 코어(S5.3 C4a)가 도구 하나를 **스스로 답하기 전에** 부르는 입장 확인. 도구를 감싸는 층 중 Rust 가 쥘 수 없는 것을 여기서 한다:
+   * ① presence mark(인메모리 표가 TS 에 있다) ② leakGuard(비밀을 여는 keyring 이 TS 에만 있다) ③ 백그라운드 회차 허용 목록.
+   * 순서는 `/mcp` 의 감싸기와 같다(leakGuard → 회차). 호출자 **자신의** 자격(PAT·오퍼레이터 토큰+배정)으로 오므로 새 신뢰가 없다 —
+   * 이 라우트가 아는 것을 에이전트가 직접 불러도 `/mcp` 로 그 도구를 부를 때 일어나는 확인 이상을 얻지 못한다.
+   * 답: `{ admitted: true }` 또는 `{ admitted: false, result }`(result 는 도구 답 모양 그대로 — Rust 가 그대로 싣는다).
+   */
+  app.post('/mcp/admit', {
+    onRequest: async (req, reply) => {
+      if (!req.account || req.account.kind !== 'agent') {
+        return reply.code(req.account ? 403 : 401)
+          .send({ error: { code: 'agent_only', message: 'MCP surface requires an agent PAT or an operator assignment' } });
+      }
+    },
+  }, async (req, reply) => {
+    if (!req.account || req.account.kind !== 'agent') {
+      return reply.code(req.account ? 403 : 401)
+        .send({ error: { code: 'agent_only', message: 'MCP surface requires an agent PAT or an operator assignment' } });
+    }
+    agentPresence.mark(req.account.id);
+    const body = (req.body ?? {}) as { tool?: unknown; arguments?: unknown };
+    if (typeof body.tool !== 'string' || !body.tool) {
+      return reply.code(400).send({ error: { code: 'bad_request', message: 'tool is required' } });
+    }
+    const tool = body.tool;
+    if (ADMIT_REFUSED.has(tool)) {
+      return reply.code(400).send({ error: { code: 'not_admissible', message: `${tool} is not answered outside /mcp` } });
+    }
+    const args = body.arguments ?? {};
+    if (leakGuard) {
+      const hits = await leakGuard.findInTexts(req.account.id, collectStrings(args));
+      if (hits.length) {
+        await leakGuard.record(null, req.account.id, req.operator?.id ?? null, hits, `mcp:${tool}`);
+        return { admitted: false, result: jsonResult({ error: SECRET_IN_BODY }) };
+      }
+    }
+    const rawCause = req.headers[CAUSE_HEADER];
+    const bgMatch = req.operator && typeof rawCause === 'string' ? BG_CAUSE_RE.exec(rawCause) : null;
+    if (bgMatch) {
+      const gate = await bgGate(pool, req.account.id, bgMatch[1]!.toLowerCase(), tool,
+        (args && typeof args === 'object' ? args : {}) as Record<string, unknown>);
+      if ('error' in gate) return { admitted: false, result: jsonResult({ error: gate.error }) };
+    }
+    return { admitted: true };
   });
 }
 
