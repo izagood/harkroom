@@ -12,7 +12,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 
 /// 이 단계에서 Rust 가 답하는 도구.
-pub const SERVED: &[&str] = &["account.me", "channel.list", "channel.doc"];
+pub const SERVED: &[&str] = &["account.me", "account.list", "channel.list", "channel.doc"];
 
 /// 입력 스키마가 없는 도구 — SDK 는 `arguments` 를 레코드(객체)로만 받는다. 없으면 `{}` 로 들어온다.
 fn no_input(args: &Value) -> bool {
@@ -53,10 +53,29 @@ fn account_text(a: &Account) -> String {
     )
 }
 
+/// `account.list` — TS 는 질의 셋(계정 · `listTeams` · `listHandleGroups`)의 행을 `{ accounts, teams, groups }` 로 묶는다. 팀은
+/// `{id,name,leadAccountId}`, 집합은 `{id,handle}` 만 싣는다(`mcpPlugin.ts` 의 map). 같은 문장·같은 정렬을 한 문장으로.
+const ACCOUNT_LIST_SQL: &str = "select json_build_object(\
+ 'accounts', coalesce((select json_agg(t) from (select id, handle, display_name as \"displayName\", kind, \
+   disabled_at is not null as disabled, deleted_at is not null as deleted from account order by handle) t), '[]'::json), \
+ 'teams', coalesce((select json_agg(t) from (select t.id, t.name, t.lead_account_id as \"leadAccountId\" \
+   from agent_team t order by t.name) t), '[]'::json), \
+ 'groups', coalesce((select json_agg(t) from (select g.id, g.handle from handle_group g order by g.handle) t), '[]'::json))::text";
+
 /// 도구 하나의 답(`result` 글자). `None` 이면 TS 로.
 pub async fn answer(pool: &PgPool, me: &Account, tool: &str, args: &Value) -> Option<String> {
     match tool {
         "account.me" => no_input(args).then(|| text_result(&account_text(me))),
+        "account.list" => {
+            if !no_input(args) {
+                return None;
+            }
+            let j: String = sqlx::query_scalar(ACCOUNT_LIST_SQL)
+                .fetch_one(pool)
+                .await
+                .ok()?;
+            Some(text_result(&minify(&j)))
+        }
         // admin 예외 없음(TS 주석: 이 목록은 곧 message.read 로 이어진다).
         "channel.list" => {
             if !no_input(args) {
@@ -146,6 +165,27 @@ mod tests {
         assert!(src.contains(
             "const ACCOUNT_COLS = `a.id, a.handle, a.display_name as \"displayName\", a.kind, a.is_admin as \"isAdmin\",\n  a.role, a.status, a.status_text as \"statusText\", a.avatar_attachment_id as \"avatarAttachmentId\"`;"
         ));
+    }
+
+    /// 문장을 TS 원본과 맞춘다 — TS 가 칸·정렬을 바꾸면 여기서 깨진다(값 비교는 대조 시험이 한다).
+    #[test]
+    fn account_list_follows_ts_source() {
+        let mcp = include_str!("../../../../../packages/server/src/mcp/mcpPlugin.ts");
+        assert!(mcp.contains(
+            "`select id, handle, display_name as \"displayName\", kind,\n                disabled_at is not null as disabled, deleted_at is not null as deleted\n         from account order by handle`"
+        ));
+        assert!(mcp.contains(
+            "(await listTeams(pool)).map((t) => ({ id: t.id, name: t.name, leadAccountId: t.leadAccountId }))"
+        ));
+        assert!(mcp.contains(
+            "(await listHandleGroups(pool)).map((g) => ({ id: g.id, handle: g.handle }))"
+        ));
+        assert!(mcp.contains("return jsonResult({ accounts: res.rows, teams, groups });"));
+        let teams = include_str!("../../../../../packages/server/src/services/teams.ts");
+        assert!(teams.contains("t.lead_account_id as \"leadAccountId\""));
+        assert!(teams.contains("`select ${COLS} from agent_team t order by t.name`"));
+        let groups = include_str!("../../../../../packages/server/src/services/handleGroups.ts");
+        assert!(groups.contains("`select ${COLS} from handle_group g order by g.handle`"));
     }
 
     #[test]

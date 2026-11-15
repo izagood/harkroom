@@ -542,6 +542,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         ['account.me 인자 없음', 'account.me', undefined, true, 'str-id'],
         ['account.me 배열 인자 → TS', 'account.me', [], false, 2],
         ['channel.list', 'channel.list', {}, true, 3],
+        ['account.list', 'account.list', {}, true, 12],
+        ['account.list 문자열 인자 → TS', 'account.list', 'x', false, 13],
         ['channel.doc 문서 있음', 'channel.doc', { channelId: todayId }, true, 4],
         ['channel.doc 문서 없음(DM)', 'channel.doc', { channelId: String(dm.id) }, true, 5],
         ['channel.doc 없는 채널 → 빈 문서', 'channel.doc', { channelId: missingCh }, true, 6],
@@ -560,6 +562,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       const docText = (await mcpCall(`http://127.0.0.1:${port}`, agent.pat, 'channel.doc', { channelId: todayId })).text;
       expect(docText).toContain('문서 본문');
       expect((await mcpCall(`http://127.0.0.1:${port}`, agent.pat, 'channel.list', {})).text).toContain('today');
+      const listText = (await mcpCall(`http://127.0.0.1:${port}`, agent.pat, 'account.list', {})).text;
+      for (const want of ['squad', 'crew', 'leadAccountId', 'bot2']) expect(listText).toContain(want);
 
       // 빈 목록끼리 비교해 통과하지 않게 — 픽스처가 실제로 칸을 채웠는지.
       const rs = `http://127.0.0.1:${port}`;
