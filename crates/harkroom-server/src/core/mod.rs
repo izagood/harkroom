@@ -7,6 +7,7 @@
 pub mod audience;
 pub mod channels;
 pub mod events;
+pub mod mcp;
 pub mod msg_list;
 pub mod msg_react;
 pub mod msg_read;
