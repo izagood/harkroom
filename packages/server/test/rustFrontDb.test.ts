@@ -1331,7 +1331,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       await say('스레드검색 답글', { ch: searchCh, root: searchRoot });
       await say('스레드검색 남의 글', { ch: searchCh, author: admin.accountId });
       await say('100%_퍼센트 밑줄', { ch: searchCh });
-      await say('비밀검색어 못 보는 곳', { ch: privId, author: admin.accountId });
+      // 에이전트가 못 보는 곳 — 관리자와 멤버의 DM(비공개 채널 today-private 에는 에이전트가 멤버로 들어 있다).
+      await say('비밀검색어 못 보는 곳', { ch: String(dm.id), author: admin.accountId });
       for (const [name, args, answeredByRust] of [
         ['message.search', { query: '부름' }, true],
         ['message.search 시스템 줄', { query: '시스템' }, true],
