@@ -615,3 +615,40 @@ fn each_attempt_notes_its_own_account_folder_transcript() {
     );
     drop(hooks);
 }
+
+/// 회귀(Rust 러너 전수 시험 rs1, 구독 codex S2): 에이전트가 부른 턴에서 하네스가 답을 최종 텍스트로만 쓰고 끝나 **화면으로**
+/// 끝을 알았는데, 턴 뒤 침묵 통지가 화면 끝·화면 답을 못 받아 ✅ 만 달고 답을 버렸다. 정본은 그 답을 대신 올린다.
+#[test]
+fn agent_called_screen_ended_turn_proxies_the_screen_answer() {
+    use crate::silent_notice::{SilentTurnInput, SilentTurnNotice, silent_turn_notice};
+    use crate::turn_notice::NudgeCaller;
+    let answer = "S2 단독 답 첫 줄\n두 번째 줄 <div> && 원문";
+    // 구독 codex: 기록 끝말(claude 기록 읽개) 없음 · 화면으로 끝남 · 화면 답 있음.
+    let said = silent_said_of(None, true, Some(answer.to_string()));
+    assert!(said.screen_ended);
+    assert_eq!(said.screen_answer.as_deref(), Some(answer));
+    let secrets: Vec<String> = vec![];
+    let notice = silent_turn_notice(&SilentTurnInput {
+        caller: NudgeCaller::Agent,
+        last_said: said.last_said.as_deref(),
+        off_anchor: None,
+        pat: "",
+        secrets: &secrets,
+        screen_answer: said.screen_answer.as_deref(),
+        proxy_head: "",
+        record_answer: said.record_answer.as_deref(),
+        screen_ended: said.screen_ended,
+        record_proxy: false,
+    });
+    match notice {
+        SilentTurnNotice::Post { body, proxied } => {
+            assert!(proxied);
+            assert!(body.contains("S2 단독 답 첫 줄"), "{body}");
+        }
+        other => panic!("답을 옮겨야 한다: {other:?}"),
+    }
+    // 기록이 말해 주면 화면 끝·화면 답은 싣지 않는다(정본 `recordSaid === null` 조건).
+    let rec = silent_said_of(Some("기록 끝말".into()), true, Some(answer.into()));
+    assert!(!rec.screen_ended && rec.screen_answer.is_none());
+    assert_eq!(rec.last_said.as_deref(), Some("기록 끝말"));
+}

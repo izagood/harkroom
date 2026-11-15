@@ -261,6 +261,10 @@ pub struct AfterCtx {
     pub ctx: LoopCtx,
     /// 하위 에이전트를 기다리다 거뒀다면 그 수(정본 `end.backgroundCut`).
     pub background_cut: Option<usize>,
+    /// 화면으로 끝을 알았다(정본 `end.screenEnded`).
+    pub screen_ended: bool,
+    /// 그 화면의 답 줄(정본 `end.screenSaid`).
+    pub screen_said: Option<String>,
 }
 /// 비밀 마운트 닫개.
 pub type MountFn<'a> = Box<dyn FnMut(&str) -> Result<(), SecretMountError> + 'a>;
@@ -1389,18 +1393,21 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
         let Some(ctx) = self.last_ctx.clone() else {
             return Err("띄우지 않은 시도의 턴 뒤 IO".to_string());
         };
-        let background_cut = self
-            .watch
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .end
-            .background_cut
-            .map(|n| n as usize);
+        let (background_cut, screen_ended, screen_said) = {
+            let w = self.watch.lock().unwrap_or_else(|e| e.into_inner());
+            (
+                w.end.background_cut.map(|n| n as usize),
+                w.end.screen_ended,
+                w.end.screen_said.clone(),
+            )
+        };
         let res = (self.after)(
             secrets,
             &AfterCtx {
                 ctx: ctx.clone(),
                 background_cut,
+                screen_ended,
+                screen_said,
             },
         );
         // 성공한 턴만(턴 뒤 IO 까지 끝난 때) — 알린 기억을 저장하고(깨움 세션은 저장하지 않는다) 실은 recall 을 센다(정본

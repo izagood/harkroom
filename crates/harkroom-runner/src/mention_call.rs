@@ -223,14 +223,14 @@ pub fn run_mention_call<'a, L, S, H>(
                 let inputs = d.inputs.view();
                 let said = d.last_said;
                 let said2 = said.clone();
+                let (screen_ended, screen_said) = (a.screen_ended, a.screen_said.clone());
                 clients.after_turn(
                     &d.plan,
                     s,
                     &inputs,
                     Box::new(move || said.clone()),
-                    Box::new(move || SilentSaid {
-                        last_said: said2.clone(),
-                        ..SilentSaid::default()
+                    Box::new(move || {
+                        silent_said_of(said2.clone(), screen_ended, screen_said.clone())
                     }),
                 )
             });
@@ -367,3 +367,20 @@ where
 #[cfg(test)]
 #[path = "mention_call_tests.rs"]
 mod tests;
+
+/// 정본 `recordSaid ?? harnessSaid ?? end.screenSaid` 와 `screenAnswer`·`screenEnded` 고르기 — 기록이 말해 주면 그것이 끝말이고
+/// 화면 답·화면 끝은 싣지 않는다. 기록이 말이 없을 때만 화면으로 안 끝과 그 답을 싣는다(에이전트가 부른 턴은 그 답을 옮긴다).
+pub fn silent_said_of(
+    record_said: Option<String>,
+    screen_ended: bool,
+    screen_said: Option<String>,
+) -> SilentSaid {
+    let record_said = record_said.filter(|s| !s.is_empty());
+    let no_record = record_said.is_none();
+    SilentSaid {
+        last_said: record_said.or_else(|| screen_said.clone()),
+        screen_answer: if no_record { screen_said } else { None },
+        record_answer: None,
+        screen_ended: no_record && screen_ended,
+    }
+}

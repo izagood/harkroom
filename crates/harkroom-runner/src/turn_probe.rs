@@ -188,6 +188,9 @@ pub fn probe_cycle(
             probe.screen_said = io.screen_answer().filter(|s| !s.is_empty());
         }
         probe.screen_ended = true;
+        // 턴 뒤 침묵 통지가 읽는 자리에도 적는다(정본은 같은 `end` 객체) — 빠지면 에이전트가 부른 턴의 화면 답이 ✅ 로 버려진다.
+        end.screen_ended = true;
+        end.screen_said = probe.screen_said.clone();
         io.log_screen_ended();
     }
     if spoke == Some(false) {

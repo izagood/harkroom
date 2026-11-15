@@ -79,6 +79,10 @@ pub struct EndState {
     pub reclaim_armed: bool,
     /// 지금 선 회수 시계의 유예(ms).
     pub reclaim_grace_ms: u64,
+    /// 이 턴의 끝을 **화면**으로 알았다(정본 `end.screenEnded`) — 턴 뒤 침묵 통지가 ✅ 대신 답을 옮길지 가른다.
+    pub screen_ended: bool,
+    /// 화면으로 끝을 안 턴의 입력창 위 답 줄(정본 `end.screenSaid`). 판정 재료 — 글로 나갈 때는 침묵 통지의 가림을 지난다.
+    pub screen_said: Option<String>,
 }
 
 impl std::fmt::Debug for EndState {
@@ -106,6 +110,8 @@ impl std::fmt::Debug for EndState {
             .field("unsent_nudged", &self.unsent_nudged)
             .field("reclaim_armed", &self.reclaim_armed)
             .field("reclaim_grace_ms", &self.reclaim_grace_ms)
+            .field("screen_ended", &self.screen_ended)
+            .field("screen_said", &len(&self.screen_said))
             .finish()
     }
 }
