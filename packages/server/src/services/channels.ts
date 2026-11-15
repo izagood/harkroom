@@ -646,6 +646,13 @@ export async function renameSection(
  * 편집·삭제·리액션에는 쓰지 않는다. 보관된 채널에서도 잘못 올라간 것을 치울 수 있어야
  * 하고, 그 경로까지 닫으면 admin 에게 조정 수단이 없어진다.
  */
+/**
+ * `channelPostGate` 의 문장(`$1` 채널, `$2` 보는 사람). Rust 코어(`core/msg_delete.rs`, S5.3 C3a-2)가 골든으로 받아 그대로 쓴다.
+ */
+export const CHANNEL_POST_GATE_SQL = `select ${channelVisibleSql('c', '$2::uuid')} as visible,
+            ${channelArchivedSql('c')} as archived
+     from channel c where c.id = $1::uuid`;
+
 export async function channelPostGate(
   /**
    * `Pool` 뿐 아니라 **트랜잭션 클라이언트**도 받는다(#222). 예약 발송 sweep 은 행을
@@ -655,12 +662,7 @@ export async function channelPostGate(
    */
   db: Queryable, channelId: string, accountId: string,
 ): Promise<'ok' | 'forbidden' | 'archived'> {
-  const res = await db.query(
-    `select ${channelVisibleSql('c', '$2')} as visible,
-            ${channelArchivedSql('c')} as archived
-     from channel c where c.id = $1`,
-    [channelId, accountId],
-  );
+  const res = await db.query(CHANNEL_POST_GATE_SQL, [channelId, accountId]);
   const row = res.rows[0] as { visible: boolean; archived: boolean } | undefined;
   if (!row) return 'ok';
   // 쓰기 게이트도 읽기와 **같은 술어**를 본다. public 채널은 멤버가 아니어도 쓸 수 있고

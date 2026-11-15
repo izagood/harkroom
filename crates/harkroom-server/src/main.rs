@@ -130,6 +130,29 @@ async fn main() {
         }
         _ => None,
     };
+    let delete_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::msg_delete as d;
+            match write::missing_in(
+                w,
+                d::MESSAGE_DELETE_PRIVILEGES,
+                d::MESSAGE_DELETE_SEQUENCE_PRIVILEGES,
+            )
+            .await
+            {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: message delete core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!("front: message delete core off — privilege check failed: {e}");
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     let operator_on = operator_write.is_some();
     let core_router = (core_mode == harkroom_server::core::CoreMode::Rust).then(|| {
         let hub = harkroom_server::core::events::Hub::new();
@@ -186,6 +209,21 @@ async fn main() {
             core_routes.router = core_routes.router.merge(react.router);
             core_routes.http.extend(react.http);
             core_routes.sockets.extend(react.sockets);
+        }
+        // C3a-2 — 지우기·「채널에도 보이기」 켜고 끄기. 쓰기 풀에 그 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = delete_write {
+            let del = harkroom_server::core::msg_delete::routes(
+                harkroom_server::core::msg_delete::DeleteState {
+                    read: state.pool.clone(),
+                    write,
+                    trust: state.trust.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(del.router);
+            core_routes.http.extend(del.http);
+            core_routes.sockets.extend(del.sockets);
         }
         // C4a-1 — `POST /mcp`. 에이전트 게이트·본문 한도(TS 와 같다) 뒤 원래 바이트를 TS 로 투명 전달한다. 아직 Rust 가 답하는 도구는 없다.
         let mcp = harkroom_server::core::mcp::route::routes(
