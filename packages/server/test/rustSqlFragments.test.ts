@@ -22,10 +22,10 @@ import { MENTION_POLICY_SQL } from '../src/services/mentionPolicy.js';
 import { PRINCIPAL_INVOKES_SQL } from '../src/services/invokePrincipal.js';
 import { ENQUEUE_INBOX_PUSH_MANY_SQL, INBOX_PUSH_REASON_LIST, PUSH_AGENT_REPLY_DELAY_SEC } from '../src/services/push/pushJobs.js';
 import { HAS_OLDER_SQL, LIST_MESSAGES_SQL, MESSAGE_BY_ID_SQL, READ_LIST_ROW_SQL, SEARCH_MESSAGES_SQL } from '../src/services/messages.js';
-import { POST_CHANNEL_KIND_SQL, POST_IDEMPOTENCY_FIND_SQL, POST_IDEMPOTENCY_INSERT_SQL, POST_INSERT_SQL, SEQ_LOCK_CLASS, SEQ_LOCK_SQL } from '../src/services/messages.js';
+import { POST_CHANNEL_KIND_SQL, POST_IDEMPOTENCY_FIND_SQL, POST_IDEMPOTENCY_INSERT_SQL, POST_INSERT_SQL, POST_ROOT_AUTHOR_SQL, POST_THREAD_ROOT_OF_SQL, SEQ_LOCK_CLASS, SEQ_LOCK_SQL } from '../src/services/messages.js';
 import { ATTACH_FIND_SQL, ATTACH_UPDATE_SQL } from '../src/services/attachments.js';
 import { CHAT_APPROVAL_GUARD_WORDS } from '../src/services/chatApproval.js';
-import { MANDATE_DELEGATED_AGENTS_SQL, MANDATE_OWN_AGENT_SQL, MANDATE_ROOT_INSERT_SQL, MESSAGE_SET_MANDATE_SQL } from '../src/services/mandates.js';
+import { MANDATE_REPLY_CONTINUE_SQL, MANDATE_KEYLESS_OWN_SQL, MANDATE_KEYLESS_ROOT_SQL, MANDATE_KEYLESS_TOUCH_SQL, MANDATE_KEYLESS_INSERT_SQL, MANDATE_KEYLESS_FIND_SQL, MANDATE_KEYLESS_ROOT_SET_SQL, MANDATE_DELEGATED_AGENTS_SQL, MANDATE_OWN_AGENT_SQL, MANDATE_ROOT_INSERT_SQL, MESSAGE_SET_MANDATE_SQL } from '../src/services/mandates.js';
 import { DECIDER_CHANNEL_SQL, DECIDER_LIST_SQL, DECIDER_ROW_SQL, DECIDER_SEEN_SQL } from '../src/services/deciders.js';
 import { URL_CANDIDATE_SOURCE } from '@harkroom/shared';
 import { ACCEPT_ROOT_SQL, DECISION_CARD_SQL, IRREVERSIBLE_WORDS, READ_BUNDLE_SQL } from '../src/services/askBundles.js';
@@ -119,6 +119,8 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     post_seq_lock_class: String(SEQ_LOCK_CLASS),
     post_idempotency_find: POST_IDEMPOTENCY_FIND_SQL,
     post_insert: POST_INSERT_SQL,
+    post_thread_root_of: POST_THREAD_ROOT_OF_SQL,
+    post_root_author: POST_ROOT_AUTHOR_SQL,
     post_idempotency_insert: POST_IDEMPOTENCY_INSERT_SQL,
     post_channel_kind: POST_CHANNEL_KIND_SQL,
     attach_find: ATTACH_FIND_SQL,
@@ -130,6 +132,13 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     mandate_root_insert: MANDATE_ROOT_INSERT_SQL,
     mandate_delegated_agents: MANDATE_DELEGATED_AGENTS_SQL,
     message_set_mandate: MESSAGE_SET_MANDATE_SQL,
+    mandate_reply_continue: MANDATE_REPLY_CONTINUE_SQL,
+    mandate_keyless_own: MANDATE_KEYLESS_OWN_SQL,
+    mandate_keyless_root: MANDATE_KEYLESS_ROOT_SQL,
+    mandate_keyless_touch: MANDATE_KEYLESS_TOUCH_SQL,
+    mandate_keyless_insert: MANDATE_KEYLESS_INSERT_SQL,
+    mandate_keyless_find: MANDATE_KEYLESS_FIND_SQL,
+    mandate_keyless_root_set: MANDATE_KEYLESS_ROOT_SET_SQL,
     decider_row: DECIDER_ROW_SQL,
     decider_seen: DECIDER_SEEN_SQL,
     decider_list: DECIDER_LIST_SQL,

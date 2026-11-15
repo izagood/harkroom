@@ -3123,7 +3123,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           const json = text ? JSON.parse(text) as Record<string, unknown> : {};
           return { status: res.status, code: (json.error as { code?: string } | undefined)?.code, json, count: res.headers.get('x-harkroom-notified-count') };
         };
-        const HANDED = ['TS: 승인 낱말', 'TS: 메시지 링크', 'TS: URL', 'TS: 스레드 답글', 'TS: DM', 'TS: 에이전트(PAT)', 'TS: 모델 지정 키'];
+        const HANDED = ['TS: 승인 낱말', 'TS: 메시지 링크', 'TS: URL', 'TS: DM', 'TS: 에이전트(PAT)', 'TS: 모델 지정 키'];
         const run = async (base: string, sd: Side) => {
           const out: { step: string; status: number; code?: string; count: string | null; body: unknown; id?: string }[] = [];
           const step = async (name: string, path: string, body: unknown, token?: string, key?: string) => {
@@ -3147,7 +3147,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           await step('TS: 승인 낱말', mPath(todayId), { body: '승인합니다' });
           await step('TS: 메시지 링크', mPath(todayId), { body: `이것 harkroom://message/${sd.root}` });
           await step('TS: URL', mPath(todayId), { body: '자료 https://example.com/a' });
-          await step('TS: 스레드 답글', mPath(todayId), { body: '답글', threadRootId: sd.root });
+          // C1c-3a 부터 Rust 가 맡는다(자세한 대조는 아래 사람 답글 블록).
+          await step('스레드 답글', mPath(todayId), { body: '답글', threadRootId: sd.root });
           await step('TS: DM', mPath(String(dm.id)), { body: 'DM 글' });
           await step('TS: 에이전트(PAT)', mPath(todayId), { body: '에이전트 글' }, agent.pat);
           await step('TS: 모델 지정 키', mPath(todayId), { body: '모델', agentModels: [] });
@@ -3170,7 +3171,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           .map((e) => shape(sd)(JSON.parse(JSON.stringify(e))));
         const idsOf = (o: typeof tsOut, handed: boolean) => o.filter((x) => x.status === 201 && HANDED.includes(x.step) === handed).map((x) => x.id!);
         const want = created(tsEvents, idsOf(tsOut, false), T);
-        expect(want.length, '맡은 글마다 message.created').toBe(3);
+        expect(want.length, '맡은 글마다 message.created(C1c-3a 부터 스레드 답글 포함)').toBe(4);
         const until8 = Date.now() + 10_000;
         while (created(busEvents, idsOf(rsOut, false), R).length < want.length && Date.now() < until8) await new Promise((res) => setTimeout(res, 100));
         expect(created(busEvents, idsOf(rsOut, false), R), 'Rust 가 낸 message.created = TS').toEqual(want);
@@ -3295,6 +3296,113 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(by('@channel').inbox.length).toBeGreaterThan(1);
         expect(by('사람 하나').events.length, 'message.created + inbox.updated').toBe(2);
         for (const r of saved) await db.pool.query(`update agent_config set invoke_scope = $2, user_decide = $3 where account_id = $1`, [r.id, r.scope, r.ud]);
+      }
+
+      // S5.3 C1c-3a — 사람 답글. 머리를 서버마다 새로 세우고(직접 넣거나 그 서버로 올려) 답을 TS·Rust 에 돌려 응답·글·inbox
+      // (`thread_reply`)·위임(잇기·키 없는 머리)·감사·이벤트를 견준다. 아직 TS 몫인 스레드(지워진 머리·열린 카드)도 두 쪽이 같다.
+      {
+        const mPath = `/channels/${todayId}/messages`;
+        const saved = (await db.pool.query<{ id: string; scope: string }>(
+          `select account_id::text as id, invoke_scope as scope from agent_config where account_id = any($1::uuid[])`,
+          [[agent.accountId, bot2.accountId]])).rows;
+        await db.pool.query(`update agent_config set invoke_scope = 'owner' where account_id = $1`, [agent.accountId]);
+        await db.pool.query(`update agent_config set invoke_scope = 'community' where account_id = $1`, [bot2.accountId]);
+        const names = new Map<string, string>([[admin.accountId, 'ADMIN'], [member.accountId, 'MEM'], [member2.accountId, 'MEM2'], [agent.accountId, 'BOT'], [bot2.accountId, 'BOT2']]);
+        const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+        const shape = (v: unknown): unknown => {
+          if (Array.isArray(v)) return v.map(shape);
+          if (v && typeof v === 'object') {
+            const o: Record<string, unknown> = {};
+            for (const [k, x] of Object.entries(v as Record<string, unknown>)) o[k] = /At$/.test(k) ? (x === null ? null : typeof x) : k === 'seq' ? typeof x : shape(x);
+            return o;
+          }
+          return typeof v === 'string' ? v.replace(UUID_RE, (id) => names.get(id) ?? '<uuid>') : v;
+        };
+        const send = async (base: string, payload: Record<string, unknown>, token: string) => {
+          const res = await fetch(`${base}${mPath}`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': J }, body: JSON.stringify(payload) });
+          const json = await res.json() as Record<string, unknown>;
+          return { status: res.status, count: res.headers.get('x-harkroom-notified-count'), ids: shape(res.headers.get('x-harkroom-notified')), id: json.id as string | undefined, message: shape(json) };
+        };
+        const direct = async (author: string, body: string) => (await db.pool.query<{ id: string }>(
+          `insert into message (channel_id, author_id, body, kind) values ($1, $2, $3, 'user') returning id::text as id`, [todayId, author, body])).rows[0]!.id;
+        const settle = () => new Promise((res) => setTimeout(res, 300));
+        const facts = async (id: string | undefined) => id ? {
+          inbox: shape((await db.pool.query(`select account_id::text as who, reason from inbox where message_id = $1 order by id`, [id])).rows),
+          mandate: shape((await db.pool.query(
+            `select d.owner_account_id::text as owner, d.delegator_account_id::text as delegator, d.root_message_id = m.thread_root_id as on_root,
+                    (select r.mandate_id = d.id from message r where r.id = m.thread_root_id) as root_keyed
+               from message m join mandate d on d.id = m.mandate_id where m.id = $1`, [id])).rows),
+          audit: shape((await db.pool.query(
+            `select g.action, g.actor_id::text as actor, g.detail - 'mandateId' - 'rootMessageId' - 'threadRootId' as detail
+               from audit_log g join message m on g.target = m.mandate_id::text where m.id = $1`, [id])).rows),
+        } : {};
+        // [이름, 머리 만들기(base → 머리 id), 답 본문(머리 id → payload), 답하는 사람]
+        type Scene = [string, (base: string) => Promise<string>, (root: string) => Record<string, unknown>, string, ('ts' | undefined)?];
+        const SCENES: Scene[] = [
+          ['남의 머리에 답 → thread_reply', async () => direct(member.accountId, '질문'), (r) => ({ body: '답', threadRootId: r }), A],
+          ['자기 머리에 답 → 아무도', async () => direct(admin.accountId, '혼잣말'), (r) => ({ body: '덧붙임', threadRootId: r }), A],
+          ['에이전트 머리(누구나) → 게이트 통과', async () => direct(bot2.accountId, '보고'), (r) => ({ body: '고마워', threadRootId: r }), member.token],
+          ['에이전트 머리(주인만) → 게이트 막힘', async () => direct(agent.accountId, '보고'), (r) => ({ body: '고마워', threadRootId: r }), member.token],
+          ['부름 + 머리 주인', async () => direct(member.accountId, '질문'), (r) => ({ body: '@mem2 같이 봐', threadRootId: r }), A],
+          ['머리 주인을 부름(한 번만)', async () => direct(member.accountId, '질문'), (r) => ({ body: '@mem 답이야', threadRootId: r }), A],
+          ['위임 잇기', async (b) => (await send(b, { body: '@bot 맡아 줘' }, A)).id!, () => ({}), A],
+          ['키 없는 머리 → owner_reply 위임', async () => direct(admin.accountId, '계획'), (r) => ({ body: '@bot 이어서', threadRootId: r }), A],
+          ['alsoInChannel', async () => direct(member.accountId, '질문'), (r) => ({ body: '채널에도', threadRootId: r, alsoInChannel: true }), A],
+          ['없는 머리 → bad_thread', async () => '00000000-0000-4000-8000-000000000000', (r) => ({ body: '답', threadRootId: r }), A],
+          ['지워진 머리 → TS 몫', async () => { const id = await direct(member.accountId, '지울 글'); await db.pool.query(`update message set deleted_at = now() where id = $1`, [id]); return id; }, (r) => ({ body: '답', threadRootId: r }), A, 'ts'],
+          ['열린 카드 스레드 → TS 몫', async () => { const id = await direct(member.accountId, '물음'); await db.pool.query(
+            `insert into message (channel_id, thread_root_id, author_id, body, kind, meta) values ($1, $2, $3, '고를래?', 'user', $4::jsonb)`,
+            [todayId, id, bot2.accountId, JSON.stringify({ kind: 'ask', ask: { to: { kind: 'human' }, options: [{ id: 'a', label: 'A' }] } })]); return id; },
+          (r) => ({ body: 'A 로', threadRootId: r }), A, 'ts'],
+          ['머리 id 가 null → 400', async () => '', () => ({ body: '답', threadRootId: null }), A],
+        ];
+        // TS 몫 갈래는 Rust 서버에서도 TS 가 올리므로 그 장면의 이벤트는 TS 버스에서 읽는다(Rust outbox 에 없어야 한다).
+        const handedOnRust: string[] = [];
+        const run = async (base: string, own: () => WorkspaceEvent[], tsBus: () => WorkspaceEvent[]) => {
+          const out: unknown[] = [];
+          for (const [name, mkRoot, payload, token, side] of SCENES) {
+            const evs = side === 'ts' ? tsBus : own;
+            const root = await mkRoot(base);
+            await settle();
+            const p = payload(root);
+            const body = Object.keys(p).length ? p : { body: '추가로', threadRootId: root };
+            const before = evs().length;
+            const busBefore = own().length;
+            const r = await send(base, body, token);
+            const until = Date.now() + 10_000;
+            const mine = () => evs().slice(before).filter((e) =>
+              (e.type === 'message.created' && (e as { message: { id: string } }).message.id === r.id) || e.type === 'inbox.updated');
+            while (r.status === 201 && !mine().some((e) => e.type === 'message.created') && Date.now() < until) await new Promise((res) => setTimeout(res, 100));
+            await settle();
+            if (side === 'ts' && own !== tsBus && own().slice(busBefore).some((e) => e.type === 'message.created' && (e as { message: { id: string } }).message.id === r.id)) handedOnRust.push(name);
+            out.push({ name, ...r, id: undefined, ...(await facts(r.id)), events: shape(JSON.parse(JSON.stringify(mine()))) });
+          }
+          return out;
+        };
+        const tsEvents: WorkspaceEvent[] = [];
+        const offTs = onEvent((e) => { tsEvents.push(e); });
+        const tsGet = () => tsEvents;
+        const tsOut = await run(tsUrl, tsGet, tsGet);
+        const rsOut = await run(rsUrl, () => busEvents, tsGet);
+        offTs();
+        expect(rsOut).toEqual(tsOut);
+        expect(handedOnRust, 'TS 몫 스레드의 답은 Rust outbox 에 없다').toEqual([]);
+        type Row = { name: string; status: number; count: string; inbox: { who: string; reason: string }[]; mandate: unknown[]; audit: { detail: { via: string } }[]; message: { alsoInChannel?: boolean } };
+        const by = (n: string) => (tsOut as Row[]).find((x) => x.name === n)!;
+        expect(by('남의 머리에 답 → thread_reply').inbox).toEqual([{ who: 'MEM', reason: 'thread_reply' }]);
+        expect(by('자기 머리에 답 → 아무도').count).toBe('0');
+        expect(by('에이전트 머리(누구나) → 게이트 통과').inbox).toEqual([{ who: 'BOT2', reason: 'thread_reply' }]);
+        expect(by('에이전트 머리(주인만) → 게이트 막힘').count).toBe('0');
+        expect(by('부름 + 머리 주인').inbox.map((x) => x.reason)).toEqual(['mention', 'thread_reply']);
+        expect(by('머리 주인을 부름(한 번만)').inbox).toEqual([{ who: 'MEM', reason: 'mention' }]);
+        expect(by('위임 잇기').mandate).toEqual([{ owner: 'ADMIN', delegator: 'ADMIN', on_root: true, root_keyed: true }]);
+        expect(by('키 없는 머리 → owner_reply 위임').mandate).toEqual([{ owner: 'ADMIN', delegator: 'ADMIN', on_root: true, root_keyed: true }]);
+        expect(by('키 없는 머리 → owner_reply 위임').audit.map((a) => a.detail.via)).toEqual(['owner_reply']);
+        expect(by('alsoInChannel').message.alsoInChannel).toBe(true);
+        expect(by('없는 머리 → bad_thread').status).toBe(400);
+        expect(by('지워진 머리 → TS 몫').status).toBe(201);
+        expect(by('열린 카드 스레드 → TS 몫').status).toBe(201);
+        for (const r of saved) await db.pool.query(`update agent_config set invoke_scope = $2 where account_id = $1`, [r.id, r.scope]);
       }
       await bus.stop();
 

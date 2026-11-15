@@ -61,6 +61,30 @@ export const MANDATE_DELEGATED_AGENTS_SQL = `select c.account_id as id from agen
       where c.account_id = any($1::uuid[]) and a.kind = 'agent' and c.owner_account_id is not null
       order by array_position($1::uuid[], c.account_id)`;
 
+/** 답글 갈래(머리의 위임 잇기·`mandateForKeylessRoot`) — Rust `core/mandate_stamp.rs` 가 골든으로 받는다(C1c-3a, 자리표에 형을 붙인다). */
+export const MANDATE_REPLY_CONTINUE_SQL = `update mandate d set last_activity_at = greatest(d.last_activity_at, $3::timestamptz)
+         from message r
+        where r.id = $1::uuid and d.id = r.mandate_id and d.ended_at is null
+          and (d.owner_account_id = $2::uuid or coalesce(d.delegator_account_id, d.owner_account_id) = $2::uuid)
+        returning d.id`;
+export const MANDATE_KEYLESS_OWN_SQL = `select 1 from agent_config c join account a on a.id = c.account_id
+      where c.account_id = any($1::uuid[]) and c.owner_account_id = $2::uuid and a.kind = 'agent' limit 1`;
+export const MANDATE_KEYLESS_ROOT_SQL = `select m.mandate_id as "mandateId",
+            (m.author_id = $3::uuid or exists (select 1 from agent_config c where c.account_id = m.author_id and c.owner_account_id = $3::uuid)) as "ownAuthor"
+       from message m
+      where m.id = $1::uuid and m.channel_id = $2::uuid and m.thread_root_id is null and m.deleted_at is null
+        -- ⑤b(security 4): 자동화 회차 글은 뿌리가 되지 않는다 — 회차 글에는 키를 적지 않는다.
+        and not (coalesce(m.meta, '{}'::jsonb) ? 'automation')
+      for update of m`;
+export const MANDATE_KEYLESS_TOUCH_SQL = `update mandate set last_activity_at = greatest(last_activity_at, $3::timestamptz)
+        where id = $1::uuid and owner_account_id = $2::uuid and ended_at is null returning id`;
+export const MANDATE_KEYLESS_INSERT_SQL = `insert into mandate (owner_account_id, delegator_account_id, root_message_id, channel_id, thread_root_id, created_at, last_activity_at)
+     values ($1::uuid, $1::uuid, $2::uuid, $3::uuid, $2::uuid, $4::timestamptz, $4::timestamptz)
+     on conflict (root_message_id) do nothing
+     returning id`;
+export const MANDATE_KEYLESS_FIND_SQL = `select id from mandate where root_message_id = $1::uuid and owner_account_id = $2::uuid and ended_at is null`;
+export const MANDATE_KEYLESS_ROOT_SET_SQL = `update message set mandate_id = $2::uuid where id = $1::uuid and mandate_id is null`;
+
 /** 사람 글의 위임. 새 머리면 `notifiedIds` 중 이 사람 소유 에이전트가 있을 때 만든다. 답글이면 머리의 위임(소유자 본인일 때)을 잇는다. */
 export async function stampHumanMandate(client: Q, args: {
   messageId: string; authorId: string; channelId: string; threadRootId: string | null; notifiedIds: string[]; now?: Date;
@@ -85,11 +109,7 @@ export async function stampHumanMandate(client: Q, args: {
     }
   } else {
     mandateId = (await client.query<{ id: string }>(
-      `update mandate d set last_activity_at = greatest(d.last_activity_at, $3)
-         from message r
-        where r.id = $1 and d.id = r.mandate_id and d.ended_at is null
-          and (d.owner_account_id = $2 or coalesce(d.delegator_account_id, d.owner_account_id) = $2)
-        returning d.id`,
+      MANDATE_REPLY_CONTINUE_SQL,
       [args.threadRootId, args.authorId, now])).rows[0]?.id ?? null;
     if (!mandateId) mandateId = await mandateForKeylessRoot(client, { ...args, threadRootId: args.threadRootId, now });
     if (!mandateId) return null;
@@ -122,41 +142,30 @@ async function mandateForKeylessRoot(client: Q, args: {
 }): Promise<string | null> {
   if (!args.notifiedIds.length) return null;
   const own = await client.query(
-    `select 1 from agent_config c join account a on a.id = c.account_id
-      where c.account_id = any($1::uuid[]) and c.owner_account_id = $2 and a.kind = 'agent' limit 1`,
+    MANDATE_KEYLESS_OWN_SQL,
     [args.notifiedIds, args.authorId]);
   if (!own.rowCount) return null;
   // 머리 행을 잠가 같은 머리의 동시 답글을 줄 세운다 — 기다린 쪽은 먼저 온 쪽이 적은 `mandate_id` 를 보고 그 위임을 잇는다.
   const root = (await client.query<{ mandateId: string | null; ownAuthor: boolean }>(
-    `select m.mandate_id as "mandateId",
-            (m.author_id = $3 or exists (select 1 from agent_config c where c.account_id = m.author_id and c.owner_account_id = $3)) as "ownAuthor"
-       from message m
-      where m.id = $1 and m.channel_id = $2 and m.thread_root_id is null and m.deleted_at is null
-        -- ⑤b(security 4): 자동화 회차 글은 뿌리가 되지 않는다 — 회차 글에는 키를 적지 않는다.
-        and not (coalesce(m.meta, '{}'::jsonb) ? 'automation')
-      for update of m`,
+    MANDATE_KEYLESS_ROOT_SQL,
     [args.threadRootId, args.channelId, args.authorId])).rows[0];
   if (!root?.ownAuthor) return null;
   if (root.mandateId) {
     return (await client.query<{ id: string }>(
-      `update mandate set last_activity_at = greatest(last_activity_at, $3)
-        where id = $1 and owner_account_id = $2 and ended_at is null returning id`,
+      MANDATE_KEYLESS_TOUCH_SQL,
       [root.mandateId, args.authorId, args.now])).rows[0]?.id ?? null;
   }
   const inserted = (await client.query<{ id: string }>(
-    `insert into mandate (owner_account_id, delegator_account_id, root_message_id, channel_id, thread_root_id, created_at, last_activity_at)
-     values ($1, $1, $2, $3, $2, $4, $4)
-     on conflict (root_message_id) do nothing
-     returning id`,
+    MANDATE_KEYLESS_INSERT_SQL,
     [args.authorId, args.threadRootId, args.channelId, args.now])).rows[0];
   const made = (await client.query<{ id: string }>(
-    `select id from mandate where root_message_id = $1 and owner_account_id = $2 and ended_at is null`,
+    MANDATE_KEYLESS_FIND_SQL,
     [args.threadRootId, args.authorId])).rows[0];
   if (!made) return null;
   if (inserted?.id === made.id) {
     args.created?.push({ mandateId: made.id, ownerId: args.authorId, rootMessageId: args.threadRootId, channelId: args.channelId, threadRootId: args.threadRootId, via: 'owner_reply' });
   }
-  await client.query(`update message set mandate_id = $2 where id = $1 and mandate_id is null`, [args.threadRootId, made.id]);
+  await client.query(MANDATE_KEYLESS_ROOT_SET_SQL, [args.threadRootId, made.id]);
   return made.id;
 }
 
