@@ -77,9 +77,14 @@ impl RunnerPick {
     }
 }
 
-/// rust 대상인가 — `runner: "node"` 로 되돌리지 않았으면 그렇다(s9① 기본 rust). 이때만 파일·풀 해석을 본다.
-pub fn wants_rust(local: Option<&LocalAgent>) -> bool {
-    local.and_then(|l| l.runner) != Some(RunnerKind::Node)
+/// rust 대상인가(이때만 파일·풀 해석을 본다). 「단계」(jaebin 11-15): 명시 `"rust"` 는 rust, 명시 `"node"`(모르는 값 포함)는
+/// node, 칸이 없으면 **node 가 없을 때만** rust — node 가 있으면 지금처럼 node 다. 운영 전체 전환은 전수 시험 뒤.
+pub fn wants_rust(local: Option<&LocalAgent>, node_present: bool) -> bool {
+    match local.and_then(|l| l.runner) {
+        Some(RunnerKind::Rust) => true,
+        Some(RunnerKind::Node) => false,
+        None => !node_present,
+    }
 }
 
 /// TS `pickRunner`. `harness` 는 서버 정의의 하네스 이름이다.
@@ -88,8 +93,9 @@ pub fn pick_runner(
     rust_runner_present: bool,
     account_use: AccountUse,
     harness: &str,
+    node_present: bool,
 ) -> RunnerPick {
-    if !wants_rust(local) {
+    if !wants_rust(local, node_present) {
         return RunnerPick::NODE;
     }
     if !RUST_RUNNER_HARNESSES.contains(&harness) {
@@ -131,10 +137,13 @@ mod tests {
     fn explicit_node_is_node_without_reason() {
         for h in ["claude-code", "codex", "gemini"] {
             for u in [AccountUse::None, AccountUse::Pool, AccountUse::Unreadable] {
-                assert_eq!(pick_runner(Some(&node()), true, u, h), RunnerPick::NODE);
+                assert_eq!(
+                    pick_runner(Some(&node()), true, u, h, false),
+                    RunnerPick::NODE
+                );
             }
         }
-        assert!(!wants_rust(Some(&node())));
+        assert!(!wants_rust(Some(&node()), false));
     }
 
     /// s9①: `runner` 칸이 없으면(로컬 항목 자체가 없어도) 기본 rust — 조건을 못 넘으면 같은 이유로 node.
@@ -142,11 +151,11 @@ mod tests {
     fn absent_runner_defaults_to_rust() {
         let absent = LocalAgent::default();
         assert_eq!(absent.runner, None);
-        assert!(wants_rust(Some(&absent)) && wants_rust(None));
+        assert!(wants_rust(Some(&absent), false) && wants_rust(None, false));
         for local in [Some(&absent), None] {
             for h in RUST_RUNNER_HARNESSES {
                 assert_eq!(
-                    pick_runner(local, true, AccountUse::None, h),
+                    pick_runner(local, true, AccountUse::None, h, false),
                     RunnerPick {
                         kind: RunnerKind::Rust,
                         fallback: None
@@ -155,19 +164,19 @@ mod tests {
                 );
             }
             assert_eq!(
-                pick_runner(local, true, AccountUse::Pool, "claude-code").kind,
+                pick_runner(local, true, AccountUse::Pool, "claude-code", false).kind,
                 RunnerKind::Rust
             );
             assert_eq!(
-                pick_runner(local, false, AccountUse::None, "claude-code").fallback,
+                pick_runner(local, false, AccountUse::None, "claude-code", false).fallback,
                 Some(RunnerFallback::RunnerMissing)
             );
             assert_eq!(
-                pick_runner(local, true, AccountUse::None, "gemini").fallback,
+                pick_runner(local, true, AccountUse::None, "gemini", false).fallback,
                 Some(RunnerFallback::HarnessUnsupported)
             );
             assert_eq!(
-                pick_runner(local, true, AccountUse::Unreadable, "claude-code").fallback,
+                pick_runner(local, true, AccountUse::Unreadable, "claude-code", false).fallback,
                 Some(RunnerFallback::AccountPoolUnreadable)
             );
         }
@@ -181,11 +190,11 @@ mod tests {
             ..rust()
         };
         assert_eq!(
-            pick_runner(Some(&pool), true, AccountUse::Pool, "claude-code").kind,
+            pick_runner(Some(&pool), true, AccountUse::Pool, "claude-code", false).kind,
             RunnerKind::Rust
         );
         assert_eq!(
-            pick_runner(Some(&rust()), true, AccountUse::Pool, "claude-code").kind,
+            pick_runner(Some(&rust()), true, AccountUse::Pool, "claude-code", false).kind,
             RunnerKind::Rust
         );
         let lane = LocalAgent {
@@ -193,7 +202,7 @@ mod tests {
             ..rust()
         };
         assert_eq!(
-            pick_runner(Some(&lane), true, AccountUse::None, "claude-code").kind,
+            pick_runner(Some(&lane), true, AccountUse::None, "claude-code", false).kind,
             RunnerKind::Rust
         );
     }
@@ -211,13 +220,13 @@ mod tests {
             "",
             "new-harness",
         ] {
-            let p = pick_runner(Some(&rust()), true, AccountUse::None, h);
+            let p = pick_runner(Some(&rust()), true, AccountUse::None, h, false);
             assert_eq!(p.kind, RunnerKind::Node, "{h}");
             assert_eq!(p.fallback, Some(RunnerFallback::HarnessUnsupported), "{h}");
         }
         for h in ["claude-code", "codex", "opencode", "kilo", "pi", "omp"] {
             assert_eq!(
-                pick_runner(Some(&rust()), true, AccountUse::None, h).kind,
+                pick_runner(Some(&rust()), true, AccountUse::None, h, false).kind,
                 RunnerKind::Rust,
                 "{h}"
             );
@@ -227,13 +236,38 @@ mod tests {
     #[test]
     fn unreadable_and_missing_stay_on_node() {
         assert_eq!(
-            pick_runner(Some(&rust()), true, AccountUse::Unreadable, "claude-code").fallback,
+            pick_runner(
+                Some(&rust()),
+                true,
+                AccountUse::Unreadable,
+                "claude-code",
+                false
+            )
+            .fallback,
             Some(RunnerFallback::AccountPoolUnreadable)
         );
         assert_eq!(AccountUse::default(), AccountUse::Unreadable);
         assert_eq!(
-            pick_runner(Some(&rust()), false, AccountUse::None, "claude-code").fallback,
+            pick_runner(Some(&rust()), false, AccountUse::None, "claude-code", false).fallback,
             Some(RunnerFallback::RunnerMissing)
         );
+    }
+
+    #[test]
+    fn staged_default_rust_only_without_node() {
+        let absent = LocalAgent::default();
+        // node 있음: 칸 없음은 node(이유 없음), 명시 rust 는 rust.
+        assert!(!wants_rust(Some(&absent), true) && !wants_rust(None, true));
+        assert_eq!(
+            pick_runner(Some(&absent), true, AccountUse::None, "claude-code", true),
+            RunnerPick::NODE
+        );
+        assert_eq!(
+            pick_runner(Some(&rust()), true, AccountUse::None, "claude-code", true).kind,
+            RunnerKind::Rust
+        );
+        // node 없음: 칸 없음은 rust 대상, 명시 node 는 여전히 node.
+        assert!(wants_rust(Some(&absent), false) && wants_rust(None, false));
+        assert!(!wants_rust(Some(&node()), false));
     }
 }

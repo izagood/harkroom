@@ -313,7 +313,9 @@ impl AssignmentReconciler {
         self.deps.link_expect(&runner_id, &agent_id, &secret);
         let env = self.runner_env(&runner_id, &secret, &mcp_path, local.as_ref());
         // 러너 구현(B4-5c → L3c-3e). pi·omp 하네스·풀 해석 못 읽음·파일 없음이면 node 다(`runner_pick.rs`).
-        let wants = crate::runner_pick::wants_rust(local.as_ref());
+        // 「단계」: 칸 없음은 node 가 없을 때만 rust(명시 rust 는 늘 rust 대상).
+        let node_present = self.deps.node_present();
+        let wants = crate::runner_pick::wants_rust(local.as_ref(), node_present);
         let account_use = || {
             self.deps.claude_account_use(
                 &agent_id,
@@ -326,22 +328,40 @@ impl AssignmentReconciler {
                 self.deps.rust_runner_present(),
                 account_use(),
                 &definition.harness,
+                node_present,
             )
         } else {
             crate::runner_pick::RunnerPick::NODE
         };
         // node 러너로 가는데 node 가 없다(s9) — 띄우면 127 로 죽고 끝없이 다시 뜬다. Rust 러너 조건(허용 하네스·풀 읽힘·
         // 파일 있음)을 넘으면 Rust 로, 못 넘으면 띄우지 않고 거절해 서버에 사유를 남긴다(조용히 돌지 않게).
-        if pick.kind == crate::local_agents::RunnerKind::Node && !self.deps.node_present() {
-            let rust = crate::runner_pick::pick_runner(
-                Some(&LocalAgent {
-                    runner: crate::local_agents::RunnerKind::Rust,
-                    ..local.clone().unwrap_or_default()
-                }),
-                self.deps.rust_runner_present(),
-                account_use(),
-                &definition.harness,
-            );
+        if pick.kind == crate::local_agents::RunnerKind::Rust
+            && !node_present
+            && local.as_ref().and_then(|l| l.runner).is_none()
+        {
+            self.deps.log(&format!(
+                "러너: node 가 없어 Rust 러너로 띄운다(기본): agent={}",
+                definition.handle
+            ));
+        }
+        if pick.kind == crate::local_agents::RunnerKind::Node && !node_present {
+            // 명시 `"node"`(모르는 값 포함)는 「Rust 에서 문제가 나서 되돌린」 뜻일 수 있다 — Rust 로 넘기지 않고 거절한다(security #2169).
+            let explicit_node = local.as_ref().and_then(|l| l.runner)
+                == Some(crate::local_agents::RunnerKind::Node);
+            let rust = if explicit_node {
+                crate::runner_pick::RunnerPick::NODE
+            } else {
+                crate::runner_pick::pick_runner(
+                    Some(&LocalAgent {
+                        runner: Some(crate::local_agents::RunnerKind::Rust),
+                        ..local.clone().unwrap_or_default()
+                    }),
+                    self.deps.rust_runner_present(),
+                    account_use(),
+                    &definition.harness,
+                    node_present,
+                )
+            };
             if rust.kind == crate::local_agents::RunnerKind::Rust {
                 self.deps.log(&format!(
                     "러너: node 가 없어 Rust 러너로 띄운다: agent={}",
@@ -353,7 +373,11 @@ impl AssignmentReconciler {
                 self.deps.log(&format!(
                     "러너를 띄우지 않는다: agent={} — node 가 없고 Rust 러너 조건도 못 넘었다({})",
                     definition.handle,
-                    rust.fallback.map_or("unknown", |f| f.as_str())
+                    if explicit_node {
+                        "runner: \"node\" 명시"
+                    } else {
+                        rust.fallback.map_or("unknown", |f| f.as_str())
+                    }
                 ));
                 return Ok(AssignOutcome::Refused("runner_node_missing".into()));
             }
@@ -988,22 +1012,14 @@ mod tests {
                 RunnerKind::Node,
                 Some(RunnerFallback::RunnerMissing),
             ),
-            // s9①: `runner` 안 적음 → 기본 rust, 파일 없음이면 같은 이유로 node.
+            // s9①「단계」: `runner` 안 적음 + node 있음 → 지금처럼 node(이유 없이). node 없을 때는 아래 시험들.
             (
                 LocalAgent::default(),
                 "claude-code",
                 AccountUse::None,
                 true,
-                RunnerKind::Rust,
-                None,
-            ),
-            (
-                LocalAgent::default(),
-                "claude-code",
-                AccountUse::None,
-                false,
                 RunnerKind::Node,
-                Some(RunnerFallback::RunnerMissing),
+                None,
             ),
             // `runner: "node"` 되돌림 → 이유 없이 node.
             (
@@ -1271,6 +1287,44 @@ mod tests {
                 .iter()
                 .any(|l| l.contains("node 가 없어 Rust 러너로"))
         );
+    }
+
+    #[test]
+    fn explicit_node_without_node_is_refused_not_moved_to_rust() {
+        // 명시 `"node"` 는 「Rust 에서 문제가 나서 되돌린」 뜻일 수 있다 — Rust 가 돌 수 있어도 넘기지 않는다(security #2169).
+        use crate::local_agents::RunnerKind;
+        use crate::runner_pick::AccountUse;
+        let (f, r) = setup();
+        *f.node_missing.lock().unwrap() = true;
+        *f.rust_present.lock().unwrap() = true;
+        *f.account_use.lock().unwrap() = AccountUse::None;
+        let mut d = def(CredentialScope::Community, None);
+        d.harness = "claude-code".into();
+        let local = LocalAgent {
+            runner: Some(RunnerKind::Node),
+            ..Default::default()
+        };
+        let out = r.on_assign("u", d, Some(local)).unwrap();
+        assert_eq!(out, AssignOutcome::Refused("runner_node_missing".into()));
+        assert!(f.picks.lock().unwrap().is_empty());
+        assert_eq!(f.forgets.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn absent_runner_with_node_present_stays_node() {
+        // 「단계」: node 가 있으면 칸 없는 에이전트는 지금처럼 node — Rust 러너 파일·풀이 다 갖춰져도.
+        use crate::local_agents::RunnerKind;
+        use crate::runner_pick::AccountUse;
+        let (f, r) = setup();
+        *f.rust_present.lock().unwrap() = true;
+        *f.account_use.lock().unwrap() = AccountUse::None;
+        let mut d = def(CredentialScope::Community, None);
+        d.harness = "claude-code".into();
+        r.on_assign("u", d, Some(LocalAgent::default())).unwrap();
+        let picks = f.picks.lock().unwrap();
+        assert_eq!(picks.len(), 1);
+        assert_eq!(picks[0].kind, RunnerKind::Node);
+        assert_eq!(picks[0].fallback, None);
     }
 
     #[test]

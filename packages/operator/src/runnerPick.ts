@@ -31,8 +31,12 @@ export interface RunnerPick {
 }
 
 /** rust 대상인가 — `runner: "node"` 로 되돌리지 않았으면 그렇다(s9① 기본 rust). 이때만 파일·풀 해석을 본다. */
-export function wantsRust(local: LocalAgentConfig | undefined): boolean {
-  return runnerKindOf(local) !== 'node';
+export function wantsRust(local: LocalAgentConfig | undefined, nodePresent: boolean): boolean {
+  // 「단계」(jaebin 11-15): 명시 rust → rust, 명시 node(모르는 값 포함) → node, 칸 없음 → node 가 없을 때만 rust.
+  const kind = runnerKindOf(local);
+  if (kind === 'rust') return true;
+  if (kind === 'node') return false;
+  return !nodePresent;
 }
 
 export function pickRunner(
@@ -41,8 +45,10 @@ export function pickRunner(
   accountUse: AccountUse,
   /** 서버 정의의 하네스(`definition.harness`). */
   harness: string,
+  /** node 러너를 띄울 수 있는가 — TS 오퍼레이터는 node 위에서 돌아 늘 참이다(Rust 오퍼레이터는 PATH 로 잰다). */
+  nodePresent: boolean,
 ): RunnerPick {
-  if (!wantsRust(local)) return { kind: 'node' };
+  if (!wantsRust(local, nodePresent)) return { kind: 'node' };
   if (!RUST_RUNNER_HARNESSES.includes(harness)) return { kind: 'node', fallback: 'rust_harness_unsupported' };
   if (accountUse === 'unreadable') return { kind: 'node', fallback: 'rust_account_pool_unreadable' };
   if (!rustRunnerPresent) return { kind: 'node', fallback: 'rust_runner_missing' };
