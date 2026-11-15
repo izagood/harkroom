@@ -12,6 +12,7 @@
   "claude-tui-trust-modal.txt",
   "codex-tui-busy.txt",
   "codex-tui-ended.txt",
+  "codex-tui-mcp-approval.txt",
   "codex-tui-ready.txt",
   "codex-tui-update-prompt.txt",
   "kilo-tui-busy.txt",
@@ -36,32 +37,32 @@
   "claude-code": {
    "ready": "/[❯›]\\u00a0/",
    "busy": null,
-   "gate": "/Do you want to (?:proceed|continue)\\?|requires confirmation|Press enter to continue|Enter\\s*to\\s*(?:confirm|continue)|Connect a provider|[❯›](?!\\u00a0)[^\\n]*✔|^\\s*[❯›]\\s*\\d+\\.\\s/m"
+   "gate": "/Do you want to (?:proceed|continue)\\?|requires confirmation|Press enter to continue|Enter\\s*to\\s*(?:confirm|continue)|Connect a provider|MCP\\s*server\\s*to\\s*run\\s*tool|[❯›](?!\\u00a0)[^\\n]*✔|^\\s*[❯›]\\s*\\d+\\.\\s/m"
   },
   "codex": {
    "ready": "/Ask\\s+\\S+\\s+to\\s+do\\s+anything/",
    "busy": "/esc to interrupt/",
-   "gate": "/Do you want to (?:proceed|continue)\\?|requires confirmation|Press enter to continue|Enter\\s*to\\s*(?:confirm|continue)|Connect a provider|[❯›](?!\\u00a0)[^\\n]*✔|^\\s*[❯›]\\s*\\d+\\.\\s/m"
+   "gate": "/Do you want to (?:proceed|continue)\\?|requires confirmation|Press enter to continue|Enter\\s*to\\s*(?:confirm|continue)|Connect a provider|MCP\\s*server\\s*to\\s*run\\s*tool|[❯›](?!\\u00a0)[^\\n]*✔|^\\s*[❯›]\\s*\\d+\\.\\s/m"
   },
   "opencode": {
    "ready": "/Ask anything|ctrl\\+p/",
    "busy": "/esc interrupt/",
-   "gate": "/Do you want to (?:proceed|continue)\\?|requires confirmation|Press enter to continue|Enter\\s*to\\s*(?:confirm|continue)|Connect a provider|[❯›](?!\\u00a0)[^\\n]*✔|^\\s*[❯›]\\s*\\d+\\.\\s/m"
+   "gate": "/Do you want to (?:proceed|continue)\\?|requires confirmation|Press enter to continue|Enter\\s*to\\s*(?:confirm|continue)|Connect a provider|MCP\\s*server\\s*to\\s*run\\s*tool|[❯›](?!\\u00a0)[^\\n]*✔|^\\s*[❯›]\\s*\\d+\\.\\s/m"
   },
   "kilo": {
    "ready": "/Ask anything|ctrl\\+p/",
    "busy": "/esc interrupt/",
-   "gate": "/Do you want to (?:proceed|continue)\\?|requires confirmation|Press enter to continue|Enter\\s*to\\s*(?:confirm|continue)|Connect a provider|[❯›](?!\\u00a0)[^\\n]*✔|^\\s*[❯›]\\s*\\d+\\.\\s/m"
+   "gate": "/Do you want to (?:proceed|continue)\\?|requires confirmation|Press enter to continue|Enter\\s*to\\s*(?:confirm|continue)|Connect a provider|MCP\\s*server\\s*to\\s*run\\s*tool|[❯›](?!\\u00a0)[^\\n]*✔|^\\s*[❯›]\\s*\\d+\\.\\s/m"
   },
   "pi": {
    "ready": "/\\d+(?:\\.\\d+)?%\\/\\d+(?:\\.\\d+)?[kM]\\b/",
    "busy": "/─+ [\\u2800-\\u28ff] Working/",
-   "gate": "/Do you want to (?:proceed|continue)\\?|requires confirmation|Press enter to continue|Enter\\s*to\\s*(?:confirm|continue)|Connect a provider|[❯›](?!\\u00a0)[^\\n]*✔|^\\s*[❯›]\\s*\\d+\\.\\s/m"
+   "gate": "/Do you want to (?:proceed|continue)\\?|requires confirmation|Press enter to continue|Enter\\s*to\\s*(?:confirm|continue)|Connect a provider|MCP\\s*server\\s*to\\s*run\\s*tool|[❯›](?!\\u00a0)[^\\n]*✔|^\\s*[❯›]\\s*\\d+\\.\\s/m"
   },
   "omp": {
    "ready": "/\\d+(?:\\.\\d+)?%[^\\n]*?\\b\\d+(?:\\.\\d+)?[KM]\\b/",
    "busy": "/Working…|[\\u2800-\\u28ff] \\d+s >/",
-   "gate": "/Do you want to (?:proceed|continue)\\?|requires confirmation|Press enter to continue|Enter\\s*to\\s*(?:confirm|continue)|Connect a provider|[❯›](?!\\u00a0)[^\\n]*✔|^\\s*[❯›]\\s*\\d+\\.\\s/m"
+   "gate": "/Do you want to (?:proceed|continue)\\?|requires confirmation|Press enter to continue|Enter\\s*to\\s*(?:confirm|continue)|Connect a provider|MCP\\s*server\\s*to\\s*run\\s*tool|[❯›](?!\\u00a0)[^\\n]*✔|^\\s*[❯›]\\s*\\d+\\.\\s/m"
   }
  },
  "classify": [
@@ -394,6 +395,36 @@
    "fixture": "codex-tui-ended.txt",
    "harness": "omp",
    "state": "unknown"
+  },
+  {
+   "fixture": "codex-tui-mcp-approval.txt",
+   "harness": "claude-code",
+   "state": "gate"
+  },
+  {
+   "fixture": "codex-tui-mcp-approval.txt",
+   "harness": "codex",
+   "state": "gate"
+  },
+  {
+   "fixture": "codex-tui-mcp-approval.txt",
+   "harness": "opencode",
+   "state": "gate"
+  },
+  {
+   "fixture": "codex-tui-mcp-approval.txt",
+   "harness": "kilo",
+   "state": "gate"
+  },
+  {
+   "fixture": "codex-tui-mcp-approval.txt",
+   "harness": "pi",
+   "state": "gate"
+  },
+  {
+   "fixture": "codex-tui-mcp-approval.txt",
+   "harness": "omp",
+   "state": "gate"
   },
   {
    "fixture": "codex-tui-ready.txt",

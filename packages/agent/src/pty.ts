@@ -314,8 +314,17 @@ export function looksReadyForPrompt(rawOutput: string, pattern: RegExp = DEFAULT
  * 을 그린다. TUI 는 단어 사이를 공백이 아니라 커서 이동으로 놓으므로 ANSI 를 걷으면
  * `Entertoconfirm` 처럼 붙는다 — 그래서 `\s*` 다. 둘 다 채팅 입력창에는 없다.
  */
+/*
+ * **`MCP server to run tool` 이 왜 여기 있나(codex-cli 0.154 실측).**
+ *
+ * codex 는 미리 승인하지 않은 MCP 도구를 부르면 `Allow the <서버> MCP server to run tool "<도구>"?` 창을 띄우고
+ * 사람의 선택을 기다린다. 창에는 `› 1. Allow` 번호 줄이 있지만 TUI 가 줄을 커서 이동으로 놓아, ANSI 를 걷은
+ * 날 바이트에서는 그 줄이 줄 머리에 오지 않는다 — 번호 패턴(`^\s*[❯›]\s*\d+\.\s`)이 맞지 않아 턴 도중 관문이
+ * 서지 않았고, 창 제목이 계속 깜빡여 정지 시계도 돌지 않아 턴이 통지 없이 섰다. 문구는 창에만 있다.
+ * fixture: `test/fixtures/codex-tui-mcp-approval.txt`.
+ */
 const DEFAULT_GATE_PATTERN =
-  /Do you want to (?:proceed|continue)\?|requires confirmation|Press enter to continue|Enter\s*to\s*(?:confirm|continue)|Connect a provider|[❯›](?!\u00a0)[^\n]*✔|^\s*[❯›]\s*\d+\.\s/m;
+  /Do you want to (?:proceed|continue)\?|requires confirmation|Press enter to continue|Enter\s*to\s*(?:confirm|continue)|Connect a provider|MCP\s*server\s*to\s*run\s*tool|[❯›](?!\u00a0)[^\n]*✔|^\s*[❯›]\s*\d+\.\s/m;
 
 /** 패턴이 **마지막으로** 맞은 위치. 없으면 -1. */
 function lastMatchIndex(text: string, pattern: RegExp): number {
