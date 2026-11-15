@@ -185,13 +185,17 @@ describe('본문 거절 (D5)', () => {
       expect(r.json().error.code).toBe('not_admissible');
     }
     expect((await admit(auth(agent.pat), { tool: 'message.post', arguments: { channelId, body: 'clean' } })).json()).toEqual({ admitted: true });
-    // 비밀이 든 인자 — REST 본문 관문(leakGuardHook)이 /mcp/admit 본문도 먼저 본다 → 400 secret_in_body.
-    // Rust 는 200 이 아니면 Unknown 으로 보고 원래 요청을 TS /mcp 로 넘기므로, 결과는 TS 감싸기의 거절과 같다.
+    // 비밀이 든 인자 — REST 본문 관문(leakGuardHook)은 /mcp/admit 을 건너뛰고 라우트 안 검사가 거절을 도구 답 모양으로 낸다.
+    // 차단 기록은 한 번만(관문이 같이 보면 Rust 가 TS /mcp 로 넘긴 뒤 또 남아 두 건이 되었다 — security C4a-2 지적).
     const before = await blockedCount();
     const leak = await admit(auth(agent.pat), { tool: 'message.post', arguments: { channelId, body: `x ${VALUE}` } });
-    expect(leak.statusCode).toBe(400);
-    expect(leak.json().error.code).toBe('secret_in_body');
+    expect(leak.statusCode).toBe(200);
+    expect(leak.json().admitted).toBe(false);
+    expect(JSON.parse(leak.json().result.content[0].text).error.code).toBe('secret_in_body');
     expect(leak.body).not.toContain(VALUE);
-    expect(await blockedCount()).toBeGreaterThan(before);
+    expect(await blockedCount()).toBe(before + 1);
+    // 쿼리가 붙어도 같다.
+    const q = await app.inject({ method: 'POST', url: '/mcp/admit?x=1', headers: auth(agent.pat), payload: { tool: 'message.post', arguments: { body: VALUE } } });
+    expect(q.json().admitted).toBe(false);
   });
 });
