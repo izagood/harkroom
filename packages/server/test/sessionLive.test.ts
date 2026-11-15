@@ -105,4 +105,35 @@ describe('agent_session_live', () => {
     await alive.stop();
     await dead.stop();
   });
+
+  it('r1: a hub swept while stalled re-registers on its next beat and rewrites its sessions', async () => {
+    const s = createSessionLiveStore(pool);
+    await s.start();
+    s.started(operatorId, agentA, session('s-r1a', agentA));
+    s.started(operatorId, agentA, session('s-r1b', agentA, { claudeAccount: 'Some Person' }));
+    s.started(operatorId, agentA, session('s-r1c', agentA));
+    s.started(operatorId, agentB, session('s-r1a', agentB)); // 남의 러너 — 사본의 주인도 바뀌지 않는다
+    s.ended(agentA, 's-r1c');
+    await s.flush();
+    // 박동이 살아 있으면 줄을 새로 넣지 않는다.
+    expect(await s.beatOnce()).toBe(false);
+    // 멈춘 사이 다른 허브가 이 줄을 쓸었다(행은 cascade).
+    await pool.query(`delete from relay_hub where hub_epoch = $1`, [s.epoch]);
+    expect(await listLiveSessions(pool)).toEqual([]);
+    expect(await s.beatOnce()).toBe(true);
+    const rows = (await pool.query(
+      `select session_id, agent_account_id::text, hub_epoch::text, row_to_json(l)::text as j from agent_session_live l order by session_id`)).rows;
+    expect(rows.map((r) => [r.session_id, r.agent_account_id, r.hub_epoch])).toEqual([
+      ['s-r1a', agentA, s.epoch], ['s-r1b', agentA, s.epoch],
+    ]);
+    expect(rows.map((r) => r.j).join()).not.toMatch(/Some Person/);
+    expect((await listLiveSessions(pool)).map((x) => x.sessionId)).toEqual(['s-r1a', 's-r1b']);
+    // 러너가 물러난 뒤엔 다시 살아나도 쓸 것이 없다.
+    s.runnerGone(operatorId, agentA);
+    await s.flush();
+    await pool.query(`delete from relay_hub where hub_epoch = $1`, [s.epoch]);
+    expect(await s.beatOnce()).toBe(true);
+    expect(await listLiveSessions(pool)).toEqual([]);
+    await s.stop();
+  });
 });
