@@ -1267,6 +1267,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // C4b ④-a(2/2) — MCP bg.claim(`bg_claim.rs::BG_CLAIM_PRIVILEGES`).
         `grant select on bg_job to ${rw}`,
         `grant update (status, claimed_at) on bg_job to ${rw}`,
+        // C4b ④-a(2/2) — MCP bg.complete 러너 길(`bg_complete.rs::BG_COMPLETE_PRIVILEGES`).
+        `grant update (summary, error, tokens, duration_ms, finished_at) on bg_job to ${rw}`,
+        `grant select (account_id, thread_root_id, archived_at) on thread_note to ${rw}`,
+        `grant update (archived_at, archived_by_run) on thread_note to ${rw}`,
         `grant insert on push_job to ${rw}`,
         `grant update (hidden_at) on channel_pref to ${rw}`,
         // S5.3 C1c-1 — 글 올리기 뼈대(`msg_post.rs::MESSAGE_POST_PRIVILEGES`). 없으면 「message post core off」(아래에서 그 길도 본다).
@@ -2008,6 +2012,62 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect((await rsB(upper(uR))).core, '대문자 — Rust 가 답한다').toBe('mcp');
         expect((await askOf(uT.root)).replyMessageId, 'TS 는 소문자로 적는다').toBe(uT.reply);
         expect((await askOf(uR.root)).replyMessageId, 'Rust 도 소문자로 적는다').toBe(uR.reply);
+      }
+
+      // S5.3 C4b ④-a(2/2) — bg.complete 러너 길(security 조건 셋). 러너면 Rust 가 닫고, 회차의 턴·일반 턴은 TS 가 답한다.
+      // 골든 ① 남의 계정 회차(not_found) ② 이미 닫힌 회차(not_running) ③ cause 턴(TS) ④ bg 회차 턴(TS). 닫기 + distill 메모 보관은 한 tx.
+      {
+        const job = async (owner: string, day: string, status: string, kind = 'distill', input: unknown = {}) =>
+          String((await db.pool.query(`insert into bg_job (account_id, kind, day, status, input) values ($1, $2, $3, $4, $5) returning id`,
+            [owner, kind, day, status, JSON.stringify(input)])).rows[0].id);
+        const cPair = async (args: unknown, extra: Record<string, string>, token = bgOp.token) =>
+          [await mcpCall(tsUrl, token, 'bg.complete', args, 1, extra), await mcpCall(rsUrl4, token, 'bg.complete', args, 1, extra)];
+        const foreign = await job(admin.accountId, '2001-01-01', 'running');
+        const closed = await job(agent.accountId, '2001-01-02', 'done');
+        for (const [name, args, extra, core, code] of [
+          ['bg.complete ① 남의 계정 회차 → not_found', { jobId: foreign, status: 'done' }, asRunner, 'mcp', 'not_found'],
+          ['bg.complete ② 이미 닫힌 회차 → not_running', { jobId: closed, status: 'failed', error: 'x' }, asRunner, 'mcp', 'not_running'],
+          ['bg.complete ③ cause 턴 → TS', { jobId: closed, status: 'done' }, { ...asRunner, 'x-harkroom-cause': foreign }, null, 'not_your_job'],
+          ['bg.complete 꼴 틀린 cause 도 → TS', { jobId: closed, status: 'done' }, { ...asRunner, 'x-harkroom-cause': 'mention:x' }, null, ''],
+          ['bg.complete ④ bg 회차 턴 → TS', { jobId: closed, status: 'done' }, { ...asRunner, 'x-harkroom-cause': `bg:${closed}` }, null, 'bg_job_not_running'],
+          ['bg.complete 턴 id → TS', { jobId: closed, status: 'done' }, { ...asRunner, 'x-harkroom-turn-id': foreign }, null, 'not_your_job'],
+          ['bg.complete 빈 턴 id 도 → TS', { jobId: closed, status: 'done' }, { ...asRunner, 'x-harkroom-turn-id': '' }, null, ''],
+          ['bg.complete 틀린 인자 → TS', { jobId: closed, status: 'running' }, asRunner, null, ''],
+        ] as const) {
+          const [a, b] = await cPair(args, extra);
+          expect({ status: b!.status, type: b!.type, text: b!.text }, name).toEqual({ status: a!.status, type: a!.type, text: a!.text });
+          expect(b!.core, `${name} — 누가 답했나`).toBe(core);
+          expect(a!.text, name).toContain(code);
+        }
+        const [, pb] = await cPair({ jobId: closed, status: 'done' }, {}, agent.pat);
+        expect(pb!.core, 'bg.complete PAT → TS').toBe(null);
+        // 닫기 + 메모 보관 — TS 가 하나, Rust 가 하나를 닫아 결과(글자·행)를 맞댄다. 남의 계정 메모·입력 밖 스레드 메모는 그대로.
+        const r1 = await say('bg 증류 스레드 1'), r2 = await say('bg 증류 스레드 2'), r3 = await say('입력 밖 스레드');
+        for (const r of [r1, r2, r3]) await db.pool.query(`insert into thread_note (account_id, thread_root_id, body) values ($1, $2, 'n')`, [agent.accountId, r]);
+        await db.pool.query(`insert into thread_note (account_id, thread_root_id, body) values ($1, $2, 'n')`, [admin.accountId, r2]);
+        const jt = await job(agent.accountId, '2001-01-03', 'running', 'distill', { threadIds: [r1] });
+        const jr = await job(agent.accountId, '2001-01-04', 'running', 'distill', { threadIds: [r2] });
+        const args = (id: string) => ({ jobId: id, status: 'done', summary: '기억 2건 😀', tokens: 12, durationMs: 345 });
+        const ta = await mcpCall(tsUrl, bgOp.token, 'bg.complete', args(jt), 1, asRunner);
+        const rb = await mcpCall(rsUrl4, bgOp.token, 'bg.complete', args(jr), 1, asRunner);
+        expect({ status: rb.status, type: rb.type, text: rb.text }, 'bg.complete 닫기').toEqual({ status: ta.status, type: ta.type, text: ta.text });
+        expect(rb.core, 'bg.complete 닫기 — Rust 가 답한다').toBe('mcp');
+        const row = async (id: string) => (await db.pool.query(
+          `select status, summary, error, tokens, duration_ms, finished_at is not null as fin from bg_job where id = $1`, [id])).rows[0];
+        expect(await row(jr), 'bg.complete 닫은 행').toEqual(await row(jt));
+        expect((await row(jr)).status).toBe('done');
+        const notes = (await db.pool.query(
+          `select account_id, thread_root_id, archived_at is not null as arch, archived_by_run from thread_note where thread_root_id = any($1::uuid[])`,
+          [[r1, r2, r3]])).rows;
+        const note = (acc: string, r: string) => notes.find((n) => n.account_id === acc && n.thread_root_id === r);
+        expect(note(agent.accountId, r1), 'TS 가 보관').toMatchObject({ arch: true, archived_by_run: jt });
+        expect(note(agent.accountId, r2), 'Rust 가 보관').toMatchObject({ arch: true, archived_by_run: jr });
+        expect(note(agent.accountId, r3), '입력 밖 스레드는 그대로').toMatchObject({ arch: false });
+        expect(note(admin.accountId, r2), '남의 계정 메모는 그대로').toMatchObject({ arch: false });
+        // 두 번 닫기 — 덮지 않는다.
+        const [a2, b2] = await cPair({ jobId: jr, status: 'failed' }, asRunner);
+        expect({ text: b2!.text, core: b2!.core }, 'bg.complete 두 번 닫기').toEqual({ text: a2!.text, core: 'mcp' });
+        expect((await row(jr)).status).toBe('done');
       }
 
       // S5.3 C4a-6b — message.search. 본문 멘션 되돌리기·시스템 줄·스코프(채널·스레드)·거르기(보낸 사람·첨부)·정렬·쪽(51개 → hasMore,
