@@ -43,6 +43,24 @@ export async function auditMandateCreated(pool: Pool, created: MandateCreated[])
   }
 }
 
+/*
+  새 머리의 위임에 쓰는 문장들(자리표에 형을 붙인다 — Rust 는 글자로 넘긴다) — Rust 코어(`core/msg_post.rs`, S5.3 C1c-2a)가 골든(`rustSqlFragments.test.ts`)으로 그대로 받는다.
+*/
+/** 부른 사람 중에 작성자 소유 에이전트가 있나. $1 받은 계정들, $2 작성자. */
+export const MANDATE_OWN_AGENT_SQL = `select 1 from agent_config c join account a on a.id = c.account_id
+        where c.account_id = any($1::uuid[]) and c.owner_account_id = $2::uuid and a.kind = 'agent' limit 1`;
+/** 새 머리를 뿌리로 위임을 만든다(있으면 활동만 민다). $1 주인 $2 글 $3 채널 $4 지금 $5 맡긴 사람. */
+export const MANDATE_ROOT_INSERT_SQL = `insert into mandate (owner_account_id, delegator_account_id, root_message_id, channel_id, thread_root_id, created_at, last_activity_at)
+       values ($1::uuid, $5::uuid, $2::uuid, $3::uuid, $2::uuid, $4::timestamptz, $4::timestamptz)
+       on conflict (root_message_id) do update set last_activity_at = excluded.last_activity_at
+       returning id, (xmax = 0) as inserted`;
+/** 글에 위임 키를 적는다. */
+export const MESSAGE_SET_MANDATE_SQL = `update message set mandate_id = $2::uuid where id = $1::uuid`;
+/** 받은 계정 중 소유자가 있는 에이전트, 받은 순서대로. */
+export const MANDATE_DELEGATED_AGENTS_SQL = `select c.account_id as id from agent_config c join account a on a.id = c.account_id
+      where c.account_id = any($1::uuid[]) and a.kind = 'agent' and c.owner_account_id is not null
+      order by array_position($1::uuid[], c.account_id)`;
+
 /** 사람 글의 위임. 새 머리면 `notifiedIds` 중 이 사람 소유 에이전트가 있을 때 만든다. 답글이면 머리의 위임(소유자 본인일 때)을 잇는다. */
 export async function stampHumanMandate(client: Q, args: {
   messageId: string; authorId: string; channelId: string; threadRootId: string | null; notifiedIds: string[]; now?: Date;
@@ -53,21 +71,14 @@ export async function stampHumanMandate(client: Q, args: {
   let mandateId: string | null = null;
   if (!args.threadRootId) {
     if (!args.notifiedIds.length) return null;
-    const own = await client.query(
-      `select 1 from agent_config c join account a on a.id = c.account_id
-        where c.account_id = any($1::uuid[]) and c.owner_account_id = $2 and a.kind = 'agent' limit 1`,
-      [args.notifiedIds, args.authorId]);
+    const own = await client.query(MANDATE_OWN_AGENT_SQL, [args.notifiedIds, args.authorId]);
     // 소유자가 자기 에이전트를 불렀으면 소유자가 맡긴 위임장. 아니면 C-3(D2): 이 채널에서 그 에이전트의 카드를 **정할 수 있는**
     // 사람(사용 권한자)이 부른 새 머리 — 주인은 그 에이전트의 소유자, delegator 는 부른 사람. 부른 에이전트가 여럿이면 처음 맞는 것.
     let ownerId: string | null = own.rowCount ? args.authorId : null;
     if (!ownerId) ownerId = await delegatedOwner(client, { authorId: args.authorId, channelId: args.channelId, notifiedIds: args.notifiedIds });
     if (!ownerId) return null;
     const row = (await client.query<{ id: string; inserted: boolean }>(
-      `insert into mandate (owner_account_id, delegator_account_id, root_message_id, channel_id, thread_root_id, created_at, last_activity_at)
-       values ($1, $5, $2, $3, $2, $4, $4)
-       on conflict (root_message_id) do update set last_activity_at = excluded.last_activity_at
-       returning id, (xmax = 0) as inserted`,
-      [ownerId, args.messageId, args.channelId, now, args.authorId])).rows[0]!;
+      MANDATE_ROOT_INSERT_SQL, [ownerId, args.messageId, args.channelId, now, args.authorId])).rows[0]!;
     mandateId = row.id;
     if (row.inserted) {
       args.created?.push({ mandateId, ownerId, rootMessageId: args.messageId, channelId: args.channelId, threadRootId: args.messageId, via: 'root', ...(ownerId !== args.authorId ? { delegatorId: args.authorId } : {}) });
@@ -83,7 +94,7 @@ export async function stampHumanMandate(client: Q, args: {
     if (!mandateId) mandateId = await mandateForKeylessRoot(client, { ...args, threadRootId: args.threadRootId, now });
     if (!mandateId) return null;
   }
-  await client.query(`update message set mandate_id = $2 where id = $1`, [args.messageId, mandateId]);
+  await client.query(MESSAGE_SET_MANDATE_SQL, [args.messageId, mandateId]);
   return mandateId;
 }
 
@@ -92,11 +103,7 @@ export async function stampHumanMandate(client: Q, args: {
  * 첫 에이전트의 소유자. 사람 세션 글에서만 불린다(부르는 쪽이 거른다). 소유자가 없거나 정할 수 없으면 null.
  */
 async function delegatedOwner(client: Q, args: { authorId: string; channelId: string; notifiedIds: string[] }): Promise<string | null> {
-  const agents = (await client.query<{ id: string }>(
-    `select c.account_id as id from agent_config c join account a on a.id = c.account_id
-      where c.account_id = any($1::uuid[]) and a.kind = 'agent' and c.owner_account_id is not null
-      order by array_position($1::uuid[], c.account_id)`,
-    [args.notifiedIds])).rows;
+  const agents = (await client.query<{ id: string }>(MANDATE_DELEGATED_AGENTS_SQL, [args.notifiedIds])).rows;
   for (const a of agents) {
     const v = await mayDecideFor(client, { agentId: a.id, actorId: args.authorId, channelId: args.channelId });
     if (v.ok && !v.asOwner && v.ownerAccountId) return v.ownerAccountId;

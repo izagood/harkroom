@@ -80,5 +80,13 @@
   "attach_find": "select id, uploader_id, message_id from attachment where id = any($1::uuid[]) for update",
   "attach_update": "update attachment a set message_id = $1::uuid, attached_at = now()\n     from unnest($2::uuid[]) with ordinality as t(id, ord)\n     where a.id = t.id",
   "url_candidate_source": "[a-zA-Z][a-zA-Z0-9+.-]*:[^\\s]+",
-  "chat_approval_guard_words": "[\"승인\",\"허락\",\"머지\",\"진행\",\"approve\",\"거절\",\"deny\",\"deni\",\"바이패스\",\"bypass\",\"harkroom://message/\"]"
+  "chat_approval_guard_words": "[\"승인\",\"허락\",\"머지\",\"진행\",\"approve\",\"거절\",\"deny\",\"deni\",\"바이패스\",\"bypass\",\"harkroom://message/\"]",
+  "mandate_own_agent": "select 1 from agent_config c join account a on a.id = c.account_id\n        where c.account_id = any($1::uuid[]) and c.owner_account_id = $2::uuid and a.kind = 'agent' limit 1",
+  "mandate_root_insert": "insert into mandate (owner_account_id, delegator_account_id, root_message_id, channel_id, thread_root_id, created_at, last_activity_at)\n       values ($1::uuid, $5::uuid, $2::uuid, $3::uuid, $2::uuid, $4::timestamptz, $4::timestamptz)\n       on conflict (root_message_id) do update set last_activity_at = excluded.last_activity_at\n       returning id, (xmax = 0) as inserted",
+  "mandate_delegated_agents": "select c.account_id as id from agent_config c join account a on a.id = c.account_id\n      where c.account_id = any($1::uuid[]) and a.kind = 'agent' and c.owner_account_id is not null\n      order by array_position($1::uuid[], c.account_id)",
+  "message_set_mandate": "update message set mandate_id = $2::uuid where id = $1::uuid",
+  "decider_row": "select c.owner_account_id as \"ownerAccountId\", coalesce(c.invoke_scope, 'community') as scope, c.user_decide as \"userDecide\",\n            (a.disabled_at is not null or a.deleted_at is not null) as \"agentOff\",\n            p.kind as \"actorKind\", p.role as \"actorRole\", (p.disabled_at is not null or p.deleted_at is not null) as \"actorOff\"\n       from agent_config c join account a on a.id = c.account_id\n       left join account p on p.id = $2::uuid\n      where c.account_id = $1::uuid",
+  "decider_seen": "select ((ch.kind = 'standard' and ch.visibility = 'public')\n     or exists (select 1 from channel_member cm_vis\n                 where cm_vis.channel_id = ch.id and cm_vis.account_id = $2::uuid)) as ok from channel ch where ch.id = $1::uuid",
+  "decider_list": "select 1 from agent_invoker where agent_id = $1::uuid and account_id = $2::uuid",
+  "decider_channel": "select 1 from channel_member m join channel ch on ch.id = m.channel_id\n          where m.channel_id = $1::uuid and m.account_id = $2::uuid and ch.kind <> 'dm'"
 }

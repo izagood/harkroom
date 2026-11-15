@@ -25,6 +25,8 @@ import { HAS_OLDER_SQL, LIST_MESSAGES_SQL, MESSAGE_BY_ID_SQL, READ_LIST_ROW_SQL,
 import { POST_CHANNEL_KIND_SQL, POST_IDEMPOTENCY_FIND_SQL, POST_IDEMPOTENCY_INSERT_SQL, POST_INSERT_SQL, SEQ_LOCK_CLASS, SEQ_LOCK_SQL } from '../src/services/messages.js';
 import { ATTACH_FIND_SQL, ATTACH_UPDATE_SQL } from '../src/services/attachments.js';
 import { CHAT_APPROVAL_GUARD_WORDS } from '../src/services/chatApproval.js';
+import { MANDATE_DELEGATED_AGENTS_SQL, MANDATE_OWN_AGENT_SQL, MANDATE_ROOT_INSERT_SQL, MESSAGE_SET_MANDATE_SQL } from '../src/services/mandates.js';
+import { DECIDER_CHANNEL_SQL, DECIDER_LIST_SQL, DECIDER_ROW_SQL, DECIDER_SEEN_SQL } from '../src/services/deciders.js';
 import { URL_CANDIDATE_SOURCE } from '@harkroom/shared';
 import { CHILD_FACTS_AUDIENCE_SQL, PLAN_PROGRESS_PLANS_SQL } from '../src/services/threadPlan.js';
 import { displayBodySql } from '../src/services/systemBody.js';
@@ -122,6 +124,15 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     attach_update: ATTACH_UPDATE_SQL,
     url_candidate_source: URL_CANDIDATE_SOURCE,
     chat_approval_guard_words: JSON.stringify([...CHAT_APPROVAL_GUARD_WORDS]),
+    // 사람 새 머리의 부름과 위임(`core/msg_post.rs`, S5.3 C1c-2a) — `stampHumanMandate` 새 머리 갈래와 `mayDecideFor`.
+    mandate_own_agent: MANDATE_OWN_AGENT_SQL,
+    mandate_root_insert: MANDATE_ROOT_INSERT_SQL,
+    mandate_delegated_agents: MANDATE_DELEGATED_AGENTS_SQL,
+    message_set_mandate: MESSAGE_SET_MANDATE_SQL,
+    decider_row: DECIDER_ROW_SQL,
+    decider_seen: DECIDER_SEEN_SQL,
+    decider_list: DECIDER_LIST_SQL,
+    decider_channel: DECIDER_CHANNEL_SQL,
   };
   const text = `${JSON.stringify(want, null, 2)}\n`;
   if (process.env.UPDATE_RUST_SQL_GOLDEN === '1') writeFileSync(GOLDEN, text);

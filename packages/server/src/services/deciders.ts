@@ -28,6 +28,22 @@ export type DecideScope = 'owner' | 'list' | 'channel' | 'community' | 'switchOf
 type VerdictBase = { ownerAccountId: string | null; decideScope: DecideScope | null };
 export type DeciderVerdict = ({ ok: true; asOwner: boolean } & VerdictBase) | ({ ok: false } & VerdictBase);
 
+/*
+  판정 문장들 — Rust 코어(`core/msg_post.rs` 의 `may_decide_for`, S5.3 C1c-2a)가 골든으로 그대로 받는다.
+*/
+/** 에이전트 설정과 행위자. $1 에이전트 $2 행위자. */
+export const DECIDER_ROW_SQL = `select c.owner_account_id as "ownerAccountId", coalesce(c.invoke_scope, 'community') as scope, c.user_decide as "userDecide",
+            (a.disabled_at is not null or a.deleted_at is not null) as "agentOff",
+            p.kind as "actorKind", p.role as "actorRole", (p.disabled_at is not null or p.deleted_at is not null) as "actorOff"
+       from agent_config c join account a on a.id = c.account_id
+       left join account p on p.id = $2::uuid
+      where c.account_id = $1::uuid`;
+/** 행위자가 그 채널을 보나. $1 채널 $2 행위자. */
+export const DECIDER_SEEN_SQL = `select ${channelVisibleSql('ch', '$2::uuid')} as ok from channel ch where ch.id = $1::uuid`;
+export const DECIDER_LIST_SQL = `select 1 from agent_invoker where agent_id = $1::uuid and account_id = $2::uuid`;
+export const DECIDER_CHANNEL_SQL = `select 1 from channel_member m join channel ch on ch.id = m.channel_id
+          where m.channel_id = $1::uuid and m.account_id = $2::uuid and ch.kind <> 'dm'`;
+
 export async function mayDecideFor(
   db: Pick<Pool | PoolClient, 'query'>,
   args: { agentId: string; actorId: string; channelId: string | null },
@@ -36,21 +52,14 @@ export async function mayDecideFor(
     ownerAccountId: string | null; scope: string; userDecide: boolean; agentOff: boolean;
     actorKind: string | null; actorRole: string | null; actorOff: boolean | null;
   }>(
-    `select c.owner_account_id as "ownerAccountId", coalesce(c.invoke_scope, 'community') as scope, c.user_decide as "userDecide",
-            (a.disabled_at is not null or a.deleted_at is not null) as "agentOff",
-            p.kind as "actorKind", p.role as "actorRole", (p.disabled_at is not null or p.deleted_at is not null) as "actorOff"
-       from agent_config c join account a on a.id = c.account_id
-       left join account p on p.id = $2
-      where c.account_id = $1`,
-    [args.agentId, args.actorId])).rows[0];
+    DECIDER_ROW_SQL, [args.agentId, args.actorId])).rows[0];
   if (!row) return { ok: false, ownerAccountId: null, decideScope: null };
   const owner = row.ownerAccountId;
   const base: VerdictBase = { ownerAccountId: owner, decideScope: row.userDecide ? (row.scope as DecideScope) : 'switchOff' };
   if (row.actorKind !== 'human' || row.actorOff !== false) return { ok: false, ...base };
   if (owner !== null && owner === args.actorId) return { ok: true, asOwner: true, ...base };
   if (!row.userDecide || row.agentOff || row.actorRole === 'guest' || !args.channelId) return { ok: false, ...base };
-  const seen = (await db.query<{ ok: boolean }>(
-    `select ${channelVisibleSql('ch', '$2')} as ok from channel ch where ch.id = $1`, [args.channelId, args.actorId])).rows[0];
+  const seen = (await db.query<{ ok: boolean }>(DECIDER_SEEN_SQL, [args.channelId, args.actorId])).rows[0];
   if (!seen?.ok) return { ok: false, ...base };
   let passes = false;
   switch (row.scope) {
@@ -58,12 +67,10 @@ export async function mayDecideFor(
       passes = true;
       break;
     case 'list':
-      passes = Boolean((await db.query(`select 1 from agent_invoker where agent_id = $1 and account_id = $2`, [args.agentId, args.actorId])).rowCount);
+      passes = Boolean((await db.query(DECIDER_LIST_SQL, [args.agentId, args.actorId])).rowCount);
       break;
     case 'channel':
-      passes = Boolean((await db.query(
-        `select 1 from channel_member m join channel ch on ch.id = m.channel_id
-          where m.channel_id = $1 and m.account_id = $2 and ch.kind <> 'dm'`, [args.channelId, args.actorId])).rowCount);
+      passes = Boolean((await db.query(DECIDER_CHANNEL_SQL, [args.channelId, args.actorId])).rowCount);
       break;
     default:
       passes = false;
