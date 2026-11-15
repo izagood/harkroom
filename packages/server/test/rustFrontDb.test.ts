@@ -2052,6 +2052,152 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // 권한을 돌려준 뒤에는 정상으로 지워진다.
         expect((await callX(rsUrl, 'DELETE', msgPath(todayId, txMsg))).status).toBe(200);
       }
+
+      // S5.3 C3b-1 — 선택 카드 답하기·닫기(코어 `ask.rs`). TS·Rust 에 **각자의 카드**로 같은 시나리오를 돌려 응답·이벤트·inbox 깨움을 견준다.
+      // 권한·머지 카드와 종류를 모르는 카드는 Rust 가 판정하지 않고 TS 로 넘긴다 — 결과가 TS 와 같아야 한다.
+      {
+        const ASKP = '/channels/{id}/messages/{messageId}';
+        for (const k of [`POST ${ASKP}/ask-answer`, `POST ${ASKP}/ask-close`]) expect(f.log()).toContain(`"${k}"`);
+        expect(f.log()).not.toContain('ask card core off');
+        const askMeta = (to: Record<string, unknown>, extra: Record<string, unknown> = {}, top: Record<string, unknown> = {}) => ({
+          kind: 'ask', ask: { prompt: '어느 쪽?', options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }], to, ...extra }, ...top,
+        });
+        const H = { kind: 'human' };
+        const side = async () => {
+          const plain = await say('@admin 카드', { meta: askMeta(H) });
+          const toMem = await say('@mem 카드', { meta: askMeta({ kind: 'account', accountId: member.accountId }) });
+          const toMem2 = await say('@mem 카드2', { meta: askMeta({ kind: 'account', accountId: member.accountId }) });
+          const toAdm = await say('@admin 관리자에게 카드', { meta: askMeta({ kind: 'account', accountId: admin.accountId }) });
+          const text = await say('@admin 글로 답할 카드', { meta: askMeta(H) });
+          const root = await say('@admin 원본', { meta: askMeta(H) });
+          const mirror = await say('@admin 거울', { meta: askMeta(H, { mirrorOf: root }) });
+          const closeMe = await say('@admin 닫을 카드', { meta: askMeta(H) });
+          const croot = await say('@admin 닫을 원본', { meta: askMeta(H) });
+          const cmirror = await say('@admin 닫을 거울', { meta: askMeta(H, { mirrorOf: croot }) });
+          const perm = await say('@admin 권한 표지 카드', { meta: askMeta(H, {}, { permissionRequest: { status: 'pending' } }) });
+          const merge = await say('@admin 머지 표지 카드', { meta: askMeta(H, {}, { mergeDenial: { repo: 'example/x' } }) });
+          const odd = await say('@admin 모르는 종류', { meta: { ...askMeta(H), kind: 'askSomethingNew' } });
+          const pmirror = await say('@admin 권한 표지의 거울', { meta: askMeta(H, { mirrorOf: perm }) });
+          const notAsk = await say('그냥 글', { author: admin.accountId });
+          return { plain, toMem, toMem2, toAdm, text, root, mirror, closeMe, croot, cmirror, perm, merge, odd, pmirror, notAsk };
+        };
+        type Side = Awaited<ReturnType<typeof side>>;
+        const T = await side();
+        const R = await side();
+        const tsEvents: WorkspaceEvent[] = [];
+        const offTs = onEvent((e) => { tsEvents.push(e); });
+        const labelOf = (sd: Side) => (v: unknown) => {
+          for (const [k, id] of Object.entries(sd)) if (v === id) return k.toUpperCase();
+          return v;
+        };
+        const shape = (sd: Side) => (v: unknown): unknown => {
+          const lab = labelOf(sd);
+          if (Array.isArray(v)) return v.map(shape(sd));
+          if (v && typeof v === 'object') {
+            const o: Record<string, unknown> = {};
+            for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+              o[k] = /At$/.test(k) ? (x === null ? null : typeof x) : k === 'seq' ? typeof x : shape(sd)(x);
+            }
+            return o;
+          }
+          return lab(v);
+        };
+        const ans = (ch: string, m: string) => `/channels/${ch}/messages/${m}/ask-answer`;
+        const cls = (ch: string, m: string) => `/channels/${ch}/messages/${m}/ask-close`;
+        const run = async (base: string, sd: Side) => {
+          const out: { step: string; status: number; code?: string; body: unknown }[] = [];
+          const step = async (name: string, path: string, body?: unknown, token = A) => {
+            const r = await callX(base, 'POST', path, body ?? {}, token);
+            out.push({ step: name, status: r.status, code: r.code, body: r.status === 200 ? shape(sd)(r.json) : null });
+          };
+          await step('답 a', ans(todayId, sd.plain), { optionId: 'a' });
+          await step('다시 b → 409', ans(todayId, sd.plain), { optionId: 'b' });
+          await step('없는 선택지 → 400', ans(todayId, sd.toMem), { optionId: 'z' }, member.token);
+          await step('남에게 온 카드 → 403', ans(todayId, sd.toMem2), { optionId: 'a' });
+          await step('받는 사람이 답', ans(todayId, sd.toMem), { optionId: 'b' }, member.token);
+          await step('글로 답', ans(todayId, sd.text), { text: '  직접 쓴 답  ' });
+          await step('거울에 답 → 원본에 먼저', ans(todayId, sd.mirror), { optionId: 'b' });
+          await step('원본은 이미 정해짐 → 409', ans(todayId, sd.root), { optionId: 'a' });
+          await step('닫기', cls(todayId, sd.closeMe));
+          await step('다시 닫기(멱등)', cls(todayId, sd.closeMe));
+          await step('답한 카드 닫기 → 409', cls(todayId, sd.plain));
+          await step('닫은 카드에 늦은 답', ans(todayId, sd.closeMe), { optionId: 'a' });
+          await step('거울 닫기 → 원본도', cls(todayId, sd.cmirror));
+          await step('남에게 온 카드 닫기 → 403', cls(todayId, sd.toAdm), undefined, member.token);
+          await step('권한 표지 카드 → TS', ans(todayId, sd.perm), { optionId: 'a' });
+          await step('권한 표지 카드 글 → TS', ans(todayId, sd.perm), { text: 'x' });
+          await step('머지 표지 카드 → TS', ans(todayId, sd.merge), { optionId: 'a' });
+          await step('알 수 없는 kind → TS', ans(todayId, sd.odd), { optionId: 'a' });
+          await step('알 수 없는 kind 닫기 → TS', cls(todayId, sd.odd));
+          await step('권한 표지의 거울 → TS', ans(todayId, sd.pmirror), { optionId: 'a' });
+          await step('물음 아닌 글 → 404', ans(todayId, sd.notAsk), { optionId: 'a' });
+          return out;
+        };
+        const tsOut = await run(tsUrl, T);
+        const rsOut = await run(rsUrl, R);
+        expect(rsOut).toEqual(tsOut);
+        const st = (step: string) => tsOut.find((o) => o.step === step);
+        expect(st('답 a')?.status).toBe(200);
+        expect(st('다시 b → 409')?.status).toBe(409);
+        expect(st('거울 닫기 → 원본도')?.status).toBe(200);
+        // 남은 카드 meta(시각 칸은 있음/없음만).
+        const metaOf = async (sd: Side) => (await db.pool.query<{ k: string; ask: unknown }>(
+          `select k, m.meta->'ask' as ask from jsonb_each_text($1::jsonb) j(k, id) join message m on m.id = j.id::uuid order by k`,
+          [JSON.stringify(sd)])).rows.map((r) => ({ k: r.k, ask: shape(sd)(r.ask) }));
+        expect(await metaOf(R)).toEqual(await metaOf(T));
+        // 깨움 — 물어본 쪽 inbox 줄(사유·카드).
+        const wakes = async (sd: Side) => (await db.pool.query<{ m: string; r: string }>(
+          `select message_id::text as m, reason as r from inbox where message_id = any($1::uuid[]) and reason in ('ask_answered', 'ask_closed') order by id`,
+          [Object.values(sd)])).rows.map((r) => ({ m: labelOf(sd)(r.m), r: r.r }));
+        const tWakes = await wakes(T);
+        expect(await wakes(R)).toEqual(tWakes);
+        expect(tWakes.length).toBeGreaterThan(0);
+        // 이벤트 — 이름·모양·받는 사람·순서(거울 경로의 겹친 `message.updated` 까지).
+        // TS 로 넘긴 카드(권한·머지·모르는 종류)의 이벤트는 R 쪽도 TS 프로세스에서 난다 — Rust 가 맡은 카드끼리 견주고,
+        // 넘긴 카드는 R 의 이벤트가 TS 쪽(`onEvent`)에만 있고 outbox(`busEvents`)에는 없는 것으로 「TS 가 처리했다」를 본다.
+        const HANDED = ['perm', 'merge', 'odd', 'pmirror'] as const;
+        const idsOf = (sd: Side, handed: boolean) => Object.entries(sd)
+          .filter(([k]) => (HANDED as readonly string[]).includes(k) === handed).map(([, id]) => id);
+        const mineOf = (evs: WorkspaceEvent[], sd: Side, handed = false) => evs.filter((e) => {
+          const o = e as { messageId?: string; message?: { id?: string } };
+          return idsOf(sd, handed).includes((o.messageId ?? o.message?.id) as string);
+        }).map((e) => shape(sd)(JSON.parse(JSON.stringify(e))));
+        const want = mineOf(tsEvents, T);
+        const until = Date.now() + 10_000;
+        while (mineOf(busEvents, R).length < want.length && Date.now() < until) await new Promise((res) => setTimeout(res, 100));
+        expect(mineOf(busEvents, R)).toEqual(want);
+        const handedT = mineOf(tsEvents, T, true);
+        expect(handedT.length, '머지 표지 카드는 TS 가 답해 이벤트가 난다').toBeGreaterThan(0);
+        expect(mineOf(tsEvents, R, true), '넘긴 카드는 TS 가 처리했다').toEqual(handedT);
+        expect(mineOf(busEvents, R, true), '넘긴 카드는 Rust outbox 에 없다').toEqual([]);
+        offTs();
+        // 거절 — 상태·코드.
+        for (const [name, path, body, token] of [
+          ['uuid 아님 → 400', ans(todayId, 'x'), { optionId: 'a' }, A],
+          ['본문 둘 다 → 400', ans(todayId, T.toMem2), { optionId: 'a', text: 'x' }, A],
+          ['본문 비었음 → 400', ans(todayId, T.toMem2), {}, A],
+          ['글 공백뿐 → 400', ans(todayId, T.toMem2), { text: '   ' }, A],
+          ['비공개 채널 멤버 아님 → 403', ans(String(priv.id), secret), { optionId: 'a' }, member.token],
+          ['다른 채널의 글 → 404', ans(String(dm.id), T.toMem2), { optionId: 'a' }, A],
+          ['닫기 없는 글 → 404', cls(todayId, ghost), undefined, A],
+        ] as const) {
+          const [a, b] = [await callX(tsUrl, 'POST', path, body ?? {}, token), await callX(rsUrl, 'POST', path, body ?? {}, token)];
+          expect({ status: b.status, code: b.code }, name).toEqual({ status: a.status, code: a.code });
+        }
+        // 판정·쓰기·이벤트는 한 트랜잭션 — outbox 넣기가 실패하면 답·닫힘도 되돌아간다.
+        const txCard = await say('@admin 트랜잭션 카드', { meta: askMeta(H) });
+        await db.pool.query(`revoke insert on event_outbox from ${rw}`);
+        try {
+          expect((await callX(rsUrl, 'POST', ans(todayId, txCard), { optionId: 'a' })).status, '답 — 이벤트 실패면 500').toBe(500);
+          expect((await callX(rsUrl, 'POST', cls(todayId, txCard), {})).status, '닫기 — 이벤트 실패면 500').toBe(500);
+        } finally {
+          await db.pool.query(`grant insert on event_outbox to ${rw}`);
+        }
+        const txAsk = (await db.pool.query<{ ask: Record<string, unknown> }>(`select meta->'ask' as ask from message where id = $1`, [txCard])).rows[0]!.ask;
+        expect(txAsk.answeredWith ?? null, '답이 되돌아갔다').toBeNull();
+        expect(txAsk.closedAt ?? null, '닫힘이 되돌아갔다').toBeNull();
+        expect((await callX(rsUrl, 'POST', ans(todayId, txCard), { optionId: 'a' })).status).toBe(200);
+      }
       await bus.stop();
 
       // S5.3 C0 — `/ws`. 같은 시나리오를 TS 와 Rust 코어에 돌려 프레임을 견준다.
