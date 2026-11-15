@@ -1283,6 +1283,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant update (mandate_id) on message to ${rw}`,
         // S5.3 C1c-3b — 사람 답글의 깨움 선점(fired_at·message.meta 는 아래 깨움 루프 줄에 이미 있다).
         `grant update (canceled_at, canceled_by_message_id) on agent_wake to ${rw}`,
+        // S5.3 C1c-3d — 담당 사람 글의 위임 활동(기한 밀기·v1 대기 중 update).
+        `grant update (deadline_at) on team_delegation to ${rw}`,
+        `grant update (last_activity_at, update_pending_message_id, update_pending_at) on team_delegation_item to ${rw}`,
         // S5.3 C5b — 예약 깨움 루프(`loops/wake.rs::WAKE_PRIVILEGES`). 없으면 「loop wake off」 — 루프는 TS 에 남는다.
         ...WAKE_GRANTS.map((g) => `grant ${g} to ${rw}`),
         // S5.3 C5c — 보존 정리 루프(`loops/retention.rs::RETENTION_PRIVILEGES`).
@@ -3631,7 +3634,22 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
               where m.meta->>'kind' = 'ask'
                 and (m.thread_root_id = t.r or m.meta->'ask'->>'mirrorOf' in (select id::text from message where thread_root_id = t.r))
               order by m.body`, [id])).rows),
+          // C1c-3d — 이 스레드의 위임 항목: 결말·활동 시각·대기 중 update 가 이 글인가·기한이 밀렸나(처음 1분 → 10분).
+          deleg: (await db.pool.query(
+            `select i.outcome, i.last_activity_at is not null as active, i.update_pending_message_id is not distinct from $1::uuid as pending,
+                    i.update_pending_at is not null as pending_at, d.deadline_at > now() + interval '5 minutes' as pushed
+               from team_delegation_item i join team_delegation d on d.id = i.delegation_id
+              where d.thread_root_id = (select thread_root_id from message where id = $1)`, [id])).rows,
         } : {};
+        // C1c-3d — 머리 하나와 그 스레드에 BOT 이 관리자(ADMIN)에게 넘긴 열린 위임 하나(기한 1분).
+        const withDelegation = async () => {
+          const root = await direct(member.accountId, '맡김');
+          const d = (await db.pool.query<{ id: string }>(
+            `insert into team_delegation (message_id, team_id, lead_account_id, channel_id, thread_root_id, deadline_at)
+             values ($1, $2, $3, $4, $1, now() + interval '1 minute') returning id::text as id`, [root, squadId, agent.accountId, todayId])).rows[0]!.id;
+          await db.pool.query(`insert into team_delegation_item (delegation_id, delegate_account_id) values ($1, $2)`, [d, admin.accountId]);
+          return root;
+        };
         // 머리 하나와 그 스레드에 BOT2 가 걸어 둔 열린 깨움 하나(보고처 = 그 스레드).
         const withWake = async () => {
           const root = await direct(member.accountId, '질문');
@@ -3685,12 +3703,18 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['DM 에이전트(누구나) → dm', async () => '', () => ({ body: '봐 줘' }), A, undefined, dmBot2],
           ['DM 에이전트(주인만) → 게이트 막힘', async () => '', () => ({ body: '봐 줘' }), member.token, undefined, dmBot],
           ['머리 id 가 null → 400', async () => '', () => ({ body: '답', threadRootId: null }), A],
+          // 앞단에 `HARKROOM_DELEGATION_V2` 가 없으면 스위치를 모르니 TS 로(아래에서 값을 준 앞단으로 v0·v1 을 견준다).
+          ['담당 사람 글, 스위치 모름 → TS 몫', withDelegation, (r) => ({ body: '진행 중', threadRootId: r }), A, 'ts'],
+        ];
+        const DELEG_SCENES: Scene[] = [
+          ['담당 사람 글 → 위임 활동', withDelegation, (r) => ({ body: '진행 중', threadRootId: r }), A],
+          ['담당 사람 물음 → 위임 활동', withDelegation, (r) => ({ body: '이거 맞아?', threadRootId: r }), A],
         ];
         // TS 몫 갈래는 Rust 서버에서도 TS 가 올리므로 그 장면의 이벤트는 TS 버스에서 읽는다(Rust outbox 에 없어야 한다).
         const handedOnRust: string[] = [];
-        const run = async (base: string, own: () => WorkspaceEvent[], tsBus: () => WorkspaceEvent[]) => {
+        const run = async (base: string, own: () => WorkspaceEvent[], tsBus: () => WorkspaceEvent[], scenes = SCENES) => {
           const out: unknown[] = [];
-          for (const [name, mkRoot, payload, token, side, ch] of SCENES) {
+          for (const [name, mkRoot, payload, token, side, ch] of scenes) {
             const evs = side === 'ts' ? tsBus : own;
             const root = await mkRoot(base);
             await settle();
@@ -3718,8 +3742,40 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const tsGet = () => tsEvents;
         const tsOut = await run(tsUrl, tsGet, tsGet);
         const rsOut = await run(rsUrl, () => busEvents, tsGet);
-        offTs();
         expect(rsOut).toEqual(tsOut);
+        // C1c-3d — 위임 스위치를 준 앞단(값마다 하나씩 띄운다)과 같은 값의 TS 를 견준다. 사람 글은 닫지도 깨우지도 않는다.
+        const delegOut: Record<string, unknown> = {};
+        const prevV2 = process.env.HARKROOM_DELEGATION_V2;
+        await db.pool.query(`alter role ${rw} connection limit -1`);
+        for (const mode of ['1', '0']) {
+          const portD = await freePort();
+          let frontD: ChildProcess | undefined;
+          try {
+            process.env.HARKROOM_DELEGATION_V2 = mode;
+            const fd = await startFront(bin, {
+              UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(portD), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
+              TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust', HARKROOM_DELEGATION_V2: mode,
+            });
+            frontD = fd.child;
+            const untilD = Date.now() + 10_000;
+            while (!fd.log().includes('front: rust core routes') && Date.now() < untilD) await new Promise((res) => setTimeout(res, 100));
+            const tsD = await run(tsUrl, tsGet, tsGet, DELEG_SCENES);
+            const rsD = await run(`http://127.0.0.1:${portD}`, () => busEvents, tsGet, DELEG_SCENES);
+            // 띄운 앞단의 outbox 이벤트는 이 버스에 늦게 닿아 견주지 않는다 — 위임 활동은 이벤트를 내지 않고, 글 이벤트는 위 본 대조가 본다.
+            const noEv = (xs: unknown[]) => xs.map((x) => ({ ...(x as Record<string, unknown>), events: undefined }));
+            expect(noEv(rsD), `HARKROOM_DELEGATION_V2=${mode}`).toEqual(noEv(tsD));
+            delegOut[mode] = tsD;
+          } finally {
+            frontD?.kill('SIGTERM');
+            if (prevV2 === undefined) delete process.env.HARKROOM_DELEGATION_V2; else process.env.HARKROOM_DELEGATION_V2 = prevV2;
+          }
+        }
+        offTs();
+        type D = { deleg: Record<string, unknown>[]; count: string };
+        expect((delegOut['1'] as D[])[0]!.deleg).toEqual([{ outcome: null, active: true, pending: true, pending_at: true, pushed: true }]);
+        expect((delegOut['0'] as D[])[0]!.deleg).toEqual([{ outcome: null, active: false, pending: false, pending_at: false, pushed: true }]);
+        expect((tsOut as D[]).find((x) => (x as unknown as { name: string }).name === '담당 사람 글, 스위치 모름 → TS 몫')!.deleg)
+          .toEqual([{ outcome: null, active: false, pending: false, pending_at: false, pushed: true }]);
         expect(handedOnRust, 'TS 몫 스레드의 답은 Rust outbox 에 없다').toEqual([]);
         type Row = { name: string; status: number; count: string; inbox: { who: string; reason: string }[]; mandate: unknown[]; audit: { detail: { via: string } }[]; message: { alsoInChannel?: boolean } };
         const by = (n: string) => (tsOut as Row[]).find((x) => x.name === n)!;

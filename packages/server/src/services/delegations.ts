@@ -285,18 +285,18 @@ export async function touchDelegationDeadline(
   client: PoolClient,
   args: { threadRootId: string; authorId: string },
 ): Promise<void> {
-  await client.query(
-    `update team_delegation d
+  await client.query(DELEGATION_TOUCH_DEADLINE_SQL, [args.authorId, args.threadRootId, DELEGATION_SILENCE_SEC]);
+}
+
+/** 담당 글이 기한을 민다(`touchDelegationDeadline`) — $1 작성자 · $2 머리 · $3 미는 초. Rust 사람 글(`core/msg_post.rs`)이 골든으로 받는다. */
+export const DELEGATION_TOUCH_DEADLINE_SQL = `update team_delegation d
         set deadline_at = greatest(d.deadline_at, now() + ($3::int * interval '1 second'))
        from team_delegation_item i
       where i.delegation_id = d.id
-        and i.delegate_account_id = $1
+        and i.delegate_account_id = $1::uuid
         and i.outcome is null
-        and d.thread_root_id = $2
-        and d.notified_at is null`,
-    [args.authorId, args.threadRootId, DELEGATION_SILENCE_SEC],
-  );
-}
+        and d.thread_root_id = $2::uuid
+        and d.notified_at is null`;
 
 /**
  * 팀원의 **완료 보고·실패가 자기 의무를 닫는다.** `postMessage` 안에서 같은 트랜잭션으로 불린다.
@@ -934,16 +934,16 @@ async function closeDelegationsForReplyV2(
     if (open.rowCount) return woke;
   }
   // 결과가 아닌 글, 또는 이미 보고된 뒤의 글: 턴 끝에 update 로 간다.
-  await client.query(
-    `update team_delegation_item i
-        set last_activity_at = now(), update_pending_message_id = $3, update_pending_at = now()
-       from team_delegation d
-      where d.id = i.delegation_id and d.thread_root_id = $2 and i.delegate_account_id = $1
-        and (i.outcome is null or i.outcome = 'reported')`,
-    [args.authorId, args.threadRootId, args.messageId],
-  );
+  await client.query(DELEGATION_V2_UPDATE_PENDING_SQL, [args.authorId, args.threadRootId, args.messageId]);
   return woke;
 }
+
+/** v1 의 「대기 중 update」 적기 — $1 작성자 · $2 머리 · $3 이 글. Rust 사람 글(`core/msg_post.rs`)이 골든으로 받는다. */
+export const DELEGATION_V2_UPDATE_PENDING_SQL = `update team_delegation_item i
+        set last_activity_at = now(), update_pending_message_id = $3::uuid, update_pending_at = now()
+       from team_delegation d
+      where d.id = i.delegation_id and d.thread_root_id = $2::uuid and i.delegate_account_id = $1::uuid
+        and (i.outcome is null or i.outcome = 'reported')`;
 
 /**
  * 턴이 끝난 담당의 대기 중 update 를 위임자 inbox 로 옮긴다. 턴 끝 = 다음 중 먼저:
