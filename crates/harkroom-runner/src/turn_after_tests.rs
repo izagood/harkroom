@@ -264,3 +264,29 @@ fn clip_body_cuts_utf16_units_without_splitting_pairs() {
     let fits = format!("{}😀", "a".repeat(BODY_LIMIT - 2));
     assert_eq!(clip_body(&fits), fits);
 }
+
+// 정본 mentionTurn.test.ts 「PTY 가 떴는데 거두기 전에 혼자 exit 0 으로 꺼진 에이전트 호출은 ✅ 가 아니라 재시도 가능한 실패다」
+#[test]
+fn quit_early_fails_retryable_with_mention_and_masked_last_said() {
+    for caller in [NudgeCaller::Agent, NudgeCaller::Human, NudgeCaller::Wake] {
+        let mut io = Fake {
+            last: Some("확인하는 중 hk_pat_secret".into()),
+            ..Fake::default()
+        };
+        apply_after_turn(&plan(SilentPath::QuitEarly), &facts(caller), &mut io).unwrap();
+        assert_eq!(io.calls.len(), 2, "{:?}", io.calls);
+        assert_eq!(io.calls[0], "last_said");
+        assert!(
+            io.calls[1].starts_with(
+                "fail c Some(\"root\") retry=true mention=Some(\"men\") 하네스가 차례를 마치지 않고 꺼졌습니다. 마지막 말: \""
+            ),
+            "{}",
+            io.calls[1]
+        );
+        assert!(!io.calls[1].contains("hk_pat_secret"), "PAT 는 가린다");
+        assert!(
+            !io.calls.iter().any(|c| c.starts_with("react")),
+            "✅ 를 달지 않는다"
+        );
+    }
+}

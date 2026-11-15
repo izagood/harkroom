@@ -13,8 +13,8 @@
 use crate::mcp::FailOpts;
 use crate::prompt_system::BODY_LIMIT;
 use crate::silent_notice::{
-    SILENT_ACK_EMOJI, SilentTurnInput, SilentTurnNotice, background_cut_notice, silent_turn_notice,
-    silent_wake_notice,
+    SILENT_ACK_EMOJI, SilentTurnInput, SilentTurnNotice, background_cut_notice, quit_early_notice,
+    silent_turn_notice, silent_wake_notice,
 };
 use crate::turn_notice::{NudgeCaller, quoted_line};
 use crate::turn_success::{
@@ -128,6 +128,24 @@ pub fn apply_after_turn(
             io.post(f.channel_id, clip_body(&body), f.anchor)?;
         }
         SilentPath::SilentTurn => silent_turn(f, io)?,
+        SilentPath::QuitEarly => {
+            let said = io.last_said();
+            io.log(&format!(
+                "[mentionTurn] {}: 하네스가 차례를 마치지 않고 혼자 꺼졌다 — 실패 줄을 남긴다",
+                f.key
+            ));
+            let body = quit_early_notice(said.as_deref(), f.pat, f.secrets);
+            io.fail(
+                f.channel_id,
+                clip_body(&body),
+                f.anchor,
+                &FailOpts {
+                    retryable: true,
+                    mention_id: Some(f.mention_id.to_string()),
+                    ..FailOpts::default()
+                },
+            )?;
+        }
         SilentPath::WakeAck => {
             let said = io.last_said();
             let line = quoted_line(said.as_deref(), f.pat, f.secrets);

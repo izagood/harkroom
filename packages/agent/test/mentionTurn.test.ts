@@ -4651,6 +4651,83 @@ describe('턴의 끝 — 발화 + 관찰자 없음 (2026-09-08)', () => {
     expect(fake.posts.map((p) => p.body)).toEqual([NO_REPLY_NOTICE]);
   });
 
+  // ── 혼자 꺼진 TUI 턴 (2026-11-16) ──────────────────────────────────────────────
+  // codex 는 SIGTERM 을 받으면 exit 0 으로 나간다 — 러너가 거두지 않았는데 차례를 마치지 않은 채 꺼진 턴이
+  // 정상 종료 갈래로 들어와 에이전트 호출이면 ✅ 를 받았다. 되돌려 RED: 판정(`quitBeforeFinishing`)을 빼면
+  // 첫 둘은 ✅·「답 없음」이 되고, `finished`·`screenEnded` 를 안 보면 셋째·넷째가 실패로 바뀐다.
+  it('PTY 가 떴는데 거두기 전에 혼자 exit 0 으로 꺼진 에이전트 호출은 ✅ 가 아니라 재시도 가능한 실패다', async () => {
+    const fake = new FakeHarkroom(defOf({ harness: 'codex' }));
+    fake.seedFrom('agent-peer', '@forge 이거 확인해 줘').id = MENTION;
+    const t = tuiScript(() => {}, 20);
+    const { deps, runTurn } = await makeDeps(fake, {
+      agentIds: new Set(['agent-peer']), utteranceProbeMs: 5, orphanMs: 5,
+      readTurnState: async () => 'working', readTranscriptMtime: async () => Date.now(),
+      readLastSaid: async () => '확인하는 중',
+    });
+    runTurn.script = t.script;
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    expect(t.killed()).toBeNull();
+    expect(fake.reactions.filter((r) => r.emoji === '✅')).toEqual([]);
+    // 실패도 그 스레드에 나간 말이라 `posts` 에도 실린다(FakeHarkroom.fail) — 보통 글은 그것 하나뿐이다.
+    expect(fake.posts).toHaveLength(1);
+    expect(fake.fails.map((f) => ({ body: f.body, retryable: f.retryable, mentionId: f.mentionId }))).toEqual([
+      { body: '하네스가 차례를 마치지 않고 꺼졌습니다. 마지막 말: "확인하는 중" — 다시 부르면 이어서 합니다.', retryable: true, mentionId: MENTION },
+    ]);
+  });
+
+  it('사람이 부른 턴도 혼자 꺼지면 「답 없음」 글 대신 실패다', async () => {
+    const fake = new FakeHarkroom(defOf({ harness: 'codex' }));
+    fake.seedFrom('human-1', '@forge 확인해 줘');
+    const t = tuiScript(() => {}, 20);
+    const { deps, runTurn } = await makeDeps(fake, {
+      utteranceProbeMs: 5, orphanMs: 5, readTurnState: async () => 'working', readTranscriptMtime: async () => Date.now(),
+      readLastSaid: async () => null,
+    });
+    runTurn.script = t.script;
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    expect(fake.posts.map((p) => p.body)).not.toContain(NO_REPLY_NOTICE);
+    expect(fake.fails.map((f) => f.body)).toEqual(['하네스가 차례를 마치지 않고 꺼졌습니다 — 다시 부르면 이어서 합니다.']);
+  });
+
+  it('말없이 end_turn 하고 거둔 턴은 그대로 ✅ 다 — 끝낸 턴은 혼자 꺼진 턴이 아니다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('agent-peer', '@forge FYI').id = MENTION;
+    const t = tuiScript(() => {}, 1_000);
+    const { deps, runTurn } = await makeDeps(fake, {
+      agentIds: new Set(['agent-peer']), utteranceProbeMs: 5, orphanMs: 5, readTurnState: async () => 'ended',
+      harnessStallMs: 1, readTranscriptMtime: async () => null,
+    });
+    runTurn.script = t.script;
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    expect(t.killed()).toBe('SIGTERM');
+    expect(fake.fails).toEqual([]);
+    expect(fake.reactions.filter((r) => r.emoji === '✅')).toHaveLength(1);
+  });
+
+  it('기록 꼬리가 end_turn 인 채 거두기 전에 꺼진 턴도 끝낸 턴이다 — 실패로 바꾸지 않는다', async () => {
+    const fake = new FakeHarkroom(defOf());
+    fake.seedFrom('agent-peer', '@forge FYI').id = MENTION;
+    // 회수 유예(orphanMs)를 길게 둬 러너가 거두기 전에 하네스가 먼저 나간다.
+    const t = tuiScript(() => {}, 60);
+    const { deps, runTurn } = await makeDeps(fake, {
+      agentIds: new Set(['agent-peer']), utteranceProbeMs: 5, orphanMs: 5_000, readTurnState: async () => 'ended',
+      readPendingBackground: async () => null, readTranscriptMtime: async () => null,
+    });
+    runTurn.script = t.script;
+
+    await runMentionTurn(deps, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION });
+
+    expect(t.killed()).toBeNull();
+    expect(fake.fails).toEqual([]);
+    expect(fake.reactions.filter((r) => r.emoji === '✅')).toHaveLength(1);
+  });
+
   /**
    * 끝난 턴의 즉시 회수(2026-10-02). 60초 유예는 같은 스레드의 다음 멘션을 그만큼 기다리게 했다
    * (스레드당 턴 하나) — 끝났고 자식 작업이 0 으로 확인된 턴만 바로 거둔다.
