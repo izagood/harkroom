@@ -12,7 +12,10 @@ import { describe, expect, it } from 'vitest';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent, createMember } from './helpers/fixtures.js';
 import { startTestDb } from './helpers/testDb.js';
-import { postMessage } from '../src/services/messages.js';
+import { postMessage, resolveMentionCalls } from '../src/services/messages.js';
+import { writeFileSync as writeCases } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join as joinPath } from 'node:path';
 import {
   addChannelMember, audienceFor, channelListAudience, channelListLostAudience, createChannel, getOrCreateDm, removeChannelMember,
 } from '../src/services/channels.js';
@@ -330,6 +333,112 @@ describe.skipIf(!ON)('호출 게이트 — TS·Rust 같은 판정', () => {
         const i = got[k].findIndex((v, n) => v !== want[k][n]);
         expect(i, `${k} 첫 어긋남 #${i}`).toBe(-1);
       }
+    } finally {
+      client.release();
+      await db.stop();
+    }
+  }, 600_000);
+});
+
+// S5.3 C3a-3b-2 — 「누구를 부르나」(`core/mention_calls.rs`)가 TS `resolveMentionCalls` 와 같은 판정인가. 같은 DB 에 픽스처를 넣고
+// 사례마다 TS 답을 만든 뒤, 같은 사례를 Rust 시험에 넘겨 찍힌 답과 맞춘다(집합 칸은 정렬해 견준다).
+describe.skipIf(!ON)('누구를 부르나 — TS·Rust 같은 판정', () => {
+  it('사슬 상한·게이트·principal(켬/끔/하루 상한)·팀 계획·그룹·@channel·지칭', async () => {
+    const db = await startTestDb();
+    const client = await db.pool.connect();
+    try {
+      const q = (sql: string, args: unknown[] = []) => client.query(sql, args);
+      const acct = async (handle: string, kind: 'human' | 'agent', o: { admin?: boolean; disabled?: boolean } = {}) => (await q(
+        `insert into account(handle, display_name, kind, login_id, role, is_admin, disabled_at)
+         values ($1, $1, $2, case when $2 = 'human' then $1 end, $3, $4, case when $5 then now() end) returning id`,
+        [handle, kind, o.admin ? 'admin' : 'member', Boolean(o.admin), Boolean(o.disabled)])).rows[0].id as string;
+      const h1 = await acct('mc-h1', 'human', { admin: true });
+      const h2 = await acct('mc-h2', 'human');
+      const agent = async (handle: string, scope: string, owner: string | null, disabled = false) => {
+        const id = await acct(handle, 'agent', { disabled });
+        await q(`insert into agent_config(account_id, owner_account_id, invoke_scope) values ($1, $2, $3)`, [id, owner, scope]);
+        return id;
+      };
+      const botc = await agent('mc-botc', 'community', h1);
+      const boto = await agent('mc-boto', 'owner', h1);
+      const botl = await agent('mc-botl', 'list', h1);
+      const botch = await agent('mc-botch', 'channel', h1);
+      const botoff = await agent('mc-botoff', 'community', h1, true);
+      await q(`insert into agent_invoker(agent_id, account_id) values ($1, $2)`, [botl, h2]);
+      const ch = (await createChannel(db.pool, { name: 'mc-room' })).id;
+      await q(`insert into channel_member(channel_id, account_id) values ($1, $2)`, [ch, h2]);
+      const team = async (name: string, scope: string, lead: string | null, members: string[]) => {
+        const id = (await q(`insert into agent_team(name, created_by, invoke_scope, owner_account_id) values ($1, $2, $3, $2) returning id`,
+          [name, h1, scope])).rows[0].id as string;
+        for (const m of members) await q(`insert into agent_team_member(team_id, agent_account_id) values ($1, $2)`, [id, m]);
+        if (lead) await q(`update agent_team set lead_account_id = $2 where id = $1`, [id, lead]);
+        return id;
+      };
+      await team('mc-squad', 'community', botc, [botc, boto]);
+      await team('mc-crowd', 'community', null, [botc, boto, botl, botoff]);
+      await team('mc-locked', 'owner', null, [botc]);
+      const g = (await q(`insert into handle_group(handle, display_name) values ('mc-crew', 'Crew') returning id`)).rows[0].id as string;
+      for (const m of [h1, h2, botc]) await q(`insert into handle_group_member(group_id, account_id) values ($1, $2)`, [g, m]);
+      await q(`update mention_policy set chain_limit = 3`);
+      // h2 는 하루 상한(200)에 닿은 principal — 그의 권한으로 연 에이전트 글 200개.
+      await q(`insert into message (channel_id, author_id, body, kind, meta, principal_account_id)
+               select $1, $2, 'p', 'user', '{"invokedAsPrincipal":{}}'::jsonb, $3 from generate_series(1, 200)`, [ch, botc, h2]);
+      const H = 3_600_000;
+      const base = { channelId: ch, mentionDepth: 0, chainBound: false, chainStartedAtMs: null as number | null, principalId: null as string | null, principalInvokeEnabled: true, replyGrantThreadId: null as string | null };
+      const cases = [
+        { ...base, body: '@mc-botc @mc-boto @mc-botl @mc-botch hi @mc-h1', authorId: h2, authorIsAgent: false },
+        { ...base, body: '@mc-boto @mc-botl 일', authorId: botc, authorIsAgent: true },
+        { ...base, body: '@mc-boto 일', authorId: botc, authorIsAgent: true, principalId: h1 },
+        { ...base, body: '@mc-boto 일', authorId: botc, authorIsAgent: true, principalId: h1, principalInvokeEnabled: false },
+        { ...base, body: '@mc-botl 일', authorId: botc, authorIsAgent: true, principalId: h2 },
+        { ...base, body: '@mc-boto 일', authorId: botc, authorIsAgent: true, principalId: h2 },
+        { ...base, body: '@mc-botl @mc-h1 일', authorId: botc, authorIsAgent: true, mentionDepth: 3 },
+        { ...base, body: '@mc-boto 일', authorId: h1, authorIsAgent: false, chainBound: true, mentionDepth: 1, chainStartedAtMs: Date.now() - 25 * H },
+        { ...base, body: '@mc-boto 일', authorId: h1, authorIsAgent: false, chainBound: true, mentionDepth: 1, chainStartedAtMs: Date.now() - H },
+        { ...base, body: '@mc-squad 해 줘', authorId: h2, authorIsAgent: false },
+        { ...base, body: '@mc-crowd 해 줘', authorId: h2, authorIsAgent: false },
+        { ...base, body: '@mc-locked 가', authorId: h2, authorIsAgent: false },
+        { ...base, body: '@mc-squad @mc-botc 함께', authorId: h1, authorIsAgent: false },
+        { ...base, body: '앞말 @mc-boto 중간 @mc-squad', authorId: botc, authorIsAgent: true },
+        { ...base, body: '@channel 공지 @mc-crew', authorId: h1, authorIsAgent: false },
+        { ...base, body: '@channel 공지', authorId: botc, authorIsAgent: true },
+        { ...base, body: '공지 @channel', authorId: botc, authorIsAgent: true },
+        { ...base, body: `<@${boto}> 토큰으로 부름 @mc-botoff`, authorId: h2, authorIsAgent: false },
+        { ...base, body: '`@mc-botc` 코드 > 와 @없는사람', authorId: h1, authorIsAgent: false },
+      ];
+      const sort = (v: Iterable<string>) => [...v].sort();
+      const want: unknown[] = [];
+      const prev = process.env.HARKROOM_PRINCIPAL_INVOKE;
+      for (const c of cases) {
+        process.env.HARKROOM_PRINCIPAL_INVOKE = c.principalInvokeEnabled ? '' : 'off';
+        const r = await resolveMentionCalls(client, {
+          body: c.body, channelId: c.channelId, authorId: c.authorId, authorIsAgent: c.authorIsAgent, mentionDepth: c.mentionDepth,
+          chainBound: c.chainBound, chainStartedAt: c.chainStartedAtMs == null ? null : new Date(c.chainStartedAtMs),
+          replyGrantThreadId: c.replyGrantThreadId, principal: c.principalId ? { id: c.principalId, causeReasons: [] } : null,
+        });
+        want.push({
+          normalizedBody: r.normalizedBody, accountHandles: sort(r.accountHandles), calledIds: r.calledIds,
+          cappedIds: sort(r.cappedIds), deniedIds: sort(r.deniedIds), teamPlans: r.teamPlans,
+          targetCall: r.targetCall.map((t) => `${t.kind}:${t.id}`), channelCalled: r.channelCalled, callMeta: r.callMeta,
+        });
+      }
+      if (prev === undefined) delete process.env.HARKROOM_PRINCIPAL_INVOKE; else process.env.HARKROOM_PRINCIPAL_INVOKE = prev;
+      // 픽스처가 갈래를 실제로 가르는지 — 막힘·상한·principal(연 것·그림자·하루 상한)·팀장·팀 막힘이 다 나와야 한다.
+      const metas = want.map((w) => (w as { callMeta: Record<string, unknown> }).callMeta);
+      for (const k of ['mentionDenied', 'mentionChainCapped', 'invokedAsPrincipal', 'mentionPrincipalShadow', 'mentionDeniedPrincipal', 'mentionRefs', 'mentionChainReason']) {
+        expect(metas.some((m) => k in m), `사례가 ${k} 를 만든다`).toBe(true);
+      }
+      expect(metas.some((m) => m.mentionDeniedPrincipal === 'capped'), '하루 상한').toBe(true);
+      const file = joinPath(tmpdir(), `mention-cases-${process.pid}.json`);
+      writeCases(file, JSON.stringify(cases));
+      const r = await cargo(['test', '--test', 'mention_calls', '--', '--nocapture'], {
+        HARKROOM_TEST_DATABASE_URL: db.uri, HARKROOM_MENTION_CASES: file,
+      });
+      expect(r.code, r.out).toBe(0);
+      const line = r.out.split('\n').find((l) => l.startsWith('MENTION_CALLS_JSON '));
+      expect(line, r.out).toBeDefined();
+      const got = JSON.parse(line!.slice('MENTION_CALLS_JSON '.length)) as unknown[];
+      for (let i = 0; i < cases.length; i++) expect(got[i], `사례 ${i}: ${cases[i]!.body}`).toEqual(want[i]);
     } finally {
       client.release();
       await db.stop();

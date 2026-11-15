@@ -1071,7 +1071,7 @@ function noMentionCalls(body: string): ResolvedMentionCalls {
   };
 }
 
-async function resolveMentionCalls(
+export async function resolveMentionCalls(
   client: PoolClient,
   input: {
     body: string; channelId: string; authorId: string; authorIsAgent: boolean; mentionDepth: number;

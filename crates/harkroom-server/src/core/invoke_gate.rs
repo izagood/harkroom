@@ -132,6 +132,30 @@ pub async fn invoke_facts(
         .collect())
 }
 
+/// [`invoke_facts`] 와 같은 조회를 **행 순서 그대로** 돌려준다 — TS 는 `Map` 의 넣은 순서(= 조회 행 순서)로 훑으므로,
+/// 순서가 결과에 실리는 자리(`resolveMentionCalls` 의 principal 로 연 부름 목록)는 이것을 쓴다.
+pub async fn invoke_facts_ordered(
+    conn: &mut PgConnection,
+    agent_ids: &[String],
+) -> Result<Vec<AgentFacts>, sqlx::Error> {
+    if agent_ids.is_empty() {
+        return Ok(vec![]);
+    }
+    let rows: Vec<(String, String, Option<String>, bool)> = sqlx::query_as(sql().facts.as_str())
+        .bind(agent_ids)
+        .fetch_all(&mut *conn)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, scope, owner, off)| AgentFacts {
+            agent_id: id,
+            invoke_scope: scope,
+            owner_account_id: owner,
+            off,
+        })
+        .collect())
+}
+
 /// TS `passesScope` — 팀과 에이전트가 같은 몸통을 쓴다(`list_sql` 만 다르다).
 async fn passes_scope(
     conn: &mut PgConnection,
