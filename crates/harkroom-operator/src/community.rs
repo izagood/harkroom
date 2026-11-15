@@ -156,6 +156,10 @@ impl AssignmentDeps for SystemDeps {
     fn rust_runner_present(&self) -> bool {
         self.runners.rust_runner_present()
     }
+    /// node 러너가 물려받는 PATH(이 프로세스의 PATH)에 실행할 수 있는 `node` 가 있는가(s9).
+    fn node_present(&self) -> bool {
+        node_on_path(std::env::var_os("PATH").as_deref())
+    }
     /// 러너와 같은 풀 해석(`harkroom-accounts::claude_account_use`, L3c-3e) — 러너 env 는 이 프로세스 env 위에 얹히므로 같은 env 로 잰다.
     /// HOME 을 모르면 닫힌 쪽(`Unreadable`).
     fn claude_account_use(
@@ -553,3 +557,42 @@ impl AssignmentFrames {
 
 #[cfg(test)]
 mod tests;
+
+/// `PATH` 의 칸마다 실행할 수 있는 일반 파일 `node` 가 있는가 — `/usr/bin/env node` 가 찾는 것과 같은 순서.
+pub fn node_on_path(path: Option<&std::ffi::OsStr>) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    let Some(path) = path else { return false };
+    std::env::split_paths(path).any(|dir| {
+        std::fs::metadata(dir.join("node"))
+            .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    })
+}
+
+#[cfg(test)]
+mod node_on_path_tests {
+    use super::node_on_path;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn finds_only_an_executable_node_file_on_path() {
+        let base = std::env::temp_dir().join(format!("hk-node-path-{}", std::process::id()));
+        let (a, b) = (base.join("a"), base.join("b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        let joined = std::env::join_paths([&a, &b]).unwrap();
+        assert!(!node_on_path(Some(&joined)));
+        assert!(!node_on_path(None));
+        // 실행 권한 없는 파일은 아니다.
+        let f = b.join("node");
+        std::fs::write(&f, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(!node_on_path(Some(&joined)));
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(node_on_path(Some(&joined)));
+        // 디렉터리 이름이 node 여도 아니다.
+        std::fs::create_dir(a.join("node")).ok();
+        let only_a = std::env::join_paths([&a]).unwrap();
+        assert!(!node_on_path(Some(&only_a)));
+        std::fs::remove_dir_all(&base).ok();
+    }
+}
