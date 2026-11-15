@@ -77,10 +77,7 @@ pub async fn announce_updated(
 
 /// TS `syncAskBundles` — 이 원본을 줄로 담은(지우지 않은) 묶음 카드마다 `message.updated`.
 /// TS 는 실패를 삼킨다 — 여기서는 `Err` 를 돌려주고, 삼킬지는 부르는 쪽이 정한다(루프는 기록만, 라우트는 tx 를 버린다).
-pub async fn sync_ask_bundles(
-    conn: &mut PgConnection,
-    root_id: &str,
-) -> Result<(), sqlx::Error> {
+pub async fn sync_ask_bundles(conn: &mut PgConnection, root_id: &str) -> Result<(), sqlx::Error> {
     let ids: Vec<String> = sqlx::query_scalar(
         "select id::text from message \
           where meta->>'kind' = 'askBundle' and deleted_at is null \
@@ -124,15 +121,14 @@ pub async fn sync_ask_mirrors(
         return Ok(());
     };
     let s = |k: &str| ask.get(k).and_then(Value::as_str).map(str::to_owned);
-    let (rows, reason, actor): (Vec<(String, Option<String>)>, &str, String) = if let Some(with) =
-        ask.get("answeredWith").filter(|v| !v.is_null())
-    {
-        let with = with
-            .as_str()
-            .map(str::to_owned)
-            .unwrap_or_else(|| with.to_string());
-        let rows = sqlx::query_as(
-            "update message set meta = jsonb_set(jsonb_set(jsonb_set(meta::jsonb, \
+    let (rows, reason, actor): (Vec<(String, Option<String>)>, &str, String) =
+        if let Some(with) = ask.get("answeredWith").filter(|v| !v.is_null()) {
+            let with = with
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| with.to_string());
+            let rows = sqlx::query_as(
+                "update message set meta = jsonb_set(jsonb_set(jsonb_set(meta::jsonb, \
                     '{ask,answeredWith}', to_jsonb($2::text)), \
                     '{ask,answeredBy}', coalesce(to_jsonb($3::text), 'null'::jsonb)), \
                     '{ask,answeredAt}', to_jsonb(coalesce($4::text, \
@@ -140,34 +136,34 @@ pub async fn sync_ask_mirrors(
               where meta->'ask'->>'mirrorOf' = $1 and deleted_at is null \
                 and meta->'ask'->>'answeredWith' is null \
               returning id::text, author_id::text",
-        )
-        .bind(root_id)
-        .bind(with)
-        .bind(s("answeredBy"))
-        .bind(s("answeredAt"))
-        .fetch_all(&mut *conn)
-        .await?;
-        (rows, "ask_answered", s("answeredBy").unwrap_or_default())
-    } else if let Some(closed_at) = s("closedAt") {
-        let rows = sqlx::query_as(
-            "update message set meta = jsonb_set(jsonb_set(jsonb_set(meta::jsonb, \
+            )
+            .bind(root_id)
+            .bind(with)
+            .bind(s("answeredBy"))
+            .bind(s("answeredAt"))
+            .fetch_all(&mut *conn)
+            .await?;
+            (rows, "ask_answered", s("answeredBy").unwrap_or_default())
+        } else if let Some(closed_at) = s("closedAt") {
+            let rows = sqlx::query_as(
+                "update message set meta = jsonb_set(jsonb_set(jsonb_set(meta::jsonb, \
                     '{ask,closedAt}', to_jsonb($2::text)), \
                     '{ask,closedBy}', coalesce(to_jsonb($3::text), 'null'::jsonb)), \
                     '{ask,closedReason}', to_jsonb($4::text)) \
               where meta->'ask'->>'mirrorOf' = $1 and deleted_at is null \
                 and meta->'ask'->>'answeredWith' is null and meta->'ask'->>'closedAt' is null \
               returning id::text, author_id::text",
-        )
-        .bind(root_id)
-        .bind(closed_at)
-        .bind(s("closedBy"))
-        .bind(s("closedReason").unwrap_or_else(|| "declined".to_owned()))
-        .fetch_all(&mut *conn)
-        .await?;
-        (rows, "ask_closed", s("closedBy").unwrap_or_default())
-    } else {
-        return Ok(());
-    };
+            )
+            .bind(root_id)
+            .bind(closed_at)
+            .bind(s("closedBy"))
+            .bind(s("closedReason").unwrap_or_else(|| "declined".to_owned()))
+            .fetch_all(&mut *conn)
+            .await?;
+            (rows, "ask_closed", s("closedBy").unwrap_or_default())
+        } else {
+            return Ok(());
+        };
     for (id, author) in rows {
         wake_asker(conn, label, author.as_deref(), &actor, &id, reason).await;
         announce_updated(conn, &id).await?;
