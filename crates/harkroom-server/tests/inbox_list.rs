@@ -218,3 +218,159 @@ async fn inbox_list_matches_ts_rules() {
         (vec![i1, i2], false)
     );
 }
+
+/// 덧붙임 셋(C6a-3b-1): 넘겨받은 일(`delegatedBy`)·이 부름이 접은 내 깨움(`canceledWakes`)·이 일이 시작된 스레드(`startedIn`).
+#[tokio::test]
+async fn inbox_extras_match_ts_rules() {
+    let Ok(url) = std::env::var("HARKROOM_TEST_DATABASE_URL") else {
+        eprintln!("skip: HARKROOM_TEST_DATABASE_URL unset");
+        return;
+    };
+    let pool = PgPool::connect(&url).await.unwrap();
+    let owner = account(&pool, "ix_owner", "human").await;
+    let me = account(&pool, "ix_me", "agent").await;
+    let lead = account(&pool, "ix_lead", "agent").await;
+    sqlx::query("insert into agent_config (account_id, instructions, owner_account_id) values ($1::uuid, '', $2::uuid)")
+        .bind(&me)
+        .bind(&owner)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let ch = id(
+        &pool,
+        "insert into channel(name, kind, visibility) values ('ix-pub-' || gen_random_uuid(), 'standard', 'public') returning id::text",
+        &[],
+    )
+    .await;
+    let post = |author: &str, body: &str, root: Option<&str>, meta: &str| {
+        let (author, body, root, meta, ch, pool) = (
+            author.to_string(),
+            body.to_string(),
+            root.map(str::to_string),
+            meta.to_string(),
+            ch.clone(),
+            pool.clone(),
+        );
+        async move {
+            sqlx::query_scalar::<_, String>(
+                "insert into message(channel_id, author_id, body, thread_root_id, meta, kind) values ($1::uuid, $2::uuid, $3, $4::uuid, $5::jsonb, 'user') returning id::text",
+            )
+            .bind(ch)
+            .bind(author)
+            .bind(body)
+            .bind(root)
+            .bind(meta)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let inbox = |m: String, reason: &'static str| {
+        let (pool, me) = (pool.clone(), me.clone());
+        async move {
+            sqlx::query_scalar::<_, String>(
+                "insert into inbox(account_id, message_id, reason) values ($1::uuid, $2::uuid, $3) returning id::text",
+            )
+            .bind(me)
+            .bind(m)
+            .bind(reason)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+
+    // 사람이 시작한 스레드(뿌리 r) — 사람이 나를 그 스레드에서 불렀다. 위임장은 그 뿌리에 걸린다.
+    let r = post(&owner, "@ix_me 시작", None, "{}").await;
+    inbox(r.clone(), "mention").await;
+    let mandate = id(
+        &pool,
+        "insert into mandate (owner_account_id, root_message_id, channel_id, thread_root_id) values ($1::uuid, $2::uuid, $3::uuid, $2::uuid) returning id::text",
+        &[&owner, &r, &ch],
+    )
+    .await;
+    // 넘겨받은 일: 팀장 글 + team_delegation(팀 없음).
+    let handed = post(&lead, "@ix_me 맡아", None, "{}").await;
+    sqlx::query("insert into team_delegation (message_id, lead_account_id, channel_id, thread_root_id, deadline_at) values ($1::uuid, $2::uuid, $3::uuid, $1::uuid, '2026-01-02T03:04:05.678Z')")
+        .bind(&handed)
+        .bind(&lead)
+        .bind(&ch)
+        .execute(&pool)
+        .await
+        .unwrap();
+    inbox(handed.clone(), "team_delegated").await;
+    // 다른 스레드의 동료 글(같은 위임장) — 시작한 곳이 붙는다.
+    let peer = post(&lead, "@ix_me 보고", None, "{}").await;
+    sqlx::query("update message set mandate_id = $1::uuid where id = $2::uuid")
+        .bind(&mandate)
+        .bind(&peer)
+        .execute(&pool)
+        .await
+        .unwrap();
+    inbox(peer.clone(), "mention").await;
+    // 사람이 부른 글 — 내 깨움 둘을 접었다(나중 것은 reportTo 있음, 남의 깨움은 안 보인다).
+    let call = post(&owner, "@ix_me 지금", None, "{}").await;
+    for (who, body, at, meta) in [
+        (
+            &me,
+            "늦은 확인",
+            "2030-01-02T00:00:00Z",
+            r#"{"wake":{"reportTo":{"channelId":"c1","threadRootId":"t1"}}}"#,
+        ),
+        (
+            &me,
+            "이른 확인",
+            "2030-01-01T00:00:00Z",
+            r#"{"wake":{"reportTo":{"channelId":"c1"}}}"#,
+        ),
+        (&lead, "남의 깨움", "2030-01-01T00:00:00Z", "{}"),
+    ] {
+        let wm = post(who, body, None, meta).await;
+        sqlx::query("insert into agent_wake (account_id, channel_id, message_id, wake_at, canceled_at, canceled_by_message_id) values ($1::uuid, $2::uuid, $3::uuid, $4::timestamptz, now(), $5::uuid)")
+            .bind(who)
+            .bind(&ch)
+            .bind(&wm)
+            .bind(at)
+            .bind(&call)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    inbox(call.clone(), "mention").await;
+
+    let rows = list_inbox(&pool, &me, InboxQuery::Since(0)).await.unwrap();
+    let by_msg = |m: &str| -> Value {
+        let row = rows
+            .iter()
+            .find(|x| x.body.contains(m))
+            .unwrap_or_else(|| panic!("row for {m}"));
+        serde_json::from_str(&row.body).unwrap()
+    };
+    let h = by_msg(&handed);
+    assert_eq!(
+        h["delegatedBy"],
+        serde_json::json!({"leadHandle":"ix_lead","teamName":null,"deadlineAt":"2026-01-02T03:04:05.678Z"})
+    );
+    assert!(h.get("startedIn").is_none() && h.get("canceledWakes").is_none());
+    let p = by_msg(&peer);
+    assert_eq!(
+        p["startedIn"],
+        serde_json::json!({"channelId": ch, "threadRootId": r})
+    );
+    assert!(p.get("delegatedBy").is_none());
+    // 사람 글(r·call)에는 시작한 곳이 없다.
+    assert!(by_msg(&r).get("startedIn").is_none());
+    let c = by_msg(&call);
+    assert!(c.get("startedIn").is_none());
+    assert_eq!(
+        c["canceledWakes"],
+        serde_json::json!([
+            {"reason":"이른 확인","wakeAt":"2030-01-01T00:00:00.000Z"},
+            {"reason":"늦은 확인","wakeAt":"2030-01-02T00:00:00.000Z","reportTo":{"channelId":"c1","threadRootId":"t1"}}
+        ])
+    );
+    // 키 차례: 덧붙임은 기본 칸 뒤.
+    let row = rows.iter().find(|x| x.body.contains(&call)).unwrap();
+    let order = key_order(&row.body, &["threadRootId", "canceledWakes"]);
+    assert!(order[0] < order[1], "{}", row.body);
+}

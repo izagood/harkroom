@@ -365,7 +365,7 @@ pub fn zod_datetime_offset(s: &str) -> Result<Option<String>, ()> {
 }
 
 /// 1970-01-01 부터의 날 수(proleptic Gregorian, H. Hinnant).
-fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+pub(crate) fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
     let era = y.div_euclid(400);
     let yoe = y - era * 400;

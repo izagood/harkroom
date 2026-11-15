@@ -2702,6 +2702,32 @@ export async function closeAsk(
 }
 
 /**
+ * 글 답으로 닫을 카드 고르기·닫기(`closeAsksByReply`). Rust(`core/ask_reply_close.rs`, S5.3 C1c-3c)가 같은 문장을 골든으로 받는다.
+ * 자리표: $1 머리 · $2 채널 · $3 답글 seq · $4 답한 사람 · $5 답글 id.
+ */
+export const ASK_CLOSE_BY_REPLY_SQL = `update message
+          set meta = jsonb_set(
+                jsonb_set(
+                  jsonb_set(
+                    jsonb_set(meta::jsonb, '{ask,closedAt}', to_jsonb(now())),
+                    '{ask,closedBy}', to_jsonb($4::text)),
+                  '{ask,closedReason}', to_jsonb('replied'::text)),
+                '{ask,replyMessageId}', to_jsonb($5::text))
+        where (id = $1::uuid or thread_root_id = $1::uuid)
+          and channel_id = $2::uuid
+          and seq < $3::bigint
+          and deleted_at is null
+          and meta->>'kind' = 'ask'
+          and meta->'ask'->>'answeredWith' is null
+          and meta->'ask'->>'closedAt' is null
+          and meta->'ask'->>'mirrorOf' is null
+          and not (meta ? 'permissionRequest')
+          and not (meta ? 'mergeDenial')
+          and (meta->'ask'->'to'->>'kind' = 'human'
+            or (meta->'ask'->'to'->>'kind' = 'account' and meta->'ask'->'to'->>'accountId' = $4))
+        returning ${COLS}`;
+
+/**
  * **사람이 카드를 누르지 않고 글로 답했다**(2026-10-09, 선택 카드 A′ — 소유자 「셋 다」, 스레드 596146cc).
  *
  * 카드가 닫히는 길이 고르기·「답하지 않기」 둘뿐이라, 사람이 "이건 다르게 해 줘"·"그게 뭐야?"를
@@ -2727,27 +2753,7 @@ export async function closeAsksByReply(pool: Pool, reply: MessageRow): Promise<v
   if (!reply.threadRootId || !reply.authorId) return;
   try {
     const rows = (await pool.query(
-      `update message
-          set meta = jsonb_set(
-                jsonb_set(
-                  jsonb_set(
-                    jsonb_set(meta::jsonb, '{ask,closedAt}', to_jsonb(now())),
-                    '{ask,closedBy}', to_jsonb($4::text)),
-                  '{ask,closedReason}', to_jsonb('replied'::text)),
-                '{ask,replyMessageId}', to_jsonb($5::text))
-        where (id = $1 or thread_root_id = $1)
-          and channel_id = $2
-          and seq < $3
-          and deleted_at is null
-          and meta->>'kind' = 'ask'
-          and meta->'ask'->>'answeredWith' is null
-          and meta->'ask'->>'closedAt' is null
-          and meta->'ask'->>'mirrorOf' is null
-          and not (meta ? 'permissionRequest')
-          and not (meta ? 'mergeDenial')
-          and (meta->'ask'->'to'->>'kind' = 'human'
-            or (meta->'ask'->'to'->>'kind' = 'account' and meta->'ask'->'to'->>'accountId' = $4))
-        returning ${COLS}`,
+      ASK_CLOSE_BY_REPLY_SQL,
       [reply.threadRootId, reply.channelId, reply.seq, reply.authorId, reply.id],
     )).rows as MessageRow[];
     if (rows.length === 0) return;
@@ -3555,6 +3561,42 @@ export const INBOX_TEAM_ROSTER_SQL = `select t.id, t.name, tm.agent_account_id a
         where t.id = any($1::uuid[])
         order by a.handle`;
 
+/**
+ * 받은함 덧붙임 문장(C6a-3b) — `listInbox` 가 쓰고, Rust 앞단(`core/inbox_list.rs`)이 골든으로 같은 바이트를 읽는다.
+ * 계정·id 목록 자리는 형을 적는다(`$1::uuid`·`::uuid[]`) — Rust 는 글자로 묶는다. node-pg 에는 동작이 같다.
+ */
+export const INBOX_HANDED_SQL = `select d.message_id, a.handle as "leadHandle", t.name as "teamName",
+              d.deadline_at as "deadlineAt"
+         from team_delegation d
+         join account a on a.id = d.lead_account_id
+         left join agent_team t on t.id = d.team_id
+        where d.message_id = any($1::uuid[])`;
+
+export const INBOX_FOLDED_WAKES_SQL = `select w.canceled_by_message_id as by, wm.body as reason, w.wake_at as "wakeAt",
+              wm.meta->'wake'->'reportTo' as "reportTo"
+         from agent_wake w join message wm on wm.id = w.message_id
+        where w.account_id = $1::uuid and w.canceled_by_message_id = any($2::uuid[])
+        order by w.wake_at`;
+
+export const INBOX_STARTED_IN_SQL = `select m.id as "messageId", d.channel_id as "channelId", d.thread_root_id as "threadRootId"
+         from message m
+         join account a on a.id = m.author_id and a.kind = 'agent'
+         join mandate d on d.id = coalesce(m.mandate_id,
+                (select w.mandate_id from agent_wake w where w.message_id = m.id and w.account_id = $1::uuid
+                  order by w.created_at desc limit 1))
+         join agent_config me on me.account_id = $1::uuid and me.owner_account_id = d.owner_account_id
+         join message r on r.id = d.root_message_id and r.deleted_at is null
+         join channel sc on sc.id = d.channel_id
+        where m.id = any($2::uuid[])
+          and d.thread_root_id is not null and d.ended_at is null
+          and d.thread_root_id <> coalesce(m.thread_root_id, m.id)
+          and exists (select 1 from inbox hi
+                        join message h on h.id = hi.message_id
+                        join account ha on ha.id = h.author_id and ha.kind = 'human'
+                       where hi.account_id = $1::uuid and h.deleted_at is null
+                         and h.channel_id = d.channel_id and coalesce(h.thread_root_id, h.id) = d.thread_root_id)
+          and ${channelVisibleSql('sc', '$1::uuid')}`;
+
 export async function listInbox(
   pool: Pool, accountId: string,
   opts: { unreadOnly?: boolean; compact?: boolean; sinceId?: number; skipLeased?: boolean; newestLimit?: number; beforeId?: number },
@@ -3645,15 +3687,7 @@ export async function listInbox(
   if (handedIds.length) {
     const handed = await pool.query<{
       message_id: string; leadHandle: string; teamName: string | null; deadlineAt: string;
-    }>(
-      `select d.message_id, a.handle as "leadHandle", t.name as "teamName",
-              d.deadline_at as "deadlineAt"
-         from team_delegation d
-         join account a on a.id = d.lead_account_id
-         left join agent_team t on t.id = d.team_id
-        where d.message_id = any($1)`,
-      [[...new Set(handedIds)]],
-    );
+    }>(INBOX_HANDED_SQL, [[...new Set(handedIds)]]);
     const byMessage = new Map(handed.rows.map((r) => [r.message_id, r]));
     for (const row of rows) {
       const found = row.reason === 'team_delegated' ? byMessage.get(row.messageId) : undefined;
@@ -3677,12 +3711,7 @@ export async function listInbox(
   const callIds = [...new Set(rows.filter((r) => r.reason !== 'wake').map((r) => r.messageId))];
   if (callIds.length) {
     const folded = await pool.query<{ by: string; reason: string; wakeAt: string; reportTo: unknown }>(
-      `select w.canceled_by_message_id as by, wm.body as reason, w.wake_at as "wakeAt",
-              wm.meta->'wake'->'reportTo' as "reportTo"
-         from agent_wake w join message wm on wm.id = w.message_id
-        where w.account_id = $1 and w.canceled_by_message_id = any($2)
-        order by w.wake_at`,
-      [accountId, callIds],
+      INBOX_FOLDED_WAKES_SQL, [accountId, callIds],
     );
     const byCall = new Map<string, NonNullable<InboxEntry['canceledWakes']>>();
     for (const r of folded.rows) {
@@ -3717,25 +3746,7 @@ export async function listInbox(
   const startIds = [...new Set(rows.filter((r) => r.reason !== 'ask_answered' && r.reason !== 'ask_closed').map((r) => r.messageId))];
   if (startIds.length) {
     const started = await pool.query<{ messageId: string; channelId: string; threadRootId: string }>(
-      `select m.id as "messageId", d.channel_id as "channelId", d.thread_root_id as "threadRootId"
-         from message m
-         join account a on a.id = m.author_id and a.kind = 'agent'
-         join mandate d on d.id = coalesce(m.mandate_id,
-                (select w.mandate_id from agent_wake w where w.message_id = m.id and w.account_id = $1
-                  order by w.created_at desc limit 1))
-         join agent_config me on me.account_id = $1 and me.owner_account_id = d.owner_account_id
-         join message r on r.id = d.root_message_id and r.deleted_at is null
-         join channel sc on sc.id = d.channel_id
-        where m.id = any($2::uuid[])
-          and d.thread_root_id is not null and d.ended_at is null
-          and d.thread_root_id <> coalesce(m.thread_root_id, m.id)
-          and exists (select 1 from inbox hi
-                        join message h on h.id = hi.message_id
-                        join account ha on ha.id = h.author_id and ha.kind = 'human'
-                       where hi.account_id = $1 and h.deleted_at is null
-                         and h.channel_id = d.channel_id and coalesce(h.thread_root_id, h.id) = d.thread_root_id)
-          and ${channelVisibleSql('sc', '$1')}`,
-      [accountId, startIds],
+      INBOX_STARTED_IN_SQL, [accountId, startIds],
     );
     const byMessage = new Map(started.rows.map((r) => [r.messageId, { channelId: r.channelId, threadRootId: r.threadRootId }]));
     for (const row of rows) {

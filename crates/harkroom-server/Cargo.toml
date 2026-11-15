@@ -44,7 +44,13 @@ hmac = { version = "=0.13.0", features = ["zeroize"] }
 sha2_011 = { package = "sha2", version = "=0.11.0", features = ["zeroize"] }
 zeroize = "=1.9.1"
 
+# 망가뜨리기 시험 전용 판정 스위치(C3b-3a `core::decide_core::Checks`). **기본 꺼짐** — release 빌드에 들어가지 않는다.
+# 시험 빌드에서만 아래 dev-dependency(자기 자신)가 켠다. `tests/decide_core.rs` 가 `default` 에 없는지 확인한다.
+[features]
+breakage-tests = []
+
 [dev-dependencies]
+harkroom-server = { path = ".", features = ["breakage-tests"] }
 # /ws 시험 클라이언트(앞단 의존 axum ws 가 이미 쓰는 판).
 tokio-tungstenite = "=0.29.0"
 futures-util = { version = "=0.3.34", default-features = false, features = ["sink", "std"] }

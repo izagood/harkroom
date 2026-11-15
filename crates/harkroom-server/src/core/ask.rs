@@ -73,8 +73,8 @@ pub(super) struct Ask {
 }
 
 impl Ask {
-    /// TS `ask.to.kind === 'human'`.
-    pub(super) fn is_to_human(&self) -> bool {
+    /// `to.kind == 'human'` — 사람 앞 물음인가(C3b-3a 거울 판정이 쓴다).
+    pub(super) fn to_human(&self) -> bool {
         self.to == To::Human
     }
 }

@@ -297,7 +297,7 @@ async fn prepare(read: &PgPool, caller: &str, roots: &[&str]) -> sqlx::Result<Pr
         if js_truthy(meta["ask"].get("mirrorOf")) {
             return refuse("mirror_of_mirror");
         }
-        if !ask.is_to_human() {
+        if !ask.to_human() {
             return refuse("mirror_not_human");
         }
         if ask.answered || ask.closed {

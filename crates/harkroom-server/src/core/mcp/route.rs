@@ -133,8 +133,16 @@ pub async fn serve(
         .unwrap_or(serde_json::Value::Null);
     match super::respond::admit(up, ci, headers, name, &args).await {
         // `bg.claim` 은 TS 의 스위치가 켜졌다고 들었을 때만 — 아니면 TS 가 답한다(`disabled` 는 TS 가 정본).
-        super::respond::Admit::Yes { bg_enabled } => {
-            if name == "bg.claim" && !bg_enabled {
+        // 조건부로 싣는 도구(`delegation.close` — TS env 스위치)는 TS 가 「지금 싣는다」고 답했을 때만 Rust 가 답한다. 그 밖이면
+        // TS 로 넘겨 TS 의 「도구 없음」 답을 그대로 낸다. 어떤 도구든 TS 가 거짓이라고 답하면 넘긴다.
+        super::respond::Admit::Yes {
+            bg_enabled,
+            registered,
+        } => {
+            if (name == "bg.claim" && !bg_enabled)
+                || registered == Some(false)
+                || (super::writes::NEEDS_REGISTERED.contains(&name) && registered != Some(true))
+            {
                 return None;
             }
         }
