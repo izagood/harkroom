@@ -37,15 +37,18 @@ export async function openReplyGrants(
     [input.granterId, input.threadRootId, grantees, REPLY_GRANT_TTL_SEC]);
 }
 
+/** `hasReplyGrant` 의 문장 — Rust 코어(`core/invoke_gate.rs`, S5.3 C3a-3b)가 골든으로 받는다. */
+export const HAS_REPLY_GRANT_SQL = `select 1 from invoke_reply_grant
+      where grantee_id = $1::uuid and granter_id = $2::uuid and thread_root_id = $3::uuid
+        and closed_at is null and expires_at > now()`;
+
 /** Y 가 T 에서 X 를 깨울 회신권이 지금 열려 있나. */
 export async function hasReplyGrant(
   client: Pick<PoolClient, 'query'>,
   input: { granteeId: string; granterId: string; threadRootId: string },
 ): Promise<boolean> {
   const res = await client.query(
-    `select 1 from invoke_reply_grant
-      where grantee_id = $1 and granter_id = $2 and thread_root_id = $3
-        and closed_at is null and expires_at > now()`,
+    HAS_REPLY_GRANT_SQL,
     [input.granteeId, input.granterId, input.threadRootId]);
   return Boolean(res.rowCount);
 }
