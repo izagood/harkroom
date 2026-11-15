@@ -72,6 +72,13 @@ pub(super) struct Ask {
     pub(super) closed: bool,
 }
 
+impl Ask {
+    /// `to.kind == 'human'` — 사람 앞 물음인가(C3b-3a 거울 판정이 쓴다).
+    pub(super) fn to_human(&self) -> bool {
+        self.to == To::Human
+    }
+}
+
 /// TS `isPermissionCardMeta`.
 fn is_permission_card_meta(meta: &Value) -> bool {
     meta.get("permissionRequest").is_some_and(Value::is_object)

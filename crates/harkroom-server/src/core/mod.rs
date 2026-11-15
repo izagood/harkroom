@@ -12,6 +12,7 @@ pub mod ask_sync;
 pub mod audience;
 pub mod channels;
 pub mod content_scan;
+pub mod decide_core;
 pub mod events;
 pub mod inbox_list;
 pub mod inbox_read;
