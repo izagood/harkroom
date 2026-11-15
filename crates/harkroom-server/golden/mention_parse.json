@@ -538,22 +538,22 @@
       }
     },
     {
-      "body": "me@forge.com 메일",
+      "body": "me@example.com 메일",
       "segments": [
         {
           "kind": "plain",
-          "text": "me@forge.com 메일",
+          "text": "me@example.com 메일",
           "lang": null,
-          "raw": "me@forge.com 메일"
+          "raw": "me@example.com 메일"
         }
       ],
-      "scanText": "me@forge.com 메일",
+      "scanText": "me@example.com 메일",
       "handles": [],
       "ids": [],
       "targets": [],
       "head": "",
-      "normalized": "me@forge.com 메일",
-      "denormalized": "me@forge.com 메일",
+      "normalized": "me@example.com 메일",
+      "denormalized": "me@example.com 메일",
       "splitHuman": {
         "call": [],
         "ref": [],
@@ -1529,13 +1529,13 @@
       }
     },
     {
-      "body": "https://w.org/A_(@forge) 괄호",
+      "body": "https://example.org/A_(@forge) 괄호",
       "segments": [
         {
           "kind": "plain",
-          "text": "https://w.org/A_(@forge) 괄호",
+          "text": "https://example.org/A_(@forge) 괄호",
           "lang": null,
-          "raw": "https://w.org/A_(@forge) 괄호"
+          "raw": "https://example.org/A_(@forge) 괄호"
         }
       ],
       "scanText": ") 괄호",
@@ -1543,8 +1543,8 @@
       "ids": [],
       "targets": [],
       "head": "",
-      "normalized": "https://w.org/A_(@forge) 괄호",
-      "denormalized": "https://w.org/A_(@forge) 괄호",
+      "normalized": "https://example.org/A_(@forge) 괄호",
+      "denormalized": "https://example.org/A_(@forge) 괄호",
       "splitHuman": {
         "call": [],
         "ref": [],
