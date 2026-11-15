@@ -479,6 +479,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "ts-rs",
+ "url",
 ]
 
 [[package]]
