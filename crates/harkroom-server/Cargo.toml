@@ -21,8 +21,16 @@ hex = "=0.4.3"
 # 오퍼레이터 이름 정리(C2a) — shared `normalizeOperatorLabel` 의 유니코드 속성(\p{Extended_Pictographic} 등).
 regex = { version = "=1.12.3", default-features = false, features = ["std", "unicode-bool", "unicode-gencat", "unicode-perl"] }
 http-body-util = "=0.1.5"
-hyper = { version = "=1.12.0", features = ["client", "http1"] }
-hyper-util = { version = "=0.1.21", features = ["client-legacy", "http1", "tokio"] }
+hyper = { version = "=1.12.0", features = ["client", "http1", "http2"] }
+hyper-util = { version = "=0.1.21", features = ["client-legacy", "http1", "http2", "tokio"] }
+# APNs 전송(C5e-1) — HTTP/2 over TLS + ES256 JWT. rustls·ring·webpki-roots 는 오퍼레이터와 같은 판이다(이미 쓰는 판).
+# ring 은 P-256 고정 길이 서명(P1363)을 바로 낸다 — APNs 는 DER 서명을 거절한다.
+bytes = "=1.12.1"
+base64 = "=0.22.1"
+ring = "=0.17.14"
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring", "tls12", "logging"] }
+webpki-roots = "=1.0.11"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
 sha2 = "=0.10.9"
@@ -34,6 +42,8 @@ ts-rs = "=12.0.1"
 url = "=2.5.8"
 
 [dev-dependencies]
+# 가짜 APNs(h2c) 서버(C5e-1 시험).
+hyper = { version = "=1.12.0", features = ["server", "http2"] }
 # /ws 시험 클라이언트(앞단 의존 axum ws 가 이미 쓰는 판).
 tokio-tungstenite = "=0.29.0"
 futures-util = { version = "=0.3.34", default-features = false, features = ["sink", "std"] }
