@@ -3502,7 +3502,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       }
 
       // S5.3 C1c-3a — 사람 답글. 머리를 서버마다 새로 세우고(직접 넣거나 그 서버로 올려) 답을 TS·Rust 에 돌려 응답·글·inbox
-      // (`thread_reply`)·위임(잇기·키 없는 머리)·감사·이벤트를 견준다. 아직 TS 몫인 스레드(지워진 머리·열린 카드)도 두 쪽이 같다.
+      // (`thread_reply`)·위임(잇기·키 없는 머리)·감사·이벤트를 견준다. 아직 TS 몫인 스레드(지워진 머리)도 두 쪽이 같다. C1c-3c — 글 답으로 카드 닫기(거울·묶음 포함).
       {
         const mPath = `/channels/${todayId}/messages`;
         const saved = (await db.pool.query<{ id: string; scope: string }>(
@@ -3545,6 +3545,16 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                     (select coalesce(array_agg(i.reason order by i.id), '{}') from inbox i where i.message_id = m.id) as wake_inbox
                from agent_wake w join message m on m.id = w.message_id
               where m.thread_root_id = (select thread_root_id from message where id = $1)`, [id])).rows,
+          // C1c-3c — 이 스레드의 카드와 그 거울: 닫힘 사유·닫은 사람·이 답으로 닫혔나·물어본 쪽 깨움.
+          asks: shape((await db.pool.query(
+            `with t as (select thread_root_id as r from message where id = $1)
+             select m.body, m.meta->'ask'->>'closedReason' as reason, m.meta->'ask'->>'closedBy' as by,
+                    m.meta->'ask'->>'replyMessageId' is not distinct from $1::text as by_reply, m.meta->'ask' ? 'closedAt' as closed,
+                    (select coalesce(array_agg(i.account_id::text || ':' || i.reason order by i.id), '{}') from inbox i where i.message_id = m.id) as inbox
+               from message m, t
+              where m.meta->>'kind' = 'ask'
+                and (m.thread_root_id = t.r or m.meta->'ask'->>'mirrorOf' in (select id::text from message where thread_root_id = t.r))
+              order by m.body`, [id])).rows),
         } : {};
         // 머리 하나와 그 스레드에 BOT2 가 걸어 둔 열린 깨움 하나(보고처 = 그 스레드).
         const withWake = async () => {
@@ -3553,6 +3563,21 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             `insert into message (channel_id, thread_root_id, author_id, body, kind, meta) values ($1, $2, $3, '다시 볼게', 'user', $4::jsonb) returning id::text as id`,
             [todayId, root, bot2.accountId, JSON.stringify({ wake: { reportTo: { channelId: todayId, threadRootId: root } } })])).rows[0]!.id;
           await db.pool.query(`insert into agent_wake (account_id, channel_id, message_id, wake_at) values ($1, $2, $3, now() + interval '1 hour')`, [bot2.accountId, todayId, w]);
+          return root;
+        };
+        // C1c-3c — 머리 하나와 그 스레드에 BOT2 가 세운 열린 카드 하나(+ 다른 자리의 거울·묶음 카드).
+        const withAsk = (ask: Record<string, unknown>, extra: Record<string, unknown> = {}, mirror = false) => async () => {
+          const root = await direct(member.accountId, '물음');
+          const meta = (a: Record<string, unknown>) => JSON.stringify({ kind: 'ask', ...extra, ask: { prompt: '고를래?', options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }], ...a } });
+          const card = (await db.pool.query<{ id: string }>(
+            `insert into message (channel_id, thread_root_id, author_id, body, kind, meta) values ($1, $2, $3, '고를래?', 'user', $4::jsonb) returning id::text as id`,
+            [todayId, root, bot2.accountId, meta(ask)])).rows[0]!.id;
+          if (mirror) {
+            await db.pool.query(`insert into message (channel_id, author_id, body, kind, meta) values ($1, $2, '거울', 'user', $3::jsonb)`,
+              [todayId, agent.accountId, meta({ ...ask, mirrorOf: card })]);
+            await db.pool.query(`insert into message (channel_id, author_id, body, kind, meta) values ($1, $2, '묶음', 'user', $3::jsonb)`,
+              [todayId, agent.accountId, JSON.stringify({ kind: 'askBundle', askBundle: { items: [{ rootId: card }] } })]);
+          }
           return root;
         };
         // [이름, 머리 만들기(base → 머리 id), 답 본문(머리 id → payload), 답하는 사람]
@@ -3571,10 +3596,13 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['열린 깨움 + 부름 → 접음', withWake, (r) => ({ body: '@bot2 지금 봐', threadRootId: r }), A],
           ['없는 머리 → bad_thread', async () => '00000000-0000-4000-8000-000000000000', (r) => ({ body: '답', threadRootId: r }), A],
           ['지워진 머리 → TS 몫', async () => { const id = await direct(member.accountId, '지울 글'); await db.pool.query(`update message set deleted_at = now() where id = $1`, [id]); return id; }, (r) => ({ body: '답', threadRootId: r }), A, 'ts'],
-          ['열린 카드 스레드 → TS 몫', async () => { const id = await direct(member.accountId, '물음'); await db.pool.query(
-            `insert into message (channel_id, thread_root_id, author_id, body, kind, meta) values ($1, $2, $3, '고를래?', 'user', $4::jsonb)`,
-            [todayId, id, bot2.accountId, JSON.stringify({ kind: 'ask', ask: { to: { kind: 'human' }, options: [{ id: 'a', label: 'A' }] } })]); return id; },
-          (r) => ({ body: 'A 로', threadRootId: r }), A, 'ts'],
+          ['열린 카드 + 물음 → 글 답으로 닫음', withAsk({ to: { kind: 'human' } }), (r) => ({ body: '그게 뭐야?', threadRootId: r }), A],
+          ['열린 카드 + 고르는 글 → TS 몫', withAsk({ to: { kind: 'human' } }), (r) => ({ body: 'A 로', threadRootId: r }), A, 'ts'],
+          ['열린 카드 + 인용 속 물음 → TS 몫', withAsk({ to: { kind: 'human' } }), (r) => ({ body: '> 뭐야?\nB 로', threadRootId: r }), A, 'ts'],
+          ['나에게 간 카드 → 닫음', withAsk({ to: { kind: 'account', accountId: admin.accountId } }), (r) => ({ body: 'B 는 뭐가 달라?', threadRootId: r }), A],
+          ['남에게 간 카드 → 그대로', withAsk({ to: { kind: 'account', accountId: member2.accountId } }), (r) => ({ body: '내 생각엔?', threadRootId: r }), A],
+          ['권한 요청 카드 → 그대로', withAsk({ to: { kind: 'human' } }, { permissionRequest: { rule: 'x' } }), (r) => ({ body: '이건 뭐지?', threadRootId: r }), A],
+          ['카드 + 거울 + 묶음 → 같이 닫음', withAsk({ to: { kind: 'human' } }, {}, true), (r) => ({ body: '어떤 차이야?', threadRootId: r }), A],
           ['머리 id 가 null → 400', async () => '', () => ({ body: '답', threadRootId: null }), A],
         ];
         // TS 몫 갈래는 Rust 서버에서도 TS 가 올리므로 그 장면의 이벤트는 TS 버스에서 읽는다(Rust outbox 에 없어야 한다).
@@ -3594,7 +3622,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             const mine = () => evs().slice(before).filter((e) =>
               (e.type === 'message.created' && (e as { message: { id: string } }).message.id === r.id) || e.type === 'inbox.updated'
               || e.type === 'thread.reportWakes.changed'
-              || (e.type === 'message.updated' && !!(e as { message: { meta?: { wake?: unknown } } }).message.meta?.wake));
+              || (e.type === 'message.updated' && !!(e as { message: { meta?: { wake?: unknown } } }).message.meta?.wake)
+              || (e.type === 'message.updated' && ['ask', 'askBundle'].includes(String((e as { message: { meta?: { kind?: unknown } } }).message.meta?.kind))));
             while (r.status === 201 && !mine().some((e) => e.type === 'message.created') && Date.now() < until) await new Promise((res) => setTimeout(res, 100));
             await settle();
             if (side === 'ts' && own !== tsBus && own().slice(busBefore).some((e) => e.type === 'message.created' && (e as { message: { id: string } }).message.id === r.id)) handedOnRust.push(name);
@@ -3630,7 +3659,18 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(folded.wakes).toEqual([{ fired: false, canceled: true, by_reply: true, stamped_fired: false, stamped_canceled: true, wake_inbox: [] }]);
         expect(by('없는 머리 → bad_thread').status).toBe(400);
         expect(by('지워진 머리 → TS 몫').status).toBe(201);
-        expect(by('열린 카드 스레드 → TS 몫').status).toBe(201);
+        type K = { asks: { body: string; reason: string | null; by: string | null; by_reply: boolean; closed: boolean; inbox: string[] }[]; events: { type: string }[] };
+        const asks = (n: string) => (tsOut as (Row & K)[]).find((x) => x.name === n)!;
+        expect(asks('열린 카드 + 물음 → 글 답으로 닫음').asks).toEqual([{ body: '고를래?', reason: 'replied', by: 'ADMIN', by_reply: true, closed: true, inbox: [] }]);
+        expect(asks('열린 카드 + 물음 → 글 답으로 닫음').events.map((e) => e.type)).toEqual(['message.created', 'inbox.updated', 'message.updated']);
+        expect(asks('열린 카드 + 고르는 글 → TS 몫').asks[0]!.closed).toBe(false);
+        expect(asks('나에게 간 카드 → 닫음').asks[0]!.reason).toBe('replied');
+        expect(asks('남에게 간 카드 → 그대로').asks[0]!.closed).toBe(false);
+        expect(asks('권한 요청 카드 → 그대로').asks[0]!.closed).toBe(false);
+        expect(asks('카드 + 거울 + 묶음 → 같이 닫음').asks).toEqual([
+          { body: '거울', reason: 'replied', by: 'ADMIN', by_reply: false, closed: true, inbox: ['BOT:ask_closed'] },
+          { body: '고를래?', reason: 'replied', by: 'ADMIN', by_reply: true, closed: true, inbox: [] },
+        ]);
         for (const r of saved) await db.pool.query(`update agent_config set invoke_scope = $2 where account_id = $1`, [r.id, r.scope]);
       }
 
