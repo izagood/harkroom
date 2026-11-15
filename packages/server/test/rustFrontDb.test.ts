@@ -1801,6 +1801,56 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         await db.pool.query(`grant update (read_count) on agent_memory to ${rw}`);
       }
 
+      // S5.3 C4b B1c — memory.search(일반·recall). 읽기 답은 같은 글자여야 한다. recordTop 은 쓰기라 TS·Rust 가 한 번씩 센다(2).
+      await db.pool.query(
+        `insert into agent_memory (account_id, slug, value, kind, description, updated_at) values
+           ($1, 'mem/search/alpha', '검색 본문 알파 ui 시험', 'topic', '검색 시험 알파 요약', now() - interval '3 hours'),
+           ($1, 'mem/search/beta', '알파 알파 베타 progress', 'procedure', '검색 베타', now() - interval '2 hours'),
+           ($1, 'mem/search/review-77', '검색 진행 상태', 'topic', '검색 리뷰 상태', now() - interval '1 hour'),
+           ($1, 'mem/search/j1', '검색 경위', 'journal', '검색 경위', now()),
+           ($1, 'mem/search/under_score', '100% 검색', 'topic', 'a_b 꼴', now() - interval '4 hours')`,
+        [agent.accountId]);
+      await db.pool.query(`update agent_memory set archived_at = now() where account_id = $1 and slug = 'mem/search/beta'`, [agent.accountId]);
+      const alphaAt = (await memRow('mem/search/alpha'))!.updated_at.toISOString();
+      for (const [name, args, answeredByRust] of [
+        ['search 일반', { query: '검색 알파' }, true],
+        ['search includeValue·limit', { query: '검색', includeValue: true, limit: 2 }, true],
+        ['search includeArchived', { query: '알파 베타', includeArchived: true }, true],
+        ['search LIKE 이스케이프', { query: 'a_b 100%' }, true],
+        ['search 낱말 없음', { query: 'a' }, true],
+        ['search recall', { query: '검색 알파를 확인해줘', recall: true }, true],
+        ['search recall includeValue', { query: '검색 ui', recall: true, includeValue: true }, true],
+        ['search recall focus', { query: '검색 알파', recall: true, focus: '알파 다시' }, true],
+        ['search recall focus 빈말', { query: '검색 알파', recall: true, focus: '다시 봐줘' }, true],
+        ['search recall exclude slug@판', { query: '검색 알파', recall: true, exclude: [`mem/search/alpha@${alphaAt}`] }, true],
+        ['search recall exclude 다른 판', { query: '검색 알파', recall: true, exclude: ['mem/search/alpha@2020-01-01T00:00:00.000Z'] }, true],
+        ['search query 빈 글자 → TS', { query: '' }, false],
+        ['search limit 21 → TS', { query: '검색', limit: 21 }, false],
+        ['search recordTop 6 → TS', { query: '검색', recall: true, recordTop: 6 }, false],
+      ] as const) {
+        const [a, b] = [await mcpCall(tsUrl, agent.pat, 'memory.search', args), await mcpCall(rsUrl4, agent.pat, 'memory.search', args)];
+        expect({ status: b.status, type: b.type, text: b.text }, name).toEqual({ status: a.status, type: a.type, text: a.text });
+        expect(b.core, `${name} — 누가 답했나`).toBe(answeredByRust ? 'mcp' : null);
+      }
+      const recallText = (await mcpCall(rsUrl4, agent.pat, 'memory.search', { query: '검색 상태 경위', recall: true })).text;
+      expect(recallText, 'recall 은 진행 상태 이름·journal 을 뺀다').not.toMatch(/review-77|search\/j1/);
+      const recA = (await memRow('mem/search/alpha'))!.recall_count;
+      const rt = { query: '검색 알파', recall: true, recordTop: 1 };
+      const [ra, rb] = [await mcpCall(tsUrl, agent.pat, 'memory.search', rt), await mcpCall(rsUrl4, agent.pat, 'memory.search', rt)];
+      expect(rb.core).toBe('mcp');
+      expect(rb.text).toBe(ra.text);
+      expect((await memRow('mem/search/alpha'))!.recall_count, 'recordTop — TS 한 번 + Rust 한 번').toBe(recA + 2);
+      await db.pool.query(`revoke update (recall_count) on agent_memory from ${rw}`);
+      try {
+        const w1 = await mcpCall(rsUrl4, agent.pat, 'memory.search', rt);
+        expect(w1.core, 'W1(recordTop) — Rust 가 답한다').toBe('mcp');
+        expect(w1.text).toContain('\\"code\\":\\"internal\\"');
+        expect((await memRow('mem/search/alpha'))!.recall_count, 'TS 가 대신 세지 않았다').toBe(recA + 2);
+      } finally {
+        await db.pool.query(`grant update (recall_count) on agent_memory to ${rw}`);
+      }
+      await db.pool.query(`delete from agent_memory where account_id = $1 and slug like 'mem/search/%'`, [agent.accountId]);
+
       // S5.3 C4a-6a — workitem.list(주인 보드 중 내가 볼 수 있는 스레드에 붙은 것) · automation.list(이 턴을 시킨 사람 = 소유자의
       // 승인된 자동화, 원인은 `x-harkroom-cause` 로 판정 — 없음·남의 것·1시간 넘음·자동화 글·에이전트 글).
       // 에이전트가 못 보는 스레드 — 관리자와 멤버의 DM(에이전트는 그 DM 의 멤버가 아니다).
