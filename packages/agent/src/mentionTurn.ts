@@ -1582,8 +1582,9 @@ export async function runMentionTurn(
   // 턴 열쇠(좁은 턴 자격). 맡기는 길이 있고 그 하네스에 다리 열쇠를 셸 밖으로 줄 길이 있을 때만 쓴다. 맡기기는 띄우기 바로 앞에서
   // 한다 — 읽기 전용 pi 의 도구 묻기는 그 앞에 잠깐 맡겼다가 바로 거둔다(`listToolsWithTurnKeys`).
   const turnKeys = deps.harkroom.registerTurnKeys && turnKeyDelivery(def.harness) ? issueTurnKeys() : null;
-  // API 키 연결 pi 턴은 턴 열쇠 없이 띄우지 않는다 — 다리가 러너 링크 열쇠로 붙는 길을 남기지 않는다(claude lane 과 같은 꼴).
-  if (deps.providerEnv && usesPiHome(def.harness) && !turnKeys) throw new ProviderLaneError('turn_key_missing');
+  // API 키 연결 pi·omp 턴은 턴 열쇠 없이 띄우지 않는다 — 다리가 러너 링크 열쇠로 붙는 길을 남기지 않는다(claude lane 과 같은 꼴).
+  // omp 는 lane 전용이다. 이 검사는 스레드 폴더·models.yml 을 쓰기 전이다.
+  if (deps.providerEnv && (usesPiHome(def.harness) || usesOmpHome(def.harness)) && !turnKeys) throw new ProviderLaneError('turn_key_missing');
   // pi API 키 연결 턴은 스레드마다 따로 쓰는 홈에서 돈다(`piHome.ts::ensurePiLaneThread`) — 그 턴의 `models.json` 이 키 파일 경로를
   // 담으므로 동시에 도는 턴끼리 덮지 않게. 루트는 사람 로그인을 링크하지 않는 lane 루트다(`main.ts`).
   const turnPiHome = deps.providerEnv && usesPiHome(def.harness) && deps.piHome ? await ensurePiLaneThread(deps.piHome, key) : deps.piHome;

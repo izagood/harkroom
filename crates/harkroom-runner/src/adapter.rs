@@ -466,7 +466,8 @@ static OMP: LazyLock<HarnessAdapter> = LazyLock::new(|| HarnessAdapter {
     trust: None,
     mcp_registration: McpRegistration::AccountConfig,
     waits_for_mcp_before_prompt: false,
-    turn_key_delivery: None,
+    // omp 는 stdio MCP 자식에 env 를 통째로 넘긴다(18.12.6 실측) — 다리 열쇠를 하네스 env 로 준다(pi 와 같은 꼴).
+    turn_key_delivery: Some(TurnKeyDelivery::EnvVars),
     command_rules: None,
     system_prompt_delivery: SystemPromptDelivery::FlagFile,
     allows_null_session_on_first_turn: false,

@@ -5,6 +5,7 @@
 // 일어나는 일이라 이 테스트(프로세스 경계 밖)에서 직접 재현할 수 없다 — 그래서 runTurn
 // 스텁이 하네스 대신 fakeHarkroom.post 를 호출해 "턴 도중 에이전트가 답을 올렸다"를
 // 흉내낸다(task-9 브리프 시나리오 1 주석 그대로).
+import { ompDirs } from '../src/ompHome.js';
 import { lstat, mkdir, mkdtemp, readFile, readdir, readlink, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -279,7 +280,7 @@ async function makeDeps(fake: FakeHarkroom, overrides: Partial<MentionTurnDeps> 
   // API 키 연결 claude 턴은 운영처럼 턴 열쇠를 맡긴다(L3c-3c) — 운영 클라이언트에는 `registerTurnKeys` 가 늘 있고, 없으면 그 턴은
   // `turn_key_missing` 으로 멈춘다(그 경우는 `턴 열쇠가 없는 API 키 연결 claude 턴` 시험이 따로 본다).
   const keyless = fake as FakeHarkroom & { registerTurnKeys?: unknown; endTurnKeys?: unknown };
-  if (overrides.providerEnv && fake.def.harness === 'claude-code' && !keyless.registerTurnKeys) {
+  if (overrides.providerEnv && ['claude-code', 'omp'].includes(fake.def.harness) && !keyless.registerTurnKeys) {
     Object.assign(fake, { registerTurnKeys: async () => {}, endTurnKeys: async () => {} });
   }
   // workingDir===null 경로(resolveWorkspaceDir)는 avcs 를 거치지 않고 실제 mkdir 을 한다
@@ -1334,6 +1335,28 @@ describe('runMentionTurn', () => {
 
     expect(fake.posts.map((p) => p.body)).toEqual([expect.stringContaining('하네스 기록에서 옮겨 올렸습니다')]);
     expect(fake.reactions.filter((r) => r.emoji === '✅')).toEqual([]);
+  });
+
+  it('턴 열쇠가 없는 omp 턴(lane 전용)은 스레드 폴더·models.yml 을 쓰기 전에 turn_key_missing 으로 멈춘다', async () => {
+    const fake = new FakeHarkroom(defOf({ harness: 'omp', model: 'ExampleOrg/example-model' }));
+    fake.seedFrom('human-1', '@forge 안녕').id = MENTION;
+    const stateDir = await mkdtemp(join(tmpdir(), 'omp-nokey-'));
+    const ompHome = join(stateDir, 'omp-home');
+    await ensureOmpHome({ ompHome, mcpServers: {} });
+    const { deps, plans } = await makeDeps(fake, {
+      providerEnv: async () => ({ [OMP_LANE_BASE_URL_ENV]: 'https://gateway.example.com', [OMP_LANE_KEY_FILE_ENV]: join(stateDir, 'key') }),
+    } as never);
+    delete (fake as { registerTurnKeys?: unknown }).registerTurnKeys;
+    const workspaceDir = join(deps.workspaceBaseDir, 'omp-nokey');
+    await mkdir(workspaceDir, { recursive: true });
+    await deps.store.put(SessionStore.threadKey(CHANNEL, null), {
+      workspaceDir, sessionId: '00000000-0000-4000-8000-000000000001', harness: 'omp', lastFedSeq: 0, turnsRun: 0,
+    });
+    await expect(runMentionTurn({ ...deps, ompHome, stateDir } as never, { channelId: CHANNEL, threadRootId: null, mentionId: MENTION }))
+      .rejects.toMatchObject({ name: 'ProviderLaneError', code: 'turn_key_missing' });
+    expect(plans).toEqual([]);
+    // 스레드 자리(cwd 루트 아래 해시 폴더)도 안 생긴다 — 검사가 파일 쓰기보다 앞이다.
+    expect(await readdir(ompDirs(ompHome).cwdRoot)).toEqual([]);
   });
 
   it('턴 열쇠가 없는 API 키 연결 claude 턴은 띄우지 않는다 — 옛 lane-mcp.json(러너 secret)을 쓰지 않는다(L3c-3c)', async () => {
