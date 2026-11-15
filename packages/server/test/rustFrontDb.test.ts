@@ -1212,6 +1212,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         ...BG_PRODUCE_GRANTS.map((g) => `grant ${g} to ${rw}`),
         // S5.3 C5c-4 — outbox 정리(`loops/outbox_prune.rs::OUTBOX_PRUNE_PRIVILEGES`). 없으면 「loop outbox.prune off」.
         ...OUTBOX_PRUNE_GRANTS.map((g) => `grant ${g} to ${rw}`),
+        // S5.3 C6a-1 — 인박스 읽음 표시(`core/inbox_read.rs::INBOX_READ_PRIVILEGES`). 칸 권한 하나. 없으면 「inbox read core off」.
+        `grant update (read_at) on inbox to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -3403,6 +3405,72 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(by('지워진 머리 → TS 몫').status).toBe(201);
         expect(by('열린 카드 스레드 → TS 몫').status).toBe(201);
         for (const r of saved) await db.pool.query(`update agent_config set invoke_scope = $2 where account_id = $1`, [r.id, r.scope]);
+      }
+
+      // S5.3 C6a-1 — 인박스 읽음 표시(코어 `inbox_read.rs`). 거절은 상태·코드를 견주고, 정상은 TS·Rust 에 각자의 줄로 같은 시나리오를 돌려
+      // 남은 행(읽음 여부·내 것만·이미 읽은 시각은 그대로)이 같은지 본다. TS 는 이벤트를 내지 않는다 — Rust 도 내지 않는다.
+      {
+        expect(f.log()).toContain('"POST /inbox/read"');
+        expect(f.log()).not.toContain('inbox read core off');
+        const seed = async () => {
+          const ids = (await db.pool.query<{ id: string }>(
+            `insert into inbox (account_id, message_id, reason)
+             select a, $3::uuid, 'mention' from unnest(array[$1::uuid, $1::uuid, $1::uuid, $2::uuid]) a returning id::text`,
+            [member.accountId, member2.accountId, msgs[0]])).rows.map((r) => Number(r.id));
+          // 셋째 줄은 미리 읽어 둔다(시각을 덮지 않는지 본다).
+          await db.pool.query(`update inbox set read_at = '2026-01-01T00:00:00Z' where id = $1`, [ids[2]]);
+          return ids;
+        };
+        const state = async (ids: number[]) => (await db.pool.query<{ i: number; read: boolean; old: boolean }>(
+          `select array_position($1::bigint[], id) as i, read_at is not null as read, coalesce(read_at = '2026-01-01T00:00:00Z', false) as old
+             from inbox where id = any($1::bigint[]) order by 1`, [ids])).rows;
+        const run = async (base: string) => {
+          const ids = await seed();
+          const out: unknown[] = [];
+          // 내 줄 둘(하나는 이미 읽음)·남의 줄·없는 id 를 한 번에.
+          const r1 = await callX(base, 'POST', '/inbox/read', { ids: [ids[0], ids[2], ids[3], 9_000_000_000, 1.0 * ids[0]!] }, member.token);
+          out.push({ status: r1.status, json: r1.json }, await state(ids));
+          // 다시 불러도 그대로(멱등).
+          const r2 = await callX(base, 'POST', '/inbox/read', { ids: [ids[0]], extra: true }, member.token);
+          out.push({ status: r2.status }, await state(ids));
+          // 남은 내 줄을 에이전트 PAT 로는 못 바꾼다(남의 줄).
+          const r3 = await callX(base, 'POST', '/inbox/read', { ids: [ids[1]] }, agent.pat);
+          out.push({ status: r3.status }, await state(ids));
+          return out;
+        };
+        const busBefore = busEvents.length;
+        const [tsOut, rsOut] = [await run(tsUrl), await run(rsUrl)];
+        expect(rsOut).toEqual(tsOut);
+        expect(tsOut[1]).toEqual([
+          { i: 1, read: true, old: false }, { i: 2, read: false, old: false },
+          { i: 3, read: true, old: true }, { i: 4, read: false, old: false },
+        ]);
+        expect(tsOut[0]).toEqual({ status: 204, json: {} });
+        for (const [name, body, token] of [
+          ['익명 → 401', { ids: [1] }, ''],
+          ['ids 없음 → 400', {}, member.token],
+          ['ids 빈 배열 → 400', { ids: [] }, member.token],
+          ['ids 소수 → 400', { ids: [1.5] }, member.token],
+          ['ids 문자열 → 400', { ids: ['1'] }, member.token],
+          ['ids 숫자 하나 → 400', { ids: 1 }, member.token],
+          ['배열 본문 → 400', [1], member.token],
+          ['bigint 밖 → 500', { ids: [1e20] }, member.token],
+        ] as const) {
+          const [a, b] = [await callX(tsUrl, 'POST', '/inbox/read', body, token), await callX(rsUrl, 'POST', '/inbox/read', body, token)];
+          expect({ status: b.status, code: b.code }, name).toEqual({ status: a.status, code: a.code });
+        }
+        for (const [name, init] of [
+          ['익명·본문 없음 → 401', {}],
+          ['본문 없음 → 400', { headers: { authorization: `Bearer ${member.token}` } }],
+          ['익명·깨진 json → 400', { headers: { 'content-type': J }, body: '{' }],
+          ['text/plain → 400', { headers: { authorization: `Bearer ${member.token}`, 'content-type': 'text/plain' }, body: 'x' }],
+          ['익명·모르는 형식 → 415', { headers: { 'content-type': 'application/xml' }, body: '<a/>' }],
+        ] as const) {
+          const [a, b] = [await fetch(`${tsUrl}/inbox/read`, { method: 'POST', ...init }), await fetch(`${rsUrl}/inbox/read`, { method: 'POST', ...init })];
+          expect(b.status, name).toBe(a.status);
+        }
+        await new Promise((res) => setTimeout(res, 500));
+        expect(busEvents.slice(busBefore).filter((e) => e.type === 'inbox.updated'), '읽음 표시는 이벤트가 없다').toEqual([]);
       }
       await bus.stop();
 
