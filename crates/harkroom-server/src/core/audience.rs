@@ -58,24 +58,13 @@ fn is_public_standard(kind: &str, visibility: &str) -> bool {
 }
 
 /// TS `audienceFor` — 없는 채널은 `All`(그런 채널의 이벤트는 애초에 생기지 않는다, TS 와 같음).
+/// 규칙은 [`audience_on`] 한 곳이다 — 여기서는 풀에서 연결 하나를 빌려 그것을 부른다(그 연결만 쓰고 놓는다).
 pub async fn audience_for(pool: &PgPool, channel: &str) -> sqlx::Result<Audience> {
-    let Some((kind, visibility)) = channel_kind(pool, channel).await? else {
-        return Ok(Audience::All);
-    };
-    if is_public_standard(&kind, &visibility) {
-        return Ok(Audience::All);
-    }
-    let ids: Vec<String> = sqlx::query_scalar(
-        "select account_id::text from channel_member where channel_id = $1::uuid",
-    )
-    .bind(channel)
-    .fetch_all(pool)
-    .await?;
-    Ok(Audience::Accounts(ids))
+    let mut conn = pool.acquire().await?;
+    audience_on(&mut conn, channel).await
 }
 
-/// [`audience_for`] 를 받은 연결 하나로 — 트랜잭션 연결을 쥔 채 같은 풀에서 또 빌리지 않으려고(`core/ask_sync.rs`).
-/// 답은 [`audience_for`] 와 같다(같은 두 질의).
+/// 받는 사람 판정의 정본 — 받은 연결 하나로 한다(트랜잭션 연결을 쥔 채 같은 풀에서 또 빌리지 않게, `core/ask_sync.rs`).
 pub async fn audience_on(conn: &mut sqlx::PgConnection, channel: &str) -> sqlx::Result<Audience> {
     let kv: Option<(String, String)> =
         sqlx::query_as("select kind, visibility from channel where id = $1::uuid")
