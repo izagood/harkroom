@@ -1185,7 +1185,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         ['channel.doc 문서 있음', 'channel.doc', { channelId: todayId }, true, 4],
         ['channel.doc 문서 없음(DM)', 'channel.doc', { channelId: String(dm.id) }, true, 5],
         ['channel.doc 없는 채널 → 빈 문서', 'channel.doc', { channelId: missingCh }, true, 6],
-        ['channel.doc 비공개·멤버 아님 → forbidden', 'channel.doc', { channelId: privId }, true, 7],
+        ['channel.doc 멤버 아닌 DM → forbidden', 'channel.doc', { channelId: String(dm.id) }, true, 7],
         ['channel.doc 모르는 키는 버린다', 'channel.doc', { channelId: todayId, extra: 1 }, true, 8],
         ['channel.doc uuid 아님 → TS', 'channel.doc', { channelId: 'nope' }, false, 9],
         ['channel.doc 문자열 인자 → TS', 'channel.doc', todayId, false, 10],
@@ -1213,7 +1213,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         ['message.read since 0', { channelId: readCh, since: 0 }, true],
         ['message.read 스레드', { channelId: readCh, threadRootId: readRoot }, true],
         ['message.read 많은 글 채널', { channelId: todayId, limit: 500 }, true],
-        ['message.read 비공개·멤버 아님 → forbidden', { channelId: privId }, true],
+        ['message.read 멤버 아닌 DM → forbidden', { channelId: String(dm.id) }, true],
         ['message.read 없는 채널', { channelId: missingCh }, true],
         ['message.read limit 0 → TS', { channelId: readCh, limit: 0 }, false],
         ['message.read limit 501 → TS', { channelId: readCh, limit: 501 }, false],
@@ -1423,7 +1423,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         ['message.search 낱말 없음', { query: '!!!' }, true],
         ['message.search 두 글자 중간', { query: '검색' }, true],
         ['message.search 못 보는 채널의 글', { query: '비밀검색어' }, true],
-        ['message.search 비공개·멤버 아님 → forbidden', { query: '비밀검색어', channelId: privId }, true],
+        ['message.search 멤버 아닌 DM → forbidden', { query: '비밀검색어', channelId: String(dm.id) }, true],
         ['message.search 없는 채널', { query: 'x', channelId: missingCh }, true],
         ['message.search 모르는 키는 버린다', { query: '부름', extra: 1 }, true],
         ['message.search @ → TS', { query: '@bot2' }, false],
@@ -1446,6 +1446,17 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       expect((await mcpCall(rsUrl4, agent.pat, 'message.search', { query: '대량검색어' })).text).toContain('hasMore\\":true');
       expect((await mcpCall(rsUrl4, agent.pat, 'message.search', { query: '시스템' })).text).toContain('relatedAccountId');
       expect((await mcpCall(rsUrl4, agent.pat, 'message.search', { query: '비밀검색어' })).text).not.toContain('못 보는 곳');
+      // forbidden 갈래를 실제로 타는지 — TS 와 같다는 것만으로는 둘 다 성공해도 통과한다. 에이전트는 이 DM(관리자·멤버)의 멤버가 아니다
+      // (비공개 채널 today-private 에는 멤버라 그 채널로는 이 갈래가 닿지 않는다).
+      for (const [tool, args] of [
+        ['channel.doc', { channelId: String(dm.id) }],
+        ['message.read', { channelId: String(dm.id) }],
+        ['message.search', { query: '비밀검색어', channelId: String(dm.id) }],
+      ] as const) {
+        const r = await mcpCall(rsUrl4, agent.pat, tool, args);
+        expect(r.core, `${tool} — Rust 가 답한다`).toBe('mcp');
+        expect(r.text, `${tool} forbidden`).toContain('\\"code\\":\\"forbidden\\"');
+      }
       // 빈 값끼리 비교해 통과하지 않게 — 문서·목록이 실제로 실렸는지.
       const docText = (await mcpCall(`http://127.0.0.1:${port}`, agent.pat, 'channel.doc', { channelId: todayId })).text;
       expect(docText).toContain('문서 본문');
