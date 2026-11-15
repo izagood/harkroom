@@ -28,6 +28,7 @@ pub mod community;
 pub mod endpoint;
 pub mod file_lock;
 pub mod forward;
+pub mod gh_report;
 pub mod harnesses;
 pub mod hello;
 pub mod hook_cli;
