@@ -978,6 +978,7 @@ fn attempt_command_carries_opencode_turn_config() {
             codex: None,
             opencode: None,
             pi: Some(Path::new("/state/pi-home")),
+            omp: None,
             opencode_turn_config: Some(cfg),
         },
         "t-1",
@@ -1101,6 +1102,75 @@ fn pi_lane_turn_model_writes_models_json_or_refuses() {
     assert_eq!(prov["models"], json!([{ "id": "org/model-1" }]));
     assert_eq!(
         std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    let _ = std::fs::remove_dir_all(&w.root);
+}
+
+/// o2: omp 턴의 띄우기 직전 — 스레드 agentDir 의 `models.yml` 에 주소와 키 **파일 경로**만 쓰고 모델은 `harkroom-lane/<id>`.
+/// omp 는 lane 으로만 돌아 lane env 가 비어도 닫힌다(`lane_unset`). 스레드 자리가 없으면 `lane_setup`. omp 가 아니면 아무것도 안 한다.
+#[test]
+fn omp_lane_turn_model_writes_models_yml_or_refuses() {
+    use crate::provider_lane::{OMP_LANE_BASE_URL_ENV, OMP_LANE_KEY_FILE_ENV};
+    let w = world("omplanemodel");
+    let t = crate::omp_home::OmpThreadDirs {
+        cwd: w.root.join("cwd"),
+        agent_dir: w.root.join("agent"),
+        leftovers: w.root.join("left"),
+    };
+    std::fs::create_dir_all(&t.agent_dir).unwrap();
+    let key_file = w.root.join("lane-key");
+    std::fs::write(&key_file, "SECRET_KEY_VALUE").unwrap();
+    let env = |url: &str| -> crate::turn_launch_io::LaneEnv {
+        BTreeMap::from([
+            (OMP_LANE_BASE_URL_ENV.to_string(), url.to_string()),
+            (
+                OMP_LANE_KEY_FILE_ENV.to_string(),
+                key_file.to_string_lossy().into_owned(),
+            ),
+        ])
+    };
+    let ok = env("https://gw.example");
+    let omp = AgentHarness::Omp;
+    let yml = t.agent_dir.join("models.yml");
+    assert_eq!(
+        omp_lane_turn_model("k", AgentHarness::Pi, &ok, Some(&t), Some("m")),
+        Ok(None)
+    );
+    // 닫히는 쪽 — 하나도 쓰지 않는다.
+    assert_eq!(
+        omp_lane_turn_model("k", omp, &BTreeMap::new(), Some(&t), Some("m")),
+        Err("lane_unset")
+    );
+    assert_eq!(
+        omp_lane_turn_model("k", omp, &ok, None, Some("m")),
+        Err("lane_setup")
+    );
+    assert_eq!(
+        omp_lane_turn_model("k", omp, &ok, Some(&t), None),
+        Err("bad_model")
+    );
+    assert_eq!(
+        omp_lane_turn_model("k", omp, &env("http://gw.example"), Some(&t), Some("m")),
+        Err("lane_setup")
+    );
+    assert!(!yml.exists());
+    // 쓴다.
+    let m = omp_lane_turn_model("k", omp, &ok, Some(&t), Some("org/model-1")).unwrap();
+    assert_eq!(m.as_deref(), Some("harkroom-lane/org/model-1"));
+    let body = std::fs::read_to_string(&yml).unwrap();
+    assert!(!body.contains("SECRET_KEY_VALUE"), "키 값은 들지 않는다");
+    assert!(
+        body.contains("baseUrl: \"https://gw.example/v1\""),
+        "{body}"
+    );
+    assert!(
+        body.contains(&format!("apiKey: \"!cat '{}'\"", key_file.display())),
+        "{body}"
+    );
+    assert!(body.contains("- id: \"org/model-1\""), "{body}");
+    assert_eq!(
+        std::fs::metadata(&yml).unwrap().permissions().mode() & 0o777,
         0o600
     );
     let _ = std::fs::remove_dir_all(&w.root);

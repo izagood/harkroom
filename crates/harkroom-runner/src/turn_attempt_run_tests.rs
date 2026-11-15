@@ -323,6 +323,7 @@ fn parts(w: &World, log: &Log, secrets: bool, exits: Vec<i32>) -> Parts {
         pty: None,
         spawn_notice: Vec::new(),
         lane_pre: Some(LanePre {
+            omp_thread_ready: false,
             model: None,
             workspace_dir: w.ws.clone(),
             home: w.home.clone(),
@@ -853,14 +854,15 @@ fn lane_preflight_refuses_before_keys() {
     }
 }
 
-/// pi·omp lane 턴은 스레드 홈이 없으면 키를 받기 전에 `lane_setup` 으로 닫힌다(pi 홈은 `prepare` 가 짓는다 — p2-2, omp 는 아직).
-/// pi 는 스레드 홈이 채워지면 이 줄을 지나 다음 판정으로 간다.
+/// pi·omp lane 턴은 스레드 홈이 없으면 키를 받기 전에 `lane_setup` 으로 닫힌다(pi 홈·omp 스레드 자리는 `prepare` 가 짓는다 — p2-2·o2).
+/// 스레드 홈이 채워지면 이 줄을 지나 다음 판정으로 간다.
 #[test]
 fn pi_omp_lane_without_thread_home_refuses_before_keys() {
     for (tag, h, pi_home) in [
         ("lanepi", AgentHarness::Pi, false),
         ("laneomp", AgentHarness::Omp, false),
         ("lanepihome", AgentHarness::Pi, true),
+        ("laneompready", AgentHarness::Omp, true),
     ] {
         let w = world(tag);
         let log: Log = Log::default();
@@ -876,7 +878,11 @@ fn pi_omp_lane_without_thread_home_refuses_before_keys() {
             let home = w.root.join("pi-thread");
             fs::create_dir_all(&home).unwrap();
             if let Some(pre) = p.lane_pre.as_mut() {
-                pre.turn_pi_home = Some(home);
+                if h == AgentHarness::Omp {
+                    pre.omp_thread_ready = true;
+                } else {
+                    pre.turn_pi_home = Some(home);
+                }
                 // 모델이 비면 bad_model 로 접힌다 — 홈 줄을 지났다는 표지로 쓴다.
                 pre.model = None;
             }
@@ -884,7 +890,21 @@ fn pi_omp_lane_without_thread_home_refuses_before_keys() {
         let mut a = attempt(&w, &client, &notice, true, p).with_lane(&lane);
         a.harness = h;
         let mut d = false;
-        assert!(a.run(&target(), None, true, &mut d).is_err());
+        let res = a.run(&target(), None, true, &mut d);
+        if tag == "laneompready" {
+            // omp 는 모델 칸을 띄우기 직전(`omp_lane_turn_model`)에 본다 — 여기서는 홈 줄에서 닫히지 않았다는 것만 본다.
+            assert!(
+                !log.lock()
+                    .unwrap()
+                    .iter()
+                    .any(|l| l == "setup_failed lane_setup"),
+                "{tag}: {:?}",
+                log.lock().unwrap()
+            );
+            let _ = fs::remove_dir_all(&w.root);
+            continue;
+        }
+        assert!(res.is_err());
         let want = if pi_home { "bad_model" } else { "lane_setup" };
         assert_eq!(
             *log.lock().unwrap(),

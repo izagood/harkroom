@@ -280,6 +280,25 @@ fn main() {
             std::process::exit(1);
         }
         maker.set_pi(pi);
+        // omp 러너 전용 홈(o2, 정본 `main.ts` 388) — HOME·agentdir·오버레이·빈 cwd 를 한 루트에 둔다(저장소 설정을 신뢰를 묻지
+        // 않고 읽기 때문이다). 루트는 lane 폴더와 같은 검사를 지나야 쓴다. 실패하면 뜨지 않는다 — 사람 `~/.omp` 로 돌지 않게.
+        let omp_home = match harkroom_runner::omp_prep::omp_home_root(&state_dir) {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("omp 홈을 만들지 못했다 — 뜨지 않는다: {}", e.kind());
+                std::process::exit(1);
+            }
+        };
+        let omp = harkroom_runner::omp_prep::OmpPrep {
+            home: omp_home,
+            mcp_config_path: maker.config().mcp_config_path.clone(),
+            state_dir: state_dir.clone(),
+        };
+        if let Err(e) = omp.ensure() {
+            eprintln!("omp 홈을 마련하지 못했다 — 뜨지 않는다: {e}");
+            std::process::exit(1);
+        }
+        maker.set_omp(omp);
     }
     match harkroom_runner::account_lane::AccountLaneHub::start(
         source,
