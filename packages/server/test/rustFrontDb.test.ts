@@ -23,7 +23,7 @@ import { startEventBus } from '../src/eventBus.js';
 import {
   invokeFactsFor, isEligibleDelegate, mayInvoke, mayInvokeTeam, type InvokeVia, type TeamInvokeFacts,
 } from '../src/services/invokeGate.js';
-import { onEvent, type WorkspaceEvent } from '../src/events.js';
+import { emitEvent, onEvent, type WorkspaceEvent } from '../src/events.js';
 import pg from 'pg';
 import WebSocket from 'ws';
 
@@ -2508,7 +2508,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           return idsOf(sd, handed).includes((o.messageId ?? o.message?.id) as string);
         }).map((e) => shape(sd)(JSON.parse(JSON.stringify(e))));
         // 스레드 상태 리액션(👀 등, `threadStatus.ts` watcher)은 답·닫기 쓰기가 아니라 그 `message.updated` 를 들은 TS watcher 가 뒤에 단다 —
-        // R 쪽도 outbox → TS 버스를 거쳐 TS watcher 가 달아 `tsEvents` 에 난다. 쓰기 이벤트와 떼어 따로 견준다(나는 때가 watcher 에 달렸다).
+        // 운영은 outbox → TS 버스의 기본 `emit` 이 `emitEvent` 라 R 쪽 쓰기도 watcher 에 닿는다. 이 시험의 버스는 `busEvents` 로만 받으므로,
+        // R 의 쓰기 이벤트를 운영처럼 `emitEvent` 로 넘겨 watcher 가 달게 한다. 쓰기 이벤트와 떼어 따로 견준다(나는 때가 watcher 에 달렸다).
         const isStatus = (e: unknown) => /^reaction\./.test(String((e as { type?: unknown }).type));
         const writes = (evs: unknown[]) => evs.filter((e) => !isStatus(e));
         const statusOf = (evs: unknown[]) => evs.filter(isStatus).map((e) => JSON.stringify(e)).sort();
@@ -2519,6 +2520,15 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const want = writes(mineOf(tsEvents, T));
         await settle(() => mineOf(busEvents, R).length >= want.length);
         expect(mineOf(busEvents, R), 'Rust 가 낸 쓰기 이벤트 = TS').toEqual(want);
+        const rIds = idsOf(R, false);
+        for (const e of busEvents.filter((x) => {
+          const o = x as { messageId?: string; message?: { id?: string } };
+          return rIds.includes((o.messageId ?? o.message?.id) as string);
+        })) emitEvent(e);
+        // T 쪽 watcher 도 디바운스(300ms) 뒤에 단다 — 빈 목록끼리 견주지 않게 T 가 난 뒤, 한 번 더 디바운스만큼 기다려 굳힌다.
+        await settle(() => statusOf(mineOf(tsEvents, T)).length > 0);
+        await new Promise((res) => setTimeout(res, 1_000));
+        expect(statusOf(mineOf(tsEvents, T)).length, '상태 리액션이 빈 목록끼리 비교하면 안 된다').toBeGreaterThan(0);
         await settle(() => statusOf(mineOf(tsEvents, R)).length >= statusOf(mineOf(tsEvents, T)).length);
         expect(statusOf(mineOf(tsEvents, R)), '상태 리액션(TS watcher)도 같다').toEqual(statusOf(mineOf(tsEvents, T)));
         const handedT = writes(mineOf(tsEvents, T, true));
