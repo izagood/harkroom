@@ -85,6 +85,8 @@ pub struct McpWrites {
     pub bg_complete: Option<PgPool>,
     /// `delegation.close` — [`DELEGATION_CLOSE_PRIVILEGES`].
     pub delegation: Option<PgPool>,
+    /// `grant.revoke`·`permission.revoke` — `grant_writes::GRANT_REVOKE_PRIVILEGES`.
+    pub grant: Option<PgPool>,
 }
 
 /// JS `Number.MAX_SAFE_INTEGER` — 이 밖의 수는 TS 에서 값이 뭉개진다. Rust 는 같은 결과를 낼 수 없으니 TS 로 넘긴다.

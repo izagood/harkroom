@@ -24,6 +24,7 @@ pub fn served() -> &'static [&'static str] {
         super::tools::SERVED
             .iter()
             .chain(super::writes::SERVED)
+            .chain(super::grant_writes::SERVED)
             .copied()
             .collect()
     })
@@ -88,6 +89,11 @@ pub async fn handle(
     let tools = |tool: &'static str, args: serde_json::Value| -> AnswerFut {
         let (pool, me, cause, writes) = (pool.clone(), me.clone(), cause.clone(), writes.clone());
         Box::pin(async move {
+            if let Some(r) =
+                super::grant_writes::answer(&pool, writes.grant.as_ref(), &me, tool, &args).await
+            {
+                return r;
+            }
             if let Some(r) = super::writes::answer(&pool, &writes, &me, tool, &args, runner).await {
                 return r;
             }

@@ -1258,6 +1258,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // S5.3 C4b — MCP delegation.close(`writes.rs::DELEGATION_CLOSE_PRIVILEGES`). 고치는 칸의 UPDATE 만 준다(읽는 칸의 SELECT 는 위 pg_read_all_data). 없으면 그 도구는 TS 가 답한다.
         `grant update (outcome, closed_reason, closed_at, update_pending_message_id, update_pending_at) on team_delegation_item to ${rw}`,
         `grant update (notified_at) on team_delegation to ${rw}`,
+        // S5.3 C4b ⑥ G1 — MCP 권한 좁히기(`grant_writes.rs::GRANT_REVOKE_PRIVILEGES`). 없으면 grant.revoke·permission.revoke 는 TS 가 답한다.
+        `grant delete on account_grant to ${rw}`,
+        `grant update on mandate_line to ${rw}`,
         // 칸 권한만 — 앞단이 `has_column_privilege` 로 알아보고 리액션 줄을 붙여야 한다(아래 「reaction core off」 없음).
         `grant update (meta) on message to ${rw}`,
         // S5.3 C3a-2 — 지우기·채널에도 보이기(`msg_delete.rs::MESSAGE_DELETE_PRIVILEGES`). 칸 권한 둘. 없으면 「message delete core off」.
@@ -2171,6 +2174,173 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const [a2, b2] = await cPair({ jobId: jr, status: 'failed' }, asRunner);
         expect({ text: b2!.text, core: b2!.core }, 'bg.complete 두 번 닫기').toEqual({ text: a2!.text, core: 'mcp' });
         expect((await row(jr)).status).toBe('done');
+      }
+
+      // S5.3 C4b ⑥ G1 — 좁히기만 하는 권한 쓰기 grant.revoke·permission.revoke. 지우기는 한 번뿐이라, 성공 길은 같은 줄을 두 번
+      // 깔고 TS·Rust 가 하나씩 지운 뒤 답 글자·감사·이벤트를 비교한다. 못 찾는 길(쓰기 없음)은 같은 요청을 둘 다에 보낸다.
+      const childGrant = async (tag: string) => (await db.pool.query<{ id: string }>(
+        `insert into account_grant (account_id, capability, scope, granted_by, limits, parent_grant_id)
+         values ($1, 'api.call', $2, $3, '{"methods": ["GET"]}', $4) returning id`,
+        [bot2.accountId, `connector:${conn}:${tag}`, agent.accountId, parentGrant])).rows[0]!.id;
+      const g1Ts = await childGrant('ts');
+      const g1Rs = await childGrant('rs');
+      const seenG: WorkspaceEvent[] = [];
+      const offG = onEvent((e) => { seenG.push(e); });
+      const busG = busEvents.length;
+      const grTs = await mcpCall(tsUrl, agent.pat, 'grant.revoke', { grantId: g1Ts });
+      const grRs = await mcpCall(rsUrl4, agent.pat, 'grant.revoke', { grantId: g1Rs });
+      expect({ status: grRs.status, type: grRs.type, text: grRs.text }, 'grant.revoke 성공').toEqual({ status: grTs.status, type: grTs.type, text: grTs.text });
+      expect(grRs.core, 'grant.revoke 성공 — Rust 가 답한다').toBe('mcp');
+      expect(grRs.text).toContain('revoked\\":true');
+      expect((await db.pool.query(`select 1 from account_grant where id = any($1::uuid[])`, [[g1Ts, g1Rs]])).rowCount, '둘 다 지워졌다').toBe(0);
+      const auditOf = async (action: string, key: string, val: string) => (await db.pool.query<{ actor_id: string; target: string; detail: unknown }>(
+        `select actor_id::text, target, detail from audit_log where action = $1 and detail->>$2 = $3`, [action, key, val])).rows;
+      const auGTs = await auditOf('grant.delegate.revoked', 'grantId', g1Ts);
+      const auGRs = await auditOf('grant.delegate.revoked', 'grantId', g1Rs);
+      expect(auGRs, 'Rust 감사 = TS 감사').toEqual(auGTs.map((r) => ({ ...r, detail: { grantId: g1Rs } })));
+      expect(auGRs).toEqual([{ actor_id: agent.accountId, target: bot2.accountId, detail: { grantId: g1Rs } }]);
+      for (const [name, token, args, answeredByRust] of [
+        ['grant.revoke 이미 지운 것', agent.pat, { grantId: g1Rs }, true],
+        ['grant.revoke 사람이 준 뿌리 줄은 못 지움', agent.pat, { grantId: parentGrant }, true],
+        ['grant.revoke 남이 준 줄', bot2.pat, { grantId: parentGrant }, true],
+        ['grant.revoke uuid 아님 → TS', agent.pat, { grantId: 'x' }, false],
+        ['grant.revoke 인자 없음 → TS', agent.pat, undefined, false],
+      ] as const) {
+        const [a, b] = [await mcpCall(tsUrl, token, 'grant.revoke', args), await mcpCall(rsUrl4, token, 'grant.revoke', args)];
+        expect({ status: b.status, type: b.type, text: b.text }, name).toEqual({ status: a.status, type: a.type, text: a.text });
+        expect(b.core, `${name} — 누가 답했나`).toBe(answeredByRust ? 'mcp' : null);
+      }
+      expect((await db.pool.query(`select 1 from account_grant where id = $1`, [parentGrant])).rowCount, '뿌리 줄은 남는다').toBe(1);
+
+      // permission.revoke — tool(정규형)·merge·read 성공. grant 를 깔고 TS 가 지우고, 다시 깔고 Rust 가 지운다.
+      const putGrant = (cap: string, scope: string) => db.pool.query(
+        `insert into account_grant (account_id, capability, scope, granted_by) values ($1, $2, $3, $4)`, [agent.accountId, cap, scope, owner]);
+      for (const [name, args, cap, scope] of [
+        ['permission.revoke tool', { kind: 'tool', rule: 'Bash(kubectl get nodes:*)', channelId: readCh }, 'tool.allow', `tool:${readCh}:Bash(kubectl get nodes:*)`],
+        ['permission.revoke tool 앞뒤 공백', { kind: 'tool', rule: '  Bash(git log)  ', channelId: readCh }, 'tool.allow', `tool:${readCh}:Bash(git log)`],
+        ['permission.revoke merge(대문자)', { kind: 'merge', repo: 'IzaGood/Demo', channelId: readCh }, 'repo.merge', 'repo:izagood/demo'],
+        ['permission.revoke merge 조직 전체', { kind: 'merge', repo: 'izagood/*', channelId: readCh }, 'repo.merge', 'repo:izagood/*'],
+        ['permission.revoke read', { kind: 'read', repo: 'izagood/demo', channelId: readCh }, 'repo.read', 'repo:izagood/demo'],
+      ] as const) {
+        await putGrant(cap, scope);
+        const a = await mcpCall(tsUrl, agent.pat, 'permission.revoke', args);
+        await putGrant(cap, scope);
+        const b = await mcpCall(rsUrl4, agent.pat, 'permission.revoke', args);
+        expect({ status: b.status, type: b.type, text: b.text }, name).toEqual({ status: a.status, type: a.type, text: a.text });
+        expect(b.core, `${name} — Rust 가 답한다`).toBe('mcp');
+        expect(b.text, name).toContain('grantRemoved\\":true');
+        expect((await db.pool.query(`select 1 from account_grant where account_id = $1 and capability = $2 and scope = $3`,
+          [agent.accountId, cap, scope])).rowCount, `${name} — 지워졌다`).toBe(0);
+        const au = (await db.pool.query<{ detail: unknown }>(
+          `select detail from audit_log where action = 'grant.revoked' and target = $1 and detail->>'scope' = $2 order by id`, [agent.accountId, scope])).rows;
+        expect(au.slice(-2), `${name} — 감사 두 줄(TS·Rust)이 같다`).toEqual([
+          { detail: { capability: cap, scope, via: 'permission.revoke' } }, { detail: { capability: cap, scope, via: 'permission.revoke' } }]);
+      }
+      // merge 를 거두면 같은 저장소 위임 줄도 닫힌다(TS `revokeLinesForGrant`, W4).
+      const lineRoot = await say('위임 줄 머리', { ch: readCh });
+      const mandate = (await db.pool.query<{ id: string }>(
+        `insert into mandate(owner_account_id, delegator_account_id, root_message_id, channel_id, thread_root_id, last_activity_at)
+         values ($1, $1, $2, $3, $2, now()) returning id`, [owner, lineRoot, readCh])).rows[0]!.id;
+      const mergeLine = (await db.pool.query<{ id: string }>(
+        `insert into mandate_line(mandate_id, cap, scope, granted_by, via, agent_ids) values ($1, 'merge', 'repo:izagood/lined', $2, 'button', array[$3::uuid]) returning id`,
+        [mandate, owner, agent.accountId])).rows[0]!.id;
+      await putGrant('repo.merge', 'repo:izagood/lined');
+      const ml = await mcpCall(rsUrl4, agent.pat, 'permission.revoke', { kind: 'merge', repo: 'izagood/lined', channelId: readCh });
+      expect(ml.core).toBe('mcp');
+      expect((await db.pool.query(`select 1 from mandate_line where id = $1 and revoked_at is not null`, [mergeLine])).rowCount, 'merge 위임 줄도 닫혔다').toBe(1);
+      // 「이번 턴만」 줄 — grant 가 없어도 줄이 닫히면 성공(grantRemoved false · closedTurnLines 1).
+      const turnLine = async (rule: string) => {
+        const req = (await db.pool.query<{ id: string }>(
+          `insert into permission_request (agent_id, kind, target, reason, warnings, channel_id, thread_root_id, created_at, expires_at, status)
+           values ($1, 'tool', $2, '확인', '{}', $3, $4, now(), now() + interval '1 day', 'approved_once') returning id`,
+          [agent.accountId, rule, readCh, lineRoot])).rows[0]!.id;
+        return (await db.pool.query<{ id: string }>(
+          `insert into mandate_line(mandate_id, cap, scope, limits, granted_by, via, agent_ids, request_id)
+           values ($1, 'tool', $2, $3, $4, 'button', array[$5::uuid], $6) returning id`,
+          [mandate, rule, JSON.stringify({ turnCause: lineRoot, until: new Date(Date.now() + 3_600_000).toISOString() }), owner, agent.accountId, req])).rows[0]!.id;
+      };
+      const tlTs = await turnLine('Bash(make test)');
+      const tlA = await mcpCall(tsUrl, agent.pat, 'permission.revoke', { kind: 'tool', rule: 'Bash(make test)', channelId: readCh });
+      const tlRs = await turnLine('Bash(make test)');
+      const tlB = await mcpCall(rsUrl4, agent.pat, 'permission.revoke', { kind: 'tool', rule: 'Bash(make test)', channelId: readCh });
+      expect({ status: tlB.status, type: tlB.type, text: tlB.text }, '이번 턴만 줄').toEqual({ status: tlA.status, type: tlA.type, text: tlA.text });
+      expect(tlB.core).toBe('mcp');
+      expect(tlB.text).toContain('grantRemoved\\":false');
+      expect(tlB.text).toContain('closedTurnLines\\":1');
+      expect((await db.pool.query(`select 1 from mandate_line where id = any($1::uuid[]) and revoked_at is not null`, [[tlTs, tlRs]])).rowCount).toBe(2);
+      const auL = async (line: string) => (await db.pool.query<{ detail: Record<string, unknown> }>(
+        `select detail from audit_log where action = 'mandate.line.revoked' and detail->>'lineId' = $1`, [line])).rows
+        .map((r) => ({ ...r.detail, lineId: '<line>', requestId: '<req>' }));
+      expect(await auL(tlRs), '줄 감사 Rust = TS').toEqual(await auL(tlTs));
+      expect(await auL(tlRs)).toHaveLength(1);
+
+      // 못 찾는 길 — 까닭(reason)마다. 쓰기가 없으니 같은 요청을 둘 다에 보낸다.
+      const pr = (kind: string, target: string, status: string, expires = "now() + interval '1 day'") => db.pool.query(
+        `insert into permission_request (agent_id, kind, target, reason, warnings, channel_id, thread_root_id, created_at, expires_at, status)
+         values ($1, $2, $3, '확인', '{}', $4, $5, now(), ${expires}, $6)`, [agent.accountId, kind, target, readCh, lineRoot, status]);
+      await pr('tool', 'Bash(np pending)', 'pending');
+      await pr('tool', 'Bash(np late)', 'pending', "now() - interval '1 minute'");
+      await pr('tool', 'Bash(np denied)', 'denied');
+      await pr('tool', 'Bash(np once)', 'approved_once');
+      await pr('tool', 'Bash(np gone)', 'granted');
+      await pr('merge', 'repo:izagood/np-closed', 'obsolete');
+      await db.pool.query(`insert into account_grant (account_id, capability, scope, granted_by) values ($1, 'tool.allow', $2, $3)`,
+        [bot2.accountId, `tool:${readCh}:Bash(np other)`, owner]);
+      for (const [name, args, reason, answeredByRust] of [
+        ['permission.revoke 기다리는 요청', { kind: 'tool', rule: 'Bash(np pending)', channelId: readCh }, 'request_pending', true],
+        ['permission.revoke 시한 지난 요청', { kind: 'tool', rule: 'Bash(np late)', channelId: readCh }, 'request_expired', true],
+        ['permission.revoke 거절된 요청', { kind: 'tool', rule: 'Bash(np denied)', channelId: readCh }, 'request_denied', true],
+        ['permission.revoke 한 번만 허락', { kind: 'tool', rule: 'Bash(np once)', channelId: readCh }, 'approved_once', true],
+        ['permission.revoke 이미 없는 grant', { kind: 'tool', rule: 'Bash(np gone)', channelId: readCh }, 'grant_gone', true],
+        ['permission.revoke 닫힌 merge 요청', { kind: 'merge', repo: 'izagood/np-closed', channelId: readCh }, 'request_closed', true],
+        ['permission.revoke 남의 규칙', { kind: 'tool', rule: 'Bash(np other)', channelId: readCh }, 'other_agent', true],
+        ['permission.revoke 아무것도 없음', { kind: 'tool', rule: 'Bash(np none)', channelId: readCh }, 'none', true],
+        ['permission.revoke read 없음', { kind: 'read', repo: 'izagood/np-none', channelId: readCh }, 'none', true],
+      ] as const) {
+        const [a, b] = [await mcpCall(tsUrl, agent.pat, 'permission.revoke', args), await mcpCall(rsUrl4, agent.pat, 'permission.revoke', args)];
+        expect({ status: b.status, type: b.type, text: b.text }, name).toEqual({ status: a.status, type: a.type, text: a.text });
+        expect(b.core, `${name} — 누가 답했나`).toBe(answeredByRust ? 'mcp' : null);
+        expect(b.text, name).toContain(`reason\\":\\"${reason}\\"`);
+      }
+      expect((await db.pool.query(`select 1 from account_grant where account_id = $1 and scope = $2`, [bot2.accountId, `tool:${readCh}:Bash(np other)`])).rowCount,
+        '남의 규칙은 남는다').toBe(1);
+      // 거절·TS 로 넘기는 길.
+      // 비정규 규칙은 TS 가 둘 다 답한다 — grant 를 깔면 첫 호출이 지워 두 답이 갈리므로 깔지 않는다(답 글자 = TS 의 not_found).
+      for (const [name, args, answeredByRust] of [
+        ['permission.revoke 저장소 꼴 아님', { kind: 'merge', repo: 'a/b/c', channelId: readCh }, true],
+        ['permission.revoke tool 에 repo', { kind: 'tool', repo: 'izagood/x', channelId: readCh }, true],
+        ['permission.revoke merge 에 rule 도', { kind: 'merge', rule: 'Bash(ls)', repo: 'izagood/x', channelId: readCh }, true],
+        ['permission.revoke 비정규 규칙 → TS', { kind: 'tool', rule: 'Bash(ls  -la)', channelId: readCh }, false],
+        ['permission.revoke ASCII 밖 → TS', { kind: 'tool', rule: 'Bash(echo 한글)', channelId: readCh }, false],
+        ['permission.revoke 모르는 kind → TS', { kind: 'api', rule: 'x', channelId: readCh }, false],
+        ['permission.revoke uuid 아님 → TS', { kind: 'tool', rule: 'Bash(ls)', channelId: 'x' }, false],
+        ['permission.revoke 빈 rule → TS(zod)', { kind: 'tool', rule: '', channelId: readCh }, false],
+      ] as const) {
+        const [a, b] = [await mcpCall(tsUrl, agent.pat, 'permission.revoke', args), await mcpCall(rsUrl4, agent.pat, 'permission.revoke', args)];
+        expect({ status: b.status, type: b.type, text: b.text }, name).toEqual({ status: a.status, type: a.type, text: a.text });
+        expect(b.core, `${name} — 누가 답했나`).toBe(answeredByRust ? 'mcp' : null);
+      }
+      // 이벤트 — Rust 는 outbox → TS 버스(busEvents)로, TS 는 자기 프로세스(onEvent)로 낸다. 모양이 같은지 본다.
+      // Rust 성공 길: grant.revoke 1(bot2) + permission.revoke 6(성공 5 · merge 위임 줄 1). 이번 턴만 줄(grant 없음)은 내지 않는다.
+      const untilG = Date.now() + 5000;
+      const gEv = (l: WorkspaceEvent[]) => l.filter((e) => e.type === 'grant.changed');
+      while (gEv(busEvents.slice(busG)).length < 7 && Date.now() < untilG) await new Promise((r) => setTimeout(r, 50));
+      offG();
+      const evBot2 = { type: 'grant.changed', accountId: bot2.accountId, audience: 'all' };
+      const evMe = { type: 'grant.changed', accountId: agent.accountId, audience: 'all' };
+      expect(gEv(busEvents.slice(busG)), 'Rust grant.changed').toEqual([evBot2, ...Array(6).fill(evMe)]);
+      expect(gEv(seenG), 'TS 도 같은 모양').toContainEqual(evBot2);
+      expect(gEv(seenG)).toContainEqual(evMe);
+      // W1 — 지우기 권한을 잠깐 거두면 Rust 가 `internal` 로 답하고(TS 가 대신 지우지 않는다) 줄이 남는다.
+      const w1g = await childGrant('w1');
+      await db.pool.query(`revoke delete on account_grant from ${rw}`);
+      try {
+        const w = await mcpCall(rsUrl4, agent.pat, 'grant.revoke', { grantId: w1g });
+        expect(w.core, 'W1 grant.revoke — Rust 가 답한다').toBe('mcp');
+        expect(w.text).toContain('\\"code\\":\\"internal\\"');
+        expect((await db.pool.query(`select 1 from account_grant where id = $1`, [w1g])).rowCount, 'TS 가 대신 지우지 않았다').toBe(1);
+      } finally {
+        await db.pool.query(`grant delete on account_grant to ${rw}`);
       }
 
       // S5.3 C4a-6b — message.search. 본문 멘션 되돌리기·시스템 줄·스코프(채널·스레드)·거르기(보낸 사람·첨부)·정렬·쪽(51개 → hasMore,
