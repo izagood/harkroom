@@ -3,7 +3,7 @@
 //!
 //! C0 가 담는 것: POST `/ws-ticket` · GET `/ws`(TS `ws/wsPlugin.ts`·`tickets.ts`·`heartbeat.ts`·`appHeartbeat.ts`·`socketLifetime.ts`·
 //! `credentials.ts`·`typing.ts`) · 이벤트 공급(outbox LISTEN → 프로세스 안 팬아웃, TS `eventBus.ts` 와 같은 순서·모양 검사).
-//! 에이전트 presence(MCP `presence.ts`)는 C3 몫이라 지금 스냅샷에는 사람 소켓만 실린다.
+//! 에이전트 presence 는 TS `presence.ts` 가 폴마다 묶어 쓰는 `agent_presence`(C6c-1)를 읽어 스냅샷에 합친다.
 pub mod ask;
 pub mod ask_bundle;
 pub mod ask_bundle_resolve;

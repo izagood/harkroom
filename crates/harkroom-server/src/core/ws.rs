@@ -234,6 +234,15 @@ fn spawn_credential_sweep(core: Arc<Core>) {
     });
 }
 
+/// 지금 온라인인 에이전트(C6c-1) — TS `presence.online()` 의 짝. 만료는 DB 시계로 본다.
+pub async fn online_agents(pool: &PgPool) -> Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar(
+        "select account_id::text from agent_presence where expires_at > now() order by account_id",
+    )
+    .fetch_all(pool)
+    .await
+}
+
 /// POST `/ws-ticket` — 계정으로 선 요청만(401). `{ ticket }`.
 pub async fn issue_ticket(
     State(core): State<Arc<Core>>,
@@ -314,8 +323,20 @@ async fn run(core: Arc<Core>, socket: WebSocket, origin: Option<String>, ticket:
         core.hub
             .emit(json!({ "type": "presence.changed", "accountId": account, "online": true }));
     }
-    // 에이전트 presence(MCP)는 C3 몫 — 지금은 사람 소켓만.
-    let online: Vec<String> = core.lock_conn().keys().cloned().collect();
+    // C6c-1: 사람 소켓 ∪ 에이전트 presence(TS `wsPlugin` 과 같은 합집합). 에이전트 쪽은 TS 가 폴마다 묶어 쓰는
+    // `agent_presence`(마이그레이션 171)를 DB 시계로 읽는다. 읽기가 실패하면 사람 소켓만 낸다(옛 동작 — 없는 것을 있다고 하지 않는다).
+    let agents = online_agents(&core.pool).await.unwrap_or_default();
+    let online: Vec<String> = {
+        let c = core.lock_conn();
+        let mut seen: HashSet<String> = c.keys().cloned().collect();
+        let mut out: Vec<String> = c.keys().cloned().collect();
+        for a in agents {
+            if seen.insert(a.clone()) {
+                out.push(a);
+            }
+        }
+        out
+    };
     let _ = out_tx.send(Out::Text(
         json!({ "type": "presence.snapshot", "online": online }).to_string(),
     ));
