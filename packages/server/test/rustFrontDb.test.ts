@@ -1123,6 +1123,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant insert on message to ${rw}`,
         `grant insert on idempotency_key to ${rw}`,
         `grant update (message_id, attached_at) on attachment to ${rw}`,
+        // S5.3 C1c-2a — 사람 새 머리의 부름과 위임(inbox·push_job·channel_pref 는 위 글 고치기 줄에 이미 있다).
+        `grant insert on mandate to ${rw}`,
+        `grant update (last_activity_at) on mandate to ${rw}`,
+        `grant update (mandate_id) on message to ${rw}`,
         // S5.3 C5b — 예약 깨움 루프(`loops/wake.rs::WAKE_PRIVILEGES`). 없으면 「loop wake off」 — 루프는 TS 에 남는다.
         ...WAKE_GRANTS.map((g) => `grant ${g} to ${rw}`),
         // S5.3 C5c — 보존 정리 루프(`loops/retention.rs::RETENTION_PRIVILEGES`).
@@ -2866,7 +2870,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           const json = text ? JSON.parse(text) as Record<string, unknown> : {};
           return { status: res.status, code: (json.error as { code?: string } | undefined)?.code, json, count: res.headers.get('x-harkroom-notified-count') };
         };
-        const HANDED = ['TS: 승인 낱말', 'TS: 메시지 링크', 'TS: URL', 'TS: 멘션', 'TS: 스레드 답글', 'TS: DM', 'TS: 에이전트(PAT)', 'TS: 모델 지정 키'];
+        const HANDED = ['TS: 승인 낱말', 'TS: 메시지 링크', 'TS: URL', 'TS: 스레드 답글', 'TS: DM', 'TS: 에이전트(PAT)', 'TS: 모델 지정 키'];
         const run = async (base: string, sd: Side) => {
           const out: { step: string; status: number; code?: string; count: string | null; body: unknown; id?: string }[] = [];
           const step = async (name: string, path: string, body: unknown, token?: string, key?: string) => {
@@ -2890,7 +2894,6 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           await step('TS: 승인 낱말', mPath(todayId), { body: '승인합니다' });
           await step('TS: 메시지 링크', mPath(todayId), { body: `이것 harkroom://message/${sd.root}` });
           await step('TS: URL', mPath(todayId), { body: '자료 https://example.com/a' });
-          await step('TS: 멘션', mPath(todayId), { body: '@mem 봐 줘' });
           await step('TS: 스레드 답글', mPath(todayId), { body: '답글', threadRootId: sd.root });
           await step('TS: DM', mPath(String(dm.id)), { body: 'DM 글' });
           await step('TS: 에이전트(PAT)', mPath(todayId), { body: '에이전트 글' }, agent.pat);
@@ -2960,6 +2963,85 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           front3?.kill('SIGTERM');
           await db.pool.query(`grant insert on idempotency_key to ${rw}`);
         }
+      }
+      // S5.3 C1c-2a — 사람 새 머리 글의 부름과 위임. 같은 시나리오를 TS·Rust 에 돌려 응답(상태·받은 사람 수·id 헤더)·글(본문·부름 meta)·
+      // inbox 행(받은 사람·사유·팀)·위임(주인·맡긴 사람)·`mandate.created` 감사·이벤트(message.created → inbox.updated 차례)를 견준다.
+      {
+        const mPath = `/channels/${todayId}/messages`;
+        const saved = (await db.pool.query<{ id: string; scope: string; ud: boolean; owner: string | null }>(
+          `select account_id::text as id, invoke_scope as scope, user_decide as ud, owner_account_id::text as owner from agent_config where account_id = any($1::uuid[])`,
+          [[agent.accountId, bot2.accountId]])).rows;
+        expect(saved.map((r) => r.owner), '두 에이전트 다 admin 소유').toEqual([admin.accountId, admin.accountId]);
+        // bot 은 주인만 부른다(막힌 부름), bot2 는 누구나 부르고 사용 권한자가 정한다(맡긴 사람 위임).
+        await db.pool.query(`update agent_config set invoke_scope = 'owner' where account_id = $1`, [agent.accountId]);
+        await db.pool.query(`update agent_config set invoke_scope = 'community', user_decide = true where account_id = $1`, [bot2.accountId]);
+        const names = new Map<string, string>([[admin.accountId, 'ADMIN'], [member.accountId, 'MEM'], [member2.accountId, 'MEM2'], [agent.accountId, 'BOT'], [bot2.accountId, 'BOT2']]);
+        const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+        const shape = (v: unknown): unknown => {
+          if (Array.isArray(v)) return v.map(shape);
+          if (v && typeof v === 'object') {
+            const o: Record<string, unknown> = {};
+            for (const [k, x] of Object.entries(v as Record<string, unknown>)) o[k] = /At$/.test(k) ? (x === null ? null : typeof x) : k === 'seq' ? typeof x : shape(x);
+            return o;
+          }
+          return typeof v === 'string' ? v.replace(UUID_RE, (id) => names.get(id) ?? '<uuid>') : v;
+        };
+        const send = async (base: string, body: string, token: string) => {
+          const res = await fetch(`${base}${mPath}`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': J }, body: JSON.stringify({ body }) });
+          const json = await res.json() as Record<string, unknown>;
+          return { status: res.status, count: res.headers.get('x-harkroom-notified-count'), ids: shape(res.headers.get('x-harkroom-notified')), id: json.id as string, message: shape(json) };
+        };
+        const facts = async (id: string) => ({
+          inbox: shape((await db.pool.query(`select account_id::text as who, reason, team_id::text as team from inbox where message_id = $1 order by id`, [id])).rows),
+          mandate: shape((await db.pool.query(
+            `select d.owner_account_id::text as owner, d.delegator_account_id::text as delegator, (d.root_message_id = m.id and d.thread_root_id = m.id) as rooted
+               from message m join mandate d on d.id = m.mandate_id where m.id = $1`, [id])).rows),
+          audit: shape((await db.pool.query(
+            `select g.action, g.actor_id::text as actor, g.detail - 'mandateId' - 'rootMessageId' - 'threadRootId' as detail
+               from audit_log g join message m on g.target = m.mandate_id::text where m.id = $1`, [id])).rows),
+        });
+        const SCENES: [string, string, string][] = [
+          ['사람 하나', '@mem 봐 줘', A],
+          ['자기 에이전트 → 위임', '@bot 맡아 줘', A],
+          ['남의 에이전트(정할 수 있음) → 맡긴 사람 위임', '@bot2 부탁', member.token],
+          ['막힌 부름', '@bot 해 줘', member.token],
+          ['집합', '@crew 모여', A],
+          ['팀', '@squad 같이', A],
+          ['@channel', '@channel 공지', A],
+          ['없는 이름', '@nobody 여기', A],
+        ];
+        const run = async (base: string, evs: () => WorkspaceEvent[]) => {
+          const out: unknown[] = [];
+          for (const [name, body, token] of SCENES) {
+            const before = evs().length;
+            const r = await send(base, body, token);
+            const until = Date.now() + 10_000;
+            const mine = () => evs().slice(before).filter((e) =>
+              (e.type === 'message.created' && (e as { message: { id: string } }).message.id === r.id) || e.type === 'inbox.updated');
+            while (!mine().some((e) => e.type === 'message.created') && Date.now() < until) await new Promise((res) => setTimeout(res, 100));
+            await new Promise((res) => setTimeout(res, 200));
+            out.push({ name, ...r, id: undefined, ...(await facts(r.id)), events: shape(JSON.parse(JSON.stringify(mine()))) });
+          }
+          return out;
+        };
+        const tsEvents: WorkspaceEvent[] = [];
+        const offTs = onEvent((e) => { tsEvents.push(e); });
+        const tsOut = await run(tsUrl, () => tsEvents);
+        offTs();
+        const rsOut = await run(rsUrl, () => busEvents);
+        expect(rsOut).toEqual(tsOut);
+        // 빈 것끼리 같음으로 통과하지 않게 — 받은 사람·위임·감사가 실제로 있다.
+        type Row = { name: string; count: string; inbox: unknown[]; mandate: { delegator: string | null }[]; audit: unknown[]; events: unknown[] };
+        const by = (n: string) => (tsOut as Row[]).find((x) => x.name === n)!;
+        expect(by('사람 하나').count).toBe('1');
+        expect(by('자기 에이전트 → 위임').mandate).toEqual([{ owner: 'ADMIN', delegator: 'ADMIN', rooted: true }]);
+        expect(by('자기 에이전트 → 위임').audit.length).toBe(1);
+        expect(by('남의 에이전트(정할 수 있음) → 맡긴 사람 위임').mandate).toEqual([{ owner: 'ADMIN', delegator: 'MEM', rooted: true }]);
+        expect(by('막힌 부름').count).toBe('0');
+        expect(Number(by('집합').count)).toBeGreaterThan(1);
+        expect(by('@channel').inbox.length).toBeGreaterThan(1);
+        expect(by('사람 하나').events.length, 'message.created + inbox.updated').toBe(2);
+        for (const r of saved) await db.pool.query(`update agent_config set invoke_scope = $2, user_decide = $3 where account_id = $1`, [r.id, r.scope, r.ud]);
       }
       await bus.stop();
 

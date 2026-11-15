@@ -3,18 +3,25 @@
 //!
 //! - **맡는 글**(나머지는 읽어 둔 본문 바이트 그대로 TS 로 넘긴다 — [`to_ts`]): 작성자가 사람이고 세션으로 섰다 · `threadRootId`·
 //!   `agentModels` 키가 없다 · DM 이 아니다 · 본문에 URL 후보가 없다(링크 미리보기는 TS 가 외부로 가져온다) · 글 승인 넓은 체
-//!   (`CHAT_APPROVAL_GUARD_WORDS`, 메시지 링크 포함)에 안 걸린다 · 멘션 해석([`super::mention_calls::resolve`]) 결과 부름·지칭이
-//!   하나도 없다. 그러면 TS 쪽 부수효과(스레드 답글 알림·깨움 선점·위임 닫기·DM 알림·위임장·글 승인·카드 닫기·링크 미리보기·
-//!   모델 지정)는 모두 저절로 꺼진다 — 남는 것은 글 하나와 첨부, `message.created` 하나다.
+//!   (`CHAT_APPROVAL_GUARD_WORDS`, 메시지 링크 포함)에 안 걸린다. 그러면 TS 쪽 부수효과 중 스레드 답글 알림·깨움 선점·위임 닫기·
+//!   DM 알림·글 승인·카드 닫기·링크 미리보기·모델 지정은 저절로 꺼진다.
+//! - **부름**(C1c-2a): 멘션 해석([`super::mention_calls::resolve`])을 TS 처럼 트랜잭션 안 seq 락 **앞**에서 하고, 부름 meta 와
+//!   고친 본문으로 넣은 뒤 [`super::mention_fanout::fan_out_calls`] 로 inbox·푸시 줄을 넣는다. 새 머리의 위임은
+//!   [`super::mandate_stamp::stamp_root`]. 받은 사람마다 `inbox.updated`, 응답 헤더에 받은 사람 수·id(TS 와 같은 순서).
 //! - 순서(TS 와 같다): 본문 읽기(413·400·415) → 인증(401, `route_layer`) → 경로·본문 검사(400) → 쓰기 게이트(403 `forbidden`·
 //!   `channel_archived`) → **쓰기 트랜잭션 하나**: seq 락(TS `lockChannelForSeq`) → 재시도 키 재생(200, 헤더 없음) → insert →
-//!   첨부 잇기(실패면 되돌리고 400 `bad_attachment`) → 다시 읽기 → 재시도 키 기록 → `message.created` 를 outbox 에 → 커밋 → 201.
+//!   첨부 잇기(실패면 되돌리고 400 `bad_attachment`) → 다시 읽기 → 재시도 키 기록 → 부름 넣기 → 위임 → `message.created`·
+//!   `inbox.updated` 를 outbox 에 → 커밋 → (새 위임이면) `mandate.created` 감사 → 201.
 //! - **어느 단계든 `Err` 면 트랜잭션을 버리고 500** — 글도 첨부도 남지 않는다.
 //! - 문장은 전부 TS 상수를 골든으로 받는다(`post_*`·`attach_*`·`channel_post_gate`·`url_candidate_source`·
 //!   `chat_approval_guard_words`). 쓰기 권한은 [`MESSAGE_POST_PRIVILEGES`] — 하나라도 없으면 `main.rs` 가 이 줄을 붙이지 않는다.
 use super::audience::audience_for;
+use super::mandate_stamp;
 use super::mention_calls::{self, Input};
-use super::msg_edit::{MAX_MESSAGE_BODY_CHARS, NOTIFIED_COUNT_HEADER};
+use super::mention_fanout::{self, Post};
+use super::msg_edit::{
+    MAX_MESSAGE_BODY_CHARS, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS,
+};
 use super::msg_read::{is_uuid, message_by_id};
 use crate::auth::{RequireAccount, Via};
 use crate::directory::{internal, json_err};
@@ -26,6 +33,7 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 use sqlx::PgPool;
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::{Arc, OnceLock};
 
@@ -36,6 +44,14 @@ pub const MESSAGE_POST_PRIVILEGES: &[(&str, &str)] = &[
     ("attachment.message_id", "UPDATE"),
     ("attachment.attached_at", "UPDATE"),
     ("event_outbox", "INSERT"),
+    // C1c-2a 부름 — inbox·푸시 줄·숨긴 채널 되살리기(`mention_fanout`), 새 머리 위임(`mandate_stamp`)과 그 감사.
+    ("inbox", "INSERT"),
+    ("push_job", "INSERT"),
+    ("channel_pref.hidden_at", "UPDATE"),
+    ("mandate", "INSERT"),
+    ("mandate.last_activity_at", "UPDATE"),
+    ("message.mandate_id", "UPDATE"),
+    ("audit_log", "INSERT"),
 ];
 pub const MESSAGE_POST_SEQUENCE_PRIVILEGES: &[(&str, &str)] = &[("event_outbox_id_seq", "USAGE")];
 
@@ -205,7 +221,43 @@ async fn to_ts(
 enum Outcome {
     Replayed(String),
     BadAttachment,
-    Posted(String),
+    Posted {
+        row: String,
+        notified: Vec<String>,
+        mandate: Option<mandate_stamp::Created>,
+    },
+}
+
+/// TS `resolveMentionCalls` 의 사람 작성자 입력 — 깊이 0, 사슬·회신권·principal 없음(`mentionDepthFor` 첫 줄).
+async fn resolve_human(
+    conn: &mut sqlx::PgConnection,
+    channel: &str,
+    author: &str,
+    body: &str,
+) -> Result<mention_calls::Resolved, sqlx::Error> {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or_default();
+    mention_calls::resolve(
+        conn,
+        &Input {
+            body,
+            channel_id: channel,
+            author_id: author,
+            author_is_agent: false,
+            mention_depth: 0,
+            chain_bound: false,
+            chain_started_at_ms: None,
+            reply_grant_thread_id: None,
+            principal: None,
+            now_ms,
+            principal_invoke_enabled: mention_calls::principal_invoke_enabled(
+                std::env::var("HARKROOM_PRINCIPAL_INVOKE").ok().as_deref(),
+            ),
+        },
+    )
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -220,6 +272,8 @@ async fn post_in_tx(
 ) -> Result<Outcome, sqlx::Error> {
     let s = sql();
     let mut tx = st.write.begin().await?;
+    // TS 와 같이 멘션 해석은 seq 락 **앞**이다(그 읽기는 seq 순서와 무관하고, 락 안에서 하면 줄 선 트랜잭션이 커넥션을 쥔다).
+    let calls = resolve_human(&mut tx, channel, author, body).await?;
     sqlx::query(s.lock.as_str())
         .bind(s.lock_class)
         .bind(channel)
@@ -246,9 +300,10 @@ async fn post_in_tx(
         .bind(channel)
         .bind(None::<String>)
         .bind(author)
-        .bind(body)
+        .bind(&calls.normalized_body)
         .bind("user")
-        .bind("{}")
+        // 사람 글은 입력 meta 가 없다 — 부름 meta 만 얹는다(TS `{...calls.callMeta}`).
+        .bind(Value::Object(calls.call_meta.clone()).to_string())
         .bind(false)
         .bind(0_i32)
         .bind(None::<String>)
@@ -285,14 +340,47 @@ async fn post_in_tx(
             .execute(&mut *tx)
             .await?;
     }
+    let mut notified_set: HashSet<String> = HashSet::new();
+    mention_fanout::fan_out_calls(
+        &mut tx,
+        &Post {
+            channel_id: channel,
+            author_id: author,
+            message_id: &id,
+        },
+        &calls,
+        &mut notified_set,
+    )
+    .await?;
+    // 넣은 순서(inbox id 순) — TS `[...notified]`(Set 삽입 순서)와 같다. 새 글이라 inbox 행은 전부 이 요청이 넣은 것이다.
+    let notified: Vec<String> = if notified_set.is_empty() {
+        vec![]
+    } else {
+        sqlx::query_scalar(
+            "select account_id::text from inbox where message_id = $1::uuid order by id",
+        )
+        .bind(&id)
+        .fetch_all(&mut *tx)
+        .await?
+    };
+    let mandate = mandate_stamp::stamp_root(&mut tx, &id, author, channel, &notified).await?;
+    // 내보내는 행은 위임 키 앞에서 읽은 것 그대로다(TS 와 같다 — 행 칸에 위임 키는 없다).
     let row_value: Value = serde_json::from_str(&row).map_err(|e| sqlx::Error::Decode(e.into()))?;
     crate::write::emit_event(
         &mut tx,
         &json!({ "type": "message.created", "message": row_value, "audience": audience }),
     )
     .await?;
+    for a in &notified {
+        crate::write::emit_event(&mut tx, &json!({ "type": "inbox.updated", "accountId": a }))
+            .await?;
+    }
     tx.commit().await?;
-    Ok(Outcome::Posted(row))
+    Ok(Outcome::Posted {
+        row,
+        notified,
+        mandate,
+    })
 }
 
 fn json_response(status: StatusCode, row: String) -> Response {
@@ -369,62 +457,18 @@ pub async fn post(
         }
         _ => {}
     }
-    // DM 은 받는 사람에게 `dm` 알림이 간다(C1c-3 몫) · 멘션이 부르거나 가리키는 글은 C1c-2 몫.
-    let normalized = {
-        let mut conn = match st.read.acquire().await {
-            Ok(c) => c,
-            Err(e) => return internal(e),
-        };
-        let kind: Option<String> = match sqlx::query_scalar(sql().channel_kind.as_str())
-            .bind(&id)
-            .fetch_optional(&mut *conn)
-            .await
-        {
-            Ok(k) => k,
-            Err(e) => return internal(e),
-        };
-        if kind.as_deref() == Some("dm") {
-            drop(conn);
-            return to_ts(st.up.clone(), peer, parts, bytes).await;
-        }
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or_default();
-        let calls = match mention_calls::resolve(
-            &mut conn,
-            &Input {
-                body: &input.body,
-                channel_id: &id,
-                author_id: &me.id,
-                author_is_agent: false,
-                mention_depth: 0,
-                chain_bound: false,
-                chain_started_at_ms: None,
-                reply_grant_thread_id: None,
-                principal: None,
-                now_ms,
-                principal_invoke_enabled: mention_calls::principal_invoke_enabled(
-                    std::env::var("HARKROOM_PRINCIPAL_INVOKE").ok().as_deref(),
-                ),
-            },
-        )
+    // DM 은 받는 사람에게 `dm` 알림이 간다(C1c-3 몫).
+    let kind: Option<String> = match sqlx::query_scalar(sql().channel_kind.as_str())
+        .bind(&id)
+        .fetch_optional(&st.read)
         .await
-        {
-            Ok(c) => c,
-            Err(e) => return internal(e),
-        };
-        let quiet = calls.called_ids.is_empty()
-            && calls.target_call.is_empty()
-            && !calls.channel_called
-            && calls.call_meta.is_empty()
-            && calls.normalized_body == input.body;
-        if !quiet {
-            drop(conn);
-            return to_ts(st.up.clone(), peer, parts, bytes).await;
-        }
-        calls.normalized_body
+    {
+        Ok(k) => k,
+        Err(e) => return internal(e),
     };
+    if kind.as_deref() == Some("dm") {
+        return to_ts(st.up.clone(), peer, parts, bytes).await;
+    }
     let audience = match audience_for(&st.read, &id).await {
         Ok(a) => a.to_json(),
         Err(e) => return internal(e),
@@ -438,7 +482,7 @@ pub async fn post(
         &st,
         &id,
         &me.id,
-        &normalized,
+        &input.body,
         &input.attachment_ids,
         key.as_deref(),
         &audience,
@@ -454,10 +498,42 @@ pub async fn post(
         ),
         // 재생은 새로 부른 사람을 모른다 — 헤더를 싣지 않는다(TS 와 같다).
         Ok(Outcome::Replayed(row)) => json_response(StatusCode::OK, row),
-        Ok(Outcome::Posted(row)) => {
+        Ok(Outcome::Posted {
+            row,
+            notified,
+            mandate,
+        }) => {
+            // 새로 만든 위임의 감사 — 커밋 뒤라 되돌린 글의 위임은 남지 않는다(TS `auditMandateCreated`).
+            if let Some(c) = &mandate {
+                crate::write::record_audit(
+                    &st.write,
+                    crate::write::AuditEntry {
+                        action: "mandate.created",
+                        actor_id: Some(c.actor_id()),
+                        actor_handle: None,
+                        target: Some(&c.mandate_id),
+                        ip: None,
+                        detail: c.audit_detail(),
+                    },
+                )
+                .await;
+            }
             let mut res = json_response(StatusCode::CREATED, row);
-            res.headers_mut()
-                .insert(NOTIFIED_COUNT_HEADER, HeaderValue::from_static("0"));
+            let h = res.headers_mut();
+            if let Ok(v) = HeaderValue::from_str(&notified.len().to_string()) {
+                h.insert(NOTIFIED_COUNT_HEADER, v);
+            }
+            if !notified.is_empty() {
+                let ids = notified
+                    .iter()
+                    .take(NOTIFIED_HEADER_MAX_IDS)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(",");
+                if let Ok(v) = HeaderValue::from_str(&ids) {
+                    h.insert(NOTIFIED_HEADER, v);
+                }
+            }
             res
         }
     }

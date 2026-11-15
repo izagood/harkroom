@@ -11,6 +11,7 @@ pub mod channels;
 pub mod content_scan;
 pub mod events;
 pub mod invoke_gate;
+pub mod mandate_stamp;
 pub mod mcp;
 pub mod mention_calls;
 pub mod mention_fanout;
