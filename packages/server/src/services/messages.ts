@@ -87,11 +87,16 @@ export const BAD_THREAD_MESSAGE = 'threadRootId must be a top-level message in t
  * 생성이 같은 이 함수를 본다 — 예약만 검사하지 않으면 나쁜 스레드 id 가 보낼 때가 돼서야
  * `failed_reason=bad_thread` 로 떨어진다. 지워진 머리도 참이다(지워진 스레드에 답하는 경로가 있다).
  */
+/** 같은 채널의 최상위 글인가(지워진 머리도 받는다). Rust `core/msg_post.rs` 가 골든으로 받는다. */
+export const POST_THREAD_ROOT_OF_SQL = `select 1 from message where id = $1::uuid and channel_id = $2::uuid and thread_root_id is null`;
+/** 답글이 머리 주인에게 `thread_reply` 를 보낼지 — 머리의 작성자와 지워졌는지. */
+export const POST_ROOT_AUTHOR_SQL = `select author_id, deleted_at from message where id = $1::uuid`;
+
 export async function isThreadRootOf(
   db: Pick<PoolClient, 'query'>, channelId: string, threadRootId: string,
 ): Promise<boolean> {
   const res = await db.query(
-    `select 1 from message where id = $1 and channel_id = $2 and thread_root_id is null`, [threadRootId, channelId]);
+    POST_THREAD_ROOT_OF_SQL, [threadRootId, channelId]);
   return Boolean(res.rowCount);
 }
 
@@ -1913,7 +1918,7 @@ export async function postMessage(
     let deletedRoot: string | null = null;
     if (input.threadRootId && isReply) {
       const root = await client.query(
-        `select author_id, deleted_at from message where id = $1`, [input.threadRootId],
+        POST_ROOT_AUTHOR_SQL, [input.threadRootId],
       );
       const rootAuthor = root.rows[0]?.author_id;
       if (rootAuthor && rootAuthor !== input.authorId && !notified.has(rootAuthor)) {
