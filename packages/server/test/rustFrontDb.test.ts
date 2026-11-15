@@ -1254,7 +1254,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         ...OPERATOR_GRANTS.map((g) => `grant ${g} to ${rw}`),
         // S5.3 C3a-1 — 리액션 쓰기(`msg_react.rs::MESSAGE_REACTION_PRIVILEGES`). 없으면 앞단은 리액션 줄을 TS 에 남긴다.
         `grant insert, update, delete on message_reaction to ${rw}`,
-        // S5.3 C4b — MCP delegation.close(`writes.rs::DELEGATION_CLOSE_PRIVILEGES`). 고치는 칸만. 없으면 그 도구는 TS 가 답한다.
+        // S5.3 C4b — MCP delegation.close(`writes.rs::DELEGATION_CLOSE_PRIVILEGES`). 고치는 칸의 UPDATE 만 준다(읽는 칸의 SELECT 는 위 pg_read_all_data). 없으면 그 도구는 TS 가 답한다.
         `grant update (outcome, closed_reason, closed_at, update_pending_message_id, update_pending_at) on team_delegation_item to ${rw}`,
         `grant update (notified_at) on team_delegation to ${rw}`,
         // 칸 권한만 — 앞단이 `has_column_privilege` 로 알아보고 리액션 줄을 붙여야 한다(아래 「reaction core off」 없음).

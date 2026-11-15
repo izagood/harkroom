@@ -30,7 +30,9 @@ pub const SERVED: &[&str] = &[
 /// `delegation.close` 는 TS env `HARKROOM_DELEGATION_V2` 가 켜졌을 때만 실린다. 앞단은 그 env 를 읽지 않는다.
 pub const NEEDS_REGISTERED: &[&str] = &["delegation.close"];
 
-/// `delegation.close` 의 쓰기 권한(표, 권한) — 고치는 칸만(security W6). 빠지면 `main.rs` 가 이 도구를 켜지 않아 TS 에 남는다.
+/// `delegation.close` 의 쓰기 권한(표, 권한) — 고치는 칸(UPDATE)과, update 의 where·set 식·returning 이 읽는 칸(SELECT)만(security W6).
+/// SELECT 가 빠지면 풀은 켜지는데 거래 안에서 늘 실패해 `internal` 로만 답한다 — 그래서 SELECT 도 여기서 본다. 빠지면 `main.rs` 가
+/// 이 도구를 켜지 않아 TS 에 남는다. 읽는 칸 목록은 [`CLOSE_ITEMS_SQL`]·[`NOTIFY_DELEGATIONS_SQL`] 에서 시험이 뽑아 맞춘다.
 /// homelab 의 앞단 쓰기 역할 GRANT 와 같아야 한다.
 pub const DELEGATION_CLOSE_PRIVILEGES: &[(&str, &str)] = &[
     ("team_delegation_item.outcome", "UPDATE"),
@@ -39,7 +41,31 @@ pub const DELEGATION_CLOSE_PRIVILEGES: &[(&str, &str)] = &[
     ("team_delegation_item.update_pending_message_id", "UPDATE"),
     ("team_delegation_item.update_pending_at", "UPDATE"),
     ("team_delegation.notified_at", "UPDATE"),
+    ("team_delegation_item.delegation_id", "SELECT"),
+    ("team_delegation_item.delegate_account_id", "SELECT"),
+    ("team_delegation_item.outcome", "SELECT"),
+    ("team_delegation_item.closed_at", "SELECT"),
+    ("team_delegation.id", "SELECT"),
+    ("team_delegation.lead_account_id", "SELECT"),
+    ("team_delegation.thread_root_id", "SELECT"),
+    ("team_delegation.notified_at", "SELECT"),
 ];
+
+/// 위임 줄 닫기 — TS `closeDelegationByDelegator` 와 같은 문장(`$1::uuid` 만 더함).
+pub const CLOSE_ITEMS_SQL: &str = "update team_delegation_item i \
+            set outcome = 'closed', closed_reason = 'delegator_close', closed_at = coalesce(i.closed_at, now()), \
+                update_pending_message_id = null, update_pending_at = null \
+           from team_delegation d \
+          where d.id = i.delegation_id and d.lead_account_id = $1::uuid and d.thread_root_id = $2::uuid \
+            and ($3::uuid is null or d.id = $3::uuid) \
+            and ($4::uuid is null or i.delegate_account_id = $4::uuid) \
+            and (i.outcome is null or i.outcome = 'reported') \
+          returning i.delegation_id::text";
+
+/// 다 닫힌 위임 묶음에 알림 처리 — TS `markSettledQuietly` 와 같은 문장.
+pub const NOTIFY_DELEGATIONS_SQL: &str = "update team_delegation d set notified_at = now() \
+              where d.id = any($1::uuid[]) and d.notified_at is null \
+                and not exists (select 1 from team_delegation_item i where i.delegation_id = d.id and i.outcome is null)";
 
 /// `inbox.read`(C4b ④-a) 쓰기 역할의 권한 — 읽음 시각 칸 하나만 고친다. 없으면 `main.rs` 가 풀을 비워 TS 가 답한다.
 pub const INBOX_READ_PRIVILEGES: &[(&str, &str)] = &[("inbox.read_at", "UPDATE")];
@@ -270,32 +296,18 @@ async fn close_tx(
     delegate: Option<&str>,
 ) -> Result<u64, sqlx::Error> {
     let mut tx = write.begin().await?;
-    let ids: Vec<String> = sqlx::query_scalar(
-        "update team_delegation_item i \
-            set outcome = 'closed', closed_reason = 'delegator_close', closed_at = coalesce(i.closed_at, now()), \
-                update_pending_message_id = null, update_pending_at = null \
-           from team_delegation d \
-          where d.id = i.delegation_id and d.lead_account_id = $1::uuid and d.thread_root_id = $2::uuid \
-            and ($3::uuid is null or d.id = $3::uuid) \
-            and ($4::uuid is null or i.delegate_account_id = $4::uuid) \
-            and (i.outcome is null or i.outcome = 'reported') \
-          returning i.delegation_id::text",
-    )
-    .bind(me)
-    .bind(thread)
-    .bind(delegation)
-    .bind(delegate)
-    .fetch_all(&mut *tx)
-    .await?;
-    if !ids.is_empty() {
-        sqlx::query(
-            "update team_delegation d set notified_at = now() \
-              where d.id = any($1::uuid[]) and d.notified_at is null \
-                and not exists (select 1 from team_delegation_item i where i.delegation_id = d.id and i.outcome is null)",
-        )
-        .bind(&ids)
-        .execute(&mut *tx)
+    let ids: Vec<String> = sqlx::query_scalar(CLOSE_ITEMS_SQL)
+        .bind(me)
+        .bind(thread)
+        .bind(delegation)
+        .bind(delegate)
+        .fetch_all(&mut *tx)
         .await?;
+    if !ids.is_empty() {
+        sqlx::query(NOTIFY_DELEGATIONS_SQL)
+            .bind(&ids)
+            .execute(&mut *tx)
+            .await?;
     }
     tx.commit().await?;
     Ok(ids.len() as u64)
@@ -404,6 +416,73 @@ mod tests {
         ] {
             assert!(mcp.contains(want), "{want}");
         }
+    }
+
+    /// 두 update 가 읽는 칸(별칭 `i.`·`d.` 로 쓴 것 = where·set 식·returning)마다 SELECT 가, 고치는 칸마다 UPDATE 가 목록에 있다.
+    /// 문장에 칸을 더하고 목록을 안 고치면 빨개진다 — 운영 역할에 SELECT 가 없을 때 풀이 켜져 늘 `internal` 이 되는 것을 막는다.
+    #[test]
+    fn delegation_close_privileges_cover_sql() {
+        let has = |t: &str, p: &str| DELEGATION_CLOSE_PRIVILEGES.contains(&(t, p));
+        let mut read = vec![];
+        for sql in [CLOSE_ITEMS_SQL, NOTIFY_DELEGATIONS_SQL] {
+            let b = sql.as_bytes();
+            for (k, w) in sql.char_indices() {
+                if !(w == 'i' || w == 'd') || b.get(k + 1) != Some(&b'.') {
+                    continue;
+                }
+                if k > 0 && (b[k - 1].is_ascii_alphanumeric() || b[k - 1] == b'_') {
+                    continue;
+                }
+                let col: String = sql[k + 2..]
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                    .collect();
+                let table = if w == 'i' {
+                    "team_delegation_item"
+                } else {
+                    "team_delegation"
+                };
+                read.push(format!("{table}.{col}"));
+            }
+        }
+        read.sort();
+        read.dedup();
+        assert_eq!(
+            read,
+            [
+                "team_delegation.id",
+                "team_delegation.lead_account_id",
+                "team_delegation.notified_at",
+                "team_delegation.thread_root_id",
+                "team_delegation_item.closed_at",
+                "team_delegation_item.delegate_account_id",
+                "team_delegation_item.delegation_id",
+                "team_delegation_item.outcome",
+            ],
+            "칸 뽑기가 문장을 다 읽었다"
+        );
+        for c in &read {
+            assert!(has(c, "SELECT"), "SELECT on {c}");
+        }
+        for c in [
+            "outcome",
+            "closed_reason",
+            "closed_at",
+            "update_pending_message_id",
+            "update_pending_at",
+        ] {
+            assert!(CLOSE_ITEMS_SQL.contains(&format!("{c} = ")), "{c}");
+            assert!(
+                has(&format!("team_delegation_item.{c}"), "UPDATE"),
+                "UPDATE on {c}"
+            );
+        }
+        assert!(has("team_delegation.notified_at", "UPDATE"));
+        assert_eq!(
+            DELEGATION_CLOSE_PRIVILEGES.len(),
+            read.len() + 6,
+            "목록에 남는 칸이 없다"
+        );
     }
 
     /// 거절 문구·답 모양을 TS 원본과 맞춘다.
