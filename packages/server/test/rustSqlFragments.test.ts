@@ -12,6 +12,8 @@ import { LIST_CHANNEL_SECTIONS_SQL } from '../src/services/channelSections.js';
 import { LIST_CHANNEL_AUTO_MENTIONS_SQL } from '../src/services/channelAutoMentions.js';
 import { LIST_SCHEDULED_SQL } from '../src/services/scheduledMessages.js';
 import { SELECT_PINS_SQL } from '../src/services/pins.js';
+import { AGENT_INVOKER_SQL, CHANNEL_SCOPE_SQL, ELIGIBLE_DELEGATE_SQL, INVOKE_FACTS_SQL, TEAM_INVOKER_SQL } from '../src/services/invokeGate.js';
+import { HAS_REPLY_GRANT_SQL } from '../src/services/replyGrants.js';
 import { HAS_OLDER_SQL, LIST_MESSAGES_SQL, MESSAGE_BY_ID_SQL, READ_LIST_ROW_SQL } from '../src/services/messages.js';
 import { CHILD_FACTS_AUDIENCE_SQL, PLAN_PROGRESS_PLANS_SQL } from '../src/services/threadPlan.js';
 import { displayBodySql } from '../src/services/systemBody.js';
@@ -28,6 +30,13 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     channel_list_visible_c_aid_aadmin: channelListVisibleSql('c', 'a.id', 'a.is_admin'),
     // 링크 한 개 읽기(`core/msg_read.rs`, S5.3 C1b-1a) — `GET /messages/:id` 의 문장 전체(COLS 포함).
     message_by_id: MESSAGE_BY_ID_SQL,
+    // 호출 게이트(`core/invoke_gate.rs`, S5.3 C3a-3b) — 누가 누구를 부를 수 있나.
+    invoke_facts: INVOKE_FACTS_SQL,
+    invoke_agent_invoker: AGENT_INVOKER_SQL,
+    invoke_eligible_delegate: ELIGIBLE_DELEGATE_SQL,
+    invoke_team_invoker: TEAM_INVOKER_SQL,
+    invoke_channel_scope: CHANNEL_SCOPE_SQL,
+    invoke_has_reply_grant: HAS_REPLY_GRANT_SQL,
     // 지우기·채널로 올리기·거두기(`core/msg_delete.rs`, S5.3 C3a-2) — 목록 한 행 다시 읽기와 쓰기 게이트.
     read_list_row: READ_LIST_ROW_SQL,
     channel_post_gate: CHANNEL_POST_GATE_SQL,

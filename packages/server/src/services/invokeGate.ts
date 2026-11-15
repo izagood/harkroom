@@ -35,6 +35,25 @@ import type { PoolClient } from 'pg';
 import type { InvokeScope } from '@harkroom/shared';
 import { hasReplyGrant } from './replyGrants.js';
 
+/**
+ * 호출 게이트의 문장들 — Rust 코어(`crates/harkroom-server/src/core/invoke_gate.rs`, S5.3 C3a-3b)가 `golden/sql_fragments.json` 으로
+ * 받아 그대로 쓴다. 고치면 `test/rustSqlFragments.test.ts` 가 골든 갱신을 요구한다.
+ */
+export const INVOKE_FACTS_SQL = `select a.id, coalesce(c.invoke_scope, 'community') as invoke_scope, c.owner_account_id,
+            (a.disabled_at is not null or a.deleted_at is not null) as off
+       from account a left join agent_config c on c.account_id = a.id
+      where a.kind = 'agent' and a.id = any($1::uuid[])`;
+export const AGENT_INVOKER_SQL = `select 1 from agent_invoker where agent_id = $1::uuid and account_id = $2::uuid`;
+export const ELIGIBLE_DELEGATE_SQL = `select 1 from account a join agent_config c on c.account_id = a.id
+      where a.id = $1::uuid and a.kind = 'agent' and a.deleted_at is null
+        and c.invoke_scope = 'owner' and c.owner_account_id = $2::uuid
+        and ($4::bool = false
+          or exists (select 1 from agent_config t where t.account_id = $3::uuid and t.trust_siblings)
+          or exists (select 1 from agent_owner_delegate d where d.agent_id = $3::uuid and d.delegate_id = a.id))`;
+export const TEAM_INVOKER_SQL = `select 1 from agent_team_invoker where team_id = $1::uuid and account_id = $2::uuid`;
+export const CHANNEL_SCOPE_SQL = `select 1 from channel_member m join channel ch on ch.id = m.channel_id
+          where m.channel_id = $1::uuid and m.account_id = $2::uuid and ch.kind <> 'dm'`;
+
 export type InvokeVia = 'mention' | 'team' | 'group' | 'channel_all' | 'auto_mention';
 
 export interface AgentInvokeFacts {
@@ -49,10 +68,7 @@ export interface AgentInvokeFacts {
 export async function invokeFactsFor(client: PoolClient, agentIds: readonly string[]): Promise<Map<string, AgentInvokeFacts>> {
   if (!agentIds.length) return new Map();
   const res = await client.query<{ id: string; invoke_scope: InvokeScope; owner_account_id: string | null; off: boolean }>(
-    `select a.id, coalesce(c.invoke_scope, 'community') as invoke_scope, c.owner_account_id,
-            (a.disabled_at is not null or a.deleted_at is not null) as off
-       from account a left join agent_config c on c.account_id = a.id
-      where a.kind = 'agent' and a.id = any($1::uuid[])`,
+    INVOKE_FACTS_SQL,
     [agentIds]);
   return new Map(res.rows.map((r) => [r.id, {
     agentId: r.id, invokeScope: r.invoke_scope, ownerAccountId: r.owner_account_id, off: r.off,
@@ -76,7 +92,7 @@ export async function mayInvoke(
   // 팀도 호출자가 작성자 그대로다 — 직접 멘션과 같은 판정을 탄다(위 머리 주석 ②).
   if (ctx.via !== 'mention' && ctx.via !== 'team') return false;
   if (await passesScope(client, facts.invokeScope, facts.ownerAccountId, ctx,
-    `select 1 from agent_invoker where agent_id = $1 and account_id = $2`, facts.agentId)) return true;
+    AGENT_INVOKER_SQL, facts.agentId)) return true;
   // owner 의 두 번째 길 — 같은 소유자의 owner 에이전트(073 명단, 또는 083 형제 기본 신뢰).
   if (facts.invokeScope === 'owner' && await isEligibleDelegate(client, facts, ctx.callerId, { listed: true })) return true;
   // 회신권(084) — 대상이 이 스레드에서 호출자를 불렀다. 팀 부름에는 쓰지 않는다(팀은 회신이 아니다).
@@ -100,12 +116,7 @@ export async function isEligibleDelegate(
 ): Promise<boolean> {
   if (!target.ownerAccountId || delegateId === target.agentId) return false;
   const res = await client.query(
-    `select 1 from account a join agent_config c on c.account_id = a.id
-      where a.id = $1 and a.kind = 'agent' and a.deleted_at is null
-        and c.invoke_scope = 'owner' and c.owner_account_id = $2
-        and ($4::bool = false
-          or exists (select 1 from agent_config t where t.account_id = $3 and t.trust_siblings)
-          or exists (select 1 from agent_owner_delegate d where d.agent_id = $3 and d.delegate_id = a.id))`,
+    ELIGIBLE_DELEGATE_SQL,
     [delegateId, target.ownerAccountId, target.agentId, opts.listed]);
   return Boolean(res.rowCount);
 }
@@ -127,7 +138,7 @@ export async function mayInvokeTeam(
 ): Promise<boolean> {
   if (facts.invokeScope === 'community') return true;
   return passesScope(client, facts.invokeScope, facts.ownerAccountId, ctx,
-    `select 1 from agent_team_invoker where team_id = $1 and account_id = $2`, facts.teamId);
+    TEAM_INVOKER_SQL, facts.teamId);
 }
 
 async function passesScope(
@@ -151,8 +162,7 @@ async function passesScope(
       // 채널이 없으면(새 DM 을 열기 전) 지날 채널도 없다.
       if (!ctx.channelId) return false;
       const res = await client.query(
-        `select 1 from channel_member m join channel ch on ch.id = m.channel_id
-          where m.channel_id = $1 and m.account_id = $2 and ch.kind <> 'dm'`, [ctx.channelId, ctx.callerId]);
+        CHANNEL_SCOPE_SQL, [ctx.channelId, ctx.callerId]);
       return Boolean(res.rowCount);
     }
   }

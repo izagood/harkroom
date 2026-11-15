@@ -7,6 +7,7 @@
 pub mod audience;
 pub mod channels;
 pub mod events;
+pub mod invoke_gate;
 pub mod mcp;
 pub mod mention_parse;
 pub mod msg_delete;
