@@ -9,7 +9,7 @@
 //!   고친 본문으로 넣은 뒤 [`super::mention_fanout::fan_out_calls`] 로 inbox·푸시 줄을 넣는다. 새 머리의 위임은
 //!   [`super::mandate_stamp::stamp_root`]. 받은 사람마다 `inbox.updated`, 응답 헤더에 받은 사람 수·id(TS 와 같은 순서).
 //! - **답글**(C1c-3a): 트랜잭션 첫 줄에서 머리가 이 채널의 최상위 글인지(아니면 400 `bad_thread`), seq 락 뒤에서 이 스레드가
-//!   아직 TS 몫인지([`TS_THREAD_SQL`] — 지워진 머리·담당 위임·카드 답으로 읽힐 글이면 되돌리고 TS 로) 본다. 맡으면 머리·
+//!   아직 TS 몫인지([`TS_THREAD_SQL`] — 담당 위임·카드 답으로 읽힐 글이면 되돌리고 TS 로) 본다. 맡으면 머리·
 //!   `alsoInChannel` 을 넣고, 부름 뒤 머리의 위임을 잇고([`super::mandate_stamp::stamp_reply`]), 머리 주인에게 호출 게이트를 지난
 //!   `thread_reply` 를 넣는다(TS 와 같이 위임 판정 **뒤**).
 //! - **깨움 선점**(C1c-3b): 그 뒤 이 스레드의 남의 열린 깨움을 접거나(이 글이 부른 계정) 지금 깨운다([`super::wake_preempt`]).
@@ -30,6 +30,7 @@ use super::mention_fanout::{self, Post};
 use super::msg_edit::{
     MAX_MESSAGE_BODY_CHARS, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS,
 };
+use super::msg_list::read_list_row;
 use super::msg_read::{is_uuid, message_by_id};
 use super::wake_preempt;
 use crate::auth::{RequireAccount, Via};
@@ -96,12 +97,11 @@ struct Sql {
 
 /// C1c-3a 갈래 판정(TS 동작이 아니라 **어느 쪽이 맡을지**) — 이 스레드에 답하면 TS 가 아직 Rust 에 없는 부수효과를 내는가.
 /// 하나라도 참이면 트랜잭션을 버리고 TS 로 넘긴다. 조건은 그 부수효과의 문장보다 넓게(같거나 더 많이 걸리게) 잡는다:
-/// 지워진 머리(`rootBack`) · 작성자가 담당인 열린·보고된 위임 항목(`closeDelegationsForReply` V2 의 활동 갱신) ·
-/// 열린 선택 카드인데 글이 **카드 답으로 읽힐 수 있음**(`$3` 이 거짓 — TS `applyChatApproval` 의 글로 고르기, 받는 쪽·종류와
+/// 작성자가 담당인 열린·보고된 위임 항목(`closeDelegationsForReply` V2 의 활동 갱신) ·
+/// (지워진 머리는 C1c-3d 부터 Rust 가 `rootBack` 까지 맡는다.) 열린 선택 카드인데 글이 **카드 답으로 읽힐 수 있음**(`$3` 이 거짓 — TS `applyChatApproval` 의 글로 고르기, 받는 쪽·종류와
 /// 무관하게 카드 전부). 글이 물음뿐이면([`question_only`]) 고르기가 될 수 없어 Rust 가 맡고 카드를 `replied` 로 닫는다(C1c-3c).
 /// 쓰기 트랜잭션 안 seq 락 뒤에서 읽는다 — TS 가 같은 판정을 하는 때와 같은 창이다.
-const TS_THREAD_SQL: &str = "select exists(select 1 from message where id = $1::uuid and deleted_at is not null) \
-     or exists(select 1 from team_delegation_item i join team_delegation d on d.id = i.delegation_id \
+const TS_THREAD_SQL: &str = "select exists(select 1 from team_delegation_item i join team_delegation d on d.id = i.delegation_id \
                 where d.thread_root_id = $1::uuid and i.delegate_account_id = $2::uuid \
                   and (i.outcome is null or i.outcome = 'reported')) \
      or (not $3::bool and exists(select 1 from message where (id = $1::uuid or thread_root_id = $1::uuid) \
@@ -454,9 +454,11 @@ async fn post_in_tx(
         None => mandate_stamp::stamp_root(&mut tx, &id, author, channel, &called).await?,
         Some(r) => mandate_stamp::stamp_reply(&mut tx, &id, author, channel, r, &called).await?,
     };
-    if let Some(r) = root {
-        thread_reply(&mut tx, r, author, channel, &id, &mut notified_set).await?;
-    }
+    // TS `deletedRoot` — 머리가 지워져 있었으면 커밋 뒤 목록에 다시 물어 `message.updated` 로 되돌린다(아래).
+    let deleted_root = match root {
+        Some(r) => thread_reply(&mut tx, r, author, channel, &id, &mut notified_set).await?,
+        None => false,
+    };
     // TS 와 같이 부름·`thread_reply` 를 다 넣은 뒤 — 이 글이 부른 계정의 깨움은 접고 나머지는 깨운다.
     let preempted = match root {
         Some(r) => wake_preempt::preempt(&mut tx, r, author, &id, &notified_set).await?,
@@ -472,6 +474,19 @@ async fn post_in_tx(
         &json!({ "type": "message.created", "message": row_value, "audience": audience }),
     )
     .await?;
+    // TS `emitPosted` — 지워진 머리에 답이 달리면 그 머리가 목록에 되돌아온다. `message.created` **뒤**, 같은 audience,
+    // `message.updated` 로(새 말이 아니다). TS 는 커밋 뒤 `readListRow` 로 읽는다 — 같은 tx 안 이 자리에서 읽으면 같은 행이고,
+    // 롤백되면 신호도 함께 사라진다. 목록에 안 보이면(`LIST_VISIBLE` 이 거르면) 내지 않는다.
+    if let (true, Some(r)) = (deleted_root, root)
+        && let Some(back) = read_list_row(&mut tx, channel, r).await?
+    {
+        let back: Value = serde_json::from_str(&back).map_err(|e| sqlx::Error::Decode(e.into()))?;
+        crate::write::emit_event(
+            &mut tx,
+            &json!({ "type": "message.updated", "message": back, "audience": audience }),
+        )
+        .await?;
+    }
     for a in &notified {
         crate::write::emit_event(&mut tx, &json!({ "type": "inbox.updated", "accountId": a }))
             .await?;
@@ -510,6 +525,7 @@ async fn notified_in_order(
 /// TS 의 머리 주인 `thread_reply` — 작성자 아닌, 아직 안 받은 머리 주인에게. 에이전트면 직접 멘션과 같은 호출 게이트
 /// (via mention, 호출자 = 작성자, 회신권 스레드 = 머리)를 지나야 하고, 사람은 facts 에 없어 그대로 받는다.
 /// 사람 글은 언제나 답글로 세어지고 시스템 줄이 아니다(`isReply`·`isSystemLine`).
+/// 돌려주는 값은 머리가 지워져 있었는가(TS `deletedRoot`) — 머리 주인 판정과 상관없이 같은 행에서 읽는다.
 async fn thread_reply(
     conn: &mut sqlx::PgConnection,
     root: &str,
@@ -517,16 +533,17 @@ async fn thread_reply(
     channel: &str,
     message_id: &str,
     notified: &mut HashSet<String>,
-) -> Result<(), sqlx::Error> {
+) -> Result<bool, sqlx::Error> {
     let row: Option<(Option<String>, bool)> = sqlx::query_as(sql().root_author.as_str())
         .bind(root)
         .fetch_optional(&mut *conn)
         .await?;
+    let deleted = row.as_ref().is_some_and(|(_, d)| *d);
     let Some((Some(owner), _)) = row else {
-        return Ok(());
+        return Ok(deleted);
     };
     if owner == author || notified.contains(&owner) {
-        return Ok(());
+        return Ok(deleted);
     }
     let facts = invoke_gate::invoke_facts(conn, std::slice::from_ref(&owner)).await?;
     if let Some(f) = facts.get(&owner) {
@@ -537,11 +554,12 @@ async fn thread_reply(
             reply_grant_thread_id: Some(root),
         };
         if !invoke_gate::may_invoke(conn, f, &ctx).await? {
-            return Ok(());
+            return Ok(deleted);
         }
     }
     mention_fanout::insert_inbox_many(conn, &[owner], message_id, "thread_reply", notified, None)
-        .await
+        .await?;
+    Ok(deleted)
 }
 
 fn json_response(status: StatusCode, row: String) -> Response {

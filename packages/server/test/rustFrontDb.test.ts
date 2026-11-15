@@ -3573,7 +3573,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       }
 
       // S5.3 C1c-3a — 사람 답글. 머리를 서버마다 새로 세우고(직접 넣거나 그 서버로 올려) 답을 TS·Rust 에 돌려 응답·글·inbox
-      // (`thread_reply`)·위임(잇기·키 없는 머리)·감사·이벤트를 견준다. 아직 TS 몫인 스레드(지워진 머리)도 두 쪽이 같다. C1c-3c — 글 답으로 카드 닫기(거울·묶음 포함).
+      // (`thread_reply`)·위임(잇기·키 없는 머리)·감사·이벤트를 견준다. 지워진 머리는 C1c-3d 부터 Rust 가 되살림(`rootBack`)까지 한다. C1c-3c — 글 답으로 카드 닫기(거울·묶음 포함).
       {
         const mPath = `/channels/${todayId}/messages`;
         const saved = (await db.pool.query<{ id: string; scope: string }>(
@@ -3666,7 +3666,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['열린 깨움 → 지금 깨움', withWake, (r) => ({ body: '다시 봐 줘', threadRootId: r }), A],
           ['열린 깨움 + 부름 → 접음', withWake, (r) => ({ body: '@bot2 지금 봐', threadRootId: r }), A],
           ['없는 머리 → bad_thread', async () => '00000000-0000-4000-8000-000000000000', (r) => ({ body: '답', threadRootId: r }), A],
-          ['지워진 머리 → TS 몫', async () => { const id = await direct(member.accountId, '지울 글'); await db.pool.query(`update message set deleted_at = now() where id = $1`, [id]); return id; }, (r) => ({ body: '답', threadRootId: r }), A, 'ts'],
+          ['지워진 머리 → 되살림(rootBack)', async () => { const id = await direct(member.accountId, '지울 글'); await db.pool.query(`update message set deleted_at = now() where id = $1`, [id]); return id; }, (r) => ({ body: '답', threadRootId: r }), A],
           ['열린 카드 + 물음 → 글 답으로 닫음', withAsk({ to: { kind: 'human' } }), (r) => ({ body: '그게 뭐야?', threadRootId: r }), A],
           ['열린 카드 + 고르는 글 → TS 몫', withAsk({ to: { kind: 'human' } }), (r) => ({ body: 'A 로', threadRootId: r }), A, 'ts'],
           ['열린 카드 + 인용 속 물음 → TS 몫', withAsk({ to: { kind: 'human' } }), (r) => ({ body: '> 뭐야?\nB 로', threadRootId: r }), A, 'ts'],
@@ -3693,6 +3693,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             const mine = () => evs().slice(before).filter((e) =>
               (e.type === 'message.created' && (e as { message: { id: string } }).message.id === r.id) || e.type === 'inbox.updated'
               || e.type === 'thread.reportWakes.changed'
+              || (e.type === 'message.updated' && (e as { message: { id: string } }).message.id === root)
               || (e.type === 'message.updated' && !!(e as { message: { meta?: { wake?: unknown } } }).message.meta?.wake)
               || (e.type === 'message.updated' && ['ask', 'askBundle'].includes(String((e as { message: { meta?: { kind?: unknown } } }).message.meta?.kind))));
             while (r.status === 201 && !mine().some((e) => e.type === 'message.created') && Date.now() < until) await new Promise((res) => setTimeout(res, 100));
@@ -3729,7 +3730,12 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const folded = (tsOut as (Row & W)[]).find((x) => x.name === '열린 깨움 + 부름 → 접음')!;
         expect(folded.wakes).toEqual([{ fired: false, canceled: true, by_reply: true, stamped_fired: false, stamped_canceled: true, wake_inbox: [] }]);
         expect(by('없는 머리 → bad_thread').status).toBe(400);
-        expect(by('지워진 머리 → TS 몫').status).toBe(201);
+        expect(by('지워진 머리 → 되살림(rootBack)').status).toBe(201);
+        // C1c-3d — 되돌아온 머리는 `message.created` **뒤** `message.updated` 로(자리표시자, 답글 수에 이 답이 들어 있음).
+        type B = { events: { type: string; message?: { deletedAt?: unknown; replyCount?: unknown } }[] };
+        const back = (tsOut as (Row & B)[]).find((x) => x.name === '지워진 머리 → 되살림(rootBack)')!;
+        expect(back.events.map((e) => e.type)).toEqual(['message.created', 'message.updated', 'inbox.updated']);
+        expect(back.events[1]!.message).toMatchObject({ deletedAt: 'string', replyCount: 1 });
         type K = { asks: { body: string; reason: string | null; by: string | null; by_reply: boolean; closed: boolean; inbox: string[] }[]; events: { type: string }[] };
         const asks = (n: string) => (tsOut as (Row & K)[]).find((x) => x.name === n)!;
         expect(asks('열린 카드 + 물음 → 글 답으로 닫음').asks).toEqual([{ body: '고를래?', reason: 'replied', by: 'ADMIN', by_reply: true, closed: true, inbox: [] }]);
