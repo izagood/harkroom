@@ -287,6 +287,33 @@ pub fn is_retryable_lock_error(e: &sqlx::Error) -> bool {
     )
 }
 
+/// [`retry_lock_once`] 가 끝낸 꼴.
+#[derive(Debug)]
+pub enum LockRetryError {
+    /// 두 번 다 40P01·55P03 — 호출자는 `internal` 로 끝낸다. **TS 로 넘기지 않는다**(넘기면 tx 밖 판정 틈이 돌아온다).
+    Exhausted(sqlx::Error),
+    /// 잠금 오류가 아닌 DB 오류 — 다시 하지 않는다. 쓰기 전이면 호출자가 TS 로 넘길 수 있고, 쓰기 뒤면 `internal`(W1).
+    Other(sqlx::Error),
+}
+
+/// 판정·쓰기 tx 한 벌(`attempt`)을 돌리고, 교착(40P01)·잠금 실패(55P03)면 **한 번만** 새 tx 로 다시 돌린다(security C3b-3 ①-4).
+/// `attempt` 는 부를 때마다 새 tx 를 열고, 앞 시도에서 읽은 값을 쓰지 않는다(판정에는 잠그는 select 가 돌려준 값만 쓴다).
+pub async fn retry_lock_once<T, F, Fut>(mut attempt: F) -> Result<T, LockRetryError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = sqlx::Result<T>>,
+{
+    match attempt().await {
+        Ok(v) => Ok(v),
+        Err(e) if is_retryable_lock_error(&e) => match attempt().await {
+            Ok(v) => Ok(v),
+            Err(e) if is_retryable_lock_error(&e) => Err(LockRetryError::Exhausted(e)),
+            Err(e) => Err(LockRetryError::Other(e)),
+        },
+        Err(e) => Err(LockRetryError::Other(e)),
+    }
+}
+
 // ───────────────────────── 카드 → 무엇을 정하나(TS `decisions.ts`) ─────────────────────────
 
 /// TS `DecisionRef`.
@@ -561,3 +588,59 @@ pub const UNKNOWN_OPTION_MESSAGE: &str = "a permission card takes approve_mandat
 pub const LOCK_REQUEST: &str = "select agent_id::text, channel_id::text, kind, status, \
      expires_at <= now() as expired, mandate_id::text, denial_id::text, card_message_id::text \
      from permission_request where id = $1::uuid for update";
+
+/// 결정 감사(`permission.denied`·`permission.approved`)의 detail — TS `decidePermissionRequest` 의 `recordAudit` 와 같은 칸만 싣는다.
+/// 3b·3c 는 이것을 결정과 **같은 tx** 에 INSERT 한다(감사가 실패하면 결정도 실패 → `internal`, TS 로 넘기지 않음).
+/// 요청 줄의 `reason`·`warnings`·`file_digests`, 카드 본문, grant 토큰 같은 것은 싣지 않는다 — 칸 목록은 [`AUDIT_DETAIL_KEYS`] 골든.
+pub struct AuditDetail<'a> {
+    pub request_id: &'a str,
+    pub kind: &'a str,
+    pub target: &'a str,
+    pub channel_id: Option<&'a str>,
+    pub as_owner: bool,
+    pub thread_root_id: Option<&'a str>,
+    pub grant_expires_at: Option<&'a str>,
+    /// (grantMode, commandGrantId)
+    pub grant_mode: Option<(&'a str, &'a str)>,
+    /// `via: { kind: 'bundle', bundleMessageId }` 만 Rust 가 맡는다(chat·mirror 는 처음부터 TS).
+    pub bundle_message_id: Option<&'a str>,
+}
+
+/// detail 에 나올 수 있는 칸 전부(TS 와 같은 이름). 시험이 이 밖의 칸이 없는지·TS 원문에 이 이름들이 있는지 본다.
+pub const AUDIT_DETAIL_KEYS: [&str; 11] = [
+    "requestId",
+    "kind",
+    "target",
+    "channelId",
+    "asOwner",
+    "threadRootId",
+    "grantExpiresAt",
+    "grantMode",
+    "commandGrantId",
+    "via",
+    "bundleMessageId",
+];
+
+pub fn audit_detail(a: &AuditDetail<'_>) -> Value {
+    let mut o = serde_json::json!({
+        "requestId": a.request_id, "kind": a.kind, "target": a.target, "channelId": a.channel_id,
+    });
+    if !a.as_owner {
+        o["asOwner"] = Value::Bool(false);
+    }
+    if a.kind == "command" {
+        o["threadRootId"] = serde_json::json!(a.thread_root_id);
+    }
+    if let Some(t) = a.grant_expires_at {
+        o["grantExpiresAt"] = serde_json::json!(t);
+    }
+    if let Some((mode, id)) = a.grant_mode {
+        o["grantMode"] = serde_json::json!(mode);
+        o["commandGrantId"] = serde_json::json!(id);
+    }
+    if let Some(b) = a.bundle_message_id {
+        o["via"] = serde_json::json!("bundle");
+        o["bundleMessageId"] = serde_json::json!(b);
+    }
+    o
+}

@@ -20,6 +20,7 @@ import {
   addChannelMember, audienceFor, channelListAudience, channelListLostAudience, createChannel, getOrCreateDm, removeChannelMember,
 } from '../src/services/channels.js';
 import { startEventBus } from '../src/eventBus.js';
+import { mayDecideFor } from '../src/services/deciders.js';
 import {
   invokeFactsFor, isEligibleDelegate, mayInvoke, mayInvokeTeam, type InvokeVia, type TeamInvokeFacts,
 } from '../src/services/invokeGate.js';
@@ -114,7 +115,7 @@ async function operatorWriteRole(db: { pool: pg.Pool; uri: string }, grants: rea
 }
 
 describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () => {
-  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention', 'mandate_idle', 'permission_expire', 'bg', 'bg_produce', 'outbox_prune', 'turn_lease']) {
+  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention', 'mandate_idle', 'permission_expire', 'bg', 'bg_produce', 'outbox_prune', 'turn_lease', 'decide_core_db']) {
     it(`tests/${name}.rs`, async () => {
       const db = await startTestDb();
       try {
@@ -3725,4 +3726,78 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       await db.stop();
     }
   }, 900_000);
+});
+
+// S5.3 C3b-3a — 권한 카드 결정권 판정(`core/decide_core.rs`, 근거 줄을 잠근 뒤 판정)이 TS `mayDecideFor` 와 같은가. 범위(owner·list·
+// channel·community) × 스위치 끔 × 꺼진 에이전트 × 행위자(소유자·멤버·밖 사람·명단·게스트·막힌 계정·에이전트) × 채널(공개·비공개·DM·없음).
+// Rust 는 같은 사례를 정상·범위 검사 끔·게스트 검사 끔·스위치 검사 끔으로 돌려 찍는다 — 정상은 TS 와 같아야 하고, 끈 셋은 달라야 한다(망가뜨리기).
+describe.skipIf(!ON)('결정권 판정 — TS·Rust 같은 답(C3b-3a)', () => {
+  it('범위 × 행위자 × 채널 × 스위치', async () => {
+    const db = await startTestDb();
+    try {
+      const q = (sql: string, args: unknown[] = []) => db.pool.query(sql, args);
+      const acct = async (handle: string, kind: 'human' | 'agent', role = 'member', off = false) => (await q(
+        `insert into account(handle, display_name, kind, login_id, role, disabled_at)
+         values ($1, $1, $2, case when $2 = 'human' then $1 end, $3, case when $4 then now() end) returning id`,
+        [handle, kind, role, off])).rows[0].id as string;
+      const owner = await acct('dk-owner', 'human');
+      const member = await acct('dk-member', 'human');
+      const outsider = await acct('dk-out', 'human');
+      const listed = await acct('dk-listed', 'human');
+      const guest = await acct('dk-guest', 'human', 'guest');
+      const off = await acct('dk-off', 'human', 'member', true);
+      const bot = await acct('dk-bot', 'agent');
+      const agent = async (handle: string, scope: string, userDecide = true, agentOff = false) => {
+        const id = await acct(handle, 'agent', 'member', agentOff);
+        await q(`insert into agent_config(account_id, owner_account_id, invoke_scope, user_decide) values ($1, $2, $3, $4)`,
+          [id, owner, scope, userDecide]);
+        for (const who of [listed, guest, off]) await q(`insert into agent_invoker(agent_id, account_id) values ($1, $2)`, [id, who]);
+        return id;
+      };
+      const agents = [
+        await agent('dk-a-owner', 'owner'), await agent('dk-a-list', 'list'), await agent('dk-a-channel', 'channel'),
+        await agent('dk-a-comm', 'community'), await agent('dk-a-switch', 'community', false), await agent('dk-a-off', 'community', true, true),
+        await agent('dk-a-listsw', 'list', false),
+      ];
+      const chan = async (name: string | null, kind: string, visibility: string, members: string[]) => {
+        const id = (await q(`insert into channel(name, kind, visibility) values ($1, $2, $3) returning id`, [name, kind, visibility])).rows[0].id as string;
+        for (const m of members) await q(`insert into channel_member(channel_id, account_id) values ($1, $2)`, [id, m]);
+        return id;
+      };
+      const pub = await chan('dk-pub', 'standard', 'public', [member, guest, off, bot]);
+      const priv = await chan('dk-priv', 'standard', 'private', [member, guest]);
+      const dm = await chan(null, 'dm', 'private', [member, listed]);
+      const actors = [owner, member, outsider, listed, guest, off, bot];
+      const cases: { agentId: string; actorId: string; channelId: string | null }[] = [];
+      for (const agentId of agents) for (const actorId of actors) for (const channelId of [pub, priv, dm, null]) cases.push({ agentId, actorId, channelId });
+      const want: unknown[] = [];
+      for (const c of cases) {
+        const v = await mayDecideFor(db.pool, c);
+        want.push(v.ok
+          ? { ok: true, asOwner: v.asOwner, ownerAccountId: v.ownerAccountId, decideScope: v.decideScope }
+          : { ok: false, ownerAccountId: v.ownerAccountId, decideScope: v.decideScope });
+      }
+      // 픽스처가 갈래를 실제로 가르는지 — 소유자 승인·소유자 아닌 승인·거절이 다 나와야 한다.
+      const ws = want as { ok: boolean; asOwner?: boolean }[];
+      expect(ws.some((w) => w.ok && w.asOwner)).toBe(true);
+      expect(ws.some((w) => w.ok && w.asOwner === false)).toBe(true);
+      expect(ws.some((w) => !w.ok)).toBe(true);
+      const file = joinPath(tmpdir(), `decide-cases-${process.pid}.json`);
+      writeCases(file, JSON.stringify(cases));
+      const r = await cargo(['test', '--test', 'decide_core_db', 'contrast', '--', '--nocapture', '--exact'], {
+        HARKROOM_TEST_DATABASE_URL: db.uri, HARKROOM_DECIDE_CASES: file,
+      });
+      expect(r.code, r.out).toBe(0);
+      const line = r.out.split('\n').find((l) => l.startsWith('DECIDE_CORE_JSON '));
+      expect(line, r.out).toBeDefined();
+      const got = JSON.parse(line!.slice('DECIDE_CORE_JSON '.length)) as Record<string, unknown[]>;
+      for (let i = 0; i < cases.length; i++) expect(got.normal![i], `사례 ${i}: ${JSON.stringify(cases[i])}`).toEqual(want[i]);
+      // 망가뜨리기 — 검사 하나를 끄면 적어도 한 사례가 TS 와 달라진다.
+      for (const k of ['scope', 'guest', 'switch']) {
+        expect(got[k]!.some((g, i) => JSON.stringify(g) !== JSON.stringify(want[i])), `${k} 검사를 끄면 빨강`).toBe(true);
+      }
+    } finally {
+      await db.stop();
+    }
+  }, 600_000);
 });

@@ -229,3 +229,65 @@ fn breakage_switch_not_in_default_features() {
         RS_SRC.contains("#[cfg(feature = \"breakage-tests\")]\npub async fn may_decide_for_with")
     );
 }
+
+const TS_PERMISSION_REQUESTS: &str =
+    include_str!("../../../packages/server/src/services/permissionRequests.ts");
+
+/// 감사 detail 골든(security C3b-3 ③) — TS 와 같은 칸 이름만, 요청 사유·경고·digest·비밀 같은 칸은 없다.
+#[test]
+fn audit_detail_keys_match_ts_and_carry_no_secrets() {
+    use harkroom_server::core::decide_core::{AUDIT_DETAIL_KEYS, AuditDetail, audit_detail};
+    for k in AUDIT_DETAIL_KEYS {
+        assert!(
+            TS_PERMISSION_REQUESTS.contains(k),
+            "TS audit detail has {k}"
+        );
+    }
+    let full = audit_detail(&AuditDetail {
+        request_id: "r",
+        kind: "command",
+        target: "git status",
+        channel_id: Some("c"),
+        as_owner: false,
+        thread_root_id: Some("t"),
+        grant_expires_at: Some("2026-11-16T00:00:00.000Z"),
+        grant_mode: Some(("hour", "g")),
+        bundle_message_id: Some("b"),
+    });
+    let keys: Vec<&str> = full
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    for k in &keys {
+        assert!(AUDIT_DETAIL_KEYS.contains(k), "unexpected audit key {k}");
+    }
+    assert_eq!(keys.len(), AUDIT_DETAIL_KEYS.len());
+    for bad in [
+        "reason",
+        "warnings",
+        "fileDigests",
+        "token",
+        "secret",
+        "body",
+    ] {
+        assert!(full.get(bad).is_none(), "{bad}");
+    }
+    // 소유자 deny(tool): asOwner·threadRootId·grant 칸이 없다 — TS 와 같은 생략.
+    let deny = audit_detail(&AuditDetail {
+        request_id: "r",
+        kind: "tool",
+        target: "Bash(ls:*)",
+        channel_id: None,
+        as_owner: true,
+        thread_root_id: None,
+        grant_expires_at: None,
+        grant_mode: None,
+        bundle_message_id: None,
+    });
+    assert_eq!(
+        deny,
+        serde_json::json!({"requestId": "r", "kind": "tool", "target": "Bash(ls:*)", "channelId": null})
+    );
+}
