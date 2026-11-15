@@ -15,6 +15,7 @@ pub mod content_scan;
 pub mod events;
 pub mod inbox_list;
 pub mod inbox_read;
+pub mod inbox_thread;
 pub mod invoke_gate;
 pub mod mandate_stamp;
 pub mod mcp;
