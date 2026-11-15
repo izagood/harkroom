@@ -64,13 +64,50 @@ pub async fn handle(
     let Ok(bytes) = to_bytes(body, BODY_LIMIT).await else {
         return json(StatusCode::PAYLOAD_TOO_LARGE, TOO_LARGE);
     };
-    if !SERVED.is_empty()
-        && let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes)
-        && let super::Dispatch::Rust(_name) = super::dispatch(&v, SERVED)
-    {
-        // C4a-2 이후: 여기서 Rust 가 답한다. 지금은 SERVED 가 비어 닿지 않는다.
+    if let Some(r) = serve(&up, ci, &parts.headers, &bytes, SERVED, &answer).await {
+        return r;
     }
     proxy::forward(State(up), ci, Request::from_parts(parts, Body::from(bytes))).await
+}
+
+/// Rust 가 도구를 답하는 함수의 꼴 — `None` 이면 답하지 않는다(TS 로).
+pub type Answer = dyn Fn(&'static str, &serde_json::Value) -> Option<serde_json::Value> + Sync;
+
+/// C4a-2: 아직 아무 도구도 답하지 않는다(C4a-3 에서 읽기 도구가 들어온다).
+fn answer(_tool: &'static str, _args: &serde_json::Value) -> Option<serde_json::Value> {
+    None
+}
+
+/// 한 요청을 Rust 가 답할 수 있으면 답을, 아니면 `None`(→ 원래 바이트를 TS 로). 순서: 갈림(`served`) → 전송 조건 → 입장 확인(TS) → 도구.
+/// 입장 확인이 거절하면 그 거절을 도구 답으로 싣는다(TS 의 감싸기와 같은 결과). 확인을 못 하면 TS 로 넘긴다.
+pub async fn serve(
+    up: &Upstream,
+    ci: ConnectInfo<SocketAddr>,
+    headers: &axum::http::HeaderMap,
+    bytes: &[u8],
+    served: &[&str],
+    answer: &Answer,
+) -> Option<Response<Body>> {
+    if served.is_empty() || !super::respond::transport_ok(headers) {
+        return None;
+    }
+    let v = serde_json::from_slice::<serde_json::Value>(bytes).ok()?;
+    let super::Dispatch::Rust(name) = super::dispatch(&v, served) else {
+        return None;
+    };
+    // 알림(id 없음)은 SDK 가 202 로 받는다 — tools/call 은 요청이어야 하니 모양이 다르면 TS 로.
+    let id = v.get("id").filter(|i| i.is_string() || i.is_number())?.clone();
+    let args = v
+        .pointer("/params/arguments")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    match super::respond::admit(up, ci, headers, name, &args).await {
+        super::respond::Admit::Yes => {}
+        super::respond::Admit::No(result) => return Some(super::respond::sse(&id, &result)),
+        super::respond::Admit::Unknown => return None,
+    }
+    let result = answer(name, &args)?;
+    Some(super::respond::sse(&id, &result))
 }
 
 /// 코어 라우터 줄 — 표(`route_table`)로 붙여 CORS 대조 목록에 실린다. 같은 경로의 다른 메서드는 `ts_fallback` 으로 TS.
