@@ -2702,6 +2702,32 @@ export async function closeAsk(
 }
 
 /**
+ * 글 답으로 닫을 카드 고르기·닫기(`closeAsksByReply`). Rust(`core/ask_reply_close.rs`, S5.3 C1c-3c)가 같은 문장을 골든으로 받는다.
+ * 자리표: $1 머리 · $2 채널 · $3 답글 seq · $4 답한 사람 · $5 답글 id.
+ */
+export const ASK_CLOSE_BY_REPLY_SQL = `update message
+          set meta = jsonb_set(
+                jsonb_set(
+                  jsonb_set(
+                    jsonb_set(meta::jsonb, '{ask,closedAt}', to_jsonb(now())),
+                    '{ask,closedBy}', to_jsonb($4::text)),
+                  '{ask,closedReason}', to_jsonb('replied'::text)),
+                '{ask,replyMessageId}', to_jsonb($5::text))
+        where (id = $1::uuid or thread_root_id = $1::uuid)
+          and channel_id = $2::uuid
+          and seq < $3::bigint
+          and deleted_at is null
+          and meta->>'kind' = 'ask'
+          and meta->'ask'->>'answeredWith' is null
+          and meta->'ask'->>'closedAt' is null
+          and meta->'ask'->>'mirrorOf' is null
+          and not (meta ? 'permissionRequest')
+          and not (meta ? 'mergeDenial')
+          and (meta->'ask'->'to'->>'kind' = 'human'
+            or (meta->'ask'->'to'->>'kind' = 'account' and meta->'ask'->'to'->>'accountId' = $4))
+        returning ${COLS}`;
+
+/**
  * **사람이 카드를 누르지 않고 글로 답했다**(2026-10-09, 선택 카드 A′ — 소유자 「셋 다」, 스레드 596146cc).
  *
  * 카드가 닫히는 길이 고르기·「답하지 않기」 둘뿐이라, 사람이 "이건 다르게 해 줘"·"그게 뭐야?"를
@@ -2727,27 +2753,7 @@ export async function closeAsksByReply(pool: Pool, reply: MessageRow): Promise<v
   if (!reply.threadRootId || !reply.authorId) return;
   try {
     const rows = (await pool.query(
-      `update message
-          set meta = jsonb_set(
-                jsonb_set(
-                  jsonb_set(
-                    jsonb_set(meta::jsonb, '{ask,closedAt}', to_jsonb(now())),
-                    '{ask,closedBy}', to_jsonb($4::text)),
-                  '{ask,closedReason}', to_jsonb('replied'::text)),
-                '{ask,replyMessageId}', to_jsonb($5::text))
-        where (id = $1 or thread_root_id = $1)
-          and channel_id = $2
-          and seq < $3
-          and deleted_at is null
-          and meta->>'kind' = 'ask'
-          and meta->'ask'->>'answeredWith' is null
-          and meta->'ask'->>'closedAt' is null
-          and meta->'ask'->>'mirrorOf' is null
-          and not (meta ? 'permissionRequest')
-          and not (meta ? 'mergeDenial')
-          and (meta->'ask'->'to'->>'kind' = 'human'
-            or (meta->'ask'->'to'->>'kind' = 'account' and meta->'ask'->'to'->>'accountId' = $4))
-        returning ${COLS}`,
+      ASK_CLOSE_BY_REPLY_SQL,
       [reply.threadRootId, reply.channelId, reply.seq, reply.authorId, reply.id],
     )).rows as MessageRow[];
     if (rows.length === 0) return;

@@ -14,6 +14,7 @@ import { LIST_SCHEDULED_SQL } from '../src/services/scheduledMessages.js';
 import { SELECT_PINS_SQL } from '../src/services/pins.js';
 import { AGENT_INVOKER_SQL, CHANNEL_SCOPE_SQL, ELIGIBLE_DELEGATE_SQL, INVOKE_FACTS_SQL, TEAM_INVOKER_SQL } from '../src/services/invokeGate.js';
 import { HAS_REPLY_GRANT_SQL } from '../src/services/replyGrants.js';
+import { ASK_CLOSE_BY_REPLY_SQL } from '../src/services/messages.js';
 import { EDIT_FIND_SQL, EDIT_INBOX_ALREADY_SQL, EDIT_UPDATE_SQL, EDIT_VIA_EDIT_SQL } from '../src/services/messages.js';
 import { ACCOUNTS_BY_HANDLES_SQL, ACCOUNTS_BY_IDS_SQL, FAN_OUT_AUDIENCE_SQL, INSERT_INBOX_MANY_SQL, REVEAL_HIDDEN_SQL, REVEAL_REASONS } from '../src/services/messages.js';
 import { GROUP_BY_HANDLE_SQL, GROUP_MEMBERS_SQL } from '../src/services/handleGroups.js';
@@ -157,6 +158,8 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     preempt_fire_inbox: PREEMPT_FIRE_INBOX_SQL,
     preempt_fire: PREEMPT_FIRE_SQL,
     stamp_wake_closed: STAMP_WAKE_CLOSED_SQL,
+    // 사람 답글로 카드 닫기(`core/ask_reply_close.rs`, S5.3 C1c-3c) — `closeAsksByReply`.
+    ask_close_by_reply: ASK_CLOSE_BY_REPLY_SQL,
     decider_row: DECIDER_ROW_SQL,
     decider_seen: DECIDER_SEEN_SQL,
     decider_list: DECIDER_LIST_SQL,
