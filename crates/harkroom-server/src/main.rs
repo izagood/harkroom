@@ -426,7 +426,7 @@ async fn open_write_pool() -> Option<sqlx::PgPool> {
 /// 요청과 나눠 쓴다. 이 풀이 막혀도 요청은 막히지 않는다. 권한([`loops::wake::WAKE_PRIVILEGES`])이 모자라면 띄우지 않는다(TS 에 남는다).
 async fn spawn_loops() {
     use harkroom_server::loops::{
-        bg, bg_produce, mandate_idle, permission_expire, retention, wake,
+        bg, bg_produce, mandate_idle, outbox_prune, permission_expire, retention, wake,
     };
     let Some(url) = std::env::var("DATABASE_WRITE_URL")
         .ok()
@@ -507,6 +507,15 @@ async fn spawn_loops() {
         Ok(m) => eprintln!("front: loop permission.expire off — missing privileges {m:?}"),
         Err(e) => eprintln!("front: loop permission.expire off — privilege check failed: {e}"),
     }
+    // C5c-4 — event_outbox 정리(한 시간 지난 줄). 문지기 이름 `outbox.prune`.
+    match write::missing_in(&pool, outbox_prune::OUTBOX_PRUNE_PRIVILEGES, &[]).await {
+        Ok(m) if m.is_empty() => {
+            eprintln!("front: loop outbox.prune on (runs only while server_loop owner is rust)");
+            outbox_prune::spawn(gate.clone(), pool.clone());
+        }
+        Ok(m) => eprintln!("front: loop outbox.prune off — missing privileges {m:?}"),
+        Err(e) => eprintln!("front: loop outbox.prune off — privilege check failed: {e}"),
+    }
     // C5c-3a — 백그라운드 회차 닫기. 스위치는 TS 와 같은 env.
     let bg_on =
         bg::background_enabled(std::env::var("HARKROOM_BACKGROUND_ENABLED").ok().as_deref());
@@ -538,8 +547,8 @@ async fn spawn_loops() {
     }
 }
 
-/// Rust 로 옮긴 루프 수(wake·retention·mandate.idle·permission.expire·bg·bg.produce) — 문지기 풀 크기. 루프를 더하면 같이 올린다.
-const LOOP_GATE_CONNECTIONS: u32 = 6;
+/// Rust 로 옮긴 루프 수(wake·retention·mandate.idle·permission.expire·outbox.prune·bg·bg.produce) — 문지기 풀 크기. 루프를 더하면 같이 올린다.
+const LOOP_GATE_CONNECTIONS: u32 = 7;
 /// sweep 풀 크기.
 const LOOP_SWEEP_CONNECTIONS: u32 = 3;
 
