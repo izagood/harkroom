@@ -1377,22 +1377,65 @@ fn retire_daemon(paths: &EndpointPaths, pid: u32) -> bool {
     false
 }
 
-/// pid 의 실행 파일 경로(macOS `proc_pidpath`). 못 읽으면 None.
+/// pid 의 실행 파일 경로와 argv(macOS `sysctl KERN_PROCARGS2`). 못 읽으면 None.
+///
+/// 실행 파일만 보면 안 된다 — 번들의 오퍼레이터는 `#!/usr/bin/env node` 스크립트라 실행 파일은 `node` 이고,
+/// 기록의 `entryPath` 는 argv 에 있다(실물 #2254 에서 드러남). Rust 오퍼레이터면 실행 파일 쪽이 맞는다.
 #[cfg(target_os = "macos")]
-fn process_exe(pid: u32) -> Option<PathBuf> {
-    let mut buf = vec![0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
-    // SAFETY: buf 는 길이만큼 쓸 수 있는 버퍼다. 돌려준 길이만 읽는다.
-    let n = unsafe { libc::proc_pidpath(pid as libc::c_int, buf.as_mut_ptr().cast(), buf.len() as u32) };
-    if n <= 0 {
+fn process_image(pid: u32) -> Option<Vec<PathBuf>> {
+    let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid as libc::c_int];
+    let mut size: libc::size_t = 0;
+    // SAFETY: 크기만 묻는 호출이다(버퍼 null).
+    if unsafe { libc::sysctl(mib.as_mut_ptr(), 3, std::ptr::null_mut(), &mut size, std::ptr::null_mut(), 0) } != 0 || size == 0 {
         return None;
     }
-    buf.truncate(n as usize);
-    Some(PathBuf::from(String::from_utf8_lossy(&buf).into_owned()))
+    let mut buf = vec![0u8; size];
+    // SAFETY: buf 는 size 만큼 쓸 수 있고, 커널이 돌려준 size 만 읽는다.
+    if unsafe { libc::sysctl(mib.as_mut_ptr(), 3, buf.as_mut_ptr().cast(), &mut size, std::ptr::null_mut(), 0) } != 0 {
+        return None;
+    }
+    buf.truncate(size);
+    parse_procargs2(&buf)
+}
+
+/// `KERN_PROCARGS2` 버퍼: `argc`(i32) · 실행 파일 경로 · NUL 채움 · argv[0..argc]. 돌려주는 값은 [실행 파일, argv…].
+fn parse_procargs2(buf: &[u8]) -> Option<Vec<PathBuf>> {
+    let argc = i32::from_ne_bytes(buf.get(..4)?.try_into().ok()?).max(0) as usize;
+    let mut rest = &buf[4..];
+    let mut take = |rest: &mut &[u8]| -> Option<PathBuf> {
+        while let Some((&0, tail)) = rest.split_first() {
+            *rest = tail;
+        }
+        let end = rest.iter().position(|&b| b == 0).unwrap_or(rest.len());
+        if end == 0 {
+            return None;
+        }
+        let s = String::from_utf8_lossy(&rest[..end]).into_owned();
+        *rest = &rest[end..];
+        Some(PathBuf::from(s))
+    };
+    let mut out = vec![take(&mut rest)?];
+    for _ in 0..argc {
+        match take(&mut rest) {
+            Some(a) => out.push(a),
+            None => break,
+        }
+    }
+    Some(out)
 }
 
 #[cfg(not(target_os = "macos"))]
-fn process_exe(pid: u32) -> Option<PathBuf> {
-    std::fs::read_link(format!("/proc/{pid}/exe")).ok()
+fn process_image(pid: u32) -> Option<Vec<PathBuf>> {
+    let mut out = vec![std::fs::read_link(format!("/proc/{pid}/exe")).ok()?];
+    if let Ok(raw) = std::fs::read(format!("/proc/{pid}/cmdline")) {
+        out.extend(raw.split(|&b| b == 0).filter(|a| !a.is_empty()).map(|a| PathBuf::from(String::from_utf8_lossy(a).into_owned())));
+    }
+    Some(out)
+}
+
+/// 그 pid 가 기록의 `entryPath` 를 돌리는 프로세스인가 — 실행 파일이거나(Rust) argv 의 한 칸이다(node 스크립트).
+fn process_runs_entry(pid: u32, entry_path: &str) -> bool {
+    process_image(pid).is_some_and(|img| img.iter().any(|p| same_entry_path(entry_path, p)))
 }
 
 /// **스위치가 바뀐 기동에서 반대쪽 모드의 오퍼레이터를 내린다**(`community_root::roots_to_retire_on_switch` 가 자리를 준다).
@@ -1418,7 +1461,7 @@ pub fn retire_operators_at(roots: &[PathBuf]) -> Vec<String> {
             lines.push(format!("스위치 바뀜: `{}` 의 pid 기록에 실행 파일이 없어 건너뛴다", paths.dir.display()));
             continue;
         }
-        let same = process_exe(rec.pid).is_some_and(|exe| same_entry_path(&rec.entry_path, &exe));
+        let same = process_runs_entry(rec.pid, &rec.entry_path);
         if !same {
             lines.push(format!("스위치 바뀜: `{}` 의 pid {} 는 그 오퍼레이터가 아니다(끝났거나 다른 프로세스) — 건너뛴다", paths.dir.display(), rec.pid));
             continue;
@@ -4336,5 +4379,43 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
         std::fs::remove_file(&paths.socket).unwrap();
         assert!(retire_operators_at(&[root.clone()]).is_empty());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 번들 오퍼레이터는 node 스크립트다 — 실행 파일은 인터프리터이고 `entryPath` 는 argv 에 있다. 그래도 내린다(실물 #2254).
+    #[test]
+    fn retire_operators_at_terminates_a_script_operator_by_argv() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("hk-retire-script-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let paths = endpoint_files(&root);
+        std::fs::create_dir_all(&paths.dir).unwrap();
+        std::fs::write(&paths.socket, "").unwrap();
+        let script = root.join("fake-operator");
+        std::fs::write(&script, "#!/bin/sh\nsleep 30\n:\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let child = std::process::Command::new(&script).spawn().unwrap();
+        let pid = child.id();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut child = child;
+            let _ = tx.send(child.wait().unwrap());
+        });
+        std::thread::sleep(Duration::from_millis(200));
+        let img = process_image(pid).expect("image");
+        assert!(!same_entry_path(script.to_str().unwrap(), &img[0]), "실행 파일은 인터프리터여야 시험이 뜻이 있다: {img:?}");
+        std::fs::write(&paths.pid, format!(r#"{{"pid":{pid},"entryPath":"{}"}}"#, script.display())).unwrap();
+        let lines = retire_operators_at(&[root.clone()]);
+        assert!(lines[0].contains("내렸다"), "{lines:?}");
+        assert!(!rx.recv_timeout(Duration::from_secs(5)).unwrap().success());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn parse_procargs2_reads_exec_path_and_argv() {
+        let mut buf = 2i32.to_ne_bytes().to_vec();
+        buf.extend_from_slice(b"/usr/local/bin/node\0\0\0\0node\0/app/harkroom-operator\0HOME=/x\0");
+        let got = parse_procargs2(&buf).unwrap();
+        assert_eq!(got, vec![PathBuf::from("/usr/local/bin/node"), PathBuf::from("node"), PathBuf::from("/app/harkroom-operator")]);
+        assert!(parse_procargs2(&[0, 0]).is_none());
     }
 }
