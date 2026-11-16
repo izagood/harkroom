@@ -4911,3 +4911,331 @@ describe.skipIf(!ON)('결정권 판정 — TS·Rust 같은 답(C3b-3a)', () => {
     }
   }, 600_000);
 });
+
+/**
+ * S5.3 C6c-4 — **러너 릴레이 TS·Rust 대조**. 같은 DB 에 TS 서버와 `HARKROOM_CORE=rust` 앞단을 띄우고, 같은 오퍼레이터가
+ * 두 쪽에 각각 붙어(허브는 서버마다 메모리라 따로다) 같은 꼴의 세션을 알린 뒤 같은 요청을 보낸다.
+ *
+ * 에이전트는 쪽마다 하나(`aT`·`aR`)다 — announce 는 「이 에이전트의 목록 밖 행을 지운다」라서 한 에이전트를 두 허브가
+ * 나눠 들면 서로의 사본을 지운다. 비교 전에 에이전트 id·쪽 표시(`sideT`/`sideR`)·티켓을 자리표로 바꾼다.
+ *
+ * 같아야 하는 것: 목록(소유자·admin·남·`?scope=visible` 비멤버 채널)·attach/cancel/interactive 의 상태와 코드
+ * (거부 길 — 소유자도 admin 도 아닌 사람의 403, 없는 세션 404, 모자란 본문 400)·cancel 뒤 예약 접기(ⓐ)·감사 줄·
+ * 세션 사본 행(허용 목록 칸)·ended 로 지우기·되살릴 때 빈 자리 다시 채우기.
+ *
+ * **갈리는 것(알려진 차이, #2245 security)**: r1a(되살릴 때 남의 행을 덮지 않음)·r1b(쓰기 실패를 다음 박동에 재시도)·
+ * r2(그 채널의 멤버가 아니면 사본을 쓰지 않음)는 Rust 에만 있다. 각 쪽 결과를 따로 못 박는다 — TS 를 고치면 TS 쪽 기대가
+ * 빨개지므로 그때 같은 것으로 옮긴다.
+ */
+describe.skipIf(!ON)('러너 릴레이 — TS·Rust 같은 요청(C6c-4)', () => {
+  it('목록·거부 길·cancel 정리·세션 사본(r1a·r1b·r2 차이 포함)', async () => {
+    const built = await cargo(['build', '--bin', 'harkroom-server-rs'], {});
+    expect(built.code, built.out).toBe(0);
+    const bin = `${dirname(MANIFEST)}/target/debug/harkroom-server-rs`;
+    const db = await startTestDb();
+    const app = await buildServer({ pool: db.pool });
+    let front: ChildProcess | undefined;
+    const sockets: WebSocket[] = [];
+    try {
+      await app.listen({ port: 0, host: '127.0.0.1' });
+      const tsUrl = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
+      const admin = await bootstrapAdmin(app);
+      const owner = await createMember(app, admin.token, 'owner');
+      const stranger = await createMember(app, admin.token, 'stranger');
+      const aT = (await createAgent(app, admin.token, 'relay-t')).accountId;
+      const aR = (await createAgent(app, admin.token, 'relay-r')).accountId;
+      const auth = (t: string) => ({ authorization: `Bearer ${t}` });
+      for (const a of [aT, aR]) {
+        const r = await app.inject({ method: 'PATCH', url: `/accounts/agents/${a}`, headers: auth(admin.token), payload: { ownerAccountId: owner.accountId } });
+        expect(r.statusCode, r.body).toBe(200);
+      }
+      const mkChannel = async (name: string, visibility: 'public' | 'private', members: string[]): Promise<string> => {
+        const r = await app.inject({ method: 'POST', url: '/channels', headers: auth(admin.token), payload: { name, visibility } });
+        expect(r.statusCode, r.body).toBeLessThan(300);
+        const id = String(r.json().id);
+        for (const m of members) {
+          const x = await app.inject({ method: 'POST', url: `/channels/${id}/members`, headers: auth(admin.token), payload: { accountId: m } });
+          expect(x.statusCode, x.body).toBeLessThan(300);
+        }
+        return id;
+      };
+      // 비공개 채널(남은 멤버 아님) · 공개 채널 · 에이전트가 멤버가 아닌 비공개 채널(r2).
+      const priv = await mkChannel('relay-priv', 'private', [owner.accountId, aT, aR]);
+      const open = await mkChannel('relay-open', 'public', [owner.accountId, aT, aR]);
+      const away = await mkChannel('relay-away', 'private', [owner.accountId]);
+      const root = async (ch: string, body: string): Promise<string> => (await db.pool.query<{ id: string }>(
+        `insert into message (channel_id, author_id, body, kind) values ($1, $2, $3, 'user') returning id`, [ch, owner.accountId, body],
+      )).rows[0]!.id;
+      const privRoot = await root(priv, 'priv thread');
+      const openRoot = await root(open, 'open thread');
+      const awayRoot = await root(away, 'away thread');
+
+      const port = await freePort();
+      const f = await startFront(bin, {
+        UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(port), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: db.uri,
+        HARKROOM_CORE: 'rust',
+      });
+      front = f.child;
+      const rsUrl = `http://127.0.0.1:${port}`;
+      // Rust 가 릴레이를 **직접** 답해야 한다 — TS 로 넘기면 대조는 TS 끼리 비교해 늘 통과한다.
+      for (const key of ['GET /agent-sessions', 'POST /agent-sessions/{id}/attach', 'POST /agent-sessions/{id}/cancel', 'POST /agent-sessions/interactive']) {
+        expect(f.log(), key).toContain(`"${key}"`);
+      }
+      expect(f.log()).not.toContain('relay session copy off');
+
+      // 오퍼레이터 하나 · 두 에이전트를 그것에 배정 · 쪽마다 소켓 하나.
+      const op = await registerOperator(app, admin.token, 'c6c4-op');
+      await db.pool.query(
+        `insert into agent_assignment (agent_id, operator_id, assigned_by) values ($1, $3, $4), ($2, $3, $4)`,
+        [aT, aR, op.operatorId, admin.accountId],
+      );
+      const SIDES = [
+        { tag: 'sideT', url: tsUrl, agent: aT, impl: 'ts' },
+        { tag: 'sideR', url: rsUrl, agent: aR, impl: 'rust' },
+      ] as const;
+      type Side = (typeof SIDES)[number] & { send(frame: Record<string, unknown>): void; runnerId: string; got: Record<string, unknown>[] };
+      const sides: Side[] = [];
+      for (const s of SIDES) {
+        const sock = new WebSocket(`${s.url.replace('http', 'ws')}/operator`, { headers: auth(op.token) });
+        sockets.push(sock);
+        const got: Record<string, unknown>[] = [];
+        sock.on('message', (d) => { got.push(JSON.parse(String(d)) as Record<string, unknown>); });
+        await new Promise<void>((resolve, reject) => {
+          sock.on('open', () => resolve());
+          sock.on('error', reject);
+          sock.on('unexpected-response', (_q, res) => reject(new Error(`${s.tag} /operator http ${res.statusCode}`)));
+        });
+        const runnerId = randomUUID();
+        const send = (frame: Record<string, unknown>) => sock.send(JSON.stringify({ ...frame, runnerId }));
+        sock.send(JSON.stringify({ type: 'hello', protocol: 1, capabilities: { agentIds: [s.agent], harnesses: {} }, runners: [], sessions: [] }));
+        send({ type: 'runner.started', agentId: s.agent });
+        send({ type: 'runner.announce', sessions: [], caps: ['input', 'interactive', 'cancel'] });
+        sides.push({ ...s, send, runnerId, got });
+      }
+
+      const sess = (s: Side, name: string, channelId: string, threadRootId: string | null) => ({
+        sessionId: `${s.tag}-${name}`, agentAccountId: s.agent, channelId, threadRootId,
+        harness: 'claude-code', startedAt: '2026-11-16T00:00:00.000Z', acceptsInput: true, mode: 'mention',
+      });
+      const call = async (base: string, method: string, path: string, token: string, body?: unknown) => {
+        const res = await fetch(`${base}${path}`, {
+          method, headers: { ...auth(token), ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+          body: body === undefined ? undefined : JSON.stringify(body),
+        });
+        const text = await res.text();
+        return { status: res.status, json: text ? JSON.parse(text) as unknown : null };
+      };
+      const norm = (v: unknown): unknown => {
+        let t = JSON.stringify(v ?? null);
+        for (const [id, k] of [[aT, '<agent>'], [aR, '<agent>'], ['sideT', '<side>'], ['sideR', '<side>']] as const) t = t.split(id).join(k);
+        return JSON.parse(t.replace(/"ticket":"[^"]+"/g, '"ticket":"<ticket>"')) as unknown;
+      };
+      const waitFor = async (what: string, pred: () => Promise<boolean>, ms = 15_000) => {
+        const start = Date.now();
+        while (!(await pred())) {
+          if (Date.now() - start > ms) throw new Error(`timeout: ${what}\n--- front log ---\n${f.log()}`);
+          await new Promise((r) => setTimeout(r, 100));
+        }
+      };
+      const listed = async (s: Side, id: string) => {
+        const r = await call(s.url, 'GET', '/agent-sessions', admin.token);
+        return ((r.json as { sessions?: { sessionId: string }[] }).sessions ?? []).some((x) => x.sessionId === id);
+      };
+      // 등록(배정 확인)이 끝나기 전의 프레임은 버려질 수 있다 — 보일 때까지 다시 보낸다(started 는 멱등).
+      const start = async (s: Side, name: string, ch: string, rootId: string | null) => {
+        const body = sess(s, name, ch, rootId);
+        await waitFor(`${s.tag} ${name}`, async () => {
+          if (await listed(s, body.sessionId)) return true;
+          s.send({ type: 'session.started', session: body });
+          return false;
+        });
+      };
+      for (const s of sides) {
+        await start(s, 'priv', priv, privRoot);
+        await start(s, 'open', open, openRoot);
+        await start(s, 'cx', open, openRoot);
+      }
+      // 사본 쓰기는 순서 일꾼 하나다 — 표지 세션의 행이 보이면 앞의 쓰기는 다 끝났다.
+      const hubEpoch = async (s: Side): Promise<string> => (await db.pool.query<{ e: string }>(
+        `select hub_epoch::text as e from relay_hub where impl = $1 order by started_at desc limit 1`, [s.impl])).rows[0]!.e;
+      const rowOf = async (id: string) => (await db.pool.query(
+        `select agent_account_id::text as agent, operator_id::text as op, channel_id::text as ch, thread_root_id::text as root,
+                harness, mode, started_at, status, hub_epoch::text as hub
+           from agent_session_live where session_id = $1`, [id])).rows[0] as Record<string, unknown> | undefined;
+      let mark = 0;
+      const flush = async (s: Side) => {
+        const name = `mark${++mark}`;
+        await start(s, name, open, openRoot);
+        await waitFor(`${s.tag} ${name} row`, async () => (await rowOf(`${s.tag}-${name}`)) !== undefined);
+      };
+      for (const s of sides) await flush(s);
+
+      const epochs = new Map<string, string>();
+      for (const s of sides) epochs.set(s.tag, await hubEpoch(s));
+      const normRow = (s: Side, r: Record<string, unknown> | undefined) => r && norm({
+        ...r, hub: r.hub === epochs.get(s.tag) ? '<own hub>' : r.hub, op: r.op === op.operatorId ? '<op>' : r.op,
+        ch: r.ch === priv ? '<priv>' : r.ch === open ? '<open>' : r.ch === away ? '<away>' : r.ch,
+        root: r.root === privRoot ? '<privRoot>' : r.root === openRoot ? '<openRoot>' : r.root === awayRoot ? '<awayRoot>' : r.root,
+      });
+      const same = (what: string, ts: unknown, rs: unknown) => expect(norm(rs), `${what}\n--- front log ---\n${f.log()}`).toEqual(norm(ts));
+      let cases = 0;
+
+      // ① 목록 — admin·소유자·남, 그리고 `?scope=visible`(남은 비공개 채널 세션을 못 보고, 공개 채널 남의 세션엔 sessionId 가 없다).
+      const pick = (j: unknown) => ({
+        ...(j as Record<string, unknown>),
+        sessions: ((j as { sessions?: { sessionId?: string; channelId: string }[] }).sessions ?? [])
+          .filter((x) => !x.sessionId || !/-mark\d+$/.test(x.sessionId))
+          // 키 순서는 두 구현이 다르다(serde 는 사전순) — 내용이 아니라 세션 id·채널로 줄을 세운다.
+          .sort((a, b) => `${a.sessionId ?? ''}|${a.channelId}`.localeCompare(`${b.sessionId ?? ''}|${b.channelId}`)),
+      });
+      for (const [who, token] of [['admin', admin.token], ['owner', owner.token], ['stranger', stranger.token]] as const) {
+        for (const q of ['', '?scope=visible']) {
+          const [t, r] = await Promise.all(sides.map((s) => call(s.url, 'GET', `/agent-sessions${q}`, token)));
+          same(`GET /agent-sessions${q} — ${who}`, { status: t!.status, body: pick(t!.json) }, { status: r!.status, body: pick(r!.json) });
+          cases++;
+        }
+      }
+      // 남이 보는 범위에 비공개 채널 세션이 정말 없는지(같은 것끼리 비교라 둘 다 새도 통과하므로 따로 못 박는다).
+      const strangerVisible = pick((await call(rsUrl, 'GET', '/agent-sessions?scope=visible', stranger.token)).json).sessions as { channelId: string; sessionId?: string }[];
+      expect(strangerVisible.map((x) => x.channelId), '남은 비공개 채널 세션을 못 본다').not.toContain(priv);
+      expect(strangerVisible.every((x) => x.sessionId === undefined), '남의 세션에는 sessionId 가 없다').toBe(true);
+      expect(strangerVisible.length, '공개 채널 세션은 보인다').toBeGreaterThan(0);
+
+      // ② 거부 길과 성공 — attach·cancel·interactive. 상태와 오류 코드가 같아야 한다.
+      const auditCount = async (action: string, agent: string) => Number((await db.pool.query<{ n: string }>(
+        `select count(*)::text as n from audit_log where action = $1 and target = $2`, [action, agent])).rows[0]!.n);
+      const errOf = (j: unknown) => {
+        const e = (j as { error?: unknown } | null)?.error;
+        return typeof e === 'string' ? e : (e as { code?: string } | undefined)?.code;
+      };
+      for (const [what, method, path, token, body] of [
+        ['attach — 남(소유자도 admin 도 아님) → 403', 'POST', (s: Side) => `/agent-sessions/${s.tag}-priv/attach`, stranger.token, undefined],
+        ['cancel — 남 → 403', 'POST', (s: Side) => `/agent-sessions/${s.tag}-priv/cancel`, stranger.token, undefined],
+        ['attach — 없는 세션 → 404', 'POST', () => '/agent-sessions/nope/attach', owner.token, undefined],
+        ['cancel — 없는 세션 → 404', 'POST', () => '/agent-sessions/nope/cancel', owner.token, undefined],
+        ['interactive — 남 → 403', 'POST', (s: Side) => '/agent-sessions/interactive', stranger.token, (s: Side) => ({ agentAccountId: s.agent, channelId: priv, threadRootId: privRoot })],
+        ['interactive — 본문 모자람 → 400', 'POST', () => '/agent-sessions/interactive', owner.token, () => ({ channelId: priv })],
+      ] as const) {
+        const [t, r] = await Promise.all(sides.map((s) => call(s.url, method, path(s), token, body ? body(s) : undefined)));
+        same(what, { status: t!.status, code: errOf(t!.json) }, { status: r!.status, code: errOf(r!.json) });
+        expect(t!.status, what).toBeGreaterThanOrEqual(400);
+        cases++;
+      }
+      for (const s of sides) {
+        expect(await auditCount('agent.attached', s.agent), `${s.tag} 거부는 감사에 안 남는다`).toBe(0);
+        expect(await auditCount('agent.turn.canceled', s.agent), `${s.tag} 거부는 감사에 안 남는다`).toBe(0);
+      }
+      for (const [who, token] of [['owner', owner.token], ['admin', admin.token]] as const) {
+        const [t, r] = await Promise.all(sides.map((s) => call(s.url, 'POST', `/agent-sessions/${s.tag}-priv/attach`, token)));
+        same(`attach — ${who} → 200 + 티켓`, t, r);
+        expect(t!.status, `attach ${who}`).toBe(200);
+        cases++;
+      }
+      for (const s of sides) expect(await auditCount('agent.attached', s.agent), `${s.tag} attach 감사`).toBe(2);
+
+      // ③ cancel 성공 → 202 · 러너에 cancel 프레임 · 그 스레드의 그 에이전트 예약만 접힌다(ⓐ settle).
+      const wakeIn = async (agent: string, ch: string, rootId: string) => {
+        const m = await db.pool.query<{ id: string }>(
+          `insert into message (channel_id, author_id, body, kind, thread_root_id) values ($1, $2, 'wait', 'wake', $3) returning id`, [ch, agent, rootId]);
+        return (await db.pool.query<{ id: string }>(
+          `insert into agent_wake (account_id, channel_id, message_id, wake_at) values ($1, $2, $3, now() + interval '1 hour') returning id`,
+          [agent, ch, m.rows[0]!.id])).rows[0]!.id;
+      };
+      const wakes = new Map<string, { here: string; there: string }>();
+      for (const s of sides) wakes.set(s.tag, { here: await wakeIn(s.agent, open, openRoot), there: await wakeIn(s.agent, priv, privRoot) });
+      {
+        const [t, r] = await Promise.all(sides.map((s) => call(s.url, 'POST', `/agent-sessions/${s.tag}-cx/cancel`, owner.token)));
+        same('cancel — 소유자 → 202', t, r);
+        expect(t!.status).toBe(202);
+        cases++;
+      }
+      const wakeState = async (id: string) => (await db.pool.query<{ c: boolean }>(
+        `select canceled_at is not null as c from agent_wake where id = $1`, [id])).rows[0]!.c;
+      for (const s of sides) {
+        const w = wakes.get(s.tag)!;
+        await waitFor(`${s.tag} 예약 접힘`, () => wakeState(w.here));
+        expect(await wakeState(w.there), `${s.tag} 다른 스레드 예약은 그대로`).toBe(false);
+        await waitFor(`${s.tag} cancel 프레임`, async () => s.got.some((g) => g.runnerId === s.runnerId && String(g.type).includes('cancel')));
+        expect(await auditCount('agent.turn.canceled', s.agent), `${s.tag} cancel 감사`).toBe(1);
+      }
+      cases++;
+
+      // ④ 세션 사본 — 같은 칸·같은 값. ended 는 행을 지운다.
+      for (const name of ['priv', 'open']) {
+        const [t, r] = sides.map(async (s) => normRow(s, await rowOf(`${s.tag}-${name}`)));
+        same(`사본 행 ${name}`, await t, await r);
+        expect(await t, `사본 행 ${name}`).toBeDefined();
+        cases++;
+      }
+      for (const s of sides) s.send({ type: 'session.ended', sessionId: `${s.tag}-open` });
+      for (const s of sides) await flush(s);
+      {
+        const [t, r] = await Promise.all(sides.map((s) => rowOf(`${s.tag}-open`)));
+        same('ended → 행 지움', t ?? null, r ?? null);
+        expect(t).toBeUndefined();
+        cases++;
+      }
+
+      // ⑤ r2 — 에이전트가 멤버가 아닌 채널의 세션. **알려진 차이**: Rust 는 쓰지 않고 TS 는 쓴다.
+      for (const s of sides) await start(s, 'r2', away, awayRoot);
+      for (const s of sides) await flush(s);
+      const r2 = Object.fromEntries(await Promise.all(sides.map(async (s) => [s.impl, (await rowOf(`${s.tag}-r2`)) !== undefined] as const)));
+      expect(r2.rust, 'r2 — Rust 는 멤버가 아닌 채널의 사본을 쓰지 않는다').toBe(false);
+      expect(r2.ts, 'r2 — TS 는 아직 멤버십을 보지 않는다(알려진 차이 · 고치면 false 로)').toBe(true);
+      cases++;
+
+      // ⑥ r1b — 쓰기 실패 뒤 다음 박동에 재시도. 시험 트리거가 `-r1b` 세션의 INSERT 만 한 번 막는다(역할과 무관하게 두 쪽 같은 조건).
+      await db.pool.query(`create function c6c4_fail() returns trigger language plpgsql as $$
+        begin if new.session_id like '%-r1b' then raise exception 'c6c4 r1b'; end if; return new; end $$`);
+      await db.pool.query(`create trigger c6c4_fail before insert on agent_session_live for each row execute function c6c4_fail()`);
+      for (const s of sides) await start(s, 'r1b', open, openRoot);
+      for (const s of sides) await flush(s); // 표지가 보이면 r1b 쓰기 시도는 이미 실패했다
+      for (const s of sides) expect(await rowOf(`${s.tag}-r1b`), `${s.tag} r1b 는 처음엔 실패`).toBeUndefined();
+      await db.pool.query(`drop trigger c6c4_fail on agent_session_live`);
+      const beatAfter = async (s: Side, t0: Date) => {
+        // 허브 박동(30초)이 t0 뒤에 한 번 돌기를 기다린 뒤 표지로 그 박동의 쓰기가 끝났음을 확인한다.
+        await waitFor(`${s.tag} beat`, async () => (await db.pool.query<{ ok: boolean }>(
+          `select seen_at > $2 as ok from relay_hub where hub_epoch = $1`, [epochs.get(s.tag), t0])).rows[0]?.ok === true, 45_000);
+        await flush(s);
+      };
+      {
+        const t0 = (await db.pool.query<{ t: Date }>('select now() as t')).rows[0]!.t;
+        await Promise.all(sides.map((s) => beatAfter(s, t0)));
+        const got = Object.fromEntries(await Promise.all(sides.map(async (s) => [s.impl, (await rowOf(`${s.tag}-r1b`)) !== undefined] as const)));
+        expect(got.rust, 'r1b — Rust 는 다음 박동에 다시 쓴다').toBe(true);
+        expect(got.ts, 'r1b — TS 는 아직 재시도하지 않는다(알려진 차이 · 고치면 true 로)').toBe(false);
+        cases++;
+      }
+
+      // ⑦ 되살리기 — 허브 줄이 쓸려 나간 사이 다른 허브(F)가 `-priv` 를 가져갔다. 다음 박동에 빈 자리(`-cx`)는 둘 다 다시
+      // 채우고(같아야 함), `-priv` 는 r1a — Rust 는 F 의 행을 그대로 두고, TS 는 아직 덮어쓴다(알려진 차이).
+      const foreign = randomUUID();
+      await db.pool.query(`insert into relay_hub (hub_epoch, impl) values ($1, 'ts')`, [foreign]);
+      const t1 = (await db.pool.query<{ t: Date }>('select now() as t')).rows[0]!.t;
+      for (const s of sides) {
+        await db.pool.query(`delete from relay_hub where hub_epoch = $1`, [epochs.get(s.tag)]);
+        await db.pool.query(
+          `insert into agent_session_live (session_id, agent_account_id, operator_id, channel_id, thread_root_id, harness, hub_epoch)
+           values ($1, $2, $3, $4, $5, 'other', $6)`, [`${s.tag}-priv`, s.agent, op.operatorId, priv, privRoot, foreign]);
+      }
+      await Promise.all(sides.map((s) => beatAfter(s, t1)));
+      {
+        const [t, r] = await Promise.all(sides.map(async (s) => normRow(s, await rowOf(`${s.tag}-cx`))));
+        same('되살리기 — 빈 자리는 다시 채운다', t, r);
+        expect(t, '되살리기 — 빈 자리').toBeDefined();
+        cases++;
+        const kept = Object.fromEntries(await Promise.all(sides.map(async (s) => [s.impl, (await rowOf(`${s.tag}-priv`))?.hub] as const)));
+        expect(kept.rust, 'r1a — Rust 는 되살릴 때 남의 허브 행을 덮지 않는다').toBe(foreign);
+        expect(kept.ts, 'r1a — TS 는 아직 덮어쓴다(알려진 차이 · 고치면 foreign 으로)').toBe(epochs.get('sideT'));
+        cases++;
+      }
+      console.log(`relay contrast: ${cases} case(s) compared`);
+      expect(cases).toBeGreaterThan(15);
+    } finally {
+      for (const s of sockets) s.terminate();
+      front?.kill();
+      await app.close();
+      await db.stop();
+    }
+  }, 300_000);
+});
