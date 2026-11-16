@@ -60,17 +60,20 @@ use serde_json::{json, Value};
 pub const OPERATOR_SIDECAR_NAME: &str = "harkroom-operator";
 
 /// Rust 오퍼레이터 사이드카의 이름(S2 A4②). `tauri.conf.json` 의 `bundle.externalBin` 에 같이 실린다.
-/// **스위치 `HARKROOM_OPERATOR_IMPL=rust` 일 때만 띄운다** — 기본은 Node(`OPERATOR_SIDECAR_NAME`)다.
+/// **기본은 이것이다**(s9 ②) — 스위치 `HARKROOM_OPERATOR_IMPL=node` 이거나 커뮤니티마다 모드를 끈(`=0`) 경우에만
+/// Node(`OPERATOR_SIDECAR_NAME`)를 띄운다.
 pub const OPERATOR_RS_SIDECAR_NAME: &str = "harkroom-operator-rs";
 
 /// Rust 오퍼레이터가 띄울 러너 사이드카. Node 오퍼레이터는 자기 자리에서 러너 경로를 계산하지만,
 /// Rust 오퍼레이터는 `--runner-command` 로 받는다(클라이언트는 프로그램을 못 고른다 — 이 값도 Rust 상수다).
 pub const RUNNER_SIDECAR_FOR_OPERATOR: &str = "harkroom-runner";
 
-/// 오퍼레이터 구현 스위치의 env 이름(S2 A4②). 정확히 `rust` 일 때만 Rust 다 — 그 밖의 값·없음은 전부 Node.
+/// 오퍼레이터 구현 스위치의 env 이름(S2 A4②). 되돌리는 길은 정확히 `node` 하나다 — 정확히 `rust` 면 Rust 를 강제하고,
+/// 없음·그 밖의 값은 기본(커뮤니티마다 모드면 Rust, `=0` 이면 Node)을 따른다.
 pub const OPERATOR_IMPL_ENV: &str = "HARKROOM_OPERATOR_IMPL";
 
-/// 어느 오퍼레이터 구현을 띄우나. **기본은 Node** — Rust 판은 아직 앱이 부르는 요청 일부만 받는다.
+/// 어느 오퍼레이터 구현을 띄우나. **기본은 Rust**(s9 ②). Rust 오퍼레이터는 커뮤니티 하나만 맡으므로(`serve --base-url`)
+/// 커뮤니티마다 모드를 끈 `=0`(옛 단일 오퍼레이터로 되돌리기, #2254)에서는 기본이 Node 로 남는다 — 그 되돌리기 길을 깨지 않는다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OperatorImpl {
     Node,
@@ -78,15 +81,21 @@ pub enum OperatorImpl {
 }
 
 impl OperatorImpl {
-    fn from_env_value(v: Option<&str>) -> Self {
+    fn from_env_value(v: Option<&str>, per_community: bool) -> Self {
         match v {
+            Some("node") => OperatorImpl::Node,
+            // 명시한 `rust` 는 `=0` 에서도 Rust 다 — `ensure_daemon` 이 「커뮤니티마다 모드에서만」으로 거절해 알린다.
             Some("rust") => OperatorImpl::Rust,
+            _ if per_community => OperatorImpl::Rust,
             _ => OperatorImpl::Node,
         }
     }
 
     pub fn current() -> Self {
-        Self::from_env_value(std::env::var(OPERATOR_IMPL_ENV).ok().as_deref())
+        Self::from_env_value(
+            std::env::var(OPERATOR_IMPL_ENV).ok().as_deref(),
+            crate::community_root::per_community_enabled(),
+        )
     }
 
     fn sidecar_name(self) -> &'static str {
@@ -3928,15 +3937,21 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
     /// 모드이고, `daemon_command` 를 떼어낸 이유가 그것이다).
     ///
     /// 되돌려 RED: `daemon_command` 의 `cmd.env("PATH", …)` 한 줄을 지우면 빨개진다.
-    /// S2 A4② — 스위치는 정확히 `rust` 일 때만 Rust 다. 빈 값·대문자·오타는 전부 Node(기본).
+    /// s9 ② — 기본은 Rust 다. 되돌리는 길은 정확히 `node` 하나이고, 커뮤니티마다 모드를 끈 `=0` 에서는 기본이 Node 다
+    /// (Rust 오퍼레이터는 커뮤니티 하나만 맡는다). 빈 값·대문자·오타는 기본을 따른다.
     #[test]
-    fn 오퍼레이터_구현_스위치는_rust_일_때만_켜진다() {
-        assert_eq!(OperatorImpl::from_env_value(None), OperatorImpl::Node);
-        assert_eq!(OperatorImpl::from_env_value(Some("")), OperatorImpl::Node);
-        assert_eq!(OperatorImpl::from_env_value(Some("node")), OperatorImpl::Node);
-        assert_eq!(OperatorImpl::from_env_value(Some("Rust")), OperatorImpl::Node);
-        assert_eq!(OperatorImpl::from_env_value(Some("rust ")), OperatorImpl::Node);
-        assert_eq!(OperatorImpl::from_env_value(Some("rust")), OperatorImpl::Rust);
+    fn 오퍼레이터_구현_기본은_rust_되돌리기는_node_하나() {
+        // 커뮤니티마다 모드(기본)
+        assert_eq!(OperatorImpl::from_env_value(None, true), OperatorImpl::Rust);
+        assert_eq!(OperatorImpl::from_env_value(Some(""), true), OperatorImpl::Rust);
+        assert_eq!(OperatorImpl::from_env_value(Some("rust"), true), OperatorImpl::Rust);
+        assert_eq!(OperatorImpl::from_env_value(Some("Node"), true), OperatorImpl::Rust);
+        assert_eq!(OperatorImpl::from_env_value(Some("node "), true), OperatorImpl::Rust);
+        assert_eq!(OperatorImpl::from_env_value(Some("node"), true), OperatorImpl::Node);
+        // `=0`(옛 단일 오퍼레이터로 되돌리기): 기본은 Node, 명시한 rust 는 그대로(ensure_daemon 이 거절해 알린다)
+        assert_eq!(OperatorImpl::from_env_value(None, false), OperatorImpl::Node);
+        assert_eq!(OperatorImpl::from_env_value(Some("node"), false), OperatorImpl::Node);
+        assert_eq!(OperatorImpl::from_env_value(Some("rust"), false), OperatorImpl::Rust);
         assert_eq!(OperatorImpl::Node.sidecar_name(), "harkroom-operator");
         assert_eq!(OperatorImpl::Rust.sidecar_name(), "harkroom-operator-rs");
     }
