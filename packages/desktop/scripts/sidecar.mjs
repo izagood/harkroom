@@ -17,7 +17,7 @@
 //
 // `buildSidecar()` 의 파라미터가 그 목록이다:
 // - **엔트리포인트** — 러너는 `packages/agent/src/main.ts`, daemon 은 `daemon/src/main.ts`
-// - **산출물 이름** — `harkroom-runner` / `harkroom-operator` (`externalBin` 항목 이름과 같아야 한다)
+// - **산출물 이름** — `harkroom-runner` (`externalBin` 항목 이름과 같아야 한다. Rust 사이드카는 `build-sidecars.mjs` 가 따로 낸다)
 // - **곁들일 네이티브 의존** — **러너만 `node-pty`** 를 곁들인다
 // - **구워 넣을 값**(`define`) — 러너는 `runnerDefines()`, daemon 은 `operatorDefines()`.
 //   이름이 다르다: 둘은 다른 소스(`agent/src/version.ts`·`operator/src/version.ts`)가 읽는다
@@ -78,19 +78,6 @@ export function appVersion() {
  */
 export function runnerDefines(version) {
   return { __AGENT_VERSION__: JSON.stringify(version) };
-}
-
-/**
- * 오퍼레이터(daemon) 번들에 구울 값들. `packages/operator/src/version.ts` 의
- * `__OPERATOR_VERSION__` 과 **이름이 같아야 한다**.
- *
- * 오퍼레이터는 이 값을 `hello.version` 으로 서버에 알리고, 화면은 그것을 러너 뒤처짐 판정의
- * 기준으로 삼는다. 앱이 띄운 daemon 은 `--app-version` 이 있어 이 값이 필요 없지만, env
- * (`HARKROOM_OPERATOR_VERSION`) 없이 도는 헤드리스 오퍼레이터는 이것이 유일한 기준이다 —
- * 그 러너들은 같은 번들에 구운 `__AGENT_VERSION__` 을 보고하므로 두 값이 맞물린다.
- */
-export function operatorDefines(version) {
-  return { __OPERATOR_VERSION__: JSON.stringify(version) };
 }
 
 /**

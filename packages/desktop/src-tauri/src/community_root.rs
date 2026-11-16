@@ -9,9 +9,9 @@
 //! - 없으면 `<HOME>/.harkroom-agent/c/<sha256 앞 8자>`, 그 뿌리를 다른 칸이 쓰면 16자, 그것도 겹치면 거절.
 //! - 색인에 같은 뿌리를 두 칸이 쓰면 읽기부터 거절한다(security P1-n1).
 //!
-//! 스위치 `HARKROOM_OPERATOR_PER_COMMUNITY` 는 **앱 프로세스의 환경**에서 읽는다 — **기본 켜짐**(G1)이고,
-//! 정확히 `0` 일 때만 꺼진다. 꺼져 있으면 이 모듈은 불리지 않는다(옛 오퍼레이터 하나 그대로 — 되돌리기 길).
-//! 오퍼레이터·러너에는 앱이 늘 명시적으로 `1` 을 주거나 지운다(`community_env`) — 그쪽 규칙(`1` 일 때만 켬)은 그대로다.
+//! 앱은 언제나 커뮤니티마다 오퍼레이터를 띄운다 — 끄는 스위치(`HARKROOM_OPERATOR_PER_COMMUNITY=0`, 옛 단일 Node 오퍼레이터로
+//! 되돌리기)는 Node 오퍼레이터와 함께 걷었다(P2). 오퍼레이터·러너에는 앱이 늘 명시적으로 `1` 을 준다(`community_env`) —
+//! 그쪽 규칙(`1` 일 때만 켬)은 그대로다.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -27,16 +27,6 @@ pub const OPERATOR_LEGACY_ENV: &str = "HARKROOM_OPERATOR_LEGACY";
 pub const ROOTS_INDEX_FILE: &str = "operators.json";
 const HASH_LEN: usize = 8;
 const HASH_FALLBACK_LEN: usize = 16;
-
-/// 앱의 스위치는 **기본 켜짐**이다 — 없거나 `0` 이 아닌 값이면 켜고, 정확히 `0` 일 때만 끈다(되돌리기).
-/// 오퍼레이터·러너 쪽 `perCommunityEnabled`(정확히 `1`)와 다르다: 그쪽 값은 앱이 `community_env` 로 늘 정해서 준다.
-pub fn per_community_enabled() -> bool {
-    switch_on(std::env::var(PER_COMMUNITY_ENV).ok().as_deref())
-}
-
-fn switch_on(v: Option<&str>) -> bool {
-    v != Some("0")
-}
 
 /// 오퍼레이터 하나가 맡을 커뮤니티와 그 뿌리.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -153,31 +143,19 @@ pub fn resolve(app_data_root: &Path, home: &Path, base_url: &str) -> Result<Comm
 }
 
 /// 오퍼레이터 프로세스에 줄 커뮤니티 env. `Some(값)` 은 주고 `None` 은 지운다(앱이 물려받은 값이 새지 않게).
-/// - 커뮤니티 모드: 스위치·뿌리·커뮤니티를 주고, **색인 칸이 `legacy` 일 때만** `LEGACY=1`, 아니면 지운다.
-/// - 꺼짐: 넷 다 지운다.
-pub fn community_env(target: Option<&CommunityTarget>) -> Vec<(&'static str, Option<String>)> {
-    match target {
-        Some(t) => vec![
-            (PER_COMMUNITY_ENV, Some("1".to_string())),
-            (OPERATOR_ROOT_ENV, Some(t.root.to_string_lossy().into_owned())),
-            (OPERATOR_COMMUNITY_ENV, Some(t.key.clone())),
-            (OPERATOR_LEGACY_ENV, if t.legacy { Some("1".to_string()) } else { None }),
-        ],
-        None => vec![
-            (PER_COMMUNITY_ENV, None),
-            (OPERATOR_ROOT_ENV, None),
-            (OPERATOR_COMMUNITY_ENV, None),
-            (OPERATOR_LEGACY_ENV, None),
-        ],
-    }
+/// 스위치·뿌리·커뮤니티를 주고, **색인 칸이 `legacy` 일 때만** `LEGACY=1`, 아니면 지운다.
+pub fn community_env(t: &CommunityTarget) -> Vec<(&'static str, Option<String>)> {
+    vec![
+        (PER_COMMUNITY_ENV, Some("1".to_string())),
+        (OPERATOR_ROOT_ENV, Some(t.root.to_string_lossy().into_owned())),
+        (OPERATOR_COMMUNITY_ENV, Some(t.key.clone())),
+        (OPERATOR_LEGACY_ENV, if t.legacy { Some("1".to_string()) } else { None }),
+    ]
 }
 
 /// 커뮤니티를 고치는 명령(인자에 `baseUrl`)이 **다른 커뮤니티의 오퍼레이터**로 가지 않게 한다(security P6-F1 이중 확인).
-/// 스위치가 켜져 있고 `community` 가 왔는데 그 키가 `baseUrl` 의 키와 다르면 거절한다. 꺼져 있으면 아무 일도 없다.
+/// `community` 가 왔는데 그 키가 `baseUrl` 의 키와 다르면 거절한다.
 pub fn check_same_community(base_url: &str, community: Option<&str>) -> Result<(), String> {
-    if !per_community_enabled() {
-        return Ok(());
-    }
     match community {
         Some(c) if community_key(c) != community_key(base_url) => Err(format!(
             "커뮤니티 `{}` 를 고치는 명령이 다른 커뮤니티(`{}`)의 오퍼레이터로 가려 했다",
@@ -443,72 +421,21 @@ pub fn adopt_legacy(app_data_root: &Path, home: &Path) -> Result<Option<String>,
     Ok(Some(legacy_key))
 }
 
-/// **되돌리기** — 스위치를 끄고 뜰 때 부른다. 각 뿌리로 옮겼던 칸(설정 칸·토큰)을 옛 단일 설정에 **도로 합친 뒤** 색인을
-/// `operators.json.off` 로 옮긴다(지우지 않는다 — 다시 켜면 그대로 되살린다, security #1649 n1). 꺼진 앱은 색인을 읽지 않고 옛 단일
-/// 오퍼레이터로 모든 커뮤니티를 든다. 뿌리(`c/<해시>`)는 지우지 않는다. 옮겼으면 true.
-fn section_of(cfg: &serde_json::Value, key: &str) -> serde_json::Value {
-    cfg.get("communities")
-        .and_then(|c| c.as_object())
-        .and_then(|c| c.iter().find(|(k, _)| community_key(k) == key).map(|(_, v)| v.clone()))
-        .unwrap_or(serde_json::Value::Null)
-}
-
-pub fn revert_index(app_data_root: &Path) -> Result<bool, String> {
-    let index_path = app_data_root.join(ROOTS_INDEX_FILE);
-    if !index_path.exists() {
-        return Ok(false);
-    }
-    let index = read_index(app_data_root)?;
-    let cfg_path = legacy_config_path(app_data_root);
-    let mut cfg = read_json(&cfg_path)?.unwrap_or_else(|| serde_json::json!({ "communities": {} }));
-    let mut changed = false;
-    for (key, e) in index.communities.iter().filter(|(_, e)| e.legacy != Some(true)) {
-        let root = Path::new(&e.root);
-        let Some(rc) = read_json(&root.join("operator").join("operator.json"))? else { continue };
-        let Some(section) = rc.get("communities").and_then(|c| c.as_object()).and_then(|c| c.iter().find(|(k, _)| community_key(k) == *key).map(|(_, v)| v.clone())) else { continue };
-        if let Some(obj) = cfg.as_object_mut() {
-            let comms = obj.entry("communities").or_insert_with(|| serde_json::json!({}));
-            if let Some(c) = comms.as_object_mut() {
-                c.insert(key.clone(), section);
-                changed = true;
-            }
-        }
-        let token = token_file_name(key);
-        copy_if_absent(&root.join("operator").join("secrets").join(&token), &app_data_root.join("operator").join("secrets").join(&token))?;
-        // 켜짐 동안 그 뿌리에서 바꾼 MCP 정의·토큰도 같은 「가리키는 이름만」 규칙으로 도로 합친다(security #1652 n2).
-        let names = mcp_names_used(root, &section_of(&rc, key));
-        copy_named_entries(&root.join("operator").join("mcp-servers.json"), &app_data_root.join("operator").join("mcp-servers.json"), &names)?;
-        copy_named_entries(&root.join("operator").join("secrets").join("mcp-oauth.json"), &app_data_root.join("operator").join("secrets").join("mcp-oauth.json"), &names)?;
-    }
-    if changed {
-        write_json_atomic(&cfg_path, &cfg)?;
-    }
-    std::fs::rename(&index_path, app_data_root.join(format!("{ROOTS_INDEX_FILE}.off"))).map_err(|e| format!("오퍼레이터 색인을 꺼 두지 못했다: {e}"))?;
-    Ok(true)
-}
-
-/// **스위치가 바뀌었을 때 내릴 오퍼레이터 자리** — 기동 때 `adopt_legacy`·`revert_index` **앞에** 부른다.
+/// **커뮤니티마다 모드로 처음 뜬 기동에서 내릴 오퍼레이터 자리** — 기동 때 `adopt_legacy` **앞에** 부른다.
 ///
-/// 스위치를 바꿔 다시 뜨면 반대쪽 모드로 띄웠던 오퍼레이터가 그대로 남는다. 같은 operatorId 로 서버에 붙는 프로세스가
-/// 둘이 되어 1초마다 서로 연결을 밀어낸다(`close 4409`). 그래서 바뀐 기동에서는 **옛 자리와 색인에 적힌 모든 뿌리**의
-/// 오퍼레이터를 내리고, 앱이 지금 모드로 다시 띄우게 한다. 바뀌었는지는 색인 파일로 가린다 — 색인은 켜짐에서만 생기고
-/// 끄면 `.off` 로 옮겨지므로:
-/// - 끔으로 뜸 + 색인 있음 = 켬→끔. 옛 자리 + 색인의 뿌리 전부.
-/// - 켬으로 뜸 + 색인 없음 = 끔→켬(또는 처음 켬). 옛 자리 + `.off` 의 뿌리 전부(없으면 옛 자리만).
-/// - 그 밖 = 바뀌지 않음. 빈 목록.
+/// 색인이 없으면 이 앱 데이터에서 커뮤니티마다 모드로 뜬 적이 없다(색인은 그 모드에서만 생긴다) — 옛 단일 오퍼레이터(Node)가
+/// 옛 자리에 떠 있을 수 있다. 그대로 두면 같은 operatorId 로 서버에 붙는 프로세스가 둘이 되어 1초마다 서로 연결을 밀어낸다
+/// (`close 4409`). 그래서 그때만 **옛 자리와, 예전에 끄면서 남긴 `.off` 색인의 뿌리 전부**를 돌려준다. 색인이 있으면(평소 기동)
+/// 빈 목록이다 — 평소 기동이 오퍼레이터를 죽이면 안 된다. `.off` 가 깨졌으면 옛 자리만 돌려준다(아는 만큼만 내린다).
 ///
-/// 옛 자리도 내리는 이유: 끔→켬이면 그 프로세스는 모든 커뮤니티를 들고 떴고, 켬→끔이면 legacy 한 커뮤니티만 거르게 떴다.
-/// 어느 쪽이든 지금 모드의 설정과 맞지 않는다. 색인이 깨졌으면 옛 자리만 돌려준다(아는 만큼만 내린다).
-pub fn roots_to_retire_on_switch(app_data_root: &Path, on: bool) -> Vec<PathBuf> {
-    let index_path = app_data_root.join(ROOTS_INDEX_FILE);
+/// 끄는 스위치(`=0`)는 P2 에서 걷었다 — 켬→끔 방향은 더 없다.
+pub fn roots_to_retire_on_switch(app_data_root: &Path) -> Vec<PathBuf> {
+    if app_data_root.join(ROOTS_INDEX_FILE).exists() {
+        return Vec::new();
+    }
     let off_path = app_data_root.join(format!("{ROOTS_INDEX_FILE}.off"));
-    let source = match (on, index_path.exists()) {
-        (false, true) => Some(index_path),
-        (true, false) => off_path.exists().then_some(off_path),
-        _ => return Vec::new(),
-    };
     let mut out = vec![normalize(app_data_root)];
-    if let Some(index) = source.and_then(|p| read_index_at(&p).ok()) {
+    if let Some(index) = off_path.exists().then_some(off_path).and_then(|p| read_index_at(&p).ok()) {
         let mut roots: Vec<PathBuf> = index
             .communities
             .values()
@@ -675,25 +602,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// 끄는 스위치를 걷었다(P2) — `HARKROOM_OPERATOR_PER_COMMUNITY=0` 이 env 에 남아 있어도 다른 커뮤니티 명령은 거절한다.
     #[test]
-    fn switch_is_on_by_default_and_only_zero_turns_it_off() {
-        assert!(switch_on(None), "없으면 켬(G1)");
-        assert!(switch_on(Some("1")));
-        assert!(switch_on(Some("")), "빈 값도 켬 — 끄는 길은 `0` 하나");
-        assert!(!switch_on(Some("0")), "`0` 이면 끔(되돌리기)");
-    }
-
-    #[test]
-    fn check_same_community_rejects_cross_community_when_on() {
-        // 스위치 env 는 프로세스 전역이라 이 시험 안에서만 켜고 끈다.
-        std::env::set_var(PER_COMMUNITY_ENV, "1");
+    fn check_same_community_rejects_cross_community() {
         assert!(check_same_community("https://a.example.com", Some("https://a.example.com/")).is_ok());
         assert!(check_same_community("https://a.example.com", Some("https://b.example.com")).is_err());
         assert!(check_same_community("https://a.example.com", None).is_ok());
-        std::env::set_var(PER_COMMUNITY_ENV, "0");
-        assert!(check_same_community("https://a.example.com", Some("https://b.example.com")).is_ok());
-        std::env::remove_var(PER_COMMUNITY_ENV);
-        assert!(check_same_community("https://a.example.com", Some("https://b.example.com")).is_err(), "없으면 켬(G1)");
     }
 
     #[test]
@@ -701,17 +615,13 @@ mod tests {
         let get = |env: &[(&str, Option<String>)], k: &str| env.iter().find(|(n, _)| *n == k).map(|(_, v)| v.clone()).unwrap();
         let legacy = CommunityTarget { key: "https://a.example.com".into(), root: PathBuf::from("/old/app-data"), legacy: true };
         let fresh = CommunityTarget { key: "https://b.example.com".into(), root: PathBuf::from("/h/.harkroom-agent/c/abcd1234"), legacy: false };
-        let e = community_env(Some(&legacy));
+        let e = community_env(&legacy);
         assert_eq!(get(&e, OPERATOR_LEGACY_ENV), Some("1".to_string()));
         assert_eq!(get(&e, OPERATOR_ROOT_ENV), Some("/old/app-data".to_string()));
         assert_eq!(get(&e, OPERATOR_COMMUNITY_ENV), Some("https://a.example.com".to_string()));
-        let e = community_env(Some(&fresh));
+        let e = community_env(&fresh);
         assert_eq!(get(&e, OPERATOR_LEGACY_ENV), None, "새 커뮤니티는 LEGACY 를 지운다");
         assert_eq!(get(&e, PER_COMMUNITY_ENV), Some("1".to_string()));
-        let e = community_env(None);
-        for k in [PER_COMMUNITY_ENV, OPERATOR_ROOT_ENV, OPERATOR_COMMUNITY_ENV, OPERATOR_LEGACY_ENV] {
-            assert_eq!(get(&e, k), None, "꺼짐이면 {k} 를 지운다");
-        }
     }
 
     fn tmp_root(tag: &str) -> PathBuf {
@@ -721,40 +631,34 @@ mod tests {
         d
     }
 
-    /// 스위치를 바꿔 뜨면 반대쪽 모드의 오퍼레이터 자리를 돌려준다(실물 G1 ③: 켬→끔 뒤 뿌리 오퍼레이터가 남아 4409 핑퐁).
+    /// 커뮤니티마다 모드로 처음 뜬 기동(색인 없음)에서만 옛 자리(+`.off` 뿌리)를 돌려준다(실물 G1 ③: 4409 핑퐁).
     #[test]
-    fn roots_to_retire_on_switch_only_when_switch_flipped() {
+    fn roots_to_retire_on_switch_only_before_the_index_exists() {
         let d = tmp_root("retire");
         let home = d.join("home");
         let a = "https://a.example.com";
         let b = "https://b.example.com";
         let nd = normalize(&d);
-        // 처음(색인·.off 없음): 켬은 옛 자리만(그 자리에 뜬 끔 모드 프로세스), 끔은 바뀐 것 없음.
-        assert_eq!(roots_to_retire_on_switch(&d, true), vec![nd.clone()]);
-        assert!(roots_to_retire_on_switch(&d, false).is_empty());
+        // 처음(색인·.off 없음): 옛 자리만(그 자리에 떠 있을 옛 단일 오퍼레이터).
+        assert_eq!(roots_to_retire_on_switch(&d), vec![nd.clone()]);
         std::fs::write(
             d.join("operator").join("operator.json"),
             format!(r#"{{"communities":{{"{a}":{{"agents":{{"x":{{}}}}}},"{b}":{{"agents":{{"x":{{}},"y":{{}}}}}}}}}}"#),
         )
         .unwrap();
-        // 끔→켬: 옛 자리 + (아직 .off 가 없으니) 그것만.
-        assert_eq!(roots_to_retire_on_switch(&d, true), vec![nd.clone()]);
+        assert_eq!(roots_to_retire_on_switch(&d), vec![nd.clone()]);
         adopt_legacy(&d, &home).unwrap();
         let a_root = normalize(Path::new(&read_index(&d).unwrap().communities[a].root));
-        // 켬 유지: 아무것도 내리지 않는다(평소 기동이 오퍼레이터를 죽이면 안 된다).
-        assert!(roots_to_retire_on_switch(&d, true).is_empty());
-        // 켬→끔: 옛 자리 + A 뿌리(legacy B 는 옛 자리와 같아 한 번만).
-        assert_eq!(roots_to_retire_on_switch(&d, false), vec![nd.clone(), a_root.clone()]);
-        revert_index(&d).unwrap();
-        // 끔 유지: 아무것도.
-        assert!(roots_to_retire_on_switch(&d, false).is_empty());
-        // 끔→켬(.off 있음): 옛 자리 + .off 의 A 뿌리.
-        assert_eq!(roots_to_retire_on_switch(&d, true), vec![nd.clone(), a_root.clone()]);
+        // 색인이 생긴 뒤(평소 기동): 아무것도 내리지 않는다.
+        assert!(roots_to_retire_on_switch(&d).is_empty());
+        // 예전 판이 끄면서 색인을 `.off` 로 옮겨 둔 자리: 옛 자리 + `.off` 의 A 뿌리.
+        std::fs::rename(d.join(ROOTS_INDEX_FILE), d.join(format!("{ROOTS_INDEX_FILE}.off"))).unwrap();
+        assert_eq!(roots_to_retire_on_switch(&d), vec![nd.clone(), a_root.clone()]);
         let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
-    fn adopt_legacy_splits_others_into_their_roots_and_revert_merges_back() {
+    fn adopt_legacy_splits_others_into_their_roots_and_revives_off_index() {
         let d = tmp_root("adopt");
         let home = d.join("home");
         let a = "https://a.example.com";
@@ -780,15 +684,8 @@ mod tests {
         assert_eq!(legacy_cfg["communities"].as_object().unwrap().keys().collect::<Vec<_>>(), vec![b]);
         // 다시 띄워도 그대로(legacy 는 색인에서 찾고 옛 설정에는 B 만).
         assert_eq!(adopt_legacy(&d, &home).unwrap().as_deref(), Some(b));
-        // 되돌리기: A 칸을 옛 설정에 도로 합치고 색인은 .off 로.
-        assert!(revert_index(&d).unwrap());
-        assert!(!d.join(ROOTS_INDEX_FILE).exists());
-        assert!(d.join(format!("{ROOTS_INDEX_FILE}.off")).exists());
-        let back = read_json(&d.join("operator").join("operator.json")).unwrap().unwrap();
-        let mut keys: Vec<_> = back["communities"].as_object().unwrap().keys().cloned().collect();
-        keys.sort();
-        assert_eq!(keys, vec![a.to_string(), b.to_string()]);
-        assert!(!revert_index(&d).unwrap());
+        // 예전 판의 끄기(`=0`, P2 에서 걷음)가 남긴 `.off` 색인: 다음 기동이 되살린다(같은 A 뿌리).
+        std::fs::rename(d.join(ROOTS_INDEX_FILE), d.join(format!("{ROOTS_INDEX_FILE}.off"))).unwrap();
         // 다시 켜기: .off 를 되살리고(같은 A 뿌리) 다시 나눈다.
         assert_eq!(adopt_legacy(&d, &home).unwrap().as_deref(), Some(b));
         assert_eq!(PathBuf::from(&read_index(&d).unwrap().communities[a].root), a_root);
@@ -818,7 +715,7 @@ mod tests {
     }
 
     #[test]
-    fn split_moves_only_the_mcp_names_the_community_uses_and_revert_merges_them_back() {
+    fn split_moves_only_the_mcp_names_the_community_uses() {
         let d = tmp_root("mcp");
         let home = d.join("home");
         let a = "https://a.example.com";
@@ -836,14 +733,6 @@ mod tests {
         let toks = read_json(&a_root.join("operator").join("secrets").join("mcp-oauth.json")).unwrap().unwrap();
         assert_eq!(defs.as_object().unwrap().keys().collect::<Vec<_>>(), vec!["jira"]);
         assert_eq!(toks.as_object().unwrap().keys().collect::<Vec<_>>(), vec!["jira"], "A 뿌리에 slack 토큰이 없어야 한다");
-        // 켜짐 동안 A 뿌리에서 jira 토큰이 바뀌었다 — 되돌리면 그 값이 옛 자리로 돌아오고 slack 은 그대로다.
-        std::fs::create_dir_all(a_root.join("operator").join("mcp")).unwrap();
-        std::fs::write(a_root.join("operator").join("mcp").join("agent-a.json"), r#"{"mcpServers":{"jira":{}}}"#).unwrap();
-        std::fs::write(a_root.join("operator").join("secrets").join("mcp-oauth.json"), r#"{"jira":{"accessToken":"J2"}}"#).unwrap();
-        assert!(revert_index(&d).unwrap());
-        let back = read_json(&op.join("secrets").join("mcp-oauth.json")).unwrap().unwrap();
-        assert_eq!(back["jira"]["accessToken"], "J2");
-        assert_eq!(back["slack"]["accessToken"], "S");
         let _ = std::fs::remove_dir_all(&d);
     }
 

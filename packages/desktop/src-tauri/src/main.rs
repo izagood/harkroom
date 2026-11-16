@@ -410,6 +410,7 @@ fn app_version(app: tauri::AppHandle) -> String {
 /// 읽기 전용 임시 경로로 옮겨 띄운다)·DMG 안(`/Volumes/…`). 화면은 그때 맥 기본 설치 경로로 물러선다.
 #[tauri::command]
 fn operator_cli_path() -> Option<String> {
+    // `register` 는 Rust 오퍼레이터에 있다(P1a #2272) — 앱이 싣는 오퍼레이터도 그것 하나다(P2).
     let path = sidecar_path(daemon_client::OPERATOR_SIDECAR_NAME).ok()?;
     pastable_cli_path(&path)
 }
@@ -1182,21 +1183,17 @@ fn main() {
             notification::install(app.handle());
             pinch_zoom::install(app.handle());
             update_channel::spawn_probe(app.handle());
-            // 격리 C 옮기기(P7): 커뮤니티마다 모드를 켜고 처음 뜨면 옛 자리 커뮤니티를 색인에 `legacy` 로 적는다(이동 0).
-            // 끄고 뜨면 색인을 지운다(되돌리기). 실패해도 앱은 뜬다 — 그때 켜진 모드는 옛 자리를 몰라 새 뿌리를 쓴다.
+            // 격리 C 옮기기(P7): 커뮤니티마다 모드로 처음 뜨면 옛 자리 커뮤니티를 색인에 `legacy` 로 적는다(이동 0).
+            // 실패해도 앱은 뜬다 — 그때는 옛 자리를 몰라 새 뿌리를 쓴다. 끄는 스위치(`=0`)는 Node 오퍼레이터와 함께 걷었다(P2).
             if let Ok(dir) = tauri::Manager::path(app).app_data_dir() {
                 let root = daemon_client::app_data_root(&dir);
-                // 스위치를 바꿔 떴으면 반대쪽 모드로 떠 있던 오퍼레이터를 먼저 내린다 — 색인을 고치기 전에 자리를 읽는다.
-                let on = community_root::per_community_enabled();
-                for line in daemon_client::retire_operators_at(&community_root::roots_to_retire_on_switch(&root, on), &daemon_client::my_bundle_operators()) {
+                // 색인이 아직 없으면(옛 단일 Node 오퍼레이터를 쓰던 판에서 올라옴) 그 자리에 떠 있던 오퍼레이터를 먼저 내린다 —
+                // 색인을 고치기 전에 자리를 읽는다.
+                for line in daemon_client::retire_operators_at(&community_root::roots_to_retire_on_switch(&root), &daemon_client::my_bundle_operators()) {
                     eprintln!("harkroom: {line}");
                     daemon_client::log_line(&line);
                 }
-                let res = if on {
-                    community_root::adopt_legacy(&root, &tauri::Manager::path(app).home_dir().unwrap_or_default()).map(|k| k.map(|k| format!("옛 자리를 legacy 칸으로 적었다: {k}")))
-                } else {
-                    community_root::revert_index(&root).map(|gone| gone.then(|| "커뮤니티마다 모드를 끄고 떠서 칸을 옛 설정에 합치고 색인을 꺼 두었다".to_string()))
-                };
+                let res = community_root::adopt_legacy(&root, &tauri::Manager::path(app).home_dir().unwrap_or_default()).map(|k| k.map(|k| format!("옛 자리를 legacy 칸으로 적었다: {k}")));
                 match res {
                     Ok(Some(line)) => eprintln!("harkroom: {line}"),
                     Ok(None) => {}

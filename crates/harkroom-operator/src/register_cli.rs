@@ -274,17 +274,32 @@ pub fn serve_command(
     app_data: &str,
 ) -> String {
     let key = community_root_key(base_url);
-    let mut cmd = format!("{bin} serve --base-url {key}");
+    let mut cmd = format!("{} serve --base-url {}", shell_quote(bin), shell_quote(key));
     if !same_root(
         root,
         &computed_community_root(home, key, COMMUNITY_ROOT_HASH_LENGTH),
     ) {
-        cmd.push_str(&format!(" --app-data {app_data}"));
+        cmd.push_str(&format!(" --app-data {}", shell_quote(app_data)));
     }
     if let Some(r) = runner {
-        cmd.push_str(&format!(" --runner-command {r}"));
+        cmd.push_str(&format!(" --runner-command {}", shell_quote(r)));
     }
     cmd
+}
+
+/// 안내 줄을 그대로 붙여 넣어도 낱말이 갈리지 않게 한다(security #2272 권고). macOS 옛 자리
+/// (`~/Library/Application Support/…`)처럼 공백이 있으면 인자가 둘로 갈려 `serve` 가 실패했다.
+/// 셸이 특별히 읽지 않는 글자만 있으면 그대로 두고, 아니면 작은따옴표로 감싼다(안의 `'` 는 `'\''`).
+fn shell_quote(arg: &str) -> String {
+    let plain = !arg.is_empty()
+        && arg
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"_@%+=:,./-".contains(&b));
+    if plain {
+        arg.to_string()
+    } else {
+        format!("'{}'", arg.replace('\'', "'\\''"))
+    }
 }
 
 /// 사람에게 보일 줄(TS `main.ts` 의 두 줄). 도는 오퍼레이터가 없었으면 `serve` 명령을 함께 보인다(TS 는 `run` 이었다).
@@ -555,6 +570,30 @@ mod tests {
     }
 
     /// `serve` 명령은 register 가 쓴 뿌리를 가리켜야 한다 — 색인이 정한 뿌리면 `--app-data`, 러너를 알면 `--runner-command`.
+    #[test]
+    fn serve_command_quotes_paths_with_spaces() {
+        let home = "/h";
+        let app_data = "/Users/a/Library/Application Support/dev.harkroom.app";
+        assert_eq!(
+            serve_command(
+                "/Apps/My Apps/Harkroom.app/Contents/MacOS/harkroom-operator-rs",
+                Some("/Apps/My Apps/Harkroom.app/Contents/MacOS/harkroom-runner"),
+                URL,
+                app_data,
+                home,
+                app_data
+            ),
+            format!(
+                "'/Apps/My Apps/Harkroom.app/Contents/MacOS/harkroom-operator-rs' serve --base-url {URL} \
+                 --app-data '/Users/a/Library/Application Support/dev.harkroom.app' \
+                 --runner-command '/Apps/My Apps/Harkroom.app/Contents/MacOS/harkroom-runner'"
+            )
+        );
+        assert_eq!(shell_quote("it's"), r"'it'\''s'");
+        assert_eq!(shell_quote(""), "''");
+        assert_eq!(shell_quote("/b/op"), "/b/op");
+    }
+
     #[test]
     fn serve_command_points_at_the_same_root() {
         let home = "/h";
