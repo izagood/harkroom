@@ -4229,6 +4229,155 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           await db.pool.query(`delete from agent_invoker where agent_id = $1 and account_id = $2`, [agent.accountId, member.accountId]);
         }
       }
+      // S5.3 C3b grant 읽기 줄 — `GET /agent/tool-allows`·`GET /agent/command-grants`(코어 `grant_reads.rs`). 읽기만 하므로 같은 DB 를 TS·Rust 에
+      // 같이 물어 상태·`cache-control`·본문을 견준다. 상시 grant(만료·정규형 아님·정할 수 없는 사람이 준 것)와 위임장 줄(uses·turnCause·until·
+      // agentIds·회수·cap·준 사람의 지금 판정)과 명령 grant(1회 쓴 것·만료·다른 스레드·정규형 아님)를 범위 스위치 둘로 돌린다.
+      // `POST /agent/command-grants/match` 는 grant 를 쓰므로 TS 에 남는다(표에 없음).
+      {
+        for (const k of ['GET /agent/tool-allows', 'GET /agent/command-grants']) expect(f.log()).toContain(`"${k}"`);
+        expect(f.log()).not.toContain('"POST /agent/command-grants/match"');
+        const privId = String(priv.id);
+        const op = await registerOperator(app, A, 'gr-op');
+        const op2 = await registerOperator(app, A, 'gr-op2');
+        const prevOp = (await db.pool.query<{ op: string }>(`select operator_id as op from agent_assignment where agent_id = $1`, [agent.accountId])).rows[0]?.op;
+        await db.pool.query(`insert into agent_assignment (agent_id, operator_id, assigned_by) values ($1, $2, $3) on conflict (agent_id) do update set operator_id = excluded.operator_id`, [agent.accountId, op.operatorId, admin.accountId]);
+        const savedGr = (await db.pool.query<{ scope: string; ud: boolean }>(
+          `select invoke_scope as scope, user_decide as ud from agent_config where account_id = $1`, [agent.accountId])).rows[0]!;
+        const msg = async (body: string) => (await db.pool.query<{ id: string }>(
+          `insert into message (channel_id, author_id, body, kind) values ($1, $2, $3, 'user') returning id`, [todayId, admin.accountId, body])).rows[0]!.id;
+        const root = await msg('gr 위임 뿌리');
+        const cause = await msg('gr 원인');
+        const causeEnded = await msg('gr 끝난 임대 원인');
+        const causeOtherOp = await msg('gr 다른 오퍼레이터 임대 원인');
+        const thread = await msg('gr 명령 스레드');
+        const otherThread = await msg('gr 다른 스레드');
+        const mandate = (await db.pool.query<{ id: string }>(
+          `insert into mandate (owner_account_id, delegator_account_id, root_message_id, channel_id, thread_root_id) values ($1, $1, $2, $3, $2) returning id`,
+          [admin.accountId, root, todayId])).rows[0]!.id;
+        const lease = (c: string, o: string, ended: boolean) => db.pool.query(
+          `insert into secret_turn_lease (token_hash, agent_id, operator_id, cause_message_id, channel_id, thread_root_id, expires_at, ended_at, mandate_id)
+           values ('gr', $1, $2, $3, $4, $3, now() + interval '1 hour', $5, $6)`, [agent.accountId, o, c, todayId, ended ? new Date() : null, mandate]);
+        await lease(cause, op.operatorId, false);
+        await lease(causeEnded, op.operatorId, true);
+        await lease(causeOtherOp, op2.operatorId, false);
+        const future = new Date(Date.now() + 3_600_000).toISOString();
+        const past = new Date(Date.now() - 60_000).toISOString();
+        const line = (scope: string, limits: Record<string, unknown>, o: { cap?: string; by?: string; agents?: string[] | null; revoked?: boolean } = {}) => db.pool.query(
+          `insert into mandate_line (mandate_id, cap, scope, limits, agent_ids, granted_by, via, revoked_at) values ($1, $2, $3, $4, $5, $6, 'button', $7)`,
+          [mandate, o.cap ?? 'tool', scope, JSON.stringify(limits), o.agents === undefined ? null : o.agents, o.by ?? admin.accountId, o.revoked ? new Date() : null]);
+        await line('Bash(make test:*)', {});
+        await line('Bash(npm ci)', { uses: 1 });
+        await line('Bash(cargo build:*)', { turnCause: cause });
+        await line('Bash(cargo check:*)', { turnCause: otherThread });
+        await line('Bash(cargo doc:*)', { until: future });
+        await line('Bash(cargo bench:*)', { until: past });
+        await line('Bash(cargo tree:*)', {}, { agents: [admin.accountId] });
+        await line('Bash(cargo run:*)', {}, { agents: [agent.accountId] });
+        await line('Bash(cargo clean:*)', {}, { revoked: true });
+        await line('Bash(cargo update:*)', {}, { by: member.accountId });
+        await line('Bash(git   log:*)', {});
+        await line('example/x', {}, { cap: 'merge' });
+        const grant = (scope: string, by: string, expires: string | null) => db.pool.query(
+          `insert into account_grant (account_id, capability, scope, granted_by, expires_at) values ($1, 'tool.allow', $2, $3, $4::timestamptz) on conflict do nothing`,
+          [agent.accountId, scope, by, expires]);
+        await grant(`tool:${todayId}:Bash(git status:*)`, admin.accountId, null);
+        await grant(`tool:${todayId}:Bash(uname -a)`, admin.accountId, future);
+        await grant(`tool:${todayId}:Bash(cargo fmt:*)`, admin.accountId, past);
+        await grant(`tool:${todayId}:Bash(*)`, admin.accountId, null);
+        await grant(`tool:${todayId}:Bash(cargo fix:*)`, member.accountId, null);
+        await grant(`tool:${privId}:Bash(make lint:*)`, admin.accountId, null);
+        await grant(`tool:${todayId}:Bash(make test:*)`, admin.accountId, null);
+        const KUBE = 'kubectl --kubeconfig /tmp/kc.yaml --context rc';
+        const cmd = (command: string, o: { single?: boolean; used?: boolean; expires?: string; th?: string; by?: string } = {}) => db.pool.query(
+          `insert into command_grant (agent_id, channel_id, thread_root_id, command, single_use, expires_at, used_at, granted_by)
+           values ($1, $2, $3, $4, $5, $6::timestamptz, $7, $8)`,
+          [agent.accountId, todayId, o.th ?? thread, command, o.single ?? false, o.expires ?? future, o.used ? new Date() : null, o.by ?? admin.accountId]);
+        await cmd(`${KUBE} get pods`);
+        await cmd(`${KUBE} get nodes`, { single: true });
+        await cmd(`${KUBE} get svc`, { single: true, used: true });
+        await cmd(`${KUBE} get cm`, { expires: past });
+        await cmd(`${KUBE} get ns`, { th: otherThread });
+        await cmd(`${KUBE}  get   deploy`);
+        await cmd('ls | wc');
+        await cmd(`${KUBE} get pv`, { by: member.accountId });
+        const agentPatGr = await agentPat(agent.accountId, 'grant-reads');
+        const asOp = { authorization: `Bearer ${op.token}`, 'x-harkroom-agent': agent.accountId };
+        const who: [string, Record<string, string>][] = [
+          ['오퍼레이터', asOp], ['에이전트 PAT', { authorization: `Bearer ${agentPatGr}` }], ['사람 세션', { authorization: `Bearer ${A}` }], ['익명', {}],
+        ];
+        const grGet = async (base: string, path: string, h: Record<string, string>) => {
+          const res = await fetch(`${base}${path}`, { headers: { ...h, 'x-forwarded-for': XFF } });
+          const text = await res.text();
+          return { status: res.status, cache: res.headers.get('cache-control'), json: text ? JSON.parse(text) as unknown : null };
+        };
+        const ta = (q: string) => `/agent/tool-allows?${q}`;
+        const cg = (q: string) => `/agent/command-grants?${q}`;
+        const grRun = async (base: string) => {
+          const out: { name: string; status: number; cache: string | null; json: unknown }[] = [];
+          for (const [scope, ud] of [['owner', false], ['community', true]] as const) {
+            await db.pool.query(`update agent_config set invoke_scope = $2, user_decide = $3 where account_id = $1`, [agent.accountId, scope, ud]);
+            for (const [wn, h] of who) {
+              out.push({ name: `${scope}·${wn}·tool-allows`, ...(await grGet(base, ta(`channelId=${todayId}`), h)) });
+              out.push({ name: `${scope}·${wn}·command-grants`, ...(await grGet(base, cg(`channelId=${todayId}&threadRootId=${thread}`), h)) });
+            }
+            for (const [name, path] of [
+              ['cause', ta(`channelId=${todayId}&cause=${cause}`)],
+              ['끝난 임대 cause', ta(`channelId=${todayId}&cause=${causeEnded}`)],
+              ['다른 오퍼레이터 임대 cause', ta(`channelId=${todayId}&cause=${causeOtherOp}`)],
+              ['임대 없는 cause', ta(`channelId=${todayId}&cause=${thread}`)],
+              ['다른 채널 + cause', ta(`channelId=${privId}&cause=${cause}`)],
+              ['모르는 키', ta(`channelId=${todayId}&x=1`)],
+              ['channelId 없음', ta('')],
+              ['channelId 둘', ta(`channelId=${todayId}&channelId=${todayId}`)],
+              ['빈 cause', ta(`channelId=${todayId}&cause=`)],
+              ['cause uuid 아님', ta(`channelId=${todayId}&cause=x`)],
+              ['명령 다른 스레드', cg(`channelId=${todayId}&threadRootId=${otherThread}`)],
+              ['threadRootId 없음', cg(`channelId=${todayId}`)],
+              ['threadRootId 둘', cg(`channelId=${todayId}&threadRootId=${thread}&threadRootId=${thread}`)],
+              ['channelId uuid 아님', cg(`channelId=x&threadRootId=${thread}`)],
+            ] as const) out.push({ name: `${scope}·${name}`, ...(await grGet(base, path, asOp)) });
+          }
+          return out;
+        };
+        try {
+          const tsGr = await grRun(tsUrl);
+          const rsGr = await grRun(rsUrl);
+          expect(rsGr).toEqual(tsGr);
+          const at = (n: string) => tsGr.find((o) => o.name === n)!;
+          // 빈 것끼리 같음으로 통과하지 않게 — 갈리는 칸을 고정 값으로 본다.
+          expect(at('owner·오퍼레이터·tool-allows')).toEqual({ name: 'owner·오퍼레이터·tool-allows', status: 200, cache: 'no-store', json: expect.anything() });
+          const own = at('owner·cause').json as { rules: string[]; reach: string[] };
+          expect(own.rules).toEqual(expect.arrayContaining(['Bash(git status:*)', 'Bash(uname -a)', 'Bash(make test:*)', 'Bash(cargo build:*)', 'Bash(cargo doc:*)', 'Bash(cargo run:*)']));
+          for (const no of ['Bash(cargo fmt:*)', 'Bash(*)', 'Bash(cargo fix:*)', 'Bash(make lint:*)', 'Bash(npm ci)', 'Bash(cargo check:*)', 'Bash(cargo bench:*)', 'Bash(cargo tree:*)', 'Bash(cargo clean:*)', 'Bash(cargo update:*)', 'Bash(git   log:*)', 'example/x']) {
+            expect(own.rules, no).not.toContain(no);
+          }
+          expect(own.reach).toContain('Bash(make lint:*)');
+          expect(own.reach).toContain('Bash(cargo build:*)');
+          // 소유자가 아닌 사람이 준 것은 그 사람이 지금 정할 수 있을 때만 — community·켜짐에서는 열린다.
+          const com = at('community·cause').json as { rules: string[] };
+          expect(com.rules).toEqual(expect.arrayContaining(['Bash(cargo fix:*)', 'Bash(cargo update:*)']));
+          expect((at('owner·끝난 임대 cause').json as { rules: string[] }).rules).not.toContain('Bash(cargo build:*)');
+          expect((at('owner·다른 오퍼레이터 임대 cause').json as { rules: string[] }).rules).not.toContain('Bash(cargo build:*)');
+          const grants = (at('owner·오퍼레이터·command-grants').json as { grants: { command: string; singleUse: boolean }[] }).grants;
+          expect(grants.map((g) => g.command)).toEqual([`${KUBE} get pods`, `${KUBE} get nodes`]);
+          expect(grants[1]).toMatchObject({ singleUse: true });
+          expect((at('community·오퍼레이터·command-grants').json as { grants: unknown[] }).grants).toHaveLength(3);
+          expect(at('owner·에이전트 PAT·tool-allows').status).toBe(403);
+          expect(at('owner·사람 세션·command-grants').status).toBe(403);
+          expect(at('owner·익명·tool-allows').status).toBe(401);
+          expect(at('owner·빈 cause').status).toBe(400);
+          expect(at('owner·빈 cause').cache).toBeNull();
+        } finally {
+          await db.pool.query(`update agent_config set invoke_scope = $2, user_decide = $3 where account_id = $1`, [agent.accountId, savedGr.scope, savedGr.ud]);
+          if (prevOp) await db.pool.query(`update agent_assignment set operator_id = $2 where agent_id = $1`, [agent.accountId, prevOp]);
+          await db.pool.query(`delete from command_grant where agent_id = $1 and thread_root_id in ($2, $3)`, [agent.accountId, thread, otherThread]);
+          await db.pool.query(`delete from account_grant where account_id = $1 and capability = 'tool.allow' and scope = any($2)`, [agent.accountId, [
+            `tool:${todayId}:Bash(git status:*)`, `tool:${todayId}:Bash(uname -a)`, `tool:${todayId}:Bash(cargo fmt:*)`, `tool:${todayId}:Bash(*)`,
+            `tool:${todayId}:Bash(cargo fix:*)`, `tool:${privId}:Bash(make lint:*)`, `tool:${todayId}:Bash(make test:*)`]]);
+          await db.pool.query(`delete from secret_turn_lease where mandate_id = $1`, [mandate]);
+          await db.pool.query(`delete from mandate where id = $1`, [mandate]);
+        }
+      }
       // S5.3 C3b-2b-2 — MCP `message.askBundle` 의 있던 묶음에 줄 더하기(코어 `ask_bundle_add.rs`). TS·Rust 에 각자의 묶음으로 같은 시나리오를
       // 돌려 답·묶음 meta(줄 사본)·이벤트·묶음 푸시를 견준다. 담을 수 있는 원본 범위(부른 에이전트가 못 보는 채널의 카드는 못 담음)와
       // 권한·머지 카드 줄의 `link` 를 서버가 원본 meta 로 붙이는지를 따로 본다. 새 묶음·백스톱 원본·zod 밖 인자는 TS 로 넘긴다.

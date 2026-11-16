@@ -1050,15 +1050,31 @@ export function createPermissionExpirySweeper(pool: Pool, opts: { now?: () => Da
   };
 }
 
+/**
+ * grant 읽기 줄(S5.3 C3b) — `GET /agent/tool-allows`·`/agent/command-grants` 의 문장(match 는 쓰기라 TS 에 둔다). Rust 코어(`core/grant_reads.rs`)가
+ * `golden/sql_fragments.json` 으로 받아 그대로 쓴다. 고치면 `test/rustSqlFragments.test.ts` 가 골든 갱신을 요구한다.
+ */
+export const TOOL_ALLOWS_SQL = `select scope from account_grant
+      where account_id = $1::uuid and capability = 'tool.allow' and left(scope, length($2::text)) = $2::text
+        and (expires_at is null or expires_at > $3::timestamptz)
+        and ${mayDecideSql('account_grant.account_id', 'account_grant.granted_by', '$4::uuid')}
+      order by scope`;
+export const TOOL_REACH_SQL = `select scope from account_grant
+      where account_id = $1::uuid and capability = 'tool.allow' and left(scope, 5) = 'tool:'
+        and (expires_at is null or expires_at > $2::timestamptz)
+        and ${mayDecideSql('account_grant.account_id', 'account_grant.granted_by', "nullif(split_part(account_grant.scope, ':', 2), '')::uuid")}`;
+/** ②b 위임장 tool 줄 — 이 오퍼레이터가 쥔 살아 있는 임대의 위임 키. */
+export const MANDATE_TURN_LEASE_SQL = `select mandate_id as "mandateId" from secret_turn_lease
+      where agent_id = $1::uuid and cause_message_id = $2::uuid and operator_id = $3::uuid and channel_id = $4::uuid
+        and ended_at is null and expires_at > $5::timestamptz`;
+/** 위임장 채널이 이 턴 채널이고 에이전트의 지금 소유자가 위임 주인인가. */
+export const MANDATE_AGENT_CHANNEL_SQL = `select 1 from mandate m join agent_config c on c.account_id = $2::uuid
+      where m.id = $1::uuid and m.channel_id = $3::uuid and c.owner_account_id = m.owner_account_id`;
+
 /** 러너가 턴을 띄울 때 — 이 에이전트가 이 채널에서 받은 살아 있는 allow 규칙(D2). */
 export async function toolAllowsFor(pool: Pool, agentId: string, channelId: string, now = new Date()): Promise<string[]> {
   const prefix = toolScope(channelId, '');
-  const rows = (await pool.query<{ scope: string }>(
-    `select scope from account_grant
-      where account_id = $1 and capability = 'tool.allow' and left(scope, length($2)) = $2
-        and (expires_at is null or expires_at > $3)
-        and ${mayDecideSql('account_grant.account_id', 'account_grant.granted_by', '$4::uuid')}
-      order by scope`, [agentId, prefix, now, channelId])).rows;
+  const rows = (await pool.query<{ scope: string }>(TOOL_ALLOWS_SQL, [agentId, prefix, now, channelId])).rows;
   // 저장된 뒤 판정이 좁아졌을 수 있다 — 지금 판정으로 다시 걸러서 내보낸다(넓은 규칙이 옛 grant 로 살아남지 않게).
   return rows.map((r) => r.scope.slice(prefix.length)).filter((rule) => {
     const v = validateToolRule(rule);
@@ -1078,17 +1094,12 @@ export async function mandateToolRulesFor(pool: Pool, args: {
   agentId: string; operatorId: string; channelId: string; causeMessageId: string; now?: Date;
 }): Promise<string[]> {
   const now = args.now ?? new Date();
-  const lease = (await pool.query<{ mandateId: string | null }>(
-    `select mandate_id as "mandateId" from secret_turn_lease
-      where agent_id = $1 and cause_message_id = $2 and operator_id = $3 and channel_id = $4
-        and ended_at is null and expires_at > $5`,
+  const lease = (await pool.query<{ mandateId: string | null }>(MANDATE_TURN_LEASE_SQL,
     [args.agentId, args.causeMessageId, args.operatorId, args.channelId, now])).rows[0];
   if (!lease?.mandateId) return [];
   const owner = await validMandateOwner(pool, lease.mandateId, now);
   if (!owner) return [];
-  const ok = (await pool.query(
-    `select 1 from mandate m join agent_config c on c.account_id = $2
-      where m.id = $1 and m.channel_id = $3 and c.owner_account_id = m.owner_account_id`,
+  const ok = (await pool.query(MANDATE_AGENT_CHANNEL_SQL,
     [lease.mandateId, args.agentId, args.channelId])).rowCount;
   if (!ok) return [];
   const out = new Set<string>();
@@ -1120,11 +1131,7 @@ export async function mandateToolRulesFor(pool: Pool, args: {
  * 채널을 가리지 않는다 — 러너는 이 합을 파일에 쓰고, 턴 hook 이 그 턴 채널의 규칙(`toolAllowsFor`)으로 다시 거른다.
  */
 export async function toolReachFor(pool: Pool, agentId: string, now = new Date()): Promise<string[]> {
-  const rows = (await pool.query<{ scope: string }>(
-    `select scope from account_grant
-      where account_id = $1 and capability = 'tool.allow' and left(scope, 5) = 'tool:'
-        and (expires_at is null or expires_at > $2)
-        and ${mayDecideSql('account_grant.account_id', 'account_grant.granted_by', "nullif(split_part(account_grant.scope, ':', 2), '')::uuid")}`, [agentId, now])).rows;
+  const rows = (await pool.query<{ scope: string }>(TOOL_REACH_SQL, [agentId, now])).rows;
   const out = new Set<string>();
   for (const r of rows) {
     const rule = parseToolScope(r.scope)?.rule;
@@ -1303,6 +1310,11 @@ export async function listToolRules(pool: Pool, agentId: string, now = new Date(
   return { toolRules, hiddenToolRules };
 }
 
+export const COMMAND_GRANTS_SQL = `select id, command, single_use as "singleUse", expires_at as "expiresAt" from command_grant
+      where agent_id = $1::uuid and channel_id = $2::uuid and thread_root_id = $3::uuid and expires_at > $4::timestamptz
+        and (not single_use or used_at is null)
+        and ${mayDecideSql('command_grant.agent_id', 'command_grant.granted_by', 'command_grant.channel_id')}
+      order by created_at`;
 export interface CommandGrantView { id: string; command: string; singleUse: boolean; expiresAt: string }
 
 /**
@@ -1312,12 +1324,7 @@ export interface CommandGrantView { id: string; command: string; singleUse: bool
 export async function commandGrantsFor(
   pool: Pool, agentId: string, channelId: string, threadRootId: string, now = new Date(),
 ): Promise<CommandGrantView[]> {
-  const rows = (await pool.query<{ id: string; command: string; singleUse: boolean; expiresAt: Date }>(
-    `select id, command, single_use as "singleUse", expires_at as "expiresAt" from command_grant
-      where agent_id = $1 and channel_id = $2 and thread_root_id = $3 and expires_at > $4
-        and (not single_use or used_at is null)
-        and ${mayDecideSql('command_grant.agent_id', 'command_grant.granted_by', 'command_grant.channel_id')}
-      order by created_at`, [agentId, channelId, threadRootId, now])).rows;
+  const rows = (await pool.query<{ id: string; command: string; singleUse: boolean; expiresAt: Date }>(COMMAND_GRANTS_SQL, [agentId, channelId, threadRootId, now])).rows;
   return rows.filter((r) => {
     const v = validateExactCommand(r.command);
     return v.ok && v.command === r.command;

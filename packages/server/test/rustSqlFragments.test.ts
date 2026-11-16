@@ -37,7 +37,9 @@ import { CHILD_FACTS_AUDIENCE_SQL, PLAN_PROGRESS_PLANS_SQL } from '../src/servic
 import { displayBodySql } from '../src/services/systemBody.js';
 import { BG_AGENT_ON_SQL, BG_DAILY_LOCK_SQL, BG_ENQUEUE_SQL, BG_EXISTS_SQL, BG_PAUSED_SQL, CLEANUP_CANDIDATES_SQL, DISTILL_CANDIDATES_SQL, ORGANIZE_CANDIDATES_SQL } from '../src/services/bgJobs.js';
 import { LIST_DELEGATIONS_GIVEN_SQL, LIST_DELEGATIONS_MINE_SQL } from '../src/services/apiDelegation.js';
-import { LIST_TOOL_RULES_SQL } from '../src/services/permissionRequests.js';
+import { COMMAND_GRANTS_SQL, LIST_TOOL_RULES_SQL, MANDATE_AGENT_CHANNEL_SQL, MANDATE_TURN_LEASE_SQL, TOOL_ALLOWS_SQL, TOOL_REACH_SQL } from '../src/services/permissionRequests.js';
+import { VALID_MANDATE_OWNER_SQL } from '../src/services/mandates.js';
+import { MANDATE_LINES_STORED_SQL } from '../src/services/mandateLines.js';
 import { LEASE_INBOX_MAX_AGE_MS, LEASE_MAX_MS, LEASE_MAX_REISSUES, LEASE_REISSUE_STALE_MS, LEASE_RENEW_MS, LEASE_TTL_MS, TURN_LEASE_CAUSE_SQL, TURN_LEASE_CLAIM_MOVED_SQL, TURN_LEASE_END_PRIOR_SQL, TURN_LEASE_END_SQL, TURN_LEASE_INSERT_SQL, TURN_LEASE_PRIOR_SQL, TURN_LEASE_RENEW_SQL, TURN_LEASE_USED_SQL } from '../src/services/secretAccess.js';
 import { CANCEL_WAKES_FOR_TURN_SQL, FOLD_WAKES_FOR_DELEGATION_SQL, PREEMPT_CANCEL_SQL, PREEMPT_DUE_SQL, PREEMPT_FIRE_INBOX_SQL, PREEMPT_FIRE_SQL, STAMP_WAKE_CLOSED_SQL } from '../src/services/agentWakes.js';
 import { CANCEL_AS_DELEGATE_SQL, CANCEL_AS_LEAD_SQL, CANCEL_DELEGATE_ITEM_SQL, CANCEL_LEAD_ITEMS_SQL, CANCEL_LEAD_MARK_SQL, CANCEL_LEAD_META_SQL, SETTLED_INBOX_SQL, SETTLED_MARK_SQL, SETTLED_META_SQL, SETTLED_STILL_SQL } from '../src/services/delegations.js';
@@ -60,6 +62,14 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     list_delegations_mine: LIST_DELEGATIONS_MINE_SQL,
     list_delegations_given: LIST_DELEGATIONS_GIVEN_SQL,
     list_tool_rules: LIST_TOOL_RULES_SQL,
+    // grant 읽기 줄(`core/grant_reads.rs`, S5.3 C3b) — tool-allows·command-grants 의 문장 전체(match 는 쓰기라 TS).
+    grant_tool_allows: TOOL_ALLOWS_SQL,
+    grant_tool_reach: TOOL_REACH_SQL,
+    grant_mandate_turn_lease: MANDATE_TURN_LEASE_SQL,
+    grant_mandate_agent_channel: MANDATE_AGENT_CHANNEL_SQL,
+    grant_valid_mandate_owner: VALID_MANDATE_OWNER_SQL,
+    grant_mandate_lines_stored: MANDATE_LINES_STORED_SQL,
+    grant_command_grants: COMMAND_GRANTS_SQL,
     // 턴 임대(`core/turn_lease.rs`, S5.3 C6b) — 문장 전체와 시간 상수(ms·횟수는 문자열로).
     turn_lease_cause: TURN_LEASE_CAUSE_SQL,
     turn_lease_used: TURN_LEASE_USED_SQL,
