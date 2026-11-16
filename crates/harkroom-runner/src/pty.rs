@@ -99,7 +99,7 @@ pub static DEFAULT_READY_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
 /// `\d` 는 JS 처럼 ASCII 만 보도록 `[0-9]` 로 썼다.
 pub static DEFAULT_GATE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(concat!(
-        r"(?m)Do you want to (?:proceed|continue)\?|requires confirmation|Press enter to continue",
+        r"(?m)Do you want to (?:proceed|continue)\?|requires confirmation|Press enter to continue|Skip until next version",
         r"|Enter\s*to\s*(?:confirm|continue)|Connect a provider|MCP\s*server\s*to\s*run\s*tool",
         r"|[❯›](?:[^\x{a0}\n][^\n]*)?✔|^\s*[❯›]\s*[0-9]+\.\s",
     ))
@@ -474,6 +474,22 @@ mod tests {
         ));
         let raw = "\x1b[2m\u{203a} call the ping tool\x1b[0m\x1b[17;1H\u{2022} Calling fake.ping({})\x1b[20;1H  \x1b[2mField 1/1\x1b[21;1H\x1b[22m  Allow the fake MCP server to run tool \"ping\"?\x1b[22;1H  \x1b[1m\x1b[38;5;6;49m\u{203a} 1. Allow                   Run the tool and continue.\x1b[23;1H\x1b[22m\x1b[39;49m    2. Allow for this session\x1b[26;1H  enter to submit | esc to cancel\x1b]0;[ ! ] Action Required | ws\x07";
         assert!(looks_like_gate(raw, None, None));
+    }
+
+    /// codex 0.158 업데이트 화면(11-16 무발화 턴). 0.153 fixture 와 달리 줄을 커서 이동으로 놓아 ANSI 를 걷으면 한 줄로 붙고,
+    /// 바닥줄이 `Press enter to continue` 가 아니라 `enter continue · esc skip` 이다 — 옛 패턴은 이 화면을 못 봤다.
+    /// 입력창(`Ask Codex to do anything`)이 먼저 그려지고 그 위로 화면이 덮인다(homelab 녹화 관찰을 줄인 꼴, 날 바이트 아님).
+    #[test]
+    fn codex_158_update_screen_is_gate_in_raw_bytes() {
+        let raw = "\x1b[1;1H\x1b[2mAsk Codex to do anything\x1b[0m\x1b[45;1H\x1b[2J\x1b[3;3H\x1b[1m\u{2728} Update available! 0.158.0 -> 0.169.0\x1b[0m\x1b[5;3H\x1b[1m\x1b[38;5;232;48;5;75m\u{203a} 1. Update now (runs `npm install -g @openai/codex`)\x1b[0m\x1b[6;3H  2. Skip\x1b[7;3H  3. Skip until next version\x1b[9;3H\x1b[2menter\x1b[0m continue \x1b[2m\u{b7}\x1b[0m \x1b[2mesc\x1b[0m skip";
+        assert!(looks_ready_for_prompt(raw, None), "입력창 문구가 먼저 있다");
+        assert!(looks_like_gate(raw, None, None));
+        // 화면을 넘긴 뒤 입력창이 다시 그려지면 관문이 아니다.
+        assert!(!looks_like_gate(
+            &format!("{raw}\x1b[2J\x1b[40;1HAsk Codex to do anything"),
+            None,
+            None
+        ));
     }
 
     #[test]
