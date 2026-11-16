@@ -24,6 +24,7 @@ pub mod inbox_list;
 pub mod inbox_read;
 pub mod inbox_thread;
 pub mod invoke_gate;
+pub mod mandate_card_thread;
 pub mod mandate_line_write;
 pub mod mandate_stamp;
 pub mod mcp;

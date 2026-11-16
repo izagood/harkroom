@@ -41,7 +41,7 @@ import { COMMAND_GRANTS_SQL, LIST_TOOL_RULES_SQL, MANDATE_AGENT_CHANNEL_SQL, MAN
 import { READ_LEASE_SQL } from '../src/services/mergeGrants.js';
 import { VALID_MANDATE_OWNER_SQL } from '../src/services/mandates.js';
 import { ADD_LINE_AGENTS_SQL, ADD_LINE_INSERT_SQL, ADD_LINE_MANDATE_SQL, MANDATE_LINES_STORED_SQL } from '../src/services/mandateLines.js';
-import { LINE_FROM_REQUEST_OWNER_SQL } from '../src/services/permissionRequests.js';
+import { CARD_THREAD_DELEGATOR_SQL, CARD_THREAD_INSERT_SQL, CARD_THREAD_ROOT_SQL, CARD_THREAD_ROOT_STAMP_SQL, CARD_THREAD_TOUCH_SQL, LINE_FROM_REQUEST_OWNER_SQL, NEW_MANDATE_CARD_SQL, NEW_MANDATE_REQUEST_SQL } from '../src/services/permissionRequests.js';
 import { LEASE_INBOX_MAX_AGE_MS, LEASE_MAX_MS, LEASE_MAX_REISSUES, LEASE_REISSUE_STALE_MS, LEASE_RENEW_MS, LEASE_TTL_MS, TURN_LEASE_CAUSE_SQL, TURN_LEASE_CLAIM_MOVED_SQL, TURN_LEASE_END_PRIOR_SQL, TURN_LEASE_END_SQL, TURN_LEASE_INSERT_SQL, TURN_LEASE_PRIOR_SQL, TURN_LEASE_RENEW_SQL, TURN_LEASE_USED_SQL } from '../src/services/secretAccess.js';
 import { CANCEL_WAKES_FOR_TURN_SQL, FOLD_WAKES_FOR_DELEGATION_SQL, PREEMPT_CANCEL_SQL, PREEMPT_DUE_SQL, PREEMPT_FIRE_INBOX_SQL, PREEMPT_FIRE_SQL, STAMP_WAKE_CLOSED_SQL } from '../src/services/agentWakes.js';
 import { CANCEL_AS_DELEGATE_SQL, CANCEL_AS_LEAD_SQL, CANCEL_DELEGATE_ITEM_SQL, CANCEL_LEAD_ITEMS_SQL, CANCEL_LEAD_MARK_SQL, CANCEL_LEAD_META_SQL, SETTLED_INBOX_SQL, SETTLED_MARK_SQL, SETTLED_META_SQL, SETTLED_STILL_SQL } from '../src/services/delegations.js';
@@ -76,6 +76,14 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     mandate_line_add_mandate: ADD_LINE_MANDATE_SQL,
     mandate_line_add_agents: ADD_LINE_AGENTS_SQL,
     mandate_line_add_insert: ADD_LINE_INSERT_SQL,
+    // S5.3 C2 — approve_new_mandate: 카드 스레드에 위임장 세우기(`core/mandate_card_thread.rs`).
+    card_thread_root: CARD_THREAD_ROOT_SQL,
+    card_thread_delegator: CARD_THREAD_DELEGATOR_SQL,
+    card_thread_touch: CARD_THREAD_TOUCH_SQL,
+    card_thread_insert: CARD_THREAD_INSERT_SQL,
+    card_thread_root_stamp: CARD_THREAD_ROOT_STAMP_SQL,
+    new_mandate_request: NEW_MANDATE_REQUEST_SQL,
+    new_mandate_card: NEW_MANDATE_CARD_SQL,
     grant_command_grants: COMMAND_GRANTS_SQL,
     // 명령 grant 쓰기(`core/command_match.rs`, S5.3 C3b B1) — 임대 읽기와 grant 하나를 쓰는 UPDATE.
     grant_read_lease: READ_LEASE_SQL,

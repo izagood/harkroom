@@ -402,6 +402,10 @@ async fn main() {
         // S5.3 C1 — 있는 위임장에 줄 쓰기 칸(fail-closed, 없으면 위임장 있는 승인은 TS).
         if harkroom_server::core::decide_approve::check_mandate_core(w).await {
             eprintln!("front: permission mandate core on");
+            // S5.3 C2 — 위임장 새로 세우기 칸(fail-closed, 없으면 위임장 없는 approve_new_mandate 는 TS).
+            if harkroom_server::core::decide_approve::new_mandate_core_on() {
+                eprintln!("front: permission new mandate core on");
+            }
         }
     }
     // C3b B1 — `POST /agent/command-grants/match`(명령 grant 하나를 쓰고 감사). `HARKROOM_CORE=rust` 그리고 쓰기 풀에

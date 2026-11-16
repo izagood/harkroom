@@ -638,12 +638,12 @@ export async function decidePermissionRequest(
         return { ok: false, status: 409, code: 'mandate_unavailable', message: 'a mandate cannot be started on this thread — approve from a thread you started' };
       }
       r.mandateId = made;
-      await client.query(`update permission_request set mandate_id = $2 where id = $1`, [r.id, made]);
+      await client.query(NEW_MANDATE_REQUEST_SQL, [r.id, made]);
       // 카드 답은 카드 글을 원인으로 에이전트를 깨운다 — 그 턴의 임대는 원인 글의 위임 키를 읽는다(`issueTurnLease`).
       // 머리 글에만 키를 적으면 카드 답 턴의 키가 null 이라 방금 더한 줄을 못 쓴다(`no_mandate_line` 되풀이). 카드 글에도 적는다.
       // W1 불변식: 키는 소유자의 에이전트 글에만 — 카드를 쓴 것이 이 요청의 에이전트일 때만 적는다.
       if (r.cardMessageId) {
-        await client.query(`update message set mandate_id = $2 where id = $1 and mandate_id is null and author_id = $3`, [r.cardMessageId, made, args.agentId]);
+        await client.query(NEW_MANDATE_CARD_SQL, [r.cardMessageId, made, args.agentId]);
       }
     }
     // D1(security 2026-11-02): merge 는 위임장 없이 7일 승인으로 넘어가지 않는다 — 소유자의 merge grant 는 모든 위임장에 상시 줄로
@@ -824,37 +824,49 @@ async function answerOptionId(pool: Pool, cardMessageId: string, candidates: str
  * 머리 글은 **소유자 본인이나 그 소유자의 에이전트**가 쓴 것이어야 한다(security F2) — 위임 키는 그런 글에만 있다는 W1 불변식.
  * 남의 글에 키를 찍으면 그 글로 뜬 턴이 키를 얻는다(`issueTurnLease` 는 원인 글의 `mandate_id` 를 믿는다).
  */
+/*
+  `mandateForCardThread`·approve_new_mandate 의 문장들 — Rust 코어(`core/mandate_card_thread.rs`, S5.3 C2)가 골든으로 그대로 받는다.
+  $n 에 형을 붙였다(Rust 는 글자로 넘긴다). 고치면 `test/rustSqlFragments.test.ts` 가 골든 갱신을 요구한다.
+*/
+/** 머리 글을 잠그고 읽는다. $1 머리 $2 채널 $3 소유자 $4 맡긴 사람 $5 소유자 본인이 세우나. */
+export const CARD_THREAD_ROOT_SQL = `select m.mandate_id as "mandateId",
+            (m.author_id = $4::uuid or ($5::boolean and exists (select 1 from agent_config c where c.account_id = m.author_id and c.owner_account_id = $3::uuid))) as "ownAuthor"
+       from message m where m.id = $1::uuid and m.channel_id = $2::uuid and m.deleted_at is null
+        and not (coalesce(m.meta, '{}'::jsonb) ? 'automation') for update of m`;
+export const CARD_THREAD_DELEGATOR_SQL = `select coalesce(delegator_account_id, owner_account_id) as delegator from mandate where id = $1::uuid`;
+export const CARD_THREAD_TOUCH_SQL = `update mandate set last_activity_at = greatest(last_activity_at, $2::timestamptz) where id = $1::uuid`;
+/** $1 주인 $2 머리 $3 채널 $4 지금 $5 맡긴 사람. */
+export const CARD_THREAD_INSERT_SQL = `insert into mandate (owner_account_id, delegator_account_id, root_message_id, channel_id, thread_root_id, created_at, last_activity_at)
+     values ($1::uuid, $5::uuid, $2::uuid, $3::uuid, $2::uuid, $4::timestamptz, $4::timestamptz)
+     on conflict (root_message_id) do update set last_activity_at = greatest(mandate.last_activity_at, excluded.last_activity_at)
+     returning id, owner_account_id as owner, coalesce(delegator_account_id, owner_account_id) as delegator, ended_at is not null as ended, (xmax = 0) as inserted`;
+export const CARD_THREAD_ROOT_STAMP_SQL = `update message set mandate_id = $2::uuid where id = $1::uuid and mandate_id is null`;
+export const NEW_MANDATE_REQUEST_SQL = `update permission_request set mandate_id = $2::uuid where id = $1::uuid`;
+/** 카드 글 — 카드를 쓴 것이 이 요청의 에이전트($3)일 때만(W1). */
+export const NEW_MANDATE_CARD_SQL = `update message set mandate_id = $2::uuid where id = $1::uuid and mandate_id is null and author_id = $3::uuid`;
+
 async function mandateForCardThread(client: PoolClient, args: { ownerId: string; delegatorId?: string; channelId: string; threadRootId: string; now: Date; created?: MandateCreated[] }): Promise<string | null> {
   // C-3: 소유자가 아닌 사람(delegator)이 세우면 머리 글은 **그 사람 본인의 글**이어야 한다(키는 delegator 본인 글·소유자 에이전트 글에만).
   const delegator = args.delegatorId ?? args.ownerId;
   const byOwner = delegator === args.ownerId;
   const root = (await client.query<{ mandateId: string | null; ownAuthor: boolean }>(
-    `select m.mandate_id as "mandateId",
-            (m.author_id = $4 or ($5::boolean and exists (select 1 from agent_config c where c.account_id = m.author_id and c.owner_account_id = $3))) as "ownAuthor"
-       from message m where m.id = $1 and m.channel_id = $2 and m.deleted_at is null
-        and not (coalesce(m.meta, '{}'::jsonb) ? 'automation') for update of m`,
-    [args.threadRootId, args.channelId, args.ownerId, delegator, byOwner])).rows[0];
+    CARD_THREAD_ROOT_SQL, [args.threadRootId, args.channelId, args.ownerId, delegator, byOwner])).rows[0];
   if (!root || !root.ownAuthor) return null;
   if (root.mandateId) {
     const owner = await validMandateOwner(client, root.mandateId, args.now);
     if (owner !== args.ownerId) return null;
-    const d = (await client.query<{ delegator: string }>(
-      `select coalesce(delegator_account_id, owner_account_id) as delegator from mandate where id = $1`, [root.mandateId])).rows[0]?.delegator;
+    const d = (await client.query<{ delegator: string }>(CARD_THREAD_DELEGATOR_SQL, [root.mandateId])).rows[0]?.delegator;
     if (d !== delegator) return null;
-    await client.query(`update mandate set last_activity_at = greatest(last_activity_at, $2) where id = $1`, [root.mandateId, args.now]);
+    await client.query(CARD_THREAD_TOUCH_SQL, [root.mandateId, args.now]);
     return root.mandateId;
   }
   const id = (await client.query<{ id: string; owner: string; ended: boolean; inserted: boolean }>(
-    `insert into mandate (owner_account_id, delegator_account_id, root_message_id, channel_id, thread_root_id, created_at, last_activity_at)
-     values ($1, $5, $2, $3, $2, $4, $4)
-     on conflict (root_message_id) do update set last_activity_at = greatest(mandate.last_activity_at, excluded.last_activity_at)
-     returning id, owner_account_id as owner, coalesce(delegator_account_id, owner_account_id) as delegator, ended_at is not null as ended, (xmax = 0) as inserted`,
-    [args.ownerId, args.threadRootId, args.channelId, args.now, delegator])).rows[0]! as { id: string; owner: string; delegator: string; ended: boolean; inserted: boolean };
+    CARD_THREAD_INSERT_SQL, [args.ownerId, args.threadRootId, args.channelId, args.now, delegator])).rows[0]! as { id: string; owner: string; delegator: string; ended: boolean; inserted: boolean };
   if (id.owner !== args.ownerId || id.delegator !== delegator || id.ended) return null;
   if (id.inserted) {
     args.created?.push({ mandateId: id.id, ownerId: args.ownerId, rootMessageId: args.threadRootId, channelId: args.channelId, threadRootId: args.threadRootId, via: 'card', ...(byOwner ? {} : { delegatorId: delegator }) });
   }
-  await client.query(`update message set mandate_id = $2 where id = $1 and mandate_id is null`, [args.threadRootId, id.id]);
+  await client.query(CARD_THREAD_ROOT_STAMP_SQL, [args.threadRootId, id.id]);
   return id.id;
 }
 
