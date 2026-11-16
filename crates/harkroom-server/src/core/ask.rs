@@ -56,6 +56,8 @@ pub struct AskState {
     pub up: Upstream,
     /// C3b-3c — 권한 카드 **거절** 쓰기 풀([`super::decide_core::deny_pool`] 이 두 겹 검사로 준 것). `None` 이면 거절도 TS 가 맡는다.
     pub deny: Option<PgPool>,
+    /// S5.3 B2 — 권한 카드 **승인**(소유자, tool 7일·command 1회/1시간) 쓰기 풀([`super::decide_approve::approve_pool`]). `None` 이면 TS.
+    pub approve: Option<PgPool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -666,6 +668,13 @@ pub async fn answer(
     {
         return r;
     }
+    // S5.3 B2 — 소유자의 승인(tool approve·command approve_once/hour). 맡지 않는 꼴은 아래 `hand_to_ts` 가 TS 로 넘긴다.
+    if let Answer::Option(o) = &ans
+        && let super::decide_routes::Taken::Done(r) =
+            super::decide_routes::answer_card_approve(&st, &me, &auth, &message, o).await
+    {
+        return r;
+    }
     match hand_to_ts(&st.read, &message).await {
         Ok(false) => {}
         Ok(true) => return to_ts(st.up.clone(), peer, parts, bytes).await,
@@ -741,6 +750,19 @@ pub fn routes(
         .post(
             "/agents/{id}/permission-requests/{requestId}/deny",
             super::decide_routes::deny_route,
+        )
+        // S5.3 B2 — 승인 REST(정확한 글자만; `approve-once` 하이픈은 1회 머지라 TS). 승인 풀이 없거나 맡지 않으면 TS.
+        .post(
+            "/agents/{id}/permission-requests/{requestId}/approve",
+            super::decide_routes::approve_route,
+        )
+        .post(
+            "/agents/{id}/permission-requests/{requestId}/approve_once",
+            super::decide_routes::approve_once_route,
+        )
+        .post(
+            "/agents/{id}/permission-requests/{requestId}/approve_hour",
+            super::decide_routes::approve_hour_route,
         )
         // C3b-2a — 묶음 카드 REST. 같은 표·같은 칸을 쓰므로 같은 잠금(`ASK_PRIVILEGES`)으로 함께 붙는다.
         .post(

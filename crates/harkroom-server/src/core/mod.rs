@@ -14,6 +14,7 @@ pub mod audience;
 pub mod channels;
 pub mod command_match;
 pub mod content_scan;
+pub mod decide_approve;
 pub mod decide_check;
 pub mod decide_core;
 pub mod decide_routes;

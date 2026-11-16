@@ -392,6 +392,14 @@ async fn main() {
     if ask_deny.is_some() {
         eprintln!("front: permission deny core on");
     }
+    // S5.3 B2 — 권한 카드 승인(소유자). 거절과 같은 세 겹에 grant·이벤트 쓰기 칸(`APPROVE_PRIVILEGES`)을 더한다(fail-closed).
+    let ask_approve = match &ask_write {
+        Some(w) => harkroom_server::core::decide_approve::approve_pool(w).await,
+        None => None,
+    };
+    if ask_approve.is_some() {
+        eprintln!("front: permission approve core on");
+    }
     // C3b B1 — `POST /agent/command-grants/match`(명령 grant 하나를 쓰고 감사). `HARKROOM_CORE=rust` 그리고 쓰기 풀에
     // `MATCH_PRIVILEGES` 가 다 있을 때만(fail-closed) — 아니면 경로를 붙이지 않아 TS 가 받는다.
     let match_write = match (&core_mode, &state.write) {
@@ -714,6 +722,7 @@ async fn main() {
                     write,
                     up: state.up.clone(),
                     deny: ask_deny,
+                    approve: ask_approve,
                 },
                 auth.clone(),
                 state.cors.clone(),

@@ -333,6 +333,12 @@ pub async fn answer(
     {
         return r;
     }
+    // S5.3 B2 — 같은 W1 확인 뒤의 소유자 승인.
+    if let super::decide_routes::Taken::Done(r) =
+        super::decide_routes::answer_bundle_approve(&st, &me, &auth, &bundle, &root, &option).await
+    {
+        return r;
+    }
     // 원본이 Rust 가 정하지 않는 카드면 TS 가 한다.
     match hand_to_ts(&st.read, &root).await {
         Ok(false) => {}
