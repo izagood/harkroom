@@ -12,6 +12,7 @@ pub mod health;
 pub mod inbox_today;
 pub mod lists;
 pub mod loops;
+pub mod migrate;
 pub mod perm;
 pub mod proxy;
 pub mod push;

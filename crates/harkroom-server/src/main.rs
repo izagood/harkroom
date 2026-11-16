@@ -1,7 +1,9 @@
 //! `harkroom-server-rs` — env: `UPSTREAM_URL`(TS 서버, 예 `http://harkroom:3400`) · `DATABASE_URL` · `PORT`(기본 3500) ·
 //! `CORS_ORIGINS`(TS 와 같은 허용 출처, 비면 요청 출처를 돌려줌 — `cors.rs`) · `HARKROOM_CORE`(`ts` 기본 · `rust` 면 `/ws`·`/ws-ticket` 을 답함, S5.3 C0) · `TRUST_PROXY`(감사 `ip` 규칙, TS 와 같은 꼴 — `trust_proxy.rs`) · `HARKROOM_FRONT_TS_ROUTES`(옮긴 줄을 TS 로 되돌림 — `"GET /accounts,GET /dms"` 또는 `*`, `routes.rs` 참고) ·
-//! `DATABASE_WRITE_URL`(쓰기 역할, P3 — 없거나 권한이 모자라면 쓰는 줄을 켜지 않고 그 요청은 TS 로 간다, `write.rs` 참고).
-use harkroom_server::{proxy, routes, schema, write};
+//! `DATABASE_WRITE_URL`(쓰기 역할, P3 — 없거나 권한이 모자라면 쓰는 줄을 켜지 않고 그 요청은 TS 로 간다, `write.rs` 참고) ·
+//! `HARKROOM_RUST_MIGRATE`(`1` 이면 기동 때 마이그레이션을 Rust 가 돌림, **기본 꺼짐** — S5.4 M1, `migrate.rs`) ·
+//! `DATABASE_MIGRATE_URL`(그때 쓰는 DDL 역할 — 스위치를 켰는데 없으면 기동하지 않는다).
+use harkroom_server::{migrate, proxy, routes, schema, write};
 use std::net::SocketAddr;
 
 #[tokio::main]
@@ -12,6 +14,23 @@ async fn main() {
         .ok()
         .and_then(|p| p.parse().ok())
         .unwrap_or(3500);
+
+    // S5.4 M1 — 켰을 때만 스키마 대조보다 먼저 마이그레이션을 돌린다. TS 실행기와 같은 잠금 키라 동시에 떠도 한쪽씩 돈다.
+    match migrate::config(|n| std::env::var(n).ok()) {
+        Ok(None) => {}
+        Ok(Some(url)) => match migrate::run_when_reachable(&url, migrate::REACHABLE_DEADLINE).await
+        {
+            Ok(applied) => eprintln!("front: migrations applied: {}", applied.len()),
+            Err(e) => {
+                eprintln!("front: refusing to start — {e}");
+                std::process::exit(1);
+            }
+        },
+        Err(e) => {
+            eprintln!("front: refusing to start — {e}");
+            std::process::exit(1);
+        }
+    }
 
     // 읽기 풀 4 · 연결 기다리는 시한 3초(쓰기 풀과 같다 — 막히면 30초 매달리지 않고 500). outbox 리스너는 이 풀 밖의 전용 연결이다
     // (`core::events::spawn_outbox_listener`). 파드당 연결: 읽기 4 + 리스너 1 + 쓰기 2 = 7 — DB 역할 한도는 그보다 커야 한다.
