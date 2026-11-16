@@ -15,6 +15,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use crate::adapter::AgentHarness;
 use crate::mention_admit::Launch;
 use crate::mention_call::{CallInputs, run_mention_guarded};
 use crate::mention_clients::{AgentClients, AgentLink};
@@ -41,8 +42,14 @@ pub trait CallMaker<L: AgentLink, S: PtyTurnSink>: Send + Sync {
         reads: MentionReads,
         system: SystemInputs,
     ) -> CallInputs<'a, L, S>;
-    /// 인터랙티브 중계 세션 — Rust 러너에는 아직 없다.
-    fn open_relay(&self, _slot: &LiveSlot) -> Option<Arc<SessionHandle>> {
+    /// 멘션 하나의 중계 세션(정본 `mentionTurn.ts` `deps.relay?.openSession`) — 장부가 없는 짓개는 `None`(턴은 관찰
+    /// 없이 돈다). 시도마다 계정 칩은 `RelayAttempt::begin` 이 고쳐 알린다.
+    fn open_relay(
+        &self,
+        _slot: &LiveSlot,
+        _target: &MentionTarget,
+        _harness: AgentHarness,
+    ) -> Option<Arc<SessionHandle>> {
         None
     }
 }
@@ -63,8 +70,13 @@ impl<L: AgentLink, S: PtyTurnSink, M: CallMaker<L, S>> CallMaker<L, S> for Arc<M
     ) -> CallInputs<'a, L, S> {
         (**self).call_inputs(clients, book, target, reads, system)
     }
-    fn open_relay(&self, slot: &LiveSlot) -> Option<Arc<SessionHandle>> {
-        (**self).open_relay(slot)
+    fn open_relay(
+        &self,
+        slot: &LiveSlot,
+        target: &MentionTarget,
+        harness: AgentHarness,
+    ) -> Option<Arc<SessionHandle>> {
+        (**self).open_relay(slot, target, harness)
     }
 }
 
@@ -130,6 +142,13 @@ where
     }));
     match prepared {
         Ok(Some(inputs)) => {
+            let target = build_mention_target(
+                &launch.lead_entry,
+                &launch.lead_mention,
+                &launch.anchor,
+                &launch.bundled,
+            );
+            let harness = inputs.base.harness;
             let panicked = run_mention_guarded(
                 &sh.ledger,
                 &sh.slots,
@@ -138,7 +157,7 @@ where
                 launch,
                 sh.sched.clone(),
                 inputs,
-                |slot| sh.maker.open_relay(slot),
+                |slot| sh.maker.open_relay(slot, &target, harness),
             );
             BodyEnd::Ran { panicked }
         }

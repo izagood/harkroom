@@ -104,7 +104,20 @@ fn main() {
     harkroom_runner::provider_lane::sweep_lane_turn_dir(std::path::Path::new(&config.state_dir));
     // 옛 lane 대체 길이 남긴 `lane-mcp.json`(그때의 러너 링크 secret)을 지운다(정본 `sweepLaneMcpConfig`, L3c-3c).
     harkroom_runner::provider_lane::sweep_lane_mcp_config(std::path::Path::new(&config.state_dir));
+    // 중계 세션 장부(정본 `relay.ts` 세션 절반)를 링크 고리 셋에 꽂는다 — 빠지면 `interactive.open`·`replay.request`·
+    // `input` 이 모두 버려져 「터미널 열기」·턴 화면 보기·관문 화면 답하기가 504 로 끝난다.
+    let relay_cell = harkroom_runner::interactive_open::ledger_cell();
+    let relay = harkroom_runner::relay_session::RelaySessions::new(
+        Some(harkroom_runner::interactive_open::handler(
+            relay_cell.clone(),
+            provider_lane,
+        )),
+        Box::new(|l: &str| eprintln!("{l}")),
+    );
+    harkroom_runner::interactive_open::fill(&relay_cell, &relay);
+    let opts = relay.wire(opts);
     let link: Link = LinkClient::new(opts);
+    relay.attach_link(&link);
     link.start();
     if !link.when_connected(Duration::from_secs(10)) {
         eprintln!("오퍼레이터 링크가 10초 안에 붙지 않았다 — 계속 재시도한다");
@@ -339,6 +352,7 @@ fn main() {
             std::process::exit(1);
         }
     }
+    maker.set_relay(Arc::clone(&relay));
     let maker = Arc::new(maker);
     install_cleanup_report(&maker, &clients);
 
