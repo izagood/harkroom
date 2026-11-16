@@ -598,6 +598,15 @@ async fn main() {
         core_routes.router = core_routes.router.merge(channels.router);
         core_routes.http.extend(channels.http);
         core_routes.sockets.extend(channels.sockets);
+        // C3b-3d — 카드 버튼을 그릴지(`GET /agents/{id}/decide-check`). 잠그지 않는 판정이라 읽기 풀만 쓴다.
+        let decide_check = harkroom_server::core::decide_check::routes(
+            state.pool.clone(),
+            auth.clone(),
+            state.cors.clone(),
+        );
+        core_routes.router = core_routes.router.merge(decide_check.router);
+        core_routes.http.extend(decide_check.http);
+        core_routes.sockets.extend(decide_check.sockets);
         // C1b-1b — 채널·스레드 목록(`GET /channels/{id}/messages`). 같은 경로의 `POST` 는 fallback 으로 TS.
         let lists = harkroom_server::core::msg_list::routes(
             state.pool.clone(),
