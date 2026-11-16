@@ -1,0 +1,1757 @@
+{
+ "lists": {
+  "particles": [
+   "에서",
+   "으로",
+   "에게",
+   "까지",
+   "부터",
+   "처럼",
+   "은",
+   "는",
+   "이",
+   "가",
+   "을",
+   "를",
+   "에",
+   "의",
+   "로",
+   "도",
+   "만",
+   "와",
+   "과"
+  ],
+  "endings": [
+   "해야해",
+   "해야지",
+   "해야겠",
+   "했습니다",
+   "합니다",
+   "해주세요",
+   "해달라",
+   "해줘",
+   "해라",
+   "해서",
+   "해야",
+   "해도",
+   "했다",
+   "했고",
+   "했는",
+   "했던",
+   "하고",
+   "하다",
+   "한다",
+   "하는",
+   "하면",
+   "하지",
+   "하게",
+   "하려",
+   "된다",
+   "됐다",
+   "되는",
+   "되어",
+   "되면",
+   "해",
+   "했",
+   "할",
+   "한",
+   "돼",
+   "됨"
+  ],
+  "recallStopwords": [
+   "지시",
+   "경유",
+   "요청",
+   "부탁",
+   "착수",
+   "진행",
+   "확인",
+   "보고",
+   "답변",
+   "방식",
+   "스레드",
+   "채널",
+   "메시지",
+   "에이전트",
+   "사람",
+   "이번",
+   "지금",
+   "다음",
+   "먼저",
+   "그리고",
+   "그러니",
+   "그래서",
+   "어떻게",
+   "무엇",
+   "여기",
+   "거기",
+   "이것",
+   "그것",
+   "해당",
+   "관련",
+   "내용",
+   "부분",
+   "경우",
+   "정도",
+   "이상",
+   "이하",
+   "달라",
+   "주세요",
+   "있다",
+   "없다",
+   "같다",
+   "한다",
+   "된다",
+   "했다",
+   "위해",
+   "대해",
+   "대한",
+   "통해",
+   "이거",
+   "이걸",
+   "너가",
+   "내가",
+   "말고",
+   "아니",
+   "있는",
+   "하는",
+   "하고",
+   "하면",
+   "않아",
+   "같아",
+   "때도",
+   "보면",
+   "원문",
+   "첨부",
+   "계획",
+   "수정",
+   "원인",
+   "분석",
+   "task",
+   "the",
+   "and",
+   "for",
+   "with",
+   "this",
+   "that",
+   "from",
+   "message",
+   "thread",
+   "channel",
+   "please",
+   "http",
+   "https",
+   "png",
+   "jpg",
+   "id",
+   "v0"
+  ],
+  "focusStopwords": [
+   "다시",
+   "한번",
+   "계속",
+   "마저",
+   "이어서",
+   "이대",
+   "그대",
+   "그걸",
+   "그거",
+   "그것",
+   "그렇게",
+   "똑같이",
+   "아까",
+   "방금",
+   "좋아",
+   "좋다",
+   "괜찮",
+   "고마워",
+   "알겠",
+   "그래",
+   "해줘",
+   "봐줘",
+   "ok",
+   "okay",
+   "again",
+   "continue"
+  ]
+ },
+ "nameRows": [
+  {
+   "handle": "mina",
+   "display_name": "Mi Na",
+   "kind": "human"
+  },
+  {
+   "handle": "alice_kim",
+   "display_name": "김 앨리스",
+   "kind": "human"
+  },
+  {
+   "handle": "x",
+   "display_name": null,
+   "kind": "human"
+  },
+  {
+   "handle": "forge",
+   "display_name": "Forge",
+   "kind": "agent"
+  },
+  {
+   "handle": "ops.team-lead",
+   "display_name": " OpsLead ",
+   "kind": "human"
+  },
+  {
+   "handle": "bob",
+   "display_name": "B﻿ob",
+   "kind": "human"
+  }
+ ],
+ "excluded": [
+  "alice",
+  "alice_kim",
+  "bob",
+  "b﻿ob",
+  "kim",
+  "lead",
+  "mi",
+  "mi na",
+  "mina",
+  "na",
+  "ob",
+  "ops",
+  "ops.team-lead",
+  "opslead",
+  "team",
+  "김 앨리스",
+  "앨리스"
+ ],
+ "terms": [
+  {
+   "query": "",
+   "plain": [],
+   "recall": [],
+   "focus": []
+  },
+  {
+   "query": " ",
+   "plain": [],
+   "recall": [],
+   "focus": []
+  },
+  {
+   "query": "a",
+   "plain": [],
+   "recall": [],
+   "focus": []
+  },
+  {
+   "query": "조사해 달라",
+   "plain": [
+    "조사",
+    "달라"
+   ],
+   "recall": [
+    "조사"
+   ],
+   "focus": [
+    "조사"
+   ]
+  },
+  {
+   "query": "권한",
+   "plain": [
+    "권한"
+   ],
+   "recall": [
+    "권한"
+   ],
+   "focus": [
+    "권한"
+   ]
+  },
+  {
+   "query": "제한을",
+   "plain": [
+    "제한"
+   ],
+   "recall": [
+    "제한"
+   ],
+   "focus": [
+    "제한"
+   ]
+  },
+  {
+   "query": "메모리 쓰기 풀 GRANT 를 확인해줘",
+   "plain": [
+    "메모리",
+    "쓰기",
+    "grant",
+    "확인"
+   ],
+   "recall": [
+    "메모리",
+    "쓰기",
+    "grant"
+   ],
+   "focus": [
+    "메모리",
+    "쓰기",
+    "grant"
+   ]
+  },
+  {
+   "query": "서버에서 머지했습니다",
+   "plain": [
+    "서버",
+    "머지"
+   ],
+   "recall": [
+    "서버",
+    "머지"
+   ],
+   "focus": [
+    "서버",
+    "머지"
+   ]
+  },
+  {
+   "query": "PR 레시피를 보고해라",
+   "plain": [
+    "pr",
+    "레시피",
+    "보고"
+   ],
+   "recall": [
+    "pr",
+    "레시피"
+   ],
+   "focus": [
+    "pr",
+    "레시피"
+   ]
+  },
+  {
+   "query": "@mina 이거 다시 봐줘",
+   "plain": [
+    "mina",
+    "이거",
+    "다시",
+    "봐줘"
+   ],
+   "recall": [
+    "다시",
+    "봐줘"
+   ],
+   "focus": []
+  },
+  {
+   "query": "@forge billing 부가 서비스 forge 이관",
+   "plain": [
+    "forge",
+    "billing",
+    "부가",
+    "서비스",
+    "이관"
+   ],
+   "recall": [
+    "billing",
+    "부가",
+    "서비스",
+    "forge",
+    "이관"
+   ],
+   "focus": [
+    "billing",
+    "부가",
+    "서비스",
+    "forge",
+    "이관"
+   ]
+  },
+  {
+   "query": "https://github.com/izagood/harkroom/pull/2214 를 봐라",
+   "plain": [
+    "https",
+    "github",
+    "com",
+    "izagood",
+    "harkroom",
+    "pull",
+    "2214",
+    "봐라"
+   ],
+   "recall": [
+    "봐라"
+   ],
+   "focus": [
+    "봐라"
+   ]
+  },
+  {
+   "query": "[첨부: 스크린샷.png] 화면이 깨진다",
+   "plain": [
+    "첨부",
+    "스크린샷",
+    "png",
+    "화면",
+    "깨진다"
+   ],
+   "recall": [
+    "화면",
+    "깨진다"
+   ],
+   "focus": [
+    "화면",
+    "깨진다"
+   ]
+  },
+  {
+   "query": "ui 가 progress 바에서 깨진다",
+   "plain": [
+    "ui",
+    "progress",
+    "바에서",
+    "깨진다"
+   ],
+   "recall": [
+    "ui",
+    "progress",
+    "바에서",
+    "깨진다"
+   ],
+   "focus": [
+    "ui",
+    "progress",
+    "바에서",
+    "깨진다"
+   ]
+  },
+  {
+   "query": "pr ui mcp-ui-sheet",
+   "plain": [
+    "pr",
+    "ui",
+    "mcp-ui-sheet"
+   ],
+   "recall": [
+    "pr",
+    "ui",
+    "mcp-ui-sheet"
+   ],
+   "focus": [
+    "pr",
+    "ui",
+    "mcp-ui-sheet"
+   ]
+  },
+  {
+   "query": "Mi Na 님께 보고",
+   "plain": [
+    "mi",
+    "na",
+    "님께",
+    "보고"
+   ],
+   "recall": [
+    "님께"
+   ],
+   "focus": [
+    "님께"
+   ]
+  },
+  {
+   "query": "alice 의 결정",
+   "plain": [
+    "alice",
+    "결정"
+   ],
+   "recall": [
+    "결정"
+   ],
+   "focus": [
+    "결정"
+   ]
+  },
+  {
+   "query": "hrki_abcdefghijklmnopqrstuvwx 토큰",
+   "plain": [
+    "hrki_abcdefghijklmnopqrstuvwx",
+    "토큰"
+   ],
+   "recall": [
+    "토큰"
+   ],
+   "focus": [
+    "토큰"
+   ]
+  },
+  {
+   "query": "0f3a9c2e-1111 id 조각",
+   "plain": [
+    "0f3a9c2e-1111",
+    "id",
+    "조각"
+   ],
+   "recall": [
+    "조각"
+   ],
+   "focus": [
+    "조각"
+   ]
+  },
+  {
+   "query": "1 2 34 v0 v1",
+   "plain": [
+    "34",
+    "v0",
+    "v1"
+   ],
+   "recall": [
+    "v1"
+   ],
+   "focus": [
+    "v1"
+   ]
+  },
+  {
+   "query": "---",
+   "plain": [
+    "---"
+   ],
+   "recall": [],
+   "focus": []
+  },
+  {
+   "query": "감사합니다 기억 정리",
+   "plain": [
+    "감사",
+    "기억",
+    "정리"
+   ],
+   "recall": [
+    "감사",
+    "기억",
+    "정리"
+   ],
+   "focus": [
+    "기억",
+    "정리"
+   ]
+  },
+  {
+   "query": "감사 결과는?",
+   "plain": [
+    "감사",
+    "결과"
+   ],
+   "recall": [
+    "감사",
+    "결과"
+   ],
+   "focus": [
+    "감사",
+    "결과"
+   ]
+  },
+  {
+   "query": "감사해요! 다시 계속",
+   "plain": [
+    "감사해요",
+    "다시",
+    "계속"
+   ],
+   "recall": [
+    "감사해요",
+    "다시",
+    "계속"
+   ],
+   "focus": []
+  },
+  {
+   "query": "그대로 진행해",
+   "plain": [
+    "그대",
+    "진행"
+   ],
+   "recall": [
+    "그대"
+   ],
+   "focus": []
+  },
+  {
+   "query": "그걸로 해줘",
+   "plain": [
+    "그걸",
+    "해줘"
+   ],
+   "recall": [
+    "그걸",
+    "해줘"
+   ],
+   "focus": []
+  },
+  {
+   "query": "ok again continue memory",
+   "plain": [
+    "ok",
+    "again",
+    "continue",
+    "memory"
+   ],
+   "recall": [
+    "ok",
+    "again",
+    "continue",
+    "memory"
+   ],
+   "focus": [
+    "memory"
+   ]
+  },
+  {
+   "query": "똑같이 해야해",
+   "plain": [
+    "똑같",
+    "해야"
+   ],
+   "recall": [
+    "똑같",
+    "해야"
+   ],
+   "focus": [
+    "똑같",
+    "해야"
+   ]
+  },
+  {
+   "query": "GO 언어 빌드",
+   "plain": [
+    "go",
+    "언어",
+    "빌드"
+   ],
+   "recall": [
+    "go",
+    "언어",
+    "빌드"
+   ],
+   "focus": [
+    "go",
+    "언어",
+    "빌드"
+   ]
+  },
+  {
+   "query": "한글 나눔",
+   "plain": [
+    "한글",
+    "나눔"
+   ],
+   "recall": [
+    "한글",
+    "나눔"
+   ],
+   "focus": [
+    "한글",
+    "나눔"
+   ]
+  },
+  {
+   "query": "한﻿글 나눔",
+   "plain": [
+    "나눔"
+   ],
+   "recall": [
+    "나눔"
+   ],
+   "focus": [
+    "나눔"
+   ]
+  },
+  {
+   "query": "한 글　나눔",
+   "plain": [
+    "나눔"
+   ],
+   "recall": [
+    "나눔"
+   ],
+   "focus": [
+    "나눔"
+   ]
+  },
+  {
+   "query": "이모지😀를 넣어",
+   "plain": [
+    "이모지😀",
+    "넣어"
+   ],
+   "recall": [
+    "이모지😀",
+    "넣어"
+   ],
+   "focus": [
+    "이모지😀",
+    "넣어"
+   ]
+  },
+  {
+   "query": "😀😀",
+   "plain": [
+    "😀😀"
+   ],
+   "recall": [],
+   "focus": []
+  },
+  {
+   "query": "가😀",
+   "plain": [
+    "가😀"
+   ],
+   "recall": [
+    "가😀"
+   ],
+   "focus": [
+    "가😀"
+   ]
+  },
+  {
+   "query": "Straße ÉCOLE İstanbul",
+   "plain": [
+    "straße",
+    "école",
+    "i̇stanbul"
+   ],
+   "recall": [
+    "straße",
+    "école",
+    "i̇stanbul"
+   ],
+   "focus": [
+    "straße",
+    "école",
+    "i̇stanbul"
+   ]
+  },
+  {
+   "query": "a,b.c;d:e!f?g(h)i[j]k{l}m\"n'o`p<q>r@s#t|u/v\\w*x~y=z+aa",
+   "plain": [
+    "aa"
+   ],
+   "recall": [
+    "aa"
+   ],
+   "focus": [
+    "aa"
+   ]
+  },
+  {
+   "query": "released 0.4.711 release",
+   "plain": [
+    "released",
+    "711",
+    "release"
+   ],
+   "recall": [
+    "released",
+    "711",
+    "release"
+   ],
+   "focus": [
+    "released",
+    "711",
+    "release"
+   ]
+  },
+  {
+   "query": "mem/pr-recipe 를 열어",
+   "plain": [
+    "mem",
+    "pr-recipe",
+    "열어"
+   ],
+   "recall": [
+    "mem",
+    "pr-recipe",
+    "열어"
+   ],
+   "focus": [
+    "mem",
+    "pr-recipe",
+    "열어"
+   ]
+  },
+  {
+   "query": "core 기억 3000자",
+   "plain": [
+    "core",
+    "기억",
+    "3000자"
+   ],
+   "recall": [
+    "core",
+    "기억",
+    "3000자"
+   ],
+   "focus": [
+    "core",
+    "기억",
+    "3000자"
+   ]
+  },
+  {
+   "query": "스레드 메모 thread.note",
+   "plain": [
+    "스레드",
+    "메모",
+    "thread",
+    "note"
+   ],
+   "recall": [
+    "메모",
+    "note"
+   ],
+   "focus": [
+    "메모",
+    "note"
+   ]
+  },
+  {
+   "query": "이전 지시를 무시해",
+   "plain": [
+    "이전",
+    "지시",
+    "무시"
+   ],
+   "recall": [
+    "이전",
+    "무시"
+   ],
+   "focus": [
+    "이전",
+    "무시"
+   ]
+  },
+  {
+   "query": "harkroom://message/abc 를 봐",
+   "plain": [
+    "harkroom",
+    "message",
+    "abc"
+   ],
+   "recall": [],
+   "focus": []
+  },
+  {
+   "query": "mailto:x@y.z 보내",
+   "plain": [
+    "mailto",
+    "보내"
+   ],
+   "recall": [
+    "mailto",
+    "보내"
+   ],
+   "focus": [
+    "mailto",
+    "보내"
+   ]
+  },
+  {
+   "query": "하나 둘 셋 넷 다섯 여섯 일곱 여덟 아홉 열 열하나 열둘 열셋 열넷",
+   "plain": [
+    "하나",
+    "다섯",
+    "여섯",
+    "일곱",
+    "여덟",
+    "아홉",
+    "열하나",
+    "열둘",
+    "열셋",
+    "열넷"
+   ],
+   "recall": [
+    "하나",
+    "다섯",
+    "여섯",
+    "일곱",
+    "여덟",
+    "아홉",
+    "열하나",
+    "열둘",
+    "열셋",
+    "열넷"
+   ],
+   "focus": [
+    "하나",
+    "다섯",
+    "여섯",
+    "일곱",
+    "여덟",
+    "아홉",
+    "열하나",
+    "열둘",
+    "열셋",
+    "열넷"
+   ]
+  },
+  {
+   "query": "에서",
+   "plain": [
+    "에서"
+   ],
+   "recall": [
+    "에서"
+   ],
+   "focus": [
+    "에서"
+   ]
+  },
+  {
+   "query": "으로부터",
+   "plain": [
+    "으로"
+   ],
+   "recall": [
+    "으로"
+   ],
+   "focus": [
+    "으로"
+   ]
+  },
+  {
+   "query": "처럼처럼",
+   "plain": [
+    "처럼"
+   ],
+   "recall": [
+    "처럼"
+   ],
+   "focus": [
+    "처럼"
+   ]
+  },
+  {
+   "query": "되어되어",
+   "plain": [
+    "되어"
+   ],
+   "recall": [
+    "되어"
+   ],
+   "focus": [
+    "되어"
+   ]
+  },
+  {
+   "query": "했습니다만",
+   "plain": [
+    "했습니다"
+   ],
+   "recall": [
+    "했습니다"
+   ],
+   "focus": [
+    "했습니다"
+   ]
+  },
+  {
+   "query": "배포했다",
+   "plain": [
+    "배포"
+   ],
+   "recall": [
+    "배포"
+   ],
+   "focus": [
+    "배포"
+   ]
+  },
+  {
+   "query": "배포됐다",
+   "plain": [
+    "배포"
+   ],
+   "recall": [
+    "배포"
+   ],
+   "focus": [
+    "배포"
+   ]
+  },
+  {
+   "query": "설정해주세요",
+   "plain": [
+    "설정"
+   ],
+   "recall": [
+    "설정"
+   ],
+   "focus": [
+    "설정"
+   ]
+  },
+  {
+   "query": "만들어",
+   "plain": [
+    "만들어"
+   ],
+   "recall": [
+    "만들어"
+   ],
+   "focus": [
+    "만들어"
+   ]
+  },
+  {
+   "query": "권한이",
+   "plain": [
+    "권한"
+   ],
+   "recall": [
+    "권한"
+   ],
+   "focus": [
+    "권한"
+   ]
+  },
+  {
+   "query": "사람의",
+   "plain": [
+    "사람"
+   ],
+   "recall": [],
+   "focus": []
+  },
+  {
+   "query": "작업하려",
+   "plain": [
+    "작업"
+   ],
+   "recall": [
+    "작업"
+   ],
+   "focus": [
+    "작업"
+   ]
+  },
+  {
+   "query": "kubectl exec pod",
+   "plain": [
+    "kubectl",
+    "exec",
+    "pod"
+   ],
+   "recall": [
+    "kubectl",
+    "exec",
+    "pod"
+   ],
+   "focus": [
+    "kubectl",
+    "exec",
+    "pod"
+   ]
+  },
+  {
+   "query": "rust 이식 B1c",
+   "plain": [
+    "rust",
+    "이식",
+    "b1c"
+   ],
+   "recall": [
+    "rust",
+    "이식",
+    "b1c"
+   ],
+   "focus": [
+    "rust",
+    "이식",
+    "b1c"
+   ]
+  },
+  {
+   "query": "메시지 검색",
+   "plain": [
+    "메시지",
+    "검색"
+   ],
+   "recall": [
+    "검색"
+   ],
+   "focus": [
+    "검색"
+   ]
+  },
+  {
+   "query": "reviews delegation-12 정리",
+   "plain": [
+    "reviews",
+    "delegation-12",
+    "정리"
+   ],
+   "recall": [
+    "reviews",
+    "delegation-12",
+    "정리"
+   ],
+   "focus": [
+    "reviews",
+    "delegation-12",
+    "정리"
+   ]
+  },
+  {
+   "query": "감사합니다.",
+   "plain": [
+    "감사"
+   ],
+   "recall": [
+    "감사"
+   ],
+   "focus": []
+  },
+  {
+   "query": "감사해,",
+   "plain": [
+    "감사"
+   ],
+   "recall": [
+    "감사"
+   ],
+   "focus": []
+  },
+  {
+   "query": "감사합니다만 문제",
+   "plain": [
+    "감사",
+    "문제"
+   ],
+   "recall": [
+    "감사",
+    "문제"
+   ],
+   "focus": [
+    "감사",
+    "문제"
+   ]
+  },
+  {
+   "query": "ŞIK ǅ",
+   "plain": [
+    "şik"
+   ],
+   "recall": [
+    "şik"
+   ],
+   "focus": [
+    "şik"
+   ]
+  },
+  {
+   "query": "tab\tsep\nline\rcr\u000bvt\ffeed",
+   "plain": [
+    "tab",
+    "sep",
+    "line",
+    "cr",
+    "vt",
+    "feed"
+   ],
+   "recall": [
+    "tab",
+    "sep",
+    "line",
+    "cr",
+    "vt",
+    "feed"
+   ],
+   "focus": [
+    "tab",
+    "sep",
+    "line",
+    "cr",
+    "vt",
+    "feed"
+   ]
+  },
+  {
+   "query": " ls ps",
+   "plain": [
+    "ls",
+    "ps"
+   ],
+   "recall": [
+    "ls",
+    "ps"
+   ],
+   "focus": [
+    "ls",
+    "ps"
+   ]
+  },
+  {
+   "query": "%like_escape\\",
+   "plain": [
+    "%like_escape"
+   ],
+   "recall": [
+    "%like_escape"
+   ],
+   "focus": [
+    "%like_escape"
+   ]
+  },
+  {
+   "query": "aa aaa aaaa",
+   "plain": [
+    "aa",
+    "aaa",
+    "aaaa"
+   ],
+   "recall": [
+    "aa",
+    "aaa",
+    "aaaa"
+   ],
+   "focus": [
+    "aa",
+    "aaa",
+    "aaaa"
+   ]
+  },
+  {
+   "query": "ui-ui ui_ui",
+   "plain": [
+    "ui-ui",
+    "ui_ui"
+   ],
+   "recall": [
+    "ui-ui",
+    "ui_ui"
+   ],
+   "focus": [
+    "ui-ui",
+    "ui_ui"
+   ]
+  },
+  {
+   "query": "Ab3 x9 zz",
+   "plain": [
+    "ab3",
+    "x9",
+    "zz"
+   ],
+   "recall": [
+    "ab3",
+    "x9",
+    "zz"
+   ],
+   "focus": [
+    "ab3",
+    "x9",
+    "zz"
+   ]
+  }
+ ],
+ "threadState": [
+  {
+   "slug": "core",
+   "want": false
+  },
+  {
+   "slug": "mem/review-2214",
+   "want": true
+  },
+  {
+   "slug": "mem/reviews",
+   "want": true
+  },
+  {
+   "slug": "mem/delegation",
+   "want": true
+  },
+  {
+   "slug": "mem/delegations-open",
+   "want": true
+  },
+  {
+   "slug": "mem/x/review_1",
+   "want": true
+  },
+  {
+   "slug": "mem/pr-review-loop",
+   "want": false
+  },
+  {
+   "slug": "mem/review#3",
+   "want": true
+  },
+  {
+   "slug": "mem/foo/delegation-12/bar",
+   "want": true
+  },
+  {
+   "slug": "mem/my-reviews-#4",
+   "want": true
+  },
+  {
+   "slug": "mem/reviewer",
+   "want": false
+  },
+  {
+   "slug": "mem/deploy/review",
+   "want": true
+  },
+  {
+   "slug": "review-1",
+   "want": false
+  },
+  {
+   "slug": "mem/a-review9",
+   "want": true
+  }
+ ],
+ "rows": [
+  {
+   "slug": "core",
+   "description": null,
+   "kind": "topic",
+   "value": "머지 규칙 권한",
+   "updatedAt": "2026-11-01T03:04:05.006Z"
+  },
+  {
+   "slug": "mem/pr-recipe",
+   "description": "PR 만들기·검증·CI·권한·머지 규칙",
+   "kind": "procedure",
+   "value": "gh pr create 전에 머지 래퍼. ui 시안 확인. 권한 권한 권한",
+   "updatedAt": "2026-11-02T03:04:05.006Z"
+  },
+  {
+   "slug": "mem/merge-wrapper-queue-unstable",
+   "description": "머지 래퍼 1회 승인·큐·UNSTABLE",
+   "kind": "topic",
+   "value": "머지 큐에 넣음. pr 상태",
+   "updatedAt": "2026-11-03T03:04:05.006Z"
+  },
+  {
+   "slug": "mem/journal/e2cc9c57",
+   "description": "머지 경위",
+   "kind": "topic",
+   "value": "머지",
+   "updatedAt": "2026-11-04T03:04:05.006Z"
+  },
+  {
+   "slug": "mem/j1",
+   "description": "머지 기록",
+   "kind": "journal",
+   "value": "머지",
+   "updatedAt": "2026-11-05T03:04:05.006Z"
+  },
+  {
+   "slug": "mem/ui/progress-bar",
+   "description": "progress 바 깨짐",
+   "kind": "topic",
+   "value": "ui ui ui progress",
+   "updatedAt": "2026-11-06T03:04:05.006Z"
+  },
+  {
+   "slug": "mem/ui/sheet",
+   "description": "mcp-ui-sheet 시트 ui",
+   "kind": "topic",
+   "value": "sheet",
+   "updatedAt": "2026-11-07T03:04:05.006Z"
+  },
+  {
+   "slug": "mem/deploy/rollback",
+   "description": "배포 되돌리기 — 감사 결과",
+   "kind": "procedure",
+   "value": "helm rollback. 배포 배포",
+   "updatedAt": "2026-11-08T03:04:05.006Z"
+  },
+  {
+   "slug": "mem/memory-system-history",
+   "description": "기억 체계 경위",
+   "kind": "topic",
+   "value": "기억 정리 memory",
+   "updatedAt": "2026-11-09T03:04:05.006Z"
+  },
+  {
+   "slug": "mem/dev/disk-hygiene-rust-builds",
+   "description": "Rust target 정리",
+   "kind": "topic",
+   "value": "cargo target 지우기 rust",
+   "updatedAt": "2026-11-10T03:04:05.006Z"
+  },
+  {
+   "slug": "mem/b-tie",
+   "description": "동점 시험 rust",
+   "kind": "topic",
+   "value": "x",
+   "updatedAt": "2026-11-11T03:04:05.006Z"
+  },
+  {
+   "slug": "mem/a-tie",
+   "description": "동점 시험 rust",
+   "kind": "topic",
+   "value": "x",
+   "updatedAt": "2026-11-12T03:04:05.006Z"
+  },
+  {
+   "slug": "mem/MixedCase",
+   "description": "Kubectl 사용",
+   "kind": "topic",
+   "value": "KUBECTL exec",
+   "updatedAt": "2026-11-13T03:04:05.006Z"
+  },
+  {
+   "slug": "mem/mcpui-lookbehind",
+   "description": "mcpui 꼴 pr2 ab3",
+   "kind": "topic",
+   "value": "xui uix ui",
+   "updatedAt": "2026-11-14T03:04:05.006Z"
+  },
+  {
+   "slug": "mem/again-note",
+   "description": "다시 제안 금지",
+   "kind": "topic",
+   "value": "다시",
+   "updatedAt": "2026-11-15T03:04:05.006Z"
+  }
+ ],
+ "rank": [
+  {
+   "query": "머지 권한 확인",
+   "terms": [
+    "머지",
+    "권한"
+   ],
+   "hits": [
+    {
+     "slug": "mem/pr-recipe",
+     "score": 8,
+     "nameHits": 2,
+     "termHits": [
+      "머지",
+      "권한"
+     ]
+    },
+    {
+     "slug": "mem/merge-wrapper-queue-unstable",
+     "score": 4,
+     "nameHits": 1,
+     "termHits": [
+      "머지"
+     ]
+    }
+   ]
+  },
+  {
+   "query": "PR 머지 래퍼",
+   "terms": [
+    "pr",
+    "머지",
+    "래퍼"
+   ],
+   "hits": [
+    {
+     "slug": "mem/pr-recipe",
+     "score": 9,
+     "nameHits": 2,
+     "termHits": [
+      "pr",
+      "머지"
+     ]
+    },
+    {
+     "slug": "mem/merge-wrapper-queue-unstable",
+     "score": 8,
+     "nameHits": 2,
+     "termHits": [
+      "머지",
+      "래퍼"
+     ]
+    }
+   ]
+  },
+  {
+   "query": "ui progress",
+   "terms": [
+    "ui",
+    "progress"
+   ],
+   "hits": [
+    {
+     "slug": "mem/ui/progress-bar",
+     "score": 8,
+     "nameHits": 2,
+     "termHits": [
+      "ui",
+      "progress"
+     ]
+    },
+    {
+     "slug": "mem/ui/sheet",
+     "score": 3,
+     "nameHits": 1,
+     "termHits": [
+      "ui"
+     ]
+    }
+   ]
+  },
+  {
+   "query": "ui sheet",
+   "terms": [
+    "ui",
+    "sheet"
+   ],
+   "hits": [
+    {
+     "slug": "mem/ui/sheet",
+     "score": 7,
+     "nameHits": 2,
+     "termHits": [
+      "ui",
+      "sheet"
+     ]
+    },
+    {
+     "slug": "mem/ui/progress-bar",
+     "score": 4,
+     "nameHits": 1,
+     "termHits": [
+      "ui"
+     ]
+    }
+   ]
+  },
+  {
+   "query": "rust 동점",
+   "terms": [
+    "rust",
+    "동점"
+   ],
+   "hits": [
+    {
+     "slug": "mem/a-tie",
+     "score": 6,
+     "nameHits": 2,
+     "termHits": [
+      "rust",
+      "동점"
+     ]
+    },
+    {
+     "slug": "mem/b-tie",
+     "score": 6,
+     "nameHits": 2,
+     "termHits": [
+      "rust",
+      "동점"
+     ]
+    },
+    {
+     "slug": "mem/dev/disk-hygiene-rust-builds",
+     "score": 4,
+     "nameHits": 1,
+     "termHits": [
+      "rust"
+     ]
+    }
+   ]
+  },
+  {
+   "query": "배포 되돌리기",
+   "focus": "감사합니다",
+   "terms": [
+    "배포",
+    "되돌리기"
+   ],
+   "hits": []
+  },
+  {
+   "query": "배포 되돌리기",
+   "focus": "감사 결과는?",
+   "terms": [
+    "감사",
+    "결과",
+    "배포",
+    "되돌리기"
+   ],
+   "hits": [
+    {
+     "slug": "mem/deploy/rollback",
+     "score": 13,
+     "nameHits": 4,
+     "termHits": [
+      "감사",
+      "결과",
+      "배포",
+      "되돌리기"
+     ]
+    }
+   ]
+  },
+  {
+   "query": "머지 큐",
+   "focus": "다시 봐줘",
+   "terms": [
+    "머지"
+   ],
+   "hits": []
+  },
+  {
+   "query": "머지 큐 pr",
+   "focus": "unstable 이면?",
+   "terms": [
+    "unstable",
+    "이면",
+    "머지",
+    "pr"
+   ],
+   "hits": [
+    {
+     "slug": "mem/merge-wrapper-queue-unstable",
+     "score": 8,
+     "nameHits": 2,
+     "termHits": [
+      "unstable",
+      "머지"
+     ]
+    }
+   ]
+  },
+  {
+   "query": "kubectl exec",
+   "terms": [
+    "kubectl",
+    "exec"
+   ],
+   "hits": [
+    {
+     "slug": "mem/MixedCase",
+     "score": 5,
+     "nameHits": 1,
+     "termHits": [
+      "kubectl"
+     ]
+    }
+   ]
+  },
+  {
+   "query": "기억 정리 memory",
+   "terms": [
+    "기억",
+    "정리",
+    "memory"
+   ],
+   "hits": [
+    {
+     "slug": "mem/memory-system-history",
+     "score": 9,
+     "nameHits": 2,
+     "termHits": [
+      "기억",
+      "memory"
+     ]
+    },
+    {
+     "slug": "mem/dev/disk-hygiene-rust-builds",
+     "score": 3,
+     "nameHits": 1,
+     "termHits": [
+      "정리"
+     ]
+    }
+   ]
+  },
+  {
+   "query": "다시 제안",
+   "terms": [
+    "다시",
+    "제안"
+   ],
+   "hits": [
+    {
+     "slug": "mem/again-note",
+     "score": 7,
+     "nameHits": 2,
+     "termHits": [
+      "다시",
+      "제안"
+     ]
+    }
+   ]
+  },
+  {
+   "query": "@mina 머지",
+   "terms": [
+    "머지"
+   ],
+   "hits": [
+    {
+     "slug": "mem/merge-wrapper-queue-unstable",
+     "score": 4,
+     "nameHits": 1,
+     "termHits": [
+      "머지"
+     ]
+    },
+    {
+     "slug": "mem/pr-recipe",
+     "score": 4,
+     "nameHits": 1,
+     "termHits": [
+      "머지"
+     ]
+    }
+   ]
+  },
+  {
+   "query": "Mi Na 권한",
+   "terms": [
+    "권한"
+   ],
+   "hits": [
+    {
+     "slug": "mem/pr-recipe",
+     "score": 4,
+     "nameHits": 1,
+     "termHits": [
+      "권한"
+     ]
+    }
+   ]
+  },
+  {
+   "query": "",
+   "terms": [],
+   "hits": []
+  },
+  {
+   "query": "cargo target rust",
+   "focus": "target",
+   "terms": [
+    "target",
+    "cargo",
+    "rust"
+   ],
+   "hits": [
+    {
+     "slug": "mem/dev/disk-hygiene-rust-builds",
+     "score": 9,
+     "nameHits": 2,
+     "termHits": [
+      "target",
+      "rust"
+     ]
+    }
+   ]
+  }
+ ]
+}
