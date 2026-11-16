@@ -390,6 +390,8 @@ struct Current {
     turn_pi_home: Option<PathBuf>,
     /// omp 턴의 스레드 자리(o2) — 빈 cwd·스레드 agentDir. omp 가 아니면 `None`.
     omp_thread: Option<crate::omp_home::OmpThreadDirs>,
+    /// 이 시도에 실을 추가 MCP(harkroom·avcs 밖, 정본 `readTurnMcp`) — codex 만 argv 로 싣는다. 그 밖의 하네스는 빈 표.
+    extra_mcp: Vec<(String, crate::turn_files::McpServerEntry)>,
 }
 
 impl Current {
@@ -600,6 +602,25 @@ impl<'a, P: PrepareIo, S: PtyTurnSink> MentionParts<'a, P, S> {
             },
             turn_id,
         ))
+    }
+
+    /// 이 시도의 추가 MCP(정본 `mentionTurn.ts` 1572 `readTurnMcp`) — **턴마다 다시 읽는다**: 오퍼레이터가 OAuth 토큰을
+    /// refresh 하면 설정 파일에 새 토큰을 넣는다. codex 만 파일을 못 받아 argv(`-c mcp_servers.<이름>.*`)로 싣는다 —
+    /// 그 밖의 하네스는 읽지 않는다. 못 읽으면 경고하고 빈 표로 띄운다(정본은 기동 때 읽은 표로 돌아가지만 Rust 러너엔 그 표가 없다).
+    fn turn_extra_mcp(&self) -> Vec<(String, crate::turn_files::McpServerEntry)> {
+        if self.harness != crate::adapter::AgentHarness::Codex
+            || self.base.mcp_config_path.is_empty()
+        {
+            return Vec::new();
+        }
+        crate::turn_files::read_extra_mcp_servers(Path::new(self.base.mcp_config_path))
+            .unwrap_or_else(|e| {
+                eprintln!(
+                    "[mentionTurn] {}: 추가 MCP 를 읽지 못해 빼고 띄운다: {e:?}",
+                    self.key
+                );
+                Vec::new()
+            })
     }
 
     /// 이 시도의 감시 자리 — `spawn` 이 sink 와 감시 루프에 넘기는 것. `bind_live(Some)` 이 시도마다 새로 만든다.
@@ -1114,6 +1135,7 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             harness_notice,
             turn_pi_home,
             omp_thread,
+            extra_mcp: self.turn_extra_mcp(),
         });
         Ok(AttemptPrep {
             key: self.key.clone(),
@@ -1649,6 +1671,7 @@ fn attempt_cmd<'s>(
     cmd.opencode_home = homes.opencode;
     cmd.pi_home = homes.pi;
     cmd.opencode_turn_config = homes.opencode_turn_config;
+    cmd.extra_mcp_servers = &c.extra_mcp;
     // omp: 러너 홈·스레드 자리·작업 폴더(조립이 cwd 가 작업 폴더 밖인지 본다). 스레드 자리가 없으면 조립에서 안 뜬다.
     if let Some(t) = c.omp_thread.as_ref() {
         cmd.omp_home = homes.omp;
