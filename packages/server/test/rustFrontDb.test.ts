@@ -1326,6 +1326,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // S5.3 C3b-3c — 권한 카드 거절(`decide_core::DENY_PRIVILEGES` + 잠금 함수 EXECUTE, 두 겹). 없으면 「permission deny core off」.
         `grant update (status, decided_at, decided_by, grant_expires_at, grant_mode) on permission_request to ${rw}`,
         `grant execute on function permission_decide_lock(uuid, uuid, uuid) to ${rw}`,
+        // S5.3 B2 — 권한 카드 승인(`decide_approve::APPROVE_PRIVILEGES`). 없으면 「permission approve core off」.
+        `grant insert on command_grant to ${rw}`,
+        `grant insert on account_grant to ${rw}`,
+        `grant update (granted_by, granted_at, expires_at, allow_agent_cause) on account_grant to ${rw}`,
         // S5.3 C6a-1 — 인박스 읽음 표시(`core/inbox_read.rs::INBOX_READ_PRIVILEGES`). 칸 권한 하나. 없으면 「inbox read core off」.
         `grant update (read_at) on inbox to ${rw}`,
         // S5.3 C6b-2 — 턴 임대 세 줄(`core/turn_lease.rs::TURN_LEASE_PRIVILEGES`). 없으면 「turn lease core off」.
@@ -4156,6 +4160,156 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           front5?.kill('SIGTERM');
           await db.pool.query(`grant execute on function permission_decide_lock(uuid, uuid, uuid) to ${rw}`);
         }
+      }
+      // S5.3 B2 — 권한 카드 **승인**(코어 `decide_approve.rs`, 입구 `decide_routes.rs`). 소유자의 tool `approve`(7일 `tool.allow`)·
+      // command `approve_once`·`approve_hour`(명령 다시 판정 → 1시간 `command_grant`, 요청 줄의 `file_digests` 를 옮김 — security ②-5).
+      // TS·Rust 에 각자의 요청·카드·묶음으로 같은 시나리오를 돌려 응답·요청 줄·카드 meta·grant 줄·감사·깨움을 견준다.
+      {
+        expect(f.log(), '승인 칸을 다 주면 켜진다').toContain('front: permission approve core on');
+        expect(f.log()).toContain('"POST /agents/{id}/permission-requests/{requestId}/approve_hour"');
+        const H = { kind: 'human' };
+        const KUBE = 'kubectl --kubeconfig /tmp/kc.yaml --context rc';
+        const DIG = [{ path: '/tmp/kc.yaml', sha256: 'a'.repeat(64) }];
+        const preq = async (kind: 'tool' | 'command', target: string, options: string[], extraMeta: Record<string, unknown> = {}) => {
+          const req = (await db.pool.query<{ id: string }>(
+            `insert into permission_request(agent_id, kind, target, reason, channel_id, thread_root_id, expires_at, file_digests)
+             values ($1, $2, $3, 'x', $4, gen_random_uuid(), now() + interval '1 hour', $5::jsonb) returning id::text`,
+            [agent.accountId, kind, target, todayId, JSON.stringify(kind === 'command' ? DIG : [])])).rows[0]!.id;
+          const card = await say(`@admin ${target}`, {
+            meta: {
+              kind: 'ask', ask: { prompt: '허락할까요?', options: options.map((id) => ({ id, label: id })), to: H },
+              permissionRequest: { requestId: req, status: 'pending', ...extraMeta },
+            },
+          });
+          await db.pool.query(`update permission_request set card_message_id = $2 where id = $1`, [req, card]);
+          return { req, card };
+        };
+        const TOOL = ['approve', 'deny'];
+        const CMD = ['approve_once', 'approve_hour', 'deny'];
+        const side = async (tag: string) => {
+          const toolRest = await preq('tool', `Bash(echo ${tag} rest:*)`, TOOL);
+          const toolOld = await preq('tool', `Bash(echo ${tag} old:*)`, TOOL);
+          // 만료된 옛 grant(allow_agent_cause true) — 소유자 승인이 덮는다.
+          await db.pool.query(
+            `insert into account_grant (account_id, capability, scope, granted_by, expires_at, allow_agent_cause)
+             values ($1, 'tool.allow', $2, $3, now() - interval '1 day', true)`,
+            [agent.accountId, `tool:${todayId}:Bash(echo ${tag} old:*)`, member.accountId]);
+          const toolCard = await preq('tool', `Bash(echo ${tag} card:*)`, TOOL);
+          const toolBundle = await preq('tool', `Bash(echo ${tag} bundle:*)`, TOOL);
+          const toolMember = await preq('tool', `Bash(echo ${tag} member:*)`, TOOL);
+          const cmdRest = await preq('command', `${KUBE} get pod ${tag}-rest`, CMD);
+          const cmdCard = await preq('command', `${KUBE} get pod ${tag}-card`, CMD);
+          const cmdOld = await preq('command', `${KUBE} get pod ${tag}-old`, ['approve', 'deny']);
+          const cmdBad = await preq('command', `${KUBE}  get   pod ${tag}-bad`, CMD);
+          const cmdOnce = await preq('command', `${KUBE} get pod ${tag}-once`, CMD, { once: { number: 1, headSha: 'b'.repeat(40) } });
+          const B = await say('묶음', {
+            author: admin.accountId,
+            meta: { kind: 'askBundle', askBundle: { items: [toolBundle.card].map((rootId) => ({ rootId, askerId: null, channelId: todayId, threadRootId: null, prompt: '허락할까요?', options: TOOL.map((id) => ({ id, label: id })) })) } },
+          });
+          return {
+            toolRestReq: toolRest.req, toolRestCard: toolRest.card, toolOldReq: toolOld.req, toolOldCard: toolOld.card,
+            toolCardReq: toolCard.req, toolCardCard: toolCard.card, toolBundleReq: toolBundle.req, toolBundleCard: toolBundle.card,
+            toolMemberReq: toolMember.req, toolMemberCard: toolMember.card, cmdRestReq: cmdRest.req, cmdRestCard: cmdRest.card,
+            cmdCardReq: cmdCard.req, cmdCardCard: cmdCard.card, cmdOldReq: cmdOld.req, cmdOldCard: cmdOld.card,
+            cmdBadReq: cmdBad.req, cmdBadCard: cmdBad.card, cmdOnceReq: cmdOnce.req, cmdOnceCard: cmdOnce.card, B,
+          };
+        };
+        type Side = Awaited<ReturnType<typeof side>>;
+        const T = await side('tside');
+        const R = await side('rside');
+        const labelOf = (sd: Side) => (v: unknown) => {
+          for (const [k, id] of Object.entries(sd)) if (v === id) return k.toUpperCase();
+          if (typeof v === 'string') return v.replace(/[tr]side/g, 'SIDE');
+          return v === agent.accountId ? 'AGENT' : v === admin.accountId ? 'ADMIN' : v;
+        };
+        const shape = (sd: Side) => (v: unknown): unknown => {
+          if (Array.isArray(v)) return v.map(shape(sd));
+          if (v && typeof v === 'object') {
+            const o: Record<string, unknown> = {};
+            for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+              o[k] = /At$/.test(k) ? (x === null ? null : typeof x) : k === 'seq' || k === 'commandGrantId' || k === 'threadRootId' ? typeof x : shape(sd)(x);
+            }
+            return o;
+          }
+          const l = labelOf(sd)(v);
+          return l === agent.accountId ? 'AGENT' : l === admin.accountId ? 'ADMIN' : l === member.accountId ? 'MEMBER' : l;
+        };
+        const restP = (r: string, d: string) => `/agents/${agent.accountId}/permission-requests/${r}/${d}`;
+        const ansP = (m: string) => `/channels/${todayId}/messages/${m}/ask-answer`;
+        const bAnsP = (m: string) => `/channels/${todayId}/messages/${m}/ask-bundle/answer`;
+        const run = async (base: string, sd: Side) => {
+          const out: { step: string; status: number; code?: string; body: unknown }[] = [];
+          const step = async (name: string, path: string, body: unknown, token = A) => {
+            const r = await callX(base, 'POST', path, body, token);
+            out.push({ step: name, status: r.status, code: r.code, body: r.status === 200 ? shape(sd)(r.json) : null });
+          };
+          await step('REST tool approve', restP(sd.toolRestReq, 'approve'), {});
+          await step('REST 다시 → 409', restP(sd.toolRestReq, 'approve'), {});
+          await step('REST tool approve — 만료 grant 덮기', restP(sd.toolOldReq, 'approve'), {});
+          await step('REST tool approve_hour → TS 409 bad_decision', restP(sd.toolCardReq, 'approve_hour'), {});
+          await step('REST 멤버 tool approve → TS', restP(sd.toolMemberReq, 'approve'), {}, member.token);
+          await step('카드 tool approve', ansP(sd.toolCardCard), { optionId: 'approve' });
+          await step('묶음 tool approve', bAnsP(sd.B), { rootId: sd.toolBundleCard, optionId: 'approve' });
+          await step('REST command approve_once', restP(sd.cmdRestReq, 'approve_once'), {});
+          await step('카드 command approve_hour', ansP(sd.cmdCardCard), { optionId: 'approve_hour' });
+          await step('REST command approve(옛 앱) → TS 가 1회 grant', restP(sd.cmdOldReq, 'approve'), {});
+          await step('REST command 판정 안 맞음 → 409 not_grantable', restP(sd.cmdBadReq, 'approve_hour'), {});
+          await step('카드 command approve_once + 카드 once → TS 409 not_once', ansP(sd.cmdOnceCard), { optionId: 'approve_once' });
+          return out;
+        };
+        const gc = () => busEvents.filter((e) => (e as { type?: string; accountId?: string }).type === 'grant.changed'
+          && (e as { accountId?: string }).accountId === agent.accountId).length;
+        const gc0 = gc();
+        const tsOut = await run(tsUrl, T);
+        const rsOut = await run(rsUrl, R);
+        expect(rsOut).toEqual(tsOut);
+        const st = (s: string) => tsOut.find((o) => o.step === s);
+        for (const s of ['REST tool approve', 'REST tool approve — 만료 grant 덮기', '카드 tool approve', '묶음 tool approve', 'REST command approve_once', '카드 command approve_hour']) {
+          expect(st(s)?.status, s).toBe(200);
+        }
+        expect(st('REST command 판정 안 맞음 → 409 not_grantable')?.code).toBe('not_grantable');
+        expect(st('REST 다시 → 409')?.code).toBe('already_decided');
+        const ids = (sd: Side) => JSON.stringify(sd);
+        const rows = async (sd: Side) => (await db.pool.query(
+          `select k, p.status, p.decided_by::text as by, p.grant_mode as mode, p.grant_expires_at is not null as has_exp,
+                  round(extract(epoch from (p.grant_expires_at - p.decided_at))) as ttl
+             from jsonb_each_text($1::jsonb) j(k, id) join permission_request p on p.id = j.id::uuid order by k`, [ids(sd)])).rows.map((r) => shape(sd)(r));
+        expect(await rows(R)).toEqual(await rows(T));
+        const cards = async (sd: Side) => (await db.pool.query(
+          `select k, m.meta->'permissionRequest' as pr, m.meta->'ask' as ask from jsonb_each_text($1::jsonb) j(k, id)
+             join message m on m.id = j.id::uuid where m.meta ? 'permissionRequest' order by k`, [ids(sd)])).rows.map((r) => shape(sd)(r));
+        expect(await cards(R)).toEqual(await cards(T));
+        const grants = async (tag: string, sd: Side) => (await db.pool.query(
+          `select scope, granted_by::text as by, allow_agent_cause as aac, round(extract(epoch from (expires_at - granted_at))) > 600000 as week
+             from account_grant where account_id = $1 and capability = 'tool.allow' and scope like $2 order by scope`,
+          [agent.accountId, `tool:${todayId}:Bash(echo ${tag} %`])).rows.map((r) => shape(sd)(r));
+        const tG = await grants('tside', T);
+        expect(tG.length, 'tool grant 넷(REST·덮기·카드·묶음) + 멤버 TS').toBeGreaterThanOrEqual(4);
+        expect(await grants('rside', R)).toEqual(tG);
+        const cmds = async (tag: string, sd: Side) => (await db.pool.query(
+          `select command, single_use, file_digests, granted_by::text as by, round(extract(epoch from (expires_at - created_at))) as ttl,
+                  (select k from jsonb_each_text($3::jsonb) j(k, id) where j.id::uuid = request_id) as req
+             from command_grant where agent_id = $1 and command like $2 order by command`,
+          [agent.accountId, `% ${tag}-%`, ids(sd)])).rows.map((r) => shape(sd)(r));
+        const tC = await cmds('tside', T);
+        expect(tC.length, 'command grant 셋(1회·1시간 Rust, 옛 approve 는 TS)').toBe(3);
+        expect(JSON.stringify(tC), '②-5 — 요청 줄의 file_digests 를 옮긴다').toContain('a'.repeat(64));
+        expect(await cmds('rside', R)).toEqual(tC);
+        const audits = async (sd: Side) => (await db.pool.query(
+          `select action, actor_id::text as actor, target, detail from audit_log
+            where action in ('permission.approved', 'grant.given') and detail->>'requestId' = any($1::text[])`,
+          [Object.values(sd)])).rows.map((r) => shape(sd)(r)).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+        const tAud = await audits(T);
+        expect(tAud.length).toBeGreaterThanOrEqual(10);
+        expect(await audits(R)).toEqual(tAud);
+        const wakes = async (sd: Side) => (await db.pool.query(
+          `select message_id::text as m, reason as r from inbox where message_id = any($1::uuid[]) and reason = 'ask_answered' order by message_id`,
+          [Object.values(sd)])).rows.map((r) => shape(sd)(r)).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+        expect(await wakes(R)).toEqual(await wakes(T));
+        // Rust 가 맡았다 — grant.changed 가 outbox(`busEvents`)에 있다.
+        const until6 = Date.now() + 10_000;
+        while (gc() - gc0 < 6 && Date.now() < until6) await new Promise((res) => setTimeout(res, 100));
+        expect(gc() - gc0, 'Rust 승인 여섯의 grant.changed').toBeGreaterThanOrEqual(6);
       }
       // S5.3 C3b-3d — `GET /agents/{id}/decide-check`(카드 버튼을 그릴지). 잠그지 않는 판정(3a 판정 SQL 그대로)이라 읽기 풀만 쓴다.
       // 범위(owner·list·channel·community) × 스위치(user_decide) × 행위자(소유자·멤버·채널 밖 멤버, 세션·PAT·에이전트) × 채널

@@ -16,6 +16,7 @@
 //! 카드 `message.updated` 를 낸다. 답 적기가 실패해도 결정은 남는다(TS 도 결정 커밋 뒤의 일이다).
 use super::ask::{AskState, ok_json, read_ask_row, record_permission_answer, to_ts};
 use super::audience::audience_on;
+use super::decide_approve::{ApproveArgs, ApproveOutcome, decide_approve};
 use super::decide_core::{DecisionRef, DenyArgs, DenyOutcome, decide_deny, resolve_decision};
 use super::msg_read::{channel_visible, is_uuid, message_by_id};
 use crate::auth::{Account, Auth, Via};
@@ -65,9 +66,18 @@ async fn deny_then_answer(
 
 /// TS `answerOptionId(card, ['deny'])` — 카드 선택지에 `deny` 가 있으면 그것, 없으면 그래도 `deny`(깨우지 못할 뿐).
 async fn answer_card(st: &AskState, card: &str, actor: &str) -> sqlx::Result<()> {
+    answer_card_with(st, card, actor, DENY_OPTION).await
+}
+
+async fn answer_card_with(
+    st: &AskState,
+    card: &str,
+    actor: &str,
+    option: &str,
+) -> sqlx::Result<()> {
     let mut tx = st.write.begin().await?;
     // 카드에 없는 선택지면 `UnknownOption` 으로 끝나 깨우지 못한다 — TS 와 같다.
-    let _ = record_permission_answer(&st.read, &mut tx, card, actor, DENY_OPTION).await?;
+    let _ = record_permission_answer(&st.read, &mut tx, card, actor, option).await?;
     if let Some((_, channel, _)) = read_ask_row(&mut tx, card).await?
         && let Some(row) = message_by_id(&mut *tx, card).await?
     {
@@ -299,3 +309,306 @@ pub async fn deny_route(
         Taken::Hand => to_ts(st.up.clone(), peer, parts, bytes).await,
     }
 }
+
+// ───────────────────────── S5.3 B2 승인(approve) ─────────────────────────
+
+/// Rust 가 맡을 수 있는 승인 선택지(꼴은 코어가 잠근 요청 줄로 다시 가른다 — tool·approve, command·approve_once/hour).
+pub fn is_approve_option(option: &str) -> bool {
+    matches!(option, "approve" | "approve_once" | "approve_hour")
+}
+
+/// TS `onceFromCard` 가 값을 만드는 꼴인가 — `permissionRequest.once` 에 숫자 `number` 와 문자열 `headSha`.
+const CARD_HAS_ONCE: &str = "select coalesce(jsonb_typeof(meta->'permissionRequest'->'once'->'number') = 'number' \
+     and jsonb_typeof(meta->'permissionRequest'->'once'->'headSha') = 'string', false) from message where id = $1::uuid";
+
+/// TS `answerOptionId` — 후보 중 카드 선택지에 있는 첫 것, 없으면 첫 후보.
+const CARD_OPTION_IDS: &str = "select coalesce(array(select jsonb_array_elements(meta->'ask'->'options')->>'id'), '{}') \
+     from message where id = $1::uuid";
+
+async fn pick_answer(
+    read: &PgPool,
+    card: &str,
+    candidates: &[&'static str],
+) -> sqlx::Result<&'static str> {
+    let ids: Option<Vec<Option<String>>> = sqlx::query_scalar(CARD_OPTION_IDS)
+        .bind(card)
+        .fetch_optional(read)
+        .await?;
+    let ids = ids.unwrap_or_default();
+    Ok(candidates
+        .iter()
+        .find(|c| ids.iter().any(|i| i.as_deref() == Some(**c)))
+        .copied()
+        .unwrap_or(candidates[0]))
+}
+
+/// 승인 코어 한 번 + 커밋 뒤 카드 답. `Err` 는 곧 응답(internal)이다.
+#[allow(clippy::result_large_err)]
+async fn approve_then_answer(
+    st: &AskState,
+    pool: &PgPool,
+    args: ApproveArgs<'_>,
+) -> Result<ApproveOutcome, Response> {
+    let out = match decide_approve(pool, args).await {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("front: permission approve failed ({e:?})");
+            return Err(json_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "internal error",
+            ));
+        }
+    };
+    if let ApproveOutcome::Granted {
+        card_message_id: Some(card),
+        answer_candidates,
+        ..
+    } = &out
+    {
+        let r = match pick_answer(&st.read, card, answer_candidates).await {
+            Ok(option) => answer_card_with(st, card, args.actor_id, option).await,
+            Err(e) => Err(e),
+        };
+        if let Err(e) = r {
+            return Err(internal(e));
+        }
+    }
+    Ok(out)
+}
+
+/// REST 승인 — `POST /agents/{id}/permission-requests/{requestId}/{approve|approve_once|approve_hour}`.
+/// 응답은 TS 와 같은 `{ status, grantExpiresAt, cardMessageId, grantMode? }`.
+pub async fn rest_approve(
+    st: &AskState,
+    me: &Account,
+    auth: &Auth,
+    agent: &str,
+    request: &str,
+    option: &str,
+) -> Taken {
+    let Some(pool) = st.approve.as_ref() else {
+        return Taken::Hand;
+    };
+    if !is_approve_option(option)
+        || !is_uuid(agent)
+        || !is_uuid(request)
+        || !human_session(me, auth)
+    {
+        return Taken::Hand;
+    }
+    let peek: sqlx::Result<Option<String>> =
+        sqlx::query_scalar("select agent_id::text from permission_request where id = $1::uuid")
+            .bind(request)
+            .fetch_optional(&st.read)
+            .await;
+    match peek {
+        Ok(Some(a)) if a == agent => {}
+        Ok(_) => return Taken::Hand,
+        Err(e) => return Taken::Done(internal(e)),
+    }
+    let args = ApproveArgs {
+        agent_id: agent,
+        request_id: request,
+        actor_id: &me.id,
+        option,
+        // REST 는 카드를 거치지 않는다(TS: `ref.cardMessageId` null → onceFromCard 안 부름).
+        has_once: false,
+        bundle_message_id: None,
+    };
+    Taken::Done(match approve_then_answer(st, pool, args).await {
+        Err(r) => r,
+        Ok(ApproveOutcome::HandToTs) => return Taken::Hand,
+        Ok(ApproveOutcome::Refused {
+            status,
+            code,
+            message,
+        }) => refusal(status, code, &message),
+        Ok(ApproveOutcome::Granted {
+            card_message_id,
+            grant_expires_at,
+            grant_mode,
+            ..
+        }) => {
+            let mut body = json!({
+                "status": "granted", "grantExpiresAt": grant_expires_at, "cardMessageId": card_message_id,
+            });
+            if let Some(m) = grant_mode {
+                body["grantMode"] = json!(m);
+            }
+            ok_json(body.to_string())
+        }
+    })
+}
+
+async fn card_has_once(read: &PgPool, card: &str, option: &str) -> sqlx::Result<bool> {
+    // TS 는 `approve_once` 일 때만 카드에서 1회 머지 값을 읽는다.
+    if option != "approve_once" {
+        return Ok(false);
+    }
+    Ok(sqlx::query_scalar::<_, bool>(CARD_HAS_ONCE)
+        .bind(card)
+        .fetch_optional(read)
+        .await?
+        .unwrap_or(false))
+}
+
+/// 2'. ask-answer 의 권한 카드 승인. `gate` 뒤에 부른다.
+pub async fn answer_card_approve(
+    st: &AskState,
+    me: &Account,
+    auth: &Auth,
+    card: &str,
+    option: &str,
+) -> Taken {
+    let Some(pool) = st.approve.as_ref() else {
+        return Taken::Hand;
+    };
+    if !is_approve_option(option) || !human_session(me, auth) {
+        return Taken::Hand;
+    }
+    let (request, agent) = match permission_card(st, card).await {
+        Ok(Some(p)) => p,
+        Ok(None) => return Taken::Hand,
+        Err(e) => return Taken::Done(internal(e)),
+    };
+    let has_once = match card_has_once(&st.read, card, option).await {
+        Ok(b) => b,
+        Err(e) => return Taken::Done(internal(e)),
+    };
+    let args = ApproveArgs {
+        agent_id: &agent,
+        request_id: &request,
+        actor_id: &me.id,
+        option,
+        has_once,
+        bundle_message_id: None,
+    };
+    Taken::Done(match approve_then_answer(st, pool, args).await {
+        Err(r) => r,
+        Ok(ApproveOutcome::HandToTs) => return Taken::Hand,
+        Ok(ApproveOutcome::Refused {
+            status,
+            code,
+            message,
+        }) => card_refusal(status, code, &message),
+        Ok(ApproveOutcome::Granted { .. }) => match message_by_id(&st.read, card).await {
+            Ok(Some(row)) => ok_json(row),
+            Ok(None) => ok_json("null".to_owned()),
+            Err(e) => internal(e),
+        },
+    })
+}
+
+/// 3'. 묶음 줄의 권한 카드 승인. **W1:** 호출자가 `bundle` 이 `root` 줄을 담는다고 확인한 뒤에만 부른다.
+pub async fn answer_bundle_approve(
+    st: &AskState,
+    me: &Account,
+    auth: &Auth,
+    bundle: &str,
+    root: &str,
+    option: &str,
+) -> Taken {
+    let Some(pool) = st.approve.as_ref() else {
+        return Taken::Hand;
+    };
+    if !is_approve_option(option) || !human_session(me, auth) {
+        return Taken::Hand;
+    }
+    let row = {
+        let mut conn = match st.read.acquire().await {
+            Ok(c) => c,
+            Err(e) => return Taken::Done(internal(e)),
+        };
+        match read_ask_row(&mut conn, root).await {
+            Ok(r) => r,
+            Err(e) => return Taken::Done(internal(e)),
+        }
+    };
+    let Some((ask, root_channel, _)) = row else {
+        return Taken::Hand;
+    };
+    if ask.mirror_of.is_some() {
+        return Taken::Hand;
+    }
+    match channel_visible(&st.read, &me.id, &root_channel).await {
+        Ok(true) => {}
+        Ok(false) => return Taken::Hand,
+        Err(e) => return Taken::Done(internal(e)),
+    }
+    let (request, agent) = match permission_card(st, root).await {
+        Ok(Some(p)) => p,
+        Ok(None) => return Taken::Hand,
+        Err(e) => return Taken::Done(internal(e)),
+    };
+    let has_once = match card_has_once(&st.read, root, option).await {
+        Ok(b) => b,
+        Err(e) => return Taken::Done(internal(e)),
+    };
+    let args = ApproveArgs {
+        agent_id: &agent,
+        request_id: &request,
+        actor_id: &me.id,
+        option,
+        has_once,
+        bundle_message_id: Some(bundle),
+    };
+    Taken::Done(match approve_then_answer(st, pool, args).await {
+        Err(r) => r,
+        Ok(ApproveOutcome::HandToTs) => return Taken::Hand,
+        Ok(ApproveOutcome::Refused {
+            status,
+            code,
+            message,
+        }) => card_refusal(status, code, &message),
+        Ok(ApproveOutcome::Granted { .. }) => match message_by_id(&st.read, bundle).await {
+            Ok(Some(row)) => ok_json(row),
+            Ok(None) => json_err(
+                StatusCode::NOT_FOUND,
+                "not_found",
+                super::ask_bundle::BUNDLE_NOT_FOUND,
+            ),
+            Err(e) => internal(e),
+        },
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+/// 승인 REST 핸들러 셋을 한 꼴로 — 경로 마지막 낱말이 선택지다(라우트 표에 정확한 글자만 적는다).
+async fn approve_route_with(
+    st: std::sync::Arc<AskState>,
+    me: Account,
+    auth: Auth,
+    peer: std::net::SocketAddr,
+    agent: String,
+    request: String,
+    option: &'static str,
+    req: axum::extract::Request,
+) -> Response {
+    let (parts, body) = req.into_parts();
+    let bytes = match super::ask::read_bytes(&parts.headers, body).await {
+        Ok((b, _)) => b,
+        Err(r) => return r,
+    };
+    match rest_approve(&st, &me, &auth, &agent, &request, option).await {
+        Taken::Done(r) => r,
+        Taken::Hand => to_ts(st.up.clone(), peer, parts, bytes).await,
+    }
+}
+
+macro_rules! approve_route {
+    ($name:ident, $option:literal) => {
+        pub async fn $name(
+            axum::extract::State(st): axum::extract::State<std::sync::Arc<AskState>>,
+            crate::auth::RequireAccount(me, auth): crate::auth::RequireAccount,
+            axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
+            axum::extract::Path((agent, request)): axum::extract::Path<(String, String)>,
+            req: axum::extract::Request,
+        ) -> Response {
+            approve_route_with(st, me, auth, peer, agent, request, $option, req).await
+        }
+    };
+}
+approve_route!(approve_route, "approve");
+approve_route!(approve_once_route, "approve_once");
+approve_route!(approve_hour_route, "approve_hour");

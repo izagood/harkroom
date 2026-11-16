@@ -392,6 +392,14 @@ async fn main() {
     if ask_deny.is_some() {
         eprintln!("front: permission deny core on");
     }
+    // S5.3 B2 — 권한 카드 승인(소유자). 거절과 같은 세 겹에 grant·이벤트 쓰기 칸(`APPROVE_PRIVILEGES`)을 더한다(fail-closed).
+    let ask_approve = match &ask_write {
+        Some(w) => harkroom_server::core::decide_approve::approve_pool(w).await,
+        None => None,
+    };
+    if ask_approve.is_some() {
+        eprintln!("front: permission approve core on");
+    }
     // C1c-1 — 글 올리기(사람 최상위 글 뼈대). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 `MESSAGE_POST_PRIVILEGES` 가 다 있을 때만.
     let post_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -678,6 +686,7 @@ async fn main() {
                     write,
                     up: state.up.clone(),
                     deny: ask_deny,
+                    approve: ask_approve,
                 },
                 auth.clone(),
                 state.cors.clone(),
