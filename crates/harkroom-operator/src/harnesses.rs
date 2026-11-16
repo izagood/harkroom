@@ -1,4 +1,4 @@
-//! 하네스 능력 — TS `packages/operator/src/harnesses.ts` 이식(s21a-2).
+//! 하네스 능력 — TS 옛 Node 오퍼레이터(P3 에서 지움)의 `src/harnesses.ts` 이식(s21a-2).
 //!
 //! hello 의 `capabilities.harnesses` 로 "이 머신에 어떤 하네스가 있고 로그인돼 있나"를 올린다.
 //! 판정 재료는 파일 존재 둘뿐이다: 실행 파일이 로그인 셸 PATH(또는 설치 관례 자리)에 있나(installed),

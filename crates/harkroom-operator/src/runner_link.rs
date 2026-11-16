@@ -1,4 +1,4 @@
-//! 러너 ↔ 오퍼레이터 unix 링크의 오퍼레이터 쪽 — TS `packages/operator/src/runnerLink.ts` 이식(s21b-1).
+//! 러너 ↔ 오퍼레이터 unix 링크의 오퍼레이터 쪽 — TS 옛 Node 오퍼레이터(P3 에서 지움)의 `src/runnerLink.ts` 이식(s21b-1).
 //!
 //! 러너는 spawn 때 받은 `HARKROOM_RUNNER_ID`·`HARKROOM_RUNNER_SECRET` 으로 앱과 **같은 소켓**에 붙어
 //! 첫 줄에 `hello{role:'runner'}` 를 보낸다. `socket::serve_connection` 이 첫 줄의 `role` 로 갈라 이리로 넘긴다.

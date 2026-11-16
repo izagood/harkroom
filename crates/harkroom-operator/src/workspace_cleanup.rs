@@ -1,5 +1,5 @@
 //! 작업 폴더 청소기 핵심(s21c5-1) — TS `packages/shared/src/workspaceCleanup.ts`(원장 모양·러너 보고 거르기·경로 도움)와
-//! `packages/operator/src/workspaceCleanup.ts`(원장 파일·`planSweep`·`applyHumanAction`·`runSweep`·`removeRebuildable`) 이식.
+//! 옛 Node 오퍼레이터(P3 에서 지움)의 `src/workspaceCleanup.ts`(원장 파일·`planSweep`·`applyHumanAction`·`runSweep`·`removeRebuildable`) 이식.
 //!
 //! 이 PR 은 **아무 데도 잇지 않는다** — git·러너 사실 재기(Owners·Scan)와 소켓 요청·주기 sweep 배선은 뒤 PR 이다.
 //!

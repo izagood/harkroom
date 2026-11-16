@@ -1,4 +1,4 @@
-//! 턴 도중 새 글 — TS `packages/operator/src/turnPeek.ts` 이식(s21b-3b).
+//! 턴 도중 새 글 — TS 옛 Node 오퍼레이터(P3 에서 지움)의 `src/turnPeek.ts` 이식(s21b-3b).
 //!
 //! claude PostToolUse hook 이 hook 소켓으로 `thread.peek` 을 묻는다. 그 턴의 임대(cause = 턴을 띄운 글)로 앵커 스레드를
 //! 정하고, 커서 뒤 **사람** 글만 돌려준다. 권한 판정이 아니라 알림이다 — 실패·임대 없음·서버 무응답은 전부 「실을 글 없음」.

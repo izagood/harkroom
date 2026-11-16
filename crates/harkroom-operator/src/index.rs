@@ -1,4 +1,4 @@
-//! `<앱 데이터>/operators.json` 색인 읽기(S2 A3b). 정본은 `packages/operator/src/communityRoots.ts::readRootsIndex`·`parseIndex`.
+//! `<앱 데이터>/operators.json` 색인 읽기(S2 A3b). 옮겨 온 원본은 옛 Node 오퍼레이터(P3 에서 지움)의 `src/communityRoots.ts::readRootsIndex`·`parseIndex`.
 //!
 //! 규칙(TS 와 같다): 파일이 없으면 빈 색인이다. **모양이 틀리면 오류다** — 모르는 채로 빈 색인으로 치면 옛 자리(D5)를
 //! 잊고 새 뿌리를 만들어 같은 커뮤니티가 두 자리로 갈린다. 키는 끝 `/` 를 걷어 맞추고, 뿌리는 절대 경로여야 하며,

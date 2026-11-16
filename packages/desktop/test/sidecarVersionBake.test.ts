@@ -63,7 +63,7 @@ describe('러너 사이드카에 버전을 굽는다', () => {
   it('Node 사이드카는 러너 하나이고 러너 이름으로 굽는다 — 오퍼레이터는 Rust 다(P2)', () => {
     const script = read('packages/desktop/scripts/build-sidecars.mjs');
     expect(script).toContain('runnerDefines(');
-    // 옛 Node 오퍼레이터(`packages/operator`) 번들은 P2 에서 뺐다 — 다시 생기면 번들에 Node 오퍼레이터가 실린다.
+    // 옛 Node 오퍼레이터(P3 에서 지움) 번들은 P2 에서 뺐다 — 다시 생기면 번들에 Node 오퍼레이터가 실린다.
     expect(script).not.toContain("name: 'harkroom-operator'");
     expect(script).not.toContain('operatorDefines(');
     expect(script).toContain("buildRustSidecar(target, 'harkroom-operator', 'harkroom-operator-rs')");

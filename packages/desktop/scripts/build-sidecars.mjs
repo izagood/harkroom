@@ -3,7 +3,7 @@
 //
 // - `harkroom-runner` — 러너(#431 1단계 B, `#425`·`#429` 를 닫았다). `node-pty` 를 곁들인다.
 // - `harkroom-operator-rs` — 오퍼레이터(`crates/harkroom-operator`). Node 가 아니라 Mach-O 다. 앱이 띄우는 오퍼레이터는
-//   이것 하나다 — Node 오퍼레이터(`packages/operator`)는 P2 에서 번들에서 뺐다(되돌리는 스위치도 없다). `sign-app.mjs` 가
+//   이것 하나다 — Node 오퍼레이터(P3 에서 지움)는 P2 에서 번들에서 뺐다(되돌리는 스위치도 없다). `sign-app.mjs` 가
 //   내용으로 Mach-O 를 찾아 서명하므로 서명 쪽은 손대지 않는다.
 // - `harkroom-runner-rs` — Rust 러너(B4-5b, `crates/harkroom-runner`). 역시 Mach-O 다. **싣기만 하고 아무도 띄우지 않는다** —
 //   오퍼레이터가 에이전트마다 러너를 고르는 것은 B4-5c 다. 그 전까지 앱의 모든 턴은 지금처럼 `harkroom-runner`(Node)로 돈다.

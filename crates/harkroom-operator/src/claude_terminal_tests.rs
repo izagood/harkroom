@@ -1,4 +1,4 @@
-//! TS `packages/operator/test/claudeAccountTerminal.test.ts` 의 openTerminal·terminalScript 칸 이식.
+//! TS 옛 Node 오퍼레이터(P3 에서 지움)의 `test/claudeAccountTerminal.test.ts` 의 openTerminal·terminalScript 칸 이식.
 use super::*;
 use crate::claude_accounts::ClaudeAccounts;
 use std::cell::RefCell;

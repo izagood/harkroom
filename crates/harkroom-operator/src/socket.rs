@@ -1,4 +1,4 @@
-//! 앱(Tauri) ↔ 오퍼레이터 소켓 서버(경계 P3, S2 A2). 정본은 `packages/operator/src/server.ts`(`DaemonServer`)와
+//! 앱(Tauri) ↔ 오퍼레이터 소켓 서버(경계 P3, S2 A2). 옮겨 온 원본은 옛 Node 오퍼레이터(P3 에서 지움)의 `src/server.ts`(`DaemonServer`)와
 //! `packages/shared/src/daemonProtocol.ts`(`NdjsonDecoder`·`checkHello`·`tokensMatch`·`parseRequest`)다.
 //!
 //! A2 는 문지기(`hello`: 버전 → role → 토큰 순, 상수시간 비교)와 `ping`·`listRunners` 를, A3b 는 러너 표

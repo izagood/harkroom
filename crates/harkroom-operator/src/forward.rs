@@ -1,4 +1,4 @@
-//! 전달 — 러너가 서버에 하던 말을 오퍼레이터가 대신 한다. TS `packages/operator/src/forward.ts` 이식(s21b-2).
+//! 전달 — 러너가 서버에 하던 말을 오퍼레이터가 대신 한다. TS 옛 Node 오퍼레이터(P3 에서 지움)의 `src/forward.ts` 이식(s21b-2).
 //!
 //! **인증만 바꾼다.** `authorization` 을 오퍼레이터 토큰으로, `x-harkroom-agent` 를 `expect` 장부의 에이전트 id 로.
 //! 본문은 열지 않는다. 러너가 보낸 머리는 옮기지 않는다 — 머리는 전부 여기서 새로 짓는다.

@@ -1,4 +1,4 @@
-// TS 정본(packages/shared/src/toolRules.ts, packages/operator/src/turnCommand.ts 의 looksSecret)이 낸 판정을 골든으로 적는다.
+// TS 정본(packages/shared/src/toolRules.ts)과 옛 Node 오퍼레이터 turnCommand.ts 의 looksSecret(아래에 옮겨 둠, Node 판은 P3 에서 지움)이 낸 판정을 골든으로 적는다.
 // 실행: node --experimental-strip-types crates/harkroom-operator/golden/gen_tool_rules.mts  (저장소 루트에서)
 import { readFileSync, writeFileSync } from 'node:fs';
 import { validateToolRule, validateExactCommand } from '../../../packages/shared/src/toolRules.ts';
@@ -12,9 +12,6 @@ const SECRET_CONTENT_PATTERNS = [
   /\b(ghp|gho|ghs|github_pat|xox[abpr]|sk-[a-z]*)[-_A-Za-z0-9]{10,}/,
 ];
 const looksSecret = (t: string) => SECRET_CONTENT_PATTERNS.some((re) => re.test(t));
-// turnCommand.ts 의 표와 어긋나지 않게 — 원문에서 같은 줄을 찾는다.
-const tc = readFileSync(new URL('../../../packages/operator/src/turnCommand.ts', import.meta.url), 'utf8');
-for (const re of SECRET_CONTENT_PATTERNS) if (!tc.includes(re.toString())) throw new Error(`turnCommand.ts 에 없는 패턴: ${re}`);
 
 const test = readFileSync(new URL('../../../packages/shared/test/toolRules.test.ts', import.meta.url), 'utf8');
 const lits = [...test.matchAll(/'((?:[^'\\]|\\.)*)'|`((?:[^`\\$]|\\.)*)`/g)].map((m) => (m[1] ?? m[2])!.replace(/\\(.)/g, '$1'));

@@ -1,4 +1,4 @@
-//! 「정확한 명령」 승인의 오퍼레이터 쪽 — TS `packages/operator/src/turnCommand.ts` 의 `createTurnCommand` 이식(s21b-3b).
+//! 「정확한 명령」 승인의 오퍼레이터 쪽 — TS 옛 Node 오퍼레이터(P3 에서 지움)의 `src/turnCommand.ts` 의 `createTurnCommand` 이식(s21b-3b).
 //!
 //! 1. `permission.request`(kind=command) — 서버로 넘기기 전에 그 명령이 읽는 파일을 **이 프로세스가** 재서(`measure_command_files`)
 //!    `command_files`(→ `COMMAND_FILES_HEADER`)에 싣는다. 링크에서 들어온 `command_files` 는 브릿지가 어떤 처리보다 먼저 지운다
@@ -201,7 +201,7 @@ pub fn maybe_handle(
 
 #[cfg(test)]
 mod tests {
-    //! TS `packages/operator/test/turnCommand.test.ts` 의 `describe('turnCommand')` 사례를 옮겼다(재기·비밀 사례는 tool_rules 시험).
+    //! TS 옛 Node 오퍼레이터(P3 에서 지움)의 `test/turnCommand.test.ts` 의 `describe('turnCommand')` 사례를 옮겼다(재기·비밀 사례는 tool_rules 시험).
     use super::*;
     use crate::forward::strip_link_only_fields;
     use std::cell::RefCell;

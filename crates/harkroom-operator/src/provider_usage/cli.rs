@@ -1,4 +1,4 @@
-//! 계정별 한도 사용률을 **각 하네스 CLI** 로 읽는다. TS 정본은 `packages/operator/src/cliUsage.ts`.
+//! 계정별 한도 사용률을 **각 하네스 CLI** 로 읽는다. TS 옮겨 온 원본은 옛 Node 오퍼레이터(P3 에서 지움)의 `src/cliUsage.ts`.
 //! API 를 직접 부르는 `fetch_*_provider_usage` 보다 먼저 쓴다(`cli_then_api`).
 //!
 //! - Claude: `claude -p /usage` 를 `CLAUDE_CONFIG_DIR=<계정>` 으로 돌려 텍스트를 해석한다.

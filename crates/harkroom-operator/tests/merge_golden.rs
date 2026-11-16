@@ -1,4 +1,4 @@
-//! `golden/merge.json`(정본 TS 가 쓴다 — `packages/operator/test/mergeCliGolden.test.ts`)의 경우마다 같은 가짜 오퍼레이터
+//! `golden/merge.json`(옛 Node 오퍼레이터의 `mergeCliGolden` 시험이 TS 출력으로 썼다 — Node 판은 P3 에서 지웠다)의 경우마다 같은 가짜 오퍼레이터
 //! 소켓을 세우고 Rust 바이너리를 띄워, 찍힌 한 줄·종료 코드·소켓으로 보낸 줄이 골든과 같은지 본다.
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};

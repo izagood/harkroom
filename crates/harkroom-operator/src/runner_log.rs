@@ -1,4 +1,4 @@
-//! 러너의 stdout·stderr 를 받는 **파일**과 종료 통지의 꼬리(`tailLines`) — 정본은 `packages/operator/src/runnerLog.ts`(`#434`·`#473`).
+//! 러너의 stdout·stderr 를 받는 **파일**과 종료 통지의 꼬리(`tailLines`) — 옮겨 온 원본은 옛 Node 오퍼레이터(P3 에서 지움)의 `src/runnerLog.ts`(`#434`·`#473`).
 //!
 //! **옮긴 성질**(TS 와 같다 — 근거는 TS 모듈 주석):
 //! - 파이프가 아니라 파일이다. 오퍼레이터가 죽어도 러너가 EPIPE 로 죽지 않고, 안 읽어도 쓰기가 막히지 않는다.

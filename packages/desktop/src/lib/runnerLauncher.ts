@@ -13,7 +13,7 @@
  * | 앞 판본의 자리 | 지금 |
  * |---|---|
  * | `startAll`·`startCreated`(무엇을 띄울까) | 서버의 **배정**(`agent_assignment`)이 오퍼레이터에 내려간다 |
- * | `spawnRunner`(env 조립·PAT) | `packages/operator/src/assignments.ts` |
+ * | `spawnRunner`(env 조립·PAT) | 옛 Node 오퍼레이터(P3 에서 지움)의 `src/assignments.ts` |
  * | `pursueRespawn`(죽으면 다시) | 같은 파일 `onRunnerExit` |
  * | `reissue`(PAT 회전) | 사라졌다 — 단계 4 에서 PAT 자체가 사라진다 |
  * | `restart`(새 번들로 갈아 띄우기) | 오퍼레이터 자체를 갱신하면 된다 |

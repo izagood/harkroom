@@ -1,5 +1,5 @@
 //! 이 머신의 MCP 정의(S2 A5c) — `operatorMcpList`·`operatorMcpSet`·`operatorMcpSetStdio`·`operatorMcpRemove`.
-//! 정본은 `packages/operator/src/localMcp.ts`, 요청 검사는 `packages/shared/src/daemonProtocol.ts`
+//! 옮겨 온 원본은 옛 Node 오퍼레이터(P3 에서 지움)의 `src/localMcp.ts`, 요청 검사는 `packages/shared/src/daemonProtocol.ts`
 //! (`readOperatorMcp*Payload`·`readMcpName`)와 `packages/shared/src/mcpStdio.ts`(`checkMcpStdioCommand`·`checkMcpEnvKey`·
 //! `sameMcpProgram`)다.
 //!

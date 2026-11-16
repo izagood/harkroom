@@ -1,4 +1,4 @@
-//! `hook <event>` 하위 명령의 입출력 갈래 — TS `packages/operator/src/main.ts` 의 `hookMain`·`permissionHookMain`·`notifyHookMain`·
+//! `hook <event>` 하위 명령의 입출력 갈래 — TS 옛 Node 오퍼레이터(P3 에서 지움)의 `src/main.ts` 의 `hookMain`·`permissionHookMain`·`notifyHookMain`·
 //! `postToolHookMain`·`laneHookMain`·`blockingHookMain` 과 `cli.ts` 의 `hook` 인자 갈래 이식(s21b-3d-3b-2a). 판정 함수는
 //! `hook_cli.rs`(#1883)에 있고, 여기는 인자·stdin·env·기록 파일·종료 코드만 다룬다.
 //!

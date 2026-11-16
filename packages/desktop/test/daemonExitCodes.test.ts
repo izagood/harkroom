@@ -3,9 +3,9 @@
  *
  * ## 왜 이 파일이 필요한가 — 값이 두 곳에 적혀 있다
  *
- * `EXIT_OCCUPIED` 는 daemon 이 정하고(`packages/operator/src/run.ts`) 앱이 읽는다
- * (`src-tauri/src/daemon_client.rs`). Rust 가 TS 상수를 import 할 방법이 없어 숫자가
- * **두 벌 존재한다.**
+ * `EXIT_OCCUPIED` 는 옛 Node 오퍼레이터가 정하고 앱이 읽었다(`src-tauri/src/daemon_client.rs`).
+ * Node 오퍼레이터는 P3 에서 지웠으므로 그 출처 대조는 걷었다 — 남은 것은 앱이 그 상수로
+ * 판정하는지와 `EXIT_NODE_TOO_OLD`(러너 사이드카 판 검사) 대조다.
  *
  * 갈리면 조용히 틀린다: daemon 이 점유로 물러났는데 앱은 그것을 다른 사유로 읽고,
  * *"이미 다른 harkroom 가 daemon 을 쥐고 있다 — 그 앱을 종료하라"* 대신 종료 코드만
@@ -22,8 +22,6 @@ import path from 'node:path';
 const read = (rel: string): string =>
   readFileSync(path.resolve(import.meta.dirname, rel), 'utf8');
 
-/** `packages/operator/src/run.ts` — 값의 **출처**다. */
-const RUN_TS = read('../../operator/src/run.ts');
 /** `src-tauri/src/daemon_client.rs` — 그 값을 읽는 쪽. */
 const DAEMON_RS = read('../src-tauri/src/daemon_client.rs');
 
@@ -40,13 +38,6 @@ const only = (source: string, re: RegExp, what: string): string => {
 };
 
 describe('daemon 종료 코드 계약', () => {
-  it('`EXIT_OCCUPIED` 가 daemon 과 앱에서 같은 값이다', () => {
-    const ts = only(RUN_TS, /export const EXIT_OCCUPIED = (\d+);/g, 'run.ts 의 EXIT_OCCUPIED');
-    const rs = only(DAEMON_RS, /const EXIT_OCCUPIED: i32 = (\d+);/g, 'Rust 의 EXIT_OCCUPIED');
-
-    expect(rs, 'daemon 이 물러나는 코드와 앱이 점유로 읽는 코드가 갈렸다').toBe(ts);
-  });
-
   it('앱이 그 상수로 판정한다 — 숫자를 따로 적어 비교하지 않는다', () => {
     // 상수를 만들어 두고 정작 판정에는 `Some(10)` 을 적으면 이 계약은 다시 두 벌이 된다.
     expect(DAEMON_RS).toContain('if code == Some(EXIT_OCCUPIED)');
@@ -58,9 +49,9 @@ describe('daemon 종료 코드 계약', () => {
     const rs = only(DAEMON_RS, /const EXIT_NODE_TOO_OLD: i32 = (\d+);/g, 'Rust 의 EXIT_NODE_TOO_OLD');
     expect(rs).toBe(js);
     expect(DAEMON_RS).toContain('if code == Some(EXIT_NODE_TOO_OLD)');
-    // operator 의 다른 종료 코드와 겹치면 앱이 오진한다.
-    const others = [...RUN_TS.matchAll(/export const EXIT_[A-Z_]+ = (\d+);/g)].map((m) => m[1]);
-    expect(others).not.toContain(js);
+    // 앱이 점유로 읽는 코드와 겹치면 앱이 오진한다.
+    const occupied = only(DAEMON_RS, /const EXIT_OCCUPIED: i32 = (\d+);/g, 'Rust 의 EXIT_OCCUPIED');
+    expect(occupied).not.toBe(js);
   });
 
   it('판 검사가 낡은 Node 에서 표식 줄을 남기고 그 코드로 물러난다(실제로 실행)', async () => {
@@ -84,10 +75,5 @@ describe('daemon 종료 코드 계약', () => {
     expect(old.stderr.toString()).toContain('harkroom: Node.js');
     expect(old.stderr.toString()).toContain('is required');
     expect(DAEMON_RS).toContain('line.contains("harkroom: Node.js") && line.contains("is required")');
-  });
-
-  it('daemon 이 그 상수로 물러난다 — `main.ts` 가 숫자를 따로 적지 않는다', () => {
-    const mainTs = read('../../operator/src/main.ts');
-    expect(mainTs).toContain('process.exit(EXIT_OCCUPIED)');
   });
 });

@@ -1,4 +1,4 @@
-//! claude 계정 로그인(s21c3b). 정본은 `packages/operator/src/claudeAccounts.ts` 의 `loginStart`·`loginSubmit`·
+//! claude 계정 로그인(s21c3b). 옮겨 온 원본은 옛 Node 오퍼레이터(P3 에서 지움)의 `src/claudeAccounts.ts` 의 `loginStart`·`loginSubmit`·
 //! `loginCancel`·`shutdownLogins`·`onLoginEvent` 다.
 //!
 //! - `claude auth login --claudeai` 를 그 계정의 `CLAUDE_CONFIG_DIR` 로 **파이프**에 띄운다(TS 실측: 파이프에서도

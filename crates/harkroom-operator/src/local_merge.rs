@@ -1,5 +1,5 @@
 //! 머지 래퍼의 gh 계정(S2 A5b) — `operatorMergeGet`·`operatorMergeSet`·`operatorMergeCheck`.
-//! 정본은 `packages/operator/src/localMerge.ts`, 요청 검사는 `packages/shared/src/daemonProtocol.ts`
+//! 옮겨 온 원본은 옛 Node 오퍼레이터(P3 에서 지움)의 `src/localMerge.ts`, 요청 검사는 `packages/shared/src/daemonProtocol.ts`
 //! (`readOperatorMergeSetPayload`·`readOperatorMergeCheckPayload`), gh env 는 `turnMerge.ts::ghEnv` 다.
 //!
 //! 값은 커뮤니티 뿌리의 `operator/operator.json` 의 `merge`(`ghUser` 옛 기기 기본값 · `byScope` 줄별 계정)에 둔다.

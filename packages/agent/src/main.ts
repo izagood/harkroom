@@ -6,7 +6,7 @@
 // 사이드카(`externalBin`)로 만들어 앱과 함께 배포하고, `.app` 안
 // `Contents/MacOS/harkroom-runner` 로 놓인다. 즉 위 pnpm 명령은 죽지 않았지만 **개발 환경
 // 전용**이다: 앱을 설치해 쓰는 사람에게는 실행할 소스도 pnpm 워크스페이스도 없다.
-// 러너를 띄우는 정본은 `packages/operator/src/assignments.ts` 다.
+// 러너를 띄우는 정본은 옛 Node 오퍼레이터(P3 에서 지움)의 `src/assignments.ts` 다.
 // (claude-code harness 는 claude CLI 의 로그인을 그대로 쓴다 — API 키가 필요 없다.)
 //
 // 옛 구조(reply.ts + harness/claudeCode.ts)는 멘션마다 `claude -p` 를 새로 띄워 stdout 의

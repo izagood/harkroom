@@ -1,5 +1,5 @@
 //! 배정 조정기(s21c-1) — 서버의 `assign`/`unassign` 을 "이 머신에서 무엇을 띄우고 내릴까"로 바꾼다.
-//! 정본은 `packages/operator/src/assignments.ts`(`createAssignmentReconciler`)다. 스펙 2026-09-20 §3(배정)·§9(drain 상한).
+//! 옮겨 온 원본은 옛 Node 오퍼레이터(P3 에서 지움)의 `src/assignments.ts`(`createAssignmentReconciler`)다. 스펙 2026-09-20 §3(배정)·§9(drain 상한).
 //!
 //! 러너 env 는 여기서 조립한다 — **URL·PAT 은 없다**(스펙 §5). 러너가 받는 것은 이 머신의 오퍼레이터 소켓과
 //! 자기 id·secret, 하네스에 물려줄 `mcp-bridge` 명령의 경로뿐이다. id·secret 은 spawn 마다 새로 만들고

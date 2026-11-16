@@ -1,7 +1,7 @@
 //! `harkroom-operator-rs register <baseUrl> <code> [--name <이름>] [--home <dir>] [--app-data <dir>]` — 사람이 터미널에서
 //! 등록 코드(설정 › Operators 가 발급, 5분·1회)를 이 머신의 오퍼레이터 등록으로 바꾼다(P1a, Node 오퍼레이터 걷기 앞 단계).
 //!
-//! 정본은 TS `packages/operator/src/cli.ts`(`parseCliArgs` 의 `register`·`register`·`registerViaRunningOperator`)와
+//! 정본은 TS 옛 Node 오퍼레이터(P3 에서 지움)의 `src/cli.ts`(`parseCliArgs` 의 `register`·`register`·`registerViaRunningOperator`)와
 //! `main.ts` 의 `register` 갈래다.
 //!
 //! TS 와 같은 것:
@@ -33,7 +33,7 @@ use std::time::Duration;
 /// TS `APP_IDENTIFIER` — Tauri `identifier` 와 같다.
 pub const APP_IDENTIFIER: &str = "app.harkroom.desktop";
 
-pub const USAGE: &str = "사용법: harkroom-operator register <baseUrl> <code> [--name <이름>]";
+pub const USAGE: &str = "사용법: harkroom-operator-rs register <baseUrl> <code> [--name <이름>]";
 
 /// 도는 오퍼레이터 답을 기다리는 시한. 그쪽이 claim(30초)을 하므로 그보다 넉넉히 둔다.
 pub const LIVE_TIMEOUT: Duration = Duration::from_secs(45);
