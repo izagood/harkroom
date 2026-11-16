@@ -597,9 +597,11 @@ where
                 thread_root_id: Some(target.thread_root_id.clone()),
                 harness: harness.as_str().to_string(),
                 mode: None,
-                // 판정은 fd 0 의 정체 하나(정본 `acceptsPtyInput(plan)`) — Rust 러너의 멘션 턴은 stdin 파일을 쓰지
-                // 않는다(`TurnCommandOptions.stdin_file` 은 늘 `None`). 계정 칩은 시도마다 `RelayAttempt::begin` 이 싣는다.
-                accepts_input: crate::pty::accepts_pty_input(None),
+                // 첫 값일 뿐이다 — 계획(`TurnCommandOptions.stdin_file`)은 시도마다 지어지므로, 띄우기 직전에 그 시도의
+                // 계획에서 다시 읽어 고쳐 알린다(`SessionHandle::restate_accepts_input`, 정본 `acceptsPtyInput(plan)`).
+                // 그 전에는 입력 통로가 없어(`bind_input` 은 spawn 때) 이 값이 무엇이든 입력은 닿지 않는다.
+                // 계정 칩도 시도마다 `RelayAttempt::begin` 이 싣는다.
+                accepts_input: crate::pty::accepts_pty_input(None::<&str>),
                 claude_account_rank: None,
                 claude_pool_rank: None,
                 on_viewer_count: None,
