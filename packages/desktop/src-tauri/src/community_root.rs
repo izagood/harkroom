@@ -92,7 +92,11 @@ fn normalize(p: &Path) -> PathBuf {
 }
 
 fn read_index(app_data_root: &Path) -> Result<RootsIndex, String> {
-    let path = app_data_root.join(ROOTS_INDEX_FILE);
+    read_index_at(&app_data_root.join(ROOTS_INDEX_FILE))
+}
+
+fn read_index_at(path: &Path) -> Result<RootsIndex, String> {
+    let path = path.to_path_buf();
     let text = match std::fs::read_to_string(&path) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(RootsIndex::default()),
@@ -483,6 +487,44 @@ pub fn revert_index(app_data_root: &Path) -> Result<bool, String> {
     Ok(true)
 }
 
+/// **스위치가 바뀌었을 때 내릴 오퍼레이터 자리** — 기동 때 `adopt_legacy`·`revert_index` **앞에** 부른다.
+///
+/// 스위치를 바꿔 다시 뜨면 반대쪽 모드로 띄웠던 오퍼레이터가 그대로 남는다. 같은 operatorId 로 서버에 붙는 프로세스가
+/// 둘이 되어 1초마다 서로 연결을 밀어낸다(`close 4409`). 그래서 바뀐 기동에서는 **옛 자리와 색인에 적힌 모든 뿌리**의
+/// 오퍼레이터를 내리고, 앱이 지금 모드로 다시 띄우게 한다. 바뀌었는지는 색인 파일로 가린다 — 색인은 켜짐에서만 생기고
+/// 끄면 `.off` 로 옮겨지므로:
+/// - 끔으로 뜸 + 색인 있음 = 켬→끔. 옛 자리 + 색인의 뿌리 전부.
+/// - 켬으로 뜸 + 색인 없음 = 끔→켬(또는 처음 켬). 옛 자리 + `.off` 의 뿌리 전부(없으면 옛 자리만).
+/// - 그 밖 = 바뀌지 않음. 빈 목록.
+///
+/// 옛 자리도 내리는 이유: 끔→켬이면 그 프로세스는 모든 커뮤니티를 들고 떴고, 켬→끔이면 legacy 한 커뮤니티만 거르게 떴다.
+/// 어느 쪽이든 지금 모드의 설정과 맞지 않는다. 색인이 깨졌으면 옛 자리만 돌려준다(아는 만큼만 내린다).
+pub fn roots_to_retire_on_switch(app_data_root: &Path, on: bool) -> Vec<PathBuf> {
+    let index_path = app_data_root.join(ROOTS_INDEX_FILE);
+    let off_path = app_data_root.join(format!("{ROOTS_INDEX_FILE}.off"));
+    let source = match (on, index_path.exists()) {
+        (false, true) => Some(index_path),
+        (true, false) => off_path.exists().then_some(off_path),
+        _ => return Vec::new(),
+    };
+    let mut out = vec![normalize(app_data_root)];
+    if let Some(index) = source.and_then(|p| read_index_at(&p).ok()) {
+        let mut roots: Vec<PathBuf> = index
+            .communities
+            .values()
+            .filter(|e| e.root.starts_with('/'))
+            .map(|e| normalize(Path::new(&e.root)))
+            .collect();
+        roots.sort();
+        for r in roots {
+            if !out.contains(&r) {
+                out.push(r);
+            }
+        }
+    }
+    out
+}
+
 /// 뿌리 디렉터리를 쓸 수 있게 한다 — 토큰·소켓을 쓰기 **전에** 부른다(security P1-n2, P2a 지적).
 /// `ensureCommunityRootDir` 와 같은 기준: 새 뿌리는 0700, 이미 있으면 심링크 아님·디렉터리·내 소유, 넓으면 좁힌다.
 /// 옛 자리는 만들지도 권한을 바꾸지도 않고 확인만 한다.
@@ -677,6 +719,38 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(d.join("operator")).unwrap();
         d
+    }
+
+    /// 스위치를 바꿔 뜨면 반대쪽 모드의 오퍼레이터 자리를 돌려준다(실물 G1 ③: 켬→끔 뒤 뿌리 오퍼레이터가 남아 4409 핑퐁).
+    #[test]
+    fn roots_to_retire_on_switch_only_when_switch_flipped() {
+        let d = tmp_root("retire");
+        let home = d.join("home");
+        let a = "https://a.example.com";
+        let b = "https://b.example.com";
+        let nd = normalize(&d);
+        // 처음(색인·.off 없음): 켬은 옛 자리만(그 자리에 뜬 끔 모드 프로세스), 끔은 바뀐 것 없음.
+        assert_eq!(roots_to_retire_on_switch(&d, true), vec![nd.clone()]);
+        assert!(roots_to_retire_on_switch(&d, false).is_empty());
+        std::fs::write(
+            d.join("operator").join("operator.json"),
+            format!(r#"{{"communities":{{"{a}":{{"agents":{{"x":{{}}}}}},"{b}":{{"agents":{{"x":{{}},"y":{{}}}}}}}}}}"#),
+        )
+        .unwrap();
+        // 끔→켬: 옛 자리 + (아직 .off 가 없으니) 그것만.
+        assert_eq!(roots_to_retire_on_switch(&d, true), vec![nd.clone()]);
+        adopt_legacy(&d, &home).unwrap();
+        let a_root = normalize(Path::new(&read_index(&d).unwrap().communities[a].root));
+        // 켬 유지: 아무것도 내리지 않는다(평소 기동이 오퍼레이터를 죽이면 안 된다).
+        assert!(roots_to_retire_on_switch(&d, true).is_empty());
+        // 켬→끔: 옛 자리 + A 뿌리(legacy B 는 옛 자리와 같아 한 번만).
+        assert_eq!(roots_to_retire_on_switch(&d, false), vec![nd.clone(), a_root.clone()]);
+        revert_index(&d).unwrap();
+        // 끔 유지: 아무것도.
+        assert!(roots_to_retire_on_switch(&d, false).is_empty());
+        // 끔→켬(.off 있음): 옛 자리 + .off 의 A 뿌리.
+        assert_eq!(roots_to_retire_on_switch(&d, true), vec![nd.clone(), a_root.clone()]);
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

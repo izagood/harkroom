@@ -1186,7 +1186,13 @@ fn main() {
             // 끄고 뜨면 색인을 지운다(되돌리기). 실패해도 앱은 뜬다 — 그때 켜진 모드는 옛 자리를 몰라 새 뿌리를 쓴다.
             if let Ok(dir) = tauri::Manager::path(app).app_data_dir() {
                 let root = daemon_client::app_data_root(&dir);
-                let res = if community_root::per_community_enabled() {
+                // 스위치를 바꿔 떴으면 반대쪽 모드로 떠 있던 오퍼레이터를 먼저 내린다 — 색인을 고치기 전에 자리를 읽는다.
+                let on = community_root::per_community_enabled();
+                for line in daemon_client::retire_operators_at(&community_root::roots_to_retire_on_switch(&root, on)) {
+                    eprintln!("harkroom: {line}");
+                    daemon_client::log_line(&line);
+                }
+                let res = if on {
                     community_root::adopt_legacy(&root, &tauri::Manager::path(app).home_dir().unwrap_or_default()).map(|k| k.map(|k| format!("옛 자리를 legacy 칸으로 적었다: {k}")))
                 } else {
                     community_root::revert_index(&root).map(|gone| gone.then(|| "커뮤니티마다 모드를 끄고 떠서 칸을 옛 설정에 합치고 색인을 꺼 두었다".to_string()))
