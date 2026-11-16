@@ -1550,6 +1550,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant update (value, description, kind, flagged_at, flag_reason) on agent_memory to ${rw}`,
         `grant delete on agent_memory_revision to ${rw}`,
         `grant insert, update, delete on memory_lease to ${rw}`,
+        // S5.4 L1 — 예약글 루프(`loops/scheduled.rs`). 없으면 루프를 띄우지 않는다.
+        `grant update (sent_message_id, failed_reason) on scheduled_message to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -1603,6 +1605,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       expect(f.log()).toContain('front: loop permission.expire on');
       expect(f.log()).toContain('front: loop bg on (enabled=false');
       expect(f.log()).toContain('front: loop outbox.prune on');
+      expect(f.log()).toContain('front: loop scheduled on');
 
       const r = await cargo(['test', '--test', 'contrast', '--', '--nocapture'], {
         HARKROOM_CONTRAST_TS_URL: tsUrl,
