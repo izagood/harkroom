@@ -143,22 +143,23 @@ pub const DAEMON_PROTOCOL_VERSION: u32 = 1;
 /// ## 여유가 얼마나 되나 — 실측 (2026-09-06)
 ///
 /// ```text
-/// /Users/alice2/Library/Application Support/app.harkroom.desktop/daemon/daemon-v1.sock
-/// = 82바이트 (여유 22)
+/// /Users/alice2/Library/Application Support/app.harkroom.desktop/operator/operator-v1.sock
+/// = 88바이트 (여유 16)
 /// ```
 ///
-/// 디렉터리 부분(`…/daemon/`)이 68바이트, 파일명 `daemon-v1.sock` 이 14바이트다.
-/// 위 바이트 수는 6자 사용자 이름 기준이므로 **사용자 이름이 28자까지는 통과하고 29자부터 넘는다.**
+/// 디렉터리 부분(`…/operator/`)이 72바이트, 파일명 `operator-v1.sock` 이 16바이트다.
+/// 위 바이트 수는 6자 사용자 이름 기준이므로 **사용자 이름이 22자까지는 통과하고 23자부터 넘는다.**
+/// (2026-09-06 실측은 82바이트였다 — 그 뒤 `daemon`→`operator` 개명이 6바이트를 더 썼다.)
 ///
-/// **그 22바이트를 갉는 것들** — 다음 사람이 "한 단계쯤 더 넣어도 되겠지"라고 생각할 때
+/// **그 16바이트를 갉는 것들** — 다음 사람이 "한 단계쯤 더 넣어도 되겠지"라고 생각할 때
 /// 답이 여기 있어야 한다:
 ///
 /// | 무엇 | 얼마나 |
 /// |---|---|
 /// | 긴 사용자 이름 | 1자당 1바이트 |
-/// | 프로토콜 버전 자릿수(`daemon-v10`) | 1바이트 — 허용 이름이 27자로 준다 |
+/// | 프로토콜 버전 자릿수(`operator-v10`) | 1바이트 — 허용 이름이 21자로 준다 |
 /// | 앱 식별자(`app.harkroom.desktop`, 18자)가 길어지면 | 그만큼 |
-/// | `<appDataDir>/daemon/` 밑에 단계를 더 넣으면 | 그만큼 |
+/// | `<appDataDir>/operator/` 밑에 단계를 더 넣으면 | 그만큼 |
 ///
 /// **그래서 "운영 경로는 안전하다"고 단정하지 않는다.** 아래 `check_socket_path_length`
 /// 가 실제 경로를 만들 때마다 재고, 넘으면 `EINVAL` 대신 **사실을 그대로** 말한다.
@@ -210,15 +211,16 @@ const DEV_DATA_DIR_ENV: &str = "HARKROOM_DEV_DATA_DIR";
 /// ## 왜 8인가 — 104바이트 예산에서 역산했다 (실측 2026-09-06)
 ///
 /// ```text
-/// 릴리즈: …/app.harkroom.desktop/daemon/daemon-v1.sock              = 82바이트 (여유 22)
-/// 개발  : …/app.harkroom.desktop/dev-XXXXXXXX/daemon/daemon-v1.sock = 95바이트 (여유 9)
+/// 릴리즈: …/app.harkroom.desktop/operator/operator-v1.sock              = 88바이트 (여유 16)
+/// 개발  : …/app.harkroom.desktop/dev-XXXXXXXX/operator/operator-v1.sock = 101바이트 (여유 3)
 /// ```
 ///
-/// `dev-` 4자 + 해시 8자 + `/` 1자 = **13바이트**를 그 22에서 갉는다. 남는 9바이트가
-/// 사용자 이름의 여유이므로 **6자 사용자 이름 기준으로 이름이 15자까지 통과한다**
-/// (릴리즈에서는 28자였다).
+/// `dev-` 4자 + 해시 8자 + `/` 1자 = **13바이트**를 그 16에서 갉는다. 남는 3바이트가
+/// 사용자 이름의 여유이므로 **6자 사용자 이름 기준으로 이름이 9자까지 통과한다**
+/// (릴리즈에서는 22자였다). 처음 정할 때(2026-09-06)는 `daemon` 이름으로 95바이트·여유 9였고,
+/// `operator` 개명이 6바이트를 더 썼다.
 ///
-/// 12자로 늘리면 99바이트가 되어 이름 여유가 11자로 준다. **개발 빌드만 쓰는 구획이라
+/// 12자로 늘리면 105바이트가 되어 6자 사용자 이름에서도 상한을 넘는다. **개발 빌드만 쓰는 구획이라
 /// 충돌 확률보다 예산이 더 비싸다** — 한 사람의 기계에 동시에 존재하는 워크트리는 많아야
 /// 수십 개이고, 32비트 공간에서 그 정도의 생일 충돌 확률은 백만분의 일 수준이다.
 /// 충돌해도 잃는 것은 "두 워크트리가 한 구획을 공유한다" 뿐이고, 그것은 이 변경 **이전의
@@ -1429,7 +1431,7 @@ fn process_image(pid: u32) -> Option<Vec<PathBuf>> {
 fn parse_procargs2(buf: &[u8]) -> Option<Vec<PathBuf>> {
     let argc = i32::from_ne_bytes(buf.get(..4)?.try_into().ok()?).max(0) as usize;
     let mut rest = &buf[4..];
-    let mut take = |rest: &mut &[u8]| -> Option<PathBuf> {
+    let take = |rest: &mut &[u8]| -> Option<PathBuf> {
         while let Some((&0, tail)) = rest.split_first() {
             *rest = tail;
         }
@@ -2803,37 +2805,37 @@ mod tests {
     #[test]
     fn 상한_안의_경로는_통과한다() {
         let ok = PathBuf::from(
-            "/Users/alice2/Library/Application Support/app.harkroom.desktop/daemon/daemon-v1.sock",
+            "/Users/alice2/Library/Application Support/app.harkroom.desktop/operator/operator-v1.sock",
         );
         assert_eq!(
             ok.as_os_str().as_encoded_bytes().len(),
-            82,
+            88,
             "실측 값이 바뀌었다"
         );
-        check_socket_path_length(&ok).expect("82바이트가 막혔다");
+        check_socket_path_length(&ok).expect("88바이트가 막혔다");
     }
 
     /// 조립 규칙이 `@harkroom/shared/daemonEndpoint::daemonEndpointPaths` 와 같아야 한다.
     #[test]
     fn 엔드포인트_경로_조립이_shared_와_같은_규칙이다() {
         let paths = endpoint_paths(Path::new("/tmp/appdata"));
-        assert_eq!(paths.dir, PathBuf::from("/tmp/appdata/daemon"));
+        assert_eq!(paths.dir, PathBuf::from("/tmp/appdata/operator"));
         assert_eq!(
             paths.socket,
-            PathBuf::from("/tmp/appdata/daemon/daemon-v1.sock")
+            PathBuf::from("/tmp/appdata/operator/operator-v1.sock")
         );
         assert_eq!(
             paths.pid,
-            PathBuf::from("/tmp/appdata/daemon/daemon-v1.pid")
+            PathBuf::from("/tmp/appdata/operator/operator-v1.pid")
         );
         assert_eq!(
             paths.token,
-            PathBuf::from("/tmp/appdata/daemon/daemon-v1.token")
+            PathBuf::from("/tmp/appdata/operator/operator-v1.token")
         );
         // 로그는 `daemonEndpointPaths` 에 없는 앱 쪽 추가다 — 같은 디렉터리에 둔다.
         assert_eq!(
             paths.log,
-            PathBuf::from("/tmp/appdata/daemon/daemon-v1.log")
+            PathBuf::from("/tmp/appdata/operator/operator-v1.log")
         );
     }
 
@@ -3066,10 +3068,10 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
         ));
         let socket = endpoint_paths(&root).socket;
         let bytes = socket.as_os_str().as_encoded_bytes().len();
-        assert_eq!(bytes, 95, "실측 값이 바뀌었다: {}", socket.display());
+        assert_eq!(bytes, 101, "실측 값이 바뀌었다: {}", socket.display());
         check_socket_path_length(&socket).expect("구획을 넣었더니 상한을 넘었다");
-        // 릴리즈 82바이트에서 **13바이트**를 갉는다(`dev-` 4 + 해시 8 + `/` 1).
-        assert_eq!(bytes - 82, 13);
+        // 릴리즈 88바이트에서 **13바이트**를 갉는다(`dev-` 4 + 해시 8 + `/` 1).
+        assert_eq!(bytes - 88, 13);
     }
 
     /// **회귀선 ⑤ — 장부·로그가 소켓과 **함께** 갈린다.**
@@ -3376,8 +3378,13 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
     /// 짧은 임시 앱 데이터 디렉터리. **`/tmp` 밑에 짧게 만든다** — 워크트리 경로에
     /// 만들면 소켓 경로가 104바이트를 넘어 `bind` 가 `EINVAL` 로 죽는다(2/3 이 그것을
     /// 실제로 밟았다, 위 `SOCKET_PATH_MAX` 주석).
+    ///
+    /// `std::env::temp_dir()`(=`$TMPDIR`)을 쓰지 않는 이유: macOS 의 `$TMPDIR` 은
+    /// `/var/folders/xx/…/T/` 로 이미 49바이트이고, 시험을 띄운 쪽(에이전트 턴·샌드박스)이
+    /// 더 긴 값으로 바꿔 줄 수 있다 — 그러면 시험만 104바이트를 넘어 로컬에서만 빨개진다.
+    /// 제품 경로(`endpoint_paths`)는 이 함수와 무관하다.
     fn temp_app_data_dir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("mmr-{tag}-{}", std::process::id()));
+        let dir = Path::new("/tmp").join(format!("mmr-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("임시 디렉터리를 못 만들었다");
         dir
@@ -3429,6 +3436,29 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
             .expect("daemon 을 못 띄웠다")
     }
 
+    /// 엔드포인트 세 파일에 더해 **SIGTERM 핸들러가 걸린 뒤**까지 기다린다.
+    ///
+    /// Node 오퍼레이터는 엔드포인트를 얻은 뒤 하네스를 훑고 나서야 소켓 서비스를 열고
+    /// `SIGTERM` 핸들러를 건다(`packages/operator/src/main.ts`). 그 사이에 `SIGTERM` 이 오면
+    /// 기본 동작으로 죽어 엔드포인트 파일이 남고, 이 시험 프로세스가 부모라 그 pid 는 좀비로
+    /// 남는다 — `retire_daemon` 의 `kill(pid, 0)` 은 좀비를 산 것으로 보아 30초를 다 기다린다.
+    /// 하네스가 많이 깔린 기계일수록 그 틈이 길어 로컬에서만 빨개졌다(CI 는 이 시험을 돌리지 않는다).
+    /// 운영에서는 낡은 오퍼레이터의 부모(옛 앱)가 이미 없어 launchd 가 거두므로 이 좀비는 생기지 않는다.
+    fn wait_for_serving(paths: &EndpointPaths) -> bool {
+        if !wait_for_endpoint(paths) {
+            return false;
+        }
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        while std::time::Instant::now() < deadline {
+            let log = std::fs::read_to_string(&paths.log).unwrap_or_default();
+            if log.contains("소켓 서비스 시작") {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        false
+    }
+
     fn wait_for_endpoint(paths: &EndpointPaths) -> bool {
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         while std::time::Instant::now() < deadline {
@@ -3474,7 +3504,10 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
             child: 낡은,
             dir: dir.clone(),
         };
-        assert!(wait_for_endpoint(&paths), "낡은 daemon 이 엔드포인트를 올리지 않았다");
+        assert!(
+            wait_for_serving(&paths),
+            "낡은 daemon 이 소켓 서비스를 열지 않았다(SIGTERM 핸들러 전)"
+        );
 
         let child = std::sync::Mutex::new(None::<std::process::Child>);
         let outcome = ensure_at(
@@ -4453,17 +4486,17 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
         // 기록의 실행 파일이 다르면(pid 재사용·남의 프로세스) 건너뛴다 — 살아 있어야 한다.
         std::fs::write(&paths.pid, format!(r#"{{"pid":{pid},"entryPath":"/bin/cat"}}"#)).unwrap();
         let mine = [PathBuf::from("/bin/sleep"), PathBuf::from("/bin/cat")];
-        let lines = retire_operators_at(&[root.clone()], &mine);
+        let lines = retire_operators_at(std::slice::from_ref(&root), &mine);
         assert!(lines[0].contains("건너뛴다"), "{lines:?}");
         assert!(rx.recv_timeout(Duration::from_millis(300)).is_err());
         // 같으면 내린다.
         std::fs::write(&paths.pid, format!(r#"{{"pid":{pid},"entryPath":"/bin/sleep"}}"#)).unwrap();
-        let lines = retire_operators_at(&[root.clone()], &mine);
+        let lines = retire_operators_at(std::slice::from_ref(&root), &mine);
         assert!(lines[0].contains("내렸다"), "{lines:?}");
         assert!(!rx.recv_timeout(Duration::from_secs(5)).unwrap().success());
         // 소켓이 없으면 아무 줄도 없다(그 자리엔 오퍼레이터가 없다).
         std::fs::remove_file(&paths.socket).unwrap();
-        assert!(retire_operators_at(&[root.clone()], &mine).is_empty());
+        assert!(retire_operators_at(std::slice::from_ref(&root), &mine).is_empty());
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -4490,7 +4523,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
         let img = process_image(pid).expect("image");
         assert!(!same_entry_path(script.to_str().unwrap(), &img[0]), "실행 파일은 인터프리터여야 시험이 뜻이 있다: {img:?}");
         std::fs::write(&paths.pid, format!(r#"{{"pid":{pid},"entryPath":"{}"}}"#, script.display())).unwrap();
-        let lines = retire_operators_at(&[root.clone()], &[script.clone()]);
+        let lines = retire_operators_at(std::slice::from_ref(&root), std::slice::from_ref(&script));
         assert!(lines[0].contains("내렸다"), "{lines:?}");
         assert!(!rx.recv_timeout(Duration::from_secs(5)).unwrap().success());
         let _ = std::fs::remove_dir_all(&root);
@@ -4531,7 +4564,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
         let (node_op, _pid, rx) = spawn_fake_operator(&root, &paths, "harkroom-operator");
         let my_entry = root.join("harkroom-operator-rs");
         let launched = std::sync::atomic::AtomicBool::new(false);
-        let _ = ensure_at(&paths, &my_entry, &[node_op.clone()], |_, _| {}, || {
+        let _ = ensure_at(&paths, &my_entry, std::slice::from_ref(&node_op), |_, _| {}, || {
             launched.store(true, std::sync::atomic::Ordering::SeqCst);
             Ok(DaemonExitWatch::exited("fake", Some(1), None))
         });
@@ -4565,10 +4598,10 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
         let _ = std::fs::remove_dir_all(&root);
         let paths = endpoint_files(&root);
         let (op, _pid, rx) = spawn_fake_operator(&root, &paths, "harkroom-operator");
-        let lines = retire_operators_at(&[root.clone()], &[root.join("mine").join("harkroom-operator")]);
+        let lines = retire_operators_at(std::slice::from_ref(&root), &[root.join("mine").join("harkroom-operator")]);
         assert!(lines[0].contains("다른 번들"), "{lines:?}");
         assert!(rx.recv_timeout(Duration::from_millis(300)).is_err(), "다른 번들의 오퍼레이터를 내렸다");
-        let lines = retire_operators_at(&[root.clone()], &[op]);
+        let lines = retire_operators_at(std::slice::from_ref(&root), &[op]);
         assert!(lines[0].contains("내렸다"), "{lines:?}");
         assert!(rx.recv_timeout(Duration::from_secs(5)).is_ok());
         let log = std::fs::read_to_string(paths.dir.join(format!("operator-v{DAEMON_PROTOCOL_VERSION}-client.log"))).unwrap();

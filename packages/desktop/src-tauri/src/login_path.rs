@@ -336,7 +336,7 @@ fn nvm_node_dir(home: &Path) -> Option<std::path::PathBuf> {
     for entry in std::fs::read_dir(&root).ok()?.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
         let Some(ver) = parse_version(&name) else { continue };
-        if best.as_ref().map_or(true, |(b, _)| ver > *b) {
+        if best.as_ref().is_none_or(|(b, _)| ver > *b) {
             best = Some((ver, entry.path().join("bin")));
         }
     }
