@@ -160,6 +160,12 @@ const TS_THREAD_SQL: &str = "select (not $4::bool and exists(select 1 from team_
                 and deleted_at is null and meta->>'kind' = 'ask' \
                 and meta->'ask'->>'answeredWith' is null and meta->'ask'->>'closedAt' is null))";
 
+/// 결과를 닫는 글([`Origin::closes_delegation`])이 TS `closeDelegationsForReply` 의 닫기 갈래에 닿는가 — 작성자가 담당인 안 닫힌
+/// 항목(`outcome is null`)이 이 스레드에 있다. 스위치(v0·v1)와 무관하게 두 갈래 모두 그 항목을 닫으므로 넓게 TS 로 넘긴다.
+/// 없으면 TS 도 기한 밀기(안 닫힌 항목만 — 닿지 않음)·대기 중 update(보고된 항목)만 해서 보통 글과 같다.
+const CLOSES_DELEGATION_SQL: &str = "select exists(select 1 from team_delegation_item i join team_delegation d on d.id = i.delegation_id \
+                where d.thread_root_id = $1::uuid and i.delegate_account_id = $2::uuid and i.outcome is null)";
+
 /// 이 글이 TS `parseAskPick` 에서 **반드시 null** 인가(카드 답이 될 수 없는가) — 넓게 TS 로 보내는 쪽으로만 틀린다.
 /// TS 는 코드·인용 줄·링크·멘션을 걷어 낸 나머지에 `?`·`？` 가 있으면 null(`QUESTION`)이다. 여기서는 걷어 낼 거리(백틱·`>` 인용 줄)가
 /// 하나라도 있으면 거짓으로 두고, 없을 때 본문에 물음표가 있으면 참이다. URL·메시지 링크 글은 이미 [`ts_body`] 로 TS 에 간다.
@@ -301,6 +307,9 @@ pub(crate) struct Origin<'a> {
     /// TS `serverNotice` — 서버가 에이전트 이름으로 세운 알림 줄(백스톱 카드, C1c-4d-2). 결과가 아니다: 회신권·위임 의무·암묵 위임을
     /// 건드리지 않고, 갈래 판정(TS 몫)도 하지 않는다(서버 안쪽 호출이라 넘길 TS 라우트가 없다). 라우트 입력에서는 켜지 않는다.
     pub(crate) server_notice: bool,
+    /// 결과를 닫는 글(`meta.kind` 가 `failure`·`report`, C3b-2c). 작성자가 담당인 **안 닫힌** 위임 항목이 이 스레드에 있으면 TS
+    /// `closeDelegationsForReply` 가 그 항목을 닫고 위임자를 깨운다 — 아직 Rust 에 없는 갈래라 [`CLOSES_DELEGATION_SQL`] 로 TS 에 넘긴다.
+    pub(crate) closes_delegation: bool,
 }
 
 /// 읽은 JSON 이 TS 몫인가 — 키만 보고 정한다(값이 틀렸으면 TS 가 400 을 준다).
@@ -727,6 +736,17 @@ pub(crate) async fn post_tx(
             .fetch_one(&mut *tx)
             .await?;
         if ts {
+            tx.rollback().await?;
+            return Ok((Outcome::ToTs, None));
+        }
+    }
+    if let (true, Some(r)) = (origin.closes_delegation && is_result, root) {
+        let closes: bool = sqlx::query_scalar(CLOSES_DELEGATION_SQL)
+            .bind(r)
+            .bind(author)
+            .fetch_one(&mut *tx)
+            .await?;
+        if closes {
             tx.rollback().await?;
             return Ok((Outcome::ToTs, None));
         }

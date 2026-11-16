@@ -163,12 +163,120 @@ pub async fn answer(
     operator: bool,
 ) -> Option<String> {
     let a = parse(args)?;
+    post(st, me, a, Map::new(), false, cause, turn, operator).await
+}
+
+/// `message.fail` 의 zod 인자 중 Rust 가 맡는 것 — 표지(`code`) 없는 실패만(C3b-2c-1).
+#[derive(Debug, PartialEq, Eq)]
+struct FailArgs {
+    args: Args,
+    retryable: bool,
+    what: Option<String>,
+    reason: Option<String>,
+}
+
+/// 문자열 칸 `z.string().min(1).max(n).optional()` — 없으면 `Some(None)`, 틀린 꼴이면 `None`(→ TS 가 검증 오류를 낸다).
+fn opt_str(o: &Map<String, Value>, key: &str, max: usize) -> Option<Option<String>> {
+    match o.get(key) {
+        None => Some(None),
+        Some(Value::String(v)) => {
+            let n = v.encode_utf16().count();
+            (n >= 1 && n <= max).then(|| Some(v.clone()))
+        }
+        _ => None,
+    }
+}
+
+/// zod `message.fail` 의 `inputSchema`. **TS 로 넘기는 것**(fail-closed): 표지 칸(`code`·`laneCode`)·차례 주인 재료(`mentionId`·
+/// `claudePoolRank`·`claudeAccountRank`)가 하나라도 있으면 — `thread_model_rejected` 의 keepCode(스레드 모델 지정의 stale 판정)·
+/// `account_gate` 의 차례 주인·inbox·`provider_lane` 의 까닭 코드 허용 목록은 아직 TS 몫이다. 옛 러너의 `account` 는 zod 처럼 받고 버린다.
+fn parse_fail(args: &Value) -> Option<FailArgs> {
+    let Value::Object(o) = args else { return None };
+    for k in [
+        "code",
+        "laneCode",
+        "mentionId",
+        "claudePoolRank",
+        "claudeAccountRank",
+    ] {
+        if o.contains_key(k) {
+            return None;
+        }
+    }
+    let retryable = match o.get("retryable") {
+        Some(Value::Bool(b)) => *b,
+        _ => return None,
+    };
+    let what = opt_str(o, "what", 500)?;
+    let reason = opt_str(o, "reason", 1000)?;
+    match o.get("account") {
+        None => {}
+        Some(Value::String(a)) if a.encode_utf16().count() <= 80 => {}
+        _ => return None,
+    }
+    // 글 칸(채널·본문·머리·모델)은 `message.post` 와 같은 zod 다. fail 에 없는 칸은 zod 가 버리므로 걸러 낸 뒤 넘긴다.
+    let mut base = Map::new();
+    for k in ["channelId", "body", "threadRootId", "model"] {
+        if let Some(v) = o.get(k) {
+            base.insert(k.to_owned(), v.clone());
+        }
+    }
+    let args = parse(&Value::Object(base))?;
+    Some(FailArgs {
+        args,
+        retryable,
+        what,
+        reason,
+    })
+}
+
+/// TS `FailureMeta` 의 `failure` — `{ retryable, what?, reason? }`(표지 없는 갈래).
+fn failure_meta(f: &FailArgs) -> Map<String, Value> {
+    let mut failure = Map::new();
+    failure.insert("retryable".into(), Value::Bool(f.retryable));
+    if let Some(w) = &f.what {
+        failure.insert("what".into(), Value::String(w.clone()));
+    }
+    if let Some(r) = &f.reason {
+        failure.insert("reason".into(), Value::String(r.clone()));
+    }
+    let mut meta = Map::new();
+    meta.insert("kind".into(), Value::String("failure".into()));
+    meta.insert("failure".into(), Value::Object(failure));
+    meta
+}
+
+/// `message.fail`(C3b-2c-1) — TS 와 같이 채널 가시성 → 실패 meta + 모델 신고 → `postMessage` → `postedResult`. 작성자가 담당인 안 닫힌
+/// 위임 항목이 이 스레드에 있으면(실패가 그 항목을 닫는다) 코어가 TS 로 넘긴다([`Origin::closes_delegation`]).
+pub async fn answer_fail(
+    st: &PostState,
+    me: &Account,
+    args: &Value,
+    cause: Option<&str>,
+    turn: Option<&str>,
+    operator: bool,
+) -> Option<String> {
+    let f = parse_fail(args)?;
+    let meta = failure_meta(&f);
+    post(st, me, f.args, meta, true, cause, turn, operator).await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn post(
+    st: &PostState,
+    me: &Account,
+    a: Args,
+    mut meta: Map<String, Value>,
+    closes_delegation: bool,
+    cause: Option<&str>,
+    turn: Option<&str>,
+    operator: bool,
+) -> Option<String> {
     match channel_visible(&st.read, &me.id, &a.channel).await {
         Ok(true) => {}
         Ok(false) => return Some(err("forbidden", "not a member of this dm channel")),
         Err(_) => return None,
     }
-    let mut meta = Map::new();
     cause_link::reported_model_meta(
         &st.read,
         &me.id,
@@ -186,6 +294,7 @@ pub async fn answer(
         turn_id: turn.filter(|_| operator),
         meta,
         server_notice: false,
+        closes_delegation,
     };
     let out = msg_post::post_in_tx(
         st,
@@ -249,6 +358,48 @@ mod tests {
         ] {
             assert!(parse(&bad).is_none(), "{bad}");
         }
+    }
+
+    #[test]
+    fn fail_parse_like_zod() {
+        let f = parse_fail(&json!({ "channelId": C, "body": "x", "retryable": true, "what": "w", "account": "old", "alsoInChannel": true }))
+            .expect("plain fail");
+        assert!(f.retryable);
+        assert_eq!(f.what.as_deref(), Some("w"));
+        assert_eq!(f.reason, None);
+        // fail 에 없는 칸(alsoInChannel)은 zod 가 버린다.
+        assert!(!f.args.post.also_in_channel);
+        let m = Value::Object(failure_meta(&f));
+        assert_eq!(
+            m,
+            json!({ "kind": "failure", "failure": { "retryable": true, "what": "w" } })
+        );
+        for bad in [
+            // 표지·차례 주인 재료는 TS 로(fail-closed).
+            json!({ "channelId": C, "body": "x", "retryable": true, "code": "account_gate" }),
+            json!({ "channelId": C, "body": "x", "retryable": true, "code": "thread_model_rejected" }),
+            json!({ "channelId": C, "body": "x", "retryable": true, "laneCode": "unknown" }),
+            json!({ "channelId": C, "body": "x", "retryable": true, "mentionId": R }),
+            json!({ "channelId": C, "body": "x", "retryable": true, "claudePoolRank": 1 }),
+            json!({ "channelId": C, "body": "x", "retryable": true, "claudeAccountRank": 1 }),
+            // zod 오류는 TS 가 낸다.
+            json!({ "channelId": C, "body": "x" }),
+            json!({ "channelId": C, "body": "x", "retryable": "yes" }),
+            json!({ "channelId": C, "body": "x", "retryable": true, "what": "" }),
+            json!({ "channelId": C, "body": "x", "retryable": true, "reason": "r".repeat(1001) }),
+            json!({ "channelId": C, "body": "x", "retryable": true, "account": "a".repeat(81) }),
+            json!({ "channelId": C, "body": "", "retryable": true }),
+            json!({ "channelId": "x", "body": "x", "retryable": true }),
+        ] {
+            assert!(parse_fail(&bad).is_none(), "{bad}");
+        }
+        // agentModels 는 fail 에 없는 칸 — zod 처럼 버린다.
+        assert!(
+            parse_fail(
+                &json!({ "channelId": C, "body": "x", "retryable": false, "agentModels": [] })
+            )
+            .is_some()
+        );
     }
 
     #[test]
