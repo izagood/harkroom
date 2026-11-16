@@ -461,6 +461,30 @@ async fn main() {
         }
         _ => None,
     };
+    // C1c-4c — MCP `message.post` 는 글 쓰기 풀에 principal 옮겨 적기 칸(`MCP_POST_EXTRA_PRIVILEGES`)까지 있을 때만. 없으면 MCP 글만 TS 에 남는다.
+    let mcp_post_ok = match &post_write {
+        Some(w) => match write::missing_in(
+            w,
+            harkroom_server::core::msg_post::MCP_POST_EXTRA_PRIVILEGES,
+            &[],
+        )
+        .await
+        {
+            Ok(m) if m.is_empty() => true,
+            Ok(m) => {
+                eprintln!("front: mcp message.post core off — missing privileges {m:?}");
+                false
+            }
+            Err(e) => {
+                eprintln!(
+                    "front: mcp message.post core off — privilege check failed ({})",
+                    e.as_database_error().map_or("io", |_| "db")
+                );
+                false
+            }
+        },
+        None => false,
+    };
     // C3a-3c — 글 고치기. 위 블록들과 같이 쓰기 역할에 그 권한이 **하나라도 없으면** 붙이지 않는다(그 경로는 TS 가 받는다).
     let edit_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -744,6 +768,14 @@ async fn main() {
             core_routes.sockets.extend(ask.sockets);
         }
         // C1c-1 — 글 올리기(`POST /channels/{id}/messages`). 맡지 않는 글은 핸들러가 읽은 바이트 그대로 TS 로 넘긴다.
+        // C1c-4c — MCP `message.post` 는 같은 쓰기 풀에 principal 옮겨 적기 칸까지 있을 때만(위 `mcp_post_ok`).
+        let mcp_post = post_write.clone().filter(|_| mcp_post_ok).map(|w| {
+            std::sync::Arc::new(harkroom_server::core::msg_post::PostState {
+                read: state.pool.clone(),
+                write: w,
+                up: state.up.clone(),
+            })
+        });
         if let Some(write) = post_write {
             let post = harkroom_server::core::msg_post::routes(
                 harkroom_server::core::msg_post::PostState {
@@ -816,6 +848,7 @@ async fn main() {
                 note: note_write,
                 memory: mem_write,
                 memory_body: mem_body_write,
+                post: mcp_post,
             },
             auth.clone(),
             state.cors.clone(),

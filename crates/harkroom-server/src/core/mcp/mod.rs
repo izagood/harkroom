@@ -14,6 +14,7 @@ pub mod grant_writes;
 pub mod mem_body;
 pub mod mem_recall;
 pub mod mem_writes;
+pub mod msg_post;
 pub mod note;
 pub mod reads2;
 pub mod reads3;

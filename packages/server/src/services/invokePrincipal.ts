@@ -42,6 +42,17 @@ export const PRINCIPAL_FROM_CAUSE_SQL = `(case
   when a.kind = 'agent' then m.principal_account_id
   else null end)`;
 
+/** `principalForAgentPost` 의 질의 — Rust 코어(`core/cause_link.rs`, S5.3 C1c-4c)가 골든으로 받는다. */
+export const PRINCIPAL_FOR_AGENT_POST_SQL = `select p.id::text as id from secret_turn_lease l
+       join account p on p.id = l.principal_account_id
+       join message m on m.id = l.cause_message_id and m.deleted_at is null
+      where l.agent_id = $1::uuid and l.cause_message_id = $2::uuid and l.ended_at is null and l.expires_at > $3::timestamptz
+        and p.kind = 'human' and p.deleted_at is null and p.disabled_at is null
+      order by l.created_at desc limit 1`;
+
+/** `causeReasonsFor` 의 질의 — Rust 코어(S5.3 C1c-4c)가 골든으로 받는다. */
+export const CAUSE_REASONS_SQL = `select distinct reason from inbox where account_id = $1::uuid and message_id = $2::uuid order by reason`;
+
 /**
  * 에이전트가 지금 쓰는 글의 principal — 그 원인으로 받은 **살아 있는 임대 행**에서만 읽는다(C1, `mandateForAgentPost` 와 같은 꼴).
  * 임대가 없거나 끝났거나 만료됐으면 null. 읽는 순간에도 그 계정이 사람이고 활성인지 다시 본다.
@@ -52,12 +63,7 @@ export async function principalForAgentPost(
 ): Promise<string | null> {
   const now = args.now ?? new Date();
   const row = (await client.query<{ id: string }>(
-    `select p.id from secret_turn_lease l
-       join account p on p.id = l.principal_account_id
-       join message m on m.id = l.cause_message_id and m.deleted_at is null
-      where l.agent_id = $1 and l.cause_message_id = $2 and l.ended_at is null and l.expires_at > $3
-        and p.kind = 'human' and p.deleted_at is null and p.disabled_at is null
-      order by l.created_at desc limit 1`,
+    PRINCIPAL_FOR_AGENT_POST_SQL,
     [args.agentId, args.causeMessageId, now])).rows[0];
   return row?.id ?? null;
 }
@@ -70,7 +76,7 @@ export async function causeReasonsFor(
   client: Q, args: { agentId: string; causeMessageId: string },
 ): Promise<string[]> {
   return (await client.query<{ reason: string }>(
-    `select distinct reason from inbox where account_id = $1 and message_id = $2 order by reason`,
+    CAUSE_REASONS_SQL,
     [args.agentId, args.causeMessageId])).rows.map((r) => r.reason);
 }
 

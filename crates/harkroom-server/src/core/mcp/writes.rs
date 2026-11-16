@@ -26,6 +26,8 @@ pub const SERVED: &[&str] = &[
     "bg.complete",
     "delegation.close",
     "thread.note",
+    // C1c-4c — 글 올리기. 글 쓰기 풀([`McpWrites::post`])이 있을 때만 답한다(없으면 TS).
+    "message.post",
 ];
 
 /// TS 가 조건부로 싣는 도구 — `/mcp/admit` 이 `registered: true` 라고 답했을 때만 Rust 가 답한다([`super::route::serve`]).
@@ -97,6 +99,8 @@ pub struct McpWrites {
     pub memory: Option<PgPool>,
     /// 기억 본문 쓰기(C4b B1b: set·merge·restore) — B1a 권한 + [`super::mem_body::MEMORY_BODY_PRIVILEGES`]. [`super::mem_body::answer`] 가 본다.
     pub memory_body: Option<PgPool>,
+    /// `message.post`(C1c-4c) — `msg_post::MESSAGE_POST_PRIVILEGES` + `MCP_POST_EXTRA_PRIVILEGES`. [`super::msg_post::answer`] 가 본다.
+    pub post: Option<std::sync::Arc<crate::core::msg_post::PostState>>,
 }
 
 /// JS `Number.MAX_SAFE_INTEGER` — 이 밖의 수는 TS 에서 값이 뭉개진다. Rust 는 같은 결과를 낼 수 없으니 TS 로 넘긴다.

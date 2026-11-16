@@ -24,6 +24,14 @@ export async function reportedModelMeta(
   return { model: { id, ...(modelsDisagree(configured, id) ? { mismatch: true as const } : {}) } };
 }
 
+/** `effectiveModel` 의 질의 — Rust 코어(`core/cause_link.rs`, S5.3 C1c-4c)가 골든으로 받는다. */
+export const EFFECTIVE_MODEL_SQL = `select coalesce(nullif(t.model, ''), nullif(c.model, ''), nullif(d.model, '')) as model
+       from agent_config c
+       left join agent_defaults d on true
+       left join thread_agent_model t
+         on t.agent_id = c.account_id and t.thread_root_id = $2::uuid and t.harness = c.harness
+      where c.account_id = $1::uuid`;
+
 /**
  * 이 계정이 이 스레드에서 **쓰기로 된** 모델. 스레드 지정(079)이 살아 있으면 그것이고, 없으면
  * `agent_config.model` → `agent_defaults.model` 순으로 내려간다. 그것도 비면 `null`("하네스
@@ -41,12 +49,7 @@ async function effectiveModel(
   db: Pool | PoolClient, accountId: string, threadRootId: string | null,
 ): Promise<string | null> {
   const found = await db.query(
-    `select coalesce(nullif(t.model, ''), nullif(c.model, ''), nullif(d.model, '')) as model
-       from agent_config c
-       left join agent_defaults d on true
-       left join thread_agent_model t
-         on t.agent_id = c.account_id and t.thread_root_id = $2 and t.harness = c.harness
-      where c.account_id = $1`,
+    EFFECTIVE_MODEL_SQL,
     [accountId, threadRootId],
   );
   return (found.rows[0]?.model as string | null | undefined) ?? null;
