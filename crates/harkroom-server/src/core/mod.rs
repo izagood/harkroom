@@ -22,6 +22,7 @@ pub mod decide_core;
 pub mod decide_routes;
 pub mod events;
 pub mod grant_reads;
+pub mod implicit_delegation;
 pub mod inbox_list;
 pub mod inbox_read;
 pub mod inbox_thread;
