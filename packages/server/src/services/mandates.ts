@@ -190,16 +190,18 @@ export async function mandateForAgentPost(client: Q, args: { agentId: string; ca
   return row?.id ?? null;
 }
 
+/** `validMandateOwner` 의 문장 — Rust 코어(`core/grant_reads.rs`)가 골든으로 받는다. `$2` 는 지금 − `MANDATE_IDLE_MS`. */
+export const VALID_MANDATE_OWNER_SQL = `select d.owner_account_id as owner from mandate d
+      where d.id = $1::uuid and d.ended_at is null
+        and ((d.automation_id is null and d.last_activity_at > $2::timestamptz)
+          or (d.automation_id is not null and exists (
+                select 1 from automation a where a.id = d.automation_id and a.deleted_at is null and a.enabled and a.approved_at is not null)))`;
+
 /** 위임이 지금 유효한가 — 끝나지 않았고 마지막 활동이 7일 안. 유효하면 소유자 id. */
 export async function validMandateOwner(client: Q, mandateId: string | null, now = new Date()): Promise<string | null> {
   if (!mandateId) return null;
   // 자동화 위임장(⑤b)은 7일 쉼 대신 자동화 상태(승인·켜짐·안 지움)에 묶인다.
-  const row = (await client.query<{ owner: string }>(
-    `select d.owner_account_id as owner from mandate d
-      where d.id = $1 and d.ended_at is null
-        and ((d.automation_id is null and d.last_activity_at > $2)
-          or (d.automation_id is not null and exists (
-                select 1 from automation a where a.id = d.automation_id and a.deleted_at is null and a.enabled and a.approved_at is not null)))`,
+  const row = (await client.query<{ owner: string }>(VALID_MANDATE_OWNER_SQL,
     [mandateId, new Date(now.getTime() - MANDATE_IDLE_MS)])).rows[0];
   return row?.owner ?? null;
 }

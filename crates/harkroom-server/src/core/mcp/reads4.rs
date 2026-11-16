@@ -40,7 +40,7 @@ fn sql() -> &'static Sql {
 }
 
 /// TS `parseToolScope` — `TOOL_SCOPE_RE = /^tool:(<uuid 소문자>):(.+)$/s`.
-fn parse_tool_scope(scope: &str) -> Option<(&str, &str)> {
+pub(crate) fn parse_tool_scope(scope: &str) -> Option<(&str, &str)> {
     static R: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let re = R.get_or_init(|| {
         regex::Regex::new(

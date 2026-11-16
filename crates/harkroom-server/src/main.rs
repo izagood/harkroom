@@ -607,6 +607,15 @@ async fn main() {
         core_routes.router = core_routes.router.merge(decide_check.router);
         core_routes.http.extend(decide_check.http);
         core_routes.sockets.extend(decide_check.sockets);
+        // C3b grant 읽기 줄 — 러너·오퍼레이터가 읽는 `GET /agent/tool-allows`·`/agent/command-grants`. 읽기 풀만(match 는 쓰기라 TS).
+        let grant_reads = harkroom_server::core::grant_reads::routes(
+            state.pool.clone(),
+            auth.clone(),
+            state.cors.clone(),
+        );
+        core_routes.router = core_routes.router.merge(grant_reads.router);
+        core_routes.http.extend(grant_reads.http);
+        core_routes.sockets.extend(grant_reads.sockets);
         // C1b-1b — 채널·스레드 목록(`GET /channels/{id}/messages`). 같은 경로의 `POST` 는 fallback 으로 TS.
         let lists = harkroom_server::core::msg_list::routes(
             state.pool.clone(),

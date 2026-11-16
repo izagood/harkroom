@@ -27,6 +27,9 @@ export interface MandateLine extends LineFacts {
 const LINE_COLS = `id, mandate_id as "mandateId", cap, scope, limits, agent_ids as "agentIds", granted_by as "grantedBy", via,
   request_id as "requestId", used_count as "usedCount", created_at as "createdAt", revoked_at as "revokedAt"`;
 
+/** 위임장의 저장된 줄(회수 제외) — Rust 코어(`core/grant_reads.rs`)가 골든으로 받는다. */
+export const MANDATE_LINES_STORED_SQL = `select ${LINE_COLS} from mandate_line where mandate_id = $1::uuid and revoked_at is null order by created_at, id`;
+
 export type AddLineResult = { ok: true; line: MandateLine } | { ok: false; code: 'no_mandate' | 'mandate_ended' | 'not_owner' | 'bad_cap' | 'bad_via' | 'bad_scope' | 'bad_agent'; detail?: string };
 
 /**
@@ -74,8 +77,7 @@ export async function listMandateLines(client: Q, mandateId: string, now = new D
     `select owner_account_id as owner, coalesce(delegator_account_id, owner_account_id) as delegator, channel_id as "channelId"
        from mandate where id = $1`, [mandateId])).rows[0];
   if (!m) return [];
-  const stored = (await client.query<MandateLine>(
-    `select ${LINE_COLS} from mandate_line where mandate_id = $1 and revoked_at is null order by created_at, id`, [mandateId])).rows
+  const stored = (await client.query<MandateLine>(MANDATE_LINES_STORED_SQL, [mandateId])).rows
     .map((r) => ({ ...r, readOnly: false }));
   // 상시 줄은 소유자가 맡긴 위임장에서만 — 다른 사람(delegator)이 맡긴 위임장에는 펼치지 않는다(C-3, security: 그 사람의 7일 grant 가
   // 그 사람이 맡긴 위임장 전부로 퍼지는 꼴을 막는다. 소유자 7일 grant 도 그 위임장에는 퍼지지 않는다 — D3). 그 위임장의 허락은 저장된 줄뿐이다.
