@@ -4924,8 +4924,8 @@ describe.skipIf(!ON)('결정권 판정 — TS·Rust 같은 답(C3b-3a)', () => {
  * 세션 사본 행(허용 목록 칸)·ended 로 지우기·되살릴 때 빈 자리 다시 채우기.
  *
  * **갈리는 것(알려진 차이, #2245 security)**: r1a(되살릴 때 남의 행을 덮지 않음)·r1b(쓰기 실패를 다음 박동에 재시도)·
- * r2(그 채널의 멤버가 아니면 사본을 쓰지 않음)는 Rust 에만 있다. 각 쪽 결과를 따로 못 박는다 — TS 를 고치면 TS 쪽 기대가
- * 빨개지므로 그때 같은 것으로 옮긴다.
+ * r2(그 채널의 멤버가 아니면 사본을 쓰지 않음)는 Rust 에만 있다. 각 쪽 결과를 따로 못 박는다.
+ * **의도된 차이 — TS 에는 옮기지 않는다(TS 는 전환 때 걷힌다, 11-16 결정).** TS 쪽 기대는 그때 TS 와 함께 지운다.
  */
 describe.skipIf(!ON)('러너 릴레이 — TS·Rust 같은 요청(C6c-4)', () => {
   it('목록·거부 길·cancel 정리·세션 사본(r1a·r1b·r2 차이 포함)', async () => {
@@ -5176,12 +5176,12 @@ describe.skipIf(!ON)('러너 릴레이 — TS·Rust 같은 요청(C6c-4)', () =>
         cases++;
       }
 
-      // ⑤ r2 — 에이전트가 멤버가 아닌 채널의 세션. **알려진 차이**: Rust 는 쓰지 않고 TS 는 쓴다.
+      // ⑤ r2 — 에이전트가 멤버가 아닌 채널의 세션. **의도된 차이**: Rust 는 쓰지 않고 TS 는 쓴다(TS 는 전환 때 걷힘).
       for (const s of sides) await start(s, 'r2', away, awayRoot);
       for (const s of sides) await flush(s);
       const r2 = Object.fromEntries(await Promise.all(sides.map(async (s) => [s.impl, (await rowOf(`${s.tag}-r2`)) !== undefined] as const)));
       expect(r2.rust, 'r2 — Rust 는 멤버가 아닌 채널의 사본을 쓰지 않는다').toBe(false);
-      expect(r2.ts, 'r2 — TS 는 아직 멤버십을 보지 않는다(알려진 차이 · 고치면 false 로)').toBe(true);
+      expect(r2.ts, 'r2 — TS 는 멤버십을 보지 않는다(의도된 차이 · TS 는 전환 때 걷힘)').toBe(true);
       cases++;
 
       // ⑥ r1b — 쓰기 실패 뒤 다음 박동에 재시도. 시험 트리거가 `-r1b` 세션의 INSERT 만 한 번 막는다(역할과 무관하게 두 쪽 같은 조건).
@@ -5203,12 +5203,12 @@ describe.skipIf(!ON)('러너 릴레이 — TS·Rust 같은 요청(C6c-4)', () =>
         await Promise.all(sides.map((s) => beatAfter(s, t0)));
         const got = Object.fromEntries(await Promise.all(sides.map(async (s) => [s.impl, (await rowOf(`${s.tag}-r1b`)) !== undefined] as const)));
         expect(got.rust, 'r1b — Rust 는 다음 박동에 다시 쓴다').toBe(true);
-        expect(got.ts, 'r1b — TS 는 아직 재시도하지 않는다(알려진 차이 · 고치면 true 로)').toBe(false);
+        expect(got.ts, 'r1b — TS 는 재시도하지 않는다(의도된 차이 · TS 는 전환 때 걷힘)').toBe(false);
         cases++;
       }
 
       // ⑦ 되살리기 — 허브 줄이 쓸려 나간 사이 다른 허브(F)가 `-priv` 를 가져갔다. 다음 박동에 빈 자리(`-cx`)는 둘 다 다시
-      // 채우고(같아야 함), `-priv` 는 r1a — Rust 는 F 의 행을 그대로 두고, TS 는 아직 덮어쓴다(알려진 차이).
+      // 채우고(같아야 함), `-priv` 는 r1a — Rust 는 F 의 행을 그대로 두고, TS 는 덮어쓴다(의도된 차이).
       const foreign = randomUUID();
       await db.pool.query(`insert into relay_hub (hub_epoch, impl) values ($1, 'ts')`, [foreign]);
       const t1 = (await db.pool.query<{ t: Date }>('select now() as t')).rows[0]!.t;
@@ -5226,7 +5226,7 @@ describe.skipIf(!ON)('러너 릴레이 — TS·Rust 같은 요청(C6c-4)', () =>
         cases++;
         const kept = Object.fromEntries(await Promise.all(sides.map(async (s) => [s.impl, (await rowOf(`${s.tag}-priv`))?.hub] as const)));
         expect(kept.rust, 'r1a — Rust 는 되살릴 때 남의 허브 행을 덮지 않는다').toBe(foreign);
-        expect(kept.ts, 'r1a — TS 는 아직 덮어쓴다(알려진 차이 · 고치면 foreign 으로)').toBe(epochs.get('sideT'));
+        expect(kept.ts, 'r1a — TS 는 덮어쓴다(의도된 차이 · TS 는 전환 때 걷힘)').toBe(epochs.get('sideT'));
         cases++;
       }
       console.log(`relay contrast: ${cases} case(s) compared`);
