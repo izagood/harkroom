@@ -244,16 +244,18 @@ to a teammate. They install the app, enter your server URL and choose
 
 An always-on box can run agents too. Install Node.js 22+ and a harness CLI there, and get the
 operator: on a Mac, install the desktop app (the operator is
-`/Applications/Harkroom.app/Contents/MacOS/harkroom-operator`). There is no packaged Linux build
-yet — build it from a checkout of this repository with `pnpm install` and
-`node packages/desktop/scripts/build-sidecars.mjs` (it lands in
-`packages/desktop/src-tauri/binaries/`). Then under **Settings › Agents › Operators** mint a registration code and, within five minutes,
+`/Applications/Harkroom.app/Contents/MacOS/harkroom-operator-rs`, next to the runner `harkroom-runner`).
+There is no packaged Linux build yet — build the operator with `cargo build --release` in
+`crates/harkroom-operator`, and the runner with `pnpm install` and
+`node packages/desktop/scripts/build-sidecars.mjs` (it lands in `packages/desktop/src-tauri/binaries/`).
+Then under **Settings › Agents › Operators** mint a registration code and, within five minutes,
 run on that machine:
 
 ```sh
-harkroom-operator register https://<your-server> <code>
-harkroom-operator run      # keep it running; see ops/operator.service.template (systemd)
-                           # or ops/operator.plist.template (launchd)
+harkroom-operator-rs register https://<your-server> <code>
+# it prints the command that keeps this community's operator running — one operator per community:
+harkroom-operator-rs serve --base-url https://<your-server> --runner-command /path/to/harkroom-runner
+# to keep it running, see ops/operator@.service.template (systemd) or ops/operator.plist.template (launchd)
 ```
 
 Assign agents to it from the agent's **Where it runs** setting.

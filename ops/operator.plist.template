@@ -1,19 +1,31 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  오퍼레이터를 launchd 감독 하에 둔다 (docs/operations.md §8-1, 스펙 2026-09-20 단계 6).
-  감독할 것은 러너가 아니라 **오퍼레이터**다 — 머신에 하나이고, 러너는 오퍼레이터가 배정을
-  받아 띄우고 죽으면 다시 띄운다. 에이전트마다 plist 하나이던 옛 `agent-runner.plist.template`
-  은 이것으로 대체됐다(러너는 서버 URL 도 PAT 도 받지 않으므로 그 plist 의 env 자리 자체가 없다).
+  오퍼레이터를 launchd 감독 하에 둔다 (docs/operations.md §8-1).
+  감독할 것은 러너가 아니라 **오퍼레이터**다. 오퍼레이터는 **커뮤니티 하나에 하나**다(`serve` 의 base-url 인자) —
+  커뮤니티가 둘이면 이 plist 도 둘이다(라벨·로그에 커뮤니티 키를 붙인다). 러너는 오퍼레이터가 배정을 받아
+  띄우고 죽으면 다시 띄운다.
+
+  자리 채우기:
+    @BIN@        Rust 오퍼레이터 실행 파일   예) /Applications/Harkroom.app/Contents/MacOS/harkroom-operator-rs
+    @RUNNER@     러너 사이드카(절대 경로)    예) /Applications/Harkroom.app/Contents/MacOS/harkroom-runner
+                 — 이 줄(runner-command 인자)을 빼면 오퍼레이터는 배정을 받아도 러너를 못 띄운다. Rust 러너는 @BIN@ 옆의 harkroom-runner-rs 를 쓴다.
+    @BASE_URL@   커뮤니티 주소               예) https://team.example.com
+    @KEY@        커뮤니티 키(라벨용 이름)     — register 가 찍은 설정 경로의 `c/<8자>` 를 쓴다
+    @USER@       로그인 사용자 이름
 
   쓰는 법:
-    harkroom-operator register https://<host> <코드>      # 먼저 등록한다 — 토큰이 데이터 디렉터리에 남는다
-    sed -e 's|@BIN@|/Applications/Harkroom.app/Contents/MacOS/harkroom-operator|g' \
-        -e "s|@USER@|$(whoami)|g" \
-        ops/operator.plist.template > ~/Library/LaunchAgents/dev.harkroom.operator.plist
-    launchctl load ~/Library/LaunchAgents/dev.harkroom.operator.plist
+    @BIN@ register https://<host> <코드>      # 먼저 등록한다 — 끝에 이 커뮤니티의 serve 명령을 보여 준다
+    sed -e 's|@BIN@|/Applications/Harkroom.app/Contents/MacOS/harkroom-operator-rs|g' \
+        -e 's|@RUNNER@|/Applications/Harkroom.app/Contents/MacOS/harkroom-runner|g' \
+        -e 's|@BASE_URL@|https://<host>|g' -e 's|@KEY@|<8자>|g' -e "s|@USER@|$(whoami)|g" \
+        ops/operator.plist.template > ~/Library/LaunchAgents/dev.harkroom.operator.<8자>.plist
+    launchctl load ~/Library/LaunchAgents/dev.harkroom.operator.<8자>.plist
+
+  register 가 보여 준 serve 명령에 app-data 인자가 있으면(색인이 정한 옛 자리) ProgramArguments 에도 그 인자와 값을 더한다 —
+  빼면 오퍼레이터가 다른 뿌리를 보고 "토큰이 없다(등록 전)"로 서버에 붙지 않는다.
 
   붙인 뒤 반드시 죽여서 확인한다 — 감독이 붙었다는 것과 동작한다는 것은 다른 사실이다:
-    kill -9 $(launchctl list | awk '$3=="dev.harkroom.operator"{print $1}')
+    kill -9 $(launchctl list | awk '$3=="dev.harkroom.operator.<8자>"{print $1}')
     launchctl list | grep dev.harkroom.operator    # PID 가 바뀌어야 한다
 
   러너는 오퍼레이터가 죽어도 살아 있고(detached), 새 오퍼레이터가 장부로 다시 소유한다 —
@@ -22,25 +34,27 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>dev.harkroom.operator</string>
+  <key>Label</key><string>dev.harkroom.operator.@KEY@</string>
 
-  <!-- 실행 파일 그 자체를 감독한다. pnpm 같은 중간 프로세스를 감독하면 오퍼레이터가 죽어도
+  <!-- 실행 파일 그 자체를 감독한다. 중간 프로세스를 감독하면 오퍼레이터가 죽어도
        그 프로세스가 남아 launchd 가 재시작하지 않는 경우가 생긴다. -->
   <key>ProgramArguments</key>
   <array>
     <string>@BIN@</string>
-    <string>run</string>
+    <string>serve</string>
+    <string>--base-url</string>
+    <string>@BASE_URL@</string>
+    <string>--runner-command</string>
+    <string>@RUNNER@</string>
   </array>
 
   <key>EnvironmentVariables</key>
   <dict>
-    <!-- launchd 는 로그인 셸의 PATH 를 물려받지 않는다. 오퍼레이터는 러너에 로그인 셸의 PATH 를
-         따로 캐내 넘기지만(loginPath.ts), 사이드카가 셔뱅 스크립트라 **오퍼레이터 자신을 실행할
-         node** 가 여기서 발견돼야 한다(#513 의 `env: node: No such file or directory`). -->
+    <!-- launchd 는 로그인 셸의 PATH 를 물려받지 않는다. 오퍼레이터는 러너에 로그인 셸의 PATH 를 따로 캐내
+         넘기지만, Node 러너 사이드카가 셔뱅 스크립트라 **러너를 실행할 node** 가 여기서도 발견돼야 한다(#513). -->
     <key>PATH</key><string>/Users/@USER@/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <!-- 뿌리(~/.harkroom-agent/c/<8자>)를 HOME 에서 잰다 — 앱과 같은 HOME 이면 앱이 나중에 떠도 같은 소켓을 보고 물러난다. -->
     <key>HOME</key><string>/Users/@USER@</string>
-    <!-- 앱과 다른 자리에 두려면 HARKROOM_DATA_DIR 을 여기 적는다. 기본은 앱과 같은
-         ~/Library/Application Support/app.harkroom.desktop 이다 — 앱이 나중에 떠도 같은 소켓을 본다. -->
   </dict>
 
   <key>RunAtLoad</key><true/>
@@ -48,7 +62,7 @@
   <!-- 즉시 재시작을 반복하면 CPU 를 태운다. -->
   <key>ThrottleInterval</key><integer>10</integer>
 
-  <key>StandardOutPath</key><string>/tmp/harkroom-operator/operator.log</string>
-  <key>StandardErrorPath</key><string>/tmp/harkroom-operator/operator.err.log</string>
+  <key>StandardOutPath</key><string>/tmp/harkroom-operator/operator.@KEY@.log</string>
+  <key>StandardErrorPath</key><string>/tmp/harkroom-operator/operator.@KEY@.err.log</string>
 </dict>
 </plist>

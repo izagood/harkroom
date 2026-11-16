@@ -1,0 +1,44 @@
+# 오퍼레이터를 systemd(user) 감독 하에 둔다 (docs/operations.md §8-1). 템플릿 유닛이다 — 인스턴스 하나 = 커뮤니티 하나.
+# macOS 의 ops/operator.plist.template 과 같은 내용이다. 오퍼레이터는 커뮤니티마다 하나(`serve --base-url`), 러너는 오퍼레이터가 띄운다.
+#
+# 자리 채우기: @BIN@ = Rust 오퍼레이터 실행 파일, @RUNNER@ = 러너 사이드카 절대 경로(빼면 배정을 받아도 러너를 못 띄운다).
+# 커뮤니티 주소는 인스턴스마다 env 파일에 둔다 — 인스턴스 이름(%i)은 커뮤니티 키(register 가 찍은 설정 경로의 `c/<8자>`)다.
+#
+# 쓰는 법:
+#   @BIN@ register https://<host> <코드>          # 끝에 이 커뮤니티의 serve 명령을 보여 준다
+#   sed -e 's|@BIN@|/opt/harkroom/harkroom-operator-rs|g' -e 's|@RUNNER@|/opt/harkroom/harkroom-runner|g' \
+#       'ops/operator@.service.template' > ~/.config/systemd/user/harkroom-operator@.service
+#   mkdir -p ~/.config/harkroom
+#   printf 'BASE_URL=https://<host>\nEXTRA_ARGS=\n' > ~/.config/harkroom/operator-<8자>.env
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now harkroom-operator@<8자>
+#   loginctl enable-linger $USER          # 로그아웃해도 user 유닛이 살게
+#
+# register 가 보여 준 serve 명령에 `--app-data <dir>` 이 있으면(색인이 정한 옛 자리) EXTRA_ARGS=--app-data <dir> 로 적는다 —
+# 빼면 오퍼레이터가 다른 뿌리를 보고 "토큰이 없다(등록 전)"로 서버에 붙지 않는다.
+#
+# 확인 — 죽여서 다시 뜨는지:
+#   systemctl --user kill -s KILL harkroom-operator@<8자> && sleep 12 && systemctl --user status harkroom-operator@<8자>
+#
+# 로그: journalctl --user -u harkroom-operator@<8자> -f   (서버에 붙으면 `서버에 붙었다: <주소>`)
+[Unit]
+Description=harkroom operator (%i) — runs the agents of one community assigned to this machine
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=%h/.config/harkroom/operator-%i.env
+# 실행 파일 그 자체를 감독한다(중간 프로세스 없이). 러너는 detached 라 이 유닛의 재시작에 죽지 않는다.
+# $EXTRA_ARGS 는 괄호 없이 둔다 — 비어 있으면 인자가 0개, 있으면 공백으로 나뉜다.
+ExecStart=@BIN@ serve --base-url ${BASE_URL} --runner-command @RUNNER@ $EXTRA_ARGS
+Restart=always
+RestartSec=10
+# 로그인 셸의 PATH 가 없다 — Node 러너(셔뱅 스크립트)를 실행할 node 와, 러너가 부를 하네스가 있는 자리를 적는다.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# 뿌리(~/.harkroom-agent/c/<8자>)를 HOME 에서 잰다 — user 유닛은 HOME 을 받지만 system 유닛으로 옮겨 쓸 때를 위해 적어 둔다.
+Environment=HOME=%h
+# 러너가 유닛과 함께 죽지 않게 — 오퍼레이터만 재시작된다(러너는 장부로 다시 소유된다).
+KillMode=process
+
+[Install]
+WantedBy=default.target

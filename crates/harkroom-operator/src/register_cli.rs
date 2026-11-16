@@ -20,8 +20,9 @@ use crate::index::read_roots_index;
 use crate::local_agents::LocalAgents;
 use crate::local_register::{RegisterInput, claim_transport, register};
 use harkroom_roots::{
-    CommunityRootResolution, DAEMON_PROTOCOL_VERSION, OperatorRootsIndex, community_root_key,
-    daemon_endpoint_paths, resolve_community_root,
+    COMMUNITY_ROOT_HASH_LENGTH, CommunityRootResolution, DAEMON_PROTOCOL_VERSION,
+    OperatorRootsIndex, community_root_key, computed_community_root, daemon_endpoint_paths,
+    resolve_community_root, same_root,
 };
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
@@ -258,8 +259,36 @@ pub fn run_register(
     })
 }
 
-/// 사람에게 보일 줄(TS `main.ts` 의 두 줄).
-pub fn success_lines(r: &Registered) -> String {
+/// Node 러너 사이드카 이름 — Rust 오퍼레이터는 이것을 `--runner-command` 로 받는다(앱 `RUNNER_SIDECAR_FOR_OPERATOR`).
+pub const RUNNER_SIDECAR_NAME: &str = "harkroom-runner";
+
+/// 앱 없이 이 커뮤니티의 오퍼레이터를 띄울 명령(P1b 안 A — `run` 대신 커뮤니티마다 `serve` 하나).
+/// - 뿌리가 계산한 자리가 아니면(색인 `operators.json` 이 정한 자리) `--app-data` 를 붙인다 — 없으면 `serve` 가 다른 뿌리를 본다.
+/// - 러너 사이드카를 알면 `--runner-command` 를 붙인다 — 없으면 `serve` 는 배정이 와도 러너를 못 띄운다.
+pub fn serve_command(
+    bin: &str,
+    runner: Option<&str>,
+    base_url: &str,
+    root: &str,
+    home: &str,
+    app_data: &str,
+) -> String {
+    let key = community_root_key(base_url);
+    let mut cmd = format!("{bin} serve --base-url {key}");
+    if !same_root(
+        root,
+        &computed_community_root(home, key, COMMUNITY_ROOT_HASH_LENGTH),
+    ) {
+        cmd.push_str(&format!(" --app-data {app_data}"));
+    }
+    if let Some(r) = runner {
+        cmd.push_str(&format!(" --runner-command {r}"));
+    }
+    cmd
+}
+
+/// 사람에게 보일 줄(TS `main.ts` 의 두 줄). 도는 오퍼레이터가 없었으면 `serve` 명령을 함께 보인다(TS 는 `run` 이었다).
+pub fn success_lines(r: &Registered, serve_cmd: &str) -> String {
     let s = |k: &str| r.out.get(k).and_then(Value::as_str).unwrap_or("");
     let config = Path::new(&r.root).join("operator").join("operator.json");
     let head = format!(
@@ -269,12 +298,32 @@ pub fn success_lines(r: &Registered) -> String {
         s("baseUrl"),
         config.display()
     );
-    let tail = if r.live {
-        "도는 오퍼레이터가 방금 그 커뮤니티에 붙었다. 이제 설정 › 에이전트 상세에서 이 오퍼레이터를 배정하면 러너가 뜬다."
+    if r.live {
+        return format!(
+            "{head}\n도는 오퍼레이터가 방금 그 커뮤니티에 붙었다. 이제 설정 › 에이전트 상세에서 이 오퍼레이터를 배정하면 러너가 뜬다."
+        );
+    }
+    let runner_note = if serve_cmd.contains(" --runner-command ") {
+        ""
     } else {
-        "이제 설정 › 에이전트 상세에서 이 오퍼레이터를 배정하면 러너가 뜬다. 이 커뮤니티의 오퍼레이터가 뜨면 이 등록으로 서버에 붙는다."
+        "\n러너를 띄우려면 --runner-command <harkroom-runner 절대 경로> 를 붙인다(없으면 배정이 와도 러너를 못 띄운다)."
     };
-    format!("{head}\n{tail}")
+    format!(
+        "{head}\n이 커뮤니티의 오퍼레이터가 떠 있지 않다. 앱을 열거나, 앱 없이 두려면 이 명령을 띄운다(상주는 ops/operator.*.template):\n  {serve_cmd}{runner_note}\n그다음 설정 › 에이전트 상세에서 이 오퍼레이터를 배정하면 러너가 뜬다."
+    )
+}
+
+/// 이 실행 파일과 그 옆의 러너 사이드카(있을 때만).
+fn self_and_runner() -> (String, Option<String>) {
+    let Ok(exe) = std::env::current_exe() else {
+        return ("harkroom-operator-rs".to_string(), None);
+    };
+    let runner = exe
+        .parent()
+        .map(|d| d.join(RUNNER_SIDECAR_NAME))
+        .filter(|p| p.is_file())
+        .map(|p| p.to_string_lossy().into_owned());
+    (exe.to_string_lossy().into_owned(), runner)
 }
 
 /// `register` 진입점. (stdout 글, stderr 글, 종료 코드).
@@ -301,7 +350,18 @@ pub fn register_main(
         &crate::local_merge::hostname,
         LIVE_TIMEOUT,
     ) {
-        Ok(r) => (success_lines(&r), String::new(), 0),
+        Ok(r) => {
+            let (bin, runner) = self_and_runner();
+            let cmd = serve_command(
+                &bin,
+                runner.as_deref(),
+                &args.base_url,
+                &r.root,
+                &home,
+                &app_data,
+            );
+            (success_lines(&r, &cmd), String::new(), 0)
+        }
         Err(e) => (String::new(), e, 1),
     }
 }
@@ -474,10 +534,66 @@ mod tests {
         let local = LocalAgents::new(&r.root, URL);
         assert_eq!(local.operator_token().as_deref(), Some("tok-1"));
         assert_eq!(local.operator_id().as_deref(), Some("op-1"));
-        assert!(success_lines(&r).starts_with(&format!(
+        let cmd = serve_command(
+            "/b/op",
+            None,
+            URL,
+            &r.root,
+            d.p(),
+            &format!("{}/app", d.p()),
+        );
+        assert_eq!(cmd, format!("/b/op serve --base-url {URL}"));
+        let lines = success_lines(&r, &cmd);
+        assert!(lines.starts_with(&format!(
             "등록됐다: mac (op-1) @ {URL} — 설정: {}/operator/operator.json",
             r.root
         )));
+        // 도는 오퍼레이터가 없었다 — `run` 이 아니라 이 커뮤니티의 `serve` 명령을 보인다(P1b 안 A).
+        assert!(lines.contains(&format!("\n  /b/op serve --base-url {URL}\n")));
+        assert!(lines.contains("--runner-command <harkroom-runner"));
+        assert!(!lines.contains(" run"));
+    }
+
+    /// `serve` 명령은 register 가 쓴 뿌리를 가리켜야 한다 — 색인이 정한 뿌리면 `--app-data`, 러너를 알면 `--runner-command`.
+    #[test]
+    fn serve_command_points_at_the_same_root() {
+        let home = "/h";
+        let computed = harkroom_roots::computed_community_root(home, URL, 8);
+        assert_eq!(
+            serve_command("/b/op", None, &format!("{URL}/"), &computed, home, "/h/app"),
+            format!("/b/op serve --base-url {URL}")
+        );
+        // 색인의 legacy 뿌리(옛 단일 자리) — --app-data 가 없으면 serve 는 계산한 뿌리를 보고 토큰을 못 찾는다.
+        assert_eq!(
+            serve_command(
+                "/b/op",
+                Some("/b/harkroom-runner"),
+                URL,
+                "/h/app",
+                home,
+                "/h/app"
+            ),
+            format!(
+                "/b/op serve --base-url {URL} --app-data /h/app --runner-command /b/harkroom-runner"
+            )
+        );
+        // 러너를 알면 안내 줄을 덧붙이지 않는다.
+        let r = Registered {
+            out: json!({}),
+            live: false,
+            root: computed.clone(),
+        };
+        let cmd = serve_command(
+            "/b/op",
+            Some("/b/harkroom-runner"),
+            URL,
+            &computed,
+            home,
+            "/h/app",
+        );
+        assert!(!success_lines(&r, &cmd).contains("붙인다"));
+        let live = Registered { live: true, ..r };
+        assert!(!success_lines(&live, &cmd).contains("serve"));
     }
 
     /// 토큰 파일은 있는데 소켓이 죽었으면(잔해) 파일 길로 간다.
