@@ -103,18 +103,18 @@ export async function enqueueInboxPushMany(
 
 /** inbox 를 거치지 않는 `ask`(G4). 받는 사람은 부르는 쪽이 차례 주인으로 정해 넘긴다. */
 export async function enqueueAskPush(pool: Pool | PoolClient, accountId: string, messageId: string): Promise<void> {
-  await pool.query(
-    `insert into push_job (account_id, message_id, reason)
-     select $1, $2, 'ask'
-      where exists (select 1 from account where id = $1 and kind = 'human')
-        and exists (select 1 from push_device where account_id = $1)
+  await pool.query(ENQUEUE_ASK_PUSH_SQL, [accountId, messageId]);
+}
+
+/** `enqueueAskPush` 의 문장 — Rust 코어(`core/chain_backstop.rs`, S5.3 C1c-4d-2)가 골든으로 받는다. */
+export const ENQUEUE_ASK_PUSH_SQL = `insert into push_job (account_id, message_id, reason)
+     select $1::uuid, $2::uuid, 'ask'
+      where exists (select 1 from account where id = $1::uuid and kind = 'human')
+        and exists (select 1 from push_device where account_id = $1::uuid)
         -- 차단(109) — inbox 를 거치지 않는 길이라 insertInbox 의 거름을 여기서도 건다.
         and not exists (
-          select 1 from account_block b join message m on m.id = $2
-           where b.blocker_id = $1 and b.blocked_id = m.author_id)`,
-    [accountId, messageId],
-  );
-}
+          select 1 from account_block b join message m on m.id = $2::uuid
+           where b.blocker_id = $1::uuid and b.blocked_id = m.author_id)`;
 
 /**
  * 묶음 카드(선택 카드 P1, 3c)의 푸시 — **1분 안에 들어온 줄은 하나로 묶는다.** 묶음에 줄이 더해질 때마다 부르지만, 같은 사람·
