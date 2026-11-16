@@ -402,6 +402,10 @@ async fn main() {
         // S5.3 C1 — 있는 위임장에 줄 쓰기 칸(fail-closed, 없으면 위임장 있는 승인은 TS).
         if harkroom_server::core::decide_approve::check_mandate_core(w).await {
             eprintln!("front: permission mandate core on");
+            // S5.3 C3 — 위임장 있는 command 승인(새 칸 없음, C1 스위치를 따른다).
+            if harkroom_server::core::decide_approve::mandate_command_core_on() {
+                eprintln!("front: permission mandate command core on");
+            }
             // S5.3 C2 — 위임장 새로 세우기 칸(fail-closed, 없으면 위임장 없는 approve_new_mandate 는 TS).
             if harkroom_server::core::decide_approve::new_mandate_core_on() {
                 eprintln!("front: permission new mandate core on");
