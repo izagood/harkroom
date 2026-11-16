@@ -94,3 +94,38 @@ fn mark_warned_on_unknown_thread_is_harmless() {
     q.mark_warned("x");
     assert_eq!(q.min_seq("x"), None);
 }
+
+#[test]
+fn reservation_is_refused_once_a_turn_is_registered_and_unreserves_on_drop() {
+    let c = SharedControl::default();
+    let r = MentionReservation::try_reserve(&c, "c/r").expect("빈 스레드는 예약된다");
+    assert!(lock_control(&c).registry.mention_starting("c/r"));
+    drop(r);
+    assert!(!lock_control(&c).registry.mention_starting("c/r"));
+
+    lock_control(&c)
+        .registry
+        .register(
+            "c/r",
+            TurnRecord {
+                kind: TurnKind::Interactive,
+                session_id: None,
+                opened_by_handle: Some("h".into()),
+            },
+        )
+        .unwrap();
+    assert!(MentionReservation::try_reserve(&c, "c/r").is_none());
+    assert!(!lock_control(&c).registry.mention_starting("c/r"));
+    // 장부 없는 예약은 떨어져도 아무것도 안 한다.
+    drop(MentionReservation::detached());
+}
+
+#[test]
+fn shared_control_defers_and_clears_under_one_lock() {
+    let c = SharedControl::default();
+    let d = lock_control(&c).queue.defer("c/r", 7, 42, 1_000);
+    assert!(d.should_notify);
+    assert_eq!(lock_control(&c).queue.min_seq("c/r"), Some(42));
+    lock_control(&c).queue.clear("c/r");
+    assert_eq!(lock_control(&c).queue.min_seq("c/r"), None);
+}

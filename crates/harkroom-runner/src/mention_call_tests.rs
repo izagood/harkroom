@@ -165,6 +165,7 @@ fn launch(ledger: &Mutex<Ledger>) -> Launch {
         tried,
         claim: None,
         slot_held: true,
+        reservation: None,
     }
 }
 

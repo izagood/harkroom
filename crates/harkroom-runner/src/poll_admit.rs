@@ -21,12 +21,14 @@ use crate::poll_sched::{AdmitFn, LaunchQueue};
 use crate::rest::RunnerLink;
 use crate::thread_claims::ThreadClaims;
 use crate::turn_attempt_account::MentionSlots;
+use crate::turn_registry::SharedControl;
 
 /// 실물 받아들이기 닫개.
 pub fn link_admit_fn<L: RunnerLink + 'static>(
     clients: Arc<AgentClients<L>>,
     claims: Arc<ThreadClaims<AgentClients<L>>>,
     slots: MentionSlots,
+    control: SharedControl,
     now: fn() -> u64,
 ) -> Box<AdmitFn> {
     Box::new(
@@ -35,7 +37,14 @@ pub fn link_admit_fn<L: RunnerLink + 'static>(
               ctx: &BatchContext,
               queue: &mut LaunchQueue|
               -> Result<AdmitOutcome, String> {
-            let mut deps = LinkAdmitDeps::new(&clients, &claims, slots.clone(), now, queue);
+            let mut deps = LinkAdmitDeps::new(
+                &clients,
+                &claims,
+                slots.clone(),
+                Arc::clone(&control),
+                now,
+                queue,
+            );
             admit(ledger, &mut deps, batch, ctx)
         },
     )

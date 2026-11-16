@@ -236,6 +236,7 @@ fn setup() -> Setup {
             lost: lost.clone(),
         })),
         slot_held: true,
+        reservation: None,
     };
     Setup {
         ledger: Mutex::new(l),

@@ -337,6 +337,7 @@ fn launch_in(
         tried,
         claim,
         slot_held: true,
+        reservation: None,
     }
 }
 

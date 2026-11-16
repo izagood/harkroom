@@ -11,9 +11,11 @@
 //! - **읽음은 받은 id 만**(⑤): `mark_read` 는 받아들이기가 넘긴 그 id 들만 `inbox.read` 로 보낸다.
 //! - **멘션마다 새로**(④): 띄우기는 [`MentionLauncher`] 에 넘긴다 — 실물 띄우개는 멘션 하나마다 deps·`CallInputs` 를 새로 짓는다.
 //!
-//! 아직 없는 것(정본에는 있다): 조종(인터랙티브 턴)·레지스트리·이관(앞 세대가 쥔 entry)이 Rust 러너에 없다. 그래서
-//! `control_of`=없음, `registry_busy`=아님, `held_entry_ids`=빈 집합, `defer`·`mark_warned`·`reserve_mention`=아무것도 안 함이다.
-//! 조종·이관은 node 러너만 하고, Rust 러너로 바꾼 에이전트에는 그 길이 열리지 않는다(B4-5 스위치 조건).
+//! - **조종 장부**(B-2b): `control_of`·`registry_busy`·`defer`·`mark_warned`·`reserve_mention` 은 러너 수명의
+//!   [`SharedControl`](레지스트리 + 멘션 대기 장부, 한 잠금)을 본다. 인터랙티브 open·끝이 같은 값을 쥔다. 예약은
+//!   [`MentionReservation`] 으로 `Launch` 에 실려 턴이 끝나거나 `Launch` 가 떨어질 때 풀린다.
+//!
+//! 아직 없는 것(정본에는 있다): 이관(앞 세대가 쥔 entry) — `held_entry_ids`=빈 집합.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -28,7 +30,9 @@ use crate::mention_target::build_mention_target;
 use crate::rest::{RunnerLink, SlotOutcome};
 use crate::thread_claims::{ClaimClient, OnLost, ThreadClaims};
 use crate::turn_attempt_account::MentionSlots;
-use crate::turn_registry::{DeferResult, ThreadControl};
+use crate::turn_registry::{
+    DeferResult, MentionReservation, SharedControl, ThreadControl, lock_control,
+};
 
 impl<L: RunnerLink> ClaimClient for AgentClients<L> {
     fn claim(
@@ -175,6 +179,8 @@ pub struct LinkAdmitDeps<'a, L: RunnerLink + 'static, M: MentionLauncher> {
     clients: &'a AgentClients<L>,
     claims: &'a ThreadClaims<AgentClients<L>>,
     slots: MentionSlots,
+    /// 조종 장부(레지스트리·멘션 대기 장부) — 인터랙티브 open·끝과 같은 값이다.
+    control: SharedControl,
     now: fn() -> u64,
     launcher: M,
     /// 잡은 임대의 칸(채널·앵커 열쇠). `launch` 가 꺼내 대표 멘션을 적고, 띄우지 않고 놓으면 손잡이([`CellClaim`])가 뺀다.
@@ -226,6 +232,7 @@ impl<'a, L: RunnerLink + 'static, M: MentionLauncher> LinkAdmitDeps<'a, L, M> {
         clients: &'a AgentClients<L>,
         claims: &'a ThreadClaims<AgentClients<L>>,
         slots: MentionSlots,
+        control: SharedControl,
         now: fn() -> u64,
         launcher: M,
     ) -> Self {
@@ -233,6 +240,7 @@ impl<'a, L: RunnerLink + 'static, M: MentionLauncher> LinkAdmitDeps<'a, L, M> {
             clients,
             claims,
             slots,
+            control,
             now,
             launcher,
             cells: Cells::default(),
@@ -276,23 +284,24 @@ impl<L: RunnerLink + 'static, M: MentionLauncher> AdmitDeps for LinkAdmitDeps<'_
         let a = read_account_attention(std::path::Path::new(config_dir));
         is_attention_active(a.as_ref(), (self.now)() as f64)
     }
-    fn control_of(&self, _key: &str) -> Option<ThreadControl> {
-        None // 조종 없음.
+    fn control_of(&self, key: &str) -> Option<ThreadControl> {
+        lock_control(&self.control).registry.control_of(key)
     }
-    fn defer(&mut self, _key: &str, _entry_id: i64, _seq: i64, _now: u64) -> DeferResult {
-        // `control_of` 가 늘 `None` 이라 불리지 않는다.
-        DeferResult {
-            should_notify: false,
-            pending: 0,
-            held_ms: 0,
-            warned: true,
-        }
+    fn defer(&mut self, key: &str, entry_id: i64, seq: i64, now: u64) -> DeferResult {
+        let at_ms = i64::try_from(now).unwrap_or(i64::MAX);
+        lock_control(&self.control)
+            .queue
+            .defer(key, entry_id, seq, at_ms)
     }
-    fn mark_warned(&mut self, _key: &str) {}
-    fn registry_busy(&self, _key: &str) -> bool {
-        false // 레지스트리 없음 — 스레드당 하나는 장부(`thread_in_flight`)와 임대가 지킨다.
+    fn mark_warned(&mut self, key: &str) {
+        lock_control(&self.control).queue.mark_warned(key);
     }
-    fn reserve_mention(&mut self, _key: &str) {}
+    fn registry_busy(&self, key: &str) -> bool {
+        lock_control(&self.control).registry.get(key).is_some()
+    }
+    fn reserve_mention(&mut self, key: &str) -> Option<MentionReservation> {
+        MentionReservation::try_reserve(&self.control, key)
+    }
     fn notice(
         &mut self,
         channel_id: &str,
