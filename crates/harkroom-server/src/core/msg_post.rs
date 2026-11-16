@@ -17,7 +17,7 @@
 //! - **에이전트 글**(C1c-4a): PAT·오퍼레이터로 선 에이전트의 REST 글도 맡는다(원인·턴 id 가 없는 판). 회신권 「결과 한 번」 락
 //!   (`REPLY_LOCK_CLASS`)을 채널 락 앞에 잡고, 부름이 실제로 간 에이전트에게 회신권을 열고(`openReplyGrants`) 답글이면 받은
 //!   회신권을 닫는다(`closeReplyGrants`). 위임 키·깨움 선점·카드 닫기는 TS 와 같이 사람 글에만. 아직 TS 로 넘기는 것:
-//!   상한에 막힌 부름(백스톱 카드)과 암묵 위임 스위치를 모르는 부름([`implicit_known_off`], C1c-4d).
+//!   상한에 막힌 부름(백스톱 카드)과 암묵 위임 스위치를 모르는 부름. 스위치를 알면 암묵 위임은 [`implicit_delegation`] 이 적는다(C1c-4d).
 //! - **사슬 안의 에이전트 글**(C1c-4b): 앞 고리([`chain_link`])에서 깊이·사슬 시작을 잇고, 정체 홉([`super::chain_stall`])을 적고,
 //!   한도를 넘으면 막았을 부름을 `meta.mentionStallShadow` 에 남긴다(그림자 — 부름은 그대로 나간다).
 //! - 순서(TS 와 같다): 본문 읽기(413·400·415) → 인증(401, `route_layer`) → 경로·본문 검사(400) → 쓰기 게이트(403 `forbidden`·
@@ -31,6 +31,7 @@ use super::ask_reply_close;
 use super::audience::audience_for;
 use super::cause_link;
 use super::chain_stall::{self, STALL_HOP_LIMIT};
+use super::implicit_delegation;
 use super::invoke_gate;
 use super::mandate_stamp;
 use super::mention_calls::{self, Input};
@@ -113,6 +114,9 @@ pub struct PostState {
     pub read: PgPool,
     pub write: PgPool,
     pub up: Upstream,
+    /// 쓰기 풀에 암묵 위임 칸([`implicit_delegation::IMPLICIT_DELEGATION_PRIVILEGES`])이 있는가(C1c-4d). 없으면 암묵 위임을 적을
+    /// 수 있는 에이전트 부름은 지금처럼 TS 로 넘긴다.
+    pub implicit_ok: bool,
 }
 
 struct Sql {
@@ -180,20 +184,6 @@ fn delegation_v2(raw: Option<&str>) -> Option<bool> {
         return None;
     }
     Some(matches!(v.as_str(), "1" | "on" | "true"))
-}
-
-/// TS `implicitDelegationMode` 이 **꺼짐**인지 Rust 가 아는가 — 위임 스위치를 알고(`delegation_v2` 가 `Some`) 그것이 꺼졌거나,
-/// 켜졌어도 `HARKROOM_DELEGATION_IMPLICIT` 이 끄는 낱말(`off`·`0`·`false`)일 때만 참이다. 모르거나 켜졌으면(그림자 포함) 암묵 위임을
-/// 적을 수 있으므로 에이전트가 누군가를 부른 글은 TS 로 넘긴다(C1c-4d 가 옮긴다).
-fn implicit_known_off(v2: Option<bool>, implicit: Option<&str>) -> bool {
-    match v2 {
-        None => false,
-        Some(false) => true,
-        Some(true) => {
-            let v = implicit.unwrap_or_default().trim().to_lowercase();
-            matches!(v.as_str(), "off" | "0" | "false")
-        }
-    }
 }
 
 fn sql() -> &'static Sql {
@@ -642,16 +632,22 @@ pub(crate) async fn post_in_tx(
         principal.as_ref().map(|(p, _)| p.as_str()),
     )
     .await?;
-    // 에이전트 글의 아직 TS 몫인 부수효과 — 상한에 막힌 부름(백스톱 카드)·암묵 위임을 적을 수 있는 부름(C1c-4d).
+    // 에이전트 글의 아직 TS 몫인 부수효과 — 상한에 막힌 부름(백스톱 카드). 암묵 위임(C1c-4d)은 모드를 알고 쓰기 칸이 있을 때만
+    // 여기서 적는다(꺼짐이면 적을 것이 없다).
+    let implicit = implicit_delegation::mode(
+        v2,
+        std::env::var("HARKROOM_DELEGATION_IMPLICIT")
+            .ok()
+            .as_deref(),
+    );
     if author_is_agent
         && (!calls.capped_ids.is_empty()
             || (!calls.called_ids.is_empty()
-                && !implicit_known_off(
-                    v2,
-                    std::env::var("HARKROOM_DELEGATION_IMPLICIT")
-                        .ok()
-                        .as_deref(),
-                )))
+                && match implicit {
+                    None => true,
+                    Some(implicit_delegation::Mode::Off) => false,
+                    Some(_) => !st.implicit_ok,
+                }))
     {
         tx.rollback().await?;
         return Ok(Outcome::ToTs);
@@ -837,6 +833,30 @@ pub(crate) async fn post_in_tx(
                 .execute(&mut *tx)
                 .await?;
         }
+    }
+    // TS 암묵 위임(P4) — 회신권을 연 뒤, `thread_reply` 앞. 결과로 세는 에이전트 글(이 앞단이 맡는 글은 모두 `user` 다)이 부른,
+    // inbox 가 실제로 간 계정 중 에이전트만 판정한다.
+    if let (true, Some(mode)) = (author_is_agent, implicit) {
+        let called: Vec<&String> = calls
+            .called_ids
+            .iter()
+            .filter(|c| c.as_str() != author && notified_set.contains(c.as_str()))
+            .collect();
+        implicit_delegation::record(
+            &mut tx,
+            mode,
+            &implicit_delegation::Post {
+                message_id: &id,
+                channel_id: channel,
+                thread_root_id: root.unwrap_or(&id),
+                author_id: author,
+                normalized_body: &calls.normalized_body,
+            },
+            &called,
+            now_ms(),
+            iso_ms,
+        )
+        .await?;
     }
     // TS `deletedRoot` — 머리가 지워져 있었으면 커밋 뒤 목록에 다시 물어 `message.updated` 로 되돌린다(아래).
     let deleted_root = match root {

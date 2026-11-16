@@ -1502,6 +1502,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant update (opened_at, expires_at, closed_at) on invoke_reply_grant to ${rw}`,
         // S5.3 C1c-4c — MCP 글의 principal 옮겨 적기(`MCP_POST_EXTRA_PRIVILEGES`).
         `grant update (principal_account_id, principal_cause_reasons) on message to ${rw}`,
+        // S5.3 C1c-4d — 암묵 위임 판정 기록과 켬 모드의 위임 행(`IMPLICIT_DELEGATION_PRIVILEGES`).
+        `grant insert on delegation_implicit_log to ${rw}`,
+        `grant insert on team_delegation to ${rw}`,
+        `grant insert on team_delegation_item to ${rw}`,
         // S5.3 C5b — 예약 깨움 루프(`loops/wake.rs::WAKE_PRIVILEGES`). 없으면 「loop wake off」 — 루프는 TS 에 남는다.
         ...WAKE_GRANTS.map((g) => `grant ${g} to ${rw}`),
         // S5.3 C5c — 보존 정리 루프(`loops/retention.rs::RETENTION_PRIVILEGES`).
@@ -5845,6 +5849,16 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                from invoke_reply_grant g
               where g.thread_root_id = (select coalesce(thread_root_id, id) from message where id = $1)
               order by g.grantee_id, g.granter_id`, [id])).rows),
+          // C1c-4d — 이 글의 암묵 위임 판정과 그것이 연 위임(종류·단계·기한 10분·담당).
+          implicit: shape((await db.pool.query(
+            `select l.delegator_account_id::text as delegator, l.delegate_account_id::text as delegate, l.verdict, l.mode, l.plan_step_id as step,
+                    l.short_question as short, l.body_chars as chars, l.thread_root_id = coalesce(m.thread_root_id, m.id) as on_root,
+                    d.kind, d.plan_step_id as d_step, d.lead_account_id::text as lead, d.team_id is null as no_team,
+                    d.deadline_at between now() + interval '9 minutes' and now() + interval '11 minutes' as deadline,
+                    (select array_agg(i.delegate_account_id::text) from team_delegation_item i where i.delegation_id = d.id) as items
+               from delegation_implicit_log l join message m on m.id = l.message_id
+               left join team_delegation d on d.id = l.delegation_id
+              where l.message_id = $1 order by l.delegate_account_id`, [id])).rows),
         } : {};
         // C1c-4a — 머리 하나와 그 스레드에서 BOT 이 받아 둔 열린 회신권 하나(BOT2 가 줌). BOT 의 결과가 그것을 닫는다.
         const withGrant = async () => {
@@ -5871,6 +5885,25 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             `insert into team_delegation (message_id, team_id, lead_account_id, channel_id, thread_root_id, deadline_at)
              values ($1, $2, $3, $4, $1, now() + interval '1 minute') returning id::text as id`, [root, squadId, agent.accountId, todayId])).rows[0]!.id;
           await db.pool.query(`insert into team_delegation_item (delegation_id, delegate_account_id) values ($1, $2)`, [d, admin.accountId]);
+          return root;
+        };
+        // C1c-4d — 머리 하나와 그 스레드의 열린 위임 하나(lead → delegate). 암묵 위임 판정(reply·existing)의 재료다.
+        const withOpenDeleg = (lead: () => string, delegate: () => string) => async () => {
+          const root = await direct(member.accountId, '맡김');
+          const d = (await db.pool.query<{ id: string }>(
+            `insert into team_delegation (message_id, lead_account_id, channel_id, thread_root_id, deadline_at)
+             values ($1, $2, $3, $1, now() + interval '10 minutes') returning id::text as id`, [root, lead(), todayId])).rows[0]!.id;
+          await db.pool.query(`insert into team_delegation_item (delegation_id, delegate_account_id) values ($1, $2)`, [d, delegate()]);
+          return root;
+        };
+        // C1c-4d — 머리 하나와 그 스레드의 계획판(BOT2 가 맡은 진행 중 단계 s2).
+        const withPlan = async () => {
+          const root = await direct(member.accountId, '계획');
+          await db.pool.query(`insert into thread_plan (root_id, channel_id, doc) values ($1, $2, $3)`, [root, todayId, JSON.stringify({ goal: 'g', steps: [
+            { id: 's1', title: 'a', state: 'done', assigneeId: bot2.accountId },
+            { id: 's2', title: 'b', state: 'active', assigneeId: bot2.accountId },
+            { id: 's3', title: 'c', state: 'todo', assigneeId: member.accountId },
+          ] })]);
           return root;
         };
         // 머리 하나와 그 스레드에 BOT2 가 걸어 둔 열린 깨움 하나(보고처 = 그 스레드).
@@ -5959,6 +5992,17 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           // C1c-4b — 정체 한도(4)에 닿은 부름: 막지 않고 막았을 에이전트만 `meta.mentionStallShadow` 에 남긴다(사람은 빠진다).
           ['정체 한도 → 그림자 기록', withChainBy(() => bot2.accountId, 1, 3), (r) => ({ body: '@bot2 @mem 다시 봐', threadRootId: r }), agent.pat],
         ];
+        // C1c-4d — 암묵 위임(그림자·켬): 에이전트가 에이전트를 맨 앞 멘션으로 부르면 판정을 적고, 켬이면 위임(kind=mention)을 연다.
+        const IMPLICIT_SCENES: Scene[] = [
+          ['암묵 위임: 최상위 부름 → open', async () => '', () => ({ body: '@bot2 이것 봐 줘' }), agent.pat, undefined, freshCh],
+          ['암묵 위임: 짧은 질문', async () => direct(member.accountId, '질문'), (r) => ({ body: '@bot2 이거 맞아?', threadRootId: r }), agent.pat],
+          ['암묵 위임: 사람만 부름 → 기록 없음', async () => direct(member.accountId, '질문'), (r) => ({ body: '@mem 봐 줘', threadRootId: r }), agent.pat],
+          ['암묵 위임: 사람+에이전트 → 에이전트만', async () => direct(member.accountId, '질문'), (r) => ({ body: '@mem @bot2 같이', threadRootId: r }), agent.pat],
+          ['암묵 위임: 반대 방향 위임 → reply', withOpenDeleg(() => bot2.accountId, () => agent.accountId), (r) => ({ body: '@bot2 끝냈다', threadRootId: r }), agent.pat],
+          ['암묵 위임: 이미 맡음 → existing', withOpenDeleg(() => member.accountId, () => bot2.accountId), (r) => ({ body: '@bot2 이것도', threadRootId: r }), agent.pat],
+          ['암묵 위임: 계획판 담당 → 단계', withPlan, (r) => ({ body: '@bot2 이어서 해 줘', threadRootId: r }), agent.pat],
+          ['암묵 위임: 본문 지칭 → 부름 아님', async () => direct(member.accountId, '질문'), (r) => ({ body: '구현은 @bot2 것이다', threadRootId: r }), agent.pat],
+        ];
         // TS 몫 갈래는 Rust 서버에서도 TS 가 올리므로 그 장면의 이벤트는 TS 버스에서 읽는다(Rust outbox 에 없어야 한다).
         const handedOnRust: string[] = [];
         const run = async (base: string, own: () => WorkspaceEvent[], tsBus: () => WorkspaceEvent[], scenes = SCENES) => {
@@ -5996,13 +6040,16 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const delegOut: Record<string, unknown> = {};
         const prevV2 = process.env.HARKROOM_DELEGATION_V2;
         const prevImplicit = process.env.HARKROOM_DELEGATION_IMPLICIT;
-        process.env.HARKROOM_DELEGATION_IMPLICIT = 'off';
         await db.pool.query(`alter role ${rw} connection limit -1`);
-        for (const mode of ['1', '0']) {
+        // [위임 스위치, 암묵 위임 모드, 장면] — C1c-4d 부터 암묵 위임 그림자·켬도 Rust 가 적는다.
+        const COMBOS: [string, string, Scene[]][] = [['1', 'off', DELEG_SCENES], ['0', 'off', DELEG_SCENES], ['1', 'shadow', IMPLICIT_SCENES], ['1', 'on', IMPLICIT_SCENES]];
+        for (const [mode, implicitMode, combScenes] of COMBOS) {
+          const key = implicitMode === 'off' ? mode : `${mode}/${implicitMode}`;
           let portD = 0;
           let frontD: ChildProcess | undefined;
           try {
             process.env.HARKROOM_DELEGATION_V2 = mode;
+            process.env.HARKROOM_DELEGATION_IMPLICIT = implicitMode;
             // `freePort` 는 고른 포트를 닫았다가 넘기므로 그 사이 남이 잡을 수 있다(AddrInUse) — 그때만 새 포트로 다시 띄운다.
             let fd: Awaited<ReturnType<typeof startFront>> | undefined;
             for (let attempt = 0; !fd; attempt += 1) {
@@ -6011,7 +6058,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 fd = await startFront(bin, {
                   UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(portD), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
                   TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust', HARKROOM_DELEGATION_V2: mode,
-                  HARKROOM_DELEGATION_IMPLICIT: 'off',
+                  HARKROOM_DELEGATION_IMPLICIT: implicitMode,
                 });
               } catch (err) {
                 if (attempt >= 2 || !String(err).includes('AddrInUse')) throw err;
@@ -6020,14 +6067,14 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             frontD = fd.child;
             const untilD = Date.now() + 10_000;
             while (!fd.log().includes('front: rust core routes') && Date.now() < untilD) await new Promise((res) => setTimeout(res, 100));
-            const tsD = await run(tsUrl, tsGet, tsGet, DELEG_SCENES);
+            const tsD = await run(tsUrl, tsGet, tsGet, combScenes);
             const tsBefore = tsEvents.length;
-            const rsD = await run(`http://127.0.0.1:${portD}`, () => busEvents, tsGet, DELEG_SCENES);
+            const rsD = await run(`http://127.0.0.1:${portD}`, () => busEvents, tsGet, combScenes);
             // 띄운 앞단이 **직접** 맡았는지 — 장면 본문이 글 승인 가드 낱말(「진행」 등)에 걸리면 `ts_body` 가 위임 갈래 전에 TS 로 넘겨
             // 대조가 TS 끼리가 된다. TS 가 맡았으면 그 글의 `message.created` 가 TS 쪽(`onEvent`)에 생긴다.
-            expect(tsEvents.slice(tsBefore).filter((e) => e.type === 'message.created'), `HARKROOM_DELEGATION_V2=${mode} 는 Rust 가 맡는다`).toEqual([]);
-            expect(rsD, `HARKROOM_DELEGATION_V2=${mode}`).toEqual(tsD);
-            delegOut[mode] = tsD;
+            expect(tsEvents.slice(tsBefore).filter((e) => e.type === 'message.created'), `HARKROOM_DELEGATION_V2=${key} 는 Rust 가 맡는다`).toEqual([]);
+            expect(rsD, `HARKROOM_DELEGATION_V2=${key}`).toEqual(tsD);
+            delegOut[key] = tsD;
           } finally {
             frontD?.kill('SIGTERM');
             if (prevV2 === undefined) delete process.env.HARKROOM_DELEGATION_V2; else process.env.HARKROOM_DELEGATION_V2 = prevV2;
@@ -6041,6 +6088,20 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect((tsOut as D[]).find((x) => (x as unknown as { name: string }).name === '담당 사람 글, 스위치 모름 → TS 몫')!.deleg)
           .toEqual([{ outcome: null, active: false, pending: false, pending_at: false, pushed: true }]);
         expect(handedOnRust, 'TS 몫 스레드의 답은 Rust outbox 에 없다').toEqual([]);
+        // C1c-4d — 대조가 「둘 다 안 적음」으로 같아지지 않게 TS 쪽 판정을 못 박는다.
+        type I = { name: string; implicit: Record<string, unknown>[] };
+        const imp = (k: string, n: string) => (delegOut[k] as I[]).find((x) => x.name === n)!.implicit;
+        const pick = (rows: Record<string, unknown>[]) => rows.map((r) => [r.delegate, r.verdict, r.mode, r.step, r.short, r.kind ?? null, r.d_step ?? null]);
+        expect(pick(imp('1/shadow', '암묵 위임: 최상위 부름 → open'))).toEqual([['BOT2', 'open', 'shadow', null, false, null, null]]);
+        expect(pick(imp('1/on', '암묵 위임: 최상위 부름 → open'))).toEqual([['BOT2', 'open', 'on', null, false, 'mention', null]]);
+        expect(imp('1/on', '암묵 위임: 최상위 부름 → open')[0]).toMatchObject({ lead: 'BOT', no_team: true, deadline: true, items: ['BOT2'], on_root: true });
+        expect(pick(imp('1/shadow', '암묵 위임: 짧은 질문'))[0]![4]).toBe(true);
+        expect(imp('1/on', '암묵 위임: 사람만 부름 → 기록 없음')).toEqual([]);
+        expect(pick(imp('1/on', '암묵 위임: 사람+에이전트 → 에이전트만')).map((r) => r[0])).toEqual(['BOT2']);
+        expect(pick(imp('1/on', '암묵 위임: 반대 방향 위임 → reply'))).toEqual([['BOT2', 'reply', 'on', null, false, null, null]]);
+        expect(pick(imp('1/on', '암묵 위임: 이미 맡음 → existing'))).toEqual([['BOT2', 'existing', 'on', null, false, null, null]]);
+        expect(pick(imp('1/on', '암묵 위임: 계획판 담당 → 단계'))).toEqual([['BOT2', 'open', 'on', 's2', false, 'mention', 's2']]);
+        expect(imp('1/shadow', '암묵 위임: 본문 지칭 → 부름 아님')).toEqual([]);
         type Row = { name: string; status: number; count: string; inbox: { who: string; reason: string }[]; mandate: unknown[]; audit: { detail: { via: string } }[]; message: { alsoInChannel?: boolean } };
         const by = (n: string) => (tsOut as Row[]).find((x) => x.name === n)!;
         expect(by('남의 머리에 답 → thread_reply').inbox).toEqual([{ who: 'MEM', reason: 'thread_reply' }]);

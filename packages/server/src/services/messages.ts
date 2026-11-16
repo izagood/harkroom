@@ -11,7 +11,7 @@ import {
 import {
   closeDelegationsForReply, delegationSummariesFor, delegationV2Enabled, outcomesFor,
 } from './delegations.js';
-import { implicitDelegationMode, recordImplicitDelegations } from './implicitDelegation.js';
+import { IMPLICIT_AGENT_CALLEES_SQL, implicitDelegationMode, recordImplicitDelegations } from './implicitDelegation.js';
 import { assertChannelVisible, audienceFor, channelVisibleSql } from './channels.js';
 import { bundledRootSql, openBundleSql } from './askBundleSql.js';
 import { emitEvent } from '../events.js';
@@ -1875,9 +1875,7 @@ export async function postMessage(
       && (input.meta as { kind?: unknown } | undefined)?.kind !== 'delegation') {
       const called = calls.calledIds.filter((id) => id !== input.authorId && notified.has(id));
       const agentCallees = called.length
-        ? ((await client.query<{ id: string }>(
-          `select id from account where id = any($1::uuid[]) and kind = 'agent'`, [called],
-        )).rows).map((r) => r.id)
+        ? ((await client.query<{ id: string }>(IMPLICIT_AGENT_CALLEES_SQL, [called])).rows).map((r) => r.id)
         : [];
       if (agentCallees.length) {
         await recordImplicitDelegations(client, {

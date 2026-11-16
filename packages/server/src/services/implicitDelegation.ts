@@ -27,6 +27,33 @@ export function implicitDelegationMode(env: NodeJS.ProcessEnv = process.env): Im
   return 'shadow';
 }
 
+/** 이 스레드의 판정 줄 세우기 — $1 머리. Rust 에이전트 글(`core/implicit_delegation.rs`, S5.3 C1c-4d)이 골든으로 받는다. */
+export const IMPLICIT_LOCK_SQL = `select pg_advisory_xact_lock(hashtext('delegation_implicit:' || $1::text))`;
+/** 이 스레드의 계획판(가려진 것 빼고) — $1 머리. */
+export const IMPLICIT_PLAN_SQL = `select doc from thread_plan where root_id = $1::uuid and flag_reason is null`;
+/** (위임자 → 담당) 판정의 재료 — $1 머리 · $2 위임자 · $3 담당 · $4 그림자 수명(초). */
+export const IMPLICIT_VERDICT_SQL = `select case when i.delegate_account_id = $3::uuid then 'same' else 'reverse' end as dir
+       from team_delegation d
+       join team_delegation_item i on i.delegation_id = d.id
+      where d.thread_root_id = $1::uuid
+        and (i.outcome is null or i.outcome = 'reported')
+        and (i.delegate_account_id = $3::uuid
+          or (d.lead_account_id = $3::uuid and i.delegate_account_id = $2::uuid))
+     union all
+     select case when l.delegate_account_id = $3::uuid then 'same' else 'reverse' end
+       from delegation_implicit_log l
+      where l.thread_root_id = $1::uuid and l.verdict = 'open' and l.mode = 'shadow'
+        and l.created_at > now() - make_interval(secs => $4::int)
+        and (l.delegate_account_id = $3::uuid
+          or (l.delegator_account_id = $3::uuid and l.delegate_account_id = $2::uuid))`;
+/** 판정 한 줄 — $1 글 · $2 채널 · $3 머리 · $4 위임자 · $5 담당 · $6 판정 · $7 모드 · $8 단계 · $9 짧은 질문 · $10 글자 수 · $11 위임. */
+export const IMPLICIT_LOG_INSERT_SQL = `insert into delegation_implicit_log
+         (message_id, channel_id, thread_root_id, delegator_account_id, delegate_account_id, verdict, mode,
+          plan_step_id, short_question, body_chars, delegation_id)
+       values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid, $6, $7, $8, $9, $10::int, $11::uuid)`;
+/** 부른 사람 중 에이전트 — $1 계정들. */
+export const IMPLICIT_AGENT_CALLEES_SQL = `select id::text from account where id = any($1::uuid[]) and kind = 'agent'`;
+
 /** 짧은 질문의 길이 상한(머리 멘션을 뺀 본문의 글자 수). */
 export const SHORT_QUESTION_MAX_CHARS = 200;
 
@@ -70,20 +97,7 @@ async function verdictFor(
   // `same` 은 위임자와 상관없이 「불린 쪽이 이 스레드에서 이미 맡은 일이 있다」다 — 다른 위임자가 넘긴 열린 위임도 이어짐으로 본다.
   // 새로 열면 그 담당의 일이 둘로 갈리고(security P4 #1), 그림자 지표도 부풀려진다.
   const r = await client.query<{ dir: 'reverse' | 'same' }>(
-    `select case when i.delegate_account_id = $3 then 'same' else 'reverse' end as dir
-       from team_delegation d
-       join team_delegation_item i on i.delegation_id = d.id
-      where d.thread_root_id = $1
-        and (i.outcome is null or i.outcome = 'reported')
-        and (i.delegate_account_id = $3
-          or (d.lead_account_id = $3 and i.delegate_account_id = $2))
-     union all
-     select case when l.delegate_account_id = $3 then 'same' else 'reverse' end
-       from delegation_implicit_log l
-      where l.thread_root_id = $1 and l.verdict = 'open' and l.mode = 'shadow'
-        and l.created_at > now() - make_interval(secs => $4)
-        and (l.delegate_account_id = $3
-          or (l.delegator_account_id = $3 and l.delegate_account_id = $2))`,
+    IMPLICIT_VERDICT_SQL,
     [args.threadRootId, args.from, args.to, DELEGATION_MAX_AGE_SEC],
   );
   // 반대 방향이 하나라도 열려 있으면 답장이다 — 서로 넘긴 상태에서도 답장이 이긴다(루프를 만들지 않는 쪽).
@@ -111,9 +125,9 @@ export async function recordImplicitDelegations(
   if (!targets.length) return 0;
   const facts = implicitBodyFacts(args.normalizedBody);
   // 판정 순서가 동시 글끼리 갈리지 않게 이 스레드에서 줄을 세운다(같은 스레드의 두 에이전트가 서로를 동시에 부르는 경우).
-  await client.query(`select pg_advisory_xact_lock(hashtext('delegation_implicit:' || $1::text))`, [args.threadRootId]);
+  await client.query(IMPLICIT_LOCK_SQL, [args.threadRootId]);
   const plan = (await client.query<{ doc: PlanDoc }>(
-    `select doc from thread_plan where root_id = $1 and flag_reason is null`, [args.threadRootId],
+    IMPLICIT_PLAN_SQL, [args.threadRootId],
   )).rows[0]?.doc ?? null;
   let n = 0;
   for (const to of targets) {
@@ -129,10 +143,7 @@ export async function recordImplicitDelegations(
       });
     }
     await client.query(
-      `insert into delegation_implicit_log
-         (message_id, channel_id, thread_root_id, delegator_account_id, delegate_account_id, verdict, mode,
-          plan_step_id, short_question, body_chars, delegation_id)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        IMPLICIT_LOG_INSERT_SQL,
       [args.messageId, args.channelId, args.threadRootId, args.authorId, to, verdict, args.mode,
        planStepId, facts.shortQuestion, facts.bodyChars, delegationId],
     );

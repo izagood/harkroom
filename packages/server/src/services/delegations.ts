@@ -194,6 +194,14 @@ export async function roundsUsedMany(
  * 지목한 대상에게 가는 것이고 남의 화면(숨김 되돌리기)을 건드릴 일이 없다. 그리고 사유가
  * `team_delegated` 라 그 관문의 `REVEAL_REASONS` 판정에도 들지 않는다.
  */
+/** 위임 행 — $1 글 · $2 팀 · $3 위임자 · $4 채널 · $5 머리 · $6 기한 · $7 종류 · $8 단계. Rust 암묵 위임(C1c-4d)이 골든으로 받는다. */
+export const DELEGATION_INSERT_SQL = `insert into team_delegation
+       (message_id, team_id, lead_account_id, channel_id, thread_root_id, deadline_at, kind, plan_step_id)
+     values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid, $6::timestamptz, $7, $8)
+     returning id::text`;
+/** 위임 항목 — $1 위임 · $2 담당. */
+export const DELEGATION_ITEM_INSERT_SQL = `insert into team_delegation_item (delegation_id, delegate_account_id) values ($1::uuid, $2::uuid)`;
+
 export async function createDelegation(
   client: PoolClient,
   args: {
@@ -213,10 +221,7 @@ export async function createDelegation(
 ): Promise<string> {
   const kind = args.kind ?? 'delegate';
   const inserted = await client.query<{ id: string }>(
-    `insert into team_delegation
-       (message_id, team_id, lead_account_id, channel_id, thread_root_id, deadline_at, kind, plan_step_id)
-     values ($1, $2, $3, $4, $5, $6, $7, $8)
-     returning id`,
+    DELEGATION_INSERT_SQL,
     [args.messageId, args.teamId, args.leadAccountId, args.channelId, args.threadRootId, args.deadlineAt,
      kind, args.planStepId ?? null],
   );
@@ -230,7 +235,7 @@ export async function createDelegation(
       await supersedePrevious(client, { threadRootId: args.threadRootId, delegateId, keep: delegationId });
     }
     await client.query(
-      `insert into team_delegation_item (delegation_id, delegate_account_id) values ($1, $2)`,
+      DELEGATION_ITEM_INSERT_SQL,
       [delegationId, delegateId],
     );
     /**

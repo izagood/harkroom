@@ -461,6 +461,30 @@ async fn main() {
         }
         _ => None,
     };
+    // C1c-4d — 암묵 위임은 글 쓰기 풀에 그 칸(`IMPLICIT_DELEGATION_PRIVILEGES`)까지 있을 때만 Rust 가 적는다. 없으면 부름이 든 에이전트 글만 TS 에 남는다.
+    let implicit_ok = match &post_write {
+        Some(w) => match write::missing_in(
+            w,
+            harkroom_server::core::implicit_delegation::IMPLICIT_DELEGATION_PRIVILEGES,
+            &[],
+        )
+        .await
+        {
+            Ok(m) if m.is_empty() => true,
+            Ok(m) => {
+                eprintln!("front: implicit delegation core off — missing privileges {m:?}");
+                false
+            }
+            Err(e) => {
+                eprintln!(
+                    "front: implicit delegation core off — privilege check failed ({})",
+                    e.as_database_error().map_or("io", |_| "db")
+                );
+                false
+            }
+        },
+        None => false,
+    };
     // C1c-4c — MCP `message.post` 는 글 쓰기 풀에 principal 옮겨 적기 칸(`MCP_POST_EXTRA_PRIVILEGES`)까지 있을 때만. 없으면 MCP 글만 TS 에 남는다.
     let mcp_post_ok = match &post_write {
         Some(w) => match write::missing_in(
@@ -774,6 +798,7 @@ async fn main() {
                 read: state.pool.clone(),
                 write: w,
                 up: state.up.clone(),
+                implicit_ok,
             })
         });
         if let Some(write) = post_write {
@@ -782,6 +807,7 @@ async fn main() {
                     read: state.pool.clone(),
                     write,
                     up: state.up.clone(),
+                    implicit_ok,
                 },
                 auth.clone(),
                 state.cors.clone(),
