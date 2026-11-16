@@ -235,7 +235,13 @@ export async function planAdoption(
     if (entry.retiring) {
       // 신원(생사·pid 재사용)은 똑같이 묻는다 — 그래야 `retire` 가 무관한 프로세스에 SIGTERM 을 안 보낸다.
       const verdict = await judgeCandidate(entry, probe);
-      plan.rejected.push({ entry, verdict: verdict.kind === 'adopt' ? { kind: 'retiring' } : verdict });
+      // 맡지 않은 커뮤니티의 회수 중 러너도 `retire` 하지 않는다 — 회수는 링크를 받으므로 남의 링크 비밀이
+      // 이 프로세스에 남는다(security #1650 n1). 종료만 한다.
+      const mine = !ownsAgent || ownsAgent(entry.agentId);
+      plan.rejected.push({
+        entry,
+        verdict: verdict.kind !== 'adopt' ? verdict : mine ? { kind: 'retiring' } : { kind: 'other-community' },
+      });
       continue;
     }
     if (최신.get(entry.agentId) !== entry) {
