@@ -634,5 +634,18 @@ describe('bg_job (BG1)', () => {
         expect(r.json().error.code, name).toBe('not_admissible');
       }
     });
+
+    it('/mcp/admit(S5.3 C4b B1a·B1b): 기억 쓰기(archive·set·merge)는 회차 밖이면 받고 bg 회차 턴이면 not_admissible', async () => {
+      const a = await agent('bg-admit-memory');
+      for (const tool of ['memory.archive', 'memory.set', 'memory.merge']) {
+        const admit = (headers: Record<string, string>) => app.inject({
+          method: 'POST', url: '/mcp/admit', headers, payload: { tool, arguments: { slug: 'mem/x' } },
+        });
+        expect((await admit(asAgent(a.accountId))).json(), tool).toEqual({ admitted: true, registered: true });
+        const r = await admit(asAgent(a.accountId, { 'x-harkroom-cause': `bg:${a.accountId}` }));
+        expect(r.statusCode, tool).toBe(400);
+        expect(r.json().error.code, tool).toBe('not_admissible');
+      }
+    });
   });
 });
