@@ -372,6 +372,12 @@ pub fn spawn_server_link(
     let cleanup_home = home.clone();
     // PR 감시 폴러가 쓸 몫 — 같은 이유로 먼저 떼어 둔다(에이전트 목록은 tick 마다 operator.json 에서 다시 읽는다).
     let watch_cfg = local.clone();
+    // 하네스가 받는 모델 목록(G5, TS communities.ts `models`) — 기동 뒤 한 번 재고 그 뒤로는 이 값을 싣는다.
+    let models_login_path = login_path.clone();
+    let models_home = home.clone();
+    let models: std::sync::Arc<std::sync::RwLock<serde_json::Map<String, serde_json::Value>>> =
+        std::sync::Arc::default();
+    let caps_models = std::sync::Arc::clone(&models);
     // 능력(`{agentIds, harnesses}`)은 hello 와 설정 변경 알림이 같이 쓴다 — 매번 새로 잰다.
     let caps: std::sync::Arc<dyn Fn() -> serde_json::Value + Send + Sync> =
         std::sync::Arc::new(move || {
@@ -381,9 +387,59 @@ pub fn spawn_server_link(
                 Path::new(&home),
                 &|p| p.exists(),
             );
-            capabilities(&local.agent_ids(), harnesses)
+            let models = caps_models.read().map(|m| m.clone()).unwrap_or_default();
+            capabilities(
+                &local.agent_ids(),
+                crate::harness_models::with_models(harnesses, &models),
+            )
         });
     let link = ServerLink::new();
+    // 모델 목록은 하네스를 **실행해** 묻는다(codex 는 카탈로그를 네트워크로 받는다) — 기동을 붙잡지 않는다.
+    // hello 는 목록 없이 먼저 나가고, 다 재면 `capabilities` 를 다시 낸다(끊겨 있으면 다음 hello 가 싣는다).
+    // 하네스 업데이트는 오퍼레이터 재시작과 같이 오므로 기동 때 한 번만 잰다(TS 와 같다).
+    {
+        let link = link.clone();
+        let caps = caps.clone();
+        std::thread::spawn(move || {
+            let detected = detect_harnesses(
+                models_login_path.as_deref(),
+                &|k| std::env::var(k).ok(),
+                Path::new(&models_home),
+                &|p| p.exists(),
+            );
+            let measured = crate::harness_models::measure(
+                &detected,
+                models_login_path.as_deref(),
+                Path::new(&models_home),
+                &|bin, args, path| {
+                    crate::harness_models::system_exec(
+                        bin,
+                        args,
+                        path,
+                        crate::harness_models::LIST_TIMEOUT,
+                    )
+                },
+            );
+            let summary: Vec<String> = measured
+                .iter()
+                .map(|(k, v)| format!("{k}={}", v.as_array().map_or(0, Vec::len)))
+                .collect();
+            eprintln!(
+                "하네스 모델: {}",
+                if summary.is_empty() {
+                    "없음".to_string()
+                } else {
+                    summary.join(", ")
+                }
+            );
+            if let Ok(mut m) = models.write() {
+                *m = measured;
+            }
+            let _ = link.send(&OperatorToServerFrame::Capabilities {
+                capabilities: caps(),
+            });
+        });
+    }
     let owner = std::sync::Arc::new(crate::community::OwnerCell::default());
     // TS `community.setAgents` — 붙어 있으면 `capabilities` 를 다시 낸다. 끊겨 있으면 다음 hello 가 새 표를 싣는다(send 의 false 는 실패가 아니다).
     // 배정된 에이전트의 로컬 설정을 조정기에 넘기는 자리 — 조정기는 아래에서 서므로 나중에 채운다.

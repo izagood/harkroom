@@ -4,7 +4,7 @@
 //! 그 사실이 다음 hello 에 실려야 서버의 배정이 통한다.
 //!
 //! **아직 옮기지 않은 것**: 회수 중 세대(retiring) 러너의 announce(러너 표에 그 개념이 아직 없다 — s21c adoptRunner 와 함께),
-//! `sessions`(러너 링크 다중화기 — s21b 전까지 빈 배열), harness 별 `models`.
+//! `sessions`(러너 링크 다중화기 — s21b 전까지 빈 배열). harness 별 `models` 는 G5 에서 옮겼다 — `harness_models.rs` 가 재고 serve.rs 가 싣는다.
 
 use std::io::Read;
 use std::process::{Command, Stdio};
