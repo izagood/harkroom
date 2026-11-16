@@ -637,12 +637,18 @@ pub struct EndpointPaths {
 }
 
 pub fn endpoint_paths(app_data_dir: &Path) -> EndpointPaths {
-    let dir = app_data_dir.join("operator");
-    let base = format!("operator-v{DAEMON_PROTOCOL_VERSION}");
+    let paths = endpoint_files(app_data_dir);
     // 앱 클라이언트 로그도 **같은 디렉터리**에 둔다 — 사람이 daemon 로그와 한자리에서
     // 대조한다(`log_line` 주석, `#456`). 경로를 여기서 정하는 것이 요점이다: 웹뷰는
     // 이 함수를 부르지 못하므로 임의 파일을 앱 권한으로 덮어쓸 수 없다.
-    let _ = CLIENT_LOG.set(dir.join(format!("{base}-client.log")));
+    let _ = CLIENT_LOG.set(paths.dir.join(format!("operator-v{DAEMON_PROTOCOL_VERSION}-client.log")));
+    paths
+}
+
+/// `endpoint_paths` 의 경로 조립만 — 클라이언트 로그 자리를 정하지 않는다(내리기만 할 남의 자리에 쓴다).
+fn endpoint_files(app_data_dir: &Path) -> EndpointPaths {
+    let dir = app_data_dir.join("operator");
+    let base = format!("operator-v{DAEMON_PROTOCOL_VERSION}");
     EndpointPaths {
         socket: dir.join(format!("{base}.sock")),
         pid: dir.join(format!("{base}.pid")),
@@ -1369,6 +1375,63 @@ fn retire_daemon(paths: &EndpointPaths, pid: u32) -> bool {
         "낡은 daemon 이 30초 안에 물러나지 않았다: pid {pid} — 그대로 띄워 본다"
     ));
     false
+}
+
+/// pid 의 실행 파일 경로(macOS `proc_pidpath`). 못 읽으면 None.
+#[cfg(target_os = "macos")]
+fn process_exe(pid: u32) -> Option<PathBuf> {
+    let mut buf = vec![0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+    // SAFETY: buf 는 길이만큼 쓸 수 있는 버퍼다. 돌려준 길이만 읽는다.
+    let n = unsafe { libc::proc_pidpath(pid as libc::c_int, buf.as_mut_ptr().cast(), buf.len() as u32) };
+    if n <= 0 {
+        return None;
+    }
+    buf.truncate(n as usize);
+    Some(PathBuf::from(String::from_utf8_lossy(&buf).into_owned()))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn process_exe(pid: u32) -> Option<PathBuf> {
+    std::fs::read_link(format!("/proc/{pid}/exe")).ok()
+}
+
+/// **스위치가 바뀐 기동에서 반대쪽 모드의 오퍼레이터를 내린다**(`community_root::roots_to_retire_on_switch` 가 자리를 준다).
+///
+/// 내리지 않으면 같은 operatorId 로 서버에 붙는 프로세스가 둘이 되어 1초마다 서로 밀어낸다(실물 G1 ③, `close 4409`).
+/// 내리는 길은 `retire_daemon`(SIGTERM → 엔드포인트가 비기를 기다림)과 같다 — 러너에게는 시그널이 가지 않고, 다시 뜬
+/// 오퍼레이터가 장부로 데려간다. 앱 setup 에서 **오퍼레이터를 띄우기 전에** 부르므로 내린 자리에는 지금 모드로 다시 뜬다.
+///
+/// 남의 프로세스를 죽이지 않게 셋을 다 본다: 소켓이 있다 · pid 파일에 pid 와 `entryPath` 가 있다 · 그 pid 의 실행 파일이
+/// `entryPath` 와 같다(pid 재사용·옛 기록이면 건너뛴다). 돌려주는 값은 사람이 읽을 줄(내렸다/건너뛰었다).
+pub fn retire_operators_at(roots: &[PathBuf]) -> Vec<String> {
+    let mut lines = Vec::new();
+    for root in roots {
+        let paths = endpoint_files(root);
+        if !paths.socket.exists() {
+            continue;
+        }
+        let Some(rec) = read_pid_record(&paths.pid) else {
+            lines.push(format!("스위치 바뀜: `{}` 에 소켓은 있는데 pid 기록이 없어 건너뛴다", paths.dir.display()));
+            continue;
+        };
+        if rec.pid == 0 || rec.entry_path.is_empty() {
+            lines.push(format!("스위치 바뀜: `{}` 의 pid 기록에 실행 파일이 없어 건너뛴다", paths.dir.display()));
+            continue;
+        }
+        let same = process_exe(rec.pid).is_some_and(|exe| same_entry_path(&rec.entry_path, &exe));
+        if !same {
+            lines.push(format!("스위치 바뀜: `{}` 의 pid {} 는 그 오퍼레이터가 아니다(끝났거나 다른 프로세스) — 건너뛴다", paths.dir.display(), rec.pid));
+            continue;
+        }
+        let gone = retire_daemon(&paths, rec.pid);
+        lines.push(format!(
+            "스위치 바뀜: `{}` 의 오퍼레이터(pid {})를 {}",
+            paths.dir.display(),
+            rec.pid,
+            if gone { "내렸다" } else { "내리지 못했다(30초)" }
+        ));
+    }
+    lines
 }
 
 fn ensure_at(
@@ -4243,5 +4306,35 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
         // 정리는 `guard` 의 `Drop` 이 한다 — 패닉해도 불린다.
         drop(guard);
     }
+    /// 스위치가 바뀐 기동의 회수(실물 G1 ③): pid 의 실행 파일이 pid 기록의 `entryPath` 와 같을 때만 SIGTERM 을 보낸다.
+    #[test]
+    fn retire_operators_at_terminates_only_the_recorded_operator() {
+        let root = std::env::temp_dir().join(format!("hk-retire-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let paths = endpoint_files(&root);
+        std::fs::create_dir_all(&paths.dir).unwrap();
+        std::fs::write(&paths.socket, "").unwrap();
+        let child = std::process::Command::new("/bin/sleep").arg("30").spawn().unwrap();
+        let pid = child.id();
+        // 실제 오퍼레이터는 앞 앱이 띄운 고아라 launchd 가 거둔다. 시험에선 내가 부모라 따로 거둬야 좀비로 안 남는다.
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut child = child;
+            let _ = tx.send(child.wait().unwrap());
+        });
+        // 기록의 실행 파일이 다르면(pid 재사용·남의 프로세스) 건너뛴다 — 살아 있어야 한다.
+        std::fs::write(&paths.pid, format!(r#"{{"pid":{pid},"entryPath":"/bin/cat"}}"#)).unwrap();
+        let lines = retire_operators_at(&[root.clone()]);
+        assert!(lines[0].contains("건너뛴다"), "{lines:?}");
+        assert!(rx.recv_timeout(Duration::from_millis(300)).is_err());
+        // 같으면 내린다.
+        std::fs::write(&paths.pid, format!(r#"{{"pid":{pid},"entryPath":"/bin/sleep"}}"#)).unwrap();
+        let lines = retire_operators_at(&[root.clone()]);
+        assert!(lines[0].contains("내렸다"), "{lines:?}");
+        assert!(!rx.recv_timeout(Duration::from_secs(5)).unwrap().success());
+        // 소켓이 없으면 아무 줄도 없다(그 자리엔 오퍼레이터가 없다).
+        std::fs::remove_file(&paths.socket).unwrap();
+        assert!(retire_operators_at(&[root.clone()]).is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
-
