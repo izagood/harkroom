@@ -14,7 +14,7 @@ import { LIST_SCHEDULED_SQL } from '../src/services/scheduledMessages.js';
 import { SELECT_PINS_SQL } from '../src/services/pins.js';
 import { AGENT_INVOKER_SQL, CHANNEL_SCOPE_SQL, ELIGIBLE_DELEGATE_SQL, INVOKE_FACTS_SQL, TEAM_INVOKER_SQL } from '../src/services/invokeGate.js';
 import { CLOSE_REPLY_GRANTS_SQL, HAS_REPLY_GRANT_SQL, OPEN_REPLY_GRANTS_SQL } from '../src/services/replyGrants.js';
-import { MENTION_DEPTH_SCAN_SQL, REPLY_LOCK_CLASS } from '../src/services/messages.js';
+import { MENTION_DEPTH_SCAN_SQL, OWN_THREAD_LINK_IDS_SQL, RECENT_BODIES_SQL, REPLY_LOCK_CLASS, STALL_SHADOW_SQL } from '../src/services/messages.js';
 import { ASK_CLOSE_BY_REPLY_SQL } from '../src/services/messages.js';
 import { DELEGATION_TOUCH_DEADLINE_SQL, DELEGATION_V2_UPDATE_PENDING_SQL } from '../src/services/delegations.js';
 import { EDIT_FIND_SQL, EDIT_INBOX_ALREADY_SQL, EDIT_UPDATE_SQL, EDIT_VIA_EDIT_SQL } from '../src/services/messages.js';
@@ -213,6 +213,10 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     reply_grant_close: CLOSE_REPLY_GRANTS_SQL,
     reply_grant_lock_class: String(REPLY_LOCK_CLASS),
     mention_depth_scan: MENTION_DEPTH_SCAN_SQL,
+    // 정체 홉(`core/chain_stall.rs`, S5.3 C1c-4b) — 최근 본문·같은 대화 링크·그림자 대상.
+    stall_recent_bodies: RECENT_BODIES_SQL,
+    stall_own_thread_links: OWN_THREAD_LINK_IDS_SQL,
+    stall_shadow: STALL_SHADOW_SQL,
     delegation_v2_update_pending: DELEGATION_V2_UPDATE_PENDING_SQL,
     decider_row: DECIDER_ROW_SQL,
     decider_seen: DECIDER_SEEN_SQL,
