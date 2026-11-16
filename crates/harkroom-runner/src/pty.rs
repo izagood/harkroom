@@ -35,7 +35,7 @@ pub fn compose_spawn(
 }
 
 /// 이 계획의 PTY 에 사람이 입력할 수 있는가(정본 `acceptsPtyInput`, #369) — stdin 이 파일이면 닿지 않는다.
-pub fn accepts_pty_input(stdin_file: Option<&str>) -> bool {
+pub fn accepts_pty_input<T>(stdin_file: Option<T>) -> bool {
     stdin_file.is_none()
 }
 
@@ -411,7 +411,7 @@ mod tests {
         assert_eq!(c, "/bin/sh");
         assert_eq!(a[0], "-c");
         assert_eq!(a[1], r#"exec '/a b/claude' 'it'\''s' < '/tmp/p q.txt'"#);
-        assert!(accepts_pty_input(None));
+        assert!(accepts_pty_input(None::<&str>));
         assert!(!accepts_pty_input(Some("/f")));
     }
 

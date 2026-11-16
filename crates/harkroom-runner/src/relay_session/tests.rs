@@ -382,3 +382,25 @@ fn restate_account_resends_started_with_new_rank() {
         "session.ended"
     );
 }
+
+#[test]
+fn accepts_input_restated_from_plan_only_on_change() {
+    // security 후속: 첫 값(참)은 계획 전 값이다 — 시도의 계획이 stdin 파일을 쓰면 거짓으로 고쳐 알리고(announce 도),
+    // 같은 값이면 다시 보내지 않는다.
+    let (l, sent) = ledger(None);
+    let h = l.open_session(input());
+    h.restate_accepts_input(crate::pty::accepts_pty_input(None::<&str>));
+    assert_eq!(types(&sent), ["session.started"]);
+    h.restate_accepts_input(crate::pty::accepts_pty_input(Some("/tmp/prompt")));
+    assert_eq!(types(&sent), ["session.started", "session.started"]);
+    assert_eq!(sent.lock().unwrap()[1]["session"]["acceptsInput"], false);
+    assert_eq!(l.announce()[0]["acceptsInput"], false);
+    h.restate_accepts_input(false);
+    assert_eq!(types(&sent).len(), 2);
+    h.close();
+    h.restate_accepts_input(true);
+    assert_eq!(
+        types(&sent),
+        ["session.started", "session.started", "session.ended"]
+    );
+}

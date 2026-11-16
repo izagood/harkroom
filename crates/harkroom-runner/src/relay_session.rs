@@ -579,6 +579,35 @@ impl SessionHandle {
         }
     }
 
+    /// 이 시도의 계획이 PTY 입력을 받는가(정본 `acceptsPtyInput(plan)`, #369)를 세션에 적는다 — 값이 바뀔 때만 같은
+    /// `sessionId` 의 `session.started` 로 다시 알린다(서버는 덮어 받는다). 판정의 근거는 턴의 이름이 아니라 fd 0 의
+    /// 정체다: stdin 이 파일이면 사람이 친 글자가 하네스에 닿지 않으므로 화면이 입력란을 열지 않게 한다.
+    pub fn restate_accepts_input(&self, accepts_input: bool) {
+        if self.is_closed() {
+            return;
+        }
+        let info = {
+            let mut map = self
+                .ledger
+                .sessions
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let Some(l) = map.get_mut(&self.session_id) else {
+                return;
+            };
+            let Some(o) = l.info.as_object_mut() else {
+                return;
+            };
+            if o.get("acceptsInput").and_then(Value::as_bool) == Some(accepts_input) {
+                return;
+            }
+            o.insert("acceptsInput".into(), json!(accepts_input));
+            l.info.clone()
+        };
+        self.ledger
+            .send(&json!({"type": "session.started", "session": info}));
+    }
+
     /// 시도마다 바뀌는 계정 칩(순번만)을 고쳐 다시 알린다 — 같은 `sessionId` 의 `session.started` 를 서버는 덮어 받는다.
     /// `account_rank`: `None` = 모른다(뺀다), `Some(None)` = 기본 로그인(null).
     pub fn restate_account(&self, account_rank: Option<Option<u32>>, pool_rank: Option<u32>) {

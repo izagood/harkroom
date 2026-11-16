@@ -1358,6 +1358,9 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             };
             match args.relay {
                 Some(r) => {
+                    // 이 시도의 계획에서 입력 가능 여부를 읽어 세션에 적는다(security 후속 — 늘 참이던 값을 계획에 잇는다).
+                    r.session()
+                        .restate_accepts_input(crate::pty::accepts_pty_input(cmd.stdin_file));
                     let mut s = RelaySink {
                         inner: &mut marker_sink,
                         relay: r,
