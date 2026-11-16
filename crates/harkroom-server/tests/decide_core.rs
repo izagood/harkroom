@@ -100,7 +100,7 @@ fn who_takes_it() {
     ] {
         assert_eq!(rust_takes(shape(o, k)), None, "{o}/{k}");
     }
-    // C1·C2 — 위임장이 있는 tool 승인 넷은 Rust, 나머지(command·merge·deny)는 TS.
+    // C1·C2·C3 — 위임장이 있는 tool 승인 넷과 command once·hour 는 Rust, 나머지(merge·deny)는 TS.
     let m = |o, k| Shape {
         has_mandate: true,
         ..shape(o, k)
@@ -118,14 +118,41 @@ fn who_takes_it() {
         rust_takes(m("approve_new_mandate", "tool")),
         Some(Decision::ApproveNewMandate)
     );
+    assert_eq!(
+        rust_takes(m("approve_once", "command")),
+        Some(Decision::ApproveOnce)
+    );
+    assert_eq!(
+        rust_takes(m("approve_hour", "command")),
+        Some(Decision::ApproveHour)
+    );
     for (o, k) in [
-        ("approve_once", "command"),
-        ("approve_hour", "command"),
         ("approve_mandate", "merge"),
         ("approve", "merge"),
+        ("approve_once", "merge"),
+        ("deny", "command"),
+        // command 에 위임장 갈래는 TS 409 bad_decision 그대로.
+        ("approve_mandate", "command"),
+        ("approve_new_mandate", "command"),
+        ("approve_turn", "command"),
     ] {
         assert_eq!(rust_takes(m(o, k)), None, "{o}/{k}");
     }
+    // C3 — 위임장 있는 command 라도 거절 카드(denial)·카드 once 는 TS.
+    assert_eq!(
+        rust_takes(Shape {
+            has_denial: true,
+            ..m("approve_once", "command")
+        }),
+        None
+    );
+    assert_eq!(
+        rust_takes(Shape {
+            has_once: true,
+            ..m("approve_hour", "command")
+        }),
+        None
+    );
     // 위임장·once·글 승인·거울이면 deny 라도 처음부터 TS(반쯤 하다 넘기는 길 없음).
     let base = shape("deny", "tool");
     for s in [
@@ -295,7 +322,7 @@ fn recheck_after_request_lock() {
         recheck_locked("a", Some("c"), Some(&locked("a", Some("c"), "command")), sh),
         Recheck::HandToTs
     );
-    // C1 — 위임장이 생겨도 tool approve 는 Rust(있는 위임장에 줄), deny·command 승인은 TS.
+    // C1 — 위임장이 생겨도 tool approve 는 Rust(있는 위임장에 줄), deny 는 TS. C3 — command 승인도 Rust.
     let mut m = base.clone();
     m.mandate_id = Some("m".into());
     assert_eq!(
@@ -310,6 +337,10 @@ fn recheck_after_request_lock() {
     mc.mandate_id = Some("m".into());
     assert_eq!(
         recheck_locked("a", Some("c"), Some(&mc), shape("approve_once", "command")),
+        Recheck::Go(Decision::ApproveOnce)
+    );
+    assert_eq!(
+        recheck_locked("a", Some("c"), Some(&mc), shape("deny", "command")),
         Recheck::HandToTs
     );
     let mut d = base.clone();

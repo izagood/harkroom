@@ -8,7 +8,10 @@
 //! 적고([`super::mandate_line_write`], savepoint — 줄이 실패해도 결정은 남는다), `approve_turn`(이번 턴만)은 grant 없이 줄 하나가
 //! 승인의 전부라 줄이 실패하면 409 `mandate_line_failed` 로 아무것도 커밋하지 않는다. 줄 감사(`mandate.line.added`·`add_failed`)도 같은 tx.
 //!
-//! 맡는 꼴은 [`super::decide_core::rust_takes`] 가 정한다(`once`·글 승인·거울·새 위임장·위임장 있는 command 는 처음부터 TS). 소유자가 아닌 사람의 승인은
+//! S5.3 C3 — 위임장 있는 command `approve_once`·`approve_hour` 도 1시간 `command_grant` 와 함께 그 위임장에 cap `command` 줄 하나
+//! (기한 1시간, 「이번 한 번」은 `uses: 1`)를 적는다. grant 를 썼으므로 줄이 실패하면 savepoint 로 줄만 되돌리고 결정은 남긴다(TS 와 같음).
+//!
+//! 맡는 꼴은 [`super::decide_core::rust_takes`] 가 정한다(`once`·글 승인·거울·merge·위임장 있는 deny 는 처음부터 TS). 소유자가 아닌 사람의 승인은
 //! 판정 뒤([`super::decide_core::after_verdict`]) 쓰기 전에 TS 로 넘긴다(소유자 알림 글을 TS 가 쓴다).
 //!
 //! TS 와 다른 점(덜 여는 쪽): TS 는 감사·`grant.given`·이벤트를 커밋 **뒤**에 쓰고 실패를 삼킨다. 여기서는 결정과 같은 tx 라
@@ -80,6 +83,13 @@ pub fn new_mandate_core_on() -> bool {
     mandate_core_on() && NEW_MANDATE_CORE.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// S5.3 C3 — 위임장 있는 command 승인을 Rust 가 맡는가. 새 칸은 없다 — 줄은 C1 칸([`MANDATE_LINE_PRIVILEGES`]), 명령 grant 는
+/// B2 칸([`APPROVE_PRIVILEGES`] 의 `command_grant` INSERT)으로 쓴다. 그래서 C1 스위치를 그대로 따른다(fail-closed —
+/// C1 이 꺼지면 「permission mandate command core off」를 남기고 그 꼴은 TS).
+pub fn mandate_command_core_on() -> bool {
+    mandate_core_on()
+}
+
 /// 위임장 있는 승인(C1)을 Rust 가 맡는가 — 기동 때 [`check_mandate_core`] 가 정한다.
 pub fn mandate_core_on() -> bool {
     MANDATE_CORE.load(std::sync::atomic::Ordering::Relaxed)
@@ -102,6 +112,9 @@ pub async fn check_mandate_core(pool: &sqlx::PgPool) -> bool {
         }
     };
     MANDATE_CORE.store(on, std::sync::atomic::Ordering::Relaxed);
+    if !on {
+        eprintln!("front: permission mandate command core off — follows permission mandate core");
+    }
     let new_on = on
         && match crate::write::missing_in(pool, NEW_MANDATE_PRIVILEGES, &[]).await {
             Ok(m) if m.is_empty() => true,
@@ -344,6 +357,10 @@ pub async fn approve_write(
     if locked.mandate_id.is_some() && !mandate_core_on() {
         return Ok(ApproveOutcome::HandToTs);
     }
+    // C3 — 위임장 있는 command 는 그 스위치로(지금은 C1 과 같다, fail-closed).
+    if locked.mandate_id.is_some() && grant_mode.is_some() && !mandate_command_core_on() {
+        return Ok(ApproveOutcome::HandToTs);
+    }
     if turn && (locked.mandate_id.is_none() || locked.card_message_id.is_none()) {
         return Ok(ApproveOutcome::HandToTs);
     }
@@ -437,7 +454,7 @@ pub async fn approve_write(
         tool_scope = Some(scope);
     }
     // C1 — 위임장이 있으면 그 위임장에 줄 하나(TS `addLineFromRequest`, savepoint). [이번 턴만]은 줄이 승인의 전부라 실패하면
-    // 결정 전체를 되돌린다(409 `mandate_line_failed`, 커밋하지 않음). 7일 승인은 grant 를 썼으므로 줄만 되돌리고 결정은 남긴다.
+    // 결정 전체를 되돌린다(409 `mandate_line_failed`, 커밋하지 않음). 7일 승인·command(C3)는 grant 를 썼으므로 줄만 되돌리고 결정은 남긴다.
     let line = match mandate_id.as_deref() {
         Some(mandate_id) => {
             let out = add_line_from_request(
@@ -454,10 +471,13 @@ pub async fn approve_write(
                     } else {
                         "button"
                     },
-                    kind: if turn {
-                        LineKind::Turn
-                    } else {
-                        LineKind::Standing
+                    kind: match grant_mode {
+                        // C3 — command: 1시간, 「이번 한 번」이면 uses 1(TS `addLineFromRequest` command 갈래).
+                        Some(mode) => LineKind::Command {
+                            once: mode == "once",
+                        },
+                        None if turn => LineKind::Turn,
+                        None => LineKind::Standing,
                     },
                     now: &now,
                     until: expires_iso.as_deref(),

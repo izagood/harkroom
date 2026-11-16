@@ -1,10 +1,11 @@
 //! S5.3 C1 — 승인이 **이미 있는 위임장**에 줄 하나를 적는다(TS `addLineFromRequest` → `addMandateLine`).
 //!
 //! 승인 tx(요청 줄을 잠근 뒤) 안에서 부른다. 순서:
-//! 1. scope 를 능력 등록부(tool = `validate_tool_rule`)로 다시 판정 — 정규형이 아니면 `bad_scope`(줄 없음).
+//! 1. scope 를 능력 등록부(tool = `validate_tool_rule`, command = `validate_exact_command`)로 다시 판정 — 정규형이 아니면 `bad_scope`(줄 없음).
 //! 2. **위임장 줄을 `for share` 로 잠근다**(TS 와 다른 점 — 아래).
 //! 3. 위임장이 지금 유효한가(`grant_valid_mandate_owner` 골든, 7일 쉼·자동화 상태) — 아니면 `mandate_invalid`.
-//! 4. 갈래별 limits(`approve_turn` = 카드 글 `turnCause` + 1시간, 7일 승인 = 같은 결정의 grant 기한).
+//! 4. 갈래별 limits(`approve_turn` = 카드 글 `turnCause` + 1시간, 7일 승인 = 같은 결정의 grant 기한,
+//!    command(C3) = 1시간 + 「이번 한 번」이면 `uses: 1`).
 //! 5. savepoint 안에서 위임장 주인·맡긴 사람·끝남 대조 → `agent_ids` 대조 → `mandate_line` INSERT. 실패하면 savepoint 만 되돌린다.
 //!
 //! TS 와 다른 점(덜 여는 쪽): TS 는 위임장 줄을 잠그지 않고 `ended` 를 읽는다. 줄 INSERT 의 FK 검사는 KEY SHARE 라 위임장 끝내기
@@ -71,6 +72,18 @@ pub enum LineKind {
     Standing,
     /// [이번 턴만] — 카드 글 하나가 깨우는 턴.
     Turn,
+    /// S5.3 C3 — command `approve_once`·`approve_hour`. cap `command`, 기한 1시간(명령 grant 와 같음), `once` 면 `uses: 1`.
+    Command { once: bool },
+}
+
+impl LineKind {
+    /// 줄의 능력(TS `CAP_FOR_KIND`).
+    pub fn cap(self) -> &'static str {
+        match self {
+            LineKind::Command { .. } => "command",
+            LineKind::Standing | LineKind::Turn => "tool",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -94,12 +107,14 @@ pub struct LineArgs<'a> {
 pub enum LineOutcome {
     Added {
         mandate_id: String,
+        cap: &'static str,
         line_id: String,
         scope: String,
         via: String,
     },
     Failed {
         mandate_id: String,
+        cap: &'static str,
         code: &'static str,
         detail: Option<String>,
     },
@@ -127,20 +142,22 @@ impl LineOutcome {
         match self {
             LineOutcome::Added {
                 mandate_id,
+                cap,
                 line_id,
                 scope,
                 via,
             } => (
                 "mandate.line.added",
-                json!({ "mandateId": mandate_id, "lineId": line_id, "cap": "tool", "scope": scope,
+                json!({ "mandateId": mandate_id, "lineId": line_id, "cap": cap, "scope": scope,
                         "via": via, "requestId": request_id }),
             ),
             LineOutcome::Failed {
                 mandate_id,
+                cap,
                 code,
                 detail,
             } => {
-                let mut d = json!({ "mandateId": mandate_id, "cap": "tool", "code": code });
+                let mut d = json!({ "mandateId": mandate_id, "cap": cap, "code": code });
                 if let Some(x) = detail {
                     d["detail"] = json!(x);
                 }
@@ -154,9 +171,15 @@ impl LineOutcome {
 pub const LINE_AUDIT: &str = "insert into audit_log (action, actor_id, target, detail) \
      values ($1, $2::uuid, $3, $4::jsonb)";
 
-fn failed(mandate_id: &str, code: &'static str, detail: Option<String>) -> LineOutcome {
+fn failed(
+    mandate_id: &str,
+    cap: &'static str,
+    code: &'static str,
+    detail: Option<String>,
+) -> LineOutcome {
     LineOutcome::Failed {
         mandate_id: mandate_id.to_string(),
+        cap,
         code,
         detail,
     }
@@ -176,19 +199,31 @@ fn clip_200(s: &str) -> String {
     out
 }
 
-/// TS `addLineFromRequest`(tool 줄만 — merge·command 는 C1 범위 밖). 승인 tx 안에서 부른다.
+/// TS `addLineFromRequest`(tool 줄, C3 부터 command 줄 — merge 는 범위 밖). 승인 tx 안에서 부른다.
 /// DB 오류는 savepoint 안의 것만 `error` 로 삼키고(TS 와 같음) 나머지는 그대로 올린다.
 pub async fn add_line_from_request(
     conn: &mut PgConnection,
     a: LineArgs<'_>,
 ) -> sqlx::Result<LineOutcome> {
-    use harkroom_proto::tool_rules::{ToolRuleVerdict, validate_tool_rule};
+    use harkroom_proto::tool_rules::{
+        ExactCommandVerdict, ToolRuleVerdict, validate_exact_command, validate_tool_rule,
+    };
     let m = a.mandate_id;
-    let scope = match validate_tool_rule(a.target) {
-        ToolRuleVerdict::Ok { rule, .. } => rule,
-        ToolRuleVerdict::Refused(code) => {
-            return Ok(failed(m, "bad_scope", Some(code.to_string())));
-        }
+    let cap = a.kind.cap();
+    // TS `validateCapScope(cap, target)` — command 는 `validateExactCommand` 의 정규형.
+    let scope = match a.kind {
+        LineKind::Command { .. } => match validate_exact_command(a.target) {
+            ExactCommandVerdict::Ok { command, .. } => command,
+            ExactCommandVerdict::Refused(code) => {
+                return Ok(failed(m, cap, "bad_scope", Some(code.to_string())));
+            }
+        },
+        LineKind::Standing | LineKind::Turn => match validate_tool_rule(a.target) {
+            ToolRuleVerdict::Ok { rule, .. } => rule,
+            ToolRuleVerdict::Refused(code) => {
+                return Ok(failed(m, cap, "bad_scope", Some(code.to_string())));
+            }
+        },
     };
     // 2단계 — TS 와 다른 점(덜 여는 쪽).
     sqlx::query(LOCK_MANDATE_SHARE)
@@ -206,20 +241,28 @@ pub async fn add_line_from_request(
         .fetch_optional(&mut *conn)
         .await?;
     if owner.is_none() {
-        return Ok(failed(m, "mandate_invalid", None));
+        return Ok(failed(m, cap, "mandate_invalid", None));
     }
     let limits = match a.kind {
         LineKind::Turn => {
             let Some(card) = a.card_message_id else {
-                return Ok(failed(m, "no_turn", None));
+                return Ok(failed(m, cap, "no_turn", None));
             };
             json!({ "turnCause": card, "until": hour_iso })
         }
         LineKind::Standing => {
             let Some(until) = a.until else {
-                return Ok(failed(m, "no_until", None));
+                return Ok(failed(m, cap, "no_until", None));
             };
             json!({ "until": until })
+        }
+        // TS: 명령 grant 와 같은 기한(1시간). 「이번 한 번」은 한 번만.
+        LineKind::Command { once } => {
+            let mut l = json!({ "until": hour_iso });
+            if once {
+                l["uses"] = json!(1);
+            }
+            l
         }
     };
     sqlx::query(SAVEPOINT).execute(&mut *conn).await?;
@@ -239,7 +282,7 @@ pub async fn add_line_from_request(
                 .map(|d| d.message().to_string())
                 .unwrap_or_else(|| "unknown".to_string());
             eprintln!("front: permission mandate line add failed");
-            Ok(failed(m, "error", Some(clip_200(&msg))))
+            Ok(failed(m, cap, "error", Some(clip_200(&msg))))
         }
     }
 }
@@ -252,6 +295,7 @@ async fn write_line(
     limits: &Value,
 ) -> sqlx::Result<Result<LineOutcome, LineOutcome>> {
     let m = a.mandate_id;
+    let cap = a.kind.cap();
     let m_owner: Option<(String,)> = sqlx::query_as(sql().owner.as_str())
         .bind(m)
         .fetch_optional(&mut *conn)
@@ -265,13 +309,13 @@ async fn write_line(
         .fetch_optional(&mut *conn)
         .await?;
     let Some((owner, delegator, ended)) = row else {
-        return Ok(Err(failed(m, "no_mandate", None)));
+        return Ok(Err(failed(m, cap, "no_mandate", None)));
     };
     if ended {
-        return Ok(Err(failed(m, "mandate_ended", None)));
+        return Ok(Err(failed(m, cap, "mandate_ended", None)));
     }
     if a.actor_id != owner && a.actor_id != delegator {
-        return Ok(Err(failed(m, "not_owner", None)));
+        return Ok(Err(failed(m, cap, "not_owner", None)));
     }
     let agent_ids: Option<Vec<&str>> = narrow.then(|| vec![a.agent_id]);
     if let Some(ids) = &agent_ids {
@@ -282,12 +326,12 @@ async fn write_line(
             .await?
             .len();
         if n != 1 {
-            return Ok(Err(failed(m, "bad_agent", None)));
+            return Ok(Err(failed(m, cap, "bad_agent", None)));
         }
     }
     let (line_id, stored_scope): (String, String) = sqlx::query_as(sql().insert.as_str())
         .bind(m)
-        .bind("tool")
+        .bind(cap)
         .bind(scope)
         .bind(limits.to_string())
         .bind(agent_ids)
@@ -299,6 +343,7 @@ async fn write_line(
         .await?;
     Ok(Ok(LineOutcome::Added {
         mandate_id: m.to_string(),
+        cap,
         line_id,
         scope: stored_scope,
         via: a.via.to_string(),
@@ -320,6 +365,7 @@ mod tests {
     fn audit_keys_follow_ts() {
         let ok = LineOutcome::Added {
             mandate_id: "m".into(),
+            cap: "tool",
             line_id: "l".into(),
             scope: "s".into(),
             via: "button".into(),
@@ -330,11 +376,23 @@ mod tests {
             d,
             json!({"mandateId":"m","lineId":"l","cap":"tool","scope":"s","via":"button","requestId":"r"})
         );
-        let (a, d) = failed("m", "mandate_invalid", None).audit("r");
+        let (a, d) = failed("m", "tool", "mandate_invalid", None).audit("r");
         assert_eq!(a, "mandate.line.add_failed");
         assert_eq!(
             d,
             json!({"mandateId":"m","cap":"tool","code":"mandate_invalid","requestId":"r"})
         );
+        let (_, d) = failed("m", "command", "error", Some("x".into())).audit("r");
+        assert_eq!(
+            d,
+            json!({"mandateId":"m","cap":"command","code":"error","detail":"x","requestId":"r"})
+        );
+    }
+
+    #[test]
+    fn cap_follows_kind() {
+        assert_eq!(LineKind::Standing.cap(), "tool");
+        assert_eq!(LineKind::Turn.cap(), "tool");
+        assert_eq!(LineKind::Command { once: true }.cap(), "command");
     }
 }
