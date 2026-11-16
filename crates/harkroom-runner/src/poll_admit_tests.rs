@@ -94,7 +94,13 @@ fn real_admit_uses_only_the_bundle_and_queues_launches() {
         90,
         Duration::from_secs(3600),
     ));
-    let f = link_admit_fn(clients, claims, MentionSlots::default(), now);
+    let f = link_admit_fn(
+        clients,
+        claims,
+        MentionSlots::default(),
+        SharedControl::default(),
+        now,
+    );
     let mut ledger = Ledger::new(&[], 0);
     let mut q = LaunchQueue::default();
     let out = f(

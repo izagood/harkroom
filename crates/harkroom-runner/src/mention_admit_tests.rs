@@ -25,6 +25,8 @@ struct Fake {
     warned: Vec<String>,
     busy: HashSet<String>,
     reserved: Vec<String>,
+    /// 예약 순간 인터랙티브가 끼어든 스레드(`reserve_mention` 이 거절).
+    reserve_refused: HashSet<String>,
     notices: Vec<(String, AdmitNotice)>,
     fails: Vec<String>,
     claims: Option<ClaimMode>,
@@ -70,8 +72,12 @@ impl AdmitDeps for Fake {
     fn registry_busy(&self, key: &str) -> bool {
         self.busy.contains(key)
     }
-    fn reserve_mention(&mut self, key: &str) {
+    fn reserve_mention(&mut self, key: &str) -> Option<MentionReservation> {
+        if self.reserve_refused.contains(key) {
+            return None;
+        }
         self.reserved.push(key.into());
+        Some(MentionReservation::detached())
     }
     fn notice(&mut self, _: &str, anchor: &str, n: &AdmitNotice) -> Result<(), String> {
         self.notices.push((anchor.into(), n.clone()));
@@ -292,6 +298,7 @@ fn release_holds_frees_claim_slot_once() {
         tried: 1,
         claim: Some(Box::new(Claim(releases.clone()))),
         slot_held: true,
+        reservation: None,
     };
     let mut slots = Vec::new();
     let mut ended = Vec::new();
@@ -374,4 +381,32 @@ fn second_entry_for_same_message_is_blocked_while_running() {
     assert_eq!(out.started, 0);
     assert_eq!(out.blocked, 1);
     assert_eq!(f.launches.borrow().len(), 1);
+}
+
+#[test]
+fn interactive_racing_in_before_reserve_blocks_and_releases_holds() {
+    // `control_of` 판정 뒤 예약 전에 인터랙티브가 등록됐다 — 장부에 적지 않고 임대·자리를 놓고 막힘으로 센다.
+    let mut l = Ledger::default();
+    let mut f = Fake {
+        now: 1_000,
+        claims: Some(ClaimMode::Grant),
+        slot: Some(SlotOutcome::Granted),
+        ..Fake::default()
+    };
+    f.reserve_refused.insert("c/r".into());
+    let b = batch(vec![ent(1, "m1")], vec![msg("m1", "u1", "r")]);
+    let out = admit(&mut l, &mut f, &b, &human_ctx()).unwrap();
+    assert_eq!(
+        out,
+        AdmitOutcome {
+            started: 0,
+            deferred: 0,
+            blocked: 1
+        }
+    );
+    assert!(f.launches.borrow().is_empty());
+    assert!(f.started.is_empty());
+    assert!(!l.thread_in_flight("c/r"));
+    assert_eq!(f.slot_releases, vec!["c/r"]);
+    assert_eq!(f.claim_releases.load(Ordering::SeqCst), 1);
 }

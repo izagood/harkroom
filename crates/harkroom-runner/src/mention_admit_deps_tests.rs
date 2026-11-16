@@ -140,6 +140,7 @@ fn launch_of(mention_id: &str, claim: Option<Box<dyn ThreadClaimHandle>>) -> Lau
         tried: 1,
         claim,
         slot_held: false,
+        reservation: None,
     }
 }
 
@@ -231,7 +232,14 @@ fn heartbeat_taken_fences_that_mention_and_does_not_release() {
     let tc = claims(&c);
     let slots = MentionSlots::default();
     let mut got = Launched::default();
-    let mut deps = LinkAdmitDeps::new(&c, &tc, slots.clone(), now, &mut got);
+    let mut deps = LinkAdmitDeps::new(
+        &c,
+        &tc,
+        slots.clone(),
+        SharedControl::default(),
+        now,
+        &mut got,
+    );
     let ClaimHold::Held(claim) = deps.hold_claim("c", "root") else {
         panic!("잡혀야 한다")
     };
@@ -263,7 +271,14 @@ fn launch_of_an_already_fenced_claim_fences_on_open() {
     let tc = claims(&c);
     let slots = MentionSlots::default();
     let mut got = Launched::default();
-    let mut deps = LinkAdmitDeps::new(&c, &tc, slots.clone(), now, &mut got);
+    let mut deps = LinkAdmitDeps::new(
+        &c,
+        &tc,
+        slots.clone(),
+        SharedControl::default(),
+        now,
+        &mut got,
+    );
     deps.launch(launch_of("m1", Some(Box::new(Lost))));
     let opened = slots.open("m1");
     assert!(fenced_after_bind(&opened.slot()));
@@ -276,7 +291,14 @@ fn mark_read_sends_only_the_given_ids() {
     let c = clients(l);
     let tc = claims(&c);
     let mut got = Launched::default();
-    let mut deps = LinkAdmitDeps::new(&c, &tc, MentionSlots::default(), now, &mut got);
+    let mut deps = LinkAdmitDeps::new(
+        &c,
+        &tc,
+        MentionSlots::default(),
+        SharedControl::default(),
+        now,
+        &mut got,
+    );
     deps.mark_read(&[7, 9]).unwrap();
     let reads: Vec<Value> = lk(&l.tools)
         .iter()
@@ -294,7 +316,14 @@ fn deps_and_read_mention_use_only_the_bundle_link() {
     let c = clients(mine);
     let tc = claims(&c);
     let mut got = Launched::default();
-    let mut deps = LinkAdmitDeps::new(&c, &tc, MentionSlots::default(), now, &mut got);
+    let mut deps = LinkAdmitDeps::new(
+        &c,
+        &tc,
+        MentionSlots::default(),
+        SharedControl::default(),
+        now,
+        &mut got,
+    );
     deps.notice("c", "root", &AdmitNotice::BlockedByTurn)
         .unwrap();
     deps.fail("c", "root", "본문", "w", "r").unwrap();
@@ -328,7 +357,14 @@ fn unsupported_claim_still_launches_unfenced() {
     let tc = claims(&c);
     let slots = MentionSlots::default();
     let mut got = Launched::default();
-    let mut deps = LinkAdmitDeps::new(&c, &tc, slots.clone(), now, &mut got);
+    let mut deps = LinkAdmitDeps::new(
+        &c,
+        &tc,
+        slots.clone(),
+        SharedControl::default(),
+        now,
+        &mut got,
+    );
     let ClaimHold::Held(claim) = deps.hold_claim("c", "root") else {
         panic!("옛 서버도 잡힌 것으로")
     };
@@ -374,7 +410,14 @@ fn releasing_without_launch_drops_that_cell() {
     let c = clients(l);
     let tc = claims(&c);
     let mut got = Launched::default();
-    let mut deps = LinkAdmitDeps::new(&c, &tc, MentionSlots::default(), now, &mut got);
+    let mut deps = LinkAdmitDeps::new(
+        &c,
+        &tc,
+        MentionSlots::default(),
+        SharedControl::default(),
+        now,
+        &mut got,
+    );
     let ClaimHold::Held(claim) = deps.hold_claim("c", "root") else {
         panic!("잡혀야 한다")
     };
@@ -392,4 +435,53 @@ fn releasing_without_launch_drops_that_cell() {
     };
     deps.launch(launch_of("m1", Some(first)));
     assert_eq!(deps.cell_count(), 0, "띄우면 꺼낸다");
+}
+
+/// B-2b: 받아들이기가 보는 조종·바쁨·유예·예약은 러너 수명의 조종 장부 하나다(인터랙티브 open·끝과 같은 값).
+#[test]
+fn control_ledger_is_the_shared_registry_and_queue() {
+    use crate::turn_registry::{TurnKind, TurnRecord};
+    let l = link();
+    let c = clients(l);
+    let tc = claims(&c);
+    let mut got = Launched::default();
+    let control = SharedControl::default();
+    let mut deps = LinkAdmitDeps::new(
+        &c,
+        &tc,
+        MentionSlots::default(),
+        Arc::clone(&control),
+        now,
+        &mut got,
+    );
+    assert_eq!(deps.control_of("c/r"), None);
+    assert!(!deps.registry_busy("c/r"));
+    let r = deps.reserve_mention("c/r").expect("빈 스레드는 예약된다");
+    assert!(lock_control(&control).registry.mention_starting("c/r"));
+    drop(r);
+
+    lock_control(&control)
+        .registry
+        .register(
+            "c/r",
+            TurnRecord {
+                kind: TurnKind::Interactive,
+                session_id: Some("s1".into()),
+                opened_by_handle: Some("h".into()),
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        deps.control_of("c/r").and_then(|t| t.opened_by_handle),
+        Some("h".into())
+    );
+    assert!(deps.registry_busy("c/r"));
+    assert!(deps.reserve_mention("c/r").is_none());
+    let d = deps.defer("c/r", 5, 40, 2_000);
+    assert!(d.should_notify);
+    assert!(!deps.defer("c/r", 5, 40, 3_000).should_notify);
+    deps.mark_warned("c/r");
+    assert!(deps.defer("c/r", 6, 41, 4_000).warned);
+    // 끝(B-2c)의 클램프 재료가 같은 장부에 남는다.
+    assert_eq!(lock_control(&control).queue.min_seq("c/r"), Some(40));
 }

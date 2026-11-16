@@ -8,6 +8,7 @@
 //! 둘 다 잠금을 스스로 갖지 않는다 — 쓰는 쪽(스케줄러·인터랙티브)이 `Mutex` 하나로 감싼다.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 
 /// 턴의 종류(`TurnMode`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -186,6 +187,62 @@ impl MentionQueue {
     /// 인터랙티브가 끝났다 — 장부를 지운다. 다음 조종의 같은 entry 유예는 새 통지다.
     pub fn clear(&mut self, thread_key: &str) {
         self.by_thread.remove(thread_key);
+    }
+}
+
+/// 조종 장부 — 레지스트리와 멘션 대기 장부를 **한 잠금**으로 묶는다(B-2b). 받아들이기(폴)와 인터랙티브 open·끝이
+/// 같은 값을 쥔다 — 둘이 따로 잠기면 「조종 중인가」를 본 뒤 유예를 적는 사이에 조종이 끝나 대기 장부가 영영 안 지워진다.
+#[derive(Default)]
+pub struct Control {
+    pub registry: TurnRegistry,
+    pub queue: MentionQueue,
+}
+
+/// 러너 수명 동안 나눠 쥐는 조종 장부.
+pub type SharedControl = Arc<Mutex<Control>>;
+
+pub fn lock_control(c: &SharedControl) -> std::sync::MutexGuard<'_, Control> {
+    c.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+/// 멘션 턴 예약 하나. 떨어질 때(턴 끝·패닉으로 `Launch` 가 풀릴 때) 예약을 푼다 — 놓기를 잊는 길이 없다.
+pub struct MentionReservation {
+    held: Option<(SharedControl, String)>,
+}
+
+impl MentionReservation {
+    /// 장부에 매이지 않은 예약(시험·장부 없는 받아들이기용). 떨어져도 아무것도 안 한다.
+    pub fn detached() -> Self {
+        Self { held: None }
+    }
+
+    /// 이 스레드에 멘션 턴을 예약한다. 이미 턴이 등록돼 있으면(받아들이기의 `control_of` 판정 뒤에 인터랙티브가
+    /// 끼어든 경합) 예약하지 않고 `None` — 부르는 쪽은 이 멘션을 `blocked` 로 다음 폴에 넘긴다.
+    pub fn try_reserve(control: &SharedControl, thread_key: &str) -> Option<Self> {
+        let mut c = lock_control(control);
+        if c.registry.get(thread_key).is_some() {
+            return None;
+        }
+        c.registry.reserve_mention(thread_key);
+        Some(Self {
+            held: Some((Arc::clone(control), thread_key.to_string())),
+        })
+    }
+}
+
+impl Drop for MentionReservation {
+    fn drop(&mut self) {
+        if let Some((c, key)) = self.held.take() {
+            lock_control(&c).registry.unreserve_mention(&key);
+        }
+    }
+}
+
+impl std::fmt::Debug for MentionReservation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MentionReservation")
+            .field("key", &self.held.as_ref().map(|(_, k)| k))
+            .finish()
     }
 }
 

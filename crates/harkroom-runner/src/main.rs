@@ -381,7 +381,15 @@ fn main() {
     ));
     let running = Arc::new(Running::default());
     let shutdown_slots = slots.clone();
-    let admit = link_admit_fn(Arc::clone(&clients), Arc::clone(&claims), slots, now_ms);
+    // 조종 장부 — 받아들이기와 (B-2c) 인터랙티브 open·끝이 같은 값을 쥔다.
+    let control = harkroom_runner::turn_registry::SharedControl::default();
+    let admit = link_admit_fn(
+        Arc::clone(&clients),
+        Arc::clone(&claims),
+        slots,
+        Arc::clone(&control),
+        now_ms,
+    );
     let drain_limit = Duration::from_millis(config.turn_timeout_ms) + Duration::from_secs(5 * 60);
     let poll = Arc::new(PollLoop::new(
         Me {

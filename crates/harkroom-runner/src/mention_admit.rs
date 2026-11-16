@@ -14,7 +14,7 @@ use crate::mention_ledger::{Ledger, PreGate, mention_anchor, message_for, thread
 use crate::mention_scheduler::{DEFER_WARN_MS, DEFER_WARN_PENDING, is_blocked_notice_reason};
 use crate::poll_loop::{AdmitOutcome, BatchContext};
 use crate::rest::SlotOutcome;
-use crate::turn_registry::{DeferResult, ThreadControl};
+use crate::turn_registry::{DeferResult, MentionReservation, ThreadControl};
 
 /// admit 이 올리는 러너 알림(정본 `RunnerNotice` 중 admit 몫).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -56,7 +56,9 @@ pub trait AdmitDeps {
     fn mark_warned(&mut self, key: &str);
     /// 레지스트리에 이 스레드의 턴이 있는가(정본 `registry.get(threadKey)`).
     fn registry_busy(&self, key: &str) -> bool;
-    fn reserve_mention(&mut self, key: &str);
+    /// 멘션 턴을 띄우기로 정했다 — 레지스트리에 예약한다(인터랙티브 open 이 이 결정을 본다). `None` 이면 그 사이
+    /// 인터랙티브 턴이 등록됐다 — 띄우지 않는다.
+    fn reserve_mention(&mut self, key: &str) -> Option<MentionReservation>;
     fn notice(
         &mut self,
         channel_id: &str,
@@ -96,6 +98,8 @@ pub struct Launch {
     pub tried: u32,
     pub claim: Option<Box<dyn ThreadClaimHandle>>,
     pub slot_held: bool,
+    /// 레지스트리의 멘션 예약 — `release_holds` 나 `Launch` 가 떨어질 때 풀린다.
+    pub reservation: Option<MentionReservation>,
 }
 
 impl Launch {
@@ -113,6 +117,7 @@ impl Launch {
         if let Some(c) = self.claim.take() {
             c.release();
         }
+        drop(self.reservation.take());
         if std::mem::take(&mut self.slot_held) {
             release_slot(&self.thread_key);
         }
@@ -308,8 +313,18 @@ pub fn admit(
             .collect();
 
         // 장부 등록은 동기적으로, 띄우기 전에. 인터랙티브 open 도 이 결정을 보게 레지스트리에 예약한다.
+        // 예약은 장부 등록보다 앞 — `control_of` 판정 뒤 인터랙티브가 끼어들었으면 아무것도 적지 않고 놓는다.
+        let Some(reservation) = deps.reserve_mention(&key) else {
+            if slot_held {
+                deps.release_slot(&key);
+            }
+            if let Some(c) = claim {
+                c.release();
+            }
+            out.blocked += 1;
+            continue;
+        };
         let tried = ledger.start(&group_ids, &key);
-        deps.reserve_mention(&key);
         out.started += 1;
         deps.turn_started(&key, str_of(lead_mention, "id"));
         deps.launch(Launch {
@@ -321,6 +336,7 @@ pub fn admit(
             tried,
             claim,
             slot_held,
+            reservation: Some(reservation),
         });
     }
 

@@ -50,6 +50,7 @@ fn launch(id: i64) -> Launch {
         tried: 1,
         claim: None,
         slot_held: false,
+        reservation: None,
     }
 }
 
