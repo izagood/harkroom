@@ -40,7 +40,8 @@ import { LIST_DELEGATIONS_GIVEN_SQL, LIST_DELEGATIONS_MINE_SQL } from '../src/se
 import { COMMAND_GRANTS_SQL, LIST_TOOL_RULES_SQL, MANDATE_AGENT_CHANNEL_SQL, MANDATE_TURN_LEASE_SQL, MATCH_COMMAND_GRANT_SQL, TOOL_ALLOWS_SQL, TOOL_REACH_SQL } from '../src/services/permissionRequests.js';
 import { READ_LEASE_SQL } from '../src/services/mergeGrants.js';
 import { VALID_MANDATE_OWNER_SQL } from '../src/services/mandates.js';
-import { MANDATE_LINES_STORED_SQL } from '../src/services/mandateLines.js';
+import { ADD_LINE_AGENTS_SQL, ADD_LINE_INSERT_SQL, ADD_LINE_MANDATE_SQL, MANDATE_LINES_STORED_SQL } from '../src/services/mandateLines.js';
+import { LINE_FROM_REQUEST_OWNER_SQL } from '../src/services/permissionRequests.js';
 import { LEASE_INBOX_MAX_AGE_MS, LEASE_MAX_MS, LEASE_MAX_REISSUES, LEASE_REISSUE_STALE_MS, LEASE_RENEW_MS, LEASE_TTL_MS, TURN_LEASE_CAUSE_SQL, TURN_LEASE_CLAIM_MOVED_SQL, TURN_LEASE_END_PRIOR_SQL, TURN_LEASE_END_SQL, TURN_LEASE_INSERT_SQL, TURN_LEASE_PRIOR_SQL, TURN_LEASE_RENEW_SQL, TURN_LEASE_USED_SQL } from '../src/services/secretAccess.js';
 import { CANCEL_WAKES_FOR_TURN_SQL, FOLD_WAKES_FOR_DELEGATION_SQL, PREEMPT_CANCEL_SQL, PREEMPT_DUE_SQL, PREEMPT_FIRE_INBOX_SQL, PREEMPT_FIRE_SQL, STAMP_WAKE_CLOSED_SQL } from '../src/services/agentWakes.js';
 import { CANCEL_AS_DELEGATE_SQL, CANCEL_AS_LEAD_SQL, CANCEL_DELEGATE_ITEM_SQL, CANCEL_LEAD_ITEMS_SQL, CANCEL_LEAD_MARK_SQL, CANCEL_LEAD_META_SQL, SETTLED_INBOX_SQL, SETTLED_MARK_SQL, SETTLED_META_SQL, SETTLED_STILL_SQL } from '../src/services/delegations.js';
@@ -70,6 +71,11 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     grant_mandate_agent_channel: MANDATE_AGENT_CHANNEL_SQL,
     grant_valid_mandate_owner: VALID_MANDATE_OWNER_SQL,
     grant_mandate_lines_stored: MANDATE_LINES_STORED_SQL,
+    // S5.3 C1 — 있는 위임장에 줄 쓰기(`core/mandate_line_write.rs`).
+    mandate_line_from_request_owner: LINE_FROM_REQUEST_OWNER_SQL,
+    mandate_line_add_mandate: ADD_LINE_MANDATE_SQL,
+    mandate_line_add_agents: ADD_LINE_AGENTS_SQL,
+    mandate_line_add_insert: ADD_LINE_INSERT_SQL,
     grant_command_grants: COMMAND_GRANTS_SQL,
     // 명령 grant 쓰기(`core/command_match.rs`, S5.3 C3b B1) — 임대 읽기와 grant 하나를 쓰는 UPDATE.
     grant_read_lease: READ_LEASE_SQL,

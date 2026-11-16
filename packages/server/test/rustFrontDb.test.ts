@@ -1330,6 +1330,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant insert on command_grant to ${rw}`,
         `grant insert on account_grant to ${rw}`,
         `grant update (granted_by, granted_at, expires_at, allow_agent_cause) on account_grant to ${rw}`,
+        // S5.3 C1 — 있는 위임장에 줄 쓰기(`decide_approve::MANDATE_LINE_PRIVILEGES`, mandate 칸 UPDATE 는 위). 없으면 「permission mandate core off」.
+        `grant insert on mandate_line to ${rw}`,
         // S5.3 C3b B1 — 명령 grant 쓰기(`command_match.rs::MATCH_PRIVILEGES`). 칸 권한 셋(감사 INSERT 는 위). 없으면 「command grant match core off」.
         `grant update (use_count, used_at, bound_cwd) on command_grant to ${rw}`,
         // S5.3 C6a-1 — 인박스 읽음 표시(`core/inbox_read.rs::INBOX_READ_PRIVILEGES`). 칸 권한 하나. 없으면 「inbox read core off」.
@@ -4312,6 +4314,185 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const until6 = Date.now() + 10_000;
         while (gc() - gc0 < 6 && Date.now() < until6) await new Promise((res) => setTimeout(res, 100));
         expect(gc() - gc0, 'Rust 승인 여섯의 grant.changed').toBeGreaterThanOrEqual(6);
+      }
+      // S5.3 C1 — 승인이 **있는 위임장**에 줄을 쓴다(코어 `mandate_line_write.rs`). tool `approve`(위임장 있음)·`approve_mandate`·
+      // `approve_turn` 을 TS·Rust 에 각자의 위임장·요청·카드로 돌려 응답·요청 줄·카드 meta(`lineId`)·grant·줄·감사를 견준다.
+      // - 7일 승인은 grant 를 쓰므로 줄이 실패해도 savepoint 로 줄만 되돌리고 결정은 남는다(끝난 위임장·줄 INSERT 실패 둘 다).
+      // - [이번 턴만]은 줄이 승인의 전부라 줄이 실패하면 409 `mandate_line_failed` 에 전체 rollback(요청 줄 pending 그대로).
+      // - 줄 INSERT 실패는 시험 전용 트리거(scope 에 `boom`)로 일부러 낸다 — TS·Rust 가 같은 DB 오류 문구를 감사에 남긴다.
+      {
+        expect(f.log(), '줄 쓰기 칸을 다 주면 켜진다').toContain('front: permission mandate core on');
+        // REST 의 decision 목록은 TS 와 같다 — approve_mandate·approve_turn 은 카드·묶음 답으로만(TS 도 REST 400).
+        expect(f.log()).not.toContain('"POST /agents/{id}/permission-requests/{requestId}/approve_turn"');
+        await db.pool.query(`create or replace function c1_line_boom() returns trigger language plpgsql as $$
+          begin if new.scope like '%boom%' then raise exception 'c1 line boom'; end if; return new; end $$`);
+        await db.pool.query(`create trigger c1_line_boom before insert on mandate_line for each row execute function c1_line_boom()`);
+        const H = { kind: 'human' };
+        const mk = async (ended = false) => {
+          const root = await say('위임 머리', { author: admin.accountId });
+          return (await db.pool.query<{ id: string }>(
+            `insert into mandate (owner_account_id, root_message_id, channel_id, thread_root_id, ended_at)
+             values ($1, $2, $3, $2, case when $4::boolean then now() end) returning id::text`,
+            [admin.accountId, root, todayId, ended])).rows[0]!.id;
+        };
+        const mreq = async (target: string, mandate: string | null, options: string[]) => {
+          const req = (await db.pool.query<{ id: string }>(
+            `insert into permission_request(agent_id, kind, target, reason, channel_id, thread_root_id, expires_at, mandate_id)
+             values ($1, 'tool', $2, 'x', $3, gen_random_uuid(), now() + interval '1 hour', $4::uuid) returning id::text`,
+            [agent.accountId, target, todayId, mandate])).rows[0]!.id;
+          const card = await say(`@admin ${target}`, {
+            meta: {
+              kind: 'ask', ask: { prompt: '허락할까요?', options: options.map((id) => ({ id, label: id })), to: H },
+              permissionRequest: { requestId: req, status: 'pending', ...(mandate ? { mandateId: mandate } : {}) },
+            },
+          });
+          await db.pool.query(`update permission_request set card_message_id = $2 where id = $1`, [req, card]);
+          return { req, card };
+        };
+        const MOPT = ['approve_mandate', 'approve_turn', 'deny'];
+        const side = async (tag: string) => {
+          const m1 = await mk();
+          const mEnded = await mk(true);
+          const mLock = await mk();
+          const std = await mreq(`Bash(echo ${tag} std:*)`, m1, MOPT);
+          const mand = await mreq(`Bash(echo ${tag} mand:*)`, m1, MOPT);
+          const turn = await mreq(`Bash(echo ${tag} turn:*)`, m1, MOPT);
+          const turnEnded = await mreq(`Bash(echo ${tag} turnended:*)`, mEnded, MOPT);
+          const stdEnded = await mreq(`Bash(echo ${tag} stdended:*)`, mEnded, MOPT);
+          const turnBoom = await mreq(`Bash(echo ${tag} turnboom:*)`, m1, MOPT);
+          const stdBoom = await mreq(`Bash(echo ${tag} stdboom:*)`, m1, MOPT);
+          const turnNone = await mreq(`Bash(echo ${tag} turnnone:*)`, null, MOPT);
+          const lock = await mreq(`Bash(echo ${tag} lock:*)`, mLock, MOPT);
+          return {
+            m1, mEnded, mLock, stdReq: std.req, stdCard: std.card, mandReq: mand.req, mandCard: mand.card, turnReq: turn.req, turnCard: turn.card,
+            turnEndedReq: turnEnded.req, turnEndedCard: turnEnded.card, stdEndedReq: stdEnded.req, stdEndedCard: stdEnded.card,
+            turnBoomReq: turnBoom.req, turnBoomCard: turnBoom.card, stdBoomReq: stdBoom.req, stdBoomCard: stdBoom.card,
+            turnNoneReq: turnNone.req, turnNoneCard: turnNone.card, lockReq: lock.req, lockCard: lock.card,
+          };
+        };
+        type Side = Awaited<ReturnType<typeof side>>;
+        const T = await side('tside1');
+        const R = await side('rside1');
+        const labelOf = (sd: Side) => (v: unknown) => {
+          for (const [k, id] of Object.entries(sd)) if (v === id) return k.toUpperCase();
+          if (typeof v === 'string') return v.replace(/[tr]side/g, 'SIDE');
+          return v;
+        };
+        const shape = (sd: Side) => (v: unknown): unknown => {
+          if (Array.isArray(v)) return v.map(shape(sd));
+          if (v && typeof v === 'object') {
+            const o: Record<string, unknown> = {};
+            for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+              o[k] = /At$/.test(k) ? (x === null ? null : typeof x)
+                : k === 'seq' || k === 'threadRootId' || k === 'lineId' || k === 'until' || k === 'line_id' ? typeof x : shape(sd)(x);
+            }
+            return o;
+          }
+          const l = labelOf(sd)(v);
+          return l === agent.accountId ? 'AGENT' : l === admin.accountId ? 'ADMIN' : l === member.accountId ? 'MEMBER' : l;
+        };
+        const restP = (r: string, d: string) => `/agents/${agent.accountId}/permission-requests/${r}/${d}`;
+        const ansP = (m: string) => `/channels/${todayId}/messages/${m}/ask-answer`;
+        const run = async (base: string, sd: Side) => {
+          const out: { step: string; status: number; code?: string; body: unknown }[] = [];
+          const step = async (name: string, path: string, body: unknown) => {
+            const r = await callX(base, 'POST', path, body, A);
+            out.push({ step: name, status: r.status, code: r.code, body: r.status === 200 ? shape(sd)(r.json) : null });
+          };
+          await step('REST tool approve + 위임장 → grant·줄', restP(sd.stdReq, 'approve'), {});
+          await step('카드 approve_mandate → grant·줄', ansP(sd.mandCard), { optionId: 'approve_mandate' });
+          await step('카드 approve_turn → 줄만', ansP(sd.turnCard), { optionId: 'approve_turn' });
+          await step('카드 approve_turn 끝난 위임장 → 409 전체 rollback', ansP(sd.turnEndedCard), { optionId: 'approve_turn' });
+          await step('REST tool approve 끝난 위임장 → grant 만(줄 실패)', restP(sd.stdEndedReq, 'approve'), {});
+          await step('카드 approve_turn 줄 INSERT 실패 → 409 전체 rollback', ansP(sd.turnBoomCard), { optionId: 'approve_turn' });
+          await step('REST tool approve 줄 INSERT 실패 → savepoint 로 줄만', restP(sd.stdBoomReq, 'approve'), {});
+          await step('카드 approve_turn 위임장 없음 → TS 409 bad_decision', ansP(sd.turnNoneCard), { optionId: 'approve_turn' });
+          await step('REST approve_turn → 400(TS 와 같은 decision 목록)', restP(sd.turnNoneReq, 'approve_turn'), {});
+          return out;
+        };
+        const tsOut = await run(tsUrl, T);
+        const rsOut = await run(rsUrl, R);
+        expect(rsOut).toEqual(tsOut);
+        const st = (s: string) => tsOut.find((o) => o.step.startsWith(s));
+        for (const s of ['REST tool approve + 위임장', '카드 approve_mandate', '카드 approve_turn', 'REST tool approve 끝난', 'REST tool approve 줄 INSERT']) {
+          expect(st(s)?.status, s).toBe(200);
+        }
+        expect(st('카드 approve_turn 끝난')?.code).toBe('mandate_line_failed');
+        expect(st('카드 approve_turn 줄 INSERT')?.code).toBe('mandate_line_failed');
+        expect(st('카드 approve_turn 위임장 없음')?.code).toBe('bad_decision');
+        expect(st('REST approve_turn')?.code).toBe('bad_request');
+        const ids = (sd: Side) => JSON.stringify(sd);
+        const rows = async (sd: Side) => (await db.pool.query(
+          `select k, p.status, p.decided_by::text as by, p.grant_mode as mode, p.grant_expires_at is not null as has_exp
+             from jsonb_each_text($1::jsonb) j(k, id) join permission_request p on p.id = j.id::uuid order by k`, [ids(sd)])).rows.map((r) => shape(sd)(r));
+        expect(await rows(R)).toEqual(await rows(T));
+        const cards = async (sd: Side) => (await db.pool.query(
+          `select k, m.meta->'permissionRequest' as pr, m.meta->'ask' as ask from jsonb_each_text($1::jsonb) j(k, id)
+             join message m on m.id = j.id::uuid where m.meta ? 'permissionRequest' order by k`, [ids(sd)])).rows.map((r) => shape(sd)(r));
+        const tCards = await cards(T);
+        expect(JSON.stringify(tCards), '카드가 자기 줄을 가리킨다(lineId)').toContain('"lineId"');
+        expect(await cards(R)).toEqual(tCards);
+        const grants = async (tag: string, sd: Side) => (await db.pool.query(
+          `select scope, granted_by::text as by, allow_agent_cause as aac from account_grant
+            where account_id = $1 and capability = 'tool.allow' and scope like $2 order by scope`,
+          [agent.accountId, `tool:${todayId}:Bash(echo ${tag} %`])).rows.map((r) => shape(sd)(r));
+        const tG = await grants('tside1', T);
+        expect(tG.length, 'grant 넷(std·mand·stdended·stdboom) — 이번 턴만은 grant 없음').toBe(4);
+        expect(await grants('rside1', R)).toEqual(tG);
+        const lines = async (sd: Side) => (await db.pool.query(
+          `select (select k from jsonb_each_text($1::jsonb) j(k, id) where j.id::uuid = l.request_id) as req,
+                  (select k from jsonb_each_text($1::jsonb) j(k, id) where j.id::uuid = l.mandate_id) as mandate,
+                  l.cap, l.scope, l.limits, l.agent_ids::text[] as agents, l.granted_by::text as by, l.via, l.revoked_at
+             from mandate_line l where l.request_id = any($2::uuid[]) order by 1`,
+          [ids(sd), Object.values(sd)])).rows.map((r) => shape(sd)(r));
+        const tL = await lines(T);
+        expect(tL.length, '줄 셋(std·mand·turn) — 끝난 위임장·boom·rollback 은 줄 없음').toBe(3);
+        expect(JSON.stringify(tL), '[이번 턴만] 줄은 카드 글을 원인으로, 요청 에이전트 하나로').toContain('"turnCause":"TURNCARD"');
+        expect(await lines(R)).toEqual(tL);
+        const audits = async (sd: Side) => (await db.pool.query(
+          `select action, actor_id::text as actor, target, detail from audit_log
+            where action in ('permission.approved', 'grant.given', 'mandate.line.added', 'mandate.line.add_failed')
+              and detail->>'requestId' = any($1::text[])`,
+          [Object.values(sd)])).rows.map((r) => shape(sd)(r)).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+        const tAud = await audits(T);
+        const tAudS = JSON.stringify(tAud);
+        expect(tAudS).toContain('"code":"mandate_invalid"');
+        expect(tAudS, '줄 INSERT 실패는 DB 오류 문구 그대로').toContain('c1 line boom');
+        expect(await audits(R)).toEqual(tAud);
+        const wakes = async (sd: Side) => (await db.pool.query(
+          `select message_id::text as m, reason as r from inbox where message_id = any($1::uuid[]) and reason = 'ask_answered' order by message_id`,
+          [Object.values(sd)])).rows.map((r) => shape(sd)(r)).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+        expect(await wakes(R)).toEqual(await wakes(T));
+
+        // TS 와 다른 점(덜 여는 쪽) — 고정 기댓값. 위임장 끝내기(NO KEY UPDATE)가 커밋 전일 때:
+        // TS 는 위임장을 잠그지 않아 기다리지 않고 **끝난 위임장에 살아 있는 줄**을 남긴다(후속 후보의 구멍 그대로).
+        // Rust 는 `for share` 로 끝내기를 기다리고, 끝난 것을 보고 줄을 쓰지 않는다(grant 는 씀, 감사 `mandate_invalid`).
+        const endHeld = async (mandate: string, call: () => Promise<{ status: number }>) => {
+          const c = await db.pool.connect();
+          try {
+            await c.query('begin');
+            await c.query(`update mandate set ended_at = now(), end_reason = 'c1-test' where id = $1`, [mandate]);
+            const p = call();
+            const early = await Promise.race([p.then(() => 'done'), new Promise((res) => setTimeout(() => res('waiting'), 1500))]);
+            await c.query('commit');
+            const r = await p;
+            return { early, status: r.status };
+          } finally {
+            c.release();
+          }
+        };
+        const tsLock = await endHeld(T.mLock, () => callX(tsUrl, 'POST', restP(T.lockReq, 'approve'), {}, A));
+        expect(tsLock, 'TS 는 끝내기를 기다리지 않는다').toEqual({ early: 'done', status: 200 });
+        const rsLock = await endHeld(R.mLock, () => callX(rsUrl, 'POST', restP(R.lockReq, 'approve'), {}, A));
+        expect(rsLock, 'Rust 는 위임장 for share 로 끝내기 커밋을 기다린다').toEqual({ early: 'waiting', status: 200 });
+        const lockLine = async (req: string) => (await db.pool.query(
+          `select count(*)::int as n from mandate_line where request_id = $1 and revoked_at is null`, [req])).rows[0]!.n;
+        expect(await lockLine(T.lockReq), 'TS 구멍: 끝난 위임장에 살아 있는 줄').toBe(1);
+        expect(await lockLine(R.lockReq), 'Rust: 끝난 위임장에는 줄 없음').toBe(0);
+        const lockAudit = (await db.pool.query(
+          `select detail->>'code' as code from audit_log where action = 'mandate.line.add_failed' and detail->>'requestId' = $1`, [R.lockReq])).rows;
+        expect(lockAudit).toEqual([{ code: 'mandate_invalid' }]);
+        await db.pool.query(`drop trigger c1_line_boom on mandate_line`);
       }
       // S5.3 C3b-3d — `GET /agents/{id}/decide-check`(카드 버튼을 그릴지). 잠그지 않는 판정(3a 판정 SQL 그대로)이라 읽기 풀만 쓴다.
       // 범위(owner·list·channel·community) × 스위치(user_decide) × 행위자(소유자·멤버·채널 밖 멤버, 세션·PAT·에이전트) × 채널

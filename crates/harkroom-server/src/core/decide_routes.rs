@@ -312,9 +312,14 @@ pub async fn deny_route(
 
 // ───────────────────────── S5.3 B2 승인(approve) ─────────────────────────
 
-/// Rust 가 맡을 수 있는 승인 선택지(꼴은 코어가 잠근 요청 줄로 다시 가른다 — tool·approve, command·approve_once/hour).
+/// Rust 가 맡을 수 있는 승인 선택지(꼴은 코어가 잠근 요청 줄로 다시 가른다 — tool·approve, command·approve_once/hour,
+/// C1 의 tool·approve_mandate/approve_turn). REST 경로는 TS 의 decision 목록(`approve`·`approve_once`·`approve_hour`)만 붙인다 —
+/// `approve_mandate`·`approve_turn` 은 TS 도 REST 에서 400 이라 카드·묶음 답으로만 온다.
 pub fn is_approve_option(option: &str) -> bool {
-    matches!(option, "approve" | "approve_once" | "approve_hour")
+    matches!(
+        option,
+        "approve" | "approve_mandate" | "approve_turn" | "approve_once" | "approve_hour"
+    )
 }
 
 /// TS `onceFromCard` 가 값을 만드는 꼴인가 — `permissionRequest.once` 에 숫자 `number` 와 문자열 `headSha`.
