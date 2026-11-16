@@ -98,5 +98,22 @@ fn maker_config_wires_the_allow_list_and_agent_dirs() {
         Some("/usr/bin")
     );
     assert_eq!(m.pat, "link-secret-value", "가림 바늘");
+    assert!(!m.chrome_host, "env 가 없으면 Chrome 은 닫힘");
+    let mut cfg_on = cfg.clone();
+    cfg_on.chrome_host = true;
+    let on = maker_config(
+        &cfg_on,
+        &e,
+        BootFacts {
+            me_id: "agent-1",
+            claim_holder: "holder",
+            agent_state: agent.clone(),
+            home: PathBuf::from("/home/u"),
+        },
+    );
+    assert!(
+        on.chrome_host,
+        "③'': 오퍼레이터의 HARKROOM_CHROME_HOST 가 짓개까지 간다"
+    );
     let _ = std::fs::remove_dir_all(&base);
 }

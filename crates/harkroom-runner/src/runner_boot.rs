@@ -66,6 +66,7 @@ pub fn maker_config(cfg: &RunnerConfig, env: &Env, f: BootFacts<'_>) -> MakerCon
         operator_bin: cfg.operator_bin.clone(),
         command_hook: cfg.command_hook,
         post_tool_hook: cfg.post_tool_hook,
+        chrome_host: cfg.chrome_host,
         workspace_base_dir: workspace_base_dir(&f.agent_state),
         state_dir: f.agent_state,
         mcp_config_path: PathBuf::from(&cfg.mcp_config_path),
