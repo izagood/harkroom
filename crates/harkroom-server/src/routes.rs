@@ -14,6 +14,7 @@ use axum::extract::FromRef;
 use axum::routing::MethodRouter;
 use sqlx::PgPool;
 use std::collections::{BTreeMap, HashSet};
+use std::sync::LazyLock;
 
 /// 옮긴 라우트가 받는 상태. 프록시는 `Upstream` 만 꺼내 쓴다.
 #[derive(Clone)]
@@ -141,7 +142,26 @@ pub const MOVED: &[Moved] = &[
         path: "/work-items",
         route: || axum::routing::get(crate::writes_misc::list_items),
     },
+    // S5.4 H1 운영 표면(`health.rs`). `/healthz`·`/readyz` 는 [`OPEN`] — 인증 층을 걸지 않는다(TS 도 인증 앞).
+    Moved {
+        key: "GET /healthz",
+        path: "/healthz",
+        route: || axum::routing::get(crate::health::healthz),
+    },
+    Moved {
+        key: "GET /readyz",
+        path: "/readyz",
+        route: || axum::routing::get(crate::health::readyz),
+    },
+    Moved {
+        key: "GET /metrics",
+        path: "/metrics",
+        route: || axum::routing::get(crate::health::metrics),
+    },
 ];
+
+/// 인증 층 없이 마운트하는 줄 — TS 에서도 `requireAccount`·인증 훅 앞에 있는 것만. 되돌림 env 는 다른 줄과 같이 먹는다.
+pub const OPEN: &[&str] = &["GET /healthz", "GET /readyz"];
 
 /// `HARKROOM_FRONT_TS_ROUTES` 를 읽은 결과.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -357,6 +377,8 @@ pub fn writes_for(state: &AppState) -> &'static [Moved] {
 pub fn router(state: AppState, table: &[Moved], ts: &TsOverrides) -> Router {
     // 경로별로 메서드를 모은다. BTreeMap 이라 마운트 순서가 늘 같다.
     let mut by_path: BTreeMap<&str, MethodRouter<AppState>> = BTreeMap::new();
+    let mut open_paths: HashSet<&str> = HashSet::new();
+    LazyLock::force(&crate::health::STARTED_AT);
     let writes = writes_for(&state);
     for m in table
         .iter()
@@ -364,6 +386,9 @@ pub fn router(state: AppState, table: &[Moved], ts: &TsOverrides) -> Router {
         .filter(|m| !ts.sends_to_ts(m.key))
     {
         let r = (m.route)();
+        if OPEN.contains(&m.key) {
+            open_paths.insert(m.path);
+        }
         let merged = match by_path.remove(m.path) {
             Some(prev) => prev.merge(r),
             None => r,
@@ -373,14 +398,19 @@ pub fn router(state: AppState, table: &[Moved], ts: &TsOverrides) -> Router {
     let mut app: Router<AppState> =
         Router::new().route("/front/healthz", axum::routing::get(proxy::front_health));
     for (path, mr) in by_path {
-        let mr = mr
-            .route_layer(axum::middleware::from_fn_with_state(
+        // `OPEN` 경로에는 다른 메서드가 옮겨져 있지 않다(경로 하나 = GET 하나) — 경로 단위로 인증 층을 뺀다.
+        let mr = if open_paths.contains(path) {
+            mr
+        } else {
+            mr.route_layer(axum::middleware::from_fn_with_state(
                 crate::auth::AuthPools {
                     read: state.pool.clone(),
                     write: state.write.clone(),
                 },
                 crate::auth::layer,
             ))
+        };
+        let mr = mr
             // CORS 는 인증 층 **바깥** — 401·403 에도 TS 와 같은 머리가 실려야 데스크톱이 오류를 읽는다(11-14 장애).
             .route_layer(axum::middleware::from_fn_with_state(
                 state.cors.clone(),

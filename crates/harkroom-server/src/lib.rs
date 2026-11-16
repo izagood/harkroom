@@ -8,6 +8,7 @@ pub mod auth;
 pub mod core;
 pub mod cors;
 pub mod directory;
+pub mod health;
 pub mod inbox_today;
 pub mod lists;
 pub mod loops;
