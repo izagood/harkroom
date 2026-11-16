@@ -138,7 +138,7 @@ async function operatorWriteRole(db: { pool: pg.Pool; uri: string }, grants: rea
 }
 
 describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () => {
-  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention', 'mandate_idle', 'permission_expire', 'bg', 'bg_produce', 'outbox_prune', 'push_loop', 'turn_lease', 'inbox_list', 'decide_core_db', 'relay_live', 'turn_settle', 'health', 'scheduled']) {
+  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention', 'mandate_idle', 'permission_expire', 'bg', 'bg_produce', 'outbox_prune', 'push_loop', 'turn_lease', 'inbox_list', 'decide_core_db', 'relay_live', 'turn_settle', 'health', 'scheduled', 'stale']) {
     it(`tests/${name}.rs`, async () => {
       const db = await startTestDb();
       try {
@@ -1552,6 +1552,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant insert, update, delete on memory_lease to ${rw}`,
         // S5.4 L1 — 예약글 루프(`loops/scheduled.rs`). 없으면 루프를 띄우지 않는다.
         `grant update (sent_message_id, failed_reason) on scheduled_message to ${rw}`,
+        // S5.4 L2 — stale 루프(`loops/stale.rs`). 없으면 루프를 띄우지 않는다.
+        `grant update (stale_notified_at) on inbox to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -1606,6 +1608,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       expect(f.log()).toContain('front: loop bg on (enabled=false');
       expect(f.log()).toContain('front: loop outbox.prune on');
       expect(f.log()).toContain('front: loop scheduled on');
+      expect(f.log()).toContain('front: loop stale on');
 
       const r = await cargo(['test', '--test', 'contrast', '--', '--nocapture'], {
         HARKROOM_CONTRAST_TS_URL: tsUrl,

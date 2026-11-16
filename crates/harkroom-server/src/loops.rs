@@ -15,6 +15,7 @@ pub mod permission_expire;
 pub mod push;
 pub mod retention;
 pub mod scheduled;
+pub mod stale;
 pub mod wake;
 
 use sqlx::PgPool;
