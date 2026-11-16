@@ -5641,6 +5641,13 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                     i.update_pending_at is not null as pending_at, d.deadline_at > now() + interval '5 minutes' as pushed
                from team_delegation_item i join team_delegation d on d.id = i.delegation_id
               where d.thread_root_id = (select thread_root_id from message where id = $1)`, [id])).rows,
+          // C1c-4b — 이 글의 사슬 자리: 깊이·정체 홉·사슬 시작이 있나·그 시각이 이 스레드의 앞 부름 글 시각인가(밀리초 안).
+          chain: (await db.pool.query(
+            `select m.mention_depth as depth, m.stall_depth as stall, m.chain_started_at is not null as started,
+                    abs(extract(epoch from m.chain_started_at - (select c.created_at from message c
+                      where c.thread_root_id = m.thread_root_id and c.id <> m.id and c.body like '<@%' order by c.seq desc limit 1))) < 0.002 as at_call,
+                    m.meta->'mentionStallShadow' as shadow, m.meta ? 'mentionStallLinkReset' as link_reset
+               from message m where m.id = $1`, [id])).rows.map(shape),
           // C1c-4a — 이 대화(답글이면 그 스레드, 최상위면 그 글)의 회신권: 받는 쪽·주는 쪽·닫혔나·만료가 6h 쯤인가.
           grants: shape((await db.pool.query(
             `select g.grantee_id::text as grantee, g.granter_id::text as granter, g.closed_at is not null as closed,
@@ -5657,14 +5664,16 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           return root;
         };
         // C1c-4a — 머리 하나와 그 스레드에서 BOT2 가 BOT 을 실제로 깨운 부름 하나(inbox 있음) — BOT 의 답은 사슬 안(깊이 1)이다.
-        const withChain = async () => {
+        // C1c-4b — 부른 쪽·그 고리의 깊이·정체 홉을 고를 수 있다(사람 고리는 정체를 물려주지 않는다).
+        const withChainBy = (by: () => string, depth = 0, stall = 0, earlier = '') => async () => {
           const root = await direct(member.accountId, '질문');
           const call = (await db.pool.query<{ id: string }>(
-            `insert into message (channel_id, thread_root_id, author_id, body, kind) values ($1, $2, $3, $4, 'user') returning id::text as id`,
-            [todayId, root, bot2.accountId, `<@${agent.accountId}> 이것 봐 줘`])).rows[0]!.id;
+            `insert into message (channel_id, thread_root_id, author_id, body, kind, mention_depth, stall_depth) values ($1, $2, $3, $4, 'user', $5, $6) returning id::text as id`,
+            [todayId, root, by(), `<@${agent.accountId}> 이것 봐 줘${earlier}`, depth, stall])).rows[0]!.id;
           await db.pool.query(`insert into inbox (account_id, message_id, reason) values ($1, $2, 'mention')`, [agent.accountId, call]);
           return root;
         };
+        const withChain = withChainBy(() => bot2.accountId);
         // C1c-3d — 머리 하나와 그 스레드에 BOT 이 관리자(ADMIN)에게 넘긴 열린 위임 하나(기한 1분).
         const withDelegation = async () => {
           const root = await direct(member.accountId, '맡김');
@@ -5744,7 +5753,11 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['에이전트 머리 id 가 null → 400', async () => '', () => ({ body: '답', threadRootId: null }), agent.pat],
           // 아직 TS 몫 — 부름은 암묵 위임 스위치를 모르면(C1c-4d), 사슬 안의 글은 정체 홉(C1c-4b).
           ['에이전트 부름, 암묵 위임 스위치 모름 → TS 몫', async () => '', () => ({ body: '@mem 봐 줘' }), agent.pat, 'ts', freshCh],
-          ['사슬 안 에이전트 답 → TS 몫', withChain, (r) => ({ body: '봤다', threadRootId: r }), agent.pat, 'ts'],
+          // C1c-4b — 사슬 안의 에이전트 글: 깊이·정체 홉·사슬 시작(앞 고리 시각)을 TS 와 같게 적는다.
+          ['사슬 안 에이전트 답(결과물 없음) → 정체 +1', withChainBy(() => bot2.accountId, 2, 1), (r) => ({ body: '봤다', threadRootId: r }), agent.pat],
+          ['사슬 안 에이전트 답(새 sha) → 정체 0', withChainBy(() => bot2.accountId, 2, 3), (r) => ({ body: 'head abc1234 올림', threadRootId: r }), agent.pat],
+          ['사슬 안 에이전트 답(앞 줄의 sha) → 정체 +1', withChainBy(() => bot2.accountId, 1, 2, ' head abc1234'), (r) => ({ body: '이미 abc1234 봤다', threadRootId: r }), agent.pat],
+          ['사람이 깨운 사슬 → 정체는 0 에서 +1', withChainBy(() => member.accountId, 5, 3), (r) => ({ body: '봤다', threadRootId: r }), agent.pat],
         ];
         const DELEG_SCENES: Scene[] = [
           ['담당 사람 글 → 위임 활동', withDelegation, (r) => ({ body: '작업하는 중', threadRootId: r }), A],
@@ -5753,6 +5766,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['에이전트가 에이전트를 부름 → 회신권 열기', async () => '', () => ({ body: '@bot2 이것 봐 줘' }), agent.pat, undefined, freshCh],
           ['에이전트 답글 부름 → 스레드에 회신권', async () => direct(member.accountId, '질문'), (r) => ({ body: '@bot2 @mem 같이', threadRootId: r }), agent.pat],
           ['누구나 에이전트의 부름 → 회신권 없음', async () => '', () => ({ body: '@bot 이것 봐 줘' }), bot2.pat, undefined, freshCh],
+          // C1c-4b — 정체 한도(4)에 닿은 부름: 막지 않고 막았을 에이전트만 `meta.mentionStallShadow` 에 남긴다(사람은 빠진다).
+          ['정체 한도 → 그림자 기록', withChainBy(() => bot2.accountId, 1, 3), (r) => ({ body: '@bot2 @mem 다시 봐', threadRootId: r }), agent.pat],
         ];
         // TS 몫 갈래는 Rust 서버에서도 TS 가 올리므로 그 장면의 이벤트는 TS 버스에서 읽는다(Rust outbox 에 없어야 한다).
         const handedOnRust: string[] = [];
@@ -5870,6 +5885,18 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(byG(tsOut, '에이전트 답글(누구나) → 남의 회신권 그대로').grants).toEqual([{ grantee: 'BOT', granter: 'BOT2', closed: false, ttl: false }]);
         expect(by('에이전트 DM → 상대에게 dm').inbox).toEqual([{ who: 'ADMIN', reason: 'dm' }]);
         expect(by('에이전트 머리 id 가 null → 400').status).toBe(400);
+        // C1c-4b — 대조가 「둘 다 아무것도 안 적음」으로 같아지지 않게 TS 쪽 값을 못 박는다.
+        type C = { name: string; chain: Record<string, unknown>[] };
+        const chainOf = (rows: unknown, n: string) => (rows as C[]).find((x) => x.name === n)!.chain[0];
+        const c0 = { started: true, at_call: true, shadow: null, link_reset: false };
+        expect(chainOf(tsOut, '사슬 안 에이전트 답(결과물 없음) → 정체 +1')).toEqual({ depth: 3, stall: 2, ...c0 });
+        expect(chainOf(tsOut, '사슬 안 에이전트 답(새 sha) → 정체 0')).toEqual({ depth: 3, stall: 0, ...c0 });
+        expect(chainOf(tsOut, '사슬 안 에이전트 답(앞 줄의 sha) → 정체 +1')).toEqual({ depth: 2, stall: 3, ...c0 });
+        expect(chainOf(tsOut, '사람이 깨운 사슬 → 정체는 0 에서 +1')).toEqual({ depth: 6, stall: 1, ...c0 });
+        expect(chainOf(tsOut, '에이전트 답글 → 머리 주인 thread_reply · 받은 회신권 닫음')).toMatchObject({ depth: 0, stall: 0, started: false });
+        for (const mode of ['1', '0']) {
+          expect(chainOf(delegOut[mode], '정체 한도 → 그림자 기록'), mode).toEqual({ ...c0, depth: 2, stall: 4, shadow: { wouldCap: ['BOT2'], stallDepth: 4, limit: 4 } });
+        }
         expect(by('에이전트 부름, 암묵 위임 스위치 모름 → TS 몫').inbox).toEqual([{ who: 'MEM', reason: 'mention' }]);
         for (const mode of ['1', '0']) {
           const d = delegOut[mode] as unknown[];

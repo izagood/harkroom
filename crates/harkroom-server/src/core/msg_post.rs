@@ -16,8 +16,10 @@
 //!   신호(`inbox.updated`·`thread.reportWakes.changed`·대기 줄 `message.updated`)는 TS 처럼 `message.created` 앞에 outbox 로.
 //! - **에이전트 글**(C1c-4a): PAT·오퍼레이터로 선 에이전트의 REST 글도 맡는다(원인·턴 id 가 없는 판). 회신권 「결과 한 번」 락
 //!   (`REPLY_LOCK_CLASS`)을 채널 락 앞에 잡고, 부름이 실제로 간 에이전트에게 회신권을 열고(`openReplyGrants`) 답글이면 받은
-//!   회신권을 닫는다(`closeReplyGrants`). 위임 키·깨움 선점·카드 닫기는 TS 와 같이 사람 글에만. 아직 TS 로 넘기는 것: 사슬 안의 글
-//!   ([`chained`] — 정체 홉·사슬 시작, C1c-4b), 상한에 막힌 부름(백스톱 카드)과 암묵 위임 스위치를 모르는 부름([`implicit_known_off`], C1c-4d).
+//!   회신권을 닫는다(`closeReplyGrants`). 위임 키·깨움 선점·카드 닫기는 TS 와 같이 사람 글에만. 아직 TS 로 넘기는 것:
+//!   상한에 막힌 부름(백스톱 카드)과 암묵 위임 스위치를 모르는 부름([`implicit_known_off`], C1c-4d).
+//! - **사슬 안의 에이전트 글**(C1c-4b): 앞 고리([`chain_link`])에서 깊이·사슬 시작을 잇고, 정체 홉([`super::chain_stall`])을 적고,
+//!   한도를 넘으면 막았을 부름을 `meta.mentionStallShadow` 에 남긴다(그림자 — 부름은 그대로 나간다).
 //! - 순서(TS 와 같다): 본문 읽기(413·400·415) → 인증(401, `route_layer`) → 경로·본문 검사(400) → 쓰기 게이트(403 `forbidden`·
 //!   `channel_archived`) → **쓰기 트랜잭션 하나**: seq 락(TS `lockChannelForSeq`) → 재시도 키 재생(200, 헤더 없음) → insert →
 //!   첨부 잇기(실패면 되돌리고 400 `bad_attachment`) → 다시 읽기 → 재시도 키 기록 → 부름 넣기 → 위임 → `message.created`·
@@ -27,6 +29,7 @@
 //!   `chat_approval_guard_words`). 쓰기 권한은 [`MESSAGE_POST_PRIVILEGES`] — 하나라도 없으면 `main.rs` 가 이 줄을 붙이지 않는다.
 use super::ask_reply_close;
 use super::audience::audience_for;
+use super::chain_stall::{self, STALL_HOP_LIMIT};
 use super::invoke_gate;
 use super::mandate_stamp;
 use super::mention_calls::{self, Input};
@@ -118,6 +121,9 @@ struct Sql {
     deleg_touch: String,
     deleg_pending: String,
     depth_scan: String,
+    recent_bodies: String,
+    own_links: String,
+    stall_shadow: String,
     reply_open: String,
     reply_close: String,
     reply_lock_class: i32,
@@ -213,10 +219,17 @@ fn sql() -> &'static Sql {
             root_of: frag("post_thread_root_of"),
             deleg_touch: frag("delegation_touch_deadline"),
             deleg_pending: frag("delegation_v2_update_pending"),
+            // 시각은 TS 가 `Date` 로 읽는 것과 같게 밀리초로 자른다(백스톱 나이 판정과 `chain_started_at` 옮겨 적기가 같은 값을 쓴다).
             depth_scan: format!(
-                "select s.body, s.author_is_agent, s.woke from ({}) s",
+                "select s.body, s.author_is_agent, s.woke, s.depth::int, s.stall::int, \
+                 (extract(epoch from date_trunc('milliseconds', s.created_at)) * 1000)::bigint, \
+                 (extract(epoch from date_trunc('milliseconds', s.chain_started_at)) * 1000)::bigint \
+                 from ({}) s",
                 frag("mention_depth_scan")
             ),
+            recent_bodies: frag("stall_recent_bodies"),
+            own_links: frag("stall_own_thread_links"),
+            stall_shadow: frag("stall_shadow"),
             reply_open: frag("reply_grant_open"),
             reply_close: frag("reply_grant_close"),
             reply_lock_class: frag("reply_grant_lock_class")
@@ -366,7 +379,7 @@ enum Outcome {
     },
 }
 
-/// TS `resolveMentionCalls` 의 입력 — 깊이 0(사람은 언제나, 에이전트는 [`chained`] 가 거짓일 때만 여기 온다), 사슬 시작·principal 없음.
+/// TS `resolveMentionCalls` 의 입력 — 깊이·사슬 시작은 [`chain_link`](사람은 언제나 0·없음), principal 없음(REST 에는 원인이 없다).
 /// 회신권 스레드는 결과 발화면 머리다(REST 글은 언제나 `user` 라 결과다).
 async fn resolve_post(
     conn: &mut sqlx::PgConnection,
@@ -375,11 +388,8 @@ async fn resolve_post(
     author_is_agent: bool,
     body: &str,
     thread_root: Option<&str>,
+    link: &Chain,
 ) -> Result<mention_calls::Resolved, sqlx::Error> {
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or_default();
     mention_calls::resolve(
         conn,
         &Input {
@@ -387,13 +397,13 @@ async fn resolve_post(
             channel_id: channel,
             author_id: author,
             author_is_agent,
-            mention_depth: 0,
+            mention_depth: link.depth as i64,
             chain_bound: false,
-            chain_started_at_ms: None,
+            chain_started_at_ms: link.started_ms,
             // TS 는 결과 발화면 사람 글에도 머리를 넘긴다(사람은 회신권 대상이 아니라 판정은 같다).
             reply_grant_thread_id: thread_root,
             principal: None,
-            now_ms,
+            now_ms: link.now_ms,
             principal_invoke_enabled: mention_calls::principal_invoke_enabled(
                 std::env::var("HARKROOM_PRINCIPAL_INVOKE").ok().as_deref(),
             ),
@@ -402,27 +412,86 @@ async fn resolve_post(
     .await
 }
 
-/// TS `mentionDepthFor`(원인 없는 판)가 0 이 **아닌가** — 이 대화에서 나를 실제로 깨운 부름이 있었나. 있으면 사슬 안의 글이라
-/// 정체 홉·사슬 시작 시각을 적어야 해서 아직 TS 몫이다(C1c-4b). 가장 최근 하나만 고리지만 0 인지만 보므로 어느 것이든 하나면 된다.
-async fn chained(
+/// 이 글의 사슬 자리 — TS `mentionDepthFor`(원인 없는 판)의 앞 고리와 그 위에서 정한 이 글의 정체 홉·사슬 시작.
+#[derive(Debug, Default)]
+struct Chain {
+    /// 이 글의 깊이(앞 고리 + 1, 사슬 밖이면 0).
+    depth: i32,
+    /// 앞 고리의 정체 홉(사람 고리는 0).
+    prev_stall: i32,
+    /// TS `chainStartedAt` — 사슬 안의 에이전트 글만 갖는다(앞 고리에 없으면 지금).
+    started_ms: Option<i64>,
+    now_ms: i64,
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or_default()
+}
+
+/// TS `mentionDepthFor`(원인 없는 판 — REST 에는 원인이 없다). 이 대화에서 나를 **실제로 깨운**(inbox 가 생긴) 부름 가운데
+/// 가장 최근 하나가 앞 고리다. 없으면 사슬 밖(0). 에이전트 고리면 그 고리의 정체·사슬 시작을, 사람 고리면 0·그 글 시각을 물려받는다.
+async fn chain_link(
     conn: &mut sqlx::PgConnection,
     channel: &str,
     root: Option<&str>,
     author: &str,
-) -> Result<bool, sqlx::Error> {
-    let rows: Vec<(String, bool, bool)> = sqlx::query_as(sql().depth_scan.as_str())
+) -> Result<Chain, sqlx::Error> {
+    type Row = (String, bool, bool, i32, i32, i64, Option<i64>);
+    let rows: Vec<Row> = sqlx::query_as(sql().depth_scan.as_str())
         .bind(channel)
         .bind(root)
         .bind(author)
         .fetch_all(&mut *conn)
         .await?;
-    Ok(rows.iter().any(|(body, row_agent, woke)| {
+    let now = now_ms();
+    let hit = rows.iter().find(|(body, row_agent, woke, ..)| {
         *woke
             && split_mention_calls(body, *row_agent, |id| id == author)
                 .call
                 .iter()
                 .any(|c| c == author)
-    }))
+    });
+    Ok(match hit {
+        None => Chain {
+            now_ms: now,
+            ..Chain::default()
+        },
+        Some((_, row_agent, _, depth, stall, created, chain_started)) => Chain {
+            depth: depth + 1,
+            prev_stall: if *row_agent { *stall } else { 0 },
+            started_ms: Some(if *row_agent {
+                chain_started.unwrap_or(*created)
+            } else {
+                *created
+            }),
+            now_ms: now,
+        },
+    })
+}
+
+/// 밀리초 시각을 ISO 8601(UTC, 밀리초)로 — TS 가 `Date` 를 넘기는 것과 같은 값을 `$11::timestamptz` 에 넣는다.
+fn iso_ms(ms: i64) -> String {
+    let (days, rem) = (ms.div_euclid(86_400_000), ms.rem_euclid(86_400_000));
+    // Howard Hinnant `civil_from_days`.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.{:03}Z",
+        rem / 3_600_000,
+        rem / 60_000 % 60,
+        rem / 1000 % 60,
+        rem % 1000
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -462,13 +531,52 @@ async fn post_in_tx(
             .await?;
     }
     let v2 = delegation_v2(std::env::var("HARKROOM_DELEGATION_V2").ok().as_deref());
-    // 사슬 안의 에이전트 글은 아직 TS 몫이다(정체 홉·사슬 시작 — C1c-4b).
-    if author_is_agent && chained(&mut tx, channel, root, author).await? {
-        tx.rollback().await?;
-        return Ok(Outcome::ToTs);
+    // TS `mentionDepthFor` — 사람 글은 언제나 사슬 밖이다.
+    let mut link = if author_is_agent {
+        chain_link(&mut tx, channel, root, author).await?
+    } else {
+        Chain {
+            now_ms: now_ms(),
+            ..Chain::default()
+        }
+    };
+    // 정체 홉(146) — 사슬 안의 에이전트 글만 센다. **그림자다**: 막지 않고 막았을 부름만 meta 에 남긴다(아래).
+    let stall = if author_is_agent && link.depth > 0 {
+        let recent: Vec<String> = sqlx::query_scalar(s.recent_bodies.as_str())
+            .bind(channel)
+            .bind(root)
+            .fetch_all(&mut *tx)
+            .await?;
+        let ids = chain_stall::message_link_ids(body);
+        let own: HashSet<String> = if ids.is_empty() {
+            HashSet::new()
+        } else {
+            sqlx::query_scalar::<_, String>(s.own_links.as_str())
+                .bind(&ids)
+                .bind(channel)
+                .bind(root)
+                .fetch_all(&mut *tx)
+                .await?
+                .into_iter()
+                .collect()
+        };
+        chain_stall::stall_step(
+            link.depth,
+            link.prev_stall,
+            body,
+            &recent,
+            !attachment_ids.is_empty(),
+            &own,
+        )
+    } else {
+        chain_stall::StallStep::default()
+    };
+    // 사슬의 시작 시각(147) — 앞 고리가 시작이면(사람 고리) 그 글 시각, 사슬 밖이면 없다.
+    if link.depth > 0 && link.started_ms.is_none() {
+        link.started_ms = Some(link.now_ms);
     }
     // TS 와 같이 멘션 해석은 seq 락 **앞**이다(그 읽기는 seq 순서와 무관하고, 락 안에서 하면 줄 선 트랜잭션이 커넥션을 쥔다).
-    let calls = resolve_post(&mut tx, channel, author, author_is_agent, body, root).await?;
+    let calls = resolve_post(&mut tx, channel, author, author_is_agent, body, root, &link).await?;
     // 에이전트 글의 아직 TS 몫인 부수효과 — 상한에 막힌 부름(백스톱 카드)·암묵 위임을 적을 수 있는 부름(C1c-4d).
     if author_is_agent
         && (!calls.capped_ids.is_empty()
@@ -518,19 +626,50 @@ async fn post_in_tx(
             });
         }
     }
+    // TS `stallShadowFor` — 정체 한도가 막았을 부름(부른 에이전트만, 부른 순서). 상한에 막힌 부름은 위 가드가 이미 TS 로 넘겼다.
+    let mut meta = calls.call_meta.clone();
+    if stall.stall_depth >= STALL_HOP_LIMIT {
+        let called: Vec<&String> = calls
+            .called_ids
+            .iter()
+            .filter(|c| c.as_str() != author && !calls.capped_ids.contains(c.as_str()))
+            .collect();
+        if !called.is_empty() {
+            let agents: HashSet<String> = sqlx::query_scalar::<_, String>(s.stall_shadow.as_str())
+                .bind(&called)
+                .fetch_all(&mut *tx)
+                .await?
+                .into_iter()
+                .collect();
+            let mut seen = HashSet::new();
+            let would: Vec<&String> = called
+                .into_iter()
+                .filter(|c| agents.contains(c.as_str()) && seen.insert(c.as_str()))
+                .collect();
+            if !would.is_empty() {
+                meta.insert(
+                    "mentionStallShadow".into(),
+                    json!({ "wouldCap": would, "stallDepth": stall.stall_depth, "limit": STALL_HOP_LIMIT }),
+                );
+            }
+        }
+    }
+    if stall.link_only_reset {
+        meta.insert("mentionStallLinkReset".into(), Value::Bool(true));
+    }
     let id: String = sqlx::query_scalar(s.insert.as_str())
         .bind(channel)
         .bind(root)
         .bind(author)
         .bind(&calls.normalized_body)
         .bind("user")
-        // 사람 글은 입력 meta 가 없다 — 부름 meta 만 얹는다(TS `{...calls.callMeta}`).
-        .bind(Value::Object(calls.call_meta.clone()).to_string())
+        // REST 글은 입력 meta 가 없다 — 부름 meta 와 정체 그림자만 얹는다(TS `{...calls.callMeta, mentionStall…}`).
+        .bind(Value::Object(meta).to_string())
         .bind(input.also_in_channel)
-        .bind(0_i32)
+        .bind(link.depth)
         .bind(None::<String>)
-        .bind(0_i32)
-        .bind(None::<String>)
+        .bind(stall.stall_depth)
+        .bind(link.started_ms.map(iso_ms))
         .fetch_one(&mut *tx)
         .await?;
     if !attachment_ids.is_empty() {
@@ -1049,6 +1188,9 @@ mod tests {
             json!({ "body": "", "attachmentIds": ["0b6f8d2e-3c1a-4f5e-9a7b-1c2d3e4f5a6b"] })
         ));
         assert!(!ok(json!({ "body": "x", "attachmentIds": ["nope"] })));
+        assert_eq!(super::iso_ms(0), "1970-01-01T00:00:00.000Z");
+        assert_eq!(super::iso_ms(1_794_830_702_123), "2026-11-16T12:05:02.123Z");
+        assert_eq!(super::iso_ms(951_782_400_007), "2000-02-29T00:00:00.007Z");
         assert!(!ok(
             json!({ "body": "x", "attachmentIds": vec!["0b6f8d2e-3c1a-4f5e-9a7b-1c2d3e4f5a6b"; 11] })
         ));

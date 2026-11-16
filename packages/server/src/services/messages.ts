@@ -914,6 +914,13 @@ async function mentionDepthFor(
   return { depth: 0, prevStall: 0, startedAt: null };
 }
 
+/** `ownThreadLinkIds` 의 질의 — Rust 코어(`core/msg_post.rs`, S5.3 C1c-4b)가 골든으로 받는다. */
+export const OWN_THREAD_LINK_IDS_SQL = `select m.id::text as id from message m
+      where m.id = any($1::uuid[]) and m.channel_id = $2::uuid
+        and (case when $3::uuid is null
+                  then m.thread_root_id is null
+                  else m.thread_root_id = $3::uuid or m.id = $3::uuid end)`;
+
 /**
  * 본문의 메시지 링크 가운데 **같은 대화**(스레드면 그 스레드, 최상위면 같은 채널 최상위)의 글 id(⑤, security M2). 그 링크는
  * 결과물로 치지 않는다 — 루프가 서로의 앞 글 링크만 달아도 정체가 풀리던 틈이다. 경계는 `recentBodiesFor` 와 같다.
@@ -924,20 +931,19 @@ async function ownThreadLinkIds(
   const ids = messageLinkIds(body);
   if (!ids.length) return new Set();
   return new Set(((await client.query(
-    `select m.id::text as id from message m
-      where m.id = any($1::uuid[]) and m.channel_id = $2
-        and (case when $3::uuid is null
-                  then m.thread_root_id is null
-                  else m.thread_root_id = $3 or m.id = $3 end)`,
+    OWN_THREAD_LINK_IDS_SQL,
     [ids, channelId, threadRootId],
   )).rows as { id: string }[]).map((r) => r.id));
 }
+
+/** `stallShadowFor` 의 질의 — Rust 코어(S5.3 C1c-4b)가 골든으로 받는다. */
+export const STALL_SHADOW_SQL = `select id::text as id from account where id = any($1::uuid[]) and kind = 'agent' and deleted_at is null`;
 
 /** 정체 한도가 막았을 부름 — 부른 계정 가운데 에이전트만(사람은 한도와 무관하게 불린다, 043 과 같다). */
 async function stallShadowFor(client: PoolClient, calledIds: readonly string[]): Promise<string[]> {
   if (!calledIds.length) return [];
   return ((await client.query(
-    `select id from account where id = any($1::uuid[]) and kind = 'agent' and deleted_at is null`, [calledIds],
+    STALL_SHADOW_SQL, [calledIds],
   )).rows as { id: string }[]).map((r) => r.id).filter((id) => calledIds.includes(id))
     .sort((a, b) => calledIds.indexOf(a) - calledIds.indexOf(b));
 }
@@ -948,20 +954,23 @@ async function stallShadowFor(client: PoolClient, calledIds: readonly string[]):
  */
 interface ChainLink { depth: number; prevStall: number; startedAt: Date | null }
 
+/** `recentBodiesFor` 의 질의 — Rust 코어(S5.3 C1c-4b)가 골든으로 받는다. */
+export const RECENT_BODIES_SQL = `select m.body from message m
+      where m.channel_id = $1::uuid
+        and (case when $2::uuid is null
+                  then m.thread_root_id is null
+                  else m.thread_root_id = $2::uuid or m.id = $2::uuid end)
+        and m.deleted_at is null
+      order by m.seq desc
+      limit ${STALL_LOOKBACK}`;
+
 /**
  * 같은 대화의 최근 본문들 — 정체 판정(`stallStep`)이 「앞 줄에 없던 결과물인가」를 이것과 견준다.
  * 경계는 `mentionDepthFor` 의 스캔과 같다(스레드면 그 스레드, 최상위면 최상위끼리).
  */
 async function recentBodiesFor(client: PoolClient, channelId: string, threadRootId: string | null): Promise<string[]> {
   return ((await client.query(
-    `select m.body from message m
-      where m.channel_id = $1
-        and (case when $2::uuid is null
-                  then m.thread_root_id is null
-                  else m.thread_root_id = $2 or m.id = $2 end)
-        and m.deleted_at is null
-      order by m.seq desc
-      limit ${STALL_LOOKBACK}`,
+    RECENT_BODIES_SQL,
     [channelId, threadRootId],
   )).rows as { body: string }[]).map((r) => r.body);
 }

@@ -1,0 +1,460 @@
+{
+  "hopLimit": 4,
+  "lookback": 10,
+  "artifacts": [
+    {
+      "body": "",
+      "artifacts": [],
+      "ownArtifacts": [],
+      "linkIds": []
+    },
+    {
+      "body": "확인",
+      "artifacts": [],
+      "ownArtifacts": [],
+      "linkIds": []
+    },
+    {
+      "body": "head 4c3e7f2a 로 #1600 올림. harkroom://message/1e086e53-91c5-4745-99f4-446432722094 https://github.com/o/r/pull/1601",
+      "artifacts": [
+        "msg:harkroom://message/1e086e53-91c5-4745-99f4-446432722094",
+        "ref:#1600",
+        "ref:#1601",
+        "sha:4c3e7f2"
+      ],
+      "ownArtifacts": [
+        "ref:#1600",
+        "ref:#1601",
+        "sha:4c3e7f2"
+      ],
+      "linkIds": [
+        "1e086e53-91c5-4745-99f4-446432722094"
+      ]
+    },
+    {
+      "body": "10:15 KST, 2026-10-27 에 1234567 건 확인",
+      "artifacts": [],
+      "ownArtifacts": [],
+      "linkIds": []
+    },
+    {
+      "body": "이미 4c3e7f2a 봤다",
+      "artifacts": [
+        "sha:4c3e7f2"
+      ],
+      "ownArtifacts": [
+        "sha:4c3e7f2"
+      ],
+      "linkIds": []
+    },
+    {
+      "body": "head 4c3e7f2a83f63b23bcde61b7e309c5aaa8ba14b4",
+      "artifacts": [
+        "sha:4c3e7f2"
+      ],
+      "ownArtifacts": [
+        "sha:4c3e7f2"
+      ],
+      "linkIds": []
+    },
+    {
+      "body": "#1600 다음으로 #1601 올림",
+      "artifacts": [
+        "ref:#1600",
+        "ref:#1601"
+      ],
+      "ownArtifacts": [
+        "ref:#1600",
+        "ref:#1601"
+      ],
+      "linkIds": []
+    },
+    {
+      "body": "턴 a57049ef-b2c8-4047-be94-648f000142a0 확인",
+      "artifacts": [],
+      "ownArtifacts": [],
+      "linkIds": []
+    },
+    {
+      "body": "앞 글 harkroom://message/1e086e53-91c5-4745-99f4-446432722094",
+      "artifacts": [
+        "msg:harkroom://message/1e086e53-91c5-4745-99f4-446432722094"
+      ],
+      "ownArtifacts": [],
+      "linkIds": [
+        "1e086e53-91c5-4745-99f4-446432722094"
+      ]
+    },
+    {
+      "body": "저쪽 harkroom://message/db87a234-68fb-4a62-9c32-a7545c4c5998",
+      "artifacts": [
+        "msg:harkroom://message/db87a234-68fb-4a62-9c32-a7545c4c5998"
+      ],
+      "ownArtifacts": [
+        "msg:harkroom://message/db87a234-68fb-4a62-9c32-a7545c4c5998"
+      ],
+      "linkIds": [
+        "db87a234-68fb-4a62-9c32-a7545c4c5998"
+      ]
+    },
+    {
+      "body": "#1700 과 harkroom://message/db87a234-68fb-4a62-9c32-a7545c4c5998",
+      "artifacts": [
+        "msg:harkroom://message/db87a234-68fb-4a62-9c32-a7545c4c5998",
+        "ref:#1700"
+      ],
+      "ownArtifacts": [
+        "msg:harkroom://message/db87a234-68fb-4a62-9c32-a7545c4c5998",
+        "ref:#1700"
+      ],
+      "linkIds": [
+        "db87a234-68fb-4a62-9c32-a7545c4c5998"
+      ]
+    },
+    {
+      "body": "harkroom://message/1e086e53-91c5-4745-99f4-446432722094 harkroom://message/------------------------------------",
+      "artifacts": [
+        "msg:harkroom://message/------------------------------------",
+        "msg:harkroom://message/1e086e53-91c5-4745-99f4-446432722094"
+      ],
+      "ownArtifacts": [
+        "msg:harkroom://message/------------------------------------"
+      ],
+      "linkIds": [
+        "1e086e53-91c5-4745-99f4-446432722094"
+      ]
+    },
+    {
+      "body": "HARKROOM://MESSAGE/1E086E53-91C5-4745-99F4-446432722094 대문자",
+      "artifacts": [
+        "msg:harkroom://message/1e086e53-91c5-4745-99f4-446432722094"
+      ],
+      "ownArtifacts": [],
+      "linkIds": [
+        "1e086e53-91c5-4745-99f4-446432722094"
+      ]
+    },
+    {
+      "body": "ABCDEF1234 대문자 sha · deadbeef 낱말 · cafe 짧음",
+      "artifacts": [
+        "sha:abcdef1"
+      ],
+      "ownArtifacts": [
+        "sha:abcdef1"
+      ],
+      "linkIds": []
+    },
+    {
+      "body": "sha4c3e7f2a 붙음 · 4c3e7f2a로 붙음 · (4c3e7f2a) 괄호",
+      "artifacts": [
+        "sha:4c3e7f2"
+      ],
+      "ownArtifacts": [
+        "sha:4c3e7f2"
+      ],
+      "linkIds": []
+    },
+    {
+      "body": "izagood/harkroom#2273 과 owner.x/re-po#12, (#13) [#14] ,#15",
+      "artifacts": [
+        "ref:#12",
+        "ref:#13",
+        "ref:#14",
+        "ref:#15",
+        "ref:#2273"
+      ],
+      "ownArtifacts": [
+        "ref:#12",
+        "ref:#13",
+        "ref:#14",
+        "ref:#15",
+        "ref:#2273"
+      ],
+      "linkIds": []
+    },
+    {
+      "body": "#12345678 길다 · a#16 앞 낱말 · #17a 뒤 낱말 · #18_ 밑줄",
+      "artifacts": [],
+      "ownArtifacts": [],
+      "linkIds": []
+    },
+    {
+      "body": " #19 nbsp · ﻿#20 bom · #21 nel · 　#22 전각",
+      "artifacts": [
+        "ref:#19",
+        "ref:#20",
+        "ref:#22"
+      ],
+      "ownArtifacts": [
+        "ref:#19",
+        "ref:#20",
+        "ref:#22"
+      ],
+      "linkIds": []
+    },
+    {
+      "body": "줄\n#23 · 탭\t#24 · 로#25",
+      "artifacts": [
+        "ref:#23",
+        "ref:#24"
+      ],
+      "ownArtifacts": [
+        "ref:#23",
+        "ref:#24"
+      ],
+      "linkIds": []
+    },
+    {
+      "body": "https://github.com/o/r/commit/4C3E7F2A83F63B23 커밋 · https://GITHUB.com/o/r/issues/77 · https://github.com/o/r/tree/main",
+      "artifacts": [
+        "ref:#77",
+        "sha:4c3e7f2"
+      ],
+      "ownArtifacts": [
+        "ref:#77",
+        "sha:4c3e7f2"
+      ],
+      "linkIds": []
+    },
+    {
+      "body": "https://github.com/o/r/pull/1601#issuecomment-1 꼬리",
+      "artifacts": [
+        "ref:#1601"
+      ],
+      "ownArtifacts": [
+        "ref:#1601"
+      ],
+      "linkIds": []
+    },
+    {
+      "body": "id 1e086e53-91c5-4745-99f4-446432722094 · 마디 1e086e53-91c5",
+      "artifacts": [
+        "sha:1e086e5"
+      ],
+      "ownArtifacts": [
+        "sha:1e086e5"
+      ],
+      "linkIds": []
+    },
+    {
+      "body": "0123456789abcdef0123456789abcdef0123456789 41자",
+      "artifacts": [],
+      "ownArtifacts": [],
+      "linkIds": []
+    },
+    {
+      "body": "0123456789abcdef0123456789abcdef01234567 40자",
+      "artifacts": [
+        "sha:0123456"
+      ],
+      "ownArtifacts": [
+        "sha:0123456"
+      ],
+      "linkIds": []
+    },
+    {
+      "body": "Kelvin harkroom://meſſage/1e086e53-91c5-4745-99f4-446432722094",
+      "artifacts": [],
+      "ownArtifacts": [],
+      "linkIds": []
+    },
+    {
+      "body": "ｃａｆｅ１２３ 전각 16진",
+      "artifacts": [],
+      "ownArtifacts": [],
+      "linkIds": []
+    },
+    {
+      "body": "harkroom://message/1e086e53-91c5-4745-99f4-446432722094harkroom://message/db87a234-68fb-4a62-9c32-a7545c4c5998",
+      "artifacts": [
+        "msg:harkroom://message/1e086e53-91c5-4745-99f4-446432722094",
+        "msg:harkroom://message/db87a234-68fb-4a62-9c32-a7545c4c5998"
+      ],
+      "ownArtifacts": [
+        "msg:harkroom://message/db87a234-68fb-4a62-9c32-a7545c4c5998"
+      ],
+      "linkIds": [
+        "1e086e53-91c5-4745-99f4-446432722094",
+        "db87a234-68fb-4a62-9c32-a7545c4c5998"
+      ]
+    },
+    {
+      "body": "abc1234로 한글 붙은 sha 만",
+      "artifacts": [
+        "sha:abc1234"
+      ],
+      "ownArtifacts": [
+        "sha:abc1234"
+      ],
+      "linkIds": []
+    },
+    {
+      "body": "#26로 뒤에 한글",
+      "artifacts": [
+        "ref:#26"
+      ],
+      "ownArtifacts": [
+        "ref:#26"
+      ],
+      "linkIds": []
+    },
+    {
+      "body": "harKroom://message/1e086e53-91c5-4745-99f4-446432722094 켈빈 K 만",
+      "artifacts": [
+        "msg:harkroom://message/1e086e53-91c5-4745-99f4-446432722094"
+      ],
+      "ownArtifacts": [],
+      "linkIds": [
+        "1e086e53-91c5-4745-99f4-446432722094"
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "mentionDepth": 0,
+      "prevStall": 3,
+      "body": "확인",
+      "recentBodies": [],
+      "hasAttachment": false,
+      "own": [],
+      "out": {
+        "stallDepth": 0,
+        "linkOnlyReset": false
+      }
+    },
+    {
+      "mentionDepth": 5,
+      "prevStall": 3,
+      "body": "head abc1234 올림",
+      "recentBodies": [],
+      "hasAttachment": false,
+      "own": [],
+      "out": {
+        "stallDepth": 0,
+        "linkOnlyReset": false
+      }
+    },
+    {
+      "mentionDepth": 5,
+      "prevStall": 3,
+      "body": "이미 봤다",
+      "recentBodies": [],
+      "hasAttachment": false,
+      "own": [],
+      "out": {
+        "stallDepth": 4,
+        "linkOnlyReset": false
+      }
+    },
+    {
+      "mentionDepth": 2,
+      "prevStall": 1,
+      "body": "이미 4c3e7f2a 봤다",
+      "recentBodies": [
+        "head 4c3e7f2a83f63b23bcde61b7e309c5aaa8ba14b4"
+      ],
+      "hasAttachment": false,
+      "own": [],
+      "out": {
+        "stallDepth": 2,
+        "linkOnlyReset": false
+      }
+    },
+    {
+      "mentionDepth": 2,
+      "prevStall": 1,
+      "body": "#1600 다음으로 #1601 올림",
+      "recentBodies": [
+        "#1600 올림"
+      ],
+      "hasAttachment": false,
+      "own": [],
+      "out": {
+        "stallDepth": 0,
+        "linkOnlyReset": false
+      }
+    },
+    {
+      "mentionDepth": 2,
+      "prevStall": 1,
+      "body": "캡처",
+      "recentBodies": [],
+      "hasAttachment": true,
+      "own": [],
+      "out": {
+        "stallDepth": 0,
+        "linkOnlyReset": false
+      }
+    },
+    {
+      "mentionDepth": 3,
+      "prevStall": 2,
+      "body": "앞 글 harkroom://message/1e086e53-91c5-4745-99f4-446432722094",
+      "recentBodies": [],
+      "own": [
+        "1e086e53-91c5-4745-99f4-446432722094"
+      ],
+      "hasAttachment": false,
+      "out": {
+        "stallDepth": 3,
+        "linkOnlyReset": false
+      }
+    },
+    {
+      "mentionDepth": 3,
+      "prevStall": 2,
+      "body": "저쪽 harkroom://message/db87a234-68fb-4a62-9c32-a7545c4c5998",
+      "recentBodies": [],
+      "own": [
+        "1e086e53-91c5-4745-99f4-446432722094"
+      ],
+      "hasAttachment": false,
+      "out": {
+        "stallDepth": 0,
+        "linkOnlyReset": true
+      }
+    },
+    {
+      "mentionDepth": 3,
+      "prevStall": 2,
+      "body": "#1700 과 harkroom://message/db87a234-68fb-4a62-9c32-a7545c4c5998",
+      "recentBodies": [],
+      "own": [
+        "1e086e53-91c5-4745-99f4-446432722094"
+      ],
+      "hasAttachment": false,
+      "out": {
+        "stallDepth": 0,
+        "linkOnlyReset": false
+      }
+    },
+    {
+      "mentionDepth": 3,
+      "prevStall": 2,
+      "body": "저쪽 harkroom://message/db87a234-68fb-4a62-9c32-a7545c4c5998",
+      "recentBodies": [
+        "전에 harkroom://message/db87a234-68fb-4a62-9c32-a7545c4c5998"
+      ],
+      "own": [
+        "1e086e53-91c5-4745-99f4-446432722094"
+      ],
+      "hasAttachment": false,
+      "out": {
+        "stallDepth": 3,
+        "linkOnlyReset": false
+      }
+    },
+    {
+      "mentionDepth": 1,
+      "prevStall": 0,
+      "body": "id 1e086e53-91c5-4745-99f4-446432722094",
+      "recentBodies": [],
+      "hasAttachment": false,
+      "own": [],
+      "out": {
+        "stallDepth": 1,
+        "linkOnlyReset": false
+      }
+    }
+  ]
+}
