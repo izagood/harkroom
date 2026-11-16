@@ -12,7 +12,7 @@ import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { buildServer } from '../src/buildServer.js';
-import { bootstrapAdmin, createAgent, createMember, registerOperator } from './helpers/fixtures.js';
+import { agentPat, bootstrapAdmin, createAgent, createMember, registerOperator } from './helpers/fixtures.js';
 import { startTestDb } from './helpers/testDb.js';
 import { fanOutCalls, postMessage, resolveMentionCalls } from '../src/services/messages.js';
 import { writeFileSync as writeCases } from 'node:fs';
@@ -4107,6 +4107,78 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         } finally {
           front5?.kill('SIGTERM');
           await db.pool.query(`grant execute on function permission_decide_lock(uuid, uuid, uuid) to ${rw}`);
+        }
+      }
+      // S5.3 C3b-3d — `GET /agents/{id}/decide-check`(카드 버튼을 그릴지). 잠그지 않는 판정(3a 판정 SQL 그대로)이라 읽기 풀만 쓴다.
+      // 범위(owner·list·channel·community) × 스위치(user_decide) × 행위자(소유자·멤버·채널 밖 멤버, 세션·PAT·에이전트) × 채널
+      // (보이는 채널·못 보는 비공개·없는 채널)을 TS·Rust 에 같이 물어 상태·`cache-control`·네 칸을 견준다. S1(없는 채널) · n6(못 보는 채널 숨김).
+      {
+        expect(f.log()).toContain('"GET /agents/{id}/decide-check"');
+        const privId = String(priv.id);
+        const ghostCh = '00000000-0000-4000-8000-00000000dc01';
+        const memPat = await agentPat(member.accountId, 'decide-check');
+        const savedDc = (await db.pool.query<{ scope: string; ud: boolean }>(
+          `select invoke_scope as scope, user_decide as ud from agent_config where account_id = $1`, [agent.accountId])).rows[0]!;
+        await db.pool.query(`insert into agent_invoker (agent_id, account_id) values ($1, $2) on conflict do nothing`, [agent.accountId, member.accountId]);
+        const dcNames = new Map<string, string>([[admin.accountId, 'ADMIN'], [member.accountId, 'MEM'], [agent.accountId, 'BOT']]);
+        const dcGet = async (base: string, path: string, token: string) => {
+          const res = await fetch(`${base}${path}`, { headers: { authorization: `Bearer ${token}`, 'x-forwarded-for': XFF } });
+          const text = await res.text();
+          const json = text ? JSON.parse(text) as Record<string, unknown> : {};
+          const own = json.ownerAccountId;
+          return {
+            status: res.status, cache: res.headers.get('cache-control'),
+            json: typeof own === 'string' ? { ...json, ownerAccountId: dcNames.get(own) ?? own } : json,
+          };
+        };
+        const actors: [string, string][] = [
+          ['소유자 세션', A], ['멤버 세션', member.token], ['채널 밖 멤버 세션', member2.token], ['멤버 PAT', memPat], ['에이전트 PAT', agent.pat],
+        ];
+        const chans: [string, string][] = [['보이는 채널', todayId], ['못 보는 비공개', privId], ['없는 채널', ghostCh]];
+        const dcPath = (ch: string, ag = agent.accountId) => `/agents/${ag}/decide-check?channelId=${ch}`;
+        const dcRun = async (base: string) => {
+          const out: { name: string; status: number; cache: string | null; json: unknown }[] = [];
+          for (const scope of ['owner', 'list', 'channel', 'community']) {
+            for (const ud of [true, false]) {
+              await db.pool.query(`update agent_config set invoke_scope = $2, user_decide = $3 where account_id = $1`, [agent.accountId, scope, ud]);
+              for (const [an, tok] of actors) {
+                for (const [cn, ch] of chans) out.push({ name: `${scope}·${ud ? '켜짐' : '꺼짐'}·${an}·${cn}`, ...(await dcGet(base, dcPath(ch), tok)) });
+              }
+            }
+          }
+          // 꼴이 틀린 요청·없는 에이전트·쿼리 id 가 경로를 덮는 것(TS `{ ...params, ...query }`).
+          for (const [name, path] of [
+            ['channelId 없음 → 400', `/agents/${agent.accountId}/decide-check`],
+            ['channelId uuid 아님 → 400', dcPath('x')],
+            ['에이전트 uuid 아님 → 400', dcPath(todayId, 'x')],
+            ['channelId 둘 → 400', `${dcPath(todayId)}&channelId=${todayId}`],
+            ['없는 에이전트', dcPath(todayId, ghostCh)],
+            ['쿼리 id 가 경로를 덮음', `/agents/x/decide-check?id=${agent.accountId}&channelId=${todayId}`],
+          ] as const) out.push({ name, ...(await dcGet(base, path, A)) });
+          return out;
+        };
+        try {
+          const tsDc = await dcRun(tsUrl);
+          const rsDc = await dcRun(rsUrl);
+          expect(rsDc).toEqual(tsDc);
+          const at = (n: string) => tsDc.find((o) => o.name === n)!;
+          // 빈 것끼리 같음으로 통과하지 않게 — 갈리는 칸이 실제로 갈린다.
+          expect(at('community·켜짐·멤버 세션·보이는 채널').json).toEqual({ viewerCanDecide: true, asOwner: false, decideScope: 'community', ownerAccountId: 'ADMIN' });
+          // 사람 PAT 는 인증에서 막힌다(양쪽 401) — 세션이 아닌 사람이 이 라우트에 닿는 길은 없다. 에이전트는 언제나 false.
+          expect(at('community·켜짐·멤버 PAT·보이는 채널').status).toBe(401);
+          expect(at('community·켜짐·에이전트 PAT·보이는 채널').json).toEqual({ viewerCanDecide: false, asOwner: false, decideScope: 'community', ownerAccountId: 'ADMIN' });
+          expect(at('list·켜짐·멤버 세션·보이는 채널').json).toMatchObject({ viewerCanDecide: true });
+          expect(at('channel·켜짐·채널 밖 멤버 세션·보이는 채널').json).toMatchObject({ viewerCanDecide: false, decideScope: 'channel' });
+          expect(at('community·꺼짐·멤버 세션·보이는 채널').json).toMatchObject({ viewerCanDecide: false, decideScope: 'switchOff' });
+          expect(at('owner·꺼짐·소유자 세션·못 보는 비공개').json, '소유자는 채널과 무관').toMatchObject({ viewerCanDecide: true, asOwner: true });
+          expect(at('community·켜짐·멤버 세션·못 보는 비공개').json, 'n6 — 범위·소유자 숨김').toEqual({ viewerCanDecide: false, asOwner: false, decideScope: null, ownerAccountId: null });
+          expect(at('owner·켜짐·소유자 세션·없는 채널').json, 'S1 — 소유자에게도 없는 채널은 false/null').toEqual({ viewerCanDecide: false, asOwner: false, decideScope: null, ownerAccountId: null });
+          expect(at('community·켜짐·멤버 세션·보이는 채널').cache).toBe('no-store');
+          expect(at('channelId 없음 → 400').status).toBe(400);
+          expect(at('쿼리 id 가 경로를 덮음').status).toBe(200);
+        } finally {
+          await db.pool.query(`update agent_config set invoke_scope = $2, user_decide = $3 where account_id = $1`, [agent.accountId, savedDc.scope, savedDc.ud]);
+          await db.pool.query(`delete from agent_invoker where agent_id = $1 and account_id = $2`, [agent.accountId, member.accountId]);
         }
       }
       // S5.3 C3b-2b-2 — MCP `message.askBundle` 의 있던 묶음에 줄 더하기(코어 `ask_bundle_add.rs`). TS·Rust 에 각자의 묶음으로 같은 시나리오를

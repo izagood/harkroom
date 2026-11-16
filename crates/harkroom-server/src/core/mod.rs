@@ -13,6 +13,7 @@ pub mod ask_sync;
 pub mod audience;
 pub mod channels;
 pub mod content_scan;
+pub mod decide_check;
 pub mod decide_core;
 pub mod decide_routes;
 pub mod events;

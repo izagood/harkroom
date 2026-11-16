@@ -1,4 +1,5 @@
-//! S5.3 C3b-3a — 권한·머지 카드 결정의 **판정 코어**(붙는 길 없음: 라우트·MCP 등록 0개).
+//! S5.3 C3b-3a — 권한·머지 카드 결정의 **판정 코어**. 거절만 `decide_routes.rs`(C3b-3c)가 라우트에 잇고,
+//! 잠그지 않는 판정([`may_decide_for_unlocked`])은 `decide_check.rs`(C3b-3d, 버튼을 그릴지 보는 읽기)가 쓴다. MCP 에는 결정 길이 없다.
 //!
 //! TS `services/deciders.ts::mayDecideFor` 를 **결정을 쓰는 tx 안에서**, 판정 근거가 된 줄을 잠근 뒤 하는 판이다. TS 는
 //! `decide` 가 판정을 tx 밖 pool 에서 하므로, 판정과 커밋 사이에 명단 빼기·게스트 강등·비활성·채널 비공개 전환이 끼어들 수 있다.
@@ -167,6 +168,21 @@ pub async fn may_decide_for_locked(
     channel: Option<&str>,
 ) -> sqlx::Result<Verdict> {
     decide_with(conn, agent, actor, channel, Checks::default()).await
+}
+
+/// 같은 판정을 **잠그지 않고** 한다 — `GET /agents/{id}/decide-check`(C3b-3d)가 버튼을 그릴지 볼 때만 쓴다.
+/// 쓰지 않으므로 읽기 풀에서 돈다. 결정은 이 값을 믿지 않고 [`may_decide_for_locked`] 로 tx 안에서 다시 판정한다.
+pub async fn may_decide_for_unlocked(
+    conn: &mut PgConnection,
+    agent: &str,
+    actor: &str,
+    channel: Option<&str>,
+) -> sqlx::Result<Verdict> {
+    let checks = Checks {
+        lock: false,
+        ..Checks::default()
+    };
+    decide_with(conn, agent, actor, channel, checks).await
 }
 
 #[cfg(feature = "breakage-tests")]
@@ -726,7 +742,7 @@ pub fn audit_detail(a: &AuditDetail<'_>) -> Value {
     o
 }
 
-// ───────────────────────── C3b-3b 거절(deny) — 쓰기 · 두 겹 검사 · 입구(붙는 길 없음) ─────────────────────────
+// ───────────────────────── C3b-3b 거절(deny) — 쓰기 · 두 겹 검사 · 입구 ─────────────────────────
 
 /// 거절 쓰기 역할의 표·칸 권한 — 요청 줄의 결정 칸 `UPDATE`, 카드 글 `meta` `UPDATE`, 감사 `INSERT`.
 /// 이것과 [`has_lock_fn_privilege`] 가 **둘 다** 참일 때만 [`deny_pool`] 이 풀을 준다(두 겹 검사).
@@ -977,7 +993,7 @@ async fn deny_attempt(
     Ok(Some(out))
 }
 
-/// 거절 입구(붙는 길 없음 — 라우트·MCP 연결은 다음 조각). 시도마다 새 tx 이고, 40P01·55P03 은 [`retry_lock_once`] 로 한 번,
+/// 거절 입구. 라우트 셋은 `decide_routes`(C3b-3c)가 부르고, MCP 에는 결정 길이 없다. 시도마다 새 tx 이고, 40P01·55P03 은 [`retry_lock_once`] 로 한 번,
 /// [`Recheck::Restart`] 는 [`MAX_RESTARTS`] 번까지 다시 한다. 둘 다 넘기면 [`DenyError`] → 호출자 `internal`.
 pub async fn decide_deny(
     pool: &sqlx::PgPool,
