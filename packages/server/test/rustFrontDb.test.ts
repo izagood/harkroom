@@ -1309,6 +1309,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // S5.3 C1c-3d — 담당 사람 글의 위임 활동(기한 밀기·v1 대기 중 update).
         `grant update (deadline_at) on team_delegation to ${rw}`,
         `grant update (last_activity_at, update_pending_message_id, update_pending_at) on team_delegation_item to ${rw}`,
+        // S5.3 C1c-4a — 에이전트 글의 회신권 열기(insert … on conflict do update)·닫기.
+        `grant insert on invoke_reply_grant to ${rw}`,
+        `grant update (opened_at, expires_at, closed_at) on invoke_reply_grant to ${rw}`,
         // S5.3 C5b — 예약 깨움 루프(`loops/wake.rs::WAKE_PRIVILEGES`). 없으면 「loop wake off」 — 루프는 TS 에 남는다.
         ...WAKE_GRANTS.map((g) => `grant ${g} to ${rw}`),
         // S5.3 C5c — 보존 정리 루프(`loops/retention.rs::RETENTION_PRIVILEGES`).
@@ -5370,6 +5373,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         type Side = Awaited<ReturnType<typeof side>>;
         const T = await side('t');
         const R = await side('r');
+        const agentCh = (await createChannel(db.pool, { name: 'c1c4a-plain' })).id;
         const tsEvents: WorkspaceEvent[] = [];
         const offTs = onEvent((e) => { tsEvents.push(e); });
         const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
@@ -5395,7 +5399,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           const json = text ? JSON.parse(text) as Record<string, unknown> : {};
           return { status: res.status, code: (json.error as { code?: string } | undefined)?.code, json, count: res.headers.get('x-harkroom-notified-count') };
         };
-        const HANDED = ['TS: 승인 낱말', 'TS: 메시지 링크', 'TS: URL', 'TS: 에이전트(PAT)', 'TS: 모델 지정 키'];
+        const HANDED = ['TS: 승인 낱말', 'TS: 메시지 링크', 'TS: URL', 'TS: 모델 지정 키'];
         const run = async (base: string, sd: Side) => {
           const out: { step: string; status: number; code?: string; count: string | null; body: unknown; id?: string }[] = [];
           const step = async (name: string, path: string, body: unknown, token?: string, key?: string) => {
@@ -5423,7 +5427,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           await step('스레드 답글', mPath(todayId), { body: '답글', threadRootId: sd.root });
           // C1c-3d 부터 Rust 가 맡는다(`dm` 알림 — 자세한 대조는 아래 사람 답글 블록).
           await step('DM', mPath(String(dm.id)), { body: 'DM 글' });
-          await step('TS: 에이전트(PAT)', mPath(todayId), { body: '에이전트 글' }, agent.pat);
+          // C1c-4a 부터 Rust 가 맡는다(자세한 대조는 아래 사람 답글 블록의 에이전트 장면).
+          // 오늘 채널의 최상위에는 BOT 을 깨운 부름이 있어 사슬 안(TS 몫)이 된다 — 부름이 없는 채널에서.
+          await step('에이전트(PAT)', mPath(agentCh), { body: '에이전트 글' }, agent.pat);
           await step('TS: 모델 지정 키', mPath(todayId), { body: '모델', agentModels: [] });
           return out;
         };
@@ -5444,7 +5450,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           .map((e) => shape(sd)(JSON.parse(JSON.stringify(e))));
         const idsOf = (o: typeof tsOut, handed: boolean) => o.filter((x) => x.status === 201 && HANDED.includes(x.step) === handed).map((x) => x.id!);
         const want = created(tsEvents, idsOf(tsOut, false), T);
-        expect(want.length, '맡은 글마다 message.created(C1c-3a 부터 스레드 답글, C1c-3d 부터 DM 포함)').toBe(5);
+        expect(want.length, '맡은 글마다 message.created(C1c-3a 부터 스레드 답글, C1c-3d 부터 DM, C1c-4a 부터 에이전트 글 포함)').toBe(6);
         const until8 = Date.now() + 10_000;
         while (created(busEvents, idsOf(rsOut, false), R).length < want.length && Date.now() < until8) await new Promise((res) => setTimeout(res, 100));
         expect(created(busEvents, idsOf(rsOut, false), R), 'Rust 가 낸 message.created = TS').toEqual(want);
@@ -5635,7 +5641,30 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                     i.update_pending_at is not null as pending_at, d.deadline_at > now() + interval '5 minutes' as pushed
                from team_delegation_item i join team_delegation d on d.id = i.delegation_id
               where d.thread_root_id = (select thread_root_id from message where id = $1)`, [id])).rows,
+          // C1c-4a — 이 대화(답글이면 그 스레드, 최상위면 그 글)의 회신권: 받는 쪽·주는 쪽·닫혔나·만료가 6h 쯤인가.
+          grants: shape((await db.pool.query(
+            `select g.grantee_id::text as grantee, g.granter_id::text as granter, g.closed_at is not null as closed,
+                    g.expires_at > now() + interval '5 hours' as ttl
+               from invoke_reply_grant g
+              where g.thread_root_id = (select coalesce(thread_root_id, id) from message where id = $1)
+              order by g.grantee_id, g.granter_id`, [id])).rows),
         } : {};
+        // C1c-4a — 머리 하나와 그 스레드에서 BOT 이 받아 둔 열린 회신권 하나(BOT2 가 줌). BOT 의 결과가 그것을 닫는다.
+        const withGrant = async () => {
+          const root = await direct(member.accountId, '질문');
+          await db.pool.query(`insert into invoke_reply_grant (grantee_id, granter_id, thread_root_id, expires_at) values ($1, $2, $3, now() + interval '1 hour')`,
+            [agent.accountId, bot2.accountId, root]);
+          return root;
+        };
+        // C1c-4a — 머리 하나와 그 스레드에서 BOT2 가 BOT 을 실제로 깨운 부름 하나(inbox 있음) — BOT 의 답은 사슬 안(깊이 1)이다.
+        const withChain = async () => {
+          const root = await direct(member.accountId, '질문');
+          const call = (await db.pool.query<{ id: string }>(
+            `insert into message (channel_id, thread_root_id, author_id, body, kind) values ($1, $2, $3, $4, 'user') returning id::text as id`,
+            [todayId, root, bot2.accountId, `<@${agent.accountId}> 이것 봐 줘`])).rows[0]!.id;
+          await db.pool.query(`insert into inbox (account_id, message_id, reason) values ($1, $2, 'mention')`, [agent.accountId, call]);
+          return root;
+        };
         // C1c-3d — 머리 하나와 그 스레드에 BOT 이 관리자(ADMIN)에게 넘긴 열린 위임 하나(기한 1분).
         const withDelegation = async () => {
           const root = await direct(member.accountId, '맡김');
@@ -5670,7 +5699,14 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           return root;
         };
         // [이름, 머리 만들기(base → 머리 id), 답 본문(머리 id → payload), 답하는 사람]
-        type Scene = [string, (base: string) => Promise<string>, (root: string) => Record<string, unknown>, string, ('ts' | undefined)?, string?];
+        type Scene = [string, (base: string) => Promise<string>, (root: string) => Record<string, unknown>, string, ('ts' | undefined)?, (string | (() => Promise<string>))?];
+        // C1c-4a — 에이전트 최상위 글은 채널의 최상위 글들을 사슬 고리로 훑는다(`mentionDepthFor`). 앞 장면·앞 실행이 그 에이전트를 깨운 글이
+        // 남으면 사슬 안(TS 몫)이 되므로, 그 장면은 실행마다 새 채널(오늘 채널과 같은 멤버)에서 한다.
+        const freshCh = async () => {
+          const c = (await createChannel(db.pool, { name: `c1c4a-${Math.random().toString(36).slice(2, 10)}` })).id;
+          await db.pool.query(`insert into channel_member (channel_id, account_id) select $1, account_id from channel_member where channel_id = $2 on conflict do nothing`, [c, todayId]);
+          return c;
+        };
         const SCENES: Scene[] = [
           ['남의 머리에 답 → thread_reply', async () => direct(member.accountId, '질문'), (r) => ({ body: '답', threadRootId: r }), A],
           ['자기 머리에 답 → 아무도', async () => direct(admin.accountId, '혼잣말'), (r) => ({ body: '덧붙임', threadRootId: r }), A],
@@ -5700,10 +5736,23 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['머리 id 가 null → 400', async () => '', () => ({ body: '답', threadRootId: null }), A],
           // 앞단에 `HARKROOM_DELEGATION_V2` 가 없으면 스위치를 모르니 TS 로(아래에서 값을 준 앞단으로 v0·v1 을 견준다).
           ['담당 사람 글, 스위치 모름 → TS 몫', withDelegation, (r) => ({ body: '작업하는 중', threadRootId: r }), A, 'ts'],
+          // C1c-4a — 에이전트(PAT) 글. BOT 은 주인만(회신권을 주는 쪽), BOT2 는 누구나.
+          ['에이전트 최상위 글(부름 없음)', async () => '', () => ({ body: '보고 드림' }), agent.pat, undefined, freshCh],
+          ['에이전트 답글 → 머리 주인 thread_reply · 받은 회신권 닫음', withGrant, (r) => ({ body: '결과다', threadRootId: r }), agent.pat],
+          ['에이전트 답글(누구나) → 남의 회신권 그대로', withGrant, (r) => ({ body: '덧붙임', threadRootId: r }), bot2.pat],
+          ['에이전트 DM → 상대에게 dm', async () => '', () => ({ body: '알림' }), bot2.pat, undefined, dmBot2],
+          ['에이전트 머리 id 가 null → 400', async () => '', () => ({ body: '답', threadRootId: null }), agent.pat],
+          // 아직 TS 몫 — 부름은 암묵 위임 스위치를 모르면(C1c-4d), 사슬 안의 글은 정체 홉(C1c-4b).
+          ['에이전트 부름, 암묵 위임 스위치 모름 → TS 몫', async () => '', () => ({ body: '@mem 봐 줘' }), agent.pat, 'ts', freshCh],
+          ['사슬 안 에이전트 답 → TS 몫', withChain, (r) => ({ body: '봤다', threadRootId: r }), agent.pat, 'ts'],
         ];
         const DELEG_SCENES: Scene[] = [
           ['담당 사람 글 → 위임 활동', withDelegation, (r) => ({ body: '작업하는 중', threadRootId: r }), A],
           ['담당 사람 물음 → 위임 활동', withDelegation, (r) => ({ body: '이거 맞아?', threadRootId: r }), A],
+          // C1c-4a — 암묵 위임을 끈(`HARKROOM_DELEGATION_IMPLICIT=off`) 앞단에서 에이전트의 부름: 회신권을 연다(받은 상대가 에이전트일 때만).
+          ['에이전트가 에이전트를 부름 → 회신권 열기', async () => '', () => ({ body: '@bot2 이것 봐 줘' }), agent.pat, undefined, freshCh],
+          ['에이전트 답글 부름 → 스레드에 회신권', async () => direct(member.accountId, '질문'), (r) => ({ body: '@bot2 @mem 같이', threadRootId: r }), agent.pat],
+          ['누구나 에이전트의 부름 → 회신권 없음', async () => '', () => ({ body: '@bot 이것 봐 줘' }), bot2.pat, undefined, freshCh],
         ];
         // TS 몫 갈래는 Rust 서버에서도 TS 가 올리므로 그 장면의 이벤트는 TS 버스에서 읽는다(Rust outbox 에 없어야 한다).
         const handedOnRust: string[] = [];
@@ -5717,7 +5766,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             const body = Object.keys(p).length ? p : { body: '추가로', threadRootId: root };
             const before = evs().length;
             const busBefore = own().length;
-            const r = await send(base, body, token, ch);
+            const r = await send(base, body, token, typeof ch === 'function' ? await ch() : ch);
             const until = Date.now() + 10_000;
             const mine = () => evs().slice(before).filter((e) =>
               (e.type === 'message.created' && (e as { message: { id: string } }).message.id === r.id) || e.type === 'inbox.updated'
@@ -5741,6 +5790,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // C1c-3d — 위임 스위치를 준 앞단(값마다 하나씩 띄운다)과 같은 값의 TS 를 견준다. 사람 글은 닫지도 깨우지도 않는다.
         const delegOut: Record<string, unknown> = {};
         const prevV2 = process.env.HARKROOM_DELEGATION_V2;
+        const prevImplicit = process.env.HARKROOM_DELEGATION_IMPLICIT;
+        process.env.HARKROOM_DELEGATION_IMPLICIT = 'off';
         await db.pool.query(`alter role ${rw} connection limit -1`);
         for (const mode of ['1', '0']) {
           let portD = 0;
@@ -5755,6 +5806,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 fd = await startFront(bin, {
                   UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(portD), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
                   TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust', HARKROOM_DELEGATION_V2: mode,
+                  HARKROOM_DELEGATION_IMPLICIT: 'off',
                 });
               } catch (err) {
                 if (attempt >= 2 || !String(err).includes('AddrInUse')) throw err;
@@ -5776,6 +5828,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             if (prevV2 === undefined) delete process.env.HARKROOM_DELEGATION_V2; else process.env.HARKROOM_DELEGATION_V2 = prevV2;
           }
         }
+        if (prevImplicit === undefined) delete process.env.HARKROOM_DELEGATION_IMPLICIT; else process.env.HARKROOM_DELEGATION_IMPLICIT = prevImplicit;
         offTs();
         type D = { deleg: Record<string, unknown>[]; count: string };
         expect((delegOut['1'] as D[])[0]!.deleg).toEqual([{ outcome: null, active: true, pending: true, pending_at: true, pushed: true }]);
@@ -5808,6 +5861,22 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(by('DM 에이전트(누구나) → dm').inbox).toEqual([{ who: 'BOT2', reason: 'dm' }]);
         expect(by('DM 에이전트(주인만) → 게이트 막힘').count).toBe('0');
         expect(by('지워진 머리 → 되살림(rootBack)').status).toBe(201);
+        // C1c-4a — 에이전트 글.
+        type G = { grants: { grantee: string; granter: string; closed: boolean; ttl: boolean }[] };
+        const byG = (o: unknown[], n: string) => (o as (Row & G)[]).find((x) => x.name === n)!;
+        expect(by('에이전트 최상위 글(부름 없음)').status).toBe(201);
+        expect(by('에이전트 답글 → 머리 주인 thread_reply · 받은 회신권 닫음').inbox).toEqual([{ who: 'MEM', reason: 'thread_reply' }]);
+        expect(byG(tsOut, '에이전트 답글 → 머리 주인 thread_reply · 받은 회신권 닫음').grants).toEqual([{ grantee: 'BOT', granter: 'BOT2', closed: true, ttl: false }]);
+        expect(byG(tsOut, '에이전트 답글(누구나) → 남의 회신권 그대로').grants).toEqual([{ grantee: 'BOT', granter: 'BOT2', closed: false, ttl: false }]);
+        expect(by('에이전트 DM → 상대에게 dm').inbox).toEqual([{ who: 'ADMIN', reason: 'dm' }]);
+        expect(by('에이전트 머리 id 가 null → 400').status).toBe(400);
+        expect(by('에이전트 부름, 암묵 위임 스위치 모름 → TS 몫').inbox).toEqual([{ who: 'MEM', reason: 'mention' }]);
+        for (const mode of ['1', '0']) {
+          const d = delegOut[mode] as unknown[];
+          expect(byG(d, '에이전트가 에이전트를 부름 → 회신권 열기').grants, mode).toEqual([{ grantee: 'BOT2', granter: 'BOT', closed: false, ttl: true }]);
+          expect(byG(d, '에이전트 답글 부름 → 스레드에 회신권').grants, mode).toEqual([{ grantee: 'BOT2', granter: 'BOT', closed: false, ttl: true }]);
+          expect(byG(d, '누구나 에이전트의 부름 → 회신권 없음').grants, mode).toEqual([]);
+        }
         // C1c-3d — 되돌아온 머리는 `message.created` **뒤** `message.updated` 로(자리표시자, 답글 수에 이 답이 들어 있음).
         type B = { events: { type: string; message?: { deletedAt?: unknown; replyCount?: unknown } }[] };
         const back = (tsOut as (Row & B)[]).find((x) => x.name === '지워진 머리 → 되살림(rootBack)')!;

@@ -14,6 +14,10 @@
 //!   `thread_reply` 를 넣는다(TS 와 같이 위임 판정 **뒤**).
 //! - **깨움 선점**(C1c-3b): 그 뒤 이 스레드의 남의 열린 깨움을 접거나(이 글이 부른 계정) 지금 깨운다([`super::wake_preempt`]).
 //!   신호(`inbox.updated`·`thread.reportWakes.changed`·대기 줄 `message.updated`)는 TS 처럼 `message.created` 앞에 outbox 로.
+//! - **에이전트 글**(C1c-4a): PAT·오퍼레이터로 선 에이전트의 REST 글도 맡는다(원인·턴 id 가 없는 판). 회신권 「결과 한 번」 락
+//!   (`REPLY_LOCK_CLASS`)을 채널 락 앞에 잡고, 부름이 실제로 간 에이전트에게 회신권을 열고(`openReplyGrants`) 답글이면 받은
+//!   회신권을 닫는다(`closeReplyGrants`). 위임 키·깨움 선점·카드 닫기는 TS 와 같이 사람 글에만. 아직 TS 로 넘기는 것: 사슬 안의 글
+//!   ([`chained`] — 정체 홉·사슬 시작, C1c-4b), 상한에 막힌 부름(백스톱 카드)과 암묵 위임 스위치를 모르는 부름([`implicit_known_off`], C1c-4d).
 //! - 순서(TS 와 같다): 본문 읽기(413·400·415) → 인증(401, `route_layer`) → 경로·본문 검사(400) → 쓰기 게이트(403 `forbidden`·
 //!   `channel_archived`) → **쓰기 트랜잭션 하나**: seq 락(TS `lockChannelForSeq`) → 재시도 키 재생(200, 헤더 없음) → insert →
 //!   첨부 잇기(실패면 되돌리고 400 `bad_attachment`) → 다시 읽기 → 재시도 키 기록 → 부름 넣기 → 위임 → `message.created`·
@@ -27,6 +31,7 @@ use super::invoke_gate;
 use super::mandate_stamp;
 use super::mention_calls::{self, Input};
 use super::mention_fanout::{self, Post};
+use super::mention_parse::split_mention_calls;
 use super::msg_edit::{
     MAX_MESSAGE_BODY_CHARS, NOTIFIED_COUNT_HEADER, NOTIFIED_HEADER, NOTIFIED_HEADER_MAX_IDS,
 };
@@ -72,11 +77,19 @@ pub const MESSAGE_POST_PRIVILEGES: &[(&str, &str)] = &[
     ("team_delegation_item.last_activity_at", "UPDATE"),
     ("team_delegation_item.update_pending_message_id", "UPDATE"),
     ("team_delegation_item.update_pending_at", "UPDATE"),
+    // C1c-4a 에이전트 글의 회신권(`openReplyGrants`·`closeReplyGrants`) — 열기는 insert … on conflict do update, 닫기는 닫힌 시각.
+    ("invoke_reply_grant", "INSERT"),
+    ("invoke_reply_grant.opened_at", "UPDATE"),
+    ("invoke_reply_grant.expires_at", "UPDATE"),
+    ("invoke_reply_grant.closed_at", "UPDATE"),
 ];
 pub const MESSAGE_POST_SEQUENCE_PRIVILEGES: &[(&str, &str)] = &[("event_outbox_id_seq", "USAGE")];
 
 /// TS `DELEGATION_SILENCE_SEC` — 담당 글 하나가 기한을 이만큼 뒤로 민다.
 const DELEGATION_SILENCE_SEC: i32 = 10 * 60;
+
+/// TS `REPLY_GRANT_TTL_SEC` — 결과를 끝내 안 낸 회신권이 닫히는 때(깨움·위임 상한 6h 와 같다).
+const REPLY_GRANT_TTL_SEC: i32 = 6 * 60 * 60;
 
 /// zod `attachmentIds.max(10)`.
 const MAX_ATTACHMENTS: usize = 10;
@@ -104,6 +117,10 @@ struct Sql {
     root_author: String,
     deleg_touch: String,
     deleg_pending: String,
+    depth_scan: String,
+    reply_open: String,
+    reply_close: String,
+    reply_lock_class: i32,
 }
 
 /// C1c-3a 갈래 판정(TS 동작이 아니라 **어느 쪽이 맡을지**) — 이 스레드에 답하면 TS 가 아직 Rust 에 없는 부수효과를 내는가.
@@ -147,6 +164,20 @@ fn delegation_v2(raw: Option<&str>) -> Option<bool> {
     Some(matches!(v.as_str(), "1" | "on" | "true"))
 }
 
+/// TS `implicitDelegationMode` 이 **꺼짐**인지 Rust 가 아는가 — 위임 스위치를 알고(`delegation_v2` 가 `Some`) 그것이 꺼졌거나,
+/// 켜졌어도 `HARKROOM_DELEGATION_IMPLICIT` 이 끄는 낱말(`off`·`0`·`false`)일 때만 참이다. 모르거나 켜졌으면(그림자 포함) 암묵 위임을
+/// 적을 수 있으므로 에이전트가 누군가를 부른 글은 TS 로 넘긴다(C1c-4d 가 옮긴다).
+fn implicit_known_off(v2: Option<bool>, implicit: Option<&str>) -> bool {
+    match v2 {
+        None => false,
+        Some(false) => true,
+        Some(true) => {
+            let v = implicit.unwrap_or_default().trim().to_lowercase();
+            matches!(v.as_str(), "off" | "0" | "false")
+        }
+    }
+}
+
 fn sql() -> &'static Sql {
     static S: OnceLock<Sql> = OnceLock::new();
     S.get_or_init(|| {
@@ -182,6 +213,15 @@ fn sql() -> &'static Sql {
             root_of: frag("post_thread_root_of"),
             deleg_touch: frag("delegation_touch_deadline"),
             deleg_pending: frag("delegation_v2_update_pending"),
+            depth_scan: format!(
+                "select s.body, s.author_is_agent, s.woke from ({}) s",
+                frag("mention_depth_scan")
+            ),
+            reply_open: frag("reply_grant_open"),
+            reply_close: frag("reply_grant_close"),
+            reply_lock_class: frag("reply_grant_lock_class")
+                .parse()
+                .expect("reply grant lock class"),
             root_author: format!(
                 "select r.author_id::text, r.deleted_at is not null from ({}) r",
                 frag("post_root_author")
@@ -326,11 +366,13 @@ enum Outcome {
     },
 }
 
-/// TS `resolveMentionCalls` 의 사람 작성자 입력 — 깊이 0, 사슬·회신권·principal 없음(`mentionDepthFor` 첫 줄).
-async fn resolve_human(
+/// TS `resolveMentionCalls` 의 입력 — 깊이 0(사람은 언제나, 에이전트는 [`chained`] 가 거짓일 때만 여기 온다), 사슬 시작·principal 없음.
+/// 회신권 스레드는 결과 발화면 머리다(REST 글은 언제나 `user` 라 결과다).
+async fn resolve_post(
     conn: &mut sqlx::PgConnection,
     channel: &str,
     author: &str,
+    author_is_agent: bool,
     body: &str,
     thread_root: Option<&str>,
 ) -> Result<mention_calls::Resolved, sqlx::Error> {
@@ -344,7 +386,7 @@ async fn resolve_human(
             body,
             channel_id: channel,
             author_id: author,
-            author_is_agent: false,
+            author_is_agent,
             mention_depth: 0,
             chain_bound: false,
             chain_started_at_ms: None,
@@ -360,11 +402,35 @@ async fn resolve_human(
     .await
 }
 
+/// TS `mentionDepthFor`(원인 없는 판)가 0 이 **아닌가** — 이 대화에서 나를 실제로 깨운 부름이 있었나. 있으면 사슬 안의 글이라
+/// 정체 홉·사슬 시작 시각을 적어야 해서 아직 TS 몫이다(C1c-4b). 가장 최근 하나만 고리지만 0 인지만 보므로 어느 것이든 하나면 된다.
+async fn chained(
+    conn: &mut sqlx::PgConnection,
+    channel: &str,
+    root: Option<&str>,
+    author: &str,
+) -> Result<bool, sqlx::Error> {
+    let rows: Vec<(String, bool, bool)> = sqlx::query_as(sql().depth_scan.as_str())
+        .bind(channel)
+        .bind(root)
+        .bind(author)
+        .fetch_all(&mut *conn)
+        .await?;
+    Ok(rows.iter().any(|(body, row_agent, woke)| {
+        *woke
+            && split_mention_calls(body, *row_agent, |id| id == author)
+                .call
+                .iter()
+                .any(|c| c == author)
+    }))
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn post_in_tx(
     st: &PostState,
     channel: &str,
     author: &str,
+    author_is_agent: bool,
     input: &PostBody,
     idempotency_key: Option<&str>,
     audience: &Value,
@@ -387,14 +453,41 @@ async fn post_in_tx(
             return Ok(Outcome::BadThread);
         }
     }
+    // TS 회신권 「결과 한 번」 락 — 같은 작성자·같은 스레드의 결과끼리 줄을 세운다(채널 락보다 언제나 앞).
+    if let (true, Some(r)) = (author_is_agent, root) {
+        sqlx::query("select pg_advisory_xact_lock($1, hashtext($2))")
+            .bind(s.reply_lock_class)
+            .bind(format!("{author}:{r}"))
+            .execute(&mut *tx)
+            .await?;
+    }
+    let v2 = delegation_v2(std::env::var("HARKROOM_DELEGATION_V2").ok().as_deref());
+    // 사슬 안의 에이전트 글은 아직 TS 몫이다(정체 홉·사슬 시작 — C1c-4b).
+    if author_is_agent && chained(&mut tx, channel, root, author).await? {
+        tx.rollback().await?;
+        return Ok(Outcome::ToTs);
+    }
     // TS 와 같이 멘션 해석은 seq 락 **앞**이다(그 읽기는 seq 순서와 무관하고, 락 안에서 하면 줄 선 트랜잭션이 커넥션을 쥔다).
-    let calls = resolve_human(&mut tx, channel, author, body, root).await?;
+    let calls = resolve_post(&mut tx, channel, author, author_is_agent, body, root).await?;
+    // 에이전트 글의 아직 TS 몫인 부수효과 — 상한에 막힌 부름(백스톱 카드)·암묵 위임을 적을 수 있는 부름(C1c-4d).
+    if author_is_agent
+        && (!calls.capped_ids.is_empty()
+            || (!calls.called_ids.is_empty()
+                && !implicit_known_off(
+                    v2,
+                    std::env::var("HARKROOM_DELEGATION_IMPLICIT")
+                        .ok()
+                        .as_deref(),
+                )))
+    {
+        tx.rollback().await?;
+        return Ok(Outcome::ToTs);
+    }
     sqlx::query(s.lock.as_str())
         .bind(s.lock_class)
         .bind(channel)
         .execute(&mut *tx)
         .await?;
-    let v2 = delegation_v2(std::env::var("HARKROOM_DELEGATION_V2").ok().as_deref());
     if let Some(r) = root {
         let ts: bool = sqlx::query_scalar(TS_THREAD_SQL)
             .bind(r)
@@ -483,10 +576,32 @@ async fn post_in_tx(
     .await?;
     // 위임은 부름만 본다 — TS 는 `thread_reply` 를 넣기 **앞에서** 판정한다.
     let called = notified_in_order(&mut tx, &id, &notified_set).await?;
-    let mandate = match root {
-        None => mandate_stamp::stamp_root(&mut tx, &id, author, channel, &called).await?,
-        Some(r) => mandate_stamp::stamp_reply(&mut tx, &id, author, channel, r, &called).await?,
+    // TS 는 사람·세션 글만 위임을 적는다. 에이전트 글은 원인(임대)이 있을 때만 잇는데 REST 에는 원인이 없다.
+    let mandate = match (author_is_agent, root) {
+        (true, _) => None,
+        (false, None) => mandate_stamp::stamp_root(&mut tx, &id, author, channel, &called).await?,
+        (false, Some(r)) => {
+            mandate_stamp::stamp_reply(&mut tx, &id, author, channel, r, &called).await?
+        }
     };
+    // TS `openReplyGrants` — 실제로 inbox 가 간 상대에게만. 최상위 글이면 그 글이 머리다. 작성자가 게이트에 걸리는 에이전트가
+    // 아니면(사람·community) 문장이 아무것도 넣지 않는다.
+    if author_is_agent {
+        let grantees: Vec<&String> = calls
+            .called_ids
+            .iter()
+            .filter(|c| c.as_str() != author && notified_set.contains(c.as_str()))
+            .collect();
+        if !grantees.is_empty() {
+            sqlx::query(s.reply_open.as_str())
+                .bind(author)
+                .bind(root.unwrap_or(&id))
+                .bind(grantees)
+                .bind(REPLY_GRANT_TTL_SEC)
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
     // TS `deletedRoot` — 머리가 지워져 있었으면 커밋 뒤 목록에 다시 물어 `message.updated` 로 되돌린다(아래).
     let deleted_root = match root {
         Some(r) => thread_reply(&mut tx, r, author, channel, &id, &mut notified_set).await?,
@@ -497,10 +612,19 @@ async fn post_in_tx(
         dm_notify(&mut tx, channel, author, root, &id, &mut notified_set).await?;
     }
     // TS 와 같이 부름·`thread_reply` 를 다 넣은 뒤 — 이 글이 부른 계정의 깨움은 접고 나머지는 깨운다.
-    let preempted = match root {
-        Some(r) => wake_preempt::preempt(&mut tx, r, author, &id, &notified_set).await?,
-        None => wake_preempt::Preempted::default(),
+    // TS `preemptWakesForThread` 는 사람 글만 본다.
+    let preempted = match (author_is_agent, root) {
+        (false, Some(r)) => wake_preempt::preempt(&mut tx, r, author, &id, &notified_set).await?,
+        _ => wake_preempt::Preempted::default(),
     };
+    // TS `closeReplyGrants` — 결과를 냈으니 이 스레드에서 받은 회신권을 닫는다(이 글은 위에서 이미 게이트를 지났다).
+    if let (true, Some(r)) = (author_is_agent, root) {
+        sqlx::query(s.reply_close.as_str())
+            .bind(author)
+            .bind(r)
+            .execute(&mut *tx)
+            .await?;
+    }
     // TS `closeDelegationsForReply`(선점 뒤, 같은 tx) — 사람 글은 결과(`report`·`fail`)가 아니라 닫지 않고 깨우지 않는다:
     // 기한만 밀고, v1 이면 「대기 중 update」로 적는다(턴 끝에 TS 스위퍼가 넘긴 쪽에 보낸다). 스위치를 모르면 위 가드가 이미 TS 로 넘겼다.
     if let (Some(r), Some(on)) = (root, v2) {
@@ -546,8 +670,8 @@ async fn post_in_tx(
         crate::write::emit_event(&mut tx, &json!({ "type": "inbox.updated", "accountId": a }))
             .await?;
     }
-    // TS 라우트는 `inbox.updated` 뒤에 `closeAsksByReply` 를 부른다 — 이 답보다 앞선 열린 카드를 `replied` 로 닫는다.
-    if let Some(r) = root {
+    // TS 라우트는 `inbox.updated` 뒤에 `closeAsksByReply` 를 부른다(사람 글만) — 이 답보다 앞선 열린 카드를 `replied` 로 닫는다.
+    if let (false, Some(r)) = (author_is_agent, root) {
         let seq = row_value
             .get("seq")
             .and_then(Value::as_i64)
@@ -687,9 +811,10 @@ pub async fn post(
         Ok(_) => None,
         Err(r) => return r,
     };
-    // 사람·세션이 아니거나 스레드·모델 지정 키가 있으면 판정하지 않고 넘긴다(검사도 TS 가 한다).
+    // 사람은 세션 글만(사람 PAT 는 인증에서 401), 에이전트는 PAT·오퍼레이터 글(C1c-4a). 모델 지정 키 등은 판정하지 않고 넘긴다.
     let human_session = me.kind == "human" && auth.via == Some(Via::Session);
-    if !human_session || parsed.as_ref().is_some_and(ts_keys) {
+    let author_is_agent = me.kind == "agent";
+    if !(human_session || author_is_agent) || parsed.as_ref().is_some_and(ts_keys) {
         return to_ts(st.up.clone(), peer, parts, bytes).await;
     }
     if !is_uuid(&id) {
@@ -747,7 +872,18 @@ pub async fn post(
         .get("idempotency-key")
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
-    match post_in_tx(&st, &id, &me.id, &input, key.as_deref(), &audience, is_dm).await {
+    match post_in_tx(
+        &st,
+        &id,
+        &me.id,
+        author_is_agent,
+        &input,
+        key.as_deref(),
+        &audience,
+        is_dm,
+    )
+    .await
+    {
         Err(e) => internal(e),
         // 세 사유를 400 하나로 합친다 — TS 와 같이, 남의 업로드 id 가 있는지 알리는 신호가 되지 않게.
         Ok(Outcome::ToTs) => to_ts(st.up.clone(), peer, parts, bytes).await,
