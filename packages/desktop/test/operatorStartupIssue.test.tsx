@@ -13,6 +13,8 @@ import { acc, fakeApi, fakeWsFactory } from './helpers/fakeApi';
 const NODE_MISSING = 'env: node: No such file or directory';
 
 beforeEach(() => {
+  // 자동 등록 표시(커뮤니티마다 한 번, 격리 C P8)는 localStorage 에 남는다 — 앞 시험이 등록하면 다음 시험은 'done-before' 다.
+  localStorage.removeItem('harkroom.operatorAutoRegistered');
   (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {
     invoke: vi.fn(async (cmd: string) => (cmd === 'operator_agents_list' ? { communities: [] } : { name: 'mac' })),
   };
