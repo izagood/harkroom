@@ -26,6 +26,9 @@ pub const NEW_INTERACTIVE_UNSUPPORTED: &str = "이 러너는 아직 새 터미�
 /// 장부가 아직 없다(기동 중) — 정본 `러너가 아직 기동 중이다` 문구.
 pub const RUNNER_STARTING: &str = "러너가 아직 기동 중이다 — 잠시 뒤 다시 열어라";
 
+/// 러너가 물러나는 중이다(`shutdown_interactive` 뒤) — 새 PTY 를 띄우면 회수 목록에 안 잡혀 러너보다 오래 산다.
+pub const RUNNER_STOPPING: &str = "러너가 물러나는 중이다 — 잠시 뒤 다시 열어라";
+
 /// 처리자가 장부를 찾는 칸. `RelaySessions::new` 뒤에 [`fill`] 로 채운다.
 pub type LedgerCell = Arc<OnceLock<Weak<RelaySessions>>>;
 

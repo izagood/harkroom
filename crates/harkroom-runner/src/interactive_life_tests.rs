@@ -66,3 +66,30 @@ fn shutdown_reclaims_once() {
     assert_eq!(l.shutdown(), vec![Act::Terminate]);
     assert!(l.shutdown().is_empty());
 }
+
+#[test]
+fn shutdown_before_spawn_is_taken_at_spawn() {
+    let mut l = InteractiveLife::new();
+    l.viewer_count(1);
+    assert!(l.shutdown().is_empty(), "손잡이가 없다");
+    assert!(l.shutting_down());
+    assert_eq!(
+        l.spawned(),
+        vec![Act::Terminate],
+        "고아 유예로 떨어지면 안 된다 — 물러나는 러너는 60초를 기다리지 않는다"
+    );
+    assert!(
+        l.viewer_count(1).is_empty(),
+        "뷰어가 회수를 되돌리지 않는다"
+    );
+    assert_eq!(l.kill_grace_fired(), vec![Act::Kill]);
+}
+
+#[test]
+fn viewer_after_shutdown_does_not_restart_grace() {
+    let mut l = InteractiveLife::new();
+    l.spawned();
+    assert_eq!(l.shutdown(), vec![Act::CancelOrphan, Act::Terminate]);
+    assert!(l.viewer_count(0).is_empty());
+    assert!(l.viewer_count(3).is_empty());
+}
