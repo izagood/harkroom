@@ -204,7 +204,12 @@ fn same_community_second_operator_backs_off_and_stale_socket_is_reclaimed() {
         ])
         .output()
         .unwrap();
-    assert_eq!(b.status.code(), Some(1));
+    // 앱은 이 코드로 점유를 가린다(`daemon_client.rs` 의 `EXIT_OCCUPIED`) — 다른 실패의 1 과 섞이면 안내가 죽는다.
+    assert_eq!(
+        b.status.code(),
+        Some(harkroom_operator::serve::EXIT_OCCUPIED)
+    );
+    assert_eq!(harkroom_operator::serve::EXIT_OCCUPIED, 10);
     let out: Value = serde_json::from_slice(&std::mem::take(&mut b.stdout)).unwrap();
     assert_eq!(out["occupied"], sock.as_str());
     // 처음 것은 그대로 서비스한다.

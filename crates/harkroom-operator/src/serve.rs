@@ -8,7 +8,7 @@
 //! `--runner-command` 는 러너 프로그램이다. 클라이언트(앱)는 프로그램을 고르지 못하고 env 만 준다(`#250` 경계).
 //! `--app-version`·`--launch-nonce` 는 앱이 띄울 때 준다(A4②). 앱은 pid 레코드의 appVersion 이 자기보다 낮으면 그 오퍼레이터를
 //! 물리고 새로 띄우므로(`should_retire_daemon`), crate 판(0.1.0)을 그대로 적으면 앱이 띄울 때마다 물린다.
-//! 이름을 잡으면 stdout 에 JSON 한 줄(`listening`·`root`·`pid`)을 찍고 듣는다. 점유 중이면 그 사실을 찍고 1 로 끝난다.
+//! 이름을 잡으면 stdout 에 JSON 한 줄(`listening`·`root`·`pid`)을 찍고 듣는다. 점유 중이면 그 사실을 찍고 [`EXIT_OCCUPIED`](10)로 끝난다.
 use crate::endpoint::{ClaimOutcome, claim, random_hex};
 use crate::index::read_roots_index;
 use crate::local_agents::LocalAgents;
@@ -38,6 +38,13 @@ fn rust_runner_beside_self() -> Option<String> {
 
 /// Rust 러너 사이드카 이름 — `tauri.conf.json` `externalBin` 의 `binaries/harkroom-runner-rs` 와 같다.
 pub const RUST_RUNNER_NAME: &str = "harkroom-runner-rs";
+
+/// 같은 커뮤니티의 소켓을 **살아 있는 다른 오퍼레이터가 쥐고 있어** 물러났다는 종료 코드.
+///
+/// 앱(`packages/desktop/src-tauri/src/daemon_client.rs` 의 `EXIT_OCCUPIED`)이 이 값을 보고
+/// 「다른 harkroom 이 쥐고 있다 — 그 앱을 종료하라」는 안내를 붙인다. 다른 실패(1·2)와 섞으면 그 안내가 죽는다.
+/// 옛 Node 오퍼레이터와 같은 10 이다. 두 값은 `packages/desktop/test/operatorExitCodes.test.ts` 가 소스를 읽어 대조한다.
+pub const EXIT_OCCUPIED: i32 = 10;
 
 pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
     let Some(base_url) = flag(args, "--base-url") else {
@@ -272,7 +279,7 @@ pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
         }
         Ok(ClaimOutcome::Occupied { paths }) => (
             json!({"ok": false, "occupied": paths.socket_path, "root": root}).to_string(),
-            1,
+            EXIT_OCCUPIED,
         ),
         Err(e) => (json!({"ok": false, "error": e.to_string()}).to_string(), 1),
     }
