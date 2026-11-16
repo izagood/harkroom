@@ -27,6 +27,12 @@ export interface AttachCallbacks {
    */
   onWriter(turn: AttachTurn): void;
   /**
+   * 서버가 이 창을 **제어 전용 attach** 로 받아들였다(R1 PR-4) — 바이트는 서버가 아니라 오퍼레이터 소켓으로 받는다.
+   * `viewKey` 는 그 구독을 여는 열람 키다. 이 콜백이 안 불리면(옛 서버·로컬 직결을 모르는 오퍼레이터) 서버가 보통
+   * attach 로 되돌린 것이고, 출력은 지금처럼 `onOutput` 으로 온다.
+   */
+  onLocal?(viewKey: string): void;
+  /**
    * 지금 PTY 의 크기(서버 `size` 프레임). 폭을 못 정하는 창은 이 크기로 그려야 줄이 안 꺾인다.
    * 구 서버는 안 보낸다 — 그때 창은 자기 패널로 맞춘다. 옵셔널: 이 사실이 필요 없는 쪽은 안 받는다.
    */
@@ -43,6 +49,8 @@ export interface AttachTurn {
   writer: boolean;
   resize: boolean;
   reason: WriterDeniedReason | null;
+  /** 로컬 직결 writer 키(R1). 제어 전용 attach 이고 칠 수 있을 때만 온다. 없으면 서버 경유로 친다. */
+  writerKey?: string;
 }
 
 export interface AttachHandle {
@@ -69,14 +77,14 @@ export function isTermSize(value: unknown): value is number {
 }
 
 /** 바이트 → base64. `btoa` 는 latin1 문자열을 받으므로 바이트를 코드 포인트로 넘긴다. */
-function encodeBase64(bytes: Uint8Array): string {
+export function encodeBase64(bytes: Uint8Array): string {
   let binary = '';
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary);
 }
 
 /** base64 → 바이트. `atob` 는 latin1 문자열을 주므로 코드 포인트가 곧 바이트다. */
-function decodeBase64(data: string): Uint8Array {
+export function decodeBase64(data: string): Uint8Array {
   const binary = atob(data);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
@@ -84,9 +92,11 @@ function decodeBase64(data: string): Uint8Array {
 }
 
 export function connectAgentAttach(
-  baseUrl: string, ticket: string, cb: AttachCallbacks,
+  baseUrl: string, ticket: string, cb: AttachCallbacks, opts: { control?: boolean } = {},
 ): AttachHandle {
-  const url = `${baseUrl.replace(/\/$/, '').replace(/^http/, 'ws')}/agent-attach?ticket=${encodeURIComponent(ticket)}`;
+  // `mode=control` 은 **이 맥의 러너 세션일 때만** 붙인다(security #1302 n3 — 판정은 부르는 쪽이 `terminalIsLocal` 로).
+  // 서버가 모르거나 오퍼레이터가 로컬 직결을 모르면 서버가 보통 attach 로 되돌린다.
+  const url = `${baseUrl.replace(/\/$/, '').replace(/^http/, 'ws')}/agent-attach?ticket=${encodeURIComponent(ticket)}${opts.control ? '&mode=control' : ''}`;
   const socket = new WebSocket(url);
   let closed = false;
 
@@ -116,7 +126,14 @@ export function connectAgentAttach(
     if (frame.type === 'writer') {
       // 구 서버는 `resize`·`reason` 을 모른다 — 그때는 옛 계약대로 읽는다: 차례가 있으면
       // 폭도 그 창이 정했고(#335 는 둘을 한 판정으로 묶었다), 이유는 알 수 없다.
-      cb.onWriter({ writer: frame.writer, resize: frame.resize ?? frame.writer, reason: frame.reason ?? null });
+      cb.onWriter({
+        writer: frame.writer, resize: frame.resize ?? frame.writer, reason: frame.reason ?? null,
+        ...(typeof frame.writerKey === 'string' ? { writerKey: frame.writerKey } : {}),
+      });
+      return;
+    }
+    if (frame.type === 'local') {
+      if (typeof frame.viewKey === 'string') cb.onLocal?.(frame.viewKey);
     }
   };
 
