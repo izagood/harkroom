@@ -94,7 +94,10 @@ pub async fn handle(
             {
                 return r;
             }
-            if let Some(r) = super::writes::answer(&pool, &writes, &me, tool, &args, runner).await {
+            if let Some(r) =
+                super::writes::answer(&pool, &writes, &me, tool, &args, runner, cause.as_deref())
+                    .await
+            {
                 return r;
             }
             super::tools::answer(&pool, &me, tool, &args, cause.as_deref()).await

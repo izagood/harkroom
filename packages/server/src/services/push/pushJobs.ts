@@ -124,19 +124,19 @@ export async function enqueueAskPush(pool: Pool | PoolClient, accountId: string,
  */
 export const BUNDLE_PUSH_WINDOW_SEC = 60;
 
-export async function enqueueBundlePush(pool: Pool | PoolClient, accountId: string, bundleId: string): Promise<void> {
-  await pool.query(
-    `insert into push_job (account_id, message_id, reason, not_before)
-     select $1, $2, 'ask', now() + make_interval(secs => $3)
-      where exists (select 1 from account where id = $1 and kind = 'human')
-        and exists (select 1 from push_device where account_id = $1)
+/** `enqueueBundlePush` 의 문장 — Rust 코어(`core/ask_bundle_add.rs`)가 골든으로 받는다(`bundle_push`). */
+export const BUNDLE_PUSH_SQL = `insert into push_job (account_id, message_id, reason, not_before)
+     select $1::uuid, $2::uuid, 'ask', now() + make_interval(secs => $3::int)
+      where exists (select 1 from account where id = $1::uuid and kind = 'human')
+        and exists (select 1 from push_device where account_id = $1::uuid)
         -- 사유를 가리지 않는다 — 그 묶음 글이 이미 답글·멘션 푸시로 나갈 참이면 둘째 알림을 얹지 않는다.
-        and not exists (select 1 from push_job j where j.account_id = $1 and j.message_id = $2)
+        and not exists (select 1 from push_job j where j.account_id = $1::uuid and j.message_id = $2::uuid)
         and not exists (
-          select 1 from account_block b join message m on m.id = $2
-           where b.blocker_id = $1 and b.blocked_id = m.author_id)`,
-    [accountId, bundleId, BUNDLE_PUSH_WINDOW_SEC],
-  );
+          select 1 from account_block b join message m on m.id = $2::uuid
+           where b.blocker_id = $1::uuid and b.blocked_id = m.author_id)`;
+
+export async function enqueueBundlePush(pool: Pool | PoolClient, accountId: string, bundleId: string): Promise<void> {
+  await pool.query(BUNDLE_PUSH_SQL, [accountId, bundleId, BUNDLE_PUSH_WINDOW_SEC]);
 }
 
 interface JobRow {

@@ -22,6 +22,7 @@ pub const SERVED: &[&str] = &[
     "bg.claim",
     // C4b-ask — 묶음 카드 한 줄 닫기. 선택 카드 쓰기 풀(`ASK_PRIVILEGES`)이 있을 때만.
     "message.askBundleResolve",
+    "message.askBundle",
     "bg.complete",
     "delegation.close",
     "thread.note",
@@ -82,6 +83,8 @@ pub struct McpWrites {
     pub bg: Option<PgPool>,
     /// `message.askBundleResolve` — C3b-1 `ASK_PRIVILEGES`.
     pub ask: Option<PgPool>,
+    /// `message.askBundle` 있던 묶음에 줄 더하기(C3b-2b-2) — `ask_bundle_add::ASK_BUNDLE_ADD_PRIVILEGES`.
+    pub bundle: Option<PgPool>,
     /// `bg.complete`(러너 길) — [`super::bg_complete::BG_COMPLETE_PRIVILEGES`].
     pub bg_complete: Option<PgPool>,
     /// `delegation.close` — [`DELEGATION_CLOSE_PRIVILEGES`].
@@ -120,6 +123,7 @@ pub async fn answer(
     tool: &str,
     args: &Value,
     runner: bool,
+    cause: Option<&str>,
 ) -> Option<Option<String>> {
     if !SERVED.contains(&tool) {
         return None;
@@ -134,6 +138,12 @@ pub async fn answer(
             .ok()?
             .as_millis() as i64;
         return Some(super::bg_claim::claim(read, write, &me.id, now_ms).await);
+    }
+    if tool == "message.askBundle" {
+        let Some(write) = writes.bundle.as_ref() else {
+            return Some(None);
+        };
+        return Some(bundle_add(read, write, me, args, cause).await);
     }
     if tool == "bg.complete" {
         // 러너 길만 — 회차의 턴·일반 턴은 TS 가 답한다(admit 도 러너 꼴만 받는다).
@@ -171,6 +181,41 @@ pub async fn answer(
         return Some(None);
     };
     Some(react(read, write, me, tool, args).await)
+}
+
+/// `message.askBundle` 있던 묶음에 줄 더하기(C3b-2b-2) — 본체는 [`crate::core::ask_bundle_add`]. 새 묶음·넘길 원본·쓰기 전 DB 오류는
+/// `None`(→ TS).
+async fn bundle_add(
+    read: &PgPool,
+    write: &PgPool,
+    me: &Account,
+    args: &Value,
+    cause: Option<&str>,
+) -> Option<String> {
+    use crate::core::ask_bundle_add::{Added, add, parse_args, refusal_message};
+    let a = parse_args(args)?;
+    match add(read, write, me, &a, cause).await {
+        Ok(Added::Handoff) => None,
+        Ok(Added::Forbidden) => Some(err("forbidden", "not a member of this dm channel")),
+        Ok(Added::Refused(code, root)) => Some(ok_text(&match root {
+            Some(r) => format!(
+                "{{\"error\":{{\"code\":{},\"message\":{},\"rootId\":{}}}}}",
+                Value::from(code),
+                Value::from(refusal_message(code)),
+                Value::from(r)
+            ),
+            None => format!(
+                "{{\"error\":{{\"code\":{},\"message\":{}}}}}",
+                Value::from(code),
+                Value::from(refusal_message(code))
+            ),
+        })),
+        Ok(Added::Bundle(row)) => Some(ok_text(&format!(
+            "{{\"message\":{},\"updated\":true}}",
+            super::respond::minify(&row)
+        ))),
+        Err(_) => Some(internal()),
+    }
 }
 
 /// `ids: z.array(z.number().int()).min(1).max(200)` 중 Rust 가 같은 값으로 읽는 것 — JSON 정수이고 JS 안전 범위 안.

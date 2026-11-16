@@ -30,7 +30,9 @@ import { CHAT_APPROVAL_GUARD_WORDS } from '../src/services/chatApproval.js';
 import { MANDATE_REPLY_CONTINUE_SQL, MANDATE_KEYLESS_OWN_SQL, MANDATE_KEYLESS_ROOT_SQL, MANDATE_KEYLESS_TOUCH_SQL, MANDATE_KEYLESS_INSERT_SQL, MANDATE_KEYLESS_FIND_SQL, MANDATE_KEYLESS_ROOT_SET_SQL, MANDATE_DELEGATED_AGENTS_SQL, MANDATE_OWN_AGENT_SQL, MANDATE_ROOT_INSERT_SQL, MESSAGE_SET_MANDATE_SQL } from '../src/services/mandates.js';
 import { DECIDER_CHANNEL_SQL, DECIDER_LIST_SQL, DECIDER_ROW_SQL, DECIDER_SEEN_SQL } from '../src/services/deciders.js';
 import { URL_CANDIDATE_SOURCE } from '@harkroom/shared';
-import { ACCEPT_ROOT_SQL, DECISION_CARD_SQL, IRREVERSIBLE_WORDS, READ_BUNDLE_SQL } from '../src/services/askBundles.js';
+import { ASK_BUNDLE_ITEM_SQL, GATE_AWAITING_SQL } from '../src/services/messages.js';
+import { BUNDLE_PUSH_SQL } from '../src/services/push/pushJobs.js';
+import { ACCEPT_ROOT_SQL, BUNDLE_ITEMS_UPDATE_SQL, DECISION_CARD_SQL, IRREVERSIBLE_WORDS, READ_BUNDLE_SQL } from '../src/services/askBundles.js';
 import { CHILD_FACTS_AUDIENCE_SQL, PLAN_PROGRESS_PLANS_SQL } from '../src/services/threadPlan.js';
 import { displayBodySql } from '../src/services/systemBody.js';
 import { BG_AGENT_ON_SQL, BG_DAILY_LOCK_SQL, BG_ENQUEUE_SQL, BG_EXISTS_SQL, BG_PAUSED_SQL, CLEANUP_CANDIDATES_SQL, DISTILL_CANDIDATES_SQL, ORGANIZE_CANDIDATES_SQL } from '../src/services/bgJobs.js';
@@ -189,6 +191,11 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     bundle_accept_root: ACCEPT_ROOT_SQL,
     bundle_irreversible_source: IRREVERSIBLE_WORDS.source,
     bundle_irreversible_flags: IRREVERSIBLE_WORDS.flags,
+    // 있던 묶음에 줄 더하기(`core/ask_bundle_add.rs`, S5.3 C3b-2b-2).
+    bundle_item_root: ASK_BUNDLE_ITEM_SQL,
+    bundle_items_update: BUNDLE_ITEMS_UPDATE_SQL,
+    gate_awaiting: GATE_AWAITING_SQL,
+    bundle_push: BUNDLE_PUSH_SQL,
     // 받은함 목록(`core/inbox_list.rs`, S5.3 C6a-3a) — `GET /inbox` 갈래 다섯과 팀 명단, 완성 문장째.
     ...Object.fromEntries(Object.entries(LIST_INBOX_SQL).map(([k, v]) => [`list_inbox_${k}`, v])),
     inbox_team_roster: INBOX_TEAM_ROSTER_SQL,
