@@ -94,31 +94,60 @@ fn parse(args: &Value) -> Option<Args> {
     })
 }
 
-/// TS `postedResult` — 못 부른 이름을 앞세운다. 상한에 막힌 부름(`mentionChainCapped`)은 `post_in_tx` 가 TS 로 넘겨 여기 오지 않는다.
+/// TS `postedResult` — 못 부른 이름을 앞세운다(상한에 막힌 부름 → 호출 범위 밖 순서).
 fn posted_result(row: &str, notified: &[String]) -> Option<String> {
     let v: Value = serde_json::from_str(row).ok()?;
-    let denied: Vec<String> = v
-        .pointer("/meta/mentionDenied")
-        .and_then(Value::as_array)
-        .map(|a| {
-            a.iter()
-                .filter_map(Value::as_str)
-                .map(|h| format!("@{h}"))
-                .collect()
-        })
-        .unwrap_or_default();
+    let handles = |key: &str| -> Vec<String> {
+        v.pointer(key)
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(|h| format!("@{h}"))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let capped = handles("/meta/mentionChainCapped");
+    let mut warnings: Vec<String> = Vec::new();
+    // TS `postedResult` — 상한에 막힌 부름이 먼저(C1c-4d-2 부터 Rust 가 맡는다). 백스톱 카드는 서버가 세웠다.
+    if !capped.is_empty() {
+        let why = if v
+            .pointer("/meta/mentionChainReason")
+            .and_then(Value::as_str)
+            == Some("age")
+        {
+            "사람 손길 뒤 24시간이 지났다".to_owned()
+        } else {
+            // TS `String(meta.mentionChainLimit)` — 숫자 그대로(없으면 undefined).
+            let limit = match v.pointer("/meta/mentionChainLimit") {
+                Some(Value::Number(n)) => n.to_string(),
+                Some(Value::String(t)) => t.clone(),
+                None => "undefined".to_owned(),
+                Some(other) => other.to_string(),
+            };
+            format!("멘션 연쇄 상한 {limit} 홉에 닿았다")
+        };
+        warnings.push(format!(
+            "{} 를 부르지 못했다: {why} (사람 없이 에이전트끼리 이어진 부름이 너무 길다). 서버가 네 소유자에게 [계속 — 예산 리셋]/[멈춤] 카드를 세웠다 — 따로 message.ask 를 세우지 말고 지금 아는 것을 정리한 뒤 턴을 끝내라. 「계속」이면 다시 깨어난다.",
+            capped.join(", ")
+        ));
+    }
+    let denied = handles("/meta/mentionDenied");
     // 행 글자는 그대로 싣는다 — 키 순서가 TS `JSON.stringify(row)` 와 같다(REST 응답과 같은 글자).
     let notified = Value::from(notified.to_vec()).to_string();
-    let inner = if denied.is_empty() {
-        format!("{{\"message\":{row},\"notified\":{notified}}}")
-    } else {
-        let w = format!(
+    if !denied.is_empty() {
+        warnings.push(format!(
             "{} 를 부르지 못했다: 너는 그 에이전트의 호출 범위(invokeScope) 밖이다. 사람에게 message.ask 로 넘기거나 소유자에게 호출 범위를 물어라.",
             denied.join(", ")
-        );
+        ));
+    }
+    let inner = if warnings.is_empty() {
+        format!("{{\"message\":{row},\"notified\":{notified}}}")
+    } else {
         format!(
             "{{\"warnings\":{},\"message\":{row},\"notified\":{notified}}}",
-            Value::from(vec![w])
+            Value::from(warnings)
         )
     };
     Some(super::respond::text_result(&super::respond::minify(&inner)))
@@ -156,6 +185,7 @@ pub async fn answer(
         chain_cause: cause.filter(|_| operator),
         turn_id: turn.filter(|_| operator),
         meta,
+        server_notice: false,
     };
     let out = msg_post::post_in_tx(
         st,
@@ -235,6 +265,30 @@ mod tests {
             "{inner}"
         );
         assert!(inner.ends_with(r#""message":{"id":"m","meta":{"mentionDenied":["bot","b2"]},"body":"x"},"notified":["a"]}"#));
+        let t = posted_result(
+            r#"{"id":"m","meta":{"mentionChainCapped":["b2"],"mentionChainLimit":8,"mentionDenied":["x"]}}"#,
+            &[],
+        )
+        .unwrap();
+        let v: Value = serde_json::from_str(&t).unwrap();
+        let inner: Value = serde_json::from_str(
+            v.pointer("/content/0/text")
+                .and_then(Value::as_str)
+                .unwrap(),
+        )
+        .unwrap();
+        let w = inner["warnings"].as_array().unwrap();
+        assert_eq!(w.len(), 2);
+        assert!(
+            w[0].as_str()
+                .unwrap()
+                .starts_with("@b2 를 부르지 못했다: 멘션 연쇄 상한 8 홉에 닿았다 (사람 없이")
+        );
+        assert!(
+            w[1].as_str()
+                .unwrap()
+                .starts_with("@x 를 부르지 못했다: 너는")
+        );
         let t = posted_result(r#"{"id":"m","meta":{}}"#, &[]).unwrap();
         assert!(
             t.contains(r#"{\"message\":{\"id\":\"m\",\"meta\":{}},\"notified\":[]}"#),

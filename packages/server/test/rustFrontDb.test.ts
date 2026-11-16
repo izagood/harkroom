@@ -5859,6 +5859,16 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                from delegation_implicit_log l join message m on m.id = l.message_id
                left join team_delegation d on d.id = l.delegation_id
               where l.message_id = $1 order by l.delegate_account_id`, [id])).rows),
+          // C1c-4d-2 — 이 대화의 백스톱 카드: 본문·작성자·받는 사람·막힌 글/계정·사슬 자리·카드의 inbox·ask 푸시.
+          backstop: shape((await db.pool.query(
+            `select b.body, b.author_id::text as author, b.kind, b.meta->'ask'->'to' as "to", b.meta->'ask'->'options' as options,
+                    b.meta->'ask'->'irreversible' as irreversible, (b.meta->'chainBackstop') - 'sourceMessageId'::text as backstop,
+                    b.meta->'chainBackstop'->>'sourceMessageId' = $1::text as from_this, b.also_in_channel as also,
+                    b.mention_depth as depth, b.stall_depth as stall, b.chain_started_at is not null as started, b.seq > m.seq as after,
+                    (select coalesce(array_agg(i.account_id::text || ':' || i.reason order by i.id), '{}') from inbox i where i.message_id = b.id) as inbox,
+                    (select coalesce(array_agg(p.account_id::text || ':' || p.reason order by p.id), '{}') from push_job p where p.message_id = b.id) as push
+               from message m join message b on b.channel_id = m.channel_id and b.thread_root_id = coalesce(m.thread_root_id, m.id)
+              where m.id = $1::uuid and b.meta ? 'chainBackstop' order by b.seq`, [id])).rows),
         } : {};
         // C1c-4a — 머리 하나와 그 스레드에서 BOT 이 받아 둔 열린 회신권 하나(BOT2 가 줌). BOT 의 결과가 그것을 닫는다.
         const withGrant = async () => {
@@ -5878,6 +5888,30 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           return root;
         };
         const withChain = withChainBy(() => bot2.accountId);
+        // C1c-4d-2 — 이 DB 의 사슬 상한(앞 블록이 고쳤을 수 있다). 막힐 장면은 BOT 을 깨운 글을 상한 - 1 깊이에 둔다.
+        const chainLimit = Number((await db.pool.query(`select chain_limit from mention_policy where id = true`)).rows[0]?.chain_limit ?? 8);
+        // C1c-4d-2 — 백스톱 카드의 ask 푸시를 받을 소유자(ADMIN)의 기기(앞 블록이 넣었으면 그대로).
+        await db.pool.query(
+          `insert into push_device (account_id, session_token_hash, platform, apns_env, token, prefs)
+           values ($1, $2, 'ios', 'production', $3, '{}') on conflict do nothing`, [admin.accountId, hashToken(admin.token), 'd'.repeat(64)]);
+        // C1c-4d-2 — 사슬 상한에 닿은 스레드(BOT 을 깨운 글이 깊이 7)와 그 스레드에 이미 열린 백스톱 카드 하나(앞 막힘의 카드).
+        const withBackstop = async () => {
+          const root = await withChainBy(() => bot2.accountId, chainLimit - 1)();
+          await db.pool.query(
+            `insert into message (channel_id, thread_root_id, author_id, body, kind, meta) values ($1, $2, $3, '⏸ 앞 카드', 'user', $4::jsonb)`,
+            [todayId, root, agent.accountId, JSON.stringify({ kind: 'ask', ask: { prompt: 'p', options: [{ id: 'continue', label: 'c' }], to: { kind: 'account', accountId: admin.accountId } },
+              chainBackstop: { agentId: agent.accountId } })]);
+          return root;
+        };
+        // C1c-4d-2 — 새 채널에 BOT 을 깨운 최상위 부름(깊이 7) — BOT 의 최상위 글이 상한에 막힌다(카드는 그 글 아래).
+        const cappedTop = async () => {
+          const c = await freshCh();
+          const call = (await db.pool.query<{ id: string }>(
+            `insert into message (channel_id, author_id, body, kind, mention_depth) values ($1, $2, $3, 'user', $4) returning id::text as id`,
+            [c, bot2.accountId, `<@${agent.accountId}> 이어 줘`, chainLimit - 1])).rows[0]!.id;
+          await db.pool.query(`insert into inbox (account_id, message_id, reason) values ($1, $2, 'mention')`, [agent.accountId, call]);
+          return c;
+        };
         // C1c-3d — 머리 하나와 그 스레드에 BOT 이 관리자(ADMIN)에게 넘긴 열린 위임 하나(기한 1분).
         const withDelegation = async () => {
           const root = await direct(member.accountId, '맡김');
@@ -5991,6 +6025,11 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['누구나 에이전트의 부름 → 회신권 없음', async () => '', () => ({ body: '@bot 이것 봐 줘' }), bot2.pat, undefined, freshCh],
           // C1c-4b — 정체 한도(4)에 닿은 부름: 막지 않고 막았을 에이전트만 `meta.mentionStallShadow` 에 남긴다(사람은 빠진다).
           ['정체 한도 → 그림자 기록', withChainBy(() => bot2.accountId, 1, 3), (r) => ({ body: '@bot2 @mem 다시 봐', threadRootId: r }), agent.pat],
+          // C1c-4d-2 — 사슬 상한(8홉)에 막힌 부름: 글은 나가고, 커밋 뒤 BOT 의 소유자(ADMIN)에게만 백스톱 카드(+ ask 푸시)를 세운다.
+          ['백스톱: 상한에 막힌 부름 → 소유자 카드', withChainBy(() => bot2.accountId, chainLimit - 1), (r) => ({ body: '@bot2 @mem 다시 봐', threadRootId: r }), agent.pat],
+          // 열린 카드가 있는 스레드라 본문이 카드 답으로 읽히면 TS 몫이다(`TS_THREAD_SQL`) — 물음으로 쓴다.
+          ['백스톱: 열린 카드 있음 → 재사용', withBackstop, (r) => ({ body: '@bot2 또 볼래?', threadRootId: r }), agent.pat],
+          ['백스톱: 최상위 글이 막힘 → 그 글 아래 카드', async () => '', () => ({ body: '@bot2 이어서' }), agent.pat, undefined, cappedTop],
         ];
         // C1c-4d — 암묵 위임(그림자·켬): 에이전트가 에이전트를 맨 앞 멘션으로 부르면 판정을 적고, 켬이면 위임(kind=mention)을 연다.
         const IMPLICIT_SCENES: Scene[] = [
@@ -6019,6 +6058,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             const until = Date.now() + 10_000;
             const mine = () => evs().slice(before).filter((e) =>
               (e.type === 'message.created' && (e as { message: { id: string } }).message.id === r.id) || e.type === 'inbox.updated'
+              || (e.type === 'message.created' && !!(e as { message: { meta?: { chainBackstop?: unknown } } }).message.meta?.chainBackstop)
               || e.type === 'thread.reportWakes.changed'
               || (e.type === 'message.updated' && (e as { message: { id: string } }).message.id === root)
               || (e.type === 'message.updated' && !!(e as { message: { meta?: { wake?: unknown } } }).message.meta?.wake)
@@ -6026,7 +6066,12 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             while (r.status === 201 && !mine().some((e) => e.type === 'message.created') && Date.now() < until) await new Promise((res) => setTimeout(res, 100));
             await settle();
             if (side === 'ts' && own !== tsBus && own().slice(busBefore).some((e) => e.type === 'message.created' && (e as { message: { id: string } }).message.id === r.id)) handedOnRust.push(name);
-            out.push({ name, ...r, id: undefined, ...(await facts(r.id)), events: shape(JSON.parse(JSON.stringify(mine()))) });
+            // C1c-4d-2 — 백스톱 카드는 TS 에서 원본 `message.created` **앞**에(라우트가 내기 전 `postMessage` 안에서), Rust 에서는 원본 뒤
+            // (커밋 뒤 따로) 나간다. 같은 이벤트가 다 나갔는지만 견주게 그 장면은 정렬한다.
+            const events = shape(JSON.parse(JSON.stringify(mine()))) as unknown[];
+            const key = (e: unknown) => { const x = e as { type: string; accountId?: string; message?: { body?: string } }; return `${x.type}|${x.message?.body ?? ''}|${x.accountId ?? ''}`; };
+            if (name.startsWith('백스톱')) events.sort((a, b) => key(a).localeCompare(key(b)));
+            out.push({ name, ...r, id: undefined, ...(await facts(r.id)), events });
           }
           return out;
         };
@@ -6102,6 +6147,30 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(pick(imp('1/on', '암묵 위임: 이미 맡음 → existing'))).toEqual([['BOT2', 'existing', 'on', null, false, null, null]]);
         expect(pick(imp('1/on', '암묵 위임: 계획판 담당 → 단계'))).toEqual([['BOT2', 'open', 'on', 's2', false, 'mention', 's2']]);
         expect(imp('1/shadow', '암묵 위임: 본문 지칭 → 부름 아님')).toEqual([]);
+        // C1c-4d-2 — 대조가 「둘 다 카드 없음」으로 같아지지 않게 TS 쪽 카드를 못 박는다.
+        type BS = { name: string; status: number; message: { meta?: Record<string, unknown> }; backstop: Record<string, unknown>[]; events: { type: string }[] };
+        for (const mode of ['1', '0']) {
+          const bs = (n: string) => (delegOut[mode] as BS[]).find((x) => x.name === n)!;
+          const capped = bs('백스톱: 상한에 막힌 부름 → 소유자 카드');
+          expect(capped.status, mode).toBe(201);
+          expect(capped.message.meta).toMatchObject({ mentionChainCapped: ['bot2'], mentionChainLimit: chainLimit });
+          expect(capped.backstop, mode).toEqual([{
+            body: `⏸ 사람 없이 이어진 연쇄가 백스톱(${chainLimit}홉)에 닿아 bot 의 부름을 멈췄다. 계속하려면 [계속 — 예산 리셋]을 누른다.`,
+            author: 'BOT', kind: 'user', to: { kind: 'account', accountId: 'ADMIN' },
+            options: [
+              { id: 'continue', label: '계속 — 예산 리셋', hint: '홉 수와 24시간을 처음부터 다시 센다', recommended: true },
+              { id: 'stop', label: '멈춤', hint: '에이전트는 동료를 부르지 않는다' },
+            ],
+            irreversible: true, backstop: { agentId: 'BOT', cappedIds: ['BOT2'], limit: chainLimit, reason: 'hops' }, from_this: true, also: false,
+            depth: chainLimit, stall: 1, started: true, after: true, inbox: ['MEM:thread_reply'], push: ['ADMIN:ask'],
+          }]);
+          expect(capped.events.filter((e) => e.type === 'message.created').length, mode).toBe(2);
+          const reuse = bs('백스톱: 열린 카드 있음 → 재사용');
+          expect(reuse.backstop.map((b) => b.body), mode).toEqual(['⏸ 앞 카드']);
+          expect(reuse.events.filter((e) => e.type === 'message.created').length, mode).toBe(1);
+          const top = bs('백스톱: 최상위 글이 막힘 → 그 글 아래 카드');
+          expect(top.backstop.map((b) => [b.to, b.push, b.inbox]), mode).toEqual([[{ kind: 'account', accountId: 'ADMIN' }, ['ADMIN:ask'], []]]); // 머리가 BOT 자신의 글이라 thread_reply 도 없다
+        }
         type Row = { name: string; status: number; count: string; inbox: { who: string; reason: string }[]; mandate: unknown[]; audit: { detail: { via: string } }[]; message: { alsoInChannel?: boolean } };
         const by = (n: string) => (tsOut as Row[]).find((x) => x.name === n)!;
         expect(by('남의 머리에 답 → thread_reply').inbox).toEqual([{ who: 'MEM', reason: 'thread_reply' }]);

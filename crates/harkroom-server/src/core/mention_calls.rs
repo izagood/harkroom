@@ -123,6 +123,8 @@ pub struct Resolved {
     pub account_handles: HashSet<String>,
     pub called_ids: Vec<String>,
     pub capped_ids: HashSet<String>,
+    /// TS `[...calls.cappedIds]` — 상한에 막힌 계정을 처음 넣은 순서로(백스톱 카드의 `cappedIds`, C1c-4d-2).
+    pub capped_order: Vec<String>,
     pub denied_ids: HashSet<String>,
     pub team_plans: Vec<TeamPlan>,
     pub target_call: Vec<Target>,
@@ -308,10 +310,11 @@ pub async fn resolve(conn: &mut PgConnection, input: &Input<'_>) -> Result<Resol
     });
 
     let mut capped: HashSet<String> = HashSet::new();
+    let mut capped_order: Vec<String> = Vec::new();
     if chain_capped {
         for id in &split.call {
-            if id != input.author_id && agent_ids.contains(id) {
-                capped.insert(id.clone());
+            if id != input.author_id && agent_ids.contains(id) && capped.insert(id.clone()) {
+                capped_order.push(id.clone());
             }
         }
     }
@@ -520,6 +523,7 @@ pub async fn resolve(conn: &mut PgConnection, input: &Input<'_>) -> Result<Resol
         account_handles,
         called_ids: split.call,
         capped_ids: capped,
+        capped_order,
         denied_ids: denied,
         team_plans,
         target_call,

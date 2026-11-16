@@ -30,6 +30,7 @@
 use super::ask_reply_close;
 use super::audience::audience_for;
 use super::cause_link;
+use super::chain_backstop;
 use super::chain_stall::{self, STALL_HOP_LIMIT};
 use super::implicit_delegation;
 use super::invoke_gate;
@@ -297,6 +298,9 @@ pub(crate) struct Origin<'a> {
     pub(crate) turn_id: Option<&'a str>,
     /// TS 입력 `meta` — MCP 는 모델 신고(`reportedModelMeta`)만 싣는다. 부름 meta 가 그 위에 얹힌다.
     pub(crate) meta: serde_json::Map<String, Value>,
+    /// TS `serverNotice` — 서버가 에이전트 이름으로 세운 알림 줄(백스톱 카드, C1c-4d-2). 결과가 아니다: 회신권·위임 의무·암묵 위임을
+    /// 건드리지 않고, 갈래 판정(TS 몫)도 하지 않는다(서버 안쪽 호출이라 넘길 TS 라우트가 없다). 라우트 입력에서는 켜지 않는다.
+    pub(crate) server_notice: bool,
 }
 
 /// 읽은 JSON 이 TS 몫인가 — 키만 보고 정한다(값이 틀렸으면 TS 가 400 을 준다).
@@ -393,6 +397,15 @@ pub(crate) enum Outcome {
         notified: Vec<String>,
         mandate: Option<mandate_stamp::Created>,
     },
+}
+
+/// 상한에 막힌 부름 — 커밋 뒤 [`chain_backstop::raise`] 가 받는다(TS `postMessage` 끝의 `raiseChainBackstop` 입력).
+pub(crate) struct Capped {
+    source: String,
+    thread_root: String,
+    capped_ids: Vec<String>,
+    limit: i64,
+    age: bool,
 }
 
 /// TS `resolveMentionCalls` 의 입력 — 깊이·사슬 시작은 [`chain_link`](사람은 언제나 0·없음), principal 없음(REST 에는 원인이 없다).
@@ -512,6 +525,8 @@ fn iso_ms(ms: i64) -> String {
     )
 }
 
+/// 글 하나를 올린다. 에이전트 결과 글의 부름이 사슬 상한에 막혔으면 **커밋 뒤** 소유자에게 백스톱 카드를 세운다(TS `postMessage`
+/// 끝의 `raiseChainBackstop`, C1c-4d-2). 카드가 실패해도 이 글은 이미 나갔다 — 오류는 적고 삼킨다(TS 와 같다).
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn post_in_tx(
     st: &PostState,
@@ -524,7 +539,50 @@ pub(crate) async fn post_in_tx(
     is_dm: bool,
     origin: &Origin<'_>,
 ) -> Result<Outcome, sqlx::Error> {
+    let (out, capped) = post_tx(
+        st,
+        channel,
+        author,
+        author_is_agent,
+        input,
+        idempotency_key,
+        audience,
+        is_dm,
+        origin,
+    )
+    .await?;
+    if let Some(c) = capped {
+        let b = chain_backstop::Input {
+            agent_id: author,
+            channel_id: channel,
+            thread_root_id: &c.thread_root,
+            source_message_id: &c.source,
+            capped_ids: &c.capped_ids,
+            limit: c.limit,
+            age: c.age,
+        };
+        if let Err(e) = chain_backstop::raise(st, &b, audience, is_dm).await {
+            eprintln!("[chainBackstop] 카드를 세우지 못했다(글은 나갔다): {e}");
+        }
+    }
+    Ok(out)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn post_tx(
+    st: &PostState,
+    channel: &str,
+    author: &str,
+    author_is_agent: bool,
+    input: &PostBody,
+    idempotency_key: Option<&str>,
+    audience: &Value,
+    is_dm: bool,
+    origin: &Origin<'_>,
+) -> Result<(Outcome, Option<Capped>), sqlx::Error> {
     let s = sql();
+    // TS `isResult` — 결과로 세는 에이전트 글(서버 알림 줄은 아니다). 이 앞단이 맡는 글은 모두 `user` 다.
+    let is_result = !origin.server_notice;
     let (body, attachment_ids) = (input.body.as_str(), input.attachment_ids.as_slice());
     let root = input.thread_root.as_deref();
     let mut tx = st.write.begin().await?;
@@ -538,11 +596,11 @@ pub(crate) async fn post_in_tx(
             .is_some();
         if !ok {
             tx.rollback().await?;
-            return Ok(Outcome::BadThread);
+            return Ok((Outcome::BadThread, None));
         }
     }
     // TS 회신권 「결과 한 번」 락 — 같은 작성자·같은 스레드의 결과끼리 줄을 세운다(채널 락보다 언제나 앞).
-    if let (true, Some(r)) = (author_is_agent, root) {
+    if let (true, true, Some(r)) = (author_is_agent, is_result, root) {
         sqlx::query("select pg_advisory_xact_lock($1, hashtext($2))")
             .bind(s.reply_lock_class)
             .bind(format!("{author}:{r}"))
@@ -627,7 +685,8 @@ pub(crate) async fn post_in_tx(
         author,
         author_is_agent,
         body,
-        root,
+        // TS `replyGrantThreadId: isResult ? threadRootId : null`.
+        root.filter(|_| is_result),
         &link,
         principal.as_ref().map(|(p, _)| p.as_str()),
     )
@@ -640,24 +699,26 @@ pub(crate) async fn post_in_tx(
             .ok()
             .as_deref(),
     );
+    // 상한에 막힌 부름은 C1c-4d-2 부터 Rust 가 맡는다 — 커밋 뒤 백스톱 카드([`post_in_tx`]).
     if author_is_agent
-        && (!calls.capped_ids.is_empty()
-            || (!calls.called_ids.is_empty()
-                && match implicit {
-                    None => true,
-                    Some(implicit_delegation::Mode::Off) => false,
-                    Some(_) => !st.implicit_ok,
-                }))
+        && is_result
+        && !calls.called_ids.is_empty()
+        && match implicit {
+            None => true,
+            Some(implicit_delegation::Mode::Off) => false,
+            Some(_) => !st.implicit_ok,
+        }
     {
         tx.rollback().await?;
-        return Ok(Outcome::ToTs);
+        return Ok((Outcome::ToTs, None));
     }
     sqlx::query(s.lock.as_str())
         .bind(s.lock_class)
         .bind(channel)
         .execute(&mut *tx)
         .await?;
-    if let Some(r) = root {
+    // 서버 알림 줄은 라우트를 거치지 않는다(TS `raiseChainBackstop` 이 `postMessage` 를 바로 부른다) — 글로 카드 고르기·위임 닫기가 없다.
+    if let (true, Some(r)) = (is_result, root) {
         let ts: bool = sqlx::query_scalar(TS_THREAD_SQL)
             .bind(r)
             .bind(author)
@@ -667,7 +728,7 @@ pub(crate) async fn post_in_tx(
             .await?;
         if ts {
             tx.rollback().await?;
-            return Ok(Outcome::ToTs);
+            return Ok((Outcome::ToTs, None));
         }
     }
     if let Some(key) = idempotency_key {
@@ -680,11 +741,14 @@ pub(crate) async fn post_in_tx(
         if let Some(id) = dup {
             let row = message_by_id(&mut *tx, &id).await?;
             tx.commit().await?;
-            return Ok(match row {
-                Some(r) => Outcome::Replayed(r),
-                // TS 는 `existing.rows[0]`(undefined)을 그대로 보낸다 — 지울 수 없는 행이라 닿지 않는 갈래다.
-                None => Outcome::Replayed("null".into()),
-            });
+            return Ok((
+                match row {
+                    Some(r) => Outcome::Replayed(r),
+                    // TS 는 `existing.rows[0]`(undefined)을 그대로 보낸다 — 지울 수 없는 행이라 닿지 않는 갈래다.
+                    None => Outcome::Replayed("null".into()),
+                },
+                None,
+            ));
         }
     }
     // TS `stallShadowFor` — 정체 한도가 막았을 부름(부른 에이전트만, 부른 순서). 상한에 막힌 부름은 위 가드가 이미 TS 로 넘겼다.
@@ -755,7 +819,7 @@ pub(crate) async fn post_in_tx(
             && found.iter().all(|(_, up, m)| up == author && m.is_none());
         if !ok {
             tx.rollback().await?;
-            return Ok(Outcome::BadAttachment);
+            return Ok((Outcome::BadAttachment, None));
         }
         sqlx::query(s.attach_update.as_str())
             .bind(&id)
@@ -836,7 +900,7 @@ pub(crate) async fn post_in_tx(
     }
     // TS 암묵 위임(P4) — 회신권을 연 뒤, `thread_reply` 앞. 결과로 세는 에이전트 글(이 앞단이 맡는 글은 모두 `user` 다)이 부른,
     // inbox 가 실제로 간 계정 중 에이전트만 판정한다.
-    if let (true, Some(mode)) = (author_is_agent, implicit) {
+    if let (true, true, Some(mode)) = (author_is_agent, is_result, implicit) {
         let called: Vec<&String> = calls
             .called_ids
             .iter()
@@ -874,7 +938,7 @@ pub(crate) async fn post_in_tx(
         _ => wake_preempt::Preempted::default(),
     };
     // TS `closeReplyGrants` — 결과를 냈으니 이 스레드에서 받은 회신권을 닫는다(이 글은 위에서 이미 게이트를 지났다).
-    if let (true, Some(r)) = (author_is_agent, root) {
+    if let (true, true, Some(r)) = (author_is_agent, is_result, root) {
         sqlx::query(s.reply_close.as_str())
             .bind(author)
             .bind(r)
@@ -883,7 +947,8 @@ pub(crate) async fn post_in_tx(
     }
     // TS `closeDelegationsForReply`(선점 뒤, 같은 tx) — 사람 글은 결과(`report`·`fail`)가 아니라 닫지 않고 깨우지 않는다:
     // 기한만 밀고, v1 이면 「대기 중 update」로 적는다(턴 끝에 TS 스위퍼가 넘긴 쪽에 보낸다). 스위치를 모르면 위 가드가 이미 TS 로 넘겼다.
-    if let (Some(r), Some(on)) = (root, v2) {
+    // 서버 알림 줄은 위임 의무를 닫지도 밀지도 않는다(TS `!input.serverNotice`).
+    if let (false, Some(r), Some(on)) = (origin.server_notice, root, v2) {
         sqlx::query(s.deleg_touch.as_str())
             .bind(author)
             .bind(r)
@@ -935,11 +1000,33 @@ pub(crate) async fn post_in_tx(
         ask_reply_close::close_by_reply(&mut tx, r, channel, seq, author, &id).await?;
     }
     tx.commit().await?;
-    Ok(Outcome::Posted {
-        row,
-        notified,
-        mandate,
-    })
+    // TS `authorIsAgent && isResult && calls.cappedIds.size > 0` — 커밋 뒤 백스톱 카드의 입력.
+    let capped = (author_is_agent && is_result && !calls.capped_ids.is_empty()).then(|| {
+        // TS `[...calls.cappedIds]` — 집합에 넣은 순서(부른 순서)다.
+        Capped {
+            source: id.clone(),
+            thread_root: root.unwrap_or(&id).to_owned(),
+            capped_ids: calls.capped_order.clone(),
+            limit: calls
+                .call_meta
+                .get("mentionChainLimit")
+                .and_then(Value::as_i64)
+                .unwrap_or(mention_calls::MENTION_CHAIN_LIMIT),
+            age: calls
+                .call_meta
+                .get("mentionChainReason")
+                .and_then(Value::as_str)
+                == Some("age"),
+        }
+    });
+    Ok((
+        Outcome::Posted {
+            row,
+            notified,
+            mandate,
+        },
+        capped,
+    ))
 }
 
 /// TS `channel.kind = 'dm'` — 없는 채널은 거짓(insert 가 FK 로 실패한다, TS 와 같다).

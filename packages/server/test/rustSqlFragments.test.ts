@@ -25,9 +25,10 @@ import { MENTION_POLICY_SQL } from '../src/services/mentionPolicy.js';
 import { IMPLICIT_AGENT_CALLEES_SQL, IMPLICIT_LOCK_SQL, IMPLICIT_LOG_INSERT_SQL, IMPLICIT_PLAN_SQL, IMPLICIT_VERDICT_SQL } from '../src/services/implicitDelegation.js';
 import { CAUSE_REASONS_SQL, PRINCIPAL_FOR_AGENT_POST_SQL, PRINCIPAL_INVOKES_SQL } from '../src/services/invokePrincipal.js';
 import { MANDATE_FOR_AGENT_POST_SQL } from '../src/services/mandates.js';
+import { CHAIN_BACKSTOP_OPEN_SQL, CHAIN_BACKSTOP_OWNER_SQL } from '../src/services/chainBackstop.js';
 import { EFFECTIVE_MODEL_SQL } from '../src/services/reportedModel.js';
 import { CAUSE_DEPTH_SQL, VERIFIED_CAUSE_LINK_SQL } from '../src/services/messages.js';
-import { ENQUEUE_INBOX_PUSH_MANY_SQL, INBOX_PUSH_REASON_LIST, PUSH_AGENT_REPLY_DELAY_SEC } from '../src/services/push/pushJobs.js';
+import { ENQUEUE_ASK_PUSH_SQL, ENQUEUE_INBOX_PUSH_MANY_SQL, INBOX_PUSH_REASON_LIST, PUSH_AGENT_REPLY_DELAY_SEC } from '../src/services/push/pushJobs.js';
 import { HAS_OLDER_SQL, INBOX_FOLDED_WAKES_SQL, INBOX_HANDED_SQL, INBOX_STARTED_IN_SQL, INBOX_TEAM_ROSTER_SQL, LIST_INBOX_SQL, LIST_MESSAGES_SQL, MESSAGE_BY_ID_SQL, READ_LIST_ROW_SQL, SEARCH_MESSAGES_SQL } from '../src/services/messages.js';
 import { POST_CHANNEL_KIND_SQL, POST_DM_PEERS_SQL, POST_IDEMPOTENCY_FIND_SQL, POST_IDEMPOTENCY_INSERT_SQL, POST_INSERT_SQL, POST_ROOT_AUTHOR_SQL, POST_THREAD_ROOT_OF_SQL, SEQ_LOCK_CLASS, SEQ_LOCK_SQL } from '../src/services/messages.js';
 import { ATTACH_FIND_SQL, ATTACH_UPDATE_SQL } from '../src/services/attachments.js';
@@ -236,6 +237,10 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     implicit_log_insert: IMPLICIT_LOG_INSERT_SQL,
     delegation_insert: DELEGATION_INSERT_SQL,
     delegation_item_insert: DELEGATION_ITEM_INSERT_SQL,
+    // S5.3 C1c-4d-2 백스톱 카드(`core/chain_backstop.rs`) — 소유자·열린 카드·ask 푸시, 완성 문장째.
+    chain_backstop_owner: CHAIN_BACKSTOP_OWNER_SQL,
+    chain_backstop_open: CHAIN_BACKSTOP_OPEN_SQL,
+    enqueue_ask_push: ENQUEUE_ASK_PUSH_SQL,
     delegation_v2_update_pending: DELEGATION_V2_UPDATE_PENDING_SQL,
     decider_row: DECIDER_ROW_SQL,
     decider_seen: DECIDER_SEEN_SQL,

@@ -30,21 +30,25 @@ export interface ChainBackstopMeta {
   agentId: string; sourceMessageId: string; cappedIds: string[]; limit: number; reason: 'hops' | 'age';
 }
 
-export async function raiseChainBackstop(pool: Pool, b: ChainBackstopInput): Promise<string | null> {
-  const owner = (await pool.query<{ ownerId: string; handle: string }>(
-    `select c.owner_account_id as "ownerId", a.handle
+/**
+ * 막힌 에이전트의 소유자(활성 사람)와 그 에이전트의 handle. Rust 코어(`core/chain_backstop.rs`, S5.3 C1c-4d-2)가 골든으로 받는다.
+ */
+export const CHAIN_BACKSTOP_OWNER_SQL = `select c.owner_account_id::text as "ownerId", a.handle
        from account a join agent_config c on c.account_id = a.id join account o on o.id = c.owner_account_id
-      where a.id = $1 and o.kind = 'human' and o.deleted_at is null and o.disabled_at is null`,
-    [b.agentId])).rows[0];
-  // 소유자가 없으면 누를 사람이 없다 — 막힘 표시(`mentionChainCapped`)만 남는다.
-  if (!owner) return null;
-  const open = (await pool.query<{ id: string }>(
-    `select id from message
-      where channel_id = $1 and coalesce(thread_root_id, id) = $2 and deleted_at is null
+      where a.id = $1::uuid and o.kind = 'human' and o.deleted_at is null and o.disabled_at is null`;
+
+/** 이 스레드에 열린 백스톱 카드(가장 최근 하나). Rust 코어가 골든으로 받는다. */
+export const CHAIN_BACKSTOP_OPEN_SQL = `select id::text as id from message
+      where channel_id = $1::uuid and coalesce(thread_root_id, id) = $2::uuid and deleted_at is null
         and meta ? 'chainBackstop'
         and meta->'ask'->>'answeredWith' is null and meta->'ask'->>'closedAt' is null
-      order by seq desc limit 1`,
-    [b.channelId, b.threadRootId])).rows[0];
+      order by seq desc limit 1`;
+
+export async function raiseChainBackstop(pool: Pool, b: ChainBackstopInput): Promise<string | null> {
+  const owner = (await pool.query<{ ownerId: string; handle: string }>(CHAIN_BACKSTOP_OWNER_SQL, [b.agentId])).rows[0];
+  // 소유자가 없으면 누를 사람이 없다 — 막힘 표시(`mentionChainCapped`)만 남는다.
+  if (!owner) return null;
+  const open = (await pool.query<{ id: string }>(CHAIN_BACKSTOP_OPEN_SQL, [b.channelId, b.threadRootId])).rows[0];
   if (open) return open.id;
 
   const meta: AskMeta & { chainBackstop: ChainBackstopMeta } = {
