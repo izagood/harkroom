@@ -1823,12 +1823,13 @@ const EXIT_COMMAND_NOT_FOUND: i32 = 127;
 
 /// daemon 이 **점유를 보고 물러났다**는 종료 코드.
 ///
-/// **출처는 옛 Node 오퍼레이터(P3 에서 지움)의 `src/run.ts` 의 `EXIT_OCCUPIED` 였다.** 그 값이 이 상수와
+/// **출처는 `crates/harkroom-operator/src/serve.rs` 의 `EXIT_OCCUPIED` 다.** 그 값이 이 상수와
 /// 갈리면 앱은 점유를 다른 사유로 읽고(또는 그 반대로) 사람에게 엉뚱한 말을 한다.
+/// 두 값이 같은지는 `packages/desktop/test/operatorExitCodes.test.ts` 가 대조하고,
 /// 앱이 이 상수로 판정하는지는 `packages/desktop/test/daemonExitCodes.test.ts` 가 본다.
 ///
-/// daemon 쪽에서 이 코드는 **실패가 아니다**(`daemon/src/main.ts`: *"앱은 그쪽에 붙으면
-/// 된다"*). 앱이 그 조언을 실행할 수 있는 자리에서는 애초에 여기까지 오지 않는다 —
+/// daemon 쪽에서 이 코드는 **실패가 아니다**(앱은 그쪽에 붙으면 된다). 앱이 그 조언을
+/// 실행할 수 있는 자리에서는 애초에 여기까지 오지 않는다 —
 /// `ensure_at` 의 1번 관문이 먼저 붙는다. 여기 온 것은 **붙을 수 없는 상대**가 쥐고
 /// 있다는 뜻이고, 그때 사람이 할 일은 `occupied_reason` 이 말한다.
 const EXIT_OCCUPIED: i32 = 10;
