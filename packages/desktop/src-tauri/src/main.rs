@@ -1188,7 +1188,7 @@ fn main() {
                 let root = daemon_client::app_data_root(&dir);
                 // 스위치를 바꿔 떴으면 반대쪽 모드로 떠 있던 오퍼레이터를 먼저 내린다 — 색인을 고치기 전에 자리를 읽는다.
                 let on = community_root::per_community_enabled();
-                for line in daemon_client::retire_operators_at(&community_root::roots_to_retire_on_switch(&root, on)) {
+                for line in daemon_client::retire_operators_at(&community_root::roots_to_retire_on_switch(&root, on), &daemon_client::my_bundle_operators()) {
                     eprintln!("harkroom: {line}");
                     daemon_client::log_line(&line);
                 }

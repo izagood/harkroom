@@ -95,6 +95,22 @@ impl OperatorImpl {
             OperatorImpl::Rust => OPERATOR_RS_SIDECAR_NAME,
         }
     }
+
+    fn other(self) -> Self {
+        match self {
+            OperatorImpl::Node => OperatorImpl::Rust,
+            OperatorImpl::Rust => OperatorImpl::Node,
+        }
+    }
+}
+
+/// **내 번들**의 오퍼레이터 실행 파일 둘(Node·Rust). 회수는 기록의 `entryPath` 가 이 중 하나일 때만 한다(G2·#2254 security L1) —
+/// 같은 HOME 의 dev·시험 빌드가 릴리스 앱의 오퍼레이터를 내리지 않게 한다. 업그레이드는 같은 `/Applications/…` 경로라 막히지 않는다.
+pub fn my_bundle_operators() -> Vec<PathBuf> {
+    [OPERATOR_SIDECAR_NAME, OPERATOR_RS_SIDECAR_NAME]
+        .iter()
+        .filter_map(|n| crate::sidecar_path(n).ok())
+        .collect()
 }
 
 /// 소켓·pid·토큰 파일명에 박히는 프로토콜 버전. **`@harkroom/shared` 의
@@ -1158,10 +1174,12 @@ pub fn ensure_daemon(
     // **내 빌드의 daemon 실행 파일.** 소켓을 쥔 daemon 이 이것과 다른 것이면 안 붙는다
     // (`same_entry_path` 주석: 소켓이 워크트리를 가로질러 공유된다).
     let my_entry = crate::sidecar_path(operator_impl.sidecar_name())?;
+    // 내 번들의 다른 구현 사이드카(G2) — 소켓을 쥔 것이 이것이면 구현 스위치가 바뀐 것이라 내리고 띄운다.
+    let my_other = crate::sidecar_path(operator_impl.other().sidecar_name())?;
     let launch_app = app.clone();
     let launch_paths = paths.clone();
     let launch_target = target.clone();
-    let (conn, kind) = ensure_at(&paths, &my_entry, runner_exit_emitter(app), move || {
+    let (conn, kind) = ensure_at(&paths, &my_entry, &[my_other], runner_exit_emitter(app), move || {
         spawn_daemon(&launch_app, &launch_paths, launch_target.as_ref())
     })?;
     guard.insert(slot, conn.clone());
@@ -1446,27 +1464,43 @@ fn process_runs_entry(pid: u32, entry_path: &str) -> bool {
 ///
 /// 남의 프로세스를 죽이지 않게 셋을 다 본다: 소켓이 있다 · pid 파일에 pid 와 `entryPath` 가 있다 · 그 pid 의 실행 파일이
 /// `entryPath` 와 같다(pid 재사용·옛 기록이면 건너뛴다). 돌려주는 값은 사람이 읽을 줄(내렸다/건너뛰었다).
-pub fn retire_operators_at(roots: &[PathBuf]) -> Vec<String> {
+pub fn retire_operators_at(roots: &[PathBuf], mine: &[PathBuf]) -> Vec<String> {
     let mut lines = Vec::new();
     for root in roots {
         let paths = endpoint_files(root);
+        let before = lines.len();
+        retire_operator_at(&paths, mine, &mut lines);
+        // 이 회수는 앱 setup 에서 클라이언트 로그 자리(`CLIENT_LOG`)가 정해지기 **전**에 돈다 — 그 자리의 클라이언트 로그에 직접 남긴다.
+        for line in &lines[before..] {
+            append_client_log(&paths.dir, line);
+        }
+    }
+    lines
+}
+
+fn retire_operator_at(paths: &EndpointPaths, mine: &[PathBuf], lines: &mut Vec<String>) {
+    {
         if !paths.socket.exists() {
-            continue;
+            return;
         }
         let Some(rec) = read_pid_record(&paths.pid) else {
             lines.push(format!("스위치 바뀜: `{}` 에 소켓은 있는데 pid 기록이 없어 건너뛴다", paths.dir.display()));
-            continue;
+            return;
         };
         if rec.pid == 0 || rec.entry_path.is_empty() {
             lines.push(format!("스위치 바뀜: `{}` 의 pid 기록에 실행 파일이 없어 건너뛴다", paths.dir.display()));
-            continue;
+            return;
+        }
+        if !mine.iter().any(|m| same_entry_path(&rec.entry_path, m)) {
+            lines.push(format!("스위치 바뀜: `{}` 의 오퍼레이터(pid {})는 다른 번들(`{}`)의 것이라 건너뛴다", paths.dir.display(), rec.pid, rec.entry_path));
+            return;
         }
         let same = process_runs_entry(rec.pid, &rec.entry_path);
         if !same {
             lines.push(format!("스위치 바뀜: `{}` 의 pid {} 는 그 오퍼레이터가 아니다(끝났거나 다른 프로세스) — 건너뛴다", paths.dir.display(), rec.pid));
-            continue;
+            return;
         }
-        let gone = retire_daemon(&paths, rec.pid);
+        let gone = retire_daemon(paths, rec.pid);
         lines.push(format!(
             "스위치 바뀜: `{}` 의 오퍼레이터(pid {})를 {}",
             paths.dir.display(),
@@ -1474,12 +1508,12 @@ pub fn retire_operators_at(roots: &[PathBuf]) -> Vec<String> {
             if gone { "내렸다" } else { "내리지 못했다(30초)" }
         ));
     }
-    lines
 }
 
 fn ensure_at(
     paths: &EndpointPaths,
     my_entry: &Path,
+    my_others: &[PathBuf],
     on_event: impl Fn(&str, Value) + Send + Clone + 'static,
     mut launch: impl FnMut() -> Result<DaemonExitWatch, String>,
 ) -> Result<(Arc<DaemonConnection>, EnsureKind), String> {
@@ -1496,7 +1530,28 @@ fn ensure_at(
         // daemon 을 죽이는 경로는 이 변경으로 생기지 않는다.
         let record = read_pid_record(&paths.pid);
         let theirs = record.as_ref().map(|r| r.entry_path.as_str()).unwrap_or("");
-        if !same_entry_path(theirs, my_entry) {
+        let their_pid = record.as_ref().map(|r| r.pid).unwrap_or(0);
+        if !same_entry_path(theirs, my_entry)
+            && their_pid != 0
+            && my_others.iter().any(|o| same_entry_path(theirs, o))
+            && process_runs_entry(their_pid, theirs)
+        {
+            // ── G2: 소켓을 쥔 것이 **내 번들의 다른 구현**(옛 Node ↔ Rust) 오퍼레이터다 ──────
+            //
+            // 구현 스위치(`HARKROOM_OPERATOR_IMPL`)를 바꿔 다시 뜬 자리다. 그대로 두면 붙지도 못하고, 띄운 우리 것은
+            // 점유로 물러난다 — 같은 operatorId 로 둘이 서버에 붙을 일은 없지만 앱이 오퍼레이터를 못 쓴다. 내 번들 경로일
+            // 때만 내린다: 남의 빌드(dev·시험·다른 워크트리)는 아래 「다른 빌드」 가지로 가서 그대로 산다.
+            log_line(&format!(
+                "구현 바뀜: 소켓을 쥔 오퍼레이터가 내 번들의 다른 구현이다(`{theirs}`) — pid {their_pid} 를 내리고 `{}` 를 띄운다",
+                my_entry.display(),
+            ));
+            let gone = retire_daemon(paths, their_pid);
+            log_line(&format!(
+                "구현 바뀜: 옛 오퍼레이터(pid {their_pid})를 {}",
+                if gone { "내렸다" } else { "내리지 못했다(30초)" }
+            ));
+            retired_one = true;
+        } else if !same_entry_path(theirs, my_entry) {
             // **사유를 값으로 남긴다. 화면 문구는 만들지 않는다**(`#443`·`#460` 범위).
             // 로그에 두 경로를 함께 찍는 이유: 이 로그 파일은 지금 여러 빌드가 공유하고
             // 있어 누가 쓴 줄인지 모른다(별건). `entryPath` 가 그 줄의 출처를 말해 준다.
@@ -1515,7 +1570,6 @@ fn ensure_at(
             // 이 가지가 없으면 daemon 쪽 수정은 릴리스를 타고도 사람에게 도달하지 않는다
             // (`should_retire_daemon` 주석의 실측). 붙어 버리면 그 순간 옛 코드가 계속
             // 러너를 띄우고, 앱은 그 사실을 로그 한 줄로만 남긴다.
-            let their_pid = record.as_ref().map(|r| r.pid).unwrap_or(0);
             log_line(&format!(
                 "소켓을 쥔 daemon 이 낡은 번들의 것이다(앱 {} < 내 {}) — 물러나게 한다: pid {their_pid}",
                 record.as_ref().map(|r| r.app_version.as_str()).unwrap_or("?"),
@@ -2303,6 +2357,16 @@ static CLIENT_LOG: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 ///
 /// 로그를 못 남기는 것이 앱 기동을 막을 이유는 아니다. 다만 그 사실 자체는 stderr 에
 /// 남긴다 — 터미널 실행에서는 보인다.
+/// 회수 줄을 그 자리(`dir`)의 클라이언트 로그에 남긴다 — `CLIENT_LOG` 가 서기 전(앱 setup)에 도는 회수용이다.
+/// 경로는 Rust 가 정한 오퍼레이터 디렉터리 안의 고정 이름뿐이다(웹뷰가 고르지 못한다). 못 쓰면 조용히 넘어간다.
+fn append_client_log(dir: &Path, line: &str) {
+    use std::io::Write;
+    let path = dir.join(format!("operator-v{DAEMON_PROTOCOL_VERSION}-client.log"));
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = writeln!(f, "[daemon-client] {line}");
+    }
+}
+
 pub fn log_line(line: &str) {
     eprintln!("[daemon-client] {line}");
 
@@ -3407,6 +3471,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
         let outcome = ensure_at(
             &paths,
             &program,
+            &[],
             |_, _| {},
             || {
                 *child.lock().unwrap() = Some(launch_daemon(&program, &paths, "nonce-fresh"));
@@ -3468,6 +3533,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
         let (conn, kind) = ensure_at(
             &paths,
             &program,
+            &[],
             |_, _| {},
             || {
                 launched.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -3526,6 +3592,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
         let outcome = ensure_at(
             &paths,
             &program,
+            &[],
             |_, _| {},
             || {
                 *child.lock().unwrap() = Some(launch_daemon(&program, &paths, "nonce-spawn"));
@@ -3591,6 +3658,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
         let (conn, _) = ensure_at(
             &paths,
             &program,
+            &[],
             // 콜백이 `(name, payload)` 로 일반화됐다(이벤트가 둘이 됐다) — 이 테스트는
             // 러너 exit 만 보므로 그 이름만 걸러 옛 단언을 그대로 유지한다.
             move |name, payload| {
@@ -3707,6 +3775,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
         let outcome = ensure_at(
             &paths,
             &my_entry,
+            &[],
             |_, _| {},
             || {
                 launched.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -3769,6 +3838,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
         let (conn, kind) = ensure_at(
             &paths,
             &program,
+            &[],
             |_, _| {},
             || {
                 launched.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -4367,17 +4437,18 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
         });
         // 기록의 실행 파일이 다르면(pid 재사용·남의 프로세스) 건너뛴다 — 살아 있어야 한다.
         std::fs::write(&paths.pid, format!(r#"{{"pid":{pid},"entryPath":"/bin/cat"}}"#)).unwrap();
-        let lines = retire_operators_at(&[root.clone()]);
+        let mine = [PathBuf::from("/bin/sleep"), PathBuf::from("/bin/cat")];
+        let lines = retire_operators_at(&[root.clone()], &mine);
         assert!(lines[0].contains("건너뛴다"), "{lines:?}");
         assert!(rx.recv_timeout(Duration::from_millis(300)).is_err());
         // 같으면 내린다.
         std::fs::write(&paths.pid, format!(r#"{{"pid":{pid},"entryPath":"/bin/sleep"}}"#)).unwrap();
-        let lines = retire_operators_at(&[root.clone()]);
+        let lines = retire_operators_at(&[root.clone()], &mine);
         assert!(lines[0].contains("내렸다"), "{lines:?}");
         assert!(!rx.recv_timeout(Duration::from_secs(5)).unwrap().success());
         // 소켓이 없으면 아무 줄도 없다(그 자리엔 오퍼레이터가 없다).
         std::fs::remove_file(&paths.socket).unwrap();
-        assert!(retire_operators_at(&[root.clone()]).is_empty());
+        assert!(retire_operators_at(&[root.clone()], &mine).is_empty());
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -4404,9 +4475,89 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
         let img = process_image(pid).expect("image");
         assert!(!same_entry_path(script.to_str().unwrap(), &img[0]), "실행 파일은 인터프리터여야 시험이 뜻이 있다: {img:?}");
         std::fs::write(&paths.pid, format!(r#"{{"pid":{pid},"entryPath":"{}"}}"#, script.display())).unwrap();
-        let lines = retire_operators_at(&[root.clone()]);
+        let lines = retire_operators_at(&[root.clone()], &[script.clone()]);
         assert!(lines[0].contains("내렸다"), "{lines:?}");
         assert!(!rx.recv_timeout(Duration::from_secs(5)).unwrap().success());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 시험용 「가짜 오퍼레이터」 — 셸 스크립트(실행 파일은 `/bin/sh`, 경로는 argv). SIGTERM 을 받으면 소켓·토큰을 걷고 물러난다
+    /// (진짜 오퍼레이터의 퇴장 경로와 같은 모양). 돌려주는 값: (스크립트 경로, pid, 끝나면 신호가 오는 rx).
+    fn spawn_fake_operator(root: &Path, paths: &EndpointPaths, name: &str) -> (PathBuf, u32, std::sync::mpsc::Receiver<std::process::ExitStatus>) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(&paths.dir).unwrap();
+        std::fs::write(&paths.socket, "").unwrap();
+        std::fs::write(&paths.token, "t").unwrap();
+        let script = root.join(name);
+        std::fs::write(
+            &script,
+            format!("#!/bin/sh\ntrap 'rm -f \"{}\" \"{}\"; exit 0' TERM\nwhile :; do sleep 0.05; done\n", paths.socket.display(), paths.token.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let child = std::process::Command::new(&script).spawn().unwrap();
+        let pid = child.id();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut child = child;
+            let _ = tx.send(child.wait().unwrap());
+        });
+        std::thread::sleep(Duration::from_millis(200));
+        std::fs::write(&paths.pid, format!(r#"{{"pid":{pid},"entryPath":"{}"}}"#, script.display())).unwrap();
+        (script, pid, rx)
+    }
+
+    /// G2 — 소켓을 쥔 것이 **내 번들의 다른 구현**(옛 Node 오퍼레이터)이면 내리고 우리 것을 띄운다.
+    #[test]
+    fn ensure_at_retires_my_bundles_other_impl_operator() {
+        let root = std::env::temp_dir().join(format!("hk-g2-other-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let paths = endpoint_files(&root);
+        let (node_op, _pid, rx) = spawn_fake_operator(&root, &paths, "harkroom-operator");
+        let my_entry = root.join("harkroom-operator-rs");
+        let launched = std::sync::atomic::AtomicBool::new(false);
+        let _ = ensure_at(&paths, &my_entry, &[node_op.clone()], |_, _| {}, || {
+            launched.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(DaemonExitWatch::exited("fake", Some(1), None))
+        });
+        assert!(rx.recv_timeout(Duration::from_secs(5)).is_ok(), "내 번들의 옛 구현 오퍼레이터가 살아 있다");
+        assert!(launched.load(std::sync::atomic::Ordering::SeqCst), "내린 뒤 우리 것을 띄우지 않았다");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// G2 대조군 — 소켓을 쥔 것이 **다른 번들**(dev·시험 빌드·다른 설치 경로)이면 구현이 달라도 건드리지 않는다(#2254 security L1).
+    #[test]
+    fn ensure_at_leaves_another_bundles_operator_alone() {
+        let root = std::env::temp_dir().join(format!("hk-g2-foreign-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let paths = endpoint_files(&root);
+        let (_theirs, pid, rx) = spawn_fake_operator(&root, &paths, "harkroom-operator");
+        let my_entry = root.join("mine").join("harkroom-operator-rs");
+        let my_other = root.join("mine").join("harkroom-operator");
+        let out = ensure_at(&paths, &my_entry, &[my_other], |_, _| {}, || Ok(DaemonExitWatch::exited("fake", Some(1), None)));
+        assert!(out.is_err());
+        assert!(rx.recv_timeout(Duration::from_millis(300)).is_err(), "다른 번들의 오퍼레이터를 내렸다");
+        assert!(paths.socket.exists());
+        unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+        let _ = rx.recv_timeout(Duration::from_secs(5));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// #2254 security L1 — 스위치 회수도 기록의 `entryPath` 가 내 번들일 때만 내린다. 내린 줄은 그 자리의 클라이언트 로그에 남는다.
+    #[test]
+    fn retire_operators_at_only_my_bundle_and_logs_to_client_log() {
+        let root = std::env::temp_dir().join(format!("hk-retire-bundle-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let paths = endpoint_files(&root);
+        let (op, _pid, rx) = spawn_fake_operator(&root, &paths, "harkroom-operator");
+        let lines = retire_operators_at(&[root.clone()], &[root.join("mine").join("harkroom-operator")]);
+        assert!(lines[0].contains("다른 번들"), "{lines:?}");
+        assert!(rx.recv_timeout(Duration::from_millis(300)).is_err(), "다른 번들의 오퍼레이터를 내렸다");
+        let lines = retire_operators_at(&[root.clone()], &[op]);
+        assert!(lines[0].contains("내렸다"), "{lines:?}");
+        assert!(rx.recv_timeout(Duration::from_secs(5)).is_ok());
+        let log = std::fs::read_to_string(paths.dir.join(format!("operator-v{DAEMON_PROTOCOL_VERSION}-client.log"))).unwrap();
+        assert!(log.contains("다른 번들") && log.contains("내렸다"), "{log}");
         let _ = std::fs::remove_dir_all(&root);
     }
 
