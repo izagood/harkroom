@@ -1020,7 +1020,7 @@ async fn open_write_pool() -> Option<sqlx::PgPool> {
 /// 요청과 나눠 쓴다. 이 풀이 막혀도 요청은 막히지 않는다. 권한([`loops::wake::WAKE_PRIVILEGES`])이 모자라면 띄우지 않는다(TS 에 남는다).
 async fn spawn_loops() {
     use harkroom_server::loops::{
-        bg, bg_produce, mandate_idle, outbox_prune, permission_expire, retention, wake,
+        bg, bg_produce, mandate_idle, outbox_prune, permission_expire, retention, scheduled, wake,
     };
     let Some(url) = std::env::var("DATABASE_WRITE_URL")
         .ok()
@@ -1109,6 +1109,22 @@ async fn spawn_loops() {
         }
         Ok(m) => eprintln!("front: loop outbox.prune off — missing privileges {m:?}"),
         Err(e) => eprintln!("front: loop outbox.prune off — privilege check failed: {e}"),
+    }
+    // S5.4 L1 — 예약 글 발송. 글 쓰기 권한 + 예약 행 표시 칸이 다 있어야 띄운다.
+    let post_privs = [
+        harkroom_server::core::msg_post::MESSAGE_POST_PRIVILEGES,
+        scheduled::SCHEDULED_PRIVILEGES,
+    ]
+    .concat();
+    let seqs = harkroom_server::core::msg_post::MESSAGE_POST_SEQUENCE_PRIVILEGES;
+    match write::missing_in(&pool, &post_privs, seqs).await {
+        Ok(m) if m.is_empty() => {
+            let implicit_ok = matches!(write::missing_in(&pool, harkroom_server::core::implicit_delegation::IMPLICIT_DELEGATION_PRIVILEGES, &[]).await, Ok(m) if m.is_empty());
+            eprintln!("front: loop scheduled on (runs only while server_loop owner is rust)");
+            scheduled::spawn(gate.clone(), pool.clone(), implicit_ok);
+        }
+        Ok(m) => eprintln!("front: loop scheduled off — missing privileges {m:?}"),
+        Err(e) => eprintln!("front: loop scheduled off — privilege check failed: {e}"),
     }
     // C5c-3a — 백그라운드 회차 닫기. 스위치는 TS 와 같은 env.
     let bg_on =

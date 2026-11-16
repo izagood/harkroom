@@ -356,8 +356,13 @@ fn parse_post(v: &Value) -> Option<PostBody> {
     })
 }
 
+/// TS `channelPostGate` 문장(`$1` 채널, `$2` 작성자 → `(멤버인가, 보관인가)`, 없는 채널은 줄 없음) — 예약 sweep 도 같은 술어를 쓴다.
+pub(crate) fn gate_sql() -> &'static str {
+    sql().gate.as_str()
+}
+
 /// 본문만 보고 TS 몫인가 — URL 후보(링크 미리보기)나 글 승인 넓은 체.
-fn ts_body(body: &str) -> bool {
+pub(crate) fn ts_body(body: &str) -> bool {
     let s = sql();
     if s.url.is_match(body) {
         return true;
