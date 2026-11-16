@@ -183,7 +183,7 @@ export const PUSH_SQL = {
          from push_device d join session s on s.token_hash = d.session_token_hash
         where d.account_id = $1::uuid and s.expires_at > now()
           and coalesce((d.prefs->>$2::text)::boolean, true)
-          and ($3::uuid is null or d.id = $3)`,
+          and ($3::uuid is null or d.id = $3::uuid)`,
   badge: `select count(distinct case when m.thread_root_id is not null and ${agentPlainSql('m', 'au')}
                                   then 't:' || m.thread_root_id else 'i:' || i.id end) as n
          from inbox i join message m on m.id = i.message_id join account au on au.id = m.author_id

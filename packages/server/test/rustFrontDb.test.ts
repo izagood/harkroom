@@ -4,7 +4,7 @@
 //
 // S5.2 P1 부터 **TS·Rust 대조 시험**(`tests/contrast.rs`)도 여기서 돈다: 같은 DB 에 TS 서버(buildServer)와 그것을 상류로 둔
 // 앞단 바이너리를 띄우고, 픽스처를 넣은 뒤 같은 요청을 두 쪽에 보내 답이 같은지 본다.
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { hashToken } from '../src/auth/tokens.js';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer, type AddressInfo } from 'node:net';
@@ -15,7 +15,7 @@ import { buildServer } from '../src/buildServer.js';
 import { agentPat, bootstrapAdmin, createAgent, createMember, registerOperator } from './helpers/fixtures.js';
 import { startTestDb } from './helpers/testDb.js';
 import { fanOutCalls, postMessage, resolveMentionCalls } from '../src/services/messages.js';
-import { writeFileSync as writeCases } from 'node:fs';
+import { mkdtempSync, writeFileSync as writeCases } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join as joinPath } from 'node:path';
 import {
@@ -85,6 +85,15 @@ const RETENTION_GRANTS = ['delete on idempotency_key', 'delete on session'];
 /** `loops/outbox_prune.rs::OUTBOX_PRUNE_PRIVILEGES` 만 가진 쓰기 역할(S5.3 C5c-4). */
 const OUTBOX_PRUNE_GRANTS = ['delete on event_outbox'];
 
+/** `loops/push.rs::PUSH_PRIVILEGES` 만 가진 쓰기 역할(S5.3 C5e-2). 읽기는 pg_read_all_data 가 맡는다. */
+const PUSH_GRANTS = [
+  'insert, update, delete on push_job',
+  'delete on push_device',
+  'update (last_ok_at, last_error) on push_device',
+  'insert, delete on push_thread_sound',
+  'update (sounded_at) on push_thread_sound',
+];
+
 /** `loops/mandate_idle.rs::MANDATE_IDLE_PRIVILEGES`(+ 시퀀스) 만 가진 쓰기 역할(S5.3 C5c-2a). */
 const MANDATE_IDLE_GRANTS = [
   'update (ended_at, end_reason) on mandate',
@@ -129,7 +138,7 @@ async function operatorWriteRole(db: { pool: pg.Pool; uri: string }, grants: rea
 }
 
 describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () => {
-  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention', 'mandate_idle', 'permission_expire', 'bg', 'bg_produce', 'outbox_prune', 'turn_lease', 'inbox_list', 'decide_core_db', 'relay_live', 'turn_settle']) {
+  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention', 'mandate_idle', 'permission_expire', 'bg', 'bg_produce', 'outbox_prune', 'push_loop', 'turn_lease', 'inbox_list', 'decide_core_db', 'relay_live', 'turn_settle']) {
     it(`tests/${name}.rs`, async () => {
       const db = await startTestDb();
       try {
@@ -150,6 +159,8 @@ describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () 
         if (name === 'bg_produce') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, BG_PRODUCE_GRANTS);
         // C5c-4 — outbox 정리도 `OUTBOX_PRUNE_PRIVILEGES` 만 가진 역할로.
         if (name === 'outbox_prune') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, OUTBOX_PRUNE_GRANTS);
+        // C5e-2 — 푸시 발송도 `PUSH_PRIVILEGES` 만 가진 역할로.
+        if (name === 'push_loop') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, PUSH_GRANTS);
         // C6b — 턴 임대도 `TURN_LEASE_PRIVILEGES` 만 가진 역할로.
         if (name === 'turn_lease') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, TURN_LEASE_GRANTS);
         const r = await cargo(['test', '--test', name, '--', '--nocapture'], env);
@@ -253,6 +264,183 @@ describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () 
       expect(left).toEqual(['dual-keep']);
       console.log(`retention-dual: rust ${m![1]} (overlapped sweeps ${m![2]}) / ts ${tsDeleted}`);
     } finally {
+      await db.stop();
+    }
+  }, 600_000);
+
+  // C5e-2 — TS `pushSend.test.ts` 와 같은 장면을 Rust sweep(`loops::push`)으로. 장면은 TS 서비스로 깔고, Rust 는 가짜 전송부로 한 번 쓴다.
+  it('푸시 발송 — Rust sweep 이 TS 와 같은 장면에서 같은 일을 한다', async () => {
+    const db = await startTestDb();
+    const app = await buildServer({ pool: db.pool, push: null });
+    try {
+      const auth = (t: string) => ({ authorization: `Bearer ${t}` });
+      const DEVICE = 'ab'.repeat(32);
+      const { token, accountId: adminId } = await bootstrapAdmin(app);
+      const { accountId: botId } = await createAgent(app, token, 'pushbot');
+      const channelId = (await app.inject({ method: 'POST', url: '/channels', headers: auth(token), payload: { name: 'push-ch' } })).json().id as string;
+      const register = () => app.inject({ method: 'PUT', url: '/push/devices', headers: auth(token), payload: { token: DEVICE, platform: 'ios', env: 'production' } });
+      expect((await register()).statusCode).toBe(200);
+      const role = await operatorWriteRole(db, PUSH_GRANTS);
+      const post = async (body: string) =>
+        ((await postMessage(db.pool, { channelId, authorId: botId, body, threadRootId: null, meta: {} })) as { message: { id: string } }).message.id;
+      const due = () => db.pool.query(`update push_job set not_before = now()`);
+      const jobs = async () => (await db.pool.query(`select reason, attempts from push_job order by id`)).rows;
+      const devices = async () => (await db.pool.query(`select 1 from push_device where account_id = $1`, [adminId])).rowCount;
+      const run = async (reply: string) => {
+        const r = await cargo(['test', '--test', 'push_loop', '--', '--nocapture'], {
+          HARKROOM_TEST_DATABASE_URL: db.uri, HARKROOM_TEST_WRITE_DATABASE_URL: role, HARKROOM_PUSH_LOOP_REPLY: reply,
+        });
+        expect(r.code, r.out).toBe(0);
+        const done = r.out.match(/push-loop done swept (\d+) degraded (true|false)/);
+        expect(done, r.out).not.toBeNull();
+        const sent = [...r.out.matchAll(/^push-loop sent (.+)$/gm)].map((m) => JSON.parse(m[1]!) as { token: string; payload: { aps: Record<string, unknown>; hk: Record<string, unknown> }; collapseId: string });
+        return { sent, degraded: done![2] === 'true', out: r.out };
+      };
+      const fresh = async () => {
+        await db.pool.query(`delete from push_job`);
+        await db.pool.query(`update inbox set read_at = now() where read_at is null`);
+      };
+
+      // 보낸다 — 제목·사유 키·배지·collapse-id 가 TS 와 같고, 미리보기는 꺼져 있어 본문이 없다.
+      await fresh();
+      const id = await post('@admin 비밀스러운 본문 xyz');
+      await due();
+      let r = await run('200');
+      expect(r.sent, r.out).toHaveLength(1);
+      expect(r.sent[0]!.token).toBe(DEVICE);
+      expect(r.sent[0]!.collapseId).toBe(id);
+      expect(r.sent[0]!.payload.aps.alert).toEqual({ title: '#push-ch', 'subtitle-loc-key': 'PUSH_SUB_MENTION', 'subtitle-loc-args': ['pushbot'], 'loc-key': 'PUSH_REASON_MENTION' });
+      expect(r.sent[0]!.payload.aps).toMatchObject({ badge: 1, sound: 'default', 'interruption-level': 'active', 'thread-id': id });
+      expect(r.sent[0]!.payload.hk).toEqual({ v: 1, accountId: adminId, messageId: id, channelId, threadRootId: null });
+      expect(JSON.stringify(r.sent[0]!.payload)).not.toContain('xyz');
+      expect(await jobs()).toEqual([]);
+
+      // 그 사이 읽었으면 보내지 않고 job 만 지운다.
+      await fresh();
+      await post('@admin 읽을 것');
+      await db.pool.query(`update inbox set read_at = now()`);
+      await due();
+      r = await run('200');
+      expect(r.sent).toHaveLength(0);
+      expect(await jobs()).toEqual([]);
+
+      // 403 — 기기는 남기고 degraded.
+      await fresh();
+      await post('@admin 키 오류');
+      await due();
+      r = await run('403:InvalidProviderToken');
+      expect(r.sent).toHaveLength(1);
+      expect(r.degraded).toBe(true);
+      expect(await devices()).toBe(1);
+
+      // 503 — 그 기기만 다시 시도(attempts 1, 30초 뒤).
+      await fresh();
+      await post('@admin 바쁨');
+      await due();
+      r = await run('503:ServiceUnavailable');
+      expect(r.sent).toHaveLength(1);
+      expect(await jobs()).toEqual([{ reason: 'mention', attempts: 1 }]);
+      expect((await db.pool.query(`select not_before > now() + interval '20 seconds' as later from push_job`)).rows).toEqual([{ later: true }]);
+
+      // 410 — 기기 행을 지운다.
+      await fresh();
+      await post('@admin 사라진 기기');
+      await due();
+      r = await run('410:Unregistered');
+      expect(r.sent).toHaveLength(1);
+      expect(await devices()).toBe(0);
+      expect(r.out).not.toContain(`loop push`);
+
+      // 미리보기를 켜면 본문을 싣고, 그 에이전트에 걸린 비밀의 값이 들어 있으면 본문을 빼고 사유만 보낸다(실제 키링으로 봉인·열기).
+      expect((await register()).statusCode).toBe(200);
+      const prefs = (preview: boolean) => app.inject({ method: 'PUT', url: '/push/devices', headers: auth(token), payload: { token: DEVICE, platform: 'ios', env: 'production', prefs: { preview } } });
+      expect((await prefs(true)).statusCode).toBe(200);
+      const keysDir = mkdtempSync(joinPath(tmpdir(), 'push-keys-'));
+      const key = randomBytes(32);
+      writeCases(joinPath(keysDir, 'k1'), key.toString('hex'));
+      const { createSecretKeyring } = await import('../src/services/secretKeyring.js');
+      const ring = createSecretKeyring(new Map([['k1', key]]), 'k1');
+      const secretId = randomUUID();
+      await db.pool.query(`insert into secret (id, name, kind, description, owner_account_id) values ($1, 'leaky', 'text', '', $2)`, [secretId, adminId]);
+      await db.pool.query(`insert into secret_version (secret_id, version, sealed, size_bytes, created_by) values ($1, 1, $2, 16, $3)`,
+        [secretId, ring.seal(Buffer.from('s3cr3t-value-777'), { secretId, version: 1, kind: 'text' }), adminId]);
+      await db.pool.query(`insert into secret_grant (secret_id, agent_id, granted_by) values ($1, $2, $3)`, [secretId, botId, adminId]);
+      const runKeys = async (reply: string) => {
+        const out = await cargo(['test', '--test', 'push_loop', '--', '--nocapture'], {
+          HARKROOM_TEST_DATABASE_URL: db.uri, HARKROOM_TEST_WRITE_DATABASE_URL: role, HARKROOM_PUSH_LOOP_REPLY: reply,
+          HARKROOM_PUSH_LOOP_KEYS_DIR: keysDir, HARKROOM_PUSH_LOOP_KEY_ID: 'k1',
+        });
+        expect(out.code, out.out).toBe(0);
+        return [...out.out.matchAll(/^push-loop sent (.+)$/gm)].map((m) => JSON.parse(m[1]!) as { payload: { aps: { alert: Record<string, unknown> } } });
+      };
+      await fresh();
+      await post('@admin 깨끗한 미리보기');
+      await due();
+      let ks = await runKeys('200');
+      expect(ks[0]!.payload.aps.alert).toEqual({ title: '#push-ch', 'subtitle-loc-key': 'PUSH_SUB_MENTION', 'subtitle-loc-args': ['pushbot'], body: '@admin 깨끗한 미리보기' });
+      await fresh();
+      await post('@admin 토큰은 s3cr3t-value-777 다');
+      await due();
+      ks = await runKeys('200');
+      expect(ks).toHaveLength(1);
+      expect(ks[0]!.payload.aps.alert['loc-key']).toBe('PUSH_REASON_MENTION');
+      expect(JSON.stringify(ks[0]!.payload)).not.toContain('s3cr3t');
+      expect((await prefs(false)).statusCode).toBe(200);
+    } finally {
+      await app.close();
+      await db.stop();
+    }
+  }, 600_000);
+
+  // C5e-2 — 때가 된 job 300개를 TS sweep(`createPushSweeper`)과 Rust sweep(`loops::push`)이 **문지기 없이 동시에** 쓸어도
+  // job 하나에 전송은 한 번이다(job 행 `for update skip locked` + 커밋 전 delete).
+  it('푸시 발송 — TS·Rust 동시 sweep 에도 job 하나에 전송은 한 번', async () => {
+    const db = await startTestDb();
+    const app = await buildServer({ pool: db.pool, push: null });
+    try {
+      const auth = (t: string) => ({ authorization: `Bearer ${t}` });
+      const { token } = await bootstrapAdmin(app);
+      const { accountId: botId } = await createAgent(app, token, 'pushbot');
+      const channelId = (await app.inject({ method: 'POST', url: '/channels', headers: auth(token), payload: { name: 'push-dual' } })).json().id as string;
+      expect((await app.inject({ method: 'PUT', url: '/push/devices', headers: auth(token), payload: { token: 'cd'.repeat(32), platform: 'ios', env: 'production' } })).statusCode).toBe(200);
+      const ids: string[] = [];
+      for (let i = 0; i < 300; i++) {
+        ids.push(((await postMessage(db.pool, { channelId, authorId: botId, body: `@admin 부름 ${i}`, threadRootId: null, meta: {} })) as { message: { id: string } }).message.id);
+      }
+      expect(Number((await db.pool.query(`select count(*)::int as n from push_job`)).rows[0].n)).toBe(300);
+      const { createPushSweeper } = await import('../src/services/push/pushJobs.js');
+      const tsSent: string[] = [];
+      const ts = createPushSweeper(db.pool, {
+        transport: { async send(i) { tsSent.push(i.collapseId!); return { status: 200 }; }, close() {} },
+        log: () => {},
+      });
+      // 양쪽이 같은 순간 시작하도록 — Rust 가 연결을 연 것을 본 뒤에 job 을 때가 되게 한다.
+      const rust = cargo(['test', '--test', 'push_loop', '--', '--nocapture'], {
+        HARKROOM_TEST_DATABASE_URL: db.uri,
+        HARKROOM_TEST_WRITE_DATABASE_URL: await operatorWriteRole(db, PUSH_GRANTS),
+        HARKROOM_PUSH_DUAL: '1',
+      });
+      const t0 = Date.now();
+      while (Number((await db.pool.query(
+        `select count(*)::int as n from pg_stat_activity where application_name = 'harkroom-push-dual'`)).rows[0].n) === 0) {
+        if (Date.now() - t0 > 540_000) throw new Error('rust push sweep never connected');
+        await new Promise((res) => setTimeout(res, 20));
+      }
+      await db.pool.query(`update push_job set not_before = now()`);
+      while (Number((await db.pool.query(`select count(*)::int as n from push_job where not_before <= now()`)).rows[0].n) > 0) await ts.sweep();
+      const r = await rust;
+      expect(r.code, r.out).toBe(0);
+      const m = r.out.match(/push-dual rust sent (\d+) overlapped (\d+)/);
+      expect(m, r.out).not.toBeNull();
+      const rustSent = [...r.out.matchAll(/^push-dual sent (\S+)$/gm)].map((x) => x[1]!);
+      expect(rustSent.length).toBe(Number(m![1]));
+      const all = [...tsSent, ...rustSent];
+      expect(all.length).toBe(300);
+      expect(new Set(all).size).toBe(300);
+      expect(new Set(all)).toEqual(new Set(ids));
+      console.log(`push-dual: rust ${m![1]} (overlapped sweeps ${m![2]}) / ts ${tsSent.length}`);
+    } finally {
+      await app.close();
       await db.stop();
     }
   }, 600_000);
