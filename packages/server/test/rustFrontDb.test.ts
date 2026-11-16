@@ -1323,6 +1323,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         ...BG_PRODUCE_GRANTS.map((g) => `grant ${g} to ${rw}`),
         // S5.3 C5c-4 — outbox 정리(`loops/outbox_prune.rs::OUTBOX_PRUNE_PRIVILEGES`). 없으면 「loop outbox.prune off」.
         ...OUTBOX_PRUNE_GRANTS.map((g) => `grant ${g} to ${rw}`),
+        // S5.3 C3b-3c — 권한 카드 거절(`decide_core::DENY_PRIVILEGES` + 잠금 함수 EXECUTE, 두 겹). 없으면 「permission deny core off」.
+        `grant update (status, decided_at, decided_by, grant_expires_at, grant_mode) on permission_request to ${rw}`,
+        `grant execute on function permission_decide_lock(uuid, uuid, uuid) to ${rw}`,
         // S5.3 C6a-1 — 인박스 읽음 표시(`core/inbox_read.rs::INBOX_READ_PRIVILEGES`). 칸 권한 하나. 없으면 「inbox read core off」.
         `grant update (read_at) on inbox to ${rw}`,
         // S5.3 C6b-2 — 턴 임대 세 줄(`core/turn_lease.rs::TURN_LEASE_PRIVILEGES`). 없으면 「turn lease core off」.
@@ -3958,6 +3961,153 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         }
         const txAsk = (await db.pool.query<{ ask: Record<string, unknown> }>(`select meta->'ask' as ask from message where id = $1`, [txCard])).rows[0]!.ask;
         expect(txAsk.answeredWith ?? null, '답이 되돌아갔다').toBeNull();
+      }
+      // S5.3 C3b-3c — 권한 카드 **거절**(코어 `decide_core::decide_deny`, 입구 `decide_routes.rs`). 거절 쓰기 칸·잠금 함수 EXECUTE 를
+      // 더 준 앞단을 따로 띄워(W2: 기동 기록에 「permission deny core on」), TS·Rust 에 **각자의 요청·카드·묶음**으로 같은 시나리오를 돌려
+      // 응답·요청 줄·카드 meta·감사·깨움을 견준다. W1: 묶음 길은 그 묶음이 그 줄을 담을 때만 묶음 id 를 감사·카드에 남긴다.
+      {
+        const H = { kind: 'human' };
+        const permCard = async (label: string) => {
+          const req = (await db.pool.query<{ id: string }>(
+            `insert into permission_request(agent_id, kind, target, reason, channel_id, thread_root_id, expires_at)
+             values ($1, 'tool', $2, 'x', $3, gen_random_uuid(), now() + interval '1 hour') returning id::text`,
+            [agent.accountId, `Bash(${label})`, todayId])).rows[0]!.id;
+          const card = await say(`@admin ${label}`, {
+            meta: {
+              kind: 'ask', ask: { prompt: '허락할까요?', options: [{ id: 'approve', label: '허락' }, { id: 'deny', label: '거절' }], to: H },
+              permissionRequest: { requestId: req, status: 'pending' },
+            },
+          });
+          await db.pool.query(`update permission_request set card_message_id = $2 where id = $1`, [req, card]);
+          return { req, card };
+        };
+        const side = async () => {
+          const rest = await permCard('rest');
+          const viaCard = await permCard('card');
+          const viaBundle = await permCard('bundle');
+          const notInBundle = await permCard('not-in-bundle');
+          const memberTry = await permCard('member');
+          const B = await say('묶음', {
+            author: admin.accountId,
+            meta: { kind: 'askBundle', askBundle: { items: [viaBundle.card].map((rootId) => ({ rootId, askerId: null, channelId: todayId, threadRootId: null, prompt: '허락할까요?', options: [{ id: 'approve', label: '허락' }, { id: 'deny', label: '거절' }] })) } },
+          });
+          return {
+            restReq: rest.req, restCard: rest.card, cardReq: viaCard.req, cardCard: viaCard.card, bundleReq: viaBundle.req, bundleCard: viaBundle.card,
+            outReq: notInBundle.req, outCard: notInBundle.card, memReq: memberTry.req, memCard: memberTry.card, B,
+          };
+        };
+        type Side = Awaited<ReturnType<typeof side>>;
+        {
+          expect(f.log(), 'W2 — 켜졌으면 기동 기록에 남는다').toContain('front: permission deny core on');
+          expect(f.log()).not.toContain('permission deny core off');
+          expect(f.log()).toContain('"POST /agents/{id}/permission-requests/{requestId}/deny"');
+          const rs3 = rsUrl;
+          const T = await side();
+          const R = await side();
+          const labelOf = (sd: Side) => (v: unknown) => {
+            for (const [k, id] of Object.entries(sd)) if (v === id) return k.toUpperCase();
+            return v === agent.accountId ? 'AGENT' : v === admin.accountId ? 'ADMIN' : v;
+          };
+          const shape = (sd: Side) => (v: unknown): unknown => {
+            if (Array.isArray(v)) return v.map(shape(sd));
+            if (v && typeof v === 'object') {
+              const o: Record<string, unknown> = {};
+              for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+                o[k] = /At$/.test(k) ? (x === null ? null : typeof x) : k === 'seq' ? typeof x : shape(sd)(x);
+              }
+              return o;
+            }
+            return labelOf(sd)(v);
+          };
+          const restP = (r: string, d = 'deny', ag = agent.accountId) => `/agents/${ag}/permission-requests/${r}/${d}`;
+          const ansP = (m: string) => `/channels/${todayId}/messages/${m}/ask-answer`;
+          const bAnsP = (m: string) => `/channels/${todayId}/messages/${m}/ask-bundle/answer`;
+          const run = async (base: string, sd: Side) => {
+            const out: { step: string; status: number; code?: string; body: unknown }[] = [];
+            const step = async (name: string, path: string, body: unknown, token = A) => {
+              const r = await callX(base, 'POST', path, body, token);
+              out.push({ step: name, status: r.status, code: r.code, body: r.status === 200 ? shape(sd)(r.json) : null });
+            };
+            await step('REST 거절', restP(sd.restReq), {});
+            await step('REST 다시 → 409 already_decided', restP(sd.restReq), {});
+            await step('REST 남의 에이전트 경로 → TS', restP(sd.cardReq, 'deny', admin.accountId), {});
+            await step('REST 소유자 아닌 멤버(채널에서 부를 수 있음) — asOwner false', restP(sd.memReq), {}, member.token);
+            await step('카드 거절', ansP(sd.cardCard), { optionId: 'deny' });
+            await step('카드 다시 → 409 already_answered', ansP(sd.cardCard), { optionId: 'deny' });
+            await step('카드 approve → TS(3c 범위 밖)', ansP(sd.outCard), { optionId: 'approve' }, member.token);
+            await step('묶음에 없는 줄 → 404', bAnsP(sd.B), { rootId: sd.outCard, optionId: 'deny' });
+            await step('묶음 줄 거절', bAnsP(sd.B), { rootId: sd.bundleCard, optionId: 'deny' });
+            await step('묶음 줄 다시 → 409', bAnsP(sd.B), { rootId: sd.bundleCard, optionId: 'deny' });
+            return out;
+          };
+          const tsOut = await run(tsUrl, T);
+          const rsOut = await run(rs3, R);
+          expect(rsOut).toEqual(tsOut);
+          const st = (s: string) => tsOut.find((o) => o.step === s);
+          expect(st('REST 거절')?.status).toBe(200);
+          expect(st('카드 거절')?.status).toBe(200);
+          expect(st('묶음 줄 거절')?.status).toBe(200);
+          // 요청 줄·카드 meta(권한·물음)·감사·깨움.
+          const rows = async (sd: Side) => (await db.pool.query<{ k: string; status: string; by: string | null; decided: boolean }>(
+            `select k, p.status, p.decided_by::text as by, p.decided_at is not null as decided from jsonb_each_text($1::jsonb) j(k, id)
+               join permission_request p on p.id = j.id::uuid order by k`, [JSON.stringify(sd)])).rows.map((r) => shape(sd)(r));
+          expect(await rows(R)).toEqual(await rows(T));
+          const cards = async (sd: Side) => (await db.pool.query<{ k: string; pr: unknown; ask: unknown }>(
+            `select k, m.meta->'permissionRequest' as pr, m.meta->'ask' as ask from jsonb_each_text($1::jsonb) j(k, id)
+               join message m on m.id = j.id::uuid where m.meta ? 'permissionRequest' order by k`, [JSON.stringify(sd)])).rows.map((r) => shape(sd)(r));
+          expect(await cards(R)).toEqual(await cards(T));
+          const audits = async (sd: Side) => (await db.pool.query<{ action: string; actor: string; target: string; detail: unknown }>(
+            `select action, actor_id::text as actor, target, detail from audit_log
+              where action = 'permission.denied' and detail->>'requestId' = any($1::text[]) order by detail->>'requestId'`,
+            [Object.values(sd)])).rows.map((r) => shape(sd)(r));
+          const tAud = await audits(T);
+          expect(tAud.length, '감사 넷(REST·멤버 REST·카드·묶음)').toBe(4);
+          expect(JSON.stringify(tAud), '버튼 길은 via: button').toContain('"via":"button"');
+          expect((await audits(R)).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))))
+            .toEqual(tAud.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))));
+          expect(JSON.stringify(tAud), 'W1 — 묶음 길만 묶음 id 를 남긴다').toContain('"bundleMessageId":"B"');
+          const wakes = async (sd: Side) => (await db.pool.query<{ m: string; r: string }>(
+            `select message_id::text as m, reason as r from inbox where message_id = any($1::uuid[]) and reason = 'ask_answered' order by message_id`,
+            [Object.values(sd)])).rows.map((r) => shape(sd)(r)).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+          const tW = await wakes(T);
+          expect(tW.length, '거절한 카드 넷이 에이전트를 깨운다').toBeGreaterThanOrEqual(4);
+          expect(await wakes(R)).toEqual(tW);
+          // Rust 가 맡았다 — Rust 쪽 거절 카드의 `message.updated` 가 outbox(`busEvents`)에 있다.
+          const rUpd = busEvents.filter((e) => (e as { type?: string; message?: { id?: string } }).type === 'message.updated'
+            && [R.restCard, R.cardCard, R.bundleCard].includes(String((e as { message?: { id?: string } }).message?.id)));
+          const until4 = Date.now() + 10_000;
+          while (rUpd.length < 3 && Date.now() < until4) {
+            await new Promise((res) => setTimeout(res, 100));
+            rUpd.splice(0, rUpd.length, ...busEvents.filter((e) => (e as { type?: string; message?: { id?: string } }).type === 'message.updated'
+              && [R.restCard, R.cardCard, R.bundleCard].includes(String((e as { message?: { id?: string } }).message?.id))));
+          }
+          expect(rUpd.length, 'Rust 가 거절한 카드 셋의 message.updated').toBeGreaterThanOrEqual(3);
+        }
+        await db.pool.query(`alter role ${rw} connection limit -1`);
+        // 잠금 함수 EXECUTE 만 거두면 두 겹 검사가 닫힌다 — 기동 기록에 까닭, 거절은 TS 가 한다.
+        await db.pool.query(`revoke execute on function permission_decide_lock(uuid, uuid, uuid) from ${rw}`);
+        const port5 = await freePort();
+        let front5: ChildProcess | undefined;
+        try {
+          const f5 = await startFront(bin, {
+            UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(port5), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
+            TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust',
+          });
+          front5 = f5.child;
+          const until5 = Date.now() + 10_000;
+          while (!f5.log().includes('front: rust core routes') && Date.now() < until5) await new Promise((res) => setTimeout(res, 100));
+          expect(f5.log()).toContain('permission deny core off — no EXECUTE');
+          expect(f5.log()).not.toContain('front: permission deny core on');
+          const late = await permCard('late');
+          const viaFront = await callX(`http://127.0.0.1:${port5}`, 'POST', `/agents/${agent.accountId}/permission-requests/${late.req}/deny`, {});
+          expect(viaFront.status, 'EXECUTE 가 없으면 TS 가 받아 200').toBe(200);
+          expect((viaFront.json as { status?: string }).status).toBe('denied');
+          const evs = busEvents.filter((e) => (e as { message?: { id?: string } }).message?.id === late.card);
+          expect(evs, 'TS 가 했으므로 Rust outbox 에는 없다').toEqual([]);
+        } finally {
+          front5?.kill('SIGTERM');
+          await db.pool.query(`grant execute on function permission_decide_lock(uuid, uuid, uuid) to ${rw}`);
+        }
       }
       // S5.3 C3b-2b-2 — MCP `message.askBundle` 의 있던 묶음에 줄 더하기(코어 `ask_bundle_add.rs`). TS·Rust 에 각자의 묶음으로 같은 시나리오를
       // 돌려 답·묶음 meta(줄 사본)·이벤트·묶음 푸시를 견준다. 담을 수 있는 원본 범위(부른 에이전트가 못 보는 채널의 카드는 못 담음)와

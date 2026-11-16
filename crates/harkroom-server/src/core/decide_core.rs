@@ -679,7 +679,7 @@ pub struct AuditDetail<'a> {
     pub grant_expires_at: Option<&'a str>,
     /// (grantMode, commandGrantId)
     pub grant_mode: Option<(&'a str, &'a str)>,
-    /// `via: { kind: 'bundle', bundleMessageId }` 만 Rust 가 맡는다(chat·mirror 는 처음부터 TS).
+    /// `via: { kind: 'bundle', bundleMessageId }` 이면 묶음, 없으면 `via: 'button'`(chat·mirror 는 처음부터 TS).
     pub bundle_message_id: Option<&'a str>,
 }
 
@@ -715,9 +715,13 @@ pub fn audit_detail(a: &AuditDetail<'_>) -> Value {
         o["grantMode"] = serde_json::json!(mode);
         o["commandGrantId"] = serde_json::json!(id);
     }
+    // TS: `via` 는 언제나 실린다(`args.via ? { via: args.via.kind } : {}` — 입구가 늘 넘긴다). Rust 가 맡는 길은 button·bundle 뿐이다
+    // (chat·mirror 는 처음부터 TS). 3b 는 button 을 빠뜨렸다 — 3c 대조 시험(rustFrontDb)이 잡았다.
     if let Some(b) = a.bundle_message_id {
         o["via"] = serde_json::json!("bundle");
         o["bundleMessageId"] = serde_json::json!(b);
+    } else {
+        o["via"] = serde_json::json!("button");
     }
     o
 }

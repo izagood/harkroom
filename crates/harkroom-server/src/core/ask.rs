@@ -54,6 +54,8 @@ pub struct AskState {
     pub read: PgPool,
     pub write: PgPool,
     pub up: Upstream,
+    /// C3b-3c — 권한 카드 **거절** 쓰기 풀([`super::decide_core::deny_pool`] 이 두 겹 검사로 준 것). `None` 이면 거절도 TS 가 맡는다.
+    pub deny: Option<PgPool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -297,6 +299,32 @@ pub(super) async fn record_ask_answer(
     written: Option<&str>,
     answered_via: Option<&str>,
 ) -> sqlx::Result<Outcome> {
+    record_ask_answer_with(read, conn, id, actor, option, written, answered_via, false).await
+}
+
+/// TS `recordAskAnswer(… viaPermissionDecision: true)` — 권한 결정을 **커밋한 뒤** 카드에 답을 적는 길(C3b-3c).
+/// 권한 카드 표지(`permissionRequest`) 거절만 건너뛴다. 결정권 판정은 이미 결정 tx 가 했다.
+pub(super) async fn record_permission_answer(
+    read: &PgPool,
+    conn: &mut PgConnection,
+    id: &str,
+    actor: &str,
+    option: &str,
+) -> sqlx::Result<Outcome> {
+    record_ask_answer_with(read, conn, id, actor, option, None, None, true).await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn record_ask_answer_with(
+    read: &PgPool,
+    conn: &mut PgConnection,
+    id: &str,
+    actor: &str,
+    option: &str,
+    written: Option<&str>,
+    answered_via: Option<&str>,
+    via_permission: bool,
+) -> sqlx::Result<Outcome> {
     let Some(meta) = meta_of(&mut *conn, id).await? else {
         return Ok(Outcome::NotFound);
     };
@@ -306,7 +334,7 @@ pub(super) async fn record_ask_answer(
     if written.is_none() && !ask.options.iter().any(|o| o == option) {
         return Ok(Outcome::UnknownOption);
     }
-    if meta.get("permissionRequest").is_some_and(|v| !v.is_null()) {
+    if !via_permission && meta.get("permissionRequest").is_some_and(|v| !v.is_null()) {
         return Ok(Outcome::Forbidden);
     }
     match &ask.to {
@@ -447,7 +475,7 @@ fn no_request() -> Response {
     json_err(StatusCode::NOT_FOUND, "not_found", "no such choice request")
 }
 
-fn ok_json(body: String) -> Response {
+pub(super) fn ok_json(body: String) -> Response {
     (
         StatusCode::OK,
         [(header::CONTENT_TYPE, "application/json; charset=utf-8")],
@@ -610,7 +638,7 @@ pub(super) async fn read_bytes(
 /// `POST /channels/{id}/messages/{messageId}/ask-answer`.
 pub async fn answer(
     State(st): State<Arc<AskState>>,
-    RequireAccount(me, _): RequireAccount,
+    RequireAccount(me, auth): RequireAccount,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Path((id, message)): Path<(String, String)>,
     req: Request,
@@ -629,6 +657,13 @@ pub async fn answer(
     };
     let (bytes, ans) = bytes;
     if let Some(r) = gate(&st, &me.id, &id, &message).await {
+        return r;
+    }
+    // C3b-3c — 권한 카드(거울 아님)의 거절은 3b 코어가 정한다. 그 밖의 권한 카드 답은 아래 `hand_to_ts` 가 TS 로 넘긴다.
+    if let Answer::Option(o) = &ans
+        && let super::decide_routes::Taken::Done(r) =
+            super::decide_routes::answer_card_deny(&st, &me, &auth, &message, o).await
+    {
         return r;
     }
     match hand_to_ts(&st.read, &message).await {
@@ -702,6 +737,11 @@ pub fn routes(
     let t = Table::<Arc<AskState>>::new()
         .post("/channels/{id}/messages/{messageId}/ask-answer", answer)
         .post("/channels/{id}/messages/{messageId}/ask-close", close)
+        // C3b-3c — 권한 요청 거절 REST. 거절 풀(`deny`)이 없거나 맡지 않는 꼴이면 핸들러가 TS 로 넘긴다.
+        .post(
+            "/agents/{id}/permission-requests/{requestId}/deny",
+            super::decide_routes::deny_route,
+        )
         // C3b-2a — 묶음 카드 REST. 같은 표·같은 칸을 쓰므로 같은 잠금(`ASK_PRIVILEGES`)으로 함께 붙는다.
         .post(
             "/channels/{id}/messages/{messageId}/ask-bundle/answer",

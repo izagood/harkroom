@@ -30,7 +30,7 @@ use std::net::SocketAddr;
 use std::sync::{Arc, OnceLock};
 
 /// TS `ASK_BUNDLE_REFUSAL_MESSAGE` 의 이 두 줄이 쓰는 것.
-const BUNDLE_NOT_FOUND: &str = "no such bundle card";
+pub(super) const BUNDLE_NOT_FOUND: &str = "no such bundle card";
 const BUNDLE_ITEM_NOT_FOUND: &str = "that card is not a row of this bundle";
 /// TS `answerBundleItem` 의 `answeredVia` — 「추천대로 일괄」.
 const BULK: &str = "bundle_bulk";
@@ -290,7 +290,7 @@ async fn visible_or_403(st: &AskState, me: &str, channel: &str) -> Option<Respon
 /// `POST /channels/{id}/messages/{messageId}/ask-bundle/answer`.
 pub async fn answer(
     State(st): State<Arc<AskState>>,
-    RequireAccount(me, _): RequireAccount,
+    RequireAccount(me, auth): RequireAccount,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Path((id, bundle)): Path<(String, String)>,
     req: Request,
@@ -326,6 +326,12 @@ pub async fn answer(
             "bundle_item_not_found",
             BUNDLE_ITEM_NOT_FOUND,
         );
+    }
+    // C3b-3c — 권한 줄의 거절. W1: 위에서 이 채널의 묶음이 이 줄(root)을 담는 것을 확인한 **뒤에만** 묶음 id 를 넘긴다.
+    if let super::decide_routes::Taken::Done(r) =
+        super::decide_routes::answer_bundle_deny(&st, &me, &auth, &bundle, &root, &option).await
+    {
+        return r;
     }
     // 원본이 Rust 가 정하지 않는 카드면 TS 가 한다.
     match hand_to_ts(&st.read, &root).await {

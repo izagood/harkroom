@@ -362,6 +362,15 @@ async fn main() {
         }
         _ => None,
     };
+    // C3b-3c — 권한 카드 거절. 세 겹: 선택 카드 코어(`HARKROOM_CORE=rust` + `ASK_PRIVILEGES`) 그리고 거절 두 겹 검사
+    // (`DENY_PRIVILEGES` 칸 + 잠금 함수 EXECUTE). 꺼지면 `deny_pool` 이 까닭을 한 줄 남기고, 켜지면 아래 한 줄을 남긴다(W2).
+    let ask_deny = match &ask_write {
+        Some(w) => harkroom_server::core::decide_core::deny_pool(w).await,
+        None => None,
+    };
+    if ask_deny.is_some() {
+        eprintln!("front: permission deny core on");
+    }
     // C1c-1 — 글 올리기(사람 최상위 글 뼈대). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 `MESSAGE_POST_PRIVILEGES` 가 다 있을 때만.
     let post_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -629,6 +638,7 @@ async fn main() {
                     read: state.pool.clone(),
                     write,
                     up: state.up.clone(),
+                    deny: ask_deny,
                 },
                 auth.clone(),
                 state.cors.clone(),

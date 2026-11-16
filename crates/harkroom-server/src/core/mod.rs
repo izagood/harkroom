@@ -14,6 +14,7 @@ pub mod audience;
 pub mod channels;
 pub mod content_scan;
 pub mod decide_core;
+pub mod decide_routes;
 pub mod events;
 pub mod inbox_list;
 pub mod inbox_read;
