@@ -443,6 +443,19 @@ pub fn normalize_mentions(body: &str, accounts: &HashMap<String, String>) -> Str
 /// shared `UNKNOWN_ACCOUNT_LABEL` — 지금 이름으로 못 바꾼 토큰 자리.
 pub const UNKNOWN_ACCOUNT_LABEL: &str = "알 수 없음";
 
+/// 본문의 저장 토큰 키(계정 id·`group:<id>`·`team:<id>`)를 나온 순서대로 — TS `handlesFor` 의 `ANY_MENTION_TOKEN_PATTERN` 훑기.
+pub fn mention_token_keys(body: &str) -> Vec<String> {
+    ANY_TOKEN
+        .captures_iter(body)
+        .filter_map(|c| {
+            c.get(1)
+                .or_else(|| c.get(2))
+                .map(|m| m.as_str().to_string())
+        })
+        .filter(|k| !k.is_empty())
+        .collect()
+}
+
 /// TS `renderMentions` — 저장된 토큰을 지금 handle 로, 모르는 것은 `@알 수 없음`([`UNKNOWN_ACCOUNT_LABEL`]).
 pub fn render_mentions(body: &str, id_to_handle: &HashMap<String, String>) -> String {
     ANY_TOKEN

@@ -1064,6 +1064,15 @@ async fn spawn_loops() {
         Ok(m) => eprintln!("front: loop bg off — missing privileges {m:?}"),
         Err(e) => eprintln!("front: loop bg off — privilege check failed: {e}"),
     }
+    // C5e-2 — 푸시 발송. 문지기 이름 `push`.
+    match push_sweeper(&pool).await {
+        Ok(Some(s)) => {
+            eprintln!("front: loop push on (runs only while server_loop owner is rust)");
+            harkroom_server::loops::push::spawn(gate.clone(), s);
+        }
+        Ok(None) => eprintln!("front: loop push off — APNS_* not set"),
+        Err(why) => eprintln!("front: loop push off — {why}"),
+    }
     // C5c-3b-2 — 백그라운드 회차 생산(distill → cleanup → organize, 1시간에 한 번). 문지기 이름 `bg.produce` — 주인이 rust 일 때만 돈다.
     match write::missing_in(&pool, bg_produce::BG_PRODUCE_PRIVILEGES, &[]).await {
         Ok(m) if m.is_empty() => {
@@ -1082,8 +1091,52 @@ async fn spawn_loops() {
     }
 }
 
-/// Rust 로 옮긴 루프 수(wake·retention·mandate.idle·permission.expire·outbox.prune·bg·bg.produce) — 문지기 풀 크기. 루프를 더하면 같이 올린다.
-const LOOP_GATE_CONNECTIONS: u32 = 7;
+/// 푸시 sweeper 를 세운다(C5e-2). `Ok(None)` 은 APNS_* 가 하나도 없음(TS 도 끔). 띄우지 않는 까닭은 `Err` 로 — 값은 싣지 않는다.
+/// 넷이 다 맞을 때만: APNS 설정·키를 읽음 · `PUSH_PRIVILEGES` 가 다 있음 · 누출 검사를 TS 와 같게 할 수 있음(키링을 열었거나, 봉인된
+/// 비밀이 하나도 없음 — 키링 없이 비밀이 있으면 에이전트 글의 미리보기를 검사 없이 보내게 되므로 띄우지 않는다).
+async fn push_sweeper(
+    pool: &sqlx::PgPool,
+) -> Result<
+    Option<
+        std::sync::Arc<
+            harkroom_server::loops::push::PushSweeper<harkroom_server::push::apns::ApnsTransport>,
+        >,
+    >,
+    String,
+> {
+    use harkroom_server::push::apns::{ApnsTransport, load_apns_config};
+    let Some(cfg) = load_apns_config(|n| std::env::var(n).ok())? else {
+        return Ok(None);
+    };
+    match write::missing_in(pool, harkroom_server::loops::push::PUSH_PRIVILEGES, &[]).await {
+        Ok(m) if m.is_empty() => {}
+        Ok(m) => return Err(format!("missing privileges {m:?}")),
+        Err(e) => return Err(format!("privilege check failed: {e}")),
+    }
+    let guard = harkroom_server::loops::push::LeakGuard::from_env()
+        .map_err(|e| format!("secret keys: {e}"))?;
+    if !guard.is_on() {
+        let sealed: bool = sqlx::query_scalar(
+            "select exists (select 1 from secret_version where sealed is not null and revoked_at is null)",
+        )
+        .fetch_one(pool)
+        .await
+        .map_err(|e| format!("secret check failed: {e}"))?;
+        if sealed {
+            return Err(
+                "sealed secrets exist but secret keys are not loaded (leak check would be skipped)"
+                    .into(),
+            );
+        }
+    }
+    let transport = ApnsTransport::new(cfg)?;
+    Ok(Some(std::sync::Arc::new(
+        harkroom_server::loops::push::PushSweeper::new(pool.clone(), transport, guard),
+    )))
+}
+
+/// Rust 로 옮긴 루프 수(wake·retention·mandate.idle·permission.expire·outbox.prune·bg·bg.produce·push) — 문지기 풀 크기. 루프를 더하면 같이 올린다.
+const LOOP_GATE_CONNECTIONS: u32 = 8;
 /// sweep 풀 크기.
 const LOOP_SWEEP_CONNECTIONS: u32 = 3;
 

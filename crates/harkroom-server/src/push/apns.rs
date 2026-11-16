@@ -156,6 +156,11 @@ pub fn sign_apns_jwt(
     Ok(format!("{input}.{}", b64url(sig.as_ref())))
 }
 
+/// 기기 토큰 꼴 — TS 등록(`pushRoutes.ts`)의 `/^[0-9a-fA-F]{64,200}$/` 와 같다.
+pub fn valid_device_token(token: &str) -> bool {
+    (64..=200).contains(&token.len()) && token.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
 pub struct ApnsSendInput<'a> {
     pub token: &'a str,
     pub env: ApnsEnv,
@@ -227,11 +232,24 @@ pub struct ApnsTransport {
 impl ApnsTransport {
     /// 실제 APNs 로. 키를 못 읽으면 `Err`(값은 싣지 않는다).
     pub fn new(cfg: ApnsConfig) -> Result<Self, String> {
-        Self::with_origins(cfg, &APNS_ORIGINS, None, Duration::from_secs(10))
+        Self::build(cfg, &APNS_ORIGINS, None, Duration::from_secs(10))
     }
 
     /// origin·시계·시한을 바꿔 연다 — 시험용 길. `http://` origin 은 TLS 없는 h2c 다(로컬 가짜 서버).
+    /// cargo feature `test-origins`(기본 꺼짐, 시험 빌드의 dev-dependency 만 켠다)일 때만 있다 — 운영 빌드에서는 APNs 밖으로
+    /// 보낼 길이 없다(security C5e-1 권고).
+    #[cfg(feature = "test-origins")]
+    #[doc(hidden)]
     pub fn with_origins(
+        cfg: ApnsConfig,
+        origins: &[(ApnsEnv, &str)],
+        now_ms: Option<Clock>,
+        timeout: Duration,
+    ) -> Result<Self, String> {
+        Self::build(cfg, origins, now_ms, timeout)
+    }
+
+    fn build(
         cfg: ApnsConfig,
         origins: &[(ApnsEnv, &str)],
         now_ms: Option<Clock>,
@@ -338,6 +356,14 @@ impl ApnsTransport {
 
     /// 하나 보낸다. 실패해도 `Err` 가 아니라 상태 0 의 [`ApnsResult`] 다(TS 와 같다 — 재시도 판정은 루프 몫).
     pub async fn send(&self, input: ApnsSendInput<'_>) -> ApnsResult {
+        // 토큰은 요청 경로(`/3/device/<token>`)에 들어간다 — 등록이 hex 만 받지만 보내기 직전에도 다시 본다(security C5e-1 권고).
+        // 틀리면 보내지 않고 APNs 의 `BadDeviceToken` 과 같게 돌려준다(루프가 그 기기를 지운다).
+        if !valid_device_token(input.token) {
+            return ApnsResult {
+                status: 400,
+                reason: Some("BadDeviceToken".to_string()),
+            };
+        }
         match tokio::time::timeout(self.timeout, self.send_inner(&input)).await {
             Ok(r) => r,
             Err(_) => {

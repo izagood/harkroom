@@ -129,9 +129,26 @@ fn transport(pem: &str, origin: &str, clock: Arc<AtomicU64>, timeout_ms: u64) ->
     .unwrap()
 }
 
-fn send<'a>(token: &'a str, payload: &'a serde_json::Value) -> ApnsSendInput<'a> {
+/// 시험 이름표를 기기 토큰 꼴(hex 64자)로 — 앞을 `0` 으로 채운다. 가짜 서버는 [`tag_of`] 로 되돌린다.
+fn hex_token(tag: &str) -> &'static str {
+    let hex: String = tag.bytes().map(|b| format!("{b:02x}")).collect();
+    Box::leak(format!("{hex:0>64}").into_boxed_str())
+}
+
+/// 요청 경로의 토큰을 시험 이름표로.
+fn tag_of(path: &str) -> String {
+    let hex = path.strip_prefix("/3/device/").unwrap_or("");
+    let hex = hex.trim_start_matches("00");
+    (0..hex.len())
+        .step_by(2)
+        .filter_map(|i| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok())
+        .map(char::from)
+        .collect()
+}
+
+fn send<'a>(tag: &str, payload: &'a serde_json::Value) -> ApnsSendInput<'a> {
     ApnsSendInput {
-        token,
+        token: hex_token(tag),
         env: ApnsEnv::Production,
         payload,
         collapse_id: "t:abc",
@@ -198,7 +215,7 @@ async fn sends_like_ts_and_jwt_verifies_with_fixed_signature() {
         }
     );
     let s = seen.lock().unwrap()[0].clone();
-    assert_eq!(s.path, "/3/device/devtoken1");
+    assert_eq!(s.path, format!("/3/device/{}", hex_token("devtoken1")));
     assert_eq!(header(&s, "apns-topic"), "com.example.app");
     assert_eq!(header(&s, "apns-push-type"), "alert");
     assert_eq!(header(&s, "apns-priority"), "10");
@@ -265,11 +282,11 @@ async fn jwt_is_reused_for_50_minutes_then_renewed_and_connection_is_reused() {
 #[tokio::test]
 async fn reasons_timeouts_and_connect_failures() {
     let (pem, _) = fake_key();
-    let (origin, _, _) = fake_apns(Arc::new(|path: &str| match path {
-        "/3/device/gone" => (410, r#"{"reason":"Unregistered"}"#, 0),
-        "/3/device/bad" => (400, r#"{"reason":"BadDeviceToken"}"#, 0),
-        "/3/device/junk" => (500, "not json", 0),
-        "/3/device/slow" => (200, "", 2_000),
+    let (origin, _, _) = fake_apns(Arc::new(|path: &str| match tag_of(path).as_str() {
+        "gone" => (410, r#"{"reason":"Unregistered"}"#, 0),
+        "bad" => (400, r#"{"reason":"BadDeviceToken"}"#, 0),
+        "junk" => (500, "not json", 0),
+        "slow" => (200, "", 2_000),
         _ => (200, "", 0),
     }))
     .await;
@@ -342,4 +359,49 @@ fn real_origins_are_tls() {
     );
     assert_eq!(ApnsEnv::parse("sandbox"), Some(ApnsEnv::Sandbox));
     assert_eq!(ApnsEnv::parse("dev"), None);
+}
+
+/// security C5e-1 권고 — 토큰은 요청 경로에 들어가므로 보내기 직전에 hex 꼴을 다시 본다. 틀리면 연결도 하지 않고 `400 BadDeviceToken`.
+#[tokio::test]
+async fn non_hex_token_is_refused_before_any_request() {
+    let (pem, _) = fake_key();
+    let (origin, seen, _) = fake_apns(Arc::new(|_| (200, "", 0))).await;
+    let t = transport(
+        &pem,
+        &origin,
+        Arc::new(AtomicU64::new(1_700_000_000_000)),
+        1_000,
+    );
+    let p = serde_json::json!({});
+    for bad in [
+        "",
+        "abc",
+        "../../3/device/x",
+        &"a".repeat(63),
+        &"a".repeat(201),
+        &format!("{}/x", "a".repeat(64)),
+        &format!("{}?q", "a".repeat(64)),
+        &format!("{}é", "a".repeat(63)),
+    ] {
+        let r = t
+            .send(ApnsSendInput {
+                token: bad,
+                env: ApnsEnv::Production,
+                payload: &p,
+                collapse_id: "t:abc",
+            })
+            .await;
+        assert_eq!(
+            r,
+            ApnsResult {
+                status: 400,
+                reason: Some("BadDeviceToken".into())
+            },
+            "{bad:?}"
+        );
+    }
+    assert!(seen.lock().unwrap().is_empty(), "no request may leave");
+    assert!(valid_device_token(&"A".repeat(64)));
+    assert!(valid_device_token(&"f".repeat(200)));
+    assert_eq!(t.send(send("ok", &p)).await.status, 200);
 }
