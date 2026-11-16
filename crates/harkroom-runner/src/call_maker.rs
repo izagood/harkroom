@@ -107,6 +107,8 @@ pub struct RunnerMaker<L: AgentLink> {
     provider_lane: Option<Arc<crate::provider_lane::ProviderLane>>,
     names: RwLock<Names>,
     report_auth: ReportAuth,
+    /// 중계 세션 장부(정본 `relay`) — 멘션마다 세션을 연다. 없으면 턴은 관찰 없이 돈다(시험).
+    relay: Option<Arc<crate::relay_session::RelaySessions>>,
 }
 
 /// 실물 PTY sink — 기본 메서드만(감시·전달 표지는 `MentionParts` 가 감싼다).
@@ -173,7 +175,13 @@ impl<L: AgentLink> RunnerMaker<L> {
             clients,
             cfg,
             report_auth,
+            relay: None,
         }
+    }
+
+    /// 중계 세션 장부를 붙인다(기동 때 한 번, `Arc` 로 감싸기 전). 링크에 꽂힌(`wire`·`attach_link`) 장부여야 한다.
+    pub fn set_relay(&mut self, relay: Arc<crate::relay_session::RelaySessions>) {
+        self.relay = Some(relay);
     }
 
     /// 스레드 기록 — 계정 축의 스레드 고정(`claudeAccount`·`claudePool`·세션 id)을 읽는 쪽과 같은 장부다.
@@ -574,6 +582,31 @@ where
                     .map(|l| l as &dyn crate::turn_lane_first::LaneSource),
             },
         }
+    }
+    fn open_relay(
+        &self,
+        slot: &crate::turn_attempt_account::LiveSlot,
+        target: &MentionTarget,
+        harness: AgentHarness,
+    ) -> Option<Arc<crate::relay_session::SessionHandle>> {
+        let relay = self.relay.as_ref()?;
+        Some(Arc::new(relay.open_session(
+            crate::relay_session::OpenSessionInput {
+                agent_account_id: self.cfg.me_id.clone(),
+                channel_id: target.channel_id.clone(),
+                thread_root_id: Some(target.thread_root_id.clone()),
+                harness: harness.as_str().to_string(),
+                mode: None,
+                // 판정은 fd 0 의 정체 하나(정본 `acceptsPtyInput(plan)`) — Rust 러너의 멘션 턴은 stdin 파일을 쓰지
+                // 않는다(`TurnCommandOptions.stdin_file` 은 늘 `None`). 계정 칩은 시도마다 `RelayAttempt::begin` 이 싣는다.
+                accepts_input: crate::pty::accepts_pty_input(None),
+                claude_account_rank: None,
+                claude_pool_rank: None,
+                on_viewer_count: None,
+                // 사람이 [중단] 을 눌렀다 — 죽이는 것은 장부가 아니라 그 멘션 자리(지금 시도·다음 시도 관문)다.
+                on_cancel: Some(crate::turn_attempt_account::cancel_hook(slot)),
+            },
+        )))
     }
 }
 

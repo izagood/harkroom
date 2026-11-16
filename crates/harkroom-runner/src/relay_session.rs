@@ -255,6 +255,22 @@ impl RelaySessions {
         self.len() == 0
     }
 
+    /// 그 스레드에 지금 도는 **멘션 턴**의 세션 id(정본 `registry.get(key).sessionId`, 「터미널 열기」 붙기 갈래).
+    /// 멘션 세션은 멘션이 끝나면 닫혀 장부에서 빠지므로, 장부에 있으면 그 턴은 아직 돈다.
+    pub fn mention_session_of(&self, channel_id: &str, thread_root_id: &str) -> Option<String> {
+        self.sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .find(|(_, l)| {
+                let s = |k: &str| l.info.get(k).and_then(Value::as_str);
+                s("mode") == Some("mention")
+                    && s("channelId") == Some(channel_id)
+                    && s("threadRootId") == Some(thread_root_id)
+            })
+            .map(|(id, _)| id.clone())
+    }
+
     /// 끊겼다 — 뷰어 수를 0 으로 돌린다(정본: 재접속 화해가 참값을 돌려준다, 유예 60초 > 백오프).
     pub fn on_link_down(&self) {
         let hooks: Vec<ViewerHook> = self
