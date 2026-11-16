@@ -4,7 +4,7 @@
 //
 // S5.2 P1 부터 **TS·Rust 대조 시험**(`tests/contrast.rs`)도 여기서 돈다: 같은 DB 에 TS 서버(buildServer)와 그것을 상류로 둔
 // 앞단 바이너리를 띄우고, 픽스처를 넣은 뒤 같은 요청을 두 쪽에 보내 답이 같은지 본다.
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { hashToken } from '../src/auth/tokens.js';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer, type AddressInfo } from 'node:net';
@@ -1330,6 +1330,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant insert on command_grant to ${rw}`,
         `grant insert on account_grant to ${rw}`,
         `grant update (granted_by, granted_at, expires_at, allow_agent_cause) on account_grant to ${rw}`,
+        // S5.3 C3b B1 — 명령 grant 쓰기(`command_match.rs::MATCH_PRIVILEGES`). 칸 권한 셋(감사 INSERT 는 위). 없으면 「command grant match core off」.
+        `grant update (use_count, used_at, bound_cwd) on command_grant to ${rw}`,
         // S5.3 C6a-1 — 인박스 읽음 표시(`core/inbox_read.rs::INBOX_READ_PRIVILEGES`). 칸 권한 하나. 없으면 「inbox read core off」.
         `grant update (read_at) on inbox to ${rw}`,
         // S5.3 C6b-2 — 턴 임대 세 줄(`core/turn_lease.rs::TURN_LEASE_PRIVILEGES`). 없으면 「turn lease core off」.
@@ -4386,10 +4388,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       // S5.3 C3b grant 읽기 줄 — `GET /agent/tool-allows`·`GET /agent/command-grants`(코어 `grant_reads.rs`). 읽기만 하므로 같은 DB 를 TS·Rust 에
       // 같이 물어 상태·`cache-control`·본문을 견준다. 상시 grant(만료·정규형 아님·정할 수 없는 사람이 준 것)와 위임장 줄(uses·turnCause·until·
       // agentIds·회수·cap·준 사람의 지금 판정)과 명령 grant(1회 쓴 것·만료·다른 스레드·정규형 아님)를 범위 스위치 둘로 돌린다.
-      // `POST /agent/command-grants/match` 는 grant 를 쓰므로 TS 에 남는다(표에 없음).
+      // `POST /agent/command-grants/match` 는 grant 를 쓰므로 아래 B1 블록이 따로 본다(각자의 grant 로).
       {
         for (const k of ['GET /agent/tool-allows', 'GET /agent/command-grants']) expect(f.log()).toContain(`"${k}"`);
-        expect(f.log()).not.toContain('"POST /agent/command-grants/match"');
         const privId = String(priv.id);
         const op = await registerOperator(app, A, 'gr-op');
         const op2 = await registerOperator(app, A, 'gr-op2');
@@ -4530,6 +4531,164 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             `tool:${todayId}:Bash(cargo fix:*)`, `tool:${privId}:Bash(make lint:*)`, `tool:${todayId}:Bash(make test:*)`]]);
           await db.pool.query(`delete from secret_turn_lease where mandate_id = $1`, [mandate]);
           await db.pool.query(`delete from mandate where id = $1`, [mandate]);
+        }
+      }
+      // S5.3 C3b B1 — `POST /agent/command-grants/match`(코어 `command_match.rs`). grant 를 **쓰므로** TS·Rust 에 각자의 임대·스레드·grant 묶음을
+      // 같은 꼴로 만들어 같은 부름 순서를 돌린다. 응답(상태·`cache-control`·본문, grantId 는 이름표로), grant 줄(use_count·used_at·bound_cwd),
+      // 감사 `permission.command_used`(detail, grantId·스레드는 이름표로)를 견준다. security ②-5: 파일 해시가 승인 때와 다르거나 빠지면 열지 않는다.
+      {
+        expect(f.log()).toContain('"POST /agent/command-grants/match"');
+        expect(f.log()).not.toContain('command grant match core off');
+        const op = await registerOperator(app, A, 'cm-op');
+        const op2 = await registerOperator(app, A, 'cm-op2');
+        const prevOp = (await db.pool.query<{ op: string }>(`select operator_id as op from agent_assignment where agent_id = $1`, [agent.accountId])).rows[0]?.op;
+        await db.pool.query(`insert into agent_assignment (agent_id, operator_id, assigned_by) values ($1, $2, $3) on conflict (agent_id) do update set operator_id = excluded.operator_id`, [agent.accountId, op.operatorId, admin.accountId]);
+        const savedCm = (await db.pool.query<{ scope: string; ud: boolean }>(
+          `select invoke_scope as scope, user_decide as ud from agent_config where account_id = $1`, [agent.accountId])).rows[0]!;
+        await db.pool.query(`update agent_config set invoke_scope = 'owner', user_decide = false where account_id = $1`, [agent.accountId]);
+        const KUBE = 'kubectl --kubeconfig /tmp/kc.yaml --context rc';
+        const H1 = 'a'.repeat(64);
+        const H2 = 'b'.repeat(64);
+        const sha = (t: string) => createHash('sha256').update(t).digest('hex');
+        const agentPatCm = await agentPat(agent.accountId, 'command-match');
+        const asOp = { authorization: `Bearer ${op.token}`, 'x-harkroom-agent': agent.accountId };
+        const threads: string[] = [];
+        // 한쪽 몫: 스레드 하나·임대 셋(살아 있음·끝남·다른 오퍼레이터)·grant 다섯.
+        const side = async (tag: string) => {
+          const th = (await db.pool.query<{ id: string }>(
+            `insert into message (channel_id, author_id, body, kind) values ($1, $2, $3, 'user') returning id`, [todayId, admin.accountId, `cm ${tag}`])).rows[0]!.id;
+          threads.push(th);
+          // 임대마다 원인 글이 다르다(살아 있는 임대는 원인 글당 하나 — `secret_turn_lease_cause_live_uniq`). 스레드는 같다.
+          const lease = async (token: string, o: string, ended: boolean) => {
+            const cause = (await db.pool.query<{ id: string }>(
+              `insert into message (channel_id, author_id, body, kind, thread_root_id) values ($1, $2, $3, 'user', $4) returning id`, [todayId, admin.accountId, `cm 원인 ${token}`, th])).rows[0]!.id;
+            return (await db.pool.query<{ id: string }>(
+              `insert into secret_turn_lease (token_hash, agent_id, operator_id, cause_message_id, channel_id, thread_root_id, expires_at, ended_at)
+               values ($1, $2, $3, $4, $5, $6, now() + interval '1 hour', $7) returning id`, [sha(token), agent.accountId, o, cause, todayId, th, ended ? new Date() : null])).rows[0]!.id;
+          };
+          const live = await lease(`tok-${tag}`, op.operatorId, false);
+          const ended = await lease(`tok-end-${tag}`, op.operatorId, true);
+          const other = await lease(`tok-op2-${tag}`, op2.operatorId, false);
+          const labels = new Map<string, string>();
+          const grant = async (label: string, command: string, o: { single?: boolean; expires?: string; by?: string; digests?: unknown } = {}) => {
+            const id = (await db.pool.query<{ id: string }>(
+              `insert into command_grant (agent_id, channel_id, thread_root_id, command, single_use, expires_at, granted_by, file_digests)
+               values ($1, $2, $3, $4, $5, $6::timestamptz, $7, $8::jsonb) returning id`,
+              [agent.accountId, todayId, th, command, o.single ?? false, o.expires ?? new Date(Date.now() + 3_600_000).toISOString(), o.by ?? admin.accountId,
+                JSON.stringify(o.digests ?? [{ path: '/tmp/kc.yaml', sha256: H1 }])])).rows[0]!.id;
+            labels.set(id, label);
+          };
+          await grant('pods', `${KUBE} get pods`);
+          await grant('nodes', `${KUBE} get nodes`, { single: true });
+          await grant('svc', `${KUBE} get svc`, { by: member.accountId });
+          await grant('cm', `${KUBE} get cm`, { expires: new Date(Date.now() - 60_000).toISOString() });
+          await grant('ns', `${KUBE} get ns`, { single: true });
+          await grant('events', `${KUBE} get events`);
+          return { th, live, ended, other, tag, labels };
+        };
+        type Side = Awaited<ReturnType<typeof side>>;
+        const call = async (base: string, h: Record<string, string>, body: unknown) => {
+          const res = await fetch(`${base}/agent/command-grants/match`, {
+            method: 'POST', headers: { ...h, 'content-type': 'application/json', 'x-forwarded-for': XFF }, body: JSON.stringify(body),
+          });
+          const text = await res.text();
+          return { status: res.status, cache: res.headers.get('cache-control'), json: text ? JSON.parse(text) as unknown : null };
+        };
+        const run = async (base: string, sd: Side) => {
+          const tok = `tok-${sd.tag}`;
+          const kc = [{ path: '/tmp/kc.yaml', sha256: H1 }];
+          const b = (command: string, extra: Record<string, unknown> = {}) => ({ leaseId: sd.live, token: tok, command, files: kc, ...extra });
+          const cases: [string, Record<string, string>, unknown][] = [
+            ['여러 번 · cwd 묶음', asOp, b(`${KUBE} get pods`, { cwd: '/w', toolUseId: 'tu-1' })],
+            ['여러 번 · 같은 cwd', asOp, b(`${KUBE}  get   pods`, { cwd: '/w' })],
+            ['여러 번 · 다른 cwd', asOp, b(`${KUBE} get pods`, { cwd: '/other' })],
+            ['여러 번 · cwd 없음', asOp, b(`${KUBE} get pods`)],
+            ['여러 번 · 상대 cwd', asOp, b(`${KUBE} get pods`, { cwd: 'w' })],
+            ['여러 번 · 묶이기 전 상대 cwd', asOp, b(`${KUBE} get events`, { cwd: 'w' })],
+            ['1회 · cwd 안 봄', asOp, b(`${KUBE} get nodes`)],
+            ['1회 · 두 번째', asOp, b(`${KUBE} get nodes`, { cwd: '/w' })],
+            ['정할 수 없는 사람이 준 것', asOp, b(`${KUBE} get svc`, { cwd: '/w' })],
+            ['만료', asOp, b(`${KUBE} get cm`, { cwd: '/w' })],
+            ['②-5 해시 다름', asOp, b(`${KUBE} get ns`, { files: [{ path: '/tmp/kc.yaml', sha256: H2 }] })],
+            ['②-5 파일 없음', asOp, b(`${KUBE} get ns`, { files: undefined })],
+            ['②-5 파일 더 있음', asOp, b(`${KUBE} get ns`, { files: [...kc, { path: '/tmp/x', sha256: H1 }] })],
+            ['②-5 같은 경로 둘', asOp, b(`${KUBE} get ns`, { files: [...kc, ...kc] })],
+            ['셸 문법', asOp, b('ls | wc')],
+            ['grant 없는 명령', asOp, b(`${KUBE} get pv`, { cwd: '/w' })],
+            ['토큰 틀림', asOp, b(`${KUBE} get pods`, { token: 'nope', cwd: '/w' })],
+            ['끝난 임대', asOp, b(`${KUBE} get pods`, { leaseId: sd.ended, token: `tok-end-${sd.tag}`, cwd: '/w' })],
+            ['다른 오퍼레이터 임대', asOp, b(`${KUBE} get pods`, { leaseId: sd.other, token: `tok-op2-${sd.tag}`, cwd: '/w' })],
+            ['없는 임대', asOp, b(`${KUBE} get pods`, { leaseId: randomUUID(), cwd: '/w' })],
+            ['command 없음', asOp, { leaseId: sd.live, token: tok }],
+            ['leaseId uuid 아님', asOp, b(`${KUBE} get pods`, { leaseId: 'x' })],
+            ['toolUseId null', asOp, b(`${KUBE} get pods`, { toolUseId: null })],
+            ['sha256 대문자', asOp, b(`${KUBE} get pods`, { files: [{ path: '/tmp/kc.yaml', sha256: H1.toUpperCase() }] })],
+            ['파일 17개', asOp, b(`${KUBE} get pods`, { files: Array.from({ length: 17 }, (_, i) => ({ path: `/p${i}`, sha256: H1 })) })],
+            ['배열 본문', asOp, []],
+            ['에이전트 PAT', { authorization: `Bearer ${agentPatCm}` }, b(`${KUBE} get pods`, { cwd: '/w' })],
+            ['사람 세션', { authorization: `Bearer ${A}` }, b(`${KUBE} get pods`, { cwd: '/w' })],
+            ['익명', {}, b(`${KUBE} get pods`, { cwd: '/w' })],
+            ['1회 ns 바른 해시', asOp, b(`${KUBE} get ns`)],
+          ];
+          const out: { name: string; status: number; cache: string | null; json: unknown }[] = [];
+          for (const [name, h, body] of cases) {
+            const r = await call(base, h, body);
+            const j = r.json as { grantId?: string } | null;
+            if (j && typeof j.grantId === 'string') j.grantId = sd.labels.get(j.grantId) ?? `?${j.grantId}`;
+            out.push({ name, ...r });
+          }
+          const rows = (await db.pool.query<{ id: string; use_count: number; used: boolean; bound_cwd: string | null }>(
+            `select id, use_count, used_at is not null as used, bound_cwd from command_grant where thread_root_id = $1 order by command`, [sd.th])).rows
+            .map((r) => ({ grant: sd.labels.get(r.id), useCount: r.use_count, used: r.used, boundCwd: r.bound_cwd }));
+          const audits = (await db.pool.query<{ actor: string; target: string; handle: string | null; ip: string | null; detail: Record<string, unknown> }>(
+            `select actor_id::text as actor, target, actor_handle as handle, ip, detail from audit_log
+              where action = 'permission.command_used' and detail->>'threadRootId' = $1 order by id`, [sd.th])).rows
+            .map((r) => ({ ...r, detail: { ...r.detail, grantId: sd.labels.get(String(r.detail.grantId)), threadRootId: 'TH' } as Record<string, unknown> }));
+          return { out, rows, audits };
+        };
+        try {
+          const ts = await run(tsUrl, await side('ts'));
+          const rs = await run(rsUrl, await side('rs'));
+          expect(rs.out).toEqual(ts.out);
+          expect(rs.rows).toEqual(ts.rows);
+          expect(rs.audits).toEqual(ts.audits);
+          // 빈 것끼리 같음으로 통과하지 않게 — 갈리는 칸을 고정 값으로 본다.
+          const at = (n: string) => ts.out.find((o) => o.name === n)!;
+          expect(at('여러 번 · cwd 묶음')).toEqual({ name: '여러 번 · cwd 묶음', status: 200, cache: 'no-store', json: { allow: true, grantId: 'pods', singleUse: false } });
+          expect(at('여러 번 · 같은 cwd').json).toEqual({ allow: true, grantId: 'pods', singleUse: false });
+          expect(at('1회 · cwd 안 봄').json).toEqual({ allow: true, grantId: 'nodes', singleUse: true });
+          expect(at('1회 ns 바른 해시').json).toEqual({ allow: true, grantId: 'ns', singleUse: true });
+          for (const n of ['여러 번 · 다른 cwd', '여러 번 · cwd 없음', '여러 번 · 상대 cwd', '여러 번 · 묶이기 전 상대 cwd', '1회 · 두 번째', '정할 수 없는 사람이 준 것', '만료',
+            '②-5 해시 다름', '②-5 파일 없음', '②-5 파일 더 있음', '②-5 같은 경로 둘', '셸 문법', 'grant 없는 명령']) {
+            expect(at(n), n).toEqual({ name: n, status: 200, cache: 'no-store', json: { allow: false } });
+          }
+          for (const n of ['토큰 틀림', '끝난 임대', '다른 오퍼레이터 임대', '없는 임대']) expect(at(n).json, n).toEqual({ allow: false, reason: 'lease_invalid' });
+          for (const n of ['command 없음', 'leaseId uuid 아님', 'toolUseId null', 'sha256 대문자', '파일 17개', '배열 본문']) {
+            expect(at(n).status, n).toBe(400);
+            expect(at(n).cache, n).toBeNull();
+          }
+          expect(at('에이전트 PAT').status).toBe(403);
+          expect(at('사람 세션').status).toBe(403);
+          expect(at('익명').status).toBe(401);
+          expect(ts.rows).toEqual([
+            { grant: 'cm', useCount: 0, used: false, boundCwd: null },
+            { grant: 'events', useCount: 0, used: false, boundCwd: null },
+            { grant: 'nodes', useCount: 1, used: true, boundCwd: null },
+            { grant: 'ns', useCount: 1, used: true, boundCwd: null },
+            { grant: 'pods', useCount: 2, used: true, boundCwd: '/w' },
+            { grant: 'svc', useCount: 0, used: false, boundCwd: null },
+          ]);
+          expect(ts.audits).toHaveLength(4);
+          expect(ts.audits[0]).toEqual({
+            actor: agent.accountId, target: agent.accountId, handle: null, ip: null,
+            detail: { grantId: 'pods', singleUse: false, channelId: todayId, threadRootId: 'TH', commandSha256: sha(`${KUBE} get pods`), toolUseId: 'tu-1' },
+          });
+          expect(ts.audits[1]!.detail.toolUseId).toBeNull();
+        } finally {
+          await db.pool.query(`update agent_config set invoke_scope = $2, user_decide = $3 where account_id = $1`, [agent.accountId, savedCm.scope, savedCm.ud]);
+          if (prevOp) await db.pool.query(`update agent_assignment set operator_id = $2 where agent_id = $1`, [agent.accountId, prevOp]);
+          await db.pool.query(`delete from command_grant where thread_root_id = any($1::uuid[])`, [threads]);
+          await db.pool.query(`delete from secret_turn_lease where thread_root_id = any($1::uuid[])`, [threads]);
         }
       }
       // S5.3 C3b-2b-2 — MCP `message.askBundle` 의 있던 묶음에 줄 더하기(코어 `ask_bundle_add.rs`). TS·Rust 에 각자의 묶음으로 같은 시나리오를

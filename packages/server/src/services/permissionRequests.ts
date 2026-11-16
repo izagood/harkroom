@@ -1332,6 +1332,26 @@ export async function commandGrantsFor(
 }
 
 /**
+ * 명령 grant 하나를 원자적으로 쓴다(`matchCommandGrant`). Rust 코어(`core/command_match.rs`)가 골든으로 같은 문장을 쓴다.
+ * $1 agent · $2 channel · $3 thread · $4 정규형 명령 · $5 지금 · $6 정규화한 파일 해시 jsonb · $7 cwd(없으면 null).
+ */
+export const MATCH_COMMAND_GRANT_SQL = `update command_grant c set use_count = c.use_count + 1, used_at = coalesce(c.used_at, $5::timestamptz),
+            bound_cwd = case when c.single_use then c.bound_cwd else coalesce(c.bound_cwd, $7::text) end
+      where c.id = (
+        select id from command_grant
+         where agent_id = $1::uuid and channel_id = $2::uuid and thread_root_id = $3::uuid and command = $4::text and expires_at > $5::timestamptz
+           and (not single_use or used_at is null)
+           and ${mayDecideSql('command_grant.agent_id', 'command_grant.granted_by', 'command_grant.channel_id')}
+           and file_digests = $6::jsonb
+           and (single_use or ($7::text is not null and (bound_cwd is null or bound_cwd = $7::text)))
+         order by single_use asc, created_at
+         limit 1
+         for update skip locked)
+        and (not c.single_use or c.used_at is null)
+        and (c.single_use or ($7::text is not null and (c.bound_cwd is null or c.bound_cwd = $7::text)))
+      returning c.id, c.single_use as "singleUse"`;
+
+/**
  * hook 이 도구 호출 하나를 열지 정한다(H②). 명령을 정규형으로 판정하고(셸 문법이면 열지 않는다) **정확히 같은** 살아 있는
  * grant 하나를 원자적으로 쓴다 — 1회짜리는 `used_at is null` 조건의 update 가 한 번만 성공한다. 여러 번짜리를 먼저 쓴다
  * (1회짜리를 아껴 둔다). 연 것마다 감사 기록을 남긴다(명령은 sha256 으로만).
@@ -1356,22 +1376,7 @@ export async function matchCommandGrant(
   const digests = JSON.stringify(canonicalDigests(measured));
   // cwd 가 없으면 1시간 grant 는 열지 않는다(security 1) — null 로 첫 사용을 지나면 묶이지 않은 채 남는다. 1회 grant 는 cwd 를 보지 않는다.
   const cwd = typeof args.cwd === 'string' && args.cwd.startsWith('/') ? args.cwd : null;
-  const hit = (await pool.query<{ id: string; singleUse: boolean }>(
-    `update command_grant c set use_count = c.use_count + 1, used_at = coalesce(c.used_at, $5),
-            bound_cwd = case when c.single_use then c.bound_cwd else coalesce(c.bound_cwd, $7) end
-      where c.id = (
-        select id from command_grant
-         where agent_id = $1 and channel_id = $2 and thread_root_id = $3 and command = $4 and expires_at > $5
-           and (not single_use or used_at is null)
-           and ${mayDecideSql('command_grant.agent_id', 'command_grant.granted_by', 'command_grant.channel_id')}
-           and file_digests = $6::jsonb
-           and (single_use or ($7::text is not null and (bound_cwd is null or bound_cwd = $7)))
-         order by single_use asc, created_at
-         limit 1
-         for update skip locked)
-        and (not c.single_use or c.used_at is null)
-        and (c.single_use or ($7::text is not null and (c.bound_cwd is null or c.bound_cwd = $7)))
-      returning c.id, c.single_use as "singleUse"`,
+  const hit = (await pool.query<{ id: string; singleUse: boolean }>(MATCH_COMMAND_GRANT_SQL,
     [args.agentId, args.channelId, args.threadRootId, v.command, now, digests, cwd])).rows[0];
   if (!hit) return { allow: false };
   await recordAudit(pool, {

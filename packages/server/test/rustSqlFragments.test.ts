@@ -37,7 +37,8 @@ import { CHILD_FACTS_AUDIENCE_SQL, PLAN_PROGRESS_PLANS_SQL } from '../src/servic
 import { displayBodySql } from '../src/services/systemBody.js';
 import { BG_AGENT_ON_SQL, BG_DAILY_LOCK_SQL, BG_ENQUEUE_SQL, BG_EXISTS_SQL, BG_PAUSED_SQL, CLEANUP_CANDIDATES_SQL, DISTILL_CANDIDATES_SQL, ORGANIZE_CANDIDATES_SQL } from '../src/services/bgJobs.js';
 import { LIST_DELEGATIONS_GIVEN_SQL, LIST_DELEGATIONS_MINE_SQL } from '../src/services/apiDelegation.js';
-import { COMMAND_GRANTS_SQL, LIST_TOOL_RULES_SQL, MANDATE_AGENT_CHANNEL_SQL, MANDATE_TURN_LEASE_SQL, TOOL_ALLOWS_SQL, TOOL_REACH_SQL } from '../src/services/permissionRequests.js';
+import { COMMAND_GRANTS_SQL, LIST_TOOL_RULES_SQL, MANDATE_AGENT_CHANNEL_SQL, MANDATE_TURN_LEASE_SQL, MATCH_COMMAND_GRANT_SQL, TOOL_ALLOWS_SQL, TOOL_REACH_SQL } from '../src/services/permissionRequests.js';
+import { READ_LEASE_SQL } from '../src/services/mergeGrants.js';
 import { VALID_MANDATE_OWNER_SQL } from '../src/services/mandates.js';
 import { MANDATE_LINES_STORED_SQL } from '../src/services/mandateLines.js';
 import { LEASE_INBOX_MAX_AGE_MS, LEASE_MAX_MS, LEASE_MAX_REISSUES, LEASE_REISSUE_STALE_MS, LEASE_RENEW_MS, LEASE_TTL_MS, TURN_LEASE_CAUSE_SQL, TURN_LEASE_CLAIM_MOVED_SQL, TURN_LEASE_END_PRIOR_SQL, TURN_LEASE_END_SQL, TURN_LEASE_INSERT_SQL, TURN_LEASE_PRIOR_SQL, TURN_LEASE_RENEW_SQL, TURN_LEASE_USED_SQL } from '../src/services/secretAccess.js';
@@ -70,6 +71,9 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     grant_valid_mandate_owner: VALID_MANDATE_OWNER_SQL,
     grant_mandate_lines_stored: MANDATE_LINES_STORED_SQL,
     grant_command_grants: COMMAND_GRANTS_SQL,
+    // 명령 grant 쓰기(`core/command_match.rs`, S5.3 C3b B1) — 임대 읽기와 grant 하나를 쓰는 UPDATE.
+    grant_read_lease: READ_LEASE_SQL,
+    grant_match_command: MATCH_COMMAND_GRANT_SQL,
     // 턴 임대(`core/turn_lease.rs`, S5.3 C6b) — 문장 전체와 시간 상수(ms·횟수는 문자열로).
     turn_lease_cause: TURN_LEASE_CAUSE_SQL,
     turn_lease_used: TURN_LEASE_USED_SQL,

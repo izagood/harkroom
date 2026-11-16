@@ -5,7 +5,7 @@
 //!
 //! 약속:
 //! - **읽기만 한다.** 읽기 풀만 쓰므로 새 GRANT 가 없다. `POST /agent/command-grants/match` 는 grant 를 **쓴다**(`use_count`·`used_at`·
-//!   `bound_cwd` UPDATE + 감사 INSERT) — 이 줄에 넣지 않고 TS 에 둔다(경로가 표에 없으니 fallback 으로 TS 가 받는다).
+//!   `bound_cwd` UPDATE + 감사 INSERT) — 읽기 풀인 이 줄이 아니라 쓰기 풀의 `command_match.rs`(C3b B1)가 맡는다.
 //! - 문장은 TS 정본(`TOOL_ALLOWS_SQL`·`TOOL_REACH_SQL`·`MANDATE_TURN_LEASE_SQL`·`MANDATE_AGENT_CHANNEL_SQL`·`VALID_MANDATE_OWNER_SQL`·
 //!   `MANDATE_LINES_STORED_SQL`·`COMMAND_GRANTS_SQL`)을 `golden/sql_fragments.json` 에서 읽는다.
 //! - 규칙·명령 판정은 TS `validateToolRule`·`validateExactCommand` 를 TS 골든으로 고정한 `harkroom_proto::tool_rules` 를 쓴다.
@@ -183,7 +183,7 @@ pub fn limits_allow(limits: &Value, cause: &str, now_ms: i64) -> bool {
     true
 }
 
-fn ok_no_store(v: &Value) -> Response {
+pub(crate) fn ok_no_store(v: &Value) -> Response {
     (
         StatusCode::OK,
         [
