@@ -942,6 +942,12 @@ impl<P: PrepareIo, S: PtyTurnSink> AttemptParts for MentionParts<'_, P, S> {
             eprintln!("[mentionTurn] {}: 지시문 파일 쓰기 실패 — {e}", self.key);
             fail()
         })?;
+        // 지시문 플래그가 없는 하네스(codex·opencode)는 프롬프트 앞에 붙여야 닿는다(정본 `prefixesSystemPrompt`).
+        prepared.prompt.prompt = crate::turn_parts::prefix_system_prompt(
+            self.harness,
+            &crate::prompt_system::build_system_prompt(&sys),
+            &prepared.prompt.prompt,
+        );
         // 승인된 스킬 동기화(#140) → 작업 폴더 설정 걷기 — 하네스가 뜨기 **전에** 끝나야 이 턴에 붙는다(정본 차례: 지시문 파일 →
         // `syncSkills` → `scrubWorkspaceSettings`). 실패는 안에서 삼키고 stderr 로만 — 턴은 그대로 간다.
         if let Some(list) = self.list_skills.as_ref() {

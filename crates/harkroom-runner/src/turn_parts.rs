@@ -56,6 +56,25 @@ pub fn write_turn_system_prompt(
     write_system_prompt_file(state_dir, thread_key, &build_system_prompt(opts))
 }
 
+/// 지시문 전용 플래그가 없는 하네스(codex·opencode — 어댑터 표 `SystemPromptDelivery::PromptPrefix`)는 **턴 프롬프트 앞에 붙는 것
+/// 말고 지시문이 닿을 길이 없다**(정본 `mentionTurn.ts` 의 `prefixesSystemPrompt` 분기). 매 턴 다시 붙인다 — 되살린 세션이
+/// 앞 턴의 지시문을 들고 있어도 지금 것이라는 보장은 없다. 플래그로 받는 하네스(claude·pi·omp)와 어댑터 없는 하네스는 그대로.
+/// 이 자리가 빠져 Rust 러너의 codex 턴이 판과 상관없이 지시문 없이 돌았다(11-16, 답을 `message.post` 하지 않고 끝난 턴).
+pub fn prefix_system_prompt(
+    harness: crate::adapter::AgentHarness,
+    system_prompt: &str,
+    turn_prompt: &str,
+) -> String {
+    if !crate::adapter::prefixes_system_prompt(harness).unwrap_or(false) {
+        return turn_prompt.to_owned();
+    }
+    [system_prompt, turn_prompt]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
 /// 러너 기본 명령 옵션 위에 이 시도의 세션·지시문 파일·원인·턴 id 를 얹는다.
 pub fn attempt_command<'a>(
     base: &TurnCommandOptions<'a>,

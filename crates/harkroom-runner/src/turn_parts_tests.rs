@@ -186,3 +186,25 @@ fn account_folder_is_applied_last() {
         "계정 없음이면 폴더 없음 — 기본 폴더가 남지 않는다"
     );
 }
+
+/// 회귀(11-16): 지시문 플래그가 없는 codex·opencode 턴은 판과 상관없이 프롬프트 앞에 지시문이 실려야 한다.
+#[test]
+fn prompt_prefix_harnesses_get_system_prompt_in_front() {
+    for h in [AgentHarness::Codex, AgentHarness::Opencode] {
+        let out = prefix_system_prompt(h, "SYS 지시문", "턴 본문");
+        assert_eq!(out, "SYS 지시문\n\n턴 본문", "{h:?}");
+    }
+    // 빈 지시문이면 본문만
+    assert_eq!(
+        prefix_system_prompt(AgentHarness::Codex, "", "턴 본문"),
+        "턴 본문"
+    );
+}
+
+#[test]
+fn flag_file_harnesses_keep_prompt_untouched() {
+    assert_eq!(
+        prefix_system_prompt(AgentHarness::ClaudeCode, "SYS", "턴 본문"),
+        "턴 본문"
+    );
+}
