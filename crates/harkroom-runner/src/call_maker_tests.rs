@@ -129,6 +129,7 @@ fn cfg(tag: &str) -> (MakerConfig, Root) {
         operator_bin: "/bin/op".into(),
         command_hook: true,
         post_tool_hook: false,
+        chrome_host: false,
         state_dir: root.join("state"),
         mcp_config_path: root.join("state/mcp.json"),
         runner_env: BTreeMap::new(),
@@ -650,4 +651,55 @@ fn opencode_home_reaches_turn_parts() {
         skills_dir: None,
     });
     assert_eq!(parts_home(&m), (Some(home), true));
+}
+
+/// ③'': 정의의 `chromeEnabled` 와 이 머신 값(`HARKROOM_CHROME_HOST`)이 **둘 다** 켜졌을 때만 실제 argv 에 `--chrome` — 정본
+/// `chromeTurnFor(def, deps.chromeHost)`. 읽기 전용 멘션은 늘 닫는다. 닫힐 때도 `--no-chrome` 을 명시한다.
+#[test]
+fn chrome_opens_only_when_definition_and_host_both_allow() {
+    use crate::turn_command::build_turn_command;
+    let t = target(1, None, "h");
+    let cases = [
+        (true, json!(true), "auto", true),
+        (false, json!(true), "auto", false),
+        (true, json!(false), "auto", false),
+        (true, Value::Null, "auto", false),
+        (true, json!("true"), "auto", false),
+        (true, json!(true), "readonly", false),
+    ];
+    for (host, enabled, perm, want) in cases {
+        let (mut m, _l, _root) = maker("chrome");
+        m.cfg.chrome_host = host;
+        let clients = m.clients();
+        let book = LeaseBook::default();
+        let mut reads = read_mention(&clients, &t).unwrap();
+        if !enabled.is_null() {
+            reads.def["chromeEnabled"] = enabled.clone();
+        }
+        reads.def["mentionPermission"] = json!(perm);
+        let ctx = <RunnerMaker<_> as CallMaker<_, Sink>>::system_context(&m, &t, &reads);
+        let system = system_inputs(&reads, &t, ctx);
+        let i: CallInputs<'_, _, Sink> = m.call_inputs(&clients, &book, &t, reads, system);
+        let parts = (i.build_parts)(bundle(&m));
+        let case = format!("host={host} chromeEnabled={enabled} perm={perm}");
+        assert_eq!(parts.base.chrome, want, "{case}");
+        let mut o = parts.base.clone();
+        o.session_id = Some("sid");
+        let plan = build_turn_command(
+            &o,
+            &std::collections::BTreeMap::new(),
+            std::path::Path::new("/h"),
+        )
+        .unwrap();
+        let (on, off) = (
+            plan.args.iter().filter(|a| *a == "--chrome").count(),
+            plan.args.iter().filter(|a| *a == "--no-chrome").count(),
+        );
+        assert_eq!(
+            (on, off),
+            if want { (1, 0) } else { (0, 1) },
+            "{case}: {:?}",
+            plan.args
+        );
+    }
 }

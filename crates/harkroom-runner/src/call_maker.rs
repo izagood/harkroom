@@ -39,7 +39,7 @@ use crate::turn_command::TurnCommandOptions;
 use crate::turn_end::EndConfig;
 use crate::turn_notice::NudgeCaller;
 use crate::turn_outcome_source::{OutcomeConfig, outcome_source_owned};
-use crate::turn_preset::TurnMode;
+use crate::turn_preset::{TurnMode, chrome_turn_for};
 use crate::turn_success::SuccessTarget;
 
 /// 러너 수명 설정(기동 때 한 번).
@@ -48,6 +48,8 @@ pub struct MakerConfig {
     pub operator_bin: String,
     pub command_hook: bool,
     pub post_tool_hook: bool,
+    /// 이 머신이 Claude in Chrome 을 열 수 있는가(오퍼레이터 env `HARKROOM_CHROME_HOST`, 정본 `deps.chromeHost`).
+    pub chrome_host: bool,
     /// 상태 폴더 — 지시문 파일 자리(카드 답 대기, 지금 자리 그대로).
     pub state_dir: PathBuf,
     /// 오퍼레이터가 쓴 기본 MCP 설정(`HARKROOM_MCP_CONFIG`).
@@ -404,6 +406,11 @@ where
             .as_ref()
             .map(|h| h.snapshot())
             .unwrap_or_default();
+        // 이 턴에 Claude in Chrome 을 여는가(정본 `chromeTurnFor(def, deps.chromeHost)`) — 소유자가 켰고 이 머신이 열 수 있을 때만.
+        let chrome_enabled = reads
+            .def
+            .get("chromeEnabled")
+            .and_then(serde_json::Value::as_bool);
         let build_parts = Box::new(move |b: BundleParts<'a, L>| {
             let perm = if system.read_only {
                 MentionPermission::Readonly
@@ -414,6 +421,7 @@ where
                 TurnCommandOptions::new(harness, TurnMode::Mention, perm, &c.operator_bin);
             base.mcp_config_path = &self.mcp_config;
             base.command_hook = system.permissions.as_ref().is_some_and(|p| p.command_hook);
+            base.chrome = chrome_turn_for(chrome_enabled, Some(perm), Some(c.chrome_host));
             let mut p = MentionParts::with_parts(
                 b.io,
                 &self.store,
