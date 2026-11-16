@@ -280,7 +280,16 @@ pub(super) async fn answer(
 /// TS `CAUSE_HEADER` 를 mcpPlugin 처럼 읽는다 — 값이 하나이고 uuid 꼴(대소문자 무관)일 때만. 여러 개면 node 가 `, ` 로 이어 붙여
 /// uuid 꼴이 아니게 되므로 없는 것과 같다.
 pub fn cause_from(headers: &axum::http::HeaderMap) -> Option<String> {
-    let mut it = headers.get_all("x-harkroom-cause").iter();
+    uuid_header(headers, "x-harkroom-cause")
+}
+
+/// 턴 id 헤더(`TURN_ID_HEADER`) — TS `rawTurnId` 와 같이 UUID 꼴 한 값만. 여러 값이면 node 가 `, ` 로 이어 붙여 꼴이 깨지므로 `None`.
+pub fn turn_from(headers: &axum::http::HeaderMap) -> Option<String> {
+    uuid_header(headers, "x-harkroom-turn-id")
+}
+
+fn uuid_header(headers: &axum::http::HeaderMap, name: &str) -> Option<String> {
+    let mut it = headers.get_all(name).iter();
     let v = it.next()?.to_str().ok()?;
     if it.next().is_some() {
         return None;

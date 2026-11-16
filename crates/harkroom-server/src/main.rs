@@ -320,6 +320,27 @@ async fn main() {
         }
         _ => None,
     };
+    // C4b B1b — MCP 기억 본문 쓰기(memory.set·merge·restore). B1a 풀이 섰고 쓰기 풀에 `MEMORY_BODY_PRIVILEGES` 도 다 있을 때만.
+    let mem_body_write = match &mem_write {
+        Some(w) => {
+            use harkroom_server::core::mcp::mem_body as b;
+            match write::missing_in(w, b::MEMORY_BODY_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: mcp memory body writes off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: mcp memory body writes off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        None => None,
+    };
     // C3b-1 — 선택 카드 답하기·닫기. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 `ASK_PRIVILEGES` 가 다 있을 때만.
     // C4b B2-1 — MCP `thread.note`. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 `THREAD_NOTE_PRIVILEGES` 가 다 있을 때만.
     let note_write = match (&core_mode, &state.write) {
@@ -719,6 +740,7 @@ async fn main() {
                 grant: grant_write,
                 note: note_write,
                 memory: mem_write,
+                memory_body: mem_body_write,
             },
             auth.clone(),
             state.cors.clone(),

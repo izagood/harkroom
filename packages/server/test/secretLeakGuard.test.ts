@@ -179,9 +179,11 @@ describe('본문 거절 (D5)', () => {
     expect(human.statusCode).toBe(403);
     expect(human.json().error.code).toBe('agent_only');
     expect((await admit(auth(agent.pat), {})).json().error.code).toBe('bad_request');
-    // memory.archive 는 회차 밖이면 받는다(C4b B1a — Rust 가 답한다). 회차 안(bg 원인 헤더)이면 여전히 거절한다.
-    expect((await admit(auth(agent.pat), { tool: 'memory.archive', arguments: { slug: 'mem/x' } })).json()).toEqual({ admitted: true, registered: true });
-    for (const tool of ['memory.set', 'memory.merge', 'bg.complete']) {
+    // memory.archive(C4b B1a)·set·merge(B1b)는 회차 밖이면 받는다(Rust 가 답한다). 회차 안(bg 원인 헤더)이면 여전히 거절한다.
+    for (const tool of ['memory.archive', 'memory.set', 'memory.merge']) {
+      expect((await admit(auth(agent.pat), { tool, arguments: { slug: 'mem/x' } })).json(), tool).toEqual({ admitted: true, registered: true });
+    }
+    for (const tool of ['bg.complete']) {
       const r = await admit(auth(agent.pat), { tool });
       expect(r.statusCode).toBe(400);
       expect(r.json().error.code).toBe('not_admissible');

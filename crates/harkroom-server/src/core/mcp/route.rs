@@ -19,9 +19,11 @@ pub const BODY_LIMIT: usize = 2 * 2 * 1024 * 1024 + 512 * 1024;
 
 /// Rust 가 답하는 도구 — 읽기([`super::tools::SERVED`]) + 리액션 쓰기([`super::writes::SERVED`], C4b) + 기억 쓰기([`super::mem_writes::SERVED`], C4b B1a).
 /// 기억 쓰기는 쓰기 풀이 있을 때만 갈림에 싣는다([`super::writes::McpWrites::memory`]).
-pub fn served(mem_write: bool) -> &'static [&'static str] {
+/// 본문 쓰기(set·merge·restore, C4b B1b)는 B1a 풀과 본문 풀이 둘 다 있을 때만 싣는다([`super::writes::McpWrites::memory_body`]).
+pub fn served(mem_write: bool, mem_body: bool) -> &'static [&'static str] {
     static BASE: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
     static ALL: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
+    static BODY: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
     if !mem_write {
         return BASE.get_or_init(|| {
             super::tools::SERVED
@@ -31,12 +33,24 @@ pub fn served(mem_write: bool) -> &'static [&'static str] {
                 .collect()
         });
     }
-    ALL.get_or_init(|| {
+    if !mem_body {
+        return ALL.get_or_init(|| {
+            super::tools::SERVED
+                .iter()
+                .chain(super::writes::SERVED)
+                .chain(super::grant_writes::SERVED)
+                .chain(super::mem_writes::SERVED)
+                .copied()
+                .collect()
+        });
+    }
+    BODY.get_or_init(|| {
         super::tools::SERVED
             .iter()
             .chain(super::writes::SERVED)
             .chain(super::grant_writes::SERVED)
             .chain(super::mem_writes::SERVED)
+            .chain(super::mem_body::SERVED)
             .copied()
             .collect()
     })
@@ -97,9 +111,16 @@ pub async fn handle(
         return json(StatusCode::PAYLOAD_TOO_LARGE, TOO_LARGE);
     };
     let cause = super::reads3::cause_from(&parts.headers);
+    let turn = super::reads3::turn_from(&parts.headers);
     let runner = super::bg_claim::runner(has_operator, &parts.headers);
     let tools = |tool: &'static str, args: serde_json::Value| -> AnswerFut {
-        let (pool, me, cause, writes) = (pool.clone(), me.clone(), cause.clone(), writes.clone());
+        let (pool, me, cause, turn, writes) = (
+            pool.clone(),
+            me.clone(),
+            cause.clone(),
+            turn.clone(),
+            writes.clone(),
+        );
         Box::pin(async move {
             if let Some(r) =
                 super::grant_writes::answer(&pool, writes.grant.as_ref(), &me, tool, &args).await
@@ -117,10 +138,22 @@ pub async fn handle(
             {
                 return r;
             }
+            if let Some(r) = super::mem_body::answer(
+                &pool,
+                writes.memory_body.as_ref(),
+                &me,
+                turn.as_deref(),
+                tool,
+                &args,
+            )
+            .await
+            {
+                return r;
+            }
             super::tools::answer(&pool, &me, tool, &args, cause.as_deref()).await
         })
     };
-    let served = served(writes.memory.is_some());
+    let served = served(writes.memory.is_some(), writes.memory_body.is_some());
     if let Some(r) = serve(&up, ci, &parts.headers, &bytes, served, &tools).await {
         return r;
     }

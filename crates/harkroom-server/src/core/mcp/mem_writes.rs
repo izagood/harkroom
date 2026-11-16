@@ -88,7 +88,7 @@ fn slug_arg<'a>(args: &'a Value, key: &str) -> Option<Result<&'a str, String>> {
 }
 
 /// zod 3 `z.string().datetime({ offset: true })` 의 **부분집합**(이 꼴이면 zod 도 받는다). 아니면 `None` → TS 가 판정한다.
-fn datetime_ok(s: &str) -> bool {
+pub(super) fn datetime_ok(s: &str) -> bool {
     static R: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     R.get_or_init(|| {
         regex::Regex::new(
@@ -102,7 +102,7 @@ fn datetime_ok(s: &str) -> bool {
 /// `ifUpdatedAt: z.string().datetime({offset:true}).nullable().optional()` — 없음 `Some(None)` · null `Some(Some(None))` ·
 /// 문자열 `Some(Some(Some(s)))` · 그 밖 `None`.
 #[allow(clippy::option_option)]
-fn if_updated_at(args: &Value) -> Option<Option<Option<&str>>> {
+pub(super) fn if_updated_at(args: &Value) -> Option<Option<Option<&str>>> {
     match args.get("ifUpdatedAt") {
         None => Some(None),
         Some(Value::Null) => Some(Some(None)),
@@ -112,7 +112,7 @@ fn if_updated_at(args: &Value) -> Option<Option<Option<&str>>> {
 }
 
 /// TS `conflictError(slug, now)`.
-fn conflict(slug: &str, now: Option<&str>) -> String {
+pub(super) fn conflict(slug: &str, now: Option<&str>) -> String {
     let message = match now {
         Some(at) => format!(
             "그 사이 다른 턴이 {slug} 를 고쳤다(지금 판 {at}). memory.get 으로 다시 읽고 그 updatedAt 으로 다시 해라."

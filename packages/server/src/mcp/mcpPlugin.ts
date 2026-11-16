@@ -159,8 +159,8 @@ export function toolRegisteredNow(tool: string): boolean {
 
 /** `/mcp/admit` 이 받지 않는 도구 — 회차 쓰기 상한·회차 닫기는 예약·부수효과가 도구 안에 있어 따로 떼어 확인할 수 없다. 예외: 러너 꼴의 bg.complete(admit 안 `bgRunnerComplete`). */
 const ADMIT_REFUSED = new Set([...BG_WRITE_TOOLS, 'bg.complete']);
-/** 그중 회차 **밖**이면 받는 것 — Rust 가 답하는 기억 쓰기(C4b B1a). 회차 안이면 여전히 /mcp 만 받는다(상한 예약·변경 기록). */
-export const ADMIT_OUTSIDE_BG: ReadonlySet<string> = new Set(['memory.archive']);
+/** 그중 회차 **밖**이면 받는 것 — Rust 가 답하는 기억 쓰기(C4b B1a archive · B1b set·merge). 회차 안이면 여전히 /mcp 만 받는다(상한 예약·변경 기록). */
+export const ADMIT_OUTSIDE_BG: ReadonlySet<string> = new Set(['memory.archive', 'memory.set', 'memory.merge']);
 
 /** 미리보기 제목을 파일명으로 — 받은 파일이 무엇인지 보이게. 경로 성분·제어문자는 `displayName` 이 한 번 더 지운다. */
 function slugFilename(title: string): string {
