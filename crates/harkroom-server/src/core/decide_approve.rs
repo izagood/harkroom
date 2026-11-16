@@ -18,6 +18,9 @@ use super::decide_core::{
     MAX_RESTARTS, Recheck, Shape, after_verdict, audit_detail, has_lock_fn_privilege, lock_request,
     may_decide_for_locked, recheck_locked, retry_lock_once,
 };
+use super::mandate_card_thread::{
+    MANDATE_CREATED_AUDIT, Made, card_stamp_sql, mandate_for_card_thread, request_stamp_sql,
+};
 use super::mandate_line_write::{LINE_AUDIT, LineArgs, LineKind, add_line_from_request};
 use super::msg_read::is_uuid;
 use harkroom_proto::tool_rules::{ExactCommandVerdict, validate_exact_command};
@@ -55,6 +58,28 @@ pub const MANDATE_LINE_PRIVILEGES: &[(&str, &str)] = &[
 
 static MANDATE_CORE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// S5.3 C2 — 카드 스레드에 위임장을 **새로 세우는** 칸(`approve_new_mandate`). [`MANDATE_LINE_PRIVILEGES`] 에 더해 이것도 다 있을 때만
+/// 위임장 없는 `approve_new_mandate` 를 Rust 가 맡는다(fail-closed — 없으면 「permission new mandate core off」, 그 꼴은 TS).
+/// 머리 글 `for update` 는 `message` 의 UPDATE 칸(`message.meta`, [`APPROVE_PRIVILEGES`])으로 된다.
+pub const NEW_MANDATE_PRIVILEGES: &[(&str, &str)] = &[
+    ("mandate.owner_account_id", "INSERT"),
+    ("mandate.delegator_account_id", "INSERT"),
+    ("mandate.root_message_id", "INSERT"),
+    ("mandate.channel_id", "INSERT"),
+    ("mandate.thread_root_id", "INSERT"),
+    ("mandate.created_at", "INSERT"),
+    ("mandate.last_activity_at", "INSERT"),
+    ("message.mandate_id", "UPDATE"),
+    ("permission_request.mandate_id", "UPDATE"),
+];
+
+static NEW_MANDATE_CORE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 위임장 없는 `approve_new_mandate`(C2)를 Rust 가 맡는가 — [`check_mandate_core`] 가 C1 칸과 함께 정한다.
+pub fn new_mandate_core_on() -> bool {
+    mandate_core_on() && NEW_MANDATE_CORE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// 위임장 있는 승인(C1)을 Rust 가 맡는가 — 기동 때 [`check_mandate_core`] 가 정한다.
 pub fn mandate_core_on() -> bool {
     MANDATE_CORE.load(std::sync::atomic::Ordering::Relaxed)
@@ -77,6 +102,22 @@ pub async fn check_mandate_core(pool: &sqlx::PgPool) -> bool {
         }
     };
     MANDATE_CORE.store(on, std::sync::atomic::Ordering::Relaxed);
+    let new_on = on
+        && match crate::write::missing_in(pool, NEW_MANDATE_PRIVILEGES, &[]).await {
+            Ok(m) if m.is_empty() => true,
+            Ok(m) => {
+                eprintln!("front: permission new mandate core off — missing privileges {m:?}");
+                false
+            }
+            Err(e) => {
+                eprintln!(
+                    "front: permission new mandate core off — privilege check failed ({})",
+                    e.as_database_error().map_or("io", |_| "db")
+                );
+                false
+            }
+        };
+    NEW_MANDATE_CORE.store(new_on, std::sync::atomic::Ordering::Relaxed);
     on
 }
 
@@ -181,10 +222,17 @@ const ANSWER_TOOL: &[&str] = &[
     "approve",
     "approve_once",
 ];
+/// TS 후보는 `[decision, approve_mandate, …]` 라 approve_mandate 가 두 번 나온다 — 첫 일치를 고르므로 뒤의 것은 빼도 같다(security 낮음).
 const ANSWER_TOOL_MANDATE: &[&str] = &[
     "approve_mandate",
-    "approve_mandate",
     "approve_new_mandate",
+    "approve",
+    "approve_once",
+];
+/// TS `[approve_new_mandate, approve_mandate, approve_new_mandate, …]` — 같은 이유로 뒤의 approve_new_mandate 를 뺐다.
+const ANSWER_TOOL_NEW_MANDATE: &[&str] = &[
+    "approve_new_mandate",
+    "approve_mandate",
     "approve",
     "approve_once",
 ];
@@ -197,6 +245,11 @@ const ANSWER_TOOL_TURN: &[&str] = &[
 ];
 
 pub const MANDATE_LINE_FAILED_STATUS: u16 = 409;
+
+/// TS `mandate_unavailable` 문구(approve_new_mandate 가 이 스레드에 위임장을 세울 수 없을 때). 카드·묶음 답 입구는 이것을 받으면
+/// `approve`(7일)로 한 번 더 한다(TS `decide` 와 같음, merge 는 처음부터 TS).
+pub const MANDATE_UNAVAILABLE_MESSAGE: &str =
+    "a mandate cannot be started on this thread — approve from a thread you started";
 
 /// TS `mandate_line_failed` 문구.
 pub fn mandate_line_failed_message(code: &str) -> String {
@@ -281,6 +334,7 @@ pub async fn approve_write(
         ("command", Decision::ApproveOnce) => (COMMAND_GRANT_TTL, Some("once"), ANSWER_ONCE),
         ("tool", Decision::Approve) => (TOOL_GRANT_TTL, None, ANSWER_TOOL),
         ("tool", Decision::ApproveMandate) => (TOOL_GRANT_TTL, None, ANSWER_TOOL_MANDATE),
+        ("tool", Decision::ApproveNewMandate) => (TOOL_GRANT_TTL, None, ANSWER_TOOL_NEW_MANDATE),
         // [이번 턴만] — grant 없이 줄 하나가 승인의 전부(기한 칸은 비운다, TS 와 같음).
         ("tool", Decision::ApproveTurn) => (COMMAND_GRANT_TTL, None, ANSWER_TOOL_TURN),
         // rust_takes 가 거른다 — 여기 오면 맡지 않는다(쓰기 전).
@@ -291,6 +345,11 @@ pub async fn approve_write(
         return Ok(ApproveOutcome::HandToTs);
     }
     if turn && (locked.mandate_id.is_none() || locked.card_message_id.is_none()) {
+        return Ok(ApproveOutcome::HandToTs);
+    }
+    // C2 — 위임장 없는 [이 스레드로 위임장 만들고 더하기]는 C2 칸까지 다 있을 때만(fail-closed, 쓰기 전).
+    let new_mandate = decision == Decision::ApproveNewMandate && locked.mandate_id.is_none();
+    if new_mandate && !new_mandate_core_on() {
         return Ok(ApproveOutcome::HandToTs);
     }
     let (now, now_iso, expires, expires_iso): (String, String, String, String) =
@@ -304,6 +363,42 @@ pub async fn approve_write(
     } else {
         (Some(expires), Some(expires_iso))
     };
+
+    // C2 — 머리 글을 잠그고(잠금 7단계) 위임장을 세우거나 잇는다. 못 세우면 409 `mandate_unavailable`(커밋 없음) — 입구가 approve 로
+    // 한 번 더 한다. 세웠으면 요청 줄·카드 글(이 요청의 에이전트가 쓴 것만)에 키를 적는다(TS 와 같은 차례: grant 보다 먼저).
+    let mut mandate_id = locked.mandate_id.clone();
+    let mut created: Option<Made> = None;
+    if new_mandate {
+        let (Some(ch), Some(root)) = (channel_id.as_deref(), thread_root_id.as_deref()) else {
+            return Ok(refused(
+                409,
+                "mandate_unavailable",
+                MANDATE_UNAVAILABLE_MESSAGE,
+            ));
+        };
+        let Some(made) = mandate_for_card_thread(conn, args.actor_id, ch, root, &now).await? else {
+            return Ok(refused(
+                409,
+                "mandate_unavailable",
+                MANDATE_UNAVAILABLE_MESSAGE,
+            ));
+        };
+        sqlx::query(request_stamp_sql())
+            .bind(args.request_id)
+            .bind(&made.mandate_id)
+            .execute(&mut *conn)
+            .await?;
+        if let Some(card) = locked.card_message_id.as_deref() {
+            sqlx::query(card_stamp_sql())
+                .bind(card)
+                .bind(&made.mandate_id)
+                .bind(args.agent_id)
+                .execute(&mut *conn)
+                .await?;
+        }
+        mandate_id = Some(made.mandate_id.clone());
+        created = made.inserted.then_some(made);
+    }
 
     let mut command_grant_id: Option<String> = None;
     let mut tool_scope: Option<String> = None;
@@ -343,7 +438,7 @@ pub async fn approve_write(
     }
     // C1 — 위임장이 있으면 그 위임장에 줄 하나(TS `addLineFromRequest`, savepoint). [이번 턴만]은 줄이 승인의 전부라 실패하면
     // 결정 전체를 되돌린다(409 `mandate_line_failed`, 커밋하지 않음). 7일 승인은 grant 를 썼으므로 줄만 되돌리고 결정은 남긴다.
-    let line = match locked.mandate_id.as_deref() {
+    let line = match mandate_id.as_deref() {
         Some(mandate_id) => {
             let out = add_line_from_request(
                 conn,
@@ -428,6 +523,19 @@ pub async fn approve_write(
         .bind(detail.to_string())
         .execute(&mut *conn)
         .await?;
+    if let Some(made) = &created {
+        // TS `auditMandateCreated`(커밋 뒤) — 여기서는 같은 tx. channel·머리는 위에서 확인했다.
+        let detail = made.audit_detail(
+            channel_id.as_deref().unwrap_or_default(),
+            thread_root_id.as_deref().unwrap_or_default(),
+        );
+        sqlx::query(MANDATE_CREATED_AUDIT)
+            .bind(args.actor_id)
+            .bind(&made.mandate_id)
+            .bind(detail.to_string())
+            .execute(&mut *conn)
+            .await?;
+    }
     if let Some(l) = &line {
         let (action, detail) = l.audit(args.request_id);
         sqlx::query(LINE_AUDIT)
@@ -528,6 +636,33 @@ async fn approve_attempt(
 
 /// 승인 입구 — [`super::decide_core::decide_deny`] 와 같은 재시도·다시 하기 규칙.
 pub async fn decide_approve(
+    pool: &sqlx::PgPool,
+    args: ApproveArgs<'_>,
+) -> Result<ApproveOutcome, ApproveError> {
+    let out = approve_once_shape(pool, args).await?;
+    // TS `decide`: [이 스레드로 위임장 만들고 더하기]인데 위임장을 세울 수 없으면 7일 승인으로 한 번 더 한다(merge 는 TS 라 여기 없음).
+    if args.option == "approve_new_mandate"
+        && matches!(
+            &out,
+            ApproveOutcome::Refused {
+                code: "mandate_unavailable",
+                ..
+            }
+        )
+    {
+        return approve_once_shape(
+            pool,
+            ApproveArgs {
+                option: "approve",
+                ..args
+            },
+        )
+        .await;
+    }
+    Ok(out)
+}
+
+async fn approve_once_shape(
     pool: &sqlx::PgPool,
     args: ApproveArgs<'_>,
 ) -> Result<ApproveOutcome, ApproveError> {

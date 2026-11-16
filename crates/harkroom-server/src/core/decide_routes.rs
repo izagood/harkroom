@@ -318,7 +318,12 @@ pub async fn deny_route(
 pub fn is_approve_option(option: &str) -> bool {
     matches!(
         option,
-        "approve" | "approve_mandate" | "approve_turn" | "approve_once" | "approve_hour"
+        "approve"
+            | "approve_mandate"
+            | "approve_new_mandate"
+            | "approve_turn"
+            | "approve_once"
+            | "approve_hour"
     )
 }
 

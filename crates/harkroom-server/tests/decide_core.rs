@@ -76,6 +76,8 @@ fn who_takes_it() {
         ("approve_hour", "command", Decision::ApproveHour),
         // C1 — 위임장 없는 approve_mandate 는 TS 처럼 grant 만(approve 와 같음).
         ("approve_mandate", "tool", Decision::ApproveMandate),
+        // C2 — 위임장 없는 approve_new_mandate(tool)는 Rust 가 카드 스레드에 위임장을 세운다.
+        ("approve_new_mandate", "tool", Decision::ApproveNewMandate),
     ] {
         assert_eq!(rust_takes(shape(o, k)), Some(d), "{o}/{k}");
     }
@@ -87,7 +89,9 @@ fn who_takes_it() {
         ("approve_once", "merge"),
         ("approve_once", "tool"),
         ("approve_hour", "tool"),
-        ("approve_new_mandate", "tool"),
+        // C2 — new_mandate 는 tool 만(command 는 TS 409 bad_decision, merge 는 TS).
+        ("approve_new_mandate", "command"),
+        ("approve_new_mandate", "merge"),
         // 위임장 없는 [이번 턴만]은 TS(409 bad_decision).
         ("approve_turn", "tool"),
         ("approve_turn", "merge"),
@@ -96,7 +100,7 @@ fn who_takes_it() {
     ] {
         assert_eq!(rust_takes(shape(o, k)), None, "{o}/{k}");
     }
-    // C1 — 위임장이 있는 tool 승인 셋은 Rust, 나머지(new_mandate·command·merge·deny)는 TS.
+    // C1·C2 — 위임장이 있는 tool 승인 넷은 Rust, 나머지(command·merge·deny)는 TS.
     let m = |o, k| Shape {
         has_mandate: true,
         ..shape(o, k)
@@ -110,8 +114,11 @@ fn who_takes_it() {
         rust_takes(m("approve_turn", "tool")),
         Some(Decision::ApproveTurn)
     );
+    assert_eq!(
+        rust_takes(m("approve_new_mandate", "tool")),
+        Some(Decision::ApproveNewMandate)
+    );
     for (o, k) in [
-        ("approve_new_mandate", "tool"),
         ("approve_once", "command"),
         ("approve_hour", "command"),
         ("approve_mandate", "merge"),

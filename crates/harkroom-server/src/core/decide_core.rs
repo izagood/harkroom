@@ -545,7 +545,7 @@ pub struct Shape<'a> {
 /// Rust 가 맡는가. `None` = 처음부터 TS(쓰기 전이라 넘겨도 된다).
 /// - 허용 목록 방식: 아래에 적힌 꼴만 Rust, 나머지는 전부 TS(security ②-1·②-2).
 /// - `once`·글 승인·거울·모르는 선택지는 처음부터 TS — Rust 에서 반쯤 하다 넘기는 길은 없다. 위임장(`mandate_id`)은 tool 승인
-///   (`approve`·`approve_mandate`·`approve_turn`, C1)만 Rust, deny·command 는 TS. `approve_new_mandate` 는 C2.
+///   (`approve`·`approve_mandate`·`approve_turn`, C1)만 Rust, deny·command 는 TS. `approve_new_mandate`(tool)는 C2.
 /// - deny 는 kind 와 관계없이 Rust(머지 거절 카드의 deny 포함, grant 를 쓰지 않음). 같은 카드의 approve_once·approve 는 TS(②-6).
 /// - 승인은 `tool`→approve, `command`→approve_once·approve_hour 만. 소유자가 아닌 승인(asOwner=false)은 판정 뒤
 ///   [`after_verdict`] 가 TS 로 돌린다.
@@ -557,7 +557,10 @@ pub fn rust_takes(s: Shape<'_>) -> Option<Decision> {
     let ok = match (d, s.kind) {
         (Decision::Deny, _) => !s.has_mandate,
         // S5.3 C1 — tool 7일 승인은 위임장이 있어도 Rust(grant + 있는 위임장에 줄). 위임장 없는 `approve_mandate` 는 TS 처럼 grant 만.
-        (Decision::Approve | Decision::ApproveMandate, "tool") => !s.has_denial,
+        // C2 — `approve_new_mandate` 도 tool 이면 Rust(위임장이 있으면 그 위임장에 줄, 없으면 카드 스레드에 세운 뒤 줄).
+        (Decision::Approve | Decision::ApproveMandate | Decision::ApproveNewMandate, "tool") => {
+            !s.has_denial
+        }
         // C1 — [이번 턴만]은 위임장이 있는 tool 카드만(없으면 TS 409 `bad_decision`).
         (Decision::ApproveTurn, "tool") => !s.has_denial && s.has_mandate,
         // 위임장이 있는 command 는 C3.
