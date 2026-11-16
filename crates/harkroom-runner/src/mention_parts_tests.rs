@@ -943,6 +943,57 @@ fn attempt_command_carries_codex_home() {
     );
 }
 
+/// 멘션 턴 codex 추가 MCP(정본 `mentionTurn.ts` 1572 `readTurnMcp`): 시도마다 설정 파일을 다시 읽어 harkroom·avcs 밖 항목을
+/// 시도 명령에 싣고, 조립된 argv 에 `mcp_servers.<이름>.*` 로 나온다. `attempt_cmd` 의 배선 한 줄이 빠지면 빨개진다.
+/// codex 가 아닌 하네스는 읽지 않고(빈 표), 못 읽으면 빈 표로 띄운다.
+#[test]
+fn attempt_command_carries_codex_extra_mcp() {
+    let w = world("cxextra");
+    let store = SessionStore::new(w.root.join("sessions.json"));
+    let stale = PathBuf::from("/acct/STALE_BASE");
+    let mcp = w.root.join("mcp.json");
+    std::fs::write(
+        &mcp,
+        r#"{"mcpServers":{"harkroom":{"command":"/bin/op","args":["mcp-bridge"]},"avcs":{"command":"/bin/avcs"},"github":{"url":"https://example.invalid/mcp"}}}"#,
+    )
+    .unwrap();
+    let mcp_s: &'static str = Box::leak(mcp.to_string_lossy().into_owned().into_boxed_str());
+    for (harness, want) in [
+        (AgentHarness::Codex, vec!["github"]),
+        (AgentHarness::ClaudeCode, vec![]),
+    ] {
+        let mut p = parts(&w, &store, &stale, false);
+        p.harness = harness;
+        p.base.harness = harness;
+        p.base.mcp_config_path = mcp_s;
+        p.codex_home = Some(PathBuf::from("/state/codex-home"));
+        p.prepare(&target(), None, true, "t-1").unwrap();
+        let cmd = p.command_for("t-1").unwrap();
+        let names: Vec<&str> = cmd
+            .extra_mcp_servers
+            .iter()
+            .map(|(n, _)| n.as_str())
+            .collect();
+        assert_eq!(names, want, "{harness:?}");
+        if harness == AgentHarness::Codex {
+            let built =
+                crate::turn_command::build_turn_command(&cmd, &BTreeMap::new(), Path::new("/home"))
+                    .unwrap();
+            let argv = built.args.join(" ");
+            assert!(argv.contains("mcp_servers.github.url="), "{argv}");
+            // 프리셋 avcs·harkroom 은 그대로 — 파일의 avcs(`/bin/avcs`)를 추가로 겹쳐 싣지 않는다.
+            assert!(!argv.contains("/bin/avcs"), "{argv}");
+        }
+    }
+    // 못 읽으면 빈 표로 띄운다(띄우기는 막지 않는다).
+    let mut p = parts(&w, &store, &stale, false);
+    p.harness = AgentHarness::Codex;
+    p.base.harness = AgentHarness::Codex;
+    p.base.mcp_config_path = "/nonexistent/mcp.json";
+    p.prepare(&target(), None, true, "t-1").unwrap();
+    assert!(p.command_for("t-1").unwrap().extra_mcp_servers.is_empty());
+}
+
 /// o1: 기동 때 정한 opencode 격리 홈이 시도 명령 옵션까지 간다(`attempt_cmd`). 빠지면 opencode·kilo 턴은 조립에서 안 뜬다.
 #[test]
 fn attempt_command_carries_opencode_home() {
