@@ -4,7 +4,6 @@
 //! **TS 와 다른 점**
 //! - 배정 처리(MCP 설정 쓰기·OAuth refresh·spawn)는 링크 스레드를 붙잡지 않게 **작업 스레드 하나**에서 차례로 한다. TS 의
 //!   `assignsInFlight`(재시작이 앞 assign 을 기다림)는 같은 큐의 순서로 지켜진다 — assign 다음에 온 restart 는 assign 뒤에 돈다.
-//! - `chrome_host` 는 이 판에서 늘 닫힘이다(TS `chromeHostAvailable` 이식 전 — 못 재면 닫힘과 같은 값).
 //! - 러너 종료 사유(`runnerExitReason(tailLines)`)는 serve.rs 가 종료 꼬리로 가려 넘긴다(`runner_log::runner_exit_reason`).
 //! - `/operators/self` 의 operator id 를 `operator.json` 에 적는 일(`rememberOperatorId`)은 하지 않는다 — 앱 기본값용이고 아직 TS 몫.
 use crate::assignments::{
@@ -113,6 +112,10 @@ pub struct SystemDeps {
     pub owner: Arc<OwnerCell>,
     /// 새로 띄웠으면 서버에 `runner.started` 를 낸다(TS `notifyRunnerStarted`).
     pub on_started: StartedSink,
+    /// 앱이 띄운 오퍼레이터인가(`--launch-nonce` 를 받았다) — Claude in Chrome 판정의 첫 조건(s9 G6).
+    pub app_launched: bool,
+    /// Chrome native host 매니페스트를 찾을 HOME.
+    pub home: String,
 }
 
 impl AssignmentDeps for SystemDeps {
@@ -155,6 +158,10 @@ impl AssignmentDeps for SystemDeps {
 
     fn rust_runner_present(&self) -> bool {
         self.runners.rust_runner_present()
+    }
+    /// TS `chromeHostAvailable` — 배정마다 다시 잰다(확장을 깔면 오퍼레이터 재시작 없이 따라간다).
+    fn chrome_host(&self) -> bool {
+        crate::chrome_host::chrome_host_on_disk(self.app_launched, &self.home)
     }
     /// node 러너가 물려받는 PATH(이 프로세스의 PATH)에 실행할 수 있는 `node` 가 있는가(s9).
     fn node_present(&self) -> bool {
