@@ -77,8 +77,8 @@ pub struct TsSource {
 }
 
 /// `adapters/gate.ts::GATE_PATTERN` 의 원문.
-pub const TS_GATE: &str = r"/Do you want to (?:proceed|continue)\?|requires confirmation|Press enter to continue|Enter\s*to\s*(?:confirm|continue)|Connect a provider|MCP\s*server\s*to\s*run\s*tool|[❯›](?!\u00a0)[^\n]*✔|^\s*[❯›]\s*\d+\.\s/m";
-const RS_GATE: &str = r"(?m)Do you want to (?:proceed|continue)\?|requires confirmation|Press enter to continue|Enter\s*to\s*(?:confirm|continue)|Connect a provider|MCP\s*server\s*to\s*run\s*tool|[❯›](?:[^\x{a0}\n][^\n]*)?✔|^\s*[❯›]\s*[0-9]+\.\s";
+pub const TS_GATE: &str = r"/Do you want to (?:proceed|continue)\?|requires confirmation|Press enter to continue|Skip until next version|Enter\s*to\s*(?:confirm|continue)|Connect a provider|MCP\s*server\s*to\s*run\s*tool|[❯›](?!\u00a0)[^\n]*✔|^\s*[❯›]\s*\d+\.\s/m";
+const RS_GATE: &str = r"(?m)Do you want to (?:proceed|continue)\?|requires confirmation|Press enter to continue|Skip until next version|Enter\s*to\s*(?:confirm|continue)|Connect a provider|MCP\s*server\s*to\s*run\s*tool|[❯›](?:[^\x{a0}\n][^\n]*)?✔|^\s*[❯›]\s*[0-9]+\.\s";
 
 fn re(p: &str) -> Regex {
     Regex::new(p).expect("화면 패턴 컴파일")

@@ -308,12 +308,20 @@ pub mod codex {
             .unwrap_or_default()
     }
 
-    /// exec 계열에만 있는 두 플래그(`codex resume`·TUI 는 파싱 오류).
+    /// 시작 때 업데이트 검사 끄기 — 모든 codex 턴. 켜 두면 홈의 `version.json` 에 새 판이 적힌 다음 기동에 TUI 가
+    /// 「Update available」 선택 화면(기본값 `Update now`)을 띄우고, 러너가 프롬프트를 붙여넣고 친 Enter 가 그 기본값을 눌러
+    /// `npm install -g @openai/codex` 를 돌린 뒤 「Please restart Codex」로 exit 0 한다(11-16 0.158→0.169, 무발화 턴).
+    /// 판 갈아치우기는 사람이 한다. 전에는 API 키 연결(lane) 턴에만 실렸다(`codex_lane_args`).
+    pub const NO_UPDATE_CHECK: [&str; 2] = ["-c", "check_for_update_on_startup=false"];
+
+    /// exec 계열에만 있는 두 플래그(`codex resume`·TUI 는 파싱 오류) + 모든 모드의 업데이트 검사 끄기.
     pub fn always_args(mode: TurnMode) -> Vec<String> {
-        match exec_model(mode) {
+        let mut out = match exec_model(mode) {
             ExecutionModel::Exec => v(&["--skip-git-repo-check", "--ignore-user-config"]),
             ExecutionModel::Tui => Vec::new(),
-        }
+        };
+        out.extend(v(&NO_UPDATE_CHECK));
+        out
     }
 
     /// 지시문·본문 모두 stdin 파일(#117) — argv 에는 아무것도 없다.
@@ -833,16 +841,37 @@ mod tests {
             ExecutionModel::Tui => {
                 assert!(first.is_empty());
                 assert_eq!(next, ["resume", "s1"]);
-                assert!(codex::always_args(TurnMode::Mention).is_empty());
+                assert_eq!(
+                    codex::always_args(TurnMode::Mention),
+                    codex::NO_UPDATE_CHECK
+                );
             }
             ExecutionModel::Exec => {
                 assert_eq!(first, ["exec"]);
                 assert_eq!(next, ["exec", "resume", "s1"]);
                 assert_eq!(
                     codex::always_args(TurnMode::Mention),
-                    ["--skip-git-repo-check", "--ignore-user-config"]
+                    [
+                        "--skip-git-repo-check",
+                        "--ignore-user-config",
+                        "-c",
+                        "check_for_update_on_startup=false"
+                    ]
                 );
             }
+        }
+    }
+
+    /// 업데이트 검사 끄기는 lane 턴만이 아니라 두 모드 모두에 실린다(11-16 무발화 턴 회귀).
+    #[test]
+    fn codex_always_disables_update_check_in_every_mode() {
+        for mode in [TurnMode::Mention, TurnMode::Interactive] {
+            let a = codex::always_args(mode);
+            assert!(
+                a.windows(2)
+                    .any(|w| w == ["-c", "check_for_update_on_startup=false"]),
+                "{mode:?}: {a:?}"
+            );
         }
     }
 

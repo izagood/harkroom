@@ -324,7 +324,7 @@ export function looksReadyForPrompt(rawOutput: string, pattern: RegExp = DEFAULT
  * fixture: `test/fixtures/codex-tui-mcp-approval.txt`.
  */
 const DEFAULT_GATE_PATTERN =
-  /Do you want to (?:proceed|continue)\?|requires confirmation|Press enter to continue|Enter\s*to\s*(?:confirm|continue)|Connect a provider|MCP\s*server\s*to\s*run\s*tool|[❯›](?!\u00a0)[^\n]*✔|^\s*[❯›]\s*\d+\.\s/m;
+  /Do you want to (?:proceed|continue)\?|requires confirmation|Press enter to continue|Skip until next version|Enter\s*to\s*(?:confirm|continue)|Connect a provider|MCP\s*server\s*to\s*run\s*tool|[❯›](?!\u00a0)[^\n]*✔|^\s*[❯›]\s*\d+\.\s/m;
 
 /** 패턴이 **마지막으로** 맞은 위치. 없으면 -1. */
 function lastMatchIndex(text: string, pattern: RegExp): number {

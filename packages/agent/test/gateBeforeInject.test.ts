@@ -61,6 +61,15 @@ describe('codex 업데이트 선택 화면', () => {
     expect(looksLikeGate(update)).toBe(true);
   });
 
+  it('0.158 판(커서 이동으로 줄을 놓고 바닥줄이 "enter continue · esc skip")도 관문이다 — 11-16 무발화 턴', () => {
+    const raw =
+      '\x1b[1;1H\x1b[2mAsk Codex to do anything\x1b[0m\x1b[2J\x1b[3;3H\x1b[1mUpdate available! 0.158.0 -> 0.169.0\x1b[0m' +
+      '\x1b[5;3H\x1b[1m\x1b[38;5;232;48;5;75m\u203a 1. Update now (runs `npm install -g @openai/codex`)\x1b[0m' +
+      '\x1b[6;3H  2. Skip\x1b[7;3H  3. Skip until next version\x1b[9;3H\x1b[2menter\x1b[0m continue \x1b[2m\u00b7\x1b[0m \x1b[2mesc\x1b[0m skip';
+    expect(looksReadyForPrompt(raw)).toBe(true);
+    expect(looksLikeGate(raw)).toBe(true);
+  });
+
   it('정상 입력창은 관문이 아니다 — 그물이 너무 넓으면 모든 턴이 사람을 부른다', () => {
     for (const name of ['codex-tui-ready.txt', 'claude-tui-ready-real.txt']) {
       expect(looksLikeGate(screen(name))).toBe(false);
