@@ -109,6 +109,8 @@ pub struct RunnerMaker<L: AgentLink> {
     report_auth: ReportAuth,
     /// 중계 세션 장부(정본 `relay`) — 멘션마다 세션을 연다. 없으면 턴은 관찰 없이 돈다(시험).
     relay: Option<Arc<crate::relay_session::RelaySessions>>,
+    /// 도는 새 터미널 턴(분기 ③) 목록 — 러너가 물러날 때 회수한다(정본 `shutdown` 의 `live` 순회).
+    interactive: interactive_spawn::Roster,
 }
 
 /// 실물 PTY sink — 기본 메서드만(감시·전달 표지는 `MentionParts` 가 감싼다).
@@ -176,6 +178,7 @@ impl<L: AgentLink> RunnerMaker<L> {
             cfg,
             report_auth,
             relay: None,
+            interactive: interactive_spawn::Roster::default(),
         }
     }
 
@@ -660,3 +663,7 @@ pub fn owned_argv(
 #[cfg(test)]
 #[path = "call_maker_tests.rs"]
 mod tests;
+
+#[path = "interactive_spawn.rs"]
+mod interactive_spawn;
+pub use interactive_spawn::{KILL_GRACE, ORPHAN_GRACE};

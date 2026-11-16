@@ -35,11 +35,11 @@ fn attaches_to_running_mention_session_of_that_thread() {
     let h = mention(&l, "c1", "t1");
     let _other = mention(&l, "c1", "t2");
     assert_eq!(
-        decide(false, Some(&l), &req("c1", "t1")),
+        decide(false, Some(&l), None, &req("c1", "t1")),
         Ok((h.session_id().to_string(), false))
     );
     assert_eq!(
-        decide(false, Some(&l), &req("c2", "t1")),
+        decide(false, Some(&l), None, &req("c2", "t1")),
         Err(NEW_INTERACTIVE_UNSUPPORTED.to_string())
     );
 }
@@ -51,7 +51,7 @@ fn closed_mention_session_is_not_offered() {
     let h = mention(&l, "c1", "t1");
     h.close();
     assert_eq!(
-        decide(false, Some(&l), &req("c1", "t1")),
+        decide(false, Some(&l), None, &req("c1", "t1")),
         Err(NEW_INTERACTIVE_UNSUPPORTED.to_string())
     );
 }
@@ -62,7 +62,7 @@ fn provider_lane_rejects_even_attach() {
     let l = RelaySessions::new(None, Box::new(|_| {}));
     let _h = mention(&l, "c1", "t1");
     assert_eq!(
-        decide(true, Some(&l), &req("c1", "t1")),
+        decide(true, Some(&l), None, &req("c1", "t1")),
         Err(PROVIDER_LANE_INTERACTIVE_REJECTION.to_string())
     );
 }
@@ -77,7 +77,7 @@ fn non_mention_session_is_not_attached() {
         mode: Some("interactive".into()),
         ..OpenSessionInput::default()
     });
-    assert!(decide(false, Some(&l), &req("c1", "t1")).is_err());
+    assert!(decide(false, Some(&l), None, &req("c1", "t1")).is_err());
 }
 
 /// 장부 프레임 길 끝까지: `interactive.open` 에 **반드시** 답한다(504 로 두지 않는다) — 붙으면 `interactive.opened`,
@@ -85,7 +85,10 @@ fn non_mention_session_is_not_attached() {
 #[test]
 fn interactive_open_frame_always_answered() {
     let cell = ledger_cell();
-    let l = RelaySessions::new(Some(handler(cell.clone(), false)), Box::new(|_| {}));
+    let l = RelaySessions::new(
+        Some(handler(cell.clone(), spawner_cell(), false)),
+        Box::new(|_| {}),
+    );
     fill(&cell, &l);
     let sent: Arc<Mutex<Vec<Value>>> = Arc::default();
     let s2 = Arc::clone(&sent);
@@ -122,8 +125,10 @@ fn interactive_open_frame_always_answered() {
     assert_eq!(r1["created"], false);
     let r2 = by("r2").expect("r2 답");
     assert_eq!(r2["type"], "interactive.error");
+    // API 키 거절 머리(`interactive_unsupported:`)를 달지 않는다 — 앱이 그 머리를 API 키 문장으로 읽는다.
+    assert_eq!(r2["message"], NEW_INTERACTIVE_UNSUPPORTED);
     assert!(
-        r2["message"]
+        !r2["message"]
             .as_str()
             .unwrap()
             .starts_with("interactive_unsupported:")
@@ -134,6 +139,32 @@ fn interactive_open_frame_always_answered() {
 #[test]
 fn empty_cell_answers_starting() {
     let cell = ledger_cell();
-    let h = handler(cell, false);
+    let h = handler(cell, spawner_cell(), false);
     assert_eq!(h(req("c", "t")), Err(RUNNER_STARTING.to_string()));
+}
+
+/// 분기 ③: 도는 멘션이 없으면 띄우개에 넘긴다. 도는 멘션이 있으면 띄우개를 부르지 않고 붙는다. lane 러너는 띄우개도 막는다.
+#[test]
+fn spawner_takes_threads_without_running_mention() {
+    let l = RelaySessions::new(None, Box::new(|_| {}));
+    let h = mention(&l, "c1", "t1");
+    let calls = Arc::new(Mutex::new(Vec::<String>::new()));
+    let seen = Arc::clone(&calls);
+    let spawn: Spawner = Arc::new(move |r: &InteractiveOpenRequest| {
+        seen.lock().unwrap().push(r.thread_root_id.clone());
+        Ok(("new-session".to_string(), true))
+    });
+    assert_eq!(
+        decide(false, Some(&l), Some(&spawn), &req("c1", "t2")),
+        Ok(("new-session".to_string(), true))
+    );
+    assert_eq!(
+        decide(false, Some(&l), Some(&spawn), &req("c1", "t1")),
+        Ok((h.session_id().to_string(), false))
+    );
+    assert_eq!(
+        decide(true, Some(&l), Some(&spawn), &req("c1", "t2")),
+        Err(PROVIDER_LANE_INTERACTIVE_REJECTION.to_string())
+    );
+    assert_eq!(*calls.lock().unwrap(), vec!["t2".to_string()]);
 }

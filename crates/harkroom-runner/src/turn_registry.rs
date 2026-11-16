@@ -220,7 +220,10 @@ impl MentionReservation {
     /// 끼어든 경합) 예약하지 않고 `None` — 부르는 쪽은 이 멘션을 `blocked` 로 다음 폴에 넘긴다.
     pub fn try_reserve(control: &SharedControl, thread_key: &str) -> Option<Self> {
         let mut c = lock_control(control);
-        if c.registry.get(thread_key).is_some() {
+        // 스레드당 턴 하나(security B-2b 메모): `reserved` 는 집합이라 같은 스레드에 예약이 둘이면 먼저 끝난 쪽의
+        // `Drop` 이 남의 예약까지 지운다 — 그러면 인터랙티브 open 이 「시작 중」을 못 보고 PTY 를 하나 더 띄운다.
+        // 스레드 장부·임대가 이미 막지만, 그 전제를 여기서도 거절로 고정한다.
+        if c.registry.get(thread_key).is_some() || c.registry.reserved.contains(thread_key) {
             return None;
         }
         c.registry.reserve_mention(thread_key);

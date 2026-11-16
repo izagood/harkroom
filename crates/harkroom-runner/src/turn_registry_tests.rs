@@ -129,3 +129,18 @@ fn shared_control_defers_and_clears_under_one_lock() {
     lock_control(&c).queue.clear("c/r");
     assert_eq!(lock_control(&c).queue.min_seq("c/r"), None);
 }
+
+#[test]
+fn second_reservation_on_same_thread_is_refused_so_drop_cannot_erase_it() {
+    let c = SharedControl::default();
+    let first = MentionReservation::try_reserve(&c, "c/r").expect("빈 스레드는 예약된다");
+    // 둘째 예약이 섰다면 먼저 끝난 쪽의 Drop 이 남의 예약까지 지웠다 — 아예 세우지 않는다.
+    assert!(MentionReservation::try_reserve(&c, "c/r").is_none());
+    assert!(lock_control(&c).registry.mention_starting("c/r"));
+    // 다른 스레드는 막지 않는다.
+    let other = MentionReservation::try_reserve(&c, "c/s").expect("다른 스레드는 예약된다");
+    drop(first);
+    assert!(!lock_control(&c).registry.mention_starting("c/r"));
+    assert!(lock_control(&c).registry.mention_starting("c/s"));
+    drop(other);
+}
