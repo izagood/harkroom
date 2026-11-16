@@ -17,6 +17,7 @@ pub mod api_cli;
 pub mod assignments;
 pub mod bridge;
 pub mod callback_page;
+pub mod chrome_host;
 pub mod claude_accounts;
 pub mod claude_login;
 pub mod claude_terminal;

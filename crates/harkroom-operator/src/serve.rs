@@ -216,6 +216,8 @@ pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
                 let weak = std::sync::Arc::downgrade(&state);
                 let (root, base_url, home) = (root.clone(), base_url.to_string(), home.clone());
                 let app_version = flag(args, "--app-version").map(str::to_string);
+                // 앱만 `--launch-nonce` 를 준다(daemon_client.rs) — Claude in Chrome 판정의 첫 조건(s9 G6, TS run.ts appLaunched).
+                let app_launched = flag(args, "--launch-nonce").is_some();
                 let socket_path = paths.socket_path.clone();
                 move || {
                     let Some(state) = weak.upgrade() else { return };
@@ -231,6 +233,7 @@ pub fn serve_main(args: &[String], env_home: Option<String>) -> (String, i32) {
                         app_version.clone(),
                         std::path::Path::new(&root),
                         socket_path.clone(),
+                        app_launched,
                     );
                 }
             };
@@ -320,6 +323,7 @@ fn start_usage_poller(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // 링크 하나를 세우는 재료 — 묶음 구조체를 만들 만큼 부르는 곳이 많지 않다(한 곳).
 pub fn spawn_server_link(
     state: std::sync::Arc<ServerState>,
     local: LocalAgents,
@@ -328,6 +332,7 @@ pub fn spawn_server_link(
     version: Option<String>,
     root: &std::path::Path,
     socket_path: String,
+    app_launched: bool,
 ) -> Option<LinkHandle> {
     use crate::harnesses::detect_harnesses;
     use crate::hello::{announce_of, build_hello, capabilities, read_login_path};
@@ -575,6 +580,9 @@ pub fn spawn_server_link(
                     runner_id: runner_id.to_string(),
                 });
             }),
+            app_launched,
+            // TS 는 `homedir()` — 러너 env·계정 풀 판정과 같은 이 프로세스의 HOME 으로 잰다.
+            home: std::env::var("HOME").unwrap_or_default(),
         };
         let mut opts = AssignmentOptions::new(socket_path, deps.operator_bin.clone());
         opts.login_path = assign_login_path;
