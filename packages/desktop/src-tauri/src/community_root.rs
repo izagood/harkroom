@@ -9,8 +9,9 @@
 //! - 없으면 `<HOME>/.harkroom-agent/c/<sha256 앞 8자>`, 그 뿌리를 다른 칸이 쓰면 16자, 그것도 겹치면 거절.
 //! - 색인에 같은 뿌리를 두 칸이 쓰면 읽기부터 거절한다(security P1-n1).
 //!
-//! 스위치 `HARKROOM_OPERATOR_PER_COMMUNITY` 는 **앱 프로세스의 환경**에서 읽는다 — 기본 꺼짐이고, 꺼져
-//! 있으면 이 모듈은 불리지 않는다(지금의 오퍼레이터 하나 그대로).
+//! 스위치 `HARKROOM_OPERATOR_PER_COMMUNITY` 는 **앱 프로세스의 환경**에서 읽는다 — **기본 켜짐**(G1)이고,
+//! 정확히 `0` 일 때만 꺼진다. 꺼져 있으면 이 모듈은 불리지 않는다(옛 오퍼레이터 하나 그대로 — 되돌리기 길).
+//! 오퍼레이터·러너에는 앱이 늘 명시적으로 `1` 을 주거나 지운다(`community_env`) — 그쪽 규칙(`1` 일 때만 켬)은 그대로다.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -27,9 +28,14 @@ pub const ROOTS_INDEX_FILE: &str = "operators.json";
 const HASH_LEN: usize = 8;
 const HASH_FALLBACK_LEN: usize = 16;
 
-/// 스위치는 정확히 `1` 일 때만 켜진다(`perCommunityEnabled` 와 같다).
+/// 앱의 스위치는 **기본 켜짐**이다 — 없거나 `0` 이 아닌 값이면 켜고, 정확히 `0` 일 때만 끈다(되돌리기).
+/// 오퍼레이터·러너 쪽 `perCommunityEnabled`(정확히 `1`)와 다르다: 그쪽 값은 앱이 `community_env` 로 늘 정해서 준다.
 pub fn per_community_enabled() -> bool {
-    std::env::var(PER_COMMUNITY_ENV).as_deref() == Ok("1")
+    switch_on(std::env::var(PER_COMMUNITY_ENV).ok().as_deref())
+}
+
+fn switch_on(v: Option<&str>) -> bool {
+    v != Some("0")
 }
 
 /// 오퍼레이터 하나가 맡을 커뮤니티와 그 뿌리.
@@ -628,14 +634,24 @@ mod tests {
     }
 
     #[test]
+    fn switch_is_on_by_default_and_only_zero_turns_it_off() {
+        assert!(switch_on(None), "없으면 켬(G1)");
+        assert!(switch_on(Some("1")));
+        assert!(switch_on(Some("")), "빈 값도 켬 — 끄는 길은 `0` 하나");
+        assert!(!switch_on(Some("0")), "`0` 이면 끔(되돌리기)");
+    }
+
+    #[test]
     fn check_same_community_rejects_cross_community_when_on() {
         // 스위치 env 는 프로세스 전역이라 이 시험 안에서만 켜고 끈다.
         std::env::set_var(PER_COMMUNITY_ENV, "1");
         assert!(check_same_community("https://a.example.com", Some("https://a.example.com/")).is_ok());
         assert!(check_same_community("https://a.example.com", Some("https://b.example.com")).is_err());
         assert!(check_same_community("https://a.example.com", None).is_ok());
-        std::env::remove_var(PER_COMMUNITY_ENV);
+        std::env::set_var(PER_COMMUNITY_ENV, "0");
         assert!(check_same_community("https://a.example.com", Some("https://b.example.com")).is_ok());
+        std::env::remove_var(PER_COMMUNITY_ENV);
+        assert!(check_same_community("https://a.example.com", Some("https://b.example.com")).is_err(), "없으면 켬(G1)");
     }
 
     #[test]
