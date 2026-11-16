@@ -125,8 +125,10 @@ fn interactive_open_frame_always_answered() {
     assert_eq!(r1["created"], false);
     let r2 = by("r2").expect("r2 답");
     assert_eq!(r2["type"], "interactive.error");
+    // API 키 거절 머리(`interactive_unsupported:`)를 달지 않는다 — 앱이 그 머리를 API 키 문장으로 읽는다.
+    assert_eq!(r2["message"], NEW_INTERACTIVE_UNSUPPORTED);
     assert!(
-        r2["message"]
+        !r2["message"]
             .as_str()
             .unwrap()
             .starts_with("interactive_unsupported:")

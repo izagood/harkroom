@@ -17,8 +17,11 @@ use crate::relay_session::{InteractiveOpenHandler, InteractiveOpenRequest, Relay
 pub const PROVIDER_LANE_INTERACTIVE_REJECTION: &str =
     "interactive_unsupported: API 키로 도는 에이전트는 아직 터미널 열기를 지원하지 않는다";
 
-/// 도는 턴이 없을 때(정본 분기 ③) — Rust 러너가 아직 못 하는 일.
-pub const NEW_INTERACTIVE_UNSUPPORTED: &str = "interactive_unsupported: 이 러너는 아직 새 터미널 턴을 띄울 준비가 안 됐다 — 이 스레드에 멘션 턴이 도는 동안에는 그 화면에 붙을 수 있다";
+/// 도는 턴이 없는데 띄우개 칸이 아직 비었을 때(기동 직후 잠깐). **`interactive_unsupported:` 머리를 붙이지 않는다** —
+/// 그 머리는 앱이 「API 키 에이전트는 터미널을 못 연다」 문장과 [열기] 버튼 숨김으로 읽는 표지라(`laneCodes.ts`
+/// `isInteractiveUnsupported`), 구독 계정 에이전트에도 API 키 문구가 떴다. 머리 없는 문장은 앱이 열기 실패 사유로 그대로
+/// 보이고 [열기]를 남긴다 — 잠시 뒤 다시 누르면 된다.
+pub const NEW_INTERACTIVE_UNSUPPORTED: &str = "이 러너는 아직 새 터미널 턴을 띄울 준비가 안 됐다 — 이 스레드에 멘션 턴이 도는 동안에는 그 화면에 붙을 수 있다";
 
 /// 장부가 아직 없다(기동 중) — 정본 `러너가 아직 기동 중이다` 문구.
 pub const RUNNER_STARTING: &str = "러너가 아직 기동 중이다 — 잠시 뒤 다시 열어라";
