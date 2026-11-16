@@ -4,7 +4,11 @@
 //!
 //! 둘 다 요청 줄 `granted`·카드 meta·감사 `permission.approved`·`grant.changed`(outbox) 를 **한 tx** 에 쓴다.
 //!
-//! 맡는 꼴은 [`super::decide_core::rust_takes`] 가 정한다(위임장·`once`·글 승인·거울은 처음부터 TS). 소유자가 아닌 사람의 승인은
+//! S5.3 C1 — 요청 줄에 위임장(`mandate_id`)이 있으면 tool 7일 승인(`approve`·`approve_mandate`)은 grant 와 함께 그 위임장에 줄 하나를
+//! 적고([`super::mandate_line_write`], savepoint — 줄이 실패해도 결정은 남는다), `approve_turn`(이번 턴만)은 grant 없이 줄 하나가
+//! 승인의 전부라 줄이 실패하면 409 `mandate_line_failed` 로 아무것도 커밋하지 않는다. 줄 감사(`mandate.line.added`·`add_failed`)도 같은 tx.
+//!
+//! 맡는 꼴은 [`super::decide_core::rust_takes`] 가 정한다(`once`·글 승인·거울·새 위임장·위임장 있는 command 는 처음부터 TS). 소유자가 아닌 사람의 승인은
 //! 판정 뒤([`super::decide_core::after_verdict`]) 쓰기 전에 TS 로 넘긴다(소유자 알림 글을 TS 가 쓴다).
 //!
 //! TS 와 다른 점(덜 여는 쪽): TS 는 감사·`grant.given`·이벤트를 커밋 **뒤**에 쓰고 실패를 삼킨다. 여기서는 결정과 같은 tx 라
@@ -14,6 +18,7 @@ use super::decide_core::{
     MAX_RESTARTS, Recheck, Shape, after_verdict, audit_detail, has_lock_fn_privilege, lock_request,
     may_decide_for_locked, recheck_locked, retry_lock_once,
 };
+use super::mandate_line_write::{LINE_AUDIT, LineArgs, LineKind, add_line_from_request};
 use super::msg_read::is_uuid;
 use harkroom_proto::tool_rules::{ExactCommandVerdict, validate_exact_command};
 use serde_json::{Value, json};
@@ -37,6 +42,44 @@ pub const APPROVE_PRIVILEGES: &[(&str, &str)] = &[
     ("account_grant.allow_agent_cause", "UPDATE"),
     ("event_outbox", "INSERT"),
 ];
+/// S5.3 C1 — 있는 위임장에 줄을 쓰는 칸. [`APPROVE_PRIVILEGES`] 에 더해 이것도 다 있을 때만 위임장 있는 승인을 Rust 가 맡는다
+/// ([`mandate_core_on`], fail-closed — 없으면 「permission mandate core off」를 남기고 그 꼴은 TS). `for share` 는 그 표의 UPDATE 칸이
+/// 하나라도 있어야 하므로 `mandate.last_activity_at` UPDATE 를 함께 요구한다.
+pub const MANDATE_LINE_PRIVILEGES: &[(&str, &str)] = &[
+    ("mandate", "SELECT"),
+    ("mandate.last_activity_at", "UPDATE"),
+    ("mandate_line", "INSERT"),
+    ("automation", "SELECT"),
+    ("agent_config", "SELECT"),
+];
+
+static MANDATE_CORE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 위임장 있는 승인(C1)을 Rust 가 맡는가 — 기동 때 [`check_mandate_core`] 가 정한다.
+pub fn mandate_core_on() -> bool {
+    MANDATE_CORE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// 승인 풀에 [`MANDATE_LINE_PRIVILEGES`] 가 다 있는가 — 기동 때 한 번. 없으면 「permission mandate core off」.
+pub async fn check_mandate_core(pool: &sqlx::PgPool) -> bool {
+    let on = match crate::write::missing_in(pool, MANDATE_LINE_PRIVILEGES, &[]).await {
+        Ok(m) if m.is_empty() => true,
+        Ok(m) => {
+            eprintln!("front: permission mandate core off — missing privileges {m:?}");
+            false
+        }
+        Err(e) => {
+            eprintln!(
+                "front: permission mandate core off — privilege check failed ({})",
+                e.as_database_error().map_or("io", |_| "db")
+            );
+            false
+        }
+    };
+    MANDATE_CORE.store(on, std::sync::atomic::Ordering::Relaxed);
+    on
+}
+
 pub const APPROVE_SEQUENCE_PRIVILEGES: &[(&str, &str)] = &[("event_outbox_id_seq", "USAGE")];
 
 /// TS `PERMISSION_GRANT_TTL_MS`(7일)·`COMMAND_GRANT_TTL_MS`(1시간) — 시험이 TS 원문과 대조한다.
@@ -79,7 +122,7 @@ pub struct ApproveArgs<'a> {
     pub agent_id: &'a str,
     pub request_id: &'a str,
     pub actor_id: &'a str,
-    /// `approve`·`approve_once`·`approve_hour`.
+    /// `approve`·`approve_mandate`·`approve_turn`·`approve_once`·`approve_hour`.
     pub option: &'a str,
     /// 카드 길이면 카드 meta 에 1회 머지 값(`permissionRequest.once`)이 있는가 — TS `onceFromCard`. 있으면 TS(`not_once` 갈래).
     pub has_once: bool,
@@ -91,7 +134,7 @@ pub enum ApproveOutcome {
     /// 쓰고 커밋했다. 카드 답은 호출자 몫 — `answer_candidates` 중 카드에 있는 첫 것(TS `answerOptionId`).
     Granted {
         card_message_id: Option<String>,
-        grant_expires_at: String,
+        grant_expires_at: Option<String>,
         grant_mode: Option<&'static str>,
         answer_candidates: &'static [&'static str],
     },
@@ -138,6 +181,29 @@ const ANSWER_TOOL: &[&str] = &[
     "approve",
     "approve_once",
 ];
+const ANSWER_TOOL_MANDATE: &[&str] = &[
+    "approve_mandate",
+    "approve_mandate",
+    "approve_new_mandate",
+    "approve",
+    "approve_once",
+];
+const ANSWER_TOOL_TURN: &[&str] = &[
+    "approve_turn",
+    "approve_mandate",
+    "approve_new_mandate",
+    "approve",
+    "approve_once",
+];
+
+pub const MANDATE_LINE_FAILED_STATUS: u16 = 409;
+
+/// TS `mandate_line_failed` 문구.
+pub fn mandate_line_failed_message(code: &str) -> String {
+    format!(
+        "the line could not be added to the mandate ({code}) — nothing was approved; the agent has to ask again"
+    )
+}
 
 /// 결정 시각 하나(ms 로 자름 — TS `Date` 와 같은 정밀도)와 기한($1 interval). 모든 칸·카드·감사가 이 값을 쓴다.
 /// (결정 시각, 결정 시각 ISO, 기한, 기한 ISO).
@@ -209,18 +275,35 @@ pub async fn approve_write(
             .bind(args.request_id)
             .fetch_one(&mut *conn)
             .await?;
+    let turn = decision == Decision::ApproveTurn;
     let (ttl, grant_mode, candidates) = match (locked.kind.as_str(), decision) {
         ("command", Decision::ApproveHour) => (COMMAND_GRANT_TTL, Some("hour"), ANSWER_HOUR),
         ("command", Decision::ApproveOnce) => (COMMAND_GRANT_TTL, Some("once"), ANSWER_ONCE),
         ("tool", Decision::Approve) => (TOOL_GRANT_TTL, None, ANSWER_TOOL),
+        ("tool", Decision::ApproveMandate) => (TOOL_GRANT_TTL, None, ANSWER_TOOL_MANDATE),
+        // [이번 턴만] — grant 없이 줄 하나가 승인의 전부(기한 칸은 비운다, TS 와 같음).
+        ("tool", Decision::ApproveTurn) => (COMMAND_GRANT_TTL, None, ANSWER_TOOL_TURN),
         // rust_takes 가 거른다 — 여기 오면 맡지 않는다(쓰기 전).
         _ => return Ok(ApproveOutcome::HandToTs),
     };
+    // 위임장 있는 승인은 C1 칸이 다 있을 때만(fail-closed), [이번 턴만]은 위임장과 카드 글이 있어야 한다(아니면 TS 409 `bad_decision`).
+    if locked.mandate_id.is_some() && !mandate_core_on() {
+        return Ok(ApproveOutcome::HandToTs);
+    }
+    if turn && (locked.mandate_id.is_none() || locked.card_message_id.is_none()) {
+        return Ok(ApproveOutcome::HandToTs);
+    }
     let (now, now_iso, expires, expires_iso): (String, String, String, String) =
         sqlx::query_as(TIMES)
             .bind(ttl)
             .fetch_one(&mut *conn)
             .await?;
+    // grant 를 쓰는 갈래만 기한이 있다(TS `grantExpiresAt`).
+    let (expires, expires_iso) = if turn {
+        (None, None)
+    } else {
+        (Some(expires), Some(expires_iso))
+    };
 
     let mut command_grant_id: Option<String> = None;
     let mut tool_scope: Option<String> = None;
@@ -236,14 +319,14 @@ pub async fn approve_write(
             .bind(thread_root_id.as_deref())
             .bind(&target)
             .bind(mode == "once")
-            .bind(&expires)
+            .bind(expires.as_deref())
             .bind(args.actor_id)
             .bind(args.request_id)
             .bind(&now)
             .fetch_one(&mut *conn)
             .await?;
         command_grant_id = Some(id);
-    } else {
+    } else if !turn {
         let Some(ch) = channel_id.as_deref() else {
             // 채널 없는 tool 요청은 없다(요청 길이 채널을 요구) — 꼴이 다르면 TS.
             return Ok(ApproveOutcome::HandToTs);
@@ -253,26 +336,70 @@ pub async fn approve_write(
             .bind(args.agent_id)
             .bind(&scope)
             .bind(args.actor_id)
-            .bind(&expires)
+            .bind(expires.as_deref())
             .execute(&mut *conn)
             .await?;
         tool_scope = Some(scope);
     }
+    // C1 — 위임장이 있으면 그 위임장에 줄 하나(TS `addLineFromRequest`, savepoint). [이번 턴만]은 줄이 승인의 전부라 실패하면
+    // 결정 전체를 되돌린다(409 `mandate_line_failed`, 커밋하지 않음). 7일 승인은 grant 를 썼으므로 줄만 되돌리고 결정은 남긴다.
+    let line = match locked.mandate_id.as_deref() {
+        Some(mandate_id) => {
+            let out = add_line_from_request(
+                conn,
+                LineArgs {
+                    mandate_id,
+                    request_id: args.request_id,
+                    target: &target,
+                    card_message_id: locked.card_message_id.as_deref(),
+                    agent_id: args.agent_id,
+                    actor_id: args.actor_id,
+                    via: if args.bundle_message_id.is_some() {
+                        "bundle"
+                    } else {
+                        "button"
+                    },
+                    kind: if turn {
+                        LineKind::Turn
+                    } else {
+                        LineKind::Standing
+                    },
+                    now: &now,
+                    until: expires_iso.as_deref(),
+                },
+            )
+            .await?;
+            if turn && !out.ok() {
+                return Ok(refused(
+                    MANDATE_LINE_FAILED_STATUS,
+                    "mandate_line_failed",
+                    mandate_line_failed_message(out.code()),
+                ));
+            }
+            Some(out)
+        }
+        None => None,
+    };
     sqlx::query(APPROVE_UPDATE_REQUEST)
         .bind(args.request_id)
         .bind(args.actor_id)
         .bind(&now)
-        .bind(&expires)
+        .bind(expires.as_deref())
         .bind(grant_mode)
         .execute(&mut *conn)
         .await?;
     if let Some(card) = locked.card_message_id.as_deref() {
         let mut patch = json!({
             "status": "granted", "decidedAt": now_iso, "decidedBy": args.actor_id,
-            "grantExpiresAt": expires_iso,
         });
+        if let Some(e) = &expires_iso {
+            patch["grantExpiresAt"] = json!(e);
+        }
         if let Some(m) = grant_mode {
             patch["grantMode"] = json!(m);
+        }
+        if let Some(id) = line.as_ref().and_then(|l| l.line_id()) {
+            patch["lineId"] = json!(id);
         }
         if let Some(b) = args.bundle_message_id {
             patch["decidedVia"] = json!({ "kind": "bundle", "bundleMessageId": b });
@@ -291,7 +418,7 @@ pub async fn approve_write(
         channel_id: channel_id.as_deref(),
         as_owner: true,
         thread_root_id: thread_root_id.as_deref(),
-        grant_expires_at: Some(expires_iso.as_str()),
+        grant_expires_at: expires_iso.as_deref(),
         grant_mode: grant_mode.zip(command_grant_id.as_deref()),
         bundle_message_id: args.bundle_message_id,
     });
@@ -301,6 +428,16 @@ pub async fn approve_write(
         .bind(detail.to_string())
         .execute(&mut *conn)
         .await?;
+    if let Some(l) = &line {
+        let (action, detail) = l.audit(args.request_id);
+        sqlx::query(LINE_AUDIT)
+            .bind(action)
+            .bind(args.actor_id)
+            .bind(args.agent_id)
+            .bind(detail.to_string())
+            .execute(&mut *conn)
+            .await?;
+    }
     if let Some(scope) = &tool_scope {
         let given = json!({
             "capability": "tool.allow", "scope": scope, "expiresAt": expires_iso,
@@ -313,11 +450,14 @@ pub async fn approve_write(
             .execute(&mut *conn)
             .await?;
     }
-    crate::write::emit_event(
-        conn,
-        &json!({ "type": "grant.changed", "accountId": args.agent_id, "audience": "all" }),
-    )
-    .await?;
+    // TS: command 이거나 grant 를 썼을 때만(이번 턴만은 grant 가 없어 이벤트도 없다).
+    if !turn {
+        crate::write::emit_event(
+            conn,
+            &json!({ "type": "grant.changed", "accountId": args.agent_id, "audience": "all" }),
+        )
+        .await?;
+    }
     Ok(ApproveOutcome::Granted {
         card_message_id: locked.card_message_id.clone(),
         grant_expires_at: expires_iso,

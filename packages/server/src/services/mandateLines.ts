@@ -30,6 +30,15 @@ const LINE_COLS = `id, mandate_id as "mandateId", cap, scope, limits, agent_ids 
 /** 위임장의 저장된 줄(회수 제외) — Rust 코어(`core/grant_reads.rs`)가 골든으로 받는다. */
 export const MANDATE_LINES_STORED_SQL = `select ${LINE_COLS} from mandate_line where mandate_id = $1::uuid and revoked_at is null order by created_at, id`;
 
+/** `addMandateLine` 의 위임장 읽기 — Rust 코어(`core/mandate_line_write.rs`, S5.3 C1)가 골든으로 받는다. */
+export const ADD_LINE_MANDATE_SQL = `select owner_account_id as owner, coalesce(delegator_account_id, owner_account_id) as delegator, ended_at is not null as ended
+       from mandate where id = $1::uuid`;
+/** `addMandateLine` 의 `agentIds` 대조(같은 소유자의 에이전트만) — Rust 골든. */
+export const ADD_LINE_AGENTS_SQL = `select 1 from agent_config where account_id = any($1::uuid[]) and owner_account_id = $2::uuid`;
+/** `addMandateLine` 의 INSERT — Rust 골든. */
+export const ADD_LINE_INSERT_SQL = `insert into mandate_line (mandate_id, cap, scope, limits, agent_ids, granted_by, via, request_id, created_at)
+     values ($1::uuid, $2, $3, $4::jsonb, $5::uuid[], $6::uuid, $7, $8::uuid, $9::timestamptz) returning ${LINE_COLS}`;
+
 export type AddLineResult = { ok: true; line: MandateLine } | { ok: false; code: 'no_mandate' | 'mandate_ended' | 'not_owner' | 'bad_cap' | 'bad_via' | 'bad_scope' | 'bad_agent'; detail?: string };
 
 /**
@@ -42,9 +51,7 @@ export async function addMandateLine(client: Q, args: {
 }): Promise<AddLineResult> {
   if (!isCap(args.cap)) return { ok: false, code: 'bad_cap' };
   if (args.via === 'standing') return { ok: false, code: 'bad_via' };
-  const m = (await client.query<{ owner: string; delegator: string; ended: boolean }>(
-    `select owner_account_id as owner, coalesce(delegator_account_id, owner_account_id) as delegator, ended_at is not null as ended
-       from mandate where id = $1`, [args.mandateId])).rows[0];
+  const m = (await client.query<{ owner: string; delegator: string; ended: boolean }>(ADD_LINE_MANDATE_SQL, [args.mandateId])).rows[0];
   if (!m) return { ok: false, code: 'no_mandate' };
   // 끝난 위임(3판)에는 줄을 더하지 않는다 — 끝낼 때 줄을 회수했는데 뒤늦은 승인이 다시 열면 끝이 끝이 아니다.
   if (m.ended) return { ok: false, code: 'mandate_ended' };
@@ -56,13 +63,10 @@ export async function addMandateLine(client: Q, args: {
   const agentIds = args.agentIds ?? null;
   if (agentIds) {
     if (!agentIds.length) return { ok: false, code: 'bad_agent' };
-    const n = (await client.query(
-      `select 1 from agent_config where account_id = any($1::uuid[]) and owner_account_id = $2`, [agentIds, owner])).rowCount ?? 0;
+    const n = (await client.query(ADD_LINE_AGENTS_SQL, [agentIds, owner])).rowCount ?? 0;
     if (n !== new Set(agentIds).size) return { ok: false, code: 'bad_agent' };
   }
-  const row = (await client.query<MandateLine>(
-    `insert into mandate_line (mandate_id, cap, scope, limits, agent_ids, granted_by, via, request_id, created_at)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning ${LINE_COLS}`,
+  const row = (await client.query<MandateLine>(ADD_LINE_INSERT_SQL,
     [args.mandateId, args.cap, v.scope, JSON.stringify(args.limits ?? {}), agentIds, args.grantedBy, args.via,
       args.requestId ?? null, args.now ?? new Date()])).rows[0]!;
   return { ok: true, line: { ...row, readOnly: false } };

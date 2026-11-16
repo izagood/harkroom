@@ -397,8 +397,12 @@ async fn main() {
         Some(w) => harkroom_server::core::decide_approve::approve_pool(w).await,
         None => None,
     };
-    if ask_approve.is_some() {
+    if let Some(w) = &ask_approve {
         eprintln!("front: permission approve core on");
+        // S5.3 C1 — 있는 위임장에 줄 쓰기 칸(fail-closed, 없으면 위임장 있는 승인은 TS).
+        if harkroom_server::core::decide_approve::check_mandate_core(w).await {
+            eprintln!("front: permission mandate core on");
+        }
     }
     // C3b B1 — `POST /agent/command-grants/match`(명령 grant 하나를 쓰고 감사). `HARKROOM_CORE=rust` 그리고 쓰기 풀에
     // `MATCH_PRIVILEGES` 가 다 있을 때만(fail-closed) — 아니면 경로를 붙이지 않아 TS 가 받는다.

@@ -858,6 +858,9 @@ async function mandateForCardThread(client: PoolClient, args: { ownerId: string;
   return id.id;
 }
 
+/** `addLineFromRequest` 의 위임장 주인 읽기 — Rust 코어(`core/mandate_line_write.rs`, S5.3 C1)가 골든으로 받는다. */
+export const LINE_FROM_REQUEST_OWNER_SQL = `select owner_account_id as owner from mandate where id = $1::uuid`;
+
 type MandateLineOutcome =
   | { ok: true; mandateId: string; lineId: string; cap: Cap; scope: string; via: LineVia }
   | { ok: false; mandateId: string; cap: Cap; code: string; detail?: string };
@@ -917,7 +920,7 @@ export async function addLineFromRequest(
   try {
     // C-3(security): 소유자가 아닌 사람이 주는 줄은 요청한 에이전트 하나에만 건다 — null(소유자의 모든 에이전트)이면 그 사람이 정할 수
     // 없는 소유자의 다른 에이전트에게도 열린다. 소유자 줄은 지금처럼 null.
-    const mOwner = (await client.query<{ owner: string }>(`select owner_account_id as owner from mandate where id = $1`, [mandateId])).rows[0]?.owner;
+    const mOwner = (await client.query<{ owner: string }>(LINE_FROM_REQUEST_OWNER_SQL, [mandateId])).rows[0]?.owner;
     // t1: [이번 턴만] 줄은 소유자 것도 요청한 에이전트 하나로 — 카드 글을 원인으로 뜬 다른 에이전트 턴에 실리지 않게(security).
     const narrow = args.agentId && ((mOwner && args.actorId !== mOwner) || args.decision === 'approve_turn') ? [args.agentId] : null;
     const added = await addMandateLine(client, {
