@@ -154,6 +154,66 @@ interface DeviceRow { id: string; token: string; env: ApnsEnv; preview: boolean;
 
 export type PushHealth = 'off' | 'ok' | 'degraded';
 
+/** 푸시 sweeper 의 문장들 — Rust 루프(`crates/harkroom-server/src/loops/push.rs`, S5.3 C5e-2)가 골든(`golden/push_sql.json`)으로 받는다. */
+export const PUSH_SQL = {
+  live: `select m.channel_id as "channelId", m.thread_root_id as "threadRootId", ${displayBodySql('m')} as body,
+              m.author_id as "authorId",
+              -- 시스템 줄은 누구의 말도 아니다 — 알림에 author 이름을 달지 않는다(제목·부제가 Harkroom 으로 물러난다).
+              case when m.kind = 'system' then null else au.handle end as "authorHandle", au.kind as "authorKind",
+              c.kind as "channelKind", c.name as "channelName",
+              m.meta->>'kind' as "metaKind", m.meta->'failure'->>'code' as "failureCode",
+              coalesce(jsonb_array_length(case when jsonb_typeof(m.meta->'ask'->'options') = 'array'
+                                               then m.meta->'ask'->'options' end), 0)::int as "optionCount",
+              ${mineThreadSql('m', 'j.account_id')} as "mineThread"
+         from push_job j
+         join account a on a.id = j.account_id
+         join message m on m.id = j.message_id
+         join channel c on c.id = m.channel_id
+         join account au on au.id = m.author_id
+         left join inbox i on i.id = j.inbox_id
+         left join channel_pref p on p.channel_id = c.id and p.account_id = j.account_id
+        where j.id = $1::bigint
+          and a.kind = 'human' and a.deleted_at is null and a.disabled_at is null
+          and m.deleted_at is null
+          and (j.inbox_id is null or i.read_at is null)
+          and coalesce(p.notify_level, 'mentions') <> 'none'
+          and ${channelVisibleSql('c', 'j.account_id')}`,
+  devices: `select d.id, d.token, d.apns_env as env, coalesce((d.prefs->>'preview')::boolean, false) as preview,
+              coalesce((d.prefs->>'badge')::boolean, true) as badge
+         from push_device d join session s on s.token_hash = d.session_token_hash
+        where d.account_id = $1::uuid and s.expires_at > now()
+          and coalesce((d.prefs->>$2::text)::boolean, true)
+          and ($3::uuid is null or d.id = $3::uuid)`,
+  badge: `select count(distinct case when m.thread_root_id is not null and ${agentPlainSql('m', 'au')}
+                                  then 't:' || m.thread_root_id else 'i:' || i.id end) as n
+         from inbox i join message m on m.id = i.message_id join account au on au.id = m.author_id
+         join channel ch on ch.id = m.channel_id
+        where i.account_id = $1::uuid and i.read_at is null and m.deleted_at is null
+          and i.reason in ('mention', 'thread_reply', 'dm')
+          and ${channelVisibleSql('ch', 'i.account_id')}`,
+  replies: `select count(*) as n
+         from inbox i join message m on m.id = i.message_id join account au on au.id = m.author_id
+        where i.account_id = $1::uuid and i.read_at is null and m.thread_root_id = $2::uuid
+          and i.reason in ('mention', 'thread_reply') and ${agentPlainSql('m', 'au')}`,
+  claimSound: `insert into push_thread_sound (account_id, thread_key, sounded_at) values ($1::uuid, $2::text, now())
+       on conflict (account_id, thread_key) do update set sounded_at = now()
+        where push_thread_sound.sounded_at <= now() - make_interval(secs => $3::float8)
+       returning 1`,
+  pick: `select id, account_id as "accountId", message_id as "messageId", inbox_id as "inboxId", reason, device_id as "deviceId", attempts
+           from push_job where not_before <= now() and not (id = any($1::bigint[]))
+          order by not_before limit 1 for update skip locked`,
+  deleteJob: `delete from push_job where id = $1::bigint`,
+  deviceOk: `update push_device set last_ok_at = now(), last_error = null where id = $1::uuid`,
+  deviceRemove: `delete from push_device where id = $1::uuid`,
+  deviceError: `update push_device set last_error = $2::text where id = $1::uuid`,
+  retry: `insert into push_job (account_id, message_id, inbox_id, device_id, reason, attempts, not_before)
+           values ($1::uuid, $2::uuid, $3::bigint, $4::uuid, $5::text, $6::int, now() + make_interval(secs => $7::int))`,
+  handlesAccount: `select id, handle from account where id = any($1::uuid[])`,
+  handlesGroup: `select id, handle from handle_group where id = any($1::uuid[])`,
+  handlesTeam: `select id, name from agent_team where id = any($1::uuid[])`,
+  pruneSounds: `delete from push_thread_sound where sounded_at < now() - interval '1 day'`,
+} as const;
+
 export function createPushSweeper(pool: Pool, deps: {
   transport: PushTransport | null;
   leakGuard?: SecretLeakGuard | null;
@@ -172,28 +232,7 @@ export function createPushSweeper(pool: Pool, deps: {
    */
   async function liveCheck(client: PoolClient, job: JobRow): Promise<LiveRow | null> {
     const res = await client.query<LiveRow>(
-      `select m.channel_id as "channelId", m.thread_root_id as "threadRootId", ${displayBodySql('m')} as body,
-              m.author_id as "authorId",
-              -- 시스템 줄은 누구의 말도 아니다 — 알림에 author 이름을 달지 않는다(제목·부제가 Harkroom 으로 물러난다).
-              case when m.kind = 'system' then null else au.handle end as "authorHandle", au.kind as "authorKind",
-              c.kind as "channelKind", c.name as "channelName",
-              m.meta->>'kind' as "metaKind", m.meta->'failure'->>'code' as "failureCode",
-              coalesce(jsonb_array_length(case when jsonb_typeof(m.meta->'ask'->'options') = 'array'
-                                               then m.meta->'ask'->'options' end), 0)::int as "optionCount",
-              ${mineThreadSql('m', 'j.account_id')} as "mineThread"
-         from push_job j
-         join account a on a.id = j.account_id
-         join message m on m.id = j.message_id
-         join channel c on c.id = m.channel_id
-         join account au on au.id = m.author_id
-         left join inbox i on i.id = j.inbox_id
-         left join channel_pref p on p.channel_id = c.id and p.account_id = j.account_id
-        where j.id = $1
-          and a.kind = 'human' and a.deleted_at is null and a.disabled_at is null
-          and m.deleted_at is null
-          and (j.inbox_id is null or i.read_at is null)
-          and coalesce(p.notify_level, 'mentions') <> 'none'
-          and ${channelVisibleSql('c', 'j.account_id')}`,
+      PUSH_SQL.live,
       [job.id],
     );
     return res.rows[0] ?? null;
@@ -201,12 +240,7 @@ export function createPushSweeper(pool: Pool, deps: {
 
   async function devicesFor(client: PoolClient, job: JobRow): Promise<DeviceRow[]> {
     const res = await client.query<DeviceRow>(
-      `select d.id, d.token, d.apns_env as env, coalesce((d.prefs->>'preview')::boolean, false) as preview,
-              coalesce((d.prefs->>'badge')::boolean, true) as badge
-         from push_device d join session s on s.token_hash = d.session_token_hash
-        where d.account_id = $1 and s.expires_at > now()
-          and coalesce((d.prefs->>$2)::boolean, true)
-          and ($3::uuid is null or d.id = $3)`,
+      PUSH_SQL.devices,
       [job.accountId, PREF_KEY[job.reason], job.deviceId],
     );
     return res.rows;
@@ -217,23 +251,14 @@ export function createPushSweeper(pool: Pool, deps: {
     const res = await client.query<{ n: string }>(
       // 지금 볼 수 있는 채널의 것만(listInbox 와 같은 경계, security F1) — 나간 채널의 항목은
       // 읽음이 될 길이 없어 배지에 영원히 남는다.
-      `select count(distinct case when m.thread_root_id is not null and ${agentPlainSql('m', 'au')}
-                                  then 't:' || m.thread_root_id else 'i:' || i.id end) as n
-         from inbox i join message m on m.id = i.message_id join account au on au.id = m.author_id
-         join channel ch on ch.id = m.channel_id
-        where i.account_id = $1 and i.read_at is null and m.deleted_at is null
-          and i.reason in ('mention', 'thread_reply', 'dm')
-          and ${channelVisibleSql('ch', 'i.account_id')}`, [accountId]);
+      PUSH_SQL.badge, [accountId]);
     return Number(res.rows[0]?.n ?? 0);
   }
 
   /** "답 N" — 이 스레드에 와 있는 에이전트의 안 읽은 보통 답 수. */
   async function repliesFor(client: PoolClient, accountId: string, threadRootId: string): Promise<number> {
     const res = await client.query<{ n: string }>(
-      `select count(*) as n
-         from inbox i join message m on m.id = i.message_id join account au on au.id = m.author_id
-        where i.account_id = $1 and i.read_at is null and m.thread_root_id = $2
-          and i.reason in ('mention', 'thread_reply') and ${agentPlainSql('m', 'au')}`, [accountId, threadRootId]);
+      PUSH_SQL.replies, [accountId, threadRootId]);
     return Number(res.rows[0]?.n ?? 0);
   }
 
@@ -244,10 +269,7 @@ export function createPushSweeper(pool: Pool, deps: {
    */
   async function claimSound(client: PoolClient, accountId: string, threadKey: string, windowMs: number): Promise<boolean> {
     const res = await client.query(
-      `insert into push_thread_sound (account_id, thread_key, sounded_at) values ($1, $2, now())
-       on conflict (account_id, thread_key) do update set sounded_at = now()
-        where push_thread_sound.sounded_at <= now() - make_interval(secs => $3)
-       returning 1`, [accountId, threadKey, windowMs / 1000]);
+      PUSH_SQL.claimSound, [accountId, threadKey, windowMs / 1000]);
     return (res.rowCount ?? 0) > 0;
   }
 
@@ -261,15 +283,15 @@ export function createPushSweeper(pool: Pool, deps: {
     const team = keys.filter((k) => k.startsWith('team:')).map((k) => k.slice(5));
     if (plain.length) {
       for (const r of (await client.query<{ id: string; handle: string }>(
-        `select id, handle from account where id = any($1::uuid[])`, [plain])).rows) map.set(r.id, r.handle);
+        PUSH_SQL.handlesAccount, [plain])).rows) map.set(r.id, r.handle);
     }
     if (group.length) {
       for (const r of (await client.query<{ id: string; handle: string }>(
-        `select id, handle from handle_group where id = any($1::uuid[])`, [group])).rows) map.set(`group:${r.id}`, r.handle);
+        PUSH_SQL.handlesGroup, [group])).rows) map.set(`group:${r.id}`, r.handle);
     }
     if (team.length) {
       for (const r of (await client.query<{ id: string; name: string }>(
-        `select id, name from agent_team where id = any($1::uuid[])`, [team])).rows) map.set(`team:${r.id}`, r.name);
+        PUSH_SQL.handlesTeam, [team])).rows) map.set(`team:${r.id}`, r.name);
     }
     return map;
   }
@@ -301,9 +323,7 @@ export function createPushSweeper(pool: Pool, deps: {
     try {
       await client.query('begin');
       job = (await client.query<JobRow>(
-        `select id, account_id as "accountId", message_id as "messageId", inbox_id as "inboxId", reason, device_id as "deviceId", attempts
-           from push_job where not_before <= now() and not (id = any($1::bigint[]))
-          order by not_before limit 1 for update skip locked`, [skip])).rows[0];
+        PUSH_SQL.pick, [skip])).rows[0];
       if (!job) { await client.query('commit'); return 'none'; }
       skip.push(job.id);
       live = await liveCheck(client, job);
@@ -332,7 +352,7 @@ export function createPushSweeper(pool: Pool, deps: {
         }
       }
       // 집은 job 은 여기서 지운다 — 다시 보낼 것은 기기 단위의 새 job 으로 돌아온다.
-      await client.query(`delete from push_job where id = $1`, [job.id]);
+      await client.query(PUSH_SQL.deleteJob, [job.id]);
       await client.query('commit');
     } catch (err) {
       await client.query('rollback').catch(() => {});
@@ -360,30 +380,29 @@ export function createPushSweeper(pool: Pool, deps: {
   async function settle(job: JobRow, device: DeviceRow, status: number, reason?: string): Promise<void> {
     if (status === 200) {
       degraded = false;
-      await pool.query(`update push_device set last_ok_at = now(), last_error = null where id = $1`, [device.id]);
+      await pool.query(PUSH_SQL.deviceOk, [device.id]);
       return;
     }
     const label = `${status}${reason ? ` ${reason}` : ''}`;
     // 기기가 없어졌다(앱 삭제·토큰 교체) → 행을 지운다. 다시 등록하면 돌아온다.
     if (status === 410 || (status === 400 && (reason === 'BadDeviceToken' || reason === 'DeviceTokenNotForTopic'))) {
-      await pool.query(`delete from push_device where id = $1`, [device.id]);
+      await pool.query(PUSH_SQL.deviceRemove, [device.id]);
       log(`[push] device ${redactToken(device.token)} removed (${label})`);
       return;
     }
     if (status === 403) {
       // 설정 오류(키·팀·topic). 토큰은 멀쩡하므로 지우지 않는다.
       degraded = true;
-      await pool.query(`update push_device set last_error = $2 where id = $1`, [device.id, label]);
+      await pool.query(PUSH_SQL.deviceError, [device.id, label]);
       log(`[push] provider rejected (${label}) — check APNS_* settings`);
       return;
     }
     if (status === 0 || status === 429 || status >= 500) {
       const next = PUSH_RETRY_DELAYS_SEC[job.attempts];
-      await pool.query(`update push_device set last_error = $2 where id = $1`, [device.id, label]);
+      await pool.query(PUSH_SQL.deviceError, [device.id, label]);
       if (next !== undefined) {
         await pool.query(
-          `insert into push_job (account_id, message_id, inbox_id, device_id, reason, attempts, not_before)
-           values ($1, $2, $3, $4, $5, $6, now() + make_interval(secs => $7))`,
+          PUSH_SQL.retry,
           // inbox 를 그대로 잇는다 — 재시도 사이에 읽으면 다시 확인에서 걸린다.
           [job.accountId, job.messageId, job.inboxId, device.id, job.reason, job.attempts + 1, next],
         );
@@ -392,7 +411,7 @@ export function createPushSweeper(pool: Pool, deps: {
       }
       return;
     }
-    await pool.query(`update push_device set last_error = $2 where id = $1`, [device.id, label]);
+    await pool.query(PUSH_SQL.deviceError, [device.id, label]);
     log(`[push] device ${redactToken(device.token)} rejected (${label})`);
   }
 
@@ -401,7 +420,7 @@ export function createPushSweeper(pool: Pool, deps: {
   async function pruneSounds(): Promise<void> {
     if (Date.now() - prunedAt < PUSH_SOUND_PRUNE_EVERY_MS) return;
     prunedAt = Date.now();
-    await pool.query(`delete from push_thread_sound where sounded_at < now() - interval '1 day'`);
+    await pool.query(PUSH_SQL.pruneSounds);
   }
 
   async function sweep(): Promise<void> {

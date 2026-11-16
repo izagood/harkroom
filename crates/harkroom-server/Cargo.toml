@@ -55,9 +55,11 @@ zeroize = "=1.9.1"
 # 시험 빌드에서만 아래 dev-dependency(자기 자신)가 켠다. `tests/decide_core.rs` 가 `default` 에 없는지 확인한다.
 [features]
 breakage-tests = []
+# 가짜 APNs origin 으로 여는 시험용 생성자(`ApnsTransport::with_origins`). **기본 꺼짐** — 시험 빌드만 켠다.
+test-origins = []
 
 [dev-dependencies]
-harkroom-server = { path = ".", features = ["breakage-tests"] }
+harkroom-server = { path = ".", features = ["breakage-tests", "test-origins"] }
 # 가짜 APNs(h2c) 서버(C5e-1 시험).
 hyper = { version = "=1.12.0", features = ["server", "http2"] }
 # /ws 시험 클라이언트(앞단 의존 axum ws 가 이미 쓰는 판).

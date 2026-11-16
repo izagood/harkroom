@@ -12,6 +12,7 @@ pub mod bg_produce;
 pub mod mandate_idle;
 pub mod outbox_prune;
 pub mod permission_expire;
+pub mod push;
 pub mod retention;
 pub mod wake;
 

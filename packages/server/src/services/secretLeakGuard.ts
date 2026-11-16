@@ -72,16 +72,19 @@ export function collectStrings(value: unknown, out: string[] = [], depth = 0): s
   return out;
 }
 
+/** 에이전트에 걸린 비밀의 현재 값 — Rust 푸시 루프(`loops/push.rs`)가 골든(`golden/push_sql.json`)으로 받는다. */
+export const LEAK_NEEDLES_SQL = `select distinct s.id, s.name, s.kind, v.version, v.sealed
+         from secret_grant g join secret s on s.id = g.secret_id
+         join secret_version v on v.secret_id = s.id and v.revoked_at is null and v.sealed is not null
+        where g.agent_id = $1::uuid`;
+
 export function createSecretLeakGuard(pool: Pool, keyring: SecretKeyring | null): SecretLeakGuard | null {
   if (!keyring) return null;
 
   /** grant 가 걸린 비밀의 현재 값마다 바늘들. 쓰기마다 새로 읽는다 — 부여·회수·값 교체가 곧바로 반영된다. */
   const needles = async (agentId: string): Promise<{ hit: LeakHit; needles: string[]; raw: Buffer }[]> => {
     const r = await pool.query(
-      `select distinct s.id, s.name, s.kind, v.version, v.sealed
-         from secret_grant g join secret s on s.id = g.secret_id
-         join secret_version v on v.secret_id = s.id and v.revoked_at is null and v.sealed is not null
-        where g.agent_id = $1`, [agentId]);
+      LEAK_NEEDLES_SQL, [agentId]);
     const out: { hit: LeakHit; needles: string[]; raw: Buffer }[] = [];
     for (const row of r.rows as { id: string; name: string; kind: 'text' | 'file'; version: number; sealed: string }[]) {
       const value = keyring.open(row.sealed, { secretId: row.id, version: row.version, kind: row.kind });
