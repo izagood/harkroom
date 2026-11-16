@@ -6,7 +6,8 @@
 //!   다시 세우지 않는다 — 세우면 유예가 늘어난다.
 //! - **중단**(#686): 유예 없이 바로 회수한다. 중단은 **먼저 적고** 회수한다 — 그 사이 뷰어 프레임이 회수를 되돌리지 않게.
 //!   중단된 조종은 다시 붙잡히지 않는다(뒤의 뷰어 수는 버린다).
-//! - **뜨기 전 중단**: PTY 손잡이가 없으면 회수할 것이 없다 — spawn 순간 받는다(정본 #707 판례).
+//! - **뜨기 전 중단·물러남**: PTY 손잡이가 없으면 회수할 것이 없다 — 표지만 세워 두고 spawn 순간 받는다(정본 #707 판례).
+//!   물러남도 중단처럼 표지를 남긴다 — 안 남기면 뜨기 전에 물러남을 받은 턴이 spawn 순간 고아 유예(60초)로 떨어진다.
 //! - **spawn 순간 뷰어 수 재생**: 아직 아무 소식이 없으면 0 으로 친다(attach 전 — 유예가 흐른다). 이미 들은 값이 있으면 그 값을
 //!   다시 쓴다 — 무조건 0 으로 재면 보고 있는 사람 앞에서 60초 뒤 PTY 가 죽는다.
 //! - 회수는 SIGTERM 이 1차, 유예(kill grace) 안에 안 죽으면 SIGKILL.
@@ -31,6 +32,8 @@ pub struct InteractiveLife {
     orphan_pending: bool,
     terminating: bool,
     canceled_by: Option<String>,
+    /// 러너가 물러난다 — 중단처럼 다시 붙잡히지 않고, 뜨기 전이면 spawn 순간 회수한다.
+    shutting_down: bool,
     /// 서버가 마지막으로 말해 준 뷰어 수. `None` = 아직 못 들었다.
     last_viewer_count: Option<i64>,
 }
@@ -42,6 +45,15 @@ impl InteractiveLife {
 
     pub fn canceled_by(&self) -> Option<&str> {
         self.canceled_by.as_deref()
+    }
+
+    pub fn shutting_down(&self) -> bool {
+        self.shutting_down
+    }
+
+    /// 중단이든 물러남이든 회수가 정해졌다 — 뷰어 수가 되돌리지 못한다.
+    fn doomed(&self) -> bool {
+        self.canceled_by.is_some() || self.shutting_down
     }
 
     pub fn exited(&self) -> bool {
@@ -66,7 +78,7 @@ impl InteractiveLife {
     /// 서버의 뷰어 수.
     pub fn viewer_count(&mut self, count: i64) -> Vec<Act> {
         let mut out = Vec::new();
-        if self.exited || self.canceled_by.is_some() {
+        if self.exited || self.doomed() {
             return out;
         }
         self.last_viewer_count = Some(count);
@@ -102,7 +114,7 @@ impl InteractiveLife {
             return out;
         }
         self.spawned = true;
-        if self.canceled_by.is_some() {
+        if self.doomed() {
             self.reclaim(&mut out);
             return out;
         }
@@ -130,9 +142,13 @@ impl InteractiveLife {
         vec![Act::Kill]
     }
 
-    /// 러너가 물러난다 — 기다릴 답이 없으므로 바로 회수한다.
+    /// 러너가 물러난다 — 기다릴 답이 없으므로 바로 회수한다. 뜨기 전이면 표지만 세우고 spawn 순간 회수한다.
     pub fn shutdown(&mut self) -> Vec<Act> {
         let mut out = Vec::new();
+        if self.exited {
+            return out;
+        }
+        self.shutting_down = true;
         self.drop_orphan(&mut out);
         self.reclaim(&mut out);
         out

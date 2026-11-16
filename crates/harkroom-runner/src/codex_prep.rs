@@ -31,15 +31,23 @@ pub struct CodexPrep {
 impl CodexPrep {
     /// 턴 직전 차례. `Err` 면 턴을 띄우지 않는다.
     pub fn run(&self, deps: &dyn CodexRulesDeps) -> Result<(), String> {
+        self.sync_link("mentionTurn", &|l| deps.log(l));
+        sweep_codex_rules(&self.home)
+            .map_err(|e| format!("codex 규칙 파일을 지우지 못했다: {}", e.kind()))
+    }
+}
+
+impl CodexPrep {
+    /// 활성 codex 계정에 로그인 링크를 맞춘다(`sync_auth` 일 때만). 멘션 턴과 새 터미널 턴이 같이 쓴다.
+    /// **실패는 경고만** — 기동 때 건 링크가 남아 직전 계정으로 돈다(정본 `syncCodexAuth().catch(warn)`).
+    pub fn sync_link(&self, tag: &str, log: &dyn Fn(&str)) {
         if self.sync_auth
             && let Err(e) = sync_codex_auth(&self.home, &self.env)
         {
-            deps.log(&format!(
-                "[mentionTurn] codex 계정 링크 갱신 실패 — 직전 계정으로 돈다: {e}"
+            log(&format!(
+                "[{tag}] codex 계정 링크 갱신 실패 — 직전 계정으로 돈다: {e}"
             ));
         }
-        sweep_codex_rules(&self.home)
-            .map_err(|e| format!("codex 규칙 파일을 지우지 못했다: {}", e.kind()))
     }
 }
 

@@ -57,6 +57,8 @@ pub(super) struct Roster {
 
 #[derive(Default)]
 struct RosterInner {
+    /// `shutdown_all` 을 지났다 — 새 턴은 받지 않는다.
+    closed: bool,
     next: u64,
     live: Vec<(u64, SharedLive)>,
 }
@@ -65,12 +67,19 @@ impl Roster {
     fn lock(&self) -> std::sync::MutexGuard<'_, RosterInner> {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
-    fn add(&self, l: &SharedLive) -> u64 {
+    /// 물러나는 중이면 `None` — 받지 않는다(받으면 회수 목록 밖에서 PTY 가 러너보다 오래 산다).
+    fn add(&self, l: &SharedLive) -> Option<u64> {
         let mut g = self.lock();
+        if g.closed {
+            return None;
+        }
         g.next += 1;
         let id = g.next;
         g.live.push((id, Arc::clone(l)));
-        id
+        Some(id)
+    }
+    fn closed(&self) -> bool {
+        self.lock().closed
     }
     fn remove(&self, id: u64) {
         let mut g = self.lock();
@@ -79,14 +88,13 @@ impl Roster {
             self.idle.notify_all();
         }
     }
-    /// 모두에 회수를 건다(SIGTERM → 유예 뒤 SIGKILL). 건 수를 돌려준다.
+    /// 모두에 회수를 건다(SIGTERM → 유예 뒤 SIGKILL). 건 수를 돌려준다. 이 뒤로는 새 턴을 받지 않는다(같은 잠금에서 닫는다).
     fn shutdown_all(&self) -> usize {
-        let lives: Vec<SharedLive> = self
-            .lock()
-            .live
-            .iter()
-            .map(|(_, l)| Arc::clone(l))
-            .collect();
+        let lives: Vec<SharedLive> = {
+            let mut g = self.lock();
+            g.closed = true;
+            g.live.iter().map(|(_, l)| Arc::clone(l)).collect()
+        };
         for l in &lives {
             let acts = lock(l).life.shutdown();
             apply(l, acts);
@@ -193,6 +201,24 @@ impl PtyTurnSink for Sink {
     }
 }
 
+/// 터미널 턴의 추가 MCP(harkroom·avcs 밖) — codex 만 argv 로 싣는다. 못 읽으면 경고하고 빈 표로 띄운다:
+/// 사람이 앉아 있는 턴이라 터미널은 열리고, 빠진 것은 로그에 남는다(MCP 설정 파일은 오퍼레이터가 쓴다).
+fn extra_mcp_for(
+    harness: AgentHarness,
+    mcp_config: &Path,
+    log: &dyn Fn(&str),
+) -> Vec<(String, crate::turn_files::McpServerEntry)> {
+    if harness != AgentHarness::Codex {
+        return Vec::new();
+    }
+    crate::turn_files::read_extra_mcp_servers(mcp_config).unwrap_or_else(|e| {
+        log(&format!(
+            "[interactive] 추가 MCP 를 읽지 못해 빼고 띄운다: {e:?}"
+        ));
+        Vec::new()
+    })
+}
+
 /// 사람이 대화했는가 — 세션 파일이 생겼으면 다음 턴은 resume 으로 조립된다(스파이크 §2). 판정할 길이 없는 하네스는
 /// 「안 생김」으로 둔다: 같은 id 로 첫 턴을 다시 시도하는 쪽이다.
 fn session_materialized(
@@ -219,6 +245,9 @@ impl<L: AgentLink + Send + Sync + 'static> RunnerMaker<L> {
             .relay
             .clone()
             .ok_or_else(|| crate::interactive_open::RUNNER_STARTING.to_string())?;
+        if self.interactive.closed() {
+            return Err(crate::interactive_open::RUNNER_STOPPING.to_string());
+        }
         let c = &self.cfg;
         let key = crate::mention_ledger::thread_key(&req.channel_id, Some(&req.thread_root_id));
 
@@ -314,6 +343,8 @@ impl<L: AgentLink + Send + Sync + 'static> RunnerMaker<L> {
         let codex_home = c.codex.as_ref().map(|x| x.home.clone());
         let opencode_home = c.opencode.as_ref().map(|x| x.home.clone());
         let pi_home = c.pi.as_ref().map(|x| x.home.clone());
+        // codex 는 MCP 설정 파일을 못 받는다 — harkroom·avcs 밖 항목을 턴마다 다시 읽어 `-c` 로 싣는다(정본 `readTurnMcp`).
+        let extra_mcp = extra_mcp_for(harness, Path::new(&self.mcp_config), &|l| eprintln!("{l}"));
         let plan = {
             let mut o =
                 TurnCommandOptions::new(harness, TurnMode::Interactive, perm, &c.operator_bin);
@@ -326,6 +357,7 @@ impl<L: AgentLink + Send + Sync + 'static> RunnerMaker<L> {
             o.codex_home = codex_home.as_deref();
             o.opencode_home = opencode_home.as_deref();
             o.pi_home = pi_home.as_deref();
+            o.extra_mcp_servers = &extra_mcp;
             o.chrome = chrome_turn_for(
                 def.get("chromeEnabled").and_then(Value::as_bool),
                 Some(perm),
@@ -396,7 +428,26 @@ impl<L: AgentLink + Send + Sync + 'static> RunnerMaker<L> {
             }
         };
         let session = Arc::new(session.expect("등록했으면 세션을 열었다"));
-        let roster_id = self.interactive.add(&live);
+        let Some(roster_id) = self.interactive.add(&live) else {
+            // 재검사 뒤 그새 물러남이 시작됐다 — 띄우지 않고 연 것만 닫는다.
+            self.finish(
+                control,
+                &key,
+                req,
+                &rec,
+                None,
+                claude_dir.as_deref(),
+                &session,
+            );
+            return Err(crate::interactive_open::RUNNER_STOPPING.to_string());
+        };
+
+        // codex 는 띄우기 직전 활성 계정으로 로그인 링크를 맞춘다(멘션 턴 `codex_prep` 과 같다). 실패는 경고만.
+        if harness == AgentHarness::Codex
+            && let Some(cx) = c.codex.as_ref()
+        {
+            cx.sync_link("interactive", &|l| eprintln!("{l}"));
+        }
 
         // 관문 — 신뢰·bypass(사람이 매번 경고 화면에 답하지 않게). codex 대화형은 규칙 파일을 쓰지 않는다 — 남은 것을 지운다.
         crate::workspace_trust::prepare_harness_gates(
@@ -616,12 +667,12 @@ mod roster_tests {
     fn shutdown_reaches_every_live_turn_and_waits_for_finish() {
         let r = Arc::new(Roster::default());
         let (a, b) = (fresh(), fresh());
-        let ia = r.add(&a);
-        let ib = r.add(&b);
+        let ia = r.add(&a).unwrap();
+        let ib = r.add(&b).unwrap();
         assert_eq!(r.shutdown_all(), 2);
-        // 뜨기 전에 물러남을 받은 턴은 spawn 순간 회수된다 — 상태 기계가 그 표지를 쥐고 있다.
+        // 뜨기 전에 물러남을 받은 턴은 spawn 순간 회수된다 — 고아 유예(StartOrphan)로 떨어지면 안 된다.
         for l in [&a, &b] {
-            assert!(!lock(l).life.spawned().is_empty());
+            assert_eq!(lock(l).life.spawned(), vec![Act::Terminate]);
         }
         let r2 = Arc::clone(&r);
         let t = std::thread::spawn(move || {
@@ -637,7 +688,64 @@ mod roster_tests {
     fn wait_gives_up_after_limit_and_reports_left() {
         let r = Roster::default();
         let a = fresh();
-        r.add(&a);
+        r.add(&a).unwrap();
         assert_eq!(r.wait_idle_for(Duration::from_millis(20)), 1);
+    }
+
+    #[test]
+    fn codex_terminal_carries_extra_mcp_servers() {
+        let d = std::env::temp_dir().join(format!("hk-ispawn-mcp-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let p = d.join("mcp.json");
+        std::fs::write(
+            &p,
+            r#"{"mcpServers":{"harkroom":{"type":"stdio","command":"/op","args":["mcp-bridge"]},"github":{"type":"stdio","command":"gh-mcp","args":["serve"]}}}"#,
+        )
+        .unwrap();
+        let log = |_: &str| {};
+        let extra = extra_mcp_for(AgentHarness::Codex, &p, &log);
+        assert_eq!(
+            extra.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
+            ["github"]
+        );
+        assert!(
+            extra_mcp_for(AgentHarness::ClaudeCode, &p, &log).is_empty(),
+            "claude 는 파일로 받는다"
+        );
+        // 터미널(Interactive) 조립에도 실린다.
+        let home = PathBuf::from("/codex");
+        let mut o = TurnCommandOptions::new(
+            AgentHarness::Codex,
+            TurnMode::Interactive,
+            MentionPermission::Auto,
+            "/op",
+        );
+        o.codex_home = Some(&home);
+        o.extra_mcp_servers = &extra;
+        let plan = build_turn_command(&o, &Default::default(), Path::new("/h")).unwrap();
+        assert!(
+            plan.args
+                .iter()
+                .any(|a| a.starts_with("mcp_servers.github.")),
+            "{:?}",
+            plan.args
+        );
+        // 못 읽으면 빈 표 + 경고(터미널은 연다).
+        let seen = std::cell::RefCell::new(Vec::<String>::new());
+        let rec = |l: &str| seen.borrow_mut().push(l.to_string());
+        assert!(extra_mcp_for(AgentHarness::Codex, &d.join("none.json"), &rec).is_empty());
+        assert_eq!(seen.borrow().len(), 1);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn no_new_turn_after_shutdown() {
+        let r = Roster::default();
+        assert!(!r.closed());
+        assert_eq!(r.shutdown_all(), 0);
+        assert!(r.closed(), "빈 목록이어도 닫는다");
+        assert!(r.add(&fresh()).is_none());
+        assert_eq!(r.wait_idle_for(Duration::from_millis(10)), 0);
     }
 }
