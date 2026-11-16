@@ -1330,6 +1330,12 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // S5.3 C6a-2 — 스레드 처리 상태(`core/inbox_thread.rs::INBOX_THREAD_PRIVILEGES`). 없으면 「inbox thread core off」.
         `grant insert, delete on inbox_thread_state to ${rw}`,
         `grant update (state, until, updated_at) on inbox_thread_state to ${rw}`,
+        // S5.3 C4b B1a — MCP 기억 쓰기(`mcp/mem_writes.rs::MEMORY_WRITE_PRIVILEGES`). 칸 권한만. 없으면 「mcp memory writes off」.
+        `grant update (read_count, last_read_at, recall_count, last_recalled_at, archived_at, updated_at) on agent_memory to ${rw}`,
+        `grant delete on agent_memory to ${rw}`,
+        `grant insert on agent_memory_revision to ${rw}`,
+        `grant usage on sequence agent_memory_revision_id_seq to ${rw}`,
+        `grant insert, update, delete on memory_lease to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -1660,6 +1666,140 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       expect((await mcpCall(rsUrl4, agent.pat, 'thread.note.list', {})).text).toContain('빈 표시라 보이는 본문');
       const revText = (await mcpCall(rsUrl4, agent.pat, 'memory.revisions', { slug: 'mem/a' })).text;
       for (const want of ['mem/x', 'merge', 'restore', 'flagged', 'chars\\":4', 'detail\\":{}']) expect(revText).toContain(want);
+
+      // S5.3 C4b B1a — 기억 쓰기 다섯(memory.get·recalled·lease·archive·unarchive). 쓰기가 상태를 바꾸므로 같은 글자가 나와야 하는
+      // 짝은 「상태를 바꾸지 않는 답」(거절·충돌·읽기)이거나, TS·Rust 가 각자 같은 모양의 다른 행을 쓰게 한다(slug 만 다름).
+      const memRow = async (slug: string, acct = agent.accountId) => (await db.pool.query<{ read_count: number; recall_count: number; archived: boolean; updated_at: Date }>(
+        `select read_count, recall_count, archived_at is not null as archived, updated_at from agent_memory where account_id = $1 and slug = $2`, [acct, slug])).rows[0];
+      await db.pool.query(
+        `insert into agent_memory (account_id, slug, value, kind, description, flagged_at, flag_reason, updated_at) values
+           ($1, 'mem/f', '걸린 본문', 'topic', '걸린 요약', now(), 'instruction', now() - interval '1 hour'),
+           ($1, 'mem/arch-ts', '보관할 것', 'topic', null, null, null, now() - interval '1 hour'),
+           ($1, 'mem/arch-rs', '보관할 것', 'topic', null, null, null, now() - interval '1 hour'),
+           ($1, 'mem/un-ts', '되살릴 것', 'topic', null, null, null, now() - interval '1 hour'),
+           ($1, 'mem/un-rs', '되살릴 것', 'topic', null, null, null, now() - interval '1 hour')`,
+        [agent.accountId]);
+      await db.pool.query(`update agent_memory set archived_at = now() - interval '1 hour' where account_id = $1 and slug in ('mem/un-ts', 'mem/un-rs')`, [agent.accountId]);
+      await db.pool.query(
+        `insert into agent_memory_revision (account_id, slug, value, description, updated_at, replaced_at, kind, flagged) values
+           ($1, 'mem/f', '깨끗한 옛 판', '옛 요약', now() - interval '2 days', now() - interval '1 day', 'topic', false)`,
+        [agent.accountId]);
+      // bot2 — 살아 있는 기억이 상한(200)에 찬 계정. 보관한 것을 되살리면 too_many.
+      await db.pool.query(
+        `insert into agent_memory (account_id, slug, value, kind) select $1, 'mem/n' || g, 'v', 'topic' from generate_series(1, 200) g`, [bot2.accountId]);
+      await db.pool.query(`insert into agent_memory (account_id, slug, value, kind, archived_at) values ($1, 'mem/kept', 'v', 'topic', now())`, [bot2.accountId]);
+      const readA = (await memRow('mem/a'))!.read_count;
+      const archTs = (await memRow('mem/arch-ts'))!.updated_at.toISOString();
+      for (const [name, token, tool, args, answeredByRust] of [
+        ['memory.get', agent.pat, 'memory.get', { slug: 'mem/a' }, true],
+        ['memory.get core', agent.pat, 'memory.get', { slug: 'core' }, true],
+        ['memory.get 걸림 + 깨끗한 옛 판', agent.pat, 'memory.get', { slug: 'mem/f' }, true],
+        ['memory.get 걸림 + 옛 판 없음', agent.pat, 'memory.get', { slug: 'mem/b' }, true],
+        ['memory.get 보관됨', agent.pat, 'memory.get', { slug: 'mem/z-old' }, true],
+        ['memory.get 없음', agent.pat, 'memory.get', { slug: 'mem/none' }, true],
+        ['memory.get slug 꼴 틀림', agent.pat, 'memory.get', { slug: 'Mem/A' }, true],
+        ['memory.get 빈 slug → TS', agent.pat, 'memory.get', { slug: '' }, false],
+        ['memory.get 인자 없음 → TS', agent.pat, 'memory.get', undefined, false],
+        ['memory.recalled', agent.pat, 'memory.recalled', { slugs: ['mem/a@2026-01-01T00:00:00.000Z', 'mem/a', 'core', 'mem/none'] }, true],
+        ['memory.recalled core 만', agent.pat, 'memory.recalled', { slugs: ['core'] }, true],
+        ['memory.recalled 빈 배열 → TS', agent.pat, 'memory.recalled', { slugs: [] }, false],
+        ['memory.recalled 6개 → TS', agent.pat, 'memory.recalled', { slugs: ['a', 'b', 'c', 'd', 'e', 'f'] }, false],
+        ['memory.recalled 빈 글자 → TS', agent.pat, 'memory.recalled', { slugs: [''] }, false],
+        ['memory.archive core', agent.pat, 'memory.archive', { slug: 'core' }, true],
+        ['memory.archive 없음', agent.pat, 'memory.archive', { slug: 'mem/none' }, true],
+        ['memory.archive slug 꼴 틀림', agent.pat, 'memory.archive', { slug: 'mem/A' }, true],
+        ['memory.archive 충돌(옛 판)', agent.pat, 'memory.archive', { slug: 'mem/arch-ts', ifUpdatedAt: '2020-01-01T00:00:00.000Z' }, true],
+        ['memory.archive 충돌(없어야 함)', agent.pat, 'memory.archive', { slug: 'mem/arch-ts', ifUpdatedAt: null }, true],
+        ['memory.archive 이미 보관(맞는 판)', agent.pat, 'memory.archive', { slug: 'mem/z-old' }, true],
+        ['memory.archive 시각 꼴 틀림 → TS', agent.pat, 'memory.archive', { slug: 'mem/arch-ts', ifUpdatedAt: 'yesterday' }, false],
+        ['memory.unarchive 없음', agent.pat, 'memory.unarchive', { slug: 'mem/none' }, true],
+        ['memory.unarchive 보관 안 됨', agent.pat, 'memory.unarchive', { slug: 'mem/a' }, true],
+        ['memory.unarchive 상한 참', bot2.pat, 'memory.unarchive', { slug: 'mem/kept' }, true],
+        ['memory.lease 조회(없음)', agent.pat, 'memory.lease', { action: 'status' }, true],
+        ['memory.lease release token 없음', agent.pat, 'memory.lease', { action: 'release' }, true],
+        ['memory.lease release 남의 token', agent.pat, 'memory.lease', { action: 'release', token: 'nobody-token' }, true],
+        ['memory.lease 모르는 action → TS', agent.pat, 'memory.lease', { action: 'steal' }, false],
+        ['memory.lease token 7자 → TS', agent.pat, 'memory.lease', { action: 'acquire', token: '1234567' }, false],
+        ['memory.lease minutes 0 → TS', agent.pat, 'memory.lease', { action: 'acquire', minutes: 0 }, false],
+        ['memory.lease minutes 181 → TS', agent.pat, 'memory.lease', { action: 'acquire', minutes: 181 }, false],
+      ] as const) {
+        const [a, b] = [await mcpCall(tsUrl, token, tool, args), await mcpCall(rsUrl4, token, tool, args)];
+        expect({ status: b.status, type: b.type, text: b.text }, name).toEqual({ status: a.status, type: a.type, text: a.text });
+        expect(b.core, `${name} — 누가 답했나`).toBe(answeredByRust ? 'mcp' : null);
+      }
+      // 이빨 — 읽은 횟수(get 은 두 번씩, TS 한 번 + Rust 한 번)·recall 셈(mem/a 는 한 호출에 한 번, 두 호출)·충돌은 아무것도 안 바꿨다.
+      expect((await memRow('mem/a'))!.read_count, 'memory.get 이 읽은 횟수를 센다').toBe(readA + 2);
+      expect((await memRow('mem/a'))!.recall_count, 'memory.recalled — 판 꼬리를 떼고 한 번만').toBe(2);
+      expect((await memRow('core'))!.recall_count, 'core 는 세지 않는다').toBe(0);
+      expect((await memRow('mem/arch-ts'))!.updated_at.toISOString(), '충돌은 쓰지 않는다').toBe(archTs);
+      expect((await memRow('mem/kept', bot2.accountId))!.archived, '상한이면 되살리지 않는다').toBe(true);
+      const getText = (await mcpCall(rsUrl4, agent.pat, 'memory.get', { slug: 'mem/f' })).text;
+      for (const want of ['깨끗한 옛 판', '옛 요약', 'instruction', '마지막 판이다']) expect(getText).toContain(want);
+      expect(getText).not.toContain('걸린 본문');
+      expect((await mcpCall(rsUrl4, agent.pat, 'memory.get', { slug: 'mem/z-old' })).text).toContain('archived\\":true');
+      expect((await mcpCall(rsUrl4, agent.pat, 'memory.get', { slug: 'mem/b' })).text).toContain('걸리기 전 판이 없다');
+      // 쓰는 짝 — 같은 모양의 다른 행(slug 만 다름)에 TS·Rust 가 각자 쓰고, 답 글자(slug 를 지운 것)와 행을 견준다.
+      const bySlug = (t: string, slug: string) => t.split(slug).join('<slug>');
+      for (const [tool, extra] of [['memory.archive', (s: string) => ({ slug: s })], ['memory.unarchive', (s: string) => ({ slug: s })]] as const) {
+        const [ts, rsSlug] = tool === 'memory.archive' ? ['mem/arch-ts', 'mem/arch-rs'] : ['mem/un-ts', 'mem/un-rs'];
+        const at = (s: string) => memRow(s).then((r) => r!.updated_at.toISOString());
+        const args = (s: string) => ({ ...extra(s), ...(tool === 'memory.archive' ? { ifUpdatedAt: '' } : {}) });
+        const a = await mcpCall(tsUrl, agent.pat, tool, tool === 'memory.archive' ? { slug: ts, ifUpdatedAt: await at(ts) } : args(ts));
+        const b = await mcpCall(rsUrl4, agent.pat, tool, tool === 'memory.archive' ? { slug: rsSlug, ifUpdatedAt: await at(rsSlug) } : args(rsSlug));
+        expect(b.core, `${tool} 쓰기 — Rust 가 답한다`).toBe('mcp');
+        expect(bySlug(b.text, rsSlug), tool).toBe(bySlug(a.text, ts));
+        expect(b.text).toContain('ok\\":true');
+        const [ra, rb] = [(await memRow(ts))!, (await memRow(rsSlug))!];
+        expect(rb.archived, `${tool} — 행`).toBe(ra.archived);
+        expect(rb.archived).toBe(tool === 'memory.archive');
+        expect(Math.abs(rb.updated_at.getTime() - Date.now()), `${tool} — updated_at 이 지금으로`).toBeLessThan(60_000);
+      }
+      // 보관 넘침 — 300 을 넘으면 가장 오래 보관된 것이 이전 판으로 옮겨지며 지워진다(Rust 쓰기 한 번).
+      await db.pool.query(
+        `insert into agent_memory (account_id, slug, value, kind, archived_at) select $1, 'mem/old' || g, 'v' || g, 'topic', now() - interval '1 day' - g * interval '1 minute'
+           from generate_series(1, 300) g`, [agent.accountId]);
+      const over = await mcpCall(rsUrl4, agent.pat, 'memory.archive', { slug: 'mem/a' });
+      expect(over.core).toBe('mcp');
+      expect(over.text).toContain('ok\\":true');
+      expect((await db.pool.query(`select count(*)::int as n from agent_memory where account_id = $1 and archived_at is not null`, [agent.accountId])).rows[0].n).toBe(300);
+      expect((await db.pool.query(`select 1 from agent_memory where account_id = $1 and slug = 'mem/old300'`, [agent.accountId])).rowCount, '가장 오래 보관된 것이 빠진다').toBe(0);
+      expect((await db.pool.query(`select value from agent_memory_revision where account_id = $1 and slug = 'mem/old300'`, [agent.accountId])).rows).toEqual([{ value: 'v300' }]);
+      await db.pool.query(`update agent_memory set archived_at = null where account_id = $1 and slug = 'mem/a'`, [agent.accountId]);
+      await db.pool.query(`delete from agent_memory where account_id = $1 and slug like 'mem/old%'`, [agent.accountId]);
+      // 임대 — 시각을 지운 글자로 견준다. 같은 token 이 TS 에서 잡고 놓은 뒤 Rust 에서 잡으면 같은 답, 남이 잡으면 heldBy.
+      const noTime = (t: string) => t.replace(/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z/g, '<t>');
+      const leaseCall = (base: string, args: Record<string, unknown>) => mcpCall(base, agent.pat, 'memory.lease', args);
+      const la = await leaseCall(tsUrl, { action: 'acquire', token: 'token-aaaa', minutes: 5 });
+      expect((await leaseCall(tsUrl, { action: 'release', token: 'token-aaaa' })).text).toContain('released\\":true');
+      const lb = await leaseCall(rsUrl4, { action: 'acquire', token: 'token-aaaa', minutes: 5 });
+      expect(lb.core).toBe('mcp');
+      expect(noTime(lb.text)).toBe(noTime(la.text));
+      expect(lb.text).toContain('acquired\\":true');
+      const held = [await leaseCall(tsUrl, { action: 'acquire', token: 'token-bbbb' }), await leaseCall(rsUrl4, { action: 'acquire', token: 'token-bbbb' })];
+      expect(held[1]!.text, '남이 들고 있으면 heldBy — 시각까지 같다').toBe(held[0]!.text);
+      expect(held[1]!.text).toContain('acquired\\":false');
+      const st = [await leaseCall(tsUrl, { action: 'status' }), await leaseCall(rsUrl4, { action: 'status' })];
+      expect(st[1]!.text).toBe(st[0]!.text);
+      expect(st[1]!.text).toContain('expiresAt');
+      const minutesLeft = (await db.pool.query<{ m: number }>(`select extract(epoch from expires_at - acquired_at)::int / 60 as m from memory_lease where account_id = $1`, [agent.accountId])).rows[0]!.m;
+      expect(minutesLeft, 'minutes 를 따른다').toBe(5);
+      expect((await leaseCall(rsUrl4, { action: 'release', token: 'token-aaaa' })).text).toContain('released\\":true');
+      const fresh = await leaseCall(rsUrl4, { action: 'acquire' });
+      expect(fresh.text, 'token 을 안 주면 uuid 를 지어 준다').toMatch(/token\\":\\"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\"/);
+      expect((await db.pool.query<{ m: number }>(`select extract(epoch from expires_at - acquired_at)::int / 60 as m from memory_lease where account_id = $1`, [agent.accountId])).rows[0]!.m, '기본 60분').toBe(60);
+      await db.pool.query(`delete from memory_lease where account_id = $1`, [agent.accountId]);
+      // W1 — 쓰기를 시작한 뒤의 오류는 TS 로 넘기지 않는다. 읽은 횟수 칸 권한을 잠깐 거두면 update 가 실패한다 → Rust 가 internal 로
+      // 답하고(core=mcp), TS 가 대신 세지 않았으니 read_count 가 그대로다.
+      const readBefore = (await memRow('mem/a'))!.read_count;
+      await db.pool.query(`revoke update (read_count) on agent_memory from ${rw}`);
+      try {
+        const w1 = await mcpCall(rsUrl4, agent.pat, 'memory.get', { slug: 'mem/a' });
+        expect(w1.core, 'W1 — Rust 가 답한다').toBe('mcp');
+        expect(w1.text).toContain('\\"code\\":\\"internal\\"');
+        expect((await memRow('mem/a'))!.read_count, 'TS 가 대신 세지 않았다').toBe(readBefore);
+      } finally {
+        await db.pool.query(`grant update (read_count) on agent_memory to ${rw}`);
+      }
 
       // S5.3 C4a-6a — workitem.list(주인 보드 중 내가 볼 수 있는 스레드에 붙은 것) · automation.list(이 턴을 시킨 사람 = 소유자의
       // 승인된 자동화, 원인은 `x-harkroom-cause` 로 판정 — 없음·남의 것·1시간 넘음·자동화 글·에이전트 글).
