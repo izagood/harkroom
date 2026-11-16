@@ -392,6 +392,28 @@ async fn main() {
     if ask_deny.is_some() {
         eprintln!("front: permission deny core on");
     }
+    // C3b B1 — `POST /agent/command-grants/match`(명령 grant 하나를 쓰고 감사). `HARKROOM_CORE=rust` 그리고 쓰기 풀에
+    // `MATCH_PRIVILEGES` 가 다 있을 때만(fail-closed) — 아니면 경로를 붙이지 않아 TS 가 받는다.
+    let match_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::command_match as cm;
+            match write::missing_in(w, cm::MATCH_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: command grant match core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: command grant match core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // C1c-1 — 글 올리기(사람 최상위 글 뼈대). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 `MESSAGE_POST_PRIVILEGES` 가 다 있을 때만.
     let post_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -607,7 +629,7 @@ async fn main() {
         core_routes.router = core_routes.router.merge(decide_check.router);
         core_routes.http.extend(decide_check.http);
         core_routes.sockets.extend(decide_check.sockets);
-        // C3b grant 읽기 줄 — 러너·오퍼레이터가 읽는 `GET /agent/tool-allows`·`/agent/command-grants`. 읽기 풀만(match 는 쓰기라 TS).
+        // C3b grant 읽기 줄 — 러너·오퍼레이터가 읽는 `GET /agent/tool-allows`·`/agent/command-grants`. 읽기 풀만(match 는 아래 B1).
         let grant_reads = harkroom_server::core::grant_reads::routes(
             state.pool.clone(),
             auth.clone(),
@@ -616,6 +638,20 @@ async fn main() {
         core_routes.router = core_routes.router.merge(grant_reads.router);
         core_routes.http.extend(grant_reads.http);
         core_routes.sockets.extend(grant_reads.sockets);
+        // C3b B1 — 명령 grant 쓰기(`POST /agent/command-grants/match`). 쓰기 풀 권한이 다 있을 때만.
+        if let Some(write) = match_write {
+            let m = harkroom_server::core::command_match::routes(
+                harkroom_server::core::command_match::MatchState {
+                    read: state.pool.clone(),
+                    write,
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(m.router);
+            core_routes.http.extend(m.http);
+            core_routes.sockets.extend(m.sockets);
+        }
         // C1b-1b — 채널·스레드 목록(`GET /channels/{id}/messages`). 같은 경로의 `POST` 는 fallback 으로 TS.
         let lists = harkroom_server::core::msg_list::routes(
             state.pool.clone(),

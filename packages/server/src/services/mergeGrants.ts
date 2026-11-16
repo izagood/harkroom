@@ -70,10 +70,9 @@ export interface LeaseRow {
   causeAskAuthorId: string | null; askAnsweredBy: string | null; askAnswererKind: string | null; askAnswererOwnsAgent: boolean;
 }
 
-export async function readLease(pool: Pool, args: { leaseId: string; token: string; now: Date }): Promise<LeaseRow | undefined> {
-  return (await pool.query(
-    `select l.id, l.agent_id as "agentId", l.operator_id as "operatorId", l.channel_id as "channelId",
-            l.thread_root_id as "threadRootId", l.expires_at <= $3 as expired, l.ended_at is not null as ended,
+/** 턴 임대 하나를 토큰으로 읽는다(`readLease`). Rust 코어(`core/command_match.rs`)가 골든으로 같은 문장을 쓴다. $1 임대 id · $2 sha256(token) · $3 지금. */
+export const READ_LEASE_SQL = `select l.id, l.agent_id as "agentId", l.operator_id as "operatorId", l.channel_id as "channelId",
+            l.thread_root_id as "threadRootId", l.expires_at <= $3::timestamptz as expired, l.ended_at is not null as ended,
             l.cause_message_id as "causeMessageId", l.mandate_id as "mandateId",
             a.kind as "causeKind",
             case when m.meta ? 'ask' and m.meta->'ask'->>'mirrorOf' is null and m.meta->'ask'->>'answeredVia' is null
@@ -86,7 +85,11 @@ export async function readLease(pool: Pool, args: { leaseId: string; token: stri
        left join message m on m.id = l.cause_message_id
        left join account a on a.id = m.author_id
        left join account ans on ans.id = nullif(m.meta->'ask'->>'answeredBy', '')::uuid
-      where l.id = $1 and l.token_hash = $2`,
+      where l.id = $1::uuid and l.token_hash = $2::text`;
+
+export async function readLease(pool: Pool, args: { leaseId: string; token: string; now: Date }): Promise<LeaseRow | undefined> {
+  return (await pool.query(
+    READ_LEASE_SQL,
     [args.leaseId, sha256(args.token), args.now])).rows[0] as LeaseRow | undefined;
 }
 
