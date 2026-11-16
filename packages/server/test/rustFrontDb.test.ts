@@ -1500,6 +1500,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // S5.3 C1c-4a — 에이전트 글의 회신권 열기(insert … on conflict do update)·닫기.
         `grant insert on invoke_reply_grant to ${rw}`,
         `grant update (opened_at, expires_at, closed_at) on invoke_reply_grant to ${rw}`,
+        // S5.3 C1c-4c — MCP 글의 principal 옮겨 적기(`MCP_POST_EXTRA_PRIVILEGES`).
+        `grant update (principal_account_id, principal_cause_reasons) on message to ${rw}`,
         // S5.3 C5b — 예약 깨움 루프(`loops/wake.rs::WAKE_PRIVILEGES`). 없으면 「loop wake off」 — 루프는 TS 에 남는다.
         ...WAKE_GRANTS.map((g) => `grant ${g} to ${rw}`),
         // S5.3 C5c — 보존 정리 루프(`loops/retention.rs::RETENTION_PRIVILEGES`).
@@ -6110,6 +6112,153 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           { body: '고를래?', reason: 'replied', by: 'ADMIN', by_reply: true, closed: true, inbox: [] },
         ]);
         for (const r of saved) await db.pool.query(`update agent_config set invoke_scope = $2 where account_id = $1`, [r.id, r.scope]);
+      }
+
+      // S5.3 C1c-4c — MCP `message.post`(원인 입력 + 몸통). 같은 장면을 서버마다 새로 깔고(원인 글·inbox·임대), 같은 도구 호출을 TS `/mcp` 와
+      // 앞단에 보내 답(아이디·시각을 지운 꼴)과 남은 행(깊이·정체·사슬 고리·턴 id·모델·위임·principal)을 견준다. Rust 가 답했는지는
+      // `x-harkroom-core: mcp` 로 가른다. 기본 앞단은 암묵 위임 스위치를 모르므로 부름이 든 글은 TS 몫이다(C1c-4d) — 장면은 부름 없이 짠다.
+      {
+        expect(f.log()).not.toContain('mcp message.post core off');
+        const names = new Map<string, string>([[admin.accountId, 'ADMIN'], [member.accountId, 'MEM'], [member2.accountId, 'MEM2'], [bot2.accountId, 'BOT2']]);
+        const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+        const shape = (v: unknown): unknown => {
+          if (Array.isArray(v)) return v.map(shape);
+          if (v && typeof v === 'object') {
+            const o: Record<string, unknown> = {};
+            for (const [k, x] of Object.entries(v as Record<string, unknown>)) o[k] = /At$/.test(k) ? (x === null ? null : typeof x) : k === 'seq' ? typeof x : shape(x);
+            return o;
+          }
+          return typeof v === 'string' ? v.replace(UUID_RE, (id) => names.get(id) ?? '<uuid>') : v;
+        };
+        // 이 블록만의 에이전트(BOT3, 누구나 부름) — 앞뒤 대조가 보는 BOT 의 배정·모델·presence(TS 의 쓰기 간격)를 건드리지 않는다.
+        const bot3 = await createAgent(app, admin.token, 'c1c4cbot');
+        names.set(bot3.accountId, 'BOT3');
+        await db.pool.query(`update agent_config set invoke_scope = 'community', model = 'opus' where account_id = $1`, [bot3.accountId]);
+        await db.pool.query(`insert into channel_member (channel_id, account_id) values ($1, $2) on conflict do nothing`, [todayId, bot3.accountId]);
+        const pop = await registerOperator(app, admin.token, 'c1c4c-mac');
+        await db.pool.query(`insert into agent_assignment (agent_id, operator_id, assigned_by) values ($1, $2, $3)`, [bot3.accountId, pop.operatorId, admin.accountId]);
+        const viaOp = { token: pop.token, extra: { 'x-harkroom-agent': bot3.accountId } as Record<string, string> };
+        const viaPat = { token: bot3.pat, extra: {} as Record<string, string> };
+        const freshCh = async () => {
+          const c = (await createChannel(db.pool, { name: `c1c4c-${Math.random().toString(36).slice(2, 10)}` })).id;
+          await db.pool.query(`insert into channel_member (channel_id, account_id) select $1, account_id from channel_member where channel_id = $2 on conflict do nothing`, [c, todayId]);
+          return c;
+        };
+        const ins = async (o: { ch: string; root?: string | null; author: string; body: string; depth?: number; stall?: number; meta?: Record<string, unknown> }) =>
+          (await db.pool.query<{ id: string }>(
+            `insert into message (channel_id, thread_root_id, author_id, body, kind, mention_depth, stall_depth, meta) values ($1, $2, $3, $4, 'user', $5, $6, $7::jsonb) returning id::text as id`,
+            [o.ch, o.root ?? null, o.author, o.body, o.depth ?? 0, o.stall ?? 0, JSON.stringify(o.meta ?? {})])).rows[0]!.id;
+        const wokeBy = (id: string, reason = 'mention') => db.pool.query(`insert into inbox (account_id, message_id, reason) values ($1, $2, $3)`, [bot3.accountId, id, reason]);
+        // 장면 하나 = 채널·머리·원인을 새로 깔고 { 인자, 헤더 } 를 돌려준다.
+        type Setup = { args: Record<string, unknown>; via: { token: string; extra: Record<string, string> }; cause?: string; turn?: string };
+        const turnId = randomUUID();
+        const chainBy = (by: string, depth: number, stall: number, earlier = '') => async (ch: string) => {
+          const root = await ins({ ch, author: member.accountId, body: '질문' });
+          const call = await ins({ ch, root, author: by, body: `<@${bot3.accountId}> 이것 봐 줘${earlier}`, depth, stall });
+          await wokeBy(call);
+          return { root, call };
+        };
+        const SCENES: [string, (ch: string) => Promise<Setup>, boolean][] = [
+          ['원인 없음(PAT) · 모델 어긋남', async (ch) => ({ args: { channelId: ch, body: '보고 드림', model: ' claude-sonnet-5 ' }, via: viaPat }), true],
+          ['오퍼레이터 원인 → 깊이·고리·턴 id', async (ch) => {
+            const { root, call } = await chainBy(bot2.accountId, 2, 1)(ch);
+            return { args: { channelId: ch, threadRootId: root, body: '봤다', model: 'claude-opus-5' }, via: viaOp, cause: call, turn: turnId };
+          }, true],
+          ['PAT 원인 → 깊이만(고리·턴 id 없음)', async (ch) => {
+            const { root, call } = await chainBy(bot2.accountId, 2, 1)(ch);
+            return { args: { channelId: ch, threadRootId: root, body: '봤다' }, via: viaPat, cause: call, turn: turnId };
+          }, true],
+          ['다른 스레드의 원인(사람 글) → 깊이 1', async (ch) => {
+            const other = await ins({ ch, author: member.accountId, body: `<@${bot3.accountId}> 저쪽 봐 줘` });
+            await wokeBy(other);
+            const root = await ins({ ch, author: member.accountId, body: '여기' });
+            return { args: { channelId: ch, threadRootId: root, body: '봤다' }, via: viaOp, cause: other };
+          }, true],
+          ['나를 안 깨운 원인 → 스레드 스캔', async (ch) => {
+            const { root } = await chainBy(bot2.accountId, 3, 0)(ch);
+            const stray = await ins({ ch, author: member.accountId, body: '아무 글' });
+            return { args: { channelId: ch, threadRootId: root, body: '봤다' }, via: viaOp, cause: stray };
+          }, true],
+          ['사람이 답한 카드 원인 → 깊이 1·사슬 시작 지금', async (ch) => {
+            const card = await ins({ ch, author: bot3.accountId, body: '고를래?', depth: 7, stall: 3,
+              meta: { kind: 'ask', ask: { prompt: '고를래?', options: [{ id: 'a', label: 'A' }], to: { kind: 'human' }, answeredWith: 'a', answeredBy: admin.accountId } } });
+            await wokeBy(card, 'ask_answered');
+            return { args: { channelId: ch, threadRootId: card, body: '이어서 한다' }, via: viaOp, cause: card };
+          }, true],
+          // 4b 에서 골든으로만 대조한 갈래 — 같은 대화의 글 링크는 결과물이 아니다(정체 +1), 다른 스레드 글 링크는 결과물이다(0 + 표지).
+          ['같은 대화 링크 → 정체 +1', async (ch) => {
+            const { root, call } = await chainBy(bot2.accountId, 2, 1)(ch);
+            return { args: { channelId: ch, threadRootId: root, body: `봤다 harkroom://message/${call}` }, via: viaOp, cause: call };
+          }, true],
+          ['다른 스레드 링크 → 정체 0 · linkReset', async (ch) => {
+            const { root, call } = await chainBy(bot2.accountId, 2, 1)(ch);
+            const elsewhere = await ins({ ch, author: member.accountId, body: '다른 스레드' });
+            return { args: { channelId: ch, threadRootId: root, body: `봤다 harkroom://message/${elsewhere}` }, via: viaOp, cause: call };
+          }, true],
+          ['URL 이 든 글도 Rust(링크 미리보기 없음)', async (ch) => ({ args: { channelId: ch, body: '여기 https://example.com/x 봐' }, via: viaPat }), true],
+          ['보관된 채널도 올린다', async (ch) => {
+            await db.pool.query(`update channel set archived_at = now() where id = $1`, [ch]);
+            return { args: { channelId: ch, body: '보관 뒤' }, via: viaPat };
+          }, true],
+          ['없는 머리 → bad_thread', async (ch) => ({ args: { channelId: ch, threadRootId: randomUUID(), body: '답' }, via: viaPat }), true],
+          ['남의 업로드 → bad_attachment', async (ch) => ({ args: { channelId: ch, body: '첨부', attachmentIds: [randomUUID()] }, via: viaPat }), true],
+          ['공백 본문도 받는다(min 1)', async (ch) => ({ args: { channelId: ch, body: ' ' }, via: viaPat }), true],
+          ['agentModels → TS', async (ch) => ({ args: { channelId: ch, body: '지정', agentModels: [] }, via: viaPat }), false],
+          ['부름(암묵 위임 모름) → TS', async (ch) => ({ args: { channelId: ch, body: '@mem 봐 줘' }, via: viaPat }), false],
+          ['ASCII 밖 모델 → TS', async (ch) => ({ args: { channelId: ch, body: '보고', model: '오푸스' }, via: viaPat }), false],
+        ];
+        const facts = async (id: string | undefined, cause: string | undefined) => id ? shape((await db.pool.query(
+          `select m.mention_depth as depth, m.stall_depth as stall, m.chain_started_at is not null as started,
+                  m.cause_message_id is not distinct from $2::uuid as linked, m.cause_message_id is null as unlinked,
+                  m.meta->'turnId' as turn, m.meta->'model' as model, m.meta ? 'mentionStallLinkReset' as link_reset,
+                  m.mandate_id is not null as mandated, m.principal_account_id::text as principal, m.principal_cause_reasons as reasons
+             from message m where m.id = $1`, [id, cause ?? null])).rows) : null;
+        const sse = (t: string) => {
+          const line = t.split('\n').find((l) => l.startsWith('data: '));
+          const res = line ? JSON.parse(line.slice(6)) as { result?: { content?: { text: string }[] } } : null;
+          const text = res?.result?.content?.[0]?.text;
+          return text ? JSON.parse(text) as Record<string, unknown> : res;
+        };
+        const leaseFor = async (cause: string, ch: string) => {
+          const root = await ins({ ch, author: admin.accountId, body: '위임 뿌리' });
+          const mandate = (await db.pool.query<{ id: string }>(
+            `insert into mandate (owner_account_id, delegator_account_id, root_message_id, channel_id, thread_root_id) values ($1, $1, $2, $3, $2) returning id`,
+            [admin.accountId, root, ch])).rows[0]!.id;
+          await db.pool.query(
+            `insert into secret_turn_lease (token_hash, agent_id, operator_id, cause_message_id, channel_id, thread_root_id, expires_at, mandate_id, principal_account_id)
+             values ('c1c4c', $1, $2, $3, $4, $3, now() + interval '1 hour', $5, $6)`, [bot3.accountId, pop.operatorId, cause, ch, mandate, member.accountId]);
+        };
+        const run = async (base: string) => {
+          const out: unknown[] = [];
+          for (const [name, setup, rust] of SCENES) {
+            const ch = await freshCh();
+            const st = await setup(ch);
+            if (st.cause && st.via === viaOp) await leaseFor(st.cause, ch);
+            const extra = { ...st.via.extra, ...(st.cause ? { 'x-harkroom-cause': st.cause } : {}), ...(st.turn ? { 'x-harkroom-turn-id': st.turn } : {}) };
+            const r = await mcpCall(base, st.via.token, 'message.post', st.args, 7, extra);
+            const body = sse(r.text) as { message?: { id?: string } } | null;
+            out.push({ name, status: r.status, rust: base === tsUrl ? rust : r.core === 'mcp', body: shape(body), row: await facts(body?.message?.id, st.cause) });
+          }
+          return out;
+        };
+        const tsOut = await run(tsUrl);
+        const rsOut = await run(rsUrl);
+        expect(rsOut).toEqual(tsOut);
+        // 대조가 「둘 다 아무것도 안 적음」으로 같아지지 않게 TS 쪽 값을 못 박는다.
+        type O = { name: string; body: { message?: { meta?: Record<string, unknown> }; error?: { code: string } }; row: Record<string, unknown>[] | null };
+        const by = (n: string) => (tsOut as O[]).find((x) => x.name === n)!;
+        const row = (n: string) => by(n).row![0]!;
+        expect(row('원인 없음(PAT) · 모델 어긋남')).toMatchObject({ depth: 0, model: { id: 'claude-sonnet-5', mismatch: true }, turn: null, unlinked: true });
+        expect(row('오퍼레이터 원인 → 깊이·고리·턴 id')).toMatchObject({ depth: 3, stall: 2, started: true, linked: true, turn: '<uuid>', model: { id: 'claude-opus-5' }, mandated: true, principal: 'MEM', reasons: ['mention'] });
+        expect(row('PAT 원인 → 깊이만(고리·턴 id 없음)')).toMatchObject({ depth: 3, stall: 2, unlinked: true, turn: null, mandated: false, principal: null });
+        expect(row('다른 스레드의 원인(사람 글) → 깊이 1')).toMatchObject({ depth: 1, stall: 1, linked: true });
+        expect(row('나를 안 깨운 원인 → 스레드 스캔')).toMatchObject({ depth: 4, unlinked: true });
+        expect(row('사람이 답한 카드 원인 → 깊이 1·사슬 시작 지금')).toMatchObject({ depth: 1, stall: 1, started: true, linked: true });
+        expect(row('같은 대화 링크 → 정체 +1')).toMatchObject({ depth: 3, stall: 2, link_reset: false });
+        expect(row('다른 스레드 링크 → 정체 0 · linkReset')).toMatchObject({ depth: 3, stall: 0, link_reset: true });
+        expect(by('없는 머리 → bad_thread').body.error?.code).toBe('bad_thread');
+        expect(by('남의 업로드 → bad_attachment').body.error?.code).toBe('bad_attachment');
+        expect(by('보관된 채널도 올린다').row).not.toBeNull();
       }
 
       // S5.3 C6a-1 — 인박스 읽음 표시(코어 `inbox_read.rs`). 거절은 상태·코드를 견주고, 정상은 TS·Rust 에 각자의 줄로 같은 시나리오를 돌려

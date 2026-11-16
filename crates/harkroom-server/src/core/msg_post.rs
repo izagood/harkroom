@@ -29,6 +29,7 @@
 //!   `chat_approval_guard_words`). 쓰기 권한은 [`MESSAGE_POST_PRIVILEGES`] — 하나라도 없으면 `main.rs` 가 이 줄을 붙이지 않는다.
 use super::ask_reply_close;
 use super::audience::audience_for;
+use super::cause_link;
 use super::chain_stall::{self, STALL_HOP_LIMIT};
 use super::invoke_gate;
 use super::mandate_stamp;
@@ -86,7 +87,17 @@ pub const MESSAGE_POST_PRIVILEGES: &[(&str, &str)] = &[
     ("invoke_reply_grant.expires_at", "UPDATE"),
     ("invoke_reply_grant.closed_at", "UPDATE"),
 ];
+/// MCP `message.post`(C1c-4c)가 [`MESSAGE_POST_PRIVILEGES`] 위에 더 쓰는 권한 — principal 옮겨 적기(위임 키 `message.mandate_id` 는
+/// 이미 위에 있다). 따로 두는 까닭: 이것이 빠져도 REST 글 줄은 그대로 Rust 가 맡고, MCP 글만 TS 에 남는다.
+pub const MCP_POST_EXTRA_PRIVILEGES: &[(&str, &str)] = &[
+    ("message.principal_account_id", "UPDATE"),
+    ("message.principal_cause_reasons", "UPDATE"),
+];
 pub const MESSAGE_POST_SEQUENCE_PRIVILEGES: &[(&str, &str)] = &[("event_outbox_id_seq", "USAGE")];
+
+/// TS `postMessage` 의 principal 옮겨 적기(152·153) — 다음 에이전트의 임대가 이것을 이어받는다. 판정에는 아직 쓰지 않는다.
+/// 문장이 TS 와 같은지는 대조 시험이 행으로 본다(TS 는 인라인 문장이다).
+const SET_PRINCIPAL_SQL: &str = "update message set principal_account_id = $2::uuid, principal_cause_reasons = $3 where id = $1::uuid";
 
 /// TS `DELEGATION_SILENCE_SEC` — 담당 글 하나가 기한을 이만큼 뒤로 민다.
 const DELEGATION_SILENCE_SEC: i32 = 10 * 60;
@@ -127,6 +138,7 @@ struct Sql {
     reply_open: String,
     reply_close: String,
     reply_lock_class: i32,
+    set_mandate: String,
 }
 
 /// C1c-3a 갈래 판정(TS 동작이 아니라 **어느 쪽이 맡을지**) — 이 스레드에 답하면 TS 가 아직 Rust 에 없는 부수효과를 내는가.
@@ -232,6 +244,7 @@ fn sql() -> &'static Sql {
             stall_shadow: frag("stall_shadow"),
             reply_open: frag("reply_grant_open"),
             reply_close: frag("reply_grant_close"),
+            set_mandate: frag("message_set_mandate"),
             reply_lock_class: frag("reply_grant_lock_class")
                 .parse()
                 .expect("reply grant lock class"),
@@ -275,12 +288,25 @@ fn js_ws(c: char) -> bool {
 
 /// zod 가 받는 본문.
 #[derive(Debug, PartialEq, Eq)]
-struct PostBody {
-    body: String,
-    attachment_ids: Vec<String>,
-    thread_root: Option<String>,
+pub(crate) struct PostBody {
+    pub(crate) body: String,
+    pub(crate) attachment_ids: Vec<String>,
+    pub(crate) thread_root: Option<String>,
     /// TS 와 같이 머리가 없으면 false 로 정규화한다.
-    also_in_channel: bool,
+    pub(crate) also_in_channel: bool,
+}
+
+/// 글의 **원인 입력**(C1c-4c) — MCP 발화만 싣는다. REST 글은 비어 있다(`Origin::default()`).
+#[derive(Debug, Default)]
+pub(crate) struct Origin<'a> {
+    /// TS `causeMessageId` — 깊이를 물려받을 원인(모양만 본 헤더 값, 확인은 [`super::cause_link::cause_depth`]).
+    pub(crate) cause: Option<&'a str>,
+    /// TS `chainCause` — 사슬 고리·principal·위임에 쓰는 원인(오퍼레이터를 거친 요청의 헤더만).
+    pub(crate) chain_cause: Option<&'a str>,
+    /// TS `turnId` — 에이전트 글의 `meta.turnId`(오퍼레이터를 거친 요청의 헤더만).
+    pub(crate) turn_id: Option<&'a str>,
+    /// TS 입력 `meta` — MCP 는 모델 신고(`reportedModelMeta`)만 싣는다. 부름 meta 가 그 위에 얹힌다.
+    pub(crate) meta: serde_json::Map<String, Value>,
 }
 
 /// 읽은 JSON 이 TS 몫인가 — 키만 보고 정한다(값이 틀렸으면 TS 가 400 을 준다).
@@ -365,7 +391,7 @@ async fn to_ts(
     .await
 }
 
-enum Outcome {
+pub(crate) enum Outcome {
     Replayed(String),
     BadAttachment,
     /// 머리가 이 채널의 최상위 글이 아니다(TS `bad_thread`, 400).
@@ -381,6 +407,7 @@ enum Outcome {
 
 /// TS `resolveMentionCalls` 의 입력 — 깊이·사슬 시작은 [`chain_link`](사람은 언제나 0·없음), principal 없음(REST 에는 원인이 없다).
 /// 회신권 스레드는 결과 발화면 머리다(REST 글은 언제나 `user` 라 결과다).
+#[allow(clippy::too_many_arguments)]
 async fn resolve_post(
     conn: &mut sqlx::PgConnection,
     channel: &str,
@@ -389,6 +416,7 @@ async fn resolve_post(
     body: &str,
     thread_root: Option<&str>,
     link: &Chain,
+    principal: Option<&str>,
 ) -> Result<mention_calls::Resolved, sqlx::Error> {
     mention_calls::resolve(
         conn,
@@ -402,7 +430,7 @@ async fn resolve_post(
             chain_started_at_ms: link.started_ms,
             // TS 는 결과 발화면 사람 글에도 머리를 넘긴다(사람은 회신권 대상이 아니라 판정은 같다).
             reply_grant_thread_id: thread_root,
-            principal: None,
+            principal: principal.map(|id| mention_calls::Principal { id }),
             now_ms: link.now_ms,
             principal_invoke_enabled: mention_calls::principal_invoke_enabled(
                 std::env::var("HARKROOM_PRINCIPAL_INVOKE").ok().as_deref(),
@@ -495,7 +523,7 @@ fn iso_ms(ms: i64) -> String {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn post_in_tx(
+pub(crate) async fn post_in_tx(
     st: &PostState,
     channel: &str,
     author: &str,
@@ -504,6 +532,7 @@ async fn post_in_tx(
     idempotency_key: Option<&str>,
     audience: &Value,
     is_dm: bool,
+    origin: &Origin<'_>,
 ) -> Result<Outcome, sqlx::Error> {
     let s = sql();
     let (body, attachment_ids) = (input.body.as_str(), input.attachment_ids.as_slice());
@@ -531,8 +560,20 @@ async fn post_in_tx(
             .await?;
     }
     let v2 = delegation_v2(std::env::var("HARKROOM_DELEGATION_V2").ok().as_deref());
-    // TS `mentionDepthFor` — 사람 글은 언제나 사슬 밖이다.
-    let mut link = if author_is_agent {
+    // TS `mentionDepthFor` — 사람 글은 언제나 사슬 밖이다. 원인이 있으면 먼저 그 원인에서 물려받고(C1c-4c), 원인이 나를 깨운
+    // 것이 아니면 스레드 스캔으로 간다.
+    let from_cause = match (author_is_agent, origin.cause) {
+        (true, Some(c)) => cause_link::cause_depth(&mut tx, author, c).await?,
+        _ => None,
+    };
+    let mut link = if let Some(c) = from_cause {
+        Chain {
+            depth: c.depth,
+            prev_stall: c.prev_stall,
+            started_ms: c.started_ms,
+            now_ms: now_ms(),
+        }
+    } else if author_is_agent {
         chain_link(&mut tx, channel, root, author).await?
     } else {
         Chain {
@@ -576,7 +617,31 @@ async fn post_in_tx(
         link.started_ms = Some(link.now_ms);
     }
     // TS 와 같이 멘션 해석은 seq 락 **앞**이다(그 읽기는 seq 순서와 무관하고, 락 안에서 하면 줄 선 트랜잭션이 커넥션을 쥔다).
-    let calls = resolve_post(&mut tx, channel, author, author_is_agent, body, root, &link).await?;
+    // principal(152) — 이 원인으로 받은 살아 있는 임대에서만 읽는다. 판정(부름)과 아래 옮겨 적기가 같은 값을 쓴다.
+    let principal = match (author_is_agent, origin.chain_cause) {
+        (true, Some(c)) => {
+            match cause_link::principal_for_agent_post(&mut tx, author, c, now_ms(), iso_ms).await?
+            {
+                Some(p) => {
+                    let reasons = cause_link::cause_reasons(&mut tx, author, c).await?;
+                    Some((p, reasons))
+                }
+                None => None,
+            }
+        }
+        _ => None,
+    };
+    let calls = resolve_post(
+        &mut tx,
+        channel,
+        author,
+        author_is_agent,
+        body,
+        root,
+        &link,
+        principal.as_ref().map(|(p, _)| p.as_str()),
+    )
+    .await?;
     // 에이전트 글의 아직 TS 몫인 부수효과 — 상한에 막힌 부름(백스톱 카드)·암묵 위임을 적을 수 있는 부름(C1c-4d).
     if author_is_agent
         && (!calls.capped_ids.is_empty()
@@ -627,7 +692,14 @@ async fn post_in_tx(
         }
     }
     // TS `stallShadowFor` — 정체 한도가 막았을 부름(부른 에이전트만, 부른 순서). 상한에 막힌 부름은 위 가드가 이미 TS 로 넘겼다.
-    let mut meta = calls.call_meta.clone();
+    // TS `{...input.meta, ...calls.callMeta, turnId?, mentionStall…}` — 입력 meta(모델 신고) 위에 부름 meta 가 얹힌다.
+    let mut meta = origin.meta.clone();
+    for (k, v) in &calls.call_meta {
+        meta.insert(k.clone(), v.clone());
+    }
+    if let (true, Some(t)) = (author_is_agent, origin.turn_id) {
+        meta.insert("turnId".into(), Value::String(t.to_owned()));
+    }
     if stall.stall_depth >= STALL_HOP_LIMIT {
         let called: Vec<&String> = calls
             .called_ids
@@ -657,17 +729,23 @@ async fn post_in_tx(
     if stall.link_only_reset {
         meta.insert("mentionStallLinkReset".into(), Value::Bool(true));
     }
+    // TS `verifiedCauseLink` — 사슬 고리(118)는 오퍼레이터를 거친 원인이 나를 최근에 깨웠을 때만 적는다.
+    let cause_link_id = match (author_is_agent, origin.chain_cause) {
+        (true, Some(c)) => {
+            cause_link::verified_cause_link(&mut tx, author, c, now_ms(), iso_ms).await?
+        }
+        _ => None,
+    };
     let id: String = sqlx::query_scalar(s.insert.as_str())
         .bind(channel)
         .bind(root)
         .bind(author)
         .bind(&calls.normalized_body)
         .bind("user")
-        // REST 글은 입력 meta 가 없다 — 부름 meta 와 정체 그림자만 얹는다(TS `{...calls.callMeta, mentionStall…}`).
         .bind(Value::Object(meta).to_string())
         .bind(input.also_in_channel)
         .bind(link.depth)
-        .bind(None::<String>)
+        .bind(cause_link_id)
         .bind(stall.stall_depth)
         .bind(link.started_ms.map(iso_ms))
         .fetch_one(&mut *tx)
@@ -715,7 +793,26 @@ async fn post_in_tx(
     .await?;
     // 위임은 부름만 본다 — TS 는 `thread_reply` 를 넣기 **앞에서** 판정한다.
     let called = notified_in_order(&mut tx, &id, &notified_set).await?;
-    // TS 는 사람·세션 글만 위임을 적는다. 에이전트 글은 원인(임대)이 있을 때만 잇는데 REST 에는 원인이 없다.
+    // TS 는 사람·세션 글만 위임을 적는다. 에이전트 글은 원인(살아 있는 임대)이 있을 때만 그 위임과 principal 을 잇는다(C1c-4c).
+    if let (true, Some(c)) = (author_is_agent, origin.chain_cause) {
+        if let Some(m) =
+            cause_link::mandate_for_agent_post(&mut tx, author, c, now_ms(), iso_ms).await?
+        {
+            sqlx::query(s.set_mandate.as_str())
+                .bind(&id)
+                .bind(&m)
+                .execute(&mut *tx)
+                .await?;
+        }
+        if let Some((p, reasons)) = &principal {
+            sqlx::query(SET_PRINCIPAL_SQL)
+                .bind(&id)
+                .bind(p)
+                .bind(reasons)
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
     let mandate = match (author_is_agent, root) {
         (true, _) => None,
         (false, None) => mandate_stamp::stamp_root(&mut tx, &id, author, channel, &called).await?,
@@ -823,6 +920,15 @@ async fn post_in_tx(
         notified,
         mandate,
     })
+}
+
+/// TS `channel.kind = 'dm'` — 없는 채널은 거짓(insert 가 FK 로 실패한다, TS 와 같다).
+pub(crate) async fn channel_is_dm(read: &PgPool, channel: &str) -> sqlx::Result<bool> {
+    let kind: Option<String> = sqlx::query_scalar(sql().channel_kind.as_str())
+        .bind(channel)
+        .fetch_optional(read)
+        .await?;
+    Ok(kind.as_deref() == Some("dm"))
 }
 
 /// 넣은 순서(inbox id 순) — TS `[...notified]`(Set 삽입 순서)와 같다. 새 글이라 inbox 행은 전부 이 요청이 넣은 것이다.
@@ -1020,6 +1126,7 @@ pub async fn post(
         key.as_deref(),
         &audience,
         is_dm,
+        &Origin::default(),
     )
     .await
     {

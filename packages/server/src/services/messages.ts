@@ -992,6 +992,12 @@ async function recentBodiesFor(client: PoolClient, channelId: string, threadRoot
 /** 사슬 고리로 저장할 수 있는 원인의 신선도 — 턴 예산(30분)에 여유를 둔다. */
 export const CAUSE_LINK_FRESH_MS = 60 * 60_000;
 
+/** `verifiedCauseLink` 의 질의 — Rust 코어(`core/cause_link.rs`, S5.3 C1c-4c)가 골든으로 받는다. `$3` 은 지금 − `CAUSE_LINK_FRESH_MS`. */
+export const VERIFIED_CAUSE_LINK_SQL = `select m.id::text as id from message m
+      where m.id = $1::uuid and m.deleted_at is null
+        -- 후속 보고로 깬 턴은 사슬 고리를 잇지 않는다 — 머지 사슬이 이 자동 깨움을 타고 사람 권한을 나르지 않게.
+        and exists (select 1 from inbox i where i.message_id = m.id and i.account_id = $2::uuid and i.created_at > $3::timestamptz and i.reason <> 'delegation_followup')`;
+
 /**
  * 머지 사슬의 고리(118, security C1). 헤더 값을 그대로 적지 않는다 — 그 메시지가 **이 작성자에게 inbox 를 만들었고**(사유 무관:
  * 부름·스레드 답·ask 답·wake) 그것이 최근이며 지워지지 않았을 때만 그 id 를, 아니면 null 을 돌려준다. 그래서 에이전트가 소유자의
@@ -1001,10 +1007,7 @@ export async function verifiedCauseLink(
   client: Pick<PoolClient, 'query'>, authorId: string, causeMessageId: string, now = new Date(),
 ): Promise<string | null> {
   const row = (await client.query(
-    `select m.id from message m
-      where m.id = $1 and m.deleted_at is null
-        -- 후속 보고로 깬 턴은 사슬 고리를 잇지 않는다 — 머지 사슬이 이 자동 깨움을 타고 사람 권한을 나르지 않게.
-        and exists (select 1 from inbox i where i.message_id = m.id and i.account_id = $2 and i.created_at > $3 and i.reason <> 'delegation_followup')`,
+    VERIFIED_CAUSE_LINK_SQL,
     [causeMessageId, authorId, new Date(now.getTime() - CAUSE_LINK_FRESH_MS)],
   )).rows[0] as { id: string } | undefined;
   return row?.id ?? null;
@@ -1023,6 +1026,33 @@ export async function delegationChainCapped(client: PoolClient, messageId: strin
   return aged || row.depth >= (await getMentionPolicy(client)).chainLimit;
 }
 
+/** `causeDepth` 의 질의 — Rust 코어(`core/cause_link.rs`, S5.3 C1c-4c)가 골든으로 받는다. */
+export const CAUSE_DEPTH_SQL = `with card as (
+       select exists (select 1 from inbox i join account h
+                        on h.id::text = case i.reason when 'ask_answered' then m.meta->'ask'->>'answeredBy'
+                                                      else m.meta->'ask'->>'closedBy' end
+                       where i.message_id = m.id and i.account_id = $2::uuid
+                         and i.reason in ('ask_answered', 'ask_closed') and h.kind = 'human'
+                         -- 백스톱 카드(147, security n3)는 사람이 원본을 직접 눌러 「계속」을 고른 답만 사슬을 새로 시작한다.
+                         -- 「멈춤」·닫힘·거울·일괄·글로 고른 답은 리셋하지 않는다 — 깊이가 그대로라 부름은 계속 막힌다.
+                         and (not (m.meta ? 'chainBackstop')
+                              or (i.reason = 'ask_answered'
+                                  and m.meta->'ask'->>'answeredWith' = '${CHAIN_BACKSTOP_CONTINUE}'
+                                  and m.meta->'ask'->>'mirrorOf' is null
+                                  and m.meta->'ask'->>'answeredVia' is null))) as by_human
+         from message m where m.id = $1::uuid
+     )
+     select m.mention_depth as depth, m.stall_depth as stall, (a.kind = 'agent') as author_is_agent,
+            m.created_at, m.chain_started_at,
+            (m.meta ? 'automation') as from_automation, card.by_human as human_card
+       from message m join account a on a.id = m.author_id cross join card
+      where m.id = $1::uuid and m.deleted_at is null
+        and (card.by_human
+             or exists (select 1 from inbox i
+                         where i.message_id = m.id and i.account_id = $2::uuid
+                           and (i.reason in ('mention', 'dm', 'team_mention', 'team_delegated', 'delegation_followup')
+                                or (a.kind = 'human' and i.reason in ('thread_reply', 'ask_answered')))))`;
+
 async function causeDepth(client: PoolClient, authorId: string, causeMessageId: string): Promise<ChainLink | null> {
   /*
     **사람이 누른 카드도 사람의 손길이다**(2026-10-27). 카드 답·닫힘의 깨움(`wakeAsker`)은 inbox 를 **에이전트가 쓴
@@ -1032,31 +1062,7 @@ async function causeDepth(client: PoolClient, authorId: string, causeMessageId: 
     `closedBy` 가 빈 값)는 그대로 이어진다 — 사람이 없었으므로.
   */
   const row = (await client.query(
-    `with card as (
-       select exists (select 1 from inbox i join account h
-                        on h.id::text = case i.reason when 'ask_answered' then m.meta->'ask'->>'answeredBy'
-                                                      else m.meta->'ask'->>'closedBy' end
-                       where i.message_id = m.id and i.account_id = $2
-                         and i.reason in ('ask_answered', 'ask_closed') and h.kind = 'human'
-                         -- 백스톱 카드(147, security n3)는 사람이 원본을 직접 눌러 「계속」을 고른 답만 사슬을 새로 시작한다.
-                         -- 「멈춤」·닫힘·거울·일괄·글로 고른 답은 리셋하지 않는다 — 깊이가 그대로라 부름은 계속 막힌다.
-                         and (not (m.meta ? 'chainBackstop')
-                              or (i.reason = 'ask_answered'
-                                  and m.meta->'ask'->>'answeredWith' = '${CHAIN_BACKSTOP_CONTINUE}'
-                                  and m.meta->'ask'->>'mirrorOf' is null
-                                  and m.meta->'ask'->>'answeredVia' is null))) as by_human
-         from message m where m.id = $1
-     )
-     select m.mention_depth as depth, m.stall_depth as stall, (a.kind = 'agent') as author_is_agent,
-            m.created_at, m.chain_started_at,
-            (m.meta ? 'automation') as from_automation, card.by_human as human_card
-       from message m join account a on a.id = m.author_id cross join card
-      where m.id = $1 and m.deleted_at is null
-        and (card.by_human
-             or exists (select 1 from inbox i
-                         where i.message_id = m.id and i.account_id = $2
-                           and (i.reason in ('mention', 'dm', 'team_mention', 'team_delegated', 'delegation_followup')
-                                or (a.kind = 'human' and i.reason in ('thread_reply', 'ask_answered')))))`,
+    CAUSE_DEPTH_SQL,
     [causeMessageId, authorId],
   )).rows[0] as {
     depth: number; stall: number; author_is_agent: boolean; from_automation: boolean; human_card: boolean;

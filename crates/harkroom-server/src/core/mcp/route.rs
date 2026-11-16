@@ -122,6 +122,18 @@ pub async fn handle(
             writes.clone(),
         );
         Box::pin(async move {
+            if tool == "message.post" {
+                let st = writes.post.as_ref()?;
+                return super::msg_post::answer(
+                    st,
+                    &me,
+                    &args,
+                    cause.as_deref(),
+                    turn.as_deref(),
+                    has_operator,
+                )
+                .await;
+            }
             if let Some(r) =
                 super::grant_writes::answer(&pool, writes.grant.as_ref(), &me, tool, &args).await
             {

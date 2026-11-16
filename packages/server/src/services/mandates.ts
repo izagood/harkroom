@@ -169,6 +169,15 @@ async function mandateForKeylessRoot(client: Q, args: {
   return made.id;
 }
 
+/** `mandateForAgentPost` 의 질의 — Rust 코어(`core/cause_link.rs`, S5.3 C1c-4c)가 골든으로 받는다. */
+export const MANDATE_FOR_AGENT_POST_SQL = `select d.id::text as id from secret_turn_lease l
+       join mandate d on d.id = l.mandate_id
+       join agent_config c on c.account_id = l.agent_id
+       join message m on m.id = l.cause_message_id and m.deleted_at is null
+      where l.agent_id = $1::uuid and l.cause_message_id = $2::uuid and l.ended_at is null and l.expires_at > $3::timestamptz
+        and c.owner_account_id = d.owner_account_id
+      order by l.created_at desc limit 1`;
+
 /**
  * 에이전트 글이 물려받을 위임 — 그 원인(`causeMessageId`, 오퍼레이터를 거친 요청의 원인 헤더)으로 이 에이전트가 쥔 **살아 있는 턴 임대**의
  * 위임이고, 글쓴 에이전트의 지금 소유자가 위임 소유자와 같을 때만. 채널이 달라도 된다.
@@ -179,13 +188,7 @@ async function mandateForKeylessRoot(client: Q, args: {
 export async function mandateForAgentPost(client: Q, args: { agentId: string; causeMessageId: string; now?: Date }): Promise<string | null> {
   const now = args.now ?? new Date();
   const row = (await client.query<{ id: string }>(
-    `select d.id from secret_turn_lease l
-       join mandate d on d.id = l.mandate_id
-       join agent_config c on c.account_id = l.agent_id
-       join message m on m.id = l.cause_message_id and m.deleted_at is null
-      where l.agent_id = $1 and l.cause_message_id = $2 and l.ended_at is null and l.expires_at > $3
-        and c.owner_account_id = d.owner_account_id
-      order by l.created_at desc limit 1`,
+    MANDATE_FOR_AGENT_POST_SQL,
     [args.agentId, args.causeMessageId, now])).rows[0];
   return row?.id ?? null;
 }

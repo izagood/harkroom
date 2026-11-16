@@ -22,7 +22,10 @@ import { ACCOUNTS_BY_HANDLES_SQL, ACCOUNTS_BY_IDS_SQL, FAN_OUT_AUDIENCE_SQL, INS
 import { GROUP_BY_HANDLE_SQL, GROUP_MEMBERS_SQL } from '../src/services/handleGroups.js';
 import { TEAM_BY_ID_SQL, TEAM_BY_NAME_SQL, TEAM_MEMBERS_SQL } from '../src/services/teams.js';
 import { MENTION_POLICY_SQL } from '../src/services/mentionPolicy.js';
-import { PRINCIPAL_INVOKES_SQL } from '../src/services/invokePrincipal.js';
+import { CAUSE_REASONS_SQL, PRINCIPAL_FOR_AGENT_POST_SQL, PRINCIPAL_INVOKES_SQL } from '../src/services/invokePrincipal.js';
+import { MANDATE_FOR_AGENT_POST_SQL } from '../src/services/mandates.js';
+import { EFFECTIVE_MODEL_SQL } from '../src/services/reportedModel.js';
+import { CAUSE_DEPTH_SQL, VERIFIED_CAUSE_LINK_SQL } from '../src/services/messages.js';
 import { ENQUEUE_INBOX_PUSH_MANY_SQL, INBOX_PUSH_REASON_LIST, PUSH_AGENT_REPLY_DELAY_SEC } from '../src/services/push/pushJobs.js';
 import { HAS_OLDER_SQL, INBOX_FOLDED_WAKES_SQL, INBOX_HANDED_SQL, INBOX_STARTED_IN_SQL, INBOX_TEAM_ROSTER_SQL, LIST_INBOX_SQL, LIST_MESSAGES_SQL, MESSAGE_BY_ID_SQL, READ_LIST_ROW_SQL, SEARCH_MESSAGES_SQL } from '../src/services/messages.js';
 import { POST_CHANNEL_KIND_SQL, POST_DM_PEERS_SQL, POST_IDEMPOTENCY_FIND_SQL, POST_IDEMPOTENCY_INSERT_SQL, POST_INSERT_SQL, POST_ROOT_AUTHOR_SQL, POST_THREAD_ROOT_OF_SQL, SEQ_LOCK_CLASS, SEQ_LOCK_SQL } from '../src/services/messages.js';
@@ -217,6 +220,13 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     stall_recent_bodies: RECENT_BODIES_SQL,
     stall_own_thread_links: OWN_THREAD_LINK_IDS_SQL,
     stall_shadow: STALL_SHADOW_SQL,
+    // 원인 입력(`core/cause_link.rs`, S5.3 C1c-4c) — MCP 글의 원인 깊이·사슬 고리·principal·위임·모델 어긋남.
+    cause_depth: CAUSE_DEPTH_SQL,
+    cause_verified_link: VERIFIED_CAUSE_LINK_SQL,
+    cause_principal: PRINCIPAL_FOR_AGENT_POST_SQL,
+    cause_reasons: CAUSE_REASONS_SQL,
+    cause_mandate: MANDATE_FOR_AGENT_POST_SQL,
+    effective_model: EFFECTIVE_MODEL_SQL,
     delegation_v2_update_pending: DELEGATION_V2_UPDATE_PENDING_SQL,
     decider_row: DECIDER_ROW_SQL,
     decider_seen: DECIDER_SEEN_SQL,
