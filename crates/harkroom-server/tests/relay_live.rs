@@ -4,8 +4,40 @@
 use harkroom_server::core::relay_live::{LiveOpts, PresenceMark, SessionLive};
 use serde_json::{Value, json};
 use sqlx::PgPool;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
+
+// 진단(#2275 bus-e2e r2 `left: []`): 같은 바이너리의 세 시험이 병렬로 돈다 — 언제 시작·끝났고
+// revoke 창이 언제였는지, on_error 가 무엇을 받았는지를 한 줄 시간표로 남겨 실패 메시지에 싣는다.
+fn timeline() -> &'static Mutex<Vec<String>> {
+    static T: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+    T.get_or_init(|| Mutex::new(vec![]))
+}
+fn mark(ev: impl AsRef<str>) {
+    static T0: OnceLock<Instant> = OnceLock::new();
+    let ms = T0.get_or_init(Instant::now).elapsed().as_millis();
+    timeline()
+        .lock()
+        .unwrap()
+        .push(format!("+{ms}ms {}", ev.as_ref()));
+}
+fn timeline_dump() -> String {
+    timeline().lock().unwrap().join("\n  ")
+}
+/// 지금 DB 연결 수(역할별)와 상한 — 연결 한도에 걸렸는지 가른다.
+async fn conn_report(admin: &PgPool) -> String {
+    let by_role: Vec<(Option<String>, i64)> = sqlx::query_as(
+        "select usename::text, count(*) from pg_stat_activity where datname = current_database() group by 1 order by 1",
+    )
+    .fetch_all(admin)
+    .await
+    .unwrap_or_default();
+    let max: Option<String> = sqlx::query_scalar("show max_connections")
+        .fetch_one(admin)
+        .await
+        .ok();
+    format!("max_connections={max:?} by_role={by_role:?}")
+}
 
 async fn account(admin: &PgPool, handle: &str, kind: &str) -> String {
     sqlx::query_scalar(
@@ -41,7 +73,10 @@ fn opts(epoch: Option<String>, errors: Arc<Mutex<Vec<String>>>) -> LiveOpts {
         beat: Duration::from_secs(3600),
         ttl_sec: 90,
         epoch,
-        on_error: Arc::new(move |what, _| errors.lock().unwrap().push(what.to_owned())),
+        on_error: Arc::new(move |what, e| {
+            mark(format!("on_error {what}: {e}"));
+            errors.lock().unwrap().push(what.to_owned())
+        }),
     }
 }
 
@@ -51,6 +86,7 @@ async fn session_live_and_presence_against_real_schema() {
         eprintln!("skip: HARKROOM_TEST_DATABASE_URL unset");
         return;
     };
+    mark("live: start");
     let admin = PgPool::connect(&url).await.unwrap();
     let write = match std::env::var("HARKROOM_TEST_WRITE_DATABASE_URL") {
         Ok(w) => {
@@ -143,13 +179,38 @@ async fn session_live_and_presence_against_real_schema() {
         &agent,
         &session("s-foreign-thread", &joined, Some(&root_out)),
     );
+    mark("live: r2 started x3");
     live.flush().await;
+    mark("live: r2 flushed");
     let r = rows(&admin, &agent).await;
-    assert_eq!(
-        r,
-        vec![("s-ok".into(), epoch.clone(), op.clone())],
-        "r2 membership"
-    );
+    if r != vec![("s-ok".into(), epoch.clone(), op.clone())] {
+        let write_role: String = sqlx::query_scalar("select current_user::text")
+            .fetch_one(&write)
+            .await
+            .unwrap_or_else(|e| format!("<{e}>"));
+        let can_insert: Option<bool> =
+            sqlx::query_scalar("select has_table_privilege($1, 'agent_session_live', 'INSERT')")
+                .bind(&write_role)
+                .fetch_one(&admin)
+                .await
+                .ok();
+        let hub_alive: Option<bool> = sqlx::query_scalar(
+            "select exists (select 1 from relay_hub where hub_epoch = $1::uuid)",
+        )
+        .bind(&epoch)
+        .fetch_one(&admin)
+        .await
+        .ok();
+        let conns = conn_report(&admin).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let later = rows(&admin, &agent).await;
+        mark("live: r2 FAILED");
+        panic!(
+            "r2 membership: rows={r:?} rows_after_500ms={later:?}\n errors(what)={:?}\n write_role={write_role} insert_now={can_insert:?} hub_alive={hub_alive:?}\n conns: {conns}\n timeline:\n  {}",
+            errors.lock().unwrap(),
+            timeline_dump()
+        );
+    }
     // ① 이름·키 문자열이 행 어디에도 없다.
     let dump: String = sqlx::query_scalar(
         "select row_to_json(l)::text from agent_session_live l where session_id = 's-ok'",
@@ -344,6 +405,7 @@ async fn session_live_and_presence_against_real_schema() {
             .await
             .unwrap();
     assert!(!left, "stop 은 자기 허브 줄을 지운다");
+    mark("live: end");
 }
 
 /// r1b — 다시 쓰기가 실패한 세션은 표시가 남아 다음 박동에 다시 쓰인다. 실패는 채널 멤버 조회 권한을 잠시 빼서 만든다
@@ -357,6 +419,7 @@ async fn failed_rewrite_is_retried_next_beat() {
         eprintln!("skip: HARKROOM_TEST_DATABASE_URL / HARKROOM_TEST_WRITE_DATABASE_URL unset");
         return;
     };
+    mark("rewrite: start");
     let admin = PgPool::connect(&url).await.unwrap();
     let write = PgPool::connect(&wurl).await.unwrap();
     let role: String = sqlx::query_scalar("select current_user::text")
@@ -402,6 +465,7 @@ async fn failed_rewrite_is_retried_next_beat() {
         .execute(&admin)
         .await
         .unwrap();
+    mark(format!("rewrite: revoke insert from {role}"));
     sqlx::query(sqlx::AssertSqlSafe(format!(
         "revoke insert on agent_session_live from {role}"
     )))
@@ -418,6 +482,7 @@ async fn failed_rewrite_is_retried_next_beat() {
     .execute(&admin)
     .await
     .unwrap();
+    mark(format!("rewrite: grant insert to {role}"));
     // 다음 박동: 줄은 이미 있다(inserted=false) — 그래도 실패 표시가 남아 다시 쓴다.
     assert_eq!(live.beat_once().await, Ok(false));
     assert_eq!(
@@ -426,6 +491,7 @@ async fn failed_rewrite_is_retried_next_beat() {
     );
 
     // 박동 밖의 쓰기(session.started)가 실패해도 같다 — 다음 박동이 다시 쓴다.
+    mark(format!("rewrite: revoke insert from {role}"));
     sqlx::query(sqlx::AssertSqlSafe(format!(
         "revoke insert on agent_session_live from {role}"
     )))
@@ -441,6 +507,7 @@ async fn failed_rewrite_is_retried_next_beat() {
     .execute(&admin)
     .await
     .unwrap();
+    mark(format!("rewrite: grant insert to {role}"));
     assert_eq!(live.beat_once().await, Ok(false));
     let ids: Vec<String> = rows(&admin, &agent)
         .await
@@ -449,6 +516,7 @@ async fn failed_rewrite_is_retried_next_beat() {
         .collect();
     assert_eq!(ids, vec!["s1", "s2"]);
     live.stop().await;
+    mark("rewrite: end");
 }
 
 /// ⓓ 관문 알림 — 소유자에게만, 소유자를 모르면 내지 않는다(TS `onAttention`·`onAttentionCleared`).
@@ -460,6 +528,7 @@ async fn attention_goes_to_owner_only() {
         eprintln!("skip: HARKROOM_TEST_DATABASE_URL unset");
         return;
     };
+    mark("attention: start");
     let admin = PgPool::connect(&url).await.unwrap();
     let write = match std::env::var("HARKROOM_TEST_WRITE_DATABASE_URL") {
         Ok(w) => PgPool::connect(&w).await.unwrap(),
@@ -528,4 +597,5 @@ async fn attention_goes_to_owner_only() {
     assert_eq!(ev[0]["audience"], json!([owner]));
     assert_eq!(ev[1]["type"], "agent.attention.cleared");
     assert_eq!(ev[1]["audience"], json!([owner]));
+    mark("attention: end");
 }
