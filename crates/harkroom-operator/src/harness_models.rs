@@ -1,4 +1,4 @@
-//! 하네스가 받는 모델 목록 — TS `packages/operator/src/harnessModels.ts` 이식(s9 G5).
+//! 하네스가 받는 모델 목록 — TS 옛 Node 오퍼레이터(P3 에서 지움)의 `src/harnessModels.ts` 이식(s9 G5).
 //!
 //! hello·`capabilities` 의 `harnesses.<하네스>.models` 로 올린다. 서버는 이 목록으로 스레드 모델 지정을
 //! 거르고(`checkOffered`), 에이전트 설정·스레드 칩의 모델 고르개도 이것으로 그린다. 목록이 없으면 서버는

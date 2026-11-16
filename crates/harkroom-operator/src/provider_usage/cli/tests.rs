@@ -1,4 +1,4 @@
-//! TS `packages/operator/test/cliUsage.test.ts` 대조.
+//! TS 옛 Node 오퍼레이터(P3 에서 지움)의 `test/cliUsage.test.ts` 대조.
 
 use std::cell::RefCell;
 use std::io::{BufRead, BufReader, Write};

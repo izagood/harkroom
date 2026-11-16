@@ -140,7 +140,7 @@ compose 밖에서 따로 띄우고 `AVCS_BASE_URL` 로 가리킨다(§0, §5):
 harkroom/
   packages/server     # Fastify: REST + WS + MCP + avcs lease 투영
   packages/agent      # 멘션 러너: PTY 안에서 harness CLI 를 돌린다
-  packages/operator   # 러너 프로세스의 소유자 (기계마다 하나; 서버에 붙어 배정을 받고, 앱과는 unix 소켓)
+  crates/harkroom-operator  # 러너 프로세스의 소유자(Rust, 실행 파일 harkroom-operator-rs) (기계마다 하나; 서버에 붙어 배정을 받고, 앱과는 unix 소켓)
   packages/desktop    # Tauri 2 + React
   packages/shared     # 프로토콜 타입·스키마 (server/desktop/agent/operator 공유)
 ```
@@ -149,7 +149,7 @@ MVP 제외: cli, 모바일, 웹 UI, 상주 에이전트 러너.
 
 #### 오퍼레이터와 server 의 경계 — **누가 무엇의 주인인가**
 
-`packages/operator`(옛 이름 daemon)은 뒤늦게 생긴 패키지이고, 그 공백 때문에 *"에이전트
+오퍼레이터(옛 이름 daemon, 지금은 `crates/harkroom-operator`)는 뒤늦게 생긴 패키지이고, 그 공백 때문에 *"에이전트
 관리는 daemon 이 하니 에이전트에 관한 통지도 daemon 이 중계하면 되지 않나"* 라는 물음이
 반복됐다. 앞 판본의 답은 *"daemon 은 서버를 모르고 서버는 daemon 을 모른다"* 였고, 스펙
 [2026-09-20](specs/2026-09-20-operator-and-permissions-design.md) §8 이 그 결정 **하나**를

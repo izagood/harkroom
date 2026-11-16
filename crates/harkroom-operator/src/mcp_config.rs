@@ -1,4 +1,4 @@
-//! 하네스 MCP 설정(s21c-1b) — 정본은 `packages/operator/src/mcpConfig.ts` 의 `buildMcpConfig`·`readLocalMcpDefinitions`·
+//! 하네스 MCP 설정(s21c-1b) — 옮겨 온 원본은 옛 Node 오퍼레이터(P3 에서 지움)의 `src/mcpConfig.ts` 의 `buildMcpConfig`·`readLocalMcpDefinitions`·
 //! `writeAgentMcpConfig` 다. 러너는 완성된 파일의 경로(`HARKROOM_MCP_CONFIG`)만 받는다.
 //!
 //! 정의를 찾는 순서: `<root>/operator/mcp-servers.json`(오퍼레이터 표) → claude `~/.claude.json` 의 `mcpServers`. 앞이 이긴다.

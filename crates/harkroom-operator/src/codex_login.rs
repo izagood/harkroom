@@ -1,4 +1,4 @@
-//! codex 계정 로그인(s21c3c-2). 정본은 `packages/operator/src/codexAccounts.ts` 의 `loginStart`·`loginCancel`·
+//! codex 계정 로그인(s21c3c-2). 옮겨 온 원본은 옛 Node 오퍼레이터(P3 에서 지움)의 `src/codexAccounts.ts` 의 `loginStart`·`loginCancel`·
 //! `shutdownLogins`·`onLoginEvent` 다.
 //!
 //! - `codex login` 을 그 계정의 `CODEX_HOME` 으로 띄운다. codex 는 로컬 콜백 서버를 띄우고 브라우저가 localhost 로

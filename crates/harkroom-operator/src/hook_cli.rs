@@ -1,4 +1,4 @@
-//! `harkroom-operator hook …` 의 판정 부분 — TS `packages/operator/src/hookCli.ts` 를 옮긴다(s21b-3d-3b-1, 기본 node 그대로).
+//! `harkroom-operator hook …` 의 판정 부분 — TS 옛 Node 오퍼레이터(P3 에서 지움)의 `src/hookCli.ts` 를 옮긴다(s21b-3d-3b-1, 기본 node 그대로).
 //! 프로세스·소켓·파일 밖에서 시험할 수 있는 순수 함수만 둔다. 하위 명령 갈래(`hookMain`)·`posttool`(`peekContext`)은 다음 PR 이다.
 //!
 //! 지켜야 할 경계(TS 와 같다):

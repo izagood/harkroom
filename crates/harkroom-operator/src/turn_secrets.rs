@@ -1,4 +1,4 @@
-//! 턴 비밀 도구 — TS `packages/operator/src/turnSecrets.ts` 의 도구 절반(`secret.mount`·`generate`·`import`·`rotate`)
+//! 턴 비밀 도구 — TS 옛 Node 오퍼레이터(P3 에서 지움)의 `src/turnSecrets.ts` 의 도구 절반(`secret.mount`·`generate`·`import`·`rotate`)
 //! 이식(s21b-3c-2). 임대 장부는 [`crate::turn_leases`] 다.
 //!
 //! - **값은 MCP 결과에 싣지 않는다.** 서버에서 받은 값은 `<root>/<leaseId>/<secretId>`(폴더 0700·파일 0600)로만 나가고

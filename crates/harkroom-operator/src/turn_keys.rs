@@ -1,4 +1,4 @@
-//! 턴 열쇠 장부 — TS `packages/operator/src/turnKeys.ts` 이식(s21b-1).
+//! 턴 열쇠 장부 — TS 옛 Node 오퍼레이터(P3 에서 지움)의 `src/turnKeys.ts` 이식(s21b-1).
 //!
 //! 러너는 하네스를 띄울 때마다 열쇠 둘(`bridge`·`shell`)을 만들어 **relay 요청**
 //! (`http.forward POST /agent/turn-keys`)으로 여기 맡기고, 끝나면 `/agent/turn-keys/end` 로 지운다.

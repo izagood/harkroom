@@ -1,5 +1,5 @@
 //! 브라우저 인증(OAuth)이 localhost 콜백으로 돌아왔을 때 사람에게 보여 주는 페이지(A5d).
-//! 정본은 `packages/operator/src/callbackPage.ts` 다 — 문구·스타일·CSP 를 **바이트까지 같게** 옮긴다
+//! 옮겨 온 원본은 옛 Node 오퍼레이터(P3 에서 지움)의 `src/callbackPage.ts` 다 — 문구·스타일·CSP 를 **바이트까지 같게** 옮긴다
 //! (`tests/callback_page_golden.rs` 가 TS 가 낸 페이지와 비교한다).
 //!
 //! - 스타일·스크립트는 고정 문자열이라 CSP 에 sha256 해시로만 허용한다 — 이스케이프가 새도 주입된 것은 돌지 않는다.

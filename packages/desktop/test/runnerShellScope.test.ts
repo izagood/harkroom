@@ -122,7 +122,7 @@ describe('웹뷰가 프로그램을 실행할 수 있는 표면이 없다 (#513)
   });
 
   // `PATH` 를 묻던 invoke(`login_path`)는 웹뷰에서 사라졌다 — 로그인 셸의 PATH 는
-  // 러너를 띄우는 쪽이 필요한 값이고, 그것은 오퍼레이터다(`packages/operator/src/loginPath.ts`).
+  // 러너를 띄우는 쪽이 필요한 값이고, 그것은 오퍼레이터다(옛 Node 오퍼레이터(P3 에서 지움)의 `src/loginPath.ts`).
 });
 
 describe('어떤 스코프 항목에도 와일드카드가 없다', () => {
@@ -263,13 +263,13 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
   it('daemon spawn 이 경로를 파라미터로 받지 않는다 — 프로그램도 소켓·토큰도 Rust 가 고정한다', () => {
     const spawnDaemon = daemonRs.slice(
       daemonRs.indexOf('fn spawn_daemon('),
-      daemonRs.indexOf('fn daemon_command('),
+      daemonRs.indexOf('fn log_tail('),
     );
     expect(spawnDaemon.length).toBeGreaterThan(0);
-    // P2: 띄우는 것은 Rust 오퍼레이터 하나다 — 옛 Node 조립(`daemon_command`)은 시험 전용이다.
+    // P2·P3: 띄우는 것은 Rust 오퍼레이터 하나다 — 옛 Node 조립(`daemon_command`)은 P3 에서 지웠다.
     expect(spawnDaemon).toContain('rust_daemon_command(');
     expect(spawnDaemon).not.toMatch(/(?<!rust_)daemon_command\(/);
-    expect(daemonRs).toMatch(/#\[cfg\(test\)\]\nfn daemon_command\(/);
+    expect(daemonRs).not.toMatch(/fn daemon_command\(/);
 
     // 1. 프로그램은 `sidecar_path(OPERATOR_SIDECAR_NAME)` 이 고정한다 — 상수다.
     expect(spawnDaemon).toContain('crate::sidecar_path(OPERATOR_SIDECAR_NAME)?');
@@ -648,8 +648,8 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
       ];
       // S2 A4②: Rust 오퍼레이터 커맨드(`rust_daemon_command`)가 둘째 자리다. 프로그램은 같은 `sidecar_path` 상수
       // (`OPERATOR_SIDECAR_NAME`)이고 인자는 전부 Rust 가 정한다 — 늘어난 것은 오퍼레이터 조립 자리이지 옆문이 아니다.
+      // P3: 옛 Node 조립(`daemon_command`)을 지워 자리는 하나다.
       expect(callers).toEqual([
-        { fn: 'daemon_command', file: 'daemon_client.rs' },
         { fn: 'rust_daemon_command', file: 'daemon_client.rs' },
       ]);
     });

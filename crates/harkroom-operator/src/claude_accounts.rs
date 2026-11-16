@@ -1,4 +1,4 @@
-//! claude 계정 풀의 **파일시스템 연산**(s21c3a) — TS `packages/operator/src/claudeAccounts.ts` 의 구조 부분 이식.
+//! claude 계정 풀의 **파일시스템 연산**(s21c3a) — TS 옛 Node 오퍼레이터(P3 에서 지움)의 `src/claudeAccounts.ts` 의 구조 부분 이식.
 //!
 //! 이 파일이 맡는 것: `pools.json` 읽기·원자 쓰기, 이름 문법과 뿌리 아래 경로 확인(`under`, 두 겹),
 //! 디스크 모양 읽기(`read_layout`), 기동 때 `order` 맞추기(`reconcile_order`).

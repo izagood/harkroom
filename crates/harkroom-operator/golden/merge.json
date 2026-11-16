@@ -1,5 +1,5 @@
 {
-  "note": "packages/operator/test/mergeCliGolden.test.ts 가 쓴다 — 손으로 고치지 마라",
+  "note": "옛 Node 오퍼레이터의 mergeCliGolden 시험이 썼다(P3 에서 지움) — 이제 Rust 판이 정본이니 출력을 바꿀 때만 같이 고친다",
   "cases": [
     {
       "name": "merged",

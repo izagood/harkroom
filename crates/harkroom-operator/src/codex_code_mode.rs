@@ -1,4 +1,4 @@
-//! codex code mode 기록에서 지금 도는 셸 호출을 꺼낸다 — TS `packages/operator/src/codexCodeMode.ts` 와 같은 판정.
+//! codex code mode 기록에서 지금 도는 셸 호출을 꺼낸다 — TS 옛 Node 오퍼레이터(P3 에서 지움)의 `src/codexCodeMode.ts` 와 같은 판정.
 //!
 //! code mode(모델의 `tool_mode: code_mode_only`)에서 셸 명령은 `custom_tool_call`(name `exec`)의 JS 코드 안
 //! `tools.exec_command({...})` 로 돈다. hook 이 받는 `tool_use_id`(`exec-…`)는 명령이 끝난 뒤에야 기록에 남으므로,

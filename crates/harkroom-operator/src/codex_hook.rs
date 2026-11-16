@@ -1,4 +1,4 @@
-//! `hook pretool --codex` 의 판정 — TS `packages/operator/src/codexHook.ts` 와 shared `providerLane.ts` 의
+//! `hook pretool --codex` 의 판정 — TS 옛 Node 오퍼레이터(P3 에서 지움)의 `src/codexHook.ts` 와 shared `providerLane.ts` 의
 //! `parseCodexRulesFile`·`decodeCodexHookSpec` 이식(s21b-3d-3b-2b).
 //!
 //! - 그 턴 채널의 규칙으로 판정한다(`decide_tail_hook` 그대로). 합집합은 러너가 준 값과 **지금 규칙 파일**을 함께 본다.

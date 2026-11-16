@@ -1,7 +1,7 @@
 // claude 계정 풀의 **해석** — 계정 뿌리, `pools.json`, 에이전트의 풀 순서(강제 → 배정 → 기본 풀 → 암묵 풀).
 //
 // 러너(`packages/agent/src/claudeAccounts.ts`)에서 옮겨 왔다(B4-5e). 러너가 어느 계정으로 도는지와, 오퍼레이터가
-// 「이 에이전트를 Rust 러너로 돌려도 되는가」(`packages/operator/src/runnerPick.ts`)를 **같은 함수**로 판정하기 위해서다 —
+// 「이 에이전트를 Rust 러너로 돌려도 되는가」(옛 Node 오퍼레이터(P3 에서 지움)의 `src/runnerPick.ts`)를 **같은 함수**로 판정하기 위해서다 —
 // 판정을 베껴 두면 한쪽만 바뀌는 날 에이전트가 다른 계정·과금으로 조용히 돈다. 동작은 옮기기 전과 같다.
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';

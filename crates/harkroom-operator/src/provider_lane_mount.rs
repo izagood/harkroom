@@ -1,4 +1,4 @@
-//! API 키 연결(전용 제공사 경로)의 오퍼레이터 몫 — TS `packages/operator/src/providerLaneMount.ts` 이식(op-lane).
+//! API 키 연결(전용 제공사 경로)의 오퍼레이터 몫 — TS 옛 Node 오퍼레이터(P3 에서 지움)의 `src/providerLaneMount.ts` 이식(op-lane).
 //!
 //! 두 가지를 relay 가로채기 사슬에서 로컬로 답한다. 둘 다 서버에는 길이 없다(`forward::LOCAL_ONLY`).
 //!

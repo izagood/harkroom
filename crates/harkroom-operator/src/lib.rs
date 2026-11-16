@@ -1,5 +1,5 @@
 //! harkroom 오퍼레이터의 Rust 판(S2, Rust 전환). **A1 은 `merge` 래퍼의 클라이언트 쪽과 P5 파일 잠금만** 옮긴다 —
-//! 정본은 `packages/operator/src/main.ts::mergeMain`·`callOperatorTool`, `turnMerge.ts::parseMergeArgs`, `fileLock.ts` 다.
+//! 옮겨 온 원본은 옛 Node 오퍼레이터(P3 에서 지움)의 `src/main.ts::mergeMain`·`callOperatorTool`, `turnMerge.ts::parseMergeArgs`, `fileLock.ts` 다.
 //! A2 는 앱 ↔ 오퍼레이터 소켓 서버(P3)의 문지기와 `ping`·`listRunners` 를 옮긴다(`socket`·`endpoint`·`serve`).
 //! A3b 는 러너 표(`spawnRunner`·`killRunner`·`runnerExit` 이벤트, `runners`)와 `operators.json` 색인 읽기(`index`)를 옮긴다.
 //! A5a 는 로컬 설정의 에이전트 항목(`operatorAgent*` 4개, `local_agents`)을 옮긴다.
@@ -11,7 +11,7 @@
 //! `merge` 는 에이전트 지시문·허용 규칙(`Bash(…harkroom-operator merge:*)`)이 **이름·인자·한 줄 JSON 출력·종료 코드**에
 //! 기대는 경계(P4)다. 그래서 TS 와 같은 입력에 **바이트까지 같은** 출력을 내야 한다 — `tests/merge_golden.rs` 가
 //! TS 가 실제로 낸 출력(`golden/merge.json`)과 비교한다.
-//! 파일 잠금(P5)은 전환 동안 Node·Rust 오퍼레이터가 **같은 잠금 파일**을 번갈아 잡는다 — `tests/file_lock_xlang.rs`.
+//! 파일 잠금(P5)은 전환 동안 Node·Rust 오퍼레이터가 **같은 잠금 파일**을 번갈아 잡도록 맞췄다(Node 판은 P3 에서 지웠다).
 pub mod adopt;
 pub mod api_cli;
 pub mod assignments;

@@ -1,4 +1,4 @@
-//! 서버 링크(S2 s21a) — `/operator` WS 클라이언트. 정본은 `packages/operator/src/serverLink.ts`.
+//! 서버 링크(S2 s21a) — `/operator` WS 클라이언트. 옮겨 온 원본은 옛 Node 오퍼레이터(P3 에서 지움)의 `src/serverLink.ts`.
 //!
 //! TS 와 같은 것: 재접속 backoff(1초에서 두 배, 30초 천장), **서버 ping 침묵으로 서버 죽음 판정**(기본 75초),
 //! 연결마다 새로 만드는 hello, 모르는 서버 프레임은 버림, 닫힘 한 줄(`describe_close`).

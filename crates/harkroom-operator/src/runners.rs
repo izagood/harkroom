@@ -1,5 +1,5 @@
 //! 러너 표(S2 A3b) — 오퍼레이터가 띄운 러너를 에이전트당 하나씩 들고, `spawnRunner`·`killRunner`·`listRunners` 에
-//! 답하고, 러너가 끝나면 `runnerExit` 이벤트를 낸다. 정본은 `packages/operator/src/runners.ts`(`RunnerRegistry`)다.
+//! 답하고, 러너가 끝나면 `runnerExit` 이벤트를 낸다. 옮겨 온 원본은 옛 Node 오퍼레이터(P3 에서 지움)의 `src/runners.ts`(`RunnerRegistry`)다.
 //!
 //! **옮긴 성질**(TS 와 같다):
 //! - 에이전트당 하나 — 표에 살아 있는 세대가 있으면 새로 띄우지 않고 그 레코드를 돌려준다.

@@ -1,4 +1,4 @@
-//! 턴 파일 올리기 — TS `packages/operator/src/turnUploads.ts` 이식(s21b-3c).
+//! 턴 파일 올리기 — TS 옛 Node 오퍼레이터(P3 에서 지움)의 `src/turnUploads.ts` 이식(s21b-3c).
 //!
 //! 하네스의 `attachment.upload{path}` 를 오퍼레이터가 받아, 턴 워크스페이스 안의 파일을 읽어 서버 `/uploads` 에
 //! multipart 로 올리고 첨부 id 만 돌려준다. `secret.import`(turnSecrets)도 [`read_workspace_file`] 을 같이 쓴다(security L1).

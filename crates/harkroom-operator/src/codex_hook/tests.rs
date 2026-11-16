@@ -1,4 +1,4 @@
-//! TS `packages/operator/test/codexHook.test.ts` 와 같은 사례 — 실행 위치 확인(security W1~W6)과 규칙 파일을 같은 출처로 읽는지.
+//! TS 옛 Node 오퍼레이터(P3 에서 지움)의 `test/codexHook.test.ts` 와 같은 사례 — 실행 위치 확인(security W1~W6)과 규칙 파일을 같은 출처로 읽는지.
 
 use super::*;
 use crate::hook_cli::LANE_HOOK_TAIL_REASON;

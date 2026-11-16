@@ -999,7 +999,7 @@ export class ApiClient {
     return (await this.req<{ operators: OperatorView[] }>('GET', '/operators')).operators;
   }
 
-  /** 1회용 등록 코드(`hkreg_`). 5분 안에 그 머신의 `harkroom-operator register` 에 넣는다. */
+  /** 1회용 등록 코드(`hkreg_`). 5분 안에 그 머신의 `harkroom-operator-rs register` 에 넣는다. */
   operatorRegisterCode(): Promise<{ code: string; expiresAt: string }> {
     return this.req('POST', '/operators/register-codes');
   }

@@ -1,5 +1,5 @@
 //! 오퍼레이터 로컬 설정의 에이전트 항목(S2 A5a) — `operatorAgentsList`·`operatorAgentSet`·`operatorAgentProviderLaneSet`·
-//! `operatorAgentRemove`. 정본은 `packages/operator/src/localAgents.ts`·`config.ts`, 요청 검사는
+//! `operatorAgentRemove`. 옮겨 온 원본은 옛 Node 오퍼레이터(P3 에서 지움)의 `src/localAgents.ts`·`config.ts`, 요청 검사는
 //! `packages/shared/src/daemonProtocol.ts`(`readOperatorAgent*Payload`)·`providerLane.ts`(`readProviderLaneConfig`)다.
 //!
 //! 파일은 커뮤니티 뿌리의 `operator/operator.json`(TS `run.ts` 의 `join(appDataDir, 'operator', 'operator.json')`)이고

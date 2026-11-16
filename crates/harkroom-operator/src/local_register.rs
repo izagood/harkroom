@@ -1,6 +1,6 @@
 //! `operatorRegister`(s9) — 앱이 받은 등록 코드(설정 › Operators, 5분·1회)를 `POST /operators/claim` 으로 토큰과 바꿔
 //! 이 커뮤니티 뿌리의 secrets 에 두고, `operator.json` 에 그 커뮤니티 칸의 `operatorId` 를 적는다.
-//! 정본은 TS `packages/operator/src/cli.ts`(`register`)·`localAgents.ts`(`register` → `onRegistered`)·
+//! 정본은 TS 옛 Node 오퍼레이터(P3 에서 지움)의 `src/cli.ts`(`register`)·`localAgents.ts`(`register` → `onRegistered`)·
 //! `packages/shared/src/daemonProtocol.ts`(`readOperatorRegisterPayload`)다.
 //!
 //! TS 와 같은 것:

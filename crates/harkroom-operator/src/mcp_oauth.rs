@@ -1,6 +1,6 @@
 //! 원격 MCP 의 OAuth(S2 A5d) — `operatorMcpAuthStart`·`operatorMcpAuthStatus`·`operatorMcpAuthForget` 와 목록의 `auth` 칸.
 //!
-//! 정본은 `packages/operator/src/mcpOAuth.ts` 의 `start`·`status`·`forget` 이다. 흐름도 같다
+//! 옮겨 온 원본은 옛 Node 오퍼레이터(P3 에서 지움)의 `src/mcpOAuth.ts` 의 `start`·`status`·`forget` 이다. 흐름도 같다
 //! (MCP 권한 명세 2025-06-18 · RFC 9728 · RFC 8414 · RFC 7591 · PKCE):
 //! 1. 보호 자원 메타데이터 — 인증 없는 `initialize` 의 401 `resource_metadata`, 없으면 well-known 두 곳.
 //! 2. 인가 서버 메타데이터 — `oauth-authorization-server`, 없으면 `openid-configuration`(두 자리).

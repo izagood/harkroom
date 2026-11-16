@@ -1,4 +1,4 @@
-//! 턴 임대 장부 — TS `packages/operator/src/turnSecrets.ts` 의 장부 절반(`noteLease`·`lookup`·`leaseEnded`·
+//! 턴 임대 장부 — TS 옛 Node 오퍼레이터(P3 에서 지움)의 `src/turnSecrets.ts` 의 장부 절반(`noteLease`·`lookup`·`leaseEnded`·
 //! `leaseHeartbeat`·`sweepExpired`) 이식(s21b-3b).
 //!
 //! 러너는 멘션을 집으며 서버에서 턴 임대를 받고(`POST /agent/turn-leases`), relay 소켓으로

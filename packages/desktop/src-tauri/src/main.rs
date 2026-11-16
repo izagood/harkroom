@@ -170,7 +170,7 @@ async fn secret_delete(key: String) -> Result<(), String> {
 // "왜 폴백이 없나"). 실패는 실패로 화면에 오른다(`#368`).
 //
 // `detached_command()` 는 그대로 남는다 — 이제 그것이 띄우는 것이 daemon 이고, 러너는
-// daemon 이 자기 쪽에서 같은 성질(`detached`)로 띄운다(`packages/operator/src/runners.ts`).
+// daemon 이 자기 쪽에서 같은 성질(`detached`)로 띄운다(옛 Node 오퍼레이터(P3 에서 지움)의 `src/runners.ts`).
 // ---------------------------------------------------------------------------
 
 /// 러너 사이드카의 스코프 이름. **`tauri.conf.json` 의 `bundle.externalBin` 항목 이름과
@@ -178,7 +178,7 @@ async fn secret_delete(key: String) -> Result<(), String> {
 ///
 /// **`#[cfg(test)]` 인 이유**: `#433` 을 닫으면서 프로덕션 경로에서 이 이름을 쓰는 자리가
 /// 사라졌다. 러너를 실제로 띄우는 것은 daemon 이고, daemon 은 **자기 위치에서** 러너 경로를
-/// 계산한다(`packages/operator/src/run.ts` — 같은 디렉터리에 있다는 계약을 daemon 쪽이 안다).
+/// 계산한다(옛 Node 오퍼레이터(P3 에서 지움)의 `src/run.ts` — 같은 디렉터리에 있다는 계약을 daemon 쪽이 안다).
 /// 앱은 배치에 더 이상 관여하지 않는다.
 ///
 /// 그래도 지우지 않는 이유는 회귀선이 이 이름으로 **실행 위치의 사이드카를 실물로 띄우기**
@@ -400,9 +400,9 @@ fn app_version(app: tauri::AppHandle) -> String {
     app.package_info().version.to_string()
 }
 
-/// 이 앱 번들 안의 `harkroom-operator` 전체 경로 — 설정 › Operators 의 등록 명령에 그대로 쓴다.
+/// 이 앱 번들 안의 `harkroom-operator-rs` 전체 경로 — 설정 › Operators 의 등록 명령에 그대로 쓴다.
 ///
-/// 앱은 PATH 에 아무것도 깔지 않는다. 그래서 화면이 맨 이름(`harkroom-operator register …`)을 보여 주면
+/// 앱은 PATH 에 아무것도 깔지 않는다. 그래서 화면이 맨 이름(`harkroom-operator-rs register …`)을 보여 주면
 /// 첫 설치 맥에서 `command not found` 로 실패했다(10-27). 오퍼레이터를 띄울 때 쓰는 바로 그 경로
 /// (`sidecar_path`)를 준다 — 앱을 어디에 깔았든 붙여 넣으면 된다.
 ///

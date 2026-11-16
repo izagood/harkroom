@@ -1,4 +1,4 @@
-//! 동시 턴 상한 — TS `packages/operator/src/turnSlots.ts` 이식(s21b-3a).
+//! 동시 턴 상한 — TS 옛 Node 오퍼레이터(P3 에서 지움)의 `src/turnSlots.ts` 이식(s21b-3a).
 //!
 //! 오퍼레이터 **전체**에서 센다(`HARKROOM_MAX_TURNS`). 러너가 턴을 띄우기 직전 `http.forward POST /agent/turn-slots`
 //! 로 자리를 묻고, 여기서 답한다 — 서버로 나가지 않는다.
