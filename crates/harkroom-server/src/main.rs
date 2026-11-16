@@ -1148,6 +1148,35 @@ async fn spawn_loops() {
         Ok(None) => eprintln!("front: loop push off — APNS_* not set"),
         Err(why) => eprintln!("front: loop push off — {why}"),
     }
+    // S5.4 L2 — 답 없는 요청 통지. 문지기 이름 `stale` — 글 올리기 권한과 표시 칸이 다 있어야 띄운다.
+    match write::missing_in(
+        &pool,
+        &[
+            harkroom_server::core::msg_post::MESSAGE_POST_PRIVILEGES,
+            harkroom_server::loops::stale::STALE_PRIVILEGES,
+        ]
+        .concat(),
+        harkroom_server::core::msg_post::MESSAGE_POST_SEQUENCE_PRIVILEGES,
+    )
+    .await
+    {
+        Ok(m) if m.is_empty() => {
+            eprintln!("front: loop stale on (runs only while server_loop owner is rust)");
+            harkroom_server::loops::stale::spawn(
+                gate.clone(),
+                harkroom_server::core::msg_post::PostState {
+                    read: pool.clone(),
+                    write: pool.clone(),
+                    up: harkroom_server::proxy::Upstream::new(
+                        &std::env::var("UPSTREAM_URL").unwrap_or_default(),
+                    ),
+                    implicit_ok: false,
+                },
+            );
+        }
+        Ok(m) => eprintln!("front: loop stale off — missing privileges {m:?}"),
+        Err(e) => eprintln!("front: loop stale off — privilege check failed: {e}"),
+    }
     // C5c-3b-2 — 백그라운드 회차 생산(distill → cleanup → organize, 1시간에 한 번). 문지기 이름 `bg.produce` — 주인이 rust 일 때만 돈다.
     match write::missing_in(&pool, bg_produce::BG_PRODUCE_PRIVILEGES, &[]).await {
         Ok(m) if m.is_empty() => {
