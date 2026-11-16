@@ -344,7 +344,7 @@ fn audit_detail_keys_match_ts_and_carry_no_secrets() {
     ] {
         assert!(full.get(bad).is_none(), "{bad}");
     }
-    // 소유자 deny(tool): asOwner·threadRootId·grant 칸이 없다 — TS 와 같은 생략.
+    // 소유자 deny(tool, 버튼): asOwner·threadRootId·grant 칸이 없고 `via: button` 은 있다 — TS 와 같다.
     let deny = audit_detail(&AuditDetail {
         request_id: "r",
         kind: "tool",
@@ -358,6 +358,6 @@ fn audit_detail_keys_match_ts_and_carry_no_secrets() {
     });
     assert_eq!(
         deny,
-        serde_json::json!({"requestId": "r", "kind": "tool", "target": "Bash(ls:*)", "channelId": null})
+        serde_json::json!({"requestId": "r", "kind": "tool", "target": "Bash(ls:*)", "channelId": null, "via": "button"})
     );
 }
