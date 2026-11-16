@@ -519,6 +519,44 @@ describe('채택 판정 — 확실하지 않으면 채택하지 않는다 (#431 
     expect(plan.adopt[0]?.pid).toBe(222);
     expect(plan.rejected).toHaveLength(1);
   });
+
+  /** 커뮤니티마다 모드(security #1650 n1): 맡지 않은 커뮤니티의 러너는 채택하지 않고 `other-community` 로 돌린다. */
+  it('맡지 않은 에이전트는 채택하지 않는다 — 신원이 맞은 것만 그 판정을 받는다', async () => {
+    const probe: ProcessIdentityProbe = {
+      alive: (pid) => pid !== 333,
+      bootTimeSec: () => Promise.resolve(500),
+    };
+    const plan = await planAdoption(
+      [후보({ agentId: 'mine', pid: 111 }), 후보({ agentId: 'theirs', pid: 222 }), 후보({ agentId: 'gone', pid: 333 })],
+      probe,
+      null,
+      (id) => id === 'mine',
+    );
+    expect(plan.adopt.map((e) => e.agentId)).toEqual(['mine']);
+    const kinds = Object.fromEntries(plan.rejected.map((r) => [r.entry.agentId, r.verdict.kind]));
+    // 죽은 pid 는 남의 것이어도 `dead` — 종료 신호를 보낼 대상이 아니다.
+    expect(kinds).toEqual({ theirs: 'other-community', gone: 'dead' });
+  });
+
+  /** 회수 중(`retiring`) 줄도 같다 — 남의 것을 `retire` 하면 그 러너의 링크 비밀을 이 프로세스가 받는다. */
+  it('맡지 않은 에이전트의 회수 중 러너는 retiring 이 아니라 other-community 다', async () => {
+    const probe: ProcessIdentityProbe = { alive: () => true, bootTimeSec: () => Promise.resolve(500) };
+    const 회수중 = { holding: [], done: [] };
+    const plan = await planAdoption(
+      [후보({ agentId: 'mine', pid: 111, retiring: 회수중 }), 후보({ agentId: 'theirs', pid: 222, retiring: 회수중 })],
+      probe,
+      null,
+      (id) => id === 'mine',
+    );
+    const kinds = Object.fromEntries(plan.rejected.map((r) => [r.entry.agentId, r.verdict.kind]));
+    expect(kinds).toEqual({ mine: 'retiring', theirs: 'other-community' });
+  });
+
+  it('거르는 함수가 없으면(꺼짐) 지금처럼 모두 채택한다', async () => {
+    const probe: ProcessIdentityProbe = { alive: () => true, bootTimeSec: () => Promise.resolve(500) };
+    const plan = await planAdoption([후보({ agentId: 'x', pid: 1 }), 후보({ agentId: 'y', pid: 2 })], probe);
+    expect(plan.adopt).toHaveLength(2);
+  });
 });
 
 // ---------------------------------------------------------------------------

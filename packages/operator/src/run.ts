@@ -65,6 +65,7 @@ import { cleanupLedgerPath } from './workspaceCleanup.js';
 import { cleanupOwnersPath, createCleanupOwners } from './workspaceCleanupOwners.js';
 import { createWorkspaceCleanup, GIT_PATH, readCleanupSettings } from './workspaceCleanupService.js';
 import { perCommunityEnabled } from '@harkroom/shared/operatorRoots';
+import { ownedAgentIds } from './communityRoots.js';
 
 /**
  * 채택한 러너의 생사를 확인하는 주기(`#431` 2-c).
@@ -559,6 +560,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     tail: (path) => readRunnerLogTail(path),
   };
 
+  const runnerHost = options.host ?? nodeRunnerHost;
   const registry = new RunnerRegistry(
     {
       command: options.runnerCommand ?? defaultRunnerCommand(entryPath),
@@ -566,7 +568,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
       // win32 에는 Rust 러너를 싣지 않는다 — 없으면 `rust` 를 청한 에이전트도 node 로 돈다(`runnerPick.ts`).
       ...(process.platform === 'win32' ? {} : { rustCommand: options.rustRunnerCommand ?? defaultRustRunnerCommand(entryPath) }),
     },
-    options.host ?? nodeRunnerHost,
+    runnerHost,
     (notice) => {
       // 러너 종료 때 그 러너의 턴 열쇠를 거둔다(runnerId = incarnationId).
       runnerLink.onRunnerExited(notice.incarnationId);
@@ -602,7 +604,9 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
     const legacy = (await readRunnerLedger(appDataDir, legacyRunnerLedgerPath(appDataDir)))
       .filter((e) => !seen.has(e.pid));
     const entries = [...fresh, ...legacy];
-    const plan = await planAdoption(entries, probe, args.appVersion ?? null);
+    // 커뮤니티마다 모드면 맡은 커뮤니티의 에이전트만 채택한다(security #1650 n1).
+    const owned = ownedAgentIds((await readConfig(join(appDataDir, 'operator', 'operator.json'))).communities, process.env);
+    const plan = await planAdoption(entries, probe, args.appVersion ?? null, owned ? (id) => owned.has(id) : undefined);
     // 낡은 세대의 러너는 **회수한다.** 안 채택하고 두면 앱이 새 러너를 띄워 같은
     // 에이전트에 둘이 되고(`#430` 이 관측한 중복), 그 둘이 멘션을 나눠 집어 간다.
     // 채택하지 않는 다른 사유들(죽음·pid 재사용)과 달리 여기서는 **우리 것이 확실하다** —
@@ -627,6 +631,8 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
       if (entry.linkSecret) runnerLink.expect(entry.incarnationId, entry.agentId, entry.linkSecret);
     };
     for (const { entry, verdict } of plan.rejected) {
+      // 남의 커뮤니티 러너는 종료만 한다 — `retire` 는 그 러너를 이 커뮤니티 hello 에 싣고 링크까지 받으므로 쓰지 않는다.
+      if (verdict.kind === 'other-community') { runnerHost.kill(entry.pid, 'SIGTERM'); continue; }
       // `retiring`: 앞 오퍼레이터가 회수하던 러너(판이 연달아 바뀐 경우, 2026-11-02). 똑같이 회수하고
       // 링크를 받는다 — 안 받으면 「모르는 러너」로 거절돼 그 러너는 열린 턴을 중단한다.
       if (verdict.kind !== 'stale-generation' && verdict.kind !== 'retiring') continue;
@@ -893,7 +899,7 @@ export async function startDaemon(options: RunOptions): Promise<StartOutcome> {
   if (options.communities !== false) {
     try {
       const runtime = await startCommunities({
-        appDataDir, registry, host: options.host ?? nodeRunnerHost,
+        appDataDir, registry, host: runnerHost,
         appVersion: args.appVersion ?? null, log,
         runnerLink, socketPath: outcome.paths.socketPath, operatorBin: entryPath, mcpOAuth,
         // 앱만 `--launch-nonce` 를 준다(`daemon_client.rs`). `run`(원격·launchd)은 Claude in Chrome 을 열지 않는다.
