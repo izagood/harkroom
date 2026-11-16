@@ -50,7 +50,8 @@ export const lockChannelForSeq = (client: PoolClient, channelId: string): Promis
   client.query(SEQ_LOCK_SQL, [SEQ_LOCK_CLASS, channelId]);
 
 /** 회신권 판정과 닫기를 (작성자, 스레드) 단위로 직렬화한다 — `postMessage` 의 주석 참고. */
-const REPLY_LOCK_CLASS = 0x6d72706c; // 'mrpl'
+/** 회신권 락의 종류 — Rust 코어(`core/msg_post.rs`)가 골든으로 받는다. */
+export const REPLY_LOCK_CLASS = 0x6d72706c; // 'mrpl'
 
 const lockReplyGrantsFor = (client: PoolClient, authorId: string, threadRootId: string): Promise<unknown> =>
   client.query('select pg_advisory_xact_lock($1, hashtext($2))', [REPLY_LOCK_CLASS, `${authorId}:${threadRootId}`]);
@@ -849,6 +850,35 @@ async function fanOutMention(
  * 없고, 스레드가 수백 줄이어도 비용이 일정해야 한다.
  */
 const DEPTH_SCAN_LIMIT = 50;
+/** `mentionDepthFor` 의 스캔 — Rust 코어(`core/msg_post.rs`, S5.3 C1c-4a)가 골든으로 받는다. */
+export const MENTION_DEPTH_SCAN_SQL = `select m.body, m.mention_depth as depth, m.stall_depth as stall, (a.kind = 'agent') as author_is_agent,
+            m.created_at, m.chain_started_at,
+            -- **실제로 나를 깨운 부름만 고리다**(2026-09-29). 본문만 다시 파싱하면 상한에
+            -- 막혔거나(capped) 호출 범위에 거절된(denied) 부름도 "나를 부른 메시지"로 보여,
+            -- 깨운 적 없는 부름이 깊이를 쌓았다. 그 부름으로 inbox 가 생겼는지를 함께 본다.
+            -- thread_reply·wake 같은 사유는 부름이 아니므로 세지 않는다.
+            exists (select 1 from inbox i
+                     where i.message_id = m.id and i.account_id = $3::uuid
+                       and i.reason in ('mention', 'dm', 'team_mention', 'team_delegated')) as woke
+       from message m join account a on a.id = m.author_id
+      where m.channel_id = $1::uuid
+        -- **스레드 경계를 양쪽 다 지킨다**(2026-09-14).
+        --
+        -- 앞 판본은 두 번째 인자가 null 이면 이 조건을 통째로 비웠다 — 그래서 **새 채널
+        -- 최상위** 발화가 채널의 다른 스레드에서 나를 부른 답을 앞 고리로 물려받았다.
+        -- 무관한 새 대화인데 깊이가 3~4로 시작해 곧바로 상한에 걸렸고, 사람이 새 턴을
+        -- 띄워 줘도 소용없었다(깊이가 내 턴이 아니라 채널 이력에서 왔으므로).
+        --
+        -- 최상위 발화는 **최상위 발화들끼리만** 고리로 본다. A·B 가 최상위로 서로를
+        -- 부르며 도는 폭주는 그대로 잡히고(그 발화들도 최상위다), 다른 스레드의 옛
+        -- 부름은 더 이상 새 대화의 앞 고리가 아니다.
+        and (case when $2::uuid is null
+                  then m.thread_root_id is null
+                  else m.thread_root_id = $2::uuid or m.id = $2::uuid end)
+        and m.deleted_at is null
+      order by m.seq desc
+      limit ${DEPTH_SCAN_LIMIT}`;
+
 
 async function mentionDepthFor(
   client: PoolClient,
@@ -863,33 +893,7 @@ async function mentionDepthFor(
     if (fromCause !== null) return fromCause;
   }
   const rows = (await client.query(
-    `select m.body, m.mention_depth as depth, m.stall_depth as stall, (a.kind = 'agent') as author_is_agent,
-            m.created_at, m.chain_started_at,
-            -- **실제로 나를 깨운 부름만 고리다**(2026-09-29). 본문만 다시 파싱하면 상한에
-            -- 막혔거나(capped) 호출 범위에 거절된(denied) 부름도 "나를 부른 메시지"로 보여,
-            -- 깨운 적 없는 부름이 깊이를 쌓았다. 그 부름으로 inbox 가 생겼는지를 함께 본다.
-            -- thread_reply·wake 같은 사유는 부름이 아니므로 세지 않는다.
-            exists (select 1 from inbox i
-                     where i.message_id = m.id and i.account_id = $3
-                       and i.reason in ('mention', 'dm', 'team_mention', 'team_delegated')) as woke
-       from message m join account a on a.id = m.author_id
-      where m.channel_id = $1
-        -- **스레드 경계를 양쪽 다 지킨다**(2026-09-14).
-        --
-        -- 앞 판본은 두 번째 인자가 null 이면 이 조건을 통째로 비웠다 — 그래서 **새 채널
-        -- 최상위** 발화가 채널의 다른 스레드에서 나를 부른 답을 앞 고리로 물려받았다.
-        -- 무관한 새 대화인데 깊이가 3~4로 시작해 곧바로 상한에 걸렸고, 사람이 새 턴을
-        -- 띄워 줘도 소용없었다(깊이가 내 턴이 아니라 채널 이력에서 왔으므로).
-        --
-        -- 최상위 발화는 **최상위 발화들끼리만** 고리로 본다. A·B 가 최상위로 서로를
-        -- 부르며 도는 폭주는 그대로 잡히고(그 발화들도 최상위다), 다른 스레드의 옛
-        -- 부름은 더 이상 새 대화의 앞 고리가 아니다.
-        and (case when $2::uuid is null
-                  then m.thread_root_id is null
-                  else m.thread_root_id = $2 or m.id = $2 end)
-        and m.deleted_at is null
-      order by m.seq desc
-      limit ${DEPTH_SCAN_LIMIT}`,
+    MENTION_DEPTH_SCAN_SQL,
     [input.channelId, input.threadRootId, input.authorId],
   )).rows as { body: string; depth: number; stall: number; author_is_agent: boolean; woke: boolean; created_at: Date; chain_started_at: Date | null }[];
   for (const row of rows) {

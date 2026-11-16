@@ -4,7 +4,7 @@
 //! - 작성자 아닌 계정의 열린 깨움을 `for update` 로 잡아(sweep 과의 경합 — 그쪽이 먼저 잡았으면 기다린 뒤 이 행은 빠진다)
 //!   그 글이 이미 부른 계정이면 **접고**(`canceled_at`·`canceled_by_message_id` = 이 답), 아니면 **지금 깨운다**
 //!   (`inbox` reason `wake` → `fired_at`). 어느 쪽이든 대기 줄 meta 에 닫힌 시각을 적는다(처음 값만).
-//! - 작성자가 사람인지는 부르는 쪽(`msg_post.rs`, 사람·세션만 맡는다)이 이미 보장한다 — TS 의 `kind = 'human'` 판정과 같다.
+//! - 작성자가 사람인지는 부르는 쪽(`msg_post.rs`, 에이전트 글이면 부르지 않는다)이 이미 보장한다 — TS 의 `kind = 'human'` 판정과 같다.
 //! - 신호는 TS 처럼 커밋 뒤에 나가야 하므로 outbox 에 넣는다(같은 트랜잭션, 커밋 뒤 배달) — 순서도 TS 그대로:
 //!   깨운 계정의 `inbox.updated` → 보고처마다 `thread.reportWakes.changed`(값 없이 신호만, 같은 스레드는 한 번) →
 //!   닫힌 대기 줄마다 `message.updated`.

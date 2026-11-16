@@ -8,6 +8,21 @@ import type { PoolClient } from 'pg';
  * 자리는 `postMessage` 한 곳이다.
  */
 
+/** `openReplyGrants` 의 문장 — Rust 코어(`core/msg_post.rs`, S5.3 C1c-4a)가 골든으로 받는다. */
+export const OPEN_REPLY_GRANTS_SQL = `insert into invoke_reply_grant (grantee_id, granter_id, thread_root_id, expires_at)
+     select g.id, $1::uuid, $2::uuid, now() + make_interval(secs => $4::int)
+       from account g
+      where g.id = any($3::uuid[]) and g.kind = 'agent'
+        and exists (
+          select 1 from account a join agent_config c on c.account_id = a.id
+           where a.id = $1::uuid and a.kind = 'agent' and c.invoke_scope <> 'community')
+     on conflict (grantee_id, granter_id, thread_root_id) do update
+       set opened_at = now(), expires_at = excluded.expires_at, closed_at = null`;
+
+/** `closeReplyGrants` 의 문장 — 같은 골든. */
+export const CLOSE_REPLY_GRANTS_SQL = `update invoke_reply_grant set closed_at = now()
+      where grantee_id = $1::uuid and thread_root_id = $2::uuid and closed_at is null`;
+
 /** 결과를 끝내 안 낸 경우의 안전장치. 깨움·위임 상한(6h)과 같다. */
 export const REPLY_GRANT_TTL_SEC = 6 * 60 * 60;
 
@@ -25,15 +40,7 @@ export async function openReplyGrants(
   const grantees = input.granteeIds.filter((id) => id !== input.granterId);
   if (!grantees.length) return;
   await client.query(
-    `insert into invoke_reply_grant (grantee_id, granter_id, thread_root_id, expires_at)
-     select g.id, $1, $2, now() + make_interval(secs => $4)
-       from account g
-      where g.id = any($3::uuid[]) and g.kind = 'agent'
-        and exists (
-          select 1 from account a join agent_config c on c.account_id = a.id
-           where a.id = $1 and a.kind = 'agent' and c.invoke_scope <> 'community')
-     on conflict (grantee_id, granter_id, thread_root_id) do update
-       set opened_at = now(), expires_at = excluded.expires_at, closed_at = null`,
+    OPEN_REPLY_GRANTS_SQL,
     [input.granterId, input.threadRootId, grantees, REPLY_GRANT_TTL_SEC]);
 }
 
@@ -62,7 +69,6 @@ export async function closeReplyGrants(
   input: { granteeId: string; threadRootId: string },
 ): Promise<void> {
   await client.query(
-    `update invoke_reply_grant set closed_at = now()
-      where grantee_id = $1 and thread_root_id = $2 and closed_at is null`,
+    CLOSE_REPLY_GRANTS_SQL,
     [input.granteeId, input.threadRootId]);
 }
