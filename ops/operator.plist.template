@@ -62,7 +62,8 @@
   <!-- 즉시 재시작을 반복하면 CPU 를 태운다. -->
   <key>ThrottleInterval</key><integer>10</integer>
 
-  <key>StandardOutPath</key><string>/tmp/harkroom-operator/operator.@KEY@.log</string>
-  <key>StandardErrorPath</key><string>/tmp/harkroom-operator/operator.@KEY@.err.log</string>
+  <!-- 로그는 그 사용자만 쓰는 ~/Library/Logs 에 둔다. /tmp 아래 폴더는 같은 머신의 다른 사용자가 먼저 만들어 둘 수 있다. -->
+  <key>StandardOutPath</key><string>/Users/@USER@/Library/Logs/harkroom-operator.@KEY@.log</string>
+  <key>StandardErrorPath</key><string>/Users/@USER@/Library/Logs/harkroom-operator.@KEY@.err.log</string>
 </dict>
 </plist>

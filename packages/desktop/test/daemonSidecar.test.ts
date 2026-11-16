@@ -1,8 +1,7 @@
 // daemon 사이드카 빌드 경로의 회귀선(#431 2단계-a).
 //
-// 여기서 재는 것은 **배포 형태**뿐이다 — daemon 이 무엇을 하는지(소켓·인증·러너 소유)는
-// `packages/operator` 의 회귀선이 재고, 이 파일이 닫는 것은 "daemon 이 앱과 함께 나가는
-// 실행 가능한 사이드카가 된다"는 것 하나다.
+// 여기서 재는 것은 **배포 형태**뿐이다. P2 이후 앱과 함께 나가는 오퍼레이터는 Rust(`harkroom-operator-rs`)
+// 하나이고, 옛 Node 오퍼레이터(`packages/operator`)는 번들에 없다.
 //
 // 2단계-b 에서 **daemon 이 상주 프로세스가 됐다.** 그래서 실행 회귀선이 종료를 기다리던
 // 방식(`execFileSync`)에서 첫 줄만 읽고 거두는 방식으로 바뀌었다 — 재는 대상은 그대로다
@@ -40,12 +39,12 @@ describe('tauri.conf.json — daemon 이 externalBin 에 있다 (#431 2단계-a)
    * `tauri build` 가 daemon 을 번들에 넣지 않고, 그 사실은 배포된 앱이 daemon 을
    * 못 찾을 때 처음 드러난다.
    */
-  it('externalBin 이 러너와 daemon 을 둘 다 싣는다', () => {
+  it('externalBin 이 러너와 Rust 오퍼레이터를 싣고 Node 오퍼레이터는 싣지 않는다', () => {
     const externalBin = readTauriConf().bundle?.externalBin;
     expect(externalBin).toContain('binaries/harkroom-runner');
-    expect(externalBin).toContain('binaries/harkroom-operator');
-    // S2 A4②: Rust 오퍼레이터도 같이 실린다(s9 ② 이후 기본으로 뜬다 — `HARKROOM_OPERATOR_IMPL=node` 로 되돌린다).
+    // P2: 오퍼레이터는 Rust 하나다. 옛 Node 오퍼레이터(`binaries/harkroom-operator`)는 싣지 않는다 — 되돌리는 스위치도 없다.
     expect(externalBin).toContain('binaries/harkroom-operator-rs');
+    expect(externalBin).not.toContain('binaries/harkroom-operator');
     // B4-5b: Rust 러너도 실린다. 앱은 띄우지 않는다 — 오퍼레이터가 에이전트마다 고르는 것은 B4-5c 다.
     expect(externalBin).toContain('binaries/harkroom-runner-rs');
   });
@@ -64,89 +63,19 @@ describe('tauri.conf.json — daemon 이 externalBin 에 있다 (#431 2단계-a)
   });
 });
 
-describe('daemon 사이드카 산출물 (#431 2단계-a)', () => {
+describe('오퍼레이터 사이드카 산출물', () => {
   /**
-   * **실물로 실행해 본다.** "셔뱅을 붙였다 + chmod 했다"를 파일 내용으로만 확인하면
-   * 그 둘이 실제로 커널의 exec 를 통과하는지는 재지 않은 것이다. Tauri 의
-   * `externalBin` 은 이 파일을 그대로 `Command::new(path).spawn()` 에 넘기므로,
-   * 여기서 재야 하는 것은 **파일 하나를 그대로 실행할 수 있는가**다.
-   *
-   * 인자까지 함께 넘겨 파싱 결과가 stdout 에 나오는지 본다 — 번들에 엔트리가 제대로
-   * 들어갔는지(빈 번들·엉뚱한 엔트리)를 같은 실행 하나로 가른다.
+   * P2 — `build:sidecar` 는 옛 Node 오퍼레이터를 더 내지 않는다. 산출물 디렉터리는 빌드마다 통째로 비워지므로
+   * (`build-sidecars.mjs`) 여기 `harkroom-operator-<triple>` 이 있으면 누군가 그 빌드를 되살린 것이다.
    */
-  it('셔뱅 + 실행 비트로 그대로 실행되고 인자를 판다', async () => {
-    const sidecar = findSidecar('harkroom-operator');
-    if (!sidecar) {
-      console.warn(`건너뜀: daemon 사이드카가 ${BINARIES_DIR} 에 없다 — ${SKIP_HINT}`);
+  it('Node 오퍼레이터 산출물이 없다', () => {
+    const runner = findSidecar('harkroom-runner');
+    if (!runner) {
+      console.warn(`건너뜀: 사이드카가 ${BINARIES_DIR} 에 없다 — ${SKIP_HINT}`);
       return;
     }
-
-    // 실행 비트가 실제로 서 있는가(소유자 x).
-    expect(statSync(sidecar).mode & 0o100, '소유자 실행 비트').toBe(0o100);
-
-    // ── 2단계-b 에서 바뀐 것: **daemon 은 이제 안 끝난다** ────────────────────
-    // 2단계-a 의 daemon 은 인자를 적고 즉시 종료했고, 그래서 이 회귀선은 `execFileSync`
-    // 로 종료를 기다려 stdout 을 통째로 받았다. 지금 daemon 은 엔드포인트를 잡고
-    // **소켓을 서비스하며 상주한다** — 그것이 2단계-b 의 목적이므로, 종료를 기다리는
-    // 방식 자체가 더 이상 성립하지 않는다.
-    //
-    // 이 회귀선이 재려는 것은 그대로다: **파일 하나가 커널의 exec 를 통과하고, 번들에
-    // 엔트리가 제대로 들어갔는가.** 그래서 spawn 으로 띄워 **첫 줄이 나오는 즉시** 거둔다.
-    // 첫 줄(`harkroom daemon 기동 …`)이 인자 파싱 결과를 담으므로 재는 대상은 같다.
-    //
-    // 엔드포인트를 실제로 잡지 않도록 **임시 디렉터리**를 준다 — 그러지 않으면 이
-    // 테스트가 사람의 진짜 daemon 소켓을 건드린다.
-    const tempDir = mkdtempSync(path.join(tmpdir(), 'harkroom-operator-sidecar-'));
-    const socketPath = path.join(tempDir, 'daemon', 'daemon-v1.sock');
-    const child = spawn(sidecar, ['--socket', socketPath, '--app-version', '9.9.9']);
-    try {
-      const firstLine = await new Promise<string>((resolve, reject) => {
-        let buf = '';
-        const timer = setTimeout(() => reject(new Error(`첫 줄이 안 나왔다: ${buf}`)), 15_000);
-        const onChunk = (chunk: Buffer): void => {
-          buf += chunk.toString('utf8');
-          const nl = buf.indexOf('\n');
-          if (nl !== -1) {
-            clearTimeout(timer);
-            resolve(buf.slice(0, nl));
-          }
-        };
-        child.stdout.on('data', onChunk);
-        child.stderr.on('data', onChunk);
-        child.on('error', (err) => {
-          clearTimeout(timer);
-          reject(err);
-        });
-      });
-
-      expect(firstLine).toContain(`--socket=${socketPath}`);
-      expect(firstLine).toContain('--app-version=9.9.9');
-    } finally {
-      // **SIGKILL 이다** — 이 자리는 러너 종료가 아니라 테스트가 띄운 daemon 을 거두는
-      // 것이고, daemon 은 러너를 안 들고 있으므로 잃을 답이 없다.
-      child.kill('SIGKILL');
-      rmSync(tempDir, { recursive: true, force: true });
-    }
-  });
-
-  /**
-   * **이 단계의 핵심 구분이다.** daemon 번들에 `node-pty` 가 섞여 들면 daemon 이
-   * 사이드카 옆의 `node_modules/node-pty` 를 요구하게 되고 — 그 디렉터리는 러너를
-   * 위해 존재하는 것이라 daemon 만 따로 배포되거나 러너 리소스가 정리되는 순간
-   * daemon 이 뜨지 못한다. 그리고 그 실패는 배포 후에야 드러난다.
-   *
-   * 번들 소스에서 `node-pty` 를 import·require 하는 흔적을 직접 찾는다. 문자열
-   * 존재만 보면 주석이나 이 검사 자체에 걸릴 수 있으므로 **모듈 지정자 형태**를 본다.
-   */
-  it('번들이 node-pty 를 요구하지 않는다', () => {
-    const sidecar = findSidecar('harkroom-operator');
-    if (!sidecar) {
-      console.warn(`건너뜀: daemon 사이드카가 ${BINARIES_DIR} 에 없다 — ${SKIP_HINT}`);
-      return;
-    }
-    const source = readFileSync(sidecar, 'utf8');
-    expect(source, 'daemon 번들이 node-pty 를 모듈로 끌어오면 안 된다')
-      .not.toMatch(/(?:from|require\(|import\()\s*["']node-pty["']/);
+    const nodeOperator = readdirSync(BINARIES_DIR).filter((f) => /^harkroom-operator-(?!rs-)/.test(f));
+    expect(nodeOperator).toEqual([]);
   });
 
   /**
@@ -192,18 +121,16 @@ describe('daemon 사이드카 산출물 (#431 2단계-a)', () => {
   });
 
   /**
-   * 두 사이드카가 **함께** 나온다. 러너만 있고 daemon 이 없는 상태는
-   * `externalBin` 이 둘을 요구하므로 `tauri build` 가 실패하는 상태이고,
-   * 청소 지점이 하나라는 설계(`build-sidecars.mjs` 주석)가 깨진 신호이기도 하다.
+   * 러너와 오퍼레이터가 **함께** 같은 triple 로 나온다. 갈리면 `tauri build --target` 이 다른 아키텍처를 싣는다.
    */
-  it('러너와 operator 가 같은 triple 로 함께 나온다', () => {
+  it('러너와 Rust 오퍼레이터가 같은 triple 로 함께 나온다', () => {
     const runner = findSidecar('harkroom-runner');
-    const daemon = findSidecar('harkroom-operator');
-    if (!runner || !daemon) {
+    const operator = findSidecar('harkroom-operator-rs');
+    if (!runner || !operator) {
       console.warn(`건너뜀: 사이드카가 ${BINARIES_DIR} 에 없다 — ${SKIP_HINT}`);
       return;
     }
-    const triple = (p: string) => path.basename(p).replace(/^harkroom-(runner|operator)-/, '');
-    expect(triple(daemon)).toBe(triple(runner));
+    const triple = (p: string) => path.basename(p).replace(/^harkroom-(runner|operator-rs)-/, '');
+    expect(triple(operator)).toBe(triple(runner));
   });
 });

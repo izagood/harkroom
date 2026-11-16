@@ -266,28 +266,33 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
       daemonRs.indexOf('fn daemon_command('),
     );
     expect(spawnDaemon.length).toBeGreaterThan(0);
+    // P2: 띄우는 것은 Rust 오퍼레이터 하나다 — 옛 Node 조립(`daemon_command`)은 시험 전용이다.
+    expect(spawnDaemon).toContain('rust_daemon_command(');
+    expect(spawnDaemon).not.toMatch(/(?<!rust_)daemon_command\(/);
+    expect(daemonRs).toMatch(/#\[cfg\(test\)\]\nfn daemon_command\(/);
 
     // 1. 프로그램은 `sidecar_path(OPERATOR_SIDECAR_NAME)` 이 고정한다 — 상수다.
     expect(spawnDaemon).toContain('crate::sidecar_path(OPERATOR_SIDECAR_NAME)?');
     // 2. 그 이름은 리터럴이다.
-    expect(daemonRs).toContain('pub const OPERATOR_SIDECAR_NAME: &str = "harkroom-operator"');
+    expect(daemonRs).toContain('pub const OPERATOR_SIDECAR_NAME: &str = "harkroom-operator-rs"');
     // 3. **`spawn_daemon` 의 파라미터에 웹뷰가 닿는 값이 없다** — `AppHandle` 과
     //    Rust 가 만든 `EndpointPaths` 뿐이다. 문자열 경로를 받는 자리가 생기면 여기서 멈춘다.
     const sig = daemonRs.match(/fn spawn_daemon\(([\s\S]*?)\)\s*->/);
     // `community` 는 웹뷰 문자열이 아니라 Rust 가 색인·해시로 정한 뿌리다(`community_root::resolve`, 격리 C P6).
     expect(splitParams(sig![1]!).sort()).toEqual([
       'app: &tauri::AppHandle',
-      'community: Option<&crate::community_root::CommunityTarget>',
+      'community: &crate::community_root::CommunityTarget',
       'paths: &EndpointPaths',
     ]);
-    // 4. 커맨드를 조립하는 자리(`daemon_command`)도 마찬가지다 — 웹뷰가 닿는 값이 없다.
-    //    `nonce`·`app_version` 은 Rust 가 만든 값이고 프로그램·경로는 위 둘이 정한다.
-    const cmdSig = daemonRs.match(/fn daemon_command\(([\s\S]*?)\)\s*->/);
+    // 4. 커맨드를 조립하는 자리(`rust_daemon_command`)도 마찬가지다 — 웹뷰가 닿는 값이 없다.
+    //    `nonce`·`app_version` 은 Rust 가 만든 값이고 프로그램·경로는 위 둘이 정한다. `serve` 는 Rust 가 정한 커뮤니티 키·뿌리·러너다.
+    const cmdSig = daemonRs.match(/fn rust_daemon_command\(([\s\S]*?)\)\s*->/);
     expect(splitParams(cmdSig![1]!).sort()).toEqual([
       'app_version: &str',
       'nonce: &str',
       'paths: &EndpointPaths',
       'program: &Path',
+      "serve: &RustServeArgs<'_>",
     ]);
     // 5. **경로를 만드는 자리도 하나다** — `app_data_dir()` 에서 Rust 가 계산한다.
     expect(daemonRs).toContain('.app_data_dir()');
@@ -313,8 +318,8 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
    */
   it('daemon 이 `detached_command` 로 뜬다 — 앱이 죽어도 살아야 한다', () => {
     const daemonCommand = daemonRs.slice(
-      daemonRs.indexOf('fn daemon_command('),
-      daemonRs.indexOf('fn new_nonce('),
+      daemonRs.indexOf('fn rust_daemon_command('),
+      daemonRs.indexOf('fn redirect_output_to_log('),
     );
     expect(daemonCommand.length).toBeGreaterThan(0);
     expect(daemonCommand).toContain('crate::detached_command(program)');
@@ -327,8 +332,9 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
 
   it('사이드카 이름이 고정 리터럴이다', () => {
     expect(mainRs).toContain('const RUNNER_SIDECAR_NAME: &str = "harkroom-runner"');
-    expect(daemonRs).toContain('pub const OPERATOR_SIDECAR_NAME: &str = "harkroom-operator"');
-    expect(daemonRs).toContain('pub const OPERATOR_RS_SIDECAR_NAME: &str = "harkroom-operator-rs"');
+    expect(daemonRs).toContain('pub const OPERATOR_SIDECAR_NAME: &str = "harkroom-operator-rs"');
+    // 옛 Node 이름은 회수(G2)용으로만 남는다 — 번들에 싣지 않는다(`daemonSidecar.test.ts`).
+    expect(daemonRs).toContain('pub const LEGACY_NODE_OPERATOR_SIDECAR_NAME: &str = "harkroom-operator"');
     expect(daemonRs).toContain('pub const RUNNER_SIDECAR_FOR_OPERATOR: &str = "harkroom-runner"');
   });
 
@@ -641,7 +647,7 @@ describe('러너 spawn Rust 커맨드는 웹뷰에 프로그램·인자 선택�
         ...scanCallers(daemonStripped.rest, 'daemon_client.rs'),
       ];
       // S2 A4②: Rust 오퍼레이터 커맨드(`rust_daemon_command`)가 둘째 자리다. 프로그램은 같은 `sidecar_path` 상수
-      // (`OPERATOR_RS_SIDECAR_NAME`)이고 인자는 전부 Rust 가 정한다 — 늘어난 것은 오퍼레이터 조립 자리이지 옆문이 아니다.
+      // (`OPERATOR_SIDECAR_NAME`)이고 인자는 전부 Rust 가 정한다 — 늘어난 것은 오퍼레이터 조립 자리이지 옆문이 아니다.
       expect(callers).toEqual([
         { fn: 'daemon_command', file: 'daemon_client.rs' },
         { fn: 'rust_daemon_command', file: 'daemon_client.rs' },

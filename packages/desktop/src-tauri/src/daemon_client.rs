@@ -55,68 +55,24 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-/// daemon 사이드카의 이름. **`tauri.conf.json` 의 `bundle.externalBin` 항목과 같아야 한다**
-/// — 러너 쪽 `RUNNER_SIDECAR_NAME` 과 같은 계약이다.
-pub const OPERATOR_SIDECAR_NAME: &str = "harkroom-operator";
+/// 오퍼레이터 사이드카의 이름 — Rust 오퍼레이터(`crates/harkroom-operator` 의 `harkroom-operator`)다.
+/// **`tauri.conf.json` 의 `bundle.externalBin` 항목과 같아야 한다** — 러너 쪽 `RUNNER_SIDECAR_NAME` 과 같은 계약이다.
+/// 앱이 띄우는 오퍼레이터는 이것 하나다(P2 — Node 오퍼레이터와 구현 스위치 `HARKROOM_OPERATOR_IMPL` 를 걷었다).
+pub const OPERATOR_SIDECAR_NAME: &str = "harkroom-operator-rs";
 
-/// Rust 오퍼레이터 사이드카의 이름(S2 A4②). `tauri.conf.json` 의 `bundle.externalBin` 에 같이 실린다.
-/// **기본은 이것이다**(s9 ②) — 스위치 `HARKROOM_OPERATOR_IMPL=node` 이거나 커뮤니티마다 모드를 끈(`=0`) 경우에만
-/// Node(`OPERATOR_SIDECAR_NAME`)를 띄운다.
-pub const OPERATOR_RS_SIDECAR_NAME: &str = "harkroom-operator-rs";
+/// 옛 Node 오퍼레이터 사이드카의 이름. **번들에 싣지 않고 띄우지도 않는다**(P2). 앱을 새 판으로 올린 직후, 옛 판이 띄워 둔
+/// Node 오퍼레이터가 소켓을 쥐고 남아 있으면 그것이 「내 번들의 옛 구현」인지 알아보고 내리는 데만 쓴다(`ensure_at` 의 G2·
+/// 기동 때 `retire_operators_at`). 같은 설치 경로(`/Applications/Harkroom.app/Contents/MacOS/…`)라 판을 올려도 경로가 같다.
+pub const LEGACY_NODE_OPERATOR_SIDECAR_NAME: &str = "harkroom-operator";
 
-/// Rust 오퍼레이터가 띄울 러너 사이드카. Node 오퍼레이터는 자기 자리에서 러너 경로를 계산하지만,
-/// Rust 오퍼레이터는 `--runner-command` 로 받는다(클라이언트는 프로그램을 못 고른다 — 이 값도 Rust 상수다).
+/// Rust 오퍼레이터가 띄울 러너 사이드카. 오퍼레이터는 `--runner-command` 로 받는다
+/// (클라이언트는 프로그램을 못 고른다 — 이 값도 Rust 상수다).
 pub const RUNNER_SIDECAR_FOR_OPERATOR: &str = "harkroom-runner";
 
-/// 오퍼레이터 구현 스위치의 env 이름(S2 A4②). 되돌리는 길은 정확히 `node` 하나다 — 정확히 `rust` 면 Rust 를 강제하고,
-/// 없음·그 밖의 값은 기본(커뮤니티마다 모드면 Rust, `=0` 이면 Node)을 따른다.
-pub const OPERATOR_IMPL_ENV: &str = "HARKROOM_OPERATOR_IMPL";
-
-/// 어느 오퍼레이터 구현을 띄우나. **기본은 Rust**(s9 ②). Rust 오퍼레이터는 커뮤니티 하나만 맡으므로(`serve --base-url`)
-/// 커뮤니티마다 모드를 끈 `=0`(옛 단일 오퍼레이터로 되돌리기, #2254)에서는 기본이 Node 로 남는다 — 그 되돌리기 길을 깨지 않는다.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OperatorImpl {
-    Node,
-    Rust,
-}
-
-impl OperatorImpl {
-    fn from_env_value(v: Option<&str>, per_community: bool) -> Self {
-        match v {
-            Some("node") => OperatorImpl::Node,
-            // 명시한 `rust` 는 `=0` 에서도 Rust 다 — `ensure_daemon` 이 「커뮤니티마다 모드에서만」으로 거절해 알린다.
-            Some("rust") => OperatorImpl::Rust,
-            _ if per_community => OperatorImpl::Rust,
-            _ => OperatorImpl::Node,
-        }
-    }
-
-    pub fn current() -> Self {
-        Self::from_env_value(
-            std::env::var(OPERATOR_IMPL_ENV).ok().as_deref(),
-            crate::community_root::per_community_enabled(),
-        )
-    }
-
-    fn sidecar_name(self) -> &'static str {
-        match self {
-            OperatorImpl::Node => OPERATOR_SIDECAR_NAME,
-            OperatorImpl::Rust => OPERATOR_RS_SIDECAR_NAME,
-        }
-    }
-
-    fn other(self) -> Self {
-        match self {
-            OperatorImpl::Node => OperatorImpl::Rust,
-            OperatorImpl::Rust => OperatorImpl::Node,
-        }
-    }
-}
-
-/// **내 번들**의 오퍼레이터 실행 파일 둘(Node·Rust). 회수는 기록의 `entryPath` 가 이 중 하나일 때만 한다(G2·#2254 security L1) —
-/// 같은 HOME 의 dev·시험 빌드가 릴리스 앱의 오퍼레이터를 내리지 않게 한다. 업그레이드는 같은 `/Applications/…` 경로라 막히지 않는다.
+/// **내 번들**의 오퍼레이터 실행 파일 자리 — 지금 판(Rust)과 옛 판(Node). 회수는 기록의 `entryPath` 가 이 중 하나일 때만 한다
+/// (G2·#2254 security L1) — 같은 HOME 의 dev·시험 빌드가 릴리스 앱의 오퍼레이터를 내리지 않게 한다.
 pub fn my_bundle_operators() -> Vec<PathBuf> {
-    [OPERATOR_SIDECAR_NAME, OPERATOR_RS_SIDECAR_NAME]
+    [OPERATOR_SIDECAR_NAME, LEGACY_NODE_OPERATOR_SIDECAR_NAME]
         .iter()
         .filter_map(|n| crate::sidecar_path(n).ok())
         .collect()
@@ -1076,9 +1032,7 @@ pub enum EnsureKind {
 /// 그 순간은 앱 기동 직후(`daemon_ensure`)이지 러너를 띄우려 할 때가 아니다 — 그러나
 /// 이 타입 자체는 그 시점을 모른다. 아직 안 붙었으면 `None` 이다.
 ///
-/// **커뮤니티마다 프로세스 모드(격리 C, 스위치 `HARKROOM_OPERATOR_PER_COMMUNITY=1`)에서는 연결이 여럿이다** —
-/// 커뮤니티 키(`community_root::community_key`)마다 하나. 스위치가 꺼져 있으면 키는 언제나 빈 문자열 하나라
-/// 지금과 같다.
+/// **오퍼레이터는 커뮤니티마다 하나다(격리 C)** — 연결도 커뮤니티 키(`community_root::community_key`)마다 하나.
 pub struct DaemonState {
     pub inner: Mutex<std::collections::HashMap<String, Arc<DaemonConnection>>>,
 }
@@ -1131,8 +1085,7 @@ impl DaemonState {
 ///
 /// ## `community` — 격리 C P6
 ///
-/// 스위치가 꺼져 있으면 `community` 는 무시되고 지금의 오퍼레이터
-/// 하나에 붙는다. 켜져 있으면 `community`(baseUrl)가 **있어야 한다** — 없을 때 아무 커뮤니티에나 붙지 않는다.
+/// `community`(baseUrl)가 **있어야 한다** — 없을 때 아무 커뮤니티에나 붙지 않는다.
 ///
 /// 락은 맵 전체에 하나다: 한 커뮤니티의 오퍼레이터를 띄우는 동안 다른 커뮤니티 요청은 기다린다. 띄우기는
 /// 처음 한 번뿐이라 그 대기는 짧고, 커뮤니티별 락을 따로 두는 복잡함보다 낫다.
@@ -1141,24 +1094,11 @@ pub fn ensure_daemon(
     state: &DaemonState,
     community: Option<&str>,
 ) -> Result<(Arc<DaemonConnection>, EnsureKind), String> {
-    let target = if crate::community_root::per_community_enabled() {
-        let base_url = community
-            .filter(|c| !c.trim().is_empty())
-            .ok_or_else(|| "커뮤니티마다 오퍼레이터 모드인데 어느 커뮤니티인지 받지 못했다".to_string())?;
-        Some(resolve_community_target(app, base_url)?)
-    } else {
-        None
-    };
-    // Rust 오퍼레이터는 커뮤니티 하나만 맡는다(`serve --base-url`) — 커뮤니티 모드가 아니면 띄울 수 없다.
-    // Node 로 물러나지 않는다(모듈 주석 "왜 폴백이 없나").
-    let operator_impl = OperatorImpl::current();
-    if operator_impl == OperatorImpl::Rust && target.is_none() {
-        return Err(format!(
-            "{OPERATOR_IMPL_ENV}=rust 는 커뮤니티마다 오퍼레이터 모드({}=1)에서만 쓴다",
-            crate::community_root::PER_COMMUNITY_ENV
-        ));
-    }
-    let slot = target.as_ref().map(|t| t.key.clone()).unwrap_or_default();
+    let base_url = community
+        .filter(|c| !c.trim().is_empty())
+        .ok_or_else(|| "커뮤니티마다 오퍼레이터 모드인데 어느 커뮤니티인지 받지 못했다".to_string())?;
+    let target = resolve_community_target(app, base_url)?;
+    let slot = target.key.clone();
     let mut guard = state
         .inner
         .lock()
@@ -1173,25 +1113,19 @@ pub fn ensure_daemon(
         guard.remove(&slot);
     }
 
-    let paths = match &target {
-        Some(t) => {
-            let paths = community_endpoint_paths(t)?;
-            // 확인을 마친 뿌리만 색인에 남긴다 — 오퍼레이터(P1 `readRootsIndex`)와 다음 기동이 같은 자리를 찾는다.
-            record_community_root(app, t)?;
-            paths
-        }
-        None => resolve_endpoint_paths(app)?,
-    };
+    let paths = community_endpoint_paths(&target)?;
+    // 확인을 마친 뿌리만 색인에 남긴다 — 오퍼레이터(P1 `readRootsIndex`)와 다음 기동이 같은 자리를 찾는다.
+    record_community_root(app, &target)?;
     // **내 빌드의 daemon 실행 파일.** 소켓을 쥔 daemon 이 이것과 다른 것이면 안 붙는다
     // (`same_entry_path` 주석: 소켓이 워크트리를 가로질러 공유된다).
-    let my_entry = crate::sidecar_path(operator_impl.sidecar_name())?;
-    // 내 번들의 다른 구현 사이드카(G2) — 소켓을 쥔 것이 이것이면 구현 스위치가 바뀐 것이라 내리고 띄운다.
-    let my_other = crate::sidecar_path(operator_impl.other().sidecar_name())?;
+    let my_entry = crate::sidecar_path(OPERATOR_SIDECAR_NAME)?;
+    // 내 번들의 옛 구현(Node) 사이드카 자리(G2) — 소켓을 쥔 것이 이것이면 옛 판이 띄워 둔 것이라 내리고 띄운다.
+    let my_other = crate::sidecar_path(LEGACY_NODE_OPERATOR_SIDECAR_NAME)?;
     let launch_app = app.clone();
     let launch_paths = paths.clone();
     let launch_target = target.clone();
     let (conn, kind) = ensure_at(&paths, &my_entry, &[my_other], runner_exit_emitter(app), move || {
-        spawn_daemon(&launch_app, &launch_paths, launch_target.as_ref())
+        spawn_daemon(&launch_app, &launch_paths, &launch_target)
     })?;
     guard.insert(slot, conn.clone());
     Ok((conn, kind))
@@ -1549,7 +1483,7 @@ fn ensure_at(
         {
             // ── G2: 소켓을 쥔 것이 **내 번들의 다른 구현**(옛 Node ↔ Rust) 오퍼레이터다 ──────
             //
-            // 구현 스위치(`HARKROOM_OPERATOR_IMPL`)를 바꿔 다시 뜬 자리다. 그대로 두면 붙지도 못하고, 띄운 우리 것은
+            // 옛 판(Node 오퍼레이터를 싣던 판)에서 앱을 올린 뒤 처음 뜬 자리다(예전에는 구현 스위치를 바꿔 뜬 자리이기도 했다). 그대로 두면 붙지도 못하고, 띄운 우리 것은
             // 점유로 물러난다 — 같은 operatorId 로 둘이 서버에 붙을 일은 없지만 앱이 오퍼레이터를 못 쓴다. 내 번들 경로일
             // 때만 내린다: 남의 빌드(dev·시험·다른 워크트리)는 아래 「다른 빌드」 가지로 가서 그대로 산다.
             log_line(&format!(
@@ -1730,13 +1664,9 @@ pub fn resolve_endpoint_paths(app: &tauri::AppHandle) -> Result<EndpointPaths, S
 fn spawn_daemon(
     app: &tauri::AppHandle,
     paths: &EndpointPaths,
-    community: Option<&crate::community_root::CommunityTarget>,
+    community: &crate::community_root::CommunityTarget,
 ) -> Result<DaemonExitWatch, String> {
-    let operator_impl = OperatorImpl::current();
-    let program = match operator_impl {
-        OperatorImpl::Node => crate::sidecar_path(OPERATOR_SIDECAR_NAME)?,
-        OperatorImpl::Rust => crate::sidecar_path(OPERATOR_RS_SIDECAR_NAME)?,
-    };
+    let program = crate::sidecar_path(OPERATOR_SIDECAR_NAME)?;
     if !program.is_file() {
         return Err(format!(
             "daemon 사이드카를 찾지 못했다: `{}` — 빌드가 externalBin 을 이 이름으로 넣었는지 확인하라",
@@ -1747,34 +1677,26 @@ fn spawn_daemon(
     let nonce = new_nonce();
     let app_version = app.package_info().version.to_string();
 
-    let mut cmd = match (operator_impl, community) {
-        (OperatorImpl::Node, _) => daemon_command(&program, paths, &nonce, &app_version),
-        (OperatorImpl::Rust, Some(target)) => {
-            use tauri::Manager;
-            let app_data_dir = app
-                .path()
-                .app_data_dir()
-                .map_err(|e| format!("앱 데이터 디렉터리를 찾지 못했다: {e}"))?;
-            let runner = crate::sidecar_path(RUNNER_SIDECAR_FOR_OPERATOR)?;
-            rust_daemon_command(
-                &program,
-                paths,
-                &nonce,
-                &app_version,
-                &RustServeArgs {
-                    base_url: &target.key,
-                    app_data_root: &app_data_root(&app_data_dir),
-                    runner: &runner,
-                },
-            )
-        }
-        (OperatorImpl::Rust, None) => {
-            return Err(format!("{OPERATOR_IMPL_ENV}=rust 인데 커뮤니티를 받지 못했다"));
-        }
+    let app_data_dir = {
+        use tauri::Manager;
+        app.path()
+            .app_data_dir()
+            .map_err(|e| format!("앱 데이터 디렉터리를 찾지 못했다: {e}"))?
     };
+    let runner = crate::sidecar_path(RUNNER_SIDECAR_FOR_OPERATOR)?;
+    let mut cmd = rust_daemon_command(
+        &program,
+        paths,
+        &nonce,
+        &app_version,
+        &RustServeArgs {
+            base_url: &community.key,
+            app_data_root: &app_data_root(&app_data_dir),
+            runner: &runner,
+        },
+    );
     // 커뮤니티마다 모드: 이 오퍼레이터(와 그 러너)가 맡은 커뮤니티·뿌리를 준다. 오퍼레이터는 이 값으로 계정 선택
     // 자리(`claudePoolsFilePath`)를 정하고, `operator.json` 에 이 커뮤니티 칸만 받는다(`assertSingleCommunity`).
-    // 꺼져 있으면 아무것도 주지 않는다 — 앱이 물려받은 스위치 값이 새지 않게 지운다.
     // 옛 자리 커뮤니티(D5)면 `HARKROOM_OPERATOR_LEGACY=1` 도 준다 — 러너가 작업 폴더를 옛 경로 그대로 쓴다(P4
     // `agentStateBaseDir`). 그 칸이 아니면 지운다(security #1641 n2). 무엇을 주고 지울지는 `community_env` 한 곳이 정한다.
     for (name, value) in crate::community_root::community_env(community) {
@@ -2206,6 +2128,11 @@ fn spawn_failure_reason(program: &Path, e: &std::io::Error) -> String {
 ///
 /// `detached_command()` 가 `main.rs` 에서 `runner_spawn` 과 테스트에 공유되던 것과 같은
 /// 이유다 — **재는 대상과 도는 대상이 같아야 한다.**
+///
+/// **P2 이후 시험 전용이다.** 앱은 Node 오퍼레이터를 더 띄우지 않는다(`spawn_daemon` 은 `rust_daemon_command` 만 쓴다).
+/// 아래 회귀선들이 옛 Node 오퍼레이터(로컬에 `target/debug/harkroom-operator` 가 있을 때만)로 붙기·점유·회수를 재는
+/// 받침으로만 남았고, `packages/operator` 를 지우는 P3 에서 회귀선과 함께 걷는다.
+#[cfg(test)]
 fn daemon_command(
     program: &Path,
     paths: &EndpointPaths,
@@ -2296,7 +2223,7 @@ fn rust_daemon_command(
     cmd
 }
 
-/// 오퍼레이터의 stdout·stderr 를 로그 파일로 돌린다(Node·Rust 판 공통).
+/// 오퍼레이터의 stdout·stderr 를 로그 파일로 돌린다.
 fn redirect_output_to_log(cmd: &mut std::process::Command, paths: &EndpointPaths) {
     use std::process::Stdio;
 
@@ -3367,7 +3294,7 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target")
             .join("debug");
-        let p = dir.join(OPERATOR_SIDECAR_NAME);
+        let p = dir.join(LEGACY_NODE_OPERATOR_SIDECAR_NAME);
         if p.is_file() {
             Some(p)
         } else {
@@ -3970,23 +3897,12 @@ target/release/bundle/macos/Harkroom.app/Contents/MacOS/harkroom-desktop";
     /// 모드이고, `daemon_command` 를 떼어낸 이유가 그것이다).
     ///
     /// 되돌려 RED: `daemon_command` 의 `cmd.env("PATH", …)` 한 줄을 지우면 빨개진다.
-    /// s9 ② — 기본은 Rust 다. 되돌리는 길은 정확히 `node` 하나이고, 커뮤니티마다 모드를 끈 `=0` 에서는 기본이 Node 다
-    /// (Rust 오퍼레이터는 커뮤니티 하나만 맡는다). 빈 값·대문자·오타는 기본을 따른다.
+    /// P2 — 앱이 싣고 띄우는 오퍼레이터는 Rust 하나다. 옛 Node 이름은 회수용으로만 남는다(두 이름이 갈려야 G2 가 산다).
     #[test]
-    fn 오퍼레이터_구현_기본은_rust_되돌리기는_node_하나() {
-        // 커뮤니티마다 모드(기본)
-        assert_eq!(OperatorImpl::from_env_value(None, true), OperatorImpl::Rust);
-        assert_eq!(OperatorImpl::from_env_value(Some(""), true), OperatorImpl::Rust);
-        assert_eq!(OperatorImpl::from_env_value(Some("rust"), true), OperatorImpl::Rust);
-        assert_eq!(OperatorImpl::from_env_value(Some("Node"), true), OperatorImpl::Rust);
-        assert_eq!(OperatorImpl::from_env_value(Some("node "), true), OperatorImpl::Rust);
-        assert_eq!(OperatorImpl::from_env_value(Some("node"), true), OperatorImpl::Node);
-        // `=0`(옛 단일 오퍼레이터로 되돌리기): 기본은 Node, 명시한 rust 는 그대로(ensure_daemon 이 거절해 알린다)
-        assert_eq!(OperatorImpl::from_env_value(None, false), OperatorImpl::Node);
-        assert_eq!(OperatorImpl::from_env_value(Some("node"), false), OperatorImpl::Node);
-        assert_eq!(OperatorImpl::from_env_value(Some("rust"), false), OperatorImpl::Rust);
-        assert_eq!(OperatorImpl::Node.sidecar_name(), "harkroom-operator");
-        assert_eq!(OperatorImpl::Rust.sidecar_name(), "harkroom-operator-rs");
+    fn 오퍼레이터는_rust_하나이고_옛_node_이름은_회수용이다() {
+        assert_eq!(OPERATOR_SIDECAR_NAME, "harkroom-operator-rs");
+        assert_eq!(LEGACY_NODE_OPERATOR_SIDECAR_NAME, "harkroom-operator");
+        assert_ne!(OPERATOR_SIDECAR_NAME, LEGACY_NODE_OPERATOR_SIDECAR_NAME);
     }
 
     /// S2 A4② — Rust 오퍼레이터 커맨드가 `serve` 와 앱이 정한 값만 싣는다. `--app-version` 이 빠지면

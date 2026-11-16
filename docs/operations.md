@@ -461,7 +461,7 @@ curl -fsS http://localhost:3400/healthz | python3 -c 'import json,sys; print(jso
    상태다) 또는 `systemctl --user status harkroom-operator`. 그리고 설정 › 에이전트 상세에서 그
    에이전트가 **배정돼 있는지** — 배정이 없으면 어느 오퍼레이터도 띄우지 않는다.
 3. 로그를 본다. 오퍼레이터: 데이터 디렉터리의 `operator/operator-v1.log`(앱이 띄운 경우),
-   `/tmp/harkroom-operator/operator.log`(launchd 템플릿), `journalctl --user -u harkroom-operator`
+   `~/Library/Logs/harkroom-operator.<8자>.log`(launchd 템플릿), `journalctl --user -u harkroom-operator`
    (systemd). 러너: 같은 디렉터리의 `operator/runner-<agentId>.log` — 러너가 배정을 거절당했으면
    (`personal_on_foreign_operator`·`mcp_server_missing:<이름>`) 오퍼레이터 로그에 사유가 있다.
 4. 러너가 뜨면 쌓인 것을 처리한다. 설계가 at-least-once이므로 **늦게라도 답한다** —

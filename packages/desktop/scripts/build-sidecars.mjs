@@ -2,10 +2,9 @@
 // 앱과 함께 배포되는 Node 사이드카를 **전부** 만든다.
 //
 // - `harkroom-runner` — 러너(#431 1단계 B, `#425`·`#429` 를 닫았다). `node-pty` 를 곁들인다.
-// - `harkroom-operator` — daemon(#431 2단계 a). **네이티브 의존이 없다.**
-// - `harkroom-operator-rs` — Rust 오퍼레이터(S2 A4②, `crates/harkroom-operator`). Node 가 아니라 Mach-O 다.
-//   앱은 기본으로 이것을 띄운다(s9 ②) — `HARKROOM_OPERATOR_IMPL=node` 이거나 커뮤니티마다 모드를 끈 `=0` 이면 Node. `sign-app.mjs` 가 내용으로 Mach-O 를
-//   찾아 서명하므로 서명 쪽은 손대지 않는다.
+// - `harkroom-operator-rs` — 오퍼레이터(`crates/harkroom-operator`). Node 가 아니라 Mach-O 다. 앱이 띄우는 오퍼레이터는
+//   이것 하나다 — Node 오퍼레이터(`packages/operator`)는 P2 에서 번들에서 뺐다(되돌리는 스위치도 없다). `sign-app.mjs` 가
+//   내용으로 Mach-O 를 찾아 서명하므로 서명 쪽은 손대지 않는다.
 // - `harkroom-runner-rs` — Rust 러너(B4-5b, `crates/harkroom-runner`). 역시 Mach-O 다. **싣기만 하고 아무도 띄우지 않는다** —
 //   오퍼레이터가 에이전트마다 러너를 고르는 것은 B4-5c 다. 그 전까지 앱의 모든 턴은 지금처럼 `harkroom-runner`(Node)로 돈다.
 //
@@ -21,7 +20,7 @@
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, chmodSync, rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { appVersion, binariesDir, buildSidecar, operatorDefines, repoRoot, resolveTarget, runnerDefines } from './sidecar.mjs';
+import { appVersion, binariesDir, buildSidecar, repoRoot, resolveTarget, runnerDefines } from './sidecar.mjs';
 
 async function main() {
   const target = resolveTarget();
@@ -34,7 +33,6 @@ async function main() {
   rmSync(binariesDir, { recursive: true, force: true });
 
   const agentRoot = join(repoRoot, 'packages', 'agent');
-  const operatorRoot = join(repoRoot, 'packages', 'operator');
 
   const runner = await buildSidecar({
     name: 'harkroom-runner',
@@ -46,29 +44,12 @@ async function main() {
     target,
   });
 
-  const daemon = await buildSidecar({
-    name: 'harkroom-operator',
-    entry: join(operatorRoot, 'src', 'main.ts'),
-    resolveFrom: operatorRoot,
-    // **daemon 은 `node-pty` 를 곁들이지 않는다.** daemon 이 하는 일은 러너 프로세스를
-    // spawn 하고 unix 소켓으로 말하는 것이고, 그 어느 것도 PTY 를 요구하지 않는다 —
-    // PTY 는 하네스를 실제로 돌리는 러너의 일이다. 네이티브 애드온을 안 곁들이므로
-    // daemon 은 `bundle.resources` 도 필요 없다(그 항목은 러너 것으로 그대로 둔다).
-    nativeDeps: [],
-    // 헤드리스로 env 없이 돌 때 hello 에 실을 버전(`operator/src/version.ts`).
-    define: operatorDefines(version),
-    target,
-  });
-
   const operatorRs = buildRustSidecar(target, 'harkroom-operator', 'harkroom-operator-rs');
   const runnerRs = buildRustSidecar(target, 'harkroom-runner', 'harkroom-runner-rs');
 
   console.log(`러너 사이드카 빌드 완료: ${runner.outfile}`);
   console.log(`  구워 넣은 버전: ${version}`);
   console.log(`  node-pty prebuild: ${target.platform}-${target.arch}`);
-  console.log(`operator 사이드카 빌드 완료: ${daemon.outfile}`);
-  console.log('  네이티브 의존: 없음 (PTY 는 러너의 일이다)');
-  console.log(`  구워 넣은 버전: ${version}`);
   console.log(`Rust operator 사이드카 빌드 완료: ${operatorRs}`);
   console.log(`Rust runner 사이드카 빌드 완료: ${runnerRs}`);
 }
