@@ -151,7 +151,11 @@ describe('repo hygiene', () => {
 
     // 대괄호 IPv6(`http://[::1]/`)를 먼저 잡는다 — `]` 를 빼고 세면 `[::` 에서 잘린다.
     const URL호스트 = /\bhttps?:\/\/(\[[^\]\s]*\](?::\d*)?|[^\s/?#'"`)\]},\\]*)/gi;
-    const 이메일 = /\b[A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,})\b/g;
+    /**
+     * 도메인은 영숫자로 시작해야 한다 — `operator@.service.template` 처럼 `@` 바로 뒤가 점인
+     * systemd 템플릿 유닛 이름은 주소가 아니다.
+     */
+    const 이메일 = /\b[A-Za-z0-9._%+-]+@([A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,})\b/g;
     /**
      * 조직 이름은 도메인이 아니어서 허용 목록으로 셀 수 없다. 대신 **실측값의 모양**만
      * 본다: `org=Foo-Bar` 처럼 대문자 합성어가 값 자리에 오면 걸린다(첫 사고가 그 모양이다).
@@ -255,6 +259,8 @@ describe('repo hygiene', () => {
       expect(걸리는주소('연락은 me@fizz.com, you@example.com 으로')).toEqual([]);
       expect(걸리는주소('작성자 someone@mail-provider.net')).toEqual(['someone@mail-provider.net']);
       expect(걸리는주소('"icons/128x128@2x.png"')).toEqual([]);
+      // systemd 템플릿 유닛 이름(`@` 뒤가 점)은 주소가 아니다.
+      expect(걸리는주소('ops/operator@.service.template, harkroom-operator@.service')).toEqual([]);
       // 조직 이름은 모양으로 본다 — 픽스처의 한 단어는 통과하고 합성어 실측값은 걸린다.
       expect(걸리는주소("orgName: 'Corp'")).toEqual([]);
       expect(걸리는주소('실측: `org=Acme-Lychee` 로 확인했다')).toEqual(['org=Acme-Lychee']);

@@ -51,6 +51,7 @@ pub mod pr_gate;
 pub mod pr_watch_poller;
 pub mod provider_lane_mount;
 pub mod provider_usage;
+pub mod register_cli;
 pub mod relay_mux;
 pub mod retiring;
 pub mod runner_ledger;

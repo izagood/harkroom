@@ -591,34 +591,45 @@ Rust 로 옮겨갔기 때문이다. `#250` 이 좁히기 시작한 경계가 여
 인자가 리터럴(`["-lc", "echo $PATH"]`)이라 임의 명령을 실행하지 않는다 — 같은 파일이
 그것도 함께 못박는다.
 
-### 앱 없는 머신 — `register` 와 `run` (단계 6)
+### 앱 없는 머신 — `register` 와 `serve` (단계 6 → Rust 전환 P1b)
 
 앱이 있는 머신은 **설정 › Operators › "이 머신을 등록"** 한 번이면 끝이다 — 앱이 코드를 발급해 이
 머신의 오퍼레이터에 넘기고, 오퍼레이터가 claim 해 곧바로 그 커뮤니티에 붙는다. 아래는 앱이 없는
-머신의 길이고, CLI `register` 도 도는 오퍼레이터가 있으면 그쪽에 시킨다(재시작 없음).
+머신의 길이고, CLI `register` 도 **그 커뮤니티의** 오퍼레이터 소켓이 떠 있으면 그쪽에 시킨다(재시작 없음).
 
-오퍼레이터는 앱의 사이드카이지만 앱이 필요하지 않다. 서버·에이전트를 돌릴 머신에 앱 없이
-오퍼레이터 하나만 두는 길:
+오퍼레이터는 **커뮤니티 하나에 하나**다(`harkroom-operator-rs serve --base-url <주소>`). 옛 Node 판의
+`harkroom-operator run`(한 프로세스가 여러 커뮤니티)은 없다 — 커뮤니티가 둘이면 `serve` 도 둘 띄운다.
+각 오퍼레이터의 자리(뿌리)는 `~/.harkroom-agent/c/<sha256(주소) 앞 8자>/` 이고, 소켓·설정·토큰이 그 아래 있다.
 
 ```sh
 # 1. 설정 › Operators(아무 기기의 앱)에서 등록 코드를 발급한다 — 5분·1회용.
-# 2. 그 머신에서 코드를 토큰으로 바꾼다. 토큰은 <데이터 디렉터리>/operator/secrets/ 에 0600 으로 남고,
-#    operator/operator.json 에 그 서버의 자리가 생긴다.
-harkroom-operator register https://<host> <코드> --name lab-mac
+# 2. 그 머신에서 코드를 토큰으로 바꾼다. 토큰은 <뿌리>/operator/secrets/ 에 0600 파일로 남고(키체인을 쓰지 않는다 —
+#    키체인 없는 Linux 도 같다), <뿌리>/operator/operator.json 에 그 서버의 자리가 생긴다.
+#    끝에 이 커뮤니티의 오퍼레이터를 띄울 serve 명령을 보여 준다.
+harkroom-operator-rs register https://<host> <코드> --name lab-mac
 # 3. 그 자리에 이 머신이 돌릴 에이전트를 적는다(키는 에이전트 계정 id). 앱이 있는 머신이면
 #    설정 › 에이전트 상세의 "이 머신" 절이 같은 파일에 같은 것을 쓴다 — 손으로는 앱 없는 머신에서만.
 #    { "communities": { "https://<host>": { "agents": { "<agentId>": { "workingDir": "~/dev/x" } } } } }
-# 4. 상주시킨다. 소켓·설정·토큰 자리는 앱과 같은 규칙으로 데이터 디렉터리에서 조립한다 —
-#    같은 머신에 앱이 나중에 떠도 같은 소켓을 보고 "이미 서비스 중"으로 물러난다.
-harkroom-operator run            # 또는 --data-dir <경로> / HARKROOM_DATA_DIR
+# 4. 상주시킨다 — register 가 보여 준 명령 그대로. 같은 머신에 앱이 나중에 떠도 같은 소켓을 보고
+#    "이미 서비스 중"으로 물러난다. --runner-command 가 없으면 배정을 받아도 러너를 못 띄운다.
+harkroom-operator-rs serve --base-url https://<host> --runner-command <harkroom-runner 절대 경로>
 # 5. 설정 › 에이전트 상세에서 그 오퍼레이터를 배정한다. 러너가 뜬다.
 ```
 
-데이터 디렉터리의 기본값은 앱과 같다: macOS `~/Library/Application Support/app.harkroom.desktop`,
+register 가 보여 준 명령에 `--app-data <dir>` 이 붙어 있으면, 그 커뮤니티의 뿌리를 앱 데이터 디렉터리의
+색인(`operators.json`)이 정한 것이다(앱이 옛 단일 자리를 그대로 쓰게 적어 둔 legacy 칸 등). 감독 설정에도 그 인자를
+그대로 넣는다 — 빼면 오퍼레이터가 계산한 뿌리를 보고 "토큰이 없다(등록 전)"로 서버에 붙지 않는다.
+
+**옛 Node `run` 머신(앱 없음)은 그대로 옮겨지지 않는다.** 옛 단일 자리(`<데이터 디렉터리>/operator/operator.json`)는
+색인에 legacy 칸이 있을 때만 읽히는데, 그 칸은 앱이 뜰 때만 적는다. 앱이 없는 머신은 새로 `register` 한다.
+
+소켓 경로는 100바이트까지다(`socket_path_too_long` 으로 거절). 계산한 뿌리면 HOME 이 47바이트까지 된다.
+
+데이터 디렉터리(색인 `operators.json` 이 사는 곳)의 기본값은 앱과 같다: macOS `~/Library/Application Support/app.harkroom.desktop`,
 리눅스 `$XDG_DATA_HOME/app.harkroom.desktop`. 감독(launchd/systemd)은 8-1 이다.
 
 에이전트에 `mcpServers` 이름이 달려 있으면 그 정의는 **이 머신**에 있어야 한다 —
-`<데이터 디렉터리>/operator/mcp-servers.json`(`{ "<이름>": { "command": …, "args": […], "env": {…} } }`)
+`<뿌리>/operator/mcp-servers.json`(`{ "<이름>": { "command": …, "args": […], "env": {…} } }`)
 또는 `~/.claude.json` 의 `mcpServers`. 없는 이름이 있으면 오퍼레이터는 그 배정을 **띄우지 않고**
 로그에 `mcp_server_missing:<이름>` 을 남긴다 — 도구 없이 뜬 에이전트는 조용히 실패하기 때문이다.
 
@@ -666,23 +677,24 @@ PAT 절에서 폐기한다.
 
 감독할 대상은 **오퍼레이터**다 — 러너가 아니다(스펙 2026-09-20 §8). 앞 판본은 에이전트마다
 `dev.harkroom.agent.<handle>.plist` 하나씩 러너를 감독했고 그 plist 에 서버 URL 과 PAT 가 평문으로
-담겼다. 지금은 머신에 하나(`harkroom-operator run`)이고 러너는 그 오퍼레이터가 배정을 받아
-띄우며, 죽으면 백오프 뒤 다시 띄운다. 러너는 URL 도 PAT 도 받지 않으므로 감독 설정에 비밀이
-없다 — 토큰은 데이터 디렉터리의 `operator/secrets/` 에 있다.
+담겼다. 지금은 **커뮤니티마다 오퍼레이터 하나**(`harkroom-operator-rs serve --base-url <주소>`)이고 러너는 그
+오퍼레이터가 배정을 받아 띄우며, 죽으면 백오프 뒤 다시 띄운다. 감독 설정에는 서버 주소만 있고 비밀이
+없다 — 토큰은 그 커뮤니티 뿌리의 `operator/secrets/` 에 있다. 커뮤니티 키(`<8자>`)는 register 가 찍은 설정 경로의
+`c/<8자>` 다.
 
 | 플랫폼 | 템플릿 | 붙이는 법 |
 |---|---|---|
-| macOS | [`ops/operator.plist.template`](../ops/operator.plist.template) | `@BIN@`·`@USER@` 를 채워 `~/Library/LaunchAgents/dev.harkroom.operator.plist` 로, `launchctl load` |
-| Linux | [`ops/operator.service.template`](../ops/operator.service.template) | `@BIN@` 을 채워 `~/.config/systemd/user/harkroom-operator.service` 로, `systemctl --user enable --now harkroom-operator`, `loginctl enable-linger` |
+| macOS | [`ops/operator.plist.template`](../ops/operator.plist.template) | `@BIN@`·`@RUNNER@`·`@BASE_URL@`·`@KEY@`·`@USER@` 를 채워 `~/Library/LaunchAgents/dev.harkroom.operator.<8자>.plist` 로, `launchctl load` |
+| Linux | [`ops/operator@.service.template`](../ops/operator@.service.template) | `@BIN@`·`@RUNNER@` 을 채워 `~/.config/systemd/user/harkroom-operator@.service` 로(한 번), 커뮤니티마다 `~/.config/harkroom/operator-<8자>.env` 에 `BASE_URL=`, `systemctl --user enable --now harkroom-operator@<8자>`, `loginctl enable-linger` |
 
 함정은 셋이고 전부 템플릿 주석에 있다:
 
 - **감독할 대상은 실행 파일 그 자체다.** `pnpm` 같은 중간 프로세스를 감독하면 오퍼레이터가
   죽어도 그 프로세스가 남아 감독이 재시작하지 않는 경우가 생긴다. 사이드카
-  (`/Applications/Harkroom.app/Contents/MacOS/harkroom-operator`)를 그대로 적는다.
+  (`/Applications/Harkroom.app/Contents/MacOS/harkroom-operator-rs`)를 그대로 적는다.
 - **`PATH` 를 명시한다.** launchd·systemd 는 로그인 셸의 PATH 를 물려받지 않는다. 오퍼레이터는
-  러너에 로그인 셸의 PATH 를 따로 캐내 넘기지만(`loginPath.ts`), 사이드카가 셔뱅 스크립트라
-  **오퍼레이터 자신을 실행할 `node`** 가 감독의 PATH 에서 발견돼야 한다(`#513`).
+  러너에 로그인 셸의 PATH 를 따로 캐내 넘기지만, Node 러너 사이드카가 셔뱅 스크립트라
+  **러너를 실행할 `node`** 가 감독의 PATH 에서도 발견돼야 한다(`#513`).
 - **러너를 데려가지 않는다.** 러너는 detached 라 오퍼레이터의 재시작에 죽지 않고, 새 오퍼레이터가
   장부(`operator/runners-v1.json`)로 다시 소유한다 — systemd 유닛의 `KillMode=process` 가 그
   성질을 지킨다. 진행 중인 턴(사람이 기다리는 답)이 감독의 재시작으로 끊기지 않는 이유다.
