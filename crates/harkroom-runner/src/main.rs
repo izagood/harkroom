@@ -484,6 +484,12 @@ fn main() {
     );
     // drain 시한이 지나도 도는 턴이 있으면(P2): 물러남 표지 → 감시 루프가 SIGTERM → 10초 유예 → 남은 PTY 그룹에 SIGKILL.
     // 기록 가리기(아래 임대 놓기)는 SIGKILL **뒤**다 — 하네스가 죽은 뒤에 가려야 덮어쓰기에 지지 않는다.
+    // 사람이 연 새 터미널 턴은 drain 이 기다리지 않는다(기다릴 답이 없다) — 바로 회수하고 끝 처리(기록 저장)까지 기다린다.
+    // 링크를 닫기 전이어야 끝 처리가 스레드를 읽는다.
+    let (reclaimed, left) = maker.shutdown_interactive(SHUTDOWN_GRACE);
+    if reclaimed > 0 {
+        eprintln!("[shutdown] 터미널 턴 {reclaimed}개 회수 — 남은 것 {left}개");
+    }
     if shutdown_slots.stop_all() > 0 {
         let left = running.wait_idle_for(SHUTDOWN_GRACE);
         if left > 0 {

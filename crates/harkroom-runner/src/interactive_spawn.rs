@@ -48,6 +48,70 @@ struct Live {
 
 type SharedLive = Arc<Mutex<Live>>;
 
+/// 도는 새 터미널 턴 목록 — 러너가 물러날 때 하나씩 회수하고, 끝 처리(세션 기록 저장)까지 기다린다.
+#[derive(Default)]
+pub(super) struct Roster {
+    inner: Mutex<RosterInner>,
+    idle: std::sync::Condvar,
+}
+
+#[derive(Default)]
+struct RosterInner {
+    next: u64,
+    live: Vec<(u64, SharedLive)>,
+}
+
+impl Roster {
+    fn lock(&self) -> std::sync::MutexGuard<'_, RosterInner> {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner())
+    }
+    fn add(&self, l: &SharedLive) -> u64 {
+        let mut g = self.lock();
+        g.next += 1;
+        let id = g.next;
+        g.live.push((id, Arc::clone(l)));
+        id
+    }
+    fn remove(&self, id: u64) {
+        let mut g = self.lock();
+        g.live.retain(|(i, _)| *i != id);
+        if g.live.is_empty() {
+            self.idle.notify_all();
+        }
+    }
+    /// 모두에 회수를 건다(SIGTERM → 유예 뒤 SIGKILL). 건 수를 돌려준다.
+    fn shutdown_all(&self) -> usize {
+        let lives: Vec<SharedLive> = self
+            .lock()
+            .live
+            .iter()
+            .map(|(_, l)| Arc::clone(l))
+            .collect();
+        for l in &lives {
+            let acts = lock(l).life.shutdown();
+            apply(l, acts);
+        }
+        lives.len()
+    }
+    /// 끝 처리까지 마친 턴이 0 이 되기를 `limit` 까지 기다린다. 남은 수를 돌려준다.
+    fn wait_idle_for(&self, limit: Duration) -> usize {
+        let deadline = std::time::Instant::now() + limit;
+        let mut g = self.lock();
+        while !g.live.is_empty() {
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                break;
+            }
+            g = self
+                .idle
+                .wait_timeout(g, deadline - now)
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
+        }
+        g.live.len()
+    }
+}
+
 fn lock(l: &SharedLive) -> std::sync::MutexGuard<'_, Live> {
     l.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -273,6 +337,18 @@ impl<L: AgentLink + Send + Sync + 'static> RunnerMaker<L> {
         };
         let accepts_input = crate::pty::accepts_pty_input(plan.stdin_file.as_deref());
 
+        // 계정 칩 — 풀 표면이 있는 하네스에만, 이름 없이 순번만(계정 칩 A, #1039). 기록 계정을 따르면 그 계정의 풀로 센다.
+        let ranks = if crate::adapter::has_account_pool(harness).unwrap_or(false) {
+            let snap = self
+                .accounts
+                .as_ref()
+                .map(|h| h.snapshot())
+                .unwrap_or_default();
+            crate::turn_attempt_account::account_ranks(&snap, account.as_ref())
+        } else {
+            (None, None)
+        };
+
         // 한 잠금으로 재검사·세션 열기·등록. 멘션 턴이 막 시작되는 중이면 등록될 때까지 기다렸다 다시 본다.
         let live: SharedLive = Arc::new(Mutex::new(Live {
             life: InteractiveLife::new(),
@@ -293,8 +369,8 @@ impl<L: AgentLink + Send + Sync + 'static> RunnerMaker<L> {
                         harness: harness.as_str().to_string(),
                         mode: Some("interactive".into()),
                         accepts_input,
-                        claude_account_rank: None,
-                        claude_pool_rank: None,
+                        claude_account_rank: ranks.0,
+                        claude_pool_rank: ranks.1,
                         on_viewer_count: Some(Arc::new(move |n| {
                             let acts = lock(&lv).life.viewer_count(n);
                             apply(&lv, acts);
@@ -320,6 +396,7 @@ impl<L: AgentLink + Send + Sync + 'static> RunnerMaker<L> {
             }
         };
         let session = Arc::new(session.expect("등록했으면 세션을 열었다"));
+        let roster_id = self.interactive.add(&live);
 
         // 관문 — 신뢰·bypass(사람이 매번 경고 화면에 답하지 않게). codex 대화형은 규칙 파일을 쓰지 않는다 — 남은 것을 지운다.
         crate::workspace_trust::prepare_harness_gates(
@@ -343,6 +420,7 @@ impl<L: AgentLink + Send + Sync + 'static> RunnerMaker<L> {
                 claude_dir.as_deref(),
                 &session,
             );
+            self.interactive.remove(roster_id);
             return Err("codex 규칙 파일을 지우지 못해 띄우지 않는다".to_string());
         }
 
@@ -361,7 +439,8 @@ impl<L: AgentLink + Send + Sync + 'static> RunnerMaker<L> {
         opts.record_dir = c.pty_record_dir.clone();
         let started_ms = super::now_i64();
         let spawn_session = Arc::clone(&session);
-        std::thread::Builder::new()
+        let (rec_for_fail, claude_dir_for_fail) = (rec.clone(), claude_dir.clone());
+        let spawned = std::thread::Builder::new()
             .name("interactive-turn".into())
             .spawn(move || {
                 let mut sink = Sink {
@@ -399,8 +478,21 @@ impl<L: AgentLink + Send + Sync + 'static> RunnerMaker<L> {
                     cd.as_deref(),
                     &spawn_session,
                 );
-            })
-            .map_err(|_| "터미널 턴 스레드를 띄우지 못했다".to_string())?;
+                me.interactive.remove(roster_id);
+            });
+        if spawned.is_err() {
+            self.finish(
+                control,
+                &key,
+                req,
+                &rec_for_fail,
+                None,
+                claude_dir_for_fail.as_deref(),
+                &session,
+            );
+            self.interactive.remove(roster_id);
+            return Err("터미널 턴 스레드를 띄우지 못했다".to_string());
+        }
 
         // spawn 이 확인되면 곧장 돌려준다. 뜨기 전에 끝나면 그 까닭이 열기 실패다.
         match rx.recv() {
@@ -409,6 +501,16 @@ impl<L: AgentLink + Send + Sync + 'static> RunnerMaker<L> {
                 .recv()
                 .unwrap_or_else(|_| "인터랙티브 턴이 뜨지 못했다".to_string())),
         }
+    }
+
+    /// 러너가 물러난다 — 도는 새 터미널 턴을 모두 회수하고(SIGTERM → 5초 뒤 SIGKILL) 끝 처리까지 `limit` 만큼 기다린다.
+    /// 건 수와 남은 수를 돌려준다. 링크를 닫기 **전에** 불러야 끝 처리가 스레드를 읽고 기록을 저장한다.
+    pub fn shutdown_interactive(&self, limit: Duration) -> (usize, usize) {
+        let n = self.interactive.shutdown_all();
+        if n == 0 {
+            return (0, 0);
+        }
+        (n, self.interactive.wait_idle_for(limit))
     }
 
     /// 턴의 끝 — 세션 기록 저장·장부 해제·세션 닫기(정본 `finish`). 저장 실패는 다음 멘션이 같은 구간을 다시 먹는 쪽으로 기운다.
@@ -488,5 +590,54 @@ impl<L: AgentLink + Send + Sync + 'static> RunnerMaker<L> {
             }
         });
         session.close();
+    }
+}
+
+#[cfg(test)]
+mod roster_tests {
+    use super::*;
+
+    fn fresh() -> SharedLive {
+        Arc::new(Mutex::new(Live {
+            life: InteractiveLife::new(),
+            controls: None,
+            orphan_gen: 0,
+        }))
+    }
+
+    #[test]
+    fn empty_roster_has_nothing_to_reclaim() {
+        let r = Roster::default();
+        assert_eq!(r.shutdown_all(), 0);
+        assert_eq!(r.wait_idle_for(Duration::from_millis(10)), 0);
+    }
+
+    #[test]
+    fn shutdown_reaches_every_live_turn_and_waits_for_finish() {
+        let r = Arc::new(Roster::default());
+        let (a, b) = (fresh(), fresh());
+        let ia = r.add(&a);
+        let ib = r.add(&b);
+        assert_eq!(r.shutdown_all(), 2);
+        // 뜨기 전에 물러남을 받은 턴은 spawn 순간 회수된다 — 상태 기계가 그 표지를 쥐고 있다.
+        for l in [&a, &b] {
+            assert!(!lock(l).life.spawned().is_empty());
+        }
+        let r2 = Arc::clone(&r);
+        let t = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            r2.remove(ia);
+            r2.remove(ib);
+        });
+        assert_eq!(r.wait_idle_for(Duration::from_secs(5)), 0);
+        t.join().unwrap();
+    }
+
+    #[test]
+    fn wait_gives_up_after_limit_and_reports_left() {
+        let r = Roster::default();
+        let a = fresh();
+        r.add(&a);
+        assert_eq!(r.wait_idle_for(Duration::from_millis(20)), 1);
     }
 }
