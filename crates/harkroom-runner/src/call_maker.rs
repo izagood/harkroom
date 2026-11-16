@@ -660,3 +660,7 @@ pub fn owned_argv(
 #[cfg(test)]
 #[path = "call_maker_tests.rs"]
 mod tests;
+
+#[path = "interactive_spawn.rs"]
+mod interactive_spawn;
+pub use interactive_spawn::{KILL_GRACE, ORPHAN_GRACE};

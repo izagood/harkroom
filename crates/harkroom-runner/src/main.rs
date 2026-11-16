@@ -107,9 +107,12 @@ fn main() {
     // 중계 세션 장부(정본 `relay.ts` 세션 절반)를 링크 고리 셋에 꽂는다 — 빠지면 `interactive.open`·`replay.request`·
     // `input` 이 모두 버려져 「터미널 열기」·턴 화면 보기·관문 화면 답하기가 504 로 끝난다.
     let relay_cell = harkroom_runner::interactive_open::ledger_cell();
+    // 새 터미널 턴 띄우개(분기 ③, B-2c) — 짓개가 선 뒤 채운다. 그 전에 온 요청은 「준비 안 됨」으로 답한다.
+    let spawner_cell = harkroom_runner::interactive_open::spawner_cell();
     let relay = harkroom_runner::relay_session::RelaySessions::new(
         Some(harkroom_runner::interactive_open::handler(
             relay_cell.clone(),
+            spawner_cell.clone(),
             provider_lane,
         )),
         Box::new(|l: &str| eprintln!("{l}")),
@@ -355,6 +358,15 @@ fn main() {
     maker.set_relay(Arc::clone(&relay));
     let maker = Arc::new(maker);
     install_cleanup_report(&maker, &clients);
+    // 조종 장부 — 받아들이기와 인터랙티브 open·끝(B-2c)이 같은 값을 쥔다.
+    let control = harkroom_runner::turn_registry::SharedControl::default();
+    {
+        let (spawn_maker, spawn_control) = (Arc::clone(&maker), Arc::clone(&control));
+        harkroom_runner::interactive_open::fill_spawner(
+            &spawner_cell,
+            Arc::new(move |req| spawn_maker.interactive_open(&spawn_control, req)),
+        );
+    }
 
     let ledger = Arc::new(Mutex::new(Ledger::new(&[], now_ms())));
     let slots = MentionSlots::default();
@@ -381,8 +393,6 @@ fn main() {
     ));
     let running = Arc::new(Running::default());
     let shutdown_slots = slots.clone();
-    // 조종 장부 — 받아들이기와 (B-2c) 인터랙티브 open·끝이 같은 값을 쥔다.
-    let control = harkroom_runner::turn_registry::SharedControl::default();
     let admit = link_admit_fn(
         Arc::clone(&clients),
         Arc::clone(&claims),
