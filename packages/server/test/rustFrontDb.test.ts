@@ -3957,6 +3957,93 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         }
       }
 
+      // S5.4 TM1 — 스레드 모델 지정 읽기(코어 `thread_models_read.rs`). 두 서버의 답을 견준다. 정하기·풀기(PUT·DELETE)는 TS 에 남는다.
+      // 다른 채널의 루트·답글·지운 루트에 표식을 심고, 볼 수 있는 채널 경로로 넣어도 어느 답에도 나오지 않는지 본다(루트를 채널에 묶기).
+      {
+        expect(f.log(), 'TM1 줄').toContain('"GET /channels/{id}/threads/{rootId}/agent-models"');
+        expect(f.log(), '정하기·풀기는 TS 에 남는다').not.toContain('/agent-models/{agentId}');
+        const M = member.token;
+        const ins = async (sql: string, p: unknown[]) => (await db.pool.query<{ id: string }>(sql, p)).rows[0]!.id;
+        const pubCh = await ins(`insert into channel (name, kind, visibility) values ('tm1-pub', 'standard', 'public') returning id`, []);
+        const privCh = await ins(`insert into channel (name, kind, visibility) values ('tm1-priv', 'standard', 'private') returning id`, []);
+        await db.pool.query('insert into channel_member (channel_id, account_id) values ($1, $2)', [privCh, admin.accountId]);
+        const msg = async (ch: string, root: string | null, deleted = false) => ins(
+          `insert into message (channel_id, author_id, body, kind, thread_root_id, deleted_at)
+           values ($1, $2, 'tm1', 'user', $3, case when $4::boolean then now() end) returning id`, [ch, admin.accountId, root, deleted]);
+        const root = await msg(pubCh, null);
+        const reply = await msg(pubCh, root);
+        const empty = await msg(pubCh, null);
+        const gone = await msg(pubCh, null, true);
+        const privRoot = await msg(privCh, null);
+        const botA = await ins(`insert into account (handle, display_name, kind) values ('tm1_a', 'tm1_a', 'agent') returning id`, []);
+        const botB = await ins(`insert into account (handle, display_name, kind) values ('tm1_b', 'tm1_b', 'agent') returning id`, []);
+        // botA 는 하네스를 바꾼 에이전트(지정이 stale), botB 는 설정 줄이 없다(currentHarness = 기본값).
+        await db.pool.query(`insert into agent_config (account_id, harness) values ($1, 'codex')`, [botA]);
+        const tam = (r: string, a: string, harness: string, model: string | null, effort: string | null, setBy: string | null, kind: string, ago: string) =>
+          db.pool.query(
+            `insert into thread_agent_model (thread_root_id, agent_id, harness, model, effort, set_by, set_by_kind, set_at)
+             values ($1, $2, $3, $4, $5, $6, $7, now() - $8::interval)`, [r, a, harness, model, effort, setBy, kind, ago]);
+        // set_at 은 마이크로초까지 넣는다 — normalize(toISOString)가 밀리초로 자르는 값.
+        await tam(root, botA, 'claude-code', 'opus', null, member.accountId, 'human', '3 hours 0.123456 seconds');
+        await tam(root, botB, 'claude-code', null, 'high', null, 'agent', '2 hours 0.000999 seconds');
+        await tam(root, agent.accountId, 'codex', 'gpt-5.5', 'xhigh', admin.accountId, 'human', '1 hour 0.999999 seconds');
+        await tam(reply, botA, 'claude-code', 'TM1MARK-reply', null, member.accountId, 'human', '1 hour');
+        await tam(gone, botA, 'claude-code', 'TM1MARK-gone', null, member.accountId, 'human', '1 hour');
+        await tam(privRoot, botA, 'codex', 'TM1MARK-priv', null, admin.accountId, 'human', '1 hour');
+        const seen: unknown[] = [];
+        const both = async (path: string, token: string) => {
+          const [x, y] = [await callX(tsUrl, 'GET', path, undefined, token), await callX(rsUrl, 'GET', path, undefined, token)];
+          expect(y.status, path).toBe(x.status);
+          expect(y.json, path).toEqual(x.json);
+          expect(Object.keys(y.json), path).toEqual(Object.keys(x.json));
+          seen.push(y.json);
+          return y;
+        };
+        const path = (ch: string, r: string) => `/channels/${ch}/threads/${r}/agent-models`;
+        type Row = { agentId: string; setAt: string; stale: boolean; currentHarness: string; setBy: string | null };
+        const got = await both(path(pubCh, root), M);
+        expect(got.status).toBe(200);
+        const rows = got.json.agentModels as Row[];
+        expect(rows.map((r) => r.agentId), 'set_at 순서').toEqual([botA, botB, agent.accountId]);
+        expect(rows.map((r) => Object.keys(r)), '칸 순서도 TS 와 같다').toEqual(
+          ((await callX(tsUrl, 'GET', path(pubCh, root), undefined, M)).json.agentModels as Row[]).map((r) => Object.keys(r)));
+        expect(rows.map((r) => [r.stale, r.currentHarness, r.setBy])).toEqual([
+          [true, 'codex', member.accountId], [false, 'claude-code', null], [rows[2]!.stale, rows[2]!.currentHarness, admin.accountId],
+        ]);
+        const dbAt = (await db.pool.query<{ a: Date }>('select set_at as a from thread_agent_model where thread_root_id = $1 order by set_at', [root])).rows;
+        expect(rows.map((r) => r.setAt), 'normalize — toISOString 꼴(밀리초)').toEqual(dbAt.map((r) => r.a.toISOString()));
+        await both(path(pubCh, root), A);
+        await both(path(pubCh, root), agent.pat);
+        expect((await both(path(pubCh, empty), M)).json).toEqual({ agentModels: [] });
+        expect((await both(path(privCh, privRoot), A)).status, '비공개 채널 멤버는 읽는다').toBe(200);
+        const leaks = JSON.stringify(seen.slice(0, -1));
+        expect(leaks, '다른 스레드의 지정은 섞이지 않는다').not.toContain('TM1MARK');
+        for (const [name, p, token, want] of [
+          ['익명 → 401', path(pubCh, root), '', 401],
+          ['채널 id 아님 → 400', path('nope', root), M, 400],
+          ['루트 id 아님 → 400', path(pubCh, 'nope'), M, 400],
+          ['비공개 채널 비멤버 → 403', path(privCh, privRoot), M, 403],
+          ['비공개 채널 에이전트 비멤버 → 403', path(privCh, privRoot), agent.pat, 403],
+          ['비공개 채널의 루트를 공개 채널 경로로 → 404', path(pubCh, privRoot), M, 404],
+          ['같은 채널의 답글 id → 404', path(pubCh, reply), M, 404],
+          ['지운 루트 → 404', path(pubCh, gone), M, 404],
+          ['없는 루트 → 404', path(pubCh, ghost), M, 404],
+          ['없는 채널 → 404', path(ghost, root), M, 404],
+          ['공개 채널의 루트를 비공개 채널 경로로(멤버) → 404', path(privCh, root), A, 404],
+        ] as const) {
+          const [x, y] = [await callX(tsUrl, 'GET', p, undefined, token), await callX(rsUrl, 'GET', p, undefined, token)];
+          expect({ status: y.status, code: y.code }, name).toEqual({ status: x.status, code: x.code });
+          expect(y.status, name).toBe(want);
+          seen.push(y.json);
+        }
+        expect(JSON.stringify(seen.slice(5)), '거절 답에 표식이 없다').not.toContain('TM1MARK');
+        await db.pool.query('delete from thread_agent_model where thread_root_id = any($1)', [[root, reply, empty, gone, privRoot]]);
+        await db.pool.query('delete from message where id = any($1)', [[reply, root, empty, gone, privRoot]]);
+        await db.pool.query('delete from channel_member where channel_id = any($1)', [[pubCh, privCh]]);
+        await db.pool.query('delete from channel where id = any($1)', [[pubCh, privCh]]);
+        await db.pool.query('delete from account where id = any($1)', [[botA, botB]]);
+      }
+
       // S5.2 P4d — 옮긴 라우트를 지난 요청도 세션을 늘리고 PAT 사용 시각을 남긴다(쓰기 풀로). 읽기 역할로 하면 조용히 실패하던 것.
       await db.pool.query(`update session set expires_at = now() + interval '1 day' where account_id = $1`, [member.accountId]);
       await db.pool.query(`update pat set last_used_at = now() - interval '1 hour' where account_id = $1`, [agent.accountId]);
