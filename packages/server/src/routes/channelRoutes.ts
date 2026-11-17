@@ -9,6 +9,7 @@ import {
   updateChannel, updateChannelDoc, updateChannelPref, listChannelPrefs, renameSection, normalizeSectionName,
   CHANNEL_DELETE_INFO_SQL, CHANNEL_MESSAGE_COUNT_SQL,
   CHANNEL_KIND_VISIBILITY_SQL,
+  CHANNEL_NAME_VISIBILITY_SQL,
 } from '../services/channels.js';
 import {
   SectionLimitError, SectionNameTakenError, createChannelSection, deleteChannelSection, getChannelSection, listChannelSections,
@@ -113,7 +114,7 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     // 'private' 만 남아 "원래도 private 이었나"를 구분할 수 없다. 이름도 같은 이유로 함께
     // 읽는다: 감사 로그의 from/to 는 옛 이름이 있어야 쓸 수 있고, 갱신 뒤에는 사라진다.
     const oldChannel = patch.visibility !== undefined || patch.name !== undefined
-      ? await pool.query(`select name, visibility from channel where id = $1`, [id])
+      ? await pool.query(CHANNEL_NAME_VISIBILITY_SQL, [id])
       : null;
     const wasPublic = oldChannel?.rows[0]?.visibility === 'public';
     const oldName = oldChannel?.rows[0]?.name as string | undefined;

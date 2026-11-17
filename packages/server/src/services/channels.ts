@@ -48,6 +48,24 @@ export function channelArchivedSql(channel: string): string {
   return `${channel}.archived_at is not null`;
 }
 
+/** 채널 만들기 문장 — Rust 코어(S5.4 CH4a `POST /channels`)가 골든으로 같은 문장을 쓴다. */
+export const CREATE_CHANNEL_SQL = `insert into channel (name, topic, kind, repo, visibility, created_by)
+       values ($1, $2, 'standard', $3, $4, $5::uuid) returning ${COLS}`;
+
+/** 채널 고치기 문장(보낸 칸만, DM 은 0 행) — Rust 코어(S5.4 CH4a `PATCH /channels/:id`)가 골든으로 같은 문장을 쓴다. */
+export const UPDATE_CHANNEL_SQL = `update channel set
+       name  = case when $10::bool then $11::text else name  end,
+       topic = case when $2::bool then $3::text else topic end,
+       repo  = case when $4::bool then $5::text else repo  end,
+       archived_at = case when $6::bool is true then now() when $6::bool is false then null else archived_at end,
+       archived_by = case when $6::bool is true then $7::uuid when $6::bool is false then null else archived_by end,
+       visibility = case when $8::bool then $9::text else visibility end
+     where id = $1::uuid and kind = 'standard'
+     returning ${COLS}`;
+
+/** 고치기 전의 이름·공개 범위(감사 from/to, 비공개화 판정) — Rust 코어(S5.4 CH4a)가 골든으로 같은 문장을 쓴다. */
+export const CHANNEL_NAME_VISIBILITY_SQL = `select name, visibility from channel where id = $1::uuid`;
+
 /**
  * `pool` 이 `PoolClient` 도 받는 이유: 부트스트랩이 계정과 기본 채널을 한 트랜잭션에 묶는다
  * (`authRoutes.ts`). 그 트랜잭션의 커넥션으로 불러야 begin/commit 이 실제로 이 INSERT 를
@@ -64,11 +82,10 @@ export async function createChannel(
 ): Promise<ChannelRow> {
   const visibility = input.visibility ?? 'public';
   const insert = async (q: Pool | PoolClient): Promise<ChannelRow> => {
+    // created_by 는 소유의 근거다(056) — 만든 사람은 channel.manage grant 없이 자기 채널을
+    // 관리한다. creatorId 가 없는 호출(bootstrap 의 기본 채널·DM)은 null 로 남는다.
     const res = await q.query(
-      // created_by 는 소유의 근거다(056) — 만든 사람은 channel.manage grant 없이 자기 채널을
-      // 관리한다. creatorId 가 없는 호출(bootstrap 의 기본 채널·DM)은 null 로 남는다.
-      `insert into channel (name, topic, kind, repo, visibility, created_by)
-       values ($1, $2, 'standard', $3, $4, $5) returning ${COLS}`,
+      CREATE_CHANNEL_SQL,
       [input.name, input.topic ?? '', input.repo ?? null, visibility, input.creatorId ?? null],
     );
     const row = res.rows[0] as ChannelRow;
@@ -76,10 +93,7 @@ export async function createChannel(
     // 보지 못하고, admin 만 이름을 볼 수 있는 유령이 된다. 그래서 만든 사람이 첫 멤버다.
     if (visibility === 'private') {
       if (!input.creatorId) throw new Error('private channel requires creatorId');
-      await q.query(
-        `insert into channel_member (channel_id, account_id) values ($1, $2) on conflict do nothing`,
-        [row.id, input.creatorId],
-      );
+      await q.query(ADD_CHANNEL_MEMBER_SQL, [row.id, input.creatorId]);
     }
     return row;
   };
@@ -121,15 +135,7 @@ export async function updateChannel(
 ): Promise<ChannelRow | null> {
   const hasArchived = patch.archived !== undefined;
   const res = await pool.query(
-    `update channel set
-       name  = case when $10::bool then $11::text else name  end,
-       topic = case when $2::bool then $3::text else topic end,
-       repo  = case when $4::bool then $5::text else repo  end,
-       archived_at = case when $6 is true then now() when $6 is false then null else archived_at end,
-       archived_by = case when $6 is true then $7::uuid when $6 is false then null else archived_by end,
-       visibility = case when $8::bool then $9::text else visibility end
-     where id = $1 and kind = 'standard'
-     returning ${COLS}`,
+    UPDATE_CHANNEL_SQL,
     [
       id,
       patch.topic !== undefined, patch.topic ?? null,

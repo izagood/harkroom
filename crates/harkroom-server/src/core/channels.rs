@@ -54,6 +54,16 @@ pub(crate) fn rows_sql(golden_sql: &str, ts: &[&str]) -> String {
     )
 }
 
+/// [`rows_sql`] 의 쓰기 판 — `insert … returning`·`update … returning` 은 부분 질의에 못 넣으므로 맨 위 CTE 로 감싼다.
+pub(crate) fn dml_rows_sql(golden_dml: &str, ts: &[&str]) -> String {
+    let rows = rows_sql("select * from w", ts);
+    format!(
+        "with w as ({golden_dml}), {}",
+        rows.strip_prefix("with ")
+            .expect("rows_sql starts with a CTE")
+    )
+}
+
 struct Sql {
     channels: String,
     reads: String,

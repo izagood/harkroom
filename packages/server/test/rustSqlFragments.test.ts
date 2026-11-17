@@ -6,7 +6,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 import { channelListVisibleSql, channelVisibleSql } from '../src/services/channels.js';
-import { ADD_CHANNEL_MEMBER_SQL, CHANNEL_KIND_VISIBILITY_SQL, UPDATE_CHANNEL_DOC_SQL, CHANNEL_DELETE_INFO_SQL, CHANNEL_POST_GATE_SQL, CHANNEL_MESSAGE_COUNT_SQL, CHANNEL_DOC_SQL, LIST_CHANNEL_MEMBERS_SQL, LIST_CHANNEL_PREFS_SQL, LIST_CHANNELS_SQL } from '../src/services/channels.js';
+import { ADD_CHANNEL_MEMBER_SQL, CHANNEL_NAME_VISIBILITY_SQL, CREATE_CHANNEL_SQL, UPDATE_CHANNEL_SQL, CHANNEL_KIND_VISIBILITY_SQL, UPDATE_CHANNEL_DOC_SQL, CHANNEL_DELETE_INFO_SQL, CHANNEL_POST_GATE_SQL, CHANNEL_MESSAGE_COUNT_SQL, CHANNEL_DOC_SQL, LIST_CHANNEL_MEMBERS_SQL, LIST_CHANNEL_PREFS_SQL, LIST_CHANNELS_SQL } from '../src/services/channels.js';
 import { ALL_READ_STATES_SQL, READ_STATE_SQL } from '../src/services/readPositions.js';
 import { LIST_CHANNEL_SECTIONS_SQL } from '../src/services/channelSections.js';
 import {
@@ -163,6 +163,9 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     channel_kind_visibility: CHANNEL_KIND_VISIBILITY_SQL,
     add_channel_member: ADD_CHANNEL_MEMBER_SQL,
     update_channel_doc: UPDATE_CHANNEL_DOC_SQL,
+    create_channel: CREATE_CHANNEL_SQL,
+    update_channel: UPDATE_CHANNEL_SQL,
+    channel_name_visibility: CHANNEL_NAME_VISIBILITY_SQL,
     list_scheduled: LIST_SCHEDULED_SQL,
     select_pins: SELECT_PINS_SQL,
     pin_insert: PIN_INSERT_SQL,

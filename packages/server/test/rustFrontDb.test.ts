@@ -1579,6 +1579,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant insert, update, delete on channel_auto_mention to ${rw}`,
         `grant insert on channel_member to ${rw}`,
         `grant insert, update on channel_doc to ${rw}`,
+        // S5.4 CH4a — 채널 만들기·고치기(`core/channel_create_update.rs::CREATE_UPDATE_PRIVILEGES`). 칸 권한만(channel_member insert 는 위 줄). 없으면 「channel create/update core off」 — TS 에 남는다.
+        `grant insert (name, topic, kind, repo, visibility, created_by), update (name, topic, repo, archived_at, archived_by, visibility) on channel to ${rw}`,
         // S5.4 MS1 — 저장한 글(`core/saved.rs::SAVED_PRIVILEGES`). 없으면 「saved messages core off」 — 다섯 줄 모두 TS 에 남는다.
         `grant insert, update, delete on saved_message to ${rw}`,
       ]) await db.pool.query(q);
@@ -4716,6 +4718,146 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         await reset();
         await db.pool.query('delete from channel_member where channel_id = any($1)', [chs]);
         await db.pool.query('delete from channel where id = any($1)', [chs]);
+      }
+
+      // S5.4 CH4a — 채널 만들기·고치기(코어 `channel_create_update.rs`). 같은 처음 상태에서 같은 요청 줄을 TS 로 한 번, Rust 로 한 번
+      // 보내고 답·행·감사·이벤트(이름·모양·받는 사람·차례)가 같은지 본다. 이 줄에서 새로 생긴 채널 id·시각은 차례 이름으로 가린다.
+      // 지우기(`DELETE /channels/{id}`)와 `GET /channels/{id}/delete-info` 는 TS 에 남는다(첨부 저장소가 TS 에만 있다).
+      {
+        for (const k of ['POST /channels', 'PATCH /channels/{id}']) {
+          expect(f.log(), k).toContain(`"${k}"`);
+        }
+        expect(f.log()).not.toContain('channel create/update core off');
+        expect(f.log(), 'DELETE /channels/{id} 는 TS 에 남는다').not.toContain('"DELETE /channels/{id}"');
+        const M = member.token;
+        const M2 = member2.token;
+        const taken = await createChannel(db.pool, { name: 'ch4a-taken' });
+        const own = await createChannel(db.pool, { name: 'ch4a-own', visibility: 'private', creatorId: member2.accountId });
+        const dm = (await getOrCreateDm(db.pool, [member.accountId, member2.accountId])).id; // 다른 줄도 쓸 수 있으니 지우지 않는다
+        const fixed = [taken.id, own.id, dm];
+        const ghost = '00000000-0000-4000-8000-0000000c4a00';
+        const made = async () => (await db.pool.query(`select id::text from channel where name like 'ch4a-%' and not (id = any($1)) order by created_at, id`, [fixed])).rows.map((r) => r.id as string);
+        const reset = async () => {
+          const ids = await made();
+          await db.pool.query('delete from channel_member where channel_id = any($1)', [ids]);
+          await db.pool.query('delete from channel where id = any($1)', [ids]);
+          await db.pool.query(`update channel set name = 'ch4a-own', topic = '', repo = null, archived_at = null, archived_by = null, visibility = 'private' where id = $1`, [own.id]);
+        };
+        const run = async (base: string, evs: () => WorkspaceEvent[]) => {
+          await reset();
+          const since = String((await db.pool.query('select coalesce(max(id), 0)::text as m from audit_log')).rows[0].m);
+          const evFrom = evs().length;
+          const out: unknown[] = [];
+          const call = async (m: string, path: string, body: unknown, token: string) => {
+            const r = await callX(base, m, path, body, token);
+            out.push({ m, path, status: r.status, json: r.status === 400 || r.status >= 500 ? null : r.json });
+            return r;
+          };
+          const P = (ch: string) => `/channels/${ch}`;
+          const pub = await call('POST', '/channels', { name: 'ch4a-pub', topic: 't', repo: 'o/r', extra: 1 }, A); // → 201, 감사 없음
+          const pubId = String((pub.json as { id?: string }).id);
+          await call('POST', '/channels', { name: 'ch4a-priv', visibility: 'private' }, A); // 만든 사람이 첫 멤버
+          await call('POST', '/channels', { name: 'ch4a-member' }, M); // channel.create 없음 → 403
+          await call('POST', '/channels', { name: 'ch4a-taken' }, A); // 이름 겹침 — TS 도 잡지 않는다(500)
+          await call('POST', '/channels', { name: 'Bad' }, A);
+          await call('POST', '/channels', { name: 'ch4a-x', visibility: 'secret' }, A);
+          await call('POST', '/channels', { name: 'ch4a-x', topic: null }, A);
+          await call('POST', '/channels', { name: 'ch4a-x', topic: 't'.repeat(257) }, A);
+          await call('POST', '/channels', undefined, A);
+          await call('PATCH', P(pubId), { topic: 't2', repo: 'o/r2' }, A); // 감사 channel.updated [topic, repo]
+          await call('PATCH', P(pubId), { name: 'ch4a-pub2' }, A); // channel.renamed from/to
+          await call('PATCH', P(pubId), { name: 'ch4a-taken' }, A); // → 409 channel_name_taken
+          await call('PATCH', P(pubId), { name: 'ch4a-pub2' }, A); // 같은 이름 → 감사 없음
+          await call('PATCH', P(pubId), { visibility: 'private', topic: 'hid' }, A); // 비공개화 → channel.deleted(잃은 사람) + updated
+          await call('PATCH', P(pubId), { visibility: 'public' }, A); // 다시 공개 → deleted 없음
+          await call('PATCH', P(pubId), { archived: true, topic: 'y' }, A); // channel.archived 만
+          await call('PATCH', P(pubId), { archived: false }, A); // channel.unarchived
+          await call('PATCH', P(pubId), { repo: null }, A); // 바인딩 해제, fields [repo]
+          await call('PATCH', P(pubId), {}, A); // 빈 고치기 → 200, 감사 없음
+          await call('PATCH', P(own.id), { topic: 'mine' }, M2); // 만든 사람은 grant 없이 관리한다
+          await call('PATCH', P(own.id), { topic: 'nope' }, M); // 권한 없음 → 403
+          await call('PATCH', P(ghost), { topic: 'x' }, A); // 없는 채널 → 404
+          await call('PATCH', P(dm), { topic: 'x' }, A); // DM → 404
+          await call('PATCH', P('nope'), { topic: 'x' }, A);
+          await call('PATCH', P(pubId), { name: null }, A);
+          await call('PATCH', P(pubId), { archived: 'yes' }, A);
+          await call('PATCH', P(pubId), { visibility: 'secret' }, A);
+          await call('PATCH', P(pubId), 'x', A);
+          const ids = await made();
+          const chs = [...ids, ...fixed];
+          // 이벤트 — 이 줄의 채널 것만, 늦게 오는 것을 잠깐 기다린다(TS 는 프로세스 안, Rust 는 outbox → 버스).
+          const mine = () => evs().slice(evFrom).filter((e) => ['channel.created', 'channel.updated', 'channel.deleted'].includes(e.type)
+            && chs.includes(String((e as { channel?: { id?: string }; channelId?: string }).channel?.id ?? (e as { channelId?: string }).channelId)));
+          const until = Date.now() + 5000;
+          while (mine().length < 13 && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
+          const state = {
+            rows: (await db.pool.query(
+              `select id::text, name, topic, kind, repo, archived_at is not null as archived, archived_by::text as "archivedBy", visibility, created_by::text as "createdBy"
+                 from channel where id = any($1) order by created_at, id`, [chs])).rows,
+            // 차례는 채널 만든 때 — 새 채널 id 는 매번 달라 id 로 줄 세우면 두 판의 차례가 갈린다.
+            members: (await db.pool.query(`select m.channel_id::text as c, m.account_id::text as a from channel_member m join channel c on c.id = m.channel_id
+               where m.channel_id = any($1) order by c.created_at, m.channel_id, m.account_id`, [chs])).rows,
+            audit: (await db.pool.query(`select action, actor_handle, target, ip, detail from audit_log where id > $1::bigint and target = any($2) order by id`, [since, chs])).rows,
+            events: mine().map((e) => {
+              const x = e as { audience?: unknown };
+              return { ...e, audience: Array.isArray(x.audience) ? [...x.audience].sort() : x.audience };
+            }),
+          };
+          out.push(state);
+          // 이 줄에서 생긴 채널 id·시각을 차례 이름으로 가린다.
+          // TS 이벤트는 프로세스 안에서 와서 시각이 `Date` 그대로다(버스를 건넌 Rust 이벤트는 글자) — 둘 다 같은 표지로 가린다.
+          const names = ids.map((id, i) => [id, `<new${i}>`] as const);
+          const mask = (v: unknown): unknown => {
+            if (typeof v === 'string') return names.reduce((t, [id, n]) => t.split(id).join(n), v);
+            if (Array.isArray(v)) return v.map(mask);
+            if (v && typeof v === 'object') {
+              return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) =>
+                [k, ['createdAt', 'archivedAt'].includes(k) && (typeof x === 'string' || x instanceof Date) ? `<${k}>` : mask(x)]));
+            }
+            return v;
+          };
+          return { out: mask(out) as unknown[], pubId };
+        };
+        const tsEvents: WorkspaceEvent[] = [];
+        const offTs = onEvent((e) => { tsEvents.push(e); });
+        const x = await run(tsUrl, () => tsEvents);
+        offTs();
+        const y = await run(rsUrl, () => busEvents);
+        expect(y.out).toEqual(x.out);
+        // 빈 것끼리 같아서 통과하지 않게 — 행·멤버·감사·이벤트가 실제로 남았는지, 거절 갈래가 실제 몸통인지.
+        const st = y.out.at(-1) as { rows: { name: string; topic: string; repo: string | null; visibility: string }[]; members: unknown[]; audit: { action: string; detail: unknown }[]; events: { type: string; audience: unknown }[] };
+        expect(st.rows.find((r) => r.name === 'ch4a-pub2')).toMatchObject({ topic: 'y', repo: null, visibility: 'public' });
+        expect(st.rows.find((r) => r.name === 'ch4a-priv')).toMatchObject({ visibility: 'private' });
+        expect(st.members).toContainEqual({ c: '<new1>', a: admin.accountId });
+        expect(st.audit.map((r) => r.action)).toEqual([
+          'channel.updated', 'channel.renamed', 'channel.visibility.changed', 'channel.updated', 'channel.visibility.changed',
+          'channel.archived', 'channel.unarchived', 'channel.updated', 'channel.updated',
+        ]);
+        expect(st.audit[0]?.detail).toEqual({ fields: ['topic', 'repo'] });
+        expect(st.audit[1]?.detail).toEqual({ from: 'ch4a-pub', to: 'ch4a-pub2' });
+        expect(st.events.map((e) => e.type)).toEqual([
+          'channel.created', 'channel.created', 'channel.updated', 'channel.updated', 'channel.updated',
+          'channel.deleted', 'channel.updated', 'channel.updated', 'channel.updated', 'channel.updated', 'channel.updated', 'channel.updated', 'channel.updated',
+        ]);
+        expect((st.events[5]?.audience as string[]).length, '비공개화로 목록을 잃은 사람이 있다').toBeGreaterThan(0);
+        const txt = JSON.stringify(y.out);
+        for (const c of ['channel_name_taken', 'not_found', 'channel.manage', 'channel.create']) expect(txt, c).toContain(c);
+        // 익명은 두 서버 모두 401.
+        {
+          const [a1, b1] = [await callX(tsUrl, 'POST', '/channels', { name: 'ch4a-anon' }, ''), await callX(rsUrl, 'POST', '/channels', { name: 'ch4a-anon' }, '')];
+          expect({ status: b1.status, code: b1.code }, '익명 → 401').toEqual({ status: a1.status, code: a1.code });
+          expect(b1.status).toBe(401);
+        }
+        // 지우기는 Rust 앞단을 거쳐도 TS 가 받는다(코어 경로의 TS fallback) — 행이 실제로 사라진다.
+        {
+          await db.pool.query('update channel set archived_at = now() where id = $1', [y.pubId]); // TS 는 보관된 채널만 지운다
+          const d = await callX(rsUrl, 'DELETE', `/channels/${y.pubId}`, undefined, A);
+          expect(d.status, JSON.stringify(d.json)).toBeLessThan(300);
+          expect((await db.pool.query('select 1 from channel where id = $1', [y.pubId])).rowCount).toBe(0);
+        }
+        await reset();
+        await db.pool.query('delete from channel_member where channel_id = any($1)', [[taken.id, own.id]]);
+        await db.pool.query('delete from channel where id = any($1)', [[taken.id, own.id]]);
       }
 
       // S5.4 AC2 — 에이전트 기억 읽기(코어 `agent_memory_read.rs`). 두 서버의 답을 견준다. 소유자·admin 만 읽고, 에이전트 자신·남·익명은
