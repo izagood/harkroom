@@ -148,6 +148,10 @@ describe('스레드 상태 리액션', () => {
       // 화면이 듣는 이벤트로 나간다 — 떼고 달았다.
       expect(events.filter((e) => 'messageId' in e && e.messageId === id).map((e) => [e.type, (e as { emoji: string }).emoji]))
         .toEqual([['reaction.added', '💬'], ['reaction.removed', '💬'], ['reaction.added', '🙋']]);
+      // 💬 를 뗀 reaction.removed 가 앱 감시자(300ms 미룸)에 다시 판정을 걸었다. 아래 '끝났다' 뒤에 그것이 먼저 돌면
+      // ✅ 를 감시자가 달고 우리 판정은 'unchanged' 가 된다(#2320 check). #1871·#1884 처럼 그 판정이 끝날 때까지 기다린다
+      // — 지금은 🙋 그대로라 'unchanged' 로 끝나고 이벤트도 안 낸다.
+      await app.threadStatusWatcher.flush();
 
       // 다시 판정해도 같으면 아무것도 안 바뀐다.
       events.length = 0;
