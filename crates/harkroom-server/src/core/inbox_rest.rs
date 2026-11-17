@@ -12,6 +12,7 @@ use crate::auth::RequireAccount;
 use crate::core::inbox_list::{
     INBOX_PAGE_LIMIT, InboxQuery, InboxRow, list_inbox, list_inbox_newest,
 };
+use crate::core::mcp::respond::minify;
 use crate::directory::{internal, json_ok};
 use crate::proxy::Upstream;
 use axum::extract::{ConnectInfo, Request, State};
@@ -79,8 +80,10 @@ fn parse(raw: Option<&str>) -> Option<Q> {
     Some(q)
 }
 
+/// 줄 본문은 Postgres `json_build_object` 글자(`"id" : 26, …`)다. TS 는 node-pg 로 읽어 `JSON.stringify` 로 다시 쓰므로
+/// 문자열 밖 공백을 지워 같은 글자로 맞춘다(키 순서는 그대로 — MCP 와 같은 [`minify`]).
 fn entries(rows: &[InboxRow]) -> String {
-    let parts: Vec<&str> = rows.iter().map(|r| r.body.as_str()).collect();
+    let parts: Vec<String> = rows.iter().map(|r| minify(&r.body)).collect();
     parts.join(",")
 }
 
@@ -152,6 +155,25 @@ pub fn routes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn entries_match_json_stringify() {
+        // bus-e2e(c744b7e5) 실패 꼴: PG `json_build_object` 의 `" : "`·`", "` 가 그대로 실렸다. 문자열 안 공백은 남는다.
+        let rows = [
+            InboxRow {
+                id: 1,
+                body: r#"{"id" : 26, "body" : "<@a> 자동화 목록 보여 줘", "meta" : {}, "readAt" : null}"#.into(),
+            },
+            InboxRow {
+                id: 2,
+                body: r#"{"id" : 27, "delegation" : {"lead" : "x"}}"#.into(),
+            },
+        ];
+        assert_eq!(
+            entries(&rows),
+            r#"{"id":26,"body":"<@a> 자동화 목록 보여 줘","meta":{},"readAt":null},{"id":27,"delegation":{"lead":"x"}}"#
+        );
+    }
 
     #[test]
     fn plain_queries_are_answered() {
