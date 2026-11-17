@@ -143,13 +143,13 @@ async function operatorWriteRole(db: { pool: pg.Pool; uri: string }, grants: rea
 }
 
 describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () => {
-  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention', 'mandate_idle', 'permission_expire', 'bg', 'bg_produce', 'outbox_prune', 'push_loop', 'turn_lease', 'inbox_list', 'decide_core_db', 'relay_live', 'turn_settle', 'health', 'scheduled', 'stale', 'migrate']) {
+  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention', 'mandate_idle', 'permission_expire', 'bg', 'bg_produce', 'outbox_prune', 'push_loop', 'turn_lease', 'inbox_list', 'decide_core_db', 'relay_live', 'turn_settle', 'turn_cancel', 'health', 'scheduled', 'stale', 'migrate']) {
     it(`tests/${name}.rs`, async () => {
       const db = await startTestDb();
       try {
         const env: Record<string, string> = { HARKROOM_TEST_DATABASE_URL: db.uri };
         // C2a — 오퍼레이터 시험은 쓰기 풀을 `write.rs::OPERATOR_PRIVILEGES` 만 가진 역할로 돌린다(homelab GRANT 표가 모자라면 여기서 빨개진다).
-        if (name === 'operator' || name === 'relay_live' || name === 'turn_settle') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db);
+        if (name === 'operator' || name === 'relay_live' || name === 'turn_settle' || name === 'turn_cancel') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db);
         // C5b — 예약 깨움 sweep 도 `WAKE_PRIVILEGES` 만 가진 역할로 돌린다.
         if (name === 'wake') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, WAKE_GRANTS);
         // C5c — 보존 정리도 `RETENTION_PRIVILEGES` 만 가진 역할로.

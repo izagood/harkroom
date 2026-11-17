@@ -56,7 +56,7 @@ pub fn served(mem_write: bool, mem_body: bool) -> &'static [&'static str] {
     })
 }
 
-/// AC5 안전판 — 릴레이가 Rust 로 옮겨진 동안([`super::writes::McpWrites::relay_moved`]) Rust 가 거절로 답하는 도구.
+/// 릴레이가 Rust 로 옮겨진 동안([`super::writes::McpWrites::relay_moved`]) Rust 가 답하는 도구([`super::turn_cancel`]).
 pub const TURN_CANCEL: &[&str] = &["turn.cancel"];
 
 /// 라우트 상태 — 상류(TS)와 읽기 풀.
@@ -126,13 +126,19 @@ pub async fn handle(
         );
         Box::pin(async move {
             if tool == "turn.cancel" {
-                return writes.relay_moved.then(|| {
-                    super::tool_error(
-                        crate::core::operator_guard::CODE,
-                        "this action is temporarily unavailable while the operator service is being moved",
-                    )
-                    .to_string()
-                });
+                if !writes.relay_moved {
+                    return None;
+                }
+                let Some(rc) = writes.relay.get() else {
+                    return Some(
+                        super::tool_error(
+                            crate::core::operator_guard::CODE,
+                            "this action is temporarily unavailable while the operator service is being moved",
+                        )
+                        .to_string(),
+                    );
+                };
+                return super::turn_cancel::answer(&pool, rc, &me, &args).await;
             }
             if matches!(tool, "message.post" | "message.fail" | "message.report") {
                 let st = writes.post.as_ref()?;
