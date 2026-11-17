@@ -59,6 +59,7 @@ pub mod secrets_read;
 pub mod sections_write;
 pub mod settings_rest;
 pub mod thread_models_read;
+pub mod thread_plan_read;
 pub mod tickets;
 pub mod turn_lease;
 pub mod turn_lease_routes;
