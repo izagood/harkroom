@@ -1554,6 +1554,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant update (sent_message_id, failed_reason) on scheduled_message to ${rw}`,
         // S5.4 L2 — stale 루프(`loops/stale.rs`). 없으면 루프를 띄우지 않는다.
         `grant update (stale_notified_at) on inbox to ${rw}`,
+        // S5.4 CH1 — 섹션 쓰기(`core/sections_write.rs::SECTION_WRITE_PRIVILEGES`). 칸 권한만. 없으면 「section write core off」 — TS 에 남는다.
+        `grant insert (account_id, name, position), update (name, position, collapsed), delete on channel_section to ${rw}`,
+        `grant insert (account_id, channel_id, section_id, section), update (section_id, section) on channel_pref to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -3454,6 +3457,86 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       expect(reg2.json.createdAt).toBe(reg.json.createdAt);
       expect((await callX(rsUrl, 'DELETE', '/push/devices/current', undefined, member.token)).status).toBe(204);
       expect((await db.pool.query('select 1 from push_device where account_id = $1', [member.accountId])).rowCount).toBe(0);
+
+      // S5.4 CH1 — 사이드바 섹션 쓰기(코어 `sections_write.rs`). Rust 로 쓰고 TS 로 읽어 같은 상태인지, 거절 갈래는 두 서버의
+      // (상태, 코드)가 같은지 본다. 이름 거울(`channel_pref.section`)은 TS `GET /channels/prefs` 로 확인한다.
+      {
+        for (const k of ['POST /channel-sections', 'PUT /channel-sections/order', 'PATCH /channel-sections/{id}', 'DELETE /channel-sections/{id}']) {
+          expect(f.log(), k).toContain(`"${k}"`);
+        }
+        expect(f.log()).not.toContain('section write core off');
+        const M = member.token;
+        const tsSections = async () => (await callX(tsUrl, 'GET', '/channel-sections', undefined, M)).json;
+        const tsPref = async (ch: string) => ((await callX(tsUrl, 'GET', '/channels/prefs', undefined, M)).json.prefs as { channelId: string; section: string | null; sectionId: string | null }[])
+          .find((p) => p.channelId === ch);
+        const a = await callX(rsUrl, 'POST', '/channel-sections', { name: '  일  ', channelIds: [todayId, todayId] }, M);
+        expect(a.status, JSON.stringify(a.json)).toBe(201);
+        const secA = a.json.section as { id: string; name: string; position: number; collapsed: boolean; createdAt: string };
+        expect(secA).toMatchObject({ name: '일', position: 0, collapsed: false });
+        expect(secA.createdAt).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+        expect(await tsSections()).toEqual({ sections: [secA] });
+        expect(a.json.prefs).toEqual((await callX(tsUrl, 'GET', '/channels/prefs', undefined, M)).json.prefs);
+        expect(await tsPref(todayId), '이름 거울').toMatchObject({ sectionId: secA.id, section: '일' });
+        const b = await callX(rsUrl, 'POST', '/channel-sections', { name: '둘', position: 0 }, M);
+        expect(b.status).toBe(201);
+        const secB = b.json.section as { id: string };
+        expect(((await tsSections()).sections as { id: string; position: number }[]).map((x) => [x.id, x.position])).toEqual([[secB.id, 0], [secA.id, 1]]);
+        const adminSec = (await callX(tsUrl, 'POST', '/channel-sections', { name: '관리' }, A)).json.section as { id: string };
+        for (const [name, m, path, body, token] of [
+          ['만들기 같은 이름 → 409', 'POST', '/channel-sections', { name: '일' }, M],
+          ['만들기 빈 이름 → 400 invalid_name', 'POST', '/channel-sections', { name: '   ' }, M],
+          ['만들기 null 이름 → 400 invalid_name', 'POST', '/channel-sections', { name: null }, M],
+          ['만들기 41자 → 400', 'POST', '/channel-sections', { name: 'x'.repeat(41) }, M],
+          ['만들기 모르는 칸 → 400', 'POST', '/channel-sections', { name: 'z', x: 1 }, M],
+          ['만들기 본문 없음 → 400', 'POST', '/channel-sections', undefined, M],
+          ['만들기 소수 자리 → 400', 'POST', '/channel-sections', { name: 'z', position: 1.5 }, M],
+          ['만들기 못 보는 채널 → 403', 'POST', '/channel-sections', { name: 'z', channelIds: [privId] }, M],
+          ['만들기 없는 채널 → 404', 'POST', '/channel-sections', { name: 'z', channelIds: [ghost] }, M],
+          ['만들기 DM → 400', 'POST', '/channel-sections', { name: 'z', channelIds: [String(dm.id)] }, M],
+          ['만들기 익명 → 401', 'POST', '/channel-sections', { name: 'z' }, ''],
+          ['고치기 uuid 아님 → 400', 'PATCH', '/channel-sections/nope', { collapsed: true }, M],
+          ['고치기 없는 섹션 → 404', 'PATCH', `/channel-sections/${ghost}`, { collapsed: true }, M],
+          ['고치기 남의 섹션 → 404', 'PATCH', `/channel-sections/${adminSec.id}`, { collapsed: true }, M],
+          ['고치기 같은 이름 → 409', 'PATCH', `/channel-sections/${secA.id}`, { name: '둘' }, M],
+          ['고치기 null 이름 → 400 invalid_name', 'PATCH', `/channel-sections/${secA.id}`, { name: null }, M],
+          ['고치기 collapsed 숫자 → 400', 'PATCH', `/channel-sections/${secA.id}`, { collapsed: 1 }, M],
+          ['지우기 남의 섹션 → 404', 'DELETE', `/channel-sections/${adminSec.id}`, undefined, M],
+          ['지우기 uuid 아님 → 400', 'DELETE', '/channel-sections/nope', undefined, M],
+          ['순서 모자람 → 409', 'PUT', '/channel-sections/order', { ids: [secA.id] }, M],
+          ['순서 겹침 → 409', 'PUT', '/channel-sections/order', { ids: [secA.id, secA.id] }, M],
+          ['순서 남의 섹션 → 409', 'PUT', '/channel-sections/order', { ids: [secA.id, adminSec.id] }, M],
+          ['순서 uuid 아님 → 400', 'PUT', '/channel-sections/order', { ids: ['x'] }, M],
+          ['순서 모르는 칸 → 400', 'PUT', '/channel-sections/order', { ids: [], x: 1 }, M],
+        ] as const) {
+          const [x, y] = [await callX(tsUrl, m, path, body, token), await callX(rsUrl, m, path, body, token)];
+          expect({ status: y.status, code: y.code }, name).toEqual({ status: x.status, code: x.code });
+        }
+        expect((await tsSections()).sections, '거절은 아무것도 바꾸지 않았다').toHaveLength(2);
+        // 이름 바꾸기·접기 — 보낸 것만 바뀌고 거울이 따라간다.
+        const pa = await callX(rsUrl, 'PATCH', `/channel-sections/${secA.id}`, { name: ' 셋 ' }, M);
+        expect(pa.json).toEqual({ section: { ...secA, name: '셋', position: 1 } });
+        expect(await tsPref(todayId)).toMatchObject({ sectionId: secA.id, section: '셋' });
+        const pc = await callX(rsUrl, 'PATCH', `/channel-sections/${secA.id}`, { collapsed: true }, M);
+        expect(pc.json).toEqual({ section: { ...secA, name: '셋', position: 1, collapsed: true } });
+        // 순서 — Rust 답 = TS 목록.
+        const ord = await callX(rsUrl, 'PUT', '/channel-sections/order', { ids: [secA.id, secB.id] }, M);
+        expect(ord.status).toBe(200);
+        expect(ord.json).toEqual(await tsSections());
+        expect((ord.json.sections as { id: string }[]).map((x) => x.id)).toEqual([secA.id, secB.id]);
+        // 지우기 — 되돌리기에 쓸 전부를 돌려주고, 채널은 미분류로, 남은 섹션은 0 부터 다시 매긴다. TS 로 되살리면 거울이 돌아온다.
+        const del = await callX(rsUrl, 'DELETE', `/channel-sections/${secA.id}`, undefined, M);
+        expect(del.json).toEqual({ section: { ...secA, name: '셋', collapsed: true, position: 0 }, channelIds: [todayId] });
+        expect(await tsPref(todayId)).toMatchObject({ sectionId: null, section: null });
+        expect(((await tsSections()).sections as { id: string; position: number }[]).map((x) => [x.id, x.position])).toEqual([[secB.id, 0]]);
+        expect((await callX(rsUrl, 'DELETE', `/channel-sections/${secA.id}`, undefined, M)).status, '두 번 지우면 404').toBe(404);
+        // TS 로 같은 섹션을 다시 만들고(되돌리기 길) Rust 로 지워 둘 다 깨끗이 — 다음 블록이 섹션을 보지 않게.
+        const back = await callX(tsUrl, 'POST', '/channel-sections', { name: '셋', position: 0, channelIds: [todayId] }, M);
+        expect(await tsPref(todayId)).toMatchObject({ sectionId: (back.json.section as { id: string }).id, section: '셋' });
+        for (const id of [(back.json.section as { id: string }).id, secB.id]) {
+          expect((await callX(rsUrl, 'DELETE', `/channel-sections/${id}`, undefined, M)).status).toBe(200);
+        }
+        expect((await callX(tsUrl, 'DELETE', `/channel-sections/${adminSec.id}`, undefined, A)).status).toBe(200);
+      }
 
       // S5.2 P4d — 옮긴 라우트를 지난 요청도 세션을 늘리고 PAT 사용 시각을 남긴다(쓰기 풀로). 읽기 역할로 하면 조용히 실패하던 것.
       await db.pool.query(`update session set expires_at = now() + interval '1 day' where account_id = $1`, [member.accountId]);
