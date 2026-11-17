@@ -41,6 +41,18 @@ fn tag() -> String {
     )
 }
 
+/// 시험 전용 advisory 키. 잠금 함수 `permission_decide_lock` 의 ACL(`pg_proc` 한 줄)을 grant·revoke 하는 시험을 차례로 돌린다.
+/// cargo 는 한 바이너리의 시험을 병렬로 돌리는데, 같은 줄을 두 연결이 동시에 고치면 PG 가 한쪽을 `tuple concurrently updated`(XX000)로 깬다.
+/// 잠금은 따로 연 연결에 세션 단위로 걸린다 — 받은 연결을 쥐고 있는 동안 유지되고, 시험이 끝나거나 패닉으로 연결이 닫히면 풀린다.
+const FN_ACL_LOCK: &str = "select pg_advisory_lock(hashtext('test:decide_core_db:fn-acl'))";
+
+async fn fn_acl_lock(url: &str) -> sqlx::PgConnection {
+    use sqlx::Connection;
+    let mut c = sqlx::PgConnection::connect(url).await.unwrap();
+    sqlx::query(FN_ACL_LOCK).execute(&mut c).await.unwrap();
+    c
+}
+
 async fn account(pool: &PgPool, handle: &str, kind: &str, role: &str) -> String {
     sqlx::query_scalar(
         "insert into account(handle, display_name, kind, login_id, role) \
@@ -411,6 +423,7 @@ async fn contrast() {
 #[tokio::test]
 async fn lock_fn_privilege_gates_rust() {
     let Some(url) = db_url() else { return };
+    let _acl = fn_acl_lock(&url).await;
     let pool = PgPool::connect(&url).await.unwrap();
     let f = fixture(&pool, "list").await;
     let role = format!("dc_ro_{}", tag());
@@ -781,6 +794,7 @@ async fn deny_audit_failure_rolls_back_all() {
 #[tokio::test]
 async fn deny_pool_needs_both_layers() {
     let Some(url) = db_url() else { return };
+    let _acl = fn_acl_lock(&url).await;
     let pool = PgPool::connect(&url).await.unwrap();
     let role = format!("dc_dn_{}", tag());
     for q in [
@@ -825,4 +839,46 @@ async fn deny_pool_needs_both_layers() {
     .execute(&pool)
     .await
     .unwrap();
+}
+
+/// 위 advisory 키가 잠금 함수 ACL 고치기를 정말 차례로 세우는지. 여러 연결이 같은 함수에 grant·revoke 를 되풀이해도 하나도 깨지지 않아야 한다.
+/// 망가뜨리기: `fn_acl_lock` 이 잠그지 않게 하면(아래 `acl_flip` 의 잠금을 빼면) 이 시험이 XX000 `tuple concurrently updated` 로 빨개진다.
+#[tokio::test]
+async fn fn_acl_grants_serialized() {
+    let Some(url) = db_url() else { return };
+    let pool = PgPool::connect(&url).await.unwrap();
+    let roles: Vec<String> = (0..6).map(|i| format!("dc_acl_{}_{i}", tag())).collect();
+    for r in &roles {
+        sqlx::query(sqlx::AssertSqlSafe(format!("create role {r} nologin")))
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    let mut tasks = Vec::new();
+    for r in roles {
+        let url = url.clone();
+        tasks.push(tokio::spawn(async move { acl_flip(&url, &r, 15).await }));
+    }
+    for t in tasks {
+        t.await.unwrap().unwrap();
+    }
+}
+
+/// 한 역할에 잠금 함수 EXECUTE 를 주고 거두기를 `n` 번 — 회마다 advisory 키를 잡고 놓는다.
+async fn acl_flip(url: &str, role: &str, n: usize) -> Result<(), sqlx::Error> {
+    use sqlx::Connection;
+    let mut c = sqlx::PgConnection::connect(url).await?;
+    for _ in 0..n {
+        let acl = fn_acl_lock(url).await;
+        for verb in ["grant", "revoke"] {
+            let to = if verb == "grant" { "to" } else { "from" };
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "{verb} execute on function permission_decide_lock(uuid, uuid, uuid) {to} {role}"
+            )))
+            .execute(&mut c)
+            .await?;
+        }
+        acl.close().await?;
+    }
+    c.close().await
 }

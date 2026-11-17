@@ -1293,8 +1293,9 @@ async fn push_sweeper(
     )))
 }
 
-/// Rust 로 옮긴 루프 수(wake·retention·mandate.idle·permission.expire·outbox.prune·bg·bg.produce·push) — 문지기 풀 크기. 루프를 더하면 같이 올린다.
-const LOOP_GATE_CONNECTIONS: u32 = 9;
+/// Rust 로 옮긴 루프 수(wake·retention·mandate.idle·permission.expire·outbox.prune·scheduled·bg·push·stale·bg.produce = 10,
+/// `spawn_loops` 가 띄우는 순서) — 문지기 풀 크기. 루프를 더하면 같이 올린다.
+const LOOP_GATE_CONNECTIONS: u32 = 10;
 /// sweep 풀 크기.
 const LOOP_SWEEP_CONNECTIONS: u32 = 3;
 
