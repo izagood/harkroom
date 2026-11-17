@@ -330,8 +330,12 @@ pub(crate) struct Origin<'a> {
     /// TS `kind: 'system'`(S5.4 CH4b-2) — 서버가 사실을 남기는 줄(멤버 넣기·빼기). 라우트 입력에서는 켜지 않는다. TS `postMessage` 와 같이
     /// `kind` 칸이 `system` 이고 `meta`(`i18n` 포함)를 그대로 싣는다. 결과로는 센다(`countsAsReply`). 위임 키(`stampHumanMandate` 는
     /// `kind === 'user'` 만)와 암묵 위임(`kind !== 'system'`)은 하지 않는다. **최상위 글만 받는다** — 스레드 시스템 글의 머리·DM 갈래
-    /// (`isSystemLine`)는 아직 옮기지 않아 [`Outcome::ToTs`] 로 돌려준다.
+    /// (`isSystemLine`, S5.4 A1)는 머리 주인·DM 상대가 에이전트면 알리지 않고(그 턴을 깨우지 않는다) 사람 글이어도 선점·카드 닫기를 하지 않는다.
     pub(crate) system: bool,
+    /// TS `kind: 'progress'`(S5.4 A1, MCP `message.progress`) — 진행 한 줄. **결과가 아니다**(`countsAsReply` 거짓): 회신권 락·회신권
+    /// 스레드·TS 몫 스레드 판정·회신권 닫기·암묵 위임·백스톱 카드·위임 닫기를 하지 않는다. 답글이 아니라 머리 주인(`thread_reply`)·
+    /// DM 상대(`dm`)에게 알리지 않고 지워진 머리를 되돌리지 않는다. 부름(`mention`)은 그대로 닿는다. 위임 기한은 민다(살아 있다는 신호).
+    pub(crate) progress: bool,
 }
 
 /// 읽은 JSON 이 TS 몫인가 — 키만 보고 정한다(값이 틀렸으면 TS 가 400 을 준다).
@@ -621,16 +625,17 @@ pub(crate) async fn post_tx(
     origin: &Origin<'_>,
 ) -> Result<(Outcome, Option<Capped>), sqlx::Error> {
     let s = sql();
-    // TS `isResult` — 결과로 세는 에이전트 글(서버 알림 줄은 아니다). `countsAsReply` 는 progress·wake 만 빼므로 `user`·`system`
-    // 둘 다 참이다(이 앞단이 맡는 kind 는 그 둘뿐이다).
-    let is_result = !origin.server_notice;
-    let kind = if origin.system { "system" } else { "user" };
+    // TS `isReply = countsAsReply(kind)` — `progress`·`wake` 만 거짓(이 앞단은 `wake` 를 쓰지 않는다).
+    let is_reply = !origin.progress;
+    // TS `isResult` — 결과로 세는 에이전트 글(서버 알림 줄은 아니다).
+    let is_result = is_reply && !origin.server_notice;
+    let kind = match (origin.system, origin.progress) {
+        (true, _) => "system",
+        (false, true) => "progress",
+        (false, false) => "user",
+    };
     let (body, attachment_ids) = (input.body.as_str(), input.attachment_ids.as_slice());
     let root = input.thread_root.as_deref();
-    // 스레드 시스템 글은 TS `isSystemLine` 갈래(머리 주인·DM 상대에게 안 알림, 선점 안 함)가 아직 Rust 에 없다 — 받지 않는다.
-    if origin.system && root.is_some() {
-        return Ok((Outcome::ToTs, None));
-    }
     let mut tx = st.write.begin().await?;
     // TS 와 같이 트랜잭션 첫 줄 — 같은 채널의 최상위 글만 머리가 된다(지워진 머리도 받는다).
     if let Some(r) = root {
@@ -996,17 +1001,38 @@ pub(crate) async fn post_tx(
         .await?;
     }
     // TS `deletedRoot` — 머리가 지워져 있었으면 커밋 뒤 목록에 다시 물어 `message.updated` 로 되돌린다(아래).
-    let deleted_root = match root {
-        Some(r) => thread_reply(&mut tx, r, author, channel, &id, &mut notified_set).await?,
-        None => false,
+    // TS `input.threadRootId && isReply` — 진행 줄은 머리 주인에게 가지 않고 지워진 머리도 되돌리지 않는다.
+    let deleted_root = match (is_reply, root) {
+        (true, Some(r)) => {
+            thread_reply(
+                &mut tx,
+                r,
+                author,
+                channel,
+                &id,
+                origin.system,
+                &mut notified_set,
+            )
+            .await?
+        }
+        _ => false,
     };
-    // TS 와 같이 `thread_reply` 뒤 — DM 이면 상대에게 `dm`(사람 글은 언제나 답글로 세어지고 시스템 줄이 아니다).
-    if is_dm {
-        dm_notify(&mut tx, channel, author, root, &id, &mut notified_set).await?;
+    // TS 와 같이 `thread_reply` 뒤 — DM 이면 상대에게 `dm`(`isReply` 만, 시스템 줄은 에이전트 상대를 건너뛴다).
+    if is_dm && is_reply {
+        dm_notify(
+            &mut tx,
+            channel,
+            author,
+            root,
+            &id,
+            origin.system,
+            &mut notified_set,
+        )
+        .await?;
     }
     // TS 와 같이 부름·`thread_reply` 를 다 넣은 뒤 — 이 글이 부른 계정의 깨움은 접고 나머지는 깨운다.
-    // TS `preemptWakesForThread` 는 사람 글만 본다.
-    let preempted = match (author_is_agent, root) {
+    // TS `preemptWakesForThread` 는 사람 글만 보고, 시스템 줄(`!isSystemLine`)은 부르지 않는다.
+    let preempted = match (author_is_agent || origin.system, root) {
         (false, Some(r)) => wake_preempt::preempt(&mut tx, r, author, &id, &notified_set).await?,
         _ => wake_preempt::Preempted::default(),
     };
@@ -1154,7 +1180,8 @@ pub(crate) async fn post_tx(
         }
     }
     // TS 라우트는 `inbox.updated` 뒤에 `closeAsksByReply` 를 부른다(사람 글만) — 이 답보다 앞선 열린 카드를 `replied` 로 닫는다.
-    if let (false, Some(r)) = (author_is_agent, root) {
+    // 시스템 줄은 라우트를 거치지 않는다(서버가 바로 `postMessage` 를 부른다) — 카드를 닫지 않는다.
+    if let (false, false, Some(r)) = (author_is_agent, origin.system, root) {
         let seq = row_value
             .get("seq")
             .and_then(Value::as_i64)
@@ -1226,6 +1253,7 @@ async fn thread_reply(
     author: &str,
     channel: &str,
     message_id: &str,
+    system_line: bool,
     notified: &mut HashSet<String>,
 ) -> Result<bool, sqlx::Error> {
     let row: Option<(Option<String>, bool)> = sqlx::query_as(sql().root_author.as_str())
@@ -1241,6 +1269,10 @@ async fn thread_reply(
     }
     let facts = invoke_gate::invoke_facts(conn, std::slice::from_ref(&owner)).await?;
     if let Some(f) = facts.get(&owner) {
+        // TS `rootFact && isSystemLine` — 에이전트 머리는 시스템 줄로 깨우지 않는다.
+        if system_line {
+            return Ok(deleted);
+        }
         let ctx = invoke_gate::Ctx {
             caller_id: author,
             channel_id: channel,
@@ -1264,6 +1296,7 @@ async fn dm_notify(
     author: &str,
     root: Option<&str>,
     message_id: &str,
+    system_line: bool,
     notified: &mut HashSet<String>,
 ) -> Result<(), sqlx::Error> {
     let peers: Vec<String> = sqlx::query_scalar(sql().dm_peers.as_str())
@@ -1278,6 +1311,10 @@ async fn dm_notify(
             continue;
         }
         if let Some(f) = facts.get(&p) {
+            // TS `fact && isSystemLine` — 에이전트 상대는 시스템 줄로 깨우지 않는다.
+            if system_line {
+                continue;
+            }
             let ctx = invoke_gate::Ctx {
                 caller_id: author,
                 channel_id: channel,

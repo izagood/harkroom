@@ -140,12 +140,25 @@ pub async fn handle(
                 };
                 return super::turn_cancel::answer(&pool, rc, &me, &args).await;
             }
-            if matches!(tool, "message.post" | "message.fail" | "message.report") {
+            if matches!(
+                tool,
+                "message.post"
+                    | "message.fail"
+                    | "message.report"
+                    | "message.progress"
+                    | "message.notice"
+            ) {
                 let st = writes.post.as_ref()?;
                 let (c, t) = (cause.as_deref(), turn.as_deref());
                 return match tool {
                     "message.post" => {
                         super::msg_post::answer(st, &me, &args, c, t, has_operator).await
+                    }
+                    "message.progress" => {
+                        super::msg_post::answer_progress(st, &me, &args, c, t, has_operator).await
+                    }
+                    "message.notice" => {
+                        super::msg_post::answer_notice(st, &me, &args, has_operator, runner).await
                     }
                     "message.fail" => {
                         super::msg_post::answer_fail(st, &me, &args, c, t, has_operator).await
