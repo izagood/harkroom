@@ -94,6 +94,7 @@ impl OperatorCore {
             workers: Arc::new(AtomicUsize::new(0)),
         });
         spawn_version_writer(core.clone());
+        super::operator_assign::spawn_resync(core.clone());
         super::operator_frames::spawn(
             core.clone(),
             super::operator_frames::machine_id_key_from_env(
