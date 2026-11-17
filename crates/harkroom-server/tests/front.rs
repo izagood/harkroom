@@ -4,6 +4,7 @@ use axum::http::{HeaderMap, Method, Request, StatusCode};
 use harkroom_server::proxy::{Upstream, router};
 use harkroom_server::schema::{KNOWN_MIGRATIONS, compare};
 use std::net::SocketAddr;
+use tokio_tungstenite::tungstenite::handshake::client::generate_key;
 
 /// 받은 메서드·경로·헤더·본문을 JSON 비슷한 글로 되돌린다.
 async fn echo(req: Request<Body>) -> axum::response::Response {
@@ -129,7 +130,7 @@ async fn upstream_status_passes_through() {
 }
 
 #[tokio::test]
-async fn upstream_down_is_502_and_upgrades_are_refused() {
+async fn upstream_down_is_502_for_http_and_websocket() {
     let dead = {
         let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         l.local_addr().unwrap()
@@ -138,15 +139,148 @@ async fn upstream_down_is_502_and_upgrades_are_refused() {
     let (status, _, text) = send(front, Method::GET, "/readyz", &[], "").await;
     assert_eq!(status, 502);
     assert!(text.contains("upstream unavailable"));
+    // 웹소켓 업그레이드도 상류가 죽어 있으면 502 — 앞단이 혼자 101 을 내지 않는다.
+    let ws_key = generate_key();
+    let (status, _, text) = send(
+        front,
+        Method::GET,
+        "/ws",
+        &[
+            ("connection", "upgrade"),
+            ("upgrade", "websocket"),
+            ("sec-websocket-version", "13"),
+            ("sec-websocket-key", &ws_key),
+        ],
+        "",
+    )
+    .await;
+    assert_eq!(status, 502);
+    assert!(text.contains("upstream unavailable"));
+}
+
+#[tokio::test]
+async fn non_websocket_upgrades_are_refused() {
+    let up = serve(axum::Router::new().fallback(echo)).await;
+    let front = front_over(&format!("http://{up}")).await;
     let (status, _, _) = send(
         front,
         Method::GET,
         "/ws",
-        &[("connection", "upgrade"), ("upgrade", "websocket")],
+        &[("connection", "upgrade"), ("upgrade", "h2c")],
         "",
     )
     .await;
     assert_eq!(status, 501);
+}
+
+/// 가짜 TS 소켓 — 쿠키가 없으면 401(TS 의 인증 거절 자리), 있으면 받은 머리를 첫 글로 보내고 그 뒤로는 메아리.
+async fn ws_upstream(
+    ws: axum::extract::ws::WebSocketUpgrade,
+    uri: axum::http::Uri,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    use axum::extract::ws::Message;
+    use axum::response::IntoResponse;
+    if !headers.contains_key("cookie") {
+        return (StatusCode::UNAUTHORIZED, "no session").into_response();
+    }
+    let mut seen: Vec<String> = headers
+        .iter()
+        .map(|(k, v)| format!("{k}={}", v.to_str().unwrap_or("?")))
+        .collect();
+    seen.sort();
+    let first = format!("{uri}\n{}", seen.join("\n"));
+    ws.on_upgrade(move |mut sock| async move {
+        if sock.send(Message::Text(first.into())).await.is_err() {
+            return;
+        }
+        while let Some(Ok(m)) = sock.recv().await {
+            match m {
+                Message::Text(_) | Message::Binary(_) => {
+                    if sock.send(m).await.is_err() {
+                        return;
+                    }
+                }
+                Message::Close(_) => return,
+                _ => {}
+            }
+        }
+    })
+}
+
+#[tokio::test]
+async fn websocket_upgrades_are_bridged_to_upstream() {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
+    let up = serve(axum::Router::new().route("/ws", axum::routing::get(ws_upstream))).await;
+    let front = front_over(&format!("http://{up}")).await;
+
+    let mut req = format!("ws://{front}/ws?ticket=t1")
+        .into_client_request()
+        .unwrap();
+    let h = req.headers_mut();
+    h.insert("origin", "tauri://localhost".parse().unwrap());
+    h.insert("cookie", "sid=abc".parse().unwrap());
+    h.insert("x-forwarded-for", "198.51.100.7".parse().unwrap());
+    h.insert("connection", "Upgrade, x-drop-me".parse().unwrap());
+    h.insert("x-drop-me", "1".parse().unwrap());
+    let (mut sock, res) = tokio_tungstenite::connect_async(req).await.unwrap();
+    assert_eq!(res.status(), 101);
+
+    let Some(Ok(Message::Text(first))) = sock.next().await else {
+        panic!("상류의 첫 글이 오지 않았다");
+    };
+    let first = first.as_str();
+    assert!(first.starts_with("/ws?ticket=t1"), "{first}");
+    assert!(first.contains("origin=tauri://localhost"), "{first}");
+    assert!(first.contains("cookie=sid=abc"), "{first}");
+    assert!(
+        first.contains("x-forwarded-for=198.51.100.7, 127.0.0.1"),
+        "HTTP 길과 같게 클라이언트 주소를 끝에 덧붙인다:\n{first}"
+    );
+    assert!(
+        !first.contains("x-drop-me"),
+        "Connection 이 이름 붙인 헤더는 넘기지 않는다:\n{first}"
+    );
+
+    // 양쪽으로 그대로 흐른다(글·바이너리).
+    sock.send(Message::Text("안녕".into())).await.unwrap();
+    let Some(Ok(Message::Text(echo))) = sock.next().await else {
+        panic!("메아리가 오지 않았다");
+    };
+    assert_eq!(echo.as_str(), "안녕");
+    sock.send(Message::Binary(vec![0u8, 1, 2, 255].into()))
+        .await
+        .unwrap();
+    let Some(Ok(Message::Binary(b))) = sock.next().await else {
+        panic!("바이너리 메아리가 오지 않았다");
+    };
+    assert_eq!(&b[..], &[0u8, 1, 2, 255]);
+    sock.close(None).await.unwrap();
+}
+
+#[tokio::test]
+async fn websocket_rejection_from_upstream_passes_through() {
+    let up = serve(axum::Router::new().route("/ws", axum::routing::get(ws_upstream))).await;
+    let front = front_over(&format!("http://{up}")).await;
+    // 쿠키 없음 → 상류가 401. 앞단은 인증을 따로 하지 않고 그 답을 그대로 돌려준다.
+    let ws_key = generate_key();
+    let (status, h, text) = send(
+        front,
+        Method::GET,
+        "/ws",
+        &[
+            ("connection", "upgrade"),
+            ("upgrade", "websocket"),
+            ("sec-websocket-version", "13"),
+            ("sec-websocket-key", &ws_key),
+        ],
+        "",
+    )
+    .await;
+    assert_eq!(status, 401);
+    assert!(h.get("upgrade").is_none());
+    assert_eq!(text, "no session");
 }
 
 #[tokio::test]
