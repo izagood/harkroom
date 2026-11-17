@@ -21,6 +21,14 @@ fn mark(ev: impl AsRef<str>) {
         .unwrap()
         .push(format!("+{ms}ms {}", ev.as_ref()));
 }
+/// 쓰기 역할의 권한을 같이 쓰는 두 시험을 한 줄로 세운다. `failed_rewrite_is_retried_next_beat` 는 같은 쓰기 역할에서
+/// `agent_session_live` INSERT 를 잠시 거두는데, cargo 는 한 바이너리의 시험을 병렬로 돌린다 — 그 틈에
+/// `session_live_and_presence_against_real_schema` 의 권한 검사·쓰기가 걸리면 `write role missing ["INSERT on agent_session_live"]`
+/// 로 빨개졌다(S5.4 CH2·AC2 bus-e2e). 두 시험은 몸통 전체에서 이 잠금을 쥔다.
+fn write_role_lock() -> &'static tokio::sync::Mutex<()> {
+    static L: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    &L
+}
 fn timeline_dump() -> String {
     timeline().lock().unwrap().join("\n  ")
 }
@@ -86,6 +94,7 @@ async fn session_live_and_presence_against_real_schema() {
         eprintln!("skip: HARKROOM_TEST_DATABASE_URL unset");
         return;
     };
+    let _serial = write_role_lock().lock().await;
     mark("live: start");
     let admin = PgPool::connect(&url).await.unwrap();
     let write = match std::env::var("HARKROOM_TEST_WRITE_DATABASE_URL") {
@@ -419,6 +428,7 @@ async fn failed_rewrite_is_retried_next_beat() {
         eprintln!("skip: HARKROOM_TEST_DATABASE_URL / HARKROOM_TEST_WRITE_DATABASE_URL unset");
         return;
     };
+    let _serial = write_role_lock().lock().await;
     mark("rewrite: start");
     let admin = PgPool::connect(&url).await.unwrap();
     let write = PgPool::connect(&wurl).await.unwrap();
