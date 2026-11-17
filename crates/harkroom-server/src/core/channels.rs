@@ -161,6 +161,11 @@ pub(crate) fn prefs_sql() -> &'static str {
 }
 
 /// TS `assertChannelVisible` — 없는 채널은 true(뒤 단계가 404 로 답한다).
+/// 핀 목록 문장(`$1` 채널, `$2` 메시지 또는 null → `[PinRow]` JSON 텍스트) — 고정 쓰기(`channel_pins_sched.rs`)가 같은 꼴로 답한다.
+pub(crate) fn pins_sql() -> &'static str {
+    sql().pins.as_str()
+}
+
 pub(crate) async fn visible(pool: &PgPool, me: &str, channel: &str) -> Result<bool, sqlx::Error> {
     let v: Option<bool> = sqlx::query_scalar(sql().visible.as_str())
         .bind(me)
