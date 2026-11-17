@@ -32,6 +32,8 @@ pub const SERVED: &[&str] = &[
     "message.search",
     // C4b
     "grant.list",
+    // S5.4 A2a — 오퍼레이터 코어가 Rust 일 때만 답한다(`route` 가 `relay_moved` 로 거른다, [`super::model_options`]).
+    "agent.modelOptions",
 ];
 
 /// 입력 스키마가 없는 도구 — SDK 는 `arguments` 를 레코드(객체)로만 받고, 없어도(`null`) 받는다. 스키마가 있는 도구는
