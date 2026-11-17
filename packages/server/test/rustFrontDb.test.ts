@@ -2532,6 +2532,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           .reduce((s, [v, k]) => s.split(v).join(k), t)
           .replace(/\d{4}-\d\d-\d\dT[\d:.]+(Z|[+-]\d\d:\d\d)/g, '<ts>')
           .replace(/(\\*"seq\\*":)\d+/g, '$1"<seq>"')
+          // 상태 리액션(🙋 등)은 threadStatus 워처가 debounce 로 따로 단다 — 답에 실린 글의 리액션은 두 호출의 시각에 따라
+          // 한쪽에만 있을 수 있다(「권한 거울 원본 → TS」 흔들림). 상태 리액션은 아래 이벤트 대조처럼 쓰기와 따로 본다.
+          .replace(/(\\*"reactions\\*":)\[(?:[^[\]]|\[[^[\]]*\])*\]/g, '$1"<reactions>"')
           .replace(/(T|R) (원본|답한 원본|권한 원본|링크 줄 원본|mem 앞 원본|카드 아님|묶음|남의 묶음|사람 답|에이전트 답|다른 스레드 사람 글|백스톱 원본|권한 거울 원본|넘김 묶음|넘김 사람 답)/g, '$2');
         const cases: [string, (x: Fx) => unknown, boolean][] = [
           ['없는 묶음', (x) => ({ bundleId: missingCh, rootId: x.root, replyMessageId: x.reply }), true],
@@ -8141,6 +8144,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           let portD = 0;
           let frontD: ChildProcess | undefined;
           try {
+            // TS stale 스위퍼(`staleRequests.ts`)는 2분 넘은 미읽음 + 러너 오프라인이면 그 스레드에 failure 글을 쓴다.
+            // 이 시험의 에이전트는 러너가 없으니 앞 장면의 미읽음이 2분을 넘기면 Rust 구간에 TS 글이 끼어든다(flaky) —
+            // 회차마다 쌓인 미읽음을 「이미 알림」으로 찍어 스위퍼 후보에서 뺀다. 두 서버가 같은 DB 를 보므로 대조는 그대로다.
+            await db.pool.query(`update inbox set stale_notified_at = now() where read_at is null and stale_notified_at is null`);
             process.env.HARKROOM_DELEGATION_V2 = mode;
             process.env.HARKROOM_DELEGATION_IMPLICIT = implicitMode;
             // `freePort` 는 고른 포트를 닫았다가 넘기므로 그 사이 남이 잡을 수 있다(AddrInUse) — 그때만 새 포트로 다시 띄운다.
