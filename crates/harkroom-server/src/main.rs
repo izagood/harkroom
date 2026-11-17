@@ -1242,7 +1242,7 @@ async fn spawn_loops() {
         Ok(m) => eprintln!("front: loop permission.expire off — missing privileges {m:?}"),
         Err(e) => eprintln!("front: loop permission.expire off — privilege check failed: {e}"),
     }
-    // C5c-4 — event_outbox 정리(한 시간 지난 줄). 문지기 이름 `outbox.prune`.
+    // C5c-4 — event_outbox 정리(보존 5분이 지난 줄, 1분마다). 문지기 이름 `outbox.prune`.
     match write::missing_in(&pool, outbox_prune::OUTBOX_PRUNE_PRIVILEGES, &[]).await {
         Ok(m) if m.is_empty() => {
             eprintln!("front: loop outbox.prune on (runs only while server_loop owner is rust)");

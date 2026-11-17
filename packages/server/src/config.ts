@@ -15,6 +15,8 @@ export interface Config {
   trustProxy: TrustProxy;
   /** 다른 프로세스가 `event_outbox` 에 쓴 이벤트를 WS 로 옮기는가(`EVENT_BUS=pg`, 기본 꺼짐 — `eventBus.ts`). */
   eventBus: boolean;
+  /** 이 프로세스가 낸 이벤트를 `event_outbox` 로 내보내 Rust 에 전달하는가(`EVENT_BUS_PUBLISH=pg`, 기본 꺼짐 — C6-α). `eventBus` 와 따로 켠다. */
+  eventBusPublish: boolean;
 }
 
 /**
@@ -82,5 +84,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     logLevel: env.LOG_LEVEL ?? 'info',
     trustProxy: parseTrustProxy(env.TRUST_PROXY),
     eventBus: env.EVENT_BUS === 'pg',
+    eventBusPublish: env.EVENT_BUS_PUBLISH === 'pg',
   };
 }

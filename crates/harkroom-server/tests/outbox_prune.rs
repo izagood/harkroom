@@ -8,10 +8,10 @@ use sqlx::PgPool;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::str::FromStr;
 
-/// 시험이 깐 줄(`event->>'t'` 로 고른다) 중 한 시간 지난 것의 수.
+/// 시험이 깐 줄(`event->>'t'` 로 고른다) 중 보존(5분)이 지난 것의 수.
 async fn old_rows(pool: &PgPool, tag: &str) -> i64 {
     sqlx::query_scalar(
-        "select count(*) from event_outbox where event->>'t' = $1 and created_at < now() - interval '1 hour'",
+        "select count(*) from event_outbox where event->>'t' = $1 and created_at < now() - interval '5 minutes'",
     )
     .bind(tag)
     .fetch_one(pool)
@@ -60,17 +60,17 @@ async fn outbox_prune_like_ts() {
         return;
     }
 
-    // 지울 것: 61분 된 줄 300. 남길 것: 50분 된 줄·방금 쓴 줄.
+    // 지울 것: 6분 된 줄 300. 남길 것: 4분 된 줄·방금 쓴 줄(보존 5분).
     sqlx::query(
         "insert into event_outbox(event, created_at) \
-         select jsonb_build_object('t', 'op-rs', 'k', 'old-' || g), now() - interval '61 minutes' from generate_series(1, 300) g",
+         select jsonb_build_object('t', 'op-rs', 'k', 'old-' || g), now() - interval '6 minutes' from generate_series(1, 300) g",
     )
     .execute(&admin)
     .await
     .unwrap();
     sqlx::query(
         "insert into event_outbox(event, created_at) values \
-         (jsonb_build_object('t', 'op-rs', 'k', 'keep-50'), now() - interval '50 minutes'), \
+         (jsonb_build_object('t', 'op-rs', 'k', 'keep-4'), now() - interval '4 minutes'), \
          (jsonb_build_object('t', 'op-rs', 'k', 'keep-now'), now())",
     )
     .execute(&admin)
@@ -87,7 +87,7 @@ async fn outbox_prune_like_ts() {
     .fetch_all(&admin)
     .await
     .unwrap();
-    assert_eq!(kept, vec!["keep-50", "keep-now"]);
+    assert_eq!(kept, vec!["keep-4", "keep-now"]);
 
     // C5 조건 — 문지기 풀과 sweep 풀이 각각 연결 하나뿐이어도 sweep 이 돈다. 주인이 아니면 지우지 않는다.
     sqlx::query(
