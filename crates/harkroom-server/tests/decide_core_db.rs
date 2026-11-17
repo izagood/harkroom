@@ -43,6 +43,7 @@ fn tag() -> String {
 
 /// 시험 전용 advisory 키. 잠금 함수 `permission_decide_lock` 의 ACL(`pg_proc` 한 줄)을 grant·revoke 하는 시험을 차례로 돌린다.
 /// cargo 는 한 바이너리의 시험을 병렬로 돌리는데, 같은 줄을 두 연결이 동시에 고치면 PG 가 한쪽을 `tuple concurrently updated`(XX000)로 깬다.
+/// `audit_log` 처럼 grant 와 `alter table` 이 같은 `pg_class` 줄을 고치는 시험도 이 키로 차례를 세운다(같은 XX000).
 /// 잠금은 따로 연 연결에 세션 단위로 걸린다 — 받은 연결을 쥐고 있는 동안 유지되고, 시험이 끝나거나 패닉으로 연결이 닫히면 풀린다.
 const FN_ACL_LOCK: &str = "select pg_advisory_lock(hashtext('test:decide_core_db:fn-acl'))";
 
@@ -752,6 +753,8 @@ async fn deny_writes_request_card_audit_together() {
 #[tokio::test]
 async fn deny_audit_failure_rolls_back_all() {
     let Some(url) = db_url() else { return };
+    // 아래 `alter table audit_log` 가 `deny_pool_needs_both_layers` 의 `grant … on audit_log` 와 같은 카탈로그 줄을 고친다.
+    let _acl = fn_acl_lock(&url).await;
     let pool = PgPool::connect(&url).await.unwrap();
     let f = fixture(&pool, "list").await;
     let (req, card) = request_with_card(&pool, &f).await;
