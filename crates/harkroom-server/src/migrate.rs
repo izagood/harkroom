@@ -1,6 +1,7 @@
 //! 마이그레이션 실행기(S5.4 M1) — TS `packages/server/src/db/migrate.ts` 를 그대로 옮긴 것. **기본 꺼짐**:
 //! `HARKROOM_RUST_MIGRATE=1` 이고 `DATABASE_MIGRATE_URL`(DDL 을 돌릴 수 있는 역할)이 있을 때만 기동 때 돈다.
-//! 켜면 스키마 대조(`schema.rs`)보다 먼저 돈다.
+//! 켜면 스키마 대조(`schema.rs`)보다 먼저 돈다. `HARKROOM_RUST_MIGRATE=only` 면 마이그레이션만 돌리고 서버로 뜨지 않고
+//! 끝난다(성공 0 · 실패 1 — 배포의 마이그레이션 Job 용, [`only`]).
 //!
 //! TS 와 같아야 하는 것(롤링 업데이트에서 TS 실행기와 같은 DB 에 동시에 붙는다):
 //! - 잠금: 세션 수준 advisory 잠금 키 [`MIGRATION_LOCK_KEY`] 를 `pg_try_advisory_lock` 으로 [`LOCK_RETRY`] 마다 두드린다
@@ -32,9 +33,16 @@ pub const REACHABLE_DEADLINE: Duration = Duration::from_secs(5 * 60);
 pub static NO_TRANSACTION_MARK: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?im)^\s*--\s*migrate:\s*no-transaction\s*$").unwrap());
 
-/// 실행기를 켜는 스위치 — `HARKROOM_RUST_MIGRATE=1` 만 켠다(`HARKROOM_BACKGROUND_ENABLED` 와 같은 꼴).
+/// 실행기를 켜는 스위치 — `HARKROOM_RUST_MIGRATE=1`(돌리고 서버로 뜸) 또는 `only`(돌리고 끝남)만 켠다
+/// (`HARKROOM_BACKGROUND_ENABLED` 와 같은 꼴 — `true`·`0` 따위는 끈 것으로 본다).
 pub fn enabled(v: Option<&str>) -> bool {
-    v == Some("1")
+    v == Some("1") || only(v)
+}
+
+/// 마이그레이션만 돌리고 프로세스를 끝내는 모드 — `HARKROOM_RUST_MIGRATE=only`. 서버 기동에 드는
+/// `DATABASE_URL`·`UPSTREAM_URL` 은 보지 않는다(`main.rs`).
+pub fn only(v: Option<&str>) -> bool {
+    v == Some("only")
 }
 
 /// 기동 설정. `Ok(None)` 이면 돌리지 않는다(기본). 켰는데 URL 이 없으면 `Err` — 기동을 멈춘다.
@@ -45,7 +53,7 @@ pub fn config(get: impl Fn(&str) -> Option<String>) -> Result<Option<String>, St
     match get("DATABASE_MIGRATE_URL").filter(|u| !u.trim().is_empty()) {
         Some(u) => Ok(Some(u)),
         None => Err(
-            "HARKROOM_RUST_MIGRATE=1 but DATABASE_MIGRATE_URL is not set (needs a DDL-capable role)"
+            "HARKROOM_RUST_MIGRATE is on but DATABASE_MIGRATE_URL is not set (needs a DDL-capable role)"
                 .into(),
         ),
     }
@@ -210,6 +218,24 @@ mod tests {
         let u = "postgres://migrator@db.example.com/harkroom";
         let r = config(|k| match k {
             "HARKROOM_RUST_MIGRATE" => Some("1".into()),
+            "DATABASE_MIGRATE_URL" => Some(u.into()),
+            _ => None,
+        });
+        assert_eq!(r, Ok(Some(u.into())));
+    }
+
+    #[test]
+    fn only_mode_also_needs_url() {
+        assert!(only(Some("only")));
+        assert!(enabled(Some("only")));
+        assert!(!only(Some("1")));
+        assert!(!only(None));
+        assert!(!only(Some("ONLY")));
+        let r = config(|k| (k == "HARKROOM_RUST_MIGRATE").then(|| "only".into()));
+        assert!(r.unwrap_err().contains("DATABASE_MIGRATE_URL"));
+        let u = "postgres://migrator@db.example.com/harkroom";
+        let r = config(|k| match k {
+            "HARKROOM_RUST_MIGRATE" => Some("only".into()),
             "DATABASE_MIGRATE_URL" => Some(u.into()),
             _ => None,
         });
