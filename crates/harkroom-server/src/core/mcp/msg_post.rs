@@ -163,7 +163,207 @@ pub async fn answer(
     operator: bool,
 ) -> Option<String> {
     let a = parse(args)?;
-    post(st, me, a, Map::new(), false, false, cause, turn, operator).await
+    post(
+        st,
+        me,
+        a,
+        Map::new(),
+        Kind::User,
+        false,
+        false,
+        cause,
+        turn,
+        operator,
+    )
+    .await
+}
+
+/// 글 종류 — TS `postMessage` 의 `kind`·`serverNotice` 조합.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    /// `message.post`·`fail`·`report`.
+    User,
+    /// `message.progress` — `kind: 'progress'`.
+    Progress,
+    /// `message.notice` — `kind: 'system'` + `serverNotice`, 원인·턴·모델 신고 없음.
+    Notice,
+}
+
+/// zod `message.progress` 의 `inputSchema`(channelId·body·threadRootId·model). 모르는 키는 zod 처럼 버린다 — `attachmentIds`·
+/// `alsoInChannel`·`agentModels` 도 이 도구에는 없는 키라 버린다(첨부를 붙이거나 채널에 올리지 않는다).
+fn parse_progress(args: &Value) -> Option<Args> {
+    let Value::Object(o) = args else { return None };
+    let kept: Map<String, Value> = o
+        .iter()
+        .filter(|(k, _)| matches!(k.as_str(), "channelId" | "body" | "threadRootId" | "model"))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    parse(&Value::Object(kept))
+}
+
+/// S5.4 A1 — `message.progress`. 결과가 아닌 진행 한 줄([`Origin::progress`]).
+pub async fn answer_progress(
+    st: &PostState,
+    me: &Account,
+    args: &Value,
+    cause: Option<&str>,
+    turn: Option<&str>,
+    operator: bool,
+) -> Option<String> {
+    let a = parse_progress(args)?;
+    post(
+        st,
+        me,
+        a,
+        Map::new(),
+        Kind::Progress,
+        false,
+        false,
+        cause,
+        turn,
+        operator,
+    )
+    .await
+}
+
+/// TS `RUNNER_NOTICE_MAX_PENDING`.
+const NOTICE_MAX_PENDING: i64 = 9999;
+/// TS `SYSTEM_I18N_MAX_ARG_LENGTH` — `systemI18n` 이 글자 인자를 자르는 길이(UTF-16).
+const I18N_MAX_ARG: usize = 200;
+
+/// zod `message.notice` 의 인자.
+#[derive(Debug, PartialEq, Eq)]
+struct NoticeArgs {
+    channel: String,
+    thread_root: Option<String>,
+    key: String,
+    handle: Option<String>,
+    pending: Option<i64>,
+}
+
+/// zod `message.notice` 의 `inputSchema`. 틀린 꼴이면 `None`(→ TS 가 검증 오류를 낸다).
+fn parse_notice(args: &Value) -> Option<NoticeArgs> {
+    let Value::Object(o) = args else { return None };
+    let channel = o
+        .get("channelId")?
+        .as_str()
+        .filter(|s| is_uuid(s))?
+        .to_owned();
+    let thread_root = match o.get("threadRootId") {
+        None => None,
+        Some(Value::String(r)) if is_uuid(r) => Some(r.clone()),
+        _ => return None,
+    };
+    let key = o
+        .get("key")?
+        .as_str()
+        .filter(|k| matches!(*k, "blocked_by_turn" | "fenced" | "controlled"))?
+        .to_owned();
+    let handle = match o.get("handle") {
+        None => None,
+        Some(Value::String(h)) if h.encode_utf16().count() <= 64 => Some(h.clone()),
+        _ => return None,
+    };
+    // zod `int().min(1).max(9999)` — 소수 꼴(3.0)은 TS 에 맡긴다.
+    let pending = match o.get("pending") {
+        None => None,
+        Some(v) => Some(
+            v.as_i64()
+                .filter(|n| (1..=NOTICE_MAX_PENDING).contains(n))?,
+        ),
+    };
+    Some(NoticeArgs {
+        channel,
+        thread_root,
+        key,
+        handle,
+        pending,
+    })
+}
+
+/// TS `HANDLE_RE` `/^[A-Za-z0-9_.-]{1,64}$/`.
+fn notice_handle(h: Option<&str>) -> Option<&str> {
+    h.filter(|h| {
+        (1..=64).contains(&h.len())
+            && h.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'))
+    })
+}
+
+/// TS `runnerNotice(key, agentId, { handle, pending })` — 본문과 `meta.i18n`. 서버가 짓는다(자유 본문을 받지 않는다).
+fn runner_notice(n: &NoticeArgs, agent: &str) -> (String, Value) {
+    let clip = |s: &str| -> String {
+        // TS `slice(0, 200)` 은 UTF-16 단위 — handle 은 ASCII 라 바이트와 같다. agentId 는 uuid 다.
+        s.chars().take(I18N_MAX_ARG).collect()
+    };
+    match n.key.as_str() {
+        "blocked_by_turn" => (
+            "(이 스레드에서 앞 턴이 아직 돌고 있습니다 — 이 글은 그 턴이 끝나면 읽습니다. 바로 멈추려면 도는 턴 목록이나 그 턴의 터미널 창에서 「멈추기」를 누르세요)".to_owned(),
+            serde_json::json!({ "key": "system.runner.blockedByTurn", "args": { "agentId": clip(agent) } }),
+        ),
+        "fenced" => (
+            "(다른 러너가 이 스레드를 넘겨받아 이 턴을 접었다 — 이 러너가 서버와 끊긴 사이 스레드 임대가 만료됐다. 남은 일은 넘겨받은 쪽이 잇는다)".to_owned(),
+            serde_json::json!({ "key": "system.runner.fenced", "args": { "agentId": clip(agent) } }),
+        ),
+        _ => {
+            let handle = notice_handle(n.handle.as_deref());
+            let pending = n.pending.unwrap_or(1).clamp(1, NOTICE_MAX_PENDING);
+            let body = format!(
+                "(지금 {} 이(가) 직접 조종 중입니다 — 이 멘션은 대기 {pending}건째입니다. 조종이 끝나면 처리합니다: 터미널에서 하네스를 종료하거나, Agents 탭에서 「조종 끝내기」)",
+                handle.unwrap_or("소유자")
+            );
+            let i18n = match handle {
+                Some(h) => serde_json::json!({ "key": "system.runner.controlled", "args": { "agentId": clip(agent), "handle": clip(h), "pending": pending } }),
+                None => serde_json::json!({ "key": "system.runner.controlledByOwner", "args": { "agentId": clip(agent), "pending": pending } }),
+            };
+            (body, i18n)
+        }
+    }
+}
+
+/// S5.4 A1 — `message.notice`(러너 알림 줄). `runner` 는 [`super::bg_claim::runner`](오퍼레이터를 거쳤고 원인·턴 헤더가 원시값으로도
+/// 없다). 오퍼레이터를 안 거쳤으면 TS 와 같이 `runner_only` 다. 거쳤는데 헤더가 있으면(꼴이 틀린 헤더는 TS 가 「없음」으로 볼 수 있다)
+/// TS 에 넘긴다 — 좁히는 쪽으로만 틀린다.
+pub async fn answer_notice(
+    st: &PostState,
+    me: &Account,
+    args: &Value,
+    operator: bool,
+    runner: bool,
+) -> Option<String> {
+    let n = parse_notice(args)?;
+    if !operator {
+        return Some(err("runner_only", "message.notice 는 러너만 부른다"));
+    }
+    if !runner {
+        return None;
+    }
+    let (body, i18n) = runner_notice(&n, &me.id);
+    let mut meta = Map::new();
+    meta.insert("i18n".into(), i18n);
+    let a = Args {
+        channel: n.channel,
+        post: PostBody {
+            body,
+            attachment_ids: Vec::new(),
+            also_in_channel: false,
+            thread_root: n.thread_root,
+        },
+        model: None,
+    };
+    post(
+        st,
+        me,
+        a,
+        meta,
+        Kind::Notice,
+        false,
+        false,
+        None,
+        None,
+        operator,
+    )
+    .await
 }
 
 /// `message.fail` 의 zod 인자 중 Rust 가 맡는 것 — 표지(`code`) 없는 실패만(C3b-2c-1).
@@ -258,7 +458,19 @@ pub async fn answer_fail(
 ) -> Option<String> {
     let f = parse_fail(args)?;
     let meta = failure_meta(&f);
-    post(st, me, f.args, meta, true, false, cause, turn, operator).await
+    post(
+        st,
+        me,
+        f.args,
+        meta,
+        Kind::User,
+        true,
+        false,
+        cause,
+        turn,
+        operator,
+    )
+    .await
 }
 
 /// shared `REPORT_MAX_ITEMS`·`REPORT_MAX_NEXT`.
@@ -356,7 +568,19 @@ pub async fn answer_report(
     operator: bool,
 ) -> Option<String> {
     let (a, meta) = parse_report(args)?;
-    post(st, me, a, meta, true, true, cause, turn, operator).await
+    post(
+        st,
+        me,
+        a,
+        meta,
+        Kind::User,
+        true,
+        true,
+        cause,
+        turn,
+        operator,
+    )
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -365,6 +589,7 @@ async fn post(
     me: &Account,
     a: Args,
     mut meta: Map<String, Value>,
+    kind: Kind,
     closes_delegation: bool,
     fold: bool,
     cause: Option<&str>,
@@ -376,15 +601,18 @@ async fn post(
         Ok(false) => return Some(err("forbidden", "not a member of this dm channel")),
         Err(_) => return None,
     }
-    cause_link::reported_model_meta(
-        &st.read,
-        &me.id,
-        a.model.as_deref(),
-        a.post.thread_root.as_deref(),
-        &mut meta,
-    )
-    .await
-    .ok()?;
+    // TS `message.notice` 는 모델 신고를 싣지 않는다(meta 는 `i18n` 하나).
+    if kind != Kind::Notice {
+        cause_link::reported_model_meta(
+            &st.read,
+            &me.id,
+            a.model.as_deref(),
+            a.post.thread_root.as_deref(),
+            &mut meta,
+        )
+        .await
+        .ok()?;
+    }
     let is_dm = msg_post::channel_is_dm(&st.read, &a.channel).await.ok()?;
     let audience = audience_for(&st.read, &a.channel).await.ok()?.to_json();
     let origin = Origin {
@@ -392,10 +620,11 @@ async fn post(
         chain_cause: cause.filter(|_| operator),
         turn_id: turn.filter(|_| operator),
         meta,
-        server_notice: false,
+        server_notice: kind == Kind::Notice,
         closes_delegation,
         delegation: None,
-        system: false,
+        system: kind == Kind::Notice,
+        progress: kind == Kind::Progress,
     };
     let out = msg_post::post_in_tx(
         st,
@@ -726,6 +955,85 @@ mod tests {
         assert!(
             t.contains(r#"{\"message\":{\"id\":\"m\",\"meta\":{}},\"notified\":[]}"#),
             "{t}"
+        );
+    }
+
+    #[test]
+    fn progress_drops_post_only_keys() {
+        // zod `message.progress` 에는 첨부·채널 올리기·모델 지정 키가 없다 — 버리고 받는다.
+        let a = parse_progress(&json!({
+            "channelId": C, "body": "x", "threadRootId": R,
+            "alsoInChannel": true, "attachmentIds": ["bad"], "agentModels": {}
+        }))
+        .expect("unknown keys stripped");
+        assert!(a.post.attachment_ids.is_empty());
+        assert!(!a.post.also_in_channel);
+        assert_eq!(a.post.thread_root.as_deref(), Some(R));
+        assert!(parse_progress(&json!({ "channelId": C, "body": "" })).is_none());
+        assert!(parse_progress(&json!({ "channelId": "x", "body": "a" })).is_none());
+    }
+
+    #[test]
+    fn notice_args_like_zod() {
+        let n = parse_notice(&json!({ "channelId": C, "key": "fenced", "body": "ignored" }))
+            .expect("ok");
+        assert_eq!(n.key, "fenced");
+        assert!(parse_notice(&json!({ "channelId": C, "key": "other" })).is_none());
+        assert!(
+            parse_notice(&json!({ "channelId": C, "key": "controlled", "pending": 0 })).is_none()
+        );
+        assert!(
+            parse_notice(&json!({ "channelId": C, "key": "controlled", "pending": 10000 }))
+                .is_none()
+        );
+        assert!(
+            parse_notice(&json!({ "channelId": C, "key": "controlled", "pending": 2.5 })).is_none()
+        );
+        assert!(
+            parse_notice(&json!({ "channelId": C, "key": "controlled", "handle": "a".repeat(65) }))
+                .is_none()
+        );
+        assert!(
+            parse_notice(&json!({ "channelId": C, "key": "fenced", "threadRootId": "x" }))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn runner_notice_like_ts() {
+        let n = |key: &str, handle: Option<&str>, pending: Option<i64>| NoticeArgs {
+            channel: C.into(),
+            thread_root: None,
+            key: key.into(),
+            handle: handle.map(str::to_owned),
+            pending,
+        };
+        let (b, i) = runner_notice(&n("blocked_by_turn", None, None), R);
+        assert!(b.starts_with("(이 스레드에서 앞 턴이"));
+        assert_eq!(
+            i,
+            json!({ "key": "system.runner.blockedByTurn", "args": { "agentId": R } })
+        );
+        let (_, i) = runner_notice(&n("fenced", None, None), R);
+        assert_eq!(i["key"], "system.runner.fenced");
+        let (b, i) = runner_notice(&n("controlled", Some("bob.x-1"), Some(3)), R);
+        assert!(
+            b.contains("지금 bob.x-1 이(가)") && b.contains("대기 3건째"),
+            "{b}"
+        );
+        assert_eq!(
+            i,
+            json!({ "key": "system.runner.controlled", "args": { "agentId": R, "handle": "bob.x-1", "pending": 3 } })
+        );
+        // HANDLE_RE 밖이면 「소유자」 + controlledByOwner, pending 없으면 1.
+        let (b, i) = runner_notice(&n("controlled", Some("bad handle"), None), R);
+        assert!(
+            b.contains("지금 소유자 이(가)") && b.contains("대기 1건째"),
+            "{b}"
+        );
+        assert_eq!(
+            i,
+            json!({ "key": "system.runner.controlledByOwner", "args": { "agentId": R, "pending": 1 } })
         );
     }
 }

@@ -34,6 +34,9 @@ pub const SERVED: &[&str] = &[
     "message.delegate",
     // C3b-2c-3 — 완료 보고(`planStepId` 없는 것). 같은 글 쓰기 풀이다 — 예약 접기 칸(`agent_wake.canceled_at`·대기 줄 meta)도 그 묶음에 있다.
     "message.report",
+    // S5.4 A1 — 진행 한 줄·러너 알림 줄. 같은 글 쓰기 풀이다(`message.post` 와 같은 칸).
+    "message.progress",
+    "message.notice",
 ];
 
 /// TS 가 조건부로 싣는 도구 — `/mcp/admit` 이 `registered: true` 라고 답했을 때만 Rust 가 답한다([`super::route::serve`]).

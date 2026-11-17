@@ -326,6 +326,7 @@ async fn write(
             deadline_at: &deadline_at,
         }),
         system: false,
+        progress: false,
     };
     let post = PostBody {
         body: a.body.clone(),
