@@ -893,6 +893,28 @@ async fn main() {
         },
         None => false,
     };
+    // S5.4 CH4b-2 — 멤버 넣기·빼기. 세 겹 잠금: `HARKROOM_CORE=rust`, 글 올리기 코어가 켜짐(시스템 글이 그 경로를 탄다),
+    // 쓰기 풀에 멤버 권한이 다 있을 때만.
+    let members_write = match &post_write {
+        Some(w) => {
+            use harkroom_server::core::channel_members as c;
+            match write::missing_in(w, c::MEMBER_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: channel members core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: channel members core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        None => None,
+    };
     // C3b-2c-4b — MCP `message.delegate` 의 쓰기(게이트를 지난 위임)는 MCP 글 칸에 더해 위임 칸(`DELEGATE_WRITE_PRIVILEGES`)까지 있을 때만.
     // 없으면 게이트를 지난 위임만 TS 에 남는다(거절 갈래는 그대로 Rust).
     let mcp_delegate_ok = mcp_post_ok
@@ -1322,7 +1344,7 @@ async fn main() {
         // S5.4 CH2 — 읽음·미읽음 표시 2줄. 권한이 다 있을 때만 — 아니면 TS 에 남는다(`PATCH /channels/{id}/pref` 는 언제나 TS).
         // S5.4 CH3b — 자동 멘션 걸기·풀기·문서 저장 3줄. 권한이 다 있을 때만 — 아니면 TS 에 남는다.
         // S5.4 CH4a — 채널 만들기·고치기 2줄. 권한이 다 있을 때만 — 아니면 TS 에 남는다. `DELETE /channels/{id}` 는 언제나 TS(첨부 저장소가 TS 에만 있다).
-        // S5.4 CH4b-1 — DM 열기 1줄. 권한이 다 있을 때만 — 아니면 TS 에 남는다. 멤버 추가·빼기는 아직 TS(시스템 글이 Rust 글 경로에 없다).
+        // S5.4 CH4b-1 — DM 열기 1줄. 권한이 다 있을 때만 — 아니면 TS 에 남는다.
         if let Some(write) = dm_open {
             let dm = harkroom_server::core::dm_open::routes(
                 harkroom_server::core::dm_open::DmOpenState {
@@ -1336,6 +1358,25 @@ async fn main() {
             core_routes.router = core_routes.router.merge(dm.router);
             core_routes.http.extend(dm.http);
             core_routes.sockets.extend(dm.sockets);
+        }
+        // S5.4 CH4b-2 — 멤버 넣기·빼기 2줄. 글 올리기 코어와 멤버 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = members_write {
+            let cm = harkroom_server::core::channel_members::routes(
+                harkroom_server::core::channel_members::MembersState {
+                    post: harkroom_server::core::msg_post::PostState {
+                        read: state.pool.clone(),
+                        write,
+                        up: state.up.clone(),
+                        implicit_ok,
+                    },
+                    trust: (*state.trust).clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(cm.router);
+            core_routes.http.extend(cm.http);
+            core_routes.sockets.extend(cm.sockets);
         }
         if let Some(write) = channel_create_update {
             let cu = harkroom_server::core::channel_create_update::routes(

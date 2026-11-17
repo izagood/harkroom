@@ -325,6 +325,7 @@ async fn write(
             delegate_ids: &delegate_ids,
             deadline_at: &deadline_at,
         }),
+        system: false,
     };
     let post = PostBody {
         body: a.body.clone(),
