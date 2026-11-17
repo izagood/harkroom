@@ -4369,8 +4369,16 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           [mem(ghost), A, 404],
           [mem(member.accountId), A, 404], // 사람 계정
           [rev(member.accountId, 'b-topic'), A, 404],
-          [rev(owned, 'x'.repeat(256)), M, 400],
-          [rev(owned, 'x'.repeat(256)), M2, 403],
+          // fastify 경로 파라미터 상한(100자, 퍼센트 인코딩을 푼 뒤 UTF-16) — 넘으면 인증 전에 414.
+          [rev(owned, 'x'.repeat(256)), M, 414],
+          [rev(owned, 'x'.repeat(256)), M2, 414],
+          [rev(owned, 'x'.repeat(256)), '', 414],
+          [rev(owned, 'x'.repeat(101)), M, 414],
+          [rev(owned, '/'.repeat(101)), M, 414],
+          [rev(owned, '😀'.repeat(51)), M, 414], // UTF-16 102단위
+          [rev(owned, 'x'.repeat(100)), M, 200],
+          [rev(owned, '한'.repeat(100)), M, 200], // 인코딩은 900자지만 풀면 100자
+          [rev(owned, '😀'.repeat(50)), M, 200],
           [mem(owned), '', 401],
           [rev(owned, 'b-topic'), '', 401],
         ] as const) {

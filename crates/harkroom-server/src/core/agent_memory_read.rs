@@ -14,7 +14,7 @@ use crate::auth::{Account, RequireAccount};
 use crate::directory::{internal, json_err, json_ok};
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use sqlx::PgPool;
 use std::sync::Arc;
 
@@ -37,6 +37,57 @@ fn bad(what: &str) -> Response {
         &format!("{what}: invalid"),
     )
 }
+/// fastify `maxParamLength`(기본 100). find-my-way 는 길을 찾을 때 경로 파라미터가 이보다 길면 라우트·훅(인증
+/// 포함)에 닿기 전에 414 `FST_ERR_MAX_PARAM_LENGTH` 를 낸다. 길이는 퍼센트 인코딩을 **모두 푼 뒤**(예약 문자 `%2F`
+/// 등도 한 글자)의 UTF-16 단위다 — fastify 5.12·find-my-way 9.9 로 확인했다(`한`×100 → 200, `😀`×51 → 414,
+/// `/`×101 → 414). 같은 답을 내려고 인증 층 바깥에서 같은 길이로 본다. 이 표의 정적 조각은 모두 100자보다
+/// 짧으므로 「어느 조각이든 100자 초과」가 「파라미터가 100자 초과」와 같다.
+const FASTIFY_MAX_PARAM_LENGTH: usize = 100;
+
+/// 퍼센트 인코딩을 푼 뒤 UTF-16 길이. 잘못된 인코딩(TS 는 400 `FST_ERR_BAD_URL`)이면 None — 여기서는 판정하지 않는다.
+fn decoded_utf16_len(seg: &str) -> Option<usize> {
+    let b = seg.as_bytes();
+    let hex = |c: u8| (c as char).to_digit(16).map(|d| d as u8);
+    let mut out: Vec<u8> = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' {
+            let (h, l) = (*b.get(i + 1)?, *b.get(i + 2)?);
+            out.push(hex(h)? << 4 | hex(l)?);
+            i += 3;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out)
+        .ok()
+        .map(|s| s.encode_utf16().count())
+}
+
+async fn max_param_length(req: axum::extract::Request, next: axum::middleware::Next) -> Response {
+    if req.uri().path().split('/').any(|seg| {
+        seg.len() > FASTIFY_MAX_PARAM_LENGTH
+            && decoded_utf16_len(seg).is_some_and(|n| n > FASTIFY_MAX_PARAM_LENGTH)
+    }) {
+        // 본문 꼴은 fastify `onMaxParamLength` 와 같다(`error` 가 문자열이라 대조의 오류 코드는 양쪽 다 없다).
+        // 요청 경로는 되돌려 싣지 않는다.
+        let body = serde_json::json!({
+            "error": "Bad Request",
+            "code": "FST_ERR_MAX_PARAM_LENGTH",
+            "message": "path is exceeding the max param length",
+            "statusCode": 414,
+        });
+        return (
+            StatusCode::URI_TOO_LONG,
+            [(axum::http::header::CONTENT_TYPE, "application/json")],
+            body.to_string(),
+        )
+            .into_response();
+    }
+    next.run(req).await
+}
+
 fn no_such_agent() -> Response {
     json_err(StatusCode::NOT_FOUND, "not_found", "no such agent")
 }
@@ -166,6 +217,8 @@ pub fn routes(
                 auth,
                 crate::auth::layer,
             ))
+            // 인증보다 먼저(바깥) — fastify 는 414 를 라우트를 찾는 단계에서 낸다.
+            .route_layer(axum::middleware::from_fn(max_param_length))
             .layer(axum::middleware::from_fn_with_state(
                 cors,
                 crate::cors::layer,
@@ -176,5 +229,28 @@ pub fn routes(
         router: t.router.with_state(Arc::new(pool)),
         http: t.http,
         sockets: t.sockets,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decoded_utf16_len as len;
+
+    #[test]
+    fn decoded_length_matches_find_my_way() {
+        assert_eq!(len(&"x".repeat(100)), Some(100));
+        assert_eq!(len(&"x".repeat(101)), Some(101));
+        // 한글 한 자는 인코딩 9글자지만 1자, 이모지는 UTF-16 2단위.
+        assert_eq!(len(&"%ED%95%9C".repeat(60)), Some(60));
+        assert_eq!(len(&"%F0%9F%98%80".repeat(51)), Some(102));
+        // 예약 문자·`%` 이스케이프도 한 글자로 센다.
+        assert_eq!(len(&"%2F".repeat(34)), Some(34));
+        assert_eq!(len("%2f%25%40"), Some(3));
+        assert_eq!(len("a%20b"), Some(3));
+        // 잘못된 인코딩 — TS 는 400(FST_ERR_BAD_URL), 여기서는 판정하지 않는다.
+        assert_eq!(len("%G1"), None);
+        assert_eq!(len("ab%"), None);
+        assert_eq!(len("ab%4"), None);
+        assert_eq!(len("%FF"), None);
     }
 }
