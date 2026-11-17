@@ -29,7 +29,7 @@ import { CHAIN_BACKSTOP_OPEN_SQL, CHAIN_BACKSTOP_OWNER_SQL } from '../src/servic
 import { EFFECTIVE_MODEL_SQL } from '../src/services/reportedModel.js';
 import { CAUSE_DEPTH_SQL, VERIFIED_CAUSE_LINK_SQL } from '../src/services/messages.js';
 import { ENQUEUE_ASK_PUSH_SQL, ENQUEUE_INBOX_PUSH_MANY_SQL, INBOX_PUSH_REASON_LIST, PUSH_AGENT_REPLY_DELAY_SEC } from '../src/services/push/pushJobs.js';
-import { HAS_OLDER_SQL, INBOX_FOLDED_WAKES_SQL, INBOX_HANDED_SQL, INBOX_STARTED_IN_SQL, INBOX_TEAM_ROSTER_SQL, INBOX_THREAD_STATES_SQL, LIST_INBOX_SQL, LIST_MESSAGES_SQL, MESSAGE_BY_ID_SQL, READ_LIST_ROW_SQL, SEARCH_MESSAGES_SQL, THREAD_HEADS_SQL } from '../src/services/messages.js';
+import { BOARD_ROOT_IDS_SQL, BOARD_VERSION_SQL, HAS_OLDER_SQL, INBOX_FOLDED_WAKES_SQL, INBOX_HANDED_SQL, INBOX_STARTED_IN_SQL, INBOX_TEAM_ROSTER_SQL, INBOX_THREAD_STATES_SQL, LIST_INBOX_SQL, LIST_MESSAGES_SQL, MESSAGE_BY_ID_SQL, READ_LIST_ROW_SQL, SEARCH_MESSAGES_SQL, THREAD_HEADS_SQL } from '../src/services/messages.js';
 import { POST_CHANNEL_KIND_SQL, POST_DM_PEERS_SQL, POST_IDEMPOTENCY_FIND_SQL, POST_IDEMPOTENCY_INSERT_SQL, POST_INSERT_SQL, POST_ROOT_AUTHOR_SQL, POST_THREAD_ROOT_OF_SQL, SEQ_LOCK_CLASS, SEQ_LOCK_SQL } from '../src/services/messages.js';
 import { ATTACH_FIND_SQL, ATTACH_UPDATE_SQL } from '../src/services/attachments.js';
 import { CHAT_APPROVAL_GUARD_WORDS } from '../src/services/chatApproval.js';
@@ -277,6 +277,8 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     // 받은함 스레드 머리·처리 상태(`GET /inbox?threads=1`, S5.4 MS2c).
     inbox_thread_heads: THREAD_HEADS_SQL,
     inbox_thread_states: INBOX_THREAD_STATES_SQL,
+    inbox_board_version: BOARD_VERSION_SQL,
+    inbox_board_root_ids: BOARD_ROOT_IDS_SQL,
     // MCP delegate 게이트(`core/mcp/delegate_gate.rs`, S5.3 C3b-2c-4a) — 팀장 명단·대상·라운드.
     delegate_lead_team: LEAD_TEAM_SQL,
     delegate_targets: DELEGATION_TARGETS_SQL,
