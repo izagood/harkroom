@@ -1016,14 +1016,14 @@ mod tests {
         );
         let (_, i) = runner_notice(&n("fenced", None, None), R);
         assert_eq!(i["key"], "system.runner.fenced");
-        let (b, i) = runner_notice(&n("controlled", Some("jae.bin-1"), Some(3)), R);
+        let (b, i) = runner_notice(&n("controlled", Some("bob.x-1"), Some(3)), R);
         assert!(
-            b.contains("지금 jae.bin-1 이(가)") && b.contains("대기 3건째"),
+            b.contains("지금 bob.x-1 이(가)") && b.contains("대기 3건째"),
             "{b}"
         );
         assert_eq!(
             i,
-            json!({ "key": "system.runner.controlled", "args": { "agentId": R, "handle": "jae.bin-1", "pending": 3 } })
+            json!({ "key": "system.runner.controlled", "args": { "agentId": R, "handle": "bob.x-1", "pending": 3 } })
         );
         // HANDLE_RE 밖이면 「소유자」 + controlledByOwner, pending 없으면 1.
         let (b, i) = runner_notice(&n("controlled", Some("bad handle"), None), R);
