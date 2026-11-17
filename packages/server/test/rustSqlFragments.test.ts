@@ -10,8 +10,8 @@ import { CHANNEL_DELETE_INFO_SQL, CHANNEL_POST_GATE_SQL, CHANNEL_MESSAGE_COUNT_S
 import { ALL_READ_STATES_SQL, READ_STATE_SQL } from '../src/services/readPositions.js';
 import { LIST_CHANNEL_SECTIONS_SQL } from '../src/services/channelSections.js';
 import { LIST_CHANNEL_AUTO_MENTIONS_SQL } from '../src/services/channelAutoMentions.js';
-import { LIST_SCHEDULED_SQL } from '../src/services/scheduledMessages.js';
-import { SELECT_PINS_SQL } from '../src/services/pins.js';
+import { CANCEL_SCHEDULED_SQL, LIST_SCHEDULED_SQL, SCHEDULE_INSERT_SQL } from '../src/services/scheduledMessages.js';
+import { PIN_INSERT_SQL, SELECT_PINS_SQL, UNPIN_DELETE_SQL, UNPIN_FIND_SQL } from '../src/services/pins.js';
 import { AGENT_INVOKER_SQL, CHANNEL_SCOPE_SQL, ELIGIBLE_DELEGATE_SQL, INVOKE_FACTS_SQL, TEAM_INVOKER_SQL } from '../src/services/invokeGate.js';
 import { CLOSE_REPLY_GRANTS_SQL, HAS_REPLY_GRANT_SQL, OPEN_REPLY_GRANTS_SQL } from '../src/services/replyGrants.js';
 import { MENTION_DEPTH_SCAN_SQL, OWN_THREAD_LINK_IDS_SQL, RECENT_BODIES_SQL, REPLY_LOCK_CLASS, STALL_SHADOW_SQL } from '../src/services/messages.js';
@@ -154,6 +154,11 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     channel_doc: CHANNEL_DOC_SQL,
     list_scheduled: LIST_SCHEDULED_SQL,
     select_pins: SELECT_PINS_SQL,
+    pin_insert: PIN_INSERT_SQL,
+    unpin_find: UNPIN_FIND_SQL,
+    unpin_delete: UNPIN_DELETE_SQL,
+    schedule_insert: SCHEDULE_INSERT_SQL,
+    cancel_scheduled: CANCEL_SCHEDULED_SQL,
     channel_delete_info: CHANNEL_DELETE_INFO_SQL,
     channel_message_count: CHANNEL_MESSAGE_COUNT_SQL,
     // 채널·스레드 목록(`core/msg_list.rs`, S5.3 C1b-1b) — `listMessageRows` 의 갈래 9개와 `hasMore` 문장 3개, 완성 문장째.

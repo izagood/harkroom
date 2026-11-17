@@ -18,6 +18,14 @@ export interface SweepHost {
   addHook(hook: 'onClose', fn: () => void | Promise<void>): void;
 }
 
+/** 예약 만들기·취소 문장 — Rust 코어(`core/channel_pins_sched.rs`, S5.4 CH3a)가 골든으로 받아 그대로 쓴다. */
+export const SCHEDULE_INSERT_SQL = `insert into scheduled_message (channel_id, author_id, thread_root_id, body, send_at)
+     values ($1::uuid, $2::uuid, $3::uuid, $4, $5::timestamptz) returning ${COLS}`;
+export const CANCEL_SCHEDULED_SQL = `update scheduled_message set canceled_at = now()
+     where id = $1::uuid and author_id = $2::uuid and canceled_at is null
+       and sent_message_id is null and failed_reason is null
+     returning id`;
+
 export async function scheduleMessage(
   pool: Pool, input: {
     channelId: string;
@@ -28,8 +36,7 @@ export async function scheduleMessage(
   },
 ): Promise<ScheduledMessageView> {
   const res = await pool.query(
-    `insert into scheduled_message (channel_id, author_id, thread_root_id, body, send_at)
-     values ($1, $2, $3, $4, $5) returning ${COLS}`,
+    SCHEDULE_INSERT_SQL,
     [input.channelId, input.authorId, input.threadRootId ?? null, input.body, input.sendAt.toISOString()],
   );
   return res.rows[0];
@@ -59,13 +66,7 @@ export async function listScheduledMessages(
 export async function cancelScheduledMessage(
   pool: Pool, id: string, authorId: string,
 ): Promise<boolean> {
-  const res = await pool.query(
-    `update scheduled_message set canceled_at = now()
-     where id = $1 and author_id = $2 and canceled_at is null
-       and sent_message_id is null and failed_reason is null
-     returning id`,
-    [id, authorId],
-  );
+  const res = await pool.query(CANCEL_SCHEDULED_SQL, [id, authorId]);
   return (res.rowCount ?? 0) > 0;
 }
 
