@@ -40,6 +40,7 @@ pub mod mem_search;
 pub mod mention_calls;
 pub mod mention_fanout;
 pub mod mention_parse;
+pub mod misc_reads;
 pub mod msg_delete;
 pub mod msg_edit;
 pub mod msg_list;
