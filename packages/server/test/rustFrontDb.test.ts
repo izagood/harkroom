@@ -3902,6 +3902,61 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         await db.pool.query('delete from channel where id = $1', [ch]);
       }
 
+      // S5.4 MI3 — 투영 설정 읽기(코어 `settings_rest.rs`). 이 시험의 TS 는 투영 표면 없이 떠서 그 줄이 없다 — 표면을 단 TS 하나와
+      // 같은 env(`AVCS_BASE_URL`)를 준 앞단 하나를 따로 띄워 견준다. PUT 은 앞단이 받지 않고 TS 로 넘겨 TS 의 reconfigure 가 불린다.
+      {
+        expect(f.log()).toContain('"GET /settings/projection"');
+        expect(f.log()).not.toContain('settings rest core off');
+        expect(f.log(), 'PUT 은 TS 에 남는다').not.toContain('"PUT /settings/projection"');
+        const ENV = 'http://Env.Example:80/base/';
+        const reconf: (string | null)[] = [];
+        const appP = await buildServer({
+          pool: db.pool, trustProxy: TRUST, corsOrigins: [CORS],
+          projection: { envBaseUrl: ENV, reconfigure: async (u) => { reconf.push(u); }, currentUrl: () => null },
+        });
+        await db.pool.query(`alter role ${rw} connection limit -1`);
+        let fP: Awaited<ReturnType<typeof startFront>> | undefined;
+        try {
+          await appP.listen({ port: 0, host: '127.0.0.1' });
+          const tsP = `http://127.0.0.1:${(appP.server.address() as AddressInfo).port}`;
+          const portP = await freePort();
+          fP = await startFront(bin, {
+            UPSTREAM_URL: tsP, DATABASE_URL: db.uri, PORT: String(portP), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
+            TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust', AVCS_BASE_URL: ENV,
+          });
+          const untilP = Date.now() + 10_000;
+          while (!fP.log().includes('front: rust core routes') && Date.now() < untilP) await new Promise((res) => setTimeout(res, 100));
+          expect(fP.log()).toContain('"GET /settings/projection"');
+          const rsP = `http://127.0.0.1:${portP}`;
+          const both = async (token: string) => {
+            const [x, y] = [await callX(tsP, 'GET', '/settings/projection', undefined, token), await callX(rsP, 'GET', '/settings/projection', undefined, token)];
+            expect({ status: y.status, code: y.code }, `GET ${token.slice(0, 6)}`).toEqual({ status: x.status, code: x.code });
+            if (x.status === 200) expect(y.json).toEqual(x.json);
+            return y;
+          };
+          await db.pool.query('update projection_config set avcs_base_url = null where id = true');
+          expect((await both(A)).json, 'app 없음 → env 표준형').toEqual({ url: 'http://env.example/base', source: 'env', appUrl: null, envUrl: ENV });
+          for (const t of [member.token, agent.pat, '']) expect((await both(t)).status).not.toBe(200);
+          // 표준형이 아닌 저장 값(손으로 넣은 것) — 읽는 쪽 표준화가 두 서버에서 같다.
+          await db.pool.query(`update projection_config set avcs_base_url = 'HTTPS://App.Example:443/x//' where id = true`);
+          expect((await both(A)).json).toMatchObject({ url: 'https://app.example/x', source: 'app' });
+          await db.pool.query(`update projection_config set avcs_base_url = 'not a url' where id = true`);
+          expect((await both(A)).json, 'URL 이 아니면 env 로 떨어진다').toMatchObject({ source: 'env', appUrl: 'not a url' });
+          // PUT 은 앞단을 지나 TS 가 받는다 — TS 의 reconfigure 가 판정 결과로 불리고 감사 줄이 TS 꼴로 남는다.
+          const put = await callX(rsP, 'PUT', '/settings/projection', { url: ' http://put.example:3000/ ' }, A);
+          expect(put.status).toBe(200);
+          expect(reconf, 'TS 폴러가 새 URL 을 받았다').toEqual(['http://put.example:3000']);
+          expect((await both(A)).json).toEqual({ url: 'http://put.example:3000', source: 'app', appUrl: 'http://put.example:3000', envUrl: ENV });
+          expect((await callX(rsP, 'PUT', '/settings/projection', { url: null }, A)).status).toBe(200);
+          expect(reconf.at(-1), '지우기는 env 로 복귀').toBe('http://env.example/base');
+          expect((await both(A)).json).toMatchObject({ source: 'env', appUrl: null });
+        } finally {
+          fP?.child.kill('SIGTERM');
+          await appP.close();
+          await db.pool.query('update projection_config set avcs_base_url = null where id = true');
+        }
+      }
+
       // S5.2 P4d — 옮긴 라우트를 지난 요청도 세션을 늘리고 PAT 사용 시각을 남긴다(쓰기 풀로). 읽기 역할로 하면 조용히 실패하던 것.
       await db.pool.query(`update session set expires_at = now() + interval '1 day' where account_id = $1`, [member.accountId]);
       await db.pool.query(`update pat set last_used_at = now() - interval '1 hour' where account_id = $1`, [agent.accountId]);

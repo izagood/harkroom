@@ -57,6 +57,7 @@ pub mod relay_live;
 pub mod relay_routes;
 pub mod secrets_read;
 pub mod sections_write;
+pub mod settings_rest;
 pub mod tickets;
 pub mod turn_lease;
 pub mod turn_lease_routes;
