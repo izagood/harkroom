@@ -5,6 +5,7 @@ import { startTestDb } from './helpers/testDb.js';
 import { buildServer } from '../src/buildServer.js';
 import { bootstrapAdmin, createAgent } from './helpers/fixtures.js';
 import { createScheduledMessageSweeper } from '../src/services/scheduledMessages.js';
+import { onEvent, type WorkspaceEvent } from '../src/events.js';
 
 async function createUser(app: FastifyInstance, adminToken: string, handle: string): Promise<{ token: string; accountId: string }> {
   const inv = await app.inject({
@@ -180,6 +181,22 @@ describe('예약 발송 (#222)', () => {
     const sent = userMessages(messages);
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({ body: '지금 발송', id: due.sent_message_id });
+  });
+
+  // 3b. 발송은 일반 발송처럼 `message.created` 이벤트를 낸다 — 없으면 예약 글이 새로고침해야 보인다.
+  it('발송된 예약은 message.created 이벤트를 낸다', async () => {
+    const ch = await makeChannel(app, adminToken, 'sched-event', userId);
+    const id = await insertScheduled(pool, ch, userId, '이벤트로 보인다', aMomentAgo());
+    const seen: WorkspaceEvent[] = [];
+    const off = onEvent((e) => { seen.push(e); });
+    try {
+      await createScheduledMessageSweeper(pool).sweep();
+    } finally {
+      off();
+    }
+    const sent = await rowById(pool, id);
+    const created = seen.filter((e) => e.type === 'message.created');
+    expect(created.map((e) => (e.type === 'message.created' ? e.message.id : null))).toContain(sent.sent_message_id);
   });
 
   // 4. **일반 발송과 같은 부작용**이 나야 한다. 이것이 `postMessage` 를 그대로 통과시키는
