@@ -1581,6 +1581,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant insert, update on channel_doc to ${rw}`,
         // S5.4 CH4a — 채널 만들기·고치기(`core/channel_create_update.rs::CREATE_UPDATE_PRIVILEGES`). 칸 권한만(channel_member insert 는 위 줄). 없으면 「channel create/update core off」 — TS 에 남는다.
         `grant insert (name, topic, kind, repo, visibility, created_by), update (name, topic, repo, archived_at, archived_by, visibility) on channel to ${rw}`,
+        // S5.4 CH4b-2 — 멤버 넣기·빼기(`core/channel_members.rs::MEMBER_PRIVILEGES`). 넣기는 위 줄. 없으면 「channel members core off」 — TS 에 남는다.
+        `grant delete on channel_member to ${rw}`,
         // S5.4 MS1 — 저장한 글(`core/saved.rs::SAVED_PRIVILEGES`). 없으면 「saved messages core off」 — 다섯 줄 모두 TS 에 남는다.
         `grant insert, update, delete on saved_message to ${rw}`,
       ]) await db.pool.query(q);
@@ -4862,13 +4864,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
 
       // S5.4 CH4b-1 — DM 열기(코어 `dm_open.rs`). 같은 처음 상태에서 같은 요청 줄을 TS 로 한 번, Rust 로 한 번 보내고 답·행·멤버가
       // 같은지 본다. 이미 있는 DM 은 차단·게이트를 보지 않고 그대로 돌려준다. 새 DM 만 차단(dm_unavailable)·호출 게이트(agent_not_invokable)를 본다.
-      // 같은 묶음의 동시 요청은 DM 을 하나만 만든다(참여자 묶음 잠금). 멤버 추가·빼기는 아직 TS 다(CH4b-2).
+      // 같은 묶음의 동시 요청은 DM 을 하나만 만든다(참여자 묶음 잠금).
       {
         expect(f.log(), 'POST /dms').toContain('"POST /dms"');
         expect(f.log()).not.toContain('dm open core off');
-        for (const k of ['POST /channels/{id}/members', 'DELETE /channels/{id}/members/{accountId}']) {
-          expect(f.log(), `${k} 는 TS 에 남는다`).not.toContain(`"${k}"`);
-        }
         const M = member.token;
         const human = async (h: string) => (await db.pool.query<{ id: string }>(
           `insert into account(handle, display_name, kind, login_id) values ($1, $1, 'human', $1) returning id::text as id`, [h])).rows[0]!.id;
@@ -4962,6 +4961,158 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         await reset();
         await db.pool.query('delete from account_block where blocked_id = $1 and blocker_id = any($2)', [member.accountId, [h3, h4]]);
         if (scope) await db.pool.query(`update agent_config set invoke_scope = $2 where account_id = $1`, [bot2.accountId, scope]);
+      }
+
+      // S5.4 CH4b-2 — 멤버 넣기·빼기(코어 `channel_members.rs`). 같은 처음 상태에서 같은 요청 줄을 TS 로 한 번, Rust 로 한 번 보내고
+      // 답·멤버 행·감사·이벤트(이름·모양·받는 사람·차례)·시스템 글(`kind: system`, 본문·meta.i18n)이 같은지 본다. 시스템 글은 Rust 글 경로
+      // (`post_tx` 의 system 갈래)를 탄다 — 부름·inbox·위임 키·암묵 위임이 생기지 않는지도 본다(에이전트가 넣은 경우 포함).
+      {
+        for (const k of ['POST /channels/{id}/members', 'DELETE /channels/{id}/members/{accountId}']) {
+          expect(f.log(), k).toContain(`"${k}"`);
+        }
+        expect(f.log()).not.toContain('channel members core off');
+        const M = member.token;
+        const M2 = member2.token;
+        const human = async (h: string) => (await db.pool.query<{ id: string }>(
+          `insert into account(handle, display_name, kind, login_id) values ($1, $1, 'human', $1) returning id::text as id`, [h])).rows[0]!.id;
+        const [h1, h2] = [await human('ch4b2_h1'), await human('ch4b2_h2')];
+        const pubc = await createChannel(db.pool, { name: 'ch4b2-pub' });
+        const priv = await createChannel(db.pool, { name: 'ch4b2-priv', visibility: 'private', creatorId: member.accountId });
+        const arch = await createChannel(db.pool, { name: 'ch4b2-arch' });
+        const dm = (await getOrCreateDm(db.pool, [member.accountId, member2.accountId])).id;
+        const chs = [pubc.id, priv.id, arch.id, dm];
+        const ghost = '00000000-0000-4000-8000-0000000c4b20';
+        const t0 = String((await db.pool.query(`select now()::text as t`)).rows[0].t);
+        const reset = async () => {
+          const msgs = (await db.pool.query(`select id from message where channel_id = any($1) and created_at >= $2::timestamptz`, [chs, t0])).rows.map((r) => r.id as string);
+          await db.pool.query('delete from inbox where message_id = any($1)', [msgs]);
+          await db.pool.query('delete from message where id = any($1)', [msgs]);
+          await db.pool.query('delete from channel_member where channel_id = any($1)', [[pubc.id, priv.id, arch.id]]);
+          await db.pool.query('insert into channel_member (channel_id, account_id) values ($1, $2), ($3, $4)', [priv.id, member.accountId, arch.id, member2.accountId]);
+          await db.pool.query('update channel set archived_at = now() where id = $1', [arch.id]);
+        };
+        const run = async (base: string, evs: () => WorkspaceEvent[]) => {
+          await reset();
+          const since = String((await db.pool.query('select coalesce(max(id), 0)::text as m from audit_log')).rows[0].m);
+          const evFrom = evs().length;
+          const out: unknown[] = [];
+          const call = async (m: string, path: string, body: unknown, token: string) => {
+            const r = await callX(base, m, path, body, token);
+            out.push({ m, path, status: r.status, json: r.status === 400 || r.status >= 500 ? null : r.json });
+            return r;
+          };
+          const P = (ch: string) => `/channels/${ch}/members`;
+          await call('POST', P(pubc.id), { accountId: h1, extra: 1 }, M); // 남을 넣음 → addedBy
+          await call('POST', P(pubc.id), { accountId: h1 }, M); // 이미 멤버 — 멱등, 글은 또 남는다(TS 와 같다)
+          await call('POST', P(pubc.id), { accountId: member2.accountId }, M2); // 나를 넣음 → added
+          await call('POST', P(pubc.id), { accountId: bot2.accountId }, agent.pat); // 에이전트가 넣음 — 위임·암묵 위임 없음
+          await call('POST', P(priv.id), { accountId: h2 }, M); // private 멤버가 넣음 → 넣은 사람에게 channel.created
+          await call('POST', P(priv.id), { accountId: h1 }, M2); // 볼 수 없음 → 403
+          await call('POST', P(priv.id), { accountId: h1 }, A); // admin 도 예외 없음 → 403
+          await call('POST', P(arch.id), { accountId: h1 }, A); // 보관 → 400 channel_archived
+          await call('POST', P(dm), { accountId: h1 }, M); // DM → 400 channel_is_dm
+          await call('POST', P(ghost), { accountId: h1 }, A); // 없는 채널 → 404
+          await call('POST', P(pubc.id), { accountId: ghost }, A); // 없는 계정 → 404
+          await call('POST', P(pubc.id), { accountId: 'nope' }, A);
+          await call('POST', P('nope'), { accountId: h1 }, A);
+          await call('POST', P(pubc.id), undefined, A);
+          await call('DELETE', `${P(pubc.id)}/${h1}`, undefined, M); // 남을 빼기는 admin 만 → 403
+          await call('DELETE', `${P(pubc.id)}/${h1}`, undefined, A); // → removedBy
+          await call('DELETE', `${P(pubc.id)}/${h1}`, undefined, A); // 이미 없음 → 글 없음
+          await call('DELETE', `${P(priv.id)}/${member2.accountId}`, undefined, M2); // 나지만 볼 수 없음 → 403
+          await call('DELETE', `${P(priv.id)}/${member.accountId}`, undefined, M); // 나가기 → left, 목록을 잃어 channel.deleted
+          await call('DELETE', `${P(arch.id)}/${member2.accountId}`, undefined, A); // 보관 채널에서 남을 빼기 → 400
+          await call('DELETE', `${P(arch.id)}/${member2.accountId}`, undefined, M2); // 보관 채널 나가기는 된다 — 글 없음
+          await call('DELETE', `${P(dm)}/${member.accountId}`, undefined, M); // DM → 400
+          await call('DELETE', `${P(ghost)}/${admin.accountId}`, undefined, A); // 없는 채널 → 404
+          await call('DELETE', `${P('nope')}/${h1}`, undefined, A);
+          // 이벤트 — 이 줄의 채널 것만, 늦게 오는 것을 잠깐 기다린다(TS 는 프로세스 안, Rust 는 outbox → 버스).
+          const chOf = (e: WorkspaceEvent) => {
+            const x = e as { channel?: { id?: string }; channelId?: string; message?: { channelId?: string } };
+            return String(x.channel?.id ?? x.channelId ?? x.message?.channelId);
+          };
+          const mine = () => evs().slice(evFrom).filter((e) => ['channel.member_added', 'channel.member_removed', 'channel.created', 'channel.deleted', 'message.created'].includes(e.type)
+            && chs.includes(chOf(e)));
+          const until = Date.now() + 5000;
+          while (mine().filter((e) => e.type === 'message.created').length < 7 && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
+          await new Promise((r) => setTimeout(r, 200));
+          const msgs = (await db.pool.query(
+            `select id::text, channel_id::text as c, author_id::text as a, thread_root_id::text as root, body, kind, meta, also_in_channel, mention_depth,
+                    mandate_id::text as mandate, principal_account_id::text as principal
+               from message where channel_id = any($1) and created_at >= $2::timestamptz order by seq`, [chs, t0])).rows;
+          const ids = msgs.map((r) => r.id as string);
+          const state = {
+            members: (await db.pool.query(`select channel_id::text as c, account_id::text as a from channel_member where channel_id = any($1) order by channel_id, account_id`, [chs])).rows,
+            audit: (await db.pool.query(`select action, actor_handle, target, ip, detail from audit_log where id > $1::bigint and target = any($2) order by id`, [since, chs])).rows,
+            msgs,
+            inbox: Number((await db.pool.query('select count(*)::int as n from inbox where message_id = any($1)', [ids])).rows[0].n),
+            implicit: Number((await db.pool.query('select count(*)::int as n from delegation_implicit_log where message_id = any($1)', [ids])).rows[0].n),
+            delegations: Number((await db.pool.query('select count(*)::int as n from team_delegation where thread_root_id = any($1)', [ids])).rows[0].n),
+            events: mine().map((e) => {
+              const x = e as { audience?: unknown };
+              return { ...e, audience: Array.isArray(x.audience) ? [...x.audience].sort() : x.audience };
+            }),
+          };
+          out.push(state);
+          // 새 글 id·seq·시각을 차례 이름으로 가린다(TS 이벤트 시각은 `Date`, 버스를 건넌 Rust 이벤트는 글자).
+          const names = ids.map((id, i) => [id, `<msg${i}>`] as const);
+          const mask = (v: unknown): unknown => {
+            if (typeof v === 'string') return names.reduce((t, [id, n]) => t.split(id).join(n), v);
+            if (Array.isArray(v)) return v.map(mask);
+            if (v && typeof v === 'object') {
+              return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) =>
+                [k, ['createdAt', 'archivedAt', 'editedAt', 'lastReplyAt'].includes(k) && (typeof x === 'string' || x instanceof Date) ? `<${k}>`
+                  : k === 'seq' && typeof x === 'number' ? '<seq>' : mask(x)]));
+            }
+            return v;
+          };
+          return mask(out) as unknown[];
+        };
+        const tsEvents: WorkspaceEvent[] = [];
+        const offTs = onEvent((e) => { tsEvents.push(e); });
+        const x = await run(tsUrl, () => tsEvents);
+        offTs();
+        const y = await run(rsUrl, () => busEvents);
+        expect(y).toEqual(x);
+        // 빈 것끼리 같아서 통과하지 않게 — 갈래가 실제로 났는지.
+        const res = y.slice(0, -1) as { status: number; json: { error?: { code?: string } } | null }[];
+        expect(res.map((r) => r.status)).toEqual([200, 200, 200, 200, 200, 403, 403, 400, 400, 404, 404, 400, 400, 400, 403, 200, 200, 403, 200, 400, 200, 400, 404, 400]);
+        expect([7, 8, 9, 10].map((i) => res[i]?.json?.error?.code)).toEqual([undefined, undefined, 'not_found', 'not_found']);
+        const st = y.at(-1) as {
+          msgs: { kind: string; body: string; a: string; root: string | null; meta: { accountId?: string; actorId?: string; i18n?: { key?: string } }; mandate: string | null }[];
+          audit: { action: string }[]; events: { type: string; audience: unknown }[]; inbox: number; implicit: number; delegations: number;
+        };
+        expect(st.msgs.map((m) => m.meta.i18n?.key)).toEqual([
+          'system.member.addedBy', 'system.member.addedBy', 'system.member.added', 'system.member.addedBy', 'system.member.addedBy',
+          'system.member.removedBy', 'system.member.left',
+        ]);
+        expect(st.msgs.every((m) => m.kind === 'system' && m.root === null && m.mandate === null)).toBe(true);
+        expect(st.msgs[3]?.a, '에이전트가 넣은 줄의 작성자').toBe(agent.accountId);
+        expect(st.msgs[0]?.body).toBe('{account}님이 채널에 추가되었습니다.');
+        expect([st.inbox, st.implicit, st.delegations], '부름·위임 없음').toEqual([0, 0, 0]);
+        expect(st.audit.map((r) => r.action)).toEqual([
+          'channel.member.added', 'channel.member.added', 'channel.member.added', 'channel.member.added', 'channel.member.added',
+          'channel.member.removed', 'channel.member.removed', 'channel.member.removed',
+        ]);
+        expect(st.events.map((e) => e.type)).toEqual([
+          'channel.member_added', 'channel.created', 'message.created',
+          'channel.member_added', 'channel.created', 'message.created',
+          'channel.member_added', 'channel.created', 'message.created',
+          'channel.member_added', 'channel.created', 'message.created',
+          'channel.member_added', 'channel.created', 'message.created',
+          'channel.member_removed', 'message.created',
+          'channel.member_removed', 'channel.deleted', 'message.created',
+          'channel.member_removed',
+        ]);
+        // 익명은 두 서버 모두 401.
+        {
+          const [a1, b1] = [await callX(tsUrl, 'POST', `/channels/${pubc.id}/members`, { accountId: h1 }, ''), await callX(rsUrl, 'POST', `/channels/${pubc.id}/members`, { accountId: h1 }, '')];
+          expect({ status: b1.status, code: b1.code }, '익명 → 401').toEqual({ status: a1.status, code: a1.code });
+          expect(b1.status).toBe(401);
+        }
+        await reset();
+        await db.pool.query('delete from channel_member where channel_id = any($1)', [[pubc.id, priv.id, arch.id]]);
+        await db.pool.query('delete from channel where id = any($1)', [[pubc.id, priv.id, arch.id]]);
       }
 
       // S5.4 AC2 — 에이전트 기억 읽기(코어 `agent_memory_read.rs`). 두 서버의 답을 견준다. 소유자·admin 만 읽고, 에이전트 자신·남·익명은

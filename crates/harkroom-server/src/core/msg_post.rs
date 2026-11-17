@@ -327,6 +327,11 @@ pub(crate) struct Origin<'a> {
     /// MCP `message.delegate`(C3b-2c-4b) — 게이트를 지난 위임. 있으면 같은 tx 에서 사슬 상한(TS `delegationChainCapped`)을 보고
     /// 의무를 만든다(TS `createDelegation`, [`delegate_write`]). 위임 스위치를 모르면 TS 로 넘긴다.
     pub(crate) delegation: Option<delegate_write::Plan<'a>>,
+    /// TS `kind: 'system'`(S5.4 CH4b-2) — 서버가 사실을 남기는 줄(멤버 넣기·빼기). 라우트 입력에서는 켜지 않는다. TS `postMessage` 와 같이
+    /// `kind` 칸이 `system` 이고 `meta`(`i18n` 포함)를 그대로 싣는다. 결과로는 센다(`countsAsReply`). 위임 키(`stampHumanMandate` 는
+    /// `kind === 'user'` 만)와 암묵 위임(`kind !== 'system'`)은 하지 않는다. **최상위 글만 받는다** — 스레드 시스템 글의 머리·DM 갈래
+    /// (`isSystemLine`)는 아직 옮기지 않아 [`Outcome::ToTs`] 로 돌려준다.
+    pub(crate) system: bool,
 }
 
 /// 읽은 JSON 이 TS 몫인가 — 키만 보고 정한다(값이 틀렸으면 TS 가 400 을 준다).
@@ -616,10 +621,16 @@ pub(crate) async fn post_tx(
     origin: &Origin<'_>,
 ) -> Result<(Outcome, Option<Capped>), sqlx::Error> {
     let s = sql();
-    // TS `isResult` — 결과로 세는 에이전트 글(서버 알림 줄은 아니다). 이 앞단이 맡는 글은 모두 `user` 다.
+    // TS `isResult` — 결과로 세는 에이전트 글(서버 알림 줄은 아니다). `countsAsReply` 는 progress·wake 만 빼므로 `user`·`system`
+    // 둘 다 참이다(이 앞단이 맡는 kind 는 그 둘뿐이다).
     let is_result = !origin.server_notice;
+    let kind = if origin.system { "system" } else { "user" };
     let (body, attachment_ids) = (input.body.as_str(), input.attachment_ids.as_slice());
     let root = input.thread_root.as_deref();
+    // 스레드 시스템 글은 TS `isSystemLine` 갈래(머리 주인·DM 상대에게 안 알림, 선점 안 함)가 아직 Rust 에 없다 — 받지 않는다.
+    if origin.system && root.is_some() {
+        return Ok((Outcome::ToTs, None));
+    }
     let mut tx = st.write.begin().await?;
     // TS 와 같이 트랜잭션 첫 줄 — 같은 채널의 최상위 글만 머리가 된다(지워진 머리도 받는다).
     if let Some(r) = root {
@@ -742,6 +753,7 @@ pub(crate) async fn post_tx(
     // 상한에 막힌 부름은 C1c-4d-2 부터 Rust 가 맡는다 — 커밋 뒤 백스톱 카드([`post_in_tx`]).
     if author_is_agent
         && is_result
+        && !origin.system
         && !calls.called_ids.is_empty()
         && match implicit {
             None => true,
@@ -852,7 +864,7 @@ pub(crate) async fn post_tx(
         .bind(root)
         .bind(author)
         .bind(&calls.normalized_body)
-        .bind("user")
+        .bind(kind)
         .bind(Value::Object(meta).to_string())
         .bind(input.also_in_channel)
         .bind(link.depth)
@@ -924,7 +936,8 @@ pub(crate) async fn post_tx(
                 .await?;
         }
     }
-    let mandate = match (author_is_agent, root) {
+    // TS `stampHumanMandate` 는 `kind === 'user'` 인 사람 글만 — 시스템 줄은 위임 키를 만들지도 잇지도 않는다.
+    let mandate = match (author_is_agent || origin.system, root) {
         (true, _) => None,
         (false, None) => mandate_stamp::stamp_root(&mut tx, &id, author, channel, &called).await?,
         (false, Some(r)) => {
@@ -953,8 +966,14 @@ pub(crate) async fn post_tx(
     // inbox 가 실제로 간 계정 중 에이전트만 판정한다.
     // TS 는 `meta.kind` 가 `delegation` 인 글(`message.delegate`)을 암묵 위임으로 보지 않는다 — 그 도구가 진짜 위임을 만든다.
     let delegation_meta = origin.meta.get("kind").and_then(Value::as_str) == Some("delegation");
-    if let (true, true, false, Some(mode)) = (author_is_agent, is_result, delegation_meta, implicit)
-    {
+    // TS `input.kind !== 'system'` — 시스템 줄은 부름이 있어도 암묵 위임으로 보지 않는다.
+    if let (true, true, false, false, Some(mode)) = (
+        author_is_agent,
+        is_result,
+        delegation_meta,
+        origin.system,
+        implicit,
+    ) {
         let called: Vec<&String> = calls
             .called_ids
             .iter()

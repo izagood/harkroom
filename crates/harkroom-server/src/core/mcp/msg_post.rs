@@ -395,6 +395,7 @@ async fn post(
         server_notice: false,
         closes_delegation,
         delegation: None,
+        system: false,
     };
     let out = msg_post::post_in_tx(
         st,

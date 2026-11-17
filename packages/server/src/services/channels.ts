@@ -304,10 +304,14 @@ export async function addChannelMember(db: Queryable, channelId: string, account
  * 나가기/내보내기. **마지막 멤버가 나가도 채널 행은 남는다** — 삭제는 캐스케이드 결정이
  * 필요한 별개 문제다(#155). 남은 채널은 admin 만 목록에서 보는 상태가 된다.
  */
+/** 멤버 빼기 — Rust 코어(S5.4 CH4b-2 멤버 빼기)가 골든으로 같은 문장을 쓴다. */
+export const REMOVE_CHANNEL_MEMBER_SQL = `delete from channel_member where channel_id = $1::uuid and account_id = $2::uuid`;
+
+/** 멤버로 넣을 계정이 있는가 — Rust 코어(S5.4 CH4b-2 멤버 추가)가 골든으로 같은 문장을 쓴다. */
+export const MEMBER_ACCOUNT_EXISTS_SQL = `select 1 from account where id = $1::uuid`;
+
 export async function removeChannelMember(pool: Pool, channelId: string, accountId: string): Promise<boolean> {
-  const res = await pool.query(
-    `delete from channel_member where channel_id = $1 and account_id = $2`, [channelId, accountId],
-  );
+  const res = await pool.query(REMOVE_CHANNEL_MEMBER_SQL, [channelId, accountId]);
   return Boolean(res.rowCount);
 }
 
@@ -717,13 +721,13 @@ export async function channelPostGate(
  * 존재하지 않는 채널은 `'not_found'` 로 **명시해서** 돌려준다. 여기서 `'ok'` 로 삼키면
  * 초대 경로가 `channel_member` 의 FK 위반으로 500 을 답한다 — 잘못된 입력이 서버 오류가 된다.
  */
+/** 멤버 넣기·빼기 게이트 문장 — Rust 코어(S5.4 CH4b-2)가 골든으로 같은 문장을 쓴다. */
+export const CHANNEL_MEMBERSHIP_GATE_SQL = `select c.kind, ${channelArchivedSql('c')} as archived from channel c where c.id = $1::uuid`;
+
 export async function channelMembershipGate(
   db: Queryable, channelId: string,
 ): Promise<'ok' | 'not_found' | 'archived' | 'dm'> {
-  const res = await db.query(
-    `select c.kind, ${channelArchivedSql('c')} as archived from channel c where c.id = $1`,
-    [channelId],
-  );
+  const res = await db.query(CHANNEL_MEMBERSHIP_GATE_SQL, [channelId]);
   const row = res.rows[0] as { kind: string; archived: boolean } | undefined;
   if (!row) return 'not_found';
   if (row.archived) return 'archived';

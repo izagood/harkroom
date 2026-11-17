@@ -6,8 +6,9 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 import { ANY_BLOCK_BETWEEN_SQL } from '../src/routes/moderationRoutes.js';
+import { MEMBER_SYSTEM_BODIES } from '../src/routes/channelRoutes.js';
 import { channelListVisibleSql, channelVisibleSql } from '../src/services/channels.js';
-import { CHANNEL_ROW_SQL, CREATE_DM_SQL, FIND_DM_SQL, LOCK_DM_SQL, ADD_CHANNEL_MEMBER_SQL, CHANNEL_NAME_VISIBILITY_SQL, CREATE_CHANNEL_SQL, UPDATE_CHANNEL_SQL, CHANNEL_KIND_VISIBILITY_SQL, UPDATE_CHANNEL_DOC_SQL, CHANNEL_DELETE_INFO_SQL, CHANNEL_POST_GATE_SQL, CHANNEL_MESSAGE_COUNT_SQL, CHANNEL_DOC_SQL, LIST_CHANNEL_MEMBERS_SQL, LIST_CHANNEL_PREFS_SQL, LIST_CHANNELS_SQL } from '../src/services/channels.js';
+import { CHANNEL_MEMBERSHIP_GATE_SQL, MEMBER_ACCOUNT_EXISTS_SQL, REMOVE_CHANNEL_MEMBER_SQL, CHANNEL_ROW_SQL, CREATE_DM_SQL, FIND_DM_SQL, LOCK_DM_SQL, ADD_CHANNEL_MEMBER_SQL, CHANNEL_NAME_VISIBILITY_SQL, CREATE_CHANNEL_SQL, UPDATE_CHANNEL_SQL, CHANNEL_KIND_VISIBILITY_SQL, UPDATE_CHANNEL_DOC_SQL, CHANNEL_DELETE_INFO_SQL, CHANNEL_POST_GATE_SQL, CHANNEL_MESSAGE_COUNT_SQL, CHANNEL_DOC_SQL, LIST_CHANNEL_MEMBERS_SQL, LIST_CHANNEL_PREFS_SQL, LIST_CHANNELS_SQL } from '../src/services/channels.js';
 import { ALL_READ_STATES_SQL, READ_STATE_SQL } from '../src/services/readPositions.js';
 import { LIST_CHANNEL_SECTIONS_SQL } from '../src/services/channelSections.js';
 import {
@@ -172,6 +173,11 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     create_dm: CREATE_DM_SQL,
     channel_row: CHANNEL_ROW_SQL,
     any_block_between: ANY_BLOCK_BETWEEN_SQL,
+    // 멤버 넣기·빼기(`core/channel_members.rs`, S5.4 CH4b-2) — 게이트·계정 확인·빼기 문장과 시스템 글 본문 세 꼴.
+    channel_membership_gate: CHANNEL_MEMBERSHIP_GATE_SQL,
+    member_account_exists: MEMBER_ACCOUNT_EXISTS_SQL,
+    remove_channel_member: REMOVE_CHANNEL_MEMBER_SQL,
+    member_system_bodies: JSON.stringify(MEMBER_SYSTEM_BODIES),
     list_scheduled: LIST_SCHEDULED_SQL,
     select_pins: SELECT_PINS_SQL,
     pin_insert: PIN_INSERT_SQL,

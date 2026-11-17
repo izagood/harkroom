@@ -10,6 +10,7 @@ import {
   CHANNEL_DELETE_INFO_SQL, CHANNEL_MESSAGE_COUNT_SQL,
   CHANNEL_KIND_VISIBILITY_SQL,
   CHANNEL_NAME_VISIBILITY_SQL,
+  MEMBER_ACCOUNT_EXISTS_SQL,
 } from '../services/channels.js';
 import {
   SectionLimitError, SectionNameTakenError, createChannelSection, deleteChannelSection, getChannelSection, listChannelSections,
@@ -60,14 +61,17 @@ const sectionName = z.string().max(40).nullable();
  * 이미 갈라 권한을 다르게 판정하는 **실재하는 구분**이다(#322). 하나로 합치면 화면이 없는
  * 구분을 지우는 것이 아니라 있는 구분을 뭉갠다.
  */
+/** 멤버 시스템 글 본문 세 꼴 — Rust 코어(S5.4 CH4b-2)가 골든으로 같은 글자를 쓴다(116 백필 대조와도 같아야 한다). */
+export const MEMBER_SYSTEM_BODIES = {
+  added: `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 채널에 추가되었습니다.`,
+  left: `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 채널에서 나갔습니다.`,
+  removed: `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 채널에서 제거되었습니다.`,
+} as const;
+
 function memberSystemMessage(
   event: 'added' | 'left' | 'removed', accountId: string, actorId: string,
 ): { body: string; kind: 'system'; meta: { accountId: string; actorId: string; i18n: SystemI18n } } {
-  const body = {
-    added: `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 채널에 추가되었습니다.`,
-    left: `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 채널에서 나갔습니다.`,
-    removed: `${SYSTEM_ACCOUNT_PLACEHOLDER}님이 채널에서 제거되었습니다.`,
-  }[event];
+  const body = MEMBER_SYSTEM_BODIES[event];
   // 본문과 번역 표지를 한 자리에서 만든다(i18n P5, security C8). 표지의 키는 위 세 꼴과 일대일이다 —
   // 옛 줄 백필(116 마이그레이션)도 이 세 본문을 그대로 대조한다(C6).
   //
@@ -294,7 +298,7 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     // 자리에서 지금의 이름을 알 필요가 없어졌다. `#322` 가 handle 을 이 질의에 합쳤던
     // 이유("존재 확인과 같은 질문이라 두 번 조회하면 판정이 갈린다")는 그대로 유효하지만,
     // 이제 그 질문의 답이 필요 없다 — 남길 것은 존재 확인뿐이다.
-    const account = await pool.query(`select 1 from account where id = $1`, [accountId]);
+    const account = await pool.query(MEMBER_ACCOUNT_EXISTS_SQL, [accountId]);
     if (!account.rowCount) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such account' } });
     }
