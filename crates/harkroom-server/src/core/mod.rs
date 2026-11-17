@@ -68,6 +68,7 @@ pub mod operator_frames;
 pub mod operator_guard;
 pub mod operator_hub;
 pub mod operator_rest;
+pub mod operator_restart;
 pub mod operator_stop;
 pub mod relay;
 pub mod relay_attention;

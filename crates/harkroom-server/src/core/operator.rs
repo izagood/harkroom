@@ -303,6 +303,10 @@ pub fn routes(
             "/accounts/agents/{id}/stop/undo",
             super::operator_stop::stop_undo,
         )
+        .post(
+            "/accounts/agents/{id}/restart",
+            super::operator_restart::restart,
+        )
         .map(|r| {
             r.route_layer(auth_layer())
                 .layer(axum::middleware::from_fn_with_state(
