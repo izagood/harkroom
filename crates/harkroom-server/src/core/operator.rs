@@ -7,6 +7,9 @@
 //! - `last_seen_at` 은 30초에 한 번만 쓰고, 끊길 때 쓰지 않은 프레임이 있었으면 한 번 더 쓴다(TS `LAST_SEEN_WRITE_MS`).
 //! - 토큰 재검증 60초: TS 는 같은 프로세스의 DELETE·계정 삭제가 허브를 직접 불러 끊는다. 코어가 이 프로세스로 오면 TS 쪽
 //!   라우트가 이 허브에 닿지 못하므로, 여기서 주기적으로 `revoked_at`·토큰을 다시 보고 4401 로 끊는다(`/ws` 의 재검증과 같은 몫).
+//! - 그 주기를 기다리지 않는 길: TS 가 폐기한 뒤 내는 `operator.changed`(계정 삭제 `DELETE /accounts/me` 등)는 outbox 로 이
+//!   프로세스의 이벤트 허브에 온다. 그 오퍼레이터가 여기 붙어 있으면 곧바로 `revoked_at` 을 보고 4401 로 끊는다(TS 의 직접
+//!   `disconnect` 와 같은 몫, `spawn_revoke_watch`). 조회가 실패하면 끊지 않고 주기 재검증에 맡긴다.
 //! - 박동·업그레이드 단계·gh 보고는 `operator_frames` 가 적는다.
 //! - hello 의 버전을 `operator.version` 에 적고, 바뀌었으면 `operator.changed`(TS 와 같음).
 use super::events::Hub;
@@ -94,6 +97,7 @@ impl OperatorCore {
             workers: Arc::new(AtomicUsize::new(0)),
         });
         spawn_version_writer(core.clone());
+        spawn_revoke_watch(core.clone());
         super::operator_assign::spawn_resync(core.clone());
         super::operator_frames::spawn(
             core.clone(),
@@ -140,6 +144,44 @@ impl OperatorCore {
         .map(|r| r.is_some())
         .unwrap_or(true)
     }
+}
+
+/// 폐기됐나 — 행이 없어도 폐기로 본다. 조회 실패는 None(끊지 않는다).
+async fn revoked(pool: &PgPool, operator_id: &str) -> Option<bool> {
+    sqlx::query_scalar::<_, bool>("select revoked_at is not null from operator where id = $1::uuid")
+        .bind(operator_id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .map(|r| r.unwrap_or(true))
+}
+
+/// 붙어 있는 오퍼레이터에 `operator.changed` 가 오면 곧바로 폐기 여부를 본다 — 다른 프로세스(TS)의 폐기를 재검증 주기
+/// (`revalidate`, 60초)까지 기다리지 않고 끊는다. 구독이 밀리면(`Lagged`) 놓친 것을 모르므로 붙은 것 전부를 한 번 본다.
+fn spawn_revoke_watch(core: Arc<OperatorCore>) {
+    let mut rx = core.events.subscribe();
+    tokio::spawn(async move {
+        loop {
+            let ids = match rx.recv().await {
+                Ok(e) => {
+                    if e.get("type").and_then(Value::as_str) != Some("operator.changed") {
+                        continue;
+                    }
+                    match e.get("operatorId").and_then(Value::as_str) {
+                        Some(id) if core.hub.is_online(id) => vec![id.to_owned()],
+                        _ => continue,
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(_)) => core.hub.online_ids(),
+                Err(broadcast::error::RecvError::Closed) => break,
+            };
+            for id in ids {
+                if revoked(&core.pool, &id).await == Some(true) {
+                    core.hub.disconnect(&id, 4401, "operator revoked");
+                }
+            }
+        }
+    });
 }
 
 /// hello 의 버전을 적는다. 없으면 null 로 덮는다(옛 오퍼레이터로 돌아갔을 때 예전 값이 거짓 기준이 되지 않게).

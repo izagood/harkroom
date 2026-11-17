@@ -10,6 +10,8 @@
 //! - claim `replaces` 는 옛 행을 폐기하고 배정을 옮기며, 옛 소켓은 4401 로 끊긴다.
 //! - PATCH 로 이름(label)을 바꾸고, DELETE 로 폐기하면 소켓이 4401 로 끊기고 그 토큰은 더 쓰이지 않는다.
 //! - DB 에서 직접 폐기한 것(TS 쪽이 폐기한 경우)도 재검증 주기 안에 4401 로 끊긴다.
+//! - TS 가 폐기 뒤 낸 `operator.changed`(outbox 로 온다)를 받으면 재검증 주기를 기다리지 않고 4401 로 끊는다. 폐기되지 않은
+//!   오퍼레이터의 `operator.changed` 로는 끊지 않는다(`revoke_event_disconnects_without_waiting`).
 mod common;
 
 use axum::http::{Method, StatusCode};
@@ -720,4 +722,120 @@ async fn fake_operator_against_real_schema() {
         sqlx::query(sql).bind(id).execute(&pool).await.unwrap();
     }
     println!("operator db test: ok");
+}
+
+/// 계정 삭제(`DELETE /accounts/me`, TS)가 오퍼레이터를 폐기하고 `operator.changed` 를 내면 — outbox 로 이 허브에 온다 —
+/// 재검증 주기(여기선 1시간)를 기다리지 않고 4401 로 끊는다. 폐기 안 된 오퍼레이터의 같은 이벤트로는 끊지 않는다.
+#[tokio::test]
+async fn revoke_event_disconnects_without_waiting() {
+    let Ok(url) = std::env::var("HARKROOM_TEST_DATABASE_URL") else {
+        eprintln!("skip: HARKROOM_TEST_DATABASE_URL unset");
+        return;
+    };
+    let pool = PgPool::connect(&url).await.unwrap();
+    let tag = format!("opr{}", std::process::id());
+    let human: String = sqlx::query_scalar(
+        "insert into account(handle, display_name, kind, login_id) values ($1, $1, 'human', $1) returning id::text",
+    )
+    .bind(format!("{tag}-human"))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let sess = format!("{tag}-sess");
+    sqlx::query("insert into session(token_hash, account_id, expires_at) values ($1, $2::uuid, now() + interval '1 day')")
+        .bind(hash_token(&sess))
+        .bind(&human)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let timing = OpTiming {
+        heartbeat: Duration::from_secs(3600),
+        last_seen_write: Duration::from_secs(3600),
+        revalidate: Duration::from_secs(3600),
+        send_timeout: Duration::from_secs(5),
+        status_min: Duration::from_millis(10),
+    };
+    let write = match std::env::var("HARKROOM_TEST_WRITE_DATABASE_URL") {
+        Ok(w) => PgPool::connect(&w).await.unwrap(),
+        Err(_) => pool.clone(),
+    };
+    let core = OperatorCore::new(
+        pool.clone(),
+        write.clone(),
+        Arc::new(harkroom_server::trust_proxy::parse(None).unwrap()),
+        Hub::new(),
+        OperatorHub::new(),
+        timing,
+    );
+    let app = router(
+        core.clone(),
+        AuthPools {
+            read: pool.clone(),
+            write: Some(write.clone()),
+        },
+        Arc::new(harkroom_server::cors::Cors::from_env_value(None)),
+    );
+    let base = format!("http://{}", common::serve(app).await);
+
+    let mut sockets = Vec::new();
+    for n in 0..2 {
+        let (s, rc) = req(
+            &base,
+            Method::POST,
+            "/operators/register-codes",
+            Some(&sess),
+            "{}",
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK, "{rc}");
+        let body = json!({ "code": rc["code"], "name": format!("{tag}-mac{n}") }).to_string();
+        let (s, c) = req(&base, Method::POST, "/operators/claim", None, &body).await;
+        assert_eq!(s, StatusCode::OK, "{c}");
+        let id = c["operator"]["id"].as_str().unwrap().to_owned();
+        let mut ws = connect(&base, c["token"].as_str().unwrap()).await;
+        ws.send(Message::Text(json!({ "type": "hello" }).to_string().into()))
+            .await
+            .unwrap();
+        for _ in 0..50 {
+            if core.hub.is_online(&id) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(core.hub.is_online(&id), "operator {n} online");
+        sockets.push((id, ws));
+    }
+    let (kept_id, mut kept) = sockets.pop().unwrap();
+    let (gone_id, mut gone) = sockets.pop().unwrap();
+
+    // 폐기 안 된 오퍼레이터의 operator.changed — 끊지 않는다.
+    core.events
+        .emit(json!({ "type": "operator.changed", "operatorId": kept_id, "audience": "all" }));
+    // TS 계정 삭제와 같은 순서: 커밋(폐기) 뒤 operator.changed.
+    sqlx::query("update operator set revoked_at = now() where id = $1::uuid")
+        .bind(&gone_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    core.events
+        .emit(json!({ "type": "operator.changed", "operatorId": gone_id, "audience": "all" }));
+    assert_eq!(
+        close_code(&mut gone).await,
+        Some(4401),
+        "revoked operator closed on the event"
+    );
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(core.hub.is_online(&kept_id), "unrevoked operator stays");
+    kept.close(None).await.unwrap();
+
+    for (sql, id) in [
+        (
+            "delete from operator where owner_account_id = $1::uuid",
+            &human,
+        ),
+        ("delete from session where account_id = $1::uuid", &human),
+    ] {
+        sqlx::query(sql).bind(id).execute(&pool).await.unwrap();
+    }
 }
