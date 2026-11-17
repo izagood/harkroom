@@ -12,6 +12,7 @@ pub mod ask_bundle_resolve;
 pub mod ask_reply_close;
 pub mod ask_sync;
 pub mod audience;
+pub mod auth_light;
 pub mod cause_link;
 pub mod chain_backstop;
 pub mod chain_stall;
