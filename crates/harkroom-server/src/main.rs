@@ -1739,6 +1739,7 @@ async fn main() {
                 memory_body: mem_body_write,
                 delegate: mcp_post.clone().filter(|_| mcp_delegate_ok),
                 post: mcp_post,
+                relay_moved: operator_on,
             },
             auth.clone(),
             state.cors.clone(),
