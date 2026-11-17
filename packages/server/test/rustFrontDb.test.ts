@@ -1585,6 +1585,13 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant delete on channel_member to ${rw}`,
         // S5.4 AC3 — 기억 쓰기·백그라운드 켜고 끄기(`core/agent_memory_write.rs::AGENT_MEMORY_WRITE_PRIVILEGES`). 기억 칸 권한은 위 B1a·B1b 줄. 없으면 「agent memory write core off」 — TS 에 남는다.
         `grant insert, update (bg_enabled) on agent_config to ${rw}`,
+        // S5.4 AC4 — handle 바꾸기(`core/account_handle.rs::ACCOUNT_HANDLE_PRIVILEGES`). 없으면 「account handle core off」 — TS 에 남는다.
+        `grant update (handle) on account to ${rw}`,
+        // S5.4 AC4 — keys PUT·agent/activity(`core/account_keys_activity.rs::KEYS_ACTIVITY_PRIVILEGES`). agent_config insert 는 위 AC3 줄. 없으면 「keys/activity core off」 — TS 에 남는다.
+        `grant insert (key_id, account_id, public_key_pem), update (public_key_pem) on account_key to ${rw}`,
+        `grant update (last_turn_at, updated_at) on agent_config to ${rw}`,
+        // S5.4 AC4 — 초대 만들기(메일 없는 것)·취소(`core/invites_write.rs::INVITES_WRITE_PRIVILEGES`). 없으면 「invites write core off」 — TS 에 남는다.
+        `grant insert (token_hash, created_by, expires_at), select (id, expires_at, used_by, revoked_at), update (revoked_at, revoked_by) on invite to ${rw}`,
         // S5.4 MS1 — 저장한 글(`core/saved.rs::SAVED_PRIVILEGES`). 없으면 「saved messages core off」 — 다섯 줄 모두 TS 에 남는다.
         `grant insert, update, delete on saved_message to ${rw}`,
       ]) await db.pool.query(q);
@@ -5360,6 +5367,204 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         await db.pool.query('delete from agent_memory where account_id = any($1)', [bots]);
         await db.pool.query('delete from agent_config where account_id = any($1)', [bots]);
         await db.pool.query('delete from account where id = any($1)', [bots]);
+      }
+
+      // S5.4 AC4 — handle 바꾸기 두 줄(코어 `account_handle.rs`). 같은 처음 상태에서 같은 요청 줄을 TS 로 한 번, Rust 로 한 번 보내고
+      // 답·계정 행·감사(from/to·actor)·`account.handle_changed` 이벤트(받는 사람 everyone·차례)가 같은지 본다.
+      {
+        for (const k of ['PATCH /accounts/me/handle', 'PATCH /accounts/{id}/handle']) {
+          expect(f.log(), k).toContain(`"${k}"`);
+        }
+        expect(f.log()).not.toContain('account handle core off');
+        const M = member.token;
+        const M2 = member2.token;
+        const ids = [member.accountId, member2.accountId, bot2.accountId];
+        const hOf = async (id: string) => String((await db.pool.query('select handle from account where id = $1', [id])).rows[0].handle);
+        const orig = { m: await hOf(member.accountId), m2: await hOf(member2.accountId), bot: await hOf(bot2.accountId) };
+        const grp = (await db.pool.query<{ id: string }>(`insert into handle_group(handle, display_name) values ('ac4-crew', 'Crew') returning id::text as id`)).rows[0]!.id;
+        const ghost = '00000000-0000-4000-8000-0000000ac400';
+        const reset = async () => {
+          await db.pool.query(`update account set handle = case id when $1::uuid then $2 when $3::uuid then $4 when $5::uuid then $6 end where id = any($7::uuid[])`,
+            [member.accountId, orig.m, member2.accountId, orig.m2, bot2.accountId, orig.bot, ids]);
+        };
+        const run = async (base: string, evs: () => WorkspaceEvent[]) => {
+          await reset();
+          const since = String((await db.pool.query('select coalesce(max(id), 0)::text as m from audit_log')).rows[0].m);
+          const evFrom = evs().length;
+          const out: unknown[] = [];
+          const call = async (m: string, path: string, body: unknown, token: string) => {
+            const r = await callX(base, m, path, body, token);
+            out.push({ m, path, status: r.status, json: r.status === 400 || r.status >= 500 ? null : r.json });
+            return r;
+          };
+          await call('PATCH', '/accounts/me/handle', { handle: 'ac4-m', extra: 1 }, M); // 200
+          await call('PATCH', '/accounts/me/handle', { handle: 'ac4-m' }, M); // 같은 이름 — 자기 자신은 충돌이 아니다
+          await call('PATCH', '/accounts/me/handle', { handle: 'AC4-M2' }, M2); // 대문자 → 400
+          await call('PATCH', '/accounts/me/handle', { handle: 'Ac4-M' }, M2); // 400(꼴이 먼저)
+          await call('PATCH', '/accounts/me/handle', { handle: 'ac4-m' }, M2); // 남이 씀 → 409
+          await call('PATCH', '/accounts/me/handle', { handle: 'ac4-crew' }, M2); // 집합 → 409
+          await call('PATCH', '/accounts/me/handle', { handle: 'deleted-x' }, M2); // 예약 → 400
+          await call('PATCH', '/accounts/me/handle', { handle: 'a' }, M2); // 400
+          await call('PATCH', '/accounts/me/handle', {}, M2); // 400
+          await call('PATCH', '/accounts/me/handle', { handle: 'ac4-bot' }, agent.pat); // 에이전트 → 400
+          await call('PATCH', '/accounts/me/handle', { handle: 'ac4-x' }, ''); // 401
+          await call('PATCH', `/accounts/${bot2.accountId}/handle`, { handle: 'ac4-bot' }, A); // admin 이 에이전트 이름을 바꿈
+          await call('PATCH', `/accounts/${member2.accountId}/handle`, { handle: 'ac4-m2' }, A);
+          await call('PATCH', `/accounts/${member2.accountId}/handle`, { handle: 'ac4-m' }, A); // 409
+          await call('PATCH', `/accounts/${member2.accountId}/handle`, { handle: 'ac4-crew' }, A); // 409
+          await call('PATCH', `/accounts/${member2.accountId}/handle`, { handle: 'ac4-z' }, M); // admin 아님 → 403
+          await call('PATCH', `/accounts/${ghost}/handle`, { handle: 'ac4-z' }, A); // 404
+          await call('PATCH', '/accounts/nope/handle', { handle: 'ac4-z' }, A); // 400
+          await call('PATCH', `/accounts/${member2.accountId}/handle`, { handle: 'Bad' }, A); // 400
+          await call('PATCH', `/accounts/${member2.accountId}/handle`, { handle: 'ac4-z' }, ''); // 익명 — requireAdmin 은 403
+          const mine = () => evs().slice(evFrom).filter((e) => e.type === 'account.handle_changed' && ids.includes((e as { accountId: string }).accountId));
+          const until = Date.now() + 5000;
+          while (mine().length < 4 && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
+          await new Promise((r) => setTimeout(r, 200));
+          out.push({
+            rows: (await db.pool.query(`select id::text, handle from account where id = any($1) order by id`, [ids])).rows,
+            audit: (await db.pool.query(`select action, actor_id::text, actor_handle, target, detail from audit_log where id > $1::bigint and action = 'account.handle.changed' order by id`, [since])).rows,
+            events: mine().map((e) => {
+              const x = e as { audience?: unknown };
+              return { ...e, audience: Array.isArray(x.audience) ? [...x.audience].sort() : x.audience };
+            }),
+          });
+          return out;
+        };
+        const tsEvents: WorkspaceEvent[] = [];
+        const offTs = onEvent((e) => { tsEvents.push(e); });
+        const x = await run(tsUrl, () => tsEvents);
+        offTs();
+        const y = await run(rsUrl, () => busEvents);
+        expect(y).toEqual(x);
+        // 빈 것끼리 같아서 통과하지 않게 — 갈래가 실제로 났는지.
+        expect((y.slice(0, -1) as { status: number }[]).map((r) => r.status)).toEqual([
+          200, 200, 400, 400, 409, 409, 400, 400, 400, 400, 401, 200, 200, 409, 409, 403, 404, 400, 400, 403]); // 익명 admin 줄은 두 서버 모두 403
+        const st = y.at(-1) as { audit: { detail: unknown }[]; events: { type: string; newHandle: string }[] };
+        expect(st.audit.map((a) => a.detail)).toEqual([
+          { from: orig.m, to: 'ac4-m' }, { from: 'ac4-m', to: 'ac4-m' }, { from: orig.bot, to: 'ac4-bot' }, { from: orig.m2, to: 'ac4-m2' }]);
+        expect(st.events.map((e) => e.newHandle)).toEqual(['ac4-m', 'ac4-m', 'ac4-bot', 'ac4-m2']);
+        await reset();
+        await db.pool.query('delete from handle_group where id = $1', [grp]);
+      }
+
+      // S5.4 AC4 — keys PUT·agent/activity(코어 `account_keys_activity.rs`). 같은 처음 상태에서 같은 요청 줄을 TS 로 한 번, Rust 로 한 번 보내고
+      // 답·account_key 행이 같은지 본다. activity 의 lastTurnAt 은 서버 now() 라 꼴(밀리초 ISO)과 행에 찍힌 값만 견준다.
+      {
+        for (const k of ['PUT /accounts/{id}/keys', 'POST /agent/activity']) expect(f.log(), k).toContain(`"${k}"`);
+        expect(f.log()).not.toContain('keys/activity core off');
+        const M = member.token;
+        const M2 = member2.token;
+        const pem = '-----BEGIN PUBLIC KEY-----\nAC4KEY\n-----END PUBLIC KEY-----';
+        const ghost = '00000000-0000-4000-8000-0000000ac4f0';
+        const reset = async () => {
+          await db.pool.query(`delete from account_key where key_id like 'ac4-%'`);
+          await db.pool.query('update agent_config set last_turn_at = null where account_id = $1', [agent.accountId]);
+        };
+        const run = async (base: string) => {
+          await reset();
+          const out: unknown[] = [];
+          const call = async (m: string, path: string, body: unknown, token: string) => {
+            const r = await callX(base, m, path, body, token);
+            const json = r.status === 200 && r.json && typeof (r.json as { lastTurnAt?: unknown }).lastTurnAt === 'string'
+              ? { lastTurnAt: /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test((r.json as { lastTurnAt: string }).lastTurnAt) ? 'ISO' : (r.json as { lastTurnAt: string }).lastTurnAt }
+              : r.status === 400 || r.status >= 500 ? null : r.json;
+            out.push({ m, path, status: r.status, code: r.code, json });
+            return r;
+          };
+          await call('PUT', `/accounts/${member.accountId}/keys`, { keyId: 'ac4-a', publicKeyPem: pem }, M); // 204
+          await call('PUT', `/accounts/${member.accountId}/keys`, { keyId: 'ac4-a', publicKeyPem: pem + 'v2' }, M); // 같은 계정 — 덮어씀 204
+          await call('PUT', `/accounts/${member2.accountId}/keys`, { keyId: 'ac4-a', publicKeyPem: pem }, M2); // 다른 계정 키 → 409
+          await call('PUT', `/accounts/${member2.accountId}/keys`, { keyId: 'ac4-b', publicKeyPem: pem }, A); // admin 이 남의 키 204
+          await call('PUT', `/accounts/${member2.accountId}/keys`, { keyId: 'ac4-c', publicKeyPem: pem }, M); // 남의 계정 → 403
+          await call('PUT', `/accounts/${member.accountId}/keys`, { keyId: '', publicKeyPem: pem }, M); // 400
+          await call('PUT', `/accounts/${member.accountId}/keys`, { keyId: 'ac4-d', publicKeyPem: 'nope' }, M); // 400
+          await call('PUT', `/accounts/${member.accountId}/keys`, { keyId: 'k'.repeat(129), publicKeyPem: pem }, M); // 400
+          await call('PUT', `/accounts/${member.accountId}/keys`, { keyId: 'ac4-' + '가'.repeat(124), publicKeyPem: pem }, M); // UTF-16 128 → 204
+          await call('PUT', '/accounts/nope/keys', { keyId: 'ac4-e', publicKeyPem: pem }, A); // 400
+          await call('PUT', `/accounts/${ghost}/keys`, { keyId: 'ac4-f', publicKeyPem: pem }, M); // 남의(없는) 계정 → 403
+          await call('PUT', `/accounts/${member.accountId}/keys`, { keyId: 'ac4-g', publicKeyPem: pem }, ''); // 401
+          await call('POST', '/agent/activity', {}, agent.pat); // 200
+          await call('POST', '/agent/activity', undefined, agent.pat); // 200(본문 없음)
+          await call('POST', '/agent/activity', {}, M); // 사람 → 400 invalid_account
+          await call('POST', '/agent/activity', {}, ''); // 401
+          out.push({
+            keys: (await db.pool.query(`select key_id, account_id::text, public_key_pem from account_key where key_id like 'ac4-%' order by key_id`)).rows,
+            turn: (await db.pool.query(`select last_turn_at > now() - interval '1 minute' as fresh from agent_config where account_id = $1`, [agent.accountId])).rows,
+          });
+          return out;
+        };
+        const x = await run(tsUrl);
+        const y = await run(rsUrl);
+        expect(y).toEqual(x);
+        expect((y.slice(0, -1) as { status: number }[]).map((r) => r.status)).toEqual([
+          204, 204, 409, 204, 403, 400, 400, 400, 204, 400, 403, 401, 200, 200, 400, 401]);
+        expect((y[12] as { json: unknown }).json).toEqual({ lastTurnAt: 'ISO' });
+        expect((y.at(-1) as { keys: unknown[]; turn: unknown[] })).toMatchObject({ turn: [{ fresh: true }] });
+        expect((y.at(-1) as { keys: unknown[] }).keys).toHaveLength(3);
+        await reset();
+      }
+
+      // S5.4 AC4 — 초대 쓰기 두 줄(코어 `invites_write.rs`). email 이 실린 POST 는 Rust 가 TS 로 넘긴다(답이 같아야 한다).
+      // 답(새 id·토큰은 꼴만)·감사·저장된 해시가 토큰의 sha256 인지 본다. resend 는 TS 에 남는다.
+      {
+        for (const k of ['POST /invites', 'DELETE /invites/{id}']) expect(f.log(), k).toContain(`"${k}"`);
+        expect(f.log()).not.toContain('invites write core off');
+        expect(f.log()).not.toContain('"POST /invites/{id}/resend"');
+        const M = member.token;
+        const ghost = '00000000-0000-4000-8000-0000000ac4e0';
+        const made: string[] = [];
+        const run = async (base: string) => {
+          const since = String((await db.pool.query('select coalesce(max(id), 0)::text as m from audit_log')).rows[0].m);
+          const used = (await db.pool.query<{ id: string }>(
+            `insert into invite (token_hash, created_by, expires_at, used_by) values (md5(random()::text), $1, now() + interval '1 day', $2) returning id::text as id`,
+            [admin.accountId, member.accountId])).rows[0]!.id;
+          made.push(used);
+          const mine: string[] = [];
+          const out: unknown[] = [];
+          const call = async (m: string, path: string, body: unknown, token: string) => {
+            const r = await callX(base, m, path, body, token);
+            let json: unknown = r.status === 400 || r.status >= 500 ? null : r.json;
+            if (r.status === 201) {
+              const j = r.json as { id: string; token: string; expiresAt: string; mail: string };
+              mine.push(j.id); made.push(j.id);
+              const row = (await db.pool.query(`select token_hash, expires_at > now() + interval '6 days 23 hours' as week from invite where id = $1`, [j.id])).rows[0];
+              expect(row.token_hash).toBe(createHash('sha256').update(j.token).digest('hex'));
+              json = { keys: Object.keys(j), token: /^hrki_[A-Za-z0-9_-]{43}$/.test(j.token), iso: /\.\d{3}Z$/.test(j.expiresAt), mail: j.mail, week: row.week };
+            }
+            out.push({ m, path: path.replace(used, 'USED').replace(/[0-9a-f-]{36}/, (x) => (mine.includes(x) ? `N${mine.indexOf(x)}` : x)), status: r.status, code: r.code, json });
+          };
+          await call('POST', '/invites', {}, A); // 201
+          await call('POST', '/invites', { locale: 'ko', extra: 1 }, A); // 201
+          await call('POST', '/invites', undefined, A); // 201(본문 없음)
+          await call('POST', '/invites', { locale: 'fr' }, A); // 400
+          await call('POST', '/invites', [], A); // 400
+          await call('POST', '/invites', {}, M); // 403
+          await call('POST', '/invites', {}, ''); // 401
+          await call('POST', '/invites', { email: 'ac4@example.test' }, A); // TS 가 판정(메일 꺼짐 409)
+          await call('POST', '/invites', { email: 'nope' }, A); // TS 가 판정(400)
+          await call('DELETE', `/invites/${mine[0]}`, undefined, A); // 204
+          await call('DELETE', `/invites/${mine[0]}`, undefined, A); // 이미 취소 204
+          await call('DELETE', `/invites/${used}`, undefined, A); // 409
+          await call('DELETE', `/invites/${ghost}`, undefined, A); // 404
+          await call('DELETE', '/invites/nope', undefined, A); // 400
+          await call('DELETE', `/invites/${mine[1]}`, undefined, M); // 403
+          await call('DELETE', `/invites/${mine[1]}`, undefined, ''); // 401
+          const audit = (await db.pool.query(`select action, actor_id::text, target, detail from audit_log where id > $1::bigint and action like 'invite.%' order by id`, [since])).rows
+            .map((a) => ({ ...a, detail: { ...a.detail, inviteId: mine.indexOf(a.detail.inviteId) } }));
+          const revoked = (await db.pool.query(`select id::text, revoked_by::text from invite where id = any($1) and revoked_at is not null`, [mine])).rows
+            .map((r) => ({ i: mine.indexOf(r.id), by: r.revoked_by }));
+          out.push({ audit, revoked });
+          return out;
+        };
+        const x = await run(tsUrl);
+        const y = await run(rsUrl);
+        expect(y).toEqual(x);
+        expect((y.slice(0, -1) as { status: number }[]).map((r) => r.status)).toEqual([
+          201, 201, 201, 400, 400, 403, 401, 409, 400, 204, 204, 409, 404, 400, 403, 401]);
+        expect((y[0] as { json: unknown }).json).toEqual({ keys: ['id', 'expiresAt', 'mail', 'token'], token: true, iso: true, mail: 'off', week: true });
+        expect((y.at(-1) as { audit: unknown[] }).audit).toHaveLength(4);
+        await db.pool.query('delete from invite where id = any($1)', [made]);
       }
 
       // S5.4 MS1 — 저장한 글(코어 `saved.rs`). 다섯 줄 모두 요청자 자신의 행만 다룬다 — 같은 순서의 요청을 TS 로 한 번,
