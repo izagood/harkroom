@@ -148,7 +148,8 @@ pub async fn send_one_due(
             posted(&row)
         }
         Outcome::Replayed(row) => posted(&row),
-        Outcome::ToTs => {
+        // 위임 상한은 MCP `message.delegate` 만 낸다.
+        Outcome::ToTs | Outcome::ChainLimit => {
             tx.rollback().await?;
             return Ok(Sent::Left);
         }

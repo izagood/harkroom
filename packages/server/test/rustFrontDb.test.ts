@@ -1506,6 +1506,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant insert on delegation_implicit_log to ${rw}`,
         `grant insert on team_delegation to ${rw}`,
         `grant insert on team_delegation_item to ${rw}`,
+        // S5.3 C3b-2c-4b — MCP delegate 쓰기가 본문 멘션 부름을 위임 부름으로 바꿔 단다(`DELEGATE_WRITE_PRIVILEGES`).
+        `grant update (reason, team_id) on inbox to ${rw}`,
         // S5.3 C5b — 예약 깨움 루프(`loops/wake.rs::WAKE_PRIVILEGES`). 없으면 「loop wake off」 — 루프는 TS 에 남는다.
         ...WAKE_GRANTS.map((g) => `grant ${g} to ${rw}`),
         // S5.3 C5c — 보존 정리 루프(`loops/retention.rs::RETENTION_PRIVILEGES`).
@@ -6544,6 +6546,11 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // C3b-2c-4a — 위임 받을 에이전트(누구나 부름). 러너가 없어 접속은 늘 꺼져 있다 — 게이트를 지난 위임은 TS 몫이라 닿지 않는다.
         const del4 = await createAgent(app, admin.token, 'c3b2c4del');
         await db.pool.query(`update agent_config set invoke_scope = 'community' where account_id = $1`, [del4.accountId]);
+        names.set(del4.accountId, 'DEL4');
+        // C3b-2c-4b — 접속하지 않는 둘째 담당(누구나 부름).
+        const del5 = await createAgent(app, admin.token, 'c3b2c4off');
+        await db.pool.query(`update agent_config set invoke_scope = 'community' where account_id = $1`, [del5.accountId]);
+        names.set(del5.accountId, 'DEL5');
         const freshCh = async () => {
           const c = (await createChannel(db.pool, { name: `c1c4c-${Math.random().toString(36).slice(2, 10)}` })).id;
           await db.pool.query(`insert into channel_member (channel_id, account_id) select $1, account_id from channel_member where channel_id = $2 on conflict do nothing`, [c, todayId]);
@@ -6638,7 +6645,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                   await db.pool.query(`insert into team_delegation (message_id, team_id, lead_account_id, channel_id, thread_root_id, deadline_at, kind) values ($1, null, $2, $3, $4, now() + interval '10 minutes', 'delegate')`, [m, bot3.accountId, ch, root]);
                 }
               }),
-              dl(() => ({ to: ['c3b2c4del'] }), false, 'delegate 사람 말 뒤 라운드 리셋 → 게이트 지남 → TS', async (ch, root) => {
+              // C3b-2c-4b — 게이트를 지난 위임도 Rust 가 쓴다. 받는 쪽이 접속해 있지 않아 둘 다 아무것도 쓰지 않는다.
+              dl(() => ({ to: ['c3b2c4del'] }), true, 'delegate 사람 말 뒤 라운드 리셋 → 게이트 지남 → 접속 없음', async (ch, root) => {
                 for (let i = 0; i < 3; i++) {
                   const m = await ins({ ch, root, author: bot3.accountId, body: `넘김 ${i}` });
                   await db.pool.query(`insert into team_delegation (message_id, team_id, lead_account_id, channel_id, thread_root_id, deadline_at, kind, created_at) values ($1, null, $2, $3, $4, now() + interval '10 minutes', 'delegate', now() - interval '1 minute')`, [m, bot3.accountId, ch, root]);
@@ -6743,7 +6751,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(by('delegate 못 부르는 이름 → not_invokable').body).toMatchObject({ error: { code: 'not_invokable', handles: ['nobody-c3b2c4', 'C1C4CBOTX'] } });
         expect(by('delegate 라운드 상한 → round_limit').body.error?.code).toBe('round_limit');
         // 사람 말(머리) 뒤 라운드가 리셋돼 게이트를 지난다 — 받는 쪽이 접속해 있지 않아 TS 도 아무것도 쓰지 않는다.
-        expect(by('delegate 사람 말 뒤 라운드 리셋 → 게이트 지남 → TS').body).toMatchObject({ delegated: [], unreachable: ['c3b2c4del'], message: null });
+        expect(by('delegate 사람 말 뒤 라운드 리셋 → 게이트 지남 → 접속 없음').body).toMatchObject({ delegated: [], unreachable: ['c3b2c4del'], message: null });
         expect(row('report 기본 · files·remaining·next·durationMs')).toMatchObject({ kind: 'report', model: { id: 'claude-opus-5' },
           report: { checks: ['시험 통과'], files: ['a.rs'], durationMs: 1200, next: [{ id: 'n1', label: '다음' }] } });
         expect(row('report 기본 · files·remaining·next·durationMs').report).not.toHaveProperty('remaining');
@@ -6840,6 +6848,86 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             expect(itemOf('report 담당(안 닫힌 항목) → 닫고 위임자 깨움')).toEqual([{ outcome: v1 ? 'reported' : 'done', closed_by_me: true, pending_me: false, notified: true, same_tx: true }]);
             expect(leadOf('report 담당(안 닫힌 항목) → 닫고 위임자 깨움')).toBe(1);
             expect(itemOf('report 담당(보고된 항목) → 대기 중 update')).toEqual([{ outcome: 'reported', closed_by_me: false, pending_me: v1, notified: false, same_tx: null }]);
+            // C3b-2c-4b — 게이트를 지난 `message.delegate`(BOT3 → DEL4). 접속은 TS 메모리(`/mcp` 한 번)와 DB(`agent_presence`) 둘 다에 둔다
+            // — TS 는 메모리를, Rust 는 DB 를 읽는다(쓰기 간격 10초 동안 DB 가 더 일찍 만료된다 — 아래 따로 잰다).
+            const online = async (acc: string, pat: string) => {
+              expect((await mcpCall(tsUrl, pat, 'account.me', {}, 900)).status).toBe(200);
+              await db.pool.query(
+                `insert into agent_presence (account_id, expires_at, updated_at) values ($1, now() + interval '30 seconds', now())
+                 on conflict (account_id) do update set expires_at = excluded.expires_at, updated_at = now()`, [acc]);
+            };
+            const DW: [string, (ch: string, root: string) => Promise<{ args: Record<string, unknown>; cause?: string }>][] = [
+              ['delegate 접속한 담당 → 글·의무·부름', async () => ({ args: { to: ['C3B2C4DEL'], body: '맡아 줘', deadlineSec: 900, model: 'claude-opus-5' } })],
+              ['delegate 본문 멘션 → mention 부름을 위임 부름으로', async () => ({ args: { to: ['c3b2c4del'], body: '@c3b2c4del 맡아 줘' } })],
+              ['delegate 접속 안 한 담당 섞임 → unreachable', async () => ({ args: { to: ['c3b2c4off', 'c3b2c4del'], body: '둘이 맡아 줘' } })],
+              ['delegate 앞 의무(같은 담당) → v1 은 대체', async (ch, root) => {
+                const d = (await db.pool.query<{ id: string }>(
+                  `insert into team_delegation (message_id, lead_account_id, channel_id, thread_root_id, deadline_at)
+                   values ($1, $2, $3, $1, now() + interval '10 minutes') returning id::text as id`, [root, member.accountId, ch])).rows[0]!.id;
+                await db.pool.query(`insert into team_delegation_item (delegation_id, delegate_account_id) values ($1, $2)`, [d, del4.accountId]);
+                return { args: { to: ['c3b2c4del'], body: '이어서 맡아 줘' } };
+              }],
+              ['delegate 사슬 상한 → chain_limit(아무것도 안 씀)', async (ch, root) => {
+                const call = await ins({ ch, root, author: bot2.accountId, body: `<@${bot3.accountId}> 넘겨 줘`, depth: 40 });
+                await wokeBy(call);
+                return { args: { to: ['c3b2c4del'], body: '넘긴다' }, cause: call };
+              }],
+            ];
+            const runW = async (base: string) => {
+              const out: unknown[] = [];
+              for (const [name, prep] of DW) {
+                const ch = await freshCh();
+                const root = await ins({ ch, author: member.accountId, body: '일' });
+                await online(del4.accountId, del4.pat);
+                const st = await prep(ch, root);
+                const r = await mcpCall(base, viaPat.token, 'message.delegate', { channelId: ch, threadRootId: root, ...st.args }, 7,
+                  st.cause ? { 'x-harkroom-cause': st.cause } : {});
+                const body = sse(r.text) as { message?: { id?: string } } | null;
+                const deleg = (await db.pool.query(
+                  `select d.message_id is not distinct from $2::uuid as by_me, d.team_id, d.kind, d.lead_account_id::text as lead, d.plan_step_id,
+                          d.notified_at is not null as notified, d.deadline_at - d.created_at as span,
+                          coalesce((select json_agg(json_build_object('to', i.delegate_account_id::text, 'outcome', i.outcome, 'why', i.closed_reason) order by i.delegate_account_id)
+                                      from team_delegation_item i where i.delegation_id = d.id), '[]') as items
+                     from team_delegation d where d.thread_root_id = $1 order by d.created_at`, [root, body?.message?.id ?? null])).rows;
+                const inbox = body?.message?.id ? (await db.pool.query(
+                  `select account_id::text as acc, reason, team_id from inbox where message_id = $1 order by account_id, reason`, [body.message.id])).rows : [];
+                const meta = body?.message?.id ? (await db.pool.query(`select meta from message where id = $1`, [body.message.id])).rows[0]?.meta : null;
+                out.push({ name, status: r.status, rust: base === tsUrl ? true : r.core === 'mcp', body: shape(body), row: await facts(body?.message?.id, st.cause),
+                  deleg: shape(deleg.map((x) => ({ ...x, span: x.span ? 'span' : null }))), inbox: shape(inbox), meta: shape(meta) });
+              }
+              return out;
+            };
+            const tsW = await runW(tsUrl);
+            const rsW = await runW(v2Url);
+            expect(rsW).toEqual(tsW);
+            type WO = { name: string; body: Record<string, unknown>; deleg: Record<string, unknown>[]; inbox: Record<string, unknown>[]; meta: Record<string, unknown> };
+            const w = (n: string) => (tsW as WO[]).find((x) => x.name === n)!;
+            expect(w('delegate 접속한 담당 → 글·의무·부름').body).toMatchObject({ delegationId: '<uuid>', delegated: ['C3B2C4DEL'], unreachable: [], roundsLeft: 2 });
+            expect(w('delegate 접속한 담당 → 글·의무·부름').meta).toMatchObject({ kind: 'delegation', delegation: { to: ['C3B2C4DEL'], open: ['DEL4'], unreachable: [] }, model: { id: 'claude-opus-5' } });
+            expect(w('delegate 접속한 담당 → 글·의무·부름').deleg).toEqual([{ by_me: true, team_id: null, kind: 'delegate', lead: 'BOT3', plan_step_id: null, notified: false, span: 'span', items: [{ to: 'DEL4', outcome: null, why: null }] }]);
+            expect(w('delegate 접속한 담당 → 글·의무·부름').inbox.filter((x) => x.acc === 'DEL4')).toEqual([{ acc: 'DEL4', reason: 'team_delegated', team_id: null }]);
+            expect(w('delegate 본문 멘션 → mention 부름을 위임 부름으로').inbox.filter((x) => x.acc === 'DEL4')).toEqual([{ acc: 'DEL4', reason: 'team_delegated', team_id: null }]);
+            expect(w('delegate 접속 안 한 담당 섞임 → unreachable').body).toMatchObject({ delegated: ['c3b2c4del'], unreachable: ['c3b2c4off'] });
+            expect(w('delegate 앞 의무(같은 담당) → v1 은 대체').deleg.map((d) => d.items)).toEqual(v1
+              ? [[{ to: 'DEL4', outcome: 'closed', why: 'superseded' }], [{ to: 'DEL4', outcome: null, why: null }]]
+              : [[{ to: 'DEL4', outcome: null, why: null }], [{ to: 'DEL4', outcome: null, why: null }]]);
+            if (v1) expect(w('delegate 앞 의무(같은 담당) → v1 은 대체').deleg[0]).toMatchObject({ notified: true });
+            expect(w('delegate 사슬 상한 → chain_limit(아무것도 안 씀)').body).toMatchObject({ error: { code: 'chain_limit' } });
+            expect(w('delegate 사슬 상한 → chain_limit(아무것도 안 씀)').deleg).toEqual([]);
+            // 접속 확인 지연 — TS 는 메모리, Rust 는 DB 를 본다. TS 는 DB 를 10초에 한 번만 고쳐 쓰므로 DB 의 만료가 메모리보다 최대 10초 이르다.
+            // 그 창(메모리는 살아 있고 DB 는 만료)을 만들어 두 쪽을 따로 잰다 — 같지 않은 것이 기대값이다(Rust 가 먼저 unreachable).
+            if (v1) {
+              const lag = async (base: string) => {
+                const ch = await freshCh();
+                const root = await ins({ ch, author: member.accountId, body: '일' });
+                await online(del4.accountId, del4.pat);
+                await db.pool.query(`update agent_presence set expires_at = now() - interval '1 second' where account_id = $1`, [del4.accountId]);
+                const r = await mcpCall(base, viaPat.token, 'message.delegate', { channelId: ch, threadRootId: root, to: ['c3b2c4del'], body: '맡아 줘' }, 7, {});
+                return sse(r.text) as { delegated?: string[]; unreachable?: string[] };
+              };
+              expect(await lag(tsUrl)).toMatchObject({ delegated: ['c3b2c4del'], unreachable: [] });
+              expect(await lag(v2Url)).toMatchObject({ delegated: [], unreachable: ['c3b2c4del'], message: null });
+            }
           } finally {
             child?.kill('SIGTERM');
             if (prev === undefined) delete process.env.HARKROOM_DELEGATION_V2; else process.env.HARKROOM_DELEGATION_V2 = prev;

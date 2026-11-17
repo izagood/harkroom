@@ -136,7 +136,17 @@ pub async fn handle(
                 };
             }
             if tool == "message.delegate" {
-                return super::delegate_gate::answer(&pool, &me, &args).await;
+                let st = writes.delegate.as_deref();
+                return super::delegate_gate::answer(
+                    &pool,
+                    st,
+                    &me,
+                    &args,
+                    cause.as_deref(),
+                    turn.as_deref(),
+                    has_operator,
+                )
+                .await;
             }
             if let Some(r) =
                 super::grant_writes::answer(&pool, writes.grant.as_ref(), &me, tool, &args).await

@@ -394,6 +394,7 @@ async fn post(
         meta,
         server_notice: false,
         closes_delegation,
+        delegation: None,
     };
     let out = msg_post::post_in_tx(
         st,
@@ -409,7 +410,7 @@ async fn post(
     .await
     .ok()?;
     match out {
-        Outcome::ToTs | Outcome::Replayed(_) => None,
+        Outcome::ToTs | Outcome::Replayed(_) | Outcome::ChainLimit => None,
         Outcome::BadThread => Some(err("bad_thread", BAD_THREAD)),
         Outcome::BadAttachment => Some(err(
             "bad_attachment",

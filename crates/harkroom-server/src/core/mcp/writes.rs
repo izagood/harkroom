@@ -107,6 +107,8 @@ pub struct McpWrites {
     pub memory_body: Option<PgPool>,
     /// `message.post`(C1c-4c) — `msg_post::MESSAGE_POST_PRIVILEGES` + `MCP_POST_EXTRA_PRIVILEGES`. [`super::msg_post::answer`] 가 본다.
     pub post: Option<std::sync::Arc<crate::core::msg_post::PostState>>,
+    /// `message.delegate` 쓰기(C3b-2c-4b) — `post` 에 더해 `delegate_write::DELEGATE_WRITE_PRIVILEGES`. 없으면 게이트를 지난 위임은 TS 로.
+    pub delegate: Option<std::sync::Arc<crate::core::msg_post::PostState>>,
 }
 
 /// JS `Number.MAX_SAFE_INTEGER` — 이 밖의 수는 TS 에서 값이 뭉개진다. Rust 는 같은 결과를 낼 수 없으니 TS 로 넘긴다.
@@ -481,7 +483,8 @@ mod tests {
             "set outcome = 'closed', closed_reason = 'delegator_close', closed_at = coalesce(i.closed_at, now()),\n            update_pending_message_id = null, update_pending_at = null",
             "where d.id = i.delegation_id and d.lead_account_id = $1 and d.thread_root_id = $2",
             "and ($3::uuid is null or d.id = $3::uuid)\n        and ($4::uuid is null or i.delegate_account_id = $4::uuid)\n        and (i.outcome is null or i.outcome = 'reported')",
-            "`update team_delegation d set notified_at = now()\n      where d.id = any($1::uuid[]) and d.notified_at is null\n        and not exists (select 1 from team_delegation_item i where i.delegation_id = d.id and i.outcome is null)`,",
+            // C3b-2c-4b 부터 `MARK_SETTLED_QUIETLY_SQL` 상수다(문장은 그대로).
+            "`update team_delegation d set notified_at = now()\n      where d.id = any($1::uuid[]) and d.notified_at is null\n        and not exists (select 1 from team_delegation_item i where i.delegation_id = d.id and i.outcome is null)`;",
         ] {
             assert!(dl.contains(want), "{want}");
         }

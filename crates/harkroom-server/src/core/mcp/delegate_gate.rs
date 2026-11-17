@@ -2,13 +2,21 @@
 //! 위에서부터 옮긴다: 채널 가시성 → 자기 위임 → 팀장 명단 → 에이전트만 → 호출 게이트(`openDelegationTargets`) → 라운드 상한(`roundsUsed`).
 //!
 //! - Rust 가 답하는 것: `forbidden` · `self_delegation` · `not_agent` · `not_invokable` · `round_limit` — 모두 **아무것도 쓰지 않는** 거절이다.
-//! - **TS 로 넘기는 것**(`None` — fail-closed): 게이트·상한을 다 지난 요청(접속 확인·글·위임 행·이벤트는 다음 PR) · 팀장이 자기 팀에
-//!   넘기는 요청(팀 명단 갈래) · `agentModels`·`planRootId`·`planGroupId`(모델 고르기·계획판) · zod 가 받지 않을 인자 · DB 오류.
-//! - 접속 확인(presence)은 이 PR 에서 읽지 않는다 — 모두 거절 전에 끝나므로 TS 메모리와 DB(`agent_presence`) 사이의 지연이 닿지 않는다.
+//! - C3b-2c-4b: 게이트를 지난 요청도 맡는다 — 접속 확인 → 위임 글(`meta.kind = 'delegation'`) → 같은 tx 의 사슬 상한·의무
+//!   ([`crate::core::delegate_write`]) → 이벤트. 쓰기 칸(`McpWrites::delegate`)이 없으면 지금처럼 TS 로 넘긴다.
+//! - **TS 로 넘기는 것**(`None` — fail-closed): 팀장이 자기 팀에 넘기는 요청(팀 명단 갈래) · `agentModels`·`planRootId`·`planGroupId`
+//!   (모델 고르기·계획판) · zod 가 받지 않을 인자 · ASCII 밖 모델 신고 · `to` 에 같은 이름이 두 번 · 위임 스위치를 모름 · DB 오류.
+//! - 접속 확인: TS 는 프로세스 메모리(`presence.online()`)를, Rust 는 DB `agent_presence`(`expires_at > now()`)를 읽는다. TS 는
+//!   그 표를 담당마다 10초에 한 번만 고쳐 쓰므로(`PERSIST_EVERY_MS`) DB 의 만료가 메모리보다 최대 약 10초 이르다 — 폴을 멈춘 담당은
+//!   Rust 쪽에서 최대 약 10초 **먼저** `unreachable` 이 된다(없는 것을 있다고 하지 않는 쪽). 처음 접속은 첫 폴에 바로 쓰인다.
 use super::tools::err;
 use crate::auth::Account;
+use crate::core::audience::audience_for;
+use crate::core::cause_link;
+use crate::core::delegate_write;
 use crate::core::invoke_gate::{self, Ctx, Via};
 use crate::core::msg_edit::MAX_MESSAGE_BODY_CHARS;
+use crate::core::msg_post::{self, Origin, Outcome, PostBody, PostState};
 use crate::core::msg_read::{channel_visible, is_uuid};
 use serde_json::Value;
 use sqlx::PgPool;
@@ -20,6 +28,11 @@ const TEAM_ROUND_LIMIT: i64 = 3;
 /// TS `DELEGATION_DEADLINE_MIN_SEC`·`MAX_SEC`.
 const DEADLINE_MIN: i64 = 60;
 const DEADLINE_MAX: i64 = 6 * 60 * 60;
+/// TS `DELEGATION_DEADLINE_DEFAULT_SEC`.
+const DEADLINE_DEFAULT: i64 = 10 * 60;
+
+/// TS `presence.online()` 의 DB 판 — 이 계정들 중 지금 접속한 것.
+const ONLINE_SQL: &str = "select account_id::text from agent_presence where account_id = any($1::uuid[]) and expires_at > now()";
 
 /// 문장(팀장 명단·대상·라운드)은 TS 상수를 골든으로 받는다(`golden/sql_fragments.json`).
 struct Sql {
@@ -51,6 +64,10 @@ struct Args {
     channel: String,
     root: String,
     to: Vec<String>,
+    body: String,
+    deadline_sec: i64,
+    /// 다듬은 모델 신고(빈 값이면 없음).
+    model: Option<String>,
 }
 
 /// zod `message.delegate` 의 `inputSchema` 중 Rust 가 맡는 것. 틀린 꼴·`agentModels`·계획판 칸은 `None`.
@@ -83,20 +100,32 @@ fn parse(args: &Value) -> Option<Args> {
         }
         to.push(h.to_owned());
     }
-    match o.get("deadlineSec") {
-        None => {}
-        Some(Value::Number(d))
-            if d.as_i64()
-                .is_some_and(|d| (DEADLINE_MIN..=DEADLINE_MAX).contains(&d)) => {}
+    let deadline_sec = match o.get("deadlineSec") {
+        None => DEADLINE_DEFAULT,
+        Some(Value::Number(d)) => d
+            .as_i64()
+            .filter(|d| (DEADLINE_MIN..=DEADLINE_MAX).contains(d))?,
         _ => return None,
-    }
-    match o.get("model") {
-        None => {}
+    };
+    let model = match o.get("model") {
+        None => None,
         Some(Value::String(m))
-            if (1..=crate::core::cause_link::MODEL_ID_MAX).contains(&m.encode_utf16().count()) => {}
+            if (1..=cause_link::MODEL_ID_MAX).contains(&m.encode_utf16().count()) =>
+        {
+            // ASCII 밖 모델 신고는 JS `trim`·UTF-16 자르기를 맞추지 않고 TS 로 넘긴다(`message.post` 와 같다).
+            cause_link::trimmed_model(m)?
+        }
         _ => return None,
-    }
-    Some(Args { channel, root, to })
+    };
+    let body = o.get("body")?.as_str()?.to_owned();
+    Some(Args {
+        channel,
+        root,
+        to,
+        body,
+        deadline_sec,
+        model,
+    })
 }
 
 /// TS `leadTeamFor` 가 팀을 찾는가 — 한 팀이 `to` 전원을 담으면 팀 명단 갈래(TS 몫)다.
@@ -110,8 +139,17 @@ fn lead_team_covers(rows: &[(String, String)], wanted: &[String]) -> bool {
         .any(|hs| wanted.iter().all(|w| hs.contains(&w.as_str())))
 }
 
-/// `message.delegate` — 거절이면 그 글자, 그 밖은 `None`(TS 가 같은 요청을 돈다).
-pub async fn answer(pool: &PgPool, me: &Account, args: &Value) -> Option<String> {
+/// `message.delegate` — 거절·위임 결과면 그 글자, 그 밖은 `None`(TS 가 같은 요청을 돈다). `st` 는 쓰기 칸이 있을 때만 있다.
+#[allow(clippy::too_many_arguments)]
+pub async fn answer(
+    pool: &PgPool,
+    st: Option<&PostState>,
+    me: &Account,
+    args: &Value,
+    cause: Option<&str>,
+    turn: Option<&str>,
+    operator: bool,
+) -> Option<String> {
     let a = parse(args)?;
     match channel_visible(pool, &me.id, &a.channel).await {
         Ok(true) => {}
@@ -154,6 +192,11 @@ pub async fn answer(pool: &PgPool, me: &Account, args: &Value) -> Option<String>
         .map(|(id, h, _)| (h.as_str(), id.as_str()))
         .collect();
     let ids: Vec<String> = rows.iter().map(|(id, _, _)| id.clone()).collect();
+    // TS `members` — 소문자 handle → (계정, 꺼짐).
+    let members: HashMap<String, (String, bool)> = rows
+        .iter()
+        .map(|(id, h, off)| (h.clone(), (id.clone(), *off)))
+        .collect();
     let facts = invoke_gate::invoke_facts(&mut conn, &ids).await.ok()?;
     let ctx = Ctx {
         caller_id: &me.id,
@@ -202,8 +245,128 @@ pub async fn answer(pool: &PgPool, me: &Account, args: &Value) -> Option<String>
             ),
         ));
     }
-    // 게이트·상한을 다 지났다 — 접속 확인·글·위임 행은 아직 TS 몫이다.
-    None
+    // 게이트·상한을 다 지났다 — 쓰기 칸이 있으면 위임을 쓴다(C3b-2c-4b).
+    let st = st?;
+    let mut seen = std::collections::HashSet::new();
+    if !wanted.iter().all(|h| seen.insert(h.as_str())) {
+        return None;
+    }
+    write(st, me, &a, &wanted, &members, used, cause, turn, operator).await
+}
+
+/// TS `message.delegate` 의 뒷부분 — 접속 확인 → 위임 글 → 의무 → 결과.
+#[allow(clippy::too_many_arguments)]
+async fn write(
+    st: &PostState,
+    me: &Account,
+    a: &Args,
+    wanted: &[String],
+    members: &HashMap<String, (String, bool)>,
+    used: i64,
+    cause: Option<&str>,
+    turn: Option<&str>,
+    operator: bool,
+) -> Option<String> {
+    let mut ids: Vec<String> = Vec::with_capacity(wanted.len());
+    for w in wanted {
+        ids.push(members.get(w)?.0.clone());
+    }
+    let online: Vec<String> = sqlx::query_scalar(ONLINE_SQL)
+        .bind(&ids)
+        .fetch_all(&st.read)
+        .await
+        .ok()?;
+    let mut delegated: Vec<String> = Vec::new();
+    let mut delegate_ids: Vec<String> = Vec::new();
+    let mut unreachable: Vec<String> = Vec::new();
+    for (i, w) in wanted.iter().enumerate() {
+        let (id, off) = members.get(w)?;
+        if *off || !online.iter().any(|o| o == id) {
+            unreachable.push(a.to[i].clone());
+        } else {
+            delegated.push(a.to[i].clone());
+            delegate_ids.push(id.clone());
+        }
+    }
+    if delegated.is_empty() {
+        return Some(super::respond::text_result(&format!(
+            "{{\"delegated\":[],\"unreachable\":{},\"message\":null}}",
+            Value::from(unreachable)
+        )));
+    }
+    let deadline_at = msg_post::iso_ms(msg_post::now_ms() + a.deadline_sec * 1000);
+    let mut delegation = serde_json::Map::new();
+    delegation.insert("to".into(), Value::from(delegated.clone()));
+    delegation.insert("open".into(), Value::from(delegate_ids.clone()));
+    delegation.insert("unreachable".into(), Value::from(unreachable.clone()));
+    delegation.insert("deadlineAt".into(), Value::from(deadline_at.clone()));
+    let mut meta = serde_json::Map::new();
+    meta.insert("kind".into(), Value::from("delegation"));
+    meta.insert("delegation".into(), Value::Object(delegation));
+    cause_link::reported_model_meta(
+        &st.read,
+        &me.id,
+        a.model.as_deref(),
+        Some(&a.root),
+        &mut meta,
+    )
+    .await
+    .ok()?;
+    let is_dm = msg_post::channel_is_dm(&st.read, &a.channel).await.ok()?;
+    let audience = audience_for(&st.read, &a.channel).await.ok()?.to_json();
+    let origin = Origin {
+        cause,
+        chain_cause: cause.filter(|_| operator),
+        turn_id: turn.filter(|_| operator),
+        meta,
+        server_notice: false,
+        closes_delegation: false,
+        delegation: Some(delegate_write::Plan {
+            delegate_ids: &delegate_ids,
+            deadline_at: &deadline_at,
+        }),
+    };
+    let post = PostBody {
+        body: a.body.clone(),
+        attachment_ids: Vec::new(),
+        thread_root: Some(a.root.clone()),
+        also_in_channel: false,
+    };
+    let out = msg_post::post_in_tx(
+        st,
+        &a.channel,
+        &me.id,
+        me.kind == "agent",
+        &post,
+        None,
+        &audience,
+        is_dm,
+        &origin,
+    )
+    .await
+    .ok()?;
+    match out {
+        Outcome::ToTs | Outcome::Replayed(_) => None,
+        Outcome::ChainLimit => Some(err(
+            "chain_limit",
+            "이 사슬은 에이전트끼리의 호출 상한에 닿았다 — 사람에게 넘겨라",
+        )),
+        // 아무것도 쓰지 않았다 — 그 오류 글자는 TS 가 낸다.
+        Outcome::BadThread | Outcome::BadAttachment => None,
+        Outcome::Posted {
+            row, delegation_id, ..
+        } => {
+            let inner = format!(
+                "{{\"message\":{row},\"delegationId\":{},\"delegated\":{},\"unreachable\":{},\"deadlineAt\":{},\"roundsLeft\":{}}}",
+                Value::from(delegation_id?),
+                Value::from(delegated),
+                Value::from(unreachable),
+                Value::from(deadline_at),
+                (TEAM_ROUND_LIMIT - used - 1).max(0)
+            );
+            Some(super::respond::text_result(&super::respond::minify(&inner)))
+        }
+    }
 }
 
 #[cfg(test)]
