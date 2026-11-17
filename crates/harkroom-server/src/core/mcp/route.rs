@@ -131,6 +131,9 @@ pub async fn handle(
                     super::msg_post::answer_fail(st, &me, &args, c, t, has_operator).await
                 };
             }
+            if tool == "message.delegate" {
+                return super::delegate_gate::answer(&pool, &me, &args).await;
+            }
             if let Some(r) =
                 super::grant_writes::answer(&pool, writes.grant.as_ref(), &me, tool, &args).await
             {

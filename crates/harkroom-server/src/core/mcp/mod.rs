@@ -10,6 +10,7 @@
 //!   presence mark(요청마다). Rust 가 도구를 받으려면 이 넷을 같이 가져야 한다.
 pub mod bg_claim;
 pub mod bg_complete;
+pub mod delegate_gate;
 pub mod grant_writes;
 pub mod mem_body;
 pub mod mem_recall;
