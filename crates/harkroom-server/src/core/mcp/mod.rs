@@ -25,6 +25,7 @@ pub mod route;
 pub mod search;
 pub mod tools;
 pub mod turn_cancel;
+pub mod workitem;
 pub mod writes;
 
 use serde_json::{Value, json};
