@@ -294,6 +294,27 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 CH3c — 채널 선호·옛 섹션 이름. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만.
+    let pref_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::channel_pref_write as p;
+            match write::missing_in(w, p::PREF_WRITE_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: channel pref write core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: channel pref write core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 AC1 — 내 상태·에이전트 PAT. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만.
     let account_self_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -1158,6 +1179,17 @@ async fn main() {
             core_routes.router = core_routes.router.merge(sec.router);
             core_routes.http.extend(sec.http);
             core_routes.sockets.extend(sec.sockets);
+        }
+        // S5.4 CH3c — 채널 선호·옛 섹션 이름 2줄. 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = pref_write {
+            let pw = harkroom_server::core::channel_pref_write::routes(
+                harkroom_server::core::channel_pref_write::PrefState { write },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(pw.router);
+            core_routes.http.extend(pw.http);
+            core_routes.sockets.extend(pw.sockets);
         }
         // S5.4 AC1 — 내 상태·PAT 4줄. 권한이 다 있을 때만 — 아니면 TS 에 남는다.
         if let Some(write) = account_self_write {

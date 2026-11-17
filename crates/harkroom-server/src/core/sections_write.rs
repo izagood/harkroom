@@ -177,10 +177,10 @@ pub fn parse_patch(body: &Body) -> Result<(Option<String>, Option<bool>), &'stat
 const SECTION_ONE: &str = "select json_build_object('id', id, 'name', name, 'position', position, 'collapsed', collapsed, \
      'createdAt', to_char(created_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'))::text \
      from channel_section where account_id = $1::uuid and id = $2::uuid";
-const SET_SECTION: &str = "insert into channel_pref (account_id, channel_id, section_id, section) \
+pub(crate) const SET_SECTION: &str = "insert into channel_pref (account_id, channel_id, section_id, section) \
      values ($1::uuid, $2::uuid, $3::uuid, (select name from channel_section where id = $3::uuid and account_id = $1::uuid)) \
      on conflict (account_id, channel_id) do update set section_id = excluded.section_id, section = excluded.section";
-const COMPACT: &str = "update channel_section s set position = r.pos \
+pub(crate) const COMPACT: &str = "update channel_section s set position = r.pos \
      from (select id, (row_number() over (order by position, name) - 1)::integer as pos \
            from channel_section where account_id = $1::uuid) r \
      where s.id = r.id and s.position <> r.pos";
