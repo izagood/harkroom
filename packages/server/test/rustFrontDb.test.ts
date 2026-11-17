@@ -1568,6 +1568,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // S5.4 SE1 — 비밀 읽기·지우기(`core/secrets_read.rs::SECRETS_READ_PRIVILEGES`). 판·부여는 cascade. 없으면 「secrets read core off」 — TS 에 남는다.
         `grant delete on secret to ${rw}`,
         `grant delete on secret_grant to ${rw}`,
+        // S5.4 CH2 — 채널 읽음 쓰기(`core/channel_read_write.rs::CHANNEL_READ_WRITE_PRIVILEGES`). 칸 권한만. 없으면 「channel read write core off」 — TS 에 남는다.
+        `grant insert (account_id, channel_id, last_read_seq, unread_from_seq), update (last_read_seq, unread_from_seq, updated_at) on channel_read to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -4223,6 +4225,73 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         await db.pool.query('delete from api_connector where id = any($1)', [[cMine, cTheirs]]);
         await db.pool.query('delete from secret where id = $1', [sec]);
         await db.pool.query('delete from invite where id = any($1)', [invIds]);
+      }
+
+      // S5.4 CH2 — 읽음·미읽음 표시(코어 `channel_read_write.rs`). 같은 DB 에서 TS 로 한 번, Rust 로 한 번 같은 요청을 보내고
+      // 답과 그 뒤의 `channel_read` 행이 같은지 본다. `PATCH /channels/{id}/pref` 는 TS 에 남는다.
+      {
+        for (const k of ['PUT /channels/{id}/read', 'PUT /channels/{id}/unread']) {
+          expect(f.log(), k).toContain(`"${k}"`);
+        }
+        expect(f.log()).not.toContain('channel read write core off');
+        expect(f.log(), 'pref 는 TS 에 남는다').not.toContain('"PATCH /channels/{id}/pref"');
+        const M = member.token;
+        const pubCh = await createChannel(db.pool, { name: 'ch2-pub' });
+        const privCh = await createChannel(db.pool, { name: 'ch2-priv', visibility: 'private', creatorId: member2.accountId });
+        for (let i = 0; i < 5; i++) await postMessage(db.pool, { channelId: pubCh.id, authorId: member2.accountId, body: `ch2 ${i}`, threadRootId: null, meta: {} });
+        const emptyCh = await createChannel(db.pool, { name: 'ch2-empty' });
+        const row = async (ch: string) => (await db.pool.query(
+          'select last_read_seq::text as r, unread_from_seq::text as u from channel_read where account_id = $1 and channel_id = $2',
+          [member.accountId, ch])).rows[0] ?? null;
+        const reset = async () => db.pool.query('delete from channel_read where account_id = $1 and channel_id = any($2)', [member.accountId, [pubCh.id, privCh.id, emptyCh.id]]);
+        // 같은 처음 상태에서 같은 요청 줄을 두 서버에 차례로 보낸다 — 줄마다 답, 줄이 끝난 뒤 행.
+        type Step = readonly [string, string, unknown];
+        const run = async (base: string, steps: readonly Step[], token = M) => {
+          await reset();
+          const out: unknown[] = [];
+          for (const [m, path, body] of steps) {
+            const r = await callX(base, m, path, body, token);
+            out.push({ path, status: r.status, json: r.status === 400 ? null : r.json });
+            out.push(await row(pubCh.id), await row(emptyCh.id));
+          }
+          return out;
+        };
+        const R = (ch: string) => `/channels/${ch}/read`;
+        const U = (ch: string) => `/channels/${ch}/unread`;
+        const scenarios: (readonly Step[])[] = [
+          [['PUT', R(pubCh.id), { seq: 2 }], ['PUT', R(pubCh.id), { seq: 1 }], ['PUT', R(pubCh.id), { seq: 999 }]],
+          [['PUT', U(pubCh.id), { seq: 3 }], ['PUT', R(pubCh.id), { seq: 4 }], ['PUT', R(pubCh.id), { seq: '5' }]],
+          [['PUT', U(pubCh.id), { seq: 2 }], ['PUT', U(pubCh.id), { seq: null }], ['PUT', U(pubCh.id), { seq: '4' }]],
+          [['PUT', R(pubCh.id), { seq: null }], ['PUT', R(pubCh.id), { seq: true }], ['PUT', R(emptyCh.id), { seq: 7 }]],
+          [['PUT', R(pubCh.id.toUpperCase()), { seq: 3, extra: 1 }], ['PUT', U(emptyCh.id), { seq: 9 }]],
+          // 거절 갈래 — 400(경로·본문)·403(비공개 비멤버)·행 그대로.
+          [['PUT', R('not-a-uuid'), { seq: 1 }], ['PUT', R(pubCh.id), {}], ['PUT', R(pubCh.id), { seq: -1 }], ['PUT', R(pubCh.id), { seq: 1.5 }],
+            ['PUT', R(pubCh.id), { seq: 'x' }], ['PUT', R(pubCh.id), [1]], ['PUT', U(pubCh.id), { seq: 0 }], ['PUT', U(pubCh.id), {}],
+            ['PUT', R(privCh.id), { seq: 1 }], ['PUT', U(privCh.id), { seq: 1 }], ['PUT', R(privCh.id), { seq: -1 }]],
+        ];
+        for (const sc of scenarios) {
+          const x = await run(tsUrl, sc);
+          const y = await run(rsUrl, sc);
+          expect(y, JSON.stringify(sc)).toEqual(x);
+        }
+        // 비공개 비멤버의 403 몸통과, 비멤버 쪽에 행이 생기지 않았는지.
+        {
+          const y = await callX(rsUrl, 'PUT', R(privCh.id), { seq: 1 }, M);
+          expect({ status: y.status, json: y.json }).toEqual({ status: 403, json: { error: { code: 'forbidden', message: 'not a member of this dm channel' } } });
+          expect(await row(privCh.id)).toBeNull();
+          const ok = await callX(rsUrl, 'PUT', R(pubCh.id), { seq: 3 }, M);
+          expect(ok.status).toBe(204);
+          expect(await row(pubCh.id)).toEqual({ r: '3', u: null });
+        }
+        {
+          const [x, y] = [await callX(tsUrl, 'PUT', R(pubCh.id), { seq: 1 }, ''), await callX(rsUrl, 'PUT', R(pubCh.id), { seq: 1 }, '')];
+          expect({ status: y.status, code: y.code }, '익명 → 401').toEqual({ status: x.status, code: x.code });
+          expect(y.status).toBe(401);
+        }
+        await reset();
+        await db.pool.query('delete from message where channel_id = any($1)', [[pubCh.id, privCh.id, emptyCh.id]]);
+        await db.pool.query('delete from channel_member where channel_id = any($1)', [[pubCh.id, privCh.id, emptyCh.id]]);
+        await db.pool.query('delete from channel where id = any($1)', [[pubCh.id, privCh.id, emptyCh.id]]);
       }
 
       // S5.2 P4d — 옮긴 라우트를 지난 요청도 세션을 늘리고 PAT 사용 시각을 남긴다(쓰기 풀로). 읽기 역할로 하면 조용히 실패하던 것.

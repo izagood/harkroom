@@ -17,6 +17,7 @@ pub mod automations_read;
 pub mod cause_link;
 pub mod chain_backstop;
 pub mod chain_stall;
+pub mod channel_read_write;
 pub mod channels;
 pub mod command_match;
 pub mod content_scan;
