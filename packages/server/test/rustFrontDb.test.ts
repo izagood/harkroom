@@ -6286,7 +6286,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             [o.ch, o.root ?? null, o.author, o.body, o.depth ?? 0, o.stall ?? 0, JSON.stringify(o.meta ?? {})])).rows[0]!.id;
         const wokeBy = (id: string, reason = 'mention') => db.pool.query(`insert into inbox (account_id, message_id, reason) values ($1, $2, $3)`, [bot3.accountId, id, reason]);
         // 장면 하나 = 채널·머리·원인을 새로 깔고 { 인자, 헤더 } 를 돌려준다.
-        type Setup = { args: Record<string, unknown>; via: { token: string; extra: Record<string, string> }; cause?: string; turn?: string };
+        type Setup = { args: Record<string, unknown>; via: { token: string; extra: Record<string, string> }; cause?: string; turn?: string; tool?: string };
         const turnId = randomUUID();
         const chainBy = (by: string, depth: number, stall: number, earlier = '') => async (ch: string) => {
           const root = await ins({ ch, author: member.accountId, body: '질문' });
@@ -6342,18 +6342,31 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['agentModels → TS', async (ch) => ({ args: { channelId: ch, body: '지정', agentModels: [] }, via: viaPat }), false],
           ['부름(암묵 위임 모름) → TS', async (ch) => ({ args: { channelId: ch, body: '@mem 봐 줘' }, via: viaPat }), false],
           ['ASCII 밖 모델 → TS', async (ch) => ({ args: { channelId: ch, body: '보고', model: '오푸스' }, via: viaPat }), false],
+          // C3b-2c-1 — `message.fail`(표지 없는 실패). 표지·차례 주인 재료가 있으면 TS 몫이다(fail-closed).
+          ['fail 원인 없음 · what/reason · 옛 account', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, body: '못 했다', retryable: true, what: '빌드', reason: '권한', account: 'old', model: 'claude-opus-5' }, via: viaPat }), true],
+          ['fail 오퍼레이터 원인 → 깊이·고리·턴 id', async (ch) => {
+            const { root, call } = await chainBy(bot2.accountId, 2, 1)(ch);
+            return { tool: 'message.fail', args: { channelId: ch, threadRootId: root, body: '막혔다', retryable: false }, via: viaOp, cause: call, turn: turnId };
+          }, true],
+          ['fail 없는 머리 → bad_thread', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, threadRootId: randomUUID(), body: '답', retryable: true }, via: viaPat }), true],
+          ['fail code → TS', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, body: '지정 모델 거절', retryable: true, code: 'thread_model_rejected' }, via: viaPat }), false],
+          ['fail account_gate·mentionId → TS', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, body: '관문', retryable: true, code: 'account_gate', mentionId: randomUUID(), claudePoolRank: 1 }, via: viaPat }), false],
+          ['fail retryable 없음 → TS(zod 오류)', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, body: '못 했다' }, via: viaPat }), false],
         ];
         const facts = async (id: string | undefined, cause: string | undefined) => id ? shape((await db.pool.query(
           `select m.mention_depth as depth, m.stall_depth as stall, m.chain_started_at is not null as started,
                   m.cause_message_id is not distinct from $2::uuid as linked, m.cause_message_id is null as unlinked,
                   m.meta->'turnId' as turn, m.meta->'model' as model, m.meta ? 'mentionStallLinkReset' as link_reset,
-                  m.mandate_id is not null as mandated, m.principal_account_id::text as principal, m.principal_cause_reasons as reasons
+                  m.mandate_id is not null as mandated, m.principal_account_id::text as principal, m.principal_cause_reasons as reasons,
+                  m.meta->'kind' as kind, m.meta->'failure' as failure
              from message m where m.id = $1`, [id, cause ?? null])).rows) : null;
         const sse = (t: string) => {
           const line = t.split('\n').find((l) => l.startsWith('data: '));
           const res = line ? JSON.parse(line.slice(6)) as { result?: { content?: { text: string }[] } } : null;
           const text = res?.result?.content?.[0]?.text;
-          return text ? JSON.parse(text) as Record<string, unknown> : res;
+          // zod 검증 오류는 JSON 이 아닌 글(`MCP error -32602: …`)이다 — 그대로 견준다.
+          if (!text) return res;
+          try { return JSON.parse(text) as Record<string, unknown>; } catch { return { text }; }
         };
         const leaseFor = async (cause: string, ch: string) => {
           const root = await ins({ ch, author: admin.accountId, body: '위임 뿌리' });
@@ -6371,7 +6384,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             const st = await setup(ch);
             if (st.cause && st.via === viaOp) await leaseFor(st.cause, ch);
             const extra = { ...st.via.extra, ...(st.cause ? { 'x-harkroom-cause': st.cause } : {}), ...(st.turn ? { 'x-harkroom-turn-id': st.turn } : {}) };
-            const r = await mcpCall(base, st.via.token, 'message.post', st.args, 7, extra);
+            const r = await mcpCall(base, st.via.token, st.tool ?? 'message.post', st.args, 7, extra);
             const body = sse(r.text) as { message?: { id?: string } } | null;
             out.push({ name, status: r.status, rust: base === tsUrl ? rust : r.core === 'mcp', body: shape(body), row: await facts(body?.message?.id, st.cause) });
           }
@@ -6395,6 +6408,70 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(by('없는 머리 → bad_thread').body.error?.code).toBe('bad_thread');
         expect(by('남의 업로드 → bad_attachment').body.error?.code).toBe('bad_attachment');
         expect(by('보관된 채널도 올린다').row).not.toBeNull();
+        expect(row('fail 원인 없음 · what/reason · 옛 account')).toMatchObject({ kind: 'failure', failure: { retryable: true, what: '빌드', reason: '권한' }, model: { id: 'claude-opus-5' }, depth: 0 });
+        expect(row('fail 원인 없음 · what/reason · 옛 account').failure).not.toHaveProperty('account');
+        expect(row('fail 오퍼레이터 원인 → 깊이·고리·턴 id')).toMatchObject({ kind: 'failure', failure: { retryable: false }, depth: 3, stall: 2, linked: true, turn: '<uuid>' });
+        expect(by('fail 없는 머리 → bad_thread').body.error?.code).toBe('bad_thread');
+        expect(row('fail code → TS')).toMatchObject({ kind: 'failure', failure: { retryable: true } });
+        // C3b-2c-1 — 위임 스위치를 아는 앞단(v1)에서 담당(BOT3)의 실패. 안 닫힌 항목이 있으면 TS 가 `failed` 로 닫고 위임자를 깨운다
+        // (Rust 에 아직 없는 갈래 → `closes_delegation` 가드가 TS 로 넘긴다). 보고된 항목뿐이면 Rust 가 맡고 「대기 중 update」만 적는다.
+        {
+          const prev = process.env.HARKROOM_DELEGATION_V2;
+          process.env.HARKROOM_DELEGATION_V2 = '1';
+          let child: ChildProcess | undefined;
+          try {
+            let fd: Awaited<ReturnType<typeof startFront>> | undefined;
+            let port = 0;
+            for (let attempt = 0; !fd; attempt += 1) {
+              port = await freePort();
+              try {
+                fd = await startFront(bin, {
+                  UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(port), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
+                  TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust', HARKROOM_DELEGATION_V2: '1', HARKROOM_DELEGATION_IMPLICIT: 'off',
+                });
+              } catch (err) {
+                if (attempt >= 2 || !String(err).includes('AddrInUse')) throw err;
+              }
+            }
+            child = fd.child;
+            const untilD = Date.now() + 10_000;
+            while (!fd.log().includes('front: rust core routes') && Date.now() < untilD) await new Promise((res) => setTimeout(res, 100));
+            const v2Url = `http://127.0.0.1:${port}`;
+            const DELEG: [string, string | null, boolean][] = [
+              ['fail 담당(안 닫힌 항목) → TS 가 failed 로 닫음', null, false],
+              ['fail 담당(보고된 항목) → Rust · 대기 중 update', 'reported', true],
+            ];
+            const runD = async (base: string) => {
+              const out: unknown[] = [];
+              for (const [name, outcome, rust] of DELEG) {
+                const ch = await freshCh();
+                const root = await ins({ ch, author: member.accountId, body: '맡김' });
+                const d = (await db.pool.query<{ id: string }>(
+                  `insert into team_delegation (message_id, lead_account_id, channel_id, thread_root_id, deadline_at)
+                   values ($1, $2, $3, $1, now() + interval '10 minutes') returning id::text as id`, [root, member.accountId, ch])).rows[0]!.id;
+                await db.pool.query(`insert into team_delegation_item (delegation_id, delegate_account_id, outcome) values ($1, $2, $3)`, [d, bot3.accountId, outcome]);
+                const r = await mcpCall(base, viaPat.token, 'message.fail', { channelId: ch, threadRootId: root, body: '못 했다', retryable: true }, 7, {});
+                const body = sse(r.text) as { message?: { id?: string } } | null;
+                const item = (await db.pool.query(
+                  `select i.outcome, i.closed_by_message_id is not distinct from $2::uuid as closed_by_me,
+                          i.update_pending_message_id is not distinct from $2::uuid as pending_me, d.notified_at is not null as notified
+                     from team_delegation_item i join team_delegation d on d.id = i.delegation_id where i.delegation_id = $1`, [d, body?.message?.id ?? null])).rows;
+                out.push({ name, status: r.status, rust: base === tsUrl ? rust : r.core === 'mcp', body: shape(body), row: await facts(body?.message?.id, undefined), item });
+              }
+              return out;
+            };
+            const tsD = await runD(tsUrl);
+            const rsD = await runD(v2Url);
+            expect(rsD).toEqual(tsD);
+            type DI = { name: string; item: Record<string, unknown>[] };
+            const itemOf = (n: string) => (tsD as DI[]).find((x) => x.name === n)!.item;
+            expect(itemOf('fail 담당(안 닫힌 항목) → TS 가 failed 로 닫음')).toEqual([{ outcome: 'failed', closed_by_me: true, pending_me: false, notified: true }]);
+            expect(itemOf('fail 담당(보고된 항목) → Rust · 대기 중 update')).toEqual([{ outcome: 'reported', closed_by_me: false, pending_me: true, notified: false }]);
+          } finally {
+            child?.kill('SIGTERM');
+            if (prev === undefined) delete process.env.HARKROOM_DELEGATION_V2; else process.env.HARKROOM_DELEGATION_V2 = prev;
+          }
+        }
       }
 
       // S5.3 C6a-1 — 인박스 읽음 표시(코어 `inbox_read.rs`). 거절은 상태·코드를 견주고, 정상은 TS·Rust 에 각자의 줄로 같은 시나리오를 돌려

@@ -129,6 +129,7 @@ pub async fn raise(
     let origin = Origin {
         meta: card_meta(b, &owner),
         server_notice: true,
+        closes_delegation: false,
         ..Origin::default()
     };
     let (out, _) = msg_post::post_tx(

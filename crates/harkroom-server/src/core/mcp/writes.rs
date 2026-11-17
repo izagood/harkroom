@@ -28,6 +28,8 @@ pub const SERVED: &[&str] = &[
     "thread.note",
     // C1c-4c — 글 올리기. 글 쓰기 풀([`McpWrites::post`])이 있을 때만 답한다(없으면 TS).
     "message.post",
+    // C3b-2c-1 — 표지 없는 실패. 글 쓰기 풀이 있을 때만(`message.post` 와 같은 권한).
+    "message.fail",
 ];
 
 /// TS 가 조건부로 싣는 도구 — `/mcp/admit` 이 `registered: true` 라고 답했을 때만 Rust 가 답한다([`super::route::serve`]).
