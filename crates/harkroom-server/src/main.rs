@@ -1003,6 +1003,18 @@ async fn main() {
         core_routes.router = core_routes.router.merge(search.router);
         core_routes.http.extend(search.http);
         core_routes.sockets.extend(search.sockets);
+        // S5.4 MS2b — 받은함 목록(`GET /inbox`). 읽기 풀만 쓴다. `threads`·위임 v2 켜짐(또는 모름)·형식이 애매한 질의는 TS 로.
+        let inbox_rest = harkroom_server::core::inbox_rest::routes(
+            harkroom_server::core::inbox_rest::InboxRestState {
+                pool: state.pool.clone(),
+                up: state.up.clone(),
+            },
+            auth.clone(),
+            state.cors.clone(),
+        );
+        core_routes.router = core_routes.router.merge(inbox_rest.router);
+        core_routes.http.extend(inbox_rest.http);
+        core_routes.sockets.extend(inbox_rest.sockets);
         // C3b-3d — 카드 버튼을 그릴지(`GET /agents/{id}/decide-check`). 잠그지 않는 판정이라 읽기 풀만 쓴다.
         let decide_check = harkroom_server::core::decide_check::routes(
             state.pool.clone(),

@@ -1,6 +1,5 @@
-//! S5.3 C6a-3a — 받은함 목록의 기본 줄(TS `listInbox` 의 기본 SELECT 와 팀 명단). 라우트(`GET /inbox`)는 아직 잇지 않는다 —
-//! 덧붙임(위임 결말·요약·넘겨받은 일·접힌 깨움·시작한 곳, C6a-3b)과 `threads=1`(C6a-3c)이 들어온 뒤에 연결해야
-//! 응답 모양이 TS 와 갈리지 않는다.
+//! S5.3 C6a-3a — 받은함 목록의 기본 줄(TS `listInbox` 의 기본 SELECT 와 팀 명단)과 덧붙임. 라우트는 [`super::inbox_rest`](S5.4 MS2b).
+//! 위임 요약(`delegations`, 위임 v2 켜짐에서만)과 `threads=1` 은 아직 옮기지 않았다 — 그 요청은 라우트가 TS 로 넘긴다.
 //!
 //! - 문장은 TS 정본 `LIST_INBOX_SQL`(갈래 다섯)·`INBOX_TEAM_ROSTER_SQL`(`services/messages.ts`) 그대로 — `golden/sql_fragments.json`
 //!   에서 읽는다. TS 가 칸·조건을 고치면 `rustSqlFragments.test.ts` 가 골든 갱신을 요구한다.
@@ -27,6 +26,8 @@ struct Sql {
     handed: String,
     folded: String,
     started: String,
+    outcomes: String,
+    rounds: String,
 }
 
 /// 갈래 문장을 감싼다 — 행마다 (본문 json, id, 이유, 팀 id). 겉 `order by` 는 id 오름차순(TS 응답 순서).
@@ -82,6 +83,16 @@ fn sql() -> &'static Sql {
             started: format!(
                 "select s.\"messageId\"::text, s.\"channelId\"::text, s.\"threadRootId\"::text from ({}) s",
                 frag("inbox_started_in")
+            ),
+            // TS `outcomesFor` 의 두 문장(결말 항목·라운드). 결말 항목은 handle 순 — 겉에서 다시 건다.
+            outcomes: format!(
+                "select o.message_id::text, o.thread_root_id::text, o.lead_account_id::text, o.handle, o.outcome \
+                 from ({}) o order by o.handle",
+                frag("inbox_delegation_outcomes")
+            ),
+            rounds: format!(
+                "select r.i::int8, r.n::int8 from ({}) r",
+                frag("delegate_rounds_used")
             ),
         }
     })
@@ -173,7 +184,12 @@ pub async fn list_inbox(pool: &PgPool, me: &str, q: InboxQuery) -> sqlx::Result<
                 Some(call) => append_key(body, "team", call),
                 None => body,
             };
-            // TS 가 키를 붙이는 차례: team → (delegation·delegations, C6a-3b-2) → delegatedBy → canceledWakes → startedIn.
+            // TS 가 키를 붙이는 차례: team → delegation → (delegations — v2 켜짐은 TS 가 답한다) → delegatedBy → canceledWakes → startedIn.
+            if reason == "delegation_done"
+                && let Some(v) = ex.outcomes.get(&message_id)
+            {
+                body = append_key(body, "delegation", v);
+            }
             if reason == "team_delegated"
                 && let Some(v) = ex.handed.get(&message_id)
             {
@@ -206,6 +222,59 @@ struct Extras {
     folded: HashMap<String, Vec<String>>,
     /// 이 일이 시작된 스레드 — 메시지 id → `{channelId, threadRootId}`.
     started: HashMap<String, String>,
+    /// 결말이 난 위임 — 위임 메시지 id → `{timedOut, roundsLeft, items:[{handle, outcome}]}`.
+    outcomes: HashMap<String, String>,
+}
+
+/// TS `TEAM_ROUND_LIMIT`(shared).
+const TEAM_ROUND_LIMIT: i64 = 3;
+
+/// TS `inboxOutcome` — DB 결말을 인박스 결말 넷으로(`reported` → done, 그 밖 모르는 값 → timeout).
+fn inbox_outcome(raw: &str) -> &'static str {
+    match raw {
+        "done" | "reported" => "done",
+        "failed" => "failed",
+        "canceled" => "canceled",
+        _ => "timeout",
+    }
+}
+
+/// 결말 항목 행(handle 순) → 위임별 (머리, 팀장, timedOut, 항목 JSON 들). 순서는 TS `Map` 의 넣은 차례.
+#[allow(clippy::type_complexity)]
+fn group_outcomes(
+    rows: Vec<(String, String, String, String, Option<String>)>,
+) -> Vec<(String, String, String, bool, Vec<String>)> {
+    let mut out: Vec<(String, String, String, bool, Vec<String>)> = vec![];
+    for (mid, root, lead, handle, outcome) in rows {
+        // 결말이 아직 없는 항목은 싣지 않는다(TS 와 같다).
+        let Some(raw) = outcome else { continue };
+        let o = inbox_outcome(&raw);
+        let i = match out.iter().position(|e| e.0 == mid) {
+            Some(i) => i,
+            None => {
+                out.push((mid, root, lead, false, vec![]));
+                out.len() - 1
+            }
+        };
+        out[i].4.push(format!(
+            "{{\"handle\":{},\"outcome\":{}}}",
+            jstr(&handle),
+            jstr(o)
+        ));
+        if o == "timeout" {
+            out[i].3 = true;
+        }
+    }
+    out
+}
+
+/// TS `{ timedOut, roundsLeft, items }` 과 같은 키 순서.
+fn outcome_json(timed_out: bool, used: i64, items: &[String]) -> String {
+    format!(
+        "{{\"timedOut\":{timed_out},\"roundsLeft\":{},\"items\":[{}]}}",
+        (TEAM_ROUND_LIMIT - used).max(0),
+        items.join(",")
+    )
 }
 
 fn uniq(ids: impl Iterator<Item = String>) -> Vec<String> {
@@ -219,6 +288,38 @@ fn uniq(ids: impl Iterator<Item = String>) -> Vec<String> {
 async fn extras(pool: &PgPool, me: &str, rows: &[BaseRow]) -> sqlx::Result<Extras> {
     let s = sql();
     let mut ex = Extras::default();
+    let done_ids = uniq(
+        rows.iter()
+            .filter(|r| r.4 == "delegation_done")
+            .map(|r| r.3.clone()),
+    );
+    if !done_ids.is_empty() {
+        let got: Vec<(String, String, String, String, Option<String>)> =
+            sqlx::query_as(s.outcomes.as_str())
+                .bind(&done_ids)
+                .fetch_all(pool)
+                .await?;
+        let groups = group_outcomes(got);
+        if !groups.is_empty() {
+            let roots: Vec<String> = groups.iter().map(|g| g.1.clone()).collect();
+            let leads: Vec<String> = groups.iter().map(|g| g.2.clone()).collect();
+            let used: Vec<(i64, i64)> = sqlx::query_as(s.rounds.as_str())
+                .bind(&roots)
+                .bind(&leads)
+                .fetch_all(pool)
+                .await?;
+            let mut n = vec![0i64; groups.len()];
+            for (i, c) in used {
+                if let Some(slot) = usize::try_from(i - 1).ok().and_then(|k| n.get_mut(k)) {
+                    *slot = c;
+                }
+            }
+            for (k, (mid, _, _, timed_out, items)) in groups.into_iter().enumerate() {
+                ex.outcomes
+                    .insert(mid, outcome_json(timed_out, n[k], &items));
+            }
+        }
+    }
     let handed_ids = uniq(
         rows.iter()
             .filter(|r| r.4 == "team_delegated")
@@ -467,6 +568,49 @@ mod tests {
         assert_eq!(
             canceled_wake_json("r", "t", Some(r#"{"channelId": "c", "threadRootId": "x"}"#)),
             r#"{"reason":"r","wakeAt":"t","reportTo":{"channelId": "c", "threadRootId": "x"}}"#
+        );
+    }
+
+    #[test]
+    fn outcomes_keep_ts_shape() {
+        for (raw, want) in [
+            ("done", "done"),
+            ("reported", "done"),
+            ("failed", "failed"),
+            ("canceled", "canceled"),
+            ("timeout", "timeout"),
+            ("closed", "timeout"),
+            ("weird", "timeout"),
+        ] {
+            assert_eq!(inbox_outcome(raw), want, "{raw}");
+        }
+        let g = group_outcomes(vec![
+            (
+                "m1".into(),
+                "r1".into(),
+                "l1".into(),
+                "alpha".into(),
+                Some("reported".into()),
+            ),
+            ("m2".into(), "r2".into(), "l2".into(), "alpha".into(), None),
+            (
+                "m1".into(),
+                "r1".into(),
+                "l1".into(),
+                "beta".into(),
+                Some("closed".into()),
+            ),
+        ]);
+        // 결말 없는 항목만 있는 위임(m2)은 빠진다.
+        assert_eq!(g.len(), 1);
+        assert!(g[0].3);
+        assert_eq!(
+            outcome_json(g[0].3, 1, &g[0].4),
+            r#"{"timedOut":true,"roundsLeft":2,"items":[{"handle":"alpha","outcome":"done"},{"handle":"beta","outcome":"timeout"}]}"#
+        );
+        assert_eq!(
+            outcome_json(false, 5, &[]),
+            r#"{"timedOut":false,"roundsLeft":0,"items":[]}"#
         );
     }
 

@@ -3074,7 +3074,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['못 보는 곳의 글(범위 없음)', `q=${e('비밀검색어')}`],
           ['멤버 아닌 DM → 403', `q=${e('비밀검색어')}&channelId=${dm.id}`],
           ['남의 비공개 채널 → 403', `q=${e('비밀검색어')}&channelId=${hidCh.id}`],
-          ['없는 채널 → 403', `q=x&channelId=${missingCh}`],
+          ['없는 채널 → 200 빈 결과', `q=x&channelId=${missingCh}`],
           ['@ → TS', `q=${e('@bot2')}`],
           ['after → TS', `q=${e('부름')}&after=${e('2026-01-01T00:00:00Z')}`],
           ['before 틀림 → TS 400', `q=${e('부름')}&before=x`],
@@ -7198,6 +7198,27 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const rsOut = await run(rsUrl, () => busEvents, tsGet);
         expect(rsOut).toEqual(tsOut);
         // C1c-3d — 위임 스위치를 준 앞단(값마다 하나씩 띄운다)과 같은 값의 TS 를 견준다. 사람 글은 닫지도 깨우지도 않는다.
+        // S5.4 MS2b — `GET /inbox` 위임 결말(`delegation`) 재료: 팀장(BOT)의 `delegation_done` 줄 둘. 하나는 결말이 섞이고(reported → done,
+        // closed → timeout, 결말 없음은 빠짐), 하나는 결말이 아직 없어 키가 없다. 아래 위임 스위치 앞단(0)에서 TS 와 견준다.
+        const ms2bDone: string[] = [];
+        for (const outcomes of [['reported', 'closed', null], [null]] as const) {
+          const root = await direct(admin.accountId, 'ms2b 맡김');
+          const d = (await db.pool.query<{ id: string }>(
+            `insert into team_delegation (message_id, team_id, lead_account_id, channel_id, thread_root_id, deadline_at)
+             values ($1, $2, $3, $4, $1, now() + interval '1 minute') returning id::text as id`, [root, squadId, agent.accountId, todayId])).rows[0]!.id;
+          const who = [admin.accountId, bot2.accountId, member.accountId];
+          for (const [i, o] of outcomes.entries()) {
+            await db.pool.query(`insert into team_delegation_item (delegation_id, delegate_account_id, outcome, closed_reason) values ($1, $2, $3, case when $3::text = 'closed' then 'idle' end)`, [d, who[i], o]);
+          }
+          await db.pool.query(`insert into inbox (account_id, message_id, reason) values ($1, $2, 'delegation_done')`, [agent.accountId, root]);
+          ms2bDone.push(root);
+        }
+        const inboxGet = async (base: string, qs: string, token: string) => {
+          const res = await fetch(`${base}/inbox${qs ? `?${qs}` : ''}`, { headers: { authorization: `Bearer ${token}` } });
+          const text = await res.text();
+          return { status: res.status, text: res.status < 300 ? text : undefined };
+        };
+        const INBOX_QS = ['', 'unread=1', 'unread=true', 'since=0', 'unread=1&since=1', 'before=999999999', 'before=1', 'threads=1', 'unread=0', 'since=x', 'before=0', 'since=1&since=2'];
         const delegOut: Record<string, unknown> = {};
         const prevV2 = process.env.HARKROOM_DELEGATION_V2;
         const prevImplicit = process.env.HARKROOM_DELEGATION_IMPLICIT;
@@ -7235,6 +7256,21 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             // 대조가 TS 끼리가 된다. TS 가 맡았으면 그 글의 `message.created` 가 TS 쪽(`onEvent`)에 생긴다.
             expect(tsEvents.slice(tsBefore).filter((e) => e.type === 'message.created'), `HARKROOM_DELEGATION_V2=${key} 는 Rust 가 맡는다`).toEqual([]);
             expect(rsD, `HARKROOM_DELEGATION_V2=${key}`).toEqual(tsD);
+            // S5.4 MS2b — `GET /inbox`. 스위치 0 앞단은 Rust 가 답하고(위임 요약 없음), 1 은 TS 로 넘긴다 — 어느 쪽이든 본문 글자가 같아야 한다.
+            if (implicitMode === 'off') {
+              for (const token of [agent.pat, A, member.token, bot2.pat]) {
+                for (const qs of INBOX_QS) {
+                  expect(await inboxGet(`http://127.0.0.1:${portD}`, qs, token), `V2=${mode} /inbox?${qs}`).toEqual(await inboxGet(tsUrl, qs, token));
+                }
+              }
+              expect((await inboxGet(`http://127.0.0.1:${portD}`, '', 'nope')).status).toBe(401);
+              // 빈 값끼리 비교해 통과하지 않게 — 결말이 실렸는지, 결말 없는 위임엔 키가 없는지.
+              const mine = JSON.parse((await inboxGet(`http://127.0.0.1:${portD}`, 'unread=1', agent.pat)).text!) as { entries: { messageId: string; delegation?: unknown }[] };
+              const [withOutcome, noOutcome] = ms2bDone.map((id) => mine.entries.find((e) => e.messageId === id));
+              expect(withOutcome?.delegation).toMatchObject({ timedOut: true, items: [{ outcome: 'done' }, { outcome: 'timeout' }] });
+              expect(noOutcome).toBeDefined();
+              expect(noOutcome!.delegation).toBeUndefined();
+            }
             delegOut[key] = tsD;
           } finally {
             frontD?.kill('SIGTERM');
