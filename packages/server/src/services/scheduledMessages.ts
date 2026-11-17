@@ -1,7 +1,8 @@
 import type { Pool, PoolClient } from 'pg';
 import type { ScheduledMessageView } from '@harkroom/shared';
 import { postMessage } from './messages.js';
-import { channelPostGate } from './channels.js';
+import { audienceFor, channelPostGate } from './channels.js';
+import { emitPosted } from '../events.js';
 import { runGated } from './loopGate.js';
 
 export const SCHEDULE_MAX_DAYS = 30;
@@ -160,6 +161,13 @@ export function createScheduledMessageSweeper(pool: Pool): {
           `update scheduled_message set sent_message_id = $1 where id = $2`,
           [result.message.id, row.id],
         );
+        await client.query('commit');
+        // 실시간 이벤트는 **부른 쪽이 낸다** — `postMessage` 는 행·inbox 만 만들고 이벤트는
+        // 라우트·MCP 가 `emitPosted` 로 낸다. 빠뜨리면 예약 글은 새로고침해야 보인다(s24 S6).
+        // `replayed` 여도 낸다: 그것은 앞 sweep 이 `postMessage` 뒤·`sent_message_id` 전에 죽은
+        // 경우뿐이고, 그때는 이벤트가 한 번도 나가지 않았다.
+        emitPosted(result, await audienceFor(pool, row.channel_id));
+        return 'done';
       } else {
         // `postMessage` 가 거부한 코드를 **그대로** 적는다. 우리가 다시 지어내면
         // 작성자가 보는 사유와 서버가 아는 사유가 갈라진다.
