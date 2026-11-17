@@ -1570,6 +1570,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant delete on secret_grant to ${rw}`,
         // S5.4 CH2 — 채널 읽음 쓰기(`core/channel_read_write.rs::CHANNEL_READ_WRITE_PRIVILEGES`). 칸 권한만. 없으면 「channel read write core off」 — TS 에 남는다.
         `grant insert (account_id, channel_id, last_read_seq, unread_from_seq), update (last_read_seq, unread_from_seq, updated_at) on channel_read to ${rw}`,
+        // S5.4 MS1 — 저장한 글(`core/saved.rs::SAVED_PRIVILEGES`). 없으면 「saved messages core off」 — 다섯 줄 모두 TS 에 남는다.
+        `grant insert, update, delete on saved_message to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -4393,6 +4395,108 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         await db.pool.query('delete from agent_memory where account_id = any($1)', [[owned, orphan, agent.accountId]]);
         await db.pool.query('delete from agent_config where account_id = any($1)', [[owned, empty, goneBot].filter(Boolean)]);
         await db.pool.query('delete from account where id = any($1)', [[owned, orphan, empty, goneBot].filter(Boolean)]);
+      }
+
+      // S5.4 MS1 — 저장한 글(코어 `saved.rs`). 다섯 줄 모두 요청자 자신의 행만 다룬다 — 같은 순서의 요청을 TS 로 한 번,
+      // 행을 되돌린 뒤 Rust 로 한 번 보내 답을 견준다(시각은 있음·없음만). 지운 글·지금 못 보는 채널의 글은 본문이 null 이고,
+      // 다른 사람의 행은 고칠 수도 뺄 수도 없고(404) 목록·요약에도 섞이지 않는다.
+      {
+        for (const k of ['GET /saved', 'GET /saved/summary', 'PUT /saved/{messageId}', 'PATCH /saved/{messageId}', 'DELETE /saved/{messageId}']) {
+          expect(f.log()).toContain(`"${k}"`);
+        }
+        expect(f.log()).not.toContain('saved messages core off');
+        const M = member.token;
+        const M2 = member2.token;
+        const pubCh = await createChannel(db.pool, { name: 'ms1-pub' });
+        const shutCh = await createChannel(db.pool, { name: 'ms1-shut' });
+        const privCh = await createChannel(db.pool, { name: 'ms1-priv', visibility: 'private', creatorId: member2.accountId });
+        const say = async (channelId: string, authorId: string, body: string) =>
+          ((await postMessage(db.pool, { channelId, authorId, body, threadRootId: null, meta: {} })) as { message: { id: string } }).message.id;
+        const m1 = await say(pubCh.id, member.accountId, 'ms1 one');
+        const m2 = await say(pubCh.id, admin.accountId, 'ms1 two');
+        const m3 = await say(pubCh.id, admin.accountId, 'ms1 later deleted MS1GONEBODY');
+        const shut = await say(shutCh.id, admin.accountId, 'ms1 MS1SHUTBODY');
+        const priv = await say(privCh.id, member2.accountId, 'ms1 MS1PRIVBODY');
+        const gone = await say(pubCh.id, member.accountId, 'ms1 gone');
+        await db.pool.query('update message set deleted_at = now() where id = $1', [gone]);
+        const ghost = '00000000-0000-4000-8000-0000000005a1';
+        const reset = async () => {
+          await db.pool.query('delete from saved_message where account_id = any($1)', [[member.accountId, member2.accountId]]);
+          await db.pool.query('update message set deleted_at = null where id = $1', [m3]);
+          await db.pool.query(`update channel set visibility = 'public' where id = $1`, [shutCh.id]);
+        };
+        const norm = (v: unknown): unknown => JSON.parse(JSON.stringify(v), (k, x) =>
+          (k === 'createdAt' || k === 'doneAt') && typeof x === 'string' ? 'T' : x);
+        const run = async (base: string) => {
+          const out: unknown[] = [];
+          const go = async (m: string, path: string, body: unknown, token: string) => {
+            const r = await callX(base, m, path, body, token);
+            out.push({ m, path, token: token === M ? 'M' : token === M2 ? 'M2' : 'other', status: r.status, code: r.code, json: r.status < 300 ? norm(r.json) : undefined });
+          };
+          await go('PUT', `/saved/${m1}`, undefined, M);
+          await go('PUT', `/saved/${m2}`, undefined, M);
+          await go('PUT', `/saved/${m3}`, undefined, M);
+          await go('PUT', `/saved/${shut}`, undefined, M);
+          await go('PUT', `/saved/${m1}`, undefined, M);
+          await go('PUT', `/saved/${m2}`, undefined, M2);
+          await go('PUT', `/saved/${priv}`, undefined, M);
+          await go('PUT', `/saved/${gone}`, undefined, M);
+          await go('PUT', `/saved/${ghost}`, undefined, M);
+          await go('PUT', '/saved/not-a-uuid', undefined, M);
+          await db.pool.query('update message set deleted_at = now() where id = $1', [m3]);
+          await db.pool.query(`update channel set visibility = 'private' where id = $1`, [shutCh.id]);
+          await go('PATCH', `/saved/${m2}`, { state: 'done' }, M);
+          await go('PATCH', `/saved/${m3}`, { state: 'done' }, M);
+          await go('PATCH', `/saved/${m2}`, { state: 'nope' }, M);
+          await go('PATCH', `/saved/${m2}`, {}, M);
+          await go('PATCH', `/saved/${ghost}`, { state: 'done' }, M);
+          await go('PATCH', `/saved/${m1}`, { state: 'done' }, M2);
+          await go('PATCH', '/saved/not-a-uuid', { state: 'done' }, M);
+          await go('GET', '/saved', undefined, M);
+          await go('GET', '/saved?state=open', undefined, M);
+          await go('GET', '/saved?state=done', undefined, M);
+          await go('GET', '/saved?state=bad', undefined, M);
+          await go('GET', '/saved', undefined, M2);
+          await go('GET', '/saved/summary', undefined, M);
+          await go('GET', '/saved/summary', undefined, M2);
+          await go('GET', '/saved/summary', undefined, A);
+          await go('PATCH', `/saved/${m2}`, { state: 'open' }, M);
+          await go('DELETE', `/saved/${m1}`, undefined, M2);
+          await go('DELETE', `/saved/${m1}`, undefined, M);
+          await go('DELETE', `/saved/${m1}`, undefined, M);
+          await go('DELETE', `/saved/${ghost}`, undefined, M);
+          await go('DELETE', '/saved/not-a-uuid', undefined, M);
+          await go('GET', '/saved', undefined, M);
+          await go('GET', '/saved/summary', undefined, M);
+          await go('GET', '/saved', undefined, '');
+          await go('PUT', `/saved/${m1}`, undefined, '');
+          return out;
+        };
+        await reset();
+        const tsOut = await run(tsUrl);
+        await reset();
+        const rsOut = await run(rsUrl);
+        expect(rsOut).toEqual(tsOut);
+        // 몇 줄은 답 자체도 못 박는다 — 두 서버가 같이 틀리는 일을 막는다.
+        const at = (i: number) => rsOut[i] as { status: number; json: Record<string, unknown> };
+        expect(at(0)).toMatchObject({ status: 200, json: { messageId: m1, state: 'open', deleted: false, doneAt: null } });
+        expect([6, 7, 8, 9].map((i) => at(i).status)).toEqual([403, 404, 404, 400]);
+        expect(at(11).json).toMatchObject({ messageId: m3, deleted: true, message: null });
+        expect([14, 15, 16].map((i) => at(i).status)).toEqual([404, 404, 400]);
+        const open = at(17).json.entries as { messageId: string; message: unknown }[];
+        expect(open.map((e) => e.messageId)).toEqual([shut, m1]);
+        expect(open[0]!.message, '지금 못 보는 채널의 본문은 null').toBeNull();
+        expect(at(21).json, '다른 사람 목록에는 그 사람 것만').toEqual({ entries: [at(5).json] });
+        expect(at(22).json).toMatchObject({ openCount: 2 });
+        expect(at(24).json).toEqual({ openCount: 0, messageIds: [] });
+        expect([26, 27, 28].map((i) => at(i).status)).toEqual([404, 204, 404]);
+        expect([33, 34].map((i) => at(i).status)).toEqual([401, 401]);
+        const leak = JSON.stringify(rsOut.slice(10)); // 지우기·닫기 뒤의 답들
+        for (const s of ['MS1GONEBODY', 'MS1SHUTBODY', 'MS1PRIVBODY']) expect(leak).not.toContain(s);
+        await reset();
+        await db.pool.query('delete from message where channel_id = any($1)', [[pubCh.id, shutCh.id, privCh.id]]);
+        await db.pool.query('delete from channel_member where channel_id = any($1)', [[pubCh.id, shutCh.id, privCh.id]]);
+        await db.pool.query('delete from channel where id = any($1)', [[pubCh.id, shutCh.id, privCh.id]]);
       }
 
       // S5.2 P4d — 옮긴 라우트를 지난 요청도 세션을 늘리고 PAT 사용 시각을 남긴다(쓰기 풀로). 읽기 역할로 하면 조용히 실패하던 것.

@@ -490,6 +490,36 @@ async fn main() {
         }
         _ => false,
     };
+    // S5.4 MS1 — 저장한 글 다섯 줄(`GET /saved`·`/saved/summary`, `PUT`·`PATCH`·`DELETE /saved/{messageId}`). 두 겹 잠금:
+    // `HARKROOM_CORE=rust` 그리고 읽기 풀·쓰기 풀에 그 권한이 다 있을 때만 — 아니면 다섯 줄 모두 TS 에 남는다.
+    let saved_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::saved as sv;
+            let r = async {
+                let mut m =
+                    write::missing_in(w, sv::SAVED_PRIVILEGES, sv::SAVED_SEQUENCE_PRIVILEGES)
+                        .await?;
+                m.extend(write::missing_in(&state.pool, sv::SAVED_READ_PRIVILEGES, &[]).await?);
+                Ok::<_, sqlx::Error>(m)
+            }
+            .await;
+            match r {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: saved messages core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: saved messages core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // C3b-2b-2 — MCP `message.askBundle` 있던 묶음에 줄 더하기. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 묶음 푸시까지 그 권한이 다 있을 때만.
     let bundle_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -1157,6 +1187,20 @@ async fn main() {
             core_routes.router = core_routes.router.merge(am.router);
             core_routes.http.extend(am.http);
             core_routes.sockets.extend(am.sockets);
+        }
+        // S5.4 MS1 — 저장한 글 다섯 줄. 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = saved_write {
+            let sv = harkroom_server::core::saved::routes(
+                harkroom_server::core::saved::SavedState {
+                    read: state.pool.clone(),
+                    write,
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(sv.router);
+            core_routes.http.extend(sv.http);
+            core_routes.sockets.extend(sv.sockets);
         }
         // C3a-2 — 지우기·「채널에도 보이기」 켜고 끄기. 쓰기 풀에 그 권한이 다 있을 때만 — 아니면 TS 에 남는다.
         if let Some(write) = delete_write {
