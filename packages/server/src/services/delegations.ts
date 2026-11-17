@@ -663,8 +663,14 @@ export function createDelegationDeadlineSweeper(pool: Pool, opts: {
    * 옵셔널인 이유: 시험은 허브 없이 이 스위퍼를 직접 돌린다(다른 스위퍼들과 같은 모양).
    * 없으면 아무 턴도 안 도는 것으로 본다 — 그 방향으로 틀리는 것이 안전하다(닫히긴 하되
    * 팀장이 결말을 받고, 반대 방향은 영원히 안 닫히는 것이다).
+   *
+   * **인자는 그 위임의 열린 팀원들이다**(S5.4 ②, 2026-11-18). 릴레이 코어가 Rust 로 옮겨지면 TS 허브는 비어 있다 —
+   * 그래서 호출부는 메모리 허브와 함께 DB 사본(`agent_session_live`, 살아 있는 허브의 행만)을 그 팀원들로 좁혀 읽는다.
+   * 비동기도 받는다.
    */
-  runningTurns?: () => readonly { agentAccountId: string; threadRootId: string | null }[];
+  runningTurns?: (agentAccountIds: readonly string[]) =>
+    | readonly { agentAccountId: string; threadRootId: string | null }[]
+    | Promise<readonly { agentAccountId: string; threadRootId: string | null }[]>;
 } = {}): { startSweep(app: SweepHost): void; sweep(): Promise<void> } {
   let sweepInterval: ReturnType<typeof setInterval> | null = null;
   let running = false;
@@ -698,13 +704,15 @@ export function createDelegationDeadlineSweeper(pool: Pool, opts: {
        * 건너뛰지 않고 **미는** 이유: 건너뛰면 이 행이 매 스윕(15초)마다 다시 잡힌다. 밀면
        * 그 팀원이 조용해진 뒤 10분에 정확히 한 번 다시 온다.
        */
-      const running = opts.runningTurns?.() ?? [];
-      if (running.length) {
+      if (opts.runningTurns) {
         const openOnes = await client.query<{ delegate_account_id: string }>(
           `select i.delegate_account_id from team_delegation_item i
             where i.delegation_id = $1 and i.outcome is null`,
           [row.id],
         );
+        const running = openOnes.rows.length
+          ? await opts.runningTurns(openOnes.rows.map((o) => o.delegate_account_id))
+          : [];
         const stillWorking = openOnes.rows.some((o) => running.some(
           (t) => t.agentAccountId === o.delegate_account_id && t.threadRootId === row.thread_root_id,
         ));
