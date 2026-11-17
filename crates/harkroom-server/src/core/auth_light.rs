@@ -112,14 +112,13 @@ pub async fn logout(State(st): State<Arc<AuthLightState>>, req: Request) -> Resp
             Ok(v) => v,
             Err(r) => return r,
         };
-    if let Some(h) = auth.credential_hash.as_deref() {
-        if let Err(e) = sqlx::query("delete from session where token_hash = $1")
+    if let Some(h) = auth.credential_hash.as_deref()
+        && let Err(e) = sqlx::query("delete from session where token_hash = $1")
             .bind(h)
             .execute(&st.write)
             .await
-        {
-            return internal(e);
-        }
+    {
+        return internal(e);
     }
     let ip = crate::writes_settings::ip_of(&parts, &st.trust);
     record_audit(
@@ -183,7 +182,7 @@ pub async fn notices(
 
 /// zod `z.object({ ids: z.array(z.string().uuid()).max(50).optional() })` 를 `req.body ?? {}` 에 —
 /// 모르는 칸은 버린다(strict 아님). Ok(None) 은 「내 것 전부」.
-pub fn parse_ack(body: &Body) -> Result<Option<Vec<String>>, ()> {
+fn parse_ack(body: &Body) -> Result<Option<Vec<String>>, ()> {
     let m = match body {
         Body::None => return Ok(None),
         Body::Json(Value::Object(m)) => m,

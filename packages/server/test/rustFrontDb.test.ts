@@ -1560,6 +1560,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // S5.4 AC1 — 내 상태·PAT(`core/account_self.rs::ACCOUNT_SELF_PRIVILEGES`). 칸 권한만(outbox 는 위). 없으면 「account self core off」 — TS 에 남는다.
         `grant update (status, status_text) on account to ${rw}`,
         `grant update (revoked_at) on pat to ${rw}`,
+        // S5.4 AU1 — 인증 가벼운 줄(`core/auth_light.rs::AUTH_LIGHT_PRIVILEGES`). 칸 권한만. 없으면 「auth light core off」 — TS 에 남는다.
+        `grant delete on session to ${rw}`,
+        `grant update (notice_seen_at) on password_reset_code to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -3620,6 +3623,102 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         await db.pool.query(`delete from pat where token_hash in ('ac1-x1', 'ac1-x2')`);
         await db.pool.query('delete from account where id = $1', [orphan]);
         expect((await callX(tsUrl, 'PUT', '/accounts/me/status', { status: 'available', statusText: null }, M)).status).toBe(200);
+      }
+
+      // S5.4 AU1 — 인증 가벼운 줄(코어 `auth_light.rs`). 읽기는 두 서버의 답을 견주고, 쓰기는 Rust 로 하고 DB·TS 로 확인한다.
+      {
+        for (const k of ['GET /auth/me', 'POST /auth/logout', 'GET /auth/password-reset-notices', 'POST /auth/password-reset-notices/ack']) {
+          expect(f.log(), k).toContain(`"${k}"`);
+        }
+        expect(f.log()).not.toContain('auth light core off');
+        const M = member.token;
+        // /auth/me — 전역 grant(살아 있음)·만료·대상 한정·전역 금지(repo.merge) 줄을 섞어 둔다. capabilities 는 집합으로 견준다(TS 는 Set 순서).
+        await db.pool.query(
+          `insert into account_grant (account_id, capability, scope, granted_by, expires_at) values
+             ($1, 'channel.create', '', $2, null), ($1, 'team.create', '', $2, now() - interval '1 hour'),
+             ($1, 'agent.manage', 'agent:' || $2, $2, null), ($1, 'repo.merge', '', $2, null)`,
+          [member.accountId, admin.accountId]);
+        for (const [who, token] of [['admin', A], ['member', M], ['agent PAT', agent.pat], ['익명', ''], ['없는 토큰', 'nope']] as const) {
+          const [x, y] = [await callX(tsUrl, 'GET', '/auth/me', undefined, token), await callX(rsUrl, 'GET', '/auth/me', undefined, token)];
+          expect({ status: y.status, code: y.code }, who).toEqual({ status: x.status, code: x.code });
+          if (x.status !== 200) continue;
+          const { capabilities: cx, ...rx } = x.json as { capabilities: string[] };
+          const { capabilities: cy, ...ry } = y.json as { capabilities: string[] };
+          expect(ry, who).toEqual(rx);
+          expect(new Set(cy), who).toEqual(new Set(cx));
+          expect(cy, `${who}: 겹침 없음`).toHaveLength(new Set(cy).size);
+        }
+        expect(new Set((await callX(rsUrl, 'GET', '/auth/me', undefined, M)).json.capabilities as string[]))
+          .toEqual(new Set(['operator.register', 'channel.create']));
+        await db.pool.query(`delete from account_grant where account_id = $1`, [member.accountId]);
+
+        // 재설정 알림 — 살아 있는 것·쓴 것·이미 확인한 것(목록에서 빠짐), 남의 것(관리자 계정)을 깐다. created_at 은 마이크로초까지.
+        const codes = (await db.pool.query<{ id: string }>(
+          `insert into password_reset_code (account_id, code_hash, issued_by, created_at, expires_at, used_at, revoked_at, notice_seen_at) values
+             ($1, 'au1-live', $3, now() - interval '1 minute', now() + interval '1 hour', null, null, null),
+             ($1, 'au1-used', $3, now() - interval '2 hours 0.123456 seconds', now() - interval '1 hour', now() - interval '90 minutes', null, null),
+             ($1, 'au1-seen', $3, now() - interval '3 hours', now() - interval '2 hours', null, now() - interval '150 minutes', now()),
+             ($2, 'au1-other', $3, now() - interval '1 minute', now() + interval '1 hour', null, null, null)
+           returning id`, [member.accountId, admin.accountId, admin.accountId])).rows.map((r) => r.id);
+        const [live, used, , other] = codes as [string, string, string, string];
+        const noticesBoth = async (token: string) => {
+          const [x, y] = [await callX(tsUrl, 'GET', '/auth/password-reset-notices', undefined, token), await callX(rsUrl, 'GET', '/auth/password-reset-notices', undefined, token)];
+          expect(y.status).toBe(x.status);
+          expect(y.json).toEqual(x.json);
+          return y.json.notices as { id: string }[];
+        };
+        expect((await noticesBoth(M)).map((n) => n.id)).toEqual([live, used]);
+        expect((await noticesBoth(A)).map((n) => n.id)).toEqual([other]);
+        expect((await callX(rsUrl, 'GET', '/auth/password-reset-notices', undefined, '')).status).toBe(401);
+        const seenOf = async (id: string) => (await db.pool.query<{ s: boolean }>(
+          'select notice_seen_at is not null as s from password_reset_code where id = $1', [id])).rows[0]!.s;
+        for (const [name, body, token] of [
+          ['ack uuid 아님 → 400', { ids: ['nope'] }, M],
+          ['ack ids null → 400', { ids: null }, M],
+          ['ack 51개 → 400', { ids: Array(51).fill(live) }, M],
+          ['ack 배열 본문 → 400', [], M],
+          ['ack 익명 → 401', {}, ''],
+        ] as const) {
+          const [x, y] = [
+            await callX(tsUrl, 'POST', '/auth/password-reset-notices/ack', body, token),
+            await callX(rsUrl, 'POST', '/auth/password-reset-notices/ack', body, token),
+          ];
+          expect({ status: y.status, code: y.code }, name).toEqual({ status: x.status, code: x.code });
+        }
+        // 남의 id 를 넣어도 남의 것은 그대로 — 조건이 내 계정으로 걸러진다.
+        expect((await callX(rsUrl, 'POST', '/auth/password-reset-notices/ack', { ids: [other, used], x: 1 }, M)).status).toBe(204);
+        expect([await seenOf(other), await seenOf(used), await seenOf(live)], '남의 것·고르지 않은 것은 그대로').toEqual([false, true, false]);
+        expect((await noticesBoth(M)).map((n) => n.id)).toEqual([live]);
+        expect((await callX(rsUrl, 'POST', '/auth/password-reset-notices/ack', undefined, M)).status, '본문 없음 = 내 것 전부').toBe(204);
+        expect(await noticesBoth(M)).toEqual([]);
+        expect(await seenOf(other), '남의 것은 여전히 그대로').toBe(false);
+        await db.pool.query(`delete from password_reset_code where code_hash like 'au1-%'`);
+
+        // 로그아웃 — 이 세션 한 줄만 지우고 감사 줄을 남긴다. 같은 계정의 다른 세션·PAT 는 살아 있다.
+        const s1 = `au1-${randomUUID()}`;
+        const s2 = `au1-${randomUUID()}`;
+        for (const s of [s1, s2]) {
+          await db.pool.query(`insert into session(token_hash, account_id, expires_at) values ($1, $2, now() + interval '1 day')`, [hashToken(s), member.accountId]);
+        }
+        const auditFrom = Number((await db.pool.query<{ n: string }>('select coalesce(max(id), 0)::text as n from audit_log')).rows[0]!.n);
+        expect((await callX(rsUrl, 'POST', '/auth/logout', undefined, s1)).status).toBe(204);
+        const left = (await db.pool.query<{ h: string }>('select token_hash as h from session where token_hash = any($1)', [[hashToken(s1), hashToken(s2)]])).rows.map((r) => r.h);
+        expect(left, '이 세션만 지운다').toEqual([hashToken(s2)]);
+        expect((await callX(tsUrl, 'GET', '/auth/me', undefined, s1)).status, '지운 세션은 TS 에서도 401').toBe(401);
+        expect((await callX(tsUrl, 'GET', '/auth/me', undefined, s2)).status).toBe(200);
+        expect((await callX(rsUrl, 'POST', '/auth/logout', undefined, s1)).status, '두 번째는 401').toBe(401);
+        expect((await callX(rsUrl, 'POST', '/auth/logout', undefined, agent.pat)).status, 'PAT 로그아웃은 지울 세션이 없다').toBe(204);
+        expect((await callX(tsUrl, 'GET', '/auth/me', undefined, agent.pat)).status, 'PAT 는 그대로').toBe(200);
+        // 남은 세션은 TS 로 로그아웃 — 그 감사 줄이 Rust 줄의 기준(칸 꼴·ip·detail)이다.
+        expect((await callX(tsUrl, 'POST', '/auth/logout', undefined, s2)).status).toBe(204);
+        const outs = (await db.pool.query<{ action: string; actor_id: string; actor_handle: string; target: unknown; ip: string | null; detail: unknown }>(
+          `select action, actor_id::text, actor_handle, target, ip, detail from audit_log where id > $1 order by id`, [auditFrom])).rows;
+        expect(outs).toHaveLength(3);
+        const tsRow = outs[2]!;
+        expect(tsRow).toMatchObject({ action: 'logout', actor_id: member.accountId, ip: XFF });
+        expect(outs[0], 'Rust 감사 줄 = TS 감사 줄').toEqual(tsRow);
+        expect(outs[1]).toEqual({ ...tsRow, actor_id: agent.accountId, actor_handle: 'bot' });
+        expect((await db.pool.query('select 1 from session where token_hash = $1', [hashToken(s2)])).rowCount).toBe(0);
       }
 
       // S5.2 P4d — 옮긴 라우트를 지난 요청도 세션을 늘리고 PAT 사용 시각을 남긴다(쓰기 풀로). 읽기 역할로 하면 조용히 실패하던 것.
@@ -7008,7 +7107,14 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       for (const key of keys) {
         const [method, path] = key.split(' ') as [string, string];
         for (const origin of [CORS, 'https://evil.example']) {
-          const req = (base: string) => fetch(`${base}${fill(path)}`, { method, headers: { authorization: `Bearer ${A}`, origin } });
+          // 로그아웃(S5.4 AU1)은 부른 세션을 지운다 — 관리자 토큰으로 돌면 A 가 죽으니, 요청마다 버릴 세션을 만들어 쓴다.
+          const tokenFor = async () => {
+            if (key !== 'POST /auth/logout') return A;
+            const t = `crawl-${randomUUID()}`;
+            await db.pool.query(`insert into session(token_hash, account_id, expires_at) values ($1, $2, now() + interval '1 day')`, [hashToken(t), admin.accountId]);
+            return t;
+          };
+          const req = async (base: string) => fetch(`${base}${fill(path)}`, { method, headers: { authorization: `Bearer ${await tokenFor()}`, origin } });
           const [a, b] = [await req(tsUrl), await req(rsUrl)];
           await a.arrayBuffer(); await b.arrayBuffer();
           for (const h of CORS_HEADERS) expect(b.headers.get(h), `${key} ${origin} ${h}`).toBe(a.headers.get(h));
