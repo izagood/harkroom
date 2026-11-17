@@ -45,6 +45,10 @@ url = "=2.5.8"
 # 키 스케줄·GHASH 상태를 지우는 `zeroize` 기능을 켠다.
 aes-gcm = { version = "=0.11.1", default-features = false, features = ["aes", "alloc", "zeroize"] }
 base64 = "=0.22.1"
+# 「내 작업」 보드 응답 압축(S5.4 MS2c-2) — TS `compressBody.ts`(node zlib) 와 같은 br 품질 4·gzip 6. flate2 는 순수 Rust
+# 백엔드(miniz_oxide)만 켠다(C 라이브러리 없음).
+brotli = "=9.1.1"
+flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }
 hkdf = "=0.13.0"
 hmac = { version = "=0.13.0", features = ["zeroize"] }
 # HKDF·HMAC 0.13 은 digest 0.11 을 쓴다 — 위의 sha2 0.10(digest 0.10)과 따로 둔다. 이미 잠금 파일에 있던 판.

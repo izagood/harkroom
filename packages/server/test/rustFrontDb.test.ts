@@ -7224,6 +7224,15 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           const text = await res.text();
           return { status: res.status, text: res.status < 300 ? text : undefined };
         };
+        // S5.4 MS2c-2 — `GET /inbox/board`. fetch 는 압축을 풀어 주므로 본문 글자끼리 견준다. 태그는 서버 기동마다 갈려 따로 본다.
+        const boardGet = async (base: string, qs: string, token: string, headers: Record<string, string> = {}) => {
+          const res = await fetch(`${base}/inbox/board${qs ? `?${qs}` : ''}`, { headers: { authorization: `Bearer ${token}`, ...headers } });
+          const text = await res.text();
+          return { status: res.status, text: res.status < 300 ? text : undefined, etag: res.headers.get('etag'), cache: res.headers.get('cache-control'), encoding: res.headers.get('content-encoding') };
+        };
+        const BOARD_QS = ['', 'compact=1', 'compact=0', 'compact=1&compact=1', 'x=1'];
+        // 간추림 머리 자르기 재료 — 500 코드 포인트를 넘는 머리 본문(이모지 포함, TS `Array.from` 단위).
+        await db.pool.query(`update message set body = $2 where id = $1`, [ms2bDone[1], `${'가'.repeat(499)}😀😀\n끝`]);
         const INBOX_QS = ['', 'unread=1', 'unread=true', 'since=0', 'unread=1&since=1', 'before=999999999', 'before=1', 'threads=1', 'unread=1&threads=1', 'since=0&threads=1', 'before=1&threads=1', 'threads=2', 'unread=0', 'since=x', 'before=0', 'since=1&since=2'];
         const delegOut: Record<string, unknown> = {};
         const prevV2 = process.env.HARKROOM_DELEGATION_V2;
@@ -7270,6 +7279,30 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 }
               }
               expect((await inboxGet(`http://127.0.0.1:${portD}`, '', 'nope')).status).toBe(401);
+              // MS2c-2 — 보드: 본문 글자·상태·cache-control 이 TS 와 같다(태그 값은 기동 판이 달라 따로 본다).
+              const rsUrl = `http://127.0.0.1:${portD}`;
+              for (const token of [agent.pat, A, member.token, bot2.pat]) {
+                for (const qs of BOARD_QS) {
+                  const [r, t] = [await boardGet(rsUrl, qs, token), await boardGet(tsUrl, qs, token)];
+                  expect({ status: r.status, text: r.text, cache: r.cache, etag: r.etag !== null }, `V2=${mode} /inbox/board?${qs}`)
+                    .toEqual({ status: t.status, text: t.text, cache: t.cache, etag: t.etag !== null });
+                }
+              }
+              expect((await boardGet(rsUrl, '', 'nope')).status).toBe(401);
+              // Rust 가 답했는지: 자기 태그로 304, 간추림·계정이 다르면 태그가 갈린다, gzip 만 받으면 gzip.
+              const full = await boardGet(rsUrl, '', agent.pat);
+              const again = await boardGet(rsUrl, '', agent.pat, { 'if-none-match': `"zz", ${full.etag}` });
+              expect([again.status, again.etag, again.cache]).toEqual([304, full.etag, 'private, no-cache']);
+              expect((await boardGet(tsUrl, '', agent.pat, { 'if-none-match': full.etag! })).status).toBe(200);
+              const cmp = await boardGet(rsUrl, 'compact=1', agent.pat);
+              expect(cmp.etag).not.toBe(full.etag);
+              expect((await boardGet(rsUrl, '', bot2.pat)).etag).not.toBe(full.etag);
+              expect((await boardGet(rsUrl, '', agent.pat, { 'accept-encoding': 'gzip' })).encoding).toBe('gzip');
+              expect((await boardGet(rsUrl, '', agent.pat, { 'accept-encoding': 'br;q=0, gzip;q=0' })).encoding).toBeNull();
+              // 머리 자르기가 실제로 걸렸는지(빈 값끼리 통과하지 않게).
+              const clipped = (JSON.parse(cmp.text!) as { threads: { id: string; body: string }[] }).threads.find((h) => h.id === ms2bDone[1]);
+              expect(Array.from(clipped!.body)).toHaveLength(500);
+              expect((JSON.parse(full.text!) as { threads: { id: string; body: string }[] }).threads.find((h) => h.id === ms2bDone[1])!.body.endsWith('끝')).toBe(true);
               // 빈 값끼리 비교해 통과하지 않게 — 결말이 실렸는지, 결말 없는 위임엔 키가 없는지.
               const mine = JSON.parse((await inboxGet(`http://127.0.0.1:${portD}`, 'unread=1', agent.pat)).text!) as { entries: { messageId: string; delegation?: unknown }[] };
               const [withOutcome, noOutcome] = ms2bDone.map((id) => mine.entries.find((e) => e.messageId === id));

@@ -3370,44 +3370,48 @@ export async function listInboxNewest(
  * 섞는다) — 본문은 싣지 않는다.
  */
 export async function boardVersion(pool: Pool, accountId: string): Promise<string> {
-  const h = (expr: string) => `count(*)::text || ':' || coalesce(bit_xor(hashtextextended(${expr}, 0)), 0)::text`;
-  const res = await pool.query<{ v: string }>(
-    `with inb as materialized (
-       select i.id, i.message_id, i.xmin::text as x from inbox i where i.account_id = $1
-     ),
-     roots as materialized (
-       select coalesce(m.thread_root_id, m.id) as id from inb join message m on m.id = inb.message_id
-       union
-       select ts.root_id from (
-         select distinct coalesce(said.thread_root_id, said.id) as root_id
-           from message said
-          where said.author_id = $1 and said.deleted_at is null
-            and said.created_at > now() - make_interval(days => $2::int)
-       ) mine join thread_status ts on ts.root_id = mine.root_id
-     ),
-     msgs as materialized (
-       select m.id, m.xmin::text as x, m.channel_id from message m where m.id in (select id from roots)
-       union all
-       select m.id, m.xmin::text, m.channel_id from message m where m.thread_root_id in (select id from roots)
-     )
-     select concat_ws('|',
-       (select ${h(`id::text || ':' || x`)} from inb),
-       (select ${h('id::text')} from roots),
-       (select ${h(`id::text || ':' || x`)} from msgs),
-       (select ${h(`r.message_id::text || r.account_id::text || r.emoji || ':' || r.xmin::text`)}
-          from message_reaction r where r.message_id in (select id from roots)),
-       (select ${h(`a.id::text || ':' || a.xmin::text`)} from attachment a where a.message_id in (select id from roots)),
-       (select ${h(`ts.root_id::text || ':' || ts.xmin::text`)} from thread_status ts where ts.root_id in (select id from roots)),
-       (select ${h(`s.root_id::text || ':' || s.xmin::text`)} from inbox_thread_state s where s.account_id = $1),
-       (select ${h(`c.id::text || ':' || c.xmin::text`)} from channel c where c.id in (select channel_id from msgs)),
-       (select ${h(`cm.channel_id::text || ':' || cm.xmin::text`)} from channel_member cm where cm.account_id = $1),
-       (select ${h(`t.id::text || ':' || t.xmin::text`)} from agent_team t),
-       (select ${h(`tm.team_id::text || tm.agent_account_id::text || ':' || tm.xmin::text`)} from agent_team_member tm)
-     ) as v`,
-    [accountId, BOARD_WINDOW_DAYS],
-  );
+  const res = await pool.query<{ v: string }>(BOARD_VERSION_SQL, [accountId, BOARD_WINDOW_DAYS]);
   return res.rows[0]!.v;
 }
+
+const boardHash = (expr: string) => `count(*)::text || ':' || coalesce(bit_xor(hashtextextended(${expr}, 0)), 0)::text`;
+
+/**
+ * 보드 판 문장(S5.4 MS2c-2). Rust 앞단(`core/inbox_board.rs`)이 골든으로 받는다 — 계정 자리는 `$1::uuid`(Rust 는 글자로 묶는다,
+ * #2316 교훈. node-pg 에는 뜻이 같다). `$2` = `BOARD_WINDOW_DAYS`.
+ */
+export const BOARD_VERSION_SQL = `with inb as materialized (
+     select i.id, i.message_id, i.xmin::text as x from inbox i where i.account_id = $1::uuid
+   ),
+   roots as materialized (
+     select coalesce(m.thread_root_id, m.id) as id from inb join message m on m.id = inb.message_id
+     union
+     select ts.root_id from (
+       select distinct coalesce(said.thread_root_id, said.id) as root_id
+         from message said
+        where said.author_id = $1::uuid and said.deleted_at is null
+          and said.created_at > now() - make_interval(days => $2::int)
+     ) mine join thread_status ts on ts.root_id = mine.root_id
+   ),
+   msgs as materialized (
+     select m.id, m.xmin::text as x, m.channel_id from message m where m.id in (select id from roots)
+     union all
+     select m.id, m.xmin::text, m.channel_id from message m where m.thread_root_id in (select id from roots)
+   )
+   select concat_ws('|',
+     (select ${boardHash(`id::text || ':' || x`)} from inb),
+     (select ${boardHash('id::text')} from roots),
+     (select ${boardHash(`id::text || ':' || x`)} from msgs),
+     (select ${boardHash(`r.message_id::text || r.account_id::text || r.emoji || ':' || r.xmin::text`)}
+        from message_reaction r where r.message_id in (select id from roots)),
+     (select ${boardHash(`a.id::text || ':' || a.xmin::text`)} from attachment a where a.message_id in (select id from roots)),
+     (select ${boardHash(`ts.root_id::text || ':' || ts.xmin::text`)} from thread_status ts where ts.root_id in (select id from roots)),
+     (select ${boardHash(`s.root_id::text || ':' || s.xmin::text`)} from inbox_thread_state s where s.account_id = $1::uuid),
+     (select ${boardHash(`c.id::text || ':' || c.xmin::text`)} from channel c where c.id in (select channel_id from msgs)),
+     (select ${boardHash(`cm.channel_id::text || ':' || cm.xmin::text`)} from channel_member cm where cm.account_id = $1::uuid),
+     (select ${boardHash(`t.id::text || ':' || t.xmin::text`)} from agent_team t),
+     (select ${boardHash(`tm.team_id::text || tm.agent_account_id::text || ':' || tm.xmin::text`)} from agent_team_member tm)
+   ) as v`;
 
 /** 「내 작업」 보드가 inbox 밖에서 더 모으는 기간과 상한. */
 export const BOARD_WINDOW_DAYS = 30;
@@ -3434,11 +3438,16 @@ export const BOARD_EXTRA_LIMIT = 300;
 export async function listBoardRootIds(
   pool: Pool, accountId: string, opts: { days: number; limit: number },
 ): Promise<{ rootIds: string[]; truncated: boolean }> {
-  const res = await pool.query(
-    `with mine as (
+  const res = await pool.query(BOARD_ROOT_IDS_SQL, [accountId, opts.days, opts.limit]);
+  const ids = res.rows.map((r: { id: string }) => r.id);
+  return { rootIds: ids.slice(0, opts.limit), truncated: ids.length > opts.limit };
+}
+
+/** 보드의 inbox 밖 머리 문장(S5.4 MS2c-2) — Rust 앞단이 골든으로 받는다. `$1` 계정 · `$2` 일 수 · `$3` 상한. */
+export const BOARD_ROOT_IDS_SQL = `with mine as (
        select distinct coalesce(said.thread_root_id, said.id) as root_id
          from message said
-        where said.author_id = $1 and said.deleted_at is null
+        where said.author_id = $1::uuid and said.deleted_at is null
           and said.created_at > now() - make_interval(days => $2::int)
      )
      select ts.root_id as id
@@ -3447,14 +3456,9 @@ export async function listBoardRootIds(
        join message m on m.id = ts.root_id
        join channel c on c.id = m.channel_id
       where m.thread_root_id is null and ${LIST_VISIBLE}
-        and ${channelVisibleSql('c', '$1')}
+        and ${channelVisibleSql('c', '$1::uuid')}
       order by ts.updated_at desc, ts.root_id
-      limit $3::int + 1`,
-    [accountId, opts.days, opts.limit],
-  );
-  const ids = res.rows.map((r: { id: string }) => r.id);
-  return { rootIds: ids.slice(0, opts.limit), truncated: ids.length > opts.limit };
-}
+      limit $3::int + 1`;
 
 /**
  * 「내 작업」 보드의 머리 = inbox 항목의 머리 ∪ `listBoardRootIds`. 응답 모양은 `?threads=1` 과 같다 —
@@ -3507,7 +3511,7 @@ const BOARD_COMPACT_KEEP_SQL = `i.id in (
                       and m2.meta->'ask'->>'answeredWith' is null
                       and m2.meta->'ask'->>'closedAt' is null)) as pinned
            from inbox i2 join message m2 on m2.id = i2.message_id
-          where i2.account_id = $1 and m2.deleted_at is null) r
+          where i2.account_id = $1::uuid and m2.deleted_at is null) r
         where r.rn <= ${BOARD_COMPACT_LATEST} or r.rr = 1 or r.pinned)`;
 
 /**
@@ -3569,6 +3573,9 @@ export const LIST_INBOX_SQL = {
   since: listInboxSql({ since: true }),
   newest: listInboxSql({ newest: true }),
   newestBefore: listInboxSql({ newest: true, before: true }),
+  /** 「내 작업」 보드(`/inbox/board`) — 전부 · 간추림(`compact=1`). */
+  all: listInboxSql({}),
+  compact: listInboxSql({ compact: true }),
 };
 
 /** 팀 부름의 명단(047) — `$1` = 팀 id 배열. Rust 코어(`core/inbox_list.rs`)도 이 문장을 쓴다. */

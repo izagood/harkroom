@@ -23,6 +23,9 @@ struct Sql {
     since: String,
     newest: String,
     newest_before: String,
+    /// 「내 작업」 보드(`/inbox/board`, MS2c-2) — 전부 · 간추림.
+    all: String,
+    compact: String,
     roster: String,
     handed: String,
     folded: String,
@@ -68,6 +71,8 @@ fn sql() -> &'static Sql {
             since: wrap(&frag("list_inbox_since")),
             newest: wrap(&frag("list_inbox_newest")),
             newest_before: wrap(&frag("list_inbox_newestBefore")),
+            all: wrap(&frag("list_inbox_all")),
+            compact: wrap(&frag("list_inbox_compact")),
             // 겉에서 uuid 를 글자로 바꾼다(sqlx 는 uuid 기능 없이 묶는다). 순서는 안쪽과 같은 handle.
             roster: format!(
                 "select r.id::text, r.name, r.\"accountId\"::text, r.handle, r.specialty, r.disabled \
@@ -130,6 +135,9 @@ pub enum InboxQuery {
     Since(i64),
     /// 둘 다 없음 — 최신 `limit` 줄(`before` 가 있으면 그 id 앞에서). 문장에는 `limit + 1` 을 넘긴다.
     Newest { limit: i64, before: Option<i64> },
+    /// 「내 작업」 보드 — 읽은 것까지 전부(TS `listInbox(…, { unreadOnly: false, compact })`). `compact` 면 스레드마다 보드가
+    /// 읽는 줄만, 본문은 앞 500자(+ `bodyTruncated`).
+    All { compact: bool },
 }
 
 /// 받은함 한 줄 — 응답 JSON 문자열(덧붙임 포함)과 그 줄의 id.
@@ -190,6 +198,10 @@ pub async fn list_inbox(
                 .bind(limit + 1)
                 .fetch_all(pool)
                 .await?
+        }
+        InboxQuery::All { compact } => {
+            let q = if compact { &s.compact } else { &s.all };
+            sqlx::query_as(q.as_str()).bind(me).fetch_all(pool).await?
         }
     };
     let mut team_ids: Vec<String> = rows.iter().filter_map(|r| r.2.clone()).collect();
