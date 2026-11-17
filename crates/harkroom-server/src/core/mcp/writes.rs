@@ -32,6 +32,8 @@ pub const SERVED: &[&str] = &[
     "message.fail",
     // C3b-2c-4a — 위임의 게이트·상한 거절만(읽기만 한다). 지나면 TS.
     "message.delegate",
+    // C3b-2c-3 — 완료 보고(`planStepId` 없는 것). 같은 글 쓰기 풀이다 — 예약 접기 칸(`agent_wake.canceled_at`·대기 줄 meta)도 그 묶음에 있다.
+    "message.report",
 ];
 
 /// TS 가 조건부로 싣는 도구 — `/mcp/admit` 이 `registered: true` 라고 답했을 때만 Rust 가 답한다([`super::route::serve`]).

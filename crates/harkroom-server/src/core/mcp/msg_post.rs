@@ -95,7 +95,7 @@ fn parse(args: &Value) -> Option<Args> {
 }
 
 /// TS `postedResult` — 못 부른 이름을 앞세운다(상한에 막힌 부름 → 호출 범위 밖 순서).
-fn posted_result(row: &str, notified: &[String]) -> Option<String> {
+fn posted_result(row: &str, notified: &[String], extra: &str) -> Option<String> {
     let v: Value = serde_json::from_str(row).ok()?;
     let handles = |key: &str| -> Vec<String> {
         v.pointer(key)
@@ -143,10 +143,10 @@ fn posted_result(row: &str, notified: &[String]) -> Option<String> {
         ));
     }
     let inner = if warnings.is_empty() {
-        format!("{{\"message\":{row},\"notified\":{notified}}}")
+        format!("{{\"message\":{row},\"notified\":{notified}{extra}}}")
     } else {
         format!(
-            "{{\"warnings\":{},\"message\":{row},\"notified\":{notified}}}",
+            "{{\"warnings\":{},\"message\":{row},\"notified\":{notified}{extra}}}",
             Value::from(warnings)
         )
     };
@@ -163,7 +163,7 @@ pub async fn answer(
     operator: bool,
 ) -> Option<String> {
     let a = parse(args)?;
-    post(st, me, a, Map::new(), false, cause, turn, operator).await
+    post(st, me, a, Map::new(), false, false, cause, turn, operator).await
 }
 
 /// `message.fail` 의 zod 인자 중 Rust 가 맡는 것 — 표지(`code`) 없는 실패만(C3b-2c-1).
@@ -258,7 +258,105 @@ pub async fn answer_fail(
 ) -> Option<String> {
     let f = parse_fail(args)?;
     let meta = failure_meta(&f);
-    post(st, me, f.args, meta, true, cause, turn, operator).await
+    post(st, me, f.args, meta, true, false, cause, turn, operator).await
+}
+
+/// shared `REPORT_MAX_ITEMS`·`REPORT_MAX_NEXT`.
+const REPORT_MAX_ITEMS: usize = 20;
+const REPORT_MAX_NEXT: usize = 4;
+
+/// `z.array(z.string().min(1).max(max)).max(REPORT_MAX_ITEMS)` — 없으면 빈 목록, 틀린 꼴이면 `None`.
+fn str_list(o: &Map<String, Value>, key: &str, max: usize) -> Option<Vec<String>> {
+    match o.get(key) {
+        None => Some(Vec::new()),
+        Some(Value::Array(a)) if a.len() <= REPORT_MAX_ITEMS => a
+            .iter()
+            .map(|x| {
+                let t = x.as_str()?;
+                let n = t.encode_utf16().count();
+                (n >= 1 && n <= max).then(|| t.to_owned())
+            })
+            .collect(),
+        _ => None,
+    }
+}
+
+/// zod `message.report` 의 `inputSchema` → (글 인자, `report` meta). **TS 로 넘기는 것**(fail-closed): `planStepId` 가 있으면(계획 단계
+/// 갱신·머리 없음 `bad_request` 는 TS 몫) · zod 가 받지 않을 꼴 · 안전한 정수가 아닌 `durationMs`.
+fn parse_report(args: &Value) -> Option<(Args, Map<String, Value>)> {
+    let Value::Object(o) = args else { return None };
+    if o.contains_key("planStepId") {
+        return None;
+    }
+    let checks = match o.get("checks") {
+        Some(_) => str_list(o, "checks", 300).filter(|c| !c.is_empty())?,
+        None => return None,
+    };
+    let files = str_list(o, "files", 400)?;
+    let remaining = str_list(o, "remaining", 300)?;
+    let duration = match o.get("durationMs") {
+        None => None,
+        // `int().nonnegative()` — JS 안전 정수 안의 u64 만 맡는다(소수점·큰 수는 TS 가 판정).
+        Some(Value::Number(n)) => Some(n.as_u64().filter(|v| *v < (1u64 << 53))?),
+        _ => return None,
+    };
+    let next = match o.get("next") {
+        None => Vec::new(),
+        Some(Value::Array(a)) if a.len() <= REPORT_MAX_NEXT => {
+            let mut out = Vec::with_capacity(a.len());
+            for x in a {
+                let Value::Object(n) = x else { return None };
+                let id = opt_str(n, "id", 64)??;
+                let label = opt_str(n, "label", 200)??;
+                // z.object 는 모르는 키를 버린다.
+                let mut item = Map::new();
+                item.insert("id".into(), Value::String(id));
+                item.insert("label".into(), Value::String(label));
+                out.push(Value::Object(item));
+            }
+            out
+        }
+        _ => return None,
+    };
+    let mut base = Map::new();
+    for k in ["channelId", "body", "threadRootId", "model"] {
+        if let Some(v) = o.get(k) {
+            base.insert(k.to_owned(), v.clone());
+        }
+    }
+    let a = parse(&Value::Object(base))?;
+    let mut report = Map::new();
+    report.insert("checks".into(), Value::from(checks));
+    if !files.is_empty() {
+        report.insert("files".into(), Value::from(files));
+    }
+    if !remaining.is_empty() {
+        report.insert("remaining".into(), Value::from(remaining));
+    }
+    if let Some(d) = duration {
+        report.insert("durationMs".into(), Value::from(d));
+    }
+    if !next.is_empty() {
+        report.insert("next".into(), Value::Array(next));
+    }
+    let mut meta = Map::new();
+    meta.insert("kind".into(), Value::String("report".into()));
+    meta.insert("report".into(), Value::Object(report));
+    Some((a, meta))
+}
+
+/// `message.report`(C3b-2c-3) — TS 와 같이 채널 가시성 → 보고 meta + 모델 신고 → `postMessage`(작성자가 담당인 안 닫힌 위임 항목을
+/// 같은 tx 에서 닫는다 — C3b-2c-2 코어) → 커밋 뒤 예약 접기 → `postedResult`(+ `foldedWakes`).
+pub async fn answer_report(
+    st: &PostState,
+    me: &Account,
+    args: &Value,
+    cause: Option<&str>,
+    turn: Option<&str>,
+    operator: bool,
+) -> Option<String> {
+    let (a, meta) = parse_report(args)?;
+    post(st, me, a, meta, true, true, cause, turn, operator).await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -268,6 +366,7 @@ async fn post(
     a: Args,
     mut meta: Map<String, Value>,
     closes_delegation: bool,
+    fold: bool,
     cause: Option<&str>,
     turn: Option<&str>,
     operator: bool,
@@ -317,8 +416,135 @@ async fn post(
             "attachments must be your own, unused uploads",
         )),
         // 에이전트 글은 새 위임을 만들지 않는다(`mandate` 는 사람 글만) — 감사 줄이 없다.
-        Outcome::Posted { row, notified, .. } => posted_result(&row, &notified),
+        Outcome::Posted { row, notified, .. } => {
+            // TS `message.report` — 보고가 선 **뒤**(커밋 뒤) 따로 예약을 접는다. 접기가 막혀도 보고는 되돌리지 않는다(TS `.catch(() => [])`).
+            let extra = match (fold, a.post.thread_root.as_deref()) {
+                (true, Some(root)) => {
+                    let folded = fold_wakes_on_report(&st.write, &me.id, root, origin.turn_id)
+                        .await
+                        .unwrap_or_default();
+                    if folded.is_empty() {
+                        String::new()
+                    } else {
+                        format!(",\"foldedWakes\":[{}]", folded.join(","))
+                    }
+                }
+                _ => String::new(),
+            };
+            posted_result(&row, &notified, &extra)
+        }
     }
+}
+
+/// 골든 문장 — TS `FOLD_WAKES_ON_REPORT_SQL`·`STAMP_WAKE_CLOSED_SQL`.
+fn fold_sql() -> &'static (String, String) {
+    static S: std::sync::OnceLock<(String, String)> = std::sync::OnceLock::new();
+    S.get_or_init(|| {
+        let v: Value = serde_json::from_str(include_str!("../../../golden/sql_fragments.json"))
+            .expect("golden/sql_fragments.json");
+        let frag = |k: &str| {
+            v[k].as_str()
+                .unwrap_or_else(|| panic!("golden fragment {k}"))
+                .to_string()
+        };
+        (frag("fold_wakes_on_report"), frag("stamp_wake_closed"))
+    })
+}
+
+/// 접힌 예약 한 줄 — TS `closedWatchView` 의 키 순서(`id`·`reason`·`wakeAt`·`messageId`·`threadRootId`·`reportTo?`).
+fn closed_watch_view(
+    id: &str,
+    wake_at: &str,
+    message_id: &str,
+    body: Option<&str>,
+    deleted: bool,
+    report: Option<&(String, String)>,
+    thread_root: &str,
+) -> String {
+    let s = |x: &str| Value::from(x).to_string();
+    let reason = match (deleted, body) {
+        (false, Some(b)) => s(b),
+        _ => "null".to_owned(),
+    };
+    let report = report
+        .map(|(c, t)| {
+            format!(
+                ",\"reportTo\":{{\"channelId\":{},\"threadRootId\":{}}}",
+                s(c),
+                s(t)
+            )
+        })
+        .unwrap_or_default();
+    format!(
+        "{{\"id\":{},\"reason\":{reason},\"wakeAt\":{},\"messageId\":{},\"threadRootId\":{}{report}}}",
+        s(id),
+        s(wake_at),
+        s(message_id),
+        s(thread_root)
+    )
+}
+
+type FoldRow = (
+    String,
+    String,
+    String,
+    Option<String>,
+    bool,
+    Option<Value>,
+    String,
+);
+
+/// TS `foldWakesOnReport` → `announceReportWakes` → `announceWakeRows` — 작성자의 열린 예약 중 이 스레드에 걸렸거나 이 스레드로 보고하는
+/// 것을 접는다(같은 턴이 건 것은 남김). 한 tx 로 접고·닫힌 시각을 적고·신호를 outbox 에 낸다. 돌려주는 것은 `foldedWakes` 의 JSON 조각들.
+async fn fold_wakes_on_report(
+    write: &sqlx::PgPool,
+    account: &str,
+    root: &str,
+    turn: Option<&str>,
+) -> Result<Vec<String>, sqlx::Error> {
+    use crate::core::{turn_settle, wake_preempt};
+    let (fold, stamp) = fold_sql();
+    let mut tx = write.begin().await?;
+    let rows: Vec<FoldRow> = sqlx::query_as(fold.as_str())
+        .bind(root)
+        .bind(account)
+        .bind(root)
+        .bind(turn)
+        .fetch_all(&mut *tx)
+        .await?;
+    if rows.is_empty() {
+        tx.commit().await?;
+        return Ok(Vec::new());
+    }
+    let ids: Vec<String> = rows.iter().map(|r| r.2.clone()).collect();
+    let at = turn_settle::now_iso(&mut tx).await?;
+    sqlx::query(stamp.as_str())
+        .bind(&ids)
+        .bind(at)
+        .bind("canceledAt")
+        .execute(&mut *tx)
+        .await?;
+    let mut signal = wake_preempt::Preempted::default();
+    let mut views = Vec::with_capacity(rows.len());
+    for (id, wake_at, message_id, body, deleted, report_to, thread_root) in rows {
+        let report = report_to.as_ref().and_then(turn_settle::report_to);
+        views.push(closed_watch_view(
+            &id,
+            &wake_at,
+            &message_id,
+            body.as_deref(),
+            deleted,
+            report.as_ref(),
+            &thread_root,
+        ));
+        if let Some(r) = report {
+            signal.report.push(r);
+        }
+        signal.rows.push(message_id);
+    }
+    wake_preempt::announce(&mut tx, &signal).await?;
+    tx.commit().await?;
+    Ok(views)
 }
 
 #[cfg(test)]
@@ -358,6 +584,59 @@ mod tests {
         ] {
             assert!(parse(&bad).is_none(), "{bad}");
         }
+    }
+
+    #[test]
+    fn report_parse_like_zod() {
+        let (a, m) = parse_report(&json!({ "channelId": C, "body": "x", "threadRootId": R, "checks": ["c"], "files": [],
+            "remaining": ["r"], "durationMs": 5, "next": [{ "id": "n", "label": "l", "x": 1 }], "alsoInChannel": true }))
+        .expect("report");
+        // report 에 없는 칸(alsoInChannel)은 zod 가 버린다.
+        assert!(!a.post.also_in_channel);
+        assert_eq!(
+            Value::Object(m),
+            json!({ "kind": "report", "report": { "checks": ["c"], "remaining": ["r"], "durationMs": 5, "next": [{ "id": "n", "label": "l" }] } })
+        );
+        for bad in [
+            json!({ "channelId": C, "body": "x", "checks": ["c"], "planStepId": "s1" }),
+            json!({ "channelId": C, "body": "x", "checks": [] }),
+            json!({ "channelId": C, "body": "x" }),
+            json!({ "channelId": C, "body": "x", "checks": [""] }),
+            json!({ "channelId": C, "body": "x", "checks": ["c"], "durationMs": 1.5 }),
+            json!({ "channelId": C, "body": "x", "checks": ["c"], "durationMs": -1 }),
+            json!({ "channelId": C, "body": "x", "checks": ["c"], "next": [{ "id": "n" }] }),
+            json!({ "channelId": C, "body": "x", "checks": ["c"], "next": [{ "id": "a", "label": "l" }, { "id": "b", "label": "l" }, { "id": "c", "label": "l" }, { "id": "d", "label": "l" }, { "id": "e", "label": "l" }] }),
+        ] {
+            assert!(parse_report(&bad).is_none(), "{bad}");
+        }
+        // agentModels 는 report 에 없는 칸 — zod 처럼 버린다.
+        assert!(
+            parse_report(
+                &json!({ "channelId": C, "body": "x", "checks": ["c"], "agentModels": [] })
+            )
+            .is_some()
+        );
+    }
+
+    #[test]
+    fn closed_watch_view_like_ts() {
+        let r = ("c".to_owned(), "t".to_owned());
+        assert_eq!(
+            closed_watch_view(
+                "i",
+                "2030-01-02T03:04:05.678Z",
+                "m",
+                Some("why"),
+                false,
+                Some(&r),
+                "h"
+            ),
+            r#"{"id":"i","reason":"why","wakeAt":"2030-01-02T03:04:05.678Z","messageId":"m","threadRootId":"h","reportTo":{"channelId":"c","threadRootId":"t"}}"#
+        );
+        assert_eq!(
+            closed_watch_view("i", "w", "m", Some("why"), true, None, "h"),
+            r#"{"id":"i","reason":null,"wakeAt":"w","messageId":"m","threadRootId":"h"}"#
+        );
     }
 
     #[test]
@@ -405,7 +684,7 @@ mod tests {
     #[test]
     fn result_shape_like_ts() {
         let row = r#"{"id":"m","meta":{"mentionDenied":["bot","b2"]},"body":"x"}"#;
-        let t = posted_result(row, &["a".into()]).unwrap();
+        let t = posted_result(row, &["a".into()], "").unwrap();
         let v: Value = serde_json::from_str(&t).unwrap();
         let inner = v
             .pointer("/content/0/text")
@@ -419,6 +698,7 @@ mod tests {
         let t = posted_result(
             r#"{"id":"m","meta":{"mentionChainCapped":["b2"],"mentionChainLimit":8,"mentionDenied":["x"]}}"#,
             &[],
+            "",
         )
         .unwrap();
         let v: Value = serde_json::from_str(&t).unwrap();
@@ -440,7 +720,7 @@ mod tests {
                 .unwrap()
                 .starts_with("@x 를 부르지 못했다: 너는")
         );
-        let t = posted_result(r#"{"id":"m","meta":{}}"#, &[]).unwrap();
+        let t = posted_result(r#"{"id":"m","meta":{}}"#, &[], "").unwrap();
         assert!(
             t.contains(r#"{\"message\":{\"id\":\"m\",\"meta\":{}},\"notified\":[]}"#),
             "{t}"

@@ -282,7 +282,7 @@ const SAME_WORK_WATCH_WAKE_SQL = `${OPEN_WATCH_WAKE_BASE_SQL}
 const CLOSED_WATCH_COLUMNS = `w.id, w.wake_at, w.message_id, m.body, m.deleted_at is not null as deleted, m.meta->'wake'->'reportTo' as report_to,
         coalesce(m.thread_root_id, m.id) as thread_root_id`;
 
-interface ClosedWatchRow { id: string; wake_at: Date; message_id: string; body: string | null; deleted: boolean; report_to: unknown; thread_root_id: string }
+interface ClosedWatchRow { id: string; wake_at: Date | string; message_id: string; body: string | null; deleted: boolean; report_to: unknown; thread_root_id: string }
 
 function closedWatchView(row: ClosedWatchRow): ClosedWatchWake {
   const report = asReportTo(row.report_to);
@@ -365,6 +365,24 @@ async function replaceWatchWakes(
 }
 
 /**
+ * `foldWakesOnReport` 의 문장 — Rust MCP `message.report`(C3b-2c-3)가 골든으로 받는다. 자리표에 형(`::uuid`)을 붙이고 id·시각·머리를
+ * 글자로 돌려준다(`wake_at` 은 `toISOString()` 꼴 — `closedWatchView` 가 다시 `Date` 로 읽어 같은 값을 낸다). 조건은 위 상수와 같다.
+ */
+export const FOLD_WAKES_ON_REPORT_SQL = `update agent_wake w set canceled_at = now()
+       from message m
+      where m.id = w.message_id
+        and w.account_id = $2::uuid
+        and w.fired_at is null
+        and w.canceled_at is null
+        and (coalesce(m.thread_root_id, m.id) = $1::uuid
+          or coalesce(lower(m.meta->'wake'->'reportTo'->>'threadRootId'), coalesce(m.thread_root_id, m.id)::text) = lower($3::text))
+        and ($4::text is null or m.meta->>'turnId' is distinct from $4::text)
+      returning w.id::text as id,
+        to_char(w.wake_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as wake_at,
+        w.message_id::text as message_id, m.body, m.deleted_at is not null as deleted, m.meta->'wake'->'reportTo' as report_to,
+        coalesce(m.thread_root_id, m.id)::text as thread_root_id`;
+
+/**
  * **끝 보고가 남은 예약을 접는다**(2026-11-05, 보고처 기준·종류 무관 2026-11-06). 그 에이전트가 그 스레드에 `message.report` 를 올리면 그 스레드에
  * 걸렸거나 그 스레드로 보고하는 예약을 닫는다 — 끝났다고 말한 뒤에 다시 깨어나 같은 보고를 하거나, 할 말이 없어 「보고 없이 끝났다」 실패 줄을 남기는 것을 막는다.
  * 감시만 접으면 한 번 깨우기가 남는다: 병렬 턴이 이미 끝낸 일에 한 번 깨우기가 깨어나 글 없이 끝나자 보고처에 헛 실패 줄이 섰다(11-05 실측).
@@ -377,12 +395,7 @@ export async function foldWakesOnReport(
   args: { accountId: string; threadRootId: string; turnId?: string | null },
 ): Promise<ClosedWatchWake[]> {
   const res = await pool.query<ClosedWatchRow>(
-    `update agent_wake w set canceled_at = now()
-       from message m
-      where ${OPEN_WAKE_BASE_SQL}
-        and ${SAME_WORK_SQL}
-        and ($4::text is null or m.meta->>'turnId' is distinct from $4::text)
-      returning ${CLOSED_WATCH_COLUMNS}`,
+    FOLD_WAKES_ON_REPORT_SQL,
     [args.threadRootId, args.accountId, args.threadRootId, args.turnId ?? null],
   );
   await stampWakeClosed(pool, res.rows.map((r) => r.message_id), 'canceledAt');
