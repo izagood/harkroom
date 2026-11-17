@@ -290,6 +290,14 @@ pub fn routes(
         .get("/operators/{id}/upgrades", rest::upgrades)
         .patch("/operators/{id}", rest::rename)
         .delete("/operators/{id}", rest::revoke)
+        .put(
+            "/accounts/agents/{id}/assignment",
+            super::operator_assign::put_assignment,
+        )
+        .delete(
+            "/accounts/agents/{id}/assignment",
+            super::operator_assign::delete_assignment,
+        )
         .map(|r| {
             r.route_layer(auth_layer())
                 .layer(axum::middleware::from_fn_with_state(

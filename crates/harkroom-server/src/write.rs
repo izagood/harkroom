@@ -74,6 +74,10 @@ pub const OPERATOR_PRIVILEGES: &[(&str, &str)] = &[
     ("operator_gh_report", "INSERT"),
     ("operator_gh_report", "UPDATE"),
     ("agent_assignment", "UPDATE"),
+    // AC5 A1b — 배정 줄(`core/operator_assign.rs` PUT·DELETE). 빠지면 오퍼레이터 코어 전체가 TS 에 남는다(fail-closed).
+    ("agent_assignment", "SELECT"),
+    ("agent_assignment", "INSERT"),
+    ("agent_assignment", "DELETE"),
     ("secret_grant", "UPDATE"),
     ("audit_log", "INSERT"),
     // S5.3 C6c-3 — Rust 릴레이(`relay_live.rs`)가 쓰는 표(security r3, fail-closed). 하나라도 빠지면 오퍼레이터 표면 전체가 TS 에 남는다

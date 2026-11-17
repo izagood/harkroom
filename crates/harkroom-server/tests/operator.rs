@@ -362,6 +362,122 @@ async fn fake_operator_against_real_schema() {
         .await
         .unwrap();
 
+    // ---- 배정 줄 PUT·DELETE /accounts/agents/{id}/assignment (TS assignmentRoutes) ----
+    let apath = format!("/accounts/agents/{agent}/assignment");
+    let put = |op: &str| json!({ "operatorId": op }).to_string();
+    let (s, _) = req(&base, Method::PUT, &apath, None, &put(&op1)).await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+    let (s, e) = req(&base, Method::PUT, &apath, Some(&sess), &put(&op1)).await;
+    assert_eq!(s, StatusCode::FORBIDDEN, "no agent.manage: {e}");
+    sqlx::query("insert into account_grant(account_id, capability, scope, granted_by) values ($1::uuid, 'agent.manage', '', $1::uuid)")
+        .bind(&human)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (s, e) = req(&base, Method::PUT, &apath, Some(&sess), "{}").await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{e}");
+    let (s, e) = req(
+        &base,
+        Method::PUT,
+        &apath,
+        Some(&sess),
+        &put("00000000-0000-4000-8000-000000000999"),
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "unknown operator: {e}");
+    // hello 에 능력(agentIds)이 없었다 → 409 not_capable.
+    let (s, e) = req(&base, Method::PUT, &apath, Some(&sess), &put(&op1)).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{e}");
+    assert_eq!(e["error"]["code"], "not_capable", "{e}");
+    b.send(Message::Text(
+        json!({ "type": "hello", "capabilities": { "agentIds": [agent] } })
+            .to_string()
+            .into(),
+    ))
+    .await
+    .unwrap();
+    until_frame(&mut b, "assign.synced").await;
+    let (s, row) = req(&base, Method::PUT, &apath, Some(&sess), &put(&op1)).await;
+    assert_eq!(s, StatusCode::OK, "{row}");
+    assert_eq!(row["operatorId"].as_str(), Some(op1.as_str()), "{row}");
+    let (f, _) = until_frame(&mut b, "assign").await;
+    assert_eq!(f["agentId"], json!(agent), "{f}");
+    assert_eq!(f["definition"]["agentId"], json!(agent), "{f}");
+
+    // 재배정: 옛 곳(op1)이 먼저 unassign{drain}, 새 곳(opx)이 assign.
+    let (_, rc) = req(
+        &base,
+        Method::POST,
+        "/operators/register-codes",
+        Some(&sess),
+        "{}",
+    )
+    .await;
+    let (s, cx) = req(
+        &base,
+        Method::POST,
+        "/operators/claim",
+        None,
+        &claim(rc["code"].as_str().unwrap().to_owned(), json!({})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{cx}");
+    let opx = cx["operator"]["id"].as_str().unwrap().to_owned();
+    let mut x = connect(&base, cx["token"].as_str().unwrap()).await;
+    x.send(Message::Text(
+        json!({ "type": "hello", "capabilities": { "agentIds": [agent] } })
+            .to_string()
+            .into(),
+    ))
+    .await
+    .unwrap();
+    let (synced, _) = until_frame(&mut x, "assign.synced").await;
+    assert_eq!(synced["agentIds"], json!([]), "{synced}");
+    let (s, row) = req(&base, Method::PUT, &apath, Some(&sess), &put(&opx)).await;
+    assert_eq!(s, StatusCode::OK, "{row}");
+    assert_eq!(row["operatorId"].as_str(), Some(opx.as_str()), "{row}");
+    let (f, _) = until_frame(&mut b, "unassign").await;
+    assert_eq!(f["agentId"], json!(agent), "{f}");
+    assert_eq!(f["drain"], json!(true), "{f}");
+    let (f, _) = until_frame(&mut x, "assign").await;
+    assert_eq!(f["agentId"], json!(agent), "{f}");
+    let audits: i64 = sqlx::query_scalar(
+        "select count(*) from audit_log where action = 'agent.assigned' and target = $1",
+    )
+    .bind(&agent)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(audits, 2, "agent.assigned audited per PUT");
+
+    // DELETE → 옛 곳에 unassign{drain}, 204. 두 번째는 404.
+    let (s, _) = req(&base, Method::DELETE, &apath, Some(&sess), "").await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let (f, _) = until_frame(&mut x, "unassign").await;
+    assert_eq!(f["drain"], json!(true), "{f}");
+    let left: i64 =
+        sqlx::query_scalar("select count(*) from agent_assignment where agent_id = $1::uuid")
+            .bind(&agent)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(left, 0, "assignment deleted");
+    let (s, e) = req(&base, Method::DELETE, &apath, Some(&sess), "").await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "{e}");
+    // 아래 claim replaces 시험은 op1 에 배정 하나가 있다고 본다 — 되돌려 둔다. opx 는 폐기해 소켓을 닫는다.
+    let (s, row) = req(&base, Method::PUT, &apath, Some(&sess), &put(&op1)).await;
+    assert_eq!(s, StatusCode::OK, "{row}");
+    let (s, _) = req(
+        &base,
+        Method::DELETE,
+        &format!("/operators/{opx}"),
+        Some(&sess),
+        "",
+    )
+    .await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    assert_eq!(close_code(&mut x).await, Some(4401));
+
     // ---- 목록·이름 바꾸기 ----
     let (s, list) = req(&base, Method::GET, "/operators", Some(&sess), "").await;
     assert_eq!(s, StatusCode::OK, "{list}");
@@ -535,6 +651,10 @@ async fn fake_operator_against_real_schema() {
             &human,
         ),
         ("delete from session where account_id = $1::uuid", &human),
+        (
+            "delete from account_grant where account_id = $1::uuid",
+            &human,
+        ),
     ] {
         sqlx::query(sql).bind(id).execute(&pool).await.unwrap();
     }
