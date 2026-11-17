@@ -1563,6 +1563,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // S5.4 AU1 — 인증 가벼운 줄(`core/auth_light.rs::AUTH_LIGHT_PRIVILEGES`). 칸 권한만. 없으면 「auth light core off」 — TS 에 남는다.
         `grant delete on session to ${rw}`,
         `grant update (notice_seen_at) on password_reset_code to ${rw}`,
+        // S5.4 SE1 — 비밀 읽기·지우기(`core/secrets_read.rs::SECRETS_READ_PRIVILEGES`). 판·부여는 cascade. 없으면 「secrets read core off」 — TS 에 남는다.
+        `grant delete on secret to ${rw}`,
+        `grant delete on secret_grant to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -3719,6 +3722,121 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(outs[0], 'Rust 감사 줄 = TS 감사 줄').toEqual(tsRow);
         expect(outs[1]).toEqual({ ...tsRow, actor_id: agent.accountId, actor_handle: 'bot' });
         expect((await db.pool.query('select 1 from session where token_hash = $1', [hashToken(s2)])).rowCount).toBe(0);
+      }
+
+      // S5.4 SE1 — 비밀 읽기·지우기(코어 `secrets_read.rs`). 읽기는 두 서버의 답을 견주고, 지우기는 Rust 로 하고 DB·감사 줄을 TS 줄과 견준다.
+      // 봉한 값(`sealed`)에 표식을 넣어 두고 Rust 답 어디에도 나오지 않는지 본다.
+      {
+        for (const k of ['GET /secrets/{id}', 'DELETE /secrets/{id}', 'GET /secrets/{id}/grants', 'DELETE /secrets/{id}/grants/{grant_id}', 'GET /secrets/{id}/access']) {
+          expect(f.log(), k).toContain(`"${k}"`);
+        }
+        expect(f.log()).not.toContain('secrets read core off');
+        const M = member.token;
+        const mk = async (name: string, owner: string) => (await db.pool.query<{ id: string }>(
+          `insert into secret (name, kind, description, owner_account_id, expires_at) values ($1, 'text', 'd', $2, now() + interval '1 day') returning id`,
+          [name, owner])).rows[0]!.id;
+        const [mine, theirs, gone, gone2] = [
+          await mk('se1-mine', member.accountId), await mk('se1-theirs', admin.accountId),
+          await mk('se1-gone', member.accountId), await mk('se1-gone2', member.accountId),
+        ];
+        await db.pool.query(
+          `insert into secret_version (secret_id, version, sealed, size_bytes, created_by, revoked_at) values
+             ($1, 1, 'v1.k1.SE1SEALED1', 5, $2, now()), ($1, 2, 'v1.k1.SE1SEALED2', 7, $3, null), ($4, 1, 'v1.k1.SE1SEALED3', 3, $2, null)`,
+          [mine, member.accountId, agent.accountId, gone]);
+        const bot2 = (await db.pool.query<{ id: string }>(`insert into account (handle, display_name, kind) values ('se1_bot', 'se1_bot', 'agent') returning id`)).rows[0]!.id;
+        const grant = async (s: string, a: string, suspended: boolean) => (await db.pool.query<{ id: string }>(
+          `insert into secret_grant (secret_id, agent_id, granted_by, suspended_at, suspend_reason)
+             values ($1, $2, $3, case when $4::boolean then now() - interval '1 hour' end, case when $4::boolean then 'agent_changed' end) returning id`,
+          [s, a, member.accountId, suspended])).rows[0]!.id;
+        const [g1, g2, g3, gT] = [await grant(mine, agent.accountId, false), await grant(mine, bot2, true), await grant(gone2, bot2, false), await grant(theirs, bot2, false)];
+        await db.pool.query(
+          `insert into audit_log (action, target, detail, at) values
+             ('secret.grant.suspended', $1, '{"fields":["model","prompt"]}', now() - interval '30 minutes 0.123456 seconds'),
+             ('secret.grant.suspended', $1, '{"fields":["prompt","tools"]}', now() - interval '10 minutes')`, [bot2]);
+        await db.pool.query(
+          `insert into secret_access_log (secret_id, secret_name, version, agent_id, result, reason, actor_account_id, action, client, ip, at) values
+             ($1, 'se1-mine', 2, $2, 'granted', null, null, null, null, null, now() - interval '2 minutes'),
+             ($1, 'se1-mine', 2, null, 'granted', null, $3, 'view', 'desktop', '198.51.100.7', now() - interval '1 minute'),
+             ($1, 'se1-mine', 2, null, 'denied', 'locked', $3, 'copy', 'desktop', '198.51.100.7', now())`,
+          [mine, agent.accountId, member.accountId]);
+        const seen: unknown[] = [];
+        const both = async (path: string, token: string) => {
+          const [x, y] = [await callX(tsUrl, 'GET', path, undefined, token), await callX(rsUrl, 'GET', path, undefined, token)];
+          expect(y.status, path).toBe(x.status);
+          expect(y.json, path).toEqual(x.json);
+          seen.push(y.json);
+          return y.json;
+        };
+        expect((await both(`/secrets/${mine}`, M)).secret).toMatchObject({ name: 'se1-mine', version: 2, sizeBytes: 7, grantCount: 2, valueSetByAgentId: agent.accountId });
+        await both(`/secrets/${mine}`, A);
+        await both(`/secrets/${gone2}`, M);
+        const gs = (await both(`/secrets/${mine}/grants`, M)).grants as { id: string; changedFields: string[] | null; lastChangedAt: string | null }[];
+        expect(gs.map((g) => g.id)).toEqual([g1, g2]);
+        expect(gs[1]).toMatchObject({ changedFields: ['model', 'prompt', 'tools'] });
+        expect(gs[1]!.lastChangedAt).not.toBeNull();
+        expect(gs[0]).toMatchObject({ changedFields: null, lastChangedAt: null });
+        await both(`/secrets/${gone2}/grants`, A);
+        const ax = (await both(`/secrets/${mine}/access`, M)).access as { ip: string | null }[];
+        expect(ax.map((r) => r.ip), '소유자는 IP 를 본다').toEqual(['198.51.100.7', '198.51.100.7', null]);
+        const aa = (await both(`/secrets/${mine}/access`, A)).access as { ip: string | null }[];
+        expect(aa.map((r) => r.ip), 'admin 에게는 IP 를 뺀다').toEqual([null, null, null]);
+        for (const q of ['?limit=1', '?limit=abc', '?limit=0', '?limit=-3', '?limit=9999', '?limit=2&limit=1']) await both(`/secrets/${mine}/access${q}`, M);
+        expect(JSON.stringify(seen), '봉한 값은 답에 없다').not.toContain('SE1SEALED');
+        expect(JSON.stringify(seen)).not.toContain('k1');
+        for (const [name, m, path, token] of [
+          ['보기 에이전트 → 403', 'GET', `/secrets/${mine}`, agent.pat],
+          ['보기 익명 → 401', 'GET', `/secrets/${mine}`, ''],
+          ['보기 id 아님 → 400', 'GET', '/secrets/nope', M],
+          ['보기 남의 것 → 404', 'GET', `/secrets/${theirs}`, M],
+          ['보기 없는 것 → 404', 'GET', `/secrets/${ghost}`, M],
+          ['부여 목록 남의 것 → 404', 'GET', `/secrets/${theirs}/grants`, M],
+          ['부여 목록 에이전트 → 403', 'GET', `/secrets/${mine}/grants`, agent.pat],
+          ['access 남의 것 → 404', 'GET', `/secrets/${theirs}/access`, M],
+          ['access id 아님 → 400', 'GET', '/secrets/nope/access', M],
+          ['지우기 남의 것 → 404', 'DELETE', `/secrets/${theirs}`, M],
+          ['지우기 에이전트 → 403', 'DELETE', `/secrets/${mine}`, agent.pat],
+          ['지우기 익명 → 401', 'DELETE', `/secrets/${mine}`, ''],
+          ['지우기 id 아님 → 400', 'DELETE', '/secrets/nope', M],
+          ['회수 grantId 아님 → 404', 'DELETE', `/secrets/${mine}/grants/nope`, M],
+          ['회수 남의 비밀의 부여 → 404', 'DELETE', `/secrets/${mine}/grants/${gT}`, M],
+          ['회수 남의 비밀 → 404', 'DELETE', `/secrets/${theirs}/grants/${gT}`, M],
+          ['회수 없는 부여 → 404', 'DELETE', `/secrets/${mine}/grants/${ghost}`, M],
+          ['회수 에이전트 → 403', 'DELETE', `/secrets/${mine}/grants/${g1}`, agent.pat],
+        ] as const) {
+          const [x, y] = [await callX(tsUrl, m, path, undefined, token), await callX(rsUrl, m, path, undefined, token)];
+          expect({ status: y.status, code: y.code }, name).toEqual({ status: x.status, code: x.code });
+        }
+        const count = async (q: string, p: unknown[]) => (await db.pool.query<{ n: number }>(q, p)).rows[0]!.n;
+        expect(await count('select count(*)::int as n from secret where id = any($1)', [[mine, theirs, gone, gone2]]), '거절은 아무것도 지우지 않았다').toBe(4);
+        expect(await count('select count(*)::int as n from secret_grant where id = any($1)', [[g1, g2, g3, gT]])).toBe(4);
+        // 회수 — Rust 로 g2, TS 로 g3. 감사 줄은 같은 꼴, 남의 부여(gT)·다른 부여(g1)는 그대로.
+        const auditFrom = Number((await db.pool.query<{ n: string }>('select coalesce(max(id), 0)::text as n from audit_log')).rows[0]!.n);
+        expect((await callX(rsUrl, 'DELETE', `/secrets/${mine}/grants/${g2}`, undefined, M)).status).toBe(204);
+        expect((await callX(rsUrl, 'DELETE', `/secrets/${mine}/grants/${g2}`, undefined, M)).status, '두 번째는 404').toBe(404);
+        expect((await callX(tsUrl, 'DELETE', `/secrets/${gone2}/grants/${g3}`, undefined, A)).status).toBe(204);
+        expect((await db.pool.query<{ id: string }>('select id from secret_grant where id = any($1) order by id', [[g1, g2, g3, gT]])).rows.map((r) => r.id).sort())
+          .toEqual([g1, gT].sort());
+        // 지우기 — Rust 로 gone, TS 로 gone2. 판·부여는 cascade, access log 는 남는다.
+        await db.pool.query(`insert into secret_access_log (secret_id, secret_name, result) values ($1, 'se1-gone', 'granted')`, [gone]);
+        expect((await callX(rsUrl, 'DELETE', `/secrets/${gone}`, undefined, M)).status).toBe(204);
+        expect((await callX(rsUrl, 'DELETE', `/secrets/${gone}`, undefined, M)).status, '두 번째는 404').toBe(404);
+        expect((await callX(tsUrl, 'DELETE', `/secrets/${gone2}`, undefined, M)).status).toBe(204);
+        expect(await count('select count(*)::int as n from secret where id = any($1)', [[mine, theirs, gone, gone2]])).toBe(2);
+        expect(await count('select count(*)::int as n from secret_version where secret_id = $1', [gone]), '판은 cascade').toBe(0);
+        expect(await count('select count(*)::int as n from secret_access_log where secret_id = $1', [gone]), 'access log 는 남는다').toBe(1);
+        const outs = (await db.pool.query<{ action: string; actor_id: string; actor_handle: string; target: string; ip: string | null; detail: Record<string, unknown> }>(
+          `select action, actor_id::text, actor_handle, target, ip, detail from audit_log where id > $1 and action like 'secret.%' order by id`, [auditFrom])).rows;
+        expect(outs.map((o) => o.action)).toEqual(['secret.grant.revoked', 'secret.grant.revoked', 'secret.deleted', 'secret.deleted']);
+        const [rRev, tRev, rDel, tDel] = outs as [typeof outs[0], typeof outs[0], typeof outs[0], typeof outs[0]];
+        expect(rRev, 'Rust 회수 줄 = TS 꼴').toEqual({ ...tRev, actor_id: member.accountId, actor_handle: rRev.actor_handle, target: mine,
+          detail: { name: 'se1-mine', grantId: g2, agentId: bot2, channelId: null } });
+        expect(tRev).toMatchObject({ actor_id: admin.accountId, ip: XFF, detail: { name: 'se1-gone2', grantId: g3, agentId: bot2, channelId: null } });
+        expect(rDel, 'Rust 지우기 줄 = TS 줄').toEqual({ ...tDel, target: gone, detail: { name: 'se1-gone' } });
+        expect(tDel).toMatchObject({ actor_id: member.accountId, ip: XFF, target: gone2 });
+        // 뒤 블록을 위해 되돌린다(audit_log 는 append-only 라 그대로 둔다).
+        await db.pool.query('delete from secret where id = any($1)', [[mine, theirs]]);
+        await db.pool.query(`delete from secret_access_log where secret_name like 'se1-%'`);
+        await db.pool.query('delete from account where id = $1', [bot2]);
       }
 
       // S5.2 P4d — 옮긴 라우트를 지난 요청도 세션을 늘리고 PAT 사용 시각을 남긴다(쓰기 풀로). 읽기 역할로 하면 조용히 실패하던 것.
