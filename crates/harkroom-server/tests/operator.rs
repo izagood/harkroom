@@ -677,6 +677,23 @@ async fn fake_operator_against_real_schema() {
     // ---- 머지 계정 줄 GET·PUT /agents/{id}/merge-accounts(/lines) (TS mergeAccountRoutes) — 배정은 op1 ----
     let mpath = format!("/agents/{agent}/merge-accounts");
     let lpath = format!("/agents/{agent}/merge-accounts/lines");
+    // 계정 없이 오면 TS requireAccount 처럼 401 — uuid 가 아니어도, 몸이 비어도 400·404 보다 먼저다.
+    for (m, p) in [
+        (Method::GET, mpath.clone()),
+        (Method::PUT, lpath.clone()),
+        (Method::GET, "/agents/not-a-uuid/merge-accounts".to_owned()),
+        (
+            Method::PUT,
+            "/agents/not-a-uuid/merge-accounts/lines".to_owned(),
+        ),
+    ] {
+        let (s, e) = req(&base, m.clone(), &p, None, "").await;
+        assert_eq!(
+            (s, e["error"]["code"].clone()),
+            (StatusCode::UNAUTHORIZED, json!("unauthorized")),
+            "{m} {p}"
+        );
+    }
     // 소유자가 아니면 그런 에이전트가 있는지도 말하지 않는다.
     let (s, _) = req(&base, Method::GET, &mpath, Some(&sess), "").await;
     assert_eq!(s, StatusCode::NOT_FOUND);
@@ -705,6 +722,12 @@ async fn fake_operator_against_real_schema() {
         async move { req(&base, Method::PUT, &lpath, Some(&sess), &body.to_string()).await }
     };
     let (s, e) = put(json!({ "scope": "nope", "ghUser": "alice" })).await;
+    assert_eq!(
+        (s, e["error"]["code"].clone()),
+        (StatusCode::BAD_REQUEST, json!("bad_scope"))
+    );
+    // 유니코드 소문자화로 ASCII 가 되는 글자(켈빈 기호 U+212A)는 범위로 받지 않는다.
+    let (s, e) = put(json!({ "scope": "Org/\u{212A}epo", "ghUser": "alice" })).await;
     assert_eq!(
         (s, e["error"]["code"].clone()),
         (StatusCode::BAD_REQUEST, json!("bad_scope"))
