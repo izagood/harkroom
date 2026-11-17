@@ -133,6 +133,7 @@ async fn set_status(write: &PgPool, me: &Account, b: &StatusBody) -> sqlx::Resul
 
 /// TS `requireOwnerOrAdmin('id')` 다음 `z.string().uuid()` 다음 `isAgentTarget`(지운 에이전트 포함).
 /// Ok(()) 면 지나간다. 순서가 TS 와 같아야 거절 갈래가 같다.
+#[allow(clippy::result_large_err)]
 async fn gate(read: &PgPool, me: &Account, id: &str) -> Result<(), Response> {
     match check_owner_or_admin(read, me, id).await {
         Ok(Verdict::Owner | Verdict::Admin) => {}
