@@ -43,6 +43,7 @@ use super::msg_edit::{
 };
 use super::msg_list::read_list_row;
 use super::msg_read::{is_uuid, message_by_id};
+use super::turn_settle;
 use super::wake_preempt;
 use crate::auth::{RequireAccount, Via};
 use crate::directory::{internal, json_err};
@@ -94,6 +95,12 @@ pub const MESSAGE_POST_PRIVILEGES: &[(&str, &str)] = &[
 pub const MCP_POST_EXTRA_PRIVILEGES: &[(&str, &str)] = &[
     ("message.principal_account_id", "UPDATE"),
     ("message.principal_cause_reasons", "UPDATE"),
+    // C3b-2c-2 결과 글(fail·report)이 담당 의무를 닫고 위임자를 깨운다(`closeDelegationsForReply` 닫기 갈래 · `notifyIfSettled`).
+    // 없으면 MCP 글·실패가 통째로 TS 에 남는다(fail-closed). 미결 meta·inbox·예약 접기 칸은 위 묶음에 이미 있다.
+    ("team_delegation_item.outcome", "UPDATE"),
+    ("team_delegation_item.closed_by_message_id", "UPDATE"),
+    ("team_delegation_item.closed_at", "UPDATE"),
+    ("team_delegation.notified_at", "UPDATE"),
 ];
 pub const MESSAGE_POST_SEQUENCE_PRIVILEGES: &[(&str, &str)] = &[("event_outbox_id_seq", "USAGE")];
 
@@ -136,6 +143,9 @@ struct Sql {
     root_author: String,
     deleg_touch: String,
     deleg_pending: String,
+    close_open: String,
+    close_item_v0: String,
+    close_item_v2: String,
     depth_scan: String,
     recent_bodies: String,
     own_links: String,
@@ -161,8 +171,8 @@ const TS_THREAD_SQL: &str = "select (not $4::bool and exists(select 1 from team_
                 and meta->'ask'->>'answeredWith' is null and meta->'ask'->>'closedAt' is null))";
 
 /// 결과를 닫는 글([`Origin::closes_delegation`])이 TS `closeDelegationsForReply` 의 닫기 갈래에 닿는가 — 작성자가 담당인 안 닫힌
-/// 항목(`outcome is null`)이 이 스레드에 있다. 스위치(v0·v1)와 무관하게 두 갈래 모두 그 항목을 닫으므로 넓게 TS 로 넘긴다.
-/// 없으면 TS 도 기한 밀기(안 닫힌 항목만 — 닿지 않음)·대기 중 update(보고된 항목)만 해서 보통 글과 같다.
+/// 항목(`outcome is null`)이 이 스레드에 있다. C3b-2c-2 부터 스위치(v0·v1)를 알면 Rust 가 같은 tx 로 닫는다. **스위치를 모르면**
+/// 어느 갈래로 닫을지 정할 수 없으므로 넓게 TS 로 넘긴다(fail-closed).
 const CLOSES_DELEGATION_SQL: &str = "select exists(select 1 from team_delegation_item i join team_delegation d on d.id = i.delegation_id \
                 where d.thread_root_id = $1::uuid and i.delegate_account_id = $2::uuid and i.outcome is null)";
 
@@ -228,6 +238,9 @@ fn sql() -> &'static Sql {
             root_of: frag("post_thread_root_of"),
             deleg_touch: frag("delegation_touch_deadline"),
             deleg_pending: frag("delegation_v2_update_pending"),
+            close_open: frag("close_reply_open"),
+            close_item_v0: frag("close_reply_item_v0"),
+            close_item_v2: frag("close_reply_item_v2"),
             // 시각은 TS 가 `Date` 로 읽는 것과 같게 밀리초로 자른다(백스톱 나이 판정과 `chain_started_at` 옮겨 적기가 같은 값을 쓴다).
             depth_scan: format!(
                 "select s.body, s.author_is_agent, s.woke, s.depth::int, s.stall::int, \
@@ -745,7 +758,7 @@ pub(crate) async fn post_tx(
             return Ok((Outcome::ToTs, None));
         }
     }
-    if let (true, Some(r)) = (origin.closes_delegation && is_result, root) {
+    if let (true, Some(r)) = (origin.closes_delegation && is_result && v2.is_none(), root) {
         let closes: bool = sqlx::query_scalar(CLOSES_DELEGATION_SQL)
             .bind(r)
             .bind(author)
@@ -973,14 +986,59 @@ pub(crate) async fn post_tx(
     // TS `closeDelegationsForReply`(선점 뒤, 같은 tx) — 사람 글은 결과(`report`·`fail`)가 아니라 닫지 않고 깨우지 않는다:
     // 기한만 밀고, v1 이면 「대기 중 update」로 적는다(턴 끝에 TS 스위퍼가 넘긴 쪽에 보낸다). 스위치를 모르면 위 가드가 이미 TS 로 넘겼다.
     // 서버 알림 줄은 위임 의무를 닫지도 밀지도 않는다(TS `!input.serverNotice`).
+    //
+    // C3b-2c-2: 결과 글(`meta.kind` 가 `failure`·`report` — [`Origin::closes_delegation`])은 작성자가 담당인 안 닫힌 항목을 닫고,
+    // 위임의 미결이 0 이 되면 위임자를 **한 번만** 깨운다(TS `notifyIfSettled` = [`turn_settle::notify_if_settled`]). 같은 tx 다.
+    // v0(`!on`): 결과 글은 기한을 밀지 않는다 · 결말 `failed`/`done`. v1(`on`): 기한을 먼저 밀고 · 결말 `failed`/`reported` ·
+    // 닫은 항목이 하나라도 있었으면 대기 중 update 를 적지 않는다.
+    let mut deleg = wake_preempt::Preempted::default();
+    let mut deleg_woke: Vec<String> = Vec::new();
     if let (false, Some(r), Some(on)) = (origin.server_notice, root, v2) {
-        sqlx::query(s.deleg_touch.as_str())
-            .bind(author)
-            .bind(r)
-            .bind(DELEGATION_SILENCE_SEC)
-            .execute(&mut *tx)
-            .await?;
-        if on {
+        let closing = origin.closes_delegation && is_result;
+        if on || !closing {
+            sqlx::query(s.deleg_touch.as_str())
+                .bind(author)
+                .bind(r)
+                .bind(DELEGATION_SILENCE_SEC)
+                .execute(&mut *tx)
+                .await?;
+        }
+        let mut had_open = false;
+        if closing {
+            let failure = origin.meta.get("kind").and_then(Value::as_str) == Some("failure");
+            let item = if on {
+                &s.close_item_v2
+            } else {
+                &s.close_item_v0
+            };
+            let outcome = match (failure, on) {
+                (true, _) => "failed",
+                (false, true) => "reported",
+                (false, false) => "done",
+            };
+            let open: Vec<String> = sqlx::query_scalar(s.close_open.as_str())
+                .bind(author)
+                .bind(r)
+                .fetch_all(&mut *tx)
+                .await?;
+            had_open = !open.is_empty();
+            for d in open {
+                let closed = sqlx::query(item.as_str())
+                    .bind(&d)
+                    .bind(author)
+                    .bind(outcome)
+                    .bind(&id)
+                    .execute(&mut *tx)
+                    .await?;
+                if closed.rows_affected() == 0 {
+                    continue;
+                }
+                if let Some(lead) = turn_settle::notify_if_settled(&mut tx, &d, &mut deleg).await? {
+                    deleg_woke.push(lead);
+                }
+            }
+        }
+        if on && !had_open {
             sqlx::query(s.deleg_pending.as_str())
                 .bind(author)
                 .bind(r)
@@ -992,6 +1050,20 @@ pub(crate) async fn post_tx(
     let notified = notified_in_order(&mut tx, &id, &notified_set).await?;
     // TS 는 선점 신호를 `postMessage` 안(커밋 뒤)에서, `message.created` 는 라우트가 그 뒤에 낸다 — 같은 순서로 outbox 에.
     wake_preempt::announce(&mut tx, &preempted).await?;
+    // TS 는 이어서 위임이 접은 예약의 보고처·대기 줄을 알리고, 결말이 난 위임자에게 `inbox.updated` 를 낸다(`wokeByDelegation`).
+    wake_preempt::announce(
+        &mut tx,
+        &wake_preempt::Preempted {
+            woke: Vec::new(),
+            report: std::mem::take(&mut deleg.report),
+            rows: std::mem::take(&mut deleg.rows),
+        },
+    )
+    .await?;
+    for a in &deleg_woke {
+        crate::write::emit_event(&mut tx, &json!({ "type": "inbox.updated", "accountId": a }))
+            .await?;
+    }
     // 내보내는 행은 위임 키 앞에서 읽은 것 그대로다(TS 와 같다 — 행 칸에 위임 키는 없다).
     let row_value: Value = serde_json::from_str(&row).map_err(|e| sqlx::Error::Decode(e.into()))?;
     crate::write::emit_event(

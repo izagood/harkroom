@@ -1496,7 +1496,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant update (canceled_at, canceled_by_message_id) on agent_wake to ${rw}`,
         // S5.3 C1c-3d — 담당 사람 글의 위임 활동(기한 밀기·v1 대기 중 update).
         `grant update (deadline_at) on team_delegation to ${rw}`,
-        `grant update (last_activity_at, update_pending_message_id, update_pending_at) on team_delegation_item to ${rw}`,
+        `grant update (last_activity_at, update_pending_message_id, update_pending_at, closed_by_message_id) on team_delegation_item to ${rw}`,
         // S5.3 C1c-4a — 에이전트 글의 회신권 열기(insert … on conflict do update)·닫기.
         `grant insert on invoke_reply_grant to ${rw}`,
         `grant update (opened_at, expires_at, closed_at) on invoke_reply_grant to ${rw}`,
@@ -6498,9 +6498,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(row('fail code → TS')).toMatchObject({ kind: 'failure', failure: { retryable: true } });
         // C3b-2c-1 — 위임 스위치를 아는 앞단(v1)에서 담당(BOT3)의 실패. 안 닫힌 항목이 있으면 TS 가 `failed` 로 닫고 위임자를 깨운다
         // (Rust 에 아직 없는 갈래 → `closes_delegation` 가드가 TS 로 넘긴다). 보고된 항목뿐이면 Rust 가 맡고 「대기 중 update」만 적는다.
-        {
+        // C3b-2c-2 — 같은 장면을 v1(`'1'`)·v0(`'0'`) 앞단 둘 다에서 돌린다.
+        for (const V2 of ['1', '0'] as const) {
           const prev = process.env.HARKROOM_DELEGATION_V2;
-          process.env.HARKROOM_DELEGATION_V2 = '1';
+          process.env.HARKROOM_DELEGATION_V2 = V2;
           let child: ChildProcess | undefined;
           try {
             let fd: Awaited<ReturnType<typeof startFront>> | undefined;
@@ -6510,7 +6511,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
               try {
                 fd = await startFront(bin, {
                   UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(port), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
-                  TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust', HARKROOM_DELEGATION_V2: '1', HARKROOM_DELEGATION_IMPLICIT: 'off',
+                  TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust', HARKROOM_DELEGATION_V2: V2, HARKROOM_DELEGATION_IMPLICIT: 'off',
                 });
               } catch (err) {
                 if (attempt >= 2 || !String(err).includes('AddrInUse')) throw err;
@@ -6521,8 +6522,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             while (!fd.log().includes('front: rust core routes') && Date.now() < untilD) await new Promise((res) => setTimeout(res, 100));
             const v2Url = `http://127.0.0.1:${port}`;
             const DELEG: [string, string | null, boolean][] = [
-              ['fail 담당(안 닫힌 항목) → TS 가 failed 로 닫음', null, false],
+              // C3b-2c-2 부터 안 닫힌 항목도 Rust 가 같은 tx 로 닫고 위임자를 깨운다.
+              ['fail 담당(안 닫힌 항목) → failed 로 닫고 위임자 깨움', null, true],
               ['fail 담당(보고된 항목) → Rust · 대기 중 update', 'reported', true],
+              ['fail 담당(안 닫힌 항목 · 다른 담당 남음) → 닫되 깨우지 않음', 'other', true],
             ];
             const runD = async (base: string) => {
               const out: unknown[] = [];
@@ -6532,14 +6535,21 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 const d = (await db.pool.query<{ id: string }>(
                   `insert into team_delegation (message_id, lead_account_id, channel_id, thread_root_id, deadline_at)
                    values ($1, $2, $3, $1, now() + interval '10 minutes') returning id::text as id`, [root, member.accountId, ch])).rows[0]!.id;
-                await db.pool.query(`insert into team_delegation_item (delegation_id, delegate_account_id, outcome) values ($1, $2, $3)`, [d, bot3.accountId, outcome]);
+                await db.pool.query(`insert into team_delegation_item (delegation_id, delegate_account_id, outcome) values ($1, $2, $3)`, [d, bot3.accountId, outcome === 'other' ? null : outcome]);
+                if (outcome === 'other') await db.pool.query(`insert into team_delegation_item (delegation_id, delegate_account_id) values ($1, $2)`, [d, member2.accountId]);
                 const r = await mcpCall(base, viaPat.token, 'message.fail', { channelId: ch, threadRootId: root, body: '못 했다', retryable: true }, 7, {});
                 const body = sse(r.text) as { message?: { id?: string } } | null;
                 const item = (await db.pool.query(
                   `select i.outcome, i.closed_by_message_id is not distinct from $2::uuid as closed_by_me,
-                          i.update_pending_message_id is not distinct from $2::uuid as pending_me, d.notified_at is not null as notified
-                     from team_delegation_item i join team_delegation d on d.id = i.delegation_id where i.delegation_id = $1`, [d, body?.message?.id ?? null])).rows;
-                out.push({ name, status: r.status, rust: base === tsUrl ? rust : r.core === 'mcp', body: shape(body), row: await facts(body?.message?.id, undefined), item });
+                          i.update_pending_message_id is not distinct from $2::uuid as pending_me, d.notified_at is not null as notified,
+                          -- 같은 tx 단언: 닫은 시각 = 글 시각(둘 다 그 tx 의 now()). 닫기를 커밋 뒤 다른 tx 로 옮기면 어긋난다.
+                          (select m.created_at = i.closed_at from message m where m.id = $2::uuid) as same_tx
+                     from team_delegation_item i join team_delegation d on d.id = i.delegation_id where i.delegation_id = $1
+                    order by i.delegate_account_id = $3::uuid desc`, [d, body?.message?.id ?? null, bot3.accountId])).rows;
+                // 위임자 깨움(`delegation_done`)은 위임 글을 가리키는 한 줄 · 미결 meta 는 남은 담당.
+                const lead = (await db.pool.query(
+                  `select count(*)::int as n from inbox where account_id = $1 and message_id = $2 and reason = 'delegation_done'`, [member.accountId, root])).rows[0];
+                out.push({ name, status: r.status, rust: base === tsUrl ? rust : r.core === 'mcp', body: shape(body), row: await facts(body?.message?.id, undefined), item, lead });
               }
               return out;
             };
@@ -6548,8 +6558,18 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             expect(rsD).toEqual(tsD);
             type DI = { name: string; item: Record<string, unknown>[] };
             const itemOf = (n: string) => (tsD as DI[]).find((x) => x.name === n)!.item;
-            expect(itemOf('fail 담당(안 닫힌 항목) → TS 가 failed 로 닫음')).toEqual([{ outcome: 'failed', closed_by_me: true, pending_me: false, notified: true }]);
-            expect(itemOf('fail 담당(보고된 항목) → Rust · 대기 중 update')).toEqual([{ outcome: 'reported', closed_by_me: false, pending_me: true, notified: false }]);
+            const v1 = V2 === '1';
+            expect(itemOf('fail 담당(안 닫힌 항목) → failed 로 닫고 위임자 깨움')).toEqual([{ outcome: 'failed', closed_by_me: true, pending_me: false, notified: true, same_tx: true }]);
+            expect(itemOf('fail 담당(안 닫힌 항목 · 다른 담당 남음) → 닫되 깨우지 않음')).toEqual([
+              { outcome: 'failed', closed_by_me: true, pending_me: false, notified: false, same_tx: true },
+              { outcome: null, closed_by_me: false, pending_me: false, notified: false, same_tx: null },
+            ]);
+            type DL = { name: string; lead: { n: number } };
+            const leadOf = (n: string) => (tsD as DL[]).find((x) => x.name === n)!.lead.n;
+            expect(leadOf('fail 담당(안 닫힌 항목) → failed 로 닫고 위임자 깨움')).toBe(1);
+            expect(leadOf('fail 담당(안 닫힌 항목 · 다른 담당 남음) → 닫되 깨우지 않음')).toBe(0);
+            // v1 은 보고된 항목에 「대기 중 update」를 적고, v0 은 결과 글이 보고된 항목에 손대지 않는다.
+            expect(itemOf('fail 담당(보고된 항목) → Rust · 대기 중 update')).toEqual([{ outcome: 'reported', closed_by_me: false, pending_me: v1, notified: false, same_tx: null }]);
           } finally {
             child?.kill('SIGTERM');
             if (prev === undefined) delete process.env.HARKROOM_DELEGATION_V2; else process.env.HARKROOM_DELEGATION_V2 = prev;

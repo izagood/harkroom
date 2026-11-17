@@ -352,14 +352,7 @@ export async function closeDelegationsForReply(
   }
 
   const open = await client.query<{ delegation_id: string }>(
-    `select i.delegation_id
-       from team_delegation_item i
-       join team_delegation d on d.id = i.delegation_id
-      where i.delegate_account_id = $1
-        and i.outcome is null
-        and d.thread_root_id = $2
-      order by d.created_at
-      for update of d`,
+    CLOSE_REPLY_OPEN_SQL,
     [args.authorId, args.threadRootId],
   );
   if (!open.rowCount) return [];
@@ -367,9 +360,7 @@ export async function closeDelegationsForReply(
   const woke: string[] = [];
   for (const row of open.rows) {
     const closed = await client.query(
-      `update team_delegation_item
-          set outcome = $3, closed_by_message_id = $4, closed_at = now()
-        where delegation_id = $1 and delegate_account_id = $2 and outcome is null`,
+      CLOSE_REPLY_ITEM_V0_SQL,
       [row.delegation_id, args.authorId, args.isFailure ? 'failed' : 'done', args.messageId],
     );
     if (!closed.rowCount) continue;
@@ -931,20 +922,12 @@ async function closeDelegationsForReplyV2(
   const woke: string[] = [];
   if (countsAsReply(args.kind) && (args.isReport || args.isFailure)) {
     const open = await client.query<{ delegation_id: string }>(
-      `select i.delegation_id
-         from team_delegation_item i
-         join team_delegation d on d.id = i.delegation_id
-        where i.delegate_account_id = $1 and i.outcome is null and d.thread_root_id = $2
-        order by d.created_at
-        for update of d`,
+      CLOSE_REPLY_OPEN_SQL,
       [args.authorId, args.threadRootId],
     );
     for (const row of open.rows) {
       const closed = await client.query(
-        `update team_delegation_item
-            set outcome = $3, closed_by_message_id = $4, closed_at = now(), last_activity_at = now(),
-                update_pending_message_id = null, update_pending_at = null
-          where delegation_id = $1 and delegate_account_id = $2 and outcome is null`,
+        CLOSE_REPLY_ITEM_V2_SQL,
         [row.delegation_id, args.authorId, args.isFailure ? 'failed' : 'reported', args.messageId],
       );
       if (!closed.rowCount) continue;
@@ -957,6 +940,26 @@ async function closeDelegationsForReplyV2(
   await client.query(DELEGATION_V2_UPDATE_PENDING_SQL, [args.authorId, args.threadRootId, args.messageId]);
   return woke;
 }
+
+/**
+ * 결과 글(report·fail)이 담당 의무를 닫는 문장들(v0·v1) — Rust 앞단(`core/msg_post.rs`, S5.3 C3b-2c-2)이 골든으로 받는다.
+ * 자리표에 형을 붙이고 id 를 `::text` 로 돌려준 것 말고는 옮기기 전 문장 그대로다. $1 작성자 · $2 머리.
+ */
+export const CLOSE_REPLY_OPEN_SQL = `select i.delegation_id::text as delegation_id
+       from team_delegation_item i
+       join team_delegation d on d.id = i.delegation_id
+      where i.delegate_account_id = $1::uuid and i.outcome is null and d.thread_root_id = $2::uuid
+      order by d.created_at
+      for update of d`;
+/** v0 닫기 — $1 위임 · $2 작성자 · $3 결말(`failed`·`done`) · $4 이 글. */
+export const CLOSE_REPLY_ITEM_V0_SQL = `update team_delegation_item
+          set outcome = $3::text, closed_by_message_id = $4::uuid, closed_at = now()
+        where delegation_id = $1::uuid and delegate_account_id = $2::uuid and outcome is null`;
+/** v1 닫기 — $1 위임 · $2 작성자 · $3 결말(`failed`·`reported`) · $4 이 글. */
+export const CLOSE_REPLY_ITEM_V2_SQL = `update team_delegation_item
+            set outcome = $3::text, closed_by_message_id = $4::uuid, closed_at = now(), last_activity_at = now(),
+                update_pending_message_id = null, update_pending_at = null
+          where delegation_id = $1::uuid and delegate_account_id = $2::uuid and outcome is null`;
 
 /** v1 의 「대기 중 update」 적기 — $1 작성자 · $2 머리 · $3 이 글. Rust 사람 글(`core/msg_post.rs`)이 골든으로 받는다. */
 export const DELEGATION_V2_UPDATE_PENDING_SQL = `update team_delegation_item i
