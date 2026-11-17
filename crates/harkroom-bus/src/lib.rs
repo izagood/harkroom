@@ -14,6 +14,12 @@ use sqlx::{PgConnection, Postgres, Transaction};
 /// 받는 쪽이 LISTEN 하는 채널 이름(`eventBus.ts::EVENT_OUTBOX_CHANNEL` 과 같아야 한다).
 pub const EVENT_OUTBOX_CHANNEL: &str = "harkroom_event_outbox";
 
+/// TS 서버가 **자기가 낸** 이벤트를 알리는 채널(C6-α, `eventBus.ts::EVENT_OUTBOX_TS_CHANNEL` 과 같아야 한다).
+///
+/// 출처는 채널 이름으로 가른다 — Rust 리스너는 두 채널을 다 듣고, TS 리스너는 [`EVENT_OUTBOX_CHANNEL`] 만 듣는다. 그래서 TS 가 낸
+/// 이벤트가 TS 로 되돌아와 두 번 나가지 않는다. 채널은 서버 코드가 고르는 상수뿐이라 클라이언트 입력으로 출처를 바꿀 자리가 없다.
+pub const EVENT_OUTBOX_TS_CHANNEL: &str = "harkroom_event_outbox_ts";
+
 /// 이벤트 하나를 호출자의 트랜잭션 안에서 outbox 에 넣고 알린다. 돌려주는 값은 outbox 줄의 id 다.
 ///
 /// 호출자가 커밋해야 받는 쪽에 닿는다 — 이벤트를 일으킨 쓰기와 같은 트랜잭션에 묶으면

@@ -9,7 +9,7 @@ import { resolveProjectionUrl } from '@harkroom/shared';
 import { Lifecycle } from './lifecycle.js';
 import { seedClaimToken } from './services/claimToken.js';
 import pg from 'pg';
-import { startEventBus } from './eventBus.js';
+import { startEventBus, startEventPublisher } from './eventBus.js';
 
 const config = loadConfig();
 // 가드 없는 Pool 을 만들지 않는다 — pg 는 유휴 클라이언트 에러를 리스너 없으면 uncaught
@@ -68,6 +68,9 @@ await app.listen({ port: config.port, host: '0.0.0.0' });
 const eventBus = config.eventBus
   ? await startEventBus({ pool, connect: async () => { const c = new pg.Client({ connectionString: config.databaseUrl }); await c.connect(); return c; } })
   : null;
+// TS → Rust 발행(C6-α) — 이 프로세스가 낸 이벤트를 outbox 로(`harkroom_event_outbox_ts`). 기본 꺼짐, `EVENT_BUS` 와 따로 켠다.
+// **`HARKROOM_CORE=rust` 인 동안 끄지 않는다** — 앱 소켓이 Rust 에 붙어 있어 TS 쓰기의 이벤트가 앱에 닿지 않게 된다.
+const eventPublisher = config.eventBusPublish ? startEventPublisher({ pool }) : null;
 console.log(
   `harkroom server on :${config.port} `
   + `(avcs: ${boot.url ?? 'disabled'}${boot.source ? ` via ${boot.source}` : ''})`,
@@ -81,6 +84,7 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
     await lifecycle.beginDrain();
     await supervisor.stop();
     await eventBus?.stop();
+    await eventPublisher?.stop();
     await app.close();
     await pool.end();
     process.exit(0);

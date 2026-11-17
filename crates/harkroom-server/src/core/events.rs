@@ -8,10 +8,38 @@
 use serde_json::Value;
 use sqlx::PgPool;
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use tokio::sync::broadcast;
 
 pub const EVENT_OUTBOX_CHANNEL: &str = harkroom_bus::EVENT_OUTBOX_CHANNEL;
+/// TS 가 낸 이벤트의 채널(C6-α). Rust 리스너만 듣는다 — 출처 구분은 채널 이름뿐이다(`harkroom_bus::EVENT_OUTBOX_TS_CHANNEL`).
+pub const EVENT_OUTBOX_TS_CHANNEL: &str = harkroom_bus::EVENT_OUTBOX_TS_CHANNEL;
+/// Rust 리스너가 듣는 채널 — 자기(Rust 쓰기)와 TS 발행 둘 다. 한 세션의 알림은 채널이 달라도 커밋 순서대로 온다(PG 보장).
+pub const LISTEN_CHANNELS: [&str; 2] = [EVENT_OUTBOX_CHANNEL, EVENT_OUTBOX_TS_CHANNEL];
+
+/// 리스너 계측(TS `EventBusStats` 의 짝) — 받은 수·버린 수·마지막 지연(ms, `created_at` → 다시 읽은 시각, 같은 DB 시계).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ListenerStats {
+    pub received: u64,
+    pub dropped: u64,
+    /// 아직 받은 것이 없으면 `None`.
+    pub last_lag_ms: Option<i64>,
+}
+
+static RECEIVED: AtomicU64 = AtomicU64::new(0);
+static DROPPED: AtomicU64 = AtomicU64::new(0);
+static LAST_LAG_MS: AtomicI64 = AtomicI64::new(-1);
+
+/// 이 프로세스 outbox 리스너의 지금 계측.
+pub fn listener_stats() -> ListenerStats {
+    let lag = LAST_LAG_MS.load(Ordering::Relaxed);
+    ListenerStats {
+        received: RECEIVED.load(Ordering::Relaxed),
+        dropped: DROPPED.load(Ordering::Relaxed),
+        last_lag_ms: (lag >= 0).then_some(lag),
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Rule {
@@ -134,7 +162,9 @@ impl Hub {
     }
 }
 
-/// outbox 공급 — `LISTEN harkroom_event_outbox` → id 로 다시 읽어 모양을 보고 허브로. 끊기면 다시 붙는다.
+/// outbox 공급 — `LISTEN harkroom_event_outbox` + `harkroom_event_outbox_ts`(C6-α, TS 발행) → id 로 다시 읽어 모양을 보고 허브로.
+/// 끊기면 다시 붙는다. 두 채널의 알림을 **온 순서대로 하나씩** 다시 읽는다 — 한 세션이 받는 알림 순서는 채널과 상관없이 커밋 순서다.
+/// TS 가 낸 줄도 Rust 가 낸 줄과 같은 검사(`to_workspace_event`)와 같은 받는 사람 판정(`visible_to`, 쓰는 쪽이 계산한 audience 그대로)을 지난다.
 ///
 /// 듣는 연결은 **풀 밖의 전용 연결**이다(`listen_url` 로 따로 연다). 읽기 풀에서 빌리면 그 하나를 늘 쥐어, 작은 풀(앞단 읽기 풀)에서는
 /// 요청이 쓸 연결이 줄고 「연결을 쥔 채 같은 풀에 또 묻는」 길 하나로 요청이 시한까지 매달린다(C3a-2b 에서 드러남). 다시 읽기는 `pool` 로 한다.
@@ -152,11 +182,11 @@ pub fn spawn_outbox_listener(pool: PgPool, listen_url: String, hub: Hub) {
                     continue;
                 }
             };
-            if listener.listen(EVENT_OUTBOX_CHANNEL).await.is_err() {
+            if listener.listen_all(LISTEN_CHANNELS).await.is_err() {
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                 continue;
             }
-            eprintln!("core: listening on {EVENT_OUTBOX_CHANNEL}");
+            eprintln!("core: listening on {EVENT_OUTBOX_CHANNEL} + {EVENT_OUTBOX_TS_CHANNEL}");
             loop {
                 let n = match listener.recv().await {
                     Ok(n) => n,
@@ -169,20 +199,31 @@ pub fn spawn_outbox_listener(pool: PgPool, listen_url: String, hub: Hub) {
                     || id.starts_with('0')
                     || !id.bytes().all(|b| b.is_ascii_digit())
                 {
+                    DROPPED.fetch_add(1, Ordering::Relaxed);
                     continue;
                 }
-                let row: Option<String> = sqlx::query_scalar(
-                    "select event::text from event_outbox where id = $1::bigint",
+                let row: Option<(String, f64)> = sqlx::query_as(
+                    "select event::text, (extract(epoch from (clock_timestamp() - created_at)) * 1000)::float8 \
+                     from event_outbox where id = $1::bigint",
                 )
                 .bind(id)
                 .fetch_optional(&pool)
                 .await
                 .ok()
                 .flatten();
-                if let Some(v) = row.and_then(|t| serde_json::from_str::<Value>(&t).ok())
-                    && to_workspace_event(&v)
-                {
-                    hub.emit(v);
+                let Some((text, lag)) = row else {
+                    DROPPED.fetch_add(1, Ordering::Relaxed);
+                    continue;
+                };
+                match serde_json::from_str::<Value>(&text) {
+                    Ok(v) if to_workspace_event(&v) => {
+                        RECEIVED.fetch_add(1, Ordering::Relaxed);
+                        LAST_LAG_MS.store(lag.max(0.0) as i64, Ordering::Relaxed);
+                        hub.emit(v);
+                    }
+                    _ => {
+                        DROPPED.fetch_add(1, Ordering::Relaxed);
+                    }
                 }
             }
         }
@@ -224,6 +265,26 @@ mod tests {
             !visible_to(&json!({ "type": "nope", "audience": "all" }), "a"),
             "모르는 종류는 아무에게도"
         );
+    }
+
+    #[test]
+    fn listens_to_both_origins() {
+        assert_eq!(
+            LISTEN_CHANNELS,
+            ["harkroom_event_outbox", "harkroom_event_outbox_ts"]
+        );
+    }
+
+    /// outbox 에는 비밀값이 실리면 안 된다 — 보존이 5분이라도 표에 남는다. 비밀 계열 종류가 버스에 들어오면 여기서 빨개진다.
+    #[test]
+    fn no_secret_types_on_bus() {
+        let t = tables();
+        for ty in t.bus_all.iter().chain(t.visibility.keys()) {
+            assert!(
+                !ty.to_ascii_lowercase().contains("secret"),
+                "secret 계열 이벤트 종류는 버스에 싣지 않는다: {ty}"
+            );
+        }
     }
 
     #[test]

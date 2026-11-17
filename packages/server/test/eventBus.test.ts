@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { EVENT_BUS_TYPES, EVENT_OUTBOX_CHANNEL, startEventBus, toWorkspaceEvent, type EventBus } from '../src/eventBus.js';
+import { EVENT_BUS_TYPES, EVENT_OUTBOX_CHANNEL, startEventBus, startEventPublisher, toWorkspaceEvent, type EventBus } from '../src/eventBus.js';
 import type { WorkspaceEvent } from '../src/events.js';
 import { startTestDb, type TestDb } from './helpers/testDb.js';
 
@@ -82,6 +82,24 @@ describe('startEventBus — outbox + NOTIFY(id)', () => {
     for (let i = 0; i < 200 && (got.length < 1 || bus.stats().dropped < 2); i += 1) await new Promise((r) => setTimeout(r, 10));
     expect(got).toEqual([{ type: 'inbox.updated', accountId: 'acct-1' }]);
     expect(bus.stats().dropped).toBe(2);
+  });
+
+  it('C6-α — 이 프로세스가 발행한 이벤트는 outbox 에 쓰이지만 이 리스너로 되돌아오지 않는다(채널이 다르다)', async () => {
+    got.length = 0;
+    let fire!: (e: WorkspaceEvent) => void;
+    const pub = startEventPublisher({ pool: db.pool, subscribe: (f) => { fire = f; return () => {}; }, log: () => {} });
+    const tag = `loop-${Date.now()}`;
+    fire({ type: 'inbox.updated', accountId: tag });
+    await pub.flush();
+    expect(pub.stats()).toMatchObject({ published: 1, failed: 0 });
+    const rows = await db.pool.query(`select 1 from event_outbox where event->>'accountId' = $1`, [tag]);
+    expect(rows.rowCount).toBe(1);
+    // 옛 채널로 다른 이벤트를 하나 보내 리스너가 살아 있음을 보인 뒤, 받은 것이 그것뿐인지 본다.
+    await publish({ type: 'inbox.updated', accountId: 'after' });
+    await waitFor(1);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(got).toEqual([{ type: 'inbox.updated', accountId: 'after' }]);
+    await pub.stop();
   });
 
   it('커밋되지 않은 쓰기는 나가지 않는다(NOTIFY 는 커밋 때만 간다)', async () => {

@@ -445,20 +445,20 @@ describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () 
     }
   }, 600_000);
 
-  // C5c-4 — 한 시간 지난 outbox 줄 20000건을 TS `pruneEventOutbox` 와 Rust `loops::outbox_prune::prune` 이 **문지기 없이 동시에** 지워도
-  // 지운 수의 합이 정확히 20000 이고 남길 줄(30분)은 남는다. 이 sweep 은 조건 delete 라 늦은 쪽은 줄 잠금을 기다린 뒤 이미 지운 줄을 건너뛴다.
+  // C5c-4 — 보존(5분)이 지난 outbox 줄 20000건을 TS `pruneEventOutbox` 와 Rust `loops::outbox_prune::prune` 이 **문지기 없이 동시에** 지워도
+  // 지운 수의 합이 정확히 20000 이고 남길 줄은 남는다. 이 sweep 은 조건 delete 라 늦은 쪽은 줄 잠금을 기다린 뒤 이미 지운 줄을 건너뛴다.
   it('outbox 정리 — TS·Rust 동시 sweep 에도 지운 수 합이 정확하고 남길 줄은 남는다', async () => {
     const db = await startTestDb();
     try {
       const tag = 'op-dual';
-      // 남길 줄은 30분 — Rust 시험 빌드를 기다리는 동안(최대 9분) 한 시간을 넘기지 않는다.
+      // 남길 줄은 30분 **뒤** 시각으로 — Rust 시험 빌드를 기다리는 동안(최대 9분) 보존 5분을 넘기지 않는다(C6-α 에서 1시간 → 5분).
       await db.pool.query(
         `insert into event_outbox(event, created_at)
-         select jsonb_build_object('t', $1::text, 'k', 'old-' || g), now() - interval '61 minutes' from generate_series(1, 20000) g
-         union all select jsonb_build_object('t', $1::text, 'k', 'keep'), now() - interval '30 minutes'`, [tag]);
+         select jsonb_build_object('t', $1::text, 'k', 'old-' || g), now() - interval '6 minutes' from generate_series(1, 20000) g
+         union all select jsonb_build_object('t', $1::text, 'k', 'keep'), now() + interval '30 minutes'`, [tag]);
       const { pruneEventOutbox } = await import('../src/eventBus.js');
       const old = async () => Number((await db.pool.query(
-        `select count(*)::int as n from event_outbox where event->>'t' = $1 and created_at < now() - interval '1 hour'`, [tag])).rows[0].n);
+        `select count(*)::int as n from event_outbox where event->>'t' = $1 and created_at < now() - interval '5 minutes'`, [tag])).rows[0].n);
       const lockWaiters = async () => Number((await db.pool.query(
         `select count(*)::int as n from pg_stat_activity where wait_event_type = 'Lock' and query like 'delete from event_outbox%'`)).rows[0].n);
       // 겹침을 확실히 만든다 — 줄 잠금을 먼저 쥐고(풀 밖 연결이라 idle-in-transaction 시한이 없다), Rust 와 TS 의 delete 가 **둘 다** 그
