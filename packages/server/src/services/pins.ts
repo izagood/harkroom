@@ -37,6 +37,15 @@ async function selectPins(pool: Pool, channelId: string, messageId: string | nul
   return (res.rows as PinnedMessageRow[]).map(toPin);
 }
 
+/** 고정·해제 문장 — Rust 코어(`core/channel_pins_sched.rs`, S5.4 CH3a)가 골든으로 받아 그대로 쓴다. */
+export const PIN_INSERT_SQL = `insert into message_pin (message_id, channel_id, pinned_by)
+     select message.id, message.channel_id, $3::uuid
+     from message
+     where message.id = $1::uuid and message.channel_id = $2::uuid and message.deleted_at is null
+     on conflict (message_id) do nothing`;
+export const UNPIN_FIND_SQL = `select pinned_by::text as pinned_by from message_pin where message_id = $1::uuid and channel_id = $2::uuid`;
+export const UNPIN_DELETE_SQL = `delete from message_pin where message_id = $1::uuid`;
+
 export function listPins(pool: Pool, channelId: string): Promise<PinRow[]> {
   return selectPins(pool, channelId, null);
 }
@@ -55,14 +64,7 @@ export function listPins(pool: Pool, channelId: string): Promise<PinRow[]> {
 export async function pinMessage(
   pool: Pool, args: { channelId: string; messageId: string; actorId: string },
 ): Promise<PinRow | 'not_found'> {
-  await pool.query(
-    `insert into message_pin (message_id, channel_id, pinned_by)
-     select message.id, message.channel_id, $3
-     from message
-     where message.id = $1 and message.channel_id = $2 and message.deleted_at is null
-     on conflict (message_id) do nothing`,
-    [args.messageId, args.channelId, args.actorId],
-  );
+  await pool.query(PIN_INSERT_SQL, [args.messageId, args.channelId, args.actorId]);
   const pins = await selectPins(pool, args.channelId, args.messageId);
   return pins[0] ?? 'not_found';
 }
@@ -77,12 +79,9 @@ export async function pinMessage(
 export async function unpinMessage(
   pool: Pool, args: { channelId: string; messageId: string; actorId: string; actorIsAdmin: boolean },
 ): Promise<'unpinned' | MutationRefusal> {
-  const found = await pool.query(
-    `select pinned_by from message_pin where message_id = $1 and channel_id = $2`,
-    [args.messageId, args.channelId],
-  );
+  const found = await pool.query(UNPIN_FIND_SQL, [args.messageId, args.channelId]);
   if (!found.rowCount) return 'not_found';
   if (found.rows[0].pinned_by !== args.actorId && !args.actorIsAdmin) return 'forbidden';
-  await pool.query(`delete from message_pin where message_id = $1`, [args.messageId]);
+  await pool.query(UNPIN_DELETE_SQL, [args.messageId]);
   return 'unpinned';
 }

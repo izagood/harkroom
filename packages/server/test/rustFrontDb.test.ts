@@ -1570,6 +1570,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant delete on secret_grant to ${rw}`,
         // S5.4 CH2 — 채널 읽음 쓰기(`core/channel_read_write.rs::CHANNEL_READ_WRITE_PRIVILEGES`). 칸 권한만. 없으면 「channel read write core off」 — TS 에 남는다.
         `grant insert (account_id, channel_id, last_read_seq, unread_from_seq), update (last_read_seq, unread_from_seq, updated_at) on channel_read to ${rw}`,
+        // S5.4 CH3a — 핀·예약 글 쓰기(`core/channel_pins_sched.rs::PINS_SCHED_PRIVILEGES`). 없으면 「pins/scheduled write core off」 — TS 에 남는다.
+        `grant insert, delete on message_pin to ${rw}`,
+        `grant insert, update on scheduled_message to ${rw}`,
         // S5.4 MS1 — 저장한 글(`core/saved.rs::SAVED_PRIVILEGES`). 없으면 「saved messages core off」 — 다섯 줄 모두 TS 에 남는다.
         `grant insert, update, delete on saved_message to ${rw}`,
       ]) await db.pool.query(q);
@@ -4360,6 +4363,137 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         await db.pool.query('delete from message where channel_id = any($1)', [[pubCh.id, privCh.id, emptyCh.id]]);
         await db.pool.query('delete from channel_member where channel_id = any($1)', [[pubCh.id, privCh.id, emptyCh.id]]);
         await db.pool.query('delete from channel where id = any($1)', [[pubCh.id, privCh.id, emptyCh.id]]);
+      }
+
+      // S5.4 CH3a — 핀 고정·해제·예약 글 만들기·취소(코어 `channel_pins_sched.rs`). 같은 처음 상태에서 같은 요청 줄을 TS 로 한 번,
+      // Rust 로 한 번 보내고 답(새 id·시각은 가림)과 그 뒤의 행·감사 수가 같은지 본다.
+      {
+        for (const k of ['POST /channels/{id}/pins', 'DELETE /channels/{id}/pins/{messageId}', 'POST /channels/{id}/scheduled', 'DELETE /scheduled/{id}']) {
+          expect(f.log(), k).toContain(`"${k}"`);
+        }
+        expect(f.log()).not.toContain('pins/scheduled write core off');
+        const M = member.token;
+        const M2 = member2.token;
+        const pubCh = await createChannel(db.pool, { name: 'ch3a-pub' });
+        const privCh = await createChannel(db.pool, { name: 'ch3a-priv', visibility: 'private', creatorId: member2.accountId });
+        const arcCh = await createChannel(db.pool, { name: 'ch3a-arc' });
+        const chs = [pubCh.id, privCh.id, arcCh.id];
+        const post = async (ch: string, body: string, root: string | null = null) =>
+          (await postMessage(db.pool, { channelId: ch, authorId: member2.accountId, body, threadRootId: root, meta: {} })).message!.id;
+        const m1 = await post(pubCh.id, 'ch3a one');
+        const m2 = await post(pubCh.id, 'ch3a two');
+        const reply = await post(pubCh.id, 'ch3a reply', m1);
+        const gone = await post(pubCh.id, 'ch3a gone');
+        await db.pool.query('update message set deleted_at = now() where id = $1', [gone]);
+        const mArc = await post(arcCh.id, 'ch3a arc');
+        await db.pool.query('update channel set archived_at = now() where id = $1', [arcCh.id]);
+        const ghost = '00000000-0000-4000-8000-0000000c3a00';
+        const reset = async () => {
+          await db.pool.query('delete from message_pin where channel_id = any($1)', [chs]);
+          await db.pool.query('delete from scheduled_message where channel_id = any($1)', [chs]);
+        };
+        const state = async () => ({
+          pins: (await db.pool.query('select message_id::text as m, pinned_by::text as b from message_pin where channel_id = any($1) order by message_id', [chs])).rows,
+          sched: (await db.pool.query(
+            `select channel_id::text as c, author_id::text as a, thread_root_id::text as t, body, send_at, canceled_at is not null as canceled
+               from scheduled_message where channel_id = any($1) order by body, canceled_at nulls first`, [chs])).rows,
+          audit: (await db.pool.query(
+            `select action, count(*)::int as n from audit_log where target = any($1) and action like 'message.%pinned' group by action order by action`,
+            [chs])).rows,
+        });
+        // 새 id·시각은 서버마다 다르다 — 꼴만 본다.
+        const mask = (v: unknown): unknown => {
+          if (Array.isArray(v)) return v.map(mask);
+          if (v && typeof v === 'object') {
+            return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) =>
+              [k, ['pinnedAt', 'createdAt'].includes(k) && typeof x === 'string' ? `<${k}>`
+                : k === 'id' && typeof x === 'string' && (v as Record<string, unknown>).sendAt !== undefined ? '<id>' : mask(x)]));
+          }
+          return v;
+        };
+        const later = new Date(Date.now() + 3_600_000).toISOString();
+        const later6 = later.replace('Z', '987Z');
+        const run = async (base: string) => {
+          await reset();
+          // audit_log 는 지울 수 없다(append-only) — 이 줄 동안 늘어난 수만 견준다.
+          const before = (await state()).audit;
+          const out: unknown[] = [];
+          const call = async (m: string, path: string, body: unknown, token: string) => {
+            const r = await callX(base, m, path, body, token);
+            out.push({ m, path: path.replace(/^\/scheduled\/[0-9a-f-]{36}$/, '/scheduled/<id>'), status: r.status, json: r.status === 400 ? r.code ?? null : mask(r.json) });
+            return r;
+          };
+          const P = (ch: string) => `/channels/${ch}/pins`;
+          await call('POST', P(pubCh.id), { messageId: m1, extra: 1 }, M);
+          await call('POST', P(pubCh.id), { messageId: m1 }, M2); // 이미 고정 — 처음 고정한 사람 그대로 201
+          await call('POST', P(pubCh.id), { messageId: reply }, M2);
+          await call('POST', P(pubCh.id), { messageId: gone }, M);
+          await call('POST', P(pubCh.id), { messageId: ghost }, M);
+          await call('POST', P(pubCh.id), { messageId: mArc }, M); // 다른 채널의 글 → 404
+          await call('POST', P(privCh.id), { messageId: m1 }, M);
+          await call('POST', P(arcCh.id), { messageId: mArc }, M);
+          await call('POST', P(ghost), { messageId: m1 }, M); // 없는 채널 → 게이트 통과, 404
+          await call('POST', P('nope'), { messageId: m1 }, M);
+          await call('POST', P(pubCh.id), { messageId: 'nope' }, M);
+          await call('POST', P(pubCh.id), [m1], M);
+          await call('DELETE', `${P(pubCh.id)}/${m1}`, undefined, M2); // 고정한 사람 아님 → 403
+          await call('DELETE', `${P(pubCh.id)}/${reply}`, undefined, M2); // 고정한 사람 → 204
+          await call('DELETE', `${P(pubCh.id)}/${m1}`, undefined, A); // admin → 204
+          await call('DELETE', `${P(pubCh.id)}/${m1}`, undefined, M); // 이미 해제 → 404
+          await call('DELETE', `${P(privCh.id)}/${m1}`, undefined, M);
+          await call('DELETE', `${P(pubCh.id)}/nope`, undefined, M);
+          await call('POST', P(pubCh.id), { messageId: m2 }, M);
+          // 보관된 채널의 핀도 치울 수 있다(게이트가 가시성).
+          await db.pool.query('insert into message_pin (message_id, channel_id, pinned_by) values ($1, $2, $3)', [mArc, arcCh.id, member.accountId]);
+          await call('DELETE', `${P(arcCh.id)}/${mArc}`, undefined, M);
+
+          const S = (ch: string) => `/channels/${ch}/scheduled`;
+          const made = await call('POST', S(pubCh.id), { body: 'ch3a s1', sendAt: later6, extra: true }, M);
+          await call('POST', S(pubCh.id), { body: 'ch3a s2', sendAt: later, threadRootId: m1 }, M);
+          await call('POST', S(pubCh.id), { body: 'ch3a s3', sendAt: later, threadRootId: reply }, M);
+          await call('POST', S(pubCh.id), { body: 'ch3a s4', sendAt: later, threadRootId: ghost }, M);
+          await call('POST', S(pubCh.id), { body: 'ch3a s5', sendAt: new Date(Date.now() - 60_000).toISOString() }, M);
+          await call('POST', S(pubCh.id), { body: 'ch3a s6', sendAt: new Date(Date.now() + 31 * 86_400_000).toISOString() }, M);
+          await call('POST', S(pubCh.id), { body: 'ch3a s7', sendAt: '0000-02-29T00:00:00Z' }, M);
+          await call('POST', S(pubCh.id), { body: 'ch3a s8', sendAt: later }, agent.pat);
+          await call('POST', S(privCh.id), { body: 'ch3a s9', sendAt: later }, M);
+          await call('POST', S(arcCh.id), { body: 'ch3a s10', sendAt: later }, M);
+          await call('POST', S(pubCh.id), { body: '', sendAt: later }, M);
+          await call('POST', S(pubCh.id), { body: 'x', sendAt: '2026-02-30T00:00:00Z' }, M);
+          await call('POST', S(pubCh.id), { body: 'x', sendAt: later, threadRootId: null }, M);
+          await call('POST', S('nope'), { body: 'x', sendAt: later }, M);
+          const sid = (made.json as { scheduled?: { id?: string } }).scheduled?.id ?? ghost;
+          await call('DELETE', `/scheduled/${sid}`, undefined, M2); // 남의 예약 → 404
+          await call('DELETE', `/scheduled/${sid}`, undefined, M);
+          await call('DELETE', `/scheduled/${sid}`, undefined, M); // 이미 취소 → 404
+          await call('DELETE', '/scheduled/nope', undefined, M);
+          const after = await state();
+          out.push({ ...after, audit: after.audit.map((r) => ({ action: r.action, n: r.n - (before.find((b) => b.action === r.action)?.n ?? 0) })) });
+          return out;
+        };
+        const x = await run(tsUrl);
+        const y = await run(rsUrl);
+        expect(y).toEqual(x);
+        // 빈 것끼리 같아서 통과하지 않게 — 핀·예약·감사가 실제로 남았는지, 거절 갈래가 실제 몸통인지.
+        const st = y.at(-1) as Awaited<ReturnType<typeof state>>;
+        expect(st.pins.length).toBe(1);
+        expect(st.sched.length).toBeGreaterThanOrEqual(2);
+        expect(st.audit).toEqual([{ action: 'message.pinned', n: 4 }, { action: 'message.unpinned', n: 3 }]);
+        expect(JSON.stringify(y)).toContain('"agents_cannot_schedule"');
+        expect(JSON.stringify(y)).toContain('"channel_archived"');
+        expect(JSON.stringify(y)).toContain('"send_at_too_far"');
+        // Rust 가 직접 답했는지 — 자기 몸통의 ms 자르기(TS 와 같은 `.xxxZ`).
+        const r = await callX(rsUrl, 'GET', `/channels/${pubCh.id}/scheduled`, undefined, M);
+        expect(JSON.stringify(r.json)).toContain(later6.slice(0, 23));
+        {
+          const [a1, b1] = [await callX(tsUrl, 'POST', `/channels/${pubCh.id}/pins`, { messageId: m1 }, ''), await callX(rsUrl, 'POST', `/channels/${pubCh.id}/pins`, { messageId: m1 }, '')];
+          expect({ status: b1.status, code: b1.code }, '익명 → 401').toEqual({ status: a1.status, code: a1.code });
+          expect(b1.status).toBe(401);
+        }
+        await reset();
+        await db.pool.query('delete from message where channel_id = any($1)', [chs]);
+        await db.pool.query('delete from channel_member where channel_id = any($1)', [chs]);
+        await db.pool.query('delete from channel where id = any($1)', [chs]);
       }
 
       // S5.4 AC2 — 에이전트 기억 읽기(코어 `agent_memory_read.rs`). 두 서버의 답을 견준다. 소유자·admin 만 읽고, 에이전트 자신·남·익명은

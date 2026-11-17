@@ -448,6 +448,27 @@ async fn main() {
         }
         _ => false,
     };
+    // S5.4 CH3a — 핀 고정·해제·예약 글 만들기·취소. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 권한이 다 있을 때만.
+    let pins_sched = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::channel_pins_sched as c;
+            match write::missing_in(w, c::PINS_SCHED_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: pins/scheduled write core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: pins/scheduled write core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 CH2 — 채널 읽음 상태 쓰기(`PUT /channels/{id}/read`·`/unread`). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만.
     let channel_read_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -1212,6 +1233,21 @@ async fn main() {
             core_routes.router = core_routes.router.merge(cr.router);
             core_routes.http.extend(cr.http);
             core_routes.sockets.extend(cr.sockets);
+        }
+        // S5.4 CH3a — 핀·예약 글 쓰기 4줄. 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = pins_sched {
+            let ps = harkroom_server::core::channel_pins_sched::routes(
+                harkroom_server::core::channel_pins_sched::PinsSchedState {
+                    read: state.pool.clone(),
+                    write,
+                    trust: (*state.trust).clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(ps.router);
+            core_routes.http.extend(ps.http);
+            core_routes.sockets.extend(ps.sockets);
         }
         // S5.4 AC2 — 에이전트 기억 읽기 2줄. 권한이 있을 때만 — 아니면 TS 에 남는다(정리 후보·백그라운드·기억 쓰기는 언제나 TS).
         if agent_memory_read_on {
