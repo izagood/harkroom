@@ -131,6 +131,18 @@ const PERMISSION_EXPIRE_GRANTS = [
   'usage on sequence event_outbox_id_seq',
 ];
 
+/** `loops/delegation_deadline.rs::DELEGATION_DEADLINE_PRIVILEGES`(+ 시퀀스) 만 가진 쓰기 역할(S5.4 L1). 읽기는 pg_read_all_data 가 맡는다. */
+const DELEGATION_DEADLINE_GRANTS = [
+  'update (deadline_at, notified_at) on team_delegation',
+  'update (outcome, closed_at, closed_reason, stalled_notified_at, update_pending_message_id, update_pending_at, update_count) on team_delegation_item',
+  'update (canceled_at, canceled_by_message_id) on agent_wake',
+  'update (meta) on message',
+  'insert, delete on inbox',
+  'update (reason) on inbox',
+  'insert on event_outbox',
+  'usage on sequence event_outbox_id_seq',
+];
+
 async function operatorWriteRole(db: { pool: pg.Pool; uri: string }, grants: readonly string[] = OPERATOR_GRANTS): Promise<string> {
   const rw = `op_rw_${Math.random().toString(36).slice(2, 10)}`;
   await db.pool.query(`create role ${rw} login password '${rw}' nosuperuser nocreatedb nocreaterole nobypassrls connection limit 8`);
@@ -143,7 +155,7 @@ async function operatorWriteRole(db: { pool: pg.Pool; uri: string }, grants: rea
 }
 
 describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () => {
-  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention', 'mandate_idle', 'permission_expire', 'bg', 'bg_produce', 'outbox_prune', 'push_loop', 'turn_lease', 'inbox_list', 'decide_core_db', 'relay_live', 'turn_settle', 'turn_cancel', 'health', 'scheduled', 'stale', 'migrate']) {
+  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention', 'mandate_idle', 'permission_expire', 'bg', 'bg_produce', 'outbox_prune', 'push_loop', 'turn_lease', 'inbox_list', 'decide_core_db', 'relay_live', 'turn_settle', 'turn_cancel', 'health', 'scheduled', 'stale', 'migrate', 'delegation_deadline']) {
     it(`tests/${name}.rs`, async () => {
       const db = await startTestDb();
       try {
@@ -168,6 +180,8 @@ describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () 
         if (name === 'push_loop') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, PUSH_GRANTS);
         // C6b — 턴 임대도 `TURN_LEASE_PRIVILEGES` 만 가진 역할로.
         if (name === 'turn_lease') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, TURN_LEASE_GRANTS);
+        // S5.4 L1 — 위임 기한 스윕도 `DELEGATION_DEADLINE_PRIVILEGES` 만 가진 역할로.
+        if (name === 'delegation_deadline') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, DELEGATION_DEADLINE_GRANTS);
         const r = await cargo(['test', '--test', name, '--', '--nocapture'], env);
         expect(r.code, r.out).toBe(0);
         // DB 가 없어 건너뛴 것을 통과로 읽지 않는다.
@@ -1527,6 +1541,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         ...BG_PRODUCE_GRANTS.map((g) => `grant ${g} to ${rw}`),
         // S5.3 C5c-4 — outbox 정리(`loops/outbox_prune.rs::OUTBOX_PRUNE_PRIVILEGES`). 없으면 「loop outbox.prune off」.
         ...OUTBOX_PRUNE_GRANTS.map((g) => `grant ${g} to ${rw}`),
+        // S5.4 L1 — 위임 기한 스윕(`loops/delegation_deadline.rs::DELEGATION_DEADLINE_PRIVILEGES`). 없으면 「loop delegation.deadline off」.
+        ...DELEGATION_DEADLINE_GRANTS.map((g) => `grant ${g} to ${rw}`),
         // S5.3 C3b-3c — 권한 카드 거절(`decide_core::DENY_PRIVILEGES` + 잠금 함수 EXECUTE, 두 겹). 없으면 「permission deny core off」.
         `grant update (status, decided_at, decided_by, grant_expires_at, grant_mode) on permission_request to ${rw}`,
         `grant execute on function permission_decide_lock(uuid, uuid, uuid) to ${rw}`,
@@ -1654,6 +1670,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       expect(f.log()).toContain('front: loop outbox.prune on');
       expect(f.log()).toContain('front: loop scheduled on');
       expect(f.log()).toContain('front: loop stale on');
+      // S5.4 L1 — 스위치 값이 없으면 꺼진다(TS 에 남는다). 권한이 모자라 꺼지는 것은 위 `missing privileges` 가 잡는다.
+      expect(f.log()).toMatch(/front: loop delegation\.deadline (on \(v2=|off — HARKROOM_DELEGATION_V2 unset)/);
 
       const r = await cargo(['test', '--test', 'contrast', '--', '--nocapture'], {
         HARKROOM_CONTRAST_TS_URL: tsUrl,

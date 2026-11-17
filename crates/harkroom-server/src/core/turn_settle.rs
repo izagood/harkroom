@@ -140,20 +140,32 @@ pub(crate) async fn notify_if_settled(
     let Some((lead, message, root)) = marked else {
         return Ok(None);
     };
-    let folded: Vec<(Option<Value>, String)> = sqlx::query_as(s.fold.as_str())
-        .bind(delegation)
-        .bind(&lead)
-        .bind(&root)
-        .bind(&message)
-        .fetch_all(&mut *conn)
-        .await?;
-    closed_wakes(conn, folded, out).await?;
+    fold_wakes_for_delegation(conn, delegation, &lead, &root, &message, out).await?;
     sqlx::query(s.inbox.as_str())
         .bind(&lead)
         .bind(&message)
         .execute(&mut *conn)
         .await?;
     Ok(Some(lead))
+}
+
+/// TS `foldWakesForDelegation` — 위임자의 그 위임에 걸린 대기 예약을 접는다(보고처·대기 줄은 `out` 에 모은다).
+pub(crate) async fn fold_wakes_for_delegation(
+    conn: &mut sqlx::PgConnection,
+    delegation: &str,
+    lead: &str,
+    root: &str,
+    message: &str,
+    out: &mut Preempted,
+) -> Result<(), sqlx::Error> {
+    let folded: Vec<(Option<Value>, String)> = sqlx::query_as(sql().fold.as_str())
+        .bind(delegation)
+        .bind(lead)
+        .bind(root)
+        .bind(message)
+        .fetch_all(&mut *conn)
+        .await?;
+    closed_wakes(conn, folded, out).await
 }
 
 /// 트랜잭션 안의 본체 — TS `cancelDelegationsFor` 다음 `cancelWakesForTurn`.
