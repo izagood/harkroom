@@ -12,11 +12,7 @@ use crate::route_table::{Routes, Table};
 pub const CODE: &str = "operator_core_moved";
 
 /// 막는 줄 — `"METHOD /path"`(TS 경로). 시험이 이 목록과 라우터를 맞춰 본다.
-pub const GUARDED: &[&str] = &[
-    "DELETE /accounts/me",
-    "GET /agents/{id}/merge-accounts",
-    "PUT /agents/{id}/merge-accounts/lines",
-];
+pub const GUARDED: &[&str] = &["DELETE /accounts/me"];
 
 async fn unavailable(_: crate::auth::RequireAccount) -> Response {
     crate::directory::json_err(
@@ -27,10 +23,7 @@ async fn unavailable(_: crate::auth::RequireAccount) -> Response {
 }
 
 fn table() -> Table<()> {
-    Table::<()>::new()
-        .delete("/accounts/me", unavailable)
-        .get("/agents/{id}/merge-accounts", unavailable)
-        .put("/agents/{id}/merge-accounts/lines", unavailable)
+    Table::<()>::new().delete("/accounts/me", unavailable)
 }
 
 pub fn routes(auth: crate::auth::AuthPools, cors: std::sync::Arc<crate::cors::Cors>) -> Routes<()> {

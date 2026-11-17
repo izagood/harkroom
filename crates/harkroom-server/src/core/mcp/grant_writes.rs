@@ -216,7 +216,7 @@ fn rule_is_canonical(raw: &str) -> bool {
 }
 
 /// TS `repoGrantScope` — `repo:<owner>/<name>` 또는 `repo:<owner>/*`(입력은 [`plain_ascii`] 를 지난 것).
-fn repo_grant_scope(repo: &str) -> Option<String> {
+pub(crate) fn repo_grant_scope(repo: &str) -> Option<String> {
     let s = repo.trim_matches(' ').to_ascii_lowercase();
     let (owner, name) = s.split_once('/')?;
     let tail =
