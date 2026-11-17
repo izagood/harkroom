@@ -1765,6 +1765,11 @@ async fn main() {
             core_routes.router = core_routes.router.merge(op.router);
             core_routes.http.extend(op.http);
             core_routes.sockets.extend(op.sockets);
+            // AC5 안전판 — TS 허브는 이제 비어 있으므로, 그 허브로 오퍼레이터에게 알리거나 소켓을 끊는 TS 줄은 옮겨질 때까지 503.
+            let guard =
+                harkroom_server::core::operator_guard::routes(auth.clone(), state.cors.clone());
+            core_routes.router = core_routes.router.merge(guard.router);
+            core_routes.http.extend(guard.http);
             // C6c-3 — 에이전트 릴레이(`/agent-sessions*`·`/agent-attach`). 러너 소켓이 이 허브에 붙으므로 오퍼레이터와 **함께만** 옮긴다.
             {
                 use harkroom_server::core::{
