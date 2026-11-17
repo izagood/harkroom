@@ -16,7 +16,7 @@ import { AGENT_INVOKER_SQL, CHANNEL_SCOPE_SQL, ELIGIBLE_DELEGATE_SQL, INVOKE_FAC
 import { CLOSE_REPLY_GRANTS_SQL, HAS_REPLY_GRANT_SQL, OPEN_REPLY_GRANTS_SQL } from '../src/services/replyGrants.js';
 import { MENTION_DEPTH_SCAN_SQL, OWN_THREAD_LINK_IDS_SQL, RECENT_BODIES_SQL, REPLY_LOCK_CLASS, STALL_SHADOW_SQL } from '../src/services/messages.js';
 import { ASK_CLOSE_BY_REPLY_SQL } from '../src/services/messages.js';
-import { CLOSE_REPLY_ITEM_V0_SQL, CLOSE_REPLY_ITEM_V2_SQL, CLOSE_REPLY_OPEN_SQL, DELEGATION_INSERT_SQL, DELEGATION_ITEM_INSERT_SQL, DELEGATION_TOUCH_DEADLINE_SQL, DELEGATION_V2_UPDATE_PENDING_SQL } from '../src/services/delegations.js';
+import { CLOSE_REPLY_ITEM_V0_SQL, CLOSE_REPLY_ITEM_V2_SQL, CLOSE_REPLY_OPEN_SQL, DELEGATION_INSERT_SQL, DELEGATION_ITEM_INSERT_SQL, DELEGATION_TARGETS_SQL, LEAD_TEAM_SQL, ROUNDS_USED_MANY_SQL, DELEGATION_TOUCH_DEADLINE_SQL, DELEGATION_V2_UPDATE_PENDING_SQL } from '../src/services/delegations.js';
 import { EDIT_FIND_SQL, EDIT_INBOX_ALREADY_SQL, EDIT_UPDATE_SQL, EDIT_VIA_EDIT_SQL } from '../src/services/messages.js';
 import { ACCOUNTS_BY_HANDLES_SQL, ACCOUNTS_BY_IDS_SQL, FAN_OUT_AUDIENCE_SQL, INSERT_INBOX_MANY_SQL, REVEAL_HIDDEN_SQL, REVEAL_REASONS } from '../src/services/messages.js';
 import { GROUP_BY_HANDLE_SQL, GROUP_MEMBERS_SQL } from '../src/services/handleGroups.js';
@@ -267,6 +267,10 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     inbox_handed: INBOX_HANDED_SQL,
     inbox_folded_wakes: INBOX_FOLDED_WAKES_SQL,
     inbox_started_in: INBOX_STARTED_IN_SQL,
+    // MCP delegate 게이트(`core/mcp/delegate_gate.rs`, S5.3 C3b-2c-4a) — 팀장 명단·대상·라운드.
+    delegate_lead_team: LEAD_TEAM_SQL,
+    delegate_targets: DELEGATION_TARGETS_SQL,
+    delegate_rounds_used: ROUNDS_USED_MANY_SQL,
   };
   const text = `${JSON.stringify(want, null, 2)}\n`;
   if (process.env.UPDATE_RUST_SQL_GOLDEN === '1') writeFileSync(GOLDEN, text);

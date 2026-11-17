@@ -6442,6 +6442,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         await db.pool.query(`insert into agent_assignment (agent_id, operator_id, assigned_by) values ($1, $2, $3)`, [bot3.accountId, pop.operatorId, admin.accountId]);
         const viaOp = { token: pop.token, extra: { 'x-harkroom-agent': bot3.accountId } as Record<string, string> };
         const viaPat = { token: bot3.pat, extra: {} as Record<string, string> };
+        // C3b-2c-4a — 위임 받을 에이전트(누구나 부름). 러너가 없어 접속은 늘 꺼져 있다 — 게이트를 지난 위임은 TS 몫이라 닿지 않는다.
+        const del4 = await createAgent(app, admin.token, 'c3b2c4del');
+        await db.pool.query(`update agent_config set invoke_scope = 'community' where account_id = $1`, [del4.accountId]);
         const freshCh = async () => {
           const c = (await createChannel(db.pool, { name: `c1c4c-${Math.random().toString(36).slice(2, 10)}` })).id;
           await db.pool.query(`insert into channel_member (channel_id, account_id) select $1, account_id from channel_member where channel_id = $2 on conflict do nothing`, [c, todayId]);
@@ -6519,6 +6522,33 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['fail code → TS', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, body: '지정 모델 거절', retryable: true, code: 'thread_model_rejected' }, via: viaPat }), false],
           ['fail account_gate·mentionId → TS', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, body: '관문', retryable: true, code: 'account_gate', mentionId: randomUUID(), claudePoolRank: 1 }, via: viaPat }), false],
           ['fail retryable 없음 → TS(zod 오류)', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, body: '못 했다' }, via: viaPat }), false],
+          // C3b-2c-4a — `message.delegate` 의 게이트·상한 거절만 Rust. 지나면(접속 확인·글·위임 행) TS 몫이다.
+          ...((): [string, (ch: string) => Promise<Setup>, boolean][] => {
+            const dl = (args: (ch: string, root: string) => Record<string, unknown>, rust: boolean, name: string, prep?: (ch: string, root: string) => Promise<void>):
+              [string, (ch: string) => Promise<Setup>, boolean] => [name, async (ch) => {
+                const root = await ins({ ch, author: member.accountId, body: '일' });
+                if (prep) await prep(ch, root);
+                return { tool: 'message.delegate', args: { channelId: ch, threadRootId: root, body: '맡아 줘', ...args(ch, root) }, via: viaPat };
+              }, rust];
+            return [
+              dl(() => ({ to: ['C1C4CBOT'] }), true, 'delegate 자기 → self_delegation'),
+              dl(() => ({ to: ['c3b2c4del', 'nobody-c3b2c4', 'C1C4CBOTX'] }), true, 'delegate 못 부르는 이름 → not_invokable'),
+              dl(() => ({ to: ['c3b2c4del'] }), true, 'delegate 라운드 상한 → round_limit', async (ch, root) => {
+                for (let i = 0; i < 3; i++) {
+                  const m = await ins({ ch, root, author: bot3.accountId, body: `넘김 ${i}` });
+                  await db.pool.query(`insert into team_delegation (message_id, team_id, lead_account_id, channel_id, thread_root_id, deadline_at, kind) values ($1, null, $2, $3, $4, now() + interval '10 minutes', 'delegate')`, [m, bot3.accountId, ch, root]);
+                }
+              }),
+              dl(() => ({ to: ['c3b2c4del'] }), false, 'delegate 사람 말 뒤 라운드 리셋 → 게이트 지남 → TS', async (ch, root) => {
+                for (let i = 0; i < 3; i++) {
+                  const m = await ins({ ch, root, author: bot3.accountId, body: `넘김 ${i}` });
+                  await db.pool.query(`insert into team_delegation (message_id, team_id, lead_account_id, channel_id, thread_root_id, deadline_at, kind, created_at) values ($1, null, $2, $3, $4, now() + interval '10 minutes', 'delegate', now() - interval '1 minute')`, [m, bot3.accountId, ch, root]);
+                }
+              }),
+              dl(() => ({ to: ['c3b2c4del'], agentModels: [] }), false, 'delegate agentModels → TS'),
+              dl((_c, root) => ({ to: ['c3b2c4del'], planRootId: root, planGroupId: 'g1' }), false, 'delegate 계획판 → TS'),
+            ];
+          })(),
         ];
         const facts = async (id: string | undefined, cause: string | undefined) => id ? shape((await db.pool.query(
           `select m.mention_depth as depth, m.stall_depth as stall, m.chain_started_at is not null as started,
@@ -6580,6 +6610,11 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(row('fail 오퍼레이터 원인 → 깊이·고리·턴 id')).toMatchObject({ kind: 'failure', failure: { retryable: false }, depth: 3, stall: 2, linked: true, turn: '<uuid>' });
         expect(by('fail 없는 머리 → bad_thread').body.error?.code).toBe('bad_thread');
         expect(row('fail code → TS')).toMatchObject({ kind: 'failure', failure: { retryable: true } });
+        expect(by('delegate 자기 → self_delegation').body.error?.code).toBe('self_delegation');
+        expect(by('delegate 못 부르는 이름 → not_invokable').body).toMatchObject({ error: { code: 'not_invokable', handles: ['nobody-c3b2c4', 'C1C4CBOTX'] } });
+        expect(by('delegate 라운드 상한 → round_limit').body.error?.code).toBe('round_limit');
+        // 사람 말(머리) 뒤 라운드가 리셋돼 게이트를 지난다 — 받는 쪽이 접속해 있지 않아 TS 도 아무것도 쓰지 않는다.
+        expect(by('delegate 사람 말 뒤 라운드 리셋 → 게이트 지남 → TS').body).toMatchObject({ delegated: [], unreachable: ['c3b2c4del'], message: null });
         // C3b-2c-1 — 위임 스위치를 아는 앞단(v1)에서 담당(BOT3)의 실패. 안 닫힌 항목이 있으면 TS 가 `failed` 로 닫고 위임자를 깨운다
         // (Rust 에 아직 없는 갈래 → `closes_delegation` 가드가 TS 로 넘긴다). 보고된 항목뿐이면 Rust 가 맡고 「대기 중 update」만 적는다.
         // C3b-2c-2 — 같은 장면을 v1(`'1'`)·v0(`'0'`) 앞단 둘 다에서 돌린다.

@@ -30,6 +30,8 @@ pub const SERVED: &[&str] = &[
     "message.post",
     // C3b-2c-1 — 표지 없는 실패. 글 쓰기 풀이 있을 때만(`message.post` 와 같은 권한).
     "message.fail",
+    // C3b-2c-4a — 위임의 게이트·상한 거절만(읽기만 한다). 지나면 TS.
+    "message.delegate",
 ];
 
 /// TS 가 조건부로 싣는 도구 — `/mcp/admit` 이 `registered: true` 라고 답했을 때만 Rust 가 답한다([`super::route::serve`]).
