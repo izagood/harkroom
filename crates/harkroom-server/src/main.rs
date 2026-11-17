@@ -264,6 +264,27 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 CH1 — 사이드바 섹션 쓰기. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만.
+    let section_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::sections_write as s;
+            match write::missing_in(w, s::SECTION_WRITE_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: section write core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: section write core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // C3b-2b-2 — MCP `message.askBundle` 있던 묶음에 줄 더하기. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 묶음 푸시까지 그 권한이 다 있을 때만.
     let bundle_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -762,6 +783,20 @@ async fn main() {
             core_routes.router = core_routes.router.merge(react.router);
             core_routes.http.extend(react.http);
             core_routes.sockets.extend(react.sockets);
+        }
+        // S5.4 CH1 — 섹션 쓰기 4줄. 권한이 다 있을 때만 — 아니면 TS 에 남는다(`GET /channel-sections` 는 읽기 코어 것).
+        if let Some(write) = section_write {
+            let sec = harkroom_server::core::sections_write::routes(
+                harkroom_server::core::sections_write::SectionState {
+                    read: state.pool.clone(),
+                    write,
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(sec.router);
+            core_routes.http.extend(sec.http);
+            core_routes.sockets.extend(sec.sockets);
         }
         // C3a-2 — 지우기·「채널에도 보이기」 켜고 끄기. 쓰기 풀에 그 권한이 다 있을 때만 — 아니면 TS 에 남는다.
         if let Some(write) = delete_write {

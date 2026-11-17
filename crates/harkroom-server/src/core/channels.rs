@@ -150,6 +150,16 @@ async fn rows(pool: &PgPool, sql: &'static str, binds: &[&str]) -> Result<String
     q.fetch_one(pool).await
 }
 
+/// 섹션 목록 문장(`$1` = 나) — 섹션 쓰기(`sections_write.rs`)가 트랜잭션 안에서 같은 꼴로 다시 읽는다.
+pub(crate) fn sections_sql() -> &'static str {
+    sql().sections.as_str()
+}
+
+/// 채널 선호 목록 문장(`$1` = 나) — 섹션 만들기의 응답 `prefs`.
+pub(crate) fn prefs_sql() -> &'static str {
+    sql().prefs.as_str()
+}
+
 /// TS `assertChannelVisible` — 없는 채널은 true(뒤 단계가 404 로 답한다).
 pub(crate) async fn visible(pool: &PgPool, me: &str, channel: &str) -> Result<bool, sqlx::Error> {
     let v: Option<bool> = sqlx::query_scalar(sql().visible.as_str())

@@ -51,6 +51,7 @@ pub mod relay_attention;
 pub mod relay_link;
 pub mod relay_live;
 pub mod relay_routes;
+pub mod sections_write;
 pub mod tickets;
 pub mod turn_lease;
 pub mod turn_lease_routes;
