@@ -49,6 +49,7 @@ import { registerWs } from './ws/wsPlugin.js';
 import { registerMcp } from './mcp/mcpPlugin.js';
 import { createAgentPresence, persistAgentPresence } from './mcp/presence.js';
 import { startThreadStatusWatcher } from './services/threadStatus.js';
+import { listLiveSessions } from './services/sessionLive.js';
 import { startThreadPlanWatcher } from './services/threadPlanWatcher.js';
 import { Lifecycle } from './lifecycle.js';
 import { loggerConfig } from './logging.js';
@@ -795,7 +796,18 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
    */
   const delegationSweeper = createDelegationDeadlineSweeper(deps.pool, {
     onWake: (accountId) => emitEvent({ type: 'inbox.updated', accountId }),
-    runningTurns: () => relay.listSessions('all'),
+    // S5.4 ②(2026-11-18) — 릴레이 코어가 Rust 로 옮겨지면 TS 허브(`relay`)는 비어 있다. 그 허브가 남기는 DB 사본
+    // (`agent_session_live`, seen_at 이 TTL 안인 허브의 행만)을 그 위임의 팀원들로 좁혀 함께 읽는다 — 새 경로 없이 같은 DB 다.
+    // 사본 읽기가 실패하면 메모리 허브만 본다(닫히는 쪽으로 틀린다 — 위 옵션 주석의 안전 방향).
+    runningTurns: async (agentAccountIds) => {
+      const mem = relay.listSessions('all');
+      try {
+        return [...mem, ...await listLiveSessions(deps.pool, agentAccountIds)];
+      } catch (err) {
+        app.log.warn({ err }, 'delegation sweep: agent_session_live read failed');
+        return mem;
+      }
+    },
   });
   delegationSweeper.startSweep(app);
 

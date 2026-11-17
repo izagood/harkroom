@@ -10,6 +10,7 @@ import { cancelDelegationsFor, createDelegationDeadlineSweeper, DELEGATION_WAIT_
 import { delegationChainCapped } from '../src/services/messages.js';
 import { scheduleWake } from '../src/services/agentWakes.js';
 import { settleCanceledTurn } from '../src/services/turnCancel.js';
+import { listLiveSessions } from '../src/services/sessionLive.js';
 import { onEvent, type WorkspaceEvent } from '../src/events.js';
 
 /**
@@ -525,6 +526,41 @@ describe('050 위임 왕복', () => {
     expect(await outcomes(messageId)).toEqual({ done1: 'timeout' });
 
     await oneClient.close(); await leadClient.close();
+  });
+
+  it('13b. 릴레이가 Rust 로 옮겨져 TS 허브가 비어도 DB 사본(agent_session_live)의 도는 턴을 본다', async () => {
+    const rootId = await openThread('@delegteam 도는 턴(Rust 허브)');
+    const leadClient = await mcpClient(leadPat);
+    const res = text(await leadClient.callTool({
+      name: 'message.delegate',
+      arguments: { channelId, threadRootId: rootId, body: '긴 작업(Rust 허브)', to: ['done1'] },
+    }));
+    const messageId = (res.message as { id: string }).id;
+    const due = () => pool.query(
+      `update team_delegation set deadline_at = now() - interval '1 second' where message_id = $1`, [messageId]);
+    // 호출부(buildServer)와 같은 모양: 메모리 허브는 비었고 사본만 읽는다.
+    const sweeper = createDelegationDeadlineSweeper(pool, {
+      runningTurns: (ids) => listLiveSessions(pool, ids),
+    });
+
+    // Rust 허브 한 줄과 그 허브가 남긴 세션 — 이 스레드에서 done1 이 돈다.
+    const hub = (await pool.query<{ hub_epoch: string }>(
+      `insert into relay_hub (hub_epoch, impl) values (gen_random_uuid(), 'rust') returning hub_epoch::text`)).rows[0]!.hub_epoch;
+    await pool.query(
+      `insert into agent_session_live (session_id, agent_account_id, channel_id, thread_root_id, harness, hub_epoch)
+       values ('s-rust-13b', $1, $2, $3, 'claude', $4)`, [oneId, channelId, rootId, hub]);
+    await due();
+    await sweeper.sweep();
+    expect(await outcomes(messageId)).toEqual({ done1: null });
+
+    // 허브 박동이 TTL 을 넘기면(죽은 허브의 유령 행) 도는 것으로 보지 않는다 — 닫힌다.
+    await pool.query(`update relay_hub set seen_at = now() - interval '1 hour' where hub_epoch = $1`, [hub]);
+    await due();
+    await sweeper.sweep();
+    expect(await outcomes(messageId)).toEqual({ done1: 'timeout' });
+
+    await pool.query(`delete from relay_hub where hub_epoch = $1`, [hub]);
+    await leadClient.close();
   });
 
   it('7. 라운드 상한에 걸리고, 사람이 말하면 리셋된다', async () => {
