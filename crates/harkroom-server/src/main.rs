@@ -1282,12 +1282,7 @@ async fn spawn_loops() {
     // 풀 둘 — 문지기(잠금) 연결 전용 `gate` 와 sweep 이 쓰는 `pool`. 잠금 연결을 쥔 채 같은 풀에서 sweep 연결을 빌리면 루프가 겹칠 때
     // 풀이 바닥나 sweep 이 acquire 시한에 걸린다. gate 는 루프 수만큼(한 루프는 tick 하나에 잠금 연결 하나), pool 은 sweep 몫(wake 는
     // 한 건 트랜잭션 + 커밋 뒤 이벤트 = 2).
-    let open = |max: u32| {
-        sqlx::postgres::PgPoolOptions::new()
-            .max_connections(max)
-            .acquire_timeout(std::time::Duration::from_secs(10))
-            .connect(&url)
-    };
+    let open = |max: u32| loop_pool_options(max).connect(&url);
     let (gate, pool) = match (
         open(LOOP_GATE_CONNECTIONS).await,
         open(LOOP_SWEEP_CONNECTIONS).await,
@@ -1495,6 +1490,19 @@ async fn push_sweeper(
 const LOOP_GATE_CONNECTIONS: u32 = 10;
 /// sweep 풀 크기.
 const LOOP_SWEEP_CONNECTIONS: u32 = 3;
+/// 루프 풀에서 쉬는 연결을 닫기까지. 루프 대부분은 주인이 `rust` 가 아니면 tick 마다 잠깐 잠금만 보고 놓는다 —
+/// sqlx 기본(10분)이면 그 잠깐 쓴 연결이 풀 크기만큼 남아 쓰기 역할의 연결 한도를 평소에도 차지한다.
+const LOOP_POOL_IDLE: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// 루프 풀(문지기·sweep) 설정 — 최대 `max`, 평소 0 개(`min_connections 0`)로 시작해 쉬는 연결은 [`LOOP_POOL_IDLE`] 뒤 닫는다.
+/// 풀 크기(최대)는 그대로라 루프가 겹칠 때 쓸 몫은 줄지 않는다.
+fn loop_pool_options(max: u32) -> sqlx::postgres::PgPoolOptions {
+    sqlx::postgres::PgPoolOptions::new()
+        .max_connections(max)
+        .min_connections(0)
+        .idle_timeout(LOOP_POOL_IDLE)
+        .acquire_timeout(std::time::Duration::from_secs(10))
+}
 
 /// Ctrl-C 또는 SIGTERM 에서 멈춘다. 컨테이너에서 이 바이너리는 PID 1 이라 처리기가 없는 SIGTERM 은 무시되고,
 /// k8s·`docker stop` 은 유예 시간을 다 기다린 뒤 SIGKILL 로 끊는다(롤링 배포마다 그만큼 늦어진다).
@@ -1504,5 +1512,22 @@ async fn shutdown() {
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {}
         _ = term.recv() => {}
+    }
+}
+
+#[cfg(test)]
+mod loop_pool_tests {
+    use super::*;
+
+    /// 루프 풀은 평소 연결을 쥐지 않고(최소 0), 쉬는 연결을 짧게 닫으며, 최대 크기는 그대로다(s24 S7 — 쓰기 역할 연결 한도).
+    #[test]
+    fn loop_pools_start_empty_and_drop_idle_connections() {
+        for max in [LOOP_GATE_CONNECTIONS, LOOP_SWEEP_CONNECTIONS] {
+            let o = loop_pool_options(max);
+            assert_eq!(o.get_max_connections(), max);
+            assert_eq!(o.get_min_connections(), 0);
+            assert_eq!(o.get_idle_timeout(), Some(LOOP_POOL_IDLE));
+        }
+        assert!(LOOP_POOL_IDLE <= std::time::Duration::from_secs(60));
     }
 }
