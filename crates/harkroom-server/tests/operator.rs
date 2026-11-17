@@ -539,6 +539,103 @@ async fn fake_operator_against_real_schema() {
         assert_eq!(n, want, "{action}");
     }
 
+    // ---- 재시작 줄 POST /accounts/agents/{id}/restart (TS accountRoutes restart) ----
+    let rpath = format!("/accounts/agents/{agent}/restart");
+    let (s, _) = req(&base, Method::POST, &rpath, None, "").await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+    let (s, e) = req(
+        &base,
+        Method::POST,
+        "/accounts/agents/00000000-0000-4000-8000-000000000999/restart",
+        Some(&sess),
+        "",
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "{e}");
+    let (s, e) = req(
+        &base,
+        Method::POST,
+        &format!("/accounts/agents/{human}/restart"),
+        Some(&sess),
+        "",
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "human account: {e}");
+    // 정상: 새 정의(assign)를 먼저, 그다음 agent.restart. 배정은 그대로, 202 {operatorId}.
+    let (s, r) = req(&base, Method::POST, &rpath, Some(&sess), "").await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{r}");
+    assert_eq!(r["operatorId"].as_str(), Some(op1.as_str()), "{r}");
+    let (f, before) = until_frame(&mut b, "agent.restart").await;
+    assert_eq!(f["agentId"], json!(agent), "{f}");
+    let last_assign = before
+        .iter()
+        .rev()
+        .find(|v| v["type"] == "assign")
+        .cloned()
+        .unwrap_or(Value::Null);
+    assert_eq!(
+        last_assign["agentId"],
+        json!(agent),
+        "definition re-pushed before restart: {before:?}"
+    );
+    let audits: i64 = sqlx::query_scalar(
+        "select count(*) from audit_log where action = 'agent.restart.requested' and target = $1",
+    )
+    .bind(&agent)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(audits, 1, "restart audited");
+    // 멈춰 둔 에이전트 → 409 stopped.
+    sqlx::query("insert into agent_config(account_id, stop_requested_at) values ($1::uuid, now()) on conflict (account_id) do update set stop_requested_at = now()")
+        .bind(&agent)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (s, e) = req(&base, Method::POST, &rpath, Some(&sess), "").await;
+    assert_eq!(s, StatusCode::CONFLICT, "{e}");
+    assert_eq!(e["error"]["code"], "stopped", "{e}");
+    sqlx::query("update agent_config set stop_requested_at = null where account_id = $1::uuid")
+        .bind(&agent)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // 붙어 있지 않은 오퍼레이터(폐기한 opx)에 배정 → 409 operator_offline.
+    sqlx::query("update agent_assignment set operator_id = $2::uuid where agent_id = $1::uuid")
+        .bind(&agent)
+        .bind(&opx)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (s, e) = req(&base, Method::POST, &rpath, Some(&sess), "").await;
+    assert_eq!(s, StatusCode::CONFLICT, "{e}");
+    assert_eq!(e["error"]["code"], "operator_offline", "{e}");
+    // 배정 없음 → 409 not_assigned.
+    sqlx::query("delete from agent_assignment where agent_id = $1::uuid")
+        .bind(&agent)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (s, e) = req(&base, Method::POST, &rpath, Some(&sess), "").await;
+    assert_eq!(s, StatusCode::CONFLICT, "{e}");
+    assert_eq!(e["error"]["code"], "not_assigned", "{e}");
+    let audits: i64 = sqlx::query_scalar(
+        "select count(*) from audit_log where action = 'agent.restart.requested' and target = $1",
+    )
+    .bind(&agent)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(audits, 1, "failed restarts are not audited");
+    // 아래 claim replaces 시험을 위해 op1 배정으로 되돌린다.
+    sqlx::query("insert into agent_assignment(agent_id, operator_id, assigned_by) values ($1::uuid, $2::uuid, $3::uuid)")
+        .bind(&agent)
+        .bind(&op1)
+        .bind(&human)
+        .execute(&pool)
+        .await
+        .unwrap();
+
     // ---- 목록·이름 바꾸기 ----
     let (s, list) = req(&base, Method::GET, "/operators", Some(&sess), "").await;
     assert_eq!(s, StatusCode::OK, "{list}");
