@@ -8,7 +8,7 @@
 //! 박동 본문(`status`)은 `parse_operator_status` 가 허용한 칸만 골라 새로 만든다(H5 — 토큰·경로 같은 값이 실려 와도 들지 않는다).
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{broadcast, mpsc};
 
@@ -485,13 +485,50 @@ pub struct OperatorHub {
     frames: broadcast::Sender<(String, Frame)>,
     closes: broadcast::Sender<String>,
     link: Arc<Mutex<Option<mpsc::UnboundedSender<LinkEvent>>>>,
-    caps: Arc<Mutex<Option<mpsc::UnboundedSender<CapEvent>>>>,
+    caps: Arc<Mutex<Weak<CapPending>>>,
 }
 
 /// 능력 스냅숏 피드(`operator_capability` 표 쓰기). 허브 잠금 **안에서** 내므로 같은 오퍼레이터의 「앞 연결 끊김 → 새 연결 hello」
 /// 순서가 표 쓰기에서도 뒤집히지 않는다. `None` 은 「이 오퍼레이터의 능력을 모른다」(줄을 지운다).
+///
+/// 줄이 아니라 **오퍼레이터별 마지막 값 하나**만 쥔다(coalesce) — 같은 오퍼레이터가 프레임을 몰아 보내도 쌓이는 것은
+/// 오퍼레이터 수 × [`super::operator_capability::MAX_BODY_BYTES`] 를 넘지 않는다. 같은 오퍼레이터의 마지막 값이 곧 표의 최종
+/// 상태이므로 「끊김 → 새 hello」가 접혀도 결과는 같다. 본문은 내기 **전에** 직렬화·상한 검사를 해서 큰 프레임을 복제해 쌓지
+/// 않는다(`None` = 지운다).
 #[derive(Debug, Clone, PartialEq)]
-pub struct CapEvent(pub String, pub Option<Value>);
+pub struct CapEvent(pub String, pub Option<String>);
+
+/// 능력 스냅숏 대기 칸 — 허브는 [`Weak`] 로만 가리킨다. 일꾼이 끝나 [`CapFeed`] 가 버려지면 허브는 더 쌓지 않는다.
+#[derive(Default)]
+pub struct CapPending {
+    map: Mutex<HashMap<String, Option<String>>>,
+    notify: tokio::sync::Notify,
+}
+
+/// 능력 스냅숏 피드(일꾼 하나가 쥔다).
+pub struct CapFeed(Arc<CapPending>);
+
+impl CapFeed {
+    /// 쌓인 값을 다 가져간다. 비어 있으면 새 값이 올 때까지 기다린다.
+    pub async fn next_batch(&self) -> Vec<CapEvent> {
+        loop {
+            let notified = self.0.notify.notified();
+            let batch = self.take();
+            if !batch.is_empty() {
+                return batch;
+            }
+            notified.await;
+        }
+    }
+
+    /// 쌓인 값을 기다리지 않고 다 가져간다.
+    pub fn take(&self) -> Vec<CapEvent> {
+        std::mem::take(&mut *self.0.map.lock().unwrap_or_else(|e| e.into_inner()))
+            .into_iter()
+            .map(|(id, body)| CapEvent(id, body))
+            .collect()
+    }
+}
 
 /// 릴레이 전용 피드(C6c-3). 프레임과 close 를 **한 줄로, 빠짐없이** 낸다.
 ///
@@ -529,17 +566,29 @@ impl OperatorHub {
     }
 
     /// 능력 스냅숏 피드를 연다(프로세스에 하나 — 다시 부르면 앞 피드는 닫힌다).
-    pub fn capability_feed(&self) -> mpsc::UnboundedReceiver<CapEvent> {
-        let (tx, rx) = mpsc::unbounded_channel();
-        *self.caps.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx);
-        rx
+    pub fn capability_feed(&self) -> CapFeed {
+        let pending = Arc::new(CapPending::default());
+        *self.caps.lock().unwrap_or_else(|e| e.into_inner()) = Arc::downgrade(&pending);
+        CapFeed(pending)
     }
 
-    /// 허브 잠금을 쥔 채로 부른다(순서 보장).
-    fn cap_event(&self, operator_id: &str, caps: Option<Value>) {
-        if let Some(tx) = &*self.caps.lock().unwrap_or_else(|e| e.into_inner()) {
-            let _ = tx.send(CapEvent(operator_id.to_owned(), caps));
-        }
+    /// 허브 잠금을 쥔 채로 부른다(순서 보장 — 같은 오퍼레이터의 마지막 값이 남는다).
+    fn cap_event(&self, operator_id: &str, caps: Option<&Value>) {
+        let Some(pending) = self
+            .caps
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .upgrade()
+        else {
+            return;
+        };
+        let body = super::operator_capability::body_of(caps);
+        pending
+            .map
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(operator_id.to_owned(), body);
+        pending.notify.notify_one();
     }
 
     /// 릴레이 피드를 연다(프로세스에 하나 — 다시 부르면 앞 피드는 닫힌다).
@@ -634,7 +683,7 @@ impl OperatorHub {
             match frame.get("type").and_then(Value::as_str).unwrap_or("") {
                 "hello" => {
                     entry.capabilities = frame.get("capabilities").cloned();
-                    self.cap_event(id, entry.capabilities.clone());
+                    self.cap_event(id, entry.capabilities.as_ref());
                     entry.runners.clear();
                     for r in frame
                         .get("runners")
@@ -653,7 +702,7 @@ impl OperatorHub {
                 }
                 "capabilities" => {
                     entry.capabilities = frame.get("capabilities").cloned();
-                    self.cap_event(id, entry.capabilities.clone());
+                    self.cap_event(id, entry.capabilities.as_ref());
                 }
                 "status" => {
                     // 틀린 박동은 버리고 앞의 값을 둔다. 프레임도 내지 않는다(TS 는 여기서 return).
@@ -768,6 +817,37 @@ impl OperatorHub {
 
 #[cfg(test)]
 mod tests {
+
+    #[tokio::test]
+    async fn capability_feed_keeps_last_value_per_operator() {
+        let hub = OperatorHub::new();
+        // 피드가 없으면 쌓지 않는다.
+        hub.cap_event("a", Some(&json!({"v": 0})));
+        let feed = hub.capability_feed();
+        assert!(feed.take().is_empty());
+        for v in 1..=100 {
+            hub.cap_event("a", Some(&json!({ "v": v })));
+        }
+        hub.cap_event("b", Some(&json!({"v": 1})));
+        hub.cap_event("b", None);
+        let big = "x".repeat(super::super::operator_capability::MAX_BODY_BYTES);
+        hub.cap_event("c", Some(&json!({ "a": big })));
+        let mut got = feed.next_batch().await;
+        got.sort_by(|x, y| x.0.cmp(&y.0));
+        assert_eq!(
+            got,
+            vec![
+                CapEvent("a".into(), Some(r#"{"v":100}"#.into())),
+                CapEvent("b".into(), None),
+                CapEvent("c".into(), None),
+            ]
+        );
+        assert!(feed.take().is_empty());
+        // 일꾼이 끝나 피드를 버리면 더 쌓지 않는다.
+        drop(feed);
+        hub.cap_event("a", Some(&json!({"v": 1})));
+        assert!(hub.caps.lock().unwrap().upgrade().is_none());
+    }
     use super::*;
 
     fn hub_with(id: &str) -> (OperatorHub, Registration, mpsc::UnboundedReceiver<OpOut>) {

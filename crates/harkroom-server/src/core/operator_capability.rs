@@ -10,11 +10,10 @@
 //!   주기마다 고치고, TS 는 `seen_at` 이 낡은 줄을 「모른다」로 읽는다. 프로세스가 죽어 delete 를 못 낸 줄도 그렇게 걸러진다.
 //! - 권한([`CAPABILITY_PRIVILEGES`])이 없으면 쓰지 않고 한 줄만 남긴다 — 이 스냅숏은 덧붙이는 기능이라 오퍼레이터 코어 전체를
 //!   TS 로 돌리지 않는다(없으면 지금처럼 TS 검사가 「모른다」로 통과할 뿐이다).
-use super::operator_hub::{CapEvent, OperatorHub};
+use super::operator_hub::{CapEvent, CapFeed, OperatorHub};
 use serde_json::Value;
 use sqlx::PgPool;
 use std::time::Duration;
-use tokio::sync::mpsc;
 
 pub const CAPABILITY_PRIVILEGES: &[(&str, &str)] = &[
     ("operator_capability", "SELECT"),
@@ -33,9 +32,9 @@ pub const DELETE_SQL: &str = "delete from operator_capability where operator_id 
 pub const TOUCH_SQL: &str =
     "update operator_capability set seen_at = now() where operator_id = any($1::uuid[])";
 
-/// 줄 하나를 쓸 값 — 상한을 넘거나 객체가 아니면 `None`(지운다).
-fn body_of(caps: Option<Value>) -> Option<String> {
-    let v = caps.filter(Value::is_object)?;
+/// 줄 하나를 쓸 값 — 상한을 넘거나 객체가 아니면 `None`(지운다). 허브가 피드에 넣기 **전에** 부른다.
+pub fn body_of(caps: Option<&Value>) -> Option<String> {
+    let v = caps.filter(|v| v.is_object())?;
     let s = v.to_string();
     (s.len() <= MAX_BODY_BYTES).then_some(s)
 }
@@ -45,7 +44,7 @@ async fn apply(pool: &PgPool, ev: CapEvent) -> Result<(), sqlx::Error> {
     if !super::msg_read::is_uuid(&id) {
         return Ok(());
     }
-    match body_of(caps) {
+    match caps {
         Some(body) => sqlx::query(UPSERT_SQL)
             .bind(&id)
             .bind(body)
@@ -78,7 +77,7 @@ async fn touch(pool: &PgPool, hub: &OperatorHub) -> Result<(), sqlx::Error> {
 
 /// 일꾼을 띄운다. `touch_every` 마다 붙어 있는 오퍼레이터의 `seen_at` 을 고친다.
 pub fn spawn(write: PgPool, hub: OperatorHub, touch_every: Duration) {
-    let mut rx: mpsc::UnboundedReceiver<CapEvent> = hub.capability_feed();
+    let feed: CapFeed = hub.capability_feed();
     tokio::spawn(async move {
         match crate::write::missing_in(&write, CAPABILITY_PRIVILEGES, &[]).await {
             Ok(m) if m.is_empty() => {}
@@ -98,14 +97,13 @@ pub fn spawn(write: PgPool, hub: OperatorHub, touch_every: Duration) {
         tick.tick().await;
         loop {
             tokio::select! {
-                ev = rx.recv() => match ev {
-                    Some(ev) => {
+                batch = feed.next_batch() => {
+                    for ev in batch {
                         if apply(&write, ev).await.is_err() {
                             eprintln!("core: operator capability write failed");
                         }
                     }
-                    None => break,
-                },
+                }
                 _ = tick.tick() => {
                     if touch(&write, &hub).await.is_err() {
                         eprintln!("core: operator capability touch failed");
@@ -124,10 +122,13 @@ mod tests {
     #[test]
     fn body_rules() {
         assert_eq!(body_of(None), None);
-        assert_eq!(body_of(Some(json!([1]))), None);
-        assert_eq!(body_of(Some(json!("x"))), None);
-        assert_eq!(body_of(Some(json!({"a":1}))).as_deref(), Some(r#"{"a":1}"#));
+        assert_eq!(body_of(Some(&json!([1]))), None);
+        assert_eq!(body_of(Some(&json!("x"))), None);
+        assert_eq!(
+            body_of(Some(&json!({"a":1}))).as_deref(),
+            Some(r#"{"a":1}"#)
+        );
         let big = "x".repeat(MAX_BODY_BYTES);
-        assert_eq!(body_of(Some(json!({ "a": big }))), None);
+        assert_eq!(body_of(Some(&json!({ "a": big }))), None);
     }
 }
