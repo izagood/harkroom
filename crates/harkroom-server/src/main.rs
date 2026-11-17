@@ -844,6 +844,15 @@ async fn main() {
         core_routes.http.extend(decide_check.http);
         core_routes.sockets.extend(decide_check.sockets);
         // C3b grant 읽기 줄 — 러너·오퍼레이터가 읽는 `GET /agent/tool-allows`·`/agent/command-grants`. 읽기 풀만(match 는 아래 B1).
+        // S5.4 AT1 — 자동화 읽기(`GET /automations`·`GET /automations/{id}`). 읽기 풀만 쓴다 — 지우기·만들기·수신은 TS.
+        let automations = harkroom_server::core::automations_read::routes(
+            state.pool.clone(),
+            auth.clone(),
+            state.cors.clone(),
+        );
+        core_routes.router = core_routes.router.merge(automations.router);
+        core_routes.http.extend(automations.http);
+        core_routes.sockets.extend(automations.sockets);
         let grant_reads = harkroom_server::core::grant_reads::routes(
             state.pool.clone(),
             auth.clone(),
