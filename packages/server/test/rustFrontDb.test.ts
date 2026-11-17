@@ -6549,14 +6549,43 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
               dl((_c, root) => ({ to: ['c3b2c4del'], planRootId: root, planGroupId: 'g1' }), false, 'delegate 계획판 → TS'),
             ];
           })(),
+          // C3b-2c-3 — `message.report`(planStepId 없는 것). 보고 meta 를 쓰고, 커밋 뒤 작성자의 예약을 접는다(같은 턴이 건 것은 남김).
+          ['report 기본 · files·remaining·next·durationMs', async (ch) => ({ tool: 'message.report', args: {
+            channelId: ch, body: '끝', checks: ['시험 통과'], files: ['a.rs'], remaining: [], durationMs: 1200,
+            next: [{ id: 'n1', label: '다음', extra: 1 }], model: 'claude-opus-5' }, via: viaPat }), true],
+          ['report 오퍼레이터 원인 → 예약 접기(같은 턴은 남김 · 보고처가 이 스레드인 남의 스레드 예약도)', async (ch) => {
+            const { root, call } = await chainBy(bot2.accountId, 2, 1)(ch);
+            const wake = async (o: { root: string | null; body: string; meta: Record<string, unknown> }) => {
+              const m = await ins({ ch, root: o.root, author: bot3.accountId, body: o.body, meta: o.meta });
+              await db.pool.query(`insert into agent_wake (account_id, channel_id, message_id, wake_at) values ($1, $2, $3, '2030-01-02T03:04:05.678901Z')`, [bot3.accountId, ch, m]);
+            };
+            await wake({ root, body: 'a 같은 턴 예약', meta: { wake: { watch: true }, turnId } });
+            await wake({ root, body: 'b 이 스레드 예약', meta: { wake: { watch: true }, turnId: randomUUID() } });
+            const other = await ins({ ch, author: member.accountId, body: '다른 스레드' });
+            await wake({ root: other, body: 'c 보고처가 이 스레드', meta: { wake: { reportTo: { channelId: ch, threadRootId: root.toUpperCase() } } } });
+            await wake({ root: other, body: 'd 상관없는 예약', meta: { wake: {} } });
+            return { tool: 'message.report', args: { channelId: ch, threadRootId: root, body: '보고', checks: ['봤다'] }, via: viaOp, cause: call, turn: turnId };
+          }, true],
+          ['report 머리 없음 → 예약 안 접음', async (ch) => {
+            const m = await ins({ ch, author: bot3.accountId, body: 'e 머리 없는 예약', meta: { wake: {} } });
+            await db.pool.query(`insert into agent_wake (account_id, channel_id, message_id, wake_at) values ($1, $2, $3, now() + interval '1 hour')`, [bot3.accountId, ch, m]);
+            return { tool: 'message.report', args: { channelId: ch, body: '보고', checks: ['봤다'] }, via: viaPat };
+          }, true],
+          ['report planStepId → TS', async (ch) => ({ tool: 'message.report', args: { channelId: ch, body: '보고', checks: ['봤다'], planStepId: 's1' }, via: viaPat }), false],
+          ['report checks 빈 목록 → TS(zod 오류)', async (ch) => ({ tool: 'message.report', args: { channelId: ch, body: '보고', checks: [] }, via: viaPat }), false],
+          ['report durationMs 소수 → TS', async (ch) => ({ tool: 'message.report', args: { channelId: ch, body: '보고', checks: ['봤다'], durationMs: 1.5 }, via: viaPat }), false],
         ];
         const facts = async (id: string | undefined, cause: string | undefined) => id ? shape((await db.pool.query(
           `select m.mention_depth as depth, m.stall_depth as stall, m.chain_started_at is not null as started,
                   m.cause_message_id is not distinct from $2::uuid as linked, m.cause_message_id is null as unlinked,
                   m.meta->'turnId' as turn, m.meta->'model' as model, m.meta ? 'mentionStallLinkReset' as link_reset,
                   m.mandate_id is not null as mandated, m.principal_account_id::text as principal, m.principal_cause_reasons as reasons,
-                  m.meta->'kind' as kind, m.meta->'failure' as failure
+                  m.meta->'kind' as kind, m.meta->'failure' as failure, m.meta->'report' as report
              from message m where m.id = $1`, [id, cause ?? null])).rows) : null;
+        // 예약 접기(C3b-2c-3) — 접혔는가 · 대기 줄에 닫힌 시각이 적혔는가. 본문 순서로.
+        const wakesOf = async (ch: string) => (await db.pool.query(
+          `select m.body, w.canceled_at is not null as canceled, m.meta->'wake' ? 'canceledAt' as stamped
+             from agent_wake w join message m on m.id = w.message_id where w.channel_id = $1 order by m.body`, [ch])).rows;
         const sse = (t: string) => {
           const line = t.split('\n').find((l) => l.startsWith('data: '));
           const res = line ? JSON.parse(line.slice(6)) as { result?: { content?: { text: string }[] } } : null;
@@ -6582,8 +6611,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             if (st.cause && st.via === viaOp) await leaseFor(st.cause, ch);
             const extra = { ...st.via.extra, ...(st.cause ? { 'x-harkroom-cause': st.cause } : {}), ...(st.turn ? { 'x-harkroom-turn-id': st.turn } : {}) };
             const r = await mcpCall(base, st.via.token, st.tool ?? 'message.post', st.args, 7, extra);
-            const body = sse(r.text) as { message?: { id?: string } } | null;
-            out.push({ name, status: r.status, rust: base === tsUrl ? rust : r.core === 'mcp', body: shape(body), row: await facts(body?.message?.id, st.cause) });
+            const body = sse(r.text) as { message?: { id?: string }; foldedWakes?: { wakeAt: string }[] } | null;
+            out.push({ name, status: r.status, rust: base === tsUrl ? rust : r.core === 'mcp', body: shape(body), row: await facts(body?.message?.id, st.cause),
+              wakes: await wakesOf(ch), wakeAt: body?.foldedWakes?.map((w) => w.wakeAt) ?? null });
           }
           return out;
         };
@@ -6615,6 +6645,20 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(by('delegate 라운드 상한 → round_limit').body.error?.code).toBe('round_limit');
         // 사람 말(머리) 뒤 라운드가 리셋돼 게이트를 지난다 — 받는 쪽이 접속해 있지 않아 TS 도 아무것도 쓰지 않는다.
         expect(by('delegate 사람 말 뒤 라운드 리셋 → 게이트 지남 → TS').body).toMatchObject({ delegated: [], unreachable: ['c3b2c4del'], message: null });
+        expect(row('report 기본 · files·remaining·next·durationMs')).toMatchObject({ kind: 'report', model: { id: 'claude-opus-5' },
+          report: { checks: ['시험 통과'], files: ['a.rs'], durationMs: 1200, next: [{ id: 'n1', label: '다음' }] } });
+        expect(row('report 기본 · files·remaining·next·durationMs').report).not.toHaveProperty('remaining');
+        type W = { name: string; wakes: Record<string, unknown>[]; wakeAt: string[] | null; body: { foldedWakes?: Record<string, unknown>[] } };
+        const fold = (tsOut as W[]).find((x) => x.name.startsWith('report 오퍼레이터 원인'))!;
+        expect(fold.wakes).toEqual([
+          { body: 'a 같은 턴 예약', canceled: false, stamped: false },
+          { body: 'b 이 스레드 예약', canceled: true, stamped: true },
+          { body: 'c 보고처가 이 스레드', canceled: true, stamped: true },
+          { body: 'd 상관없는 예약', canceled: false, stamped: false },
+        ]);
+        expect(fold.wakeAt).toEqual(['2030-01-02T03:04:05.678Z', '2030-01-02T03:04:05.678Z']);
+        expect(fold.body.foldedWakes?.map((w) => w.reason).sort()).toEqual(['b 이 스레드 예약', 'c 보고처가 이 스레드']);
+        expect((tsOut as W[]).find((x) => x.name === 'report 머리 없음 → 예약 안 접음')!.wakes).toEqual([{ body: 'e 머리 없는 예약', canceled: false, stamped: false }]);
         // C3b-2c-1 — 위임 스위치를 아는 앞단(v1)에서 담당(BOT3)의 실패. 안 닫힌 항목이 있으면 TS 가 `failed` 로 닫고 위임자를 깨운다
         // (Rust 에 아직 없는 갈래 → `closes_delegation` 가드가 TS 로 넘긴다). 보고된 항목뿐이면 Rust 가 맡고 「대기 중 update」만 적는다.
         // C3b-2c-2 — 같은 장면을 v1(`'1'`)·v0(`'0'`) 앞단 둘 다에서 돌린다.
@@ -6645,6 +6689,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
               ['fail 담당(안 닫힌 항목) → failed 로 닫고 위임자 깨움', null, true],
               ['fail 담당(보고된 항목) → Rust · 대기 중 update', 'reported', true],
               ['fail 담당(안 닫힌 항목 · 다른 담당 남음) → 닫되 깨우지 않음', 'other', true],
+              // C3b-2c-3 — report 도 같은 코어로 닫는다(결말 v0 `done` · v1 `reported`).
+              ['report 담당(안 닫힌 항목) → 닫고 위임자 깨움', null, true],
+              ['report 담당(보고된 항목) → 대기 중 update', 'reported', true],
             ];
             const runD = async (base: string) => {
               const out: unknown[] = [];
@@ -6656,7 +6703,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                    values ($1, $2, $3, $1, now() + interval '10 minutes') returning id::text as id`, [root, member.accountId, ch])).rows[0]!.id;
                 await db.pool.query(`insert into team_delegation_item (delegation_id, delegate_account_id, outcome) values ($1, $2, $3)`, [d, bot3.accountId, outcome === 'other' ? null : outcome]);
                 if (outcome === 'other') await db.pool.query(`insert into team_delegation_item (delegation_id, delegate_account_id) values ($1, $2)`, [d, member2.accountId]);
-                const r = await mcpCall(base, viaPat.token, 'message.fail', { channelId: ch, threadRootId: root, body: '못 했다', retryable: true }, 7, {});
+                const r = name.startsWith('report')
+                  ? await mcpCall(base, viaPat.token, 'message.report', { channelId: ch, threadRootId: root, body: '했다', checks: ['봤다'] }, 7, {})
+                  : await mcpCall(base, viaPat.token, 'message.fail', { channelId: ch, threadRootId: root, body: '못 했다', retryable: true }, 7, {});
                 const body = sse(r.text) as { message?: { id?: string } } | null;
                 const item = (await db.pool.query(
                   `select i.outcome, i.closed_by_message_id is not distinct from $2::uuid as closed_by_me,
@@ -6689,6 +6738,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             expect(leadOf('fail 담당(안 닫힌 항목 · 다른 담당 남음) → 닫되 깨우지 않음')).toBe(0);
             // v1 은 보고된 항목에 「대기 중 update」를 적고, v0 은 결과 글이 보고된 항목에 손대지 않는다.
             expect(itemOf('fail 담당(보고된 항목) → Rust · 대기 중 update')).toEqual([{ outcome: 'reported', closed_by_me: false, pending_me: v1, notified: false, same_tx: null }]);
+            expect(itemOf('report 담당(안 닫힌 항목) → 닫고 위임자 깨움')).toEqual([{ outcome: v1 ? 'reported' : 'done', closed_by_me: true, pending_me: false, notified: true, same_tx: true }]);
+            expect(leadOf('report 담당(안 닫힌 항목) → 닫고 위임자 깨움')).toBe(1);
+            expect(itemOf('report 담당(보고된 항목) → 대기 중 update')).toEqual([{ outcome: 'reported', closed_by_me: false, pending_me: v1, notified: false, same_tx: null }]);
           } finally {
             child?.kill('SIGTERM');
             if (prev === undefined) delete process.env.HARKROOM_DELEGATION_V2; else process.env.HARKROOM_DELEGATION_V2 = prev;

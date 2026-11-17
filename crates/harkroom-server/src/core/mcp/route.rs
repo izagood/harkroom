@@ -122,13 +122,17 @@ pub async fn handle(
             writes.clone(),
         );
         Box::pin(async move {
-            if tool == "message.post" || tool == "message.fail" {
+            if matches!(tool, "message.post" | "message.fail" | "message.report") {
                 let st = writes.post.as_ref()?;
                 let (c, t) = (cause.as_deref(), turn.as_deref());
-                return if tool == "message.post" {
-                    super::msg_post::answer(st, &me, &args, c, t, has_operator).await
-                } else {
-                    super::msg_post::answer_fail(st, &me, &args, c, t, has_operator).await
+                return match tool {
+                    "message.post" => {
+                        super::msg_post::answer(st, &me, &args, c, t, has_operator).await
+                    }
+                    "message.fail" => {
+                        super::msg_post::answer_fail(st, &me, &args, c, t, has_operator).await
+                    }
+                    _ => super::msg_post::answer_report(st, &me, &args, c, t, has_operator).await,
                 };
             }
             if tool == "message.delegate" {

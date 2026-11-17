@@ -72,7 +72,7 @@ fn sql() -> &'static Sql {
 }
 
 /// TS `asReportTo` — 두 칸이 다 문자열일 때만.
-fn report_to(v: &Value) -> Option<(String, String)> {
+pub(crate) fn report_to(v: &Value) -> Option<(String, String)> {
     Some((
         v.get("channelId")?.as_str()?.to_owned(),
         v.get("threadRootId")?.as_str()?.to_owned(),
@@ -80,7 +80,7 @@ fn report_to(v: &Value) -> Option<(String, String)> {
 }
 
 /// TS `new Date().toISOString()` — 밀리초까지, UTC `Z`.
-async fn now_iso(conn: &mut sqlx::PgConnection) -> Result<String, sqlx::Error> {
+pub(crate) async fn now_iso(conn: &mut sqlx::PgConnection) -> Result<String, sqlx::Error> {
     sqlx::query_scalar(
         "select to_char(clock_timestamp() at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"')",
     )
