@@ -150,14 +150,15 @@ async fn fake_operator_against_real_schema() {
         .await
         .unwrap();
 
+    // 바꿀 칸만 적는다 — `OpTiming` 칸이 늘어도 시험 초기화가 깨지지 않는다(쓰기 시한 등은 기본값).
     let timing = OpTiming {
         heartbeat: Duration::from_secs(3600),
         last_seen_write: Duration::from_secs(3600),
         revalidate: Duration::from_millis(300),
-        send_timeout: Duration::from_secs(5),
         status_min: Duration::from_millis(10),
         gh_lines: Duration::from_millis(500),
         cap_touch: Duration::from_millis(200),
+        ..OpTiming::default()
     };
     // 쓰기 풀 — 있으면 `OPERATOR_PRIVILEGES` 만 가진 역할(rustFrontDb.test.ts 가 만든다). 표가 모자라면 아래 쓰기가 실패한다.
     let write = match std::env::var("HARKROOM_TEST_WRITE_DATABASE_URL") {
@@ -1004,14 +1005,15 @@ async fn revoke_event_disconnects_without_waiting() {
         .execute(&pool)
         .await
         .unwrap();
+    // 바꿀 칸만 적는다 — `OpTiming` 칸이 늘어도 시험 초기화가 깨지지 않는다(쓰기 시한 등은 기본값).
     let timing = OpTiming {
         heartbeat: Duration::from_secs(3600),
         last_seen_write: Duration::from_secs(3600),
         revalidate: Duration::from_secs(3600),
-        send_timeout: Duration::from_secs(5),
         status_min: Duration::from_millis(10),
         gh_lines: Duration::from_millis(500),
         cap_touch: Duration::from_secs(3600),
+        ..OpTiming::default()
     };
     let write = match std::env::var("HARKROOM_TEST_WRITE_DATABASE_URL") {
         Ok(w) => PgPool::connect(&w).await.unwrap(),

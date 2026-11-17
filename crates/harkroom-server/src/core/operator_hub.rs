@@ -817,6 +817,7 @@ impl OperatorHub {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
 
     #[tokio::test]
     async fn capability_feed_keeps_last_value_per_operator() {
@@ -848,7 +849,6 @@ mod tests {
         hub.cap_event("a", Some(&json!({"v": 1})));
         assert!(hub.caps.lock().unwrap().upgrade().is_none());
     }
-    use super::*;
 
     fn hub_with(id: &str) -> (OperatorHub, Registration, mpsc::UnboundedReceiver<OpOut>) {
         let hub = OperatorHub::new();
