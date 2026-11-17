@@ -153,7 +153,7 @@ describe('발급 창', () => {
     expect(c.issuePasswordResetCode).toHaveBeenCalledWith('m1');
     fireEvent.click(screen.getByTestId('reset-code-copy'));
     await waitFor(() => expect(writes).toEqual(['K7QF-9MXD-2PQR']));
-    expect(screen.getByText('복사했다. 클립보드는 60초 뒤에 비운다.')).toBeTruthy();
+    expect(await screen.findByText('복사했다. 클립보드는 60초 뒤에 비운다.')).toBeTruthy();
     cleanup();
     expect(c.lockSecrets).toHaveBeenCalledTimes(1);
   });
