@@ -56,6 +56,9 @@ pub fn served(mem_write: bool, mem_body: bool) -> &'static [&'static str] {
     })
 }
 
+/// AC5 안전판 — 릴레이가 Rust 로 옮겨진 동안([`super::writes::McpWrites::relay_moved`]) Rust 가 거절로 답하는 도구.
+pub const TURN_CANCEL: &[&str] = &["turn.cancel"];
+
 /// 라우트 상태 — 상류(TS)와 읽기 풀.
 #[derive(Clone)]
 pub struct McpState {
@@ -122,6 +125,15 @@ pub async fn handle(
             writes.clone(),
         );
         Box::pin(async move {
+            if tool == "turn.cancel" {
+                return writes.relay_moved.then(|| {
+                    super::tool_error(
+                        crate::core::operator_guard::CODE,
+                        "this action is temporarily unavailable while the operator service is being moved",
+                    )
+                    .to_string()
+                });
+            }
             if matches!(tool, "message.post" | "message.fail" | "message.report") {
                 let st = writes.post.as_ref()?;
                 let (c, t) = (cause.as_deref(), turn.as_deref());
@@ -179,7 +191,15 @@ pub async fn handle(
             super::tools::answer(&pool, &me, tool, &args, cause.as_deref()).await
         })
     };
-    let served = served(writes.memory.is_some(), writes.memory_body.is_some());
+    let relay_moved = writes.relay_moved;
+    let served = if relay_moved
+        && serde_json::from_slice::<serde_json::Value>(&bytes)
+            .is_ok_and(|v| super::dispatch(&v, TURN_CANCEL) == super::Dispatch::Rust("turn.cancel"))
+    {
+        TURN_CANCEL
+    } else {
+        served(writes.memory.is_some(), writes.memory_body.is_some())
+    };
     if let Some(r) = serve(&up, ci, &parts.headers, &bytes, served, &tools).await {
         return r;
     }
@@ -273,6 +293,20 @@ pub fn routes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// AC5 안전판 — `turn.cancel` 만 고르고, 다른 도구는 이 목록으로 Rust 에 오지 않는다.
+    #[test]
+    fn turn_cancel_list_picks_only_turn_cancel() {
+        let call = |n: &str| serde_json::json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":n,"arguments":{}}});
+        assert_eq!(
+            super::super::dispatch(&call("turn.cancel"), TURN_CANCEL),
+            super::super::Dispatch::Rust("turn.cancel")
+        );
+        assert_eq!(
+            super::super::dispatch(&call("turn.wake"), TURN_CANCEL),
+            super::super::Dispatch::Ts
+        );
+    }
 
     #[test]
     fn body_limit_matches_ts_source() {

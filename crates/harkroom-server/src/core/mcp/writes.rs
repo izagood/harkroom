@@ -109,6 +109,9 @@ pub struct McpWrites {
     pub post: Option<std::sync::Arc<crate::core::msg_post::PostState>>,
     /// `message.delegate` 쓰기(C3b-2c-4b) — `post` 에 더해 `delegate_write::DELEGATE_WRITE_PRIVILEGES`. 없으면 게이트를 지난 위임은 TS 로.
     pub delegate: Option<std::sync::Arc<crate::core::msg_post::PostState>>,
+    /// AC5 안전판 — 릴레이가 Rust 오퍼레이터 코어와 함께 옮겨졌다. 그 동안 TS 의 릴레이 허브는 비어 있어 `turn.cancel` 이
+    /// 아무 턴도 못 찾고 성공처럼 답하므로, Rust 가 `operator_core_moved` 로 거절한다([`super::route::TURN_CANCEL`]).
+    pub relay_moved: bool,
 }
 
 /// JS `Number.MAX_SAFE_INTEGER` — 이 밖의 수는 TS 에서 값이 뭉개진다. Rust 는 같은 결과를 낼 수 없으니 TS 로 넘긴다.
