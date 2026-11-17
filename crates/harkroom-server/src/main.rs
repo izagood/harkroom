@@ -1015,6 +1015,18 @@ async fn main() {
         core_routes.router = core_routes.router.merge(inbox_rest.router);
         core_routes.http.extend(inbox_rest.http);
         core_routes.sockets.extend(inbox_rest.sockets);
+        // S5.4 MS2c-2 — 「내 작업」 보드(`GET /inbox/board`). 판 태그 304·간추림·압축. 읽기 풀만 쓴다. 위임 v2 모름·모르는 질의는 TS 로.
+        let inbox_board = harkroom_server::core::inbox_board::routes(
+            harkroom_server::core::inbox_board::InboxBoardState {
+                pool: state.pool.clone(),
+                up: state.up.clone(),
+            },
+            auth.clone(),
+            state.cors.clone(),
+        );
+        core_routes.router = core_routes.router.merge(inbox_board.router);
+        core_routes.http.extend(inbox_board.http);
+        core_routes.sockets.extend(inbox_board.sockets);
         // C3b-3d — 카드 버튼을 그릴지(`GET /agents/{id}/decide-check`). 잠그지 않는 판정이라 읽기 풀만 쓴다.
         let decide_check = harkroom_server::core::decide_check::routes(
             state.pool.clone(),
