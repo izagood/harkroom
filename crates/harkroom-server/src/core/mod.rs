@@ -59,6 +59,7 @@ pub mod relay_link;
 pub mod relay_live;
 pub mod relay_routes;
 pub mod saved;
+pub mod search_rest;
 pub mod secrets_read;
 pub mod sections_write;
 pub mod settings_rest;
