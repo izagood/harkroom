@@ -9225,7 +9225,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       await bus.stop();
 
       // S5.3 C0 — `/ws`. 같은 시나리오를 TS 와 Rust 코어에 돌려 프레임을 견준다.
-      interface Sock { ws: WebSocket; frames: Record<string, unknown>[]; closed: Promise<number> }
+      // `at`·`closedAt` 은 flaky⑦(입력 중 대조가 가끔 undefined) 진단용 — 실패할 때만 메시지에 싣는다.
+      interface Sock { ws: WebSocket; frames: Record<string, unknown>[]; at: number[]; closed: Promise<number>; closedAt: () => number | undefined }
       const ticket = async (base: string, token: string): Promise<string> => {
         const res = await fetch(`${base}/ws-ticket`, { method: 'POST', headers: { authorization: `Bearer ${token}` } });
         expect(res.status, `${base} /ws-ticket`).toBe(200);
@@ -9234,9 +9235,11 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       const open = (base: string, query: string): Promise<Sock> => new Promise((resolve, reject) => {
         const ws = new WebSocket(`${base.replace('http', 'ws')}/ws${query}`);
         const frames: Record<string, unknown>[] = [];
-        const closed = new Promise<number>((r) => ws.on('close', (code) => r(code)));
-        ws.on('message', (d) => frames.push(JSON.parse(String(d)) as Record<string, unknown>));
-        ws.on('open', () => resolve({ ws, frames, closed }));
+        const at: number[] = [];
+        let closedAt: number | undefined;
+        const closed = new Promise<number>((r) => ws.on('close', (code) => { closedAt = Date.now(); r(code); }));
+        ws.on('message', (d) => { frames.push(JSON.parse(String(d)) as Record<string, unknown>); at.push(Date.now()); });
+        ws.on('open', () => resolve({ ws, frames, at, closed, closedAt: () => closedAt }));
         ws.on('error', reject);
       });
       const waitFor = async (s: Sock, pred: (f: Record<string, unknown>) => boolean, ms = 5_000) => {
@@ -9296,9 +9299,22 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         socks.push(tsAdmin);
         const typingFrames: Record<string, unknown>[][] = [];
         for (const [memS, adminS] of [[tsMem, tsAdmin], [rsMem, rsAdmin]] as const) {
+          const sentAt = Date.now();
           memS.ws.send(JSON.stringify({ type: 'typing', channelId: pubId }));
           const toAdmin = await waitFor(adminS, (f) => f.type === 'typing.changed' && f.channelId === pubId);
           const toMe = await waitFor(memS, (f) => f.type === 'typing.changed' && f.channelId === pubId);
+          // flaky⑦ 진단(고침 아님) — admin 몫이 안 오면 (a) admin 소켓이 이미 닫혔나(닫힘 코드·시각) (b) 열려 있는데 수신자에서 빠졌나
+          // (보낸 뒤에도 hb 가 계속 왔나)를 가를 증거를 실패 메시지에 싣는다. 통과할 때는 아무것도 찍지 않는다.
+          if (!toAdmin) {
+            const rel = (t: number | undefined) => (t === undefined ? null : t - sentAt);
+            const code = await Promise.race([adminS.closed, new Promise<number>((r) => setTimeout(() => r(-1), 50))]);
+            const tail = (s: Sock) => s.frames.slice(-12).map((fr, i, a) => `${String(fr.type)}@${rel(s.at[s.at.length - a.length + i])}`);
+            const diag = {
+              server: memS === rsMem ? 'rust' : 'ts', adminClose: code, adminClosedAt: rel(adminS.closedAt()), adminReady: adminS.ws.readyState,
+              adminTail: tail(adminS), memTail: tail(memS), toMe, rsLogTail: f.log().slice(-1500),
+            };
+            expect(toAdmin, `입력 중 admin 프레임 없음 — 진단 ${JSON.stringify(diag)}`).toBeDefined();
+          }
           typingFrames.push([toAdmin!, toMe!]);
           memS.ws.send('not json');
           memS.ws.send(JSON.stringify({ type: 'typing.stop', channelId: pubId }));
