@@ -7,8 +7,8 @@
 //! - 질의는 TS `listMemoryEntries`(`ENTRY_COLUMNS`, slug 순)·`listMemoryRevisions`(최근 것부터) 와 같은 칸·같은 순서다.
 //! - **읽기만 한다.** 읽기 풀만 쓰고 새 GRANT 가 없다. 필요한 SELECT 는 [`AGENT_MEMORY_READ_PRIVILEGES`] — 없으면 `main.rs` 가
 //!   이 줄을 붙이지 않아 TS 에 남는다.
-//! - 정리 후보(`GET …/memory/audit`, 분류·유사도 판정)·백그라운드(`GET …/background`·`…/background/runs/:runId`)와
-//!   기억 쓰기(PUT·DELETE·confirm·archive·unarchive)는 TS 에 남긴다.
+//! - 정리 후보(`GET …/memory/audit`, 분류·유사도 판정)·백그라운드 읽기(`GET …/background`·`…/background/runs/:runId`)는
+//!   TS 에 남긴다. 기억 쓰기·백그라운드 켜고 끄기는 [`super::agent_memory_write`].
 use super::relay_routes::{Verdict, check_owner_or_admin};
 use crate::auth::{Account, RequireAccount};
 use crate::directory::{internal, json_err, json_ok};
@@ -29,7 +29,7 @@ pub const AGENT_MEMORY_READ_PRIVILEGES: &[(&str, &str)] = &[
 /// zod `slug: z.string().min(1).max(255)` — UTF-16 단위.
 const SLUG_MAX: usize = 255;
 
-fn bad(what: &str) -> Response {
+pub(super) fn bad(what: &str) -> Response {
     // 문구는 TS(zod 오류 JSON)와 다르다 — 대조는 상태·코드만 본다.
     json_err(
         StatusCode::BAD_REQUEST,
@@ -65,7 +65,10 @@ fn decoded_utf16_len(seg: &str) -> Option<usize> {
         .map(|s| s.encode_utf16().count())
 }
 
-async fn max_param_length(req: axum::extract::Request, next: axum::middleware::Next) -> Response {
+pub(super) async fn max_param_length(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
     if req.uri().path().split('/').any(|seg| {
         seg.len() > FASTIFY_MAX_PARAM_LENGTH
             && decoded_utf16_len(seg).is_some_and(|n| n > FASTIFY_MAX_PARAM_LENGTH)
@@ -88,14 +91,32 @@ async fn max_param_length(req: axum::extract::Request, next: axum::middleware::N
     next.run(req).await
 }
 
-fn no_such_agent() -> Response {
+pub(super) fn no_such_agent() -> Response {
     json_err(StatusCode::NOT_FOUND, "not_found", "no such agent")
 }
 
 /// TS `requireOwnerOrAdmin('id')` 다음 `z.string().uuid()` 다음 `isAgentTarget`(지운 에이전트 포함).
 /// Ok(()) 면 지나간다. 순서가 TS 와 같아야 거절 갈래가 같다.
 #[allow(clippy::result_large_err)]
-async fn gate(read: &PgPool, me: &Account, id: &str, slug: Option<&str>) -> Result<(), Response> {
+pub(super) async fn gate(
+    read: &PgPool,
+    me: &Account,
+    id: &str,
+    slug: Option<&str>,
+    live: bool,
+) -> Result<(), Response> {
+    access(read, me, id, slug).await?;
+    agent_target(read, id, live).await
+}
+
+/// `requireOwnerOrAdmin('id')` 다음 경로 zod 까지(에이전트 판정 앞). 쓰기 줄은 이 다음에 본문을 읽고 [`agent_target`] 을 본다.
+#[allow(clippy::result_large_err)]
+pub(super) async fn access(
+    read: &PgPool,
+    me: &Account,
+    id: &str,
+    slug: Option<&str>,
+) -> Result<(), Response> {
     match check_owner_or_admin(read, me, id).await {
         Ok(Verdict::Owner | Verdict::Admin) => {}
         Ok(Verdict::Refused(s, c, m)) => return Err(json_err(s, c, m)),
@@ -110,11 +131,19 @@ async fn gate(read: &PgPool, me: &Account, id: &str, slug: Option<&str>) -> Resu
             return Err(bad("params"));
         }
     }
-    let agent: Result<Option<i32>, _> =
-        sqlx::query_scalar("select 1 from account where id = $1::uuid and kind = 'agent'")
-            .bind(id)
-            .fetch_optional(read)
-            .await;
+    Ok(())
+}
+
+/// TS `isAgentTarget(id, { live })` — `live` 면 지운 에이전트는 404.
+#[allow(clippy::result_large_err)]
+pub(super) async fn agent_target(read: &PgPool, id: &str, live: bool) -> Result<(), Response> {
+    let agent: Result<Option<i32>, _> = sqlx::query_scalar(
+        "select 1 from account where id = $1::uuid and kind = 'agent' and ($2 = false or deleted_at is null)",
+    )
+    .bind(id)
+    .bind(live)
+    .fetch_optional(read)
+    .await;
     match agent {
         Ok(Some(_)) => Ok(()),
         Ok(None) => Err(no_such_agent()),
@@ -168,7 +197,7 @@ pub async fn list_memory(
     RequireAccount(me, _): RequireAccount,
     Path(id): Path<String>,
 ) -> Response {
-    if let Err(r) = gate(&read, &me, &id, None).await {
+    if let Err(r) = gate(&read, &me, &id, None, false).await {
         return r;
     }
     match sqlx::query_scalar::<_, String>(ENTRIES_SQL)
@@ -186,7 +215,7 @@ pub async fn list_revisions(
     RequireAccount(me, _): RequireAccount,
     Path((id, slug)): Path<(String, String)>,
 ) -> Response {
-    if let Err(r) = gate(&read, &me, &id, Some(&slug)).await {
+    if let Err(r) = gate(&read, &me, &id, Some(&slug), false).await {
         return r;
     }
     match sqlx::query_scalar::<_, String>(REVISIONS_SQL)

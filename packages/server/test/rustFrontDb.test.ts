@@ -1583,6 +1583,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant insert (name, topic, kind, repo, visibility, created_by), update (name, topic, repo, archived_at, archived_by, visibility) on channel to ${rw}`,
         // S5.4 CH4b-2 — 멤버 넣기·빼기(`core/channel_members.rs::MEMBER_PRIVILEGES`). 넣기는 위 줄. 없으면 「channel members core off」 — TS 에 남는다.
         `grant delete on channel_member to ${rw}`,
+        // S5.4 AC3 — 기억 쓰기·백그라운드 켜고 끄기(`core/agent_memory_write.rs::AGENT_MEMORY_WRITE_PRIVILEGES`). 기억 칸 권한은 위 B1a·B1b 줄. 없으면 「agent memory write core off」 — TS 에 남는다.
+        `grant insert, update (bg_enabled) on agent_config to ${rw}`,
         // S5.4 MS1 — 저장한 글(`core/saved.rs::SAVED_PRIVILEGES`). 없으면 「saved messages core off」 — 다섯 줄 모두 TS 에 남는다.
         `grant insert, update, delete on saved_message to ${rw}`,
       ]) await db.pool.query(q);
@@ -5214,6 +5216,147 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         await db.pool.query('delete from agent_memory where account_id = any($1)', [[owned, orphan, agent.accountId]]);
         await db.pool.query('delete from agent_config where account_id = any($1)', [[owned, empty, goneBot].filter(Boolean)]);
         await db.pool.query('delete from account where id = any($1)', [[owned, orphan, empty, goneBot].filter(Boolean)]);
+      }
+
+      // S5.4 AC3 — 사람이 에이전트 기억을 고치는 다섯 줄과 백그라운드 켜고 끄기(코어 `agent_memory_write.rs`). 같은 처음 상태에서 같은
+      // 요청 줄을 TS 로 한 번, Rust 로 한 번 보내고 답·기억 행·이전 판·agent_config·감사가 같은지 본다. 회차 되돌리기는 TS 에 남는다.
+      {
+        for (const k of ['DELETE /accounts/agents/{id}/memory/{slug}', 'PUT /accounts/agents/{id}/memory/{slug}',
+          'POST /accounts/agents/{id}/memory/{slug}/confirm', 'POST /accounts/agents/{id}/memory/archive',
+          'POST /accounts/agents/{id}/memory/unarchive', 'PUT /accounts/agents/{id}/background']) {
+          expect(f.log(), k).toContain(`"${k}"`);
+        }
+        expect(f.log()).not.toContain('agent memory write core off');
+        expect(f.log(), '회차 되돌리기는 TS 에 남는다').not.toContain('"POST /accounts/agents/{id}/background/runs/{runId}/revert"');
+        const M = member.token;
+        const M2 = member2.token;
+        const ins = async (q: string, p: unknown[] = []) => (await db.pool.query<{ id: string }>(q, p)).rows[0]!.id;
+        const owned = await ins(`insert into account (handle, display_name, kind) values ('ac3_owned', 'ac3_owned', 'agent') returning id`);
+        const orphan = await ins(`insert into account (handle, display_name, kind) values ('ac3_orphan', 'ac3_orphan', 'agent') returning id`);
+        const goneBot = await ins(`insert into account (handle, display_name, kind, deleted_at) values ('ac3_gone', 'ac3_gone', 'agent', now()) returning id`);
+        const bots = [owned, orphan, goneBot];
+        const T0 = '2026-01-01T00:00:00.123Z';
+        const reset = async () => {
+          await db.pool.query('delete from agent_memory_revision where account_id = any($1)', [bots]);
+          await db.pool.query('delete from agent_memory where account_id = any($1)', [bots]);
+          await db.pool.query('delete from agent_config where account_id = any($1)', [bots]);
+          await db.pool.query('insert into agent_config (account_id, owner_account_id, bg_enabled) values ($1, $2, false), ($3, $2, true)',
+            [owned, member.accountId, goneBot]);
+          await db.pool.query(
+            `insert into agent_memory (account_id, slug, value, description, kind, updated_at, flagged_at, flag_reason, archived_at)
+             values ($1, 'mem/a', 'AC3SECRET a', 'desc a', 'topic', $2, null, null, null),
+                    ($1, 'mem/b', 'AC3SECRET b', null, 'procedure', $2, null, null, null),
+                    ($1, 'mem/flag', 'AC3SECRET f', null, 'topic', $2, now(), 'instruction', null),
+                    ($1, 'mem/flag2', 'AC3SECRET f2', null, 'topic', $2, now(), 'secret', null),
+                    ($1, 'mem/arch', 'AC3SECRET ar', null, 'topic', $2, null, null, now()),
+                    ($1, 'mem/arch2', 'AC3SECRET ar2', null, 'topic', $2, null, null, now()),
+                    ($1, 'core', 'AC3SECRET core', null, 'topic', $2, null, null, null),
+                    ($3, 'mem/a', 'AC3SECRET gone', null, 'topic', $2, null, null, null)`, [owned, T0, goneBot]);
+          // 소유자 없는 에이전트는 살아 있는 기억이 꽉 찼다(200) — 새로 쓰기·되살리기가 too_many.
+          await db.pool.query(
+            `insert into agent_memory (account_id, slug, value, kind, updated_at)
+             select $1, 'mem/fill-' || g, 'fill', 'topic', $2 from generate_series(1, 200) g`, [orphan, T0]);
+          await db.pool.query(`insert into agent_memory (account_id, slug, value, kind, updated_at, archived_at) values ($1, 'mem/old', 'old', 'topic', $2, now())`, [orphan, T0]);
+        };
+        const run = async (base: string) => {
+          await reset();
+          const since = String((await db.pool.query('select coalesce(max(id), 0)::text as m from audit_log')).rows[0].m);
+          const out: unknown[] = [];
+          const call = async (m: string, path: string, body: unknown, token: string) => {
+            const r = await callX(base, m, path, body, token);
+            // 414 는 문구에 경로를 싣는다(TS) — 상태만 견준다(AC2 와 같다).
+            const json = r.status === 400 || r.status === 414 || r.status >= 500 ? null : r.json;
+            // 충돌의 지금 판은 시각이라 있음·없음만 견준다.
+            const err = (json as { error?: { updatedAt?: unknown } } | null)?.error;
+            if (err && typeof err === 'object' && 'updatedAt' in err) err.updatedAt = err.updatedAt === null ? null : typeof err.updatedAt;
+            out.push({ m, path, status: r.status, json });
+            return r;
+          };
+          const mem = (id: string, slug: string) => `/accounts/agents/${id}/memory/${encodeURIComponent(slug)}`;
+          const P = (id: string, tail: string) => `/accounts/agents/${id}/${tail}`;
+          await call('PUT', mem(owned, 'mem/a'), { value: 'new a', description: 'd2', kind: 'procedure', extra: 1 }, M);
+          await call('PUT', mem(owned, 'mem/a'), { value: 'x', ifUpdatedAt: '2020-01-01T00:00:00Z' }, M); // 409
+          await call('PUT', mem(owned, 'mem/b'), { value: 'b2', ifUpdatedAt: T0 }, M); // 판이 맞음
+          await call('PUT', mem(owned, 'mem/new'), { value: 'n', ifUpdatedAt: null }, M); // 새로
+          await call('PUT', mem(owned, 'mem/new'), { value: 'n2', ifUpdatedAt: null }, M); // 이미 있음 → 409
+          await call('PUT', mem(owned, 'mem/ghost'), { value: 'g', ifUpdatedAt: T0 }, M); // 없는데 판을 줌 → 409(null)
+          await call('PUT', mem(owned, 'mem/j'), { value: 'j', kind: 'journal', description: '' }, A); // admin
+          await call('PUT', mem(owned, 'core'), { value: 'x'.repeat(3001) }, M); // 422 core_too_long
+          await call('PUT', mem(owned, 'core'), { value: '한'.repeat(3000) }, M);
+          await call('PUT', mem(owned, 'Bad.Slug'), { value: 'x' }, M); // 422 invalid_slug
+          await call('PUT', mem(owned, 'mem/flag'), { value: 'fixed' }, M); // 표시가 풀린다
+          await call('PUT', mem(owned, 'mem/arch'), { value: 'revived' }, M); // 되살아난다
+          for (const body of [{ value: '' }, { value: 'x'.repeat(8001) }, { value: 'x', kind: 'note' }, { value: 'x', description: null },
+            { value: 'x', ifUpdatedAt: '2026-01-01' }, { value: 1 }, {}]) {
+            await call('PUT', mem(owned, 'mem/a'), body, M); // 400
+          }
+          await call('PUT', mem(owned, 'mem/a'), { value: 'x' }, M2); // 남 403
+          await call('PUT', mem(owned, 'mem/a'), { value: 'x' }, agent.pat); // 에이전트 403
+          await call('PUT', mem(orphan, 'mem/a'), { value: 'x' }, M); // 소유자 없음 — admin 만
+          await call('PUT', mem(orphan, 'mem/o'), { value: 'o' }, A); // 꽉 참 → 422 too_many
+          await call('PUT', mem(orphan, 'mem/fill-1'), { value: 'f' }, A); // 있는 것은 고칠 수 있다
+          await call('PUT', mem(goneBot, 'mem/a'), { value: 'x' }, M); // 지운 에이전트 404
+          await call('PUT', mem(member.accountId, 'mem/a'), { value: 'x' }, A); // 사람 404
+          await call('PUT', mem(ghost, 'mem/a'), { value: 'x' }, A); // 없음 404
+          await call('PUT', mem(owned, 'mem/a'), { value: 'x' }, ''); // 401
+          await call('DELETE', mem(owned, 'mem/b'), undefined, M); // 204
+          await call('DELETE', mem(owned, 'mem/nope'), undefined, M); // 없어도 204
+          await call('DELETE', mem(owned, 'Bad.Slug'), undefined, M); // slug 꼴을 보지 않는다
+          await call('DELETE', mem(goneBot, 'mem/a'), undefined, M); // 지운 에이전트도 대상
+          await call('DELETE', mem(orphan, 'mem/fill-2'), undefined, M); // 403
+          await call('DELETE', mem(owned, 'mem/a'), undefined, M2); // 403
+          await call('DELETE', mem(owned, 'mem/a'), undefined, ''); // 401
+          await call('POST', `${mem(owned, 'mem/flag2')}/confirm`, undefined, M); // ok
+          await call('POST', `${mem(owned, 'mem/flag2')}/confirm`, undefined, M); // 404 not_flagged
+          await call('POST', `${mem(owned, 'mem/a')}/confirm`, undefined, A); // 404 not_flagged
+          await call('POST', `${mem(owned, 'mem/a')}/confirm`, undefined, M2); // 403
+          await call('POST', `${mem(goneBot, 'mem/a')}/confirm`, undefined, M); // 지운 에이전트도 대상 → not_flagged
+          await call('POST', P(owned, 'memory/archive'), { slugs: ['mem/a', 'mem/a', 'core', 'Bad.Slug', 'mem/nope', 'mem/arch2', 'mem/new'] }, M);
+          await call('POST', P(owned, 'memory/archive'), { slugs: [] }, M); // 400
+          await call('POST', P(owned, 'memory/archive'), { slugs: ['x'.repeat(256)] }, M); // 400
+          await call('POST', P(owned, 'memory/archive'), { slugs: ['mem/nope'] }, M); // 감사 없음
+          await call('POST', P(owned, 'memory/unarchive'), { slugs: ['mem/arch2', 'mem/a', 'mem/nope', 'Bad.Slug', 'mem/flag'] }, M);
+          await call('POST', P(orphan, 'memory/unarchive'), { slugs: ['mem/old'] }, A); // too_many
+          await call('POST', P(orphan, 'memory/archive'), { slugs: ['mem/fill-3'] }, A);
+          await call('POST', P(orphan, 'memory/unarchive'), { slugs: ['mem/old', 'mem/fill-3'] }, A); // 자리가 하나 — 앞은 ok, 뒤는 too_many
+          await call('POST', P(orphan, 'memory/archive'), { slugs: ['mem/fill-4'] }, M); // 403
+          await call('POST', P(goneBot, 'memory/archive'), { slugs: ['mem/a'] }, M); // 지운 에이전트도 대상
+          await call('PUT', P(owned, 'background'), { enabled: true }, M);
+          await call('PUT', P(orphan, 'background'), { enabled: true }, A); // 행이 없어도 저장
+          await call('PUT', P(owned, 'background'), { enabled: 'yes' }, M); // 400
+          await call('PUT', P(owned, 'background'), undefined, M); // 400
+          await call('PUT', P(goneBot, 'background'), { enabled: false }, M); // 404
+          await call('PUT', P(owned, 'background'), { enabled: false }, M2); // 403
+          await call('PUT', P(owned, 'background'), { enabled: false }, ''); // 401
+          await call('PUT', mem(owned, 'x'.repeat(101)), { value: 'x' }, M); // 414
+          const rows = (await db.pool.query(
+            `select account_id::text, slug, value, description, kind, flagged_at is not null as flagged, flag_reason, archived_at is not null as archived
+               from agent_memory where account_id = any($1) order by account_id, slug`, [bots])).rows;
+          const revs = (await db.pool.query(
+            `select account_id::text, slug, value, description, kind, flagged, reason, run_id, turn_id
+               from agent_memory_revision where account_id = any($1) order by account_id, slug, value`, [bots])).rows;
+          const cfg = (await db.pool.query(`select account_id::text, bg_enabled from agent_config where account_id = any($1) order by account_id`, [bots])).rows;
+          const audit = (await db.pool.query(
+            `select action, actor_id::text, actor_handle, target, detail from audit_log where id > $1::bigint and action like 'agent.%' order by id`, [since])).rows;
+          return { out, rows, revs, cfg, audit };
+        };
+        const ts = await run(tsUrl);
+        const rs = await run(rsUrl);
+        expect(rs.out).toEqual(ts.out);
+        expect(rs.rows).toEqual(ts.rows);
+        expect(rs.revs).toEqual(ts.revs);
+        expect(rs.cfg).toEqual(ts.cfg);
+        expect(rs.audit).toEqual(ts.audit);
+        const statuses = (ts.out as { status: number }[]).map((o) => o.status);
+        expect(statuses).toContain(409);
+        expect(statuses).toContain(414);
+        expect(ts.audit.map((a) => a.action)).toEqual(expect.arrayContaining(['agent.memory.edited', 'agent.memory.deleted',
+          'agent.memory.flag_cleared', 'agent.memory.archived', 'agent.memory.unarchived', 'agent.background.toggled']));
+        expect(JSON.stringify(ts.audit)).not.toContain('AC3SECRET');
+        await db.pool.query('delete from agent_memory_revision where account_id = any($1)', [bots]);
+        await db.pool.query('delete from agent_memory where account_id = any($1)', [bots]);
+        await db.pool.query('delete from agent_config where account_id = any($1)', [bots]);
+        await db.pool.query('delete from account where id = any($1)', [bots]);
       }
 
       // S5.4 MS1 — 저장한 글(코어 `saved.rs`). 다섯 줄 모두 요청자 자신의 행만 다룬다 — 같은 순서의 요청을 TS 로 한 번,

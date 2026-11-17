@@ -725,6 +725,28 @@ async fn main() {
         }
         None => None,
     };
+    // S5.4 AC3 — 사람이 에이전트 기억을 고치는 다섯 줄과 백그라운드 켜고 끄기. 기억 읽기 줄과 MCP 기억 본문 쓰기 풀이 섰고
+    // 쓰기 풀에 `AGENT_MEMORY_WRITE_PRIVILEGES` 도 다 있을 때만 — 아니면 여섯 줄 모두 TS 에 남는다(fail-closed).
+    let agent_memory_write = match (&mem_body_write, agent_memory_read_on) {
+        (Some(w), true) => {
+            use harkroom_server::core::agent_memory_write as a;
+            match write::missing_in(w, a::AGENT_MEMORY_WRITE_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: agent memory write core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: agent memory write core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // C3b-1 — 선택 카드 답하기·닫기. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 `ASK_PRIVILEGES` 가 다 있을 때만.
     // C4b B2-1 — MCP `thread.note`. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 `THREAD_NOTE_PRIVILEGES` 가 다 있을 때만.
     let note_write = match (&core_mode, &state.write) {
@@ -1434,7 +1456,7 @@ async fn main() {
             core_routes.http.extend(ps.http);
             core_routes.sockets.extend(ps.sockets);
         }
-        // S5.4 AC2 — 에이전트 기억 읽기 2줄. 권한이 있을 때만 — 아니면 TS 에 남는다(정리 후보·백그라운드·기억 쓰기는 언제나 TS).
+        // S5.4 AC2 — 에이전트 기억 읽기 2줄. 권한이 있을 때만 — 아니면 TS 에 남는다(정리 후보·백그라운드 읽기는 언제나 TS).
         if agent_memory_read_on {
             let am = harkroom_server::core::agent_memory_read::routes(
                 state.pool.clone(),
@@ -1444,6 +1466,21 @@ async fn main() {
             core_routes.router = core_routes.router.merge(am.router);
             core_routes.http.extend(am.http);
             core_routes.sockets.extend(am.sockets);
+        }
+        // S5.4 AC3 — 기억 쓰기 다섯 줄 + 백그라운드 켜고 끄기. 권한이 다 있을 때만 — 아니면 TS 에 남는다(회차 되돌리기는 언제나 TS).
+        if let Some(write) = agent_memory_write {
+            let aw = harkroom_server::core::agent_memory_write::routes(
+                harkroom_server::core::agent_memory_write::MemoryWriteState {
+                    read: state.pool.clone(),
+                    write,
+                    trust: (*state.trust).clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(aw.router);
+            core_routes.http.extend(aw.http);
+            core_routes.sockets.extend(aw.sockets);
         }
         // S5.4 MS1 — 저장한 글 다섯 줄. 권한이 다 있을 때만 — 아니면 TS 에 남는다.
         if let Some(write) = saved_write {

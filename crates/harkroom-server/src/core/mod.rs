@@ -6,6 +6,7 @@
 //! 에이전트 presence 는 TS `presence.ts` 가 폴마다 묶어 쓰는 `agent_presence`(C6c-1)를 읽어 스냅샷에 합친다.
 pub mod account_self;
 pub mod agent_memory_read;
+pub mod agent_memory_write;
 pub mod ask;
 pub mod ask_bundle;
 pub mod ask_bundle_add;
