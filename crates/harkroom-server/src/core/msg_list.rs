@@ -256,8 +256,26 @@ pub fn linked_roots(doc: &Value) -> Vec<String> {
     out
 }
 
-/// TS `planProgress(doc, linked)` — `derivePlan` 의 파생 상태로 단위를 센다.
-pub fn plan_progress(doc: &Value, linked: &HashMap<String, Linked>) -> Progress {
+/// TS `derivePlan` 의 노드 하나 — `{ derived, waitingOn, startedEarly }`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DerivedNode {
+    pub derived: String,
+    pub waiting_on: Vec<String>,
+    pub started_early: bool,
+}
+
+/// JS 객체의 「정수 색인」 키(`"0"`·`"12"`, 앞자리 0 없음, 2^32-1 미만)인가 — 그런 키는 넣은 순서와 상관없이 맨 앞에 오름차순으로 선다.
+fn js_index_key(k: &str) -> Option<u32> {
+    if k.is_empty() || (k.len() > 1 && k.starts_with('0')) || !k.bytes().all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
+    k.parse::<u32>().ok().filter(|n| *n != u32::MAX)
+}
+
+/// TS `derivePlan(doc, linked)` — 노드 id 마다 파생 상태. 순서는 TS 결과 객체의 키 순서다(그룹 뒤 단계, 같은 id 는 처음 자리에
+/// 나중 값, 정수 꼴 키는 맨 앞).
+pub fn derive_plan(doc: &Value, linked: &HashMap<String, Linked>) -> Vec<(String, DerivedNode)> {
     const ZERO: Progress = Progress {
         done: 0,
         total: 0,
@@ -328,44 +346,72 @@ pub fn plan_progress(doc: &Value, linked: &HashMap<String, Linked>) -> Progress 
         steps: &steps,
         steps_of: &steps_of,
     };
-    let pending_deps = |d: &mut Done, deps: Vec<&str>| -> usize {
-        let mut out: Vec<&str> = Vec::new();
+    let pending_deps = |d: &mut Done, deps: Vec<&str>| -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
         for x in deps {
-            if !out.contains(&x) && !is_done(d, x, &linked_of) {
-                out.push(x);
+            if !out.iter().any(|o| o == x) && !is_done(d, x, &linked_of) {
+                out.push(x.to_string());
             }
         }
-        out.len()
+        out
     };
 
-    // 파생 상태 — 그룹 먼저, 같은 id 의 단계가 덮는다(TS `result` 에 그룹 뒤 단계를 넣는 순서). 단계·그룹 id 가 겹치면 마지막 것이 이긴다.
-    let mut derived: HashMap<String, String> = HashMap::new();
-    let mut step_nodes: Vec<(String, String)> = Vec::new();
+    let mut step_nodes: Vec<(String, DerivedNode)> = Vec::new();
     for s in steps_v {
         let parent = truthy_str(&s["groupId"]).and_then(|g| groups.get(g).copied());
         let mut deps = str_list(&s["dependsOn"]);
         if let Some(p) = parent {
             deps.extend(str_list(&p["dependsOn"]));
         }
-        let waiting = pending_deps(&mut d, deps);
+        let waiting_on = pending_deps(&mut d, deps);
         let state = s["state"].as_str().unwrap_or("").to_string();
         let node = if state == "pending" {
-            if waiting > 0 {
-                "waiting".into()
-            } else {
-                "ready".into()
+            DerivedNode {
+                derived: if waiting_on.is_empty() {
+                    "ready"
+                } else {
+                    "waiting"
+                }
+                .into(),
+                waiting_on,
+                started_early: false,
             }
         } else {
-            state
+            let started_early = !waiting_on.is_empty();
+            DerivedNode {
+                derived: state,
+                waiting_on,
+                started_early,
+            }
         };
         step_nodes.push((gid(s), node));
     }
+    // TS `result` — 그룹 먼저 넣고 단계가 뒤에 덮는다. 같은 키는 처음 자리에 나중 값.
+    let mut out: Vec<(String, DerivedNode)> = Vec::new();
+    let put = |out: &mut Vec<(String, DerivedNode)>, id: String, node: DerivedNode| match out
+        .iter_mut()
+        .find(|(k, _)| *k == id)
+    {
+        Some(slot) => slot.1 = node,
+        None => out.push((id, node)),
+    };
     for g in groups_v {
         let id = gid(g);
-        let waiting = pending_deps(&mut d, str_list(&g["dependsOn"]));
-        let node = if truthy_str(&g["linkedRootId"]).is_some() {
+        let waiting_on = pending_deps(&mut d, str_list(&g["dependsOn"]));
+        let derived = if truthy_str(&g["linkedRootId"]).is_some() {
             match linked_of(g) {
-                Linked::Hidden => "hidden",
+                Linked::Hidden => {
+                    put(
+                        &mut out,
+                        id,
+                        DerivedNode {
+                            derived: "hidden".into(),
+                            waiting_on,
+                            started_early: false,
+                        },
+                    );
+                    continue;
+                }
                 Linked::Shown(p) => {
                     if is_done(&mut d, &id, &linked_of) {
                         "done"
@@ -373,7 +419,7 @@ pub fn plan_progress(doc: &Value, linked: &HashMap<String, Linked>) -> Progress 
                         "blocked"
                     } else if p.active > 0 || p.done > 0 {
                         "active"
-                    } else if waiting > 0 {
+                    } else if !waiting_on.is_empty() {
                         "waiting"
                     } else {
                         "ready"
@@ -395,18 +441,45 @@ pub fn plan_progress(doc: &Value, linked: &HashMap<String, Linked>) -> Progress 
                 "blocked"
             } else if members.contains(&"active") || members.contains(&"done") {
                 "active"
-            } else if waiting > 0 {
+            } else if !waiting_on.is_empty() {
                 "waiting"
             } else {
                 "ready"
             }
         };
-        derived.insert(id, node.to_string());
+        let started = matches!(derived, "done" | "blocked" | "active");
+        let started_early = started && !waiting_on.is_empty();
+        put(
+            &mut out,
+            id,
+            DerivedNode {
+                derived: derived.into(),
+                waiting_on,
+                started_early,
+            },
+        );
     }
     for (id, node) in step_nodes {
-        derived.insert(id, node);
+        put(&mut out, id, node);
     }
+    // 정수 꼴 키는 맨 앞 오름차순(안정 정렬이라 나머지는 넣은 순서 그대로).
+    out.sort_by_key(|(k, _)| match js_index_key(k) {
+        Some(n) => (0, n),
+        None => (1, 0),
+    });
+    out
+}
 
+/// TS `planProgress(doc, linked)` — `derivePlan` 의 파생 상태로 단위를 센다.
+pub fn plan_progress(doc: &Value, linked: &HashMap<String, Linked>) -> Progress {
+    let empty = Vec::new();
+    let groups_v = doc["groups"].as_array().unwrap_or(&empty);
+    let steps_v = doc["steps"].as_array().unwrap_or(&empty);
+    let gid = |g: &Value| g["id"].as_str().unwrap_or("").to_string();
+    let derived: HashMap<String, String> = derive_plan(doc, linked)
+        .into_iter()
+        .map(|(k, n)| (k, n.derived))
+        .collect();
     let mut units: Vec<String> = steps_v.iter().map(gid).collect();
     units.extend(
         groups_v
@@ -416,7 +489,7 @@ pub fn plan_progress(doc: &Value, linked: &HashMap<String, Linked>) -> Progress 
     );
     let mut p = Progress {
         total: units.len() as i64,
-        ..ZERO
+        ..Default::default()
     };
     for id in &units {
         match derived.get(id).map(String::as_str) {

@@ -4044,6 +4044,119 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         await db.pool.query('delete from account where id = any($1)', [[botA, botB]]);
       }
 
+      // S5.4 TP1 — 계획판 읽기(코어 `thread_plan_read.rs`). 두 서버의 답을 견준다. 계획 쓰기(start·manager·auto)는 TS 에 남는다.
+      // 연결 그룹의 진행률은 보는 사람이 자식 채널을 볼 때만 — 못 보는 자식 채널 id·진행률이 어느 답에도 새지 않는지 본다.
+      {
+        expect(f.log()).toContain('"GET /threads/{rootId}/plan"');
+        expect(f.log()).not.toContain('thread plan read core off');
+        for (const k of ['POST /threads/{rootId}/plan/start', 'PUT /threads/{rootId}/plan/manager', 'DELETE /threads/{rootId}/plan/auto']) {
+          expect(f.log(), `${k} 는 TS 에 남는다`).not.toContain(`"${k}"`);
+        }
+        const M = member.token;
+        const M2 = member2.token;
+        const pubCh = await createChannel(db.pool, { name: 'tp1-pub' });
+        const privCh = await createChannel(db.pool, { name: 'tp1-priv', visibility: 'private', creatorId: member.accountId });
+        const hidCh = await createChannel(db.pool, { name: 'tp1-hid', visibility: 'private', creatorId: member2.accountId });
+        const say = async (channelId: string, authorId: string, body: string, threadRootId: string | null = null) =>
+          ((await postMessage(db.pool, { channelId, authorId, body, threadRootId, meta: {} })) as { message: { id: string } }).message.id;
+        const parent = await say(pubCh.id, member.accountId, 'tp1 parent');
+        const reply = await say(pubCh.id, member.accountId, 'tp1 reply', parent);
+        const childVis = await say(pubCh.id, admin.accountId, 'tp1 child seen');
+        const childHid = await say(hidCh.id, member2.accountId, 'tp1 child hidden');
+        const childNoPlan = await say(pubCh.id, admin.accountId, 'tp1 child no plan');
+        const privRoot = await say(privCh.id, member.accountId, 'tp1 private');
+        const privEmpty = await say(privCh.id, member.accountId, 'tp1 private no plan');
+        const pubEmpty = await say(pubCh.id, member.accountId, 'tp1 no plan');
+        const bare = await say(pubCh.id, member.accountId, 'tp1 bare plan');
+        const gone = await say(pubCh.id, member.accountId, 'tp1 gone');
+        const ghostRoot = '00000000-0000-4000-8000-0000000007a1';
+        const st = (id: string, state: string, dependsOn: string[], groupId: string | null = null) =>
+          ({ id, groupId, title: id, state, links: [], dependsOn });
+        const plan = async (root: string, ch: string, doc: unknown, extra = '') => db.pool.query(
+          `insert into thread_plan (root_id, channel_id, doc, rev, updated_by, updated_at) values ($1, $2, $3::jsonb, 3, $4, now() - interval '1 minute 0.654321 seconds')${extra}`,
+          [root, ch, JSON.stringify(doc), member.accountId]);
+        // 자식들: 보이는 쪽은 진행 중, 못 보는 쪽은 다 끝남(새면 부모 g2 가 done 이 된다).
+        await plan(childVis, pubCh.id, { goal: 'seen', groups: [], steps: [st('s1', 'done', []), st('s2', 'active', [])] });
+        await plan(childHid, hidCh.id, { goal: 'TP1HIDDEN', groups: [], steps: [st('s1', 'done', []), st('s2', 'done', [])] });
+        await plan(parent, pubCh.id, {
+          goal: '부모 계획', next: 's2', managerId: agent.accountId,
+          groups: [
+            { id: 'g1', title: 'seen', linkedRootId: childVis, dependsOn: [] },
+            { id: 'g2', title: 'hidden', linkedRootId: childHid, dependsOn: [] },
+            { id: 'g3', title: 'ghost', linkedRootId: ghostRoot, dependsOn: [] },
+            { id: 'g4', title: 'reply', linkedRootId: reply, dependsOn: ['g1'] },
+            { id: 'g5', title: 'no plan', linkedRootId: childNoPlan, dependsOn: [] },
+            { id: 'g6', title: 'own', assigneeId: member.accountId, dependsOn: [] },
+            { id: 'g7', title: 'dup', linkedRootId: childVis, dependsOn: [] },
+          ],
+          steps: [
+            st('s1', 'done', [], 'g6'), st('s2', 'pending', ['g2']), st('s3', 'active', ['g1', 'g1', 's2']),
+            { ...st('s4', 'blocked', ['g5']), blockedReason: '막힘' }, st('s5', 'pending', ['s1']),
+          ],
+        });
+        await db.pool.query(
+          `update thread_plan set flag_reason = 'looks odd', auto_until = 's5', auto_source = $2, auto_by = $3,
+             auto_at = now() - interval '0.123456 seconds' where root_id = $1`, [parent, parent, member.accountId]);
+        await plan(privRoot, privCh.id, { goal: 'private', groups: [], steps: [st('s1', 'pending', [])] });
+        await plan(bare, pubCh.id, { goal: '', groups: [], steps: [] });
+        await db.pool.query(`update thread_plan set flag_reason = '', auto_until = '', auto_at = now() where root_id = $1`, [bare]);
+        await plan(gone, pubCh.id, { goal: 'gone', groups: [], steps: [] });
+        await db.pool.query('update message set deleted_at = now() where id = $1', [gone]);
+
+        const seen: unknown[] = [];
+        const both = async (path: string, token: string) => {
+          const [x, y] = [await callX(tsUrl, 'GET', path, undefined, token), await callX(rsUrl, 'GET', path, undefined, token)];
+          expect(y.status, path).toBe(x.status);
+          expect(y.json, path).toEqual(x.json);
+          seen.push({ token, json: y.json });
+          return y;
+        };
+        const P = `/threads/${parent}/plan`;
+        type View = { linked: { groupId: string; hidden: boolean; channelId: string | null }[]; derived: Record<string, { derived: string }> };
+        const mine = (await both(P, M)).json.plan as View;
+        expect(mine.linked.map((l) => [l.groupId, l.hidden])).toEqual([['g1', false], ['g2', true], ['g3', true], ['g4', true], ['g5', false], ['g7', false]]);
+        expect(mine.derived.g2!.derived).toBe('hidden');
+        expect(mine.derived.s2!.derived, '못 보는 자식이 끝났어도 기다린다').toBe('waiting');
+        const theirs = (await both(P, M2)).json.plan as View;
+        expect(theirs.linked.find((l) => l.groupId === 'g2')).toMatchObject({ hidden: false, channelId: hidCh.id });
+        expect(theirs.derived.g2!.derived).toBe('done');
+        await both(P, A);
+        await both(P, agent.pat);
+        await both(`/threads/${parent.toUpperCase()}/plan`, M);
+        expect((await both(`/threads/${privRoot}/plan`, M)).json.plan).toMatchObject({ rootId: privRoot });
+        expect((await both(`/threads/${privEmpty}/plan`, M)).json).toEqual({ plan: null });
+        expect((await both(`/threads/${pubEmpty}/plan`, agent.pat)).json).toEqual({ plan: null });
+        expect((await both(`/threads/${bare}/plan`, M)).json.plan).toMatchObject({ flagged: null, auto: null, linked: [], derived: {} });
+        for (const [path, token] of [
+          [`/threads/${privRoot}/plan`, A], // 비멤버 admin — 예외 없음
+          [`/threads/${privRoot}/plan`, agent.pat],
+          [`/threads/${privRoot}/plan`, M2],
+          [`/threads/${privEmpty}/plan`, A],
+          [`/threads/${childHid}/plan`, M],
+          [`/threads/${reply}/plan`, M], // 답글
+          [`/threads/${gone}/plan`, M], // 지운 루트
+          [`/threads/${ghostRoot}/plan`, M],
+          ['/threads/not-a-uuid/plan', M],
+          [`/threads/${parent.slice(0, -1)}/plan`, M],
+        ] as const) {
+          const y = await both(path, token);
+          expect({ status: y.status, json: y.json }, path).toEqual({ status: 404, json: { error: 'not_found' } });
+        }
+        {
+          const [x, y] = [await callX(tsUrl, 'GET', P, undefined, ''), await callX(rsUrl, 'GET', P, undefined, '')];
+          expect({ status: y.status, code: y.code }, '익명 → 401').toEqual({ status: x.status, code: x.code });
+          expect(y.status).toBe(401);
+        }
+        // member·admin·에이전트 답 어디에도 못 보는 자식 채널·계획이 없다(member2 는 그 채널 멤버라 제외).
+        const leak = JSON.stringify(seen.filter((s) => (s as { token: string }).token !== M2));
+        expect(leak).not.toContain(hidCh.id);
+        expect(leak).not.toContain('TP1HIDDEN');
+        await db.pool.query('delete from thread_plan where root_id = any($1)', [[parent, childVis, childHid, privRoot, bare, gone]]);
+        await db.pool.query('delete from message where channel_id = any($1)', [[pubCh.id, privCh.id, hidCh.id]]);
+        await db.pool.query('delete from channel_member where channel_id = any($1)', [[pubCh.id, privCh.id, hidCh.id]]);
+        await db.pool.query('delete from channel where id = any($1)', [[pubCh.id, privCh.id, hidCh.id]]);
+      }
+
       // S5.2 P4d — 옮긴 라우트를 지난 요청도 세션을 늘리고 PAT 사용 시각을 남긴다(쓰기 풀로). 읽기 역할로 하면 조용히 실패하던 것.
       await db.pool.query(`update session set expires_at = now() + interval '1 day' where account_id = $1`, [member.accountId]);
       await db.pool.query(`update pat set last_used_at = now() - interval '1 hour' where account_id = $1`, [agent.accountId]);
