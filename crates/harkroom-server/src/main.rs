@@ -627,6 +627,34 @@ async fn main() {
         },
         None => false,
     };
+    // C3b-2c-4b — MCP `message.delegate` 의 쓰기(게이트를 지난 위임)는 MCP 글 칸에 더해 위임 칸(`DELEGATE_WRITE_PRIVILEGES`)까지 있을 때만.
+    // 없으면 게이트를 지난 위임만 TS 에 남는다(거절 갈래는 그대로 Rust).
+    let mcp_delegate_ok = mcp_post_ok
+        && match &post_write {
+            Some(w) => match write::missing_in(
+                w,
+                harkroom_server::core::delegate_write::DELEGATE_WRITE_PRIVILEGES,
+                &[],
+            )
+            .await
+            {
+                Ok(m) if m.is_empty() => true,
+                Ok(m) => {
+                    eprintln!(
+                        "front: mcp message.delegate write core off — missing privileges {m:?}"
+                    );
+                    false
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: mcp message.delegate write core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    false
+                }
+            },
+            None => false,
+        };
     // C3a-3c — 글 고치기. 위 블록들과 같이 쓰기 역할에 그 권한이 **하나라도 없으면** 붙이지 않는다(그 경로는 TS 가 받는다).
     let edit_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -1051,6 +1079,7 @@ async fn main() {
                 note: note_write,
                 memory: mem_write,
                 memory_body: mem_body_write,
+                delegate: mcp_post.clone().filter(|_| mcp_delegate_ok),
                 post: mcp_post,
             },
             auth.clone(),

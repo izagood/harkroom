@@ -211,6 +211,23 @@ export const DELEGATION_INSERT_SQL = `insert into team_delegation
 /** 위임 항목 — $1 위임 · $2 담당. */
 export const DELEGATION_ITEM_INSERT_SQL = `insert into team_delegation_item (delegation_id, delegate_account_id) values ($1::uuid, $2::uuid)`;
 
+/** 같은 담당의 앞 의무 대체(v1) — $1 머리 · $2 담당 · $3 새 위임. Rust `message.delegate`(C3b-2c-4b)가 골든으로 받는다. */
+export const SUPERSEDE_PREVIOUS_SQL = `update team_delegation_item i
+        set outcome = 'closed', closed_reason = 'superseded', closed_at = now(), update_pending_message_id = null
+       from team_delegation d
+      where d.id = i.delegation_id and d.thread_root_id = $1::uuid and i.delegate_account_id = $2::uuid
+        and i.delegation_id <> $3::uuid and (i.outcome is null or i.outcome = 'reported')
+      returning i.delegation_id::text`;
+/** 열린 의무가 남지 않은 위임에 조용히 결말 시각 — $1 위임 id 들. */
+export const MARK_SETTLED_QUIETLY_SQL = `update team_delegation d set notified_at = now()
+      where d.id = any($1::uuid[]) and d.notified_at is null
+        and not exists (select 1 from team_delegation_item i where i.delegation_id = d.id and i.outcome is null)`;
+/** 담당의 멘션 부름을 위임 부름으로 바꿔 단다 — $1 담당 · $2 글 · $3 팀. */
+export const DELEGATION_INBOX_CONVERT_SQL = `update inbox set reason = 'team_delegated', team_id = $3::uuid
+        where account_id = $1::uuid and message_id = $2::uuid and reason = 'mention'`;
+/** 바꿀 멘션 부름이 없으면 새로 — $1 담당 · $2 글 · $3 팀. */
+export const DELEGATION_INBOX_INSERT_SQL = `insert into inbox (account_id, message_id, reason, team_id) values ($1::uuid, $2::uuid, 'team_delegated', $3::uuid)`;
+
 export async function createDelegation(
   client: PoolClient,
   args: {
@@ -267,13 +284,12 @@ export async function createDelegation(
     // P3 의 inbox 위임 요약이 싣는다). 바꾸면 옛 러너가 맨 앞 멘션 하나마다 「넘겨받은 일」 지시문을 싣는다.
     if (kind === 'mention') continue;
     const converted = await client.query(
-      `update inbox set reason = 'team_delegated', team_id = $3
-        where account_id = $1 and message_id = $2 and reason = 'mention'`,
+      DELEGATION_INBOX_CONVERT_SQL,
       [delegateId, args.messageId, args.teamId],
     );
     if (!converted.rowCount) {
       await client.query(
-        `insert into inbox (account_id, message_id, reason, team_id) values ($1, $2, 'team_delegated', $3)`,
+        DELEGATION_INBOX_INSERT_SQL,
         [delegateId, args.messageId, args.teamId],
       );
     }
@@ -892,24 +908,14 @@ export const DELEGATION_UPDATE_LIMIT = 40;
  */
 async function markSettledQuietly(client: PoolClient, delegationIds: string[]): Promise<void> {
   if (!delegationIds.length) return;
-  await client.query(
-    `update team_delegation d set notified_at = now()
-      where d.id = any($1::uuid[]) and d.notified_at is null
-        and not exists (select 1 from team_delegation_item i where i.delegation_id = d.id and i.outcome is null)`,
-    [delegationIds],
-  );
+  await client.query(MARK_SETTLED_QUIETLY_SQL, [delegationIds]);
 }
 
 async function supersedePrevious(
   client: PoolClient, args: { threadRootId: string; delegateId: string; keep: string },
 ): Promise<void> {
   const r = await client.query<{ delegation_id: string }>(
-    `update team_delegation_item i
-        set outcome = 'closed', closed_reason = 'superseded', closed_at = now(), update_pending_message_id = null
-       from team_delegation d
-      where d.id = i.delegation_id and d.thread_root_id = $1 and i.delegate_account_id = $2
-        and i.delegation_id <> $3 and (i.outcome is null or i.outcome = 'reported')
-      returning i.delegation_id`,
+    SUPERSEDE_PREVIOUS_SQL,
     [args.threadRootId, args.delegateId, args.keep],
   );
   await markSettledQuietly(client, r.rows.map((x) => x.delegation_id));

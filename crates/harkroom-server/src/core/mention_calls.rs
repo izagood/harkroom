@@ -175,7 +175,7 @@ async fn accounts_by_ids(
 }
 
 /// TS `getMentionPolicy` — 행이 없으면 상수.
-async fn chain_limit(conn: &mut PgConnection) -> Result<i64, sqlx::Error> {
+pub(crate) async fn chain_limit(conn: &mut PgConnection) -> Result<i64, sqlx::Error> {
     let v: Option<i32> = sqlx::query_scalar(sql().policy.as_str())
         .fetch_optional(&mut *conn)
         .await?;

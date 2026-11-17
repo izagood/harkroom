@@ -32,6 +32,7 @@ use super::audience::audience_for;
 use super::cause_link;
 use super::chain_backstop;
 use super::chain_stall::{self, STALL_HOP_LIMIT};
+use super::delegate_write;
 use super::implicit_delegation;
 use super::invoke_gate;
 use super::mandate_stamp;
@@ -323,6 +324,9 @@ pub(crate) struct Origin<'a> {
     /// 결과를 닫는 글(`meta.kind` 가 `failure`·`report`, C3b-2c). 작성자가 담당인 **안 닫힌** 위임 항목이 이 스레드에 있으면 TS
     /// `closeDelegationsForReply` 가 그 항목을 닫고 위임자를 깨운다 — 아직 Rust 에 없는 갈래라 [`CLOSES_DELEGATION_SQL`] 로 TS 에 넘긴다.
     pub(crate) closes_delegation: bool,
+    /// MCP `message.delegate`(C3b-2c-4b) — 게이트를 지난 위임. 있으면 같은 tx 에서 사슬 상한(TS `delegationChainCapped`)을 보고
+    /// 의무를 만든다(TS `createDelegation`, [`delegate_write`]). 위임 스위치를 모르면 TS 로 넘긴다.
+    pub(crate) delegation: Option<delegate_write::Plan<'a>>,
 }
 
 /// 읽은 JSON 이 TS 몫인가 — 키만 보고 정한다(값이 틀렸으면 TS 가 400 을 준다).
@@ -419,10 +423,14 @@ pub(crate) enum Outcome {
     BadThread,
     /// 이 스레드는 TS 몫이다([`TS_THREAD_SQL`]) — 아무것도 쓰지 않았다.
     ToTs,
+    /// 위임 글의 사슬이 상한에 닿았다(TS `beforeCommit` 의 `chain_limit`, 409) — 아무것도 쓰지 않았다. [`Origin::delegation`] 만.
+    ChainLimit,
     Posted {
         row: String,
         notified: Vec<String>,
         mandate: Option<mandate_stamp::Created>,
+        /// [`Origin::delegation`] 으로 만든 위임 id.
+        delegation_id: Option<String>,
     },
 }
 
@@ -482,7 +490,7 @@ struct Chain {
     now_ms: i64,
 }
 
-fn now_ms() -> i64 {
+pub(crate) fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
@@ -531,7 +539,7 @@ async fn chain_link(
 }
 
 /// 밀리초 시각을 ISO 8601(UTC, 밀리초)로 — TS 가 `Date` 를 넘기는 것과 같은 값을 `$11::timestamptz` 에 넣는다.
-fn iso_ms(ms: i64) -> String {
+pub(crate) fn iso_ms(ms: i64) -> String {
     let (days, rem) = (ms.div_euclid(86_400_000), ms.rem_euclid(86_400_000));
     // Howard Hinnant `civil_from_days`.
     let z = days + 719_468;
@@ -635,6 +643,11 @@ pub(crate) async fn post_tx(
             .await?;
     }
     let v2 = delegation_v2(std::env::var("HARKROOM_DELEGATION_V2").ok().as_deref());
+    // 위임 글(C3b-2c-4b)은 v1 이면 앞 의무를 대체한다 — 스위치를 모르면 어느 쪽인지 정할 수 없으니 TS 로 넘긴다(fail-closed).
+    if origin.delegation.is_some() && v2.is_none() {
+        tx.rollback().await?;
+        return Ok((Outcome::ToTs, None));
+    }
     // TS `mentionDepthFor` — 사람 글은 언제나 사슬 밖이다. 원인이 있으면 먼저 그 원인에서 물려받고(C1c-4c), 원인이 나를 깨운
     // 것이 아니면 스레드 스캔으로 간다.
     let from_cause = match (author_is_agent, origin.cause) {
@@ -938,7 +951,10 @@ pub(crate) async fn post_tx(
     }
     // TS 암묵 위임(P4) — 회신권을 연 뒤, `thread_reply` 앞. 결과로 세는 에이전트 글(이 앞단이 맡는 글은 모두 `user` 다)이 부른,
     // inbox 가 실제로 간 계정 중 에이전트만 판정한다.
-    if let (true, true, Some(mode)) = (author_is_agent, is_result, implicit) {
+    // TS 는 `meta.kind` 가 `delegation` 인 글(`message.delegate`)을 암묵 위임으로 보지 않는다 — 그 도구가 진짜 위임을 만든다.
+    let delegation_meta = origin.meta.get("kind").and_then(Value::as_str) == Some("delegation");
+    if let (true, true, false, Some(mode)) = (author_is_agent, is_result, delegation_meta, implicit)
+    {
         let called: Vec<&String> = calls
             .called_ids
             .iter()
@@ -1047,6 +1063,29 @@ pub(crate) async fn post_tx(
                 .await?;
         }
     }
+    // C3b-2c-4b `message.delegate` — TS `beforeCommit` 의 사슬 상한, 이어서 `createDelegation`. TS 는 의무를 커밋 뒤 다른 tx 로
+    // 만들지만(그 사이 실패면 글만 남는다) 여기서는 같은 tx 다.
+    let delegation_id = match (&origin.delegation, v2) {
+        (Some(plan), Some(on)) => {
+            if delegate_write::chain_capped(&mut tx, &id, now_ms()).await? {
+                tx.rollback().await?;
+                return Ok((Outcome::ChainLimit, None));
+            }
+            Some(
+                delegate_write::create(
+                    &mut tx,
+                    on,
+                    &id,
+                    channel,
+                    root.unwrap_or(&id),
+                    author,
+                    plan,
+                )
+                .await?,
+            )
+        }
+        _ => None,
+    };
     let notified = notified_in_order(&mut tx, &id, &notified_set).await?;
     // TS 는 선점 신호를 `postMessage` 안(커밋 뒤)에서, `message.created` 는 라우트가 그 뒤에 낸다 — 같은 순서로 outbox 에.
     wake_preempt::announce(&mut tx, &preempted).await?;
@@ -1088,6 +1127,13 @@ pub(crate) async fn post_tx(
         crate::write::emit_event(&mut tx, &json!({ "type": "inbox.updated", "accountId": a }))
             .await?;
     }
+    // TS `message.delegate` — 넘겨받은 담당의 부름은 `createDelegation` 이 만들었다. 러너가 곧 폴하도록 따로 친다.
+    if let Some(plan) = &origin.delegation {
+        for a in plan.delegate_ids {
+            crate::write::emit_event(&mut tx, &json!({ "type": "inbox.updated", "accountId": a }))
+                .await?;
+        }
+    }
     // TS 라우트는 `inbox.updated` 뒤에 `closeAsksByReply` 를 부른다(사람 글만) — 이 답보다 앞선 열린 카드를 `replied` 로 닫는다.
     if let (false, Some(r)) = (author_is_agent, root) {
         let seq = row_value
@@ -1121,6 +1167,7 @@ pub(crate) async fn post_tx(
             row,
             notified,
             mandate,
+            delegation_id,
         },
         capped,
     ))
@@ -1336,7 +1383,8 @@ pub async fn post(
     {
         Err(e) => internal(e),
         // 세 사유를 400 하나로 합친다 — TS 와 같이, 남의 업로드 id 가 있는지 알리는 신호가 되지 않게.
-        Ok(Outcome::ToTs) => to_ts(st.up.clone(), peer, parts, bytes).await,
+        // 위임 상한은 MCP `message.delegate` 만 낸다 — REST 글에는 닿지 않는다.
+        Ok(Outcome::ToTs | Outcome::ChainLimit) => to_ts(st.up.clone(), peer, parts, bytes).await,
         Ok(Outcome::BadThread) => json_err(
             StatusCode::BAD_REQUEST,
             "bad_thread",
@@ -1353,6 +1401,7 @@ pub async fn post(
             row,
             notified,
             mandate,
+            ..
         }) => {
             // 새로 만든 위임의 감사 — 커밋 뒤라 되돌린 글의 위임은 남지 않는다(TS `auditMandateCreated`).
             if let Some(c) = &mandate {
