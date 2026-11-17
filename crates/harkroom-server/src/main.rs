@@ -384,6 +384,28 @@ async fn main() {
         }
         _ => false,
     };
+    // S5.4 TM1 — 스레드 모델 지정 읽기(`GET /channels/{id}/threads/{rootId}/agent-models`). 읽기 풀만 쓴다.
+    // 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 읽기 역할에 그 표들의 SELECT 가 다 있을 때만 — 아니면 TS 에 남는다.
+    let thread_models_read = match &core_mode {
+        harkroom_server::core::CoreMode::Rust => {
+            use harkroom_server::core::thread_models_read as tm;
+            match write::missing_in(&state.pool, tm::THREAD_MODELS_READ_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => true,
+                Ok(m) => {
+                    eprintln!("front: thread models read core off — missing privileges {m:?}");
+                    false
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: thread models read core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    false
+                }
+            }
+        }
+        _ => false,
+    };
     // C3b-2b-2 — MCP `message.askBundle` 있던 묶음에 줄 더하기. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 묶음 푸시까지 그 권한이 다 있을 때만.
     let bundle_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -864,6 +886,17 @@ async fn main() {
         core_routes.router = core_routes.router.merge(decide_check.router);
         core_routes.http.extend(decide_check.http);
         core_routes.sockets.extend(decide_check.sockets);
+        // S5.4 TM1 — 스레드 모델 지정 읽기. 읽기 역할에 SELECT 가 다 있을 때만 — 정하기·풀기(PUT·DELETE)는 언제나 TS.
+        if thread_models_read {
+            let tm = harkroom_server::core::thread_models_read::routes(
+                state.pool.clone(),
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(tm.router);
+            core_routes.http.extend(tm.http);
+            core_routes.sockets.extend(tm.sockets);
+        }
         // C3b grant 읽기 줄 — 러너·오퍼레이터가 읽는 `GET /agent/tool-allows`·`/agent/command-grants`. 읽기 풀만(match 는 아래 B1).
         // S5.4 AT1 — 자동화 읽기(`GET /automations`·`GET /automations/{id}`). 읽기 풀만 쓴다 — 지우기·만들기·수신은 TS.
         let automations = harkroom_server::core::automations_read::routes(
