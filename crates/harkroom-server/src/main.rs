@@ -285,6 +285,33 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 AC1 — 내 상태·에이전트 PAT. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만.
+    let account_self_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::account_self as a;
+            match write::missing_in(
+                w,
+                a::ACCOUNT_SELF_PRIVILEGES,
+                a::ACCOUNT_SELF_SEQUENCE_PRIVILEGES,
+            )
+            .await
+            {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: account self core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: account self core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // C3b-2b-2 — MCP `message.askBundle` 있던 묶음에 줄 더하기. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 묶음 푸시까지 그 권한이 다 있을 때만.
     let bundle_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -797,6 +824,21 @@ async fn main() {
             core_routes.router = core_routes.router.merge(sec.router);
             core_routes.http.extend(sec.http);
             core_routes.sockets.extend(sec.sockets);
+        }
+        // S5.4 AC1 — 내 상태·PAT 4줄. 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = account_self_write {
+            let acc = harkroom_server::core::account_self::routes(
+                harkroom_server::core::account_self::AccountSelfState {
+                    read: state.pool.clone(),
+                    write,
+                    trust: state.trust.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(acc.router);
+            core_routes.http.extend(acc.http);
+            core_routes.sockets.extend(acc.sockets);
         }
         // C3a-2 — 지우기·「채널에도 보이기」 켜고 끄기. 쓰기 풀에 그 권한이 다 있을 때만 — 아니면 TS 에 남는다.
         if let Some(write) = delete_write {
