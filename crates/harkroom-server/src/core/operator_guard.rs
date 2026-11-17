@@ -15,8 +15,6 @@ pub const CODE: &str = "operator_core_moved";
 pub const GUARDED: &[&str] = &[
     "POST /accounts/agents/{id}/stop",
     "POST /accounts/agents/{id}/stop/undo",
-    "PUT /accounts/agents/{id}/assignment",
-    "DELETE /accounts/agents/{id}/assignment",
     "DELETE /accounts/me",
     "GET /agents/{id}/merge-accounts",
     "PUT /agents/{id}/merge-accounts/lines",
@@ -34,8 +32,6 @@ fn table() -> Table<()> {
     Table::<()>::new()
         .post("/accounts/agents/{id}/stop", unavailable)
         .post("/accounts/agents/{id}/stop/undo", unavailable)
-        .put("/accounts/agents/{id}/assignment", unavailable)
-        .delete("/accounts/agents/{id}/assignment", unavailable)
         .delete("/accounts/me", unavailable)
         .get("/agents/{id}/merge-accounts", unavailable)
         .put("/agents/{id}/merge-accounts/lines", unavailable)
