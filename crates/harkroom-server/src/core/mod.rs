@@ -32,6 +32,7 @@ pub mod grant_reads;
 pub mod implicit_delegation;
 pub mod inbox_list;
 pub mod inbox_read;
+pub mod inbox_rest;
 pub mod inbox_thread;
 pub mod invoke_gate;
 pub mod mandate_card_thread;

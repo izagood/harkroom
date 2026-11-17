@@ -196,7 +196,7 @@ fn question_only(body: &str) -> bool {
 /// TS 는 없으면 꺼짐(v0)으로 보지만, 앞단 컨테이너에 이 변수가 빠진 채 TS 만 켜져 있으면 두 서버가 다르게 군다. 그래서 Rust 는
 /// 값이 있을 때만 위임 갈래를 맡고(`1`·`on`·`true` → v1, 그 밖의 값 → v0 — TS 와 같은 낱말), 없으면 지금처럼 TS 로 넘긴다.
 /// TS 와 같이 부를 때마다 읽는다.
-fn delegation_v2(raw: Option<&str>) -> Option<bool> {
+pub(crate) fn delegation_v2(raw: Option<&str>) -> Option<bool> {
     let v = raw?.trim().to_lowercase();
     if v.is_empty() {
         return None;

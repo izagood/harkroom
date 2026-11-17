@@ -580,6 +580,14 @@ export function inboxOutcome(raw: string): InboxDelegationOutcome['items'][numbe
   }
 }
 
+/** 결말 항목 — $1 위임 메시지 id 들. Rust `GET /inbox`(S5.4 MS2b, `core/inbox_list.rs`)가 골든으로 받는다. */
+export const DELEGATION_OUTCOMES_SQL = `select d.message_id, d.thread_root_id, d.lead_account_id, a.handle, i.outcome
+       from team_delegation d
+       join team_delegation_item i on i.delegation_id = d.id
+       join account a on a.id = i.delegate_account_id
+      where d.message_id = any($1::uuid[])
+      order by a.handle`;
+
 /**
  * 팀장의 `delegation_done` 항목에 실어 줄 **결말**. `listInbox` 가 부른다.
  *
@@ -593,15 +601,7 @@ export async function outcomesFor(
   const res = await db.query<{
     message_id: string; thread_root_id: string; lead_account_id: string;
     handle: string; outcome: string | null;
-  }>(
-    `select d.message_id, d.thread_root_id, d.lead_account_id, a.handle, i.outcome
-       from team_delegation d
-       join team_delegation_item i on i.delegation_id = d.id
-       join account a on a.id = i.delegate_account_id
-      where d.message_id = any($1)
-      order by a.handle`,
-    [messageIds],
-  );
+  }>(DELEGATION_OUTCOMES_SQL, [messageIds]);
 
   const out = new Map<string, InboxDelegationOutcome>();
   const threads = new Map<string, { threadRootId: string; leadAccountId: string }>();
