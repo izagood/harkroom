@@ -1559,6 +1559,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // S5.4 CH1 — 섹션 쓰기(`core/sections_write.rs::SECTION_WRITE_PRIVILEGES`). 칸 권한만. 없으면 「section write core off」 — TS 에 남는다.
         `grant insert (account_id, name, position), update (name, position, collapsed), delete on channel_section to ${rw}`,
         `grant insert (account_id, channel_id, section_id, section), update (section_id, section) on channel_pref to ${rw}`,
+        // S5.4 CH3c — 채널 선호·옛 섹션 이름(`core/channel_pref_write.rs::PREF_WRITE_PRIVILEGES`). 칸 권한만. 없으면 「channel pref write core off」 — TS 에 남는다.
+        `grant insert (notify_level, muted_at, starred_at, hidden_at, sort_order), update (notify_level, muted_at, starred_at, hidden_at, sort_order) on channel_pref to ${rw}`,
         // S5.4 AC1 — 내 상태·PAT(`core/account_self.rs::ACCOUNT_SELF_PRIVILEGES`). 칸 권한만(outbox 는 위). 없으면 「account self core off」 — TS 에 남는다.
         `grant update (status, status_text) on account to ${rw}`,
         `grant update (revoked_at) on pat to ${rw}`,
@@ -3626,6 +3628,97 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect((await callX(tsUrl, 'DELETE', `/channel-sections/${adminSec.id}`, undefined, A)).status).toBe(200);
       }
 
+      // S5.4 CH3c — 채널 선호·옛 섹션 이름(코어 `channel_pref_write.rs`). Rust 로 쓰고 TS 로 읽어 같은 상태인지, 거절 갈래는
+      // 두 서버의 (상태, 코드)가 같은지 본다. 보낸 칸만 바뀌는지, 이름 거울이 따라가는지, 합치기 순서가 TS 와 같은지도 본다.
+      {
+        for (const k of ['PATCH /channels/{id}/pref', 'PATCH /channels/sections/{name}']) {
+          expect(f.log(), k).toContain(`"${k}"`);
+        }
+        expect(f.log()).not.toContain('channel pref write core off');
+        const M = member.token;
+        type Pref = { channelId: string; notifyLevel: string; mutedAt: string | null; starredAt: string | null; hiddenAt: string | null; section: string | null; sectionId: string | null; sortOrder: number | null };
+        const tsPrefs = async () => (await callX(tsUrl, 'GET', '/channels/prefs', undefined, M)).json.prefs as Pref[];
+        const tsPref = async (ch: string) => (await tsPrefs()).find((p) => p.channelId === ch);
+        const tsSections = async () => (await callX(tsUrl, 'GET', '/channel-sections', undefined, M)).json.sections as { id: string; name: string; position: number }[];
+        const two = String((await callX(tsUrl, 'POST', '/channels', { name: 'ch3c-two' }, A)).json.id);
+        const pref = (ch: string, body: unknown) => callX(rsUrl, 'PATCH', `/channels/${ch}/pref`, body, M);
+        // 알림 수준·별표·숨김·순서 — Rust 답 = TS 행, 시각 칸이 채워진다.
+        const p1 = await pref(todayId, { notifyLevel: 'none', starred: true, hidden: true, sortOrder: 3 });
+        expect(p1.status, JSON.stringify(p1.json)).toBe(200);
+        expect(p1.json).toEqual(await tsPref(todayId));
+        expect(p1.json).toMatchObject({ notifyLevel: 'none', sortOrder: 3 });
+        for (const k of ['mutedAt', 'starredAt', 'hiddenAt']) expect(p1.json[k], k).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+        // 옛 길(이름) — 없는 이름이면 섹션을 맨 뒤에 만들고 거울을 쓴다. 다른 칸은 그대로.
+        const p2 = await pref(todayId, { section: '  넷 ' });
+        expect(p2.json).toEqual(await tsPref(todayId));
+        const net = (await tsSections()).find((x) => x.name === '넷')!;
+        expect(p2.json).toMatchObject({ section: '넷', sectionId: net.id, notifyLevel: 'none', sortOrder: 3 });
+        // 보낸 칸만 — 섹션은 남는다. 1.0 은 정수다.
+        const p3 = await pref(todayId, { notifyLevel: 'all', starred: false, hidden: false, sortOrder: 1.0 });
+        expect(p3.json).toEqual(await tsPref(todayId));
+        expect(p3.json).toMatchObject({ notifyLevel: 'all', mutedAt: null, starredAt: null, hiddenAt: null, sortOrder: 1, section: '넷' });
+        // 새 길(id) 넣기·빼기, 빈 이름 = 빼기, 순서 null = 지우기.
+        expect((await pref(two, { sectionId: net.id })).json).toMatchObject({ sectionId: net.id, section: '넷' });
+        expect((await pref(two, { sectionId: null })).json).toMatchObject({ sectionId: null, section: null });
+        expect((await pref(two, { section: '   ', sortOrder: null })).json).toEqual(await tsPref(two));
+        expect(await tsPref(two)).toMatchObject({ sectionId: null, section: null, sortOrder: null });
+        // DM 에서 빼기(null)는 된다.
+        expect((await pref(String(dm.id), { section: null })).status).toBe(200);
+        const adminSec = (await callX(tsUrl, 'POST', '/channel-sections', { name: '관리2' }, A)).json.section as { id: string };
+        const prefsBefore = await tsPrefs();
+        for (const [name, m, path, body, token] of [
+          ['pref uuid 아님 → 400', 'PATCH', '/channels/nope/pref', { starred: true }, M],
+          ['pref 모르는 칸 → 400', 'PATCH', `/channels/${todayId}/pref`, { muted: true }, M],
+          ['pref 수준 틀림 → 400', 'PATCH', `/channels/${todayId}/pref`, { notifyLevel: 'loud' }, M],
+          ['pref 소수 순서 → 400', 'PATCH', `/channels/${todayId}/pref`, { sortOrder: 1.5 }, M],
+          ['pref 41자 섹션 → 400', 'PATCH', `/channels/${todayId}/pref`, { section: 'x'.repeat(41) }, M],
+          ['pref sectionId uuid 아님 → 400', 'PATCH', `/channels/${todayId}/pref`, { sectionId: 'x' }, M],
+          ['pref 본문 없음 → 400', 'PATCH', `/channels/${todayId}/pref`, undefined, M],
+          ['pref 둘 다 → 400 invalid_body', 'PATCH', `/channels/${todayId}/pref`, { section: 'a', sectionId: null }, M],
+          ['pref 남의 섹션 → 404', 'PATCH', `/channels/${todayId}/pref`, { sectionId: adminSec.id }, M],
+          ['pref 없는 섹션 → 404', 'PATCH', `/channels/${todayId}/pref`, { sectionId: ghost }, M],
+          ['pref 못 보는 채널 → 403', 'PATCH', `/channels/${privId}/pref`, { starred: true }, M],
+          ['pref 없는 채널 섹션 → 404', 'PATCH', `/channels/${ghost}/pref`, { section: 'a' }, M],
+          ['pref 없는 채널 → 404', 'PATCH', `/channels/${ghost}/pref`, { starred: true }, M],
+          ['pref DM 섹션 → 400', 'PATCH', `/channels/${String(dm.id)}/pref`, { section: 'a' }, M],
+          ['pref DM 섹션 id → 400', 'PATCH', `/channels/${String(dm.id)}/pref`, { sectionId: net.id }, M],
+          ['pref 익명 → 401', 'PATCH', `/channels/${todayId}/pref`, { starred: true }, ''],
+          ['이름 name 없음 → 400 invalid_body', 'PATCH', '/channels/sections/%EB%84%B7', {}, M],
+          ['이름 name 숫자 → 400', 'PATCH', '/channels/sections/%EB%84%B7', { name: 3 }, M],
+          ['이름 41자 옛 이름 → 400', 'PATCH', `/channels/sections/${'x'.repeat(41)}`, { name: 'a' }, M],
+          ['이름 41자 새 이름 → 400', 'PATCH', '/channels/sections/%EB%84%B7', { name: 'x'.repeat(41) }, M],
+          ['이름 본문 없음 → 400', 'PATCH', '/channels/sections/%EB%84%B7', undefined, M],
+          ['이름 공백 옛 이름 → 500', 'PATCH', '/channels/sections/%20', { name: 'a' }, M],
+          ['이름 익명 → 401', 'PATCH', '/channels/sections/%EB%84%B7', { name: 'a' }, ''],
+        ] as const) {
+          const [x, y] = [await callX(tsUrl, m, path, body, token), await callX(rsUrl, m, path, body, token)];
+          expect({ status: y.status, code: y.code }, name).toEqual({ status: x.status, code: x.code });
+        }
+        expect(await tsPrefs(), '거절은 아무것도 바꾸지 않았다').toEqual(prefsBefore);
+        const ren = (from: string, body: unknown) => callX(rsUrl, 'PATCH', `/channels/sections/${encodeURIComponent(from)}`, body, M);
+        // 같은 이름·없는 이름은 아무것도 쓰지 않고 목록만.
+        expect((await ren('넷', { name: ' 넷 ' })).json).toEqual({ prefs: prefsBefore });
+        expect((await ren('없음', { name: '아무' })).json).toEqual({ prefs: prefsBefore });
+        // 받는 쪽이 없으면 이름만 바꾼다(행 id 그대로, 거울도).
+        const r1 = await ren(' 넷', { name: '다섯' });
+        expect(r1.status, JSON.stringify(r1.json)).toBe(200);
+        expect(r1.json).toEqual({ prefs: await tsPrefs() });
+        expect(await tsPref(todayId)).toMatchObject({ sectionId: net.id, section: '다섯' });
+        // 합치기 — 받는 쪽(two, 순서 null)이 앞, 합쳐지는 쪽(today)이 뒤로 0..n-1, 옛 섹션은 지우고 자리를 메운다.
+        const six = (await callX(tsUrl, 'POST', '/channel-sections', { name: '여섯', position: 0, channelIds: [two] }, M)).json.section as { id: string };
+        const r2 = await ren('다섯', { name: '여섯' });
+        expect(r2.json).toEqual({ prefs: await tsPrefs() });
+        expect(await tsPref(two)).toMatchObject({ sectionId: six.id, section: '여섯', sortOrder: 0 });
+        expect(await tsPref(todayId)).toMatchObject({ sectionId: six.id, section: '여섯', sortOrder: 1 });
+        expect((await tsSections()).map((x) => [x.id, x.position])).toEqual([[six.id, 0]]);
+        // 빼기 — null 이면 채널을 미분류로, 섹션 행도 지운다. 순서 값은 남는다.
+        const r3 = await ren('여섯', { name: null });
+        expect(r3.json).toEqual({ prefs: await tsPrefs() });
+        expect(await tsPref(todayId)).toMatchObject({ sectionId: null, section: null, sortOrder: 1 });
+        expect(await tsSections()).toEqual([]);
+        expect((await callX(tsUrl, 'DELETE', `/channel-sections/${adminSec.id}`, undefined, A)).status).toBe(200);
+      }
+
       // S5.4 AC1 — 내 상태·에이전트 PAT(코어 `account_self.rs`). Rust 로 쓰고 TS 로 읽어 같은 상태인지, 거절 갈래는 두 서버의
       // (상태, 코드)가 같은지 본다. 상태 이벤트는 outbox → TS 버스로 건너와야 한다.
       {
@@ -4303,13 +4396,12 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       }
 
       // S5.4 CH2 — 읽음·미읽음 표시(코어 `channel_read_write.rs`). 같은 DB 에서 TS 로 한 번, Rust 로 한 번 같은 요청을 보내고
-      // 답과 그 뒤의 `channel_read` 행이 같은지 본다. `PATCH /channels/{id}/pref` 는 TS 에 남는다.
+      // 답과 그 뒤의 `channel_read` 행이 같은지 본다. `PATCH /channels/{id}/pref` 는 CH3c(`channel_pref_write.rs`) 것.
       {
         for (const k of ['PUT /channels/{id}/read', 'PUT /channels/{id}/unread']) {
           expect(f.log(), k).toContain(`"${k}"`);
         }
         expect(f.log()).not.toContain('channel read write core off');
-        expect(f.log(), 'pref 는 TS 에 남는다').not.toContain('"PATCH /channels/{id}/pref"');
         const M = member.token;
         const pubCh = await createChannel(db.pool, { name: 'ch2-pub' });
         const privCh = await createChannel(db.pool, { name: 'ch2-priv', visibility: 'private', creatorId: member2.accountId });

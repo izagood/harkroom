@@ -6,7 +6,7 @@
 //! - **이름 거울**: `channel_pref.section_id` 를 쓰는 문장은 언제나 `section`(이름)도 같이 쓴다 — 옛 앱이 그 칸을 읽는다.
 //! - 이벤트가 없다(TS 도 내지 않는다). 쓰기는 쓰기 풀의 트랜잭션 하나. 권한은 [`SECTION_WRITE_PRIVILEGES`] —
 //!   없으면 `main.rs` 가 이 줄을 붙이지 않아 TS 에 남는다.
-//! - 옛 이름 경로 `PATCH /channels/sections/{name}`(합치기)는 TS 에 남긴다.
+//! - 옛 이름 경로 `PATCH /channels/sections/{name}`(합치기)는 CH3c `channel_pref_write.rs` 것.
 use super::channels::{is_uuid, prefs_sql, sections_sql, visible};
 use crate::auth::RequireAccount;
 use crate::directory::{internal, json_err, json_ok};

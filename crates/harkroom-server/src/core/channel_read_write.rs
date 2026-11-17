@@ -6,7 +6,7 @@
 //!   `/unread` 는 `nullable` 이 바깥이라 `null` 은 null 그대로(표시 지우기)다. 키 부재는 400.
 //! - 이벤트가 없다(TS 도 내지 않는다 — 읽음은 내 상태다). 쓰기는 쓰기 풀의 문장 하나. 권한은
 //!   [`CHANNEL_READ_WRITE_PRIVILEGES`] — 없으면 `main.rs` 가 이 줄을 붙이지 않아 TS 에 남는다.
-//! - `GET /channels/{id}/read`·`GET /reads` 는 읽기 코어(`channels.rs`) 것. `PATCH /channels/:id/pref` 는 TS 에 남긴다.
+//! - `GET /channels/{id}/read`·`GET /reads` 는 읽기 코어(`channels.rs`) 것. `PATCH /channels/:id/pref` 는 CH3c `channel_pref_write.rs` 것.
 use super::channels::{is_uuid, visible};
 use crate::auth::RequireAccount;
 use crate::directory::{internal, json_err};
