@@ -175,7 +175,7 @@ pub(crate) async fn visible(pool: &PgPool, me: &str, channel: &str) -> Result<bo
     Ok(v.unwrap_or(true))
 }
 
-async fn exists(pool: &PgPool, channel: &str) -> Result<bool, sqlx::Error> {
+pub(crate) async fn exists(pool: &PgPool, channel: &str) -> Result<bool, sqlx::Error> {
     let v: Option<i32> = sqlx::query_scalar(sql().exists)
         .bind(channel)
         .fetch_optional(pool)

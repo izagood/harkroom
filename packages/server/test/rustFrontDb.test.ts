@@ -1573,6 +1573,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // S5.4 CH3a — 핀·예약 글 쓰기(`core/channel_pins_sched.rs::PINS_SCHED_PRIVILEGES`). 없으면 「pins/scheduled write core off」 — TS 에 남는다.
         `grant insert, delete on message_pin to ${rw}`,
         `grant insert, update on scheduled_message to ${rw}`,
+        // S5.4 CH3b — 자동 멘션 걸기·풀기·채널 문서 저장(`core/channel_auto_mention_doc.rs::AUTO_MENTION_DOC_PRIVILEGES`). 없으면 「auto-mention/doc write core off」 — TS 에 남는다.
+        `grant insert, update, delete on channel_auto_mention to ${rw}`,
+        `grant insert on channel_member to ${rw}`,
+        `grant insert, update on channel_doc to ${rw}`,
         // S5.4 MS1 — 저장한 글(`core/saved.rs::SAVED_PRIVILEGES`). 없으면 「saved messages core off」 — 다섯 줄 모두 TS 에 남는다.
         `grant insert, update, delete on saved_message to ${rw}`,
       ]) await db.pool.query(q);
@@ -4492,6 +4496,132 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         }
         await reset();
         await db.pool.query('delete from message where channel_id = any($1)', [chs]);
+        await db.pool.query('delete from channel_member where channel_id = any($1)', [chs]);
+        await db.pool.query('delete from channel where id = any($1)', [chs]);
+      }
+
+      // S5.4 CH3b — 자동 멘션 걸기·풀기·채널 문서 저장(코어 `channel_auto_mention_doc.rs`). 같은 처음 상태에서 같은 요청 줄을 TS 로 한 번,
+      // Rust 로 한 번 보내고 답(시각은 가림)과 그 뒤의 행, 이 줄 동안 늘어난 감사(행동·detail·ip)가 같은지 본다.
+      {
+        for (const k of ['PUT /channels/{id}/auto-mentions/{agentId}', 'DELETE /channels/{id}/auto-mentions/{agentId}', 'PUT /channels/{id}/doc']) {
+          expect(f.log(), k).toContain(`"${k}"`);
+        }
+        expect(f.log()).not.toContain('auto-mention/doc write core off');
+        const M = member.token;
+        const M2 = member2.token;
+        const pubCh = await createChannel(db.pool, { name: 'ch3b-pub' });
+        const privCh = await createChannel(db.pool, { name: 'ch3b-priv', visibility: 'private', creatorId: member2.accountId });
+        await db.pool.query('insert into channel_member (channel_id, account_id) values ($1, $2) on conflict do nothing', [privCh.id, member2.accountId]);
+        const arcCh = await createChannel(db.pool, { name: 'ch3b-arc' });
+        await db.pool.query('update channel set archived_at = now() where id = $1', [arcCh.id]);
+        const chs = [pubCh.id, privCh.id, arcCh.id];
+        const bots = [agent.accountId, bot2.accountId];
+        const ghost = '00000000-0000-4000-8000-0000000c3b00';
+        const reset = async () => {
+          await db.pool.query('delete from channel_auto_mention where channel_id = any($1)', [chs]);
+          await db.pool.query('delete from channel_doc where channel_id = any($1)', [chs]);
+          await db.pool.query('delete from channel_member where channel_id = any($1) and account_id = any($2)', [chs, bots]);
+          await db.pool.query('update account set disabled_at = null where id = $1', [bot2.accountId]);
+          await db.pool.query(`update agent_config set invoke_scope = 'community' where account_id = $1`, [bot2.accountId]);
+        };
+        const state = async (sinceAudit: string) => ({
+          am: (await db.pool.query(
+            `select channel_id::text as c, agent_account_id::text as a, mode, created_by::text as by from channel_auto_mention
+              where channel_id = any($1) order by channel_id, agent_account_id`, [chs])).rows,
+          docs: (await db.pool.query('select channel_id::text as c, body, updated_by::text as by from channel_doc where channel_id = any($1) order by channel_id', [chs])).rows,
+          members: (await db.pool.query(
+            'select channel_id::text as c, account_id::text as a from channel_member where channel_id = any($1) and account_id = any($2) order by 1, 2', [chs, bots])).rows,
+          // audit_log 는 지울 수 없다(append-only) — 이 줄 동안 새로 남은 것만 견준다.
+          audit: (await db.pool.query(
+            `select action, actor_handle, target, ip, detail from audit_log where id > $1::bigint and target = any($2) order by id`, [sinceAudit, chs])).rows,
+        });
+        const mask = (v: unknown): unknown => {
+          if (Array.isArray(v)) return v.map(mask);
+          if (v && typeof v === 'object') {
+            return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) =>
+              [k, ['createdAt', 'updatedAt'].includes(k) && typeof x === 'string' ? `<${k}>` : mask(x)]));
+          }
+          return v;
+        };
+        const run = async (base: string) => {
+          await reset();
+          const since = String((await db.pool.query('select coalesce(max(id), 0)::text as m from audit_log')).rows[0].m);
+          const out: unknown[] = [];
+          const call = async (m: string, path: string, body: unknown, token: string) => {
+            const r = await callX(base, m, path, body, token);
+            out.push({ m, path, status: r.status, json: r.status === 400 ? r.code ?? null : mask(r.json) });
+            return r;
+          };
+          const AM = (ch: string, a: string) => `/channels/${ch}/auto-mentions/${a}`;
+          await call('PUT', AM(pubCh.id, agent.accountId), undefined, A); // 본문 없음 → always
+          await call('PUT', AM(pubCh.id, agent.accountId), { mode: 'available', extra: 1 }, A); // 모드만 바꿈
+          await call('PUT', AM(pubCh.id, agent.accountId), { mode: 'available' }, A); // 같은 모드 → 200
+          await call('PUT', AM(privCh.id, bot2.accountId), {}, M2); // 채널 주인 → 200, 멤버로 넣음
+          await call('PUT', AM(privCh.id, agent.accountId), {}, M); // 권한 없음 → 403
+          await call('PUT', AM(arcCh.id, agent.accountId), { mode: 'always' }, A); // 보관돼도 건다(게이트 없음)
+          await call('PUT', AM(pubCh.id, member2.accountId), {}, A); // 사람 → not_an_agent
+          await call('PUT', AM(pubCh.id, ghost), {}, A); // 없는 계정 → 404
+          await call('PUT', AM(ghost, agent.accountId), {}, A); // 없는 채널 → 404
+          await call('PUT', AM(pubCh.id, agent.accountId), { mode: 'never' }, A);
+          await call('PUT', AM(pubCh.id, agent.accountId), { mode: null }, A);
+          await call('PUT', AM(pubCh.id, 'nope'), {}, A);
+          await db.pool.query('update account set disabled_at = now() where id = $1', [bot2.accountId]);
+          await call('PUT', AM(privCh.id, bot2.accountId), { mode: 'always' }, A); // 이미 같은 모드로 걸려 있음 → 200(멱등)
+          await call('PUT', AM(privCh.id, bot2.accountId), { mode: 'available' }, A); // → agent_disabled
+          await call('PUT', AM(pubCh.id, bot2.accountId), {}, A); // → agent_disabled
+          await db.pool.query('update account set disabled_at = null where id = $1', [bot2.accountId]);
+          await db.pool.query(`update agent_config set invoke_scope = 'owner' where account_id = $1`, [bot2.accountId]);
+          await call('PUT', AM(pubCh.id, bot2.accountId), {}, A); // → invoke_scope_restricted
+          await db.pool.query(`update agent_config set invoke_scope = 'community' where account_id = $1`, [bot2.accountId]);
+          await call('DELETE', AM(privCh.id, bot2.accountId), undefined, M); // 권한 없음 → 403
+          await call('DELETE', AM(privCh.id, bot2.accountId), undefined, M2); // → 204
+          await call('DELETE', AM(privCh.id, bot2.accountId), undefined, M2); // 이미 풂 → 404
+          await call('DELETE', AM(arcCh.id, agent.accountId), undefined, A);
+          await call('DELETE', AM(pubCh.id, 'nope'), undefined, A);
+
+          const D = (ch: string) => `/channels/${ch}/doc`;
+          const first = await call('PUT', D(pubCh.id), { body: 'ch3b doc 😀', extra: true }, M); // 처음 → 200
+          await call('PUT', D(pubCh.id), { body: 'again', expectedUpdatedAt: null }, M); // 이미 있음 → 409 + 지금 본문
+          const at = Date.parse(String((first.json as { updatedAt?: string }).updatedAt ?? '1970-01-01T00:00:00Z'));
+          await call('PUT', D(pubCh.id), { body: 'second', expectedUpdatedAt: at }, agent.pat); // 맞는 판 → 200(에이전트도 쓸 수 있다)
+          await call('PUT', D(pubCh.id), { body: 'third', expectedUpdatedAt: at }, M); // 낡은 판 → 409
+          await call('PUT', D(privCh.id), { body: 'x' }, M); // 볼 수 없음 → 403
+          await call('PUT', D(privCh.id), { body: 'priv' }, M2);
+          await call('PUT', D(arcCh.id), { body: 'x' }, M); // 보관 → channel_archived
+          await call('PUT', D(ghost), { body: 'x' }, M); // 없는 채널 → 404
+          await call('PUT', D('nope'), { body: 'x' }, M);
+          await call('PUT', D(pubCh.id), { body: 'x'.repeat(64 * 1024 + 1) }, M);
+          await call('PUT', D(pubCh.id), { expectedUpdatedAt: 1 }, M);
+          await call('PUT', D(pubCh.id), { body: 'x', expectedUpdatedAt: -1 }, M);
+          await call('PUT', D(pubCh.id), { body: 'x', expectedUpdatedAt: 1.5 }, M);
+          await call('PUT', D(pubCh.id), 'x', M);
+          out.push(await state(since));
+          return out;
+        };
+        const x = await run(tsUrl);
+        const y = await run(rsUrl);
+        expect(y).toEqual(x);
+        // 빈 것끼리 같아서 통과하지 않게 — 행·멤버·감사가 실제로 남았는지, 거절 갈래가 실제 몸통인지.
+        const st = y.at(-1) as Awaited<ReturnType<typeof state>>;
+        expect(st.am.length).toBe(1);
+        expect(st.members).toEqual([{ c: privCh.id, a: bot2.accountId }]);
+        expect(st.docs.map((d) => d.body).sort()).toEqual(['priv', 'second']);
+        expect(st.audit.map((r) => r.action)).toEqual([
+          ...Array(6).fill('channel.auto_mention.set'), 'channel.auto_mention.unset', 'channel.auto_mention.unset',
+          'channel.doc.updated', 'channel.doc.updated', 'channel.doc.updated',
+        ]);
+        expect(st.audit[8].detail).toEqual({ bodyLength: 'ch3b doc 😀'.length });
+        const txt = JSON.stringify(y);
+        for (const c of ['not_an_agent', 'agent_disabled', 'invoke_scope_restricted', 'doc_stale', 'channel_archived', 'channel.auto_mention 권한이 필요하다']) {
+          expect(txt, c).toContain(c);
+        }
+        // Rust 가 직접 답했는지 — 기동 로그에 세 줄이 Rust 코어 줄로 실렸고(위), 익명은 두 서버 모두 401.
+        {
+          const [a1, b1] = [await callX(tsUrl, 'PUT', `/channels/${pubCh.id}/doc`, { body: 'x' }, ''), await callX(rsUrl, 'PUT', `/channels/${pubCh.id}/doc`, { body: 'x' }, '')];
+          expect({ status: b1.status, code: b1.code }, '익명 → 401').toEqual({ status: a1.status, code: a1.code });
+          expect(b1.status).toBe(401);
+        }
+        await reset();
         await db.pool.query('delete from channel_member where channel_id = any($1)', [chs]);
         await db.pool.query('delete from channel where id = any($1)', [chs]);
       }
