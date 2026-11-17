@@ -469,6 +469,27 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 CH3b — 자동 멘션 걸기·풀기·채널 문서 저장. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 권한이 다 있을 때만.
+    let auto_mention_doc = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::channel_auto_mention_doc as c;
+            match write::missing_in(w, c::AUTO_MENTION_DOC_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: auto-mention/doc write core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: auto-mention/doc write core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 CH2 — 채널 읽음 상태 쓰기(`PUT /channels/{id}/read`·`/unread`). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만.
     let channel_read_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -1221,6 +1242,21 @@ async fn main() {
             core_routes.sockets.extend(mr.sockets);
         }
         // S5.4 CH2 — 읽음·미읽음 표시 2줄. 권한이 다 있을 때만 — 아니면 TS 에 남는다(`PATCH /channels/{id}/pref` 는 언제나 TS).
+        // S5.4 CH3b — 자동 멘션 걸기·풀기·문서 저장 3줄. 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = auto_mention_doc {
+            let am = harkroom_server::core::channel_auto_mention_doc::routes(
+                harkroom_server::core::channel_auto_mention_doc::AutoMentionDocState {
+                    read: state.pool.clone(),
+                    write,
+                    trust: (*state.trust).clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(am.router);
+            core_routes.http.extend(am.http);
+            core_routes.sockets.extend(am.sockets);
+        }
         if let Some(write) = channel_read_write {
             let cr = harkroom_server::core::channel_read_write::routes(
                 harkroom_server::core::channel_read_write::ReadWriteState {

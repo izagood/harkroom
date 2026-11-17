@@ -16,6 +16,24 @@ const FROM = `from channel_auto_mention m join account a on a.id = m.agent_accou
 /** 자동 멘션 목록의 문장 — Rust 코어(`core/channels.rs`, S5.3 C1e-1)가 골든으로 받아 그대로 쓴다. */
 export const LIST_CHANNEL_AUTO_MENTIONS_SQL = `select ${COLS} ${FROM} where m.channel_id = $1::uuid order by a.handle`;
 
+/**
+ * 걸기·풀기 문장 — Rust 코어(`core/channel_auto_mention_doc.rs`, S5.4 CH3b)가 골든으로 받아 그대로 쓴다.
+ * 넣기는 「대상이 켜진 community 에이전트일 때만」 한 행을 고르고, 이미 있으면 모드만 바꾼다(0 행이면 거절 까닭을 따로 읽는다).
+ */
+export const SET_CHANNEL_AUTO_MENTION_SQL = `insert into channel_auto_mention (channel_id, agent_account_id, created_by, mode)
+     select $1::uuid, a.id, $3::uuid, $4 from account a left join agent_config c on c.account_id = a.id
+      where a.id = $2::uuid and a.kind = 'agent' and a.disabled_at is null
+        -- 스펙 2026-09-20 §6: auto-mention 은 "소유자가 아닌 무언가가 부르는 것"이라 community 만.
+        and coalesce(c.invoke_scope, 'community') = 'community'
+     on conflict (channel_id, agent_account_id) do update set mode = excluded.mode`;
+export const CHANNEL_AUTO_MENTION_ROW_SQL = `select ${COLS} ${FROM} where m.channel_id = $1::uuid and m.agent_account_id = $2::uuid`;
+export const AUTO_MENTION_ACCOUNT_SQL = `select a.kind, a.disabled_at is not null as disabled, coalesce(c.invoke_scope, 'community') as invoke_scope
+         from account a left join agent_config c on c.account_id = a.id where a.id = $1::uuid`;
+export const UNSET_CHANNEL_AUTO_MENTION_SQL = `delete from channel_auto_mention where channel_id = $1::uuid and agent_account_id = $2::uuid`;
+/** 풀기 전에 감사에 남길 handle 을 읽는 문장(지운 뒤에는 조인할 행이 없다). */
+export const AUTO_MENTION_HANDLE_SQL = `select a.handle from channel_auto_mention m join account a on a.id = m.agent_account_id
+        where m.channel_id = $1::uuid and m.agent_account_id = $2::uuid`;
+
 export async function listChannelAutoMentions(pool: Pool, channelId: string): Promise<ChannelAutoMentionRow[]> {
   const res = await pool.query<ChannelAutoMentionRow>(LIST_CHANNEL_AUTO_MENTIONS_SQL, [channelId]);
   return res.rows;
@@ -41,18 +59,12 @@ export async function setChannelAutoMention(
   input: { channelId: string; agentAccountId: string; createdBy: string; mode: ChannelAutoMentionMode },
 ): Promise<SetAutoMentionResult> {
   const inserted = await pool.query(
-    `insert into channel_auto_mention (channel_id, agent_account_id, created_by, mode)
-     select $1, a.id, $3, $4 from account a left join agent_config c on c.account_id = a.id
-      where a.id = $2 and a.kind = 'agent' and a.disabled_at is null
-        -- 스펙 2026-09-20 §6: auto-mention 은 "소유자가 아닌 무언가가 부르는 것"이라 community 만.
-        and coalesce(c.invoke_scope, 'community') = 'community'
-     on conflict (channel_id, agent_account_id) do update set mode = excluded.mode`,
+    SET_CHANNEL_AUTO_MENTION_SQL,
     [input.channelId, input.agentAccountId, input.createdBy, input.mode],
   );
   if (!inserted.rowCount) {
     const existing = await pool.query<ChannelAutoMentionRow>(
-      `select ${COLS} ${FROM} where m.channel_id = $1 and m.agent_account_id = $2`,
-      [input.channelId, input.agentAccountId],
+      CHANNEL_AUTO_MENTION_ROW_SQL, [input.channelId, input.agentAccountId],
     );
     /**
      * 여기까지 왔다는 것은 위 `select` 가 걸러 냈다는 뜻 — 즉 그 계정은 **지금 비활성**이다
@@ -64,8 +76,7 @@ export async function setChannelAutoMention(
      */
     if (existing.rowCount && existing.rows[0]!.mode === input.mode) return { ok: true, row: existing.rows[0]! };
     const account = await pool.query<{ kind: string; disabled: boolean; invoke_scope: string }>(
-      `select a.kind, a.disabled_at is not null as disabled, coalesce(c.invoke_scope, 'community') as invoke_scope
-         from account a left join agent_config c on c.account_id = a.id where a.id = $1`, [input.agentAccountId],
+      AUTO_MENTION_ACCOUNT_SQL, [input.agentAccountId],
     );
     if (!account.rowCount) return { ok: false, reason: 'not_found' };
     if (account.rows[0]!.kind !== 'agent') return { ok: false, reason: 'not_an_agent' };
@@ -73,17 +84,13 @@ export async function setChannelAutoMention(
     return { ok: false, reason: 'invoke_scope_restricted' };
   }
   const row = await pool.query<ChannelAutoMentionRow>(
-    `select ${COLS} ${FROM} where m.channel_id = $1 and m.agent_account_id = $2`,
-    [input.channelId, input.agentAccountId],
+    CHANNEL_AUTO_MENTION_ROW_SQL, [input.channelId, input.agentAccountId],
   );
   return { ok: true, row: row.rows[0]! };
 }
 
 /** 푼다. 없던 것을 풀면 false — 호출부가 감사를 남길지 정하는 근거다. */
 export async function unsetChannelAutoMention(pool: Pool, channelId: string, agentAccountId: string): Promise<boolean> {
-  const res = await pool.query(
-    `delete from channel_auto_mention where channel_id = $1 and agent_account_id = $2`,
-    [channelId, agentAccountId],
-  );
+  const res = await pool.query(UNSET_CHANNEL_AUTO_MENTION_SQL, [channelId, agentAccountId]);
   return (res.rowCount ?? 0) > 0;
 }
