@@ -478,6 +478,67 @@ async fn fake_operator_against_real_schema() {
     assert_eq!(s, StatusCode::NO_CONTENT);
     assert_eq!(close_code(&mut x).await, Some(4401));
 
+    // ---- 멈추기 줄 POST /accounts/agents/{id}/stop·stop/undo (TS accountRoutes) — 배정은 op1 ----
+    until_frame(&mut b, "assign").await;
+    let spath = format!("/accounts/agents/{agent}/stop");
+    let upath = format!("/accounts/agents/{agent}/stop/undo");
+    let (s, _) = req(&base, Method::POST, &spath, None, "").await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+    let (s, e) = req(
+        &base,
+        Method::POST,
+        "/accounts/agents/00000000-0000-4000-8000-000000000999/stop",
+        Some(&sess),
+        "",
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "{e}");
+    let (s, e) = req(
+        &base,
+        Method::POST,
+        &format!("/accounts/agents/{human}/stop"),
+        Some(&sess),
+        "",
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "human is not an agent: {e}");
+    let (s, view) = req(&base, Method::POST, &spath, Some(&sess), "").await;
+    assert_eq!(s, StatusCode::OK, "{view}");
+    assert_eq!(view["id"], json!(agent), "{view}");
+    assert!(
+        view["stopRequestedAt"]
+            .as_str()
+            .is_some_and(|t| t.ends_with('Z')),
+        "{view}"
+    );
+    assert_eq!(view["stopAckedAt"], Value::Null, "{view}");
+    assert_eq!(
+        view["assignment"]["operatorId"],
+        json!(op1),
+        "assignment kept: {view}"
+    );
+    let (f, _) = until_frame(&mut b, "unassign").await;
+    assert_eq!(f["agentId"], json!(agent), "{f}");
+    assert_eq!(f["drain"], json!(true), "{f}");
+    let (s, view) = req(&base, Method::POST, &upath, Some(&sess), "").await;
+    assert_eq!(s, StatusCode::OK, "{view}");
+    assert_eq!(view["stopRequestedAt"], Value::Null, "{view}");
+    let (f, _) = until_frame(&mut b, "assign").await;
+    assert_eq!(f["definition"]["agentId"], json!(agent), "{f}");
+    // 요청이 없으면 되돌리기는 200 이고 감사를 남기지 않는다.
+    let (s, _) = req(&base, Method::POST, &upath, Some(&sess), "").await;
+    assert_eq!(s, StatusCode::OK);
+    for (action, want) in [("agent.stop.requested", 1i64), ("agent.stop.undone", 1)] {
+        let n: i64 =
+            sqlx::query_scalar("select count(*) from audit_log where action = $1 and target = $2")
+                .bind(action)
+                .bind(&agent)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(n, want, "{action}");
+    }
+
     // ---- 목록·이름 바꾸기 ----
     let (s, list) = req(&base, Method::GET, "/operators", Some(&sess), "").await;
     assert_eq!(s, StatusCode::OK, "{list}");

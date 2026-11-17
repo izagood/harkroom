@@ -99,7 +99,7 @@ use axum::extract::{Path, Request, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 
-const DEFINITION_SQL: &str = "select json_build_object(\
+pub(super) const DEFINITION_SQL: &str = "select json_build_object(\
        'agentId', ac.id, 'handle', ac.handle, 'harness', coalesce(c.harness, 'claude-code'), \
        'instructions', coalesce(c.instructions, ''), 'model', c.model, 'effort', c.effort, \
        'mentionPermission', coalesce(c.mention_permission, 'auto'), \
