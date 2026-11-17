@@ -3038,6 +3038,72 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(r.core, `${tool} — Rust 가 답한다`).toBe('mcp');
         expect(r.text, `${tool} forbidden`).toContain('\\"code\\":\\"forbidden\\"');
       }
+      // S5.4 MS2a — REST `GET /search`(코어 `search_rest.rs`). MCP 와 같은 문장이고, 본문은 `<@id>` 그대로(되돌리기 없음)다.
+      // 같은 요청을 TS 와 Rust 앞단에 보내 상태·본문 글자를 견준다. `@`·기간·틀린 꼴은 Rust 가 읽은 그대로 TS 로 넘긴다(400 도 TS 가 낸다).
+      // 남의 비공개 채널·멤버 아닌 DM 의 글은 범위 없는 검색에 섞이지 않고, 범위로 주면 403 이다.
+      {
+        expect(f.log()).toContain('"GET /search"');
+        const hidCh = await createChannel(db.pool, { name: 'ms2-hidden', visibility: 'private', creatorId: admin.accountId });
+        await say('비밀검색어 남의 비공개 채널', { ch: hidCh.id, author: admin.accountId });
+        const restSearch = async (base: string, qs: string, token = agent.pat) => {
+          const res = await fetch(`${base}/search?${qs}`, { headers: { authorization: `Bearer ${token}` } });
+          const text = await res.text();
+          let code: string | undefined;
+          try { code = (JSON.parse(text) as { error?: { code?: string } }).error?.code; } catch { code = undefined; }
+          return { status: res.status, code, text: res.status < 300 ? text : undefined };
+        };
+        const e = encodeURIComponent;
+        for (const [name, qs] of [
+          ['기본', `q=${e('부름')}`],
+          ['시스템 줄', `q=${e('시스템')}`],
+          ['최신순', `q=${e('스레드검색')}&sort=recent`],
+          ['관련도(명시)', `q=${e('스레드검색')}&sort=relevance`],
+          ['채널', `q=${e('스레드검색')}&channelId=${searchCh}`],
+          ['스레드', `q=${e('스레드검색')}&threadRootId=${searchRoot}`],
+          ['보낸 사람 하나', `q=${e('스레드검색')}&authorId=${admin.accountId}`],
+          ['보낸 사람 둘', `q=${e('스레드검색')}&authorId=${admin.accountId}&authorId=${agent.accountId}`],
+          ['첨부만', `q=${e('스레드검색')}&hasAttachment=true`],
+          ['첨부 false', `q=${e('스레드검색')}&hasAttachment=false`],
+          ['51개 → hasMore', `q=${e('대량검색어')}`],
+          ['둘째 쪽', `q=${e('대량검색어')}&offset=50`],
+          ['천장', `q=${e('대량검색어')}&offset=1000`],
+          ['like 메타문자', `q=${e('100%_')}`],
+          ['낱말 없음', `q=${e('!!!')}`],
+          ['+ 는 빈칸', `q=${e('스레드검색')}+${e('답글')}`],
+          ['모르는 키는 버린다', `q=${e('부름')}&extra=1`],
+          ['못 보는 곳의 글(범위 없음)', `q=${e('비밀검색어')}`],
+          ['멤버 아닌 DM → 403', `q=${e('비밀검색어')}&channelId=${dm.id}`],
+          ['남의 비공개 채널 → 403', `q=${e('비밀검색어')}&channelId=${hidCh.id}`],
+          ['없는 채널 → 403', `q=x&channelId=${missingCh}`],
+          ['@ → TS', `q=${e('@bot2')}`],
+          ['after → TS', `q=${e('부름')}&after=${e('2026-01-01T00:00:00Z')}`],
+          ['before 틀림 → TS 400', `q=${e('부름')}&before=x`],
+          ['빈 질의 → TS 400', 'q='],
+          ['질의 없음 → TS 400', ''],
+          ['정렬 틀림 → TS 400', `q=${e('부름')}&sort=old`],
+          ['offset 1001 → TS 400', `q=${e('부름')}&offset=1001`],
+          ['offset 빈 값 → TS', `q=${e('부름')}&offset=`],
+          ['보낸 사람 uuid 아님 → TS 400', `q=${e('부름')}&authorId=x`],
+          ['첨부 1 → TS 400', `q=${e('부름')}&hasAttachment=1`],
+          ['q 되풀이 → TS 400', 'q=a&q=b'],
+        ] as const) {
+          const [a, b] = [await restSearch(tsUrl, qs), await restSearch(rsUrl4, qs)];
+          expect(b, name).toEqual(a);
+        }
+        // 빈 값끼리 비교해 통과하지 않게 — 실제로 실렸는지, 못 보는 곳은 빠졌는지, 403 갈래를 탔는지.
+        const hit = await restSearch(rsUrl4, `q=${e('대량검색어')}`);
+        expect(hit.status).toBe(200);
+        expect(hit.text).toContain('"hasMore":true');
+        expect((await restSearch(rsUrl4, `q=${e('부름')}`)).text).toContain('<@');
+        const secret = await restSearch(rsUrl4, `q=${e('비밀검색어')}`);
+        expect(secret.status).toBe(200);
+        expect(secret.text).not.toContain('못 보는 곳');
+        expect(secret.text).not.toContain('남의 비공개 채널');
+        expect(await restSearch(rsUrl4, `q=${e('비밀검색어')}&channelId=${hidCh.id}`)).toEqual({ status: 403, code: 'forbidden', text: undefined });
+        // 같은 글을 볼 수 있는 사람(관리자)에게는 실린다 — 술어가 빈 결과만 내는 것이 아니다.
+        expect((await restSearch(rsUrl4, `q=${e('비밀검색어')}`, admin.token)).text).toContain('남의 비공개 채널');
+        expect((await restSearch(rsUrl4, `q=${e('부름')}`, 'nope')).status).toBe(401);
+      }
       // 빈 값끼리 비교해 통과하지 않게 — 문서·목록이 실제로 실렸는지.
       const docText = (await mcpCall(`http://127.0.0.1:${port}`, agent.pat, 'channel.doc', { channelId: todayId })).text;
       expect(docText).toContain('문서 본문');

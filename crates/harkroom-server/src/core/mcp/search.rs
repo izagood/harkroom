@@ -16,11 +16,11 @@ use serde_json::Value;
 use sqlx::PgPool;
 
 /// TS `SEARCH_MAX_OFFSET`.
-const SEARCH_MAX_OFFSET: i64 = 1000;
+pub(crate) const SEARCH_MAX_OFFSET: i64 = 1000;
 /// TS `SEARCH_MAX_AUTHORS`.
-const SEARCH_MAX_AUTHORS: usize = 10;
+pub(crate) const SEARCH_MAX_AUTHORS: usize = 10;
 /// TS MCP 는 `limit` 을 주지 않는다 — `searchMessages` 의 기본 50.
-const LIMIT: i64 = 50;
+pub(crate) const LIMIT: i64 = 50;
 
 /// 골든 문장을 감싸 행마다 JSON 글자 하나를 낸다. 맨 겉 `createdAt`·`editedAt` 만 JS `toISOString()` 꼴로(첨부 요약 안에는
 /// 시각 칸이 없다). 행 순서는 TS 문장의 `order by` 그대로 — 정렬된 부분 질의를 `json_agg` 로 모으고 `with ordinality` 로 펼친다.
@@ -37,7 +37,7 @@ fn rows_sql(golden: &str) -> String {
     )
 }
 
-fn sql(recent: bool) -> &'static str {
+pub(crate) fn sql(recent: bool) -> &'static str {
     static S: std::sync::OnceLock<(String, String)> = std::sync::OnceLock::new();
     let s = S.get_or_init(|| {
         let f = crate::core::channels::frag;
@@ -50,7 +50,7 @@ fn sql(recent: bool) -> &'static str {
 }
 
 /// TS `searchHasMore`.
-fn has_more(fetched: usize, limit: i64, offset: i64) -> bool {
+pub(crate) fn has_more(fetched: usize, limit: i64, offset: i64) -> bool {
     fetched as i64 > limit && offset + limit <= SEARCH_MAX_OFFSET
 }
 
