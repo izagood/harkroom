@@ -1557,6 +1557,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // S5.4 CH1 — 섹션 쓰기(`core/sections_write.rs::SECTION_WRITE_PRIVILEGES`). 칸 권한만. 없으면 「section write core off」 — TS 에 남는다.
         `grant insert (account_id, name, position), update (name, position, collapsed), delete on channel_section to ${rw}`,
         `grant insert (account_id, channel_id, section_id, section), update (section_id, section) on channel_pref to ${rw}`,
+        // S5.4 AC1 — 내 상태·PAT(`core/account_self.rs::ACCOUNT_SELF_PRIVILEGES`). 칸 권한만(outbox 는 위). 없으면 「account self core off」 — TS 에 남는다.
+        `grant update (status, status_text) on account to ${rw}`,
+        `grant update (revoked_at) on pat to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -3536,6 +3539,87 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect((await callX(rsUrl, 'DELETE', `/channel-sections/${id}`, undefined, M)).status).toBe(200);
         }
         expect((await callX(tsUrl, 'DELETE', `/channel-sections/${adminSec.id}`, undefined, A)).status).toBe(200);
+      }
+
+      // S5.4 AC1 — 내 상태·에이전트 PAT(코어 `account_self.rs`). Rust 로 쓰고 TS 로 읽어 같은 상태인지, 거절 갈래는 두 서버의
+      // (상태, 코드)가 같은지 본다. 상태 이벤트는 outbox → TS 버스로 건너와야 한다.
+      {
+        for (const k of ['PUT /accounts/me/status', 'GET /accounts/{id}/pats', 'POST /accounts/{id}/pats', 'DELETE /accounts/{id}/pats/{label}']) {
+          expect(f.log(), k).toContain(`"${k}"`);
+        }
+        expect(f.log()).not.toContain('account self core off');
+        const M = member.token;
+        const tsMe = async (t: string) => (await callX(tsUrl, 'GET', '/auth/me', undefined, t)).json as { status: string; statusText: string | null };
+        // 상태 — 부재는 그대로, null 은 지우기. 이벤트 모양은 TS 와 같다.
+        const adminBefore = await tsMe(A);
+        const busFrom = busEvents.length;
+        const s1 = await callX(rsUrl, 'PUT', '/accounts/me/status', { status: 'away', statusText: '점심', x: 1 }, M);
+        expect(s1.status, JSON.stringify(s1.json)).toBe(200);
+        expect(s1.json).toEqual({ status: 'away', statusText: '점심' });
+        expect(await tsMe(M)).toMatchObject({ status: 'away', statusText: '점심' });
+        const s2 = await callX(rsUrl, 'PUT', '/accounts/me/status', { status: 'dnd' }, M);
+        expect(s2.json, '부재는 문구를 그대로 둔다').toEqual({ status: 'dnd', statusText: '점심' });
+        const s3 = await callX(rsUrl, 'PUT', '/accounts/me/status', { status: 'dnd', statusText: null }, M);
+        expect(s3.json, 'null 은 지운다').toEqual({ status: 'dnd', statusText: null });
+        expect(await tsMe(M)).toMatchObject({ status: 'dnd', statusText: null });
+        expect(await tsMe(A), '남의 상태는 그대로').toEqual(adminBefore);
+        const statusEvents = () => busEvents.slice(busFrom).filter((e) => e.type === 'status.changed');
+        for (const until = Date.now() + 5000; statusEvents().length < 3 && Date.now() < until;) await new Promise((r) => setTimeout(r, 50));
+        expect(statusEvents()).toHaveLength(3);
+        expect(statusEvents().at(-1))
+          .toEqual({ type: 'status.changed', accountId: member.accountId, status: 'dnd', statusText: null });
+        // PAT — 지울 대상은 따로 넣는다(`agent.pat` 은 뒤 블록이 쓴다). 소유자 없는 에이전트도 하나.
+        const pat = (await db.pool.query<{ label: string }>('select label from pat where account_id = $1 limit 1', [agent.accountId])).rows[0]!.label;
+        await db.pool.query(`insert into pat (token_hash, account_id, label, revoked_at) values ('ac1-x1', $1, 'ac1-x', null), ('ac1-x2', $1, 'ac1-x', now())`, [agent.accountId]);
+        const orphan = (await db.pool.query<{ id: string }>(`insert into account (handle, display_name, kind) values ('ac1_orphan', 'ac1_orphan', 'agent') returning id`)).rows[0]!.id;
+        const ag = agent.accountId;
+        for (const [name, m, path, body, token] of [
+          ['상태 모르는 값 → 400', 'PUT', '/accounts/me/status', { status: 'busy' }, M],
+          ['상태 본문 없음 → 400', 'PUT', '/accounts/me/status', undefined, M],
+          ['상태 81자 → 400', 'PUT', '/accounts/me/status', { status: 'away', statusText: 'x'.repeat(81) }, M],
+          ['상태 문구 숫자 → 400', 'PUT', '/accounts/me/status', { status: 'away', statusText: 1 }, M],
+          ['상태 에이전트 → 400 invalid_account', 'PUT', '/accounts/me/status', { status: 'away' }, agent.pat],
+          ['상태 익명 → 401', 'PUT', '/accounts/me/status', { status: 'away' }, ''],
+          ['PAT 목록 멤버(남의 에이전트) → 403', 'GET', `/accounts/${ag}/pats`, undefined, M],
+          ['PAT 목록 소유자 없는 에이전트·멤버 → 403', 'GET', `/accounts/${orphan}/pats`, undefined, M],
+          ['PAT 목록 없는 계정·멤버 → 404', 'GET', `/accounts/${ghost}/pats`, undefined, M],
+          ['PAT 목록 없는 계정·admin → 404', 'GET', `/accounts/${ghost}/pats`, undefined, A],
+          ['PAT 목록 사람 계정·admin → 404', 'GET', `/accounts/${member.accountId}/pats`, undefined, A],
+          ['PAT 목록 익명 → 401', 'GET', `/accounts/${ag}/pats`, undefined, ''],
+          ['PAT 발급 → 410', 'POST', `/accounts/${ag}/pats`, { label: 'n' }, A],
+          ['PAT 발급 멤버 → 403', 'POST', `/accounts/${ag}/pats`, { label: 'n' }, M],
+          ['PAT 발급 사람 계정 → 404', 'POST', `/accounts/${member.accountId}/pats`, { label: 'n' }, A],
+          ['PAT 폐기 멤버 → 403', 'DELETE', `/accounts/${ag}/pats/ac1-x`, undefined, M],
+          ['PAT 폐기 65자 → 400', 'DELETE', `/accounts/${ag}/pats/${'x'.repeat(65)}`, undefined, A],
+          ['PAT 폐기 사람 계정 → 404', 'DELETE', `/accounts/${member.accountId}/pats/x`, undefined, A],
+        ] as const) {
+          const [x, y] = [await callX(tsUrl, m, path, body, token), await callX(rsUrl, m, path, body, token)];
+          expect({ status: y.status, code: y.code }, name).toEqual({ status: x.status, code: x.code });
+        }
+        expect(await tsMe(M), '거절은 상태를 바꾸지 않았다').toMatchObject({ status: 'dnd', statusText: null });
+        expect(await tsMe(A)).toEqual(adminBefore);
+        // 목록 — Rust 답 = TS 답(라벨·시각만, 해시 없음).
+        const lr = await callX(rsUrl, 'GET', `/accounts/${ag}/pats`, undefined, A);
+        expect(lr.status).toBe(200);
+        expect(lr.json).toEqual((await callX(tsUrl, 'GET', `/accounts/${ag}/pats`, undefined, A)).json);
+        expect(JSON.stringify(lr.json)).not.toContain('ac1-x1');
+        expect((lr.json.pats as { label: string }[]).map((p) => p.label)).toContain(pat);
+        expect((await callX(rsUrl, 'GET', `/accounts/${orphan}/pats`, undefined, A)).json).toEqual({ pats: [] });
+        // 폐기 — 살아 있는 것만(이미 폐기된 같은 라벨은 그대로), 감사 줄은 TS 줄과 같은 꼴, 다른 라벨(`agent.pat`)은 살아 있다.
+        const rv = await callX(rsUrl, 'DELETE', `/accounts/${ag}/pats/ac1-x`, undefined, A);
+        expect(rv.json).toEqual({ revoked: 1 });
+        expect((await callX(rsUrl, 'DELETE', `/accounts/${ag}/pats/ac1-x`, undefined, A)).json, '두 번째는 0').toEqual({ revoked: 0 });
+        expect((await callX(tsUrl, 'DELETE', `/accounts/${ag}/pats/ac1-nope`, undefined, A)).json).toEqual({ revoked: 0 });
+        const audits = (await db.pool.query<{ actor_id: string; actor_handle: string; target: string; ip: string; detail: unknown }>(
+          `select actor_id, actor_handle, target, ip, detail from audit_log where action = 'pat.revoked' and target = $1 order by id`, [ag])).rows;
+        expect(audits).toHaveLength(3);
+        expect(audits[0]).toEqual({ ...audits[2], detail: { label: 'ac1-x', revoked: 1 } });
+        expect((await db.pool.query(`select count(*)::int as n from pat where account_id = $1 and label = 'ac1-x' and revoked_at is null`, [ag])).rows[0].n).toBe(0);
+        expect((await db.pool.query(`select count(*)::int as n from pat where account_id = $1 and label = $2 and revoked_at is null`, [ag, pat])).rows[0].n).toBe(1);
+        // 뒤 블록을 위해 되돌린다.
+        await db.pool.query(`delete from pat where token_hash in ('ac1-x1', 'ac1-x2')`);
+        await db.pool.query('delete from account where id = $1', [orphan]);
+        expect((await callX(tsUrl, 'PUT', '/accounts/me/status', { status: 'available', statusText: null }, M)).status).toBe(200);
       }
 
       // S5.2 P4d — 옮긴 라우트를 지난 요청도 세션을 늘리고 PAT 사용 시각을 남긴다(쓰기 풀로). 읽기 역할로 하면 조용히 실패하던 것.
