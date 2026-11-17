@@ -115,7 +115,7 @@ async fn closed_wakes(
 }
 
 /// TS `notifyIfSettled` — 미결이 0 이면 팀장을 **한 번만** 깨운다. 깨웠으면 팀장 id.
-async fn notify_if_settled(
+pub(crate) async fn notify_if_settled(
     conn: &mut sqlx::PgConnection,
     delegation: &str,
     out: &mut Preempted,

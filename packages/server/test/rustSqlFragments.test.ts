@@ -16,7 +16,7 @@ import { AGENT_INVOKER_SQL, CHANNEL_SCOPE_SQL, ELIGIBLE_DELEGATE_SQL, INVOKE_FAC
 import { CLOSE_REPLY_GRANTS_SQL, HAS_REPLY_GRANT_SQL, OPEN_REPLY_GRANTS_SQL } from '../src/services/replyGrants.js';
 import { MENTION_DEPTH_SCAN_SQL, OWN_THREAD_LINK_IDS_SQL, RECENT_BODIES_SQL, REPLY_LOCK_CLASS, STALL_SHADOW_SQL } from '../src/services/messages.js';
 import { ASK_CLOSE_BY_REPLY_SQL } from '../src/services/messages.js';
-import { DELEGATION_INSERT_SQL, DELEGATION_ITEM_INSERT_SQL, DELEGATION_TOUCH_DEADLINE_SQL, DELEGATION_V2_UPDATE_PENDING_SQL } from '../src/services/delegations.js';
+import { CLOSE_REPLY_ITEM_V0_SQL, CLOSE_REPLY_ITEM_V2_SQL, CLOSE_REPLY_OPEN_SQL, DELEGATION_INSERT_SQL, DELEGATION_ITEM_INSERT_SQL, DELEGATION_TOUCH_DEADLINE_SQL, DELEGATION_V2_UPDATE_PENDING_SQL } from '../src/services/delegations.js';
 import { EDIT_FIND_SQL, EDIT_INBOX_ALREADY_SQL, EDIT_UPDATE_SQL, EDIT_VIA_EDIT_SQL } from '../src/services/messages.js';
 import { ACCOUNTS_BY_HANDLES_SQL, ACCOUNTS_BY_IDS_SQL, FAN_OUT_AUDIENCE_SQL, INSERT_INBOX_MANY_SQL, REVEAL_HIDDEN_SQL, REVEAL_REASONS } from '../src/services/messages.js';
 import { GROUP_BY_HANDLE_SQL, GROUP_MEMBERS_SQL } from '../src/services/handleGroups.js';
@@ -242,6 +242,9 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     chain_backstop_open: CHAIN_BACKSTOP_OPEN_SQL,
     enqueue_ask_push: ENQUEUE_ASK_PUSH_SQL,
     delegation_v2_update_pending: DELEGATION_V2_UPDATE_PENDING_SQL,
+    close_reply_open: CLOSE_REPLY_OPEN_SQL,
+    close_reply_item_v0: CLOSE_REPLY_ITEM_V0_SQL,
+    close_reply_item_v2: CLOSE_REPLY_ITEM_V2_SQL,
     decider_row: DECIDER_ROW_SQL,
     decider_seen: DECIDER_SEEN_SQL,
     decider_list: DECIDER_LIST_SQL,
