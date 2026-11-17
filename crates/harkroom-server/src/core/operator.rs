@@ -41,26 +41,42 @@ pub struct OpTiming {
     pub cap_touch: Duration,
 }
 
+/// TS 기본값. 시험은 `OpTiming { revalidate: …, ..OpTiming::default() }` 처럼 바꿀 칸만 적는다 — 칸이 늘어도
+/// 시험 초기화가 깨지지 않는다(#2337·#2338 이 연달아 들어가 main 시험이 E0063 으로 깨진 일).
+impl Default for OpTiming {
+    fn default() -> Self {
+        Self {
+            heartbeat: Duration::from_millis(30_000),
+            last_seen_write: Duration::from_millis(30_000),
+            revalidate: Duration::from_millis(60_000),
+            send_timeout: Duration::from_millis(10_000),
+            status_min: Duration::from_millis(10_000),
+            gh_lines: Duration::from_millis(10_000),
+            cap_touch: Duration::from_millis(60_000),
+        }
+    }
+}
+
 impl OpTiming {
-    /// TS 기본값. 시험은 env 로 줄인다 — 0·모르는 값은 기본값.
+    /// 기본값([`Default`])에 env 를 덮는다 — 0·모르는 값은 기본값.
     pub fn from_env() -> Self {
-        let ms = |k: &str, d: u64| {
-            Duration::from_millis(
-                std::env::var(k)
-                    .ok()
-                    .and_then(|v| v.parse::<u64>().ok())
-                    .filter(|n| *n > 0)
-                    .unwrap_or(d),
-            )
+        let d = Self::default();
+        let ms = |k: &str, d: Duration| {
+            std::env::var(k)
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .filter(|n| *n > 0)
+                .map(Duration::from_millis)
+                .unwrap_or(d)
         };
         Self {
-            heartbeat: ms("HARKROOM_OPERATOR_HEARTBEAT_MS", 30_000),
-            last_seen_write: ms("HARKROOM_OPERATOR_LAST_SEEN_MS", 30_000),
-            revalidate: ms("HARKROOM_OPERATOR_REVALIDATE_MS", 60_000),
-            send_timeout: ms("HARKROOM_WS_SEND_TIMEOUT_MS", 10_000),
-            status_min: ms("HARKROOM_OPERATOR_STATUS_MIN_MS", 10_000),
-            gh_lines: ms("HARKROOM_GH_LINES_TIMEOUT_MS", 10_000),
-            cap_touch: ms("HARKROOM_OPERATOR_CAP_TOUCH_MS", 60_000),
+            heartbeat: ms("HARKROOM_OPERATOR_HEARTBEAT_MS", d.heartbeat),
+            last_seen_write: ms("HARKROOM_OPERATOR_LAST_SEEN_MS", d.last_seen_write),
+            revalidate: ms("HARKROOM_OPERATOR_REVALIDATE_MS", d.revalidate),
+            send_timeout: ms("HARKROOM_WS_SEND_TIMEOUT_MS", d.send_timeout),
+            status_min: ms("HARKROOM_OPERATOR_STATUS_MIN_MS", d.status_min),
+            gh_lines: ms("HARKROOM_GH_LINES_TIMEOUT_MS", d.gh_lines),
+            cap_touch: ms("HARKROOM_OPERATOR_CAP_TOUCH_MS", d.cap_touch),
         }
     }
 }
