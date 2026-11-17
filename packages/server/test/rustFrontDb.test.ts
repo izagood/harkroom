@@ -7211,6 +7211,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             await db.pool.query(`insert into team_delegation_item (delegation_id, delegate_account_id, outcome, closed_reason) values ($1, $2, $3, case when $3::text = 'closed' then 'idle' end)`, [d, who[i], o]);
           }
           await db.pool.query(`insert into inbox (account_id, message_id, reason) values ($1, $2, 'delegation_done')`, [agent.accountId, root]);
+          // S5.4 MS2b-2 — 담당(bot2)도 그 스레드 줄을 받는다: 위임 요약(`delegations`)은 담당 쪽이면 자기 한 줄만 실려야 한다.
+          if (outcomes.length > 1) await db.pool.query(`insert into inbox (account_id, message_id, reason) values ($1, $2, 'mention')`, [bot2.accountId, root]);
           ms2bDone.push(root);
         }
         const inboxGet = async (base: string, qs: string, token: string) => {
@@ -7256,7 +7258,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             // 대조가 TS 끼리가 된다. TS 가 맡았으면 그 글의 `message.created` 가 TS 쪽(`onEvent`)에 생긴다.
             expect(tsEvents.slice(tsBefore).filter((e) => e.type === 'message.created'), `HARKROOM_DELEGATION_V2=${key} 는 Rust 가 맡는다`).toEqual([]);
             expect(rsD, `HARKROOM_DELEGATION_V2=${key}`).toEqual(tsD);
-            // S5.4 MS2b — `GET /inbox`. 스위치 0 앞단은 Rust 가 답하고(위임 요약 없음), 1 은 TS 로 넘긴다 — 어느 쪽이든 본문 글자가 같아야 한다.
+            // S5.4 MS2b — `GET /inbox`. 스위치 0·1 앞단 모두 Rust 가 답한다(1 은 위임 요약 `delegations` 까지, MS2b-2) — 본문 글자가 TS 와 같아야 한다.
             if (implicitMode === 'off') {
               for (const token of [agent.pat, A, member.token, bot2.pat]) {
                 for (const qs of INBOX_QS) {
@@ -7270,6 +7272,21 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
               expect(withOutcome?.delegation).toMatchObject({ timedOut: true, items: [{ outcome: 'done' }, { outcome: 'timeout' }] });
               expect(noOutcome).toBeDefined();
               expect(noOutcome!.delegation).toBeUndefined();
+              // MS2b-2 — 위임 요약: 스위치 1 에서만 실린다. 넘긴 쪽(BOT)은 담당 전원, 담당(bot2)은 자기 한 줄만.
+              const summaryOf = (e: unknown) => (e as { delegations?: { role: string; items: { handle: string }[] }[] } | undefined)?.delegations;
+              const theirs = JSON.parse((await inboxGet(`http://127.0.0.1:${portD}`, '', bot2.pat)).text!) as { entries: { messageId: string }[] };
+              const delegateRow = theirs.entries.find((e) => e.messageId === ms2bDone[0]);
+              expect(delegateRow).toBeDefined();
+              if (mode === '1') {
+                expect(summaryOf(withOutcome)).toMatchObject([{ role: 'delegator', items: [{}, {}, {}] }]);
+                expect(summaryOf(noOutcome)).toMatchObject([{ role: 'delegator', items: [{ state: 'open' }] }]);
+                expect(summaryOf(delegateRow)).toHaveLength(1);
+                expect(summaryOf(delegateRow)![0]).toMatchObject({ role: 'delegate' });
+                expect(summaryOf(delegateRow)![0]!.items).toHaveLength(1);
+              } else {
+                expect(summaryOf(withOutcome)).toBeUndefined();
+                expect(summaryOf(delegateRow)).toBeUndefined();
+              }
             }
             delegOut[key] = tsD;
           } finally {

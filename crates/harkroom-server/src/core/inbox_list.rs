@@ -1,5 +1,6 @@
 //! S5.3 C6a-3a — 받은함 목록의 기본 줄(TS `listInbox` 의 기본 SELECT 와 팀 명단)과 덧붙임. 라우트는 [`super::inbox_rest`](S5.4 MS2b).
-//! 위임 요약(`delegations`, 위임 v2 켜짐에서만)과 `threads=1` 은 아직 옮기지 않았다 — 그 요청은 라우트가 TS 로 넘긴다.
+//! 위임 요약(`delegations`)은 위임 v2 가 켜졌을 때만 싣는다(TS `delegationV2Enabled`, S5.4 MS2b-2). `threads=1` 은 아직 옮기지 않았다 —
+//! 그 요청은 라우트가 TS 로 넘긴다.
 //!
 //! - 문장은 TS 정본 `LIST_INBOX_SQL`(갈래 다섯)·`INBOX_TEAM_ROSTER_SQL`(`services/messages.ts`) 그대로 — `golden/sql_fragments.json`
 //!   에서 읽는다. TS 가 칸·조건을 고치면 `rustSqlFragments.test.ts` 가 골든 갱신을 요구한다.
@@ -28,6 +29,9 @@ struct Sql {
     started: String,
     outcomes: String,
     rounds: String,
+    summaries: String,
+    summary_items: String,
+    summary_watches: String,
 }
 
 /// 갈래 문장을 감싼다 — 행마다 (본문 json, id, 이유, 팀 id). 겉 `order by` 는 id 오름차순(TS 응답 순서).
@@ -40,7 +44,8 @@ fn wrap(branch: &str) -> String {
              from json_each(row_to_json(t)) with ordinality as e(key, value, ord) \
              where e.key <> 'teamId' \
                and not (e.key in ('viaEdit', 'bodyTruncated') and e.value::text <> 'true'))::text as body, \
-           t.id::int8 as id, t.\"teamId\"::text as team_id, t.\"messageId\"::text as message_id, t.reason \
+           t.id::int8 as id, t.\"teamId\"::text as team_id, t.\"messageId\"::text as message_id, t.reason, \
+           t.\"threadRootId\"::text as thread_root_id \
          from ({branch}) t order by t.id",
         crate::iso!("t.\"readAt\""),
         crate::iso!("t.\"createdAt\""),
@@ -94,6 +99,24 @@ fn sql() -> &'static Sql {
                 "select r.i::int8, r.n::int8 from ({}) r",
                 frag("delegate_rounds_used")
             ),
+            // TS `delegationSummariesFor` 의 세 문장. 순서는 안쪽과 같게 겉에서 다시 건다(스레드 머리, 최근 것이 뒤).
+            summaries: format!(
+                "select y.id::text, y.thread_root_id::text, y.kind, y.delegator_handle, y.message_id::text, \
+                 y.plan_step_id, y.is_lead from ({}) y order by y.thread_root_id, y.rn desc",
+                frag("inbox_delegation_summaries")
+            ),
+            summary_items: format!(
+                "select y.delegation_id::text, y.delegate_account_id::text, y.handle, y.outcome, y.closed_reason, \
+                 {}, y.last_message_id::text from ({}) y order by y.handle",
+                crate::iso!("y.last_activity_at"),
+                frag("inbox_delegation_summary_items")
+            ),
+            // 안쪽 `order by w.created_at` 은 겉에 칸이 없어 다시 걸지 못한다 — 단순 투영은 안쪽 순서를 그대로 낸다.
+            summary_watches: format!(
+                "select y.delegation_id::text, y.account_id::text, y.repo, y.number::int8, y.head, y.until, y.handle \
+                 from ({}) y",
+                frag("inbox_delegation_summary_watches")
+            ),
         }
     })
 }
@@ -116,8 +139,13 @@ pub struct InboxRow {
     pub body: String,
 }
 
-/// TS `listInbox` 의 기본 줄 + 팀 명단 + 덧붙임 셋(넘겨받은 일·접힌 깨움·시작한 곳). 위임 결말·요약은 C6a-3b-2.
-pub async fn list_inbox(pool: &PgPool, me: &str, q: InboxQuery) -> sqlx::Result<Vec<InboxRow>> {
+/// TS `listInbox` 의 기본 줄 + 팀 명단 + 덧붙임(위임 결말·넘겨받은 일·접힌 깨움·시작한 곳). `v2` 면 위임 요약(`delegations`)도.
+pub async fn list_inbox(
+    pool: &PgPool,
+    me: &str,
+    q: InboxQuery,
+    v2: bool,
+) -> sqlx::Result<Vec<InboxRow>> {
     let s = sql();
     let rows: Vec<BaseRow> = match q {
         InboxQuery::Unread { since: None } => {
@@ -176,19 +204,33 @@ pub async fn list_inbox(pool: &PgPool, me: &str, q: InboxQuery) -> sqlx::Result<
         team_calls(roster)
     };
     let ex = extras(pool, me, &rows).await?;
+    let summaries = if v2 {
+        let roots = uniq(
+            rows.iter()
+                .map(|r| r.5.clone().unwrap_or_else(|| r.3.clone())),
+        );
+        delegation_summaries(pool, me, &roots).await?
+    } else {
+        HashMap::new()
+    };
     Ok(rows
         .into_iter()
-        .map(|(body, id, team, message_id, reason)| {
+        .map(|(body, id, team, message_id, reason, root)| {
             let body = body.unwrap_or_else(|| "{}".into());
             let mut body = match team.as_deref().and_then(|t| teams.get(t)) {
                 Some(call) => append_key(body, "team", call),
                 None => body,
             };
-            // TS 가 키를 붙이는 차례: team → delegation → (delegations — v2 켜짐은 TS 가 답한다) → delegatedBy → canceledWakes → startedIn.
+            // TS 가 키를 붙이는 차례: team → delegation → delegations(v2) → delegatedBy → canceledWakes → startedIn.
             if reason == "delegation_done"
                 && let Some(v) = ex.outcomes.get(&message_id)
             {
                 body = append_key(body, "delegation", v);
+            }
+            if let Some(list) = summaries.get(root.as_ref().unwrap_or(&message_id))
+                && !list.is_empty()
+            {
+                body = append_key(body, "delegations", &format!("[{}]", list.join(",")));
             }
             if reason == "team_delegated"
                 && let Some(v) = ex.handed.get(&message_id)
@@ -211,8 +253,128 @@ pub async fn list_inbox(pool: &PgPool, me: &str, q: InboxQuery) -> sqlx::Result<
         .collect())
 }
 
-/// 기본 줄 한 행 — (본문 json, id, 팀 id, 메시지 id, 사유).
-type BaseRow = (Option<String>, i64, Option<String>, String, String);
+/// 기본 줄 한 행 — (본문 json, id, 팀 id, 메시지 id, 사유, 스레드 머리 id).
+type BaseRow = (
+    Option<String>,
+    i64,
+    Option<String>,
+    String,
+    String,
+    Option<String>,
+);
+
+/// TS `DELEGATION_SUMMARY_PER_THREAD` — 스레드 하나에 실을 위임 요약 수(최근 것부터).
+const DELEGATION_SUMMARY_PER_THREAD: i64 = 10;
+
+/// 요약 행 — (위임 id, 스레드 머리, kind, 넘긴 쪽 handle, 위임 메시지 id, 계획 단계, 내가 넘긴 쪽인가).
+type SummaryRow = (String, String, String, String, String, Option<String>, bool);
+/// 담당 줄 — (위임 id, 담당 id, handle, outcome, closed_reason, last_activity_at(ISO), last_message_id).
+type ItemRow = (
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+/// 열린 PR 감시 — (위임 id, 건 계정 id, repo, number, head, until, 건 계정 handle).
+type WatchRow = (String, String, String, i64, String, String, String);
+
+/// TS `delegationSummariesFor` — 스레드 머리 id → 위임 요약 JSON 들. **담당 쪽은 자기 한 줄·자기 감시만** 받는다(넘긴 쪽은 전부).
+async fn delegation_summaries(
+    pool: &PgPool,
+    me: &str,
+    roots: &[String],
+) -> sqlx::Result<HashMap<String, Vec<String>>> {
+    if roots.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let s = sql();
+    let dl: Vec<SummaryRow> = sqlx::query_as(s.summaries.as_str())
+        .bind(me)
+        .bind(roots)
+        .bind(DELEGATION_SUMMARY_PER_THREAD)
+        .fetch_all(pool)
+        .await?;
+    if dl.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let ids: Vec<String> = dl.iter().map(|d| d.0.clone()).collect();
+    let items: Vec<ItemRow> = sqlx::query_as(s.summary_items.as_str())
+        .bind(&ids)
+        .fetch_all(pool)
+        .await?;
+    let watches: Vec<WatchRow> = sqlx::query_as(s.summary_watches.as_str())
+        .bind(&ids)
+        .fetch_all(pool)
+        .await?;
+    Ok(summaries_json(me, dl, &items, &watches))
+}
+
+/// 요약 행들 → 스레드별 JSON(키 순서는 TS `InboxDelegationSummary` 를 만드는 차례 그대로).
+fn summaries_json(
+    me: &str,
+    dl: Vec<SummaryRow>,
+    items: &[ItemRow],
+    watches: &[WatchRow],
+) -> HashMap<String, Vec<String>> {
+    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    for (id, root, kind, delegator, message_id, plan_step, is_lead) in dl {
+        // 담당 쪽은 자기 한 줄만. 위임자이면서 담당인 경우(자기에게 넘김)는 위임자 쪽으로 본다.
+        let its: Vec<String> = items
+            .iter()
+            .filter(|i| i.0 == id && (is_lead || i.1 == me))
+            .map(|(_, _, handle, outcome, closed, last_at, last_msg)| {
+                let state = outcome.as_deref().unwrap_or("open");
+                let closed_reason = match (outcome.as_deref(), closed.as_deref()) {
+                    (Some("closed"), Some(c)) if !c.is_empty() => {
+                        format!(",\"closedReason\":{}", jstr(c))
+                    }
+                    _ => String::new(),
+                };
+                format!(
+                    "{{\"handle\":{},\"state\":{}{closed_reason},\"lastMessageId\":{},\"lastActivityAt\":{}}}",
+                    jstr(handle),
+                    jstr(state),
+                    opt(last_msg.as_deref()),
+                    opt(last_at.as_deref())
+                )
+            })
+            .collect();
+        // 담당 쪽은 자기가 건 감시만(items 와 같은 「자기 줄만」 원칙).
+        let ws: Vec<String> = watches
+            .iter()
+            .filter(|w| w.0 == id && (is_lead || w.1 == me))
+            .map(|(_, _, repo, number, head, until, by)| {
+                format!(
+                    "{{\"repo\":{},\"number\":{number},\"head\":{},\"until\":{},\"byHandle\":{}}}",
+                    jstr(repo),
+                    jstr(head),
+                    jstr(until),
+                    jstr(by)
+                )
+            })
+            .collect();
+        let text = format!(
+            "{{\"id\":{},\"role\":{},\"kind\":{},\"delegatorHandle\":{},\"messageId\":{},\"planStepId\":{},\"items\":[{}],\"prWatches\":[{}]}}",
+            jstr(&id),
+            jstr(if is_lead { "delegator" } else { "delegate" }),
+            jstr(&kind),
+            jstr(&delegator),
+            jstr(&message_id),
+            opt(plan_step.as_deref()),
+            its.join(","),
+            ws.join(",")
+        );
+        out.entry(root).or_default().push(text);
+    }
+    out
+}
+
+fn opt(v: Option<&str>) -> String {
+    v.map_or_else(|| "null".into(), jstr)
+}
 
 #[derive(Default)]
 struct Extras {
@@ -414,8 +576,9 @@ pub async fn list_inbox_newest(
     me: &str,
     limit: i64,
     before: Option<i64>,
+    v2: bool,
 ) -> sqlx::Result<(Vec<InboxRow>, bool)> {
-    let mut rows = list_inbox(pool, me, InboxQuery::Newest { limit, before }).await?;
+    let mut rows = list_inbox(pool, me, InboxQuery::Newest { limit, before }, v2).await?;
     let truncated = rows.len() as i64 > limit;
     if truncated {
         let cut = rows.len() - limit as usize;
@@ -611,6 +774,101 @@ mod tests {
         assert_eq!(
             outcome_json(false, 5, &[]),
             r#"{"timedOut":false,"roundsLeft":0,"items":[]}"#
+        );
+    }
+
+    #[test]
+    fn summaries_keep_ts_shape_and_hide_other_delegates() {
+        // 위임 둘: d1 은 내가 넘긴 것(담당 전원·감시 전부), d2 는 내가 담당(자기 줄·자기 감시만).
+        let dl = vec![
+            (
+                "d1".into(),
+                "r1".into(),
+                "explicit".into(),
+                "me-h".into(),
+                "m1".into(),
+                Some("s2".into()),
+                true,
+            ),
+            (
+                "d2".into(),
+                "r1".into(),
+                "implicit".into(),
+                "lead-h".into(),
+                "m2".into(),
+                None,
+                false,
+            ),
+        ];
+        let items = vec![
+            (
+                "d1".into(),
+                "a".into(),
+                "alice".into(),
+                Some("closed".into()),
+                Some("delegator_close".into()),
+                Some("2026-01-01T00:00:00.000Z".into()),
+                Some("x1".into()),
+            ),
+            (
+                "d1".into(),
+                "b".into(),
+                "bob".into(),
+                Some("reported".into()),
+                Some("ignored".into()),
+                None,
+                None,
+            ),
+            (
+                "d2".into(),
+                "other".into(),
+                "carol".into(),
+                None,
+                None,
+                None,
+                Some("secret".into()),
+            ),
+            (
+                "d2".into(),
+                "me".into(),
+                "me-h".into(),
+                None,
+                None,
+                None,
+                None,
+            ),
+        ];
+        let watches = vec![
+            (
+                "d1".into(),
+                "a".into(),
+                "o/r".into(),
+                7,
+                "ab".into(),
+                "checks".into(),
+                "alice".into(),
+            ),
+            (
+                "d2".into(),
+                "other".into(),
+                "o/r".into(),
+                8,
+                "cd".into(),
+                "merged".into(),
+                "carol".into(),
+            ),
+        ];
+        let got = summaries_json("me", dl, &items, &watches);
+        let list = &got["r1"];
+        assert_eq!(list.len(), 2);
+        assert_eq!(
+            list[0],
+            r#"{"id":"d1","role":"delegator","kind":"explicit","delegatorHandle":"me-h","messageId":"m1","planStepId":"s2","items":[{"handle":"alice","state":"closed","closedReason":"delegator_close","lastMessageId":"x1","lastActivityAt":"2026-01-01T00:00:00.000Z"},{"handle":"bob","state":"reported","lastMessageId":null,"lastActivityAt":null}],"prWatches":[{"repo":"o/r","number":7,"head":"ab","until":"checks","byHandle":"alice"}]}"#
+        );
+        // 담당 쪽: 다른 담당의 lastMessageId·감시가 실리지 않는다.
+        assert_eq!(
+            list[1],
+            r#"{"id":"d2","role":"delegate","kind":"implicit","delegatorHandle":"lead-h","messageId":"m2","planStepId":null,"items":[{"handle":"me-h","state":"open","lastMessageId":null,"lastActivityAt":null}],"prWatches":[]}"#
         );
     }
 

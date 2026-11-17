@@ -4,8 +4,8 @@
 //! - 읽기 풀만 쓴다(SELECT). 인증(401)은 층이 먼저 본다.
 //! - **답하지 않고 읽은 요청 그대로 TS 로 넘기는 것**(보수적으로):
 //!   - `threads` 키가 있으면 — 스레드 머리·처리 상태(`listInboxThreads`·`listInboxThreadStates`)는 아직 옮기지 않았다(MS2c 와 같이).
-//!   - 위임 v2 스위치(`HARKROOM_DELEGATION_V2`)가 꺼졌다고 **확실하지 않으면** — 켜진 서버는 줄마다 위임 요약(`delegations`)을 싣는데
-//!     그것은 아직 옮기지 않았다. 값이 없으면 TS 의 env 를 모르므로 넘긴다(`msg_post` 와 같은 판단).
+//!   - 위임 v2 스위치(`HARKROOM_DELEGATION_V2`) 값이 없으면 — 켜진 서버는 줄마다 위임 요약(`delegations`)을 싣는데, 값이 없으면
+//!     TS 의 env 를 모르므로 넘긴다(`msg_post` 와 같은 판단). 켜짐·꺼짐이 적혀 있으면 Rust 가 그대로 답한다(MS2b-2).
 //!   - 형식이 zod 와 정확히 맞는지 확신할 수 없는 값 — `unread` 가 `1`·`true` 가 아님(zod `coerce.boolean` 은 `"0"`·`"false"` 도
 //!     참으로 읽는다), 숫자만이 아니거나 15자리 넘는 `since`·`before`, `before=0`, 키의 되풀이. TS 가 같은 요청에 같은 답(또는 400)을 낸다.
 use crate::auth::RequireAccount;
@@ -96,17 +96,13 @@ async fn inbox(
     let v2 = crate::core::msg_post::delegation_v2(
         std::env::var("HARKROOM_DELEGATION_V2").ok().as_deref(),
     );
-    let parsed = if v2 == Some(false) {
-        parse(req.uri().query())
-    } else {
-        None
-    };
-    let Some(q) = parsed else {
+    let parsed = parse(req.uri().query()).zip(v2);
+    let Some((q, v2)) = parsed else {
         return crate::proxy::forward(State(st.up.clone()), ConnectInfo(peer), req).await;
     };
     // TS `capped = since === undefined && unread !== true`.
     if q.since.is_none() && !q.unread {
-        return match list_inbox_newest(&st.pool, &me.id, INBOX_PAGE_LIMIT, q.before).await {
+        return match list_inbox_newest(&st.pool, &me.id, INBOX_PAGE_LIMIT, q.before, v2).await {
             Ok((rows, truncated)) => json_ok(format!(
                 "{{\"entries\":[{}],\"truncated\":{truncated}}}",
                 entries(&rows)
@@ -119,7 +115,7 @@ async fn inbox(
     } else {
         InboxQuery::Since(q.since.unwrap_or(0))
     };
-    match list_inbox(&st.pool, &me.id, query).await {
+    match list_inbox(&st.pool, &me.id, query, v2).await {
         Ok(rows) => json_ok(format!("{{\"entries\":[{}]}}", entries(&rows))),
         Err(e) => internal(e),
     }

@@ -142,7 +142,7 @@ async fn inbox_list_matches_ts_rules() {
     id(&pool, &inbox(&m4, "mention", ""), &[]).await;
 
     // 안 읽은 것: i1 하나(i2 읽음 · 비공개 채널 · 지운 글은 빠진다).
-    let unread = list_inbox(&pool, &me, InboxQuery::Unread { since: None })
+    let unread = list_inbox(&pool, &me, InboxQuery::Unread { since: None }, false)
         .await
         .unwrap();
     assert_eq!(unread.iter().map(|r| r.id).collect::<Vec<_>>(), vec![i1]);
@@ -187,32 +187,40 @@ async fn inbox_list_matches_ts_rules() {
     assert!(row1.contains(&format!("\"members\":[{{\"accountId\":\"{a}\",\"handle\":\"il_a\",\"specialty\":null,\"disabled\":false}}")));
 
     // since=0: 읽은 것까지 id 오름차순. 시스템 글은 자리표시자를 handle 로 채우고, 수정으로 생긴 줄만 viaEdit.
-    let all = list_inbox(&pool, &me, InboxQuery::Since(0)).await.unwrap();
+    let all = list_inbox(&pool, &me, InboxQuery::Since(0), false)
+        .await
+        .unwrap();
     assert_eq!(all.iter().map(|r| r.id).collect::<Vec<_>>(), vec![i1, i2]);
     let v2: Value = serde_json::from_str(&all[1].body).unwrap();
     assert_eq!(v2["body"], "il_b님이 들어왔다");
     assert_eq!(v2["viaEdit"], true);
     assert!(v2["readAt"].as_str().unwrap().ends_with('Z'));
     assert!(v2.get("team").is_none());
-    let after = list_inbox(&pool, &me, InboxQuery::Since(i1)).await.unwrap();
+    let after = list_inbox(&pool, &me, InboxQuery::Since(i1), false)
+        .await
+        .unwrap();
     assert_eq!(after.iter().map(|r| r.id).collect::<Vec<_>>(), vec![i2]);
-    let unread_after = list_inbox(&pool, &me, InboxQuery::Unread { since: Some(i1) })
+    let unread_after = list_inbox(&pool, &me, InboxQuery::Unread { since: Some(i1) }, false)
         .await
         .unwrap();
     assert!(unread_after.is_empty());
 
     // 상한 페이지: 최신 1줄 = i2, 앞에 더 있음. before=i2 이면 i1, 끝.
-    let (page, truncated) = list_inbox_newest(&pool, &me, 1, None).await.unwrap();
+    let (page, truncated) = list_inbox_newest(&pool, &me, 1, None, false).await.unwrap();
     assert_eq!(
         (page.iter().map(|r| r.id).collect::<Vec<_>>(), truncated),
         (vec![i2], true)
     );
-    let (page, truncated) = list_inbox_newest(&pool, &me, 1, Some(i2)).await.unwrap();
+    let (page, truncated) = list_inbox_newest(&pool, &me, 1, Some(i2), false)
+        .await
+        .unwrap();
     assert_eq!(
         (page.iter().map(|r| r.id).collect::<Vec<_>>(), truncated),
         (vec![i1], false)
     );
-    let (page, truncated) = list_inbox_newest(&pool, &me, 200, None).await.unwrap();
+    let (page, truncated) = list_inbox_newest(&pool, &me, 200, None, false)
+        .await
+        .unwrap();
     assert_eq!(
         (page.iter().map(|r| r.id).collect::<Vec<_>>(), truncated),
         (vec![i1, i2], false)
@@ -338,7 +346,9 @@ async fn inbox_extras_match_ts_rules() {
     }
     inbox(call.clone(), "mention").await;
 
-    let rows = list_inbox(&pool, &me, InboxQuery::Since(0)).await.unwrap();
+    let rows = list_inbox(&pool, &me, InboxQuery::Since(0), false)
+        .await
+        .unwrap();
     let by_msg = |m: &str| -> Value {
         let row = rows
             .iter()

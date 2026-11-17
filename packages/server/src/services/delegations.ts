@@ -1115,6 +1115,38 @@ export async function closeDelegationByDelegator(
 /** 스레드 하나에 실을 위임 요약의 최대 개수(최근 것부터). */
 const DELEGATION_SUMMARY_PER_THREAD = 10;
 
+/** 스레드에 실을 위임 요약 — $1 계정, $2 스레드 머리 id 들, $3 스레드당 개수. Rust `GET /inbox`(S5.4 MS2b-2, `core/inbox_list.rs`)가 골든으로 받는다. */
+export const DELEGATION_SUMMARIES_SQL = `select * from (
+       select d.id, d.thread_root_id, d.kind, la.handle as delegator_handle, d.message_id, d.plan_step_id,
+              d.lead_account_id = $1::uuid as is_lead,
+              row_number() over (partition by d.thread_root_id order by d.created_at desc) as rn
+         from team_delegation d
+         join account la on la.id = d.lead_account_id
+        where d.thread_root_id = any($2::uuid[])
+          and (d.lead_account_id = $1::uuid
+               or exists (select 1 from team_delegation_item i where i.delegation_id = d.id and i.delegate_account_id = $1::uuid))
+     ) x where rn <= $3
+     order by thread_root_id, rn desc`;
+
+/** 위임 요약의 담당 줄 — $1 위임 id 들. 같은 Rust 가 골든으로 받는다. */
+export const DELEGATION_SUMMARY_ITEMS_SQL = `select i.delegation_id, i.delegate_account_id, a.handle, i.outcome, i.closed_reason, i.last_activity_at,
+            (select m.id from message m
+              where m.thread_root_id = d.thread_root_id and m.author_id = i.delegate_account_id and m.created_at >= d.created_at
+              order by m.created_at desc limit 1) as last_message_id
+       from team_delegation_item i
+       join team_delegation d on d.id = i.delegation_id
+       join account a on a.id = i.delegate_account_id
+      where i.delegation_id = any($1::uuid[])
+      order by a.handle`;
+
+/** 위임 요약의 열린 PR 감시 — $1 위임 id 들. 같은 Rust 가 골든으로 받는다. */
+export const DELEGATION_SUMMARY_WATCHES_SQL = `select s.delegation_id, s.account_id, w.repo, w.number, w.head, w.until, a.handle
+       from pr_watch_subscriber s
+       join pr_watch w on w.id = s.watch_id and w.state = 'open'
+       join account a on a.id = s.account_id
+      where s.delegation_id = any($1::uuid[])
+      order by w.created_at`;
+
 /**
  * inbox 항목에 실을 스레드별 위임 요약(`InboxEntry.delegations`). 넘긴 쪽은 담당 전원을, **담당 쪽은 자기 한 줄만** 받는다 —
  * 다른 담당의 `lastMessageId` 는 결코 담당에게 가지 않는다(보안 요구). 열린 PR 감시는 `pr_watch_subscriber.delegation_id` 로 붙인다.
@@ -1128,17 +1160,7 @@ export async function delegationSummariesFor(
     id: string; thread_root_id: string; kind: DelegationKind; delegator_handle: string; message_id: string;
     plan_step_id: string | null; is_lead: boolean;
   }>(
-    `select * from (
-       select d.id, d.thread_root_id, d.kind, la.handle as delegator_handle, d.message_id, d.plan_step_id,
-              d.lead_account_id = $1 as is_lead,
-              row_number() over (partition by d.thread_root_id order by d.created_at desc) as rn
-         from team_delegation d
-         join account la on la.id = d.lead_account_id
-        where d.thread_root_id = any($2::uuid[])
-          and (d.lead_account_id = $1
-               or exists (select 1 from team_delegation_item i where i.delegation_id = d.id and i.delegate_account_id = $1))
-     ) x where rn <= $3
-     order by thread_root_id, rn desc`,
+    DELEGATION_SUMMARIES_SQL,
     [accountId, [...new Set(threadRootIds)], DELEGATION_SUMMARY_PER_THREAD],
   );
   if (!dl.rowCount) return out;
@@ -1147,24 +1169,11 @@ export async function delegationSummariesFor(
     delegation_id: string; delegate_account_id: string; handle: string; outcome: string | null;
     closed_reason: DelegationClosedReason | null; last_activity_at: Date | null; last_message_id: string | null;
   }>(
-    `select i.delegation_id, i.delegate_account_id, a.handle, i.outcome, i.closed_reason, i.last_activity_at,
-            (select m.id from message m
-              where m.thread_root_id = d.thread_root_id and m.author_id = i.delegate_account_id and m.created_at >= d.created_at
-              order by m.created_at desc limit 1) as last_message_id
-       from team_delegation_item i
-       join team_delegation d on d.id = i.delegation_id
-       join account a on a.id = i.delegate_account_id
-      where i.delegation_id = any($1::uuid[])
-      order by a.handle`,
+    DELEGATION_SUMMARY_ITEMS_SQL,
     [ids],
   );
   const watches = await pool.query<{ delegation_id: string; account_id: string; repo: string; number: number; head: string; until: PrWatchUntil; handle: string }>(
-    `select s.delegation_id, s.account_id, w.repo, w.number, w.head, w.until, a.handle
-       from pr_watch_subscriber s
-       join pr_watch w on w.id = s.watch_id and w.state = 'open'
-       join account a on a.id = s.account_id
-      where s.delegation_id = any($1::uuid[])
-      order by w.created_at`,
+    DELEGATION_SUMMARY_WATCHES_SQL,
     [ids],
   );
   for (const d of dl.rows) {
