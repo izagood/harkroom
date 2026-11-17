@@ -195,6 +195,33 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 A2a — MCP `workitem.upsert`. 쓰기 풀에 work_item 넣기·고칠 칸·outbox 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+    let work_item_upsert_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::mcp::workitem as wi;
+            match write::missing_in(
+                w,
+                wi::WORK_ITEM_UPSERT_PRIVILEGES,
+                wi::WORK_ITEM_UPSERT_SEQUENCES,
+            )
+            .await
+            {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: mcp workitem.upsert core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: mcp workitem.upsert core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // C4b ④-a(2/2) — MCP `bg.claim`. 쓰기 풀에 bg_job 고르기·집기 권한이 있을 때만 — 아니면 TS 에 남는다.
     let bg_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -1767,6 +1794,7 @@ async fn main() {
                 grant: grant_write,
                 note: note_write,
                 work_item: work_item_write,
+                work_item_upsert: work_item_upsert_write,
                 memory: mem_write,
                 memory_body: mem_body_write,
                 delegate: mcp_post.clone().filter(|_| mcp_delegate_ok),

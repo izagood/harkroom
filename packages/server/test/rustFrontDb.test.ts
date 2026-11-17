@@ -1470,6 +1470,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant insert, delete on account_block to ${rw}`,
         // P4c-2 — 작업 항목 지우기·스레드 임대·푸시 기기.
         `grant delete on work_item to ${rw}`,
+        // S5.4 A2a — MCP workitem.upsert(`workitem.rs::WORK_ITEM_UPSERT_PRIVILEGES`). 넣기 + `on conflict do update` 가 고치는 칸만. 없으면 「workitem.upsert core off」.
+        `grant insert, update (url, title, state, thread_root_id, updated_by, updated_at) on work_item to ${rw}`,
         `grant insert, update, delete on agent_thread_claim to ${rw}`,
         `grant insert, update, delete on push_device to ${rw}`,
         // S5.3 C2a — 오퍼레이터 코어(`OPERATOR_PRIVILEGES`). 없으면 앞단은 `/operator`·`/operators*` 를 TS 에 남긴다.
@@ -3017,6 +3019,119 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           await db.pool.query(`grant delete on thread_note to ${rw}`);
           await db.pool.query(`alter role ${rw} connection limit 12`);
         }
+      }
+
+      // S5.4 A2a — workitem.upsert·workitem.remove. TS·Rust 에 **각자의 키**(wiT·wiR)로 같은 순서를 돌려 답 글자를 견준다(항목 id·시각·키
+      // 표지만 자리표로 바꾼다). `state: done`+스레드(위임장 끝내기)와 zod 가 거절할 인자는 TS 로 넘긴다.
+      expect(f.log()).not.toContain('workitem.upsert core off');
+      expect(f.log()).not.toContain('workitem.remove core off');
+      {
+        const ISO = /\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z/g;
+        const ID = /id\\":\\"[0-9a-f-]{36}/g;
+        const norm = (t: string, tag: string) => t.split(tag).join('wi*').replace(ISO, '<t>').replace(ID, 'id\\":\\"<id>');
+        const wiRoot = await say('일감 머리', { ch: readCh });
+        const wiReply = await say('일감 스레드 답글', { ch: readCh, root: wiRoot });
+        const runSide = async (base: string, tag: string) => {
+          const out: { name: string; text: string; core: string | null }[] = [];
+          const call = async (name: string, tool: string, args: Record<string, unknown>) => {
+            const r = await mcpCall(base, agent.pat, tool, args);
+            out.push({ name, text: norm(r.text, tag), core: r.core });
+          };
+          const up = (name: string, args: Record<string, unknown>) => call(name, 'workitem.upsert', args);
+          await up('새로 — 스레드·url', { source: 'github', externalKey: ` ${tag}#1 `, title: ' PR "하나" 😀 ', url: 'https://example.com/pr/1', state: 'active', threadRootId: wiRoot, x: 1 });
+          await up('고쳐 쓰기 — 스레드 뗌', { source: 'github', externalKey: `${tag}#1`, title: '바뀐 제목', state: 'blocked' });
+          await up('못 보는 기존 항목 덮기 → thread_forbidden', { source: 'github', externalKey: `${tag}#1`, title: 'x', state: 'active', threadRootId: wiRoot });
+          await up('스레드 없이 done', { source: 'jira', externalKey: `${tag}-2`, title: '티켓', state: 'done', url: null, threadRootId: null });
+          await up('avcs', { source: 'avcs', externalKey: `${tag}/abcdef012345`, title: '일감', threadRootId: wiRoot });
+          await up('avcs 키 꼴 → bad_key', { source: 'avcs', externalKey: `${tag}/XYZ`, title: '일감', threadRootId: wiRoot });
+          await up('avcs 상태 → state_not_allowed', { source: 'avcs', externalKey: `${tag}/abcdef012345`, title: '일감', state: 'mine', threadRootId: wiRoot });
+          await up('avcs 스레드 없음 → thread_required', { source: 'avcs', externalKey: `${tag}/abcdef012345`, title: '일감' });
+          await up('상태 없음 → state_required', { source: 'other', externalKey: `${tag}-3`, title: 't' });
+          await up('없는 글 → thread_not_found', { source: 'other', externalKey: `${tag}-3`, title: 't', state: 'mine', threadRootId: missingCh });
+          await up('못 보는 DM → thread_forbidden', { source: 'other', externalKey: `${tag}-3`, title: 't', state: 'mine', threadRootId: privRoot });
+          await up('답글 → not_root', { source: 'other', externalKey: `${tag}-3`, title: 't', state: 'mine', threadRootId: wiReply });
+          // 주인이 아닌 에이전트는 자기가 보는 스레드에 붙은 항목만 뗀다 — 스레드 없는 항목(`${tag}-2`)은 false.
+          await up('뗄 항목 — 스레드', { source: 'jira', externalKey: `${tag}-4`, title: '뗄 것', state: 'mine', threadRootId: wiRoot });
+          await call('떼기', 'workitem.remove', { source: 'jira', externalKey: ` ${tag}-4` });
+          await call('또 떼기 → false', 'workitem.remove', { source: 'jira', externalKey: `${tag}-4` });
+          await call('스레드 없는 항목 떼기 → false', 'workitem.remove', { source: 'jira', externalKey: `${tag}-2` });
+          await call('못 보는 항목 떼기 → false', 'workitem.remove', { source: 'github', externalKey: `${tag}#1` });
+          return out;
+        };
+        const [sideT, sideR] = [await runSide(tsUrl, 'wiT'), await runSide(rsUrl4, 'wiR')];
+        for (const [i, a] of sideT.entries()) {
+          const b = sideR[i]!;
+          expect(b.text, a.name).toBe(a.text);
+          expect(b.core, `${a.name} — Rust 가 답한다`).toBe('mcp');
+        }
+        const byName = Object.fromEntries(sideR.map((s) => [s.name, s.text]));
+        expect(byName['새로 — 스레드·url']).toContain('PR \\\\\\"하나\\\\\\" 😀');
+        expect(byName['고쳐 쓰기 — 스레드 뗌']).toContain('threadRootId\\":null');
+        for (const [n, code] of [['못 보는 기존 항목 덮기 → thread_forbidden', 'thread_forbidden'], ['avcs 키 꼴 → bad_key', 'bad_key'],
+          ['avcs 상태 → state_not_allowed', 'state_not_allowed'], ['avcs 스레드 없음 → thread_required', 'thread_required'],
+          ['상태 없음 → state_required', 'state_required'], ['없는 글 → thread_not_found', 'thread_not_found'],
+          ['못 보는 DM → thread_forbidden', 'thread_forbidden'], ['답글 → not_root', 'not_root']] as const) {
+          expect(byName[n], n).toContain(`code\\":\\"${code}`);
+        }
+        expect(byName['떼기']).toContain('removed\\":true');
+        expect(byName['못 보는 항목 떼기 → false']).toContain('removed\\":false');
+        expect(byName['또 떼기 → false']).toContain('removed\\":false');
+        expect(byName['스레드 없는 항목 떼기 → false']).toContain('removed\\":false');
+        const wiRows = async (tag: string) => (await db.pool.query<Record<string, unknown>>(
+          `select source, replace(external_key, $2, 'wi*') as k, url, title, state, thread_root_id as root, updated_by as by
+             from work_item where owner_account_id = $1 and external_key like $2 || '%' order by source, external_key`,
+          [owner, tag])).rows;
+        expect(await wiRows('wiR'), 'Rust 행 = TS 행').toEqual(await wiRows('wiT'));
+        expect((await wiRows('wiR')).map((r) => r.k)).toEqual(['wi*/abcdef012345', 'wi*#1', 'wi*-2']);
+        // TS 로 넘기는 인자 — 같은 요청을 둘에 보내 글자 그대로(답이 TS 의 쓰기면 두 번째가 같은 키를 고쳐 쓴다 → 시각만 자리표).
+        for (const [name, token, tool, args] of [
+          ['done+스레드 → TS(위임장 끝내기)', agent.pat, 'workitem.upsert', { source: 'other', externalKey: 'wi-done', title: '끝', state: 'done', threadRootId: wiRoot }],
+          ['http url → TS(zod)', agent.pat, 'workitem.upsert', { source: 'other', externalKey: 'wi-x', title: 't', state: 'mine', url: 'http://example.com' }],
+          ['IPv4 꼴 url → TS', agent.pat, 'workitem.upsert', { source: 'other', externalKey: 'wi-x', title: 't', state: 'mine', url: 'https://999.1.1.1/' }],
+          ['빈 제목 → TS(zod)', agent.pat, 'workitem.upsert', { source: 'other', externalKey: 'wi-x', title: '  ', state: 'mine' }],
+          ['모르는 상태 → TS(zod)', agent.pat, 'workitem.upsert', { source: 'other', externalKey: 'wi-x', title: 't', state: 'closed' }],
+          ['uuid 아님 → TS', agent.pat, 'workitem.upsert', { source: 'other', externalKey: 'wi-x', title: 't', state: 'mine', threadRootId: 'x' }],
+          ['인자 없음 → TS', agent.pat, 'workitem.upsert', undefined],
+          ['사람 계정 → TS', member.token, 'workitem.upsert', { source: 'other', externalKey: 'wi-h', title: 't', state: 'mine' }],
+          ['remove 모르는 source → TS', agent.pat, 'workitem.remove', { source: 'gitlab', externalKey: 'k' }],
+        ] as const) {
+          const [a, b] = [await mcpCall(tsUrl, token, tool, args), await mcpCall(rsUrl4, token, tool, args)];
+          expect({ status: b.status, type: b.type, text: b.text.replace(ISO, '<t>') }, name).toEqual({ status: a.status, type: a.type, text: a.text.replace(ISO, '<t>') });
+          expect(b.core, `${name} — 누가 답했나`).toBeNull();
+        }
+        // 상한 — 주인 보드를 500개로 채우면 새 키는 too_many, 있는 키 고쳐 쓰기는 된다.
+        const have = (await db.pool.query<{ n: number }>(`select count(*)::int as n from work_item where owner_account_id = $1`, [owner])).rows[0]!.n;
+        await db.pool.query(
+          `insert into work_item (owner_account_id, source, external_key, title, state, updated_by)
+             select $1, 'other', 'wi-fill-' || g, 'f', 'mine', $1 from generate_series(1, $2::int) g`, [owner, 500 - have]);
+        // 키 꼴 글자를 변수로 — gitleaks generic-api-key 가 `externalKey: '…'` 를 키로 읽는다.
+        const wiOidR = 'wiR/abcdef012345';
+        try {
+          for (const [name, args, want] of [
+            ['상한 → too_many', { source: 'other', externalKey: 'wi-over', title: 't', state: 'mine' }, 'too_many'],
+            ['상한이어도 있는 키는 고친다', { source: 'avcs', externalKey: wiOidR, title: '다시', threadRootId: wiRoot }, '다시'],
+          ] as const) {
+            const b = await mcpCall(rsUrl4, agent.pat, 'workitem.upsert', args);
+            expect(b.core, name).toBe('mcp');
+            expect(b.text, name).toContain(want);
+          }
+          const a = await mcpCall(tsUrl, agent.pat, 'workitem.upsert', { source: 'other', externalKey: 'wi-over', title: 't', state: 'mine' });
+          const b = await mcpCall(rsUrl4, agent.pat, 'workitem.upsert', { source: 'other', externalKey: 'wi-over', title: 't', state: 'mine' });
+          expect(b.text, 'too_many 글자 그대로').toBe(a.text);
+        } finally {
+          await db.pool.query(`delete from work_item where owner_account_id = $1 and external_key like 'wi-fill-%'`, [owner]);
+        }
+        // W1 — 쓰기 트랜잭션을 연 뒤의 오류는 TS 로 넘기지 않는다(insert 권한을 거두면 internal, 행 없음).
+        await db.pool.query(`revoke insert on work_item from ${rw}`);
+        try {
+          const w = await mcpCall(rsUrl4, agent.pat, 'workitem.upsert', { source: 'other', externalKey: 'wi-w1', title: 't', state: 'mine' });
+          expect(w.core, 'W1 — Rust 가 답한다').toBe('mcp');
+          expect(w.text).toContain('code\\":\\"internal');
+          expect((await db.pool.query(`select 1 from work_item where external_key = 'wi-w1'`)).rowCount, 'TS 가 대신 쓰지 않았다').toBe(0);
+        } finally {
+          await db.pool.query(`grant insert on work_item to ${rw}`);
+        }
+        await db.pool.query(`delete from work_item where owner_account_id = $1 and external_key like 'wi%'`, [owner]);
       }
 
       // S5.3 C4a-6b — message.search. 본문 멘션 되돌리기·시스템 줄·스코프(채널·스레드)·거르기(보낸 사람·첨부)·정렬·쪽(51개 → hasMore,

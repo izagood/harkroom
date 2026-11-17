@@ -39,6 +39,8 @@ pub const SERVED: &[&str] = &[
     "message.notice",
     // S5.4 A2a — 보드 항목 떼기. 작업 항목 쓰기 풀(`workitem::WORK_ITEM_REMOVE_PRIVILEGES`)이 있을 때만.
     "workitem.remove",
+    // S5.4 A2a — 보드 항목 걸기. `workitem::WORK_ITEM_UPSERT_PRIVILEGES` 가 있을 때만, `state: done`+스레드는 TS.
+    "workitem.upsert",
 ];
 
 /// TS 가 조건부로 싣는 도구 — `/mcp/admit` 이 `registered: true` 라고 답했을 때만 Rust 가 답한다([`super::route::serve`]).
@@ -106,6 +108,8 @@ pub struct McpWrites {
     pub grant: Option<PgPool>,
     /// `workitem.remove`(S5.4 A2a) — `workitem::WORK_ITEM_REMOVE_PRIVILEGES`.
     pub work_item: Option<PgPool>,
+    /// `workitem.upsert`(S5.4 A2a) — `workitem::WORK_ITEM_UPSERT_PRIVILEGES`.
+    pub work_item_upsert: Option<PgPool>,
     /// `thread.note`(B2-1) — `note::THREAD_NOTE_PRIVILEGES`.
     pub note: Option<PgPool>,
     /// 기억 쓰기(C4b B1a) — [`super::mem_writes::MEMORY_WRITE_PRIVILEGES`]. [`super::mem_writes::answer`] 가 본다.
@@ -194,6 +198,12 @@ pub async fn answer(
             return Some(None);
         };
         return Some(super::workitem::remove(read, write, me, args).await);
+    }
+    if tool == "workitem.upsert" {
+        let Some(write) = writes.work_item_upsert.as_ref() else {
+            return Some(None);
+        };
+        return Some(super::workitem::upsert(read, write, me, args).await);
     }
     if tool == "inbox.read" {
         let Some(write) = writes.inbox.as_ref() else {
