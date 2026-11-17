@@ -6,10 +6,13 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 import { channelListVisibleSql, channelVisibleSql } from '../src/services/channels.js';
-import { CHANNEL_DELETE_INFO_SQL, CHANNEL_POST_GATE_SQL, CHANNEL_MESSAGE_COUNT_SQL, CHANNEL_DOC_SQL, LIST_CHANNEL_MEMBERS_SQL, LIST_CHANNEL_PREFS_SQL, LIST_CHANNELS_SQL } from '../src/services/channels.js';
+import { ADD_CHANNEL_MEMBER_SQL, CHANNEL_KIND_VISIBILITY_SQL, UPDATE_CHANNEL_DOC_SQL, CHANNEL_DELETE_INFO_SQL, CHANNEL_POST_GATE_SQL, CHANNEL_MESSAGE_COUNT_SQL, CHANNEL_DOC_SQL, LIST_CHANNEL_MEMBERS_SQL, LIST_CHANNEL_PREFS_SQL, LIST_CHANNELS_SQL } from '../src/services/channels.js';
 import { ALL_READ_STATES_SQL, READ_STATE_SQL } from '../src/services/readPositions.js';
 import { LIST_CHANNEL_SECTIONS_SQL } from '../src/services/channelSections.js';
-import { LIST_CHANNEL_AUTO_MENTIONS_SQL } from '../src/services/channelAutoMentions.js';
+import {
+  AUTO_MENTION_ACCOUNT_SQL, AUTO_MENTION_HANDLE_SQL, CHANNEL_AUTO_MENTION_ROW_SQL, LIST_CHANNEL_AUTO_MENTIONS_SQL,
+  SET_CHANNEL_AUTO_MENTION_SQL, UNSET_CHANNEL_AUTO_MENTION_SQL,
+} from '../src/services/channelAutoMentions.js';
 import { CANCEL_SCHEDULED_SQL, LIST_SCHEDULED_SQL, SCHEDULE_INSERT_SQL } from '../src/services/scheduledMessages.js';
 import { PIN_INSERT_SQL, SELECT_PINS_SQL, UNPIN_DELETE_SQL, UNPIN_FIND_SQL } from '../src/services/pins.js';
 import { AGENT_INVOKER_SQL, CHANNEL_SCOPE_SQL, ELIGIBLE_DELEGATE_SQL, INVOKE_FACTS_SQL, TEAM_INVOKER_SQL } from '../src/services/invokeGate.js';
@@ -152,6 +155,14 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     list_channel_sections: LIST_CHANNEL_SECTIONS_SQL,
     list_channel_auto_mentions: LIST_CHANNEL_AUTO_MENTIONS_SQL,
     channel_doc: CHANNEL_DOC_SQL,
+    set_channel_auto_mention: SET_CHANNEL_AUTO_MENTION_SQL,
+    channel_auto_mention_row: CHANNEL_AUTO_MENTION_ROW_SQL,
+    auto_mention_account: AUTO_MENTION_ACCOUNT_SQL,
+    unset_channel_auto_mention: UNSET_CHANNEL_AUTO_MENTION_SQL,
+    auto_mention_handle: AUTO_MENTION_HANDLE_SQL,
+    channel_kind_visibility: CHANNEL_KIND_VISIBILITY_SQL,
+    add_channel_member: ADD_CHANNEL_MEMBER_SQL,
+    update_channel_doc: UPDATE_CHANNEL_DOC_SQL,
     list_scheduled: LIST_SCHEDULED_SQL,
     select_pins: SELECT_PINS_SQL,
     pin_insert: PIN_INSERT_SQL,

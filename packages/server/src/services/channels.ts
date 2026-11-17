@@ -267,12 +267,12 @@ export async function isChannelMember(db: Queryable, channelId: string, accountI
   return Boolean(res.rowCount);
 }
 
+/** 멤버 넣기(멱등) — Rust 코어(S5.4 CH3b 자동 멘션 걸기)가 골든으로 같은 문장을 쓴다. */
+export const ADD_CHANNEL_MEMBER_SQL = `insert into channel_member (channel_id, account_id) values ($1::uuid, $2::uuid) on conflict do nothing`;
+
 /** 이미 멤버면 아무 일도 하지 않는다 — 초대를 두 번 눌렀다고 실패로 보이면 안 된다. */
 export async function addChannelMember(db: Queryable, channelId: string, accountId: string): Promise<void> {
-  await db.query(
-    `insert into channel_member (channel_id, account_id) values ($1, $2) on conflict do nothing`,
-    [channelId, accountId],
-  );
+  await db.query(ADD_CHANNEL_MEMBER_SQL, [channelId, accountId]);
 }
 
 /**
@@ -724,6 +724,9 @@ export const CHANNEL_DOC_SQL = `select d.channel_id as "channelId", d.body, d.up
             d.updated_at as "updatedAt"
      from channel_doc d where d.channel_id = $1::uuid`;
 
+/** 자동 멘션 걸기의 채널 확인(없으면 404, public standard 가 아니면 에이전트를 멤버로 넣는다) — Rust 코어(S5.4 CH3b)가 골든으로 받는다. */
+export const CHANNEL_KIND_VISIBILITY_SQL = `select kind, visibility from channel where id = $1::uuid`;
+
 /** `GET /channels/:id/delete-info` 의 두 문장(#155). Rust 코어(`core/channels.rs`)가 골든으로 같은 문장을 읽는다. */
 export const CHANNEL_DELETE_INFO_SQL = `select id, name, kind, archived_at from channel where id = $1::uuid`;
 export const CHANNEL_MESSAGE_COUNT_SQL = `select count(*)::int as cnt from message where channel_id = $1::uuid`;
@@ -736,6 +739,14 @@ export async function getChannelDoc(pool: Pool, channelId: string): Promise<Chan
   // 클라이언트가 되돌려 보내는 `expectedUpdatedAt` 과 같은 값이어야 한다.
   return { ...row, updatedAt: new Date(row.updatedAt!).toISOString() };
 }
+
+/** 문서 저장 문장 — Rust 코어(S5.4 CH3b)가 골든으로 같은 문장을 쓴다. 0 행이면 stale 이다. */
+export const UPDATE_CHANNEL_DOC_SQL = `insert into channel_doc (channel_id, body, updated_by, updated_at)
+     values ($1::uuid, $2, $3::uuid, now())
+     on conflict (channel_id) do update
+       set body = excluded.body, updated_by = excluded.updated_by, updated_at = now()
+       where channel_doc.updated_at = $4::timestamptz
+     returning channel_id`;
 
 /**
  * 채널 문서 저장(#188) — **낙관적 동시성은 한 문장 안에서 판정한다.**
@@ -755,15 +766,7 @@ export async function updateChannelDoc(
   pool: Pool, channelId: string, actorId: string,
   body: string, expectedUpdatedAt: Date | null,
 ): Promise<{ ok: ChannelDoc } | { stale: ChannelDoc }> {
-  const res = await pool.query(
-    `insert into channel_doc (channel_id, body, updated_by, updated_at)
-     values ($1, $2, $3, now())
-     on conflict (channel_id) do update
-       set body = excluded.body, updated_by = excluded.updated_by, updated_at = now()
-       where channel_doc.updated_at = $4::timestamptz
-     returning channel_id`,
-    [channelId, body, actorId, expectedUpdatedAt],
-  );
+  const res = await pool.query(UPDATE_CHANNEL_DOC_SQL, [channelId, body, actorId, expectedUpdatedAt]);
   // 0 행이면 행이 이미 있는데 기대값이 어긋난 것이다. 현재 본문을 함께 돌려줘야 사람이
   // 무엇이 달라졌는지 보고 다시 편집할 수 있다 — 조용히 버리지도, 덮어쓰지도 않는다.
   if (!res.rowCount) return { stale: await getChannelDoc(pool, channelId) };

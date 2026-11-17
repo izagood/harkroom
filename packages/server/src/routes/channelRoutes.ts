@@ -8,6 +8,7 @@ import {
   findDm, getChannelDoc, getChannelRow, getOrCreateDm, listChannelMembers, listChannels, removeChannelMember,
   updateChannel, updateChannelDoc, updateChannelPref, listChannelPrefs, renameSection, normalizeSectionName,
   CHANNEL_DELETE_INFO_SQL, CHANNEL_MESSAGE_COUNT_SQL,
+  CHANNEL_KIND_VISIBILITY_SQL,
 } from '../services/channels.js';
 import {
   SectionLimitError, SectionNameTakenError, createChannelSection, deleteChannelSection, getChannelSection, listChannelSections,
@@ -15,7 +16,7 @@ import {
 } from '../services/channelSections.js';
 import { listPins, pinMessage, unpinMessage } from '../services/pins.js';
 import {
-  listChannelAutoMentions, setChannelAutoMention, unsetChannelAutoMention,
+  AUTO_MENTION_HANDLE_SQL, listChannelAutoMentions, setChannelAutoMention, unsetChannelAutoMention,
 } from '../services/channelAutoMentions.js';
 import { allReadStates, markChannelRead, markChannelUnread, readState } from '../services/readPositions.js';
 import {
@@ -794,9 +795,7 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
     const body = autoMentionBody.parse(req.body ?? {});
     // 존재하지 않는 채널은 FK 위반으로 500 이 된다 — 잘못된 입력을 서버 오류로 답하면
     // 호출부가 재시도할 대상인지 구분하지 못한다(멤버 초대와 같은 이유).
-    const exists = await pool.query<{ kind: string; visibility: string }>(
-      `select kind, visibility from channel where id = $1`, [id],
-    );
+    const exists = await pool.query<{ kind: string; visibility: string }>(CHANNEL_KIND_VISIBILITY_SQL, [id]);
     if (!exists.rowCount) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'no such channel' } });
     }
@@ -846,11 +845,7 @@ export async function registerChannelRoutes(app: FastifyInstance, pool: Pool, st
   app.delete('/channels/:id/auto-mentions/:agentId', { preHandler: app.requireCap('channel.auto_mention', { kind: 'channel', param: 'id' }) }, async (req, reply) => {
     const { id, agentId } = autoMentionParam.parse(req.params);
     // handle 은 지우기 **전에** 읽는다 — 지운 뒤에는 조인할 행이 없다.
-    const before = await pool.query<{ handle: string }>(
-      `select a.handle from channel_auto_mention m join account a on a.id = m.agent_account_id
-        where m.channel_id = $1 and m.agent_account_id = $2`,
-      [id, agentId],
-    );
+    const before = await pool.query<{ handle: string }>(AUTO_MENTION_HANDLE_SQL, [id, agentId]);
     const removed = await unsetChannelAutoMention(pool, id, agentId);
     if (!removed) {
       return reply.code(404).send({ error: { code: 'not_found', message: 'that agent is not auto-mentioned here' } });
