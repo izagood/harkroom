@@ -14,7 +14,8 @@ const plan = () => ({
 });
 
 /** 주입 시각(스폰 기준 ms)과 `onSettled` 결과를 함께 잰다. */
-async function run(waitFor: { ready: () => boolean; maxMs: number }) {
+/** `ready` 는 주입 시각과 **같은 기준**(스폰 직전)의 경과 ms 를 받는다 — 바깥에서 따로 시계를 재면 그 차이만큼 판정이 앞당겨진다. */
+async function run(waitFor: { ready: (elapsedMs: number) => boolean; maxMs: number }) {
   const chunks: Buffer[] = [];
   const marks: number[] = [];
   const settled: { ready: boolean; waitedMs: number }[] = [];
@@ -31,7 +32,7 @@ async function run(waitFor: { ready: () => boolean; maxMs: number }) {
       readyPattern: /READY/,
       readyTimeoutMs: 10_000,
       readyQuietMs: 50,
-      waitFor: { ...waitFor, pollMs: 50, onSettled: (r) => settled.push(r) },
+      waitFor: { maxMs: waitFor.maxMs, ready: () => waitFor.ready(Date.now() - startedAt), pollMs: 50, onSettled: (r) => settled.push(r) },
     },
   });
   return { result, injectedAt: marks[0], settled };
@@ -39,8 +40,7 @@ async function run(waitFor: { ready: () => boolean; maxMs: number }) {
 
 describe('MCP 준비 신호를 기다린다', () => {
   it('신호가 시한 안에 오면 그때 넣는다', async () => {
-    const startedAt = Date.now();
-    const { result, injectedAt, settled } = await run({ ready: () => Date.now() - startedAt >= 700, maxMs: 5_000 });
+    const { result, injectedAt, settled } = await run({ ready: (elapsedMs) => elapsedMs >= 700, maxMs: 5_000 });
     expect(result.tail).toContain('SUBMITTED:');
     expect(injectedAt).toBeGreaterThanOrEqual(700);
     expect(injectedAt).toBeLessThan(5_000);
