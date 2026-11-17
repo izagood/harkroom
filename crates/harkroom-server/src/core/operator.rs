@@ -298,6 +298,11 @@ pub fn routes(
             "/accounts/agents/{id}/assignment",
             super::operator_assign::delete_assignment,
         )
+        .post("/accounts/agents/{id}/stop", super::operator_stop::stop)
+        .post(
+            "/accounts/agents/{id}/stop/undo",
+            super::operator_stop::stop_undo,
+        )
         .map(|r| {
             r.route_layer(auth_layer())
                 .layer(axum::middleware::from_fn_with_state(

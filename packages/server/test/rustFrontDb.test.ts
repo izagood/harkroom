@@ -55,6 +55,8 @@ const OPERATOR_GRANTS = [
   'insert, update on operator_gh_report',
   // AC5 A1b — 배정 줄(PUT·DELETE `/accounts/agents/:id/assignment`)이 Rust 로 왔다(`write.rs` OPERATOR_PRIVILEGES).
   'select, insert, update, delete on agent_assignment',
+  // AC5 A2 — 멈추기 줄(POST `/accounts/agents/:id/stop`·`stop/undo`).
+  'select, insert, update on agent_config',
   'update on secret_grant',
   'insert on audit_log',
   // C6c-3 — Rust 릴레이의 세션 사본·presence(security r3). select 는 `pg_read_all_data` 가 주지만 운영 역할에는 따로 준다.

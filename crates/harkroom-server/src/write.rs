@@ -78,6 +78,10 @@ pub const OPERATOR_PRIVILEGES: &[(&str, &str)] = &[
     ("agent_assignment", "SELECT"),
     ("agent_assignment", "INSERT"),
     ("agent_assignment", "DELETE"),
+    // AC5 A2 — 멈추기 줄(`core/operator_stop.rs` stop·stop/undo). 빠지면 오퍼레이터 코어 전체가 TS 에 남는다(fail-closed).
+    ("agent_config", "SELECT"),
+    ("agent_config", "INSERT"),
+    ("agent_config", "UPDATE"),
     ("secret_grant", "UPDATE"),
     ("audit_log", "INSERT"),
     // S5.3 C6c-3 — Rust 릴레이(`relay_live.rs`)가 쓰는 표(security r3, fail-closed). 하나라도 빠지면 오퍼레이터 표면 전체가 TS 에 남는다
