@@ -3841,6 +3841,67 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         await db.pool.query('delete from account where id = $1', [bot2]);
       }
 
+      // S5.4 AT1 — 자동화 읽기(코어 `automations_read.rs`). 두 서버의 답을 견준다. 지우기·만들기·수신은 TS 에 남는다.
+      // 수신 키 해시·서명 비밀 봉투(`ingress_token_hash`·`ingress_secret_enc`)에 표식을 넣어 두고 어느 답에도 나오지 않는지 본다.
+      {
+        for (const k of ['GET /automations', 'GET /automations/{id}']) expect(f.log(), k).toContain(`"${k}"`);
+        expect(f.log(), '지우기는 TS 에 남는다').not.toContain('"DELETE /automations/{id}"');
+        const M = member.token;
+        const ch = (await db.pool.query<{ id: string }>(`insert into channel (name, kind) values ('at1-ch', 'standard') returning id`)).rows[0]!.id;
+        const mk = async (owner: string, name: string, extra: string, deleted = false) => (await db.pool.query<{ id: string }>(
+          `insert into automation (owner_id, channel_id, name, body, trigger, enabled, next_at, paused_reason, consecutive_failures,
+             ingress_enabled_at, ingress_token_hash, ingress_secret_enc, debounce_sec, proposed_by, approved_at, deleted_at, created_at)
+           values ($1, $2, $3, '본문 {{date}}', $4::jsonb, true, now() + interval '1 hour 0.123456 seconds', null, 2,
+             now() - interval '5 minutes', 'AT1MARK-hash', 'v1.k1.AT1MARK-enc', 30, $5, now(), case when $6::boolean then now() end, now() - $7::interval)
+           returning id`,
+          [owner, ch, name, '{"kind":"webhook"}', agent.accountId, deleted, extra])).rows[0]!.id;
+        const [a1, a2, aGone, aTheirs] = [
+          await mk(member.accountId, 'at1-one', '3 hours'), await mk(member.accountId, 'at1-two', '2 hours'),
+          await mk(member.accountId, 'at1-gone', '1 hour', true), await mk(admin.accountId, 'at1-theirs', '1 hour'),
+        ];
+        await db.pool.query(`update automation set next_at = null, proposed_by = null, approved_at = null, debounce_sec = null, ingress_enabled_at = null where id = $1`, [a2]);
+        await db.pool.query(
+          `insert into automation_run (automation_id, event_key, trigger_kind, status, error, payload, created_at, finished_at) values
+             ($1, 'r1', 'manual', 'sent', null, '{"secret":"AT1MARK-payload"}', now() - interval '20 minutes', now() - interval '19 minutes'),
+             ($1, 'r2', 'event', 'failed', 'channel_archived', '{}', now() - interval '10 minutes', null)`, [a1]);
+        const seen: unknown[] = [];
+        const both = async (path: string, token: string) => {
+          const [x, y] = [await callX(tsUrl, 'GET', path, undefined, token), await callX(rsUrl, 'GET', path, undefined, token)];
+          expect(y.status, path).toBe(x.status);
+          expect(y.json, path).toEqual(x.json);
+          seen.push(y.json);
+          return y.json;
+        };
+        const list = (await both('/automations', M)).automations as { id: string; lastRun: { status: string } | null }[];
+        expect(list.map((a) => a.id).filter((id) => [a1, a2, aGone, aTheirs].includes(id))).toEqual([a1, a2]);
+        expect(list.find((a) => a.id === a1)!.lastRun).toMatchObject({ status: 'failed' });
+        await both('/automations', A);
+        await both('/automations', agent.pat);
+        const one = await both(`/automations/${a1}`, M);
+        expect((one.runs as unknown[]).length).toBe(2);
+        await both(`/automations/${a2}`, M);
+        await both(`/automations/${aTheirs}`, A);
+        expect(JSON.stringify(seen), '수신 비밀·봉투는 답에 없다').not.toContain('AT1MARK');
+        for (const [name, path, token] of [
+          ['보기 익명 → 401', `/automations/${a1}`, ''],
+          ['목록 익명 → 401', '/automations', ''],
+          ['보기 id 아님 → 400', '/automations/nope', M],
+          ['보기 남의 것 → 404', `/automations/${aTheirs}`, M],
+          ['보기 admin 도 남의 것 → 404', `/automations/${a1}`, A],
+          ['보기 지운 것 → 404', `/automations/${aGone}`, M],
+          ['보기 없는 것 → 404', `/automations/${ghost}`, M],
+          ['보기 에이전트 남의 것 → 404', `/automations/${a1}`, agent.pat],
+        ] as const) {
+          const [x, y] = [await callX(tsUrl, 'GET', path, undefined, token), await callX(rsUrl, 'GET', path, undefined, token)];
+          expect({ status: y.status, code: y.code }, name).toEqual({ status: x.status, code: x.code });
+          seen.push(y.json);
+        }
+        expect(JSON.stringify(seen)).not.toContain('AT1MARK');
+        await db.pool.query('delete from automation_run where automation_id = any($1)', [[a1, a2, aGone, aTheirs]]);
+        await db.pool.query('delete from automation where id = any($1)', [[a1, a2, aGone, aTheirs]]);
+        await db.pool.query('delete from channel where id = $1', [ch]);
+      }
+
       // S5.2 P4d — 옮긴 라우트를 지난 요청도 세션을 늘리고 PAT 사용 시각을 남긴다(쓰기 풀로). 읽기 역할로 하면 조용히 실패하던 것.
       await db.pool.query(`update session set expires_at = now() + interval '1 day' where account_id = $1`, [member.accountId]);
       await db.pool.query(`update pat set last_used_at = now() - interval '1 hour' where account_id = $1`, [agent.accountId]);
