@@ -33,10 +33,10 @@ pub const MEMORY_BODY_PRIVILEGES: &[(&str, &str)] = &[
 ];
 
 /// shared 상수들.
-const MAX_ITEMS: i64 = 200;
-const MAX_VALUE: usize = 8000;
-const MAX_CORE: usize = 3000;
-const MAX_DESCRIPTION: usize = 200;
+pub(crate) const MAX_ITEMS: i64 = 200;
+pub(crate) const MAX_VALUE: usize = 8000;
+pub(crate) const MAX_CORE: usize = 3000;
+pub(crate) const MAX_DESCRIPTION: usize = 200;
 const MAX_JOURNAL: i64 = 60;
 const CORE_WARN: i32 = 2600;
 const ITEMS_WARN: i32 = 180;
@@ -62,7 +62,7 @@ macro_rules! iso {
     };
 }
 
-fn js_len(s: &str) -> usize {
+pub(crate) fn js_len(s: &str) -> usize {
     s.encode_utf16().count()
 }
 
@@ -541,7 +541,7 @@ async fn set(
     Some(tail.unwrap_or_else(|_| internal()))
 }
 
-enum SetOutcome {
+pub(crate) enum SetOutcome {
     Ok,
     TooMany,
     Conflict(Option<String>),
@@ -571,7 +571,7 @@ async fn current(
 
 /// `setMemory(value = null)`.
 #[allow(clippy::option_option)]
-async fn delete(
+pub(crate) async fn delete(
     write: &PgPool,
     me: &Account,
     turn: Option<&str>,
@@ -627,7 +627,7 @@ async fn delete(
 
 /// `setMemory(value = 문자열)` — TS 와 같은 한 문장(상한·판 비교·이전 판).
 #[allow(clippy::too_many_arguments, clippy::option_option)]
-async fn upsert(
+pub(crate) async fn upsert(
     write: &PgPool,
     me: &Account,
     turn: Option<&str>,

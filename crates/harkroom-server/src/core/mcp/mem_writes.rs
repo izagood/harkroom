@@ -55,7 +55,7 @@ const LEASE_DEFAULT_MINUTES: i64 = 60;
 const LEASE_MAX_MINUTES: i64 = 180;
 
 /// `memory.ts::MEMORY_SLUG_HINT`.
-pub(super) const SLUG_HINT: &str = "slug must be \"core\" or \"mem/<name>\" (segments of [a-z0-9][a-z0-9_-]* joined by \"/\", e.g. \"mem/deploy\" or \"mem/people/alex\"; no dots, no uppercase, and the \"mem/\" prefix is required)";
+pub(crate) const SLUG_HINT: &str = "slug must be \"core\" or \"mem/<name>\" (segments of [a-z0-9][a-z0-9_-]* joined by \"/\", e.g. \"mem/deploy\" or \"mem/people/alex\"; no dots, no uppercase, and the \"mem/\" prefix is required)";
 
 /// `Date#toISOString()` 꼴 글자 — sqlx 는 `&'static str` 문장만 받으므로 문장째 `concat!` 으로 짓는다.
 macro_rules! iso {
@@ -88,7 +88,7 @@ fn slug_arg<'a>(args: &'a Value, key: &str) -> Option<Result<&'a str, String>> {
 }
 
 /// zod 3 `z.string().datetime({ offset: true })` 의 **부분집합**(이 꼴이면 zod 도 받는다). 아니면 `None` → TS 가 판정한다.
-pub(super) fn datetime_ok(s: &str) -> bool {
+pub(crate) fn datetime_ok(s: &str) -> bool {
     static R: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     R.get_or_init(|| {
         regex::Regex::new(
@@ -422,7 +422,7 @@ async fn lease(write: &PgPool, me: &Account, args: &Value) -> Option<String> {
 /// 잠근 한 줄 — `lockRows` 의 `updated_at`(ISO)·`archived_at is not null`. ifUpdatedAt 비교는 ms 로 자른 값끼리(`sameMs`).
 async fn lock_row(
     c: &mut sqlx::PgConnection,
-    me: &Account,
+    owner: &str,
     slug: &str,
     expect: Option<Option<&str>>,
 ) -> Result<Option<(String, bool, bool)>, sqlx::Error> {
@@ -434,7 +434,7 @@ async fn lock_row(
          from agent_memory where account_id = $1::uuid and slug = $2 for update"
     );
     sqlx::query_as(SQL)
-        .bind(&me.id)
+        .bind(owner)
         .bind(slug)
         .bind(expect.flatten())
         .fetch_optional(&mut *c)
@@ -463,45 +463,64 @@ async fn archive(write: &PgPool, me: &Account, args: &Value) -> Option<String> {
         ));
     }
     // 바뀌는 것은 커밋뿐이다 — 그 전 오류는 롤백되어 TS 가 다시 돌아도 같은 쓰기를 두 번 하지 않는다. 그래도 W1 대로 고정 오류로 끝낸다.
-    let r: Result<String, sqlx::Error> = async {
-        let mut tx = write.begin().await?;
-        let Some((updated, archived, same)) = lock_row(&mut tx, me, slug, expect).await? else {
-            tx.rollback().await?;
-            return Ok(err("not_found", "memory not found"));
-        };
-        // `expect === undefined` 면 비교하지 않는다. null 이면 「없어야 한다」 — 있으니 충돌.
-        if expect.is_some() && !(same && expect.flatten().is_some()) {
-            tx.rollback().await?;
-            return Ok(conflict(slug, Some(&updated)));
-        }
-        if !archived {
-            sqlx::query(
-                "update agent_memory set archived_at = now(), updated_at = now() \
-                 where account_id = $1::uuid and slug = $2",
-            )
-            .bind(&me.id)
-            .bind(slug)
-            .execute(&mut *tx)
-            .await?;
-            sqlx::query(
-                "with d as ( \
-                   delete from agent_memory where account_id = $1::uuid and archived_at is not null and slug in ( \
-                     select slug from agent_memory where account_id = $1::uuid and archived_at is not null \
-                     order by archived_at desc, slug offset $2) \
-                   returning slug, value, description, updated_at, flagged_at, kind) \
-                 insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged, kind) \
-                 select $1::uuid, slug, value, description, updated_at, flagged_at is not null, kind from d",
-            )
-            .bind(&me.id)
-            .bind(MAX_ARCHIVED)
-            .execute(&mut *tx)
-            .await?;
-        }
-        tx.commit().await?;
-        Ok(ok_text("{\"ok\":true}"))
+    Some(match archive_one(write, &me.id, slug, expect).await {
+        Ok(Archived::Ok) => ok_text("{\"ok\":true}"),
+        Ok(Archived::NotFound) => err("not_found", "memory not found"),
+        Ok(Archived::Conflict(now)) => conflict(slug, Some(&now)),
+        Err(_) => internal(),
+    })
+}
+
+/// [`archive_one`] 의 결말 — TS `archiveMemory` 의 `'ok' | 'not_found' | { conflict }`.
+pub(crate) enum Archived {
+    Ok,
+    NotFound,
+    Conflict(String),
+}
+
+/// `archiveMemory`(+ `pruneArchived`) 한 건 — MCP `memory.archive` 와 REST `POST …/memory/archive` 가 같이 탄다.
+#[allow(clippy::option_option)]
+pub(crate) async fn archive_one(
+    write: &PgPool,
+    owner: &str,
+    slug: &str,
+    expect: Option<Option<&str>>,
+) -> Result<Archived, sqlx::Error> {
+    let mut tx = write.begin().await?;
+    let Some((updated, archived, same)) = lock_row(&mut tx, owner, slug, expect).await? else {
+        tx.rollback().await?;
+        return Ok(Archived::NotFound);
+    };
+    // `expect === undefined` 면 비교하지 않는다. null 이면 「없어야 한다」 — 있으니 충돌.
+    if expect.is_some() && !(same && expect.flatten().is_some()) {
+        tx.rollback().await?;
+        return Ok(Archived::Conflict(updated));
     }
-    .await;
-    Some(r.unwrap_or_else(|_| internal()))
+    if !archived {
+        sqlx::query(
+            "update agent_memory set archived_at = now(), updated_at = now() \
+             where account_id = $1::uuid and slug = $2",
+        )
+        .bind(owner)
+        .bind(slug)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "with d as ( \
+               delete from agent_memory where account_id = $1::uuid and archived_at is not null and slug in ( \
+                 select slug from agent_memory where account_id = $1::uuid and archived_at is not null \
+                 order by archived_at desc, slug offset $2) \
+               returning slug, value, description, updated_at, flagged_at, kind) \
+             insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged, kind) \
+             select $1::uuid, slug, value, description, updated_at, flagged_at is not null, kind from d",
+        )
+        .bind(owner)
+        .bind(MAX_ARCHIVED)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(Archived::Ok)
 }
 
 /// `memory.unarchive` — `unarchiveMemory`.
@@ -510,42 +529,59 @@ async fn unarchive(write: &PgPool, me: &Account, args: &Value) -> Option<String>
         Ok(s) => s,
         Err(t) => return Some(t),
     };
-    let r: Result<String, sqlx::Error> = async {
-        let mut tx = write.begin().await?;
-        let Some((_, archived, _)) = lock_row(&mut tx, me, slug, None).await? else {
-            tx.rollback().await?;
-            return Ok(err("not_found", "memory not found"));
-        };
-        if !archived {
-            tx.rollback().await?;
-            return Ok(ok_text("{\"ok\":true}"));
-        }
-        let n: i64 = sqlx::query_scalar(
-            "select count(*) from agent_memory where account_id = $1::uuid and archived_at is null",
-        )
-        .bind(&me.id)
-        .fetch_one(&mut *tx)
-        .await?;
-        if n >= MAX_ITEMS {
-            tx.rollback().await?;
-            return Ok(err(
-                "too_many",
-                &format!("at most {MAX_ITEMS} active memories per account"),
-            ));
-        }
-        sqlx::query(
-            "update agent_memory set archived_at = null, updated_at = now() \
-             where account_id = $1::uuid and slug = $2",
-        )
-        .bind(&me.id)
-        .bind(slug)
-        .execute(&mut *tx)
-        .await?;
-        tx.commit().await?;
-        Ok(ok_text("{\"ok\":true}"))
+    Some(match unarchive_one(write, &me.id, slug).await {
+        Ok(Unarchived::Ok) => ok_text("{\"ok\":true}"),
+        Ok(Unarchived::NotFound) => err("not_found", "memory not found"),
+        Ok(Unarchived::TooMany) => err(
+            "too_many",
+            &format!("at most {MAX_ITEMS} active memories per account"),
+        ),
+        Err(_) => internal(),
+    })
+}
+
+/// [`unarchive_one`] 의 결말 — TS `unarchiveMemory` 의 `'ok' | 'not_found' | 'too_many'`.
+pub(crate) enum Unarchived {
+    Ok,
+    NotFound,
+    TooMany,
+}
+
+/// `unarchiveMemory` 한 건 — MCP `memory.unarchive` 와 REST `POST …/memory/unarchive` 가 같이 탄다.
+pub(crate) async fn unarchive_one(
+    write: &PgPool,
+    owner: &str,
+    slug: &str,
+) -> Result<Unarchived, sqlx::Error> {
+    let mut tx = write.begin().await?;
+    let Some((_, archived, _)) = lock_row(&mut tx, owner, slug, None).await? else {
+        tx.rollback().await?;
+        return Ok(Unarchived::NotFound);
+    };
+    if !archived {
+        tx.rollback().await?;
+        return Ok(Unarchived::Ok);
     }
-    .await;
-    Some(r.unwrap_or_else(|_| internal()))
+    let n: i64 = sqlx::query_scalar(
+        "select count(*) from agent_memory where account_id = $1::uuid and archived_at is null",
+    )
+    .bind(owner)
+    .fetch_one(&mut *tx)
+    .await?;
+    if n >= MAX_ITEMS {
+        tx.rollback().await?;
+        return Ok(Unarchived::TooMany);
+    }
+    sqlx::query(
+        "update agent_memory set archived_at = null, updated_at = now() \
+         where account_id = $1::uuid and slug = $2",
+    )
+    .bind(owner)
+    .bind(slug)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(Unarchived::Ok)
 }
 
 #[cfg(test)]
