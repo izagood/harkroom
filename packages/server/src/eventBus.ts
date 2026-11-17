@@ -7,6 +7,8 @@
  * 내는 방향(**TS → Rust**, C6-α)은 `startEventPublisher` 다(`EVENT_BUS_PUBLISH=pg`, 기본 꺼짐). TS 가 낸 이벤트를 outbox 에 쓰고
  * **다른 채널**(`EVENT_OUTBOX_TS_CHANNEL`)로 알린다. Rust 리스너는 두 채널을 다 듣고 이 리스너는 옛 채널만 들으므로, TS 이벤트가 TS 로
  * 되돌아와 두 번 나가지 않는다. 출처는 서버 코드가 고른 채널 이름뿐이다 — 클라이언트 입력이 닿는 자리가 없다.
+ * 반대 방향도 막는다: 이 리스너가 옮겨 낸 이벤트(Rust 가 쓴 것)는 `relayed` 에 표시하고 발행기가 건너뛴다. 막지 않으면 두 스위치를
+ * 함께 켰을 때 Rust 이벤트가 `_ts` 로 다시 outbox 에 쓰여 Rust 소켓에 두 번 간다. 표시는 메모리 안에만 둔다(JSON 칸 없음).
  * **`HARKROOM_CORE=rust` 인 동안 발행을 끄면 안 된다** — 그때 앱 소켓은 Rust 에 붙어 있어 TS 쓰기의 이벤트가 앱에 닿지 않는다.
  *
  * - 켜기: `EVENT_BUS=pg`(기본 꺼짐). 꺼져 있으면 아무 연결도 열지 않는다.
@@ -23,6 +25,12 @@ import { emitEvent, onEvent, type WorkspaceEvent } from './events.js';
 import { runGated } from './services/loopGate.js';
 
 export const EVENT_OUTBOX_CHANNEL = 'harkroom_event_outbox';
+
+/**
+ * 이 프로세스의 리스너가 outbox 에서 옮겨 낸 이벤트 객체(= 다른 프로세스가 만든 것). 발행기는 이것을 다시 보내지 않는다 —
+ * `events.ts` 의 `EventEmitter` 는 같은 객체를 모든 구독자에게 넘기므로 객체 정체성으로 가른다. 메모리 안 표시라 위조할 자리가 없다.
+ */
+const relayed = new WeakSet<object>();
 /** TS 가 낸 이벤트의 알림 채널(C6-α) — Rust `harkroom_bus::EVENT_OUTBOX_TS_CHANNEL` 과 같아야 한다. 이 프로세스는 듣지 않는다. */
 export const EVENT_OUTBOX_TS_CHANNEL = 'harkroom_event_outbox_ts';
 /**
@@ -116,6 +124,7 @@ export async function startEventBus(deps: EventBusDeps): Promise<EventBus> {
     if (!e) { stats.dropped += 1; return; }
     stats.received += 1;
     stats.lastLagMs = Number(row!.lag_ms);
+    relayed.add(e);
     emit(e);
   };
 
@@ -212,6 +221,7 @@ export interface EventPublisher {
 
 /**
  * TS → outbox 발행(C6-α). 이 프로세스가 `emitEvent` 로 낸 이벤트를 **낸 순서대로 하나씩** outbox 에 쓴다.
+ * `startEventBus` 리스너가 옮겨 낸 이벤트(다른 프로세스가 만든 것)는 건너뛴다.
  *
  * - **직렬 사슬 하나**: 풀에서 병렬로 보내면 A·B 의 커밋 순서가 뒤집힐 수 있다. Rust 리스너는 알림(=커밋) 순서대로 내므로, 커밋 순서를
  *   emit 순서와 같게 두려면 한 번에 하나만 보낸다.
@@ -245,6 +255,8 @@ export function startEventPublisher(deps: EventPublisherDeps): EventPublisher {
   };
 
   const off = subscribe((e) => {
+    // 이 프로세스가 직접 만든 이벤트만 보낸다 — 리스너가 옮겨 낸 것(Rust 쓰기)을 다시 보내면 Rust 소켓에 두 번 간다.
+    if (relayed.has(e)) return;
     if (PUBLISH_SKIP_TYPES.has(e.type)) return;
     if (stats.pending >= cap) { stats.dropped += 1; return; }
     stats.pending += 1;

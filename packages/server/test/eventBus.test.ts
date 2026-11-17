@@ -4,8 +4,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { EVENT_BUS_TYPES, EVENT_OUTBOX_CHANNEL, startEventBus, startEventPublisher, toWorkspaceEvent, type EventBus } from '../src/eventBus.js';
-import type { WorkspaceEvent } from '../src/events.js';
+import { EVENT_BUS_TYPES, EVENT_OUTBOX_CHANNEL, EVENT_OUTBOX_TS_CHANNEL, startEventBus, startEventPublisher, toWorkspaceEvent, type EventBus } from '../src/eventBus.js';
+import { emitEvent, onEvent, type WorkspaceEvent } from '../src/events.js';
 import { startTestDb, type TestDb } from './helpers/testDb.js';
 
 describe('toWorkspaceEvent — 모양 검사', () => {
@@ -115,6 +115,65 @@ describe('startEventBus — outbox + NOTIFY(id)', () => {
     }
     await new Promise((r) => setTimeout(r, 300));
     expect(got).toEqual([]);
+  });
+});
+
+describe('C6-α — 두 스위치를 함께 켜도 Rust 이벤트가 다시 발행되지 않는다', () => {
+  let db: TestDb;
+
+  beforeAll(async () => { db = await startTestDb(); });
+  afterAll(async () => { await db?.stop(); });
+
+  it('옛 채널(Rust 쓰기) 줄을 TS 리스너가 다시 내도 `_ts` 알림·outbox 줄이 생기지 않는다 — 이 프로세스가 낸 것은 발행된다', async () => {
+    // 운영 배선 그대로: 리스너는 기본 emit(events.ts::emitEvent), 발행기는 기본 subscribe(events.ts::onEvent).
+    const bus = await startEventBus({
+      pool: db.pool,
+      connect: async () => { const c = new pg.Client({ connectionString: db.uri }); await c.connect(); return c; },
+      log: () => {},
+    });
+    const pub = startEventPublisher({ pool: db.pool, log: () => {} });
+    const tsNotes: string[] = [];
+    const watcher = new pg.Client({ connectionString: db.uri });
+    await watcher.connect();
+    watcher.on('notification', (n) => { if (n.channel === EVENT_OUTBOX_TS_CHANNEL) tsNotes.push(n.payload ?? ''); });
+    await watcher.query(`listen ${EVENT_OUTBOX_TS_CHANNEL}`);
+    const seen: WorkspaceEvent[] = [];
+    const off = onEvent((e) => seen.push(e));
+    const count = async (tag: string): Promise<number> =>
+      (await db.pool.query(`select 1 from event_outbox where event->>'accountId' = $1`, [tag])).rowCount ?? 0;
+    try {
+      const rustTag = `rust-${Date.now()}`;
+      const c = await db.pool.connect();
+      try {
+        await c.query('begin');
+        const r = await c.query<{ id: string }>('insert into event_outbox (event) values ($1) returning id', [JSON.stringify({ type: 'inbox.updated', accountId: rustTag })]);
+        await c.query('select pg_notify($1, $2)', [EVENT_OUTBOX_CHANNEL, r.rows[0]!.id]);
+        await c.query('commit');
+      } finally {
+        c.release();
+      }
+      for (let i = 0; i < 200 && seen.length < 1; i += 1) await new Promise((r) => setTimeout(r, 10));
+      expect(seen).toEqual([{ type: 'inbox.updated', accountId: rustTag }]); // TS 리스너는 받아서 다시 냈다
+      await pub.flush();
+      await new Promise((r) => setTimeout(r, 200));
+      expect(await count(rustTag)).toBe(1); // Rust 가 쓴 줄 하나뿐
+      expect(tsNotes).toEqual([]);
+      expect(pub.stats()).toMatchObject({ published: 0, failed: 0 });
+
+      // 대조: 이 프로세스가 직접 낸 이벤트는 발행된다(발행기가 살아 있다).
+      const tsTag = `ts-${Date.now()}`;
+      emitEvent({ type: 'inbox.updated', accountId: tsTag });
+      await pub.flush();
+      for (let i = 0; i < 200 && tsNotes.length < 1; i += 1) await new Promise((r) => setTimeout(r, 10));
+      expect(await count(tsTag)).toBe(1);
+      expect(tsNotes).toHaveLength(1);
+      expect(pub.stats()).toMatchObject({ published: 1, failed: 0 });
+    } finally {
+      off();
+      await pub.stop();
+      await bus.stop();
+      await watcher.end();
+    }
   });
 });
 
