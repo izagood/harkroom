@@ -457,56 +457,61 @@ class _CodeBlockState extends State<CodeBlock> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Container(
-            decoration: BoxDecoration(
-              color: k.surfaceSunken,
-              border: Border(bottom: BorderSide(color: k.border)),
-            ),
-            padding: const EdgeInsets.only(left: 10),
-            child: Row(
-              children: [
-                // 언어는 표시만 한다(데스크톱과 같다). 없으면 왼쪽이 비고 버튼만 선다.
-                Expanded(
-                  child: lang == null
-                      ? const SizedBox.shrink()
-                      : Text(lang,
-                          key: const Key('code-lang'),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: small.copyWith(fontFamily: 'Menlo', fontFamilyFallback: const ['Courier'])),
-                ),
-                // 이름은 상태와 상관없이 「복사」 — 눌린 뒤 바뀌는 글자만 읽히면 VoiceOver 에는
-                // 버튼 이름이 바뀌는 셈이다(데스크톱 aria-label 과 같은 규율).
-                Semantics(
-                  button: true,
-                  label: t.codeCopy,
-                  excludeSemantics: true,
-                  child: InkWell(
-                    key: const Key('code-copy'),
-                    onTap: _copy,
-                    child: ConstrainedBox(
-                      // 손가락 표적. 머리 줄을 너무 키우지 않으면서 가로를 넓게 잡는다.
-                      constraints: const BoxConstraints(minHeight: 36, minWidth: 64),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 10),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(_copied ? Icons.check : Icons.content_copy,
-                                key: Key(_copied ? 'code-copy-done' : 'code-copy-idle'),
-                                size: 14,
-                                color: _copied ? k.success : k.fgSubtle),
-                            const SizedBox(width: 4),
-                            Text(_copied ? t.codeCopied : t.codeCopy,
-                                style: small.copyWith(color: _copied ? k.success : k.fgSubtle)),
-                          ],
+          // 바탕색은 `Material` 이 칠한다 — 색을 `Container` 에 두면 [복사] 의 물결이 그 아래 메시지 줄
+          // `Material` 에 그려져 색에 가려진다(누르는 순간 눌림 표시가 안 보였다, designer).
+          Material(
+            key: const Key('code-head'),
+            color: k.surfaceSunken,
+            child: Container(
+              decoration: BoxDecoration(
+                border: Border(bottom: BorderSide(color: k.border)),
+              ),
+              padding: const EdgeInsets.only(left: 10),
+              child: Row(
+                children: [
+                  // 언어는 표시만 한다(데스크톱과 같다). 없으면 왼쪽이 비고 버튼만 선다.
+                  Expanded(
+                    child: lang == null
+                        ? const SizedBox.shrink()
+                        : Text(lang,
+                            key: const Key('code-lang'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: small.copyWith(fontFamily: 'Menlo', fontFamilyFallback: const ['Courier'])),
+                  ),
+                  // 이름은 상태와 상관없이 「복사」 — 눌린 뒤 바뀌는 글자만 읽히면 VoiceOver 에는
+                  // 버튼 이름이 바뀌는 셈이다(데스크톱 aria-label 과 같은 규율).
+                  Semantics(
+                    button: true,
+                    label: t.codeCopy,
+                    excludeSemantics: true,
+                    child: InkWell(
+                      key: const Key('code-copy'),
+                      onTap: _copy,
+                      child: ConstrainedBox(
+                        // 손가락 표적. 머리 줄을 너무 키우지 않으면서 가로를 넓게 잡는다.
+                        constraints: const BoxConstraints(minHeight: 36, minWidth: 64),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 10),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(_copied ? Icons.check : Icons.content_copy,
+                                  key: Key(_copied ? 'code-copy-done' : 'code-copy-idle'),
+                                  size: 14,
+                                  color: _copied ? k.success : k.fgSubtle),
+                              const SizedBox(width: 4),
+                              Text(_copied ? t.codeCopied : t.codeCopy,
+                                  style: small.copyWith(color: _copied ? k.success : k.fgSubtle)),
+                            ],
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
           // 긴 줄은 **접지 않고 옆으로 민다** — 코드를 접으면 들여쓰기의 뜻이 사라진다.

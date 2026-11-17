@@ -679,6 +679,25 @@ void main() {
       await tester.pumpAndSettle(const Duration(seconds: 3));
     });
 
+    testWidgets('물결은 머리 줄의 sunken Material 에 그려진다 — 바탕색에 가려지지 않는다', (tester) async {
+      fakePlatform(tester);
+      await tester.pumpWidget(host(const MarkdownBody('```\nx\n```')));
+      final k = harkroomTheme(Brightness.light).extension<HarkroomTokens>()!;
+      // [복사] 에서 가장 가까운 Material(= InkWell 물결이 그려지는 곳)이 머리 줄이고, 그 색이 sunken 이다.
+      final nearest = tester.widget<Material>(
+          find.ancestor(of: find.byKey(const Key('code-copy')), matching: find.byType(Material)).first);
+      expect(nearest.key, const Key('code-head'));
+      expect(nearest.color, k.surfaceSunken);
+      // 그 Material 과 버튼 사이에 색을 칠하는 상자가 없다(있으면 물결을 덮는다).
+      final between = find.descendant(
+          of: find.byKey(const Key('code-head')),
+          matching: find.ancestor(of: find.byKey(const Key('code-copy')), matching: find.byType(Container)));
+      for (final c in tester.widgetList<Container>(between)) {
+        final d = c.decoration;
+        expect(d is BoxDecoration ? d.color : null, isNull);
+      }
+    });
+
     testWidgets('VoiceOver 이름은 눌린 뒤에도 「복사」다', (tester) async {
       fakePlatform(tester);
       final h = tester.ensureSemantics();
