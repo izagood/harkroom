@@ -32,6 +32,8 @@ pub struct OpTiming {
     pub send_timeout: Duration,
     /// 박동을 DB·이벤트로 처리하는 최소 간격(TS `STATUS_MIN_INTERVAL_MS`).
     pub status_min: Duration,
+    /// 머지 계정 줄 `gh.lines.set` 의 답을 기다리는 시한(TS `GH_LINES_TIMEOUT_MS`).
+    pub gh_lines: Duration,
 }
 
 impl OpTiming {
@@ -52,6 +54,7 @@ impl OpTiming {
             revalidate: ms("HARKROOM_OPERATOR_REVALIDATE_MS", 60_000),
             send_timeout: ms("HARKROOM_WS_SEND_TIMEOUT_MS", 10_000),
             status_min: ms("HARKROOM_OPERATOR_STATUS_MIN_MS", 10_000),
+            gh_lines: ms("HARKROOM_GH_LINES_TIMEOUT_MS", 10_000),
         }
     }
 }
@@ -306,6 +309,14 @@ pub fn routes(
         .post(
             "/accounts/agents/{id}/restart",
             super::operator_restart::restart,
+        )
+        .get(
+            "/agents/{id}/merge-accounts",
+            super::operator_merge_lines::get_accounts,
+        )
+        .put(
+            "/agents/{id}/merge-accounts/lines",
+            super::operator_merge_lines::put_line,
         )
         .map(|r| {
             r.route_layer(auth_layer())

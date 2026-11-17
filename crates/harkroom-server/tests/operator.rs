@@ -154,6 +154,7 @@ async fn fake_operator_against_real_schema() {
         revalidate: Duration::from_millis(300),
         send_timeout: Duration::from_secs(5),
         status_min: Duration::from_millis(10),
+        gh_lines: Duration::from_millis(500),
     };
     // 쓰기 풀 — 있으면 `OPERATOR_PRIVILEGES` 만 가진 역할(rustFrontDb.test.ts 가 만든다). 표가 모자라면 아래 쓰기가 실패한다.
     let write = match std::env::var("HARKROOM_TEST_WRITE_DATABASE_URL") {
@@ -635,6 +636,96 @@ async fn fake_operator_against_real_schema() {
         .execute(&pool)
         .await
         .unwrap();
+    // ---- 머지 계정 줄 GET·PUT /agents/{id}/merge-accounts(/lines) (TS mergeAccountRoutes) — 배정은 op1 ----
+    let mpath = format!("/agents/{agent}/merge-accounts");
+    let lpath = format!("/agents/{agent}/merge-accounts/lines");
+    // 소유자가 아니면 그런 에이전트가 있는지도 말하지 않는다.
+    let (s, _) = req(&base, Method::GET, &mpath, Some(&sess), "").await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    sqlx::query("update agent_config set owner_account_id = $2::uuid where account_id = $1::uuid")
+        .bind(&agent)
+        .bind(&human)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (s, v) = req(&base, Method::GET, &mpath, Some(&sess), "").await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v, json!({ "operatorId": op1, "report": null }), "{v}");
+    sqlx::query(
+        "insert into operator_gh_report (operator_id, logins, by_scope, reach) values ($1::uuid, '[\"alice\",\"bob\"]', '{}', '[]') \
+         on conflict (operator_id) do update set logins = excluded.logins, by_scope = '{}'",
+    )
+    .bind(&op1)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (s, v) = req(&base, Method::GET, &mpath, Some(&sess), "").await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["report"]["logins"], json!(["alice", "bob"]), "{v}");
+    let put = |body: Value| {
+        let (base, lpath, sess) = (base.clone(), lpath.clone(), sess.clone());
+        async move { req(&base, Method::PUT, &lpath, Some(&sess), &body.to_string()).await }
+    };
+    let (s, e) = put(json!({ "scope": "nope", "ghUser": "alice" })).await;
+    assert_eq!(
+        (s, e["error"]["code"].clone()),
+        (StatusCode::BAD_REQUEST, json!("bad_scope"))
+    );
+    let (s, e) = put(json!({ "scope": "Org/Repo", "ghUser": "carol" })).await;
+    assert_eq!(
+        (s, e["error"]["code"].clone()),
+        (StatusCode::CONFLICT, json!("unknown_login"))
+    );
+    // 성공 — 서버가 op1 에 gh.lines.set 을 보내고, 오퍼레이터가 같은 requestId 로 답한다.
+    let call = tokio::spawn(put(json!({ "scope": "Org/Repo", "ghUser": "alice" })));
+    let (f, _) = until_frame(&mut b, "gh.lines.set").await;
+    assert_eq!(
+        (f["scope"].clone(), f["ghUser"].clone()),
+        (json!("org/repo"), json!("alice")),
+        "{f}"
+    );
+    b.send(Message::Text(
+        json!({ "type": "gh.lines.result", "requestId": f["requestId"], "ok": true })
+            .to_string()
+            .into(),
+    ))
+    .await
+    .unwrap();
+    let (s, v) = call.await.unwrap();
+    assert_eq!((s, v), (StatusCode::OK, json!({ "ok": true })));
+    let by: Value =
+        sqlx::query_scalar("select by_scope from operator_gh_report where operator_id = $1::uuid")
+            .bind(&op1)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(by, json!({ "org/repo": "alice" }));
+    // 거절 — 오퍼레이터의 code 를 그대로 409 로.
+    let call = tokio::spawn(put(json!({ "scope": "org/*", "ghUser": null })));
+    let (f, _) = until_frame(&mut b, "gh.lines.set").await;
+    b.send(Message::Text(
+        json!({ "type": "gh.lines.result", "requestId": f["requestId"], "ok": false, "code": "no_agent" }).to_string().into(),
+    ))
+    .await
+    .unwrap();
+    let (s, e) = call.await.unwrap();
+    assert_eq!(
+        (s, e["error"]["code"].clone()),
+        (StatusCode::CONFLICT, json!("no_agent"))
+    );
+    // 답이 없으면 504.
+    let (s, e) = put(json!({ "scope": "org/repo", "ghUser": null })).await;
+    assert_eq!(
+        (s, e["error"]["code"].clone()),
+        (StatusCode::GATEWAY_TIMEOUT, json!("operator_unreachable"))
+    );
+    until_frame(&mut b, "gh.lines.set").await;
+    let n: i64 = sqlx::query_scalar("select count(*) from audit_log where action = 'operator.merge_line.set_remote' and target = $1")
+        .bind(&op1)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(n, 3);
 
     // ---- 목록·이름 바꾸기 ----
     let (s, list) = req(&base, Method::GET, "/operators", Some(&sess), "").await;
