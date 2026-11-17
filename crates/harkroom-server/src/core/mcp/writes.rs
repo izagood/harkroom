@@ -112,6 +112,10 @@ pub struct McpWrites {
     /// AC5 안전판 — 릴레이가 Rust 오퍼레이터 코어와 함께 옮겨졌다. 그 동안 TS 의 릴레이 허브는 비어 있어 `turn.cancel` 이
     /// 아무 턴도 못 찾고 성공처럼 답하므로, Rust 가 `operator_core_moved` 로 거절한다([`super::route::TURN_CANCEL`]).
     pub relay_moved: bool,
+    /// `turn.cancel` 을 Rust 허브로 답할 릴레이 코어. 릴레이 줄이 `McpWrites` 뒤에 서므로 그때 채운다. 비어 있으면
+    /// (`relay_moved` 인데 아직 안 채워짐) 옛 안전판처럼 `operator_core_moved` 로 거절한다.
+    pub relay:
+        std::sync::Arc<std::sync::OnceLock<std::sync::Arc<crate::core::relay_routes::RelayCore>>>,
 }
 
 /// JS `Number.MAX_SAFE_INTEGER` — 이 밖의 수는 TS 에서 값이 뭉개진다. Rust 는 같은 결과를 낼 수 없으니 TS 로 넘긴다.

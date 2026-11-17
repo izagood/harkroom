@@ -1720,6 +1720,10 @@ async fn main() {
             core_routes.sockets.extend(it.sockets);
         }
         // C4a-1 — `POST /mcp`. 에이전트 게이트·본문 한도(TS 와 같다) 뒤, Rust 가 답하는 읽기 도구(C4a-3)가 아니면 원래 바이트를 TS 로 투명 전달한다.
+        // `turn.cancel` 이 쓸 릴레이 코어 — 릴레이 줄(아래)에서 채운다.
+        let relay_cell: std::sync::Arc<
+            std::sync::OnceLock<std::sync::Arc<harkroom_server::core::relay_routes::RelayCore>>,
+        > = Default::default();
         let mcp = harkroom_server::core::mcp::route::routes(
             state.up.clone(),
             state.pool.clone(),
@@ -1740,6 +1744,7 @@ async fn main() {
                 delegate: mcp_post.clone().filter(|_| mcp_delegate_ok),
                 post: mcp_post,
                 relay_moved: operator_on,
+                relay: relay_cell.clone(),
             },
             auth.clone(),
             state.cors.clone(),
@@ -1802,6 +1807,7 @@ async fn main() {
                     harkroom_server::core::ws::Timing::from_env(),
                     turn_settle::settle_hook(write),
                 );
+                let _ = relay_cell.set(rc.clone());
                 let r = relay_routes::routes(rc, auth, state.cors.clone());
                 core_routes.router = core_routes.router.merge(r.router);
                 core_routes.http.extend(r.http);
