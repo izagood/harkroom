@@ -427,6 +427,27 @@ async fn main() {
         }
         _ => false,
     };
+    // S5.4 RD1 — `GET /invites`·`GET /connectors`. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 읽기 풀에 그 SELECT 가 다 있을 때만. 리스·에이전트 목록·`/agent/config` 는 언제나 TS.
+    let misc_reads_on = match &core_mode {
+        harkroom_server::core::CoreMode::Rust => {
+            use harkroom_server::core::misc_reads as m;
+            match write::missing_in(&state.pool, m::MISC_READS_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => true,
+                Ok(m) => {
+                    eprintln!("front: misc reads core off — missing privileges {m:?}");
+                    false
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: misc reads core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    false
+                }
+            }
+        }
+        _ => false,
+    };
     // C3b-2b-2 — MCP `message.askBundle` 있던 묶음에 줄 더하기. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 묶음 푸시까지 그 권한이 다 있을 때만.
     let bundle_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -1058,6 +1079,17 @@ async fn main() {
             core_routes.router = core_routes.router.merge(tp.router);
             core_routes.http.extend(tp.http);
             core_routes.sockets.extend(tp.sockets);
+        }
+        // S5.4 RD1 — 초대·API 연결 목록 읽기 2줄. 권한이 있을 때만 — 아니면 TS 에 남는다.
+        if misc_reads_on {
+            let mr = harkroom_server::core::misc_reads::routes(
+                state.pool.clone(),
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(mr.router);
+            core_routes.http.extend(mr.http);
+            core_routes.sockets.extend(mr.sockets);
         }
         // C3a-2 — 지우기·「채널에도 보이기」 켜고 끄기. 쓰기 풀에 그 권한이 다 있을 때만 — 아니면 TS 에 남는다.
         if let Some(write) = delete_write {

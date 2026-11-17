@@ -4157,6 +4157,74 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         await db.pool.query('delete from channel where id = any($1)', [[pubCh.id, privCh.id, hidCh.id]]);
       }
 
+      // S5.4 RD1 — 초대·API 연결 목록 읽기(코어 `misc_reads.rs`). 두 서버의 답을 견준다. 리스·에이전트 목록·`/agent/config` 는 TS 에 남는다
+      // (투영 주소·허브 거절 사유는 서버 메모리, `/agent/config` 는 읽으며 종료 수령을 쓴다). 연결 답 어디에도 비밀 값이 새지 않는지 본다.
+      {
+        expect(f.log()).toContain('"GET /invites"');
+        expect(f.log()).toContain('"GET /connectors"');
+        expect(f.log()).not.toContain('misc reads core off');
+        for (const k of ['GET /leases', 'GET /accounts/agents', 'GET /agent/config']) {
+          expect(f.log(), `${k} 는 TS 에 남는다`).not.toContain(`"${k}"`);
+        }
+        const M = member.token;
+        const M2 = member2.token;
+        const SECRET = 'RD1SECRETVALUE-do-not-leak';
+        const inv = async (by: string, extra: Record<string, unknown> = {}) => (await db.pool.query<{ id: string }>(
+          `insert into invite (token_hash, created_by, used_by, created_at, expires_at, revoked_at, email, mail_status, last_sent_at)
+           values ($1, $2, $3, now() - ($4::int * interval '1 minute') - interval '0.123456 seconds', $5, $6, $7, $8, $9) returning id`,
+          [randomUUID(), by, extra.usedBy ?? null, extra.ago ?? 0, extra.expiresAt ?? null, extra.revokedAt ?? null,
+            extra.email ?? null, extra.mailStatus ?? null, extra.lastSentAt ?? null])).rows[0]!.id;
+        const invIds = [
+          await inv(admin.accountId, { ago: 1, email: 'a@example.test', mailStatus: 'sent', lastSentAt: new Date(Date.now() - 1234) }),
+          await inv(admin.accountId, { ago: 2, usedBy: member.accountId }),
+          await inv(member.accountId, { ago: 3, revokedAt: new Date() }),
+          await inv(admin.accountId, { ago: 4, expiresAt: new Date(Date.now() - 60_000), mailStatus: 'failed' }),
+          await inv(admin.accountId, { ago: 5, expiresAt: new Date(Date.now() + 3_600_000) }),
+        ];
+        const sec = (await db.pool.query<{ id: string }>(
+          `insert into secret (name, kind, owner_account_id) values ('rd1-key', 'text', $1) returning id`, [member.accountId])).rows[0]!.id;
+        await db.pool.query(`insert into secret_version (secret_id, version, sealed, size_bytes) values ($1, 1, $2, 10)`, [sec, SECRET]);
+        const conn = async (name: string, owner: string, extra = '') => (await db.pool.query<{ id: string }>(
+          `insert into api_connector (name, owner_account_id, base_url, auth_kind, auth_header, secret_id, methods${extra ? ', token_url, token_form' : ''})
+           values ($1, $2, 'https://api.example.test', $3, $4, $5, array['GET','POST']${extra ? `, 'https://auth.example.test/token', '{"grant_type":"client_credentials","z":1,"a":"x"}'::jsonb` : ''}) returning id`,
+          [name, owner, extra || 'bearer', null, owner === member.accountId ? sec : null])).rows[0]!.id;
+        const cMine = await conn('rd1-b-mine', member.accountId);
+        const cTheirs = await conn('rd1-a-theirs', member2.accountId, 'token_exchange');
+        await db.pool.query(`insert into account_grant (account_id, capability, scope, granted_by) values ($1, 'api.call', $2, $3)`, [agent.accountId, `connector:${cMine}`, admin.accountId]);
+
+        const seen: unknown[] = [];
+        const both = async (path: string, token: string) => {
+          const [x, y] = [await callX(tsUrl, 'GET', path, undefined, token), await callX(rsUrl, 'GET', path, undefined, token)];
+          expect({ status: y.status, json: y.json }, `${path} ${token.slice(0, 6)}`).toEqual({ status: x.status, json: x.json });
+          seen.push({ x: x.json, y: y.json });
+          return y;
+        };
+        // 초대 — admin 은 다 본다, 기본 member 는 403, grant 받은 member 는 본다, 에이전트는 403.
+        const all = (await both('/invites', A)).json.invites as { id: string; status: string }[];
+        expect(all.filter((i) => invIds.includes(i.id)).map((i) => i.status)).toEqual(['pending', 'used', 'revoked', 'expired', 'pending']);
+        expect((await both('/invites', M)).status).toBe(403);
+        expect((await both('/invites', agent.pat)).status).toBe(403);
+        await db.pool.query(`insert into account_grant (account_id, capability, scope, granted_by) values ($1, 'member.invite', '', $2)`, [member2.accountId, admin.accountId]);
+        expect((await both('/invites', M2)).status).toBe(200);
+        await db.pool.query(`delete from account_grant where account_id = $1 and capability = 'member.invite'`, [member2.accountId]);
+        // 연결 — admin 은 전부(이름순), member 는 자기 것만, 에이전트는 403.
+        const ca = (await both('/connectors', A)).json.connectors as { id: string }[];
+        expect(ca.map((c) => c.id).filter((id) => id === cMine || id === cTheirs)).toEqual([cTheirs, cMine]);
+        expect(((await both('/connectors', M)).json.connectors as { id: string; grantCount: number }[]).map((c) => [c.id, c.grantCount])).toEqual([[cMine, 1]]);
+        expect(((await both('/connectors', M2)).json.connectors as { id: string }[]).map((c) => c.id)).toEqual([cTheirs]);
+        expect((await both('/connectors', agent.pat)).status).toBe(403);
+        for (const path of ['/invites', '/connectors']) {
+          const [x, y] = [await callX(tsUrl, 'GET', path, undefined, ''), await callX(rsUrl, 'GET', path, undefined, '')];
+          expect({ status: y.status, json: y.json }, `${path} 익명`).toEqual({ status: x.status, json: x.json });
+          expect(y.status).toBe(401);
+        }
+        expect(JSON.stringify(seen)).not.toContain(SECRET);
+        await db.pool.query('delete from account_grant where scope = $1', [`connector:${cMine}`]);
+        await db.pool.query('delete from api_connector where id = any($1)', [[cMine, cTheirs]]);
+        await db.pool.query('delete from secret where id = $1', [sec]);
+        await db.pool.query('delete from invite where id = any($1)', [invIds]);
+      }
+
       // S5.2 P4d — 옮긴 라우트를 지난 요청도 세션을 늘리고 PAT 사용 시각을 남긴다(쓰기 풀로). 읽기 역할로 하면 조용히 실패하던 것.
       await db.pool.query(`update session set expires_at = now() + interval '1 day' where account_id = $1`, [member.accountId]);
       await db.pool.query(`update pat set last_used_at = now() - interval '1 hour' where account_id = $1`, [agent.accountId]);
