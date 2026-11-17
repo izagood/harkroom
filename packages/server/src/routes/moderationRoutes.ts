@@ -159,13 +159,15 @@ export async function registerModerationRoutes(
   });
 }
 
+/** 차단 확인 문장 — Rust 코어(S5.4 CH4b-1 `POST /dms`)가 골든으로 같은 문장을 쓴다. */
+export const ANY_BLOCK_BETWEEN_SQL = `select 1 from account_block
+      where (blocker_id = $1::uuid and blocked_id = any($2::uuid[]))
+         or (blocked_id = $1::uuid and blocker_id = any($2::uuid[]))
+      limit 1`;
+
 /** 둘 사이에 어느 쪽이든 차단이 있나 — 새 DM 을 열 때 본다. */
 export async function anyBlockBetween(pool: Pool, me: string, others: readonly string[]): Promise<boolean> {
   if (!others.length) return false;
-  const res = await pool.query(
-    `select 1 from account_block
-      where (blocker_id = $1 and blocked_id = any($2::uuid[]))
-         or (blocked_id = $1 and blocker_id = any($2::uuid[]))
-      limit 1`, [me, others]);
+  const res = await pool.query(ANY_BLOCK_BETWEEN_SQL, [me, others]);
   return Boolean(res.rowCount);
 }

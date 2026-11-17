@@ -490,6 +490,31 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 CH4b-1 — DM 열기. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 권한이 다 있을 때만.
+    let dm_open = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::dm_open as c;
+            match write::missing_in(w, c::DM_OPEN_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: dm open core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: dm open core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+    // `POST /dms` 가 코어에 붙으면 같은 경로의 `GET /dms` 도 코어 라우터가 단다(읽기 표에서는 뺀다 — 두 라우터가 같은 경로를
+    // fallback 과 함께 가지면 합칠 수 없다).
+    let dm_core_on = dm_open.is_some();
+    let ts_get_dms = ts.keys.contains("GET /dms") || ts.all;
     // S5.4 CH4a — 채널 만들기·고치기. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 권한이 다 있을 때만.
     let channel_create_update = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -1297,6 +1322,21 @@ async fn main() {
         // S5.4 CH2 — 읽음·미읽음 표시 2줄. 권한이 다 있을 때만 — 아니면 TS 에 남는다(`PATCH /channels/{id}/pref` 는 언제나 TS).
         // S5.4 CH3b — 자동 멘션 걸기·풀기·문서 저장 3줄. 권한이 다 있을 때만 — 아니면 TS 에 남는다.
         // S5.4 CH4a — 채널 만들기·고치기 2줄. 권한이 다 있을 때만 — 아니면 TS 에 남는다. `DELETE /channels/{id}` 는 언제나 TS(첨부 저장소가 TS 에만 있다).
+        // S5.4 CH4b-1 — DM 열기 1줄. 권한이 다 있을 때만 — 아니면 TS 에 남는다. 멤버 추가·빼기는 아직 TS(시스템 글이 Rust 글 경로에 없다).
+        if let Some(write) = dm_open {
+            let dm = harkroom_server::core::dm_open::routes(
+                harkroom_server::core::dm_open::DmOpenState {
+                    read: state.pool.clone(),
+                    write,
+                    get_dms: !ts_get_dms,
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(dm.router);
+            core_routes.http.extend(dm.http);
+            core_routes.sockets.extend(dm.sockets);
+        }
         if let Some(write) = channel_create_update {
             let cu = harkroom_server::core::channel_create_update::routes(
                 harkroom_server::core::channel_create_update::CreateUpdateState {
@@ -1591,7 +1631,12 @@ async fn main() {
             "ts"
         }
     );
-    let app = routes::router(state, routes::MOVED, &ts);
+    let moved: Vec<routes::Moved> = routes::MOVED
+        .iter()
+        .copied()
+        .filter(|m| !(dm_core_on && m.key == "GET /dms"))
+        .collect();
+    let app = routes::router(state, &moved, &ts);
     let app = match core_router {
         Some(c) => c.merge(app),
         None => app,
