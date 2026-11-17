@@ -173,17 +173,30 @@ export async function listChannels(pool: Pool, accountId: string, isAdmin = fals
   return res.rows;
 }
 
-/** 이 참여자 그대로인 DM 이 이미 있으면 그 id. */
-export async function findDm(pool: Pool, accountIds: string[]): Promise<string | null> {
-  const members = [...new Set(accountIds)].sort();
-  const existing = await pool.query(
-    `select c.id from channel c
+/** 이 참여자 그대로인 DM 의 id — Rust 코어(S5.4 CH4b-1 `POST /dms`)가 골든으로 같은 문장을 쓴다. */
+export const FIND_DM_SQL = `select c.id from channel c
      join channel_member m on m.channel_id = c.id
      where c.kind = 'dm'
      group by c.id
-     having array_agg(m.account_id order by m.account_id) = $1::uuid[]`,
-    [members],
-  );
+     having array_agg(m.account_id order by m.account_id) = $1::uuid[]`;
+
+/**
+ * 같은 참여자 묶음의 DM 만들기를 줄 세운다(트랜잭션 끝까지). DM 에는 「참여자 묶음」 고유 제약이 없어서,
+ * 찾기와 만들기 사이에 같은 요청이 둘 들어오면 DM 이 둘 생긴다 — 잠근 뒤 한 번 더 찾는다.
+ * 키는 정렬한 id 목록이라 TS·Rust 가 같은 묶음에 같은 잠금을 잡는다.
+ */
+export const LOCK_DM_SQL = `select pg_advisory_xact_lock(hashtextextended('dm:' || array_to_string($1::uuid[], ','), 0))`;
+
+/** 새 DM 행 — Rust 코어(S5.4 CH4b-1)가 골든으로 같은 문장을 쓴다. */
+export const CREATE_DM_SQL = `insert into channel (kind, topic) values ('dm', '') returning ${COLS}`;
+
+/** 채널 행 하나(`ChannelRow`) — Rust 코어(S5.4 CH4b-1)가 골든으로 같은 문장을 쓴다. */
+export const CHANNEL_ROW_SQL = `select ${COLS} from channel where id = $1::uuid`;
+
+/** 이 참여자 그대로인 DM 이 이미 있으면 그 id. */
+export async function findDm(pool: Pool | PoolClient, accountIds: string[]): Promise<string | null> {
+  const members = [...new Set(accountIds)].sort();
+  const existing = await pool.query(FIND_DM_SQL, [members]);
   return existing.rows[0]?.id ?? null;
 }
 
@@ -191,17 +204,23 @@ export async function getOrCreateDm(pool: Pool, accountIds: string[]): Promise<C
   const members = [...new Set(accountIds)].sort();
   const existingId = await findDm(pool, members);
   if (existingId) {
-    const res = await pool.query(`select ${COLS} from channel where id = $1`, [existingId]);
+    const res = await pool.query(CHANNEL_ROW_SQL, [existingId]);
     return res.rows[0];
   }
   const client = await pool.connect();
   try {
     await client.query('begin');
-    const created = await client.query(
-      `insert into channel (kind, topic) values ('dm', '') returning ${COLS}`,
-    );
+    await client.query(LOCK_DM_SQL, [members]);
+    // 잠금을 기다리는 사이 같은 묶음의 DM 이 생겼으면 그것을 돌려준다.
+    const raced = await findDm(client, members);
+    if (raced) {
+      const res = await client.query(CHANNEL_ROW_SQL, [raced]);
+      await client.query('commit');
+      return res.rows[0];
+    }
+    const created = await client.query(CREATE_DM_SQL);
     for (const id of members) {
-      await client.query(`insert into channel_member (channel_id, account_id) values ($1, $2)`, [created.rows[0].id, id]);
+      await client.query(ADD_CHANNEL_MEMBER_SQL, [created.rows[0].id, id]);
     }
     await client.query('commit');
     return created.rows[0];
@@ -238,7 +257,7 @@ export async function listBoundRepos(pool: Pool): Promise<{ repo: string; channe
  * 여기 한 곳에만 둔다.
  */
 export async function getChannelRow(pool: Pool, channelId: string): Promise<ChannelRow | null> {
-  const res = await pool.query(`select ${COLS} from channel where id = $1`, [channelId]);
+  const res = await pool.query(CHANNEL_ROW_SQL, [channelId]);
   return (res.rows[0] as ChannelRow | undefined) ?? null;
 }
 

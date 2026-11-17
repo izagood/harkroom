@@ -5,8 +5,9 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
+import { ANY_BLOCK_BETWEEN_SQL } from '../src/routes/moderationRoutes.js';
 import { channelListVisibleSql, channelVisibleSql } from '../src/services/channels.js';
-import { ADD_CHANNEL_MEMBER_SQL, CHANNEL_NAME_VISIBILITY_SQL, CREATE_CHANNEL_SQL, UPDATE_CHANNEL_SQL, CHANNEL_KIND_VISIBILITY_SQL, UPDATE_CHANNEL_DOC_SQL, CHANNEL_DELETE_INFO_SQL, CHANNEL_POST_GATE_SQL, CHANNEL_MESSAGE_COUNT_SQL, CHANNEL_DOC_SQL, LIST_CHANNEL_MEMBERS_SQL, LIST_CHANNEL_PREFS_SQL, LIST_CHANNELS_SQL } from '../src/services/channels.js';
+import { CHANNEL_ROW_SQL, CREATE_DM_SQL, FIND_DM_SQL, LOCK_DM_SQL, ADD_CHANNEL_MEMBER_SQL, CHANNEL_NAME_VISIBILITY_SQL, CREATE_CHANNEL_SQL, UPDATE_CHANNEL_SQL, CHANNEL_KIND_VISIBILITY_SQL, UPDATE_CHANNEL_DOC_SQL, CHANNEL_DELETE_INFO_SQL, CHANNEL_POST_GATE_SQL, CHANNEL_MESSAGE_COUNT_SQL, CHANNEL_DOC_SQL, LIST_CHANNEL_MEMBERS_SQL, LIST_CHANNEL_PREFS_SQL, LIST_CHANNELS_SQL } from '../src/services/channels.js';
 import { ALL_READ_STATES_SQL, READ_STATE_SQL } from '../src/services/readPositions.js';
 import { LIST_CHANNEL_SECTIONS_SQL } from '../src/services/channelSections.js';
 import {
@@ -166,6 +167,11 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     create_channel: CREATE_CHANNEL_SQL,
     update_channel: UPDATE_CHANNEL_SQL,
     channel_name_visibility: CHANNEL_NAME_VISIBILITY_SQL,
+    find_dm: FIND_DM_SQL,
+    lock_dm: LOCK_DM_SQL,
+    create_dm: CREATE_DM_SQL,
+    channel_row: CHANNEL_ROW_SQL,
+    any_block_between: ANY_BLOCK_BETWEEN_SQL,
     list_scheduled: LIST_SCHEDULED_SQL,
     select_pins: SELECT_PINS_SQL,
     pin_insert: PIN_INSERT_SQL,
