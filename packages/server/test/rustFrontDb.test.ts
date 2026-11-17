@@ -63,6 +63,8 @@ const OPERATOR_GRANTS = [
   'select, insert, update, delete on relay_hub',
   'select, insert, update, delete on agent_session_live',
   'select, insert, update on agent_presence',
+  // AC6 — 능력 스냅숏(`operator_capability.rs::CAPABILITY_PRIVILEGES`). 없으면 스냅숏만 꺼진다(오퍼레이터 코어는 선다).
+  'select, insert, update, delete on operator_capability',
   // C6c-3 — cancel 뒤 위임 의무·예약 닫기(`turn_settle.rs::SETTLE_CANCEL_PRIVILEGES`).
   'update (notified_at) on team_delegation',
   'update (outcome, closed_at) on team_delegation_item',

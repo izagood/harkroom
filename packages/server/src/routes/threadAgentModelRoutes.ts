@@ -13,6 +13,7 @@ import { EFFORT_MAX, MODEL_ID_MAX, SYSTEM_ACCOUNT_PLACEHOLDER, type ThreadAgentM
 import { recordAudit } from '../audit.js';
 import { emitEvent, emitPosted } from '../events.js';
 import { assignmentOf } from '../services/agents.js';
+import { offeredModels } from '../services/operatorCapabilities.js';
 import { assertChannelVisible, audienceFor, channelPostGate } from '../services/channels.js';
 import { postMessage } from '../services/messages.js';
 import { systemI18n } from '../services/systemI18n.js';
@@ -44,11 +45,11 @@ export async function checkOffered(
   if (!hub || (model === null && effort === null)) return { ok: true };
   const assignment = await assignmentOf(pool, agentId);
   if (!assignment) return { ok: true };
-  const caps = hub.capabilities(assignment.operatorId);
   const cfg = await pool.query<{ harness: string | null; model: string | null }>(
     `select harness, model from agent_config where account_id = $1`, [agentId]);
   const harness = cfg.rows[0]?.harness ?? 'claude-code';
-  const models = caps?.harnesses[harness]?.models;
+  // 허브에 없으면(오퍼레이터 코어가 Rust) Rust 가 적은 스냅숏을 본다(AC6).
+  const models = await offeredModels(pool, hub, assignment.operatorId, harness);
   if (!models) return { ok: true };
   if (model !== null && !models.some((m) => m.id === model)) {
     return { ok: false, code: 'model_not_offered', message: `${harness} 가 이 머신에서 밝힌 모델 목록에 ${model} 가 없다` };
@@ -111,8 +112,7 @@ export async function agentModelOptions(pool: Pool, hub: OperatorHub | undefined
   const row = found.rows[0]!;
   const harness = row.harness ?? 'claude-code';
   const assignment = await assignmentOf(pool, agentId);
-  const caps = assignment && hub ? hub.capabilities(assignment.operatorId) : null;
-  const models = caps?.harnesses[harness]?.models;
+  const models = assignment && hub ? await offeredModels(pool, hub, assignment.operatorId, harness) : undefined;
   return { harness, model: row.model, effort: row.effort, pickable: readPickable(row.pickable), ...(models ? { models } : {}) };
 }
 

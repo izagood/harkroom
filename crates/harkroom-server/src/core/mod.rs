@@ -64,6 +64,7 @@ pub mod msg_react;
 pub mod msg_read;
 pub mod operator;
 pub mod operator_assign;
+pub mod operator_capability;
 pub mod operator_frames;
 pub mod operator_guard;
 pub mod operator_hub;
