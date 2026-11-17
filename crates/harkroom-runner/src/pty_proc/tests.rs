@@ -201,3 +201,61 @@ fn reader_stops_on_flag_even_if_never_closed() {
     assert_eq!(got, b"hi");
     drop(writer);
 }
+
+#[test]
+fn pty_env_defaults_fill_only_missing_terminal_keys() {
+    let none: Vec<(String, String)> = vec![("PATH".into(), "/usr/bin".into())];
+    assert_eq!(
+        pty_env_defaults(&none, None),
+        vec![
+            ("TERM", "xterm-256color".to_string()),
+            ("COLORTERM", "truecolor".to_string()),
+            ("LANG", "en_US.UTF-8".to_string()),
+        ]
+    );
+    // 러너의 LANG 이 있으면 그 값, 빈 값이면 기본값.
+    assert_eq!(
+        pty_env_defaults(&none, Some("ko_KR.UTF-8"))[2],
+        ("LANG", "ko_KR.UTF-8".to_string())
+    );
+    assert_eq!(pty_env_defaults(&none, Some(""))[2].1, "en_US.UTF-8");
+    // 자식 env 에 이미 있으면 덮지 않는다.
+    let set: Vec<(String, String)> = vec![
+        ("TERM".into(), "dumb".into()),
+        ("COLORTERM".into(), "24bit".into()),
+        ("LANG".into(), "C".into()),
+    ];
+    assert!(pty_env_defaults(&set, Some("ko_KR.UTF-8")).is_empty());
+}
+
+#[test]
+fn child_without_term_gets_terminal_defaults() {
+    let args: Vec<String> = vec![
+        "-c".into(),
+        "echo \"T=$TERM C=$COLORTERM L=${LANG:+set}\"".into(),
+    ];
+    let env: Vec<(String, String)> = vec![("PATH".into(), "/usr/bin:/bin".into())];
+    let spec = SpawnSpec {
+        harness: "/bin/sh",
+        command: "/bin/sh",
+        args: &args,
+        env: &env,
+        cwd: Path::new("/"),
+        cols: 80,
+        rows: 24,
+    };
+    let p = spawn_pty(&spec, Duration::from_millis(300)).expect("spawn");
+    let (tx, rx) = mpsc::channel();
+    let reader = p.reader.try_clone().unwrap();
+    std::thread::spawn(move || {
+        read_until_closed(reader, |c| {
+            let _ = tx.send(c.to_vec());
+        })
+    });
+    p.wait().unwrap();
+    let out = collect(&rx);
+    assert!(
+        out.contains("T=xterm-256color C=truecolor L=set"),
+        "{out:?}"
+    );
+}

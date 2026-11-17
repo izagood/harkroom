@@ -248,6 +248,28 @@ pub fn spawn_lock() -> std::sync::MutexGuard<'static, ()> {
     LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// PTY 자식에 넣는 터미널 기본값 — `env_clear()` 뒤라 자식 env 에 없으면 하네스가 「터미널 아님」으로 보고 색·굵게를 끈다
+/// (supports-color 수준 0). 자식 env 에 이미 있는 키는 덮지 않는다. `LANG` 은 러너 자신의 값(`parent_lang`)이 있으면
+/// 그것을, 없으면 UTF-8 로캘을 준다 — C 로캘이면 한글 폭·조합이 어긋난다.
+pub(crate) fn pty_env_defaults(
+    env: &[(String, String)],
+    parent_lang: Option<&str>,
+) -> Vec<(&'static str, String)> {
+    let has = |key: &str| env.iter().any(|(k, _)| k == key);
+    let lang = parent_lang
+        .filter(|v| !v.is_empty())
+        .unwrap_or("en_US.UTF-8");
+    [
+        ("TERM", "xterm-256color"),
+        ("COLORTERM", "truecolor"),
+        ("LANG", lang),
+    ]
+    .into_iter()
+    .filter(|(k, _)| !has(k))
+    .map(|(k, v)| (k, v.to_string()))
+    .collect()
+}
+
 /// PTY 를 열고 자식을 띄운다(정본 `nodePty().spawn`). 하네스 부재는 spawn **전에** 잰다(정본 순서·이유).
 pub fn spawn_pty(spec: &SpawnSpec<'_>, kill_grace: Duration) -> Result<PtyProcess, SpawnError> {
     let path = spec
@@ -301,6 +323,10 @@ pub fn spawn_pty(spec: &SpawnSpec<'_>, kill_grace: Duration) -> Result<PtyProces
         .args(spec.args)
         .env_clear()
         .envs(spec.env.iter().map(|(k, v)| (k, v)))
+        .envs(pty_env_defaults(
+            spec.env,
+            std::env::var("LANG").ok().as_deref(),
+        ))
         .current_dir(spec.cwd)
         .stdin(Stdio::from(slave.try_clone().map_err(SpawnError::Io)?))
         .stdout(Stdio::from(slave.try_clone().map_err(SpawnError::Io)?))
