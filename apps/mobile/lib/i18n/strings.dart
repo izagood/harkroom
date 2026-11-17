@@ -82,6 +82,15 @@ abstract class Strings {
   /// 클립보드에 못 담았다. 조용히 지나가면 사람은 붙여넣고서야 안다.
   String get messageCopyFailed;
 
+  /// 코드 블록 머리의 복사 버튼(데스크톱 `message.code.copy` 와 같은 말).
+  String get codeCopy;
+
+  /// 복사 버튼이 잠깐 바뀌는 말(데스크톱 `message.code.copied`).
+  String get codeCopied;
+
+  /// 코드 블록을 담았다는 짧은 확인.
+  String get codeCopiedToast;
+
   /// 시트(남의 글): 이 메시지부터 안 읽은 것으로 되돌린다.
   String get messageMarkUnread;
 
@@ -1572,6 +1581,9 @@ Map<String, String> stringsToMap(Strings s) => {
       'messageLinkCopied': s.messageLinkCopied,
       'messageBodyCopied': s.messageBodyCopied,
       'messageCopyFailed': s.messageCopyFailed,
+      'codeCopy': s.codeCopy,
+      'codeCopied': s.codeCopied,
+      'codeCopiedToast': s.codeCopiedToast,
       'messageMarkUnread': s.messageMarkUnread,
       'messageMarkedUnread': s.messageMarkedUnread,
       'threadStatusReceived': s.threadStatusReceived,

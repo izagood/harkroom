@@ -1,8 +1,12 @@
+import 'dart:async';
+
 import '../api/thread_plan.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../ui/states.dart';
 import '../ui/tokens.dart';
 import '../i18n/i18n.dart';
 import 'markdown.dart';
@@ -117,26 +121,7 @@ class _MarkdownBodyState extends State<MarkdownBody> {
         MdParagraph(:final text) => _rich(text, base, k),
         MdHeading(:final level, :final text) =>
           _rich(text, base.copyWith(fontWeight: FontWeight.w600, fontSize: level <= 2 ? 16 : 15), k),
-        MdCode(:final text) => Container(
-            key: _key('md-code'),
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            decoration: BoxDecoration(
-              color: k.surfaceSunken,
-              borderRadius: BorderRadius.circular(HarkroomRadius.row),
-              border: Border.all(color: k.border),
-            ),
-            // 긴 줄은 **접지 않고 옆으로 민다** — 코드를 접으면 들여쓰기의 뜻이 사라진다.
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: SelectableText(
-                text,
-                style: TextStyle(
-                    fontFamily: 'Menlo', fontFamilyFallback: const ['Courier'],
-                    fontSize: 13, height: 1.4, color: k.fg),
-              ),
-            ),
-          ),
+        MdCode(:final text, :final language) => CodeBlock(key: _key('md-code'), code: text, language: language),
         MdQuote(:final text) => Container(
             key: _key('md-quote'),
             padding: const EdgeInsets.only(left: 10),
@@ -396,4 +381,151 @@ Future<bool?> showLinkConfirm(BuildContext context, Uri uri) {
       ),
     ),
   );
+}
+
+/// 펜스 코드 블록. 데스크톱 `MessageBody` 의 `CodeBlock` 과 같은 모양이다 — 머리 줄(왼쪽 언어,
+/// 오른쪽 [복사]) + 아래 코드.
+///
+/// - 버튼은 **머리 줄에 산다.** 코드 위에 겹쳐 띄우면 가로로 미는 긴 명령의 첫 줄을 가린다.
+/// - 담는 것은 **화면이 아니라 원문**([code], 파서가 펜스에서 떼어 온 그대로)이다. 가로로 밀려
+///   화면 밖에 있는 부분도, 선택 범위와 상관없이 블록 전체가 담긴다.
+/// - 누르면 아이콘이 체크로·글자가 「복사됨」으로 1.5초 바뀌고(데스크톱과 같은 시간), 가벼운
+///   햅틱과 짧은 토스트가 같이 온다 — 손가락이 버튼을 가려 글자 변화를 못 볼 수 있다.
+class CodeBlock extends StatefulWidget {
+  const CodeBlock({super.key, required this.code, this.language});
+
+  final String code;
+  final String? language;
+
+  @override
+  State<CodeBlock> createState() => _CodeBlockState();
+}
+
+class _CodeBlockState extends State<CodeBlock> {
+  var _copied = false;
+  Timer? _revert;
+
+  @override
+  void dispose() {
+    // 줄은 스크롤하며 사라졌다 생긴다 — 남은 타이머가 사라진 화면에 setState 하지 않게 걷는다.
+    _revert?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _copy() async {
+    final t = context.t;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final margin = toastMargin(context);
+    try {
+      await Clipboard.setData(ClipboardData(text: widget.code));
+    } on Object {
+      if (mounted) showFailureToast(context, t.messageCopyFailed);
+      return;
+    }
+    HapticFeedback.lightImpact().ignore();
+    if (!mounted) return;
+    setState(() => _copied = true);
+    _revert?.cancel();
+    _revert = Timer(const Duration(milliseconds: 1500), () {
+      if (mounted) setState(() => _copied = false);
+    });
+    messenger
+      ?..removeCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        key: const Key('code-copied'),
+        content: Text(t.codeCopiedToast),
+        behavior: SnackBarBehavior.floating,
+        margin: margin,
+        duration: const Duration(seconds: 2),
+      ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final k = context.tokens;
+    final t = context.t;
+    final lang = widget.language;
+    final small = TextStyle(fontSize: 12, height: 1.2, color: k.fgSubtle);
+    return Container(
+      width: double.infinity,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: k.surface,
+        borderRadius: BorderRadius.circular(HarkroomRadius.row),
+        border: Border.all(color: k.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // 바탕색은 `Material` 이 칠한다 — 색을 `Container` 에 두면 [복사] 의 물결이 그 아래 메시지 줄
+          // `Material` 에 그려져 색에 가려진다(누르는 순간 눌림 표시가 안 보였다, designer).
+          Material(
+            key: const Key('code-head'),
+            color: k.surfaceSunken,
+            child: Container(
+              decoration: BoxDecoration(
+                border: Border(bottom: BorderSide(color: k.border)),
+              ),
+              padding: const EdgeInsets.only(left: 10),
+              child: Row(
+                children: [
+                  // 언어는 표시만 한다(데스크톱과 같다). 없으면 왼쪽이 비고 버튼만 선다.
+                  Expanded(
+                    child: lang == null
+                        ? const SizedBox.shrink()
+                        : Text(lang,
+                            key: const Key('code-lang'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: small.copyWith(fontFamily: 'Menlo', fontFamilyFallback: const ['Courier'])),
+                  ),
+                  // 이름은 상태와 상관없이 「복사」 — 눌린 뒤 바뀌는 글자만 읽히면 VoiceOver 에는
+                  // 버튼 이름이 바뀌는 셈이다(데스크톱 aria-label 과 같은 규율).
+                  Semantics(
+                    button: true,
+                    label: t.codeCopy,
+                    excludeSemantics: true,
+                    child: InkWell(
+                      key: const Key('code-copy'),
+                      onTap: _copy,
+                      child: ConstrainedBox(
+                        // 손가락 표적. 머리 줄을 너무 키우지 않으면서 가로를 넓게 잡는다.
+                        constraints: const BoxConstraints(minHeight: 36, minWidth: 64),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 10),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(_copied ? Icons.check : Icons.content_copy,
+                                  key: Key(_copied ? 'code-copy-done' : 'code-copy-idle'),
+                                  size: 14,
+                                  color: _copied ? k.success : k.fgSubtle),
+                              const SizedBox(width: 4),
+                              Text(_copied ? t.codeCopied : t.codeCopy,
+                                  style: small.copyWith(color: _copied ? k.success : k.fgSubtle)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // 긴 줄은 **접지 않고 옆으로 민다** — 코드를 접으면 들여쓰기의 뜻이 사라진다.
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            child: SelectableText(
+              widget.code,
+              style: TextStyle(
+                  fontFamily: 'Menlo', fontFamilyFallback: const ['Courier'], fontSize: 13, height: 1.4, color: k.fg),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

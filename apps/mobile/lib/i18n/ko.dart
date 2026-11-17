@@ -1262,6 +1262,12 @@ class StringsKo implements Strings {
   @override
   String get messageCopyFailed => '복사하지 못했다';
   @override
+  String get codeCopy => '복사';
+  @override
+  String get codeCopied => '복사됨';
+  @override
+  String get codeCopiedToast => '코드를 복사했다';
+  @override
   String get messageMarkUnread => '여기부터 안 읽음';
   @override
   String get messageMarkedUnread => '안 읽음으로 표시했다';
