@@ -67,6 +67,33 @@ export interface LeadTeam {
   members: Map<string, { accountId: string; disabled: boolean }>;
 }
 
+/** 팀장의 팀·명단 — $1 계정. Rust delegate 게이트(C3b-2c-4a)가 골든으로 받는다. */
+export const LEAD_TEAM_SQL = `select t.id::text as team_id, a.handle, a.id::text as account_id, a.disabled_at is not null as disabled
+       from agent_team t
+       join agent_team_member tm on tm.team_id = t.id
+       join account a on a.id = tm.agent_account_id
+      where t.lead_account_id = $1::uuid`;
+
+/** 팀 밖 위임 대상 — $1 소문자 handle 목록. Rust delegate 게이트(C3b-2c-4a)가 골든으로 받는다. */
+export const DELEGATION_TARGETS_SQL = `select id::text as id, lower(handle) as handle, disabled_at is not null as disabled from account
+      where kind = 'agent' and deleted_at is null and lower(handle) = any($1::text[])`;
+
+/** (스레드, 팀장) 쌍마다 쓴 라운드 — $1 머리 목록 · $2 팀장 목록. Rust delegate 게이트(C3b-2c-4a)가 골든으로 받는다. */
+export const ROUNDS_USED_MANY_SQL = `select p.i::int as i,
+            (select count(*)::int
+               from team_delegation d
+              where d.thread_root_id = p.root
+                and d.lead_account_id = p.lead
+                and d.kind = 'delegate'
+                and d.created_at > coalesce((
+                  select max(m.created_at) from message m
+                   join account a on a.id = m.author_id
+                  where (m.thread_root_id = p.root or (m.id = p.root and m.thread_root_id is null))
+                    and a.kind = 'human'
+                    and m.deleted_at is null
+                ), 'epoch'::timestamptz)) as n
+       from unnest($1::uuid[], $2::uuid[]) with ordinality as p(root, lead, i)`;
+
 /**
  * 이 계정이 팀장인 팀과 그 명단. 팀장이 아니면 `null`.
  *
@@ -79,11 +106,7 @@ export async function leadTeamFor(
   db: Pick<Pool, 'query'>, accountId: string, to: string[],
 ): Promise<LeadTeam | null> {
   const res = await db.query<{ team_id: string; handle: string; account_id: string; disabled: boolean }>(
-    `select t.id as team_id, a.handle, a.id as account_id, a.disabled_at is not null as disabled
-       from agent_team t
-       join agent_team_member tm on tm.team_id = t.id
-       join account a on a.id = tm.agent_account_id
-      where t.lead_account_id = $1`,
+    LEAD_TEAM_SQL,
     [accountId],
   );
   if (!res.rowCount) return null;
@@ -116,8 +139,7 @@ export async function openDelegationTargets(
 ): Promise<{ members: LeadTeam['members'] } | { refused: string[] }> {
   const wanted = args.to.map((h) => h.toLowerCase());
   const res = await client.query<{ id: string; handle: string; disabled: boolean }>(
-    `select id, lower(handle) as handle, disabled_at is not null as disabled from account
-      where kind = 'agent' and deleted_at is null and lower(handle) = any($1::text[])`,
+    DELEGATION_TARGETS_SQL,
     [wanted],
   );
   const byHandle = new Map(res.rows.map((r) => [r.handle, r]));
@@ -161,20 +183,7 @@ export async function roundsUsedMany(
 ): Promise<number[]> {
   if (pairs.length === 0) return [];
   const res = await db.query<{ i: number; n: number }>(
-    `select p.i::int as i,
-            (select count(*)::int
-               from team_delegation d
-              where d.thread_root_id = p.root
-                and d.lead_account_id = p.lead
-                and d.kind = 'delegate'
-                and d.created_at > coalesce((
-                  select max(m.created_at) from message m
-                   join account a on a.id = m.author_id
-                  where (m.thread_root_id = p.root or (m.id = p.root and m.thread_root_id is null))
-                    and a.kind = 'human'
-                    and m.deleted_at is null
-                ), 'epoch'::timestamptz)) as n
-       from unnest($1::uuid[], $2::uuid[]) with ordinality as p(root, lead, i)`,
+    ROUNDS_USED_MANY_SQL,
     [pairs.map((p) => p.threadRootId), pairs.map((p) => p.leadAccountId)],
   );
   const out = new Array<number>(pairs.length).fill(0);

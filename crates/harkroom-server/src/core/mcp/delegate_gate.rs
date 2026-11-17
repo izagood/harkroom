@@ -13,6 +13,7 @@ use crate::core::msg_read::{channel_visible, is_uuid};
 use serde_json::Value;
 use sqlx::PgPool;
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 /// TS `TEAM_ROUND_LIMIT`(shared).
 const TEAM_ROUND_LIMIT: i64 = 3;
@@ -20,30 +21,30 @@ const TEAM_ROUND_LIMIT: i64 = 3;
 const DEADLINE_MIN: i64 = 60;
 const DEADLINE_MAX: i64 = 6 * 60 * 60;
 
-/// TS `leadTeamFor` 의 조회 — 이 계정이 팀장인 팀의 (팀, 팀원 handle).
-const LEAD_TEAM_SQL: &str = "select t.id::text, lower(a.handle)
-       from agent_team t
-       join agent_team_member tm on tm.team_id = t.id
-       join account a on a.id = tm.agent_account_id
-      where t.lead_account_id = $1::uuid";
+/// 문장(팀장 명단·대상·라운드)은 TS 상수를 골든으로 받는다(`golden/sql_fragments.json`).
+struct Sql {
+    lead_team: String,
+    targets: String,
+    rounds: String,
+}
 
-/// TS `openDelegationTargets` 의 대상 조회.
-const TARGETS_SQL: &str = "select id::text, lower(handle) from account
-      where kind = 'agent' and deleted_at is null and lower(handle) = any($1::text[])";
-
-/// TS `roundsUsedMany` 를 한 쌍으로 — 사람의 마지막 발화 뒤 이 팀장이 이 스레드에서 만든 위임 수.
-const ROUNDS_SQL: &str = "select count(*)::bigint
-       from team_delegation d
-      where d.thread_root_id = $1::uuid
-        and d.lead_account_id = $2::uuid
-        and d.kind = 'delegate'
-        and d.created_at > coalesce((
-          select max(m.created_at) from message m
-           join account a on a.id = m.author_id
-          where (m.thread_root_id = $1::uuid or (m.id = $1::uuid and m.thread_root_id is null))
-            and a.kind = 'human'
-            and m.deleted_at is null
-        ), 'epoch'::timestamptz)";
+fn sql() -> &'static Sql {
+    static S: OnceLock<Sql> = OnceLock::new();
+    S.get_or_init(|| {
+        let v: Value = serde_json::from_str(include_str!("../../../golden/sql_fragments.json"))
+            .expect("golden/sql_fragments.json");
+        let frag = |k: &str| {
+            v[k].as_str()
+                .unwrap_or_else(|| panic!("golden fragment {k}"))
+                .to_string()
+        };
+        Sql {
+            lead_team: frag("delegate_lead_team"),
+            targets: frag("delegate_targets"),
+            rounds: frag("delegate_rounds_used"),
+        }
+    })
+}
 
 #[derive(Debug, PartialEq, Eq)]
 struct Args {
@@ -126,11 +127,16 @@ pub async fn answer(pool: &PgPool, me: &Account, args: &Value) -> Option<String>
     if wanted.contains(&mine) {
         return Some(err("self_delegation", "you cannot delegate to yourself"));
     }
-    let team: Vec<(String, String)> = sqlx::query_as(LEAD_TEAM_SQL)
+    // TS `leadTeamFor` — (팀, handle, 계정, 꺼짐). handle 은 TS 처럼 읽은 뒤 소문자로.
+    let rows: Vec<(String, String, String, bool)> = sqlx::query_as(&*sql().lead_team)
         .bind(&me.id)
         .fetch_all(pool)
         .await
         .ok()?;
+    let team: Vec<(String, String)> = rows
+        .into_iter()
+        .map(|(t, h, _, _)| (t, h.to_lowercase()))
+        .collect();
     if lead_team_covers(&team, &wanted) {
         return None;
     }
@@ -138,16 +144,16 @@ pub async fn answer(pool: &PgPool, me: &Account, args: &Value) -> Option<String>
         return Some(err("not_agent", "only agents delegate"));
     }
     let mut conn = pool.acquire().await.ok()?;
-    let rows: Vec<(String, String)> = sqlx::query_as(TARGETS_SQL)
+    let rows: Vec<(String, String, bool)> = sqlx::query_as(&*sql().targets)
         .bind(&wanted)
         .fetch_all(&mut *conn)
         .await
         .ok()?;
     let by_handle: HashMap<&str, &str> = rows
         .iter()
-        .map(|(id, h)| (h.as_str(), id.as_str()))
+        .map(|(id, h, _)| (h.as_str(), id.as_str()))
         .collect();
-    let ids: Vec<String> = rows.iter().map(|(id, _)| id.clone()).collect();
+    let ids: Vec<String> = rows.iter().map(|(id, _, _)| id.clone()).collect();
     let facts = invoke_gate::invoke_facts(&mut conn, &ids).await.ok()?;
     let ctx = Ctx {
         caller_id: &me.id,
@@ -180,12 +186,14 @@ pub async fn answer(pool: &PgPool, me: &Account, args: &Value) -> Option<String>
         );
         return Some(super::respond::text_result(&body));
     }
-    let used: i64 = sqlx::query_scalar(ROUNDS_SQL)
-        .bind(&a.root)
-        .bind(&me.id)
+    // TS `roundsUsed` = `roundsUsedMany` 에 한 쌍 — (순번, 수) 한 줄.
+    let (_, used): (i32, i32) = sqlx::query_as(&*sql().rounds)
+        .bind(vec![a.root.clone()])
+        .bind(vec![me.id.clone()])
         .fetch_one(pool)
         .await
         .ok()?;
+    let used = i64::from(used);
     if used >= TEAM_ROUND_LIMIT {
         return Some(err(
             "round_limit",
@@ -202,6 +210,14 @@ pub async fn answer(pool: &PgPool, me: &Account, args: &Value) -> Option<String>
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn golden_sql_loads() {
+        let s = sql();
+        assert!(s.lead_team.contains("agent_team_member"));
+        assert!(s.targets.contains("lower(handle) = any($1::text[])"));
+        assert!(s.rounds.contains("with ordinality"));
+    }
 
     const C: &str = "11111111-1111-1111-1111-111111111111";
     const R: &str = "22222222-2222-2222-2222-222222222222";
