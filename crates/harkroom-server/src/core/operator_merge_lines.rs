@@ -8,7 +8,7 @@
 //! PUT 은 그 에이전트가 지금 배정된 오퍼레이터(폐기 안 됨)의 주인이어야 하고, 이름은 그 오퍼레이터가 마지막으로 알린
 //! 로그인 가운데 하나여야 한다. 답은 **보낸 그 오퍼레이터**에게서 온 `gh.lines.result` 만 받는다.
 use super::operator::OperatorCore;
-use crate::auth::{Auth, Via};
+use crate::auth::{Auth, RequireAccount, Via};
 use crate::directory::{internal, json_err};
 use crate::lists::is_zod_uuid;
 use crate::write::{AuditEntry, record_audit};
@@ -138,13 +138,13 @@ fn json_ok(v: &Value, no_store: bool) -> Response {
 }
 
 /// `GET /agents/{id}/merge-accounts`.
+///
+/// 계정 없이 오면 TS `requireAccount` 처럼 401 이다(추출기가 먼저 막는다).
 pub async fn get_accounts(
     State(core): State<Arc<OperatorCore>>,
     Path(agent_id): Path<String>,
-    req: Request,
+    RequireAccount(_, auth): RequireAccount,
 ) -> Response {
-    let (parts, _) = req.into_parts();
-    let auth = parts.extensions.get::<Auth>().cloned().unwrap_or_default();
     if !is_zod_uuid(&agent_id) {
         return bad("bad_request", "agent id must be a uuid");
     }
@@ -217,13 +217,15 @@ async fn wait_result(
 }
 
 /// `PUT /agents/{id}/merge-accounts/lines` — body `{ scope, ghUser | null }`.
+///
+/// 계정 없이 오면 TS `requireAccount` 처럼 401 이다(추출기가 먼저 막는다).
 pub async fn put_line(
     State(core): State<Arc<OperatorCore>>,
     Path(agent_id): Path<String>,
+    RequireAccount(_, auth): RequireAccount,
     req: Request,
 ) -> Response {
     let (parts, body) = req.into_parts();
-    let auth = parts.extensions.get::<Auth>().cloned().unwrap_or_default();
     if !is_zod_uuid(&agent_id) {
         return bad("bad_request", "agent id must be a uuid");
     }
@@ -251,7 +253,9 @@ pub async fn put_line(
         _ => return body_err(),
     };
     // 로컬 앱과 같은 범위 규칙 — 정확한 `owner/name` 또는 조직 전체 `owner/*`.
-    let Some(scope) = super::mcp::grant_writes::repo_grant_scope(&raw_scope.trim().to_lowercase())
+    // 받은 글자를 그대로 넘긴다 — 유니코드 소문자화를 먼저 하면 켈빈 기호(U+212A) 같은 글자가 ASCII 로 접혀
+    // 통과한다. `repo_grant_scope` 는 앞뒤 공백만 떼고 ASCII 만 소문자로 바꾸니 그런 글자는 거절된다.
+    let Some(scope) = super::mcp::grant_writes::repo_grant_scope(raw_scope)
         .map(|s| s["repo:".len()..].to_owned())
     else {
         return bad("bad_scope", "scope 는 owner/name 이나 owner/* 여야 한다");
