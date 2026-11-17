@@ -469,6 +469,27 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 AC2 — `GET /accounts/agents/{id}/memory`·`…/memory/{slug}/revisions`. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 읽기 풀에 그 SELECT 가 다 있을 때만. 정리 후보·백그라운드·기억 쓰기는 언제나 TS.
+    let agent_memory_read_on = match &core_mode {
+        harkroom_server::core::CoreMode::Rust => {
+            use harkroom_server::core::agent_memory_read as t;
+            match write::missing_in(&state.pool, t::AGENT_MEMORY_READ_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => true,
+                Ok(m) => {
+                    eprintln!("front: agent memory read core off — missing privileges {m:?}");
+                    false
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: agent memory read core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    false
+                }
+            }
+        }
+        _ => false,
+    };
     // C3b-2b-2 — MCP `message.askBundle` 있던 묶음에 줄 더하기. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 묶음 푸시까지 그 권한이 다 있을 때만.
     let bundle_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -1125,6 +1146,17 @@ async fn main() {
             core_routes.router = core_routes.router.merge(cr.router);
             core_routes.http.extend(cr.http);
             core_routes.sockets.extend(cr.sockets);
+        }
+        // S5.4 AC2 — 에이전트 기억 읽기 2줄. 권한이 있을 때만 — 아니면 TS 에 남는다(정리 후보·백그라운드·기억 쓰기는 언제나 TS).
+        if agent_memory_read_on {
+            let am = harkroom_server::core::agent_memory_read::routes(
+                state.pool.clone(),
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(am.router);
+            core_routes.http.extend(am.http);
+            core_routes.sockets.extend(am.sockets);
         }
         // C3a-2 — 지우기·「채널에도 보이기」 켜고 끄기. 쓰기 풀에 그 권한이 다 있을 때만 — 아니면 TS 에 남는다.
         if let Some(write) = delete_write {

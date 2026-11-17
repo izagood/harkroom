@@ -4294,6 +4294,99 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         await db.pool.query('delete from channel where id = any($1)', [[pubCh.id, privCh.id, emptyCh.id]]);
       }
 
+      // S5.4 AC2 — 에이전트 기억 읽기(코어 `agent_memory_read.rs`). 두 서버의 답을 견준다. 소유자·admin 만 읽고, 에이전트 자신·남·익명은
+      // 같은 거절 갈래다. 정리 후보(audit)·백그라운드·기억 쓰기는 TS 에 남는다. 거절 답 어디에도 기억 본문이 새지 않는지 본다.
+      {
+        for (const k of ['GET /accounts/agents/{id}/memory', 'GET /accounts/agents/{id}/memory/{slug}/revisions']) {
+          expect(f.log(), k).toContain(`"${k}"`);
+        }
+        expect(f.log()).not.toContain('agent memory read core off');
+        for (const k of ['GET /accounts/agents/{id}/memory/audit', 'GET /accounts/agents/{id}/background', 'GET /accounts/agents/{id}/background/runs/{runId}']) {
+          expect(f.log(), `${k} 는 TS 에 남는다`).not.toContain(`"${k}"`);
+        }
+        const M = member.token;
+        const M2 = member2.token;
+        const ins = async (q: string, p: unknown[] = []) => (await db.pool.query<{ id: string }>(q, p)).rows[0]!.id;
+        const owned = await ins(`insert into account (handle, display_name, kind) values ('ac2_owned', 'ac2_owned', 'agent') returning id`);
+        const orphan = await ins(`insert into account (handle, display_name, kind) values ('ac2_orphan', 'ac2_orphan', 'agent') returning id`);
+        const goneBot = await ins(`insert into account (handle, display_name, kind, deleted_at) values ('ac2_gone', 'ac2_gone', 'agent', now()) returning id`).catch(() => null);
+        await db.pool.query('insert into agent_config (account_id, owner_account_id) values ($1, $2)', [owned, member.accountId]);
+        if (goneBot) await db.pool.query('insert into agent_config (account_id, owner_account_id) values ($1, $2)', [goneBot, member.accountId]);
+        for (const bot of [owned, orphan, agent.accountId]) {
+          await db.pool.query(
+            `insert into agent_memory (account_id, slug, value, description, kind, updated_at, created_at, read_count, last_read_at,
+               recall_count, flagged_at, flag_reason, archived_at)
+             values ($1, 'b-topic', 'AC2SECRET b', 'desc b', 'topic', now() - interval '1 hour 0.123456 seconds', now() - interval '2 days', 3,
+               now() - interval '5 minutes', 2, now() - interval '1 minute', 'looks odd', null),
+                    ($1, 'a-core', 'AC2SECRET a', null, 'procedure', now(), now(), 0, null, 0, null, null, now() - interval '3 seconds'),
+                    ($1, '한글-슬러그', 'AC2SECRET 한', '', 'topic', now(), now(), 0, null, 0, null, null, null)`, [bot]);
+          await db.pool.query(
+            `insert into agent_memory_revision (account_id, slug, value, description, updated_at, replaced_at, flagged, kind, reason, detail)
+             values ($1, 'b-topic', 'AC2SECRET r1', 'old', now() - interval '3 hours', now() - interval '2 hours 0.5 seconds', false, 'topic', null, null),
+                    ($1, 'b-topic', 'AC2SECRET r2', null, now() - interval '2 hours', now() - interval '1 hour', true, null, 'merge', '{"created": true, "from": ["x", "y"]}'),
+                    ($1, 'b-topic', 'AC2SECRET r3', null, now() - interval '2 hours', now() - interval '1 hour', false, 'journal', 'restore', '{}'),
+                    ($1, '한글-슬러그', 'AC2SECRET r4', null, now(), now(), false, 'topic', null, null)`, [bot]);
+        }
+        const refused: unknown[] = [];
+        const both = async (path: string, token: string) => {
+          const [x, y] = [await callX(tsUrl, 'GET', path, undefined, token), await callX(rsUrl, 'GET', path, undefined, token)];
+          expect(y.status, path).toBe(x.status);
+          if (x.status === 200) expect(y.json, path).toEqual(x.json);
+          else {
+            expect(y.code, path).toBe(x.code);
+            refused.push(y.json, x.json);
+          }
+          return y;
+        };
+        const mem = (id: string) => `/accounts/agents/${id}/memory`;
+        const rev = (id: string, slug: string) => `/accounts/agents/${id}/memory/${encodeURIComponent(slug)}/revisions`;
+        const mine = await both(mem(owned), M);
+        expect(mine.status).toBe(200);
+        expect((mine.json.memories as { slug: string }[]).map((m) => m.slug)).toEqual(['a-core', 'b-topic', '한글-슬러그']);
+        expect(Object.keys((mine.json.memories as object[])[1]!)).toEqual(['slug', 'value', 'updatedAt', 'description', 'createdAt', 'readCount',
+          'lastReadAt', 'kind', 'recallCount', 'lastRecalledAt', 'flaggedAt', 'flagReason', 'archivedAt']);
+        expect((await both(rev(owned, 'b-topic'), M)).json.revisions).toHaveLength(3);
+        expect((await both(rev(owned, '한글-슬러그'), M)).json.revisions).toHaveLength(1);
+        expect((await both(rev(owned, 'nope'), M)).json).toEqual({ revisions: [] });
+        await both(mem(owned), A);
+        await both(rev(owned, 'b-topic'), A);
+        await both(mem(orphan), A);
+        await both(rev(orphan, 'b-topic'), A);
+        await both(mem(owned.toUpperCase()), M);
+        if (goneBot) await both(mem(goneBot), M);
+        const empty = await ins(`insert into account (handle, display_name, kind) values ('ac2_empty', 'ac2_empty', 'agent') returning id`);
+        await db.pool.query('insert into agent_config (account_id, owner_account_id) values ($1, $2)', [empty, member.accountId]);
+        expect((await both(mem(empty), M)).json).toEqual({ memories: [] });
+        for (const [path, token, status] of [
+          [mem(owned), M2, 403], // 남
+          [rev(owned, 'b-topic'), M2, 403],
+          [mem(orphan), M, 403], // 소유자 없는 에이전트 — admin 만
+          [rev(orphan, 'b-topic'), M, 403],
+          [mem(agent.accountId), agent.pat, 403], // 에이전트 자신
+          [rev(agent.accountId, 'b-topic'), agent.pat, 403],
+          [mem(owned), agent.pat, 403],
+          [mem(ghost), M, 404],
+          [mem(ghost), A, 404],
+          [mem(member.accountId), A, 404], // 사람 계정
+          [rev(member.accountId, 'b-topic'), A, 404],
+          [rev(owned, 'x'.repeat(256)), M, 400],
+          [rev(owned, 'x'.repeat(256)), M2, 403],
+          [mem(owned), '', 401],
+          [rev(owned, 'b-topic'), '', 401],
+        ] as const) {
+          const y = await both(path, token);
+          if (status !== null) expect(y.status, path).toBe(status);
+        }
+        // uuid 가 아닌 id 는 견주지 않는다 — TS 는 인가 조회가 pg 오류로 500, Rust 는 404/400 이다.
+        const leak = JSON.stringify(refused);
+        expect(leak).not.toContain('AC2SECRET');
+        expect(leak).not.toContain('b-topic');
+        await db.pool.query('delete from agent_memory_revision where account_id = any($1)', [[owned, orphan, agent.accountId]]);
+        await db.pool.query('delete from agent_memory where account_id = any($1)', [[owned, orphan, agent.accountId]]);
+        await db.pool.query('delete from agent_config where account_id = any($1)', [[owned, empty, goneBot].filter(Boolean)]);
+        await db.pool.query('delete from account where id = any($1)', [[owned, orphan, empty, goneBot].filter(Boolean)]);
+      }
+
       // S5.2 P4d — 옮긴 라우트를 지난 요청도 세션을 늘리고 PAT 사용 시각을 남긴다(쓰기 풀로). 읽기 역할로 하면 조용히 실패하던 것.
       await db.pool.query(`update session set expires_at = now() + interval '1 day' where account_id = $1`, [member.accountId]);
       await db.pool.query(`update pat set last_used_at = now() - interval '1 hour' where account_id = $1`, [agent.accountId]);
