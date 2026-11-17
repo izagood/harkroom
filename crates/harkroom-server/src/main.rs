@@ -1901,7 +1901,8 @@ async fn open_write_pool() -> Option<sqlx::PgPool> {
 /// 요청과 나눠 쓴다. 이 풀이 막혀도 요청은 막히지 않는다. 권한([`loops::wake::WAKE_PRIVILEGES`])이 모자라면 띄우지 않는다(TS 에 남는다).
 async fn spawn_loops() {
     use harkroom_server::loops::{
-        bg, bg_produce, mandate_idle, outbox_prune, permission_expire, retention, scheduled, wake,
+        bg, bg_produce, delegation_deadline, mandate_idle, outbox_prune, permission_expire,
+        retention, scheduled, wake,
     };
     let Some(url) = std::env::var("DATABASE_WRITE_URL")
         .ok()
@@ -1976,6 +1977,28 @@ async fn spawn_loops() {
         }
         Ok(m) => eprintln!("front: loop permission.expire off — missing privileges {m:?}"),
         Err(e) => eprintln!("front: loop permission.expire off — privilege check failed: {e}"),
+    }
+    // S5.4 L1 — 위임 기한 스윕. 스위치(`HARKROOM_DELEGATION_V2`) 값을 모르면 v0/v1 을 못 고르므로 띄우지 않는다(TS 에 남는다).
+    match delegation_deadline::v2_switch(std::env::var("HARKROOM_DELEGATION_V2").ok().as_deref()) {
+        None => eprintln!("front: loop delegation.deadline off — HARKROOM_DELEGATION_V2 unset"),
+        Some(v2) => match write::missing_in(
+            &pool,
+            delegation_deadline::DELEGATION_DEADLINE_PRIVILEGES,
+            delegation_deadline::DELEGATION_DEADLINE_SEQUENCE_PRIVILEGES,
+        )
+        .await
+        {
+            Ok(m) if m.is_empty() => {
+                eprintln!(
+                    "front: loop delegation.deadline on (v2={v2}; runs only while server_loop owner is rust)"
+                );
+                delegation_deadline::spawn(gate.clone(), pool.clone(), v2);
+            }
+            Ok(m) => eprintln!("front: loop delegation.deadline off — missing privileges {m:?}"),
+            Err(e) => {
+                eprintln!("front: loop delegation.deadline off — privilege check failed: {e}")
+            }
+        },
     }
     // C5c-4 — event_outbox 정리(보존 5분이 지난 줄, 1분마다). 문지기 이름 `outbox.prune`.
     match write::missing_in(&pool, outbox_prune::OUTBOX_PRUNE_PRIVILEGES, &[]).await {
