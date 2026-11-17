@@ -6,6 +6,7 @@
 //! - 등록 코드 → claim → 토큰. 같은 코드 두 번은 401. 이름이 틀리면 400.
 //! - 같은 오퍼레이터의 두 번째 소켓은 앞 소켓을 4409 로 밀어낸다(TS operatorHub 와 같음).
 //! - hello 의 version 이 `operator.version` 에, 프레임을 받으면 `last_seen_at` 이 적힌다.
+//! - hello 마다 그 오퍼레이터의 배정을 다시 민다(assign → assign.synced). 재접속에도, 종료 요청이 걸린 에이전트는 빼고.
 //! - claim `replaces` 는 옛 행을 폐기하고 배정을 옮기며, 옛 소켓은 4401 로 끊긴다.
 //! - PATCH 로 이름(label)을 바꾸고, DELETE 로 폐기하면 소켓이 4401 로 끊기고 그 토큰은 더 쓰이지 않는다.
 //! - DB 에서 직접 폐기한 것(TS 쪽이 폐기한 경우)도 재검증 주기 안에 4401 로 끊긴다.
@@ -50,6 +51,25 @@ async fn close_code(ws: &mut Ws) -> Option<u16> {
     })
     .await
     .expect("close within 10s")
+}
+
+/// 그 타입의 서버 프레임이 올 때까지 읽는다(앞에 온 프레임은 모아 돌려준다).
+async fn until_frame(ws: &mut Ws, ty: &str) -> (Value, Vec<Value>) {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let mut seen = Vec::new();
+        while let Some(m) = ws.next().await {
+            if let Ok(Message::Text(t)) = m {
+                let v: Value = serde_json::from_str(t.as_str()).unwrap();
+                if v["type"] == ty {
+                    return (v, seen);
+                }
+                seen.push(v);
+            }
+        }
+        panic!("socket ended before {ty}");
+    })
+    .await
+    .expect("frame within 10s")
 }
 
 /// 조건이 설 때까지 DB 를 본다(쓰기는 기다리지 않고 띄워 두므로).
@@ -293,6 +313,17 @@ async fn fake_operator_against_real_schema() {
         .await,
         "last_seen_at written"
     );
+    // ---- hello → 배정 재전송(assign 들 → assign.synced{agentIds}, TS assignmentRoutes onFrame) ----
+    let (synced, before) = until_frame(&mut a, "assign.synced").await;
+    assert_eq!(synced["agentIds"], json!([agent]), "{synced}");
+    let assigns: Vec<&Value> = before.iter().filter(|f| f["type"] == "assign").collect();
+    assert_eq!(assigns.len(), 1, "{before:?}");
+    assert_eq!(assigns[0]["agentId"], json!(agent));
+    let def = &assigns[0]["definition"];
+    assert_eq!(def["agentId"], json!(agent), "{def}");
+    assert_eq!(def["harness"], "claude-code", "{def}");
+    assert_eq!(def["mcpServers"], json!([]), "{def}");
+    assert_eq!(def["credentialScope"], "none", "{def}");
     let (s, me) = req(&base, Method::GET, "/operators/self", Some(&tok1), "").await;
     assert_eq!(s, StatusCode::OK, "{me}");
     assert_eq!(me["id"].as_str(), Some(op1.as_str()), "{me}");
@@ -303,6 +334,33 @@ async fn fake_operator_against_real_schema() {
         Some(4409),
         "older socket replaced"
     );
+    // ---- 재접속 → assign 재전송. 종료 요청이 걸린 에이전트는 밀지 않는다(synced 는 빈 목록) ----
+    b.send(Message::Text(json!({ "type": "hello" }).to_string().into()))
+        .await
+        .unwrap();
+    let (synced, before) = until_frame(&mut b, "assign.synced").await;
+    assert_eq!(synced["agentIds"], json!([agent]), "reconnect resends");
+    assert!(
+        before
+            .iter()
+            .any(|f| f["type"] == "assign" && f["agentId"] == json!(agent))
+    );
+    sqlx::query("insert into agent_config(account_id, stop_requested_at) values ($1::uuid, now()) on conflict (account_id) do update set stop_requested_at = now()")
+        .bind(&agent)
+        .execute(&pool)
+        .await
+        .unwrap();
+    b.send(Message::Text(json!({ "type": "hello" }).to_string().into()))
+        .await
+        .unwrap();
+    let (synced, before) = until_frame(&mut b, "assign.synced").await;
+    assert_eq!(synced["agentIds"], json!([]), "stopped agent not resent");
+    assert!(!before.iter().any(|f| f["type"] == "assign"), "{before:?}");
+    sqlx::query("update agent_config set stop_requested_at = null where account_id = $1::uuid")
+        .bind(&agent)
+        .execute(&pool)
+        .await
+        .unwrap();
 
     // ---- 목록·이름 바꾸기 ----
     let (s, list) = req(&base, Method::GET, "/operators", Some(&sess), "").await;
@@ -458,6 +516,10 @@ async fn fake_operator_against_real_schema() {
     for (sql, id) in [
         (
             "delete from agent_assignment where agent_id = $1::uuid",
+            &agent,
+        ),
+        (
+            "delete from agent_config where account_id = $1::uuid",
             &agent,
         ),
         (

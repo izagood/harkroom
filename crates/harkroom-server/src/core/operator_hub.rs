@@ -675,6 +675,11 @@ impl OperatorHub {
         }
     }
 
+    /// 지금 붙어 있는 오퍼레이터 id 전부 — hello 를 놓쳤을 때(구독 `Lagged`) 배정 재전송을 다시 거는 데 쓴다.
+    pub fn online_ids(&self) -> Vec<String> {
+        self.lock().live.keys().cloned().collect()
+    }
+
     pub fn is_online(&self, operator_id: &str) -> bool {
         self.lock().live.contains_key(operator_id)
     }
