@@ -1258,6 +1258,12 @@ class StringsEn implements Strings {
   @override
   String get messageCopyFailed => 'Could not copy';
   @override
+  String get codeCopy => 'Copy';
+  @override
+  String get codeCopied => 'Copied';
+  @override
+  String get codeCopiedToast => 'Code copied';
+  @override
   String get messageMarkUnread => 'Mark unread from here';
   @override
   String get messageMarkedUnread => 'Marked unread';

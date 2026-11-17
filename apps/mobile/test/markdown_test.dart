@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harkroom/markdown/markdown.dart';
 import 'package:harkroom/markdown/markdown_view.dart';
@@ -619,6 +620,76 @@ void main() {
       await tester.pump();
       await tester.pump();
       expect(linkSpan(tester).style!.backgroundColor, isNull);
+    });
+  });
+
+  group('코드 블록 복사', () {
+    Widget host(Widget child) => MaterialApp(
+          theme: harkroomTheme(Brightness.light),
+          home: I18n(strings: stringsFor('ko'), child: Scaffold(body: child)),
+        );
+
+    /// 클립보드·햅틱 플랫폼 호출을 가로챈다.
+    (List<String>, List<String>) fakePlatform(WidgetTester tester) {
+      final copied = <String>[];
+      final haptics = <String>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        if (call.method == 'Clipboard.setData') copied.add((call.arguments as Map)['text'] as String);
+        if (call.method == 'HapticFeedback.vibrate') haptics.add(call.arguments as String);
+        return null;
+      });
+      addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null));
+      return (copied, haptics);
+    }
+
+    testWidgets('가로로 넘치는 긴 줄도 원문 전부를 담고, 체크·토스트·햅틱으로 알린 뒤 1.5초에 돌아온다', (tester) async {
+      tester.view.physicalSize = const Size(390 * 3, 844 * 3);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      final (copied, haptics) = fakePlatform(tester);
+      final long = 'curl -fsSL https://a.example.com/${'x' * 400} | sh';
+      final code = '$long\n  들여쓴 둘째 줄\n\n마지막';
+      await tester.pumpWidget(host(MarkdownBody('앞\n```bash\n$code\n```\n뒤')));
+      expect(find.byKey(const Key('code-lang')), findsOneWidget);
+      expect(find.text('복사'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('code-copy')));
+      await tester.pump();
+      expect(copied, [code]);
+      expect(haptics, ['HapticFeedbackType.lightImpact']);
+      expect(find.byKey(const Key('code-copy-done')), findsOneWidget);
+      expect(find.text('복사됨'), findsOneWidget);
+      expect(find.byKey(const Key('code-copied')), findsOneWidget);
+      expect(find.text('코드를 복사했다'), findsOneWidget);
+
+      await tester.pump(const Duration(milliseconds: 1600));
+      expect(find.byKey(const Key('code-copy-idle')), findsOneWidget);
+      expect(find.text('복사'), findsOneWidget);
+      await tester.pumpAndSettle(const Duration(seconds: 3));
+    });
+
+    testWidgets('언어가 없어도 머리 줄과 버튼이 서고, 블록마다 제 것만 담는다', (tester) async {
+      final (copied, _) = fakePlatform(tester);
+      await tester.pumpWidget(host(const MarkdownBody('```\n하나\n```\n\n```\n둘\n```')));
+      expect(find.byKey(const Key('code-lang')), findsNothing);
+      expect(find.byKey(const Key('code-copy')), findsNWidgets(2));
+      await tester.tap(find.byKey(const Key('code-copy')).last);
+      await tester.pump();
+      expect(copied, ['둘']);
+      await tester.pumpAndSettle(const Duration(seconds: 3));
+    });
+
+    testWidgets('VoiceOver 이름은 눌린 뒤에도 「복사」다', (tester) async {
+      fakePlatform(tester);
+      final h = tester.ensureSemantics();
+      await tester.pumpWidget(host(const MarkdownBody('```\nx\n```')));
+      expect(find.bySemanticsLabel('복사'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('code-copy')));
+      await tester.pump();
+      expect(find.bySemanticsLabel('복사'), findsOneWidget);
+      expect(find.bySemanticsLabel('복사됨'), findsNothing);
+      await tester.pumpAndSettle(const Duration(seconds: 3));
+      h.dispose();
     });
   });
 }

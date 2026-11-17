@@ -812,6 +812,8 @@ Future<void> copyMessage(BuildContext context, MessageRow message, MessageCopy w
     if (context.mounted) showFailureToast(context, t.messageCopyFailed);
     return;
   }
+  // 손끝 확인. 코드 블록 [복사] 와 같은 세기다(`CodeBlock`).
+  HapticFeedback.lightImpact().ignore();
   // 짧은 확인. 앞의 토스트를 밀어내고 선다 — 연달아 복사하면 마지막 것이 보여야 한다.
   messenger
     ..removeCurrentSnackBar()
