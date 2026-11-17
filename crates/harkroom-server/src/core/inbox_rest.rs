@@ -3,7 +3,9 @@
 //! - 갈래는 TS 와 같다: `since`·`unread` 가 없으면 최신 [`INBOX_PAGE_LIMIT`] 줄 + `truncated`(`before` 커서), 있으면 전부.
 //! - 읽기 풀만 쓴다(SELECT). 인증(401)은 층이 먼저 본다.
 //! - **답하지 않고 읽은 요청 그대로 TS 로 넘기는 것**(보수적으로):
-//!   - `threads` 키가 있으면 — 스레드 머리·처리 상태(`listInboxThreads`·`listInboxThreadStates`)는 아직 옮기지 않았다(MS2c 와 같이).
+//! - `threads=1` 이면 스레드 머리·처리 상태(`threads`·`threadStates`)도 싣는다 — [`super::inbox_threads`](S5.4 MS2c). 키 차례는 TS
+//!   `{ entries, threads, threadStates, ...extra }` 그대로(`truncated` 가 맨 끝).
+//!   - `threads` 가 `1` 이 아니면 — zod `enum(['1'])` 의 400 은 TS 가 낸다.
 //!   - 위임 v2 스위치(`HARKROOM_DELEGATION_V2`) 값이 없으면 — 켜진 서버는 줄마다 위임 요약(`delegations`)을 싣는데, 값이 없으면
 //!     TS 의 env 를 모르므로 넘긴다(`msg_post` 와 같은 판단). 켜짐·꺼짐이 적혀 있으면 Rust 가 그대로 답한다(MS2b-2).
 //!   - 형식이 zod 와 정확히 맞는지 확신할 수 없는 값 — `unread` 가 `1`·`true` 가 아님(zod `coerce.boolean` 은 `"0"`·`"false"` 도
@@ -12,6 +14,7 @@ use crate::auth::RequireAccount;
 use crate::core::inbox_list::{
     INBOX_PAGE_LIMIT, InboxQuery, InboxRow, list_inbox, list_inbox_newest,
 };
+use crate::core::inbox_threads::{thread_heads, thread_states};
 use crate::core::mcp::respond::minify;
 use crate::directory::{internal, json_ok};
 use crate::proxy::Upstream;
@@ -34,6 +37,7 @@ struct Q {
     unread: bool,
     since: Option<i64>,
     before: Option<i64>,
+    threads: bool,
 }
 
 /// 음 아닌 정수 — 숫자만, 15자리까지(`Number.MAX_SAFE_INTEGER` 안). 그 밖은 `None`(→ TS).
@@ -50,6 +54,7 @@ fn parse(raw: Option<&str>) -> Option<Q> {
         unread: false,
         since: None,
         before: None,
+        threads: false,
     };
     let mut seen: Vec<String> = Vec::new();
     for (k, v) in url::form_urlencoded::parse(raw.unwrap_or("").as_bytes()) {
@@ -60,7 +65,10 @@ fn parse(raw: Option<&str>) -> Option<Q> {
         }
         seen.push(k.clone());
         match k.as_str() {
-            "threads" => return None,
+            "threads" => match v.as_ref() {
+                "1" => q.threads = true,
+                _ => return None,
+            },
             "unread" => match v.as_ref() {
                 "1" | "true" => q.unread = true,
                 _ => return None,
@@ -87,6 +95,19 @@ fn entries(rows: &[InboxRow]) -> String {
     parts.join(",")
 }
 
+/// `threads=1` 의 덧붙임 — `,"threads":[…],"threadStates":[…]`. 처리 상태는 실린 머리의 것만(TS 와 같다, security F1).
+async fn threads_part(pool: &PgPool, me: &str, rows: &[InboxRow]) -> sqlx::Result<String> {
+    let heads = thread_heads(pool, me, rows.iter().map(|r| r.root.clone())).await?;
+    let ids: Vec<String> = heads.iter().map(|(_, id)| id.clone()).collect();
+    let states = thread_states(pool, me, &ids).await?;
+    let bodies: Vec<&str> = heads.iter().map(|(b, _)| b.as_str()).collect();
+    Ok(format!(
+        ",\"threads\":[{}],\"threadStates\":[{}]",
+        bodies.join(","),
+        states.join(",")
+    ))
+}
+
 async fn inbox(
     State(st): State<Arc<InboxRestState>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
@@ -102,23 +123,42 @@ async fn inbox(
     };
     // TS `capped = since === undefined && unread !== true`.
     if q.since.is_none() && !q.unread {
-        return match list_inbox_newest(&st.pool, &me.id, INBOX_PAGE_LIMIT, q.before, v2).await {
-            Ok((rows, truncated)) => json_ok(format!(
-                "{{\"entries\":[{}],\"truncated\":{truncated}}}",
-                entries(&rows)
-            )),
-            Err(e) => internal(e),
+        let (rows, truncated) =
+            match list_inbox_newest(&st.pool, &me.id, INBOX_PAGE_LIMIT, q.before, v2).await {
+                Ok(v) => v,
+                Err(e) => return internal(e),
+            };
+        let extra = if q.threads {
+            match threads_part(&st.pool, &me.id, &rows).await {
+                Ok(t) => t,
+                Err(e) => return internal(e),
+            }
+        } else {
+            String::new()
         };
+        return json_ok(format!(
+            "{{\"entries\":[{}]{extra},\"truncated\":{truncated}}}",
+            entries(&rows)
+        ));
     }
     let query = if q.unread {
         InboxQuery::Unread { since: q.since }
     } else {
         InboxQuery::Since(q.since.unwrap_or(0))
     };
-    match list_inbox(&st.pool, &me.id, query, v2).await {
-        Ok(rows) => json_ok(format!("{{\"entries\":[{}]}}", entries(&rows))),
-        Err(e) => internal(e),
-    }
+    let rows = match list_inbox(&st.pool, &me.id, query, v2).await {
+        Ok(rows) => rows,
+        Err(e) => return internal(e),
+    };
+    let extra = if q.threads {
+        match threads_part(&st.pool, &me.id, &rows).await {
+            Ok(t) => t,
+            Err(e) => return internal(e),
+        }
+    } else {
+        String::new()
+    };
+    json_ok(format!("{{\"entries\":[{}]{extra}}}", entries(&rows)))
 }
 
 /// 코어 라우터에 합칠 줄 — `search_rest.rs` 와 같은 길(인증은 `route_layer`, CORS 는 `layer`).
@@ -159,10 +199,12 @@ mod tests {
             InboxRow {
                 id: 1,
                 body: r#"{"id" : 26, "body" : "<@a> 자동화 목록 보여 줘", "meta" : {}, "readAt" : null}"#.into(),
+                root: "r".into(),
             },
             InboxRow {
                 id: 2,
                 body: r#"{"id" : 27, "delegation" : {"lead" : "x"}}"#.into(),
+                root: "r".into(),
             },
         ];
         assert_eq!(
@@ -177,6 +219,7 @@ mod tests {
             unread,
             since,
             before,
+            threads: false,
         };
         assert_eq!(parse(None), Some(q(false, None, None)));
         assert_eq!(parse(Some("")), Some(q(false, None, None)));
@@ -191,14 +234,23 @@ mod tests {
             parse(Some("since=999999999999999")),
             Some(q(false, Some(999_999_999_999_999), None))
         );
+        let t = |unread| Q {
+            unread,
+            since: None,
+            before: None,
+            threads: true,
+        };
+        assert_eq!(parse(Some("threads=1")), Some(t(false)));
+        assert_eq!(parse(Some("unread=1&threads=1")), Some(t(true)));
     }
 
     #[test]
     fn doubtful_queries_go_to_ts() {
         for raw in [
-            "threads=1",
             "threads=0",
-            "unread=1&threads=1",
+            "threads=",
+            "threads=true",
+            "threads=1&threads=1",
             "unread=0",
             "unread=false",
             "unread=",

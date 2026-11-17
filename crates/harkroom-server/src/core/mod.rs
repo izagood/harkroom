@@ -34,6 +34,7 @@ pub mod inbox_list;
 pub mod inbox_read;
 pub mod inbox_rest;
 pub mod inbox_thread;
+pub mod inbox_threads;
 pub mod invoke_gate;
 pub mod mandate_card_thread;
 pub mod mandate_line_write;
