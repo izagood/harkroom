@@ -31,6 +31,7 @@ pub mod decide_check;
 pub mod decide_core;
 pub mod decide_routes;
 pub mod delegate_write;
+pub mod dm_open;
 pub mod events;
 pub mod grant_reads;
 pub mod implicit_delegation;

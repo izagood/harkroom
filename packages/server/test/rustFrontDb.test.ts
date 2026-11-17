@@ -4860,6 +4860,110 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         await db.pool.query('delete from channel where id = any($1)', [[taken.id, own.id]]);
       }
 
+      // S5.4 CH4b-1 — DM 열기(코어 `dm_open.rs`). 같은 처음 상태에서 같은 요청 줄을 TS 로 한 번, Rust 로 한 번 보내고 답·행·멤버가
+      // 같은지 본다. 이미 있는 DM 은 차단·게이트를 보지 않고 그대로 돌려준다. 새 DM 만 차단(dm_unavailable)·호출 게이트(agent_not_invokable)를 본다.
+      // 같은 묶음의 동시 요청은 DM 을 하나만 만든다(참여자 묶음 잠금). 멤버 추가·빼기는 아직 TS 다(CH4b-2).
+      {
+        expect(f.log(), 'POST /dms').toContain('"POST /dms"');
+        expect(f.log()).not.toContain('dm open core off');
+        for (const k of ['POST /channels/{id}/members', 'DELETE /channels/{id}/members/{accountId}']) {
+          expect(f.log(), `${k} 는 TS 에 남는다`).not.toContain(`"${k}"`);
+        }
+        const M = member.token;
+        const human = async (h: string) => (await db.pool.query<{ id: string }>(
+          `insert into account(handle, display_name, kind, login_id) values ($1, $1, 'human', $1) returning id::text as id`, [h])).rows[0]!.id;
+        const [h1, h2, h3, h4] = [await human('ch4b_h1'), await human('ch4b_h2'), await human('ch4b_h3'), await human('ch4b_h4')];
+        // 이미 있는 DM 두 개 — h4 는 이 DM 이 생긴 뒤에 member 를 막았다(있는 DM 은 그대로 돌려준다).
+        const pre1 = (await getOrCreateDm(db.pool, [member.accountId, h1])).id;
+        const pre2 = (await getOrCreateDm(db.pool, [member.accountId, h4])).id;
+        await db.pool.query('insert into account_block (blocker_id, blocked_id) values ($1, $2), ($3, $2)', [h3, member.accountId, h4]);
+        const scope = (await db.pool.query(`select invoke_scope from agent_config where account_id = $1`, [bot2.accountId])).rows[0]?.invoke_scope as string | undefined;
+        await db.pool.query(`update agent_config set invoke_scope = 'owner' where account_id = $1`, [bot2.accountId]);
+        const fixed = [pre1, pre2];
+        const t0 = String((await db.pool.query(`select now()::text as t`)).rows[0].t);
+        const made = async () => (await db.pool.query(`select id::text from channel where kind = 'dm' and created_at >= $1::timestamptz and not (id = any($2)) order by created_at, id`, [t0, fixed])).rows.map((r) => r.id as string);
+        const reset = async () => {
+          const ids = await made();
+          await db.pool.query('delete from channel_member where channel_id = any($1)', [ids]);
+          await db.pool.query('delete from channel where id = any($1)', [ids]);
+        };
+        const run = async (base: string) => {
+          await reset();
+          const out: unknown[] = [];
+          const call = async (body: unknown, token: string) => {
+            const r = await callX(base, 'POST', '/dms', body, token);
+            out.push({ status: r.status, json: r.status === 400 || r.status >= 500 ? null : r.json });
+            return r;
+          };
+          await call({ accountIds: [h2], extra: 1 }, M); // 새 DM → 201
+          await call({ accountIds: [h2] }, M); // 같은 DM 그대로 → 201
+          await call({ accountIds: [h2, h2, member.accountId] }, M); // 중복·자기 자신 → 같은 DM
+          await call({ accountIds: [h2, h1] }, M); // 셋짜리 새 DM
+          await call({ accountIds: [h1] }, M); // 이미 있던 DM(pre1)
+          await call({ accountIds: [h4] }, M); // 이미 있던 DM(pre2) — 막혔어도 그대로
+          await call({ accountIds: [h3] }, M); // h3 가 member 를 막았다 → 403 dm_unavailable
+          await call({ accountIds: [h3, h2] }, M); // 여럿 중 하나만 막아도 → 403
+          await call({ accountIds: [h3] }, A); // admin 은 막히지 않았다 → 201
+          await call({ accountIds: [bot2.accountId] }, M); // owner 범위 에이전트 → 403 agent_not_invokable
+          await call({ accountIds: [bot2.accountId] }, A); // 소유자 → 201
+          await call({ accountIds: [member.accountId] }, M); // 나 혼자
+          await call({ accountIds: [] }, M);
+          await call({ accountIds: ['nope'] }, M);
+          await call({ accountIds: Array.from({ length: 17 }, () => h2) }, M);
+          await call({ accountIds: h2 }, M);
+          await call(undefined, M);
+          const ids = await made();
+          const chs = [...ids, ...fixed];
+          const state = {
+            rows: (await db.pool.query(`select id::text, name, topic, kind, repo, visibility, created_by::text as "createdBy" from channel where id = any($1) order by created_at, id`, [chs])).rows,
+            members: (await db.pool.query(`select m.channel_id::text as c, m.account_id::text as a from channel_member m join channel c on c.id = m.channel_id
+               where m.channel_id = any($1) order by c.created_at, m.channel_id, m.account_id`, [chs])).rows,
+          };
+          out.push(state);
+          const names = ids.map((id, i) => [id, `<new${i}>`] as const);
+          const mask = (v: unknown): unknown => {
+            if (typeof v === 'string') return names.reduce((t, [id, n]) => t.split(id).join(n), v);
+            if (Array.isArray(v)) return v.map(mask);
+            if (v && typeof v === 'object') {
+              return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) =>
+                [k, k === 'createdAt' && typeof x === 'string' ? '<createdAt>' : mask(x)]));
+            }
+            return v;
+          };
+          return mask(out) as unknown[];
+        };
+        const x = await run(tsUrl);
+        const y = await run(rsUrl);
+        expect(y).toEqual(x);
+        // 빈 것끼리 같아서 통과하지 않게 — 갈래가 실제로 났는지.
+        const st = y.at(-1) as { rows: { id: string; kind: string }[]; members: { c: string; a: string }[] };
+        expect(st.rows.filter((r) => r.id.startsWith('<new')).length, '새 DM 넷(h2·h2+h1·h3·bot2)과 나 혼자').toBe(5);
+        expect(st.rows.every((r) => r.kind === 'dm')).toBe(true);
+        expect(st.members.filter((m) => m.c === '<new1>').map((m) => m.a).sort()).toEqual([member.accountId, h1, h2].sort());
+        const res = y.slice(0, -1) as { status: number; json: { id?: string; error?: { code?: string } } | null }[];
+        expect(res.map((r) => r.status)).toEqual([201, 201, 201, 201, 201, 201, 403, 403, 201, 403, 201, 201, 400, 400, 400, 400, 400]);
+        expect([res[1]?.json?.id, res[2]?.json?.id]).toEqual([res[0]?.json?.id, res[0]?.json?.id]);
+        expect([res[4]?.json?.id, res[5]?.json?.id]).toEqual([pre1, pre2]);
+        expect([res[6], res[7], res[9]].map((r) => r?.json?.error?.code)).toEqual(['dm_unavailable', 'dm_unavailable', 'agent_not_invokable']);
+        // 같은 묶음의 동시 요청 — 두 서버를 섞어 보내도 DM 은 하나다.
+        {
+          await reset();
+          const rs = await Promise.all(Array.from({ length: 8 }, (_, i) => callX(i % 2 ? rsUrl : tsUrl, 'POST', '/dms', { accountIds: [h2] }, A)));
+          expect(rs.map((r) => r.status)).toEqual(Array(8).fill(201));
+          expect(new Set(rs.map((r) => (r.json as { id?: string }).id)).size, '같은 DM 하나').toBe(1);
+          expect((await made()).length, 'DM 은 하나만 생긴다').toBe(1);
+        }
+        // 익명은 두 서버 모두 401.
+        {
+          const [a1, b1] = [await callX(tsUrl, 'POST', '/dms', { accountIds: [h2] }, ''), await callX(rsUrl, 'POST', '/dms', { accountIds: [h2] }, '')];
+          expect({ status: b1.status, code: b1.code }, '익명 → 401').toEqual({ status: a1.status, code: a1.code });
+          expect(b1.status).toBe(401);
+        }
+        await reset();
+        await db.pool.query('delete from account_block where blocked_id = $1 and blocker_id = any($2)', [member.accountId, [h3, h4]]);
+        if (scope) await db.pool.query(`update agent_config set invoke_scope = $2 where account_id = $1`, [bot2.accountId, scope]);
+      }
+
       // S5.4 AC2 — 에이전트 기억 읽기(코어 `agent_memory_read.rs`). 두 서버의 답을 견준다. 소유자·admin 만 읽고, 에이전트 자신·남·익명은
       // 같은 거절 갈래다. 정리 후보(audit)·백그라운드·기억 쓰기는 TS 에 남는다. 거절 답 어디에도 기억 본문이 새지 않는지 본다.
       {
