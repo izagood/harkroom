@@ -1118,13 +1118,13 @@ const DELEGATION_SUMMARY_PER_THREAD = 10;
 /** 스레드에 실을 위임 요약 — $1 계정, $2 스레드 머리 id 들, $3 스레드당 개수. Rust `GET /inbox`(S5.4 MS2b-2, `core/inbox_list.rs`)가 골든으로 받는다. */
 export const DELEGATION_SUMMARIES_SQL = `select * from (
        select d.id, d.thread_root_id, d.kind, la.handle as delegator_handle, d.message_id, d.plan_step_id,
-              d.lead_account_id = $1 as is_lead,
+              d.lead_account_id = $1::uuid as is_lead,
               row_number() over (partition by d.thread_root_id order by d.created_at desc) as rn
          from team_delegation d
          join account la on la.id = d.lead_account_id
         where d.thread_root_id = any($2::uuid[])
-          and (d.lead_account_id = $1
-               or exists (select 1 from team_delegation_item i where i.delegation_id = d.id and i.delegate_account_id = $1))
+          and (d.lead_account_id = $1::uuid
+               or exists (select 1 from team_delegation_item i where i.delegation_id = d.id and i.delegate_account_id = $1::uuid))
      ) x where rn <= $3
      order by thread_root_id, rn desc`;
 
