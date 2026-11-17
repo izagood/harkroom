@@ -137,6 +137,8 @@ pub enum InboxQuery {
 pub struct InboxRow {
     pub id: i64,
     pub body: String,
+    /// 스레드 머리 id — TS `threadRootId ?? messageId`(`listInboxThreads` 가 머리를 고르는 값, MS2c).
+    pub root: String,
 }
 
 /// TS `listInbox` 의 기본 줄 + 팀 명단 + 덧붙임(위임 결말·넘겨받은 일·접힌 깨움·시작한 곳). `v2` 면 위임 요약(`delegations`)도.
@@ -248,7 +250,8 @@ pub async fn list_inbox(
             {
                 body = append_key(body, "startedIn", v);
             }
-            InboxRow { id, body }
+            let root = root.unwrap_or(message_id);
+            InboxRow { id, body, root }
         })
         .collect())
 }

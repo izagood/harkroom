@@ -36,7 +36,7 @@ struct Sql {
 }
 
 /// 갈래 문장을 감싼다 — 행마다 (본문 json, id, seq, 머리인가). 갈래는 모두 seq 오름차순으로 끝나므로 겉 `order by` 가 같은 순서다.
-fn wrap(branch: &str) -> String {
+pub(crate) fn wrap(branch: &str) -> String {
     format!(
         "select (select json_object_agg(e.key, case e.key \
                when 'createdAt' then to_json({}) \

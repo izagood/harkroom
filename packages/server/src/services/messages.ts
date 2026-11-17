@@ -3322,15 +3322,20 @@ export async function listInboxThreads(pool: Pool, accountId: string, entries: I
 async function listThreadHeads(pool: Pool, accountId: string, ids: string[]): Promise<MessageRow[]> {
   const rootIds = [...new Set(ids)];
   if (rootIds.length === 0) return [];
-  const res = await pool.query(
-    `select ${LIST_COLS} from message m ${THREAD_STATS}
-       join channel c on c.id = m.channel_id
-      where m.id = any($1::uuid[]) and m.thread_root_id is null and ${LIST_VISIBLE}
-        and ${channelVisibleSql('c', '$2')}`,
-    [rootIds, accountId],
-  );
+  const res = await pool.query(THREAD_HEADS_SQL, [rootIds, accountId]);
   return res.rows;
 }
+
+/**
+ * 스레드 머리 문장(S5.4 MS2c). Rust 앞단(`core/inbox_threads.rs`)이 골든으로 받는다 — 그래서 계정 자리는 `$2::uuid` 로 적는다
+ * (Rust 는 글자로 묶는다, #2316 교훈. node-pg 에는 뜻이 같다). 순서는 `m.seq` 로 못 박는다 — 예전에는 `order by` 가 없어
+ * 계획에 맡겼다(앱은 순서를 쓰지 않는다). 두 서버가 같은 글자를 내려면 순서가 정해져야 한다.
+ */
+export const THREAD_HEADS_SQL = `select ${LIST_COLS} from message m ${THREAD_STATS}
+       join channel c on c.id = m.channel_id
+      where m.id = any($1::uuid[]) and m.thread_root_id is null and ${LIST_VISIBLE}
+        and ${channelVisibleSql('c', '$2::uuid')}
+      order by m.seq`;
 
 /** `GET /inbox` 가 `since`·`unread` 없이 불릴 때 싣는 최신 줄 수(2026-11, A1). */
 export const INBOX_PAGE_LIMIT = 200;
@@ -3788,20 +3793,23 @@ export async function listInbox(
  */
 export async function listInboxThreadStates(pool: Pool, accountId: string, rootIds: string[]): Promise<InboxThreadState[]> {
   if (rootIds.length === 0) return [];
-  const res = await pool.query(
-    `select s.root_id as "rootId", s.state, s.until, s.updated_at as "updatedAt"
-       from inbox_thread_state s
-       join message m on m.id = s.root_id
-       join channel c on c.id = m.channel_id
-      where s.account_id = $1 and s.root_id = any($2::uuid[]) and ${channelVisibleSql('c', '$1')}`,
-    [accountId, rootIds],
-  );
+  const res = await pool.query(INBOX_THREAD_STATES_SQL, [accountId, rootIds]);
   return res.rows.map((r) => ({
     rootId: r.rootId, state: r.state,
     until: r.until ? new Date(r.until).toISOString() : null,
     updatedAt: new Date(r.updatedAt).toISOString(),
   }));
 }
+
+/**
+ * 내 스레드 처리 상태 문장(S5.4 MS2c, Rust 골든). 계정 자리는 `$1::uuid`(Rust 는 글자로 묶는다). 순서는 머리 id 로 못 박는다.
+ */
+export const INBOX_THREAD_STATES_SQL = `select s.root_id as "rootId", s.state, s.until, s.updated_at as "updatedAt"
+       from inbox_thread_state s
+       join message m on m.id = s.root_id
+       join channel c on c.id = m.channel_id
+      where s.account_id = $1::uuid and s.root_id = any($2::uuid[]) and ${channelVisibleSql('c', '$1::uuid')}
+      order by s.root_id`;
 
 /** `setInboxThreadState` 가 거절한 이유. 라우트가 404·403 으로 옮긴다. */
 export type InboxThreadStateRefusal = 'not_found' | 'not_root' | 'forbidden';

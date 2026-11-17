@@ -7215,12 +7215,16 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           if (outcomes.length > 1) await db.pool.query(`insert into inbox (account_id, message_id, reason) values ($1, $2, 'mention')`, [bot2.accountId, root]);
           ms2bDone.push(root);
         }
+        // S5.4 MS2c — `threads=1` 의 처리 상태(`threadStates`) 재료: 팀장(BOT)의 두 머리에 done·later(until 있음) 한 줄씩.
+        await db.pool.query(
+          `insert into inbox_thread_state (account_id, root_id, state, until) values ($1, $2, 'done', null), ($1, $3, 'later', now() + interval '1 day')`,
+          [agent.accountId, ms2bDone[0], ms2bDone[1]]);
         const inboxGet = async (base: string, qs: string, token: string) => {
           const res = await fetch(`${base}/inbox${qs ? `?${qs}` : ''}`, { headers: { authorization: `Bearer ${token}` } });
           const text = await res.text();
           return { status: res.status, text: res.status < 300 ? text : undefined };
         };
-        const INBOX_QS = ['', 'unread=1', 'unread=true', 'since=0', 'unread=1&since=1', 'before=999999999', 'before=1', 'threads=1', 'unread=0', 'since=x', 'before=0', 'since=1&since=2'];
+        const INBOX_QS = ['', 'unread=1', 'unread=true', 'since=0', 'unread=1&since=1', 'before=999999999', 'before=1', 'threads=1', 'unread=1&threads=1', 'since=0&threads=1', 'before=1&threads=1', 'threads=2', 'unread=0', 'since=x', 'before=0', 'since=1&since=2'];
         const delegOut: Record<string, unknown> = {};
         const prevV2 = process.env.HARKROOM_DELEGATION_V2;
         const prevImplicit = process.env.HARKROOM_DELEGATION_IMPLICIT;
@@ -7272,6 +7276,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
               expect(withOutcome?.delegation).toMatchObject({ timedOut: true, items: [{ outcome: 'done' }, { outcome: 'timeout' }] });
               expect(noOutcome).toBeDefined();
               expect(noOutcome!.delegation).toBeUndefined();
+              // MS2c — `threads=1`: 머리와 처리 상태가 실렸는지(빈 값끼리 통과하지 않게). 상태는 실린 머리의 것만, 키 차례는 TS 그대로.
+              const withHeads = JSON.parse((await inboxGet(`http://127.0.0.1:${portD}`, 'unread=1&threads=1', agent.pat)).text!) as { threads: { id: string }[]; threadStates: { rootId: string; state: string; until: string | null }[] };
+              expect(withHeads.threads.map((h) => h.id)).toEqual(expect.arrayContaining(ms2bDone));
+              expect(withHeads.threadStates.filter((t) => ms2bDone.includes(t.rootId)).map((t) => [t.state, t.until === null]).sort()).toEqual([['done', true], ['later', false]]);
               // MS2b-2 — 위임 요약: 스위치 1 에서만 실린다. 넘긴 쪽(BOT)은 담당 전원, 담당(bot2)은 자기 한 줄만.
               const summaryOf = (e: unknown) => (e as { delegations?: { role: string; items: { handle: string }[] }[] } | undefined)?.delegations;
               const theirs = JSON.parse((await inboxGet(`http://127.0.0.1:${portD}`, '', bot2.pat)).text!) as { entries: { messageId: string }[] };
