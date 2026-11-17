@@ -37,6 +37,8 @@ pub struct OpTiming {
     pub status_min: Duration,
     /// 머지 계정 줄 `gh.lines.set` 의 답을 기다리는 시한(TS `GH_LINES_TIMEOUT_MS`).
     pub gh_lines: Duration,
+    /// 능력 스냅숏의 `seen_at` 을 고치는 주기(AC6). TS 는 3배가 넘게 낡은 줄을 「모른다」로 읽는다.
+    pub cap_touch: Duration,
 }
 
 impl OpTiming {
@@ -58,6 +60,7 @@ impl OpTiming {
             send_timeout: ms("HARKROOM_WS_SEND_TIMEOUT_MS", 10_000),
             status_min: ms("HARKROOM_OPERATOR_STATUS_MIN_MS", 10_000),
             gh_lines: ms("HARKROOM_GH_LINES_TIMEOUT_MS", 10_000),
+            cap_touch: ms("HARKROOM_OPERATOR_CAP_TOUCH_MS", 60_000),
         }
     }
 }
@@ -101,6 +104,11 @@ impl OperatorCore {
         });
         spawn_version_writer(core.clone());
         spawn_revoke_watch(core.clone());
+        super::operator_capability::spawn(
+            core.write.clone(),
+            core.hub.clone(),
+            core.timing.cap_touch,
+        );
         super::operator_assign::spawn_resync(core.clone());
         super::operator_frames::spawn(
             core.clone(),

@@ -485,7 +485,13 @@ pub struct OperatorHub {
     frames: broadcast::Sender<(String, Frame)>,
     closes: broadcast::Sender<String>,
     link: Arc<Mutex<Option<mpsc::UnboundedSender<LinkEvent>>>>,
+    caps: Arc<Mutex<Option<mpsc::UnboundedSender<CapEvent>>>>,
 }
+
+/// 능력 스냅숏 피드(`operator_capability` 표 쓰기). 허브 잠금 **안에서** 내므로 같은 오퍼레이터의 「앞 연결 끊김 → 새 연결 hello」
+/// 순서가 표 쓰기에서도 뒤집히지 않는다. `None` 은 「이 오퍼레이터의 능력을 모른다」(줄을 지운다).
+#[derive(Debug, Clone, PartialEq)]
+pub struct CapEvent(pub String, pub Option<Value>);
 
 /// 릴레이 전용 피드(C6c-3). 프레임과 close 를 **한 줄로, 빠짐없이** 낸다.
 ///
@@ -518,6 +524,21 @@ impl OperatorHub {
             frames: broadcast::channel(4096).0,
             closes: broadcast::channel(256).0,
             link: Arc::default(),
+            caps: Arc::default(),
+        }
+    }
+
+    /// 능력 스냅숏 피드를 연다(프로세스에 하나 — 다시 부르면 앞 피드는 닫힌다).
+    pub fn capability_feed(&self) -> mpsc::UnboundedReceiver<CapEvent> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        *self.caps.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx);
+        rx
+    }
+
+    /// 허브 잠금을 쥔 채로 부른다(순서 보장).
+    fn cap_event(&self, operator_id: &str, caps: Option<Value>) {
+        if let Some(tx) = &*self.caps.lock().unwrap_or_else(|e| e.into_inner()) {
+            let _ = tx.send(CapEvent(operator_id.to_owned(), caps));
         }
     }
 
@@ -546,16 +567,22 @@ impl OperatorHub {
     ) -> Registration {
         static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let conn = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let previous = self.lock().live.insert(
-            operator_id.to_owned(),
-            LiveOperator {
-                conn,
-                tx,
-                capabilities: None,
-                runners: HashMap::new(),
-                status: None,
-            },
-        );
+        let previous = {
+            let mut st = self.lock();
+            let prev = st.live.insert(
+                operator_id.to_owned(),
+                LiveOperator {
+                    conn,
+                    tx,
+                    capabilities: None,
+                    runners: HashMap::new(),
+                    status: None,
+                },
+            );
+            // 새 연결은 hello 전까지 능력을 모른다(TS 와 같음) — 앞 연결의 줄이 남아 있으면 지운다.
+            self.cap_event(operator_id, None);
+            prev
+        };
         if let Some(prev) = previous {
             let _ = prev.tx.send(OpOut::Close(
                 4409,
@@ -578,6 +605,7 @@ impl OperatorHub {
                 .is_some_and(|e| e.conn == reg.conn)
             {
                 s.live.remove(&reg.operator_id);
+                self.cap_event(&reg.operator_id, None);
                 true
             } else {
                 false
@@ -606,6 +634,7 @@ impl OperatorHub {
             match frame.get("type").and_then(Value::as_str).unwrap_or("") {
                 "hello" => {
                     entry.capabilities = frame.get("capabilities").cloned();
+                    self.cap_event(id, entry.capabilities.clone());
                     entry.runners.clear();
                     for r in frame
                         .get("runners")
@@ -622,7 +651,10 @@ impl OperatorHub {
                         }
                     }
                 }
-                "capabilities" => entry.capabilities = frame.get("capabilities").cloned(),
+                "capabilities" => {
+                    entry.capabilities = frame.get("capabilities").cloned();
+                    self.cap_event(id, entry.capabilities.clone());
+                }
                 "status" => {
                     // 틀린 박동은 버리고 앞의 값을 둔다. 프레임도 내지 않는다(TS 는 여기서 return).
                     let Some(Value::Object(mut st)) =

@@ -157,6 +157,7 @@ async fn fake_operator_against_real_schema() {
         send_timeout: Duration::from_secs(5),
         status_min: Duration::from_millis(10),
         gh_lines: Duration::from_millis(500),
+        cap_touch: Duration::from_millis(200),
     };
     // 쓰기 풀 — 있으면 `OPERATOR_PRIVILEGES` 만 가진 역할(rustFrontDb.test.ts 가 만든다). 표가 모자라면 아래 쓰기가 실패한다.
     let write = match std::env::var("HARKROOM_TEST_WRITE_DATABASE_URL") {
@@ -331,11 +332,46 @@ async fn fake_operator_against_real_schema() {
     assert_eq!(s, StatusCode::OK, "{me}");
     assert_eq!(me["id"].as_str(), Some(op1.as_str()), "{me}");
 
+    // ---- AC6 능력 스냅숏: capabilities 프레임 → `operator_capability` 줄. 새 연결은 hello 전까지 「모른다」(줄 지움) ----
+    a.send(Message::Text(
+        json!({ "type": "capabilities", "capabilities": { "harnesses": { "claude-code": { "models": [{ "id": "m-test" }] } } } })
+            .to_string()
+            .into(),
+    ))
+    .await
+    .unwrap();
+    assert!(
+        eventually(
+            &pool,
+            "select coalesce((select body #>> '{harnesses,claude-code,models,0,id}' = 'm-test' from operator_capability where operator_id = $1::uuid), false)",
+            &op1
+        )
+        .await,
+        "capabilities snapshot written"
+    );
+    assert!(
+        eventually(
+            &pool,
+            "select coalesce((select seen_at > updated_at from operator_capability where operator_id = $1::uuid), false)",
+            &op1
+        )
+        .await,
+        "seen_at touched while online"
+    );
     let mut b = connect(&base, &tok1).await;
     assert_eq!(
         close_code(&mut a).await,
         Some(4409),
         "older socket replaced"
+    );
+    assert!(
+        eventually(
+            &pool,
+            "select not exists (select 1 from operator_capability where operator_id = $1::uuid)",
+            &op1
+        )
+        .await,
+        "replacement clears snapshot until hello"
     );
     // ---- 재접속 → assign 재전송. 종료 요청이 걸린 에이전트는 밀지 않는다(synced 는 빈 목록) ----
     b.send(Message::Text(json!({ "type": "hello" }).to_string().into()))
@@ -784,6 +820,15 @@ async fn fake_operator_against_real_schema() {
         Some(4401),
         "replaced operator's socket revoked"
     );
+    assert!(
+        eventually(
+            &pool,
+            "select not exists (select 1 from operator_capability where operator_id = $1::uuid)",
+            &op1
+        )
+        .await,
+        "disconnect clears snapshot"
+    );
     let on: String = sqlx::query_scalar(
         "select operator_id::text from agent_assignment where agent_id = $1::uuid",
     )
@@ -942,6 +987,8 @@ async fn revoke_event_disconnects_without_waiting() {
         revalidate: Duration::from_secs(3600),
         send_timeout: Duration::from_secs(5),
         status_min: Duration::from_millis(10),
+        gh_lines: Duration::from_millis(500),
+        cap_touch: Duration::from_secs(3600),
     };
     let write = match std::env::var("HARKROOM_TEST_WRITE_DATABASE_URL") {
         Ok(w) => PgPool::connect(&w).await.unwrap(),
