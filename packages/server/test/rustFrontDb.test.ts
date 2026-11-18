@@ -4515,6 +4515,28 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect({ status: y.status, code: y.code }, '익명 → 401').toEqual({ status: x.status, code: x.code });
           expect(y.status).toBe(401);
         }
+        // S5.4 A4a — MCP `thread.plan` 읽기(`core/mcp/plan_read.rs`)도 같은 몸통을 쓴다. 거절은 REST 와 달리 코드별로 갈린다.
+        // `plan`·`ifUpdatedAt` 이 실리면(쓰기·검증) TS 가 답한다 — 여기서는 지우지 않게 `ifUpdatedAt` 만 싣는다.
+        for (const [name, args, rust, want] of [
+          ['부모 계획', { threadRootId: parent }, true, 'goal'],
+          ['대문자 id', { threadRootId: parent.toUpperCase() }, true, 'goal'],
+          ['모르는 키는 버린다', { threadRootId: parent, x: 1 }, true, 'goal'],
+          ['계획 없음', { threadRootId: pubEmpty }, true, '{\\"plan\\":null}'],
+          ['빈 표시 계획', { threadRootId: bare }, true, '\\"flagged\\":null'],
+          ['못 보는 채널 → forbidden', { threadRootId: privRoot }, true, 'code\\":\\"forbidden'],
+          ['못 보는 자식 루트 → forbidden', { threadRootId: childHid }, true, 'code\\":\\"forbidden'],
+          ['답글 → not_root', { threadRootId: reply }, true, 'code\\":\\"not_root'],
+          ['지운 루트 → not_found', { threadRootId: gone }, true, 'code\\":\\"not_found'],
+          ['없는 루트 → not_found', { threadRootId: ghostRoot }, true, 'code\\":\\"not_found'],
+          ['ifUpdatedAt 실림 → TS', { threadRootId: parent, ifUpdatedAt: null }, false, 'goal'],
+          ['uuid 아님 → TS', { threadRootId: 'x' }, false, ''],
+        ] as const) {
+          const [x, y] = [await mcpCall(tsUrl, agent.pat, 'thread.plan', args), await mcpCall(rsUrl, agent.pat, 'thread.plan', args)];
+          expect(y.text, name).toBe(x.text);
+          expect(y.core === 'mcp', `${name} — Rust 가 답하는가`).toBe(rust);
+          expect(y.text, name).toContain(want);
+          seen.push({ token: agent.pat, json: y.text });
+        }
         // member·admin·에이전트 답 어디에도 못 보는 자식 채널·계획이 없다(member2 는 그 채널 멤버라 제외).
         const leak = JSON.stringify(seen.filter((s) => (s as { token: string }).token !== M2));
         expect(leak).not.toContain(hidCh.id);

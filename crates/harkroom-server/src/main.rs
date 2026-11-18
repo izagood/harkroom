@@ -1818,6 +1818,7 @@ async fn main() {
                 delegation: mcp_deleg_write,
                 grant: grant_write,
                 note: note_write,
+                plan_read: thread_plan_read_on,
                 work_item: work_item_write,
                 work_item_upsert: work_item_upsert_write,
                 memory: mem_write,
