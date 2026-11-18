@@ -22,6 +22,7 @@ pub mod agent_model_options;
 pub mod agent_secret_create;
 pub mod agent_secret_reveal;
 pub mod agent_wakes_read;
+pub mod api_checks;
 pub mod api_results;
 pub mod ask;
 pub mod ask_bundle;

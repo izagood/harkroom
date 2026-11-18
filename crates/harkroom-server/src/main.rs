@@ -3361,6 +3361,17 @@ async fn main() {
             core_routes.http.extend(ps.http);
             core_routes.sockets.extend(ps.sockets);
         }
+        // S5.4 — `POST /agent/api-checks`(부분). 오퍼레이터·모양 판정만 Rust, 나머지는 TS 로 넘긴다 — DB 를 건드리지 않는다.
+        if matches!(core_mode, harkroom_server::core::CoreMode::Rust) {
+            let ac = harkroom_server::core::api_checks::routes(
+                state.up.clone(),
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(ac.router);
+            core_routes.http.extend(ac.http);
+            core_routes.sockets.extend(ac.sockets);
+        }
         // S5.4 TP3 — 계획 자동 진행 끄기. 글 올리기 코어와 끄기 칸 권한이 다 있을 때만 — 아니면 TS 에 남는다.
         if let Some(write) = thread_plan_auto_off {
             let pa = harkroom_server::core::thread_plan_auto_off::routes(

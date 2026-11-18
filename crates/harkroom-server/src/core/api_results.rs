@@ -97,7 +97,7 @@ fn int_in(v: &Value, min: i64, max: i64) -> Option<i64> {
 }
 
 /// `^[a-z0-9][a-z0-9_-]{0,63}$`.
-fn connector_ok(s: &str) -> bool {
+pub(crate) fn connector_ok(s: &str) -> bool {
     let b = s.as_bytes();
     !b.is_empty()
         && b.len() <= 64
