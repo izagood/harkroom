@@ -6,7 +6,10 @@
 //! 쓰기 풀에 [`API_CHECKS_DENY_PRIVILEGES`] 가 다 있으면 임대 거절(403 `lease_invalid` — 막힘 카드가 없는 갈래)과 그
 //! `api.call.denied` 감사는 Rust 가 답한다. [`API_CHECKS_ALLOW_PRIVILEGES`] 까지 있으면 임대가 통과한 본체 중
 //! `authKind = none` 연결의 허락(`api.call.checked`)과 막힘 카드가 없는 거절(`bad_path`·`chain_broken`)도 Rust 가 답한다.
-//! 카드가 서는 거절·비밀을 여는 연결·`%`/질의가 든 경로는 TS 로 넘긴다.
+//! 글 올리기 코어(`api-results` 와 같은 `PostState`)까지 있으면 카드가 서는 거절(`not_granted`·`no_connector`·`expired`·
+//! `suspended`·`method_not_allowed`·`path_not_allowed`·`cause_not_human`)도 Rust 가 답하고 그 턴의 스레드에 **새** 막힘 카드를
+//! 세운다(`api_blocked_card`). 같은 날 같은 스레드에 이미 선 카드를 고쳐 쓰는 갈래(`message.updated`)는 아직 TS 몫이다.
+//! 비밀을 여는 연결·`%`/질의가 든 경로는 TS 로 넘긴다.
 use super::api_results::connector_ok;
 use super::grant_reads::through_operator;
 use super::merge_approval_peek::str_len_ok;
@@ -110,6 +113,8 @@ pub struct ChecksState {
     pub deny: Option<sqlx::PgPool>,
     /// 임대가 유효한 본체 — 거기에 [`API_CHECKS_ALLOW_PRIVILEGES`] 까지 다 있을 때만.
     pub allow: bool,
+    /// 막힘 카드가 서는 거절 — `allow` 에 더해 글 올리기 코어(시스템 줄)가 있을 때만. 없으면 그 거절은 TS 몫.
+    pub card: Option<super::msg_post::PostState>,
 }
 
 /// TS `leaseOk`.
@@ -198,6 +203,100 @@ async fn deny(
     ))
 }
 
+const CARD_EXISTING_SQL: &str = "select id::text from message \
+      where meta->'blocked'->>'key' = $1 and channel_id = $2::uuid and coalesce(thread_root_id, id) = $3::uuid and deleted_at is null \
+      order by created_at limit 1";
+const CARD_AGENT_SQL: &str = "select a.handle, c.owner_account_id::text from account a \
+     left join agent_config c on c.account_id = a.id where a.id = $1::uuid";
+
+/// 카드가 서는 거절(TS `deny` + `recordBlocked`). `Ok(None)` 은 TS 몫 — 카드 경로를 못 따라가거나(`%`·ASCII 밖),
+/// 이미 선 카드를 고쳐 써야 하거나(`message.updated` 는 아직 TS 몫), 글 코어가 TS 로 넘겼을 때. 아무것도 쓰기 전에 고른다.
+/// 새 카드를 먼저 올리고 감사를 남긴다(TS 는 감사 → 카드; 카드 실패는 판정을 바꾸지 않는다).
+#[allow(clippy::too_many_arguments)]
+async fn deny_card(
+    st: &super::msg_post::PostState,
+    agent: &str,
+    lease: &super::lease_read::LeaseRow,
+    connector_id: Option<&str>,
+    connector_name: &str,
+    method: &str,
+    path: &str,
+    target: &str,
+    detail: Value,
+    code: &str,
+) -> sqlx::Result<Option<Response>> {
+    use super::api_blocked_card as bc;
+    use super::msg_post::{Origin, Outcome, PostBody, channel_is_dm, post_in_tx};
+    let w = &st.write;
+    let Some(cpath) = bc::card_path(path) else {
+        return Ok(None);
+    };
+    let (Some(channel), Some(root)) =
+        (lease.channel_id.as_deref(), lease.thread_root_id.as_deref())
+    else {
+        return Ok(None);
+    };
+    let now = super::merge_approval_peek::db_now(w).await?;
+    let key = bc::card_key(agent, connector_id, root, &now);
+    let existing: Option<String> = sqlx::query_scalar(CARD_EXISTING_SQL)
+        .bind(&key)
+        .bind(channel)
+        .bind(root)
+        .fetch_optional(w)
+        .await?;
+    if existing.is_some() {
+        return Ok(None);
+    }
+    let who: Option<(String, Option<String>)> = sqlx::query_as(CARD_AGENT_SQL)
+        .bind(agent)
+        .fetch_optional(w)
+        .await?;
+    let handle = who.as_ref().map_or("agent", |w| w.0.as_str());
+    let owner = who.as_ref().and_then(|w| w.1.as_deref());
+    let request = bc::card_request(method, cpath.as_deref());
+    let name = bc::card_connector_name(connector_id, connector_name);
+    let blocked = bc::card_meta(&bc::NewMeta {
+        key: &key,
+        agent,
+        owner,
+        code,
+        now: &now,
+        connector_id,
+        connector_name: name.as_deref(),
+        method,
+        path: cpath.as_deref(),
+    });
+    let mut meta = Map::new();
+    meta.insert("blocked".into(), blocked);
+    meta.insert(
+        "i18n".into(),
+        bc::card_i18n(agent, name.as_deref(), &request, code),
+    );
+    let audience = super::audience::audience_for(w, channel).await?.to_json();
+    let is_dm = channel_is_dm(w, channel).await?;
+    let input = PostBody {
+        body: bc::card_body(handle, name.as_deref(), &request, code),
+        attachment_ids: Vec::new(),
+        thread_root: Some(root.to_owned()),
+        also_in_channel: false,
+    };
+    let origin = Origin {
+        meta,
+        system: true,
+        server_notice: true,
+        no_mentions: true,
+        ..Origin::default()
+    };
+    if let Outcome::ToTs = post_in_tx(
+        st, channel, agent, true, &input, None, &audience, is_dm, &origin,
+    )
+    .await?
+    {
+        return Ok(None);
+    }
+    Ok(Some(deny(w, agent, target, detail, code).await))
+}
+
 type ConnRow = (
     String,
     Option<String>,
@@ -222,6 +321,7 @@ async fn checks_body(
     lease: &super::lease_read::LeaseRow,
     o: &Value,
     path300: &str,
+    card: Option<&super::msg_post::PostState>,
 ) -> sqlx::Result<Option<Response>> {
     use super::mcp::grant_delegate as gd;
     let g = |k: &str| o.get(k).and_then(Value::as_str).unwrap_or_default();
@@ -231,9 +331,44 @@ async fn checks_body(
         .fetch_optional(pool)
         .await?
     else {
-        return Ok(None);
+        let Some(st) = card else { return Ok(None) };
+        let target = format!("connector-name:{}", g("connector"));
+        let d = denied_detail("no_connector", method, path300, operator, Some(&lease.id));
+        return deny_card(
+            st,
+            agent,
+            lease,
+            None,
+            g("connector"),
+            method,
+            path,
+            &target,
+            d,
+            "no_connector",
+        )
+        .await
+        .or(Ok(None));
     };
     let target = format!("connector:{}", c.0);
+    let (target_ref, cid) = (target.as_str(), c.0.as_str());
+    let carded = |code: &'static str| async move {
+        let Some(st) = card else { return Ok(None) };
+        let d = denied_detail(code, method, path300, operator, Some(&lease.id));
+        deny_card(
+            st,
+            agent,
+            lease,
+            Some(cid),
+            g("connector"),
+            method,
+            path,
+            target_ref,
+            d,
+            code,
+        )
+        .await
+        .or(Ok(None)) // 카드 쓰기 오류는 tx 가 되돌린다 — 아무것도 남기기 전이니 TS 에 맡긴다(TS 는 카드 오류를 삼킨다).
+    };
     let denied = |code: &'static str| {
         (
             code,
@@ -258,7 +393,7 @@ async fn checks_body(
             .fetch_optional(pool)
             .await?
     else {
-        return Ok(None); // not_granted — 막힘 카드.
+        return carded("not_granted").await;
     };
     let root = match gd::chain_root(pool, c.1.as_ref(), &target, &leaf_id).await {
         None => return Ok(None),
@@ -267,7 +402,9 @@ async fn checks_body(
             let (code, d) = denied("chain_broken");
             return Ok(Some(deny(pool, agent, &target, d, code).await));
         }
-        Some(Err(_)) => return Ok(None), // expired·suspended — 막힘 카드.
+        Some(Err("expired")) => return carded("expired").await,
+        Some(Err("suspended")) => return carded("suspended").await,
+        Some(Err(_)) => return Ok(None),
     };
     let Some(limits) = gd::limits_of(leaf_limits.as_deref()) else {
         return Ok(None);
@@ -277,17 +414,20 @@ async fn checks_body(
         return Ok(Some(deny(pool, agent, &target, d, code).await));
     };
     if !limits.methods.iter().any(|m| m == method) || !c.7.iter().any(|m| m == method) {
-        return Ok(None); // method_not_allowed — 막힘 카드.
+        return carded("method_not_allowed").await;
     }
-    if limits.path_prefix.contains('%') || !gd::path_covered_plain(path, &limits.path_prefix) {
-        return Ok(None); // path_not_allowed — 막힘 카드.
+    if limits.path_prefix.contains('%') {
+        return Ok(None);
+    }
+    if !gd::path_covered_plain(path, &limits.path_prefix) {
+        return carded("path_not_allowed").await;
     }
     if c.4 != "none" {
         return Ok(None); // 비밀 열기·토큰 교환은 TS 몫.
     }
     let by_human = lease.cause_by_human();
     if method != "GET" && write_human && !by_human {
-        return Ok(None); // cause_not_human — 막힘 카드.
+        return carded("cause_not_human").await;
     }
     crate::write::record_audit(
         pool,
@@ -316,6 +456,7 @@ async fn checks_early(
     operator: &str,
     o: &Value,
     allow: bool,
+    card: Option<&super::msg_post::PostState>,
 ) -> sqlx::Result<Option<Response>> {
     let g = |k: &str| o.get(k).and_then(Value::as_str).unwrap_or_default();
     let Some(path) = audit_path(g("path")) else {
@@ -330,7 +471,7 @@ async fn checks_early(
         if !allow {
             return Ok(None);
         }
-        return checks_body(pool, agent, operator, l, o, &path).await;
+        return checks_body(pool, agent, operator, l, o, &path, card).await;
     }
     let cid: Option<String> =
         sqlx::query_scalar("select id::text from api_connector where name = $1")
@@ -382,7 +523,7 @@ pub async fn checks_route(
         auth.operator.as_ref().map(|o| o.id.as_str()),
         parsed.as_ref(),
     ) {
-        match checks_early(pool, &me.id, op, o, st.allow).await {
+        match checks_early(pool, &me.id, op, o, st.allow, st.card.as_ref()).await {
             Ok(Some(r)) => return r,
             Ok(None) => {}
             Err(e) => return crate::directory::internal(e),
@@ -395,6 +536,7 @@ pub fn routes(
     up: Upstream,
     deny: Option<sqlx::PgPool>,
     allow: bool,
+    card: Option<super::msg_post::PostState>,
     auth: crate::auth::AuthPools,
     cors: Arc<crate::cors::Cors>,
 ) -> crate::route_table::Routes<()> {
@@ -413,9 +555,12 @@ pub fn routes(
         })
         .finish();
     crate::route_table::Routes {
-        router: t
-            .router
-            .with_state(Arc::new(ChecksState { up, deny, allow })),
+        router: t.router.with_state(Arc::new(ChecksState {
+            up,
+            deny,
+            allow,
+            card: card.filter(|_| allow),
+        })),
         http: t.http,
         sockets: t.sockets,
     }
