@@ -172,13 +172,30 @@ const AGENT_STOP_SQL: &str = "select to_char(stop_requested_at at time zone 'UTC
 
 /// zod 를 지나고 Rust 가 답할 꼴이면 참 — `timeoutMs` 는 없거나 0, `version`·`lease` 는 없어야(있으면 TS 가 쓴다).
 fn quick(args: &Value, allow_version: bool) -> bool {
+    quick_with(args, allow_version, false)
+}
+
+/// `timeoutMs: z.number().int().min(0).max(25_000).optional()` — 없으면 0. 못 지나면 `None`.
+fn timeout_ms(args: &Value) -> Option<u64> {
+    match args.get("timeoutMs") {
+        None => Some(0),
+        Some(v) => {
+            let f = v.as_f64()?;
+            (f.fract() == 0.0 && (0.0..=25_000.0).contains(&f)).then_some(f as u64)
+        }
+    }
+}
+
+/// [`quick`] 에 긴 폴(`timeoutMs > 0`)까지 받을지(`allow_wait`).
+fn quick_with(args: &Value, allow_version: bool, allow_wait: bool) -> bool {
     let o = match args {
         Value::Object(o) => o,
         _ => return false,
     };
-    let timeout_ok = match o.get("timeoutMs") {
-        None => true,
-        Some(v) => v.as_f64() == Some(0.0),
+    let timeout_ok = match timeout_ms(args) {
+        Some(0) => true,
+        Some(_) => allow_wait,
+        None => false,
     };
     let reasons_ok = match o.get("inboxReasons") {
         None => true,
@@ -216,21 +233,120 @@ pub async fn answer(pool: &PgPool, me: &Account, args: &Value) -> Option<String>
 }
 
 /// `version` 이 온 폴 — 답이 정해지면 TS 처럼 버전을 기록하고(빈 글자는 기록하지 않는다, TS `if (version)`) 답한다. 기록이 실패하면 TS.
-pub async fn answer_versioned(
+///
+/// `hub` 이 있으면 긴 폴(`timeoutMs > 0`)도 받는다 — TS 처럼 첫 읽기 **전에** 이벤트 허브를 구독하고, 비었으면 이 계정의
+/// `inbox.updated` 가 오거나 시한이 될 때까지 기다린 뒤 다시 읽는다. 기다리기 전에 TS 로 넘길 갈래(줄이 있는데 고쳐 쓸 일·승인 안 된
+/// 종료 요청)가 보이면 기다리지 않고 넘긴다 — TS 가 처음부터 다시 기다리지 않게.
+pub async fn answer_full(
     read: &PgPool,
-    write: &PgPool,
+    write: Option<&PgPool>,
+    hub: Option<&crate::core::events::Hub>,
     me: &Account,
     args: &Value,
 ) -> Option<String> {
-    if !quick(args, true) {
+    if !quick_with(args, write.is_some(), hub.is_some()) {
         return None;
     }
     let version = args.get("version").and_then(Value::as_str);
-    let out = respond(read, me, args, version).await?;
-    if let Some(v) = version.filter(|v| !v.is_empty()) {
-        record_runner_version(write, &me.id, v).await.ok()?;
+    let wait = timeout_ms(args)?;
+    let out = match hub.filter(|_| wait > 0) {
+        Some(h) => wait_then_respond(read, me, args, version, h, wait).await?,
+        None => respond(read, me, args, version).await?,
+    };
+    if let (Some(w), Some(v)) = (write, version.filter(|v| !v.is_empty())) {
+        record_runner_version(w, &me.id, v).await.ok()?;
     }
     Some(out)
+}
+
+fn drain_tx() -> &'static tokio::sync::watch::Sender<bool> {
+    static D: OnceLock<tokio::sync::watch::Sender<bool>> = OnceLock::new();
+    D.get_or_init(|| tokio::sync::watch::channel(false).0)
+}
+
+/// 종료가 시작됐다(TS `lifecycle.onDrain`) — 기다리던 긴 폴을 깨우고, 이후의 폴은 기다리지 않는다. 종료가 25초 폴을 붙잡지 않게.
+pub fn begin_drain() {
+    drain_tx().send_replace(true);
+}
+
+/// 이 계정의 `inbox.updated` 면 참(TS `e.type === 'inbox.updated' && e.accountId === account.id`).
+fn wakes(e: &Value, account: &str) -> bool {
+    e.get("type").and_then(Value::as_str) == Some("inbox.updated")
+        && e.get("accountId").and_then(Value::as_str) == Some(account)
+}
+
+async fn wait_then_respond(
+    pool: &PgPool,
+    me: &Account,
+    args: &Value,
+    version: Option<&str>,
+    hub: &crate::core::events::Hub,
+    wait_ms: u64,
+) -> Option<String> {
+    use tokio::sync::broadcast::error::{RecvError, TryRecvError};
+    // 첫 읽기 전에 구독한다 — 그 왕복 사이에 온 깨움을 잃지 않게(TS 주석과 같은 까닭).
+    let mut rx = hub.subscribe();
+    let mut drain = drain_tx().subscribe();
+    let rows = list_inbox(pool, &me.id, InboxQuery::Unread { since: None }, false)
+        .await
+        .ok()?;
+    if !rows.is_empty() {
+        return respond(pool, me, args, version).await;
+    }
+    // 비었는데 승인 안 된 종료 요청이 있으면 TS 가 답한다 — 기다리기 전에 넘긴다.
+    if me.kind == "agent" {
+        let stop = sqlx::query_as::<_, (Option<String>, bool)>(AGENT_STOP_SQL)
+            .bind(&me.id)
+            .fetch_optional(pool)
+            .await
+            .ok()?;
+        if matches!(stop, Some((Some(_), false))) {
+            return None;
+        }
+    }
+    // 첫 읽기 동안 이미 깨움이 왔으면 기다리지 않는다. 놓친 것이 있으면(lagged) 깨운 것으로 본다.
+    let mut woken = false;
+    loop {
+        match rx.try_recv() {
+            Ok(e) if wakes(&e, &me.id) => {
+                woken = true;
+                break;
+            }
+            Ok(_) => {}
+            Err(TryRecvError::Lagged(_)) => {
+                woken = true;
+                break;
+            }
+            Err(_) => break,
+        }
+    }
+    // 종료 중이면 기다리지 않는다(TS `draining`). 기다리는 동안 종료가 오면 깨어난다.
+    if !woken && !*drain.borrow_and_update() {
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(wait_ms), async {
+            let drained = async {
+                let _ = drain.wait_for(|d| *d).await;
+            };
+            tokio::pin!(drained);
+            loop {
+                tokio::select! {
+                    _ = &mut drained => return,
+                    r = rx.recv() => match r {
+                        Ok(e) if wakes(&e, &me.id) => return,
+                        Ok(_) => {}
+                        Err(RecvError::Lagged(_)) => return,
+                        // 허브가 닫히면 종료·시한까지 기다린다.
+                        Err(RecvError::Closed) => {
+                            let _ = (&mut drained).await;
+                            return;
+                        }
+                    },
+                }
+            }
+        })
+        .await;
+    }
+    // 깨웠거나 시한을 다 기다렸다 — TS 처럼 다시 읽어 답한다.
+    respond(pool, me, args, version).await
 }
 
 async fn respond(
@@ -333,6 +449,55 @@ async fn batch(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn wait_args_follow_zod() {
+        assert_eq!(timeout_ms(&json!({})), Some(0));
+        assert_eq!(timeout_ms(&json!({ "timeoutMs": 25000 })), Some(25_000));
+        assert_eq!(timeout_ms(&json!({ "timeoutMs": 25001 })), None);
+        assert_eq!(timeout_ms(&json!({ "timeoutMs": -1 })), None);
+        assert_eq!(timeout_ms(&json!({ "timeoutMs": 1.5 })), None);
+        assert_eq!(timeout_ms(&json!({ "timeoutMs": "5" })), None);
+        assert!(quick_with(&json!({ "timeoutMs": 5000 }), false, true));
+        assert!(!quick_with(&json!({ "timeoutMs": 5000 }), false, false));
+        assert!(!quick_with(
+            &json!({ "timeoutMs": 5000, "lease": { "runnerId": "r", "holding": [] } }),
+            false,
+            true
+        ));
+        assert!(!quick_with(
+            &json!({ "timeoutMs": 5000, "version": "1" }),
+            false,
+            true
+        ));
+        assert!(quick_with(
+            &json!({ "timeoutMs": 5000, "version": "1" }),
+            true,
+            true
+        ));
+    }
+
+    #[test]
+    fn drain_is_sticky_for_new_polls() {
+        begin_drain();
+        assert!(*drain_tx().subscribe().borrow());
+    }
+
+    #[test]
+    fn wakes_only_own_inbox_updated() {
+        assert!(wakes(
+            &json!({ "type": "inbox.updated", "accountId": "a" }),
+            "a"
+        ));
+        assert!(!wakes(
+            &json!({ "type": "inbox.updated", "accountId": "b" }),
+            "a"
+        ));
+        assert!(!wakes(
+            &json!({ "type": "message.created", "accountId": "a" }),
+            "a"
+        ));
+    }
 
     #[test]
     fn quick_version_only_when_allowed() {

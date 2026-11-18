@@ -4494,6 +4494,7 @@ async fn main() {
                 automation: automation_write,
                 automation_run: automation_run_write,
                 runner_version: runner_version_write,
+                inbox_hub: Some(core.hub.clone()),
                 grant_delegate: grant_delegate_write,
                 memory: mem_write,
                 memory_body: mem_body_write,
@@ -4976,6 +4977,8 @@ async fn shutdown() {
         _ = tokio::signal::ctrl_c() => {}
         _ = term.recv() => {}
     }
+    // 기다리던 MCP 긴 폴을 걷어낸다(TS `lifecycle.onDrain`) — 아니면 graceful shutdown 이 최대 25초 붙잡힌다.
+    harkroom_server::core::mcp::inbox_poll::begin_drain();
 }
 
 #[cfg(test)]

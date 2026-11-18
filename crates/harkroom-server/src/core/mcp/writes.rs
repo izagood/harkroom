@@ -149,6 +149,8 @@ pub struct McpWrites {
     pub automation_run: Option<PgPool>,
     /// `inbox.poll` 의 `version` 기록 — `inbox_poll::RUNNER_VERSION_PRIVILEGES`. 없으면 `version` 이 온 폴은 TS.
     pub runner_version: Option<PgPool>,
+    /// `inbox.poll` 긴 폴의 깨움 — 코어 이벤트 허브(outbox LISTEN 이 채운다). 없으면 `timeoutMs > 0` 폴은 TS.
+    pub inbox_hub: Option<crate::core::events::Hub>,
     /// `grant.delegate`(S5.4 MCP 6) — `grant_delegate::GRANT_DELEGATE_PRIVILEGES`.
     pub grant_delegate: Option<PgPool>,
     /// 기억 쓰기(C4b B1a) — [`super::mem_writes::MEMORY_WRITE_PRIVILEGES`]. [`super::mem_writes::answer`] 가 본다.
@@ -205,11 +207,24 @@ pub async fn answer(
     runner: bool,
     cause: Option<&str>,
 ) -> Option<Option<String>> {
-    if tool == "inbox.poll" && args.get("version").is_some() {
-        let Some(write) = writes.runner_version.as_ref() else {
-            return Some(None);
-        };
-        return Some(super::inbox_poll::answer_versioned(read, write, me, args).await);
+    if tool == "inbox.poll" {
+        let versioned = args.get("version").is_some();
+        let waiting = args
+            .get("timeoutMs")
+            .is_some_and(|v| v.as_f64() != Some(0.0));
+        if versioned || waiting {
+            let write = match (versioned, writes.runner_version.as_ref()) {
+                (false, _) => None,
+                (true, Some(w)) => Some(w),
+                (true, None) => return Some(None),
+            };
+            let hub = match (waiting, writes.inbox_hub.as_ref()) {
+                (false, _) => None,
+                (true, Some(h)) => Some(h),
+                (true, None) => return Some(None),
+            };
+            return Some(super::inbox_poll::answer_full(read, write, hub, me, args).await);
+        }
     }
     if !SERVED.contains(&tool) {
         return None;
