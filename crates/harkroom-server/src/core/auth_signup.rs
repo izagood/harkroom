@@ -164,6 +164,7 @@ fn handle_taken() -> Response {
 }
 
 /// onRequest 훅(`signup:{ip}`) → 본문 읽기. 막히면 응답을 돌려준다.
+#[allow(clippy::result_large_err)]
 async fn gate(st: &AuthSignupState, req: Request) -> Result<(Option<String>, Body), Response> {
     let (parts, body) = req.into_parts();
     let ip = crate::writes_settings::ip_of(&parts, &st.trust);

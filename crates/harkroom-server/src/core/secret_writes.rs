@@ -354,6 +354,7 @@ fn scan_hits_secret(text: &str) -> bool {
     scan_write(&[Some(text)]).is_some_and(|h| h.rules.contains(&"secret"))
 }
 
+#[allow(clippy::result_large_err)]
 async fn secret_json(read: &PgPool, id: &str) -> Result<String, Response> {
     let row: Option<(String, String, String)> = sqlx::query_as(SECRET_SQL)
         .bind(id)
@@ -521,6 +522,7 @@ pub async fn create(State(st): State<Arc<SecretWritesState>>, req: Request) -> R
 }
 
 /// 소유자만(admin 도 남의 것은 404). 답은 (비밀 json 값).
+#[allow(clippy::result_large_err)]
 async fn load_own(st: &SecretWritesState, me: &Account, id: &str) -> Result<Value, Response> {
     let s = load(&st.read, me, id).await?;
     if s.owner != me.id {
