@@ -506,6 +506,8 @@ mod tests {
                 "handle_group",
                 "handle_group_member",
                 "inbox_view_cursor",
+                "mcp_server",
+                "mcp_server.credential_kind",
                 "mention_policy",
                 "message_report",
                 "pat",
