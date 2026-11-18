@@ -1724,6 +1724,28 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 — `POST /agent/merge-checks` 의 흔한 허락 길. 이른 거절이 켜졌고 [`MERGE_CHECKS_ALLOW_PRIVILEGES`] 까지 있을 때만.
+    let merge_checks_allow = match &merge_checks_deny {
+        Some(w) => {
+            use harkroom_server::core::merge_checks as t;
+            match write::missing_in(w, t::MERGE_CHECKS_ALLOW_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: merge checks allow off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: merge checks allow off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        None => None,
+    };
     // S5.4 — `POST /agent/api-checks` 의 임대 거절(`lease_invalid` + `api.call.denied` 감사). 쓰기 풀에 [`API_CHECKS_DENY_PRIVILEGES`] 가 다 있을 때만.
     let api_checks_deny = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -3898,6 +3920,7 @@ async fn main() {
             let mk = harkroom_server::core::merge_checks::routes(
                 state.up.clone(),
                 merge_checks_deny.clone(),
+                merge_checks_allow.clone(),
                 merge_results_read.clone(),
                 merge_results_post.clone(),
                 auth.clone(),
