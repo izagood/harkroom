@@ -1716,6 +1716,16 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant select (token_hash, expires_at, stepped_up_at, stepped_up_until), update (stepped_up_until) on session to ${rw}`,
         `grant insert (secret_id, secret_name, version, actor_account_id, action, client, ip, result, reason) on secret_access_log to ${rw}`,
         `grant usage on sequence secret_access_log_id_seq to ${rw}`,
+        // S5.4 10회차 z — POST /agent/secrets·/rotate generate(`agent_secret_create::CREATE_WRITE_PRIVILEGES`).
+        `grant select (id, agent_id, operator_id, channel_id, thread_root_id, cause_message_id, expires_at, ended_at, token_hash) on secret_turn_lease to ${rw}`,
+        `grant select (account_id, owner_account_id) on agent_config to ${rw}`,
+        `grant select (id, kind, handle, deleted_at, disabled_at) on account to ${rw}`,
+        `grant select (id, author_id, meta) on message to ${rw}`,
+        `grant select (id, name, kind, description, expires_at, created_by_agent_id), insert (name, kind, filename, description, owner_account_id, expires_at, created_by_agent_id, created_cause_message_id), update (updated_at) on secret to ${rw}`,
+        `grant select (secret_id, version, created_by, revoked_at) on secret_version to ${rw}`,
+        `grant select (secret_id, agent_id, granted_by, channel_id, suspended_at) on secret_grant to ${rw}`,
+        `grant insert (secret_id, secret_name, version, agent_id, operator_id, turn_id, channel_id, thread_root_id, result, reason, at) on secret_access_log to ${rw}`,
+        `grant insert on audit_log to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -4226,10 +4236,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // SE3·SE4 — 비밀 쓰기 세 줄과 목록이 Rust 에 붙었는지(쓰기 답 대조는 S5.4 3회차 ② 의 7번).
         for (const k of ['GET /secrets', 'POST /secrets', 'PATCH /secrets/{id}', 'PUT /secrets/{id}/value']) expect(f.log(), k).toContain(`"${k}"`);
         expect(f.log()).not.toContain('secret writes core off');
-        // SE4 — GET /agent/secret-create 는 Rust, POST /agent/secrets·/agent/secrets/rotate 는 TS 에 남는다(같은 인메모리 리미터·소유자 알림).
+        // SE4 — GET /agent/secret-create 와 POST /agent/secrets·/agent/secrets/rotate(generate) 는 Rust 다. import 몸만 TS 로 넘긴다.
         expect(f.log(), 'GET /agent/secret-create').toContain('"GET /agent/secret-create"');
         expect(f.log()).not.toContain('agent secret create core off');
-        for (const k of ['POST /agent/secrets', 'POST /agent/secrets/rotate']) expect(f.log(), k).not.toContain(`"${k}"`);
+        for (const k of ['POST /agent/secrets', 'POST /agent/secrets/rotate']) expect(f.log(), k).toContain(`"${k}"`);
         const M = member.token;
         const mk = async (name: string, owner: string) => (await db.pool.query<{ id: string }>(
           `insert into secret (name, kind, description, owner_account_id, expires_at) values ($1, 'text', 'd', $2, now() + interval '1 day') returning id`,
