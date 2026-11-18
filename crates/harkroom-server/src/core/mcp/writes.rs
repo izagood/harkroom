@@ -50,6 +50,8 @@ pub const SERVED: &[&str] = &[
     "thread.plan.item",
     // S5.4 MCP 2 — PR 감시 걸기. 감시 쓰기 풀(`pr_watch::PR_WATCH_PRIVILEGES`)이 있고 위임 스위치를 알 때만.
     "pr.watch",
+    // S5.4 MCP 3 — 스킬 제안(행·시스템 글·이벤트). 제안 행 칸이 있는 글 쓰기 풀(`writes.skill`)일 때만.
+    "skill.propose",
 ];
 
 /// TS 가 조건부로 싣는 도구 — `/mcp/admit` 이 `registered: true` 라고 답했을 때만 Rust 가 답한다([`super::route::serve`]).
@@ -137,6 +139,8 @@ pub struct McpWrites {
     pub delegate: Option<std::sync::Arc<crate::core::msg_post::PostState>>,
     /// `turn.wake`(S5.4 A3) — `post` 에 더해 `turn_wake::TURN_WAKE_PRIVILEGES`. 없으면 TS 로(게시 전에).
     pub wake: Option<std::sync::Arc<crate::core::msg_post::PostState>>,
+    /// `skill.propose`(S5.4 MCP 3) — `post` 에 더해 `skill_propose::SKILL_PROPOSE_PRIVILEGES`.
+    pub skill: Option<std::sync::Arc<crate::core::msg_post::PostState>>,
     /// AC5 안전판 — 릴레이가 Rust 오퍼레이터 코어와 함께 옮겨졌다. 그 동안 TS 의 릴레이 허브는 비어 있어 `turn.cancel` 이
     /// 아무 턴도 못 찾고 성공처럼 답하므로, Rust 가 `operator_core_moved` 로 거절한다([`super::route::TURN_CANCEL`]).
     pub relay_moved: bool,
@@ -233,6 +237,12 @@ pub async fn answer(
             return Some(None);
         };
         return Some(super::workitem::remove(read, write, me, args).await);
+    }
+    if tool == "skill.propose" {
+        let Some(st) = writes.skill.as_ref() else {
+            return Some(None);
+        };
+        return Some(super::skill_propose::answer(st, me, args).await);
     }
     if tool == "pr.watch" {
         let Some(write) = writes.pr_watch.as_ref() else {

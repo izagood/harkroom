@@ -38,6 +38,16 @@ const RETURNING = `returning slug, body, proposed_by as "proposedBy", proposed_a
   flagged_at as "flaggedAt", flag_reason as "flagReason"`;
 
 /**
+ * 제안 upsert(골든 — Rust `core/mcp/skill_propose.rs` 가 같은 문장을 쓴다). 같은 slug 면 본문을 덮고 승인·비활성을 버린다.
+ * `flagged_*` 는 늘 이번 제안의 값으로 덮는다(깨끗한 재제안은 표시를 지운다).
+ */
+export const SKILL_PROPOSE_UPSERT_SQL = `insert into workspace_skill (slug, body, proposed_by, flagged_at, flag_reason)
+     values ($1::text, $2::text, $3::uuid, case when $4::text is null then null else now() end, $4::text)
+     on conflict (slug) do update set body = excluded.body, proposed_by = excluded.proposed_by,
+       proposed_at = now(), approved_by = null, approved_at = null, disabled_at = null,
+       flagged_at = excluded.flagged_at, flag_reason = excluded.flag_reason`;
+
+/**
  * 에이전트가 스킬을 제안한다(#140). **제안만** 한다 — 승인은 admin 의 일이다.
  *
  * 같은 slug 를 다시 제안하면 본문을 덮고 **승인 상태를 버린다**(`approved_*` 를 null 로).
@@ -62,11 +72,7 @@ export async function proposeSkill(
   }
 
   const res = await pool.query(
-    `insert into workspace_skill (slug, body, proposed_by, flagged_at, flag_reason)
-     values ($1, $2, $3, case when $4::text is null then null else now() end, $4::text)
-     on conflict (slug) do update set body = excluded.body, proposed_by = excluded.proposed_by,
-       proposed_at = now(), approved_by = null, approved_at = null, disabled_at = null,
-       flagged_at = excluded.flagged_at, flag_reason = excluded.flag_reason
+    `${SKILL_PROPOSE_UPSERT_SQL}
      ${RETURNING}`,
     [input.slug, input.body, input.proposedBy, input.flagReason ?? null],
   );

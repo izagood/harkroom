@@ -1167,6 +1167,31 @@ async fn main() {
             },
             None => false,
         };
+    // S5.4 MCP 3 — MCP `skill.propose`. 글 쓰기 풀에 제안 행 칸이 다 있을 때만 — 아니면 TS 에 남는다.
+    let mcp_skill_ok = mcp_post_ok
+        && match &post_write {
+            Some(w) => match write::missing_in(
+                w,
+                harkroom_server::core::mcp::skill_propose::SKILL_PROPOSE_PRIVILEGES,
+                &[],
+            )
+            .await
+            {
+                Ok(m) if m.is_empty() => true,
+                Ok(m) => {
+                    eprintln!("front: mcp skill.propose core off — missing privileges {m:?}");
+                    false
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: mcp skill.propose core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    false
+                }
+            },
+            None => false,
+        };
     // C3a-3c — 글 고치기. 위 블록들과 같이 쓰기 역할에 그 권한이 **하나라도 없으면** 붙이지 않는다(그 경로는 TS 가 받는다).
     let edit_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -1881,6 +1906,7 @@ async fn main() {
                 memory_body: mem_body_write,
                 delegate: mcp_post.clone().filter(|_| mcp_delegate_ok),
                 wake: mcp_post.clone().filter(|_| mcp_wake_ok),
+                skill: mcp_post.clone().filter(|_| mcp_skill_ok),
                 post: mcp_post,
                 relay_moved: operator_on,
                 relay: relay_cell.clone(),

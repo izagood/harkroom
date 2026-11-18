@@ -30,6 +30,7 @@ pub mod reads4;
 pub mod respond;
 pub mod route;
 pub mod search;
+pub mod skill_propose;
 pub mod tools;
 pub mod turn_cancel;
 pub mod turn_wake;
