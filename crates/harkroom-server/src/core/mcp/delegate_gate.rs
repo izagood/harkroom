@@ -5,8 +5,8 @@
 //! - C3b-2c-4b: 게이트를 지난 요청도 맡는다 — 접속 확인 → 위임 글(`meta.kind = 'delegation'`) → 같은 tx 의 사슬 상한·의무
 //!   ([`crate::core::delegate_write`]) → 이벤트. 쓰기 칸(`McpWrites::delegate`)이 없으면 지금처럼 TS 로 넘긴다.
 //! - S5.4-11c: 팀장 **에이전트**가 `to` 전원을 담는 자기 팀 **하나**에 넘기는 요청(팀 명단 갈래)도 맡는다 — TS 처럼 호출 게이트·
-//!   사슬 상한을 건너뛰고 팀 명단의 (계정, 꺼짐)으로 접속을 본 뒤 위임 행·부름에 `team_id` 를 적는다. `to` 를 담는 팀이 둘 이상
-//!   (TS 는 행 순서의 첫 팀을 고른다 — 순서 없는 문장이다)이거나 팀장이 사람이면 TS 로 넘긴다.
+//!   사슬 상한을 건너뛰고 팀 명단의 (계정, 꺼짐)으로 접속을 본 뒤 위임 행·부름에 `team_id` 를 적는다. `to` 를 담는 팀이 둘 이상이면
+//!   TS 처럼 같은 문장의 행 순서 첫 팀(S5.4-14c). 팀장이 사람이면 TS 로 넘긴다.
 //! - S5.4-14c: 비지 않은 `agentModels` 도 맡는다 — 접속 확인 뒤 TS `preparePicks`([`super::msg_post::check_picks`]), 글 tx 의
 //!   `applyAgentPicks`(`notified` 에 넘겨받는 팀원을 더한다), 커밋 뒤 시스템 줄·이벤트. 하네스 목록(`relay_moved`)·고르기 쓰기 권한
 //!   (`AGENT_MODEL_PICKS_PRIVILEGES`)이 없으면 TS.
@@ -150,10 +150,8 @@ type Members = HashMap<String, (String, bool)>;
 enum LeadPick {
     /// `to` 전원을 담는 팀이 없다 — 호출 게이트 갈래.
     NoTeam,
-    /// 그런 팀이 꼭 하나 — (팀 id, 그 팀 명단).
+    /// 그런 팀 중 행 순서의 첫 팀 — (팀 id, 그 팀 명단). TS 처럼 같은 문장의 행 순서를 따른다(S5.4-14c: 둘 이상도 맡는다).
     One(String, Members),
-    /// 둘 이상 — TS 는 행 순서의 첫 팀을 고른다(순서 없는 문장). 맞추지 않고 TS 로 넘긴다.
-    Many,
 }
 
 /// `rows` 는 (팀, 소문자 handle, 계정, 꺼짐).
@@ -169,13 +167,13 @@ fn lead_team_pick(rows: &[(String, String, String, bool)], wanted: &[String]) ->
             .or_default()
             .insert(h.clone(), (id.clone(), *off));
     }
-    let mut hits = order
+    // TS `for (const [teamId, members] of byTeam)` — 삽입 순서(= 행 순서)의 첫 팀.
+    match order
         .into_iter()
-        .filter(|t| wanted.iter().all(|w| by_team[t].contains_key(w)));
-    match (hits.next(), hits.next()) {
-        (None, _) => LeadPick::NoTeam,
-        (Some(t), None) => LeadPick::One(t.to_owned(), by_team.remove(t).unwrap_or_default()),
-        _ => LeadPick::Many,
+        .find(|t| wanted.iter().all(|w| by_team[t].contains_key(w)))
+    {
+        None => LeadPick::NoTeam,
+        Some(t) => LeadPick::One(t.to_owned(), by_team.remove(t).unwrap_or_default()),
     }
 }
 
@@ -221,7 +219,6 @@ pub async fn answer(
         .map(|(t, h, id, off)| (t, h.to_lowercase(), id, off))
         .collect();
     let (team_id, members) = match lead_team_pick(&rows, &wanted) {
-        LeadPick::Many => return None,
         // 팀장이 사람인 팀 명단 갈래는 TS 몫이다.
         LeadPick::One(..) if me.kind != "agent" => return None,
         LeadPick::One(t, m) => (Some(t), m),
@@ -569,6 +566,14 @@ mod tests {
         );
         assert_eq!(lead_team_pick(&[], &["a".into()]), LeadPick::NoTeam);
         let two = vec![r("t1", "a", false), r("t2", "a", false)];
-        assert_eq!(lead_team_pick(&two, &["a".into()]), LeadPick::Many);
+        let LeadPick::One(t, _) = lead_team_pick(&two, &["a".into()]) else {
+            panic!("first team");
+        };
+        assert_eq!(t, "t1");
+        let two_rev = vec![r("t2", "a", false), r("t1", "a", false)];
+        let LeadPick::One(t, _) = lead_team_pick(&two_rev, &["a".into()]) else {
+            panic!("first team");
+        };
+        assert_eq!(t, "t2");
     }
 }
