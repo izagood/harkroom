@@ -15,12 +15,12 @@ use sqlx::PgPool;
 pub const SNAPSHOT_FRESH_SEC: i32 = 180;
 
 const FIND_SQL: &str = "select id::text from account where lower(handle) = lower($1) and kind = 'agent' and deleted_at is null";
-const OPTS_SQL: &str = "select c.harness, c.model, c.effort, c.agent_pickable_models \
+pub(crate) const OPTS_SQL: &str = "select c.harness, c.model, c.effort, c.agent_pickable_models \
        from account a left join agent_config c on c.account_id = a.id \
       where a.id = $1::uuid and a.kind = 'agent' and a.deleted_at is null";
-const ASSIGNMENT_SQL: &str =
+pub(crate) const ASSIGNMENT_SQL: &str =
     "select operator_id::text from agent_assignment where agent_id = $1::uuid";
-const SNAPSHOT_SQL: &str = "select body from operator_capability \
+pub(crate) const SNAPSHOT_SQL: &str = "select body from operator_capability \
       where operator_id = $1::uuid and seen_at > now() - make_interval(secs => $2)";
 
 const SELF_REASON: &str = "자기 자신의 모델은 고를 수 없다 — 사람만 바꾼다";
