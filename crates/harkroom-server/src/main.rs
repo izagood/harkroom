@@ -1724,6 +1724,28 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 — `POST /agent/api-checks` 의 임대 거절(`lease_invalid` + `api.call.denied` 감사). 쓰기 풀에 [`API_CHECKS_DENY_PRIVILEGES`] 가 다 있을 때만.
+    let api_checks_deny = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::api_checks as t;
+            match write::missing_in(w, t::API_CHECKS_DENY_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: api checks deny off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: api checks deny off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 — `POST /agent/merge-closed`. 쓰기 풀에 [`MERGE_CLOSED_PRIVILEGES`] 가 다 있을 때만.
     let merge_closed_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -3889,6 +3911,7 @@ async fn main() {
         if matches!(core_mode, harkroom_server::core::CoreMode::Rust) {
             let ac = harkroom_server::core::api_checks::routes(
                 state.up.clone(),
+                api_checks_deny.clone(),
                 auth.clone(),
                 state.cors.clone(),
             );
