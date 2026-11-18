@@ -1305,6 +1305,14 @@ async function freePort(): Promise<number> {
 }
 
 /** 앞단 바이너리를 띄우고 `front: listening` 줄과 `front: rust routes [...]` 줄을 기다린다. */
+/**
+ * 가군 스위치 — 앞단은 값이 없으면 「모름」으로 보고 그 스위치에 걸린 요청을 TS 로 넘긴다. 대조하려면 TS 가 쓰는 값(기본값)을
+ * 앞단에 명시한다. 이 값을 주지 않은 앞단이 「없으면 TS」 장면이다.
+ */
+const GROUP_A_ENV: Record<string, string> = {
+  HARKROOM_PRINCIPAL_INVOKE: 'on', ATTACHMENT_MAX_BYTES: '26214400', HARKROOM_BACKGROUND_ENABLED: '0',
+};
+
 async function startFront(bin: string, env: Record<string, string>): Promise<{ child: ChildProcess; log: () => string }> {
   const child = spawn(bin, [], { env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
   let log = '';
@@ -1796,6 +1804,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // S5.3 C0 — 코어 /ws·/ws-ticket 을 켠다. 주기는 시험이 기다릴 수 있게 줄인다(기본값은 TS 와 같다).
         HARKROOM_CORE: 'rust', HARKROOM_WS_APP_HEARTBEAT_MS: '300', HARKROOM_WS_REVALIDATE_MS: '500',
         ATTACHMENT_ROOT: attRoot, HARKROOM_SECRET_KEYS_DIR: secretKeysDir, HARKROOM_SECRET_KEY_ID: 'ck1',
+        ...GROUP_A_ENV,
       });
       expect(f.log()).toContain('front: core rust');
       expect(f.log()).toContain('/operator, /operators*');
@@ -3237,6 +3246,18 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           const untilN = Date.now() + 10_000;
           while (!fN.log().includes('front: rust core routes') && Date.now() < untilN) await new Promise((res) => setTimeout(res, 100));
           expect(fN.log()).toContain('thread note core off — missing privileges');
+          // 가군 스위치를 주지 않은 앞단 — 스위치마다 「모름 → TS」로 기동한다(값을 준 앞단은 이 줄을 남기지 않는다).
+          const UNSET_LINES = [
+            'front: principal-invoke posts to TS — HARKROOM_PRINCIPAL_INVOKE unset',
+            'front: agent calls under delegation v2 to TS — HARKROOM_DELEGATION_IMPLICIT unset',
+            'front: attachment upload to TS — ATTACHMENT_MAX_BYTES unset',
+            'front: background list to TS — HARKROOM_BACKGROUND_ENABLED unset',
+            'front: invite mail (issue with email, resend) to TS — mail env unset',
+          ];
+          for (const line of UNSET_LINES) expect(fN.log(), line).toContain(line);
+          expect(fN.log()).not.toContain('"POST /uploads"');
+          expect(fN.log()).not.toContain('"GET /accounts/agents/{id}/background"');
+          for (const line of UNSET_LINES.slice(0, 1).concat(UNSET_LINES.slice(2, 4))) expect(f.log(), line).not.toContain(line);
           const viaTs = await mcpCall(`http://127.0.0.1:${portN}`, agent.pat, 'thread.note', { threadRootId: noteRootR, body: 'TS 가 받는다' });
           expect(viaTs.core, '권한이 없으면 TS 가 답한다').toBeNull();
           expect(viaTs.text).toContain('ok\\":true');
@@ -8991,7 +9012,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 fd = await startFront(bin, {
                   UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(portD), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
                   TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust', HARKROOM_DELEGATION_V2: mode,
-                  HARKROOM_DELEGATION_IMPLICIT: implicitMode,
+                  HARKROOM_DELEGATION_IMPLICIT: implicitMode, ...GROUP_A_ENV,
                 });
               } catch (err) {
                 if (attempt >= 2 || !String(err).includes('AddrInUse')) throw err;
@@ -9518,7 +9539,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
               try {
                 fd = await startFront(bin, {
                   UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(port), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
-                  TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust', HARKROOM_DELEGATION_V2: V2, HARKROOM_DELEGATION_IMPLICIT: 'off',
+                  TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust', HARKROOM_DELEGATION_V2: V2, HARKROOM_DELEGATION_IMPLICIT: 'off', ...GROUP_A_ENV,
                 });
               } catch (err) {
                 if (attempt >= 2 || !String(err).includes('AddrInUse')) throw err;
