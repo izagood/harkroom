@@ -1632,6 +1632,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // S5.4 MCP 4 — MCP `automation.propose`(`automation_propose.rs::AUTOMATION_PROPOSE_PRIVILEGES`). 없으면 「mcp automation.propose core off」. 운영에 줄 목록과 글자째 같다.
         `grant insert (owner_id, proposed_by, approved_at, enabled, channel_id, name, body, trigger, debounce_sec) on automation to ${rw}`,
         `grant select (id, owner_id, channel_id, name, body, trigger, enabled, next_at, paused_reason, consecutive_failures, ingress_enabled_at, debounce_sec, proposed_by, approved_at, created_at, updated_at) on automation to ${rw}`,
+        // S5.4 MCP 5 — MCP `automation.run`(`automation_run.rs::AUTOMATION_RUN_PRIVILEGES`). 없으면 「mcp automation.run core off」. 운영에 줄 목록과 글자째 같다.
+        // automation 의 SELECT 칸(id·enabled·debounce_sec·deleted_at)은 위 propose 줄에 없는 deleted_at 만 더한다. update(updated_at)는 `for update` 잠금용이다.
+        `grant select (id, enabled, debounce_sec, deleted_at), update (updated_at) on automation to ${rw}`,
+        `grant select (id, automation_id, event_key, trigger_kind, status, message_id, error, created_at, finished_at, initiated_by, cause_message_id), insert (automation_id, event_key, trigger_kind, payload, not_before, initiated_by, cause_message_id, chain_depth) on automation_run to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -9578,6 +9582,120 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
               expect((await apRows('ap-t-ok'))[0]!.trigger).not.toHaveProperty('extra');
               expect(await apRows('ap-t-fh')).toMatchObject([{ owner_admin: true, debounce_sec: 30 }]);
               await db.pool.query(`delete from automation where name like 'ap-_-%'`);
+            }
+
+            // S5.4 MCP 5 — `automation.run`. TS·Rust 가 각자 다른 자동화(`ar-t-*`·`ar-r-*`)와 각자 다른 원인 글로 같은 장면을 돌리고 답 글자·회차 행을 견준다.
+            if (V2 === '1') {
+              const arCh = await freshCh();
+              const arNorm = (t: string) => t.replace(/ar-[tr]-/g, 'ar-x-')
+                .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, '<uuid>')
+                .replace(/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z/g, '<iso>');
+              const mkAuto = async (name: string, o: { owner?: string; approved?: boolean; trigger?: Record<string, unknown> } = {}) =>
+                (await db.pool.query<{ id: string }>(
+                  `insert into automation (owner_id, channel_id, name, body, trigger, enabled, approved_at)
+                   values ($1, $2, $3, '본문', $4::jsonb, true, case when $5 then now() end) returning id::text as id`,
+                  [o.owner ?? admin.accountId, arCh, name, JSON.stringify(o.trigger ?? { kind: 'webhook' }), o.approved ?? true])).rows[0]!.id;
+              const cause = async (o: { author?: string; meta?: Record<string, unknown>; ageH?: number; woke?: boolean } = {}) => {
+                const id = await ins({ ch: arCh, author: o.author ?? admin.accountId, body: `<@${bot3.accountId}> 지금 돌려 줘`, meta: o.meta });
+                if (o.woke ?? true) await wokeBy(id);
+                if (o.ageH) await db.pool.query(`update message set created_at = now() - make_interval(hours => $2) where id = $1`, [id, o.ageH]);
+                return id;
+              };
+              // [이름, 장면을 깔고 { 인자, 원인 } 을 돌려준다, Rust 가 답하나]
+              type AR = [string, (side: 't' | 'r') => Promise<{ args: unknown; cause?: string }>, boolean];
+              const used = new Map<string, string>();
+              const ARS: AR[] = [
+                ['① 정상(webhook)', async (s) => {
+                  const a = await mkAuto(`ar-${s}-ok`);
+                  const c = await cause();
+                  used.set(`${s}:ok`, a); used.set(`${s}:okc`, c);
+                  return { args: { automationId: a }, cause: c };
+                }, true],
+                ['② 정상(schedule Asia/Seoul — 날짜 변수)', async (s) => ({
+                  args: { automationId: await mkAuto(`ar-${s}-sch`, { trigger: { kind: 'schedule', freq: 'daily', time: '09:00', tz: 'Asia/Seoul' } }) },
+                  cause: await cause(),
+                }), true],
+                ['③ no_cause(원인 없음)', async (s) => ({ args: { automationId: await mkAuto(`ar-${s}-nc`) } }), true],
+                ['③ no_cause(나를 안 부른 글)', async (s) => ({ args: { automationId: await mkAuto(`ar-${s}-nw`) }, cause: await cause({ woke: false }) }), true],
+                ['④ cause_stale(2시간 전)', async (s) => ({ args: { automationId: await mkAuto(`ar-${s}-st`) }, cause: await cause({ ageH: 2 }) }), true],
+                ['⑤ cause_not_human(에이전트 글)', async (s) => ({ args: { automationId: await mkAuto(`ar-${s}-ag`) }, cause: await cause({ author: bot2.accountId }) }), true],
+                ['⑥ automation_reentry(자동화 글)', async (s) => ({ args: { automationId: await mkAuto(`ar-${s}-re`) }, cause: await cause({ meta: { automation: { id: randomUUID() } } }) }), true],
+                ['⑦ not_found(남의 자동화)', async (s) => ({ args: { automationId: await mkAuto(`ar-${s}-nf`, { owner: member.accountId }) }, cause: await cause() }), true],
+                ['⑦ not_found(없는 id)', async () => ({ args: { automationId: randomUUID() }, cause: await cause() }), true],
+                ['⑧ not_approved', async (s) => ({ args: { automationId: await mkAuto(`ar-${s}-na`, { approved: false }) }, cause: await cause() }), true],
+                ['⑨ cause_used(같은 원인으로 다른 자동화)', async (s) => ({ args: { automationId: await mkAuto(`ar-${s}-cu`) }, cause: used.get(`${s}:okc`)! }), true],
+                ['⑩ agent_quota(10분 안에 같은 자동화)', async (s) => ({ args: { automationId: used.get(`${s}:ok`)! }, cause: await cause() }), true],
+                ['⑪ rate_limited(1시간 20회) → TS', async (s) => {
+                  const a = await mkAuto(`ar-${s}-rl`);
+                  await db.pool.query(
+                    `insert into automation_run (automation_id, event_key, trigger_kind, status) select $1, 'rl-' || g, 'webhook', 'sent' from generate_series(1, 20) g`, [a]);
+                  return { args: { automationId: a }, cause: await cause() };
+                }, false],
+                ['⑫ uuid 아님 → TS', async () => ({ args: { automationId: 'nope' }, cause: await cause() }), false],
+              ];
+              const run = async (side: 't' | 'r') => {
+                const out: Record<string, unknown>[] = [];
+                for (const [name, setup] of ARS) {
+                  const { args, cause: c } = await setup(side);
+                  const r = await mcpCall(side === 't' ? tsUrl : v2Url, bot3.pat, 'automation.run', args, 32, c ? { 'x-harkroom-cause': c } : {});
+                  out.push({ name, status: r.status, type: r.type, core: r.core, text: arNorm(r.text) });
+                }
+                return out;
+              };
+              const tsAr = await run('t');
+              // ⑪ 의 Rust 쪽은 TS 로 넘어가 TS 가 끈다 — Rust 가 넘기기 전에 아무것도 쓰지 않았는지는 아래 회차 수로 본다.
+              const rsAr = await run('r');
+              for (let i = 0; i < tsAr.length; i++) {
+                const { core, ...a } = tsAr[i]!;
+                const { core: rc, ...b } = rsAr[i]!;
+                expect(b, `automation.run ${String(a.name)}`).toEqual(a);
+                expect(core, `${String(a.name)} — TS`).toBeNull();
+                expect(rc, `${String(a.name)} — 누가 답했나`).toBe(ARS[i]![2] ? 'mcp' : null);
+              }
+              // ⑬ chain_capped — 상한을 1로 내리고 양쪽에 한 번씩.
+              const prevLimit = (await db.pool.query<{ n: number }>(`select chain_limit as n from mention_policy where id = true`)).rows[0]?.n ?? null;
+              await db.pool.query(`insert into mention_policy (id, chain_limit) values (true, 1) on conflict (id) do update set chain_limit = 1`);
+              try {
+                const cc = { t: await mkAuto('ar-t-cc'), r: await mkAuto('ar-r-cc') };
+                const a = await mcpCall(tsUrl, bot3.pat, 'automation.run', { automationId: cc.t }, 33, { 'x-harkroom-cause': await cause() });
+                const b = await mcpCall(v2Url, bot3.pat, 'automation.run', { automationId: cc.r }, 33, { 'x-harkroom-cause': await cause() });
+                expect(b.core, '⑬ chain_capped — 누가 답했나').toBe('mcp');
+                expect(arNorm(b.text)).toBe(arNorm(a.text));
+                expect(a.text).toContain('chain_capped');
+              } finally {
+                if (prevLimit === null) await db.pool.query(`delete from mention_policy where id = true`);
+                else await db.pool.query(`update mention_policy set chain_limit = $1 where id = true`, [prevLimit]);
+              }
+              // 빈 값끼리 통과하지 않게 — TS 쪽 결과를 못 박는다.
+              const tsArText = (n: string) => String(tsAr.find((x) => x.name === n)!.text);
+              expect(tsArText('① 정상(webhook)')).toContain('Queued.');
+              for (const [n, code] of [
+                ['③ no_cause(원인 없음)', 'no_cause'], ['③ no_cause(나를 안 부른 글)', 'no_cause'], ['④ cause_stale(2시간 전)', 'cause_stale'],
+                ['⑤ cause_not_human(에이전트 글)', 'cause_not_human'], ['⑥ automation_reentry(자동화 글)', 'automation_reentry'],
+                ['⑦ not_found(남의 자동화)', 'not_found'], ['⑦ not_found(없는 id)', 'not_found'], ['⑧ not_approved', 'not_approved'],
+                ['⑨ cause_used(같은 원인으로 다른 자동화)', 'cause_used'], ['⑩ agent_quota(10분 안에 같은 자동화)', 'agent_quota'],
+              ] as const) expect(tsArText(n), n).toContain(code);
+              // 회차 행 — payload(이벤트 키는 무작위라 꼴만)·initiated_by·원인·chain_depth 를 견준다.
+              const arRows = async (name: string) => (await db.pool.query(
+                `select r.trigger_kind, r.status, r.not_before, r.chain_depth, r.initiated_by = $2::uuid as by_bot,
+                        r.cause_message_id is not null as has_cause, r.event_key ~ '^manual:[0-9a-f-]{36}$' as key_ok,
+                        r.payload -> 'vars' as vars, jsonb_array_length(r.payload -> 'events') as n_events,
+                        r.payload -> 'events' -> 0 ->> 'key' = r.event_key and r.payload -> 'events' -> 0 ->> 'summary' = r.event_key as ev_ok
+                   from automation_run r join automation a on a.id = r.automation_id
+                  where a.name = $1 and r.initiated_by is not null order by r.created_at`, [name, bot3.accountId])).rows;
+              for (const tail of ['ok', 'sch', 'nc', 'nw', 'st', 'ag', 're', 'nf', 'na', 'cu', 'rl', 'cc']) {
+                const [t, r] = [await arRows(`ar-t-${tail}`), await arRows(`ar-r-${tail}`)];
+                expect(r, `automation.run 회차 ${tail}`).toEqual(t);
+                expect(t, `automation.run 회차 수 ${tail}`).toHaveLength(['ok', 'sch'].includes(tail) ? 1 : 0);
+              }
+              expect(await arRows('ar-t-ok')).toMatchObject([{ trigger_kind: 'manual', status: 'pending', not_before: null, chain_depth: 1, by_bot: true, has_cause: true, key_ok: true, vars: {}, n_events: 1, ev_ok: true }]);
+              expect(Object.keys((await arRows('ar-t-sch'))[0]!.vars as object).sort()).toEqual(['date', 'lastWeek', 'lastWeek.end', 'lastWeek.start', 'yesterday']);
+              // ⑪ — 두 쪽 모두 TS 가 처리했다(끄기). 20회 밖에 회차를 더 넣지 않았다.
+              const rl = (await db.pool.query<{ name: string; enabled: boolean; n: number }>(
+                `select a.name, a.enabled, (select count(*)::int from automation_run r where r.automation_id = a.id) as n
+                   from automation a where a.name in ('ar-t-rl', 'ar-r-rl') order by a.name desc`)).rows;
+              expect(rl.map((x) => ({ enabled: x.enabled, n: x.n }))).toEqual([{ enabled: false, n: 20 }, { enabled: false, n: 20 }]);
+              await db.pool.query(`delete from automation where name like 'ar-_-%'`);
             }
             type DI = { name: string; item: Record<string, unknown>[] };
             const itemOf = (n: string) => (tsD as DI[]).find((x) => x.name === n)!.item;

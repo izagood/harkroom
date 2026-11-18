@@ -237,7 +237,8 @@ async fn vars_for(read: &PgPool, trigger: &str) -> Option<Value> {
     Some(Value::Object(m))
 }
 
-enum Enq {
+/// 회차 넣기의 결말 — 시험(`tests/automation_grant.rs`)이 무권한 롤로 [`enqueue_tx`] 를 돌려 본다.
+pub enum Enq {
     Queued(String),
     Refused(&'static str),
     ToTs,
@@ -254,7 +255,7 @@ async fn enqueue(
     let Ok(mut tx) = write.begin().await else {
         return Enq::ToTs;
     };
-    let out = enqueue_tx(&mut tx, a, cause, agent, event_key, payload).await;
+    let out = enqueue_tx(&mut tx, &a.id, cause, agent, event_key, payload).await;
     match out {
         Ok(Enq::Queued(run)) => {
             if tx.commit().await.is_ok() {
@@ -283,20 +284,21 @@ async fn enqueue(
     }
 }
 
-async fn enqueue_tx(
+/// 자동화 행 잠금 아래의 쿼터·원인 한 번·회차 INSERT. 커밋·롤백은 부른 쪽이 한다.
+pub async fn enqueue_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    a: &Automation,
+    automation_id: &str,
     cause: &str,
     agent: &str,
     event_key: &str,
     payload: &Value,
 ) -> Result<Enq, sqlx::Error> {
     sqlx::query(LOCK_SQL)
-        .bind(&a.id)
+        .bind(automation_id)
         .fetch_optional(&mut **tx)
         .await?;
     let (last, now, n): (Option<i64>, i64, i32) = sqlx::query_as(QUOTA_SQL)
-        .bind(&a.id)
+        .bind(automation_id)
         .fetch_one(&mut **tx)
         .await?;
     let used = sqlx::query(CAUSE_USED_SQL)
@@ -311,14 +313,14 @@ async fn enqueue_tx(
     }
     // enqueueRun — 「지금 한 번」은 꺼진 자동화도 돌리고(ignoreEnabled), 수동이라 디바운스로 모으지 않는다.
     let row: Option<(bool, Option<i32>)> = sqlx::query_as(ENQUEUE_ROW_SQL)
-        .bind(&a.id)
+        .bind(automation_id)
         .fetch_optional(&mut **tx)
         .await?;
     if row.is_none() {
         return Ok(Enq::Refused("inactive"));
     }
     let recent: i32 = sqlx::query_scalar(RECENT_SQL)
-        .bind(&a.id)
+        .bind(automation_id)
         .fetch_one(&mut **tx)
         .await?;
     if recent >= RATE_LIMIT_PER_HOUR {
@@ -326,7 +328,7 @@ async fn enqueue_tx(
         return Ok(Enq::ToTs);
     }
     let ins = sqlx::query(INSERT_SQL)
-        .bind(&a.id)
+        .bind(automation_id)
         .bind(event_key)
         .bind(payload.to_string())
         .bind(agent)
