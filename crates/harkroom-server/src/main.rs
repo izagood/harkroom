@@ -2711,6 +2711,24 @@ async fn spawn_loops() {
         Ok(m) => eprintln!("front: loop outbox.prune off — missing privileges {m:?}"),
         Err(e) => eprintln!("front: loop outbox.prune off — privilege check failed: {e}"),
     }
+    // decision 4 — avcs 투영(lease·커서·상태 줄). 문지기 이름 `projection`(줄이 없으면 `ts` — 꺼짐).
+    {
+        use harkroom_server::loops::projection as pj;
+        match write::missing_in(
+            &pool,
+            pj::PROJECTION_PRIVILEGES,
+            pj::PROJECTION_SEQUENCE_PRIVILEGES,
+        )
+        .await
+        {
+            Ok(m) if m.is_empty() => {
+                eprintln!("front: loop projection on (runs only while server_loop owner is rust)");
+                pj::spawn(gate.clone(), pool.clone());
+            }
+            Ok(m) => eprintln!("front: loop projection off — missing privileges {m:?}"),
+            Err(e) => eprintln!("front: loop projection off — privilege check failed: {e}"),
+        }
+    }
     // S5.4 L1 — 예약 글 발송. 글 쓰기 권한 + 예약 행 표시 칸이 다 있어야 띄운다.
     let post_privs = [
         harkroom_server::core::msg_post::MESSAGE_POST_PRIVILEGES,

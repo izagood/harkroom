@@ -14,6 +14,7 @@ pub mod delegation_deadline;
 pub mod mandate_idle;
 pub mod outbox_prune;
 pub mod permission_expire;
+pub mod projection;
 pub mod push;
 pub mod retention;
 pub mod scheduled;
