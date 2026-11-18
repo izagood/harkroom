@@ -8,7 +8,9 @@
 //!   (`automation_ingress_verify::safe_equal`). 본문 상한은 전역 `bodyLimit` 과 같은 1MiB.
 //! - github 의 `matchGithub` 거절 중 변수 없이 확정되는 것(`repo`·`event`·`not_a_branch`·push `branch`)은 여기서
 //!   `200 {status:'ignored', reason}` 으로 답한다([`github_ignored`]) — 트리거는 이미 읽던 `automation.trigger` 에서(새 GRANT 없음).
-//! - **TS 로 넘기는 것**: 검증을 통과한 뒤의 나머지 필터(`matchGithub` 의 맞음·paths·`genericVars`)와 회차 만들기(`enqueueRun` —
+//! - github 이 맞으면(쓰기 풀이 있고 디바운스가 없을 때) 회차도 여기서 만든다(`github:<delivery>`, 상한은 200 `rate_limited`).
+//!   paths/change 글롭 필터·JS 강제 변환이 다를 수 있는 값은 TS 로.
+//! - **TS 로 넘기는 것**: 검증을 통과한 뒤의 나머지 필터(paths 글롭)와 회차 만들기(`enqueueRun` —
 //!   디바운스 모으기·시간당 상한 일시정지)는 아직 TS 다. 원문 바이트를 그대로 넘기므로 TS 가 같은 판정을 다시 한다.
 //!   예외: generic 은 쓰기 풀이 있으면 `genericVars`·`enqueueRun`(디바운스 없음·시간당 상한 일시정지·429)을 여기서 한다 —
 //!   디바운스가 걸렸거나 50 칸 넘는 본문·JS 와 문자열화가 다른 숫자는 TS 로 넘긴다.
@@ -159,79 +161,172 @@ async fn load(read: &PgPool, id: &str) -> Result<Option<IngressTarget>, sqlx::Er
     )
 }
 
-/// TS `matchGithub` 의 거절 갈래 중 **변수 없이** 확정되는 것(`repo`·`event`·`not_a_branch`·push 의 `branch`).
-/// `Some(reason)` 이면 TS 와 같은 `200 {status:'ignored', reason}` 을 답한다. `None` 이면 맞을 수 있거나(변수·회차는 아직 TS)
-/// JS 강제 변환이 다를 수 있는 꼴(문자열 아닌 값·ASCII 아닌 저장소 이름·TS 가 던질 본문) — TS 로 넘긴다.
+/// TS `matchGithub` 의 거절 갈래만 — [`match_github`] 의 `Err`.
+#[cfg(test)]
 pub(crate) fn github_ignored(
     trigger: &Value,
     event: &str,
     payload: &Value,
 ) -> Option<&'static str> {
-    // JS `String(x ?? '')` — 문자열이거나 없음/null 일 때만 같은 값을 안다.
-    fn js_str(v: Option<&Value>) -> Option<&str> {
+    match_github(trigger, event, payload)?.err()
+}
+
+/// TS `matchGithub`. `Some(Ok(vars))` 맞음, `Some(Err(reason))` 거절(`200 ignored`), `None` 은 JS 와 같은 답을 장담할 수 없는
+/// 꼴(문자열·정수 아닌 값·ASCII 아닌 저장소 이름·TS 가 던질 본문·paths/change 글롭 필터) — TS 로 넘긴다.
+pub(crate) fn match_github(
+    trigger: &Value,
+    event: &str,
+    payload: &Value,
+) -> Option<Result<serde_json::Map<String, Value>, &'static str>> {
+    // JS `String(x ?? '')`.
+    fn jv(v: Option<&Value>) -> Option<String> {
         match v {
-            None | Some(Value::Null) => Some(""),
-            Some(Value::String(s)) => Some(s.as_str()),
-            Some(_) => None,
+            None | Some(Value::Null) => Some(String::new()),
+            Some(v) => js_string(v),
         }
+    }
+    fn n(v: Option<&Value>, max: usize) -> Option<Value> {
+        Some(Value::String(neutralize(&jv(v)?, max)))
     }
     let t_repo = trigger.get("repo")?.as_str()?;
     let t_event = trigger.get("event")?.as_str()?;
-    let repo = js_str(payload.get("repository").and_then(|r| r.get("full_name")))?;
+    let repo = jv(payload.get("repository").and_then(|r| r.get("full_name")))?;
     if !repo.is_ascii() || !t_repo.is_ascii() {
         return None;
     }
     if !repo.eq_ignore_ascii_case(t_repo) {
-        return Some("repo");
+        return Some(Err("repo"));
     }
+    let mut vars = serde_json::Map::new();
+    vars.insert("repo".into(), Value::String(neutralize(&repo, 300)));
+    vars.insert("event".into(), Value::String(neutralize(t_event, 300)));
     let action = payload.get("action");
     let is = |v: Option<&Value>, s: &str| v.and_then(Value::as_str) == Some(s);
+    let mut branch: Option<String> = None;
+    let mut files: Vec<String> = Vec::new();
     match t_event {
         "push" => {
             if event != "push" {
-                return Some("event");
+                return Some(Err("event"));
             }
-            let r = js_str(payload.get("ref"))?;
-            let Some(branch) = r.strip_prefix("refs/heads/") else {
-                return Some("not_a_branch");
+            let r = jv(payload.get("ref"))?;
+            let Some(b) = r.strip_prefix("refs/heads/") else {
+                return Some(Err("not_a_branch"));
             };
-            // `pushChanges` 는 commits 안의 null 에서 던진다(TS 500) — 그런 본문은 TS 로.
-            if let Some(Value::Array(cs)) = payload.get("commits")
-                && cs.iter().any(Value::is_null)
-            {
-                return None;
+            branch = Some(b.to_owned());
+            if let Some(Value::Array(cs)) = payload.get("commits") {
+                for c in cs {
+                    if c.is_null() {
+                        return None; // TS 가 던진다(500).
+                    }
+                    for k in ["added", "modified", "removed"] {
+                        if let Some(Value::Array(ps)) = c.get(k) {
+                            for p in ps {
+                                files.push(p.as_str()?.to_owned());
+                            }
+                        }
+                    }
+                }
             }
-            match trigger.get("branch") {
-                None | Some(Value::Null) => None,
-                Some(Value::String(b)) if b.is_empty() => None,
-                Some(Value::String(b)) if b != branch => Some("branch"),
-                _ => None,
-            }
+            vars.insert("sha".into(), n(payload.get("after"), 40)?);
+            let pusher = payload.get("pusher").and_then(|p| p.get("name"));
+            let author = match pusher {
+                None | Some(Value::Null) => payload.get("sender").and_then(|p| p.get("login")),
+                some => some,
+            };
+            vars.insert("author".into(), n(author, 300)?);
+            vars.insert("compare".into(), n(payload.get("compare"), 500)?);
+            vars.insert(
+                "commit.message".into(),
+                n(
+                    payload.get("head_commit").and_then(|c| c.get("message")),
+                    300,
+                )?,
+            );
         }
         "pull_request.merged" => {
-            let merged = payload
-                .get("pull_request")
-                .and_then(|p| p.get("merged"))
-                .and_then(Value::as_bool)
-                == Some(true);
+            let pr = payload.get("pull_request");
+            let merged = pr.and_then(|p| p.get("merged")).and_then(Value::as_bool) == Some(true);
             if event != "pull_request" || !is(action, "closed") || !merged {
-                return Some("event");
+                return Some(Err("event"));
             }
-            None
+            let pr = pr?;
+            branch = Some(jv(pr.get("base").and_then(|b| b.get("ref")))?);
+            vars.insert("pr.number".into(), n(pr.get("number"), 20)?);
+            vars.insert("pr.title".into(), n(pr.get("title"), 300)?);
+            vars.insert("pr.url".into(), n(pr.get("html_url"), 500)?);
+            vars.insert("sha".into(), n(pr.get("merge_commit_sha"), 40)?);
+            vars.insert(
+                "author".into(),
+                n(pr.get("user").and_then(|u| u.get("login")), 300)?,
+            );
         }
         "release.published" => {
             if event != "release" || !is(action, "published") {
-                return Some("event");
+                return Some(Err("event"));
             }
-            None
+            let rel = payload.get("release");
+            let g = |k: &str| rel.and_then(|r| r.get(k));
+            vars.insert("release.tag".into(), n(g("tag_name"), 300)?);
+            vars.insert("release.url".into(), n(g("html_url"), 500)?);
+            vars.insert(
+                "author".into(),
+                n(g("author").and_then(|a| a.get("login")), 300)?,
+            );
         }
         _ => {
             if event != "workflow_run" || !is(action, "completed") {
-                return Some("event");
+                return Some(Err("event"));
             }
-            None
+            let run = payload.get("workflow_run");
+            let g = |k: &str| run.and_then(|r| r.get(k));
+            branch = Some(jv(g("head_branch"))?);
+            vars.insert("workflow.name".into(), n(g("name"), 300)?);
+            vars.insert("workflow.conclusion".into(), n(g("conclusion"), 300)?);
+            vars.insert("workflow.url".into(), n(g("html_url"), 500)?);
+            vars.insert("sha".into(), n(g("head_sha"), 40)?);
         }
     }
+    match trigger.get("branch") {
+        None | Some(Value::Null) => {}
+        Some(Value::String(b)) if b.is_empty() => {}
+        Some(Value::String(b)) => {
+            if branch.as_deref() != Some(b.as_str()) {
+                return Some(Err("branch"));
+            }
+        }
+        _ => return None,
+    }
+    if let Some(b) = &branch {
+        vars.insert("branch".into(), Value::String(neutralize(b, 300)));
+    }
+    let has_paths = match trigger.get("paths") {
+        None | Some(Value::Null) => false,
+        Some(Value::Array(a)) => !a.is_empty(),
+        _ => return None,
+    };
+    let has_change = match trigger.get("change") {
+        None | Some(Value::Null) => false,
+        Some(Value::String(c)) => !c.is_empty() && c != "any",
+        _ => return None,
+    };
+    if has_paths || has_change {
+        if t_event != "push" {
+            return Some(Err("paths_need_push"));
+        }
+        return None; // 글롭 필터는 아직 TS.
+    }
+    if !files.is_empty() {
+        let mut seen = std::collections::HashSet::new();
+        let uniq: Vec<String> = files
+            .iter()
+            .filter(|p| seen.insert(p.as_str()))
+            .take(50)
+            .map(|p| neutralize(p, 300))
+            .collect();
+        vars.insert("files".into(), Value::String(uniq.join("\n")));
+    }
+    Some(Ok(vars))
 }
 
 /// 쓰기 풀 권한 — `automation_run_now` 의 회차·일시정지 칸과 같다(새 GRANT 없음).
@@ -315,8 +410,6 @@ async fn enqueue_generic(
     idem: Option<&str>,
     payload: &Value,
 ) -> Result<Option<Response>, sqlx::Error> {
-    use crate::core::mcp::automation_run as ar;
-    use crate::loops::automation as la;
     // serde_json 은 키 순서를 바꿀 수 있다(`slice(0, 50)` 이 달라진다) — 50 칸 넘는 본문은 TS 로.
     if payload.as_object().is_some_and(|o| o.len() > 50) {
         return Ok(None);
@@ -324,6 +417,24 @@ async fn enqueue_generic(
     let Some(vars) = generic_vars(payload) else {
         return Ok(None);
     };
+    let idem = idem.map(|k| {
+        let u: Vec<u16> = k.encode_utf16().take(200).collect();
+        String::from_utf16_lossy(&u)
+    });
+    enqueue_vars(w, id, kind, "generic", idem, vars).await
+}
+
+/// TS `enqueueRun`(디바운스 없는 갈래). `suffix` 가 없으면 `prefix:` + 새 uuid. 디바운스가 걸렸으면 `None`(TS 로).
+async fn enqueue_vars(
+    w: &PgPool,
+    id: &str,
+    kind: &str,
+    prefix: &str,
+    suffix: Option<String>,
+    vars: serde_json::Map<String, Value>,
+) -> Result<Option<Response>, sqlx::Error> {
+    use crate::core::mcp::automation_run as ar;
+    use crate::loops::automation as la;
     let row: Option<(bool, Option<i32>)> = sqlx::query_as(ar::ENQUEUE_ROW_SQL)
         .bind(id)
         .fetch_optional(w)
@@ -345,13 +456,11 @@ async fn enqueue_generic(
     if debounce.is_some_and(|d| d != 0) {
         return Ok(None); // 디바운스 모으기는 아직 TS.
     }
-    let event_key = match idem {
-        Some(k) => {
-            let u: Vec<u16> = k.encode_utf16().take(200).collect();
-            format!("generic:{}", String::from_utf16_lossy(&u))
-        }
+    let event_key = match suffix {
+        Some(k) => format!("{prefix}:{k}"),
         None => {
-            sqlx::query_scalar("select 'generic:' || gen_random_uuid()::text")
+            sqlx::query_scalar("select $1 || ':' || gen_random_uuid()::text")
+                .bind(prefix)
                 .fetch_one(w)
                 .await?
         }
@@ -368,7 +477,13 @@ async fn enqueue_generic(
             .await?;
         la::end_automation_mandates_tx(&mut tx, id, "automation_off").await?;
         tx.commit().await?;
-        return Ok(Some(status(StatusCode::TOO_MANY_REQUESTS, "rate_limited")));
+        // TS: generic 은 429, github 은 200.
+        let code = if prefix == "github" {
+            StatusCode::OK
+        } else {
+            StatusCode::TOO_MANY_REQUESTS
+        };
+        return Ok(Some(status(code, "rate_limited")));
     }
     let summary = la::event_summary(&vars, &event_key);
     let body =
@@ -468,17 +583,37 @@ async fn handle(
                 .trigger
                 .as_deref()
                 .and_then(|t| serde_json::from_str::<Value>(t).ok());
-            if let Some(reason) = trigger
+            match trigger
                 .as_ref()
                 .zip(event)
-                .and_then(|(t, e)| github_ignored(t, e, &payload))
+                .and_then(|(t, e)| match_github(t, e, &payload))
             {
-                return (
-                    StatusCode::OK,
-                    [(header::CONTENT_TYPE, "application/json; charset=utf-8")],
-                    format!(r#"{{"status":"ignored","reason":"{reason}"}}"#),
-                )
-                    .into_response();
+                Some(Err(reason)) => {
+                    return (
+                        StatusCode::OK,
+                        [(header::CONTENT_TYPE, "application/json; charset=utf-8")],
+                        format!(r#"{{"status":"ignored","reason":"{reason}"}}"#),
+                    )
+                        .into_response();
+                }
+                Some(Ok(vars)) => {
+                    // 배달 id 가 utf-8 이 아니면 TS(latin1) 와 키가 달라진다 — TS 로.
+                    let delivery = match parts.headers.get("x-github-delivery") {
+                        None => Some(None),
+                        Some(v) => v
+                            .to_str()
+                            .ok()
+                            .map(|s| Some(s.to_owned()).filter(|s| !s.is_empty())),
+                    };
+                    if let (Some(w), Some(delivery)) = (&st.write, delivery) {
+                        match enqueue_vars(w, &id, "github", "github", delivery, vars).await {
+                            Ok(Some(r)) => return r,
+                            Ok(None) => {}
+                            Err(e) => return internal(e),
+                        }
+                    }
+                }
+                None => {}
             }
         }
         Hook::Generic => {
@@ -662,8 +797,12 @@ mod tests {
         );
         let nulls = json!({ "repository": { "full_name": "acme/app" }, "ref": "refs/heads/dev", "commits": [null] });
         assert_eq!(github_ignored(&push, "push", &nulls), None, "TS throws");
-        let num = json!({ "repository": { "full_name": 7 } });
-        assert_eq!(github_ignored(&push, "push", &num), None, "JS coercion");
+        let num = json!({ "repository": { "full_name": 7.5 } });
+        assert_eq!(
+            github_ignored(&push, "push", &num),
+            None,
+            "JS float coercion"
+        );
         let pr = json!({ "repo": "acme/app", "event": "pull_request.merged" });
         let open = json!({ "repository": { "full_name": "acme/app" }, "action": "closed", "pull_request": { "merged": false } });
         assert_eq!(github_ignored(&pr, "pull_request", &open), Some("event"));
@@ -674,6 +813,41 @@ mod tests {
         assert_eq!(github_ignored(&wf, "workflow_run", &req), Some("event"));
         let rel = json!({ "repo": "acme/app", "event": "release.published" });
         assert_eq!(github_ignored(&rel, "release", &req), Some("event"));
+    }
+
+    #[test]
+    fn match_github_vars() {
+        use serde_json::json;
+        let t = json!({ "kind": "github", "repo": "acme/app", "event": "push" });
+        let p = json!({
+            "repository": { "full_name": "acme/app" }, "ref": "refs/heads/main", "after": "abc",
+            "pusher": null, "sender": { "login": "@bob" }, "compare": "u",
+            "commits": [{ "added": ["a.rs"], "modified": ["b.rs", "a.rs"] }, 3],
+        });
+        let v = match_github(&t, "push", &p).unwrap().unwrap();
+        assert_eq!(v["branch"], "main");
+        assert_eq!(v["author"], "@\u{200b}bob");
+        assert_eq!(v["files"], "a.rs\nb.rs");
+        assert_eq!(v["commit.message"], "");
+        let globbed = json!({ "repo": "acme/app", "event": "push", "paths": ["src/**"] });
+        assert!(
+            match_github(&globbed, "push", &p).is_none(),
+            "globs stay in TS"
+        );
+        let rel = json!({ "repo": "acme/app", "event": "release.published", "branch": "main" });
+        let rp = json!({ "repository": { "full_name": "acme/app" }, "action": "published" });
+        assert_eq!(github_ignored(&rel, "release", &rp), Some("branch"));
+        let relp = json!({ "repo": "acme/app", "event": "release.published", "change": "added" });
+        assert_eq!(
+            github_ignored(&relp, "release", &rp),
+            Some("paths_need_push")
+        );
+        let pr = json!({ "repo": "acme/app", "event": "pull_request.merged" });
+        let pp = json!({ "repository": { "full_name": "acme/app" }, "action": "closed",
+            "pull_request": { "merged": true, "number": 12, "base": { "ref": "main" } } });
+        let v = match_github(&pr, "pull_request", &pp).unwrap().unwrap();
+        assert_eq!(v["pr.number"], "12");
+        assert_eq!(v["branch"], "main");
     }
 
     #[test]
