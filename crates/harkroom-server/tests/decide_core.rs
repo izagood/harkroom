@@ -443,3 +443,12 @@ fn audit_detail_keys_match_ts_and_carry_no_secrets() {
         serde_json::json!({"requestId": "r", "kind": "tool", "target": "Bash(ls:*)", "channelId": null, "via": "button"})
     );
 }
+
+/// S5.4 12e — 결정 길의 만료 409 문구·코드는 TS `decidePermissionRequest` 원문과 같다.
+#[test]
+fn request_expired_matches_ts() {
+    use harkroom_server::core::decide_approve::REQUEST_EXPIRED_MESSAGE;
+    assert!(TS_PERMISSION_REQUESTS.contains(&format!(
+        "code: 'request_expired', message: '{REQUEST_EXPIRED_MESSAGE}'"
+    )));
+}
