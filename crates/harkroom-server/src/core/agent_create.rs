@@ -5,9 +5,9 @@
 //! - 본문 zod(`handle`·`displayName`·`configFields`)를 Rust 가 판정한다 — 어긋나면 400 `invalid_request`.
 //!   JSON 객체가 아닌 본문(없음·text)은 판정 전부를 TS 로 넘긴다(fastify 파서 순서까지 맞추지 않는다).
 //! - `validateScopeChange(null, …)` 도 Rust 가 한다 — 400 `{error:{code:'scope_invariant', message}}`.
-//! - 통과하면 요청을 그대로 TS 로 넘긴다(`createAgentAccount`·감사 `agent.created`·201). 여기까지는 부작용이 없어
-//!   TS 가 다시 판정해도 결과가 같다.
-//! - 남은 일: 이름 겹침 409·생성 트랜잭션(`withDefaults`·`upsertConfig`)·`getAgent` 응답 모양을 옮긴다.
+//! - 통과하면 쓰기 풀에 [`AGENT_CREATE_PRIVILEGES`] 가 다 있을 때 생성까지 Rust 가 한다: 집합·계정 이름 겹침 409
+//!   `handle_taken` → `insert account` → `withDefaults`+`upsertConfig`(owner 는 호출자) → `getAgent` 뷰 →
+//!   감사 `agent.created {handle}` → 201. 권한이 모자라면 TS 로 넘긴다(판정까지는 부작용이 없다).
 use crate::auth::Auth;
 use crate::directory::json_err;
 use crate::proxy::Upstream;
@@ -15,18 +15,177 @@ use crate::write::Body;
 use axum::body::to_bytes;
 use axum::extract::{ConnectInfo, Request, State};
 use axum::http::StatusCode;
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use serde_json::{Map, Value};
 use sqlx::PgPool;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-/// 능력 판정(`can`)이 읽는 것 — 읽기 풀이면 된다. 쓰기는 아직 TS 가 한다.
-pub const AGENT_CREATE_PRIVILEGES: &[(&str, &str)] = &[];
+/// 생성 트랜잭션·뷰·감사가 쓰기 풀에 바라는 권한. 없으면 `main.rs` 가 `write` 를 비워 성공 길은 TS 로 넘긴다.
+pub const AGENT_CREATE_PRIVILEGES: &[(&str, &str)] = &[
+    ("handle_group.handle", "SELECT"),
+    ("account.handle", "SELECT"),
+    ("account.id", "SELECT"),
+    ("account.handle", "INSERT"),
+    ("account.display_name", "INSERT"),
+    ("account.kind", "INSERT"),
+    ("agent_defaults.id", "SELECT"),
+    ("agent_defaults.harness", "SELECT"),
+    ("agent_defaults.model", "SELECT"),
+    ("agent_defaults.effort", "SELECT"),
+    ("agent_config.account_id", "INSERT"),
+    ("agent_config.instructions", "INSERT"),
+    ("agent_config.harness", "INSERT"),
+    ("agent_config.model", "INSERT"),
+    ("agent_config.effort", "INSERT"),
+    ("agent_config.working_dir", "INSERT"),
+    ("agent_config.mention_permission", "INSERT"),
+    ("agent_config.owner_account_id", "INSERT"),
+    ("agent_config.invoke_scope", "INSERT"),
+    ("agent_config.credential_scope", "INSERT"),
+    // `getAgent` 뷰(`operator_stop::agent_view`).
+    ("account", "SELECT"),
+    ("agent_config", "SELECT"),
+    ("agent_runner_version", "SELECT"),
+    ("agent_assignment", "SELECT"),
+    ("agent_invoker", "SELECT"),
+    ("agent_owner_delegate", "SELECT"),
+    ("agent_mcp_server", "SELECT"),
+    ("audit_log.action", "INSERT"),
+    ("audit_log.actor_id", "INSERT"),
+    ("audit_log.actor_handle", "INSERT"),
+    ("audit_log.target", "INSERT"),
+    ("audit_log.ip", "INSERT"),
+    ("audit_log.detail", "INSERT"),
+];
 
 pub struct AgentCreateState {
     pub pool: PgPool,
     pub up: Upstream,
+    /// 권한이 다 있을 때만 — 그러면 생성까지 Rust 가 한다.
+    pub write: Option<PgPool>,
+    pub trust: Arc<crate::trust_proxy::TrustProxy>,
+}
+
+enum Created {
+    Taken(&'static str),
+    Id(String),
+}
+
+/// `createAgentAccount` 의 트랜잭션(뷰 읽기 앞까지).
+async fn create_agent_account(
+    pool: &PgPool,
+    m: &Map<String, Value>,
+    owner_id: &str,
+) -> Result<Created, sqlx::Error> {
+    let handle = m.get("handle").and_then(Value::as_str).unwrap_or_default();
+    let display = m
+        .get("displayName")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let mut tx = pool.begin().await?;
+    let group: Option<i32> =
+        sqlx::query_scalar("select 1 from handle_group where lower(handle) = lower($1)")
+            .bind(handle)
+            .fetch_optional(&mut *tx)
+            .await?;
+    if group.is_some() {
+        return Ok(Created::Taken("a group with this handle already exists"));
+    }
+    let taken: Option<i32> =
+        sqlx::query_scalar("select 1 from account where lower(handle) = lower($1)")
+            .bind(handle)
+            .fetch_optional(&mut *tx)
+            .await?;
+    if taken.is_some() {
+        return Ok(Created::Taken("this handle is already taken"));
+    }
+    let id: String = match sqlx::query_scalar(
+        "insert into account (handle, display_name, kind) values ($1, $2, 'agent') returning id::text",
+    )
+    .bind(handle)
+    .bind(display)
+    .fetch_one(&mut *tx)
+    .await
+    {
+        Ok(id) => id,
+        Err(e) if e.as_database_error().and_then(|d| d.code()).as_deref() == Some("23505") => {
+            return Ok(Created::Taken("this handle is already taken"));
+        }
+        Err(e) => return Err(e),
+    };
+    // `withDefaults` — 키가 있으면(null 이라도) 그 값, 없으면 전역 기본값.
+    let (dh, dm, de): (Option<String>, Option<String>, Option<String>) =
+        sqlx::query_as("select harness, model, effort from agent_defaults where id = true")
+            .fetch_optional(&mut *tx)
+            .await?
+            .unwrap_or((None, None, None));
+    let pick = |k: &str, d: Option<String>| match m.get(k) {
+        Some(v) => v.as_str().map(str::to_owned),
+        None => d,
+    };
+    let s = |k: &str| m.get(k).and_then(Value::as_str).map(str::to_owned);
+    sqlx::query(
+        "insert into agent_config (account_id, instructions, harness, model, effort, working_dir, mention_permission, \
+                                   owner_account_id, invoke_scope, credential_scope) \
+         values ($1::uuid, coalesce($2, ''), coalesce($3, 'claude-code'), $4, $5, $6, coalesce($7, 'auto'), $8::uuid, \
+                 coalesce($9, 'community'), coalesce($10, 'none'))",
+    )
+    .bind(&id)
+    .bind(s("instructions"))
+    .bind(pick("harness", dh))
+    .bind(pick("model", dm))
+    .bind(pick("effort", de))
+    .bind(s("workingDir"))
+    .bind(s("mentionPermission"))
+    .bind(owner_id)
+    .bind(s("invokeScope"))
+    .bind(s("credentialScope"))
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(Created::Id(id))
+}
+
+async fn create_native(
+    st: &AgentCreateState,
+    write: &PgPool,
+    parts: &axum::http::request::Parts,
+    actor: &crate::auth::Account,
+    m: &Map<String, Value>,
+) -> Response {
+    let id = match create_agent_account(write, m, &actor.id).await {
+        Ok(Created::Id(id)) => id,
+        Ok(Created::Taken(msg)) => return json_err(StatusCode::CONFLICT, "handle_taken", msg),
+        Err(e) => return crate::directory::internal(e),
+    };
+    let view = match super::operator_stop::agent_view(write, &id).await {
+        Ok(Some((v, _))) => v,
+        Ok(None) => return json_err(StatusCode::NOT_FOUND, "not_found", "no such agent"),
+        Err(e) => return crate::directory::internal(e),
+    };
+    let ip = crate::writes_settings::ip_of(parts, &st.trust);
+    crate::write::record_audit(
+        write,
+        crate::write::AuditEntry {
+            action: "agent.created",
+            actor_id: Some(&actor.id),
+            actor_handle: Some(&actor.handle),
+            target: Some(&id),
+            ip: ip.as_deref(),
+            detail: serde_json::json!({ "handle": m.get("handle") }),
+        },
+    )
+    .await;
+    (
+        StatusCode::CREATED,
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "application/json; charset=utf-8",
+        )],
+        view,
+    )
+        .into_response()
 }
 
 /// `POST /accounts/agents`.
@@ -36,9 +195,10 @@ pub async fn post(
     req: Request,
 ) -> Response {
     let auth = req.extensions().get::<Auth>().cloned().unwrap_or_default();
-    if let Err(r) = crate::perm::require_cap(&st.pool, &auth, "agent.create", None).await {
-        return r;
-    }
+    let actor = match crate::perm::require_cap(&st.pool, &auth, "agent.create", None).await {
+        Ok(a) => a,
+        Err(r) => return r,
+    };
     let (parts, raw) = req.into_parts();
     let Ok(bytes) = to_bytes(raw, BODY_LIMIT).await else {
         return json_err(
@@ -60,7 +220,11 @@ pub async fn post(
             Err(Refusal::Scope(code, message)) => {
                 return json_err(StatusCode::BAD_REQUEST, code, message);
             }
-            Ok(()) => {}
+            Ok(()) => {
+                if let Some(w) = &st.write {
+                    return create_native(&st, w, &parts, &actor, &m).await;
+                }
+            }
         }
     }
     let req = Request::from_parts(parts, axum::body::Body::from(bytes));

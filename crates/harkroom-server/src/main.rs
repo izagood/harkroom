@@ -1869,6 +1869,33 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 — 에이전트 만들기 성공 길. 쓰기 풀에 그 권한이 다 있을 때만 — 아니면 판정만 Rust, 생성은 TS.
+    let agent_create_write = match &core_mode {
+        harkroom_server::core::CoreMode::Rust => match &state.write {
+            Some(w) => match write::missing_in(
+                w,
+                harkroom_server::core::agent_create::AGENT_CREATE_PRIVILEGES,
+                &[],
+            )
+            .await
+            {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: agent create core write off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: agent create core write off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            },
+            None => None,
+        },
+        _ => None,
+    };
     // S5.4 — 기억 정리 후보(`GET /accounts/agents/{id}/memory/audit`). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 읽기 풀에 그 SELECT 가 다 있을 때만.
     let agent_memory_audit_read_on = match &core_mode {
         harkroom_server::core::CoreMode::Rust => {
@@ -3812,10 +3839,13 @@ async fn main() {
         }
         // S5.4 — 에이전트 만들기 앞단(`POST /accounts/agents`): 능력 판정만 Rust, 나머지는 안에서 TS 로.
         if matches!(core_mode, harkroom_server::core::CoreMode::Rust) {
-            let ac = harkroom_server::core::agent_create::routes(
-                harkroom_server::core::agent_create::AgentCreateState {
+            use harkroom_server::core::agent_create as acm;
+            let ac = acm::routes(
+                acm::AgentCreateState {
                     pool: state.pool.clone(),
                     up: state.up.clone(),
+                    write: agent_create_write.clone(),
+                    trust: state.trust.clone(),
                 },
                 auth.clone(),
                 state.cors.clone(),
