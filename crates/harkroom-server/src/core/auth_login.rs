@@ -85,7 +85,7 @@ fn parse_body(body: Body) -> Option<(String, String)> {
 }
 
 /// TS `newToken('hrks')`.
-fn new_session_token() -> (String, String) {
+pub(crate) fn new_session_token() -> (String, String) {
     use base64::Engine;
     let mut b = [0u8; 32];
     getrandom::fill(&mut b).expect("os random");

@@ -1175,6 +1175,28 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 — 재설정 코드 쓰기(`POST /auth/password-reset`). 권한이 있을 때만 — 아니면 TS 에 남는다.
+    // 리밋 키 `passwordReset:*`(주소·로그인 ID 둘 다)는 이 경로만 쓰므로 통째로 Rust 리미터로 옮겨 간다.
+    let password_reset_use_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::password_reset_use as a;
+            match write::missing_in(w, a::PASSWORD_RESET_USE_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: password reset core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: password reset core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 — 보관소 잠금 해제(`POST /auth/step-up`). 쓰기 풀에 계정 해시 SELECT·세션 창 UPDATE·감사 INSERT 칸 권한이 있을 때만 — 아니면 TS 에 남는다.
     let step_up_open_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -2489,6 +2511,20 @@ async fn main() {
             core_routes.router = core_routes.router.merge(al.router);
             core_routes.http.extend(al.http);
             core_routes.sockets.extend(al.sockets);
+        }
+        // S5.4 — 재설정 코드 쓰기 1줄(주소 단위 `passwordReset:{ip}` 훅 포함). 권한이 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = password_reset_use_write {
+            let pr = harkroom_server::core::password_reset_use::routes(
+                harkroom_server::core::password_reset_use::PasswordResetUseState {
+                    write,
+                    trust: state.trust.clone(),
+                    limiter: auth_limiter.clone(),
+                },
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(pr.router);
+            core_routes.http.extend(pr.http);
+            core_routes.sockets.extend(pr.sockets);
         }
         // S5.4 — 계정 권한 목록 읽기 1줄. 권한이 있을 때만 — 아니면 TS 에 남는다(권한 주기 PUT 은 언제나 TS).
         if account_grants_read_on {
