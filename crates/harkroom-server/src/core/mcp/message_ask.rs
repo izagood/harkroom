@@ -1,4 +1,4 @@
-//! MCP `message.ask` 의 거절 앞머리(TS `mcpPlugin.ts` `message.ask`). TS 순서 그대로: zod 인자 → `planStepId` 인데 스레드
+//! MCP `message.ask` 의 거절 앞머리(대상 찾기 `unknown_handle` 까지, TS `mcpPlugin.ts` `message.ask`). TS 순서 그대로: zod 인자 → `planStepId` 인데 스레드
 //! 없음(`bad_request`) → 채널 가시성(`forbidden`) → 선택지 id 겹침(`duplicate_option`) → 예약 id(`reserved_option_id`)
 //! → 추천 둘 이상(`multiple_recommended`) → 머지 거절 카드에 `to`·`mirrorOf`(`merge_denial_audience`). 모두 지나면 `None`
 //! (→ TS). 그 뒤 스레드 안의 사람 앞 카드는 [`answer_plain`] 이 열린 카드 검사(`open_card_in_thread`, `keepOpen` 반영)를 하고,
@@ -56,7 +56,7 @@ struct Args<'a> {
     thread: bool,
     /// (id, recommended)
     options: Vec<(&'a str, bool)>,
-    to: bool,
+    to: Option<&'a str>,
     mirror_of: bool,
     merge_denial: bool,
     plan_step: bool,
@@ -85,7 +85,7 @@ fn parse(args: &Value) -> Option<Args<'_>> {
         options.push((id, rec));
     }
     opt(o, "irreversible", Value::is_boolean)?;
-    let to = opt(o, "to", str_ok(64))?.is_some();
+    let to = opt(o, "to", str_ok(64))?.and_then(Value::as_str);
     opt(o, "prompt", str_ok(500))?;
     let mirror_of = opt(o, "mirrorOf", uuid_ok)?.is_some();
     opt(o, "supersedes", |v| {
@@ -129,7 +129,7 @@ fn option_refusal(a: &Args<'_>) -> Option<String> {
             "mark at most one option as recommended",
         ));
     }
-    if a.merge_denial && (a.to || a.mirror_of) {
+    if a.merge_denial && (a.to.is_some() || a.mirror_of) {
         return Some(err(
             "merge_denial_audience",
             "a merge-denial card is addressed to humans; omit `to` and `mirrorOf`",
@@ -152,7 +152,32 @@ pub async fn answer(read: &PgPool, me: &Account, args: &Value) -> Option<String>
     {
         return Some(err("forbidden", "not a member of this dm channel"));
     }
-    option_refusal(&a)
+    if let Some(r) = option_refusal(&a) {
+        return Some(r);
+    }
+    // TS `to` 대상 찾기 — 없는 handle 이면 `unknown_handle`. 찾으면 그 뒤(사람 아닌 대상 카드)는 아직 TS 몫이다.
+    let to = a.to?;
+    let handle = to_handle(to);
+    let found: Option<String> = sqlx::query_scalar(TO_SQL)
+        .bind(&handle)
+        .fetch_optional(read)
+        .await
+        .ok()?;
+    if found.is_none() {
+        return Some(err(
+            "unknown_handle",
+            &format!("no account with handle @{handle}"),
+        ));
+    }
+    None
+}
+
+/// TS `select id from account where lower(handle) = $1` — `to` 대상 찾기(읽기 풀의 `account` SELECT).
+const TO_SQL: &str = "select id::text from account where lower(handle) = $1";
+
+/// TS `to.replace(/^@/, '').toLowerCase()`.
+fn to_handle(to: &str) -> String {
+    to.strip_prefix('@').unwrap_or(to).to_lowercase()
 }
 
 /// 평범한 카드의 TS `AskMeta` — `{kind:'ask', ask:{options, to:{kind:'human'}, prompt?, irreversible?}}`. 칸 차례는 DB(jsonb)가 다시 짓는다.
@@ -417,6 +442,21 @@ mod tests {
             .replace("::uuid", "");
         assert!(norm(ts).contains(&body));
         assert_eq!(OPEN_CARD_READ_PRIVILEGES, &[("message", "SELECT")]);
+    }
+
+    #[test]
+    fn to_handle_like_ts() {
+        assert_eq!(to_handle("@Alice"), "alice");
+        assert_eq!(to_handle("Bob"), "bob");
+        assert_eq!(to_handle("@@x"), "@x");
+        let ts = include_str!("../../../../../packages/server/src/mcp/mcpPlugin.ts");
+        assert!(ts.contains("select id from account where lower(handle) = $1"));
+        assert!(ts.contains("no account with handle @${handle}"));
+        assert_eq!(
+            TO_SQL.replace("id::text", "id"),
+            "select id from account where lower(handle) = $1"
+        );
+        assert_eq!(parse(&ask(json!({ "to": "@a" }))).unwrap().to, Some("@a"));
     }
 
     #[test]
