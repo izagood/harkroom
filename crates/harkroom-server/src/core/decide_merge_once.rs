@@ -6,19 +6,91 @@
 use serde_json::Value;
 use std::collections::BTreeSet;
 
-/// 쓰기 풀에 있어야 하는 권한(fail-closed — 하나라도 없으면 TS).
+/// 승인 풀에 있어야 하는 칸(fail-closed — 하나라도 없으면 「permission merge once core off」, 그 꼴은 TS).
+/// 요청 줄·카드·감사 칸은 [`super::decide_approve::APPROVE_PRIVILEGES`] 가 이미 요구한다.
 pub const MERGE_ONCE_PRIVILEGES: &[(&str, &str)] = &[
-    ("merge_denial", "SELECT"),
-    ("merge_denial", "UPDATE"),
-    ("merge_approval", "INSERT"),
+    ("merge_denial.id", "SELECT"),
+    ("merge_denial.agent_id", "SELECT"),
+    ("merge_denial.scope", "SELECT"),
+    ("merge_denial.pr_number", "SELECT"),
+    ("merge_denial.head_sha", "SELECT"),
+    ("merge_denial.channel_id", "SELECT"),
+    ("merge_denial.thread_root_id", "SELECT"),
+    ("merge_denial.expires_at", "SELECT"),
+    ("merge_denial.used_at", "SELECT"),
+    ("merge_denial.reason", "SELECT"),
+    ("merge_denial.failed_checks", "SELECT"),
+    ("merge_denial.obsoleted_at", "SELECT"),
+    ("merge_denial.used_at", "UPDATE"),
+    ("merge_denial.used_by", "UPDATE"),
+    ("merge_approval.id", "SELECT"),
+    ("merge_approval.denial_id", "INSERT"),
+    ("merge_approval.agent_id", "INSERT"),
+    ("merge_approval.scope", "INSERT"),
+    ("merge_approval.pr_number", "INSERT"),
+    ("merge_approval.head_sha", "INSERT"),
+    ("merge_approval.gh_user", "INSERT"),
+    ("merge_approval.relax_checks", "INSERT"),
+    ("merge_approval.channel_id", "INSERT"),
+    ("merge_approval.thread_root_id", "INSERT"),
+    ("merge_approval.approved_by", "INSERT"),
+    ("merge_approval.approved_at", "INSERT"),
+    ("merge_approval.expires_at", "INSERT"),
+    ("merge_approval.ci_override", "INSERT"),
+    ("merge_approval.approved_checks", "INSERT"),
 ];
+
+static MERGE_ONCE_CORE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 머지 거절 카드의 [이번 한 번]을 Rust 가 맡는가 — 기동 때 [`check_merge_once_core`] 가 정한다.
+pub fn merge_once_on() -> bool {
+    MERGE_ONCE_CORE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// 승인 풀에 [`MERGE_ONCE_PRIVILEGES`] 가 다 있는가 — 기동 때 한 번.
+pub async fn check_merge_once_core(pool: &sqlx::PgPool) -> bool {
+    let on = match crate::write::missing_in(pool, MERGE_ONCE_PRIVILEGES, &[]).await {
+        Ok(m) if m.is_empty() => true,
+        Ok(m) => {
+            eprintln!("front: permission merge once core off — missing privileges {m:?}");
+            false
+        }
+        Err(e) => {
+            eprintln!(
+                "front: permission merge once core off — privilege check failed ({})",
+                e.as_database_error().map_or("io", |_| "db")
+            );
+            false
+        }
+    };
+    MERGE_ONCE_CORE.store(on, std::sync::atomic::Ordering::Relaxed);
+    on
+}
+
+/// 1회 승인 감사(TS `repo.merge.approved_once`, target 은 저장소 scope).
+pub const MERGE_ONCE_AUDIT: &str = "insert into audit_log (action, actor_id, target, detail) \
+     values ('repo.merge.approved_once', $1::uuid, $2, $3::jsonb)";
+
+/// 요청 줄 — TS 는 1회 머지에 기한·grantMode 를 적지 않는다(`grantExpiresAt` null).
+pub const MERGE_ONCE_UPDATE_REQUEST: &str = "update permission_request set status = 'approved_once', \
+     decided_at = $3::timestamptz, decided_by = $2::uuid, grant_expires_at = null, grant_mode = null where id = $1::uuid";
+
+/// TS `answerOptionId` 후보 `[approve_once, approve_mandate, approve_new_mandate, approve, approve_once]`(뒤 중복 뺌).
+pub const ANSWER_MERGE_ONCE: &[&str] = &[
+    "approve_once",
+    "approve_mandate",
+    "approve_new_mandate",
+    "approve",
+];
+
+pub const DENIAL_USED_MESSAGE: &str = "the merge refusal behind this card was already used";
 
 /// TS `APPROVAL_TTL_MS`(24시간).
 pub const APPROVAL_TTL: &str = "24 hours";
 
 /// TS `readDenial(client, id, now, true)` — 거절 기록을 잠그고 읽는다(`headMoved` 는 obsolete 문구에만 쓰여 뺐다: obsolete 면 TS).
 /// $1 거절 id, $2 결정 시각.
-pub const READ_DENIAL_LOCKED_SQL: &str = "select agent_id::text, scope, pr_number::bigint, head_sha, channel_id::text, \
+pub const READ_DENIAL_LOCKED_SQL: &str = "select id::text, agent_id::text, scope, pr_number::bigint, head_sha, channel_id::text, \
      thread_root_id::text, expires_at <= $2::timestamptz as expired, reason, failed_checks, obsoleted_at is not null as obsolete \
      from merge_denial d where id = $1::uuid for update of d";
 
@@ -29,7 +101,7 @@ pub const USE_DENIAL_SQL: &str = "update merge_denial set used_at = $2::timestam
 /// TS 의 1회 승인 INSERT(같은 칸·같은 차례).
 pub const INSERT_APPROVAL_SQL: &str = "insert into merge_approval (denial_id, agent_id, scope, pr_number, head_sha, gh_user, \
      relax_checks, channel_id, thread_root_id, approved_by, approved_at, expires_at, ci_override, approved_checks) \
-     values ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8::uuid, $9::uuid, $10::uuid, $11::timestamptz, $12::timestamptz, $13, $14) \
+     values ($1::uuid, $2::uuid, $3, $4::int, $5, $6, $7, $8::uuid, $9::uuid, $10::uuid, $11::timestamptz, $12::timestamptz, $13, $14) \
      returning id::text";
 
 /// 카드가 보여 준 1회 머지 값 — TS `DecideInput['once']`.
