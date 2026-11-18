@@ -107,6 +107,91 @@ pub async fn agent_wakes(
     json_ok(format!("{{\"wakes\":[{}]}}", wakes.join(",")))
 }
 
+/// TS `listReportWakes` 의 머리 — 스레드 머리 글의 채널과 그 채널이 내게 보이나($2).
+fn report_head_sql() -> &'static str {
+    static S: OnceLock<String> = OnceLock::new();
+    S.get_or_init(|| {
+        format!(
+            "select m.channel_id::text, {} as visible from message m join channel c on c.id = m.channel_id \
+             where m.id = $1::uuid and m.thread_root_id is null and m.deleted_at is null",
+            frag("channel_visible_c_p1uuid").replace("$1::uuid", "$2::uuid")
+        )
+    })
+}
+
+/// TS `listReportWakes` 의 목록(최대 50, `wake_at` 순) → `ReportWakeView` 배열 JSON(키 순서 그대로).
+fn report_wakes_sql() -> &'static str {
+    static S: OnceLock<String> = OnceLock::new();
+    S.get_or_init(|| {
+        format!(
+            "select coalesce(json_agg(json_build_object('id', x.id, 'agentAccountId', x.account_id, \
+             'wakeAt', to_char(x.wake_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'), \
+             'reason', case when x.anchor_visible and not x.deleted then x.body else null end, \
+             'anchor', case when x.anchor_visible then json_build_object('channelId', x.anchor_channel, 'threadRootId', x.anchor_root) else null end) \
+             order by x.ord), '[]')::text from (select q.*, row_number() over () as ord from (\
+             select w.id, w.account_id, w.wake_at, wm.body, wm.deleted_at is not null as deleted, \
+             wm.channel_id as anchor_channel, coalesce(wm.thread_root_id, wm.id) as anchor_root, {} as anchor_visible \
+             from agent_wake w join message wm on wm.id = w.message_id join channel ac on ac.id = wm.channel_id \
+             where w.fired_at is null and w.canceled_at is null \
+             and wm.meta->'wake'->'reportTo'->>'threadRootId' = $1::text \
+             and wm.meta->'wake'->'reportTo'->>'channelId' = $2::text \
+             order by w.wake_at limit 50) q) x",
+            frag("channel_visible_ac_p2uuid").replace("$2::uuid", "$3::uuid")
+        )
+    })
+}
+
+fn plain_err(status: axum::http::StatusCode, code: &str) -> Response {
+    use axum::response::IntoResponse;
+    (
+        status,
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "application/json; charset=utf-8",
+        )],
+        format!("{{\"error\":\"{code}\"}}"),
+    )
+        .into_response()
+}
+
+/// `GET /threads/{rootId}/report-wakes` — TS 와 같은 판정: id 꼴이 아니면 404 → 머리 없음 404 → 안 보임 403 → `{wakes}`.
+pub async fn report_wakes(
+    State(pool): State<Arc<PgPool>>,
+    RequireAccount(me, _auth): RequireAccount,
+    axum::extract::Path(root): axum::extract::Path<String>,
+) -> Response {
+    use axum::http::StatusCode;
+    // TS `UUID_RE`(대소문자 무관 8-4-4-4-12).
+    if !crate::core::msg_read::is_uuid(&root) {
+        return plain_err(StatusCode::NOT_FOUND, "not_found");
+    }
+    let head: Option<(String, bool)> = match sqlx::query_as(report_head_sql())
+        .bind(&root)
+        .bind(&me.id)
+        .fetch_optional(&*pool)
+        .await
+    {
+        Ok(h) => h,
+        Err(e) => return internal(e),
+    };
+    let Some((channel, visible)) = head else {
+        return plain_err(StatusCode::NOT_FOUND, "not_found");
+    };
+    if !visible {
+        return plain_err(StatusCode::FORBIDDEN, "forbidden");
+    }
+    match sqlx::query_scalar::<_, String>(report_wakes_sql())
+        .bind(&root)
+        .bind(&channel)
+        .bind(&me.id)
+        .fetch_one(&*pool)
+        .await
+    {
+        Ok(t) => json_ok(format!("{{\"wakes\":{t}}}")),
+        Err(e) => internal(e),
+    }
+}
+
 pub fn routes(
     pool: PgPool,
     auth: crate::auth::AuthPools,
@@ -115,6 +200,7 @@ pub fn routes(
     use crate::route_table::Table;
     let t = Table::<Arc<PgPool>>::new()
         .get("/agent-wakes", agent_wakes)
+        .get("/threads/{rootId}/report-wakes", report_wakes)
         .map(|r| {
             r.route_layer(axum::middleware::from_fn_with_state(
                 auth,
@@ -148,5 +234,12 @@ mod tests {
             v,
             r#"{"id":"i","agentAccountId":"a","channelId":"c","threadRootId":"t","messageId":"m","wakeAt":"2026-01-01T00:00:00.000Z","reason":null}"#
         );
+    }
+
+    #[test]
+    fn report_wakes_sql_binds_viewer_as_last_param() {
+        assert!(report_head_sql().contains("cm_vis.account_id = $2::uuid"));
+        let q = report_wakes_sql();
+        assert!(q.contains("cm_vis.account_id = $3::uuid") && q.contains("limit 50"));
     }
 }

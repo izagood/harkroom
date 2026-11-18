@@ -8,7 +8,7 @@
 //!
 //! 규칙은 TS 와 같다: 인가는 `check_owner_or_admin` 하나(TS `checkOwnerOrAdmin`), 감사에는 사건·세션 id 만 남기고 PTY 바이트·
 //! 입력 바이트는 남기지 않는다(입력은 detach 행의 `inputBytes` 합 하나). 뷰어 소켓은 `/ws` 와 같은 자격증명 재검증(4401)과
-//! ping/pong 을 받는다. `/agent-wakes` 는 `agent_wakes_read.rs`(S5.4), `/threads/{id}/report-wakes` 는 허브와 무관해 TS 에 남는다.
+//! ping/pong 을 받는다. `/agent-wakes` 는 `agent_wakes_read.rs`(S5.4), `/threads/{id}/report-wakes` 도 `agent_wakes_read.rs`.
 use super::relay::{CancelOutcome, INTERACTIVE_OPEN_TIMEOUT, InteractiveOutcome, Session};
 use super::relay_link::RelayLink;
 use super::tickets::TicketStore;
