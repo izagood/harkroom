@@ -49,9 +49,10 @@ pub(crate) fn kind_of(s: &str) -> Option<SecretKind> {
     }
 }
 
-/// 같은 길이에서 시간 차가 없는 비교.
+/// 같은 길이에서 시간 차가 없는 비교(`subtle` — 최적화가 짧은 회로로 바꾸지 못하게 막는다). 길이는 비밀이 아니다.
 pub(crate) fn ct_eq(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+    use subtle::ConstantTimeEq;
+    a.len() == b.len() && bool::from(a.ct_eq(b))
 }
 
 /// TS `verifySecretKeys`.

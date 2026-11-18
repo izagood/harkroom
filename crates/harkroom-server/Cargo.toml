@@ -45,6 +45,8 @@ url = "=2.5.8"
 # 키 스케줄·GHASH 상태를 지우는 `zeroize` 기능을 켠다.
 aes-gcm = { version = "=0.11.1", default-features = false, features = ["aes", "alloc", "zeroize"] }
 base64 = "=0.22.1"
+# 키 확인값 비교(시간 차 없는 비교). ring 의 `constant_time` 은 0.17.14 에서 "부채널 약속 없음"으로 폐기 예고됐다. 이미 잠금 파일에 있던 판.
+subtle = { version = "=2.6.1", default-features = false }
 # 「내 작업」 보드 응답 압축(S5.4 MS2c-2) — TS `compressBody.ts`(node zlib) 와 같은 br 품질 4·gzip 6. flate2 는 순수 Rust
 # 백엔드(miniz_oxide)만 켠다(C 라이브러리 없음).
 brotli = "=9.1.1"
