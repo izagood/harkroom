@@ -13,6 +13,7 @@ pub mod automation_run;
 pub mod bg_claim;
 pub mod bg_complete;
 pub mod delegate_gate;
+pub mod grant_delegate;
 pub mod grant_writes;
 pub mod mem_audit;
 pub mod mem_body;
