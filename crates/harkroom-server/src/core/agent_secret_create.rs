@@ -18,7 +18,7 @@
 //!      본문을 읽어 import 이면 **게이트·속도 제한을 세기 전에** 같은 바이트로 TS 에 넘긴다. 그래서 import 호출은 Rust 의
 //!      제한기를 세지 않고 TS 제한기만 센다(상한이 갈라지는 것은 import 몫뿐이다 — generate 끼리는 하나다).
 //!   2. 키링이 없거나 키가 틀린 경우의 409(`secret_store_disabled`·`secret_key_mismatch`) — TS 에 넘겨 그대로 답하게 한다.
-//!   3. `POST /agent/secrets/reveal`(값 내주기)은 이 파일 몫이 아니다(TS).
+//!   3. `POST /agent/secrets/reveal`(값 내주기)은 이 파일 몫이 아니다(`agent_secret_reveal.rs`).
 //!
 //! 쓰기 풀 칸 권한: `GET` 은 [`AGENT_SECRET_CREATE_PRIVILEGES`] + 기동 키 확인. 두 POST 는 그 위에 [`CREATE_WRITE_PRIVILEGES`]
 //! (임대·소유자·원인 글 읽기, secret·secret_version·secret_grant·secret_access_log 쓰기, `audit_log`)와 글 경로

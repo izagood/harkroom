@@ -891,6 +891,34 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 — `POST /agent/secrets/reveal`. 세 겹 잠금: `HARKROOM_CORE=rust`, 쓰기 풀에 그 칸 권한이 다 있고, 키 env 를 읽어
+    // DB 확인값과 맞춰 볼 수 있을 때만. 아니면 TS 에 남는다(`agent_secret_reveal.rs` 머리말).
+    let agent_secret_reveal = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::agent_secret_reveal as k;
+            match write::missing_in(w, &k::privileges(), k::AGENT_SECRET_REVEAL_SEQUENCES).await {
+                Ok(m) if m.is_empty() => match k::load_state(w.clone(), state.up.clone()).await {
+                    Ok(st) => Some(st),
+                    Err(e) => {
+                        eprintln!("front: agent secret reveal core off — secret keys: {e}");
+                        None
+                    }
+                },
+                Ok(m) => {
+                    eprintln!("front: agent secret reveal core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: agent secret reveal core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // `POST /agent/secrets`·`/agent/secrets/rotate` — 두 줄이 닿는 칸이 다 있을 때만(`agent_secret_create.rs` 머리말).
     let agent_secret_write_ok = match (&agent_secret_create, &state.write) {
         (Some(_), Some(w)) => {
@@ -2719,6 +2747,16 @@ async fn main() {
             core_routes.router = core_routes.router.merge(sr.router);
             core_routes.http.extend(sr.http);
             core_routes.sockets.extend(sr.sockets);
+        }
+        if let Some(st) = agent_secret_reveal {
+            let ar = harkroom_server::core::agent_secret_reveal::routes(
+                st,
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(ar.router);
+            core_routes.http.extend(ar.http);
+            core_routes.sockets.extend(ar.sockets);
         }
         if let Some(st) = agent_secret_create {
             // 만들기·회전 두 줄: 글 경로(소유자 알림)와 두 줄의 칸 권한이 다 있을 때만 — 아니면 TS 에 남는다.

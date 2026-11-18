@@ -1726,6 +1726,15 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant select (secret_id, agent_id, granted_by, channel_id, suspended_at) on secret_grant to ${rw}`,
         `grant insert (secret_id, secret_name, version, agent_id, operator_id, turn_id, channel_id, thread_root_id, result, reason, at) on secret_access_log to ${rw}`,
         `grant insert on audit_log to ${rw}`,
+        // S5.4 aa — POST /agent/secrets/reveal(`agent_secret_reveal::privileges()` = AGENT_SECRET_REVEAL_PRIVILEGES + SECRET_KEY_CHECK_PRIVILEGES, 시퀀스 AGENT_SECRET_REVEAL_SEQUENCES).
+        `grant select (id, token_hash, agent_id, operator_id, channel_id, thread_root_id, expires_at, ended_at) on secret_turn_lease to ${rw}`,
+        `grant select (id, name, kind, filename, expires_at, owner_account_id) on secret to ${rw}`,
+        `grant select (id, deleted_at, disabled_at) on account to ${rw}`,
+        `grant select (account_id, owner_account_id) on agent_config to ${rw}`,
+        `grant select (secret_id, agent_id, channel_id, operator_id, suspended_at) on secret_grant to ${rw}`,
+        `grant select (secret_id, version, sealed, revoked_at) on secret_version to ${rw}`,
+        `grant insert (secret_id, secret_name, version, agent_id, operator_id, turn_id, channel_id, thread_root_id, result, reason, at) on secret_access_log to ${rw}`,
+        `grant usage on sequence secret_access_log_id_seq to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -4240,6 +4249,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(f.log(), 'GET /agent/secret-create').toContain('"GET /agent/secret-create"');
         expect(f.log()).not.toContain('agent secret create core off');
         for (const k of ['POST /agent/secrets', 'POST /agent/secrets/rotate']) expect(f.log(), k).toContain(`"${k}"`);
+        // S5.4 aa — POST /agent/secrets/reveal 도 Rust 에 붙었다(키가 없거나 틀리면 TS 로 넘긴다).
+        expect(f.log(), 'POST /agent/secrets/reveal').toContain('"POST /agent/secrets/reveal"');
+        expect(f.log()).not.toContain('agent secret reveal core off');
         const M = member.token;
         const mk = async (name: string, owner: string) => (await db.pool.query<{ id: string }>(
           `insert into secret (name, kind, description, owner_account_id, expires_at) values ($1, 'text', 'd', $2, now() + interval '1 day') returning id`,

@@ -10,7 +10,7 @@
 //!   `{name, version, action}` → 200 `no-store` `{steppedUpUntil, name, kind, filename, version, value|valueBase64}`.
 //! - **두 상한·「창마다 한 줄」은 프로세스 로컬이다**(TS 도 인메모리 `RevealLimiter`·`OncePerWindow`). 이 상한들은 이 줄만 쓰므로
 //!   (`/agent/secrets/reveal` 의 리미터는 따로다) 이 줄을 Rust 가 받으면 TS 쪽 카운터는 쓰이지 않는다 — 나뉘어 세는 일이 없다.
-//! - `/agent/secrets/reveal` 은 TS 에 남는다(턴 임대 판정과 에이전트 리미터를 같이 옮겨야 한다).
+//! - `/agent/secrets/reveal` 은 `agent_secret_reveal.rs` 가 맡는다(턴 임대 판정과 에이전트 리미터를 같이 옮겼다).
 //! - **값은 답 본문에만** 싣는다. access log·감사·오류에는 값도 해시도 없다.
 //! - 칸 권한은 [`privileges`] — 쓰기 풀에 하나라도 없으면 `main.rs` 가 이 줄을 붙이지 않아 TS 에 남는다. homelab GRANT:
 //!   ```sql
