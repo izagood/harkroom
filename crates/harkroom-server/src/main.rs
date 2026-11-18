@@ -676,6 +676,27 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 — API 연결 만들기·고치기. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만.
+    let connectors_upsert = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::connectors_upsert as k;
+            match write::missing_in(w, k::CONNECTORS_UPSERT_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: connectors upsert core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: connectors upsert core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 AC4 — 초대 만들기(메일 없는 것)·취소. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만.
     let invites_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -2487,6 +2508,21 @@ async fn main() {
             core_routes.router = core_routes.router.merge(cw.router);
             core_routes.http.extend(cw.http);
             core_routes.sockets.extend(cw.sockets);
+        }
+        // S5.4 — API 연결 POST·PATCH(주소에 ASCII 밖 글자가 있으면 안에서 TS 로 넘긴다). 권한이 다 있을 때만.
+        if let Some(write) = connectors_upsert {
+            let cu = harkroom_server::core::connectors_upsert::routes(
+                harkroom_server::core::connectors_upsert::ConnectorsUpsertState {
+                    write,
+                    trust: state.trust.clone(),
+                    up: state.up.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(cu.router);
+            core_routes.http.extend(cu.http);
+            core_routes.sockets.extend(cu.sockets);
         }
         // S5.4 AC4 — 초대 쓰기 2줄(메일이 실린 POST 는 안에서 TS 로 넘긴다, resend 는 TS). 권한이 다 있을 때만.
         if let Some(write) = invites_write {

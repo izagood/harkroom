@@ -1649,6 +1649,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // S5.4 통합 — 갈래 B·C·D 의 쓰기 줄(각 모듈 `*_PRIVILEGES` 와 글자째 같게). automation 비밀 칸 2개는 UPDATE 만 주고 SELECT 는 주지 않는다.
         `grant update (ingress_enabled_at, ingress_token_hash, ingress_secret_enc, updated_at) on automation to ${rw}`,
         `grant select (id, name, owner_account_id), delete on api_connector to ${rw}`,
+        // S5.4 — API 연결 POST·PATCH(`connectors_upsert.rs::CONNECTORS_UPSERT_PRIVILEGES`). 없으면 「connectors upsert core off」. secret 은 소유·종류 칸만(값 칸 없음).
+        `grant select (id, name, owner_account_id, base_url, auth_kind, auth_header, secret_id, methods, token_url, token_form, created_at, updated_at), insert (name, owner_account_id, base_url, auth_kind, auth_header, secret_id, methods, token_url, token_form), update (base_url, auth_kind, auth_header, secret_id, methods, token_url, token_form, updated_at) on api_connector to ${rw}`,
+        `grant select (id, owner_account_id, kind) on secret to ${rw}`,
+        `grant select (account_id, capability, scope, suspended_at, limits), update (suspended_at, suspend_reason) on account_grant to ${rw}`,
         `grant delete on account_grant to ${rw}`,
         `grant update (agent_pickable_models) on agent_config to ${rw}`,
         `grant update (model), delete on thread_agent_model to ${rw}`,

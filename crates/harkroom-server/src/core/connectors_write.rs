@@ -4,8 +4,7 @@
 //!   없거나 남의 것(admin 이 아니면) 404 `not_found` → 한 트랜잭션에서 그 연결의 `api.call` grant 와 연결을 지운다 →
 //!   감사 `connector.deleted {name, removedGrants}` → 지워진 grant 의 계정마다 `grant.changed` → 204.
 //! - 비밀 값은 읽지도 건드리지도 않는다(`secret_id` 도 읽지 않는다).
-//! - `PATCH /connectors/:id` 는 TS 에 남는다 — 주소 정규화(`normalizeBaseUrl`·`normalizeTokenUrl`)와 비밀 소유 검사,
-//!   zod 본문 검사의 Rust 짝이 아직 없다.
+//! - `POST /connectors`·`PATCH /connectors/:id` 는 [`super::connectors_upsert`] 가 맡는다(권한 줄이 따로다).
 //! - 권한은 [`CONNECTORS_WRITE_PRIVILEGES`] — 쓰기 풀에 하나라도 없으면 `main.rs` 가 붙이지 않아 TS 에 남는다.
 use crate::auth::RequireAccount;
 use crate::directory::{internal, json_err};

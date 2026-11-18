@@ -51,6 +51,7 @@ pub mod channel_read_write;
 pub mod channel_team_add;
 pub mod channels;
 pub mod command_match;
+pub mod connectors_upsert;
 pub mod connectors_write;
 pub mod content_scan;
 pub mod decide_approve;
