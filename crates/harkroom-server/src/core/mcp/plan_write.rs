@@ -423,6 +423,8 @@ enum Outcome {
         before: Option<Value>,
         facts: Facts,
         flag: Option<crate::core::content_scan::ScanHit>,
+        /// 관리자가 바뀌어 자동 진행을 같은 tx 에서 껐다 — (새 관리자, 앞 관리자). 끄기 알림은 부른 쪽 몫이다.
+        auto_off: Option<(Option<String>, Option<String>)>,
     },
     /// 관리자가 바뀌는데 자동 진행이 켜져 있다 — 되감았다. TS 가 답한다.
     ToTs,
@@ -434,6 +436,7 @@ async fn write_plan(
     root: &str,
     channel: &str,
     build: Build,
+    clear_auto: bool,
 ) -> sqlx::Result<Outcome> {
     let mut tx = write.begin().await?;
     let cur: Option<(String, i64, String, Option<String>, bool)> = sqlx::query_as(LOCK_SQL)
@@ -479,10 +482,16 @@ async fn write_plan(
         o.insert("seq".into(), json!({ "s": s, "g": g }));
     }
     let (manager, prev_manager) = settle_manager(&mut doc, before, me);
-    if now.is_some() && manager != prev_manager && now.as_ref().is_some_and(|n| n.auto_on) {
-        tx.rollback().await?;
-        return Ok(Outcome::ToTs);
-    }
+    let auto_off =
+        if now.is_some() && manager != prev_manager && now.as_ref().is_some_and(|n| n.auto_on) {
+            if !clear_auto {
+                tx.rollback().await?;
+                return Ok(Outcome::ToTs);
+            }
+            Some((manager.clone(), prev_manager.clone()))
+        } else {
+            None
+        };
     if let Some(m) = manager
         .as_deref()
         .filter(|m| Some(*m) != prev_manager.as_deref())
@@ -541,6 +550,13 @@ async fn write_plan(
         .execute(&mut *tx)
         .await?;
     }
+    // TS `managerChanged && written.auto` — 같은 tx 에서 끈다(rev 는 올리지 않는다).
+    if auto_off.is_some() {
+        sqlx::query(AUTO_CLEAR_SQL)
+            .bind(root)
+            .execute(&mut *tx)
+            .await?;
+    }
     // 답(보는 사람 맵)과 이벤트(청중 맵)에 쓸 사실 — 앞 판·새 판의 연결 전부.
     let mut all = roots;
     for id in before.map(linked_roots).unwrap_or_default() {
@@ -560,8 +576,15 @@ async fn write_plan(
         before: now.map(|n| n.doc),
         facts,
         flag,
+        auto_off,
     })
 }
+
+/// TS `writeThreadPlan` 의 관리자 바뀜 자동 진행 끄기.
+const AUTO_CLEAR_SQL: &str = "update thread_plan \
+     set auto_until = null, auto_source = null, auto_by = null, auto_mandate = null, auto_at = null, \
+         auto_woken = '{}'::jsonb, auto_range = '{}'::jsonb \
+     where root_id = $1::uuid";
 
 /// TS `emitPlanChanged(pool, channel, root, row)` — 판이 있을 때, 같은 tx 의 outbox 로(S5.4 TP3 자동 진행 끄기가 쓴다).
 /// 진행률은 청중 맵(public standard 이거나 같은 채널)으로 센다. `viewer` 는 자식 사실 문장의 자리를 채울 뿐 맵에 쓰지 않는다.
@@ -679,7 +702,7 @@ async fn run(
         Err(t) => return Some(t),
     };
     Some(
-        match write_plan(write, &me.id, root, &channel, build).await {
+        match write_plan(write, &me.id, root, &channel, build, false).await {
             Err(_) => internal(),
             Ok(Outcome::ToTs) => return None,
             Ok(Outcome::Refused(r)) => r.text(),
@@ -692,6 +715,7 @@ async fn run(
                 before,
                 facts,
                 flag,
+                ..
             }) => written_text(
                 rev,
                 &updated_at,
@@ -740,11 +764,11 @@ pub async fn answer_item(
 /// HTTP `PUT /threads/:rootId/plan/manager`(S5.4 TP4)의 쓰기 결과.
 pub(crate) enum ManagerWrite {
     /// 거절 — 코드와 TS 오류 객체의 칸 글자(중괄호 없이, TS 키 순서).
-    Refused {
-        code: &'static str,
-        fields: String,
+    Refused { code: &'static str, fields: String },
+    /// 썼다. `auto_off` 는 관리자가 바뀌어 자동 진행을 껐을 때 (새 관리자, 앞 관리자) — 끄기 알림은 부른 쪽 몫.
+    Written {
+        auto_off: Option<(Option<String>, Option<String>)>,
     },
-    Written,
     /// TS `deleted` 갈래(type plan 은 판을 지우지 않지만 같은 꼴로 둔다).
     Deleted,
     /// 관리자가 바뀌는데 자동 진행이 켜져 있다 — 되감았다. TS 가 답한다(끄기 알림).
@@ -758,6 +782,7 @@ pub(crate) async fn write_manager(
     root: &str,
     channel: &str,
     manager: Option<String>,
+    clear_auto: bool,
 ) -> sqlx::Result<ManagerWrite> {
     let patch = ItemPatch {
         type_: Some("plan".to_owned()),
@@ -765,12 +790,21 @@ pub(crate) async fn write_manager(
         ..ItemPatch::default()
     };
     Ok(
-        match write_plan(write, me, root, channel, Build::Item(Box::new(patch))).await? {
+        match write_plan(
+            write,
+            me,
+            root,
+            channel,
+            Build::Item(Box::new(patch)),
+            clear_auto,
+        )
+        .await?
+        {
             Outcome::Refused(r) => ManagerWrite::Refused {
                 code: r.code,
                 fields: r.fields,
             },
-            Outcome::Written { .. } => ManagerWrite::Written,
+            Outcome::Written { auto_off, .. } => ManagerWrite::Written { auto_off },
             Outcome::Deleted => ManagerWrite::Deleted,
             Outcome::ToTs => ManagerWrite::ToTs,
         },

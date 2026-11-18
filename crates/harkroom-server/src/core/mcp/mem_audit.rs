@@ -3,7 +3,7 @@
 //!
 //! JS 와 맞춘 것:
 //! - 길이는 UTF-16 단위(`value.length`)다. 비교 시각은 ms 로 자른 값(JS `Date`), 글자 시각은 `toISOString` 꼴이다.
-//! - `[[링크]]` 정규식은 u 플래그가 없다 — `{1,255}` 가 UTF-16 단위를 센다. BMP 밖 글자가 든 본문에 `[[` 가 있으면 TS 로 넘긴다.
+//! - `[[링크]]` 정규식은 u 플래그가 없다 — `{1,255}` 가 UTF-16 단위를 센다. 손으로 읽는다([`js_links`]).
 //!   `\s` 는 JS 공백 집합(U+FEFF 포함·U+0085 제외)으로 적었다.
 //! - `#123` 참조(`(?<![\w#])#(\d{3,6})\b`)는 Rust regex 에 뒤보기가 없어 손으로 읽는다(`\w`·`\d`·`\b` 는 ASCII).
 //! - journal 동률(같은 ms)은 [`slug_locale_cmp`](ICU 뿌리 순서 근사, `memory.set` 경고와 같은 것)로 가른다.
@@ -96,14 +96,37 @@ fn js_ws(c: char) -> bool {
     )
 }
 
-fn link_re() -> &'static regex::Regex {
-    static R: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    R.get_or_init(|| {
-        regex::Regex::new(
-            r"\[\[([^\]\t\x0B\x0C\n\r \x{a0}\x{feff}\x{2028}\x{2029}\x{1680}\x{2000}-\x{200a}\x{202f}\x{205f}\x{3000}]{1,255})\]\]",
-        )
-        .expect("link re")
-    })
+/// JS `value.matchAll(/\[\[([^\]\s]{1,255})\]\]/g)`(u 플래그 없음)의 잡힌 글자들 — 길이는 UTF-16 단위로 센다.
+/// 칸 밖 글자(`]`·공백)에서 멈춘 최대 길이가 1..=255 이고 바로 `]]` 가 오면 잡힌다. 255 에서 끊기면 다음 글자도 칸 안이라
+/// 되돌아가도 `]]` 를 못 만나니 실패다. 실패하면 한 단위 뒤에서 다시 본다(시작은 언제나 ASCII `[`).
+fn js_links(s: &str) -> Vec<&str> {
+    let b = s.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i + 1 < b.len() {
+        if b[i] == b'[' && b[i + 1] == b'[' {
+            let start = i + 2;
+            let mut units = 0usize;
+            let mut end = start;
+            for c in s[start..].chars() {
+                if c == ']' || js_ws(c) {
+                    break;
+                }
+                units += c.len_utf16();
+                end += c.len_utf8();
+                if units > 255 {
+                    break;
+                }
+            }
+            if (1..=255).contains(&units) && s[end..].starts_with("]]") {
+                out.push(&s[start..end]);
+                i = end + 2;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out
 }
 
 fn body_split_re() -> &'static regex::Regex {
@@ -207,7 +230,7 @@ fn parse_patterns(args: &Value) -> Option<Vec<String>> {
     }
 }
 
-/// TS `auditMemory`(cap 30) 의 답 글자. JS 와 판정이 갈릴 수 있는 본문이 있으면 `None`.
+/// TS `auditMemory`(cap 30) 의 답 글자(시험용 — 늘 `Some`).
 #[cfg(test)]
 pub(crate) fn audit_text(
     rows: &[Row],
@@ -215,7 +238,9 @@ pub(crate) fn audit_text(
     patterns: &[String],
     now_ms: i64,
 ) -> Option<String> {
-    audit_text_capped(rows, archived, patterns, now_ms, LIST_CAP)
+    Some(audit_text_capped(
+        rows, archived, patterns, now_ms, LIST_CAP,
+    ))
 }
 
 /// [`audit_text`] 에 목록 상한을 따로 준다 — 사람 화면(REST)은 TS `AUDIT_HUMAN_LIST_CAP`.
@@ -225,12 +250,7 @@ pub(crate) fn audit_text_capped(
     patterns: &[String],
     now_ms: i64,
     cap: usize,
-) -> Option<String> {
-    for r in rows {
-        if r.value.contains("[[") && r.value.chars().any(|c| u32::from(c) > 0xFFFF) {
-            return None;
-        }
-    }
+) -> String {
     let slugs: HashSet<&str> = rows.iter().map(|r| r.slug.as_str()).collect();
     let core = rows.iter().find(|r| r.slug == "core");
     let lowered: Vec<(String, String)> = patterns
@@ -272,8 +292,7 @@ pub(crate) fn audit_text_capped(
             old.push((r.slug.clone(), r.updated_iso.clone()));
         }
         let mut seen: HashSet<&str> = HashSet::new();
-        for m in link_re().captures_iter(&r.value) {
-            let target = m.get(1)?.as_str();
+        for target in js_links(&r.value) {
             let exists = slugs.contains(target) || slugs.contains(format!("mem/{target}").as_str());
             if !exists && seen.insert(target) {
                 broken.push((r.slug.clone(), target.to_owned()));
@@ -469,7 +488,7 @@ pub(crate) fn audit_text_capped(
             s(a)
         ))
     ));
-    Some(out)
+    out
 }
 
 fn into_row(r: RawRow) -> Row {
@@ -517,17 +536,16 @@ pub(super) async fn answer(pool: &PgPool, me: &Account, args: &Value) -> Option<
     audit_for(pool, &me.id, &patterns, LIST_CAP)
         .await
         .ok()
-        .flatten()
         .map(|t| text_result(&t))
 }
 
-/// 한 계정의 정리 후보(TS `auditMemory(pool, id, patterns, { cap })`) 의 JSON 글자. `Ok(None)` 은 JS 와 판정이 갈릴 수 있는 꼴(→ TS).
+/// 한 계정의 정리 후보(TS `auditMemory(pool, id, patterns, { cap })`) 의 JSON 글자. 판정은 늘 Rust 가 한다(`[[링크]]` 도 UTF-16 단위로 센다).
 pub(crate) async fn audit_for(
     pool: &PgPool,
     account_id: &str,
     patterns: &[String],
     cap: usize,
-) -> Result<Option<String>, sqlx::Error> {
+) -> Result<String, sqlx::Error> {
     let raw: Vec<RawRow> = sqlx::query_as(ROWS_SQL)
         .bind(account_id)
         .fetch_all(pool)
@@ -648,8 +666,14 @@ mod tests {
     }
 
     #[test]
-    fn astral_link_goes_to_ts_and_caps_truncate() {
-        assert!(audit_text(&[row("mem/a", "[[😀]]")], 0, &[], NOW).is_none());
+    fn astral_link_counts_utf16_and_caps_truncate() {
+        assert!(audit_text(&[row("mem/a", "[[😀]]")], 0, &[], NOW).is_some());
+        // UTF-16 단위로 센다 — 😀 128개(256 단위)는 잡히지 않고 127개(254 단위)는 잡힌다.
+        assert!(js_links(&format!("[[{}]]", "😀".repeat(128))).is_empty());
+        assert_eq!(js_links(&format!("[[{}]]", "😀".repeat(127))).len(), 1);
+        assert_eq!(js_links(&format!("[[{}]]", "a".repeat(255))).len(), 1);
+        assert!(js_links(&format!("[[{}]]", "a".repeat(256))).is_empty());
+        assert_eq!(js_links("[[[a]] [[b c]] [[]] [[d]]"), vec!["[a", "d"]);
         assert!(audit_text(&[row("mem/a", "😀 no links")], 0, &[], NOW).is_some());
         let many: Vec<Row> = (0..31)
             .map(|i| {
@@ -737,12 +761,11 @@ mod tests {
             })
             .collect();
         let agent: Value =
-            serde_json::from_str(&audit_text_capped(&rows, 0, &[], NOW, LIST_CAP).unwrap())
-                .unwrap();
+            serde_json::from_str(&audit_text_capped(&rows, 0, &[], NOW, LIST_CAP)).unwrap();
         assert_eq!(agent["undescribed"].as_array().unwrap().len(), 30);
         assert_eq!(agent["truncated"], true);
         let human: Value =
-            serde_json::from_str(&audit_text_capped(&rows, 0, &[], NOW, 200).unwrap()).unwrap();
+            serde_json::from_str(&audit_text_capped(&rows, 0, &[], NOW, 200)).unwrap();
         assert_eq!(human["undescribed"].as_array().unwrap().len(), 31);
         assert_eq!(human["truncated"], false);
     }
