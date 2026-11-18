@@ -3,7 +3,8 @@
 //! - 순서는 TS 와 같다: `requireAccount`(401) → 경로 zod(400) → 본문 zod(400 `bad_request`) → api.call 전용 칸(400)
 //!   → `member.reset_password`(400 `not_grantable`) → capability 별 판정 → 대상 없음 404 → 전 값 읽기 → upsert
 //!   → 감사 `grant.given`/`grant.updated {changed?, capability, scope, expiresAt, allowAgentCause?}` → `grant.changed` → 200 `{grants}`.
-//! - `api.call`(연결·limits·위임 판정)과 `tool.allow`(규칙 검사·세션 판정)는 본문 검사까지 마친 뒤 TS 로 넘긴다
+//! - `tool.allow` 는 여기서 판정한다(규칙 정규형은 `harkroom_proto::tool_rules::validate_tool_rule`, 사람 세션·소유자·만료 상한).
+//! - `api.call`(연결·limits·위임 판정)은 본문 검사까지 마친 뒤 TS 로 넘긴다
 //!   — 여기까지는 부작용이 없어 TS 가 처음부터 다시 판정해도 같다.
 //! - 알려진 차이: zod 실패의 `message` 는 TS 가 zod issue JSON 이다 — 여기서는 `"body"`. `repo:` scope 길이는
 //!   UTF-16 단위가 아니라 문자 수로 센다.
@@ -229,12 +230,18 @@ async fn check_merge(
 }
 
 /// `secretCreateOwner`.
-async fn check_secret_owner(pool: &PgPool, me: &Account, id: &str) -> Result<(), Response> {
+/// `cap` 은 문구 머리 — `tool.allow` 는 TS 가 `message.replace('secret.create', 'tool.allow')` 로 같은 문구를 쓴다.
+async fn check_secret_owner(
+    pool: &PgPool,
+    me: &Account,
+    id: &str,
+    cap: &str,
+) -> Result<(), Response> {
     if me.kind != "human" {
         return Err(err(
             StatusCode::FORBIDDEN,
             "forbidden",
-            "secret.create 는 사람만 준다",
+            &format!("{cap} 는 사람만 준다"),
         ));
     }
     match agent_owner(pool, id).await {
@@ -242,15 +249,106 @@ async fn check_secret_owner(pool: &PgPool, me: &Account, id: &str) -> Result<(),
         Ok(None) => Err(err(
             StatusCode::NOT_FOUND,
             "not_found",
-            "secret.create 는 에이전트에게만 준다",
+            &format!("{cap} 는 에이전트에게만 준다"),
         )),
         Ok(Some(o)) if o.as_deref() != Some(me.id.as_str()) => Err(err(
             StatusCode::FORBIDDEN,
             "forbidden",
-            "secret.create 는 그 에이전트의 소유자만 준다",
+            &format!("{cap} 는 그 에이전트의 소유자만 준다"),
         )),
         Ok(Some(_)) => Ok(()),
     }
+}
+
+/// 설정 화면 `tool.allow` 의 만료 상한(30일 + 1분 여유) — TS `TOOL_RULE_CAPPED_EXPIRY_MS`.
+const TOOL_RULE_CAPPED_EXPIRY_MS: i64 = 30 * 86_400_000 + 60_000;
+/// TS `TOOL_RULE_EXPIRY_CAPPED_WARNINGS`.
+const TOOL_RULE_EXPIRY_CAPPED_WARNINGS: &[&str] = &[
+    "runs_arbitrary",
+    "executes_in_workload",
+    "mutates_remote",
+    "unclassified",
+];
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+}
+
+/// `Date.parse(expiresAt)` — zod 를 이미 통과한 값.
+fn expires_ms(s: &str) -> Option<i64> {
+    let iso = iso(s)?;
+    chrono::DateTime::parse_from_rfc3339(&iso)
+        .ok()
+        .map(|d| d.timestamp_millis())
+}
+
+/// `tool.allow` 판정 — TS 와 같은 순서: scope 꼴·규칙 정규형(400 `bad_scope`) → 사람 세션(403) → 소유자(`secretCreateOwner`)
+/// → 위험 경고면 만료 필수·30일 안 → 지난 만료(400).
+async fn check_tool_allow(
+    pool: &PgPool,
+    me: &Account,
+    auth: &crate::auth::Auth,
+    id: &str,
+    b: &GrantBody,
+) -> Result<(), Response> {
+    use harkroom_proto::tool_rules::{ToolRuleVerdict, validate_tool_rule};
+    let parsed = crate::core::mcp::reads4::parse_tool_scope(&b.scope);
+    let warnings = match parsed.map(|(_, rule)| (rule, validate_tool_rule(rule))) {
+        Some((
+            rule,
+            ToolRuleVerdict::Ok {
+                rule: norm,
+                warnings,
+                ..
+            },
+        )) if norm == rule && b.allow_agent_cause.is_none() => warnings,
+        _ => {
+            return Err(err(
+                StatusCode::BAD_REQUEST,
+                "bad_scope",
+                "tool.allow 의 scope 는 tool:<channelId>:<정규화한 규칙> 이고 넓은 규칙은 받지 않는다",
+            ));
+        }
+    };
+    if auth.via != Some(crate::auth::Via::Session) {
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "tool.allow 는 앱에 로그인한 소유자만 준다",
+        ));
+    }
+    check_secret_owner(pool, me, id, "tool.allow").await?;
+    let exp = b.expires_at.clone().flatten();
+    let exp_ms = exp.as_deref().and_then(expires_ms);
+    if warnings
+        .iter()
+        .any(|w| TOOL_RULE_EXPIRY_CAPPED_WARNINGS.contains(w))
+    {
+        if exp.is_none() {
+            return Err(err(
+                StatusCode::BAD_REQUEST,
+                "tool_rule_needs_expiry",
+                "이 규칙은 위험 경고가 붙어 만료가 필수다(30일 안)",
+            ));
+        }
+        if exp_ms.is_some_and(|t| t > now_ms() + TOOL_RULE_CAPPED_EXPIRY_MS) {
+            return Err(err(
+                StatusCode::BAD_REQUEST,
+                "tool_rule_expiry_too_long",
+                "위험 경고가 붙은 규칙의 만료는 30일 안이다",
+            ));
+        }
+    }
+    if exp_ms.is_some_and(|t| t <= now_ms()) {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "bad_request",
+            "만료가 이미 지났다",
+        ));
+    }
+    Ok(())
 }
 
 /// `new Date(s).toISOString()` — 이미 zod 를 통과한 값.
@@ -261,7 +359,7 @@ fn iso(s: &str) -> Option<String> {
 /// `PUT /accounts/{id}/grants`.
 pub async fn put_grants(
     State(st): State<Arc<AccountGrantGiveState>>,
-    RequireAccount(me, _): RequireAccount,
+    RequireAccount(me, auth): RequireAccount,
     Path(id): Path<String>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     req: Request,
@@ -309,7 +407,7 @@ pub async fn put_grants(
             "member.reset_password 는 owner·admin 역할로만 갖는다",
         );
     }
-    if cap == "api.call" || cap == "tool.allow" {
+    if cap == "api.call" {
         return crate::proxy::forward(
             State(st.up.clone()),
             ConnectInfo(peer),
@@ -331,6 +429,10 @@ pub async fn put_grants(
             Ok(s) => scope = s,
             Err(r) => return r,
         }
+    } else if cap == "tool.allow" {
+        if let Err(r) = check_tool_allow(&st.write, &me, &auth, &id, &b).await {
+            return r;
+        }
     } else if cap == "secret.create" {
         if !scope.is_empty() || allow.is_some() {
             return err(
@@ -339,7 +441,7 @@ pub async fn put_grants(
                 "secret.create 의 scope 는 빈 값 하나다",
             );
         }
-        if let Err(r) = check_secret_owner(&st.write, &me, &id).await {
+        if let Err(r) = check_secret_owner(&st.write, &me, &id, "secret.create").await {
             return r;
         }
     } else {
