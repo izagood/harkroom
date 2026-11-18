@@ -3463,6 +3463,17 @@ async fn main() {
             core_routes.http.extend(ps.http);
             core_routes.sockets.extend(ps.sockets);
         }
+        // S5.4 — `POST /agent/merge-checks`(부분). 오퍼레이터·모양 판정만 Rust, 나머지는 TS 로 넘긴다 — DB 를 건드리지 않는다.
+        if matches!(core_mode, harkroom_server::core::CoreMode::Rust) {
+            let mk = harkroom_server::core::merge_checks::routes(
+                state.up.clone(),
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(mk.router);
+            core_routes.http.extend(mk.http);
+            core_routes.sockets.extend(mk.sockets);
+        }
         // S5.4 — `POST /agent/api-checks`(부분). 오퍼레이터·모양 판정만 Rust, 나머지는 TS 로 넘긴다 — DB 를 건드리지 않는다.
         if matches!(core_mode, harkroom_server::core::CoreMode::Rust) {
             let ac = harkroom_server::core::api_checks::routes(
