@@ -2871,6 +2871,33 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 — `POST /agent/merge-checks` 의 1회 승인 소모. 허락 길·글 경로가 켜졌고 [`MERGE_CHECKS_APPROVAL_PRIVILEGES`] 까지 있을 때만.
+    let merge_checks_approve = match (&post_write, &merge_checks_allow) {
+        (Some(w), Some(_)) => {
+            use harkroom_server::core::merge_checks as t;
+            match write::missing_in(w, t::MERGE_CHECKS_APPROVAL_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(harkroom_server::core::msg_post::PostState {
+                    read: state.pool.clone(),
+                    write: w.clone(),
+                    up: state.up.clone(),
+                    implicit_ok,
+                }),
+                Ok(m) => {
+                    eprintln!("front: merge checks approval off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: merge checks approval off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 — `POST /agent/api-results`. 글 올리기 코어(시스템 줄)와 [`API_RESULTS_PRIVILEGES`] 가 다 있을 때만.
     let api_results_write = match &post_write {
         Some(w) => {
@@ -4033,6 +4060,7 @@ async fn main() {
                 merge_checks_deny.clone(),
                 merge_checks_allow.clone(),
                 merge_checks_card.clone(),
+                merge_checks_approve.clone(),
                 merge_results_read.clone(),
                 merge_results_post.clone(),
                 auth.clone(),

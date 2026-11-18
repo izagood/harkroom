@@ -1124,6 +1124,253 @@ pub struct ChecksState {
     pub allow: Option<sqlx::PgPool>,
     /// `not_granted` 거절(카드용 `merge_denial`) — [`MERGE_CHECKS_CARD_PRIVILEGES`] 까지 다 있을 때만.
     pub card: Option<sqlx::PgPool>,
+    /// 1회 승인 소모(TS `merge_approval` update + 시스템 줄) — 글 경로와 [`MERGE_CHECKS_APPROVAL_PRIVILEGES`] 까지 다 있을 때만.
+    pub approve: Option<super::msg_post::PostState>,
+}
+
+/// 1회 승인을 Rust 가 소모할 때 더 있어야 하는 권한(TS `checkMergeByChain` 의 승인 갈래). 글 올리기 권한은 글 경로가 따로 본다.
+pub const MERGE_CHECKS_APPROVAL_PRIVILEGES: &[(&str, &str)] = &[
+    ("merge_approval.id", "SELECT"),
+    ("merge_approval.agent_id", "SELECT"),
+    ("merge_approval.scope", "SELECT"),
+    ("merge_approval.pr_number", "SELECT"),
+    ("merge_approval.head_sha", "SELECT"),
+    ("merge_approval.channel_id", "SELECT"),
+    ("merge_approval.thread_root_id", "SELECT"),
+    ("merge_approval.used_at", "SELECT"),
+    ("merge_approval.expires_at", "SELECT"),
+    ("merge_approval.ci_override", "SELECT"),
+    ("merge_approval.gh_user", "SELECT"),
+    ("merge_approval.relax_checks", "SELECT"),
+    ("merge_approval.approved_by", "SELECT"),
+    ("merge_approval.approved_at", "SELECT"),
+    ("merge_approval.used_at", "UPDATE"),
+    ("merge_approval.used_lease_id", "UPDATE"),
+    ("account", "SELECT"),
+    ("audit_log", "INSERT"),
+];
+
+/// TS 의 승인 고르기(같은 조건·같은 순서). 소모는 글 tx 안의 [`APPROVAL_CONSUME_SQL`] 이 `used_at is null` 로 한 번만 한다.
+const APPROVAL_PEEK_SQL: &str = "select id::text, gh_user, relax_checks, ci_override, approved_by::text, \
+       to_char(approved_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') \
+     from merge_approval \
+     where agent_id = $1::uuid and scope = $2 and pr_number = $3 and head_sha = $4 \
+       and channel_id = $5::uuid and thread_root_id = $6::uuid and used_at is null and expires_at > $7::timestamptz \
+       and (not ci_override or $8::boolean) \
+     order by approved_at desc limit 1";
+
+const APPROVAL_CONSUME_SQL: &str = "update merge_approval set used_at = $2::timestamptz, used_lease_id = $3::uuid \
+      where id = $1::uuid and used_at is null and expires_at > $2::timestamptz returning id::text";
+
+/// 글 tx 안에서 승인을 소모한다. 이미 쓰였으면(경합) 거절해 글을 되돌리고 부른 쪽이 TS 로 넘긴다.
+#[derive(Debug)]
+struct ConsumeApproval {
+    id: String,
+    now: String,
+    lease_id: String,
+}
+
+impl super::msg_post::BeforeCommit for ConsumeApproval {
+    fn run<'a>(
+        &'a self,
+        tx: &'a mut sqlx::Transaction<'static, sqlx::Postgres>,
+        _message_id: &'a str,
+    ) -> super::msg_post::BeforeCommitFuture<'a> {
+        Box::pin(async move {
+            let got: Option<String> = sqlx::query_scalar(APPROVAL_CONSUME_SQL)
+                .bind(&self.id)
+                .bind(&self.now)
+                .bind(&self.lease_id)
+                .fetch_optional(&mut **tx)
+                .await?;
+            Ok(got.is_none().then(|| super::msg_post::Rejection {
+                status: 409,
+                code: "approval_taken".into(),
+                message: "approval already used".into(),
+            }))
+        })
+    }
+}
+
+/// TS 의 승인 소모 줄 본문과 `meta`(번역 표지 포함).
+#[allow(clippy::too_many_arguments)]
+pub fn approval_line(
+    repo: &str,
+    number: i64,
+    head_sha: &str,
+    id: &str,
+    gh_user: Option<&str>,
+    relax: bool,
+    ci_override: bool,
+    approved_by: &str,
+    approver: Option<&str>,
+) -> (String, Value) {
+    let head: String = head_sha.chars().take(9).collect();
+    let gh_shown = gh_user.unwrap_or("(오퍼레이터가 고름)");
+    let body = if ci_override {
+        format!(
+            "🔓 {repo}#{number} CI 실패 무시 승인으로 머지 시도{} · head {head} · gh {gh_shown}",
+            approver.map_or(String::new(), |a| format!(" · 승인: {a}"))
+        )
+    } else {
+        format!(
+            "🔓 {repo}#{number} 1회 승인으로 머지 시도 · head {head} · gh {gh_shown}{}",
+            if relax {
+                " · CI 판정은 GitHub 에 맡김"
+            } else {
+                ""
+            }
+        )
+    };
+    let clip = |s: &str| super::api_results::js_slice(s, 200);
+    let mut meta = json!({ "mergeApproval": {
+        "id": id, "repo": repo, "number": number, "headSha": head_sha, "ghUser": gh_user,
+        "relaxChecks": relax, "ciOverride": ci_override, "approvedBy": approved_by } });
+    let mut args = json!({ "repo": clip(repo), "number": number, "head": clip(&head) });
+    let key = if ci_override {
+        if approver.is_none() {
+            return (body, meta);
+        }
+        args["approverId"] = json!(clip(approved_by));
+        if gh_user.is_some() {
+            "system.merge.approvalUsedCiOverride"
+        } else {
+            "system.merge.approvalUsedCiOverrideOperatorPick"
+        }
+    } else {
+        match (relax, gh_user.is_some()) {
+            (true, true) => "system.merge.approvalUsedRelaxed",
+            (true, false) => "system.merge.approvalUsedRelaxedOperatorPick",
+            (false, true) => "system.merge.approvalUsed",
+            (false, false) => "system.merge.approvalUsedOperatorPick",
+        }
+    };
+    if let Some(u) = gh_user {
+        args["ghUser"] = json!(clip(u));
+    }
+    meta["i18n"] = json!({ "key": key, "args": args });
+    (body, meta)
+}
+
+type ApprovalRow = (String, Option<String>, bool, bool, String, Option<String>);
+
+/// TS 승인 갈래 — 고른 승인을 글 tx 안에서 소모하고 `repo.merge.checked` 감사·그림자를 남긴다. `None` 이면 TS 몫(아무것도 안 썼다).
+#[allow(clippy::too_many_arguments)]
+async fn approval_allow(
+    st: &super::msg_post::PostState,
+    agent: &str,
+    operator: &str,
+    o: &Value,
+    lease: &super::lease_read::LeaseRow,
+    scope: &str,
+    number: i64,
+    channel: &str,
+    root: &str,
+    a: ApprovalRow,
+    now: &str,
+) -> sqlx::Result<Option<Response>> {
+    use super::msg_post::{Origin, Outcome, PostBody, channel_is_dm, post_in_tx};
+    let w = &st.write;
+    let (id, gh_user, relax, ci_override, approved_by, approved_at) = a;
+    let head_sha = o.get("headSha").and_then(Value::as_str).unwrap_or_default();
+    let repo = &scope["repo:".len()..];
+    let by_human = lease.cause_by_human();
+    let approver: Option<String> = if ci_override {
+        sqlx::query_scalar(HANDLE_SQL)
+            .bind(&approved_by)
+            .fetch_optional(w)
+            .await?
+    } else {
+        None
+    };
+    let (body, meta) = approval_line(
+        repo,
+        number,
+        head_sha,
+        &id,
+        gh_user.as_deref(),
+        relax,
+        ci_override,
+        &approved_by,
+        approver.as_deref(),
+    );
+    let audience = super::audience::audience_for(w, channel).await?.to_json();
+    let is_dm = channel_is_dm(w, channel).await?;
+    let input = PostBody {
+        body,
+        attachment_ids: Vec::new(),
+        thread_root: Some(root.to_owned()),
+        also_in_channel: false,
+    };
+    let hook = ConsumeApproval {
+        id: id.clone(),
+        now: now.to_owned(),
+        lease_id: lease.id.clone(),
+    };
+    let Value::Object(meta) = meta else {
+        return Ok(None);
+    };
+    let origin = Origin {
+        meta,
+        system: true,
+        before_commit: Some(&hook),
+        ..Origin::default()
+    };
+    match post_in_tx(
+        st, channel, agent, true, &input, None, &audience, is_dm, &origin,
+    )
+    .await?
+    {
+        Outcome::Posted { .. } => {}
+        _ => return Ok(None),
+    }
+    let mut detail = json!({
+        "number": number, "headSha": head_sha, "operatorId": operator, "leaseId": lease.id,
+        "grantedBy": approved_by, "approvalId": id, "ghUser": gh_user,
+    });
+    if gh_user.is_none() {
+        detail["ghUserChosenBy"] = json!("operator");
+    }
+    detail["relaxChecks"] = json!(relax);
+    detail["ciOverride"] = json!(ci_override);
+    detail["causeByHuman"] = json!(by_human);
+    crate::write::record_audit(
+        w,
+        crate::write::AuditEntry {
+            action: "repo.merge.checked",
+            actor_id: Some(agent),
+            actor_handle: None,
+            target: Some(scope),
+            ip: None,
+            detail,
+        },
+    )
+    .await;
+    let origin = shadow_origin(w, lease)
+        .await
+        .unwrap_or(("unknown", false, false));
+    crate::write::record_audit(
+        w,
+        crate::write::AuditEntry {
+            action: "mandate.shadow",
+            actor_id: Some(agent),
+            actor_handle: None,
+            target: Some(scope),
+            ip: None,
+            detail: shadow_detail_no_mandate("allowed", agent, scope, &lease.id, origin),
+        },
+    )
+    .await;
+    Ok(Some(super::grant_reads::ok_no_store(&json!({
+        "allowed": true,
+        "repo": repo,
+        "grantedBy": approved_by,
+        "grantedAt": approved_at,
+        "causeByHuman": by_human,
+        "channelId": lease.channel_id,
+        "threadRootId": lease.thread_root_id,
+        "approval": { "id": id, "ghUser": gh_user, "relaxChecks": relax, "ciOverride": ci_override },
+    }))))
 }
 
 /// `not_granted` 거절에 카드용 거절 기록(`merge_denial`)을 남길 때 더 있어야 하는 권한(TS `denyWithCard`·`obsoleteOtherHeads`).
@@ -1251,7 +1498,7 @@ pub fn denial_body(code: &str, denial_id: Option<&str>) -> Value {
 pub const MERGE_CHECKS_ALLOW_PRIVILEGES: &[(&str, &str)] =
     &[("account_grant", "SELECT"), ("merge_approval", "SELECT")];
 
-/// 1회 승인이 있는지만 본다(TS 는 같은 조건으로 소모한다). 있으면 TS 로 넘긴다.
+/// 1회 승인이 있는지만 본다(TS 는 같은 조건으로 소모한다). 있으면 승인 갈래(글 경로가 있으면 Rust, 없으면 TS).
 const APPROVAL_EXISTS_SQL: &str = "select exists (select 1 from merge_approval \
      where agent_id = $1::uuid and scope = $2 and pr_number = $3 and head_sha = $4 \
        and channel_id = $5::uuid and thread_root_id = $6::uuid and used_at is null and expires_at > $7::timestamptz \
@@ -1460,6 +1707,7 @@ async fn cause_chain_root(
 async fn checks_allow(
     pool: &sqlx::PgPool,
     card: bool,
+    approve: Option<&super::msg_post::PostState>,
     agent: &str,
     operator: &str,
     o: &Value,
@@ -1491,7 +1739,27 @@ async fn checks_allow(
         .fetch_one(pool)
         .await?;
     if approval {
-        return Ok(None);
+        let Some(st) = approve else {
+            return Ok(None);
+        };
+        let row: Option<ApprovalRow> = sqlx::query_as(APPROVAL_PEEK_SQL)
+            .bind(agent)
+            .bind(&scope)
+            .bind(number)
+            .bind(g("headSha"))
+            .bind(channel)
+            .bind(root)
+            .bind(now)
+            .bind(by_human)
+            .fetch_optional(&st.write)
+            .await?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        return approval_allow(
+            st, agent, operator, o, lease, &scope, number, channel, root, row, now,
+        )
+        .await;
     }
     static GRANT_SQL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     let grant_sql: &'static str = GRANT_SQL.get_or_init(|| {
@@ -1781,6 +2049,7 @@ async fn checks_early(
     pool: &sqlx::PgPool,
     allow: bool,
     card: bool,
+    approve: Option<&super::msg_post::PostState>,
     agent: &str,
     operator: &str,
     o: &Value,
@@ -1791,7 +2060,7 @@ async fn checks_early(
     let Some(code) = early_denial(lease.as_ref(), agent, operator, g("repo")) else {
         return match lease.as_ref() {
             Some(l) if allow && !l.expired && !l.ended => {
-                checks_allow(pool, card, agent, operator, o, l, &now).await
+                checks_allow(pool, card, approve, agent, operator, o, l, &now).await
             }
             Some(l)
                 if (l.expired || l.ended)
@@ -1854,7 +2123,17 @@ pub async fn checks_route(
         auth.operator.as_ref().map(|o| o.id.as_str()),
         parsed.as_ref(),
     ) {
-        match checks_early(pool, st.allow.is_some(), st.card.is_some(), &me.id, op, o).await {
+        match checks_early(
+            pool,
+            st.allow.is_some(),
+            st.card.is_some(),
+            st.approve.as_ref(),
+            &me.id,
+            op,
+            o,
+        )
+        .await
+        {
             Ok(Some(r)) => return r,
             Ok(None) => {}
             Err(e) => return crate::directory::internal(e),
@@ -1869,6 +2148,7 @@ pub fn routes(
     checks_deny: Option<sqlx::PgPool>,
     checks_allow: Option<sqlx::PgPool>,
     checks_card: Option<sqlx::PgPool>,
+    checks_approve: Option<super::msg_post::PostState>,
     results_read: Option<sqlx::PgPool>,
     results_post: Option<super::msg_post::PostState>,
     auth: crate::auth::AuthPools,
@@ -1913,6 +2193,7 @@ pub fn routes(
                 deny: checks_deny,
                 allow: checks_allow,
                 card: checks_card,
+                approve: checks_approve,
             }))
             .merge(rt.router.with_state(Arc::new(ResultsState {
                 up,
@@ -1979,6 +2260,48 @@ mod tests {
             early_denial(Some(&lease("a", "o")), "a", "o", " Owner/Repo "),
             None
         );
+    }
+
+    #[test]
+    fn approval_line_like_ts() {
+        let h = "0123456789abcdef0123456789abcdef01234567";
+        let (b, m) = approval_line("o/r", 7, h, "ap", Some("me"), true, false, "u1", None);
+        assert_eq!(
+            b,
+            "🔓 o/r#7 1회 승인으로 머지 시도 · head 012345678 · gh me · CI 판정은 GitHub 에 맡김"
+        );
+        assert_eq!(m["i18n"]["key"], "system.merge.approvalUsedRelaxed");
+        assert_eq!(m["i18n"]["args"]["ghUser"], "me");
+        assert_eq!(m["mergeApproval"]["approvedBy"], "u1");
+        let (b, m) = approval_line("o/r", 7, h, "ap", None, false, false, "u1", None);
+        assert_eq!(
+            b,
+            "🔓 o/r#7 1회 승인으로 머지 시도 · head 012345678 · gh (오퍼레이터가 고름)"
+        );
+        assert_eq!(m["i18n"]["key"], "system.merge.approvalUsedOperatorPick");
+        assert!(m["i18n"]["args"].get("ghUser").is_none());
+        let (b, m) = approval_line("o/r", 7, h, "ap", None, false, true, "u1", Some("kim"));
+        assert_eq!(
+            b,
+            "🔓 o/r#7 CI 실패 무시 승인으로 머지 시도 · 승인: kim · head 012345678 · gh (오퍼레이터가 고름)"
+        );
+        assert_eq!(
+            m["i18n"]["key"],
+            "system.merge.approvalUsedCiOverrideOperatorPick"
+        );
+        assert_eq!(m["i18n"]["args"]["approverId"], "u1");
+        let (b, m) = approval_line("o/r", 7, h, "ap", Some("me"), false, true, "u1", None);
+        assert_eq!(
+            b,
+            "🔓 o/r#7 CI 실패 무시 승인으로 머지 시도 · head 012345678 · gh me"
+        );
+        assert!(m.get("i18n").is_none());
+        for p in [
+            ("merge_approval.used_at", "UPDATE"),
+            ("merge_approval.used_lease_id", "UPDATE"),
+        ] {
+            assert!(MERGE_CHECKS_APPROVAL_PRIVILEGES.contains(&p));
+        }
     }
 
     #[test]
