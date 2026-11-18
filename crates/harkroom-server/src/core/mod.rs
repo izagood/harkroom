@@ -30,6 +30,7 @@ pub mod channel_pref_write;
 pub mod channel_read_write;
 pub mod channels;
 pub mod command_match;
+pub mod connectors_write;
 pub mod content_scan;
 pub mod decide_approve;
 pub mod decide_check;
