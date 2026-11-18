@@ -4201,6 +4201,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect(f.log(), k).toContain(`"${k}"`);
         }
         expect(f.log()).not.toContain('secrets read core off');
+        // SE3 — 비밀 쓰기 세 줄이 Rust 에 붙었는지(답 대조 사례는 다음 회차).
+        for (const k of ['POST /secrets', 'PATCH /secrets/{id}', 'PUT /secrets/{id}/value']) expect(f.log(), k).toContain(`"${k}"`);
+        expect(f.log()).not.toContain('secret writes core off');
         const M = member.token;
         const mk = async (name: string, owner: string) => (await db.pool.query<{ id: string }>(
           `insert into secret (name, kind, description, owner_account_id, expires_at) values ($1, 'text', 'd', $2, now() + interval '1 day') returning id`,
