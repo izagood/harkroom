@@ -82,6 +82,8 @@ pub enum LineKind {
     /// S5.4 14d — merge 7일 승인(`approve`·`approve_mandate`) — cap `merge`, scope 는 TS `CAPABILITIES.merge.validateScope`,
     /// `until` 은 같은 결정의 기한(grant 를 쓰지 않는 `approve_mandate` 도 그 기한, TS 와 같음).
     MergeStanding,
+    /// S5.4 15d — 머지 거절 카드의 [이번 한 번] — cap `merge`, limits 는 [`LineArgs::merge_once`](TS `{ pr, head, uses: 1, ghUser, ciOverride }`).
+    MergeOnce,
 }
 
 impl LineKind {
@@ -89,7 +91,7 @@ impl LineKind {
     pub fn cap(self) -> &'static str {
         match self {
             LineKind::Command { .. } => "command",
-            LineKind::MergeStanding => "merge",
+            LineKind::MergeStanding | LineKind::MergeOnce => "merge",
             LineKind::Standing | LineKind::Turn => "tool",
         }
     }
@@ -110,6 +112,8 @@ pub struct LineArgs<'a> {
     pub now: &'a str,
     /// Standing 일 때 grant 기한 ISO.
     pub until: Option<&'a str>,
+    /// MergeOnce 일 때 줄의 limits(TS `{ pr, head, uses: 1, ghUser, ciOverride }`).
+    pub merge_once: Option<&'a serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -227,10 +231,12 @@ pub async fn add_line_from_request(
                 return Ok(failed(m, cap, "bad_scope", Some(code.to_string())));
             }
         },
-        LineKind::MergeStanding => match super::mandate_lines_read::merge_scope(a.target) {
-            Some(scope) => scope,
-            None => return Ok(failed(m, cap, "bad_scope", Some("bad_repo".to_string()))),
-        },
+        LineKind::MergeStanding | LineKind::MergeOnce => {
+            match super::mandate_lines_read::merge_scope(a.target) {
+                Some(scope) => scope,
+                None => return Ok(failed(m, cap, "bad_scope", Some("bad_repo".to_string()))),
+            }
+        }
         LineKind::Standing | LineKind::Turn => match validate_tool_rule(a.target) {
             ToolRuleVerdict::Ok { rule, .. } => rule,
             ToolRuleVerdict::Refused(code) => {
@@ -257,6 +263,12 @@ pub async fn add_line_from_request(
         return Ok(failed(m, cap, "mandate_invalid", None));
     }
     let limits = match a.kind {
+        LineKind::MergeOnce => {
+            let Some(l) = a.merge_once else {
+                return Ok(failed(m, cap, "no_once", None));
+            };
+            l.clone()
+        }
         LineKind::Turn => {
             let Some(card) = a.card_message_id else {
                 return Ok(failed(m, cap, "no_turn", None));
