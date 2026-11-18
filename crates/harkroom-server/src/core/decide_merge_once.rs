@@ -16,6 +16,12 @@ pub const MERGE_ONCE_PRIVILEGES: &[(&str, &str)] = &[
 /// TS `APPROVAL_TTL_MS`(24시간).
 pub const APPROVAL_TTL: &str = "24 hours";
 
+/// TS `readDenial(client, id, now, true)` — 거절 기록을 잠그고 읽는다(`headMoved` 는 obsolete 문구에만 쓰여 뺐다: obsolete 면 TS).
+/// $1 거절 id, $2 결정 시각.
+pub const READ_DENIAL_LOCKED_SQL: &str = "select agent_id::text, scope, pr_number::bigint, head_sha, channel_id::text, \
+     thread_root_id::text, expires_at <= $2::timestamptz as expired, reason, failed_checks, obsoleted_at is not null as obsolete \
+     from merge_denial d where id = $1::uuid for update of d";
+
 /// TS 의 거절 기록 소모(같은 문장).
 pub const USE_DENIAL_SQL: &str = "update merge_denial set used_at = $2::timestamptz, used_by = $3::uuid \
      where id = $1::uuid and used_at is null returning id::text";
