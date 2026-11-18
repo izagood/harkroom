@@ -6191,6 +6191,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           await call('POST', '/invites', {}, ''); // 401
           await call('POST', '/invites', { email: 'ac4@example.test' }, A); // TS 가 판정(메일 꺼짐 409)
           await call('POST', '/invites', { email: 'nope' }, A); // TS 가 판정(400)
+          await call('POST', `/invites/${mine[1]}/resend`, undefined, A); // 메일 설정 없는 앞단 → TS 가 판정(메일 꺼짐 409)
           await call('DELETE', `/invites/${mine[0]}`, undefined, A); // 204
           await call('DELETE', `/invites/${mine[0]}`, undefined, A); // 이미 취소 204
           await call('DELETE', `/invites/${used}`, undefined, A); // 409
@@ -6209,7 +6210,11 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const y = await run(rsUrl);
         expect(y).toEqual(x);
         expect((y.slice(0, -1) as { status: number }[]).map((r) => r.status)).toEqual([
-          201, 201, 201, 400, 400, 403, 401, 409, 400, 204, 204, 409, 404, 400, 403, 401]);
+          201, 201, 201, 400, 400, 403, 401, 409, 400, 409, 204, 204, 409, 404, 400, 403, 401]);
+        // 가군(메일 설정) — 이 앞단에는 메일 env 가 없다. 주소가 실린 발급·다시 보내기의 409 `mail_disabled` 는 TS 만 내는 코드다
+        // (Rust 코어에는 그 답이 없다, d83818756) — 그 코드가 왔으면 TS 가 답한 것이다. 초대 행도 새로 생기지 않는다(감사 4건 그대로).
+        expect((y as { path: string; json: unknown; code?: string }[]).filter((r) => r.code === 'mail_disabled').map((r) => r.path))
+          .toEqual(['/invites', '/invites/N1/resend']);
         expect((y[0] as { json: unknown }).json).toEqual({ keys: ['id', 'expiresAt', 'mail', 'token'], token: true, iso: true, mail: 'off', week: true });
         expect((y.at(-1) as { audit: unknown[] }).audit).toHaveLength(4);
         await db.pool.query('delete from invite where id = any($1)', [made]);
@@ -10287,6 +10292,84 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           } finally {
             child?.kill('SIGTERM');
             if (prev === undefined) delete process.env.HARKROOM_DELEGATION_V2; else process.env.HARKROOM_DELEGATION_V2 = prev;
+          }
+        }
+
+        // S5.5 가군 — 「스위치가 없으면 TS」를 요청으로 본다. 값을 준 앞단(K)은 Rust 가, 그 스위치만 비운 앞단은 TS 가 답한다
+        // (`startFront` 는 시험 프로세스의 env 를 물려주므로 「없음」은 빈 값으로 준다 — 두 스위치 모두 빈 값을 모름으로 읽는다).
+        {
+          const prevV2 = process.env.HARKROOM_DELEGATION_V2;
+          const prevImplicit = process.env.HARKROOM_DELEGATION_IMPLICIT;
+          process.env.HARKROOM_DELEGATION_V2 = '1';
+          process.env.HARKROOM_DELEGATION_IMPLICIT = 'off';
+          // 주인(MEM)만 부르는 에이전트 — BOT3 은 못 부르고, 원인 제공자(임대의 principal = MEM)의 권한으로만 열린다.
+          const gap = await createAgent(app, admin.token, 's55gapbot');
+          await db.pool.query(`update agent_config set invoke_scope = 'owner', owner_account_id = $2 where account_id = $1`, [gap.accountId, member.accountId]);
+          await db.pool.query(`insert into channel_member (channel_id, account_id) values ($1, $2) on conflict do nothing`, [todayId, gap.accountId]);
+          const kids: ChildProcess[] = [];
+          const front = async (over: Record<string, string>) => {
+            for (let attempt = 0; ; attempt += 1) {
+              const port = await freePort();
+              try {
+                const fd = await startFront(bin, {
+                  UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(port), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
+                  TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust', HARKROOM_DELEGATION_V2: '1', HARKROOM_DELEGATION_IMPLICIT: 'off',
+                  ...GROUP_A_ENV, ...over,
+                });
+                kids.push(fd.child);
+                const until = Date.now() + 10_000;
+                while (!fd.log().includes('front: rust core routes') && Date.now() < until) await new Promise((res) => setTimeout(res, 100));
+                return { url: `http://127.0.0.1:${port}`, log: fd.log };
+              } catch (err) {
+                if (attempt >= 2 || !String(err).includes('AddrInUse')) throw err;
+              }
+            }
+          };
+          const PRINCIPAL_LINE = 'front: principal-invoke posts to TS — HARKROOM_PRINCIPAL_INVOKE unset';
+          const IMPLICIT_LINE = 'front: agent calls under delegation v2 to TS — HARKROOM_DELEGATION_IMPLICIT unset';
+          try {
+            const K = await front({});
+            const noPrincipal = await front({ HARKROOM_PRINCIPAL_INVOKE: '' });
+            const noImplicit = await front({ HARKROOM_DELEGATION_IMPLICIT: '' });
+            for (const line of [PRINCIPAL_LINE, IMPLICIT_LINE]) expect(K.log(), line).not.toContain(line);
+            expect(noPrincipal.log()).toContain(PRINCIPAL_LINE);
+            expect(noPrincipal.log()).not.toContain(IMPLICIT_LINE);
+            expect(noImplicit.log()).toContain(IMPLICIT_LINE);
+            expect(noImplicit.log()).not.toContain(PRINCIPAL_LINE);
+            // 답한 쪽(`x-harkroom-core: mcp` = Rust)과 그 글에 원인 제공자 대행이 적혔는지.
+            const post = async (base: string, body: string, withCause: boolean) => {
+              const ch = await freshCh();
+              const { root, call } = await chainBy(bot2.accountId, 2, 1)(ch);
+              if (withCause) await leaseFor(call, ch);
+              const r = withCause
+                ? await mcpCall(base, viaOp.token, 'message.post', { channelId: ch, threadRootId: root, body }, 7, { ...viaOp.extra, 'x-harkroom-cause': call, 'x-harkroom-turn-id': turnId })
+                : await mcpCall(base, viaPat.token, 'message.post', { channelId: ch, threadRootId: root, body }, 7, {});
+              const id = (sse(r.text) as { message?: { id?: string } } | null)?.message?.id;
+              const row = id ? (await db.pool.query<{ as_principal: boolean; denied: boolean }>(
+                `select meta ? 'invokedAsPrincipal' as as_principal, meta ? 'mentionDenied' as denied from message where id = $1`, [id])).rows[0] : undefined;
+              return { rust: r.core === 'mcp', posted: !!id, asPrincipal: row?.as_principal, denied: row?.denied };
+            };
+            // (가) 원인 제공자 대행 — 대행으로 열릴 부름이 있는 글만 TS 로 간다. TS 는 스위치가 없으면 켜짐이라 대행으로 연다.
+            expect(await post(K.url, '@s55gapbot 이것 봐 줘', true), '값을 준 앞단: Rust 가 대행으로 연다')
+              .toEqual({ rust: true, posted: true, asPrincipal: true, denied: false });
+            expect(await post(noPrincipal.url, '@s55gapbot 이것 봐 줘', true), '스위치 없는 앞단: TS 가 답한다')
+              .toEqual({ rust: false, posted: true, asPrincipal: true, denied: false });
+            expect(await post(tsUrl, '@s55gapbot 이것 봐 줘', true), 'TS 직접')
+              .toEqual({ rust: false, posted: true, asPrincipal: true, denied: false });
+            // 대행이 걸리지 않는 글(원인 없음 → 막힌 부름으로 적힘)은 스위치가 없어도 Rust 가 답한다.
+            expect(await post(noPrincipal.url, '@s55gapbot 이것 봐 줘', false), '대행이 없으면 스위치와 무관')
+              .toEqual({ rust: true, posted: true, asPrincipal: false, denied: true });
+            // (나) 암묵 위임 — 위임 스위치가 켜져 있는데 암묵 위임 값이 없으면 에이전트의 부름은 TS 로 간다. 부름 없는 글은 Rust 가 답한다.
+            expect((await post(K.url, '@mem 봐 줘', false)).rust, '값을 준 앞단: Rust 가 부름을 답한다').toBe(true);
+            expect(await post(noImplicit.url, '@mem 봐 줘', false), '암묵 위임 값 없는 앞단: TS 가 답한다')
+              .toEqual({ rust: false, posted: true, asPrincipal: false, denied: false });
+            expect((await post(noImplicit.url, '부름 없는 글', false)).rust, '부름이 없으면 스위치와 무관').toBe(true);
+            // 위 글들의 호출함 이벤트(outbox)가 다 나간 뒤에 넘어간다 — 다음 블록이 「이벤트 없음」을 센다.
+            await new Promise((res) => setTimeout(res, 1500));
+          } finally {
+            for (const k of kids) k.kill('SIGTERM');
+            if (prevV2 === undefined) delete process.env.HARKROOM_DELEGATION_V2; else process.env.HARKROOM_DELEGATION_V2 = prevV2;
+            if (prevImplicit === undefined) delete process.env.HARKROOM_DELEGATION_IMPLICIT; else process.env.HARKROOM_DELEGATION_IMPLICIT = prevImplicit;
           }
         }
       }
