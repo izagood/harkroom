@@ -211,6 +211,9 @@ pub enum ApproveError {
     RestartsExhausted,
 }
 
+/// TS `not_once` 문구(골든).
+pub const NOT_ONCE_MESSAGE: &str = "only a card raised from a merge refusal can approve one merge";
+
 fn refused(status: u16, code: &'static str, message: impl Into<String>) -> ApproveOutcome {
     ApproveOutcome::Refused {
         status,
@@ -340,6 +343,10 @@ pub async fn approve_write(
     if locked.expired {
         // TS 는 이 자리에서 카드를 만료로 닫는다 — 그 일은 TS 가 한다(쓰기 전).
         return Ok(ApproveOutcome::HandToTs);
+    }
+    // TS `decidePermissionRequest`: command 가 아닌 카드의 `approve_once` 는 머지 거절 카드 + once 일 때만 — 그 밖은 쓰기 없이 409.
+    if decision == Decision::ApproveOnce && locked.kind != "command" {
+        return Ok(refused(409, "not_once", NOT_ONCE_MESSAGE));
     }
     let (target, channel_id, thread_root_id): (String, Option<String>, Option<String>) =
         sqlx::query_as(READ_LOCKED_TARGET)
@@ -704,6 +711,51 @@ async fn approve_once_shape(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tool_approve_once_routing() {
+        use super::super::decide_core::rust_takes;
+        let base = Shape {
+            option: "approve_once",
+            kind: "tool",
+            has_mandate: false,
+            has_denial: false,
+            has_once: false,
+            via_chat: false,
+            via_mirror: false,
+        };
+        assert_eq!(rust_takes(base), Some(Decision::ApproveOnce));
+        let mandate = Shape {
+            has_mandate: true,
+            ..base
+        };
+        assert_eq!(rust_takes(mandate), Some(Decision::ApproveOnce));
+        // once 본문·거절 기록·merge 는 TS(1회 머지 쓰기).
+        for s in [
+            Shape {
+                has_once: true,
+                ..base
+            },
+            Shape {
+                has_denial: true,
+                ..base
+            },
+            Shape {
+                kind: "merge",
+                ..base
+            },
+        ] {
+            assert_eq!(rust_takes(s), None, "{s:?}");
+        }
+    }
+
+    #[test]
+    fn not_once_message_matches_ts() {
+        assert_eq!(
+            NOT_ONCE_MESSAGE,
+            "only a card raised from a merge refusal can approve one merge"
+        );
+    }
 
     #[test]
     fn answer_candidates_follow_ts_order() {
