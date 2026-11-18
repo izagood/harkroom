@@ -10,7 +10,8 @@
 //! - access 목록의 IP 는 소유자에게만 — admin 이 남의 것을 보면 null(security #1253 n2).
 //! - 권한은 [`SECRETS_READ_PRIVILEGES`] — 없으면 `main.rs` 가 이 줄을 붙이지 않아 TS 에 남는다.
 //! - 목록·만들기·고치기·값 쓰기는 `secret_writes.rs`, 부여 주기는 `secret_grant_give.rs`, 소유자 보기(reveal)는 `secret_reveal.rs`.
-//!   에이전트 줄은 `GET /agent/secret-create` 만 Rust(`agent_secret_create.rs`)고 나머지 `/agent/secrets*` 는 TS 에 남긴다.
+//!   에이전트 줄은 `GET /agent/secret-create`·`POST /agent/secrets`·`/rotate`(generate)가 `agent_secret_create.rs`,
+//!   `POST /agent/secrets/reveal` 이 `agent_secret_reveal.rs` 다. import 요청·키링 409 는 TS 에 넘긴다.
 use crate::auth::{Account, RequireAccount};
 use crate::directory::{internal, json_err, json_ok};
 use crate::trust_proxy::TrustProxy;
