@@ -910,6 +910,21 @@ mod tests {
     }
 
     #[test]
+    fn denial_once_columns_are_granted() {
+        for c in ["pr_number", "head_sha", "reason", "failed_checks"] {
+            assert!(DENIAL_ONCE_SQL.contains(c));
+            let col = format!("merge_denial.{c}");
+            assert!(
+                MERGE_DENIAL_ASK_READ_PRIVILEGES
+                    .iter()
+                    .any(|(k, p)| *k == col && *p == "SELECT"),
+                "{col}"
+            );
+        }
+        assert!(DENIAL_AGENT_SQL.contains("owner_account_id"));
+    }
+
+    #[test]
     fn parse_like_zod() {
         assert!(parse(&ask(json!({}))).is_some());
         assert!(
