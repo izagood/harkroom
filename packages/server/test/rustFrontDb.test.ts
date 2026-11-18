@@ -1476,7 +1476,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant insert, update, delete on handle_group to ${rw}`,
         `grant insert, delete on handle_group_member to ${rw}`,
         // P4c — 신고 해결·차단.
-        `grant update on message_report to ${rw}`,
+        `grant insert, update on message_report to ${rw}`,
+        // MCP 레지스트리 PUT·DELETE(`write.rs::REQUIRED_PRIVILEGES` 의 mcp_server 줄). 없으면 쓰기 풀 전체가 꺼진다.
+        `grant insert, delete on mcp_server to ${rw}`,
+        `grant update (credential_kind) on mcp_server to ${rw}`,
         `grant insert, delete on account_block to ${rw}`,
         // P4c-2 — 작업 항목 지우기·스레드 임대·푸시 기기.
         `grant delete on work_item to ${rw}`,

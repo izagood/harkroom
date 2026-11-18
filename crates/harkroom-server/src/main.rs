@@ -1523,7 +1523,15 @@ async fn main() {
             use harkroom_server::core::leak_guard as lg;
             match write::missing_in(write, &lg::privileges(), lg::LEAK_GUARD_SEQUENCES).await {
                 Ok(m) if m.is_empty() => match lg::LeakGuard::load(write.clone()).await {
-                    Ok(g) => Some(std::sync::Arc::new(g)),
+                    Ok(g) => match g.into_active() {
+                        Some(g) => Some(std::sync::Arc::new(g)),
+                        None => {
+                            eprintln!(
+                                "front: agent upload leak guard off — no matching secret key"
+                            );
+                            None
+                        }
+                    },
                     Err(e) => {
                         eprintln!("front: agent upload leak guard off — secret keys: {e}");
                         None

@@ -88,6 +88,12 @@ impl LeakGuard {
         self.keyring.is_some()
     }
 
+    /// 키링이 있을 때만 가드를 돌려준다. 키 env 가 없어 꺼진 가드를 쥐면 에이전트 업로드가 비밀 값 검사 없이 Rust 에서 저장되므로,
+    /// 그때는 `None` — 그 줄을 TS 에 남긴다(모듈 문서 「키 env 를 켤 수 없으면 TS」, api_checks `load_secret_opener` 와 같은 꼴).
+    pub fn into_active(self) -> Option<Self> {
+        self.is_on().then_some(self)
+    }
+
     async fn secrets(
         &self,
         keyring: &SecretKeyring,
@@ -212,5 +218,19 @@ mod tests {
         assert!(norm(ts).contains(&norm(inner)));
         assert!(ts.contains("'denied', 'leak_blocked'"));
         assert!(ts.contains("action: 'secret.leak.blocked'"));
+    }
+
+    /// 키 env 가 없어 꺼진 가드는 쥐지 않는다 → 에이전트 업로드는 TS 가 받는다(security #2353 막음 #1).
+    #[tokio::test]
+    async fn guard_without_keyring_is_not_active() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://x@127.0.0.1:1/x")
+            .unwrap();
+        let off = LeakGuard {
+            pool,
+            keyring: None,
+        };
+        assert!(!off.is_on());
+        assert!(off.into_active().is_none());
     }
 }
