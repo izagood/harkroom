@@ -6,9 +6,9 @@
 //!
 //! `POST /agent/merge-results`(TS `reportMerge`)도 같은 꼴로 부분 이식한다 — 403 `forbidden`·400 `bad_request` 만 Rust,
 //! 읽기 풀([`MERGE_RESULTS_PRIVILEGES`])이 있으면 N1 관문(403 `lease_invalid`·400 `bad_repo`·409 `already_reported`/`not_checked`)도
-//! Rust 가 답한다. 글 경로와 [`MERGE_RESULTS_WRITE_PRIVILEGES`] 까지 있으면 받을 `failed` 보고(CI 거절 아님)도 Rust 가 적는다 —
-//! 「머지 실패」 시스템 줄·감사 `repo.merge.failed`·201 `{ messageId }`. 「머지됨」·「큐」 줄과 CI 거절 기록(`denialId`)·후속(감시·
-//! 카드 닫기·고른 gh 이름 적기)은 아직 TS 몫이다.
+//! Rust 가 답한다. 글 경로와 [`MERGE_RESULTS_WRITE_PRIVILEGES`] 까지 있으면 받을 `failed` 보고(CI 거절 아님)와 `merged` 보고
+//! (무시한 체크 0개·닫을 머지 카드 없음·계정을 비운 승인의 고른 gh 이름 없음)도 Rust 가 적는다 — 시스템 줄·감사·201 `{ messageId }`.
+//! 「큐」 줄(감시)·CI 거절 기록(`denialId`)·무시한 체크·카드 닫기·고른 gh 이름 적기가 필요한 보고는 쓰기 전에 TS 로 넘긴다.
 use super::grant_reads::through_operator;
 use super::merge_approval_peek::str_len_ok;
 use super::msg_read::is_uuid;
@@ -187,6 +187,16 @@ pub const MERGE_RESULTS_WRITE_PRIVILEGES: &[(&str, &str)] = &[
     ("merge_approval.scope", "SELECT"),
     ("merge_approval.pr_number", "SELECT"),
     ("merge_approval.head_sha", "SELECT"),
+    ("merge_approval.gh_user", "SELECT"),
+    ("merge_denial.id", "SELECT"),
+    ("merge_denial.scope", "SELECT"),
+    ("merge_denial.pr_number", "SELECT"),
+    ("merge_denial.used_at", "SELECT"),
+    ("merge_denial.obsoleted_at", "SELECT"),
+    ("permission_request.kind", "SELECT"),
+    ("permission_request.status", "SELECT"),
+    ("permission_request.target", "SELECT"),
+    ("permission_request.denial_id", "SELECT"),
     ("account_grant", "SELECT"),
     ("agent_config", "SELECT"),
     ("agent_invoker", "SELECT"),
@@ -237,7 +247,81 @@ pub fn is_ci_refusal(c: Option<&Value>) -> bool {
 /// Rust 가 적을 수 있는 보고인가 — `failed` 이고 CI 거절 기록(`recordCiDenial`)이 필요 없다. 나머지(머지됨·큐·CI 거절)는 감시·카드
 /// 닫기·거절 기록이 붙어 TS 몫이다.
 pub fn rust_reportable(o: &Value) -> bool {
-    o.get("result").and_then(Value::as_str) == Some("failed") && !is_ci_refusal(o.get("ciRefusal"))
+    match o.get("result").and_then(Value::as_str) {
+        Some("failed") => !is_ci_refusal(o.get("ciRefusal")),
+        // 무시한 체크가 있으면 TS `sanitizeCheckNames`(\p{Cf} 거르기)·꼬리 문구가 필요하다 — TS 몫.
+        Some("merged") => o
+            .get("ignoredChecks")
+            .and_then(Value::as_array)
+            .is_none_or(|a| a.is_empty()),
+        _ => false,
+    }
+}
+
+/// 이 PR 에 닫을 머지 카드(안 쓴 거절 기록·기다리는 머지 권한 요청)가 있는가 — 있으면 `obsoleteMergeCards` 가 카드를 고치고
+/// 알려야 해서 TS 로 넘긴다(없으면 TS 도 아무것도 하지 않는다).
+const OPEN_CARDS_SQL: &str = "select exists(select 1 from merge_denial where scope = $1 and pr_number = $2::bigint \
+         and used_at is null and obsoleted_at is null) \
+      or exists(select 1 from permission_request where kind = 'merge' and status = 'pending' and target = $1 \
+         and denial_id in (select id from merge_denial where scope = $1 and pr_number = $2::bigint))";
+
+const APPROVAL_GH_SQL: &str = "select gh_user is null from merge_approval where id = $1::uuid";
+
+const HANDLE_SQL: &str = "select handle from account where id = $1::uuid";
+
+/// TS `merged` 줄(무시한 체크 0개) — `failed_line` 의 meta 를 고쳐 쓴다.
+#[allow(clippy::too_many_arguments)]
+pub fn merged_line(
+    repo: &str,
+    number: i64,
+    head_sha: &str,
+    merge_sha: Option<&str>,
+    error: Option<&str>,
+    granter: Option<(&str, &str)>,
+    granter_id: Option<&str>,
+    via_approval: bool,
+    ci_override: bool,
+    no_pr_checks: bool,
+    chain_root_id: Option<&str>,
+) -> (String, Map<String, Value>) {
+    let (_, mut meta) = failed_line(
+        repo,
+        number,
+        head_sha,
+        merge_sha,
+        error,
+        granter_id,
+        via_approval,
+        ci_override,
+        chain_root_id,
+    );
+    let sha: String = merge_sha.unwrap_or(head_sha).chars().take(9).collect();
+    let mut body = format!("🔀 {repo}#{number} 머지됨 · {sha}");
+    if let Some((_, h)) = granter {
+        body.push_str(&format!(" · 권한: {h}"));
+    }
+    if ci_override {
+        body.push_str(" · CI 실패 무시 승인");
+    }
+    body.push_str(" (래퍼 보고)");
+    if let Some(Value::Object(m)) = meta.get_mut("merge") {
+        m.insert("result".into(), json!("merged"));
+        if no_pr_checks {
+            m.insert("noPrChecks".into(), json!(true));
+        }
+    }
+    meta.remove("i18n");
+    if !ci_override {
+        let clip = |s: &str| super::api_results::js_slice(s, 200);
+        let i18n = match granter {
+            Some((id, _)) => json!({ "key": "system.merge.mergedGranted", "args": {
+                "repo": clip(repo), "number": number, "sha": sha, "granterId": clip(id) } }),
+            None => json!({ "key": "system.merge.merged", "args": {
+                "repo": clip(repo), "number": number, "sha": sha } }),
+        };
+        meta.insert("i18n".into(), i18n);
+    }
+    (body, meta)
 }
 
 /// TS `failed` 줄 — 본문과 `meta`(i18n 은 CI 무시 승인 꼬리가 없을 때만).
@@ -376,17 +460,64 @@ async fn report_failed(
     let ci_override = used.as_ref().is_some_and(|u| u.2);
     let granter_id = approved_by.clone().or(grant_by.flatten());
     let merge_sha = g("mergeSha");
-    let (body, meta) = failed_line(
-        &repo,
-        number,
-        &head_sha,
-        merge_sha.as_deref(),
-        g("error").as_deref(),
-        granter_id.as_deref(),
-        approved_by.is_some(),
-        ci_override,
-        chain_root_id.as_deref(),
-    );
+    let merged = g("result").as_deref() == Some("merged");
+    let no_pr_checks = merged && o.get("noPrChecks") == Some(&Value::Bool(true));
+    let (body, meta) = if merged {
+        let open: bool = sqlx::query_scalar(OPEN_CARDS_SQL)
+            .bind(&scope)
+            .bind(number)
+            .fetch_one(w)
+            .await?;
+        if open {
+            return Ok(Report::ToTs);
+        }
+        // 계정을 비운 승인 + 고른 gh 이름이면 `noteOnceGhUserUsed`(카드·거울 고치기)가 필요하다 — TS 몫.
+        let gh_used = g("ghUserUsed").filter(|u| gh_user_ok(u));
+        if let (Some((id, _, _)), Some(_)) = (&used, &gh_used) {
+            let blank: Option<bool> = sqlx::query_scalar(APPROVAL_GH_SQL)
+                .bind(id)
+                .fetch_optional(w)
+                .await?;
+            if blank != Some(false) {
+                return Ok(Report::ToTs);
+            }
+        }
+        let handle: Option<String> = match &granter_id {
+            Some(id) => {
+                sqlx::query_scalar(HANDLE_SQL)
+                    .bind(id)
+                    .fetch_optional(w)
+                    .await?
+            }
+            None => None,
+        };
+        let granter = granter_id.as_deref().zip(handle.as_deref());
+        merged_line(
+            &repo,
+            number,
+            &head_sha,
+            merge_sha.as_deref(),
+            g("error").as_deref(),
+            granter,
+            granter_id.as_deref(),
+            approved_by.is_some(),
+            ci_override,
+            no_pr_checks,
+            chain_root_id.as_deref(),
+        )
+    } else {
+        failed_line(
+            &repo,
+            number,
+            &head_sha,
+            merge_sha.as_deref(),
+            g("error").as_deref(),
+            granter_id.as_deref(),
+            approved_by.is_some(),
+            ci_override,
+            chain_root_id.as_deref(),
+        )
+    };
     let audience = super::audience::audience_for(w, &channel).await?.to_json();
     let is_dm = channel_is_dm(w, &channel).await?;
     let input = PostBody {
@@ -424,10 +555,17 @@ async fn report_failed(
         detail["approvedBy"] = json!(by);
         detail["ciOverride"] = json!(ci_override);
     }
+    if no_pr_checks {
+        detail["noPrChecks"] = json!(true);
+    }
     crate::write::record_audit(
         w,
         crate::write::AuditEntry {
-            action: "repo.merge.failed",
+            action: if merged {
+                "repo.merge.merged"
+            } else {
+                "repo.merge.failed"
+            },
             actor_id: Some(agent),
             actor_handle: None,
             target: Some(&scope),
@@ -732,7 +870,66 @@ mod tests {
         assert!(!rust_reportable(
             &json!({ "result": "failed", "ciRefusal": { "code": "not_mergeable", "mergeState": "UNSTABLE", "checks": [] } })
         ));
-        assert!(!rust_reportable(&json!({ "result": "merged" })));
+        assert!(rust_reportable(&json!({ "result": "merged" })));
         assert!(!rust_reportable(&json!({ "result": "queued" })));
+    }
+
+    #[test]
+    fn merged_line_like_ts() {
+        let h = "b".repeat(40);
+        let m = "c".repeat(40);
+        let (body, meta) = merged_line(
+            "o/r",
+            7,
+            &h,
+            Some(&m),
+            None,
+            Some(("g1", "kim")),
+            Some("g1"),
+            true,
+            false,
+            true,
+            None,
+        );
+        assert_eq!(body, "🔀 o/r#7 머지됨 · ccccccccc · 권한: kim (래퍼 보고)");
+        assert_eq!(meta["merge"]["result"], json!("merged"));
+        assert_eq!(meta["merge"]["noPrChecks"], json!(true));
+        assert_eq!(meta["merge"]["viaApproval"], json!(true));
+        assert_eq!(
+            meta["i18n"],
+            json!({ "key": "system.merge.mergedGranted", "args": { "repo": "o/r", "number": 7, "sha": "ccccccccc", "granterId": "g1" } })
+        );
+        let (body, meta) = merged_line(
+            "o/r",
+            7,
+            &h,
+            None,
+            None,
+            None,
+            Some("g1"),
+            false,
+            false,
+            false,
+            None,
+        );
+        assert_eq!(body, "🔀 o/r#7 머지됨 · bbbbbbbbb (래퍼 보고)");
+        assert_eq!(meta["i18n"]["key"], json!("system.merge.merged"));
+        assert!(meta["merge"].get("noPrChecks").is_none());
+        let (body, meta) = merged_line(
+            "o/r", 7, &h, None, None, None, None, true, true, false, None,
+        );
+        assert_eq!(
+            body,
+            "🔀 o/r#7 머지됨 · bbbbbbbbb · CI 실패 무시 승인 (래퍼 보고)"
+        );
+        assert!(meta.get("i18n").is_none());
+        assert!(rust_reportable(
+            &json!({ "result": "merged", "ignoredChecks": [] })
+        ));
+        assert!(!rust_reportable(
+            &json!({ "result": "merged", "ignoredChecks": ["x"] })
+        ));
+        let src = include_str!("../../../../packages/server/src/services/mergeGrants.ts");
+        assert!(src.contains("`🔀 ${repo}#${r.number} 머지됨 · ${(r.mergeSha ?? r.headSha).slice(0, 9)}` + (granter ? ` · 권한: ${granter}` : '') + ignoredTail + ' (래퍼 보고)'"));
     }
 }
