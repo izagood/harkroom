@@ -37,6 +37,8 @@ pub const SERVED: &[&str] = &[
     // S5.4 A1 — 진행 한 줄·러너 알림 줄. 같은 글 쓰기 풀이다(`message.post` 와 같은 칸).
     "message.progress",
     "message.notice",
+    // S5.4 A3 — 다시 부르기 예약. 글 쓰기 풀에 더해 agent_wake 칸이 있을 때만([`McpWrites::wake`]).
+    "turn.wake",
 ];
 
 /// TS 가 조건부로 싣는 도구 — `/mcp/admit` 이 `registered: true` 라고 답했을 때만 Rust 가 답한다([`super::route::serve`]).
