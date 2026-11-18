@@ -1,5 +1,5 @@
 //! S5.4 AT7(준비) — 들어오는 hook 의 서명·토큰 검증. TS `services/automationIngress.ts` 의 `verifyBearer`·`verifyGithubSignature`·
-//! `safeEqual` 을 옮긴다. 줄(`POST /hooks/github/:id` 등)은 아직 TS — 여기는 검증 함수만 둔다.
+//! `safeEqual` 을 옮긴다. 줄(`POST /hooks/github/:id` 등)은 `automation_hooks` 가 쓴다.
 //!
 //! - 비교는 늘 상수 시간(XOR 누적 — `ring::constant_time` 은 0.17 에서 deprecated). 길이가 다르면 바로 false(TS `safeEqual` 과 같다 — 길이는 숨기지 않는다).
 //! - 비밀 값(토큰 해시·열린 서명 키)은 이 모듈 밖으로 내보내지 않고 기록하지 않는다.
