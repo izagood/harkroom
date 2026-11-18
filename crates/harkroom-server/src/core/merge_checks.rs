@@ -1,8 +1,9 @@
 //! S5.4 — `POST /agent/merge-checks`(TS `mergeRoutes.ts` → `mergeGrants.ts::checkMerge`) — **부분 이식**.
 //!
 //! Rust 는 판정 전의 두 갈래만 답한다: 오퍼레이터를 거치지 않은 요청(403 `forbidden`)과 zod 모양이 틀린 본문(400 `bad_request`).
-//! 모양이 맞는 요청은 전부 TS 로 넘긴다 — 임대·사슬 판정(`checkMergeByChain`)·위임 판정·1회 승인 소모·`merge_denial`·카드·
-//! 그림자 감사(`mandate.shadow`)는 아직 TS 몫이다. 넘기는 쪽은 DB 를 건드리지 않으므로 칸 권한이 필요 없다.
+//! 쓰기 풀에 [`MERGE_CHECKS_DENY_PRIVILEGES`] 가 다 있으면 그림자 감사가 비는 이른 거절([`early_denial`] — 403 `lease_invalid`·400 `bad_repo`,
+//! `repo.merge.denied` 감사 포함)도 Rust 가 답한다. 그 밖의 모양이 맞는 요청은 전부 TS 로 넘긴다 — 임대·사슬 판정(`checkMergeByChain`)·위임 판정·1회 승인 소모·`merge_denial`·카드·
+//! 그림자 감사(`mandate.shadow`)는 아직 TS 몫이다. 넘기는 쪽은 임대를 읽기만 하고 쓰지 않는다.
 //!
 //! `POST /agent/merge-results`(TS `reportMerge`)도 같은 꼴로 부분 이식한다 — 403 `forbidden`·400 `bad_request` 만 Rust,
 //! 읽기 풀([`MERGE_RESULTS_PRIVILEGES`])이 있으면 N1 관문(403 `lease_invalid`·400 `bad_repo`·409 `already_reported`/`not_checked`)도
@@ -1098,8 +1099,106 @@ pub async fn results_route(
     super::msg_post::to_ts(st.up.clone(), peer, parts, bytes).await
 }
 
+/// `merge-checks` 의 이른 거절(`lease_invalid`·`bad_repo`)을 Rust 가 답할 때 쓰기 풀에 있어야 하는 권한 — 임대 정본 문장
+/// (`grant_read_lease`)이 읽는 표와 `repo.merge.denied` 감사 쓰기. 하나라도 없으면 모양이 맞는 요청은 전부 TS 로 넘긴다.
+pub const MERGE_CHECKS_DENY_PRIVILEGES: &[(&str, &str)] = &[
+    ("secret_turn_lease", "SELECT"),
+    ("message", "SELECT"),
+    ("account", "SELECT"),
+    ("agent_config", "SELECT"),
+    ("channel", "SELECT"),
+    ("channel_member", "SELECT"),
+    ("agent_invoker", "SELECT"),
+    ("audit_log", "INSERT"),
+];
+
+pub struct ChecksState {
+    pub up: Upstream,
+    /// 이른 거절 경로 — 쓰기 풀에 [`MERGE_CHECKS_DENY_PRIVILEGES`] 가 다 있을 때만.
+    pub deny: Option<sqlx::PgPool>,
+}
+
+/// TS `checkMergeByChain` 의 첫 두 거절 중 **그림자 감사(`shadowMandate`)가 아무것도 남기지 않는** 갈래만 고른다.
+/// - 임대가 없거나 에이전트·오퍼레이터가 다르다 → `lease_invalid`(그림자는 같은 조건에서 바로 돌아간다).
+/// - 임대는 맞고 저장소 모양이 틀렸다 → 끝남·만료면 `lease_invalid`, 아니면 `bad_repo`(그림자는 `repoScope` 가 없으면 돌아간다).
+///
+/// `None` 이면 TS 몫이다: 끝나거나 만료된 임대 + 맞는 저장소(그림자가 `findLine` 을 돈다)와 그 뒤 모든 판정
+/// (1회 승인 소모·위임 줄·사슬 판정·`merge_denial`·카드·`repo.merge.checked`).
+pub fn early_denial(
+    lease: Option<&super::lease_read::LeaseRow>,
+    agent: &str,
+    operator: &str,
+    repo: &str,
+) -> Option<&'static str> {
+    let l = match lease {
+        Some(l) if l.agent_id == agent && l.operator_id.as_deref() == Some(operator) => l,
+        _ => return Some("lease_invalid"),
+    };
+    if super::merge_approval_peek::repo_scope(repo).is_some() {
+        return None;
+    }
+    Some(if l.expired || l.ended {
+        "lease_invalid"
+    } else {
+        "bad_repo"
+    })
+}
+
+/// TS `deny` 의 `repo.merge.denied` 감사 `detail` — `leaseId` 는 임대가 통과했을 때(`bad_repo`)만.
+pub fn denied_detail(code: &str, o: &Value, operator: &str, lease_id: Option<&str>) -> Value {
+    json!({
+        "code": code,
+        "number": o.get("number").cloned().unwrap_or(Value::Null),
+        "headSha": o.get("headSha").cloned().unwrap_or(Value::Null),
+        "operatorId": operator,
+        "leaseId": lease_id,
+    })
+}
+
+/// 이른 거절을 감사에 적고 응답한다. `None` 이면 TS 로 넘긴다(아무것도 쓰지 않았다).
+async fn checks_early(
+    pool: &sqlx::PgPool,
+    agent: &str,
+    operator: &str,
+    o: &Value,
+) -> sqlx::Result<Option<Response>> {
+    let g = |k: &str| o.get(k).and_then(Value::as_str).unwrap_or_default();
+    let now = super::merge_approval_peek::db_now(pool).await?;
+    let lease = super::lease_read::read_lease(pool, g("leaseId"), g("token"), &now).await?;
+    let Some(code) = early_denial(lease.as_ref(), agent, operator, g("repo")) else {
+        return Ok(None);
+    };
+    let lease_id = (code == "bad_repo")
+        .then(|| lease.as_ref().map(|l| l.id.as_str()))
+        .flatten();
+    let scope = super::merge_approval_peek::repo_scope(g("repo"));
+    crate::write::record_audit(
+        pool,
+        crate::write::AuditEntry {
+            action: "repo.merge.denied",
+            actor_id: Some(agent),
+            actor_handle: None,
+            target: Some(scope.as_deref().unwrap_or(g("repo"))),
+            ip: None,
+            detail: denied_detail(code, o, operator, lease_id),
+        },
+    )
+    .await;
+    let status = if code == "bad_repo" {
+        StatusCode::BAD_REQUEST
+    } else {
+        StatusCode::FORBIDDEN
+    };
+    let mut r = json_err(status, code, &format!("merge not allowed: {code}"));
+    r.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    Ok(Some(r))
+}
+
 pub async fn checks_route(
-    State(up): State<Arc<Upstream>>,
+    State(st): State<Arc<ChecksState>>,
     RequireAccount(me, auth): RequireAccount,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     req: Request,
@@ -1115,18 +1214,30 @@ pub async fn checks_route(
     if !shape_ok(parsed.as_ref()) {
         return json_err(StatusCode::BAD_REQUEST, "bad_request", BAD);
     }
-    super::msg_post::to_ts((*up).clone(), peer, parts, bytes).await
+    if let (Some(pool), Some(op), Some(o)) = (
+        st.deny.as_ref(),
+        auth.operator.as_ref().map(|o| o.id.as_str()),
+        parsed.as_ref(),
+    ) {
+        match checks_early(pool, &me.id, op, o).await {
+            Ok(Some(r)) => return r,
+            Ok(None) => {}
+            Err(e) => return crate::directory::internal(e),
+        }
+    }
+    super::msg_post::to_ts(st.up.clone(), peer, parts, bytes).await
 }
 
 pub fn routes(
     up: Upstream,
+    checks_deny: Option<sqlx::PgPool>,
     results_read: Option<sqlx::PgPool>,
     results_post: Option<super::msg_post::PostState>,
     auth: crate::auth::AuthPools,
     cors: Arc<crate::cors::Cors>,
 ) -> crate::route_table::Routes<()> {
     use crate::route_table::Table;
-    let t = Table::<Arc<Upstream>>::new()
+    let t = Table::<Arc<ChecksState>>::new()
         .post("/agent/merge-checks", checks_route)
         .map(|r| {
             r.route_layer(axum::middleware::from_fn_with_state(
@@ -1159,7 +1270,10 @@ pub fn routes(
     crate::route_table::Routes {
         router: t
             .router
-            .with_state(Arc::new(up.clone()))
+            .with_state(Arc::new(ChecksState {
+                up: up.clone(),
+                deny: checks_deny,
+            }))
             .merge(rt.router.with_state(Arc::new(ResultsState {
                 up,
                 read: results_read,
@@ -1174,6 +1288,89 @@ pub fn routes(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn lease(agent: &str, op: &str) -> crate::core::lease_read::LeaseRow {
+        crate::core::lease_read::LeaseRow {
+            id: "L".into(),
+            agent_id: agent.into(),
+            operator_id: Some(op.into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn early_denial_like_ts() {
+        // 임대 없음·남의 임대 → lease_invalid(그림자는 비어 있다).
+        assert_eq!(early_denial(None, "a", "o", "o/r"), Some("lease_invalid"));
+        assert_eq!(
+            early_denial(Some(&lease("b", "o")), "a", "o", "o/r"),
+            Some("lease_invalid")
+        );
+        assert_eq!(
+            early_denial(Some(&lease("a", "x")), "a", "o", "bad"),
+            Some("lease_invalid")
+        );
+        let mut no_op = lease("a", "o");
+        no_op.operator_id = None;
+        assert_eq!(
+            early_denial(Some(&no_op), "a", "o", "o/r"),
+            Some("lease_invalid")
+        );
+        // 맞는 임대 + 틀린 저장소 → bad_repo, 끝남·만료면 lease_invalid.
+        assert_eq!(
+            early_denial(Some(&lease("a", "o")), "a", "o", "nope"),
+            Some("bad_repo")
+        );
+        let mut ex = lease("a", "o");
+        ex.expired = true;
+        assert_eq!(
+            early_denial(Some(&ex), "a", "o", "nope"),
+            Some("lease_invalid")
+        );
+        let mut en = lease("a", "o");
+        en.ended = true;
+        assert_eq!(
+            early_denial(Some(&en), "a", "o", "nope"),
+            Some("lease_invalid")
+        );
+        // 그림자가 findLine 을 도는 갈래와 판정 본문은 TS 몫.
+        assert_eq!(early_denial(Some(&ex), "a", "o", "O/R"), None);
+        assert_eq!(
+            early_denial(Some(&lease("a", "o")), "a", "o", " Owner/Repo "),
+            None
+        );
+    }
+
+    #[test]
+    fn denied_detail_like_ts() {
+        let o = json!({ "number": 7, "headSha": "a".repeat(40), "repo": "x" });
+        assert_eq!(
+            denied_detail("lease_invalid", &o, "op", None),
+            json!({ "code": "lease_invalid", "number": 7, "headSha": "a".repeat(40), "operatorId": "op", "leaseId": null })
+        );
+        assert_eq!(
+            denied_detail("bad_repo", &o, "op", Some("L"))["leaseId"],
+            json!("L")
+        );
+    }
+
+    #[test]
+    fn deny_privileges_cover_lease_sql() {
+        let f = crate::core::channels::frag("grant_read_lease");
+        for t in [
+            "secret_turn_lease",
+            "message",
+            "account",
+            "agent_config",
+            "channel",
+            "channel_member",
+            "agent_invoker",
+        ] {
+            assert!(f.contains(t), "{t}");
+            assert!(MERGE_CHECKS_DENY_PRIVILEGES.contains(&(t, "SELECT")), "{t}");
+        }
+        assert!(MERGE_CHECKS_DENY_PRIVILEGES.contains(&("audit_log", "INSERT")));
+    }
 
     #[test]
     fn shape_like_zod() {
