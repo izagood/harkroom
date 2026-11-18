@@ -548,6 +548,28 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 결정 5 — 자동화 지우기(`DELETE /automations/{id}`) + 위임 끝 카드 갱신(`core::perm_card`). 두 겹 잠금.
+    let automation_delete = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::{automation_delete as k, perm_card as pc};
+            let need = [k::AUTOMATION_DELETE_PRIVILEGES, pc::PERM_CARD_PRIVILEGES].concat();
+            match write::missing_in(w, &need, pc::PERM_CARD_SEQUENCE_PRIVILEGES).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: automation delete core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: automation delete core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 — API 연결 지우기(`DELETE /connectors/{id}`). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만. PATCH 는 TS.
     let connectors_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -1950,6 +1972,17 @@ async fn main() {
             core_routes.router = core_routes.router.merge(aw.router);
             core_routes.http.extend(aw.http);
             core_routes.sockets.extend(aw.sockets);
+        }
+        // S5.4 결정 5 — 자동화 지우기. 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = automation_delete {
+            let ad = harkroom_server::core::automation_delete::routes(
+                write,
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(ad.router);
+            core_routes.http.extend(ad.http);
+            core_routes.sockets.extend(ad.sockets);
         }
         // S5.4 — API 연결 지우기. 권한이 다 있을 때만 — 아니면 TS 에 남는다.
         if let Some(write) = connectors_write {
