@@ -3750,7 +3750,7 @@ async fn main() {
                 harkroom_server::core::thread_plan_manager::ManagerState {
                     write,
                     up: state.up.clone(),
-                    post: plan_manager_post,
+                    post: plan_manager_post.clone(),
                 },
                 auth.clone(),
                 state.cors.clone(),
@@ -4362,6 +4362,7 @@ async fn main() {
                 note: note_write,
                 plan_read: thread_plan_read_on,
                 plan_write,
+                plan_auto_off: plan_manager_post.clone().map(std::sync::Arc::new),
                 work_item: work_item_write,
                 work_item_upsert: work_item_upsert_write,
                 pr_watch: pr_watch_write,
