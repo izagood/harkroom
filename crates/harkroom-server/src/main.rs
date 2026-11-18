@@ -594,7 +594,12 @@ async fn main() {
     let automation_run_now = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
             use harkroom_server::core::automation_run_now as k;
-            match write::missing_in(w, k::AUTOMATION_RUN_NOW_PRIVILEGES, &[]).await {
+            let need: Vec<(&str, &str)> = k::AUTOMATION_RUN_NOW_PRIVILEGES
+                .iter()
+                .chain(k::AUTOMATION_RUN_NOW_PAUSE_PRIVILEGES)
+                .copied()
+                .collect();
+            match write::missing_in(w, &need, &[]).await {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: automation run-now core off — missing privileges {m:?}");
