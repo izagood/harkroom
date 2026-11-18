@@ -969,14 +969,23 @@ mod tests {
 
     #[test]
     fn patch_ts_only_fields_cover_admin_only_and_rename() {
-        for f in [
-            "handle",
-            "disabled",
-            "ownerAccountId",
-            "mcpServers",
-            "invokeScope",
-            "credentialScope",
-        ] {
+        assert_eq!(
+            validate_scope_change("owner", "list", "none").unwrap().0,
+            "scope_widening"
+        );
+        assert_eq!(
+            validate_scope_change("list", "list", "personal").unwrap().0,
+            "scope_invariant"
+        );
+        assert!(validate_scope_change("owner", "owner", "personal").is_none());
+        assert_eq!(
+            definition_changed(
+                &json!({ "harness": "a", "mcpServers": ["x", "y"] }),
+                &json!({ "harness": "b", "mcpServers": ["y", "x"] })
+            ),
+            vec!["harness"]
+        );
+        for f in ["handle", "disabled", "ownerAccountId"] {
             assert!(PATCH_TS_ONLY_FIELDS.contains(&f), "{f}");
         }
     }
