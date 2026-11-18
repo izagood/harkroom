@@ -11,10 +11,12 @@
 //! 세운다(`api_blocked_card`). [`API_CHECKS_BUMP_PRIVILEGES`] 까지 있으면 같은 날 같은 스레드에 이미 선 카드를 고쳐 쓰는
 //! 갈래(`meta.blocked` 의 `count`·`lastAt`·`lastCode`·`lastRequest` + `message.updated`)도 Rust 가 한다.
 //! 경로는 `%`·질의·ASCII 밖 글자까지 TS `safePath`·`wirePath`·`pathCovered` 를 따라 Rust 가 본다(바탕이 http(s) 가
-//! 아닌 연결만 TS 몫). 비밀을 여는 연결(`authKind` 가 `none`·`token_exchange` 가 아닌 것)은 [`API_CHECKS_SECRET_PRIVILEGES`] 와
+//! 아닌 연결만 TS 몫). 비밀을 여는 연결(`authKind` 가 `none` 이 아닌 것)은 [`API_CHECKS_SECRET_PRIVILEGES`] 와
 //! DB 확인값에 맞는 v2 키가 있을 때 **허락 갈래만** Rust 가 연다 — `secret_access_log` granted 줄, `api.call.checked` 감사,
-//! 응답 `valueBase64`(오퍼레이터 자신에게만, `no-store`). 비밀 거절(`no_secret`·`secret_expired`·`owner_inactive`·`no_value`·
-//! `unreadable`)·409 `secret_key_mismatch`·토큰 교환은 아무것도 쓰기 전에 TS 로 넘긴다.
+//! 응답 `valueBase64`(오퍼레이터 자신에게만, `no-store`). 비밀 거절(`no_secret`(비밀 행 없음)·`secret_expired`·`owner_inactive`·
+//! `no_value`·`unreadable`)도 TS 처럼 거절 줄·감사·막힘 카드로 Rust 가 답한다. 키 없음·어긋남(`no_secret`·409 `secret_key_mismatch`)과
+//! 비밀 칸이 빈 연결은 아무것도 쓰기 전에 TS 로 넘긴다. 토큰 교환(156)은 `caps` 거절
+//! (409 `operator_update_required` + 막힘 카드)과, [`API_CHECKS_TOKEN_PRIVILEGES`] 가 있을 때 허락(`tokenUrl`·`tokenForm`)을 Rust 가 답한다.
 use super::api_results::connector_ok;
 use super::grant_reads::through_operator;
 use super::merge_approval_peek::str_len_ok;
@@ -129,6 +131,12 @@ pub const API_CHECKS_SECRET_PRIVILEGES: &[(&str, &str)] = &[
     ("secret_version.sealed", "SELECT"),
     ("secret_version.revoked_at", "SELECT"),
     ("secret_access_log", "INSERT"),
+];
+
+/// 토큰 교환 연결(156)의 허락에 더 있어야 하는 권한 — 토큰 주소·form 틀. 없으면 그 연결만 TS 몫(쿼리 오류 = 쓰기 전 폴백).
+pub const API_CHECKS_TOKEN_PRIVILEGES: &[(&str, &str)] = &[
+    ("api_connector.token_url", "SELECT"),
+    ("api_connector.token_form", "SELECT"),
 ];
 
 /// 비밀 열쇠(v2 보관소). 키가 DB 확인값과 맞을 때만 선다 — 없거나 어긋나면(TS 의 `no_secret`·409 `secret_key_mismatch`) TS 몫.
@@ -627,11 +635,33 @@ async fn checks_body(
     if !path_covered(path, &limits.path_prefix) || !path_covered(&wire, &limits.path_prefix) {
         return carded("path_not_allowed").await;
     }
-    // 토큰 교환(`caps`·`tokenUrl`)은 TS 몫. 비밀을 여는 연결은 맞는 키와 권한이 있을 때만 — 없으면 TS 가
-    // `no_secret`·409 `secret_key_mismatch` 로 답한다. 여기까지는 아무것도 쓰지 않았다.
-    if c.4 == "token_exchange" || (c.4 != "none" && secret.is_none()) {
+    // 비밀을 여는 연결은 비밀 칸·맞는 키·권한이 있을 때만 — 없으면 TS 가 `no_secret`·409 `secret_key_mismatch` 로
+    // 답한다. 토큰 교환(156)은 TS 처럼 `no_secret` 다음, 쓰기 원인 앞에서 `caps` 를 본다. 여기까지는 아무것도 쓰지 않았다.
+    if c.4 != "none" && c.6.is_none() {
         return Ok(None);
     }
+    if c.4 == "token_exchange" && !has_token_cap(o) {
+        return carded("operator_update_required").await;
+    }
+    if c.4 != "none" && secret.is_none() {
+        return Ok(None);
+    }
+    // 토큰 주소·form 틀. 권한([`API_CHECKS_TOKEN_PRIVILEGES`])이 없거나 짝이 안 맞으면 쓰기 전이니 TS 몫.
+    let token = if c.4 == "token_exchange" {
+        match sqlx::query_as::<_, (Option<String>, Option<String>)>(TOKEN_SQL)
+            .bind(cid)
+            .fetch_optional(pool)
+            .await
+        {
+            Ok(Some((Some(u), Some(f)))) => match token_fields(&u, &f) {
+                Some(t) => Some(t),
+                None => return Ok(None),
+            },
+            _ => return Ok(None),
+        }
+    } else {
+        None
+    };
     let by_human = lease.cause_by_human();
     if method != "GET" && write_human && !by_human {
         return carded("cause_not_human").await;
@@ -647,8 +677,29 @@ async fn checks_body(
             )
             .await?
             {
-                Some(v) => Some(v),
-                None => return Ok(None),
+                Opened::Value(v) => Some(v),
+                Opened::Fallback => return Ok(None),
+                Opened::Denied(code, row) => {
+                    // TS: 거절 줄(`secret_access_log` denied) → `api.call.denied` 감사(+ 카드 코드면 막힘 카드).
+                    // 카드 코드는 카드가 선 뒤에만 줄을 쓴다 — 카드가 TS 로 넘어가면 TS 가 줄을 쓴다(두 줄 방지).
+                    let log = |row: Option<(String, String)>| async move {
+                        if let Some((sid, name)) = row {
+                            log_denied(pool, &sid, &name, agent, operator, lease, code, now)
+                                .await?;
+                        }
+                        Ok::<(), sqlx::Error>(())
+                    };
+                    if code == "secret_expired" || code == "no_secret" {
+                        let r = carded(code).await?;
+                        if r.is_some() {
+                            log(row).await?;
+                        }
+                        return Ok(r);
+                    }
+                    log(row).await?;
+                    let (code, d) = denied(code);
+                    return Ok(Some(deny(pool, agent, &target, d, code).await));
+                }
             }
         }
         (_, None) => return Ok(None),
@@ -667,16 +718,41 @@ async fn checks_body(
         },
     )
     .await;
-    let body = json!({
+    let mut body = json!({
         "allowed": true, "connector": c.2, "baseUrl": c.3, "authKind": c.4, "authHeader": c.5,
         "valueBase64": value.as_ref().map(|v| v.as_str()), "causeByHuman": by_human, "path": wire,
     });
+    if let (Some((u, f)), Some(m)) = (token, body.as_object_mut()) {
+        m.insert("tokenUrl".into(), Value::String(u));
+        m.insert("tokenForm".into(), f);
+    }
     drop(value);
     let text = zeroize::Zeroizing::new(body.to_string());
     drop(body);
     Ok(Some(no_store(crate::directory::json_ok(
         text.as_str().to_owned(),
     ))))
+}
+
+const TOKEN_SQL: &str = "select token_url, token_form::text from api_connector where id = $1::uuid and auth_kind = 'token_exchange'";
+
+/// 오퍼레이터가 `caps` 에 `token_exchange` 를 밝혔는가(TS `(args.caps ?? []).includes('token_exchange')`).
+pub fn has_token_cap(o: &Value) -> bool {
+    o.get("caps")
+        .and_then(Value::as_array)
+        .is_some_and(|a| a.iter().any(|c| c.as_str() == Some("token_exchange")))
+}
+
+/// 토큰 교환 칸 — TS 는 `tokenUrl && tokenForm` 일 때만 싣는다. form 은 jsonb 객체여야 한다(아니면 TS 몫).
+pub fn token_fields(url: &str, form_text: &str) -> Option<(String, Value)> {
+    if url.is_empty() {
+        return None;
+    }
+    let f: Value = serde_json::from_str(form_text).ok()?;
+    if !f.is_object() {
+        return None;
+    }
+    Some((url.to_owned(), f))
 }
 
 const SECRET_SQL: &str = "select s.id::text, s.name, s.kind, s.expires_at <= $2::timestamptz, \
@@ -687,6 +763,43 @@ const VERSION_SQL: &str = "select version, sealed from secret_version \
 const ACCESS_LOG_SQL: &str = "insert into secret_access_log (secret_id, secret_name, version, agent_id, operator_id, \
      turn_id, channel_id, thread_root_id, result, reason, at) \
      values ($1::uuid, $2, $3, $4::uuid, $5::uuid, $6::uuid, $7::uuid, $8::uuid, 'granted', $9, $10::timestamptz)";
+
+/// 비밀 열기 결과. `Denied` 는 TS 와 같은 거절 — 거절 줄을 남길 비밀 행(id·이름)이 있으면 함께.
+enum Opened {
+    Value(zeroize::Zeroizing<String>),
+    Fallback,
+    Denied(&'static str, Option<(String, String)>),
+}
+
+const DENIED_LOG_SQL: &str = "insert into secret_access_log (secret_id, secret_name, version, agent_id, operator_id, \
+     turn_id, channel_id, thread_root_id, result, reason, at) \
+     values ($1::uuid, $2, null, $3::uuid, $4::uuid, $5::uuid, $6::uuid, $7::uuid, 'denied', $8, $9::timestamptz)";
+
+#[allow(clippy::too_many_arguments)]
+async fn log_denied(
+    pool: &sqlx::PgPool,
+    sid: &str,
+    name: &str,
+    agent: &str,
+    operator: &str,
+    lease: &super::lease_read::LeaseRow,
+    reason: &str,
+    now: &str,
+) -> sqlx::Result<()> {
+    sqlx::query(DENIED_LOG_SQL)
+        .bind(sid)
+        .bind(name)
+        .bind(agent)
+        .bind(operator)
+        .bind(&lease.id)
+        .bind(lease.channel_id.as_deref())
+        .bind(lease.thread_root_id.as_deref())
+        .bind(reason)
+        .bind(now)
+        .execute(pool)
+        .await
+        .map(|_| ())
+}
 
 /// TS `(path.split('?')[0] ?? '').slice(0, 200)` — UTF-16 단위. 서로게이트 쌍 가운데서 잘리면 None(TS 몫).
 pub fn access_path(path: &str) -> Option<String> {
@@ -712,11 +825,11 @@ async fn open_secret(
     method: &str,
     path: &str,
     now: &str,
-) -> sqlx::Result<Option<zeroize::Zeroizing<String>>> {
+) -> sqlx::Result<Opened> {
     use crate::secrets::keyring::{SecretAad, SecretKind};
     use base64::Engine as _;
     let Some(reason_path) = access_path(path) else {
-        return Ok(None);
+        return Ok(Opened::Fallback);
     };
     let row: Option<(String, String, String, Option<bool>, bool)> = sqlx::query_as(SECRET_SQL)
         .bind(secret_id)
@@ -724,22 +837,25 @@ async fn open_secret(
         .fetch_optional(pool)
         .await?;
     let Some((sid, name, kind, expired, owner_inactive)) = row else {
-        return Ok(None);
+        return Ok(Opened::Denied("no_secret", None));
     };
-    if expired == Some(true) || owner_inactive {
-        return Ok(None);
+    if expired == Some(true) {
+        return Ok(Opened::Denied("secret_expired", Some((sid, name))));
+    }
+    if owner_inactive {
+        return Ok(Opened::Denied("owner_inactive", Some((sid, name))));
     }
     let kind = match kind.as_str() {
         "text" => SecretKind::Text,
         "file" => SecretKind::File,
-        _ => return Ok(None),
+        _ => return Ok(Opened::Fallback),
     };
     let Some((version, sealed)): Option<(i32, String)> = sqlx::query_as(VERSION_SQL)
         .bind(&sid)
         .fetch_optional(pool)
         .await?
     else {
-        return Ok(None);
+        return Ok(Opened::Denied("no_value", Some((sid, name))));
     };
     let sealed = zeroize::Zeroizing::new(sealed);
     let aad = SecretAad {
@@ -748,7 +864,7 @@ async fn open_secret(
         kind,
     };
     let Some(value) = sec.0.open(&sealed, &aad) else {
-        return Ok(None);
+        return Ok(Opened::Denied("unreadable", Some((sid, name))));
     };
     drop(sealed);
     sqlx::query(ACCESS_LOG_SQL)
@@ -764,7 +880,7 @@ async fn open_secret(
         .bind(now)
         .execute(pool)
         .await?;
-    Ok(Some(zeroize::Zeroizing::new(
+    Ok(Opened::Value(zeroize::Zeroizing::new(
         base64::engine::general_purpose::STANDARD.encode(value.as_bytes()),
     )))
 }
@@ -1043,6 +1159,28 @@ mod tests {
         assert!(CARD_BUMP_SQL.contains("coalesce((meta->'blocked'->>'count')::int, 1) + 1"));
         assert!(CARD_BUMP_SQL.starts_with("update message set meta ="));
         assert_eq!(API_CHECKS_BUMP_PRIVILEGES, &[("message.meta", "UPDATE")]);
+    }
+
+    #[test]
+    fn token_exchange_like_ts() {
+        assert!(has_token_cap(&json!({ "caps": ["x", "token_exchange"] })));
+        assert!(!has_token_cap(&json!({ "caps": ["x"] })));
+        assert!(!has_token_cap(&json!({})));
+        assert!(!has_token_cap(&json!({ "caps": [] })));
+        assert_eq!(
+            deny_status("operator_update_required"),
+            StatusCode::CONFLICT
+        );
+        let (u, f) = token_fields(
+            "https://id.example/token",
+            r#"{"grant_type": "client_credentials", "client_secret": "{{secret}}"}"#,
+        )
+        .unwrap();
+        assert_eq!(u, "https://id.example/token");
+        assert_eq!(f["grant_type"], "client_credentials");
+        assert!(token_fields("", "{}").is_none());
+        assert!(token_fields("https://x/t", "[1]").is_none());
+        assert!(token_fields("https://x/t", "not json").is_none());
     }
 
     #[test]
