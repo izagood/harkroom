@@ -628,6 +628,27 @@ async fn main() {
         }
         _ => false,
     };
+    // S5.4 CF1 — 채널 파일 목록(`GET /channels/{id}/files`). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 읽기 역할 SELECT.
+    let channel_files_on = match &core_mode {
+        harkroom_server::core::CoreMode::Rust => {
+            use harkroom_server::core::channel_files as cf;
+            match write::missing_in(&state.pool, cf::CHANNEL_FILES_READ_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => true,
+                Ok(m) => {
+                    eprintln!("front: channel files core off — missing privileges {m:?}");
+                    false
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: channel files core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    false
+                }
+            }
+        }
+        _ => false,
+    };
     // S5.4 TP1 — `GET /threads/{rootId}/plan`. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 읽기 풀에 그 SELECT 가 다 있을 때만. 계획 쓰기는 언제나 TS.
     let thread_plan_read_on = match &core_mode {
         harkroom_server::core::CoreMode::Rust => {
@@ -1469,6 +1490,16 @@ async fn main() {
         core_routes.http.extend(decide_check.http);
         core_routes.sockets.extend(decide_check.sockets);
         // S5.4 TM1 — 스레드 모델 지정 읽기. 읽기 역할에 SELECT 가 다 있을 때만 — 정하기·풀기(PUT·DELETE)는 언제나 TS.
+        if channel_files_on {
+            let cf = harkroom_server::core::channel_files::routes(
+                state.pool.clone(),
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(cf.router);
+            core_routes.http.extend(cf.http);
+            core_routes.sockets.extend(cf.sockets);
+        }
         if thread_models_read {
             let tm = harkroom_server::core::thread_models_read::routes(
                 state.pool.clone(),

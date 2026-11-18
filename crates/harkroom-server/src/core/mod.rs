@@ -23,6 +23,7 @@ pub mod chain_backstop;
 pub mod chain_stall;
 pub mod channel_auto_mention_doc;
 pub mod channel_create_update;
+pub mod channel_files;
 pub mod channel_members;
 pub mod channel_pins_sched;
 pub mod channel_pref_write;
