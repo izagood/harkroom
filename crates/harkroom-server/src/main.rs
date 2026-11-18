@@ -938,6 +938,47 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 — 첨부 올리기(`POST /uploads`). 네 겹 잠금: `HARKROOM_CORE=rust`, 쓰기 풀에 그 칸 권한이 다 있을 때,
+    // 첨부 저장소(`ATTACHMENT_ROOT`)가 있을 때, `ATTACHMENT_MAX_BYTES` 를 읽을 수 있을 때만 — 아니면 TS 에 남는다.
+    let attachment_upload = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::attachment_store::LocalStorage;
+            use harkroom_server::core::attachment_upload as c;
+            match (
+                write::missing_in(w, c::UPLOAD_PRIVILEGES, &[]).await,
+                LocalStorage::from_env(),
+                c::max_bytes_from_env(),
+            ) {
+                (Ok(m), _, _) if !m.is_empty() => {
+                    eprintln!("front: attachment upload core off — missing privileges {m:?}");
+                    None
+                }
+                (Ok(_), Ok(Some(s)), Some(max)) => Some((w.clone(), s, max)),
+                (Ok(_), Ok(None), _) => {
+                    eprintln!("front: attachment upload core off — ATTACHMENT_ROOT not set");
+                    None
+                }
+                (Ok(_), Err(e), _) => {
+                    eprintln!("front: attachment upload core off — attachment root ({e})");
+                    None
+                }
+                (Ok(_), _, None) => {
+                    eprintln!(
+                        "front: attachment upload core off — ATTACHMENT_MAX_BYTES unreadable"
+                    );
+                    None
+                }
+                (Err(e), _, _) => {
+                    eprintln!(
+                        "front: attachment upload core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 CT1 — 채널에 팀 넣기(`POST /channels/{id}/teams/{teamId}/add`). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만.
     let channel_team_add = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -2333,6 +2374,21 @@ async fn main() {
             core_routes.router = core_routes.router.merge(cd.router);
             core_routes.http.extend(cd.http);
             core_routes.sockets.extend(cd.sockets);
+        }
+        if let Some((write, storage, max_bytes)) = attachment_upload {
+            let au = harkroom_server::core::attachment_upload::routes(
+                harkroom_server::core::attachment_upload::UploadState {
+                    write,
+                    storage,
+                    max_bytes,
+                    up: state.up.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(au.router);
+            core_routes.http.extend(au.http);
+            core_routes.sockets.extend(au.sockets);
         }
         if let Some(storage) = attachment_download {
             let ad = harkroom_server::core::attachment_download::routes(

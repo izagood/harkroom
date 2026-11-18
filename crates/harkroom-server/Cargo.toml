@@ -15,7 +15,7 @@ path = "src/main.rs"
 [dependencies]
 # 이벤트 버스 쓰는 쪽(S5.0) — outbox 계약을 한 곳에 둔다(P3 쓰기 바탕).
 harkroom-bus = { path = "../harkroom-bus" }
-axum = { version = "=0.8.9", default-features = false, features = ["http1", "tokio", "ws"] }
+axum = { version = "=0.8.9", default-features = false, features = ["http1", "tokio", "ws", "multipart"] }
 getrandom = "=0.4.3"
 hex = "=0.4.3"
 # 오퍼레이터 이름 정리(C2a) — shared `normalizeOperatorLabel` 의 유니코드 속성(\p{Extended_Pictographic} 등).
