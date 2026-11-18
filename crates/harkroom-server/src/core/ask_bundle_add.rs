@@ -7,7 +7,7 @@
 //!   사람 앞이고, 열려 있어야 한다. 하나라도 거절이면 아무것도 담지 않는다(`rootId` 를 실어 거절).
 //! - 줄의 사본(물음·선택지·`link`)은 **서버가 원본 meta 에서 만든다**. 에이전트가 주는 것은 원본 id 뿐이다 — 권한 요청·머지 거절
 //!   카드의 `link` 표지도 원본 meta 로 붙인다.
-//! - TS 로 넘기는 원본(닫힌 쪽): 권한 거울·연쇄 백스톱 표지가 있으면 요청 전체를 읽은 바이트 그대로 TS 로. 사본의 물음 글자를
+//! - TS 로 넘기는 원본(닫힌 쪽): 권한 거울 표지가 있으면 요청 전체를 읽은 바이트 그대로 TS 로. 사본의 물음 글자를
 //!   JS 와 같게 자를 수 없는 경우(서로게이트 쌍 가운데서 잘림, 물음이 글자가 아님)도 TS 로.
 //! - 묶음 바꾸기·묶음과 새로 담긴 원본의 `message.updated`·묶음 푸시는 한 트랜잭션이다. 쓰기를 시작한 뒤의 DB 오류는 TS 로 넘기지 않고
 //!   고정 문장의 도구 오류로 답한다(security W1).
@@ -196,8 +196,9 @@ fn js_truthy(v: Option<&Value>) -> bool {
     }
 }
 
-/// 이 원본을 담는 일은 TS 가 한다 — 권한 거울·연쇄 백스톱(서버가 세운 카드의 다른 꼴).
-const TS_ONLY_MARKERS: &[&str] = &["permissionMirror", "chainBackstop"];
+/// 이 원본을 담는 일은 TS 가 한다 — 권한 거울(서버가 세운 카드의 다른 꼴). 연쇄 백스톱은 TS `prepareItems` 도 보통 원본과
+/// 같은 판정(`checkAskMirror` — 소유자 계정 앞이라 보통 `mirror_not_human`)이라 Rust 가 맡는다.
+const TS_ONLY_MARKERS: &[&str] = &["permissionMirror"];
 
 /// JS `s.slice(0, n)`(UTF-16 단위). 서로게이트 쌍 가운데서 잘리면 None(JS 는 짝 없는 서로게이트를 남긴다 — 같게 못 낸다).
 fn js_slice(s: &str, n: usize) -> Option<String> {
