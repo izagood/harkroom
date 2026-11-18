@@ -892,6 +892,34 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 A4b2 — MCP `thread.plan` 쓰기·`thread.plan.item`. 세 겹 잠금: `HARKROOM_CORE=rust`, 계획 읽기가 켜짐(루트·가시성 판정을 같이 쓴다),
+    // 쓰기 풀에 `PLAN_WRITE_PRIVILEGES` 가 다 있을 때만. 없으면 TS 가 답한다.
+    let plan_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) if thread_plan_read_on => {
+            use harkroom_server::core::mcp::plan_write as p;
+            match write::missing_in(
+                w,
+                p::PLAN_WRITE_PRIVILEGES,
+                p::PLAN_WRITE_SEQUENCE_PRIVILEGES,
+            )
+            .await
+            {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: thread plan write core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: thread plan write core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     let ask_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
             use harkroom_server::core::ask as a;
@@ -1819,6 +1847,7 @@ async fn main() {
                 grant: grant_write,
                 note: note_write,
                 plan_read: thread_plan_read_on,
+                plan_write,
                 work_item: work_item_write,
                 work_item_upsert: work_item_upsert_write,
                 memory: mem_write,

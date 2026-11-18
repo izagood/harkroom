@@ -1619,6 +1619,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant insert (token_hash, created_by, expires_at), select (id, expires_at, used_by, revoked_at), update (revoked_at, revoked_by) on invite to ${rw}`,
         // S5.4 MS1 — 저장한 글(`core/saved.rs::SAVED_PRIVILEGES`). 없으면 「saved messages core off」 — 다섯 줄 모두 TS 에 남는다.
         `grant insert, update, delete on saved_message to ${rw}`,
+        // S5.4 A4b2 — MCP 계획판 쓰기(`core/mcp/plan_write.rs::PLAN_WRITE_PRIVILEGES`, outbox 는 위). 없으면 「thread plan write core off」 — TS 에 남는다.
+        `grant insert, update, delete on thread_plan to ${rw}`,
+        `grant insert, delete on thread_plan_link to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -4545,6 +4548,140 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         await db.pool.query('delete from message where channel_id = any($1)', [[pubCh.id, privCh.id, hidCh.id]]);
         await db.pool.query('delete from channel_member where channel_id = any($1)', [[pubCh.id, privCh.id, hidCh.id]]);
         await db.pool.query('delete from channel where id = any($1)', [[pubCh.id, privCh.id, hidCh.id]]);
+      }
+
+      // S5.4 A4b2 — MCP `thread.plan` 쓰기·지우기와 `thread.plan.item`(`core/mcp/plan_write.rs`). TS·Rust 에 **각자의 루트**(T·R)로
+      // 같은 순서를 돌려 답 글자를 견준다(루트 id·시각만 자리표). `auto` 칸·애매한 꼴은 TS 로 넘긴다.
+      {
+        expect(f.log()).not.toContain('thread plan write core off');
+        const ch = await createChannel(db.pool, { name: 'a4b2-pub' });
+        const hid = await createChannel(db.pool, { name: 'a4b2-hid', visibility: 'private', creatorId: member2.accountId });
+        const say = async (channelId: string, authorId: string, body: string, threadRootId: string | null = null) =>
+          ((await postMessage(db.pool, { channelId, authorId, body, threadRootId, meta: {} })) as { message: { id: string } }).message.id;
+        const child = await say(ch.id, member.accountId, 'a4b2 child');
+        const childReply = await say(ch.id, member.accountId, 'a4b2 child reply', child);
+        const childHid = await say(hid.id, member2.accountId, 'a4b2 hidden child');
+        const ISO = /\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z/g;
+        const updatedAtOf = (t: string) => /updatedAt\\":\\"([^\\]+)\\"/.exec(t)?.[1] ?? null;
+        const runSide = async (base: string, tag: string) => {
+          const root = await say(ch.id, member.accountId, `a4b2 root ${tag}`);
+          const norm = (t: string) => t.split(root).join('<root>').replace(ISO, '<t>');
+          const out: { name: string; text: string; core: string | null; raw: string }[] = [];
+          const call = async (name: string, tool: string, args: Record<string, unknown>) => {
+            const r = await mcpCall(base, agent.pat, tool, { threadRootId: root, ...args });
+            out.push({ name, text: norm(r.text), core: r.core, raw: r.text });
+            return r.text;
+          };
+          const set = (name: string, args: Record<string, unknown>) => call(name, 'thread.plan', args);
+          const item = (name: string, args: Record<string, unknown>) => call(name, 'thread.plan.item', args);
+          const first = await set('새로 세움', {
+            ifUpdatedAt: null, x: 1,
+            plan: {
+              goal: ' 목표 "하나" 😀 ', next: 's1', seq: { s: 99, g: 99 },
+              groups: [{ id: 'g1', title: '연결', linkedRootId: child }],
+              steps: [{ id: 's1', title: '하나', state: 'active' }, { id: 's2', title: '둘', state: 'pending', dependsOn: ['s1', 'g1'] }],
+            },
+          });
+          await set('판 있음 + ifUpdatedAt 없음 → guard_required', { plan: { goal: 'x', groups: [], steps: [] } });
+          await set('낡은 ifUpdatedAt → conflict', { ifUpdatedAt: '2000-01-01T00:00:00.000Z', plan: { goal: 'x', groups: [], steps: [] } });
+          await set('ifUpdatedAt null 인데 판 있음 → conflict', { ifUpdatedAt: null, plan: { goal: 'x', groups: [], steps: [] } });
+          await item('단계 끝냄', { id: 's1', state: 'done' });
+          await item('ifRev 어긋남 → rev_conflict', { id: 's2', state: 'active', ifRev: 1 });
+          await item('새 단계', { title: '셋', after: 's1', dependsOn: ['s2'] });
+          await item('제목 없는 새 단계', { state: 'active' });
+          await item('없는 단계 지우기', { id: 's77', remove: true });
+          await item('사람 관리자 → invalid_manager', { type: 'plan', managerId: member.accountId });
+          await item('없는 관리자 → invalid_manager', { type: 'plan', managerId: '00000000-0000-4000-8000-0000000a4b20' });
+          await item('관리자 같음', { type: 'plan', managerId: agent.accountId });
+          await item('자기 스레드 연결 → self_link', { type: 'group', id: 'g1', linkedRootId: root });
+          await item('못 보는 스레드 연결 → linked_thread_unavailable', { type: 'group', title: '숨김', linkedRootId: childHid });
+          await item('답글 연결 → linked_thread_unavailable', { type: 'group', title: '답글', linkedRootId: childReply });
+          await item('그룹에 state → field_not_for_type', { type: 'group', id: 'g1', state: 'done' });
+          await item('순환 → dependency_cycle', { id: 's2', dependsOn: ['s3'] });
+          await item('단계 지움', { id: 's3', remove: true });
+          const cur = updatedAtOf(out.at(-1)!.raw);
+          await set('전체 덮어쓰기', { ifUpdatedAt: cur, plan: { goal: '바꿈', groups: [], steps: [{ id: 's1', title: '하나', state: 'blocked', blockedReason: '막힘' }] } });
+          const doc = (await db.pool.query<{ doc: unknown; rev: number; by: string; links: number }>(
+            `select doc, rev, updated_by as by, (select count(*)::int from thread_plan_link where parent_root = root_id) as links
+               from thread_plan where root_id = $1`, [root])).rows[0];
+          await set('지우기', { ifUpdatedAt: updatedAtOf(out.at(-1)!.raw), plan: null });
+          await item('지운 뒤 단계 → no_plan', { id: 's1', state: 'done' });
+          const gone = (await db.pool.query('select 1 from thread_plan where root_id = $1', [root])).rowCount;
+          expect(first, `${tag} 새로 세움`).toContain('ok\\":true');
+          return { out, doc, gone, root };
+        };
+        const [T, R] = [await runSide(tsUrl, 'T'), await runSide(rsUrl, 'R')];
+        for (const [i, a] of T.out.entries()) {
+          const b = R.out[i]!;
+          expect(b.text, a.name).toBe(a.text);
+          expect(b.core, `${a.name} — Rust 가 답한다`).toBe('mcp');
+        }
+        const byName = Object.fromEntries(R.out.map((s) => [s.name, s.text]));
+        for (const [n, code] of [
+          ['판 있음 + ifUpdatedAt 없음 → guard_required', 'guard_required'], ['낡은 ifUpdatedAt → conflict', 'conflict'],
+          ['ifUpdatedAt null 인데 판 있음 → conflict', 'conflict'], ['ifRev 어긋남 → rev_conflict', 'rev_conflict'],
+          ['사람 관리자 → invalid_manager', 'invalid_manager'], ['없는 관리자 → invalid_manager', 'invalid_manager'],
+          ['자기 스레드 연결 → self_link', 'self_link'], ['못 보는 스레드 연결 → linked_thread_unavailable', 'linked_thread_unavailable'],
+          ['답글 연결 → linked_thread_unavailable', 'linked_thread_unavailable'], ['지운 뒤 단계 → no_plan', 'no_plan'],
+        ] as const) {
+          expect(byName[n], n).toContain(`code\\":\\"${code}`);
+        }
+        expect(byName['지우기']).toContain('deleted\\":true');
+        expect(byName['새 단계']).toContain('id\\":\\"s3');
+        // 저장한 판·연결 표·관리자가 같다(입력 seq 는 버리고 서버가 번호표를 정한다).
+        expect(R.doc, 'Rust 판 = TS 판').toEqual(T.doc);
+        expect(R.doc!.links).toBe(0);
+        expect(JSON.stringify(R.doc!.doc)).toContain(`"managerId":"${agent.accountId}"`);
+        expect(JSON.stringify(R.doc!.doc)).not.toContain('"s":99');
+        expect([T.gone, R.gone]).toEqual([0, 0]);
+        // 못 보는 자식 스레드의 채널이 답 어디에도 새지 않는다.
+        expect(JSON.stringify(R.out.map((o) => o.raw))).not.toContain(hid.id);
+        // 이벤트 — Rust 가 쓴 줄마다 같은 트랜잭션에서 `thread.plan.changed` 를 outbox 에 넣었다(쓰기 성공 수와 같다).
+        const wrote = R.out.filter((o) => o.raw.includes('ok\\":true')).length;
+        const ev = (await db.pool.query<{ n: number }>(
+          `select count(*)::int as n from event_outbox where event->>'type' = 'thread.plan.changed' and event->>'rootId' = $1`, [R.root])).rows[0]!.n;
+        expect(ev, 'Rust 쓰기마다 이벤트 하나').toBe(wrote);
+        // TS 로 넘기는 인자 — 같은 요청을 둘에 보내 글자 그대로, 둘 다 TS 가 답한다.
+        const rootX = await say(ch.id, member.accountId, 'a4b2 root X');
+        for (const [name, token, tool, args] of [
+          ['auto 칸 → TS(A4b3)', agent.pat, 'thread.plan.item', { threadRootId: rootX, type: 'plan', auto: null }],
+          ['uuid 아님 → TS', agent.pat, 'thread.plan', { threadRootId: 'x', ifUpdatedAt: null, plan: null }],
+          ['plan 꼴 틀림 → TS(zod)', agent.pat, 'thread.plan', { threadRootId: rootX, ifUpdatedAt: null, plan: { goal: 1 } }],
+          ['모르는 type → TS(zod)', agent.pat, 'thread.plan.item', { threadRootId: rootX, type: 'x', title: 't' }],
+          ['정수 아닌 ifRev → TS(zod)', agent.pat, 'thread.plan.item', { threadRootId: rootX, title: 't', ifRev: 1.5 }],
+        ] as const) {
+          const [a, b] = [await mcpCall(tsUrl, token, tool, args), await mcpCall(rsUrl, token, tool, args)];
+          expect({ status: b.status, text: b.text.replace(ISO, '<t>') }, name).toEqual({ status: a.status, text: a.text.replace(ISO, '<t>') });
+          expect(b.core, `${name} — TS 가 답한다`).toBeNull();
+        }
+        // 자동 진행이 켜진 판에서 관리자를 바꾸면 Rust 는 되감고 TS 로 넘긴다(TS 가 자동 진행을 끄며 바꾼다).
+        await mcpCall(rsUrl, agent.pat, 'thread.plan', { threadRootId: rootX, ifUpdatedAt: null, plan: { goal: 'auto', groups: [], steps: [{ id: 's1', title: 'a', state: 'pending' }] } });
+        await db.pool.query(`update thread_plan set auto_until = 's1', auto_source = $1, auto_by = $2, auto_at = now() where root_id = $1`, [rootX, member.accountId]);
+        {
+          const b = await mcpCall(rsUrl, agent.pat, 'thread.plan.item', { threadRootId: rootX, type: 'plan', managerId: null });
+          expect(b.core, '관리자 바뀜 + 자동 진행 → TS').toBeNull();
+        }
+        // 루트·가시성 거절 — 둘에 같은 요청(쓰지 않는다).
+        for (const [name, root, want] of [
+          ['답글 → not_root', childReply, 'not_root'], ['못 보는 채널 → forbidden', childHid, 'forbidden'],
+          ['없는 루트 → not_found', '00000000-0000-4000-8000-0000000a4b21', 'not_found'],
+        ] as const) {
+          const args = { threadRootId: root, ifUpdatedAt: null, plan: { goal: 'x', groups: [], steps: [] } };
+          const [a, b] = [await mcpCall(tsUrl, agent.pat, 'thread.plan', args), await mcpCall(rsUrl, agent.pat, 'thread.plan', args)];
+          expect(b.text, name).toBe(a.text);
+          expect(b.core, name).toBe('mcp');
+          expect(b.text, name).toContain(`code\\":\\"${want}`);
+        }
+        {
+          const args = { threadRootId: rootX, title: 't' };
+          const [a, b] = [await mcpCall(tsUrl, member.token, 'thread.plan.item', args), await mcpCall(rsUrl, member.token, 'thread.plan.item', args)];
+          expect(b.text, '사람 계정').toBe(a.text);
+        }
+        await db.pool.query('delete from thread_plan where channel_id = $1', [ch.id]);
+        await db.pool.query('delete from inbox where message_id in (select id from message where channel_id = any($1))', [[ch.id, hid.id]]);
+        await db.pool.query('delete from message where channel_id = any($1)', [[ch.id, hid.id]]);
+        await db.pool.query('delete from channel_member where channel_id = any($1)', [[ch.id, hid.id]]);
+        await db.pool.query('delete from channel where id = any($1)', [[ch.id, hid.id]]);
       }
 
       // S5.4 RD1 — 초대·API 연결 목록 읽기(코어 `misc_reads.rs`). 두 서버의 답을 견준다. 리스·에이전트 목록·`/agent/config` 는 TS 에 남는다

@@ -43,8 +43,11 @@ pub const SERVED: &[&str] = &[
     "workitem.remove",
     // S5.4 A2a — 보드 항목 걸기. `workitem::WORK_ITEM_UPSERT_PRIVILEGES` 가 있을 때만, `state: done`+스레드는 TS.
     "workitem.upsert",
-    // S5.4 A4a — 계획판 읽기(`plan` 인자 없음)만. 읽기 풀에 `THREAD_PLAN_READ_PRIVILEGES` 가 있을 때만([`McpWrites::plan_read`]), 쓰기는 TS.
+    // S5.4 A4a — 계획판 읽기(`plan` 인자 없음). 읽기 풀에 `THREAD_PLAN_READ_PRIVILEGES` 가 있을 때만([`McpWrites::plan_read`]).
+    // S5.4 A4b2 — 쓰기(`plan` 객체·null)는 [`McpWrites::plan_write`] 가 있을 때만.
     "thread.plan",
+    // S5.4 A4b2 — 단계·그룹 하나 고치기(`auto` 칸 없는 것). [`McpWrites::plan_write`] 가 있을 때만, 자동 진행은 TS.
+    "thread.plan.item",
 ];
 
 /// TS 가 조건부로 싣는 도구 — `/mcp/admit` 이 `registered: true` 라고 답했을 때만 Rust 가 답한다([`super::route::serve`]).
@@ -118,6 +121,8 @@ pub struct McpWrites {
     pub note: Option<PgPool>,
     /// `thread.plan` 읽기(S5.4 A4a) — 읽기 풀에 `thread_plan_read::THREAD_PLAN_READ_PRIVILEGES` 가 다 있을 때만 참. 쓰기 풀은 쓰지 않는다.
     pub plan_read: bool,
+    /// `thread.plan` 쓰기·`thread.plan.item`(S5.4 A4b2) — `plan_read` 에 더해 `plan_write::PLAN_WRITE_PRIVILEGES`.
+    pub plan_write: Option<PgPool>,
     /// 기억 쓰기(C4b B1a) — [`super::mem_writes::MEMORY_WRITE_PRIVILEGES`]. [`super::mem_writes::answer`] 가 본다.
     pub memory: Option<PgPool>,
     /// 기억 본문 쓰기(C4b B1b: set·merge·restore) — B1a 권한 + [`super::mem_body::MEMORY_BODY_PRIVILEGES`]. [`super::mem_body::answer`] 가 본다.
@@ -205,7 +210,19 @@ pub async fn answer(
         if !writes.plan_read {
             return Some(None);
         }
+        if args.get("plan").is_some() {
+            let Some(w) = writes.plan_write.as_ref() else {
+                return Some(None);
+            };
+            return Some(super::plan_write::answer_set(read, w, me, args).await);
+        }
         return Some(super::plan_read::answer(read, me, args).await);
+    }
+    if tool == "thread.plan.item" {
+        let Some(w) = writes.plan_write.as_ref().filter(|_| writes.plan_read) else {
+            return Some(None);
+        };
+        return Some(super::plan_write::answer_item(read, w, me, args).await);
     }
     if tool == "workitem.remove" {
         let Some(write) = writes.work_item.as_ref() else {
