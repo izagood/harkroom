@@ -7,8 +7,8 @@
 //! `POST /agent/merge-results`(TS `reportMerge`)도 같은 꼴로 부분 이식한다 — 403 `forbidden`·400 `bad_request` 만 Rust,
 //! 읽기 풀([`MERGE_RESULTS_PRIVILEGES`])이 있으면 N1 관문(403 `lease_invalid`·400 `bad_repo`·409 `already_reported`/`not_checked`)도
 //! Rust 가 답한다. 글 경로와 [`MERGE_RESULTS_WRITE_PRIVILEGES`] 까지 있으면 받을 `failed` 보고(CI 거절이면 `recordCiDenial`·`denialId` 까지)와 `merged` 보고
-//! (무시한 체크 꼬리·`obsoleteMergeCards` 카드 닫기 포함, 계정을 비운 승인의 고른 gh 이름 없음)도 Rust 가 적는다 — 시스템 줄·감사·201 `{ messageId }`.
-//! `queued` 보고도 위임 v2 스위치가 꺼졌다고 확실하면(감시 없음) Rust 가 적는다. 스위치가 켜졌거나 모르는 「큐」 줄(감시)·고른 gh 이름 적기가 필요한 보고는 쓰기 전에 TS 로 넘긴다.
+//! (무시한 체크 꼬리·`obsoleteMergeCards` 카드 닫기·`noteOnceGhUserUsed` gh 이름 메모 포함)도 Rust 가 적는다 — 시스템 줄·감사·201 `{ messageId }`.
+//! `queued` 보고도 위임 v2 스위치가 꺼졌다고 확실하면(감시 없음) Rust 가 적는다. 스위치가 켜졌거나 모르는 「큐」 줄(감시)이 필요한 보고는 쓰기 전에 TS 로 넘긴다.
 use super::grant_reads::through_operator;
 use super::merge_approval_peek::str_len_ok;
 use super::msg_read::is_uuid;
@@ -189,6 +189,7 @@ pub const MERGE_RESULTS_WRITE_PRIVILEGES: &[(&str, &str)] = &[
     ("merge_approval.head_sha", "SELECT"),
     ("merge_approval.gh_user", "SELECT"),
     ("merge_approval.approved_checks", "SELECT"),
+    ("merge_approval.denial_id", "SELECT"),
     ("merge_denial.id", "SELECT"),
     ("merge_denial.scope", "SELECT"),
     ("merge_denial.pr_number", "SELECT"),
@@ -272,8 +273,8 @@ pub fn is_ci_refusal(c: Option<&Value>) -> bool {
             && c.get("mergeState").and_then(Value::as_str) == Some("UNSTABLE"))
 }
 
-/// Rust 가 적을 수 있는 보고인가 — `failed`(CI 거절 포함)·`merged`(카드 닫기 포함)·`queued`(무시한 체크 포함). 감시·gh 이름
-/// 메모가 필요한 갈래는 `report_failed` 가 DB 를 보고 TS 로 넘긴다.
+/// Rust 가 적을 수 있는 보고인가 — `failed`(CI 거절 포함)·`merged`(카드 닫기·gh 이름 메모 포함)·`queued`(무시한 체크 포함). 감시
+/// 가 필요한 `queued` 는 `report_failed` 가 DB 를 보고 TS 로 넘긴다.
 pub fn rust_reportable(o: &Value) -> bool {
     matches!(
         o.get("result").and_then(Value::as_str),
@@ -647,6 +648,57 @@ async fn record_ci_denial(
     Ok(Some(id))
 }
 
+const GH_CARD_SQL: &str = "update message m \
+        set meta = jsonb_set(m.meta, '{permissionRequest}', (m.meta->'permissionRequest') || jsonb_build_object('ghUserUsed', $2::text)) \
+       from permission_request r join merge_approval a on a.denial_id = r.denial_id \
+      where a.id = $1::uuid and a.gh_user is null and r.status = 'approved_once' and m.id = r.card_message_id \
+        and m.deleted_at is null and m.meta ? 'permissionRequest' \
+      returning m.id::text";
+
+const GH_MIRROR_SQL: &str = "update message \
+          set meta = jsonb_set(meta, '{permissionMirror}', (meta->'permissionMirror') || jsonb_build_object('ghUserUsed', $2::text)) \
+        where meta->'ask'->>'mirrorOf' = $1 and deleted_at is null and meta ? 'permissionMirror' \
+          and coalesce((meta->'permissionMirror'->>'neutral')::boolean, false) = false \
+        returning id::text";
+
+/// TS `noteOnceGhUserUsed` — 카드와 중립 아닌 거울에 고른 gh 이름을 적고 `message.updated` 를 낸다(한 tx).
+async fn note_once_gh_user_used(
+    w: &sqlx::PgPool,
+    approval_id: &str,
+    gh_user_used: &str,
+) -> sqlx::Result<()> {
+    let mut tx = w.begin().await?;
+    let cards: Vec<String> = sqlx::query_scalar(GH_CARD_SQL)
+        .bind(approval_id)
+        .bind(gh_user_used)
+        .fetch_all(&mut *tx)
+        .await?;
+    for card in &cards {
+        let mirrors: Vec<String> = sqlx::query_scalar(GH_MIRROR_SQL)
+            .bind(card)
+            .bind(gh_user_used)
+            .fetch_all(&mut *tx)
+            .await?;
+        for id in std::iter::once(card).chain(mirrors.iter()) {
+            if let Some(row) = super::msg_read::message_by_id(&mut *tx, id).await? {
+                let message: Value =
+                    serde_json::from_str(&row).map_err(|e| sqlx::Error::Decode(e.into()))?;
+                if let Some(channel) = message.get("channelId").and_then(Value::as_str) {
+                    let audience = super::audience::audience_on(&mut tx, channel)
+                        .await?
+                        .to_json();
+                    crate::write::emit_event(
+                        &mut tx,
+                        &json!({ "type": "message.updated", "message": message, "audience": audience }),
+                    )
+                    .await?;
+                }
+            }
+        }
+    }
+    tx.commit().await
+}
+
 /// TS `reportMerge` 의 `failed`(CI 거절 아님) 갈래 — 관문부터 줄·감사까지.
 async fn report_failed(
     st: &super::msg_post::PostState,
@@ -750,16 +802,19 @@ async fn report_failed(
         &ignored,
         used.as_ref().map_or(&[][..], |u| &u.3[..]),
     );
-    let (body, meta) = if merged || queued {
-        // 계정을 비운 승인 + 고른 gh 이름이면 `noteOnceGhUserUsed`(카드·거울 고치기)가 필요하다 — TS 몫.
+    let mut gh_memo: Option<(String, String)> = None;
+    let (body, mut meta) = if merged || queued {
+        // 계정을 비운 승인 + 고른 gh 이름이면 감사에 남기고 `noteOnceGhUserUsed`(카드·거울 고치기)를 한다.
         let gh_used = g("ghUserUsed").filter(|u| gh_user_ok(u));
-        if let (Some((id, _, _, _)), Some(_)) = (&used, &gh_used) {
+        if let (Some((id, _, _, _)), Some(u)) = (&used, &gh_used) {
             let blank: Option<bool> = sqlx::query_scalar(APPROVAL_GH_SQL)
                 .bind(id)
                 .fetch_optional(w)
                 .await?;
-            if blank != Some(false) {
-                return Ok(Report::ToTs);
+            match blank {
+                Some(true) => gh_memo = Some((id.clone(), u.clone())),
+                Some(false) => {}
+                None => return Ok(Report::ToTs),
             }
         }
         let handle: Option<String> = match &granter_id {
@@ -801,6 +856,10 @@ async fn report_failed(
             chain_root_id.as_deref(),
         )
     };
+    if let (Some((_, u)), Some(Value::Object(m))) = (&gh_memo, meta.get_mut("merge")) {
+        m.insert("ghUserUsed".into(), json!(u));
+        m.insert("ghUserChosenBy".into(), json!("operator"));
+    }
     let audience = super::audience::audience_for(w, &channel).await?.to_json();
     let is_dm = channel_is_dm(w, &channel).await?;
     let input = PostBody {
@@ -843,6 +902,10 @@ async fn report_failed(
     }
     if grew {
         detail["grewAfterApproval"] = json!(true);
+    }
+    if let Some((_, u)) = &gh_memo {
+        detail["ghUserUsed"] = json!(u);
+        detail["ghUserChosenBy"] = json!("operator");
     }
     if no_pr_checks {
         detail["noPrChecks"] = json!(true);
@@ -890,6 +953,10 @@ async fn report_failed(
         },
     )
     .await;
+    // n6: 계정을 비운 1회 승인이면 그 권한 카드(와 거울)에 고른 이름을 적는다. 실패해도 보고는 남는다.
+    if let Some((id, u)) = &gh_memo {
+        let _ = note_once_gh_user_used(w, id, u).await;
+    }
     // Q3-a: 통과한 판정 뒤의 `merged` 보고면 그 PR 의 기다리는 머지 카드를 모든 에이전트에 걸쳐 닫는다. 실패해도 보고는 남는다.
     if merged {
         let _ = super::merge_closed::obsolete_merge_cards(
@@ -1487,5 +1554,22 @@ mod tests {
         assert!(d.contains(
             "return names.join(', ').replace(/@/g, '＠').replace(/</g, '‹').replace(/>/g, '›');"
         ));
+    }
+
+    #[test]
+    fn gh_user_memo_sql_like_ts() {
+        let src = include_str!("../../../../packages/server/src/services/permissionRequests.ts");
+        assert!(src.contains("where a.id = $1 and a.gh_user is null and r.status = 'approved_once' and m.id = r.card_message_id"));
+        assert!(GH_CARD_SQL.contains("where a.id = $1::uuid and a.gh_user is null and r.status = 'approved_once' and m.id = r.card_message_id"));
+        assert!(src.contains(
+            "and coalesce((meta->'permissionMirror'->>'neutral')::boolean, false) = false"
+        ));
+        assert!(GH_MIRROR_SQL.contains(
+            "and coalesce((meta->'permissionMirror'->>'neutral')::boolean, false) = false"
+        ));
+        let g = include_str!("../../../../packages/server/src/services/mergeGrants.ts");
+        assert!(g.contains("const ghUserUsedDetail = usedApproval && usedApproval.ghUser === null && ghUserUsed ? { ghUserUsed, ghUserChosenBy: 'operator' } : {};"));
+        assert!(!gh_user_ok("-bad"));
+        assert!(gh_user_ok("bot-1"));
     }
 }
