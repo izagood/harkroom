@@ -916,6 +916,7 @@ async fn open_denial_card(
     use crate::core::permission_card as pc;
     let mut privs = pc::REQUEST_WRITE_PRIVILEGES.to_vec();
     privs.extend_from_slice(pc::LINK_PUSH_PRIVILEGES);
+    privs.extend_from_slice(DENIAL_CARD_PATCH_PRIVILEGES);
     if !crate::write::missing_in(&st.write, &privs, &[])
         .await
         .ok()?
@@ -939,37 +940,21 @@ async fn open_denial_card(
     let why = pc::merge_denial_reason(number, Some(once.reason.as_str()), body);
     let now = now_ms();
     let (now_iso, expires_iso) = (iso_ms(now), iso_ms(now + pc::PERMISSION_REQUEST_TTL_MS));
-    let mut tx = st.write.begin().await.ok()?;
     // W4: 위임 있는 턴의 요청(`mandateId`·카드 위임 칸)은 TS.
-    if let Some(c) = cause.filter(|_| operator)
-        && crate::core::cause_link::mandate_for_agent_post(&mut tx, &me.id, c, now, iso_ms)
+    if let Some(c) = cause.filter(|_| operator) {
+        let mut conn = st.write.acquire().await.ok()?;
+        if crate::core::cause_link::mandate_for_agent_post(&mut conn, &me.id, c, now, iso_ms)
             .await
             .ok()?
             .is_some()
-    {
-        return None;
+        {
+            return None;
+        }
     }
-    let opened = pc::open_merge_request(
-        &mut tx,
-        &me.id,
-        target,
-        &why,
-        channel,
-        thread,
-        denial,
-        number,
-        &now_iso,
-        &expires_iso,
-    )
-    .await
-    .ok()?;
-    let request_id = match opened {
-        pc::Opened::TooMany => return Some(err("too_many", &pc::too_many_message())),
-        pc::Opened::Created { request_id } => request_id,
-    };
     let short = target.strip_prefix("repo:").unwrap_or(target);
+    // 요청 id 는 카드와 같은 tx 의 훅이 세운 뒤 meta 에 박는다 — 여기서는 빈 자리.
     let pr_meta = pc::merge_request_meta(
-        &request_id,
+        "",
         &me.id,
         owner,
         target,
@@ -987,31 +972,137 @@ async fn open_denial_card(
     if let Some(m) = o.get("model") {
         sub.insert("model".into(), m.clone());
     }
-    let posted =
-        super::msg_post::post_card(st, me, &Value::Object(sub), meta, cause, turn, operator)
-            .await?;
-    let (card_id, notified) = match posted {
-        Ok(p) => p,
-        // TS `postFailureResult` — 요청 줄은 TS 처럼 남는다(TS 는 글 전에 줄을 세운다).
-        Err(answer) => {
-            tx.commit().await.ok()?;
-            return Some(answer);
-        }
+    let hook = DenialRequestHook {
+        agent: &me.id,
+        target,
+        why: &why,
+        channel,
+        thread,
+        denial,
+        number,
+        now: &now_iso,
+        expires: &expires_iso,
+        owner,
+        request_id: std::sync::OnceLock::new(),
     };
-    if let Err(e) = tx.commit().await {
-        eprintln!("message.ask: merge-denial request commit failed after card {card_id}: {e}");
-        return None;
-    }
-    if let Err(e) =
-        pc::link_and_push(&st.write, &request_id, &card_id, owner, &notified, false).await
-    {
-        eprintln!("message.ask: merge-denial card link {request_id} failed: {e}");
-    }
+    let posted = super::msg_post::post_card(
+        st,
+        me,
+        &Value::Object(sub),
+        meta,
+        cause,
+        turn,
+        operator,
+        Some(&hook),
+    )
+    .await?;
+    let (card_id, _notified) = match posted {
+        Ok(p) => p,
+        Err(answer) => return Some(answer),
+    };
+    let request_id = hook.request_id.get()?;
     Some(super::respond::text_result(&pc::created_result(
-        &request_id,
+        request_id,
         &card_id,
         &expires_iso,
     )))
+}
+
+/// 카드 meta 의 `permissionRequest.requestId` 를 훅 안에서 채운다.
+const DENIAL_CARD_PATCH_SQL: &str = "update message set meta = jsonb_set(meta, '{permissionRequest,requestId}', to_jsonb($2::text)) \
+     where id = $1::uuid";
+
+/// [`DENIAL_CARD_PATCH_SQL`] 의 쓰기 풀 칸.
+const DENIAL_CARD_PATCH_PRIVILEGES: &[(&str, &str)] = &[
+    ("message.id", "SELECT"),
+    ("message.meta", "SELECT"),
+    ("message.meta", "UPDATE"),
+];
+
+/// 머지 거절 카드의 요청 줄(하루 상한 → insert → supersede → 감사) → meta 의 requestId → 잇기 → 푸시를 **카드 글과 같은 tx** 에서 한다.
+/// 예전에는 요청 tx 를 열어 둔 채 카드를 따로 커밋해서, 요청 커밋이 실패하면 카드만 남고(→ TS 로 넘겨 또 카드) 재시도마다 카드가 늘었다.
+#[derive(Debug)]
+struct DenialRequestHook<'a> {
+    agent: &'a str,
+    target: &'a str,
+    why: &'a str,
+    channel: &'a str,
+    thread: &'a str,
+    denial: &'a str,
+    number: i64,
+    now: &'a str,
+    expires: &'a str,
+    owner: Option<&'a str>,
+    request_id: std::sync::OnceLock<String>,
+}
+
+/// 하루 상한이면 카드를 되돌리는 거절(TS `too_many`).
+fn denial_hook_outcome(
+    opened: crate::core::permission_card::Opened,
+) -> Result<String, crate::core::msg_post::Rejection> {
+    use crate::core::permission_card as pc;
+    match opened {
+        pc::Opened::Created { request_id } => Ok(request_id),
+        pc::Opened::TooMany => Err(crate::core::msg_post::Rejection {
+            status: 429,
+            code: "too_many".into(),
+            message: pc::too_many_message(),
+        }),
+    }
+}
+
+/// 소유자가 inbox 로 알림받지 않았으면 푸시(TS `raisePermission` 글 뒤).
+fn denial_needs_push(owner: Option<&str>, notified: &HashSet<String>) -> bool {
+    owner.is_some_and(|o| !notified.contains(o))
+}
+
+impl crate::core::msg_post::BeforeCommit for DenialRequestHook<'_> {
+    fn run<'b>(
+        &'b self,
+        tx: &'b mut sqlx::Transaction<'static, sqlx::Postgres>,
+        message_id: &'b str,
+        notified: &'b HashSet<String>,
+    ) -> crate::core::msg_post::BeforeCommitFuture<'b> {
+        use crate::core::permission_card as pc;
+        Box::pin(async move {
+            let opened = pc::open_merge_request(
+                tx,
+                self.agent,
+                self.target,
+                self.why,
+                self.channel,
+                self.thread,
+                self.denial,
+                self.number,
+                self.now,
+                self.expires,
+            )
+            .await?;
+            let request_id = match denial_hook_outcome(opened) {
+                Ok(id) => id,
+                Err(rej) => return Ok(Some(rej)),
+            };
+            sqlx::query(DENIAL_CARD_PATCH_SQL)
+                .bind(message_id)
+                .bind(&request_id)
+                .execute(&mut **tx)
+                .await?;
+            sqlx::query(pc::LINK_CARD_SQL)
+                .bind(&request_id)
+                .bind(message_id)
+                .execute(&mut **tx)
+                .await?;
+            if denial_needs_push(self.owner, notified) {
+                sqlx::query(pc::enqueue_ask_push_sql())
+                    .bind(self.owner)
+                    .bind(message_id)
+                    .execute(&mut **tx)
+                    .await?;
+            }
+            let _ = self.request_id.set(request_id);
+            Ok(None)
+        })
+    }
 }
 
 /// `planStepId` 를 Rust 가 맡을 수 있나 — 쓰기 풀에 계획 쓰기 권한([`super::plan_write::PLAN_WRITE_PRIVILEGES`])이 다 있고, 그 스레드에
@@ -1121,6 +1212,30 @@ mod tests {
     use serde_json::json;
 
     const C: &str = "0b7f3f92-3fa6-494a-8ab3-76d0d2a6a1c0";
+
+    /// 머지 거절 카드: 요청 줄·잇기·푸시는 카드와 같은 tx 의 훅에서 — 하루 상한이면 카드까지 되돌리고(`too_many`), 카드만 남는 길이 없다.
+    #[test]
+    fn denial_card_request_is_written_in_the_card_tx() {
+        use crate::core::permission_card::Opened;
+        assert_eq!(
+            denial_hook_outcome(Opened::Created {
+                request_id: "r".into()
+            }),
+            Ok("r".into())
+        );
+        let rej = denial_hook_outcome(Opened::TooMany).unwrap_err();
+        assert_eq!(rej.code, "too_many");
+        assert_eq!(
+            rej.message,
+            crate::core::permission_card::too_many_message()
+        );
+        let notified: HashSet<String> = ["o".to_string()].into();
+        assert!(!denial_needs_push(Some("o"), &notified));
+        assert!(denial_needs_push(Some("p"), &notified));
+        assert!(!denial_needs_push(None, &notified));
+        assert!(DENIAL_CARD_PATCH_SQL.contains("'{permissionRequest,requestId}'"));
+        assert!(DENIAL_CARD_PATCH_PRIVILEGES.contains(&("message.meta", "UPDATE")));
+    }
 
     #[test]
     fn mirror_plain_only_for_bare_mirrors() {
