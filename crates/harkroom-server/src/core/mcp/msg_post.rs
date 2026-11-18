@@ -620,6 +620,82 @@ pub(super) async fn answer_ask(
     .await
 }
 
+/// 권한 카드 글([`super::message_ask`] 의 머지 거절 카드) — 세운 글의 id·`notified` 를 돌려준다. 거절(`forbidden`·`bad_thread` 등)은
+/// `Err(답)`, 재생·TS 로 넘길 꼴·DB 오류는 `None`(→ TS: 재생이면 TS 가 같은 키로 답한다).
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn post_card(
+    st: &PostState,
+    me: &Account,
+    sub: &Value,
+    mut meta: Map<String, Value>,
+    cause: Option<&str>,
+    turn: Option<&str>,
+    operator: bool,
+) -> Option<Result<(String, Vec<String>), String>> {
+    let a = parse(sub)?;
+    match channel_visible(&st.read, &me.id, &a.channel).await {
+        Ok(true) => {}
+        Ok(false) => return Some(Err(err("forbidden", "not a member of this dm channel"))),
+        Err(_) => return None,
+    }
+    cause_link::reported_model_meta(
+        &st.read,
+        &me.id,
+        a.model.as_deref(),
+        a.post.thread_root.as_deref(),
+        &mut meta,
+    )
+    .await
+    .ok()?;
+    let is_dm = msg_post::channel_is_dm(&st.read, &a.channel).await.ok()?;
+    let audience = audience_for(&st.read, &a.channel).await.ok()?.to_json();
+    let origin = Origin {
+        cause,
+        chain_cause: cause.filter(|_| operator),
+        turn_id: turn.filter(|_| operator),
+        meta,
+        server_notice: false,
+        closes_delegation: false,
+        delegation: None,
+        system: false,
+        progress: false,
+        wake: false,
+        no_mentions: false,
+        before_commit: None,
+        service_call: false,
+    };
+    let out = msg_post::post_in_tx(
+        st,
+        &a.channel,
+        &me.id,
+        me.kind == "agent",
+        &a.post,
+        None,
+        &audience,
+        is_dm,
+        &origin,
+    )
+    .await
+    .ok()?;
+    match out {
+        Outcome::ToTs | Outcome::Replayed(_) | Outcome::ChainLimit => None,
+        Outcome::Rejected(r) => Some(Err(err(&r.code, &r.message))),
+        Outcome::BadThread => Some(Err(err("bad_thread", BAD_THREAD))),
+        Outcome::BadAttachment => Some(Err(err(
+            "bad_attachment",
+            "attachments must be your own, unused uploads",
+        ))),
+        Outcome::Posted { row, notified, .. } => {
+            let id = serde_json::from_str::<Value>(&row)
+                .ok()?
+                .get("id")?
+                .as_str()?
+                .to_owned();
+            Some(Ok((id, notified)))
+        }
+    }
+}
+
 /// shared `REPORT_MAX_ITEMS`·`REPORT_MAX_NEXT`.
 const REPORT_MAX_ITEMS: usize = 20;
 const REPORT_MAX_NEXT: usize = 4;
