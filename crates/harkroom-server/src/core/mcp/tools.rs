@@ -383,9 +383,16 @@ mod tests {
 
     #[test]
     fn served_are_pure_reads_in_registry() {
+        // 오퍼레이터가 가로채는 도구(`Operator`)는 DB 에 닿지 않고 고정 글자만 낸다([`super::operator_only`]) — 읽기와 같이 친다.
         for n in SERVED {
             let s = super::super::find(n).expect(n);
-            assert_eq!(s.access, super::super::Access::Read, "{n}");
+            let operator_only = super::super::operator_only::SERVED.contains(n);
+            let want = if operator_only {
+                super::super::Access::Operator
+            } else {
+                super::super::Access::Read
+            };
+            assert_eq!(s.access, want, "{n}");
         }
     }
 
