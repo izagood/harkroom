@@ -864,7 +864,7 @@ async fn main() {
         _ => None,
     };
     // S5.4 SE4 — `GET /agent/secret-create`. 세 겹 잠금: `HARKROOM_CORE=rust`, 쓰기 풀에 그 칸 권한이 다 있고, 키 env 를 읽어
-    // DB 확인값과 맞춰 볼 수 있을 때만. `POST /agent/secrets`·`/agent/secrets/rotate`(generate)는 아래 두 겹 잠금을 더 본다.
+    // DB 확인값과 맞춰 볼 수 있을 때만. `POST /agent/secrets`·`/agent/secrets/rotate`(generate·import)는 아래 두 겹 잠금을 더 본다.
     let agent_secret_create = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
             use harkroom_server::core::agent_secret_create as k;
