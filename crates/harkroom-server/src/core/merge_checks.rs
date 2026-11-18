@@ -1626,11 +1626,17 @@ pub fn shadow_detail_enforced(
 }
 
 /// 어느 쪽(Rust/TS)이 이 임대의 판정을 답하나. 스위치가 켜졌으면 `enforce_ok`(위임·카드·소모 권한), 꺼졌으면 위임장이 있을 때만 `mandate_ok`.
-pub fn rust_answers(enforced: bool, has_mandate: bool, mandate_ok: bool, enforce_ok: bool) -> bool {
-    if enforced {
-        enforce_ok
-    } else {
-        !has_mandate || mandate_ok
+/// 스위치를 **모르면**(`None` — 앞단에 `HARKROOM_MANDATE_ENFORCE` 가 없다) 언제나 TS 다: TS 가 어느 판정을 켰는지 알 수 없다.
+pub fn rust_answers(
+    enforced: Option<bool>,
+    has_mandate: bool,
+    mandate_ok: bool,
+    enforce_ok: bool,
+) -> bool {
+    match enforced {
+        None => false,
+        Some(true) => enforce_ok,
+        Some(false) => !has_mandate || mandate_ok,
     }
 }
 
@@ -1772,7 +1778,7 @@ async fn record_shadow(
     used_line: Option<&super::mandate_line_match::FoundLine>,
     via_approval: Option<&str>,
 ) {
-    if super::lease_read::mandate_enforced_env() {
+    if super::lease_read::mandate_enforced_env() == Some(true) {
         let origin = shadow_origin(pool, lease)
             .await
             .unwrap_or(("unknown", false, false));
@@ -1985,13 +1991,9 @@ async fn checks_allow(
     now: &str,
 ) -> sqlx::Result<Option<Response>> {
     let g = |k: &str| o.get(k).and_then(Value::as_str).unwrap_or_default();
-    let enforced = super::lease_read::mandate_enforced_env();
-    if !rust_answers(
-        enforced,
-        lease.mandate_id.is_some(),
-        mandate,
-        enforce && card,
-    ) {
+    let switch = super::lease_read::mandate_enforced_env();
+    let enforced = switch == Some(true);
+    if !rust_answers(switch, lease.mandate_id.is_some(), mandate, enforce && card) {
         return Ok(None);
     }
     let (Some(scope), Some(number), Some(channel), Some(root)) = (
@@ -2294,11 +2296,16 @@ async fn checks_early(
     card: bool,
     mandate: bool,
     enforce: bool,
+    switch: Option<bool>,
     approve: Option<&super::msg_post::PostState>,
     agent: &str,
     operator: &str,
     o: &Value,
 ) -> sqlx::Result<Option<Response>> {
+    // 위임 스위치를 모르면(앞단에 env 가 없다) 이른 거절·감사까지 통째로 TS 몫이다 — 아무것도 읽거나 쓰지 않는다.
+    if switch.is_none() {
+        return Ok(None);
+    }
     let g = |k: &str| o.get(k).and_then(Value::as_str).unwrap_or_default();
     let now = super::merge_approval_peek::db_now(pool).await?;
     let lease = super::lease_read::read_lease(pool, g("leaseId"), g("token"), &now).await?;
@@ -2312,12 +2319,7 @@ async fn checks_early(
             }
             Some(l)
                 if (l.expired || l.ended)
-                    && rust_answers(
-                        super::lease_read::mandate_enforced_env(),
-                        l.mandate_id.is_some(),
-                        mandate,
-                        enforce && card,
-                    ) =>
+                    && rust_answers(switch, l.mandate_id.is_some(), mandate, enforce && card) =>
             {
                 expired_denial(pool, agent, operator, o, l).await.map(Some)
             }
@@ -2381,6 +2383,7 @@ pub async fn checks_route(
             st.card.is_some(),
             st.mandate,
             st.enforce,
+            super::lease_read::mandate_enforced_env(),
             st.approve.as_ref(),
             &me.id,
             op,
@@ -2487,16 +2490,39 @@ mod tests {
         }
     }
 
+    /// 앞단에 `HARKROOM_MANDATE_ENFORCE` 가 없으면(스위치 모름) 판정은 DB 를 건드리기 전에 TS 로 넘어간다 — 닿지 않는 풀을 줘도
+    /// 오류가 아니라 `None`(→ TS)이다. 값이 있으면 임대를 읽으러 가서 이 풀에서는 오류가 난다.
+    #[tokio::test]
+    async fn unset_mandate_switch_leaves_merge_checks_to_ts() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(200))
+            .connect_lazy("postgres://x@127.0.0.1:1/x")
+            .unwrap();
+        let o = serde_json::json!({ "leaseId": "l", "token": "t", "repo": "o/r", "number": 1, "headSha": "a" });
+        let run = |switch| checks_early(&pool, true, true, true, true, switch, None, "a", "op", &o);
+        assert!(matches!(run(None).await, Ok(None)));
+        assert!(run(Some(false)).await.is_err());
+        assert!(run(Some(true)).await.is_err());
+    }
+
     #[test]
     fn rust_answers_like_gates() {
         // 스위치 꺼짐: 위임장 없으면 언제나, 있으면 그림자 권한이 있을 때만.
-        assert!(rust_answers(false, false, false, false));
-        assert!(!rust_answers(false, true, false, true));
-        assert!(rust_answers(false, true, true, false));
+        assert!(rust_answers(Some(false), false, false, false));
+        assert!(!rust_answers(Some(false), true, false, true));
+        assert!(rust_answers(Some(false), true, true, false));
         // 스위치 켜짐: 위임장 유무와 상관없이 소모·카드 권한이 다 있어야.
-        assert!(!rust_answers(true, false, true, false));
-        assert!(!rust_answers(true, true, true, false));
-        assert!(rust_answers(true, false, false, true));
+        assert!(!rust_answers(Some(true), false, true, false));
+        assert!(!rust_answers(Some(true), true, true, false));
+        assert!(rust_answers(Some(true), false, false, true));
+        // 스위치 모름(앞단에 env 없음): 권한이 다 있어도 TS 로 넘긴다.
+        for (m, ok, e) in [
+            (false, false, false),
+            (false, true, true),
+            (true, true, true),
+        ] {
+            assert!(!rust_answers(None, m, ok, e));
+        }
     }
 
     #[test]

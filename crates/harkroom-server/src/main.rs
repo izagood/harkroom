@@ -1711,6 +1711,13 @@ async fn main() {
         _ => None,
     };
     // S5.4 — `POST /agent/merge-checks` 의 이른 거절(`lease_invalid`·`bad_repo` + `repo.merge.denied` 감사). 쓰기 풀에 [`MERGE_CHECKS_DENY_PRIVILEGES`] 가 다 있을 때만.
+    // 위임 스위치(`HARKROOM_MANDATE_ENFORCE`)가 앞단에 없으면 TS 가 어느 판정을 켰는지 모른다 — 아래 권한이 다 있어도 머지 판정은
+    // 요청마다 통째로 TS 로 넘어간다(`merge_checks::checks_early`). `on`/`off` 가 명시됐을 때만 Rust 가 답한다.
+    if matches!(core_mode, harkroom_server::core::CoreMode::Rust)
+        && harkroom_server::core::lease_read::mandate_enforced_env().is_none()
+    {
+        eprintln!("front: merge checks to TS — HARKROOM_MANDATE_ENFORCE unset");
+    }
     let merge_checks_deny = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
             use harkroom_server::core::merge_checks as t;
