@@ -51,8 +51,10 @@ async fn propose_insert_runs_with_column_grants_only() {
     .await
     .unwrap();
 
-    // GRANT 목록만 가진 역할 — pg_read_all_data 없음.
-    let role = "ap_grant_probe";
+    // GRANT 목록만 가진 역할 — pg_read_all_data 없음. 롤은 클러스터 단위다(시험 DB 는 템플릿 복제라
+    // 클러스터를 같이 쓴다) — 같은 클러스터에서 다시 돌아도 부딪히지 않게 이 실행의 채널 id 로 이름을 가른다.
+    let role = format!("ap_gp_{}", ch.replace('-', ""));
+    let role = role.as_str();
     sqlx::query(sqlx::AssertSqlSafe(format!("create role {role} nologin")))
         .execute(&admin)
         .await
