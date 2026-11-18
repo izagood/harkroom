@@ -396,6 +396,7 @@ pub async fn rest_approve(
     agent: &str,
     request: &str,
     option: &str,
+    once: Option<&super::decide_merge_once::Once>,
 ) -> Taken {
     let Some(pool) = st.approve.as_ref() else {
         return Taken::Hand;
@@ -422,9 +423,9 @@ pub async fn rest_approve(
         request_id: request,
         actor_id: &me.id,
         option,
-        // REST 는 카드를 거치지 않는다(TS: `ref.cardMessageId` null → onceFromCard 안 부름).
-        has_once: false,
-        once: None,
+        // REST 는 카드를 거치지 않는다(TS: `ref.cardMessageId` null → onceFromCard 안 부름). `approve-once` 만 본문에서 once 를 받는다.
+        has_once: once.is_some(),
+        once,
         bundle_message_id: None,
     };
     Taken::Done(match approve_then_answer(st, pool, args).await {
@@ -628,7 +629,7 @@ async fn approve_route_with(
         Ok((b, _)) => b,
         Err(r) => return r,
     };
-    match rest_approve(&st, &me, &auth, &agent, &request, option).await {
+    match rest_approve(&st, &me, &auth, &agent, &request, option, None).await {
         Taken::Done(r) => r,
         Taken::Hand => to_ts(st.up.clone(), peer, parts, bytes).await,
     }
@@ -702,8 +703,34 @@ pub fn once_body_ok(body: Option<&serde_json::Value>) -> bool {
     ok.is_some()
 }
 
-/// `POST /agents/{id}/permission-requests/{requestId}/approve-once`(1회 머지, 머지 거절 카드) — **부분 이식**.
-/// Rust 는 판정 전 세 갈래(경로 400·사람 세션 아님 403·본문 400)만 답하고, 1회 승인 쓰기는 TS 로 넘긴다.
+/// TS 라우트의 `once` — `{ ghUser: ghUser ?? null, relaxChecks: relaxChecks ?? false, number, headSha, failedChecks? }`.
+/// [`once_body_ok`] 를 지난 본문에만 부른다. number 가 i64 로 안 읽히면 `None`(TS 로 넘긴다).
+pub fn once_from_body(body: Option<&serde_json::Value>) -> Option<super::decide_merge_once::Once> {
+    let o = match body {
+        None => return None,
+        Some(v) => v.as_object()?,
+    };
+    let number = super::merge_approval_peek::positive_int(o.get("number")?)?;
+    Some(super::decide_merge_once::Once {
+        gh_user: o.get("ghUser").and_then(Value::as_str).map(str::to_owned),
+        relax_checks: o
+            .get("relaxChecks")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        number,
+        head_sha: o.get("headSha")?.as_str()?.to_owned(),
+        failed_checks: o.get("failedChecks").and_then(Value::as_array).map(|a| {
+            a.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        }),
+    })
+}
+
+/// `POST /agents/{id}/permission-requests/{requestId}/approve-once`(1회 머지, 머지 거절 카드).
+/// 판정 전 세 갈래(경로 400·사람 세션 아님 403·본문 400)는 Rust. 그 뒤 1회 승인 쓰기도 Rust(10차 카드 [이번 한 번]과 같은 코어,
+/// once 는 본문에서) — 맡지 않는 꼴(위임장·소유자 아님·만료·스위치 꺼짐 등)은 쓰기 전에 TS.
 pub async fn approve_once_merge_route(
     axum::extract::State(st): axum::extract::State<std::sync::Arc<AskState>>,
     crate::auth::RequireAccount(me, auth): crate::auth::RequireAccount,
@@ -725,7 +752,24 @@ pub async fn approve_once_merge_route(
     if !once_body_ok(parsed.as_ref()) {
         return json_err(StatusCode::BAD_REQUEST, "bad_request", BAD_ONCE);
     }
-    to_ts(st.up.clone(), peer, parts, bytes).await
+    // 빈 본문(`{}`)은 number 가 없어 위에서 400 — 여기 오면 언제나 객체다.
+    let Some(once) = once_from_body(parsed.as_ref()) else {
+        return to_ts(st.up.clone(), peer, parts, bytes).await;
+    };
+    match rest_approve(
+        &st,
+        &me,
+        &auth,
+        &agent,
+        &request,
+        "approve_once",
+        Some(&once),
+    )
+    .await
+    {
+        Taken::Done(r) => r,
+        Taken::Hand => to_ts(st.up.clone(), peer, parts, bytes).await,
+    }
 }
 
 /// 그 밖의 `{decision}` — TS `params` zod(`approve|deny|approve-once|approve_once|approve_hour`)에 없는 낱말은 언제나 400
@@ -757,8 +801,24 @@ pub async fn other_decision_route(
 
 #[cfg(test)]
 mod once_tests {
-    use super::once_body_ok;
+    use super::{once_body_ok, once_from_body};
     use serde_json::json;
+
+    #[test]
+    fn once_from_body_like_ts_route() {
+        let b = json!({ "ghUser": null, "number": 7.0, "headSha": "a".repeat(40) });
+        let o = once_from_body(Some(&b)).unwrap();
+        assert_eq!(o.gh_user, None);
+        assert!(!o.relax_checks);
+        assert_eq!(o.number, 7);
+        assert_eq!(o.failed_checks, None);
+        let b = json!({ "ghUser": "octo", "relaxChecks": true, "number": 3, "headSha": "b".repeat(40), "failedChecks": ["ci"] });
+        let o = once_from_body(Some(&b)).unwrap();
+        assert_eq!(o.gh_user.as_deref(), Some("octo"));
+        assert!(o.relax_checks);
+        assert_eq!(o.failed_checks, Some(vec!["ci".to_owned()]));
+        assert!(once_from_body(None).is_none());
+    }
 
     #[test]
     fn once_body_like_zod_strict() {

@@ -774,7 +774,7 @@ pub fn routes(
             "/agents/{id}/permission-requests/{requestId}/approve_hour",
             super::decide_routes::approve_hour_route,
         )
-        // `approve-once`(1회 머지) — 경로·세션·본문 거절만 Rust, 1회 승인 쓰기는 TS.
+        // `approve-once`(1회 머지) — 거절·1회 승인 쓰기 모두 Rust(맡지 않는 꼴은 쓰기 전에 TS).
         .post(
             "/agents/{id}/permission-requests/{requestId}/approve-once",
             super::decide_routes::approve_once_merge_route,
