@@ -700,31 +700,6 @@ pub async fn approve_once_merge_route(
     to_ts(st.up.clone(), peer, parts, bytes).await
 }
 
-#[cfg(test)]
-mod once_tests {
-    use super::once_body_ok;
-    use serde_json::json;
-
-    #[test]
-    fn once_body_like_zod_strict() {
-        let ok = json!({ "ghUser": null, "relaxChecks": true, "number": 7, "headSha": "a".repeat(40), "failedChecks": ["ci"] });
-        assert!(once_body_ok(Some(&ok)));
-        assert!(!once_body_ok(None));
-        for (k, v) in [
-            ("ghUser", json!("")),
-            ("relaxChecks", json!(null)),
-            ("number", json!(0)),
-            ("headSha", json!("x")),
-            ("failedChecks", json!(["c".repeat(201)])),
-            ("extra", json!(1)),
-        ] {
-            let mut b = ok.clone();
-            b[k] = v;
-            assert!(!once_body_ok(Some(&b)), "{k}");
-        }
-    }
-}
-
 /// 그 밖의 `{decision}` — TS `params` zod(`approve|deny|approve-once|approve_once|approve_hour`)에 없는 낱말은 언제나 400
 /// (정확한 낱말은 위의 고정 경로가 먼저 받는다; 혹시 여기로 오면 TS 로 넘긴다).
 pub async fn other_decision_route(
@@ -750,4 +725,29 @@ pub async fn other_decision_route(
         return to_ts(st.up.clone(), peer, parts, bytes).await;
     }
     json_err(StatusCode::BAD_REQUEST, "bad_request", BAD_PARAMS)
+}
+
+#[cfg(test)]
+mod once_tests {
+    use super::once_body_ok;
+    use serde_json::json;
+
+    #[test]
+    fn once_body_like_zod_strict() {
+        let ok = json!({ "ghUser": null, "relaxChecks": true, "number": 7, "headSha": "a".repeat(40), "failedChecks": ["ci"] });
+        assert!(once_body_ok(Some(&ok)));
+        assert!(!once_body_ok(None));
+        for (k, v) in [
+            ("ghUser", json!("")),
+            ("relaxChecks", json!(null)),
+            ("number", json!(0)),
+            ("headSha", json!("x")),
+            ("failedChecks", json!(["c".repeat(201)])),
+            ("extra", json!(1)),
+        ] {
+            let mut b = ok.clone();
+            b[k] = v;
+            assert!(!once_body_ok(Some(&b)), "{k}");
+        }
+    }
 }

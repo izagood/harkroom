@@ -6,7 +6,9 @@
 //!   (3) github `ping` → 200 `{status:'pong'}`, (4) 본문이 JSON 이 아니면 400 `bad_json`.
 //! - 서명은 **원문 바이트**로 검증한다(본문을 다시 직렬화하지 않는다). 비교는 상수 시간
 //!   (`automation_ingress_verify::safe_equal`). 본문 상한은 전역 `bodyLimit` 과 같은 1MiB.
-//! - **TS 로 넘기는 것**: 검증을 통과한 뒤의 필터(`matchGithub`·`genericVars`)와 회차 만들기(`enqueueRun` —
+//! - github 의 `matchGithub` 거절 중 변수 없이 확정되는 것(`repo`·`event`·`not_a_branch`·push `branch`)은 여기서
+//!   `200 {status:'ignored', reason}` 으로 답한다([`github_ignored`]) — 트리거는 이미 읽던 `automation.trigger` 에서(새 GRANT 없음).
+//! - **TS 로 넘기는 것**: 검증을 통과한 뒤의 나머지 필터(`matchGithub` 의 맞음·paths·`genericVars`)와 회차 만들기(`enqueueRun` —
 //!   디바운스 모으기·시간당 상한 일시정지)는 아직 TS 다. 원문 바이트를 그대로 넘기므로 TS 가 같은 판정을 다시 한다.
 //!   예외: generic 은 쓰기 풀이 있으면 `genericVars`·`enqueueRun`(디바운스 없음·시간당 상한 일시정지·429)을 여기서 한다 —
 //!   디바운스가 걸렸거나 50 칸 넘는 본문·JS 와 문자열화가 다른 숫자는 TS 로 넘긴다.
@@ -39,7 +41,7 @@ pub const PRIVILEGES: &[(&str, &str)] = &[
 ];
 
 /// TS `loadIngressTarget` — 수신이 **켜진** 자동화만.
-pub(crate) const TARGET_SQL: &str = "select trigger->>'kind', ingress_token_hash, ingress_secret_enc \
+pub(crate) const TARGET_SQL: &str = "select trigger->>'kind', ingress_token_hash, ingress_secret_enc, trigger::text \
      from automation where id = $1::uuid and deleted_at is null and ingress_enabled_at is not null";
 
 const BODY_LIMIT: usize = 1024 * 1024;
@@ -48,6 +50,7 @@ struct IngressTarget {
     kind: Option<String>,
     token_hash: Option<String>,
     secret_enc: Option<String>,
+    trigger: Option<String>,
 }
 
 impl fmt::Debug for IngressTarget {
@@ -136,15 +139,99 @@ fn header_str<'a>(h: &'a HeaderMap, name: &str) -> Option<&'a str> {
 }
 
 async fn load(read: &PgPool, id: &str) -> Result<Option<IngressTarget>, sqlx::Error> {
-    let row: Option<(Option<String>, Option<String>, Option<String>)> = sqlx::query_as(TARGET_SQL)
+    type Row = (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    );
+    let row: Option<Row> = sqlx::query_as(TARGET_SQL)
         .bind(id)
         .fetch_optional(read)
         .await?;
-    Ok(row.map(|(kind, token_hash, secret_enc)| IngressTarget {
-        kind,
-        token_hash,
-        secret_enc,
-    }))
+    Ok(
+        row.map(|(kind, token_hash, secret_enc, trigger)| IngressTarget {
+            kind,
+            token_hash,
+            secret_enc,
+            trigger,
+        }),
+    )
+}
+
+/// TS `matchGithub` 의 거절 갈래 중 **변수 없이** 확정되는 것(`repo`·`event`·`not_a_branch`·push 의 `branch`).
+/// `Some(reason)` 이면 TS 와 같은 `200 {status:'ignored', reason}` 을 답한다. `None` 이면 맞을 수 있거나(변수·회차는 아직 TS)
+/// JS 강제 변환이 다를 수 있는 꼴(문자열 아닌 값·ASCII 아닌 저장소 이름·TS 가 던질 본문) — TS 로 넘긴다.
+pub(crate) fn github_ignored(
+    trigger: &Value,
+    event: &str,
+    payload: &Value,
+) -> Option<&'static str> {
+    // JS `String(x ?? '')` — 문자열이거나 없음/null 일 때만 같은 값을 안다.
+    fn js_str(v: Option<&Value>) -> Option<&str> {
+        match v {
+            None | Some(Value::Null) => Some(""),
+            Some(Value::String(s)) => Some(s.as_str()),
+            Some(_) => None,
+        }
+    }
+    let t_repo = trigger.get("repo")?.as_str()?;
+    let t_event = trigger.get("event")?.as_str()?;
+    let repo = js_str(payload.get("repository").and_then(|r| r.get("full_name")))?;
+    if !repo.is_ascii() || !t_repo.is_ascii() {
+        return None;
+    }
+    if !repo.eq_ignore_ascii_case(t_repo) {
+        return Some("repo");
+    }
+    let action = payload.get("action");
+    let is = |v: Option<&Value>, s: &str| v.and_then(Value::as_str) == Some(s);
+    match t_event {
+        "push" => {
+            if event != "push" {
+                return Some("event");
+            }
+            let r = js_str(payload.get("ref"))?;
+            let Some(branch) = r.strip_prefix("refs/heads/") else {
+                return Some("not_a_branch");
+            };
+            // `pushChanges` 는 commits 안의 null 에서 던진다(TS 500) — 그런 본문은 TS 로.
+            if let Some(Value::Array(cs)) = payload.get("commits")
+                && cs.iter().any(Value::is_null)
+            {
+                return None;
+            }
+            match trigger.get("branch") {
+                None | Some(Value::Null) => None,
+                Some(Value::String(b)) if b.is_empty() => None,
+                Some(Value::String(b)) if b != branch => Some("branch"),
+                _ => None,
+            }
+        }
+        "pull_request.merged" => {
+            let merged = payload
+                .get("pull_request")
+                .and_then(|p| p.get("merged"))
+                .and_then(Value::as_bool)
+                == Some(true);
+            if event != "pull_request" || !is(action, "closed") || !merged {
+                return Some("event");
+            }
+            None
+        }
+        "release.published" => {
+            if event != "release" || !is(action, "published") {
+                return Some("event");
+            }
+            None
+        }
+        _ => {
+            if event != "workflow_run" || !is(action, "completed") {
+                return Some("event");
+            }
+            None
+        }
+    }
 }
 
 /// 쓰기 풀 권한 — `automation_run_now` 의 회차·일시정지 칸과 같다(새 GRANT 없음).
@@ -369,8 +456,29 @@ async fn handle(
                 )
                     .into_response();
             }
-            if !matches!(parse(&bytes), Some(Value::Object(_) | Value::Array(_))) {
+            let Some(payload @ (Value::Object(_) | Value::Array(_))) = parse(&bytes) else {
                 return json_err(StatusCode::BAD_REQUEST, "bad_json", "body is not JSON");
+            };
+            // 헤더가 utf-8 이 아니면 TS(latin1) 와 글자가 다를 수 있다 — 판정하지 않는다.
+            let event = match parts.headers.get("x-github-event") {
+                None => Some(""),
+                Some(v) => v.to_str().ok(),
+            };
+            let trigger = target
+                .trigger
+                .as_deref()
+                .and_then(|t| serde_json::from_str::<Value>(t).ok());
+            if let Some(reason) = trigger
+                .as_ref()
+                .zip(event)
+                .and_then(|(t, e)| github_ignored(t, e, &payload))
+            {
+                return (
+                    StatusCode::OK,
+                    [(header::CONTENT_TYPE, "application/json; charset=utf-8")],
+                    format!(r#"{{"status":"ignored","reason":"{reason}"}}"#),
+                )
+                    .into_response();
             }
         }
         Hook::Generic => {
@@ -527,9 +635,45 @@ mod tests {
             kind: Some("github".into()),
             token_hash: Some("deadbeef".into()),
             secret_enc: Some("v1.secret".into()),
+            trigger: None,
         };
         let s = format!("{t:?}");
         assert!(!s.contains("deadbeef") && !s.contains("v1.secret"), "{s}");
+    }
+
+    #[test]
+    fn github_ignored_matches_ts() {
+        use serde_json::json;
+        let push =
+            json!({ "kind": "github", "repo": "Acme/App", "event": "push", "branch": "main" });
+        let p = json!({ "repository": { "full_name": "acme/app" }, "ref": "refs/heads/dev", "commits": [] });
+        assert_eq!(github_ignored(&push, "push", &p), Some("branch"));
+        assert_eq!(github_ignored(&push, "release", &p), Some("event"));
+        let other = json!({ "repository": { "full_name": "acme/other" } });
+        assert_eq!(github_ignored(&push, "push", &other), Some("repo"));
+        assert_eq!(github_ignored(&push, "push", &json!([])), Some("repo"));
+        let tag = json!({ "repository": { "full_name": "acme/app" }, "ref": "refs/tags/v1" });
+        assert_eq!(github_ignored(&push, "push", &tag), Some("not_a_branch"));
+        let main = json!({ "repository": { "full_name": "acme/app" }, "ref": "refs/heads/main" });
+        assert_eq!(
+            github_ignored(&push, "push", &main),
+            None,
+            "a match goes to TS"
+        );
+        let nulls = json!({ "repository": { "full_name": "acme/app" }, "ref": "refs/heads/dev", "commits": [null] });
+        assert_eq!(github_ignored(&push, "push", &nulls), None, "TS throws");
+        let num = json!({ "repository": { "full_name": 7 } });
+        assert_eq!(github_ignored(&push, "push", &num), None, "JS coercion");
+        let pr = json!({ "repo": "acme/app", "event": "pull_request.merged" });
+        let open = json!({ "repository": { "full_name": "acme/app" }, "action": "closed", "pull_request": { "merged": false } });
+        assert_eq!(github_ignored(&pr, "pull_request", &open), Some("event"));
+        let merged = json!({ "repository": { "full_name": "acme/app" }, "action": "closed", "pull_request": { "merged": true } });
+        assert_eq!(github_ignored(&pr, "pull_request", &merged), None);
+        let wf = json!({ "repo": "acme/app", "event": "workflow_run.completed" });
+        let req = json!({ "repository": { "full_name": "acme/app" }, "action": "requested" });
+        assert_eq!(github_ignored(&wf, "workflow_run", &req), Some("event"));
+        let rel = json!({ "repo": "acme/app", "event": "release.published" });
+        assert_eq!(github_ignored(&rel, "release", &req), Some("event"));
     }
 
     #[test]
