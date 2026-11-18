@@ -132,13 +132,20 @@ const OWNER_OF_AGENT_SQL: &str = "select o.id::text from agent_config c join acc
          where c.account_id = $1::uuid and o.kind = 'human' and o.deleted_at is null and o.disabled_at is null";
 
 #[derive(Debug, PartialEq)]
-struct Args {
-    name: String,
-    channel: String,
-    body: String,
-    trigger: Value,
-    debounce: Option<i32>,
+pub(crate) struct Args {
+    pub(crate) name: String,
+    pub(crate) channel: String,
+    pub(crate) body: String,
+    pub(crate) trigger: Value,
+    pub(crate) debounce: Option<i32>,
     for_handle: Option<String>,
+}
+
+/// REST `POST /automations` 의 zod — `forHandle` 이 없는 같은 꼴(모르는 키는 버린다). `None` 이면 TS 가 판정한다.
+pub(crate) fn parse_rest(body: &Value) -> Option<Args> {
+    let mut o = body.as_object()?.clone();
+    o.remove("forHandle");
+    parse(&Value::Object(o))
 }
 
 fn u16len(s: &str) -> usize {

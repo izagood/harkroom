@@ -74,15 +74,15 @@ const SECRET_SQL: &str = concat!(
 );
 
 /// 소유자 또는 admin 이 볼 수 있는 비밀(json, 소유자 id, 이름).
-struct Loaded {
-    json: String,
-    owner: String,
-    name: String,
+pub(crate) struct Loaded {
+    pub(crate) json: String,
+    pub(crate) owner: String,
+    pub(crate) name: String,
 }
 
 /// TS `human` → `idParam.parse` → `load(allowAdmin=true)`. Ok 면 지나간다.
 #[allow(clippy::result_large_err)]
-async fn load(read: &PgPool, me: &Account, id: &str) -> Result<Loaded, Response> {
+pub(crate) async fn load(read: &PgPool, me: &Account, id: &str) -> Result<Loaded, Response> {
     if me.kind == "agent" {
         return Err(json_err(
             StatusCode::FORBIDDEN,

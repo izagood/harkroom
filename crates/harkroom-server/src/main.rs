@@ -548,6 +548,69 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 AT5 — 자동화 만들기(`POST /automations`). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만.
+    let automation_create = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::automation_create as k;
+            match write::missing_in(w, k::AUTOMATION_CREATE_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: automation create core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: automation create core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+    // S5.4 AT4 — 자동화 제안 승인(`POST /automations/{id}/approve`). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만.
+    let automation_approve = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::automation_approve as k;
+            match write::missing_in(w, k::AUTOMATION_APPROVE_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: automation approve core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: automation approve core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+    // S5.4 AT3 — 자동화 「지금 한 번」(`POST /automations/{id}/run`). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만.
+    let automation_run_now = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::automation_run_now as k;
+            match write::missing_in(w, k::AUTOMATION_RUN_NOW_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: automation run-now core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: automation run-now core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 결정 5 — 자동화 지우기(`DELETE /automations/{id}`) + 위임 끝 카드 갱신(`core::perm_card`). 두 겹 잠금.
     let automation_delete = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -698,6 +761,27 @@ async fn main() {
         _ => None,
     };
     // S5.4 SE1 — 비밀 REST 읽기·지우기. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 권한이 다 있을 때만.
+    // S5.4 SE2 — 비밀 부여(`PUT /secrets/{id}/grants`). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만.
+    let secret_grant_give = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::secret_grant_give as k;
+            match write::missing_in(w, k::SECRET_GRANT_GIVE_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: secret grant give core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: secret grant give core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     let secrets_read_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
             use harkroom_server::core::secrets_read as s;
@@ -2234,6 +2318,51 @@ async fn main() {
             core_routes.http.extend(aw.http);
             core_routes.sockets.extend(aw.sockets);
         }
+        // S5.4 AT5 — 자동화 만들기. 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = automation_create {
+            let ac = harkroom_server::core::automation_create::routes(
+                harkroom_server::core::automation_create::CreateState {
+                    read: state.pool.clone(),
+                    write,
+                    up: state.up.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(ac.router);
+            core_routes.http.extend(ac.http);
+            core_routes.sockets.extend(ac.sockets);
+        }
+        // S5.4 AT4 — 자동화 제안 승인. 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = automation_approve {
+            let ap = harkroom_server::core::automation_approve::routes(
+                harkroom_server::core::automation_approve::ApproveState {
+                    read: state.pool.clone(),
+                    write,
+                    up: state.up.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(ap.router);
+            core_routes.http.extend(ap.http);
+            core_routes.sockets.extend(ap.sockets);
+        }
+        // S5.4 AT3 — 자동화 「지금 한 번」. 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = automation_run_now {
+            let rn = harkroom_server::core::automation_run_now::routes(
+                harkroom_server::core::automation_run_now::RunNowState {
+                    read: state.pool.clone(),
+                    write,
+                    up: state.up.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(rn.router);
+            core_routes.http.extend(rn.http);
+            core_routes.sockets.extend(rn.sockets);
+        }
         // S5.4 결정 5 — 자동화 지우기. 권한이 다 있을 때만 — 아니면 TS 에 남는다.
         if let Some(write) = automation_delete {
             let ad = harkroom_server::core::automation_delete::routes(
@@ -2330,6 +2459,21 @@ async fn main() {
             core_routes.sockets.extend(au.sockets);
         }
         // S5.4 SE1 — 비밀 읽기·지우기 5줄. 권한이 다 있을 때만 — 아니면 TS 에 남는다(목록·만들기·값·부여 주기·보기는 언제나 TS).
+        // S5.4 SE2 — 비밀 부여. 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = secret_grant_give {
+            let sg = harkroom_server::core::secret_grant_give::routes(
+                harkroom_server::core::secrets_read::SecretsReadState {
+                    read: state.pool.clone(),
+                    write,
+                    trust: state.trust.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(sg.router);
+            core_routes.http.extend(sg.http);
+            core_routes.sockets.extend(sg.sockets);
+        }
         if let Some(write) = secrets_read_write {
             let se = harkroom_server::core::secrets_read::routes(
                 harkroom_server::core::secrets_read::SecretsReadState {
