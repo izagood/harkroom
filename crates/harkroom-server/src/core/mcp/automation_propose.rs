@@ -83,7 +83,28 @@ const GITHUB_EVENTS: &[&str] = &[
 ];
 const GITHUB_CHANGES: &[&str] = &["any", "added", "modified", "removed"];
 
-fn insert_sql() -> &'static str {
+/// 골든 INSERT 에 Rust 가 씌우는 `returning` 칸 — `AUTOMATION_PROPOSE_PRIVILEGES` 의 SELECT 칸과 같아야 한다(단위 시험이 못 박는다).
+/// `returning *` 은 표의 모든 칸(수신 비밀 칸 포함)에 SELECT 를 요구해 칸 단위 GRANT 로는 돌지 않는다.
+const RETURNING_COLS: &[&str] = &[
+    "id",
+    "owner_id",
+    "channel_id",
+    "name",
+    "body",
+    "trigger",
+    "enabled",
+    "next_at",
+    "paused_reason",
+    "consecutive_failures",
+    "ingress_enabled_at",
+    "debounce_sec",
+    "proposed_by",
+    "approved_at",
+    "created_at",
+    "updated_at",
+];
+
+pub fn insert_sql() -> &'static str {
     static S: OnceLock<String> = OnceLock::new();
     S.get_or_init(|| {
         let v: Value = serde_json::from_str(include_str!("../../../golden/sql_fragments.json"))
@@ -93,13 +114,14 @@ fn insert_sql() -> &'static str {
             .expect("golden fragment automation_propose_insert");
         // 시각은 ms 로 받는다(node-pg `Date` 처럼 μs 는 버린다) — 문장 자체는 정본 그대로. 칸 이름·순서는 TS `COLS`.
         format!(
-            "with r as ({frag} returning *) select r.id::text as id, r.owner_id::text as owner_id, \
+            "with r as ({frag} returning {cols}) select r.id::text as id, r.owner_id::text as owner_id, \
              r.channel_id::text as channel_id, r.name, r.body, r.trigger::text as trigger, r.enabled, \
              floor(extract(epoch from r.next_at) * 1000)::bigint as next_ms, r.paused_reason, r.consecutive_failures, \
              floor(extract(epoch from r.ingress_enabled_at) * 1000)::bigint as ingress_ms, r.debounce_sec, \
              r.proposed_by::text as proposed_by, floor(extract(epoch from r.approved_at) * 1000)::bigint as approved_ms, \
              floor(extract(epoch from r.created_at) * 1000)::bigint as created_ms, \
-             floor(extract(epoch from r.updated_at) * 1000)::bigint as updated_ms from r"
+             floor(extract(epoch from r.updated_at) * 1000)::bigint as updated_ms from r",
+            cols = RETURNING_COLS.join(", ")
         )
     })
 }
@@ -348,6 +370,22 @@ pub async fn answer(read: &PgPool, write: &PgPool, me: &Account, args: &Value) -
         .fetch_one(write)
         .await
         .ok()?;
+    // 여기부터는 행이 이미 들어갔다 — 읽기에 실패해도 TS 로 넘기지 않는다(넘기면 TS 가 한 번 더 INSERT 해 대기 제안이 둘 된다).
+    let Some(view) = view_of(&row) else {
+        return Some(err(
+            "internal",
+            "the automation was saved but could not be read back; it was not retried",
+        ));
+    };
+    let text = format!(
+        "{{\"automation\":{view},\"next\":{}}}",
+        Value::from("Tell the approver in chat: Settings › Automations › Approve.")
+    );
+    Some(super::respond::text_result(&text))
+}
+
+/// INSERT 가 돌려준 행 → TS `automationView` 글자(`lastRun` 은 새 행이라 null).
+fn view_of(row: &sqlx::postgres::PgRow) -> Option<String> {
     let s = |k: &str| row.try_get::<String, _>(k).ok().map(Value::from);
     let os = |k: &str| {
         row.try_get::<Option<String>, _>(k)
@@ -359,7 +397,7 @@ pub async fn answer(read: &PgPool, write: &PgPool, me: &Account, args: &Value) -
     let debounce: Option<i32> = row.try_get("debounce_sec").ok()?;
     let failures: i32 = row.try_get("consecutive_failures").ok()?;
     let enabled: bool = row.try_get("enabled").ok()?;
-    let view = format!(
+    Some(format!(
         "{{\"id\":{},\"ownerId\":{},\"channelId\":{},\"name\":{},\"body\":{},\"trigger\":{},\"enabled\":{},\"nextAt\":{},\
          \"pausedReason\":{},\"consecutiveFailures\":{},\"ingressEnabledAt\":{},\"debounceSec\":{},\"proposedBy\":{},\
          \"approvedAt\":{},\"createdAt\":{},\"updatedAt\":{},\"lastRun\":null}}",
@@ -379,12 +417,7 @@ pub async fn answer(read: &PgPool, write: &PgPool, me: &Account, args: &Value) -
         opt_iso(oi("approved_ms")?),
         opt_iso(oi("created_ms")?),
         opt_iso(oi("updated_ms")?),
-    );
-    let text = format!(
-        "{{\"automation\":{view},\"next\":{}}}",
-        Value::from("Tell the approver in chat: Settings › Automations › Approve.")
-    );
-    Some(super::respond::text_result(&text))
+    ))
 }
 
 /// jsonb 글자(`{"a": 1}`)를 JS `JSON.stringify` 꼴(`{"a":1}`)로 — **키 순서는 jsonb 가 준 그대로**(node-pg 가 파싱한 객체의 순서와 같다).
@@ -471,6 +504,33 @@ mod tests {
         assert!(parse(&v).is_none());
         v["trigger"] = json!({ "kind": "webhook", "freq": "daily" });
         assert_eq!(parse(&v).unwrap().trigger, json!({ "kind": "webhook" }));
+    }
+
+    #[test]
+    fn returning_cols_match_select_grant() {
+        let granted: Vec<&str> = AUTOMATION_PROPOSE_PRIVILEGES
+            .iter()
+            .filter(|(_, p)| *p == "SELECT")
+            .map(|(c, _)| c.strip_prefix("automation.").unwrap())
+            .collect();
+        assert_eq!(
+            granted, RETURNING_COLS,
+            "returning 칸 = SELECT GRANT 칸(순서까지)"
+        );
+        let sql = insert_sql();
+        assert!(
+            !sql.contains("returning *"),
+            "returning * 는 비밀 칸까지 SELECT 를 요구한다"
+        );
+        assert!(sql.contains(&format!("returning {})", RETURNING_COLS.join(", "))));
+        for secret in [
+            "ingress_token_hash",
+            "ingress_secret_enc",
+            "mandate_session_at",
+            "deleted_at",
+        ] {
+            assert!(!sql.contains(secret), "{secret} 를 읽지 않는다");
+        }
     }
 
     #[test]
