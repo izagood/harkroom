@@ -1637,6 +1637,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant delete on channel_member to ${rw}`,
         // S5.4 AC3 — 기억 쓰기·백그라운드 켜고 끄기(`core/agent_memory_write.rs::AGENT_MEMORY_WRITE_PRIVILEGES`). 기억 칸 권한은 위 B1a·B1b 줄. 없으면 「agent memory write core off」 — TS 에 남는다.
         `grant insert, update (bg_enabled) on agent_config to ${rw}`,
+        // S5.5 — 회차 되돌리기(`core/agent_memory_write.rs::BG_REVERT_PRIVILEGES`). bg_job select 는 위 bg.claim 줄. 없으면 「background revert to TS」 — 그 한 줄만 TS 에 남는다.
+        `grant update (reverted_at, reverted_by) on bg_job to ${rw}`,
+        `grant select on bg_job_change to ${rw}`,
+        `grant select (archived_by_run), update (archived_at, archived_by_run) on thread_note to ${rw}`,
         // S5.4 AC4 — handle 바꾸기(`core/account_handle.rs::ACCOUNT_HANDLE_PRIVILEGES`). 없으면 「account handle core off」 — TS 에 남는다.
         `grant update (handle) on account to ${rw}`,
         // S5.4 AC4 — keys PUT·agent/activity(`core/account_keys_activity.rs::KEYS_ACTIVITY_PRIVILEGES`). agent_config insert 는 위 AC3 줄. 없으면 「keys/activity core off」 — TS 에 남는다.
@@ -5888,7 +5892,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect(f.log(), k).toContain(`"${k}"`);
         }
         expect(f.log()).not.toContain('agent memory write core off');
-        expect(f.log(), '회차 되돌리기는 TS 에 남는다').not.toContain('"POST /accounts/agents/{id}/background/runs/{runId}/revert"');
+        expect(f.log(), '회차 되돌리기도 Rust 줄이다(S5.5)').toContain('"POST /accounts/agents/{id}/background/runs/{runId}/revert"');
+        expect(f.log()).not.toContain('background revert to TS');
         const M = member.token;
         const M2 = member2.token;
         const ins = async (q: string, p: unknown[] = []) => (await db.pool.query<{ id: string }>(q, p)).rows[0]!.id;
@@ -6014,6 +6019,90 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(ts.audit.map((a) => a.action)).toEqual(expect.arrayContaining(['agent.memory.edited', 'agent.memory.deleted',
           'agent.memory.flag_cleared', 'agent.memory.archived', 'agent.memory.unarchived', 'agent.background.toggled']));
         expect(JSON.stringify(ts.audit)).not.toContain('AC3SECRET');
+
+        // S5.5 — [이 회차 되돌리기](`POST …/background/runs/{runId}/revert`, 코어 `agent_memory_write.rs::revert`). 같은 처음 상태에서
+        // 같은 요청 줄을 TS 로 한 번, Rust 로 한 번 보내고 답·기억 행·이전 판·회차 행·스레드 메모·감사가 같은지 본다.
+        {
+          const R1 = '5e55f000-0000-4000-8000-000000000001'; // 끝난 회차 — 되돌린다
+          const R2 = '5e55f000-0000-4000-8000-000000000002'; // 도는 회차 — 409 not_finished
+          const R3 = '5e55f000-0000-4000-8000-000000000003'; // 다른 에이전트의 회차 — 404
+          const T1 = '2026-02-02T00:00:00.456789Z';
+          const root = String((await db.pool.query(`select id from message order by id limit 1`)).rows[0].id);
+          const wipe = async () => {
+            await db.pool.query('delete from thread_note where account_id = $1', [owned]);
+            await db.pool.query('delete from bg_job where id = any($1)', [[R1, R2, R3]]);
+            await db.pool.query('delete from agent_memory_revision where account_id = any($1)', [bots]);
+            await db.pool.query('delete from agent_memory where account_id = any($1)', [bots]);
+          };
+          const seed = async () => {
+            await wipe();
+            await db.pool.query(
+              `insert into bg_job (id, account_id, kind, day, status) values
+                 ($1, $4, 'distill', '2026-02-02', 'done'), ($2, $4, 'cleanup', '2026-02-02', 'running'), ($3, $5, 'distill', '2026-02-02', 'done')`,
+              [R1, R2, R3, owned, orphan]);
+            await db.pool.query(
+              `insert into agent_memory (account_id, slug, value, description, kind, updated_at, archived_at) values
+                 ($1, 'mem/made', 'made by run', null, 'topic', $2, null),
+                 ($1, 'mem/upd', 'new upd', 'nd', 'topic', $2, null),
+                 ($1, 'mem/arc', 'kept', null, 'procedure', $2, now()),
+                 ($1, 'mem/chg', 'edited later', null, 'topic', $3, null),
+                 ($1, 'mem/merged', 'merged in', null, 'topic', $2, null),
+                 ($1, 'mem/nullafter', 'na', null, 'topic', $2, null)`, [owned, T1, T0]);
+            await db.pool.query(
+              `insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged, reason, detail, kind, run_id) values
+                 ($1, 'mem/upd', 'old upd', 'od', $3, false, null, null, 'procedure', $2),
+                 ($1, 'mem/upd', 'mid upd', null, $3, false, null, null, 'topic', $2),
+                 ($1, 'mem/merged', 'pre merge', null, $3, false, 'merge', '{"created":true}', 'topic', $2)`, [owned, R1, T0]);
+            await db.pool.query(
+              `insert into bg_job_change (run_id, slug, op, after_updated_at) values
+                 ($1, 'mem/made', 'create', $2), ($1, 'mem/upd', 'update', null), ($1, 'mem/arc', 'archive', $2), ($1, 'mem/chg', 'update', $2),
+                 ($1, 'mem/gone', 'create', $2), ($1, 'mem/merged', 'merge', $2), ($1, 'mem/nullafter', 'update', null), ($1, 'mem/upd', 'update', $2)`, [R1, T1]);
+            await db.pool.query(`insert into thread_note (account_id, thread_root_id, body, archived_at, archived_by_run) values ($1, $2, 'note', now(), $3)`, [owned, root, R1]);
+          };
+          const go = async (base: string) => {
+            await seed();
+            const since = String((await db.pool.query('select coalesce(max(id), 0)::text as m from audit_log')).rows[0].m);
+            const out: unknown[] = [];
+            const call = async (id: string, runId: string, token: string) => {
+              const r = await callX(base, 'POST', `/accounts/agents/${id}/background/runs/${runId}/revert`, undefined, token);
+              out.push({ id, runId, status: r.status, json: r.status === 400 ? null : r.json });
+            };
+            await call(owned, R1, M2); // 남 403
+            await call(owned, R1, ''); // 401
+            await call(owned, R1, agent.pat); // 에이전트 403
+            await call(owned, 'nope', M); // 400
+            await call(owned, '5e55f000-0000-4000-8000-0000000000ff', M); // 없는 회차 404
+            await call(owned, R3, M); // 남의 회차 404
+            await call(owned, R2, M); // 도는 회차 409
+            await call(goneBot, R1, M); // 지운 에이전트 404
+            await call(member.accountId, R1, A); // 사람 404
+            await call(owned, R1, M); // 200
+            await call(owned, R1, M); // 409 already_reverted
+            const rows = (await db.pool.query(
+              `select slug, value, description, kind, flagged_at is not null as flagged, archived_at is not null as archived
+                 from agent_memory where account_id = $1 order by slug`, [owned])).rows;
+            const revs = (await db.pool.query(
+              `select slug, value, description, kind, flagged, reason, detail - 'revisionId' as detail, run_id, turn_id
+                 from agent_memory_revision where account_id = $1 order by slug, value`, [owned])).rows;
+            const jobs = (await db.pool.query(
+              `select id::text, status, reverted_at is not null as reverted, reverted_by::text from bg_job where id = any($1) order by id`, [[R1, R2, R3]])).rows;
+            const notes = (await db.pool.query(
+              `select archived_at is not null as archived, archived_by_run::text from thread_note where account_id = $1`, [owned])).rows;
+            const audit = (await db.pool.query(
+              `select action, actor_id::text, actor_handle, target, detail from audit_log where id > $1::bigint and action like 'agent.%' order by id`, [since])).rows;
+            return { out, rows, revs, jobs, notes, audit };
+          };
+          const t2 = await go(tsUrl);
+          const r2 = await go(rsUrl);
+          expect(r2).toEqual(t2);
+          expect((t2.out as { status: number }[]).map((o) => o.status)).toEqual([403, 401, 403, 400, 404, 404, 409, 404, 404, 200, 409]);
+          const done = (t2.out as { json: { reverted: string[]; skipped: { slug: string; reason: string }[]; notesReopened: number } }[])[9]!.json;
+          expect(done.reverted).toEqual(['mem/made', 'mem/upd', 'mem/arc', 'mem/merged']);
+          expect(done.skipped).toEqual([{ slug: 'mem/chg', reason: 'changed_since' }, { slug: 'mem/gone', reason: 'gone' }, { slug: 'mem/nullafter', reason: 'changed_since' }]);
+          expect(done.notesReopened).toBe(1);
+          expect(t2.audit.map((a) => a.action)).toEqual(['agent.background.reverted']);
+          await wipe();
+        }
         await db.pool.query('delete from agent_memory_revision where account_id = any($1)', [bots]);
         await db.pool.query('delete from agent_memory where account_id = any($1)', [bots]);
         await db.pool.query('delete from agent_config where account_id = any($1)', [bots]);
@@ -10787,11 +10876,13 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // 성공 여섯 번 → 이벤트 여섯 번(지우기·없는 줄 지우기 포함, TS 와 같다). 거절은 이벤트가 없다.
         const rsEvents = () => busEvents.slice(busBefore).filter((e) => e.type === 'inbox.updated');
         const deadline = Date.now() + 10_000;
-        while (rsEvents().length < 6 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
+        while (rsEvents().filter((e) => e.accountId === member.accountId).length < 6 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
         await new Promise((r) => setTimeout(r, 500));
         off();
-        expect(tsEvents).toEqual(Array.from({ length: 6 }, () => ({ type: 'inbox.updated', accountId: member.accountId })));
-        expect(rsEvents()).toEqual(tsEvents);
+        // 앞 장면이 늦게 낸 다른 계정의 이벤트가 섞일 수 있다 — 이 장면의 계정 것만 견준다.
+        const mine = (xs: object[]) => xs.filter((e) => (e as { accountId?: unknown }).accountId === member.accountId);
+        expect(mine(tsEvents)).toEqual(Array.from({ length: 6 }, () => ({ type: 'inbox.updated', accountId: member.accountId })));
+        expect(mine(rsEvents())).toEqual(mine(tsEvents));
       }
       await bus.stop();
 
