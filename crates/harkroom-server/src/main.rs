@@ -1027,6 +1027,27 @@ async fn main() {
         }
         _ => false,
     };
+    // `PUT /settings/projection` — 읽기 줄이 섰고 쓰기 풀에 그 칸 권한이 있을 때만(아니면 TS).
+    let settings_projection_write = match (&state.write, settings_rest_on) {
+        (Some(w), true) => {
+            use harkroom_server::core::settings_rest as s;
+            match write::missing_in(w, s::SETTINGS_PROJECTION_WRITE_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: settings projection write off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: settings projection write off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 TM1 — 스레드 모델 지정 읽기(`GET /channels/{id}/threads/{rootId}/agent-models`). 읽기 풀만 쓴다.
     // 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 읽기 역할에 그 표들의 SELECT 가 다 있을 때만 — 아니면 TS 에 남는다.
     let thread_models_read = match &core_mode {
@@ -3102,6 +3123,8 @@ async fn main() {
                     read: state.pool.clone(),
                     // TS `config.avcsBaseUrl` 과 같이 원문(`?? null`) — 빈 문자열도 그대로 싣는다.
                     env_base_url: std::env::var("AVCS_BASE_URL").ok(),
+                    write: settings_projection_write.clone(),
+                    trust: state.trust.clone(),
                 },
                 auth.clone(),
                 state.cors.clone(),
