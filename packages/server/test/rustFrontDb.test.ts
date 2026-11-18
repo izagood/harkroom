@@ -11342,6 +11342,184 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect(JSON.stringify([lR, auR])).not.toContain('reveal-me');
           await db.pool.query('delete from secret where id = any($1)', [[sText, sFile, sNone, sBad]]);
         }
+        // 12) POST /agent/secrets·/agent/secrets/rotate generate 갈래(S5.4 SE4 `agent_secret_create.rs`). 같은 임대로 TS·Rust 가 차례로
+        // 부른다 — 비밀 이름은 전역 하나라 쪽마다 픽스처를 세우고(setup) 부작용을 떠 둔 뒤 그 비밀을 지운다. 속도 제한(에이전트당
+        // 시간당 10회)은 두 서버가 따로 센다(인메모리) — 그래서 쪽마다 같은 횟수에서 429 가 나야 한다. 값은 무작위라 견주지 않고
+        // 길이·모양만 본다. 부작용은 secret·secret_version·secret_grant·secret_access_log·audit_log·소유자 알림 줄(system·serverNotice).
+        {
+          const sha = (t: string) => createHash('sha256').update(t).digest('hex');
+          const inj = async (url: string, payload: unknown) => {
+            const r = await app.inject({ method: 'POST', url, headers: { authorization: `Bearer ${A}` }, payload: payload as Record<string, unknown> });
+            expect(r.statusCode, `${url} ${r.body}`).toBeLessThan(300);
+          };
+          const acop = await registerOperator(app, A, 's54ac-op');
+          const mkAgent = async (handle: string) => {
+            const a = await createAgent(app, A, handle);
+            await db.pool.query(`insert into agent_assignment (agent_id, operator_id, assigned_by) values ($1, $2, $3)`, [a.accountId, acop.operatorId, admin.accountId]);
+            await db.pool.query(`update agent_config set owner_account_id = $2 where account_id = $1`, [a.accountId, admin.accountId]);
+            await db.pool.query(`insert into account_grant (account_id, capability, scope, granted_by) values ($1, 'secret.create', '', $2)`, [a.accountId, admin.accountId]);
+            await inj(`/channels/${todayId}/members`, { accountId: a.accountId });
+            return a;
+          };
+          const ac = await mkAgent('s54ac');
+          const ac2 = await mkAgent('s54ac2');
+          const th = (await db.pool.query<{ id: string }>(
+            `insert into message (channel_id, author_id, body, kind) values ($1, $2, 's54ac 스레드', 'user') returning id`, [todayId, admin.accountId])).rows[0]!.id;
+          const known = new Map<string, string>([[admin.accountId, '<owner>'], [member.accountId, '<member>'], [ac.accountId, '<ac>'], [ac2.accountId, '<ac2>'],
+            [acop.operatorId, '<op>'], [todayId, '<ch>'], [th, '<th>']]);
+          const lease = async (tag: string, agentId: string, o: { author?: string; ended?: boolean } = {}) => {
+            const cause = (await db.pool.query<{ id: string }>(
+              `insert into message (channel_id, author_id, body, kind, thread_root_id) values ($1, $2, $3, 'user', $4) returning id`,
+              [todayId, o.author ?? admin.accountId, `s54ac 원인 ${tag}`, th])).rows[0]!.id;
+            const token = `s54ac-tok-${tag}`;
+            const id = (await db.pool.query<{ id: string }>(
+              `insert into secret_turn_lease (token_hash, agent_id, operator_id, cause_message_id, channel_id, thread_root_id, expires_at, ended_at)
+               values ($1, $2, $3, $4, $5, $6, now() + interval '1 hour', $7) returning id`,
+              [sha(token), agentId, acop.operatorId, cause, todayId, th, o.ended ? new Date() : null])).rows[0]!.id;
+            known.set(id, `<lease:${tag}>`);
+            known.set(cause, `<cause:${tag}>`);
+            return { leaseId: id, token };
+          };
+          const L = await lease('live', ac.accountId);
+          const L2 = await lease('live2', ac2.accountId);
+          const Lend = await lease('ended', ac.accountId, { ended: true });
+          const Lmem = await lease('member', ac.accountId, { author: member.accountId });
+          const norm = (v: unknown): unknown => {
+            let s = JSON.stringify(v);
+            for (const [id, label] of known) s = s.split(id).join(label);
+            return JSON.parse(s.replace(UUIDS, '<id>').replace(ISO_T, '<t>').replace(/ssh-ed25519 [A-Za-z0-9+/=]+ /g, 'ssh-ed25519 <pub> '));
+          };
+          const viaOp = (a: { accountId: string }) => ({ authorization: `Bearer ${acop.token}`, 'x-harkroom-agent': a.accountId });
+          const raw = async (base: string, path: string, body: unknown, headers: Record<string, string>) => {
+            const res = await fetch(`${base}${path}`, { method: 'POST', headers: { ...headers, 'content-type': J, 'x-forwarded-for': XFF }, body: JSON.stringify(body) });
+            const text = await res.text();
+            return { status: res.status, cc: res.headers.get('cache-control'), json: (text ? JSON.parse(text) : {}) as Record<string, unknown> };
+          };
+          const agents = [ac.accountId, ac2.accountId];
+          const seenMsg: string[] = [];
+          const snapSecret = async (name: string) => (await db.pool.query(
+            `select s.name, s.kind, s.filename, s.description, s.owner_account_id, s.created_by_agent_id, s.created_cause_message_id,
+                    round(extract(epoch from s.expires_at - s.created_at) / 86400)::int as days, s.updated_at > s.created_at as touched,
+                    (select json_agg(json_build_object('v', v.version, 'size', v.size_bytes, 'by', v.created_by, 'revoked', v.revoked_at is not null,
+                        'sealed', case when v.sealed is null then null else split_part(v.sealed, '.', 1) || '.' || split_part(v.sealed, '.', 2) end) order by v.version)
+                       from secret_version v where v.secret_id = s.id) as versions,
+                    (select json_agg(json_build_object('agent', g.agent_id, 'ch', g.channel_id, 'op', g.operator_id, 'by', g.granted_by, 'suspended', g.suspended_at is not null))
+                       from secret_grant g where g.secret_id = s.id) as grants
+               from secret s where s.name = $1`, [name])).rows;
+          /** 한쪽 호출 — 앞뒤 표지(감사·접근 기록 id, 알림 글)로 그 호출이 남긴 줄만 뜬다. `name` 이 있으면 그 비밀을 뜬 뒤 지운다. */
+          const side = async (base: string, path: string, body: unknown, headers: Record<string, string>, o: { setup?: () => Promise<void>; name?: string }) => {
+            await o.setup?.();
+            const mark = (await db.pool.query<{ a: string; l: string }>(
+              `select (select coalesce(max(id), 0) from audit_log)::text as a, (select coalesce(max(id), 0) from secret_access_log)::text as l`)).rows[0]!;
+            const r = await raw(base, path, body, headers);
+            const audit = (await db.pool.query(
+              `select action, actor_id, actor_handle, target, detail from audit_log where id > $1 and (actor_id = any($2::uuid[]) or target = any($3::text[])) order by id`,
+              [mark.a, agents, agents])).rows;
+            const access = (await db.pool.query(
+              `select secret_name, version, agent_id, operator_id, turn_id, channel_id, thread_root_id, result, reason from secret_access_log where id > $1 order by id`,
+              [mark.l])).rows;
+            const msgs = (await db.pool.query<{ id: string }>(
+              `select id, kind, body, author_id, channel_id, thread_root_id, cause_message_id, meta from message
+                where author_id = any($1::uuid[]) and meta ? 'secretNotice' and not (id = any($2::uuid[])) order by created_at`, [agents, seenMsg])).rows;
+            seenMsg.push(...msgs.map((m) => m.id));
+            const secret = o.name ? await snapSecret(o.name) : null;
+            if (o.name) await db.pool.query('delete from secret where name = $1', [o.name]);
+            return { r, effects: { audit, access, msgs: msgs.map(({ id: _id, ...m }) => m), secret } };
+          };
+          const pair = async (label: string, path: string, body: unknown, o: { headers?: Record<string, string>; setup?: () => Promise<void>; name?: string } = {}) => {
+            const headers = o.headers ?? viaOp(ac);
+            const a = await side(tsUrl, path, body, headers, o);
+            const b = await side(rsUrl, path, body, headers, o);
+            expect(norm({ status: b.r.status, cc: b.r.cc, json: b.r.json }), label).toEqual(norm({ status: a.r.status, cc: a.r.cc, json: a.r.json }));
+            expect(norm(b.effects), `${label} 부작용`).toEqual(norm(a.effects));
+            return { a, b };
+          };
+          const C = '/agent/secrets';
+          const R = '/agent/secrets/rotate';
+          const gen = (type: string, length?: number) => ({ generate: length === undefined ? { type } : { type, length } });
+          const mkBody = (l: { leaseId: string; token: string }, name: string, source: unknown, extra: Record<string, unknown> = {}) => ({ ...l, name, source, ...extra });
+          // 인증·오퍼레이터.
+          await pair('만들기 익명 → 401', C, mkBody(L, 's54ac-x', gen('password')), { headers: {} });
+          await pair('만들기 사람 → 403', C, mkBody(L, 's54ac-x', gen('password')), { headers: { authorization: `Bearer ${A}` } });
+          await pair('만들기 PAT 에이전트 → 403', C, mkBody(L, 's54ac-x', gen('password')), { headers: { authorization: `Bearer ${ac.pat}` } });
+          // 본문 400(게이트 앞 — 감사 없음).
+          await pair('만들기 source 없음 → 400', C, { ...L, name: 's54ac-x' });
+          await pair('만들기 모르는 종류 → 400', C, mkBody(L, 's54ac-x', gen('rsa')));
+          await pair('만들기 모르는 키 → 400', C, mkBody(L, 's54ac-x', gen('password'), { extra: 1 }));
+          await pair('만들기 이름 틀림 → 400', C, mkBody(L, 'Bad Name', gen('password')));
+          await pair('만들기 만료일 0 → 400', C, mkBody(L, 's54ac-x', gen('password'), { expiresInDays: 0 }));
+          await pair('만들기 길이 소수 → 400', C, mkBody(L, 's54ac-x', gen('password', 20.5)));
+          await pair('만들기 generate·import 둘 다 → 400', C, mkBody(L, 's54ac-x', { generate: { type: 'password' }, import: { kind: 'text', valueBase64: 'YQ==' } }));
+          await pair('회전 만료일 → 400', R, mkBody(L, 's54ac-x', gen('password'), { expiresInDays: 3 }));
+          // 게이트 거절(감사 secret.<action>.denied).
+          await pair('만들기 없는 임대 → 403 lease_invalid', C, mkBody({ leaseId: g4, token: 'nope' }, 's54ac-x', gen('password')));
+          await pair('만들기 토큰 틀림 → 403 lease_invalid', C, mkBody({ ...L, token: 'wrong' }, 's54ac-x', gen('password')));
+          await pair('만들기 끝난 임대 → 403 lease_invalid', C, mkBody(Lend, 's54ac-x', gen('password')));
+          await pair('만들기 남의 임대 → 403 lease_invalid', C, mkBody(L2, 's54ac-x', gen('password')));
+          await pair('만들기 원인 글이 소유자 아님 → 403 cause_not_owner', C, mkBody(Lmem, 's54ac-x', gen('password')));
+          await pair('회전 끝난 임대 → 403 lease_invalid', R, mkBody(Lend, 's54ac-x', gen('password')));
+          await db.pool.query(`update account_grant set suspended_at = now() where account_id = $1 and capability = 'secret.create'`, [ac.accountId]);
+          await pair('만들기 부여 멈춤 → 403 not_granted', C, mkBody(L, 's54ac-x', gen('password')));
+          await pair('회전 부여 멈춤 → 403 not_granted', R, mkBody(L, 's54ac-x', gen('password')));
+          await db.pool.query(`update account_grant set suspended_at = null where account_id = $1 and capability = 'secret.create'`, [ac.accountId]);
+          // import 몸은 Rust 가 TS 로 넘긴다 — 같은 답·같은 감사.
+          await pair('만들기 import(TS 로) 없는 임대 → 403', C, mkBody({ leaseId: g4, token: 'nope' }, 's54ac-x', { import: { kind: 'text', valueBase64: 'YQ==' } }));
+          // 만들기 성공(ac 의 제한기: 쪽마다 아래 9번).
+          const okPw = await pair('만들기 password 20', C, mkBody(L, 's54ac-pw', gen('password', 20), { description: '디비 비번', expiresInDays: 7 }), { name: 's54ac-pw' });
+          expect(okPw.a.r.status).toBe(201);
+          expect(okPw.a.effects.secret, 'TS 가 만든 줄').toHaveLength(1);
+          expect(okPw.a.effects.msgs, '소유자 알림').toHaveLength(1);
+          expect(norm(okPw.b.effects.msgs[0])).toMatchObject({ kind: 'system', author_id: '<ac>', thread_root_id: '<th>',
+            meta: { secretNotice: { action: 'created', via: 'generate', name: 's54ac-pw', version: 1 }, i18n: { key: 'system.secret.createdGenerated' } } });
+          expect(norm(okPw.b.effects.secret)).toMatchObject([{ days: 7, versions: [{ v: 1, size: 20, sealed: 'v2.ck1', revoked: false }], grants: [{ agent: '<ac>', by: '<ac>', ch: '<ch>', op: '<op>' }] }]);
+          const exp = Date.parse(String((okPw.b.r.json.secret as { expiresAt: string }).expiresAt));
+          expect(Math.abs(exp - Date.now() - 7 * 86_400_000), '만료 7일').toBeLessThan(120_000);
+          const okHex = await pair('만들기 token_hex 기본', C, mkBody(L, 's54ac-hex', gen('token_hex')), { name: 's54ac-hex' });
+          expect(norm(okHex.b.effects.secret)).toMatchObject([{ days: 90, versions: [{ size: 64 }] }]);
+          const okB64 = await pair('만들기 token_base64url 16', C, mkBody(L, 's54ac-b64', gen('token_base64url', 16)), { name: 's54ac-b64' });
+          expect(norm(okB64.b.effects.secret)).toMatchObject([{ versions: [{ size: 22 }] }]);
+          const okSsh = await pair('만들기 ssh_ed25519', C, mkBody(L, 's54ac-ssh', gen('ssh_ed25519')), { name: 's54ac-ssh' });
+          expect(okSsh.b.r.json.publicKey, 'Rust 공개키').toMatch(/^ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI[A-Za-z0-9+/]+=* harkroom:s54ac-ssh$/);
+          expect(okSsh.b.r.json.publicKey).not.toBe(okSsh.a.r.json.publicKey);
+          expect(norm(okSsh.b.effects.secret)).toMatchObject([{ kind: 'file', filename: 'id_ed25519' }]);
+          await pair('만들기 ssh 에 길이 → 400 bad_length', C, mkBody(L, 's54ac-x', gen('ssh_ed25519', 32)));
+          await pair('만들기 password 짧음 → 400 bad_length', C, mkBody(L, 's54ac-x', gen('password', 15)));
+          await pair('만들기 설명에 토큰 → 400 secret_in_description', C, mkBody(L, 's54ac-x', gen('password'), { description: 'key AKIAABCDEFGHIJKLMNOP' }));
+          const taken = async () => { await db.pool.query(`insert into secret (name, kind, owner_account_id) values ('s54ac-taken', 'text', $1)`, [member.accountId]); };
+          await pair('만들기 이름 있음 → 409 name_taken', C, mkBody(L, 's54ac-taken', gen('password')), { setup: taken, name: 's54ac-taken' });
+          // 회전 — 픽스처는 이 에이전트가 만든 비밀(최신 판도 이 에이전트, 자동 부여 한 줄).
+          const mkOwn = (name: string, agentId: string, o: { kind?: 'text' | 'file'; by?: string; suspended?: boolean; expired?: boolean } = {}) => async () => {
+            const id = (await db.pool.query<{ id: string }>(
+              `insert into secret (name, kind, filename, description, owner_account_id, expires_at, created_by_agent_id)
+               values ($1, $2, $3, 'd', $4, now() + case when $5::boolean then interval '-1 hour' else interval '1 day' end, $6) returning id`,
+              [name, o.kind ?? 'text', o.kind === 'file' ? 'id_ed25519' : null, admin.accountId, o.expired ?? false, agentId])).rows[0]!.id;
+            await db.pool.query(`insert into secret_version (secret_id, version, sealed, size_bytes, created_by) values ($1, 1, 'v2.ck1.AAAA.AAAA.AAAA.AAAA', 4, $2)`, [id, agentId]);
+            await db.pool.query(
+              `insert into secret_grant (secret_id, agent_id, channel_id, operator_id, granted_by, suspended_at) values ($1, $2, $3, $4, $5, case when $6::boolean then now() end)`,
+              [id, agentId, todayId, acop.operatorId, o.by ?? agentId, o.suspended ?? false]);
+          };
+          const okRot = await pair('회전 password 성공', R, mkBody(L, 's54ac-rot', gen('password', 24)), { setup: mkOwn('s54ac-rot', ac.accountId), name: 's54ac-rot' });
+          expect(okRot.a.r.status).toBe(200);
+          expect(norm(okRot.b.effects.secret)).toMatchObject([{ touched: true, versions: [{ v: 1, revoked: true, sealed: null }, { v: 2, size: 24, by: '<ac>', revoked: false, sealed: 'v2.ck1' }] }]);
+          expect(norm(okRot.b.effects.msgs)).toMatchObject([{ meta: { secretNotice: { action: 'rotated', version: 2 }, i18n: { key: 'system.secret.rotatedGenerated' } } }]);
+          expect(okRot.b.effects.access.map((x) => x.result)).toEqual(['rotated']);
+          await pair('회전 종류 다름 → 400 kind_mismatch', R, mkBody(L, 's54ac-kind', gen('password')), { setup: mkOwn('s54ac-kind', ac.accountId, { kind: 'file' }), name: 's54ac-kind' });
+          // 상한(20개)·회전 대상 거절·속도 제한 — ac2(쪽마다 10번째까지 통과, 11번째 429).
+          await db.pool.query(
+            `insert into secret (name, kind, owner_account_id, created_by_agent_id) select 's54ac2-fill-' || g, 'text', $1, $2 from generate_series(1, 20) g`,
+            [admin.accountId, ac2.accountId]);
+          const v2 = viaOp(ac2);
+          await pair('만들기 20개 → 409 too_many', C, mkBody(L2, 's54ac2-x', gen('password')), { headers: v2 });
+          await pair('회전 없는 비밀 → 404', R, mkBody(L2, 's54ac2-none', gen('password')), { headers: v2 });
+          await pair('회전 남의 에이전트 것 → 404', R, mkBody(L2, 's54ac2-other', gen('password')), { headers: v2, setup: mkOwn('s54ac2-other', ac.accountId), name: 's54ac2-other' });
+          await pair('회전 사람이 다시 줌 → 409 adopted_by_owner', R, mkBody(L2, 's54ac2-ad', gen('password')), { headers: v2, setup: mkOwn('s54ac2-ad', ac2.accountId, { by: admin.accountId }), name: 's54ac2-ad' });
+          await pair('회전 부여 정지 → 403 grant_suspended', R, mkBody(L2, 's54ac2-su', gen('password')), { headers: v2, setup: mkOwn('s54ac2-su', ac2.accountId, { suspended: true }), name: 's54ac2-su' });
+          await pair('회전 만료 → 409 secret_expired', R, mkBody(L2, 's54ac2-ex', gen('password')), { headers: v2, setup: mkOwn('s54ac2-ex', ac2.accountId, { expired: true }), name: 's54ac2-ex' });
+          for (let i = 7; i <= 10; i++) await pair(`회전 없는 비밀 ${i}번째`, R, mkBody(L2, 's54ac2-none', gen('password')), { headers: v2 });
+          const lim = await pair('11번째 → 429 rate_limited', R, mkBody(L2, 's54ac2-none', gen('password')), { headers: v2 });
+          expect(lim.a.r.status).toBe(429);
+          await db.pool.query('delete from secret where created_by_agent_id = any($1::uuid[])', [agents]);
+        }
       }
       // 프리플라이트(옮긴 줄의 OPTIONS 는 앞단이 TS 로 넘긴다 — 두 답이 같아야 한다).
       for (const headers of [{ origin: CORS, 'access-control-request-method': 'PUT' }, { origin: CORS }] as Record<string, string>[]) {
