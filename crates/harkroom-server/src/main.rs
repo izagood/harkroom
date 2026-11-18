@@ -501,6 +501,27 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 AT2 — 자동화 수신 끄기(`DELETE /automations/{id}/ingress`). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만.
+    let automations_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::automations_write as k;
+            match write::missing_in(w, k::AUTOMATIONS_WRITE_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: automations write core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: automations write core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 AC4 — 초대 만들기(메일 없는 것)·취소. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만.
     let invites_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -1489,6 +1510,15 @@ async fn main() {
         core_routes.router = core_routes.router.merge(automations.router);
         core_routes.http.extend(automations.http);
         core_routes.sockets.extend(automations.sockets);
+        // S5.4 MD1 — 위임장 줄 읽기(`GET /mandates/{id}/lines`). 읽기 풀만 — 줄 빼기·위임 끝내기는 TS.
+        let mandate_lines = harkroom_server::core::mandate_lines_read::routes(
+            state.pool.clone(),
+            auth.clone(),
+            state.cors.clone(),
+        );
+        core_routes.router = core_routes.router.merge(mandate_lines.router);
+        core_routes.http.extend(mandate_lines.http);
+        core_routes.sockets.extend(mandate_lines.sockets);
         let grant_reads = harkroom_server::core::grant_reads::routes(
             state.pool.clone(),
             auth.clone(),
@@ -1589,6 +1619,17 @@ async fn main() {
             core_routes.router = core_routes.router.merge(ah.router);
             core_routes.http.extend(ah.http);
             core_routes.sockets.extend(ah.sockets);
+        }
+        // S5.4 AT2 — 자동화 수신 끄기. 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = automations_write {
+            let aw = harkroom_server::core::automations_write::routes(
+                write,
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(aw.router);
+            core_routes.http.extend(aw.http);
+            core_routes.sockets.extend(aw.sockets);
         }
         // S5.4 AC4 — 초대 쓰기 2줄(메일이 실린 POST 는 안에서 TS 로 넘긴다, resend 는 TS). 권한이 다 있을 때만.
         if let Some(write) = invites_write {
