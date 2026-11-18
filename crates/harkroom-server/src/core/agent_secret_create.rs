@@ -18,9 +18,8 @@
 //!     "값" 단계(TS `resolveValue`): generate 는 길이 판정 뒤 만든다. import 는 빈 값·64 KiB 넘음 → `bad_value`, text 인데
 //!     UTF-8 로 풀어 U+FFFD 가 보이면 `bad_value`, 그 뒤 F4 "마운트된 값"([`is_mounted_value`] — 같은 오퍼레이터의 살아 있는
 //!     임대로 `granted` 된 판의 봉투를 풀어 시간 차 없이 견준다, 끝 공백·줄바꿈 차이는 같은 값) → `value_is_mounted`(409).
-//! - **TS 에 남는 줄**:
-//!   1. 키링이 없거나 키가 틀린 경우의 409(`secret_store_disabled`·`secret_key_mismatch`) — TS 에 넘겨 그대로 답하게 한다.
-//!   2. `POST /agent/secrets/reveal`(값 내주기)은 이 파일 몫이 아니다(`agent_secret_reveal.rs`).
+//! - 키링이 없거나 키가 틀린 경우의 409(`secret_store_disabled`·`secret_key_mismatch`)는 TS `secretRoutes` 와 같은 본문으로 직접 답한다.
+//! - `POST /agent/secrets/reveal`(값 내주기)은 이 파일 몫이 아니다(`agent_secret_reveal.rs`).
 //!
 //! 쓰기 풀 칸 권한: `GET` 은 [`AGENT_SECRET_CREATE_PRIVILEGES`] + 기동 키 확인. 두 POST 는 그 위에 [`CREATE_WRITE_PRIVILEGES`]
 //! (임대·소유자·원인 글 읽기, secret·secret_version·secret_grant·secret_access_log 쓰기, F4 의 접근 기록·봉투 읽기, `audit_log`)와 글 경로
@@ -28,16 +27,15 @@
 //! - 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 권한이 다 있을 때만 선다(`main.rs`). 키 env 를 읽을 수 없으면
 //!   세 줄 모두 TS 에 남는다(TS 와 같이 키가 없거나 틀리면 `granted: false`). POST 두 줄의 권한이나 글 경로가 없으면 `GET` 만 선다.
 use crate::auth::{Account, RequireAccount};
-use crate::core::msg_post::{PostState, to_ts};
+use crate::core::msg_post::PostState;
 use crate::directory::{internal, json_err, json_ok};
 use crate::secrets::keyring::{SecretAad, SecretKeyring, SecretKind};
 use crate::secrets::verify::{SECRET_KEY_CHECK_PRIVILEGES, load_verified_from_env};
-use axum::extract::{ConnectInfo, FromRequestParts, Request, State};
+use axum::extract::{FromRequestParts, Request, State};
 use axum::http::{StatusCode, header};
 use axum::response::Response;
 use sqlx::PgPool;
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 /// TS `hasCreateGrant` 가 읽는 칸.
@@ -542,6 +540,8 @@ impl CreateLimiter {
 pub struct AgentSecretCreateState {
     write: PgPool,
     keyring: Option<SecretKeyring>,
+    /// 키는 걸렸는데 확인값과 맞지 않아 꺼졌다(409 `secret_key_mismatch`).
+    mismatch: bool,
     /// 만들기·회전 두 줄(`POST /agent/secrets`·`/agent/secrets/rotate`) — 글 경로와 [`CREATE_WRITE_PRIVILEGES`] 가 있을 때만 선다.
     post: Option<PostState>,
     /// 두 줄이 함께 쓰는 하나의 속도 제한(TS `makeLimiter`).
@@ -551,9 +551,11 @@ pub struct AgentSecretCreateState {
 /// 기동 한 번: 키를 읽어 확인값과 맞춘다(TS `verifySecretKeys`). env 가 잘못됐으면 `Err`(이 줄은 TS 에 남는다).
 pub async fn load_state(write: PgPool) -> Result<AgentSecretCreateState, String> {
     let v = load_verified_from_env(&write).await?;
+    let mismatch = v.as_ref().is_some_and(|v| v.mismatch);
     Ok(AgentSecretCreateState {
         write,
         keyring: v.and_then(|v| v.keyring),
+        mismatch,
         post: None,
         limiter: CreateLimiter::create(),
     })
@@ -1523,10 +1525,9 @@ pub fn created_json(
     json!({ "secret": secret, "publicKey": public_key }).to_string()
 }
 
-/// `POST /agent/secrets`·`POST /agent/secrets/rotate` 공통(generate·import). 키링 없음만 판정·속도 제한 **앞에서** TS 로 넘긴다.
+/// `POST /agent/secrets`·`POST /agent/secrets/rotate` 공통(generate·import). 키링 없음은 판정·속도 제한 **앞에서** 409 로 끝낸다(TS 와 같은 순서).
 async fn create_or_rotate(
     st: Arc<AgentSecretCreateState>,
-    peer: SocketAddr,
     req: Request,
     action: Action,
 ) -> Response {
@@ -1564,9 +1565,9 @@ async fn create_or_rotate(
     let Some(post) = st.post.as_ref() else {
         return json_err(StatusCode::NOT_FOUND, "not_found", "not found");
     };
-    // 키가 없거나 틀리면 TS 가 409(`secret_store_disabled`·`secret_key_mismatch`)를 그대로 낸다.
+    // 키가 없거나 틀리면 TS 와 같은 409(`secret_store_disabled`·`secret_key_mismatch`).
     let Some(keyring) = st.keyring.as_ref() else {
-        return to_ts(post.up.clone(), peer, parts, bytes).await;
+        return crate::core::secret_writes::disabled(st.mismatch);
     };
     let json = match &parsed {
         crate::write::Body::Json(v) => v.clone(),
@@ -1608,21 +1609,13 @@ async fn create_or_rotate(
 }
 
 /// `POST /agent/secrets`.
-pub async fn create(
-    State(st): State<Arc<AgentSecretCreateState>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    req: Request,
-) -> Response {
-    create_or_rotate(st, peer, req, Action::Create).await
+pub async fn create(State(st): State<Arc<AgentSecretCreateState>>, req: Request) -> Response {
+    create_or_rotate(st, req, Action::Create).await
 }
 
 /// `POST /agent/secrets/rotate`.
-pub async fn rotate(
-    State(st): State<Arc<AgentSecretCreateState>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    req: Request,
-) -> Response {
-    create_or_rotate(st, peer, req, Action::Rotate).await
+pub async fn rotate(State(st): State<Arc<AgentSecretCreateState>>, req: Request) -> Response {
+    create_or_rotate(st, req, Action::Rotate).await
 }
 
 pub fn routes(

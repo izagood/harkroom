@@ -142,7 +142,8 @@ fn agent_refused() -> Response {
         "agents cannot manage secrets",
     )
 }
-fn disabled(mismatch: bool) -> Response {
+/// TS `secretRoutes` 의 `storeOff`·`keyMismatch` 409. 에이전트 줄도 같은 본문을 쓴다.
+pub(crate) fn disabled(mismatch: bool) -> Response {
     if mismatch {
         json_err(
             StatusCode::CONFLICT,
