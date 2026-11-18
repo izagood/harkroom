@@ -724,3 +724,30 @@ mod once_tests {
         }
     }
 }
+
+/// 그 밖의 `{decision}` — TS `params` zod(`approve|deny|approve-once|approve_once|approve_hour`)에 없는 낱말은 언제나 400
+/// (정확한 낱말은 위의 고정 경로가 먼저 받는다; 혹시 여기로 오면 TS 로 넘긴다).
+pub async fn other_decision_route(
+    axum::extract::State(st): axum::extract::State<std::sync::Arc<AskState>>,
+    crate::auth::RequireAccount(_me, _auth): crate::auth::RequireAccount,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    axum::extract::Path((_agent, _request, decision)): axum::extract::Path<(
+        String,
+        String,
+        String,
+    )>,
+    req: axum::extract::Request,
+) -> Response {
+    let (parts, body) = req.into_parts();
+    let bytes = match super::ask::read_bytes(&parts.headers, body).await {
+        Ok((b, _)) => b,
+        Err(r) => return r,
+    };
+    if matches!(
+        decision.as_str(),
+        "approve" | "deny" | "approve-once" | "approve_once" | "approve_hour"
+    ) {
+        return to_ts(st.up.clone(), peer, parts, bytes).await;
+    }
+    json_err(StatusCode::BAD_REQUEST, "bad_request", BAD_PARAMS)
+}
