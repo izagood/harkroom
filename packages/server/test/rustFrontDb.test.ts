@@ -1636,6 +1636,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // automation 의 SELECT 칸(id·enabled·debounce_sec·deleted_at)은 위 propose 줄에 없는 deleted_at 만 더한다. update(updated_at)는 `for update` 잠금용이다.
         `grant select (id, enabled, debounce_sec, deleted_at), update (updated_at) on automation to ${rw}`,
         `grant select (id, automation_id, event_key, trigger_kind, status, message_id, error, created_at, finished_at, initiated_by, cause_message_id), insert (automation_id, event_key, trigger_kind, payload, not_before, initiated_by, cause_message_id, chain_depth) on automation_run to ${rw}`,
+        // S5.4 MCP 6 — MCP `grant.delegate` 앞머리 거절(`grant_delegate.rs::GRANT_DELEGATE_PRIVILEGES`). 없으면 「mcp grant.delegate core off」. 위 표 단위 insert 와 겹치지만 운영 줄과 글자째 같게 둔다.
+        `grant insert (action, actor_id, target, detail) on audit_log to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -9696,6 +9698,53 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                    from automation a where a.name in ('ar-t-rl', 'ar-r-rl') order by a.name desc`)).rows;
               expect(rl.map((x) => ({ enabled: x.enabled, n: x.n }))).toEqual([{ enabled: false, n: 20 }, { enabled: false, n: 20 }]);
               await db.pool.query(`delete from automation where name like 'ar-_-%'`);
+            }
+
+            // S5.4 MCP 6 — `grant.delegate` 앞머리 거절. TS·Rust 가 각자 다른 `to`(`gd-t-*`·`gd-r-*`)로 같은 장면을 돌리고 답 글자·감사 줄을 견준다.
+            {
+              const gdConn = (await db.pool.query<{ id: string }>(
+                `insert into api_connector (name, owner_account_id, base_url, auth_kind, methods) values ('gd-conn', $1, 'https://api.example.com', 'none', '{GET,POST}') returning id`,
+                [admin.accountId])).rows[0]!.id;
+              try {
+                const base = { methods: ['GET'], pathPrefix: '/repos', days: 7 };
+                // [이름, 인자(쪽별 to), Rust 가 답하나]
+                const GDS: [string, (s: 't' | 'r') => unknown, boolean][] = [
+                  ['① no_connector', (s) => ({ ...base, to: `gd-${s}-nc`, connector: 'gd-none' }), true],
+                  ['② not_granted(받은 권한 없음)', (s) => ({ ...base, to: `gd-${s}-ng`, connector: 'gd-conn' }), true],
+                  ['③ days 소수 → TS', (s) => ({ ...base, to: `gd-${s}-bd`, connector: 'gd-conn', days: 1.5 }), false],
+                  ['④ connector 대문자 → TS', (s) => ({ ...base, to: `gd-${s}-bc`, connector: 'GD' }), false],
+                ];
+                const gdNorm = (t: string) => t.replace(/gd-[tr]-/g, 'gd-x-');
+                const run = async (side: 't' | 'r') => {
+                  const out: Record<string, unknown>[] = [];
+                  for (const [name, args] of GDS) {
+                    const r = await mcpCall(side === 't' ? tsUrl : v2Url, bot3.pat, 'grant.delegate', args(side), 34);
+                    out.push({ name, status: r.status, type: r.type, core: r.core, text: gdNorm(r.text) });
+                  }
+                  return out;
+                };
+                const tsGd = await run('t');
+                const rsGd = await run('r');
+                for (let i = 0; i < tsGd.length; i++) {
+                  const { core, ...a } = tsGd[i]!;
+                  const { core: rc, ...b } = rsGd[i]!;
+                  expect(b, `grant.delegate ${String(a.name)}`).toEqual(a);
+                  expect(core, `${String(a.name)} — TS`).toBeNull();
+                  expect(rc, `${String(a.name)} — 누가 답했나`).toBe(GDS[i]![2] ? 'mcp' : null);
+                }
+                expect(String(tsGd[0]!.text)).toContain('no_connector');
+                expect(String(tsGd[1]!.text)).toContain('not_granted');
+                // 감사 줄 — 거절마다 한 줄, 같은 칸.
+                const gdAudit = async (s: 't' | 'r') => (await db.pool.query(
+                  `select action, actor_id::text = $2 as by_bot, target, detail->>'code' as code, replace(detail->>'to', 'gd-${s}-', 'gd-x-') as to
+                     from audit_log where action = 'grant.delegate.denied' and detail->>'to' like $1 order by detail->>'to'`,
+                  [`gd-${s}-%`, bot3.accountId])).rows;
+                const [ta, ra] = [await gdAudit('t'), await gdAudit('r')];
+                expect(ra).toEqual(ta);
+                expect(ta.map((x) => x.code)).toEqual(['no_connector', 'not_granted']);
+              } finally {
+                await db.pool.query('delete from api_connector where id = $1', [gdConn]);
+              }
             }
             type DI = { name: string; item: Record<string, unknown>[] };
             const itemOf = (n: string) => (tsD as DI[]).find((x) => x.name === n)!.item;
