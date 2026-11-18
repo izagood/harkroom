@@ -1375,6 +1375,33 @@ async fn main() {
         }
         _ => None,
     };
+    // 에이전트 업로드의 비밀 값 검사(`core/leak_guard.rs`) — 권한·키 env 가 다 맞을 때만. 아니면 에이전트 업로드는 TS.
+    let agent_upload_leak = match &attachment_upload {
+        Some((write, _, _)) => {
+            use harkroom_server::core::leak_guard as lg;
+            match write::missing_in(write, &lg::privileges(), lg::LEAK_GUARD_SEQUENCES).await {
+                Ok(m) if m.is_empty() => match lg::LeakGuard::load(write.clone()).await {
+                    Ok(g) => Some(std::sync::Arc::new(g)),
+                    Err(e) => {
+                        eprintln!("front: agent upload leak guard off — secret keys: {e}");
+                        None
+                    }
+                },
+                Ok(m) => {
+                    eprintln!("front: agent upload leak guard off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: agent upload leak guard off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        None => None,
+    };
     // S5.4 CT1 — 채널에 팀 넣기(`POST /channels/{id}/teams/{teamId}/add`). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만.
     let channel_team_add = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -3275,6 +3302,7 @@ async fn main() {
                     up: state.up.clone(),
                     limiter: auth_limiter.clone(),
                     trust: state.trust.clone(),
+                    leak: agent_upload_leak,
                 },
                 auth.clone(),
                 state.cors.clone(),
