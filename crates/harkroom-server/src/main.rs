@@ -3558,7 +3558,8 @@ async fn push_sweeper(
         Ok(m) => return Err(format!("missing privileges {m:?}")),
         Err(e) => return Err(format!("privilege check failed: {e}")),
     }
-    let guard = harkroom_server::loops::push::LeakGuard::from_env()
+    let guard = harkroom_server::loops::push::LeakGuard::from_env_verified(pool)
+        .await
         .map_err(|e| format!("secret keys: {e}"))?;
     if !guard.is_on() {
         let sealed: bool = sqlx::query_scalar(

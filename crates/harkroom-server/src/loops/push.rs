@@ -17,7 +17,7 @@ use crate::push::payload::{
     PushReason, build_push_payload, classify_push, is_urgent, push_collapse_id, push_thread_key,
 };
 use crate::secrets::keyring::{
-    SecretAad, SecretBytes, SecretKeyring, SecretKind, load_secret_keys, load_secret_keys_from_env,
+    SecretAad, SecretBytes, SecretKeyring, SecretKind, load_secret_keys,
 };
 use crate::secrets::leak::{LeakHit, LeakSecret, find_in_texts};
 use serde_json::Value;
@@ -174,15 +174,20 @@ impl LeakGuard {
         }
     }
 
-    /// env(`HARKROOM_SECRET_KEYS_DIR` 등, 키링과 같다)로 [`LeakGuard::load`].
-    pub fn from_env() -> Result<Self, String> {
-        let loaded = load_secret_keys_from_env().map_err(|e| format!("{e}"))?;
-        match loaded {
-            None => Ok(Self(None)),
-            Some(l) => SecretKeyring::new(l)
-                .map(|k| Self(Some(k)))
-                .map_err(|e| format!("{e}")),
-        }
+    /// env(`HARKROOM_SECRET_KEYS_DIR` 등)로 읽어 DB 키 확인값과 맞춘 키링 — 비밀 REST 와 같은 공용 로더
+    /// ([`crate::secrets::verify::load_verified_from_env`], TS `verifySecretKeys` 뒤의 `createSecretLeakGuard`).
+    /// 확인값과 맞지 않는 kid 는 빠지고, 활성 kid 가 어긋나면 꺼짐이다. 오류 글귀에는 파일 이름·kid 만 있다.
+    pub async fn from_env_verified(pool: &PgPool) -> Result<Self, String> {
+        let verified = crate::secrets::verify::load_verified_from_env(pool).await?;
+        Ok(Self(verified.and_then(|v| {
+            if !v.rejected_kids.is_empty() {
+                eprintln!(
+                    "front: push leak guard — secret keys rejected by key check: {:?}",
+                    v.rejected_kids
+                );
+            }
+            v.keyring
+        })))
     }
 
     pub fn is_on(&self) -> bool {

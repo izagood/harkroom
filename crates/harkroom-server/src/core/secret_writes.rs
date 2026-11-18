@@ -1,4 +1,5 @@
 //! S5.4 SE3 — 비밀 REST 쓰기 세 줄: `POST /secrets`·`PATCH /secrets/:id`·`PUT /secrets/:id/value`. TS `routes/secretRoutes.ts` 를 옮긴다.
+//! SE4 — 목록 `GET /secrets` 도 여기 있다(키링 상태·행마다 `keyLost` 를 싣는다 — 같은 기동 키링을 쓴다).
 //!
 //! - 키링은 기동에 한 번 [`load_state`] 가 env 로 읽어 DB 확인값(`secret_key_check`)과 맞춘다(TS `verifySecretKeys`).
 //!   키가 없거나 맞지 않으면 TS 와 같이 409(`secret_store_disabled`·`secret_key_mismatch`)로 답한다. env 가 잘못돼
@@ -6,7 +7,7 @@
 //! - 판정 순서·상태·코드는 TS 와 같다. zod 오류 문구는 다르다 — 대조는 상태·코드만 본다.
 //! - **값은 답·감사·오류 어디에도 싣지 않는다.** 봉인은 v2(AAD = id·판·종류·kid).
 //! - 권한은 [`SECRET_WRITES_PRIVILEGES`]·[`crate::secrets::verify::SECRET_KEY_CHECK_PRIVILEGES`] — 없으면 TS 에 남는다.
-//! - 목록(`GET /secrets`)·보기(reveal)·에이전트 줄은 TS 에 남긴다.
+//! - 보기(reveal)·에이전트 줄은 TS 에 남긴다.
 use crate::auth::{Account, RequireAccount};
 use crate::core::content_scan::scan_write;
 use crate::core::secrets_read::{SECRET_SQL, load};
@@ -81,6 +82,22 @@ const MAX_VERSION_SQL: &str =
 const REVOKE_OLD_SQL: &str = "update secret_version set sealed = null, revoked_at = now() \
      where secret_id = $1::uuid and version < $2 and revoked_at is null";
 const TOUCH_SQL: &str = "update secret set updated_at = now() where id = $1::uuid";
+/// TS `GET /secrets` — `SECRET_COLS` + 지금 판의 kid(`split_part(sealed, '.', 2)`). 값 자체는 고르지 않는다. admin 은 모두, 아니면 내 것.
+const LIST_SQL: &str = "select json_build_object(\
+       'id', s.id, 'name', s.name, 'kind', s.kind, 'filename', s.filename, 'description', s.description, \
+       'ownerAccountId', s.owner_account_id, \
+       'expiresAt', to_char(s.expires_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'), \
+       'createdAt', to_char(s.created_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'), \
+       'updatedAt', to_char(s.updated_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'), \
+       'version', v.version, 'sizeBytes', v.size_bytes, \
+       'grantCount', (select count(*)::int from secret_grant g where g.secret_id = s.id), \
+       'createdByAgentId', s.created_by_agent_id, 'createdCauseMessageId', s.created_cause_message_id, \
+       'valueSetByAgentId', (select a.id from account a where a.id = v.created_by and a.kind = 'agent'))::text, \
+       v.sealed_kid \
+     from secret s left join lateral ( \
+       select version, size_bytes, created_by, split_part(sealed, '.', 2) as sealed_kid from secret_version \
+        where secret_id = s.id and revoked_at is null order by version desc limit 1) v on true \
+     where $1::boolean or s.owner_account_id = $2::uuid order by s.name";
 
 pub struct SecretWritesState {
     read: PgPool,
@@ -688,6 +705,52 @@ pub async fn replace_value(
     }
 }
 
+/// 행의 `keyLost` — 보관소가 켜져 있고, 지금 값의 kid 가 있고, 그 kid 가 키링에 없다. kid 이름은 내보내지 않는다.
+fn key_lost(keyring: Option<&SecretKeyring>, sealed_kid: Option<&str>) -> bool {
+    match (keyring, sealed_kid) {
+        (Some(k), Some(kid)) if !kid.is_empty() => !k.kids().any(|x| x == kid),
+        _ => false,
+    }
+}
+
+/// `GET /secrets` — 사람만. admin 은 모두, 아니면 내 것. 이름 순.
+pub async fn list(
+    State(st): State<Arc<SecretWritesState>>,
+    RequireAccount(me, _): RequireAccount,
+) -> Response {
+    if me.kind == "agent" {
+        return agent_refused();
+    }
+    let rows: Vec<(String, Option<String>)> = match sqlx::query_as(LIST_SQL)
+        .bind(me.is_admin)
+        .bind(&me.id)
+        .fetch_all(&st.read)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => return internal(e),
+    };
+    let mut secrets = Vec::with_capacity(rows.len());
+    for (j, kid) in rows {
+        let Ok(Value::Object(mut o)) = serde_json::from_str::<Value>(&j) else {
+            return internal_msg();
+        };
+        o.insert(
+            "keyLost".to_owned(),
+            Value::Bool(key_lost(st.keyring.as_ref(), kid.as_deref())),
+        );
+        secrets.push(Value::Object(o));
+    }
+    json_ok(
+        json!({
+            "enabled": st.keyring.is_some(),
+            "keyMismatch": st.mismatch,
+            "secrets": secrets,
+        })
+        .to_string(),
+    )
+}
+
 pub fn routes(
     st: SecretWritesState,
     auth: crate::auth::AuthPools,
@@ -695,6 +758,7 @@ pub fn routes(
 ) -> crate::route_table::Routes<()> {
     use crate::route_table::Table;
     let t = Table::<Arc<SecretWritesState>>::new()
+        .get("/secrets", list)
         .post("/secrets", create)
         .patch("/secrets/{id}", patch)
         .put("/secrets/{id}/value", replace_value)

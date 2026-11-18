@@ -1333,7 +1333,15 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
     const CORS = 'tauri://localhost';
     // S5.4 3회차 — 첨부 저장소를 두 서버가 함께 쓴다(Rust 의 `GET /attachments/{id}`·`DELETE /channels/{id}` 는 `ATTACHMENT_ROOT` 가 있을 때만 붙는다).
     const attRoot = mkdtempSync(joinPath(tmpdir(), 'contrast-att-'));
-    const app = await buildServer({ pool: db.pool, trustProxy: TRUST, corsOrigins: [CORS], storage: { root: attRoot, maxBytes: 25 * 1024 * 1024 } });
+    // S5.4 SE3/SE4 — 비밀 보관소 키를 두 서버에 같이 건다(kid `ck1`). Rust 는 env 로 읽어 DB 확인값과 맞춘다.
+    const secretKeysDir = mkdtempSync(joinPath(tmpdir(), 'contrast-keys-'));
+    const secretKey = randomBytes(32);
+    writeCases(joinPath(secretKeysDir, 'ck1'), secretKey.toString('hex'));
+    const { createSecretKeyring } = await import('../src/services/secretKeyring.js');
+    const app = await buildServer({
+      pool: db.pool, trustProxy: TRUST, corsOrigins: [CORS], storage: { root: attRoot, maxBytes: 25 * 1024 * 1024 },
+      secretKeyring: createSecretKeyring(new Map([['ck1', secretKey]]), 'ck1'),
+    });
     let front: ChildProcess | undefined;
     try {
       await app.listen({ port: 0, host: '127.0.0.1' });
@@ -1713,7 +1721,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS,
         // S5.3 C0 — 코어 /ws·/ws-ticket 을 켠다. 주기는 시험이 기다릴 수 있게 줄인다(기본값은 TS 와 같다).
         HARKROOM_CORE: 'rust', HARKROOM_WS_APP_HEARTBEAT_MS: '300', HARKROOM_WS_REVALIDATE_MS: '500',
-        ATTACHMENT_ROOT: attRoot,
+        ATTACHMENT_ROOT: attRoot, HARKROOM_SECRET_KEYS_DIR: secretKeysDir, HARKROOM_SECRET_KEY_ID: 'ck1',
       });
       expect(f.log()).toContain('front: core rust');
       expect(f.log()).toContain('/operator, /operators*');
@@ -4201,8 +4209,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect(f.log(), k).toContain(`"${k}"`);
         }
         expect(f.log()).not.toContain('secrets read core off');
-        // SE3 — 비밀 쓰기 세 줄이 Rust 에 붙었는지(답 대조 사례는 다음 회차).
-        for (const k of ['POST /secrets', 'PATCH /secrets/{id}', 'PUT /secrets/{id}/value']) expect(f.log(), k).toContain(`"${k}"`);
+        // SE3·SE4 — 비밀 쓰기 세 줄과 목록이 Rust 에 붙었는지(쓰기 답 대조는 S5.4 3회차 ② 의 7번).
+        for (const k of ['GET /secrets', 'POST /secrets', 'PATCH /secrets/{id}', 'PUT /secrets/{id}/value']) expect(f.log(), k).toContain(`"${k}"`);
         expect(f.log()).not.toContain('secret writes core off');
         const M = member.token;
         const mk = async (name: string, owner: string) => (await db.pool.query<{ id: string }>(
@@ -4254,6 +4262,19 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const aa = (await both(`/secrets/${mine}/access`, A)).access as { ip: string | null }[];
         expect(aa.map((r) => r.ip), 'admin 에게는 IP 를 뺀다').toEqual([null, null, null]);
         for (const q of ['?limit=1', '?limit=abc', '?limit=0', '?limit=-3', '?limit=9999', '?limit=2&limit=1']) await both(`/secrets/${mine}/access${q}`, M);
+        // SE4 — 목록(`GET /secrets`). se1-mine 의 지금 판은 kid `k1`(키링에 없음 → keyLost), se1-gone 은 v1.k1 하나, 나머지는 판 없음.
+        // `ck1` 로 봉한 판(키링에 있음 → keyLost false)을 하나 더 둔다. 소유자는 내 것만, admin 은 모두.
+        const live = await mk('se1-live', member.accountId);
+        await db.pool.query(`insert into secret_version (secret_id, version, sealed, size_bytes, created_by) values ($1, 1, 'v2.ck1.SE1SEALED4', 4, $2)`, [live, member.accountId]);
+        const lm = (await both('/secrets', M)) as { enabled: boolean; keyMismatch: boolean; secrets: { name: string; keyLost: boolean }[] };
+        expect({ enabled: lm.enabled, keyMismatch: lm.keyMismatch }).toEqual({ enabled: true, keyMismatch: false });
+        expect(lm.secrets.filter((x) => x.name.startsWith('se1-')).map((x) => [x.name, x.keyLost]))
+          .toEqual([['se1-gone', true], ['se1-gone2', false], ['se1-live', false], ['se1-mine', true]]);
+        const la = (await both('/secrets', A)) as { secrets: { name: string }[] };
+        expect(la.secrets.map((x) => x.name), 'admin 은 남의 것도').toContain('se1-theirs');
+        await both('/secrets', agent.pat);
+        await both('/secrets', '');
+        await db.pool.query('delete from secret where id = $1', [live]);
         expect(JSON.stringify(seen), '봉한 값은 답에 없다').not.toContain('SE1SEALED');
         expect(JSON.stringify(seen)).not.toContain('k1');
         for (const [name, m, path, token] of [
@@ -10954,6 +10975,88 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           const [auT, auR] = [await au(sT), await au(sR)];
           expect(auR, '부여 감사').toEqual(auT);
           expect(auR.length).toBe(3);
+        }
+        // 7) 비밀 쓰기(S5.4 SE3) — POST /secrets · PATCH /secrets/:id · PUT /secrets/:id/value. 두 벌의 이름은 `se3t-*`·`se3r-*` 로 갈라
+        // 본문·감사의 이름을 가린 뒤 견준다. 봉인 바이트는 다르다(IV) — 판 줄은 꼴(v2.ck1.*)·크기·판 번호만 본다.
+        {
+          const M = member.token;
+          const norm = (v: unknown): unknown => deep(JSON.parse(JSON.stringify(v ?? null).replace(/se3[tr]-/g, 'se3x-')));
+          const pair3 = async (name: string, m: string, pT: string, pR: string, bT?: unknown, bR?: unknown, token = M) => {
+            const [a, b] = [await callX(tsUrl, m, pT, bT, token), await callX(rsUrl, m, pR, bR, token)];
+            if (a.status === 400) expect({ status: b.status, code: b.code }, name).toEqual({ status: a.status, code: a.code });
+            else expect({ status: b.status, json: norm(b.json) }, name).toEqual({ status: a.status, json: norm(a.json) });
+            return { a, b };
+          };
+          const nm = (side: 't' | 'r', n: string) => `se3${side}-${n}`;
+          const post = (name: string, body: (side: 't' | 'r') => unknown, token = M) => pair3(name, 'POST', '/secrets', '/secrets', body('t'), body('r'), token);
+          const leakId = 'AKIA' + 'Q'.repeat(16);
+          await post('비밀 만들기 에이전트 → 403', (x) => ({ name: nm(x, 'a'), kind: 'text', value: 'v' }), agent.pat);
+          await post('비밀 만들기 익명 → 401', (x) => ({ name: nm(x, 'a'), kind: 'text', value: 'v' }), '');
+          await post('비밀 만들기 본문 없음 → 400', () => ({}));
+          await post('비밀 만들기 이름 틀림 → 400', () => ({ name: 'Bad Name', kind: 'text', value: 'v' }));
+          await post('비밀 만들기 kind 모름 → 400', (x) => ({ name: nm(x, 'a'), kind: 'blob', value: 'v' }));
+          await post('비밀 만들기 파일 이름 없음 → 400', (x) => ({ name: nm(x, 'a'), kind: 'file', valueBase64: 'aGk=' }));
+          await post('비밀 만들기 텍스트에 파일 이름 → 400', (x) => ({ name: nm(x, 'a'), kind: 'text', filename: 'a.txt', value: 'v' }));
+          await post('비밀 만들기 값 칸 틀림 → 400 bad_value', (x) => ({ name: nm(x, 'a'), kind: 'text', valueBase64: 'aGk=' }));
+          await post('비밀 만들기 빈 값 → 400 bad_value', (x) => ({ name: nm(x, 'a'), kind: 'text', value: '' }));
+          await post('비밀 만들기 base64 아님 → 400 bad_value', (x) => ({ name: nm(x, 'a'), kind: 'file', filename: 'k.bin', valueBase64: '@@' }));
+          await post('비밀 만들기 설명에 토큰 → 400', (x) => ({ name: nm(x, 'a'), kind: 'text', value: 'v', description: `key ${leakId}` }));
+          await post('비밀 만들기 설명에 값 → 400', (x) => ({ name: nm(x, 'a'), kind: 'text', value: 'hunter2-long-value', description: 'pw hunter2-long-value' }));
+          await post('비밀 만들기 expiresAt 틀림 → 400', (x) => ({ name: nm(x, 'a'), kind: 'text', value: 'v', expiresAt: 'tomorrow' }));
+          const okT = await post('비밀 만들기 텍스트 성공', (x) => ({ name: nm(x, 'text'), kind: 'text', value: 'se3-value-1', description: '설명', expiresAt: '2099-01-02T03:04:05.678Z' }));
+          expect(okT.a.status).toBe(201);
+          const okF = await post('비밀 만들기 파일 성공', (x) => ({ name: nm(x, 'file'), kind: 'file', filename: 'id_rsa', valueBase64: Buffer.from('file-bytes').toString('base64') }));
+          expect(okF.a.status).toBe(201);
+          await post('비밀 만들기 이름 겹침 → 409', (x) => ({ name: nm(x, 'text'), kind: 'text', value: 'other' }));
+          const idOf = (r: { json: Record<string, unknown> }) => String((r.json.secret as { id: string }).id);
+          const [tT, tR, fT, fR] = [idOf(okT.a), idOf(okT.b), idOf(okF.a), idOf(okF.b)];
+          const versions = async (id: string) => (await db.pool.query<{ version: number; sealed: string | null; size_bytes: number; revoked: boolean }>(
+            `select version, sealed, size_bytes, revoked_at is not null as revoked from secret_version where secret_id = $1 order by version`, [id])).rows
+            .map((r) => ({ ...r, sealed: r.sealed === null ? null : r.sealed.replace(/^(v2\.ck1\.).+$/, '$1<sealed>') }));
+          expect(await versions(tR), '텍스트 판 줄').toEqual(await versions(tT));
+          expect(await versions(tR)).toEqual([{ version: 1, sealed: 'v2.ck1.<sealed>', size_bytes: 11, revoked: false }]);
+          expect(await versions(fR), '파일 판 줄').toEqual(await versions(fT));
+          // PATCH /secrets/:id
+          const patch = (name: string, t: string, r: string, body: unknown, token = M) => pair3(name, 'PATCH', `/secrets/${t}`, `/secrets/${r}`, body, body, token);
+          await patch('비밀 고치기 에이전트 → 403', tT, tR, { description: 'x' }, agent.pat);
+          await patch('비밀 고치기 익명 → 401', tT, tR, { description: 'x' }, '');
+          await patch('비밀 고치기 id 아님 → 400', 'nope', 'nope', { description: 'x' });
+          await patch('비밀 고치기 없는 것 → 404', g4, g4, { description: 'x' });
+          await patch('비밀 고치기 admin 도 남의 것 → 404', tT, tR, { description: 'x' }, A);
+          await patch('비밀 고치기 설명 너무 김 → 400', tT, tR, { description: 'x'.repeat(501) });
+          await patch('비밀 고치기 expiresAt 틀림 → 400', tT, tR, { expiresAt: 'soon' });
+          await patch('비밀 고치기 설명에 토큰 → 400', tT, tR, { description: leakId });
+          await patch('비밀 고치기 설명에 값 → 400', tT, tR, { description: 'it is se3-value-1' });
+          expect((await patch('비밀 고치기 성공', tT, tR, { description: '새 설명', expiresAt: null })).a.status).toBe(200);
+          await patch('비밀 고치기 빈 본문', tT, tR, {});
+          // PUT /secrets/:id/value
+          const put = (name: string, t: string, r: string, body: unknown, token = M) => pair3(name, 'PUT', `/secrets/${t}/value`, `/secrets/${r}/value`, body, body, token);
+          await put('값 바꾸기 에이전트 → 403', tT, tR, { value: 'n' }, agent.pat);
+          await put('값 바꾸기 id 아님 → 400', 'nope', 'nope', { value: 'n' });
+          await put('값 바꾸기 없는 것 → 404', g4, g4, { value: 'n' });
+          await put('값 바꾸기 admin 도 남의 것 → 404', tT, tR, { value: 'n' }, A);
+          await put('값 바꾸기 텍스트에 base64 → 400', tT, tR, { valueBase64: 'aGk=' });
+          await put('값 바꾸기 빈 값 → 400', tT, tR, { value: '' });
+          await put('값 바꾸기 파일에 value → 400', fT, fR, { value: 'x' });
+          expect((await put('값 바꾸기 성공', tT, tR, { value: 'se3-value-2-longer' })).a.status).toBe(200);
+          await put('값 바꾸기 파일 성공', fT, fR, { valueBase64: Buffer.from('file-bytes-2').toString('base64') });
+          expect(await versions(tR), '바꾼 뒤 판 줄').toEqual(await versions(tT));
+          expect((await versions(tR)).map((v) => [v.version, v.sealed, v.revoked])).toEqual([[1, null, true], [2, 'v2.ck1.<sealed>', false]]);
+          expect(await versions(fR)).toEqual(await versions(fT));
+          // 감사 — 이름만 가르고 같은 줄.
+          const au = async (id: string) => (await auditOf(`target = $1 and action like 'secret.%'`, [id])).map(norm);
+          expect(await au(tR), '텍스트 비밀 감사').toEqual(await au(tT));
+          expect((await au(tR)).length).toBeGreaterThanOrEqual(2);
+          expect(await au(fR), '파일 비밀 감사').toEqual(await au(fT));
+          // 봉인 바이트를 서로의 키링으로 연다 — Rust 가 봉한 값을 TS 키링이 풀고 같은 값이 나온다.
+          const ring = createSecretKeyring(new Map([['ck1', secretKey]]), 'ck1');
+          const cur = async (id: string) => (await db.pool.query<{ version: number; sealed: string }>(
+            `select version, sealed from secret_version where secret_id = $1 and sealed is not null`, [id])).rows[0]!;
+          for (const [id, kind, want] of [[tR, 'text', 'se3-value-2-longer'], [fR, 'file', 'file-bytes-2']] as const) {
+            const c = await cur(id);
+            expect(ring.open(c.sealed, { secretId: id, version: c.version, kind })?.toString('utf8'), `${kind} 값이 풀린다`).toBe(want);
+          }
+          await db.pool.query('delete from secret where id = any($1)', [[tT, tR, fT, fR]]);
         }
       }
       // 프리플라이트(옮긴 줄의 OPTIONS 는 앞단이 TS 로 넘긴다 — 두 답이 같아야 한다).
