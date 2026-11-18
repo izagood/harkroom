@@ -309,8 +309,8 @@ mod tests {
             "number": 2353,
             "head": "71c117108b064ac51d6d1c6d20138c21794a367f",
             "until": "checks",
-            "channelId": "efdaeeef-6258-4047-b232-22152fe9d226",
-            "threadRootId": "6ef97871-80a1-43d3-b2ac-1cd70ca9fe93",
+            "channelId": "0b5c2a1e-7d34-4f6a-9e81-3c2d4b5a6f70",
+            "threadRootId": "4e8d1f20-9a3b-4c5e-8f12-7a6b5c4d3e21",
         })
     }
 
@@ -321,7 +321,7 @@ mod tests {
         assert_eq!(a.number, 2353);
         assert_eq!(a.delegation, None);
         let mut d = ok();
-        d["delegationId"] = json!("6ef97871-80a1-43d3-b2ac-1cd70ca9fe93");
+        d["delegationId"] = json!("4e8d1f20-9a3b-4c5e-8f12-7a6b5c4d3e21");
         d["extra"] = json!(1);
         assert!(parse(&d).unwrap().delegation.is_some());
     }
