@@ -5,7 +5,7 @@
 //! - 순서가 규칙이다(TS 와 같다): 인증(401) → 경로(400) → 본문(400) → 볼 수 있는가(403) → 이 채널의 글인가(404) → 판정 → 쓰기 → 이벤트.
 //! - **Rust 가 맡는 카드는 좁다(닫힌 쪽).** 카드나 그 거울의 원본이 권한·머지·사슬 카드(`permissionRequest`·`permissionMirror`·
 //!   `mergeDenial`·`chainBackstop`)이거나 권한 요청 줄이 가리키는 카드, 또는 종류(`meta.kind`)·모양을 못 읽는 카드면
-//!   Rust 는 판정하지 않고 읽어 둔 본문 그대로 TS 로 넘긴다([`hand_to_ts`]). 그런 카드의 결정은 C3b-3 몫이다.
+//!   Rust 는 판정하지 않고 읽어 둔 본문 그대로 TS 로 넘긴다([`hand_answer_to_ts`]). 그런 카드의 결정은 C3b-3 몫이다.
 //!   단 답하기·닫기는 사슬 백스톱·옛 머지 거절 카드(와 그 거울)도 Rust 가 맡는다 — TS 에서도 보통 물음 길이다([`ANSWER_TS_MARKERS`]).
 //! - 판정·쓰기·깨움·이벤트는 쓰기 풀의 **한 트랜잭션**이다. `Err` 면 500 이고 답·닫힘도 되돌아간다. 깨움 실패만 TS 처럼 삼킨다
 //!   (SAVEPOINT — 답은 남는다).
@@ -166,12 +166,7 @@ async fn is_permission_request_card(pool: &PgPool, id: &str) -> sqlx::Result<boo
     .await
 }
 
-/// 이 카드를 TS 에 넘기나 — 닫힌 쪽: 확신할 수 없으면 넘긴다.
-pub(super) async fn hand_to_ts(pool: &PgPool, id: &str) -> sqlx::Result<bool> {
-    hand_to_ts_with(pool, id, TS_ONLY_MARKERS).await
-}
-
-/// 답하기·닫기용 [`hand_to_ts`] — 사슬·머지 거절 카드는 넘기지 않는다([`ANSWER_TS_MARKERS`]).
+/// 이 카드를 TS 에 넘기나 — 닫힌 쪽: 확신할 수 없으면 넘긴다. 사슬·머지 거절 카드는 넘기지 않는다([`ANSWER_TS_MARKERS`]).
 pub(super) async fn hand_answer_to_ts(pool: &PgPool, id: &str) -> sqlx::Result<bool> {
     hand_to_ts_with(pool, id, ANSWER_TS_MARKERS).await
 }
@@ -676,14 +671,14 @@ pub async fn answer(
     if let Some(r) = gate(&st, &me.id, &id, &message).await {
         return r;
     }
-    // C3b-3c — 권한 카드(거울 아님)의 거절은 3b 코어가 정한다. 그 밖의 권한 카드 답은 아래 `hand_to_ts` 가 TS 로 넘긴다.
+    // C3b-3c — 권한 카드(거울 아님)의 거절은 3b 코어가 정한다. 그 밖의 권한 카드 답은 아래 `hand_answer_to_ts` 가 TS 로 넘긴다.
     if let Answer::Option(o) = &ans
         && let super::decide_routes::Taken::Done(r) =
             super::decide_routes::answer_card_deny(&st, &me, &auth, &message, o).await
     {
         return r;
     }
-    // S5.3 B2 — 소유자의 승인(tool approve·command approve_once/hour). 맡지 않는 꼴은 아래 `hand_to_ts` 가 TS 로 넘긴다.
+    // S5.3 B2 — 소유자의 승인(tool approve·command approve_once/hour). 맡지 않는 꼴은 아래 `hand_answer_to_ts` 가 TS 로 넘긴다.
     if let Answer::Option(o) = &ans
         && let super::decide_routes::Taken::Done(r) =
             super::decide_routes::answer_card_approve(&st, &me, &auth, &message, o).await

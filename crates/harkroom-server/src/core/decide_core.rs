@@ -423,7 +423,7 @@ pub async fn resolve_decision(
 type MirrorRow = (Value, Option<String>, Option<String>, Option<String>);
 
 /// TS `isGenuinePermissionMirror`(security n2) — 서버가 받아 세운 거울인가. 거짓이면 TS 는 물음 길(`recordAskAnswer`)로 가서
-/// 거절된다. **그 물음 길은 Rust 가 맡지 않는다**(3b 입구가 TS 로 넘긴다 — 거울·원본이 권한 카드라 C3b-1 의 `hand_to_ts` 도 넘긴다).
+/// 거절된다. **그 물음 길은 Rust 가 맡지 않는다**(3b 입구가 TS 로 넘긴다 — 거울·원본이 권한 카드라 C3b-1 의 `hand_answer_to_ts` 도 넘긴다).
 pub async fn is_genuine_permission_mirror(
     conn: &mut PgConnection,
     mirror: &str,
