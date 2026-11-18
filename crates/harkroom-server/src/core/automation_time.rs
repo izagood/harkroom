@@ -3,8 +3,8 @@
 //! TS 는 `Intl.DateTimeFormat` 으로 tz 벽시계를 풀고, 여기는 `chrono-tz` 의 IANA 표로 푼다 — 산법(오프셋 두 번 구하기,
 //! 분 단위 내림)은 한 줄씩 같으므로 DST 경계의 결과도 같다(시험이 TS 로 뽑은 값을 고정한다).
 //!
-//! 남는 차이(그래서 [`Schedule::parse`] 가 `None` = TS 로 넘긴다): `Intl` 은 tz 이름을 대소문자 무시·별칭 정규화로 받지만
-//! `chrono-tz` 는 정확한 IANA 이름만 받는다. tz 표의 판(ICU vs chrono-tz 내장)이 다르면 그 사이 바뀐 규칙에서 갈린다.
+//! 남는 차이(그래서 [`Schedule::parse`] 가 `None` = TS 로 넘긴다): `Intl` 은 tz 이름을 대소문자 무시·별칭 정규화로 받는다 —
+//! [`parse_tz`] 가 대소문자 무시·링크 이름까지 푼다. 그래도 chrono-tz 표에 없는 꼴(오프셋 `+09:00` 등)은 TS 몫이다. tz 표의 판(ICU vs chrono-tz 내장)이 다르면 그 사이 바뀐 규칙에서 갈린다.
 use chrono::{Datelike, NaiveDate, TimeZone, Timelike};
 use chrono_tz::Tz;
 use serde_json::Value;
@@ -83,9 +83,16 @@ pub struct Schedule {
     pub tz: Tz,
 }
 
-/// `chrono-tz` 가 정확한 이름으로 아는 tz. 모르면 `None`(TS `Intl` 은 받을 수 있으므로 부른 쪽이 TS 로 넘긴다).
+/// `chrono-tz` 가 아는 tz — `Intl` 처럼 대소문자를 무시하고, 별칭(backward 링크: `US/Eastern`·`Asia/Calcutta` 등)도
+/// 받는다(chrono-tz 표에 링크가 변형으로 들어 있어 같은 규칙으로 푼다). 모르면 `None`(오프셋 꼴 등 — 부른 쪽이 TS 로 넘긴다).
 pub fn parse_tz(s: &str) -> Option<Tz> {
-    s.parse::<Tz>().ok()
+    if let Ok(tz) = s.parse::<Tz>() {
+        return (tz.name() != "Factory").then_some(tz);
+    }
+    chrono_tz::TZ_VARIANTS
+        .iter()
+        .copied()
+        .find(|tz| tz.name().eq_ignore_ascii_case(s) && tz.name() != "Factory")
 }
 
 impl Schedule {
@@ -411,10 +418,19 @@ mod tests {
         );
         assert!(
             Schedule::parse(
-                &json!({"kind":"schedule","freq":"daily","time":"09:00","tz":"asia/seoul"})
+                &json!({"kind":"schedule","freq":"daily","time":"09:00","tz":"+09:00"})
             )
             .is_none()
         );
+        // Intl 처럼 대소문자 무시·링크 이름도 받는다.
+        assert_eq!(parse_tz("asia/seoul"), Some(chrono_tz::Asia::Seoul));
+        assert_eq!(
+            parse_tz("ASIA/CALCUTTA").map(|t| t.name()),
+            Some("Asia/Calcutta")
+        );
+        assert_eq!(parse_tz("us/eastern").map(|t| t.name()), Some("US/Eastern"));
+        assert_eq!(parse_tz("Factory"), None);
+        assert_eq!(parse_tz("Nope/X"), None);
         assert!(
             Schedule::parse(
                 &json!({"kind":"schedule","freq":"weekly","weekdays":[],"time":"09:00","tz":"UTC"})

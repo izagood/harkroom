@@ -55,25 +55,11 @@ const NAME_MAX: usize = 100;
 const HANDLE_MAX: usize = 64;
 const DEBOUNCE_MAX: i64 = 3600;
 
-/// Rust 가 판정하는 시간대. ICU(`Intl.DateTimeFormat`)가 받는 것이 확실한 IANA 정식 이름만 — 대소문자까지 그대로일 때만.
-/// 이 밖(별칭·대소문자 다름·없는 이름)은 TS 가 판정한다. 저장 값은 입력 글자 그대로라 TS 와 같다.
-pub(super) const TZ_ALLOW: &[&str] = &[
-    "UTC",
-    "Etc/UTC",
-    "Asia/Seoul",
-    "Asia/Tokyo",
-    "Asia/Shanghai",
-    "Asia/Singapore",
-    "Asia/Kolkata",
-    "Europe/London",
-    "Europe/Berlin",
-    "Europe/Paris",
-    "America/New_York",
-    "America/Chicago",
-    "America/Denver",
-    "America/Los_Angeles",
-    "Australia/Sydney",
-];
+/// Rust 가 판정하는 시간대 — TS `tzSchema`(1~64자 + `Intl` 이 받음). chrono-tz 표의 이름·링크를 대소문자 무시로 받는다
+/// ([`parse_tz`](crate::core::automation_time::parse_tz)). 표에 없는 꼴은 TS 가 판정한다. 저장 값은 입력 글자 그대로라 TS 와 같다.
+fn tz_ok(s: &str) -> bool {
+    (1..=64).contains(&s.len()) && crate::core::automation_time::parse_tz(s).is_some()
+}
 
 const GITHUB_EVENTS: &[&str] = &[
     "push",
@@ -216,7 +202,7 @@ fn parse_trigger(v: &Value) -> Option<Value> {
     match o.get("kind")?.as_str()? {
         "schedule" => {
             let time = o.get("time")?.as_str().filter(|s| hhmm_ok(s))?;
-            let tz = o.get("tz")?.as_str().filter(|s| TZ_ALLOW.contains(s))?;
+            let tz = o.get("tz")?.as_str().filter(|s| tz_ok(s))?;
             out.insert("kind".into(), "schedule".into());
             let freq = o.get("freq")?.as_str()?;
             out.insert("freq".into(), freq.into());
@@ -583,7 +569,14 @@ mod tests {
     fn falls_back_to_ts_when_unsure() {
         let mut v = base();
         v["trigger"]["tz"] = json!("asia/seoul");
-        assert!(parse(&v).is_none(), "대소문자 다른 시간대는 TS 가 판정");
+        assert!(
+            parse(&v).is_some(),
+            "대소문자 다른 시간대도 Intl 처럼 받는다"
+        );
+        v["trigger"]["tz"] = json!("US/Eastern");
+        assert!(parse(&v).is_some(), "링크 이름도 받는다");
+        v["trigger"]["tz"] = json!("+09:00");
+        assert!(parse(&v).is_none(), "오프셋 꼴은 TS 가 판정");
         let mut v = base();
         v["name"] = json!("\u{FEFF}이름");
         assert!(parse(&v).is_none());

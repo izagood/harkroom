@@ -4,8 +4,10 @@
 //! - 순서는 TS 와 같다: `requireAccount`(401) → 경로(400) → 사람이 아니면 403 `human_only` → 본문(400 `bad_request`) →
 //!   모양(400 `bad_model_value`) → 에이전트 없음 404 → 소유자가 아니면 403 `owner_only` → 트랜잭션(목록 저장 + 목록 밖
 //!   에이전트 지정 세기, 행 잠금) → 감사 `agent.pickable_models.set {models, cleared}` → 200 `{models, outside, cleared}`.
-//! - 본문에 `clearOutside: true` 가 있으면 **그대로 TS 로 넘긴다** — 풀린 스레드마다 시스템 줄(i18n 표지)·
-//!   `thread.agent_model.changed` 를 내는 일은 TS `postMessage` 몫이다. 그래서 여기서는 `cleared` 가 늘 0 이다.
+//! - 본문에 `clearOutside: true` 면 같은 트랜잭션에서 목록 밖 에이전트 지정을 지우고(`set_by_kind = 'agent'` 재확인),
+//!   커밋·감사 뒤 풀린 스레드마다 `thread.agent_model.changed` → 시스템 줄(사람 갈래, 소유자 이름)을 낸다(TS 순서 그대로).
+//!   글 올리기 코어·풀기 권한([`super::thread_model_clear::THREAD_MODEL_CLEAR_PRIVILEGES`])이 없으면(`clear` 가 `None`)
+//!   이 갈래만 TS 로 넘긴다.
 //! - 권한은 [`PICKABLE_MODELS_PRIVILEGES`] — 없으면 `main.rs` 가 이 줄을 붙이지 않아 TS 에 남는다.
 use crate::auth::RequireAccount;
 use crate::directory::{internal, json_err};
@@ -49,6 +51,8 @@ const BODY_LIMIT: usize = 1024 * 1024;
 #[derive(Clone)]
 pub struct PickableModelsState {
     pub write: PgPool,
+    /// `clearOutside: true` 갈래가 시스템 줄을 올릴 글 코어. 없으면 그 갈래는 TS 로.
+    pub clear: Option<super::msg_post::PostState>,
     pub trust: Arc<TrustProxy>,
     pub up: Upstream,
 }
@@ -61,9 +65,8 @@ pub struct Entry {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Parsed {
-    /// `clearOutside: true` — TS 몫.
-    Ts,
-    Ok(Vec<Entry>),
+    /// `clearOutside` 값과 목록.
+    Ok(Vec<Entry>, bool),
     Bad,
 }
 
@@ -144,10 +147,7 @@ pub fn parse(body: &Body) -> Parsed {
             }
         }
     }
-    if clear {
-        return Parsed::Ts;
-    }
-    Parsed::Ok(out)
+    Parsed::Ok(out, clear)
 }
 
 /// TS `pickAllowed`.
@@ -183,10 +183,15 @@ const OWNER: &str =
  where a.id = $1::uuid and a.kind = 'agent' and a.deleted_at is null";
 const SAVE: &str =
     "update agent_config set agent_pickable_models = $2::jsonb where account_id = $1::uuid";
-const HELD: &str = "select t.model, t.effort
+const HELD: &str = "select t.thread_root_id::text, m.channel_id::text, t.model, t.effort
  from thread_agent_model t join message m on m.id = t.thread_root_id
  where t.agent_id = $1::uuid and t.set_by_kind = 'agent'
  for update of t";
+
+/// TS `clearOutside` 의 지우기 — 잠근 행 중 목록 밖인 것만, 다시 `set_by_kind = 'agent'` 를 조건에 둔다.
+const CLEAR_OUTSIDE: &str = "delete from thread_agent_model
+ where agent_id = $1::uuid and set_by_kind = 'agent' and thread_root_id = any($2::uuid[])
+ returning thread_root_id::text";
 
 /// `PUT /accounts/agents/{agentId}/pickable-models`.
 pub async fn put(
@@ -225,12 +230,16 @@ pub async fn put(
             "허용 목록은 사람이 켠다",
         );
     }
-    let models = match parse(&body) {
-        Parsed::Ok(m) => m,
+    let (models, clear_outside) = match parse(&body) {
+        Parsed::Ok(m, c) => (m, c),
         Parsed::Bad => {
             return refuse(StatusCode::BAD_REQUEST, "bad_request", "invalid body");
         }
-        Parsed::Ts => {
+    };
+    let clear_post = match (clear_outside, &st.clear) {
+        (false, _) => None,
+        (true, Some(p)) => Some(p),
+        (true, None) => {
             return crate::proxy::forward(
                 State(st.up.clone()),
                 ConnectInfo(peer),
@@ -281,7 +290,8 @@ pub async fn put(
         {
             return internal(e);
         }
-        let rows: Vec<(Option<String>, Option<String>)> = match sqlx::query_as(HELD)
+        type Held = (String, String, Option<String>, Option<String>);
+        let rows: Vec<Held> = match sqlx::query_as(HELD)
             .bind(&agent_id)
             .fetch_all(&mut *tx)
             .await
@@ -289,13 +299,33 @@ pub async fn put(
             Ok(r) => r,
             Err(e) => return internal(e),
         };
+        let mut outside: Vec<(String, String)> = rows
+            .into_iter()
+            .filter(|(_, _, m, e)| !pick_allowed(&models, m.as_deref(), e.as_deref()))
+            .map(|(r, c, _, _)| (r, c))
+            .collect();
+        let mut cleared: Vec<(String, String)> = Vec::new();
+        if clear_post.is_some() && !outside.is_empty() {
+            let roots: Vec<String> = outside.iter().map(|(r, _)| r.clone()).collect();
+            let gone: Vec<String> = match sqlx::query_scalar(CLEAR_OUTSIDE)
+                .bind(&agent_id)
+                .bind(&roots)
+                .fetch_all(&mut *tx)
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => return internal(e),
+            };
+            let (c, o): (Vec<_>, Vec<_>) = outside.into_iter().partition(|(r, _)| gone.contains(r));
+            cleared = c;
+            outside = o;
+        }
         if let Err(e) = tx.commit().await {
             return internal(e);
         }
-        rows.iter()
-            .filter(|(m, e)| !pick_allowed(&models, m.as_deref(), e.as_deref()))
-            .count()
+        (outside.len(), cleared)
     };
+    let (outside, cleared) = outside;
     let ip = crate::writes_settings::ip_of(&parts, &st.trust);
     let detail_models: Value = serde_json::from_str(&list).unwrap_or(Value::Null);
     record_audit(
@@ -306,17 +336,41 @@ pub async fn put(
             actor_handle: Some(&me.handle),
             target: Some(&agent_id),
             ip: ip.as_deref(),
-            detail: json!({ "models": detail_models, "cleared": 0 }),
+            detail: json!({ "models": detail_models, "cleared": cleared.len() }),
         },
     )
     .await;
+    // TS: 풀린 스레드마다 `emitChanged` → `announceChange(…, null, 'human')` — 푼 사람은 소유자다.
+    if let Some(post) = clear_post {
+        for (root, channel) in &cleared {
+            let audience = match super::audience::audience_for(&post.write, channel).await {
+                Ok(a) => a.to_json(),
+                Err(e) => return internal(e),
+            };
+            let ev = json!({ "type": "thread.agent_model.changed", "channelId": channel,
+                "threadRootId": root, "agentId": agent_id, "row": null, "audience": audience });
+            let emitted = match post.write.acquire().await {
+                Ok(mut c) => crate::write::emit_event(&mut c, &ev).await.map(|_| ()),
+                Err(e) => Err(e),
+            };
+            if let Err(e) = emitted {
+                return internal(e);
+            }
+            if let Err(e) =
+                super::thread_model_clear::announce(post, channel, root, &me.id, &agent_id).await
+            {
+                return internal(e);
+            }
+        }
+    }
+    let cleared = cleared.len();
     (
         StatusCode::OK,
         [(
             axum::http::header::CONTENT_TYPE,
             "application/json; charset=utf-8",
         )],
-        format!("{{\"models\":{list},\"outside\":{outside},\"cleared\":0}}"),
+        format!("{{\"models\":{list},\"outside\":{outside},\"cleared\":{cleared}}}"),
     )
         .into_response()
 }
@@ -361,21 +415,24 @@ mod tests {
         ]}));
         assert_eq!(
             parse(&b),
-            Parsed::Ok(vec![
-                Entry {
-                    model: "a".into(),
-                    efforts: vec!["hi".into(), "lo".into()]
-                },
-                Entry {
-                    model: "b".into(),
-                    efforts: vec![]
-                },
-            ])
+            Parsed::Ok(
+                vec![
+                    Entry {
+                        model: "a".into(),
+                        efforts: vec!["hi".into(), "lo".into()]
+                    },
+                    Entry {
+                        model: "b".into(),
+                        efforts: vec![]
+                    },
+                ],
+                false
+            )
         );
         assert_eq!(parse(&Body::None), Parsed::Bad);
         assert_eq!(
             parse(&Body::Json(json!({ "models": [], "clearOutside": true }))),
-            Parsed::Ts
+            Parsed::Ok(vec![], true)
         );
         assert_eq!(
             parse(&Body::Json(json!({ "models": [{ "model": "" }] }))),
