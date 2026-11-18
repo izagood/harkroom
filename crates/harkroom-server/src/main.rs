@@ -1654,6 +1654,27 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 — `GET /link-previews`. 같은 두 겹 잠금(읽기 풀 칸 SELECT). 만료된 행은 TS 로 넘긴다(재가져오기).
+    let link_preview_read_on = match &core_mode {
+        harkroom_server::core::CoreMode::Rust => {
+            use harkroom_server::core::link_preview_read as t;
+            match write::missing_in(&state.pool, t::LINK_PREVIEW_READ_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => true,
+                Ok(m) => {
+                    eprintln!("front: link preview read core off — missing privileges {m:?}");
+                    false
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: link preview read core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    false
+                }
+            }
+        }
+        _ => false,
+    };
     // S5.4 — `GET /agent-wakes`. 같은 두 겹 잠금(읽기 풀 SELECT).
     let agent_wakes_read_on = match &core_mode {
         harkroom_server::core::CoreMode::Rust => {
@@ -2958,6 +2979,19 @@ async fn main() {
             core_routes.router = core_routes.router.merge(pd.router);
             core_routes.http.extend(pd.http);
             core_routes.sockets.extend(pd.sockets);
+        }
+        if link_preview_read_on {
+            let lp = harkroom_server::core::link_preview_read::routes(
+                harkroom_server::core::link_preview_read::LinkPreviewState {
+                    read: state.pool.clone(),
+                    up: state.up.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(lp.router);
+            core_routes.http.extend(lp.http);
+            core_routes.sockets.extend(lp.sockets);
         }
         if agent_wakes_read_on {
             let aw = harkroom_server::core::agent_wakes_read::routes(
