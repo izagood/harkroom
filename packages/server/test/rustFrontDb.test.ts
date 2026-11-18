@@ -2331,6 +2331,30 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       for (const gone of ['ls -la', 'git status']) expect(glText).not.toContain(gone);
       const gl2 = (await mcpCall(rsUrl4, bot2.pat, 'grant.list', {})).text;
       for (const want of ['toolRules\\":[]', 'hiddenToolRules\\":0', 'pathPrefix']) expect(gl2).toContain(want);
+      // S5.4 통합 — 오퍼레이터가 가로채는 도구 6개. 서버까지 오면 TS 는 늘 `operator_required` 를 낸다 — Rust 도 같은 글자를 낸다.
+      // 모양이 zod 와 다르면(빠진 칸·null·범위 밖·소수) Rust 는 답하지 않고 TS 의 검증 오류가 그대로 나온다.
+      for (const [name, tool, args, answeredByRust] of [
+        ['secret.mount', 'secret.mount', { name: 'gh' }, true],
+        ['secret.mount 이름 65자 → TS(zod)', 'secret.mount', { name: 'a'.repeat(65) }, false],
+        ['secret.mount 인자 없음 → TS', 'secret.mount', undefined, false],
+        ['secret.generate', 'secret.generate', { name: 'x', type: 'token_hex', length: 32, mount: true }, true],
+        ['secret.generate 모르는 type → TS', 'secret.generate', { name: 'x', type: 'rsa' }, false],
+        ['secret.generate length 소수 → TS', 'secret.generate', { name: 'x', type: 'password', length: 1.5 }, false],
+        ['secret.import', 'secret.import', { name: 'x', path: 'out.txt', kind: 'file', expiresInDays: 30, keepSource: false }, true],
+        ['secret.import expiresInDays 0 → TS', 'secret.import', { name: 'x', path: 'out.txt', expiresInDays: 0 }, false],
+        ['secret.rotate', 'secret.rotate', { name: 'x', generate: { type: 'password' } }, true],
+        ['secret.rotate generate.type 틀림 → TS', 'secret.rotate', { name: 'x', generate: { type: 'nope' } }, false],
+        ['attachment.upload', 'attachment.upload', { path: 'a.png', extra: 1 }, true],
+        ['attachment.upload filename 빈칸 → TS', 'attachment.upload', { path: 'a.png', filename: '' }, false],
+        ['pr.status', 'pr.status', { repo: 'owner/name', number: 7 }, true],
+        ['pr.status number 0 → TS', 'pr.status', { repo: 'owner/name', number: 0 }, false],
+        ['pr.status repo 꼴 틀림 → TS', 'pr.status', { repo: '-bad/x', number: 7 }, false],
+      ] as const) {
+        const [a, b] = [await mcpCall(tsUrl, agent.pat, tool, args), await mcpCall(rsUrl4, agent.pat, tool, args)];
+        expect({ status: b.status, type: b.type, text: b.text }, name).toEqual({ status: a.status, type: a.type, text: a.text });
+        expect(b.core, `${name} — 누가 답했나`).toBe(answeredByRust ? 'mcp' : null);
+        if (answeredByRust) expect(b.text, name).toContain('operator_required');
+      }
       // S5.3 C4b-w1 — 쓰기 도구 message.react·unreact. 같은 요청을 TS·Rust 에 차례로 보내 답 글자를 비교한다(리액션은 같은 결과로
       // 수렴한다 — 두 번째 달기는 on conflict, 떼기는 없는 것도 성공). 그다음 Rust 만 쓴 줄로 DB·이벤트를 따로 본다.
       const reactMsg = await say('리액션 받을 글', { ch: readCh });

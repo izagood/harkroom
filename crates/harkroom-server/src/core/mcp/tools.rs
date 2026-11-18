@@ -36,6 +36,13 @@ pub const SERVED: &[&str] = &[
     "agent.modelOptions",
     // S5.4 A2b
     "memory.audit",
+    // S5.4 통합 — 오퍼레이터가 가로채는 도구([`super::operator_only`], DB 없이 `operator_required`)
+    "secret.mount",
+    "secret.generate",
+    "secret.import",
+    "secret.rotate",
+    "attachment.upload",
+    "pr.status",
 ];
 
 /// 입력 스키마가 없는 도구 — SDK 는 `arguments` 를 레코드(객체)로만 받고, 없어도(`null`) 받는다. 스키마가 있는 도구는
@@ -358,6 +365,8 @@ pub async fn answer(
         "message.search" => super::search::answer(pool, me, args).await,
         "memory.audit" => super::mem_audit::answer(pool, me, args).await,
         "grant.list" => super::reads4::answer(pool, me, tool, args).await,
+        "secret.mount" | "secret.generate" | "secret.import" | "secret.rotate"
+        | "attachment.upload" | "pr.status" => super::operator_only::answer(tool, args),
         "workitem.list" | "automation.list" => {
             super::reads3::answer(pool, me, tool, args, cause).await
         }

@@ -19,6 +19,7 @@ pub mod mem_writes;
 pub mod model_options;
 pub mod msg_post;
 pub mod note;
+pub mod operator_only;
 pub mod plan_input;
 pub mod plan_read;
 pub mod plan_write;
