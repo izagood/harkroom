@@ -281,6 +281,108 @@ fn parse_trigger(v: &Value) -> Option<Value> {
     Some(Value::Object(out))
 }
 
+/// REST `PATCH /automations/:id` 의 zod(`.strict()` — 모르는 키는 거절). 값이 없는 칸은 `None`, `debounceSec` 은
+/// `Some(None)` 이 null(끄기). Rust 가 확신하지 못하면 `None` — TS 가 판정한다.
+#[derive(Debug, PartialEq, Default)]
+pub(crate) struct PatchArgs {
+    pub(crate) name: Option<String>,
+    pub(crate) channel: Option<String>,
+    pub(crate) body: Option<String>,
+    pub(crate) trigger: Option<Value>,
+    pub(crate) enabled: Option<bool>,
+    pub(crate) debounce: Option<Option<i32>>,
+}
+
+pub(crate) fn parse_patch(v: &Value) -> Option<PatchArgs> {
+    let o = v.as_object()?;
+    const KEYS: [&str; 6] = [
+        "name",
+        "channelId",
+        "body",
+        "trigger",
+        "enabled",
+        "debounceSec",
+    ];
+    if o.keys().any(|k| !KEYS.contains(&k.as_str())) {
+        return None;
+    }
+    let mut p = PatchArgs::default();
+    if let Some(n) = optional(o, "name")? {
+        let n = js_trim(n.as_str()?)?;
+        if !(1..=NAME_MAX).contains(&u16len(n)) {
+            return None;
+        }
+        p.name = Some(n.to_owned());
+    }
+    if let Some(c) = optional(o, "channelId")? {
+        p.channel = Some(c.as_str().filter(|s| is_uuid(s))?.to_owned());
+    }
+    if optional(o, "body")?.is_some() {
+        p.body = Some(str_len(o, "body", 1, MAX_MESSAGE_BODY_CHARS)?.to_owned());
+    }
+    if let Some(t) = optional(o, "trigger")? {
+        p.trigger = Some(parse_trigger(t)?);
+    }
+    if let Some(e) = optional(o, "enabled")? {
+        p.enabled = Some(e.as_bool()?);
+    }
+    p.debounce = match o.get("debounceSec") {
+        None => None,
+        Some(Value::Null) => Some(None),
+        Some(v) => Some(Some(int_in(v, 0, DEBOUNCE_MAX)? as i32)),
+    };
+    Some(p)
+}
+
+/// JS `JSON.stringify` 꼴(빈칸 없음)로 쓴다. 객체 키는 `order` 가 정한 순서.
+pub(crate) fn stringify_ordered(
+    v: &Value,
+    order: &dyn Fn(&str, &str) -> std::cmp::Ordering,
+) -> String {
+    match v {
+        Value::Object(m) => {
+            let mut ks: Vec<&String> = m.keys().collect();
+            ks.sort_by(|a, b| order(a, b));
+            let parts: Vec<String> = ks
+                .iter()
+                .map(|k| {
+                    format!(
+                        "{}:{}",
+                        Value::from(k.as_str()),
+                        stringify_ordered(&m[k.as_str()], order)
+                    )
+                })
+                .collect();
+            format!("{{{}}}", parts.join(","))
+        }
+        Value::Array(a) => format!(
+            "[{}]",
+            a.iter()
+                .map(|x| stringify_ordered(x, order))
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        other => other.to_string(),
+    }
+}
+
+/// zod 가 내놓는 트리거 키 순서(스키마 순서).
+pub(crate) fn zod_trigger_order(a: &str, b: &str) -> std::cmp::Ordering {
+    const ORDER: [&str; 11] = [
+        "kind", "freq", "weekdays", "monthDay", "time", "tz", "repo", "event", "branch", "paths",
+        "change",
+    ];
+    let pos = |k: &str| ORDER.iter().position(|x| *x == k).unwrap_or(usize::MAX);
+    pos(a).cmp(&pos(b)).then_with(|| a.cmp(b))
+}
+
+/// pg jsonb 의 키 순서(짧은 키 먼저, 같으면 바이트 순).
+pub(crate) fn jsonb_order(a: &str, b: &str) -> std::cmp::Ordering {
+    a.len()
+        .cmp(&b.len())
+        .then_with(|| a.as_bytes().cmp(b.as_bytes()))
+}
+
 /// zod: `name` trim 1..100 · `channelId` uuid · `body` 1..MAX · `trigger` · `debounceSec` 0..3600 · `forHandle` 1..64(UTF-16).
 fn parse(args: &Value) -> Option<Args> {
     let o = args.as_object()?;

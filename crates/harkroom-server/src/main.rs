@@ -633,6 +633,28 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 AT6 — 자동화 고치기(`PATCH /automations/{id}`) + 위임 끝 카드 갱신. 두 겹 잠금.
+    let automation_patch = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::{automation_patch as k, perm_card as pc};
+            let need = [k::AUTOMATION_PATCH_PRIVILEGES, pc::PERM_CARD_PRIVILEGES].concat();
+            match write::missing_in(w, &need, pc::PERM_CARD_SEQUENCE_PRIVILEGES).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: automation patch core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: automation patch core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 결정 5 — 소유자의 [위임 끝](`POST /mandates/{id}/end`) + 위임 끝 카드 갱신(`core::perm_card`). 두 겹 잠금.
     let mandate_end = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -2618,6 +2640,21 @@ async fn main() {
             core_routes.router = core_routes.router.merge(ad.router);
             core_routes.http.extend(ad.http);
             core_routes.sockets.extend(ad.sockets);
+        }
+        // S5.4 AT6 — 자동화 고치기. 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = automation_patch {
+            let ap = harkroom_server::core::automation_patch::routes(
+                harkroom_server::core::automation_patch::PatchState {
+                    read: state.pool.clone(),
+                    write,
+                    up: state.up.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(ap.router);
+            core_routes.http.extend(ap.http);
+            core_routes.sockets.extend(ap.sockets);
         }
         // S5.4 결정 5 — 위임 끝. 권한이 다 있을 때만 — 아니면 TS 에 남는다.
         if let Some(write) = mandate_end {
