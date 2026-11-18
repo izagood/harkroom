@@ -159,6 +159,17 @@ pub async fn handle(
                 let (c, t) = (cause.as_deref(), turn.as_deref());
                 return match tool {
                     "message.post" => {
+                        // 비지 않은 모델 고르기는 거절 갈래만 Rust(하네스 목록이 스냅숏에 있을 때), 통과하면 TS.
+                        if args
+                            .get("agentModels")
+                            .and_then(serde_json::Value::as_array)
+                            .is_some_and(|a| !a.is_empty())
+                        {
+                            if !writes.relay_moved {
+                                return None;
+                            }
+                            return super::msg_post::picks_refusal(st, &me, &args).await;
+                        }
                         super::msg_post::answer(st, &me, &args, c, t, has_operator).await
                     }
                     "message.progress" => {
