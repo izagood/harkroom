@@ -519,7 +519,7 @@ mod tests {
             ],
             "넓힐 때는 homelab GRANT 와 이 시험을 같이 고친다"
         );
-        // DELETE 는 P4b 의 팀·집합(과 그 구성원)·P4c 차단·작업 항목·임대·푸시 기기 표에만 — homelab#353 목록과 같다. TRUNCATE·그 밖의 것은 없다.
+        // DELETE 는 P4b 의 팀·집합(과 그 구성원)·P4c 차단·작업 항목·임대·푸시 기기·MCP 서버 표에만 — homelab#353 목록과 같다. TRUNCATE·그 밖의 것은 없다.
         const DELETE_OK: &[&str] = &[
             "account_block",
             "agent_thread_claim",
@@ -530,6 +530,8 @@ mod tests {
             "agent_team_invoker",
             "handle_group",
             "handle_group_member",
+            // DELETE /mcp-servers/:name (S5.4)
+            "mcp_server",
         ];
         assert!(
             REQUIRED_PRIVILEGES.iter().all(|x| x.1 == "INSERT"
