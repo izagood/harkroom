@@ -27,6 +27,7 @@
 //! - 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 권한이 다 있을 때만 선다(`main.rs`). 키 env 를 읽을 수 없으면
 //!   세 줄 모두 TS 에 남는다(TS 와 같이 키가 없거나 틀리면 `granted: false`). POST 두 줄의 권한이나 글 경로가 없으면 `GET` 만 선다.
 use crate::auth::{Account, RequireAccount};
+use crate::core::lease_read::{CreateLease, read_create_lease};
 use crate::core::msg_post::PostState;
 use crate::directory::{internal, json_err, json_ok};
 use crate::secrets::keyring::{SecretAad, SecretKeyring, SecretKind};
@@ -626,23 +627,6 @@ pub async fn secret_create(
 
 // ─── 만들기·회전(generate) ─────────────────────────────────────────────────────────────
 
-/// TS `readCreateLease` — `$3` 은 TS 가 넘기는 `now`(밀리초 ISO).
-const READ_LEASE_SQL: &str = "select l.id::text, l.agent_id::text, l.operator_id::text, l.channel_id::text, \
-            l.thread_root_id::text, l.cause_message_id::text, \
-            l.expires_at <= $3::timestamptz as expired, l.ended_at is not null as ended, \
-            c.owner_account_id::text as owner_id, \
-            coalesce(o.deleted_at is not null or o.disabled_at is not null, true) as owner_inactive, \
-            m.author_id::text as cause_author_id, a.kind as cause_kind, \
-            case when m.meta ? 'ask' and m.meta->'ask'->>'mirrorOf' is null and m.meta->'ask'->>'answeredVia' is null \
-                 then m.author_id::text end as cause_ask_author_id, \
-            m.meta->'ask'->>'answeredBy' as ask_answered_by, ans.kind as ask_answerer_kind \
-       from secret_turn_lease l \
-       left join agent_config c on c.account_id = l.agent_id \
-       left join account o on o.id = c.owner_account_id \
-       left join message m on m.id = l.cause_message_id \
-       left join account a on a.id = m.author_id \
-       left join account ans on ans.id = nullif(m.meta->'ask'->>'answeredBy', '')::uuid \
-      where l.id = $1::uuid and l.token_hash = $2";
 /// TS `countCreated`.
 const COUNT_CREATED_SQL: &str =
     "select count(*)::int from secret where created_by_agent_id = $1::uuid";
@@ -766,79 +750,6 @@ pub fn write_privileges() -> Vec<(&'static str, &'static str)> {
         .collect()
 }
 
-/// TS `CreateLease`.
-#[derive(Debug, Clone)]
-struct CreateLease {
-    id: String,
-    agent_id: String,
-    operator_id: String,
-    channel_id: String,
-    thread_root_id: String,
-    cause_message_id: String,
-    expired: bool,
-    ended: bool,
-    owner_id: Option<String>,
-    owner_inactive: bool,
-    cause_author_id: Option<String>,
-    cause_kind: Option<String>,
-    cause_ask_author_id: Option<String>,
-    ask_answered_by: Option<String>,
-    ask_answerer_kind: Option<String>,
-}
-
-impl CreateLease {
-    fn cause(&self) -> LeaseCause<'_> {
-        LeaseCause {
-            agent_id: &self.agent_id,
-            owner_id: self.owner_id.as_deref(),
-            cause_author_id: self.cause_author_id.as_deref(),
-            cause_kind: self.cause_kind.as_deref(),
-            cause_ask_author_id: self.cause_ask_author_id.as_deref(),
-            ask_answered_by: self.ask_answered_by.as_deref(),
-            ask_answerer_kind: self.ask_answerer_kind.as_deref(),
-        }
-    }
-}
-
-fn sha256_hex(s: &str) -> String {
-    hex::encode(ring::digest::digest(&ring::digest::SHA256, s.as_bytes()))
-}
-
-async fn read_lease(
-    pool: &PgPool,
-    lease_id: &str,
-    token: &str,
-    now_iso: &str,
-) -> sqlx::Result<Option<CreateLease>> {
-    use sqlx::Row;
-    let Some(r) = sqlx::query(READ_LEASE_SQL)
-        .bind(lease_id)
-        .bind(sha256_hex(token))
-        .bind(now_iso)
-        .fetch_optional(pool)
-        .await?
-    else {
-        return Ok(None);
-    };
-    Ok(Some(CreateLease {
-        id: r.try_get(0)?,
-        agent_id: r.try_get(1)?,
-        operator_id: r.try_get(2)?,
-        channel_id: r.try_get(3)?,
-        thread_root_id: r.try_get(4)?,
-        cause_message_id: r.try_get(5)?,
-        expired: r.try_get(6)?,
-        ended: r.try_get(7)?,
-        owner_id: r.try_get(8)?,
-        owner_inactive: r.try_get(9)?,
-        cause_author_id: r.try_get(10)?,
-        cause_kind: r.try_get(11)?,
-        cause_ask_author_id: r.try_get(12)?,
-        ask_answered_by: r.try_get(13)?,
-        ask_answerer_kind: r.try_get(14)?,
-    }))
-}
-
 /// 만들기인가 회전인가(감사 action·오류 문구·알림 갈래).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
@@ -886,7 +797,7 @@ async fn gate(
 ) -> Result<Result<(CreateLease, i64), CreateDenial>, sqlx::Error> {
     let now = crate::core::msg_post::now_ms();
     let now_iso = crate::core::msg_post::iso_ms(now);
-    let lease = read_lease(&st.write, lease_id, token, &now_iso).await?;
+    let lease = read_create_lease(&st.write, lease_id, token, &now_iso).await?;
     let lease = lease.filter(|l| {
         l.agent_id == who.agent_id && l.operator_id == who.operator_id && !l.expired && !l.ended
     });
@@ -2163,7 +2074,7 @@ mod tests {
     #[test]
     fn token_hash_is_sha256_hex() {
         assert_eq!(
-            sha256_hex("abc"),
+            crate::core::merge_approval_peek::sha256_hex("abc"),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
     }
