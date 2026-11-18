@@ -172,8 +172,8 @@ pub async fn answer(read: &PgPool, me: &Account, args: &Value) -> Option<String>
             ));
         }
     }
-    // 거울 검사 — TS 순서대로 `to` 를 실었으면 `mirror_audience`, 그다음 `checkAskMirror`. 다 지난 거울(권한 카드 거울
-    // 다시 쓰기·대신하기 검사·글 올리기)은 아직 TS 몫이다.
+    // 거울 검사 — TS 순서대로 `to` 를 실었으면 `mirror_audience`, 그다음 `checkAskMirror`. 다 지난 거울은 평범한 카드처럼
+    // 대신하기 검사로 이어진다.
     if let Some(root) = a.mirror_of {
         if a.to.is_some() {
             return Some(err(
@@ -197,7 +197,7 @@ pub async fn answer(read: &PgPool, me: &Account, args: &Value) -> Option<String>
         if let Some(code) = mirror_refusal(ask.as_ref(), visible, &ids) {
             return Some(err(code, mirror_message(code)));
         }
-        return None;
+        // 거울도 TS 처럼 이어서 대신하기 검사를 한다.
     }
     let o = args.as_object()?;
     let olds = supersedes_list(o);
@@ -420,14 +420,12 @@ fn plain(o: &Map<String, Value>, cause: Option<&str>) -> bool {
             .all(|k| !o.contains_key(*k))
 }
 
-/// Rust 가 세우는 거울 카드 — `mirrorOf` 가 있고, `to`·머지 거절·`supersedes`·계획 단계·원인 헤더가 없을 때만([`answer`] 의 거울
-/// 검사를 이미 지났다). 대신하기 검사·원인 기반 사람 앞 푸시·계획 잇기가 얽힌 거울은 TS.
+/// Rust 가 세우는 거울 카드 — `mirrorOf` 가 있고, `to`·머지 거절·원인 헤더가 없을 때만([`answer`] 의 거울·대신하기 검사를 이미
+/// 지났다). `supersedes`·`planStepId` 는 평범한 카드와 같은 길(닫기·계획 잇기)로 간다. 원인 기반 사람 앞 푸시가 얽힌 거울은 TS.
 fn mirror_plain(o: &Map<String, Value>, cause: Option<&str>) -> bool {
     cause.is_none()
         && o.get("mirrorOf").is_some_and(Value::is_string)
-        && ["to", "mergeDenialId", "supersedes", "planStepId"]
-            .iter()
-            .all(|k| !o.contains_key(*k))
+        && ["to", "mergeDenialId"].iter().all(|k| !o.contains_key(*k))
 }
 
 /// TS `renderPermissionMirror` 의 원본 찾기 — 지우지 않은 원본이 권한 요청 카드인가. 참이면(또는 못 찾으면) TS.
@@ -1130,10 +1128,16 @@ mod tests {
         let o = base.as_object().unwrap();
         assert!(mirror_plain(o, None));
         assert!(!mirror_plain(o, Some(C)));
-        for k in ["to", "mergeDenialId", "supersedes", "planStepId"] {
+        for k in ["to", "mergeDenialId"] {
             let mut m = o.clone();
             m.insert(k.into(), json!("x"));
             assert!(!mirror_plain(&m, None), "{k}");
+        }
+        // 대신하기·계획 단계는 평범한 카드와 같은 길로 Rust 가 한다.
+        for k in ["supersedes", "planStepId"] {
+            let mut m = o.clone();
+            m.insert(k.into(), json!("x"));
+            assert!(mirror_plain(&m, None), "{k}");
         }
         let mut m = o.clone();
         m.remove("mirrorOf");
