@@ -633,6 +633,28 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 MD2 — 위임장 줄 빼기(`DELETE /mandates/{id}/lines/{lineId}`) + 카드 `message.updated`. 두 겹 잠금.
+    let mandate_line_revoke = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::{mandate_line_revoke as k, perm_card as pc};
+            let need = [k::MANDATE_LINE_REVOKE_PRIVILEGES, pc::PERM_CARD_PRIVILEGES].concat();
+            match write::missing_in(w, &need, pc::PERM_CARD_SEQUENCE_PRIVILEGES).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: mandate line revoke core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: mandate line revoke core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 AT6 — 자동화 고치기(`PATCH /automations/{id}`) + 위임 끝 카드 갱신. 두 겹 잠금.
     let automation_patch = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -2640,6 +2662,20 @@ async fn main() {
             core_routes.router = core_routes.router.merge(ad.router);
             core_routes.http.extend(ad.http);
             core_routes.sockets.extend(ad.sockets);
+        }
+        // S5.4 MD2 — 위임장 줄 빼기. 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = mandate_line_revoke {
+            let ml = harkroom_server::core::mandate_line_revoke::routes(
+                harkroom_server::core::mandate_line_revoke::MandateLineRevokeState {
+                    write,
+                    up: state.up.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(ml.router);
+            core_routes.http.extend(ml.http);
+            core_routes.sockets.extend(ml.sockets);
         }
         // S5.4 AT6 — 자동화 고치기. 권한이 다 있을 때만 — 아니면 TS 에 남는다.
         if let Some(write) = automation_patch {
