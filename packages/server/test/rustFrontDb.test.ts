@@ -4612,13 +4612,14 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         await db.pool.query('delete from account where id = any($1)', [[botA, botB]]);
       }
 
-      // S5.4 TP1 — 계획판 읽기(코어 `thread_plan_read.rs`). 두 서버의 답을 견준다. 계획 쓰기(start·manager·auto)는 TS 에 남는다.
+      // S5.4 TP1 — 계획판 읽기(코어 `thread_plan_read.rs`). 두 서버의 답을 견준다. 계획 쓰기 start·manager·auto 는 Rust 줄이 있다(start 의 미리보기·시작은 TS 로 넘긴다).
       // 연결 그룹의 진행률은 보는 사람이 자식 채널을 볼 때만 — 못 보는 자식 채널 id·진행률이 어느 답에도 새지 않는지 본다.
       {
         expect(f.log()).toContain('"GET /threads/{rootId}/plan"');
         expect(f.log()).not.toContain('thread plan read core off');
         for (const k of ['POST /threads/{rootId}/plan/start', 'PUT /threads/{rootId}/plan/manager']) {
-          expect(f.log(), `${k} 는 TS 에 남는다`).not.toContain(`"${k}"`);
+          // TP4 — manager 는 Rust, start 는 앞 거절만 Rust(미리보기·시작은 TS 로 넘긴다).
+          expect(f.log(), `${k} 줄`).toContain(`"${k}"`);
         }
         expect(f.log(), 'TP3 자동 진행 끄기 줄').toContain('"DELETE /threads/{rootId}/plan/auto"');
         const M = member.token;
