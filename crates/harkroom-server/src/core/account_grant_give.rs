@@ -267,13 +267,6 @@ pub async fn put_grants(
     req: Request,
 ) -> Response {
     let (parts, raw) = req.into_parts();
-    if !is_zod_uuid(&id) {
-        return err(
-            StatusCode::BAD_REQUEST,
-            "invalid_request",
-            "params: invalid",
-        );
-    }
     let bytes = match to_bytes(raw, BODY_LIMIT).await {
         Ok(b) => b,
         Err(_) => {
@@ -288,6 +281,14 @@ pub async fn put_grants(
         Ok(b) => b,
         Err(r) => return r,
     };
+    // fastify 는 본문을 preHandler 보다 먼저 읽는다 — 본문 거절(413·415·JSON)이 경로 zod 보다 앞선다.
+    if !is_zod_uuid(&id) {
+        return err(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "params: invalid",
+        );
+    }
     let Some(b) = parse_body(&body) else {
         return err(StatusCode::BAD_REQUEST, "bad_request", "body");
     };
