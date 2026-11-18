@@ -788,7 +788,7 @@ mod tests {
         assert_eq!(p["events"][0]["summary"], key.as_str());
         assert_eq!(p["vars"]["yesterday"], "2025-11-15");
         // 모르는 tz 는 TS 몫.
-        let bad = json!({"kind": "schedule", "freq": "daily", "time": "09:00", "tz": "asia/seoul"});
+        let bad = json!({"kind": "schedule", "freq": "daily", "time": "09:00", "tz": "+09:00"});
         assert_eq!(plan_schedule(&bad, fired), None);
         // 다른 trigger 는 변수 없음·다음 시각 null.
         let other = plan_schedule(&json!({"kind": "manual"}), fired).unwrap();

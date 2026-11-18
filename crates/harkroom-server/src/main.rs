@@ -1911,7 +1911,7 @@ async fn main() {
         }
         _ => None,
     };
-    // S5.4 — 고를 수 있는 모델 목록 쓰기(`PUT /accounts/agents/{id}/pickable-models`, `clearOutside: true` 는 안에서 TS 로).
+    // S5.4 — 고를 수 있는 모델 목록 쓰기(`PUT /accounts/agents/{id}/pickable-models`, `clearOutside: true` 는 글 코어가 없을 때만 TS 로).
     // 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만.
     let pickable_models_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -2810,7 +2810,7 @@ async fn main() {
         core_routes.router = core_routes.router.merge(channels.router);
         core_routes.http.extend(channels.http);
         core_routes.sockets.extend(channels.sockets);
-        // S5.4 MS2a — 메시지 검색(`GET /search`). 읽기 풀만 쓴다(MCP `message.search` 와 같은 문장). `@`·기간·형식이 애매한 질의는 TS 로.
+        // S5.4 MS2a — 메시지 검색(`GET /search`). 읽기 풀만 쓴다(MCP `message.search` 와 같은 문장). `@handle`·기간도 Rust 가 푼다.
         let search = harkroom_server::core::search_rest::routes(
             harkroom_server::core::search_rest::SearchState {
                 pool: state.pool.clone(),
@@ -3464,7 +3464,7 @@ async fn main() {
             core_routes.sockets.extend(ts.sockets);
         }
         // S5.4 TM2 — 스레드 모델 지정 풀기. 글 올리기 코어와 풀기 권한이 다 있을 때만 — 아니면 TS 에 남는다.
-        if let Some(write) = thread_model_clear {
+        if let Some(write) = thread_model_clear.clone() {
             let tc = harkroom_server::core::thread_model_clear::routes(
                 harkroom_server::core::thread_model_clear::ClearState {
                     post: harkroom_server::core::msg_post::PostState {
@@ -3888,6 +3888,15 @@ async fn main() {
             let pm = harkroom_server::core::pickable_models::routes(
                 harkroom_server::core::pickable_models::PickableModelsState {
                     write,
+                    // `clearOutside: true` 는 글 올리기 코어·풀기 권한이 다 있을 때만 Rust — 아니면 그 갈래만 TS.
+                    clear: thread_model_clear.clone().map(|w| {
+                        harkroom_server::core::msg_post::PostState {
+                            read: state.pool.clone(),
+                            write: w,
+                            up: state.up.clone(),
+                            implicit_ok,
+                        }
+                    }),
                     trust: state.trust.clone(),
                     up: state.up.clone(),
                 },

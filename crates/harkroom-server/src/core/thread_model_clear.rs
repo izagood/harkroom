@@ -197,7 +197,7 @@ pub async fn clear(
 }
 
 /// TS `announceChange(row = null)` — 스레드 안 시스템 줄, 아무도 부르지 않는다. `message.created` 는 글 경로가 같은 tx 의 outbox 로 낸다.
-async fn announce(
+pub(crate) async fn announce(
     st: &PostState,
     channel: &str,
     root: &str,
