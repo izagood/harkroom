@@ -10,7 +10,8 @@
 //!   보는 사람 자리로 얹은 것이다. 판정은 `msg_list.rs` 의 [`derive_plan`]·[`plan_progress`](shared `planGraph.ts` 이식).
 //! - **읽기만 한다.** 읽기 풀만 쓰고 새 GRANT 가 없다. 필요한 SELECT 는 [`THREAD_PLAN_READ_PRIVILEGES`] — 없으면 `main.rs` 가
 //!   이 줄을 붙이지 않아 TS 에 남는다.
-//! - 계획 쓰기(`POST …/plan/start`·`PUT …/plan/manager`·`DELETE …/plan/auto`)와 MCP `thread.plan`·`thread.plan.item` 은 TS 에 남긴다.
+//! - 계획 쓰기(`POST …/plan/start`·`PUT …/plan/manager`·`DELETE …/plan/auto`)와 MCP `thread.plan` 쓰기·`thread.plan.item` 은 TS 에 남긴다.
+//!   MCP `thread.plan` 읽기(`plan` 인자 없음)는 [`plan_view_json`] 을 같이 쓴다(`core/mcp/plan_read.rs`).
 use super::msg_list::{Linked, Progress, derive_plan, linked_roots, plan_progress};
 use super::msg_read::channel_visible;
 use crate::auth::RequireAccount;
@@ -32,7 +33,7 @@ pub const THREAD_PLAN_READ_PRIVILEGES: &[(&str, &str)] = &[
 ];
 
 /// TS `threadRootChannel` — 지운 글은 없는 것.
-const ROOT_SQL: &str = "select channel_id::text, thread_root_id is null from message where id = $1::uuid and deleted_at is null";
+pub(crate) const ROOT_SQL: &str = "select channel_id::text, thread_root_id is null from message where id = $1::uuid and deleted_at is null";
 
 /// TS `getThreadPlan`(`THREAD_PLAN_COLUMNS`) — 시각은 `toISOString` 꼴.
 const PLAN_SQL: &str = concat!(
@@ -187,14 +188,26 @@ pub async fn get_thread_plan(
         Ok(false) => return not_found(),
         Err(e) => return internal(e),
     }
+    match plan_view_json(pool, &me.id, &root_id).await {
+        Ok(body) => json_ok(body),
+        Err(e) => internal(e),
+    }
+}
+
+/// 루트·가시성 판정을 **지난 뒤**의 답 몸통 `{"plan":view|null}` — REST GET 과 MCP `thread.plan` 읽기(S5.4 A4a)가 같이 쓴다.
+/// TS `getThreadPlan` → `threadPlanView(pool, row, viewer)`. DB 오류는 그대로 돌려준다(REST 는 500, MCP 는 TS 로 넘긴다).
+pub async fn plan_view_json(
+    pool: &PgPool,
+    viewer: &str,
+    root_id: &str,
+) -> Result<String, sqlx::Error> {
     let row: PlanRow = match sqlx::query_as(PLAN_SQL)
-        .bind(&root_id)
+        .bind(root_id)
         .fetch_optional(pool)
-        .await
+        .await?
     {
-        Ok(Some(r)) => r,
-        Ok(None) => return json_ok(r#"{"plan":null}"#.into()),
-        Err(e) => return internal(e),
+        Some(r) => r,
+        None => return Ok(r#"{"plan":null}"#.into()),
     };
     let (
         root,
@@ -213,15 +226,11 @@ pub async fn get_thread_plan(
     let roots = linked_roots(&doc);
     let mut facts: HashMap<String, Child> = HashMap::new();
     if !roots.is_empty() {
-        let rows: Vec<(String, String, Option<String>, bool)> = match sqlx::query_as(children_sql())
+        let rows: Vec<(String, String, Option<String>, bool)> = sqlx::query_as(children_sql())
             .bind(&roots)
-            .bind(&me.id)
+            .bind(viewer)
             .fetch_all(pool)
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => return internal(e),
-        };
+            .await?;
         let none = HashMap::new();
         for (id, channel_id, child_doc, viewer_visible) in rows {
             // 재귀하지 않는다(K5): 자식의 연결 그룹은 맵 없이 센다.
@@ -255,7 +264,7 @@ pub async fn get_thread_plan(
         ),
         _ => "null".into(),
     };
-    json_ok(format!(
+    Ok(format!(
         r#"{{"plan":{{"rootId":{},"channelId":{},"doc":{doc_text},"rev":{rev},"updatedAt":{},"updatedBy":{},"flagged":{flagged},"derived":{},"progress":{},"linked":{linked},"auto":{auto}}}}}"#,
         q(&root),
         q(&chan),

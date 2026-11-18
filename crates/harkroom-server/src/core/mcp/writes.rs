@@ -41,6 +41,8 @@ pub const SERVED: &[&str] = &[
     "workitem.remove",
     // S5.4 A2a — 보드 항목 걸기. `workitem::WORK_ITEM_UPSERT_PRIVILEGES` 가 있을 때만, `state: done`+스레드는 TS.
     "workitem.upsert",
+    // S5.4 A4a — 계획판 읽기(`plan` 인자 없음)만. 읽기 풀에 `THREAD_PLAN_READ_PRIVILEGES` 가 있을 때만([`McpWrites::plan_read`]), 쓰기는 TS.
+    "thread.plan",
 ];
 
 /// TS 가 조건부로 싣는 도구 — `/mcp/admit` 이 `registered: true` 라고 답했을 때만 Rust 가 답한다([`super::route::serve`]).
@@ -112,6 +114,8 @@ pub struct McpWrites {
     pub work_item_upsert: Option<PgPool>,
     /// `thread.note`(B2-1) — `note::THREAD_NOTE_PRIVILEGES`.
     pub note: Option<PgPool>,
+    /// `thread.plan` 읽기(S5.4 A4a) — 읽기 풀에 `thread_plan_read::THREAD_PLAN_READ_PRIVILEGES` 가 다 있을 때만 참. 쓰기 풀은 쓰지 않는다.
+    pub plan_read: bool,
     /// 기억 쓰기(C4b B1a) — [`super::mem_writes::MEMORY_WRITE_PRIVILEGES`]. [`super::mem_writes::answer`] 가 본다.
     pub memory: Option<PgPool>,
     /// 기억 본문 쓰기(C4b B1b: set·merge·restore) — B1a 권한 + [`super::mem_body::MEMORY_BODY_PRIVILEGES`]. [`super::mem_body::answer`] 가 본다.
@@ -192,6 +196,12 @@ pub async fn answer(
             return Some(None);
         };
         return Some(super::note::answer(read, w, me, args).await);
+    }
+    if tool == "thread.plan" {
+        if !writes.plan_read {
+            return Some(None);
+        }
+        return Some(super::plan_read::answer(read, me, args).await);
     }
     if tool == "workitem.remove" {
         let Some(write) = writes.work_item.as_ref() else {
@@ -468,8 +478,8 @@ mod tests {
     fn served_are_writes_in_registry() {
         for n in SERVED {
             let s = super::super::find(n).expect(n);
-            // `thread.note` 는 body 에 따라 읽기·쓰기가 갈리는 도구(Access 표의 ReadSide)다.
-            let want = if *n == "thread.note" {
+            // `thread.note`·`thread.plan` 은 인자에 따라 읽기·쓰기가 갈리는 도구(Access 표의 ReadSide)다.
+            let want = if *n == "thread.note" || *n == "thread.plan" {
                 super::super::Access::ReadSide
             } else {
                 super::super::Access::Write
