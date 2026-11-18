@@ -4,8 +4,8 @@
 //! (→ TS). 그 뒤 스레드 안의 사람 앞 카드는 [`answer_plain`] 이 열린 카드 검사(`open_card_in_thread`, `keepOpen` 반영)를 하고,
 //! 평범한 카드(사람 앞·원인 헤더 없음, 스레드 안팎)는 글 올리기 풀로 세운다 — 대신하기(`supersedes`)는 새 카드를 세운 뒤
 //! 옛 카드를 닫고, 계획 단계(`planStepId`)는 세운 뒤 그 단계에 카드를 잇는다(묶음에 담긴 옛 카드·계획·단계 없음은 TS). 머지 거절 카드(`mergeDenialId`)는 거절 기록
-//! 검사(`prepareDenialCard` 거절)와 같은 거절 기록의 기다리는 카드(`pending`)까지 읽기 풀로 답하고, 새 요청·카드 세우기는 TS 다.
-//! 거울·사람 앞 푸시는 아직 TS 몫이다. 인자가 zod 를 못 지나거나 DB 오류여도 `None`.
+//! 검사(`prepareDenialCard` 거절)와 같은 거절 기록의 기다리는 카드(`pending`)까지 읽기 풀로 답하고, 첫 부름(새 요청 줄·카드·잇기·푸시)도 세운다(위임 있는 턴·재생은 TS).
+//! `to` 로 정한 받는 사람(사람이면 글 뒤 `enqueueAskPush`)도 세운다. 거울(`mirrorOf`)·원인 기반 사람 앞 푸시는 아직 TS 몫이다. 인자가 zod 를 못 지나거나 DB 오류여도 `None`.
 use super::tools::err;
 use crate::auth::Account;
 use crate::core::ask::{ASK_MAX_OPTIONS, ASK_MIN_OPTIONS, ASK_TEXT_OPTION_ID};
@@ -339,10 +339,10 @@ fn addressed(o: &Map<String, Value>) -> bool {
 /// `to` 대상 찾기에 종류까지 — 사람이면 TS `enqueueAskPush` 가 `push_job` 을 넣을 수 있다.
 const TO_KIND_SQL: &str = "select id::text, kind::text from account where lower(handle) = $1";
 
-/// 찾은 대상의 TS `AskAudience` — `{kind:'account', accountId}`. 사람이면 `None`(→ TS): 그 카드는 `enqueueAskPush` 로 푸시 job 을
-/// 넣을 수 있고, 그 쓰기는 아직 TS 몫이다. 에이전트면 그 문장의 `kind = 'human'` 조건 때문에 아무것도 넣지 않으니 Rust 가 세운다.
-fn account_audience((id, kind): (String, String)) -> Option<Value> {
-    (kind != "human").then(|| serde_json::json!({ "kind": "account", "accountId": id }))
+/// 찾은 대상의 TS `AskAudience` — `{kind:'account', accountId}`. 사람이든 에이전트든 세우고, 글 뒤 `enqueueAskPush` 는
+/// [`super::msg_post::answer_ask`] 가 한다(에이전트면 그 문장의 `kind = 'human'` 조건 때문에 아무것도 넣지 않는다).
+fn account_audience((id, _kind): (String, String)) -> Option<Value> {
+    Some(serde_json::json!({ "kind": "account", "accountId": id }))
 }
 
 /// Rust 가 세우는 카드 — 사람 앞(`to` 없음), 거울·머지 거절·supersedes·계획 단계 없음, 원인 헤더 없음(TS 의 사람 앞 푸시
@@ -436,14 +436,18 @@ pub async fn answer_plain(
     if let Some(denial) = o.get("mergeDenialId").and_then(Value::as_str) {
         return merge_denial_answer(
             read,
+            st,
             me,
+            o,
             a.channel,
             o.get("threadRootId").and_then(Value::as_str),
             denial,
+            (cause, turn, operator),
         )
         .await;
     }
     let st = st?;
+    let mut push_to: Option<String> = None;
     let audience = match o.get("to").and_then(Value::as_str) {
         Some(to) => {
             if !addressed(o) {
@@ -454,7 +458,21 @@ pub async fn answer_plain(
                 .fetch_optional(read)
                 .await
                 .ok()?;
-            account_audience(row?)?
+            let row = row?;
+            // 글 뒤 푸시 job 쓰기 칸이 없으면 TS.
+            if !crate::write::missing_in(
+                &st.write,
+                crate::core::permission_card::LINK_PUSH_PRIVILEGES,
+                &[],
+            )
+            .await
+            .ok()?
+            .is_empty()
+            {
+                return None;
+            }
+            push_to = Some(row.0.clone());
+            account_audience(row)?
         }
         None if plain(o, cause) => serde_json::json!({ "kind": "human" }),
         None => return None,
@@ -486,6 +504,7 @@ pub async fn answer_plain(
         operator,
         &olds,
         plan_step,
+        push_to.as_deref(),
     )
     .await
 }
@@ -500,7 +519,7 @@ pub const DENIAL_READ_SQL: &str = "select agent_id::text, scope, channel_id::tex
        from merge_denial d where id = $1::uuid";
 
 /// TS `openPermissionRequest` 의 `not_agent` 검사.
-const DENIAL_AGENT_SQL: &str = "select 1 from account a join agent_config c on c.account_id = a.id \
+const DENIAL_AGENT_SQL: &str = "select c.owner_account_id::text from account a join agent_config c on c.account_id = a.id \
      where a.id = $1::uuid and a.kind = 'agent'";
 
 /// TS `openPermissionRequest` 의 기다리는 카드 찾기(거절에서 온 요청 — `denial_id` 가 같은 것만).
@@ -522,6 +541,8 @@ pub const MERGE_DENIAL_ASK_READ_PRIVILEGES: &[(&str, &str)] = &[
     ("merge_denial.used_at", "SELECT"),
     ("merge_denial.obsoleted_at", "SELECT"),
     ("merge_denial.created_at", "SELECT"),
+    ("merge_denial.reason", "SELECT"),
+    ("merge_denial.failed_checks", "SELECT"),
     ("account", "SELECT"),
     ("agent_config", "SELECT"),
     ("permission_request.id", "SELECT"),
@@ -536,6 +557,9 @@ pub const MERGE_DENIAL_ASK_READ_PRIVILEGES: &[(&str, &str)] = &[
     ("permission_request.denial_id", "SELECT"),
     ("permission_request.created_at", "SELECT"),
 ];
+
+/// TS `readDenial` 의 카드 칸(PR·head·사유·실패 체크).
+const DENIAL_ONCE_SQL: &str = "select pr_number::bigint, head_sha, reason, failed_checks from merge_denial where id = $1::uuid";
 
 type DenialRow = (String, String, String, String, bool, bool, bool, bool);
 
@@ -594,13 +618,17 @@ fn denial_target(scope: &str) -> Option<String> {
 }
 
 /// 머지 거절 카드(`mergeDenialId`) — TS `prepareDenialCard` 의 거절과, `openPermissionRequest` 가 같은 거절 기록의 기다리는 카드를
-/// 찾아 주는 `pending` 답까지 Rust 가 답한다. 새 요청 줄·카드 세우기(insert·감사·카드 글·푸시)는 TS. 읽기 칸이 없거나 DB 오류도 `None`.
+/// 찾아 주는 `pending` 답까지 Rust 가 답한다. 첫 부름은 [`open_denial_card`]. 읽기 칸이 없거나 DB 오류도 `None`.
+#[allow(clippy::too_many_arguments)]
 async fn merge_denial_answer(
     read: &PgPool,
+    st: Option<&crate::core::msg_post::PostState>,
     me: &Account,
+    o: &Map<String, Value>,
     channel: &str,
     thread: Option<&str>,
     denial: &str,
+    (cause, turn, operator): (Option<&str>, Option<&str>, bool),
 ) -> Option<String> {
     let missing = crate::write::missing_in(read, MERGE_DENIAL_ASK_READ_PRIVILEGES, &[])
         .await
@@ -618,12 +646,12 @@ async fn merge_denial_answer(
         Err(code) => return Some(err(code, denial_message(code))),
     };
     let target = denial_target(&scope)?;
-    let agent: Option<i32> = sqlx::query_scalar(DENIAL_AGENT_SQL)
+    let owner: Option<Option<String>> = sqlx::query_scalar(DENIAL_AGENT_SQL)
         .bind(&me.id)
         .fetch_optional(read)
         .await
         .ok()?;
-    agent?; // `not_agent` 는 TS 가 답한다.
+    let owner = owner?; // `not_agent` 는 TS 가 답한다.
     let pending: Option<(String, Option<String>)> = sqlx::query_as(DENIAL_PENDING_SQL)
         .bind(&me.id)
         .bind(&target)
@@ -633,13 +661,144 @@ async fn merge_denial_answer(
         .fetch_optional(read)
         .await
         .ok()?;
-    let (request_id, card) = pending?;
+    let Some((request_id, card)) = pending else {
+        return open_denial_card(
+            read,
+            st?,
+            me,
+            o,
+            channel,
+            thread?,
+            denial,
+            &target,
+            owner.as_deref(),
+            (cause, turn, operator),
+        )
+        .await;
+    };
     // TS `jsonResult` 칸 차례(requestId·cardMessageId·pending·message).
     Some(super::respond::text_result(&format!(
         "{{\"requestId\":{},\"cardMessageId\":{},\"pending\":true,\"message\":{}}}",
         Value::from(request_id),
         card.map_or(Value::Null, Value::from),
         Value::from("the same request is already waiting for the owner in this thread"),
+    )))
+}
+
+/// TS `raisePermission`(merge · 거절에서 온 요청)의 첫 부름 — 요청 줄 세우기(하루 상한 → insert → supersede → 감사)를 tx 로 열어 둔 채
+/// 카드를 세우고, 카드가 섰으면 커밋한 뒤 잇기·푸시. 위임 있는 턴(`mandateId`)·쓰기 칸 없음·재생·TS 로 넘길 글은 tx 를 되돌리고 `None`(→ TS).
+#[allow(clippy::too_many_arguments)]
+async fn open_denial_card(
+    read: &PgPool,
+    st: &crate::core::msg_post::PostState,
+    me: &Account,
+    o: &Map<String, Value>,
+    channel: &str,
+    thread: &str,
+    denial: &str,
+    target: &str,
+    owner: Option<&str>,
+    (cause, turn, operator): (Option<&str>, Option<&str>, bool),
+) -> Option<String> {
+    use crate::core::msg_post::{iso_ms, now_ms};
+    use crate::core::permission_card as pc;
+    let mut privs = pc::REQUEST_WRITE_PRIVILEGES.to_vec();
+    privs.extend_from_slice(pc::LINK_PUSH_PRIVILEGES);
+    if !crate::write::missing_in(&st.write, &privs, &[])
+        .await
+        .ok()?
+        .is_empty()
+    {
+        return None;
+    }
+    let (number, head_sha, reason, failed): (i64, Option<String>, Option<String>, Vec<String>) =
+        sqlx::query_as(DENIAL_ONCE_SQL)
+            .bind(denial)
+            .fetch_optional(read)
+            .await
+            .ok()??;
+    let once = pc::Once {
+        number,
+        head_sha: head_sha.unwrap_or_default(),
+        reason: reason.unwrap_or_else(|| "not_granted".into()),
+        failed_checks: failed,
+    };
+    let body = o.get("body")?.as_str()?;
+    let why = pc::merge_denial_reason(number, Some(once.reason.as_str()), body);
+    let now = now_ms();
+    let (now_iso, expires_iso) = (iso_ms(now), iso_ms(now + pc::PERMISSION_REQUEST_TTL_MS));
+    let mut tx = st.write.begin().await.ok()?;
+    // W4: 위임 있는 턴의 요청(`mandateId`·카드 위임 칸)은 TS.
+    if let Some(c) = cause.filter(|_| operator)
+        && crate::core::cause_link::mandate_for_agent_post(&mut tx, &me.id, c, now, iso_ms)
+            .await
+            .ok()?
+            .is_some()
+    {
+        return None;
+    }
+    let opened = pc::open_merge_request(
+        &mut tx,
+        &me.id,
+        target,
+        &why,
+        channel,
+        thread,
+        denial,
+        number,
+        &now_iso,
+        &expires_iso,
+    )
+    .await
+    .ok()?;
+    let request_id = match opened {
+        pc::Opened::TooMany => return Some(err("too_many", &pc::too_many_message())),
+        pc::Opened::Created { request_id } => request_id,
+    };
+    let short = target.strip_prefix("repo:").unwrap_or(target);
+    let pr_meta = pc::merge_request_meta(
+        &request_id,
+        &me.id,
+        owner,
+        target,
+        &why,
+        &once,
+        &now_iso,
+        &expires_iso,
+    );
+    let meta = pc::merge_card_meta(pr_meta, once.ci());
+    let card_body = pc::merge_card_body(short, Some(&once), &format!("@{}", me.handle), &why);
+    let mut sub = Map::new();
+    sub.insert("channelId".into(), Value::from(channel));
+    sub.insert("body".into(), Value::from(card_body));
+    sub.insert("threadRootId".into(), Value::from(thread));
+    if let Some(m) = o.get("model") {
+        sub.insert("model".into(), m.clone());
+    }
+    let posted =
+        super::msg_post::post_card(st, me, &Value::Object(sub), meta, cause, turn, operator)
+            .await?;
+    let (card_id, notified) = match posted {
+        Ok(p) => p,
+        // TS `postFailureResult` — 요청 줄은 TS 처럼 남는다(TS 는 글 전에 줄을 세운다).
+        Err(answer) => {
+            tx.commit().await.ok()?;
+            return Some(answer);
+        }
+    };
+    if let Err(e) = tx.commit().await {
+        eprintln!("message.ask: merge-denial request commit failed after card {card_id}: {e}");
+        return None;
+    }
+    if let Err(e) =
+        pc::link_and_push(&st.write, &request_id, &card_id, owner, &notified, false).await
+    {
+        eprintln!("message.ask: merge-denial card link {request_id} failed: {e}");
+    }
+    Some(super::respond::text_result(&pc::created_result(
+        &request_id,
+        &card_id,
+        &expires_iso,
     )))
 }
 
@@ -764,6 +923,21 @@ mod tests {
         let v: Value = serde_json::from_str(&r?).ok()?;
         let inner: Value = serde_json::from_str(v.pointer("/content/0/text")?.as_str()?).ok()?;
         Some(inner.pointer("/error/code")?.as_str()?.to_owned())
+    }
+
+    #[test]
+    fn denial_once_columns_are_granted() {
+        for c in ["pr_number", "head_sha", "reason", "failed_checks"] {
+            assert!(DENIAL_ONCE_SQL.contains(c));
+            let col = format!("merge_denial.{c}");
+            assert!(
+                MERGE_DENIAL_ASK_READ_PRIVILEGES
+                    .iter()
+                    .any(|(k, p)| *k == col && *p == "SELECT"),
+                "{col}"
+            );
+        }
+        assert!(DENIAL_AGENT_SQL.contains("owner_account_id"));
     }
 
     #[test]
@@ -941,8 +1115,11 @@ mod tests {
     }
 
     #[test]
-    fn addressed_card_only_for_agents() {
-        assert_eq!(account_audience((C.into(), "human".into())), None);
+    fn addressed_card_for_humans_and_agents() {
+        assert_eq!(
+            account_audience((C.into(), "human".into())),
+            Some(json!({ "kind": "account", "accountId": C }))
+        );
         assert_eq!(
             account_audience((C.into(), "agent".into())),
             Some(json!({ "kind": "account", "accountId": C }))

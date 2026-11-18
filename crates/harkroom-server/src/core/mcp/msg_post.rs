@@ -332,6 +332,7 @@ pub async fn answer_picks(
         &[],
         None,
         Some(&hook),
+        None,
     )
     .await
 }
@@ -647,6 +648,7 @@ pub(super) async fn answer_ask(
     operator: bool,
     supersedes: &[&str],
     plan_step: Option<&str>,
+    push_to: Option<&str>,
 ) -> Option<String> {
     let a = parse(sub)?;
     post_with(
@@ -664,8 +666,85 @@ pub(super) async fn answer_ask(
         supersedes,
         plan_step,
         None,
+        push_to,
     )
     .await
+}
+
+/// 권한 카드 글([`super::message_ask`] 의 머지 거절 카드) — 세운 글의 id·`notified` 를 돌려준다. 거절(`forbidden`·`bad_thread` 등)은
+/// `Err(답)`, 재생·TS 로 넘길 꼴·DB 오류는 `None`(→ TS: 재생이면 TS 가 같은 키로 답한다).
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn post_card(
+    st: &PostState,
+    me: &Account,
+    sub: &Value,
+    mut meta: Map<String, Value>,
+    cause: Option<&str>,
+    turn: Option<&str>,
+    operator: bool,
+) -> Option<Result<(String, Vec<String>), String>> {
+    let a = parse(sub)?;
+    match channel_visible(&st.read, &me.id, &a.channel).await {
+        Ok(true) => {}
+        Ok(false) => return Some(Err(err("forbidden", "not a member of this dm channel"))),
+        Err(_) => return None,
+    }
+    cause_link::reported_model_meta(
+        &st.read,
+        &me.id,
+        a.model.as_deref(),
+        a.post.thread_root.as_deref(),
+        &mut meta,
+    )
+    .await
+    .ok()?;
+    let is_dm = msg_post::channel_is_dm(&st.read, &a.channel).await.ok()?;
+    let audience = audience_for(&st.read, &a.channel).await.ok()?.to_json();
+    let origin = Origin {
+        cause,
+        chain_cause: cause.filter(|_| operator),
+        turn_id: turn.filter(|_| operator),
+        meta,
+        server_notice: false,
+        closes_delegation: false,
+        delegation: None,
+        system: false,
+        progress: false,
+        wake: false,
+        no_mentions: false,
+        before_commit: None,
+        service_call: false,
+    };
+    let out = msg_post::post_in_tx(
+        st,
+        &a.channel,
+        &me.id,
+        me.kind == "agent",
+        &a.post,
+        None,
+        &audience,
+        is_dm,
+        &origin,
+    )
+    .await
+    .ok()?;
+    match out {
+        Outcome::ToTs | Outcome::Replayed(_) | Outcome::ChainLimit => None,
+        Outcome::Rejected(r) => Some(Err(err(&r.code, &r.message))),
+        Outcome::BadThread => Some(Err(err("bad_thread", BAD_THREAD))),
+        Outcome::BadAttachment => Some(Err(err(
+            "bad_attachment",
+            "attachments must be your own, unused uploads",
+        ))),
+        Outcome::Posted { row, notified, .. } => {
+            let id = serde_json::from_str::<Value>(&row)
+                .ok()?
+                .get("id")?
+                .as_str()?
+                .to_owned();
+            Some(Ok((id, notified)))
+        }
+    }
 }
 
 /// shared `REPORT_MAX_ITEMS`·`REPORT_MAX_NEXT`.
@@ -808,6 +887,7 @@ async fn post(
         &[],
         None,
         None,
+        None,
     )
     .await
 }
@@ -830,6 +910,7 @@ async fn post_with(
     supersedes: &[&str],
     plan_step: Option<&str>,
     picks: Option<&crate::core::agent_model_picks::AgentPicks>,
+    push_to: Option<&str>,
 ) -> Option<String> {
     match channel_visible(&st.read, &me.id, &a.channel).await {
         Ok(true) => {}
@@ -915,6 +996,17 @@ async fn post_with(
             if let Some(new_id) = new_id {
                 for old in supersedes {
                     super::message_ask::supersede_ask(&st.write, old, &new_id, &me.id).await;
+                }
+                // TS: 이름으로 정한 받는 사람이 이 글로 inbox 를 받지 않았으면 `enqueueAskPush`(에이전트면 문장이 아무것도 넣지 않는다).
+                if let Some(to) = push_to.filter(|t| !notified.iter().any(|n| n == t))
+                    && let Err(e) =
+                        sqlx::query(crate::core::permission_card::enqueue_ask_push_sql())
+                            .bind(to)
+                            .bind(&new_id)
+                            .execute(&st.write)
+                            .await
+                {
+                    eprintln!("message.ask: ask push for {new_id} failed: {e}");
                 }
                 // TS `postedResult(message, notified, { plan: planHookOut(await linkPlanCard(…)) })` — 재생이 아닐 때만(재생은 TS 가 답한다).
                 if let (Some(step), Some(root)) = (plan_step, a.post.thread_root.as_deref()) {
