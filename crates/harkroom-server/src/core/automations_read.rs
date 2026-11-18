@@ -81,6 +81,19 @@ const GET_SQL: &str = concat!(
     "where a.id = $1::uuid and a.owner_id = $2::uuid and a.deleted_at is null"
 );
 
+/// TS `approveAutomation` 의 `writeReturningView` — `returning *` 대신 `COLS` 칸만 돌려받는다(수신 비밀 칸은 고르지 않는다).
+/// $1 id · $2 소유자 · $3 다음 회차(timestamptz 또는 null) · $4 사람 세션으로 승인했나.
+pub(crate) const APPROVE_SQL: &str = concat!(
+    "with w as (update automation set approved_at = now(), enabled = true, next_at = $3::timestamptz, updated_at = now(), ",
+    "mandate_session_at = case when $4 then now() else null end ",
+    "where id = $1::uuid and owner_id = $2::uuid and approved_at is null and deleted_at is null ",
+    "returning id, owner_id, channel_id, name, body, trigger, enabled, next_at, paused_reason, consecutive_failures, ",
+    "ingress_enabled_at, debounce_sec, proposed_by, approved_at, created_at, updated_at) select ",
+    view_json!(),
+    "::text from w a ",
+    last_run_join!()
+);
+
 /// TS `listRuns(pool, id)` — `RUN_COLS`, 최근 50.
 const RUNS_SQL: &str = concat!(
     "select coalesce(json_agg(json_build_object(",
@@ -178,7 +191,7 @@ mod tests {
 
     #[test]
     fn sql_never_selects_ingress_secrets() {
-        for q in [LIST_SQL, GET_SQL, RUNS_SQL] {
+        for q in [LIST_SQL, GET_SQL, RUNS_SQL, APPROVE_SQL] {
             assert!(!q.contains("ingress_token"), "{q}");
             assert!(!q.contains("secret"), "{q}");
             assert!(!q.contains("a.*"), "{q}");

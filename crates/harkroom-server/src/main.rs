@@ -548,6 +548,27 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 AT4 — 자동화 제안 승인(`POST /automations/{id}/approve`). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만.
+    let automation_approve = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::automation_approve as k;
+            match write::missing_in(w, k::AUTOMATION_APPROVE_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: automation approve core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: automation approve core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 AT3 — 자동화 「지금 한 번」(`POST /automations/{id}/run`). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만.
     let automation_run_now = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -2104,6 +2125,21 @@ async fn main() {
             core_routes.router = core_routes.router.merge(aw.router);
             core_routes.http.extend(aw.http);
             core_routes.sockets.extend(aw.sockets);
+        }
+        // S5.4 AT4 — 자동화 제안 승인. 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = automation_approve {
+            let ap = harkroom_server::core::automation_approve::routes(
+                harkroom_server::core::automation_approve::ApproveState {
+                    read: state.pool.clone(),
+                    write,
+                    up: state.up.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(ap.router);
+            core_routes.http.extend(ap.http);
+            core_routes.sockets.extend(ap.sockets);
         }
         // S5.4 AT3 — 자동화 「지금 한 번」. 권한이 다 있을 때만 — 아니면 TS 에 남는다.
         if let Some(write) = automation_run_now {
