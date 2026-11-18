@@ -158,19 +158,21 @@ pub enum SecretKey {
 }
 
 impl SecretKey {
-    /// TS `verified?.keyring ?? null`·`verified?.mismatch ?? false` 그대로(env 키 없음 = 꺼짐, 어긋남 아님).
-    fn from_verified(v: Option<(Option<SecretOpener>, bool)>) -> Self {
+    /// 키를 읽은 뒤의 상태만 Rust 가 답한다. env 키가 없으면(`None`) 이 프로세스에 키가 없다는 뜻일 뿐
+    /// 보관소가 꺼졌다는 뜻이 아니다(TS 쪽에는 키가 있을 수 있다) → `None` = 비밀 갈래는 TS 몫.
+    fn from_verified(v: Option<(Option<SecretOpener>, bool)>) -> Option<Self> {
         match v {
-            None => SecretKey::Off { mismatch: false },
-            Some((Some(k), _)) => SecretKey::Open(k),
-            Some((None, mismatch)) => SecretKey::Off { mismatch },
+            None => None,
+            Some((Some(k), _)) => Some(SecretKey::Open(k)),
+            Some((None, mismatch)) => Some(SecretKey::Off { mismatch }),
         }
     }
 }
 
 /// 기동 한 번 — `secret_reveal::load_state` 와 같은 길(env 키 + DB 확인값). 오류 글귀엔 파일 이름·kid 만 있다.
 /// 오류(키 파일을 못 읽음·확인값 조회 실패)면 상태를 모르니 호출 쪽이 비밀 갈래를 TS 에 맡긴다.
-pub async fn load_secret_opener(pool: &sqlx::PgPool) -> Result<SecretKey, String> {
+/// `Ok(None)` = env 키 없음 — 이것도 TS 몫이다.
+pub async fn load_secret_opener(pool: &sqlx::PgPool) -> Result<Option<SecretKey>, String> {
     Ok(SecretKey::from_verified(
         crate::secrets::verify::load_verified_from_env(pool)
             .await?
@@ -1247,16 +1249,20 @@ mod tests {
 
     #[test]
     fn key_state_like_ts() {
-        // env 키 없음 = 꺼짐(어긋남 아님) → 403 `no_secret`.
-        let off = SecretKey::from_verified(None);
-        assert!(matches!(off, SecretKey::Off { mismatch: false }));
-        assert!(!mismatch_off(Some(&off)));
         // 활성 kid 어긋남 → 키링 없음 + mismatch → 409.
-        let mm = SecretKey::from_verified(Some((None, true)));
+        let mm = SecretKey::from_verified(Some((None, true))).unwrap();
         assert!(mismatch_off(Some(&mm)));
-        let plain = SecretKey::from_verified(Some((None, false)));
+        // 키는 읽었는데 키링이 없음 → 403 `no_secret`.
+        let plain = SecretKey::from_verified(Some((None, false))).unwrap();
+        assert!(matches!(plain, SecretKey::Off { mismatch: false }));
         assert!(!mismatch_off(Some(&plain)));
         assert!(!mismatch_off(None));
+    }
+
+    #[test]
+    fn no_key_env_leaves_secret_connections_to_ts() {
+        // env 키 없음 = 이 프로세스에 키가 없을 뿐 → 상태 없음(`secret: None`) → 비밀 갈래는 TS 가 답한다.
+        assert!(SecretKey::from_verified(None).is_none());
     }
 
     #[tokio::test]

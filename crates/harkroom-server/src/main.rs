@@ -1889,13 +1889,18 @@ async fn main() {
         _ => false,
     };
     // S5.4 — `POST /agent/api-checks` 의 비밀을 여는 연결. 본체가 켜져 있고 [`API_CHECKS_SECRET_PRIVILEGES`] 가 다 있고
-    // 키 상태를 읽었을 때만. 키가 없거나 어긋나면 Rust 가 `no_secret`·409 `secret_key_mismatch` 로 답한다(S5.5 b).
+    // 키 상태를 읽었을 때만. env 키가 없으면 TS 몫. 키를 읽었는데 키링이 없거나 어긋나면 Rust 가
+    // `no_secret`·409 `secret_key_mismatch` 로 답한다(S5.5 b).
     let api_checks_secret = match (&api_checks_deny, api_checks_allow) {
         (Some(w), true) => {
             use harkroom_server::core::api_checks as t;
             match write::missing_in(w, t::API_CHECKS_SECRET_PRIVILEGES, &[]).await {
                 Ok(m) if m.is_empty() => match t::load_secret_opener(w).await {
-                    Ok(k) => {
+                    Ok(None) => {
+                        eprintln!("front: api checks secret off — no key env");
+                        None
+                    }
+                    Ok(Some(k)) => {
                         if let t::SecretKey::Off { mismatch } = &k {
                             eprintln!(
                                 "front: api checks secret — no matching secret key (mismatch: {mismatch}); answering no_secret"
