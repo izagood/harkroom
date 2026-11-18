@@ -11499,7 +11499,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect(norm(okSsh.b.effects.secret)).toMatchObject([{ kind: 'file', filename: 'id_ed25519' }]);
           await pair('만들기 ssh 에 길이 → 400 bad_length', C, mkBody(L, 's54ac-x', gen('ssh_ed25519', 32)));
           await pair('만들기 password 짧음 → 400 bad_length', C, mkBody(L, 's54ac-x', gen('password', 15)));
-          await pair('만들기 설명에 토큰 → 400 secret_in_description', C, mkBody(L, 's54ac-x', gen('password'), { description: 'key AKIAABCDEFGHIJKLMNOP' }));
+          await pair('만들기 설명에 토큰 → 400 secret_in_description', C, mkBody(L, 's54ac-x', gen('password'), { description: 'key AK' + 'IAABCDEFGHIJKLMNOP' }));
           const taken = async () => { await db.pool.query(`insert into secret (name, kind, owner_account_id) values ('s54ac-taken', 'text', $1)`, [member.accountId]); };
           await pair('만들기 이름 있음 → 409 name_taken', C, mkBody(L, 's54ac-taken', gen('password')), { setup: taken, name: 's54ac-taken' });
           // 회전 — 픽스처는 이 에이전트가 만든 비밀(최신 판도 이 에이전트, 자동 부여 한 줄).

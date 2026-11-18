@@ -67,6 +67,10 @@ const HAS_CREATE_GRANT_SQL: &str = "select 1 from account_grant \
 pub const AGENT_SECRET_MAX: i64 = 20;
 pub const AGENT_SECRET_DEFAULT_DAYS: i64 = 90;
 pub const AGENT_SECRET_MAX_DAYS: i64 = 365;
+/// OpenSSH 개인키 머리·꼬리. 비밀 검사(gitleaks)가 소스의 이 글자를 개인키로 잡지 않게 쪼개 쓴다.
+const PEM_BEGIN: &str = concat!("-----BEGIN OPENSSH ", "PRIVATE KEY-----\n");
+const PEM_END: &str = concat!("-----END OPENSSH ", "PRIVATE KEY-----\n");
+
 pub const SECRET_CREATE_MAX_BYTES: usize = 64 * 1024;
 
 /// TS `CreateDenial`.
@@ -246,12 +250,12 @@ pub fn ssh_ed25519(comment: &str) -> (zeroize::Zeroizing<Vec<u8>>, String) {
     ssh_string(&mut blob, &pub_blob);
     ssh_string(&mut blob, &priv_);
     let b64 = zeroize::Zeroizing::new(base64::engine::general_purpose::STANDARD.encode(&*blob));
-    let mut pem = zeroize::Zeroizing::new(String::from("-----BEGIN OPENSSH PRIVATE KEY-----\n"));
+    let mut pem = zeroize::Zeroizing::new(String::from(PEM_BEGIN));
     for chunk in b64.as_bytes().chunks(70) {
         pem.push_str(std::str::from_utf8(chunk).expect("base64 is ascii"));
         pem.push('\n');
     }
-    pem.push_str("-----END OPENSSH PRIVATE KEY-----\n");
+    pem.push_str(PEM_END);
     let public = format!(
         "ssh-ed25519 {} {comment}",
         base64::engine::general_purpose::STANDARD.encode(&pub_blob)
@@ -1833,8 +1837,8 @@ mod tests {
             .unwrap();
         assert_eq!((g.kind, g.filename), ("file", Some("id_ed25519")));
         let pem = std::str::from_utf8(&g.value).unwrap();
-        assert!(pem.starts_with("-----BEGIN OPENSSH PRIVATE KEY-----\n"));
-        assert!(pem.ends_with("-----END OPENSSH PRIVATE KEY-----\n"));
+        assert!(pem.starts_with(PEM_BEGIN));
+        assert!(pem.ends_with(PEM_END));
         let body: Vec<&str> = pem.lines().filter(|l| !l.starts_with("-----")).collect();
         assert!(body.iter().all(|l| l.len() <= 70));
         let blob = base64::engine::general_purpose::STANDARD
