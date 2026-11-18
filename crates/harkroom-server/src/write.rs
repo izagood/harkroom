@@ -48,7 +48,8 @@ pub const REQUIRED_PRIVILEGES: &[(&str, &str)] = &[
     ("handle_group", "DELETE"),
     ("handle_group_member", "INSERT"),
     ("handle_group_member", "DELETE"),
-    // P4c — 신고 해결·차단(`writes_moderation.rs`). 신고 올리기는 TS 에 남아 message_report INSERT 는 앞단이 쓰지 않는다.
+    // P4c — 신고 올리기·해결·차단(`writes_moderation.rs`). 신고 올리기는 message_report INSERT(+ message 본문 SELECT).
+    ("message_report", "INSERT"),
     ("message_report", "UPDATE"),
     ("account_block", "INSERT"),
     ("account_block", "DELETE"),

@@ -341,7 +341,12 @@ pub const MOVED_WRITE: &[Moved] = &[
         path: "/handle-groups/{id}/members",
         route: || axum::routing::delete(crate::writes_groups::remove_members),
     },
-    // P4c 신고·차단(`writes_moderation.rs`). 신고 올리기(POST /messages/{id}/report)는 프로세스 메모리 상한 때문에 TS 에 남는다.
+    // P4c 신고·차단(`writes_moderation.rs`). 신고 올리기의 상한은 Rust 프로세스 리미터가 센다(이 줄은 Rust 만 받는다).
+    Moved {
+        key: "POST /messages/{id}/report",
+        path: "/messages/{id}/report",
+        route: || axum::routing::post(crate::writes_moderation::report_message),
+    },
     Moved {
         key: "POST /admin/reports/{id}/resolve",
         path: "/admin/reports/{id}/resolve",
