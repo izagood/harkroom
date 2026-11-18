@@ -864,7 +864,7 @@ async fn main() {
         _ => None,
     };
     // S5.4 SE4 — `GET /agent/secret-create`. 세 겹 잠금: `HARKROOM_CORE=rust`, 쓰기 풀에 그 칸 권한이 다 있고, 키 env 를 읽어
-    // DB 확인값과 맞춰 볼 수 있을 때만. `POST /agent/secrets`·`/agent/secrets/rotate` 는 TS 에 남는다(`agent_secret_create.rs` 머리말).
+    // DB 확인값과 맞춰 볼 수 있을 때만. `POST /agent/secrets`·`/agent/secrets/rotate`(generate)는 아래 두 겹 잠금을 더 본다.
     let agent_secret_create = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
             use harkroom_server::core::agent_secret_create as k;
@@ -890,6 +890,29 @@ async fn main() {
             }
         }
         _ => None,
+    };
+    // `POST /agent/secrets`·`/agent/secrets/rotate` — 두 줄이 닿는 칸이 다 있을 때만(`agent_secret_create.rs` 머리말).
+    let agent_secret_write_ok = match (&agent_secret_create, &state.write) {
+        (Some(_), Some(w)) => {
+            use harkroom_server::core::agent_secret_create as k;
+            match write::missing_in(w, &k::write_privileges(), &[]).await {
+                Ok(m) if m.is_empty() => true,
+                Ok(m) => {
+                    eprintln!(
+                        "front: agent secret create/rotate core off — missing privileges {m:?}"
+                    );
+                    false
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: agent secret create/rotate core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    false
+                }
+            }
+        }
+        _ => false,
     };
     let secrets_read_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -2698,6 +2721,16 @@ async fn main() {
             core_routes.sockets.extend(sr.sockets);
         }
         if let Some(st) = agent_secret_create {
+            // 만들기·회전 두 줄: 글 경로(소유자 알림)와 두 줄의 칸 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+            let st = match (&post_write, agent_secret_write_ok) {
+                (Some(w), true) => st.with_post(harkroom_server::core::msg_post::PostState {
+                    read: state.pool.clone(),
+                    write: w.clone(),
+                    up: state.up.clone(),
+                    implicit_ok,
+                }),
+                _ => st,
+            };
             let sc = harkroom_server::core::agent_secret_create::routes(
                 st,
                 auth.clone(),
