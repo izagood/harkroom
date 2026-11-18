@@ -43,7 +43,7 @@ pub const SERVED: &[&str] = &[
     "secret.rotate",
     "attachment.upload",
     "pr.status",
-    // 거절 갈래만([`super::attachment_fetch`]) — 통과하면 바이트 싣기는 TS 가 한다.
+    // [`super::attachment_fetch`] — 거절·텍스트·PDF·작은 그림. 3MiB 넘는 그림 줄이기만 TS.
     "attachment.fetch",
 ];
 
