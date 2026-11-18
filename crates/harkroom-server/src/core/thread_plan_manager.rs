@@ -200,8 +200,8 @@ fn parse_start(bytes: &[u8]) -> Option<(bool, bool)> {
 }
 
 /// `POST /threads/{rootId}/plan/start` — TS `startPlanSteps` 의 앞 거절들(`human_only`·`not_found`·`if_rev_required`·
-/// `not_root`·보기 404·`channel_archived`·`no_plan`·`plan_flagged`)만 Rust 가 답한다. 그 뒤(경로 정하기·미리보기·위임 글 올리기)와
-/// zod 판정이 애매한 본문은 요청을 그대로 TS 에 넘긴다(TS 가 같은 판정을 처음부터 다시 돈다).
+/// `not_root`·보기 404·`channel_archived`·`no_plan`·`plan_flagged`), 미리보기, 자기 단계만 시작(TP5b), 글을 올리는 시작(TP5c)을
+/// Rust 가 답한다. 글 경로가 없거나 스레드에 열린 선택 카드가 있는 글 올리기와 zod 판정이 애매한 본문은 요청을 그대로 TS 에 넘긴다.
 pub async fn post_start(
     State(st): State<Arc<ManagerState>>,
     RequireAccount(me, auth): RequireAccount,
@@ -495,7 +495,7 @@ fn message_id(row: &str) -> Option<String> {
     v["id"].as_str().map(str::to_string)
 }
 
-/// 코어 라우터에 합칠 줄 — 인증은 `route_layer`, CORS 는 `layer`. `POST …/plan/start` 는 앞 거절·미리보기·자기 단계만 시작은 Rust, 글을 올리는 시작은 TS.
+/// 코어 라우터에 합칠 줄 — 인증은 `route_layer`, CORS 는 `layer`. `POST …/plan/start` 는 앞 거절·미리보기·실제 시작 모두 Rust(글 경로·열린 카드 갈래만 TS).
 pub fn routes(
     st: ManagerState,
     auth: crate::auth::AuthPools,
