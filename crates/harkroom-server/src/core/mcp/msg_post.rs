@@ -1,8 +1,8 @@
 //! S5.3 C1c-4c — MCP `message.post` 의 몸통. TS `mcp/mcpPlugin.ts` 의 같은 도구를 옮긴다: 채널 가시성 → 모델 신고 meta →
 //! `postMessage`(원인 입력과 함께, [`crate::core::msg_post::post_in_tx`]) → `postedResult`.
 //!
-//! - **TS 로 넘기는 것**(`None` — 아무것도 쓰지 않았다): zod 가 받지 않을 인자(모양을 모르면 넘긴다) · 비지 않은 `agentModels`(거절 갈래만
-//!   [`picks_refusal`] 이 답하고, 고르기 쓰기 `applyAgentPicks` 는 TS 몫) · 자른 자리가 서로게이트 쌍을 가르는 모델 신고([`cause_link::trimmed_model`]) · `post_in_tx` 가 TS 몫이라고 한
+//! - **TS 로 넘기는 것**(`None` — 아무것도 쓰지 않았다): zod 가 받지 않을 인자(모양을 모르면 넘긴다) · 비지 않은 `agentModels` 중 고르기 쓰기 권한이
+//!   없을 때(거절 갈래만 [`picks_refusal`] 이 답한다 — 권한이 있으면 [`answer_picks`] 가 글과 같은 tx 에서 `applyAgentPicks` 까지 맡는다) · 자른 자리가 서로게이트 쌍을 가르는 모델 신고([`cause_link::trimmed_model`]) · `post_in_tx` 가 TS 몫이라고 한
 //!   글(상한에 막힌 부름·암묵 위임을 모르는 부름·TS 몫 스레드) · DB 오류(트랜잭션이 버려져 아무것도 남지 않았다 — TS 가 같은 요청을 다시 돈다).
 //! - REST 와 다른 점(TS 와 같다): 보관된 채널도 막지 않는다(`assertChannelVisible` 만) · 링크 미리보기·글 승인이 없어 본문 가드가
 //!   없다 — 그래서 메시지 링크가 든 글도 Rust 가 맡고, 정체 판정의 「같은 대화 링크」 갈래가 여기서 닿는다 · 재시도 키가 없다 ·
@@ -287,6 +287,53 @@ pub async fn picks_refusal(st: &PostState, me: &Account, args: &Value) -> Option
         }
     }
     None
+}
+
+/// `message.post` + 비지 않은 `agentModels` — 거절 앞머리([`picks_refusal`]) 뒤 글과 같은 tx 에서 TS `applyAgentPicks` 를 돈다
+/// ([`crate::core::agent_model_picks::AgentPicks`]). 바뀐 줄은 커밋 뒤 시스템 줄·이벤트. 인자가 zod 를 못 지나거나 DB 오류면 `None`(→ TS).
+pub async fn answer_picks(
+    st: &PostState,
+    me: &Account,
+    args: &Value,
+    cause: Option<&str>,
+    turn: Option<&str>,
+    operator: bool,
+) -> Option<String> {
+    use crate::core::agent_model_picks::{AgentPicks, Pick};
+    use crate::core::thread_model_set::clean_axis;
+    if let Some(refused) = picks_refusal(st, me, args).await {
+        return Some(refused);
+    }
+    let raw = parse_picks(args.get("agentModels")?)?;
+    let mut rest = args.clone();
+    rest.as_object_mut()?.remove("agentModels");
+    let a = parse(&rest)?;
+    let picks: Vec<Pick> = raw
+        .into_iter()
+        .map(|(agent_id, model, effort)| Pick {
+            agent_id,
+            model: clean_axis(model.as_deref(), cause_link::MODEL_ID_MAX),
+            effort: clean_axis(effort.as_deref(), 64),
+        })
+        .collect();
+    let hook = AgentPicks::new(&a.channel, a.post.thread_root.as_deref(), &me.id, picks);
+    post_with(
+        st,
+        me,
+        a,
+        Map::new(),
+        Kind::User,
+        false,
+        false,
+        cause,
+        turn,
+        operator,
+        None,
+        &[],
+        None,
+        Some(&hook),
+    )
+    .await
 }
 
 /// 글 종류 — TS `postMessage` 의 `kind`·`serverNotice` 조합.
@@ -616,6 +663,7 @@ pub(super) async fn answer_ask(
         None,
         supersedes,
         plan_step,
+        None,
     )
     .await
 }
@@ -759,6 +807,7 @@ async fn post(
         artifact,
         &[],
         None,
+        None,
     )
     .await
 }
@@ -780,6 +829,7 @@ async fn post_with(
     artifact: Option<&super::artifact_write::NewArtifact>,
     supersedes: &[&str],
     plan_step: Option<&str>,
+    picks: Option<&crate::core::agent_model_picks::AgentPicks>,
 ) -> Option<String> {
     match channel_visible(&st.read, &me.id, &a.channel).await {
         Ok(true) => {}
@@ -812,7 +862,9 @@ async fn post_with(
         progress: kind == Kind::Progress,
         wake: false,
         no_mentions: false,
-        before_commit: artifact.map(|h| h as &dyn msg_post::BeforeCommit),
+        before_commit: artifact
+            .map(|h| h as &dyn msg_post::BeforeCommit)
+            .or(picks.map(|h| h as &dyn msg_post::BeforeCommit)),
         service_call: false,
     };
     let out = msg_post::post_in_tx(
@@ -839,6 +891,23 @@ async fn post_with(
         )),
         // 에이전트 글은 새 위임을 만들지 않는다(`mandate` 는 사람 글만) — 감사 줄이 없다.
         Outcome::Posted { row, notified, .. } => {
+            // TS: 지정이 바뀌었으면 커밋 뒤 시스템 줄(`byKind: 'agent'`)·`thread.agent_model.changed`. 행은 이미 커밋됐다.
+            if let Some((root, changes)) = picks.and_then(|h| h.changes()) {
+                for (agent, axes) in &changes {
+                    if let Err(e) = crate::core::thread_model_set::announce_agent_pick(
+                        st,
+                        &a.channel,
+                        &root,
+                        &me.id,
+                        agent,
+                        axes.as_ref(),
+                    )
+                    .await
+                    {
+                        eprintln!("message.post: agent pick announce failed: {e}");
+                    }
+                }
+            }
             let new_id = serde_json::from_str::<Value>(&row)
                 .ok()
                 .and_then(|v| v.get("id").and_then(Value::as_str).map(str::to_owned));

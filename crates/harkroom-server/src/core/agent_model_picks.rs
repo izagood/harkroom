@@ -1,5 +1,5 @@
 //! S5.4 — 에이전트가 다른 에이전트를 부르며 그 스레드의 모델을 고른다(`agentModels`). TS `services/agentModelPicks.ts` 의
-//! `applyAgentPicks` 판정을 순수 함수로 옮긴다(DB 에서 읽은 값을 받아 판정만 한다). 쓰기·시스템 줄은 아직 TS 몫이다.
+//! `applyAgentPicks` 를 옮긴다 — 판정은 순수 함수, 쓰기는 [`apply`], 게시 tx 훅은 [`AgentPicks`](MCP `message.post` 가 쓴다).
 //!
 //! 판정 순서(TS 와 같다, 고른 것마다): `self_pick`(403) → `not_called`(403) → `bad_model_value`(400) → 허용 목록
 //! `not_pickable`(403, 풀기는 건너뛴다) → 사람이 정한 행 `human_pinned`(409). 모두 지나면 실제로 바뀌는 것만 세어
@@ -18,6 +18,7 @@ pub const AGENT_MODEL_PICKS_PRIVILEGES: &[(&str, &str)] = &[
     ("account.id", "SELECT"),
     ("account.kind", "SELECT"),
     ("account.deleted_at", "SELECT"),
+    ("account.handle", "SELECT"),
     ("thread_agent_model", "SELECT"),
     ("thread_agent_model", "INSERT"),
     ("thread_agent_model", "UPDATE"),
@@ -222,7 +223,7 @@ async fn existing(
         .await
 }
 
-/// TS `applyAgentPicks` — 게시 tx 안에서 판정하고 쓴다. `Err(Rejection)` 이면 호출자가 롤백한다. 아직 MCP 갈래에 잇지 않았다.
+/// TS `applyAgentPicks` — 게시 tx 안에서 판정하고 쓴다. `Err(Rejection)` 이면 호출자가 롤백한다.
 pub async fn apply(
     tx: &mut sqlx::PgConnection,
     channel: &str,
@@ -330,6 +331,56 @@ pub async fn apply(
     Ok(Ok(changes))
 }
 
+/// `message.post`·`message.delegate` 의 TS `beforeCommit: applyAgentPicks(…)` — 글과 같은 tx 에서 고르기를 판정·쓴다.
+/// 루트는 `threadRootId ?? 새 글 id`. 바뀐 줄은 [`AgentPicks::changes`] 로 꺼내 커밋 뒤 시스템 줄·이벤트를 낸다.
+#[derive(Debug)]
+pub(crate) struct AgentPicks {
+    pub(crate) channel: String,
+    pub(crate) root: Option<String>,
+    pub(crate) actor: String,
+    pub(crate) picks: Vec<Pick>,
+    done: std::sync::Mutex<Option<(String, Vec<Change>)>>,
+}
+
+impl AgentPicks {
+    pub(crate) fn new(channel: &str, root: Option<&str>, actor: &str, picks: Vec<Pick>) -> Self {
+        Self {
+            channel: channel.to_owned(),
+            root: root.map(str::to_owned),
+            actor: actor.to_owned(),
+            picks,
+            done: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// 쓴 스레드 루트와 바뀐 줄(훅이 지났을 때만).
+    pub(crate) fn changes(&self) -> Option<(String, Vec<Change>)> {
+        self.done.lock().ok()?.clone()
+    }
+}
+
+impl crate::core::msg_post::BeforeCommit for AgentPicks {
+    fn run<'a>(
+        &'a self,
+        tx: &'a mut sqlx::Transaction<'static, sqlx::Postgres>,
+        message_id: &'a str,
+        notified: &'a HashSet<String>,
+    ) -> crate::core::msg_post::BeforeCommitFuture<'a> {
+        Box::pin(async move {
+            let root = self.root.clone().unwrap_or_else(|| message_id.to_owned());
+            match apply(tx, &self.channel, &root, &self.actor, &self.picks, notified).await? {
+                Err(r) => Ok(Some(r)),
+                Ok(changes) => {
+                    if let Ok(mut g) = self.done.lock() {
+                        *g = Some((root, changes));
+                    }
+                    Ok(None)
+                }
+            }
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,6 +398,15 @@ mod tests {
     }
     fn code(r: Option<Rejection>) -> Option<(u16, String)> {
         r.map(|r| (r.status, r.code))
+    }
+
+    #[test]
+    fn hook_has_no_changes_until_run() {
+        let h = AgentPicks::new(A, None, A, vec![pick(Some("opus"), None)]);
+        assert!(h.changes().is_none());
+        assert!(h.root.is_none());
+        assert!(AGENT_MODEL_PICKS_PRIVILEGES.contains(&("account.handle", "SELECT")));
+        let _: &dyn crate::core::msg_post::BeforeCommit = &h;
     }
 
     #[test]

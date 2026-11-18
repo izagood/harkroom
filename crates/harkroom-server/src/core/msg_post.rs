@@ -389,6 +389,7 @@ pub(crate) trait BeforeCommit: std::fmt::Debug + Sync {
         &'a self,
         tx: &'a mut sqlx::Transaction<'static, sqlx::Postgres>,
         message_id: &'a str,
+        notified: &'a HashSet<String>,
     ) -> BeforeCommitFuture<'a>;
 }
 
@@ -1239,7 +1240,7 @@ pub(crate) async fn post_tx(
     };
     // TS `beforeCommit` — 위임을 닫은 뒤, 커밋 앞. 거절이면 롤백, 지나면 같은 tx 에서 행을 다시 읽는다.
     if let Some(hook) = origin.before_commit {
-        if let Some(rej) = hook.run(&mut tx, &id).await? {
+        if let Some(rej) = hook.run(&mut tx, &id, &notified_set).await? {
             tx.rollback().await?;
             return Ok((Outcome::Rejected(rej), None));
         }
@@ -1660,6 +1661,7 @@ mod tests {
                 &'a self,
                 _tx: &'a mut sqlx::Transaction<'static, sqlx::Postgres>,
                 _message_id: &'a str,
+                _notified: &'a HashSet<String>,
             ) -> BeforeCommitFuture<'a> {
                 Box::pin(async {
                     Ok(Some(Rejection {

@@ -184,6 +184,18 @@ pub async fn handle(
                             if !writes.relay_moved {
                                 return None;
                             }
+                            // 고르기 쓰기 권한(`AGENT_MODEL_PICKS_PRIVILEGES`)이 있으면 글과 같은 tx 에서 Rust 가 다 맡는다.
+                            if let Some(ps) = writes.agent_picks.as_ref() {
+                                return super::msg_post::answer_picks(
+                                    ps,
+                                    &me,
+                                    &args,
+                                    c,
+                                    t,
+                                    has_operator,
+                                )
+                                .await;
+                            }
                             return super::msg_post::picks_refusal(st, &me, &args).await;
                         }
                         super::msg_post::answer(st, &me, &args, c, t, has_operator).await
