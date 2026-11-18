@@ -616,6 +616,50 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 AT8 — 수신 켜기(`POST /automations/{id}/ingress`). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만.
+    let automation_ingress_issue = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::automation_ingress_issue as k;
+            match write::missing_in(w, k::PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!(
+                        "front: automation ingress issue core off — missing privileges {m:?}"
+                    );
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: automation ingress issue core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+    // S5.4 AT7 — 들어오는 hook(github·generic). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 읽기 풀에 수신 비밀 칸 SELECT 가 있을 때만.
+    let automation_hooks_on = match core_mode {
+        harkroom_server::core::CoreMode::Rust => {
+            use harkroom_server::core::automation_hooks as k;
+            match write::missing_in(&state.pool, k::PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => true,
+                Ok(m) => {
+                    eprintln!("front: automation hooks core off — missing privileges {m:?}");
+                    false
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: automation hooks core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    false
+                }
+            }
+        }
+        _ => false,
+    };
     // S5.4 결정 5 — 자동화 지우기(`DELETE /automations/{id}`) + 위임 끝 카드 갱신(`core::perm_card`). 두 겹 잠금.
     let automation_delete = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -2998,6 +3042,29 @@ async fn main() {
             core_routes.router = core_routes.router.merge(rn.router);
             core_routes.http.extend(rn.http);
             core_routes.sockets.extend(rn.sockets);
+        }
+        // S5.4 AT7 — 들어오는 hook(github·generic). 읽기 풀에 수신 비밀 칸 SELECT 가 있을 때만 — 아니면 TS 에 남는다.
+        // S5.4 AT8 — 수신 켜기. 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = automation_ingress_issue {
+            use harkroom_server::core::automation_ingress_issue as k;
+            let ii = k::routes(
+                k::IssueState::new(state.pool.clone(), write),
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(ii.router);
+            core_routes.http.extend(ii.http);
+            core_routes.sockets.extend(ii.sockets);
+        }
+        if automation_hooks_on {
+            use harkroom_server::core::automation_hooks as k;
+            let hk = k::routes(
+                k::HooksState::new(state.pool.clone(), state.up.clone()),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(hk.router);
+            core_routes.http.extend(hk.http);
+            core_routes.sockets.extend(hk.sockets);
         }
         // S5.4 결정 5 — 자동화 지우기. 권한이 다 있을 때만 — 아니면 TS 에 남는다.
         if let Some(write) = automation_delete {
