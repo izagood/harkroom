@@ -62,6 +62,23 @@ use std::sync::{Arc, OnceLock};
 
 /// 이 줄이 쓰는 권한(표, 권한) — homelab GRANT 와 같아야 한다. 첨부는 잇는 칸만(칸 권한 — `for update` 도 이것으로 된다).
 pub const MESSAGE_POST_PRIVILEGES: &[(&str, &str)] = &[
+    // 링크 미리보기 가져오기(REST 글의 URL 후보 — [`super::link_preview_fetch::LINK_PREVIEW_WRITE_PRIVILEGES`] 와 같은 칸).
+    ("link_preview.url", "SELECT"),
+    ("link_preview.status", "SELECT"),
+    ("link_preview.fetched_at", "SELECT"),
+    ("link_preview.url", "INSERT"),
+    ("link_preview.title", "INSERT"),
+    ("link_preview.description", "INSERT"),
+    ("link_preview.image_url", "INSERT"),
+    ("link_preview.site_name", "INSERT"),
+    ("link_preview.status", "INSERT"),
+    ("link_preview.fetched_at", "INSERT"),
+    ("link_preview.title", "UPDATE"),
+    ("link_preview.description", "UPDATE"),
+    ("link_preview.image_url", "UPDATE"),
+    ("link_preview.site_name", "UPDATE"),
+    ("link_preview.status", "UPDATE"),
+    ("link_preview.fetched_at", "UPDATE"),
     ("message", "INSERT"),
     ("idempotency_key", "INSERT"),
     ("attachment.message_id", "UPDATE"),
@@ -180,7 +197,8 @@ fn question_only(body: &str) -> bool {
     let quoted = body
         .split(['\n', '\r', '\u{2028}', '\u{2029}'])
         .any(|l| l.trim_start_matches([' ', '\t']).starts_with('>'));
-    if body.contains('`') || quoted {
+    // TS 는 링크를 걷어 낸 뒤 본다 — URL(쿼리의 `?`)이 있으면 판정하지 않는다(TS 로 넓게).
+    if body.contains('`') || quoted || sql().url.is_match(body) {
         return false;
     }
     body.contains('?') || body.contains('？')
@@ -403,12 +421,56 @@ pub(crate) fn gate_sql() -> &'static str {
 
 /// 본문만 보고 TS 몫인가 — URL 후보(링크 미리보기)나 글 승인 넓은 체.
 pub(crate) fn ts_body(body: &str) -> bool {
+    sql().url.is_match(body) || ts_guard(body)
+}
+
+/// 글 승인 넓은 체만(REST 글 — URL 후보는 Rust 가 미리보기를 건다).
+fn ts_guard(body: &str) -> bool {
     let s = sql();
-    if s.url.is_match(body) {
-        return true;
-    }
     let low = body.to_lowercase();
     s.guard_words.iter().any(|w| low.contains(w.as_str()))
+}
+
+/// shared `trimTrailingPunctuation`.
+fn trim_trailing_punctuation(token: &str) -> &str {
+    let mut t = token;
+    while let Some(ch) = t.chars().last() {
+        if ".,;:!?'\"".contains(ch) {
+            t = &t[..t.len() - ch.len_utf8()];
+            continue;
+        }
+        if ch == ')' || ch == ']' {
+            let open = if ch == ')' { '(' } else { '[' };
+            if t.matches(open).count() <= t.matches(ch).count() {
+                t = &t[..t.len() - 1];
+                continue;
+            }
+        }
+        break;
+    }
+    t
+}
+
+/// shared `extractPreviewUrls` — 정규화된 URL, 겹침 없이 최대 `max` 개.
+pub(crate) fn extract_preview_urls(body: &str, max: usize) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    for m in sql().url.find_iter(body) {
+        let token = trim_trailing_punctuation(m.as_str());
+        if token.is_empty() {
+            continue;
+        }
+        let Some(n) = super::link_preview_read::normalize_preview_url(token) else {
+            continue;
+        };
+        if out.contains(&n) {
+            continue;
+        }
+        out.push(n);
+        if out.len() >= max {
+            break;
+        }
+    }
+    out
 }
 
 fn bad() -> Response {
@@ -1385,9 +1447,10 @@ pub async fn post(
     let Some(input) = parsed.as_ref().and_then(parse_post) else {
         return bad();
     };
-    if ts_body(&input.body) {
+    if ts_guard(&input.body) {
         return to_ts(st.up.clone(), peer, parts, bytes).await;
     }
+    let preview_urls = extract_preview_urls(&input.body, 3);
     // TS `channelPostGate` — 없는 채널은 'ok'(insert 가 FK 로 실패해 500, TS 와 같다).
     let gate: Option<(bool, bool)> = match sqlx::query_as(sql().gate.as_str())
         .bind(&id)
@@ -1483,6 +1546,10 @@ pub async fn post(
                     },
                 )
                 .await;
+            }
+            // TS `queueLinkPreviewFetch` — 응답을 기다리게 하지 않는다(실패는 삼킨다).
+            for u in preview_urls {
+                tokio::spawn(super::link_preview_fetch::queue_fetch(st.write.clone(), u));
             }
             let mut res = json_response(StatusCode::CREATED, row);
             let h = res.headers_mut();
@@ -1594,6 +1661,19 @@ mod tests {
         ] {
             assert!(!question_only(b), "{b}");
         }
+    }
+
+    #[test]
+    fn preview_urls_like_shared() {
+        assert_eq!(
+            extract_preview_urls(
+                "see https://A.com/x). and (https://b.com/(y)) https://a.com/x a:b mailto:z https://c.com https://d.com",
+                3
+            ),
+            vec!["https://a.com/x", "https://b.com/(y", "https://c.com/"]
+        );
+        assert_eq!(trim_trailing_punctuation("x.com/a?!'\""), "x.com/a");
+        assert!(!question_only("https://a.com/?q=1"));
     }
 
     #[test]

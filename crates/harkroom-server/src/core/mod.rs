@@ -91,6 +91,7 @@ pub mod invites_write;
 pub mod invoke_gate;
 pub mod join_page;
 pub mod leak_guard;
+pub mod link_preview_fetch;
 pub mod link_preview_read;
 pub mod mandate_card_thread;
 pub mod mandate_end;
