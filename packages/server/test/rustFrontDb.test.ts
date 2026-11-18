@@ -9953,8 +9953,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 ['⑨ cause_used(같은 원인으로 다른 자동화)', 'cause_used'], ['⑩ agent_quota(10분 안에 같은 자동화)', 'agent_quota'],
               ] as const) expect(tsArText(n), n).toContain(code);
               // 회차 행 — payload(이벤트 키는 무작위라 꼴만)·initiated_by·원인·chain_depth 를 견준다.
+              // status 는 pending·sent 를 한 값으로 본다 — TS 의 자동화 sweep(주기 타이머)이 이 사이에 돌면 먼저 넣은
+              // 쪽만 sent 로 넘어가 있다(CI 에서 실제로 갈렸다). 넣은 쪽이 적는 값은 둘 다 pending 이다.
               const arRows = async (name: string) => (await db.pool.query(
-                `select r.trigger_kind, r.status, r.not_before, r.chain_depth, r.initiated_by = $2::uuid as by_bot,
+                `select r.trigger_kind, case when r.status in ('pending', 'sent') then 'queued' else r.status end as status, r.not_before, r.chain_depth, r.initiated_by = $2::uuid as by_bot,
                         r.cause_message_id is not null as has_cause, r.event_key ~ '^manual:[0-9a-f-]{36}$' as key_ok,
                         r.payload -> 'vars' as vars, jsonb_array_length(r.payload -> 'events') as n_events,
                         r.payload -> 'events' -> 0 ->> 'key' = r.event_key and r.payload -> 'events' -> 0 ->> 'summary' = r.event_key as ev_ok
@@ -9965,7 +9967,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 expect(r, `automation.run 회차 ${tail}`).toEqual(t);
                 expect(t, `automation.run 회차 수 ${tail}`).toHaveLength(['ok', 'sch'].includes(tail) ? 1 : 0);
               }
-              expect(await arRows('ar-t-ok')).toMatchObject([{ trigger_kind: 'manual', status: 'pending', not_before: null, chain_depth: 1, by_bot: true, has_cause: true, key_ok: true, vars: {}, n_events: 1, ev_ok: true }]);
+              expect(await arRows('ar-t-ok')).toMatchObject([{ trigger_kind: 'manual', status: 'queued', not_before: null, chain_depth: 1, by_bot: true, has_cause: true, key_ok: true, vars: {}, n_events: 1, ev_ok: true }]);
               expect(Object.keys((await arRows('ar-t-sch'))[0]!.vars as object).sort()).toEqual(['date', 'lastWeek', 'lastWeek.end', 'lastWeek.start', 'yesterday']);
               // ⑪ — 두 쪽 모두 TS 가 처리했다(끄기). 20회 밖에 회차를 더 넣지 않았다.
               const rl = (await db.pool.query<{ name: string; enabled: boolean; n: number }>(
