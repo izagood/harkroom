@@ -3,7 +3,7 @@
 //! - 판정 순서는 TS 와 같다: `requireOwnerOrAdmin('id')`(401·403·404) → 경로 zod(400) → 에이전트인가(404, 지운 에이전트도 대상).
 //!   문지기는 [`super::agent_memory_read`] 와 같은 것이다.
 //! - 판정은 MCP `memory.audit` 와 **같은 함수**([`super::mcp::mem_audit::audit_for`])다. 목록 상한만 TS `AUDIT_HUMAN_LIST_CAP`
-//!   (= `MAX_MEMORY_ITEMS_PER_ACCOUNT`)로 다르다. JS 와 판정이 갈릴 수 있는 본문이면 요청을 그대로 TS 로 넘긴다.
+//!   (= `MAX_MEMORY_ITEMS_PER_ACCOUNT`)로 다르다. 판정은 늘 Rust 하나다(TS 로 넘기지 않는다).
 //! - **읽기만 한다.** 필요한 SELECT 는 [`AGENT_MEMORY_AUDIT_READ_PRIVILEGES`] — 없으면 `main.rs` 가 이 줄을 붙이지 않아 TS 에 남는다.
 use super::agent_memory_read::{gate, max_param_length};
 use super::mcp::mem_audit::audit_for;
@@ -11,10 +11,9 @@ use super::mcp::mem_body::MAX_ITEMS;
 use crate::auth::RequireAccount;
 use crate::directory::{internal, json_ok};
 use crate::proxy::Upstream;
-use axum::extract::{ConnectInfo, Path, Request, State};
+use axum::extract::{Path, State};
 use axum::response::Response;
 use sqlx::PgPool;
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 /// 읽기 풀에 있어야 하는 권한. `account`·`agent_config` 는 인가와 에이전트 판정이 읽는다.
@@ -35,18 +34,14 @@ pub struct AuditReadState {
 
 pub async fn audit(
     State(st): State<Arc<AuditReadState>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     RequireAccount(me, _): RequireAccount,
     Path(id): Path<String>,
-    req: Request,
 ) -> Response {
     if let Err(r) = gate(&st.read, &me, &id, None, false).await {
         return r;
     }
     match audit_for(&st.read, &id, &[], HUMAN_LIST_CAP).await {
-        Ok(Some(a)) => json_ok(format!("{{\"audit\":{a}}}")),
-        // JS 와 판정이 갈릴 수 있는 본문 — TS 가 답한다.
-        Ok(None) => crate::proxy::forward(State(st.up.clone()), ConnectInfo(peer), req).await,
+        Ok(a) => json_ok(format!("{{\"audit\":{a}}}")),
         Err(e) => internal(e),
     }
 }

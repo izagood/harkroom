@@ -5,7 +5,9 @@
 //!   `channelPostGate` 가 보관(403 `channel_archived`) → `writeThreadPlan`(가시성 404 `forbidden`, 판 없음 404 `no_plan`,
 //!   `invalid_manager` 400, 그 밖 409) → 200 `{ plan }`. 거절 몸통은 `{ "error": { code, …칸 } }`(TS `res.error` 그대로)다.
 //! - 쓰기는 MCP 쓰기 경로([`super::mcp::plan_write::write_manager`])를 그대로 탄다 — 검증·이벤트(`thread.plan.changed`)가 같다.
-//! - 관리자가 바뀌는데 자동 진행이 켜져 있으면(끄기 알림이 TS 몫) 되감고 요청을 통째로 TS 에 넘긴다.
+//! - 관리자가 바뀌는데 자동 진행이 켜져 있으면 같은 tx 에서 끄고(TS `writeThreadPlan`), 커밋 뒤 끄기 알림
+//!   (`noticePlanAutoOff(…, [나, 새 관리자, 앞 관리자], 'manager_changed')`)을 스레드에 올린다. 글 올리기·끄기 권한이 없어
+//!   [`ManagerState::post`] 가 비었을 때만 되감고 TS 에 넘긴다.
 //! - 권한은 MCP 계획 쓰기와 같다([`super::mcp::plan_write::PLAN_WRITE_PRIVILEGES`]) — `main.rs` 가 그것이 켜졌을 때만 붙인다.
 use super::mcp::plan_write::{ManagerWrite, write_manager};
 use super::msg_post::{gate_sql, to_ts};
@@ -28,6 +30,9 @@ pub struct ManagerState {
     /// MCP 계획 쓰기가 켜진 쓰기 풀 — 판정·쓰기·답 읽기를 다 여기서 한다.
     pub write: PgPool,
     pub up: Upstream,
+    /// 자동 진행 끄기 알림을 올릴 글 경로 — 끄기 칸 권한([`super::thread_plan_auto_off::THREAD_PLAN_AUTO_OFF_PRIVILEGES`])과
+    /// 글 올리기 권한이 다 있을 때만 있다. 없으면 그 갈래는 TS 에 남는다.
+    pub post: Option<super::msg_post::PostState>,
 }
 
 const BODY_LIMIT: usize = 1024 * 1024;
@@ -114,8 +119,22 @@ pub async fn put_manager(
         Ok(false) => return code_err(StatusCode::NOT_FOUND, "forbidden"),
         Err(e) => return internal(e),
     }
-    match write_manager(w, &me.id, &root, &channel, manager).await {
-        Ok(ManagerWrite::Written) => {}
+    match write_manager(w, &me.id, &root, &channel, manager, st.post.is_some()).await {
+        Ok(ManagerWrite::Written { auto_off: None }) => {}
+        Ok(ManagerWrite::Written {
+            auto_off: Some((next, prev)),
+        }) => {
+            if let Some(post) = &st.post {
+                let authors = [Some(me.id.as_str()), next.as_deref(), prev.as_deref()];
+                if let Err(e) = super::thread_plan_auto_off::notice_manager_changed(
+                    post, &channel, &root, &authors,
+                )
+                .await
+                {
+                    return internal(e);
+                }
+            }
+        }
         Ok(ManagerWrite::Refused { code, fields }) => return err_fields(status_of(code), &fields),
         Ok(ManagerWrite::Deleted) => return code_err(StatusCode::NOT_FOUND, "no_plan"),
         Ok(ManagerWrite::ToTs) => return to_ts(st.up.clone(), peer, parts, bytes).await,

@@ -166,9 +166,44 @@ async fn switch_off(w: &sqlx::PgPool, root: &str, actor: &str) -> sqlx::Result<O
     Ok(Some(true))
 }
 
+/// TS `noticePlanAutoOff(pool, row, authors, 'manager_changed')` — 채널을 볼 수 있는 첫 사람 이름으로 한 줄. 아무도 못 보면 줄 없이 지나간다.
+pub(crate) async fn notice_manager_changed(
+    st: &PostState,
+    channel: &str,
+    root: &str,
+    authors: &[Option<&str>],
+) -> sqlx::Result<()> {
+    for a in authors.iter().flatten() {
+        if channel_visible(&st.write, a, channel).await? {
+            let mut meta = Map::new();
+            meta.insert(
+                "planAutoState".into(),
+                json!({ "on": false, "reason": "manager_changed" }),
+            );
+            meta.insert(
+                "i18n".into(),
+                json!({ "key": "system.plan.autoOffManagerChanged", "args": {} }),
+            );
+            return post_line(st, channel, root, a, "▶ 자동 진행 꺼짐".to_owned(), meta).await;
+        }
+    }
+    Ok(())
+}
+
 /// TS `notice` — 스레드 안 시스템 줄(`serverNotice`·`noMentions`). `message.created` 는 글 경로가 같은 tx 의 outbox 로 낸다.
 async fn announce(st: &PostState, channel: &str, root: &str, actor: &str) -> sqlx::Result<()> {
     let (body, meta) = off_line(actor);
+    post_line(st, channel, root, actor, body, meta).await
+}
+
+async fn post_line(
+    st: &PostState,
+    channel: &str,
+    root: &str,
+    actor: &str,
+    body: String,
+    meta: Map<String, Value>,
+) -> sqlx::Result<()> {
     let audience = audience_for(&st.write, channel).await?.to_json();
     let is_dm = channel_is_dm(&st.write, channel).await?;
     let input = PostBody {

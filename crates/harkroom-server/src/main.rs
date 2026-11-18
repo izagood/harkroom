@@ -3497,6 +3497,15 @@ async fn main() {
             core_routes.sockets.extend(ac.sockets);
         }
         // S5.4 TP3 — 계획 자동 진행 끄기. 글 올리기 코어와 끄기 칸 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+        let plan_manager_post =
+            thread_plan_auto_off
+                .clone()
+                .map(|write| harkroom_server::core::msg_post::PostState {
+                    read: state.pool.clone(),
+                    write,
+                    up: state.up.clone(),
+                    implicit_ok,
+                });
         if let Some(write) = thread_plan_auto_off {
             let pa = harkroom_server::core::thread_plan_auto_off::routes(
                 harkroom_server::core::thread_plan_auto_off::AutoOffState {
@@ -3520,6 +3529,7 @@ async fn main() {
                 harkroom_server::core::thread_plan_manager::ManagerState {
                     write,
                     up: state.up.clone(),
+                    post: plan_manager_post,
                 },
                 auth.clone(),
                 state.cors.clone(),
