@@ -9831,6 +9831,54 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 await db.pool.query('delete from api_connector where id = $1', [gdConn2]);
               }
             }
+            // S5.4 — `permission.request` 거절 앞머리(`permission_request.rs`). 아무것도 쓰지 않는 거절만 Rust 가 답하고, 받아들여지는 요청·command·gh/git 머리는 TS.
+            {
+              const prCh = await freshCh();
+              const prRoot = await ins({ ch: prCh, author: bot3.accountId, body: 'pr 앞머리' });
+              const at = { reason: 'needed', channelId: prCh, threadRootId: prRoot };
+              // [이름, 인자, Rust 가 답하나]
+              const PRS: [string, Record<string, unknown>, boolean][] = [
+                ['① kind·인자 짝 어긋남', { ...at, kind: 'tool', repo: 'a/b' }, true],
+                ['② Bash(*)', { ...at, kind: 'tool', rule: 'Bash(*)' }, true],
+                ['③ 접두 낱말 하나', { ...at, kind: 'tool', rule: 'Bash(kubectl:*)' }, true],
+                ['④ ;', { ...at, kind: 'tool', rule: 'Bash(ls; rm -rf x)' }, true],
+                ['⑤ &&', { ...at, kind: 'tool', rule: 'Bash(ls && id)' }, true],
+                ['⑥ --dangerously-*', { ...at, kind: 'tool', rule: 'Bash(claude --dangerously-skip-permissions)' }, true],
+                ['⑦ 셸 머리', { ...at, kind: 'tool', rule: 'Bash(/bin/bash -c id)' }, true],
+                ['⑧ 버전 붙은 인터프리터', { ...at, kind: 'tool', rule: 'Bash(python3.12 x.py)' }, true],
+                ['⑨ harkroom mcp', { ...at, kind: 'tool', rule: 'mcp__harkroom__message_post' }, true],
+                ['⑩ 따옴표', { ...at, kind: 'tool', rule: 'Bash(ls "x")' }, true],
+                ['⑪ 와일드카드', { ...at, kind: 'tool', rule: 'Bash(ls *.ts)' }, true],
+                ['⑫ 다른 도구', { ...at, kind: 'tool', rule: 'Read(/etc/passwd)' }, true],
+                ['⑬ merge 조직 전체', { ...at, kind: 'merge', repo: 'Izagood/*' }, true],
+                ['⑭ merge 모양 틀림', { ...at, kind: 'merge', repo: 'a/b/c' }, true],
+                ['⑮ gh api 쓰기 → TS', { ...at, kind: 'tool', rule: 'Bash(gh api -X POST repos/a/b)' }, false],
+                ['⑯ model 빈 글 → TS(zod)', { ...at, kind: 'tool', rule: 'Bash(*)', model: '' }, false],
+              ];
+              const run = async (side: 't' | 'r') => {
+                const out: Record<string, unknown>[] = [];
+                for (const [name, args] of PRS) {
+                  const r = await mcpCall(side === 't' ? tsUrl : v2Url, bot3.pat, 'permission.request', args, 37);
+                  out.push({ name, status: r.status, type: r.type, core: r.core, text: r.text });
+                }
+                return out;
+              };
+              const tsPr = await run('t');
+              const rsPr = await run('r');
+              for (let i = 0; i < tsPr.length; i++) {
+                const { core, ...a } = tsPr[i]!;
+                const { core: rc, ...b } = rsPr[i]!;
+                expect(b, `permission.request ${String(a.name)}`).toEqual(a);
+                expect(core, `${String(a.name)} — TS`).toBeNull();
+                expect(rc, `${String(a.name)} — 누가 답했나`).toBe(PRS[i]![2] ? 'mcp' : null);
+              }
+              expect(String(tsPr[1]!.text)).toContain('too_broad');
+              expect(String(tsPr[3]!.text)).toContain('shell_syntax');
+              expect(String(tsPr[12]!.text)).toContain('org_wide');
+              // 거절은 아무것도 쓰지 않는다 — 요청 줄·감사 줄이 없다.
+              expect((await db.pool.query(`select count(*)::int as n from permission_request where channel_id = $1`, [prCh])).rows[0].n).toBe(0);
+              expect((await db.pool.query(`select count(*)::int as n from audit_log where action = 'permission.requested' and detail->>'channelId' = $1`, [prCh])).rows[0].n).toBe(0);
+            }
             type DI = { name: string; item: Record<string, unknown>[] };
             const itemOf = (n: string) => (tsD as DI[]).find((x) => x.name === n)!.item;
             const v1 = V2 === '1';
