@@ -134,6 +134,7 @@ pub mod settings_rest;
 pub mod step_up_end;
 pub mod step_up_open;
 pub mod thread_model_clear;
+pub mod thread_model_set;
 pub mod thread_models_read;
 pub mod thread_plan_auto_off;
 pub mod thread_plan_manager;

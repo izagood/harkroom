@@ -7,7 +7,7 @@
 //! - 시스템 줄이 Rust 글 경로에서 TS 몫으로 갈 스레드면([`super::msg_post::system_thread_is_ts`] — 위임 스위치를 모르는데 바꾼 사람이
 //!   담당), 아무것도 지우기 **앞에** 요청을 통째로 TS 에 넘긴다(fail-closed).
 //! - 권한은 [`THREAD_MODEL_CLEAR_PRIVILEGES`] 와 글 올리기 권한 — 둘 다 있어야 `main.rs` 가 붙인다(없으면 TS 에 남는다).
-//! - `PUT …/agent-models/:agentId` 는 TS 에 남는다(오퍼레이터 허브의 하네스 목록 `checkOffered` 를 본다).
+//! - `PUT …/agent-models/:agentId` 는 `thread_model_set.rs` 가 맡는다(오퍼레이터 코어가 Rust 일 때만 — 아니면 TS).
 use super::audience::audience_for;
 use super::msg_post::{
     Origin, Outcome, PostBody, PostState, channel_is_dm, gate_sql, post_in_tx, system_thread_is_ts,
@@ -255,7 +255,7 @@ async fn announce(
 }
 
 /// 코어 라우터에 합칠 줄 — 인증은 `route_layer`, CORS 는 `layer`. 같은 경로의 `GET …/agent-models` 는 읽기 코어
-/// (`thread_models_read.rs`)가, `PUT` 은 TS 가 맡는다.
+/// (`thread_models_read.rs`)가, `PUT` 은 `thread_model_set.rs`(또는 TS)가 맡는다.
 pub fn routes(
     st: ClearState,
     auth: crate::auth::AuthPools,
