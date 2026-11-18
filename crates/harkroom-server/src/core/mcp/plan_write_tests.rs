@@ -279,3 +279,22 @@ fn privileges_cover_sql() {
     );
     assert!(children_sql().contains("$2::uuid") && manager_sql().contains("a.kind = 'agent'"));
 }
+
+#[test]
+fn link_plan_card_hook_out_like_ts() {
+    assert_eq!(plan_hook_out(Ok(4)), r#"{"ok":true,"rev":4}"#);
+    assert_eq!(
+        plan_hook_out(Err(Refusal::plain("unchanged"))),
+        r#"{"ok":true,"unchanged":true}"#
+    );
+    let v: Value =
+        serde_json::from_str(&plan_hook_out(Err(Refusal::id("unknown_item", "s9")))).unwrap();
+    assert_eq!(
+        v,
+        json!({ "ok": false, "error": { "code": "unknown_item", "id": "s9", "message": "그런 단계·그룹이 없다" } })
+    );
+    let doc = json!({ "steps": [{ "id": "s1" }, { "id": "s2" }] });
+    assert!(has_step(&doc, "s2"));
+    assert!(!has_step(&doc, "s3"));
+    assert!(!has_step(&json!({}), "s1"));
+}

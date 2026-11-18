@@ -3,7 +3,7 @@
 //! → 추천 둘 이상(`multiple_recommended`) → 머지 거절 카드에 `to`·`mirrorOf`(`merge_denial_audience`). 모두 지나면 `None`
 //! (→ TS). 그 뒤 스레드 안의 사람 앞 카드는 [`answer_plain`] 이 열린 카드 검사(`open_card_in_thread`, `keepOpen` 반영)를 하고,
 //! 평범한 카드(사람 앞·원인 헤더 없음, 스레드 안팎)는 글 올리기 풀로 세운다 — 대신하기(`supersedes`)는 새 카드를 세운 뒤
-//! 옛 카드를 닫는다(묶음에 담긴 옛 카드는 TS). 거울·계획 단계·머지 거절·사람 앞 푸시는 아직 TS 몫이다. 인자가 zod 를 못 지나거나 DB 오류여도 `None`.
+//! 옛 카드를 닫고, 계획 단계(`planStepId`)는 세운 뒤 그 단계에 카드를 잇는다(묶음에 담긴 옛 카드·계획·단계 없음은 TS). 거울·머지 거절·사람 앞 푸시는 아직 TS 몫이다. 인자가 zod 를 못 지나거나 DB 오류여도 `None`.
 use super::tools::err;
 use crate::auth::Account;
 use crate::core::ask::{ASK_MAX_OPTIONS, ASK_MIN_OPTIONS, ASK_TEXT_OPTION_ID};
@@ -329,7 +329,7 @@ fn plain_meta(o: &Map<String, Value>, to: Value) -> Option<Map<String, Value>> {
 /// `to` 로 대상을 정한 카드 — 거울·대신하기·머지 거절·계획 단계가 없을 때만 Rust 가 세운다. 원인 헤더는 상관없다(TS 의 원인 기반
 /// 푸시는 사람 앞 카드만 쓴다).
 fn addressed(o: &Map<String, Value>) -> bool {
-    ["mirrorOf", "mergeDenialId", "planStepId"]
+    ["mirrorOf", "mergeDenialId"]
         .iter()
         .all(|k| !o.contains_key(*k))
 }
@@ -348,7 +348,7 @@ fn account_audience((id, kind): (String, String)) -> Option<Value> {
 /// 지났어야 한다 — `keepOpen` 은 그 검사에만 쓰인다. 그 밖은 `false`(→ TS).
 fn plain(o: &Map<String, Value>, cause: Option<&str>) -> bool {
     cause.is_none()
-        && ["to", "mirrorOf", "mergeDenialId", "planStepId"]
+        && ["to", "mirrorOf", "mergeDenialId"]
             .iter()
             .all(|k| !o.contains_key(*k))
 }
@@ -451,6 +451,12 @@ pub async fn answer_plain(
     if !olds.is_empty() && !supersede_ready(read, st, &olds).await? {
         return None;
     }
+    let plan_step = o.get("planStepId").and_then(Value::as_str);
+    if let Some(step) = plan_step
+        && !plan_step_ready(read, st, o.get("threadRootId")?.as_str()?, step).await?
+    {
+        return None;
+    }
     let meta = plain_meta(o, audience)?;
     let mut sub = Map::new();
     for k in ["channelId", "body", "threadRootId", "model"] {
@@ -467,8 +473,36 @@ pub async fn answer_plain(
         turn,
         operator,
         &olds,
+        plan_step,
     )
     .await
+}
+
+/// `planStepId` 를 Rust 가 맡을 수 있나 — 쓰기 풀에 계획 쓰기 권한([`super::plan_write::PLAN_WRITE_PRIVILEGES`])이 다 있고, 그 스레드에
+/// 계획이 있고 그 단계가 있을 때만. 아니면 `Some(false)`(→ TS: `no_plan`·`unknown_item` 답은 TS 가 만든다), DB 오류는 `None`.
+async fn plan_step_ready(
+    read: &PgPool,
+    st: &crate::core::msg_post::PostState,
+    root: &str,
+    step: &str,
+) -> Option<bool> {
+    use super::plan_write::{PLAN_WRITE_PRIVILEGES, PLAN_WRITE_SEQUENCE_PRIVILEGES};
+    let missing = crate::write::missing_in(
+        &st.write,
+        PLAN_WRITE_PRIVILEGES,
+        PLAN_WRITE_SEQUENCE_PRIVILEGES,
+    )
+    .await
+    .ok()?;
+    if !missing.is_empty() {
+        return Some(false);
+    }
+    let doc: Option<Value> = sqlx::query_scalar(super::plan_write::PLAN_DOC_SQL)
+        .bind(root)
+        .fetch_optional(read)
+        .await
+        .ok()?;
+    Some(doc.is_some_and(|d| super::plan_write::has_step(&d, step)))
 }
 
 /// TS `bundlesHolding` — 옛 카드를 줄로 담은 묶음이 있는가. 있으면 TS `carryBundleItem`(새 카드를 묶음 줄로 옮기기)이 필요한데
@@ -538,6 +572,8 @@ pub(super) async fn supersede_ask(write: &PgPool, old: &str, new_id: &str, actor
         crate::core::ask_sync::sync_ask_mirrors(&mut conn, "message.ask supersedes", old).await
     }
     .await;
+    // 다름(기록): TS `supersedeAsk` 의 실패는 도구 오류로 올라간다(새 카드는 이미 섰는데도). Rust 는 기록만 하고 새 카드의
+    // 성공 답을 돌려준다 — 옛 카드는 열린 채 남을 수 있다.
     if let Err(e) = r {
         eprintln!("message.ask: supersede {old} failed: {e}");
     }
@@ -612,7 +648,7 @@ mod tests {
                 .unwrap(),
             None
         ));
-        for k in ["to", "mirrorOf", "mergeDenialId", "planStepId"] {
+        for k in ["to", "mirrorOf", "mergeDenialId"] {
             assert!(
                 !plain(ask(json!({ k: C })).as_object().unwrap(), None),
                 "{k}"
@@ -623,6 +659,10 @@ mod tests {
         assert!(plain(sup.as_object().unwrap(), None));
         assert!(addressed(sup.as_object().unwrap()));
         assert_eq!(open_card_thread(sup.as_object().unwrap()), Some(C));
+        // 계획 단계 잇기도 Rust 가 세운 뒤 한다(계획·단계·권한이 있을 때).
+        let step = ask(json!({ "planStepId": "s1", "threadRootId": C }));
+        assert!(plain(step.as_object().unwrap(), None));
+        assert!(addressed(step.as_object().unwrap()));
     }
 
     #[test]
@@ -747,7 +787,7 @@ mod tests {
                 .as_object()
                 .unwrap()
         ));
-        for k in ["mirrorOf", "mergeDenialId", "planStepId"] {
+        for k in ["mirrorOf", "mergeDenialId"] {
             assert!(
                 !addressed(ask(json!({ "to": "@a", k: C })).as_object().unwrap()),
                 "{k}"

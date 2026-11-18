@@ -893,6 +893,72 @@ pub(crate) async fn write_custom(
     )
 }
 
+/// TS `linkPlanCard` + `planHookOut` — `message.ask` 의 `planStepId`. 카드가 선 **뒤** 그 단계에 `{kind:'card', messageId}` 를 잇고,
+/// 도구 답의 `plan` 칸(JSON 글자)을 돌려준다. 루트·가시성은 부른 쪽이 봤다(그 스레드에 방금 카드를 세웠다).
+pub(crate) async fn link_plan_card(
+    write: &PgPool,
+    me: &str,
+    root: &str,
+    channel: &str,
+    step: &str,
+    message_id: &str,
+) -> sqlx::Result<String> {
+    let patch = ItemPatch {
+        type_: Some("step".to_owned()),
+        id: Some(step.to_owned()),
+        add_links: Some(vec![
+            serde_json::json!({ "kind": "card", "messageId": message_id }),
+        ]),
+        ..ItemPatch::default()
+    };
+    let out = write_plan(
+        write,
+        me,
+        root,
+        channel,
+        Build::Item(Box::new(patch)),
+        false,
+    )
+    .await?;
+    Ok(plan_hook_out(match out {
+        Outcome::Refused(r) => Err(r),
+        Outcome::Written { rev, .. } => Ok(rev),
+        Outcome::Deleted => Err(Refusal::plain("unexpected_delete")),
+        // 관리자를 바꾸지 않는 판이라 오지 않는다.
+        Outcome::ToTs => Err(Refusal::plain("internal")),
+    }))
+}
+
+/// TS `planHookOut(toHookResult(res))` — `unchanged` 는 성공으로 접는다.
+fn plan_hook_out(r: Result<i64, Refusal>) -> String {
+    match r {
+        Ok(rev) => format!("{{\"ok\":true,\"rev\":{rev}}}"),
+        Err(r) if r.code == "unchanged" => "{\"ok\":true,\"unchanged\":true}".to_owned(),
+        Err(r) => {
+            let msg = MESSAGES
+                .iter()
+                .find(|(c, _)| *c == r.code)
+                .map_or(r.code, |(_, m)| m);
+            format!(
+                "{{\"ok\":false,\"error\":{{{},\"message\":{}}}}}",
+                r.fields,
+                q(msg)
+            )
+        }
+    }
+}
+
+/// `planStepId` 미리 보기(읽기 풀) — 그 스레드에 계획이 있고 그 단계가 있는가. 없으면 부른 쪽이 TS 로 넘긴다(`no_plan`·`unknown_item`).
+pub(crate) const PLAN_DOC_SQL: &str = "select doc from thread_plan where root_id = $1::uuid";
+
+/// [`PLAN_DOC_SQL`] 의 판에 그 단계가 있는가.
+pub(crate) fn has_step(doc: &Value, step: &str) -> bool {
+    doc.get("steps").and_then(Value::as_array).is_some_and(|a| {
+        a.iter()
+            .any(|s| s.get("id").and_then(Value::as_str) == Some(step))
+    })
+}
+
 #[cfg(test)]
 #[path = "plan_write_tests.rs"]
 mod tests;

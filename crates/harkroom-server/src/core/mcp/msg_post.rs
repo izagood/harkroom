@@ -599,6 +599,7 @@ pub(super) async fn answer_ask(
     turn: Option<&str>,
     operator: bool,
     supersedes: &[&str],
+    plan_step: Option<&str>,
 ) -> Option<String> {
     let a = parse(sub)?;
     post_with(
@@ -614,6 +615,7 @@ pub(super) async fn answer_ask(
         operator,
         None,
         supersedes,
+        plan_step,
     )
     .await
 }
@@ -756,6 +758,7 @@ async fn post(
         operator,
         artifact,
         &[],
+        None,
     )
     .await
 }
@@ -776,6 +779,7 @@ async fn post_with(
     operator: bool,
     artifact: Option<&super::artifact_write::NewArtifact>,
     supersedes: &[&str],
+    plan_step: Option<&str>,
 ) -> Option<String> {
     match channel_visible(&st.read, &me.id, &a.channel).await {
         Ok(true) => {}
@@ -834,13 +838,24 @@ async fn post_with(
         )),
         // 에이전트 글은 새 위임을 만들지 않는다(`mandate` 는 사람 글만) — 감사 줄이 없다.
         Outcome::Posted { row, notified, .. } => {
-            if !supersedes.is_empty() {
-                let new_id = serde_json::from_str::<Value>(&row)
-                    .ok()
-                    .and_then(|v| v.get("id").and_then(Value::as_str).map(str::to_owned));
-                if let Some(new_id) = new_id {
-                    for old in supersedes {
-                        super::message_ask::supersede_ask(&st.write, old, &new_id, &me.id).await;
+            let new_id = serde_json::from_str::<Value>(&row)
+                .ok()
+                .and_then(|v| v.get("id").and_then(Value::as_str).map(str::to_owned));
+            let mut plan_extra = String::new();
+            if let Some(new_id) = new_id {
+                for old in supersedes {
+                    super::message_ask::supersede_ask(&st.write, old, &new_id, &me.id).await;
+                }
+                // TS `postedResult(message, notified, { plan: planHookOut(await linkPlanCard(…)) })` — 재생이 아닐 때만(재생은 TS 가 답한다).
+                if let (Some(step), Some(root)) = (plan_step, a.post.thread_root.as_deref()) {
+                    match super::plan_write::link_plan_card(
+                        &st.write, &me.id, root, &a.channel, step, &new_id,
+                    )
+                    .await
+                    {
+                        Ok(plan) => plan_extra = format!(",\"plan\":{plan}"),
+                        // 다름(기록): TS 는 이 DB 오류를 도구 오류로 던진다. Rust 는 카드가 이미 섰으므로 기록만 하고 `plan` 칸 없이 답한다.
+                        Err(e) => eprintln!("message.ask: plan link {step} failed: {e}"),
                     }
                 }
             }
@@ -865,7 +880,7 @@ async fn post_with(
                     None => String::new(),
                 },
             };
-            posted_result(&row, &notified, &extra)
+            posted_result(&row, &notified, &format!("{extra}{plan_extra}"))
         }
     }
 }
