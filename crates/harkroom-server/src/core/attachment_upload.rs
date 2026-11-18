@@ -126,6 +126,9 @@ fn is_multipart_with_boundary(req: &Request<Body>) -> bool {
     l.starts_with("multipart/form-data") && l.contains("boundary=")
 }
 
+/// 첫 파일 앞에 올 수 있는 일반 필드 수 상한.
+pub const MAX_FIELDS: usize = 1000;
+
 fn too_large() -> Response {
     json_err(
         StatusCode::PAYLOAD_TOO_LARGE,
@@ -168,11 +171,30 @@ pub async fn upload(
         Ok(m) => m,
         Err(e) => return e.into_response(),
     };
-    // 첫 파일 파트(TS `req.file()`) — 앞의 일반 필드는 건너뛴다.
+    // 첫 파일 파트(TS `req.file()`) — 앞의 일반 필드는 건너뛴다. 건너뛰는 필드는 조각째 읽어 버린다(한 필드를 통째로
+    // 메모리에 쌓지 않는다 — busboy `fieldSize` 1MiB 를 넘는 값을 잘라 버리는 것과 결과가 같다). 개수는
+    // [`MAX_FIELDS`] 까지 — 넘으면 @fastify/multipart `FieldsLimitError` 처럼 413.
+    let mut fields = 0usize;
     let mut field = loop {
         match mp.next_field().await {
             Ok(Some(f)) if f.file_name().is_some() => break f,
-            Ok(Some(_)) => continue,
+            Ok(Some(mut f)) => {
+                fields += 1;
+                if fields > MAX_FIELDS {
+                    return json_err(
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        "fst_fields_limit",
+                        "reach fields limit",
+                    );
+                }
+                loop {
+                    match f.chunk().await {
+                        Ok(Some(_)) => {}
+                        Ok(None) => break,
+                        Err(e) => return e.into_response(),
+                    }
+                }
+            }
             Ok(None) => {
                 return json_err(
                     StatusCode::BAD_REQUEST,
@@ -316,16 +338,7 @@ mod tests {
     #[tokio::test]
     async fn upload_ip_limit_triggers_before_auth() {
         let dir = std::env::temp_dir().join(format!("hr-upload-rl-{}", std::process::id()));
-        let st = Arc::new(UploadState {
-            write: sqlx::postgres::PgPoolOptions::new()
-                .connect_lazy("postgres://x@127.0.0.1:1/x")
-                .unwrap(),
-            storage: LocalStorage::new(&dir).unwrap(),
-            max_bytes: DEFAULT_MAX_BYTES,
-            up: crate::proxy::Upstream::new("http://127.0.0.1:1"),
-            limiter: Arc::new(crate::rate_limit::RateLimiter::default()),
-            trust: Arc::new(crate::trust_proxy::TrustProxy::None),
-        });
+        let st = test_state(&dir);
         let req = |ip: [u8; 4]| {
             let peer = SocketAddr::from((ip, 4000));
             let mut r = Request::post("/uploads").body(Body::empty()).unwrap();
@@ -349,6 +362,55 @@ mod tests {
         let (peer, r) = req([10, 0, 0, 2]);
         let res = upload(State(st.clone()), ConnectInfo(peer), r).await;
         assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn test_state(dir: &std::path::Path) -> Arc<UploadState> {
+        Arc::new(UploadState {
+            write: sqlx::postgres::PgPoolOptions::new()
+                .connect_lazy("postgres://x@127.0.0.1:1/x")
+                .unwrap(),
+            storage: LocalStorage::new(dir).unwrap(),
+            max_bytes: DEFAULT_MAX_BYTES,
+            up: crate::proxy::Upstream::new("http://127.0.0.1:1"),
+            limiter: Arc::new(crate::rate_limit::RateLimiter::default()),
+            trust: Arc::new(crate::trust_proxy::TrustProxy::None),
+        })
+    }
+
+    #[tokio::test]
+    async fn too_many_fields_before_file_is_413() {
+        let dir = std::env::temp_dir().join(format!("hr-upload-fl-{}", std::process::id()));
+        let st = test_state(&dir);
+        let mut body = String::new();
+        for i in 0..=MAX_FIELDS {
+            body.push_str(&format!(
+                "--B\r\nContent-Disposition: form-data; name=\"f{i}\"\r\n\r\nv\r\n"
+            ));
+        }
+        body.push_str("--B\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.txt\"\r\n\r\nhi\r\n--B--\r\n");
+        let peer = SocketAddr::from(([10, 0, 0, 3], 4000));
+        let mut r = Request::post("/uploads")
+            .header(header::CONTENT_TYPE, "multipart/form-data; boundary=B")
+            .body(Body::from(body))
+            .unwrap();
+        r.extensions_mut().insert(ConnectInfo(peer));
+        r.extensions_mut().insert(crate::auth::Auth {
+            account: Some(crate::auth::Account {
+                id: "00000000-0000-0000-0000-000000000001".into(),
+                handle: "h".into(),
+                display_name: "h".into(),
+                kind: "human".into(),
+                is_admin: false,
+                role: "member".into(),
+                status: "active".into(),
+                status_text: None,
+                avatar_attachment_id: None,
+            }),
+            ..Default::default()
+        });
+        let res = upload(State(st), ConnectInfo(peer), r).await;
+        assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
