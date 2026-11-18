@@ -14,8 +14,8 @@ use super::msg_post::{gate_sql, to_ts};
 use super::msg_read::channel_visible;
 use super::thread_plan_read::{ROOT_SQL, plan_view_json};
 use super::thread_plan_start::{
-    activate, handles_of, nothing_json, plan_routes, preview_json, refused_json, start_req,
-    started_json,
+    Sent, activate, bodies_after, finish, handles_of, nothing_json, plan_routes, preview_json,
+    refused_json, start_req, started_full_json,
 };
 use crate::auth::{RequireAccount, Via};
 use crate::directory::{internal, json_err, json_ok};
@@ -26,6 +26,7 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde_json::Value;
 use sqlx::PgPool;
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -283,52 +284,87 @@ pub async fn post_start(
         )
             .into_response();
     }
-    // 보낼 글이 있는 꼴(다른 담당·관리자 부르기)은 TS — 글·links 달기·되돌리기가 거기 있다.
-    if !route.posts.is_empty() {
-        return to_ts(st.up.clone(), peer, parts, bytes).await;
-    }
+    // 보낼 글이 있는 꼴(다른 담당·관리자 부르기, TP5c)은 글 경로가 붙어 있고(`post`) 스레드에 열린 카드가 없을 때만 Rust —
+    // 열린 카드가 있으면 Rust 글 경로가 그 글을 TS 몫으로 돌리는데(카드 답 판정), 그때는 이미 active 로 바꾼 뒤라 되돌릴 수 없다.
+    let post_st = if route.posts.is_empty() {
+        None
+    } else {
+        let Some(p) = st.post.as_ref() else {
+            return to_ts(st.up.clone(), peer, parts, bytes).await;
+        };
+        match sqlx::query_scalar::<_, bool>(OPEN_ASK_SQL)
+            .bind(&root)
+            .fetch_one(w)
+            .await
+        {
+            Ok(false) => {}
+            Ok(true) => return to_ts(st.up.clone(), peer, parts, bytes).await,
+            Err(e) => return internal(e),
+        }
+        Some(p)
+    };
     let Some(if_rev) = req.if_rev else {
         return to_ts(st.up.clone(), peer, parts, bytes).await;
+    };
+    let handles = if post_st.is_some() {
+        match handles_of(w, &route, &doc).await {
+            Ok(h) => h,
+            Err(e) => return internal(e),
+        }
+    } else {
+        HashMap::new()
     };
     let map = match super::thread_plan_read::linked_map(w, &me.id, &doc).await {
         Ok(m) => m,
         Err(e) => return internal(e),
     };
+    let wanted: Vec<String> = route
+        .self_ids
+        .iter()
+        .cloned()
+        .chain(route.posts.iter().flat_map(|p| p.2.iter().cloned()))
+        .collect();
     type Out = (
         Vec<String>,
         Vec<(String, &'static str)>,
         Option<&'static str>,
+        Value,
     );
     let out: Arc<std::sync::Mutex<Out>> = Arc::default();
     let f = {
         let out = out.clone();
-        let (row_doc, ids, actor) = (doc.clone(), route.self_ids.clone(), me.id.clone());
+        let (row_doc, ids, actor, picks) = (
+            doc.clone(),
+            wanted.clone(),
+            me.id.clone(),
+            route.picked.clone(),
+        );
         Box::new(move |prev: Option<(&Value, i64)>| {
-            let r = activate(prev, if_rev, &row_doc, &ids, &actor, &map);
+            let r = activate(prev, if_rev, &row_doc, &ids, &actor, &picks, &map);
             let mut o = out
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             match r {
                 Ok((next, ok, sk)) => {
-                    *o = (ok, sk, None);
+                    *o = (ok, sk, None, next.clone());
                     Ok(next)
                 }
                 Err((code, sk)) => {
-                    *o = (Vec::new(), sk, Some(code));
+                    *o = (Vec::new(), sk, Some(code), Value::Null);
                     Err(code)
                 }
             }
         })
     };
     let written = write_custom(w, &me.id, &root, &channel, f).await;
-    let (activated, extra, _) = std::mem::take(
+    let (activated, extra, _, active_doc) = std::mem::take(
         &mut *out
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner),
     );
     let mut skipped = route.skipped.clone();
     skipped.extend(extra);
-    let rev = match written {
+    let mut rev = match written {
         Ok((ManagerWrite::Written { auto_off: None }, r)) => r.unwrap_or(rev),
         Ok((ManagerWrite::Refused { code, .. }, _)) if code == "nothing_to_start" => {
             let (c, fields) = refused_json(code, &skipped);
@@ -344,17 +380,119 @@ pub async fn post_start(
         }
         Err(e) => return internal(e),
     };
+    let mut sent: Vec<Sent> = Vec::new();
+    let mut failed: Vec<String> = Vec::new();
+    let mut not_notified: Vec<String> = Vec::new();
+    if let Some(ps) = post_st {
+        let posts = bodies_after(&route, &activated, &active_doc, &handles, req.en);
+        match send_posts(ps, &channel, &me.id, &root, if_rev, &posts).await {
+            Ok((s, f, n)) => (sent, failed, not_notified) = (s, f, n),
+            Err(e) => return internal(e),
+        }
+        if !sent.is_empty() || !failed.is_empty() {
+            let link_of: Vec<(String, String)> =
+                sent.iter().map(|x| (x.0.clone(), x.3.clone())).collect();
+            let (fl, before, activated_rev) = (failed.clone(), doc.clone(), rev);
+            let f2 = Box::new(move |prev: Option<(&Value, i64)>| {
+                finish(prev, activated_rev, &link_of, &fl, &before)
+            });
+            // TS 와 같이 마무리 쓰기가 실패해도 시작 답은 낸다(흔적만).
+            match write_custom(w, &me.id, &root, &channel, f2).await {
+                Ok((ManagerWrite::Written { .. }, Some(r))) => rev = r,
+                Ok(_) => {}
+                Err(e) => eprintln!("[threadPlanStart] 시작 뒤 판 쓰기 실패: {e}"),
+            }
+        }
+    }
     match plan_view_json(w, &me.id, &root).await {
-        Ok(view) => json_ok(started_json(
+        Ok(view) => json_ok(started_full_json(
             rev,
             &route.self_ids,
             &activated,
+            &sent,
             &skipped,
+            &failed,
+            &not_notified,
             route.manager_skipped,
             &view,
         )),
         Err(e) => internal(e),
     }
+}
+
+/// 이 스레드에 열린 선택 카드가 있는가(`msg_post` 의 TS 몫 스레드 판정 중 카드 갈래와 같은 조건).
+const OPEN_ASK_SQL: &str = "select exists(select 1 from message where (id = $1::uuid or thread_root_id = $1::uuid) \
+     and deleted_at is null and meta->>'kind' = 'ask' \
+     and meta->'ask'->>'answeredWith' is null and meta->'ask'->>'closedAt' is null)";
+
+/// 시작 글들을 올린다(TS `postMessage(…, authVia: 'session')` 고리) — 글마다 따로 커밋한다. 실패한 글의 단계는 `failed`.
+#[allow(clippy::type_complexity)]
+async fn send_posts(
+    ps: &super::msg_post::PostState,
+    channel: &str,
+    actor: &str,
+    root: &str,
+    start_rev: i64,
+    posts: &[(String, bool, Vec<String>, String)],
+) -> sqlx::Result<(Vec<Sent>, Vec<String>, Vec<String>)> {
+    use super::msg_post::{Origin, Outcome, PostBody, channel_is_dm, post_in_tx};
+    let (mut sent, mut failed, mut nn) = (Vec::new(), Vec::new(), Vec::new());
+    if posts.is_empty() {
+        return Ok((sent, failed, nn));
+    }
+    let audience = super::audience::audience_for(&ps.write, channel)
+        .await?
+        .to_json();
+    let is_dm = channel_is_dm(&ps.write, channel).await?;
+    for (to, manager, ids, body) in posts {
+        let input = PostBody {
+            body: body.clone(),
+            attachment_ids: Vec::new(),
+            thread_root: Some(root.to_owned()),
+            also_in_channel: false,
+        };
+        let key = format!("plan-start:{root}:{to}:{start_rev}:{}", ids.join(","));
+        let r = post_in_tx(
+            ps,
+            channel,
+            actor,
+            false,
+            &input,
+            Some(&key),
+            &audience,
+            is_dm,
+            &Origin::default(),
+        )
+        .await;
+        let mid = match r {
+            Ok(Outcome::Posted { row, notified, .. }) => {
+                if !notified.contains(to) {
+                    nn.push(to.clone());
+                }
+                message_id(&row)
+            }
+            Ok(Outcome::Replayed(row)) => message_id(&row),
+            Ok(_) => None,
+            Err(e) => {
+                eprintln!("[threadPlanStart] 시작 글 실패: {e}");
+                None
+            }
+        };
+        match mid {
+            Some(m) => {
+                for id in ids {
+                    sent.push((id.clone(), *manager, to.clone(), m.clone()));
+                }
+            }
+            None => failed.extend(ids.iter().cloned()),
+        }
+    }
+    Ok((sent, failed, nn))
+}
+
+fn message_id(row: &str) -> Option<String> {
+    let v: Value = serde_json::from_str(row).ok()?;
+    v["id"].as_str().map(str::to_string)
 }
 
 /// 코어 라우터에 합칠 줄 — 인증은 `route_layer`, CORS 는 `layer`. `POST …/plan/start` 는 앞 거절·미리보기·자기 단계만 시작은 Rust, 글을 올리는 시작은 TS.
