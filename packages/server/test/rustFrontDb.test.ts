@@ -1658,6 +1658,13 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant select, insert, update (last_log_index) on projection_cursor to ${rw}`,
         `grant select, insert, update (expires_at), delete on active_lease to ${rw}`,
         `grant select, insert, update (avcs_base_url, configured, connected, repo, last_log_index, last_polled_at, last_advanced_at, last_error, updated_at) on projection_status to ${rw}`,
+        // S5.4 2회차 — POST /mandates/:id/end(`MANDATE_END_PRIVILEGES`)·POST /auth/step-up(`STEP_UP_OPEN_PRIVILEGES`)·sweeper 일정 회차(`AUTOMATION_SWEEP_PRIVILEGES`).
+        `grant select (id, owner_account_id, ended_at, end_reason) on mandate to ${rw}`,
+        `grant select (id, password_hash) on account to ${rw}`,
+        `grant select (token_hash, stepped_up_until), update (stepped_up_at, stepped_up_until) on session to ${rw}`,
+        `grant insert (action, actor_id, actor_handle, target, ip, detail) on audit_log to ${rw}`,
+        `grant select (trigger, next_at, enabled, debounce_sec) on automation to ${rw}`,
+        `grant select (event_key), insert (automation_id, event_key, trigger_kind, payload, not_before, initiated_by, cause_message_id, chain_depth) on automation_run to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
