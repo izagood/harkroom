@@ -8,7 +8,7 @@
  * 스토어에 닿는가, 장부를 못 읽으면 지어내지 않는가.
  */
 import { describe, it, expect } from 'vitest';
-import { RunnerLauncher, type AppVersionReader, type RunnerState } from '../src/lib/runnerLauncher';
+import { RunnerLauncher, type AppVersionReader, type ReobserveTimers, type RunnerState } from '../src/lib/runnerLauncher';
 import { fakeDaemon, liveRunner } from './helpers/fakeDaemon';
 
 const version: AppVersionReader = { read: async () => '1.2.3' };
@@ -49,5 +49,62 @@ describe('RunnerLauncher — 관측만 한다', () => {
     expect(await launcher.currentAppVersion()).toBe('2.0.0');
     expect(await launcher.currentAppVersion()).toBe('2.0.0');
     expect(reads).toBe(1);
+  });
+});
+
+/** 손으로 돌리는 타이머 — `tick()` 이 걸린 콜백을 한 번 부른다. */
+function manualTimers() {
+  let fn: (() => void) | null = null;
+  let sets = 0;
+  let cleared = false;
+  const timers: ReobserveTimers = {
+    set: (f) => { fn = f; sets += 1; return 'h'; },
+    clear: () => { cleared = true; fn = null; },
+  };
+  return { timers, tick: () => fn?.(), get sets() { return sets; }, get cleared() { return cleared; } };
+}
+
+const flush = () => new Promise((r) => setTimeout(r, 0));
+
+describe('RunnerLauncher — 장부를 다시 읽는다 (2026-11-18 「다른 기기」 오판)', () => {
+  it('기동 때 빈 장부여도 뒤에 뜬 러너가 다음 재관측에서 상태에 오른다', async () => {
+    const daemon = fakeDaemon([]);
+    const launcher = new RunnerLauncher(daemon, version);
+    let states: RunnerState[] = [];
+    launcher.setOnStateChange((s) => { states = s; });
+    await launcher.ensureOperator();
+    expect(states).toEqual([]);
+
+    const t = manualTimers();
+    launcher.watch(1000, t.timers);
+    daemon.runners.push(liveRunner('a-1'));
+    t.tick();
+    await flush();
+    expect(states).toEqual([{ agentId: 'a-1', status: 'adopted', exitCode: null, message: null }]);
+  });
+
+  it('재관측이 실패하면 지난 상태를 그대로 둔다 — 못 읽은 것을 0개로 그리지 않는다', async () => {
+    const daemon = fakeDaemon([liveRunner('a-1')]);
+    const launcher = new RunnerLauncher(daemon, version);
+    let changes = 0;
+    launcher.setOnStateChange(() => { changes += 1; });
+    await launcher.ensureOperator();
+    const t = manualTimers();
+    launcher.watch(1000, t.timers);
+    daemon.error = new Error('소켓 없음');
+    t.tick();
+    await flush();
+    expect(changes).toBe(1);
+    expect(launcher.getStates().map((s) => s.agentId)).toEqual(['a-1']);
+  });
+
+  it('watch 를 두 번 불러도 타이머는 하나이고, dispose 가 걷는다', () => {
+    const launcher = new RunnerLauncher(fakeDaemon(), version);
+    const t = manualTimers();
+    launcher.watch(1000, t.timers);
+    launcher.watch(1000, t.timers);
+    expect(t.sets).toBe(1);
+    launcher.dispose();
+    expect(t.cleared).toBe(true);
   });
 });

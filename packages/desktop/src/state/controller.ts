@@ -504,6 +504,9 @@ export class Controller {
     // (operator.manage)에게, 커뮤니티마다 한 번만(`autoRegisterOperator.ts`, 격리 C P8). 오퍼레이터를 못 세웠으면
     // (웹·테스트·실패) 묻지 않는다.
     this.swallow(this.ensureOperatorAndRegister());
+    // 장부는 기동 한 번으로 끝나지 않는다 — 러너는 그 뒤에 뜨고 갈린다(`LEDGER_REOBSERVE_MS` 주석).
+    // Tauri 표면이 없는 곳(웹·테스트)은 물을 오퍼레이터가 없다.
+    if (hasOperatorLocalSurface()) this.runnerLauncher.watch();
 
     // 마지막 채널을 연다 — 기다리지 않는다. 첫 화면은 그 채널의 머리로 바로 서고, 메시지는
     // 위에서 미리 띄운 응답이 오는 대로 찬다. 그 사이 사람이 다른 채널을 눌렀으면 열지 않는다.
