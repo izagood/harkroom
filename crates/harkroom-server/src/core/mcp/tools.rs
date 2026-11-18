@@ -43,6 +43,8 @@ pub const SERVED: &[&str] = &[
     "secret.rotate",
     "attachment.upload",
     "pr.status",
+    // 거절 갈래만([`super::attachment_fetch`]) — 통과하면 바이트 싣기는 TS 가 한다.
+    "attachment.fetch",
 ];
 
 /// 입력 스키마가 없는 도구 — SDK 는 `arguments` 를 레코드(객체)로만 받고, 없어도(`null`) 받는다. 스키마가 있는 도구는
@@ -364,6 +366,7 @@ pub async fn answer(
         "message.read" => message_read(pool, me, args).await,
         "message.search" => super::search::answer(pool, me, args).await,
         "memory.audit" => super::mem_audit::answer(pool, me, args).await,
+        "attachment.fetch" => super::attachment_fetch::answer(pool, me, args).await,
         "grant.list" => super::reads4::answer(pool, me, tool, args).await,
         "secret.mount" | "secret.generate" | "secret.import" | "secret.rotate"
         | "attachment.upload" | "pr.status" => super::operator_only::answer(tool, args),
