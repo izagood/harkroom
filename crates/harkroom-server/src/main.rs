@@ -3734,6 +3734,20 @@ async fn main() {
             core_routes.http.extend(gr.http);
             core_routes.sockets.extend(gr.sockets);
         }
+        // S5.4 — 에이전트 만들기 앞단(`POST /accounts/agents`): 능력 판정만 Rust, 나머지는 안에서 TS 로.
+        if matches!(core_mode, harkroom_server::core::CoreMode::Rust) {
+            let ac = harkroom_server::core::agent_create::routes(
+                harkroom_server::core::agent_create::AgentCreateState {
+                    pool: state.pool.clone(),
+                    up: state.up.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(ac.router);
+            core_routes.http.extend(ac.http);
+            core_routes.sockets.extend(ac.sockets);
+        }
         // S5.4 — grant 주기 1줄. 권한이 있을 때만 — 아니면 TS 에 남는다.
         if let Some(write) = account_grant_give_write {
             let gg = harkroom_server::core::account_grant_give::routes(
