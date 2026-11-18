@@ -1,8 +1,9 @@
-//! MCP `message.ask` 의 거절 앞머리(TS `mcpPlugin.ts` `message.ask`). TS 순서 그대로: zod 인자 → `planStepId` 인데 스레드
+//! MCP `message.ask` 의 거절 앞머리(대상 찾기 `unknown_handle` 까지, TS `mcpPlugin.ts` `message.ask`). TS 순서 그대로: zod 인자 → `planStepId` 인데 스레드
 //! 없음(`bad_request`) → 채널 가시성(`forbidden`) → 선택지 id 겹침(`duplicate_option`) → 예약 id(`reserved_option_id`)
 //! → 추천 둘 이상(`multiple_recommended`) → 머지 거절 카드에 `to`·`mirrorOf`(`merge_denial_audience`). 모두 지나면 `None`
-//! (→ TS). 그 뒤 평범한 카드(사람 앞·스레드 밖·원인 헤더 없음)는 [`answer_plain`] 이 글 올리기 풀로 세운다 — 대상 찾기·거울·
-//! 대신하기·열린 카드 검사·계획 단계·머지 거절·푸시는 아직 TS 몫이다. 인자가 zod 를 못 지나거나 DB 오류여도 `None`.
+//! (→ TS). 그 뒤 스레드 안의 사람 앞 카드는 [`answer_plain`] 이 열린 카드 검사(`open_card_in_thread`, `keepOpen` 반영)를 하고,
+//! 평범한 카드(사람 앞·원인 헤더 없음, 스레드 안팎)는 글 올리기 풀로 세운다 — 대상 찾기(`to`)·거울·대신하기(`supersedes`)·
+//! 계획 단계·머지 거절·푸시는 아직 TS 몫이다. 인자가 zod 를 못 지나거나 DB 오류여도 `None`.
 use super::tools::err;
 use crate::auth::Account;
 use crate::core::ask::{ASK_MAX_OPTIONS, ASK_MIN_OPTIONS, ASK_TEXT_OPTION_ID};
@@ -55,7 +56,7 @@ struct Args<'a> {
     thread: bool,
     /// (id, recommended)
     options: Vec<(&'a str, bool)>,
-    to: bool,
+    to: Option<&'a str>,
     mirror_of: bool,
     merge_denial: bool,
     plan_step: bool,
@@ -84,7 +85,7 @@ fn parse(args: &Value) -> Option<Args<'_>> {
         options.push((id, rec));
     }
     opt(o, "irreversible", Value::is_boolean)?;
-    let to = opt(o, "to", str_ok(64))?.is_some();
+    let to = opt(o, "to", str_ok(64))?.and_then(Value::as_str);
     opt(o, "prompt", str_ok(500))?;
     let mirror_of = opt(o, "mirrorOf", uuid_ok)?.is_some();
     opt(o, "supersedes", |v| {
@@ -128,7 +129,7 @@ fn option_refusal(a: &Args<'_>) -> Option<String> {
             "mark at most one option as recommended",
         ));
     }
-    if a.merge_denial && (a.to || a.mirror_of) {
+    if a.merge_denial && (a.to.is_some() || a.mirror_of) {
         return Some(err(
             "merge_denial_audience",
             "a merge-denial card is addressed to humans; omit `to` and `mirrorOf`",
@@ -151,7 +152,32 @@ pub async fn answer(read: &PgPool, me: &Account, args: &Value) -> Option<String>
     {
         return Some(err("forbidden", "not a member of this dm channel"));
     }
-    option_refusal(&a)
+    if let Some(r) = option_refusal(&a) {
+        return Some(r);
+    }
+    // TS `to` 대상 찾기 — 없는 handle 이면 `unknown_handle`. 찾으면 그 뒤(사람 아닌 대상 카드)는 아직 TS 몫이다.
+    let to = a.to?;
+    let handle = to_handle(to);
+    let found: Option<String> = sqlx::query_scalar(TO_SQL)
+        .bind(&handle)
+        .fetch_optional(read)
+        .await
+        .ok()?;
+    if found.is_none() {
+        return Some(err(
+            "unknown_handle",
+            &format!("no account with handle @{handle}"),
+        ));
+    }
+    None
+}
+
+/// TS `select id from account where lower(handle) = $1` — `to` 대상 찾기(읽기 풀의 `account` SELECT).
+const TO_SQL: &str = "select id::text from account where lower(handle) = $1";
+
+/// TS `to.replace(/^@/, '').toLowerCase()`.
+fn to_handle(to: &str) -> String {
+    to.strip_prefix('@').unwrap_or(to).to_lowercase()
 }
 
 /// 평범한 카드의 TS `AskMeta` — `{kind:'ask', ask:{options, to:{kind:'human'}, prompt?, irreversible?}}`. 칸 차례는 DB(jsonb)가 다시 짓는다.
@@ -185,40 +211,105 @@ fn plain_meta(o: &Map<String, Value>) -> Option<Map<String, Value>> {
     Some(meta)
 }
 
-/// Rust 가 세우는 카드 — 사람 앞(`to` 없음), 스레드 밖(열린 카드 검사·계획 단계 없음), 거울·머지 거절·supersedes·keepOpen 없음,
-/// 원인 헤더 없음(TS 의 사람 앞 푸시 `gateAwaitingAccount`→`enqueueAskPush` 는 원인이 있을 때만 쓴다). 그 밖은 `false`(→ TS).
+/// Rust 가 세우는 카드 — 사람 앞(`to` 없음), 거울·머지 거절·supersedes·계획 단계 없음, 원인 헤더 없음(TS 의 사람 앞 푸시
+/// `gateAwaitingAccount`→`enqueueAskPush` 는 원인이 있을 때만 쓴다). 스레드 안이면 열린 카드 검사([`open_card_refusal`])를 이미
+/// 지났어야 한다 — `keepOpen` 은 그 검사에만 쓰인다. 그 밖은 `false`(→ TS).
 fn plain(o: &Map<String, Value>, cause: Option<&str>) -> bool {
     cause.is_none()
         && [
             "to",
             "mirrorOf",
             "supersedes",
-            "keepOpen",
             "mergeDenialId",
             "planStepId",
-            "threadRootId",
         ]
         .iter()
         .all(|k| !o.contains_key(*k))
 }
 
-/// 거절 앞머리([`answer`])를 다 지난 평범한 카드를 세운다. 고를 수 없는 꼴·쓰기 풀 없음·DB 오류는 `None`(→ TS).
+/// 열린 카드 검사를 Rust 가 할 수 있는 꼴 — TS 의 `audience.kind === 'human' && !mirrorOf && !mergeDenialId && threadRootId`.
+/// `supersedes` 가 있으면 그 앞의 `checkAskSupersede` 가 아직 TS 몫이라 고르지 않는다(→ TS). 고르면 스레드 머리 id.
+fn open_card_thread(o: &Map<String, Value>) -> Option<&str> {
+    if ["to", "mirrorOf", "mergeDenialId", "supersedes"]
+        .iter()
+        .any(|k| o.contains_key(*k))
+    {
+        return None;
+    }
+    o.get("threadRootId")?.as_str()
+}
+
+/// TS `listOpenHumanAsks` — 이 작성자가 이 스레드(머리 포함)에 열어 둔 사람 앞 카드. 서버가 세운 카드·거울은 뺀다.
+pub const OPEN_CARD_SQL: &str = "select id::text from message
+      where channel_id = $2::uuid and (id = $3::uuid or thread_root_id = $3::uuid)
+        and author_id = $1::uuid and deleted_at is null
+        and meta->>'kind' = 'ask'
+        and meta->'ask'->>'answeredWith' is null
+        and meta->'ask'->>'closedAt' is null
+        and meta->'ask'->'to'->>'kind' = 'human'
+        and meta->'ask'->>'mirrorOf' is null
+        and not (meta ? 'permissionRequest') and not (meta ? 'chainBackstop') and not (meta ? 'mergeDenial')
+      order by seq";
+
+/// [`OPEN_CARD_SQL`] 이 읽는 칸 — 읽기 풀의 기존 `message` SELECT 뿐이다(새 GRANT 없음).
+pub const OPEN_CARD_READ_PRIVILEGES: &[(&str, &str)] = &[("message", "SELECT")];
+
+/// TS `open_card_in_thread` 거절 — `supersedes`·`keepOpen` 에 밝히지 않은 열린 카드가 있으면 그 id 들을 싣는다.
+fn open_card_refusal(open: Vec<String>, keep: &HashSet<&str>) -> Option<String> {
+    let undeclared: Vec<String> = open
+        .into_iter()
+        .filter(|id| !keep.contains(id.as_str()))
+        .collect();
+    if undeclared.is_empty() {
+        return None;
+    }
+    Some(super::respond::text_result(
+        &serde_json::json!({ "error": {
+            "code": "open_card_in_thread",
+            "message": "you already have open card(s) in this thread — pass each id in `supersedes` (this card replaces or merges them) or in `keepOpen` (a separate decision that stays open)",
+            "openCardIds": undeclared,
+        } })
+        .to_string(),
+    ))
+}
+
+/// 거절 앞머리([`answer`])를 다 지난 카드 — 스레드 안이면 먼저 열린 카드 검사(`open_card_in_thread`, 읽기 풀)를 하고, 평범한
+/// 카드면 세운다. 고를 수 없는 꼴·쓰기 풀 없음·DB 오류는 `None`(→ TS).
 pub async fn answer_plain(
-    st: &crate::core::msg_post::PostState,
+    read: &PgPool,
+    st: Option<&crate::core::msg_post::PostState>,
     me: &Account,
     args: &Value,
     cause: Option<&str>,
     turn: Option<&str>,
     operator: bool,
 ) -> Option<String> {
-    parse(args)?;
+    let a = parse(args)?;
     let o = args.as_object()?;
+    if let Some(thread) = open_card_thread(o) {
+        let open: Vec<String> = sqlx::query_scalar(OPEN_CARD_SQL)
+            .bind(&me.id)
+            .bind(a.channel)
+            .bind(thread)
+            .fetch_all(read)
+            .await
+            .ok()?;
+        let keep: HashSet<&str> = o
+            .get("keepOpen")
+            .and_then(Value::as_array)
+            .map(|v| v.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
+        if let Some(r) = open_card_refusal(open, &keep) {
+            return Some(r);
+        }
+    }
+    let st = st?;
     if !plain(o, cause) {
         return None;
     }
     let meta = plain_meta(o)?;
     let mut sub = Map::new();
-    for k in ["channelId", "body", "model"] {
+    for k in ["channelId", "body", "threadRootId", "model"] {
         if let Some(v) = o.get(k) {
             sub.insert(k.into(), v.clone());
         }
@@ -289,14 +380,83 @@ mod tests {
         let o = ask(json!({}));
         assert!(plain(o.as_object().unwrap(), None));
         assert!(!plain(o.as_object().unwrap(), Some("c")));
-        assert!(!plain(
-            ask(json!({ "threadRootId": C })).as_object().unwrap(),
+        assert!(plain(
+            ask(json!({ "threadRootId": C, "keepOpen": [C] }))
+                .as_object()
+                .unwrap(),
             None
         ));
-        assert!(!plain(
-            ask(json!({ "keepOpen": [] })).as_object().unwrap(),
-            None
+        for k in [
+            "to",
+            "mirrorOf",
+            "supersedes",
+            "mergeDenialId",
+            "planStepId",
+        ] {
+            assert!(
+                !plain(ask(json!({ k: C })).as_object().unwrap(), None),
+                "{k}"
+            );
+        }
+    }
+
+    #[test]
+    fn open_card_check_only_for_human_thread_cards() {
+        let t = |v: Value| open_card_thread(v.as_object().unwrap()).map(str::to_owned);
+        assert_eq!(t(ask(json!({}))), None);
+        assert_eq!(t(ask(json!({ "threadRootId": C }))).as_deref(), Some(C));
+        assert_eq!(
+            t(ask(
+                json!({ "threadRootId": C, "keepOpen": [C], "planStepId": "s1" })
+            ))
+            .as_deref(),
+            Some(C)
+        );
+        for k in ["to", "mirrorOf", "mergeDenialId", "supersedes"] {
+            assert_eq!(t(ask(json!({ "threadRootId": C, k: C }))), None, "{k}");
+        }
+    }
+
+    #[test]
+    fn open_card_refusal_like_ts() {
+        const D: &str = "1b7f3f92-3fa6-494a-8ab3-76d0d2a6a1c0";
+        assert_eq!(open_card_refusal(vec![], &HashSet::new()), None);
+        let keep: HashSet<&str> = [C].into_iter().collect();
+        assert_eq!(open_card_refusal(vec![C.into()], &keep), None);
+        let r = open_card_refusal(vec![C.into(), D.into()], &keep).unwrap();
+        let v: Value = serde_json::from_str(&r).unwrap();
+        let text = v.pointer("/content/0/text").unwrap().as_str().unwrap();
+        assert!(text.starts_with(
+            r#"{"error":{"code":"open_card_in_thread","message":"you already have open card(s)"#
         ));
+        let inner: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(inner["error"]["openCardIds"], json!([D]));
+    }
+
+    #[test]
+    fn open_card_sql_follows_ts_source() {
+        let ts = include_str!("../../../../../packages/server/src/services/messages.ts");
+        let norm = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+        let body = norm(OPEN_CARD_SQL)
+            .replace("select id::text from", "select id from")
+            .replace("::uuid", "");
+        assert!(norm(ts).contains(&body));
+        assert_eq!(OPEN_CARD_READ_PRIVILEGES, &[("message", "SELECT")]);
+    }
+
+    #[test]
+    fn to_handle_like_ts() {
+        assert_eq!(to_handle("@Alice"), "alice");
+        assert_eq!(to_handle("Bob"), "bob");
+        assert_eq!(to_handle("@@x"), "@x");
+        let ts = include_str!("../../../../../packages/server/src/mcp/mcpPlugin.ts");
+        assert!(ts.contains("select id from account where lower(handle) = $1"));
+        assert!(ts.contains("no account with handle @${handle}"));
+        assert_eq!(
+            TO_SQL.replace("id::text", "id"),
+            "select id from account where lower(handle) = $1"
+        );
+        assert_eq!(parse(&ask(json!({ "to": "@a" }))).unwrap().to, Some("@a"));
     }
 
     #[test]

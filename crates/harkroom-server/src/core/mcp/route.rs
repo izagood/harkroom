@@ -148,13 +148,13 @@ pub async fn handle(
                 return super::model_options::answer(&pool, &me, &args).await;
             }
             if tool == "message.ask" {
-                // 거절 앞머리는 읽기 풀로, 다 지난 평범한 카드는 글 올리기 풀로([`super::message_ask::answer_plain`]).
+                // 거절 앞머리·스레드의 열린 카드 검사는 읽기 풀로, 다 지난 평범한 카드는 글 올리기 풀로([`super::message_ask::answer_plain`]).
                 if let Some(r) = super::message_ask::answer(&pool, &me, &args).await {
                     return Some(r);
                 }
-                let st = writes.post.as_ref()?;
                 return super::message_ask::answer_plain(
-                    st,
+                    &pool,
+                    writes.post.as_deref(),
                     &me,
                     &args,
                     cause.as_deref(),
