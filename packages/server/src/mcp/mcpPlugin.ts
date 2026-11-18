@@ -60,7 +60,7 @@ import { proposeSkill, isValidSkillSlug } from '../services/skills.js';
 import { scanWrite } from '../services/contentScan.js';
 import { listAutomationsForAgent, proposeAutomation, runAutomationForAgent, triggerSchema } from '../services/automations.js';
 import { channelPostGate } from '../services/channels.js';
-import { announceReportWakes, announceWakeRows, foldWakesOnReport, scheduleWake, WAKE_MAX_SEC, WAKE_MIN_SEC, type ClosedWatchWake } from '../services/agentWakes.js';
+import { announceReportWakes, announceWakeRows, foldWakesOnReport, scheduleWake, WAKE_MAX_SEC, WAKE_MIN_SEC, WAKE_REPORT_HEAD_SQL, type ClosedWatchWake } from '../services/agentWakes.js';
 import { guideFor } from './guide.js';
 import { listWorkItems, removeWorkItem, resolveWorkItemOwner, upsertWorkItem, WORK_ITEM_REFUSAL_MESSAGE, WORK_ITEM_SOURCES } from '../services/workItems.js';
 import { workItemUpsertSchema } from '../routes/workItemRoutes.js';
@@ -2736,10 +2736,7 @@ function buildMcpServer(
       if (!(await assertChannelVisible(pool, reportTo.channelId, account.id))) {
         return jsonResult({ error: { code: 'forbidden', message: 'reportTo: not a member of that channel' } });
       }
-      const head = await pool.query(
-        `select 1 from message where id = $1 and channel_id = $2 and thread_root_id is null and deleted_at is null`,
-        [reportTo.threadRootId, reportTo.channelId],
-      );
+      const head = await pool.query(WAKE_REPORT_HEAD_SQL, [reportTo.threadRootId, reportTo.channelId]);
       if (!head.rowCount) {
         return jsonResult({ error: { code: 'bad_report_to', message: 'reportTo.threadRootId 는 그 채널의 최상위 글(스레드 머리) id 여야 한다' } });
       }

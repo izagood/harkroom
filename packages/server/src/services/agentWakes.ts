@@ -53,17 +53,16 @@ export type WakeRefusal =
  * 쓴 사람의 발화는 기준선이 되지 못하고, 대신 그 스레드의 첫 답부터 센다. 루트 하나뿐인
  * 스레드에서 카운트가 0 부터 시작하는 것이 맞는 동작이다(아직 아무도 기다리지 않았다).
  */
+export const WAKE_CONSECUTIVE_SQL = `select count(*)::int as n from message
+      where thread_root_id = $1::uuid and author_id = $2::uuid and kind = 'wake'
+        and seq > coalesce((
+          select max(seq) from message where thread_root_id = $1::uuid and author_id <> $2::uuid
+        ), 0)`;
+
 export async function consecutiveWakes(
   db: Pool | PoolClient, threadRootId: string, accountId: string,
 ): Promise<number> {
-  const res = await db.query(
-    `select count(*)::int as n from message
-      where thread_root_id = $1 and author_id = $2 and kind = 'wake'
-        and seq > coalesce((
-          select max(seq) from message where thread_root_id = $1 and author_id <> $2
-        ), 0)`,
-    [threadRootId, accountId],
-  );
+  const res = await db.query(WAKE_CONSECUTIVE_SQL, [threadRootId, accountId]);
   return res.rows[0].n as number;
 }
 
@@ -117,6 +116,12 @@ const ORIGIN_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
  * - 최종 후보는 **이 깨움과 같은 채널·같은 스레드**(머리 또는 답)이고 지워지지 않았고 대기 줄·시스템 줄·진행 설명이
  *   아니어야 한다. 하나라도 어긋나면 싣지 않는다(null) — 다른 스레드의 글을 이 스레드의 감시에 끌어오지 않는다.
  */
+/** `watchOriginFor` 의 원인 글 읽기·후보 확인 — Rust MCP `turn.wake`(S5.4 A3)가 골든으로 받는다. */
+export const WATCH_ORIGIN_CAUSE_SQL = `select kind, meta->'wake'->>'watch' = 'true' as watch, meta->'wake'->>'origin' as origin from message where id = $1::uuid`;
+export const WATCH_ORIGIN_OK_SQL = `select 1 from message
+      where id = $1::uuid and channel_id = $2::uuid and (id = $3::uuid or thread_root_id = $3::uuid)
+        and deleted_at is null and kind not in ('wake', 'system', 'progress')`;
+
 export async function watchOriginFor(
   pool: Pick<Pool, 'query'>,
   input: { accountId: string; channelId: string; threadRootId: string; chainCause?: string | null },
@@ -124,20 +129,12 @@ export async function watchOriginFor(
   if (!input.chainCause) return null;
   const cause = await verifiedCauseLink(pool, input.accountId, input.chainCause);
   if (!cause) return null;
-  const row = (await pool.query(
-    `select kind, meta->'wake'->>'watch' = 'true' as watch, meta->'wake'->>'origin' as origin from message where id = $1`,
-    [cause],
-  )).rows[0] as { kind: string; watch: boolean | null; origin: string | null } | undefined;
+  const row = (await pool.query(WATCH_ORIGIN_CAUSE_SQL, [cause])).rows[0] as { kind: string; watch: boolean | null; origin: string | null } | undefined;
   if (!row) return null;
   const inherited = row.kind === 'wake' && row.watch === true && typeof row.origin === 'string' && ORIGIN_ID_RE.test(row.origin)
     ? row.origin : null;
   const candidate = inherited ?? cause;
-  const ok = await pool.query(
-    `select 1 from message
-      where id = $1 and channel_id = $2 and (id = $3 or thread_root_id = $3)
-        and deleted_at is null and kind not in ('wake', 'system', 'progress')`,
-    [candidate, input.channelId, input.threadRootId],
-  );
+  const ok = await pool.query(WATCH_ORIGIN_OK_SQL, [candidate, input.channelId, input.threadRootId]);
   return ok.rowCount ? candidate : null;
 }
 
@@ -167,15 +164,20 @@ export type ScheduleWakeResult =
  * 대신 실패는 **호출자에게 던진다**: 에이전트가 "예약됐다"고 믿고 턴을 끝내는 것이
  * 이 결함의 실제 피해이므로, 조용히 성공으로 만들지 않는다.
  */
+/** `scheduleWake` 의 문장들 — Rust MCP `turn.wake`(S5.4 A3)가 골든으로 받는다(`test/rustSqlFragments.test.ts`). */
+export const WAKE_DELEGATION_HELD_SQL = `select 1 from team_delegation where id = $1::uuid and lead_account_id = $2::uuid and notified_at is null`;
+/** 위임 키(133, W1): 깨움 글이 지금 임대에서 물려받은 위임을 깨움 행에도 둔다 — 깨어난 턴의 임대가 이것을 잇는다. */
+export const WAKE_INSERT_SQL = `insert into agent_wake (account_id, channel_id, message_id, wake_at, mandate_id)
+       values ($1::uuid, $2::uuid, $3::uuid, $4::timestamptz, (select mandate_id from message where id = $3::uuid)) returning id::text as id`;
+/** `turn.wake` 의 보고처 머리 확인(`mcpPlugin.ts`). */
+export const WAKE_REPORT_HEAD_SQL = `select 1 from message where id = $1::uuid and channel_id = $2::uuid and thread_root_id is null and deleted_at is null`;
+
 export async function scheduleWake(pool: Pool, input: ScheduleWakeInput): Promise<ScheduleWakeResult> {
   // 대체될 감시의 보고처를 물려받는다(`replaceWatchWakes`) — 새 예약이 보고처를 말하지 않았다고 다른 스레드에 한 약속이
   // 사라지면 안 된다. 메시지 meta 에 실어야 해서 게시 전에 읽는다. 동시에 걸린 드문 경합은 `replaced` 가 알려 준다.
   const reportTo = input.reportTo ?? (input.watch === true ? await openWatchReportTo(pool, input) : undefined);
   if (input.delegationId) {
-    const held = await pool.query(
-      `select 1 from team_delegation where id = $1 and lead_account_id = $2 and notified_at is null`,
-      [input.delegationId, input.accountId],
-    );
+    const held = await pool.query(WAKE_DELEGATION_HELD_SQL, [input.delegationId, input.accountId]);
     if (!held.rowCount) {
       return { refusal: { code: 'bad_delegation', message: '내가 넘겼고 아직 결말이 안 난 위임만 적을 수 있다 — 결말이 났으면 예약이 필요 없다' } };
     }
@@ -238,9 +240,7 @@ export async function scheduleWake(pool: Pool, input: ScheduleWakeInput): Promis
       }
     }
     const res = await client.query(
-      // 위임 키(133, W1): 깨움 글이 지금 임대에서 물려받은 위임을 깨움 행에도 둔다 — 깨어난 턴의 임대가 이것을 잇는다.
-      `insert into agent_wake (account_id, channel_id, message_id, wake_at, mandate_id)
-       values ($1, $2, $3, $4, (select mandate_id from message where id = $3)) returning id`,
+      WAKE_INSERT_SQL,
       [input.accountId, input.channelId, posted.message.id, wakeAt.toISOString()],
     );
     const id = res.rows[0].id as string;
@@ -262,7 +262,7 @@ export async function scheduleWake(pool: Pool, input: ScheduleWakeInput): Promis
 
 /** 이 계정의 열린 예약. `$2` 계정. */
 const OPEN_WAKE_BASE_SQL = `m.id = w.message_id
-        and w.account_id = $2
+        and w.account_id = $2::uuid
         and w.fired_at is null
         and w.canceled_at is null`;
 /** 그중 감시 예약. */
@@ -270,17 +270,15 @@ const OPEN_WATCH_WAKE_BASE_SQL = `${OPEN_WAKE_BASE_SQL}
         and m.meta->'wake'->>'watch' = 'true'`;
 /** 그중 이 스레드에 걸린 것. `$1` 스레드 머리. */
 const OPEN_WATCH_WAKE_SQL = `${OPEN_WATCH_WAKE_BASE_SQL}
-        and coalesce(m.thread_root_id, m.id) = $1`;
+        and coalesce(m.thread_root_id, m.id) = $1::uuid`;
 /**
  * 그중 **같은 일을 보는** 것(2026-11-06): 스레드가 `$1` 이거나, 소식을 전할 곳이 `$3` 인 것.
  * 소식을 전할 곳은 `reportTo` 의 스레드이고, 없으면 걸린 스레드 자신이다. `reportTo` 는 meta 의 글자이므로 소문자로 맞춰 견준다.
  */
-const SAME_WORK_SQL = `(coalesce(m.thread_root_id, m.id) = $1
+const SAME_WORK_SQL = `(coalesce(m.thread_root_id, m.id) = $1::uuid
           or coalesce(lower(m.meta->'wake'->'reportTo'->>'threadRootId'), coalesce(m.thread_root_id, m.id)::text) = lower($3::text))`;
 const SAME_WORK_WATCH_WAKE_SQL = `${OPEN_WATCH_WAKE_BASE_SQL}
         and ${SAME_WORK_SQL}`;
-const CLOSED_WATCH_COLUMNS = `w.id, w.wake_at, w.message_id, m.body, m.deleted_at is not null as deleted, m.meta->'wake'->'reportTo' as report_to,
-        coalesce(m.thread_root_id, m.id) as thread_root_id`;
 
 interface ClosedWatchRow { id: string; wake_at: Date | string; message_id: string; body: string | null; deleted: boolean; report_to: unknown; thread_root_id: string }
 
@@ -324,14 +322,17 @@ export async function announceWakeRows(pool: Pool, messageIds: readonly string[]
   }
 }
 
+/** `openWatchReportTo` 의 문장 — Rust MCP `turn.wake` 가 골든으로 받는다. `$1` 스레드 머리, `$2` 계정. */
+export const WAKE_OPEN_WATCH_REPORT_TO_SQL = `select m.meta->'wake'->'reportTo' as report_to from agent_wake w, message m
+      where ${OPEN_WATCH_WAKE_SQL} and m.meta->'wake' ? 'reportTo'
+      order by m.seq desc limit 1`;
+
 /** 이 스레드에 열린 내 감시 예약 중 가장 늦게 걸린 것의 보고처. */
 async function openWatchReportTo(
   pool: Pick<Pool, 'query'>, input: { accountId: string; threadRootId: string },
 ): Promise<WakeReportTo | undefined> {
   const res = await pool.query<{ report_to: unknown }>(
-    `select m.meta->'wake'->'reportTo' as report_to from agent_wake w, message m
-      where ${OPEN_WATCH_WAKE_SQL} and m.meta->'wake' ? 'reportTo'
-      order by m.seq desc limit 1`,
+    WAKE_OPEN_WATCH_REPORT_TO_SQL,
     [input.threadRootId, input.accountId],
   );
   return asReportTo(res.rows[0]?.report_to) ?? undefined;
@@ -350,14 +351,23 @@ async function openWatchReportTo(
  * **스레드만 봐서는 모자랐다**(2026-11-06): 작업 스레드와 요청 스레드에 걸린 감시가 같은 요청 스레드로 보고하면서 같은 보고가 두 번 나갔다.
  * 그래서 소식을 전할 곳이 같아도 같은 일로 본다. 같은 스레드에 걸린 것은 보고처가 달라도 그대로 대체한다(한 스레드에 하나라는 앞 약속).
  */
+/**
+ * `replaceWatchWakes` 의 문장 — Rust MCP `turn.wake`(S5.4 A3)가 골든으로 받는다. id·시각·머리를 글자로 돌려준다(`FOLD_WAKES_ON_REPORT_SQL`
+ * 과 같은 꼴 — `closedWatchView` 가 `wake_at` 을 다시 `Date` 로 읽어 같은 값을 낸다).
+ */
+export const WAKE_REPLACE_WATCH_SQL = `update agent_wake w set canceled_at = now()
+       from message m
+      where ${SAME_WORK_WATCH_WAKE_SQL} and w.id <> $4::uuid
+      returning w.id::text as id,
+        to_char(w.wake_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as wake_at,
+        w.message_id::text as message_id, m.body, m.deleted_at is not null as deleted, m.meta->'wake'->'reportTo' as report_to,
+        coalesce(m.thread_root_id, m.id)::text as thread_root_id`;
+
 async function replaceWatchWakes(
   client: PoolClient, input: { accountId: string; threadRootId: string; target: string }, keepId: string,
 ): Promise<ClosedWatchWake[]> {
   const res = await client.query<ClosedWatchRow>(
-    `update agent_wake w set canceled_at = now()
-       from message m
-      where ${SAME_WORK_WATCH_WAKE_SQL} and w.id <> $4
-      returning ${CLOSED_WATCH_COLUMNS}`,
+    WAKE_REPLACE_WATCH_SQL,
     [input.threadRootId, input.accountId, input.target, keepId],
   );
   await stampWakeClosed(client, res.rows.map((r) => r.message_id), 'canceledAt');

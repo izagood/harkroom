@@ -17,78 +17,57 @@ use crate::core::msg_read::{channel_visible, is_uuid};
 use crate::core::{turn_settle, wake_preempt};
 use serde_json::{Map, Value, json};
 
+/// 쓰기 풀에 이 권한이 다 있을 때만 Rust 가 답한다(`message.post` 권한에 더해) — 없으면 게시 **전에** TS 로 넘긴다.
+/// 대기 줄만 서고 예약이 `internal` 로 실패하는 일을 막는다. 운영 GRANT: `grant select, insert on agent_wake` ·
+/// `grant update (canceled_at) on agent_wake`.
+pub const TURN_WAKE_PRIVILEGES: &[(&str, &str)] = &[
+    ("agent_wake", "SELECT"),
+    ("agent_wake", "INSERT"),
+    ("agent_wake.canceled_at", "UPDATE"),
+];
+
 /// TS `WAKE_MIN_SEC`·`WAKE_MAX_SEC`·`MAX_CONSECUTIVE_WAKES`.
 const WAKE_MIN_SEC: i64 = 60;
 const WAKE_MAX_SEC: i64 = 6 * 60 * 60;
-const MAX_CONSECUTIVE_WAKES: i64 = 20;
+const MAX_CONSECUTIVE_WAKES: i32 = 20;
 /// zod `reason.max(200)`(UTF-16).
 const REASON_MAX: usize = 200;
 
 /// TS `BAD_THREAD_MESSAGE`.
 const BAD_THREAD: &str = "threadRootId must be a top-level message in this channel";
 
-/// TS `turn.wake` 핸들러의 보고처 머리 확인.
-const REPORT_HEAD_SQL: &str = "select 1 from message where id = $1::uuid and channel_id = $2::uuid \
-     and thread_root_id is null and deleted_at is null";
-
-/// TS `scheduleWake` 의 위임 확인.
-const DELEGATION_HELD_SQL: &str = "select 1 from team_delegation where id = $1::uuid \
-     and lead_account_id = $2::uuid and notified_at is null";
-
-/// TS `consecutiveWakes`.
-const CONSECUTIVE_SQL: &str = "select count(*)::int8 as n from message \
-      where thread_root_id = $1::uuid and author_id = $2::uuid and kind = 'wake' \
-        and seq > coalesce(( \
-          select max(seq) from message where thread_root_id = $1::uuid and author_id <> $2::uuid \
-        ), 0)";
-
-/// TS `OPEN_WATCH_WAKE_BASE_SQL` — 이 계정(`$2`)의 열린 감시 예약.
-const OPEN_WATCH_BASE: &str = "m.id = w.message_id \
-        and w.account_id = $2::uuid \
-        and w.fired_at is null \
-        and w.canceled_at is null \
-        and m.meta->'wake'->>'watch' = 'true'";
-
-/// TS `watchOriginFor` 의 원인 글 읽기·후보 확인.
-const ORIGIN_CAUSE_SQL: &str = "select kind, (meta->'wake'->>'watch' = 'true') as watch, \
-     meta->'wake'->>'origin' as origin from message where id = $1::uuid";
-const ORIGIN_OK_SQL: &str = "select 1 from message \
-      where id = $1::uuid and channel_id = $2::uuid and (id = $3::uuid or thread_root_id = $3::uuid) \
-        and deleted_at is null and kind not in ('wake', 'system', 'progress')";
-
-/// TS `scheduleWake` 의 예약 행(위임 키 133 — 대기 줄의 `mandate_id` 를 물려받는다).
-const INSERT_WAKE_SQL: &str = "insert into agent_wake (account_id, channel_id, message_id, wake_at, mandate_id) \
-       values ($1::uuid, $2::uuid, $3::uuid, $4::timestamptz, (select mandate_id from message where id = $3::uuid)) \
-       returning id::text";
-
-fn open_watch_report_sql() -> &'static str {
-    static S: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    S.get_or_init(|| {
-    // TS `openWatchReportTo` — 이 스레드(`$1`)에 열린 내 감시 중 가장 늦게 걸린 것의 보고처.
-    format!(
-        "select m.meta->'wake'->'reportTo' as report_to from agent_wake w, message m \
-          where {OPEN_WATCH_BASE} and coalesce(m.thread_root_id, m.id) = $1::uuid and m.meta->'wake' ? 'reportTo' \
-          order by m.seq desc limit 1"
-    )
-    })
+/// 골든 문장(TS `agentWakes.ts` 의 `WAKE_*`·`WATCH_ORIGIN_*` — `test/rustSqlFragments.test.ts` 가 대조한다).
+struct Sql {
+    report_head: String,
+    delegation_held: String,
+    consecutive: String,
+    open_watch_report_to: String,
+    origin_cause: String,
+    origin_ok: String,
+    insert: String,
+    replace_watch: String,
 }
 
-fn replace_watch_sql() -> &'static str {
-    static S: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+fn sql() -> &'static Sql {
+    static S: std::sync::OnceLock<Sql> = std::sync::OnceLock::new();
     S.get_or_init(|| {
-    // TS `replaceWatchWakes`(`SAME_WORK_WATCH_WAKE_SQL` + `CLOSED_WATCH_COLUMNS`) — 시각·id 는 `foldWakesOnReport` 골든과 같은 글자로 돌려준다.
-    format!(
-        "update agent_wake w set canceled_at = now() \
-           from message m \
-          where {OPEN_WATCH_BASE} \
-            and (coalesce(m.thread_root_id, m.id) = $1::uuid \
-              or coalesce(lower(m.meta->'wake'->'reportTo'->>'threadRootId'), coalesce(m.thread_root_id, m.id)::text) = lower($3::text)) \
-            and w.id <> $4::uuid \
-          returning w.id::text as id, \
-            to_char(w.wake_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') as wake_at, \
-            w.message_id::text as message_id, m.body, m.deleted_at is not null as deleted, m.meta->'wake'->'reportTo' as report_to, \
-            coalesce(m.thread_root_id, m.id)::text as thread_root_id"
-    )
+        let v: Value = serde_json::from_str(include_str!("../../../golden/sql_fragments.json"))
+            .expect("golden/sql_fragments.json");
+        let frag = |k: &str| {
+            v[k].as_str()
+                .unwrap_or_else(|| panic!("golden fragment {k}"))
+                .to_string()
+        };
+        Sql {
+            report_head: frag("wake_report_head"),
+            delegation_held: frag("wake_delegation_held"),
+            consecutive: frag("wake_consecutive"),
+            open_watch_report_to: frag("wake_open_watch_report_to"),
+            origin_cause: frag("watch_origin_cause"),
+            origin_ok: frag("watch_origin_ok"),
+            insert: frag("wake_insert"),
+            replace_watch: frag("wake_replace_watch"),
+        }
     })
 }
 
@@ -205,16 +184,17 @@ async fn watch_origin(
     else {
         return Ok(None);
     };
-    let row: Option<(String, Option<bool>, Option<String>)> = sqlx::query_as(ORIGIN_CAUSE_SQL)
-        .bind(&cause)
-        .fetch_optional(&mut *conn)
-        .await?;
+    let row: Option<(String, Option<bool>, Option<String>)> =
+        sqlx::query_as(sql().origin_cause.as_str())
+            .bind(&cause)
+            .fetch_optional(&mut *conn)
+            .await?;
     let Some((kind, watch, origin)) = row else {
         return Ok(None);
     };
     let inherited = origin.filter(|o| kind == "wake" && watch == Some(true) && origin_id_ok(o));
     let candidate = inherited.unwrap_or(cause);
-    let ok = sqlx::query(ORIGIN_OK_SQL)
+    let ok = sqlx::query(sql().origin_ok.as_str())
         .bind(&candidate)
         .bind(channel)
         .bind(thread)
@@ -242,7 +222,7 @@ async fn pre_checks(
                 "reportTo: not a member of that channel",
             )));
         }
-        let head = sqlx::query(REPORT_HEAD_SQL)
+        let head = sqlx::query(sql().report_head.as_str())
             .bind(rt)
             .bind(rc)
             .fetch_optional(&st.read)
@@ -258,7 +238,7 @@ async fn pre_checks(
     }
     // TS `scheduleWake` — 대체될 감시의 보고처를 물려받는다(새 예약이 말하지 않았다고 다른 스레드의 약속이 사라지지 않게).
     if report.is_none() && a.watch {
-        let v: Option<Option<Value>> = sqlx::query_scalar(open_watch_report_sql())
+        let v: Option<Option<Value>> = sqlx::query_scalar(sql().open_watch_report_to.as_str())
             .bind(&a.thread)
             .bind(me)
             .fetch_optional(&st.read)
@@ -266,7 +246,7 @@ async fn pre_checks(
         report = v.flatten().as_ref().and_then(turn_settle::report_to);
     }
     if let Some(d) = a.delegation.as_deref() {
-        let held = sqlx::query(DELEGATION_HELD_SQL)
+        let held = sqlx::query(sql().delegation_held.as_str())
             .bind(d)
             .bind(me)
             .fetch_optional(&st.read)
@@ -279,7 +259,7 @@ async fn pre_checks(
             )));
         }
     }
-    let already: i64 = sqlx::query_scalar(CONSECUTIVE_SQL)
+    let already: i32 = sqlx::query_scalar(sql().consecutive.as_str())
         .bind(&a.thread)
         .bind(me)
         .fetch_one(&st.read)
@@ -321,7 +301,7 @@ async fn schedule_tx(
                 .await?;
         }
     }
-    let id: String = sqlx::query_scalar(INSERT_WAKE_SQL)
+    let id: String = sqlx::query_scalar(sql().insert.as_str())
         .bind(me)
         .bind(&a.channel)
         .bind(message_id)
@@ -331,7 +311,7 @@ async fn schedule_tx(
     let mut signal = wake_preempt::Preempted::default();
     let mut replaced = Vec::new();
     if a.watch {
-        let rows: Vec<FoldRow> = sqlx::query_as(replace_watch_sql())
+        let rows: Vec<FoldRow> = sqlx::query_as(sql().replace_watch.as_str())
             .bind(&a.thread)
             .bind(me)
             .bind(&target)
@@ -511,6 +491,13 @@ mod tests {
             full.delegation.as_deref(),
             Some("aaaaaaaa-1111-1111-1111-111111111111")
         );
+    }
+
+    #[test]
+    fn golden_sql_loads() {
+        let s = sql();
+        assert!(s.insert.contains("insert into agent_wake"));
+        assert!(s.replace_watch.contains("w.id <> $4::uuid"));
     }
 
     #[test]
