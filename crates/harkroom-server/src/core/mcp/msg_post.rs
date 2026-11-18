@@ -217,9 +217,9 @@ pub(super) async fn answer_artifact(
 }
 
 /// zod `AGENT_MODELS_ARG` 한 칸 — `{ agentId: uuid, model?: string(≤MODEL_ID_MAX)|null, effort?: string(≤64)|null }`.
-type Pick = (String, Option<String>, Option<String>);
+pub(crate) type Pick = (String, Option<String>, Option<String>);
 
-fn parse_picks(v: &Value) -> Option<Vec<Pick>> {
+pub(crate) fn parse_picks(v: &Value) -> Option<Vec<Pick>> {
     let a = v.as_array()?;
     if a.len() > 8 {
         return None;
@@ -253,7 +253,6 @@ fn parse_picks(v: &Value) -> Option<Vec<Pick>> {
 /// (→ TS 가 게시 트랜잭션 안의 `applyAgentPicks` 와 함께 처음부터 돈다 — 여기서는 읽기만 했다). 하네스 목록은 능력 스냅숏만 보므로
 /// 오퍼레이터 코어가 Rust 일 때(`relay_moved`)만 부른다. 인자가 zod 를 못 지나거나 DB 오류여도 `None`.
 pub async fn picks_refusal(st: &PostState, me: &Account, args: &Value) -> Option<String> {
-    use crate::core::thread_model_set::{axis_valid, check_offered, clean_axis};
     let picks = parse_picks(args.get("agentModels")?)?;
     if picks.is_empty() {
         return None;
@@ -266,27 +265,34 @@ pub async fn picks_refusal(st: &PostState, me: &Account, args: &Value) -> Option
         Ok(false) => return Some(err("forbidden", "not a member of this dm channel")),
         Err(_) => return None,
     }
-    for (agent, model, effort) in &picks {
+    check_picks(st, &picks).await?
+}
+
+/// TS `preparePicks` 의 `axisValid`·`checkOffered` — `Some(Some(거절))`·`Some(None)`(지났다)·`None`(DB 오류).
+/// `message.delegate` 도 같은 판정을 쓴다.
+pub(crate) async fn check_picks(st: &PostState, picks: &[Pick]) -> Option<Option<String>> {
+    use crate::core::thread_model_set::{axis_valid, check_offered, clean_axis};
+    for (agent, model, effort) in picks {
         let model = clean_axis(model.as_deref(), cause_link::MODEL_ID_MAX);
         let effort = clean_axis(effort.as_deref(), 64);
         if model.is_none() && effort.is_none() {
             continue;
         }
         if !axis_valid(model.as_deref()) || !axis_valid(effort.as_deref()) {
-            return Some(err(
+            return Some(Some(err(
                 "bad_model_value",
                 "모델·effort 는 영숫자로 시작하고 영숫자·._:/[]- 만 쓴다",
-            ));
+            )));
         }
         if let Err((code, message)) =
             check_offered(&st.write, agent, model.as_deref(), effort.as_deref())
                 .await
                 .ok()?
         {
-            return Some(err(code, &message));
+            return Some(Some(err(code, &message)));
         }
     }
-    None
+    Some(None)
 }
 
 /// `message.post` + 비지 않은 `agentModels` — 거절 앞머리([`picks_refusal`]) 뒤 글과 같은 tx 에서 TS `applyAgentPicks` 를 돈다
