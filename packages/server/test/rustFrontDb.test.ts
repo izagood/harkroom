@@ -10629,6 +10629,51 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect((await raw(tsUrl, pub, A)).status).toBe(200);
           expect((await raw(tsUrl, secret, member.token)).status).not.toBe(200);
         }
+        // S5.4 — 아바타 읽기(코어 `avatar_read.rs`). 두 서버의 답(상태·헤더·바이트)을 견준다. `raster=1` + SVG 와 이상한
+        // `raster` 꼴은 Rust 가 TS 에 넘긴다(sharp 로 굳힌 PNG). PUT 둘은 TS 에 남는다 — 픽스처는 행을 직접 넣는다.
+        {
+          const ins = async (sql: string, p: unknown[]) => (await db.pool.query<{ id: string }>(sql, p)).rows[0]!.id;
+          const file = async (ct: string, bytes: string | null) => {
+            const key = `av-${randomUUID()}`;
+            if (bytes !== null) writeCases(joinPath(attRoot, key), bytes);
+            return ins(`insert into attachment (uploader_id, filename, content_type, size_bytes, storage_key) values ($1, 'a', $2, $3, $4) returning id`,
+              [member.accountId, ct, bytes === null ? 3 : Buffer.byteLength(bytes), key]);
+          };
+          const png = await file('image/png', 'AVPNG-bytes');
+          const orig = await file('image/jpeg', 'AVJPG-original');
+          const svg = await file('image/svg+xml', 'not really svg');
+          const lost = await file('image/png', null);
+          await db.pool.query(`update account set avatar_attachment_id = $2, avatar_source_attachment_id = $3, avatar_crop = $4::jsonb where id = $1`,
+            [member.accountId, png, orig, JSON.stringify({ x: 0.1, y: 0.25, size: 0.5 })]);
+          const bot = await ins(`insert into account (handle, display_name, kind, avatar_attachment_id, avatar_source_attachment_id) values ('av_bot', 'av_bot', 'agent', $1, $2) returning id`, [svg, orig]);
+          await db.pool.query(`insert into agent_config (account_id, owner_account_id) values ($1, $2)`, [bot, member.accountId]);
+          const human = await ins(`insert into account (handle, display_name, kind, avatar_attachment_id) values ('av_lost', 'av_lost', 'human', $1) returning id`, [lost]);
+          const get = async (base: string, path: string, token: string) => {
+            const r = await fetch(`${base}${path}`, { headers: { authorization: `Bearer ${token}` } });
+            const h: Record<string, string | null> = {};
+            for (const k of ['content-type', 'content-disposition', 'content-length', 'x-content-type-options', 'x-harkroom-avatar-source']) h[k] = r.headers.get(k);
+            return { status: r.status, h, body: await r.text() };
+          };
+          const M = member.token;
+          for (const [name, path, token] of [
+            ['아바타 성공', `/accounts/${member.accountId}/avatar`, A], ['아바타 raster PNG', `/accounts/${member.accountId}/avatar?raster=1&v=2`, A],
+            ['아바타 raster 틀린 값', `/accounts/${member.accountId}/avatar?raster=2`, A], ['아바타 SVG raster(TS 로)', `/accounts/${bot}/avatar?raster=1`, M],
+            ['아바타 SVG 그대로', `/accounts/${bot}/avatar`, M], ['아바타 없음', `/accounts/${admin.accountId}/avatar`, M],
+            ['아바타 uuid 아님', '/accounts/nope/avatar', M], ['아바타 파일 사라짐', `/accounts/${human}/avatar`, M],
+            ['원본 자기 자신', `/accounts/${member.accountId}/avatar/source`, M], ['원본 사람 계정 admin', `/accounts/${member.accountId}/avatar/source`, A],
+            ['원본 에이전트 소유자', `/accounts/${bot}/avatar/source`, M], ['원본 에이전트 admin', `/accounts/${bot}/avatar/source`, A],
+            ['원본 없는 id 멤버', `/accounts/${g3}/avatar/source`, M], ['원본 없는 id admin', `/accounts/${g3}/avatar/source`, A],
+            ['원본 없음', `/accounts/${admin.accountId}/avatar/source`, A], ['원본 uuid 아님', '/accounts/nope/avatar/source', M],
+          ] as const) {
+            const [a, b] = [await get(tsUrl, path, token), await get(rsUrl, path, token)];
+            // 400 은 zod 덤프, 500 은 오류 처리기 문구라 상태·코드만 본다.
+            if (a.status === 400 || a.status === 500) expect(b.status, name).toBe(a.status);
+            else expect(b, name).toEqual(a);
+          }
+          expect((await get(tsUrl, `/accounts/${member.accountId}/avatar/source`, M)).h['x-harkroom-avatar-source'])
+            .toBe(JSON.stringify({ attachmentId: orig, crop: { x: 0.1, y: 0.25, size: 0.5 } }));
+          await db.pool.query(`update account set avatar_attachment_id = null, avatar_source_attachment_id = null, avatar_crop = null where id = any($1)`, [[member.accountId, bot, human]]);
+        }
         // 4) DELETE /channels/:id — 멤버(관리자 아님) 거절 · 없는 id · 관리자 성공(행·첨부 파일이 지워진다) · 두 번째.
         {
           const mkCh = async (tag: string) => {

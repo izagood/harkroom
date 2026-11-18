@@ -1043,6 +1043,40 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 — 아바타 읽기(`GET /accounts/{id}/avatar`·`…/avatar/source`). 세 겹 잠금: `HARKROOM_CORE=rust`, 읽기 역할에
+    // 그 SELECT 가 다 있을 때, 첨부 저장소(`ATTACHMENT_ROOT`)가 있을 때만 — 아니면 TS 에 남는다.
+    let avatar_read = match &core_mode {
+        harkroom_server::core::CoreMode::Rust => {
+            use harkroom_server::core::attachment_store::LocalStorage;
+            use harkroom_server::core::avatar_read as c;
+            match (
+                write::missing_in(&state.pool, c::AVATAR_READ_PRIVILEGES, &[]).await,
+                LocalStorage::from_env(),
+            ) {
+                (Ok(m), Ok(Some(s))) if m.is_empty() => Some(s),
+                (Ok(m), Ok(Some(_))) => {
+                    eprintln!("front: avatar read core off — missing privileges {m:?}");
+                    None
+                }
+                (Ok(_), Ok(None)) => {
+                    eprintln!("front: avatar read core off — ATTACHMENT_ROOT not set");
+                    None
+                }
+                (Ok(_), Err(e)) => {
+                    eprintln!("front: avatar read core off — attachment root ({e})");
+                    None
+                }
+                (Err(e), _) => {
+                    eprintln!(
+                        "front: avatar read core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 — 첨부 올리기(`POST /uploads`). 네 겹 잠금: `HARKROOM_CORE=rust`, 쓰기 풀에 그 칸 권한이 다 있을 때,
     // 첨부 저장소(`ATTACHMENT_ROOT`)가 있을 때, `ATTACHMENT_MAX_BYTES` 를 읽을 수 있을 때만 — 아니면 TS 에 남는다.
     let attachment_upload = match (&core_mode, &state.write) {
@@ -2678,6 +2712,20 @@ async fn main() {
             core_routes.router = core_routes.router.merge(au.router);
             core_routes.http.extend(au.http);
             core_routes.sockets.extend(au.sockets);
+        }
+        if let Some(storage) = avatar_read {
+            let av = harkroom_server::core::avatar_read::routes(
+                harkroom_server::core::avatar_read::AvatarReadState {
+                    read: state.pool.clone(),
+                    storage,
+                    up: state.up.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(av.router);
+            core_routes.http.extend(av.http);
+            core_routes.sockets.extend(av.sockets);
         }
         if let Some(storage) = attachment_download {
             let ad = harkroom_server::core::attachment_download::routes(

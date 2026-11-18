@@ -125,7 +125,7 @@ impl HttpBody for FileBody {
     }
 }
 
-fn stream_file(mut f: std::fs::File) -> AxBody {
+pub(crate) fn stream_file(mut f: std::fs::File) -> AxBody {
     let (tx, rx) = mpsc::channel(4);
     tokio::task::spawn_blocking(move || {
         let mut buf = vec![0u8; CHUNK];

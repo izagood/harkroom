@@ -36,6 +36,7 @@ pub mod automation_run_now;
 pub mod automation_time;
 pub mod automations_read;
 pub mod automations_write;
+pub mod avatar_read;
 pub mod cause_link;
 pub mod chain_backstop;
 pub mod chain_stall;
