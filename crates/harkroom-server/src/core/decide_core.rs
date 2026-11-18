@@ -566,6 +566,8 @@ pub fn rust_takes(s: Shape<'_>) -> Option<Decision> {
         (Decision::ApproveTurn, "tool") => !s.has_denial && s.has_mandate,
         // C3 — command 는 위임장이 있어도 Rust(1시간 command_grant + 그 위임장에 command 줄).
         (Decision::ApproveOnce | Decision::ApproveHour, "command") => !s.has_denial,
+        // S5.4 — tool 카드의 [이번 한 번](once 없음·거절 기록 없음)은 TS 가 쓰기 없이 409 `not_once` 로 돌려보낸다 — Rust 가 같은 답을 한다.
+        (Decision::ApproveOnce, "tool") => !s.has_denial,
         _ => false,
     };
     ok.then_some(d)

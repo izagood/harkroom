@@ -74,6 +74,8 @@ fn who_takes_it() {
         ("approve", "tool", Decision::Approve),
         ("approve_once", "command", Decision::ApproveOnce),
         ("approve_hour", "command", Decision::ApproveHour),
+        // S5.4 — tool 카드의 approve_once 는 Rust 가 409 not_once(쓰기 없음).
+        ("approve_once", "tool", Decision::ApproveOnce),
         // C1 — 위임장 없는 approve_mandate 는 TS 처럼 grant 만(approve 와 같음).
         ("approve_mandate", "tool", Decision::ApproveMandate),
         // C2 — 위임장 없는 approve_new_mandate(tool)는 Rust 가 카드 스레드에 위임장을 세운다.
@@ -87,7 +89,6 @@ fn who_takes_it() {
         ("approve", "command"),
         ("approve", "future_kind"),
         ("approve_once", "merge"),
-        ("approve_once", "tool"),
         ("approve_hour", "tool"),
         // C2 — new_mandate 는 tool 만(command 는 TS 409 bad_decision, merge 는 TS).
         ("approve_new_mandate", "command"),
