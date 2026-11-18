@@ -2,7 +2,7 @@
 //!
 //! - 순서는 TS 와 같다: `requireAccount`(401) → 사람·세션이 아니면 403 `session_required` → 창 기록이 남아 있던 세션만
 //!   비우고 그때만 감사 `step_up.ended` → 204. **멱등**이다(이미 잠겼어도 204).
-//! - 비밀번호가 필요 없는 줄이라 argon2·시도 상한(메모리 리미터)과 엮이지 않는다. 열기(`POST /auth/step-up`)는 TS 에 남긴다.
+//! - 비밀번호가 필요 없는 줄이라 argon2·시도 상한(메모리 리미터)과 엮이지 않는다. 열기(`POST /auth/step-up`)는 `step_up_open.rs`.
 //! - 쓰기 권한은 [`STEP_UP_END_PRIVILEGES`] — 없으면 `main.rs` 가 이 줄을 붙이지 않아 TS 에 남는다.
 use crate::auth::{RequireAccount, Via};
 use crate::directory::{internal, json_err};

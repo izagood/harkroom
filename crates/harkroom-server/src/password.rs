@@ -119,6 +119,18 @@ mod tests {
         assert!(!verify(&cheap, "px"));
     }
 
+    /// node-argon2 0.41.1 `argon2.hash('correct horse battery staple')`(기본값, TS 와 같은 호출) 이 실제로 만든 해시.
+    /// 시험용 문자열이라 비밀이 아니다. TS 가 저장한 해시를 Rust 가 검증할 수 있다는 고정 증거.
+    const NODE_ARGON2_VECTOR: &str = "$argon2id$v=19$m=65536,t=3,p=4$Ra25GV2EygyvSHism6QUVg$wEKL9X33N8AfCrZbDHExMD4fpIWTXVPs/Xm8JPX1ogE";
+
+    #[test]
+    fn verifies_real_node_argon2_hash() {
+        assert!(verify(NODE_ARGON2_VECTOR, "correct horse battery staple"));
+        assert!(!verify(NODE_ARGON2_VECTOR, "correct horse battery stapl"));
+        assert!(!verify(NODE_ARGON2_VECTOR, "Correct horse battery staple"));
+        assert!(!verify(NODE_ARGON2_VECTOR, ""));
+    }
+
     #[test]
     fn malformed_hash_is_false() {
         assert!(!verify("not-a-hash", "pw"));
