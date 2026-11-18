@@ -36,8 +36,8 @@ pub const ASK_SEQUENCE_PRIVILEGES: &[(&str, &str)] = &[("event_outbox_id_seq", "
 /// TS shared `ASK_TEXT_OPTION_ID`·`ASK_TEXT_MAX_CHARS`·`ASK_MIN_OPTIONS`·`ASK_MAX_OPTIONS`.
 pub const ASK_TEXT_OPTION_ID: &str = "__text__";
 pub const ASK_TEXT_MAX_CHARS: usize = 2000;
-const ASK_MIN_OPTIONS: usize = 2;
-const ASK_MAX_OPTIONS: usize = 5;
+pub(crate) const ASK_MIN_OPTIONS: usize = 2;
+pub(crate) const ASK_MAX_OPTIONS: usize = 5;
 use crate::write::BODY_LIMIT;
 const LABEL: &str = "ask";
 

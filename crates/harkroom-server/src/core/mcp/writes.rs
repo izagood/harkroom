@@ -60,6 +60,10 @@ pub const SERVED: &[&str] = &[
     "grant.delegate",
     // S5.4 — 권한 요청의 거절 앞머리(인자 짝·채널·규칙 모양·저장소 모양). 읽기만 한다 — 받아들여지는 요청(요청 줄·카드)은 TS.
     "permission.request",
+    // 아티팩트 올리기의 거절 앞머리(채널 가시성·html/attachmentId 짝). 읽기만 한다 — 올리기는 TS.
+    "artifact.publish",
+    // 선택 카드의 거절 앞머리(계획 단계·채널 가시성·선택지 모양·머지 거절 대상). 읽기만 한다 — 카드 쓰기는 TS.
+    "message.ask",
 ];
 
 /// TS 가 조건부로 싣는 도구 — `/mcp/admit` 이 `registered: true` 라고 답했을 때만 Rust 가 답한다([`super::route::serve`]).
@@ -257,6 +261,12 @@ pub async fn answer(
             return Some(None);
         };
         return Some(super::skill_propose::answer(st, me, args).await);
+    }
+    if tool == "message.ask" {
+        return Some(super::message_ask::answer(read, me, args).await);
+    }
+    if tool == "artifact.publish" {
+        return Some(super::artifact_publish::answer(read, me, args).await);
     }
     if tool == "permission.request" {
         return Some(super::permission_request::answer(read, me, args).await);

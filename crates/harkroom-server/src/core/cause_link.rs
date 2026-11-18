@@ -174,15 +174,41 @@ pub fn models_disagree(configured: Option<&str>, reported: Option<&str>) -> bool
     }
 }
 
-/// 신고값을 TS 처럼 다듬는다(`trim().slice(0, MODEL_ID_MAX)`). JS 의 `trim`·UTF-16 자르기와 같게 다룰 수 있는 **ASCII 만** 받는다 —
-/// 그 밖은 `None`(→ 부른 쪽이 TS 로 넘긴다). 빈 값이면 `Some(None)`(meta 없음).
+/// JS `String.prototype.trim` 이 벗기는 글자(WhiteSpace · LineTerminator). Rust `char::is_whitespace` 와 다르다
+/// (JS 는 U+FEFF 를 벗기고 U+0085 는 남긴다).
+pub(crate) fn js_trim_char(c: char) -> bool {
+    matches!(
+        c,
+        '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
+            ..='\u{200a}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202f}'
+                | '\u{205f}'
+                | '\u{3000}'
+                | '\u{feff}'
+    )
+}
+
+/// 신고값을 TS 처럼 다듬는다(`trim().slice(0, MODEL_ID_MAX)` — JS `trim` 의 글자 집합, UTF-16 단위로 자른다).
+/// 자른 자리가 서로게이트 쌍 한가운데면(JS 는 짝 잃은 서로게이트를 남겨 jsonb 가 거절한다) `None`(→ 부른 쪽이 TS 로
+/// 넘긴다). 빈 값이면 `Some(None)`(meta 없음).
 pub fn trimmed_model(raw: &str) -> Option<Option<String>> {
-    if !raw.is_ascii() {
-        return None;
+    let t = raw.trim_matches(js_trim_char);
+    let mut units = 0;
+    let mut end = t.len();
+    for (i, c) in t.char_indices() {
+        let w = c.len_utf16();
+        if units + w > MODEL_ID_MAX {
+            if units < MODEL_ID_MAX {
+                return None;
+            }
+            end = i;
+            break;
+        }
+        units += w;
     }
-    // ASCII 안에서 JS WhiteSpace·LineTerminator 는 \t \n \v \f \r 공백이다.
-    let t = raw.trim_matches(|c: char| matches!(c, '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' '));
-    let cut = &t[..t.len().min(MODEL_ID_MAX)];
+    let cut = &t[..end];
     Some((!cut.is_empty()).then(|| cut.to_owned()))
 }
 
@@ -235,7 +261,22 @@ mod tests {
         assert_eq!(trimmed_model("  opus \n"), Some(Some("opus".into())));
         assert_eq!(trimmed_model(" \t "), Some(None));
         assert_eq!(trimmed_model(&"a".repeat(130)), Some(Some("a".repeat(120))));
-        assert_eq!(trimmed_model("오푸스"), None);
-        assert_eq!(trimmed_model("\u{a0}opus"), None);
+        assert_eq!(trimmed_model("오푸스"), Some(Some("오푸스".into())));
+        assert_eq!(
+            trimmed_model("\u{a0}\u{feff}opus\u{3000}"),
+            Some(Some("opus".into()))
+        );
+        // NEL(U+0085)은 JS `trim` 이 남긴다.
+        assert_eq!(trimmed_model("\u{85}opus"), Some(Some("\u{85}opus".into())));
+        assert_eq!(
+            trimmed_model(&"가".repeat(130)),
+            Some(Some("가".repeat(120)))
+        );
+        // 120 번째 UTF-16 단위가 서로게이트 쌍을 가르면 TS 로 넘긴다.
+        assert_eq!(trimmed_model(&format!("{}😀", "a".repeat(119))), None);
+        assert_eq!(
+            trimmed_model(&format!("{}😀b", "a".repeat(118))),
+            Some(Some(format!("{}😀", "a".repeat(118))))
+        );
     }
 }

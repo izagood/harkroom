@@ -5,7 +5,7 @@
 //! - C3b-2c-4b: 게이트를 지난 요청도 맡는다 — 접속 확인 → 위임 글(`meta.kind = 'delegation'`) → 같은 tx 의 사슬 상한·의무
 //!   ([`crate::core::delegate_write`]) → 이벤트. 쓰기 칸(`McpWrites::delegate`)이 없으면 지금처럼 TS 로 넘긴다.
 //! - **TS 로 넘기는 것**(`None` — fail-closed): 팀장이 자기 팀에 넘기는 요청(팀 명단 갈래) · `agentModels`·`planRootId`·`planGroupId`
-//!   (모델 고르기·계획판) · zod 가 받지 않을 인자 · ASCII 밖 모델 신고 · `to` 에 같은 이름이 두 번 · 위임 스위치를 모름 · DB 오류.
+//!   (모델 고르기·계획판) · zod 가 받지 않을 인자 · 자른 자리가 서로게이트 쌍을 가르는 모델 신고 · `to` 에 같은 이름이 두 번 · 위임 스위치를 모름 · DB 오류.
 //! - 접속 확인: TS 는 프로세스 메모리(`presence.online()`)를, Rust 는 DB `agent_presence`(`expires_at > now()`)를 읽는다. TS 는
 //!   그 표를 담당마다 10초에 한 번만 고쳐 쓰므로(`PERSIST_EVERY_MS`) DB 의 만료가 메모리보다 최대 약 10초 이르다 — 폴을 멈춘 담당은
 //!   Rust 쪽에서 최대 약 10초 **먼저** `unreachable` 이 된다(없는 것을 있다고 하지 않는 쪽). 처음 접속은 첫 폴에 바로 쓰인다.
@@ -112,7 +112,7 @@ fn parse(args: &Value) -> Option<Args> {
         Some(Value::String(m))
             if (1..=cause_link::MODEL_ID_MAX).contains(&m.encode_utf16().count()) =>
         {
-            // ASCII 밖 모델 신고는 JS `trim`·UTF-16 자르기를 맞추지 않고 TS 로 넘긴다(`message.post` 와 같다).
+            // JS `trim().slice` 그대로 다듬는다 — 서로게이트 쌍이 갈리면 TS 로 넘긴다(`message.post` 와 같다).
             cause_link::trimmed_model(m)?
         }
         _ => return None,
