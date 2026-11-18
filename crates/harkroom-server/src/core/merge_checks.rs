@@ -1175,6 +1175,7 @@ impl super::msg_post::BeforeCommit for ConsumeApproval {
         &'a self,
         tx: &'a mut sqlx::Transaction<'static, sqlx::Postgres>,
         _message_id: &'a str,
+        _notified: &'a std::collections::HashSet<String>,
     ) -> super::msg_post::BeforeCommitFuture<'a> {
         Box::pin(async move {
             let got: Option<String> = sqlx::query_scalar(APPROVAL_CONSUME_SQL)
