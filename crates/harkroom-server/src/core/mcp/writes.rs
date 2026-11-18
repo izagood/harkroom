@@ -170,6 +170,9 @@ pub struct McpWrites {
     pub artifact: Option<std::sync::Arc<super::artifact_publish::ArtifactWrite>>,
     /// `skill.propose`(S5.4 MCP 3) — `post` 에 더해 `skill_propose::SKILL_PROPOSE_PRIVILEGES`.
     pub skill: Option<std::sync::Arc<crate::core::msg_post::PostState>>,
+    /// `message.post` 의 비지 않은 `agentModels`(S5.4 lane c) — `post` 에 더해 `agent_model_picks::AGENT_MODEL_PICKS_PRIVILEGES`.
+    /// 없으면 거절 앞머리만 Rust, 고르기 쓰기는 TS.
+    pub agent_picks: Option<std::sync::Arc<crate::core::msg_post::PostState>>,
     /// AC5 안전판 — 릴레이가 Rust 오퍼레이터 코어와 함께 옮겨졌다. 그 동안 TS 의 릴레이 허브는 비어 있어 `turn.cancel` 이
     /// 아무 턴도 못 찾고 성공처럼 답하므로, Rust 가 `operator_core_moved` 로 거절한다([`super::route::TURN_CANCEL`]).
     pub relay_moved: bool,

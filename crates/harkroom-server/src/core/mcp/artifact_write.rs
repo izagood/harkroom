@@ -222,6 +222,7 @@ impl BeforeCommit for NewArtifact {
         &'a self,
         tx: &'a mut sqlx::Transaction<'static, sqlx::Postgres>,
         _message_id: &'a str,
+        _notified: &'a std::collections::HashSet<String>,
     ) -> BeforeCommitFuture<'a> {
         Box::pin(async move {
             let row: Option<(String, i64)> = sqlx::query_as(HTML_SQL)

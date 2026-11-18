@@ -3106,6 +3106,32 @@ async fn main() {
             },
             None => false,
         };
+    // S5.4 lane c — MCP `message.post` 의 비지 않은 `agentModels`. 글 쓰기 풀에 고르기 행 칸이 다 있을 때만 — 아니면 TS.
+    let mcp_picks_ok = mcp_post_ok
+        && match &post_write {
+            Some(w) => match write::missing_in(
+                w,
+                harkroom_server::core::agent_model_picks::AGENT_MODEL_PICKS_PRIVILEGES,
+                &[],
+            )
+            .await
+            {
+                Ok(m) if m.is_empty() => true,
+                Ok(m) => {
+                    eprintln!("front: mcp agentModels core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
+                    false
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: mcp agentModels core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    false
+                }
+            },
+            None => false,
+        };
     // C3a-3c — 글 고치기. 위 블록들과 같이 쓰기 역할에 그 권한이 **하나라도 없으면** 붙이지 않는다(그 경로는 TS 가 받는다).
     let edit_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -4754,6 +4780,7 @@ async fn main() {
                 delegate: mcp_post.clone().filter(|_| mcp_delegate_ok),
                 wake: mcp_post.clone().filter(|_| mcp_wake_ok),
                 skill: mcp_post.clone().filter(|_| mcp_skill_ok),
+                agent_picks: mcp_post.clone().filter(|_| mcp_picks_ok),
                 artifact: mcp_post
                     .clone()
                     .filter(|_| mcp_artifact_ok)

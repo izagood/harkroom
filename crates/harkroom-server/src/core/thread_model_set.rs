@@ -146,6 +146,7 @@ pub fn axis_valid(v: Option<&str>) -> bool {
 }
 
 /// TS `announceChange(…, byKind = 'human')` 의 본문과 meta.
+#[cfg(test)]
 fn change_line(
     actor: &str,
     agent: &str,
@@ -471,15 +472,54 @@ async fn announce(
     agent: &str,
     axes: Option<&(Option<String>, Option<String>)>,
 ) -> sqlx::Result<()> {
+    announce_by(st, channel, root, actor, agent, axes, false).await
+}
+
+/// TS `announceChange(…, byKind)` + `emitChanged` — 에이전트 고르기(`agentModels`)가 커밋된 뒤 바뀐 줄마다 부른다.
+pub(crate) async fn announce_agent_pick(
+    st: &PostState,
+    channel: &str,
+    root: &str,
+    actor: &str,
+    agent: &str,
+    axes: Option<&(Option<String>, Option<String>)>,
+) -> sqlx::Result<()> {
+    announce_by(st, channel, root, actor, agent, axes, true).await?;
+    let row: Option<String> = sqlx::query_scalar(ROW_SQL)
+        .bind(root)
+        .bind(agent)
+        .fetch_optional(&st.write)
+        .await?;
+    let row_val: Value = row
+        .as_deref()
+        .and_then(|r| serde_json::from_str(r).ok())
+        .unwrap_or(Value::Null);
+    let audience = audience_for(&st.write, channel).await?.to_json();
+    let ev = json!({ "type": "thread.agent_model.changed", "channelId": channel, "threadRootId": root,
+        "agentId": agent, "row": row_val, "audience": audience });
+    let mut c = st.write.acquire().await?;
+    emit_event(&mut c, &ev).await.map(|_| ())
+}
+
+async fn announce_by(
+    st: &PostState,
+    channel: &str,
+    root: &str,
+    actor: &str,
+    agent: &str,
+    axes: Option<&(Option<String>, Option<String>)>,
+    by_agent: bool,
+) -> sqlx::Result<()> {
     let handle: Option<String> = sqlx::query_scalar(HANDLE_SQL)
         .bind(agent)
         .fetch_optional(&st.write)
         .await?;
-    let (body, meta) = change_line(
+    let (body, meta) = change_line_by(
         actor,
         agent,
         handle.as_deref().unwrap_or(""),
         axes.map(|(m, e)| (m.as_deref(), e.as_deref())),
+        by_agent,
     );
     let audience = audience_for(&st.write, channel).await?.to_json();
     let is_dm = channel_is_dm(&st.write, channel).await?;
