@@ -1592,6 +1592,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // S5.4 AU1 — 인증 가벼운 줄(`core/auth_light.rs::AUTH_LIGHT_PRIVILEGES`). 칸 권한만. 없으면 「auth light core off」 — TS 에 남는다.
         `grant delete on session to ${rw}`,
         `grant update (notice_seen_at) on password_reset_code to ${rw}`,
+        // S5.4 — 재설정 코드 거두기(`core/account_reset_code_revoke.rs::ACCOUNT_RESET_CODE_REVOKE_PRIVILEGES`). 없으면 「account reset code revoke core off」 — TS 에 남는다.
+        `grant update (revoked_at) on password_reset_code to ${rw}`,
         // S5.4 SE1 — 비밀 읽기·지우기(`core/secrets_read.rs::SECRETS_READ_PRIVILEGES`). 판·부여는 cascade. 없으면 「secrets read core off」 — TS 에 남는다.
         `grant delete on secret to ${rw}`,
         `grant delete on secret_grant to ${rw}`,
