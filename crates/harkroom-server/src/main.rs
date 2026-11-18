@@ -719,6 +719,27 @@ async fn main() {
         _ => None,
     };
     // S5.4 SE1 — 비밀 REST 읽기·지우기. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 권한이 다 있을 때만.
+    // S5.4 SE2 — 비밀 부여(`PUT /secrets/{id}/grants`). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만.
+    let secret_grant_give = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::secret_grant_give as k;
+            match write::missing_in(w, k::SECRET_GRANT_GIVE_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: secret grant give core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: secret grant give core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     let secrets_read_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
             use harkroom_server::core::secrets_read as s;
@@ -2238,6 +2259,21 @@ async fn main() {
             core_routes.sockets.extend(au.sockets);
         }
         // S5.4 SE1 — 비밀 읽기·지우기 5줄. 권한이 다 있을 때만 — 아니면 TS 에 남는다(목록·만들기·값·부여 주기·보기는 언제나 TS).
+        // S5.4 SE2 — 비밀 부여. 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = secret_grant_give {
+            let sg = harkroom_server::core::secret_grant_give::routes(
+                harkroom_server::core::secrets_read::SecretsReadState {
+                    read: state.pool.clone(),
+                    write,
+                    trust: state.trust.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(sg.router);
+            core_routes.http.extend(sg.http);
+            core_routes.sockets.extend(sg.sockets);
+        }
         if let Some(write) = secrets_read_write {
             let se = harkroom_server::core::secrets_read::routes(
                 harkroom_server::core::secrets_read::SecretsReadState {

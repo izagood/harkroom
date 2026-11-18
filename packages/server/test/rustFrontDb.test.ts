@@ -1667,6 +1667,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant select (event_key), insert (automation_id, event_key, trigger_kind, payload, not_before, initiated_by, cause_message_id, chain_depth) on automation_run to ${rw}`,
         // S5.4 AT4 — POST /automations/:id/approve(`AUTOMATION_APPROVE_PRIVILEGES`). AT3 run-now 는 MCP automation.run 칸의 부분집합이라 새 줄이 없다.
         `grant update (approved_at, mandate_session_at) on automation to ${rw}`,
+        // S5.4 SE2 — PUT /secrets/:id/grants(`SECRET_GRANT_GIVE_PRIVILEGES`).
+        `grant select (id, secret_id, agent_id, channel_id), insert (secret_id, agent_id, channel_id, operator_id, granted_by), update (operator_id, granted_by, granted_at, suspended_at, suspend_reason) on secret_grant to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
