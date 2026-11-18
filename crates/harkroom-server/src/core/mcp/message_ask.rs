@@ -156,20 +156,135 @@ pub async fn answer(read: &PgPool, me: &Account, args: &Value) -> Option<String>
         return Some(r);
     }
     // TS `to` 대상 찾기 — 없는 handle 이면 `unknown_handle`. 찾으면 그 뒤(사람 아닌 대상 카드)는 아직 TS 몫이다.
-    let to = a.to?;
-    let handle = to_handle(to);
-    let found: Option<String> = sqlx::query_scalar(TO_SQL)
-        .bind(&handle)
-        .fetch_optional(read)
-        .await
-        .ok()?;
-    if found.is_none() {
+    if let Some(to) = a.to {
+        let handle = to_handle(to);
+        let found: Option<String> = sqlx::query_scalar(TO_SQL)
+            .bind(&handle)
+            .fetch_optional(read)
+            .await
+            .ok()?;
+        if found.is_none() {
+            return Some(err(
+                "unknown_handle",
+                &format!("no account with handle @{handle}"),
+            ));
+        }
+    }
+    // 거울 검사(`mirror_audience`·`checkAskMirror`)는 아직 TS 몫이라, 거울이면 대신하기 검사도 TS 에 둔다.
+    if a.mirror_of {
+        return None;
+    }
+    let o = args.as_object()?;
+    let olds = supersedes_list(o);
+    if olds.len() > ASK_SUPERSEDES_MAX {
         return Some(err(
-            "unknown_handle",
-            &format!("no account with handle @{handle}"),
+            "supersedes_too_many",
+            "list at most 4 cards in supersedes",
         ));
     }
+    let thread = o.get("threadRootId").and_then(Value::as_str);
+    for old in olds {
+        let row: Option<(Value, String, Option<String>, Option<String>)> =
+            sqlx::query_as(SUPERSEDE_SQL)
+                .bind(old)
+                .fetch_optional(read)
+                .await
+                .ok()?;
+        if let Some(code) = supersede_refusal(old, row, &me.id, a.channel, thread) {
+            return Some(super::respond::text_result(
+                &serde_json::json!({ "error": {
+                    "code": code, "message": supersede_message(code), "supersedes": old,
+                } })
+                .to_string(),
+            ));
+        }
+    }
+    // 대신하기를 다 지난 카드는 [`answer_plain`] 이 고른다 — `supersedes` 가 있으면 닫기(`supersedeAsk`)가 TS 몫이라 넘긴다.
     None
+}
+
+/// TS `ASK_SUPERSEDES_MAX`.
+const ASK_SUPERSEDES_MAX: usize = 4;
+
+/// TS `checkAskSupersede` 의 옛 카드 읽기(읽기 풀의 `message` SELECT).
+const SUPERSEDE_SQL: &str = "select meta, channel_id::text, thread_root_id::text, author_id::text
+       from message where id = $1::uuid and deleted_at is null";
+
+/// TS `[...new Set(typeof s === 'string' ? [s] : s)]` — 차례를 지키며 겹침을 뺀다.
+fn supersedes_list(o: &Map<String, Value>) -> Vec<&str> {
+    let raw: Vec<&str> = match o.get("supersedes") {
+        Some(Value::String(s)) => vec![s.as_str()],
+        Some(Value::Array(a)) => a.iter().filter_map(Value::as_str).collect(),
+        _ => Vec::new(),
+    };
+    let mut seen = HashSet::new();
+    raw.into_iter().filter(|x| seen.insert(*x)).collect()
+}
+
+/// JS 참값.
+fn truthy(v: Option<&Value>) -> bool {
+    match v {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(b)) => *b,
+        Some(Value::Number(n)) => n.as_f64().is_some_and(|f| f != 0.0),
+        Some(Value::String(s)) => !s.is_empty(),
+        Some(_) => true,
+    }
+}
+
+/// `x != null` (undefined·null 이 아님).
+fn present(v: Option<&Value>) -> bool {
+    !matches!(v, None | Some(Value::Null))
+}
+
+/// TS `checkAskSupersede` 판정 차례 그대로.
+fn supersede_refusal(
+    old: &str,
+    row: Option<(Value, String, Option<String>, Option<String>)>,
+    caller: &str,
+    channel: &str,
+    thread: Option<&str>,
+) -> Option<&'static str> {
+    let Some((meta, ch, root, author)) = row else {
+        return Some("supersedes_not_found");
+    };
+    if crate::core::ask::read_ask_meta(&meta).is_none() {
+        return Some("supersedes_not_found");
+    }
+    if author.as_deref() != Some(caller) {
+        return Some("supersedes_not_yours");
+    }
+    if truthy(meta.get("permissionRequest")) || truthy(meta.get("chainBackstop")) {
+        return Some("supersedes_permission_card");
+    }
+    let old_root = root.as_deref().unwrap_or(old);
+    if ch != channel || thread.is_none_or(|t| t != old_root) {
+        return Some("supersedes_other_thread");
+    }
+    let ask = meta.get("ask");
+    let f = |k: &str| ask.and_then(|a| a.get(k));
+    if present(f("answeredWith"))
+        || (present(f("closedAt")) && f("closedReason") != Some(&Value::from("replied")))
+    {
+        return Some("supersedes_resolved");
+    }
+    None
+}
+
+/// TS `SUPERSEDE_REFUSAL_MESSAGE`.
+fn supersede_message(code: &str) -> &'static str {
+    match code {
+        "supersedes_not_found" => "no choice request with that id",
+        "supersedes_not_yours" => "you can only replace a card you posted",
+        "supersedes_other_thread" => {
+            "the new card must go in the same thread as the card it replaces"
+        }
+        "supersedes_resolved" => "that card is already answered, declined, or replaced",
+        "supersedes_permission_card" => {
+            "a permission-request card ends only by the owner approving or denying it"
+        }
+        _ => "list at most 4 cards in supersedes",
+    }
 }
 
 /// TS `select id from account where lower(handle) = $1` — `to` 대상 찾기(읽기 풀의 `account` SELECT).
@@ -427,6 +542,102 @@ mod tests {
                 "{k}"
             );
         }
+    }
+
+    #[test]
+    fn supersede_refusal_like_ts() {
+        const D: &str = "1b7f3f92-3fa6-494a-8ab3-76d0d2a6a1c0";
+        let me = "me";
+        let card = |extra: Value| {
+            let mut m = json!({ "kind": "ask", "ask": { "options": [{ "id": "a", "label": "A" }, { "id": "b", "label": "B" }],
+                "to": { "kind": "human" } } });
+            for (k, x) in extra.as_object().unwrap() {
+                m["ask"][k] = x.clone();
+            }
+            m
+        };
+        let row = |m: Value, author: &str, root: Option<&str>| {
+            Some((
+                m,
+                C.to_owned(),
+                root.map(str::to_owned),
+                Some(author.to_owned()),
+            ))
+        };
+        let r = |row, thread| supersede_refusal(D, row, me, C, thread);
+        assert_eq!(r(None, Some(D)), Some("supersedes_not_found"));
+        assert_eq!(
+            r(row(json!({ "kind": "post" }), me, None), Some(D)),
+            Some("supersedes_not_found")
+        );
+        assert_eq!(
+            r(row(card(json!({})), "x", None), Some(D)),
+            Some("supersedes_not_yours")
+        );
+        let mut perm = card(json!({}));
+        perm["chainBackstop"] = json!({});
+        assert_eq!(
+            r(row(perm, me, None), Some(D)),
+            Some("supersedes_permission_card")
+        );
+        assert_eq!(
+            r(row(card(json!({})), me, None), None),
+            Some("supersedes_other_thread")
+        );
+        assert_eq!(
+            r(row(card(json!({})), me, Some(C)), Some(D)),
+            Some("supersedes_other_thread")
+        );
+        assert_eq!(r(row(card(json!({})), me, Some(C)), Some(C)), None);
+        assert_eq!(r(row(card(json!({})), me, None), Some(D)), None);
+        assert_eq!(
+            r(row(card(json!({ "answeredWith": "a" })), me, None), Some(D)),
+            Some("supersedes_resolved")
+        );
+        assert_eq!(
+            r(
+                row(
+                    card(json!({ "closedAt": "t", "closedReason": "declined" })),
+                    me,
+                    None
+                ),
+                Some(D)
+            ),
+            Some("supersedes_resolved")
+        );
+        assert_eq!(
+            r(
+                row(
+                    card(json!({ "closedAt": "t", "closedReason": "replied" })),
+                    me,
+                    None
+                ),
+                Some(D)
+            ),
+            None
+        );
+        let o = ask(json!({ "supersedes": [C, D, C] }));
+        assert_eq!(supersedes_list(o.as_object().unwrap()), vec![C, D]);
+        assert_eq!(
+            supersedes_list(ask(json!({ "supersedes": C })).as_object().unwrap()),
+            vec![C]
+        );
+        let ts = include_str!("../../../../../packages/server/src/mcp/mcpPlugin.ts");
+        for code in [
+            "supersedes_not_found",
+            "supersedes_not_yours",
+            "supersedes_other_thread",
+            "supersedes_resolved",
+            "supersedes_permission_card",
+            "supersedes_too_many",
+        ] {
+            assert!(
+                ts.contains(&format!("{code}: '{}'", supersede_message(code))),
+                "{code}"
+            );
+        }
+        let ms = include_str!("../../../../../packages/server/src/services/messages.ts");
+        assert!(ms.contains("export const ASK_SUPERSEDES_MAX = 4;"));
     }
 
     #[test]
