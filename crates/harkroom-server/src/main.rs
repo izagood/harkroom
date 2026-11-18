@@ -2310,6 +2310,27 @@ async fn main() {
         }
         None => None,
     };
+    // S5.4 — `POST /agent/api-results`. 글 올리기 코어(시스템 줄)와 [`API_RESULTS_PRIVILEGES`] 가 다 있을 때만.
+    let api_results_write = match &post_write {
+        Some(w) => {
+            use harkroom_server::core::api_results as c;
+            match write::missing_in(w, c::API_RESULTS_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: api results core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: api results core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        None => None,
+    };
     // S5.4 TP3 — 계획 자동 진행 끄기. 글 올리기 코어(시스템 줄이 스레드 안으로 그 경로를 탄다)와 끄기 칸 권한이 다 있을 때만.
     let thread_plan_auto_off = match &post_write {
         Some(w) => {
@@ -3219,6 +3240,24 @@ async fn main() {
             core_routes.router = core_routes.router.merge(tc.router);
             core_routes.http.extend(tc.http);
             core_routes.sockets.extend(tc.sockets);
+        }
+        // S5.4 — `POST /agent/api-results`. 글 올리기 코어와 칸 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = api_results_write {
+            let ar = harkroom_server::core::api_results::routes(
+                harkroom_server::core::api_results::ApiResultsState {
+                    post: harkroom_server::core::msg_post::PostState {
+                        read: state.pool.clone(),
+                        write,
+                        up: state.up.clone(),
+                        implicit_ok,
+                    },
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(ar.router);
+            core_routes.http.extend(ar.http);
+            core_routes.sockets.extend(ar.sockets);
         }
         // S5.4 TP3 — 계획 자동 진행 끄기. 글 올리기 코어와 끄기 칸 권한이 다 있을 때만 — 아니면 TS 에 남는다.
         if let Some(write) = thread_plan_auto_off {
