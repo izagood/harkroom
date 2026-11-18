@@ -8,6 +8,8 @@
 //!   (`automation_ingress_verify::safe_equal`). 본문 상한은 전역 `bodyLimit` 과 같은 1MiB.
 //! - **TS 로 넘기는 것**: 검증을 통과한 뒤의 필터(`matchGithub`·`genericVars`)와 회차 만들기(`enqueueRun` —
 //!   디바운스 모으기·시간당 상한 일시정지)는 아직 TS 다. 원문 바이트를 그대로 넘기므로 TS 가 같은 판정을 다시 한다.
+//!   예외: generic 은 쓰기 풀이 있으면 `genericVars`·`enqueueRun`(디바운스 없음·시간당 상한 일시정지·429)을 여기서 한다 —
+//!   디바운스가 걸렸거나 50 칸 넘는 본문·JS 와 문자열화가 다른 숫자는 TS 로 넘긴다.
 //!   `application/json` 이 아닌 content-type 도 fastify 파서 동작(415·문자열 본문)을 그대로 두려고 TS 로 넘긴다.
 //! - 비밀(토큰 해시·봉인된 서명 키·열린 키)은 기록하지 않는다. [`IngressTarget`] 의 Debug 는 가린다.
 use crate::core::automation_ingress_verify::{verify_bearer, verify_github_signature};
@@ -67,6 +69,7 @@ impl fmt::Debug for IngressTarget {
 pub struct HooksState {
     read: PgPool,
     up: Upstream,
+    write: Option<PgPool>,
     secret_box: Option<SecretBox>,
 }
 
@@ -78,10 +81,11 @@ impl fmt::Debug for HooksState {
 
 impl HooksState {
     /// 서명 키 상자는 TS 처럼 `HARKROOM_SECRET_KEY` 에서 한 번 읽는다(없으면 github 서명은 늘 실패 → 401).
-    pub fn new(read: PgPool, up: Upstream) -> Self {
+    pub fn new(read: PgPool, up: Upstream, write: Option<PgPool>) -> Self {
         Self {
             read,
             up,
+            write,
             secret_box: SecretBox::from_env(),
         }
     }
@@ -140,6 +144,158 @@ async fn load(read: &PgPool, id: &str) -> Result<Option<IngressTarget>, sqlx::Er
         kind,
         token_hash,
         secret_enc,
+    }))
+}
+
+/// 쓰기 풀 권한 — `automation_run_now` 의 회차·일시정지 칸과 같다(새 GRANT 없음).
+pub fn write_privileges() -> Vec<(&'static str, &'static str)> {
+    use crate::core::automation_run_now as rn;
+    rn::AUTOMATION_RUN_NOW_PRIVILEGES
+        .iter()
+        .chain(rn::AUTOMATION_RUN_NOW_PAUSE_PRIVILEGES)
+        .copied()
+        .collect()
+}
+
+/// TS `neutralize` — 줄바꿈 접기, `@` 뒤 폭 없는 공백, UTF-16 단위로 `max` 넘으면 `max-1` 단위 + `…`.
+pub(crate) fn neutralize(v: &str, max: usize) -> String {
+    let mut s = String::with_capacity(v.len());
+    let mut nl = false;
+    for c in v.chars() {
+        if c == '\r' || c == '\n' {
+            if !nl {
+                s.push(' ');
+            }
+            nl = true;
+            continue;
+        }
+        nl = false;
+        s.push(c);
+    }
+    let s = s.replace('@', "@\u{200b}").replace("<@", "<\u{200b}@");
+    let units: Vec<u16> = s.encode_utf16().collect();
+    if units.len() > max {
+        format!("{}…", String::from_utf16_lossy(&units[..max - 1]))
+    } else {
+        s
+    }
+}
+
+/// JS `String(v)` 근사 — 원시값만(TS `genericVars` 가 원시값만 받는다).
+fn js_string(v: &Value) -> Option<String> {
+    match v {
+        Value::String(s) => Some(s.clone()),
+        Value::Bool(b) => Some(b.to_string()),
+        // 정수는 JS 와 같다. 소수·지수 표기는 JS 와 다를 수 있다 — 부른 쪽이 TS 로 넘긴다.
+        Value::Number(n) if n.as_i64().is_some_and(|i| i.unsigned_abs() <= (1u64 << 53)) => {
+            Some(n.to_string())
+        }
+        _ => None,
+    }
+}
+
+fn valid_key(k: &str) -> bool {
+    (1..=64).contains(&k.chars().count())
+        && k.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-')
+}
+
+/// TS `genericVars`. 소수 숫자 값이 있으면 None(JS 숫자 문자열화와 맞출 수 없어 TS 로 넘긴다).
+pub(crate) fn generic_vars(body: &Value) -> Option<serde_json::Map<String, Value>> {
+    let mut vars = serde_json::Map::new();
+    if let Value::Object(o) = body {
+        for (k, v) in o.iter().take(50) {
+            if !valid_key(k) {
+                continue;
+            }
+            match v {
+                Value::String(_) | Value::Bool(_) | Value::Number(_) => {
+                    let s = js_string(v)?;
+                    vars.insert(format!("payload.{k}"), Value::String(neutralize(&s, 1000)));
+                }
+                _ => {}
+            }
+        }
+    }
+    Some(vars)
+}
+
+/// TS `enqueueRun`(webhook 갈래). None 이면 TS 로 넘긴다(디바운스 모으기 · JS 와 맞출 수 없는 값).
+async fn enqueue_generic(
+    w: &PgPool,
+    id: &str,
+    kind: &str,
+    idem: Option<&str>,
+    payload: &Value,
+) -> Result<Option<Response>, sqlx::Error> {
+    use crate::core::mcp::automation_run as ar;
+    use crate::loops::automation as la;
+    // serde_json 은 키 순서를 바꿀 수 있다(`slice(0, 50)` 이 달라진다) — 50 칸 넘는 본문은 TS 로.
+    if payload.as_object().is_some_and(|o| o.len() > 50) {
+        return Ok(None);
+    }
+    let Some(vars) = generic_vars(payload) else {
+        return Ok(None);
+    };
+    let row: Option<(bool, Option<i32>)> = sqlx::query_as(ar::ENQUEUE_ROW_SQL)
+        .bind(id)
+        .fetch_optional(w)
+        .await?;
+    let status = |code: StatusCode, s: &str| -> Response {
+        (
+            code,
+            [(header::CONTENT_TYPE, "application/json; charset=utf-8")],
+            format!("{{\"status\":\"{s}\"}}"),
+        )
+            .into_response()
+    };
+    let Some((enabled, debounce)) = row else {
+        return Ok(Some(status(StatusCode::OK, "inactive")));
+    };
+    if !enabled {
+        return Ok(Some(status(StatusCode::OK, "inactive")));
+    }
+    if debounce.is_some_and(|d| d != 0) {
+        return Ok(None); // 디바운스 모으기는 아직 TS.
+    }
+    let event_key = match idem {
+        Some(k) => {
+            let u: Vec<u16> = k.encode_utf16().take(200).collect();
+            format!("generic:{}", String::from_utf16_lossy(&u))
+        }
+        None => {
+            sqlx::query_scalar("select 'generic:' || gen_random_uuid()::text")
+                .fetch_one(w)
+                .await?
+        }
+    };
+    let recent: i32 = sqlx::query_scalar(ar::RECENT_SQL)
+        .bind(id)
+        .fetch_one(w)
+        .await?;
+    if recent >= ar::RATE_LIMIT_PER_HOUR {
+        let mut tx = w.begin().await?;
+        sqlx::query(la::RATE_LIMIT_SQL)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        la::end_automation_mandates_tx(&mut tx, id, "automation_off").await?;
+        tx.commit().await?;
+        return Ok(Some(status(StatusCode::TOO_MANY_REQUESTS, "rate_limited")));
+    }
+    let summary = la::event_summary(&vars, &event_key);
+    let body =
+        serde_json::json!({ "vars": vars, "events": [{ "key": event_key, "summary": summary }] });
+    let ins: Option<String> = sqlx::query_scalar(la::INSERT_SCHEDULE_RUN_SQL)
+        .bind(id)
+        .bind(&event_key)
+        .bind(kind)
+        .bind(body.to_string())
+        .fetch_optional(w)
+        .await?;
+    Ok(Some(match ins {
+        Some(_) => status(StatusCode::ACCEPTED, "queued"),
+        None => status(StatusCode::OK, "duplicate"),
     }))
 }
 
@@ -222,8 +378,21 @@ async fn handle(
             if !verify_bearer(target.token_hash.as_deref(), auth) {
                 return json_err(StatusCode::UNAUTHORIZED, "bad_key", "key does not match");
             }
-            if parse(&bytes).is_none() {
+            let Some(payload) = parse(&bytes) else {
                 return json_err(StatusCode::BAD_REQUEST, "bad_json", "body is not JSON");
+            };
+            if let Some(w) = &st.write {
+                let kind = if target.kind.as_deref() == Some("github") {
+                    "github"
+                } else {
+                    "webhook"
+                };
+                let idem = header_str(&parts.headers, "idempotency-key").filter(|s| !s.is_empty());
+                match enqueue_generic(w, &id, kind, idem, &payload).await {
+                    Ok(Some(r)) => return r,
+                    Ok(None) => {}
+                    Err(e) => return internal(e),
+                }
             }
         }
     }
@@ -327,6 +496,22 @@ mod tests {
         assert!(!github_ok(Some(&b), Some(&enc), body, None));
         assert!(!github_ok(None, Some(&enc), body, Some(&sig(body))));
         assert!(!github_ok(Some(&b), None, body, Some(&sig(body))));
+    }
+
+    #[test]
+    fn neutralize_and_generic_vars() {
+        assert_eq!(neutralize("a\r\n\nb @x", 300), "a b @\u{200b}x");
+        assert_eq!(neutralize("abcdef", 4), "abc…");
+        assert_eq!(neutralize("😀😀", 3), "😀…");
+        let v = generic_vars(
+            &serde_json::json!({"a": "x", "n": 3, "b": true, "o": {}, "bad key": "y"}),
+        )
+        .unwrap();
+        assert_eq!(v.len(), 3);
+        assert_eq!(v["payload.n"], "3");
+        assert!(generic_vars(&serde_json::json!({"f": 1.5})).is_none());
+        assert!(generic_vars(&serde_json::json!({"big": 12345678901234567890u64})).is_none());
+        assert!(generic_vars(&serde_json::json!([1])).unwrap().is_empty());
     }
 
     #[test]
