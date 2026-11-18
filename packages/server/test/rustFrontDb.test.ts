@@ -1580,6 +1580,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant insert on mandate_line to ${rw}`,
         // S5.3 C2 — 위임장 새로 세우기(`decide_approve::NEW_MANDATE_PRIVILEGES`, mandate INSERT·message.mandate_id 는 위). 없으면 「permission new mandate core off」.
         `grant update (mandate_id) on permission_request to ${rw}`,
+        // S5.5 f — 머지 거절 카드의 요청 줄 세우기·잇기(`permission_card.rs::REQUEST_WRITE_PRIVILEGES`). 없으면 새 카드는 TS 가 세운다.
+        `grant insert (agent_id, kind, target, reason, warnings, channel_id, thread_root_id, created_at, expires_at, denial_id, mandate_id) on permission_request to ${rw}`,
+        `grant update (superseded_by, card_message_id) on permission_request to ${rw}`,
         // S5.3 C3b B1 — 명령 grant 쓰기(`command_match.rs::MATCH_PRIVILEGES`). 칸 권한 셋(감사 INSERT 는 위). 없으면 「command grant match core off」.
         `grant update (use_count, used_at, bound_cwd) on command_grant to ${rw}`,
         // S5.3 C6a-1 — 인박스 읽음 표시(`core/inbox_read.rs::INBOX_READ_PRIVILEGES`). 칸 권한 하나. 없으면 「inbox read core off」.
@@ -9517,8 +9520,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['ask 권한 거울 · 오퍼레이터 원인(차례 주인 푸시)', mirrorAsk({ kind: 'tool', target: 'Bash(echo op:*)', reason: 'x' }, { op: true }), true],
           ['ask 권한 거울 · 경고 실린 요청 → TS', mirrorAsk({ kind: 'tool', target: 'Bash(echo warn:*)', reason: 'x', warnings: ['broad'] }), false],
           // 이 앞단의 쓰기 역할에는 요청 줄 INSERT 칸이 없어 새 카드는 TS 가 세운다 — 칸을 준 앞단의 장면은 따로 둔다.
-          ['ask 머지 거절 카드 → 요청·카드 한 번에', denialAsk(), false],
-          ['ask 머지 거절 카드 · CI 실패 거절', denialAsk({ ci: true }), false],
+          ['ask 머지 거절 카드 → 요청·카드 한 번에', denialAsk(), true],
+          ['ask 머지 거절 카드 · CI 실패 거절', denialAsk({ ci: true }), true],
           ['ask 머지 거절 카드 · 기다리는 카드 있음 → pending', denialAsk({ pending: true }), true],
           ['ask 머지 거절 카드 · 쓴 거절 → denial_used', denialAsk({ used: true }), true],
           ['ask 머지 거절 카드 · 다른 스레드 → denial_other_thread', denialAsk({ otherThread: true }), true],
@@ -9658,6 +9661,12 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(by('보관된 채널도 올린다').row).not.toBeNull();
         expect(row('fail 원인 없음 · what/reason · 옛 account')).toMatchObject({ kind: 'failure', failure: { retryable: true, what: '빌드', reason: '권한' }, model: { id: 'claude-opus-5' }, depth: 0 });
         expect(row('fail 원인 없음 · what/reason · 옛 account').failure).not.toHaveProperty('account');
+        // S5.5 f — 새 카드: 요청 줄과 카드가 한 번에 서고 이어진다(Rust 가 직접 세운다).
+        for (const n of ['ask 머지 거절 카드 → 요청·카드 한 번에', 'ask 머지 거절 카드 · CI 실패 거절']) {
+          const perms = (by(n) as unknown as { perms: Record<string, unknown>[] }).perms;
+          expect(perms).toHaveLength(1);
+          expect(perms[0]).toMatchObject({ kind: 'merge', target: 'repo:acme/app', status: 'pending', from_denial: true, linked: true });
+        }
         expect(row('fail 오퍼레이터 원인 → 깊이·고리·턴 id')).toMatchObject({ kind: 'failure', failure: { retryable: false }, depth: 3, stall: 2, linked: true, turn: '<uuid>' });
         expect(by('fail 없는 머리 → bad_thread').body.error?.code).toBe('bad_thread');
         expect(row('fail code → TS')).toMatchObject({ kind: 'failure', failure: { retryable: true } });
