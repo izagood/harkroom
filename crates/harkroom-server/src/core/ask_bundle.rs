@@ -8,6 +8,7 @@
 //! - **TS 로 넘기는 줄**(닫힌 쪽): 줄마다 원본을 [`super::ask::hand_to_ts`] 로 잰다 — 권한 요청·권한 거울·머지 거절·백스톱 표지,
 //!   권한 요청 행의 카드, 못 읽는 모양·모르는 kind, 이상한 `mirrorOf`, 원본이 없음. 그런 줄의 답은 읽어 둔 본문 바이트 그대로 TS 가
 //!   한다(권한 줄의 `decide` 는 C3b-3 몫). 머지 카드 [이번 한 번] 값(`once`)이 실린 답도 TS 로 넘긴다.
+//!   단 줄 하나에 답하기는 [`super::ask::hand_answer_to_ts`] 로 재서 머지 거절·백스톱 원본은 Rust 가 맡는다(TS 도 `recordAskAnswer` 길).
 //!   「추천대로」는 TS 도 결정 카드 줄을 뺀다(`skipped_link`) — 남는 줄 가운데 하나라도 넘길 줄이면 요청 전체를 TS 로 넘긴다.
 //! - 판정·쓰기·이벤트는 줄 하나에 한 트랜잭션이다. 「추천대로」는 TS 처럼 줄마다 따로 커밋한다(일부만 될 수 있다).
 //!   `Err` 면 그 줄의 트랜잭션을 버리고 500.
@@ -339,8 +340,8 @@ pub async fn answer(
     {
         return r;
     }
-    // 원본이 Rust 가 정하지 않는 카드면 TS 가 한다.
-    match hand_to_ts(&st.read, &root).await {
+    // 원본이 Rust 가 정하지 않는 카드면 TS 가 한다. 사슬·옛 머지 거절 원본은 TS 에서도 `recordAskAnswer` 길이라 Rust 가 맡는다.
+    match super::ask::hand_answer_to_ts(&st.read, &root).await {
         Ok(false) => {}
         Ok(true) => return to_ts(st.up.clone(), peer, parts, bytes).await,
         Err(e) => return internal(e),
