@@ -4,12 +4,12 @@
 //! - 판정 순서는 TS 와 같다: `requireAccount`(401) → 사람만(에이전트 403 `forbidden`) → 경로 id(400 `invalid_request`) →
 //!   소유자 또는 admin(남의 것은 **있어도 404** — 이름은 권한의 지도다) → 그 줄의 일.
 //! - **값은 읽지 않는다.** `secret_version.sealed` 는 kid 조각조차 고르지 않는다(kid 로 가르는 `keyLost` 는 키링이 있는
-//!   TS `GET /secrets` 목록에만 있고, 그 줄은 TS 에 남는다). 답에는 TS 와 같은 메타 칸만 싣는다.
+//!   목록 `GET /secrets` 에만 있고, 그 줄은 `secret_writes.rs` 가 맡는다). 답에는 TS 와 같은 메타 칸만 싣는다.
 //! - 지우기: 비밀은 `delete from secret where id = $1`(판·부여는 FK cascade, access log 는 남는다), 부여는
 //!   `delete from secret_grant where id = $1 and secret_id = $2` — 남의 비밀의 부여 id 를 넣어도 0 줄(404)이다.
 //! - access 목록의 IP 는 소유자에게만 — admin 이 남의 것을 보면 null(security #1253 n2).
 //! - 권한은 [`SECRETS_READ_PRIVILEGES`] — 없으면 `main.rs` 가 이 줄을 붙이지 않아 TS 에 남는다.
-//! - 목록(`GET /secrets`, 키링 상태를 싣는다)·만들기·고치기·값 쓰기·부여 주기·보기(reveal)·에이전트 줄은 TS 에 남긴다.
+//! - 목록·만들기·고치기·값 쓰기는 `secret_writes.rs`, 부여 주기는 `secret_grant_give.rs`. 보기(reveal)·에이전트 줄은 TS 에 남긴다.
 use crate::auth::{Account, RequireAccount};
 use crate::directory::{internal, json_err, json_ok};
 use crate::trust_proxy::TrustProxy;
