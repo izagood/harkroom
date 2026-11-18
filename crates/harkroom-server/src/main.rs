@@ -1612,6 +1612,27 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 — `POST /agent/merge-results` 의 N1 관문(읽기). 쓰기 풀에 [`MERGE_RESULTS_PRIVILEGES`] 가 다 있을 때만 — 아니면 403/400 만.
+    let merge_results_read = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::merge_checks as t;
+            match write::missing_in(w, t::MERGE_RESULTS_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: merge results gate off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: merge results gate off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 — `POST /agent/merge-closed`. 쓰기 풀에 [`MERGE_CLOSED_PRIVILEGES`] 가 다 있을 때만.
     let merge_closed_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -3495,10 +3516,11 @@ async fn main() {
             core_routes.http.extend(ps.http);
             core_routes.sockets.extend(ps.sockets);
         }
-        // S5.4 — `POST /agent/merge-checks`(부분). 오퍼레이터·모양 판정만 Rust, 나머지는 TS 로 넘긴다 — DB 를 건드리지 않는다.
+        // S5.4 — `POST /agent/merge-checks`·`/agent/merge-results`(부분). 오퍼레이터·모양 판정만 Rust, 나머지는 TS 로 넘긴다 — DB 를 건드리지 않는다.
         if matches!(core_mode, harkroom_server::core::CoreMode::Rust) {
             let mk = harkroom_server::core::merge_checks::routes(
                 state.up.clone(),
+                merge_results_read.clone(),
                 auth.clone(),
                 state.cors.clone(),
             );

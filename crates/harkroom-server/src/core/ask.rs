@@ -764,6 +764,16 @@ pub fn routes(
             "/agents/{id}/permission-requests/{requestId}/approve_hour",
             super::decide_routes::approve_hour_route,
         )
+        // `approve-once`(1회 머지) — 경로·세션·본문 거절만 Rust, 1회 승인 쓰기는 TS.
+        .post(
+            "/agents/{id}/permission-requests/{requestId}/approve-once",
+            super::decide_routes::approve_once_merge_route,
+        )
+        // 그 밖의 낱말 — TS zod 처럼 400(고정 경로가 먼저 맞는다).
+        .post(
+            "/agents/{id}/permission-requests/{requestId}/{decision}",
+            super::decide_routes::other_decision_route,
+        )
         // C3b-2a — 묶음 카드 REST. 같은 표·같은 칸을 쓰므로 같은 잠금(`ASK_PRIVILEGES`)으로 함께 붙는다.
         .post(
             "/channels/{id}/messages/{messageId}/ask-bundle/answer",

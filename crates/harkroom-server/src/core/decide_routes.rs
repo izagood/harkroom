@@ -622,3 +622,132 @@ macro_rules! approve_route {
 approve_route!(approve_route, "approve");
 approve_route!(approve_once_route, "approve_once");
 approve_route!(approve_hour_route, "approve_hour");
+
+const BAD_PARAMS: &str = "agent id and request id must be uuids; decision is approve, approve-once (a merge refusal card), approve_once, approve_hour (an exact command) or deny";
+const NOT_SESSION: &str = "only a person signed in to the app can decide a permission request";
+const BAD_ONCE: &str = "number and a 40-hex headSha are required; ghUser is optional (null lets the operator pick); relaxChecks is a boolean; nothing else";
+
+/// TS `onceBody`(`.strict()`) — `{ ghUser?: string(1..39)|null, relaxChecks?: bool, number, headSha, failedChecks?: string(≤200)[≤20] }`.
+pub fn once_body_ok(body: Option<&serde_json::Value>) -> bool {
+    let empty = serde_json::Map::new();
+    let o = match body {
+        None => &empty,
+        Some(v) => match v.as_object() {
+            Some(o) => o,
+            None => return false,
+        },
+    };
+    let ok = (|| {
+        for k in o.keys() {
+            if !matches!(
+                k.as_str(),
+                "ghUser" | "relaxChecks" | "number" | "headSha" | "failedChecks"
+            ) {
+                return None;
+            }
+        }
+        match o.get("ghUser") {
+            None | Some(Value::Null) => {}
+            Some(v) => {
+                super::merge_approval_peek::str_len_ok(v, 1, 39)?;
+            }
+        }
+        if let Some(v) = o.get("relaxChecks") {
+            v.as_bool()?;
+        }
+        super::merge_approval_peek::positive_int(o.get("number")?)?;
+        let h = o.get("headSha")?.as_str()?;
+        if !(h.len() == 40 && h.bytes().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f'))) {
+            return None;
+        }
+        if let Some(v) = o.get("failedChecks") {
+            let a = v.as_array()?;
+            if a.len() > 20 {
+                return None;
+            }
+            for x in a {
+                super::merge_approval_peek::str_len_ok(x, 0, 200)?;
+            }
+        }
+        Some(())
+    })();
+    ok.is_some()
+}
+
+/// `POST /agents/{id}/permission-requests/{requestId}/approve-once`(1회 머지, 머지 거절 카드) — **부분 이식**.
+/// Rust 는 판정 전 세 갈래(경로 400·사람 세션 아님 403·본문 400)만 답하고, 1회 승인 쓰기는 TS 로 넘긴다.
+pub async fn approve_once_merge_route(
+    axum::extract::State(st): axum::extract::State<std::sync::Arc<AskState>>,
+    crate::auth::RequireAccount(me, auth): crate::auth::RequireAccount,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    axum::extract::Path((agent, request)): axum::extract::Path<(String, String)>,
+    req: axum::extract::Request,
+) -> Response {
+    let (parts, body) = req.into_parts();
+    let (bytes, parsed) = match super::ask::read_bytes(&parts.headers, body).await {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    if !is_uuid(&agent) || !is_uuid(&request) {
+        return json_err(StatusCode::BAD_REQUEST, "bad_request", BAD_PARAMS);
+    }
+    if !human_session(&me, &auth) {
+        return json_err(StatusCode::FORBIDDEN, "forbidden", NOT_SESSION);
+    }
+    if !once_body_ok(parsed.as_ref()) {
+        return json_err(StatusCode::BAD_REQUEST, "bad_request", BAD_ONCE);
+    }
+    to_ts(st.up.clone(), peer, parts, bytes).await
+}
+
+#[cfg(test)]
+mod once_tests {
+    use super::once_body_ok;
+    use serde_json::json;
+
+    #[test]
+    fn once_body_like_zod_strict() {
+        let ok = json!({ "ghUser": null, "relaxChecks": true, "number": 7, "headSha": "a".repeat(40), "failedChecks": ["ci"] });
+        assert!(once_body_ok(Some(&ok)));
+        assert!(!once_body_ok(None));
+        for (k, v) in [
+            ("ghUser", json!("")),
+            ("relaxChecks", json!(null)),
+            ("number", json!(0)),
+            ("headSha", json!("x")),
+            ("failedChecks", json!(["c".repeat(201)])),
+            ("extra", json!(1)),
+        ] {
+            let mut b = ok.clone();
+            b[k] = v;
+            assert!(!once_body_ok(Some(&b)), "{k}");
+        }
+    }
+}
+
+/// 그 밖의 `{decision}` — TS `params` zod(`approve|deny|approve-once|approve_once|approve_hour`)에 없는 낱말은 언제나 400
+/// (정확한 낱말은 위의 고정 경로가 먼저 받는다; 혹시 여기로 오면 TS 로 넘긴다).
+pub async fn other_decision_route(
+    axum::extract::State(st): axum::extract::State<std::sync::Arc<AskState>>,
+    crate::auth::RequireAccount(_me, _auth): crate::auth::RequireAccount,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    axum::extract::Path((_agent, _request, decision)): axum::extract::Path<(
+        String,
+        String,
+        String,
+    )>,
+    req: axum::extract::Request,
+) -> Response {
+    let (parts, body) = req.into_parts();
+    let bytes = match super::ask::read_bytes(&parts.headers, body).await {
+        Ok((b, _)) => b,
+        Err(r) => return r,
+    };
+    if matches!(
+        decision.as_str(),
+        "approve" | "deny" | "approve-once" | "approve_once" | "approve_hour"
+    ) {
+        return to_ts(st.up.clone(), peer, parts, bytes).await;
+    }
+    json_err(StatusCode::BAD_REQUEST, "bad_request", BAD_PARAMS)
+}
