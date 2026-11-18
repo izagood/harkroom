@@ -10,6 +10,7 @@ pub mod account_keys_activity;
 pub mod account_login_ids;
 pub mod account_reset_code_issue;
 pub mod account_reset_code_revoke;
+pub mod account_role;
 pub mod account_self;
 pub mod agent_config_read;
 pub mod agent_grants_read;

@@ -1502,6 +1502,27 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 — 역할 바꾸기(`PUT /accounts/{id}/role`). 쓰기 풀에 그 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+    let account_role_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::account_role as a;
+            match write::missing_in(w, a::ACCOUNT_ROLE_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: account role core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: account role core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 — 재설정 코드 거두기(`DELETE /accounts/{id}/password-reset-code`). 쓰기 풀에 그 권한이 다 있을 때만 — 아니면 TS 에 남는다.
     let account_reset_code_revoke_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -3126,6 +3147,20 @@ async fn main() {
             core_routes.router = core_routes.router.merge(ri.router);
             core_routes.http.extend(ri.http);
             core_routes.sockets.extend(ri.sockets);
+        }
+        // S5.4 — 역할 바꾸기 1줄. 권한이 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = account_role_write {
+            let ar = harkroom_server::core::account_role::routes(
+                harkroom_server::core::account_role::AccountRoleState {
+                    write,
+                    trust: state.trust.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(ar.router);
+            core_routes.http.extend(ar.http);
+            core_routes.sockets.extend(ar.sockets);
         }
         // S5.4 — 자기 비밀번호 바꾸기 1줄. 권한이 있을 때만 — 아니면 TS 에 남는다.
         if let Some(write) = auth_password_write {
