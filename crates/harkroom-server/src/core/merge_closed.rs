@@ -144,19 +144,50 @@ async fn close(
     } else {
         "closed"
     };
+    let extra = json!({ "operatorId": operator, "leaseId": lease_id, "reportedState": b.state });
+    let total = obsolete_merge_cards(
+        write,
+        &scope,
+        b.number,
+        reason,
+        agent,
+        &now,
+        Some(agent),
+        extra,
+    )
+    .await?;
+    if total == 0 {
+        return Ok(Outcome::Refused(StatusCode::CONFLICT, "no_card"));
+    }
+    Ok(Outcome::Closed(total))
+}
+
+/// TS `obsoleteMergeCards` — 그 (저장소, PR)의 기다리는 머지 카드를 닫는다. `only_agent` 가 있으면 그 에이전트의 것만(래퍼의
+/// `closed` 보고), 없으면 모든 에이전트(통과한 판정 뒤의 `merged` 보고). 닫은 줄 수를 돌려준다. 감사는 커밋 뒤에 따로 쓴다.
+#[allow(clippy::too_many_arguments)]
+pub async fn obsolete_merge_cards(
+    write: &PgPool,
+    scope: &str,
+    number: i64,
+    reason: &str,
+    actor: &str,
+    now: &str,
+    only_agent: Option<&str>,
+    extra_audit: Value,
+) -> sqlx::Result<usize> {
     let mut tx = write.begin().await?;
     let denials: Vec<(String, Option<String>)> = sqlx::query_as(DENIALS_SQL)
-        .bind(&scope)
-        .bind(b.number)
-        .bind(&now)
-        .bind(agent)
+        .bind(scope)
+        .bind(number)
+        .bind(now)
+        .bind(only_agent)
         .fetch_all(&mut *tx)
         .await?;
     let requests: Vec<(String, Option<String>)> = sqlx::query_as(REQUESTS_SQL)
-        .bind(&scope)
-        .bind(b.number)
-        .bind(&now)
-        .bind(agent)
+        .bind(scope)
+        .bind(number)
+        .bind(now)
+        .bind(only_agent)
         .fetch_all(&mut *tx)
         .await?;
     let patch =
@@ -186,7 +217,7 @@ async fn close(
     if !cards.is_empty() {
         sqlx::query(ASK_CLOSE_SQL)
             .bind(&cards)
-            .bind(json!({ "closedAt": now, "closedBy": agent }).to_string())
+            .bind(json!({ "closedAt": now, "closedBy": actor }).to_string())
             .execute(&mut *tx)
             .await?;
     }
@@ -194,7 +225,7 @@ async fn close(
     if total == 0 {
         // 쓴 것이 없다 — TS 도 커밋만 하고 0 을 돌려준다.
         tx.commit().await?;
-        return Ok(Outcome::Refused(StatusCode::CONFLICT, "no_card"));
+        return Ok(0);
     }
     for card in &cards {
         if let Some(row) = message_by_id(&mut *tx, card).await? {
@@ -215,20 +246,36 @@ async fn close(
         write,
         AuditEntry {
             action: "repo.merge.obsoleted",
-            actor_id: Some(agent),
+            actor_id: Some(actor),
             actor_handle: None,
-            target: Some(&scope),
+            target: Some(scope),
             ip: None,
-            detail: json!({
-                "number": b.number, "reason": reason, "onlyAgentId": agent, "source": "wrapper_report",
-                "denialIds": denials.iter().map(|d| d.0.clone()).collect::<Vec<_>>(),
-                "requestIds": requests.iter().map(|r| r.0.clone()).collect::<Vec<_>>(),
-                "operatorId": operator, "leaseId": lease_id, "reportedState": b.state,
-            }),
+            detail: obsoleted_detail(number, reason, only_agent, &denials, &requests, extra_audit),
         },
     )
     .await;
-    Ok(Outcome::Closed(total))
+    Ok(total)
+}
+
+/// TS `obsoleteMergeCards` 의 감사 detail — `source` 는 `onlyAgentId` 가 있으면 래퍼 보고, 없으면 머지 결과.
+pub fn obsoleted_detail(
+    number: i64,
+    reason: &str,
+    only_agent: Option<&str>,
+    denials: &[(String, Option<String>)],
+    requests: &[(String, Option<String>)],
+    extra: Value,
+) -> Value {
+    let mut d = json!({
+        "number": number, "reason": reason, "onlyAgentId": only_agent,
+        "source": if only_agent.is_some() { "wrapper_report" } else { "merge_result" },
+        "denialIds": denials.iter().map(|d| d.0.clone()).collect::<Vec<_>>(),
+        "requestIds": requests.iter().map(|r| r.0.clone()).collect::<Vec<_>>(),
+    });
+    if let (Value::Object(m), Value::Object(e)) = (&mut d, extra) {
+        m.extend(e);
+    }
+    d
 }
 
 /// `POST /agent/merge-closed`.
@@ -326,5 +373,25 @@ mod tests {
             ("d2".to_owned(), Some("c2".to_owned())),
         ];
         assert_eq!(card_ids(&rows), vec!["c2".to_owned(), "c1".to_owned()]);
+    }
+
+    #[test]
+    fn obsoleted_detail_like_ts() {
+        let d = vec![("d1".to_owned(), None)];
+        let r = vec![("r1".to_owned(), Some("c".to_owned()))];
+        let v = obsoleted_detail(5, "merged", None, &d, &r, json!({}));
+        assert_eq!(
+            v,
+            json!({ "number": 5, "reason": "merged", "onlyAgentId": null, "source": "merge_result",
+                "denialIds": ["d1"], "requestIds": ["r1"] })
+        );
+        let v = obsoleted_detail(5, "closed", Some("a"), &d, &[], json!({ "leaseId": "l" }));
+        assert_eq!(v["source"], json!("wrapper_report"));
+        assert_eq!(v["onlyAgentId"], json!("a"));
+        assert_eq!(v["leaseId"], json!("l"));
+        let src = include_str!("../../../../packages/server/src/services/mergeDenials.ts");
+        assert!(src.contains("source: args.onlyAgentId ? 'wrapper_report' : 'merge_result',"));
+        let g = include_str!("../../../../packages/server/src/services/mergeGrants.ts");
+        assert!(g.contains("await obsoleteMergeCards(pool, { scope, number: r.number, reason: 'merged', actorId: r.agentId, now }).catch(() => null);"));
     }
 }
