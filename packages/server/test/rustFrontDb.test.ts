@@ -3579,7 +3579,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       const fut = await put(rsUrl, { token: member.token, ct: J, body: upTo('2999-01-01T00:00:00Z') });
       expect(fut.status).toBe(200);
       expect(Date.parse(fut.seenAt!)).toBeGreaterThanOrEqual(before - 5_000);
-      expect(Date.parse(fut.seenAt!)).toBeLessThanOrEqual(Date.now());
+      // PG(now) 와 node 시계가 몇 ms 어긋날 수 있다 — 1초 여유.
+      expect(Date.parse(fut.seenAt!)).toBeLessThanOrEqual(Date.now() + 1_000);
       const tsFut = await put(tsUrl, { token: member.token, ct: J, body: upTo('2999-01-01T00:00:00Z') });
       expect(Date.parse(tsFut.seenAt!)).toBeGreaterThanOrEqual(Date.parse(fut.seenAt!));
       // Rust 가 올린 두 번(처음·미래)만 버스로 건너온다 — 바뀌지 않은 PUT 은 이벤트가 없다.
@@ -11649,6 +11650,54 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             await want('reveal 제한 뒤에도 없음 먼저 → 404', rb(LA, 's54ar-nothing'), 404, 'not_found', 0);
             expect(JSON.stringify(await db.pool.query(`select * from secret_access_log where agent_id = $1`, [ar.accountId]).then((r) => r.rows))).not.toContain('agent-reveal');
             await db.pool.query(`delete from secret where name like 's54ar-%'`);
+          }
+          // 13) POST /agent/secrets·/rotate import 갈래(S5.4 ab — F4 `value_is_mounted`·`bad_value` 포함). 새 에이전트(쪽마다 제한기 10회 중 8회).
+          {
+            const ai = await mkAgent('s54ai');
+            agents.push(ai.accountId);
+            known.set(ai.accountId, '<ai>');
+            const LI = await lease('ai', ai.accountId);
+            const vI = viaOp(ai);
+            const b64 = (v: string | Buffer) => (typeof v === 'string' ? Buffer.from(v, 'utf8') : v).toString('base64');
+            const imp = (kind: 'text' | 'file', value: string | Buffer, filename?: string) => ({ import: filename ? { kind, filename, valueBase64: b64(value) } : { kind, valueBase64: b64(value) } });
+            // 본문 400(게이트 앞 — 제한기 안 셈).
+            await pair('import file 에 filename 없음 → 400', C, mkBody(LI, 's54ai-x', imp('file', 'abc')), { headers: vI });
+            await pair('import text 에 filename → 400', C, mkBody(LI, 's54ai-x', imp('text', 'abc', 'a.txt')), { headers: vI });
+            // 성공.
+            const okT = await pair('import text 성공', C, mkBody(LI, 's54ai-t', imp('text', 'imported-ünï'), { description: '가져온 값' }), { headers: vI, name: 's54ai-t' });
+            expect(okT.a.r.status).toBe(201);
+            expect(norm(okT.b.effects.secret)).toMatchObject([{ kind: 'text', filename: null, versions: [{ v: 1, size: Buffer.byteLength('imported-ünï'), sealed: 'v2.ck1', revoked: false }] }]);
+            expect(norm(okT.b.effects.msgs)).toMatchObject([{ kind: 'system', meta: { secretNotice: { action: 'created', via: 'import', name: 's54ai-t', version: 1 }, i18n: { key: 'system.secret.createdImported' } } }]);
+            expect(norm(okT.b.effects.audit)).toMatchObject([{ detail: { via: 'import', type: null } }]);
+            const okF = await pair('import file 성공', C, mkBody(LI, 's54ai-f', imp('file', Buffer.from([0xff, 0, 1, 2]), 'id_rsa')), { headers: vI, name: 's54ai-f' });
+            expect(okF.a.r.status).toBe(201);
+            expect(norm(okF.b.effects.secret)).toMatchObject([{ kind: 'file', filename: 'id_rsa', versions: [{ size: 4 }] }]);
+            // bad_value — 빈 값·64 KiB 넘음·text 에 깨진 UTF-8.
+            await pair('import 빈 값 → 400 bad_value', C, mkBody(LI, 's54ai-x', imp('text', '')), { headers: vI });
+            await pair('import 64KiB 넘음 → 400 bad_value', C, mkBody(LI, 's54ai-x', imp('file', Buffer.alloc(64 * 1024 + 1, 0x61), 'big.bin')), { headers: vI });
+            await pair('import text 깨진 UTF-8 → 400 bad_value', C, mkBody(LI, 's54ai-x', imp('text', Buffer.from([0x61, 0xff, 0xfe]))), { headers: vI });
+            // F4 — 같은 오퍼레이터의 살아 있는 임대로 granted 된 판과 같은 값(끝 줄바꿈 차이 무시) → 409 value_is_mounted.
+            const mr = await app.inject({ method: 'POST', url: '/secrets', headers: { authorization: `Bearer ${A}` }, payload: { name: 's54ai-mounted', kind: 'text', value: 'mounted-ünï' } });
+            expect(mr.statusCode, mr.body).toBe(201);
+            const mId = String((mr.json() as { secret: { id: string } }).secret.id);
+            known.set(mId, '<s:mounted>');
+            await db.pool.query(
+              `insert into secret_access_log (secret_id, secret_name, version, agent_id, operator_id, turn_id, channel_id, thread_root_id, result, at)
+               values ($1, 's54ai-mounted', 1, $2, $3, $4, $5, $6, 'granted', now())`,
+              [mId, ai.accountId, acop.operatorId, LI.leaseId, todayId, th]);
+            const mnt = await pair('import 마운트된 값 → 409 value_is_mounted', C, mkBody(LI, 's54ai-x', imp('text', 'mounted-ünï\n')), { headers: vI });
+            expect(mnt.a.r.status).toBe(409);
+            expect(mnt.a.r.json).toMatchObject({ error: { code: 'value_is_mounted' } });
+            expect(JSON.stringify([mnt.a.effects, mnt.b.effects])).not.toContain('mounted-ünï');
+            // 회전 import.
+            await pair('회전 import 마운트된 값 → 409 value_is_mounted', R, mkBody(LI, 's54ai-rotm', imp('text', 'mounted-ünï')),
+              { headers: vI, setup: mkOwn('s54ai-rotm', ai.accountId), name: 's54ai-rotm' });
+            const okR = await pair('회전 import 성공', R, mkBody(LI, 's54ai-rot', imp('text', 'rotated-value')), { headers: vI, setup: mkOwn('s54ai-rot', ai.accountId), name: 's54ai-rot' });
+            expect(okR.a.r.status).toBe(200);
+            expect(norm(okR.b.effects.secret)).toMatchObject([{ touched: true, versions: [{ v: 1, revoked: true, sealed: null }, { v: 2, size: 13, by: '<ai>', revoked: false, sealed: 'v2.ck1' }] }]);
+            expect(norm(okR.b.effects.msgs)).toMatchObject([{ meta: { secretNotice: { action: 'rotated', via: 'import', version: 2 }, i18n: { key: 'system.secret.rotatedImported' } } }]);
+            expect(okR.b.effects.access.map((x) => x.result)).toEqual(['rotated']);
+            await db.pool.query(`delete from secret where name like 's54ai-%'`);
           }
         }
       }
