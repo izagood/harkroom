@@ -287,21 +287,36 @@ pub async fn answer(pool: &PgPool, me: &Account, args: &Value) -> Option<String>
             if tx.commit().await.is_err() {
                 return Some(err("internal", "the write failed; it was not retried"));
             }
-            Some(super::respond::text_result(
-                &json!({
-                    "watchId": id,
-                    "created": created,
-                    "expiresAt": crate::core::msg_post::iso_ms(exp_ms),
-                })
-                .to_string(),
-            ))
+            Some(super::respond::text_result(&answer_text(
+                &id,
+                created,
+                &crate::core::msg_post::iso_ms(exp_ms),
+            )))
         }
     }
+}
+
+/// TS `jsonResult({ watchId, created, expiresAt })` 와 **키 순서까지** 같은 글자. 이 크레이트의 serde_json 은
+/// `preserve_order` 가 없어 `json!` 이 키를 가나다순으로 늘어놓는다(대조 시험이 글자로 비교해 갈렸다).
+fn answer_text(id: &str, created: bool, expires_at: &str) -> String {
+    format!(
+        "{{\"watchId\":{},\"created\":{created},\"expiresAt\":{}}}",
+        Value::from(id),
+        Value::from(expires_at)
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn answer_keeps_ts_key_order() {
+        assert_eq!(
+            answer_text("u-1", true, "2026-01-01T00:00:00.000Z"),
+            r#"{"watchId":"u-1","created":true,"expiresAt":"2026-01-01T00:00:00.000Z"}"#
+        );
+    }
 
     fn ok() -> Value {
         json!({
