@@ -1,4 +1,4 @@
-//! S5.4 TP4 — 스레드 계획 관리 에이전트 바꾸기 한 줄. TS `routes/threadPlanRoutes.ts` 의 `PUT /threads/:rootId/plan/manager` 를 옮긴다.
+//! S5.4 TP4 — 스레드 계획 관리 에이전트 바꾸기 한 줄(+ `POST …/plan/start` 의 앞 거절들, [`post_start`]). TS `routes/threadPlanRoutes.ts` 의 `PUT /threads/:rootId/plan/manager` 를 옮긴다.
 //!
 //! - 순서가 규칙이다(TS 와 같다): 인증(401) → 사람 **세션**만(403 `human_only`) → rootId 가 uuid 아님(404 `not_found`) →
 //!   본문 zod `{ managerId: uuid | null }`(400 `invalid_request`) → `threadRootChannel`(404 `not_found`·`not_root`) →
@@ -146,7 +146,118 @@ pub async fn put_manager(
     }
 }
 
-/// 코어 라우터에 합칠 줄 — 인증은 `route_layer`, CORS 는 `layer`. `POST …/plan/start` 는 TS 에 남는다.
+/// zod `startBody` 를 Rust 가 같은 판정으로 읽을 수 있는 꼴만 — `(dryRun, ifRev 있음)`. 애매하면 `None`(→ TS 가 판정한다).
+fn parse_start(bytes: &[u8]) -> Option<(bool, bool)> {
+    let v: Value = serde_json::from_slice(bytes).ok()?;
+    let o = v.as_object()?;
+    let steps = o.get("steps")?.as_array()?;
+    if steps.is_empty() || steps.len() > 40 {
+        return None;
+    }
+    for st in steps {
+        let so = st.as_object()?;
+        let id = so.get("id")?.as_str()?;
+        let digits = id.strip_prefix('s')?;
+        if digits.is_empty()
+            || digits.len() > 4
+            || digits.starts_with('0')
+            || !digits.bytes().all(|b| b.is_ascii_digit())
+        {
+            return None;
+        }
+        match so.get("assigneeId") {
+            None => {}
+            Some(Value::String(a)) if crate::lists::is_zod_uuid(a) => {}
+            Some(_) => return None,
+        }
+    }
+    let dry = match o.get("dryRun") {
+        None => false,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return None,
+    };
+    let if_rev = match o.get("ifRev") {
+        None => false,
+        Some(v) => {
+            let n = v.as_i64()?;
+            if !(1..=9_007_199_254_740_991).contains(&n) {
+                return None;
+            }
+            true
+        }
+    };
+    match o.get("locale") {
+        None => {}
+        Some(Value::String(l)) if l == "ko" || l == "en" => {}
+        Some(_) => return None,
+    }
+    Some((dry, if_rev))
+}
+
+/// `POST /threads/{rootId}/plan/start` — TS `startPlanSteps` 의 앞 거절들(`human_only`·`not_found`·`if_rev_required`·
+/// `not_root`·보기 404·`channel_archived`·`no_plan`·`plan_flagged`)만 Rust 가 답한다. 그 뒤(경로 정하기·미리보기·위임 글 올리기)와
+/// zod 판정이 애매한 본문은 요청을 그대로 TS 에 넘긴다(TS 가 같은 판정을 처음부터 다시 돈다).
+pub async fn post_start(
+    State(st): State<Arc<ManagerState>>,
+    RequireAccount(me, auth): RequireAccount,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Path(root): Path<String>,
+    req: Request,
+) -> Response {
+    let (parts, body) = req.into_parts();
+    let Ok(bytes) = to_bytes(body, BODY_LIMIT).await else {
+        return code_err(StatusCode::PAYLOAD_TOO_LARGE, "fst_err_ctp_body_too_large");
+    };
+    if me.kind != "human" || auth.via != Some(Via::Session) {
+        return code_err(StatusCode::FORBIDDEN, "human_only");
+    }
+    if !crate::lists::is_zod_uuid(&root) {
+        return code_err(StatusCode::NOT_FOUND, "not_found");
+    }
+    let Some((dry, if_rev)) = parse_start(&bytes) else {
+        return to_ts(st.up.clone(), peer, parts, bytes).await;
+    };
+    if !dry && !if_rev {
+        return code_err(StatusCode::BAD_REQUEST, "if_rev_required");
+    }
+    let w = &st.write;
+    let channel = match sqlx::query_as::<_, (String, bool)>(ROOT_SQL)
+        .bind(&root)
+        .fetch_optional(w)
+        .await
+    {
+        Ok(Some((c, true))) => c,
+        Ok(Some((_, false))) => return code_err(StatusCode::NOT_FOUND, "not_root"),
+        Ok(None) => return code_err(StatusCode::NOT_FOUND, "not_found"),
+        Err(e) => return internal(e),
+    };
+    match sqlx::query_as::<_, (bool, bool)>(gate_sql())
+        .bind(&channel)
+        .bind(&me.id)
+        .fetch_optional(w)
+        .await
+    {
+        Ok(Some((false, _))) => return code_err(StatusCode::NOT_FOUND, "not_found"),
+        Ok(Some((true, true))) => return code_err(StatusCode::FORBIDDEN, "channel_archived"),
+        Ok(_) => {}
+        Err(e) => return internal(e),
+    }
+    match sqlx::query_scalar::<_, Option<String>>(
+        "select flag_reason from thread_plan where root_id = $1::uuid",
+    )
+    .bind(&root)
+    .fetch_optional(w)
+    .await
+    {
+        Ok(None) => code_err(StatusCode::NOT_FOUND, "no_plan"),
+        // TS `if (row.flagReason)` — 빈 글자는 걸리지 않은 것이다.
+        Ok(Some(Some(f))) if !f.is_empty() => code_err(StatusCode::CONFLICT, "plan_flagged"),
+        Ok(Some(_)) => to_ts(st.up.clone(), peer, parts, bytes).await,
+        Err(e) => internal(e),
+    }
+}
+
+/// 코어 라우터에 합칠 줄 — 인증은 `route_layer`, CORS 는 `layer`. `POST …/plan/start` 는 앞 거절만 Rust, 나머지는 TS.
 pub fn routes(
     st: ManagerState,
     auth: crate::auth::AuthPools,
@@ -155,6 +266,7 @@ pub fn routes(
     use crate::route_table::Table;
     let t = Table::<Arc<ManagerState>>::new()
         .put("/threads/{rootId}/plan/manager", put_manager)
+        .post("/threads/{rootId}/plan/start", post_start)
         .map(|r| {
             r.route_layer(axum::middleware::from_fn_with_state(
                 auth,
@@ -201,5 +313,32 @@ mod tests {
         assert_eq!(status_of("channel_archived"), StatusCode::FORBIDDEN);
         assert_eq!(status_of("rev_conflict"), StatusCode::CONFLICT);
         assert_eq!(status_of("plan_too_large"), StatusCode::CONFLICT);
+    }
+}
+
+#[cfg(test)]
+mod start_tests {
+    use super::parse_start;
+
+    #[test]
+    fn start_body_follows_zod() {
+        assert_eq!(
+            parse_start(br#"{"steps":[{"id":"s1"}],"ifRev":2}"#),
+            Some((false, true))
+        );
+        assert_eq!(
+            parse_start(br#"{"steps":[{"id":"s9999"}],"dryRun":true}"#),
+            Some((true, false))
+        );
+        assert_eq!(
+            parse_start(br#"{"steps":[{"id":"s1"}]}"#),
+            Some((false, false))
+        );
+        assert!(parse_start(br#"{"steps":[]}"#).is_none());
+        assert!(parse_start(br#"{"steps":[{"id":"s0"}]}"#).is_none());
+        assert!(parse_start(br#"{"steps":[{"id":"s10000"}]}"#).is_none());
+        assert!(parse_start(br#"{"steps":[{"id":"s1"}],"ifRev":0}"#).is_none());
+        assert!(parse_start(br#"{"steps":[{"id":"s1"}],"locale":"fr"}"#).is_none());
+        assert!(parse_start(br#"{"steps":[{"id":"s1","assigneeId":"x"}]}"#).is_none());
     }
 }
