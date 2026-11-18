@@ -833,6 +833,36 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 — 소유자 보기 `POST /secrets/{id}/reveal`. 세 겹 잠금: `HARKROOM_CORE=rust`, 쓰기 풀에 그 칸 권한이 다 있고,
+    // 키 env 를 읽어 DB 확인값과 맞춰 볼 수 있을 때만. 아니면 TS 에 남는다(`secret_reveal.rs` 머리말).
+    let secret_reveal = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::secret_reveal as k;
+            match write::missing_in(w, &k::privileges(), k::SECRET_REVEAL_SEQUENCES).await {
+                Ok(m) if m.is_empty() => {
+                    match k::load_state(state.pool.clone(), w.clone(), state.trust.clone()).await {
+                        Ok(st) => Some(st),
+                        Err(e) => {
+                            eprintln!("front: secret reveal core off — secret keys: {e}");
+                            None
+                        }
+                    }
+                }
+                Ok(m) => {
+                    eprintln!("front: secret reveal core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: secret reveal core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 SE4 — `GET /agent/secret-create`. 세 겹 잠금: `HARKROOM_CORE=rust`, 쓰기 풀에 그 칸 권한이 다 있고, 키 env 를 읽어
     // DB 확인값과 맞춰 볼 수 있을 때만. `POST /agent/secrets`·`/agent/secrets/rotate` 는 TS 에 남는다(`agent_secret_create.rs` 머리말).
     let agent_secret_create = match (&core_mode, &state.write) {
@@ -2659,6 +2689,13 @@ async fn main() {
             core_routes.router = core_routes.router.merge(sw.router);
             core_routes.http.extend(sw.http);
             core_routes.sockets.extend(sw.sockets);
+        }
+        if let Some(st) = secret_reveal {
+            let sr =
+                harkroom_server::core::secret_reveal::routes(st, auth.clone(), state.cors.clone());
+            core_routes.router = core_routes.router.merge(sr.router);
+            core_routes.http.extend(sr.http);
+            core_routes.sockets.extend(sr.sockets);
         }
         if let Some(st) = agent_secret_create {
             let sc = harkroom_server::core::agent_secret_create::routes(

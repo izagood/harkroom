@@ -113,6 +113,7 @@ pub mod relay_routes;
 pub mod saved;
 pub mod search_rest;
 pub mod secret_grant_give;
+pub mod secret_reveal;
 pub mod secret_writes;
 pub mod secrets_read;
 pub mod sections_write;
