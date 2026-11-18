@@ -147,6 +147,7 @@ pub async fn handle(
                     | "message.report"
                     | "message.progress"
                     | "message.notice"
+                    | "turn.wake"
             ) {
                 let st = writes.post.as_ref()?;
                 let (c, t) = (cause.as_deref(), turn.as_deref());
@@ -159,6 +160,9 @@ pub async fn handle(
                     }
                     "message.notice" => {
                         super::msg_post::answer_notice(st, &me, &args, has_operator, runner).await
+                    }
+                    "turn.wake" => {
+                        super::turn_wake::answer(st, &me, &args, c, t, has_operator).await
                     }
                     "message.fail" => {
                         super::msg_post::answer_fail(st, &me, &args, c, t, has_operator).await

@@ -336,6 +336,9 @@ pub(crate) struct Origin<'a> {
     /// 스레드·TS 몫 스레드 판정·회신권 닫기·암묵 위임·백스톱 카드·위임 닫기를 하지 않는다. 답글이 아니라 머리 주인(`thread_reply`)·
     /// DM 상대(`dm`)에게 알리지 않고 지워진 머리를 되돌리지 않는다. 부름(`mention`)은 그대로 닿는다. 위임 기한은 민다(살아 있다는 신호).
     pub(crate) progress: bool,
+    /// TS `kind: 'wake'`(S5.4 A3, MCP `turn.wake`) — 대기 줄. `progress` 와 같이 **결과가 아니다**(`countsAsReply` 거짓) — 그 밖의 갈래도
+    /// `progress` 와 같고 `kind` 칸 글자만 다르다(TS `postMessage` 가 두 종류를 `countsAsReply` 하나로만 가른다).
+    pub(crate) wake: bool,
 }
 
 /// 읽은 JSON 이 TS 몫인가 — 키만 보고 정한다(값이 틀렸으면 TS 가 400 을 준다).
@@ -625,14 +628,15 @@ pub(crate) async fn post_tx(
     origin: &Origin<'_>,
 ) -> Result<(Outcome, Option<Capped>), sqlx::Error> {
     let s = sql();
-    // TS `isReply = countsAsReply(kind)` — `progress`·`wake` 만 거짓(이 앞단은 `wake` 를 쓰지 않는다).
-    let is_reply = !origin.progress;
+    // TS `isReply = countsAsReply(kind)` — `progress`·`wake` 만 거짓.
+    let is_reply = !(origin.progress || origin.wake);
     // TS `isResult` — 결과로 세는 에이전트 글(서버 알림 줄은 아니다).
     let is_result = is_reply && !origin.server_notice;
-    let kind = match (origin.system, origin.progress) {
-        (true, _) => "system",
-        (false, true) => "progress",
-        (false, false) => "user",
+    let kind = match (origin.system, origin.progress, origin.wake) {
+        (true, _, _) => "system",
+        (false, true, _) => "progress",
+        (false, false, true) => "wake",
+        (false, false, false) => "user",
     };
     let (body, attachment_ids) = (input.body.as_str(), input.attachment_ids.as_slice());
     let root = input.thread_root.as_deref();
