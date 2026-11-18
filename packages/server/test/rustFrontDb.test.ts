@@ -9746,6 +9746,54 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 await db.pool.query('delete from api_connector where id = $1', [gdConn]);
               }
             }
+            // S5.4 MCP 6 — `grant.delegate` 사슬 판정 뒤 거절(받은 권한이 있을 때). 쓰기는 거절 감사 줄뿐이고 성공(줄 쓰기)은 아직 TS 몫이다.
+            {
+              const gdConn2 = (await db.pool.query<{ id: string }>(
+                `insert into api_connector (name, owner_account_id, base_url, auth_kind, methods) values ('gd-conn2', $1, 'https://api.example.com', 'none', '{GET,POST}') returning id`,
+                [admin.accountId])).rows[0]!.id;
+              try {
+                await db.pool.query(
+                  `insert into account_grant (account_id, capability, scope, granted_by, limits, delegate_depth)
+                   values ($1, 'api.call', $2, $3, '{"methods":["GET"],"pathPrefix":"/repos"}', 1)`,
+                  [bot3.accountId, `connector:${gdConn2}`, admin.accountId]);
+                const base = { connector: 'gd-conn2', methods: ['GET'], pathPrefix: '/repos/x', days: 7 };
+                const GDS: [string, (s: 't' | 'r') => unknown][] = [
+                  ['⑤ 받는 쪽 없음', (s) => ({ ...base, to: `gd-${s}-none` })],
+                  ['⑥ 연결이 허용하지 않은 메서드', (s) => ({ ...base, to: `gd-${s}-m`, methods: ['DELETE'] })],
+                  ['⑦ 경로 모양', (s) => ({ ...base, to: `gd-${s}-p`, pathPrefix: '/repos/../x' })],
+                  ['⑧ 준 범위보다 넓다', (s) => ({ ...base, to: `gd-${s}-w`, pathPrefix: '/other' })],
+                  ['⑨ 단계가 깊다', (s) => ({ ...base, to: `gd-${s}-d`, delegateDepth: 1 })],
+                  ['⑩ 자기 자신', () => ({ ...base, to: bot3.accountId })],
+                ];
+                const gdNorm = (t: string) => t.replace(/gd-[tr]-/g, 'gd-x-');
+                const run = async (side: 't' | 'r') => {
+                  const out: Record<string, unknown>[] = [];
+                  for (const [name, args] of GDS) {
+                    const r = await mcpCall(side === 't' ? tsUrl : v2Url, bot3.pat, 'grant.delegate', args(side), 35);
+                    out.push({ name, status: r.status, type: r.type, core: r.core, text: gdNorm(r.text) });
+                  }
+                  return out;
+                };
+                const tsGd = await run('t');
+                const rsGd = await run('r');
+                for (let i = 0; i < tsGd.length; i++) {
+                  const { core, ...a } = tsGd[i]!;
+                  const { core: rc, ...b } = rsGd[i]!;
+                  expect(b, `grant.delegate ${String(a.name)}`).toEqual(a);
+                  expect(core, `${String(a.name)} — TS`).toBeNull();
+                  expect(rc, `${String(a.name)} — 누가 답했나`).toBe('mcp');
+                  expect(String(a.text), String(a.name)).toContain('"error"');
+                }
+                const gdAudit = async (s: 't' | 'r') => (await db.pool.query(
+                  `select detail->>'code' as code, replace(detail->>'to', 'gd-${s}-', 'gd-x-') as to
+                     from audit_log where action = 'grant.delegate.denied' and target = 'gd-conn2' and detail->>'to' like $1 order by detail->>'to'`,
+                  [`gd-${s}-%`])).rows;
+                expect(await gdAudit('r')).toEqual(await gdAudit('t'));
+              } finally {
+                await db.pool.query(`delete from account_grant where scope = $1`, [`connector:${gdConn2}`]);
+                await db.pool.query('delete from api_connector where id = $1', [gdConn2]);
+              }
+            }
             type DI = { name: string; item: Record<string, unknown>[] };
             const itemOf = (n: string) => (tsD as DI[]).find((x) => x.name === n)!.item;
             const v1 = V2 === '1';

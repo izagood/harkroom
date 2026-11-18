@@ -56,7 +56,7 @@ pub const SERVED: &[&str] = &[
     "automation.propose",
     // S5.4 MCP 5 — 에이전트의 「지금 한 번」(회차 INSERT 만). 회차 칸이 있는 쓰기 풀(`writes.automation_run`)일 때만.
     "automation.run",
-    // S5.4 MCP 6 — API 권한 다시 주기의 앞머리 거절(not_agent·no_connector·not_granted, 감사 줄만). `writes.grant_delegate` 일 때만.
+    // S5.4 MCP 6 — API 권한 다시 주기의 거절 전부·같은 위임 다시 오기(감사 줄만, 새 위임은 TS). `writes.grant_delegate` 일 때만.
     "grant.delegate",
 ];
 
