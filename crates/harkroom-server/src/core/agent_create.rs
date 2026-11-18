@@ -490,6 +490,16 @@ mod tests {
     }
 
     #[test]
+    fn privileges_cover_view() {
+        for p in super::super::agent_config_read::AGENT_CONFIG_PRIVILEGES {
+            if p.1 == "SELECT" {
+                assert!(AGENT_CREATE_PRIVILEGES.contains(p), "{p:?}");
+            }
+        }
+        assert!(AGENT_CREATE_PRIVILEGES.contains(&("audit_log.detail", "INSERT")));
+    }
+
+    #[test]
     fn patch_zod() {
         assert_eq!(check_patch(&m(json!({}))), Ok(()));
         assert_eq!(check_patch(&m(json!({ "disabled": "x" }))), Err("disabled"));
