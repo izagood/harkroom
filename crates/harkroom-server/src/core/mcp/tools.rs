@@ -45,6 +45,8 @@ pub const SERVED: &[&str] = &[
     "pr.status",
     // [`super::attachment_fetch`] — 거절·텍스트·PDF·작은 그림. 3MiB 넘는 그림 줄이기만 TS.
     "attachment.fetch",
+    // S5.4 — 기다리지 않는 빈 폴만([`super::inbox_poll`]). 긴 폴·줄 있는 배치·쓰기는 TS.
+    "inbox.poll",
 ];
 
 /// 입력 스키마가 없는 도구 — SDK 는 `arguments` 를 레코드(객체)로만 받고, 없어도(`null`) 받는다. 스키마가 있는 도구는
@@ -364,6 +366,7 @@ pub async fn answer(
                 .then(|| text_result(one))
         }
         "message.read" => message_read(pool, me, args).await,
+        "inbox.poll" => super::inbox_poll::answer(pool, me, args).await,
         "message.search" => super::search::answer(pool, me, args).await,
         "memory.audit" => super::mem_audit::answer(pool, me, args).await,
         "attachment.fetch" => super::attachment_fetch::answer(pool, me, args).await,
@@ -392,6 +395,8 @@ mod tests {
             let operator_only = super::super::operator_only::SERVED.contains(n);
             let want = if operator_only {
                 super::super::Access::Operator
+            } else if *n == "inbox.poll" {
+                super::super::Access::ReadSide
             } else {
                 super::super::Access::Read
             };
