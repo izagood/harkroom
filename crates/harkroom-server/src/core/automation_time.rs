@@ -4,8 +4,8 @@
 //! 분 단위 내림)은 한 줄씩 같으므로 DST 경계의 결과도 같다(시험이 TS 로 뽑은 값을 고정한다).
 //!
 //! 남는 차이(그래서 [`Schedule::parse`] 가 `None` = TS 로 넘긴다): `Intl` 은 tz 이름을 대소문자 무시·별칭 정규화로 받는다 —
-//! [`parse_tz`] 가 대소문자 무시·링크 이름까지 푼다. 그래도 chrono-tz 표에 없는 꼴(오프셋 `+09:00` 등)은 TS 몫이다. tz 표의 판(ICU vs chrono-tz 내장)이 다르면 그 사이 바뀐 규칙에서 갈린다.
-use chrono::{Datelike, NaiveDate, TimeZone, Timelike};
+//! [`parse_tz`] 가 대소문자 무시·링크 이름까지 푼다. 오프셋 꼴(`+09:00`·`-0530`·`+09`)은 [`Zone::Fixed`] 로 푼다(`UTC+9` 는 `Intl` 도 거절). tz 표의 판(ICU vs chrono-tz 내장)이 다르면 그 사이 바뀐 규칙에서 갈린다.
+use chrono::{Datelike, FixedOffset, NaiveDate, TimeZone, Timelike};
 use chrono_tz::Tz;
 use serde_json::Value;
 
@@ -25,28 +25,56 @@ fn utc_ms(y: i32, m: u32, d: u32, h: u32, mi: u32) -> Option<i64> {
     Some(date.and_hms_opt(h, mi, 0)?.and_utc().timestamp_millis())
 }
 
+/// 일정의 시간대 — IANA 이름(`chrono-tz`) 또는 `Intl` 이 받는 고정 오프셋 꼴(`+09:00`·`-0530`·`+09`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Zone {
+    Iana(Tz),
+    Fixed(FixedOffset),
+}
+
+impl From<Tz> for Zone {
+    fn from(tz: Tz) -> Self {
+        Zone::Iana(tz)
+    }
+}
+
+impl Zone {
+    #[cfg(test)]
+    fn name(&self) -> String {
+        match self {
+            Zone::Iana(tz) => tz.name().to_owned(),
+            Zone::Fixed(o) => o.to_string(),
+        }
+    }
+}
+
 /// TS `wallClock(at, tz)`.
-pub fn wall_clock(at_ms: i64, tz: Tz) -> Option<WallClock> {
-    let utc = chrono::DateTime::from_timestamp_millis(at_ms)?;
-    let l = tz.from_utc_datetime(&utc.naive_utc());
-    Some(WallClock {
-        y: l.year(),
-        m: l.month(),
-        d: l.day(),
-        h: l.hour(),
-        mi: l.minute(),
+pub fn wall_clock(at_ms: i64, tz: Zone) -> Option<WallClock> {
+    let utc = chrono::DateTime::from_timestamp_millis(at_ms)?.naive_utc();
+    fn wc<T: Datelike + Timelike>(l: T) -> WallClock {
+        WallClock {
+            y: l.year(),
+            m: l.month(),
+            d: l.day(),
+            h: l.hour(),
+            mi: l.minute(),
+        }
+    }
+    Some(match tz {
+        Zone::Iana(z) => wc(z.from_utc_datetime(&utc)),
+        Zone::Fixed(o) => wc(o.from_utc_datetime(&utc)),
     })
 }
 
 /// TS `offsetMs(at, tz)`.
-fn offset_ms(at_ms: i64, tz: Tz) -> Option<i64> {
+fn offset_ms(at_ms: i64, tz: Zone) -> Option<i64> {
     let w = wall_clock(at_ms, tz)?;
     let as_utc = utc_ms(w.y, w.m, w.d, w.h, w.mi)?;
     Some(as_utc - at_ms.div_euclid(60_000) * 60_000)
 }
 
 /// TS `zonedToUtc(w, tz)` — 오프셋을 두 번 구한다(추정 시각과 실제 시각이 DST 경계 양쪽에 걸리면 첫 것이 틀린다).
-pub fn zoned_to_utc(w: WallClock, tz: Tz) -> Option<i64> {
+pub fn zoned_to_utc(w: WallClock, tz: Zone) -> Option<i64> {
     let guess = utc_ms(w.y, w.m, w.d, w.h, w.mi)?;
     let o1 = offset_ms(guess, tz)?;
     let mut t = guess - o1;
@@ -80,19 +108,56 @@ pub struct Schedule {
     pub freq: Freq,
     pub hh: u32,
     pub mm: u32,
-    pub tz: Tz,
+    pub tz: Zone,
 }
 
-/// `chrono-tz` 가 아는 tz — `Intl` 처럼 대소문자를 무시하고, 별칭(backward 링크: `US/Eastern`·`Asia/Calcutta` 등)도
-/// 받는다(chrono-tz 표에 링크가 변형으로 들어 있어 같은 규칙으로 푼다). 모르면 `None`(오프셋 꼴 등 — 부른 쪽이 TS 로 넘긴다).
-pub fn parse_tz(s: &str) -> Option<Tz> {
+/// TS `isTimeZone` + `Intl` 해석 — IANA 이름은 `chrono-tz` 로(대소문자 무시, 별칭(backward 링크: `US/Eastern`·
+/// `Asia/Calcutta` 등)도 받는다), 오프셋 꼴은 [`parse_offset`] 로 푼다. 모르면 `None`(부른 쪽이 TS 로 넘긴다).
+pub fn parse_tz(s: &str) -> Option<Zone> {
+    if let Some(o) = parse_offset(s) {
+        return Some(Zone::Fixed(o));
+    }
     if let Ok(tz) = s.parse::<Tz>() {
-        return (tz.name() != "Factory").then_some(tz);
+        return (tz.name() != "Factory").then_some(Zone::Iana(tz));
     }
     chrono_tz::TZ_VARIANTS
         .iter()
         .copied()
         .find(|tz| tz.name().eq_ignore_ascii_case(s) && tz.name() != "Factory")
+        .map(Zone::Iana)
+}
+
+/// ECMA-402 오프셋 시간대(Node 22 `Intl` 이 받는 꼴): 부호(`+`·`-`·U+2212) + `HH`, 뒤에 `MM` 또는 `:MM` 이 붙을 수 있다.
+/// `HH` 00~23, `MM` 00~59. 초·한 자리 시·`UTC+9` 같은 꼴은 `Intl` 도 거절한다.
+fn parse_offset(s: &str) -> Option<FixedOffset> {
+    let (neg, rest) = if let Some(r) = s.strip_prefix('+') {
+        (false, r)
+    } else if let Some(r) = s.strip_prefix('-') {
+        (true, r)
+    } else if let Some(r) = s.strip_prefix('\u{2212}') {
+        (true, r)
+    } else {
+        return None;
+    };
+    let b = rest.as_bytes();
+    if !b.iter().all(|c| c.is_ascii_digit() || *c == b':') {
+        return None;
+    }
+    let (hh, mm) = match b.len() {
+        2 => (&rest[..2], "00"),
+        4 if b[..4].iter().all(u8::is_ascii_digit) => (&rest[..2], &rest[2..]),
+        5 if b[2] == b':' => (&rest[..2], &rest[3..]),
+        _ => return None,
+    };
+    if !hh.bytes().chain(mm.bytes()).all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let (h, m) = (hh.parse::<i32>().ok()?, mm.parse::<i32>().ok()?);
+    if h > 23 || m > 59 {
+        return None;
+    }
+    let secs = (h * 3600 + m * 60) * if neg { -1 } else { 1 };
+    FixedOffset::east_opt(secs)
 }
 
 impl Schedule {
@@ -181,7 +246,7 @@ pub fn next_occurrence(s: &Schedule, after_ms: i64) -> Option<i64> {
 }
 
 /// TS `timeVars(firedFor, tz)` — 키 순서도 TS 와 같다.
-pub fn time_vars(fired_for_ms: i64, tz: Tz) -> Option<serde_json::Map<String, Value>> {
+pub fn time_vars(fired_for_ms: i64, tz: Zone) -> Option<serde_json::Map<String, Value>> {
     let w = wall_clock(fired_for_ms, tz)?;
     let base = NaiveDate::from_ymd_opt(w.y, w.m, w.d)?;
     let dow = i64::from(base.weekday().num_days_from_sunday());
@@ -417,18 +482,55 @@ mod tests {
                 .is_none()
         );
         assert!(
-            Schedule::parse(
-                &json!({"kind":"schedule","freq":"daily","time":"09:00","tz":"+09:00"})
-            )
-            .is_none()
+            Schedule::parse(&json!({"kind":"schedule","freq":"daily","time":"09:00","tz":"UTC+9"}))
+                .is_none()
         );
         // Intl 처럼 대소문자 무시·링크 이름도 받는다.
-        assert_eq!(parse_tz("asia/seoul"), Some(chrono_tz::Asia::Seoul));
         assert_eq!(
-            parse_tz("ASIA/CALCUTTA").map(|t| t.name()),
+            parse_tz("asia/seoul"),
+            Some(Zone::Iana(chrono_tz::Asia::Seoul))
+        );
+        // Node 22 `Intl.DateTimeFormat` 으로 뽑은 받음/거절.
+        for (z, want) in [
+            ("+09:00", Some("+09:00")),
+            ("-05:30", Some("-05:30")),
+            ("+0900", Some("+09:00")),
+            ("+09", Some("+09:00")),
+            ("\u{2212}09:00", Some("-09:00")),
+            ("-00:00", Some("+00:00")),
+            ("+23:59", Some("+23:59")),
+            ("UTC+9", None),
+            ("GMT+9", None),
+            ("+24:00", None),
+            ("+9:00", None),
+            ("+09:60", None),
+            ("+0960", None),
+            ("+09:00:00", None),
+            ("+1", None),
+            ("+123", None),
+            ("+09:0", None),
+            ("Z", None),
+        ] {
+            assert_eq!(parse_tz(z).map(|t| t.name()).as_deref(), want, "{z}");
+        }
+        let seoul_fixed = json!({"kind":"schedule","freq":"daily","time":"09:00","tz":"+09:00"});
+        assert_eq!(
+            iso(next_occurrence(
+                &Schedule::parse(&seoul_fixed).unwrap(),
+                ms("2026-11-18T00:30:00Z")
+            )
+            .unwrap())
+            .unwrap(),
+            "2026-11-19T00:00:00.000Z"
+        );
+        assert_eq!(
+            parse_tz("ASIA/CALCUTTA").map(|t| t.name()).as_deref(),
             Some("Asia/Calcutta")
         );
-        assert_eq!(parse_tz("us/eastern").map(|t| t.name()), Some("US/Eastern"));
+        assert_eq!(
+            parse_tz("us/eastern").map(|t| t.name()).as_deref(),
+            Some("US/Eastern")
+        );
         assert_eq!(parse_tz("Factory"), None);
         assert_eq!(parse_tz("Nope/X"), None);
         assert!(

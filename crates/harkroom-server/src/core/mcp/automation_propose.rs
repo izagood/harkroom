@@ -56,7 +56,7 @@ const HANDLE_MAX: usize = 64;
 const DEBOUNCE_MAX: i64 = 3600;
 
 /// Rust 가 판정하는 시간대 — TS `tzSchema`(1~64자 + `Intl` 이 받음). chrono-tz 표의 이름·링크를 대소문자 무시로 받는다
-/// ([`parse_tz`](crate::core::automation_time::parse_tz)). 표에 없는 꼴은 TS 가 판정한다. 저장 값은 입력 글자 그대로라 TS 와 같다.
+/// ([`parse_tz`](crate::core::automation_time::parse_tz)). 오프셋 꼴(`+09:00`)도 받고, 그 밖의 모르는 꼴은 TS 가 판정한다. 저장 값은 입력 글자 그대로라 TS 와 같다.
 fn tz_ok(s: &str) -> bool {
     (1..=64).contains(&s.len()) && crate::core::automation_time::parse_tz(s).is_some()
 }
@@ -576,7 +576,9 @@ mod tests {
         v["trigger"]["tz"] = json!("US/Eastern");
         assert!(parse(&v).is_some(), "링크 이름도 받는다");
         v["trigger"]["tz"] = json!("+09:00");
-        assert!(parse(&v).is_none(), "오프셋 꼴은 TS 가 판정");
+        assert!(parse(&v).is_some(), "오프셋 꼴도 Intl 처럼 받는다");
+        v["trigger"]["tz"] = json!("UTC+9");
+        assert!(parse(&v).is_none(), "Intl 이 거절하는 꼴은 TS 가 판정");
         let mut v = base();
         v["name"] = json!("\u{FEFF}이름");
         assert!(parse(&v).is_none());
