@@ -177,6 +177,31 @@ fn lead_team_pick(rows: &[(String, String, String, bool)], wanted: &[String]) ->
     }
 }
 
+/// 팀 명단 판정 뒤의 갈래 — TS `team?.members ?? (kind !== 'agent' ? not_agent : openDelegationTargets)`.
+#[derive(Debug, PartialEq, Eq)]
+enum Route {
+    /// 팀 명단으로 지나간다 — 팀장이 사람이어도(S5.4-15c, 글은 `author_is_agent` 거짓이라 위임 키를 잇는다).
+    Team,
+    /// 받는 쪽마다 호출 게이트(에이전트만).
+    Gate,
+    /// 팀이 없는 사람 — `not_agent`.
+    NotAgent,
+}
+
+fn route_for(pick: &LeadPick, is_agent: bool) -> Route {
+    match (pick, is_agent) {
+        (LeadPick::One(..), _) => Route::Team,
+        (LeadPick::NoTeam, true) => Route::Gate,
+        (LeadPick::NoTeam, false) => Route::NotAgent,
+    }
+}
+
+/// TS 도구는 서비스 `postMessage` 를 바로 부른다 — 라우트 몫(카드 고르기·`closeAsksByReply`)이 없다. 사람 작성자에게만 뜻이 있다
+/// (에이전트 글은 그 갈래를 이미 타지 않는다) — 에이전트는 예전 그대로 끈다.
+fn service_call_for(is_agent: bool) -> bool {
+    !is_agent
+}
+
 /// `message.delegate` — 거절·위임 결과면 그 글자, 그 밖은 `None`(TS 가 같은 요청을 돈다). `st` 는 쓰기 칸이 있을 때만 있다.
 #[allow(clippy::too_many_arguments)]
 pub async fn answer(
@@ -218,19 +243,14 @@ pub async fn answer(
         .into_iter()
         .map(|(t, h, id, off)| (t, h.to_lowercase(), id, off))
         .collect();
-    let (team_id, members) = match lead_team_pick(&rows, &wanted) {
-        // 팀장이 사람인 팀 명단 갈래는 TS 몫이다.
-        LeadPick::One(..) if me.kind != "agent" => return None,
-        LeadPick::One(t, m) => (Some(t), m),
-        LeadPick::NoTeam => {
-            if me.kind != "agent" {
-                return Some(err("not_agent", "only agents delegate"));
-            }
-            match gate(pool, me, &a, &wanted).await? {
-                Ok(m) => (None, m),
-                Err(refused) => return Some(refused),
-            }
-        }
+    let pick = lead_team_pick(&rows, &wanted);
+    let (team_id, members) = match (route_for(&pick, me.kind == "agent"), pick) {
+        (Route::Team, LeadPick::One(t, m)) => (Some(t), m),
+        (Route::NotAgent, _) => return Some(err("not_agent", "only agents delegate")),
+        _ => match gate(pool, me, &a, &wanted).await? {
+            Ok(m) => (None, m),
+            Err(refused) => return Some(refused),
+        },
     };
     rounds_then_write(
         pool,
@@ -445,7 +465,7 @@ async fn write(
         wake: false,
         no_mentions: false,
         before_commit: hook.as_ref().map(|h| h as &dyn msg_post::BeforeCommit),
-        service_call: false,
+        service_call: service_call_for(me.kind == "agent"),
     };
     let post = PostBody {
         body: a.body.clone(),
@@ -475,8 +495,26 @@ async fn write(
         // 아무것도 쓰지 않았다 — 그 오류 글자는 TS 가 낸다.
         Outcome::BadThread | Outcome::BadAttachment => None,
         Outcome::Posted {
-            row, delegation_id, ..
+            row,
+            delegation_id,
+            mandate,
+            ..
         } => {
+            // 사람 팀장 글이 새로 세운 위임 — 커밋 뒤 감사(TS `postMessage` 끝의 `auditMandateCreated`).
+            if let Some(c) = &mandate {
+                crate::write::record_audit(
+                    &st.write,
+                    crate::write::AuditEntry {
+                        action: "mandate.created",
+                        actor_id: Some(c.actor_id()),
+                        actor_handle: None,
+                        target: Some(&c.mandate_id),
+                        ip: None,
+                        detail: c.audit_detail(),
+                    },
+                )
+                .await;
+            }
             // TS: 지정 행은 게시 tx 에서 이미 커밋됐다 — 시스템 줄(`byKind: 'agent'`)·이벤트는 커밋 뒤.
             if let Some((root, changes)) = hook.as_ref().and_then(|h| h.changes()) {
                 for (agent, axes) in &changes {
@@ -575,5 +613,18 @@ mod tests {
             panic!("first team");
         };
         assert_eq!(t, "t2");
+    }
+
+    #[test]
+    fn human_lead_takes_team_route() {
+        let rows = vec![("t1".into(), "a".into(), "id-a".into(), false)];
+        let team = lead_team_pick(&rows, &["a".into()]);
+        assert_eq!(route_for(&team, false), Route::Team);
+        assert_eq!(route_for(&team, true), Route::Team);
+        let none = lead_team_pick(&rows, &["b".into()]);
+        assert_eq!(route_for(&none, false), Route::NotAgent);
+        assert_eq!(route_for(&none, true), Route::Gate);
+        assert!(service_call_for(false));
+        assert!(!service_call_for(true));
     }
 }
