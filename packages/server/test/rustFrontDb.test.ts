@@ -1640,6 +1640,18 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant insert (action, actor_id, target, detail) on audit_log to ${rw}`,
         // S5.4 MCP 6 — 원인이 확인되지 않은 새 위임(대기 줄 upsert). 위 표 단위 insert·update 와 겹치지만 운영 줄과 글자째 같게 둔다.
         `grant select (id, account_id, capability, scope), insert (account_id, capability, scope, granted_by, expires_at, limits, delegate_depth, write_needs_human_cause, parent_grant_id, suspended_at, suspend_reason), update (granted_by, granted_at, expires_at, limits, delegate_depth, write_needs_human_cause, parent_grant_id, suspended_at, suspend_reason) on account_grant to ${rw}`,
+        // S5.4 통합 — 갈래 B·C·D 의 쓰기 줄(각 모듈 `*_PRIVILEGES` 와 글자째 같게). automation 비밀 칸 2개는 UPDATE 만 주고 SELECT 는 주지 않는다.
+        `grant update (ingress_enabled_at, ingress_token_hash, ingress_secret_enc, updated_at) on automation to ${rw}`,
+        `grant select (id, name, owner_account_id), delete on api_connector to ${rw}`,
+        `grant delete on account_grant to ${rw}`,
+        `grant update (agent_pickable_models) on agent_config to ${rw}`,
+        `grant update (model), delete on thread_agent_model to ${rw}`,
+        // S5.4 갈래 F — 자동화 sweeper(`loops/automation.rs::AUTOMATION_SWEEP_PRIVILEGES`, 게이트는 꺼져 있지만 권한 판정은 돈다).
+        `grant select (id, automation_id, trigger_kind, payload, created_at, not_before, initiated_by, chain_depth, status), update (status, error, message_id, finished_at) on automation_run to ${rw}`,
+        `grant select (id, owner_id, channel_id, name, body, deleted_at, consecutive_failures), update (consecutive_failures, enabled, next_at, paused_reason, updated_at) on automation to ${rw}`,
+        `grant select (id, automation_id, ended_at), update (ended_at, end_reason) on mandate to ${rw}`,
+        `grant select (mandate_id, revoked_at), update (revoked_at) on mandate_line to ${rw}`,
+        `grant select (id, deleted_at, disabled_at) on account to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -4807,7 +4819,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(f.log()).toContain('"GET /invites"');
         expect(f.log()).toContain('"GET /connectors"');
         expect(f.log()).not.toContain('misc reads core off');
-        for (const k of ['GET /leases', 'GET /accounts/agents', 'GET /agent/config']) {
+        for (const k of ['GET /leases', 'GET /agent/config']) {  // GET /accounts/agents 는 S5.4 갈래 B 가 Rust 로 옮겼다
           expect(f.log(), `${k} 는 TS 에 남는다`).not.toContain(`"${k}"`);
         }
         const M = member.token;
@@ -5592,7 +5604,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect(f.log(), k).toContain(`"${k}"`);
         }
         expect(f.log()).not.toContain('agent memory read core off');
-        for (const k of ['GET /accounts/agents/{id}/memory/audit', 'GET /accounts/agents/{id}/background', 'GET /accounts/agents/{id}/background/runs/{runId}']) {
+        for (const k of ['GET /accounts/agents/{id}/memory/audit', 'GET /accounts/agents/{id}/background']) {  // background/runs/{runId} 는 S5.4 갈래 B 가 Rust 로 옮겼다
           expect(f.log(), `${k} 는 TS 에 남는다`).not.toContain(`"${k}"`);
         }
         const M = member.token;
@@ -9778,6 +9790,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             }
 
             // S5.4 MCP 6 — `grant.delegate` 앞머리 거절. TS·Rust 가 각자 다른 `to`(`gd-t-*`·`gd-r-*`)로 같은 장면을 돌리고 답 글자·감사 줄을 견준다.
+            // audit_log 는 지울 수 없다(append-only) — 앞서 중간에 멈춘 실행이 남긴 `gd-*` 감사 줄을 이 id 밑으로 거른다.
+            const gdFloor = String((await db.pool.query<{ m: string | null }>('select max(id)::text as m from audit_log')).rows[0]!.m ?? '0');
             {
               const gdConn = (await db.pool.query<{ id: string }>(
                 `insert into api_connector (name, owner_account_id, base_url, auth_kind, methods) values ('gd-conn', $1, 'https://api.example.com', 'none', '{GET,POST}') returning id`,
@@ -9814,8 +9828,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 // 감사 줄 — 거절마다 한 줄, 같은 칸.
                 const gdAudit = async (s: 't' | 'r') => (await db.pool.query(
                   `select action, actor_id::text = $2 as by_bot, target, detail->>'code' as code, replace(detail->>'to', 'gd-${s}-', 'gd-x-') as to
-                     from audit_log where action = 'grant.delegate.denied' and detail->>'to' like $1 order by detail->>'to'`,
-                  [`gd-${s}-%`, bot3.accountId])).rows;
+                     from audit_log where action = 'grant.delegate.denied' and detail->>'to' like $1 and id > $3::bigint order by detail->>'to'`,
+                  [`gd-${s}-%`, bot3.accountId, gdFloor])).rows;
                 const [ta, ra] = [await gdAudit('t'), await gdAudit('r')];
                 expect(ra).toEqual(ta);
                 expect(ta.map((x) => x.code)).toEqual(['no_connector', 'not_granted']);
@@ -9859,12 +9873,12 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                   expect(b, `grant.delegate ${String(a.name)}`).toEqual(a);
                   expect(core, `${String(a.name)} — TS`).toBeNull();
                   expect(rc, `${String(a.name)} — 누가 답했나`).toBe('mcp');
-                  expect(String(a.text), String(a.name)).toContain('"error"');
+                  expect(String(a.text), String(a.name)).toMatch(/\\?"error\\?"/);  // 도구 결과 안의 JSON 은 \" 로 escape 된다
                 }
                 const gdAudit = async (s: 't' | 'r') => (await db.pool.query(
                   `select detail->>'code' as code, replace(detail->>'to', 'gd-${s}-', 'gd-x-') as to
-                     from audit_log where action = 'grant.delegate.denied' and target = 'gd-conn2' and detail->>'to' like $1 order by detail->>'to'`,
-                  [`gd-${s}-%`])).rows;
+                     from audit_log where action = 'grant.delegate.denied' and target = 'gd-conn2' and detail->>'to' like $1 and id > $2::bigint order by detail->>'to'`,
+                  [`gd-${s}-%`, gdFloor])).rows;
                 expect(await gdAudit('r')).toEqual(await gdAudit('t'));
                 // 새 위임 — 원인 없는 턴이면 TS 도 늘 대기 줄이고 시스템 줄이 없다. Rust 가 줄·감사·이벤트를 쓴다.
                 // 받는 쪽은 루트 사람(admin)이 소유한 에이전트 둘(TS·Rust 각각). 원인이 확인된 턴(시스템 줄)은 아직 TS 몫이다.
