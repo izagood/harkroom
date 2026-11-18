@@ -139,6 +139,47 @@ pub async fn check_mandate_core(pool: &sqlx::PgPool) -> bool {
     on
 }
 
+/// S5.4 12e — 승인 길이 만료를 만났을 때 그 자리에서 카드를 닫는 칸(TS `expirePermissionRequests(requestId)`).
+/// 만료 루프와 같은 칸([`crate::loops::permission_expire::PERMISSION_EXPIRE_PRIVILEGES`]) — 승인 칸에 더해 `inbox` INSERT 가 새로 든다.
+/// 다 있을 때만 승인 길의 만료 409 를 Rust 가 답한다(fail-closed — 없으면 「permission decide expire core off」, 그 꼴은 TS).
+static DECIDE_EXPIRE_CORE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// 승인 길의 만료(409 `request_expired` + 카드 닫기)를 Rust 가 맡는가.
+pub fn decide_expire_core_on() -> bool {
+    DECIDE_EXPIRE_CORE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// 승인 풀에 만료 칸이 다 있는가 — 기동 때 한 번.
+pub async fn check_decide_expire_core(pool: &sqlx::PgPool) -> bool {
+    use crate::loops::permission_expire as pe;
+    let on = match crate::write::missing_in(
+        pool,
+        pe::PERMISSION_EXPIRE_PRIVILEGES,
+        pe::PERMISSION_EXPIRE_SEQUENCE_PRIVILEGES,
+    )
+    .await
+    {
+        Ok(m) if m.is_empty() => true,
+        Ok(m) => {
+            eprintln!("front: permission decide expire core off — missing privileges {m:?}");
+            false
+        }
+        Err(e) => {
+            eprintln!(
+                "front: permission decide expire core off — privilege check failed ({})",
+                e.as_database_error().map_or("io", |_| "db")
+            );
+            false
+        }
+    };
+    DECIDE_EXPIRE_CORE.store(on, std::sync::atomic::Ordering::Relaxed);
+    on
+}
+
+/// TS `request_expired` 문구(골든).
+pub const REQUEST_EXPIRED_MESSAGE: &str = "this request expired — the agent has to ask again";
+
 pub const APPROVE_SEQUENCE_PRIVILEGES: &[(&str, &str)] = &[("event_outbox_id_seq", "USAGE")];
 
 /// TS `PERMISSION_GRANT_TTL_MS`(7일)·`COMMAND_GRANT_TTL_MS`(1시간) — 시험이 TS 원문과 대조한다.
@@ -327,6 +368,7 @@ pub async fn approve_write(
     locked: &LockedRequest,
     args: ApproveArgs<'_>,
     decision: Decision,
+    as_owner: bool,
 ) -> sqlx::Result<ApproveOutcome> {
     match locked.status.as_str() {
         "obsolete" => {
@@ -358,6 +400,9 @@ pub async fn approve_write(
     }
     // S5.4 — 머지 거절 카드의 [이번 한 번](rust_takes 가 거절 기록 있음·위임장 없음·카드 once 있음만 들인다).
     if decision == Decision::ApproveOnce && locked.kind == "merge" {
+        if !as_owner {
+            return Ok(ApproveOutcome::HandToTs);
+        }
         return merge_once_write(conn, locked, args).await;
     }
     // TS `decidePermissionRequest`: command 가 아닌 카드의 `approve_once` 는 머지 거절 카드 + once 일 때만 — 그 밖은 쓰기 없이 409.
@@ -373,6 +418,10 @@ pub async fn approve_write(
     {
         return Ok(refused(409, "bad_decision", BAD_DECISION_COMMAND_MANDATE));
     }
+    // S5.4 12e — 소유자가 아닌 사람은 TS 가 그 사람이 맡긴 위임장이 아니면 위임장을 지운 뒤에 [이번 턴만]을 본다 — 위임장이 있으면 TS.
+    if !as_owner && decision == Decision::ApproveTurn && locked.mandate_id.is_some() {
+        return Ok(ApproveOutcome::HandToTs);
+    }
     if decision == Decision::ApproveTurn
         && (locked.kind != "tool"
             || locked.mandate_id.is_none()
@@ -382,6 +431,10 @@ pub async fn approve_write(
     }
     if decision == Decision::ApproveHour && locked.kind != "command" {
         return Ok(refused(409, "bad_decision", BAD_DECISION_HOUR));
+    }
+    // S5.4 12e — 소유자가 아닌 사람의 승인은 쓰기 없는 거절(위)까지만 Rust. 쓰는 길(그 사람 이름 grant·소유자 알림 글)은 TS.
+    if !as_owner {
+        return Ok(ApproveOutcome::HandToTs);
     }
     let (target, channel_id, thread_root_id): (String, Option<String>, Option<String>) =
         sqlx::query_as(READ_LOCKED_TARGET)
@@ -842,19 +895,30 @@ async fn approve_attempt(
     if d == Decision::Deny {
         return Ok(Some(ApproveOutcome::HandToTs));
     }
-    match after_verdict(&v, d) {
+    // S5.4 12e — 소유자가 아닌 사람(`AfterVerdict::HandToTs`)도 여기서는 들인다: 쓰기 없는 거절까지만 Rust, 쓰는 길은
+    // [`approve_write`] 가 쓰기 전에 TS 로 넘긴다.
+    let as_owner = match after_verdict(&v, d) {
         AfterVerdict::Forbidden => {
             return Ok(Some(refused(403, "forbidden", FORBIDDEN_MESSAGE)));
         }
-        AfterVerdict::HandToTs | AfterVerdict::Go { as_owner: false } => {
-            return Ok(Some(ApproveOutcome::HandToTs));
-        }
-        AfterVerdict::Go { as_owner: true } => {}
-    }
+        AfterVerdict::HandToTs => false,
+        AfterVerdict::Go { as_owner } => as_owner,
+    };
     let Some(locked) = locked else {
         return Ok(Some(not_found()));
     };
-    let out = approve_write(&mut tx, &locked, args, d).await?;
+    // S5.4 12e — 기다리던 요청이 만료됐으면 TS 처럼 결정 tx 를 버리고 그 요청만 만료로 닫은 뒤 409(쓰는 칸이 다 있을 때만).
+    if locked.status == "pending" && locked.expired && decide_expire_core_on() {
+        tx.rollback().await?;
+        crate::loops::permission_expire::expire_permission_requests(pool, Some(args.request_id))
+            .await?;
+        return Ok(Some(refused(
+            409,
+            "request_expired",
+            REQUEST_EXPIRED_MESSAGE,
+        )));
+    }
+    let out = approve_write(&mut tx, &locked, args, d, as_owner).await?;
     if matches!(out, ApproveOutcome::Granted { .. }) {
         tx.commit().await?;
     }
