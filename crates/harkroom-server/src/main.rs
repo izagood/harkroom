@@ -1237,6 +1237,30 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 — `GET /workspace/icon`. 아바타 읽기(같은 저장소)가 켜졌고 아이콘 칸 권한이 있을 때만.
+    let workspace_icon = match &avatar_read {
+        Some(s) => match write::missing_in(
+            &state.pool,
+            harkroom_server::core::avatar_read::WORKSPACE_ICON_PRIVILEGES,
+            &[],
+        )
+        .await
+        {
+            Ok(m) if m.is_empty() => Some(s.clone()),
+            Ok(m) => {
+                eprintln!("front: workspace icon core off — missing privileges {m:?}");
+                None
+            }
+            Err(e) => {
+                eprintln!(
+                    "front: workspace icon core off — privilege check failed ({})",
+                    e.as_database_error().map_or("io", |_| "db")
+                );
+                None
+            }
+        },
+        None => None,
+    };
     // S5.4 — 아바타 걸기(`PUT /accounts/me/avatar`·`PUT /accounts/agents/{id}/avatar`). 네 겹 잠금: `HARKROOM_CORE=rust`,
     // 쓰기 풀에 그 칸 권한이 다 있을 때, 아바타 읽기 코어가 켜졌을 때(같은 읽기 SELECT·같은 저장소)만 — 아니면 TS 에 남는다.
     // 래스터 그림은 코어가 TS 에 넘긴다(sharp 판정).
@@ -2283,6 +2307,24 @@ async fn main() {
         _ => None,
     };
     let operator_on = operator_write.is_some();
+    // S5.4 TM3 — `GET /agents/{agentId}/model-options`: 오퍼레이터 코어 + 읽기 칸 권한.
+    let agent_model_options = operator_on && {
+        use harkroom_server::core::agent_model_options as mo;
+        match write::missing_in(&state.pool, mo::AGENT_MODEL_OPTIONS_PRIVILEGES, &[]).await {
+            Ok(m) if m.is_empty() => true,
+            Ok(m) => {
+                eprintln!("front: agent model-options core off — missing privileges {m:?}");
+                false
+            }
+            Err(e) => {
+                eprintln!(
+                    "front: agent model-options core off — privilege check failed ({})",
+                    e.as_database_error().map_or("io", |_| "db")
+                );
+                false
+            }
+        }
+    };
     // C6c-3 — 릴레이 세션 사본은 오퍼레이터 코어와 함께만 선다(한 스위치). 허브 줄을 못 넣으면 사본 없이 릴레이만 돈다(TS 와 같음).
     let relay_live = match &operator_write {
         Some(w) => match harkroom_server::core::relay_live::SessionLive::start(
@@ -2404,6 +2446,18 @@ async fn main() {
             core_routes.router = core_routes.router.merge(tm.router);
             core_routes.http.extend(tm.http);
             core_routes.sockets.extend(tm.sockets);
+        }
+        // S5.4 TM3 — `GET /agents/{agentId}/model-options`. 오퍼레이터 코어가 Rust 일 때만(하네스 목록이 스냅숏에서 같은 답이다)
+        // + 읽기 칸 권한이 있을 때만 — 아니면 TS 에 남는다.
+        if agent_model_options {
+            let r = harkroom_server::core::agent_model_options::routes(
+                state.pool.clone(),
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(r.router);
+            core_routes.http.extend(r.http);
+            core_routes.sockets.extend(r.sockets);
         }
         // C3b grant 읽기 줄 — 러너·오퍼레이터가 읽는 `GET /agent/tool-allows`·`/agent/command-grants`. 읽기 풀만(match 는 아래 B1).
         // S5.4 AT1 — 자동화 읽기(`GET /automations`·`GET /automations/{id}`). 읽기 풀만 쓴다 — 지우기·만들기·수신은 TS.
@@ -2903,6 +2957,20 @@ async fn main() {
             core_routes.http.extend(pa.http);
             core_routes.sockets.extend(pa.sockets);
         }
+        // S5.4 TP4 — 계획 관리 에이전트 바꾸기. MCP 계획 쓰기(같은 쓰기 경로·같은 권한)가 켜졌을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = plan_write.clone() {
+            let pm = harkroom_server::core::thread_plan_manager::routes(
+                harkroom_server::core::thread_plan_manager::ManagerState {
+                    write,
+                    up: state.up.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(pm.router);
+            core_routes.http.extend(pm.http);
+            core_routes.sockets.extend(pm.sockets);
+        }
         // S5.4 CT1 — 채널에 팀 넣기. 쓰기 풀에 칸 권한이 다 있을 때만 — 아니면 TS 에 남는다.
         if let Some(write) = channel_team_add {
             let ta = harkroom_server::core::channel_team_add::routes(
@@ -2980,6 +3048,20 @@ async fn main() {
             core_routes.router = core_routes.router.merge(aw.router);
             core_routes.http.extend(aw.http);
             core_routes.sockets.extend(aw.sockets);
+        }
+        if let Some(storage) = workspace_icon {
+            let wi = harkroom_server::core::avatar_read::icon_routes(
+                harkroom_server::core::avatar_read::AvatarReadState {
+                    read: state.pool.clone(),
+                    storage,
+                    up: state.up.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(wi.router);
+            core_routes.http.extend(wi.http);
+            core_routes.sockets.extend(wi.sockets);
         }
         if let Some(storage) = avatar_read {
             let av = harkroom_server::core::avatar_read::routes(

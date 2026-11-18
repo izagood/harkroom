@@ -737,6 +737,46 @@ pub async fn answer_item(
     .await
 }
 
+/// HTTP `PUT /threads/:rootId/plan/manager`(S5.4 TP4)의 쓰기 결과.
+pub(crate) enum ManagerWrite {
+    /// 거절 — 코드와 TS 오류 객체의 칸 글자(중괄호 없이, TS 키 순서).
+    Refused {
+        code: &'static str,
+        fields: String,
+    },
+    Written,
+    /// TS `deleted` 갈래(type plan 은 판을 지우지 않지만 같은 꼴로 둔다).
+    Deleted,
+    /// 관리자가 바뀌는데 자동 진행이 켜져 있다 — 되감았다. TS 가 답한다(끄기 알림).
+    ToTs,
+}
+
+/// TS `writeThreadPlan(…, (prev) => applyPlanItem(prev, { type: 'plan', managerId }))` — 사람 세션 갈래. 루트·가시성은 부른 쪽이 봤다.
+pub(crate) async fn write_manager(
+    write: &PgPool,
+    me: &str,
+    root: &str,
+    channel: &str,
+    manager: Option<String>,
+) -> sqlx::Result<ManagerWrite> {
+    let patch = ItemPatch {
+        type_: Some("plan".to_owned()),
+        manager_id: Some(manager),
+        ..ItemPatch::default()
+    };
+    Ok(
+        match write_plan(write, me, root, channel, Build::Item(Box::new(patch))).await? {
+            Outcome::Refused(r) => ManagerWrite::Refused {
+                code: r.code,
+                fields: r.fields,
+            },
+            Outcome::Written { .. } => ManagerWrite::Written,
+            Outcome::Deleted => ManagerWrite::Deleted,
+            Outcome::ToTs => ManagerWrite::ToTs,
+        },
+    )
+}
+
 #[cfg(test)]
 #[path = "plan_write_tests.rs"]
 mod tests;
