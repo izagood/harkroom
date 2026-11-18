@@ -11,7 +11,10 @@
 //! 세운다(`api_blocked_card`). [`API_CHECKS_BUMP_PRIVILEGES`] 까지 있으면 같은 날 같은 스레드에 이미 선 카드를 고쳐 쓰는
 //! 갈래(`meta.blocked` 의 `count`·`lastAt`·`lastCode`·`lastRequest` + `message.updated`)도 Rust 가 한다.
 //! 경로는 `%`·질의·ASCII 밖 글자까지 TS `safePath`·`wirePath`·`pathCovered` 를 따라 Rust 가 본다(바탕이 http(s) 가
-//! 아닌 연결만 TS 몫). 비밀을 여는 연결(`authKind != none`)은 TS 로 넘긴다.
+//! 아닌 연결만 TS 몫). 비밀을 여는 연결(`authKind` 가 `none`·`token_exchange` 가 아닌 것)은 [`API_CHECKS_SECRET_PRIVILEGES`] 와
+//! DB 확인값에 맞는 v2 키가 있을 때 **허락 갈래만** Rust 가 연다 — `secret_access_log` granted 줄, `api.call.checked` 감사,
+//! 응답 `valueBase64`(오퍼레이터 자신에게만, `no-store`). 비밀 거절(`no_secret`·`secret_expired`·`owner_inactive`·`no_value`·
+//! `unreadable`)·409 `secret_key_mismatch`·토큰 교환은 아무것도 쓰기 전에 TS 로 넘긴다.
 use super::api_results::connector_ok;
 use super::grant_reads::through_operator;
 use super::merge_approval_peek::str_len_ok;
@@ -113,6 +116,39 @@ pub const API_CHECKS_ALLOW_PRIVILEGES: &[(&str, &str)] = &[
 /// `meta` 갱신. 다시 읽기(`getMessageById`)·`message.updated` outbox 는 글 올리기 코어 권한에 든다.
 pub const API_CHECKS_BUMP_PRIVILEGES: &[(&str, &str)] = &[("message.meta", "UPDATE")];
 
+/// 비밀을 여는 연결(`authKind` 가 `none`·`token_exchange` 가 아닌 것)의 허락을 Rust 가 답할 때 더 있어야 하는 권한 —
+/// 비밀 행·소유자 상태(`account` SELECT 는 거절 쪽에 있다), 현재 값, `secret_access_log` 쓰기.
+pub const API_CHECKS_SECRET_PRIVILEGES: &[(&str, &str)] = &[
+    ("secret.id", "SELECT"),
+    ("secret.name", "SELECT"),
+    ("secret.kind", "SELECT"),
+    ("secret.expires_at", "SELECT"),
+    ("secret.owner_account_id", "SELECT"),
+    ("secret_version.secret_id", "SELECT"),
+    ("secret_version.version", "SELECT"),
+    ("secret_version.sealed", "SELECT"),
+    ("secret_version.revoked_at", "SELECT"),
+    ("secret_access_log", "INSERT"),
+];
+
+/// 비밀 열쇠(v2 보관소). 키가 DB 확인값과 맞을 때만 선다 — 없거나 어긋나면(TS 의 `no_secret`·409 `secret_key_mismatch`) TS 몫.
+pub struct SecretOpener(crate::secrets::keyring::SecretKeyring);
+
+impl std::fmt::Debug for SecretOpener {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SecretOpener(<redacted>)")
+    }
+}
+
+/// 기동 한 번 — `secret_reveal::load_state` 와 같은 길(env 키 + DB 확인값). 오류 글귀엔 파일 이름·kid 만 있다.
+pub async fn load_secret_opener(pool: &sqlx::PgPool) -> Result<Option<SecretOpener>, String> {
+    Ok(crate::secrets::verify::load_verified_from_env(pool)
+        .await?
+        .filter(|v| !v.mismatch)
+        .and_then(|v| v.keyring)
+        .map(SecretOpener))
+}
+
 pub struct ChecksState {
     pub up: Upstream,
     /// 임대 거절 경로 — 쓰기 풀에 [`API_CHECKS_DENY_PRIVILEGES`] 가 다 있을 때만.
@@ -123,6 +159,8 @@ pub struct ChecksState {
     pub card: Option<super::msg_post::PostState>,
     /// 이미 선 카드의 갱신 — `card` 에 더해 [`API_CHECKS_BUMP_PRIVILEGES`] 가 있을 때만. 없으면 그 갈래는 TS 몫.
     pub bump: bool,
+    /// 비밀을 여는 연결의 허락 — `allow` 에 더해 [`API_CHECKS_SECRET_PRIVILEGES`] 와 맞는 키가 있을 때만.
+    pub secret: Option<SecretOpener>,
 }
 
 /// JS 정규식 `\s`(ECMAScript WhiteSpace + LineTerminator).
@@ -467,11 +505,11 @@ type ConnRow = (
     String,
     String,
     Option<String>,
-    bool,
+    Option<String>,
     Vec<String>,
 );
 const CONN_SQL: &str = "select id::text, owner_account_id::text, name, base_url, auth_kind, auth_header, \
-     (secret_id is not null), methods from api_connector where name = $1";
+     secret_id::text, methods from api_connector where name = $1";
 const LEAF_SQL: &str = "select id::text, limits::text, write_needs_human_cause from account_grant \
      where account_id = $1::uuid and capability = 'api.call' and scope = $2";
 
@@ -487,6 +525,8 @@ async fn checks_body(
     path300: &str,
     card: Option<&super::msg_post::PostState>,
     bump: bool,
+    secret: Option<&SecretOpener>,
+    now: &str,
 ) -> sqlx::Result<Option<Response>> {
     use super::mcp::grant_delegate as gd;
     let g = |k: &str| o.get(k).and_then(Value::as_str).unwrap_or_default();
@@ -587,13 +627,32 @@ async fn checks_body(
     if !path_covered(path, &limits.path_prefix) || !path_covered(&wire, &limits.path_prefix) {
         return carded("path_not_allowed").await;
     }
-    if c.4 != "none" {
-        return Ok(None); // 비밀 열기·토큰 교환은 TS 몫.
+    // 토큰 교환(`caps`·`tokenUrl`)은 TS 몫. 비밀을 여는 연결은 맞는 키와 권한이 있을 때만 — 없으면 TS 가
+    // `no_secret`·409 `secret_key_mismatch` 로 답한다. 여기까지는 아무것도 쓰지 않았다.
+    if c.4 == "token_exchange" || (c.4 != "none" && secret.is_none()) {
+        return Ok(None);
     }
     let by_human = lease.cause_by_human();
     if method != "GET" && write_human && !by_human {
         return carded("cause_not_human").await;
     }
+    let value = match (c.4.as_str(), secret) {
+        ("none", _) => None,
+        (_, Some(sec)) => {
+            let Some(sid) = c.6.as_deref() else {
+                return Ok(None); // `no_secret` 거절은 TS 몫.
+            };
+            match open_secret(
+                pool, sec, sid, &c.2, agent, operator, lease, method, path, now,
+            )
+            .await?
+            {
+                Some(v) => Some(v),
+                None => return Ok(None),
+            }
+        }
+        (_, None) => return Ok(None),
+    };
     crate::write::record_audit(
         pool,
         crate::write::AuditEntry {
@@ -610,11 +669,107 @@ async fn checks_body(
     .await;
     let body = json!({
         "allowed": true, "connector": c.2, "baseUrl": c.3, "authKind": c.4, "authHeader": c.5,
-        "valueBase64": null, "causeByHuman": by_human, "path": wire,
+        "valueBase64": value.as_ref().map(|v| v.as_str()), "causeByHuman": by_human, "path": wire,
     });
-    Ok(Some(no_store(crate::directory::json_ok(body.to_string()))))
+    drop(value);
+    let text = zeroize::Zeroizing::new(body.to_string());
+    drop(body);
+    Ok(Some(no_store(crate::directory::json_ok(
+        text.as_str().to_owned(),
+    ))))
 }
 
+const SECRET_SQL: &str = "select s.id::text, s.name, s.kind, s.expires_at <= $2::timestamptz, \
+     (o.deleted_at is not null or o.disabled_at is not null) \
+     from secret s join account o on o.id = s.owner_account_id where s.id = $1::uuid";
+const VERSION_SQL: &str = "select version, sealed from secret_version \
+     where secret_id = $1::uuid and revoked_at is null and sealed is not null order by version desc limit 1";
+const ACCESS_LOG_SQL: &str = "insert into secret_access_log (secret_id, secret_name, version, agent_id, operator_id, \
+     turn_id, channel_id, thread_root_id, result, reason, at) \
+     values ($1::uuid, $2, $3, $4::uuid, $5::uuid, $6::uuid, $7::uuid, $8::uuid, 'granted', $9, $10::timestamptz)";
+
+/// TS `(path.split('?')[0] ?? '').slice(0, 200)` — UTF-16 단위. 서로게이트 쌍 가운데서 잘리면 None(TS 몫).
+pub fn access_path(path: &str) -> Option<String> {
+    let head = path.split('?').next().unwrap_or_default();
+    let u: Vec<u16> = head.encode_utf16().collect();
+    if u.len() <= 200 {
+        return Some(head.to_owned());
+    }
+    String::from_utf16(&u[..200]).ok()
+}
+
+/// TS `checkApiCall` 의 비밀 열기 — 허락 갈래만. 만료·소유자 비활성·값 없음·열 수 없음(`secret_access_log` 거절 줄 +
+/// 거절 감사)은 아무것도 쓰기 전에 `None` 으로 TS 에 맡긴다. 값은 base64 로만 돌려주고, 로그·오류·감사에는 싣지 않는다.
+#[allow(clippy::too_many_arguments)]
+async fn open_secret(
+    pool: &sqlx::PgPool,
+    sec: &SecretOpener,
+    secret_id: &str,
+    connector_name: &str,
+    agent: &str,
+    operator: &str,
+    lease: &super::lease_read::LeaseRow,
+    method: &str,
+    path: &str,
+    now: &str,
+) -> sqlx::Result<Option<zeroize::Zeroizing<String>>> {
+    use crate::secrets::keyring::{SecretAad, SecretKind};
+    use base64::Engine as _;
+    let Some(reason_path) = access_path(path) else {
+        return Ok(None);
+    };
+    let row: Option<(String, String, String, Option<bool>, bool)> = sqlx::query_as(SECRET_SQL)
+        .bind(secret_id)
+        .bind(now)
+        .fetch_optional(pool)
+        .await?;
+    let Some((sid, name, kind, expired, owner_inactive)) = row else {
+        return Ok(None);
+    };
+    if expired == Some(true) || owner_inactive {
+        return Ok(None);
+    }
+    let kind = match kind.as_str() {
+        "text" => SecretKind::Text,
+        "file" => SecretKind::File,
+        _ => return Ok(None),
+    };
+    let Some((version, sealed)): Option<(i32, String)> = sqlx::query_as(VERSION_SQL)
+        .bind(&sid)
+        .fetch_optional(pool)
+        .await?
+    else {
+        return Ok(None);
+    };
+    let sealed = zeroize::Zeroizing::new(sealed);
+    let aad = SecretAad {
+        secret_id: &sid,
+        version: i64::from(version),
+        kind,
+    };
+    let Some(value) = sec.0.open(&sealed, &aad) else {
+        return Ok(None);
+    };
+    drop(sealed);
+    sqlx::query(ACCESS_LOG_SQL)
+        .bind(&sid)
+        .bind(&name)
+        .bind(version)
+        .bind(agent)
+        .bind(operator)
+        .bind(&lease.id)
+        .bind(lease.channel_id.as_deref())
+        .bind(lease.thread_root_id.as_deref())
+        .bind(format!("api:{connector_name} {method} {reason_path}"))
+        .bind(now)
+        .execute(pool)
+        .await?;
+    Ok(Some(zeroize::Zeroizing::new(
+        base64::engine::general_purpose::STANDARD.encode(value.as_bytes()),
+    )))
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn checks_early(
     pool: &sqlx::PgPool,
     agent: &str,
@@ -623,6 +778,7 @@ async fn checks_early(
     allow: bool,
     card: Option<&super::msg_post::PostState>,
     bump: bool,
+    secret: Option<&SecretOpener>,
 ) -> sqlx::Result<Option<Response>> {
     let g = |k: &str| o.get(k).and_then(Value::as_str).unwrap_or_default();
     let Some(path) = audit_path(g("path")) else {
@@ -637,7 +793,7 @@ async fn checks_early(
         if !allow {
             return Ok(None);
         }
-        return checks_body(pool, agent, operator, l, o, &path, card, bump).await;
+        return checks_body(pool, agent, operator, l, o, &path, card, bump, secret, &now).await;
     }
     let cid: Option<String> =
         sqlx::query_scalar("select id::text from api_connector where name = $1")
@@ -689,7 +845,18 @@ pub async fn checks_route(
         auth.operator.as_ref().map(|o| o.id.as_str()),
         parsed.as_ref(),
     ) {
-        match checks_early(pool, &me.id, op, o, st.allow, st.card.as_ref(), st.bump).await {
+        match checks_early(
+            pool,
+            &me.id,
+            op,
+            o,
+            st.allow,
+            st.card.as_ref(),
+            st.bump,
+            st.secret.as_ref(),
+        )
+        .await
+        {
             Ok(Some(r)) => return r,
             Ok(None) => {}
             Err(e) => return crate::directory::internal(e),
@@ -698,12 +865,14 @@ pub async fn checks_route(
     super::msg_post::to_ts(st.up.clone(), peer, parts, bytes).await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn routes(
     up: Upstream,
     deny: Option<sqlx::PgPool>,
     allow: bool,
     card: Option<super::msg_post::PostState>,
     bump: bool,
+    secret: Option<SecretOpener>,
     auth: crate::auth::AuthPools,
     cors: Arc<crate::cors::Cors>,
 ) -> crate::route_table::Routes<()> {
@@ -728,6 +897,7 @@ pub fn routes(
             allow,
             bump: bump && allow && card.is_some(),
             card: card.filter(|_| allow),
+            secret: secret.filter(|_| allow),
         })),
         http: t.http,
         sockets: t.sockets,
@@ -757,6 +927,15 @@ mod tests {
         let mut n = l.clone();
         n.ended = true;
         assert!(!lease_ok(Some(&n), "a", "o"));
+    }
+
+    #[test]
+    fn access_path_like_ts() {
+        assert_eq!(access_path("/x?api_key=1").as_deref(), Some("/x"));
+        assert_eq!(access_path(&"a".repeat(300)).unwrap().len(), 200);
+        assert_eq!(access_path(&"가".repeat(300)).unwrap().chars().count(), 200);
+        let p = format!("{}{}", "a".repeat(199), "😀");
+        assert_eq!(access_path(&p), None);
     }
 
     #[test]

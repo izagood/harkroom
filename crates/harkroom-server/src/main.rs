@@ -1834,6 +1834,40 @@ async fn main() {
         }
         _ => false,
     };
+    // S5.4 — `POST /agent/api-checks` 의 비밀을 여는 연결 허락. 본체가 켜져 있고 [`API_CHECKS_SECRET_PRIVILEGES`] 가 다 있고
+    // 키가 DB 확인값과 맞을 때만. 키가 없거나 어긋나면 그 갈래는 TS 몫(`no_secret`·409 `secret_key_mismatch`).
+    let api_checks_secret = match (&api_checks_deny, api_checks_allow) {
+        (Some(w), true) => {
+            use harkroom_server::core::api_checks as t;
+            match write::missing_in(w, t::API_CHECKS_SECRET_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => match t::load_secret_opener(w).await {
+                    Ok(k) => {
+                        if k.is_none() {
+                            eprintln!("front: api checks secret off — no matching secret key");
+                        }
+                        k
+                    }
+                    Err(e) => {
+                        eprintln!("front: api checks secret off — {e}");
+                        None
+                    }
+                },
+                Ok(m) => {
+                    eprintln!("front: api checks secret off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: api checks secret off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 — `POST /agent/merge-closed`. 쓰기 풀에 [`MERGE_CLOSED_PRIVILEGES`] 가 다 있을 때만.
     let merge_closed_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -4133,6 +4167,7 @@ async fn main() {
                         implicit_ok,
                     }),
                 api_checks_bump,
+                api_checks_secret,
                 auth.clone(),
                 state.cors.clone(),
             );
