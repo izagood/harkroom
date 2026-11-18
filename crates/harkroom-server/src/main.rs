@@ -1968,6 +1968,33 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 — 에이전트 고치기(PATCH) 성공 길(설정·스위치 칸만). 쓰기 풀에 그 권한이 다 있을 때만 — 아니면 TS.
+    let agent_patch_write = match &core_mode {
+        harkroom_server::core::CoreMode::Rust => match &state.write {
+            Some(w) => match write::missing_in(
+                w,
+                harkroom_server::core::agent_create::AGENT_PATCH_PRIVILEGES,
+                &[],
+            )
+            .await
+            {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: agent patch core write off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: agent patch core write off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            },
+            None => None,
+        },
+        _ => None,
+    };
     // S5.4 — 에이전트 만들기 성공 길. 쓰기 풀에 그 권한이 다 있을 때만 — 아니면 판정만 Rust, 생성은 TS.
     let agent_create_write = match &core_mode {
         harkroom_server::core::CoreMode::Rust => match &state.write {
@@ -4023,6 +4050,7 @@ async fn main() {
                     pool: state.pool.clone(),
                     up: state.up.clone(),
                     write: agent_create_write.clone(),
+                    patch_write: agent_patch_write.clone(),
                     trust: state.trust.clone(),
                 },
                 auth.clone(),

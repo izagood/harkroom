@@ -59,11 +59,102 @@ pub const AGENT_CREATE_PRIVILEGES: &[(&str, &str)] = &[
     ("audit_log.detail", "INSERT"),
 ];
 
+/// `PATCH /accounts/agents/{id}` 의 Rust 성공 길(설정·스위치 칸만)이 쓰기 풀에 바라는 권한.
+/// 없으면 `main.rs` 가 `patch_write` 를 비워 성공 길은 TS 로 넘긴다(오늘과 같다).
+pub const AGENT_PATCH_PRIVILEGES: &[(&str, &str)] = &[
+    ("account.id", "SELECT"),
+    ("account.display_name", "UPDATE"),
+    // `upsertConfig` — insert 칸 전부 + on conflict update 칸 전부.
+    ("agent_config.account_id", "INSERT"),
+    ("agent_config.instructions", "INSERT"),
+    ("agent_config.harness", "INSERT"),
+    ("agent_config.model", "INSERT"),
+    ("agent_config.effort", "INSERT"),
+    ("agent_config.working_dir", "INSERT"),
+    ("agent_config.mention_permission", "INSERT"),
+    ("agent_config.owner_account_id", "INSERT"),
+    ("agent_config.invoke_scope", "INSERT"),
+    ("agent_config.credential_scope", "INSERT"),
+    ("agent_config.instructions", "UPDATE"),
+    ("agent_config.harness", "UPDATE"),
+    ("agent_config.model", "UPDATE"),
+    ("agent_config.effort", "UPDATE"),
+    ("agent_config.working_dir", "UPDATE"),
+    ("agent_config.mention_permission", "UPDATE"),
+    ("agent_config.owner_account_id", "UPDATE"),
+    ("agent_config.invoke_scope", "UPDATE"),
+    ("agent_config.credential_scope", "UPDATE"),
+    ("agent_config.updated_at", "UPDATE"),
+    // `setTrustSiblings`·`setRequiresMacos`·`setChromeEnabled`·`setUserDecide` upsert.
+    ("agent_config.trust_siblings", "INSERT"),
+    ("agent_config.trust_siblings", "UPDATE"),
+    ("agent_config.requires_macos", "INSERT"),
+    ("agent_config.requires_macos", "UPDATE"),
+    ("agent_config.chrome_enabled", "INSERT"),
+    ("agent_config.chrome_enabled", "UPDATE"),
+    ("agent_config.user_decide", "INSERT"),
+    ("agent_config.user_decide", "UPDATE"),
+    // `getAgent` 뷰(`operator_stop::agent_view`) — before·after.
+    ("account", "SELECT"),
+    ("agent_config", "SELECT"),
+    ("agent_runner_version", "SELECT"),
+    ("agent_assignment", "SELECT"),
+    ("agent_invoker", "SELECT"),
+    ("agent_owner_delegate", "SELECT"),
+    ("agent_mcp_server", "SELECT"),
+    // `validateMcpServers`·`setAgentMcpServers`.
+    ("mcp_server.name", "SELECT"),
+    ("mcp_server.credential_kind", "SELECT"),
+    ("agent_mcp_server", "DELETE"),
+    ("agent_mcp_server.agent_id", "INSERT"),
+    ("agent_mcp_server.name", "INSERT"),
+    // `suspendSecretGrants(…, 'definition_changed')` + 이미 정지된 grant 확인.
+    ("secret_grant.agent_id", "SELECT"),
+    ("secret_grant.suspended_at", "SELECT"),
+    ("secret_grant.suspended_at", "UPDATE"),
+    ("secret_grant.suspend_reason", "UPDATE"),
+    ("audit_log.action", "INSERT"),
+    ("audit_log.actor_id", "INSERT"),
+    ("audit_log.actor_handle", "INSERT"),
+    ("audit_log.target", "INSERT"),
+    ("audit_log.ip", "INSERT"),
+    ("audit_log.detail", "INSERT"),
+];
+
+/// TS `definitionChanged` — 비밀 grant 를 세우는 정의 칸(순서 같다). MCP 목록은 이름순으로 이어 붙여 비교한다.
+fn definition_changed(before: &Value, after: &Value) -> Vec<&'static str> {
+    let mcp = |v: &Value| {
+        let mut l: Vec<String> = v
+            .get("mcpServers")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .map(|x| x.as_str().unwrap_or_default().to_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        l.sort();
+        l.join("\n")
+    };
+    let mut out = Vec::new();
+    for k in ["instructions", "harness", "ownerAccountId", "workingDir"] {
+        if before.get(k) != after.get(k) {
+            out.push(k);
+        }
+    }
+    if mcp(before) != mcp(after) {
+        out.push("mcpServers");
+    }
+    out
+}
+
 pub struct AgentCreateState {
     pub pool: PgPool,
     pub up: Upstream,
     /// 권한이 다 있을 때만 — 그러면 생성까지 Rust 가 한다.
     pub write: Option<PgPool>,
+    /// [`AGENT_PATCH_PRIVILEGES`] 가 다 있을 때만 — 그러면 PATCH 성공 길(설정·스위치 칸만)을 Rust 가 한다.
+    pub patch_write: Option<PgPool>,
     pub trust: Arc<crate::trust_proxy::TrustProxy>,
 }
 
@@ -360,6 +451,346 @@ fn check_patch(m: &Map<String, Value>) -> Result<(), &'static str> {
 
 const ADMIN_ONLY_FIELDS: &[&str] = &["ownerAccountId", "disabled", "mentionPermission"];
 
+/// 이 칸이 하나라도 있으면 PATCH 성공 길은 TS 로 넘긴다 — 이름 바꾸기(409·감사·WS 이벤트), 끄기(PAT 회수·
+/// 감사·`agent_disabled` grant 정지)가 아직 Rust 에 없다. 스코프·MCP 판정, 정의 변경 grant 정지는 Rust 가 한다.
+const PATCH_TS_ONLY_FIELDS: &[&str] = &["handle", "disabled"];
+
+/// TS `AUDITED_FIELDS` — 순서·종류가 같다.
+const AUDITED_FIELDS: &[(&str, bool)] = &[
+    ("mentionPermission", false),
+    ("workingDir", false),
+    ("ownerAccountId", false),
+    ("harness", false),
+    ("instructions", true),
+    ("trustSiblings", false),
+    ("chromeEnabled", false),
+    ("userDecide", false),
+];
+
+/// TS `diffAudited(before, after)` — 값이 바뀐 감사 칸만. `changed` 칸은 원문을 남기지 않는다.
+fn diff_audited(before: &Value, after: &Value) -> Map<String, Value> {
+    let mut out = Map::new();
+    for (k, changed_only) in AUDITED_FIELDS {
+        let prev = before.get(*k);
+        let next = after.get(*k);
+        if prev == next {
+            continue;
+        }
+        let v = if *changed_only {
+            serde_json::json!({ "changed": true })
+        } else {
+            let mut o = Map::new();
+            if let Some(p) = prev {
+                o.insert("before".into(), p.clone());
+            }
+            if let Some(n) = next {
+                o.insert("after".into(), n.clone());
+            }
+            Value::Object(o)
+        };
+        out.insert((*k).to_owned(), v);
+    }
+    out
+}
+
+fn json_200(body: String) -> Response {
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "application/json; charset=utf-8",
+        )],
+        body,
+    )
+        .into_response()
+}
+
+/// PATCH 성공 길 — 설정·스위치 칸만(`PATCH_TS_ONLY_FIELDS` 가 없을 때). TS 핸들러의 순서를 그대로 따른다:
+/// 비admin 소유 판정 → `getAgent`(404) → 스위치 upsert → `updateAgent`(displayName·`upsertConfig`) → `diffAudited` 감사.
+async fn patch_native(
+    st: &AgentCreateState,
+    write: &PgPool,
+    parts: &axum::http::request::Parts,
+    me: &crate::auth::Account,
+    id: &str,
+    m: &Map<String, Value>,
+) -> Response {
+    use super::relay_routes::{Verdict, check_owner_or_admin};
+    if !me.is_admin {
+        match check_owner_or_admin(&st.pool, me, id).await {
+            Ok(Verdict::Owner | Verdict::Admin) => {}
+            Ok(Verdict::Refused(s, c, msg)) => return json_err(s, c, msg),
+            Err(e) => return crate::directory::internal(e),
+        }
+    }
+    let not_found = || json_err(StatusCode::NOT_FOUND, "not_found", "no such agent");
+    let before = match super::operator_stop::agent_view(write, id).await {
+        Ok(Some((v, _))) => v,
+        Ok(None) => return not_found(),
+        Err(e) => return crate::directory::internal(e),
+    };
+    let bv: Value = serde_json::from_str(&before).unwrap_or(Value::Null);
+    let bs = |k: &str| {
+        bv.get(k)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let ps = |k: &str| m.get(k).and_then(Value::as_str).map(str::to_owned);
+    if m.contains_key("invokeScope") || m.contains_key("credentialScope") {
+        let invoke = ps("invokeScope").unwrap_or_else(|| bs("invokeScope"));
+        let cred = ps("credentialScope").unwrap_or_else(|| bs("credentialScope"));
+        if let Some((code, msg)) = validate_scope_change(&bs("invokeScope"), &invoke, &cred) {
+            return json_err(StatusCode::BAD_REQUEST, code, msg);
+        }
+    }
+    let names: Option<Vec<String>> = m.get("mcpServers").and_then(Value::as_array).map(|a| {
+        a.iter()
+            .filter_map(|v| v.as_str().map(str::to_owned))
+            .collect()
+    });
+    if names.is_some() || m.contains_key("credentialScope") {
+        let list = names.clone().unwrap_or_else(|| {
+            bv.get("mcpServers")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default()
+        });
+        let cred = ps("credentialScope").unwrap_or_else(|| bs("credentialScope"));
+        if !list.is_empty() {
+            let rows: Vec<(String, String)> = match sqlx::query_as(
+                "select name, credential_kind from mcp_server where name = any($1::text[])",
+            )
+            .bind(&list)
+            .fetch_all(write)
+            .await
+            {
+                Ok(r) => r,
+                Err(e) => return crate::directory::internal(e),
+            };
+            let unknown: Vec<&str> = list
+                .iter()
+                .filter(|n| !rows.iter().any(|(r, _)| r == *n))
+                .map(String::as_str)
+                .collect();
+            if !unknown.is_empty() {
+                return json_err(
+                    StatusCode::BAD_REQUEST,
+                    "unknown_mcp_server",
+                    &format!("레지스트리에 없는 MCP 이름: {}", unknown.join(", ")),
+                );
+            }
+            if cred != "personal" && rows.iter().any(|(_, k)| k == "personal") {
+                return json_err(
+                    StatusCode::BAD_REQUEST,
+                    "scope_invariant",
+                    "personal 자격증명의 MCP 를 붙이려면 credentialScope 가 personal 이어야 한다",
+                );
+            }
+        }
+    }
+    let r: Result<(), sqlx::Error> = async {
+        if let Some(names) = &names {
+            sqlx::query("delete from agent_mcp_server where agent_id = $1::uuid and not (name = any($2::text[]))")
+                .bind(id)
+                .bind(names)
+                .execute(write)
+                .await?;
+            for n in names {
+                sqlx::query("insert into agent_mcp_server (agent_id, name) values ($1::uuid, $2) on conflict do nothing")
+                    .bind(id)
+                    .bind(n)
+                    .execute(write)
+                    .await?;
+            }
+        }
+        for (key, sql) in [
+            (
+                "trustSiblings",
+                "insert into agent_config (account_id, trust_siblings) values ($1::uuid, $2) \
+                 on conflict (account_id) do update set trust_siblings = excluded.trust_siblings, updated_at = now()",
+            ),
+            (
+                "requiresMacos",
+                "insert into agent_config (account_id, requires_macos) values ($1::uuid, $2) \
+                 on conflict (account_id) do update set requires_macos = excluded.requires_macos, updated_at = now()",
+            ),
+            (
+                "chromeEnabled",
+                "insert into agent_config (account_id, chrome_enabled) values ($1::uuid, $2) \
+                 on conflict (account_id) do update set chrome_enabled = excluded.chrome_enabled, updated_at = now()",
+            ),
+            (
+                "userDecide",
+                "insert into agent_config (account_id, user_decide) values ($1::uuid, $2) \
+                 on conflict (account_id) do update set user_decide = excluded.user_decide, updated_at = now()",
+            ),
+        ] {
+            if let Some(on) = m.get(key).and_then(Value::as_bool) {
+                sqlx::query(sql).bind(id).bind(on).execute(write).await?;
+            }
+        }
+        Ok(())
+    }
+    .await;
+    if let Err(e) = r {
+        return crate::directory::internal(e);
+    }
+    // `updateAgent` — 다시 본다(사이에 사라졌으면 404).
+    match super::operator_stop::agent_view(write, id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return not_found(),
+        Err(e) => return crate::directory::internal(e),
+    }
+    if let Some(d) = m.get("displayName").and_then(Value::as_str)
+        && let Err(e) = sqlx::query("update account set display_name = $2 where id = $1::uuid")
+            .bind(id)
+            .bind(d)
+            .execute(write)
+            .await
+    {
+        return crate::directory::internal(e);
+    }
+    if let Err(e) = upsert_config(write, id, m).await {
+        return crate::directory::internal(e);
+    }
+    let updated = match super::operator_stop::agent_view(write, id).await {
+        Ok(Some((v, _))) => v,
+        Ok(None) => return not_found(),
+        Err(e) => return crate::directory::internal(e),
+    };
+    let b: Value = serde_json::from_str(&before).unwrap_or(Value::Null);
+    let a: Value = serde_json::from_str(&updated).unwrap_or(Value::Null);
+    let ip = crate::writes_settings::ip_of(parts, &st.trust);
+    let defn = definition_changed(&b, &a);
+    if !defn.is_empty() {
+        let n = match sqlx::query(
+            "update secret_grant set suspended_at = now(), suspend_reason = $2 where agent_id = $1::uuid and suspended_at is null",
+        )
+        .bind(id)
+        .bind("definition_changed")
+        .execute(write)
+        .await
+        {
+            Ok(r) => r.rows_affected(),
+            Err(e) => return crate::directory::internal(e),
+        };
+        let any = if n > 0 {
+            true
+        } else {
+            match sqlx::query_scalar::<_, i32>(
+                "select 1 from secret_grant where agent_id = $1::uuid and suspended_at is not null limit 1",
+            )
+            .bind(id)
+            .fetch_optional(write)
+            .await
+            {
+                Ok(r) => r.is_some(),
+                Err(e) => return crate::directory::internal(e),
+            }
+        };
+        if any {
+            crate::write::record_audit(
+                write,
+                crate::write::AuditEntry {
+                    action: "secret.grant.suspended",
+                    actor_id: Some(&me.id),
+                    actor_handle: Some(&me.handle),
+                    target: Some(id),
+                    ip: ip.as_deref(),
+                    detail: serde_json::json!({ "reason": "definition_changed", "fields": defn, "suspended": n }),
+                },
+            )
+            .await;
+        }
+    }
+    let changes = diff_audited(&b, &a);
+    if !changes.is_empty() {
+        crate::write::record_audit(
+            write,
+            crate::write::AuditEntry {
+                action: "agent.updated",
+                actor_id: Some(&me.id),
+                actor_handle: Some(&me.handle),
+                target: Some(id),
+                ip: ip.as_deref(),
+                detail: Value::Object(changes),
+            },
+        )
+        .await;
+    }
+    json_200(updated)
+}
+
+/// TS `validateScopeChange(before, after)`.
+fn validate_scope_change(
+    before_invoke: &str,
+    invoke: &str,
+    cred: &str,
+) -> Option<(&'static str, &'static str)> {
+    if cred == "personal" && invoke != "owner" {
+        return Some((
+            "scope_invariant",
+            "개인 자격증명(personal)을 쥔 에이전트는 소유자만 부를 수 있어야 한다(invokeScope=owner)",
+        ));
+    }
+    if before_invoke == "owner" && invoke != "owner" {
+        return Some((
+            "scope_widening",
+            "소유자 전용이던 에이전트는 넓힐 수 없다 — 넓히려면 새 에이전트를 만든다",
+        ));
+    }
+    None
+}
+
+/// TS `upsertConfig` — 키 부재는 손대지 않음, `null` 은 기본값으로 되돌리기.
+async fn upsert_config(pool: &PgPool, id: &str, m: &Map<String, Value>) -> Result<(), sqlx::Error> {
+    let has = |k: &str| m.contains_key(k);
+    let s = |k: &str| m.get(k).and_then(Value::as_str).map(str::to_owned);
+    sqlx::query(
+        "insert into agent_config (account_id, instructions, harness, model, effort, working_dir, mention_permission, owner_account_id, \
+                                   invoke_scope, credential_scope) \
+         values ($1::uuid, coalesce($3, ''), coalesce($5, 'claude-code'), $6, $8, $10, coalesce($13, 'auto'), $15::uuid, \
+                 coalesce($17, 'community'), coalesce($19, 'none')) \
+         on conflict (account_id) do update set \
+           instructions       = case when $2::bool  then excluded.instructions       else agent_config.instructions       end, \
+           harness            = case when $4::bool  then excluded.harness            else agent_config.harness            end, \
+           model              = case when $7::bool  then excluded.model              else agent_config.model              end, \
+           effort             = case when $9::bool  then excluded.effort             else agent_config.effort             end, \
+           working_dir        = case when $11::bool then excluded.working_dir        else agent_config.working_dir        end, \
+           mention_permission = case when $12::bool then excluded.mention_permission else agent_config.mention_permission end, \
+           owner_account_id   = case when $14::bool then excluded.owner_account_id   else agent_config.owner_account_id   end, \
+           invoke_scope       = case when $16::bool then excluded.invoke_scope       else agent_config.invoke_scope       end, \
+           credential_scope   = case when $18::bool then excluded.credential_scope   else agent_config.credential_scope   end, \
+           updated_at = now()",
+    )
+    .bind(id)
+    .bind(has("instructions"))
+    .bind(s("instructions"))
+    .bind(has("harness"))
+    .bind(s("harness"))
+    .bind(s("model"))
+    .bind(has("model"))
+    .bind(s("effort"))
+    .bind(has("effort"))
+    .bind(s("workingDir"))
+    .bind(has("workingDir"))
+    .bind(has("mentionPermission"))
+    .bind(s("mentionPermission"))
+    .bind(has("ownerAccountId"))
+    .bind(s("ownerAccountId"))
+    .bind(has("invokeScope"))
+    .bind(s("invokeScope"))
+    .bind(has("credentialScope"))
+    .bind(s("credentialScope"))
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 /// `PATCH /accounts/agents/{id}` 앞단 — 경로·본문 zod(400)·Chrome 켜기 403·admin 전용 칸 403 을 Rust 가 판정하고
 /// 비admin 의 `checkOwnerOrAdmin` 거절(404·403)도 Rust 가 한다. 나머지(쓰기·감사)는 TS 로 넘긴다. 여기까지는 부작용이 없다.
 pub async fn patch(
@@ -407,6 +838,11 @@ pub async fn patch(
                 "forbidden",
                 "admin required for this field",
             );
+        }
+        if let Some(w) = &st.patch_write
+            && !PATCH_TS_ONLY_FIELDS.iter().any(|f| m.contains_key(*f))
+        {
+            return patch_native(&st, w, &parts, &me, &id, &m).await;
         }
     }
     let req = Request::from_parts(parts, axum::body::Body::from(bytes));
@@ -487,6 +923,71 @@ mod tests {
         let nulls = json!({ "handle": "bot", "displayName": "B", "model": null, "effort": null,
             "workingDir": null, "ownerAccountId": null });
         assert_eq!(check_body(&m(nulls)), Ok(()));
+    }
+
+    #[test]
+    fn patch_privileges_cover_view_and_audit() {
+        for p in super::super::agent_config_read::AGENT_CONFIG_PRIVILEGES {
+            if p.1 == "SELECT" {
+                assert!(AGENT_PATCH_PRIVILEGES.contains(p), "{p:?}");
+            }
+        }
+        for c in [
+            "trust_siblings",
+            "requires_macos",
+            "chrome_enabled",
+            "user_decide",
+        ] {
+            let col = format!("agent_config.{c}");
+            for verb in ["INSERT", "UPDATE"] {
+                assert!(
+                    AGENT_PATCH_PRIVILEGES
+                        .iter()
+                        .any(|(t, v)| *t == col && *v == verb),
+                    "{col} {verb}"
+                );
+            }
+        }
+        assert!(AGENT_PATCH_PRIVILEGES.contains(&("account.display_name", "UPDATE")));
+        assert!(AGENT_PATCH_PRIVILEGES.contains(&("audit_log.detail", "INSERT")));
+    }
+
+    #[test]
+    fn diff_audited_matches_ts() {
+        let before = json!({ "mentionPermission": "auto", "trustSiblings": true, "chromeEnabled": false,
+            "userDecide": true, "instructions": "a", "harness": "codex", "workingDir": null, "ownerAccountId": null });
+        let mut after = before.clone();
+        assert!(diff_audited(&before, &after).is_empty());
+        after["chromeEnabled"] = json!(true);
+        after["instructions"] = json!("b");
+        let d = diff_audited(&before, &after);
+        assert_eq!(
+            Value::Object(d),
+            json!({ "instructions": { "changed": true }, "chromeEnabled": { "before": false, "after": true } })
+        );
+    }
+
+    #[test]
+    fn patch_ts_only_fields_cover_admin_only_and_rename() {
+        assert_eq!(
+            validate_scope_change("owner", "list", "none").unwrap().0,
+            "scope_widening"
+        );
+        assert_eq!(
+            validate_scope_change("list", "list", "personal").unwrap().0,
+            "scope_invariant"
+        );
+        assert!(validate_scope_change("owner", "owner", "personal").is_none());
+        assert_eq!(
+            definition_changed(
+                &json!({ "harness": "a", "mcpServers": ["x", "y"] }),
+                &json!({ "harness": "b", "mcpServers": ["y", "x"] })
+            ),
+            vec!["harness"]
+        );
+        for f in ["handle", "disabled"] {
+            assert!(PATCH_TS_ONLY_FIELDS.contains(&f), "{f}");
+        }
     }
 
     #[test]
