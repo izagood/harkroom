@@ -5,9 +5,8 @@
 //! - **비밀은 고르지 않는다.** `ingress_token_hash`·`ingress_secret_enc`(서명 비밀 봉투)는 문장에 없다 — 답 칸은 TS `COLS`·
 //!   `LAST_RUN_JOIN`·`RUN_COLS` 그대로다. 수신이 켜졌는지는 `ingressEnabledAt` 시각만 싣는다.
 //! - **읽기만 한다.** 읽기 풀만 쓰므로 새 GRANT 가 없다.
-//! - `DELETE /automations/:id` 는 TS 에 남긴다: 지우면 그 자동화의 위임장을 끝내고(`mandate`·`mandate_line`) 그 위임을 단 열린
-//!   권한 카드의 meta 를 고쳐 `message.updated` 를 낸다(`endAutomationMandates` → `refreshMandateCards`). 카드 직렬화·청중까지
-//!   옮겨야 같은 일이 되므로 이 조각에서는 옮기지 않는다.
+//! - `DELETE /automations/:id` 는 [`super::automation_delete`] 가 맡는다(위임장 끝내기·카드 `message.updated` 는
+//!   [`super::perm_card`]).
 //! - 만들기·고치기·승인·돌리기·수신(봉투·서명)은 TS 에 남긴다.
 use crate::auth::RequireAccount;
 use crate::directory::{internal, json_err, json_ok};
