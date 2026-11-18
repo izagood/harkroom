@@ -2564,6 +2564,10 @@ async fn main() {
     };
     if let Some(w) = &ask_approve {
         eprintln!("front: permission approve core on");
+        // S5.4 — 머지 거절 카드의 [이번 한 번](fail-closed, 칸이 없으면 TS).
+        if harkroom_server::core::decide_merge_once::check_merge_once_core(w).await {
+            eprintln!("front: permission merge once core on");
+        }
         // S5.3 C1 — 있는 위임장에 줄 쓰기 칸(fail-closed, 없으면 위임장 있는 승인은 TS).
         if harkroom_server::core::decide_approve::check_mandate_core(w).await {
             eprintln!("front: permission mandate core on");

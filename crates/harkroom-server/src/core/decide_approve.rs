@@ -185,6 +185,8 @@ pub struct ApproveArgs<'a> {
     pub option: &'a str,
     /// 카드 길이면 카드 meta 에 1회 머지 값(`permissionRequest.once`)이 있는가 — TS `onceFromCard`. 있으면 TS(`not_once` 갈래).
     pub has_once: bool,
+    /// 카드의 1회 머지 값(TS `onceFromCard`, gh 계정은 비움 — 오퍼레이터가 고른다). 머지 [이번 한 번]만 쓴다.
+    pub once: Option<&'a super::decide_merge_once::Once>,
     pub bundle_message_id: Option<&'a str>,
 }
 
@@ -192,6 +194,10 @@ pub struct ApproveArgs<'a> {
 pub enum ApproveOutcome {
     /// 쓰고 커밋했다. 카드 답은 호출자 몫 — `answer_candidates` 중 카드에 있는 첫 것(TS `answerOptionId`).
     Granted {
+        /// TS 결과 `status` — `granted` 또는 머지 1회의 `approved_once`.
+        status: &'static str,
+        /// 머지 1회 승인의 기한(TS `approvalExpiresAt`).
+        approval_expires_at: Option<String>,
         card_message_id: Option<String>,
         grant_expires_at: Option<String>,
         grant_mode: Option<&'static str>,
@@ -343,6 +349,10 @@ pub async fn approve_write(
     if locked.expired {
         // TS 는 이 자리에서 카드를 만료로 닫는다 — 그 일은 TS 가 한다(쓰기 전).
         return Ok(ApproveOutcome::HandToTs);
+    }
+    // S5.4 — 머지 거절 카드의 [이번 한 번](rust_takes 가 거절 기록 있음·위임장 없음·카드 once 있음만 들인다).
+    if decision == Decision::ApproveOnce && locked.kind == "merge" {
+        return merge_once_write(conn, locked, args).await;
     }
     // TS `decidePermissionRequest`: command 가 아닌 카드의 `approve_once` 는 머지 거절 카드 + once 일 때만 — 그 밖은 쓰기 없이 409.
     if decision == Decision::ApproveOnce && locked.kind != "command" {
@@ -599,10 +609,170 @@ pub async fn approve_write(
         .await?;
     }
     Ok(ApproveOutcome::Granted {
+        status: "granted",
+        approval_expires_at: None,
         card_message_id: locked.card_message_id.clone(),
         grant_expires_at: expires_iso,
         grant_mode,
         answer_candidates: candidates,
+    })
+}
+
+/// 머지 거절 카드의 [이번 한 번] — TS `insertApprovalFromDenial` + `decidePermissionRequest` 의 그 갈래. 같은 tx, 감사도 tx 안.
+/// 위임장·소유자 아님·once 값 없음·스위치 꺼짐은 쓰기 전에 TS.
+async fn merge_once_write(
+    conn: &mut PgConnection,
+    locked: &LockedRequest,
+    args: ApproveArgs<'_>,
+) -> sqlx::Result<ApproveOutcome> {
+    use super::decide_merge_once as m;
+    let (Some(once), Some(denial_id), None, true) = (
+        args.once,
+        locked.denial_id.as_deref(),
+        locked.mandate_id.as_deref(),
+        m::merge_once_on(),
+    ) else {
+        return Ok(ApproveOutcome::HandToTs);
+    };
+    let (now, now_iso, expires, expires_iso): (String, String, String, String) =
+        sqlx::query_as(TIMES)
+            .bind(m::APPROVAL_TTL)
+            .fetch_one(&mut *conn)
+            .await?;
+    type DenialRow = (
+        String,
+        String,
+        String,
+        i64,
+        String,
+        Option<String>,
+        Option<String>,
+        bool,
+        String,
+        Vec<String>,
+        bool,
+    );
+    let row: Option<DenialRow> = sqlx::query_as(m::READ_DENIAL_LOCKED_SQL)
+        .bind(denial_id)
+        .bind(&now)
+        .fetch_optional(&mut *conn)
+        .await?;
+    let view = row.as_ref().map(|r| m::DenialView {
+        agent_id: &r.1,
+        expired: r.7,
+        obsolete: r.10,
+        number: r.3,
+        head_sha: &r.4,
+        reason: &r.8,
+        failed_checks: &r.9,
+    });
+    let ci_override = match m::check_once(args.agent_id, once, view.as_ref()) {
+        m::OnceCheck::Go { ci_override } => ci_override,
+        m::OnceCheck::Refused {
+            status,
+            code,
+            message,
+        } => return Ok(refused(status, code, message)),
+        m::OnceCheck::HandToTs => return Ok(ApproveOutcome::HandToTs),
+    };
+    let Some((d_id, d_agent, scope, number, head_sha, d_channel, d_root, _, reason, failed, _)) =
+        row
+    else {
+        return Ok(not_found());
+    };
+    let used: Option<String> = sqlx::query_scalar(m::USE_DENIAL_SQL)
+        .bind(&d_id)
+        .bind(&now)
+        .bind(args.actor_id)
+        .fetch_optional(&mut *conn)
+        .await?;
+    if used.is_none() {
+        return Ok(refused(409, "denial_used", m::DENIAL_USED_MESSAGE));
+    }
+    let checks: Vec<String> = if ci_override { failed } else { Vec::new() };
+    let approval_id: String = sqlx::query_scalar(m::INSERT_APPROVAL_SQL)
+        .bind(&d_id)
+        .bind(&d_agent)
+        .bind(&scope)
+        .bind(number)
+        .bind(&head_sha)
+        .bind(once.gh_user.as_deref())
+        .bind(once.relax_checks)
+        .bind(d_channel.as_deref())
+        .bind(d_root.as_deref())
+        .bind(args.actor_id)
+        .bind(&now)
+        .bind(&expires)
+        .bind(ci_override)
+        .bind(&checks)
+        .fetch_one(&mut *conn)
+        .await?;
+    let (target, channel_id, thread_root_id): (String, Option<String>, Option<String>) =
+        sqlx::query_as(READ_LOCKED_TARGET)
+            .bind(args.request_id)
+            .fetch_one(&mut *conn)
+            .await?;
+    sqlx::query(m::MERGE_ONCE_UPDATE_REQUEST)
+        .bind(args.request_id)
+        .bind(args.actor_id)
+        .bind(&now)
+        .execute(&mut *conn)
+        .await?;
+    if let Some(card) = locked.card_message_id.as_deref() {
+        let mut patch = json!({
+            "status": "approved_once", "decidedAt": now_iso, "decidedBy": args.actor_id,
+            "approvedOnce": { "ghUser": once.gh_user, "relaxChecks": once.relax_checks, "expiresAt": expires_iso },
+        });
+        if let Some(b) = args.bundle_message_id {
+            patch["decidedVia"] = json!({ "kind": "bundle", "bundleMessageId": b });
+        }
+        patch["decidedByOwner"] = Value::Bool(true);
+        sqlx::query(APPROVE_UPDATE_CARD)
+            .bind(card)
+            .bind(patch.to_string())
+            .execute(&mut *conn)
+            .await?;
+    }
+    let mut once_detail = json!({
+        "agentId": args.agent_id, "requestId": args.request_id, "approvalId": approval_id,
+        "denialId": denial_id, "reason": reason, "number": number, "headSha": head_sha,
+        "ghUser": once.gh_user,
+    });
+    if once.gh_user.is_none() {
+        once_detail["ghUserChosenBy"] = json!("operator");
+    }
+    once_detail["relaxChecks"] = json!(once.relax_checks);
+    once_detail["expiresAt"] = json!(expires_iso);
+    sqlx::query(m::MERGE_ONCE_AUDIT)
+        .bind(args.actor_id)
+        .bind(&scope)
+        .bind(once_detail.to_string())
+        .execute(&mut *conn)
+        .await?;
+    let detail = audit_detail(&AuditDetail {
+        request_id: args.request_id,
+        kind: locked.kind.as_str(),
+        target: target.as_str(),
+        channel_id: channel_id.as_deref(),
+        as_owner: true,
+        thread_root_id: thread_root_id.as_deref(),
+        grant_expires_at: None,
+        grant_mode: None,
+        bundle_message_id: args.bundle_message_id,
+    });
+    sqlx::query(APPROVE_AUDIT)
+        .bind(args.actor_id)
+        .bind(args.agent_id)
+        .bind(detail.to_string())
+        .execute(&mut *conn)
+        .await?;
+    Ok(ApproveOutcome::Granted {
+        status: "approved_once",
+        approval_expires_at: Some(expires_iso),
+        card_message_id: locked.card_message_id.clone(),
+        grant_expires_at: None,
+        grant_mode: None,
+        answer_candidates: m::ANSWER_MERGE_ONCE,
     })
 }
 
@@ -744,9 +914,56 @@ mod tests {
                 kind: "merge",
                 ..base
             },
+            // 머지 1회라도 위임장이 있거나 거절 기록이 없거나 거울·글 승인이면 TS.
+            Shape {
+                kind: "merge",
+                has_once: true,
+                has_denial: true,
+                has_mandate: true,
+                ..base
+            },
+            Shape {
+                kind: "merge",
+                has_once: true,
+                ..base
+            },
+            Shape {
+                kind: "merge",
+                has_once: true,
+                has_denial: true,
+                via_mirror: true,
+                ..base
+            },
+            Shape {
+                kind: "merge",
+                has_once: true,
+                has_denial: true,
+                via_chat: true,
+                ..base
+            },
+            Shape {
+                kind: "command",
+                has_once: true,
+                ..base
+            },
+            Shape {
+                option: "approve",
+                kind: "merge",
+                has_once: true,
+                has_denial: true,
+                ..base
+            },
         ] {
             assert_eq!(rust_takes(s), None, "{s:?}");
         }
+        // S5.4 — 머지 거절 카드의 [이번 한 번](once·거절 기록·위임장 없음)은 Rust.
+        let merge_once = Shape {
+            kind: "merge",
+            has_once: true,
+            has_denial: true,
+            ..base
+        };
+        assert_eq!(rust_takes(merge_once), Some(Decision::ApproveOnce));
     }
 
     #[test]

@@ -285,6 +285,7 @@ fn created(id: String, expires_at: String, mail: &str, token: String) -> Respons
         .into_response()
 }
 
+#[allow(clippy::result_large_err)]
 async fn read_body(req: Request) -> Result<(Parts, Body), Response> {
     let (parts, raw) = req.into_parts();
     let bytes = match to_bytes(raw, BODY_LIMIT).await {

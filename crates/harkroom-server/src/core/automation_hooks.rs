@@ -481,6 +481,7 @@ pub(crate) fn generic_vars(body: &Value) -> Option<serde_json::Map<String, Value
 }
 
 /// TS `enqueueRun`(webhook 갈래). None 이면 TS 로 넘긴다(디바운스 모으기 · JS 와 맞출 수 없는 값).
+#[allow(clippy::result_large_err)]
 async fn enqueue_generic(
     w: &PgPool,
     id: &str,
@@ -503,6 +504,7 @@ async fn enqueue_generic(
 }
 
 /// TS `enqueueRun`(디바운스 없는 갈래). `suffix` 가 없으면 `prefix:` + 새 uuid. 디바운스가 걸렸으면 `None`(TS 로).
+#[allow(clippy::result_large_err)]
 async fn enqueue_vars(
     w: &PgPool,
     id: &str,

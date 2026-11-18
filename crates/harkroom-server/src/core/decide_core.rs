@@ -551,10 +551,16 @@ pub struct Shape<'a> {
 /// - 승인은 `tool`→approve, `command`→approve_once·approve_hour 만. 소유자가 아닌 승인(asOwner=false)은 판정 뒤
 ///   [`after_verdict`] 가 TS 로 돌린다.
 pub fn rust_takes(s: Shape<'_>) -> Option<Decision> {
-    if s.has_once || s.via_chat || s.via_mirror {
+    if s.via_chat || s.via_mirror {
         return None;
     }
     let d = option_decision(s.option)?;
+    // S5.4 — `once` 는 머지 거절 카드의 [이번 한 번](거절 기록 있음·위임장 없음)만 Rust. 그 밖의 `once` 는 TS.
+    if s.has_once {
+        let merge_once =
+            d == Decision::ApproveOnce && s.kind == "merge" && s.has_denial && !s.has_mandate;
+        return merge_once.then_some(d);
+    }
     let ok = match (d, s.kind) {
         (Decision::Deny, _) => !s.has_mandate,
         // S5.3 C1 — tool 7일 승인은 위임장이 있어도 Rust(grant + 있는 위임장에 줄). 위임장 없는 `approve_mandate` 는 TS 처럼 grant 만.

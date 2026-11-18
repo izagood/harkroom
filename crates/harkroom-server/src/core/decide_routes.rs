@@ -424,6 +424,7 @@ pub async fn rest_approve(
         option,
         // REST 는 카드를 거치지 않는다(TS: `ref.cardMessageId` null → onceFromCard 안 부름).
         has_once: false,
+        once: None,
         bundle_message_id: None,
     };
     Taken::Done(match approve_then_answer(st, pool, args).await {
@@ -435,14 +436,20 @@ pub async fn rest_approve(
             message,
         }) => refusal(status, code, &message),
         Ok(ApproveOutcome::Granted {
+            status,
+            approval_expires_at,
             card_message_id,
             grant_expires_at,
             grant_mode,
             ..
         }) => {
             let mut body = json!({
-                "status": "granted", "grantExpiresAt": grant_expires_at, "cardMessageId": card_message_id,
+                "status": status, "grantExpiresAt": grant_expires_at,
             });
+            if let Some(a) = approval_expires_at {
+                body["approvalExpiresAt"] = json!(a);
+            }
+            body["cardMessageId"] = json!(card_message_id);
             if let Some(m) = grant_mode {
                 body["grantMode"] = json!(m);
             }
@@ -451,16 +458,35 @@ pub async fn rest_approve(
     })
 }
 
-async fn card_has_once(read: &PgPool, card: &str, option: &str) -> sqlx::Result<bool> {
+const CARD_META: &str = "select meta from message where id = $1::uuid";
+
+async fn card_has_once(
+    read: &PgPool,
+    card: &str,
+    option: &str,
+) -> sqlx::Result<(bool, Option<super::decide_merge_once::Once>)> {
     // TS 는 `approve_once` 일 때만 카드에서 1회 머지 값을 읽는다.
     if option != "approve_once" {
-        return Ok(false);
+        return Ok((false, None));
     }
-    Ok(sqlx::query_scalar::<_, bool>(CARD_HAS_ONCE)
+    let has = sqlx::query_scalar::<_, bool>(CARD_HAS_ONCE)
         .bind(card)
         .fetch_optional(read)
         .await?
-        .unwrap_or(false))
+        .unwrap_or(false);
+    if !has {
+        return Ok((false, None));
+    }
+    // 값이 정수가 아니면(드문 꼴) once 없이 — 머지 갈래는 쓰기 전에 TS 로 넘긴다.
+    let meta: Option<serde_json::Value> = sqlx::query_scalar(CARD_META)
+        .bind(card)
+        .fetch_optional(read)
+        .await?;
+    Ok((
+        true,
+        meta.as_ref()
+            .and_then(super::decide_merge_once::once_from_card),
+    ))
 }
 
 /// 2'. ask-answer 의 권한 카드 승인. `gate` 뒤에 부른다.
@@ -482,7 +508,7 @@ pub async fn answer_card_approve(
         Ok(None) => return Taken::Hand,
         Err(e) => return Taken::Done(internal(e)),
     };
-    let has_once = match card_has_once(&st.read, card, option).await {
+    let (has_once, once) = match card_has_once(&st.read, card, option).await {
         Ok(b) => b,
         Err(e) => return Taken::Done(internal(e)),
     };
@@ -492,6 +518,7 @@ pub async fn answer_card_approve(
         actor_id: &me.id,
         option,
         has_once,
+        once: once.as_ref(),
         bundle_message_id: None,
     };
     Taken::Done(match approve_then_answer(st, pool, args).await {
@@ -551,7 +578,7 @@ pub async fn answer_bundle_approve(
         Ok(None) => return Taken::Hand,
         Err(e) => return Taken::Done(internal(e)),
     };
-    let has_once = match card_has_once(&st.read, root, option).await {
+    let (has_once, once) = match card_has_once(&st.read, root, option).await {
         Ok(b) => b,
         Err(e) => return Taken::Done(internal(e)),
     };
@@ -561,6 +588,7 @@ pub async fn answer_bundle_approve(
         actor_id: &me.id,
         option,
         has_once,
+        once: once.as_ref(),
         bundle_message_id: Some(bundle),
     };
     Taken::Done(match approve_then_answer(st, pool, args).await {

@@ -183,6 +183,7 @@ async fn agent_owner(pool: &PgPool, id: &str) -> Result<Option<Option<String>>, 
 }
 
 /// `checkMergeGrant` — 맞으면 정규화한 scope.
+#[allow(clippy::result_large_err)]
 async fn check_merge(
     pool: &PgPool,
     me: &Account,
@@ -237,6 +238,7 @@ async fn check_merge(
 
 /// `secretCreateOwner`.
 /// `cap` 은 문구 머리 — `tool.allow` 는 TS 가 `message.replace('secret.create', 'tool.allow')` 로 같은 문구를 쓴다.
+#[allow(clippy::result_large_err)]
 async fn check_secret_owner(
     pool: &PgPool,
     me: &Account,
@@ -292,6 +294,7 @@ fn expires_ms(s: &str) -> Option<i64> {
 
 /// `tool.allow` 판정 — TS 와 같은 순서: scope 꼴·규칙 정규형(400 `bad_scope`) → 사람 세션(403) → 소유자(`secretCreateOwner`)
 /// → 위험 경고면 만료 필수·30일 안 → 지난 만료(400).
+#[allow(clippy::result_large_err)]
 async fn check_tool_allow(
     pool: &PgPool,
     me: &Account,
@@ -418,6 +421,7 @@ fn parse_limits(raw: Option<&Value>, connector_methods: &[String]) -> Result<Val
 }
 
 /// `checkApiGrant` — 맞으면 정규화한 limits.
+#[allow(clippy::result_large_err)]
 async fn check_api(
     pool: &PgPool,
     me: &Account,
@@ -938,10 +942,11 @@ mod tests {
     #[test]
     fn merges_with_read_and_revoke_paths() {
         // GET·PUT 이 같은 경로에 따로 붙어도 axum 이 합친다.
-        let a: axum::Router =
-            axum::Router::new().route("/accounts/{id}/grants", axum::routing::get(|| async { "" }));
-        let b: axum::Router =
-            axum::Router::new().route("/accounts/{id}/grants", axum::routing::put(|| async { "" }));
-        let _ = a.merge(b);
+        // 코어 줄은 `route_table::Table` 로만 붙인다(tests/lints.rs) — 시험도 같은 길로.
+        let a =
+            crate::route_table::Table::<()>::new().get("/accounts/{id}/grants", || async { "" });
+        let b =
+            crate::route_table::Table::<()>::new().put("/accounts/{id}/grants", || async { "" });
+        let _ = a.merge(b).finish();
     }
 }
