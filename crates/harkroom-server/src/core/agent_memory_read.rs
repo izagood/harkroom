@@ -10,7 +10,7 @@
 //! - 회차 하나 펼치기(`GET …/background/runs/:runId`, TS `bgRunChanges`)도 여기서 답한다 — 같은 문지기·읽기 풀이다.
 //! - 백그라운드 목록(`GET …/background`, TS `bgState`·`listBgRuns`)도 여기서 답한다 — 같은 경로의 PUT 은
 //!   [`super::agent_memory_write`] 가, 그쪽이 꺼져 있으면 `ts_fallback` 이 TS 로 넘긴다.
-//! - 정리 후보(`GET …/memory/audit`, 분류·유사도 판정)는 TS 에 남긴다. 기억 쓰기·백그라운드 켜고 끄기는 [`super::agent_memory_write`].
+//! - 정리 후보(`GET …/memory/audit`)는 [`super::agent_memory_audit_read`]. 기억 쓰기·백그라운드 켜고 끄기는 [`super::agent_memory_write`].
 use super::relay_routes::{Verdict, check_owner_or_admin};
 use crate::auth::{Account, RequireAccount};
 use crate::directory::{internal, json_err, json_ok};

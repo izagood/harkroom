@@ -1068,7 +1068,7 @@ async fn main() {
         }
         _ => false,
     };
-    // S5.4 AC2 — `GET /accounts/agents/{id}/memory`·`…/memory/{slug}/revisions`·`…/background/runs/{runId}`. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 읽기 풀에 그 SELECT 가 다 있을 때만. `…/background`(목록)도 함께. 정리 후보·기억 쓰기는 언제나 TS.
+    // S5.4 AC2 — `GET /accounts/agents/{id}/memory`·`…/memory/{slug}/revisions`·`…/background/runs/{runId}`. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 읽기 풀에 그 SELECT 가 다 있을 때만. `…/background`(목록)도 함께. 정리 후보는 `agent_memory_audit_read`, 기억 쓰기는 `agent_memory_write`.
     let agent_memory_read_on = match &core_mode {
         harkroom_server::core::CoreMode::Rust => {
             use harkroom_server::core::agent_memory_read as t;
@@ -1111,6 +1111,27 @@ async fn main() {
             }
         }
         _ => None,
+    };
+    // S5.4 — 기억 정리 후보(`GET /accounts/agents/{id}/memory/audit`). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 읽기 풀에 그 SELECT 가 다 있을 때만.
+    let agent_memory_audit_read_on = match &core_mode {
+        harkroom_server::core::CoreMode::Rust => {
+            use harkroom_server::core::agent_memory_audit_read as t;
+            match write::missing_in(&state.pool, t::AGENT_MEMORY_AUDIT_READ_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => true,
+                Ok(m) => {
+                    eprintln!("front: agent memory audit read core off — missing privileges {m:?}");
+                    false
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: agent memory audit read core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    false
+                }
+            }
+        }
+        _ => false,
     };
     // S5.4 — 로그인 ID 읽기(`GET /accounts/login-ids`). 쓰기 풀에 감사 INSERT 가 있을 때만 — 아니면 TS 에 남는다.
     let account_login_ids_write = match (&core_mode, &state.write) {
@@ -2510,6 +2531,20 @@ async fn main() {
             core_routes.router = core_routes.router.merge(am.router);
             core_routes.http.extend(am.http);
             core_routes.sockets.extend(am.sockets);
+        }
+        // S5.4 — 기억 정리 후보 1줄. 권한이 있을 때만 — 아니면 TS 에 남는다. JS 와 판정이 갈릴 본문이면 TS 로 넘긴다.
+        if agent_memory_audit_read_on {
+            let au = harkroom_server::core::agent_memory_audit_read::routes(
+                harkroom_server::core::agent_memory_audit_read::AuditReadState {
+                    read: state.pool.clone(),
+                    up: state.up.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(au.router);
+            core_routes.http.extend(au.http);
+            core_routes.sockets.extend(au.sockets);
         }
         // S5.4 AC3 — 기억 쓰기 다섯 줄 + 백그라운드 켜고 끄기. 권한이 다 있을 때만 — 아니면 TS 에 남는다(회차 되돌리기는 언제나 TS).
         if let Some(write) = agent_memory_write {

@@ -5615,13 +5615,11 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       // S5.4 AC2 — 에이전트 기억 읽기(코어 `agent_memory_read.rs`). 두 서버의 답을 견준다. 소유자·admin 만 읽고, 에이전트 자신·남·익명은
       // 같은 거절 갈래다. 정리 후보(audit)·백그라운드·기억 쓰기는 TS 에 남는다. 거절 답 어디에도 기억 본문이 새지 않는지 본다.
       {
-        for (const k of ['GET /accounts/agents/{id}/memory', 'GET /accounts/agents/{id}/memory/{slug}/revisions', 'GET /accounts/agents/{id}/background']) {
+        for (const k of ['GET /accounts/agents/{id}/memory', 'GET /accounts/agents/{id}/memory/{slug}/revisions', 'GET /accounts/agents/{id}/background', 'GET /accounts/agents/{id}/memory/audit']) {
           expect(f.log(), k).toContain(`"${k}"`);
         }
         expect(f.log()).not.toContain('agent memory read core off');
-        for (const k of ['GET /accounts/agents/{id}/memory/audit']) {  // background/runs/{runId}·background 목록은 Rust 로 옮겼다
-          expect(f.log(), `${k} 는 TS 에 남는다`).not.toContain(`"${k}"`);
-        }
+        // background/runs/{runId}·background 목록·memory/audit 은 Rust 로 옮겼다.
         const M = member.token;
         const M2 = member2.token;
         const ins = async (q: string, p: unknown[] = []) => (await db.pool.query<{ id: string }>(q, p)).rows[0]!.id;
