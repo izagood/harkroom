@@ -7,6 +7,7 @@
 //!   모르는 키는 zod 처럼 버린다.
 //! - 읽기 풀만 쓰고 새 GRANT 가 없다. 필요한 SELECT 는 `thread_plan_read::THREAD_PLAN_READ_PRIVILEGES` — 없으면 `main.rs` 가
 //!   [`super::writes::McpWrites::plan_read`] 를 끄고 TS 가 답한다. DB 오류도 TS 로 넘긴다(읽기라 다시 돌아도 같다).
+//! - 답 글자는 [`super::reads2::jsonb_as_js`] 로 공백을 지운다 — 몸통의 `doc` 이 jsonb 출력(`": "`·`", "`) 그대로라서.
 use super::respond::text_result;
 use super::tools::{err, uuid_arg};
 use crate::auth::Account;
@@ -46,8 +47,10 @@ pub async fn answer(read: &PgPool, me: &Account, args: &Value) -> Option<String>
     {
         return Some(err("forbidden", FORBIDDEN));
     }
+    // `doc` 는 jsonb 글자 그대로 실린다(`"goal": "…"` 처럼 공백이 있다). TS 는 node-pg 가 읽어 `JSON.stringify` 하니 공백이
+    // 없다 — 문자열 밖 공백을 지운다. 정수가 아닌 수가 섞이면 JS 표기와 갈릴 수 있으니 TS 로 넘긴다.
     let body = plan_view_json(read, &me.id, root).await.ok()?;
-    Some(text_result(&body))
+    Some(text_result(&super::reads2::jsonb_as_js(&body)?))
 }
 
 #[cfg(test)]
