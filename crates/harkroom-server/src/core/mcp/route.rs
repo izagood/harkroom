@@ -226,9 +226,12 @@ pub async fn handle(
             }
             if tool == "message.delegate" {
                 let st = writes.delegate.as_deref();
+                // 비지 않은 `agentModels` 는 하네스 목록(스냅숏)과 고르기 쓰기 권한이 다 있을 때만 Rust 가 고른다.
+                let picks_ok = writes.relay_moved && writes.agent_picks.is_some();
                 return super::delegate_gate::answer(
                     &pool,
                     st,
+                    picks_ok,
                     &me,
                     &args,
                     cause.as_deref(),

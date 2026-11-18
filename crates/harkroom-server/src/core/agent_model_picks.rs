@@ -339,6 +339,8 @@ pub(crate) struct AgentPicks {
     pub(crate) root: Option<String>,
     pub(crate) actor: String,
     pub(crate) picks: Vec<Pick>,
+    /// `notified` 에 더할 계정 — `message.delegate` 는 넘겨받는 팀원(TS `[...ctx.notified, ...delegates]`).
+    pub(crate) also_notified: Vec<String>,
     done: std::sync::Mutex<Option<(String, Vec<Change>)>>,
 }
 
@@ -349,8 +351,15 @@ impl AgentPicks {
             root: root.map(str::to_owned),
             actor: actor.to_owned(),
             picks,
+            also_notified: Vec::new(),
             done: std::sync::Mutex::new(None),
         }
+    }
+
+    /// `message.delegate` — 넘겨받는 팀원도 부른 것으로 센다.
+    pub(crate) fn also_notify(mut self, ids: &[String]) -> Self {
+        self.also_notified = ids.to_vec();
+        self
     }
 
     /// 쓴 스레드 루트와 바뀐 줄(훅이 지났을 때만).
@@ -368,6 +377,17 @@ impl crate::core::msg_post::BeforeCommit for AgentPicks {
     ) -> crate::core::msg_post::BeforeCommitFuture<'a> {
         Box::pin(async move {
             let root = self.root.clone().unwrap_or_else(|| message_id.to_owned());
+            let merged: HashSet<String>;
+            let notified = if self.also_notified.is_empty() {
+                notified
+            } else {
+                merged = notified
+                    .iter()
+                    .chain(self.also_notified.iter())
+                    .cloned()
+                    .collect();
+                &merged
+            };
             match apply(tx, &self.channel, &root, &self.actor, &self.picks, notified).await? {
                 Err(r) => Ok(Some(r)),
                 Ok(changes) => {

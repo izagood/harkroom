@@ -7,8 +7,11 @@
 //! - S5.4-11c: 팀장 **에이전트**가 `to` 전원을 담는 자기 팀 **하나**에 넘기는 요청(팀 명단 갈래)도 맡는다 — TS 처럼 호출 게이트·
 //!   사슬 상한을 건너뛰고 팀 명단의 (계정, 꺼짐)으로 접속을 본 뒤 위임 행·부름에 `team_id` 를 적는다. `to` 를 담는 팀이 둘 이상
 //!   (TS 는 행 순서의 첫 팀을 고른다 — 순서 없는 문장이다)이거나 팀장이 사람이면 TS 로 넘긴다.
-//! - **TS 로 넘기는 것**(`None` — fail-closed): 위 밖의 팀 명단 갈래 · 비지 않은 `agentModels`·`planRootId`·`planGroupId`
-//!   (모델 고르기·계획판) · zod 가 받지 않을 인자 · 자른 자리가 서로게이트 쌍을 가르는 모델 신고 · `to` 에 같은 이름이 두 번 · 위임 스위치를 모름 · DB 오류.
+//! - S5.4-14c: 비지 않은 `agentModels` 도 맡는다 — 접속 확인 뒤 TS `preparePicks`([`super::msg_post::check_picks`]), 글 tx 의
+//!   `applyAgentPicks`(`notified` 에 넘겨받는 팀원을 더한다), 커밋 뒤 시스템 줄·이벤트. 하네스 목록(`relay_moved`)·고르기 쓰기 권한
+//!   (`AGENT_MODEL_PICKS_PRIVILEGES`)이 없으면 TS.
+//! - **TS 로 넘기는 것**(`None` — fail-closed): 위 밖의 팀 명단 갈래 · 권한 없는 `agentModels` · `planRootId`·`planGroupId`
+//!   (계획판) · zod 가 받지 않을 인자 · 자른 자리가 서로게이트 쌍을 가르는 모델 신고 · `to` 에 같은 이름이 두 번 · 위임 스위치를 모름 · DB 오류.
 //! - 접속 확인: TS 는 프로세스 메모리(`presence.online()`)를, Rust 는 DB `agent_presence`(`expires_at > now()`)를 읽는다. TS 는
 //!   그 표를 담당마다 10초에 한 번만 고쳐 쓰므로(`PERSIST_EVERY_MS`) DB 의 만료가 메모리보다 최대 약 10초 이르다 — 폴을 멈춘 담당은
 //!   Rust 쪽에서 최대 약 10초 **먼저** `unreachable` 이 된다(없는 것을 있다고 하지 않는 쪽). 처음 접속은 첫 폴에 바로 쓰인다.
@@ -71,6 +74,8 @@ struct Args {
     deadline_sec: i64,
     /// 다듬은 모델 신고(빈 값이면 없음).
     model: Option<String>,
+    /// 비지 않은 `agentModels`(zod 꼴만 본 것). 빈 배열은 없는 것과 같다.
+    picks: Vec<super::msg_post::Pick>,
 }
 
 /// zod `message.delegate` 의 `inputSchema` 중 Rust 가 맡는 것. 틀린 꼴·비지 않은 `agentModels`·계획판 칸은 `None`.
@@ -81,12 +86,11 @@ fn parse(args: &Value) -> Option<Args> {
             return None;
         }
     }
-    // 빈 `agentModels` 는 TS 에서도 고를 것이 없다(`cleanPicks([])` → 고르기 없음) — 없는 것과 같다. 고르는 갈래만 TS 몫.
-    match o.get("agentModels") {
-        None => {}
-        Some(Value::Array(a)) if a.is_empty() => {}
-        Some(_) => return None,
-    }
+    // 빈 `agentModels` 는 TS 에서도 고를 것이 없다(`cleanPicks([])` → 고르기 없음) — 없는 것과 같다.
+    let picks = match o.get("agentModels") {
+        None => Vec::new(),
+        Some(v) => super::msg_post::parse_picks(v)?,
+    };
     let uuid = |k: &str| o.get(k)?.as_str().filter(|s| is_uuid(s)).map(str::to_owned);
     let channel = uuid("channelId")?;
     let root = uuid("threadRootId")?;
@@ -134,6 +138,7 @@ fn parse(args: &Value) -> Option<Args> {
         body,
         deadline_sec,
         model,
+        picks,
     })
 }
 
@@ -179,6 +184,7 @@ fn lead_team_pick(rows: &[(String, String, String, bool)], wanted: &[String]) ->
 pub async fn answer(
     pool: &PgPool,
     st: Option<&PostState>,
+    picks_ok: bool,
     me: &Account,
     args: &Value,
     cause: Option<&str>,
@@ -186,6 +192,10 @@ pub async fn answer(
     operator: bool,
 ) -> Option<String> {
     let a = parse(args)?;
+    // 고르기는 하네스 목록·고르기 쓰기 권한이 다 있을 때만 — 아니면 아무것도 답하지 않고 TS.
+    if !a.picks.is_empty() && !picks_ok {
+        return None;
+    }
     match channel_visible(pool, &me.id, &a.channel).await {
         Ok(true) => {}
         Ok(false) => return Some(err("forbidden", "not a member of this dm channel")),
@@ -381,6 +391,26 @@ async fn write(
             Value::from(unreachable)
         )));
     }
+    // TS `preparePicks` — 접속 확인 뒤, 글 앞.
+    if let Some(refused) = super::msg_post::check_picks(st, &a.picks).await? {
+        return Some(refused);
+    }
+    let hook = (!a.picks.is_empty()).then(|| {
+        use crate::core::thread_model_set::clean_axis;
+        let picks = a
+            .picks
+            .iter()
+            .map(
+                |(agent_id, model, effort)| crate::core::agent_model_picks::Pick {
+                    agent_id: agent_id.clone(),
+                    model: clean_axis(model.as_deref(), cause_link::MODEL_ID_MAX),
+                    effort: clean_axis(effort.as_deref(), 64),
+                },
+            )
+            .collect();
+        crate::core::agent_model_picks::AgentPicks::new(&a.channel, Some(&a.root), &me.id, picks)
+            .also_notify(&delegate_ids)
+    });
     let deadline_at = msg_post::iso_ms(msg_post::now_ms() + a.deadline_sec * 1000);
     let mut delegation = serde_json::Map::new();
     delegation.insert("to".into(), Value::from(delegated.clone()));
@@ -417,7 +447,7 @@ async fn write(
         progress: false,
         wake: false,
         no_mentions: false,
-        before_commit: None,
+        before_commit: hook.as_ref().map(|h| h as &dyn msg_post::BeforeCommit),
         service_call: false,
     };
     let post = PostBody {
@@ -450,6 +480,23 @@ async fn write(
         Outcome::Posted {
             row, delegation_id, ..
         } => {
+            // TS: 지정 행은 게시 tx 에서 이미 커밋됐다 — 시스템 줄(`byKind: 'agent'`)·이벤트는 커밋 뒤.
+            if let Some((root, changes)) = hook.as_ref().and_then(|h| h.changes()) {
+                for (agent, axes) in &changes {
+                    if let Err(e) = crate::core::thread_model_set::announce_agent_pick(
+                        st,
+                        &a.channel,
+                        &root,
+                        &me.id,
+                        agent,
+                        axes.as_ref(),
+                    )
+                    .await
+                    {
+                        eprintln!("message.delegate: agent pick announce failed: {e}");
+                    }
+                }
+            }
             let inner = format!(
                 "{{\"message\":{row},\"delegationId\":{},\"delegated\":{},\"unreachable\":{},\"deadlineAt\":{},\"roundsLeft\":{}}}",
                 Value::from(delegation_id?),
@@ -484,14 +531,19 @@ mod tests {
         let ok = json!({ "channelId": C, "threadRootId": R, "body": "해 줘", "to": ["Bot"], "deadlineSec": 600, "model": "m" });
         assert_eq!(parse(&ok).unwrap().to, vec!["Bot".to_owned()]);
         let empty = json!({ "channelId": C, "threadRootId": R, "body": "x", "to": ["a"], "agentModels": [] });
-        assert!(parse(&empty).is_some());
+        assert!(parse(&empty).unwrap().picks.is_empty());
+        let picked = json!({ "channelId": C, "threadRootId": R, "body": "x", "to": ["a"], "agentModels": [{ "agentId": C, "model": "opus" }] });
+        assert_eq!(
+            parse(&picked).unwrap().picks,
+            vec![(C.to_owned(), Some("opus".to_owned()), None)]
+        );
         for bad in [
             json!({ "channelId": C, "body": "x", "to": ["a"] }),
             json!({ "channelId": C, "threadRootId": R, "body": "", "to": ["a"] }),
             json!({ "channelId": C, "threadRootId": R, "body": "x", "to": [] }),
             json!({ "channelId": C, "threadRootId": R, "body": "x", "to": ["a"], "deadlineSec": 59 }),
             json!({ "channelId": C, "threadRootId": R, "body": "x", "to": ["a"], "deadlineSec": 1.5 }),
-            json!({ "channelId": C, "threadRootId": R, "body": "x", "to": ["a"], "agentModels": [{ "agentId": C }] }),
+            json!({ "channelId": C, "threadRootId": R, "body": "x", "to": ["a"], "agentModels": [{ "agentId": "x" }] }),
             json!({ "channelId": C, "threadRootId": R, "body": "x", "to": ["a"], "agentModels": null }),
             json!({ "channelId": C, "threadRootId": R, "body": "x", "to": ["a"], "planRootId": R }),
             json!({ "channelId": C, "threadRootId": R, "body": "x", "to": ["a"], "planGroupId": "g1" }),
