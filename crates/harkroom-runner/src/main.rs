@@ -33,9 +33,6 @@ use serde_json::Value;
 /// 물러남 표지 뒤 SIGKILL 전 유예.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
 
-/// 서버에 알리는 러너 판.
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-
 type Link = Arc<LinkClient>;
 
 fn now_ms() -> u64 {
@@ -126,7 +123,11 @@ fn main() {
         eprintln!("오퍼레이터 링크가 10초 안에 붙지 않았다 — 계속 재시도한다");
     }
 
-    let clients = Arc::new(AgentClients::new(Arc::clone(&link), VERSION));
+    let clients = Arc::new(AgentClients::new(
+        Arc::clone(&link),
+        // 서버에 알리는 러너 판 — 오퍼레이터가 심은 번들 판(`runner_version` 주석).
+        harkroom_runner::runner_version::runner_version(|k| std::env::var(k).ok()),
+    ));
     let (me_id, me_handle) = match clients.mcp().me() {
         Ok(v) => v,
         Err(e) => {

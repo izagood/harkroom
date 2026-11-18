@@ -33,9 +33,14 @@ impl RunnerLink for &Link {
         let tag = match path.as_str() {
             TURN_KEYS_PATH => "keys",
             TURN_KEYS_END_PATH => "keys_end",
+            "/agent/activity" => "activity",
             _ => "other",
         };
-        push(&self.0, format!("{tag} {id}"));
+        if tag == "activity" {
+            push(&self.0, tag.to_string());
+        } else {
+            push(&self.0, format!("{tag} {id}"));
+        }
         let refuse = tag == "keys" && self.1.swap(false, std::sync::atomic::Ordering::SeqCst);
         RunnerLinkResponse::HttpResponse {
             id: "x".into(),
@@ -420,6 +425,7 @@ fn account_retry_gets_fresh_attempt_after_previous_cleanup() {
             "keys t-1",
             "mount m1",
             "spawn t-1",
+            "activity",
             "lease_ended m1",
             "keys_end t-1",
             "outcome",
@@ -429,6 +435,7 @@ fn account_retry_gets_fresh_attempt_after_previous_cleanup() {
             "keys t-2",
             "mount m1",
             "spawn t-2",
+            "activity",
             "lease_ended m1",
             "keys_end t-2",
             "outcome",
@@ -534,6 +541,7 @@ fn without_turn_keys_uses_base_config() {
             "bind",
             "prepare t-1 -",
             "spawn t-1",
+            "activity",
             "outcome",
             "after",
             "unbind"
@@ -800,6 +808,7 @@ fn lane_env_comes_before_plan_and_is_released_after() {
             "lane_env m1",
             "keys t-1",
             "spawn t-1",
+            "activity",
             "keys_end t-1",
             "outcome",
             "after",

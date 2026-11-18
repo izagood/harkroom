@@ -91,6 +91,7 @@ pub mod relay_session;
 pub mod rest;
 pub mod review_fork;
 pub mod runner_boot;
+pub mod runner_version;
 pub mod runner_wire;
 pub mod secret_scrub;
 pub mod session_store;

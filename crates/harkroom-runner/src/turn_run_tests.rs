@@ -20,6 +20,19 @@ use crate::turn_outcome::{OutcomeFacts, attempt_outcome};
 
 struct Link {
     status: BTreeMap<&'static str, u16>,
+    /// 지나간 HTTP 경로 — 활동 보고(#176)가 몇 번 나갔는지 센다.
+    hits: Mutex<Vec<String>>,
+}
+
+impl Link {
+    fn activity_reports(&self) -> usize {
+        self.hits
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|p| p.as_str() == "/agent/activity")
+            .count()
+    }
 }
 
 impl RunnerLink for &Link {
@@ -27,6 +40,7 @@ impl RunnerLink for &Link {
         let LinkRequest::Http { path, .. } = req else {
             panic!("mcp")
         };
+        self.hits.lock().unwrap().push(path.clone());
         let status = self.status.get(path.as_str()).copied().unwrap_or(0);
         RunnerLinkResponse::HttpResponse {
             id: "x".into(),
@@ -211,7 +225,13 @@ fn outcome_with<'e>(
 
 fn link() -> Link {
     Link {
-        status: [(TURN_KEYS_PATH, 200), (TURN_KEYS_END_PATH, 200)].into(),
+        status: [
+            (TURN_KEYS_PATH, 200),
+            (TURN_KEYS_END_PATH, 200),
+            ("/agent/activity", 200),
+        ]
+        .into(),
+        hits: Mutex::default(),
     }
 }
 
@@ -261,6 +281,11 @@ fn mounted_secret_is_masked_in_records_outcome_and_after_turn() {
         "턴 뒤 글이 받은 목록에 마운트한 비밀이 있다"
     );
     assert!(!Path::new(&w.turn_cfg).exists());
+    assert_eq!(
+        link.activity_reports(),
+        1,
+        "턴이 끝나면 활동을 남긴다(#176)"
+    );
 }
 
 /// 실패해도 기록·실패 문장의 목록에 마운트한 비밀이 있다 · 턴 뒤 IO 는 돌지 않는다.
@@ -293,6 +318,11 @@ fn failure_still_masks_mounted_secret_and_skips_after_turn() {
     assert_eq!(r.unwrap_err().message, "harness 종료 1");
     assert!(masked.get());
     assert!(!after_ran.get());
+    assert_eq!(
+        link.activity_reports(),
+        1,
+        "실패한 턴도 움직인 턴이다(#176)"
+    );
     assert!(
         !std::fs::read_to_string(&w.record)
             .unwrap()
@@ -334,6 +364,11 @@ fn blocked_folds_with_pat_and_turn_keys_only() {
     );
     assert!(key_masked.get(), "턴 열쇠는 그래도 가린다");
     assert!(!Path::new(&w.turn_cfg).exists());
+    assert_eq!(
+        link.activity_reports(),
+        0,
+        "하네스가 돌지 않았으면 활동이 아니다"
+    );
 }
 
 /// 턴 뒤 IO 실패는 턴을 실패로 만들지 않는다(best-effort).
