@@ -1749,6 +1749,33 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant update (meta) on message to ${rw}`,
         `grant select (id, name, kind, expires_at, owner_account_id) on secret to ${rw}`,
         `grant select (secret_id, version, sealed, revoked_at) on secret_version to ${rw}`,
+        // S5.4 — 쓰기 풀이 켜지자 드러난 코어·루프의 칸(main.rs 기동 권한 확인과 같은 표). 없으면 그 코어는 「… off — missing privileges」로 TS 에 남는다.
+        // 링크 미리보기 쓰기(loop scheduled·automation·stale 이 글을 올릴 때).
+        `grant insert (url, title, description, image_url, site_name, status, fetched_at), update (title, description, image_url, site_name, status, fetched_at) on link_preview to ${rw}`,
+        // PATCH /automations/:id.
+        `grant update (name, body, channel_id, trigger, debounce_sec) on automation to ${rw}`,
+        // 초대 메일.
+        `grant insert (email, last_sent_at), update (mail_status) on invite to ${rw}`,
+        // 워크스페이스 아이콘.
+        `grant update (icon_attachment_id) on workspace_profile to ${rw}`,
+        // 머지 거절 1회 승인.
+        `grant update (used_at, used_by) on merge_denial to ${rw}`,
+        // 머지 검사 카드·결과·닫힘·1회 승인(merge checks card·results write·closed·approval, permission merge once).
+        `grant insert (agent_id, scope, pr_number, head_sha, channel_id, thread_root_id, reason, failed_checks, lease_id, expires_at), update (reason, failed_checks, lease_id, obsoleted_at) on merge_denial to ${rw}`,
+        `grant insert (denial_id, agent_id, scope, pr_number, head_sha, gh_user, relax_checks, ci_override, approved_checks, channel_id, thread_root_id, approved_by, approved_at, expires_at), update (used_at, used_lease_id) on merge_approval to ${rw}`,
+        // 계정 역할·재설정 코드·에이전트 삭제·고치기, grant 주기.
+        `grant update (id, role, is_admin, display_name, deleted_at, disabled_at) on account to ${rw}`,
+        `grant insert (account_id, code_hash, issued_by, expires_at) on password_reset_code to ${rw}`,
+        `grant delete on agent_invoker, agent_owner_delegate, agent_mcp_server to ${rw}`,
+        `grant insert (agent_id, name) on agent_mcp_server to ${rw}`,
+        `grant update on account_grant to ${rw}`,
+        // MCP inbox.poll 임대·artifact.publish·agentModels, 스레드 모델 정하기.
+        `grant update (claimed_by, claimed_until) on inbox to ${rw}`,
+        `grant insert (channel_id, title, created_by), update (title) on artifact to ${rw}`,
+        `grant insert (artifact_id, version, attachment_id, summary, title, cover_attachment_id) on artifact_version to ${rw}`,
+        `grant insert, update on thread_agent_model, thread_agent_pick_count to ${rw}`,
+        // api checks 비밀 — access log 는 표 단위 INSERT 로 확인한다.
+        `grant insert on secret_access_log to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -1795,7 +1822,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(f.log(), key).toContain(`"${key}"`);
       }
       expect(f.log()).toContain('front: write pool on');
-      expect(f.log()).not.toContain('missing privileges');
+      // PUT /settings/projection 만 일부러 뺀다 — Rust 판(b54f0e48e)은 TS reconfigure 를 부르지 않으므로 아래 대조는 PUT 이 TS 에 남는 길을 본다.
+      expect(f.log().split('\n').filter((l) => l.includes('missing privileges') && !l.startsWith('front: settings projection write off')).join('\n')).toBe('');
+      expect(f.log()).toContain('front: settings projection write off — missing privileges ["UPDATE on projection_config.avcs_base_url"]');
       expect(f.log()).toContain('front: loop wake on');
       expect(f.log()).toContain('front: loop retention on (delete=false');
       expect(f.log()).toContain('front: loop mandate.idle on');
@@ -2120,11 +2149,11 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       const [aa, ab] = [await mcpCall(tsUrl, agent.pat, 'memory.audit', {}), await mcpCall(rsUrl4, agent.pat, 'memory.audit', {})];
       expect({ status: ab.status, text: ab.text }, 'memory.audit agent').toEqual({ status: aa.status, text: aa.text });
       expect(ab.core).toBe('mcp');
-      // BMP 밖 글자 + `[[` → TS(`{1,255}` 를 UTF-16 으로 세는 차이).
+      // BMP 밖 글자 + `[[` — Rust 가 `{1,255}` 를 UTF-16 단위로 직접 센다(739c7e190 부터 TS 로 넘기지 않는다).
       await db.pool.query(`insert into agent_memory (account_id, slug, value, kind) values ($1, 'mem/emoji', '😀 [[mem/deploy-a]]', 'topic')`, [bot2.accountId]);
       const [ea, eb] = [await mcpCall(tsUrl, bot2.pat, 'memory.audit', {}), await mcpCall(rsUrl4, bot2.pat, 'memory.audit', {})];
-      expect({ status: eb.status, text: eb.text }, 'memory.audit BMP 밖 → TS').toEqual({ status: ea.status, text: ea.text });
-      expect(eb.core, 'memory.audit BMP 밖 — 누가 답했나').toBe(null);
+      expect({ status: eb.status, text: eb.text }, 'memory.audit BMP 밖').toEqual({ status: ea.status, text: ea.text });
+      expect(eb.core, 'memory.audit BMP 밖 — 누가 답했나').toBe('mcp');
       await db.pool.query(`delete from agent_memory where account_id = $1`, [bot2.accountId]);
 
       // S5.3 C4b B1a — 기억 쓰기 다섯(memory.get·recalled·lease·archive·unarchive). 쓰기가 상태를 바꾸므로 같은 글자가 나와야 하는
@@ -2780,7 +2809,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['mem 앞 원본에 admin 글', (x) => ({ bundleId: x.bundle, rootId: x.toMem, replyMessageId: x.reply }), true],
           ['카드 아닌 원본', (x) => ({ bundleId: x.bundle, rootId: x.plain, replyMessageId: x.reply }), true],
           // hand_to_ts — 이 검사를 끄면 Rust 가 닫아 core 가 'mcp' 가 된다(빨강).
-          ['백스톱 원본 → TS', (x) => ({ bundleId: x.hBundle, rootId: x.backstop, replyMessageId: x.hReply }), false],
+          // b120df6f4 부터 백스톱 원본은 Rust 가 보통 길로 닫는다(TS 와 같은 답).
+          ['백스톱 원본', (x) => ({ bundleId: x.hBundle, rootId: x.backstop, replyMessageId: x.hReply }), true],
           ['권한 거울 원본 → TS', (x) => ({ bundleId: x.hBundle, rootId: x.pmirror, replyMessageId: x.hReply }), false],
           ['note 빈 글 → TS(zod)', (x) => ({ bundleId: x.bundle, rootId: x.root, replyMessageId: x.reply, note: '' }), false],
           ['note 숫자 → TS(zod)', (x) => ({ bundleId: x.bundle, rootId: x.root, replyMessageId: x.reply, note: 1 }), false],
@@ -3284,7 +3314,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect((await wiRows('wiR')).map((r) => r.k)).toEqual(['wi*/abcdef012345', 'wi*#1', 'wi*-2']);
         // TS 로 넘기는 인자 — 같은 요청을 둘에 보내 글자 그대로(답이 TS 의 쓰기면 두 번째가 같은 키를 고쳐 쓴다 → 시각만 자리표).
         for (const [name, token, tool, args] of [
-          ['done+스레드 → TS(위임장 끝내기)', agent.pat, 'workitem.upsert', { source: 'other', externalKey: 'wi-done', title: '끝', state: 'done', threadRootId: wiRoot }],
+          // 1ff2a69f9 부터 done+스레드(위임장 끝내기)는 Rust 가 답한다 — 이름에 `→ TS` 가 없는 줄만 'mcp' 를 기대한다.
+          ['done+스레드(위임장 끝내기)', agent.pat, 'workitem.upsert', { source: 'other', externalKey: 'wi-done', title: '끝', state: 'done', threadRootId: wiRoot }],
           ['http url → TS(zod)', agent.pat, 'workitem.upsert', { source: 'other', externalKey: 'wi-x', title: 't', state: 'mine', url: 'http://example.com' }],
           ['IPv4 꼴 url → TS', agent.pat, 'workitem.upsert', { source: 'other', externalKey: 'wi-x', title: 't', state: 'mine', url: 'https://999.1.1.1/' }],
           ['빈 제목 → TS(zod)', agent.pat, 'workitem.upsert', { source: 'other', externalKey: 'wi-x', title: '  ', state: 'mine' }],
@@ -3296,7 +3327,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         ] as const) {
           const [a, b] = [await mcpCall(tsUrl, token, tool, args), await mcpCall(rsUrl4, token, tool, args)];
           expect({ status: b.status, type: b.type, text: b.text.replace(ISO, '<t>') }, name).toEqual({ status: a.status, type: a.type, text: a.text.replace(ISO, '<t>') });
-          expect(b.core, `${name} — 누가 답했나`).toBeNull();
+          expect(b.core, `${name} — 누가 답했나`).toBe(name.includes('→ TS') ? null : 'mcp');
         }
         // 상한 — 주인 보드를 500개로 채우면 새 키는 too_many, 있는 키 고쳐 쓰기는 된다.
         const have = (await db.pool.query<{ n: number }>(`select count(*)::int as n from work_item where owner_account_id = $1`, [owner])).rows[0]!.n;
@@ -3365,9 +3396,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         ['message.search 멤버 아닌 DM → forbidden', { query: '비밀검색어', channelId: String(dm.id) }, true],
         ['message.search 없는 채널', { query: 'x', channelId: missingCh }, true],
         ['message.search 모르는 키는 버린다', { query: '부름', extra: 1 }, true],
-        ['message.search @ → TS', { query: '@bot2' }, false],
-        ['message.search after → TS', { query: '부름', after: '2026-01-01T00:00:00Z' }, false],
-        ['message.search before → TS', { query: '부름', before: '2026-01-01T00:00:00+09:00' }, false],
+        // 5a508bc14·1f2f6af0c 부터 @handle·after·before 는 Rust 가 직접 다룬다.
+        ['message.search @', { query: '@bot2' }, true],
+        ['message.search after', { query: '부름', after: '2026-01-01T00:00:00Z' }, true],
+        ['message.search before', { query: '부름', before: '2026-01-01T00:00:00+09:00' }, true],
         ['message.search 빈 질의 → TS', { query: '' }, false],
         ['message.search 정렬 틀림 → TS', { query: '부름', sort: 'old' }, false],
         ['message.search offset 1001 → TS', { query: '부름', offset: 1001 }, false],
@@ -4508,7 +4540,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       // 다른 채널의 루트·답글·지운 루트에 표식을 심고, 볼 수 있는 채널 경로로 넣어도 어느 답에도 나오지 않는지 본다(루트를 채널에 묶기).
       {
         expect(f.log(), 'TM1 줄').toContain('"GET /channels/{id}/threads/{rootId}/agent-models"');
-        expect(f.log(), '정하기는 TS 에 남는다').not.toContain('"PUT /channels/{id}/threads/{rootId}/agent-models/{agentId}"');
+        // 66f3bc88e 부터 정하기(PUT)도 Rust 가 받는다.
+        expect(f.log(), 'TM 정하기 줄').toContain('"PUT /channels/{id}/threads/{rootId}/agent-models/{agentId}"');
         expect(f.log(), 'TM2 풀기 줄').toContain('"DELETE /channels/{id}/threads/{rootId}/agent-models/{agentId}"');
         const M = member.token;
         const ins = async (sql: string, p: unknown[]) => (await db.pool.query<{ id: string }>(sql, p)).rows[0]!.id;
@@ -4906,12 +4939,14 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect({ status: b.status, text: b.text.replace(ISO, '<t>') }, name).toEqual({ status: a.status, text: a.text.replace(ISO, '<t>') });
           expect(b.core, `${name} — TS 가 답한다`).toBeNull();
         }
-        // 자동 진행이 켜진 판에서 관리자를 바꾸면 Rust 는 되감고 TS 로 넘긴다(TS 가 자동 진행을 끄며 바꾼다).
+        // 자동 진행이 켜진 판에서 관리자를 바꾸면 Rust 가 같은 tx 에서 자동 진행을 끄며 바꾼다(739c7e190 부터 TS 로 넘기지 않는다).
         await mcpCall(rsUrl, agent.pat, 'thread.plan', { threadRootId: rootX, ifUpdatedAt: null, plan: { goal: 'auto', groups: [], steps: [{ id: 's1', title: 'a', state: 'pending' }] } });
         await db.pool.query(`update thread_plan set auto_until = 's1', auto_source = $1, auto_by = $2, auto_at = now() where root_id = $1`, [rootX, member.accountId]);
         {
           const b = await mcpCall(rsUrl, agent.pat, 'thread.plan.item', { threadRootId: rootX, type: 'plan', managerId: null });
-          expect(b.core, '관리자 바뀜 + 자동 진행 → TS').toBeNull();
+          expect(b.core, '관리자 바뀜 + 자동 진행 — Rust').toBe('mcp');
+          const auto = (await db.pool.query<{ u: string | null }>(`select auto_until as u from thread_plan where root_id = $1`, [rootX])).rows[0];
+          expect(auto?.u ?? null, '자동 진행 꺼짐').toBeNull();
         }
         // 루트·가시성 거절 — 둘에 같은 요청(쓰지 않는다).
         for (const [name, root, want] of [
@@ -4943,9 +4978,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(f.log()).toContain('"GET /connectors"');
         expect(f.log()).not.toContain('misc reads core off');
         expect(f.log(), 'GET /agent/config 는 Rust 가 받는다(S5.4 갈래 o)').toContain('"GET /agent/config"');
-        for (const k of ['GET /leases']) {  // GET /accounts/agents 는 갈래 B, GET /agent/config 는 갈래 o 가 Rust 로 옮겼다
-          expect(f.log(), `${k} 는 TS 에 남는다`).not.toContain(`"${k}"`);
-        }
+        // GET /accounts/agents 는 갈래 B, GET /agent/config 는 갈래 o, GET /leases 는 afc9aa3ab 가 Rust 로 옮겼다.
+        expect(f.log(), 'GET /leases 는 Rust 가 받는다').toContain('"GET /leases"');
         const M = member.token;
         const M2 = member2.token;
         const SECRET = 'RD1SECRETVALUE-do-not-leak';
@@ -6102,7 +6136,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       {
         for (const k of ['POST /invites', 'DELETE /invites/{id}']) expect(f.log(), k).toContain(`"${k}"`);
         expect(f.log()).not.toContain('invites write core off');
-        expect(f.log()).not.toContain('"POST /invites/{id}/resend"');
+        // 8ce9b283a 부터 resend 도 Rust 가 받는다(SMTP 를 Rust 가 보낸다).
+        expect(f.log()).toContain('"POST /invites/{id}/resend"');
         const M = member.token;
         const ghost = '00000000-0000-4000-8000-0000000ac4e0';
         const made: string[] = [];
@@ -6772,7 +6807,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           await step('남에게 온 카드 닫기 → 403', cls(todayId, sd.toAdm), undefined, member.token);
           await step('권한 표지 카드 → TS', ans(todayId, sd.perm), { optionId: 'a' });
           await step('권한 표지 카드 글 → TS', ans(todayId, sd.perm), { text: 'x' });
-          await step('머지 표지 카드 → TS', ans(todayId, sd.merge), { optionId: 'a' });
+          // b346d0f95 부터 옛 머지 거절 카드(mergeDenial)는 Rust 가 보통 물음 길로 답한다(TS 와 같다).
+          await step('머지 표지 카드', ans(todayId, sd.merge), { optionId: 'a' });
           await step('알 수 없는 kind → TS', ans(todayId, sd.odd), { optionId: 'a' });
           await step('알 수 없는 kind 닫기 → TS', cls(todayId, sd.odd));
           await step('권한 표지의 거울 → TS', ans(todayId, sd.pmirror), { optionId: 'a' });
@@ -6801,7 +6837,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // 이벤트 — 이름·모양·받는 사람·순서(거울 경로의 겹친 `message.updated` 까지).
         // TS 로 넘긴 카드(권한·머지·모르는 종류)의 이벤트는 R 쪽도 TS 프로세스에서 난다 — Rust 가 맡은 카드끼리 견주고,
         // 넘긴 카드는 R 의 이벤트가 TS 쪽(`onEvent`)에만 있고 outbox(`busEvents`)에는 없는 것으로 「TS 가 처리했다」를 본다.
-        const HANDED = ['perm', 'merge', 'odd', 'pmirror'] as const;
+        const HANDED = ['perm', 'odd', 'pmirror'] as const;
         const idsOf = (sd: Side, handed: boolean) => Object.entries(sd)
           .filter(([k]) => (HANDED as readonly string[]).includes(k) === handed).map(([, id]) => id);
         const mineOf = (evs: WorkspaceEvent[], sd: Side, handed = false) => evs.filter((e) => {
@@ -6833,7 +6869,6 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         await settle(() => statusOf(mineOf(tsEvents, R)).length >= statusOf(mineOf(tsEvents, T)).length);
         expect(statusOf(mineOf(tsEvents, R)), '상태 리액션(TS watcher)도 같다').toEqual(statusOf(mineOf(tsEvents, T)));
         const handedT = writes(mineOf(tsEvents, T, true));
-        expect(handedT.length, '머지 표지 카드는 TS 가 답해 이벤트가 난다').toBeGreaterThan(0);
         expect(writes(mineOf(tsEvents, R, true)), '넘긴 카드는 TS 가 처리했다').toEqual(handedT);
         expect(mineOf(busEvents, R, true), '넘긴 카드는 Rust outbox 에 없다').toEqual([]);
         offTs();
@@ -6965,7 +7000,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           await step('거울 줄 → 403', bAns(sd.B1), { rootId: sd.mirror, optionId: 'a' });
           await step('권한 줄 → TS', bAns(sd.B1), { rootId: sd.perm, optionId: 'a' });
           await step('모르는 kind 줄 → TS', bAns(sd.B1), { rootId: sd.odd, optionId: 'a' });
-          await step('백스톱 줄 → TS', bAns(sd.B4), { rootId: sd.backstop, optionId: 'a' });
+          // b346d0f95 부터 사슬 백스톱 줄은 Rust 가 보통 물음 길로 답한다(TS 와 같다).
+          await step('백스톱 줄', bAns(sd.B4), { rootId: sd.backstop, optionId: 'a' });
           await step('once 실림 → TS', bAns(sd.B1), { rootId: sd.plain2, optionId: 'a', once: { number: 1, headSha: 'x' } });
           await step('같은 묶음의 평범한 줄은 그대로', bAns(sd.B1), { rootId: sd.plain2, optionId: 'b' });
           await step('묶음 아님 → 404', bAns(sd.plain), { rootId: sd.plain, optionId: 'a' });
@@ -7001,7 +7037,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           [Object.values(sd)])).rows.map((r) => ({ m: labelOf(sd)(r.m), r: r.r }));
         expect(await wakes(R)).toEqual(await wakes(T));
         // 이벤트 — 쓰기(`message.updated`)만, 이름·모양·받는 사람·순서. 넘긴 줄(권한·모르는 kind·once·B3)은 TS 에서 나고 Rust outbox 에 없다.
-        const HANDED = ['perm', 'odd', 'backstop', 'recA2', 'odd2', 'B3', 'B4'];
+        const HANDED = ['perm', 'odd', 'recA2', 'odd2', 'B3'];
         const writesOf = (evs: WorkspaceEvent[], sd: Side, handed: boolean) => evs.filter((e) => {
           if (e.type !== 'message.updated') return false;
           const id = (e as { message: { id: string } }).message.id;
@@ -8289,7 +8325,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           await step('없는 묶음', go([sd.fresh], { bundleId: missing }));
           await step('찬 묶음', go([sd.fresh], { bundleId: sd.full, threadRootId: sd.full }));
           await step('못 보는 채널로 부름', go([sd.fresh], { channelId: dmId }));
-          await step('백스톱 원본 → TS', go([sd.backstop], { bundleId: sd.Bh, threadRootId: sd.Bh }));
+          // c00adbed0 부터 사슬 백스톱 원본도 Rust 가 묶음에 더한다(TS 와 같다).
+          await step('백스톱 원본', go([sd.backstop], { bundleId: sd.Bh, threadRootId: sd.Bh }));
           await step('model 빈 글자 → TS(zod)', go([sd.fresh], { model: '' }));
           return out;
         };
@@ -8297,7 +8334,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const rsOut = await run(rsUrl, R);
         const strip = (o: { step: string; body: unknown }[]) => o.map(({ step, body }) => ({ step, body }));
         expect(strip(rsOut)).toEqual(strip(tsOut));
-        const TS_STEPS = ['백스톱 원본 → TS', 'model 빈 글자 → TS(zod)'];
+        const TS_STEPS = ['model 빈 글자 → TS(zod)'];
         for (const o of rsOut) expect(o.core, `${o.step} — 누가 답했나`).toBe(TS_STEPS.includes(o.step) ? null : 'mcp');
         const codeOf = (o: { body: unknown }) => (o.body as { error?: { code: string; rootId?: string } }).error;
         expect(Object.fromEntries(tsOut.map((o) => [o.step, codeOf(o)?.code ?? 'ok']))).toMatchObject({
@@ -8327,8 +8364,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const tPush = await pushes(T);
         expect(tPush).toEqual([{ a: 'ADMIN', r: 'ask', later: true }]);
         expect(await pushes(R)).toEqual(tPush);
-        // 이벤트 — `message.updated` 만(묶음과 새로 담긴 원본). 넘긴 길(백스톱)은 TS 에서 나고 Rust outbox 에 없다.
-        const HANDED = ['backstop', 'Bh'];
+        // 이벤트 — `message.updated` 만(묶음과 새로 담긴 원본). 백스톱도 이제 Rust 가 쓰므로 넘긴 길이 없다.
+        const HANDED: string[] = [];
         const writesOf = (evs: WorkspaceEvent[], sd: Side, handed: boolean) => evs.filter((e) => {
           if (e.type !== 'message.updated') return false;
           const id = (e as { message: { id: string } }).message.id;
@@ -8339,10 +8376,6 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const until = Date.now() + 10_000;
         while (writesOf(busEvents, R, false).length < want.length && Date.now() < until) await new Promise((res) => setTimeout(res, 100));
         expect(writesOf(busEvents, R, false), 'Rust 가 낸 쓰기 이벤트 = TS').toEqual(want);
-        const handedT = writesOf(tsEvents, T, true);
-        expect(handedT.length, '넘긴 길도 TS 가 더해 이벤트가 난다').toBeGreaterThan(0);
-        expect(writesOf(tsEvents, R, true), '넘긴 길은 TS 가 처리했다').toEqual(handedT);
-        expect(writesOf(busEvents, R, true), '넘긴 길은 Rust outbox 에 없다').toEqual([]);
         offTs();
         // 한 트랜잭션 — outbox 넣기가 실패하면 줄 더하기가 되돌아간다(도구 오류 internal, TS 로 다시 돌지 않는다).
         const txCard = await card('트랜잭션 줄');
@@ -8405,7 +8438,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           const json = text ? JSON.parse(text) as Record<string, unknown> : {};
           return { status: res.status, code: (json.error as { code?: string } | undefined)?.code, json, count: res.headers.get('x-harkroom-notified-count') };
         };
-        const HANDED = ['TS: 승인 낱말', 'TS: 메시지 링크', 'TS: URL', 'TS: 모델 지정 키'];
+        // 8d22aaf3f 부터 URL 이 든 글은 Rust 가 올린다(링크 미리보기를 Rust 가 받는다).
+        const HANDED = ['TS: 승인 낱말', 'TS: 메시지 링크', 'TS: 모델 지정 키'];
         const run = async (base: string, sd: Side) => {
           const out: { step: string; status: number; code?: string; count: string | null; body: unknown; id?: string }[] = [];
           const step = async (name: string, path: string, body: unknown, token?: string, key?: string) => {
@@ -8428,7 +8462,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           await step('채널 uuid 아님 → 400', mPath('x'), { body: 'x' });
           await step('TS: 승인 낱말', mPath(todayId), { body: '승인합니다' });
           await step('TS: 메시지 링크', mPath(todayId), { body: `이것 harkroom://message/${sd.root}` });
-          await step('TS: URL', mPath(todayId), { body: '자료 https://example.com/a' });
+          await step('URL', mPath(todayId), { body: '자료 https://example.com/a' });
           // C1c-3a 부터 Rust 가 맡는다(자세한 대조는 아래 사람 답글 블록).
           await step('스레드 답글', mPath(todayId), { body: '답글', threadRootId: sd.root });
           // C1c-3d 부터 Rust 가 맡는다(`dm` 알림 — 자세한 대조는 아래 사람 답글 블록).
@@ -8456,7 +8490,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           .map((e) => shape(sd)(JSON.parse(JSON.stringify(e))));
         const idsOf = (o: typeof tsOut, handed: boolean) => o.filter((x) => x.status === 201 && HANDED.includes(x.step) === handed).map((x) => x.id!);
         const want = created(tsEvents, idsOf(tsOut, false), T);
-        expect(want.length, '맡은 글마다 message.created(C1c-3a 부터 스레드 답글, C1c-3d 부터 DM, C1c-4a 부터 에이전트 글 포함)').toBe(6);
+        expect(want.length, '맡은 글마다 message.created(C1c-3a 부터 스레드 답글, C1c-3d 부터 DM, C1c-4a 부터 에이전트 글, 8d22aaf3f 부터 URL 글 포함)').toBe(7);
         const until8 = Date.now() + 10_000;
         while (created(busEvents, idsOf(rsOut, false), R).length < want.length && Date.now() < until8) await new Promise((res) => setTimeout(res, 100));
         expect(created(busEvents, idsOf(rsOut, false), R), 'Rust 가 낸 message.created = TS').toEqual(want);
@@ -8813,7 +8847,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['DM 에이전트(주인만) → 게이트 막힘', async () => '', () => ({ body: '봐 줘' }), member.token, undefined, dmBot],
           ['머리 id 가 null → 400', async () => '', () => ({ body: '답', threadRootId: null }), A],
           // 앞단에 `HARKROOM_DELEGATION_V2` 가 없으면 스위치를 모르니 TS 로(아래에서 값을 준 앞단으로 v0·v1 을 견준다).
-          ['담당 사람 글, 스위치 모름 → TS 몫', withDelegation, (r) => ({ body: '작업하는 중', threadRootId: r }), A, 'ts'],
+          // (S5.4: 글 올리기 경로는 값이 없으면 TS 처럼 꺼짐(v0)으로 읽고 Rust 가 올린다 — `msg_post.rs::post_delegation_v2`.)
+          ['담당 사람 글, 스위치 없음 → 꺼짐(v0)', withDelegation, (r) => ({ body: '작업하는 중', threadRootId: r }), A],
           // C1c-4a — 에이전트(PAT) 글. BOT 은 주인만(회신권을 주는 쪽), BOT2 는 누구나.
           ['에이전트 최상위 글(부름 없음)', async () => '', () => ({ body: '보고 드림' }), agent.pat, undefined, freshCh],
           ['에이전트 답글 → 머리 주인 thread_reply · 받은 회신권 닫음', withGrant, (r) => ({ body: '결과다', threadRootId: r }), agent.pat],
@@ -8821,7 +8856,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['에이전트 DM → 상대에게 dm', async () => '', () => ({ body: '알림' }), bot2.pat, undefined, dmBot2],
           ['에이전트 머리 id 가 null → 400', async () => '', () => ({ body: '답', threadRootId: null }), agent.pat],
           // 아직 TS 몫 — 부름은 암묵 위임 스위치를 모르면(C1c-4d), 사슬 안의 글은 정체 홉(C1c-4b).
-          ['에이전트 부름, 암묵 위임 스위치 모름 → TS 몫', async () => '', () => ({ body: '@mem 봐 줘' }), agent.pat, 'ts', freshCh],
+          ['에이전트 부름, 위임 스위치 없음 → 꺼짐', async () => '', () => ({ body: '@mem 봐 줘' }), agent.pat, undefined, freshCh],
           // C1c-4b — 사슬 안의 에이전트 글: 깊이·정체 홉·사슬 시작(앞 고리 시각)을 TS 와 같게 적는다.
           ['사슬 안 에이전트 답(결과물 없음) → 정체 +1', withChainBy(() => bot2.accountId, 2, 1), (r) => ({ body: '봤다', threadRootId: r }), agent.pat],
           ['사슬 안 에이전트 답(새 sha) → 정체 0', withChainBy(() => bot2.accountId, 2, 3), (r) => ({ body: 'head abc1234 올림', threadRootId: r }), agent.pat],
@@ -8883,7 +8918,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             const events = shape(JSON.parse(JSON.stringify(mine()))) as unknown[];
             const key = (e: unknown) => { const x = e as { type: string; accountId?: string; message?: { body?: string } }; return `${x.type}|${x.message?.body ?? ''}|${x.accountId ?? ''}`; };
             if (name.startsWith('백스톱')) events.sort((a, b) => key(a).localeCompare(key(b)));
-            out.push({ name, ...r, id: undefined, ...(await facts(r.id)), events });
+            // 400 문구는 TS(zod 오류 JSON)와 Rust(`body: invalid`)가 다르다 — 상태·코드만 견준다(`msg_post.rs::bad` 의 약속).
+            const message = r.status === 400 ? { error: { code: (r.message as { error?: { code?: unknown } }).error?.code } } : r.message;
+            out.push({ name, ...r, message, id: undefined, ...(await facts(r.id)), events });
           }
           return out;
         };
@@ -9040,7 +9077,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         type D = { deleg: Record<string, unknown>[]; count: string };
         expect((delegOut['1'] as D[])[0]!.deleg).toEqual([{ outcome: null, active: true, pending: true, pending_at: true, pushed: true }]);
         expect((delegOut['0'] as D[])[0]!.deleg).toEqual([{ outcome: null, active: false, pending: false, pending_at: false, pushed: true }]);
-        expect((tsOut as D[]).find((x) => (x as unknown as { name: string }).name === '담당 사람 글, 스위치 모름 → TS 몫')!.deleg)
+        expect((tsOut as D[]).find((x) => (x as unknown as { name: string }).name === '담당 사람 글, 스위치 없음 → 꺼짐(v0)')!.deleg)
           .toEqual([{ outcome: null, active: false, pending: false, pending_at: false, pushed: true }]);
         expect(handedOnRust, 'TS 몫 스레드의 답은 Rust outbox 에 없다').toEqual([]);
         // C1c-4d — 대조가 「둘 다 안 적음」으로 같아지지 않게 TS 쪽 판정을 못 박는다.
@@ -9127,7 +9164,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         for (const mode of ['1', '0']) {
           expect(chainOf(delegOut[mode], '정체 한도 → 그림자 기록'), mode).toEqual({ ...c0, depth: 2, stall: 4, shadow: { wouldCap: ['BOT2'], stallDepth: 4, limit: 4 } });
         }
-        expect(by('에이전트 부름, 암묵 위임 스위치 모름 → TS 몫').inbox).toEqual([{ who: 'MEM', reason: 'mention' }]);
+        expect(by('에이전트 부름, 위임 스위치 없음 → 꺼짐').inbox).toEqual([{ who: 'MEM', reason: 'mention' }]);
         for (const mode of ['1', '0']) {
           const d = delegOut[mode] as unknown[];
           expect(byG(d, '에이전트가 에이전트를 부름 → 회신권 열기').grants, mode).toEqual([{ grantee: 'BOT2', granter: 'BOT', closed: false, ttl: true }]);
@@ -9252,9 +9289,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['없는 머리 → bad_thread', async (ch) => ({ args: { channelId: ch, threadRootId: randomUUID(), body: '답' }, via: viaPat }), true],
           ['남의 업로드 → bad_attachment', async (ch) => ({ args: { channelId: ch, body: '첨부', attachmentIds: [randomUUID()] }, via: viaPat }), true],
           ['공백 본문도 받는다(min 1)', async (ch) => ({ args: { channelId: ch, body: ' ' }, via: viaPat }), true],
-          ['agentModels → TS', async (ch) => ({ args: { channelId: ch, body: '지정', agentModels: [] }, via: viaPat }), false],
-          ['부름(암묵 위임 모름) → TS', async (ch) => ({ args: { channelId: ch, body: '@mem 봐 줘' }, via: viaPat }), false],
-          ['ASCII 밖 모델 → TS', async (ch) => ({ args: { channelId: ch, body: '보고', model: '오푸스' }, via: viaPat }), false],
+          // S5.4 — 빈 agentModels(3f7e8cb78·39da7054d) · 위임 스위치 없음 = 꺼짐(e46a80212) · ASCII 밖 모델(UTF-16 길이로 센다)은 Rust 가 답한다.
+          ['agentModels 빈 목록', async (ch) => ({ args: { channelId: ch, body: '지정', agentModels: [] }, via: viaPat }), true],
+          ['부름(위임 스위치 없음 → 꺼짐)', async (ch) => ({ args: { channelId: ch, body: '@mem 봐 줘' }, via: viaPat }), true],
+          ['ASCII 밖 모델', async (ch) => ({ args: { channelId: ch, body: '보고', model: '오푸스' }, via: viaPat }), true],
           // C3b-2c-1 — `message.fail`(표지 없는 실패). 표지·차례 주인 재료가 있으면 TS 몫이다(fail-closed).
           ['fail 원인 없음 · what/reason · 옛 account', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, body: '못 했다', retryable: true, what: '빌드', reason: '권한', account: 'old', model: 'claude-opus-5' }, via: viaPat }), true],
           ['fail 오퍼레이터 원인 → 깊이·고리·턴 id', async (ch) => {
@@ -9289,7 +9327,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                   await db.pool.query(`insert into team_delegation (message_id, team_id, lead_account_id, channel_id, thread_root_id, deadline_at, kind, created_at) values ($1, null, $2, $3, $4, now() + interval '10 minutes', 'delegate', now() - interval '1 minute')`, [m, bot3.accountId, ch, root]);
                 }
               }),
-              dl(() => ({ to: ['c3b2c4del'], agentModels: [] }), false, 'delegate agentModels → TS'),
+              dl(() => ({ to: ['c3b2c4del'], agentModels: [] }), true, 'delegate agentModels 빈 목록'),
               dl((_c, root) => ({ to: ['c3b2c4del'], planRootId: root, planGroupId: 'g1' }), false, 'delegate 계획판 → TS'),
             ];
           })(),
@@ -10216,10 +10254,11 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 };
                 const tsH = await runH(tsUrl);
                 const rsH = await runH(v2Url);
-                expect(rsH).toEqual(tsH);
-                expect(tsH.body).toMatchObject({ delegated: ['c3b2c4del'], unreachable: [] });
-                expect(tsH.deleg).toEqual([{ by_me: true, team_id: 'HTEAM', kind: 'delegate', lead: 'MEM', items: [{ to: 'DEL4', outcome: null }] }]);
-                expect(tsH.msg).toMatchObject({ author: 'MEM' });
+                // `/mcp` 는 에이전트 전용이다(`agent_only`) — 사람 토큰은 두 서버 모두 문 앞에서 403 이고 도구에 닿지 않는다. 그래서
+                // 사람 팀장 갈래(`delegate_gate.rs::route_for` Team)는 이 표면으로는 못 견준다(단위 시험 `human_lead_takes_team_route` 뿐).
+                // 여기서는 두 쪽이 똑같이 거절하고 아무것도 적지 않는 것만 못 박는다.
+                expect({ ...rsH, rust: null }).toEqual({ ...tsH, rust: null });
+                expect(tsH).toMatchObject({ status: 403, body: null, deleg: [], inbox: [], msg: null });
               } finally {
                 await db.pool.query(`delete from agent_team where id = $1`, [hTeam]);
               }
@@ -11748,8 +11787,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
               known.set(id, `<c:${name}>`);
               if (o.grant !== false) {
                 await db.pool.query(
-                  `insert into account_grant (account_id, capability, scope, granted_by, write_needs_human_cause) values ($1, 'api.call', $2, $3, $4)`,
-                  [ap.accountId, `connector:${id}`, admin.accountId, o.write ?? false]);
+                  `insert into account_grant (account_id, capability, scope, granted_by, write_needs_human_cause, limits) values ($1, 'api.call', $2, $3, $4, $5::jsonb)`,
+                  [ap.accountId, `connector:${id}`, admin.accountId, o.write ?? false, JSON.stringify({ methods: o.methods ?? ['GET', 'POST'], pathPrefix: '/v1' })]);
               }
               return id;
             };
@@ -11779,7 +11818,11 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 `select id, kind, body, author_id, channel_id, thread_root_id, meta from message
                   where channel_id = $1 and meta ? 'blocked' and not (id = any($2::uuid[])) order by created_at`, [todayId, seenCards])).rows;
               seenCards.push(...cards.map((c) => c.id));
-              if (cards.length) await db.pool.query('delete from message where id = any($1::uuid[])', [cards.map((c) => c.id)]);
+              if (cards.length) {
+                // 카드는 소유자 인박스에 줄을 남긴다 — 글보다 먼저 지운다(FK).
+                await db.pool.query('delete from inbox where message_id = any($1::uuid[])', [cards.map((c) => c.id)]);
+                await db.pool.query('delete from message where id = any($1::uuid[])', [cards.map((c) => c.id)]);
+              }
               return { r, effects: { audit, access, cards: cards.map(({ id: _id, ...c }) => c) } };
             };
             const apPair = async (label: string, body: unknown, headers: Record<string, string> = vP) => {
@@ -11803,7 +11846,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             await apPair('api 남의 임대 → 403 lease_invalid', q(L, 's54ap-bearer'));
             // 허락 — none·bearer·header·질의 붙은 경로.
             const okN = await apPair('api none 허락', q(LP, 's54ap-none'));
-            expect(okN.a.r.status).toBe(200);
+            expect(okN.a.r.status, JSON.stringify([okN.a.r.json, okN.a.effects.audit])).toBe(200);
             expect(okN.a.r.cc).toBe('no-store');
             expect(okN.a.r.json).toMatchObject({ allowed: true, authKind: 'none', valueBase64: null, causeByHuman: true });
             const okB = await apPair('api bearer 허락(비밀 엶)', q(LP, 's54ap-bearer', 'GET', '/v1/items?api_key=zzz'));
