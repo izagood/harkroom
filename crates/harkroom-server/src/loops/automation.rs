@@ -27,9 +27,11 @@
 //! TS 처럼 sweep 에서는 위임 카드 갱신(`refreshMandateCards`)을 하지 않는다. 비밀 칸(`ingress_token_hash`·`ingress_secret_enc`)은 읽지 않는다.
 //!
 //! TODO(이것이 끝나야 주인을 `rust` 로 넘길 수 있다):
-//! - [ ] 1 `fireOneSchedule` — tz 벽시계 계산은 [`crate::core::automation_time`](`next_occurrence`·`time_vars`·`zoned_to_utc`, chrono-tz)에 있다.
-//!   남은 것: 잡기 SQL·`update automation set next_at`
-//!   + `enqueueRun` 의 디바운스(`debounce_sec` 창 병합)·시간당 상한 일시정지. [`crate::core::mcp::automation_run::enqueue_tx`] 를 재사용할 것.
+//! - [x] 1 `fireOneSchedule` — [`fire_one_schedule`]: [`DUE_SCHEDULE_SQL`](`$2` = 프로세스 시각, TS 와 같다) →
+//!   [`enqueue_schedule_tx`](TS `enqueueRun` 의 schedule 갈래 — 디바운스는 schedule 에 걸리지 않고, 시간당 상한이면
+//!   [`RATE_LIMIT_SQL`] + 위임장 끝내기) → `rate_limited` 가 아니면 [`SET_NEXT_AT_SQL`](`next_occurrence(trigger, now)`).
+//!   남은 차이: chrono-tz 가 모르는 tz·zod 가 받지 않을 trigger 는 되돌려 TS 몫으로 둔다(`Fired::Left`).
+//!   `pool.begin` 실패는 TS 에선 sweep 전체를 끝내지만 여기선 그 한 건만 넘긴다(다음 건도 같은 실패라 결과는 같다).
 //! - [x] 3 `pauseForRefusal` + `endAutomationMandatesTx` — [`pause_for_refusal`]·[`end_automation_mandates_tx`].
 //!   남은 차이: 위임장 `ended_at`·줄 `revoked_at` 이 TS 는 프로세스 시각(`new Date()`), 여기는 DB `now()`(tx 시작 시각)다.
 //!   `BadAttachment`(첨부 없음 — 닿지 않는다)·`ToTs`·`ChainLimit` 은 여전히 대기로 둔다.
@@ -48,7 +50,7 @@ use std::time::Duration;
 pub const SWEEP_INTERVAL: Duration = Duration::from_secs(15);
 /// TS `SWEEP_BATCH_SIZE`.
 pub const SWEEP_BATCH_SIZE: usize = 20;
-/// TS `RATE_LIMIT_PER_HOUR` (TODO: 회차 만들기 — 위 모듈 문서).
+/// TS `RATE_LIMIT_PER_HOUR`.
 pub const RATE_LIMIT_PER_HOUR: i64 = 20;
 /// TS `PENDING_EXPIRY_MS`.
 pub const PENDING_EXPIRY_MS: i64 = 60 * 60 * 1000;
@@ -94,7 +96,47 @@ pub const AUTOMATION_SWEEP_PRIVILEGES: &[(&str, &str)] = &[
     ("account.id", "SELECT"),
     ("account.deleted_at", "SELECT"),
     ("account.disabled_at", "SELECT"),
+    // `fire_one_schedule` — 잡기(where·`returning` 칸)와 TS `enqueueRun`(schedule 갈래).
+    ("automation.trigger", "SELECT"),
+    ("automation.next_at", "SELECT"),
+    ("automation.enabled", "SELECT"),
+    ("automation.debounce_sec", "SELECT"),
+    ("automation_run.event_key", "SELECT"),
+    ("automation_run.automation_id", "INSERT"),
+    ("automation_run.event_key", "INSERT"),
+    ("automation_run.trigger_kind", "INSERT"),
+    ("automation_run.payload", "INSERT"),
+    ("automation_run.not_before", "INSERT"),
+    ("automation_run.initiated_by", "INSERT"),
+    ("automation_run.cause_message_id", "INSERT"),
+    ("automation_run.chain_depth", "INSERT"),
 ];
+
+/// TS `fireOneSchedule` 의 잡기 그대로. `$2` 는 TS 처럼 프로세스 시각(`now()`)이다. `next_at` 은 ms(TS `Date` 정밀도).
+pub const DUE_SCHEDULE_SQL: &str = "select id::text, trigger, (floor(extract(epoch from next_at) * 1000))::bigint from automation \
+     where enabled and deleted_at is null and next_at is not null and next_at <= $2::timestamptz \
+       and not (id = any($1::uuid[])) \
+     order by next_at limit 1 \
+     for update skip locked";
+/// TS `enqueueRun` 의 자동화 행 읽기.
+pub const ENQUEUE_ROW_SQL: &str =
+    "select enabled, debounce_sec from automation where id = $1::uuid and deleted_at is null";
+/// TS `enqueueRun` 의 시간당 회차 셈.
+pub const RECENT_RUNS_SQL: &str = "select count(*)::int as n from automation_run \
+     where automation_id = $1::uuid and created_at > now() - interval '1 hour'";
+/// TS `enqueueRun` 의 시간당 상한 일시정지.
+pub const RATE_LIMIT_SQL: &str = "update automation set enabled = false, paused_reason = 'rate_limited', next_at = null, updated_at = now() \
+     where id = $1::uuid";
+/// TS `enqueueRun` 의 INSERT(schedule 갈래 — 디바운스 없음이라 `not_before` null, 에이전트 칸 null).
+/// `returning` 은 TS `RUN_COLS` 대신 id 만(sweeper 는 회차 행을 쓰지 않는다).
+pub const INSERT_SCHEDULE_RUN_SQL: &str = "insert into automation_run (automation_id, event_key, trigger_kind, payload, not_before, \
+                                 initiated_by, cause_message_id, chain_depth) \
+     values ($1::uuid, $2, $3, $4::jsonb, null, null, null, null) \
+     on conflict (automation_id, event_key) do nothing \
+     returning id::text";
+/// TS `fireOneSchedule` 의 다음 시각.
+pub const SET_NEXT_AT_SQL: &str =
+    "update automation set next_at = $2::timestamptz where id = $1::uuid";
 
 /// TS `deliverOne` 의 select 그대로(칸은 Rust 튜플에 맞춤). TS 의 `$2`(프로세스 시각) 자리는 DB `now()` 다.
 pub const DUE_SQL: &str = "select r.id::text, r.automation_id::text, r.trigger_kind, r.payload, \
@@ -445,6 +487,182 @@ pub async fn deliver_one(
     Ok(Delivered::Sent(msg))
 }
 
+/// TS `EnqueueResult` 중 schedule 갈래가 닿는 것.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Enqueued {
+    Inactive,
+    RateLimited,
+    Duplicate,
+    Queued(String),
+}
+
+/// TS `eventSummary(vars, eventKey)`.
+pub fn event_summary(vars: &Map<String, Value>, event_key: &str) -> String {
+    let get = |k: &str| {
+        vars.get(k)
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+    };
+    let any = |k: &str| vars.get(k).and_then(Value::as_str);
+    let head = if let Some(n) = get("pr.number") {
+        format!("#{n} ")
+    } else if let Some(sha) = get("sha") {
+        // JS `slice(0, 7)` 는 UTF-16 단위다 — sha 는 ASCII 라 문자 단위와 같다.
+        format!("{} ", sha.chars().take(7).collect::<String>())
+    } else {
+        String::new()
+    };
+    let text = [
+        "pr.title",
+        "commit.message",
+        "release.tag",
+        "workflow.name",
+        "payload.title",
+        "payload.status",
+    ]
+    .iter()
+    .find_map(|k| any(k))
+    .unwrap_or(event_key);
+    format!("{head}{text}")
+}
+
+/// TS `enqueueRun` 의 payload — `{ vars, events: [{ key, summary }] }`.
+pub fn run_payload(vars: &Map<String, Value>, event_key: &str) -> Value {
+    json!({
+        "vars": vars,
+        "events": [{ "key": event_key, "summary": event_summary(vars, event_key) }],
+    })
+}
+
+/// 일정 한 건의 순수 계획 — 저장된 trigger 로 `timeVars` 와 다음 시각 계산기를 고른다.
+/// `None` 이면 Rust 가 계산할 수 없는 일정(chrono-tz 가 모르는 tz 등)이라 TS 몫으로 남긴다.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SchedulePlan {
+    /// `kind == 'schedule'` — 변수와 일정.
+    Schedule(Map<String, Value>, crate::core::automation_time::Schedule),
+    /// 다른 trigger 에 `next_at` 이 있는 경우 — TS 는 변수 `{}`, 다음 시각 null.
+    Other,
+}
+
+pub fn plan_schedule(trigger: &Value, fired_for_ms: i64) -> Option<SchedulePlan> {
+    use crate::core::automation_time::{Schedule, time_vars};
+    if trigger.get("kind").and_then(Value::as_str) != Some("schedule") {
+        return Some(SchedulePlan::Other);
+    }
+    let s = Schedule::parse(trigger)?;
+    let vars = time_vars(fired_for_ms, s.tz)?;
+    Some(SchedulePlan::Schedule(vars, s))
+}
+
+impl SchedulePlan {
+    /// TS `t.kind === 'schedule' ? nextOccurrence(t, now()) : null` → ISO.
+    pub fn next_at(&self, now_ms: i64) -> Option<String> {
+        match self {
+            SchedulePlan::Schedule(_, s) => {
+                crate::core::automation_time::next_occurrence(s, now_ms)
+                    .and_then(crate::core::automation_time::iso)
+            }
+            SchedulePlan::Other => None,
+        }
+    }
+}
+
+/// TS `enqueueRun`(triggerKind `schedule`, ignoreEnabled 없음, 에이전트 칸 없음). schedule 은 디바운스로 모으지 않으므로
+/// `mergeIntoGathering` 갈래와 `not_before` 는 늘 비어 있다(TS 조건 `triggerKind !== 'schedule'`).
+pub async fn enqueue_schedule_tx(
+    tx: &mut sqlx::PgConnection,
+    automation_id: &str,
+    event_key: &str,
+    vars: &Map<String, Value>,
+) -> Result<Enqueued, sqlx::Error> {
+    let row: Option<(bool, Option<i32>)> = sqlx::query_as(ENQUEUE_ROW_SQL)
+        .bind(automation_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    match row {
+        Some((true, _)) => {}
+        _ => return Ok(Enqueued::Inactive),
+    }
+    let n: i32 = sqlx::query_scalar(RECENT_RUNS_SQL)
+        .bind(automation_id)
+        .fetch_one(&mut *tx)
+        .await?;
+    if i64::from(n) >= RATE_LIMIT_PER_HOUR {
+        sqlx::query(RATE_LIMIT_SQL)
+            .bind(automation_id)
+            .execute(&mut *tx)
+            .await?;
+        end_automation_mandates_tx(tx, automation_id, "automation_off").await?;
+        return Ok(Enqueued::RateLimited);
+    }
+    let id: Option<String> = sqlx::query_scalar(INSERT_SCHEDULE_RUN_SQL)
+        .bind(automation_id)
+        .bind(event_key)
+        .bind("schedule")
+        .bind(run_payload(vars, event_key))
+        .fetch_optional(&mut *tx)
+        .await?;
+    Ok(id.map_or(Enqueued::Duplicate, Enqueued::Queued))
+}
+
+/// `fire_one_schedule` 의 결과.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Fired {
+    None,
+    Done(Enqueued),
+    /// Rust 가 계산할 수 없는 일정 — 되돌려 TS 몫으로 두었다.
+    Left,
+}
+
+/// TS `fireOneSchedule` — 시각이 된 schedule 하나를 회차로 만든다. 밀린 회차는 따라잡지 않는다.
+/// `now` 는 TS 처럼 잡기 시각과 다음 시각 계산에 각각 새로 읽는다.
+pub async fn fire_one_schedule(
+    pool: &PgPool,
+    skip: &mut Vec<String>,
+    now: impl Fn() -> i64,
+) -> Result<Fired, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let Some(now_iso) = crate::core::automation_time::iso(now()) else {
+        tx.rollback().await?;
+        return Ok(Fired::None);
+    };
+    let row: Option<(String, Value, i64)> = sqlx::query_as(DUE_SCHEDULE_SQL)
+        .bind(&*skip)
+        .bind(&now_iso)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let Some((id, trigger, next_at_ms)) = row else {
+        tx.commit().await?;
+        return Ok(Fired::None);
+    };
+    skip.push(id.clone());
+
+    let (Some(plan), Some(fired_iso)) = (
+        plan_schedule(&trigger, next_at_ms),
+        crate::core::automation_time::iso(next_at_ms),
+    ) else {
+        tx.rollback().await?;
+        return Ok(Fired::Left);
+    };
+    // 회차 키는 **예정 시각**이다 — 같은 회차를 두 프로세스가 집어도 하나만 남는다.
+    let event_key = format!("schedule:{fired_iso}");
+    let empty = Map::new();
+    let vars = match &plan {
+        SchedulePlan::Schedule(v, _) => v,
+        SchedulePlan::Other => &empty,
+    };
+    let result = enqueue_schedule_tx(&mut tx, &id, &event_key, vars).await?;
+    if result != Enqueued::RateLimited {
+        sqlx::query(SET_NEXT_AT_SQL)
+            .bind(&id)
+            .bind(plan.next_at(now()))
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(Fired::Done(result))
+}
+
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -452,8 +670,20 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-/// TS `sweep` — TODO: 앞에 `fireOneSchedule` × 20. 지금은 발송 단계만. 보낸 수.
+/// TS `sweep` — `fireOneSchedule` × 20 뒤 `deliverOne` × 20. 보낸 수.
 pub async fn sweep(pool: &PgPool, st: &PostState) -> Result<usize, sqlx::Error> {
+    let mut skip_a = Vec::new();
+    for _ in 0..SWEEP_BATCH_SIZE {
+        match fire_one_schedule(pool, &mut skip_a, now_ms).await {
+            Ok(Fired::None) => break,
+            Ok(Fired::Left) => {
+                eprintln!("loop automation: left a schedule for TS (owner should stay ts)")
+            }
+            Ok(Fired::Done(_)) => {}
+            // TS 처럼 한 건 오류는 로그만 남기고 다음 건으로 간다(`'done'`).
+            Err(e) => eprintln!("loop automation: schedule sweep failed: {e}"),
+        }
+    }
     let mut skip = Vec::new();
     let mut n = 0;
     for _ in 0..SWEEP_BATCH_SIZE {
@@ -521,9 +751,61 @@ mod tests {
     }
 
     #[test]
+    fn event_summary_matches_ts() {
+        let mut v = Map::new();
+        assert_eq!(event_summary(&v, "schedule:x"), "schedule:x");
+        v.insert("sha".into(), "abcdef0123".into());
+        v.insert("commit.message".into(), "fix".into());
+        assert_eq!(event_summary(&v, "k"), "abcdef0 fix");
+        v.insert("pr.number".into(), "12".into());
+        v.insert("pr.title".into(), "T".into());
+        assert_eq!(event_summary(&v, "k"), "#12 T");
+        // `??` 는 빈 문자열을 넘기지 않는다.
+        let mut w = Map::new();
+        w.insert("pr.title".into(), "".into());
+        assert_eq!(event_summary(&w, "k"), "");
+    }
+
+    #[test]
+    fn schedule_plan_and_payload() {
+        // 2025-11-16 00:00 UTC = 09:00 Asia/Seoul.
+        let fired = 1_763_251_200_000;
+        let t = json!({"kind": "schedule", "freq": "daily", "time": "09:00", "tz": "Asia/Seoul"});
+        let plan = plan_schedule(&t, fired).expect("plan");
+        let SchedulePlan::Schedule(vars, _) = &plan else {
+            panic!("schedule")
+        };
+        assert_eq!(vars["date"], "2025-11-16");
+        assert_eq!(
+            plan.next_at(fired).as_deref(),
+            Some("2025-11-17T00:00:00.000Z")
+        );
+        let key = format!(
+            "schedule:{}",
+            crate::core::automation_time::iso(fired).unwrap()
+        );
+        let p = run_payload(vars, &key);
+        assert_eq!(p["events"][0]["summary"], key.as_str());
+        assert_eq!(p["vars"]["yesterday"], "2025-11-15");
+        // 모르는 tz 는 TS 몫.
+        let bad = json!({"kind": "schedule", "freq": "daily", "time": "09:00", "tz": "asia/seoul"});
+        assert_eq!(plan_schedule(&bad, fired), None);
+        // 다른 trigger 는 변수 없음·다음 시각 null.
+        let other = plan_schedule(&json!({"kind": "manual"}), fired).unwrap();
+        assert_eq!(other, SchedulePlan::Other);
+        assert_eq!(other.next_at(fired), None);
+    }
+
+    #[test]
     fn never_touches_ingress_secrets() {
         for sql in [
             DUE_SQL,
+            DUE_SCHEDULE_SQL,
+            ENQUEUE_ROW_SQL,
+            RECENT_RUNS_SQL,
+            RATE_LIMIT_SQL,
+            INSERT_SCHEDULE_RUN_SQL,
+            SET_NEXT_AT_SQL,
             FINISH_SQL,
             PAUSE_SQL,
             LIVE_MANDATES_SQL,
