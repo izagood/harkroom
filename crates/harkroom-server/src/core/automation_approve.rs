@@ -74,7 +74,7 @@ fn no_pending() -> Response {
 }
 
 /// TS `initialNextAt` — `Some(None)` 는 null, `None` 은 Rust 가 못 읽는 일정(TS 로).
-fn initial_next_at(trigger: &str, now_ms: i64) -> Option<Option<String>> {
+pub(crate) fn initial_next_at(trigger: &str, now_ms: i64) -> Option<Option<String>> {
     let t: Value = serde_json::from_str(trigger).ok()?;
     if t.get("kind").and_then(Value::as_str) != Some("schedule") {
         return Some(None);
