@@ -1726,6 +1726,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant select (secret_id, agent_id, granted_by, channel_id, suspended_at) on secret_grant to ${rw}`,
         `grant insert (secret_id, secret_name, version, agent_id, operator_id, turn_id, channel_id, thread_root_id, result, reason, at) on secret_access_log to ${rw}`,
         `grant insert on audit_log to ${rw}`,
+        // S5.4 ab — POST /agent/secrets·/rotate import 의 F4(마운트된 값) 판정.
+        `grant select (secret_id, version, turn_id, result) on secret_access_log to ${rw}`,
         // S5.4 aa — POST /agent/secrets/reveal(`agent_secret_reveal::privileges()` = AGENT_SECRET_REVEAL_PRIVILEGES + SECRET_KEY_CHECK_PRIVILEGES, 시퀀스 AGENT_SECRET_REVEAL_SEQUENCES).
         `grant select (id, token_hash, agent_id, operator_id, channel_id, thread_root_id, expires_at, ended_at) on secret_turn_lease to ${rw}`,
         `grant select (id, name, kind, filename, expires_at, owner_account_id) on secret to ${rw}`,
@@ -4245,7 +4247,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // SE3·SE4 — 비밀 쓰기 세 줄과 목록이 Rust 에 붙었는지(쓰기 답 대조는 S5.4 3회차 ② 의 7번).
         for (const k of ['GET /secrets', 'POST /secrets', 'PATCH /secrets/{id}', 'PUT /secrets/{id}/value']) expect(f.log(), k).toContain(`"${k}"`);
         expect(f.log()).not.toContain('secret writes core off');
-        // SE4 — GET /agent/secret-create 와 POST /agent/secrets·/agent/secrets/rotate(generate) 는 Rust 다. import 몸만 TS 로 넘긴다.
+        // SE4 — GET /agent/secret-create 와 POST /agent/secrets·/agent/secrets/rotate(generate) 는 Rust 다. import 도 Rust 다(S5.4 ab).
         expect(f.log(), 'GET /agent/secret-create').toContain('"GET /agent/secret-create"');
         expect(f.log()).not.toContain('agent secret create core off');
         for (const k of ['POST /agent/secrets', 'POST /agent/secrets/rotate']) expect(f.log(), k).toContain(`"${k}"`);
@@ -11474,8 +11476,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           await pair('만들기 부여 멈춤 → 403 not_granted', C, mkBody(L, 's54ac-x', gen('password')));
           await pair('회전 부여 멈춤 → 403 not_granted', R, mkBody(L, 's54ac-x', gen('password')));
           await db.pool.query(`update account_grant set suspended_at = null where account_id = $1 and capability = 'secret.create'`, [ac.accountId]);
-          // import 몸은 Rust 가 TS 로 넘긴다 — 같은 답·같은 감사.
-          await pair('만들기 import(TS 로) 없는 임대 → 403', C, mkBody({ leaseId: g4, token: 'nope' }, 's54ac-x', { import: { kind: 'text', valueBase64: 'YQ==' } }));
+          // import 도 Rust 가 받는다(S5.4 ab) — 같은 답·같은 감사.
+          await pair('만들기 import 없는 임대 → 403', C, mkBody({ leaseId: g4, token: 'nope' }, 's54ac-x', { import: { kind: 'text', valueBase64: 'YQ==' } }));
           // 만들기 성공(ac 의 제한기: 쪽마다 아래 9번).
           const okPw = await pair('만들기 password 20', C, mkBody(L, 's54ac-pw', gen('password', 20), { description: '디비 비번', expiresInDays: 7 }), { name: 's54ac-pw' });
           expect(okPw.a.r.status).toBe(201);
