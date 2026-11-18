@@ -31,6 +31,12 @@ pub const SECRET_GRANT_GIVE_PRIVILEGES: &[(&str, &str)] = &[
     ("secret_grant.granted_at", "UPDATE"),
     ("secret_grant.suspended_at", "UPDATE"),
     ("secret_grant.suspend_reason", "UPDATE"),
+    ("audit_log.action", "INSERT"),
+    ("audit_log.actor_id", "INSERT"),
+    ("audit_log.actor_handle", "INSERT"),
+    ("audit_log.target", "INSERT"),
+    ("audit_log.ip", "INSERT"),
+    ("audit_log.detail", "INSERT"),
 ];
 
 const EXPIRED_SQL: &str = "select 1 from secret where id = $1::uuid and expires_at <= now()";

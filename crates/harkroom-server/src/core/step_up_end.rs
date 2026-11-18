@@ -15,10 +15,19 @@ use serde_json::json;
 use sqlx::PgPool;
 use std::sync::Arc;
 
-/// 쓰기 풀에 있어야 하는 칸 권한 — homelab GRANT 와 같아야 한다. 감사 줄(`audit_log` INSERT)은 이미 있는 쓰기 코어 권한이다.
+/// 쓰기 풀에 있어야 하는 칸 권한 — homelab GRANT 와 같아야 한다. UPDATE 의 WHERE 가 읽는 칸(`token_hash`·`stepped_up_until`)은
+/// SELECT 도 있어야 하고, 감사 줄(`audit_log` INSERT) 칸도 여기서 함께 확인한다.
 pub const STEP_UP_END_PRIVILEGES: &[(&str, &str)] = &[
+    ("session.token_hash", "SELECT"),
+    ("session.stepped_up_until", "SELECT"),
     ("session.stepped_up_at", "UPDATE"),
     ("session.stepped_up_until", "UPDATE"),
+    ("audit_log.action", "INSERT"),
+    ("audit_log.actor_id", "INSERT"),
+    ("audit_log.actor_handle", "INSERT"),
+    ("audit_log.target", "INSERT"),
+    ("audit_log.ip", "INSERT"),
+    ("audit_log.detail", "INSERT"),
 ];
 
 #[derive(Clone)]

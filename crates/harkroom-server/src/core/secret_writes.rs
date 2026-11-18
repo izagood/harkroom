@@ -55,6 +55,12 @@ pub const SECRET_WRITES_PRIVILEGES: &[(&str, &str)] = &[
     ("secret_version.sealed", "SELECT"),
     ("secret_version.sealed", "UPDATE"),
     ("secret_version.revoked_at", "UPDATE"),
+    ("audit_log.action", "INSERT"),
+    ("audit_log.actor_id", "INSERT"),
+    ("audit_log.actor_handle", "INSERT"),
+    ("audit_log.target", "INSERT"),
+    ("audit_log.ip", "INSERT"),
+    ("audit_log.detail", "INSERT"),
 ];
 
 /// 모든 권한(쓰기 세 줄 + 기동 키 확인).
