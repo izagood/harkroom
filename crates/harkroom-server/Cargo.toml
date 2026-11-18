@@ -54,6 +54,9 @@ hmac = { version = "=0.13.0", features = ["zeroize"] }
 # HKDF·HMAC 0.13 은 digest 0.11 을 쓴다 — 위의 sha2 0.10(digest 0.10)과 따로 둔다. 이미 잠금 파일에 있던 판.
 sha2_011 = { package = "sha2", version = "=0.11.0", features = ["zeroize"] }
 zeroize = "=1.9.1"
+# 비밀번호 해시(S5.4 decision 1) — TS `argon2`(node-argon2 0.41) 와 같은 PHC 문자열 `$argon2id$v=19$m=65536,t=3,p=4$…`.
+# 난수(getrandom) 기능은 끄고 위 getrandom 으로 소금을 만든다.
+argon2 = { version = "=0.6.0", default-features = false, features = ["alloc", "password-hash"] }
 
 # 망가뜨리기 시험 전용 판정 스위치(C3b-3a `core::decide_core::Checks`). **기본 꺼짐** — release 빌드에 들어가지 않는다.
 # 시험 빌드에서만 아래 dev-dependency(자기 자신)가 켠다. `tests/decide_core.rs` 가 `default` 에 없는지 확인한다.
