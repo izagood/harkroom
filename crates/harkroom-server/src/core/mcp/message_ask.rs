@@ -1,7 +1,8 @@
 //! MCP `message.ask` 의 거절 앞머리(TS `mcpPlugin.ts` `message.ask`). TS 순서 그대로: zod 인자 → `planStepId` 인데 스레드
 //! 없음(`bad_request`) → 채널 가시성(`forbidden`) → 선택지 id 겹침(`duplicate_option`) → 예약 id(`reserved_option_id`)
 //! → 추천 둘 이상(`multiple_recommended`) → 머지 거절 카드에 `to`·`mirrorOf`(`merge_denial_audience`). 모두 지나면 `None`
-//! (→ TS) — 대상 찾기·거울·대신하기·카드 쓰기는 아직 TS 몫이다. 인자가 zod 를 못 지나거나 DB 오류여도 `None`. 읽기만 한다.
+//! (→ TS). 그 뒤 평범한 카드(사람 앞·스레드 밖·원인 헤더 없음)는 [`answer_plain`] 이 글 올리기 풀로 세운다 — 대상 찾기·거울·
+//! 대신하기·열린 카드 검사·계획 단계·머지 거절·푸시는 아직 TS 몫이다. 인자가 zod 를 못 지나거나 DB 오류여도 `None`.
 use super::tools::err;
 use crate::auth::Account;
 use crate::core::ask::{ASK_MAX_OPTIONS, ASK_MIN_OPTIONS, ASK_TEXT_OPTION_ID};
@@ -153,6 +154,78 @@ pub async fn answer(read: &PgPool, me: &Account, args: &Value) -> Option<String>
     option_refusal(&a)
 }
 
+/// 평범한 카드의 TS `AskMeta` — `{kind:'ask', ask:{options, to:{kind:'human'}, prompt?, irreversible?}}`. 칸 차례는 DB(jsonb)가 다시 짓는다.
+fn plain_meta(o: &Map<String, Value>) -> Option<Map<String, Value>> {
+    let mut options = Vec::new();
+    for x in o.get("options")?.as_array()? {
+        let x = x.as_object()?;
+        let mut m = Map::new();
+        m.insert("id".into(), x.get("id")?.clone());
+        m.insert("label".into(), x.get("label")?.clone());
+        if let Some(h) = x.get("hint") {
+            m.insert("hint".into(), h.clone());
+        }
+        if x.get("recommended") == Some(&Value::Bool(true)) {
+            m.insert("recommended".into(), Value::Bool(true));
+        }
+        options.push(Value::Object(m));
+    }
+    let mut ask = Map::new();
+    ask.insert("options".into(), Value::Array(options));
+    ask.insert("to".into(), serde_json::json!({ "kind": "human" }));
+    if let Some(p) = o.get("prompt") {
+        ask.insert("prompt".into(), p.clone());
+    }
+    if o.get("irreversible") == Some(&Value::Bool(true)) {
+        ask.insert("irreversible".into(), Value::Bool(true));
+    }
+    let mut meta = Map::new();
+    meta.insert("kind".into(), Value::from("ask"));
+    meta.insert("ask".into(), Value::Object(ask));
+    Some(meta)
+}
+
+/// Rust 가 세우는 카드 — 사람 앞(`to` 없음), 스레드 밖(열린 카드 검사·계획 단계 없음), 거울·머지 거절·supersedes·keepOpen 없음,
+/// 원인 헤더 없음(TS 의 사람 앞 푸시 `gateAwaitingAccount`→`enqueueAskPush` 는 원인이 있을 때만 쓴다). 그 밖은 `false`(→ TS).
+fn plain(o: &Map<String, Value>, cause: Option<&str>) -> bool {
+    cause.is_none()
+        && [
+            "to",
+            "mirrorOf",
+            "supersedes",
+            "keepOpen",
+            "mergeDenialId",
+            "planStepId",
+            "threadRootId",
+        ]
+        .iter()
+        .all(|k| !o.contains_key(*k))
+}
+
+/// 거절 앞머리([`answer`])를 다 지난 평범한 카드를 세운다. 고를 수 없는 꼴·쓰기 풀 없음·DB 오류는 `None`(→ TS).
+pub async fn answer_plain(
+    st: &crate::core::msg_post::PostState,
+    me: &Account,
+    args: &Value,
+    cause: Option<&str>,
+    turn: Option<&str>,
+    operator: bool,
+) -> Option<String> {
+    parse(args)?;
+    let o = args.as_object()?;
+    if !plain(o, cause) {
+        return None;
+    }
+    let meta = plain_meta(o)?;
+    let mut sub = Map::new();
+    for k in ["channelId", "body", "model"] {
+        if let Some(v) = o.get(k) {
+            sub.insert(k.into(), v.clone());
+        }
+    }
+    super::msg_post::answer_ask(st, me, &Value::Object(sub), meta, cause, turn, operator).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,6 +275,28 @@ mod tests {
         ] {
             assert!(parse(&ask(bad.clone())).is_none(), "{bad}");
         }
+    }
+
+    #[test]
+    fn plain_meta_like_ts() {
+        let v = ask(json!({ "prompt": "p", "irreversible": false }));
+        let m = plain_meta(v.as_object().unwrap()).unwrap();
+        assert_eq!(
+            Value::Object(m),
+            json!({ "kind": "ask", "ask": { "options": [{ "id": "a", "label": "A" }, { "id": "b", "label": "B", "hint": "h" }],
+                "to": { "kind": "human" }, "prompt": "p" } })
+        );
+        let o = ask(json!({}));
+        assert!(plain(o.as_object().unwrap(), None));
+        assert!(!plain(o.as_object().unwrap(), Some("c")));
+        assert!(!plain(
+            ask(json!({ "threadRootId": C })).as_object().unwrap(),
+            None
+        ));
+        assert!(!plain(
+            ask(json!({ "keepOpen": [] })).as_object().unwrap(),
+            None
+        ));
     }
 
     #[test]

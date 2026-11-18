@@ -549,6 +549,33 @@ pub async fn answer_fail(
     .await
 }
 
+/// `message.ask` 의 평범한 카드(사람 앞·거울/머지 거절/supersedes 없음) — [`super::message_ask::answer_plain`] 이 고른 인자와 ask meta 로
+/// `message.post` 와 같은 길(가시성 → 모델 신고 → `postMessage` → `postedResult`)을 탄다. `sub` 는 `channelId`·`body`·`model`·`threadRootId` 만.
+pub(super) async fn answer_ask(
+    st: &PostState,
+    me: &Account,
+    sub: &Value,
+    meta: Map<String, Value>,
+    cause: Option<&str>,
+    turn: Option<&str>,
+    operator: bool,
+) -> Option<String> {
+    let a = parse(sub)?;
+    post(
+        st,
+        me,
+        a,
+        meta,
+        Kind::User,
+        false,
+        false,
+        cause,
+        turn,
+        operator,
+    )
+    .await
+}
+
 /// shared `REPORT_MAX_ITEMS`·`REPORT_MAX_NEXT`.
 const REPORT_MAX_ITEMS: usize = 20;
 const REPORT_MAX_NEXT: usize = 4;

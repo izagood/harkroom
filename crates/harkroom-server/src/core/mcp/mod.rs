@@ -17,6 +17,7 @@ pub mod bg_complete;
 pub mod delegate_gate;
 pub mod grant_delegate;
 pub mod grant_writes;
+pub mod inbox_poll;
 pub mod mem_audit;
 pub mod mem_body;
 pub mod mem_recall;
