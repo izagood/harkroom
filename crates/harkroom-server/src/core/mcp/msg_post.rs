@@ -772,6 +772,7 @@ async fn post(
         wake: false,
         no_mentions: false,
         before_commit: artifact.map(|h| h as &dyn msg_post::BeforeCommit),
+        service_call: false,
     };
     let out = msg_post::post_in_tx(
         st,

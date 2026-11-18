@@ -7,7 +7,7 @@
 //!   links 달기·되돌리기 쓰기도 없다(TS `linkOf`·`failed` 가 비었다).
 //! - 다른 담당·관리자에게 글을 올리는 꼴(TP5c)도 Rust 다: 잠금 안 active([`activate`], 남에게 고른 담당은 `picked`) →
 //!   글마다 Rust 글 경로(`post_in_tx`, 사람 세션 글·TS 와 같은 재시도 키) → 마무리 쓰기([`finish`]: links 달기·실패 되돌리기).
-//!   글 경로가 없거나(`ManagerState::post` 없음) 스레드에 열린 선택 카드가 있으면 TS 로 넘긴다.
+//!   글은 라우트 몫(카드 고르기·닫기)을 끈다(`Origin::service_call`). 글 경로가 없으면(`ManagerState::post` 없음) TS 로 넘긴다.
 use super::invoke_gate::{AgentFacts, Ctx, Via, invoke_facts, may_invoke};
 use super::msg_list::derive_plan;
 use super::msg_read::channel_visible;

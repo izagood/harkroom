@@ -201,7 +201,7 @@ fn parse_start(bytes: &[u8]) -> Option<(bool, bool)> {
 
 /// `POST /threads/{rootId}/plan/start` — TS `startPlanSteps` 의 앞 거절들(`human_only`·`not_found`·`if_rev_required`·
 /// `not_root`·보기 404·`channel_archived`·`no_plan`·`plan_flagged`), 미리보기, 자기 단계만 시작(TP5b), 글을 올리는 시작(TP5c)을
-/// Rust 가 답한다. 글 경로가 없거나 스레드에 열린 선택 카드가 있는 글 올리기와 zod 판정이 애매한 본문은 요청을 그대로 TS 에 넘긴다.
+/// Rust 가 답한다. 글 경로가 없는 글 올리기와 zod 판정이 애매한 본문은 요청을 그대로 TS 에 넘긴다.
 pub async fn post_start(
     State(st): State<Arc<ManagerState>>,
     RequireAccount(me, auth): RequireAccount,
@@ -284,23 +284,14 @@ pub async fn post_start(
         )
             .into_response();
     }
-    // 보낼 글이 있는 꼴(다른 담당·관리자 부르기, TP5c)은 글 경로가 붙어 있고(`post`) 스레드에 열린 카드가 없을 때만 Rust —
-    // 열린 카드가 있으면 Rust 글 경로가 그 글을 TS 몫으로 돌리는데(카드 답 판정), 그때는 이미 active 로 바꾼 뒤라 되돌릴 수 없다.
+    // 보낼 글이 있는 꼴(다른 담당·관리자 부르기, TP5c)은 글 경로가 붙어 있을 때(`post`)만 Rust. 글은 TS 서비스 `postMessage` 와 같이
+    // 라우트 몫(카드 고르기·카드 닫기)을 끈 채 올린다([`super::msg_post::Origin::service_call`]).
     let post_st = if route.posts.is_empty() {
         None
     } else {
         let Some(p) = st.post.as_ref() else {
             return to_ts(st.up.clone(), peer, parts, bytes).await;
         };
-        match sqlx::query_scalar::<_, bool>(OPEN_ASK_SQL)
-            .bind(&root)
-            .fetch_one(w)
-            .await
-        {
-            Ok(false) => {}
-            Ok(true) => return to_ts(st.up.clone(), peer, parts, bytes).await,
-            Err(e) => return internal(e),
-        }
         Some(p)
     };
     let Some(if_rev) = req.if_rev else {
@@ -420,11 +411,6 @@ pub async fn post_start(
     }
 }
 
-/// 이 스레드에 열린 선택 카드가 있는가(`msg_post` 의 TS 몫 스레드 판정 중 카드 갈래와 같은 조건).
-const OPEN_ASK_SQL: &str = "select exists(select 1 from message where (id = $1::uuid or thread_root_id = $1::uuid) \
-     and deleted_at is null and meta->>'kind' = 'ask' \
-     and meta->'ask'->>'answeredWith' is null and meta->'ask'->>'closedAt' is null)";
-
 /// 시작 글들을 올린다(TS `postMessage(…, authVia: 'session')` 고리) — 글마다 따로 커밋한다. 실패한 글의 단계는 `failed`.
 #[allow(clippy::type_complexity)]
 async fn send_posts(
@@ -461,7 +447,10 @@ async fn send_posts(
             Some(&key),
             &audience,
             is_dm,
-            &Origin::default(),
+            &Origin {
+                service_call: true,
+                ..Origin::default()
+            },
         )
         .await;
         let mid = match r {
@@ -495,7 +484,7 @@ fn message_id(row: &str) -> Option<String> {
     v["id"].as_str().map(str::to_string)
 }
 
-/// 코어 라우터에 합칠 줄 — 인증은 `route_layer`, CORS 는 `layer`. `POST …/plan/start` 는 앞 거절·미리보기·실제 시작 모두 Rust(글 경로·열린 카드 갈래만 TS).
+/// 코어 라우터에 합칠 줄 — 인증은 `route_layer`, CORS 는 `layer`. `POST …/plan/start` 는 앞 거절·미리보기·실제 시작 모두 Rust(글 경로가 없을 때만 TS).
 pub fn routes(
     st: ManagerState,
     auth: crate::auth::AuthPools,
