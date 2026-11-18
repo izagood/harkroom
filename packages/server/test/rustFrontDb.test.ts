@@ -11604,7 +11604,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           const raw = async (base: string, path: string, body: unknown, headers: Record<string, string>) => {
             const res = await fetch(`${base}${path}`, { method: 'POST', headers: { ...headers, 'content-type': J, 'x-forwarded-for': XFF }, body: JSON.stringify(body) });
             const text = await res.text();
-            return { status: res.status, cc: res.headers.get('cache-control'), json: (text ? JSON.parse(text) : {}) as Record<string, unknown> };
+            let json: Record<string, unknown> = {};
+            // 닿지 않는 upstream 앞단의 502 는 맨글자다.
+            try { json = (text ? JSON.parse(text) : {}) as Record<string, unknown>; } catch { json = { raw: text }; }
+            return { status: res.status, cc: res.headers.get('cache-control'), json };
           };
           const agents = [ac.accountId, ac2.accountId];
           const seenMsg: string[] = [];
@@ -11990,6 +11993,96 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             expect(ng.a.effects.cards).toHaveLength(1);
             await apPair('api 메서드 밖', q(LP, 's54ap-getonly', 'POST'));
             await apPair('api 나쁜 경로', q(LP, 's54ap-none', 'GET', '//evil.example/x'));
+            // S5.5 b — 비밀 칸이 빈 연결·키 어긋남(409 `secret_key_mismatch`)·키 env 없음. Rust 쪽은 **닿지 않는 upstream** 앞단이다 —
+            // TS 로 넘기면 502 라서 TS 와 답이 같으면 Rust 가 직접 답한 것이다. 키 어긋남은 다른 키를 같은 kid(`ck1`)로 건 TS 하나와
+            // 앞단 하나를 따로 띄운다(DB 확인값은 원래 키 것이라 둘 다 보관소를 끈다). 키 env 가 없는 앞단은 비밀 갈래만 TS 로 넘긴다.
+            {
+              await conn('s54ap-empty', 'bearer', null);
+              const wrongKeysDir = mkdtempSync(joinPath(tmpdir(), 'contrast-keys-wrong-'));
+              writeCases(joinPath(wrongKeysDir, 'ck1'), randomBytes(32).toString('hex'));
+              const bKids: ChildProcess[] = [];
+              const bDeadPort = await freePort();
+              const bFront = async (env: Record<string, string>) => {
+                for (let attempt = 0; ; attempt += 1) {
+                  const p = await freePort();
+                  try {
+                    const fd = await startFront(bin, {
+                      UPSTREAM_URL: `http://127.0.0.1:${bDeadPort}`, DATABASE_URL: db.uri, PORT: String(p), HARKROOM_FRONT_TS_ROUTES: '',
+                      DATABASE_WRITE_URL: writeUrl.toString(), TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust',
+                      ...GROUP_A_ENV, ...env,
+                    });
+                    bKids.push(fd.child);
+                    const until = Date.now() + 10_000;
+                    while (!fd.log().includes('front: rust core routes') && Date.now() < until) await new Promise((res) => setTimeout(res, 100));
+                    return { url: `http://127.0.0.1:${p}`, log: fd.log };
+                  } catch (err) {
+                    if (attempt >= 2 || !String(err).includes('AddrInUse')) throw err;
+                  }
+                }
+              };
+              const prevDir = process.env.HARKROOM_SECRET_KEYS_DIR;
+              const prevKid = process.env.HARKROOM_SECRET_KEY_ID;
+              process.env.HARKROOM_SECRET_KEYS_DIR = wrongKeysDir;
+              process.env.HARKROOM_SECRET_KEY_ID = 'ck1';
+              let appMm: Awaited<ReturnType<typeof buildServer>> | undefined;
+              try {
+                appMm = await buildServer({ pool: db.pool, push: null, trustProxy: TRUST, corsOrigins: [CORS] });
+              } finally {
+                if (prevDir === undefined) delete process.env.HARKROOM_SECRET_KEYS_DIR; else process.env.HARKROOM_SECRET_KEYS_DIR = prevDir;
+                if (prevKid === undefined) delete process.env.HARKROOM_SECRET_KEY_ID; else process.env.HARKROOM_SECRET_KEY_ID = prevKid;
+              }
+              try {
+                await appMm.listen({ port: 0, host: '127.0.0.1' });
+                const tsMm = `http://127.0.0.1:${(appMm.server.address() as AddressInfo).port}`;
+                const dKey = await bFront({ HARKROOM_SECRET_KEYS_DIR: secretKeysDir, HARKROOM_SECRET_KEY_ID: 'ck1' });
+                const dMm = await bFront({ HARKROOM_SECRET_KEYS_DIR: wrongKeysDir, HARKROOM_SECRET_KEY_ID: 'ck1' });
+                const dNoKey = await bFront({ HARKROOM_SECRET_KEYS_DIR: '', HARKROOM_SECRET_KEY_ID: '' });
+                const NO_KEY_LINE = 'front: api checks secret off — no key env';
+                const MM_LINE = 'front: api checks secret — no matching secret key (mismatch: true)';
+                expect(dKey.log()).not.toContain('api checks secret');
+                expect(dMm.log()).toContain(MM_LINE);
+                expect(dNoKey.log()).toContain(NO_KEY_LINE);
+                const bPair = async (label: string, tsBase: string, rsBase: string, body: unknown) => {
+                  const a = await apSide(tsBase, body, vP);
+                  const b = await apSide(rsBase, body, vP);
+                  expect(norm({ status: b.r.status, cc: b.r.cc, json: b.r.json }), `${label} — Rust 가 직접 답한다(upstream 없음)`)
+                    .toEqual(norm({ status: a.r.status, cc: a.r.cc, json: a.r.json }));
+                  expect(norm(b.effects), `${label} 부작용`).toEqual(norm(a.effects));
+                  return { a, b };
+                };
+                const errCode = (x: { r: { json: unknown } }) => (x.r.json as { error?: { code?: string } }).error?.code;
+                // 키가 맞는 앞단 — 비밀 칸이 빈 연결은 403 `no_secret`(감사·카드, 거절 줄 없음). 비밀을 여는 허락도 직접 답한다.
+                const em = await bPair('api 비밀 칸 빈 연결 → 403 no_secret', tsUrl, dKey.url, q(LP, 's54ap-empty'));
+                expect([em.a.r.status, errCode(em.a)]).toEqual([403, 'no_secret']);
+                expect(norm(em.a.effects)).toMatchObject({ audit: [{ action: 'api.call.denied', detail: { code: 'no_secret' } }], access: [] });
+                expect(em.a.effects.cards).toHaveLength(1);
+                const kb = await bPair('api bearer 허락(닿지 않는 upstream)', tsUrl, dKey.url, q(LP, 's54ap-bearer'));
+                expect(kb.a.r.status).toBe(200);
+                // 키 어긋남 — 비밀을 여는 연결·빈 칸 연결·만료 비밀 모두 응답만 409, 감사·카드는 `no_secret`, 비밀 행을 읽기 전이라 거절 줄이 없다.
+                for (const c of ['s54ap-bearer', 's54ap-empty', 's54ap-exp', 's54ap-tx']) {
+                  const m = await bPair(`api 키 어긋남 ${c} → 409`, tsMm, dMm.url, q(LP, c, 'GET', '/v1/items', { caps: ['token_exchange'] }));
+                  expect([m.a.r.status, errCode(m.a)], c).toEqual([409, 'secret_key_mismatch']);
+                  expect(m.a.r.cc, c).toBe('no-store');
+                  expect(norm(m.a.effects), c).toMatchObject({ audit: [{ action: 'api.call.denied', detail: { code: 'no_secret' } }], access: [] });
+                  expect(m.a.effects.cards, c).toHaveLength(1);
+                }
+                const mn = await bPair('api 키 어긋남이어도 none 연결은 허락', tsMm, dMm.url, q(LP, 's54ap-none'));
+                expect(mn.a.r.status).toBe(200);
+                const mg = await bPair('api 키 어긋남 + grant 없음 → not_granted 그대로', tsMm, dMm.url, q(LP, 's54ap-nogrant'));
+                expect([mg.a.r.status, errCode(mg.a)]).toEqual([403, 'not_granted']);
+                // 키 env 없는 앞단 — 이 프로세스에 키가 없을 뿐이다. 비밀을 여는 연결은 아무것도 적지 않고 TS 로 넘기고(502), none 연결은 직접 답한다.
+                for (const c of ['s54ap-bearer', 's54ap-empty', 's54ap-exp']) {
+                  const u = await apSide(dNoKey.url, q(LP, c), vP);
+                  expect(u.r.status, `키 env 없음: ${c} → TS 로 넘긴다`).toBe(502);
+                  expect(u.effects, `키 env 없음: ${c} — 아무것도 적지 않는다`).toEqual({ audit: [], access: [], cards: [] });
+                }
+                const un = await bPair('api 키 env 없음이어도 none 연결은 직접 답한다', tsUrl, dNoKey.url, q(LP, 's54ap-none'));
+                expect(un.a.r.status).toBe(200);
+              } finally {
+                for (const k of bKids) k.kill('SIGTERM');
+                await appMm.close();
+              }
+            }
             await db.pool.query(`delete from api_connector where name like 's54ap-%'`);
             await db.pool.query(`delete from secret where name like 's54ap-%'`);
           }
