@@ -20,6 +20,22 @@ use crate::turn_outcome::{OutcomeFacts, attempt_outcome};
 
 struct Link {
     status: BTreeMap<&'static str, u16>,
+    /// 지나간 HTTP 경로 — 활동 보고(#176)가 몇 번 나갔는지 센다.
+    hits: Mutex<Vec<String>>,
+    /// 활동 보고가 나가는 순간 읽을 기록 파일과 그때 본 내용 — 보고가 가리기 뒤인지 본다.
+    watch: Option<PathBuf>,
+    seen_at_activity: Mutex<Option<String>>,
+}
+
+impl Link {
+    fn activity_reports(&self) -> usize {
+        self.hits
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|p| p.as_str() == "/agent/activity")
+            .count()
+    }
 }
 
 impl RunnerLink for &Link {
@@ -27,6 +43,12 @@ impl RunnerLink for &Link {
         let LinkRequest::Http { path, .. } = req else {
             panic!("mcp")
         };
+        self.hits.lock().unwrap().push(path.clone());
+        if path == "/agent/activity"
+            && let Some(rec) = &self.watch
+        {
+            *self.seen_at_activity.lock().unwrap() = std::fs::read_to_string(rec).ok();
+        }
         let status = self.status.get(path.as_str()).copied().unwrap_or(0);
         RunnerLinkResponse::HttpResponse {
             id: "x".into(),
@@ -211,7 +233,15 @@ fn outcome_with<'e>(
 
 fn link() -> Link {
     Link {
-        status: [(TURN_KEYS_PATH, 200), (TURN_KEYS_END_PATH, 200)].into(),
+        status: [
+            (TURN_KEYS_PATH, 200),
+            (TURN_KEYS_END_PATH, 200),
+            ("/agent/activity", 200),
+        ]
+        .into(),
+        hits: Mutex::default(),
+        watch: None,
+        seen_at_activity: Mutex::default(),
     }
 }
 
@@ -220,7 +250,10 @@ fn link() -> Link {
 #[test]
 fn mounted_secret_is_masked_in_records_outcome_and_after_turn() {
     let w = world("ok");
-    let link = link();
+    let link = Link {
+        watch: Some(w.record.clone()),
+        ..link()
+    };
     let client = HarkroomRestClient::new(&link);
     let ops = Ops {
         log: RefCell::default(),
@@ -261,6 +294,17 @@ fn mounted_secret_is_masked_in_records_outcome_and_after_turn() {
         "턴 뒤 글이 받은 목록에 마운트한 비밀이 있다"
     );
     assert!(!Path::new(&w.turn_cfg).exists());
+    assert_eq!(
+        link.activity_reports(),
+        1,
+        "턴이 끝나면 활동을 남긴다(#176)"
+    );
+    // security(#2354): 활동 보고(시한 없는 링크 요청)는 기록 가리기 **뒤**에 나간다.
+    let seen = link.seen_at_activity.lock().unwrap().clone().unwrap();
+    assert!(
+        !seen.contains(&w.secret) && !seen.contains(&w.key),
+        "활동 보고 때 기록이 아직 안 가려졌다: {seen}"
+    );
 }
 
 /// 실패해도 기록·실패 문장의 목록에 마운트한 비밀이 있다 · 턴 뒤 IO 는 돌지 않는다.
@@ -293,6 +337,11 @@ fn failure_still_masks_mounted_secret_and_skips_after_turn() {
     assert_eq!(r.unwrap_err().message, "harness 종료 1");
     assert!(masked.get());
     assert!(!after_ran.get());
+    assert_eq!(
+        link.activity_reports(),
+        1,
+        "실패한 턴도 움직인 턴이다(#176)"
+    );
     assert!(
         !std::fs::read_to_string(&w.record)
             .unwrap()
@@ -334,6 +383,11 @@ fn blocked_folds_with_pat_and_turn_keys_only() {
     );
     assert!(key_masked.get(), "턴 열쇠는 그래도 가린다");
     assert!(!Path::new(&w.turn_cfg).exists());
+    assert_eq!(
+        link.activity_reports(),
+        0,
+        "하네스가 돌지 않았으면 활동이 아니다"
+    );
 }
 
 /// 턴 뒤 IO 실패는 턴을 실패로 만들지 않는다(best-effort).

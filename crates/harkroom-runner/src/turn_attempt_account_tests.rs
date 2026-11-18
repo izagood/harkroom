@@ -128,8 +128,18 @@ fn live_slot_cancel_sticks_for_the_mention() {
 
 struct NoLink;
 impl RunnerLink for &NoLink {
-    fn request(&self, _req: LinkRequest) -> RunnerLinkResponse {
-        panic!("열쇠 길이 없는 시험이다")
+    fn request(&self, req: LinkRequest) -> RunnerLinkResponse {
+        // 턴이 끝나면 나가는 활동 보고(#176)만 받는다 — 열쇠 길은 없다.
+        match req {
+            LinkRequest::Http { path, .. } if path == "/agent/activity" => {
+                RunnerLinkResponse::HttpResponse {
+                    id: "x".into(),
+                    status: 200,
+                    body: "{}".into(),
+                }
+            }
+            _ => panic!("열쇠 길이 없는 시험이다"),
+        }
     }
 }
 

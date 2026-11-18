@@ -82,6 +82,7 @@ pub fn run_attempt<'a, L: RunnerLink>(
     let source = std::rc::Rc::new(secrets);
     let src = std::rc::Rc::clone(&source);
     let started = std::time::Instant::now();
+    let client = input.client;
     input.after_run = Some(Box::new(move |out: &PtyOut| {
         if let Some(line) = turn_end_line(scrub.key, started.elapsed().as_millis(), out) {
             eprintln!("{line}");
@@ -100,6 +101,17 @@ pub fn run_attempt<'a, L: RunnerLink>(
             eprintln!(
                 "[mentionTurn] {}: 기록 가리기 실패 {}곳",
                 scrub.key, t.failed
+            );
+        }
+        // #176: 마지막 활동 시각(`agent_config.last_turn_at`). 하네스가 돈 턴이면 성공·실패와 무관하게 남긴다 —
+        // 「언제 마지막으로 움직였나」에 성공 여부는 없다(정본 mentionTurn 의 같은 자리). 실패는 턴을 실패로
+        // 만들지 않고 로그만 — 화면의 활동이 왜 멈췄는지 답할 자리가 이 줄뿐이다.
+        // **기록 가리기 뒤에 둔다** — 링크 요청은 답을 시한 없이 기다리므로, 앞에 두면 느린 서버·종료 SIGKILL 동안
+        // 기록에 마운트한 비밀이 가려지지 않은 채 남는다(임대 끝 전이라는 점은 그대로다).
+        if let Err(e) = client.report_activity() {
+            eprintln!(
+                "[mentionTurn] {}: 활동 보고 실패(턴은 계속한다) — {e}",
+                scrub.key
             );
         }
     }));
