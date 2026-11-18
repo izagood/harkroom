@@ -701,6 +701,7 @@ pub async fn approve_once_merge_route(
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod once_tests {
     use super::once_body_ok;
     use serde_json::json;

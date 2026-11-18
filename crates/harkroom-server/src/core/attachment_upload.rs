@@ -279,7 +279,7 @@ pub async fn upload(
             }
             let who = super::leak_guard::LeakActor {
                 agent_id: &me.id,
-                agent_handle: &me.handle,
+                agent_handle: Some(&me.handle),
                 operator_id: operator_id.as_deref(),
                 ip: Some(ip.as_str()).filter(|s| !s.is_empty()),
             };

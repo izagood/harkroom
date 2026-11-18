@@ -243,18 +243,135 @@ pub async fn handle(
     } else {
         served(writes.memory.is_some(), writes.memory_body.is_some())
     };
-    if let Some(r) = serve(&up, ci, &parts.headers, &bytes, served, &tools).await {
+    let pre = Pre {
+        leak: writes.leak.as_deref(),
+        agent_id: &me.id,
+        operator_id: auth.operator.as_ref().map(|o| o.id.as_str()),
+        bg_cause: has_operator && bg_cause(&parts.headers),
+    };
+    if let Some(r) = serve_pre(&up, ci, &parts.headers, &bytes, served, &tools, &pre).await {
         return r;
     }
     proxy::forward(State(up), ci, Request::from_parts(parts, Body::from(bytes))).await
+}
+
+/// 백그라운드 회차가 쓸 수 있는 도구 — TS `BG_ALLOWED_TOOLS`(설계 5절). 이 밖은 회차 상태를 보기 전에 거절한다.
+pub const BG_ALLOWED_TOOLS: &[&str] = &[
+    "memory.get",
+    "memory.list",
+    "memory.search",
+    "memory.audit",
+    "memory.set",
+    "memory.archive",
+    "memory.merge",
+    "thread.note",
+    "thread.plan",
+    "message.read",
+    "bg.complete",
+];
+
+/// cause 헤더가 백그라운드 꼴(`bg:<uuid>`, TS `BG_CAUSE_RE`)인가. 값이 여럿이면 node 가 `, ` 로 이어 붙여 꼴이 깨진다 → 거짓.
+pub fn bg_cause(headers: &axum::http::HeaderMap) -> bool {
+    let mut it = headers.get_all("x-harkroom-cause").iter();
+    let (Some(v), None) = (it.next(), it.next()) else {
+        return false;
+    };
+    let Ok(v) = v.to_str() else {
+        return false;
+    };
+    v.get(..3).is_some_and(|p| p == "bg:") && is_uuid(&v[3..])
+}
+
+fn is_uuid(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 36
+        && b.iter().enumerate().all(|(i, c)| match i {
+            8 | 13 | 18 | 23 => *c == b'-',
+            _ => c.is_ascii_hexdigit(),
+        })
+}
+
+/// 입장 확인 가운데 Rust 가 스스로 하는 앞부분(TS `/mcp/admit` 과 같은 순서 — leakGuard → 회차 허용 목록).
+pub struct Pre<'a> {
+    pub leak: Option<&'a crate::core::leak_guard::LeakGuard>,
+    pub agent_id: &'a str,
+    pub operator_id: Option<&'a str>,
+    /// 오퍼레이터를 거쳤고 cause 가 `bg:<uuid>` 꼴이다(TS `bgMatch`).
+    pub bg_cause: bool,
+}
+
+impl Pre<'static> {
+    /// 앞부분을 하지 않는다(모두 TS `/mcp/admit`).
+    pub const NONE: Pre<'static> = Pre {
+        leak: None,
+        agent_id: "",
+        operator_id: None,
+        bg_cause: false,
+    };
+}
+
+/// TS `ADMIT_REFUSED`(회차 쓰기·회차 닫기) — 이 요청은 admit 이 400 으로 받지 않아 TS `/mcp` 가 답한다. 그 경우 Rust 도 앞부분을 하지 않는다.
+fn admit_refused(tool: &str, pre: &Pre<'_>, headers: &axum::http::HeaderMap) -> bool {
+    let bg_write = matches!(tool, "memory.set" | "memory.archive" | "memory.merge");
+    if !bg_write && tool != "bg.complete" {
+        return false;
+    }
+    let runner_complete = tool == "bg.complete"
+        && pre.operator_id.is_some()
+        && headers.get("x-harkroom-cause").is_none()
+        && headers.get("x-harkroom-turn-id").is_none();
+    !runner_complete && (pre.bg_cause || !bg_write)
+}
+
+/// 앞부분 판정 — `Some(답)` 이면 그 거절을 도구 답으로 싣는다. `Err(())` 은 확인을 못 했다(→ TS).
+async fn pre_admit(
+    pre: &Pre<'_>,
+    headers: &axum::http::HeaderMap,
+    tool: &str,
+    args: &serde_json::Value,
+) -> Result<Option<String>, ()> {
+    if admit_refused(tool, pre, headers) {
+        return Ok(None);
+    }
+    if let Some(g) = pre.leak.filter(|g| g.is_on()) {
+        // TS 는 `arguments ?? {}` 를 본다 — null 이면 글이 없다.
+        let texts = crate::secrets::leak::collect_strings(args);
+        let hits = g
+            .find_in_texts(pre.agent_id, &texts)
+            .await
+            .map_err(|_| ())?;
+        if !hits.is_empty() {
+            let who = crate::core::leak_guard::LeakActor {
+                agent_id: pre.agent_id,
+                agent_handle: None,
+                operator_id: pre.operator_id,
+                ip: None,
+            };
+            g.record(&who, &hits, &format!("mcp:{tool}"))
+                .await
+                .map_err(|_| ())?;
+            let err = serde_json::json!({ "error": {
+                "code": crate::core::leak_guard::SECRET_IN_BODY_CODE,
+                "message": crate::core::leak_guard::SECRET_IN_BODY_MESSAGE,
+            }});
+            return Ok(Some(err.to_string()));
+        }
+    }
+    if pre.bg_cause && !BG_ALLOWED_TOOLS.contains(&tool) {
+        let err = serde_json::json!({ "error": {
+            "code": "bg_tool_not_allowed",
+            "message": format!("백그라운드 회차에서는 {tool} 을 쓸 수 없다"),
+        }});
+        return Ok(Some(err.to_string()));
+    }
+    Ok(None)
 }
 
 pub type AnswerFut = std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send>>;
 /// Rust 가 도구를 답하는 함수의 꼴(도구 이름·인자) — 답은 `result` 의 JSON 글자. `None` 이면 답하지 않는다(TS 로).
 pub type Answer<'f> = dyn Fn(&'static str, serde_json::Value) -> AnswerFut + Sync + 'f;
 
-/// 한 요청을 Rust 가 답할 수 있으면 답을, 아니면 `None`(→ 원래 바이트를 TS 로). 순서: 갈림(`served`) → 전송 조건 → 입장 확인(TS) → 도구.
-/// 입장 확인이 거절하면 그 거절을 도구 답으로 싣는다(TS 의 감싸기와 같은 결과). 확인을 못 하면 TS 로 넘긴다.
+/// 앞부분 없이([`Pre::NONE`]) [`serve_pre`] — 시험 줄이 쓴다.
 pub async fn serve(
     up: &Upstream,
     ci: ConnectInfo<SocketAddr>,
@@ -262,6 +379,20 @@ pub async fn serve(
     bytes: &[u8],
     served: &[&str],
     answer: &Answer<'_>,
+) -> Option<Response<Body>> {
+    serve_pre(up, ci, headers, bytes, served, answer, &Pre::NONE).await
+}
+
+/// 한 요청을 Rust 가 답할 수 있으면 답을, 아니면 `None`(→ 원래 바이트를 TS 로). 순서: 갈림(`served`) → 전송 조건 → 입장 확인(TS) → 도구.
+/// 입장 확인이 거절하면 그 거절을 도구 답으로 싣는다(TS 의 감싸기와 같은 결과). 확인을 못 하면 TS 로 넘긴다.
+pub async fn serve_pre(
+    up: &Upstream,
+    ci: ConnectInfo<SocketAddr>,
+    headers: &axum::http::HeaderMap,
+    bytes: &[u8],
+    served: &[&str],
+    answer: &Answer<'_>,
+    pre: &Pre<'_>,
 ) -> Option<Response<Body>> {
     if served.is_empty() || !super::respond::transport_ok(headers) {
         return None;
@@ -277,6 +408,17 @@ pub async fn serve(
         .pointer("/params/arguments")
         .cloned()
         .unwrap_or(serde_json::Value::Null);
+    // 앞부분(leakGuard·회차 허용 목록)은 Rust 가 한다. 거절이면 TS 에 묻지 않고 답한다(TS 가 다시 기록하지 않게).
+    match pre_admit(pre, headers, name, &args).await {
+        Ok(Some(text)) => {
+            return Some(super::respond::sse(
+                &id,
+                &super::respond::text_result(&text),
+            ));
+        }
+        Ok(None) => {}
+        Err(()) => return None,
+    }
     match super::respond::admit(up, ci, headers, name, &args).await {
         // `bg.claim` 은 TS 의 스위치가 켜졌다고 들었을 때만 — 아니면 TS 가 답한다(`disabled` 는 TS 가 정본).
         // 조건부로 싣는 도구(`delegation.close` — TS env 스위치)는 TS 가 「지금 싣는다」고 답했을 때만 Rust 가 답한다. 그 밖이면
@@ -360,6 +502,65 @@ mod tests {
         let art = include_str!("../../../../../packages/server/src/services/artifacts.ts");
         assert!(art.contains("export const ARTIFACT_PUBLISH_ARG_MAX_BYTES = 2 * 1024 * 1024;"));
         assert_eq!(BODY_LIMIT, 4_718_592);
+    }
+
+    #[test]
+    fn bg_gate_head_matches_ts_source() {
+        let src = include_str!("../../../../../packages/server/src/mcp/mcpPlugin.ts");
+        let list = BG_ALLOWED_TOOLS
+            .iter()
+            .map(|t| format!("'{t}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let norm = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(norm(src).contains(&format!("const BG_ALLOWED_TOOLS = new Set([ {list}, ]);")));
+        assert!(src.contains(
+            "refused('bg_tool_not_allowed', `백그라운드 회차에서는 ${toolName} 을 쓸 수 없다`)"
+        ));
+        assert!(src.contains("await leakGuard.record(null, req.account.id, req.operator?.id ?? null, hits, `mcp:${tool}`);"));
+        assert!(src.contains("const ADMIT_REFUSED = new Set([...BG_WRITE_TOOLS, 'bg.complete']);"));
+    }
+
+    #[test]
+    fn bg_cause_shape() {
+        let mut h = axum::http::HeaderMap::new();
+        assert!(!bg_cause(&h));
+        h.insert(
+            "x-harkroom-cause",
+            HeaderValue::from_static("bg:0123ABCD-0123-4567-89ab-0123456789ab"),
+        );
+        assert!(bg_cause(&h));
+        h.append(
+            "x-harkroom-cause",
+            HeaderValue::from_static("bg:0123abcd-0123-4567-89ab-0123456789ab"),
+        );
+        assert!(!bg_cause(&h));
+        h.insert(
+            "x-harkroom-cause",
+            HeaderValue::from_static("0123abcd-0123-4567-89ab-0123456789ab"),
+        );
+        assert!(!bg_cause(&h));
+        h.insert(
+            "x-harkroom-cause",
+            HeaderValue::from_static("bg:0123abcd-0123-4567-89ab-0123456789abc"),
+        );
+        assert!(!bg_cause(&h));
+    }
+
+    #[test]
+    fn admit_refused_mirrors_ts() {
+        let pre = |op: bool, bg: bool| Pre {
+            leak: None,
+            agent_id: "a",
+            operator_id: op.then_some("o"),
+            bg_cause: bg,
+        };
+        let none = axum::http::HeaderMap::new();
+        assert!(admit_refused("memory.set", &pre(true, true), &none));
+        assert!(!admit_refused("memory.set", &pre(true, false), &none));
+        assert!(!admit_refused("bg.complete", &pre(true, false), &none));
+        assert!(admit_refused("bg.complete", &pre(false, false), &none));
+        assert!(!admit_refused("message.read", &pre(true, true), &none));
     }
 
     #[test]
