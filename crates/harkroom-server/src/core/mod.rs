@@ -30,6 +30,7 @@ pub mod attachment_upload;
 pub mod audience;
 pub mod auth_light;
 pub mod auth_login;
+pub mod auth_password;
 pub mod auth_signup;
 pub mod automation_approve;
 pub mod automation_create;

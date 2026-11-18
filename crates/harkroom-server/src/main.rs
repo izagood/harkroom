@@ -1458,6 +1458,27 @@ async fn main() {
         }
         _ => false,
     };
+    // S5.4 — 자기 비밀번호 바꾸기(`POST /auth/password`). 쓰기 풀에 그 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+    let auth_password_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::auth_password as a;
+            match write::missing_in(w, a::AUTH_PASSWORD_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: auth password core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: auth password core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 — 재설정 코드 거두기(`DELETE /accounts/{id}/password-reset-code`). 쓰기 풀에 그 권한이 다 있을 때만 — 아니면 TS 에 남는다.
     let account_reset_code_revoke_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -3060,6 +3081,20 @@ async fn main() {
             core_routes.router = core_routes.router.merge(li.router);
             core_routes.http.extend(li.http);
             core_routes.sockets.extend(li.sockets);
+        }
+        // S5.4 — 자기 비밀번호 바꾸기 1줄. 권한이 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = auth_password_write {
+            let ap = harkroom_server::core::auth_password::routes(
+                harkroom_server::core::auth_password::AuthPasswordState {
+                    write,
+                    trust: state.trust.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(ap.router);
+            core_routes.http.extend(ap.http);
+            core_routes.sockets.extend(ap.sockets);
         }
         // S5.4 — 재설정 코드 거두기 1줄. 권한이 있을 때만 — 아니면 TS 에 남는다(발급은 언제나 TS).
         if let Some(write) = account_reset_code_revoke_write {
