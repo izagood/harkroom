@@ -64,7 +64,7 @@ pub struct PeekBody {
 }
 
 /// zod `.string().min(a).max(b)` — 길이는 UTF-16 코드 단위.
-fn str_len_ok(v: &Value, min: usize, max: usize) -> Option<&str> {
+pub(crate) fn str_len_ok(v: &Value, min: usize, max: usize) -> Option<&str> {
     let s = v.as_str()?;
     (min..=max).contains(&s.encode_utf16().count()).then_some(s)
 }
@@ -74,7 +74,7 @@ fn is_sha40(s: &str) -> bool {
 }
 
 /// zod `.number().int().positive()` — JSON 숫자이고 정수이며 0 보다 크다(`5.0` 도 정수다).
-fn positive_int(v: &Value) -> Option<i64> {
+pub(crate) fn positive_int(v: &Value) -> Option<i64> {
     if let Some(n) = v.as_i64() {
         return (n > 0).then_some(n);
     }
@@ -145,7 +145,7 @@ pub fn cause_by_human(
         && answerer_owns
 }
 
-fn sha256_hex(s: &str) -> String {
+pub(crate) fn sha256_hex(s: &str) -> String {
     hex::encode(Sha256::digest(s.as_bytes()))
 }
 
@@ -163,12 +163,17 @@ type LeaseRow = (
     Option<bool>,
 );
 
-async fn peek(pool: &PgPool, agent: &str, operator: &str, b: &PeekBody) -> sqlx::Result<Value> {
-    let now: String = sqlx::query_scalar(
+/// DB 시계를 JS `toISOString()` 꼴로(ms 로 자름) — TS 의 `new Date()` 자리.
+pub(crate) async fn db_now(pool: &PgPool) -> sqlx::Result<String> {
+    sqlx::query_scalar(
         "select to_char(date_trunc('milliseconds', clock_timestamp()) at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"')",
     )
     .fetch_one(pool)
-    .await?;
+    .await
+}
+
+async fn peek(pool: &PgPool, agent: &str, operator: &str, b: &PeekBody) -> sqlx::Result<Value> {
+    let now = db_now(pool).await?;
     let lease: Option<LeaseRow> = sqlx::query_as(lease_sql())
         .bind(&b.lease_id)
         .bind(sha256_hex(&b.token))
