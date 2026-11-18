@@ -7,6 +7,7 @@
 pub mod account_handle;
 pub mod account_keys_activity;
 pub mod account_self;
+pub mod agent_grants_read;
 pub mod agent_memory_read;
 pub mod agent_memory_write;
 pub mod ask;

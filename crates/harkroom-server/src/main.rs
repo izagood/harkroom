@@ -779,6 +779,28 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 AG1 — `GET /agent/merge-grants`·`GET /agent/api-grants`. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 읽기 풀에 그 SELECT 가 다 있을 때만.
+    // `/agent/pr-watches/due` 는 만료 UPDATE 를 하므로, `/agent/thread-model` 은 실효 모델 계산이 남아 아직 TS.
+    let agent_grants_read_on = match &core_mode {
+        harkroom_server::core::CoreMode::Rust => {
+            use harkroom_server::core::agent_grants_read as t;
+            match write::missing_in(&state.pool, t::AGENT_GRANTS_READ_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => true,
+                Ok(m) => {
+                    eprintln!("front: agent grants read core off — missing privileges {m:?}");
+                    false
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: agent grants read core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    false
+                }
+            }
+        }
+        _ => false,
+    };
     // S5.4 AC2 — `GET /accounts/agents/{id}/memory`·`…/memory/{slug}/revisions`. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 읽기 풀에 그 SELECT 가 다 있을 때만. 정리 후보·백그라운드·기억 쓰기는 언제나 TS.
     let agent_memory_read_on = match &core_mode {
         harkroom_server::core::CoreMode::Rust => {
@@ -1497,6 +1519,16 @@ async fn main() {
         core_routes.router = core_routes.router.merge(grant_reads.router);
         core_routes.http.extend(grant_reads.http);
         core_routes.sockets.extend(grant_reads.sockets);
+        if agent_grants_read_on {
+            let ag = harkroom_server::core::agent_grants_read::routes(
+                state.pool.clone(),
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(ag.router);
+            core_routes.http.extend(ag.http);
+            core_routes.sockets.extend(ag.sockets);
+        }
         // C3b B1 — 명령 grant 쓰기(`POST /agent/command-grants/match`). 쓰기 풀 권한이 다 있을 때만.
         if let Some(write) = match_write {
             let m = harkroom_server::core::command_match::routes(
