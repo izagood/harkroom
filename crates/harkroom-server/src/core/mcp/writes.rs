@@ -48,6 +48,8 @@ pub const SERVED: &[&str] = &[
     "thread.plan",
     // S5.4 A4b2 — 단계·그룹 하나 고치기(`auto` 칸 없는 것). [`McpWrites::plan_write`] 가 있을 때만, 자동 진행은 TS.
     "thread.plan.item",
+    // S5.4 MCP 2 — PR 감시 걸기. 감시 쓰기 풀(`pr_watch::PR_WATCH_PRIVILEGES`)이 있고 위임 스위치를 알 때만.
+    "pr.watch",
 ];
 
 /// TS 가 조건부로 싣는 도구 — `/mcp/admit` 이 `registered: true` 라고 답했을 때만 Rust 가 답한다([`super::route::serve`]).
@@ -123,6 +125,8 @@ pub struct McpWrites {
     pub plan_read: bool,
     /// `thread.plan` 쓰기·`thread.plan.item`(S5.4 A4b2) — `plan_read` 에 더해 `plan_write::PLAN_WRITE_PRIVILEGES`.
     pub plan_write: Option<PgPool>,
+    /// `pr.watch`(S5.4 MCP 2) — `pr_watch::PR_WATCH_PRIVILEGES`.
+    pub pr_watch: Option<PgPool>,
     /// 기억 쓰기(C4b B1a) — [`super::mem_writes::MEMORY_WRITE_PRIVILEGES`]. [`super::mem_writes::answer`] 가 본다.
     pub memory: Option<PgPool>,
     /// 기억 본문 쓰기(C4b B1b: set·merge·restore) — B1a 권한 + [`super::mem_body::MEMORY_BODY_PRIVILEGES`]. [`super::mem_body::answer`] 가 본다.
@@ -229,6 +233,12 @@ pub async fn answer(
             return Some(None);
         };
         return Some(super::workitem::remove(read, write, me, args).await);
+    }
+    if tool == "pr.watch" {
+        let Some(write) = writes.pr_watch.as_ref() else {
+            return Some(None);
+        };
+        return Some(super::pr_watch::answer(write, me, args).await);
     }
     if tool == "workitem.upsert" {
         let Some(write) = writes.work_item_upsert.as_ref() else {

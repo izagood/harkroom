@@ -50,6 +50,8 @@ import { BG_AGENT_ON_SQL, BG_DAILY_LOCK_SQL, BG_ENQUEUE_SQL, BG_EXISTS_SQL, BG_P
 import { LIST_DELEGATIONS_GIVEN_SQL, LIST_DELEGATIONS_MINE_SQL } from '../src/services/apiDelegation.js';
 import { COMMAND_GRANTS_SQL, LIST_TOOL_RULES_SQL, MANDATE_AGENT_CHANNEL_SQL, MANDATE_TURN_LEASE_SQL, MATCH_COMMAND_GRANT_SQL, TOOL_ALLOWS_SQL, TOOL_REACH_SQL } from '../src/services/permissionRequests.js';
 import { READ_LEASE_SQL } from '../src/services/mergeGrants.js';
+import { REPO_GRANT_FOR_SQL } from '../src/auth/permissions.js';
+import { PR_WATCH_COUNT_SQL, PR_WATCH_DELEGATION_SQL, PR_WATCH_INSERT_SQL, PR_WATCH_LOCK_SQL, PR_WATCH_MEMBER_SQL, PR_WATCH_SUBSCRIBE_SQL } from '../src/services/prWatch.js';
 import { VALID_MANDATE_OWNER_SQL } from '../src/services/mandates.js';
 import { ADD_LINE_AGENTS_SQL, ADD_LINE_INSERT_SQL, ADD_LINE_MANDATE_SQL, MANDATE_LINES_STORED_SQL } from '../src/services/mandateLines.js';
 import { CARD_THREAD_DELEGATOR_SQL, CARD_THREAD_INSERT_SQL, CARD_THREAD_ROOT_SQL, CARD_THREAD_ROOT_STAMP_SQL, CARD_THREAD_TOUCH_SQL, LINE_FROM_REQUEST_OWNER_SQL, NEW_MANDATE_CARD_SQL, NEW_MANDATE_REQUEST_SQL } from '../src/services/permissionRequests.js';
@@ -77,6 +79,13 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     list_tool_rules: LIST_TOOL_RULES_SQL,
     // grant 읽기 줄(`core/grant_reads.rs`, S5.3 C3b) — tool-allows·command-grants 의 문장 전체(match 는 쓰기라 TS).
     grant_tool_allows: TOOL_ALLOWS_SQL,
+    repo_grant_for: REPO_GRANT_FOR_SQL,
+    pr_watch_member: PR_WATCH_MEMBER_SQL,
+    pr_watch_delegation: PR_WATCH_DELEGATION_SQL,
+    pr_watch_lock: PR_WATCH_LOCK_SQL,
+    pr_watch_count: PR_WATCH_COUNT_SQL,
+    pr_watch_insert: PR_WATCH_INSERT_SQL,
+    pr_watch_subscribe: PR_WATCH_SUBSCRIBE_SQL,
     grant_tool_reach: TOOL_REACH_SQL,
     grant_mandate_turn_lease: MANDATE_TURN_LEASE_SQL,
     grant_mandate_agent_channel: MANDATE_AGENT_CHANNEL_SQL,

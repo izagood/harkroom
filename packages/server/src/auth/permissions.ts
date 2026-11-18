@@ -98,6 +98,18 @@ export async function readGrantFor(
 export interface RepoGrantFact { scope: string; grantedBy: string; grantedAt: string; expiresAt: string | null; allowAgentCause: boolean }
 
 /**
+ * `repoGrantFor` 의 문장 — Rust 코어(MCP `pr.watch`, S5.4)가 `golden/sql_fragments.json` 으로 받아 그대로 쓴다.
+ * $1 계정 · $2 scope 들(정확·조직) · $3 정확 scope · $4 채널(없으면 null) · $5 capability.
+ */
+export const REPO_GRANT_FOR_SQL = `select scope, granted_by as "grantedBy", granted_at as "grantedAt", expires_at as "expiresAt",
+            allow_agent_cause as "allowAgentCause"
+       from account_grant
+      where account_id = $1::uuid and capability = $5::text and scope = any($2::text[])
+        and (expires_at is null or expires_at > now())
+        and ($4::uuid is null or ${mayDecideSql('account_grant.account_id', 'account_grant.granted_by', '$4::uuid')})
+      order by allow_agent_cause desc, (scope = $3::text) desc limit 1`;
+
+/**
  * 저장소 grant 맞춤 한 곳(2026-11-02). `mergeGrantFor`·`readGrantFor` 가 같은 맞춤을 두 벌 갖지 않게 capability 만 받는다 —
  * 맞춤이 어긋나면 머지가 읽을 수 있는 저장소와 `pr.status` 가 읽을 수 있는 저장소가 갈린다. 이 파일 밖에서 부르지 않는다.
  */
@@ -108,16 +120,7 @@ async function repoGrantFor(
   if (!scope) return null;
   const org = orgScopeOf(scope);
   const scopes = org ? [scope, org] : [scope];
-  const res = await pool.query(
-    `select scope, granted_by as "grantedBy", granted_at as "grantedAt", expires_at as "expiresAt",
-            allow_agent_cause as "allowAgentCause"
-       from account_grant
-      where account_id = $1 and capability = $5 and scope = any($2::text[])
-        and (expires_at is null or expires_at > now())
-        and ($4::uuid is null or ${mayDecideSql('account_grant.account_id', 'account_grant.granted_by', '$4::uuid')})
-      order by allow_agent_cause desc, (scope = $3) desc limit 1`,
-    [agentId, scopes, scope, opts.channelId ?? null, capability],
-  );
+  const res = await pool.query(REPO_GRANT_FOR_SQL, [agentId, scopes, scope, opts.channelId ?? null, capability]);
   return (res.rows[0] as RepoGrantFact | undefined) ?? null;
 }
 

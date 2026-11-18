@@ -195,6 +195,32 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 MCP 2 — MCP `pr.watch`. 쓰기 풀에 감시 넣기·판정이 읽는 칸이 다 있을 때만 — 아니면 TS 에 남는다.
+    let pr_watch_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            match write::missing_in(
+                w,
+                harkroom_server::core::mcp::pr_watch::PR_WATCH_PRIVILEGES,
+                &[],
+            )
+            .await
+            {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: mcp pr.watch core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: mcp pr.watch core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 A2a — MCP `workitem.upsert`. 쓰기 풀에 work_item 넣기·고칠 칸·outbox 권한이 다 있을 때만 — 아니면 TS 에 남는다.
     let work_item_upsert_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -1850,6 +1876,7 @@ async fn main() {
                 plan_write,
                 work_item: work_item_write,
                 work_item_upsert: work_item_upsert_write,
+                pr_watch: pr_watch_write,
                 memory: mem_write,
                 memory_body: mem_body_write,
                 delegate: mcp_post.clone().filter(|_| mcp_delegate_ok),

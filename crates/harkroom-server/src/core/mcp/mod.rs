@@ -23,6 +23,7 @@ pub mod operator_only;
 pub mod plan_input;
 pub mod plan_read;
 pub mod plan_write;
+pub mod pr_watch;
 pub mod reads2;
 pub mod reads3;
 pub mod reads4;

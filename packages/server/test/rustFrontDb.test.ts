@@ -1622,6 +1622,11 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // S5.4 A4b2 — MCP 계획판 쓰기(`core/mcp/plan_write.rs::PLAN_WRITE_PRIVILEGES`, outbox 는 위). 없으면 「thread plan write core off」 — TS 에 남는다.
         `grant insert, update, delete on thread_plan to ${rw}`,
         `grant insert, delete on thread_plan_link to ${rw}`,
+        // S5.4 MCP 2 — MCP `pr.watch`(`pr_watch.rs::PR_WATCH_PRIVILEGES`). 없으면 「mcp pr.watch core off」.
+        `grant insert on pr_watch to ${rw}`,
+        `grant update (expires_at) on pr_watch to ${rw}`,
+        `grant insert on pr_watch_subscriber to ${rw}`,
+        `grant update (delegation_id) on pr_watch_subscriber to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -9303,6 +9308,90 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             const tsD = await runD(tsUrl);
             const rsD = await runD(v2Url);
             expect(rsD).toEqual(tsD);
+            // S5.4 MCP 2 — `pr.watch`. 같은 장면을 TS·Rust 에 각자 다른 head 로 걸고(키가 겹치지 않게) 답 글자·행을 견준다. 스위치 0 이면 둘 다 disabled.
+            {
+              const pwCh = await freshCh();
+              const pwRoot = await ins({ ch: pwCh, author: member.accountId, body: '감시 스레드' });
+              const pwReply = await ins({ ch: pwCh, root: pwRoot, author: member.accountId, body: '답글' });
+              const outsider = (await createChannel(db.pool, { name: `pw-out-${Math.random().toString(36).slice(2, 10)}` })).id;
+              const outRoot = await ins({ ch: outsider, author: member.accountId, body: '남의 채널' });
+              const owner = (await db.pool.query<{ o: string }>(`select owner_account_id::text as o from agent_config where account_id = $1`, [bot3.accountId])).rows[0]!.o;
+              await db.pool.query(
+                `insert into account_grant (account_id, capability, scope, granted_by) values ($1, 'repo.merge', 'repo:pwowner/pwrepo', $2), ($1, 'repo.merge', 'repo:pworg/*', $2)
+                 on conflict do nothing`, [bot3.accountId, owner]);
+              const theirs = (await db.pool.query<{ id: string }>(
+                `insert into team_delegation (message_id, lead_account_id, channel_id, thread_root_id, deadline_at)
+                 values ($1, $2, $3, $1, now() + interval '1 hour') returning id::text as id`, [pwRoot, member.accountId, pwCh])).rows[0]!.id;
+              let seq = 0;
+              const head = (side: 'ts' | 'rs') => `${V2}${side === 'ts' ? 'a' : 'b'}${(++seq).toString(16).padStart(38, '0')}`;
+              const base = { number: 7, until: 'checks', channelId: pwCh, threadRootId: pwRoot };
+              const PW: [string, (h: string) => Record<string, unknown>, boolean][] = [
+                ['정확 grant · checks', (h) => ({ ...base, repo: 'pwowner/pwrepo', head: h }), true],
+                ['대소문자 다른 저장소 → 같은 grant', (h) => ({ ...base, repo: 'PwOwner/PwRepo', head: h }), true],
+                ['조직 grant · merged', (h) => ({ ...base, repo: 'pworg/anything', head: h, until: 'merged' }), true],
+                ['grant 없음 → not_granted', (h) => ({ ...base, repo: 'nogrant/x', head: h }), true],
+                ['채널 멤버 아님 → forbidden', (h) => ({ ...base, repo: 'pwowner/pwrepo', head: h, channelId: outsider, threadRootId: outRoot }), true],
+                ['머리가 답글 → forbidden', (h) => ({ ...base, repo: 'pwowner/pwrepo', head: h, threadRootId: pwReply }), true],
+                ['남의 위임 → delegation_not_found', (h) => ({ ...base, repo: 'pwowner/pwrepo', head: h, delegationId: theirs }), true],
+                ['head 대문자 → TS(zod)', (h) => ({ ...base, repo: 'pwowner/pwrepo', head: h.toUpperCase().replace(/^./, 'A') }), false],
+                ['number 정수 칸 밖 → TS', (h) => ({ ...base, repo: 'pwowner/pwrepo', head: h, number: 2 ** 31 }), false],
+              ];
+              const norm = (t: string) => t.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, '<uuid>')
+                .replace(/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z/g, '<iso>');
+              const rowsOf = async (h: string) => (await db.pool.query(
+                `select w.repo, w.number, w.until, w.state, s.source, s.delegation_id is not null as deleg,
+                        abs(extract(epoch from (w.expires_at - now())) - 21600) < 120 as ttl
+                   from pr_watch w join pr_watch_subscriber s on s.watch_id = w.id where w.head = $1 order by w.repo`, [h])).rows;
+              const audits = async () => Number((await db.pool.query(
+                `select count(*)::int as n from audit_log where action = 'pr.status.denied' and actor_id = $1 and detail->>'via' = 'pr.watch'`, [bot3.accountId])).rows[0]!.n);
+              let tsFirst = '';
+              for (const [name, mk, rust] of PW) {
+                const [hT, hR] = [head('ts'), head('rs')];
+                const auditBefore = await audits();
+                const a = await mcpCall(tsUrl, bot3.pat, 'pr.watch', mk(hT), 11);
+                const auditTs = await audits() - auditBefore;
+                const b = await mcpCall(v2Url, bot3.pat, 'pr.watch', mk(hR), 11);
+                const auditRs = await audits() - auditBefore - auditTs;
+                expect({ status: b.status, type: b.type, text: norm(b.text) }, `V2=${V2} pr.watch ${name}`).toEqual({ status: a.status, type: a.type, text: norm(a.text) });
+                expect(b.core, `V2=${V2} pr.watch ${name} — 누가 답했나`).toBe(rust ? 'mcp' : null);
+                expect(await rowsOf(hR), `V2=${V2} pr.watch ${name} — 행`).toEqual(await rowsOf(hT));
+                expect(auditRs, `V2=${V2} pr.watch ${name} — 감사 줄`).toBe(auditTs);
+                if (V2 === '0' && rust) expect(b.text, name).toContain('pr watch not created: disabled');
+                if (!tsFirst && V2 === '1' && name.startsWith('정확')) tsFirst = hT;
+              }
+              if (V2 === '1') {
+                // 빈 값끼리 통과하지 않게 — 걸렸는지·거절 코드·감사 줄을 못 박는다.
+                expect(await rowsOf(tsFirst)).toEqual([{ repo: 'pwowner/pwrepo', number: 7, until: 'checks', state: 'open', source: 'manual', deleg: false, ttl: true }]);
+                // 같은 키(TS 가 건 감시)에 Rust 로 다시 → 같은 감시에 붙고 created=false · 구독자는 그대로 하나.
+                const first = await mcpCall(tsUrl, bot3.pat, 'pr.watch', { ...base, repo: 'pwowner/pwrepo', head: tsFirst }, 12);
+                const again = await mcpCall(v2Url, bot3.pat, 'pr.watch', { ...base, repo: 'PWOWNER/pwrepo', head: tsFirst }, 12);
+                expect(again.core).toBe('mcp');
+                const idOf = (t: string) => /watchId\\":\\"([0-9a-f-]{36})/.exec(t)?.[1];
+                expect(idOf(again.text)).toBeDefined();
+                expect(idOf(again.text)).toBe(idOf(first.text));
+                expect(again.text).toContain('created\\":false');
+                expect((await rowsOf(tsFirst))).toHaveLength(1);
+                // 상한 20 — bot3 의 열린 감시를 20 개로 채우면 새 키는 둘 다 too_many, 이미 붙은 키는 그대로 받는다.
+                const open = Number((await db.pool.query(
+                  `select count(distinct w.id)::int as n from pr_watch_subscriber s join pr_watch w on w.id = s.watch_id
+                    where s.account_id = $1 and w.state = 'open' and w.expires_at > now()`, [bot3.accountId])).rows[0]!.n);
+                for (let i = open; i < 20; i++) {
+                  const w = (await db.pool.query<{ id: string }>(
+                    `insert into pr_watch (repo, number, head, until, expires_at) values ('pwfill/x', $1, $2, 'checks', now() + interval '1 hour') returning id::text as id`,
+                    [100 + i, 'f'.repeat(40)])).rows[0]!.id;
+                  await db.pool.query(`insert into pr_watch_subscriber (watch_id, account_id, channel_id, thread_root_id) values ($1, $2, $3, $4)`, [w, bot3.accountId, pwCh, pwRoot]);
+                }
+                const [ta, rb] = [await mcpCall(tsUrl, bot3.pat, 'pr.watch', { ...base, repo: 'pwowner/pwrepo', head: head('ts') }, 13),
+                  await mcpCall(v2Url, bot3.pat, 'pr.watch', { ...base, repo: 'pwowner/pwrepo', head: head('rs') }, 13)];
+                expect(rb.core).toBe('mcp');
+                expect(norm(rb.text)).toBe(norm(ta.text));
+                expect(rb.text).toContain('pr watch not created: too_many');
+                const keep = await mcpCall(v2Url, bot3.pat, 'pr.watch', { ...base, repo: 'pwowner/pwrepo', head: tsFirst }, 14);
+                expect(keep.text).toContain('created\\":false');
+                expect(await audits()).toBeGreaterThanOrEqual(2);
+              }
+              await db.pool.query(`delete from pr_watch where repo in ('pwowner/pwrepo', 'pworg/anything', 'pwfill/x')`);
+            }
             type DI = { name: string; item: Record<string, unknown>[] };
             const itemOf = (n: string) => (tsD as DI[]).find((x) => x.name === n)!.item;
             const v1 = V2 === '1';
