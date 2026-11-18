@@ -129,6 +129,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: operator core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -155,6 +156,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: mcp inbox.read core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -182,6 +184,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: mcp workitem.remove core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -208,6 +211,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: mcp pr.watch core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -234,6 +238,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: mcp automation.propose core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -260,6 +265,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: mcp automation.run core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -286,6 +292,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: mcp grant.delegate core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -310,9 +317,15 @@ async fn main() {
             )
             .await
             {
-                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) if m.is_empty() => {
+                    // REST `PUT /work-items` 도 같은 권한·같은 코어를 쓴다 — 이때만 Rust 가 답한다.
+                    harkroom_server::writes_misc::WORK_ITEM_UPSERT_READY
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
+                    Some(w.clone())
+                }
                 Ok(m) => {
                     eprintln!("front: mcp workitem.upsert core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -339,6 +352,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: mcp bg.claim core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -365,6 +379,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: mcp bg.complete core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -392,6 +407,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: mcp grant write core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -418,6 +434,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: reaction core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -439,6 +456,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: section write core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -460,6 +478,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: channel pref write core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -487,6 +506,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: account self core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -514,6 +534,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: account handle core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -535,6 +556,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: automations write core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -556,6 +578,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: automation create core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -577,6 +600,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: automation approve core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -603,6 +627,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: automation run-now core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -626,6 +651,7 @@ async fn main() {
                     eprintln!(
                         "front: automation ingress issue core off — missing privileges {m:?}"
                     );
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -658,6 +684,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => true,
                 Ok(m) => {
                     eprintln!("front: automation hooks core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     false
                 }
                 Err(e) => {
@@ -680,6 +707,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: automation delete core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -702,6 +730,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: mandate line revoke core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -724,6 +753,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: automation patch core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -746,6 +776,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: mandate end core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -767,6 +798,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: connectors write core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -788,6 +820,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: connectors upsert core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -809,6 +842,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: invites write core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -830,6 +864,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: agent config core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -851,6 +886,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: keys/activity core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -872,6 +908,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: auth light core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -894,6 +931,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: secret grant give core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -924,6 +962,7 @@ async fn main() {
                 }
                 Ok(m) => {
                     eprintln!("front: secret writes core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -954,6 +993,7 @@ async fn main() {
                 }
                 Ok(m) => {
                     eprintln!("front: secret reveal core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -982,6 +1022,7 @@ async fn main() {
                 },
                 Ok(m) => {
                     eprintln!("front: agent secret create core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -1010,6 +1051,7 @@ async fn main() {
                 },
                 Ok(m) => {
                     eprintln!("front: agent secret reveal core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -1033,6 +1075,7 @@ async fn main() {
                     eprintln!(
                         "front: agent secret create/rotate core off — missing privileges {m:?}"
                     );
+                    refuse_missing_grants(&m);
                     false
                 }
                 Err(e) => {
@@ -1053,6 +1096,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: secrets read core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -1074,6 +1118,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => true,
                 Ok(m) => {
                     eprintln!("front: settings rest core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     false
                 }
                 Err(e) => {
@@ -1095,6 +1140,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: settings projection write off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -1117,6 +1163,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => true,
                 Ok(m) => {
                     eprintln!("front: thread models read core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     false
                 }
                 Err(e) => {
@@ -1138,6 +1185,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => true,
                 Ok(m) => {
                     eprintln!("front: channel files core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     false
                 }
                 Err(e) => {
@@ -1159,6 +1207,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => true,
                 Ok(m) => {
                     eprintln!("front: thread plan read core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     false
                 }
                 Err(e) => {
@@ -1180,6 +1229,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => true,
                 Ok(m) => {
                     eprintln!("front: misc reads core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     false
                 }
                 Err(e) => {
@@ -1201,6 +1251,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: pins/scheduled write core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -1222,6 +1273,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: dm open core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -1247,6 +1299,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: channel create/update core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -1273,6 +1326,7 @@ async fn main() {
                 (Ok(m), Ok(Some(s))) if m.is_empty() => Some((w.clone(), s)),
                 (Ok(m), Ok(Some(_))) => {
                     eprintln!("front: channel delete core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 (Ok(_), Ok(None)) => {
@@ -1307,6 +1361,7 @@ async fn main() {
                 (Ok(m), Ok(Some(s))) if m.is_empty() => Some(s),
                 (Ok(m), Ok(Some(_))) => {
                     eprintln!("front: attachment download core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 (Ok(_), Ok(None)) => {
@@ -1341,6 +1396,7 @@ async fn main() {
                 (Ok(m), Ok(Some(s))) if m.is_empty() => Some(s),
                 (Ok(m), Ok(Some(_))) => {
                     eprintln!("front: avatar read core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 (Ok(_), Ok(None)) => {
@@ -1374,6 +1430,7 @@ async fn main() {
             Ok(m) if m.is_empty() => Some(s.clone()),
             Ok(m) => {
                 eprintln!("front: workspace icon core off — missing privileges {m:?}");
+                refuse_missing_grants(&m);
                 None
             }
             Err(e) => {
@@ -1402,6 +1459,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some((w.clone(), storage.clone())),
                 Ok(m) => {
                     eprintln!("front: avatar write core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -1428,6 +1486,7 @@ async fn main() {
             ) {
                 (Ok(m), _, _) if !m.is_empty() => {
                     eprintln!("front: attachment upload core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 (Ok(_), Ok(Some(s)), Some(max)) => Some((w.clone(), s, max)),
@@ -1470,6 +1529,7 @@ async fn main() {
                 },
                 Ok(m) => {
                     eprintln!("front: agent upload leak guard off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -1491,6 +1551,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: channel team add core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -1512,6 +1573,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: auto-mention/doc write core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -1533,6 +1595,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: channel read write core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -1557,6 +1620,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: pr-watches due core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -1578,6 +1642,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => true,
                 Ok(m) => {
                     eprintln!("front: merge approval peek core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     false
                 }
                 Err(e) => {
@@ -1599,6 +1664,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: merge denial grant core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -1620,6 +1686,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: merge results gate off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -1641,6 +1708,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: merge closed core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -1662,6 +1730,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => true,
                 Ok(m) => {
                     eprintln!("front: agent wakes read core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     false
                 }
                 Err(e) => {
@@ -1684,6 +1753,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => true,
                 Ok(m) => {
                     eprintln!("front: agent grants read core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     false
                 }
                 Err(e) => {
@@ -1705,6 +1775,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => true,
                 Ok(m) => {
                     eprintln!("front: agent memory read core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     false
                 }
                 Err(e) => {
@@ -1726,6 +1797,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: auth password core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -1749,6 +1821,7 @@ async fn main() {
                     eprintln!(
                         "front: account reset code issue core off — missing privileges {m:?}"
                     );
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -1770,6 +1843,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: account role core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -1791,6 +1865,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: account grant give core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -1812,6 +1887,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: account grant revoke core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -1835,6 +1911,7 @@ async fn main() {
                     eprintln!(
                         "front: account reset code revoke core off — missing privileges {m:?}"
                     );
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -1856,6 +1933,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some((w.clone(), storage.clone())),
                 Ok(m) => {
                     eprintln!("front: agent delete core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -1904,6 +1982,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => true,
                 Ok(m) => {
                     eprintln!("front: agent memory audit read core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     false
                 }
                 Err(e) => {
@@ -1925,6 +2004,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: account login ids core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -1947,6 +2027,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: pickable models core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -1968,6 +2049,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: step-up end core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -1990,6 +2072,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: auth login core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -2012,6 +2095,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: auth signup core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -2034,6 +2118,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: password reset core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -2055,6 +2140,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: step-up open core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -2076,6 +2162,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => true,
                 Ok(m) => {
                     eprintln!("front: account grants read core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     false
                 }
                 Err(e) => {
@@ -2106,6 +2193,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: saved messages core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -2133,6 +2221,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: ask bundle add core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -2154,6 +2243,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: mcp delegation.close off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -2181,6 +2271,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: mcp memory writes off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -2202,6 +2293,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: mcp memory body writes off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -2224,6 +2316,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: agent memory write core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -2246,6 +2339,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: thread note core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -2274,6 +2368,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: thread plan write core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -2294,6 +2389,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: ask card core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -2345,6 +2441,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: command grant match core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -2372,6 +2469,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: message post core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(err) => {
@@ -2397,6 +2495,7 @@ async fn main() {
             Ok(m) if m.is_empty() => true,
             Ok(m) => {
                 eprintln!("front: implicit delegation core off — missing privileges {m:?}");
+                refuse_missing_grants(&m);
                 false
             }
             Err(e) => {
@@ -2421,6 +2520,7 @@ async fn main() {
             Ok(m) if m.is_empty() => true,
             Ok(m) => {
                 eprintln!("front: mcp message.post core off — missing privileges {m:?}");
+                refuse_missing_grants(&m);
                 false
             }
             Err(e) => {
@@ -2442,6 +2542,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: channel members core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -2463,6 +2564,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: thread model clear core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -2484,6 +2586,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: api results core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -2506,6 +2609,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: pr-watch status core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -2527,6 +2631,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: thread plan auto-off core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -2556,6 +2661,7 @@ async fn main() {
                     eprintln!(
                         "front: mcp message.delegate write core off — missing privileges {m:?}"
                     );
+                    refuse_missing_grants(&m);
                     false
                 }
                 Err(e) => {
@@ -2581,6 +2687,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => true,
                 Ok(m) => {
                     eprintln!("front: mcp turn.wake core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     false
                 }
                 Err(e) => {
@@ -2606,6 +2713,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => true,
                 Ok(m) => {
                     eprintln!("front: mcp skill.propose core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     false
                 }
                 Err(e) => {
@@ -2632,6 +2740,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: message edit core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(err) => {
@@ -2658,6 +2767,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: message delete core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -2679,6 +2789,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: inbox read core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -2700,6 +2811,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: turn lease core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -2727,6 +2839,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: inbox thread core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -2750,6 +2863,7 @@ async fn main() {
                 Ok(m) if m.is_empty() => Some(w.clone()),
                 Ok(m) => {
                     eprintln!("front: thread model set core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
                     None
                 }
                 Err(e) => {
@@ -2770,6 +2884,7 @@ async fn main() {
             Ok(m) if m.is_empty() => true,
             Ok(m) => {
                 eprintln!("front: agent model-options core off — missing privileges {m:?}");
+                refuse_missing_grants(&m);
                 false
             }
             Err(e) => {
@@ -4336,6 +4451,22 @@ async fn main() {
     .expect("serve");
 }
 
+/// 쓰기 풀에 Rust 가 맡을 길의 권한(GRANT)이 빠졌다. 기본은 예전대로 그 길을 TS 로 넘긴다(TS 운영에 영향 없음).
+/// `HARKROOM_REQUIRE_GRANTS=1` 이면 넘기지 않고 기동을 거절한다(exit 1) — 배포가 GRANT 를 덜 깐 것을 조용히 TS 로 덮지 않으려면 켠다.
+fn refuse_missing_grants(missing: &[String]) {
+    if !require_grants(std::env::var("HARKROOM_REQUIRE_GRANTS").ok().as_deref()) {
+        return;
+    }
+    eprintln!(
+        "front: refusing to start — missing privileges {missing:?} (HARKROOM_REQUIRE_GRANTS=1; unset it to forward to TS instead)"
+    );
+    std::process::exit(1);
+}
+
+fn require_grants(v: Option<&str>) -> bool {
+    matches!(v, Some("1" | "true"))
+}
+
 /// `DATABASE_WRITE_URL` 이 있으면 쓰기 풀(2)을 연다. 연결이 안 되거나 [`write::REQUIRED_PRIVILEGES`] 중 빠진 것이 있으면
 /// 쓰는 줄을 켜지 않는다(`None`) — 반쯤 되는 쓰기보다 TS 로 넘기는 편이 안전하다. 읽는 줄은 그대로 뜬다.
 async fn open_write_pool() -> Option<sqlx::PgPool> {
@@ -4366,6 +4497,7 @@ async fn open_write_pool() -> Option<sqlx::PgPool> {
         }
         Ok(m) => {
             eprintln!("front: write pool off — missing privileges {m:?}");
+            refuse_missing_grants(&m);
             None
         }
         Err(e) => {
@@ -4697,5 +4829,17 @@ mod loop_pool_tests {
             assert_eq!(o.get_idle_timeout(), Some(LOOP_POOL_IDLE));
         }
         assert!(LOOP_POOL_IDLE <= std::time::Duration::from_secs(60));
+    }
+}
+
+#[cfg(test)]
+mod grant_tests {
+    #[test]
+    fn require_grants_is_opt_in() {
+        assert!(!super::require_grants(None));
+        assert!(!super::require_grants(Some("0")));
+        assert!(!super::require_grants(Some("")));
+        assert!(super::require_grants(Some("1")));
+        assert!(super::require_grants(Some("true")));
     }
 }

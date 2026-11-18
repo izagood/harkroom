@@ -112,6 +112,22 @@ pub const WORK_ITEM_UPSERT_PRIVILEGES: &[(&str, &str)] = &[
     ("channel", "SELECT"),
     ("channel_member", "SELECT"),
     ("event_outbox", "INSERT"),
+    // TS `endMandatesForDoneThreadTx`(done + 스레드) — 고르기·잠그기(`for update` 는 칸 UPDATE 하나가 있어야 한다).
+    ("mandate.root_message_id", "SELECT"),
+    ("mandate.owner_account_id", "SELECT"),
+    // `endMandateTx`·`refreshMandateCards`(`perm_card::PERM_CARD_PRIVILEGES` 와 같은 줄들).
+    ("mandate.id", "SELECT"),
+    ("mandate.ended_at", "SELECT"),
+    ("mandate.ended_at", "UPDATE"),
+    ("mandate.end_reason", "UPDATE"),
+    ("mandate_line.mandate_id", "SELECT"),
+    ("mandate_line.revoked_at", "SELECT"),
+    ("mandate_line.revoked_at", "UPDATE"),
+    ("message.id", "SELECT"),
+    ("message.meta", "SELECT"),
+    ("message.meta", "UPDATE"),
+    // 끝낸 위임마다 감사 `mandate.ended`.
+    ("audit_log", "INSERT"),
 ];
 pub const WORK_ITEM_UPSERT_SEQUENCES: &[(&str, &str)] = &[("event_outbox_id_seq", "USAGE")];
 
@@ -221,7 +237,11 @@ pub fn avcs_key_ok(k: &str) -> bool {
 
 /// TS `WORK_ITEM_REFUSAL_MESSAGE`.
 fn refusal(code: &str) -> String {
-    let m = match code {
+    err(code, refusal_message(code))
+}
+
+pub fn refusal_message(code: &str) -> &'static str {
+    match code {
         "bad_key" => "avcs externalKey must be <repo>/<intent oid>",
         "state_not_allowed" => "avcs items carry no state — it is read from the avcs server",
         "state_required" => "state is required for non-avcs items (mine | blocked | active | done)",
@@ -230,8 +250,7 @@ fn refusal(code: &str) -> String {
         "thread_forbidden" => "the thread is not visible to the board owner or to you",
         "not_root" => "threadRootId must be a thread root",
         _ => "the board already has 500 work items; remove some first",
-    };
-    err(code, m)
+    }
 }
 
 fn thread_sql() -> &'static str {
@@ -276,19 +295,46 @@ fn insert_sql() -> &'static str {
 }
 
 enum Wrote {
-    Item(String),
+    Item(String, Vec<String>),
     Refused(&'static str),
 }
 
 pub async fn upsert(read: &PgPool, write: &PgPool, me: &Account, args: &Value) -> Option<String> {
     let u = parse_upsert(args)?;
-    // 위임장 끝내기(`endMandatesForDoneThreadTx`)가 Rust 에 없다 — 이 갈래는 TS 가 답한다.
-    if u.state == Some("done") && u.thread.is_some() {
-        return None;
-    }
+    Some(match upsert_core(read, write, me, &u).await? {
+        Upserted::Item(item) => {
+            super::respond::text_result(&format!("{{\"item\":{}}}", super::respond::minify(&item)))
+        }
+        Upserted::NoOwner => err("no_owner", NO_OWNER),
+        Upserted::Refused(code) => refusal(code),
+        Upserted::Internal => internal(),
+    })
+}
+
+/// TS `upsertWorkItem` 의 결과 — MCP `workitem.upsert` 와 REST `PUT /work-items` 가 함께 쓴다.
+pub enum Upserted {
+    /// 항목 JSON(직렬화된 글자).
+    Item(String),
+    NoOwner,
+    Refused(&'static str),
+    Internal,
+}
+
+/// TS `END_DONE_SQL` — `endMandatesForDoneThreadTx` 의 고르기.
+const DONE_MANDATES_SQL: &str = "select id::text from mandate where root_message_id = $1::uuid \
+     and owner_account_id = $2::uuid and ended_at is null for update";
+
+/// TS `resolveWorkItemOwner` + `upsertWorkItem`. `None` = 읽기가 실패해 판정 못 함(부른 쪽이 TS 로 넘긴다).
+pub async fn upsert_core(
+    read: &PgPool,
+    write: &PgPool,
+    me: &Account,
+    u: &Upsert<'_>,
+) -> Option<Upserted> {
+    let refusal = |c: &'static str| Upserted::Refused(c);
     let owner = match work_item_owner(read, me).await.ok()? {
         Some(o) => o,
-        None => return Some(err("no_owner", NO_OWNER)),
+        None => return Some(Upserted::NoOwner),
     };
     if u.source == "avcs" {
         if !avcs_key_ok(u.key) {
@@ -366,7 +412,21 @@ pub async fn upsert(read: &PgPool, write: &PgPool, me: &Account, args: &Value) -
             &json!({ "type": "inbox.updated", "accountId": owner }),
         )
         .await?;
-        Ok(Wrote::Item(item))
+        // TS `endMandatesForDoneThreadTx` — 그 스레드 머리의 일감이 done 이 되면 그 머리의 위임(주인 소유)을 같은 tx 에서 끝낸다.
+        let mut ended = Vec::new();
+        if let (Some("done"), Some(root)) = (u.state, u.thread) {
+            let ids: Vec<String> = sqlx::query_scalar(DONE_MANDATES_SQL)
+                .bind(root)
+                .bind(&owner)
+                .fetch_all(&mut *tx)
+                .await?;
+            for id in ids {
+                if crate::core::perm_card::end_mandate_tx(&mut tx, &id, "work_done").await? {
+                    ended.push(id);
+                }
+            }
+        }
+        Ok(Wrote::Item(item, ended))
     }
     .await;
     Some(match wrote {
@@ -375,14 +435,30 @@ pub async fn upsert(read: &PgPool, write: &PgPool, me: &Account, args: &Value) -
             let _ = tx.rollback().await;
             refusal(code)
         }
-        Ok(Wrote::Item(item)) => match tx.commit().await {
-            Ok(()) => super::respond::text_result(&format!(
-                "{{\"item\":{}}}",
-                super::respond::minify(&item)
-            )),
-            Err(_) => internal(),
+        Ok(Wrote::Item(item, ended)) => match tx.commit().await {
+            Ok(()) => {
+                if !ended.is_empty() {
+                    crate::core::perm_card::refresh_mandate_cards(write, &ended).await;
+                    for id in &ended {
+                        crate::write::record_audit(
+                            write,
+                            crate::write::AuditEntry {
+                                action: "mandate.ended",
+                                actor_id: Some(&me.id),
+                                actor_handle: None,
+                                target: Some(id),
+                                ip: None,
+                                detail: json!({ "reason": "work_done" }),
+                            },
+                        )
+                        .await;
+                    }
+                }
+                Upserted::Item(item)
+            }
+            Err(_) => Upserted::Internal,
         },
-        Err(_) => internal(),
+        Err(_) => Upserted::Internal,
     })
 }
 

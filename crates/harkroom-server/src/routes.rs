@@ -362,7 +362,12 @@ pub const MOVED_WRITE: &[Moved] = &[
         path: "/accounts/me/blocks/{id}",
         route: || axum::routing::delete(crate::writes_moderation::delete_block),
     },
-    // P4c-2 작업 항목·스레드 임대·푸시 기기(`writes_misc.rs`). PUT /work-items 는 위임장 끝내기 때문에 TS 에 남는다.
+    // P4c-2 작업 항목·스레드 임대·푸시 기기(`writes_misc.rs`). PUT /work-items 는 MCP `workitem.upsert` 권한이 다 있을 때만 Rust(`WORK_ITEM_UPSERT_READY`), 아니면 TS.
+    Moved {
+        key: "PUT /work-items",
+        path: "/work-items",
+        route: || axum::routing::put(crate::writes_misc::put_item),
+    },
     Moved {
         key: "DELETE /work-items/{id}",
         path: "/work-items/{id}",
