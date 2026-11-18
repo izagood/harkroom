@@ -5,6 +5,7 @@
 //!   내 에이전트가 아님 403 `not_own_agent` → 채널 없음 404 → `operator: current` 인데 배정 없음 409 `not_assigned` →
 //!   upsert → 감사 `secret.grant.given` → 200 `{grantId, operatorId}`.
 //! - 판정 읽기는 읽기 풀, upsert·감사는 쓰기 풀. 권한은 [`SECRET_GRANT_GIVE_PRIVILEGES`] — 없으면 TS 에 남는다.
+//! - 다시 승인 `POST /secrets/:id/grants/:grantId/reapprove`([`reapprove`])도 여기서 맡는다 — 같은 상태·같은 권한 묶음.
 use crate::auth::RequireAccount;
 use crate::core::secrets_read::{SecretsReadState, load};
 use crate::directory::{internal, json_err, json_ok};
@@ -31,6 +32,20 @@ pub const SECRET_GRANT_GIVE_PRIVILEGES: &[(&str, &str)] = &[
     ("secret_grant.granted_at", "UPDATE"),
     ("secret_grant.suspended_at", "UPDATE"),
     ("secret_grant.suspend_reason", "UPDATE"),
+    // 다시 승인(`POST /secrets/{id}/grants/{g}/reapprove`)의 조건부 갱신이 WHERE 에서 읽는 칸.
+    ("secret_grant.suspended_at", "SELECT"),
+    ("account.id", "SELECT"),
+    ("account.deleted_at", "SELECT"),
+    ("account.disabled_at", "SELECT"),
+    ("agent_config.account_id", "SELECT"),
+    ("agent_config.owner_account_id", "SELECT"),
+    ("secret.id", "SELECT"),
+    ("secret.expires_at", "SELECT"),
+    ("agent_assignment.agent_id", "SELECT"),
+    ("agent_assignment.operator_id", "SELECT"),
+    ("audit_log.action", "SELECT"),
+    ("audit_log.target", "SELECT"),
+    ("audit_log.at", "SELECT"),
     ("audit_log.action", "INSERT"),
     ("audit_log.actor_id", "INSERT"),
     ("audit_log.actor_handle", "INSERT"),
@@ -196,6 +211,235 @@ pub async fn give(
     json_ok(json!({ "grantId": grant_id, "operatorId": bound }).to_string())
 }
 
+const RE_CUR_SQL: &str = "select g.agent_id::text, g.channel_id::text, g.operator_id::text, \
+       to_char(g.suspended_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'), g.suspend_reason, \
+       asg.operator_id::text, c.owner_account_id::text, a.deleted_at is not null \
+       from secret_grant g join account a on a.id = g.agent_id \
+       left join agent_assignment asg on asg.agent_id = g.agent_id \
+       left join agent_config c on c.account_id = g.agent_id \
+      where g.id = $1::uuid and g.secret_id = $2::uuid";
+const RE_DISABLED_SQL: &str =
+    "select 1 from account where id = $1::uuid and disabled_at is not null";
+/// TS `newer(seen)` — 본 뒤(또는 본 것이 없는데 정지 뒤)에 남은 `secret.grant.suspended` 기록.
+macro_rules! re_newer {
+    ($seen:literal) => {
+        concat!(
+            "select 1 from audit_log al where al.action = 'secret.grant.suspended' and al.target = g.agent_id::text \
+               and al.at >= g.suspended_at and (",
+            $seen,
+            "::timestamptz is null or date_trunc('milliseconds', al.at) > ",
+            $seen,
+            "::timestamptz)"
+        )
+    };
+}
+const RE_CHANGED_SQL: &str = concat!(
+    "select 1 from secret_grant g where g.id = $1::uuid and exists (",
+    re_newer!("$2"),
+    ")"
+);
+const RE_UPDATE_SQL: &str = concat!(
+    "update secret_grant g set operator_id = $3::uuid, granted_by = $4::uuid, granted_at = now(), \
+       suspended_at = null, suspend_reason = null \
+      where g.id = $1::uuid and g.secret_id = $2::uuid and g.suspended_at is not null \
+        and exists (select 1 from account a join agent_config c on c.account_id = a.id \
+                     where a.id = g.agent_id and a.deleted_at is null and a.disabled_at is null and c.owner_account_id = $4::uuid) \
+        and not exists (select 1 from secret x where x.id = g.secret_id and x.expires_at <= now()) \
+        and ($3::uuid is null or exists (select 1 from agent_assignment asg where asg.agent_id = g.agent_id and asg.operator_id = $3::uuid)) \
+        and not exists (",
+    re_newer!("$5"),
+    ")"
+);
+
+/// zod `{ seenChangedAt: datetime({offset:true}).nullable() }.strict()` — 본문이 없으면 `{}`(→ 거절).
+/// `Some(None)` 은 null, `Some(Some(s))` 는 원문 그대로(TS 도 원문을 `::timestamptz` 로 넘긴다).
+fn parse_seen(body: &Body) -> Option<Option<String>> {
+    let o = match body {
+        Body::Json(Value::Object(o)) => o,
+        _ => return None,
+    };
+    if o.len() != 1 {
+        return None;
+    }
+    match o.get("seenChangedAt")? {
+        Value::Null => Some(None),
+        Value::String(s) if crate::write::zod_datetime_offset(s).is_ok() => Some(Some(s.clone())),
+        _ => None,
+    }
+}
+
+fn no_grant() -> Response {
+    json_err(StatusCode::NOT_FOUND, "not_found", "no such grant")
+}
+
+fn conflict(code: &str, msg: &str) -> Response {
+    json_err(StatusCode::CONFLICT, code, msg)
+}
+
+/// `POST /secrets/:id/grants/:grantId/reapprove` — 정지된 부여를 소유자가 다시 승인한다(TS 같은 줄).
+/// 순서: 401 → 사람·불러오기(`load`) → 소유자만 403 `owner_only` → grantId uuid 아니면 404 → 본문 400 →
+/// 없거나 지운 에이전트 404 → 정지 아님 409 → 만료 409 → 내 에이전트 아님 403 → 꺼짐 409 → 배정 없음 409 →
+/// 본 뒤 바뀜 409 `changed_since` → 조건부 갱신 0 줄이면 409 `state_changed` → 감사 `secret.grant.reapproved` → 200.
+pub async fn reapprove(
+    State(st): State<Arc<SecretsReadState>>,
+    Path((id, grant_id)): Path<(String, String)>,
+    req: Request,
+) -> Response {
+    let (body, RequireAccount(me, _), parts) =
+        match crate::writes_settings::body_then::<RequireAccount>(req).await {
+            Ok(v) => v,
+            Err(r) => return r,
+        };
+    let s = match load(&st.read, &me, &id).await {
+        Ok(s) => s,
+        Err(r) => return r,
+    };
+    if s.owner != me.id {
+        return json_err(
+            StatusCode::FORBIDDEN,
+            "owner_only",
+            "only the secret owner can re-approve a grant",
+        );
+    }
+    if !crate::lists::is_zod_uuid(&grant_id) {
+        return no_grant();
+    }
+    let Some(seen) = parse_seen(&body) else {
+        return json_err(
+            StatusCode::BAD_REQUEST,
+            "bad_request",
+            "seenChangedAt (the lastChangedAt you reviewed, or null) is required",
+        );
+    };
+    type Cur = (
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        bool,
+    );
+    let cur: Option<Cur> = match sqlx::query_as(RE_CUR_SQL)
+        .bind(&grant_id)
+        .bind(&id)
+        .fetch_optional(&st.read)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => return internal(e),
+    };
+    let Some((
+        agent_id,
+        channel_id,
+        operator_id,
+        suspended_at,
+        suspend_reason,
+        assigned,
+        agent_owner,
+        deleted,
+    )) = cur
+    else {
+        return no_grant();
+    };
+    if deleted {
+        return no_grant();
+    }
+    let Some(suspended_at) = suspended_at else {
+        return conflict("not_suspended", "the grant is not suspended");
+    };
+    match sqlx::query(EXPIRED_SQL)
+        .bind(&id)
+        .fetch_optional(&st.read)
+        .await
+    {
+        Ok(Some(_)) => {
+            return conflict(
+                "secret_expired",
+                "the secret has expired; replace its value or extend expiresAt first",
+            );
+        }
+        Ok(None) => {}
+        Err(e) => return internal(e),
+    }
+    if agent_owner.as_deref() != Some(me.id.as_str()) {
+        return json_err(
+            StatusCode::FORBIDDEN,
+            "not_own_agent",
+            "secrets can only be given to your own agents",
+        );
+    }
+    match sqlx::query(RE_DISABLED_SQL)
+        .bind(&agent_id)
+        .fetch_optional(&st.read)
+        .await
+    {
+        Ok(Some(_)) => return conflict("agent_disabled", "enable the agent before re-approving"),
+        Ok(None) => {}
+        Err(e) => return internal(e),
+    }
+    let bound = operator_id.is_some();
+    if bound && assigned.is_none() {
+        return conflict(
+            "not_assigned",
+            "the agent is not assigned to an operator; assign it first or grant again with operator: \"any\"",
+        );
+    }
+    let bound_operator = if bound { assigned } else { None };
+    match sqlx::query(RE_CHANGED_SQL)
+        .bind(&grant_id)
+        .bind(&seen)
+        .fetch_optional(&st.read)
+        .await
+    {
+        Ok(Some(_)) => {
+            return conflict(
+                "changed_since",
+                "the agent definition changed after you reviewed it; reload and review again",
+            );
+        }
+        Ok(None) => {}
+        Err(e) => return internal(e),
+    }
+    let n = match sqlx::query(RE_UPDATE_SQL)
+        .bind(&grant_id)
+        .bind(&id)
+        .bind(&bound_operator)
+        .bind(&me.id)
+        .bind(&seen)
+        .execute(&st.write)
+        .await
+    {
+        Ok(r) => r.rows_affected(),
+        Err(e) => return internal(e),
+    };
+    if n == 0 {
+        return conflict(
+            "state_changed",
+            "the grant or agent changed while re-approving; reload and try again",
+        );
+    }
+    let ip = crate::writes_settings::ip_of(&parts, &st.trust);
+    record_audit(
+        &st.write,
+        AuditEntry {
+            action: "secret.grant.reapproved",
+            actor_id: Some(&me.id),
+            actor_handle: Some(&me.handle),
+            target: Some(&id),
+            ip: ip.as_deref(),
+            detail: json!({
+                "name": s.name, "grantId": grant_id, "agentId": agent_id, "channelId": channel_id,
+                "operatorId": bound_operator, "previousOperatorId": operator_id,
+                "suspendReason": suspend_reason, "suspendedAt": suspended_at,
+            }),
+        },
+    )
+    .await;
+    json_ok(json!({ "grantId": grant_id, "operatorId": bound_operator }).to_string())
+}
+
 pub fn routes(
     st: SecretsReadState,
     auth: crate::auth::AuthPools,
@@ -204,6 +448,7 @@ pub fn routes(
     use crate::route_table::Table;
     let t = Table::<Arc<SecretsReadState>>::new()
         .put("/secrets/{id}/grants", give)
+        .post("/secrets/{id}/grants/{grant_id}/reapprove", reapprove)
         .map(|r| {
             r.route_layer(axum::middleware::from_fn_with_state(
                 auth,
@@ -248,8 +493,56 @@ mod tests {
 
     #[test]
     fn never_reads_values() {
-        for q in [EXPIRED_SQL, AGENT_SQL, CHANNEL_SQL, UPSERT_SQL] {
+        for q in [
+            EXPIRED_SQL,
+            AGENT_SQL,
+            CHANNEL_SQL,
+            UPSERT_SQL,
+            RE_CUR_SQL,
+            RE_DISABLED_SQL,
+            RE_CHANGED_SQL,
+            RE_UPDATE_SQL,
+        ] {
             assert!(!q.contains("sealed"), "{q}");
+        }
+    }
+
+    #[test]
+    fn parse_seen_matches_zod_strict() {
+        assert_eq!(
+            parse_seen(&Body::Json(json!({ "seenChangedAt": null }))),
+            Some(None)
+        );
+        let t = "2026-01-02T03:04:05.123+09:00";
+        assert_eq!(
+            parse_seen(&Body::Json(json!({ "seenChangedAt": t }))),
+            Some(Some(t.to_owned()))
+        );
+        assert!(parse_seen(&Body::None).is_none());
+        assert!(parse_seen(&Body::Json(json!({}))).is_none());
+        assert!(parse_seen(&Body::Json(json!({ "seenChangedAt": null, "x": 1 }))).is_none());
+        assert!(parse_seen(&Body::Json(json!({ "seenChangedAt": "yesterday" }))).is_none());
+        assert!(parse_seen(&Body::Json(json!({ "seenChangedAt": 1 }))).is_none());
+    }
+
+    #[test]
+    fn reapprove_sql_rechecks_and_binds_seen() {
+        assert!(RE_CHANGED_SQL.contains("$2::timestamptz is null"));
+        assert!(RE_UPDATE_SQL.contains("$5::timestamptz is null"));
+        assert!(RE_UPDATE_SQL.contains("a.disabled_at is null"));
+        assert!(RE_UPDATE_SQL.contains("g.suspended_at is not null"));
+        assert!(!RE_UPDATE_SQL.contains("$6"));
+    }
+
+    #[test]
+    fn privileges_cover_reapprove_and_audit() {
+        for p in [
+            ("secret_grant.suspended_at", "SELECT"),
+            ("account.disabled_at", "SELECT"),
+            ("audit_log.at", "SELECT"),
+            ("audit_log.detail", "INSERT"),
+        ] {
+            assert!(SECRET_GRANT_GIVE_PRIVILEGES.contains(&p), "{p:?}");
         }
     }
 }
