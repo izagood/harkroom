@@ -134,10 +134,8 @@ fn parse_offset(s: &str) -> Option<FixedOffset> {
         (false, r)
     } else if let Some(r) = s.strip_prefix('-') {
         (true, r)
-    } else if let Some(r) = s.strip_prefix('\u{2212}') {
-        (true, r)
     } else {
-        return None;
+        (true, s.strip_prefix('\u{2212}')?)
     };
     let b = rest.as_bytes();
     if !b.iter().all(|c| c.is_ascii_digit() || *c == b':') {

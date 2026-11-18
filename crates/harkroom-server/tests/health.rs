@@ -123,11 +123,12 @@ async fn ts_override_sends_health_rows_back_to_ts() {
 }
 
 #[test]
-fn open_rows_are_in_the_table_and_projection_status_stays_on_ts() {
+fn open_rows_are_in_the_table_and_projection_status_is_moved() {
     for k in OPEN {
         assert!(MOVED.iter().any(|m| m.key == *k), "{k}");
     }
-    assert!(!MOVED.iter().any(|m| m.path == "/projection/status"));
+    // a6f481561 이 GET /projection/status 를 Rust 로 옮겼다(TS 가 투영 루프를 돌 때는 빈 상태를 답한다).
+    assert!(MOVED.iter().any(|m| m.path == "/projection/status"));
     assert_eq!(
         canonical_avcs("https://avcs.example.com/"),
         Some("https://avcs.example.com".into())

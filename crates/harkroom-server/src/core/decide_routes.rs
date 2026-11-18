@@ -706,10 +706,7 @@ pub fn once_body_ok(body: Option<&serde_json::Value>) -> bool {
 /// TS 라우트의 `once` — `{ ghUser: ghUser ?? null, relaxChecks: relaxChecks ?? false, number, headSha, failedChecks? }`.
 /// [`once_body_ok`] 를 지난 본문에만 부른다. number 가 i64 로 안 읽히면 `None`(TS 로 넘긴다).
 pub fn once_from_body(body: Option<&serde_json::Value>) -> Option<super::decide_merge_once::Once> {
-    let o = match body {
-        None => return None,
-        Some(v) => v.as_object()?,
-    };
+    let o = body?.as_object()?;
     let number = super::merge_approval_peek::positive_int(o.get("number")?)?;
     Some(super::decide_merge_once::Once {
         gh_user: o.get("ghUser").and_then(Value::as_str).map(str::to_owned),
