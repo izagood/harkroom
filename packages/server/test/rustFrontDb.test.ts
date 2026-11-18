@@ -1694,6 +1694,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant select (id, kind, description, expires_at), insert (id, name, kind, filename, description, owner_account_id, expires_at), update (description, expires_at, updated_at) on secret to ${rw}`,
         `grant select (secret_id, version, sealed, revoked_at), insert (secret_id, version, sealed, size_bytes, created_by), update (sealed, revoked_at) on secret_version to ${rw}`,
         `grant select (kid, kcv), insert (kid, kcv) on secret_key_check to ${rw}`,
+        // S5.4 SE4 — GET /agent/secret-create(`agent_secret_create::privileges()` = AGENT_SECRET_CREATE_PRIVILEGES + SECRET_KEY_CHECK_PRIVILEGES).
+        `grant select (account_id, capability, scope, expires_at, suspended_at) on account_grant to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -4204,6 +4206,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // SE3 — 비밀 쓰기 세 줄이 Rust 에 붙었는지(답 대조 사례는 다음 회차).
         for (const k of ['POST /secrets', 'PATCH /secrets/{id}', 'PUT /secrets/{id}/value']) expect(f.log(), k).toContain(`"${k}"`);
         expect(f.log()).not.toContain('secret writes core off');
+        // SE4 — GET /agent/secret-create 는 Rust, POST /agent/secrets·/agent/secrets/rotate 는 TS 에 남는다(같은 인메모리 리미터·소유자 알림).
+        expect(f.log(), 'GET /agent/secret-create').toContain('"GET /agent/secret-create"');
+        expect(f.log()).not.toContain('agent secret create core off');
+        for (const k of ['POST /agent/secrets', 'POST /agent/secrets/rotate']) expect(f.log(), k).not.toContain(`"${k}"`);
         const M = member.token;
         const mk = async (name: string, owner: string) => (await db.pool.query<{ id: string }>(
           `insert into secret (name, kind, description, owner_account_id, expires_at) values ($1, 'text', 'd', $2, now() + interval '1 day') returning id`,

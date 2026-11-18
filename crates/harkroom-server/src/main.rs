@@ -812,6 +812,34 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 SE4 — `GET /agent/secret-create`. 세 겹 잠금: `HARKROOM_CORE=rust`, 쓰기 풀에 그 칸 권한이 다 있고, 키 env 를 읽어
+    // DB 확인값과 맞춰 볼 수 있을 때만. `POST /agent/secrets`·`/agent/secrets/rotate` 는 TS 에 남는다(`agent_secret_create.rs` 머리말).
+    let agent_secret_create = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::agent_secret_create as k;
+            match write::missing_in(w, &k::privileges(), &[]).await {
+                Ok(m) if m.is_empty() => match k::load_state(w.clone()).await {
+                    Ok(st) => Some(st),
+                    Err(e) => {
+                        eprintln!("front: agent secret create core off — secret keys: {e}");
+                        None
+                    }
+                },
+                Ok(m) => {
+                    eprintln!("front: agent secret create core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: agent secret create core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     let secrets_read_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
             use harkroom_server::core::secrets_read as s;
@@ -2566,6 +2594,16 @@ async fn main() {
             core_routes.router = core_routes.router.merge(sw.router);
             core_routes.http.extend(sw.http);
             core_routes.sockets.extend(sw.sockets);
+        }
+        if let Some(st) = agent_secret_create {
+            let sc = harkroom_server::core::agent_secret_create::routes(
+                st,
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(sc.router);
+            core_routes.http.extend(sc.http);
+            core_routes.sockets.extend(sc.sockets);
         }
         if let Some(write) = secrets_read_write {
             let se = harkroom_server::core::secrets_read::routes(
