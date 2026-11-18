@@ -57,6 +57,9 @@ zeroize = "=1.9.1"
 # 비밀번호 해시(S5.4 decision 1) — TS `argon2`(node-argon2 0.41) 와 같은 PHC 문자열 `$argon2id$v=19$m=65536,t=3,p=4$…`.
 # 난수(getrandom) 기능은 끄고 위 getrandom 으로 소금을 만든다.
 argon2 = { version = "=0.6.0", default-features = false, features = ["alloc", "password-hash"] }
+# 자동화 일정 트리거의 tz 벽시계(S5.4 결정 2) — TS `Intl.DateTimeFormat` 대신 IANA 표. 기본 기능(clock·serde 등)은 끈다.
+chrono = { version = "=0.4.44", default-features = false, features = ["std"] }
+chrono-tz = { version = "=0.10.4", default-features = false }
 
 # 망가뜨리기 시험 전용 판정 스위치(C3b-3a `core::decide_core::Checks`). **기본 꺼짐** — release 빌드에 들어가지 않는다.
 # 시험 빌드에서만 아래 dev-dependency(자기 자신)가 켠다. `tests/decide_core.rs` 가 `default` 에 없는지 확인한다.

@@ -27,7 +27,8 @@
 //! TS 처럼 sweep 에서는 위임 카드 갱신(`refreshMandateCards`)을 하지 않는다. 비밀 칸(`ingress_token_hash`·`ingress_secret_enc`)은 읽지 않는다.
 //!
 //! TODO(이것이 끝나야 주인을 `rust` 로 넘길 수 있다):
-//! - [ ] 1 `fireOneSchedule` — tz 벽시계 계산(`nextOccurrence`·`timeVars`, DST 처리 `zonedToUtc`)이 Rust 에 없다(chrono-tz 필요)
+//! - [ ] 1 `fireOneSchedule` — tz 벽시계 계산은 [`crate::core::automation_time`](`next_occurrence`·`time_vars`·`zoned_to_utc`, chrono-tz)에 있다.
+//!   남은 것: 잡기 SQL·`update automation set next_at`
 //!   + `enqueueRun` 의 디바운스(`debounce_sec` 창 병합)·시간당 상한 일시정지. [`crate::core::mcp::automation_run::enqueue_tx`] 를 재사용할 것.
 //! - [x] 3 `pauseForRefusal` + `endAutomationMandatesTx` — [`pause_for_refusal`]·[`end_automation_mandates_tx`].
 //!   남은 차이: 위임장 `ended_at`·줄 `revoked_at` 이 TS 는 프로세스 시각(`new Date()`), 여기는 DB `now()`(tx 시작 시각)다.
