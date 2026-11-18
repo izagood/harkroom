@@ -4,26 +4,20 @@
 //! - 순서가 규칙이다(TS 와 같다): 인증(401) → 경로 세 id(400 `invalid_request`) → 사람만(403 `human_only`) → `channelPostGate`
 //!   (403 `forbidden`·403 `channel_archived`, 없는 채널은 통과) → `isChannelRoot`(404 `not_a_root`) → 지우기(없으면 404 `not_found`)
 //!   → 시스템 줄(스레드 안, 아무도 부르지 않는다 — `kind: 'system'`·`noMentions`) → `thread.agent_model.changed` → 감사 → 204.
-//! - 시스템 줄이 Rust 글 경로에서 TS 몫으로 갈 스레드면([`super::msg_post::system_thread_is_ts`] — 위임 스위치를 모르는데 바꾼 사람이
-//!   담당), 아무것도 지우기 **앞에** 요청을 통째로 TS 에 넘긴다(fail-closed).
 //! - 권한은 [`THREAD_MODEL_CLEAR_PRIVILEGES`] 와 글 올리기 권한 — 둘 다 있어야 `main.rs` 가 붙인다(없으면 TS 에 남는다).
 //! - `PUT …/agent-models/:agentId` 는 TS 에 남는다(오퍼레이터 허브의 하네스 목록 `checkOffered` 를 본다).
 use super::audience::audience_for;
-use super::msg_post::{
-    Origin, Outcome, PostBody, PostState, channel_is_dm, gate_sql, post_in_tx, system_thread_is_ts,
-    to_ts,
-};
+use super::msg_post::{Origin, Outcome, PostBody, PostState, channel_is_dm, gate_sql, post_in_tx};
 use crate::auth::RequireAccount;
 use crate::directory::{internal, json_err};
 use crate::trust_proxy::TrustProxy;
 use crate::write::{AuditEntry, emit_event, record_audit};
 use crate::writes_settings::ip_of;
 use axum::body::to_bytes;
-use axum::extract::{ConnectInfo, Path, Request, State};
+use axum::extract::{Path, Request, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde_json::{Map, Value, json};
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 /// 이 줄이 글 올리기 권한([`super::msg_post::MESSAGE_POST_PRIVILEGES`]) 위에 쓰는 권한 — homelab GRANT 와 같아야 한다.
@@ -83,12 +77,11 @@ fn cleared_line(actor: &str, agent: &str, handle: &str) -> (String, Map<String, 
 pub async fn clear(
     State(st): State<Arc<ClearState>>,
     RequireAccount(me, _): RequireAccount,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Path((id, root, agent)): Path<(String, String, String)>,
     req: Request,
 ) -> Response {
     let (parts, body) = req.into_parts();
-    let Ok(bytes) = to_bytes(body, BODY_LIMIT).await else {
+    let Ok(_) = to_bytes(body, BODY_LIMIT).await else {
         return json_err(
             StatusCode::PAYLOAD_TOO_LARGE,
             "fst_err_ctp_body_too_large",
@@ -152,12 +145,6 @@ pub async fn clear(
                 "그 채널의 최상위 글이 아니다",
             );
         }
-        Err(e) => return internal(e),
-    }
-    // 시스템 줄이 TS 몫으로 갈 스레드면 지우기 앞에서 통째로 넘긴다 — 지운 뒤에는 되돌릴 수 없다.
-    match system_thread_is_ts(w, &root, &me.id).await {
-        Ok(false) => {}
-        Ok(true) => return to_ts(st.post.up.clone(), peer, parts, bytes).await,
         Err(e) => return internal(e),
     }
     match sqlx::query(CLEAR_SQL)

@@ -6,23 +6,18 @@
 //!   → 바뀌었을 때만 `thread.plan.changed`(청중 맵 진행률) → 스레드 안 시스템 줄(`▶ 자동 진행 꺼짐`, 부르지 않는다) → 200 `{ plan }`.
 //!   거절 몸통은 `{ "error": { "code": … } }` 이다. 감사는 없다(TS 도 없다).
 //! - 이미 꺼져 있으면 아무것도 바꾸지 않고 이벤트·줄 없이 지금 판을 돌려준다(TS `changed: false`).
-//! - 시스템 줄이 Rust 글 경로에서 TS 몫으로 갈 스레드면([`super::msg_post::system_thread_is_ts`]), 아무것도 바꾸기 **앞에** 요청을
-//!   통째로 TS 에 넘긴다(fail-closed).
 //! - 권한은 [`THREAD_PLAN_AUTO_OFF_PRIVILEGES`] 와 글 올리기 권한 — 둘 다 있어야 `main.rs` 가 붙인다(없으면 TS 에 남는다).
 use super::audience::audience_for;
-use super::msg_post::{
-    Origin, Outcome, PostBody, PostState, channel_is_dm, post_in_tx, system_thread_is_ts, to_ts,
-};
+use super::msg_post::{Origin, Outcome, PostBody, PostState, channel_is_dm, post_in_tx};
 use super::msg_read::channel_visible;
 use super::thread_plan_read::{ROOT_SQL, plan_view_json};
 use crate::auth::{RequireAccount, Via};
 use crate::directory::{internal, json_ok};
 use axum::body::to_bytes;
-use axum::extract::{ConnectInfo, Path, Request, State};
+use axum::extract::{Path, Request, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde_json::{Map, Value, json};
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 /// 이 줄이 글 올리기 권한([`super::msg_post::MESSAGE_POST_PRIVILEGES`]) 위에 쓰는 권한 — homelab GRANT 와 같아야 한다.
@@ -100,12 +95,11 @@ fn off_line(actor: &str) -> (String, Map<String, Value>) {
 pub async fn auto_off(
     State(st): State<Arc<AutoOffState>>,
     RequireAccount(me, auth): RequireAccount,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Path(root): Path<String>,
     req: Request,
 ) -> Response {
-    let (parts, body) = req.into_parts();
-    let Ok(bytes) = to_bytes(body, BODY_LIMIT).await else {
+    let (_, body) = req.into_parts();
+    let Ok(_) = to_bytes(body, BODY_LIMIT).await else {
         return code_err(StatusCode::PAYLOAD_TOO_LARGE, "fst_err_ctp_body_too_large");
     };
     if me.kind != "human" || auth.via != Some(Via::Session) {
@@ -128,12 +122,6 @@ pub async fn auto_off(
     match channel_visible(w, &me.id, &channel).await {
         Ok(true) => {}
         Ok(false) => return code_err(StatusCode::NOT_FOUND, "not_found"),
-        Err(e) => return internal(e),
-    }
-    // 시스템 줄이 TS 몫으로 갈 스레드면 바꾸기 앞에서 통째로 넘긴다.
-    match system_thread_is_ts(w, &root, &me.id).await {
-        Ok(false) => {}
-        Ok(true) => return to_ts(st.post.up.clone(), peer, parts, bytes).await,
         Err(e) => return internal(e),
     }
     match switch_off(w, &root, &me.id).await {

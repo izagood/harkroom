@@ -332,7 +332,6 @@ pub(crate) struct Origin<'a> {
     /// `kind === 'user'` 만)와 암묵 위임(`kind !== 'system'`)은 하지 않는다. 스레드 안(머리 아래)에도 쓴다(S5.4 TM2) — 머리·DM 갈래
     /// (`isSystemLine`, S5.4 A1)는 머리 주인·DM 상대가 에이전트면 알리지 않고(그 턴을 깨우지 않는다) 사람 글이어도 선점·카드 닫기를 하지 않는다.
     /// 카드 답 판정([`TS_THREAD_SQL`] 의 ask 갈래)도 하지 않는다 — TS `closeAsksByReply` 는 라우트 몫이라 시스템 줄은 닿지 않는다.
-    /// 담당 위임 갈래(스위치를 모르는데 작성자가 담당)는 그대로 `ToTs` 다 — 부르는 쪽이 [`system_thread_is_ts`] 로 먼저 본다.
     pub(crate) system: bool,
     /// TS `noMentions`(S5.4 TM2) — 부르지 않는 줄. 본문은 그대로 두고 부름 판정을 건너뛴다(TS `noMentionCalls`: 부름·`meta` 없음).
     /// 머리 주인 `thread_reply`·DM 갈래는 그대로다(부름이 아니다). 라우트 입력에서는 켜지 않는다.
@@ -509,23 +508,6 @@ fn no_mention_calls(body: &str) -> mention_calls::Resolved {
         channel_called: false,
         call_meta: serde_json::Map::new(),
     }
-}
-
-/// 스레드 시스템 줄([`Origin::system`] + 머리)이 [`post_tx`] 에서 `ToTs` 로 갈 것인가 — 같은 [`TS_THREAD_SQL`](ask 갈래는 끈다)을
-/// 미리 본다. 부르는 쪽(모델 지정 풀기)은 쓰기 **앞**에서 이것을 보고 참이면 요청을 통째로 TS 에 넘긴다(fail-closed).
-pub(crate) async fn system_thread_is_ts(
-    pool: &PgPool,
-    root: &str,
-    author: &str,
-) -> sqlx::Result<bool> {
-    let v2 = post_delegation_v2();
-    sqlx::query_scalar(TS_THREAD_SQL)
-        .bind(root)
-        .bind(author)
-        .bind(true)
-        .bind(v2.is_some())
-        .fetch_one(pool)
-        .await
 }
 
 /// 이 글의 사슬 자리 — TS `mentionDepthFor`(원인 없는 판)의 앞 고리와 그 위에서 정한 이 글의 정체 홉·사슬 시작.
