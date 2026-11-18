@@ -4,8 +4,8 @@
 //! - `timestamptz` → node-pg 는 `Date` 로 읽고 `toISOString()`(UTC, 밀리초 3자리, `Z`)으로 낸다 → [`iso!`].
 //! - `::text` 로 캐스팅한 값·uuid·`bigint::text` 는 문자열 그대로, `int`·`boolean` 은 그대로, `jsonb` 는 값으로.
 //!
-//! 메모리 상태(TS 의 `Map`·투영 워커)를 읽는 라우트는 여기 두지 않는다 — `GET /leases` 는 `projection.currentUrl()`(투영 워커가
-//! 지금 보는 avcs 서버, 프로세스 메모리)에 기대므로 S5.3 코어로 간다.
+//! `GET /leases` 는 TS 에선 `projection.currentUrl()`(투영 워커 메모리)에 기댔지만, Rust 투영 루프는 사이클마다 설정을 다시 읽으므로
+//! 같은 규칙으로 URL 을 풀어 여기서 답한다(`leases`).
 use crate::auth::RequireAccount;
 use crate::perm::require_cap;
 use axum::extract::{RawQuery, State};
@@ -294,6 +294,41 @@ pub async fn audit(
     match res {
         Ok(b) => json_ok(b),
         Err(e) => internal(e),
+    }
+}
+
+const LEASES: &str = concat!(
+    "select json_build_object('leases', coalesce((select json_agg(x order by x.repo, x.path) from (",
+    "select repo, path, actor_key_id as \"actorKeyId\", ",
+    iso!("expires_at"),
+    " as \"expiresAt\" from active_lease where expires_at > now() and avcs_base_url = $1) x), '[]'::json))::text"
+);
+
+/// `GET /leases` 가 읽는 칸 — 읽기 풀 GRANT 와 같아야 한다.
+pub const LEASES_PRIVILEGES: &[(&str, &str)] =
+    &[("projection_config", "SELECT"), ("active_lease", "SELECT")];
+
+/// `GET /leases` — 투영이 지금 보는 avcs 서버(TS `projection.currentUrl()`)의 살아 있는 리스.
+/// 그 URL 은 투영 루프와 같은 규칙(`projection_config` → env `AVCS_BASE_URL`, [`resolve_url`](crate::loops::projection::resolve_url))으로
+/// 사이클마다 다시 푼다 — Rust 루프는 캐시가 없으니 그것이 곧 「워커가 쓰는 URL」이다. 없으면 빈 목록(TS 와 같다).
+pub async fn leases(State(pool): State<PgPool>, _: RequireAccount) -> Response {
+    let app: Option<String> =
+        match sqlx::query_scalar("select avcs_base_url from projection_config where id = true")
+            .fetch_optional(&pool)
+            .await
+        {
+            Ok(v) => v.flatten(),
+            Err(e) => return internal(e),
+        };
+    let env = std::env::var("AVCS_BASE_URL")
+        .ok()
+        .filter(|v| !v.is_empty());
+    let Some(url) = crate::loops::projection::resolve_url(env.as_deref(), app.as_deref()) else {
+        return json_ok(r#"{"leases":[]}"#.to_owned());
+    };
+    match one_json(&pool, LEASES, Some(&url)).await {
+        Ok(b) => json_ok(b),
+        Err(r) => r,
     }
 }
 

@@ -64,6 +64,11 @@ pub const MOVED: &[Moved] = &[
         route: || axum::routing::get(crate::directory::dms),
     },
     Moved {
+        key: "GET /leases",
+        path: "/leases",
+        route: || axum::routing::get(crate::directory::leases),
+    },
+    Moved {
         key: "GET /mcp-servers",
         path: "/mcp-servers",
         route: || axum::routing::get(crate::directory::mcp_servers),
