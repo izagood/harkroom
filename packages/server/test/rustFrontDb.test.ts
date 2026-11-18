@@ -10647,7 +10647,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             [member.accountId, png, orig, JSON.stringify({ x: 0.1, y: 0.25, size: 0.5 })]);
           const bot = await ins(`insert into account (handle, display_name, kind, avatar_attachment_id, avatar_source_attachment_id) values ('av_bot', 'av_bot', 'agent', $1, $2) returning id`, [svg, orig]);
           await db.pool.query(`insert into agent_config (account_id, owner_account_id) values ($1, $2)`, [bot, member.accountId]);
-          const human = await ins(`insert into account (handle, display_name, kind, avatar_attachment_id) values ('av_lost', 'av_lost', 'human', $1) returning id`, [lost]);
+          const human = await ins(`insert into account (handle, login_id, display_name, kind, avatar_attachment_id) values ('av_lost', 'av_lost', 'av_lost', 'human', $1) returning id`, [lost]);
           const get = async (base: string, path: string, token: string) => {
             const r = await fetch(`${base}${path}`, { headers: { authorization: `Bearer ${token}` } });
             const h: Record<string, string | null> = {};
