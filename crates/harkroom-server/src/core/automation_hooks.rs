@@ -52,8 +52,14 @@ impl fmt::Debug for IngressTarget {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("IngressTarget")
             .field("kind", &self.kind)
-            .field("token_hash", &self.token_hash.as_ref().map(|_| "<redacted>"))
-            .field("secret_enc", &self.secret_enc.as_ref().map(|_| "<redacted>"))
+            .field(
+                "token_hash",
+                &self.token_hash.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "secret_enc",
+                &self.secret_enc.as_ref().map(|_| "<redacted>"),
+            )
             .finish()
     }
 }
@@ -73,7 +79,11 @@ impl fmt::Debug for HooksState {
 impl HooksState {
     /// 서명 키 상자는 TS 처럼 `HARKROOM_SECRET_KEY` 에서 한 번 읽는다(없으면 github 서명은 늘 실패 → 401).
     pub fn new(read: PgPool, up: Upstream) -> Self {
-        Self { read, up, secret_box: SecretBox::from_env() }
+        Self {
+            read,
+            up,
+            secret_box: SecretBox::from_env(),
+        }
     }
 }
 
@@ -82,7 +92,12 @@ fn hook_not_found() -> Response {
 }
 
 /// TS `verifyGithubSignature` 전체 — 상자·암호문·헤더가 다 있고, 열린 키로 만든 HMAC 이 같을 때만.
-fn github_ok(secret_box: Option<&SecretBox>, secret_enc: Option<&str>, raw: &[u8], sig: Option<&str>) -> bool {
+fn github_ok(
+    secret_box: Option<&SecretBox>,
+    secret_enc: Option<&str>,
+    raw: &[u8],
+    sig: Option<&str>,
+) -> bool {
     let (Some(b), Some(enc), Some(h)) = (secret_box, secret_enc, sig) else {
         return false;
     };
@@ -117,9 +132,15 @@ fn header_str<'a>(h: &'a HeaderMap, name: &str) -> Option<&'a str> {
 }
 
 async fn load(read: &PgPool, id: &str) -> Result<Option<IngressTarget>, sqlx::Error> {
-    let row: Option<(Option<String>, Option<String>, Option<String>)> =
-        sqlx::query_as(TARGET_SQL).bind(id).fetch_optional(read).await?;
-    Ok(row.map(|(kind, token_hash, secret_enc)| IngressTarget { kind, token_hash, secret_enc }))
+    let row: Option<(Option<String>, Option<String>, Option<String>)> = sqlx::query_as(TARGET_SQL)
+        .bind(id)
+        .fetch_optional(read)
+        .await?;
+    Ok(row.map(|(kind, token_hash, secret_enc)| IngressTarget {
+        kind,
+        token_hash,
+        secret_enc,
+    }))
 }
 
 #[derive(Clone, Copy)]
@@ -128,7 +149,13 @@ enum Hook {
     Generic,
 }
 
-async fn handle(st: Arc<HooksState>, peer: SocketAddr, id: String, req: Request, hook: Hook) -> Response {
+async fn handle(
+    st: Arc<HooksState>,
+    peer: SocketAddr,
+    id: String,
+    req: Request,
+    hook: Hook,
+) -> Response {
     let (parts, body) = req.into_parts();
     let bytes = match to_bytes(body, BODY_LIMIT).await {
         Ok(b) => b,
@@ -166,8 +193,17 @@ async fn handle(st: Arc<HooksState>, peer: SocketAddr, id: String, req: Request,
                 return hook_not_found();
             }
             let sig = header_str(&parts.headers, "x-hub-signature-256");
-            if !github_ok(st.secret_box.as_ref(), target.secret_enc.as_deref(), &bytes, sig) {
-                return json_err(StatusCode::UNAUTHORIZED, "bad_signature", "signature does not match");
+            if !github_ok(
+                st.secret_box.as_ref(),
+                target.secret_enc.as_deref(),
+                &bytes,
+                sig,
+            ) {
+                return json_err(
+                    StatusCode::UNAUTHORIZED,
+                    "bad_signature",
+                    "signature does not match",
+                );
             }
             if header_str(&parts.headers, "x-github-event") == Some("ping") {
                 return (
@@ -219,7 +255,12 @@ pub fn routes(st: HooksState, cors: Arc<crate::cors::Cors>) -> crate::route_tabl
     let t = Table::<Arc<HooksState>>::new()
         .post("/hooks/github/{id}", github)
         .post("/hooks/generic/{id}", generic)
-        .map(|r| r.layer(axum::middleware::from_fn_with_state(cors, crate::cors::layer)))
+        .map(|r| {
+            r.layer(axum::middleware::from_fn_with_state(
+                cors,
+                crate::cors::layer,
+            ))
+        })
         .finish();
     crate::route_table::Routes {
         router: t.router.with_state(Arc::new(st)),
@@ -258,7 +299,12 @@ mod tests {
         let (b, enc) = sealed();
         let body = br#"{"a": 1}"#;
         // 같은 JSON 을 다시 직렬화한 바이트로는 맞지 않는다.
-        assert!(!github_ok(Some(&b), Some(&enc), body, Some(&sig(br#"{"a":1}"#))));
+        assert!(!github_ok(
+            Some(&b),
+            Some(&enc),
+            body,
+            Some(&sig(br#"{"a":1}"#))
+        ));
         assert!(!github_ok(Some(&b), Some(&enc), body, Some("sha256=00")));
         let mut s = sig(body);
         s.replace_range(7..8, if s.as_bytes()[7] == b'a' { "b" } else { "a" });
@@ -266,7 +312,12 @@ mod tests {
         // 다른 키로 봉인한 것 · 접두사 없음
         let other = SecretBox::new(Some("other-master")).expect("box");
         assert!(!github_ok(Some(&other), Some(&enc), body, Some(&sig(body))));
-        assert!(!github_ok(Some(&b), Some(&enc), body, Some(&sig(body)[7..])));
+        assert!(!github_ok(
+            Some(&b),
+            Some(&enc),
+            body,
+            Some(&sig(body)[7..])
+        ));
     }
 
     #[test]
