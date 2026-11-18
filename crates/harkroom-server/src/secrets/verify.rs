@@ -50,7 +50,7 @@ pub(crate) fn kind_of(s: &str) -> Option<SecretKind> {
 }
 
 /// 같은 길이에서 시간 차가 없는 비교.
-fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+pub(crate) fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 

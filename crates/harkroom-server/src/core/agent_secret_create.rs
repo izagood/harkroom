@@ -4,24 +4,26 @@
 //!   - `GET /agent/secret-create` → `{ granted }`(러너가 프롬프트에 만들기 절을 쓸지 고른다. 판정이 아니다).
 //!     차례는 TS 와 같다: 인증(401) → 오퍼레이터를 거친 에이전트(403) → `cache-control: no-store` →
 //!     `granted = 키링이 있음 && secret.create 부여가 살아 있음`.
-//!   - `POST /agent/secrets`·`POST /agent/secrets/rotate` 의 **generate 갈래**(서버가 값을 만든다). 두 줄은 하나의
-//!     [`CreateLimiter`](에이전트마다 시간당 10회)를 나눠 쓴다 — 그래서 함께 선다([`crate::rate_limit`] 머리말 규칙).
-//!     차례는 TS 와 같다: 인증(401) → 오퍼레이터를 거친 에이전트(403) → 본문(400 `badCreate`) → `gate`
+//!   - `POST /agent/secrets`·`POST /agent/secrets/rotate` — **generate·import 두 갈래 모두**. 두 줄은 하나의
+//!     [`CreateLimiter`](에이전트마다 시간당 10회)를 나눠 쓰고, generate·import 도 같은 제한기를 센다(TS `makeLimiter` 하나) —
+//!     그래서 함께 선다([`crate::rate_limit`] 머리말 규칙).
+//!     차례는 TS 와 같다: 인증(401) → 오퍼레이터를 거친 에이전트(403) → 본문(400 `badCreate`, import 의 base64 는 Node
+//!     `Buffer.from(b64,'base64')` 처럼 너그럽게 푼다) → `gate`
 //!     (임대 → 소유자 비활성 → `secret.create` 부여 → 소유자 원인(F2) → 속도 제한, 거절마다 감사 `secret.<action>.denied`)
 //!     → 만들기: 20개 상한(미리 한 번 + tx 안 advisory lock 뒤 다시) → 값 → 설명 누출 → tx(secret·secret_version·secret_grant,
 //!     23505 → `name_taken`) / 회전: 대상(404·`secret_expired`) → 입양(`adopted_by_owner`)·정지(`grant_suspended`) → 값 →
 //!     종류·설명 누출 → tx(새 판·옛 판 회수·`updated_at`) → `secret_access_log` → 감사(`record_audit`) →
 //!     소유자 알림(TS `notifyOwner`: 그 턴 스레드의 `system`·`serverNotice` 줄, `@소유자` 부름, `meta.secretNotice`·`meta.i18n`,
 //!     실패해도 되돌리지 않고 로그만). 값은 키링 v2 `seal` 로 봉한다. 거절·성공 모두 `cache-control: no-store`.
+//!     "값" 단계(TS `resolveValue`): generate 는 길이 판정 뒤 만든다. import 는 빈 값·64 KiB 넘음 → `bad_value`, text 인데
+//!     UTF-8 로 풀어 U+FFFD 가 보이면 `bad_value`, 그 뒤 F4 "마운트된 값"([`is_mounted_value`] — 같은 오퍼레이터의 살아 있는
+//!     임대로 `granted` 된 판의 봉투를 풀어 시간 차 없이 견준다, 끝 공백·줄바꿈 차이는 같은 값) → `value_is_mounted`(409).
 //! - **TS 에 남는 줄**:
-//!   1. 같은 두 줄의 **import 갈래** — "마운트된 값" 판정(F4)이 살아 있는 임대의 봉투를 전부 풀어 견준다(아직 안 옮김).
-//!      본문을 읽어 import 이면 **게이트·속도 제한을 세기 전에** 같은 바이트로 TS 에 넘긴다. 그래서 import 호출은 Rust 의
-//!      제한기를 세지 않고 TS 제한기만 센다(상한이 갈라지는 것은 import 몫뿐이다 — generate 끼리는 하나다).
-//!   2. 키링이 없거나 키가 틀린 경우의 409(`secret_store_disabled`·`secret_key_mismatch`) — TS 에 넘겨 그대로 답하게 한다.
-//!   3. `POST /agent/secrets/reveal`(값 내주기)은 이 파일 몫이 아니다(`agent_secret_reveal.rs`).
+//!   1. 키링이 없거나 키가 틀린 경우의 409(`secret_store_disabled`·`secret_key_mismatch`) — TS 에 넘겨 그대로 답하게 한다.
+//!   2. `POST /agent/secrets/reveal`(값 내주기)은 이 파일 몫이 아니다(`agent_secret_reveal.rs`).
 //!
 //! 쓰기 풀 칸 권한: `GET` 은 [`AGENT_SECRET_CREATE_PRIVILEGES`] + 기동 키 확인. 두 POST 는 그 위에 [`CREATE_WRITE_PRIVILEGES`]
-//! (임대·소유자·원인 글 읽기, secret·secret_version·secret_grant·secret_access_log 쓰기, `audit_log`)와 글 경로
+//! (임대·소유자·원인 글 읽기, secret·secret_version·secret_grant·secret_access_log 쓰기, F4 의 접근 기록·봉투 읽기, `audit_log`)와 글 경로
 //! (`msg_post::MESSAGE_POST_PRIVILEGES`)까지. `automation.*` 은 읽지 않는다.
 //! - 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 권한이 다 있을 때만 선다(`main.rs`). 키 env 를 읽을 수 없으면
 //!   세 줄 모두 TS 에 남는다(TS 와 같이 키가 없거나 틀리면 `granted: false`). POST 두 줄의 권한이나 글 경로가 없으면 `GET` 만 선다.
@@ -304,6 +306,16 @@ pub fn generate_value(
     }))
 }
 
+/// import 로 들어온 값. drop 하면 지우고 `Debug` 는 가린다(값은 로그·응답에 싣지 않는다).
+#[derive(PartialEq)]
+pub struct ImportValue(pub zeroize::Zeroizing<Vec<u8>>);
+
+impl std::fmt::Debug for ImportValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ImportValue(<redacted>)")
+    }
+}
+
 /// 라우트 본문의 값 출처(TS `toSource`).
 #[derive(Debug, PartialEq)]
 pub enum Source {
@@ -311,8 +323,38 @@ pub enum Source {
         kind: String,
         length: Option<i64>,
     },
-    /// import 는 TS `isMountedValue`(F4)를 아직 옮기지 않았다 — 라우트가 서면 gate 앞에서 TS 로 넘긴다.
-    Import,
+    /// TS `{ import: { kind, filename, value } }` — 값은 base64 를 푼 바이트. 길이·글자·F4 판정은 gate 뒤(`resolve_value`).
+    Import {
+        kind: &'static str,
+        filename: Option<String>,
+        value: ImportValue,
+    },
+}
+
+/// Node `Buffer.from(b64, 'base64')` — `/^[A-Za-z0-9+/]*={0,2}$/` 를 지난 글에 한해. 덧붙임(`=`)은 무시하고, 4 글자로
+/// 떨어지지 않는 꼬리는 채워진 8 비트만 낸다(1 글자 꼬리는 버린다). 남는 비트가 0 이 아니어도 탓하지 않는다.
+pub fn node_base64_decode(b64: &str) -> Option<zeroize::Zeroizing<Vec<u8>>> {
+    let body = b64.trim_end_matches('=');
+    let mut out = zeroize::Zeroizing::new(Vec::with_capacity(body.len() / 4 * 3 + 3));
+    let mut acc: u32 = 0;
+    let mut bits = 0u32;
+    for c in body.bytes() {
+        let v = match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return None,
+        };
+        acc = ((acc << 6) | u32::from(v)) & 0xffff;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+        }
+    }
+    Some(out)
 }
 
 /// TS `agentCreateBody`·`agentRotateBody`(zod strict) + `toSource` 를 지난 본문. 실패는 400 `badCreate`.
@@ -392,7 +434,11 @@ fn parse_source(v: &serde_json::Value) -> Option<Source> {
     if kind == "text" && filename.is_some_and(|f| !f.is_empty()) {
         return None;
     }
-    Some(Source::Import)
+    Some(Source::Import {
+        kind: if kind == "file" { "file" } else { "text" },
+        filename: filename.cloned(),
+        value: ImportValue(node_base64_decode(b64)?),
+    })
 }
 
 /// TS `agentCreateBody`(`rotate == false`) 또는 `agentRotateBody`(`rotate == true`) + `toSource`.
@@ -605,7 +651,16 @@ const ROTATE_TOUCH_SQL: &str = "update secret set updated_at = now() where id = 
 const HANDLES_SQL: &str =
     "select a.handle, o.handle from account a, account o where a.id = $1::uuid and o.id = $2::uuid";
 
-/// 만들기·회전 두 줄이 닿는 칸(TS `secretCreate.ts`, generate 갈래). import 의 `isMountedValue` 는 TS 에 남아 읽지 않는다.
+/// TS `isMountedValue`(F4) — 같은 오퍼레이터의 살아 있는 임대로 `granted` 된 판의 봉투. `$2` 는 TS 가 넘기는 `now`.
+const MOUNTED_SQL: &str = "select distinct s.id::text, s.kind, v.version, v.sealed \
+       from secret_access_log g \
+       join secret_turn_lease l on l.id = g.turn_id \
+       join secret s on s.id = g.secret_id \
+       join secret_version v on v.secret_id = g.secret_id and v.version = g.version \
+      where g.result = 'granted' and l.operator_id = $1::uuid and l.ended_at is null and l.expires_at > $2::timestamptz \
+        and v.sealed is not null";
+
+/// 만들기·회전 두 줄이 닿는 칸(TS `secretCreate.ts`, generate·import 갈래 — import 의 `isMountedValue` 포함).
 /// 소유자 알림의 글 경로 칸은 `msg_post::MESSAGE_POST_PRIVILEGES`(`main.rs` 가 따로 본다).
 pub const CREATE_WRITE_PRIVILEGES: &[(&str, &str)] = &[
     ("secret_turn_lease.id", "SELECT"),
@@ -674,6 +729,12 @@ pub const CREATE_WRITE_PRIVILEGES: &[(&str, &str)] = &[
     ("secret_access_log.result", "INSERT"),
     ("secret_access_log.reason", "INSERT"),
     ("secret_access_log.at", "INSERT"),
+    // F4(`isMountedValue`) — 접근 기록을 읽어 살아 있는 임대의 봉투를 푼다.
+    ("secret_access_log.secret_id", "SELECT"),
+    ("secret_access_log.version", "SELECT"),
+    ("secret_access_log.turn_id", "SELECT"),
+    ("secret_access_log.result", "SELECT"),
+    ("secret_version.sealed", "SELECT"),
     ("audit_log", "INSERT"),
 ];
 
@@ -896,14 +957,17 @@ async fn log_access(
     Ok(())
 }
 
-/// 소유자 알림의 본문·meta(TS `notifyOwner`, generate 갈래).
+/// 소유자 알림의 본문·meta(TS `notifyOwner`). `gen_type` 이 `None` 이면 import 갈래.
 pub fn notice_line(
     agent_handle: &str,
     owner_handle: &str,
     n: &NoticeArgs<'_>,
 ) -> (String, serde_json::Map<String, serde_json::Value>) {
     use serde_json::json;
-    let how = format!("서버가 만든 값({})", n.gen_type);
+    let how = match n.gen_type {
+        Some(t) => format!("서버가 만든 값({t})"),
+        None => "값을 에이전트가 정함(import)".to_owned(),
+    };
     let what = match n.action {
         Action::Create => "만들었다".to_owned(),
         Action::Rotate => format!("회전했다(판 {})", n.version),
@@ -916,13 +980,18 @@ pub fn notice_line(
     meta.insert(
         "secretNotice".into(),
         json!({ "action": n.action.done(), "secretId": n.secret_id, "name": n.name, "version": n.version,
-            "via": "generate", "agentId": n.agent_id, "ownerAccountId": n.owner_id }),
+            "via": if n.gen_type.is_some() { "generate" } else { "import" },
+            "agentId": n.agent_id, "ownerAccountId": n.owner_id }),
     );
-    let i18n = match n.action {
-        Action::Create => json!({ "key": "system.secret.createdGenerated",
-            "args": { "agentId": n.agent_id, "name": n.name, "type": n.gen_type, "ownerId": n.owner_id } }),
-        Action::Rotate => json!({ "key": "system.secret.rotatedGenerated",
-            "args": { "agentId": n.agent_id, "name": n.name, "version": n.version, "type": n.gen_type, "ownerId": n.owner_id } }),
+    let i18n = match (n.action, n.gen_type) {
+        (Action::Create, Some(t)) => json!({ "key": "system.secret.createdGenerated",
+            "args": { "agentId": n.agent_id, "name": n.name, "type": t, "ownerId": n.owner_id } }),
+        (Action::Create, None) => json!({ "key": "system.secret.createdImported",
+            "args": { "agentId": n.agent_id, "name": n.name, "ownerId": n.owner_id } }),
+        (Action::Rotate, Some(t)) => json!({ "key": "system.secret.rotatedGenerated",
+            "args": { "agentId": n.agent_id, "name": n.name, "version": n.version, "type": t, "ownerId": n.owner_id } }),
+        (Action::Rotate, None) => json!({ "key": "system.secret.rotatedImported",
+            "args": { "agentId": n.agent_id, "name": n.name, "version": n.version, "ownerId": n.owner_id } }),
     };
     meta.insert("i18n".into(), i18n);
     (body, meta)
@@ -936,7 +1005,8 @@ pub struct NoticeArgs<'a> {
     pub secret_id: &'a str,
     pub name: &'a str,
     pub version: i32,
-    pub gen_type: &'a str,
+    /// generate 의 종류(`password` 등). `None` = import.
+    pub gen_type: Option<&'a str>,
 }
 
 /// TS `notifyOwner` — 실패해도 만들기를 되돌리지 않는다(로그만).
@@ -947,7 +1017,7 @@ async fn notify_owner(
     name: &str,
     version: i32,
     action: Action,
-    gen_type: &str,
+    gen_type: Option<&str>,
 ) {
     use crate::core::msg_post::{Origin, Outcome, PostBody, channel_is_dm, post_in_tx};
     let Some(owner) = lease.owner_id.as_deref() else {
@@ -1021,6 +1091,128 @@ async fn notify_owner(
     }
 }
 
+/// TS `trimEnd` — 끝의 `\r`·`\n`·`\t`·공백 바이트를 걷는다(latin1 왕복이라 바이트 단위다).
+pub fn trim_end_ws(b: &[u8]) -> &[u8] {
+    let n = b
+        .iter()
+        .rposition(|c| !matches!(c, b'\r' | b'\n' | b'\t' | b' '))
+        .map_or(0, |i| i + 1);
+    &b[..n]
+}
+
+/// TS `isMountedValue` 의 견주기 — 그대로 같거나, 끝 공백·줄바꿈을 걷고 같으면 같은 값. 시간 차 없이 견준다(TS `timingSafeEqual`).
+pub fn same_mounted_value(opened: &[u8], value: &[u8]) -> bool {
+    use crate::secrets::verify::ct_eq;
+    ct_eq(opened, value) || ct_eq(trim_end_ws(opened), trim_end_ws(value))
+}
+
+/// TS `isMountedValue`(F4): 들어온 값이 **같은 오퍼레이터에서 지금 살아 있는 임대로 reveal 된 값**이면 참.
+/// 봉투를 풀지 못한 판은 건너뛴다(TS `keyring.open` 이 null). 연 값은 곧바로 지운다.
+async fn is_mounted_value(
+    pool: &PgPool,
+    keyring: &SecretKeyring,
+    operator_id: &str,
+    value: &[u8],
+    now_iso: &str,
+) -> sqlx::Result<bool> {
+    let rows: Vec<(String, String, i32, String)> = sqlx::query_as(MOUNTED_SQL)
+        .bind(operator_id)
+        .bind(now_iso)
+        .fetch_all(pool)
+        .await?;
+    for (secret_id, kind, version, sealed) in &rows {
+        let Some(kind) = crate::secrets::verify::kind_of(kind) else {
+            continue;
+        };
+        let opened = keyring.open(
+            sealed,
+            &SecretAad {
+                secret_id,
+                version: i64::from(*version),
+                kind,
+            },
+        );
+        if opened.is_some_and(|v| same_mounted_value(v.as_bytes(), value)) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// TS `resolveValue` 의 성공 갈래.
+struct Resolved {
+    kind: &'static str,
+    filename: Option<String>,
+    value: zeroize::Zeroizing<Vec<u8>>,
+    public_key: Option<String>,
+    /// generate 의 종류. `None` = import(감사 `via: 'import'`, `type: null`).
+    gen_type: Option<String>,
+}
+
+impl Resolved {
+    fn via(&self) -> &'static str {
+        if self.gen_type.is_some() {
+            "generate"
+        } else {
+            "import"
+        }
+    }
+}
+
+/// TS `resolveValue` 의 import 값 판정(F4 앞): 빈 값·64 KiB 넘음, text 인데 UTF-8 로 풀어 U+FFFD 가 보임 → `bad_value`.
+pub fn check_import_value(kind: &str, value: &[u8]) -> Result<(), CreateDenial> {
+    if value.is_empty() || value.len() > SECRET_CREATE_MAX_BYTES {
+        return Err(CreateDenial::BadValue);
+    }
+    if kind == "text" && String::from_utf8_lossy(value).contains('\u{FFFD}') {
+        return Err(CreateDenial::BadValue);
+    }
+    Ok(())
+}
+
+/// TS `resolveValue`.
+async fn resolve_value(
+    st: &AgentSecretCreateState,
+    keyring: &SecretKeyring,
+    lease: &CreateLease,
+    now_iso: &str,
+    source: &Source,
+    name: &str,
+) -> Result<Result<Resolved, CreateDenial>, sqlx::Error> {
+    match source {
+        Source::Generate { kind, length } => Ok(match generate_value(kind, *length, name) {
+            Some(Ok(g)) => Ok(Resolved {
+                kind: g.kind,
+                filename: g.filename.map(str::to_owned),
+                value: g.value,
+                public_key: g.public_key,
+                gen_type: Some(kind.clone()),
+            }),
+            Some(Err(d)) => Err(d),
+            None => Err(CreateDenial::BadLength),
+        }),
+        Source::Import {
+            kind,
+            filename,
+            value,
+        } => {
+            if let Err(d) = check_import_value(kind, &value.0) {
+                return Ok(Err(d));
+            }
+            if is_mounted_value(&st.write, keyring, &lease.operator_id, &value.0, now_iso).await? {
+                return Ok(Err(CreateDenial::ValueIsMounted));
+            }
+            Ok(Ok(Resolved {
+                kind,
+                filename: filename.clone(),
+                value: value.0.clone(),
+                public_key: None,
+                gen_type: None,
+            }))
+        }
+    }
+}
+
 /// 성공 결과(TS `CreateResult` 의 ok 갈래).
 struct Created {
     name: String,
@@ -1030,27 +1222,25 @@ struct Created {
     expires_at: Option<String>,
 }
 
-/// TS `createAgentSecret`(generate 갈래).
+/// TS `createAgentSecret`.
 async fn create_secret(
     st: &AgentSecretCreateState,
     post: &PostState,
     keyring: &SecretKeyring,
     who: &Who,
     b: &AgentBody,
-    gen_kind: &str,
-    length: Option<i64>,
 ) -> Result<Result<Created, CreateDenial>, sqlx::Error> {
     let (lease, now) = match gate(st, who, &b.lease_id, &b.token, Action::Create).await? {
         Ok(v) => v,
         Err(d) => return Ok(Err(d)),
     };
+    let now_iso = crate::core::msg_post::iso_ms(now);
     if count_created(&st.write, &who.agent_id).await? >= AGENT_SECRET_MAX as i32 {
         return Ok(Err(CreateDenial::TooMany));
     }
-    let g = match generate_value(gen_kind, length, &b.name) {
-        Some(Ok(g)) => g,
-        Some(Err(d)) => return Ok(Err(d)),
-        None => return Ok(Err(CreateDenial::BadLength)),
+    let g = match resolve_value(st, keyring, &lease, &now_iso, &b.source, &b.name).await? {
+        Ok(g) => g,
+        Err(d) => return Ok(Err(d)),
     };
     if description_leaks(&b.description, &g.value) {
         return Ok(Err(CreateDenial::SecretInDescription));
@@ -1060,7 +1250,6 @@ async fn create_secret(
         .unwrap_or(AGENT_SECRET_DEFAULT_DAYS)
         .min(AGENT_SECRET_MAX_DAYS);
     let expires_at = crate::core::msg_post::iso_ms(now + days * 86_400_000);
-    let now_iso = crate::core::msg_post::iso_ms(now);
     let kind = if g.kind == "file" {
         SecretKind::File
     } else {
@@ -1079,7 +1268,7 @@ async fn create_secret(
         let id: String = sqlx::query_scalar(INSERT_SECRET_SQL)
             .bind(&b.name)
             .bind(g.kind)
-            .bind(g.filename)
+            .bind(g.filename.as_deref())
             .bind(&b.description)
             .bind(lease.owner_id.as_deref())
             .bind(&expires_at)
@@ -1136,14 +1325,23 @@ async fn create_secret(
             target: Some(&id),
             ip: None,
             detail: serde_json::json!({
-                "name": b.name, "kind": g.kind, "via": "generate", "type": gen_kind, "byAgent": true,
+                "name": b.name, "kind": g.kind, "via": g.via(), "type": g.gen_type, "byAgent": true,
                 "leaseId": lease.id, "causeMessageId": lease.cause_message_id, "causeAuthorId": lease.cause_author_id,
                 "channelId": lease.channel_id, "operatorId": lease.operator_id,
             }),
         },
     )
     .await;
-    notify_owner(post, &lease, &id, &b.name, 1, Action::Create, gen_kind).await;
+    notify_owner(
+        post,
+        &lease,
+        &id,
+        &b.name,
+        1,
+        Action::Create,
+        g.gen_type.as_deref(),
+    )
+    .await;
     Ok(Ok(Created {
         name: b.name.clone(),
         kind: g.kind,
@@ -1161,15 +1359,13 @@ pub fn auto_grant(agent: &str, grants: &[(String, String, Option<String>, bool)]
     }
 }
 
-/// TS `rotateAgentSecret`(generate 갈래).
+/// TS `rotateAgentSecret`.
 async fn rotate_secret(
     st: &AgentSecretCreateState,
     post: &PostState,
     keyring: &SecretKeyring,
     who: &Who,
     b: &AgentBody,
-    gen_kind: &str,
-    length: Option<i64>,
 ) -> Result<Result<Created, CreateDenial>, sqlx::Error> {
     let (lease, now) = match gate(st, who, &b.lease_id, &b.token, Action::Rotate).await? {
         Ok(v) => v,
@@ -1200,10 +1396,9 @@ async fn rotate_secret(
     if auto == Some(true) {
         return Ok(Err(CreateDenial::GrantSuspended));
     }
-    let g = match generate_value(gen_kind, length, &sname) {
-        Some(Ok(g)) => g,
-        Some(Err(d)) => return Ok(Err(d)),
-        None => return Ok(Err(CreateDenial::BadLength)),
+    let g = match resolve_value(st, keyring, &lease, &now_iso, &b.source, &sname).await? {
+        Ok(g) => g,
+        Err(d) => return Ok(Err(d)),
     };
     if g.kind != skind {
         return Ok(Err(CreateDenial::KindMismatch));
@@ -1271,7 +1466,7 @@ async fn rotate_secret(
             target: Some(&sid),
             ip: None,
             detail: serde_json::json!({
-                "name": sname, "version": version, "via": "generate", "type": gen_kind,
+                "name": sname, "version": version, "via": g.via(), "type": g.gen_type,
                 "leaseId": lease.id, "causeMessageId": lease.cause_message_id, "causeAuthorId": lease.cause_author_id,
                 "channelId": lease.channel_id, "operatorId": lease.operator_id,
             }),
@@ -1285,7 +1480,7 @@ async fn rotate_secret(
         &sname,
         version,
         Action::Rotate,
-        gen_kind,
+        g.gen_type.as_deref(),
     )
     .await;
     Ok(Ok(Created {
@@ -1324,7 +1519,7 @@ pub fn created_json(
     json!({ "secret": secret, "publicKey": public_key }).to_string()
 }
 
-/// `POST /agent/secrets`·`POST /agent/secrets/rotate` 공통. import·키링 없음은 판정·속도 제한 **앞에서** TS 로 넘긴다.
+/// `POST /agent/secrets`·`POST /agent/secrets/rotate` 공통(generate·import). 키링 없음만 판정·속도 제한 **앞에서** TS 로 넘긴다.
 async fn create_or_rotate(
     st: Arc<AgentSecretCreateState>,
     peer: SocketAddr,
@@ -1377,18 +1572,16 @@ async fn create_or_rotate(
     let Some(b) = parse_body(&json, action == Action::Rotate) else {
         return json_err(StatusCode::BAD_REQUEST, "bad_request", BAD_CREATE_MESSAGE);
     };
-    let (gen_kind, length) = match &b.source {
-        Source::Generate { kind, length } => (kind.clone(), *length),
-        // import 의 "마운트된 값" 판정(F4)은 TS 몫 — 게이트·속도 제한을 세기 전에 넘긴다.
-        Source::Import => return to_ts(post.up.clone(), peer, parts, bytes).await,
-    };
+    // 본문 사본(import 의 base64 포함)은 여기서 놓는다 — 값은 `b.source` 의 지워지는 버퍼에만 남는다.
+    drop(json);
+    drop(parsed);
     let who = Who {
         agent_id: me.id.clone(),
         operator_id: op.id.clone(),
     };
     let r = match action {
-        Action::Create => create_secret(&st, post, keyring, &who, &b, &gen_kind, length).await,
-        Action::Rotate => rotate_secret(&st, post, keyring, &who, &b, &gen_kind, length).await,
+        Action::Create => create_secret(&st, post, keyring, &who, &b).await,
+        Action::Rotate => rotate_secret(&st, post, keyring, &who, &b).await,
     };
     match r {
         Err(e) => internal(e),
@@ -1702,7 +1895,31 @@ mod tests {
         assert!(parse_body(&bad, false).is_none());
         let mut imp = base.clone();
         imp["source"] = json!({"import": {"kind": "text", "valueBase64": "aGk="}});
-        assert_eq!(parse_body(&imp, false).unwrap().source, Source::Import);
+        assert_eq!(
+            parse_body(&imp, false).unwrap().source,
+            Source::Import {
+                kind: "text",
+                filename: None,
+                value: ImportValue(zeroize::Zeroizing::new(b"hi".to_vec()))
+            }
+        );
+        imp["source"] =
+            json!({"import": {"kind": "file", "filename": "id_rsa", "valueBase64": "", }});
+        assert_eq!(
+            parse_body(&imp, true).unwrap().source,
+            Source::Import {
+                kind: "file",
+                filename: Some("id_rsa".into()),
+                value: ImportValue(zeroize::Zeroizing::new(Vec::new()))
+            },
+            "빈 값은 본문을 지나고 gate 뒤에 bad_value"
+        );
+        imp["source"] = json!({"import": {"kind": "text", "filename": null, "valueBase64": "a"}});
+        assert!(parse_body(&imp, false).is_some());
+        imp["source"] = json!({"import": {"kind": "text", "valueBase64": "x".repeat(87_389)}});
+        assert!(parse_body(&imp, false).is_none(), "zod max");
+        imp["source"] = json!({"import": {"kind": "text", "valueBase64": "QUFB".repeat(21_847)}});
+        assert!(parse_body(&imp, false).is_some(), "87388 글자까지");
         imp["source"] = json!({"import": {"kind": "file", "valueBase64": "aGk="}});
         assert!(
             parse_body(&imp, false).is_none(),
@@ -1725,7 +1942,7 @@ mod tests {
             secret_id: "s1",
             name: "db@x",
             version: 1,
-            gen_type: "password",
+            gen_type: Some("password"),
         };
         let (body, meta) = notice_line("bot", "kim", &n);
         assert_eq!(
@@ -1755,6 +1972,104 @@ mod tests {
         assert_eq!(meta["i18n"]["key"], "system.secret.rotatedGenerated");
         assert_eq!(meta["i18n"]["args"]["version"], 3);
         assert_eq!(meta["secretNotice"]["action"], "rotated");
+        let imp = NoticeArgs {
+            gen_type: None,
+            ..n
+        };
+        let (body, meta) = notice_line("bot", "kim", &imp);
+        assert_eq!(
+            body,
+            "🔑 bot 가 비밀 `db＠x` 을 만들었다 · 값을 에이전트가 정함(import) · 이 채널로 자기에게만 부여 · 설정 › 나 › 비밀과 API @kim"
+        );
+        assert_eq!(
+            meta["i18n"],
+            serde_json::json!({ "key": "system.secret.createdImported",
+                "args": { "agentId": "ag", "name": "db@x", "ownerId": "ow" } })
+        );
+        assert_eq!(meta["secretNotice"]["via"], "import");
+        let (body, meta) = notice_line(
+            "bot",
+            "kim",
+            &NoticeArgs {
+                action: Action::Rotate,
+                version: 2,
+                ..imp
+            },
+        );
+        assert!(body.contains("을 회전했다(판 2) · 값을 에이전트가 정함(import) ·"));
+        assert_eq!(
+            meta["i18n"],
+            serde_json::json!({ "key": "system.secret.rotatedImported",
+                "args": { "agentId": "ag", "name": "db@x", "version": 2, "ownerId": "ow" } })
+        );
+    }
+
+    #[test]
+    fn base64_decodes_like_node_buffer() {
+        // `node -e 'Buffer.from(s, "base64")'` 의 결과.
+        for (s, want) in [
+            ("", &b""[..]),
+            ("a", b""),
+            ("aG", b"h"),
+            ("aGk", b"hi"),
+            ("aGk=", b"hi"),
+            ("aGk==", b"hi"),
+            ("aGl=", b"hi"),
+            ("aGkx", b"hi1"),
+            ("aGkxa", b"hi1"),
+            ("aGkxaG", b"hi1h"),
+            ("+/8=", &[0xfb, 0xff]),
+        ] {
+            assert_eq!(&node_base64_decode(s).unwrap()[..], want, "{s}");
+        }
+        assert!(node_base64_decode("a-b").is_none());
+    }
+
+    #[test]
+    fn import_value_rules_match_ts_resolve_value() {
+        assert_eq!(check_import_value("text", b""), Err(CreateDenial::BadValue));
+        assert_eq!(check_import_value("file", b""), Err(CreateDenial::BadValue));
+        let big = vec![b'a'; SECRET_CREATE_MAX_BYTES];
+        assert_eq!(check_import_value("text", &big), Ok(()));
+        let over = vec![b'a'; SECRET_CREATE_MAX_BYTES + 1];
+        assert_eq!(
+            check_import_value("file", &over),
+            Err(CreateDenial::BadValue)
+        );
+        assert_eq!(
+            check_import_value("text", &[0xff, 0x41]),
+            Err(CreateDenial::BadValue)
+        );
+        assert_eq!(
+            check_import_value("text", "x\u{FFFD}".as_bytes()),
+            Err(CreateDenial::BadValue),
+            "TS 는 풀린 글에 U+FFFD 가 있는지만 본다"
+        );
+        assert_eq!(check_import_value("file", &[0xff, 0x00]), Ok(()));
+        assert_eq!(check_import_value("text", "비밀".as_bytes()), Ok(()));
+    }
+
+    #[test]
+    fn mounted_value_compare_trims_trailing_whitespace() {
+        assert_eq!(trim_end_ws(b"abc \r\n\t"), b"abc");
+        assert_eq!(trim_end_ws(b" \n"), b"");
+        assert_eq!(trim_end_ws(b" a b"), b" a b");
+        assert!(same_mounted_value(b"tok", b"tok"));
+        assert!(same_mounted_value(b"tok\n", b"tok"));
+        assert!(same_mounted_value(b"tok", b"tok \r\n"));
+        assert!(!same_mounted_value(b"tok", b" tok"), "앞 공백은 다르다");
+        assert!(!same_mounted_value(b"tok", b"toke"));
+        assert!(!same_mounted_value(b"tok\x0b", b"tok"), "VT 는 걷지 않는다");
+    }
+
+    #[test]
+    fn import_value_debug_is_redacted() {
+        let s = Source::Import {
+            kind: "text",
+            filename: None,
+            value: ImportValue(zeroize::Zeroizing::new(b"hunter2".to_vec())),
+        };
+        assert!(!format!("{s:?}").contains("hunter2"));
     }
 
     #[test]
@@ -1840,11 +2155,24 @@ mod tests {
         ] {
             assert!(p.contains(&need), "{need:?}");
         }
-        // import 의 F4(마운트된 값)는 TS 에 남는다 — 이 두 줄 몫으로는 봉투·접근 기록을 읽지 않는다
-        // (`secret_version.sealed` SELECT 는 기동 키 확인 몫이다).
+        // import 의 F4(마운트된 값) — TS `isMountedValue` 가 읽는 칸.
         let own = CREATE_WRITE_PRIVILEGES;
-        assert!(!own.contains(&("secret_version.sealed", "SELECT")));
-        assert!(!own.contains(&("secret_access_log.result", "SELECT")));
+        for need in [
+            ("secret_access_log.secret_id", "SELECT"),
+            ("secret_access_log.version", "SELECT"),
+            ("secret_access_log.turn_id", "SELECT"),
+            ("secret_access_log.result", "SELECT"),
+            ("secret_turn_lease.operator_id", "SELECT"),
+            ("secret_turn_lease.ended_at", "SELECT"),
+            ("secret_turn_lease.expires_at", "SELECT"),
+            ("secret.kind", "SELECT"),
+            ("secret_version.sealed", "SELECT"),
+        ] {
+            assert!(own.contains(&need), "{need:?}");
+        }
+        // 접근 기록의 다른 칸(이름·사유·채널…)은 읽지 않는다.
+        assert!(!own.contains(&("secret_access_log.secret_name", "SELECT")));
+        assert!(!own.contains(&("secret_access_log.reason", "SELECT")));
     }
 
     #[test]
