@@ -10184,6 +10184,43 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
               expect(await lag(tsUrl)).toMatchObject({ delegated: ['c3b2c4del'], unreachable: [] });
               expect(await lag(v2Url)).toMatchObject({ delegated: [], unreachable: ['c3b2c4del'], message: null });
             }
+            // S5.4-15c — 팀장이 사람인 팀의 위임(MEM 이 이끄는 팀 → DEL4). 사람이라 호출 게이트 대신 팀 명단으로 지나고, 글은 사람 글이다.
+            // 두 쪽이 같은 팀 행으로 같은 장면을 돌려 답·위임 행·부름·글 행을 견주고, Rust 가 실제로 답했는지(core === 'mcp')도 본다.
+            // 팀장 FK(046)가 (팀, 팀장)을 명단에서 찾으므로 MEM 도 명단에 넣는다.
+            {
+              const hTeam = (await db.pool.query<{ id: string }>(
+                `insert into agent_team(name, created_by, invoke_scope, owner_account_id) values ('c15c-human-lead', $1, 'community', $1) returning id::text as id`,
+                [member.accountId])).rows[0]!.id;
+              names.set(hTeam, 'HTEAM');
+              await db.pool.query(`insert into agent_team_member(team_id, agent_account_id) values ($1, $2), ($1, $3)`, [hTeam, member.accountId, del4.accountId]);
+              await db.pool.query(`update agent_team set lead_account_id = $2 where id = $1`, [hTeam, member.accountId]);
+              try {
+                const runH = async (base: string) => {
+                  const ch = await freshCh();
+                  const root = await ins({ ch, author: member.accountId, body: '팀 일' });
+                  await online(del4.accountId, del4.pat);
+                  const r = await mcpCall(base, member.token, 'message.delegate', { channelId: ch, threadRootId: root, to: ['c3b2c4del'], body: '팀이 맡아 줘' }, 7, {});
+                  const body = sse(r.text) as { message?: { id?: string } } | null;
+                  const deleg = (await db.pool.query(
+                    `select d.message_id is not distinct from $2::uuid as by_me, d.team_id::text as team_id, d.kind, d.lead_account_id::text as lead,
+                            coalesce((select json_agg(json_build_object('to', i.delegate_account_id::text, 'outcome', i.outcome) order by i.delegate_account_id)
+                                        from team_delegation_item i where i.delegation_id = d.id), '[]') as items
+                       from team_delegation d where d.thread_root_id = $1 order by d.created_at`, [root, body?.message?.id ?? null])).rows;
+                  const inbox = body?.message?.id ? (await db.pool.query(
+                    `select account_id::text as acc, reason, team_id::text as team_id from inbox where message_id = $1 order by account_id, reason`, [body.message.id])).rows : [];
+                  const msg = body?.message?.id ? (await db.pool.query(`select author_id::text as author, kind, meta from message where id = $1`, [body.message.id])).rows[0] : null;
+                  return { status: r.status, rust: base === tsUrl ? true : r.core === 'mcp', body: shape(body), deleg: shape(deleg), inbox: shape(inbox), msg: shape(msg) };
+                };
+                const tsH = await runH(tsUrl);
+                const rsH = await runH(v2Url);
+                expect(rsH).toEqual(tsH);
+                expect(tsH.body).toMatchObject({ delegated: ['c3b2c4del'], unreachable: [] });
+                expect(tsH.deleg).toEqual([{ by_me: true, team_id: 'HTEAM', kind: 'delegate', lead: 'MEM', items: [{ to: 'DEL4', outcome: null }] }]);
+                expect(tsH.msg).toMatchObject({ author: 'MEM' });
+              } finally {
+                await db.pool.query(`delete from agent_team where id = $1`, [hTeam]);
+              }
+            }
           } finally {
             child?.kill('SIGTERM');
             if (prev === undefined) delete process.env.HARKROOM_DELEGATION_V2; else process.env.HARKROOM_DELEGATION_V2 = prev;
