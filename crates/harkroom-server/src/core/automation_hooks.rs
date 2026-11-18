@@ -9,8 +9,8 @@
 //! - github 의 `matchGithub` 거절 중 변수 없이 확정되는 것(`repo`·`event`·`not_a_branch`·push `branch`)은 여기서
 //!   `200 {status:'ignored', reason}` 으로 답한다([`github_ignored`]) — 트리거는 이미 읽던 `automation.trigger` 에서(새 GRANT 없음).
 //! - github 이 맞으면(쓰기 풀이 있고 디바운스가 없을 때) 회차도 여기서 만든다(`github:<delivery>`, 상한은 200 `rate_limited`).
-//!   paths/change 글롭 필터·JS 강제 변환이 다를 수 있는 값은 TS 로.
-//! - **TS 로 넘기는 것**: 검증을 통과한 뒤의 나머지 필터(paths 글롭)와 회차 만들기(`enqueueRun` —
+//!   paths/change 글롭 필터도 여기서(`globToRegExp` 이식) — ASCII 아닌 경로·글롭, JS 강제 변환이 다를 수 있는 값은 TS 로.
+//! - **TS 로 넘기는 것**: 위에서 장담하지 못한 꼴과 회차 만들기(`enqueueRun` —
 //!   디바운스 모으기·시간당 상한 일시정지)는 아직 TS 다. 원문 바이트를 그대로 넘기므로 TS 가 같은 판정을 다시 한다.
 //!   예외: generic 은 쓰기 풀이 있으면 `genericVars`·`enqueueRun`(디바운스 없음·시간당 상한 일시정지·429)을 여기서 한다 —
 //!   디바운스가 걸렸거나 50 칸 넘는 본문·JS 와 문자열화가 다른 숫자는 TS 로 넘긴다.
@@ -204,6 +204,7 @@ pub(crate) fn match_github(
     let is = |v: Option<&Value>, s: &str| v.and_then(Value::as_str) == Some(s);
     let mut branch: Option<String> = None;
     let mut files: Vec<String> = Vec::new();
+    let mut changes: Vec<(String, &'static str)> = Vec::new();
     match t_event {
         "push" => {
             if event != "push" {
@@ -223,6 +224,7 @@ pub(crate) fn match_github(
                         if let Some(Value::Array(ps)) = c.get(k) {
                             for p in ps {
                                 files.push(p.as_str()?.to_owned());
+                                changes.push((p.as_str()?.to_owned(), k));
                             }
                         }
                     }
@@ -314,7 +316,48 @@ pub(crate) fn match_github(
         if t_event != "push" {
             return Some(Err("paths_need_push"));
         }
-        return None; // 글롭 필터는 아직 TS.
+        // JS 정규식(UTF-16 단위·`.` 의 줄 끝)과 어긋날 수 있는 경로는 TS 로.
+        if files.iter().any(|p| !p.is_ascii() || p.contains('\r')) {
+            return None;
+        }
+        let globs: Vec<&str> = match trigger.get("paths") {
+            Some(Value::Array(a)) if !a.is_empty() => {
+                a.iter().map(Value::as_str).collect::<Option<Vec<_>>>()?
+            }
+            _ => vec!["**"],
+        };
+        let res = globs
+            .iter()
+            .map(|g| glob_regex(g))
+            .collect::<Option<Vec<_>>>()?;
+        let change = match trigger.get("change") {
+            Some(Value::String(c)) if !c.is_empty() && c != "any" => Some(c.as_str()),
+            _ => None,
+        };
+        let hit: Vec<&(String, &str)> = changes
+            .iter()
+            .filter(|(p, k)| res.iter().any(|r| r.is_match(p)) && change.is_none_or(|c| c == *k))
+            .collect();
+        if hit.is_empty() {
+            return Some(Err("paths"));
+        }
+        let join = |it: &mut dyn Iterator<Item = &str>| {
+            let mut seen = std::collections::HashSet::new();
+            it.filter(|p| seen.insert(*p))
+                .take(50)
+                .map(|p| neutralize(p, 300))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        vars.insert(
+            "files".into(),
+            Value::String(join(&mut hit.iter().map(|(p, _)| p.as_str()))),
+        );
+        for k in ["added", "modified", "removed"] {
+            let v = join(&mut hit.iter().filter(|(_, c)| *c == k).map(|(p, _)| p.as_str()));
+            vars.insert(format!("files.{k}"), Value::String(v));
+        }
+        return Some(Ok(vars));
     }
     if !files.is_empty() {
         let mut seen = std::collections::HashSet::new();
@@ -327,6 +370,41 @@ pub(crate) fn match_github(
         vars.insert("files".into(), Value::String(uniq.join("\n")));
     }
     Some(Ok(vars))
+}
+
+/// TS `globToRegExp` — `**` 는 `/` 를 넘고(뒤 `/` 하나 먹음), `*` 는 한 칸 안, `?` 는 한 글자. ASCII 아닌 글롭은 TS 로.
+fn glob_regex(glob: &str) -> Option<regex::Regex> {
+    if !glob.is_ascii() {
+        return None;
+    }
+    let b: Vec<char> = glob.chars().collect();
+    let mut re = String::from("^");
+    let mut i = 0;
+    while i < b.len() {
+        let c = b[i];
+        if c == '*' {
+            if b.get(i + 1) == Some(&'*') {
+                re.push_str(".*");
+                i += 1;
+                if b.get(i + 1) == Some(&'/') {
+                    i += 1;
+                }
+            } else {
+                re.push_str("[^/]*");
+            }
+        } else if c == '?' {
+            re.push_str("[^/]");
+        } else if ".+^${}()|[]\\".contains(c) {
+            re.push('\\');
+            re.push(c);
+        } else {
+            // JS 는 그 밖의 글자를 그대로 둔다(`-`·`&` 등도 괄호 밖에선 글자다).
+            re.push_str(&regex::escape(&c.to_string()));
+        }
+        i += 1;
+    }
+    re.push('$');
+    regex::Regex::new(&re).ok()
 }
 
 /// 쓰기 풀 권한 — `automation_run_now` 의 회차·일시정지 칸과 같다(새 GRANT 없음).
@@ -830,10 +908,16 @@ mod tests {
         assert_eq!(v["files"], "a.rs\nb.rs");
         assert_eq!(v["commit.message"], "");
         let globbed = json!({ "repo": "acme/app", "event": "push", "paths": ["src/**"] });
-        assert!(
-            match_github(&globbed, "push", &p).is_none(),
-            "globs stay in TS"
-        );
+        assert_eq!(github_ignored(&globbed, "push", &p), Some("paths"));
+        let g2 =
+            json!({ "repo": "acme/app", "event": "push", "paths": ["*.rs"], "change": "modified" });
+        let v = match_github(&g2, "push", &p).unwrap().unwrap();
+        assert_eq!(v["files"], "b.rs\na.rs");
+        assert_eq!(v["files.modified"], "b.rs\na.rs");
+        assert_eq!(v["files.added"], "");
+        assert!(glob_regex("**/x.ts").unwrap().is_match("x.ts"));
+        assert!(glob_regex("a/**/b?.c").unwrap().is_match("a/q/r/b1.c"));
+        assert!(!glob_regex("a/*.c").unwrap().is_match("a/q/b.c"));
         let rel = json!({ "repo": "acme/app", "event": "release.published", "branch": "main" });
         let rp = json!({ "repository": { "full_name": "acme/app" }, "action": "published" });
         assert_eq!(github_ignored(&rel, "release", &rp), Some("branch"));
