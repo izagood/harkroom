@@ -3577,6 +3577,7 @@ async fn main() {
                     write,
                     storage,
                     up: state.up.clone(),
+                    trust: state.trust.clone(),
                 },
                 auth.clone(),
                 state.cors.clone(),

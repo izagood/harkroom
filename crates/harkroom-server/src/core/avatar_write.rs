@@ -46,6 +46,15 @@ pub const AVATAR_WRITE_PRIVILEGES: &[(&str, &str)] = &[
     ("artifact_version.attachment_id", "SELECT"),
     ("artifact_version.cover_attachment_id", "SELECT"),
     ("event_outbox", "INSERT"),
+    // `PUT /settings/workspace-icon`.
+    ("workspace_profile.id", "SELECT"),
+    ("workspace_profile.icon_attachment_id", "UPDATE"),
+    ("audit_log.action", "INSERT"),
+    ("audit_log.actor_id", "INSERT"),
+    ("audit_log.actor_handle", "INSERT"),
+    ("audit_log.target", "INSERT"),
+    ("audit_log.ip", "INSERT"),
+    ("audit_log.detail", "INSERT"),
 ];
 pub const AVATAR_WRITE_SEQUENCE_PRIVILEGES: &[(&str, &str)] = &[("event_outbox_id_seq", "USAGE")];
 
@@ -55,6 +64,7 @@ pub struct AvatarWriteState {
     pub write: PgPool,
     pub storage: LocalStorage,
     pub up: Upstream,
+    pub trust: Arc<crate::trust_proxy::TrustProxy>,
 }
 
 // ── 판정(services/avatars.ts) ─────────────────────────────────────────
@@ -646,6 +656,125 @@ pub async fn put_agent(
     }
 }
 
+const ICON_ID: &str = "select icon_attachment_id::text from workspace_profile where id = true";
+const ICON_SET: &str = "update workspace_profile set icon_attachment_id = $1::uuid where id = true";
+
+/// zod `{ attachmentId: uuid().nullable() }` — 키는 필수, 모르는 키는 버린다. `Some(None)` 은 지우기.
+fn parse_icon_body(body: &Body) -> Option<Option<String>> {
+    let Body::Json(Value::Object(o)) = body else {
+        return None;
+    };
+    match o.get("attachmentId")? {
+        Value::Null => Some(None),
+        Value::String(s) if crate::lists::is_zod_uuid(s) => Some(Some(s.clone())),
+        _ => None,
+    }
+}
+
+/// `PUT /settings/workspace-icon`(TS `workspaceRoutes.ts`) — admin 만. 요청자 자신의 붙지 않은 업로드를 판정(원본 상한)해
+/// 걸거나 null 로 지우고, 바뀐 옛 아이콘을 정리한 뒤 `workspace.icon.changed`·감사 `workspace.icon.updated`.
+pub async fn put_workspace_icon(
+    State(st): State<Arc<AvatarWriteState>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    req: Request,
+) -> Response {
+    let (mut parts, body) = req.into_parts();
+    let bytes = match to_bytes(body, BODY_LIMIT).await {
+        Ok(b) => b,
+        Err(_) => {
+            return json_err(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "fst_err_ctp_body_too_large",
+                "Request body is too large",
+            );
+        }
+    };
+    let parsed = match crate::write::fastify_body(&parts.headers, &bytes) {
+        Ok(b) => b,
+        Err(r) => return r,
+    };
+    let me = match crate::auth::RequireAdmin::from_request_parts(&mut parts, &()).await {
+        Ok(crate::auth::RequireAdmin(me)) => me,
+        Err(r) => return r,
+    };
+    let Some(after) = parse_icon_body(&parsed) else {
+        return bad("body");
+    };
+    let before: Option<String> = match sqlx::query_scalar::<_, Option<String>>(ICON_ID)
+        .fetch_optional(&st.read)
+        .await
+    {
+        Ok(v) => v.flatten(),
+        Err(e) => return internal(e),
+    };
+    let found = match &after {
+        None => None,
+        Some(att_id) => {
+            let Some((found_id, found_key, found_size)) =
+                (match find_source(&st.read, att_id, &me.id).await {
+                    Ok(v) => v,
+                    Err(e) => return internal(e),
+                })
+            else {
+                return json_err(
+                    StatusCode::NOT_FOUND,
+                    "not_found",
+                    "no unattached upload of yours with that id",
+                );
+            };
+            match detect_upload(&st, &found_key, i64::from(found_size), Purpose::Original).await {
+                Ok(Detected::Image(t)) => Some((found_id, t)),
+                Ok(Detected::Raster) => return to_ts(st.up.clone(), peer, parts, bytes).await,
+                Ok(Detected::Refused(code, msg)) => {
+                    return json_err(StatusCode::BAD_REQUEST, code, &msg);
+                }
+                Err(e) => return internal_msg(&e),
+            }
+        }
+    };
+    let res: sqlx::Result<()> = async {
+        let mut tx = st.write.begin().await?;
+        if let Some((id, t)) = &found {
+            sqlx::query(SET_TYPE)
+                .bind(id)
+                .bind(*t)
+                .execute(&mut *tx)
+                .await?;
+        }
+        sqlx::query(ICON_SET)
+            .bind(found.as_ref().map(|(id, _)| id.clone()))
+            .execute(&mut *tx)
+            .await?;
+        crate::write::emit_event(
+            &mut tx,
+            &json!({ "type": "workspace.icon.changed", "iconAttachmentId": after }),
+        )
+        .await?;
+        tx.commit().await
+    }
+    .await;
+    if let Err(e) = res {
+        return internal(e);
+    }
+    if before.is_some() && before != after {
+        release(&st, vec![before.clone()]).await;
+    }
+    let ip = crate::trust_proxy::request_ip(&parts, &st.trust);
+    crate::write::record_audit(
+        &st.write,
+        crate::write::AuditEntry {
+            action: "workspace.icon.updated",
+            actor_id: Some(&me.id),
+            actor_handle: Some(&me.handle),
+            target: None,
+            ip: ip.as_deref(),
+            detail: json!({ "before": before, "after": after }),
+        },
+    )
+    .await;
+    json_ok(json!({ "iconAttachmentId": after }).to_string())
+}
+
 pub fn routes(
     st: AvatarWriteState,
     auth: crate::auth::AuthPools,
@@ -655,6 +784,7 @@ pub fn routes(
     let t = Table::<Arc<AvatarWriteState>>::new()
         .put("/accounts/me/avatar", put_me)
         .put("/accounts/agents/{id}/avatar", put_agent)
+        .put("/settings/workspace-icon", put_workspace_icon)
         .map(|r| {
             r.route_layer(axum::middleware::from_fn_with_state(
                 auth,
@@ -678,6 +808,32 @@ mod tests {
     use super::*;
 
     const U: &str = "00000000-0000-4000-8000-000000000001";
+
+    #[test]
+    fn workspace_icon_body_matches_zod() {
+        assert_eq!(
+            parse_icon_body(&Body::Json(json!({ "attachmentId": null }))),
+            Some(None)
+        );
+        assert_eq!(
+            parse_icon_body(&Body::Json(json!({ "attachmentId": U, "x": 1 }))),
+            Some(Some(U.to_owned()))
+        );
+        assert!(parse_icon_body(&Body::Json(json!({}))).is_none());
+        assert!(parse_icon_body(&Body::None).is_none());
+        assert!(parse_icon_body(&Body::Json(json!({ "attachmentId": "x" }))).is_none());
+    }
+
+    #[test]
+    fn workspace_icon_privileges() {
+        for p in [
+            ("workspace_profile.icon_attachment_id", "UPDATE"),
+            ("audit_log.detail", "INSERT"),
+            ("attachment.content_type", "UPDATE"),
+        ] {
+            assert!(AVATAR_WRITE_PRIVILEGES.contains(&p), "{p:?}");
+        }
+    }
 
     #[test]
     fn sniff_matches_ts_signatures() {
