@@ -8,6 +8,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { hashToken } from '../src/auth/tokens.js';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer, type AddressInfo } from 'node:net';
+import { createServer as createHttpServer } from 'node:http';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -4562,6 +4563,160 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           fP?.child.kill('SIGTERM');
           await appP.close();
           await db.pool.query('update projection_config set avcs_base_url = null where id = true');
+        }
+      }
+
+      // S5.5 — 협업 탭 제안 읽기(`GET /collab/proposals`, 코어 `collab_read.rs`). 가짜 avcs 를 포트 둘로 띄워(같은 내용) TS 는 A 를,
+      // Rust 앞단은 B 를 보게 한다 — B 만 맞았으면 Rust 가 직접 읽어 답한 것이다. 답은 `baseUrl` 만 빼고 같아야 한다.
+      {
+        expect(f.log(), 'collab 줄').toContain('"GET /collab/proposals"');
+        {
+          const [x, y] = [await callX(tsUrl, 'GET', '/collab/proposals'), await callX(rsUrl, 'GET', '/collab/proposals')];
+          expect(y.json, '보는 서버 없음').toEqual({ baseUrl: null, repos: [] });
+          expect(y.json).toEqual(x.json);
+        }
+        const av = {
+          oids: [] as string[], objects: new Map<string, Record<string, unknown>>(),
+          reduced: 'ok' as 'ok' | '404' | '500', etag: '"e1"', body: {} as Record<string, unknown>, hits: new Map<number, number>(),
+        };
+        const fake = () => createHttpServer((req, res) => {
+          const port = (req.socket.address() as AddressInfo).port;
+          av.hits.set(port, (av.hits.get(port) ?? 0) + 1);
+          const u = new URL(req.url ?? '/', 'http://x');
+          const send = (status: number, body?: unknown, headers: Record<string, string> = {}) => {
+            res.writeHead(status, { 'content-type': 'application/json', ...headers });
+            res.end(body === undefined ? '' : JSON.stringify(body));
+          };
+          if (!u.pathname.startsWith('/o/collab-r/')) return send(404, { error: 'no repo' });
+          const leaf = u.pathname.slice('/o/collab-r/'.length);
+          if (req.method === 'GET' && leaf === 'sync') {
+            return send(200, { oids: av.oids.slice(Number(u.searchParams.get('since') ?? 0)), cursor: av.oids.length });
+          }
+          if (req.method === 'POST' && leaf === 'objects/fetch') {
+            let raw = '';
+            req.on('data', (c) => { raw += String(c); });
+            req.on('end', () => {
+              const want = (JSON.parse(raw) as { oids: string[] }).oids;
+              send(200, { objects: want.flatMap((o) => (av.objects.has(o) ? [{ ...av.objects.get(o), oid: o }] : [])) });
+            });
+            return undefined;
+          }
+          if (req.method === 'GET' && leaf === 'reduced') {
+            if (av.reduced === '404') return send(404, {});
+            if (av.reduced === '500') return send(500, {});
+            if (req.headers['if-none-match'] === av.etag) return send(304);
+            return send(200, av.body, { etag: av.etag });
+          }
+          return send(404, {});
+        });
+        const [avA, avB] = [fake(), fake()];
+        await Promise.all([avA, avB].map((sv) => new Promise<void>((res) => sv.listen(0, '127.0.0.1', () => res()))));
+        const [portA, portB] = [avA, avB].map((sv) => (sv.address() as AddressInfo).port) as [number, number];
+        const [urlA, urlB] = [`http://127.0.0.1:${portA}`, `http://127.0.0.1:${portB}`];
+        const appC = await buildServer({
+          pool: db.pool, trustProxy: TRUST, corsOrigins: [CORS],
+          projection: { envBaseUrl: urlA, reconfigure: async () => {}, currentUrl: () => urlA },
+        });
+        const ins = async (sql: string, p: unknown[]) => (await db.pool.query<{ id: string }>(sql, p)).rows[0]!.id;
+        const ch1 = await ins(`insert into channel (name, kind, visibility, repo) values ('collab-1', 'standard', 'public', 'o/collab-r') returning id`, []);
+        const ch2 = await ins(`insert into channel (name, kind, visibility, repo) values ('collab-2', 'standard', 'private', 'o/collab-r') returning id`, []);
+        await db.pool.query(`insert into account_key (key_id, account_id, public_key_pem) values ('collab-k1', $1, 'pem'), ('collab-k2', $2, 'pem')`, [member.accountId, agent.accountId]);
+        await db.pool.query(`alter role ${rw} connection limit -1`);
+        let fC: Awaited<ReturnType<typeof startFront>> | undefined;
+        try {
+          await appC.listen({ port: 0, host: '127.0.0.1' });
+          const tsC = `http://127.0.0.1:${(appC.server.address() as AddressInfo).port}`;
+          const portC = await freePort();
+          fC = await startFront(bin, {
+            UPSTREAM_URL: tsC, DATABASE_URL: db.uri, PORT: String(portC), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
+            TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust', AVCS_BASE_URL: urlB,
+          });
+          const untilC = Date.now() + 10_000;
+          while (!fC.log().includes('front: rust core routes') && Date.now() < untilC) await new Promise((res) => setTimeout(res, 100));
+          expect(fC.log()).toContain('"GET /collab/proposals"');
+          const rsC = `http://127.0.0.1:${portC}`;
+          type View = { baseUrl: string | null; repos: { repo: string; channelIds: string[]; error: string | null; proposals: Record<string, unknown>[]; reducedAt: unknown }[]; actors?: Record<string, string> };
+          const norm = (j: unknown) => {
+            const v = structuredClone(j) as View;
+            for (const r of v.repos ?? []) r.channelIds = [...r.channelIds].sort();
+            return { ...v, baseUrl: 'X' };
+          };
+          // 두 서버에 같은 요청 — Rust 쪽은 B 만 때려야 한다(TS 로 넘겼으면 A 가 맞는다).
+          const both = async (name: string, token: string = A) => {
+            const x = await callX(tsC, 'GET', '/collab/proposals', undefined, token);
+            const [a0, b0] = [av.hits.get(portA) ?? 0, av.hits.get(portB) ?? 0];
+            const y = await callX(rsC, 'GET', '/collab/proposals', undefined, token);
+            expect({ status: y.status, code: y.code }, name).toEqual({ status: x.status, code: x.code });
+            if (x.status !== 200) return { y: y.json as unknown as View, mine: undefined };
+            expect(norm(y.json), name).toEqual(norm(x.json));
+            expect(av.hits.get(portA) ?? 0, `${name}: TS 로 넘기지 않았다`).toBe(a0);
+            expect(av.hits.get(portB) ?? 0, `${name}: Rust 가 avcs 를 읽었다`).toBeGreaterThan(b0);
+            expect((x.json as unknown as View).baseUrl).toBe(urlA);
+            expect((y.json as unknown as View).baseUrl).toBe(urlB);
+            const v = y.json as unknown as View;
+            return { y: v, mine: v.repos.find((r) => r.repo === 'o/collab-r') };
+          };
+          const put = (oid: string, obj: Record<string, unknown>) => { av.oids.push(oid); av.objects.set(oid, obj); };
+          put('intent_a', { type: 'intent', owner: 'collab-k1', title: '제안 A' });
+          av.oids.push('blob_x');
+          put('operation_1', { type: 'operation', actor: { id: 'collab-k2' }, intentOid: 'intent_a', declaredPurpose: '고침 1', effects: { changesBehavior: true } });
+          put('evidence_1', { type: 'evidence', forOps: ['operation_1'], producedBy: { id: 'collab-ext' }, kind: 'test', result: 'pass' });
+          put('lease_1', { type: 'lease', actor: { id: 'collab-k2' }, intentOid: 'intent_a', writeScopes: ['src/a.ts'], expiresAt: '2999-01-01T00:00:00.000Z' });
+          av.body = { view: 'main', cursor: 5, materializer: 'm1', treeHash: 't1', statuses: { operation_1: 'proposed' }, blockedReasons: {}, conflicts: [] };
+          const first = await both('첫 읽기');
+          expect(first.mine).toMatchObject({ channelIds: [ch1, ch2].sort(), error: null, reducedAt: { cursor: 5, materializer: 'm1', treeHash: 't1' } });
+          expect(first.mine!.proposals).toEqual([{
+            intentOid: 'intent_a', title: '제안 A', ownerKeyId: 'collab-k1', lastLogIndex: 4, state: 'open', conflicts: [], decisions: [],
+            effects: { changesBehavior: true, breaksPublicApi: false },
+            ops: [{
+              oid: 'operation_1', purpose: '고침 1', actorKeyId: 'collab-k2', status: 'proposed', blockedReason: null,
+              effects: { changesBehavior: true, breaksPublicApi: false },
+              evidence: [{ oid: 'evidence_1', summary: 'test pass', actorKeyId: 'collab-ext' }],
+            }],
+          }]);
+          expect(first.y.actors, '아는 키만 계정으로').toEqual({ 'collab-k1': member.accountId, 'collab-k2': agent.accountId });
+          // 다시 — 커서부터 읽고 환원은 304 다. 답은 그대로다. 멤버·에이전트도 읽는다.
+          expect((await both('다시(304)')).mine).toEqual(first.mine);
+          expect((await both('멤버', member.token)).mine).toEqual(first.mine);
+          expect((await both('에이전트', agent.pat)).mine).toEqual(first.mine);
+          expect((await both('익명 → 401', '')).mine).toBeUndefined();
+          // 로그가 자란다 — 앞 배치의 op 를 가리키는 decision(op 를 다시 받아 intent 를 찾는다)과 새 intent. 환원은 충돌을 싣는다.
+          put('decision_1', { type: 'decision', chosenOps: ['operation_1'], decidedBy: { id: 'collab-k1' }, reason: '이걸로' });
+          put('intent_b', { type: 'intent', owner: '', title: '제안 B' });
+          av.etag = '"e2"';
+          av.body = {
+            view: 'main', cursor: 7, materializer: 'm1', treeHash: 't2', statuses: { operation_1: 'needs_decision' }, blockedReasons: { operation_1: '다툼' },
+            conflicts: [{ id: 'c1', key: 'file:src/a.ts', kind: 'file', reason: '같은 파일', options: [{ opOid: 'operation_1', actor: 'collab-k2', purpose: '고침 1' }, { opOid: 'operation_gone', actor: 'z', purpose: 'z' }] }],
+          };
+          const grown = await both('자란 로그');
+          expect(grown.mine!.proposals.map((p) => [p.intentOid, p.state, p.lastLogIndex])).toEqual([['intent_a', 'needs_decision', 6], ['intent_b', 'open', 7]]);
+          expect(grown.mine!.proposals[0]).toMatchObject({
+            decisions: [{ oid: 'decision_1', reason: '이걸로', decidedByKeyId: 'collab-k1' }],
+            conflicts: [{ id: 'c1', key: 'file:src/a.ts', reason: '같은 파일' }],
+          });
+          // 환원 평면 없음(404) → 상태를 모른다. 500 → 그 저장소만 unreachable.
+          av.reduced = '404';
+          const none = await both('환원 없음');
+          expect(none.mine).toMatchObject({ error: null, reducedAt: null });
+          expect(none.mine!.proposals.map((p) => p.state)).toEqual(['unknown', 'unknown']);
+          av.reduced = '500';
+          expect((await both('환원 500')).mine).toEqual({ repo: 'o/collab-r', channelIds: [ch1, ch2].sort(), error: 'unreachable', proposals: [], reducedAt: null });
+          av.reduced = 'ok';
+          expect((await both('되살아남')).mine!.proposals.map((p) => p.state)).toEqual(['needs_decision', 'open']);
+          // https 서버 — 이 앞단의 avcs 클라이언트는 TLS 를 못 붙는다. 읽지 않고 TS 에 넘긴다(TS 는 자기 워커의 URL 로 답한다).
+          await db.pool.query(`update projection_config set avcs_base_url = 'https://collab.example' where id = true`);
+          const b1 = av.hits.get(portB) ?? 0;
+          const viaTs = await callX(rsC, 'GET', '/collab/proposals');
+          expect(viaTs.status).toBe(200);
+          expect((viaTs.json as unknown as View).baseUrl, 'https → TS 가 답했다').toBe(urlA);
+          expect(av.hits.get(portB) ?? 0, 'Rust 는 읽지 않았다').toBe(b1);
+        } finally {
+          fC?.child.kill('SIGTERM');
+          await appC.close();
+          await Promise.all([avA, avB].map((sv) => new Promise<void>((res) => { sv.closeAllConnections(); sv.close(() => res()); })));
+          await db.pool.query('update projection_config set avcs_base_url = null where id = true');
+          await db.pool.query(`delete from account_key where key_id like 'collab-%'`);
+          await db.pool.query('delete from channel where id = any($1)', [[ch1, ch2]]);
         }
       }
 
