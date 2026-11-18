@@ -81,7 +81,7 @@ fn parse_password(body: Body) -> Option<String> {
 }
 
 /// TS `verifyAgainstDummy` — 늘 false 지만 진짜 검증과 같은 시간을 쓴다.
-async fn verify_against_dummy(dummy: Arc<OnceLock<String>>, password: String) -> bool {
+pub(crate) async fn verify_against_dummy(dummy: Arc<OnceLock<String>>, password: String) -> bool {
     tokio::task::spawn_blocking(move || {
         let h = dummy.get_or_init(|| {
             let mut b = [0u8; 32];

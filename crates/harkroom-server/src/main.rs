@@ -1153,6 +1153,28 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 — 로그인(`POST /auth/login`). 쓰기 풀에 계정 조회·세션 INSERT·감사 INSERT 칸 권한이 있을 때만 — 아니면 TS 에 남는다.
+    // 리밋 키(`login:*`·`loginAccountIp:*`·`loginAccount:*`)는 이 경로만 쓰므로 통째로 Rust 리미터로 옮겨 간다.
+    let auth_login_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::auth_login as a;
+            match write::missing_in(w, a::AUTH_LOGIN_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: auth login core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: auth login core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 — 보관소 잠금 해제(`POST /auth/step-up`). 쓰기 풀에 계정 해시 SELECT·세션 창 UPDATE·감사 INSERT 칸 권한이 있을 때만 — 아니면 TS 에 남는다.
     let step_up_open_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -2437,12 +2459,14 @@ async fn main() {
         // S5.4 — 보관소 잠금 해제 1줄. 권한이 있을 때만 — 아니면 TS 에 남는다.
         // 시도 상한(`stepUp:{accountId}`)은 이 프로세스의 리미터가 센다 — TS 리미터와 따로 센다. login·passwordReset·stepUp 의
         // 계정 단위 키는 같이 옮겨야 한다(login 은 아직 TS). 옮길 때 이 리미터 하나를 나눠 쓴다.
+        // 비밀번호 추측 표면(step-up·login)은 이 프로세스에서 리미터 하나를 나눠 쓴다(키는 서로 다르다).
+        let auth_limiter = std::sync::Arc::new(harkroom_server::rate_limit::RateLimiter::default());
         if let Some(write) = step_up_open_write {
             let so = harkroom_server::core::step_up_open::routes(
                 harkroom_server::core::step_up_open::StepUpOpenState::new(
                     write,
                     state.trust.clone(),
-                    std::sync::Arc::new(harkroom_server::rate_limit::RateLimiter::default()),
+                    auth_limiter.clone(),
                 ),
                 auth.clone(),
                 state.cors.clone(),
@@ -2450,6 +2474,21 @@ async fn main() {
             core_routes.router = core_routes.router.merge(so.router);
             core_routes.http.extend(so.http);
             core_routes.sockets.extend(so.sockets);
+        }
+        // S5.4 — 로그인 1줄(주소 단위 `login:{ip}` 훅 포함). 권한이 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = auth_login_write {
+            let al = harkroom_server::core::auth_login::routes(
+                harkroom_server::core::auth_login::AuthLoginState {
+                    write,
+                    trust: state.trust.clone(),
+                    limiter: auth_limiter.clone(),
+                    dummy: std::sync::Arc::new(std::sync::OnceLock::new()),
+                },
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(al.router);
+            core_routes.http.extend(al.http);
+            core_routes.sockets.extend(al.sockets);
         }
         // S5.4 — 계정 권한 목록 읽기 1줄. 권한이 있을 때만 — 아니면 TS 에 남는다(권한 주기 PUT 은 언제나 TS).
         if account_grants_read_on {

@@ -23,6 +23,7 @@ pub mod attachment_download;
 pub mod attachment_store;
 pub mod audience;
 pub mod auth_light;
+pub mod auth_login;
 pub mod automation_delete;
 pub mod automation_time;
 pub mod automations_read;
