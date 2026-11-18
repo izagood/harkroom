@@ -177,6 +177,41 @@ pub async fn answer(
         cause,
         turn,
         operator,
+        None,
+    )
+    .await
+}
+
+/// MCP `artifact.publish` 의 게시(새 안, [`super::artifact_publish::publish`]) — 업로드 행을 붙인 글을 `artifact` 훅과 같은 tx 로 올린다.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn answer_artifact(
+    st: &PostState,
+    me: &Account,
+    channel: &str,
+    post_body: PostBody,
+    model: Option<String>,
+    hook: &super::artifact_write::NewArtifact,
+    cause: Option<&str>,
+    turn: Option<&str>,
+    operator: bool,
+) -> Option<String> {
+    let a = Args {
+        channel: channel.to_owned(),
+        post: post_body,
+        model,
+    };
+    post(
+        st,
+        me,
+        a,
+        Map::new(),
+        Kind::User,
+        false,
+        false,
+        cause,
+        turn,
+        operator,
+        Some(hook),
     )
     .await
 }
@@ -298,6 +333,7 @@ pub async fn answer_progress(
         cause,
         turn,
         operator,
+        None,
     )
     .await
 }
@@ -438,6 +474,7 @@ pub async fn answer_notice(
         None,
         None,
         operator,
+        None,
     )
     .await
 }
@@ -545,6 +582,7 @@ pub async fn answer_fail(
         cause,
         turn,
         operator,
+        None,
     )
     .await
 }
@@ -572,6 +610,7 @@ pub(super) async fn answer_ask(
         cause,
         turn,
         operator,
+        None,
     )
     .await
 }
@@ -682,6 +721,7 @@ pub async fn answer_report(
         cause,
         turn,
         operator,
+        None,
     )
     .await
 }
@@ -698,6 +738,7 @@ async fn post(
     cause: Option<&str>,
     turn: Option<&str>,
     operator: bool,
+    artifact: Option<&super::artifact_write::NewArtifact>,
 ) -> Option<String> {
     match channel_visible(&st.read, &me.id, &a.channel).await {
         Ok(true) => {}
@@ -730,7 +771,7 @@ async fn post(
         progress: kind == Kind::Progress,
         wake: false,
         no_mentions: false,
-        before_commit: None,
+        before_commit: artifact.map(|h| h as &dyn msg_post::BeforeCommit),
     };
     let out = msg_post::post_in_tx(
         st,
@@ -768,7 +809,14 @@ async fn post(
                         format!(",\"foldedWakes\":[{}]", folded.join(","))
                     }
                 }
-                _ => String::new(),
+                _ => match artifact.and_then(|h| h.published()) {
+                    // TS `postedResult(message, notified, { artifact: published })`.
+                    Some((id, version)) => format!(
+                        ",\"artifact\":{{\"artifactId\":{},\"version\":{version}}}",
+                        Value::from(id)
+                    ),
+                    None => String::new(),
+                },
             };
             posted_result(&row, &notified, &extra)
         }

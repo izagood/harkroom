@@ -1516,6 +1516,8 @@ async fn main() {
         _ => None,
     };
     // 에이전트 업로드의 비밀 값 검사(`core/leak_guard.rs`) — 권한·키 env 가 다 맞을 때만. 아니면 에이전트 업로드는 TS.
+    // MCP `artifact.publish` 새 안 게시가 쓸 첨부 저장소 — 업로드 줄과 같은 잠금(권한·저장소·상한)을 지났을 때만.
+    let artifact_storage = attachment_upload.as_ref().map(|(_, s, _)| s.clone());
     let agent_upload_leak = match &attachment_upload {
         Some((write, _, _)) => {
             use harkroom_server::core::leak_guard as lg;
@@ -2816,6 +2818,38 @@ async fn main() {
             None => false,
         };
     // S5.4 MCP 3 — MCP `skill.propose`. 글 쓰기 풀에 제안 행 칸이 다 있을 때만 — 아니면 TS 에 남는다.
+    // MCP `artifact.publish` 새 안(v1) — 글 쓰기 풀에 아티팩트 행·업로드 정리 칸이 다 있고 첨부 저장소가 있을 때만. 아니면 게시는 TS.
+    let mcp_artifact_ok = mcp_post_ok
+        && artifact_storage.is_some()
+        && match &post_write {
+            Some(w) => {
+                use harkroom_server::core::mcp::{artifact_publish as ap, artifact_write as aw};
+                let need: Vec<(&str, &str)> = aw::ARTIFACT_PUBLISH_PRIVILEGES
+                    .iter()
+                    .chain(ap::ARTIFACT_UPLOAD_CLEANUP_PRIVILEGES)
+                    .chain(harkroom_server::core::attachment_upload::UPLOAD_PRIVILEGES)
+                    .copied()
+                    .collect();
+                match write::missing_in(w, &need, &[]).await {
+                    Ok(m) if m.is_empty() => true,
+                    Ok(m) => {
+                        eprintln!(
+                            "front: mcp artifact.publish core off — missing privileges {m:?}"
+                        );
+                        refuse_missing_grants(&m);
+                        false
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "front: mcp artifact.publish core off — privilege check failed ({})",
+                            e.as_database_error().map_or("io", |_| "db")
+                        );
+                        false
+                    }
+                }
+            }
+            None => false,
+        };
     let mcp_skill_ok = mcp_post_ok
         && match &post_write {
             Some(w) => match write::missing_in(
@@ -4472,6 +4506,18 @@ async fn main() {
                 delegate: mcp_post.clone().filter(|_| mcp_delegate_ok),
                 wake: mcp_post.clone().filter(|_| mcp_wake_ok),
                 skill: mcp_post.clone().filter(|_| mcp_skill_ok),
+                artifact: mcp_post
+                    .clone()
+                    .filter(|_| mcp_artifact_ok)
+                    .zip(artifact_storage)
+                    .map(|(post, storage)| {
+                        std::sync::Arc::new(
+                            harkroom_server::core::mcp::artifact_publish::ArtifactWrite {
+                                post,
+                                storage,
+                            },
+                        )
+                    }),
                 post: mcp_post,
                 relay_moved: operator_on,
                 relay: relay_cell.clone(),

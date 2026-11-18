@@ -3,12 +3,8 @@
 //! 거절이면 msg_post 가 롤백한다(글도 첨부 연결도 남지 않는다).
 //!
 //! 이 판이 맡는 모양: `html` 글자로 받은 페이지, `artifactId` 없음(새 안), 표지 없음. 고쳐 올리기(`artifactId`, 행 잠금·
-//! 채널·만든 이 판정·제목 갱신)와 표지(`coverAttachmentId`)는 TS 몫이다. 라우트([`super::artifact_publish`])는 아직 이 훅을
-//! 쓰지 않고 성공 갈래를 TS 로 넘긴다 — `html` 바이트를 저장소에 쓰고 업로드 행을 만드는 앞단(TS `storage.write`·
-//! `recordUpload`)이 Rust 에 붙으면 켠다. 권한은 [`ARTIFACT_PUBLISH_PRIVILEGES`].
-// 라우트가 아직 이 훅을 쓰지 않는다(위 설명) — 앞단이 붙을 때 떼는 허용이다.
-#![allow(dead_code)]
-
+//! 채널·만든 이 판정·제목 갱신)와 표지(`coverAttachmentId`)는 TS 몫이다. 라우트([`super::artifact_publish`])가
+//! 앞단(저장소 쓰기·업로드 행)을 맡고 이 훅을 건다([`super::artifact_publish::publish`]). 권한은 [`ARTIFACT_PUBLISH_PRIVILEGES`].
 use crate::core::msg_post::{BeforeCommit, BeforeCommitFuture, Rejection};
 use std::sync::Mutex;
 

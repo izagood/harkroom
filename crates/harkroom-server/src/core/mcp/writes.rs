@@ -159,6 +159,9 @@ pub struct McpWrites {
     pub delegate: Option<std::sync::Arc<crate::core::msg_post::PostState>>,
     /// `turn.wake`(S5.4 A3) — `post` 에 더해 `turn_wake::TURN_WAKE_PRIVILEGES`. 없으면 TS 로(게시 전에).
     pub wake: Option<std::sync::Arc<crate::core::msg_post::PostState>>,
+    /// `artifact.publish` 새 안(v1) 게시 — `post` 에 더해 `artifact_write::ARTIFACT_PUBLISH_PRIVILEGES`·업로드 권한·첨부 저장소.
+    /// 없으면 거절 앞머리만 Rust, 게시는 TS.
+    pub artifact: Option<std::sync::Arc<super::artifact_publish::ArtifactWrite>>,
     /// `skill.propose`(S5.4 MCP 3) — `post` 에 더해 `skill_propose::SKILL_PROPOSE_PRIVILEGES`.
     pub skill: Option<std::sync::Arc<crate::core::msg_post::PostState>>,
     /// AC5 안전판 — 릴레이가 Rust 오퍼레이터 코어와 함께 옮겨졌다. 그 동안 TS 의 릴레이 허브는 비어 있어 `turn.cancel` 이
