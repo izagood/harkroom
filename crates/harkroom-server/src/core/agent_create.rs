@@ -361,7 +361,7 @@ fn check_patch(m: &Map<String, Value>) -> Result<(), &'static str> {
 const ADMIN_ONLY_FIELDS: &[&str] = &["ownerAccountId", "disabled", "mentionPermission"];
 
 /// `PATCH /accounts/agents/{id}` 앞단 — 경로·본문 zod(400)·Chrome 켜기 403·admin 전용 칸 403 을 Rust 가 판정하고
-/// 나머지(소유자 판정·쓰기·감사)는 TS 로 넘긴다. 여기까지는 부작용이 없다.
+/// 비admin 의 `checkOwnerOrAdmin` 거절(404·403)도 Rust 가 한다. 나머지(쓰기·감사)는 TS 로 넘긴다. 여기까지는 부작용이 없다.
 pub async fn patch(
     State(st): State<Arc<AgentCreateState>>,
     crate::auth::RequireAccount(me, auth): crate::auth::RequireAccount,
