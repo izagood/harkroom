@@ -889,6 +889,73 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 — `GET /agent/pr-watches/due`. 만료 UPDATE(`expireWatches`)를 하므로 쓰기 풀에 [`PR_WATCH_DUE_PRIVILEGES`] 가 다 있고,
+    // `HARKROOM_DELEGATION_V2` 값이 있을 때만(없으면 TS 와 스위치 판정이 갈릴 수 있어 TS 에 남긴다).
+    let pr_watch_due_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w))
+            if std::env::var("HARKROOM_DELEGATION_V2").is_ok_and(|v| !v.trim().is_empty()) =>
+        {
+            use harkroom_server::core::pr_watch_due as t;
+            match write::missing_in(w, t::PR_WATCH_DUE_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: pr-watches due core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: pr-watches due core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+    // S5.4 — `GET /agent-wakes`. 같은 두 겹 잠금(읽기 풀 SELECT).
+    let agent_wakes_read_on = match &core_mode {
+        harkroom_server::core::CoreMode::Rust => {
+            use harkroom_server::core::agent_wakes_read as t;
+            match write::missing_in(&state.pool, t::AGENT_WAKES_READ_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => true,
+                Ok(m) => {
+                    eprintln!("front: agent wakes read core off — missing privileges {m:?}");
+                    false
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: agent wakes read core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    false
+                }
+            }
+        }
+        _ => false,
+    };
+    // S5.4 AG1 — `GET /agent/merge-grants`·`/agent/api-grants`·`/agent/thread-model`. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고
+    // 읽기 풀에 그 SELECT 가 다 있을 때만. `/agent/pr-watches/due` 는 만료 UPDATE 가 있어 쓰기 풀로 따로 켠다(`pr_watch_due_write`).
+    let agent_grants_read_on = match &core_mode {
+        harkroom_server::core::CoreMode::Rust => {
+            use harkroom_server::core::agent_grants_read as t;
+            match write::missing_in(&state.pool, t::AGENT_GRANTS_READ_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => true,
+                Ok(m) => {
+                    eprintln!("front: agent grants read core off — missing privileges {m:?}");
+                    false
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: agent grants read core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    false
+                }
+            }
+        }
+        _ => false,
+    };
     // S5.4 AC2 — `GET /accounts/agents/{id}/memory`·`…/memory/{slug}/revisions`·`…/background/runs/{runId}`. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 읽기 풀에 그 SELECT 가 다 있을 때만. 정리 후보·백그라운드·기억 쓰기는 언제나 TS.
     let agent_memory_read_on = match &core_mode {
         harkroom_server::core::CoreMode::Rust => {
@@ -1753,6 +1820,33 @@ async fn main() {
         core_routes.router = core_routes.router.merge(grant_reads.router);
         core_routes.http.extend(grant_reads.http);
         core_routes.sockets.extend(grant_reads.sockets);
+        if agent_grants_read_on {
+            let ag = harkroom_server::core::agent_grants_read::routes(
+                state.pool.clone(),
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(ag.router);
+            core_routes.http.extend(ag.http);
+            core_routes.sockets.extend(ag.sockets);
+        }
+        if let Some(w) = pr_watch_due_write {
+            let pd =
+                harkroom_server::core::pr_watch_due::routes(w, auth.clone(), state.cors.clone());
+            core_routes.router = core_routes.router.merge(pd.router);
+            core_routes.http.extend(pd.http);
+            core_routes.sockets.extend(pd.sockets);
+        }
+        if agent_wakes_read_on {
+            let aw = harkroom_server::core::agent_wakes_read::routes(
+                state.pool.clone(),
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(aw.router);
+            core_routes.http.extend(aw.http);
+            core_routes.sockets.extend(aw.sockets);
+        }
         // C3b B1 — 명령 grant 쓰기(`POST /agent/command-grants/match`). 쓰기 풀 권한이 다 있을 때만.
         if let Some(write) = match_write {
             let m = harkroom_server::core::command_match::routes(
