@@ -31,6 +31,10 @@ pub const REQUIRED_PRIVILEGES: &[(&str, &str)] = &[
     ("workspace_skill", "UPDATE"),
     ("workspace_skill_usage", "INSERT"),
     ("builtin_skill_usage", "INSERT"),
+    // MCP 레지스트리 PUT·DELETE(`writes_settings.rs`, `MCP_SERVER_WRITE_PRIVILEGES`). 에이전트 쪽 줄은 FK cascade 가 지운다.
+    ("mcp_server", "INSERT"),
+    ("mcp_server.credential_kind", "UPDATE"),
+    ("mcp_server", "DELETE"),
     // P4b — 팀·집합(`writes_teams.rs`·`writes_groups.rs`). 구성원 표는 부모를 지울 때 FK cascade 가 지운다(표 주인 권한).
     ("agent_team", "INSERT"),
     ("agent_team", "UPDATE"),

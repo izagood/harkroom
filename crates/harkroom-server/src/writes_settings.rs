@@ -487,8 +487,159 @@ async fn record_use(
     Ok(recorded)
 }
 
+// ── MCP 레지스트리 ─────────────────────────────────────────────────────
+
+/// `PUT·DELETE /mcp-servers/{name}` 가 쓰는 칸 — 쓰기 풀 GRANT 와 같아야 한다.
+pub const MCP_SERVER_WRITE_PRIVILEGES: &[(&str, &str)] = &[
+    ("mcp_server", "SELECT"),
+    ("mcp_server", "INSERT"),
+    ("mcp_server.credential_kind", "UPDATE"),
+    ("mcp_server", "DELETE"),
+    ("audit_log", "INSERT"),
+];
+
+/// TS `nameParam` = `^[a-z0-9-]{1,32}$`.
+fn is_mcp_name(s: &str) -> bool {
+    (1..=32).contains(&s.len())
+        && s.bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
+/// zod `{ credentialKind: enum['community','personal'] }`(모르는 키는 버린다). 본문 없음은 `{}` 로 본다(`req.body ?? {}`).
+pub fn parse_mcp_kind(body: &Body) -> Option<&'static str> {
+    let o = match body {
+        Body::None => return None,
+        Body::Json(Value::Object(o)) => o,
+        _ => return None,
+    };
+    match o.get("credentialKind").and_then(Value::as_str) {
+        Some("community") => Some("community"),
+        Some("personal") => Some("personal"),
+        _ => None,
+    }
+}
+
+/// `PUT /mcp-servers/{name}` — `agent.privileged`. 이름과 자격증명 종류를 등록·갱신.
+pub async fn put_mcp_server(
+    State(st): State<AppState>,
+    Path(name): Path<String>,
+    req: Request,
+) -> Response {
+    let (body, RequireAccount(_, auth), parts) = match body_then::<RequireAccount>(req).await {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    let me = match crate::perm::require_cap(&st.pool, &auth, "agent.privileged", None).await {
+        Ok(a) => a,
+        Err(r) => return r,
+    };
+    if !is_mcp_name(&name) {
+        return bad("name");
+    }
+    let Some(kind) = parse_mcp_kind(&body) else {
+        return json_err(StatusCode::BAD_REQUEST, "bad_request", "credentialKind");
+    };
+    let pool = match write_pool(&st) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+    let row: Result<String, _> = sqlx::query_scalar(concat!(
+        "insert into mcp_server (name, credential_kind, created_by) values ($1, $2, $3::uuid) \
+         on conflict (name) do update set credential_kind = excluded.credential_kind \
+         returning json_build_object('name', name, 'credentialKind', credential_kind, 'createdBy', created_by, 'createdAt', ",
+        crate::iso!("created_at"),
+        ")::text"
+    ))
+    .bind(&name)
+    .bind(kind)
+    .bind(&me.id)
+    .fetch_one(pool)
+    .await;
+    let row = match row {
+        Ok(r) => r,
+        Err(e) => return internal(e),
+    };
+    let ip = ip_of(&parts, &st.trust);
+    record_audit(
+        pool,
+        AuditEntry {
+            action: "mcp_server.set",
+            actor_id: Some(&me.id),
+            actor_handle: Some(&me.handle),
+            target: Some(&name),
+            ip: ip.as_deref(),
+            detail: json!({ "credentialKind": kind }),
+        },
+    )
+    .await;
+    json_ok(row)
+}
+
+/// `DELETE /mcp-servers/{name}` — `agent.privileged`. 없으면 404, 지웠으면 204(에이전트 쪽은 cascade).
+pub async fn delete_mcp_server(
+    State(st): State<AppState>,
+    Path(name): Path<String>,
+    req: Request,
+) -> Response {
+    let (_, RequireAccount(_, auth), parts) = match body_then::<RequireAccount>(req).await {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    let me = match crate::perm::require_cap(&st.pool, &auth, "agent.privileged", None).await {
+        Ok(a) => a,
+        Err(r) => return r,
+    };
+    if !is_mcp_name(&name) {
+        return bad("name");
+    }
+    let pool = match write_pool(&st) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+    let n = match sqlx::query("delete from mcp_server where name = $1")
+        .bind(&name)
+        .execute(pool)
+        .await
+    {
+        Ok(r) => r.rows_affected(),
+        Err(e) => return internal(e),
+    };
+    if n == 0 {
+        return json_err(StatusCode::NOT_FOUND, "not_found", "그런 MCP 이름이 없다");
+    }
+    let ip = ip_of(&parts, &st.trust);
+    record_audit(
+        pool,
+        AuditEntry {
+            action: "mcp_server.deleted",
+            actor_id: Some(&me.id),
+            actor_handle: Some(&me.handle),
+            target: Some(&name),
+            ip: ip.as_deref(),
+            detail: json!({}),
+        },
+    )
+    .await;
+    axum::response::IntoResponse::into_response(StatusCode::NO_CONTENT)
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn mcp_server_inputs_follow_zod() {
+        assert!(is_mcp_name("a") && is_mcp_name("gh-01"));
+        assert!(!is_mcp_name("") && !is_mcp_name("A") && !is_mcp_name(&"a".repeat(33)));
+        assert_eq!(
+            parse_mcp_kind(&Body::Json(json!({ "credentialKind": "personal", "x": 1 }))),
+            Some("personal")
+        );
+        assert_eq!(parse_mcp_kind(&Body::None), None);
+        assert_eq!(
+            parse_mcp_kind(&Body::Json(json!({ "credentialKind": "other" }))),
+            None
+        );
+    }
+
     use super::*;
 
     fn j(v: Value) -> Body {

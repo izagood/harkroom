@@ -64,6 +64,16 @@ pub const MOVED: &[Moved] = &[
         route: || axum::routing::get(crate::directory::dms),
     },
     Moved {
+        key: "GET /leases",
+        path: "/leases",
+        route: || axum::routing::get(crate::directory::leases),
+    },
+    Moved {
+        key: "GET /projection/status",
+        path: "/projection/status",
+        route: || axum::routing::get(crate::directory::projection_status),
+    },
+    Moved {
         key: "GET /mcp-servers",
         path: "/mcp-servers",
         route: || axum::routing::get(crate::directory::mcp_servers),
@@ -249,6 +259,16 @@ pub const MOVED_WRITE: &[Moved] = &[
         key: "DELETE /skills/{slug}",
         path: "/skills/{slug}",
         route: || axum::routing::delete(crate::writes_settings::disable_skill),
+    },
+    Moved {
+        key: "PUT /mcp-servers/{name}",
+        path: "/mcp-servers/{name}",
+        route: || axum::routing::put(crate::writes_settings::put_mcp_server),
+    },
+    Moved {
+        key: "DELETE /mcp-servers/{name}",
+        path: "/mcp-servers/{name}",
+        route: || axum::routing::delete(crate::writes_settings::delete_mcp_server),
     },
     // P4b 팀·집합(`writes_teams.rs`·`writes_groups.rs`). 채널에 팀 넣기는 S5.3.
     Moved {
