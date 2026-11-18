@@ -27,7 +27,7 @@ pub const POLL: Duration = Duration::from_millis(25_000);
 /// TS `FETCH_CHUNK`.
 pub const FETCH_CHUNK: usize = 256;
 /// TS `PROJECTED` — 페치 전에 oid 접두로 거른다.
-const PROJECTED: [&str; 7] = [
+pub(crate) const PROJECTED: [&str; 7] = [
     "intent",
     "operation",
     "decision",
@@ -195,7 +195,7 @@ struct Avcs {
     client: Client<HttpConnector, Full<Bytes>>,
 }
 
-fn repo_path(repo: &str) -> String {
+pub(crate) fn repo_path(repo: &str) -> String {
     repo.split('/')
         .filter(|s| !s.is_empty())
         .map(encode_uri_component)

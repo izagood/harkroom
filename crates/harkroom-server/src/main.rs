@@ -2003,6 +2003,28 @@ async fn main() {
         }
         _ => false,
     };
+    // S5.5 — `GET /collab/proposals`. 같은 두 겹 잠금(읽기 풀 SELECT).
+    let collab_read_on = match &core_mode {
+        harkroom_server::core::CoreMode::Rust => {
+            use harkroom_server::core::collab_read as t;
+            match write::missing_in(&state.pool, t::COLLAB_READ_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => true,
+                Ok(m) => {
+                    eprintln!("front: collab read core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
+                    false
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: collab read core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    false
+                }
+            }
+        }
+        _ => false,
+    };
     // S5.4 — `GET /agent-wakes`. 같은 두 겹 잠금(읽기 풀 SELECT).
     let agent_wakes_read_on = match &core_mode {
         harkroom_server::core::CoreMode::Rust => {
@@ -3691,6 +3713,19 @@ async fn main() {
             core_routes.router = core_routes.router.merge(lp.router);
             core_routes.http.extend(lp.http);
             core_routes.sockets.extend(lp.sockets);
+        }
+        if collab_read_on {
+            let c = harkroom_server::core::collab_read::routes(
+                harkroom_server::core::collab_read::CollabState::new(
+                    state.pool.clone(),
+                    state.up.clone(),
+                ),
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(c.router);
+            core_routes.http.extend(c.http);
+            core_routes.sockets.extend(c.sockets);
         }
         if agent_wakes_read_on {
             let aw = harkroom_server::core::agent_wakes_read::routes(
