@@ -110,7 +110,7 @@ pub async fn mandate_for_card_thread(
         return Ok(None);
     };
     // 첫 글을 소유자·그 소유자의 에이전트가 쓰지 않았어도, 승인한 사람이 워크스페이스 owner/admin 이면 위임장을 세운다
-    // (소유자 결정 2026-11-19 — W1 불변식을 owner/admin 에게만 푼다. TS `mandateForCardThread`(merge 카드)는 그대로다).
+    // (소유자 결정 2026-11-19 — W1 불변식을 owner/admin 에게만 푼다. TS `mandateForCardThread` 도 같은 조건).
     if !own_author && !is_workspace_admin(conn, owner_id).await? {
         return Ok(None);
     }
