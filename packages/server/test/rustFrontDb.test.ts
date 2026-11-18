@@ -4491,9 +4491,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       {
         expect(f.log()).toContain('"GET /threads/{rootId}/plan"');
         expect(f.log()).not.toContain('thread plan read core off');
-        for (const k of ['POST /threads/{rootId}/plan/start', 'PUT /threads/{rootId}/plan/manager', 'DELETE /threads/{rootId}/plan/auto']) {
+        for (const k of ['POST /threads/{rootId}/plan/start', 'PUT /threads/{rootId}/plan/manager']) {
           expect(f.log(), `${k} 는 TS 에 남는다`).not.toContain(`"${k}"`);
         }
+        expect(f.log(), 'TP3 자동 진행 끄기 줄').toContain('"DELETE /threads/{rootId}/plan/auto"');
         const M = member.token;
         const M2 = member2.token;
         const pubCh = await createChannel(db.pool, { name: 'tp1-pub' });
@@ -4615,6 +4616,47 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const leak = JSON.stringify(seen.filter((s) => (s as { token: string }).token !== M2));
         expect(leak).not.toContain(hidCh.id);
         expect(leak).not.toContain('TP1HIDDEN');
+        // S5.4 TP3 — 자동 진행 끄기(코어 `thread_plan_auto_off.rs`). 거절은 상태·코드를, 끄기는 답(rev·시각 빼고)·시스템 줄을 견준다.
+        {
+          const off = (r: string) => `/threads/${r}/plan/auto`;
+          for (const [name, p, token, want] of [
+            ['익명 → 401', off(parent), '', 401],
+            ['에이전트 → 403 human_only', off(parent), agent.pat, 403],
+            ['uuid 아님 → 404', off('not-a-uuid'), M, 404],
+            ['답글 → 404 not_root', off(reply), M, 404],
+            ['지운 루트 → 404', off(gone), M, 404],
+            ['없는 루트 → 404', off(ghostRoot), M, 404],
+            ['못 보는 채널 → 404', off(privRoot), M2, 404],
+            ['계획 없음 → 404 no_plan', off(pubEmpty), M, 404],
+          ] as const) {
+            const [x, y] = [await callX(tsUrl, 'DELETE', p, undefined, token), await callX(rsUrl, 'DELETE', p, undefined, token)];
+            expect({ status: y.status, code: y.code }, name).toEqual({ status: x.status, code: x.code });
+            expect(y.status, name).toBe(want);
+          }
+          const line = async () => (await db.pool.query<{ body: string; kind: string; author_id: string; thread_root_id: string; meta: Record<string, unknown> }>(
+            `select body, kind, author_id, thread_root_id, meta from message where thread_root_id = $1 and kind = 'system' order by seq desc limit 1`, [parent])).rows[0];
+          const lines = async () => Number((await db.pool.query<{ n: string }>(
+            `select count(*) as n from message where thread_root_id = $1 and kind = 'system'`, [parent])).rows[0]!.n);
+          const strip = (j: Record<string, unknown>) => { const { rev: _r, updatedAt: _u, ...rest } = j.plan as Record<string, unknown>; return rest; };
+          const reArm = () => db.pool.query(
+            `update thread_plan set auto_until = 's5', auto_source = $2, auto_by = $3, auto_at = now() where root_id = $1`, [parent, parent, member.accountId]);
+          const ts = await callX(tsUrl, 'DELETE', off(parent), undefined, M);
+          expect(ts.status).toBe(200);
+          const tsLine = await line();
+          await reArm();
+          const rs = await callX(rsUrl, 'DELETE', off(parent), undefined, M);
+          expect(rs.status).toBe(200);
+          expect(strip(rs.json), '끈 판이 TS 와 같다').toEqual(strip(ts.json));
+          expect((rs.json.plan as { auto: unknown }).auto).toBeNull();
+          expect(await line(), '시스템 줄이 TS 와 같다').toEqual(tsLine);
+          expect(tsLine?.body).toBe('▶ 자동 진행 꺼짐');
+          const n = await lines();
+          const again = await callX(rsUrl, 'DELETE', off(parent), undefined, M);
+          expect(again.status, '이미 꺼짐 → 200').toBe(200);
+          expect(again.json, '바뀌지 않으면 같은 판').toEqual(rs.json);
+          expect(await lines(), '이미 꺼짐이면 줄 없음').toBe(n);
+          await db.pool.query(`delete from message where thread_root_id = $1 and kind = 'system'`, [parent]);
+        }
         await db.pool.query('delete from thread_plan where root_id = any($1)', [[parent, childVis, childHid, privRoot, bare, gone]]);
         await db.pool.query('delete from message where channel_id = any($1)', [[pubCh.id, privCh.id, hidCh.id]]);
         await db.pool.query('delete from channel_member where channel_id = any($1)', [[pubCh.id, privCh.id, hidCh.id]]);

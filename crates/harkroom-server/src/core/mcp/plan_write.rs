@@ -563,6 +563,21 @@ async fn write_plan(
     })
 }
 
+/// TS `emitPlanChanged(pool, channel, root, row)` — 판이 있을 때, 같은 tx 의 outbox 로(S5.4 TP3 자동 진행 끄기가 쓴다).
+/// 진행률은 청중 맵(public standard 이거나 같은 채널)으로 센다. `viewer` 는 자식 사실 문장의 자리를 채울 뿐 맵에 쓰지 않는다.
+pub(crate) async fn emit_changed(
+    conn: &mut PgConnection,
+    channel: &str,
+    root: &str,
+    rev: i64,
+    doc: &Value,
+    viewer: &str,
+) -> sqlx::Result<()> {
+    let facts = child_facts(&mut *conn, &linked_roots(doc), viewer).await?;
+    let progress = plan_progress(doc, &linked_map(doc, &facts, Some(channel)));
+    emit(conn, channel, root, Some((rev, &progress))).await
+}
+
 /// TS `emitPlanChanged` — 지웠으면 rev·progress 가 null.
 async fn emit(
     conn: &mut PgConnection,
