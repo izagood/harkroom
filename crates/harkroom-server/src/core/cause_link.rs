@@ -176,7 +176,7 @@ pub fn models_disagree(configured: Option<&str>, reported: Option<&str>) -> bool
 
 /// JS `String.prototype.trim` 이 벗기는 글자(WhiteSpace · LineTerminator). Rust `char::is_whitespace` 와 다르다
 /// (JS 는 U+FEFF 를 벗기고 U+0085 는 남긴다).
-fn js_trim_char(c: char) -> bool {
+pub(crate) fn js_trim_char(c: char) -> bool {
     matches!(
         c,
         '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
