@@ -5,7 +5,7 @@
 //! - 키링은 기동에 한 번 env 로 읽어 DB 확인값과 맞춘다(TS `verifySecretKeys` → `createSecretLeakGuard`). 키링이 없거나 맞지 않으면
 //!   TS 처럼 검사가 꺼진다([`LeakGuard::is_on`] 이 거짓 — TS 는 `leakGuard` 가 null 이다).
 //! - 쓰기마다 새로 읽는다(부여·회수·값 교체가 곧바로 반영 — TS 와 같다). 연 값은 [`LeakSecret`] 이 지운다.
-//! - 쓰는 곳: 에이전트 업로드(`attachment_upload.rs`, surface `upload`). `/mcp` 입장 확인(`findInTexts`)은 아직 TS `/mcp/admit`.
+//! - 쓰는 곳: 에이전트 업로드(`attachment_upload.rs`, surface `upload`). `/mcp` 입장 확인(`findInTexts`, surface `mcp:<tool>`)은 [`crate::core::mcp::route::serve`].
 //! - 권한은 [`privileges`] — 비밀 **값**(`secret_version.sealed`)을 읽는 줄이다(보안 검토 대상).
 use sqlx::{PgPool, Row};
 
@@ -63,7 +63,8 @@ const RECORD_SQL: &str = "insert into secret_access_log (secret_id, secret_name,
 /// 누가 막혔는지(감사 줄의 행위자 — TS `actorOf(req)`).
 pub struct LeakActor<'a> {
     pub agent_id: &'a str,
-    pub agent_handle: &'a str,
+    /// TS `record(null, …)`(`/mcp` 입장 확인)은 `null` 이다.
+    pub agent_handle: Option<&'a str>,
     pub operator_id: Option<&'a str>,
     pub ip: Option<&'a str>,
 }
@@ -121,6 +122,19 @@ impl LeakGuard {
         Ok(out)
     }
 
+    /// TS `findInTexts`(`/mcp` 입장 확인 — 인자의 글을 [`crate::secrets::leak::collect_strings`] 로 모아 넘긴다).
+    pub(crate) async fn find_in_texts(
+        &self,
+        agent_id: &str,
+        texts: &[&str],
+    ) -> sqlx::Result<Vec<LeakHit>> {
+        let Some(keyring) = &self.keyring else {
+            return Ok(vec![]);
+        };
+        let secrets = self.secrets(keyring, agent_id).await?;
+        Ok(crate::secrets::leak::find_in_texts(&secrets, texts))
+    }
+
     /// TS `findInBytes`.
     pub(crate) async fn find_in_bytes(
         &self,
@@ -162,7 +176,7 @@ impl LeakGuard {
             crate::write::AuditEntry {
                 action: "secret.leak.blocked",
                 actor_id: Some(who.agent_id),
-                actor_handle: Some(who.agent_handle),
+                actor_handle: who.agent_handle,
                 target: Some(who.agent_id),
                 ip: who.ip,
                 detail: serde_json::json!({ "surface": surface, "secrets": secrets }),

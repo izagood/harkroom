@@ -162,6 +162,9 @@ pub struct McpWrites {
     /// AC5 안전판 — 릴레이가 Rust 오퍼레이터 코어와 함께 옮겨졌다. 그 동안 TS 의 릴레이 허브는 비어 있어 `turn.cancel` 이
     /// 아무 턴도 못 찾고 성공처럼 답하므로, Rust 가 `operator_core_moved` 로 거절한다([`super::route::TURN_CANCEL`]).
     pub relay_moved: bool,
+    /// `/mcp` 입장 확인의 비밀 값 검사(TS `/mcp/admit` 의 leakGuard) — 업로드 검사와 같은 판정·권한(`leak_guard::privileges`).
+    /// 없으면(권한·키 env 가 안 맞음) 그 검사는 TS `/mcp/admit` 이 한다.
+    pub leak: Option<std::sync::Arc<crate::core::leak_guard::LeakGuard>>,
     /// `turn.cancel` 을 Rust 허브로 답할 릴레이 코어. 릴레이 줄이 `McpWrites` 뒤에 서므로 그때 채운다. 비어 있으면
     /// (`relay_moved` 인데 아직 안 채워짐) 옛 안전판처럼 `operator_core_moved` 로 거절한다.
     pub relay:
