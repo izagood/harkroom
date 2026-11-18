@@ -102,6 +102,11 @@ pub const AGENT_PATCH_PRIVILEGES: &[(&str, &str)] = &[
     ("agent_invoker", "SELECT"),
     ("agent_owner_delegate", "SELECT"),
     ("agent_mcp_server", "SELECT"),
+    // `suspendSecretGrants(…, 'definition_changed')` + 이미 정지된 grant 확인.
+    ("secret_grant.agent_id", "SELECT"),
+    ("secret_grant.suspended_at", "SELECT"),
+    ("secret_grant.suspended_at", "UPDATE"),
+    ("secret_grant.suspend_reason", "UPDATE"),
     ("audit_log.action", "INSERT"),
     ("audit_log.actor_id", "INSERT"),
     ("audit_log.actor_handle", "INSERT"),
@@ -109,6 +114,33 @@ pub const AGENT_PATCH_PRIVILEGES: &[(&str, &str)] = &[
     ("audit_log.ip", "INSERT"),
     ("audit_log.detail", "INSERT"),
 ];
+
+/// TS `definitionChanged` — 비밀 grant 를 세우는 정의 칸(순서 같다). MCP 목록은 이름순으로 이어 붙여 비교한다.
+fn definition_changed(before: &Value, after: &Value) -> Vec<&'static str> {
+    let mcp = |v: &Value| {
+        let mut l: Vec<String> = v
+            .get("mcpServers")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .map(|x| x.as_str().unwrap_or_default().to_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        l.sort();
+        l.join("\n")
+    };
+    let mut out = Vec::new();
+    for k in ["instructions", "harness", "ownerAccountId", "workingDir"] {
+        if before.get(k) != after.get(k) {
+            out.push(k);
+        }
+    }
+    if mcp(before) != mcp(after) {
+        out.push("mcpServers");
+    }
+    out
+}
 
 pub struct AgentCreateState {
     pub pool: PgPool,
@@ -414,13 +446,10 @@ fn check_patch(m: &Map<String, Value>) -> Result<(), &'static str> {
 const ADMIN_ONLY_FIELDS: &[&str] = &["ownerAccountId", "disabled", "mentionPermission"];
 
 /// 이 칸이 하나라도 있으면 PATCH 성공 길은 TS 로 넘긴다 — 이름 바꾸기(409·감사·WS), 끄기(PAT 회수),
-/// 스코프·MCP 판정, 정의 변경 비밀 grant 정지가 아직 Rust 에 없다.
+/// 스코프·MCP 판정이 아직 Rust 에 없다. 정의 변경(instructions·harness·workingDir)의 비밀 grant 정지는 Rust 가 한다.
 const PATCH_TS_ONLY_FIELDS: &[&str] = &[
     "handle",
     "disabled",
-    "instructions",
-    "harness",
-    "workingDir",
     "ownerAccountId",
     "invokeScope",
     "credentialScope",
@@ -558,9 +587,51 @@ async fn patch_native(
     };
     let b: Value = serde_json::from_str(&before).unwrap_or(Value::Null);
     let a: Value = serde_json::from_str(&updated).unwrap_or(Value::Null);
+    let ip = crate::writes_settings::ip_of(parts, &st.trust);
+    let defn = definition_changed(&b, &a);
+    if !defn.is_empty() {
+        let n = match sqlx::query(
+            "update secret_grant set suspended_at = now(), suspend_reason = $2 where agent_id = $1::uuid and suspended_at is null",
+        )
+        .bind(id)
+        .bind("definition_changed")
+        .execute(write)
+        .await
+        {
+            Ok(r) => r.rows_affected(),
+            Err(e) => return crate::directory::internal(e),
+        };
+        let any = if n > 0 {
+            true
+        } else {
+            match sqlx::query_scalar::<_, i32>(
+                "select 1 from secret_grant where agent_id = $1::uuid and suspended_at is not null limit 1",
+            )
+            .bind(id)
+            .fetch_optional(write)
+            .await
+            {
+                Ok(r) => r.is_some(),
+                Err(e) => return crate::directory::internal(e),
+            }
+        };
+        if any {
+            crate::write::record_audit(
+                write,
+                crate::write::AuditEntry {
+                    action: "secret.grant.suspended",
+                    actor_id: Some(&me.id),
+                    actor_handle: Some(&me.handle),
+                    target: Some(id),
+                    ip: ip.as_deref(),
+                    detail: serde_json::json!({ "reason": "definition_changed", "fields": defn, "suspended": n }),
+                },
+            )
+            .await;
+        }
+    }
     let changes = diff_audited(&b, &a);
     if !changes.is_empty() {
-        let ip = crate::writes_settings::ip_of(parts, &st.trust);
         crate::write::record_audit(
             write,
             crate::write::AuditEntry {
