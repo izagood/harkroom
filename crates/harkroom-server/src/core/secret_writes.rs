@@ -181,12 +181,12 @@ fn not_found() -> Response {
     json_err(StatusCode::NOT_FOUND, "not_found", "no such secret")
 }
 
-fn len16(s: &str) -> usize {
+pub(crate) fn len16(s: &str) -> usize {
     s.encode_utf16().count()
 }
 
 /// TS `NAME`.
-fn valid_name(s: &str) -> bool {
+pub(crate) fn valid_name(s: &str) -> bool {
     let b = s.as_bytes();
     !b.is_empty()
         && b.len() <= 64
@@ -197,7 +197,7 @@ fn valid_name(s: &str) -> bool {
 }
 
 /// TS `FILENAME` — `.`·`..` 아님, 1–255 글자(UTF-16), `/`·`\`·NUL 없음.
-fn valid_filename(s: &str) -> bool {
+pub(crate) fn valid_filename(s: &str) -> bool {
     s != "." && s != ".." && (1..=255).contains(&len16(s)) && !s.contains(['/', '\\', '\0'])
 }
 

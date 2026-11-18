@@ -300,6 +300,158 @@ pub fn generate_value(
     }))
 }
 
+/// 라우트 본문의 값 출처(TS `toSource`).
+#[derive(Debug, PartialEq)]
+pub enum Source {
+    Generate {
+        kind: String,
+        length: Option<i64>,
+    },
+    /// import 는 TS `isMountedValue`(F4)를 아직 옮기지 않았다 — 라우트가 서면 gate 앞에서 TS 로 넘긴다.
+    Import,
+}
+
+/// TS `agentCreateBody`·`agentRotateBody`(zod strict) + `toSource` 를 지난 본문. 실패는 400 `badCreate`.
+#[derive(Debug, PartialEq)]
+pub struct AgentBody {
+    pub lease_id: String,
+    pub token: String,
+    pub name: String,
+    pub description: String,
+    pub expires_in_days: Option<i64>,
+    pub source: Source,
+}
+
+/// TS `badCreate` 문구.
+pub const BAD_CREATE_MESSAGE: &str = "leaseId, token, a valid name and one source ({generate:{type,length?}} or {import:{kind,filename?,valueBase64}}) are required";
+
+/// zod `z.number().int()` — JS 정수(`32.0` 도 정수다).
+fn js_int(v: &serde_json::Value) -> Option<i64> {
+    let f = v.as_f64()?;
+    (f.fract() == 0.0 && f.abs() <= 9_007_199_254_740_991.0).then_some(f as i64)
+}
+
+fn only_keys(o: &serde_json::Map<String, serde_json::Value>, keys: &[&str]) -> bool {
+    o.keys().all(|k| keys.contains(&k.as_str()))
+}
+
+fn parse_source(v: &serde_json::Value) -> Option<Source> {
+    use serde_json::Value;
+    let o = v.as_object()?;
+    if let Some(g) = o.get("generate") {
+        let g = g.as_object()?;
+        if o.len() != 1 || !only_keys(g, &["type", "length"]) {
+            return None;
+        }
+        let kind = g.get("type")?.as_str()?;
+        if !GENERATE_TYPES.contains(&kind) {
+            return None;
+        }
+        let length = match g.get("length") {
+            None => None,
+            Some(l) => Some(js_int(l)?),
+        };
+        return Some(Source::Generate {
+            kind: kind.to_owned(),
+            length,
+        });
+    }
+    let i = o.get("import")?.as_object()?;
+    if o.len() != 1 || !only_keys(i, &["kind", "filename", "valueBase64"]) {
+        return None;
+    }
+    let kind = i.get("kind")?.as_str()?;
+    if kind != "text" && kind != "file" {
+        return None;
+    }
+    let filename = match i.get("filename") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(f)) if crate::core::secret_writes::valid_filename(f) => Some(f),
+        _ => return None,
+    };
+    let b64 = i.get("valueBase64")?.as_str()?;
+    if crate::core::secret_writes::len16(b64) > (64 * 1024_usize).div_ceil(3) * 4 + 4 {
+        return None;
+    }
+    // TS `/^[A-Za-z0-9+/]*={0,2}$/`.
+    let body = b64.trim_end_matches('=');
+    if b64.len() - body.len() > 2
+        || !body
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || c == b'+' || c == b'/')
+    {
+        return None;
+    }
+    if kind == "file" && filename.is_none_or(|f| f.is_empty()) {
+        return None;
+    }
+    if kind == "text" && filename.is_some_and(|f| !f.is_empty()) {
+        return None;
+    }
+    Some(Source::Import)
+}
+
+/// TS `agentCreateBody`(`rotate == false`) 또는 `agentRotateBody`(`rotate == true`) + `toSource`.
+pub fn parse_body(v: &serde_json::Value, rotate: bool) -> Option<AgentBody> {
+    use crate::core::secret_writes::{len16, valid_name};
+    let o = v.as_object()?;
+    let allowed: &[&str] = if rotate {
+        &["leaseId", "token", "name", "source"]
+    } else {
+        &[
+            "leaseId",
+            "token",
+            "name",
+            "description",
+            "expiresInDays",
+            "source",
+        ]
+    };
+    if !only_keys(o, allowed) {
+        return None;
+    }
+    let lease_id = o.get("leaseId")?.as_str()?;
+    if !crate::core::msg_read::is_uuid(lease_id) {
+        return None;
+    }
+    let token = o.get("token")?.as_str()?;
+    if !(1..=200).contains(&len16(token)) {
+        return None;
+    }
+    let name = o.get("name")?.as_str()?;
+    if !valid_name(name) {
+        return None;
+    }
+    let description = match o.get("description") {
+        None => String::new(),
+        Some(d) => {
+            let d = d.as_str()?;
+            if len16(d) > 500 {
+                return None;
+            }
+            d.to_owned()
+        }
+    };
+    let expires_in_days = match o.get("expiresInDays") {
+        None => None,
+        Some(d) => {
+            let n = js_int(d)?;
+            if !(1..=365).contains(&n) {
+                return None;
+            }
+            Some(n)
+        }
+    };
+    Some(AgentBody {
+        lease_id: lease_id.to_owned(),
+        token: token.to_owned(),
+        name: name.to_owned(),
+        description,
+        expires_in_days,
+        source: parse_source(o.get("source")?)?,
+    })
+}
+
 /// TS `RevealLimiter` (`createLimiter` = 시간당 10회) — 미끄럼 창. 키는 에이전트 id.
 pub struct CreateLimiter {
     max: usize,
@@ -615,6 +767,56 @@ mod tests {
             .unwrap();
         assert!(pos > 0);
         assert!(blob.windows(32).filter(|w| *w == raw_pub).count() >= 3);
+    }
+
+    #[test]
+    fn body_matches_zod_and_to_source() {
+        use serde_json::json;
+        let base = json!({"leaseId": "123e4567-e89b-12d3-a456-426614174000", "token": "t", "name": "db-pass",
+            "source": {"generate": {"type": "password", "length": 32.0}}});
+        let b = parse_body(&base, false).unwrap();
+        assert_eq!(
+            b.source,
+            Source::Generate {
+                kind: "password".into(),
+                length: Some(32)
+            }
+        );
+        assert_eq!(b.description, "");
+        assert!(parse_body(&base, true).is_some());
+        let mut extra = base.clone();
+        extra["description"] = json!("d");
+        assert!(parse_body(&extra, false).is_some());
+        assert!(
+            parse_body(&extra, true).is_none(),
+            "rotate 는 strict — description 없음"
+        );
+        let mut bad = base.clone();
+        bad["expiresInDays"] = json!(366);
+        assert!(parse_body(&bad, false).is_none());
+        let mut bad = base.clone();
+        bad["source"] = json!({"generate": {"type": "rsa"}});
+        assert!(parse_body(&bad, false).is_none());
+        let mut bad = base.clone();
+        bad["source"]["generate"]["length"] = json!(1.5);
+        assert!(parse_body(&bad, false).is_none());
+        let mut bad = base.clone();
+        bad["name"] = json!("Bad");
+        assert!(parse_body(&bad, false).is_none());
+        let mut imp = base.clone();
+        imp["source"] = json!({"import": {"kind": "text", "valueBase64": "aGk="}});
+        assert_eq!(parse_body(&imp, false).unwrap().source, Source::Import);
+        imp["source"] = json!({"import": {"kind": "file", "valueBase64": "aGk="}});
+        assert!(
+            parse_body(&imp, false).is_none(),
+            "file 은 filename 이 있어야"
+        );
+        imp["source"] = json!({"import": {"kind": "text", "filename": "a", "valueBase64": "aGk="}});
+        assert!(parse_body(&imp, false).is_none());
+        imp["source"] = json!({"import": {"kind": "text", "valueBase64": "a-b"}});
+        assert!(parse_body(&imp, false).is_none());
+        imp["source"] = json!({"import": {"kind": "text", "valueBase64": "a==="}});
+        assert!(parse_body(&imp, false).is_none());
     }
 
     #[test]
