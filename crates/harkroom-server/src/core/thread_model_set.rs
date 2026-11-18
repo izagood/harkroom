@@ -486,7 +486,10 @@ async fn announce(
         Outcome::Posted { .. } => {}
         Outcome::ToTs => eprintln!("[threadModelSet] system line not posted: to_ts"),
         Outcome::BadThread => eprintln!("[threadModelSet] system line not posted: bad_thread"),
-        Outcome::BadAttachment | Outcome::ChainLimit | Outcome::Replayed(_) => {
+        Outcome::BadAttachment
+        | Outcome::ChainLimit
+        | Outcome::Rejected(_)
+        | Outcome::Replayed(_) => {
             eprintln!("[threadModelSet] system line not posted")
         }
     }

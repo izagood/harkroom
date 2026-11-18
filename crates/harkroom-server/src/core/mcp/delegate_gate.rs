@@ -329,6 +329,7 @@ async fn write(
         progress: false,
         wake: false,
         no_mentions: false,
+        before_commit: None,
     };
     let post = PostBody {
         body: a.body.clone(),
@@ -350,7 +351,7 @@ async fn write(
     .await
     .ok()?;
     match out {
-        Outcome::ToTs | Outcome::Replayed(_) => None,
+        Outcome::ToTs | Outcome::Replayed(_) | Outcome::Rejected(_) => None,
         Outcome::ChainLimit => Some(err(
             "chain_limit",
             "이 사슬은 에이전트끼리의 호출 상한에 닿았다 — 사람에게 넘겨라",

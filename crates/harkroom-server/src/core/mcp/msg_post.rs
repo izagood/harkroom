@@ -730,6 +730,7 @@ async fn post(
         progress: kind == Kind::Progress,
         wake: false,
         no_mentions: false,
+        before_commit: None,
     };
     let out = msg_post::post_in_tx(
         st,
@@ -746,6 +747,8 @@ async fn post(
     .ok()?;
     match out {
         Outcome::ToTs | Outcome::Replayed(_) | Outcome::ChainLimit => None,
+        // TS `failure === 'rejected'` — `{ error: { code, message } }`.
+        Outcome::Rejected(r) => Some(err(&r.code, &r.message)),
         Outcome::BadThread => Some(err("bad_thread", BAD_THREAD)),
         Outcome::BadAttachment => Some(err(
             "bad_attachment",
