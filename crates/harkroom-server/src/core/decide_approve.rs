@@ -218,6 +218,12 @@ pub enum ApproveError {
 }
 
 /// TS `not_once` 문구(골든).
+/// TS `decidePermissionRequest` 의 `bad_decision` 문구(골든).
+pub const BAD_DECISION_COMMAND_MANDATE: &str =
+    "an exact-command request is approved once (or for an hour) — not for a mandate";
+pub const BAD_DECISION_TURN: &str =
+    "only a tool request on a mandate thread can be approved for one turn";
+pub const BAD_DECISION_HOUR: &str = "once/hour is only for an exact-command request";
 pub const NOT_ONCE_MESSAGE: &str = "only a card raised from a merge refusal can approve one merge";
 
 fn refused(status: u16, code: &'static str, message: impl Into<String>) -> ApproveOutcome {
@@ -357,6 +363,25 @@ pub async fn approve_write(
     // TS `decidePermissionRequest`: command 가 아닌 카드의 `approve_once` 는 머지 거절 카드 + once 일 때만 — 그 밖은 쓰기 없이 409.
     if decision == Decision::ApproveOnce && locked.kind != "command" {
         return Ok(refused(409, "not_once", NOT_ONCE_MESSAGE));
+    }
+    // S5.4 11d — TS 와 같은 차례의 쓰기 없는 409 `bad_decision` 셋(소유자 승인만 여기 온다 — 위임장 줄 지우기 갈래 없음).
+    if locked.kind == "command"
+        && matches!(
+            decision,
+            Decision::ApproveMandate | Decision::ApproveNewMandate
+        )
+    {
+        return Ok(refused(409, "bad_decision", BAD_DECISION_COMMAND_MANDATE));
+    }
+    if decision == Decision::ApproveTurn
+        && (locked.kind != "tool"
+            || locked.mandate_id.is_none()
+            || locked.card_message_id.is_none())
+    {
+        return Ok(refused(409, "bad_decision", BAD_DECISION_TURN));
+    }
+    if decision == Decision::ApproveHour && locked.kind != "command" {
+        return Ok(refused(409, "bad_decision", BAD_DECISION_HOUR));
     }
     let (target, channel_id, thread_root_id): (String, Option<String>, Option<String>) =
         sqlx::query_as(READ_LOCKED_TARGET)

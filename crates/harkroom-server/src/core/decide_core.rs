@@ -574,6 +574,11 @@ pub fn rust_takes(s: Shape<'_>) -> Option<Decision> {
         (Decision::ApproveOnce | Decision::ApproveHour, "command") => !s.has_denial,
         // S5.4 — tool 카드의 [이번 한 번](once 없음·거절 기록 없음)은 TS 가 쓰기 없이 409 `not_once` 로 돌려보낸다 — Rust 가 같은 답을 한다.
         (Decision::ApproveOnce, "tool") => !s.has_denial,
+        // S5.4 11d — TS 가 쓰기 없이 409 `bad_decision` 으로 돌려보내는 꼴(위임장 없는 tool [이번 턴만], command 의 [이번 턴만]·
+        // 위임장 승인, tool 의 [1시간])도 Rust 가 같은 답을 한다(쓰기 없음).
+        (Decision::ApproveTurn, "tool" | "command")
+        | (Decision::ApproveMandate | Decision::ApproveNewMandate, "command")
+        | (Decision::ApproveHour, "tool") => !s.has_denial,
         _ => false,
     };
     ok.then_some(d)
