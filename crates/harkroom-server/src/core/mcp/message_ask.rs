@@ -5,7 +5,7 @@
 //! 평범한 카드(사람 앞·원인 헤더 없음, 스레드 안팎)는 글 올리기 풀로 세운다 — 대신하기(`supersedes`)는 새 카드를 세운 뒤
 //! 옛 카드를 닫고, 계획 단계(`planStepId`)는 세운 뒤 그 단계에 카드를 잇는다(묶음에 담긴 옛 카드·계획·단계 없음은 TS). 머지 거절 카드(`mergeDenialId`)는 거절 기록
 //! 검사(`prepareDenialCard` 거절)와 같은 거절 기록의 기다리는 카드(`pending`)까지 읽기 풀로 답하고, 첫 부름(새 요청 줄·카드·잇기·푸시)도 세운다(위임 있는 턴·재생은 TS).
-//! 거울·사람 앞 푸시는 아직 TS 몫이다. 인자가 zod 를 못 지나거나 DB 오류여도 `None`.
+//! `to` 로 정한 받는 사람(사람이면 글 뒤 `enqueueAskPush`)도 세운다. 거울(`mirrorOf`)·원인 기반 사람 앞 푸시는 아직 TS 몫이다. 인자가 zod 를 못 지나거나 DB 오류여도 `None`.
 use super::tools::err;
 use crate::auth::Account;
 use crate::core::ask::{ASK_MAX_OPTIONS, ASK_MIN_OPTIONS, ASK_TEXT_OPTION_ID};
@@ -339,10 +339,10 @@ fn addressed(o: &Map<String, Value>) -> bool {
 /// `to` 대상 찾기에 종류까지 — 사람이면 TS `enqueueAskPush` 가 `push_job` 을 넣을 수 있다.
 const TO_KIND_SQL: &str = "select id::text, kind::text from account where lower(handle) = $1";
 
-/// 찾은 대상의 TS `AskAudience` — `{kind:'account', accountId}`. 사람이면 `None`(→ TS): 그 카드는 `enqueueAskPush` 로 푸시 job 을
-/// 넣을 수 있고, 그 쓰기는 아직 TS 몫이다. 에이전트면 그 문장의 `kind = 'human'` 조건 때문에 아무것도 넣지 않으니 Rust 가 세운다.
-fn account_audience((id, kind): (String, String)) -> Option<Value> {
-    (kind != "human").then(|| serde_json::json!({ "kind": "account", "accountId": id }))
+/// 찾은 대상의 TS `AskAudience` — `{kind:'account', accountId}`. 사람이든 에이전트든 세우고, 글 뒤 `enqueueAskPush` 는
+/// [`super::msg_post::answer_ask`] 가 한다(에이전트면 그 문장의 `kind = 'human'` 조건 때문에 아무것도 넣지 않는다).
+fn account_audience((id, _kind): (String, String)) -> Option<Value> {
+    Some(serde_json::json!({ "kind": "account", "accountId": id }))
 }
 
 /// Rust 가 세우는 카드 — 사람 앞(`to` 없음), 거울·머지 거절·supersedes·계획 단계 없음, 원인 헤더 없음(TS 의 사람 앞 푸시
@@ -447,6 +447,7 @@ pub async fn answer_plain(
         .await;
     }
     let st = st?;
+    let mut push_to: Option<String> = None;
     let audience = match o.get("to").and_then(Value::as_str) {
         Some(to) => {
             if !addressed(o) {
@@ -457,7 +458,21 @@ pub async fn answer_plain(
                 .fetch_optional(read)
                 .await
                 .ok()?;
-            account_audience(row?)?
+            let row = row?;
+            // 글 뒤 푸시 job 쓰기 칸이 없으면 TS.
+            if !crate::write::missing_in(
+                &st.write,
+                crate::core::permission_card::LINK_PUSH_PRIVILEGES,
+                &[],
+            )
+            .await
+            .ok()?
+            .is_empty()
+            {
+                return None;
+            }
+            push_to = Some(row.0.clone());
+            account_audience(row)?
         }
         None if plain(o, cause) => serde_json::json!({ "kind": "human" }),
         None => return None,
@@ -489,6 +504,7 @@ pub async fn answer_plain(
         operator,
         &olds,
         plan_step,
+        push_to.as_deref(),
     )
     .await
 }
@@ -1099,8 +1115,11 @@ mod tests {
     }
 
     #[test]
-    fn addressed_card_only_for_agents() {
-        assert_eq!(account_audience((C.into(), "human".into())), None);
+    fn addressed_card_for_humans_and_agents() {
+        assert_eq!(
+            account_audience((C.into(), "human".into())),
+            Some(json!({ "kind": "account", "accountId": C }))
+        );
         assert_eq!(
             account_audience((C.into(), "agent".into())),
             Some(json!({ "kind": "account", "accountId": C }))

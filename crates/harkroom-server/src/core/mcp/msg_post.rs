@@ -600,6 +600,7 @@ pub(super) async fn answer_ask(
     operator: bool,
     supersedes: &[&str],
     plan_step: Option<&str>,
+    push_to: Option<&str>,
 ) -> Option<String> {
     let a = parse(sub)?;
     post_with(
@@ -616,6 +617,7 @@ pub(super) async fn answer_ask(
         None,
         supersedes,
         plan_step,
+        push_to,
     )
     .await
 }
@@ -835,6 +837,7 @@ async fn post(
         artifact,
         &[],
         None,
+        None,
     )
     .await
 }
@@ -856,6 +859,7 @@ async fn post_with(
     artifact: Option<&super::artifact_write::NewArtifact>,
     supersedes: &[&str],
     plan_step: Option<&str>,
+    push_to: Option<&str>,
 ) -> Option<String> {
     match channel_visible(&st.read, &me.id, &a.channel).await {
         Ok(true) => {}
@@ -922,6 +926,17 @@ async fn post_with(
             if let Some(new_id) = new_id {
                 for old in supersedes {
                     super::message_ask::supersede_ask(&st.write, old, &new_id, &me.id).await;
+                }
+                // TS: 이름으로 정한 받는 사람이 이 글로 inbox 를 받지 않았으면 `enqueueAskPush`(에이전트면 문장이 아무것도 넣지 않는다).
+                if let Some(to) = push_to.filter(|t| !notified.iter().any(|n| n == t))
+                    && let Err(e) =
+                        sqlx::query(crate::core::permission_card::enqueue_ask_push_sql())
+                            .bind(to)
+                            .bind(&new_id)
+                            .execute(&st.write)
+                            .await
+                {
+                    eprintln!("message.ask: ask push for {new_id} failed: {e}");
                 }
                 // TS `postedResult(message, notified, { plan: planHookOut(await linkPlanCard(…)) })` — 재생이 아닐 때만(재생은 TS 가 답한다).
                 if let (Some(step), Some(root)) = (plan_step, a.post.thread_root.as_deref()) {
