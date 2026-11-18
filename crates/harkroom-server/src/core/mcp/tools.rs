@@ -45,7 +45,7 @@ pub const SERVED: &[&str] = &[
     "pr.status",
     // [`super::attachment_fetch`] — 거절·텍스트·PDF·작은 그림. 3MiB 넘는 그림 줄이기만 TS.
     "attachment.fetch",
-    // S5.4 — 기다리지 않는 폴([`super::inbox_poll`]). 긴 폴·쓰기는 TS.
+    // S5.4 — 기다리지 않는 폴([`super::inbox_poll`]). 긴 폴·`version` 은 `writes::answer` 가 허브·쓰기 풀이 있을 때만, 임대는 TS.
     "inbox.poll",
 ];
 
@@ -127,7 +127,7 @@ fn mention_re() -> &'static regex::Regex {
 }
 
 /// 맨 겉 객체의 `key` 값이 문자열이면 그 글자 범위(따옴표 포함). 공백 없는 JSON([`minify`] 뒤)만 받는다.
-fn top_string_span(t: &str, key: &str) -> Option<(usize, usize)> {
+pub(super) fn top_string_span(t: &str, key: &str) -> Option<(usize, usize)> {
     let b = t.as_bytes();
     let str_end = |i: usize| -> Option<usize> {
         let mut j = i + 1;
