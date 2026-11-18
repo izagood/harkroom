@@ -281,10 +281,20 @@ impl Expires {
     }
 }
 
-#[derive(Debug)]
 struct ValueFields {
     value: Option<String>,
     value_base64: Option<String>,
+}
+
+/// 값은 로그에 남기지 않는다 — 있었는지만 보인다(`ImportValue` 와 같다).
+impl std::fmt::Debug for ValueFields {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let r = |v: &Option<String>| v.as_ref().map(|_| "<redacted>");
+        f.debug_struct("ValueFields")
+            .field("value", &r(&self.value))
+            .field("value_base64", &r(&self.value_base64))
+            .finish()
+    }
 }
 
 fn value_fields(o: &Map<String, Value>) -> Result<ValueFields, ()> {
@@ -791,6 +801,17 @@ pub fn routes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn value_fields_debug_redacts() {
+        let v = ValueFields {
+            value: Some("hunter2-secret".into()),
+            value_base64: None,
+        };
+        let d = format!("{v:?}");
+        assert!(!d.contains("hunter2"), "{d}");
+        assert!(d.contains("<redacted>"), "{d}");
+    }
 
     #[test]
     fn name_and_filename_match_ts() {

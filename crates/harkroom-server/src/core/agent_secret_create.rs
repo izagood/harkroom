@@ -362,7 +362,7 @@ pub fn node_base64_decode(b64: &str) -> Option<zeroize::Zeroizing<Vec<u8>>> {
 }
 
 /// TS `agentCreateBody`·`agentRotateBody`(zod strict) + `toSource` 를 지난 본문. 실패는 400 `badCreate`.
-#[derive(Debug, PartialEq)]
+#[derive(PartialEq)]
 pub struct AgentBody {
     pub lease_id: String,
     pub token: String,
@@ -370,6 +370,20 @@ pub struct AgentBody {
     pub description: String,
     pub expires_in_days: Option<i64>,
     pub source: Source,
+}
+
+/// 리스 토큰은 로그에 남기지 않는다(값은 `ImportValue` 가 이미 가린다).
+impl std::fmt::Debug for AgentBody {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AgentBody")
+            .field("lease_id", &self.lease_id)
+            .field("token", &"<redacted>")
+            .field("name", &self.name)
+            .field("description", &self.description)
+            .field("expires_in_days", &self.expires_in_days)
+            .field("source", &self.source)
+            .finish()
+    }
 }
 
 /// TS `badCreate` 문구.
@@ -1661,6 +1675,24 @@ pub fn routes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_body_debug_redacts_token() {
+        let b = AgentBody {
+            lease_id: "lease-1".into(),
+            token: "tok-supersecret".into(),
+            name: "n".into(),
+            description: String::new(),
+            expires_in_days: None,
+            source: Source::Generate {
+                kind: "password".into(),
+                length: None,
+            },
+        };
+        let d = format!("{b:?}");
+        assert!(!d.contains("supersecret"), "{d}");
+        assert!(d.contains("lease-1"), "{d}");
+    }
 
     const AGENT: &str = "a";
     const OWNER: &str = "o";
