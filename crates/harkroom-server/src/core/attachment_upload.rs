@@ -8,7 +8,9 @@
 //! - 내용 판별·허용 목록·미리보기 생성은 TS 에도 없다. 타입은 파트의 `Content-Type` 그대로(busboy 처럼 매개변수를 떼고
 //!   소문자 `type/subtype`, 없으면 busboy 기본 `text/plain`) — 믿지 않고 저장만 하며 내려줄 때 무력화한다.
 //! - **TS 로 넘기는 요청**(본문을 읽기 전에 판정, 그대로 `proxy::forward`):
-//!   - 에이전트의 업로드 — TS 는 비밀 값 유출 검사(`leakGuard.findInBytes`)와 거절 기록을 한다. 그 DB 읽기·기록은 아직 Rust 에 없다.
+//!   - 에이전트의 업로드인데 [`super::leak_guard`] 를 켤 수 없을 때(권한·키 env) — TS 가 비밀 값 유출 검사를 한다.
+//! - 에이전트의 업로드는 저장한 바이트를 다시 읽어 grant 받은 비밀 값이 들어 있으면 파일을 지우고 거절을 기록한 뒤
+//!   400 `secret_in_body`(TS `leakGuard.findInBytes`·`record`, surface `upload`). 키링이 꺼져 있으면 TS 처럼 보지 않는다.
 //!   - `multipart/` 가 아니거나 boundary 가 없는 요청 — TS(@fastify/multipart)의 오류 응답을 그대로 받게 한다.
 //! - 저장소(`ATTACHMENT_ROOT`)가 없거나 [`UPLOAD_PRIVILEGES`](쓰기 풀)가 모자라면 `main.rs` 가 이 줄을 붙이지 않는다 — TS.
 use super::attachment_store::{LocalStorage, WriteError};
@@ -52,6 +54,8 @@ pub struct UploadState {
     /// 주소 단위 상한 `upload:{ip}`([`crate::rate_limit::UPLOAD`]) — 다른 주소 단위 줄과 같은 리미터를 나눠 쓴다.
     pub limiter: Arc<crate::rate_limit::RateLimiter>,
     pub trust: Arc<crate::trust_proxy::TrustProxy>,
+    /// 에이전트 업로드의 비밀 값 검사. `None` 이면 에이전트 업로드는 TS 로 넘긴다.
+    pub leak: Option<Arc<super::leak_guard::LeakGuard>>,
 }
 
 /// `ATTACHMENT_MAX_BYTES` — 없으면 기본값. 음이 아닌 정수가 아니면 `None`(TS `Number(...)` 의 NaN·소수 갈래는 옮기지 않는다 → TS).
@@ -159,12 +163,12 @@ pub async fn upload(
     if !verdict.allowed {
         return crate::rate_limit::too_many(verdict, false);
     }
-    let me = match RequireAccount::from_request_parts(&mut parts, &()).await {
-        Ok(RequireAccount(me, _)) => me,
+    let (me, operator_id) = match RequireAccount::from_request_parts(&mut parts, &()).await {
+        Ok(RequireAccount(me, auth)) => (me, auth.operator.map(|o| o.id)),
         Err(r) => return r,
     };
     let req = Request::from_parts(parts, body);
-    if me.kind == "agent" || !is_multipart_with_boundary(&req) {
+    if (me.kind == "agent" && st.leak.is_none()) || !is_multipart_with_boundary(&req) {
         return crate::proxy::forward(State(st.up.clone()), ConnectInfo(peer), req).await;
     }
     let mut mp = match Multipart::from_request(req, &()).await {
@@ -246,6 +250,46 @@ pub async fn upload(
         }
     };
 
+    // 에이전트가 올린 파일에 grant 받은 비밀 값이 들어 있으면 거절한다(TS D5) — 저장한 바이트를 다시 읽어 본다.
+    if me.kind == "agent"
+        && let Some(guard) = st.leak.as_ref().filter(|g| g.is_on())
+    {
+        let bytes = match read_stored(&st.storage, &stored.key).await {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("upload: storage read failed ({e})");
+                return internal_plain();
+            }
+        };
+        let hits = match guard.find_in_bytes(&me.id, &bytes).await {
+            Ok(h) => h,
+            Err(e) => {
+                let _ = st.storage.remove(&stored.key).await;
+                return internal(e);
+            }
+        };
+        drop(bytes);
+        if !hits.is_empty() {
+            // 지우기가 실패하면 값이 든 파일이 남는다 — key 만 남겨 사람이 치우게 한다(TS security N2).
+            if let Err(e) = st.storage.remove(&stored.key).await {
+                eprintln!(
+                    "secret leak upload: could not remove stored file {} ({e})",
+                    stored.key
+                );
+            }
+            let who = super::leak_guard::LeakActor {
+                agent_id: &me.id,
+                agent_handle: &me.handle,
+                operator_id: operator_id.as_deref(),
+                ip: Some(ip.as_str()).filter(|s| !s.is_empty()),
+            };
+            if let Err(e) = guard.record(&who, &hits, "upload").await {
+                return internal(e);
+            }
+            return super::leak_guard::secret_in_body();
+        }
+    }
+
     let row: Result<(String, String, String, i32), sqlx::Error> = sqlx::query_as(INSERT_SQL)
         .bind(&me.id)
         .bind(display_name(&filename))
@@ -270,6 +314,20 @@ pub async fn upload(
             internal(e)
         }
     }
+}
+
+/// 저장한 파일을 통째로 읽는다(크기는 이미 `max_bytes` 로 묶였다).
+async fn read_stored(storage: &LocalStorage, key: &str) -> Result<Vec<u8>, String> {
+    let f = storage.read(key).await.map_err(|e| format!("{e}"))?;
+    tokio::task::spawn_blocking(move || {
+        use std::io::Read as _;
+        let mut f = f;
+        let mut v = Vec::new();
+        f.read_to_end(&mut v).map(|_| v)
+    })
+    .await
+    .map_err(|e| format!("{e}"))?
+    .map_err(|e| format!("{e}"))
 }
 
 pub fn routes(
@@ -375,6 +433,7 @@ mod tests {
             up: crate::proxy::Upstream::new("http://127.0.0.1:1"),
             limiter: Arc::new(crate::rate_limit::RateLimiter::default()),
             trust: Arc::new(crate::trust_proxy::TrustProxy::None),
+            leak: None,
         })
     }
 
