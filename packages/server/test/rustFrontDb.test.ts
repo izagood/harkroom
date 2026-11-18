@@ -8847,8 +8847,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['DM 에이전트(주인만) → 게이트 막힘', async () => '', () => ({ body: '봐 줘' }), member.token, undefined, dmBot],
           ['머리 id 가 null → 400', async () => '', () => ({ body: '답', threadRootId: null }), A],
           // 앞단에 `HARKROOM_DELEGATION_V2` 가 없으면 스위치를 모르니 TS 로(아래에서 값을 준 앞단으로 v0·v1 을 견준다).
-          // (S5.4: 글 올리기 경로는 값이 없으면 TS 처럼 꺼짐(v0)으로 읽고 Rust 가 올린다 — `msg_post.rs::post_delegation_v2`.)
-          ['담당 사람 글, 스위치 없음 → 꺼짐(v0)', withDelegation, (r) => ({ body: '작업하는 중', threadRootId: r }), A],
+          ['담당 사람 글, 스위치 모름 → TS 몫', withDelegation, (r) => ({ body: '작업하는 중', threadRootId: r }), A, 'ts'],
           // C1c-4a — 에이전트(PAT) 글. BOT 은 주인만(회신권을 주는 쪽), BOT2 는 누구나.
           ['에이전트 최상위 글(부름 없음)', async () => '', () => ({ body: '보고 드림' }), agent.pat, undefined, freshCh],
           ['에이전트 답글 → 머리 주인 thread_reply · 받은 회신권 닫음', withGrant, (r) => ({ body: '결과다', threadRootId: r }), agent.pat],
@@ -8856,7 +8855,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['에이전트 DM → 상대에게 dm', async () => '', () => ({ body: '알림' }), bot2.pat, undefined, dmBot2],
           ['에이전트 머리 id 가 null → 400', async () => '', () => ({ body: '답', threadRootId: null }), agent.pat],
           // 아직 TS 몫 — 부름은 암묵 위임 스위치를 모르면(C1c-4d), 사슬 안의 글은 정체 홉(C1c-4b).
-          ['에이전트 부름, 위임 스위치 없음 → 꺼짐', async () => '', () => ({ body: '@mem 봐 줘' }), agent.pat, undefined, freshCh],
+          ['에이전트 부름, 암묵 위임 스위치 모름 → TS 몫', async () => '', () => ({ body: '@mem 봐 줘' }), agent.pat, 'ts', freshCh],
           // C1c-4b — 사슬 안의 에이전트 글: 깊이·정체 홉·사슬 시작(앞 고리 시각)을 TS 와 같게 적는다.
           ['사슬 안 에이전트 답(결과물 없음) → 정체 +1', withChainBy(() => bot2.accountId, 2, 1), (r) => ({ body: '봤다', threadRootId: r }), agent.pat],
           ['사슬 안 에이전트 답(새 sha) → 정체 0', withChainBy(() => bot2.accountId, 2, 3), (r) => ({ body: 'head abc1234 올림', threadRootId: r }), agent.pat],
@@ -9077,7 +9076,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         type D = { deleg: Record<string, unknown>[]; count: string };
         expect((delegOut['1'] as D[])[0]!.deleg).toEqual([{ outcome: null, active: true, pending: true, pending_at: true, pushed: true }]);
         expect((delegOut['0'] as D[])[0]!.deleg).toEqual([{ outcome: null, active: false, pending: false, pending_at: false, pushed: true }]);
-        expect((tsOut as D[]).find((x) => (x as unknown as { name: string }).name === '담당 사람 글, 스위치 없음 → 꺼짐(v0)')!.deleg)
+        expect((tsOut as D[]).find((x) => (x as unknown as { name: string }).name === '담당 사람 글, 스위치 모름 → TS 몫')!.deleg)
           .toEqual([{ outcome: null, active: false, pending: false, pending_at: false, pushed: true }]);
         expect(handedOnRust, 'TS 몫 스레드의 답은 Rust outbox 에 없다').toEqual([]);
         // C1c-4d — 대조가 「둘 다 안 적음」으로 같아지지 않게 TS 쪽 판정을 못 박는다.
@@ -9164,7 +9163,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         for (const mode of ['1', '0']) {
           expect(chainOf(delegOut[mode], '정체 한도 → 그림자 기록'), mode).toEqual({ ...c0, depth: 2, stall: 4, shadow: { wouldCap: ['BOT2'], stallDepth: 4, limit: 4 } });
         }
-        expect(by('에이전트 부름, 위임 스위치 없음 → 꺼짐').inbox).toEqual([{ who: 'MEM', reason: 'mention' }]);
+        expect(by('에이전트 부름, 암묵 위임 스위치 모름 → TS 몫').inbox).toEqual([{ who: 'MEM', reason: 'mention' }]);
         for (const mode of ['1', '0']) {
           const d = delegOut[mode] as unknown[];
           expect(byG(d, '에이전트가 에이전트를 부름 → 회신권 열기').grants, mode).toEqual([{ grantee: 'BOT2', granter: 'BOT', closed: false, ttl: true }]);
@@ -9289,9 +9288,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['없는 머리 → bad_thread', async (ch) => ({ args: { channelId: ch, threadRootId: randomUUID(), body: '답' }, via: viaPat }), true],
           ['남의 업로드 → bad_attachment', async (ch) => ({ args: { channelId: ch, body: '첨부', attachmentIds: [randomUUID()] }, via: viaPat }), true],
           ['공백 본문도 받는다(min 1)', async (ch) => ({ args: { channelId: ch, body: ' ' }, via: viaPat }), true],
-          // S5.4 — 빈 agentModels(3f7e8cb78·39da7054d) · 위임 스위치 없음 = 꺼짐(e46a80212) · ASCII 밖 모델(UTF-16 길이로 센다)은 Rust 가 답한다.
+          // S5.4 — 빈 agentModels(3f7e8cb78·39da7054d) · ASCII 밖 모델(UTF-16 길이로 센다)은 Rust 가 답한다.
           ['agentModels 빈 목록', async (ch) => ({ args: { channelId: ch, body: '지정', agentModels: [] }, via: viaPat }), true],
-          ['부름(위임 스위치 없음 → 꺼짐)', async (ch) => ({ args: { channelId: ch, body: '@mem 봐 줘' }, via: viaPat }), true],
+          // 위임 스위치(env)가 없는 앞단은 암묵 위임 모드를 모른다 — 부름은 Rust 가 답하지 않고 TS 로 넘긴다.
+          ['부름(암묵 위임 모름) → TS', async (ch) => ({ args: { channelId: ch, body: '@mem 봐 줘' }, via: viaPat }), false],
           ['ASCII 밖 모델', async (ch) => ({ args: { channelId: ch, body: '보고', model: '오푸스' }, via: viaPat }), true],
           // C3b-2c-1 — `message.fail`(표지 없는 실패). 표지·차례 주인 재료가 있으면 TS 몫이다(fail-closed).
           ['fail 원인 없음 · what/reason · 옛 account', async (ch) => ({ tool: 'message.fail', args: { channelId: ch, body: '못 했다', retryable: true, what: '빌드', reason: '권한', account: 'old', model: 'claude-opus-5' }, via: viaPat }), true],

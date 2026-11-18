@@ -16,8 +16,8 @@
 //!   신호(`inbox.updated`·`thread.reportWakes.changed`·대기 줄 `message.updated`)는 TS 처럼 `message.created` 앞에 outbox 로.
 //! - **에이전트 글**(C1c-4a): PAT·오퍼레이터로 선 에이전트의 REST 글도 맡는다(원인·턴 id 가 없는 판). 회신권 「결과 한 번」 락
 //!   (`REPLY_LOCK_CLASS`)을 채널 락 앞에 잡고, 부름이 실제로 간 에이전트에게 회신권을 열고(`openReplyGrants`) 답글이면 받은
-//!   회신권을 닫는다(`closeReplyGrants`). 위임 키·깨움 선점·카드 닫기는 TS 와 같이 사람 글에만. 위임 스위치는 env 를
-//!   바로 읽는다(없으면 꺼짐 — TS 와 같다). 암묵 위임은 [`implicit_delegation`] 이 적는다(C1c-4d).
+//!   회신권을 닫는다(`closeReplyGrants`). 위임 키·깨움 선점·카드 닫기는 TS 와 같이 사람 글에만. 아직 TS 로 넘기는 것:
+//!   상한에 막힌 부름(백스톱 카드)과 암묵 위임 스위치를 모르는 부름. 스위치를 알면 암묵 위임은 [`implicit_delegation`] 이 적는다(C1c-4d).
 //! - **사슬 안의 에이전트 글**(C1c-4b): 앞 고리([`chain_link`])에서 깊이·사슬 시작을 잇고, 정체 홉([`super::chain_stall`])을 적고,
 //!   한도를 넘으면 막았을 부름을 `meta.mentionStallShadow` 에 남긴다(그림자 — 부름은 그대로 나간다).
 //! - 순서(TS 와 같다): 본문 읽기(413·400·415) → 인증(401, `route_layer`) → 경로·본문 검사(400) → 쓰기 게이트(403 `forbidden`·
@@ -188,6 +188,12 @@ const TS_THREAD_SQL: &str = "select (not $4::bool and exists(select 1 from team_
                 and deleted_at is null and meta->>'kind' = 'ask' \
                 and meta->'ask'->>'answeredWith' is null and meta->'ask'->>'closedAt' is null))";
 
+/// 결과를 닫는 글([`Origin::closes_delegation`])이 TS `closeDelegationsForReply` 의 닫기 갈래에 닿는가 — 작성자가 담당인 안 닫힌
+/// 항목(`outcome is null`)이 이 스레드에 있다. C3b-2c-2 부터 스위치(v0·v1)를 알면 Rust 가 같은 tx 로 닫는다. **스위치를 모르면**
+/// 어느 갈래로 닫을지 정할 수 없으므로 넓게 TS 로 넘긴다(fail-closed).
+const CLOSES_DELEGATION_SQL: &str = "select exists(select 1 from team_delegation_item i join team_delegation d on d.id = i.delegation_id \
+                where d.thread_root_id = $1::uuid and i.delegate_account_id = $2::uuid and i.outcome is null)";
+
 /// 이 글이 TS `parseAskPick` 에서 **반드시 null** 인가(카드 답이 될 수 없는가) — 넓게 TS 로 보내는 쪽으로만 틀린다.
 /// TS 는 코드·인용 줄·링크·멘션을 걷어 낸 나머지에 `?`·`？` 가 있으면 null(`QUESTION`)이다. 여기서는 걷어 낼 거리(백틱·`>` 인용 줄)가
 /// 하나라도 있으면 거짓으로 두고, 없을 때 본문에 물음표가 있으면 참이다. URL·메시지 링크 글은 이미 [`ts_body`] 로 TS 에 간다.
@@ -214,12 +220,6 @@ pub(crate) fn delegation_v2(raw: Option<&str>) -> Option<bool> {
         return None;
     }
     Some(matches!(v.as_str(), "1" | "on" | "true"))
-}
-
-/// 글 올리기 경로가 보는 위임 스위치 — env 를 바로 읽고 TS `delegationV2Enabled` 와 같이 **없으면 꺼짐(v0)** 이다. 그래서 언제나
-/// `Some` 이고, 스위치를 몰라 TS 로 넘기던 갈래(위임 글·암묵 위임·결과로 닫기·담당 스레드)는 없다.
-fn post_delegation_v2() -> Option<bool> {
-    Some(delegation_v2(std::env::var("HARKROOM_DELEGATION_V2").ok().as_deref()).unwrap_or(false))
 }
 
 fn sql() -> &'static Sql {
@@ -340,7 +340,7 @@ pub(crate) struct Origin<'a> {
     /// 건드리지 않고, 갈래 판정(TS 몫)도 하지 않는다(서버 안쪽 호출이라 넘길 TS 라우트가 없다). 라우트 입력에서는 켜지 않는다.
     pub(crate) server_notice: bool,
     /// 결과를 닫는 글(`meta.kind` 가 `failure`·`report`, C3b-2c). 작성자가 담당인 **안 닫힌** 위임 항목이 이 스레드에 있으면 TS
-    /// `closeDelegationsForReply` 가 그 항목을 닫고 위임자를 깨운다 — Rust 가 같은 tx 로 닫는다(스위치는 [`post_delegation_v2`]).
+    /// `closeDelegationsForReply` 가 그 항목을 닫고 위임자를 깨운다 — 아직 Rust 에 없는 갈래라 [`CLOSES_DELEGATION_SQL`] 로 TS 에 넘긴다.
     pub(crate) closes_delegation: bool,
     /// MCP `message.delegate`(C3b-2c-4b) — 게이트를 지난 위임. 있으면 같은 tx 에서 사슬 상한(TS `delegationChainCapped`)을 보고
     /// 의무를 만든다(TS `createDelegation`, [`delegate_write`]). 위임 스위치를 모르면 TS 로 넘긴다.
@@ -774,7 +774,12 @@ pub(crate) async fn post_tx(
             .execute(&mut *tx)
             .await?;
     }
-    let v2 = post_delegation_v2();
+    let v2 = delegation_v2(std::env::var("HARKROOM_DELEGATION_V2").ok().as_deref());
+    // 위임 글(C3b-2c-4b)은 v1 이면 앞 의무를 대체한다 — 스위치를 모르면 어느 쪽인지 정할 수 없으니 TS 로 넘긴다(fail-closed).
+    if origin.delegation.is_some() && v2.is_none() {
+        tx.rollback().await?;
+        return Ok((Outcome::ToTs, None));
+    }
     // TS `mentionDepthFor` — 사람 글은 언제나 사슬 밖이다. 원인이 있으면 먼저 그 원인에서 물려받고(C1c-4c), 원인이 나를 깨운
     // 것이 아니면 스레드 스캔으로 간다.
     let from_cause = match (author_is_agent, origin.cause) {
@@ -876,7 +881,8 @@ pub(crate) async fn post_tx(
         && !origin.system
         && !calls.called_ids.is_empty()
         && match implicit {
-            None | Some(implicit_delegation::Mode::Off) => false,
+            None => true,
+            Some(implicit_delegation::Mode::Off) => false,
             Some(_) => !st.implicit_ok,
         }
     {
@@ -899,6 +905,17 @@ pub(crate) async fn post_tx(
             .fetch_one(&mut *tx)
             .await?;
         if ts {
+            tx.rollback().await?;
+            return Ok((Outcome::ToTs, None));
+        }
+    }
+    if let (true, Some(r)) = (origin.closes_delegation && is_result && v2.is_none(), root) {
+        let closes: bool = sqlx::query_scalar(CLOSES_DELEGATION_SQL)
+            .bind(r)
+            .bind(author)
+            .fetch_one(&mut *tx)
+            .await?;
+        if closes {
             tx.rollback().await?;
             return Ok((Outcome::ToTs, None));
         }
