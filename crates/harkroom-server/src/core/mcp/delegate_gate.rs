@@ -219,8 +219,7 @@ pub async fn answer(
         .map(|(t, h, id, off)| (t, h.to_lowercase(), id, off))
         .collect();
     let (team_id, members) = match lead_team_pick(&rows, &wanted) {
-        // 팀장이 사람인 팀 명단 갈래는 TS 몫이다.
-        LeadPick::One(..) if me.kind != "agent" => return None,
+        // S5.4-15c: 팀장이 사람이어도 팀 명단 갈래는 여기서 — 글은 사람 글(`author_is_agent` 거짓)이라 위임 키를 잇는다.
         LeadPick::One(t, m) => (Some(t), m),
         LeadPick::NoTeam => {
             if me.kind != "agent" {
@@ -445,7 +444,8 @@ async fn write(
         wake: false,
         no_mentions: false,
         before_commit: hook.as_ref().map(|h| h as &dyn msg_post::BeforeCommit),
-        service_call: false,
+        // TS 도구는 서비스 `postMessage` 를 바로 부른다 — 라우트 몫(카드 고르기·`closeAsksByReply`)이 없다. 사람 팀장만 닿는 갈래다.
+        service_call: me.kind != "agent",
     };
     let post = PostBody {
         body: a.body.clone(),
@@ -475,8 +475,26 @@ async fn write(
         // 아무것도 쓰지 않았다 — 그 오류 글자는 TS 가 낸다.
         Outcome::BadThread | Outcome::BadAttachment => None,
         Outcome::Posted {
-            row, delegation_id, ..
+            row,
+            delegation_id,
+            mandate,
+            ..
         } => {
+            // 사람 팀장 글이 새로 세운 위임 — 커밋 뒤 감사(TS `postMessage` 끝의 `auditMandateCreated`).
+            if let Some(c) = &mandate {
+                crate::write::record_audit(
+                    &st.write,
+                    crate::write::AuditEntry {
+                        action: "mandate.created",
+                        actor_id: Some(c.actor_id()),
+                        actor_handle: None,
+                        target: Some(&c.mandate_id),
+                        ip: None,
+                        detail: c.audit_detail(),
+                    },
+                )
+                .await;
+            }
             // TS: 지정 행은 게시 tx 에서 이미 커밋됐다 — 시스템 줄(`byKind: 'agent'`)·이벤트는 커밋 뒤.
             if let Some((root, changes)) = hook.as_ref().and_then(|h| h.changes()) {
                 for (agent, axes) in &changes {
