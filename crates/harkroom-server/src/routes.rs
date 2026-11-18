@@ -255,6 +255,16 @@ pub const MOVED_WRITE: &[Moved] = &[
         path: "/skills/{slug}",
         route: || axum::routing::delete(crate::writes_settings::disable_skill),
     },
+    Moved {
+        key: "PUT /mcp-servers/{name}",
+        path: "/mcp-servers/{name}",
+        route: || axum::routing::put(crate::writes_settings::put_mcp_server),
+    },
+    Moved {
+        key: "DELETE /mcp-servers/{name}",
+        path: "/mcp-servers/{name}",
+        route: || axum::routing::delete(crate::writes_settings::delete_mcp_server),
+    },
     // P4b 팀·집합(`writes_teams.rs`·`writes_groups.rs`). 채널에 팀 넣기는 S5.3.
     Moved {
         key: "POST /teams",
