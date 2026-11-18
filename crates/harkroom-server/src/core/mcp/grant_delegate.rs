@@ -124,13 +124,13 @@ struct Args {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct Limits {
-    methods: Vec<String>,
-    path_prefix: String,
+pub(crate) struct Limits {
+    pub(crate) methods: Vec<String>,
+    pub(crate) path_prefix: String,
 }
 
 /// DB 의 limits(jsonb 글). 모양이 다르면 TS 에 맡긴다(`None`).
-fn limits_of(text: Option<&str>) -> Option<Option<Limits>> {
+pub(crate) fn limits_of(text: Option<&str>) -> Option<Option<Limits>> {
     let Some(text) = text else {
         return Some(None);
     };
@@ -167,7 +167,7 @@ fn connector_ok(s: &str) -> bool {
 }
 
 /// TS `safePath` 중 `%` 가 없는 ASCII 경로만 — 그 밖(`%`·ASCII 밖 글자)은 `None` 으로 TS 에 맡긴다.
-fn safe_path_plain(path: &str) -> Option<bool> {
+pub(crate) fn safe_path_plain(path: &str) -> Option<bool> {
     if !path.is_ascii() || path.contains('%') {
         return None;
     }
@@ -189,7 +189,7 @@ fn safe_path_plain(path: &str) -> Option<bool> {
 }
 
 /// TS `pathCovered` 중 `%` 없는 경로(호출하는 쪽이 보장한다).
-fn path_covered_plain(path: &str, prefix: &str) -> bool {
+pub(crate) fn path_covered_plain(path: &str, prefix: &str) -> bool {
     let p = path.split('?').next().unwrap_or("");
     if prefix.ends_with('/') {
         return p.starts_with(prefix);
@@ -198,7 +198,7 @@ fn path_covered_plain(path: &str, prefix: &str) -> bool {
 }
 
 /// `new URL(path, base)` 가 경로를 그대로 두는 글자들인가(WHATWG path percent-encode set·`?`·`#` 없음, 인쇄 가능한 ASCII).
-fn wire_is_identity(path: &str) -> bool {
+pub(crate) fn wire_is_identity(path: &str) -> bool {
     path.bytes().all(|c| {
         (0x21..0x7f).contains(&c)
             && !matches!(c, b'"' | b'<' | b'>' | b'`' | b'{' | b'}' | b'?' | b'#')
@@ -297,6 +297,27 @@ async fn live_chain(
     if !wire_is_identity(path) {
         return None;
     }
+    let root = match chain_root(read, conn.1.as_ref(), scope, leaf_id).await? {
+        Ok(r) => r,
+        Err(c) => return Some(Err(c)),
+    };
+    if !conn.5.contains(method) {
+        return Some(Err("method_not_allowed"));
+    }
+    if conn.3 != "none" && !conn.4 {
+        return Some(Err("no_secret"));
+    }
+    Some(Ok(root))
+}
+
+/// `apiGrantFor` 의 사슬 판정(사슬 모양·이웃 줄·주인·만료·정지). `Some(Ok(root 준 사람))` 통과 · `Some(Err(code))` 거절 ·
+/// `None` 은 TS 몫(모양이 낯설거나 DB 오류). `owner` 는 연결 주인.
+pub(crate) async fn chain_root(
+    read: &PgPool,
+    owner: Option<&String>,
+    scope: &str,
+    leaf_id: &str,
+) -> Option<Result<String, &'static str>> {
     let chain: Vec<ChainRow> = sqlx::query_as(CHAIN_SQL)
         .bind(leaf_id)
         .fetch_all(read)
@@ -309,7 +330,7 @@ async fn live_chain(
     if chain.iter().any(|g| g.2 != "api.call" || g.3 != scope) {
         return Some(Err("chain_broken"));
     }
-    if root.5.as_deref() != Some("human") || Some(&root.4) != conn.1.as_ref() {
+    if root.5.as_deref() != Some("human") || Some(&root.4) != owner {
         return Some(Err("chain_broken"));
     }
     for w in chain.windows(2) {
@@ -353,12 +374,6 @@ async fn live_chain(
     }
     if chain.iter().any(|g| g.7) {
         return Some(Err("suspended"));
-    }
-    if !conn.5.contains(method) {
-        return Some(Err("method_not_allowed"));
-    }
-    if conn.3 != "none" && !conn.4 {
-        return Some(Err("no_secret"));
     }
     Some(Ok(root.4.clone()))
 }

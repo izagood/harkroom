@@ -4,7 +4,9 @@
 //! 모양이 맞는 요청은 전부 TS 로 넘긴다 — 임대·연결·`apiGrantFor`(사슬·limits·경로)·쓰기 사람 원인·비밀 열기(`secret_access_log`)·
 //! 막힘 카드(`recordBlocked`)·감사·409 `secret_key_mismatch` 는 아직 TS 몫이다.
 //! 쓰기 풀에 [`API_CHECKS_DENY_PRIVILEGES`] 가 다 있으면 임대 거절(403 `lease_invalid` — 막힘 카드가 없는 갈래)과 그
-//! `api.call.denied` 감사는 Rust 가 답한다. 임대가 통과한 요청은 전부 TS 로 넘긴다(임대를 읽기만 했다).
+//! `api.call.denied` 감사는 Rust 가 답한다. [`API_CHECKS_ALLOW_PRIVILEGES`] 까지 있으면 임대가 통과한 본체 중
+//! `authKind = none` 연결의 허락(`api.call.checked`)과 막힘 카드가 없는 거절(`bad_path`·`chain_broken`)도 Rust 가 답한다.
+//! 카드가 서는 거절·비밀을 여는 연결·`%`/질의가 든 경로는 TS 로 넘긴다.
 use super::api_results::connector_ok;
 use super::grant_reads::through_operator;
 use super::merge_approval_peek::str_len_ok;
@@ -80,10 +82,34 @@ pub const API_CHECKS_DENY_PRIVILEGES: &[(&str, &str)] = &[
     ("audit_log", "INSERT"),
 ];
 
+/// 임대가 유효한 본체(허락·카드 없는 거절)를 Rust 가 답할 때 더 있어야 하는 권한 — 연결 행, `apiGrantFor` 의 잎·사슬 쿼리,
+/// 쓰기 원인 칸, `api.call.checked` 감사(`audit_log` INSERT 는 거절 쪽에 있다).
+pub const API_CHECKS_ALLOW_PRIVILEGES: &[(&str, &str)] = &[
+    ("api_connector.owner_account_id", "SELECT"),
+    ("api_connector.base_url", "SELECT"),
+    ("api_connector.auth_kind", "SELECT"),
+    ("api_connector.auth_header", "SELECT"),
+    ("api_connector.secret_id", "SELECT"),
+    ("api_connector.methods", "SELECT"),
+    ("account_grant.id", "SELECT"),
+    ("account_grant.account_id", "SELECT"),
+    ("account_grant.capability", "SELECT"),
+    ("account_grant.scope", "SELECT"),
+    ("account_grant.parent_grant_id", "SELECT"),
+    ("account_grant.granted_by", "SELECT"),
+    ("account_grant.expires_at", "SELECT"),
+    ("account_grant.suspended_at", "SELECT"),
+    ("account_grant.limits", "SELECT"),
+    ("account_grant.delegate_depth", "SELECT"),
+    ("account_grant.write_needs_human_cause", "SELECT"),
+];
+
 pub struct ChecksState {
     pub up: Upstream,
     /// 임대 거절 경로 — 쓰기 풀에 [`API_CHECKS_DENY_PRIVILEGES`] 가 다 있을 때만.
     pub deny: Option<sqlx::PgPool>,
+    /// 임대가 유효한 본체 — 거기에 [`API_CHECKS_ALLOW_PRIVILEGES`] 까지 다 있을 때만.
+    pub allow: bool,
 }
 
 /// TS `leaseOk`.
@@ -104,9 +130,184 @@ pub fn audit_path(path: &str) -> Option<String> {
     String::from_utf16(&u[..300]).ok()
 }
 
-/// TS `deny('lease_invalid')` 의 `api.call.denied` 감사 `detail`.
-pub fn denied_detail(code: &str, method: &str, path: &str, operator: &str) -> Value {
-    json!({ "code": code, "method": method, "path": path, "operatorId": operator, "leaseId": null })
+/// TS `deny(code)` 의 `api.call.denied` 감사 `detail` — `leaseId` 는 임대가 통과했을 때만.
+pub fn denied_detail(
+    code: &str,
+    method: &str,
+    path: &str,
+    operator: &str,
+    lease: Option<&str>,
+) -> Value {
+    json!({ "code": code, "method": method, "path": path, "operatorId": operator, "leaseId": lease })
+}
+
+/// TS `api.call.checked` 감사 `detail`.
+pub fn checked_detail(
+    method: &str,
+    path: &str,
+    operator: &str,
+    lease: &str,
+    grant: &str,
+    root: &str,
+    by_human: bool,
+) -> Value {
+    json!({ "method": method, "path": path, "operatorId": operator, "leaseId": lease, "grantId": grant, "rootGrantedBy": root, "causeByHuman": by_human })
+}
+
+/// TS 라우트의 거절 상태 — Rust 가 답하는 코드만.
+pub fn deny_status(code: &str) -> StatusCode {
+    match code {
+        "bad_path" => StatusCode::BAD_REQUEST,
+        "no_connector" => StatusCode::NOT_FOUND,
+        "operator_update_required" => StatusCode::CONFLICT,
+        _ => StatusCode::FORBIDDEN,
+    }
+}
+
+fn no_store(mut r: Response) -> Response {
+    r.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    r
+}
+
+async fn deny(
+    pool: &sqlx::PgPool,
+    agent: &str,
+    target: &str,
+    detail: Value,
+    code: &str,
+) -> Response {
+    crate::write::record_audit(
+        pool,
+        crate::write::AuditEntry {
+            action: "api.call.denied",
+            actor_id: Some(agent),
+            actor_handle: None,
+            target: Some(target),
+            ip: None,
+            detail,
+        },
+    )
+    .await;
+    no_store(json_err(
+        deny_status(code),
+        code,
+        &format!("api call not allowed: {code}"),
+    ))
+}
+
+type ConnRow = (
+    String,
+    Option<String>,
+    String,
+    String,
+    String,
+    Option<String>,
+    bool,
+    Vec<String>,
+);
+const CONN_SQL: &str = "select id::text, owner_account_id::text, name, base_url, auth_kind, auth_header, \
+     (secret_id is not null), methods from api_connector where name = $1";
+const LEAF_SQL: &str = "select id::text, limits::text, write_needs_human_cause from account_grant \
+     where account_id = $1::uuid and capability = 'api.call' and scope = $2";
+
+/// 임대가 유효한 본체. `Ok(None)` 은 TS 몫 — 막힘 카드가 서는 거절(`not_granted`·`no_connector`·`expired`·…),
+/// 비밀을 여는 연결(`authKind != none`), `%`·질의·ASCII 밖 글자가 든 경로.
+async fn checks_body(
+    pool: &sqlx::PgPool,
+    agent: &str,
+    operator: &str,
+    lease: &super::lease_read::LeaseRow,
+    o: &Value,
+    path300: &str,
+) -> sqlx::Result<Option<Response>> {
+    use super::mcp::grant_delegate as gd;
+    let g = |k: &str| o.get(k).and_then(Value::as_str).unwrap_or_default();
+    let (method, path) = (g("method"), g("path"));
+    let Some(c): Option<ConnRow> = sqlx::query_as(CONN_SQL)
+        .bind(g("connector"))
+        .fetch_optional(pool)
+        .await?
+    else {
+        return Ok(None);
+    };
+    let target = format!("connector:{}", c.0);
+    let denied = |code: &'static str| {
+        (
+            code,
+            denied_detail(code, method, path300, operator, Some(&lease.id)),
+        )
+    };
+    let Some(safe) = gd::safe_path_plain(path) else {
+        return Ok(None);
+    };
+    if !safe {
+        let (code, d) = denied("bad_path");
+        return Ok(Some(deny(pool, agent, &target, d, code).await));
+    }
+    // 실제로 보낼 경로가 입력과 같은 글자일 때만(그 밖은 URL 짓기를 TS 가 한다).
+    if !gd::wire_is_identity(path) {
+        return Ok(None);
+    }
+    let Some((leaf_id, leaf_limits, write_human)): Option<(String, Option<String>, bool)> =
+        sqlx::query_as(LEAF_SQL)
+            .bind(agent)
+            .bind(&target)
+            .fetch_optional(pool)
+            .await?
+    else {
+        return Ok(None); // not_granted — 막힘 카드.
+    };
+    let root = match gd::chain_root(pool, c.1.as_ref(), &target, &leaf_id).await {
+        None => return Ok(None),
+        Some(Ok(r)) => r,
+        Some(Err("chain_broken")) => {
+            let (code, d) = denied("chain_broken");
+            return Ok(Some(deny(pool, agent, &target, d, code).await));
+        }
+        Some(Err(_)) => return Ok(None), // expired·suspended — 막힘 카드.
+    };
+    let Some(limits) = gd::limits_of(leaf_limits.as_deref()) else {
+        return Ok(None);
+    };
+    let Some(limits) = limits else {
+        let (code, d) = denied("chain_broken");
+        return Ok(Some(deny(pool, agent, &target, d, code).await));
+    };
+    if !limits.methods.iter().any(|m| m == method) || !c.7.iter().any(|m| m == method) {
+        return Ok(None); // method_not_allowed — 막힘 카드.
+    }
+    if limits.path_prefix.contains('%') || !gd::path_covered_plain(path, &limits.path_prefix) {
+        return Ok(None); // path_not_allowed — 막힘 카드.
+    }
+    if c.4 != "none" {
+        return Ok(None); // 비밀 열기·토큰 교환은 TS 몫.
+    }
+    let by_human = lease.cause_by_human();
+    if method != "GET" && write_human && !by_human {
+        return Ok(None); // cause_not_human — 막힘 카드.
+    }
+    crate::write::record_audit(
+        pool,
+        crate::write::AuditEntry {
+            action: "api.call.checked",
+            actor_id: Some(agent),
+            actor_handle: None,
+            target: Some(&target),
+            ip: None,
+            detail: checked_detail(
+                method, path300, operator, &lease.id, &leaf_id, &root, by_human,
+            ),
+        },
+    )
+    .await;
+    let body = json!({
+        "allowed": true, "connector": c.2, "baseUrl": c.3, "authKind": c.4, "authHeader": c.5,
+        "valueBase64": null, "causeByHuman": by_human, "path": path,
+    });
+    Ok(Some(no_store(crate::directory::json_ok(body.to_string()))))
 }
 
 async fn checks_early(
@@ -114,6 +315,7 @@ async fn checks_early(
     agent: &str,
     operator: &str,
     o: &Value,
+    allow: bool,
 ) -> sqlx::Result<Option<Response>> {
     let g = |k: &str| o.get(k).and_then(Value::as_str).unwrap_or_default();
     let Some(path) = audit_path(g("path")) else {
@@ -121,8 +323,14 @@ async fn checks_early(
     };
     let now = super::merge_approval_peek::db_now(pool).await?;
     let lease = super::lease_read::read_lease(pool, g("leaseId"), g("token"), &now).await?;
-    if lease_ok(lease.as_ref(), agent, operator) {
-        return Ok(None);
+    if let Some(l) = lease
+        .as_ref()
+        .filter(|_| lease_ok(lease.as_ref(), agent, operator))
+    {
+        if !allow {
+            return Ok(None);
+        }
+        return checks_body(pool, agent, operator, l, o, &path).await;
     }
     let cid: Option<String> =
         sqlx::query_scalar("select id::text from api_connector where name = $1")
@@ -141,20 +349,15 @@ async fn checks_early(
             actor_handle: None,
             target: Some(&target),
             ip: None,
-            detail: denied_detail("lease_invalid", g("method"), &path, operator),
+            detail: denied_detail("lease_invalid", g("method"), &path, operator, None),
         },
     )
     .await;
-    let mut r = json_err(
+    Ok(Some(no_store(json_err(
         StatusCode::FORBIDDEN,
         "lease_invalid",
         "api call not allowed: lease_invalid",
-    );
-    r.headers_mut().insert(
-        axum::http::header::CACHE_CONTROL,
-        axum::http::HeaderValue::from_static("no-store"),
-    );
-    Ok(Some(r))
+    ))))
 }
 
 pub async fn checks_route(
@@ -179,7 +382,7 @@ pub async fn checks_route(
         auth.operator.as_ref().map(|o| o.id.as_str()),
         parsed.as_ref(),
     ) {
-        match checks_early(pool, &me.id, op, o).await {
+        match checks_early(pool, &me.id, op, o, st.allow).await {
             Ok(Some(r)) => return r,
             Ok(None) => {}
             Err(e) => return crate::directory::internal(e),
@@ -191,6 +394,7 @@ pub async fn checks_route(
 pub fn routes(
     up: Upstream,
     deny: Option<sqlx::PgPool>,
+    allow: bool,
     auth: crate::auth::AuthPools,
     cors: Arc<crate::cors::Cors>,
 ) -> crate::route_table::Routes<()> {
@@ -209,7 +413,9 @@ pub fn routes(
         })
         .finish();
     crate::route_table::Routes {
-        router: t.router.with_state(Arc::new(ChecksState { up, deny })),
+        router: t
+            .router
+            .with_state(Arc::new(ChecksState { up, deny, allow })),
         http: t.http,
         sockets: t.sockets,
     }
@@ -251,7 +457,7 @@ mod tests {
         let p = format!("{}{}", "a".repeat(299), "😀");
         assert_eq!(audit_path(&p), None);
         assert_eq!(
-            denied_detail("lease_invalid", "GET", "/x", "op"),
+            denied_detail("lease_invalid", "GET", "/x", "op", None),
             json!({ "code": "lease_invalid", "method": "GET", "path": "/x", "operatorId": "op", "leaseId": null })
         );
     }
@@ -270,6 +476,29 @@ mod tests {
         ] {
             assert!(f.contains(t), "{t}");
             assert!(API_CHECKS_DENY_PRIVILEGES.contains(&(t, "SELECT")), "{t}");
+        }
+    }
+
+    #[test]
+    fn allow_details_like_ts() {
+        assert_eq!(
+            checked_detail("GET", "/x", "op", "L", "G", "R", true),
+            json!({ "method": "GET", "path": "/x", "operatorId": "op", "leaseId": "L", "grantId": "G", "rootGrantedBy": "R", "causeByHuman": true })
+        );
+        assert_eq!(
+            denied_detail("chain_broken", "GET", "/x", "op", Some("L"))["leaseId"],
+            json!("L")
+        );
+        assert_eq!(deny_status("bad_path"), StatusCode::BAD_REQUEST);
+        assert_eq!(deny_status("chain_broken"), StatusCode::FORBIDDEN);
+        for (c, _) in API_CHECKS_ALLOW_PRIVILEGES {
+            let col = c.split('.').nth(1).unwrap();
+            assert!(
+                CONN_SQL.contains(col)
+                    || LEAF_SQL.contains(col)
+                    || (c.starts_with("account_grant.") && col != "id"),
+                "{c}"
+            );
         }
     }
 

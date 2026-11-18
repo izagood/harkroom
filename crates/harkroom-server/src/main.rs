@@ -1790,6 +1790,28 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 — `POST /agent/api-checks` 의 임대가 유효한 본체(authKind none 의 허락·카드 없는 거절). 거절 풀에 [`API_CHECKS_ALLOW_PRIVILEGES`] 까지 있을 때만.
+    let api_checks_allow = match &api_checks_deny {
+        Some(w) => {
+            use harkroom_server::core::api_checks as t;
+            match write::missing_in(w, t::API_CHECKS_ALLOW_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => true,
+                Ok(m) => {
+                    eprintln!("front: api checks allow off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
+                    false
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: api checks allow off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    false
+                }
+            }
+        }
+        None => false,
+    };
     // S5.4 — `POST /agent/merge-closed`. 쓰기 풀에 [`MERGE_CLOSED_PRIVILEGES`] 가 다 있을 때만.
     let merge_closed_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -4017,6 +4039,7 @@ async fn main() {
             let ac = harkroom_server::core::api_checks::routes(
                 state.up.clone(),
                 api_checks_deny.clone(),
+                api_checks_allow,
                 auth.clone(),
                 state.cors.clone(),
             );
