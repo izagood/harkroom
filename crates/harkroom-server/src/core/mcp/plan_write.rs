@@ -307,7 +307,13 @@ enum Build {
     },
     /// `thread.plan.item`.
     Item(Box<ItemPatch>),
+    /// 잠근 판 `(doc, rev)` 에서 새 판을 만드는 함수(HTTP `plan/start`, S5.4 TP5b). `Err` 는 거절 코드.
+    Custom(StartBuild),
 }
+
+/// [`Build::Custom`] 의 함수.
+pub(crate) type StartBuild =
+    Box<dyn FnOnce(Option<(&Value, i64)>) -> Result<Value, &'static str> + Send>;
 
 /// TS `setThreadPlan` 의 build — guard 비교. 시각은 둘 다 밀리초 ISO 글자라 글자 비교가 `getTime()` 비교와 같다.
 #[allow(clippy::option_option)]
@@ -458,6 +464,9 @@ async fn write_plan(
         Build::Item(p) => apply_plan_item(now.as_ref().map(|n| (&n.doc, n.rev)), &p)
             .map(|(d, id)| (Some(d), id))
             .map_err(|e| Refusal::plan(&e)),
+        Build::Custom(f) => f(now.as_ref().map(|n| (&n.doc, n.rev)))
+            .map(|d| (Some(d), String::new()))
+            .map_err(Refusal::plain),
     };
     let before = now.as_ref().map(|n| &n.doc);
     let doc = match built {
@@ -853,6 +862,33 @@ pub(crate) async fn write_manager(
             Outcome::Written { auto_off, .. } => ManagerWrite::Written { auto_off },
             Outcome::Deleted => ManagerWrite::Deleted,
             Outcome::ToTs => ManagerWrite::ToTs,
+        },
+    )
+}
+
+/// HTTP `POST …/plan/start` 의 잠금 안 쓰기(TS `writeThreadPlan(…, (prev) => …)`). 루트·가시성은 부른 쪽이 봤다.
+/// 관리자는 바꾸지 않는 판이라 자동 진행 끄기 갈래는 없다 — 생기면 `ToTs`.
+pub(crate) async fn write_custom(
+    write: &PgPool,
+    me: &str,
+    root: &str,
+    channel: &str,
+    f: StartBuild,
+) -> sqlx::Result<(ManagerWrite, Option<i64>)> {
+    Ok(
+        match write_plan(write, me, root, channel, Build::Custom(f), false).await? {
+            Outcome::Refused(r) => (
+                ManagerWrite::Refused {
+                    code: r.code,
+                    fields: r.fields,
+                },
+                None,
+            ),
+            Outcome::Written { auto_off, rev, .. } => {
+                (ManagerWrite::Written { auto_off }, Some(rev))
+            }
+            Outcome::Deleted => (ManagerWrite::Deleted, None),
+            Outcome::ToTs => (ManagerWrite::ToTs, None),
         },
     )
 }

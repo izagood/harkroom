@@ -2,7 +2,10 @@
 //! TS `services/threadPlanStart.ts` 의 `planRoutes`·`postBody`·`buildPosts` 와 `startPlanSteps` 의 쓰기 앞 갈래를 옮긴다.
 //!
 //! - 읽기만 한다(새 GRANT 없음): 계획 판·연결 자식(보는 사람 기준)·호출 게이트·`account.handle`.
-//! - 실제 시작(잠금 안 active 로 바꾸기·누른 사람 이름의 글·links 달기)은 아직 TS 다 — 부르는 쪽이 요청을 그대로 넘긴다.
+//! - 실제 시작 중 **누른 사람 자기 단계만**(`selfStepIds` 만 있고 보낼 글이 없는 꼴, TP5b)은 Rust 가 쓴다 — 잠금 안 다시 보기·
+//!   active 로 바꾸기([`activate`])는 MCP 계획 쓰기 경로(`write_custom`, 같은 권한 `PLAN_WRITE_PRIVILEGES`)를 탄다. 글이 없으니
+//!   links 달기·되돌리기 쓰기도 없다(TS `linkOf`·`failed` 가 비었다).
+//! - 다른 담당·관리자에게 글을 올리는 꼴은 아직 TS 다 — 부르는 쪽이 요청을 그대로 넘긴다.
 use super::invoke_gate::{AgentFacts, Ctx, Via, invoke_facts, may_invoke};
 use super::msg_list::derive_plan;
 use super::msg_read::channel_visible;
@@ -15,6 +18,8 @@ use std::collections::HashMap;
 pub struct StartReq {
     pub steps: Vec<(String, Option<String>)>,
     pub en: bool,
+    /// `ifRev`(실제 시작에는 꼭 있다 — 라우트가 먼저 본다).
+    pub if_rev: Option<i64>,
 }
 
 /// [`super::thread_plan_manager`] 의 `parse_start` 를 지난 본문에서 단계·언어를 읽는다.
@@ -31,6 +36,7 @@ pub fn start_req(bytes: &[u8]) -> Option<StartReq> {
     Some(StartReq {
         steps,
         en: v["locale"].as_str() == Some("en"),
+        if_rev: v["ifRev"].as_i64(),
     })
 }
 
@@ -479,6 +485,129 @@ pub fn nothing_json(route: &Route) -> String {
     )
 }
 
+/// 잠금 안에서 다시 보기(TS `startPlanSteps` 의 첫 `writeThreadPlan` 함수) — 자기 단계만 시작하는 꼴.
+/// `row_doc` 은 경로를 정할 때 본 판, `prev` 는 잠근 판. 정할 때 담당이 비어 있던 단계는 누른 사람을 담당으로 적는다(TS `picked`).
+/// `Ok((새 판, 시작한 id, 더 빠진 단계))`, `Err((코드, 더 빠진 단계))` — `nothing_to_start` 면 부른 쪽이 첫 빠짐 코드로 바꾼다.
+#[allow(clippy::type_complexity)]
+pub fn activate(
+    prev: Option<(&Value, i64)>,
+    if_rev: i64,
+    row_doc: &Value,
+    self_ids: &[String],
+    actor: &str,
+    map: &HashMap<String, crate::core::msg_list::Linked>,
+) -> Result<
+    (Value, Vec<String>, Vec<(String, &'static str)>),
+    (&'static str, Vec<(String, &'static str)>),
+> {
+    let Some((doc, rev)) = prev else {
+        return Err(("no_plan", Vec::new()));
+    };
+    if rev != if_rev {
+        return Err(("plan_changed", Vec::new()));
+    }
+    let derived: HashMap<String, String> = derive_plan(doc, map)
+        .into_iter()
+        .map(|(id, n)| (id, n.derived))
+        .collect();
+    let mgr = |d: &Value| d["managerId"].as_str().map(str::to_string);
+    let manager_moved = mgr(doc) != mgr(row_doc);
+    let find = |d: &'_ Value, id: &str| -> Option<Value> {
+        d["steps"]
+            .as_array()?
+            .iter()
+            .find(|s| sid(s) == id)
+            .cloned()
+    };
+    let mut skipped = Vec::new();
+    let mut ok: Vec<String> = Vec::new();
+    let mut picked: Vec<String> = Vec::new();
+    for id in self_ids {
+        let at_route = find(row_doc, id).and_then(|s| step_assignee(row_doc, &s));
+        let Some(s) = find(doc, id) else {
+            skipped.push((id.clone(), "unknown_item"));
+            continue;
+        };
+        let state = derived.get(id).map_or("hidden", String::as_str);
+        if state != "ready" {
+            skipped.push((id.clone(), not_ready_code(state)));
+        } else if manager_moved || step_assignee(doc, &s) != at_route {
+            skipped.push((id.clone(), "plan_changed"));
+        } else {
+            if at_route.is_none() {
+                picked.push(id.clone());
+            }
+            ok.push(id.clone());
+        }
+    }
+    if ok.is_empty() {
+        return Err(("nothing_to_start", skipped));
+    }
+    let mut next = doc.clone();
+    if let Some(steps) = next["steps"].as_array_mut() {
+        for s in steps.iter_mut() {
+            let id = sid(s).to_string();
+            if !ok.contains(&id) {
+                continue;
+            }
+            if let Some(o) = s.as_object_mut() {
+                o.insert("state".into(), Value::from("active"));
+                if picked.contains(&id) {
+                    o.insert("assigneeId".into(), Value::from(actor));
+                }
+            }
+        }
+    }
+    Ok((next, ok, skipped))
+}
+
+/// 실제 시작 답 몸통(TS `{ ok, dryRun: false, rev, started, skipped, failed, notNotified, managerSkipped, plan }`) — 자기 단계만.
+/// `plan_view` 는 [`super::thread_plan_read::plan_view_json`] 의 `{"plan":…}` 몸통.
+pub fn started_json(
+    rev: i64,
+    self_ids: &[String],
+    activated: &[String],
+    skipped: &[(String, &'static str)],
+    manager_skipped: Option<&'static str>,
+    plan_view: &str,
+) -> String {
+    let started: Vec<String> = self_ids
+        .iter()
+        .filter(|id| activated.contains(id))
+        .map(|id| {
+            format!(
+                r#"{{"id":{},"via":"self","to":null,"messageId":null}}"#,
+                q(id)
+            )
+        })
+        .collect();
+    let plan = plan_view
+        .strip_prefix(r#"{"plan":"#)
+        .and_then(|p| p.strip_suffix('}'))
+        .unwrap_or("null");
+    format!(
+        r#"{{"ok":true,"dryRun":false,"rev":{rev},"started":[{}],"skipped":{},"failed":[],"notNotified":[],"managerSkipped":{},"plan":{plan}}}"#,
+        started.join(","),
+        skipped_json(skipped),
+        manager_skipped.map_or("null".into(), q)
+    )
+}
+
+/// 잠금 안 거절 몸통 — `nothing_to_start` 면 첫 빠짐 코드(없으면 `not_ready`)와 `skipped`, 그 밖은 `{ code }`.
+pub fn refused_json(
+    code: &'static str,
+    skipped: &[(String, &'static str)],
+) -> (&'static str, String) {
+    if code == "nothing_to_start" {
+        let c = skipped.first().map_or("not_ready", |s| s.1);
+        return (
+            c,
+            format!(r#""code":{},"skipped":{}"#, q(c), skipped_json(skipped)),
+        );
+    }
+    (code, format!(r#""code":{}"#, q(code)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -509,6 +638,102 @@ mod tests {
         assert_eq!(
             nothing_json(&r),
             r#"{"error":{"code":"unknown_item","skipped":[{"id":"s2","code":"unknown_item"}]}}"#
+        );
+    }
+
+    fn plan() -> Value {
+        serde_json::json!({"managerId":"m","groups":[],"steps":[
+            {"id":"s1","title":"a","state":"pending","assigneeId":"me","dependsOn":[],"links":[]},
+            {"id":"s2","title":"b","state":"pending","dependsOn":[],"links":[]},
+            {"id":"s3","title":"c","state":"active","assigneeId":"me","dependsOn":[],"links":[]}
+        ]})
+    }
+
+    #[test]
+    fn activate_marks_self_and_picks_unassigned() {
+        let d = plan();
+        let ids = vec!["s1".to_string(), "s2".to_string()];
+        let (next, ok, sk) = activate(Some((&d, 4)), 4, &d, &ids, "me", &HashMap::new()).unwrap();
+        assert_eq!(ok, ids);
+        assert!(sk.is_empty());
+        assert_eq!(next["steps"][0]["state"], "active");
+        assert_eq!(next["steps"][1]["state"], "active");
+        assert_eq!(next["steps"][1]["assigneeId"], "me");
+        assert_eq!(next["steps"][2], d["steps"][2]);
+    }
+
+    #[test]
+    fn activate_rechecks_under_lock() {
+        let d = plan();
+        let ids = vec!["s1".to_string()];
+        assert_eq!(
+            activate(None, 4, &d, &ids, "me", &HashMap::new())
+                .unwrap_err()
+                .0,
+            "no_plan"
+        );
+        assert_eq!(
+            activate(Some((&d, 5)), 4, &d, &ids, "me", &HashMap::new())
+                .unwrap_err()
+                .0,
+            "plan_changed"
+        );
+        // 그 사이 누가 먼저 시작했다.
+        let mut started = d.clone();
+        started["steps"][0]["state"] = "active".into();
+        let e = activate(Some((&started, 4)), 4, &d, &ids, "me", &HashMap::new()).unwrap_err();
+        assert_eq!(
+            e,
+            (
+                "nothing_to_start",
+                vec![("s1".to_string(), "already_started")]
+            )
+        );
+        // 담당이 바뀌었다·관리자가 바뀌었다.
+        let mut moved = d.clone();
+        moved["steps"][0]["assigneeId"] = "other".into();
+        let e = activate(Some((&moved, 4)), 4, &d, &ids, "me", &HashMap::new()).unwrap_err();
+        assert_eq!(e.1, vec![("s1".to_string(), "plan_changed")]);
+        let mut mgr = d.clone();
+        mgr["managerId"] = "n".into();
+        let e = activate(Some((&mgr, 4)), 4, &d, &ids, "me", &HashMap::new()).unwrap_err();
+        assert_eq!(e.1, vec![("s1".to_string(), "plan_changed")]);
+        // 없어진 단계는 빠지고 남은 것만 시작한다.
+        let mut gone = d.clone();
+        gone["steps"].as_array_mut().unwrap().remove(1);
+        let two = vec!["s1".to_string(), "s2".to_string()];
+        let (_, ok, sk) = activate(Some((&gone, 4)), 4, &d, &two, "me", &HashMap::new()).unwrap();
+        assert_eq!(ok, vec!["s1".to_string()]);
+        assert_eq!(sk, vec![("s2".to_string(), "unknown_item")]);
+    }
+
+    #[test]
+    fn started_and_refused_bodies() {
+        let ids = vec!["s1".to_string(), "s2".to_string()];
+        let sk = vec![("s2".to_string(), "plan_changed")];
+        assert_eq!(
+            started_json(
+                7,
+                &ids,
+                &ids[..1],
+                &sk,
+                Some("manager_off"),
+                r#"{"plan":{"rev":7}}"#
+            ),
+            r#"{"ok":true,"dryRun":false,"rev":7,"started":[{"id":"s1","via":"self","to":null,"messageId":null}],"skipped":[{"id":"s2","code":"plan_changed"}],"failed":[],"notNotified":[],"managerSkipped":"manager_off","plan":{"rev":7}}"#
+        );
+        assert_eq!(
+            refused_json("nothing_to_start", &sk),
+            (
+                "plan_changed",
+                r#""code":"plan_changed","skipped":[{"id":"s2","code":"plan_changed"}]"#
+                    .to_string()
+            )
+        );
+        assert_eq!(refused_json("nothing_to_start", &[]).0, "not_ready");
+        assert_eq!(
+            refused_json("plan_changed", &sk).1,
+            r#""code":"plan_changed""#
         );
     }
 }

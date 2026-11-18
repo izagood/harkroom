@@ -9,11 +9,14 @@
 //!   (`noticePlanAutoOff(…, [나, 새 관리자, 앞 관리자], 'manager_changed')`)을 스레드에 올린다. 글 올리기·끄기 권한이 없어
 //!   [`ManagerState::post`] 가 비었을 때만 되감고 TS 에 넘긴다.
 //! - 권한은 MCP 계획 쓰기와 같다([`super::mcp::plan_write::PLAN_WRITE_PRIVILEGES`]) — `main.rs` 가 그것이 켜졌을 때만 붙인다.
-use super::mcp::plan_write::{ManagerWrite, write_manager};
+use super::mcp::plan_write::{ManagerWrite, write_custom, write_manager};
 use super::msg_post::{gate_sql, to_ts};
 use super::msg_read::channel_visible;
 use super::thread_plan_read::{ROOT_SQL, plan_view_json};
-use super::thread_plan_start::{handles_of, nothing_json, plan_routes, preview_json, start_req};
+use super::thread_plan_start::{
+    activate, handles_of, nothing_json, plan_routes, preview_json, refused_json, start_req,
+    started_json,
+};
 use crate::auth::{RequireAccount, Via};
 use crate::directory::{internal, json_err, json_ok};
 use crate::proxy::Upstream;
@@ -258,7 +261,7 @@ pub async fn post_start(
         Ok(Some((_, d, r))) => (d, r),
         Err(e) => return internal(e),
     };
-    // 미리보기와 「시작할 단계 없음」 거절은 Rust(TP5, `thread_plan_start.rs`), 실제 시작(쓰기·글)은 TS.
+    // 미리보기와 「시작할 단계 없음」 거절은 Rust(TP5), 자기 단계만 시작하는 실제 쓰기도 Rust(TP5b), 글을 올리는 시작은 TS.
     let (Some(req), Ok(doc)) = (start_req(&bytes), serde_json::from_str::<Value>(&doc_text)) else {
         return to_ts(st.up.clone(), peer, parts, bytes).await;
     };
@@ -280,10 +283,81 @@ pub async fn post_start(
         )
             .into_response();
     }
-    to_ts(st.up.clone(), peer, parts, bytes).await
+    // 보낼 글이 있는 꼴(다른 담당·관리자 부르기)은 TS — 글·links 달기·되돌리기가 거기 있다.
+    if !route.posts.is_empty() {
+        return to_ts(st.up.clone(), peer, parts, bytes).await;
+    }
+    let Some(if_rev) = req.if_rev else {
+        return to_ts(st.up.clone(), peer, parts, bytes).await;
+    };
+    let map = match super::thread_plan_read::linked_map(w, &me.id, &doc).await {
+        Ok(m) => m,
+        Err(e) => return internal(e),
+    };
+    type Out = (
+        Vec<String>,
+        Vec<(String, &'static str)>,
+        Option<&'static str>,
+    );
+    let out: Arc<std::sync::Mutex<Out>> = Arc::default();
+    let f = {
+        let out = out.clone();
+        let (row_doc, ids, actor) = (doc.clone(), route.self_ids.clone(), me.id.clone());
+        Box::new(move |prev: Option<(&Value, i64)>| {
+            let r = activate(prev, if_rev, &row_doc, &ids, &actor, &map);
+            let mut o = out
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            match r {
+                Ok((next, ok, sk)) => {
+                    *o = (ok, sk, None);
+                    Ok(next)
+                }
+                Err((code, sk)) => {
+                    *o = (Vec::new(), sk, Some(code));
+                    Err(code)
+                }
+            }
+        })
+    };
+    let written = write_custom(w, &me.id, &root, &channel, f).await;
+    let (activated, extra, _) = std::mem::take(
+        &mut *out
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+    );
+    let mut skipped = route.skipped.clone();
+    skipped.extend(extra);
+    let rev = match written {
+        Ok((ManagerWrite::Written { auto_off: None }, r)) => r.unwrap_or(rev),
+        Ok((ManagerWrite::Refused { code, .. }, _)) if code == "nothing_to_start" => {
+            let (c, fields) = refused_json(code, &skipped);
+            return err_fields(status_of(c), &fields);
+        }
+        Ok((ManagerWrite::Refused { code, fields }, _)) => {
+            return err_fields(status_of(code), &fields);
+        }
+        Ok((ManagerWrite::Deleted, _)) => return code_err(StatusCode::NOT_FOUND, "no_plan"),
+        // 관리자를 바꾸지 않는 판이라 오지 않는다 — 오면 되감았으니 TS 가 처음부터 다시 돈다.
+        Ok((ManagerWrite::Written { auto_off: Some(_) } | ManagerWrite::ToTs, _)) => {
+            return to_ts(st.up.clone(), peer, parts, bytes).await;
+        }
+        Err(e) => return internal(e),
+    };
+    match plan_view_json(w, &me.id, &root).await {
+        Ok(view) => json_ok(started_json(
+            rev,
+            &route.self_ids,
+            &activated,
+            &skipped,
+            route.manager_skipped,
+            &view,
+        )),
+        Err(e) => internal(e),
+    }
 }
 
-/// 코어 라우터에 합칠 줄 — 인증은 `route_layer`, CORS 는 `layer`. `POST …/plan/start` 는 앞 거절만 Rust, 나머지는 TS.
+/// 코어 라우터에 합칠 줄 — 인증은 `route_layer`, CORS 는 `layer`. `POST …/plan/start` 는 앞 거절·미리보기·자기 단계만 시작은 Rust, 글을 올리는 시작은 TS.
 pub fn routes(
     st: ManagerState,
     auth: crate::auth::AuthPools,
