@@ -248,6 +248,11 @@ pub async fn handle(
         agent_id: &me.id,
         operator_id: auth.operator.as_ref().map(|o| o.id.as_str()),
         bg_cause: has_operator && bg_cause(&parts.headers),
+        bg_pool: writes.bg_complete.as_ref(),
+        cause_header: parts
+            .headers
+            .get("x-harkroom-cause")
+            .and_then(|v| v.to_str().ok()),
     };
     if let Some(r) = serve_pre(&up, ci, &parts.headers, &bytes, served, &tools, &pre).await {
         return r;
@@ -298,6 +303,10 @@ pub struct Pre<'a> {
     pub operator_id: Option<&'a str>,
     /// 오퍼레이터를 거쳤고 cause 가 `bg:<uuid>` 꼴이다(TS `bgMatch`).
     pub bg_cause: bool,
+    /// 회차 상태를 읽을 풀 — `bg.complete` 쓰기 풀(`bg_job` SELECT 가 이미 있다). 없으면 회차 상태 확인은 TS `/mcp/admit`.
+    pub bg_pool: Option<&'a sqlx::PgPool>,
+    /// cause 헤더 글자(`bg_cause` 가 참일 때 `bg:<uuid>`).
+    pub cause_header: Option<&'a str>,
 }
 
 impl Pre<'static> {
@@ -307,6 +316,8 @@ impl Pre<'static> {
         agent_id: "",
         operator_id: None,
         bg_cause: false,
+        bg_pool: None,
+        cause_header: None,
     };
 }
 
@@ -364,7 +375,66 @@ async fn pre_admit(
         }});
         return Ok(Some(err.to_string()));
     }
+    if pre.bg_cause
+        && let (Some(pool), Some(cause)) = (pre.bg_pool, pre.cause_header)
+    {
+        let job_id = cause[3..].to_ascii_lowercase();
+        let row: Option<(String, String, Option<serde_json::Value>)> = sqlx::query_as(BG_JOB_SQL)
+            .bind(&job_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|_| ())?;
+        return Ok(bg_gate_rest(pre.agent_id, row, tool, args).map(|e| e.to_string()));
+    }
     Ok(None)
+}
+
+/// TS `getBgJob` 가운데 `bgGate` 가 보는 칸만.
+const BG_JOB_SQL: &str =
+    "select account_id::text, status, input->'threadIds' from bg_job where id = $1::uuid";
+
+/// TS `bgGate` 의 허용 목록 뒤(회차 상태·입력 스레드·읽기 전용). 쓰기 도구의 상한 예약은 여기 오지 않는다(`ADMIT_REFUSED`).
+fn bg_gate_rest(
+    me: &str,
+    row: Option<(String, String, Option<serde_json::Value>)>,
+    tool: &str,
+    args: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    let refused = |code: &str, message: &str| {
+        Some(serde_json::json!({ "error": { "code": code, "message": message } }))
+    };
+    let Some((_, _, threads)) = row.filter(|(a, s, _)| a == me && s == "running") else {
+        return refused(
+            "bg_job_not_running",
+            "이 백그라운드 회차는 이미 닫혔거나 이 계정의 것이 아니다",
+        );
+    };
+    if matches!(tool, "message.read" | "thread.note" | "thread.plan") {
+        let root = args.get("threadRootId").and_then(serde_json::Value::as_str);
+        let listed = threads
+            .as_ref()
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|a| a.iter().any(|t| t.as_str().is_some() && t.as_str() == root));
+        if root.is_none() || !listed {
+            return refused(
+                "bg_thread_not_in_input",
+                "이 회차의 입력 스레드만 읽을 수 있다",
+            );
+        }
+        if tool == "thread.note" && args.get("body").is_some() {
+            return refused(
+                "bg_note_read_only",
+                "백그라운드 회차에서 스레드 메모는 읽기만 한다",
+            );
+        }
+        if tool == "thread.plan" && args.get("plan").is_some() {
+            return refused(
+                "bg_plan_read_only",
+                "백그라운드 회차에서 계획판은 읽기만 한다",
+            );
+        }
+    }
+    None
 }
 
 pub type AnswerFut = std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send>>;
@@ -522,6 +592,96 @@ mod tests {
     }
 
     #[test]
+    fn bg_gate_rest_mirrors_ts() {
+        use serde_json::json;
+        let row = |a: &str, s: &str| Some((a.to_owned(), s.to_owned(), Some(json!(["t1"]))));
+        let code = |v: Option<serde_json::Value>| {
+            v.map(|v| v["error"]["code"].as_str().unwrap().to_owned())
+        };
+        assert_eq!(
+            code(bg_gate_rest("me", None, "memory.get", &json!({}))).as_deref(),
+            Some("bg_job_not_running")
+        );
+        assert_eq!(
+            code(bg_gate_rest(
+                "me",
+                row("x", "running"),
+                "memory.get",
+                &json!({})
+            ))
+            .as_deref(),
+            Some("bg_job_not_running")
+        );
+        assert_eq!(
+            code(bg_gate_rest(
+                "me",
+                row("me", "done"),
+                "memory.get",
+                &json!({})
+            ))
+            .as_deref(),
+            Some("bg_job_not_running")
+        );
+        assert_eq!(
+            code(bg_gate_rest(
+                "me",
+                row("me", "running"),
+                "memory.get",
+                &json!({})
+            )),
+            None
+        );
+        assert_eq!(
+            code(bg_gate_rest(
+                "me",
+                row("me", "running"),
+                "message.read",
+                &json!({"threadRootId":"t2"})
+            ))
+            .as_deref(),
+            Some("bg_thread_not_in_input")
+        );
+        assert_eq!(
+            code(bg_gate_rest(
+                "me",
+                row("me", "running"),
+                "message.read",
+                &json!({"threadRootId":"t1"})
+            )),
+            None
+        );
+        assert_eq!(
+            code(bg_gate_rest(
+                "me",
+                row("me", "running"),
+                "thread.note",
+                &json!({"threadRootId":"t1","body":null})
+            ))
+            .as_deref(),
+            Some("bg_note_read_only")
+        );
+        assert_eq!(
+            code(bg_gate_rest(
+                "me",
+                row("me", "running"),
+                "thread.plan",
+                &json!({"threadRootId":"t1","plan":"x"})
+            ))
+            .as_deref(),
+            Some("bg_plan_read_only")
+        );
+        let src = include_str!("../../../../../packages/server/src/mcp/mcpPlugin.ts");
+        for m in [
+            "'bg_job_not_running', '이 백그라운드 회차는 이미 닫혔거나 이 계정의 것이 아니다'",
+            "'bg_thread_not_in_input', '이 회차의 입력 스레드만 읽을 수 있다'",
+            "'bg_note_read_only', '백그라운드 회차에서 스레드 메모는 읽기만 한다'",
+            "'bg_plan_read_only', '백그라운드 회차에서 계획판은 읽기만 한다'",
+        ] {
+            assert!(src.contains(m), "{m}");
+        }
+    }
+
+    #[test]
     fn bg_cause_shape() {
         let mut h = axum::http::HeaderMap::new();
         assert!(!bg_cause(&h));
@@ -554,6 +714,8 @@ mod tests {
             agent_id: "a",
             operator_id: op.then_some("o"),
             bg_cause: bg,
+            bg_pool: None,
+            cause_header: None,
         };
         let none = axum::http::HeaderMap::new();
         assert!(admit_refused("memory.set", &pre(true, true), &none));
