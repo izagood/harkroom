@@ -2016,6 +2016,26 @@ async fn main() {
         },
         None => false,
     };
+    let agent_patch_disable = match &agent_patch_write {
+        Some(w) => match write::missing_in(
+            w,
+            harkroom_server::core::agent_create::AGENT_DISABLE_PRIVILEGES,
+            &[],
+        )
+        .await
+        {
+            Ok(m) if m.is_empty() => true,
+            Ok(m) => {
+                eprintln!("front: agent disable core write off — missing privileges {m:?}");
+                false
+            }
+            Err(e) => {
+                eprintln!("front: agent disable core write off — privilege check failed ({e})");
+                false
+            }
+        },
+        None => false,
+    };
     // S5.4 — 에이전트 만들기 성공 길. 쓰기 풀에 그 권한이 다 있을 때만 — 아니면 판정만 Rust, 생성은 TS.
     let agent_create_write = match &core_mode {
         harkroom_server::core::CoreMode::Rust => match &state.write {
@@ -4073,6 +4093,7 @@ async fn main() {
                     write: agent_create_write.clone(),
                     patch_write: agent_patch_write.clone(),
                     patch_rename: agent_patch_rename,
+                    patch_disable: agent_patch_disable,
                     trust: state.trust.clone(),
                 },
                 auth.clone(),

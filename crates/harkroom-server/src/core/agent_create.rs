@@ -70,6 +70,19 @@ pub const AGENT_RENAME_PRIVILEGES: &[(&str, &str)] = &[
 ];
 pub const AGENT_RENAME_SEQUENCE_PRIVILEGES: &[(&str, &str)] = &[("event_outbox_id_seq", "USAGE")];
 
+/// PATCH 본문에 `disabled` 가 있을 때 더 필요한 권한 — `disabled_at`·PAT 회수·`agent_disabled` grant 정지.
+pub const AGENT_DISABLE_PRIVILEGES: &[(&str, &str)] = &[
+    ("account.disabled_at", "UPDATE"),
+    ("pat.account_id", "SELECT"),
+    ("pat.label", "SELECT"),
+    ("pat.revoked_at", "SELECT"),
+    ("pat.revoked_at", "UPDATE"),
+    ("secret_grant.agent_id", "SELECT"),
+    ("secret_grant.suspended_at", "SELECT"),
+    ("secret_grant.suspended_at", "UPDATE"),
+    ("secret_grant.suspend_reason", "UPDATE"),
+];
+
 pub const AGENT_PATCH_PRIVILEGES: &[(&str, &str)] = &[
     ("account.id", "SELECT"),
     ("account.display_name", "UPDATE"),
@@ -166,6 +179,8 @@ pub struct AgentCreateState {
     pub patch_write: Option<PgPool>,
     /// 이름 바꾸기(`handle`)까지 Rust 가 할 수 있나 — [`AGENT_RENAME_PRIVILEGES`] 가 다 있을 때만. 아니면 TS.
     pub patch_rename: bool,
+    /// `disabled` 까지 Rust 가 할 수 있나 — [`AGENT_DISABLE_PRIVILEGES`] 가 다 있을 때만. 아니면 TS.
+    pub patch_disable: bool,
     pub trust: Arc<crate::trust_proxy::TrustProxy>,
 }
 
@@ -464,7 +479,7 @@ const ADMIN_ONLY_FIELDS: &[&str] = &["ownerAccountId", "disabled", "mentionPermi
 
 /// 이 칸이 하나라도 있으면 PATCH 성공 길은 TS 로 넘긴다 — 이름 바꾸기(409·감사·WS 이벤트), 끄기(PAT 회수·
 /// 감사·`agent_disabled` grant 정지)가 아직 Rust 에 없다. 이름 바꾸기·스코프·MCP 판정, 정의 변경 grant 정지는 Rust 가 한다.
-const PATCH_TS_ONLY_FIELDS: &[&str] = &["disabled"];
+const PATCH_TS_ONLY_FIELDS: &[&str] = &[];
 
 /// TS `AUDITED_FIELDS` — 순서·종류가 같다.
 const AUDITED_FIELDS: &[(&str, bool)] = &[
@@ -694,6 +709,63 @@ async fn patch_native(
     if let Err(e) = r {
         return crate::directory::internal(e);
     }
+    // TS: 값이 실제로 바뀔 때만 — 끄면 disabled_at + PAT 전부 회수(한 트랜잭션), 켜면 disabled_at 만(PAT 는 되살리지 않는다).
+    let before_disabled = bv.get("disabled").and_then(Value::as_bool).unwrap_or(false);
+    let disable_to = m
+        .get("disabled")
+        .and_then(Value::as_bool)
+        .filter(|d| *d != before_disabled);
+    if let Some(off) = disable_to {
+        let r: Result<Vec<String>, sqlx::Error> = async {
+            let mut tx = write.begin().await?;
+            let labels = if off {
+                sqlx::query("update account set disabled_at = now() where id = $1::uuid")
+                    .bind(id)
+                    .execute(&mut *tx)
+                    .await?;
+                sqlx::query_scalar::<_, String>(
+                    "update pat set revoked_at = now() where account_id = $1::uuid and revoked_at is null returning label",
+                )
+                .bind(id)
+                .fetch_all(&mut *tx)
+                .await?
+            } else {
+                sqlx::query("update account set disabled_at = null where id = $1::uuid")
+                    .bind(id)
+                    .execute(&mut *tx)
+                    .await?;
+                Vec::new()
+            };
+            tx.commit().await?;
+            Ok(labels)
+        }
+        .await;
+        let labels = match r {
+            Ok(l) => l,
+            Err(e) => return crate::directory::internal(e),
+        };
+        let ip = crate::writes_settings::ip_of(parts, &st.trust);
+        crate::write::record_audit(
+            write,
+            crate::write::AuditEntry {
+                action: if off {
+                    "agent.disabled"
+                } else {
+                    "agent.enabled"
+                },
+                actor_id: Some(&me.id),
+                actor_handle: Some(&me.handle),
+                target: Some(id),
+                ip: ip.as_deref(),
+                detail: if off {
+                    serde_json::json!({ "revokedPats": labels })
+                } else {
+                    serde_json::json!({ "patsNotRestored": true })
+                },
+            },
+        )
+        .await;
+    }
     // `updateAgent` — 다시 본다(사이에 사라졌으면 404).
     match super::operator_stop::agent_view(write, id).await {
         Ok(Some(_)) => {}
@@ -766,6 +838,17 @@ async fn patch_native(
             )
             .await;
         }
+    }
+    if disable_to == Some(true)
+        && let Err(e) = sqlx::query(
+            "update secret_grant set suspended_at = now(), suspend_reason = $2 where agent_id = $1::uuid and suspended_at is null",
+        )
+        .bind(id)
+        .bind("agent_disabled")
+        .execute(write)
+        .await
+    {
+        return crate::directory::internal(e);
     }
     let changes = diff_audited(&b, &a);
     if !changes.is_empty() {
@@ -932,6 +1015,7 @@ pub async fn patch(
         if let Some(w) = &st.patch_write
             && !PATCH_TS_ONLY_FIELDS.iter().any(|f| m.contains_key(*f))
             && (st.patch_rename || !m.contains_key("handle"))
+            && (st.patch_disable || !m.contains_key("disabled"))
         {
             return patch_native(&st, w, &parts, &me, &id, &m).await;
         }
@@ -1076,8 +1160,13 @@ mod tests {
             ),
             vec!["harness"]
         );
-        assert!(PATCH_TS_ONLY_FIELDS.contains(&"disabled"));
-        assert!(!PATCH_TS_ONLY_FIELDS.contains(&"handle"));
+        assert!(PATCH_TS_ONLY_FIELDS.is_empty());
+        for p in [
+            ("account.disabled_at", "UPDATE"),
+            ("pat.revoked_at", "UPDATE"),
+        ] {
+            assert!(AGENT_DISABLE_PRIVILEGES.contains(&p), "{p:?}");
+        }
         for p in [
             ("account.handle", "UPDATE"),
             ("handle_group.handle", "SELECT"),
