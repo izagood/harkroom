@@ -92,7 +92,6 @@ fn who_takes_it() {
         ("approve_once", "merge"),
         ("approve_new_mandate", "merge"),
         ("approve_turn", "merge"),
-        ("approve_mandate", "merge"),
         ("nope", "tool"),
     ] {
         assert_eq!(rust_takes(shape(o, k)), None, "{o}/{k}");
@@ -182,14 +181,27 @@ fn who_takes_it() {
     ] {
         assert_eq!(rust_takes(s), None, "{s:?}");
     }
-    // 머지 거절 카드(denial_id): deny 는 Rust, 같은 카드의 approve_once·approve 는 TS(security ②-6).
+    // 머지 거절 카드(denial_id): deny 는 Rust, once 값 없는 approve_once 는 TS(security ②-6).
+    // 13d — 같은 카드의 7일 approve 는 Rust(CI 거절이면 400 `ci_card_once_only`, 위임장이 있으면 TS).
     let d = |o| Shape {
         has_denial: true,
         ..shape(o, "merge")
     };
     assert_eq!(rust_takes(d("deny")), Some(Decision::Deny));
     assert_eq!(rust_takes(d("approve_once")), None);
-    assert_eq!(rust_takes(d("approve")), None);
+    assert_eq!(rust_takes(d("approve")), Some(Decision::Approve));
+    // 13d — 위임장 없는 merge approve_mandate 는 쓰기 없는 409 `mandate_unavailable`(Rust).
+    assert_eq!(
+        rust_takes(shape("approve_mandate", "merge")),
+        Some(Decision::ApproveMandate)
+    );
+    assert_eq!(
+        rust_takes(Shape {
+            has_mandate: true,
+            ..d("approve")
+        }),
+        None
+    );
 }
 
 #[test]

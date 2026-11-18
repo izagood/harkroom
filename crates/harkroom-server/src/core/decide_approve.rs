@@ -196,6 +196,10 @@ async fn expire_privileges_ok(pool: &sqlx::PgPool, which: &str) -> bool {
 }
 
 /// TS `request_expired` 문구(골든).
+/// TS `select reason from merge_denial where id = $1`(merge 7일 승인의 CI 거절 대조, 쓰기 전).
+const DENIAL_REASON: &str = "select reason from merge_denial where id = $1::uuid";
+/// TS `MERGE_NO_MANDATE_MESSAGE`(골든).
+pub const MERGE_NO_MANDATE_MESSAGE: &str = "a merge cannot be approved for 7 days without a mandate on this thread — approve the merge once from the refusal card, or approve from a thread you started";
 pub const REQUEST_EXPIRED_MESSAGE: &str = "this request expired — the agent has to ask again";
 
 pub const APPROVE_SEQUENCE_PRIVILEGES: &[(&str, &str)] = &[("event_outbox_id_seq", "USAGE")];
@@ -471,10 +475,16 @@ pub async fn approve_write(
         ("command", Decision::ApproveOnce) => (COMMAND_GRANT_TTL, Some("once"), ANSWER_ONCE),
         ("tool", Decision::Approve) => (TOOL_GRANT_TTL, None, ANSWER_TOOL),
         // S5.4 12e — 위임장·거절 기록 없는 merge 7일 승인(rust_takes 가 거른다). 그 밖의 merge 는 TS.
-        ("merge", Decision::Approve)
-            if locked.mandate_id.is_none() && locked.denial_id.is_none() =>
-        {
+        ("merge", Decision::Approve) if locked.mandate_id.is_none() => {
             (TOOL_GRANT_TTL, None, ANSWER_TOOL)
+        }
+        // 13d — TS D1: merge 는 위임장 없이 7일 승인으로 넘어가지 않는다(쓰기 없음, 거절 기록 대조보다 먼저).
+        ("merge", Decision::ApproveMandate) if locked.mandate_id.is_none() => {
+            return Ok(refused(
+                409,
+                "mandate_unavailable",
+                MERGE_NO_MANDATE_MESSAGE,
+            ));
         }
         ("tool", Decision::ApproveMandate) => (TOOL_GRANT_TTL, None, ANSWER_TOOL_MANDATE),
         ("tool", Decision::ApproveNewMandate) => (TOOL_GRANT_TTL, None, ANSWER_TOOL_NEW_MANDATE),
@@ -498,6 +508,24 @@ pub async fn approve_write(
     let new_mandate = decision == Decision::ApproveNewMandate && locked.mandate_id.is_none();
     if new_mandate && !new_mandate_core_on() {
         return Ok(ApproveOutcome::HandToTs);
+    }
+    // S5.4 13d — 거절 기록이 붙은 merge 카드의 7일 승인: TS 처럼 CI 거절이면 쓰기 없이 400 `ci_card_once_only`(security D4).
+    // `merge_denial.reason` 읽기 칸은 [`super::decide_merge_once::MERGE_ONCE_PRIVILEGES`] 에 있다 — 꺼져 있으면 쓰기 전에 TS.
+    if let (Some(denial_id), "merge") = (locked.denial_id.as_deref(), locked.kind.as_str()) {
+        if !super::decide_merge_once::merge_once_on() {
+            return Ok(ApproveOutcome::HandToTs);
+        }
+        let reason: Option<(String,)> = sqlx::query_as(DENIAL_REASON)
+            .bind(denial_id)
+            .fetch_optional(&mut *conn)
+            .await?;
+        if reason.is_some_and(|(r,)| r == "ci_not_green") {
+            return Ok(refused(
+                400,
+                "ci_card_once_only",
+                super::merge_denial_grant::CI_ONCE,
+            ));
+        }
     }
     let (now, now_iso, expires, expires_iso): (String, String, String, String) =
         sqlx::query_as(TIMES)

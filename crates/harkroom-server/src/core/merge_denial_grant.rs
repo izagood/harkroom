@@ -53,7 +53,7 @@ const PR_CLOSED: &str = "that pull request was already merged or closed — this
 /// TS `HEAD_MOVED_MESSAGE`.
 const HEAD_MOVED: &str = "that pull request got a new commit after this card was raised, so this card cannot approve it — approve on the newer card, or if there is none, ask the agent to try the merge again";
 /// TS `CI_CARD_ONCE_ONLY_MESSAGE`.
-const CI_ONCE: &str =
+pub(crate) const CI_ONCE: &str =
     "a CI-failure card only approves one merge with the CI check skipped — it never grants 7 days";
 
 const OWNER_SQL: &str =
