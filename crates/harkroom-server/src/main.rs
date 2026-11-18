@@ -1479,6 +1479,29 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 — 재설정 코드 발급(`POST /accounts/{id}/password-reset-code`). 쓰기 풀에 그 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+    let account_reset_code_issue_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::account_reset_code_issue as a;
+            match write::missing_in(w, a::ACCOUNT_RESET_CODE_ISSUE_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!(
+                        "front: account reset code issue core off — missing privileges {m:?}"
+                    );
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: account reset code issue core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 — 재설정 코드 거두기(`DELETE /accounts/{id}/password-reset-code`). 쓰기 풀에 그 권한이 다 있을 때만 — 아니면 TS 에 남는다.
     let account_reset_code_revoke_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -3088,6 +3111,21 @@ async fn main() {
             core_routes.router = core_routes.router.merge(jp.router);
             core_routes.http.extend(jp.http);
             core_routes.sockets.extend(jp.sockets);
+        }
+        // S5.4 — 재설정 코드 발급 1줄. 권한이 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = account_reset_code_issue_write {
+            let ri = harkroom_server::core::account_reset_code_issue::routes(
+                harkroom_server::core::account_reset_code_issue::ResetCodeIssueState {
+                    read: state.pool.clone(),
+                    write,
+                    trust: state.trust.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(ri.router);
+            core_routes.http.extend(ri.http);
+            core_routes.sockets.extend(ri.sockets);
         }
         // S5.4 — 자기 비밀번호 바꾸기 1줄. 권한이 있을 때만 — 아니면 TS 에 남는다.
         if let Some(write) = auth_password_write {
