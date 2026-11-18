@@ -317,7 +317,12 @@ async fn main() {
             )
             .await
             {
-                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) if m.is_empty() => {
+                    // REST `PUT /work-items` 도 같은 권한·같은 코어를 쓴다 — 이때만 Rust 가 답한다.
+                    harkroom_server::writes_misc::WORK_ITEM_UPSERT_READY
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
+                    Some(w.clone())
+                }
                 Ok(m) => {
                     eprintln!("front: mcp workitem.upsert core off — missing privileges {m:?}");
                     refuse_missing_grants(&m);
