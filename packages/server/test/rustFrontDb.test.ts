@@ -4678,6 +4678,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect(b.text, '사람 계정').toBe(a.text);
         }
         await db.pool.query('delete from thread_plan where channel_id = $1', [ch.id]);
+        await db.pool.query('delete from inbox where message_id in (select id from message where channel_id = any($1))', [[ch.id, hid.id]]);
         await db.pool.query('delete from message where channel_id = any($1)', [[ch.id, hid.id]]);
         await db.pool.query('delete from channel_member where channel_id = any($1)', [[ch.id, hid.id]]);
         await db.pool.query('delete from channel where id = any($1)', [[ch.id, hid.id]]);
