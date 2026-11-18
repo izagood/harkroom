@@ -372,7 +372,7 @@ pub(crate) struct Origin<'a> {
 
 /// TS `beforeCommit` 의 거절 — `{ status, code, message }`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Rejection {
+pub struct Rejection {
     pub(crate) status: u16,
     pub(crate) code: String,
     pub(crate) message: String,
