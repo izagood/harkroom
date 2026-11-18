@@ -56,6 +56,10 @@ pub const SERVED: &[&str] = &[
     "automation.propose",
     // S5.4 MCP 5 — 에이전트의 「지금 한 번」(회차 INSERT 만). 회차 칸이 있는 쓰기 풀(`writes.automation_run`)일 때만.
     "automation.run",
+    // S5.4 MCP 6 — API 권한 다시 주기의 거절 전부·같은 위임 다시 오기·원인 없는 새 위임(대기 줄; 원인이 확인된 새 위임은 TS). `writes.grant_delegate` 일 때만.
+    "grant.delegate",
+    // S5.4 — 권한 요청의 거절 앞머리(인자 짝·채널·규칙 모양·저장소 모양). 읽기만 한다 — 받아들여지는 요청(요청 줄·카드)은 TS.
+    "permission.request",
 ];
 
 /// TS 가 조건부로 싣는 도구 — `/mcp/admit` 이 `registered: true` 라고 답했을 때만 Rust 가 답한다([`super::route::serve`]).
@@ -137,6 +141,8 @@ pub struct McpWrites {
     pub automation: Option<PgPool>,
     /// `automation.run`(S5.4 MCP 5) — `automation_run::AUTOMATION_RUN_PRIVILEGES`.
     pub automation_run: Option<PgPool>,
+    /// `grant.delegate`(S5.4 MCP 6) — `grant_delegate::GRANT_DELEGATE_PRIVILEGES`.
+    pub grant_delegate: Option<PgPool>,
     /// 기억 쓰기(C4b B1a) — [`super::mem_writes::MEMORY_WRITE_PRIVILEGES`]. [`super::mem_writes::answer`] 가 본다.
     pub memory: Option<PgPool>,
     /// 기억 본문 쓰기(C4b B1b: set·merge·restore) — B1a 권한 + [`super::mem_body::MEMORY_BODY_PRIVILEGES`]. [`super::mem_body::answer`] 가 본다.
@@ -251,6 +257,15 @@ pub async fn answer(
             return Some(None);
         };
         return Some(super::skill_propose::answer(st, me, args).await);
+    }
+    if tool == "permission.request" {
+        return Some(super::permission_request::answer(read, me, args).await);
+    }
+    if tool == "grant.delegate" {
+        let Some(write) = writes.grant_delegate.as_ref() else {
+            return Some(None);
+        };
+        return Some(super::grant_delegate::answer(read, write, me, args, cause).await);
     }
     if tool == "automation.run" {
         let Some(write) = writes.automation_run.as_ref() else {
