@@ -882,6 +882,40 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 결정 3 — 첨부 내려받기(`GET /attachments/{id}`). 세 겹 잠금: `HARKROOM_CORE=rust`, 읽기 역할에 그 SELECT 가 다 있을 때,
+    // 그리고 첨부 저장소(`ATTACHMENT_ROOT`)가 있을 때만 — 없으면 파일을 찾을 곳을 모르므로 TS 에 남는다.
+    let attachment_download = match &core_mode {
+        harkroom_server::core::CoreMode::Rust => {
+            use harkroom_server::core::attachment_download as c;
+            use harkroom_server::core::attachment_store::LocalStorage;
+            match (
+                write::missing_in(&state.pool, c::DOWNLOAD_PRIVILEGES, &[]).await,
+                LocalStorage::from_env(),
+            ) {
+                (Ok(m), Ok(Some(s))) if m.is_empty() => Some(s),
+                (Ok(m), Ok(Some(_))) => {
+                    eprintln!("front: attachment download core off — missing privileges {m:?}");
+                    None
+                }
+                (Ok(_), Ok(None)) => {
+                    eprintln!("front: attachment download core off — ATTACHMENT_ROOT not set");
+                    None
+                }
+                (Ok(_), Err(e)) => {
+                    eprintln!("front: attachment download core off — attachment root ({e})");
+                    None
+                }
+                (Err(e), _) => {
+                    eprintln!(
+                        "front: attachment download core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 CT1 — 채널에 팀 넣기(`POST /channels/{id}/teams/{teamId}/add`). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만.
     let channel_team_add = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -2242,6 +2276,19 @@ async fn main() {
             core_routes.router = core_routes.router.merge(cd.router);
             core_routes.http.extend(cd.http);
             core_routes.sockets.extend(cd.sockets);
+        }
+        if let Some(storage) = attachment_download {
+            let ad = harkroom_server::core::attachment_download::routes(
+                harkroom_server::core::attachment_download::DownloadState {
+                    read: state.pool.clone(),
+                    storage,
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(ad.router);
+            core_routes.http.extend(ad.http);
+            core_routes.sockets.extend(ad.sockets);
         }
         if let Some(write) = auto_mention_doc {
             let am = harkroom_server::core::channel_auto_mention_doc::routes(

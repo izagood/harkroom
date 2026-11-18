@@ -19,6 +19,7 @@ pub mod ask_bundle_add;
 pub mod ask_bundle_resolve;
 pub mod ask_reply_close;
 pub mod ask_sync;
+pub mod attachment_download;
 pub mod attachment_store;
 pub mod audience;
 pub mod auth_light;
