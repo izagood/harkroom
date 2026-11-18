@@ -15,6 +15,7 @@ import { buildServer } from '../src/buildServer.js';
 import { agentPat, bootstrapAdmin, createAgent, createMember, registerOperator } from './helpers/fixtures.js';
 import { startTestDb } from './helpers/testDb.js';
 import { fanOutCalls, postMessage, resolveMentionCalls } from '../src/services/messages.js';
+import { addMandateLine } from '../src/services/mandateLines.js';
 import { mkdtempSync, writeFileSync as writeCases } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join as joinPath } from 'node:path';
@@ -11991,6 +11992,170 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             await apPair('api 나쁜 경로', q(LP, 's54ap-none', 'GET', '//evil.example/x'));
             await db.pool.query(`delete from api_connector where name like 's54ap-%'`);
             await db.pool.query(`delete from secret where name like 's54ap-%'`);
+          }
+          // 13) POST /agent/merge-checks(S5.5 a — `merge_checks.rs`). 장면마다 쪽별로 새 원인 글·임대(·위임 줄)를 세우고 같은 요청을 보내
+          // 응답·감사·`merge_denial`·줄 사용 횟수를 견준다. Rust 쪽 앞단은 **닿지 않는 upstream** 을 달고 뜬다 — TS 로 넘기면 502 라서
+          // 답이 TS 와 같다는 것이 곧 「Rust 가 직접 답했다」는 증명이다. 위임 스위치(`HARKROOM_MANDATE_ENFORCE`)는 TS 는 요청 때 env 를,
+          // 앞단은 기동 때 준 값을 읽는다. 값을 주지 않은 앞단은 모름이라 판정을 통째로 TS 로 넘긴다(502).
+          {
+            const mc = await mkAgent('s55mc');
+            agents.push(mc.accountId);
+            known.set(mc.accountId, '<mc>');
+            const vM = viaOp(mc);
+            const MC = '/agent/merge-checks';
+            const SHA40 = 'c'.repeat(40);
+            const UNSET_LINE = 'front: merge checks to TS — HARKROOM_MANDATE_ENFORCE unset';
+            const prevEnforce = process.env.HARKROOM_MANDATE_ENFORCE;
+            const kids: ChildProcess[] = [];
+            const deadPort = await freePort();
+            const deadFront = async (enforce: string) => {
+              for (let attempt = 0; ; attempt += 1) {
+                const port = await freePort();
+                try {
+                  const fd = await startFront(bin, {
+                    UPSTREAM_URL: `http://127.0.0.1:${deadPort}`, DATABASE_URL: db.uri, PORT: String(port), HARKROOM_FRONT_TS_ROUTES: '',
+                    DATABASE_WRITE_URL: writeUrl.toString(), TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust',
+                    ...GROUP_A_ENV, HARKROOM_MANDATE_ENFORCE: enforce,
+                  });
+                  kids.push(fd.child);
+                  const until = Date.now() + 10_000;
+                  while (!fd.log().includes('front: rust core routes') && Date.now() < until) await new Promise((res) => setTimeout(res, 100));
+                  return { url: `http://127.0.0.1:${port}`, log: fd.log };
+                } catch (err) {
+                  if (attempt >= 2 || !String(err).includes('AddrInUse')) throw err;
+                }
+              }
+            };
+            type McFx = { body: unknown; headers: Record<string, string>; line?: string };
+            let seq = 0;
+            /** 사람(소유자) 글로 띄운 턴의 임대. `pat` 이면 사람 세션 글이 아니라 위임장이 없다. `line` 이면 그 위임장에 merge 줄을 적는다. */
+            const turn = async (repo: string, o: { pat?: boolean; line?: { uses?: number }; token?: string } = {}): Promise<McFx> => {
+              seq += 1;
+              const posted = await postMessage(db.pool, { channelId: todayId, authorId: admin.accountId, body: `@s55mc 머지 ${seq}`, threadRootId: null, authVia: o.pat ? 'pat' : 'session' });
+              const root = (posted as { message: { id: string } }).message.id;
+              const lr = await app.inject({ method: 'POST', url: '/agent/turn-leases', headers: vM, payload: { causeMessageId: root } });
+              expect(lr.statusCode, lr.body).toBe(200);
+              const l = (lr.json() as { lease: { id: string; token: string } }).lease;
+              let line: string | undefined;
+              if (o.line) {
+                const mandate = (await db.pool.query<{ m: string | null }>(`select mandate_id::text as m from message where id = $1`, [root])).rows[0]!.m;
+                expect(mandate, '사람 세션 글에는 위임장이 선다').toBeTruthy();
+                const added = await addMandateLine(db.pool, { mandateId: mandate!, cap: 'merge', scope: `repo:${repo}`, grantedBy: admin.accountId, via: 'button',
+                  ...(o.line.uses ? { limits: { uses: o.line.uses } } : {}) });
+                expect(added.ok, JSON.stringify(added)).toBe(true);
+                line = added.ok ? added.line.id : undefined;
+              }
+              return { body: { leaseId: l.id, token: o.token ?? l.token, repo, number: 7, headSha: SHA40 }, headers: vM, ...(line ? { line } : {}) };
+            };
+            const grant = (repo: string) => db.pool.query(
+              `insert into account_grant (account_id, capability, scope, granted_by, expires_at) values ($1, 'repo.merge', $2, $3, now() + interval '7 days')`,
+              [mc.accountId, `repo:${repo}`, admin.accountId]);
+            const mcSide = async (base: string, fx: () => Promise<McFx>, times: number) => {
+              const x = await fx();
+              const mark = (await db.pool.query<{ a: string }>(`select coalesce(max(id), 0)::text as a from audit_log`)).rows[0]!.a;
+              const rs: Array<{ status: number; cc: string | null; json: unknown }> = [];
+              for (let i = 0; i < times; i += 1) {
+                const res = await fetch(`${base}${MC}`, { method: 'POST', headers: { ...x.headers, 'content-type': J, 'x-forwarded-for': XFF }, body: JSON.stringify(x.body) });
+                const text = await res.text();
+                let json: unknown = text;
+                try { json = JSON.parse(text); } catch { /* 502 는 맨글자다 */ }
+                rs.push({ status: res.status, cc: res.headers.get('cache-control'), json });
+              }
+              const audit = (await db.pool.query(
+                `select action, actor_id, actor_handle, target, detail from audit_log where id > $1 and actor_id = $2 order by id`, [mark, mc.accountId])).rows;
+              const denials = (await db.pool.query(
+                `select reason, scope, pr_number, head_sha, failed_checks, channel_id, thread_root_id is not null as threaded, lease_id is not null as leased,
+                        obsoleted_at is not null as obsoleted, expires_at > now() as live
+                   from merge_denial where agent_id = $1 order by reason, scope`, [mc.accountId])).rows;
+              await db.pool.query(`delete from merge_denial where agent_id = $1`, [mc.accountId]);
+              const used = x.line
+                ? (await db.pool.query<{ n: number }>(`select used_count as n from mandate_line where id = $1`, [x.line])).rows[0]!.n
+                : null;
+              return { rs, effects: { audit, denials, used } };
+            };
+            try {
+              const dOff = await deadFront('off');
+              const dOn = await deadFront('on');
+              const dUnset = await deadFront('');
+              for (const d of [dOff, dOn]) {
+                expect(d.log(), UNSET_LINE).not.toContain(UNSET_LINE);
+                for (const off of ['merge checks deny off', 'merge checks allow off', 'merge checks card off', 'merge checks mandate shadow off', 'merge checks mandate enforce off']) {
+                  expect(d.log(), off).not.toContain(off);
+                }
+              }
+              expect(dUnset.log()).toContain(UNSET_LINE);
+              const mcPair = async (label: string, mode: 'on' | 'off', fx: () => Promise<McFx>, times = 1) => {
+                if (mode === 'on') process.env.HARKROOM_MANDATE_ENFORCE = 'on'; else delete process.env.HARKROOM_MANDATE_ENFORCE;
+                const a = await mcSide(tsUrl, fx, times);
+                const b = await mcSide((mode === 'on' ? dOn : dOff).url, fx, times);
+                expect(norm(b.rs), `${label} — Rust 가 직접 답한다(upstream 없음)`).toEqual(norm(a.rs));
+                expect(norm(b.effects), `${label} 부작용`).toEqual(norm(a.effects));
+                return { a, b };
+              };
+              const code = (p: { a: { rs: Array<{ json: unknown }> } }, i = 0) => (p.a.rs[i]!.json as { error?: { code?: string } }).error?.code;
+              for (const mode of ['off', 'on'] as const) {
+                // 게이트 앞·이른 거절 — 스위치와 무관하다.
+                await mcPair(`merge ${mode} 익명 → 401`, mode, async () => ({ ...(await turn('izagood/s55mc-gate')), headers: {} }));
+                await mcPair(`merge ${mode} 사람 → 403`, mode, async () => ({ ...(await turn('izagood/s55mc-gate')), headers: { authorization: `Bearer ${A}` } }));
+                await mcPair(`merge ${mode} 본문 틀림 → 400`, mode, async () => {
+                  const x = await turn('izagood/s55mc-gate');
+                  return { ...x, body: { ...(x.body as Record<string, unknown>), headSha: 'zz' } };
+                });
+                const li = await mcPair(`merge ${mode} 토큰 틀림 → 403 lease_invalid`, mode, () => turn('izagood/s55mc-gate', { token: 'wrong' }));
+                expect([li.a.rs[0]!.status, code(li)]).toEqual([403, 'lease_invalid']);
+                expect(norm(li.a.effects.audit)).toMatchObject([{ action: 'repo.merge.denied', detail: { code: 'lease_invalid' } }]);
+              }
+              // 스위치 꺼짐 — 사슬 판정(오늘 판정). grant 없음은 카드용 거절 기록, grant 있음은 허락, 줄만 있고 grant 없음은 거절(그림자에는 줄이 맞았다고 적힌다).
+              const ng = await mcPair('merge off grant 없음 → not_granted + 거절 기록', 'off', () => turn('izagood/s55mc-none'));
+              expect([ng.a.rs[0]!.status, code(ng)]).toEqual([403, 'not_granted']);
+              expect((ng.a.rs[0]!.json as { error: { denialId?: string } }).error.denialId, '사람 턴이면 카드용 denialId').toBeTruthy();
+              expect(ng.a.effects.denials).toMatchObject([{ reason: 'not_granted', scope: 'repo:izagood/s55mc-none', leased: true }]);
+              await grant('izagood/s55mc-ok');
+              const ok = await mcPair('merge off grant 있음 → 허락', 'off', () => turn('izagood/s55mc-ok'));
+              expect(ok.a.rs[0]!.status, JSON.stringify(ok.a.rs)).toBe(200);
+              expect(ok.a.rs[0]!.json).toMatchObject({ allowed: true });
+              expect((ok.a.effects.audit as Array<{ action: string }>).map((r) => r.action).sort()).toEqual(['mandate.shadow', 'repo.merge.checked']);
+              const lo = await mcPair('merge off 줄만 있음 → not_granted(그림자: 줄은 맞음)', 'off', () => turn('izagood/s55mc-line', { line: {} }));
+              expect(code(lo)).toBe('not_granted');
+              expect(lo.a.effects.used, '꺼졌으면 줄을 쓰지 않는다').toBe(0);
+              expect(lo.a.effects.audit).toMatchObject(expect.arrayContaining([
+                expect.objectContaining({ action: 'mandate.shadow', detail: expect.objectContaining({ enforced: 'chain', mandateVerdict: 'allowed' }) })]));
+              // 스위치 켜짐 — 위임 판정. 줄이 맞으면 허락(줄을 쓴다), 1회 줄은 두 번째에 거절, 줄이 없으면 `no_mandate_line` + 거절 기록,
+              // 위임장 없는 턴(PAT 글)은 grant 가 있어도 거절, 위임장 있는 턴의 7일 grant 는 standing 줄로 허락.
+              const st = await mcPair('merge on 줄 있음 → 허락', 'on', () => turn('izagood/s55mc-line', { line: {} }));
+              expect(st.a.rs[0]!.status, JSON.stringify(st.a.rs)).toBe(200);
+              expect(st.a.rs[0]!.json).toMatchObject({ allowed: true, mandateLine: { via: 'button', ghUser: null, ciOverride: false } });
+              expect(st.a.effects.audit).toMatchObject(expect.arrayContaining([
+                expect.objectContaining({ action: 'mandate.shadow', detail: expect.objectContaining({ enforced: 'mandate', mandateVerdict: 'allowed', lineVia: 'button' }) })]));
+              const once = await mcPair('merge on 1회 줄 두 번 → 허락 뒤 no_mandate_line', 'on', () => turn('izagood/s55mc-once', { line: { uses: 1 } }), 2);
+              expect([once.a.rs[0]!.status, once.a.rs[1]!.status, code(once, 1)]).toEqual([200, 403, 'no_mandate_line']);
+              expect([once.a.effects.used, once.b.effects.used]).toEqual([1, 1]);
+              const nl = await mcPair('merge on 줄 없음 → no_mandate_line + 거절 기록', 'on', () => turn('izagood/s55mc-none'));
+              expect([nl.a.rs[0]!.status, code(nl)]).toEqual([403, 'no_mandate_line']);
+              expect((nl.a.rs[0]!.json as { error: { denialId?: string } }).error.denialId).toBeTruthy();
+              expect(nl.a.effects.denials).toMatchObject([{ reason: 'no_mandate_line', scope: 'repo:izagood/s55mc-none' }]);
+              const pg1 = await mcPair('merge on 위임장 없는 턴 + grant → no_mandate_line', 'on', () => turn('izagood/s55mc-ok', { pat: true }));
+              expect(code(pg1)).toBe('no_mandate_line');
+              const sg = await mcPair('merge on 위임장 있는 턴 + 7일 grant → standing 줄', 'on', () => turn('izagood/s55mc-ok'));
+              expect(sg.a.rs[0]!.json).toMatchObject({ allowed: true, mandateLine: { via: 'standing' } });
+              // 스위치를 모르는 앞단 — 게이트 앞 두 갈래만 직접 답하고, 판정은 아무것도 읽거나 쓰지 않고 TS 로 넘긴다(여기서는 502).
+              delete process.env.HARKROOM_MANDATE_ENFORCE;
+              const uGate = await mcSide(dUnset.url, async () => ({ ...(await turn('izagood/s55mc-gate')), headers: { authorization: `Bearer ${A}` } }), 1);
+              expect(uGate.rs[0]!.status, '모양·오퍼레이터 검사는 스위치 앞').toBe(403);
+              for (const [label, fx] of [
+                ['허락될 요청', () => turn('izagood/s55mc-ok')],
+                ['이른 거절(토큰 틀림)', () => turn('izagood/s55mc-gate', { token: 'wrong' })],
+                ['grant 없음', () => turn('izagood/s55mc-none')],
+              ] as Array<[string, () => Promise<McFx>]>) {
+                const u = await mcSide(dUnset.url, fx, 1);
+                expect(u.rs[0]!.status, `스위치 모름: ${label} → TS 로 넘긴다`).toBe(502);
+                expect(u.effects, `스위치 모름: ${label} — 아무것도 적지 않는다`).toEqual({ audit: [], denials: [], used: null });
+              }
+            } finally {
+              for (const k of kids) k.kill('SIGTERM');
+              if (prevEnforce === undefined) delete process.env.HARKROOM_MANDATE_ENFORCE; else process.env.HARKROOM_MANDATE_ENFORCE = prevEnforce;
+              await db.pool.query(`delete from account_grant where account_id = $1 and capability = 'repo.merge'`, [mc.accountId]);
+            }
           }
           // 13) POST /agent/secrets·/rotate import 갈래(S5.4 ab — F4 `value_is_mounted`·`bad_value` 포함). 새 에이전트(쪽마다 제한기 10회 중 8회).
           {
