@@ -10652,6 +10652,250 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           await pair('채널 지우기 두 번째', 'DELETE', `/channels/${cT.ch}`, `/channels/${cR.ch}`);
         }
       }
+      // S5.4 3회차 ② — 로그인·재설정·업로드·러너 설정·자동화 만들기/돌리기/승인·비밀 부여. 줄이 Rust 코어로 실렸는지 보고,
+      // 같은 처음 상태를 두 벌 만들어 TS 로 한 번, Rust 로 한 번 보내 상태·본문을 견준다. 새로 생기는 id·시각·토큰은 가린다.
+      // 400 은 TS 가 zod 덤프를 message 에 싣으므로 상태·코드만 본다(다른 줄과 같은 관례). 리밋은 두 서버가 따로 세고,
+      // 재설정·로그인 성공은 사례마다 다른 계정을 써서 세션 삭제·리밋 키가 서로 닿지 않게 한다.
+      {
+        for (const k of [
+          'POST /auth/login', 'POST /auth/password-reset', 'POST /uploads', 'GET /agent/config',
+          'POST /automations', 'POST /automations/{id}/run', 'POST /automations/{id}/approve', 'PUT /secrets/{id}/grants',
+        ]) expect(f.log(), k).toContain(`"${k}"`);
+        for (const off of ['agent config core off', 'automation create core off', 'automation approve core off', 'automation run-now core off', 'secret grant give core off']) {
+          expect(f.log(), off).not.toContain(off);
+        }
+        const g4 = '00000000-0000-4000-8000-0000000c5404';
+        const UUIDS = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
+        const ISO_T = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g;
+        const deep = (v: unknown): unknown => JSON.parse(JSON.stringify(v)
+          .replace(UUIDS, '<id>').replace(ISO_T, '<t>').replace(/hrks_[A-Za-z0-9_-]+/g, '<tok>'));
+        /** pT·pR 은 TS·Rust 쪽 경로(같은 처음 상태의 두 벌). 400 은 상태·코드만, 나머지는 가린 본문 전체. */
+        const pair2 = async (name: string, m: string, pT: string, pR: string, body?: unknown, token = A, bodyR = body) => {
+          const [a, b] = [await callX(tsUrl, m, pT, body, token), await callX(rsUrl, m, pR, bodyR, token)];
+          if (a.status === 400) expect({ status: b.status, code: b.code }, name).toEqual({ status: a.status, code: a.code });
+          else expect({ status: b.status, json: deep(b.json) }, name).toEqual({ status: a.status, json: deep(a.json) });
+          return { a, b };
+        };
+        const auditOf = async (where: string, args: unknown[]) => (await db.pool.query(
+          `select action, actor_id, actor_handle, target, ip, detail from audit_log where ${where} order by id`, args)).rows.map(deep);
+        const ISO_SQL = (c: string) => `to_char(${c} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
+        // 1) POST /auth/login — 성공 · 틀린 비밀번호 · 없는 계정(감사 줄까지) · 본문 틀림.
+        {
+          const ok = await pair2('로그인 성공', 'POST', '/auth/login', '/auth/login', { loginId: 'mem', password: 'pw123456' }, '');
+          expect(ok.a.status).toBe(200);
+          expect(String(ok.b.json.token)).toMatch(/^hrks_/);
+          expect((await callX(tsUrl, 'GET', '/auth/me', undefined, String(ok.b.json.token))).status, 'Rust 가 낸 세션으로 들어간다').toBe(200);
+          const bad = await pair2('로그인 틀린 비밀번호', 'POST', '/auth/login', '/auth/login', { loginId: 'mem', password: 'wrong-pw' }, '');
+          expect(bad.a.status).toBe(401);
+          await pair2('로그인 없는 계정', 'POST', '/auth/login', '/auth/login', { loginId: 'nobody-s54r4', password: 'whatever1' }, '');
+          const rows = await auditOf(`actor_handle = $1`, ['nobody-s54r4']);
+          expect(rows.length, '없는 계정 실패 감사 — 양쪽 하나씩').toBe(2);
+          expect(rows[1], '감사 줄이 같다').toEqual(rows[0]);
+          await pair2('로그인 본문 없음', 'POST', '/auth/login', '/auth/login', {}, '');
+          await pair2('로그인 비밀번호 숫자', 'POST', '/auth/login', '/auth/login', { loginId: 'mem', password: 1 }, '');
+          await pair2('로그인 ID 너무 김', 'POST', '/auth/login', '/auth/login', { loginId: 'x'.repeat(65), password: 'pw123456' }, '');
+        }
+        // 2) POST /auth/password-reset — 본문 틀림 · 코드 꼴 틀림 · 맞지 않는 코드 · 성공(옛 세션이 끊긴다) · 같은 코드 두 번째.
+        {
+          const [uT, uR] = [await createMember(app, A, 'pwrt'), await createMember(app, A, 'pwrr')];
+          // 코드 해시는 유일 — 두 벌에 다른 코드를 준다.
+          const [code, codeR] = ['ABCD-EFGH-JKMN', 'NMKJ-HGFE-DCBA'];
+          for (const [u, c] of [[uT, code], [uR, codeR]] as const) {
+            await db.pool.query(
+              `insert into password_reset_code (account_id, code_hash, issued_by, expires_at) values ($1, $2, $3, now() + interval '30 minutes')`,
+              [u.accountId, hashToken(c.replace(/-/g, '')), admin.accountId]);
+          }
+          const rq = (loginId: string, c: string, newPassword: string) => ({ loginId, code: c, newPassword });
+          const pr = (name: string, c: string, pw: string, cR = c) =>
+            pair2(name, 'POST', '/auth/password-reset', '/auth/password-reset', rq('pwrt', c, pw), '', rq('pwrr', cR, pw));
+          await pair2('재설정 본문 없음', 'POST', '/auth/password-reset', '/auth/password-reset', {}, '');
+          await pr('재설정 짧은 비밀번호', code, 'short', codeR);
+          await pr('재설정 코드 꼴 틀림', 'nope', 'newpass123');
+          await pr('재설정 맞지 않는 코드', 'ZZZZ-ZZZZ-ZZZZ', 'newpass123');
+          await pair2('재설정 남의 로그인 ID', 'POST', '/auth/password-reset', '/auth/password-reset', rq('mem', code, 'newpass123'), '');
+          const ok = await pr('재설정 성공', 'abcd efgh jkmn', 'newpass123', 'nmkj hgfe dcba');
+          expect(ok.a.status).toBe(200);
+          expect([(await callX(tsUrl, 'GET', '/auth/me', undefined, uT.token)).status, (await callX(tsUrl, 'GET', '/auth/me', undefined, uR.token)).status], '옛 세션 끊김').toEqual([401, 401]);
+          expect((await callX(tsUrl, 'GET', '/auth/me', undefined, String(ok.b.json.token))).status, 'Rust 가 낸 세션').toBe(200);
+          await pr('재설정 같은 코드 두 번째', code, 'newpass456', codeR);
+          const [lT, lR] = [
+            await callX(tsUrl, 'POST', '/auth/login', { loginId: 'pwrr', password: 'newpass123' }, ''),
+            await callX(rsUrl, 'POST', '/auth/login', { loginId: 'pwrt', password: 'newpass123' }, ''),
+          ];
+          expect([lT.status, lR.status], '새 비밀번호로 서로의 서버에 로그인').toEqual([200, 200]);
+          const au = async (id: string) => (await auditOf(`(actor_id = $1::uuid or target = $1::text) and action like 'password%'`, [id]))
+            .map((r) => ({ ...(r as object), actor_handle: null }));
+          expect(await au(uR.accountId), '재설정 감사').toEqual(await au(uT.accountId));
+        }
+        // 3) POST /uploads — 성공(행·파일) · 파일 파트 없음 · 익명 · multipart 아님(TS 로) · 에이전트(TS 로).
+        {
+          const up = async (base: string, token: string, form?: FormData, raw?: { ct: string; body: string }) => {
+            const headers: Record<string, string> = { 'x-forwarded-for': XFF };
+            if (token) headers.authorization = `Bearer ${token}`;
+            if (raw) headers['content-type'] = raw.ct;
+            const res = await fetch(`${base}/uploads`, { method: 'POST', headers, body: raw ? raw.body : form });
+            const text = await res.text();
+            return { status: res.status, json: text ? JSON.parse(text) as Record<string, unknown> : {} };
+          };
+          const file = (name: string, type: string, bytes: string) => { const fd = new FormData(); fd.append('file', new Blob([bytes], { type }), name); return fd; };
+          const field = () => { const fd = new FormData(); fd.append('note', 'no file'); return fd; };
+          const cases: [string, string, () => FormData | undefined, { ct: string; body: string } | undefined][] = [
+            ['업로드 성공', A, () => file('hello é.txt', 'text/plain; charset=utf-8', 'hello s54r4'), undefined],
+            ['업로드 멤버 타입 없음', member.token, () => file('blob.bin', '', 'xyz'), undefined],
+            ['업로드 파일 파트 없음', A, field, undefined],
+            ['업로드 익명', '', () => file('a.txt', 'text/plain', 'a'), undefined],
+            ['업로드 multipart 아님 → TS', A, () => undefined, { ct: J, body: '{"x":1}' }],
+            ['업로드 에이전트 → TS', agent.pat, () => file('agent.txt', 'text/plain', 'from agent'), undefined],
+          ];
+          const { readFileSync } = await import('node:fs');
+          for (const [name, token, mk, raw] of cases) {
+            const [a, b] = [await up(tsUrl, token, mk(), raw), await up(rsUrl, token, mk(), raw)];
+            expect({ status: b.status, json: deep(b.json) }, name).toEqual({ status: a.status, json: deep(a.json) });
+            if (name.endsWith('성공')) expect(a.status, name).toBe(201);
+            if (a.status === 201) {
+              const one = async (id: unknown) => (await db.pool.query<{ uploader_id: string; filename: string; content_type: string; size_bytes: number; storage_key: string }>(
+                `select uploader_id, filename, content_type, size_bytes, storage_key from attachment where id = $1`, [id])).rows[0]!;
+              const [ra, rb] = [await one(a.json.id), await one(b.json.id)];
+              expect({ ...rb, storage_key: '' }, `${name} 행`).toEqual({ ...ra, storage_key: '' });
+              expect(readFileSync(joinPath(attRoot, rb.storage_key), 'utf8'), `${name} 파일`).toBe(readFileSync(joinPath(attRoot, ra.storage_key), 'utf8'));
+            }
+          }
+        }
+        // 4) GET /agent/config — 에이전트 · 사람 403 · 익명 401 · 종료 요청 수령(stopAckedAt 를 응답 글자 속에 끼워 넣는 자리).
+        //    표시 이름에 같은 글자(`"stopAckedAt" : null`)를 넣어 두어 Rust 의 글자 치환이 엉뚱한 곳을 바꾸지 않는지 본다.
+        const bot = await createAgent(app, A, 's54r4bot');
+        {
+          await db.pool.query(`update account set display_name = $2 where id = $1`, [bot.accountId, '"stopAckedAt" : null']);
+          const raw = async (base: string, token: string) => {
+            const r = await fetch(`${base}/agent/config`, { headers: token ? { authorization: `Bearer ${token}` } : {} });
+            return { status: r.status, type: r.headers.get('content-type'), json: JSON.parse(await r.text()) as Record<string, unknown> };
+          };
+          const both = async (name: string, token: string, maskAck = false) => {
+            const a = await raw(tsUrl, token);
+            if (maskAck) await db.pool.query(`update agent_config set stop_acked_at = null where account_id = $1`, [bot.accountId]);
+            const b = await raw(rsUrl, token);
+            const m = (x: typeof a) => (maskAck ? { ...x, json: { ...x.json, stopAckedAt: typeof x.json.stopAckedAt === 'string' ? '<t>' : x.json.stopAckedAt } } : x);
+            expect(m(b), name).toEqual(m(a));
+            return { a, b };
+          };
+          const plain = await both('러너 설정', bot.pat);
+          expect(plain.a.status).toBe(200);
+          expect(plain.a.json.stopAckedAt).toBeNull();
+          expect(plain.b.json.displayName).toBe('"stopAckedAt" : null');
+          await both('러너 설정 사람 → 403', A);
+          await both('러너 설정 익명 → 401', '');
+          await db.pool.query(`update agent_config set stop_requested_at = now() - interval '1 minute' where account_id = $1`, [bot.accountId]);
+          const acked = await both('러너 설정 종료 수령', bot.pat, true);
+          for (const x of [acked.a, acked.b]) expect(String(x.json.stopAckedAt)).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+          expect(acked.b.json.displayName, '표시 이름은 그대로').toBe('"stopAckedAt" : null');
+          const at = (await db.pool.query(`select ${ISO_SQL('stop_acked_at')} as t from agent_config where account_id = $1`, [bot.accountId])).rows[0].t;
+          expect(acked.b.json.stopAckedAt, 'Rust 답의 수령 시각 = DB').toBe(at);
+          // 이미 수령 — 둘 다 DB 값을 그대로(가리지 않고).
+          const again = await both('러너 설정 수령 뒤', bot.pat);
+          expect(again.a.json.stopAckedAt).toBe(at);
+        }
+        // 5) 자동화 만들기·돌리기·승인 — 멤버 소유. 같은 처음 상태를 두 벌.
+        {
+          const M = member.token;
+          const priv = (await createChannel(db.pool, { name: 's54r4-priv', visibility: 'private', creatorId: admin.accountId })).id;
+          const archived = (await createChannel(db.pool, { name: 's54r4-arch', creatorId: admin.accountId })).id;
+          await db.pool.query(`update channel set archived_at = now() where id = $1`, [archived]);
+          const base = { name: 's54r4 auto', channelId: todayId, body: '보고 {{date}}' };
+          const hook = { kind: 'webhook' };
+          const creates: [string, unknown, string][] = [
+            ['자동화 만들기 웹훅', { ...base, trigger: hook }, M],
+            ['자동화 만들기 매일', { ...base, trigger: { kind: 'schedule', freq: 'daily', time: '09:00', tz: 'Asia/Seoul' }, debounceSec: 30 }, M],
+            ['자동화 만들기 디바운스 null', { ...base, trigger: hook, debounceSec: null }, M],
+            ['자동화 만들기 에이전트 → 403', { ...base, trigger: hook }, agent.pat],
+            ['자동화 만들기 익명 → 401', { ...base, trigger: hook }, ''],
+            ['자동화 만들기 본문 없음 → 400', {}, M],
+            ['자동화 만들기 이름 공백 → 400', { ...base, name: '   ', trigger: hook }, M],
+            ['자동화 만들기 없는 채널 → 404', { ...base, channelId: g4, trigger: hook }, M],
+            ['자동화 만들기 안 보이는 채널 → 403', { ...base, channelId: priv, trigger: hook }, M],
+            ['자동화 만들기 보관 채널 → 403', { ...base, channelId: archived, trigger: hook }, M],
+          ];
+          for (const [name, body, token] of creates) {
+            const { a } = await pair2(name, 'POST', '/automations', '/automations', body, token);
+            if (name.startsWith('자동화 만들기 웹훅') || name.startsWith('자동화 만들기 매일')) expect(a.status, name).toBe(201);
+          }
+          const mk = async (owner: string, proposed: boolean) => (await db.pool.query<{ id: string }>(
+            `insert into automation (owner_id, channel_id, name, body, trigger, enabled, proposed_by, approved_at)
+             values ($1, $2, 's54r4 run', '본문', $3::jsonb, $4::boolean, $5, case when $4::boolean then now() end) returning id`,
+            [owner, todayId, proposed ? '{"kind":"schedule","freq":"daily","time":"08:30","tz":"UTC"}' : '{"kind":"webhook"}', !proposed, proposed ? agent.accountId : null])).rows[0]!.id;
+          // 돌리기.
+          const [rT, rR] = [await mk(member.accountId, false), await mk(member.accountId, false)];
+          const theirs = await mk(admin.accountId, false);
+          const run = (name: string, t: string, r: string, token = M) => pair2(name, 'POST', `/automations/${t}/run`, `/automations/${r}/run`, undefined, token);
+          await run('자동화 돌리기 에이전트 → 403', rT, rR, agent.pat);
+          await run('자동화 돌리기 익명 → 401', rT, rR, '');
+          await run('자동화 돌리기 id 아님 → 400', 'nope', 'nope');
+          await run('자동화 돌리기 없는 것 → 404', g4, g4);
+          await run('자동화 돌리기 남의 것 → 404', theirs, theirs);
+          expect((await run('자동화 돌리기 성공', rT, rR)).a.status).toBe(202);
+          await run('자동화 돌리기 두 번째', rT, rR);
+          await db.pool.query(`update automation set enabled = false where id = any($1::uuid[])`, [[rT, rR]]);
+          await run('자동화 돌리기 꺼진 것', rT, rR);
+          const runs = async (id: string) => (await db.pool.query(
+            `select trigger_kind, status, payload, initiated_by, chain_depth, not_before is null as nb from automation_run where automation_id = $1 order by created_at, id`, [id])).rows.map(deep);
+          expect(await runs(rR), '돌리기 회차 줄').toEqual(await runs(rT));
+          // 승인.
+          const [pT, pR] = [await mk(member.accountId, true), await mk(member.accountId, true)];
+          const pTheirs = await mk(admin.accountId, true);
+          const appr = (name: string, t: string, r: string, token = M) => pair2(name, 'POST', `/automations/${t}/approve`, `/automations/${r}/approve`, undefined, token);
+          await appr('자동화 승인 에이전트 → 403', pT, pR, agent.pat);
+          await appr('자동화 승인 익명 → 401', pT, pR, '');
+          await appr('자동화 승인 id 아님 → 400', 'nope', 'nope');
+          await appr('자동화 승인 없는 것 → 404', g4, g4);
+          await appr('자동화 승인 남의 것 → 404', pTheirs, pTheirs);
+          expect((await appr('자동화 승인 성공', pT, pR)).a.status).toBe(200);
+          await appr('자동화 승인 두 번째 → 404', pT, pR);
+          const st = async (id: string) => (await db.pool.query(
+            `select enabled, approved_at is not null as ok, mandate_session_at is not null as ms, ${ISO_SQL('next_at')} as next_at from automation where id = $1`, [id])).rows[0];
+          expect(await st(pR), '승인 뒤 행').toEqual(await st(pT));
+        }
+        // 6) PUT /secrets/:id/grants — 관리자 소유 비밀, 관리자가 만든 에이전트. 거절 사다리 · 성공(operator any) · 다시(upsert) · 감사.
+        {
+          const owner = (await db.pool.query<{ o: string | null }>(`select owner_account_id as o from agent_config where account_id = $1`, [bot.accountId])).rows[0]?.o;
+          expect(owner, '관리자가 만든 에이전트의 소유자').toBe(admin.accountId);
+          const mk = async (name: string, o: string, expired = false) => (await db.pool.query<{ id: string }>(
+            `insert into secret (name, kind, description, owner_account_id, expires_at)
+             values ($1, 'text', 'd', $2, now() + case when $3::boolean then interval '-1 hour' else interval '1 day' end) returning id`,
+            [name, o, expired])).rows[0]!.id;
+          const [sT, sR, sOld, sMem] = [await mk('s54r4-t', admin.accountId), await mk('s54r4-r', admin.accountId), await mk('s54r4-old', admin.accountId, true), await mk('s54r4-mem', member.accountId)];
+          const stray = (await db.pool.query<{ id: string }>(`insert into account (handle, display_name, kind) values ('s54r4_stray', 's54r4_stray', 'agent') returning id`)).rows[0]!.id;
+          const give = (agentId: string, extra: Record<string, unknown> = {}) => ({ agentId, ...extra });
+          const B = bot.accountId;
+          const gives: [string, string, string, unknown, string][] = [
+            ['부여 에이전트 → 403', sT, sR, give(B), agent.pat],
+            ['부여 익명 → 401', sT, sR, give(B), ''],
+            ['부여 id 아님 → 400', 'nope', 'nope', give(B), A],
+            ['부여 없는 비밀 → 404', g4, g4, give(B), A],
+            ['부여 남의 비밀(멤버) → 404', sT, sR, give(B), member.token],
+            ['부여 admin 이지만 소유자 아님 → 403', sMem, sMem, give(B), A],
+            ['부여 본문 없음 → 400', sT, sR, {}, A],
+            ['부여 operator 모름 → 400', sT, sR, give(B, { operator: 'all' }), A],
+            ['부여 만료 → 409', sOld, sOld, give(B), A],
+            ['부여 없는 에이전트 → 404', sT, sR, give(g4), A],
+            ['부여 사람 계정 → 404', sT, sR, give(member.accountId), A],
+            ['부여 내 에이전트 아님 → 403', sT, sR, give(stray), A],
+            ['부여 없는 채널 → 404', sT, sR, give(B, { channelId: g4 }), A],
+            ['부여 배정 없음 → 409', sT, sR, give(B, { operator: 'current' }), A],
+            ['부여 성공', sT, sR, give(B, { operator: 'any' }), A],
+            ['부여 채널 한정', sT, sR, give(B, { operator: 'any', channelId: todayId }), A],
+            ['부여 다시(upsert)', sT, sR, give(B, { operator: 'any' }), A],
+          ];
+          for (const [name, t, r, body, token] of gives) await pair2(name, 'PUT', `/secrets/${t}/grants`, `/secrets/${r}/grants`, body, token);
+          const grants = async (s: string) => (await db.pool.query(
+            `select agent_id, channel_id, operator_id, granted_by, suspended_at from secret_grant where secret_id = $1 order by channel_id nulls first`, [s])).rows;
+          expect(await grants(sR), '부여 줄').toEqual(await grants(sT));
+          expect((await grants(sR)).length).toBe(2);
+          const au = async (s: string) => (await auditOf(`target = $1 and action = 'secret.grant.given'`, [s]))
+            .map((r) => JSON.parse(JSON.stringify(r).replace(/s54r4-[tr]/g, 's54r4-x')) as unknown);
+          const [auT, auR] = [await au(sT), await au(sR)];
+          expect(auR, '부여 감사').toEqual(auT);
+          expect(auR.length).toBe(3);
+        }
+      }
       // 프리플라이트(옮긴 줄의 OPTIONS 는 앞단이 TS 로 넘긴다 — 두 답이 같아야 한다).
       for (const headers of [{ origin: CORS, 'access-control-request-method': 'PUT' }, { origin: CORS }] as Record<string, string>[]) {
         const [a, b] = [
