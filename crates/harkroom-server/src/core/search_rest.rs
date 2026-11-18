@@ -7,8 +7,8 @@
 //! - 질의는 TS zod 스키마 그대로 읽는다(`offset` 은 JS `Number()` 강제 변환). zod 가 거절하는 값 — `q` 없음·길이 밖, uuid 가 아닌
 //!   id, 정수가 아니거나 천장 밖 `offset`, 모르는 `sort`·`hasAttachment`, 상한 넘는 `authorId`, `authorId` 밖 키의 되풀이 — 은
 //!   TS 와 같은 400 `invalid_request` 로 답한다(문구는 다르다 — 대조는 상태만 본다).
-//! - **답하지 않고 읽은 요청 그대로 TS 로 넘기는 것**(zod 를 통과한 뒤, 판정을 옮기지 않은 것):
-//!   - 질의에 `@` 가 있으면 — TS `normalizeSearchQuery` 가 `@handle` 을 `<@id>` 로 바꾼다(MCP 와 같은 경계).
+//! - 질의의 `@handle` 은 TS `normalizeSearchQuery` 처럼 저장 토큰(`<@id>`·`group:`·`team:`)으로 바꾼다. `after`·`before` 는 zod
+//!   `datetime({ offset: true })` 그대로 본다.
 use crate::auth::RequireAccount;
 use crate::core::mcp::respond::minify;
 use crate::core::mcp::search::{LIMIT, SEARCH_MAX_AUTHORS, SEARCH_MAX_OFFSET, has_more, sql};
@@ -47,11 +47,9 @@ struct Q {
 enum Reject {
     /// zod 가 거절한다 — TS 와 같은 400.
     Bad,
-    /// 형식은 맞지만 판정을 옮기지 않았다(`@` 정규화) — TS 로 넘긴다.
-    Ts,
 }
 
-/// 질의 문자열을 TS zod 스키마 그대로 읽는다. zod 가 거절하면 [`Reject::Bad`], 옮기지 않은 판정이 남으면 [`Reject::Ts`].
+/// 질의 문자열을 TS zod 스키마 그대로 읽는다. zod 가 거절하면 [`Reject::Bad`].
 /// 되풀이된 키는 fastify 에서 배열이 된다 — `authorId` 밖의 키는 문자열만 받으니 400 이다.
 fn parse(raw: Option<&str>) -> Result<Q, Reject> {
     let mut q: Option<String> = None;
@@ -63,7 +61,6 @@ fn parse(raw: Option<&str>) -> Result<Q, Reject> {
     let mut recent: Option<bool> = None;
     let mut after: Option<String> = None;
     let mut before: Option<String> = None;
-    let mut to_ts = false;
     let mut seen: Vec<String> = Vec::new();
     for (k, v) in url::form_urlencoded::parse(raw.unwrap_or("").as_bytes()) {
         let (k, v) = (k.into_owned(), v.into_owned());
@@ -95,10 +92,6 @@ fn parse(raw: Option<&str>) -> Result<Q, Reject> {
                 let n = v.encode_utf16().count();
                 if !(1..=256).contains(&n) {
                     return Err(Reject::Bad);
-                }
-                // TS `normalizeSearchQuery` 가 `@handle` 을 `<@id>` 로 바꾼다 — 옮기지 않았다.
-                if v.contains('@') {
-                    to_ts = true;
                 }
                 q = Some(v);
             }
@@ -153,9 +146,6 @@ fn parse(raw: Option<&str>) -> Result<Q, Reject> {
         return Err(Reject::Bad);
     }
     let query = q.ok_or(Reject::Bad)?;
-    if to_ts {
-        return Err(Reject::Ts);
-    }
     Ok(Q {
         query,
         channel,
@@ -171,7 +161,7 @@ fn parse(raw: Option<&str>) -> Result<Q, Reject> {
 
 async fn search(
     State(st): State<Arc<SearchState>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    ConnectInfo(_peer): ConnectInfo<SocketAddr>,
     RequireAccount(me, _): RequireAccount,
     req: Request,
 ) -> Response {
@@ -180,9 +170,6 @@ async fn search(
         // TS zod 오류와 같은 400 — 문구는 다르다(대조는 상태만 본다, `channels.rs` 와 같은 약속).
         Err(Reject::Bad) => {
             return json_err(StatusCode::BAD_REQUEST, "invalid_request", "query: invalid");
-        }
-        Err(Reject::Ts) => {
-            return crate::proxy::forward(State(st.up.clone()), ConnectInfo(peer), req).await;
         }
     };
     if let Some(ch) = q.channel.as_deref() {
@@ -198,8 +185,13 @@ async fn search(
             Err(e) => return internal(e),
         }
     }
+    // TS `normalizeSearchQuery` — `@handle` 을 저장 토큰(`<@id>`)으로.
+    let query = match crate::core::mention_parse::normalize_search_query(&st.pool, &q.query).await {
+        Ok(s) => s,
+        Err(e) => return internal(e),
+    };
     let rows: Vec<String> = match sqlx::query_scalar::<_, String>(sql(q.recent))
-        .bind(&q.query)
+        .bind(&query)
         .bind(LIMIT + 1)
         .bind(&me.id)
         .bind(q.channel.as_deref())
@@ -299,9 +291,7 @@ mod tests {
 
     #[test]
     fn unported_judgements_go_to_ts() {
-        for raw in ["q=%40alice"] {
-            assert_eq!(parse(Some(raw)), Err(Reject::Ts), "{raw}");
-        }
+        assert_eq!(parse(Some("q=%40alice")).unwrap().query, "@alice");
         let ok = parse(Some(
             "q=a&after=2026-01-01T00:00:00Z&before=2026-02-29T09:00%2B0900",
         ));

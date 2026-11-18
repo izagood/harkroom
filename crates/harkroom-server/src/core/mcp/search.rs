@@ -4,9 +4,8 @@
 //! - 문장은 TS 정본 `SEARCH_MESSAGES_SQL`(`services/messages.ts`, 정렬 두 갈래)을 `golden/sql_fragments.json` 에서 읽는다.
 //!   가시성 술어·스코프·거르기는 그 문장 안에 있다.
 //! - 답하지 않고 TS 로 넘기는 것(보수적으로):
-//!   - 질의에 `@` 가 있으면 — TS `normalizeSearchQuery` 가 `@handle` 을 `<@id>` 로 바꾼다(shared `mentionedHandles`·
-//!     `normalizeMentions` 의 JS 규칙). `@` 가 없으면 그 함수는 질의를 그대로 돌려준다.
 //!   - `after`·`before` 가 zod `datetime({ offset: true })` 를 지나지 못하면(그 거절 문구는 TS 몫).
+//! - 질의의 `@handle` 은 TS `normalizeSearchQuery` 처럼 저장 토큰으로 바꾼다([`normalize_search_query`](crate::core::mention_parse::normalize_search_query)).
 //! - 결과: TS `searchMessages` 처럼 `limit + 1`(51)을 떠서 50 을 싣고, `hasMore` 는 `searchHasMore`(천장 1000).
 //!   그 뒤 `message.read` 와 같은 `denormalizeBodies` → `markSystemLines`([`super::tools::denormalize_marked`]).
 use super::respond::{minify, text_result};
@@ -73,7 +72,7 @@ fn parse(args: &Value) -> Option<Args> {
     // `z.string().min(1).max(256)` — JS 길이(UTF-16 단위).
     let query = o.get("query")?.as_str()?;
     let n = query.encode_utf16().count();
-    if !(1..=256).contains(&n) || query.contains('@') {
+    if !(1..=256).contains(&n) {
         return None;
     }
     // zod `datetime({ offset: true })` — 틀리면 TS 가 거절한다(그 문구째로).
@@ -154,8 +153,12 @@ pub async fn answer(pool: &PgPool, me: &Account, args: &Value) -> Option<String>
     {
         return Some(err("forbidden", "not a member of this channel"));
     }
+    // TS `normalizeSearchQuery` — `@handle` 을 저장 토큰(`<@id>`)으로.
+    let query = crate::core::mention_parse::normalize_search_query(pool, &a.query)
+        .await
+        .ok()?;
     let rows: Vec<String> = sqlx::query_scalar::<_, String>(sql(a.recent))
-        .bind(&a.query)
+        .bind(&query)
         .bind(LIMIT + 1)
         .bind(&me.id)
         .bind(a.channel.as_deref())
@@ -211,7 +214,6 @@ mod tests {
             json!({}),
             json!({ "query": "" }),
             json!({ "query": 1 }),
-            json!({ "query": "@bot 찾기" }),
             json!({ "query": "x", "after": "2026-11-15" }),
             json!({ "query": "x", "before": 1 }),
             json!({ "query": "x", "offset": 1001 }),

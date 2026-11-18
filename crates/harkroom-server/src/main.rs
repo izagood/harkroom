@@ -2768,7 +2768,7 @@ async fn main() {
         core_routes.router = core_routes.router.merge(channels.router);
         core_routes.http.extend(channels.http);
         core_routes.sockets.extend(channels.sockets);
-        // S5.4 MS2a — 메시지 검색(`GET /search`). 읽기 풀만 쓴다(MCP `message.search` 와 같은 문장). `@`·기간·형식이 애매한 질의는 TS 로.
+        // S5.4 MS2a — 메시지 검색(`GET /search`). 읽기 풀만 쓴다(MCP `message.search` 와 같은 문장). `@handle`·기간도 Rust 가 푼다.
         let search = harkroom_server::core::search_rest::routes(
             harkroom_server::core::search_rest::SearchState {
                 pool: state.pool.clone(),
