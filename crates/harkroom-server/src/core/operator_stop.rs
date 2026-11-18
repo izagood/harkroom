@@ -19,10 +19,14 @@ use axum::response::{IntoResponse, Response};
 use serde_json::json;
 use std::sync::Arc;
 
-/// TS `services/agents.ts` `COLS`·`FROM`·`getAgent` 를 한 json 으로 접는다. 최상위 시각은 TS 가 `Date` 를 JSON 으로 옮기는
+/// TS `services/agents.ts` `COLS` 를 한 json 으로 접는다. 최상위 시각은 TS 가 `Date` 를 JSON 으로 옮기는
 /// 꼴(`toISOString`, ms·Z)로 맞추고, `assignment` 안 시각은 TS 도 pg 의 json 그대로 넘기므로 같은 `json_build_object` 를 쓴다.
-const AGENT_VIEW_SQL: &str = concat!(
-    "select json_build_object(\
+/// AgentView 한 행을 접는 `json_build_object(...)` — 상세(`AGENT_VIEW_SQL`)와 목록(`GET /accounts/agents`)이 같은 칸을 쓴다.
+/// 별칭 `a`(account)·`c`(agent_config)·`v`(agent_runner_version)·`asg`(agent_assignment) 를 기대한다.
+macro_rules! agent_view_json {
+    () => {
+        concat!(
+            "json_build_object(\
        'id', a.id, 'handle', a.handle, 'displayName', a.display_name, 'kind', a.kind, 'isAdmin', a.is_admin, \
        'role', a.role, \
        'instructions', coalesce(c.instructions, ''), \
@@ -53,12 +57,32 @@ const AGENT_VIEW_SQL: &str = concat!(
     ", 'assignment', case when asg.agent_id is null then null \
          else json_build_object('agentId', asg.agent_id, 'operatorId', asg.operator_id, \
                                 'assignedBy', asg.assigned_by, 'assignedAt', asg.assigned_at) end\
-     )::text, ",
+     )"
+        )
+    };
+}
+
+const AGENT_VIEW_SQL: &str = concat!(
+    "select ",
+    agent_view_json!(),
+    "::text, ",
     crate::iso!("c.stop_requested_at"),
     " from account a left join agent_config c on c.account_id = a.id \
        left join agent_runner_version v on v.account_id = a.id \
        left join agent_assignment asg on asg.agent_id = a.id \
      where a.id = $1::uuid and a.kind = 'agent' and a.deleted_at is null"
+);
+
+/// TS `listAgents` — admin 은 전부, 비admin 은 자기가 소유한 것만(SQL 에서 거른다). `order by a.handle`.
+const AGENT_LIST_SQL: &str = concat!(
+    "select a.id::text, ",
+    agent_view_json!(),
+    "::text from account a left join agent_config c on c.account_id = a.id \
+       left join agent_runner_version v on v.account_id = a.id \
+       left join agent_assignment asg on asg.agent_id = a.id \
+     where a.kind = 'agent' and a.deleted_at is null \
+       and ($1::uuid is null or c.owner_account_id = $1::uuid) \
+     order by a.handle"
 );
 
 macro_rules! tri {
@@ -113,6 +137,34 @@ fn handle_of(view: &str) -> serde_json::Value {
         .ok()
         .and_then(|v| v.get("handle").cloned())
         .unwrap_or(serde_json::Value::Null)
+}
+
+/// `GET /accounts/agents` — TS `accountRoutes.ts`. `requireAccount`(401) → `listAgents` → 각 행 끝에 `runnerRefusal`
+/// (허브의 `refusalOf`, 없으면 null). TS 의 `{ ...a, runnerRefusal }` 처럼 그 키가 **마지막**이다. 이 줄은 오퍼레이터 코어와
+/// 함께만 선다 — 거절 사유는 `/operator` 소켓을 가진 프로세스의 허브에만 있다.
+pub async fn list_agents(
+    State(core): State<Arc<OperatorCore>>,
+    crate::auth::RequireAccount(me, _): crate::auth::RequireAccount,
+) -> Response {
+    let owner = (!me.is_admin).then_some(me.id.as_str());
+    let rows: Vec<(String, String)> = db!(sqlx::query_as(AGENT_LIST_SQL)
+        .bind(owner)
+        .fetch_all(&core.pool)
+        .await);
+    let mut out = String::from("{\"agents\":[");
+    for (i, (id, view)) in rows.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        let refusal = core.hub.refusal_of(id).unwrap_or(serde_json::Value::Null);
+        // json_build_object 는 늘 `}` 로 끝난다 — 그 앞에 마지막 키를 붙인다.
+        out.push_str(view.trim_end().strip_suffix('}').unwrap_or(view));
+        out.push_str(",\"runnerRefusal\":");
+        out.push_str(&refusal.to_string());
+        out.push('}');
+    }
+    out.push_str("]}");
+    json_text(out)
 }
 
 /// `POST /accounts/agents/{id}/stop` — TS `requestAgentStop` + 감사 `agent.stop.requested` + 배정된 오퍼레이터에 `unassign{drain}`.

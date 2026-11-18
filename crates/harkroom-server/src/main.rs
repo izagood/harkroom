@@ -847,7 +847,7 @@ async fn main() {
         }
         _ => None,
     };
-    // S5.4 AC2 — `GET /accounts/agents/{id}/memory`·`…/memory/{slug}/revisions`. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 읽기 풀에 그 SELECT 가 다 있을 때만. 정리 후보·백그라운드·기억 쓰기는 언제나 TS.
+    // S5.4 AC2 — `GET /accounts/agents/{id}/memory`·`…/memory/{slug}/revisions`·`…/background/runs/{runId}`. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 읽기 풀에 그 SELECT 가 다 있을 때만. 정리 후보·백그라운드·기억 쓰기는 언제나 TS.
     let agent_memory_read_on = match &core_mode {
         harkroom_server::core::CoreMode::Rust => {
             use harkroom_server::core::agent_memory_read as t;
@@ -860,6 +860,91 @@ async fn main() {
                 Err(e) => {
                     eprintln!(
                         "front: agent memory read core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    false
+                }
+            }
+        }
+        _ => false,
+    };
+    // S5.4 — 로그인 ID 읽기(`GET /accounts/login-ids`). 쓰기 풀에 감사 INSERT 가 있을 때만 — 아니면 TS 에 남는다.
+    let account_login_ids_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::account_login_ids as a;
+            match write::missing_in(w, a::ACCOUNT_LOGIN_IDS_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: account login ids core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: account login ids core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+    // S5.4 — 고를 수 있는 모델 목록 쓰기(`PUT /accounts/agents/{id}/pickable-models`, `clearOutside: true` 는 안에서 TS 로).
+    // 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만.
+    let pickable_models_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::pickable_models as a;
+            match write::missing_in(w, a::PICKABLE_MODELS_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: pickable models core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: pickable models core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+    // S5.4 — 보관소 잠그기(`DELETE /auth/step-up`). 쓰기 풀에 세션의 창 칸 UPDATE 가 있을 때만 — 아니면 TS 에 남는다.
+    let step_up_end_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::step_up_end as a;
+            match write::missing_in(w, a::STEP_UP_END_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: step-up end core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: step-up end core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+    // S5.4 — 계정 권한 목록 읽기(`GET /accounts/{id}/grants`). 읽기 풀에 SELECT 가 있을 때만 — 아니면 TS 에 남는다.
+    let account_grants_read_on = match &core_mode {
+        harkroom_server::core::CoreMode::Rust => {
+            use harkroom_server::core::account_grants_read as t;
+            match write::missing_in(&state.pool, t::ACCOUNT_GRANTS_READ_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => true,
+                Ok(m) => {
+                    eprintln!("front: account grants read core off — missing privileges {m:?}");
+                    false
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: account grants read core off — privilege check failed ({})",
                         e.as_database_error().map_or("io", |_| "db")
                     );
                     false
@@ -1947,6 +2032,62 @@ async fn main() {
             core_routes.router = core_routes.router.merge(ps.router);
             core_routes.http.extend(ps.http);
             core_routes.sockets.extend(ps.sockets);
+        }
+        // S5.4 — 로그인 ID 읽기 1줄. 권한이 있을 때만 — 아니면 TS 에 남는다(재설정 코드 발급·거두기는 언제나 TS).
+        if let Some(write) = account_login_ids_write {
+            let li = harkroom_server::core::account_login_ids::routes(
+                harkroom_server::core::account_login_ids::LoginIdsState {
+                    read: state.pool.clone(),
+                    write,
+                    trust: state.trust.clone(),
+                    once: Default::default(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(li.router);
+            core_routes.http.extend(li.http);
+            core_routes.sockets.extend(li.sockets);
+        }
+        // S5.4 — 고를 수 있는 모델 목록 쓰기 1줄. 권한이 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = pickable_models_write {
+            let pm = harkroom_server::core::pickable_models::routes(
+                harkroom_server::core::pickable_models::PickableModelsState {
+                    write,
+                    trust: state.trust.clone(),
+                    up: state.up.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(pm.router);
+            core_routes.http.extend(pm.http);
+            core_routes.sockets.extend(pm.sockets);
+        }
+        // S5.4 — 보관소 잠그기 1줄. 권한이 있을 때만 — 아니면 TS 에 남는다(열기 POST 는 argon2·리미터 때문에 TS).
+        if let Some(write) = step_up_end_write {
+            let su = harkroom_server::core::step_up_end::routes(
+                harkroom_server::core::step_up_end::StepUpEndState {
+                    write,
+                    trust: state.trust.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(su.router);
+            core_routes.http.extend(su.http);
+            core_routes.sockets.extend(su.sockets);
+        }
+        // S5.4 — 계정 권한 목록 읽기 1줄. 권한이 있을 때만 — 아니면 TS 에 남는다(권한 주기 PUT 은 언제나 TS).
+        if account_grants_read_on {
+            let ag = harkroom_server::core::account_grants_read::routes(
+                state.pool.clone(),
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(ag.router);
+            core_routes.http.extend(ag.http);
+            core_routes.sockets.extend(ag.sockets);
         }
         // S5.4 AC2 — 에이전트 기억 읽기 2줄. 권한이 있을 때만 — 아니면 TS 에 남는다(정리 후보·백그라운드 읽기는 언제나 TS).
         if agent_memory_read_on {
