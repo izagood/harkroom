@@ -5,18 +5,18 @@
 //! - **정본은 원본이다.** 줄의 답은 원본에 누른 사람 이름으로 적는다 — C3b-1 의 [`super::ask::record_ask_answer`] 그대로(수신자·
 //!   사람만·superseded 거절·깨움·거울/묶음 맞추기). 이벤트는 그 안의 묶음 `message.updated` 뒤에 원본의 `message.updated`(원본 채널의
 //!   받는 사람) — TS 와 같은 차례.
-//! - **TS 로 넘기는 줄**(닫힌 쪽): 줄마다 원본을 [`super::ask::hand_to_ts`] 로 잰다 — 권한 요청·권한 거울·머지 거절·백스톱 표지,
+//! - **TS 로 넘기는 줄**(닫힌 쪽): 줄마다 원본을 [`hand_answer_to_ts`] 로 잰다 — 권한 요청·권한 거울 표지,
 //!   권한 요청 행의 카드, 못 읽는 모양·모르는 kind, 이상한 `mirrorOf`, 원본이 없음. 그런 줄의 답은 읽어 둔 본문 바이트 그대로 TS 가
 //!   한다(권한 줄의 `decide` 는 C3b-3 몫). 머지 카드 [이번 한 번] 값(`once`)이 실린 답도 TS 로 넘긴다.
-//!   단 줄 하나에 답하기는 [`super::ask::hand_answer_to_ts`] 로 재서 머지 거절·백스톱 원본은 Rust 가 맡는다(TS 도 `recordAskAnswer` 길).
+//!   머지 거절·백스톱 원본은 Rust 가 맡는다(TS 도 `recordAskAnswer` 길 — 「추천대로」에서는 결정 카드·`irreversible` 로 빠진다).
 //!   「추천대로」는 TS 도 결정 카드 줄을 뺀다(`skipped_link`) — 남는 줄 가운데 하나라도 넘길 줄이면 요청 전체를 TS 로 넘긴다.
 //! - 판정·쓰기·이벤트는 줄 하나에 한 트랜잭션이다. 「추천대로」는 TS 처럼 줄마다 따로 커밋한다(일부만 될 수 있다).
 //!   `Err` 면 그 줄의 트랜잭션을 버리고 500.
 //! - 문장은 TS 상수를 골든으로 받는다(`bundle_*`). 쓰기 권한은 C3b-1 의 `ASK_PRIVILEGES` 와 같다(같은 표·같은 칸을 쓴다) —
 //!   `ask::routes` 가 이 두 줄을 함께 붙이므로 권한이 모자라면 둘 다 TS 에 남는다.
 use super::ask::{
-    AskState, Outcome, hand_to_ts, read_ask_meta, read_ask_row, read_bytes, record_ask_answer,
-    to_ts,
+    AskState, Outcome, hand_answer_to_ts, read_ask_meta, read_ask_row, read_bytes,
+    record_ask_answer, to_ts,
 };
 use super::audience::audience_on;
 use super::msg_read::{channel_visible, is_uuid, message_by_id};
@@ -189,7 +189,7 @@ enum ItemResult {
     Refused(StatusCode, &'static str, &'static str),
 }
 
-/// TS `answerBundleItem` 의 원본 쪽(권한 줄이 아닌 것) — 원본을 이미 [`hand_to_ts`] 로 거른 뒤에 부른다. 한 트랜잭션.
+/// TS `answerBundleItem` 의 원본 쪽(권한 줄이 아닌 것) — 원본을 이미 [`hand_answer_to_ts`] 로 거른 뒤에 부른다. 한 트랜잭션.
 async fn answer_root(
     st: &AskState,
     root: &str,
@@ -341,7 +341,7 @@ pub async fn answer(
         return r;
     }
     // 원본이 Rust 가 정하지 않는 카드면 TS 가 한다. 사슬·옛 머지 거절 원본은 TS 에서도 `recordAskAnswer` 길이라 Rust 가 맡는다.
-    match super::ask::hand_answer_to_ts(&st.read, &root).await {
+    match hand_answer_to_ts(&st.read, &root).await {
         Ok(false) => {}
         Ok(true) => return to_ts(st.up.clone(), peer, parts, bytes).await,
         Err(e) => return internal(e),
@@ -390,8 +390,9 @@ pub async fn accept_recommended(
                 Ok(b) => b,
                 Err(e) => return internal(e),
             };
+        // 사슬 백스톱 원본은 TS 도 `recordAskAnswer` 길이다(실제로는 `irreversible` 로 빠진다).
         if !skip {
-            match hand_to_ts(&st.read, &item.root_id).await {
+            match hand_answer_to_ts(&st.read, &item.root_id).await {
                 Ok(false) => {}
                 Ok(true) => return to_ts(st.up.clone(), peer, parts, bytes).await,
                 Err(e) => return internal(e),
