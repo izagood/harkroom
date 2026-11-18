@@ -779,7 +779,7 @@ async fn main() {
         }
         _ => None,
     };
-    // S5.4 AC2 — `GET /accounts/agents/{id}/memory`·`…/memory/{slug}/revisions`. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 읽기 풀에 그 SELECT 가 다 있을 때만. 정리 후보·백그라운드·기억 쓰기는 언제나 TS.
+    // S5.4 AC2 — `GET /accounts/agents/{id}/memory`·`…/memory/{slug}/revisions`·`…/background/runs/{runId}`. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 읽기 풀에 그 SELECT 가 다 있을 때만. 정리 후보·백그라운드·기억 쓰기는 언제나 TS.
     let agent_memory_read_on = match &core_mode {
         harkroom_server::core::CoreMode::Rust => {
             use harkroom_server::core::agent_memory_read as t;
