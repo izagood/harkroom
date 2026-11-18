@@ -9,7 +9,6 @@
 //!   TS 와 같은 400 `invalid_request` 로 답한다(문구는 다르다 — 대조는 상태만 본다).
 //! - **답하지 않고 읽은 요청 그대로 TS 로 넘기는 것**(zod 를 통과한 뒤, 판정을 옮기지 않은 것):
 //!   - 질의에 `@` 가 있으면 — TS `normalizeSearchQuery` 가 `@handle` 을 `<@id>` 로 바꾼다(MCP 와 같은 경계).
-//!   - `after`·`before` 가 있으면 — zod `datetime({ offset: true })` 판정을 옮기지 않는다.
 use crate::auth::RequireAccount;
 use crate::core::mcp::respond::minify;
 use crate::core::mcp::search::{LIMIT, SEARCH_MAX_AUTHORS, SEARCH_MAX_OFFSET, has_more, sql};
@@ -39,6 +38,8 @@ struct Q {
     authors: Option<Vec<String>>,
     has_attachment: bool,
     recent: bool,
+    after: Option<String>,
+    before: Option<String>,
 }
 
 /// 읽은 질의를 Rust 가 맡을 수 없을 때의 갈래.
@@ -46,7 +47,7 @@ struct Q {
 enum Reject {
     /// zod 가 거절한다 — TS 와 같은 400.
     Bad,
-    /// 형식은 맞지만 판정을 옮기지 않았다(`@` 정규화·`after`·`before`) — TS 로 넘긴다.
+    /// 형식은 맞지만 판정을 옮기지 않았다(`@` 정규화) — TS 로 넘긴다.
     Ts,
 }
 
@@ -60,6 +61,8 @@ fn parse(raw: Option<&str>) -> Result<Q, Reject> {
     let mut authors: Vec<String> = Vec::new();
     let mut has_attachment: Option<bool> = None;
     let mut recent: Option<bool> = None;
+    let mut after: Option<String> = None;
+    let mut before: Option<String> = None;
     let mut to_ts = false;
     let mut seen: Vec<String> = Vec::new();
     for (k, v) in url::form_urlencoded::parse(raw.unwrap_or("").as_bytes()) {
@@ -117,8 +120,17 @@ fn parse(raw: Option<&str>) -> Result<Q, Reject> {
                 }
                 offset = Some(n as i64);
             }
-            // zod `datetime({ offset: true })` 판정은 옮기지 않았다.
-            "after" | "before" => to_ts = true,
+            // zod `datetime({ offset: true })`.
+            "after" | "before" => {
+                if !crate::core::mcp::search::zod_datetime_offset(&v) {
+                    return Err(Reject::Bad);
+                }
+                if k == "after" {
+                    after = Some(v);
+                } else {
+                    before = Some(v);
+                }
+            }
             "hasAttachment" => {
                 has_attachment = Some(match v.as_str() {
                     "true" => true,
@@ -152,6 +164,8 @@ fn parse(raw: Option<&str>) -> Result<Q, Reject> {
         authors: (!authors.is_empty()).then_some(authors),
         has_attachment: has_attachment.unwrap_or(false),
         recent: recent.unwrap_or(false),
+        after,
+        before,
     })
 }
 
@@ -192,8 +206,8 @@ async fn search(
         .bind(q.thread.as_deref())
         .bind(q.offset)
         .bind(q.authors.as_deref())
-        .bind(None::<String>)
-        .bind(None::<String>)
+        .bind(q.after.as_deref())
+        .bind(q.before.as_deref())
         .bind(q.has_attachment)
         .fetch_all(&st.pool)
         .await
@@ -285,12 +299,26 @@ mod tests {
 
     #[test]
     fn unported_judgements_go_to_ts() {
-        for raw in [
-            "q=%40alice",
-            "q=a&after=2026-01-01T00:00:00Z",
-            "q=a&before=x",
-        ] {
+        for raw in ["q=%40alice"] {
             assert_eq!(parse(Some(raw)), Err(Reject::Ts), "{raw}");
+        }
+        let ok = parse(Some(
+            "q=a&after=2026-01-01T00:00:00Z&before=2026-02-29T09:00%2B0900",
+        ));
+        assert_eq!(ok, Err(Reject::Bad), "2026 은 윤년이 아니다");
+        let ok = parse(Some(
+            "q=a&after=2026-01-01T00:00:00.5Z&before=2028-02-29T09:00%2B09:00",
+        ))
+        .unwrap();
+        assert_eq!(ok.after.as_deref(), Some("2026-01-01T00:00:00.5Z"));
+        assert_eq!(ok.before.as_deref(), Some("2028-02-29T09:00+09:00"));
+        for raw in [
+            "q=a&before=x",
+            "q=a&after=2026-01-01",
+            "q=a&after=2026-01-01T24:00Z",
+            "q=a&after=2026-01-01T00:00:00",
+        ] {
+            assert_eq!(parse(Some(raw)), Err(Reject::Bad), "{raw}");
         }
     }
 
