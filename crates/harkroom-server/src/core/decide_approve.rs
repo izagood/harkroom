@@ -150,10 +150,30 @@ pub fn decide_expire_core_on() -> bool {
     DECIDE_EXPIRE_CORE.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+static DENY_EXPIRE_CORE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 거절 길의 만료(409 `request_expired` + 카드 닫기)를 Rust 가 맡는가 — 거절 풀에 만료 칸이 다 있을 때만.
+pub fn deny_expire_core_on() -> bool {
+    DENY_EXPIRE_CORE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// 거절 풀에 만료 칸이 다 있는가 — 기동 때 한 번(거절 칸에 더해 `inbox`·`event_outbox` INSERT·시퀀스 USAGE).
+pub async fn check_deny_expire_core(pool: &sqlx::PgPool) -> bool {
+    let on = expire_privileges_ok(pool, "deny").await;
+    DENY_EXPIRE_CORE.store(on, std::sync::atomic::Ordering::Relaxed);
+    on
+}
+
 /// 승인 풀에 만료 칸이 다 있는가 — 기동 때 한 번.
 pub async fn check_decide_expire_core(pool: &sqlx::PgPool) -> bool {
+    let on = expire_privileges_ok(pool, "decide").await;
+    DECIDE_EXPIRE_CORE.store(on, std::sync::atomic::Ordering::Relaxed);
+    on
+}
+
+async fn expire_privileges_ok(pool: &sqlx::PgPool, which: &str) -> bool {
     use crate::loops::permission_expire as pe;
-    let on = match crate::write::missing_in(
+    match crate::write::missing_in(
         pool,
         pe::PERMISSION_EXPIRE_PRIVILEGES,
         pe::PERMISSION_EXPIRE_SEQUENCE_PRIVILEGES,
@@ -162,19 +182,17 @@ pub async fn check_decide_expire_core(pool: &sqlx::PgPool) -> bool {
     {
         Ok(m) if m.is_empty() => true,
         Ok(m) => {
-            eprintln!("front: permission decide expire core off — missing privileges {m:?}");
+            eprintln!("front: permission {which} expire core off — missing privileges {m:?}");
             false
         }
         Err(e) => {
             eprintln!(
-                "front: permission decide expire core off — privilege check failed ({})",
+                "front: permission {which} expire core off — privilege check failed ({})",
                 e.as_database_error().map_or("io", |_| "db")
             );
             false
         }
-    };
-    DECIDE_EXPIRE_CORE.store(on, std::sync::atomic::Ordering::Relaxed);
-    on
+    }
 }
 
 /// TS `request_expired` 문구(골든).

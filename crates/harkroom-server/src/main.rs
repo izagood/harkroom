@@ -2664,8 +2664,12 @@ async fn main() {
         Some(w) => harkroom_server::core::decide_core::deny_pool(w).await,
         None => None,
     };
-    if ask_deny.is_some() {
+    if let Some(d) = &ask_deny {
         eprintln!("front: permission deny core on");
+        // S5.4 12e — 거절 길의 만료 닫기 칸(fail-closed, 없으면 만료 409 는 TS).
+        if harkroom_server::core::decide_approve::check_deny_expire_core(d).await {
+            eprintln!("front: permission deny expire core on");
+        }
     }
     // S5.3 B2 — 권한 카드 승인(소유자). 거절과 같은 세 겹에 grant·이벤트 쓰기 칸(`APPROVE_PRIVILEGES`)을 더한다(fail-closed).
     let ask_approve = match &ask_write {

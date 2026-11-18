@@ -1007,6 +1007,18 @@ async fn deny_attempt(
     let Some(locked) = locked else {
         return Ok(Some(not_found()));
     };
+    // S5.4 12e — 만료면 TS 처럼 tx 를 버리고 그 요청만 만료로 닫은 뒤 409(거절 풀에 만료 칸이 다 있을 때만, 아니면 TS).
+    if locked.status == "pending" && locked.expired && super::decide_approve::deny_expire_core_on()
+    {
+        tx.rollback().await?;
+        crate::loops::permission_expire::expire_permission_requests(pool, Some(args.request_id))
+            .await?;
+        return Ok(Some(refused(
+            409,
+            "request_expired",
+            super::decide_approve::REQUEST_EXPIRED_MESSAGE,
+        )));
+    }
     let out = deny_write(&mut tx, &locked, args, as_owner).await?;
     if matches!(out, DenyOutcome::Denied { .. }) {
         tx.commit().await?;
