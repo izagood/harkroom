@@ -346,7 +346,8 @@ async fn checks_body(
             d,
             "no_connector",
         )
-        .await;
+        .await
+        .or(Ok(None));
     };
     let target = format!("connector:{}", c.0);
     let (target_ref, cid) = (target.as_str(), c.0.as_str());
@@ -366,6 +367,7 @@ async fn checks_body(
             code,
         )
         .await
+        .or(Ok(None)) // 카드 쓰기 오류는 tx 가 되돌린다 — 아무것도 남기기 전이니 TS 에 맡긴다(TS 는 카드 오류를 삼킨다).
     };
     let denied = |code: &'static str| {
         (
