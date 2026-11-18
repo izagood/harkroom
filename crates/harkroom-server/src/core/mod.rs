@@ -85,6 +85,7 @@ pub mod search_rest;
 pub mod secrets_read;
 pub mod sections_write;
 pub mod settings_rest;
+pub mod thread_model_clear;
 pub mod thread_models_read;
 pub mod thread_plan_read;
 pub mod tickets;

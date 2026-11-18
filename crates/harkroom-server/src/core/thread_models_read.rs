@@ -7,8 +7,8 @@
 //!   B 스레드의 지정은 나오지 않는다. 답글 id·지운 글도 루트가 아니다.
 //! - 답 칸은 TS `COLS` + `normalize` 그대로다 — `setAt` 은 `toISOString()` 꼴(밀리초·Z), 순서는 `set_at`.
 //! - 읽기 풀만 쓴다. 읽기 역할에 [`THREAD_MODELS_READ_PRIVILEGES`] 의 SELECT 가 다 있을 때만 `main.rs` 가 붙인다 — 없으면 TS 에 남는다.
-//! - `PUT`·`DELETE …/agent-models/:agentId` 는 TS 에 남긴다: 시스템 줄을 쓰고(`announceChange` → `postMessage`)
-//!   `thread.agent_model.changed` 이벤트·감사 줄을 내며, 정하기는 오퍼레이터 허브의 하네스 목록(`checkOffered`)을 본다.
+//! - `PUT …/agent-models/:agentId` 는 TS 에 남긴다: 정하기는 오퍼레이터 허브의 하네스 목록(`checkOffered`)을 본다.
+//!   `DELETE` 는 S5.4 TM2 부터 [`super::thread_model_clear`] 가 맡는다.
 use crate::auth::RequireAccount;
 use crate::directory::{internal, json_err, json_ok};
 use axum::extract::{Path, State};

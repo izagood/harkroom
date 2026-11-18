@@ -626,6 +626,7 @@ async fn post(
         system: kind == Kind::Notice,
         progress: kind == Kind::Progress,
         wake: false,
+        no_mentions: false,
     };
     let out = msg_post::post_in_tx(
         st,

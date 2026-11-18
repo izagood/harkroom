@@ -4370,7 +4370,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       // 다른 채널의 루트·답글·지운 루트에 표식을 심고, 볼 수 있는 채널 경로로 넣어도 어느 답에도 나오지 않는지 본다(루트를 채널에 묶기).
       {
         expect(f.log(), 'TM1 줄').toContain('"GET /channels/{id}/threads/{rootId}/agent-models"');
-        expect(f.log(), '정하기·풀기는 TS 에 남는다').not.toContain('/agent-models/{agentId}');
+        expect(f.log(), '정하기는 TS 에 남는다').not.toContain('"PUT /channels/{id}/threads/{rootId}/agent-models/{agentId}"');
+        expect(f.log(), 'TM2 풀기 줄').toContain('"DELETE /channels/{id}/threads/{rootId}/agent-models/{agentId}"');
         const M = member.token;
         const ins = async (sql: string, p: unknown[]) => (await db.pool.query<{ id: string }>(sql, p)).rows[0]!.id;
         const pubCh = await ins(`insert into channel (name, kind, visibility) values ('tm1-pub', 'standard', 'public') returning id`, []);
@@ -4446,6 +4447,38 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           seen.push(y.json);
         }
         expect(JSON.stringify(seen.slice(5)), '거절 답에 표식이 없다').not.toContain('TM1MARK');
+        // S5.4 TM2 — 풀기(코어 `thread_model_clear.rs`). 거절은 상태·코드를, 풀기는 남은 시스템 줄(스레드 안·아무도 부르지 않음)을 견준다.
+        {
+          const del = (ch: string, r: string, a: string) => `/channels/${ch}/threads/${r}/agent-models/${a}`;
+          await db.pool.query('insert into channel_member (channel_id, account_id) values ($1, $2) on conflict do nothing', [pubCh, admin.accountId]);
+          for (const [name, p, token, want] of [
+            ['익명 → 401', del(pubCh, root, botA), '', 401],
+            ['에이전트 아이디 아님 → 400', del(pubCh, root, 'nope'), A, 400],
+            ['에이전트 → 403 human_only', del(pubCh, root, botA), agent.pat, 403],
+            ['비공개 채널 비멤버 → 403', del(privCh, privRoot, botA), M, 403],
+            ['답글 id → 404 not_a_root', del(pubCh, reply, botA), A, 404],
+            ['지정 없음 → 404 not_found', del(pubCh, empty, botA), A, 404],
+          ] as const) {
+            const [x, y] = [await callX(tsUrl, 'DELETE', p, undefined, token), await callX(rsUrl, 'DELETE', p, undefined, token)];
+            expect({ status: y.status, code: y.code }, name).toEqual({ status: x.status, code: x.code });
+            expect(y.status, name).toBe(want);
+          }
+          const line = async () => (await db.pool.query<{ body: string; kind: string; thread_root_id: string; meta: Record<string, unknown> }>(
+            `select body, kind, thread_root_id, meta from message where thread_root_id = $1 and kind = 'system' order by seq desc limit 1`, [root])).rows[0]!;
+          const inboxOf = async () => Number((await db.pool.query<{ n: string }>(
+            `select count(*) as n from inbox i join message m on m.id = i.message_id where m.thread_root_id = $1 and m.kind = 'system'`, [root])).rows[0]!.n);
+          expect((await callX(tsUrl, 'DELETE', del(pubCh, root, botA), undefined, A)).status).toBe(204);
+          const tsLine = await line();
+          const tsInbox = await inboxOf();
+          await tam(root, botA, 'claude-code', 'opus', null, member.accountId, 'human', '1 minute');
+          expect((await callX(rsUrl, 'DELETE', del(pubCh, root, botA), undefined, A)).status).toBe(204);
+          const rsLine = await line();
+          expect(rsLine, '시스템 줄이 TS 와 같다').toEqual(tsLine);
+          expect(rsLine.thread_root_id).toBe(root);
+          expect(await inboxOf(), '머리 주인 알림 수도 같은 규칙').toBe(tsInbox * 2);
+          expect((await callX(rsUrl, 'DELETE', del(pubCh, root, botA), undefined, A)).status, '두 번째 풀기는 404').toBe(404);
+          await db.pool.query(`delete from message where thread_root_id = $1 and kind = 'system'`, [root]);
+        }
         await db.pool.query('delete from thread_agent_model where thread_root_id = any($1)', [[root, reply, empty, gone, privRoot]]);
         await db.pool.query('delete from message where id = any($1)', [[reply, root, empty, gone, privRoot]]);
         await db.pool.query('delete from channel_member where channel_id = any($1)', [[pubCh, privCh]]);

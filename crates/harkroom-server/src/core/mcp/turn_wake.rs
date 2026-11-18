@@ -399,6 +399,7 @@ pub async fn answer(
         system: false,
         progress: false,
         wake: true,
+        no_mentions: false,
     };
     let post = PostBody {
         body: a.reason.clone(),

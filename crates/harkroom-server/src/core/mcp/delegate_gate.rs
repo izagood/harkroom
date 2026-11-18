@@ -328,6 +328,7 @@ async fn write(
         system: false,
         progress: false,
         wake: false,
+        no_mentions: false,
     };
     let post = PostBody {
         body: a.body.clone(),

@@ -1208,6 +1208,27 @@ async fn main() {
         }
         None => None,
     };
+    // S5.4 TM2 — 스레드 모델 지정 풀기. 글 올리기 코어(시스템 줄이 스레드 안으로 그 경로를 탄다)와 풀기 권한이 다 있을 때만.
+    let thread_model_clear = match &post_write {
+        Some(w) => {
+            use harkroom_server::core::thread_model_clear as c;
+            match write::missing_in(w, c::THREAD_MODEL_CLEAR_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: thread model clear core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: thread model clear core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        None => None,
+    };
     // C3b-2c-4b — MCP `message.delegate` 의 쓰기(게이트를 지난 위임)는 MCP 글 칸에 더해 위임 칸(`DELEGATE_WRITE_PRIVILEGES`)까지 있을 때만.
     // 없으면 게이트를 지난 위임만 TS 에 남는다(거절 갈래는 그대로 Rust).
     let mcp_delegate_ok = mcp_post_ok
@@ -1772,6 +1793,25 @@ async fn main() {
             core_routes.router = core_routes.router.merge(cm.router);
             core_routes.http.extend(cm.http);
             core_routes.sockets.extend(cm.sockets);
+        }
+        // S5.4 TM2 — 스레드 모델 지정 풀기. 글 올리기 코어와 풀기 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = thread_model_clear {
+            let tc = harkroom_server::core::thread_model_clear::routes(
+                harkroom_server::core::thread_model_clear::ClearState {
+                    post: harkroom_server::core::msg_post::PostState {
+                        read: state.pool.clone(),
+                        write,
+                        up: state.up.clone(),
+                        implicit_ok,
+                    },
+                    trust: (*state.trust).clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(tc.router);
+            core_routes.http.extend(tc.http);
+            core_routes.sockets.extend(tc.sockets);
         }
         // S5.4 CT1 — 채널에 팀 넣기. 쓰기 풀에 칸 권한이 다 있을 때만 — 아니면 TS 에 남는다.
         if let Some(write) = channel_team_add {
