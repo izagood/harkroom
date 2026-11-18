@@ -779,8 +779,8 @@ async fn main() {
         }
         _ => None,
     };
-    // S5.4 AG1 — `GET /agent/merge-grants`·`GET /agent/api-grants`. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 읽기 풀에 그 SELECT 가 다 있을 때만.
-    // `/agent/pr-watches/due` 는 만료 UPDATE 를 하므로, `/agent/thread-model` 은 실효 모델 계산이 남아 아직 TS.
+    // S5.4 AG1 — `GET /agent/merge-grants`·`/agent/api-grants`·`/agent/thread-model`. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고
+    // 읽기 풀에 그 SELECT 가 다 있을 때만. `/agent/pr-watches/due` 는 만료 UPDATE(`expireWatches`)를 하므로 아직 TS.
     let agent_grants_read_on = match &core_mode {
         harkroom_server::core::CoreMode::Rust => {
             use harkroom_server::core::agent_grants_read as t;

@@ -1,5 +1,8 @@
-//! S5.4 AG1 — 러너가 턴을 띄울 때 읽는 grant 두 줄. TS `mergeRoutes.ts`·`apiCallRoutes.ts` 와 같은 응답.
+//! S5.4 AG1 — 러너가 턴을 띄울 때 읽는 세 줄. TS `mergeRoutes.ts`·`apiCallRoutes.ts`·`threadAgentModelRoutes.ts` 와 같은 응답.
 //!
+//! - `GET /agent/thread-model?messageId=` → `{ model, effort, source: { model, effort } }` (TS `threadRootOf`·`effectiveAgentModel`).
+//!   에이전트면 오퍼레이터를 거치지 않아도 받는다(TS 와 같이 `kind` 만 본다). `cache-control` 은 싣지 않는다. 400 문구는 zod 오류 글과 다르다 —
+//!   대조는 상태·코드만 본다.
 //! - `GET /agent/merge-grants` → `{ repos, approvals }` (TS `mergeableRepos`·`openMergeApprovals`)
 //! - `GET /agent/api-grants` → `{ connectors, delegatable }` (TS `callableConnectors`·`delegatableConnectors`)
 //!
@@ -8,10 +11,10 @@
 //!   두 줄을 TS 에 남긴다. 비밀 값은 읽지도 싣지도 않는다(연결 **이름**만).
 //! - 오퍼레이터를 거친 에이전트만(아니면 403, 몸에 `cache-control` 없음). 200 에만 `cache-control: no-store`.
 //! - 문장은 TS 서비스 문장을 그대로 옮겼다. `openMergeApprovals` 의 `$2`(JS `new Date()`)는 DB `now()` 로 본다.
-use super::grant_reads::through_operator;
+use super::grant_reads::{parse_query, through_operator};
 use crate::auth::RequireAccount;
-use crate::directory::{internal, json_err};
-use axum::extract::State;
+use crate::directory::{internal, json_err, json_ok};
+use axum::extract::{RawQuery, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde_json::Value;
@@ -23,6 +26,10 @@ pub const AGENT_GRANTS_READ_PRIVILEGES: &[(&str, &str)] = &[
     ("account_grant", "SELECT"),
     ("merge_approval", "SELECT"),
     ("api_connector", "SELECT"),
+    ("account", "SELECT"),
+    ("agent_config", "SELECT"),
+    ("thread_agent_model", "SELECT"),
+    ("message", "SELECT"),
 ];
 
 const FORBIDDEN: &str = "only an agent through its operator can do this";
@@ -41,6 +48,75 @@ const CALLABLE_SQL: &str = "select distinct c.name from account_grant g join api
 const DELEGATABLE_SQL: &str = "select distinct c.name from account_grant g join api_connector c on g.scope = 'connector:' || c.id::text \
      where g.account_id = $1::uuid and g.capability = 'api.call' and g.suspended_at is null and g.delegate_depth >= 1 \
      and (g.expires_at is null or g.expires_at > now()) order by c.name";
+
+const THREAD_ROOT_SQL: &str =
+    "select coalesce(thread_root_id, id)::text as root from message where id = $1::uuid";
+
+const EFFECTIVE_MODEL_SQL: &str = "select c.model as cm, c.effort as ce, t.model as tm, t.effort as te \
+     from account a \
+     left join agent_config c on c.account_id = a.id \
+     left join thread_agent_model t \
+       on t.agent_id = a.id and t.thread_root_id = $2::uuid \
+      and t.harness = coalesce(c.harness, 'claude-code') \
+     where a.id = $1::uuid";
+
+type ModelRow = (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
+/// TS `effectiveAgentModel` 의 몸 — 키 순서 `model, effort, source{model, effort}`.
+fn effective_body(r: Option<ModelRow>) -> String {
+    let (cm, ce, tm, te) = r.unwrap_or_default();
+    let src = |t: &Option<String>| if t.is_some() { "thread" } else { "agent" };
+    format!(
+        "{{\"model\":{},\"effort\":{},\"source\":{{\"model\":\"{}\",\"effort\":\"{}\"}}}}",
+        Value::from(tm.clone().or(cm)),
+        Value::from(te.clone().or(ce)),
+        src(&tm),
+        src(&te)
+    )
+}
+
+pub async fn thread_model(
+    State(pool): State<Arc<PgPool>>,
+    RequireAccount(me, _auth): RequireAccount,
+    RawQuery(raw): RawQuery,
+) -> Response {
+    if me.kind != "agent" {
+        return json_err(StatusCode::FORBIDDEN, "agent_only", "agents only");
+    }
+    let Some(q) = parse_query(raw.as_deref(), &[], &["messageId"]) else {
+        return json_err(
+            StatusCode::BAD_REQUEST,
+            "bad_request",
+            "messageId: Invalid uuid",
+        );
+    };
+    let run = async {
+        let root: Option<String> = match q[0].as_deref() {
+            Some(m) => {
+                sqlx::query_scalar(THREAD_ROOT_SQL)
+                    .bind(m)
+                    .fetch_optional(&*pool)
+                    .await?
+            }
+            None => None,
+        };
+        let row: Option<ModelRow> = sqlx::query_as(EFFECTIVE_MODEL_SQL)
+            .bind(&me.id)
+            .bind(root)
+            .fetch_optional(&*pool)
+            .await?;
+        Ok::<_, sqlx::Error>(row)
+    };
+    match run.await {
+        Ok(row) => json_ok(effective_body(row)),
+        Err(e) => internal(e),
+    }
+}
 
 fn approvals_sql() -> &'static str {
     static S: std::sync::OnceLock<String> = std::sync::OnceLock::new();
@@ -150,6 +226,7 @@ pub fn routes(
     let t = Table::<Arc<PgPool>>::new()
         .get("/agent/merge-grants", merge_grants)
         .get("/agent/api-grants", api_grants)
+        .get("/agent/thread-model", thread_model)
         .map(|r| {
             r.route_layer(axum::middleware::from_fn_with_state(
                 auth,
@@ -172,6 +249,19 @@ pub fn routes(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn effective_prefers_thread() {
+        assert_eq!(
+            effective_body(None),
+            r#"{"model":null,"effort":null,"source":{"model":"agent","effort":"agent"}}"#
+        );
+        let r = (Some("a".into()), Some("lo".into()), Some("t".into()), None);
+        assert_eq!(
+            effective_body(Some(r)),
+            r#"{"model":"t","effort":"lo","source":{"model":"thread","effort":"agent"}}"#
+        );
+    }
 
     #[test]
     fn repo_slice_like_ts() {
