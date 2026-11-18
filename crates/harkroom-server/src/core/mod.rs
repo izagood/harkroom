@@ -24,6 +24,7 @@ pub mod attachment_store;
 pub mod audience;
 pub mod auth_light;
 pub mod automation_delete;
+pub mod automation_run_now;
 pub mod automation_time;
 pub mod automations_read;
 pub mod automations_write;

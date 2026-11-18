@@ -46,7 +46,7 @@ pub const AUTOMATION_RUN_PRIVILEGES: &[(&str, &str)] = &[
 ];
 
 /// TS 상수(`automations.ts`).
-const RATE_LIMIT_PER_HOUR: i32 = 20;
+pub(crate) const RATE_LIMIT_PER_HOUR: i32 = 20;
 const AGENT_RUNS_PER_HOUR: i32 = 3;
 const AGENT_RUN_MIN_GAP_MS: i64 = 10 * 60 * 1000;
 const AGENT_RUN_CHAIN_DEPTH: i32 = 1;
@@ -63,12 +63,12 @@ const QUOTA_SQL: &str = "select floor(extract(epoch from max(created_at)) * 1000
        floor(extract(epoch from now()) * 1000)::bigint, count(*)::int from automation_run \
         where automation_id = $1::uuid and initiated_by is not null and created_at > now() - interval '1 hour'";
 const CAUSE_USED_SQL: &str = "select 1 from automation_run where cause_message_id = $1::uuid and initiated_by is not null limit 1";
-const ENQUEUE_ROW_SQL: &str =
+pub(crate) const ENQUEUE_ROW_SQL: &str =
     "select enabled, debounce_sec from automation where id = $1::uuid and deleted_at is null";
-const RECENT_SQL: &str = "select count(*)::int from automation_run \
+pub(crate) const RECENT_SQL: &str = "select count(*)::int from automation_run \
      where automation_id = $1::uuid and created_at > now() - interval '1 hour'";
 /// TS `enqueueRun` 의 INSERT(수동 회차 — `not_before` 는 늘 null). `returning` 은 TS `RUN_COLS` 칸.
-const INSERT_SQL: &str = "insert into automation_run (automation_id, event_key, trigger_kind, payload, not_before, \
+pub(crate) const INSERT_SQL: &str = "insert into automation_run (automation_id, event_key, trigger_kind, payload, not_before, \
                                  initiated_by, cause_message_id, chain_depth) \
      values ($1::uuid, $2, 'manual', $3::jsonb, null, $4::uuid, $5::uuid, $6) \
      on conflict (automation_id, event_key) do nothing \
@@ -211,7 +211,7 @@ pub async fn answer(
 /// TS `runAutomationNow` 의 `vars` — 일정 트리거면 `timeVars(now, tz)`(프로세스 시각, TS 와 같다), 아니면 빈 객체.
 /// 계산은 [`automation_time`](crate::core::automation_time) 이 TS 산법 그대로 한다. `chrono-tz` 가 모르는 tz 이름
 /// (TS `Intl` 은 대소문자 무시·별칭으로 받을 수 있다)만 TS 로 넘긴다(`None`).
-fn vars_for(trigger: &str) -> Option<Value> {
+pub(crate) fn vars_for(trigger: &str) -> Option<Value> {
     let t: Value = serde_json::from_str(trigger).ok()?;
     if t.get("kind").and_then(Value::as_str) == Some("schedule") {
         let tz = crate::core::automation_time::parse_tz(t.get("tz")?.as_str()?)?;
@@ -338,7 +338,7 @@ fn opt_iso(ms: Option<i64>) -> Value {
 }
 
 /// TS `RUN_COLS` 글자(키 순서 그대로).
-fn run_view(row: &sqlx::postgres::PgRow) -> Option<String> {
+pub(crate) fn run_view(row: &sqlx::postgres::PgRow) -> Option<String> {
     let s = |k: &str| row.try_get::<String, _>(k).ok().map(Value::from);
     let os = |k: &str| {
         row.try_get::<Option<String>, _>(k)
