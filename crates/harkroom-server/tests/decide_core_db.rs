@@ -885,3 +885,79 @@ async fn acl_flip(url: &str, role: &str, n: usize) -> Result<(), sqlx::Error> {
     }
     c.close().await
 }
+
+/// 소유자 결정 2026-11-19 — [이 스레드로 위임장 만들고 더하기]: 승인한 소유자가 워크스페이스 owner/admin 이면 **남(다른 사람)이 시작한
+/// 스레드**에서도 위임장을 세운다. 일반 멤버는 그대로 `None`(→ `mandate_unavailable`). 망가뜨리기: admin 예외를 지우면 첫 단언이 깨진다.
+async fn card_thread_case(
+    pool: &PgPool,
+    role: &str,
+) -> (
+    Option<harkroom_server::core::mandate_card_thread::Made>,
+    Option<String>,
+) {
+    use harkroom_server::core::mandate_card_thread::mandate_for_card_thread;
+    let f = fixture(pool, "list").await;
+    let admin = role == "admin" || role == "owner";
+    sqlx::query("update account set role = $2, is_admin = $3 where id = $1::uuid")
+        .bind(&f.owner)
+        .bind(role)
+        .bind(admin)
+        .execute(pool)
+        .await
+        .unwrap();
+    // 스레드 첫 글은 소유자도 소유자의 에이전트도 아닌 다른 사람(H)이 썼다.
+    let root: String = sqlx::query_scalar(
+        "insert into message(channel_id, author_id, body, kind) values ($1::uuid, $2::uuid, 'root', 'user') returning id::text",
+    )
+    .bind(&f.channel)
+    .bind(&f.actor)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    let now: String = sqlx::query_scalar("select now()::text")
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    let made = mandate_for_card_thread(&mut tx, &f.owner, &f.channel, &root, &now)
+        .await
+        .unwrap();
+    let stamped: Option<String> =
+        sqlx::query_scalar("select mandate_id::text from message where id = $1::uuid")
+            .bind(&root)
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+    tx.rollback().await.unwrap();
+    (made, stamped)
+}
+
+#[tokio::test]
+async fn card_thread_mandate_admin_on_others_thread() {
+    let Some(url) = db_url() else { return };
+    let pool = PgPool::connect(&url).await.unwrap();
+    for role in ["admin", "owner"] {
+        let (made, stamped) = card_thread_case(&pool, role).await;
+        let made = made.unwrap_or_else(|| panic!("{role}: 남의 스레드에서도 위임장을 세워야 한다"));
+        assert!(made.inserted, "{role}: 새 위임장");
+        assert_eq!(
+            stamped.as_deref(),
+            Some(made.mandate_id.as_str()),
+            "{role}: 머리 글에 키"
+        );
+    }
+}
+
+#[tokio::test]
+async fn card_thread_mandate_member_on_others_thread_still_refused() {
+    let Some(url) = db_url() else { return };
+    let pool = PgPool::connect(&url).await.unwrap();
+    for role in ["member", "guest"] {
+        let (made, stamped) = card_thread_case(&pool, role).await;
+        assert!(
+            made.is_none(),
+            "{role}: 남의 스레드엔 위임장을 못 세운다(W1)"
+        );
+        assert!(stamped.is_none(), "{role}: 머리 글에 키 없음");
+    }
+}

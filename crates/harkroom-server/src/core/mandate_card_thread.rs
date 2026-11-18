@@ -3,6 +3,7 @@
 //! 승인 tx(요청 줄을 잠근 뒤, 잠금 순서 6단계 다음) 안에서 소유자 승인일 때만 부른다. 순서:
 //! 7. 카드 스레드의 **머리 글을 `for update of m`** 으로 잠근다 — 이 채널의 지워지지 않은 글이고, 자동화 글이 아니며, 소유자 본인이나
 //!    그 소유자의 에이전트가 쓴 글이어야 한다(W1 불변식: 위임 키는 그런 글에만). 아니면 `None`(→ `mandate_unavailable`).
+//!    예외: 승인한 사람이 워크스페이스 owner/admin 이면 첫 글 작성자를 보지 않는다(머리 글 잠금·채널·자동화 조건은 그대로).
 //! 8. 머리에 위임장이 있으면 그것이 지금 유효하고(`grant_valid_mandate_owner`) 주인·맡긴 사람이 같을 때만 활동 시각을 밀어 잇는다.
 //!    없으면 위임장을 upsert(`root_message_id` 충돌이면 활동만 민다)하고 주인·맡긴 사람·끝남을 대조한 뒤 머리 글에 키를 적는다.
 //!
@@ -77,6 +78,17 @@ impl Made {
     }
 }
 
+/// 워크스페이스 owner/admin 인 살아 있는 사람(`account.role`, 마이그레이션 055 — `is_admin` 과 같은 뜻).
+pub const WORKSPACE_ADMIN_SQL: &str = "select exists(select 1 from account where id = $1::uuid and kind = 'human' \
+     and role in ('owner', 'admin') and disabled_at is null and deleted_at is null)";
+
+async fn is_workspace_admin(conn: &mut PgConnection, account_id: &str) -> sqlx::Result<bool> {
+    sqlx::query_scalar(WORKSPACE_ADMIN_SQL)
+        .bind(account_id)
+        .fetch_one(&mut *conn)
+        .await
+}
+
 /// 소유자(`owner_id` = 승인한 사람 = 맡긴 사람)가 카드 스레드에 위임장을 세우거나 잇는다. `now` 는 결정 시각(`timestamptz` 문자열).
 pub async fn mandate_for_card_thread(
     conn: &mut PgConnection,
@@ -97,7 +109,9 @@ pub async fn mandate_for_card_thread(
     let Some((root_mandate, own_author)) = root else {
         return Ok(None);
     };
-    if !own_author {
+    // 첫 글을 소유자·그 소유자의 에이전트가 쓰지 않았어도, 승인한 사람이 워크스페이스 owner/admin 이면 위임장을 세운다
+    // (소유자 결정 2026-11-19 — W1 불변식을 owner/admin 에게만 푼다. TS `mandateForCardThread`(merge 카드)는 그대로다).
+    if !own_author && !is_workspace_admin(conn, owner_id).await? {
         return Ok(None);
     }
     if let Some(m) = root_mandate {
