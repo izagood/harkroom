@@ -361,6 +361,31 @@ pub(crate) struct Origin<'a> {
     /// TS `kind: 'wake'`(S5.4 A3, MCP `turn.wake`) — 대기 줄. `progress` 와 같이 **결과가 아니다**(`countsAsReply` 거짓) — 그 밖의 갈래도
     /// `progress` 와 같고 `kind` 칸 글자만 다르다(TS `postMessage` 가 두 종류를 `countsAsReply` 하나로만 가른다).
     pub(crate) wake: bool,
+    /// TS `beforeCommit` — 글을 넣고 위임을 닫은 뒤, 커밋 **앞** 같은 tx 에서 부른다. 거절하면 롤백하고 [`Outcome::Rejected`].
+    /// 지나면 행을 다시 읽어 내보낸다(이 훅이 글에 딸린 행을 더 쓸 수 있다 — TS 의 `reread`). 없으면 아무것도 바뀌지 않는다.
+    pub(crate) before_commit: Option<&'a dyn BeforeCommit>,
+}
+
+/// TS `beforeCommit` 의 거절 — `{ status, code, message }`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Rejection {
+    pub(crate) status: u16,
+    pub(crate) code: String,
+    pub(crate) message: String,
+}
+
+/// 훅이 돌려주는 future.
+pub(crate) type BeforeCommitFuture<'a> = std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<Option<Rejection>, sqlx::Error>> + Send + 'a>,
+>;
+
+/// TS `postMessage` 의 `beforeCommit(client, { message, notified })` — 여기서는 tx 와 새 글 id 를 받는다.
+pub(crate) trait BeforeCommit: std::fmt::Debug + Sync {
+    fn run<'a>(
+        &'a self,
+        tx: &'a mut sqlx::Transaction<'static, sqlx::Postgres>,
+        message_id: &'a str,
+    ) -> BeforeCommitFuture<'a>;
 }
 
 /// 읽은 JSON 이 TS 몫인가 — 키만 보고 정한다(값이 틀렸으면 TS 가 400 을 준다).
@@ -501,6 +526,8 @@ pub(crate) enum Outcome {
     ToTs,
     /// 위임 글의 사슬이 상한에 닿았다(TS `beforeCommit` 의 `chain_limit`, 409) — 아무것도 쓰지 않았다. [`Origin::delegation`] 만.
     ChainLimit,
+    /// [`Origin::before_commit`] 이 거절했다 — 롤백됐고 글은 없다(TS `failure: 'rejected'`).
+    Rejected(Rejection),
     Posted {
         row: String,
         notified: Vec<String>,
@@ -967,7 +994,7 @@ pub(crate) async fn post_tx(
             .execute(&mut *tx)
             .await?;
     }
-    let Some(row) = message_by_id(&mut *tx, &id).await? else {
+    let Some(mut row) = message_by_id(&mut *tx, &id).await? else {
         return Err(sqlx::Error::RowNotFound);
     };
     if let Some(key) = idempotency_key {
@@ -1203,6 +1230,16 @@ pub(crate) async fn post_tx(
         }
         _ => None,
     };
+    // TS `beforeCommit` — 위임을 닫은 뒤, 커밋 앞. 거절이면 롤백, 지나면 같은 tx 에서 행을 다시 읽는다.
+    if let Some(hook) = origin.before_commit {
+        if let Some(rej) = hook.run(&mut tx, &id).await? {
+            tx.rollback().await?;
+            return Ok((Outcome::Rejected(rej), None));
+        }
+        if let Some(r) = message_by_id(&mut *tx, &id).await? {
+            row = r;
+        }
+    }
     let notified = notified_in_order(&mut tx, &id, &notified_set).await?;
     // TS 는 선점 신호를 `postMessage` 안(커밋 뒤)에서, `message.created` 는 라우트가 그 뒤에 낸다 — 같은 순서로 outbox 에.
     wake_preempt::announce(&mut tx, &preempted).await?;
@@ -1513,7 +1550,9 @@ pub async fn post(
         Err(e) => internal(e),
         // 세 사유를 400 하나로 합친다 — TS 와 같이, 남의 업로드 id 가 있는지 알리는 신호가 되지 않게.
         // 위임 상한은 MCP `message.delegate` 만 낸다 — REST 글에는 닿지 않는다.
-        Ok(Outcome::ToTs | Outcome::ChainLimit) => to_ts(st.up.clone(), peer, parts, bytes).await,
+        Ok(Outcome::ToTs | Outcome::ChainLimit | Outcome::Rejected(_)) => {
+            to_ts(st.up.clone(), peer, parts, bytes).await
+        }
         Ok(Outcome::BadThread) => json_err(
             StatusCode::BAD_REQUEST,
             "bad_thread",
@@ -1601,6 +1640,35 @@ pub fn routes(
 
 #[cfg(test)]
 mod tests {
+
+    /// 훅이 없는 것이 기본이다 — 기존 호출자(`Origin::default()`·`..`)는 그대로 돈다. 훅은 `&dyn` 으로 실린다.
+    #[test]
+    fn before_commit_is_off_by_default_and_object_safe() {
+        #[derive(Debug)]
+        struct Reject;
+        impl BeforeCommit for Reject {
+            fn run<'a>(
+                &'a self,
+                _tx: &'a mut sqlx::Transaction<'static, sqlx::Postgres>,
+                _message_id: &'a str,
+            ) -> BeforeCommitFuture<'a> {
+                Box::pin(async {
+                    Ok(Some(Rejection {
+                        status: 400,
+                        code: "bad_request".into(),
+                        message: "no".into(),
+                    }))
+                })
+            }
+        }
+        assert!(Origin::default().before_commit.is_none());
+        let hook = Reject;
+        let o = Origin {
+            before_commit: Some(&hook),
+            ..Origin::default()
+        };
+        assert!(o.before_commit.is_some());
+    }
 
     #[test]
     fn no_mention_calls_keep_body_and_call_nobody() {

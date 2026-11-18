@@ -239,6 +239,7 @@ async fn post_system(
                     Outcome::BadThread => "bad_thread",
                     Outcome::BadAttachment => "bad_attachment",
                     Outcome::ChainLimit => "chain_limit",
+                    Outcome::Rejected(_) => "rejected",
                     Outcome::Replayed(_) => "replayed",
                     Outcome::Posted { .. } => "posted",
                 }

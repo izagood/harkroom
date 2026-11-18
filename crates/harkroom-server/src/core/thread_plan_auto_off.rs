@@ -228,7 +228,10 @@ async fn post_line(
         // TS 는 `posted.failure` 면 알리지 않고 지나간다 — 판은 이미 꺼졌다. 흔적만 남긴다.
         Outcome::ToTs => eprintln!("[threadPlanAutoOff] system line not posted: to_ts"),
         Outcome::BadThread => eprintln!("[threadPlanAutoOff] system line not posted: bad_thread"),
-        Outcome::BadAttachment | Outcome::ChainLimit | Outcome::Replayed(_) => {
+        Outcome::BadAttachment
+        | Outcome::ChainLimit
+        | Outcome::Rejected(_)
+        | Outcome::Replayed(_) => {
             eprintln!("[threadPlanAutoOff] system line not posted")
         }
     }

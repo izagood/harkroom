@@ -400,6 +400,7 @@ pub async fn answer(
         progress: false,
         wake: true,
         no_mentions: false,
+        before_commit: None,
     };
     let post = PostBody {
         body: a.reason.clone(),
@@ -421,7 +422,9 @@ pub async fn answer(
     .await
     .ok()?;
     let row = match out {
-        Outcome::ToTs | Outcome::Replayed(_) | Outcome::ChainLimit => return None,
+        Outcome::ToTs | Outcome::Replayed(_) | Outcome::ChainLimit | Outcome::Rejected(_) => {
+            return None;
+        }
         Outcome::BadThread => return Some(err("bad_thread", BAD_THREAD)),
         // 깨움은 첨부를 받지 않는다 — TS 는 게시 거절을 이 글자로 답한다.
         Outcome::BadAttachment => {
