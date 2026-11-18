@@ -35,6 +35,11 @@ struct Sql {
     insert: String,
 }
 
+/// 위임장이 지금 유효한가(주인 id) — `$1` 위임장 id, `$2` 7일 쉼 경계. 무권한 롤 시험(`tests/automation_grant.rs`)이 같은 문장을 돌린다.
+pub fn valid_owner_sql() -> &'static str {
+    sql().valid_owner.as_str()
+}
+
 fn sql() -> &'static Sql {
     static S: std::sync::OnceLock<Sql> = std::sync::OnceLock::new();
     S.get_or_init(|| Sql {

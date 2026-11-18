@@ -55,7 +55,12 @@ pub const MANDATE_LINE_PRIVILEGES: &[(&str, &str)] = &[
     ("mandate", "SELECT"),
     ("mandate.last_activity_at", "UPDATE"),
     ("mandate_line", "INSERT"),
-    ("automation", "SELECT"),
+    // 자동화 위임장의 유효성(골든 `grant_valid_mandate_owner`)이 읽는 4칸만 — 표 단위 SELECT 를 요구하면 운영 쓰기 롤이
+    // 수신 비밀 칸(`ingress_token_hash`·`ingress_secret_enc`)까지 읽게 된다(security 11-18, `tests/automation_grant.rs` 가 본다).
+    ("automation.id", "SELECT"),
+    ("automation.deleted_at", "SELECT"),
+    ("automation.enabled", "SELECT"),
+    ("automation.approved_at", "SELECT"),
     ("agent_config", "SELECT"),
 ];
 
