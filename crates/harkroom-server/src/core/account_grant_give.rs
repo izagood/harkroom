@@ -4,8 +4,7 @@
 //!   → `member.reset_password`(400 `not_grantable`) → capability 별 판정 → 대상 없음 404 → 전 값 읽기 → upsert
 //!   → 감사 `grant.given`/`grant.updated {changed?, capability, scope, expiresAt, allowAgentCause?}` → `grant.changed` → 200 `{grants}`.
 //! - `tool.allow` 는 여기서 판정한다(규칙 정규형은 `harkroom_proto::tool_rules::validate_tool_rule`, 사람 세션·소유자·만료 상한).
-//! - `api.call`(연결·limits·위임 판정)은 본문 검사까지 마친 뒤 TS 로 넘긴다
-//!   — 여기까지는 부작용이 없어 TS 가 처음부터 다시 판정해도 같다.
+//! - `api.call` 도 여기서 판정한다(`checkApiGrant`·`parseLimits` — 연결 주인·메서드 부분집합·쓰기 만료 30일).
 //! - 알려진 차이: zod 실패의 `message` 는 TS 가 zod issue JSON 이다 — 여기서는 `"body"`. `repo:` scope 길이는
 //!   UTF-16 단위가 아니라 문자 수로 센다.
 //! - 쓰기 권한은 [`ACCOUNT_GRANT_GIVE_PRIVILEGES`] — 없으면 `main.rs` 가 이 줄을 붙이지 않아 TS 에 남는다.
@@ -37,6 +36,10 @@ pub const ACCOUNT_GRANT_GIVE_PRIVILEGES: &[(&str, &str)] = &[
     ("account_grant", "SELECT"),
     ("account_grant", "INSERT"),
     ("account_grant", "UPDATE"),
+    // api.call — 연결 주인·허용 메서드.
+    ("api_connector.id", "SELECT"),
+    ("api_connector.owner_account_id", "SELECT"),
+    ("api_connector.methods", "SELECT"),
     ("audit_log.action", "INSERT"),
     ("audit_log.actor_id", "INSERT"),
     ("audit_log.actor_handle", "INSERT"),
@@ -59,6 +62,8 @@ pub(crate) struct GrantBody {
     expires_at: Option<Option<String>>,
     allow_agent_cause: Option<bool>,
     has_limits: bool,
+    /// `limits` 원문(api.call 이 `parseLimits` 로 판정한다).
+    limits: Option<Value>,
     delegate_depth: Option<i64>,
     write_needs_human_cause: Option<bool>,
 }
@@ -156,6 +161,7 @@ pub(crate) fn parse_body(body: &Body) -> Option<GrantBody> {
         expires_at,
         allow_agent_cause,
         has_limits: m.contains_key("limits"),
+        limits: m.get("limits").cloned(),
         delegate_depth,
         write_needs_human_cause,
     })
@@ -351,6 +357,173 @@ async fn check_tool_allow(
     Ok(())
 }
 
+/// `CONNECTOR_SCOPE_RE` 의 id 부분 — 소문자 uuid 꼴.
+fn lower_uuid(s: &str) -> bool {
+    s.len() == 36
+        && s.bytes().enumerate().all(|(i, b)| {
+            if matches!(i, 8 | 13 | 18 | 23) {
+                b == b'-'
+            } else {
+                b.is_ascii_digit() || (b'a'..=b'f').contains(&b)
+            }
+        })
+}
+
+/// TS `API_METHODS`.
+const API_METHODS: &[&str] = &["GET", "POST", "PUT", "PATCH", "DELETE"];
+/// 쓰기 api.call 의 만료 상한 — TS `WRITE_MAX_MS`.
+const WRITE_MAX_MS: i64 = 30 * 86_400_000 + 60_000;
+
+/// `parseLimits` — 맞으면 `{methods, pathPrefix}`(methods 는 처음 나온 순서로 하나씩).
+fn parse_limits(raw: Option<&Value>, connector_methods: &[String]) -> Result<Value, String> {
+    let Some(Value::Object(o)) = raw else {
+        return Err("limits 가 필요하다 — {methods, pathPrefix}".into());
+    };
+    let extra: Vec<&str> = o
+        .keys()
+        .map(String::as_str)
+        .filter(|k| *k != "methods" && *k != "pathPrefix")
+        .collect();
+    if !extra.is_empty() {
+        return Err(format!("받지 않는 limits 칸: {}", extra.join(", ")));
+    }
+    let Some(Value::Array(methods)) = o.get("methods") else {
+        return Err("limits.methods 가 비었다".into());
+    };
+    if methods.is_empty() {
+        return Err("limits.methods 가 비었다".into());
+    }
+    let mut ms: Vec<String> = Vec::new();
+    for m in methods {
+        // `String(m)` — 글이 아니면 JSON 꼴이 메서드 목록에 없으므로 아래에서 거절된다.
+        let s = m.as_str().map_or_else(|| m.to_string(), str::to_string);
+        if !ms.contains(&s) {
+            ms.push(s);
+        }
+    }
+    if !ms.iter().all(|m| API_METHODS.contains(&m.as_str())) {
+        return Err("limits.methods 에 모르는 메서드가 있다".into());
+    }
+    if !ms.iter().all(|m| connector_methods.contains(m)) {
+        return Err("연결이 허용하지 않은 메서드다".into());
+    }
+    match o.get("pathPrefix") {
+        Some(Value::String(p))
+            if super::connectors_upsert::safe_path(p) && !p.contains('?') && !p.contains('%') =>
+        {
+            Ok(json!({ "methods": ms, "pathPrefix": p }))
+        }
+        _ => Err("limits.pathPrefix 는 / 로 시작하는 안전한 경로다".into()),
+    }
+}
+
+/// `checkApiGrant` — 맞으면 정규화한 limits.
+async fn check_api(
+    pool: &PgPool,
+    me: &Account,
+    id: &str,
+    b: &GrantBody,
+) -> Result<Value, Response> {
+    let connector = b
+        .scope
+        .strip_prefix("connector:")
+        .filter(|rest| lower_uuid(rest))
+        .map(str::to_string);
+    let Some(connector) = connector else {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "bad_scope",
+            "api.call 의 scope 는 connector:<id> 하나다 — 전역은 없다",
+        ));
+    };
+    if b.allow_agent_cause.is_some() {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "bad_request",
+            "allowAgentCause 는 repo.merge 전용이다",
+        ));
+    }
+    if me.kind != "human" {
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "api.call 은 사람만 준다",
+        ));
+    }
+    match agent_owner(pool, id).await {
+        Err(e) => return Err(internal(e)),
+        Ok(None) => {
+            return Err(err(
+                StatusCode::NOT_FOUND,
+                "not_found",
+                "api.call 은 에이전트에게만 준다",
+            ));
+        }
+        Ok(Some(o)) if o.as_deref() != Some(me.id.as_str()) => {
+            return Err(err(
+                StatusCode::FORBIDDEN,
+                "forbidden",
+                "api.call 은 그 에이전트의 소유자만 준다",
+            ));
+        }
+        Ok(Some(_)) => {}
+    }
+    let conn: Option<(String, Vec<String>)> = sqlx::query_as(
+        "select owner_account_id::text, methods from api_connector where id = $1::uuid",
+    )
+    .bind(&connector)
+    .fetch_optional(pool)
+    .await
+    .map_err(internal)?;
+    let Some((owner, methods)) = conn else {
+        return Err(err(
+            StatusCode::NOT_FOUND,
+            "no_connector",
+            "그런 API 연결이 없다",
+        ));
+    };
+    if owner != me.id {
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "내 API 연결만 줄 수 있다",
+        ));
+    }
+    let limits = parse_limits(b.limits.as_ref(), &methods)
+        .map_err(|m| err(StatusCode::BAD_REQUEST, "bad_limits", &m))?;
+    let writes = limits["methods"]
+        .as_array()
+        .is_some_and(|ms| ms.iter().any(|m| m.as_str() != Some("GET")));
+    if writes && b.expires_at.is_none() {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "write_needs_expiry",
+            "쓰기 메서드가 있는 api.call 은 만료(날짜 또는 무기한 null)를 명시한다",
+        ));
+    }
+    let exp_ms = b
+        .expires_at
+        .clone()
+        .flatten()
+        .as_deref()
+        .and_then(expires_ms);
+    if writes && exp_ms.is_some_and(|t| t > now_ms() + WRITE_MAX_MS) {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "write_expiry_too_long",
+            "쓰기 메서드가 있는 api.call 의 만료는 30일 안이다",
+        ));
+    }
+    if exp_ms.is_some_and(|t| t <= now_ms()) {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "bad_request",
+            "만료가 이미 지났다",
+        ));
+    }
+    Ok(limits)
+}
+
 /// `new Date(s).toISOString()` — 이미 zod 를 통과한 값.
 fn iso(s: &str) -> Option<String> {
     crate::write::zod_datetime_offset(s).ok().flatten()
@@ -361,7 +534,7 @@ pub async fn put_grants(
     State(st): State<Arc<AccountGrantGiveState>>,
     RequireAccount(me, auth): RequireAccount,
     Path(id): Path<String>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    ConnectInfo(_peer): ConnectInfo<SocketAddr>,
     req: Request,
 ) -> Response {
     let (parts, raw) = req.into_parts();
@@ -407,17 +580,15 @@ pub async fn put_grants(
             "member.reset_password 는 owner·admin 역할로만 갖는다",
         );
     }
-    if cap == "api.call" {
-        return crate::proxy::forward(
-            State(st.up.clone()),
-            ConnectInfo(peer),
-            Request::from_parts(parts, axum::body::Body::from(bytes)),
-        )
-        .await;
-    }
     let mut scope = b.scope.clone();
     let allow = b.allow_agent_cause;
-    if cap == "repo.merge" || cap == "repo.read" {
+    let mut limits: Option<Value> = None;
+    if cap == "api.call" {
+        match check_api(&st.write, &me, &id, &b).await {
+            Ok(l) => limits = Some(l),
+            Err(r) => return r,
+        }
+    } else if cap == "repo.merge" || cap == "repo.read" {
         if cap == "repo.read" && allow.is_some() {
             return err(
                 StatusCode::BAD_REQUEST,
@@ -496,9 +667,16 @@ pub async fn put_grants(
     };
     let expires: Option<String> = b.expires_at.clone().flatten();
     let allow_v = allow.unwrap_or(false);
+    let api = cap == "api.call";
+    let delegate_depth: i64 = if api {
+        b.delegate_depth.unwrap_or(0)
+    } else {
+        0
+    };
+    let after_wnh = api && b.write_needs_human_cause.unwrap_or(false);
     if let Err(e) = sqlx::query(
         "insert into account_grant (account_id, capability, scope, granted_by, expires_at, allow_agent_cause, limits, delegate_depth, write_needs_human_cause) \
-         values ($1::uuid, $2, $3, $4::uuid, $5::timestamptz, $6, null, 0, false) \
+         values ($1::uuid, $2, $3, $4::uuid, $5::timestamptz, $6, $7::jsonb, $8, $9) \
          on conflict (account_id, capability, scope) do update \
            set granted_by = excluded.granted_by, granted_at = now(), expires_at = excluded.expires_at, \
                allow_agent_cause = excluded.allow_agent_cause, limits = excluded.limits, \
@@ -512,6 +690,9 @@ pub async fn put_grants(
     .bind(&me.id)
     .bind(&expires)
     .bind(allow_v)
+    .bind(limits.as_ref().map(Value::to_string))
+    .bind(i32::try_from(delegate_depth).unwrap_or(0))
+    .bind(after_wnh)
     .execute(&st.write)
     .await
     {
@@ -525,14 +706,15 @@ pub async fn put_grants(
             changed.insert("expiresAt".into(), json!([b_exp, after_exp]));
         }
         let b_lim = b_lim.clone().unwrap_or(Value::Null);
-        if b_lim != Value::Null {
-            changed.insert("limits".into(), json!([b_lim, Value::Null]));
+        let a_lim = limits.clone().unwrap_or(Value::Null);
+        if b_lim != a_lim {
+            changed.insert("limits".into(), json!([b_lim, a_lim]));
         }
-        if *b_wnh {
-            changed.insert("writeNeedsHumanCause".into(), json!([true, false]));
+        if *b_wnh != after_wnh {
+            changed.insert("writeNeedsHumanCause".into(), json!([b_wnh, after_wnh]));
         }
-        if *b_dd != 0 {
-            changed.insert("delegateDepth".into(), json!([b_dd, 0]));
+        if i64::from(*b_dd) != delegate_depth {
+            changed.insert("delegateDepth".into(), json!([b_dd, delegate_depth]));
         }
         if *b_aac != allow_v {
             changed.insert("allowAgentCause".into(), json!([b_aac, allow_v]));
@@ -553,6 +735,20 @@ pub async fn put_grants(
     detail.insert("expiresAt".into(), json!(expires));
     if cap == "repo.merge" {
         detail.insert("allowAgentCause".into(), json!(allow_v));
+    }
+    if api {
+        detail.insert("limits".into(), limits.clone().unwrap_or(Value::Null));
+        detail.insert("delegateDepth".into(), json!(delegate_depth));
+        detail.insert("writeNeedsHumanCause".into(), json!(after_wnh));
+        // 무기한 쓰기를 감사 한 줄로 셀 수 있게(security 설계 5). TS 는 `expiresAt === null` — 칸 없음은 아니다.
+        let writes = limits
+            .as_ref()
+            .and_then(|l| l.get("methods"))
+            .and_then(Value::as_array)
+            .is_some_and(|ms| ms.iter().any(|m| m.as_str() != Some("GET")));
+        if writes && matches!(b.expires_at, Some(None)) {
+            detail.insert("writeNoExpiry".into(), json!(true));
+        }
     }
     let ip = crate::writes_settings::ip_of(&parts, &st.trust);
     record_audit(
@@ -689,6 +885,45 @@ mod tests {
             Some(2)
         );
         assert!(parse_body(&Body::Text("x".into())).is_none());
+    }
+
+    #[test]
+    fn limits_shape() {
+        let cm = vec!["GET".to_string(), "POST".to_string()];
+        assert_eq!(
+            parse_limits(
+                Some(&json!({"methods": ["GET", "GET", "POST"], "pathPrefix": "/v1"})),
+                &cm
+            ),
+            Ok(json!({"methods": ["GET", "POST"], "pathPrefix": "/v1"}))
+        );
+        assert_eq!(
+            parse_limits(None, &cm),
+            Err("limits 가 필요하다 — {methods, pathPrefix}".to_string())
+        );
+        assert_eq!(
+            parse_limits(
+                Some(&json!({"methods": ["DELETE"], "pathPrefix": "/v1"})),
+                &cm
+            ),
+            Err("연결이 허용하지 않은 메서드다".to_string())
+        );
+        assert_eq!(
+            parse_limits(
+                Some(&json!({"methods": ["GET"], "pathPrefix": "/v1?x"})),
+                &cm
+            ),
+            Err("limits.pathPrefix 는 / 로 시작하는 안전한 경로다".to_string())
+        );
+        assert!(
+            parse_limits(
+                Some(&json!({"methods": ["GET"], "pathPrefix": "/", "x": 1})),
+                &cm
+            )
+            .is_err()
+        );
+        assert!(lower_uuid("0a1b2c3d-0000-4000-8000-00000000abcd"));
+        assert!(!lower_uuid("0A1B2C3D-0000-4000-8000-00000000abcd"));
     }
 
     #[test]
