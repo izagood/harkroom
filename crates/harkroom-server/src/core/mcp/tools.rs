@@ -32,6 +32,8 @@ pub const SERVED: &[&str] = &[
     "message.search",
     // C4b
     "grant.list",
+    // S5.4 A2a — 오퍼레이터 코어가 Rust 일 때만 답한다(`route` 가 `relay_moved` 로 거른다, [`super::model_options`]).
+    "agent.modelOptions",
     // S5.4 A2b
     "memory.audit",
 ];
