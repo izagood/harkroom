@@ -28,6 +28,7 @@ pub mod channel_members;
 pub mod channel_pins_sched;
 pub mod channel_pref_write;
 pub mod channel_read_write;
+pub mod channel_team_add;
 pub mod channels;
 pub mod command_match;
 pub mod content_scan;

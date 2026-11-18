@@ -1,5 +1,5 @@
 //! 가벼운 쓰기②-팀(S5.2 P4b) — TS `routes/teamRoutes.ts` 의 쓰기(`services/teams.ts`). 채널에 팀 넣기
-//! (`POST /channels/:id/teams/:teamId/add`)는 채널 멤버십을 쓰므로 S5.3 코어로 남긴다.
+//! (`POST /channels/:id/teams/:teamId/add`)는 채널 멤버십을 쓰므로 코어(`core::channel_team_add`, S5.4 CT1)로 옮겼다.
 //!
 //! 순서는 TS 와 같다: 본문 읽기 → preHandler(`requireCap('team.create')` 또는 대상 팀을 단 `requireCap('team.manage')`) → zod.
 //! 쓴 뒤 감사(ip 는 `TRUST_PROXY` 규칙)와 `agent_team.changed {teamId, audience:'all'}` 이벤트(outbox, 쓰기와 같은 트랜잭션).

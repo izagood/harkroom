@@ -758,6 +758,27 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 CT1 — 채널에 팀 넣기(`POST /channels/{id}/teams/{teamId}/add`). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만.
+    let channel_team_add = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::channel_team_add as c;
+            match write::missing_in(w, c::TEAM_ADD_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: channel team add core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: channel team add core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 CH3b — 자동 멘션 걸기·풀기·채널 문서 저장. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 권한이 다 있을 때만.
     let auto_mention_doc = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -1751,6 +1772,20 @@ async fn main() {
             core_routes.router = core_routes.router.merge(cm.router);
             core_routes.http.extend(cm.http);
             core_routes.sockets.extend(cm.sockets);
+        }
+        // S5.4 CT1 — 채널에 팀 넣기. 쓰기 풀에 칸 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = channel_team_add {
+            let ta = harkroom_server::core::channel_team_add::routes(
+                harkroom_server::core::channel_team_add::TeamAddState {
+                    write,
+                    trust: (*state.trust).clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(ta.router);
+            core_routes.http.extend(ta.http);
+            core_routes.sockets.extend(ta.sockets);
         }
         if let Some(write) = channel_create_update {
             let cu = harkroom_server::core::channel_create_update::routes(
