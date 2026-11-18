@@ -821,6 +821,27 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 — 보관소 잠그기(`DELETE /auth/step-up`). 쓰기 풀에 세션의 창 칸 UPDATE 가 있을 때만 — 아니면 TS 에 남는다.
+    let step_up_end_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::step_up_end as a;
+            match write::missing_in(w, a::STEP_UP_END_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: step-up end core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: step-up end core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 — 계정 권한 목록 읽기(`GET /accounts/{id}/grants`). 읽기 풀에 SELECT 가 있을 때만 — 아니면 TS 에 남는다.
     let account_grants_read_on = match &core_mode {
         harkroom_server::core::CoreMode::Rust => {
@@ -1834,6 +1855,20 @@ async fn main() {
             core_routes.router = core_routes.router.merge(li.router);
             core_routes.http.extend(li.http);
             core_routes.sockets.extend(li.sockets);
+        }
+        // S5.4 — 보관소 잠그기 1줄. 권한이 있을 때만 — 아니면 TS 에 남는다(열기 POST 는 argon2·리미터 때문에 TS).
+        if let Some(write) = step_up_end_write {
+            let su = harkroom_server::core::step_up_end::routes(
+                harkroom_server::core::step_up_end::StepUpEndState {
+                    write,
+                    trust: state.trust.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(su.router);
+            core_routes.http.extend(su.http);
+            core_routes.sockets.extend(su.sockets);
         }
         // S5.4 — 계정 권한 목록 읽기 1줄. 권한이 있을 때만 — 아니면 TS 에 남는다(권한 주기 PUT 은 언제나 TS).
         if account_grants_read_on {

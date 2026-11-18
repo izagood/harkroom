@@ -367,6 +367,7 @@ pub fn routes(
             "/accounts/agents/{id}/assignment",
             super::operator_assign::delete_assignment,
         )
+        .get("/accounts/agents", super::operator_stop::list_agents)
         .post("/accounts/agents/{id}/stop", super::operator_stop::stop)
         .post(
             "/accounts/agents/{id}/stop/undo",
