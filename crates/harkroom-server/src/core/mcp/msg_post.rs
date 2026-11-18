@@ -912,6 +912,12 @@ async fn post_with(
     picks: Option<&crate::core::agent_model_picks::AgentPicks>,
     push_to: Option<&str>,
 ) -> Option<String> {
+    // TS `if (mirrorOf) await syncAskMirrors(pool, mirrorOf)` — 검사와 발행 사이에 원본이 정해졌으면 새 거울을 곧바로 닫는다.
+    let mirror_root = meta
+        .get("ask")
+        .and_then(|x| x.get("mirrorOf"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     match channel_visible(&st.read, &me.id, &a.channel).await {
         Ok(true) => {}
         Ok(false) => return Some(err("forbidden", "not a member of this dm channel")),
@@ -994,6 +1000,21 @@ async fn post_with(
                 .and_then(|v| v.get("id").and_then(Value::as_str).map(str::to_owned));
             let mut plan_extra = String::new();
             if let Some(new_id) = new_id {
+                if let Some(root) = &mirror_root {
+                    let r: Result<(), sqlx::Error> = async {
+                        let mut conn = st.write.acquire().await?;
+                        crate::core::ask_sync::sync_ask_mirrors(
+                            &mut conn,
+                            "message.ask mirrorOf",
+                            root,
+                        )
+                        .await
+                    }
+                    .await;
+                    if let Err(e) = r {
+                        eprintln!("message.ask: mirror sync for {root} failed: {e}");
+                    }
+                }
                 for old in supersedes {
                     super::message_ask::supersede_ask(&st.write, old, &new_id, &me.id).await;
                 }
