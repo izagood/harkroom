@@ -8,7 +8,7 @@
 //! 읽기 풀([`MERGE_RESULTS_PRIVILEGES`])이 있으면 N1 관문(403 `lease_invalid`·400 `bad_repo`·409 `already_reported`/`not_checked`)도
 //! Rust 가 답한다. 글 경로와 [`MERGE_RESULTS_WRITE_PRIVILEGES`] 까지 있으면 받을 `failed` 보고(CI 거절 아님)와 `merged` 보고
 //! (무시한 체크 0개·닫을 머지 카드 없음·계정을 비운 승인의 고른 gh 이름 없음)도 Rust 가 적는다 — 시스템 줄·감사·201 `{ messageId }`.
-//! 「큐」 줄(감시)·CI 거절 기록(`denialId`)·무시한 체크·카드 닫기·고른 gh 이름 적기가 필요한 보고는 쓰기 전에 TS 로 넘긴다.
+//! `queued` 보고도 위임 v2 스위치가 꺼졌다고 확실하면(감시 없음) Rust 가 적는다. 스위치가 켜졌거나 모르는 「큐」 줄(감시)·CI 거절 기록(`denialId`)·무시한 체크·카드 닫기·고른 gh 이름 적기가 필요한 보고는 쓰기 전에 TS 로 넘긴다.
 use super::grant_reads::through_operator;
 use super::merge_approval_peek::str_len_ok;
 use super::msg_read::is_uuid;
@@ -250,7 +250,7 @@ pub fn rust_reportable(o: &Value) -> bool {
     match o.get("result").and_then(Value::as_str) {
         Some("failed") => !is_ci_refusal(o.get("ciRefusal")),
         // 무시한 체크가 있으면 TS `sanitizeCheckNames`(\p{Cf} 거르기)·꼬리 문구가 필요하다 — TS 몫.
-        Some("merged") => o
+        Some("merged" | "queued") => o
             .get("ignoredChecks")
             .and_then(Value::as_array)
             .is_none_or(|a| a.is_empty()),
@@ -324,6 +324,60 @@ pub fn merged_line(
     (body, meta)
 }
 
+/// TS `queued` 줄(무시한 체크 0개) — `merged_line` 의 meta 를 고쳐 쓴다.
+#[allow(clippy::too_many_arguments)]
+pub fn queued_line(
+    repo: &str,
+    number: i64,
+    head_sha: &str,
+    merge_sha: Option<&str>,
+    error: Option<&str>,
+    granter: Option<(&str, &str)>,
+    granter_id: Option<&str>,
+    via_approval: bool,
+    ci_override: bool,
+    no_pr_checks: bool,
+    chain_root_id: Option<&str>,
+) -> (String, Map<String, Value>) {
+    let (_, mut meta) = merged_line(
+        repo,
+        number,
+        head_sha,
+        merge_sha,
+        error,
+        granter,
+        granter_id,
+        via_approval,
+        ci_override,
+        no_pr_checks,
+        chain_root_id,
+    );
+    let head: String = head_sha.chars().take(9).collect();
+    let mut body = format!("📥 {repo}#{number} 머지 큐에 넣음 · head {head}");
+    if let Some((_, h)) = granter {
+        body.push_str(&format!(" · 권한: {h}"));
+    }
+    if ci_override {
+        body.push_str(" · CI 실패 무시 승인");
+    }
+    body.push_str(" (래퍼 보고)");
+    if let Some(Value::Object(m)) = meta.get_mut("merge") {
+        m.insert("result".into(), json!("queued"));
+    }
+    meta.remove("i18n");
+    if !ci_override {
+        let clip = |s: &str| super::api_results::js_slice(s, 200);
+        let i18n = match granter {
+            Some((id, _)) => json!({ "key": "system.merge.queuedGranted", "args": {
+                "repo": clip(repo), "number": number, "head": head, "granterId": clip(id) } }),
+            None => json!({ "key": "system.merge.queued", "args": {
+                "repo": clip(repo), "number": number, "head": head } }),
+        };
+        meta.insert("i18n".into(), i18n);
+    }
+    (body, meta)
+}
+
 /// TS `failed` 줄 — 본문과 `meta`(i18n 은 CI 무시 승인 꼬리가 없을 때만).
 #[allow(clippy::too_many_arguments)]
 pub fn failed_line(
@@ -369,6 +423,12 @@ pub fn failed_line(
     (body, meta)
 }
 
+/// 위임 v2 스위치가 꺼졌다고 확실한가(값이 없으면 모른다 → TS) — 그러면 `queued` 보고는 감시 없이 줄·감사뿐이다.
+fn queued_without_watch() -> bool {
+    super::msg_post::delegation_v2(std::env::var("HARKROOM_DELEGATION_V2").ok().as_deref())
+        == Some(false)
+}
+
 enum Report {
     Refused(&'static str),
     ToTs,
@@ -386,6 +446,10 @@ async fn report_failed(
     use super::msg_post::{Origin, Outcome, PostBody, channel_is_dm, post_in_tx};
     let w = &st.write;
     let g = |k: &str| o.get(k).and_then(Value::as_str).map(str::to_owned);
+    // `queued` 는 TS `autoWatchOnQueued` 가 위임 v2 스위치가 켜졌을 때 감시를 건다 — 꺼졌다고 **확실할** 때만 Rust 가 적는다.
+    if g("result").as_deref() == Some("queued") && !queued_without_watch() {
+        return Ok(Report::ToTs);
+    }
     let Some(number) = pk::positive_int(o.get("number").unwrap_or(&Value::Null)) else {
         return Ok(Report::ToTs);
     };
@@ -460,16 +524,20 @@ async fn report_failed(
     let ci_override = used.as_ref().is_some_and(|u| u.2);
     let granter_id = approved_by.clone().or(grant_by.flatten());
     let merge_sha = g("mergeSha");
-    let merged = g("result").as_deref() == Some("merged");
-    let no_pr_checks = merged && o.get("noPrChecks") == Some(&Value::Bool(true));
-    let (body, meta) = if merged {
-        let open: bool = sqlx::query_scalar(OPEN_CARDS_SQL)
-            .bind(&scope)
-            .bind(number)
-            .fetch_one(w)
-            .await?;
-        if open {
-            return Ok(Report::ToTs);
+    let result = g("result");
+    let merged = result.as_deref() == Some("merged");
+    let queued = result.as_deref() == Some("queued");
+    let no_pr_checks = (merged || queued) && o.get("noPrChecks") == Some(&Value::Bool(true));
+    let (body, meta) = if merged || queued {
+        if merged {
+            let open: bool = sqlx::query_scalar(OPEN_CARDS_SQL)
+                .bind(&scope)
+                .bind(number)
+                .fetch_one(w)
+                .await?;
+            if open {
+                return Ok(Report::ToTs);
+            }
         }
         // 계정을 비운 승인 + 고른 gh 이름이면 `noteOnceGhUserUsed`(카드·거울 고치기)가 필요하다 — TS 몫.
         let gh_used = g("ghUserUsed").filter(|u| gh_user_ok(u));
@@ -492,7 +560,8 @@ async fn report_failed(
             None => None,
         };
         let granter = granter_id.as_deref().zip(handle.as_deref());
-        merged_line(
+        let line = if merged { merged_line } else { queued_line };
+        line(
             &repo,
             number,
             &head_sha,
@@ -563,6 +632,8 @@ async fn report_failed(
         crate::write::AuditEntry {
             action: if merged {
                 "repo.merge.merged"
+            } else if queued {
+                "repo.merge.queued"
             } else {
                 "repo.merge.failed"
             },
@@ -871,7 +942,55 @@ mod tests {
             &json!({ "result": "failed", "ciRefusal": { "code": "not_mergeable", "mergeState": "UNSTABLE", "checks": [] } })
         ));
         assert!(rust_reportable(&json!({ "result": "merged" })));
-        assert!(!rust_reportable(&json!({ "result": "queued" })));
+        assert!(rust_reportable(&json!({ "result": "queued" })));
+        assert!(!rust_reportable(
+            &json!({ "result": "queued", "ignoredChecks": ["x"] })
+        ));
+    }
+
+    #[test]
+    fn queued_line_like_ts() {
+        let h = "b".repeat(40);
+        let (body, meta) = queued_line(
+            "o/r",
+            7,
+            &h,
+            None,
+            None,
+            Some(("g1", "kim")),
+            Some("g1"),
+            false,
+            false,
+            true,
+            None,
+        );
+        assert_eq!(
+            body,
+            "📥 o/r#7 머지 큐에 넣음 · head bbbbbbbbb · 권한: kim (래퍼 보고)"
+        );
+        assert_eq!(meta["merge"]["result"], json!("queued"));
+        assert_eq!(meta["merge"]["noPrChecks"], json!(true));
+        assert_eq!(meta["merge"]["mergeSha"], Value::Null);
+        assert_eq!(
+            meta["i18n"],
+            json!({ "key": "system.merge.queuedGranted", "args": { "repo": "o/r", "number": 7, "head": "bbbbbbbbb", "granterId": "g1" } })
+        );
+        let (body, meta) = queued_line(
+            "o/r", 7, &h, None, None, None, None, false, false, false, None,
+        );
+        assert_eq!(body, "📥 o/r#7 머지 큐에 넣음 · head bbbbbbbbb (래퍼 보고)");
+        assert_eq!(
+            meta["i18n"],
+            json!({ "key": "system.merge.queued", "args": { "repo": "o/r", "number": 7, "head": "bbbbbbbbb" } })
+        );
+        let (body, meta) = queued_line(
+            "o/r", 7, &h, None, None, None, None, true, true, false, None,
+        );
+        assert_eq!(
+            body,
+            "📥 o/r#7 머지 큐에 넣음 · head bbbbbbbbb · CI 실패 무시 승인 (래퍼 보고)"
+        );
+        assert!(meta.get("i18n").is_none());
     }
 
     #[test]
@@ -930,6 +1049,9 @@ mod tests {
             &json!({ "result": "merged", "ignoredChecks": ["x"] })
         ));
         let src = include_str!("../../../../packages/server/src/services/mergeGrants.ts");
+        assert!(src.contains("`📥 ${repo}#${r.number} 머지 큐에 넣음 · head ${r.headSha.slice(0, 9)}` + (granter ? ` · 권한: ${granter}` : '') + ignoredTail + ' (래퍼 보고)'"));
+        let watch = include_str!("../../../../packages/server/src/services/prWatch.ts");
+        assert!(watch.contains("if (!delegationV2Enabled()) return null;"));
         assert!(src.contains("`🔀 ${repo}#${r.number} 머지됨 · ${(r.mergeSha ?? r.headSha).slice(0, 9)}` + (granter ? ` · 권한: ${granter}` : '') + ignoredTail + ' (래퍼 보고)'"));
     }
 }
