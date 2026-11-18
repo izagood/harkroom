@@ -692,6 +692,15 @@ mod tests {
     }
 
     #[test]
+    fn tool_allow_expiry_parse() {
+        assert_eq!(expires_ms("1970-01-01T00:00:01Z"), Some(1000));
+        assert_eq!(expires_ms("1970-01-01T09:00:01+09:00"), Some(1000));
+        assert!(now_ms() > 0);
+        assert!(TOOL_RULE_EXPIRY_CAPPED_WARNINGS.contains(&"runs_arbitrary"));
+        assert!(!TOOL_RULE_EXPIRY_CAPPED_WARNINGS.contains(&"short_prefix"));
+    }
+
+    #[test]
     fn merges_with_read_and_revoke_paths() {
         // GET·PUT 이 같은 경로에 따로 붙어도 axum 이 합친다.
         let a: axum::Router =
