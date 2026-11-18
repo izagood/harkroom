@@ -124,6 +124,7 @@ pub mod step_up_open;
 pub mod thread_model_clear;
 pub mod thread_models_read;
 pub mod thread_plan_auto_off;
+pub mod thread_plan_manager;
 pub mod thread_plan_read;
 pub mod tickets;
 pub mod turn_lease;

@@ -2903,6 +2903,20 @@ async fn main() {
             core_routes.http.extend(pa.http);
             core_routes.sockets.extend(pa.sockets);
         }
+        // S5.4 TP4 — 계획 관리 에이전트 바꾸기. MCP 계획 쓰기(같은 쓰기 경로·같은 권한)가 켜졌을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = plan_write.clone() {
+            let pm = harkroom_server::core::thread_plan_manager::routes(
+                harkroom_server::core::thread_plan_manager::ManagerState {
+                    write,
+                    up: state.up.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(pm.router);
+            core_routes.http.extend(pm.http);
+            core_routes.sockets.extend(pm.sockets);
+        }
         // S5.4 CT1 — 채널에 팀 넣기. 쓰기 풀에 칸 권한이 다 있을 때만 — 아니면 TS 에 남는다.
         if let Some(write) = channel_team_add {
             let ta = harkroom_server::core::channel_team_add::routes(
