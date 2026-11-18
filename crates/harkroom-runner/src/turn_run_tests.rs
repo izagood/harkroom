@@ -22,6 +22,9 @@ struct Link {
     status: BTreeMap<&'static str, u16>,
     /// 지나간 HTTP 경로 — 활동 보고(#176)가 몇 번 나갔는지 센다.
     hits: Mutex<Vec<String>>,
+    /// 활동 보고가 나가는 순간 읽을 기록 파일과 그때 본 내용 — 보고가 가리기 뒤인지 본다.
+    watch: Option<PathBuf>,
+    seen_at_activity: Mutex<Option<String>>,
 }
 
 impl Link {
@@ -41,6 +44,11 @@ impl RunnerLink for &Link {
             panic!("mcp")
         };
         self.hits.lock().unwrap().push(path.clone());
+        if path == "/agent/activity"
+            && let Some(rec) = &self.watch
+        {
+            *self.seen_at_activity.lock().unwrap() = std::fs::read_to_string(rec).ok();
+        }
         let status = self.status.get(path.as_str()).copied().unwrap_or(0);
         RunnerLinkResponse::HttpResponse {
             id: "x".into(),
@@ -232,6 +240,8 @@ fn link() -> Link {
         ]
         .into(),
         hits: Mutex::default(),
+        watch: None,
+        seen_at_activity: Mutex::default(),
     }
 }
 
@@ -240,7 +250,10 @@ fn link() -> Link {
 #[test]
 fn mounted_secret_is_masked_in_records_outcome_and_after_turn() {
     let w = world("ok");
-    let link = link();
+    let link = Link {
+        watch: Some(w.record.clone()),
+        ..link()
+    };
     let client = HarkroomRestClient::new(&link);
     let ops = Ops {
         log: RefCell::default(),
@@ -285,6 +298,12 @@ fn mounted_secret_is_masked_in_records_outcome_and_after_turn() {
         link.activity_reports(),
         1,
         "턴이 끝나면 활동을 남긴다(#176)"
+    );
+    // security(#2354): 활동 보고(시한 없는 링크 요청)는 기록 가리기 **뒤**에 나간다.
+    let seen = link.seen_at_activity.lock().unwrap().clone().unwrap();
+    assert!(
+        !seen.contains(&w.secret) && !seen.contains(&w.key),
+        "활동 보고 때 기록이 아직 안 가려졌다: {seen}"
     );
 }
 
