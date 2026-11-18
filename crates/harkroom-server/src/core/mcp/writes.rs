@@ -56,7 +56,7 @@ pub const SERVED: &[&str] = &[
     "automation.propose",
     // S5.4 MCP 5 — 에이전트의 「지금 한 번」(회차 INSERT 만). 회차 칸이 있는 쓰기 풀(`writes.automation_run`)일 때만.
     "automation.run",
-    // S5.4 MCP 6 — API 권한 다시 주기의 거절 전부·같은 위임 다시 오기(감사 줄만, 새 위임은 TS). `writes.grant_delegate` 일 때만.
+    // S5.4 MCP 6 — API 권한 다시 주기의 거절 전부·같은 위임 다시 오기·원인 없는 새 위임(대기 줄; 원인이 확인된 새 위임은 TS). `writes.grant_delegate` 일 때만.
     "grant.delegate",
 ];
 
@@ -260,7 +260,7 @@ pub async fn answer(
         let Some(write) = writes.grant_delegate.as_ref() else {
             return Some(None);
         };
-        return Some(super::grant_delegate::answer(read, write, me, args).await);
+        return Some(super::grant_delegate::answer(read, write, me, args, cause).await);
     }
     if tool == "automation.run" {
         let Some(write) = writes.automation_run.as_ref() else {

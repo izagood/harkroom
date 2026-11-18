@@ -5,10 +5,14 @@
 //! `not_root_owner_agent` → `already_granted` → 같은 위임이면 그 줄로 답 → `rate_limited`.
 //! 거절은 TS 처럼 `audit_log` 에 `grant.delegate.denied` 한 줄을 남기고 `{error:{code,message}}` 로 답한다.
 //!
+//! 모든 판정을 지난 새 위임은 **원인이 확인되지 않을 때만**(원인 없음·이 에이전트를 1시간 안에 깨운 글이 아님) Rust 가 쓴다 —
+//! 그때 TS 는 늘 대기(`pending_approval`)이고 시스템 줄을 쓰지 않는다. 줄 upsert·`grant.delegate.pending` 감사·`grant.changed`
+//! 이벤트를 **한 트랜잭션**에 쓴다.
+//!
 //! - **TS 로 넘기는 것**(`None`): zod 가 받지 않을 인자 · `%`·ASCII 밖 글자·URL 짓기가 바꿀 글자가 든 경로 ·
-//!   낯선 limits 모양 · 모든 판정을 지난 새 위임(원인 확인·upsert·감사·이벤트·시스템 줄) · DB 오류 · 감사 줄 INSERT 실패.
-//!   넘기기 전에 Rust 가 쓴 것은 없다(감사 줄은 거절 답과 함께만 쓴다).
-//! - 쓰기 칸은 `audit_log` INSERT 네 칸뿐이다.
+//!   낯선 limits 모양 · 원인이 확인된 새 위임(즉시 유효 판정·시스템 줄 — `postMessage` 의 부름·알림) · uuid 가 아닌 원인 ·
+//!   DB 오류 · 감사 줄 INSERT 실패. 넘기기 전에 Rust 가 쓴 것은 없다(감사 줄은 거절 답과 함께, 새 위임은 롤백 뒤 넘긴다).
+//! - 쓰기 칸은 [`GRANT_DELEGATE_PRIVILEGES`] 뿐이다.
 use super::tools::err;
 use crate::auth::Account;
 use serde_json::Value;
@@ -20,7 +24,35 @@ pub const GRANT_DELEGATE_PRIVILEGES: &[(&str, &str)] = &[
     ("audit_log.actor_id", "INSERT"),
     ("audit_log.target", "INSERT"),
     ("audit_log.detail", "INSERT"),
+    // 새 위임(TS `insert … on conflict (account_id, capability, scope) do update … returning id`).
+    ("account_grant.id", "SELECT"),
+    ("account_grant.account_id", "SELECT"),
+    ("account_grant.capability", "SELECT"),
+    ("account_grant.scope", "SELECT"),
+    ("account_grant.account_id", "INSERT"),
+    ("account_grant.capability", "INSERT"),
+    ("account_grant.scope", "INSERT"),
+    ("account_grant.granted_by", "INSERT"),
+    ("account_grant.expires_at", "INSERT"),
+    ("account_grant.limits", "INSERT"),
+    ("account_grant.delegate_depth", "INSERT"),
+    ("account_grant.write_needs_human_cause", "INSERT"),
+    ("account_grant.parent_grant_id", "INSERT"),
+    ("account_grant.suspended_at", "INSERT"),
+    ("account_grant.suspend_reason", "INSERT"),
+    ("account_grant.granted_by", "UPDATE"),
+    ("account_grant.granted_at", "UPDATE"),
+    ("account_grant.expires_at", "UPDATE"),
+    ("account_grant.limits", "UPDATE"),
+    ("account_grant.delegate_depth", "UPDATE"),
+    ("account_grant.write_needs_human_cause", "UPDATE"),
+    ("account_grant.parent_grant_id", "UPDATE"),
+    ("account_grant.suspended_at", "UPDATE"),
+    ("account_grant.suspend_reason", "UPDATE"),
+    // `grant.changed`(outbox).
+    ("event_outbox", "INSERT"),
 ];
+pub const GRANT_DELEGATE_SEQUENCE_PRIVILEGES: &[(&str, &str)] = &[("event_outbox_id_seq", "USAGE")];
 
 const CONNECTOR_SQL: &str = "select id::text, owner_account_id::text, base_url, auth_kind, \
      (secret_id is not null), methods from api_connector where name = $1";
@@ -60,6 +92,21 @@ const RECENT_SQL: &str = "select count(*)::int from audit_log where action in ('
      and actor_id = $1::uuid and target = $2 and at > now() - interval '1 day'";
 const AUDIT_SQL: &str = "insert into audit_log (action, actor_id, target, detail) \
      values ('grant.delegate.denied', $1::uuid, $2, $3::jsonb)";
+/// TS 원인 확인(security F1) — 그 글이 이 에이전트를 1시간 안에 깨웠어야 원인이다. 줄이 있으면 TS 몫(즉시 유효 판정·시스템 줄).
+const CAUSE_SQL: &str = "select 1 from message m where m.id = $1::uuid and m.deleted_at is null \
+     and exists (select 1 from inbox i where i.account_id = $2::uuid and i.message_id = m.id \
+                 and i.created_at > now() - interval '60 minutes')";
+/// TS 위임 줄 upsert(대기 — `suspended_at`·`pending_approval`).
+const UPSERT_SQL: &str = "insert into account_grant (account_id, capability, scope, granted_by, expires_at, limits, delegate_depth, \
+       write_needs_human_cause, parent_grant_id, suspended_at, suspend_reason) \
+     values ($1::uuid, 'api.call', $2, $3::uuid, $4::timestamptz, $5::jsonb, $6, $7, $8::uuid, $9::timestamptz, 'pending_approval') \
+     on conflict (account_id, capability, scope) do update \
+       set granted_by = excluded.granted_by, granted_at = now(), expires_at = excluded.expires_at, limits = excluded.limits, \
+           delegate_depth = excluded.delegate_depth, write_needs_human_cause = excluded.write_needs_human_cause, \
+           parent_grant_id = excluded.parent_grant_id, suspended_at = excluded.suspended_at, suspend_reason = excluded.suspend_reason \
+     returning id::text";
+const PENDING_AUDIT_SQL: &str = "insert into audit_log (action, actor_id, target, detail) \
+     values ('grant.delegate.pending', $1::uuid, $2, $3::jsonb)";
 
 const METHODS: [&str; 5] = ["GET", "POST", "PUT", "PATCH", "DELETE"];
 const DAILY_PER_PAIR: i32 = 5;
@@ -316,7 +363,13 @@ async fn live_chain(
     Some(Ok(root.4.clone()))
 }
 
-pub async fn answer(read: &PgPool, write: &PgPool, me: &Account, args: &Value) -> Option<String> {
+pub async fn answer(
+    read: &PgPool,
+    write: &PgPool,
+    me: &Account,
+    args: &Value,
+    cause: Option<&str>,
+) -> Option<String> {
     let a = parse(args)?;
     if me.kind != "agent" {
         return Some(err("not_agent", "only agents delegate"));
@@ -473,8 +526,108 @@ pub async fn answer(read: &PgPool, write: &PgPool, me: &Account, args: &Value) -
     if recent >= DAILY_PER_PAIR {
         return deny(write, me, &a, "rate_limited", None).await;
     }
-    // 원인 확인·줄 쓰기(upsert)·감사·이벤트·시스템 줄은 아직 TS 몫이다 — 여기까지 Rust 는 아무것도 쓰지 않았다.
-    None
+    // 원인 확인(security F1). 확인된 원인이면 즉시 유효 판정과 시스템 줄(루트 사람 부름)이 TS 몫이다 — 여기까지 Rust 는 쓰지 않았다.
+    if let Some(c) = cause {
+        if !crate::core::msg_read::is_uuid(c) {
+            return None;
+        }
+        let hit: Option<i32> = sqlx::query_scalar(CAUSE_SQL)
+            .bind(c)
+            .bind(&me.id)
+            .fetch_optional(read)
+            .await
+            .ok()?;
+        if hit.is_some() {
+            return None;
+        }
+    }
+    // 원인이 확인되지 않았다 — TS 도 늘 대기(`pending`)이고 시스템 줄을 쓰지 않는다.
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_millis() as i64;
+    let w = parent_w || a.write_needs_human_cause;
+    let new = NewGrant {
+        target: &target_id,
+        scope: &scope,
+        parent: &parent_id,
+        root: &root,
+        expires_at: crate::core::msg_post::iso_ms(now_ms + i64::from(a.days) * 86_400_000),
+        now: crate::core::msg_post::iso_ms(now_ms),
+        w,
+    };
+    let grant_id = write_pending(write, me, &a, &new, cause).await.ok()?;
+    Some(super::respond::text_result(&format!(
+        "{{\"grantId\":{},\"pending\":true,\"note\":{}}}",
+        Value::from(grant_id.as_str()),
+        Value::from("waiting for the root person to approve")
+    )))
+}
+
+struct NewGrant<'a> {
+    target: &'a str,
+    scope: &'a str,
+    parent: &'a str,
+    root: &'a str,
+    expires_at: String,
+    now: String,
+    w: bool,
+}
+
+/// TS `limits`(`parseLimits` 의 결과 — methods 는 겹침을 뺀 차례 그대로).
+fn limits_json(a: &Args) -> Value {
+    serde_json::json!({ "methods": a.methods, "pathPrefix": a.path_prefix })
+}
+
+/// TS `grant.delegate.pending` 감사 detail.
+fn pending_detail(grant_id: &str, a: &Args, n: &NewGrant<'_>, cause: Option<&str>) -> Value {
+    serde_json::json!({
+        "grantId": grant_id,
+        "parentGrantId": n.parent,
+        "scope": n.scope,
+        "limits": limits_json(a),
+        "expiresAt": n.expires_at,
+        "delegateDepth": a.delegate_depth,
+        "writeNeedsHumanCause": n.w,
+        "rootAccountId": n.root,
+        "causeMessageId": cause,
+    })
+}
+
+/// 줄 upsert·감사·`grant.changed` 를 한 트랜잭션에(TS 는 따로 쓰지만 어느 하나가 실패하면 Rust 는 롤백하고 TS 에 넘긴다).
+async fn write_pending(
+    write: &PgPool,
+    me: &Account,
+    a: &Args,
+    n: &NewGrant<'_>,
+    cause: Option<&str>,
+) -> Result<String, sqlx::Error> {
+    let mut tx = write.begin().await?;
+    let id: String = sqlx::query_scalar(UPSERT_SQL)
+        .bind(n.target)
+        .bind(n.scope)
+        .bind(&me.id)
+        .bind(&n.expires_at)
+        .bind(limits_json(a).to_string())
+        .bind(a.delegate_depth)
+        .bind(n.w)
+        .bind(n.parent)
+        .bind(&n.now)
+        .fetch_one(&mut *tx)
+        .await?;
+    sqlx::query(PENDING_AUDIT_SQL)
+        .bind(&me.id)
+        .bind(n.target)
+        .bind(pending_detail(&id, a, n, cause).to_string())
+        .execute(&mut *tx)
+        .await?;
+    crate::write::emit_event(
+        &mut tx,
+        &serde_json::json!({ "type": "grant.changed", "accountId": n.target, "audience": "all" }),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(id)
 }
 
 /// TS `deny` — 감사 줄(target = 연결 이름, detail = {code, to}) 뒤 `{error:{code, message: code}}`.
@@ -570,12 +723,53 @@ mod tests {
     }
 
     #[test]
-    fn writes_only_audit_log() {
-        assert!(
-            GRANT_DELEGATE_PRIVILEGES
-                .iter()
-                .all(|(c, p)| c.starts_with("audit_log.") && *p == "INSERT")
-        );
+    fn writes_only_declared_tables() {
+        assert!(GRANT_DELEGATE_PRIVILEGES.iter().all(|(c, p)| {
+            (c.starts_with("audit_log.") && *p == "INSERT")
+                || c.starts_with("account_grant.")
+                || (*c == "event_outbox" && *p == "INSERT")
+        }));
         assert!(!AUDIT_SQL.to_lowercase().contains("returning"));
+        // upsert 가 고치는 칸은 모두 UPDATE 로, 넣는 칸은 모두 INSERT 로 적혀 있다.
+        for col in [
+            "granted_by",
+            "granted_at",
+            "expires_at",
+            "limits",
+            "delegate_depth",
+            "write_needs_human_cause",
+            "parent_grant_id",
+            "suspended_at",
+            "suspend_reason",
+        ] {
+            assert!(UPSERT_SQL.contains(&format!("{col} = ")), "{col}");
+            assert!(
+                GRANT_DELEGATE_PRIVILEGES.contains(&(&*format!("account_grant.{col}"), "UPDATE")),
+                "{col}"
+            );
+        }
+    }
+
+    #[test]
+    fn pending_detail_matches_ts() {
+        let a = parse(&ok()).unwrap();
+        let n = NewGrant {
+            target: "t",
+            scope: "connector:c",
+            parent: "p",
+            root: "r",
+            expires_at: "2026-01-08T00:00:00.000Z".into(),
+            now: "2026-01-01T00:00:00.000Z".into(),
+            w: true,
+        };
+        assert_eq!(
+            pending_detail("g", &a, &n, None),
+            json!({
+                "grantId": "g", "parentGrantId": "p", "scope": "connector:c",
+                "limits": { "methods": ["GET"], "pathPrefix": "/repos" },
+                "expiresAt": "2026-01-08T00:00:00.000Z", "delegateDepth": 0, "writeNeedsHumanCause": true,
+                "rootAccountId": "r", "causeMessageId": null,
+            })
+        );
     }
 }

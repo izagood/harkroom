@@ -1638,6 +1638,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant select (id, automation_id, event_key, trigger_kind, status, message_id, error, created_at, finished_at, initiated_by, cause_message_id), insert (automation_id, event_key, trigger_kind, payload, not_before, initiated_by, cause_message_id, chain_depth) on automation_run to ${rw}`,
         // S5.4 MCP 6 — MCP `grant.delegate` 앞머리 거절(`grant_delegate.rs::GRANT_DELEGATE_PRIVILEGES`). 없으면 「mcp grant.delegate core off」. 위 표 단위 insert 와 겹치지만 운영 줄과 글자째 같게 둔다.
         `grant insert (action, actor_id, target, detail) on audit_log to ${rw}`,
+        // S5.4 MCP 6 — 원인이 확인되지 않은 새 위임(대기 줄 upsert). 위 표 단위 insert·update 와 겹치지만 운영 줄과 글자째 같게 둔다.
+        `grant select (id, account_id, capability, scope), insert (account_id, capability, scope, granted_by, expires_at, limits, delegate_depth, write_needs_human_cause, parent_grant_id, suspended_at, suspend_reason), update (granted_by, granted_at, expires_at, limits, delegate_depth, write_needs_human_cause, parent_grant_id, suspended_at, suspend_reason) on account_grant to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -9746,7 +9748,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 await db.pool.query('delete from api_connector where id = $1', [gdConn]);
               }
             }
-            // S5.4 MCP 6 — `grant.delegate` 사슬 판정 뒤 거절(받은 권한이 있을 때). 쓰기는 거절 감사 줄뿐이고 성공(줄 쓰기)은 아직 TS 몫이다.
+            // S5.4 MCP 6 — `grant.delegate` 사슬 판정 뒤 거절(받은 권한이 있을 때)과 원인 없는 새 위임(대기 줄).
             {
               const gdConn2 = (await db.pool.query<{ id: string }>(
                 `insert into api_connector (name, owner_account_id, base_url, auth_kind, methods) values ('gd-conn2', $1, 'https://api.example.com', 'none', '{GET,POST}') returning id`,
@@ -9789,6 +9791,41 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                      from audit_log where action = 'grant.delegate.denied' and target = 'gd-conn2' and detail->>'to' like $1 order by detail->>'to'`,
                   [`gd-${s}-%`])).rows;
                 expect(await gdAudit('r')).toEqual(await gdAudit('t'));
+                // 새 위임 — 원인 없는 턴이면 TS 도 늘 대기 줄이고 시스템 줄이 없다. Rust 가 줄·감사·이벤트를 쓴다.
+                // 받는 쪽은 루트 사람(admin)이 소유한 에이전트 둘(TS·Rust 각각). 원인이 확인된 턴(시스템 줄)은 아직 TS 몫이다.
+                const gdTargets: Record<'t' | 'r', string> = { t: '', r: '' };
+                for (const s of ['t', 'r'] as const) {
+                  const acc = (await db.pool.query<{ id: string }>(
+                    `insert into account (kind, handle, display_name) values ('agent', $1, $1) returning id::text as id`, [`gd-${s}-ok`])).rows[0]!.id;
+                  await db.pool.query(`insert into agent_config (account_id, owner_account_id) values ($1, $2)`, [acc, admin.accountId]);
+                  gdTargets[s] = acc;
+                }
+                const okCall = async (side: 't' | 'r') => {
+                  const r = await mcpCall(side === 't' ? tsUrl : v2Url, bot3.pat, 'grant.delegate', { ...base, to: `gd-${side}-ok` }, 36);
+                  const g = (await db.pool.query(
+                    `select limits, delegate_depth, write_needs_human_cause as w, suspend_reason, suspended_at is not null as suspended,
+                            granted_by::text = $2 as by_me, expires_at - now() > interval '6 days 23 hours' as span
+                       from account_grant where account_id = $1 and scope = $3`, [gdTargets[side], bot3.accountId, `connector:${gdConn2}`])).rows;
+                  const au = (await db.pool.query(
+                    `select action, detail - 'grantId' - 'expiresAt' as detail from audit_log where target = $1 and action like 'grant.delegate%'`,
+                    [gdTargets[side]])).rows;
+                  return { status: r.status, core: r.core, text: r.text.replace(/[0-9a-f-]{36}/g, 'ID'), g, au };
+                };
+                const tOk = await okCall('t');
+                const rOk = await okCall('r');
+                expect(tOk.core, '새 위임 — TS').toBeNull();
+                expect(rOk.core, '새 위임 — 누가 답했나').toBe('mcp');
+                expect({ ...rOk, core: null }).toEqual({ ...tOk, core: null });
+                expect(rOk.g).toHaveLength(1);
+                expect(rOk.g[0]).toMatchObject({ suspend_reason: 'pending_approval', suspended: true, by_me: true, span: true });
+                expect(rOk.au.map((x: { action: string }) => x.action)).toEqual(['grant.delegate.pending']);
+                // 같은 위임이 다시 오면 아무것도 쓰지 않는다(L1) — 두 쪽 모두 감사 줄이 늘지 않는다.
+                const again = await okCall('r');
+                expect(again.au).toHaveLength(1);
+                expect(again.text).toBe(rOk.text);
+                await db.pool.query(`delete from account_grant where account_id = any($1::uuid[])`, [[gdTargets.t, gdTargets.r]]);
+                await db.pool.query(`delete from agent_config where account_id = any($1::uuid[])`, [[gdTargets.t, gdTargets.r]]);
+                await db.pool.query(`delete from account where id = any($1::uuid[])`, [[gdTargets.t, gdTargets.r]]);
               } finally {
                 await db.pool.query(`delete from account_grant where scope = $1`, [`connector:${gdConn2}`]);
                 await db.pool.query('delete from api_connector where id = $1', [gdConn2]);

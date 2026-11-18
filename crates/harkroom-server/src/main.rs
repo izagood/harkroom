@@ -273,13 +273,13 @@ async fn main() {
         }
         _ => None,
     };
-    // S5.4 MCP 6 — MCP `grant.delegate` 앞머리 거절. 쓰기 풀에 감사 줄 INSERT 칸이 다 있을 때만 — 아니면 TS 에 남는다.
+    // S5.4 MCP 6 — MCP `grant.delegate`(거절·원인 없는 새 위임). 쓰기 풀에 `GRANT_DELEGATE_PRIVILEGES` 가 다 있을 때만 — 아니면 TS 에 남는다.
     let grant_delegate_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
             match write::missing_in(
                 w,
                 harkroom_server::core::mcp::grant_delegate::GRANT_DELEGATE_PRIVILEGES,
-                &[],
+                harkroom_server::core::mcp::grant_delegate::GRANT_DELEGATE_SEQUENCE_PRIVILEGES,
             )
             .await
             {
