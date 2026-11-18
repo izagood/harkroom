@@ -181,7 +181,7 @@ fn to_handle(to: &str) -> String {
 }
 
 /// 평범한 카드의 TS `AskMeta` — `{kind:'ask', ask:{options, to:{kind:'human'}, prompt?, irreversible?}}`. 칸 차례는 DB(jsonb)가 다시 짓는다.
-fn plain_meta(o: &Map<String, Value>) -> Option<Map<String, Value>> {
+fn plain_meta(o: &Map<String, Value>, to: Value) -> Option<Map<String, Value>> {
     let mut options = Vec::new();
     for x in o.get("options")?.as_array()? {
         let x = x.as_object()?;
@@ -198,7 +198,7 @@ fn plain_meta(o: &Map<String, Value>) -> Option<Map<String, Value>> {
     }
     let mut ask = Map::new();
     ask.insert("options".into(), Value::Array(options));
-    ask.insert("to".into(), serde_json::json!({ "kind": "human" }));
+    ask.insert("to".into(), to);
     if let Some(p) = o.get("prompt") {
         ask.insert("prompt".into(), p.clone());
     }
@@ -209,6 +209,23 @@ fn plain_meta(o: &Map<String, Value>) -> Option<Map<String, Value>> {
     meta.insert("kind".into(), Value::from("ask"));
     meta.insert("ask".into(), Value::Object(ask));
     Some(meta)
+}
+
+/// `to` 로 대상을 정한 카드 — 거울·대신하기·머지 거절·계획 단계가 없을 때만 Rust 가 세운다. 원인 헤더는 상관없다(TS 의 원인 기반
+/// 푸시는 사람 앞 카드만 쓴다).
+fn addressed(o: &Map<String, Value>) -> bool {
+    ["mirrorOf", "supersedes", "mergeDenialId", "planStepId"]
+        .iter()
+        .all(|k| !o.contains_key(*k))
+}
+
+/// `to` 대상 찾기에 종류까지 — 사람이면 TS `enqueueAskPush` 가 `push_job` 을 넣을 수 있다.
+const TO_KIND_SQL: &str = "select id::text, kind::text from account where lower(handle) = $1";
+
+/// 찾은 대상의 TS `AskAudience` — `{kind:'account', accountId}`. 사람이면 `None`(→ TS): 그 카드는 `enqueueAskPush` 로 푸시 job 을
+/// 넣을 수 있고, 그 쓰기는 아직 TS 몫이다. 에이전트면 그 문장의 `kind = 'human'` 조건 때문에 아무것도 넣지 않으니 Rust 가 세운다.
+fn account_audience((id, kind): (String, String)) -> Option<Value> {
+    (kind != "human").then(|| serde_json::json!({ "kind": "account", "accountId": id }))
 }
 
 /// Rust 가 세우는 카드 — 사람 앞(`to` 없음), 거울·머지 거절·supersedes·계획 단계 없음, 원인 헤더 없음(TS 의 사람 앞 푸시
@@ -304,10 +321,22 @@ pub async fn answer_plain(
         }
     }
     let st = st?;
-    if !plain(o, cause) {
-        return None;
-    }
-    let meta = plain_meta(o)?;
+    let audience = match o.get("to").and_then(Value::as_str) {
+        Some(to) => {
+            if !addressed(o) {
+                return None;
+            }
+            let row: Option<(String, String)> = sqlx::query_as(TO_KIND_SQL)
+                .bind(to_handle(to))
+                .fetch_optional(read)
+                .await
+                .ok()?;
+            account_audience(row?)?
+        }
+        None if plain(o, cause) => serde_json::json!({ "kind": "human" }),
+        None => return None,
+    };
+    let meta = plain_meta(o, audience)?;
     let mut sub = Map::new();
     for k in ["channelId", "body", "threadRootId", "model"] {
         if let Some(v) = o.get(k) {
@@ -371,7 +400,7 @@ mod tests {
     #[test]
     fn plain_meta_like_ts() {
         let v = ask(json!({ "prompt": "p", "irreversible": false }));
-        let m = plain_meta(v.as_object().unwrap()).unwrap();
+        let m = plain_meta(v.as_object().unwrap(), json!({ "kind": "human" })).unwrap();
         assert_eq!(
             Value::Object(m),
             json!({ "kind": "ask", "ask": { "options": [{ "id": "a", "label": "A" }, { "id": "b", "label": "B", "hint": "h" }],
@@ -398,6 +427,34 @@ mod tests {
                 "{k}"
             );
         }
+    }
+
+    #[test]
+    fn addressed_card_only_for_agents() {
+        assert_eq!(account_audience((C.into(), "human".into())), None);
+        assert_eq!(
+            account_audience((C.into(), "agent".into())),
+            Some(json!({ "kind": "account", "accountId": C }))
+        );
+        assert!(addressed(
+            ask(json!({ "to": "@a", "threadRootId": C, "keepOpen": [C] }))
+                .as_object()
+                .unwrap()
+        ));
+        for k in ["mirrorOf", "supersedes", "mergeDenialId", "planStepId"] {
+            assert!(
+                !addressed(ask(json!({ "to": "@a", k: C })).as_object().unwrap()),
+                "{k}"
+            );
+        }
+        let ts = include_str!("../../../../../packages/server/src/services/push/pushJobs.ts");
+        assert!(ts.contains(
+            "where exists (select 1 from account where id = $1::uuid and kind = 'human')"
+        ));
+        assert_eq!(
+            TO_KIND_SQL.replace("id::text, kind::text", "id"),
+            TO_SQL.replace("id::text", "id")
+        );
     }
 
     #[test]
