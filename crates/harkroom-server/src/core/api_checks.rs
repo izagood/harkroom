@@ -11,10 +11,11 @@
 //! 세운다(`api_blocked_card`). [`API_CHECKS_BUMP_PRIVILEGES`] 까지 있으면 같은 날 같은 스레드에 이미 선 카드를 고쳐 쓰는
 //! 갈래(`meta.blocked` 의 `count`·`lastAt`·`lastCode`·`lastRequest` + `message.updated`)도 Rust 가 한다.
 //! 경로는 `%`·질의·ASCII 밖 글자까지 TS `safePath`·`wirePath`·`pathCovered` 를 따라 Rust 가 본다(바탕이 http(s) 가
-//! 아닌 연결만 TS 몫). 비밀을 여는 연결(`authKind` 가 `none`·`token_exchange` 가 아닌 것)은 [`API_CHECKS_SECRET_PRIVILEGES`] 와
+//! 아닌 연결만 TS 몫). 비밀을 여는 연결(`authKind` 가 `none` 이 아닌 것)은 [`API_CHECKS_SECRET_PRIVILEGES`] 와
 //! DB 확인값에 맞는 v2 키가 있을 때 **허락 갈래만** Rust 가 연다 — `secret_access_log` granted 줄, `api.call.checked` 감사,
 //! 응답 `valueBase64`(오퍼레이터 자신에게만, `no-store`). 비밀 거절(`no_secret`·`secret_expired`·`owner_inactive`·`no_value`·
-//! `unreadable`)·409 `secret_key_mismatch`·토큰 교환은 아무것도 쓰기 전에 TS 로 넘긴다.
+//! `unreadable`)·409 `secret_key_mismatch` 는 아무것도 쓰기 전에 TS 로 넘긴다. 토큰 교환(156)은 `caps` 거절
+//! (409 `operator_update_required` + 막힘 카드)과, [`API_CHECKS_TOKEN_PRIVILEGES`] 가 있을 때 허락(`tokenUrl`·`tokenForm`)을 Rust 가 답한다.
 use super::api_results::connector_ok;
 use super::grant_reads::through_operator;
 use super::merge_approval_peek::str_len_ok;
@@ -129,6 +130,12 @@ pub const API_CHECKS_SECRET_PRIVILEGES: &[(&str, &str)] = &[
     ("secret_version.sealed", "SELECT"),
     ("secret_version.revoked_at", "SELECT"),
     ("secret_access_log", "INSERT"),
+];
+
+/// 토큰 교환 연결(156)의 허락에 더 있어야 하는 권한 — 토큰 주소·form 틀. 없으면 그 연결만 TS 몫(쿼리 오류 = 쓰기 전 폴백).
+pub const API_CHECKS_TOKEN_PRIVILEGES: &[(&str, &str)] = &[
+    ("api_connector.token_url", "SELECT"),
+    ("api_connector.token_form", "SELECT"),
 ];
 
 /// 비밀 열쇠(v2 보관소). 키가 DB 확인값과 맞을 때만 선다 — 없거나 어긋나면(TS 의 `no_secret`·409 `secret_key_mismatch`) TS 몫.
@@ -627,11 +634,33 @@ async fn checks_body(
     if !path_covered(path, &limits.path_prefix) || !path_covered(&wire, &limits.path_prefix) {
         return carded("path_not_allowed").await;
     }
-    // 토큰 교환(`caps`·`tokenUrl`)은 TS 몫. 비밀을 여는 연결은 맞는 키와 권한이 있을 때만 — 없으면 TS 가
-    // `no_secret`·409 `secret_key_mismatch` 로 답한다. 여기까지는 아무것도 쓰지 않았다.
-    if c.4 == "token_exchange" || (c.4 != "none" && secret.is_none()) {
+    // 비밀을 여는 연결은 비밀 칸·맞는 키·권한이 있을 때만 — 없으면 TS 가 `no_secret`·409 `secret_key_mismatch` 로
+    // 답한다. 토큰 교환(156)은 TS 처럼 `no_secret` 다음, 쓰기 원인 앞에서 `caps` 를 본다. 여기까지는 아무것도 쓰지 않았다.
+    if c.4 != "none" && c.6.is_none() {
         return Ok(None);
     }
+    if c.4 == "token_exchange" && !has_token_cap(o) {
+        return carded("operator_update_required").await;
+    }
+    if c.4 != "none" && secret.is_none() {
+        return Ok(None);
+    }
+    // 토큰 주소·form 틀. 권한([`API_CHECKS_TOKEN_PRIVILEGES`])이 없거나 짝이 안 맞으면 쓰기 전이니 TS 몫.
+    let token = if c.4 == "token_exchange" {
+        match sqlx::query_as::<_, (Option<String>, Option<String>)>(TOKEN_SQL)
+            .bind(cid)
+            .fetch_optional(pool)
+            .await
+        {
+            Ok(Some((Some(u), Some(f)))) => match token_fields(&u, &f) {
+                Some(t) => Some(t),
+                None => return Ok(None),
+            },
+            _ => return Ok(None),
+        }
+    } else {
+        None
+    };
     let by_human = lease.cause_by_human();
     if method != "GET" && write_human && !by_human {
         return carded("cause_not_human").await;
@@ -667,16 +696,41 @@ async fn checks_body(
         },
     )
     .await;
-    let body = json!({
+    let mut body = json!({
         "allowed": true, "connector": c.2, "baseUrl": c.3, "authKind": c.4, "authHeader": c.5,
         "valueBase64": value.as_ref().map(|v| v.as_str()), "causeByHuman": by_human, "path": wire,
     });
+    if let (Some((u, f)), Some(m)) = (token, body.as_object_mut()) {
+        m.insert("tokenUrl".into(), Value::String(u));
+        m.insert("tokenForm".into(), f);
+    }
     drop(value);
     let text = zeroize::Zeroizing::new(body.to_string());
     drop(body);
     Ok(Some(no_store(crate::directory::json_ok(
         text.as_str().to_owned(),
     ))))
+}
+
+const TOKEN_SQL: &str = "select token_url, token_form::text from api_connector where id = $1::uuid and auth_kind = 'token_exchange'";
+
+/// 오퍼레이터가 `caps` 에 `token_exchange` 를 밝혔는가(TS `(args.caps ?? []).includes('token_exchange')`).
+pub fn has_token_cap(o: &Value) -> bool {
+    o.get("caps")
+        .and_then(Value::as_array)
+        .is_some_and(|a| a.iter().any(|c| c.as_str() == Some("token_exchange")))
+}
+
+/// 토큰 교환 칸 — TS 는 `tokenUrl && tokenForm` 일 때만 싣는다. form 은 jsonb 객체여야 한다(아니면 TS 몫).
+pub fn token_fields(url: &str, form_text: &str) -> Option<(String, Value)> {
+    if url.is_empty() {
+        return None;
+    }
+    let f: Value = serde_json::from_str(form_text).ok()?;
+    if !f.is_object() {
+        return None;
+    }
+    Some((url.to_owned(), f))
 }
 
 const SECRET_SQL: &str = "select s.id::text, s.name, s.kind, s.expires_at <= $2::timestamptz, \
@@ -1043,6 +1097,28 @@ mod tests {
         assert!(CARD_BUMP_SQL.contains("coalesce((meta->'blocked'->>'count')::int, 1) + 1"));
         assert!(CARD_BUMP_SQL.starts_with("update message set meta ="));
         assert_eq!(API_CHECKS_BUMP_PRIVILEGES, &[("message.meta", "UPDATE")]);
+    }
+
+    #[test]
+    fn token_exchange_like_ts() {
+        assert!(has_token_cap(&json!({ "caps": ["x", "token_exchange"] })));
+        assert!(!has_token_cap(&json!({ "caps": ["x"] })));
+        assert!(!has_token_cap(&json!({})));
+        assert!(!has_token_cap(&json!({ "caps": [] })));
+        assert_eq!(
+            deny_status("operator_update_required"),
+            StatusCode::CONFLICT
+        );
+        let (u, f) = token_fields(
+            "https://id.example/token",
+            r#"{"grant_type": "client_credentials", "client_secret": "{{secret}}"}"#,
+        )
+        .unwrap();
+        assert_eq!(u, "https://id.example/token");
+        assert_eq!(f["grant_type"], "client_credentials");
+        assert!(token_fields("", "{}").is_none());
+        assert!(token_fields("https://x/t", "[1]").is_none());
+        assert!(token_fields("https://x/t", "not json").is_none());
     }
 
     #[test]
