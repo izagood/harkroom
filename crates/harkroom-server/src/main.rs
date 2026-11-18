@@ -2946,6 +2946,9 @@ async fn main() {
             core_routes.http.extend(cd.http);
             core_routes.sockets.extend(cd.sockets);
         }
+        // 주소 단위(`upload:{ip}`·`login:{ip}` …)와 비밀번호 추측 표면(step-up·login)은 이 프로세스에서 리미터 하나를
+        // 나눠 쓴다(키는 서로 다르다).
+        let auth_limiter = std::sync::Arc::new(harkroom_server::rate_limit::RateLimiter::default());
         if let Some((write, storage, max_bytes)) = attachment_upload {
             let au = harkroom_server::core::attachment_upload::routes(
                 harkroom_server::core::attachment_upload::UploadState {
@@ -2953,6 +2956,8 @@ async fn main() {
                     storage,
                     max_bytes,
                     up: state.up.clone(),
+                    limiter: auth_limiter.clone(),
+                    trust: state.trust.clone(),
                 },
                 auth.clone(),
                 state.cors.clone(),
@@ -3108,8 +3113,7 @@ async fn main() {
         // S5.4 — 보관소 잠금 해제 1줄. 권한이 있을 때만 — 아니면 TS 에 남는다.
         // 시도 상한(`stepUp:{accountId}`)은 이 프로세스의 리미터가 센다 — TS 리미터와 따로 센다. login·passwordReset·stepUp 의
         // 계정 단위 키는 같이 옮겨야 한다(login 은 아직 TS). 옮길 때 이 리미터 하나를 나눠 쓴다.
-        // 비밀번호 추측 표면(step-up·login)은 이 프로세스에서 리미터 하나를 나눠 쓴다(키는 서로 다르다).
-        let auth_limiter = std::sync::Arc::new(harkroom_server::rate_limit::RateLimiter::default());
+        // 리미터 `auth_limiter` 는 위(첨부 올리기 줄 앞)에서 만들었다.
         if let Some(write) = step_up_open_write {
             let so = harkroom_server::core::step_up_open::routes(
                 harkroom_server::core::step_up_open::StepUpOpenState::new(

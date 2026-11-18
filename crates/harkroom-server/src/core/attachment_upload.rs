@@ -1,7 +1,7 @@
 //! S5.4 — 첨부 올리기(`POST /uploads`). TS `routes/attachmentRoutes.ts` 의 그 줄과 `services/attachments.ts`
 //! (`recordUpload`·`displayName`), `storage/local.ts`(`write`)를 옮긴다.
 //!
-//! - 순서(TS 와 같다): 인증(401) → 첫 **파일** 파트(없으면 400 `bad_request` `expected a file part`) → 저장소에 먼저 쓰기
+//! - 순서(TS 와 같다): 주소 단위 상한 `upload:{ip}`(429, TS `LIMITED_ROUTES` — 에이전트 요청을 TS 로 넘기기 전에도 센다) → 인증(401) → 첫 **파일** 파트(없으면 400 `bad_request` `expected a file part`) → 저장소에 먼저 쓰기
 //!   (제한 `ATTACHMENT_MAX_BYTES`, 기본 25MiB — 넘으면 413 `too_large` `file exceeds the size limit`; TS 는 multipart 파서가
 //!   같은 값에서 잘라 `truncated` 갈래로 같은 문장을 낸다) → 행 넣기(실패하면 파일을 지우고 500) → 201
 //!   `{ id, filename, contentType, sizeBytes }`.
@@ -49,6 +49,9 @@ pub struct UploadState {
     pub storage: LocalStorage,
     pub max_bytes: u64,
     pub up: crate::proxy::Upstream,
+    /// 주소 단위 상한 `upload:{ip}`([`crate::rate_limit::UPLOAD`]) — 다른 주소 단위 줄과 같은 리미터를 나눠 쓴다.
+    pub limiter: Arc<crate::rate_limit::RateLimiter>,
+    pub trust: Arc<crate::trust_proxy::TrustProxy>,
 }
 
 /// `ATTACHMENT_MAX_BYTES` — 없으면 기본값. 음이 아닌 정수가 아니면 `None`(TS `Number(...)` 의 NaN·소수 갈래는 옮기지 않는다 → TS).
@@ -145,6 +148,14 @@ pub async fn upload(
     req: Request<Body>,
 ) -> Response {
     let (mut parts, body) = req.into_parts();
+    // TS `LIMITED_ROUTES` onRequest 훅 — 인증·본문·TS 로 넘기기보다 먼저 센다.
+    let ip = crate::trust_proxy::request_ip(&parts, &st.trust).unwrap_or_default();
+    let verdict = st
+        .limiter
+        .hit(&format!("upload:{ip}"), crate::rate_limit::UPLOAD);
+    if !verdict.allowed {
+        return crate::rate_limit::too_many(verdict, false);
+    }
     let me = match RequireAccount::from_request_parts(&mut parts, &()).await {
         Ok(RequireAccount(me, _)) => me,
         Err(r) => return r,
@@ -300,6 +311,45 @@ mod tests {
             part_mime(Some("application/octet-stream")),
             "application/octet-stream"
         );
+    }
+
+    #[tokio::test]
+    async fn upload_ip_limit_triggers_before_auth() {
+        let dir = std::env::temp_dir().join(format!("hr-upload-rl-{}", std::process::id()));
+        let st = Arc::new(UploadState {
+            write: sqlx::postgres::PgPoolOptions::new()
+                .connect_lazy("postgres://x@127.0.0.1:1/x")
+                .unwrap(),
+            storage: LocalStorage::new(&dir).unwrap(),
+            max_bytes: DEFAULT_MAX_BYTES,
+            up: crate::proxy::Upstream::new("http://127.0.0.1:1"),
+            limiter: Arc::new(crate::rate_limit::RateLimiter::default()),
+            trust: Arc::new(crate::trust_proxy::TrustProxy::None),
+        });
+        let req = |ip: [u8; 4]| {
+            let peer = SocketAddr::from((ip, 4000));
+            let mut r = Request::post("/uploads").body(Body::empty()).unwrap();
+            r.extensions_mut().insert(ConnectInfo(peer));
+            (peer, r)
+        };
+        for _ in 0..crate::rate_limit::UPLOAD.max {
+            let (peer, r) = req([10, 0, 0, 1]);
+            let res = upload(State(st.clone()), ConnectInfo(peer), r).await;
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        }
+        let (peer, r) = req([10, 0, 0, 1]);
+        let res = upload(State(st.clone()), ConnectInfo(peer), r).await;
+        assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(res.headers().contains_key(header::RETRY_AFTER));
+        let body = axum::body::to_bytes(res.into_body(), 4096).await.unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v["error"]["code"], "rate_limited");
+        assert_eq!(v["error"]["message"], "too many attempts, try again later");
+        // 다른 주소는 따로 센다.
+        let (peer, r) = req([10, 0, 0, 2]);
+        let res = upload(State(st.clone()), ConnectInfo(peer), r).await;
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
