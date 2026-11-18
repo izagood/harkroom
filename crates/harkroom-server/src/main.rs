@@ -1768,6 +1768,29 @@ async fn main() {
         }
         None => None,
     };
+    // S5.4 15a — 임대에 위임장이 있을 때 `mandate.shadow` 의 `findLine` 을 Rust 가 돈다. 허락 길이 켜졌고
+    // [`MANDATE_PRIVILEGES`] 까지 있을 때만 — 없으면 위임장 있는 임대는 지금처럼 TS 로 넘긴다.
+    let merge_checks_mandate = match &merge_checks_allow {
+        Some(w) => {
+            use harkroom_server::core::mandate_line_match as t;
+            match write::missing_in(w, t::MERGE_CHECKS_MANDATE_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => true,
+                Ok(m) => {
+                    eprintln!("front: merge checks mandate shadow off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
+                    false
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: merge checks mandate shadow off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    false
+                }
+            }
+        }
+        None => false,
+    };
     // S5.4 — `POST /agent/api-checks` 의 임대 거절(`lease_invalid` + `api.call.denied` 감사). 쓰기 풀에 [`API_CHECKS_DENY_PRIVILEGES`] 가 다 있을 때만.
     let api_checks_deny = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -4143,6 +4166,7 @@ async fn main() {
                 merge_checks_allow.clone(),
                 merge_checks_card.clone(),
                 merge_checks_approve.clone(),
+                merge_checks_mandate,
                 merge_results_read.clone(),
                 merge_results_post.clone(),
                 auth.clone(),

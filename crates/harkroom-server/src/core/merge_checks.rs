@@ -8,6 +8,8 @@
 //! 위임장 없는 끝난·만료 임대의 `lease_invalid`(그림자 포함)는 이른 거절 풀로 Rust 가 답한다. 12차: 카드 풀이 있으면 grant 는 있는데 사람 턴이 아닌 갈래(사슬 `causeChainRoot` — 통과면 `viaChain` 허락, 끊기면 `cause_not_human` 카드)도 Rust.
 //! 그 밖의 모양이 맞는 요청은 전부 TS 로 넘긴다 — 임대·사슬 판정(`checkMergeByChain`)·위임 판정·1회 승인 소모·`merge_denial`·카드·
 //! 그림자 감사(`mandate.shadow`)는 아직 TS 몫이다. 넘기는 쪽은 임대를 읽기만 하고 쓰지 않는다.
+//! 15a: 위임 스위치가 꺼졌고 [`super::mandate_line_match::MERGE_CHECKS_MANDATE_PRIVILEGES`] 가 있으면, 임대에 위임장이 있어도 위 갈래를 Rust 가 답하고
+//! 그림자는 `findLine` 결과(`mandateVerdict`·`lineId`·`lineVia`)를 적는다. 스위치가 켜진 판정(`consumeLine`·`no_mandate_line`)은 아직 TS 몫이다.
 //!
 //! `POST /agent/merge-results`(TS `reportMerge`)도 같은 꼴로 부분 이식한다 — 403 `forbidden`·400 `bad_request` 만 Rust,
 //! 읽기 풀([`MERGE_RESULTS_PRIVILEGES`])이 있으면 N1 관문(403 `lease_invalid`·400 `bad_repo`·409 `already_reported`/`not_checked`)도
@@ -1126,6 +1128,9 @@ pub struct ChecksState {
     pub card: Option<sqlx::PgPool>,
     /// 1회 승인 소모(TS `merge_approval` update + 시스템 줄) — 글 경로와 [`MERGE_CHECKS_APPROVAL_PRIVILEGES`] 까지 다 있을 때만.
     pub approve: Option<super::msg_post::PostState>,
+    /// 15a: 임대에 위임장이 있어도 그림자(`findLine`)를 Rust 가 돈다 — 쓰기 풀에
+    /// [`super::mandate_line_match::MERGE_CHECKS_MANDATE_PRIVILEGES`] 가 다 있을 때만.
+    pub mandate: bool,
 }
 
 /// 1회 승인을 Rust 가 소모할 때 더 있어야 하는 권한(TS `checkMergeByChain` 의 승인 갈래). 글 올리기 권한은 글 경로가 따로 본다.
@@ -1347,21 +1352,7 @@ async fn approval_allow(
         },
     )
     .await;
-    let origin = shadow_origin(w, lease)
-        .await
-        .unwrap_or(("unknown", false, false));
-    crate::write::record_audit(
-        w,
-        crate::write::AuditEntry {
-            action: "mandate.shadow",
-            actor_id: Some(agent),
-            actor_handle: None,
-            target: Some(scope),
-            ip: None,
-            detail: shadow_detail_no_mandate("allowed", agent, scope, &lease.id, origin),
-        },
-    )
-    .await;
+    record_shadow(w, "allowed", agent, scope, o, lease).await;
     Ok(Some(super::grant_reads::ok_no_store(&json!({
         "allowed": true,
         "repo": repo,
@@ -1561,20 +1552,94 @@ pub fn shadow_detail_no_mandate(
     lease_id: &str,
     origin: (&str, bool, bool),
 ) -> Value {
+    shadow_detail(chain_verdict, None, None, agent, scope, lease_id, origin)
+}
+
+/// 위임 스위치가 꺼졌을 때 TS `shadowMandate` 의 `mandate.shadow` detail — `line` 은 `findLine` 의 결과.
+pub fn shadow_detail(
+    chain_verdict: &str,
+    mandate_id: Option<&str>,
+    line: Option<&super::mandate_line_match::FoundLine>,
+    agent: &str,
+    scope: &str,
+    lease_id: &str,
+    origin: (&str, bool, bool),
+) -> Value {
     json!({
         "enforced": "chain",
         "chainVerdict": chain_verdict,
-        "mandateVerdict": "denied",
-        "mandateId": null,
+        "mandateVerdict": if line.is_some() { "allowed" } else { "denied" },
+        "mandateId": mandate_id,
         "agentId": agent,
         "repo": scope,
         "leaseId": lease_id,
-        "lineId": null,
-        "lineVia": null,
+        "lineId": line.map(|l| l.id.as_str()),
+        "lineVia": line.map(|l| l.via.as_str()),
         "causeKind": origin.0,
         "rootHasKey": origin.1,
         "causeHasKey": origin.2,
     })
+}
+
+/// TS `shadowMandate`(위임 스위치 꺼짐) — 임대의 위임장으로 `findLine` 을 돌려 `mandate.shadow` 를 남긴다.
+/// TS 는 그림자 전체를 try/catch 로 감싸므로 `findLine` 이 실패하면 감사 없이 지나간다. 판정은 바꾸지 않는다.
+async fn record_shadow(
+    pool: &sqlx::PgPool,
+    chain_verdict: &str,
+    agent: &str,
+    scope: &str,
+    o: &Value,
+    lease: &super::lease_read::LeaseRow,
+) {
+    let line = if lease.mandate_id.is_some() {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis() as i64);
+        let action = super::mandate_line_match::MergeAction {
+            repo: o.get("repo").and_then(Value::as_str).unwrap_or_default(),
+            pr: o.get("number").and_then(Value::as_i64),
+            head: o.get("headSha").and_then(Value::as_str),
+            gh_user: o.get("ghUser").and_then(Value::as_str),
+            ci_override: false,
+        };
+        match super::mandate_line_match::find_line(
+            pool,
+            lease.mandate_id.as_deref(),
+            agent,
+            &action,
+            now_ms,
+        )
+        .await
+        {
+            Ok(l) => l,
+            Err(_) => return,
+        }
+    } else {
+        None
+    };
+    let origin = shadow_origin(pool, lease)
+        .await
+        .unwrap_or(("unknown", false, false));
+    crate::write::record_audit(
+        pool,
+        crate::write::AuditEntry {
+            action: "mandate.shadow",
+            actor_id: Some(agent),
+            actor_handle: None,
+            target: Some(scope),
+            ip: None,
+            detail: shadow_detail(
+                chain_verdict,
+                lease.mandate_id.as_deref(),
+                line.as_ref(),
+                agent,
+                scope,
+                &lease.id,
+                origin,
+            ),
+        },
+    )
+    .await;
 }
 
 async fn shadow_origin(
@@ -1708,6 +1773,7 @@ async fn cause_chain_root(
 async fn checks_allow(
     pool: &sqlx::PgPool,
     card: bool,
+    mandate: bool,
     approve: Option<&super::msg_post::PostState>,
     agent: &str,
     operator: &str,
@@ -1716,7 +1782,7 @@ async fn checks_allow(
     now: &str,
 ) -> sqlx::Result<Option<Response>> {
     let g = |k: &str| o.get(k).and_then(Value::as_str).unwrap_or_default();
-    if super::lease_read::mandate_enforced_env() || lease.mandate_id.is_some() {
+    if super::lease_read::mandate_enforced_env() || (lease.mandate_id.is_some() && !mandate) {
         return Ok(None);
     }
     let (Some(scope), Some(number), Some(channel), Some(root)) = (
@@ -1835,21 +1901,7 @@ async fn checks_allow(
     )
     .await;
     // 그림자 — 실패해도 판정은 그대로 나간다(출처 조회가 실패하면 unknown).
-    let origin = shadow_origin(pool, lease)
-        .await
-        .unwrap_or(("unknown", false, false));
-    crate::write::record_audit(
-        pool,
-        crate::write::AuditEntry {
-            action: "mandate.shadow",
-            actor_id: Some(agent),
-            actor_handle: None,
-            target: Some(&scope),
-            ip: None,
-            detail: shadow_detail_no_mandate("allowed", agent, &scope, &lease.id, origin),
-        },
-    )
-    .await;
+    record_shadow(pool, "allowed", agent, &scope, o, lease).await;
     Ok(Some(super::grant_reads::ok_no_store(&json!({
         "allowed": true,
         "repo": &scope["repo:".len()..],
@@ -1885,21 +1937,7 @@ async fn expired_denial(
         },
     )
     .await;
-    let origin = shadow_origin(pool, lease)
-        .await
-        .unwrap_or(("unknown", false, false));
-    crate::write::record_audit(
-        pool,
-        crate::write::AuditEntry {
-            action: "mandate.shadow",
-            actor_id: Some(agent),
-            actor_handle: None,
-            target: Some(&scope),
-            ip: None,
-            detail: shadow_detail_no_mandate(code, agent, &scope, &lease.id, origin),
-        },
-    )
-    .await;
+    record_shadow(pool, code, agent, &scope, o, lease).await;
     let mut r = json_err(
         StatusCode::FORBIDDEN,
         code,
@@ -1979,21 +2017,7 @@ async fn not_granted_code(
     } else {
         None
     };
-    let origin = shadow_origin(pool, lease)
-        .await
-        .unwrap_or(("unknown", false, false));
-    crate::write::record_audit(
-        pool,
-        crate::write::AuditEntry {
-            action: "mandate.shadow",
-            actor_id: Some(agent),
-            actor_handle: None,
-            target: Some(scope),
-            ip: None,
-            detail: shadow_detail_no_mandate(code, agent, scope, &lease.id, origin),
-        },
-    )
-    .await;
+    record_shadow(pool, code, agent, scope, o, lease).await;
     Ok((
         StatusCode::FORBIDDEN,
         [
@@ -2046,10 +2070,12 @@ pub fn denied_detail(code: &str, o: &Value, operator: &str, lease_id: Option<&st
 }
 
 /// 이른 거절을 감사에 적고 응답한다. `None` 이면 TS 로 넘긴다(아무것도 쓰지 않았다).
+#[allow(clippy::too_many_arguments)]
 async fn checks_early(
     pool: &sqlx::PgPool,
     allow: bool,
     card: bool,
+    mandate: bool,
     approve: Option<&super::msg_post::PostState>,
     agent: &str,
     operator: &str,
@@ -2061,11 +2087,11 @@ async fn checks_early(
     let Some(code) = early_denial(lease.as_ref(), agent, operator, g("repo")) else {
         return match lease.as_ref() {
             Some(l) if allow && !l.expired && !l.ended => {
-                checks_allow(pool, card, approve, agent, operator, o, l, &now).await
+                checks_allow(pool, card, mandate, approve, agent, operator, o, l, &now).await
             }
             Some(l)
                 if (l.expired || l.ended)
-                    && l.mandate_id.is_none()
+                    && (l.mandate_id.is_none() || mandate)
                     && !super::lease_read::mandate_enforced_env() =>
             {
                 expired_denial(pool, agent, operator, o, l).await.map(Some)
@@ -2128,6 +2154,7 @@ pub async fn checks_route(
             pool,
             st.allow.is_some(),
             st.card.is_some(),
+            st.mandate,
             st.approve.as_ref(),
             &me.id,
             op,
@@ -2150,6 +2177,7 @@ pub fn routes(
     checks_allow: Option<sqlx::PgPool>,
     checks_card: Option<sqlx::PgPool>,
     checks_approve: Option<super::msg_post::PostState>,
+    checks_mandate: bool,
     results_read: Option<sqlx::PgPool>,
     results_post: Option<super::msg_post::PostState>,
     auth: crate::auth::AuthPools,
@@ -2195,6 +2223,7 @@ pub fn routes(
                 allow: checks_allow,
                 card: checks_card,
                 approve: checks_approve,
+                mandate: checks_mandate,
             }))
             .merge(rt.router.with_state(Arc::new(ResultsState {
                 up,
@@ -2389,6 +2418,41 @@ mod tests {
         assert_eq!(d["causeHasKey"], true);
         assert_eq!(d["rootHasKey"], false);
         assert!(d.get("viaApproval").is_none());
+    }
+
+    #[test]
+    fn shadow_detail_with_line_like_ts() {
+        let l = crate::core::mandate_line_match::FoundLine {
+            id: "G".into(),
+            via: "standing".into(),
+        };
+        let d = shadow_detail(
+            "not_granted",
+            Some("M"),
+            Some(&l),
+            "a",
+            "repo:x/y",
+            "L",
+            ("human", true, false),
+        );
+        assert_eq!(d["enforced"], "chain");
+        assert_eq!(d["chainVerdict"], "not_granted");
+        assert_eq!(d["mandateVerdict"], "allowed");
+        assert_eq!(d["mandateId"], "M");
+        assert_eq!(d["lineId"], "G");
+        assert_eq!(d["lineVia"], "standing");
+        let d = shadow_detail(
+            "allowed",
+            Some("M"),
+            None,
+            "a",
+            "repo:x/y",
+            "L",
+            ("human", true, false),
+        );
+        assert_eq!(d["mandateVerdict"], "denied");
+        assert_eq!(d["mandateId"], "M");
+        assert_eq!(d["lineId"], Value::Null);
     }
 
     #[test]
