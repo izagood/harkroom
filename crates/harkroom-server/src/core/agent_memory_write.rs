@@ -8,11 +8,12 @@
 //!   `memory.archive`·`unarchive` 의 [`archive_one`]·[`unarchive_one`]. 사람 경로라 턴·회차가 없고(`run_id`·`turn_id` null),
 //!   쓰기 검사(`scanWrite`)도 하지 않는다 — TS 가 `setMemory` 에 `flagReason` 을 주지 않는 것과 같다(사람이 고친 판은 표시가 풀린다).
 //! - 감사는 slug 만 남긴다(본문 없음).
-//! - `POST …/background/runs/:runId/revert` 는 TS 에 남긴다 — 회차의 기억마다 보관·restore·되살리기를 고르고 스레드 메모까지
-//!   다시 여는 여러 단계 쓰기라 따로 옮긴다.
+//! - `POST …/background/runs/:runId/revert`(S5.5) 는 TS `revertBgRun` 을 옮긴 [`revert`] 다 — 쓰기 풀에
+//!   [`BG_REVERT_PRIVILEGES`] 가 다 있을 때만 줄을 단다(없으면 TS).
 use super::agent_memory_read::{access, agent_target, bad, max_param_length};
 use super::mcp::mem_body::{
-    MAX_CORE, MAX_DESCRIPTION, MAX_ITEMS, MAX_VALUE, SetOutcome, delete, js_len, upsert,
+    MAX_CORE, MAX_DESCRIPTION, MAX_ITEMS, MAX_VALUE, Restored, SetOutcome, delete, js_len,
+    restore_one, upsert,
 };
 use super::mcp::mem_writes::{
     Archived, SLUG_HINT, Unarchived, archive_one, datetime_ok, unarchive_one,
@@ -42,10 +43,24 @@ pub const AGENT_MEMORY_WRITE_PRIVILEGES: &[(&str, &str)] = &[
     ("audit_log", "INSERT"),
 ];
 
+/// 회차 되돌리기([`revert`])가 [`AGENT_MEMORY_WRITE_PRIVILEGES`] 위에 더 쓰는 것.
+pub const BG_REVERT_PRIVILEGES: &[(&str, &str)] = &[
+    ("bg_job", "SELECT"),
+    ("bg_job.reverted_at", "UPDATE"),
+    ("bg_job.reverted_by", "UPDATE"),
+    ("bg_job_change", "SELECT"),
+    ("thread_note.account_id", "SELECT"),
+    ("thread_note.archived_by_run", "SELECT"),
+    ("thread_note.archived_at", "UPDATE"),
+    ("thread_note.archived_by_run", "UPDATE"),
+];
+
 pub struct MemoryWriteState {
     pub read: PgPool,
     pub write: PgPool,
     pub trust: TrustProxy,
+    /// 쓰기 풀에 [`BG_REVERT_PRIVILEGES`] 가 다 있는가 — 아니면 되돌리기 줄을 달지 않는다(→ TS).
+    pub revert: bool,
 }
 
 /// 쓰기 함수들은 `me.id` 만 읽는다 — 사람이 남의(에이전트의) 기억을 고치므로 그 에이전트를 주인 자리에 둔다.
@@ -439,19 +454,238 @@ pub async fn background(
     json_ok(json!({ "ok": true, "enabled": enabled }).to_string())
 }
 
+/// TS `revertBgRun` 의 결말.
+enum Reverted {
+    Done {
+        reverted: Vec<String>,
+        skipped: Vec<(String, &'static str)>,
+        notes: u64,
+    },
+    NotFound,
+    Already,
+    NotFinished,
+}
+
+/// 한 기억 되돌리기 — `Ok(None)` 이면 되돌렸고, `Ok(Some(reason))` 이면 건너뛴다.
+async fn revert_slug(
+    write: &PgPool,
+    id: &str,
+    run_id: &str,
+    slug: &str,
+    first_op: &str,
+    after: Option<&str>,
+) -> Result<Option<&'static str>, sqlx::Error> {
+    // TS `sameMs` — 지금 판이 회차 직후 판과 (ms 까지) 같을 때만 되돌린다. 직후 판이 없으면(null) 다르다.
+    let cur: Option<(String, bool)> = sqlx::query_as(
+        "select updated_at::text, coalesce(date_trunc('milliseconds', updated_at) = \
+         date_trunc('milliseconds', $3::timestamptz), false) \
+         from agent_memory where account_id = $1::uuid and slug = $2",
+    )
+    .bind(id)
+    .bind(slug)
+    .bind(after)
+    .fetch_optional(write)
+    .await?;
+    let Some((updated, same)) = cur else {
+        return Ok(Some("gone"));
+    };
+    if !same {
+        return Ok(Some("changed_since"));
+    }
+    let first: Option<(i64, Option<String>, bool)> = sqlx::query_as(
+        "select id, reason, coalesce((detail->>'created')::boolean, false) \
+         from agent_memory_revision where account_id = $1::uuid and slug = $2 and run_id = $3::uuid \
+         order by replaced_at, id limit 1",
+    )
+    .bind(id)
+    .bind(slug)
+    .bind(run_id)
+    .fetch_optional(write)
+    .await?;
+    let created = first_op == "create"
+        || first
+            .as_ref()
+            .is_some_and(|(_, reason, created)| reason.as_deref() == Some("merge") && *created);
+    // 회차가 만든 것은 보관, 고친 것은 그 회차가 밀어낸 가장 이른 판으로 restore, 보관만 한 것은 되살린다.
+    let (ok, too_many) = if created {
+        let r = archive_one(write, id, slug, Some(Some(&updated))).await?;
+        (matches!(r, Archived::Ok), false)
+    } else if let Some((rev, _, _)) = first {
+        match restore_one(write, &owner(id), slug, Some(rev), None).await? {
+            Restored::Ok => (true, false),
+            Restored::TooMany => (false, true),
+            Restored::NotFound => (false, false),
+        }
+    } else {
+        match unarchive_one(write, id, slug).await? {
+            Unarchived::Ok => (true, false),
+            Unarchived::TooMany => (false, true),
+            Unarchived::NotFound => (false, false),
+        }
+    };
+    Ok(if ok {
+        None
+    } else if too_many {
+        Some("too_many")
+    } else {
+        Some("changed_since")
+    })
+}
+
+/// TS `revertBgRun` — 회차는 한 번만 되돌린다(먼저 `reverted_at` 을 찍어 잡는다). 대상은 `run_id`·`bg_job_change` 로만 고른다.
+async fn revert_run(
+    write: &PgPool,
+    id: &str,
+    run_id: &str,
+    actor: &str,
+) -> Result<Reverted, sqlx::Error> {
+    let claim = sqlx::query(
+        "update bg_job set reverted_at = now(), reverted_by = $3::uuid \
+         where id = $1::uuid and account_id = $2::uuid and reverted_at is null \
+           and status in ('done', 'failed', 'skipped')",
+    )
+    .bind(run_id)
+    .bind(id)
+    .bind(actor)
+    .execute(write)
+    .await?;
+    if claim.rows_affected() == 0 {
+        let r: Option<bool> = sqlx::query_scalar(
+            "select reverted_at is not null from bg_job where id = $1::uuid and account_id = $2::uuid",
+        )
+        .bind(run_id)
+        .bind(id)
+        .fetch_optional(write)
+        .await?;
+        return Ok(match r {
+            None => Reverted::NotFound,
+            Some(true) => Reverted::Already,
+            Some(false) => Reverted::NotFinished,
+        });
+    }
+    let changes: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "select slug, op, after_updated_at::text from bg_job_change where run_id = $1::uuid order by id",
+    )
+    .bind(run_id)
+    .fetch_all(write)
+    .await?;
+    // JS `Map` — 처음 나온 차례, 값은 마지막 것(직후 판)·첫 op.
+    let mut order: Vec<(String, String, Option<String>)> = Vec::new();
+    for (slug, op, after) in changes {
+        match order.iter_mut().find(|e| e.0 == slug) {
+            Some(e) => e.2 = after,
+            None => order.push((slug, op, after)),
+        }
+    }
+    let mut reverted = Vec::new();
+    let mut skipped = Vec::new();
+    for (slug, first_op, after) in order {
+        // 한 기억의 실패가 나머지를 막지 않는다(TS security n2) — 회차는 이미 「되돌림」으로 찍혔다.
+        match revert_slug(write, id, run_id, &slug, &first_op, after.as_deref()).await {
+            Ok(None) => reverted.push(slug),
+            Ok(Some(reason)) => skipped.push((slug, reason)),
+            Err(_) => {
+                eprintln!("bg revert error: one memory skipped");
+                skipped.push((slug, "error"));
+            }
+        }
+    }
+    let notes = sqlx::query(
+        "update thread_note set archived_at = null, archived_by_run = null \
+         where account_id = $1::uuid and archived_by_run = $2::uuid",
+    )
+    .bind(id)
+    .bind(run_id)
+    .execute(write)
+    .await?;
+    Ok(Reverted::Done {
+        reverted,
+        skipped,
+        notes: notes.rows_affected(),
+    })
+}
+
+/// `POST /accounts/agents/{id}/background/runs/{runId}/revert` — [이 회차 되돌리기]. 판정 차례는 TS 와 같다:
+/// 소유자·admin → 경로 uuid(400) → 살아 있는 에이전트(404) → 되돌리기(404·409) → 감사.
+pub async fn revert(
+    State(st): State<Arc<MemoryWriteState>>,
+    Path((id, run_id)): Path<(String, String)>,
+    req: Request,
+) -> Response {
+    let (_body, RequireAccount(me, _), parts) = match body_then::<RequireAccount>(req).await {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
+    if let Err(r) = access(&st.read, &me, &id, None).await {
+        return r;
+    }
+    if !crate::lists::is_zod_uuid(&run_id) {
+        return bad("params");
+    }
+    if let Err(r) = agent_target(&st.write, &id, true).await {
+        return r;
+    }
+    let (reverted, skipped, notes) = match revert_run(&st.write, &id, &run_id, &me.id).await {
+        Ok(Reverted::Done {
+            reverted,
+            skipped,
+            notes,
+        }) => (reverted, skipped, notes),
+        Ok(Reverted::NotFound) => {
+            return json_err(StatusCode::NOT_FOUND, "not_found", "no such run");
+        }
+        Ok(Reverted::Already) => {
+            return json_err(
+                StatusCode::CONFLICT,
+                "already_reverted",
+                "이미 되돌린 회차다",
+            );
+        }
+        Ok(Reverted::NotFinished) => {
+            return json_err(StatusCode::CONFLICT, "not_finished", "아직 도는 회차다");
+        }
+        Err(e) => return internal(e),
+    };
+    let skipped_slugs: Vec<&str> = skipped.iter().map(|(s, _)| s.as_str()).collect();
+    audit(
+        &st,
+        &parts,
+        &me,
+        "agent.background.reverted",
+        &id,
+        json!({ "runId": run_id, "reverted": reverted, "skipped": skipped_slugs }),
+    )
+    .await;
+    let skipped: Vec<Value> = skipped
+        .iter()
+        .map(|(s, r)| json!({ "slug": s, "reason": r }))
+        .collect();
+    json_ok(json!({ "reverted": reverted, "skipped": skipped, "notesReopened": notes }).to_string())
+}
+
 pub fn routes(
     st: MemoryWriteState,
     auth: crate::auth::AuthPools,
     cors: Arc<crate::cors::Cors>,
 ) -> crate::route_table::Routes<()> {
     use crate::route_table::Table;
+    let revert_on = st.revert;
     let t = Table::<Arc<MemoryWriteState>>::new()
         .delete("/accounts/agents/{id}/memory/{slug}", remove)
         .put("/accounts/agents/{id}/memory/{slug}", put)
         .post("/accounts/agents/{id}/memory/{slug}/confirm", confirm)
         .post("/accounts/agents/{id}/memory/archive", archive)
         .post("/accounts/agents/{id}/memory/unarchive", unarchive)
-        .put("/accounts/agents/{id}/background", background)
+        .put("/accounts/agents/{id}/background", background);
+    let t = if revert_on {
+        t.post(
+            "/accounts/agents/{id}/background/runs/{runId}/revert",
+            revert,
+        )
+    } else {
+        t
+    };
+    let t = t
         .map(|r| {
             r.route_layer(axum::middleware::from_fn_with_state(
                 auth,

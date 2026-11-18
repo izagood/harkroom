@@ -2733,6 +2733,28 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.5 — 회차 되돌리기(`POST …/background/runs/{runId}/revert`). 기억 쓰기 줄이 섰고 쓰기 풀에 `BG_REVERT_PRIVILEGES` 도
+    // 다 있을 때만 — 아니면 그 한 줄만 TS 에 남는다(나머지 여섯 줄은 그대로).
+    let bg_revert = match &agent_memory_write {
+        Some(w) => {
+            use harkroom_server::core::agent_memory_write as a;
+            match write::missing_in(w, a::BG_REVERT_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => true,
+                Ok(m) => {
+                    eprintln!("front: background revert to TS — missing privileges {m:?}");
+                    false
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: background revert to TS — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    false
+                }
+            }
+        }
+        None => false,
+    };
     // C3b-1 — 선택 카드 답하기·닫기. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 `ASK_PRIVILEGES` 가 다 있을 때만.
     // C4b B2-1 — MCP `thread.note`. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 `THREAD_NOTE_PRIVILEGES` 가 다 있을 때만.
     let note_write = match (&core_mode, &state.write) {
@@ -4758,13 +4780,14 @@ async fn main() {
             core_routes.http.extend(au.http);
             core_routes.sockets.extend(au.sockets);
         }
-        // S5.4 AC3 — 기억 쓰기 다섯 줄 + 백그라운드 켜고 끄기. 권한이 다 있을 때만 — 아니면 TS 에 남는다(회차 되돌리기는 언제나 TS).
+        // S5.4 AC3 — 기억 쓰기 다섯 줄 + 백그라운드 켜고 끄기. 권한이 다 있을 때만 — 아니면 TS 에 남는다(회차 되돌리기는 `bg_revert` 일 때만).
         if let Some(write) = agent_memory_write {
             let aw = harkroom_server::core::agent_memory_write::routes(
                 harkroom_server::core::agent_memory_write::MemoryWriteState {
                     read: state.pool.clone(),
                     write,
                     trust: (*state.trust).clone(),
+                    revert: bg_revert,
                 },
                 auth.clone(),
                 state.cors.clone(),
