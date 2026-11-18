@@ -306,6 +306,113 @@ fn check_body(m: &Map<String, Value>) -> Result<(), Refusal> {
     Ok(())
 }
 
+/// TS PATCH 본문 zod — `handle`·`displayName`·`disabled` 는 선택, 나머지는 `configFields` 와 MCP·불리언 칸.
+fn check_patch(m: &Map<String, Value>) -> Result<(), &'static str> {
+    let z = |r: Result<(), Refusal>| match r {
+        Err(Refusal::Zod(f)) => Err(f),
+        _ => Ok(()),
+    };
+    z(field(m, "handle", false, super::account_handle::is_handle))?;
+    z(field(m, "displayName", false, |d| {
+        (1..=64).contains(&len16(d))
+    }))?;
+    z(field(m, "instructions", false, |s| len16(s) <= 8000))?;
+    z(field(m, "harness", false, |s| HARNESSES.contains(&s)))?;
+    z(field(m, "model", true, |s| len16(s) <= 64))?;
+    z(field(m, "effort", true, |s| EFFORTS.contains(&s)))?;
+    z(field(m, "workingDir", true, |s| len16(s) <= 512))?;
+    z(field(m, "mentionPermission", false, |s| {
+        MENTION_PERMISSIONS.contains(&s)
+    }))?;
+    z(field(m, "ownerAccountId", true, crate::lists::is_zod_uuid))?;
+    z(field(m, "invokeScope", false, |s| {
+        INVOKE_SCOPES.contains(&s)
+    }))?;
+    z(field(m, "credentialScope", false, |s| {
+        CREDENTIAL_SCOPES.contains(&s)
+    }))?;
+    match m.get("mcpServers") {
+        None => {}
+        Some(Value::Array(a))
+            if a.len() <= 32
+                && a.iter().all(|v| {
+                    v.as_str().is_some_and(|s| {
+                        (1..=32).contains(&s.len())
+                            && s.bytes()
+                                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+                    })
+                }) => {}
+        _ => return Err("mcpServers"),
+    }
+    for k in [
+        "disabled",
+        "trustSiblings",
+        "requiresMacos",
+        "chromeEnabled",
+        "userDecide",
+    ] {
+        if m.get(k).is_some_and(|v| !v.is_boolean()) {
+            return Err(k);
+        }
+    }
+    Ok(())
+}
+
+const ADMIN_ONLY_FIELDS: &[&str] = &["ownerAccountId", "disabled", "mentionPermission"];
+
+/// `PATCH /accounts/agents/{id}` 앞단 — 경로·본문 zod(400)·Chrome 켜기 403·admin 전용 칸 403 을 Rust 가 판정하고
+/// 나머지(소유자 판정·쓰기·감사)는 TS 로 넘긴다. 여기까지는 부작용이 없다.
+pub async fn patch(
+    State(st): State<Arc<AgentCreateState>>,
+    crate::auth::RequireAccount(me, auth): crate::auth::RequireAccount,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    req: Request,
+) -> Response {
+    let (parts, raw) = req.into_parts();
+    let Ok(bytes) = to_bytes(raw, BODY_LIMIT).await else {
+        return json_err(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "fst_err_ctp_body_too_large",
+            "Request body is too large",
+        );
+    };
+    if let Ok(Body::Json(Value::Object(m))) = crate::write::fastify_body(&parts.headers, &bytes) {
+        if !crate::lists::is_zod_uuid(&id) {
+            return json_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "params: invalid",
+            );
+        }
+        if let Err(f) = check_patch(&m) {
+            return json_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                &format!("{f}: invalid"),
+            );
+        }
+        if m.get("chromeEnabled") == Some(&Value::Bool(true))
+            && !(me.kind == "human" && auth.via == Some(crate::auth::Via::Session))
+        {
+            return json_err(
+                StatusCode::FORBIDDEN,
+                "human_session_required",
+                "only a signed-in human can enable Chrome control",
+            );
+        }
+        if !me.is_admin && ADMIN_ONLY_FIELDS.iter().any(|f| m.contains_key(*f)) {
+            return json_err(
+                StatusCode::FORBIDDEN,
+                "forbidden",
+                "admin required for this field",
+            );
+        }
+    }
+    let req = Request::from_parts(parts, axum::body::Body::from(bytes));
+    crate::proxy::forward(State(st.up.clone()), ConnectInfo(peer), req).await
+}
+
 pub fn routes(
     st: AgentCreateState,
     auth: crate::auth::AuthPools,
@@ -314,6 +421,7 @@ pub fn routes(
     use crate::route_table::Table;
     let t = Table::<Arc<AgentCreateState>>::new()
         .post("/accounts/agents", post)
+        .patch("/accounts/agents/{id}", patch)
         .map(|r| {
             r.route_layer(axum::middleware::from_fn_with_state(
                 auth,
@@ -379,6 +487,21 @@ mod tests {
         let nulls = json!({ "handle": "bot", "displayName": "B", "model": null, "effort": null,
             "workingDir": null, "ownerAccountId": null });
         assert_eq!(check_body(&m(nulls)), Ok(()));
+    }
+
+    #[test]
+    fn patch_zod() {
+        assert_eq!(check_patch(&m(json!({}))), Ok(()));
+        assert_eq!(check_patch(&m(json!({ "disabled": "x" }))), Err("disabled"));
+        assert_eq!(
+            check_patch(&m(json!({ "mcpServers": ["A"] }))),
+            Err("mcpServers")
+        );
+        assert_eq!(
+            check_patch(&m(json!({ "mcpServers": ["gh-1"], "trustSiblings": true }))),
+            Ok(())
+        );
+        assert_eq!(check_patch(&m(json!({ "handle": "X" }))), Err("handle"));
     }
 
     #[test]
