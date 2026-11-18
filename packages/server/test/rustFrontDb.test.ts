@@ -1668,6 +1668,13 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant select (id, owner_account_id, ended_at, end_reason) on mandate to ${rw}`,
         `grant select (id, password_hash) on account to ${rw}`,
         `grant select (token_hash, stepped_up_until), update (stepped_up_at, stepped_up_until) on session to ${rw}`,
+        // S5.4 3회차 l·m — 로그인·재설정(`auth_login.rs`·`password_reset_use.rs`)·업로드(`attachment_upload.rs`).
+        `grant insert (token_hash, account_id, expires_at) on session to ${rw}`,
+        `grant update (used_at) on password_reset_code to ${rw}`,
+        `grant update (password_hash) on account to ${rw}`,
+        `grant insert (uploader_id, filename, content_type, size_bytes, storage_key) on attachment to ${rw}`,
+        // DELETE /channels/:id(`channel_delete.rs::DELETE_PRIVILEGES`) — 표 단위 DELETE(칸 SELECT 는 위 줄들).
+        `grant delete on channel, message, channel_read, channel_pref, channel_doc, scheduled_message, agent_wake to ${rw}`,
         `grant insert (action, actor_id, actor_handle, target, ip, detail) on audit_log to ${rw}`,
         `grant select (trigger, next_at, enabled, debounce_sec) on automation to ${rw}`,
         `grant select (event_key), insert (automation_id, event_key, trigger_kind, payload, not_before, initiated_by, cause_message_id, chain_depth) on automation_run to ${rw}`,
@@ -1723,9 +1730,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(f.log(), key).toContain(`"${key}"`);
       }
       expect(f.log()).toContain('front: write pool on');
-      // TODO(S5.4 3회차): 채널 지우기는 표 단위 DELETE 권한을 일부러 주지 않았다(주면 Rust 지우기가 500) — 그 줄만 빼고 본다.
-      expect(f.log()).toContain('front: channel delete core off — missing privileges');
-      expect(f.log().replace(/front: channel delete core off — missing privileges[^\n]*\n?/, '')).not.toContain('missing privileges');
+      expect(f.log()).not.toContain('missing privileges');
       expect(f.log()).toContain('front: loop wake on');
       expect(f.log()).toContain('front: loop retention on (delete=false');
       expect(f.log()).toContain('front: loop mandate.idle on');
@@ -4847,7 +4852,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(f.log()).toContain('"GET /invites"');
         expect(f.log()).toContain('"GET /connectors"');
         expect(f.log()).not.toContain('misc reads core off');
-        for (const k of ['GET /leases', 'GET /agent/config']) {  // GET /accounts/agents 는 S5.4 갈래 B 가 Rust 로 옮겼다
+        expect(f.log(), 'GET /agent/config 는 Rust 가 받는다(S5.4 갈래 o)').toContain('"GET /agent/config"');
+        for (const k of ['GET /leases']) {  // GET /accounts/agents 는 갈래 B, GET /agent/config 는 갈래 o 가 Rust 로 옮겼다
           expect(f.log(), `${k} 는 TS 에 남는다`).not.toContain(`"${k}"`);
         }
         const M = member.token;
@@ -5240,8 +5246,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect(f.log(), k).toContain(`"${k}"`);
         }
         expect(f.log()).not.toContain('channel create/update core off');
-        // TODO(S5.4 3회차): 표 단위 DELETE 권한을 주면 Rust 가 붙지만 아래 지우기에서 500 — 원인 확인 전까지 권한 없이 TS 에 남긴다.
-        expect(f.log(), 'DELETE /channels/{id} 는 아직 TS 에 남는다(권한 없음)').not.toContain('"DELETE /channels/{id}"');
+        expect(f.log(), 'DELETE /channels/{id} 는 Rust 가 받는다').toContain('"DELETE /channels/{id}"');
         const M = member.token;
         const M2 = member2.token;
         const taken = await createChannel(db.pool, { name: 'ch4a-taken' });
@@ -10534,10 +10539,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       // S5.4 3회차 — 위임 끝·보관소 열기·첨부 내려받기·채널 지우기. 네 줄이 Rust 코어 줄로 실렸는지 보고, 같은 처음 상태를 두 벌 만들어
       // TS 로 한 번, Rust 로 한 번 보내 상태·본문(시각은 가림)을 견준다.
       {
-        for (const k of ['POST /mandates/{id}/end', 'POST /auth/step-up', 'GET /attachments/{id}']) {
+        for (const k of ['POST /mandates/{id}/end', 'POST /auth/step-up', 'GET /attachments/{id}', 'DELETE /channels/{id}']) {
           expect(f.log(), k).toContain(`"${k}"`);
         }
-        for (const off of ['mandate end core off', 'step-up open core off', 'attachment download core off']) {
+        for (const off of ['mandate end core off', 'step-up open core off', 'attachment download core off', 'channel delete core off']) {
           expect(f.log(), off).not.toContain(off);
         }
         const g3 = '00000000-0000-4000-8000-0000000c5403';
@@ -10615,6 +10620,36 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           }
           expect((await raw(tsUrl, pub, A)).status).toBe(200);
           expect((await raw(tsUrl, secret, member.token)).status).not.toBe(200);
+        }
+        // 4) DELETE /channels/:id — 멤버(관리자 아님) 거절 · 없는 id · 관리자 성공(행·첨부 파일이 지워진다) · 두 번째.
+        {
+          const mkCh = async (tag: string) => {
+            const ch = (await createChannel(db.pool, { name: `s54r3-del-${tag}`, creatorId: admin.accountId })).id;
+            const key = `s54r3-del-${randomUUID()}`;
+            writeCases(joinPath(attRoot, key), 'bye');
+            const msgId = await say('s54r3 지울 글', { ch, author: admin.accountId });
+            await db.pool.query(
+              `insert into attachment (uploader_id, message_id, filename, content_type, size_bytes, storage_key) values ($1, $2, 'bye.txt', 'text/plain', 3, $3)`,
+              [admin.accountId, msgId, key]);
+            await db.pool.query(`update channel set archived_at = now() where id = $1`, [ch]); // TS·Rust 모두 보관된 채널만 지운다
+            return { ch, key };
+          };
+          const [cT, cR] = [await mkCh('t'), await mkCh('r')];
+          const nm = await pair('채널 지우기 관리자 아님', 'DELETE', `/channels/${cT.ch}`, `/channels/${cR.ch}`, undefined, member.token);
+          expect(nm.status).not.toBe(200);
+          await pair('채널 지우기 없는 id', 'DELETE', `/channels/${g3}`, `/channels/${g3}`);
+          { // uuid 아님 — 둘 다 500 internal. TS 는 PG 오류 글을 그대로 싣고 Rust 는 「internal error」로 가린다(다른 500 사례와 같은 관례) → 상태·코드만 견준다.
+            const [a, b] = [await callX(tsUrl, 'DELETE', '/channels/nope', undefined, A), await callX(rsUrl, 'DELETE', '/channels/nope', undefined, A)];
+            expect({ status: b.status, code: b.code }, '채널 지우기 uuid 아님').toEqual({ status: a.status, code: a.code });
+          }
+          const okDel = await pair('채널 지우기 성공', 'DELETE', `/channels/${cT.ch}`, `/channels/${cR.ch}`);
+          expect(okDel.status).toBeLessThan(300);
+          const left = async (ch: string) => (await db.pool.query(`select count(*)::int as n from channel where id = $1`, [ch])).rows[0].n;
+          expect([await left(cT.ch), await left(cR.ch)]).toEqual([0, 0]);
+          const { existsSync } = await import('node:fs');
+          await new Promise((r) => setTimeout(r, 200));
+          expect([existsSync(joinPath(attRoot, cT.key)), existsSync(joinPath(attRoot, cR.key))], '첨부 파일 지움').toEqual([false, false]);
+          await pair('채널 지우기 두 번째', 'DELETE', `/channels/${cT.ch}`, `/channels/${cR.ch}`);
         }
       }
       // 프리플라이트(옮긴 줄의 OPTIONS 는 앞단이 TS 로 넘긴다 — 두 답이 같아야 한다).

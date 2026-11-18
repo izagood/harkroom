@@ -64,25 +64,25 @@ pub const DELETE_PRIVILEGES: &[(&str, &str)] = &[
 
 /// TS `deleteChannel` 의 문장 — 글자 그대로, 차례 그대로.
 const LOCK_CHANNEL: &str =
-    "select id, name, kind, archived_at from channel where id = $1 for update";
+    "select id, name, kind, archived_at from channel where id = $1::uuid for update";
 const STORAGE_KEYS: &str = "select a.storage_key from attachment a
        join message m on m.id = a.message_id
-       where m.channel_id = $1";
-const COUNT_MESSAGES: &str = "select count(*)::int as cnt from message where channel_id = $1";
+       where m.channel_id = $1::uuid";
+const COUNT_MESSAGES: &str = "select count(*)::int as cnt from message where channel_id = $1::uuid";
 const DELETES: &[&str] = &[
-    "delete from inbox where message_id in (select id from message where channel_id = $1)",
-    "delete from idempotency_key where channel_id = $1",
+    "delete from inbox where message_id in (select id from message where channel_id = $1::uuid)",
+    "delete from idempotency_key where channel_id = $1::uuid",
     "delete from saved_message
-       where message_id in (select id from message where channel_id = $1)",
-    "delete from message_pin where channel_id = $1",
-    "delete from channel_read where channel_id = $1",
-    "delete from channel_member where channel_id = $1",
-    "delete from channel_pref where channel_id = $1",
-    "delete from channel_doc where channel_id = $1",
-    "delete from scheduled_message where channel_id = $1",
-    "delete from agent_wake where channel_id = $1",
-    "delete from message where channel_id = $1",
-    "delete from channel where id = $1",
+       where message_id in (select id from message where channel_id = $1::uuid)",
+    "delete from message_pin where channel_id = $1::uuid",
+    "delete from channel_read where channel_id = $1::uuid",
+    "delete from channel_member where channel_id = $1::uuid",
+    "delete from channel_pref where channel_id = $1::uuid",
+    "delete from channel_doc where channel_id = $1::uuid",
+    "delete from scheduled_message where channel_id = $1::uuid",
+    "delete from agent_wake where channel_id = $1::uuid",
+    "delete from message where channel_id = $1::uuid",
+    "delete from channel where id = $1::uuid",
 ];
 
 #[derive(Clone)]
