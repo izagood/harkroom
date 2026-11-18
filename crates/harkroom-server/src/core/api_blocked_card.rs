@@ -2,7 +2,6 @@
 //! 요청 글자·본문·번역 표지(`system.apiBlocked*`)·`meta.blocked`. 카드 본문은 TS 처럼 한국어 고정 문구이고, 영어는 앱이
 //! 번역 표지(`i18n`)와 `blocked.why.<code>` 사전으로 옮긴다. DB 쓰기는 `api_checks` 가 한다.
 use super::api_results::js_slice;
-use super::mcp::grant_delegate as gd;
 use serde_json::{Value, json};
 
 /// TS `API_CARD_CODES`.
@@ -42,8 +41,7 @@ pub fn reason_text(code: &str) -> &str {
 
 /// TS `cardPath`. 바깥 `None` 은 Rust 가 `safePath` 를 못 따라가는 경로(`%`·ASCII 밖) — TS 에 맡긴다.
 pub fn card_path(path: &str) -> Option<Option<String>> {
-    let safe = gd::safe_path_plain(path)?;
-    if !safe || path.contains('`') {
+    if !super::api_checks::safe_path(path) || path.contains('`') {
         return Some(None);
     }
     Some(Some(js_slice(path.split('?').next().unwrap_or(""), 200)))
@@ -137,7 +135,8 @@ mod tests {
         assert_eq!(card_path("/x?a=1"), Some(Some("/x".into())));
         assert_eq!(card_path("/a`b"), Some(None));
         assert_eq!(card_path("x"), Some(None));
-        assert_eq!(card_path("/a%2e"), None);
+        assert_eq!(card_path("/a%2e"), Some(None));
+        assert_eq!(card_path("/a%2Fb?x"), Some(Some("/a%2Fb".into())));
         assert_eq!(
             card_path(&format!("/{}", "a".repeat(300)))
                 .unwrap()
