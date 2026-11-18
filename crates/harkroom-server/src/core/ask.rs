@@ -671,7 +671,7 @@ pub async fn answer(
     if let Some(r) = gate(&st, &me.id, &id, &message).await {
         return r;
     }
-    // C3b-3c — 권한 카드(거울 아님)의 거절은 3b 코어가 정한다. 그 밖의 권한 카드 답은 아래 `hand_answer_to_ts` 가 TS 로 넘긴다.
+    // C3b-3c — 권한 카드의 거절은 3b 코어가 정한다(S5.5 d 부터 진짜 거울도 — 원본 요청을 정한다). 그 밖의 권한 카드 답은 아래 `hand_answer_to_ts` 가 TS 로 넘긴다.
     if let Answer::Option(o) = &ans
         && let super::decide_routes::Taken::Done(r) =
             super::decide_routes::answer_card_deny(&st, &me, &auth, &message, o).await

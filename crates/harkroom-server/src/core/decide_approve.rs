@@ -251,6 +251,8 @@ pub struct ApproveArgs<'a> {
     /// 카드의 1회 머지 값(TS `onceFromCard`, gh 계정은 비움 — 오퍼레이터가 고른다). 머지 [이번 한 번]만 쓴다.
     pub once: Option<&'a super::decide_merge_once::Once>,
     pub bundle_message_id: Option<&'a str>,
+    /// S5.5 d — 거울 카드에서 왔으면 그 거울 글 id(카드 meta `decidedVia`·감사·위임장 줄 `via: 'mirror'`).
+    pub mirror_message_id: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -391,6 +393,17 @@ pub const GRANT_GIVEN_AUDIT: &str = "insert into audit_log (action, actor_id, ta
      values ('grant.given', $1::uuid, $2, $3::jsonb)";
 
 /// 요청 줄을 잠근 뒤 같은 tx 에서 승인을 쓴다. 상태 대조 순서·문구는 TS 와 같다(거절과 같은 앞부분).
+/// 위임장 줄의 `via`(TS `LineVia` — 입구의 `via.kind`).
+pub fn line_via(args: ApproveArgs<'_>) -> &'static str {
+    if args.bundle_message_id.is_some() {
+        "bundle"
+    } else if args.mirror_message_id.is_some() {
+        "mirror"
+    } else {
+        "button"
+    }
+}
+
 pub async fn approve_write(
     conn: &mut PgConnection,
     locked: &LockedRequest,
@@ -640,11 +653,7 @@ pub async fn approve_write(
                     card_message_id: locked.card_message_id.as_deref(),
                     agent_id: args.agent_id,
                     actor_id: args.actor_id,
-                    via: if args.bundle_message_id.is_some() {
-                        "bundle"
-                    } else {
-                        "button"
-                    },
+                    via: line_via(args),
                     kind: match grant_mode {
                         // C3 — command: 1시간, 「이번 한 번」이면 uses 1(TS `addLineFromRequest` command 갈래).
                         Some(mode) => LineKind::Command {
@@ -692,7 +701,9 @@ pub async fn approve_write(
         if let Some(id) = line.as_ref().and_then(|l| l.line_id()) {
             patch["lineId"] = json!(id);
         }
-        if let Some(v) = super::decide_core::decided_via(args.bundle_message_id, None) {
+        if let Some(v) =
+            super::decide_core::decided_via(args.bundle_message_id, args.mirror_message_id)
+        {
             patch["decidedVia"] = v;
         }
         patch["decidedByOwner"] = Value::Bool(true);
@@ -712,7 +723,7 @@ pub async fn approve_write(
         grant_expires_at: expires_iso.as_deref(),
         grant_mode: grant_mode.zip(command_grant_id.as_deref()),
         bundle_message_id: args.bundle_message_id,
-        mirror_message_id: None,
+        mirror_message_id: args.mirror_message_id,
     });
     sqlx::query(APPROVE_AUDIT)
         .bind(args.actor_id)
@@ -881,11 +892,7 @@ async fn merge_once_write(
                         card_message_id: locked.card_message_id.as_deref(),
                         agent_id: args.agent_id,
                         actor_id: args.actor_id,
-                        via: if args.bundle_message_id.is_some() {
-                            "bundle"
-                        } else {
-                            "button"
-                        },
+                        via: line_via(args),
                         kind: LineKind::MergeOnce,
                         now: &now,
                         until: None,
@@ -911,7 +918,9 @@ async fn merge_once_write(
         if let Some(id) = line.as_ref().and_then(|l| l.line_id()) {
             patch["lineId"] = json!(id);
         }
-        if let Some(v) = super::decide_core::decided_via(args.bundle_message_id, None) {
+        if let Some(v) =
+            super::decide_core::decided_via(args.bundle_message_id, args.mirror_message_id)
+        {
             patch["decidedVia"] = v;
         }
         patch["decidedByOwner"] = Value::Bool(true);
@@ -947,7 +956,7 @@ async fn merge_once_write(
         grant_expires_at: None,
         grant_mode: None,
         bundle_message_id: args.bundle_message_id,
-        mirror_message_id: None,
+        mirror_message_id: args.mirror_message_id,
     });
     sqlx::query(APPROVE_AUDIT)
         .bind(args.actor_id)
@@ -1005,7 +1014,7 @@ async fn approve_attempt(
         has_denial: false,
         has_once: args.has_once,
         via_chat: false,
-        via_mirror: false,
+        via_mirror: args.mirror_message_id.is_some(),
     };
     let d = match recheck_locked(&agent, channel.as_deref(), locked.as_ref(), shape) {
         Recheck::Go(d) => d,
@@ -1093,6 +1102,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn line_via_follows_entry() {
+        let base = ApproveArgs {
+            agent_id: "a",
+            request_id: "r",
+            actor_id: "u",
+            option: "approve",
+            has_once: false,
+            once: None,
+            bundle_message_id: None,
+            mirror_message_id: None,
+        };
+        assert_eq!(line_via(base), "button");
+        let m = ApproveArgs {
+            mirror_message_id: Some("m"),
+            ..base
+        };
+        assert_eq!(line_via(m), "mirror");
+        let b = ApproveArgs {
+            bundle_message_id: Some("b"),
+            ..base
+        };
+        assert_eq!(line_via(b), "bundle");
+    }
+
+    #[test]
     fn tool_approve_once_routing() {
         use super::super::decide_core::rust_takes;
         let base = Shape {
@@ -1110,6 +1144,17 @@ mod tests {
             ..base
         };
         assert_eq!(rust_takes(mandate), Some(Decision::ApproveOnce));
+        // S5.5 d — 거울에서 누른 머지 [이번 한 번](원본 카드의 once·거절 기록)도 Rust.
+        assert_eq!(
+            rust_takes(Shape {
+                kind: "merge",
+                has_once: true,
+                has_denial: true,
+                via_mirror: true,
+                ..base
+            }),
+            Some(Decision::ApproveOnce)
+        );
         // once 본문·거절 기록·merge 는 TS(1회 머지 쓰기).
         for s in [
             Shape {
@@ -1124,17 +1169,10 @@ mod tests {
                 kind: "merge",
                 ..base
             },
-            // 머지 1회라도 거절 기록이 없거나 거울·글 승인이면 TS(15d — 위임장이 있으면 Rust, 아래).
+            // 머지 1회라도 거절 기록이 없거나 글 승인이면 TS(거울은 S5.5 d 부터 버튼과 같다)(15d — 위임장이 있으면 Rust, 아래).
             Shape {
                 kind: "merge",
                 has_once: true,
-                ..base
-            },
-            Shape {
-                kind: "merge",
-                has_once: true,
-                has_denial: true,
-                via_mirror: true,
                 ..base
             },
             Shape {

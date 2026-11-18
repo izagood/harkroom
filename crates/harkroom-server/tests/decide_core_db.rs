@@ -637,6 +637,7 @@ async fn deny_writes_request_card_audit_together() {
             request_id: &req,
             actor_id: &stranger,
             bundle_message_id: None,
+            mirror_message_id: None,
         },
     )
     .await
@@ -667,6 +668,7 @@ async fn deny_writes_request_card_audit_together() {
             request_id: &req,
             actor_id: &f.actor,
             bundle_message_id: None,
+            mirror_message_id: None,
         },
     )
     .await
@@ -683,6 +685,7 @@ async fn deny_writes_request_card_audit_together() {
             request_id: &req,
             actor_id: &f.actor,
             bundle_message_id: Some(&card),
+            mirror_message_id: None,
         },
     )
     .await
@@ -733,6 +736,7 @@ async fn deny_writes_request_card_audit_together() {
             request_id: &req,
             actor_id: &f.owner,
             bundle_message_id: None,
+            mirror_message_id: None,
         },
     )
     .await
@@ -771,6 +775,7 @@ async fn deny_audit_failure_rolls_back_all() {
             request_id: &req,
             actor_id: &f.owner,
             bundle_message_id: None,
+            mirror_message_id: None,
         },
         true,
     )

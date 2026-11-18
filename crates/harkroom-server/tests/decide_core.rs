@@ -179,13 +179,17 @@ fn who_takes_it() {
             via_chat: true,
             ..base
         },
-        Shape {
-            via_mirror: true,
-            ..base
-        },
     ] {
         assert_eq!(rust_takes(s), None, "{s:?}");
     }
+    // S5.5 d — 진짜 거울(입구가 확인)은 원본 버튼과 같은 허용 목록을 탄다.
+    assert_eq!(
+        rust_takes(Shape {
+            via_mirror: true,
+            ..base
+        }),
+        rust_takes(base)
+    );
     // 머지 거절 카드(denial_id): deny 는 Rust, once 값 없는 approve_once 는 TS(security ②-6).
     // 13d — 같은 카드의 7일 approve 는 Rust(CI 거절이면 400 `ci_card_once_only`). 14d — 위임장이 있어도 Rust.
     let d = |o| Shape {

@@ -2,11 +2,13 @@
 //!
 //! 붙는 입구 셋(모두 `HARKROOM_CORE=rust` + 쓰기 풀 `ASK_PRIVILEGES` + 거절 두 겹 검사([`super::decide_core::deny_pool`])일 때만):
 //! 1. `POST /agents/{id}/permission-requests/{requestId}/deny` — TS `permissionRequestRoutes.ts`.
-//! 2. `POST /channels/{id}/messages/{messageId}/ask-answer` 의 권한 카드(거울 아님) + `deny` — TS `messageRoutes.ts`.
+//! 2. `POST /channels/{id}/messages/{messageId}/ask-answer` 의 권한 카드 + `deny` — TS `messageRoutes.ts`. S5.5 d 부터 권한 카드의
+//!    **거울**도 맡는다([`card_target`]): 서버가 세운 진짜 거울이고 누른 사람이 원본 채널을 보면 원본 요청을 정하고(`via: mirror`),
+//!    답은 원본 카드에 적혀 `sync_ask_mirrors` 가 거울을 같은 tx 에서 닫는다. 응답은 누른 거울 글이다.
 //! 3. `POST /channels/{id}/messages/{messageId}/ask-bundle/answer` 의 권한 줄 + `deny` — TS `answerBundleItem`(`via: bundle`).
 //!
 //! **맡지 않으면 언제나 쓰기 전에 TS 로 넘긴다**(읽은 바이트 그대로): 사람 세션이 아님·uuid 아님·요청 줄의 에이전트가 경로와 다름·
-//! 거울·`once`·거절이 아닌 선택지·코어가 `HandToTs`(만료·꼴 바뀜). 코어가 쓰기 tx 안에서 실패하면 `internal` 이고 TS 로 넘기지 않는다.
+//! 진짜 거울이 아님·`once`·거절이 아닌 선택지·코어가 `HandToTs`(만료·꼴 바뀜). 코어가 쓰기 tx 안에서 실패하면 `internal` 이고 TS 로 넘기지 않는다.
 //!
 //! **W1(security, 3b 검토)** — `bundle_message_id` 는 [`answer_bundle_deny`] 를 부르기 **전에** 호출자(`ask_bundle::answer`)가
 //! 「그 묶음 글이 이 채널의 묶음이고 그 줄(rootId)을 담는다」를 확인한 뒤에만 넘긴다. 여기서도 그 줄의 원본이 권한 카드인지·원본 채널을
@@ -17,7 +19,10 @@
 use super::ask::{AskState, ok_json, read_ask_row, record_permission_answer, to_ts};
 use super::audience::audience_on;
 use super::decide_approve::{ApproveArgs, ApproveOutcome, decide_approve};
-use super::decide_core::{DecisionRef, DenyArgs, DenyOutcome, decide_deny, resolve_decision};
+use super::decide_core::{
+    DecisionRef, DenyArgs, DenyOutcome, channel_visible_conn, decide_deny,
+    is_genuine_permission_mirror, resolve_decision,
+};
 use super::msg_read::{channel_visible, is_uuid, message_by_id};
 use crate::auth::{Account, Auth, Via};
 use crate::directory::{internal, json_err};
@@ -146,6 +151,7 @@ pub async fn rest_deny(
         request_id: request,
         actor_id: &me.id,
         bundle_message_id: None,
+        mirror_message_id: None,
     };
     Taken::Done(match deny_then_answer(st, deny, args).await {
         Err(r) => r,
@@ -181,6 +187,107 @@ async fn permission_card(st: &AskState, card: &str) -> sqlx::Result<Option<(Stri
     })
 }
 
+/// ask-answer 로 누른 권한 카드가 정할 요청. `mirror` 가 있으면 누른 글은 거울이고 `root` 가 원본 카드다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PermTarget {
+    request: String,
+    agent: String,
+    root: String,
+    mirror: Option<String>,
+}
+
+enum CardTarget {
+    Go(PermTarget),
+    /// 권한 카드(또는 그 진짜 거울)가 아니다 — 호출자 흐름 그대로(TS 로 넘김).
+    Hand,
+    /// 진짜 거울인데 누른 사람이 원본 채널을 못 본다 — TS `decide` 의 `forbidden`(쓰기 전).
+    Forbidden,
+}
+
+/// 카드·거울 길의 거절 문구 바꿈. 원본 카드 길은 `already_decided`·`request_expired` 를, 거울 길은 TS `messageRoutes.ts`
+/// 대로 `already_decided` 만 `already_answered` 로 바꾼다.
+fn mirror_refusal_code(via_mirror: bool, code: &str) -> &str {
+    match code {
+        "already_decided" => "already_answered",
+        "request_expired" if !via_mirror => "already_answered",
+        c => c,
+    }
+}
+
+/// TS 거울 길의 404(누른 거울이 결정 뒤 사라짐).
+pub const MIRROR_NOT_FOUND: &str = "no such choice request";
+
+fn mirror_forbidden() -> Response {
+    refusal(403, "forbidden", super::decide_core::FORBIDDEN_MESSAGE)
+}
+
+impl PermTarget {
+    fn refusal(&self, status: u16, code: &str, message: &str) -> Response {
+        refusal(
+            status,
+            mirror_refusal_code(self.mirror.is_some(), code),
+            message,
+        )
+    }
+
+    /// 정한 뒤 돌려줄 글 — 원본 카드 길은 원본(없으면 null), 거울 길은 누른 거울(없으면 404).
+    async fn decided_reply(&self, st: &AskState) -> Response {
+        match &self.mirror {
+            None => match message_by_id(&st.read, &self.root).await {
+                Ok(Some(row)) => ok_json(row),
+                Ok(None) => ok_json("null".to_owned()),
+                Err(e) => internal(e),
+            },
+            Some(m) => match message_by_id(&st.read, m).await {
+                Ok(Some(row)) => ok_json(row),
+                Ok(None) => json_err(StatusCode::NOT_FOUND, "not_found", MIRROR_NOT_FOUND),
+                Err(e) => internal(e),
+            },
+        }
+    }
+}
+
+/// TS `resolveDecision` + `decide` 앞머리(거울 갈래). 권한 카드면 그 요청, 권한 카드의 거울이면 **서버가 세운 진짜 거울**
+/// (`isGenuinePermissionMirror`)이고 누른 사람이 원본 채널을 볼 때만 원본 요청. 진짜 거울이 아니면 TS 는 물음 길로 가서
+/// 거절한다 — 그 길은 TS 가 한다(`Hand`). 모두 쓰기 전 읽기다.
+async fn card_target(st: &AskState, card: &str, actor: &str) -> sqlx::Result<CardTarget> {
+    let mut conn = st.read.acquire().await?;
+    let r = match resolve_decision(&mut conn, card).await {
+        Ok(r) => r,
+        // 못 읽는 거울 표지 등 — 맡지 않는다(호출자가 TS 로 넘긴다).
+        Err(sqlx::Error::Protocol(_)) => return Ok(CardTarget::Hand),
+        Err(e) => return Err(e),
+    };
+    let Some(DecisionRef::Permission {
+        request_id,
+        agent_id,
+        card_message_id: Some(root),
+        mirror_message_id,
+        ..
+    }) = r
+    else {
+        return Ok(CardTarget::Hand);
+    };
+    if let Some(m) = &mirror_message_id {
+        if !is_genuine_permission_mirror(&mut conn, m, &root, &agent_id).await? {
+            return Ok(CardTarget::Hand);
+        }
+        // TS: 거울로 정하는 사람도 원본 채널을 볼 수 있어야 한다. 원본이 사라졌으면(경합) TS 도 forbidden.
+        let Some((_, root_channel, _)) = read_ask_row(&mut conn, &root).await? else {
+            return Ok(CardTarget::Forbidden);
+        };
+        if !channel_visible_conn(&mut conn, &root_channel, actor).await? {
+            return Ok(CardTarget::Forbidden);
+        }
+    }
+    Ok(CardTarget::Go(PermTarget {
+        request: request_id,
+        agent: agent_id,
+        root,
+        mirror: mirror_message_id,
+    }))
+}
+
 /// 2. ask-answer 의 권한 카드 거절. `gate`(채널 보기·카드가 이 채널 글) 뒤에 부른다.
 pub async fn answer_card_deny(
     st: &AskState,
@@ -195,16 +302,18 @@ pub async fn answer_card_deny(
     if option != DENY_OPTION || !human_session(me, auth) {
         return Taken::Hand;
     }
-    let (request, agent) = match permission_card(st, card).await {
-        Ok(Some(p)) => p,
-        Ok(None) => return Taken::Hand,
+    let t = match card_target(st, card, &me.id).await {
+        Ok(CardTarget::Go(t)) => t,
+        Ok(CardTarget::Hand) => return Taken::Hand,
+        Ok(CardTarget::Forbidden) => return Taken::Done(mirror_forbidden()),
         Err(e) => return Taken::Done(internal(e)),
     };
     let args = DenyArgs {
-        agent_id: &agent,
-        request_id: &request,
+        agent_id: &t.agent,
+        request_id: &t.request,
         actor_id: &me.id,
         bundle_message_id: None,
+        mirror_message_id: t.mirror.as_deref(),
     };
     Taken::Done(match deny_then_answer(st, deny, args).await {
         Err(r) => r,
@@ -213,13 +322,9 @@ pub async fn answer_card_deny(
             status,
             code,
             message,
-        }) => card_refusal(status, code, &message),
-        // TS `decidedCard` — 답이 적힌 원본 카드.
-        Ok(DenyOutcome::Denied { .. }) => match message_by_id(&st.read, card).await {
-            Ok(Some(row)) => ok_json(row),
-            Ok(None) => ok_json("null".to_owned()),
-            Err(e) => internal(e),
-        },
+        }) => t.refusal(status, code, &message),
+        // TS `decidedCard` — 답이 적힌 원본 카드(거울이면 누른 거울).
+        Ok(DenyOutcome::Denied { .. }) => t.decided_reply(st).await,
     })
 }
 
@@ -270,6 +375,7 @@ pub async fn answer_bundle_deny(
         request_id: &request,
         actor_id: &me.id,
         bundle_message_id: Some(bundle),
+        mirror_message_id: None,
     };
     Taken::Done(match deny_then_answer(st, deny, args).await {
         Err(r) => r,
@@ -427,6 +533,7 @@ pub async fn rest_approve(
         has_once: once.is_some(),
         once,
         bundle_message_id: None,
+        mirror_message_id: None,
     };
     Taken::Done(match approve_then_answer(st, pool, args).await {
         Err(r) => r,
@@ -504,23 +611,26 @@ pub async fn answer_card_approve(
     if !is_approve_option(option) || !human_session(me, auth) {
         return Taken::Hand;
     }
-    let (request, agent) = match permission_card(st, card).await {
-        Ok(Some(p)) => p,
-        Ok(None) => return Taken::Hand,
+    let t = match card_target(st, card, &me.id).await {
+        Ok(CardTarget::Go(t)) => t,
+        Ok(CardTarget::Hand) => return Taken::Hand,
+        Ok(CardTarget::Forbidden) => return Taken::Done(mirror_forbidden()),
         Err(e) => return Taken::Done(internal(e)),
     };
-    let (has_once, once) = match card_has_once(&st.read, card, option).await {
+    // 거울에서 [이번 한 번]을 누르면 PR·head 는 원본 카드가 보인 값이다(TS `onceFromCard(ref.cardMessageId)`).
+    let (has_once, once) = match card_has_once(&st.read, &t.root, option).await {
         Ok(b) => b,
         Err(e) => return Taken::Done(internal(e)),
     };
     let args = ApproveArgs {
-        agent_id: &agent,
-        request_id: &request,
+        agent_id: &t.agent,
+        request_id: &t.request,
         actor_id: &me.id,
         option,
         has_once,
         once: once.as_ref(),
         bundle_message_id: None,
+        mirror_message_id: t.mirror.as_deref(),
     };
     Taken::Done(match approve_then_answer(st, pool, args).await {
         Err(r) => r,
@@ -529,12 +639,8 @@ pub async fn answer_card_approve(
             status,
             code,
             message,
-        }) => card_refusal(status, code, &message),
-        Ok(ApproveOutcome::Granted { .. }) => match message_by_id(&st.read, card).await {
-            Ok(Some(row)) => ok_json(row),
-            Ok(None) => ok_json("null".to_owned()),
-            Err(e) => internal(e),
-        },
+        }) => t.refusal(status, code, &message),
+        Ok(ApproveOutcome::Granted { .. }) => t.decided_reply(st).await,
     })
 }
 
@@ -591,6 +697,7 @@ pub async fn answer_bundle_approve(
         has_once,
         once: once.as_ref(),
         bundle_message_id: Some(bundle),
+        mirror_message_id: None,
     };
     Taken::Done(match approve_then_answer(st, pool, args).await {
         Err(r) => r,
@@ -834,5 +941,34 @@ mod once_tests {
             b[k] = v;
             assert!(!once_body_ok(Some(&b)), "{k}");
         }
+    }
+}
+
+#[cfg(test)]
+mod mirror_tests {
+    use super::mirror_refusal_code;
+
+    #[test]
+    fn refusal_codes_like_ts_routes() {
+        // 원본 카드 길: 둘 다 already_answered.
+        assert_eq!(
+            mirror_refusal_code(false, "already_decided"),
+            "already_answered"
+        );
+        assert_eq!(
+            mirror_refusal_code(false, "request_expired"),
+            "already_answered"
+        );
+        // 거울 길(TS messageRoutes 거울 갈래): already_decided 만 바꾼다.
+        assert_eq!(
+            mirror_refusal_code(true, "already_decided"),
+            "already_answered"
+        );
+        assert_eq!(
+            mirror_refusal_code(true, "request_expired"),
+            "request_expired"
+        );
+        assert_eq!(mirror_refusal_code(true, "forbidden"), "forbidden");
+        assert_eq!(mirror_refusal_code(false, "not_once"), "not_once");
     }
 }
