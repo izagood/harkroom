@@ -2727,6 +2727,21 @@ async fn spawn_loops() {
         Ok(m) => eprintln!("front: loop scheduled off — missing privileges {m:?}"),
         Err(e) => eprintln!("front: loop scheduled off — privilege check failed: {e}"),
     }
+    // S5.4 — 자동화 sweep(골격: 발송 단계 일부만, `loops::automation` 모듈 문서의 TODO). 주인 `automation` 은 TODO 가 끝날 때까지 `ts`.
+    let auto_privs = [
+        harkroom_server::core::msg_post::MESSAGE_POST_PRIVILEGES,
+        harkroom_server::loops::automation::AUTOMATION_SWEEP_PRIVILEGES,
+    ]
+    .concat();
+    match write::missing_in(&pool, &auto_privs, seqs).await {
+        Ok(m) if m.is_empty() => {
+            let implicit_ok = matches!(write::missing_in(&pool, harkroom_server::core::implicit_delegation::IMPLICIT_DELEGATION_PRIVILEGES, &[]).await, Ok(m) if m.is_empty());
+            eprintln!("front: loop automation on (runs only while server_loop owner is rust)");
+            harkroom_server::loops::automation::spawn(gate.clone(), pool.clone(), implicit_ok);
+        }
+        Ok(m) => eprintln!("front: loop automation off — missing privileges {m:?}"),
+        Err(e) => eprintln!("front: loop automation off — privilege check failed: {e}"),
+    }
     // C5c-3a — 백그라운드 회차 닫기. 스위치는 TS 와 같은 env.
     let bg_on =
         bg::background_enabled(std::env::var("HARKROOM_BACKGROUND_ENABLED").ok().as_deref());
