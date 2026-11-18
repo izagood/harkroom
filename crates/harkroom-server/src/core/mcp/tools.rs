@@ -45,7 +45,7 @@ pub const SERVED: &[&str] = &[
     "pr.status",
     // [`super::attachment_fetch`] — 거절·텍스트·PDF·작은 그림. 3MiB 넘는 그림 줄이기만 TS.
     "attachment.fetch",
-    // S5.4 — 기다리지 않는 빈 폴만([`super::inbox_poll`]). 긴 폴·줄 있는 배치·쓰기는 TS.
+    // S5.4 — 기다리지 않는 폴([`super::inbox_poll`]). 긴 폴·쓰기는 TS.
     "inbox.poll",
 ];
 
