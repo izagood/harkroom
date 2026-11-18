@@ -172,8 +172,8 @@ pub async fn answer(read: &PgPool, me: &Account, args: &Value) -> Option<String>
             ));
         }
     }
-    // 거울 검사 — TS 순서대로 `to` 를 실었으면 `mirror_audience`, 그다음 `checkAskMirror`. 다 지난 거울(권한 카드 거울
-    // 다시 쓰기·대신하기 검사·글 올리기)은 아직 TS 몫이다.
+    // 거울 검사 — TS 순서대로 `to` 를 실었으면 `mirror_audience`, 그다음 `checkAskMirror`. 다 지난 거울은 평범한 카드처럼
+    // 대신하기 검사로 이어진다.
     if let Some(root) = a.mirror_of {
         if a.to.is_some() {
             return Some(err(
@@ -197,7 +197,7 @@ pub async fn answer(read: &PgPool, me: &Account, args: &Value) -> Option<String>
         if let Some(code) = mirror_refusal(ask.as_ref(), visible, &ids) {
             return Some(err(code, mirror_message(code)));
         }
-        return None;
+        // 거울도 TS 처럼 이어서 대신하기 검사를 한다.
     }
     let o = args.as_object()?;
     let olds = supersedes_list(o);
@@ -420,19 +420,110 @@ fn plain(o: &Map<String, Value>, cause: Option<&str>) -> bool {
             .all(|k| !o.contains_key(*k))
 }
 
-/// Rust 가 세우는 거울 카드 — `mirrorOf` 가 있고, `to`·머지 거절·`supersedes`·계획 단계·원인 헤더가 없을 때만([`answer`] 의 거울
-/// 검사를 이미 지났다). 대신하기 검사·원인 기반 사람 앞 푸시·계획 잇기가 얽힌 거울은 TS.
+/// Rust 가 세우는 거울 카드 — `mirrorOf` 가 있고, `to`·머지 거절·원인 헤더가 없을 때만([`answer`] 의 거울·대신하기 검사를 이미
+/// 지났다). `supersedes`·`planStepId` 는 평범한 카드와 같은 길(닫기·계획 잇기)로 간다. 원인 기반 사람 앞 푸시가 얽힌 거울은 TS.
 fn mirror_plain(o: &Map<String, Value>, cause: Option<&str>) -> bool {
     cause.is_none()
         && o.get("mirrorOf").is_some_and(Value::is_string)
-        && ["to", "mergeDenialId", "supersedes", "planStepId"]
-            .iter()
-            .all(|k| !o.contains_key(*k))
+        && ["to", "mergeDenialId"].iter().all(|k| !o.contains_key(*k))
 }
 
 /// TS `renderPermissionMirror` 의 원본 찾기 — 지우지 않은 원본이 권한 요청 카드인가. 참이면(또는 못 찾으면) TS.
 pub const MIRROR_PERMISSION_SQL: &str =
     "select meta ? 'permissionRequest' from message where id = $1::uuid and deleted_at is null";
+
+/// TS `renderPermissionMirror` 의 원본 읽기 — 권한 요청 카드의 meta·채널·작성자 handle.
+pub const PERMISSION_MIRROR_ROOT_SQL: &str = "select m.meta, m.channel_id::text, a.handle
+       from message m left join account a on a.id = m.author_id
+      where m.id = $1::uuid and m.deleted_at is null and m.meta ? 'permissionRequest'";
+
+/// [`PERMISSION_MIRROR_ROOT_SQL`]·받는 사람 판정이 읽는 칸 — 읽기 풀의 기존 SELECT 뿐이다(새 GRANT 없음).
+pub const PERMISSION_MIRROR_READ_PRIVILEGES: &[(&str, &str)] = &[
+    ("message", "SELECT"),
+    ("account", "SELECT"),
+    ("channel", "SELECT"),
+    ("channel_member", "SELECT"),
+];
+
+/// 중립 권한 거울의 다시 쓴 본문·선택지·질문·`permissionMirror` 칸.
+#[derive(Debug, PartialEq)]
+struct NeutralMirror {
+    body: String,
+    options: Value,
+    prompt: Option<Value>,
+    mirror: Value,
+}
+
+/// TS `renderPermissionMirror` 의 중립 가지(순수 부분). 원본 `ask.options` 가 배열이 아니면(TS `permissionCardOptions` 로
+/// 채움) `None` → TS.
+fn neutral_mirror_render(root: &str, meta: &Value, handle: Option<&str>) -> Option<NeutralMirror> {
+    let ask = meta.get("ask");
+    let mut options = Vec::new();
+    for x in ask?.get("options")?.as_array()? {
+        let mut m = Map::new();
+        // TS `{ id: o.id, label: o.label }` — undefined 칸은 JSON 에서 빠진다.
+        for k in ["id", "label"] {
+            if let Some(v) = x.as_object()?.get(k) {
+                m.insert(k.into(), v.clone());
+            }
+        }
+        options.push(Value::Object(m));
+    }
+    let prompt = ask
+        .and_then(|a| a.get("prompt"))
+        .filter(|p| p.as_str().is_some_and(|s| !s.is_empty()))
+        .cloned();
+    let handle = format!("@{}", handle.unwrap_or("agent"));
+    Some(NeutralMirror {
+        body: format!(
+            "권한 요청 · {handle}\n원래 카드가 있는 채널에서 내용을 확인하고 정해 주세요.\nharkroom://message/{root}"
+        ),
+        options: Value::Array(options),
+        prompt,
+        mirror: serde_json::json!({ "rootId": root, "neutral": true }),
+    })
+}
+
+/// TS `mirrorAudienceSeesRoot` — 거울 채널의 받는 사람이 모두 원본 채널도 보는가.
+fn audience_sees_root(
+    same: bool,
+    root: &crate::core::audience::Audience,
+    mirror: &crate::core::audience::Audience,
+) -> bool {
+    use crate::core::audience::Audience;
+    if same {
+        return true;
+    }
+    match (root, mirror) {
+        (Audience::All, _) => true,
+        (_, Audience::All) => false,
+        (Audience::Accounts(r), Audience::Accounts(m)) => m.iter().all(|id| r.contains(id)),
+    }
+}
+
+/// 권한 카드 거울 — 중립이면 다시 쓴 꼴, 같은 카드를 그려야 하면(또는 못 읽으면) `None` → TS.
+async fn neutral_mirror(read: &PgPool, root: &str, channel: &str) -> Option<NeutralMirror> {
+    let row: Option<(Value, String, Option<String>)> = sqlx::query_as(PERMISSION_MIRROR_ROOT_SQL)
+        .bind(root)
+        .fetch_optional(read)
+        .await
+        .ok()?;
+    let (meta, root_channel, handle) = row?;
+    let same = root_channel == channel;
+    if same {
+        return None;
+    }
+    let ra = crate::core::audience::audience_for(read, &root_channel)
+        .await
+        .ok()?;
+    let ma = crate::core::audience::audience_for(read, channel)
+        .await
+        .ok()?;
+    if audience_sees_root(same, &ra, &ma) {
+        return None;
+    }
+    neutral_mirror_render(root, &meta, handle.as_deref())
+}
 
 /// 열린 카드 검사를 Rust 가 할 수 있는 꼴 — TS 의 `audience.kind === 'human' && !mirrorOf && !mergeDenialId && threadRootId`.
 /// `supersedes` 의 id 는 밝힌 카드로 센다(TS `declared`). 고르면 스레드 머리 id.
@@ -527,6 +618,7 @@ pub async fn answer_plain(
     }
     let st = st?;
     let mut push_to: Option<String> = None;
+    let mut mirror_render: Option<NeutralMirror> = None;
     let audience = match o.get("to").and_then(Value::as_str) {
         Some(to) => {
             if !addressed(o) {
@@ -555,15 +647,18 @@ pub async fn answer_plain(
         }
         None if plain(o, cause) => serde_json::json!({ "kind": "human" }),
         None if mirror_plain(o, cause) => {
-            // 권한 카드의 거울(`renderPermissionMirror` 다시 쓰기)은 TS. 글 뒤 `syncAskMirrors` 쓰기 칸이 없어도 TS.
+            // 권한 카드의 거울은 중립 꼴만 Rust 가 다시 쓴다(같은 카드를 그리는 거울은 TS). 글 뒤 `syncAskMirrors` 쓰기 칸이 없어도 TS.
             let root = o.get("mirrorOf")?.as_str()?;
             let perm: Option<bool> = sqlx::query_scalar(MIRROR_PERMISSION_SQL)
                 .bind(root)
                 .fetch_optional(read)
                 .await
                 .ok()?;
-            if perm != Some(false) {
-                return None;
+            match perm {
+                Some(false) => {}
+                // 중립 거울(원본을 못 보는 사람이 있는 채널)만 Rust 가 다시 쓴다. 같은 카드를 그리는 거울은 TS.
+                Some(true) => mirror_render = Some(neutral_mirror(read, root, a.channel).await?),
+                None => return None,
             }
             use crate::core::ask::{ASK_PRIVILEGES, ASK_SEQUENCE_PRIVILEGES};
             if !crate::write::missing_in(&st.write, ASK_PRIVILEGES, ASK_SEQUENCE_PRIVILEGES)
@@ -593,11 +688,23 @@ pub async fn answer_plain(
             .as_object_mut()?
             .insert("mirrorOf".into(), Value::from(root));
     }
+    if let Some(r) = &mirror_render {
+        let ask = meta.get_mut("ask")?.as_object_mut()?;
+        ask.insert("options".into(), r.options.clone());
+        match &r.prompt {
+            Some(p) => ask.insert("prompt".into(), p.clone()),
+            None => ask.remove("prompt"),
+        };
+        meta.insert("permissionMirror".into(), r.mirror.clone());
+    }
     let mut sub = Map::new();
     for k in ["channelId", "body", "threadRootId", "model"] {
         if let Some(v) = o.get(k) {
             sub.insert(k.into(), v.clone());
         }
+    }
+    if let Some(r) = &mirror_render {
+        sub.insert("body".into(), Value::from(r.body.clone()));
     }
     super::msg_post::answer_ask(
         st,
@@ -1021,10 +1128,16 @@ mod tests {
         let o = base.as_object().unwrap();
         assert!(mirror_plain(o, None));
         assert!(!mirror_plain(o, Some(C)));
-        for k in ["to", "mergeDenialId", "supersedes", "planStepId"] {
+        for k in ["to", "mergeDenialId"] {
             let mut m = o.clone();
             m.insert(k.into(), json!("x"));
             assert!(!mirror_plain(&m, None), "{k}");
+        }
+        // 대신하기·계획 단계는 평범한 카드와 같은 길로 Rust 가 한다.
+        for k in ["supersedes", "planStepId"] {
+            let mut m = o.clone();
+            m.insert(k.into(), json!("x"));
+            assert!(mirror_plain(&m, None), "{k}");
         }
         let mut m = o.clone();
         m.remove("mirrorOf");
@@ -1156,6 +1269,38 @@ mod tests {
         ] {
             assert!(parse(&ask(bad.clone())).is_none(), "{bad}");
         }
+    }
+
+    #[test]
+    fn neutral_permission_mirror_like_ts() {
+        let meta = json!({ "permissionRequest": {}, "ask": { "options": [{ "id": "a", "label": "A", "hint": "h" }], "prompt": "p" } });
+        let r = neutral_mirror_render(C, &meta, Some("bot")).unwrap();
+        assert_eq!(
+            r.body,
+            format!(
+                "권한 요청 · @bot\n원래 카드가 있는 채널에서 내용을 확인하고 정해 주세요.\nharkroom://message/{C}"
+            )
+        );
+        assert_eq!(r.options, json!([{ "id": "a", "label": "A" }]));
+        assert_eq!(r.prompt, Some(json!("p")));
+        assert_eq!(r.mirror, json!({ "rootId": C, "neutral": true }));
+        let r = neutral_mirror_render(C, &json!({ "ask": { "options": [], "prompt": "" } }), None)
+            .unwrap();
+        assert!(r.body.starts_with("권한 요청 · @agent\n"));
+        assert_eq!(r.prompt, None);
+        // 원본 선택지가 없으면 TS(`permissionCardOptions`).
+        assert!(neutral_mirror_render(C, &json!({ "permissionRequest": {} }), None).is_none());
+    }
+
+    #[test]
+    fn audience_sees_root_like_ts() {
+        use crate::core::audience::Audience::{Accounts, All};
+        let ids = |v: &[&str]| Accounts(v.iter().map(|s| s.to_string()).collect());
+        assert!(audience_sees_root(true, &ids(&[]), &All));
+        assert!(audience_sees_root(false, &All, &ids(&["x"])));
+        assert!(!audience_sees_root(false, &ids(&["x"]), &All));
+        assert!(audience_sees_root(false, &ids(&["x", "y"]), &ids(&["y"])));
+        assert!(!audience_sees_root(false, &ids(&["x"]), &ids(&["x", "z"])));
     }
 
     #[test]
