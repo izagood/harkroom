@@ -237,6 +237,144 @@ pub fn merge_card_meta(permission_request: Value, ci: bool) -> Map<String, Value
     m
 }
 
+/// TS `openPermissionRequest` 의 하루 상한 셈(`created_at > now - 1일`).
+pub const REQUEST_COUNT_SQL: &str = "select count(*)::bigint from permission_request \
+     where agent_id = $1::uuid and created_at > $2::timestamptz - interval '1 day'";
+
+/// TS `openPermissionRequest` 의 요청 줄(merge · 거절에서 온 것 · 위임 없음 — `warnings` 는 빈 배열).
+pub const REQUEST_INSERT_SQL: &str = "insert into permission_request \
+     (agent_id, kind, target, reason, warnings, channel_id, thread_root_id, created_at, expires_at, denial_id, mandate_id) \
+     values ($1::uuid, 'merge', $2, $3, '{}', $4::uuid, $5::uuid, $6::timestamptz, $7::timestamptz, $8::uuid, null) \
+     returning id::text";
+
+/// TS `supersedeOlderRequests`(거절 카드 — `denialPr` 가 있다: 같은 PR 의 카드만, 살아 있는 pending 도 대체).
+pub const SUPERSEDE_OLDER_SQL: &str = "update permission_request \
+        set superseded_by = $6::uuid, \
+            status = case when status = 'pending' then 'superseded' else status end, \
+            decided_at = coalesce(decided_at, $7::timestamptz) \
+      where agent_id = $1::uuid and kind = $2 and target = $3 and channel_id = $4::uuid and thread_root_id = $5::uuid \
+        and id <> $6::uuid and superseded_by is null \
+        and ($8::int is null or denial_id in (select d.id from merge_denial d where d.scope = $3 and d.pr_number = $8)) \
+        and (status = 'expired' or (status = 'pending' and (expires_at <= $7::timestamptz or $8::int is not null)))";
+
+/// TS `recordAudit({ action: 'permission.requested', actorId: agent, target: agent, detail })`.
+pub const REQUEST_AUDIT_SQL: &str = "insert into audit_log (action, actor_id, target, detail) \
+     values ('permission.requested', $1::uuid, $2, $3::jsonb)";
+
+/// TS `linkPermissionCard` 의 잇기(옛 카드 닫기 `closeSupersededCards` 는 뒤처리).
+pub const LINK_CARD_SQL: &str = "update permission_request set card_message_id = $2::uuid \
+     where id = $1::uuid and card_message_id is null";
+
+/// 요청 줄 세우기·잇기에 드는 쓰기 풀 칸. 하나라도 없으면 TS.
+pub const REQUEST_WRITE_PRIVILEGES: &[(&str, &str)] = &[
+    ("permission_request.id", "SELECT"),
+    ("permission_request.agent_id", "SELECT"),
+    ("permission_request.kind", "SELECT"),
+    ("permission_request.target", "SELECT"),
+    ("permission_request.channel_id", "SELECT"),
+    ("permission_request.thread_root_id", "SELECT"),
+    ("permission_request.status", "SELECT"),
+    ("permission_request.expires_at", "SELECT"),
+    ("permission_request.created_at", "SELECT"),
+    ("permission_request.denial_id", "SELECT"),
+    ("permission_request.superseded_by", "SELECT"),
+    ("permission_request.decided_at", "SELECT"),
+    ("permission_request.card_message_id", "SELECT"),
+    ("permission_request.agent_id", "INSERT"),
+    ("permission_request.kind", "INSERT"),
+    ("permission_request.target", "INSERT"),
+    ("permission_request.reason", "INSERT"),
+    ("permission_request.warnings", "INSERT"),
+    ("permission_request.channel_id", "INSERT"),
+    ("permission_request.thread_root_id", "INSERT"),
+    ("permission_request.created_at", "INSERT"),
+    ("permission_request.expires_at", "INSERT"),
+    ("permission_request.denial_id", "INSERT"),
+    ("permission_request.mandate_id", "INSERT"),
+    ("permission_request.superseded_by", "UPDATE"),
+    ("permission_request.status", "UPDATE"),
+    ("permission_request.decided_at", "UPDATE"),
+    ("permission_request.card_message_id", "UPDATE"),
+    ("merge_denial.id", "SELECT"),
+    ("merge_denial.scope", "SELECT"),
+    ("merge_denial.pr_number", "SELECT"),
+    ("audit_log", "INSERT"),
+];
+
+/// 요청 줄 세우기 결과.
+pub enum Opened {
+    Created { request_id: String },
+    TooMany,
+}
+
+/// TS `openPermissionRequest` 의 세우기 차례(merge · 거절에서 온 요청 · 위임 없음): 하루 상한 → insert → supersede → 감사.
+/// 한 tx 안에서 부른다. `now`·`expires` 는 ISO 문자열(`expires = now + 하루`).
+#[allow(clippy::too_many_arguments)]
+pub async fn open_merge_request(
+    tx: &mut sqlx::PgConnection,
+    agent: &str,
+    target: &str,
+    reason: &str,
+    channel: &str,
+    thread: &str,
+    denial_id: &str,
+    denial_pr: i64,
+    now: &str,
+    expires: &str,
+) -> Result<Opened, sqlx::Error> {
+    let n: i64 = sqlx::query_scalar(REQUEST_COUNT_SQL)
+        .bind(agent)
+        .bind(now)
+        .fetch_one(&mut *tx)
+        .await?;
+    if n >= PERMISSION_REQUESTS_PER_DAY {
+        return Ok(Opened::TooMany);
+    }
+    let id: String = sqlx::query_scalar(REQUEST_INSERT_SQL)
+        .bind(agent)
+        .bind(target)
+        .bind(reason)
+        .bind(channel)
+        .bind(thread)
+        .bind(now)
+        .bind(expires)
+        .bind(denial_id)
+        .fetch_one(&mut *tx)
+        .await?;
+    sqlx::query(SUPERSEDE_OLDER_SQL)
+        .bind(agent)
+        .bind("merge")
+        .bind(target)
+        .bind(channel)
+        .bind(thread)
+        .bind(&id)
+        .bind(now)
+        .bind(i32::try_from(denial_pr).ok())
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(REQUEST_AUDIT_SQL)
+        .bind(agent)
+        .bind(agent)
+        .bind(request_audit_detail(&id, target, channel, thread))
+        .execute(&mut *tx)
+        .await?;
+    Ok(Opened::Created { request_id: id })
+}
+
+/// TS 감사 `detail` — `{ requestId, kind, target, warnings, channelId, threadRootId }`.
+pub fn request_audit_detail(id: &str, target: &str, channel: &str, thread: &str) -> String {
+    json!({
+        "requestId": id, "kind": "merge", "target": target, "warnings": [],
+        "channelId": channel, "threadRootId": thread,
+    })
+    .to_string()
+}
+
+/// TS `too_many` 거절 글.
+pub fn too_many_message() -> String {
+    format!("at most {PERMISSION_REQUESTS_PER_DAY} permission requests a day")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -417,5 +555,21 @@ mod tests {
         let meta = merge_card_meta(m, false);
         assert_eq!(meta["ask"]["prompt"], "권한을 줄까?");
         assert_eq!(meta["ask"]["to"], json!({ "kind": "human" }));
+    }
+
+    #[test]
+    fn request_sql_follows_ts() {
+        assert!(SUPERSEDE_OLDER_SQL.contains("d.pr_number = $8"));
+        assert!(SUPERSEDE_OLDER_SQL.contains("$8::int is not null"));
+        assert!(REQUEST_INSERT_SQL.contains("'merge'"));
+        assert!(LINK_CARD_SQL.contains("card_message_id is null"));
+        assert_eq!(too_many_message(), "at most 20 permission requests a day");
+        let d: Value =
+            serde_json::from_str(&request_audit_detail("r", "repo:a/b", "c", "t")).unwrap();
+        assert_eq!(
+            d,
+            json!({ "requestId": "r", "kind": "merge", "target": "repo:a/b", "warnings": [], "channelId": "c", "threadRootId": "t" })
+        );
+        assert!(REQUEST_WRITE_PRIVILEGES.contains(&("audit_log", "INSERT")));
     }
 }
