@@ -89,17 +89,26 @@ fn who_takes_it() {
         ("approve", "command"),
         ("approve", "future_kind"),
         ("approve_once", "merge"),
-        ("approve_hour", "tool"),
-        // C2 — new_mandate 는 tool 만(command 는 TS 409 bad_decision, merge 는 TS).
-        ("approve_new_mandate", "command"),
         ("approve_new_mandate", "merge"),
-        // 위임장 없는 [이번 턴만]은 TS(409 bad_decision).
-        ("approve_turn", "tool"),
         ("approve_turn", "merge"),
         ("approve_mandate", "merge"),
         ("nope", "tool"),
     ] {
         assert_eq!(rust_takes(shape(o, k)), None, "{o}/{k}");
+    }
+    // S5.4 11d — TS 가 쓰기 없이 409 `bad_decision` 으로 답하는 꼴도 Rust(같은 답).
+    for (o, k, d) in [
+        ("approve_hour", "tool", Decision::ApproveHour),
+        ("approve_turn", "tool", Decision::ApproveTurn),
+        ("approve_turn", "command", Decision::ApproveTurn),
+        ("approve_mandate", "command", Decision::ApproveMandate),
+        (
+            "approve_new_mandate",
+            "command",
+            Decision::ApproveNewMandate,
+        ),
+    ] {
+        assert_eq!(rust_takes(shape(o, k)), Some(d), "{o}/{k}");
     }
     // C1·C2·C3 — 위임장이 있는 tool 승인 넷과 command once·hour 는 Rust, 나머지(merge·deny)는 TS.
     let m = |o, k| Shape {
@@ -132,10 +141,6 @@ fn who_takes_it() {
         ("approve", "merge"),
         ("approve_once", "merge"),
         ("deny", "command"),
-        // command 에 위임장 갈래는 TS 409 bad_decision 그대로.
-        ("approve_mandate", "command"),
-        ("approve_new_mandate", "command"),
-        ("approve_turn", "command"),
     ] {
         assert_eq!(rust_takes(m(o, k)), None, "{o}/{k}");
     }

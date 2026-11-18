@@ -568,8 +568,7 @@ pub fn rust_takes(s: Shape<'_>) -> Option<Decision> {
         (Decision::Approve | Decision::ApproveMandate | Decision::ApproveNewMandate, "tool") => {
             !s.has_denial
         }
-        // C1 — [이번 턴만]은 위임장이 있는 tool 카드만(없으면 TS 409 `bad_decision`).
-        (Decision::ApproveTurn, "tool") => !s.has_denial && s.has_mandate,
+        // C1 — [이번 턴만]은 위임장이 있는 tool 카드만 승인이다(없으면 409 `bad_decision` — 11d 부터 그 답도 Rust, 아래).
         // C3 — command 는 위임장이 있어도 Rust(1시간 command_grant + 그 위임장에 command 줄).
         (Decision::ApproveOnce | Decision::ApproveHour, "command") => !s.has_denial,
         // S5.4 — tool 카드의 [이번 한 번](once 없음·거절 기록 없음)은 TS 가 쓰기 없이 409 `not_once` 로 돌려보낸다 — Rust 가 같은 답을 한다.
