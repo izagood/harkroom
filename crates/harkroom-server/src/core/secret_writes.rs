@@ -7,7 +7,7 @@
 //! - 판정 순서·상태·코드는 TS 와 같다. zod 오류 문구는 다르다 — 대조는 상태·코드만 본다.
 //! - **값은 답·감사·오류 어디에도 싣지 않는다.** 봉인은 v2(AAD = id·판·종류·kid).
 //! - 권한은 [`SECRET_WRITES_PRIVILEGES`]·[`crate::secrets::verify::SECRET_KEY_CHECK_PRIVILEGES`] — 없으면 TS 에 남는다.
-//! - 소유자 보기 `POST /secrets/:id/reveal` 은 `secret_reveal.rs` 가 맡는다(같은 기동 키 확인). 에이전트 줄은 `agent_secret_create.rs`·`agent_secret_reveal.rs`(import 요청은 TS).
+//! - 소유자 보기 `POST /secrets/:id/reveal` 은 `secret_reveal.rs` 가 맡는다(같은 기동 키 확인). 에이전트 줄은 `agent_secret_create.rs`(generate·import)·`agent_secret_reveal.rs`.
 use crate::auth::{Account, RequireAccount};
 use crate::core::content_scan::scan_write;
 use crate::core::secrets_read::{SECRET_SQL, load};
