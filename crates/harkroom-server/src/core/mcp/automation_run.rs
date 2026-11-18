@@ -3,7 +3,7 @@
 //! **자동화 행 잠금 아래 한 트랜잭션**에서 에이전트 쿼터(10분 1회·1시간 3회)·원인 한 번·회차 INSERT(`runAutomationNow` → `enqueueRun`).
 //! 글은 Rust 도 쓰지 않는다 — 회차만 넣고 발송은 sweeper(TS) 몫이다(TS 도 같다).
 //!
-//! - **TS 로 넘기는 것**(`None`): zod 가 받지 않을 인자 · 일정 트리거의 시간대가 허용 목록(`automation_propose::TZ_ALLOW`) 밖 ·
+//! - **TS 로 넘기는 것**(`None`): zod 가 받지 않을 인자 · 일정 트리거의 시간대를 `chrono-tz` 가 모름(정확한 IANA 이름이 아님) ·
 //!   1시간 회차가 `RATE_LIMIT_PER_HOUR` 에 닿은 경우(자동화를 끄고 위임장을 닫는 쓰기는 TS 만 한다 — 롤백한 뒤 넘기므로 TS 가 같은 판정을
 //!   처음부터 다시 한다) · DB 오류(롤백 뒤) · 회차 행 해석 실패(커밋 **전**에 롤백하므로 이중 INSERT 가 없다).
 //! - 쓰기 칸은 `automation_run` INSERT 여덟 칸뿐이다. `automation` 에는 쓰지 않는다 — `for update` 잠금이 표의 UPDATE 칸 하나를
@@ -58,12 +58,6 @@ const AUTOMATION_SQL: &str = "select a.id::text, a.owner_id::text, a.channel_id:
        (a.approved_at is not null) from automation a where a.id = $1::uuid and a.owner_id = $2::uuid and a.deleted_at is null";
 const CHAIN_LIMIT_SQL: &str =
     "select coalesce((select chain_limit from mention_policy where id = true), $1)::int";
-/// TS `timeVars` — 그 시간대의 오늘을 기준으로 어제·지난주(월~일). `isodow - 1` = TS `(dow + 6) % 7`.
-const TIME_VARS_SQL: &str = "with t as (select (now() at time zone $1)::date as d), \
-       w as (select d, extract(isodow from d)::int - 1 as since from t) \
-     select to_char(d, 'YYYY-MM-DD'), to_char(d - 1, 'YYYY-MM-DD'), \
-            to_char(d - since - 7, 'YYYY-MM-DD'), to_char(d - since - 1, 'YYYY-MM-DD') from w";
-
 const LOCK_SQL: &str = "select 1 from automation where id = $1::uuid for update";
 const QUOTA_SQL: &str = "select floor(extract(epoch from max(created_at)) * 1000)::bigint, \
        floor(extract(epoch from now()) * 1000)::bigint, count(*)::int from automation_run \
@@ -184,7 +178,7 @@ pub async fn answer(
     if AGENT_RUN_CHAIN_DEPTH >= chain_limit {
         return refuse("chain_capped");
     }
-    let vars = vars_for(read, &a.trigger).await?;
+    let vars = vars_for(&a.trigger)?;
     // TS `manual:${randomUUID()}` — v4 를 DB 에서 받는다(크레이트에 uuid 가 없다).
     let event_key: String = sqlx::query_scalar("select 'manual:' || gen_random_uuid()::text")
         .fetch_one(read)
@@ -214,27 +208,23 @@ pub async fn answer(
     }
 }
 
-/// TS `runAutomationNow` 의 `vars` — 일정 트리거면 `timeVars(now, tz)`, 아니면 빈 객체. 키 순서는 TS 와 같다(jsonb 로 저장돼 DB 에서는 무관).
-async fn vars_for(read: &PgPool, trigger: &str) -> Option<Value> {
+/// TS `runAutomationNow` 의 `vars` — 일정 트리거면 `timeVars(now, tz)`(프로세스 시각, TS 와 같다), 아니면 빈 객체.
+/// 계산은 [`automation_time`](crate::core::automation_time) 이 TS 산법 그대로 한다. `chrono-tz` 가 모르는 tz 이름
+/// (TS `Intl` 은 대소문자 무시·별칭으로 받을 수 있다)만 TS 로 넘긴다(`None`).
+fn vars_for(trigger: &str) -> Option<Value> {
     let t: Value = serde_json::from_str(trigger).ok()?;
-    let mut m = serde_json::Map::new();
     if t.get("kind").and_then(Value::as_str) == Some("schedule") {
-        let tz = t
-            .get("tz")?
-            .as_str()
-            .filter(|s| super::automation_propose::TZ_ALLOW.contains(s))?;
-        let (d, y, s, e): (String, String, String, String) = sqlx::query_as(TIME_VARS_SQL)
-            .bind(tz)
-            .fetch_one(read)
-            .await
-            .ok()?;
-        m.insert("date".into(), d.into());
-        m.insert("yesterday".into(), y.into());
-        m.insert("lastWeek.start".into(), s.clone().into());
-        m.insert("lastWeek.end".into(), e.clone().into());
-        m.insert("lastWeek".into(), format!("{s} ~ {e}").into());
+        let tz = crate::core::automation_time::parse_tz(t.get("tz")?.as_str()?)?;
+        let now = i64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()?
+                .as_millis(),
+        )
+        .ok()?;
+        return crate::core::automation_time::time_vars(now, tz).map(Value::Object);
     }
-    Some(Value::Object(m))
+    Some(Value::Object(serde_json::Map::new()))
 }
 
 /// 회차 넣기의 결말 — 시험(`tests/automation_grant.rs`)이 무권한 롤로 [`enqueue_tx`] 를 돌려 본다.
