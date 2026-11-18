@@ -826,6 +826,40 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 결정 3 — 채널 지우기. 세 겹 잠금: `HARKROOM_CORE=rust`, 쓰기 풀에 그 권한이 다 있을 때, 그리고 첨부 저장소
+    // (`ATTACHMENT_ROOT`)가 있을 때만 — 없으면 지운 채널의 파일이 고아로 남으므로 TS 에 남는다.
+    let channel_delete = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::attachment_store::LocalStorage;
+            use harkroom_server::core::channel_delete as c;
+            match (
+                write::missing_in(w, c::DELETE_PRIVILEGES, &[]).await,
+                LocalStorage::from_env(),
+            ) {
+                (Ok(m), Ok(Some(s))) if m.is_empty() => Some((w.clone(), s)),
+                (Ok(m), Ok(Some(_))) => {
+                    eprintln!("front: channel delete core off — missing privileges {m:?}");
+                    None
+                }
+                (Ok(_), Ok(None)) => {
+                    eprintln!("front: channel delete core off — ATTACHMENT_ROOT not set");
+                    None
+                }
+                (Ok(_), Err(e)) => {
+                    eprintln!("front: channel delete core off — attachment root ({e})");
+                    None
+                }
+                (Err(e), _) => {
+                    eprintln!(
+                        "front: channel delete core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 CT1 — 채널에 팀 넣기(`POST /channels/{id}/teams/{teamId}/add`). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만.
     let channel_team_add = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -2160,6 +2194,21 @@ async fn main() {
             core_routes.router = core_routes.router.merge(cu.router);
             core_routes.http.extend(cu.http);
             core_routes.sockets.extend(cu.sockets);
+        }
+        if let Some((write, storage)) = channel_delete {
+            let cd = harkroom_server::core::channel_delete::routes(
+                harkroom_server::core::channel_delete::DeleteState {
+                    read: state.pool.clone(),
+                    write,
+                    trust: (*state.trust).clone(),
+                    storage,
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(cd.router);
+            core_routes.http.extend(cd.http);
+            core_routes.sockets.extend(cd.sockets);
         }
         if let Some(write) = auto_mention_doc {
             let am = harkroom_server::core::channel_auto_mention_doc::routes(
