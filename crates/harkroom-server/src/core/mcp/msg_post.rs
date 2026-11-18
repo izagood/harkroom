@@ -182,7 +182,7 @@ pub async fn answer(
     .await
 }
 
-/// MCP `artifact.publish` 의 게시(새 안, [`super::artifact_publish::publish`]) — 업로드 행을 붙인 글을 `artifact` 훅과 같은 tx 로 올린다.
+/// MCP `artifact.publish` 의 게시([`super::artifact_publish::publish`]) — 페이지(·표지) 첨부를 붙인 글을 `artifact` 훅과 같은 tx 로 올린다.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn answer_artifact(
     st: &PostState,
