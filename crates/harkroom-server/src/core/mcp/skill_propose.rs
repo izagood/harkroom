@@ -22,12 +22,16 @@ const BUILTIN_SKILL_PREFIX: &str = "harkroom-";
 /// TS `SYSTEM_I18N_MAX_ARG_LENGTH`.
 const I18N_MAX_ARG: usize = 200;
 
-/// 쓰기 풀에 이 권한이 다 있을 때만 Rust 가 답한다(`main.rs`). 운영 GRANT: `grant select, insert on workspace_skill` ·
+/// 쓰기 풀에 이 권한이 다 있을 때만 Rust 가 답한다(`main.rs`). 운영 GRANT: `grant select on workspace_skill` · `grant insert (slug, body, proposed_by, flagged_at, flag_reason) on workspace_skill` ·
 /// `grant update (body, proposed_by, proposed_at, approved_by, approved_at, disabled_at, flagged_at, flag_reason) on workspace_skill`
 /// (글·outbox 칸은 `message.post` 묶음에서 이미 받았다).
 pub const SKILL_PROPOSE_PRIVILEGES: &[(&str, &str)] = &[
     ("workspace_skill", "SELECT"),
-    ("workspace_skill", "INSERT"),
+    ("workspace_skill.slug", "INSERT"),
+    ("workspace_skill.body", "INSERT"),
+    ("workspace_skill.proposed_by", "INSERT"),
+    ("workspace_skill.flagged_at", "INSERT"),
+    ("workspace_skill.flag_reason", "INSERT"),
     ("workspace_skill.body", "UPDATE"),
     ("workspace_skill.proposed_by", "UPDATE"),
     ("workspace_skill.proposed_at", "UPDATE"),
