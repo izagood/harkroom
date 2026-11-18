@@ -74,6 +74,7 @@ pub mod operator_merge_lines;
 pub mod operator_rest;
 pub mod operator_restart;
 pub mod operator_stop;
+pub mod pickable_models;
 pub mod plan_graph;
 pub mod relay;
 pub mod relay_attention;

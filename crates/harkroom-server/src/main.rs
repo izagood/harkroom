@@ -821,6 +821,28 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 — 고를 수 있는 모델 목록 쓰기(`PUT /accounts/agents/{id}/pickable-models`, `clearOutside: true` 는 안에서 TS 로).
+    // 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만.
+    let pickable_models_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::pickable_models as a;
+            match write::missing_in(w, a::PICKABLE_MODELS_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: pickable models core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: pickable models core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 — 보관소 잠그기(`DELETE /auth/step-up`). 쓰기 풀에 세션의 창 칸 UPDATE 가 있을 때만 — 아니면 TS 에 남는다.
     let step_up_end_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -1855,6 +1877,21 @@ async fn main() {
             core_routes.router = core_routes.router.merge(li.router);
             core_routes.http.extend(li.http);
             core_routes.sockets.extend(li.sockets);
+        }
+        // S5.4 — 고를 수 있는 모델 목록 쓰기 1줄. 권한이 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = pickable_models_write {
+            let pm = harkroom_server::core::pickable_models::routes(
+                harkroom_server::core::pickable_models::PickableModelsState {
+                    write,
+                    trust: state.trust.clone(),
+                    up: state.up.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(pm.router);
+            core_routes.http.extend(pm.http);
+            core_routes.sockets.extend(pm.sockets);
         }
         // S5.4 — 보관소 잠그기 1줄. 권한이 있을 때만 — 아니면 TS 에 남는다(열기 POST 는 argon2·리미터 때문에 TS).
         if let Some(write) = step_up_end_write {
