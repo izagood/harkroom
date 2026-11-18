@@ -1702,6 +1702,72 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 — `POST /agent/merge-checks` 의 이른 거절(`lease_invalid`·`bad_repo` + `repo.merge.denied` 감사). 쓰기 풀에 [`MERGE_CHECKS_DENY_PRIVILEGES`] 가 다 있을 때만.
+    let merge_checks_deny = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::merge_checks as t;
+            match write::missing_in(w, t::MERGE_CHECKS_DENY_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: merge checks deny off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: merge checks deny off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+    // S5.4 — `POST /agent/merge-checks` 의 흔한 허락 길. 이른 거절이 켜졌고 [`MERGE_CHECKS_ALLOW_PRIVILEGES`] 까지 있을 때만.
+    let merge_checks_allow = match &merge_checks_deny {
+        Some(w) => {
+            use harkroom_server::core::merge_checks as t;
+            match write::missing_in(w, t::MERGE_CHECKS_ALLOW_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: merge checks allow off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: merge checks allow off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        None => None,
+    };
+    // S5.4 — `POST /agent/api-checks` 의 임대 거절(`lease_invalid` + `api.call.denied` 감사). 쓰기 풀에 [`API_CHECKS_DENY_PRIVILEGES`] 가 다 있을 때만.
+    let api_checks_deny = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::api_checks as t;
+            match write::missing_in(w, t::API_CHECKS_DENY_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: api checks deny off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: api checks deny off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 — `POST /agent/merge-closed`. 쓰기 풀에 [`MERGE_CLOSED_PRIVILEGES`] 가 다 있을 때만.
     let merge_closed_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -3908,10 +3974,12 @@ async fn main() {
             core_routes.http.extend(ps.http);
             core_routes.sockets.extend(ps.sockets);
         }
-        // S5.4 — `POST /agent/merge-checks`·`/agent/merge-results`(부분). 오퍼레이터·모양 판정만 Rust, 나머지는 TS 로 넘긴다 — DB 를 건드리지 않는다.
+        // S5.4 — `POST /agent/merge-checks`·`/agent/merge-results`(부분). 오퍼레이터·모양 판정과 (권한이 있으면) 이른 거절만 Rust, 나머지는 TS 로 넘긴다.
         if matches!(core_mode, harkroom_server::core::CoreMode::Rust) {
             let mk = harkroom_server::core::merge_checks::routes(
                 state.up.clone(),
+                merge_checks_deny.clone(),
+                merge_checks_allow.clone(),
                 merge_results_read.clone(),
                 merge_results_post.clone(),
                 auth.clone(),
@@ -3921,10 +3989,11 @@ async fn main() {
             core_routes.http.extend(mk.http);
             core_routes.sockets.extend(mk.sockets);
         }
-        // S5.4 — `POST /agent/api-checks`(부분). 오퍼레이터·모양 판정만 Rust, 나머지는 TS 로 넘긴다 — DB 를 건드리지 않는다.
+        // S5.4 — `POST /agent/api-checks`(부분). 오퍼레이터·모양 판정과 (권한이 있으면) 임대 거절만 Rust, 나머지는 TS 로 넘긴다.
         if matches!(core_mode, harkroom_server::core::CoreMode::Rust) {
             let ac = harkroom_server::core::api_checks::routes(
                 state.up.clone(),
+                api_checks_deny.clone(),
                 auth.clone(),
                 state.cors.clone(),
             );
