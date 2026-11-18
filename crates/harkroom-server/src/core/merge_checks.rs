@@ -188,6 +188,7 @@ pub const MERGE_RESULTS_WRITE_PRIVILEGES: &[(&str, &str)] = &[
     ("merge_approval.pr_number", "SELECT"),
     ("merge_approval.head_sha", "SELECT"),
     ("merge_approval.gh_user", "SELECT"),
+    ("merge_approval.approved_checks", "SELECT"),
     ("merge_denial.id", "SELECT"),
     ("merge_denial.scope", "SELECT"),
     ("merge_denial.pr_number", "SELECT"),
@@ -239,7 +240,7 @@ const POST_TRAIL_SQL: &str = "select action, detail->'viaChain' from audit_log \
         and target = $1 and detail->>'leaseId' = $2 and (detail->>'number')::int = $3::bigint and detail->>'headSha' = $4";
 
 /// TS `reportMerge` 의 `usedApproval` select.
-const USED_APPROVAL_SQL: &str = "select id::text, approved_by::text, ci_override \
+const USED_APPROVAL_SQL: &str = "select id::text, approved_by::text, ci_override, approved_checks \
        from merge_approval where used_lease_id = $1::uuid and scope = $2 and pr_number = $3::bigint and head_sha = $4";
 
 /// JS 참 값(`x.viaChain` 의 `&&`).
@@ -264,17 +265,71 @@ pub fn is_ci_refusal(c: Option<&Value>) -> bool {
             && c.get("mergeState").and_then(Value::as_str) == Some("UNSTABLE"))
 }
 
-/// Rust 가 적을 수 있는 보고인가 — `failed`(CI 거절 포함)·무시한 체크 없는 `merged`·`queued`. 나머지는 감시·카드
-/// 닫기·거절 기록이 붙어 TS 몫이다.
+/// Rust 가 적을 수 있는 보고인가 — `failed`(CI 거절 포함)·`merged`·`queued`(무시한 체크 포함). 감시·카드 닫기·gh 이름
+/// 메모가 필요한 갈래는 `report_failed` 가 DB 를 보고 TS 로 넘긴다.
 pub fn rust_reportable(o: &Value) -> bool {
-    match o.get("result").and_then(Value::as_str) {
-        Some("failed") => true,
-        // 무시한 체크가 있으면 TS `sanitizeCheckNames`(\p{Cf} 거르기)·꼬리 문구가 필요하다 — TS 몫.
-        Some("merged" | "queued") => o
-            .get("ignoredChecks")
-            .and_then(Value::as_array)
-            .is_none_or(|a| a.is_empty()),
-        _ => false,
+    matches!(
+        o.get("result").and_then(Value::as_str),
+        Some("failed" | "merged" | "queued")
+    )
+}
+
+/// TS `checkNamesForBody` — 이름마다 코드 스팬, 멘션·토큰 글자는 비슷한 글자로.
+pub fn check_names_for_body(names: &[String]) -> String {
+    names
+        .iter()
+        .map(|n| {
+            format!(
+                "`{}`",
+                n.replace('`', "'")
+                    .replace('@', "＠")
+                    .replace('<', "‹")
+                    .replace('>', "›")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// TS `checkNamesText`.
+pub fn check_names_text(names: &[String]) -> String {
+    names
+        .join(", ")
+        .replace('@', "＠")
+        .replace('<', "‹")
+        .replace('>', "›")
+}
+
+/// TS `grewAfterApproval` — CI 무시 승인인데 래퍼가 다시 읽은 무시 목록에 승인 때 없던 이름이 있다.
+pub fn grew_after_approval(ci_override: bool, ignored: &[String], approved: &[String]) -> bool {
+    ci_override && ignored.iter().any(|n| !approved.contains(n))
+}
+
+/// TS `ignoredTail`.
+fn ignored_tail(ci_override: bool, ignored: &[String], grew: bool) -> String {
+    let mut t = String::new();
+    if ci_override {
+        t.push_str(" · CI 실패 무시 승인");
+    }
+    if !ignored.is_empty() {
+        t.push_str(&format!(" · 무시: {}", check_names_for_body(ignored)));
+    }
+    if grew {
+        t.push_str(" (승인 뒤 늘어남)");
+    }
+    t
+}
+
+/// TS `tailVariant`.
+fn tail_variant(ci_override: bool, ignored: &[String], grew: bool) -> Option<&'static str> {
+    if ignored.is_empty() {
+        None
+    } else if !ci_override {
+        Some("Ignoring")
+    } else if grew {
+        Some("CiOverrideGrew")
+    } else {
+        Some("CiOverride")
     }
 }
 
@@ -303,6 +358,8 @@ pub fn merged_line(
     ci_override: bool,
     no_pr_checks: bool,
     chain_root_id: Option<&str>,
+    ignored: &[String],
+    grew: bool,
 ) -> (String, Map<String, Value>) {
     let (_, mut meta) = failed_line(
         repo,
@@ -316,23 +373,28 @@ pub fn merged_line(
         chain_root_id,
     );
     let sha: String = merge_sha.unwrap_or(head_sha).chars().take(9).collect();
+    let tail = ignored_tail(ci_override, ignored, grew);
     let mut body = format!("🔀 {repo}#{number} 머지됨 · {sha}");
     if let Some((_, h)) = granter {
         body.push_str(&format!(" · 권한: {h}"));
     }
-    if ci_override {
-        body.push_str(" · CI 실패 무시 승인");
-    }
+    body.push_str(&tail);
     body.push_str(" (래퍼 보고)");
     if let Some(Value::Object(m)) = meta.get_mut("merge") {
         m.insert("result".into(), json!("merged"));
+        if !ignored.is_empty() {
+            m.insert("ignoredChecks".into(), json!(ignored));
+        }
+        if grew {
+            m.insert("grewAfterApproval".into(), json!(true));
+        }
         if no_pr_checks {
             m.insert("noPrChecks".into(), json!(true));
         }
     }
     meta.remove("i18n");
-    if !ci_override {
-        let clip = |s: &str| super::api_results::js_slice(s, 200);
+    let clip = |s: &str| super::api_results::js_slice(s, 200);
+    if tail.is_empty() {
         let i18n = match granter {
             Some((id, _)) => json!({ "key": "system.merge.mergedGranted", "args": {
                 "repo": clip(repo), "number": number, "sha": sha, "granterId": clip(id) } }),
@@ -340,6 +402,13 @@ pub fn merged_line(
                 "repo": clip(repo), "number": number, "sha": sha } }),
         };
         meta.insert("i18n".into(), i18n);
+    } else if let (Some(v), Some((id, _))) = (tail_variant(ci_override, ignored, grew), granter) {
+        meta.insert(
+            "i18n".into(),
+            json!({ "key": format!("system.merge.merged{v}"), "args": {
+                "repo": clip(repo), "number": number, "sha": sha, "granterId": clip(id),
+                "checks": clip(&check_names_text(ignored)) } }),
+        );
     }
     (body, meta)
 }
@@ -358,6 +427,8 @@ pub fn queued_line(
     ci_override: bool,
     no_pr_checks: bool,
     chain_root_id: Option<&str>,
+    ignored: &[String],
+    grew: bool,
 ) -> (String, Map<String, Value>) {
     let (_, mut meta) = merged_line(
         repo,
@@ -371,22 +442,35 @@ pub fn queued_line(
         ci_override,
         no_pr_checks,
         chain_root_id,
+        ignored,
+        grew,
     );
     let head: String = head_sha.chars().take(9).collect();
+    let tail = ignored_tail(ci_override, ignored, grew);
     let mut body = format!("📥 {repo}#{number} 머지 큐에 넣음 · head {head}");
     if let Some((_, h)) = granter {
         body.push_str(&format!(" · 권한: {h}"));
     }
-    if ci_override {
-        body.push_str(" · CI 실패 무시 승인");
-    }
+    body.push_str(&tail);
     body.push_str(" (래퍼 보고)");
     if let Some(Value::Object(m)) = meta.get_mut("merge") {
         m.insert("result".into(), json!("queued"));
     }
     meta.remove("i18n");
-    if !ci_override {
-        let clip = |s: &str| super::api_results::js_slice(s, 200);
+    let clip = |s: &str| super::api_results::js_slice(s, 200);
+    if let (false, Some(v), Some((id, _))) = (
+        tail.is_empty(),
+        tail_variant(ci_override, ignored, grew),
+        granter,
+    ) {
+        meta.insert(
+            "i18n".into(),
+            json!({ "key": format!("system.merge.queued{v}"), "args": {
+                "repo": clip(repo), "number": number, "head": head, "granterId": clip(id),
+                "checks": clip(&check_names_text(ignored)) } }),
+        );
+    }
+    if tail.is_empty() {
         let i18n = match granter {
             Some((id, _)) => json!({ "key": "system.merge.queuedGranted", "args": {
                 "repo": clip(repo), "number": number, "head": head, "granterId": clip(id) } }),
@@ -641,7 +725,7 @@ async fn report_failed(
         .bind("repo.merge")
         .fetch_optional(w)
         .await?;
-    let used: Option<(String, String, bool)> = sqlx::query_as(USED_APPROVAL_SQL)
+    let used: Option<(String, String, bool, Vec<String>)> = sqlx::query_as(USED_APPROVAL_SQL)
         .bind(&lease_id)
         .bind(&scope)
         .bind(number)
@@ -656,6 +740,16 @@ async fn report_failed(
     let merged = result.as_deref() == Some("merged");
     let queued = result.as_deref() == Some("queued");
     let no_pr_checks = (merged || queued) && o.get("noPrChecks") == Some(&Value::Bool(true));
+    let ignored = if merged || queued {
+        sanitize_check_names(o.get("ignoredChecks"))
+    } else {
+        Vec::new()
+    };
+    let grew = grew_after_approval(
+        ci_override,
+        &ignored,
+        used.as_ref().map_or(&[][..], |u| &u.3[..]),
+    );
     let (body, meta) = if merged || queued {
         if merged {
             let open: bool = sqlx::query_scalar(OPEN_CARDS_SQL)
@@ -669,7 +763,7 @@ async fn report_failed(
         }
         // 계정을 비운 승인 + 고른 gh 이름이면 `noteOnceGhUserUsed`(카드·거울 고치기)가 필요하다 — TS 몫.
         let gh_used = g("ghUserUsed").filter(|u| gh_user_ok(u));
-        if let (Some((id, _, _)), Some(_)) = (&used, &gh_used) {
+        if let (Some((id, _, _, _)), Some(_)) = (&used, &gh_used) {
             let blank: Option<bool> = sqlx::query_scalar(APPROVAL_GH_SQL)
                 .bind(id)
                 .fetch_optional(w)
@@ -701,6 +795,8 @@ async fn report_failed(
             ci_override,
             no_pr_checks,
             chain_root_id.as_deref(),
+            &ignored,
+            grew,
         )
     } else {
         failed_line(
@@ -747,10 +843,16 @@ async fn report_failed(
         "number": number, "headSha": head_sha, "mergeSha": merge_sha, "operatorId": operator,
         "leaseId": lease_id, "messageId": message_id,
     });
-    if let Some((id, by, _)) = &used {
+    if let Some((id, by, _, _)) = &used {
         detail["approvalId"] = json!(id);
         detail["approvedBy"] = json!(by);
         detail["ciOverride"] = json!(ci_override);
+    }
+    if !ignored.is_empty() {
+        detail["ignoredChecks"] = json!(ignored);
+    }
+    if grew {
+        detail["grewAfterApproval"] = json!(true);
     }
     if no_pr_checks {
         detail["noPrChecks"] = json!(true);
@@ -1103,9 +1205,10 @@ mod tests {
         )));
         assert!(rust_reportable(&json!({ "result": "merged" })));
         assert!(rust_reportable(&json!({ "result": "queued" })));
-        assert!(!rust_reportable(
+        assert!(rust_reportable(
             &json!({ "result": "queued", "ignoredChecks": ["x"] })
         ));
+        assert!(!rust_reportable(&json!({ "result": "other" })));
     }
 
     #[test]
@@ -1152,6 +1255,8 @@ mod tests {
             false,
             true,
             None,
+            &[],
+            false,
         );
         assert_eq!(
             body,
@@ -1165,7 +1270,19 @@ mod tests {
             json!({ "key": "system.merge.queuedGranted", "args": { "repo": "o/r", "number": 7, "head": "bbbbbbbbb", "granterId": "g1" } })
         );
         let (body, meta) = queued_line(
-            "o/r", 7, &h, None, None, None, None, false, false, false, None,
+            "o/r",
+            7,
+            &h,
+            None,
+            None,
+            None,
+            None,
+            false,
+            false,
+            false,
+            None,
+            &[],
+            false,
         );
         assert_eq!(body, "📥 o/r#7 머지 큐에 넣음 · head bbbbbbbbb (래퍼 보고)");
         assert_eq!(
@@ -1173,7 +1290,19 @@ mod tests {
             json!({ "key": "system.merge.queued", "args": { "repo": "o/r", "number": 7, "head": "bbbbbbbbb" } })
         );
         let (body, meta) = queued_line(
-            "o/r", 7, &h, None, None, None, None, true, true, false, None,
+            "o/r",
+            7,
+            &h,
+            None,
+            None,
+            None,
+            None,
+            true,
+            true,
+            false,
+            None,
+            &[],
+            false,
         );
         assert_eq!(
             body,
@@ -1198,6 +1327,8 @@ mod tests {
             false,
             true,
             None,
+            &[],
+            false,
         );
         assert_eq!(body, "🔀 o/r#7 머지됨 · ccccccccc · 권한: kim (래퍼 보고)");
         assert_eq!(meta["merge"]["result"], json!("merged"));
@@ -1219,12 +1350,26 @@ mod tests {
             false,
             false,
             None,
+            &[],
+            false,
         );
         assert_eq!(body, "🔀 o/r#7 머지됨 · bbbbbbbbb (래퍼 보고)");
         assert_eq!(meta["i18n"]["key"], json!("system.merge.merged"));
         assert!(meta["merge"].get("noPrChecks").is_none());
         let (body, meta) = merged_line(
-            "o/r", 7, &h, None, None, None, None, true, true, false, None,
+            "o/r",
+            7,
+            &h,
+            None,
+            None,
+            None,
+            None,
+            true,
+            true,
+            false,
+            None,
+            &[],
+            false,
         );
         assert_eq!(
             body,
@@ -1234,7 +1379,7 @@ mod tests {
         assert!(rust_reportable(
             &json!({ "result": "merged", "ignoredChecks": [] })
         ));
-        assert!(!rust_reportable(
+        assert!(rust_reportable(
             &json!({ "result": "merged", "ignoredChecks": ["x"] })
         ));
         let src = include_str!("../../../../packages/server/src/services/mergeGrants.ts");
@@ -1242,5 +1387,101 @@ mod tests {
         let watch = include_str!("../../../../packages/server/src/services/prWatch.ts");
         assert!(watch.contains("if (!delegationV2Enabled()) return null;"));
         assert!(src.contains("`🔀 ${repo}#${r.number} 머지됨 · ${(r.mergeSha ?? r.headSha).slice(0, 9)}` + (granter ? ` · 권한: ${granter}` : '') + ignoredTail + ' (래퍼 보고)'"));
+    }
+
+    #[test]
+    fn ignored_checks_like_ts() {
+        let names = vec!["a`b".to_owned(), "@x<y>".to_owned()];
+        assert_eq!(check_names_for_body(&names), "`a'b`, `＠x‹y›`");
+        assert_eq!(check_names_text(&names), "a`b, ＠x‹y›");
+        let approved = vec!["a`b".to_owned()];
+        assert!(grew_after_approval(true, &names, &approved));
+        assert!(!grew_after_approval(false, &names, &approved));
+        assert!(!grew_after_approval(true, &approved, &approved));
+        let h = "b".repeat(40);
+        let ci = vec!["ci".to_owned()];
+        // 무시만(CI 무시 승인 아님) + 권한 이름 → Ignoring 표지.
+        let (body, meta) = merged_line(
+            "o/r",
+            7,
+            &h,
+            None,
+            None,
+            Some(("g1", "kim")),
+            Some("g1"),
+            false,
+            false,
+            false,
+            None,
+            &ci,
+            false,
+        );
+        assert_eq!(
+            body,
+            "🔀 o/r#7 머지됨 · bbbbbbbbb · 권한: kim · 무시: `ci` (래퍼 보고)"
+        );
+        assert_eq!(meta["merge"]["ignoredChecks"], json!(["ci"]));
+        assert!(meta["merge"].get("grewAfterApproval").is_none());
+        assert_eq!(
+            meta["i18n"],
+            json!({ "key": "system.merge.mergedIgnoring", "args": { "repo": "o/r", "number": 7, "sha": "bbbbbbbbb", "granterId": "g1", "checks": "ci" } })
+        );
+        // CI 무시 승인 + 늘어남.
+        let (body, meta) = queued_line(
+            "o/r",
+            7,
+            &h,
+            None,
+            None,
+            Some(("g1", "kim")),
+            Some("g1"),
+            true,
+            true,
+            false,
+            None,
+            &ci,
+            true,
+        );
+        assert_eq!(
+            body,
+            "📥 o/r#7 머지 큐에 넣음 · head bbbbbbbbb · 권한: kim · CI 실패 무시 승인 · 무시: `ci` (승인 뒤 늘어남) (래퍼 보고)"
+        );
+        assert_eq!(meta["merge"]["grewAfterApproval"], json!(true));
+        assert_eq!(meta["merge"]["result"], json!("queued"));
+        assert_eq!(
+            meta["i18n"],
+            json!({ "key": "system.merge.queuedCiOverrideGrew", "args": { "repo": "o/r", "number": 7, "head": "bbbbbbbbb", "granterId": "g1", "checks": "ci" } })
+        );
+        let (_, meta) = merged_line(
+            "o/r",
+            7,
+            &h,
+            None,
+            None,
+            Some(("g1", "kim")),
+            Some("g1"),
+            true,
+            true,
+            false,
+            None,
+            &ci,
+            false,
+        );
+        assert_eq!(meta["i18n"]["key"], json!("system.merge.mergedCiOverride"));
+        // 권한 이름이 없으면 꼬리가 있어도 표지 없이 본문만.
+        let (body, meta) = merged_line(
+            "o/r", 7, &h, None, None, None, None, false, false, false, None, &ci, false,
+        );
+        assert_eq!(body, "🔀 o/r#7 머지됨 · bbbbbbbbb · 무시: `ci` (래퍼 보고)");
+        assert!(meta.get("i18n").is_none());
+        let src = include_str!("../../../../packages/server/src/services/mergeGrants.ts");
+        assert!(src.contains("const grewAfterApproval = ciOverride && ignored.some((n) => !usedApproval!.approvedChecks.includes(n));"));
+        assert!(src.contains("+ (ignored.length ? ` · 무시: ${checkNamesForBody(ignored)}` : '') + (grewAfterApproval ? ' (승인 뒤 늘어남)' : '');"));
+        assert!(src.contains("const tailVariant = ignored.length ? (ciOverride ? (grewAfterApproval ? 'CiOverrideGrew' : 'CiOverride') : 'Ignoring') : null;"));
+        let d = include_str!("../../../../packages/server/src/services/mergeDenials.ts");
+        assert!(d.contains("return names.map((n) => `\\`${n.replace(/`/g, \"'\").replace(/@/g, '＠').replace(/</g, '‹').replace(/>/g, '›')}\\``).join(', ');"));
+        assert!(d.contains(
+            "return names.join(', ').replace(/@/g, '＠').replace(/</g, '‹').replace(/>/g, '›');"
+        ));
     }
 }
