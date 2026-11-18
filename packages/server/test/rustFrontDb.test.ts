@@ -1711,6 +1711,11 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant select (kid, kcv), insert (kid, kcv) on secret_key_check to ${rw}`,
         // S5.4 SE4 — GET /agent/secret-create(`agent_secret_create::privileges()` = AGENT_SECRET_CREATE_PRIVILEGES + SECRET_KEY_CHECK_PRIVILEGES).
         `grant select (account_id, capability, scope, expires_at, suspended_at) on account_grant to ${rw}`,
+        // S5.4 9회차 y — POST /secrets/:id/reveal(`secret_reveal.rs`).
+        `grant select (id, name, kind, filename, owner_account_id) on secret to ${rw}`,
+        `grant select (token_hash, expires_at, stepped_up_at, stepped_up_until), update (stepped_up_until) on session to ${rw}`,
+        `grant insert (secret_id, secret_name, version, actor_account_id, action, client, ip, result, reason) on secret_access_log to ${rw}`,
+        `grant usage on sequence secret_access_log_id_seq to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
