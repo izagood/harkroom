@@ -7389,6 +7389,117 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         while (gc() - gc0 < 6 && Date.now() < until6) await new Promise((res) => setTimeout(res, 100));
         expect(gc() - gc0, 'Rust 승인 여섯의 grant.changed').toBeGreaterThanOrEqual(6);
       }
+      // S5.5 d — 권한 카드를 그 **거울 카드**로 정한다(`decide_routes.rs` `card_target`). 서버가 세운 꼴의 거울(에이전트 글·사람 앞·
+      // 선택지 id 같음)로 거절·승인하면 원본 요청이 정해지고(`via: mirror`) 원본 카드에 답이 적히며 거울이 같이 닫힌다. 응답은 누른 거울이다.
+      // 선택지가 다른 거울은 진짜 거울이 아니다 — 두 쪽 모두 TS 의 물음 길로 간다. Rust 가 맡았는지는 outbox(`busEvents`)로 본다.
+      {
+        const H = { kind: 'human' };
+        const OPTS = [{ id: 'approve', label: '허락' }, { id: 'deny', label: '거절' }];
+        const preq = async (target: string) => {
+          const req = (await db.pool.query<{ id: string }>(
+            `insert into permission_request(agent_id, kind, target, reason, channel_id, thread_root_id, expires_at)
+             values ($1, 'tool', $2, 'x', $3, gen_random_uuid(), now() + interval '1 hour') returning id::text`,
+            [agent.accountId, target, todayId])).rows[0]!.id;
+          const card = await say(`@admin ${target}`, {
+            meta: { kind: 'ask', ask: { prompt: '허락할까요?', options: OPTS, to: H }, permissionRequest: { requestId: req, status: 'pending' } },
+          });
+          await db.pool.query(`update permission_request set card_message_id = $2 where id = $1`, [req, card]);
+          return { req, card };
+        };
+        const mirrorOf = (root: string, options = OPTS) =>
+          say('@admin 거울', { meta: { kind: 'ask', ask: { prompt: '허락할까요?', options, to: H, mirrorOf: root } } });
+        const side = async (tag: string) => {
+          const deny = await preq(`Bash(echo ${tag} mdeny:*)`);
+          const appr = await preq(`Bash(echo ${tag} mappr:*)`);
+          const fake = await preq(`Bash(echo ${tag} mfake:*)`);
+          const mem = await preq(`Bash(echo ${tag} mmem:*)`);
+          return {
+            denyReq: deny.req, denyCard: deny.card, denyMirror: await mirrorOf(deny.card),
+            apprReq: appr.req, apprCard: appr.card, apprMirror: await mirrorOf(appr.card),
+            fakeReq: fake.req, fakeCard: fake.card, fakeMirror: await mirrorOf(fake.card, [{ id: 'approve', label: '허락' }, { id: 'no', label: '아니' }]),
+            memReq: mem.req, memCard: mem.card, memMirror: await mirrorOf(mem.card),
+          };
+        };
+        type Side = Awaited<ReturnType<typeof side>>;
+        const T = await side('tside');
+        const R = await side('rside');
+        const shape = (sd: Side) => (v: unknown): unknown => {
+          if (Array.isArray(v)) return v.map(shape(sd));
+          if (v && typeof v === 'object') {
+            const o: Record<string, unknown> = {};
+            for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+              o[k] = /At$/.test(k) ? (x === null ? null : typeof x) : k === 'seq' || k === 'threadRootId' ? typeof x : shape(sd)(x);
+            }
+            return o;
+          }
+          for (const [k, id] of Object.entries(sd)) if (v === id) return k.toUpperCase();
+          if (typeof v === 'string') return v.replace(/[tr]side/g, 'SIDE');
+          return v;
+        };
+        const ansP = (m: string) => `/channels/${todayId}/messages/${m}/ask-answer`;
+        const updOf = (ids: string[]) => busEvents.filter((e) => (e as { type?: string }).type === 'message.updated'
+          && ids.includes(String((e as { message?: { id?: string } }).message?.id))).length;
+        const run = async (base: string, sd: Side) => {
+          const out: { step: string; status: number; code?: string; body: unknown }[] = [];
+          const step = async (name: string, path: string, body: unknown, token = A) => {
+            const r = await callX(base, 'POST', path, body, token);
+            out.push({ step: name, status: r.status, code: r.code, body: r.status === 200 ? shape(sd)(r.json) : null });
+          };
+          await step('거울로 거절', ansP(sd.denyMirror), { optionId: 'deny' });
+          await step('거울 다시 → 409', ansP(sd.denyMirror), { optionId: 'deny' });
+          await step('정해진 뒤 원본 카드 → 409', ansP(sd.denyCard), { optionId: 'deny' });
+          await step('거울로 승인(소유자)', ansP(sd.apprMirror), { optionId: 'approve' });
+          await step('선택지 다른 거울 거절 → 물음 길', ansP(sd.fakeMirror), { optionId: 'no' });
+          await step('선택지 다른 거울 approve', ansP(sd.fakeMirror), { optionId: 'approve' });
+          await step('멤버가 거울로 거절', ansP(sd.memMirror), { optionId: 'deny' }, member.token);
+          return out;
+        };
+        const tsOut = await run(tsUrl, T);
+        const u0 = updOf([R.denyCard, R.apprCard]);
+        const rsOut = await run(rsUrl, R);
+        expect(rsOut).toEqual(tsOut);
+        const st = (s: string) => tsOut.find((o) => o.step === s);
+        expect(st('거울로 거절')?.status).toBe(200);
+        expect((st('거울로 거절')?.body as { id?: string }).id, '응답은 누른 거울').toBe('DENYMIRROR');
+        expect(st('거울 다시 → 409')?.status).toBe(409);
+        expect(st('거울로 승인(소유자)')?.status).toBe(200);
+        const ids = (sd: Side) => JSON.stringify(sd);
+        const rows = async (sd: Side) => (await db.pool.query(
+          `select k, p.status, p.decided_by::text as by, p.grant_mode as mode, p.decided_at is not null as decided
+             from jsonb_each_text($1::jsonb) j(k, id) join permission_request p on p.id = j.id::uuid order by k`, [ids(sd)])).rows.map((r) => shape(sd)(r));
+        const tRows = await rows(T);
+        expect(tRows.find((r) => (r as { k: string }).k === 'denyReq')).toMatchObject({ status: 'denied' });
+        expect(tRows.find((r) => (r as { k: string }).k === 'apprReq')).toMatchObject({ status: 'granted' });
+        expect(await rows(R)).toEqual(tRows);
+        const cards = async (sd: Side) => (await db.pool.query(
+          `select k, m.meta->'permissionRequest' as pr, m.meta->'ask' as ask from jsonb_each_text($1::jsonb) j(k, id)
+             join message m on m.id = j.id::uuid order by k`, [ids(sd)])).rows.map((r) => shape(sd)(r));
+        const tCards = await cards(T);
+        expect(JSON.stringify(tCards), '원본 카드에 거울로 정했다고 남는다').toContain('"decidedVia":{"kind":"mirror","mirrorMessageId":"APPRMIRROR"}');
+        expect(await cards(R)).toEqual(tCards);
+        const grants = async (tag: string, sd: Side) => (await db.pool.query(
+          `select scope, granted_by::text as by, allow_agent_cause as aac from account_grant
+            where account_id = $1 and capability = 'tool.allow' and scope like $2 order by scope`,
+          [agent.accountId, `tool:${todayId}:Bash(echo ${tag} m%`])).rows.map((r) => shape(sd)(r));
+        const tG = await grants('tside', T);
+        expect(tG.length, '거울 승인의 tool grant').toBeGreaterThanOrEqual(1);
+        expect(await grants('rside', R)).toEqual(tG);
+        const audits = async (sd: Side) => (await db.pool.query(
+          `select action, actor_id::text as actor, target, detail from audit_log
+            where action in ('permission.approved', 'permission.denied', 'grant.given') and detail->>'requestId' = any($1::text[])`,
+          [Object.values(sd)])).rows.map((r) => shape(sd)(r)).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+        const tAud = await audits(T);
+        expect(JSON.stringify(tAud), '감사에 via: mirror').toContain('"via":"mirror"');
+        expect(await audits(R)).toEqual(tAud);
+        const wakes = async (sd: Side) => (await db.pool.query(
+          `select message_id::text as m, reason as r from inbox where message_id = any($1::uuid[]) and reason = 'ask_answered'`,
+          [Object.values(sd)])).rows.map((r) => shape(sd)(r)).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+        expect(await wakes(R)).toEqual(await wakes(T));
+        // Rust 가 맡았다 — 원본 카드 둘의 `message.updated` 가 outbox 로 건너온다(TS 가 했으면 busEvents 에 없다).
+        const untilD = Date.now() + 10_000;
+        while (updOf([R.denyCard, R.apprCard]) - u0 < 2 && Date.now() < untilD) await new Promise((res) => setTimeout(res, 100));
+        expect(updOf([R.denyCard, R.apprCard]) - u0, 'Rust 가 거울로 정한 원본 카드 둘의 message.updated').toBeGreaterThanOrEqual(2);
+      }
       // S5.3 C1 — 승인이 **있는 위임장**에 줄을 쓴다(코어 `mandate_line_write.rs`). tool `approve`(위임장 있음)·`approve_mandate`·
       // `approve_turn` 을 TS·Rust 에 각자의 위임장·요청·카드로 돌려 응답·요청 줄·카드 meta(`lineId`)·grant·줄·감사를 견준다.
       // - 7일 승인은 grant 를 쓰므로 줄이 실패해도 savepoint 로 줄만 되돌리고 결정은 남는다(끝난 위임장·줄 INSERT 실패 둘 다).
@@ -9270,6 +9381,47 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           await wokeBy(call);
           return { root, call };
         };
+        // S5.5 e·f — `message.ask` 의 권한 카드 거울(같은 카드를 그리는 꼴)과 머지 거절 카드(`mergeDenialId`).
+        const AD = [{ id: 'approve', label: '허락' }, { id: 'deny', label: '거절' }];
+        const permRoot = async (ch: string, pr: Record<string, unknown>) => {
+          const head = await ins({ ch, author: member.accountId, body: '일' });
+          const req = (await db.pool.query<{ id: string }>(
+            `insert into permission_request(agent_id, kind, target, reason, channel_id, thread_root_id, expires_at)
+             values ($1, $2, $3, $4, $5, $6, now() + interval '1 hour') returning id::text`,
+            [bot3.accountId, pr.kind, pr.target, pr.reason, ch, head])).rows[0]!.id;
+          const card = await ins({ ch, root: head, author: bot3.accountId, body: '권한 카드', meta: {
+            kind: 'ask', ask: { prompt: '허락할까요?', options: AD, to: { kind: 'human' } }, permissionRequest: { requestId: req, status: 'pending', ...pr },
+          } });
+          await db.pool.query(`update permission_request set card_message_id = $2 where id = $1`, [req, card]);
+          return { head, card };
+        };
+        const mirrorAsk = (pr: Record<string, unknown>, o: { op?: boolean } = {}) => async (ch: string): Promise<Setup> => {
+          const { card } = await permRoot(ch, pr);
+          const args = { channelId: ch, body: '정해 주세요', mirrorOf: card, options: AD };
+          if (!o.op) return { tool: 'message.ask', args, via: viaPat };
+          const { call } = await chainBy(member.accountId, 0, 0)(ch);
+          return { tool: 'message.ask', args, via: viaOp, cause: call, turn: turnId };
+        };
+        const denialAsk = (o: { used?: boolean; otherThread?: boolean; pending?: boolean; ci?: boolean } = {}) => async (ch: string): Promise<Setup> => {
+          const head = await ins({ ch, author: member.accountId, body: '머지해 줘' });
+          const other = await ins({ ch, author: member.accountId, body: '다른 스레드' });
+          const denial = (await db.pool.query<{ id: string }>(
+            `insert into merge_denial (agent_id, scope, pr_number, head_sha, channel_id, thread_root_id, reason, failed_checks, expires_at, used_at, lease_id)
+             values ($1, 'repo:acme/app', 7, $2, $3, $4, $5, $6::text[], now() + interval '1 hour', $7, gen_random_uuid()) returning id::text`,
+            [bot3.accountId, 'c'.repeat(40), ch, head, o.ci ? 'ci_not_green' : 'not_granted', o.ci ? ['secrets'] : [],
+              o.used ? new Date() : null])).rows[0]!.id;
+          if (o.pending) {
+            const req = (await db.pool.query<{ id: string }>(
+              `insert into permission_request(agent_id, kind, target, reason, channel_id, thread_root_id, expires_at, denial_id)
+               values ($1, 'merge', 'repo:acme/app', 'x', $2, $3, now() + interval '1 hour', $4) returning id::text`,
+              [bot3.accountId, ch, head, denial])).rows[0]!.id;
+            const card = await ins({ ch, root: head, author: bot3.accountId, body: '기다리는 카드', meta: { kind: 'ask', ask: { options: AD, to: { kind: 'human' } }, permissionRequest: { requestId: req, status: 'pending' } } });
+            await db.pool.query(`update permission_request set card_message_id = $2 where id = $1`, [req, card]);
+          }
+          return { tool: 'message.ask', via: viaPat, args: {
+            channelId: ch, threadRootId: o.otherThread ? other : head, body: '머지가 거절됐다', mergeDenialId: denial,
+            options: [{ id: 'retry', label: '다시 머지' }, { id: 'later', label: '나중에' }] } };
+        };
         const SCENES: [string, (ch: string) => Promise<Setup>, boolean][] = [
           ['원인 없음(PAT) · 모델 어긋남', async (ch) => ({ args: { channelId: ch, body: '보고 드림', model: ' claude-sonnet-5 ' }, via: viaPat }), true],
           ['오퍼레이터 원인 → 깊이·고리·턴 id', async (ch) => {
@@ -9358,6 +9510,18 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
               dl((_c, root) => ({ to: ['c3b2c4del'], planRootId: root, planGroupId: 'g1' }), false, 'delegate 계획판 → TS'),
             ];
           })(),
+          ['ask 권한 거울 · tool(같은 카드)', mirrorAsk({ kind: 'tool', target: 'Bash(echo e:*)', reason: '빌드에 필요' }), true],
+          ['ask 권한 거울 · command', mirrorAsk({ kind: 'command', target: 'kubectl --context rc get pod', reason: '확인' }), true],
+          ['ask 권한 거울 · merge 1회(CI 실패)', mirrorAsk({ kind: 'merge', target: 'repo:acme/app', reason: 'x', once: { number: 7, headSha: 'c'.repeat(40), reason: 'ci_not_green', failedChecks: ['secrets'] } }), true],
+          ['ask 권한 거울 · 위임 줄 표지', mirrorAsk({ kind: 'tool', target: 'Bash(echo line:*)', reason: 'x', line: { scope: 'tool:Bash(echo line:*)' } }), true],
+          ['ask 권한 거울 · 오퍼레이터 원인(차례 주인 푸시)', mirrorAsk({ kind: 'tool', target: 'Bash(echo op:*)', reason: 'x' }, { op: true }), true],
+          ['ask 권한 거울 · 경고 실린 요청 → TS', mirrorAsk({ kind: 'tool', target: 'Bash(echo warn:*)', reason: 'x', warnings: ['broad'] }), false],
+          // 이 앞단의 쓰기 역할에는 요청 줄 INSERT 칸이 없어 새 카드는 TS 가 세운다 — 칸을 준 앞단의 장면은 따로 둔다.
+          ['ask 머지 거절 카드 → 요청·카드 한 번에', denialAsk(), false],
+          ['ask 머지 거절 카드 · CI 실패 거절', denialAsk({ ci: true }), false],
+          ['ask 머지 거절 카드 · 기다리는 카드 있음 → pending', denialAsk({ pending: true }), true],
+          ['ask 머지 거절 카드 · 쓴 거절 → denial_used', denialAsk({ used: true }), true],
+          ['ask 머지 거절 카드 · 다른 스레드 → denial_other_thread', denialAsk({ otherThread: true }), true],
           // C3b-2c-3 — `message.report`(planStepId 없는 것). 보고 meta 를 쓰고, 커밋 뒤 작성자의 예약을 접는다(같은 턴이 건 것은 남김).
           ['report 기본 · files·remaining·next·durationMs', async (ch) => ({ tool: 'message.report', args: {
             channelId: ch, body: '끝', checks: ['시험 통과'], files: ['a.rs'], remaining: [], durationMs: 1200,
@@ -9438,6 +9602,11 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const wakesOf = async (ch: string) => (await db.pool.query(
           `select m.body, w.canceled_at is not null as canceled, m.meta->'wake' ? 'canceledAt' as stamped
              from agent_wake w join message m on m.id = w.message_id where w.channel_id = $1 order by m.body`, [ch])).rows;
+        // S5.5 e·f — 그 채널의 권한 요청 줄과 이어진 카드의 표지(요청·카드가 같이 섰는가).
+        const permsOf = async (ch: string) => shape((await db.pool.query(
+          `select p.kind, p.target, p.status, p.denial_id is not null as from_denial, p.card_message_id is not null as linked,
+                  m.body, m.meta->'permissionRequest' as pr, m.meta->'ask' as ask
+             from permission_request p left join message m on m.id = p.card_message_id where p.channel_id = $1 order by p.created_at`, [ch])).rows);
         const sse = (t: string) => {
           const line = t.split('\n').find((l) => l.startsWith('data: '));
           const res = line ? JSON.parse(line.slice(6)) as { result?: { content?: { text: string }[] } } : null;
@@ -9465,7 +9634,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             const r = await mcpCall(base, st.via.token, st.tool ?? 'message.post', st.args, 7, extra);
             const body = sse(r.text) as { message?: { id?: string }; foldedWakes?: { wakeAt: string }[] } | null;
             out.push({ name, status: r.status, rust: base === tsUrl ? rust : r.core === 'mcp', body: shape(body), row: await facts(body?.message?.id, st.cause),
-              wakes: await wakesOf(ch), wakeAt: body?.foldedWakes?.map((w) => w.wakeAt) ?? null });
+              wakes: await wakesOf(ch), perms: await permsOf(ch), wakeAt: body?.foldedWakes?.map((w) => w.wakeAt) ?? null });
           }
           return out;
         };
