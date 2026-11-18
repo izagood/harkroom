@@ -2984,6 +2984,8 @@ async fn main() {
             let lp = harkroom_server::core::link_preview_read::routes(
                 harkroom_server::core::link_preview_read::LinkPreviewState {
                     read: state.pool.clone(),
+                    // 글 쓰기 풀(그 권한에 link_preview 칸이 들어 있다) — 없으면 만료된 행은 TS 로 넘긴다.
+                    write: post_write.clone(),
                     up: state.up.clone(),
                 },
                 auth.clone(),

@@ -2,8 +2,8 @@
 //!
 //! - 인증(401, `route_layer`) → `url` 쿼리 zod(`z.string().min(1)`, 400 `url is required`) → shared `normalizePreviewUrl`
 //!   (400 `not a previewable url`) → 행 없음 404 → 행(TS `getLinkPreviewByUrl` 키 순서 그대로).
-//! - **만료된 행**(TS `isStale`: ok 는 7일, failed·blocked 는 1시간)은 백그라운드 재가져오기(외부 fetch·SSRF 검사)가 TS 몫이라
-//!   읽어 둔 요청 그대로 TS 로 넘긴다 — TS 가 같은 카드를 주고 갱신을 건다.
+//! - **만료된 행**(TS `isStale`: ok 는 7일, failed·blocked 는 1시간)은 그대로 주고 [`super::link_preview_fetch::queue_fetch`] 로
+//!   백그라운드에서 다시 가져온다. 쓰기 풀이 없으면(권한 부족) 요청 그대로 TS 로 넘긴다.
 //! - **읽기만 한다.** 새 GRANT 없음 — [`LINK_PREVIEW_READ_PRIVILEGES`], 없으면 `main.rs` 가 TS 에 남긴다.
 use crate::auth::RequireAccount;
 use crate::directory::{internal, json_err, json_ok};
@@ -35,6 +35,8 @@ const ROW_SQL: &str = "select json_build_object('url', url, 'title', title, 'des
 
 pub struct LinkPreviewState {
     pub read: PgPool,
+    /// 재가져오기용 쓰기 풀([`super::link_preview_fetch::LINK_PREVIEW_WRITE_PRIVILEGES`]). 없으면 만료된 행은 TS 로.
+    pub write: Option<PgPool>,
     pub up: Upstream,
 }
 
@@ -113,6 +115,13 @@ pub async fn link_preview(
     };
     match row {
         None => json_err(StatusCode::NOT_FOUND, "not_found", "link preview not found"),
+        Some((text, true)) if st.write.is_some() => {
+            // TS 와 같이 만료된 카드를 먼저 주고 백그라운드에서 갱신한다.
+            if let Some(w) = &st.write {
+                tokio::spawn(super::link_preview_fetch::queue_fetch(w.clone(), key));
+            }
+            json_ok(text)
+        }
         Some((_, true)) => {
             crate::proxy::forward(State(st.up.clone()), ConnectInfo(peer), req).await
         }
