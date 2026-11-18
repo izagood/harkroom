@@ -2553,6 +2553,28 @@ async fn main() {
         _ => None,
     };
     let operator_on = operator_write.is_some();
+    // S5.4 TM4 — 스레드 모델 지정(`PUT …/agent-models/{agentId}`). 하네스 목록을 스냅숏으로 보므로 오퍼레이터 코어가 Rust 일 때만,
+    // 그리고 글 올리기 코어(시스템 줄)와 지정 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+    let thread_model_set = match (&post_write, operator_on) {
+        (Some(w), true) => {
+            use harkroom_server::core::thread_model_set as c;
+            match write::missing_in(w, c::THREAD_MODEL_SET_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: thread model set core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: thread model set core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 TM3 — `GET /agents/{agentId}/model-options`: 오퍼레이터 코어 + 읽기 칸 권한.
     let agent_model_options = operator_on && {
         use harkroom_server::core::agent_model_options as mo;
@@ -3221,6 +3243,25 @@ async fn main() {
             core_routes.router = core_routes.router.merge(cm.router);
             core_routes.http.extend(cm.http);
             core_routes.sockets.extend(cm.sockets);
+        }
+        // S5.4 TM4 — 스레드 모델 지정 1줄. 오퍼레이터 코어·글 올리기 코어·권한이 다 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = thread_model_set {
+            let ts = harkroom_server::core::thread_model_set::routes(
+                harkroom_server::core::thread_model_set::SetState {
+                    post: harkroom_server::core::msg_post::PostState {
+                        read: state.pool.clone(),
+                        write,
+                        up: state.up.clone(),
+                        implicit_ok,
+                    },
+                    trust: (*state.trust).clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(ts.router);
+            core_routes.http.extend(ts.http);
+            core_routes.sockets.extend(ts.sockets);
         }
         // S5.4 TM2 — 스레드 모델 지정 풀기. 글 올리기 코어와 풀기 권한이 다 있을 때만 — 아니면 TS 에 남는다.
         if let Some(write) = thread_model_clear {
