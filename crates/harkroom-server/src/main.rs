@@ -1365,6 +1365,28 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 — 가입 표면 셋(`POST /bootstrap`·`/claim`·`/auth/register`). 셋이 `signup:{ip}` 리밋 키를 나눠 쓰므로 권한 하나로 묶어
+    // 셋을 같이 옮기거나 셋 다 TS 에 남긴다 — 일부만 옮기면 두 리미터가 따로 세어 한도가 두 배가 된다.
+    let auth_signup_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::auth_signup as a;
+            match write::missing_in(w, a::AUTH_SIGNUP_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: auth signup core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: auth signup core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 — 재설정 코드 쓰기(`POST /auth/password-reset`). 권한이 있을 때만 — 아니면 TS 에 남는다.
     // 리밋 키 `passwordReset:*`(주소·로그인 ID 둘 다)는 이 경로만 쓰므로 통째로 Rust 리미터로 옮겨 간다.
     let password_reset_use_write = match (&core_mode, &state.write) {
@@ -2805,6 +2827,20 @@ async fn main() {
             core_routes.router = core_routes.router.merge(al.router);
             core_routes.http.extend(al.http);
             core_routes.sockets.extend(al.sockets);
+        }
+        // S5.4 — 가입 표면 3줄(주소 단위 `signup:{ip}` 훅 포함, 셋이 한 키). 권한이 있을 때만 — 아니면 셋 다 TS 에 남는다.
+        if let Some(write) = auth_signup_write {
+            let su = harkroom_server::core::auth_signup::routes(
+                harkroom_server::core::auth_signup::AuthSignupState {
+                    write,
+                    trust: state.trust.clone(),
+                    limiter: auth_limiter.clone(),
+                },
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(su.router);
+            core_routes.http.extend(su.http);
+            core_routes.sockets.extend(su.sockets);
         }
         // S5.4 — 재설정 코드 쓰기 1줄(주소 단위 `passwordReset:{ip}` 훅 포함). 권한이 있을 때만 — 아니면 TS 에 남는다.
         if let Some(write) = password_reset_use_write {

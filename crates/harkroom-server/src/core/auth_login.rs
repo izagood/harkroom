@@ -7,8 +7,8 @@
 //!   `login.failed` + 401 `invalid_credentials` → 맞으면 두 계정 키 비우기 · 세션 행(`hrks_`, 14일) · 감사
 //!   `login.succeeded` → 200 `{token}`. 쿠키는 없다(TS 도 본문으로만 준다).
 //! - **리밋 키 묶음**: `login:*`·`loginAccountIp:*`·`loginAccount:*` 는 이 경로만 쓴다 — 셋을 한꺼번에 옮기므로
-//!   TS 리미터와 겹쳐 세지 않는다. `signup:{ip}` 는 `/auth/register`·`/bootstrap`·`/claim` 이 나눠 쓰므로 register 는
-//!   셋을 같이 옮길 때까지 TS 에 남는다.
+//!   TS 리미터와 겹쳐 세지 않는다. `signup:{ip}` 는 `/auth/register`·`/bootstrap`·`/claim` 이 나눠 쓰므로 셋을 한꺼번에
+//!   옮겼다(`auth_signup`).
 //! - 쓰기 권한은 [`AUTH_LOGIN_PRIVILEGES`] — 없으면 `main.rs` 가 이 줄을 붙이지 않아 TS 에 남는다.
 use crate::directory::{internal, json_err, json_ok};
 use crate::rate_limit::{self, RateLimiter};
