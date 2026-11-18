@@ -102,6 +102,12 @@ pub const AGENT_PATCH_PRIVILEGES: &[(&str, &str)] = &[
     ("agent_invoker", "SELECT"),
     ("agent_owner_delegate", "SELECT"),
     ("agent_mcp_server", "SELECT"),
+    // `validateMcpServers`·`setAgentMcpServers`.
+    ("mcp_server.name", "SELECT"),
+    ("mcp_server.credential_kind", "SELECT"),
+    ("agent_mcp_server", "DELETE"),
+    ("agent_mcp_server.agent_id", "INSERT"),
+    ("agent_mcp_server.name", "INSERT"),
     // `suspendSecretGrants(…, 'definition_changed')` + 이미 정지된 grant 확인.
     ("secret_grant.agent_id", "SELECT"),
     ("secret_grant.suspended_at", "SELECT"),
@@ -447,14 +453,7 @@ const ADMIN_ONLY_FIELDS: &[&str] = &["ownerAccountId", "disabled", "mentionPermi
 
 /// 이 칸이 하나라도 있으면 PATCH 성공 길은 TS 로 넘긴다 — 이름 바꾸기(409·감사·WS), 끄기(PAT 회수),
 /// 스코프·MCP 판정이 아직 Rust 에 없다. 정의 변경(instructions·harness·workingDir)의 비밀 grant 정지는 Rust 가 한다.
-const PATCH_TS_ONLY_FIELDS: &[&str] = &[
-    "handle",
-    "disabled",
-    "ownerAccountId",
-    "invokeScope",
-    "credentialScope",
-    "mcpServers",
-];
+const PATCH_TS_ONLY_FIELDS: &[&str] = &["handle", "disabled", "ownerAccountId"];
 
 /// TS `AUDITED_FIELDS` — 순서·종류가 같다.
 const AUDITED_FIELDS: &[(&str, bool)] = &[
@@ -529,7 +528,85 @@ async fn patch_native(
         Ok(None) => return not_found(),
         Err(e) => return crate::directory::internal(e),
     };
+    let bv: Value = serde_json::from_str(&before).unwrap_or(Value::Null);
+    let bs = |k: &str| {
+        bv.get(k)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let ps = |k: &str| m.get(k).and_then(Value::as_str).map(str::to_owned);
+    if m.contains_key("invokeScope") || m.contains_key("credentialScope") {
+        let invoke = ps("invokeScope").unwrap_or_else(|| bs("invokeScope"));
+        let cred = ps("credentialScope").unwrap_or_else(|| bs("credentialScope"));
+        if let Some((code, msg)) = validate_scope_change(&bs("invokeScope"), &invoke, &cred) {
+            return json_err(StatusCode::BAD_REQUEST, code, msg);
+        }
+    }
+    let names: Option<Vec<String>> = m.get("mcpServers").and_then(Value::as_array).map(|a| {
+        a.iter()
+            .filter_map(|v| v.as_str().map(str::to_owned))
+            .collect()
+    });
+    if names.is_some() || m.contains_key("credentialScope") {
+        let list = names.clone().unwrap_or_else(|| {
+            bv.get("mcpServers")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default()
+        });
+        let cred = ps("credentialScope").unwrap_or_else(|| bs("credentialScope"));
+        if !list.is_empty() {
+            let rows: Vec<(String, String)> = match sqlx::query_as(
+                "select name, credential_kind from mcp_server where name = any($1::text[])",
+            )
+            .bind(&list)
+            .fetch_all(write)
+            .await
+            {
+                Ok(r) => r,
+                Err(e) => return crate::directory::internal(e),
+            };
+            let unknown: Vec<&str> = list
+                .iter()
+                .filter(|n| !rows.iter().any(|(r, _)| r == *n))
+                .map(String::as_str)
+                .collect();
+            if !unknown.is_empty() {
+                return json_err(
+                    StatusCode::BAD_REQUEST,
+                    "unknown_mcp_server",
+                    &format!("레지스트리에 없는 MCP 이름: {}", unknown.join(", ")),
+                );
+            }
+            if cred != "personal" && rows.iter().any(|(_, k)| k == "personal") {
+                return json_err(
+                    StatusCode::BAD_REQUEST,
+                    "scope_invariant",
+                    "personal 자격증명의 MCP 를 붙이려면 credentialScope 가 personal 이어야 한다",
+                );
+            }
+        }
+    }
     let r: Result<(), sqlx::Error> = async {
+        if let Some(names) = &names {
+            sqlx::query("delete from agent_mcp_server where agent_id = $1::uuid and not (name = any($2::text[]))")
+                .bind(id)
+                .bind(names)
+                .execute(write)
+                .await?;
+            for n in names {
+                sqlx::query("insert into agent_mcp_server (agent_id, name) values ($1::uuid, $2) on conflict do nothing")
+                    .bind(id)
+                    .bind(n)
+                    .execute(write)
+                    .await?;
+            }
+        }
         for (key, sql) in [
             (
                 "trustSiblings",
@@ -646,6 +723,27 @@ async fn patch_native(
         .await;
     }
     json_200(updated)
+}
+
+/// TS `validateScopeChange(before, after)`.
+fn validate_scope_change(
+    before_invoke: &str,
+    invoke: &str,
+    cred: &str,
+) -> Option<(&'static str, &'static str)> {
+    if cred == "personal" && invoke != "owner" {
+        return Some((
+            "scope_invariant",
+            "개인 자격증명(personal)을 쥔 에이전트는 소유자만 부를 수 있어야 한다(invokeScope=owner)",
+        ));
+    }
+    if before_invoke == "owner" && invoke != "owner" {
+        return Some((
+            "scope_widening",
+            "소유자 전용이던 에이전트는 넓힐 수 없다 — 넓히려면 새 에이전트를 만든다",
+        ));
+    }
+    None
 }
 
 /// TS `upsertConfig` — 키 부재는 손대지 않음, `null` 은 기본값으로 되돌리기.
