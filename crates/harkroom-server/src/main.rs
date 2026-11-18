@@ -1799,6 +1799,29 @@ async fn main() {
         }
         None => false,
     };
+    // S5.5 a — 위임 스위치가 켜졌을 때의 판정(`consumeLine`·`no_mandate_line` 카드)도 Rust 가 답한다. 그림자 권한·카드 권한에 더해
+    // [`MERGE_CHECKS_ENFORCE_PRIVILEGES`](`mandate_line.used_count` UPDATE)까지 있을 때만 — 없으면 스위치가 켜진 판정은 TS 로 넘긴다.
+    let merge_checks_enforce = match (&merge_checks_card, merge_checks_mandate) {
+        (Some(w), true) => {
+            use harkroom_server::core::mandate_line_match as t;
+            match write::missing_in(w, t::MERGE_CHECKS_ENFORCE_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => true,
+                Ok(m) => {
+                    eprintln!("front: merge checks mandate enforce off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
+                    false
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: merge checks mandate enforce off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    false
+                }
+            }
+        }
+        _ => false,
+    };
     // S5.4 — `POST /agent/api-checks` 의 임대 거절(`lease_invalid` + `api.call.denied` 감사). 쓰기 풀에 [`API_CHECKS_DENY_PRIVILEGES`] 가 다 있을 때만.
     let api_checks_deny = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -4177,6 +4200,7 @@ async fn main() {
                 merge_checks_card.clone(),
                 merge_checks_approve.clone(),
                 merge_checks_mandate,
+                merge_checks_enforce,
                 merge_results_read.clone(),
                 merge_results_post.clone(),
                 auth.clone(),
