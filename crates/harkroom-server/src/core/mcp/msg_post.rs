@@ -1,8 +1,8 @@
 //! S5.3 C1c-4c — MCP `message.post` 의 몸통. TS `mcp/mcpPlugin.ts` 의 같은 도구를 옮긴다: 채널 가시성 → 모델 신고 meta →
 //! `postMessage`(원인 입력과 함께, [`crate::core::msg_post::post_in_tx`]) → `postedResult`.
 //!
-//! - **TS 로 넘기는 것**(`None` — 아무것도 쓰지 않았다): zod 가 받지 않을 인자(모양을 모르면 넘긴다) · 비지 않은 `agentModels`(모델 지정은
-//!   `applyAgentPicks`, TS 몫) · 자른 자리가 서로게이트 쌍을 가르는 모델 신고([`cause_link::trimmed_model`]) · `post_in_tx` 가 TS 몫이라고 한
+//! - **TS 로 넘기는 것**(`None` — 아무것도 쓰지 않았다): zod 가 받지 않을 인자(모양을 모르면 넘긴다) · 비지 않은 `agentModels`(거절 갈래만
+//!   [`picks_refusal`] 이 답하고, 고르기 쓰기 `applyAgentPicks` 는 TS 몫) · 자른 자리가 서로게이트 쌍을 가르는 모델 신고([`cause_link::trimmed_model`]) · `post_in_tx` 가 TS 몫이라고 한
 //!   글(상한에 막힌 부름·암묵 위임을 모르는 부름·TS 몫 스레드) · DB 오류(트랜잭션이 버려져 아무것도 남지 않았다 — TS 가 같은 요청을 다시 돈다).
 //! - REST 와 다른 점(TS 와 같다): 보관된 채널도 막지 않는다(`assertChannelVisible` 만) · 링크 미리보기·글 승인이 없어 본문 가드가
 //!   없다 — 그래서 메시지 링크가 든 글도 Rust 가 맡고, 정체 판정의 「같은 대화 링크」 갈래가 여기서 닿는다 · 재시도 키가 없다 ·
@@ -179,6 +179,79 @@ pub async fn answer(
         operator,
     )
     .await
+}
+
+/// zod `AGENT_MODELS_ARG` 한 칸 — `{ agentId: uuid, model?: string(≤MODEL_ID_MAX)|null, effort?: string(≤64)|null }`.
+type Pick = (String, Option<String>, Option<String>);
+
+fn parse_picks(v: &Value) -> Option<Vec<Pick>> {
+    let a = v.as_array()?;
+    if a.len() > 8 {
+        return None;
+    }
+    let axis = |o: &Map<String, Value>, k: &str, max: usize| -> Option<Option<String>> {
+        match o.get(k) {
+            None | Some(Value::Null) => Some(None),
+            Some(Value::String(s)) if s.encode_utf16().count() <= max => Some(Some(s.clone())),
+            _ => None,
+        }
+    };
+    a.iter()
+        .map(|p| {
+            let o = p.as_object()?;
+            let id = o
+                .get("agentId")?
+                .as_str()
+                .filter(|s| is_uuid(s))?
+                .to_owned();
+            Some((
+                id,
+                axis(o, "model", cause_link::MODEL_ID_MAX)?,
+                axis(o, "effort", 64)?,
+            ))
+        })
+        .collect()
+}
+
+/// `message.post` 에 비지 않은 `agentModels` 가 왔을 때 TS `preparePicks` 까지의 거절(채널 가시성 → `cleanPicks` →
+/// `axisValid`(`bad_model_value`) → `checkOffered`(`model_not_offered`·`effort_not_offered`))만 Rust 가 답한다. 모두 지나면 `None`
+/// (→ TS 가 게시 트랜잭션 안의 `applyAgentPicks` 와 함께 처음부터 돈다 — 여기서는 읽기만 했다). 하네스 목록은 능력 스냅숏만 보므로
+/// 오퍼레이터 코어가 Rust 일 때(`relay_moved`)만 부른다. 인자가 zod 를 못 지나거나 DB 오류여도 `None`.
+pub async fn picks_refusal(st: &PostState, me: &Account, args: &Value) -> Option<String> {
+    use crate::core::thread_model_set::{axis_valid, check_offered, clean_axis};
+    let picks = parse_picks(args.get("agentModels")?)?;
+    if picks.is_empty() {
+        return None;
+    }
+    let mut rest = args.clone();
+    rest.as_object_mut()?.remove("agentModels");
+    let a = parse(&rest)?;
+    match channel_visible(&st.read, &me.id, &a.channel).await {
+        Ok(true) => {}
+        Ok(false) => return Some(err("forbidden", "not a member of this dm channel")),
+        Err(_) => return None,
+    }
+    for (agent, model, effort) in &picks {
+        let model = clean_axis(model.as_deref(), cause_link::MODEL_ID_MAX);
+        let effort = clean_axis(effort.as_deref(), 64);
+        if model.is_none() && effort.is_none() {
+            continue;
+        }
+        if !axis_valid(model.as_deref()) || !axis_valid(effort.as_deref()) {
+            return Some(err(
+                "bad_model_value",
+                "모델·effort 는 영숫자로 시작하고 영숫자·._:/[]- 만 쓴다",
+            ));
+        }
+        if let Err((code, message)) =
+            check_offered(&st.write, agent, model.as_deref(), effort.as_deref())
+                .await
+                .ok()?
+        {
+            return Some(err(code, &message));
+        }
+    }
+    None
 }
 
 /// 글 종류 — TS `postMessage` 의 `kind`·`serverNotice` 조합.
@@ -805,6 +878,13 @@ mod tests {
             parse(&json!({ "channelId": C, "body": "x", "model": "  " })).map(|a| a.model),
             Some(None)
         );
+        assert_eq!(
+            parse_picks(&json!([{ "agentId": C, "model": "m", "effort": null }])),
+            Some(vec![(C.to_owned(), Some("m".to_owned()), None)])
+        );
+        assert!(parse_picks(&json!([{ "agentId": "x" }])).is_none());
+        assert!(parse_picks(&json!([{ "agentId": C, "effort": "e".repeat(65) }])).is_none());
+        assert!(parse_picks(&json!(vec![json!({ "agentId": C }); 9])).is_none());
         // 빈 agentModels 는 고를 것이 없어 없는 것과 같다.
         assert!(parse(&json!({ "channelId": C, "body": "x", "agentModels": [] })).is_some());
         // ASCII 밖 모델도 JS `trim` 처럼 다듬어 Rust 가 맡는다.

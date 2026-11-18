@@ -219,7 +219,7 @@ fn offered_verdict(
     Ok(())
 }
 
-async fn check_offered(
+pub(crate) async fn check_offered(
     w: &sqlx::PgPool,
     agent: &str,
     model: Option<&str>,
