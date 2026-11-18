@@ -725,10 +725,25 @@ pub struct AuditDetail<'a> {
     pub grant_mode: Option<(&'a str, &'a str)>,
     /// `via: { kind: 'bundle', bundleMessageId }` 이면 묶음, 없으면 `via: 'button'`(chat·mirror 는 처음부터 TS).
     pub bundle_message_id: Option<&'a str>,
+    /// S5.4 14d — 거울 카드에서 온 결정이면 `via: 'mirror', mirrorMessageId`(TS 와 같은 칸). 묶음과 함께 오지 않는다.
+    /// 아직 입구는 거울을 TS 로 넘긴다(`rust_takes`) — 쓰기 길이 이것을 채우는 것은 다음 조각.
+    pub mirror_message_id: Option<&'a str>,
+}
+
+/// S5.4 14d — 카드 meta 의 `decidedVia`(TS: chat·mirror·bundle 일 때만, button 은 없음).
+pub fn decided_via(
+    bundle_message_id: Option<&str>,
+    mirror_message_id: Option<&str>,
+) -> Option<Value> {
+    match (bundle_message_id, mirror_message_id) {
+        (Some(b), _) => Some(serde_json::json!({ "kind": "bundle", "bundleMessageId": b })),
+        (None, Some(m)) => Some(serde_json::json!({ "kind": "mirror", "mirrorMessageId": m })),
+        (None, None) => None,
+    }
 }
 
 /// detail 에 나올 수 있는 칸 전부(TS 와 같은 이름). 시험이 이 밖의 칸이 없는지·TS 원문에 이 이름들이 있는지 본다.
-pub const AUDIT_DETAIL_KEYS: [&str; 11] = [
+pub const AUDIT_DETAIL_KEYS: [&str; 12] = [
     "requestId",
     "kind",
     "target",
@@ -740,6 +755,7 @@ pub const AUDIT_DETAIL_KEYS: [&str; 11] = [
     "commandGrantId",
     "via",
     "bundleMessageId",
+    "mirrorMessageId",
 ];
 
 pub fn audit_detail(a: &AuditDetail<'_>) -> Value {
@@ -764,6 +780,9 @@ pub fn audit_detail(a: &AuditDetail<'_>) -> Value {
     if let Some(b) = a.bundle_message_id {
         o["via"] = serde_json::json!("bundle");
         o["bundleMessageId"] = serde_json::json!(b);
+    } else if let Some(m) = a.mirror_message_id {
+        o["via"] = serde_json::json!("mirror");
+        o["mirrorMessageId"] = serde_json::json!(m);
     } else {
         o["via"] = serde_json::json!("button");
     }
@@ -921,8 +940,8 @@ pub async fn deny_write(
         let mut patch = serde_json::json!({
             "status": "denied", "decidedAt": now, "decidedBy": args.actor_id,
         });
-        if let Some(b) = args.bundle_message_id {
-            patch["decidedVia"] = serde_json::json!({ "kind": "bundle", "bundleMessageId": b });
+        if let Some(v) = decided_via(args.bundle_message_id, None) {
+            patch["decidedVia"] = v;
         }
         patch["decidedByOwner"] = Value::Bool(as_owner);
         sqlx::query(DENY_UPDATE_CARD)
@@ -941,6 +960,7 @@ pub async fn deny_write(
         grant_expires_at: None,
         grant_mode: None,
         bundle_message_id: args.bundle_message_id,
+        mirror_message_id: None,
     });
     sqlx::query(DENY_AUDIT)
         .bind(args.actor_id)

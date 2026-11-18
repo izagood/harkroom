@@ -691,8 +691,8 @@ pub async fn approve_write(
         if let Some(id) = line.as_ref().and_then(|l| l.line_id()) {
             patch["lineId"] = json!(id);
         }
-        if let Some(b) = args.bundle_message_id {
-            patch["decidedVia"] = json!({ "kind": "bundle", "bundleMessageId": b });
+        if let Some(v) = super::decide_core::decided_via(args.bundle_message_id, None) {
+            patch["decidedVia"] = v;
         }
         patch["decidedByOwner"] = Value::Bool(true);
         sqlx::query(APPROVE_UPDATE_CARD)
@@ -711,6 +711,7 @@ pub async fn approve_write(
         grant_expires_at: expires_iso.as_deref(),
         grant_mode: grant_mode.zip(command_grant_id.as_deref()),
         bundle_message_id: args.bundle_message_id,
+        mirror_message_id: None,
     });
     sqlx::query(APPROVE_AUDIT)
         .bind(args.actor_id)
@@ -876,8 +877,8 @@ async fn merge_once_write(
             "status": "approved_once", "decidedAt": now_iso, "decidedBy": args.actor_id,
             "approvedOnce": { "ghUser": once.gh_user, "relaxChecks": once.relax_checks, "expiresAt": expires_iso },
         });
-        if let Some(b) = args.bundle_message_id {
-            patch["decidedVia"] = json!({ "kind": "bundle", "bundleMessageId": b });
+        if let Some(v) = super::decide_core::decided_via(args.bundle_message_id, None) {
+            patch["decidedVia"] = v;
         }
         patch["decidedByOwner"] = Value::Bool(true);
         sqlx::query(APPROVE_UPDATE_CARD)
@@ -912,6 +913,7 @@ async fn merge_once_write(
         grant_expires_at: None,
         grant_mode: None,
         bundle_message_id: args.bundle_message_id,
+        mirror_message_id: None,
     });
     sqlx::query(APPROVE_AUDIT)
         .bind(args.actor_id)
