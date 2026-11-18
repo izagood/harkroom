@@ -1237,6 +1237,30 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 — `GET /workspace/icon`. 아바타 읽기(같은 저장소)가 켜졌고 아이콘 칸 권한이 있을 때만.
+    let workspace_icon = match &avatar_read {
+        Some(s) => match write::missing_in(
+            &state.pool,
+            harkroom_server::core::avatar_read::WORKSPACE_ICON_PRIVILEGES,
+            &[],
+        )
+        .await
+        {
+            Ok(m) if m.is_empty() => Some(s.clone()),
+            Ok(m) => {
+                eprintln!("front: workspace icon core off — missing privileges {m:?}");
+                None
+            }
+            Err(e) => {
+                eprintln!(
+                    "front: workspace icon core off — privilege check failed ({})",
+                    e.as_database_error().map_or("io", |_| "db")
+                );
+                None
+            }
+        },
+        None => None,
+    };
     // S5.4 — 아바타 걸기(`PUT /accounts/me/avatar`·`PUT /accounts/agents/{id}/avatar`). 네 겹 잠금: `HARKROOM_CORE=rust`,
     // 쓰기 풀에 그 칸 권한이 다 있을 때, 아바타 읽기 코어가 켜졌을 때(같은 읽기 SELECT·같은 저장소)만 — 아니면 TS 에 남는다.
     // 래스터 그림은 코어가 TS 에 넘긴다(sharp 판정).
@@ -3019,6 +3043,20 @@ async fn main() {
             core_routes.router = core_routes.router.merge(aw.router);
             core_routes.http.extend(aw.http);
             core_routes.sockets.extend(aw.sockets);
+        }
+        if let Some(storage) = workspace_icon {
+            let wi = harkroom_server::core::avatar_read::icon_routes(
+                harkroom_server::core::avatar_read::AvatarReadState {
+                    read: state.pool.clone(),
+                    storage,
+                    up: state.up.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(wi.router);
+            core_routes.http.extend(wi.http);
+            core_routes.sockets.extend(wi.sockets);
         }
         if let Some(storage) = avatar_read {
             let av = harkroom_server::core::avatar_read::routes(

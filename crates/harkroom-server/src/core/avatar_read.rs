@@ -309,6 +309,68 @@ pub fn routes(
     }
 }
 
+/// S5.4 — `GET /workspace/icon`(TS `routes/workspaceRoutes.ts` · `findWorkspaceIcon`)이 읽기 역할에 쓰는 권한.
+/// 아바타 줄과 따로 본다 — 이 칸이 없다고 아바타 읽기까지 TS 로 떨어지지 않게.
+pub const WORKSPACE_ICON_PRIVILEGES: &[(&str, &str)] = &[
+    ("workspace_profile.id", "SELECT"),
+    ("workspace_profile.icon_attachment_id", "SELECT"),
+    ("attachment.id", "SELECT"),
+    ("attachment.storage_key", "SELECT"),
+    ("attachment.content_type", "SELECT"),
+    ("attachment.size_bytes", "SELECT"),
+];
+
+const ICON_SQL: &str = "select a.id::text, a.storage_key, a.content_type, a.size_bytes::int \
+     from workspace_profile w join attachment a on a.id = w.icon_attachment_id where w.id = true";
+
+/// `GET /workspace/icon` — 아바타와 같은 헤더에 `etag: "<attachmentId>"` 를 더한다.
+pub async fn workspace_icon(
+    State(st): State<Arc<AvatarReadState>>,
+    RequireAccount(_me, _): RequireAccount,
+) -> Response {
+    let row: Option<TargetRow> = match sqlx::query_as(ICON_SQL).fetch_optional(&st.read).await {
+        Ok(r) => r,
+        Err(e) => return internal(e),
+    };
+    let Some((att_id, key, content_type, size)) = row else {
+        return json_err(StatusCode::NOT_FOUND, "not_found", "no workspace icon");
+    };
+    let mut r = serve(&st.storage, &att_id, &key, &content_type, size, None).await;
+    if r.status() == StatusCode::OK
+        && let Ok(v) = HeaderValue::from_str(&format!("\"{att_id}\""))
+    {
+        r.headers_mut().insert(header::ETAG, v);
+    }
+    r
+}
+
+/// `GET /workspace/icon` 한 줄 — [`WORKSPACE_ICON_PRIVILEGES`] 가 있을 때만 `main.rs` 가 붙인다.
+pub fn icon_routes(
+    st: AvatarReadState,
+    auth: crate::auth::AuthPools,
+    cors: Arc<crate::cors::Cors>,
+) -> crate::route_table::Routes<()> {
+    use crate::route_table::Table;
+    let t = Table::<Arc<AvatarReadState>>::new()
+        .get("/workspace/icon", workspace_icon)
+        .map(|r| {
+            r.route_layer(axum::middleware::from_fn_with_state(
+                auth,
+                crate::auth::layer,
+            ))
+            .layer(axum::middleware::from_fn_with_state(
+                cors,
+                crate::cors::layer,
+            ))
+        })
+        .finish();
+    crate::route_table::Routes {
+        router: t.router.with_state(Arc::new(st)),
+        http: t.http,
+        sockets: t.sockets,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
