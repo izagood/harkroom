@@ -42,7 +42,7 @@ struct Q {
 
 /// JS `Number(v)` — zod `coerce.number()` 가 쓰는 변환. 앞뒤 공백을 버리고, 빈 글은 0, `0x`·`0o`·`0b` 접두는 정수,
 /// 나머지는 10진 실수. JS 가 `NaN` 을 내는 꼴은 `None`.
-fn js_number(v: &str) -> Option<f64> {
+pub(crate) fn js_number(v: &str) -> Option<f64> {
     let t = v.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
     if t.is_empty() {
         return Some(0.0);
