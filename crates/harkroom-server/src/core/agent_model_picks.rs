@@ -10,6 +10,23 @@ use super::thread_model_set::axis_valid;
 use serde_json::Value;
 use std::collections::HashSet;
 
+/// [`apply`] 이 글 올리기 권한 위에 더 쓰는 권한 — 다 있을 때만 Rust 가 답해야 한다(없으면 TS 로 넘긴다).
+pub const AGENT_MODEL_PICKS_PRIVILEGES: &[(&str, &str)] = &[
+    ("agent_config.account_id", "SELECT"),
+    ("agent_config.agent_pickable_models", "SELECT"),
+    ("agent_config.harness", "SELECT"),
+    ("account.id", "SELECT"),
+    ("account.kind", "SELECT"),
+    ("account.deleted_at", "SELECT"),
+    ("thread_agent_model", "SELECT"),
+    ("thread_agent_model", "INSERT"),
+    ("thread_agent_model", "UPDATE"),
+    ("thread_agent_model", "DELETE"),
+    ("thread_agent_pick_count", "SELECT"),
+    ("thread_agent_pick_count", "INSERT"),
+    ("thread_agent_pick_count", "UPDATE"),
+];
+
 /// TS `AGENT_PICK_LIMIT_PER_THREAD`.
 pub const AGENT_PICK_LIMIT_PER_THREAD: i32 = 3;
 
