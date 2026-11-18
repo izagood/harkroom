@@ -208,13 +208,24 @@ fn parse_patterns(args: &Value) -> Option<Vec<String>> {
 }
 
 /// TS `auditMemory`(cap 30) 의 답 글자. JS 와 판정이 갈릴 수 있는 본문이 있으면 `None`.
+#[cfg(test)]
 pub(crate) fn audit_text(
     rows: &[Row],
     archived: i64,
     patterns: &[String],
     now_ms: i64,
 ) -> Option<String> {
-    let cap = LIST_CAP;
+    audit_text_capped(rows, archived, patterns, now_ms, LIST_CAP)
+}
+
+/// [`audit_text`] 에 목록 상한을 따로 준다 — 사람 화면(REST)은 TS `AUDIT_HUMAN_LIST_CAP`.
+pub(crate) fn audit_text_capped(
+    rows: &[Row],
+    archived: i64,
+    patterns: &[String],
+    now_ms: i64,
+    cap: usize,
+) -> Option<String> {
     for r in rows {
         if r.value.contains("[[") && r.value.chars().any(|c| u32::from(c) > 0xFFFF) {
             return None;
@@ -503,23 +514,34 @@ fn into_row(r: RawRow) -> Row {
 
 pub(super) async fn answer(pool: &PgPool, me: &Account, args: &Value) -> Option<String> {
     let patterns = parse_patterns(args)?;
+    audit_for(pool, &me.id, &patterns, LIST_CAP)
+        .await
+        .ok()
+        .flatten()
+        .map(|t| text_result(&t))
+}
+
+/// 한 계정의 정리 후보(TS `auditMemory(pool, id, patterns, { cap })`) 의 JSON 글자. `Ok(None)` 은 JS 와 판정이 갈릴 수 있는 꼴(→ TS).
+pub(crate) async fn audit_for(
+    pool: &PgPool,
+    account_id: &str,
+    patterns: &[String],
+    cap: usize,
+) -> Result<Option<String>, sqlx::Error> {
     let raw: Vec<RawRow> = sqlx::query_as(ROWS_SQL)
-        .bind(&me.id)
+        .bind(account_id)
         .fetch_all(pool)
-        .await
-        .ok()?;
+        .await?;
     let archived: i64 = sqlx::query_scalar(ARCHIVED_SQL)
-        .bind(&me.id)
+        .bind(account_id)
         .fetch_one(pool)
-        .await
-        .ok()?;
+        .await?;
     let rows: Vec<Row> = raw.into_iter().map(into_row).collect();
     #[allow(clippy::cast_possible_truncation)]
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .ok()?
-        .as_millis() as i64;
-    audit_text(&rows, archived, &patterns, now_ms).map(|t| text_result(&t))
+        .map_or(0, |d| d.as_millis() as i64);
+    Ok(audit_text_capped(&rows, archived, patterns, now_ms, cap))
 }
 
 #[cfg(test)]
@@ -704,5 +726,24 @@ mod tests {
         assert!(shared.contains("export const JOURNAL_EXPIRING_WINDOW = 5;"));
         let mcp = include_str!("../../../../../packages/server/src/mcp/mcpPlugin.ts");
         assert!(mcp.contains("inputSchema: { patterns: z.array(z.string().min(3).max(100)).max(20).optional() },\n  }, async ({ patterns }) => jsonResult(await auditMemory(pool, account.id, patterns ?? [])));"));
+    }
+
+    #[test]
+    fn human_cap_keeps_more_than_agent_cap() {
+        let rows: Vec<Row> = (0..31)
+            .map(|i| Row {
+                description: None,
+                ..row(&format!("mem/n{i:02}"), "x")
+            })
+            .collect();
+        let agent: Value =
+            serde_json::from_str(&audit_text_capped(&rows, 0, &[], NOW, LIST_CAP).unwrap())
+                .unwrap();
+        assert_eq!(agent["undescribed"].as_array().unwrap().len(), 30);
+        assert_eq!(agent["truncated"], true);
+        let human: Value =
+            serde_json::from_str(&audit_text_capped(&rows, 0, &[], NOW, 200).unwrap()).unwrap();
+        assert_eq!(human["undescribed"].as_array().unwrap().len(), 31);
+        assert_eq!(human["truncated"], false);
     }
 }

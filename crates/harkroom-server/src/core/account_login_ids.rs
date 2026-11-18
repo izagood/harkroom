@@ -5,7 +5,7 @@
 //!   제외, 자기 자신 제외) — 질의는 TS 와 같다.
 //! - 읽은 사실(누가·건수)만 사람마다 하루 한 줄 감사에 남긴다(TS `OncePerWindow` 와 같은 창). 값은 싣지 않는다.
 //! - 쓰기는 감사 줄(`audit_log` INSERT)뿐 — [`ACCOUNT_LOGIN_IDS_PRIVILEGES`]. 없으면 `main.rs` 가 이 줄을 붙이지 않아 TS 에
-//!   남는다. 재설정 코드 발급·거두기는 TS 에 남긴다.
+//!   남는다. 재설정 코드 발급은 TS 에 남기고, 거두기는 [`super::account_reset_code_revoke`].
 use crate::auth::{Auth, Via};
 use crate::directory::internal;
 use crate::perm::require_cap;
