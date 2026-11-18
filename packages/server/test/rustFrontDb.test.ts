@@ -11531,6 +11531,123 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           const lim = await pair('11번째 → 429 rate_limited', R, mkBody(L2, 's54ac2-none', gen('password')), { headers: v2 });
           expect(lim.a.r.status).toBe(429);
           await db.pool.query('delete from secret where created_by_agent_id = any($1::uuid[])', [agents]);
+          // 13) POST /agent/secrets/reveal(S5.4 aa `agent_secret_reveal.rs`). 새 에이전트 ar(위 ac·ac2 의 제한기와 따로 — 이 줄의
+          // 제한기는 에이전트마다 10분에 30회, 쪽마다 따로 센다). 같은 비밀을 두 서버가 차례로 연다 — 값은 바뀌지 않고 access log 만
+          // 쌓인다. 감사 줄은 없다(TS 도 없다). 순서: 임대 → 없음 → 제한 → 만료 → 소유자 → grant → 남의 에이전트 → 채널 → 오퍼레이터 →
+          // 정지 → 값 없음 → 못 엶.
+          {
+            const ar = await mkAgent('s54ar');
+            agents.push(ar.accountId);
+            known.set(ar.accountId, '<ar>');
+            const LA = await lease('ar', ar.accountId);
+            const LAend = await lease('ar-ended', ar.accountId, { ended: true });
+            const vA = viaOp(ar);
+            const op2 = await registerOperator(app, A, 's54ar-op2');
+            known.set(op2.operatorId, '<op2>');
+            const other = (await db.pool.query<{ id: string }>(
+              `insert into channel (name, kind, visibility) values ('s54ar-other', 'standard', 'public') returning id::text`)).rows[0]!.id;
+            known.set(other, '<other>');
+            // 소유자 계정은 DB 로 바로 세운다(가입 속도 제한에 닿지 않게).
+            const human = async (handle: string) => ({ accountId: (await db.pool.query<{ id: string }>(
+              `insert into account (handle, display_name, kind, login_id, role) values ($1, $1, 'human', $1, 'member') returning id::text`, [handle])).rows[0]!.id });
+            const outsider = await human('s54ar-owner');
+            known.set(outsider.accountId, '<outsider>');
+            const mkSec = async (body: Record<string, unknown>) => {
+              const r = await app.inject({ method: 'POST', url: '/secrets', headers: { authorization: `Bearer ${A}` }, payload: body });
+              expect(r.statusCode, r.body).toBe(201);
+              return String((r.json() as { secret: { id: string } }).secret.id);
+            };
+            const bareSec = async (name: string, owner = admin.accountId) => (await db.pool.query<{ id: string }>(
+              `insert into secret (name, kind, owner_account_id) values ($1, 'text', $2) returning id::text`, [name, owner])).rows[0]!.id;
+            const grant = (secretId: string, o: { ch?: string; op?: string; suspended?: boolean } = {}) => db.pool.query(
+              `insert into secret_grant (secret_id, agent_id, channel_id, operator_id, granted_by, suspended_at)
+               values ($1, $2, $3, $4, $5, case when $6::boolean then now() end)`,
+              [secretId, ar.accountId, o.ch ?? todayId, o.op ?? acop.operatorId, admin.accountId, o.suspended ?? false]);
+            const sText = await mkSec({ name: 's54ar-text', kind: 'text', value: 'agent-reveal-ünï' });
+            const sFile = await mkSec({ name: 's54ar-file', kind: 'file', filename: 'id_rsa', valueBase64: Buffer.from([0xff, 0, 1, 2]).toString('base64') });
+            const sExp = await mkSec({ name: 's54ar-exp', kind: 'text', value: 'expired-value' });
+            await db.pool.query(`update secret set expires_at = now() - interval '1 hour' where id = $1`, [sExp]);
+            const sOwnerOff = await bareSec('s54ar-owneroff', outsider.accountId);
+            const sNotOwn = await bareSec('s54ar-notown', outsider.accountId);
+            await db.pool.query(`update account set disabled_at = now() where id = $1`, [outsider.accountId]);
+            // notown 은 살아 있는 다른 사람(owner2)의 것 — 소유자 판정을 지나 not_own_agent 에 닿는다.
+            const owner2 = await human('s54ar-owner2');
+            known.set(owner2.accountId, '<owner2>');
+            await db.pool.query(`update secret set owner_account_id = $2 where id = $1`, [sNotOwn, owner2.accountId]);
+            const sNoGrant = await mkSec({ name: 's54ar-nogrant', kind: 'text', value: 'nogrant-value' });
+            const sCh = await mkSec({ name: 's54ar-ch', kind: 'text', value: 'ch-value' });
+            const sOp = await mkSec({ name: 's54ar-op', kind: 'text', value: 'op-value' });
+            const sSus = await mkSec({ name: 's54ar-sus', kind: 'text', value: 'sus-value' });
+            const sNone = await bareSec('s54ar-none');
+            const sBad = await bareSec('s54ar-bad');
+            await db.pool.query(`insert into secret_version (secret_id, version, sealed, size_bytes, created_by) values ($1, 1, 'v2.k9.AAAA.AAAA.AAAA.AAAA', 4, $2)`, [sBad, admin.accountId]);
+            for (const s of [sText, sFile, sExp, sOwnerOff, sNotOwn, sNone, sBad]) await grant(s);
+            await grant(sCh, { ch: other });
+            await grant(sOp, { op: op2.operatorId });
+            await grant(sSus, { suspended: true });
+            for (const [id, n] of [[sText, 'text'], [sFile, 'file'], [sExp, 'exp'], [sOwnerOff, 'owneroff'], [sNotOwn, 'notown'], [sNoGrant, 'nogrant'],
+              [sCh, 'ch'], [sOp, 'op'], [sSus, 'sus'], [sNone, 'none'], [sBad, 'bad']] as const) known.set(id, `<s:${n}>`);
+            const RV = '/agent/secrets/reveal';
+            const rb = (l: { leaseId: string; token: string }, name: string, extra: Record<string, unknown> = {}) => ({ leaseId: l.leaseId, token: l.token, name, ...extra });
+            const rp = (label: string, body: unknown, headers: Record<string, string> = vA) => pair(label, RV, body, { headers });
+            const want = async (label: string, body: unknown, status: number, code: string | null, logs: number) => {
+              const { a, b } = await rp(label, body);
+              expect(a.r.status, label).toBe(status);
+              if (code) expect((a.r.json.error as { code: string }).code, label).toBe(code);
+              expect(a.r.cc, `${label} no-store`).toBe('no-store');
+              expect(b.effects.access, `${label} access log`).toHaveLength(logs);
+              expect(b.effects.audit, `${label} 감사 없음`).toEqual([]);
+              return { a, b };
+            };
+            // 게이트 앞(no-store 없음).
+            await rp('reveal 익명 → 401', rb(LA, 's54ar-text'), {});
+            await rp('reveal 사람 → 403', rb(LA, 's54ar-text'), { authorization: `Bearer ${A}` });
+            await rp('reveal PAT 에이전트 → 403', rb(LA, 's54ar-text'), { authorization: `Bearer ${ar.pat}` });
+            await rp('reveal 본문 틀림 → 400', { leaseId: 'nope', token: 't', name: 's54ar-text' });
+            await rp('reveal 이름 틀림 → 400', rb(LA, 'Bad Name'));
+            // 임대 — 비밀이 있으면 denied 한 줄(turn_id 없음), 없으면 줄 없음.
+            const li = await want('reveal 끝난 임대 → 403 lease_invalid', rb(LAend, 's54ar-text'), 403, 'lease_invalid', 1);
+            expect(norm(li.b.effects.access[0])).toMatchObject({ secret_name: 's54ar-text', agent_id: '<ar>', operator_id: '<op>', turn_id: null, channel_id: null, result: 'denied', reason: 'lease_invalid' });
+            await want('reveal 남의 임대 → 403 lease_invalid', rb(L, 's54ar-text'), 403, 'lease_invalid', 1);
+            await want('reveal 토큰 틀림 → 403 lease_invalid', { ...rb(LA, 's54ar-text'), token: 'wrong' }, 403, 'lease_invalid', 1);
+            await want('reveal 끝난 임대·없는 비밀 → 403 lease_invalid(줄 없음)', rb(LAend, 's54ar-nothing'), 403, 'lease_invalid', 0);
+            await want('reveal 없는 비밀 → 404', rb(LA, 's54ar-nothing'), 404, 'not_found', 0);
+            // 비밀 판정(아래부터 제한기를 센다 — 쪽마다 n 번).
+            let n = 0;
+            const deny = async (label: string, name: string, status: number, code: string) => {
+              n++;
+              const r = await want(label, rb(LA, name), status, code, 1);
+              expect(norm(r.b.effects.access[0])).toMatchObject({ secret_name: name, version: null, agent_id: '<ar>', turn_id: '<lease:ar>', channel_id: '<ch>', thread_root_id: '<th>', result: 'denied', reason: code });
+            };
+            await deny('reveal 만료 → 403 secret_expired', 's54ar-exp', 403, 'secret_expired');
+            await deny('reveal 소유자 비활성 → 403 owner_inactive', 's54ar-owneroff', 403, 'owner_inactive');
+            await deny('reveal grant 없음 → 403 not_granted', 's54ar-nogrant', 403, 'not_granted');
+            await deny('reveal 남의 에이전트 → 403 not_own_agent', 's54ar-notown', 403, 'not_own_agent');
+            await deny('reveal 채널 다름 → 403 wrong_channel', 's54ar-ch', 403, 'wrong_channel');
+            await deny('reveal 오퍼레이터 다름 → 403 wrong_operator', 's54ar-op', 403, 'wrong_operator');
+            await deny('reveal grant 정지 → 403 grant_suspended', 's54ar-sus', 403, 'grant_suspended');
+            await deny('reveal 값 없음 → 403 no_value', 's54ar-none', 403, 'no_value');
+            await deny('reveal 못 엶 → 500 unreadable', 's54ar-bad', 500, 'unreadable');
+            // 성공 — 같은 평문·바이트, access log granted 판 1.
+            n++;
+            const okT = await want('reveal 텍스트 성공', rb(LA, 's54ar-text', { extra: 1 }), 200, null, 1);
+            expect([okT.a.r.json.valueBase64, okT.b.r.json.valueBase64].map((v) => Buffer.from(String(v), 'base64').toString('utf8')), '두 쪽 같은 평문')
+              .toEqual(['agent-reveal-ünï', 'agent-reveal-ünï']);
+            expect(norm(okT.b.r.json)).toEqual({ secret: { id: '<s:text>', name: 's54ar-text', kind: 'text', filename: null, version: 1 }, valueBase64: okT.a.r.json.valueBase64 });
+            expect(norm(okT.b.effects.access)).toEqual([{ secret_name: 's54ar-text', version: 1, agent_id: '<ar>', operator_id: '<op>', turn_id: '<lease:ar>', channel_id: '<ch>', thread_root_id: '<th>', result: 'granted', reason: null }]);
+            n++;
+            const okF = await want('reveal 파일 성공', rb(LA, 's54ar-file'), 200, null, 1);
+            expect([okF.a.r.json.valueBase64, okF.b.r.json.valueBase64], '두 쪽 같은 바이트').toEqual(['/wABAg==', '/wABAg==']);
+            expect(norm(okF.b.r.json)).toMatchObject({ secret: { id: '<s:file>', name: 's54ar-file', kind: 'file', filename: 'id_rsa', version: 1 } });
+            expect(norm(okF.b.effects.access)).toMatchObject([{ secret_name: 's54ar-file', version: 1, result: 'granted', reason: null }]);
+            // 제한기 — 쪽마다 30번째까지 통과, 31번째 429(denied rate_limited 한 줄).
+            while (n < 30) { n++; await want(`reveal 제한 채우기 ${n}`, rb(LA, 's54ar-nogrant'), 403, 'not_granted', 1); }
+            await want('reveal 31번째 → 429 rate_limited', rb(LA, 's54ar-text'), 429, 'rate_limited', 1);
+            await want('reveal 제한 뒤에도 임대 먼저 → 403 lease_invalid', rb(LAend, 's54ar-text'), 403, 'lease_invalid', 1);
+            await want('reveal 제한 뒤에도 없음 먼저 → 404', rb(LA, 's54ar-nothing'), 404, 'not_found', 0);
+            expect(JSON.stringify(await db.pool.query(`select * from secret_access_log where agent_id = $1`, [ar.accountId]).then((r) => r.rows))).not.toContain('agent-reveal');
+            await db.pool.query(`delete from secret where name like 's54ar-%'`);
+          }
         }
       }
       // 프리플라이트(옮긴 줄의 OPTIONS 는 앞단이 TS 로 넘긴다 — 두 답이 같아야 한다).
