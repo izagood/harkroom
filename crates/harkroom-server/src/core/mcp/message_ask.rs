@@ -420,6 +420,20 @@ fn plain(o: &Map<String, Value>, cause: Option<&str>) -> bool {
             .all(|k| !o.contains_key(*k))
 }
 
+/// Rust 가 세우는 거울 카드 — `mirrorOf` 가 있고, `to`·머지 거절·`supersedes`·계획 단계·원인 헤더가 없을 때만([`answer`] 의 거울
+/// 검사를 이미 지났다). 대신하기 검사·원인 기반 사람 앞 푸시·계획 잇기가 얽힌 거울은 TS.
+fn mirror_plain(o: &Map<String, Value>, cause: Option<&str>) -> bool {
+    cause.is_none()
+        && o.get("mirrorOf").is_some_and(Value::is_string)
+        && ["to", "mergeDenialId", "supersedes", "planStepId"]
+            .iter()
+            .all(|k| !o.contains_key(*k))
+}
+
+/// TS `renderPermissionMirror` 의 원본 찾기 — 지우지 않은 원본이 권한 요청 카드인가. 참이면(또는 못 찾으면) TS.
+pub const MIRROR_PERMISSION_SQL: &str =
+    "select meta ? 'permissionRequest' from message where id = $1::uuid and deleted_at is null";
+
 /// 열린 카드 검사를 Rust 가 할 수 있는 꼴 — TS 의 `audience.kind === 'human' && !mirrorOf && !mergeDenialId && threadRootId`.
 /// `supersedes` 의 id 는 밝힌 카드로 센다(TS `declared`). 고르면 스레드 머리 id.
 fn open_card_thread(o: &Map<String, Value>) -> Option<&str> {
@@ -540,6 +554,27 @@ pub async fn answer_plain(
             account_audience(row)?
         }
         None if plain(o, cause) => serde_json::json!({ "kind": "human" }),
+        None if mirror_plain(o, cause) => {
+            // 권한 카드의 거울(`renderPermissionMirror` 다시 쓰기)은 TS. 글 뒤 `syncAskMirrors` 쓰기 칸이 없어도 TS.
+            let root = o.get("mirrorOf")?.as_str()?;
+            let perm: Option<bool> = sqlx::query_scalar(MIRROR_PERMISSION_SQL)
+                .bind(root)
+                .fetch_optional(read)
+                .await
+                .ok()?;
+            if perm != Some(false) {
+                return None;
+            }
+            use crate::core::ask::{ASK_PRIVILEGES, ASK_SEQUENCE_PRIVILEGES};
+            if !crate::write::missing_in(&st.write, ASK_PRIVILEGES, ASK_SEQUENCE_PRIVILEGES)
+                .await
+                .ok()?
+                .is_empty()
+            {
+                return None;
+            }
+            serde_json::json!({ "kind": "human" })
+        }
         None => return None,
     };
     let olds = supersedes_list(o);
@@ -552,7 +587,12 @@ pub async fn answer_plain(
     {
         return None;
     }
-    let meta = plain_meta(o, audience)?;
+    let mut meta = plain_meta(o, audience)?;
+    if let Some(root) = o.get("mirrorOf").and_then(Value::as_str) {
+        meta.get_mut("ask")?
+            .as_object_mut()?
+            .insert("mirrorOf".into(), Value::from(root));
+    }
     let mut sub = Map::new();
     for k in ["channelId", "body", "threadRootId", "model"] {
         if let Some(v) = o.get(k) {
@@ -974,6 +1014,24 @@ mod tests {
     use serde_json::json;
 
     const C: &str = "0b7f3f92-3fa6-494a-8ab3-76d0d2a6a1c0";
+
+    #[test]
+    fn mirror_plain_only_for_bare_mirrors() {
+        let base = json!({ "channelId": C, "body": "b", "options": [], "mirrorOf": C });
+        let o = base.as_object().unwrap();
+        assert!(mirror_plain(o, None));
+        assert!(!mirror_plain(o, Some(C)));
+        for k in ["to", "mergeDenialId", "supersedes", "planStepId"] {
+            let mut m = o.clone();
+            m.insert(k.into(), json!("x"));
+            assert!(!mirror_plain(&m, None), "{k}");
+        }
+        let mut m = o.clone();
+        m.remove("mirrorOf");
+        assert!(!mirror_plain(&m, None));
+        assert!(!plain(o, None));
+        assert!(MIRROR_PERMISSION_SQL.contains("deleted_at is null"));
+    }
 
     #[test]
     fn mirror_refusal_follows_check_ask_mirror_order() {
