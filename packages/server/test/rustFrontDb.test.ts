@@ -1652,6 +1652,12 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant select (id, automation_id, ended_at), update (ended_at, end_reason) on mandate to ${rw}`,
         `grant select (mandate_id, revoked_at), update (revoked_at) on mandate_line to ${rw}`,
         `grant select (id, deleted_at, disabled_at) on account to ${rw}`,
+        // S5.4 결정 5 — DELETE /automations/:id(`core/automation_delete.rs::AUTOMATION_DELETE_PRIVILEGES`). 위 sweeper 줄과 겹치는 칸은 운영 줄과 글자째 같게 둔다.
+        `grant select (id, owner_id, deleted_at), update (deleted_at, enabled, next_at) on automation to ${rw}`,
+        // S5.4 결정 4 — avcs 투영 루프(`loops/projection.rs::PROJECTION_PRIVILEGES`, 게이트는 꺼져 있지만 권한 판정은 돈다).
+        `grant select, insert, update (last_log_index) on projection_cursor to ${rw}`,
+        `grant select, insert, update (expires_at), delete on active_lease to ${rw}`,
+        `grant select, insert, update (avcs_base_url, configured, connected, repo, last_log_index, last_polled_at, last_advanced_at, last_error, updated_at) on projection_status to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -4270,7 +4276,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       // 수신 키 해시·서명 비밀 봉투(`ingress_token_hash`·`ingress_secret_enc`)에 표식을 넣어 두고 어느 답에도 나오지 않는지 본다.
       {
         for (const k of ['GET /automations', 'GET /automations/{id}']) expect(f.log(), k).toContain(`"${k}"`);
-        expect(f.log(), '지우기는 TS 에 남는다').not.toContain('"DELETE /automations/{id}"');
+        expect(f.log(), '지우기는 S5.4 결정 5 가 Rust 로 옮겼다').toContain('"DELETE /automations/{id}"');
         const M = member.token;
         const ch = (await db.pool.query<{ id: string }>(`insert into channel (name, kind) values ('at1-ch', 'standard') returning id`)).rows[0]!.id;
         const mk = async (owner: string, name: string, extra: string, deleted = false) => (await db.pool.query<{ id: string }>(
