@@ -6,11 +6,10 @@
 //!   400 → 지우지 않은 에이전트인가 404) → zod 본문 400 → 지금 사진 id 둘 읽기 → `null` 이면 지우기 →
 //!   업로드 찾기 404 `not_found` → 판정 400 → 원본 찾기 404 `source_not_found` → 원본 판정 400 → 걸기 + `avatar.changed`
 //!   (outbox) → 옛 사진 정리(행 + 파일, 실패는 삼킨다).
-//! - **래스터 그림(PNG·JPEG·GIF·WebP·AVIF)은 TS 에 넘긴다.** TS 는 sharp(libvips) `metadata()` 로 가로·세로·장 수를 재서
-//!   상한(`AVATAR_PIXEL_LIMITS`)과 견주고, libvips 가 헤더를 못 읽으면 `not_an_image` 로 거절한다. 그 판정(움직이는
-//!   GIF·WebP 의 장 수, AVIF 헤더, 깨진 파일의 갈래)을 새 크레이트 없이 같게 낼 수 없다. 넘기기 전까지는 읽기만 했으므로
-//!   TS 가 처음부터 다시 해도 결과가 같다. Rust 는 지우기(`null`)·404 둘·SVG 걸기·SVG 거절(`svg_too_large`·`not_an_image`)
-//!   을 낸다.
+//! - **PNG·JPEG 은 여기서 잰다**(`image` 크레이트 헤더 읽기 — sharp `metadata()` 처럼 픽셀은 풀지 않는다). 가로·세로를
+//!   상한(`AVATAR_PIXEL_LIMITS`)과 견주고, 헤더를 못 읽으면 `not_an_image`. PNG·JPEG 은 libvips 도 한 장으로 읽는다.
+//! - **GIF·WebP·AVIF 는 아직 TS 에 넘긴다** — 장 수·AVIF 헤더 판정에 그 디코더가 필요하다(이 서버는 png·jpeg 만 넣는다).
+//!   넘기기 전까지는 읽기만 했으므로 TS 가 처음부터 다시 해도 결과가 같다.
 //! - TS 는 `emitEvent` 를 커밋 뒤에 따로 내지만 여기서는 걸기와 같은 트랜잭션의 outbox 줄이다(다른 쓰기 코어와 같다).
 use super::attachment_store::LocalStorage;
 use super::relay_routes::{Verdict, check_owner_or_admin};
@@ -164,12 +163,63 @@ pub fn looks_like_svg(bytes: &[u8]) -> bool {
         && !SVG_UNSAFE.is_match(&String::from_utf8_lossy(bytes).to_ascii_lowercase())
 }
 
-/// 판정 결과. `Raster` 는 TS(sharp) 에 넘긴다.
+/// 판정 결과. `Image` 는 받아 준 타입(SVG·PNG·JPEG). `Raster` 는 TS(sharp) 에 넘긴다(GIF·WebP·AVIF — 장 수를
+/// 재려면 그 디코더가 필요한데, 이 서버는 PNG·JPEG 디코더만 넣는다).
 #[derive(Debug, PartialEq)]
 pub enum Detected {
-    Svg,
+    Image(&'static str),
     Raster,
     Refused(&'static str, String),
+}
+
+/// `AVATAR_PIXEL_LIMITS` — (한 변 상한, 픽셀 수 상한).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Purpose {
+    Avatar,
+    Original,
+}
+
+impl Purpose {
+    fn limits(self) -> (u64, u64) {
+        match self {
+            Purpose::Avatar => (4096, 4096 * 4096),
+            Purpose::Original => (16384, 8192 * 8192),
+        }
+    }
+}
+
+/// 크기를 재려고 올리는 바이트의 상한(`DIMENSION_READ_MAX_BYTES`).
+const DIMENSION_READ_MAX_BYTES: usize = 64 * 1024 * 1024;
+
+/// `checkRasterDimensions`(PNG·JPEG) — 헤더만 읽어 가로·세로를 상한과 견준다. 픽셀은 풀지 않는다.
+/// PNG·JPEG 은 libvips 가 한 장(pages=1)으로 읽는다(APNG 의 뒤 장은 libvips 가 보지 않는다).
+/// 헤더를 못 읽으면 `not_an_image`(깨진 파일).
+pub fn check_raster_dimensions(bytes: &[u8], mime: &str, purpose: Purpose) -> Option<Detected> {
+    let (max_side, max_pixels) = purpose.limits();
+    let format = match mime {
+        "image/png" => image::ImageFormat::Png,
+        "image/jpeg" => image::ImageFormat::Jpeg,
+        _ => return Some(not_an_image()),
+    };
+    let dims =
+        image::ImageReader::with_format(std::io::Cursor::new(bytes), format).into_dimensions();
+    let Ok((w, h)) = dims else {
+        return Some(not_an_image());
+    };
+    let (w, h) = (u64::from(w), u64::from(h));
+    let too_large = |detail: String| {
+        Some(Detected::Refused(
+            "image_dimensions_too_large",
+            format!("image is {detail}; at most {max_side}px per side and {max_pixels} pixels"),
+        ))
+    };
+    if w == 0 || h == 0 {
+        return too_large("of unknown size".into());
+    }
+    if w > max_side || h > max_side || w * h > max_pixels {
+        return too_large(format!("{w}x{h}"));
+    }
+    None
 }
 
 fn not_an_image() -> Detected {
@@ -181,8 +231,11 @@ fn not_an_image() -> Detected {
 
 /// `detectAvatarType` 에서 래스터 상한 판정을 뺀 것 — 바이트(앞 `want`)와 행의 크기로 정한다.
 pub fn detect(bytes: &[u8], size_bytes: i64) -> Detected {
-    if sniff_image_type(bytes).is_some() {
-        return Detected::Raster;
+    if let Some(t) = sniff_image_type(bytes) {
+        return match t {
+            "image/png" | "image/jpeg" => Detected::Image(t),
+            _ => Detected::Raster,
+        };
     }
     if size_bytes > SVG_MAX_BYTES {
         return if starts_like_svg(bytes) {
@@ -195,7 +248,7 @@ pub fn detect(bytes: &[u8], size_bytes: i64) -> Detected {
         };
     }
     if looks_like_svg(bytes) {
-        Detected::Svg
+        Detected::Image("image/svg+xml")
     } else {
         not_an_image()
     }
@@ -215,14 +268,32 @@ async fn read_head(storage: &LocalStorage, key: &str, want: usize) -> Result<Vec
     .map_err(|e| e.to_string())?
 }
 
-async fn detect_upload(st: &AvatarWriteState, key: &str, size: i64) -> Result<Detected, String> {
+async fn detect_upload(
+    st: &AvatarWriteState,
+    key: &str,
+    size: i64,
+    purpose: Purpose,
+) -> Result<Detected, String> {
     let want = if size > SVG_MAX_BYTES {
         SVG_PROBE_BYTES
     } else {
         (size.max(0) as usize).max(IMAGE_HEAD_BYTES)
     };
     let bytes = read_head(&st.storage, key, want).await?;
-    Ok(detect(&bytes, size))
+    let detected = detect(&bytes, size);
+    let Detected::Image(t @ ("image/png" | "image/jpeg")) = detected else {
+        return Ok(detected);
+    };
+    let all = read_head(
+        &st.storage,
+        key,
+        (size.max(0) as usize).min(DIMENSION_READ_MAX_BYTES),
+    )
+    .await?;
+    let checked = tokio::task::spawn_blocking(move || check_raster_dimensions(&all, t, purpose))
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(checked.unwrap_or(detected))
 }
 
 // ── 본문(zod) ──────────────────────────────────────────────────────
@@ -419,16 +490,17 @@ async fn apply(st: &AvatarWriteState, target: &str, uploader: &str, body: &Body)
             "no unattached upload of yours with that id",
         ));
     };
-    match detect_upload(st, &found_key, i64::from(found_size)).await {
-        Ok(Detected::Svg) => {}
-        Ok(Detected::Raster) => return Step::ToTs,
-        Ok(Detected::Refused(code, msg)) => {
-            return Step::Done(json_err(StatusCode::BAD_REQUEST, code, &msg));
-        }
-        Err(e) => return Step::Done(internal_msg(&e)),
-    }
+    let found_type =
+        match detect_upload(st, &found_key, i64::from(found_size), Purpose::Avatar).await {
+            Ok(Detected::Image(t)) => t,
+            Ok(Detected::Raster) => return Step::ToTs,
+            Ok(Detected::Refused(code, msg)) => {
+                return Step::Done(json_err(StatusCode::BAD_REQUEST, code, &msg));
+            }
+            Err(e) => return Step::Done(internal_msg(&e)),
+        };
 
-    let mut source: Option<(String, Value)> = None;
+    let mut source: Option<(String, &'static str, Value)> = None;
     if let Some(src) = body.source {
         let own = match find_source(&st.read, &src.attachment_id, uploader).await {
             Ok(v) => v,
@@ -453,37 +525,38 @@ async fn apply(st: &AvatarWriteState, target: &str, uploader: &str, body: &Body)
                 "no usable original with that id",
             ));
         };
-        match detect_upload(st, &orig_key, i64::from(orig_size)).await {
-            Ok(Detected::Svg) => {}
-            Ok(Detected::Raster) => return Step::ToTs,
-            Ok(Detected::Refused(code, msg)) => {
-                return Step::Done(json_err(StatusCode::BAD_REQUEST, code, &msg));
-            }
-            Err(e) => return Step::Done(internal_msg(&e)),
-        }
+        let orig_type =
+            match detect_upload(st, &orig_key, i64::from(orig_size), Purpose::Original).await {
+                Ok(Detected::Image(t)) => t,
+                Ok(Detected::Raster) => return Step::ToTs,
+                Ok(Detected::Refused(code, msg)) => {
+                    return Step::Done(json_err(StatusCode::BAD_REQUEST, code, &msg));
+                }
+                Err(e) => return Step::Done(internal_msg(&e)),
+            };
         let (x, y, size) = src.crop;
-        source = Some((orig_id, json!({ "x": x, "y": y, "size": size })));
+        source = Some((orig_id, orig_type, json!({ "x": x, "y": y, "size": size })));
     }
 
     let res: sqlx::Result<()> = async {
         let mut tx = st.write.begin().await?;
         sqlx::query(SET_TYPE)
             .bind(&found_id)
-            .bind("image/svg+xml")
+            .bind(found_type)
             .execute(&mut *tx)
             .await?;
-        if let Some((orig_id, _)) = &source {
+        if let Some((orig_id, orig_type, _)) = &source {
             sqlx::query(SET_TYPE)
                 .bind(orig_id)
-                .bind("image/svg+xml")
+                .bind(*orig_type)
                 .execute(&mut *tx)
                 .await?;
         }
         sqlx::query(SET_ACCOUNT)
             .bind(target)
             .bind(&found_id)
-            .bind(source.as_ref().map(|(id, _)| id.clone()))
-            .bind(source.as_ref().map(|(_, c)| c.to_string()))
+            .bind(source.as_ref().map(|(id, _, _)| id.clone()))
+            .bind(source.as_ref().map(|(_, _, c)| c.to_string()))
             .execute(&mut *tx)
             .await?;
         crate::write::emit_event(
@@ -651,7 +724,11 @@ mod tests {
     #[test]
     fn detect_branches() {
         assert_eq!(detect(b"GIF89a______", 12), Detected::Raster);
-        assert_eq!(detect(b"<svg/>", 6), Detected::Svg);
+        assert_eq!(detect(b"<svg/>", 6), Detected::Image("image/svg+xml"));
+        assert_eq!(
+            detect(b"\xff\xd8\xff\xe0________", 12),
+            Detected::Image("image/jpeg")
+        );
         assert!(matches!(
             detect(b"<svg>", SVG_MAX_BYTES + 1),
             Detected::Refused("svg_too_large", _)
@@ -664,6 +741,85 @@ mod tests {
             detect(b"<html/>", 7),
             Detected::Refused("not_an_image", _)
         ));
+    }
+
+    fn png_of(w: u32, h: u32) -> Vec<u8> {
+        let mut out = Vec::new();
+        image::ImageEncoder::write_image(
+            image::codecs::png::PngEncoder::new(&mut out),
+            &vec![0u8; (w * h * 4) as usize],
+            w,
+            h,
+            image::ExtendedColorType::Rgba8,
+        )
+        .unwrap();
+        out
+    }
+
+    fn jpeg_of(w: u32, h: u32) -> Vec<u8> {
+        let mut out = Vec::new();
+        image::ImageEncoder::write_image(
+            image::codecs::jpeg::JpegEncoder::new(&mut out),
+            &vec![128u8; (w * h * 3) as usize],
+            w,
+            h,
+            image::ExtendedColorType::Rgb8,
+        )
+        .unwrap();
+        out
+    }
+
+    #[test]
+    fn raster_dimensions_follow_ts_limits() {
+        let png = png_of(2, 3);
+        assert_eq!(detect(&png, png.len() as i64), Detected::Image("image/png"));
+        assert_eq!(
+            check_raster_dimensions(&png, "image/png", Purpose::Avatar),
+            None
+        );
+        let jpg = jpeg_of(4, 4);
+        assert_eq!(
+            detect(&jpg, jpg.len() as i64),
+            Detected::Image("image/jpeg")
+        );
+        assert_eq!(
+            check_raster_dimensions(&jpg, "image/jpeg", Purpose::Avatar),
+            None
+        );
+
+        // 한 변이 4096 을 넘는다 — 아바타는 거절, 원본(16384)은 받는다.
+        let wide = png_of(4097, 1);
+        assert_eq!(
+            check_raster_dimensions(&wide, "image/png", Purpose::Avatar),
+            Some(Detected::Refused(
+                "image_dimensions_too_large",
+                "image is 4097x1; at most 4096px per side and 16777216 pixels".into()
+            ))
+        );
+        assert_eq!(
+            check_raster_dimensions(&wide, "image/png", Purpose::Original),
+            None
+        );
+
+        // 헤더만 고친 PNG(IHDR 가로·세로) — 픽셀을 풀지 않고 거절한다(압축 폭탄).
+        let mut bomb = png_of(1, 1);
+        bomb[16..20].copy_from_slice(&40000u32.to_be_bytes());
+        bomb[20..24].copy_from_slice(&40000u32.to_be_bytes());
+        assert!(matches!(
+            check_raster_dimensions(&bomb, "image/png", Purpose::Original),
+            Some(Detected::Refused("image_dimensions_too_large", _))
+                | Some(Detected::Refused("not_an_image", _))
+        ));
+
+        // 매직 바이트만 맞는 깨진 파일.
+        let broken = b"\x89PNG\r\n\x1a\n\0\0\0\0garbage";
+        assert!(matches!(
+            check_raster_dimensions(broken, "image/png", Purpose::Avatar),
+            Some(Detected::Refused("not_an_image", _))
+        ));
+
+        // 움직이는 GIF(장 수 판정)는 아직 TS 다.
+        assert_eq!(detect(b"GIF89a\x01\0\x01\0____", 16), Detected::Raster);
     }
 
     #[test]
