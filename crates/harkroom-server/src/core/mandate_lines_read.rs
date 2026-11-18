@@ -4,7 +4,7 @@
 //!   404 → 내 위임장이 아니면 404. 남의 위임장이 있는지도 말하지 않는다. 200 에만 `cache-control: no-store`.
 //! - 줄은 저장된 줄(회수 제외, TS `MANDATE_LINES_STORED_SQL` 골든) 다음에 상시 줄(소유자가 맡긴 위임장에서만, 소유자가 준
 //!   `repo.merge`·`tool.allow` grant 를 펼친 것 — `readOnly: true`). 상시 줄의 scope 판정은 TS `CAPABILITIES.*.validateScope` 와 같다.
-//! - **읽기만 한다.** 읽기 풀만 쓰므로 새 GRANT 가 없다. 줄 빼기(`DELETE .../lines/:lineId`)·위임 끝내기(`POST .../end`)는 TS.
+//! - **읽기만 한다.** 읽기 풀만 쓰므로 새 GRANT 가 없다. 줄 빼기는 `mandate_line_revoke.rs`, 위임 끝내기는 `mandate_end.rs`.
 use super::grant_reads::canonical_rule;
 use super::mcp::grant_writes::repo_grant_scope;
 use super::mcp::reads4::parse_tool_scope;

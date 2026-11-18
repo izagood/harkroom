@@ -106,6 +106,27 @@ pub(crate) const CREATE_SQL: &str = concat!(
     last_run_join!()
 );
 
+/// TS `updateAutomationRow` 의 `writeReturningView` — `returning *` 대신 `COLS` 칸만. 시간 트리거로 바뀔 때 수신 칸 지우기는
+/// 같은 tx 의 따로 문장(`automation_patch::CLEAR_INGRESS_SQL`) — `case ... else ingress_token_hash` 는 그 칸 SELECT 를 요구한다.
+/// $1 id · $2 소유자 · $3 이름 · $4 본문 · $5 채널 · $6 trigger(json 글자) · $7 enabled · $8 다시 잡나 · $9 다음 회차 ·
+/// $10 다시 켜나 · $11 debounce 를 고치나 · $12 debounce.
+pub(crate) const PATCH_SQL: &str = concat!(
+    "with w as (update automation set ",
+    "name = coalesce($3, name), body = coalesce($4, body), channel_id = coalesce($5::uuid, channel_id), ",
+    "trigger = $6::jsonb, enabled = $7, ",
+    "next_at = case when $8 then $9::timestamptz else next_at end, ",
+    "paused_reason = case when $10 then null else paused_reason end, ",
+    "consecutive_failures = case when $10 then 0 else consecutive_failures end, ",
+    "debounce_sec = case when $11 then $12::int else debounce_sec end, ",
+    "updated_at = now() ",
+    "where id = $1::uuid and owner_id = $2::uuid and deleted_at is null ",
+    "returning id, owner_id, channel_id, name, body, trigger, enabled, next_at, paused_reason, consecutive_failures, ",
+    "ingress_enabled_at, debounce_sec, proposed_by, approved_at, created_at, updated_at) select ",
+    view_json!(),
+    "::text from w a ",
+    last_run_join!()
+);
+
 /// TS `listRuns(pool, id)` — `RUN_COLS`, 최근 50.
 const RUNS_SQL: &str = concat!(
     "select coalesce(json_agg(json_build_object(",
