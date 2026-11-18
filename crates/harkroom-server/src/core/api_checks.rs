@@ -13,8 +13,9 @@
 //! 경로는 `%`·질의·ASCII 밖 글자까지 TS `safePath`·`wirePath`·`pathCovered` 를 따라 Rust 가 본다(바탕이 http(s) 가
 //! 아닌 연결만 TS 몫). 비밀을 여는 연결(`authKind` 가 `none` 이 아닌 것)은 [`API_CHECKS_SECRET_PRIVILEGES`] 와
 //! DB 확인값에 맞는 v2 키가 있을 때 **허락 갈래만** Rust 가 연다 — `secret_access_log` granted 줄, `api.call.checked` 감사,
-//! 응답 `valueBase64`(오퍼레이터 자신에게만, `no-store`). 비밀 거절(`no_secret`·`secret_expired`·`owner_inactive`·`no_value`·
-//! `unreadable`)·409 `secret_key_mismatch` 는 아무것도 쓰기 전에 TS 로 넘긴다. 토큰 교환(156)은 `caps` 거절
+//! 응답 `valueBase64`(오퍼레이터 자신에게만, `no-store`). 비밀 거절(`no_secret`(비밀 행 없음)·`secret_expired`·`owner_inactive`·
+//! `no_value`·`unreadable`)도 TS 처럼 거절 줄·감사·막힘 카드로 Rust 가 답한다. 키 없음·어긋남(`no_secret`·409 `secret_key_mismatch`)과
+//! 비밀 칸이 빈 연결은 아무것도 쓰기 전에 TS 로 넘긴다. 토큰 교환(156)은 `caps` 거절
 //! (409 `operator_update_required` + 막힘 카드)과, [`API_CHECKS_TOKEN_PRIVILEGES`] 가 있을 때 허락(`tokenUrl`·`tokenForm`)을 Rust 가 답한다.
 use super::api_results::connector_ok;
 use super::grant_reads::through_operator;
@@ -676,8 +677,29 @@ async fn checks_body(
             )
             .await?
             {
-                Some(v) => Some(v),
-                None => return Ok(None),
+                Opened::Value(v) => Some(v),
+                Opened::Fallback => return Ok(None),
+                Opened::Denied(code, row) => {
+                    // TS: 거절 줄(`secret_access_log` denied) → `api.call.denied` 감사(+ 카드 코드면 막힘 카드).
+                    // 카드 코드는 카드가 선 뒤에만 줄을 쓴다 — 카드가 TS 로 넘어가면 TS 가 줄을 쓴다(두 줄 방지).
+                    let log = |row: Option<(String, String)>| async move {
+                        if let Some((sid, name)) = row {
+                            log_denied(pool, &sid, &name, agent, operator, lease, code, now)
+                                .await?;
+                        }
+                        Ok::<(), sqlx::Error>(())
+                    };
+                    if code == "secret_expired" || code == "no_secret" {
+                        let r = carded(code).await?;
+                        if r.is_some() {
+                            log(row).await?;
+                        }
+                        return Ok(r);
+                    }
+                    log(row).await?;
+                    let (code, d) = denied(code);
+                    return Ok(Some(deny(pool, agent, &target, d, code).await));
+                }
             }
         }
         (_, None) => return Ok(None),
@@ -742,6 +764,43 @@ const ACCESS_LOG_SQL: &str = "insert into secret_access_log (secret_id, secret_n
      turn_id, channel_id, thread_root_id, result, reason, at) \
      values ($1::uuid, $2, $3, $4::uuid, $5::uuid, $6::uuid, $7::uuid, $8::uuid, 'granted', $9, $10::timestamptz)";
 
+/// 비밀 열기 결과. `Denied` 는 TS 와 같은 거절 — 거절 줄을 남길 비밀 행(id·이름)이 있으면 함께.
+enum Opened {
+    Value(zeroize::Zeroizing<String>),
+    Fallback,
+    Denied(&'static str, Option<(String, String)>),
+}
+
+const DENIED_LOG_SQL: &str = "insert into secret_access_log (secret_id, secret_name, version, agent_id, operator_id, \
+     turn_id, channel_id, thread_root_id, result, reason, at) \
+     values ($1::uuid, $2, null, $3::uuid, $4::uuid, $5::uuid, $6::uuid, $7::uuid, 'denied', $8, $9::timestamptz)";
+
+#[allow(clippy::too_many_arguments)]
+async fn log_denied(
+    pool: &sqlx::PgPool,
+    sid: &str,
+    name: &str,
+    agent: &str,
+    operator: &str,
+    lease: &super::lease_read::LeaseRow,
+    reason: &str,
+    now: &str,
+) -> sqlx::Result<()> {
+    sqlx::query(DENIED_LOG_SQL)
+        .bind(sid)
+        .bind(name)
+        .bind(agent)
+        .bind(operator)
+        .bind(&lease.id)
+        .bind(lease.channel_id.as_deref())
+        .bind(lease.thread_root_id.as_deref())
+        .bind(reason)
+        .bind(now)
+        .execute(pool)
+        .await
+        .map(|_| ())
+}
+
 /// TS `(path.split('?')[0] ?? '').slice(0, 200)` — UTF-16 단위. 서로게이트 쌍 가운데서 잘리면 None(TS 몫).
 pub fn access_path(path: &str) -> Option<String> {
     let head = path.split('?').next().unwrap_or_default();
@@ -766,11 +825,11 @@ async fn open_secret(
     method: &str,
     path: &str,
     now: &str,
-) -> sqlx::Result<Option<zeroize::Zeroizing<String>>> {
+) -> sqlx::Result<Opened> {
     use crate::secrets::keyring::{SecretAad, SecretKind};
     use base64::Engine as _;
     let Some(reason_path) = access_path(path) else {
-        return Ok(None);
+        return Ok(Opened::Fallback);
     };
     let row: Option<(String, String, String, Option<bool>, bool)> = sqlx::query_as(SECRET_SQL)
         .bind(secret_id)
@@ -778,22 +837,25 @@ async fn open_secret(
         .fetch_optional(pool)
         .await?;
     let Some((sid, name, kind, expired, owner_inactive)) = row else {
-        return Ok(None);
+        return Ok(Opened::Denied("no_secret", None));
     };
-    if expired == Some(true) || owner_inactive {
-        return Ok(None);
+    if expired == Some(true) {
+        return Ok(Opened::Denied("secret_expired", Some((sid, name))));
+    }
+    if owner_inactive {
+        return Ok(Opened::Denied("owner_inactive", Some((sid, name))));
     }
     let kind = match kind.as_str() {
         "text" => SecretKind::Text,
         "file" => SecretKind::File,
-        _ => return Ok(None),
+        _ => return Ok(Opened::Fallback),
     };
     let Some((version, sealed)): Option<(i32, String)> = sqlx::query_as(VERSION_SQL)
         .bind(&sid)
         .fetch_optional(pool)
         .await?
     else {
-        return Ok(None);
+        return Ok(Opened::Denied("no_value", Some((sid, name))));
     };
     let sealed = zeroize::Zeroizing::new(sealed);
     let aad = SecretAad {
@@ -802,7 +864,7 @@ async fn open_secret(
         kind,
     };
     let Some(value) = sec.0.open(&sealed, &aad) else {
-        return Ok(None);
+        return Ok(Opened::Denied("unreadable", Some((sid, name))));
     };
     drop(sealed);
     sqlx::query(ACCESS_LOG_SQL)
@@ -818,7 +880,7 @@ async fn open_secret(
         .bind(now)
         .execute(pool)
         .await?;
-    Ok(Some(zeroize::Zeroizing::new(
+    Ok(Opened::Value(zeroize::Zeroizing::new(
         base64::engine::general_purpose::STANDARD.encode(value.as_bytes()),
     )))
 }
