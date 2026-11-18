@@ -28,7 +28,7 @@ macro_rules! iso {
 }
 
 /// TS `listGrants` 와 같은 칸 — 키 순서도 같다(`json_build_object` 는 넣은 순서를 지킨다).
-const GRANTS_SQL: &str = concat!(
+pub(crate) const GRANTS_SQL: &str = concat!(
     "select coalesce(json_agg(json_build_object(",
     "'accountId', account_id, 'capability', capability, 'scope', scope, 'grantedBy', granted_by, ",
     "'grantedAt', ",

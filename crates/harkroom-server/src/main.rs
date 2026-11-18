@@ -1707,6 +1707,27 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 — grant 주기(`PUT /accounts/{id}/grants`, api.call·tool.allow 는 안에서 TS 로). 쓰기 풀에 그 권한이 다 있을 때만.
+    let account_grant_give_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::account_grant_give as a;
+            match write::missing_in(w, a::ACCOUNT_GRANT_GIVE_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: account grant give core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: account grant give core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 — grant 거두기(`DELETE /accounts/{id}/grants/{capability}`). 쓰기 풀에 그 권한이 다 있을 때만 — 아니면 TS 에 남는다.
     let account_grant_revoke_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -3582,6 +3603,21 @@ async fn main() {
             core_routes.router = core_routes.router.merge(gr.router);
             core_routes.http.extend(gr.http);
             core_routes.sockets.extend(gr.sockets);
+        }
+        // S5.4 — grant 주기 1줄. 권한이 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = account_grant_give_write {
+            let gg = harkroom_server::core::account_grant_give::routes(
+                harkroom_server::core::account_grant_give::AccountGrantGiveState {
+                    write,
+                    trust: state.trust.clone(),
+                    up: state.up.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(gg.router);
+            core_routes.http.extend(gg.http);
+            core_routes.sockets.extend(gg.sockets);
         }
         // S5.4 — 자기 비밀번호 바꾸기 1줄. 권한이 있을 때만 — 아니면 TS 에 남는다.
         if let Some(write) = auth_password_write {
