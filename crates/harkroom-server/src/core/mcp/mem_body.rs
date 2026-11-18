@@ -215,7 +215,7 @@ fn core_sections(value: &str) -> String {
 }
 
 /// TS `localeCompare` 의 근사 — slug 글자([a-z0-9_/-])만 나오므로 ICU 뿌리 순서(`_` < `-` < `/` < 숫자 < 글자)로 맞춘다.
-fn slug_locale_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+pub(super) fn slug_locale_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     let key = |c: u8| -> u16 {
         match c {
             b'_' => 0,
