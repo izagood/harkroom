@@ -451,9 +451,9 @@ fn check_patch(m: &Map<String, Value>) -> Result<(), &'static str> {
 
 const ADMIN_ONLY_FIELDS: &[&str] = &["ownerAccountId", "disabled", "mentionPermission"];
 
-/// 이 칸이 하나라도 있으면 PATCH 성공 길은 TS 로 넘긴다 — 이름 바꾸기(409·감사·WS), 끄기(PAT 회수),
-/// 스코프·MCP 판정이 아직 Rust 에 없다. 정의 변경(instructions·harness·workingDir)의 비밀 grant 정지는 Rust 가 한다.
-const PATCH_TS_ONLY_FIELDS: &[&str] = &["handle", "disabled", "ownerAccountId"];
+/// 이 칸이 하나라도 있으면 PATCH 성공 길은 TS 로 넘긴다 — 이름 바꾸기(409·감사·WS 이벤트), 끄기(PAT 회수·
+/// 감사·`agent_disabled` grant 정지)가 아직 Rust 에 없다. 스코프·MCP 판정, 정의 변경 grant 정지는 Rust 가 한다.
+const PATCH_TS_ONLY_FIELDS: &[&str] = &["handle", "disabled"];
 
 /// TS `AUDITED_FIELDS` — 순서·종류가 같다.
 const AUDITED_FIELDS: &[(&str, bool)] = &[
@@ -985,7 +985,7 @@ mod tests {
             ),
             vec!["harness"]
         );
-        for f in ["handle", "disabled", "ownerAccountId"] {
+        for f in ["handle", "disabled"] {
             assert!(PATCH_TS_ONLY_FIELDS.contains(&f), "{f}");
         }
     }
