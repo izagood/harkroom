@@ -1690,6 +1690,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant insert (next_at, mandate_session_at) on automation to ${rw}`,
         // S5.4 SE2 — PUT /secrets/:id/grants(`SECRET_GRANT_GIVE_PRIVILEGES`).
         `grant select (id, secret_id, agent_id, channel_id), insert (secret_id, agent_id, channel_id, operator_id, granted_by), update (operator_id, granted_by, granted_at, suspended_at, suspend_reason) on secret_grant to ${rw}`,
+        // S5.4 SE3 — POST /secrets·PATCH /secrets/:id·PUT /secrets/:id/value(`secret_writes::privileges()` = SECRET_WRITES_PRIVILEGES + SECRET_KEY_CHECK_PRIVILEGES).
+        `grant select (id, kind, description, expires_at), insert (id, name, kind, filename, description, owner_account_id, expires_at), update (description, expires_at, updated_at) on secret to ${rw}`,
+        `grant select (secret_id, version, sealed, revoked_at), insert (secret_id, version, sealed, size_bytes, created_by), update (sealed, revoked_at) on secret_version to ${rw}`,
+        `grant select (kid, kcv), insert (kid, kcv) on secret_key_check to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
