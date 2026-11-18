@@ -194,6 +194,50 @@ pub async fn get_thread_plan(
     }
 }
 
+/// 연결 그룹 자식들의 사실(보는 사람 기준) — TS `childFacts(db, roots, viewer)`.
+async fn child_facts(
+    pool: &PgPool,
+    viewer: &str,
+    doc: &Value,
+) -> Result<HashMap<String, Child>, sqlx::Error> {
+    let roots = linked_roots(doc);
+    let mut facts: HashMap<String, Child> = HashMap::new();
+    if !roots.is_empty() {
+        let rows: Vec<(String, String, Option<String>, bool)> = sqlx::query_as(children_sql())
+            .bind(&roots)
+            .bind(viewer)
+            .fetch_all(pool)
+            .await?;
+        let none = HashMap::new();
+        for (id, channel_id, child_doc, viewer_visible) in rows {
+            // 재귀하지 않는다(K5): 자식의 연결 그룹은 맵 없이 센다.
+            let progress = child_doc
+                .and_then(|d| serde_json::from_str::<Value>(&d).ok())
+                .filter(|d| !d.is_null())
+                .map(|d| plan_progress(&d, &none));
+            facts.insert(
+                id,
+                Child {
+                    channel_id,
+                    viewer_visible,
+                    progress,
+                },
+            );
+        }
+    }
+    Ok(facts)
+}
+
+/// TS `linkedFor(pool, doc, { viewer }).map` — 파생 상태를 보는 사람 기준으로 셀 맵(`POST …/plan/start` 미리보기가 쓴다).
+pub(crate) async fn linked_map(
+    pool: &PgPool,
+    viewer: &str,
+    doc: &Value,
+) -> Result<HashMap<String, Linked>, sqlx::Error> {
+    let facts = child_facts(pool, viewer, doc).await?;
+    Ok(linked_view(doc, &facts).0)
+}
+
 /// 루트·가시성 판정을 **지난 뒤**의 답 몸통 `{"plan":view|null}` — REST GET 과 MCP `thread.plan` 읽기(S5.4 A4a)가 같이 쓴다.
 /// TS `getThreadPlan` → `threadPlanView(pool, row, viewer)`. DB 오류는 그대로 돌려준다(REST 는 500, MCP 는 TS 로 넘긴다).
 pub async fn plan_view_json(
@@ -223,31 +267,7 @@ pub async fn plan_view_json(
         auto_at,
     ) = row;
     let doc: Value = serde_json::from_str(&doc_text).unwrap_or(Value::Null);
-    let roots = linked_roots(&doc);
-    let mut facts: HashMap<String, Child> = HashMap::new();
-    if !roots.is_empty() {
-        let rows: Vec<(String, String, Option<String>, bool)> = sqlx::query_as(children_sql())
-            .bind(&roots)
-            .bind(viewer)
-            .fetch_all(pool)
-            .await?;
-        let none = HashMap::new();
-        for (id, channel_id, child_doc, viewer_visible) in rows {
-            // 재귀하지 않는다(K5): 자식의 연결 그룹은 맵 없이 센다.
-            let progress = child_doc
-                .and_then(|d| serde_json::from_str::<Value>(&d).ok())
-                .filter(|d| !d.is_null())
-                .map(|d| plan_progress(&d, &none));
-            facts.insert(
-                id,
-                Child {
-                    channel_id,
-                    viewer_visible,
-                    progress,
-                },
-            );
-        }
-    }
+    let facts = child_facts(pool, viewer, &doc).await?;
     let (map, linked) = linked_view(&doc, &facts);
     let flagged = if truthy(&flag) {
         format!(r#"{{"reason":{}}}"#, opt_q(&flag))

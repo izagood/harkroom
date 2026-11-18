@@ -139,6 +139,8 @@ pub struct McpWrites {
     pub plan_read: bool,
     /// `thread.plan` 쓰기·`thread.plan.item`(S5.4 A4b2) — `plan_read` 에 더해 `plan_write::PLAN_WRITE_PRIVILEGES`.
     pub plan_write: Option<PgPool>,
+    /// MCP 계획 쓰기에서 관리자가 바뀌어 자동 진행을 끌 때의 알림 글 경로(S5.4 TP3 끄기 칸 권한 + 글 올리기). 없으면 그 갈래는 TS 로.
+    pub plan_auto_off: Option<std::sync::Arc<crate::core::msg_post::PostState>>,
     /// `pr.watch`(S5.4 MCP 2) — `pr_watch::PR_WATCH_PRIVILEGES`.
     pub pr_watch: Option<PgPool>,
     /// `automation.propose`(S5.4 MCP 4) — `automation_propose::AUTOMATION_PROPOSE_PRIVILEGES`.
@@ -243,7 +245,10 @@ pub async fn answer(
             let Some(w) = writes.plan_write.as_ref() else {
                 return Some(None);
             };
-            return Some(super::plan_write::answer_set(read, w, me, args).await);
+            return Some(
+                super::plan_write::answer_set(read, w, writes.plan_auto_off.as_deref(), me, args)
+                    .await,
+            );
         }
         return Some(super::plan_read::answer(read, me, args).await);
     }
@@ -251,7 +256,10 @@ pub async fn answer(
         let Some(w) = writes.plan_write.as_ref().filter(|_| writes.plan_read) else {
             return Some(None);
         };
-        return Some(super::plan_write::answer_item(read, w, me, args).await);
+        return Some(
+            super::plan_write::answer_item(read, w, writes.plan_auto_off.as_deref(), me, args)
+                .await,
+        );
     }
     if tool == "workitem.remove" {
         let Some(write) = writes.work_item.as_ref() else {

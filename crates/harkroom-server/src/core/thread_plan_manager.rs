@@ -13,6 +13,7 @@ use super::mcp::plan_write::{ManagerWrite, write_manager};
 use super::msg_post::{gate_sql, to_ts};
 use super::msg_read::channel_visible;
 use super::thread_plan_read::{ROOT_SQL, plan_view_json};
+use super::thread_plan_start::{handles_of, nothing_json, plan_routes, preview_json, start_req};
 use crate::auth::{RequireAccount, Via};
 use crate::directory::{internal, json_err, json_ok};
 use crate::proxy::Upstream;
@@ -242,19 +243,44 @@ pub async fn post_start(
         Ok(_) => {}
         Err(e) => return internal(e),
     }
-    match sqlx::query_scalar::<_, Option<String>>(
-        "select flag_reason from thread_plan where root_id = $1::uuid",
+    let (doc_text, rev) = match sqlx::query_as::<_, (Option<String>, String, i64)>(
+        "select flag_reason, doc::text, rev::int8 from thread_plan where root_id = $1::uuid",
     )
     .bind(&root)
     .fetch_optional(w)
     .await
     {
-        Ok(None) => code_err(StatusCode::NOT_FOUND, "no_plan"),
+        Ok(None) => return code_err(StatusCode::NOT_FOUND, "no_plan"),
         // TS `if (row.flagReason)` — 빈 글자는 걸리지 않은 것이다.
-        Ok(Some(Some(f))) if !f.is_empty() => code_err(StatusCode::CONFLICT, "plan_flagged"),
-        Ok(Some(_)) => to_ts(st.up.clone(), peer, parts, bytes).await,
-        Err(e) => internal(e),
+        Ok(Some((Some(f), _, _))) if !f.is_empty() => {
+            return code_err(StatusCode::CONFLICT, "plan_flagged");
+        }
+        Ok(Some((_, d, r))) => (d, r),
+        Err(e) => return internal(e),
+    };
+    // 미리보기와 「시작할 단계 없음」 거절은 Rust(TP5, `thread_plan_start.rs`), 실제 시작(쓰기·글)은 TS.
+    let (Some(req), Ok(doc)) = (start_req(&bytes), serde_json::from_str::<Value>(&doc_text)) else {
+        return to_ts(st.up.clone(), peer, parts, bytes).await;
+    };
+    let route = match plan_routes(w, &me.id, &channel, &doc, &req).await {
+        Ok(r) => r,
+        Err(e) => return internal(e),
+    };
+    if dry {
+        return match handles_of(w, &route, &doc).await {
+            Ok(h) => json_ok(preview_json(&route, &doc, rev, &h, req.en)),
+            Err(e) => internal(e),
+        };
     }
+    if route.self_ids.is_empty() && route.posts.is_empty() {
+        return (
+            StatusCode::CONFLICT,
+            [(header::CONTENT_TYPE, "application/json; charset=utf-8")],
+            nothing_json(&route),
+        )
+            .into_response();
+    }
+    to_ts(st.up.clone(), peer, parts, bytes).await
 }
 
 /// 코어 라우터에 합칠 줄 — 인증은 `route_layer`, CORS 는 `layer`. `POST …/plan/start` 는 앞 거절만 Rust, 나머지는 TS.
