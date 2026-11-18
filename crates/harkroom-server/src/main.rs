@@ -1119,6 +1119,27 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 — 보관소 잠금 해제(`POST /auth/step-up`). 쓰기 풀에 계정 해시 SELECT·세션 창 UPDATE·감사 INSERT 칸 권한이 있을 때만 — 아니면 TS 에 남는다.
+    let step_up_open_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::step_up_open as a;
+            match write::missing_in(w, a::STEP_UP_OPEN_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: step-up open core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: step-up open core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 — 계정 권한 목록 읽기(`GET /accounts/{id}/grants`). 읽기 풀에 SELECT 가 있을 때만 — 아니면 TS 에 남는다.
     let account_grants_read_on = match &core_mode {
         harkroom_server::core::CoreMode::Rust => {
@@ -2352,7 +2373,7 @@ async fn main() {
             core_routes.http.extend(pm.http);
             core_routes.sockets.extend(pm.sockets);
         }
-        // S5.4 — 보관소 잠그기 1줄. 권한이 있을 때만 — 아니면 TS 에 남는다(열기 POST 는 argon2·리미터 때문에 TS).
+        // S5.4 — 보관소 잠그기 1줄. 권한이 있을 때만 — 아니면 TS 에 남는다(열기 POST 는 `step_up_open`).
         if let Some(write) = step_up_end_write {
             let su = harkroom_server::core::step_up_end::routes(
                 harkroom_server::core::step_up_end::StepUpEndState {
@@ -2365,6 +2386,23 @@ async fn main() {
             core_routes.router = core_routes.router.merge(su.router);
             core_routes.http.extend(su.http);
             core_routes.sockets.extend(su.sockets);
+        }
+        // S5.4 — 보관소 잠금 해제 1줄. 권한이 있을 때만 — 아니면 TS 에 남는다.
+        // 시도 상한(`stepUp:{accountId}`)은 이 프로세스의 리미터가 센다 — TS 리미터와 따로 센다. login·passwordReset·stepUp 의
+        // 계정 단위 키는 같이 옮겨야 한다(login 은 아직 TS). 옮길 때 이 리미터 하나를 나눠 쓴다.
+        if let Some(write) = step_up_open_write {
+            let so = harkroom_server::core::step_up_open::routes(
+                harkroom_server::core::step_up_open::StepUpOpenState::new(
+                    write,
+                    state.trust.clone(),
+                    std::sync::Arc::new(harkroom_server::rate_limit::RateLimiter::default()),
+                ),
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(so.router);
+            core_routes.http.extend(so.http);
+            core_routes.sockets.extend(so.sockets);
         }
         // S5.4 — 계정 권한 목록 읽기 1줄. 권한이 있을 때만 — 아니면 TS 에 남는다(권한 주기 PUT 은 언제나 TS).
         if account_grants_read_on {
