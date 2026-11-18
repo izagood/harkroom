@@ -555,10 +555,9 @@ pub fn rust_takes(s: Shape<'_>) -> Option<Decision> {
         return None;
     }
     let d = option_decision(s.option)?;
-    // S5.4 — `once` 는 머지 거절 카드의 [이번 한 번](거절 기록 있음·위임장 없음)만 Rust. 그 밖의 `once` 는 TS.
+    // S5.4 — `once` 는 머지 거절 카드의 [이번 한 번](거절 기록 있음, 15d 부터 위임장이 있어도)만 Rust. 그 밖의 `once` 는 TS.
     if s.has_once {
-        let merge_once =
-            d == Decision::ApproveOnce && s.kind == "merge" && s.has_denial && !s.has_mandate;
+        let merge_once = d == Decision::ApproveOnce && s.kind == "merge" && s.has_denial;
         return merge_once.then_some(d);
     }
     let ok = match (d, s.kind) {

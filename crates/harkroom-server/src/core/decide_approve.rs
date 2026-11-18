@@ -656,6 +656,7 @@ pub async fn approve_write(
                     },
                     now: &now,
                     until: expires_iso.as_deref(),
+                    merge_once: None,
                 },
             )
             .await?;
@@ -780,12 +781,9 @@ async fn merge_once_write(
     args: ApproveArgs<'_>,
 ) -> sqlx::Result<ApproveOutcome> {
     use super::decide_merge_once as m;
-    let (Some(once), Some(denial_id), None, true) = (
-        args.once,
-        locked.denial_id.as_deref(),
-        locked.mandate_id.as_deref(),
-        m::merge_once_on(),
-    ) else {
+    let (Some(once), Some(denial_id), true) =
+        (args.once, locked.denial_id.as_deref(), m::merge_once_on())
+    else {
         return Ok(ApproveOutcome::HandToTs);
     };
     let (now, now_iso, expires, expires_iso): (String, String, String, String) =
@@ -866,6 +864,39 @@ async fn merge_once_write(
             .bind(args.request_id)
             .fetch_one(&mut *conn)
             .await?;
+    // S5.4 15d — 위임장이 있으면 그 위임장에 이 PR·head 1회 merge 줄(TS `addLineFromRequest` once 갈래). 승인 기록이 승인의 전부라
+    // 줄이 실패해도 결정은 그대로(savepoint, TS 와 같음 — `mandate_line_failed` 는 7일·이번 턴 갈래만).
+    let line = match locked.mandate_id.as_deref() {
+        Some(mandate_id) => {
+            let limits = json!({
+                "pr": number, "head": head_sha, "uses": 1, "ghUser": once.gh_user, "ciOverride": ci_override,
+            });
+            Some(
+                super::mandate_line_write::add_line_from_request(
+                    conn,
+                    super::mandate_line_write::LineArgs {
+                        mandate_id,
+                        request_id: args.request_id,
+                        target: &target,
+                        card_message_id: locked.card_message_id.as_deref(),
+                        agent_id: args.agent_id,
+                        actor_id: args.actor_id,
+                        via: if args.bundle_message_id.is_some() {
+                            "bundle"
+                        } else {
+                            "button"
+                        },
+                        kind: LineKind::MergeOnce,
+                        now: &now,
+                        until: None,
+                        merge_once: Some(&limits),
+                    },
+                )
+                .await?,
+            )
+        }
+        None => None,
+    };
     sqlx::query(m::MERGE_ONCE_UPDATE_REQUEST)
         .bind(args.request_id)
         .bind(args.actor_id)
@@ -877,6 +908,9 @@ async fn merge_once_write(
             "status": "approved_once", "decidedAt": now_iso, "decidedBy": args.actor_id,
             "approvedOnce": { "ghUser": once.gh_user, "relaxChecks": once.relax_checks, "expiresAt": expires_iso },
         });
+        if let Some(id) = line.as_ref().and_then(|l| l.line_id()) {
+            patch["lineId"] = json!(id);
+        }
         if let Some(v) = super::decide_core::decided_via(args.bundle_message_id, None) {
             patch["decidedVia"] = v;
         }
@@ -921,6 +955,16 @@ async fn merge_once_write(
         .bind(detail.to_string())
         .execute(&mut *conn)
         .await?;
+    if let Some(l) = &line {
+        let (action, detail) = l.audit(args.request_id);
+        sqlx::query(LINE_AUDIT)
+            .bind(action)
+            .bind(args.actor_id)
+            .bind(args.agent_id)
+            .bind(detail.to_string())
+            .execute(&mut *conn)
+            .await?;
+    }
     Ok(ApproveOutcome::Granted {
         status: "approved_once",
         approval_expires_at: Some(expires_iso),
@@ -1080,14 +1124,7 @@ mod tests {
                 kind: "merge",
                 ..base
             },
-            // 머지 1회라도 위임장이 있거나 거절 기록이 없거나 거울·글 승인이면 TS.
-            Shape {
-                kind: "merge",
-                has_once: true,
-                has_denial: true,
-                has_mandate: true,
-                ..base
-            },
+            // 머지 1회라도 거절 기록이 없거나 거울·글 승인이면 TS(15d — 위임장이 있으면 Rust, 아래).
             Shape {
                 kind: "merge",
                 has_once: true,
@@ -1130,6 +1167,11 @@ mod tests {
             ..base
         };
         assert_eq!(rust_takes(merge_once), Some(Decision::ApproveOnce));
+        let with_mandate = Shape {
+            has_mandate: true,
+            ..merge_once
+        };
+        assert_eq!(rust_takes(with_mandate), Some(Decision::ApproveOnce));
     }
 
     #[test]
