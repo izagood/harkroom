@@ -126,8 +126,34 @@ export interface ObservedRunner {
   termSentAtMs?: number | null;
 }
 
+/**
+ * 이 머신의 오퍼레이터 장부를 다시 읽는 간격(ms).
+ *
+ * 앞 판본은 장부를 **앱 기동 때 한 번만** 읽었다. 그런데 기동 직후의 장부는 비어 있기 쉽다 — 앱이 새 번들이면
+ * 오퍼레이터도 새로 뜨고, 옛 세대 러너는 채택하지 않으며(회수), 새 러너는 서버에 붙은 **뒤** 배정이 띄운다.
+ * 그 빈 장부가 앱이 끝날 때까지 굳어, 이 기기의 러너 전부가 「다른 기기의 뒤처진 러너」로 세어졌다
+ * (2026-11-18 실측: 앱이 붙은 13:34:25, 첫 러너 13:34:27). 로컬 소켓 왕복 하나라 짧게 둔다.
+ */
+export const LEDGER_REOBSERVE_MS = 15_000;
+
+/** 주기 재관측의 타이머 표면 — 시험이 바꿔 끼운다. */
+export interface ReobserveTimers {
+  set(fn: () => void, ms: number): unknown;
+  clear(handle: unknown): void;
+}
+
+const realTimers: ReobserveTimers = {
+  set: (fn, ms) => setInterval(fn, ms),
+  clear: (h) => clearInterval(h as ReturnType<typeof setInterval>),
+};
+
 export class RunnerLauncher {
   private states = new Map<string, RunnerState>();
+  /** `watch` 가 건 타이머. `dispose` 가 걷는다. */
+  private watchHandle: unknown = null;
+  private watchTimers: ReobserveTimers | null = null;
+  /** 앞 재관측이 아직 안 끝났으면 겹쳐 묻지 않는다(오퍼레이터가 느릴 때 줄이 쌓이지 않게). */
+  private reobserving = false;
   private onStateChange?: (states: RunnerState[]) => void;
   /** `setOnObservation` 이 건 구독자. 오퍼레이터가 말한 사실이 화면까지 가는 통로다(`#443`). */
   private onObservation?: (runners: ObservedRunner[]) => void;
@@ -200,6 +226,30 @@ export class RunnerLauncher {
     return observation;
   }
 
+  /**
+   * 장부를 `intervalMs` 마다 다시 읽어 상태·관측을 갈아 끼운다(`LEDGER_REOBSERVE_MS` 주석). 두 번 불러도 타이머는
+   * 하나다. **실패는 던지지 않고 지난 상태를 그대로 둔다** — 한 번 못 읽었다고 살아 있는 러너를 지우면 화면이
+   * 깜빡이고, 못 읽은 것을 「0개」로 그리는 것은 지어낸 사실이다(`ensureOperatorWithReason` 과 같은 태도).
+   */
+  watch(intervalMs: number = LEDGER_REOBSERVE_MS, timers: ReobserveTimers = realTimers): void {
+    if (this.disposed || this.watchHandle !== null) return;
+    this.watchTimers = timers;
+    this.watchHandle = timers.set(() => { void this.reobserve(); }, intervalMs);
+  }
+
+  /** 한 번 다시 읽는다. 겹치면 건너뛴다. 결과는 구독자로만 간다. */
+  async reobserve(): Promise<void> {
+    if (this.disposed || this.reobserving) return;
+    this.reobserving = true;
+    try {
+      await this.observeAndPublish();
+    } catch {
+      // 지난 상태를 둔다(위 주석).
+    } finally {
+      this.reobserving = false;
+    }
+  }
+
   getStates(): RunnerState[] {
     return [...this.states.values()];
   }
@@ -215,6 +265,8 @@ export class RunnerLauncher {
   /** 앱이 닫힌다. 상태는 지우지 않는다(창이 다시 열리면 보여야 한다). */
   dispose(): void {
     this.disposed = true;
+    if (this.watchHandle !== null) this.watchTimers?.clear(this.watchHandle);
+    this.watchHandle = null;
   }
 }
 
