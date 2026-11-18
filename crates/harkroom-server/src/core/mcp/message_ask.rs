@@ -5,10 +5,10 @@
 //! 평범한 카드(사람 앞·원인 헤더 없음, 스레드 안팎)는 글 올리기 풀로 세운다 — 대신하기(`supersedes`)는 새 카드를 세운 뒤
 //! 옛 카드를 닫고, 계획 단계(`planStepId`)는 세운 뒤 그 단계에 카드를 잇는다(묶음에 담긴 옛 카드·계획·단계 없음은 TS). 머지 거절 카드(`mergeDenialId`)는 거절 기록
 //! 검사(`prepareDenialCard` 거절)와 같은 거절 기록의 기다리는 카드(`pending`)까지 읽기 풀로 답하고, 첫 부름(새 요청 줄·카드·잇기·푸시)도 세운다(위임 있는 턴·재생은 TS).
-//! `to` 로 정한 받는 사람(사람이면 글 뒤 `enqueueAskPush`)도 세운다. 거울(`mirrorOf`)·원인 기반 사람 앞 푸시는 아직 TS 몫이다. 인자가 zod 를 못 지나거나 DB 오류여도 `None`.
+//! `to` 로 정한 받는 사람(사람이면 글 뒤 `enqueueAskPush`)도 세운다. 거울(`mirrorOf`)은 거절(`mirror_audience`·`checkAskMirror`)만 Rust 가 답하고 세우기는, 원인 기반 사람 앞 푸시와 함께 아직 TS 몫이다. 인자가 zod 를 못 지나거나 DB 오류여도 `None`.
 use super::tools::err;
 use crate::auth::Account;
-use crate::core::ask::{ASK_MAX_OPTIONS, ASK_MIN_OPTIONS, ASK_TEXT_OPTION_ID};
+use crate::core::ask::{ASK_MAX_OPTIONS, ASK_MIN_OPTIONS, ASK_TEXT_OPTION_ID, Ask, read_ask_meta};
 use crate::core::cause_link::MODEL_ID_MAX;
 use crate::core::channels::is_uuid;
 use crate::core::msg_edit::MAX_MESSAGE_BODY_CHARS;
@@ -59,7 +59,7 @@ struct Args<'a> {
     /// (id, recommended)
     options: Vec<(&'a str, bool)>,
     to: Option<&'a str>,
-    mirror_of: bool,
+    mirror_of: Option<&'a str>,
     merge_denial: bool,
     plan_step: bool,
 }
@@ -89,7 +89,7 @@ fn parse(args: &Value) -> Option<Args<'_>> {
     opt(o, "irreversible", Value::is_boolean)?;
     let to = opt(o, "to", str_ok(64))?.and_then(Value::as_str);
     opt(o, "prompt", str_ok(500))?;
-    let mirror_of = opt(o, "mirrorOf", uuid_ok)?.is_some();
+    let mirror_of = opt(o, "mirrorOf", uuid_ok)?.and_then(Value::as_str);
     opt(o, "supersedes", |v| {
         uuid_ok(v)
             || v.as_array()
@@ -131,7 +131,7 @@ fn option_refusal(a: &Args<'_>) -> Option<String> {
             "mark at most one option as recommended",
         ));
     }
-    if a.merge_denial && (a.to.is_some() || a.mirror_of) {
+    if a.merge_denial && (a.to.is_some() || a.mirror_of.is_some()) {
         return Some(err(
             "merge_denial_audience",
             "a merge-denial card is addressed to humans; omit `to` and `mirrorOf`",
@@ -172,8 +172,31 @@ pub async fn answer(read: &PgPool, me: &Account, args: &Value) -> Option<String>
             ));
         }
     }
-    // 거울 검사(`mirror_audience`·`checkAskMirror`)는 아직 TS 몫이라, 거울이면 대신하기 검사도 TS 에 둔다.
-    if a.mirror_of {
+    // 거울 검사 — TS 순서대로 `to` 를 실었으면 `mirror_audience`, 그다음 `checkAskMirror`. 다 지난 거울(권한 카드 거울
+    // 다시 쓰기·대신하기 검사·글 올리기)은 아직 TS 몫이다.
+    if let Some(root) = a.mirror_of {
+        if a.to.is_some() {
+            return Some(err(
+                "mirror_audience",
+                "a mirror card is always addressed to humans; omit `to`",
+            ));
+        }
+        let row: Option<(Value, String)> = sqlx::query_as(MIRROR_ROOT_SQL)
+            .bind(root)
+            .fetch_optional(read)
+            .await
+            .ok()?;
+        let visible = match &row {
+            Some((_, ch)) => crate::core::channels::visible(read, &me.id, ch)
+                .await
+                .ok()?,
+            None => false,
+        };
+        let ids: Vec<&str> = a.options.iter().map(|(id, _)| *id).collect();
+        let ask = row.as_ref().and_then(|(m, _)| read_ask_meta(m));
+        if let Some(code) = mirror_refusal(ask.as_ref(), visible, &ids) {
+            return Some(err(code, mirror_message(code)));
+        }
         return None;
     }
     let o = args.as_object()?;
@@ -203,6 +226,48 @@ pub async fn answer(read: &PgPool, me: &Account, args: &Value) -> Option<String>
     }
     // 대신하기를 다 지난 카드는 [`answer_plain`] 이 세우고 옛 카드를 닫는다(묶음에 담긴 옛 카드·권한 없음은 TS).
     None
+}
+
+/// TS `readAskRow` 의 원본 읽기(읽기 풀의 `message` SELECT).
+pub const MIRROR_ROOT_SQL: &str =
+    "select meta, channel_id::text from message where id = $1::uuid and deleted_at is null";
+
+/// TS `checkAskMirror` 의 판정 — `ask` 는 원본의 `readAskMeta`(없으면 `None`), `visible` 은 부른 쪽이 원본 채널을 보는가.
+fn mirror_refusal(ask: Option<&Ask>, visible: bool, option_ids: &[&str]) -> Option<&'static str> {
+    let Some(ask) = ask else {
+        return Some("mirror_not_found");
+    };
+    if !visible {
+        return Some("mirror_not_found");
+    }
+    if ask.mirror_of.is_some() {
+        return Some("mirror_of_mirror");
+    }
+    if !ask.to_human() {
+        return Some("mirror_not_human");
+    }
+    let mut root: Vec<&str> = ask.options.iter().map(String::as_str).collect();
+    let mut ids = option_ids.to_vec();
+    root.sort_unstable();
+    ids.sort_unstable();
+    if root != ids {
+        return Some("mirror_options_mismatch");
+    }
+    if ask.answered || ask.closed {
+        return Some("mirror_resolved");
+    }
+    None
+}
+
+/// TS `MIRROR_REFUSAL_MESSAGE`.
+fn mirror_message(code: &str) -> &'static str {
+    match code {
+        "mirror_not_found" => "no choice request with that id that you can see",
+        "mirror_of_mirror" => "that card is itself a mirror; point mirrorOf at its original",
+        "mirror_not_human" => "only a card addressed to humans can be mirrored",
+        "mirror_options_mismatch" => "options must carry exactly the original card's option ids",
+        _ => "the original card is already answered or closed",
+    }
 }
 
 /// TS `ASK_SUPERSEDES_MAX`.
@@ -909,6 +974,72 @@ mod tests {
     use serde_json::json;
 
     const C: &str = "0b7f3f92-3fa6-494a-8ab3-76d0d2a6a1c0";
+
+    #[test]
+    fn mirror_refusal_follows_check_ask_mirror_order() {
+        use crate::core::ask::To;
+        let root = |to: To, mirror: Option<&str>, answered: bool, closed: bool| Ask {
+            options: vec!["a".into(), "b".into()],
+            to,
+            mirror_of: mirror.map(str::to_owned),
+            answered,
+            closed,
+        };
+        let open = root(To::Human, None, false, false);
+        assert_eq!(
+            mirror_refusal(None, true, &["a", "b"]),
+            Some("mirror_not_found")
+        );
+        assert_eq!(
+            mirror_refusal(Some(&open), false, &["a", "b"]),
+            Some("mirror_not_found")
+        );
+        let m = root(To::Human, Some(C), false, false);
+        assert_eq!(
+            mirror_refusal(Some(&m), true, &["a", "b"]),
+            Some("mirror_of_mirror")
+        );
+        let ag = root(To::Account(C.into()), None, false, false);
+        assert_eq!(
+            mirror_refusal(Some(&ag), true, &["a", "b"]),
+            Some("mirror_not_human")
+        );
+        assert_eq!(
+            mirror_refusal(Some(&open), true, &["a"]),
+            Some("mirror_options_mismatch")
+        );
+        assert_eq!(
+            mirror_refusal(Some(&open), true, &["a", "c"]),
+            Some("mirror_options_mismatch")
+        );
+        // 차례는 달라도 된다(TS 는 정렬해 견준다).
+        assert_eq!(mirror_refusal(Some(&open), true, &["b", "a"]), None);
+        let done = root(To::Human, None, true, false);
+        assert_eq!(
+            mirror_refusal(Some(&done), true, &["a", "b"]),
+            Some("mirror_resolved")
+        );
+        // 선택지가 달라도 정해진 원본보다 먼저 걸린다(TS 순서).
+        assert_eq!(
+            mirror_refusal(Some(&done), true, &["a"]),
+            Some("mirror_options_mismatch")
+        );
+        let closed = root(To::Human, None, false, true);
+        assert_eq!(
+            mirror_refusal(Some(&closed), true, &["a", "b"]),
+            Some("mirror_resolved")
+        );
+        for c in [
+            "mirror_not_found",
+            "mirror_of_mirror",
+            "mirror_not_human",
+            "mirror_options_mismatch",
+            "mirror_resolved",
+        ] {
+            assert!(!mirror_message(c).is_empty());
+        }
+        assert!(MIRROR_ROOT_SQL.contains("deleted_at is null"));
+    }
 
     fn ask(extra: Value) -> Value {
         let mut v = json!({ "channelId": C, "body": "b",
