@@ -2599,6 +2599,32 @@ async fn main() {
         }
         None => None,
     };
+    // 받을 `failed` 보고(CI 거절 아님)는 글 경로와 [`MERGE_RESULTS_WRITE_PRIVILEGES`] 가 다 있을 때만 Rust 가 적는다 — 없으면 TS.
+    let merge_results_post = match (&post_write, &merge_results_read) {
+        (Some(w), Some(_)) => {
+            use harkroom_server::core::merge_checks as t;
+            match write::missing_in(w, t::MERGE_RESULTS_WRITE_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(harkroom_server::core::msg_post::PostState {
+                    read: state.pool.clone(),
+                    write: w.clone(),
+                    up: state.up.clone(),
+                    implicit_ok,
+                }),
+                Ok(m) => {
+                    eprintln!("front: merge results write off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: merge results write off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 — `POST /agent/api-results`. 글 올리기 코어(시스템 줄)와 [`API_RESULTS_PRIVILEGES`] 가 다 있을 때만.
     let api_results_write = match &post_write {
         Some(w) => {
@@ -3699,6 +3725,7 @@ async fn main() {
             let mk = harkroom_server::core::merge_checks::routes(
                 state.up.clone(),
                 merge_results_read.clone(),
+                merge_results_post.clone(),
                 auth.clone(),
                 state.cors.clone(),
             );

@@ -6,7 +6,9 @@
 //!
 //! `POST /agent/merge-results`(TS `reportMerge`)도 같은 꼴로 부분 이식한다 — 403 `forbidden`·400 `bad_request` 만 Rust,
 //! 읽기 풀([`MERGE_RESULTS_PRIVILEGES`])이 있으면 N1 관문(403 `lease_invalid`·400 `bad_repo`·409 `already_reported`/`not_checked`)도
-//! Rust 가 답한다. 받을 보고의 「머지됨」 줄·CI 거절 기록(`denialId`)·감사·후속(감시·카드 닫기)은 아직 TS 몫이다.
+//! Rust 가 답한다. 글 경로와 [`MERGE_RESULTS_WRITE_PRIVILEGES`] 까지 있으면 받을 `failed` 보고(CI 거절 아님)도 Rust 가 적는다 —
+//! 「머지 실패」 시스템 줄·감사 `repo.merge.failed`·201 `{ messageId }`. 「머지됨」·「큐」 줄과 CI 거절 기록(`denialId`)·후속(감시·
+//! 카드 닫기·고른 gh 이름 적기)은 아직 TS 몫이다.
 use super::grant_reads::through_operator;
 use super::merge_approval_peek::str_len_ok;
 use super::msg_read::is_uuid;
@@ -16,7 +18,7 @@ use crate::proxy::Upstream;
 use axum::extract::{ConnectInfo, Request, State};
 use axum::http::StatusCode;
 use axum::response::Response;
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -168,6 +170,273 @@ const TRAIL_SQL: &str = "select action from audit_log \
 pub struct ResultsState {
     pub up: Upstream,
     pub read: Option<sqlx::PgPool>,
+    /// 받을 `failed` 보고(CI 거절 아님)를 Rust 가 적는 글 경로 — 쓰기 풀에 [`MERGE_RESULTS_WRITE_PRIVILEGES`] 까지 있을 때만.
+    pub post: Option<super::msg_post::PostState>,
+}
+
+/// 받을 보고 중 Rust 가 적는 갈래(`result: failed`·CI 거절 아님)가 읽고 쓰는 칸. 글 경로 칸은
+/// `msg_post::MESSAGE_POST_PRIVILEGES` 로 따로 본다. 하나라도 없으면 받을 보고는 TS 로 넘긴다.
+pub const MERGE_RESULTS_WRITE_PRIVILEGES: &[(&str, &str)] = &[
+    ("secret_turn_lease", "SELECT"),
+    ("audit_log", "SELECT"),
+    ("audit_log", "INSERT"),
+    ("merge_approval.id", "SELECT"),
+    ("merge_approval.approved_by", "SELECT"),
+    ("merge_approval.ci_override", "SELECT"),
+    ("merge_approval.used_lease_id", "SELECT"),
+    ("merge_approval.scope", "SELECT"),
+    ("merge_approval.pr_number", "SELECT"),
+    ("merge_approval.head_sha", "SELECT"),
+    ("account_grant", "SELECT"),
+    ("agent_config", "SELECT"),
+    ("agent_invoker", "SELECT"),
+    ("account", "SELECT"),
+    ("channel", "SELECT"),
+    ("channel_member", "SELECT"),
+    ("message", "SELECT"),
+    ("team_delegation", "SELECT"),
+    ("team_delegation_item", "SELECT"),
+];
+
+/// 받을 보고의 임대(채널·스레드까지).
+const POST_LEASE_SQL: &str = "select l.id::text, l.agent_id::text, l.operator_id::text, l.channel_id::text, \
+       l.thread_root_id::text, l.expires_at <= $3::timestamptz \
+     from secret_turn_lease l where l.id = $1::uuid and l.token_hash = $2::text";
+
+/// TS `reportMerge` 의 `trail` select(위임 사슬 뿌리까지).
+const POST_TRAIL_SQL: &str = "select action, detail->'viaChain' from audit_log \
+      where action in ('repo.merge.checked', 'repo.merge.merged', 'repo.merge.queued', 'repo.merge.failed') \
+        and target = $1 and detail->>'leaseId' = $2 and (detail->>'number')::int = $3::bigint and detail->>'headSha' = $4";
+
+/// TS `reportMerge` 의 `usedApproval` select.
+const USED_APPROVAL_SQL: &str = "select id::text, approved_by::text, ci_override \
+       from merge_approval where used_lease_id = $1::uuid and scope = $2 and pr_number = $3::bigint and head_sha = $4";
+
+/// JS 참 값(`x.viaChain` 의 `&&`).
+fn js_truthy(v: &Value) -> bool {
+    match v {
+        Value::Null => false,
+        Value::Bool(b) => *b,
+        Value::Number(n) => n.as_f64().is_some_and(|f| f != 0.0),
+        Value::String(s) => !s.is_empty(),
+        _ => true,
+    }
+}
+
+/// TS `isCiRefusal`.
+pub fn is_ci_refusal(c: Option<&Value>) -> bool {
+    let Some(c) = c.and_then(Value::as_object) else {
+        return false;
+    };
+    let code = c.get("code").and_then(Value::as_str);
+    code == Some("ci_not_green")
+        || (code == Some("not_mergeable")
+            && c.get("mergeState").and_then(Value::as_str) == Some("UNSTABLE"))
+}
+
+/// Rust 가 적을 수 있는 보고인가 — `failed` 이고 CI 거절 기록(`recordCiDenial`)이 필요 없다. 나머지(머지됨·큐·CI 거절)는 감시·카드
+/// 닫기·거절 기록이 붙어 TS 몫이다.
+pub fn rust_reportable(o: &Value) -> bool {
+    o.get("result").and_then(Value::as_str) == Some("failed") && !is_ci_refusal(o.get("ciRefusal"))
+}
+
+/// TS `failed` 줄 — 본문과 `meta`(i18n 은 CI 무시 승인 꼬리가 없을 때만).
+#[allow(clippy::too_many_arguments)]
+pub fn failed_line(
+    repo: &str,
+    number: i64,
+    head_sha: &str,
+    merge_sha: Option<&str>,
+    error: Option<&str>,
+    granter_id: Option<&str>,
+    via_approval: bool,
+    ci_override: bool,
+    chain_root_id: Option<&str>,
+) -> (String, Map<String, Value>) {
+    let head: String = head_sha.chars().take(9).collect();
+    let body = format!("⛔ {repo}#{number} 머지 실패 · head {head} (래퍼 보고)");
+    let mut merge = Map::new();
+    merge.insert("repo".into(), json!(repo));
+    merge.insert("number".into(), json!(number));
+    merge.insert("headSha".into(), json!(head_sha));
+    merge.insert("mergeSha".into(), json!(merge_sha));
+    merge.insert("result".into(), json!("failed"));
+    merge.insert("grantedBy".into(), json!(granter_id));
+    merge.insert("viaApproval".into(), json!(via_approval));
+    merge.insert(
+        "error".into(),
+        json!(error.map(|e| super::api_results::js_slice(e, 1000))),
+    );
+    if ci_override {
+        merge.insert("ciOverride".into(), json!(true));
+    }
+    if let Some(c) = chain_root_id {
+        merge.insert("chainRootId".into(), json!(c));
+    }
+    let mut meta = Map::new();
+    meta.insert("merge".into(), Value::Object(merge));
+    if !ci_override {
+        meta.insert(
+            "i18n".into(),
+            json!({ "key": "system.merge.failed", "args": {
+                "repo": super::api_results::js_slice(repo, 200), "number": number, "head": head } }),
+        );
+    }
+    (body, meta)
+}
+
+enum Report {
+    Refused(&'static str),
+    ToTs,
+    Posted(String),
+}
+
+/// TS `reportMerge` 의 `failed`(CI 거절 아님) 갈래 — 관문부터 줄·감사까지.
+async fn report_failed(
+    st: &super::msg_post::PostState,
+    agent: &str,
+    operator: &str,
+    o: &Value,
+) -> sqlx::Result<Report> {
+    use super::merge_approval_peek as pk;
+    use super::msg_post::{Origin, Outcome, PostBody, channel_is_dm, post_in_tx};
+    let w = &st.write;
+    let g = |k: &str| o.get(k).and_then(Value::as_str).map(str::to_owned);
+    let Some(number) = pk::positive_int(o.get("number").unwrap_or(&Value::Null)) else {
+        return Ok(Report::ToTs);
+    };
+    // TS 의 `(detail->>'number')::int = $3` — int4 를 넘는 PR 번호는 TS 쿼리 오류 갈래다. TS 에 맡긴다.
+    if number > i64::from(i32::MAX) {
+        return Ok(Report::ToTs);
+    }
+    let now = pk::db_now(w).await?;
+    type Lease = (String, String, Option<String>, String, String, bool);
+    let lease: Option<Lease> = sqlx::query_as(POST_LEASE_SQL)
+        .bind(g("leaseId").unwrap_or_default())
+        .bind(pk::sha256_hex(&g("token").unwrap_or_default()))
+        .bind(&now)
+        .fetch_optional(w)
+        .await?;
+    let (lease_id, channel, thread_root) = match lease {
+        Some((id, a, op, c, t, expired))
+            if a == agent && op.as_deref() == Some(operator) && !expired =>
+        {
+            (id, c, t)
+        }
+        _ => return Ok(Report::Refused("lease_invalid")),
+    };
+    let Some(scope) = pk::repo_scope(&g("repo").unwrap_or_default()) else {
+        return Ok(Report::Refused("bad_repo"));
+    };
+    let repo = scope["repo:".len()..].to_owned();
+    let head_sha = g("headSha").unwrap_or_default();
+    let trail: Vec<(String, Option<Value>)> = sqlx::query_as(POST_TRAIL_SQL)
+        .bind(&scope)
+        .bind(&lease_id)
+        .bind(number)
+        .bind(&head_sha)
+        .fetch_all(w)
+        .await?;
+    if trail.iter().any(|(a, _)| a != "repo.merge.checked") {
+        return Ok(Report::Refused("already_reported"));
+    }
+    if trail.is_empty() {
+        return Ok(Report::Refused("not_checked"));
+    }
+    let chain_root_id = trail
+        .iter()
+        .find_map(|(_, v)| v.as_ref().filter(|v| js_truthy(v)))
+        .and_then(|v| v.get("rootId"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let owner = repo.split_once('/').map_or(repo.as_str(), |(o, _)| o);
+    static GRANT_SQL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let grant_sql: &'static str = GRANT_SQL.get_or_init(|| {
+        format!(
+            "select \"grantedBy\"::text from ({}) g",
+            super::channels::frag("repo_grant_for")
+        )
+    });
+    let grant_by: Option<Option<String>> = sqlx::query_scalar(grant_sql)
+        .bind(agent)
+        .bind(vec![scope.clone(), format!("repo:{owner}/*")])
+        .bind(&scope)
+        .bind(None::<String>)
+        .bind("repo.merge")
+        .fetch_optional(w)
+        .await?;
+    let used: Option<(String, String, bool)> = sqlx::query_as(USED_APPROVAL_SQL)
+        .bind(&lease_id)
+        .bind(&scope)
+        .bind(number)
+        .bind(&head_sha)
+        .fetch_optional(w)
+        .await?;
+    let approved_by = used.as_ref().map(|u| u.1.clone());
+    let ci_override = used.as_ref().is_some_and(|u| u.2);
+    let granter_id = approved_by.clone().or(grant_by.flatten());
+    let merge_sha = g("mergeSha");
+    let (body, meta) = failed_line(
+        &repo,
+        number,
+        &head_sha,
+        merge_sha.as_deref(),
+        g("error").as_deref(),
+        granter_id.as_deref(),
+        approved_by.is_some(),
+        ci_override,
+        chain_root_id.as_deref(),
+    );
+    let audience = super::audience::audience_for(w, &channel).await?.to_json();
+    let is_dm = channel_is_dm(w, &channel).await?;
+    let input = PostBody {
+        body,
+        attachment_ids: Vec::new(),
+        thread_root: Some(thread_root),
+        also_in_channel: false,
+    };
+    let origin = Origin {
+        meta,
+        system: true,
+        ..Origin::default()
+    };
+    let row = match post_in_tx(
+        st, &channel, agent, true, &input, None, &audience, is_dm, &origin,
+    )
+    .await?
+    {
+        Outcome::Posted { row, .. } => row,
+        Outcome::ToTs => return Ok(Report::ToTs),
+        _ => return Ok(Report::Refused("post_failed")),
+    };
+    let message: Value = serde_json::from_str(&row).map_err(|e| sqlx::Error::Decode(e.into()))?;
+    let message_id = message
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let mut detail = json!({
+        "number": number, "headSha": head_sha, "mergeSha": merge_sha, "operatorId": operator,
+        "leaseId": lease_id, "messageId": message_id,
+    });
+    if let Some((id, by, _)) = &used {
+        detail["approvalId"] = json!(id);
+        detail["approvedBy"] = json!(by);
+        detail["ciOverride"] = json!(ci_override);
+    }
+    crate::write::record_audit(
+        w,
+        crate::write::AuditEntry {
+            action: "repo.merge.failed",
+            actor_id: Some(agent),
+            actor_handle: None,
+            target: Some(&scope),
+            ip: None,
+            detail,
+        },
+    )
+    .await;
+    Ok(Report::Posted(message_id))
 }
 
 /// N1 관문 전의 거절(`lease_invalid`·`bad_repo`·`already_reported`·`not_checked`) — 쓰기 전 읽기만이라 TS 와 같은 순서로 답한다.
@@ -238,6 +507,37 @@ pub async fn results_route(
     if !results_shape_ok(parsed.as_ref()) {
         return json_err(StatusCode::BAD_REQUEST, "bad_request", BAD_RESULT);
     }
+    if let (Some(post), Some(op), Some(body)) = (
+        st.post.as_ref(),
+        auth.operator.as_ref().map(|o| o.id.as_str()),
+        parsed.as_ref(),
+    ) && rust_reportable(body)
+    {
+        match report_failed(post, &me.id, op, body).await {
+            Ok(Report::Refused(code)) => {
+                let status = match code {
+                    "bad_repo" => StatusCode::BAD_REQUEST,
+                    "lease_invalid" => StatusCode::FORBIDDEN,
+                    _ => StatusCode::CONFLICT,
+                };
+                return json_err(status, code, &format!("merge result not recorded: {code}"));
+            }
+            Ok(Report::Posted(id)) => {
+                use axum::response::IntoResponse;
+                return (
+                    StatusCode::CREATED,
+                    [(
+                        axum::http::header::CONTENT_TYPE,
+                        "application/json; charset=utf-8",
+                    )],
+                    json!({ "messageId": id }).to_string(),
+                )
+                    .into_response();
+            }
+            Ok(Report::ToTs) => {}
+            Err(e) => return crate::directory::internal(e),
+        }
+    }
     if let (Some(pool), Some(op), Some(body)) = (
         st.read.as_ref(),
         auth.operator.as_ref().map(|o| o.id.as_str()),
@@ -282,6 +582,7 @@ pub async fn checks_route(
 pub fn routes(
     up: Upstream,
     results_read: Option<sqlx::PgPool>,
+    results_post: Option<super::msg_post::PostState>,
     auth: crate::auth::AuthPools,
     cors: Arc<crate::cors::Cors>,
 ) -> crate::route_table::Routes<()> {
@@ -323,6 +624,7 @@ pub fn routes(
             .merge(rt.router.with_state(Arc::new(ResultsState {
                 up,
                 read: results_read,
+                post: results_post,
             }))),
         http,
         sockets,
@@ -374,5 +676,63 @@ mod tests {
             b[k] = v;
             assert!(!results_shape_ok(Some(&b)), "{k}");
         }
+    }
+
+    #[test]
+    fn failed_line_like_ts() {
+        let h = "a".repeat(40);
+        let (body, meta) = failed_line(
+            "o/r",
+            7,
+            &h,
+            None,
+            Some("boom"),
+            Some("g1"),
+            false,
+            false,
+            None,
+        );
+        assert_eq!(body, "⛔ o/r#7 머지 실패 · head aaaaaaaaa (래퍼 보고)");
+        assert_eq!(
+            Value::Object(meta),
+            json!({ "merge": { "repo": "o/r", "number": 7, "headSha": h, "mergeSha": null, "result": "failed",
+                "grantedBy": "g1", "viaApproval": false, "error": "boom" },
+                "i18n": { "key": "system.merge.failed", "args": { "repo": "o/r", "number": 7, "head": "aaaaaaaaa" } } })
+        );
+        let (_, meta) = failed_line(
+            "o/r",
+            7,
+            &h,
+            None,
+            None,
+            Some("a1"),
+            true,
+            true,
+            Some("root"),
+        );
+        assert!(meta.get("i18n").is_none());
+        assert_eq!(meta["merge"]["ciOverride"], json!(true));
+        assert_eq!(meta["merge"]["chainRootId"], json!("root"));
+        let src = include_str!("../../../../packages/server/src/services/mergeGrants.ts");
+        assert!(src.contains(
+            "`⛔ ${repo}#${r.number} 머지 실패 · head ${r.headSha.slice(0, 9)} (래퍼 보고)`"
+        ));
+        assert!(src.contains("systemI18n('system.merge.failed', { repo, number: r.number, head: r.headSha.slice(0, 9) })"));
+    }
+
+    #[test]
+    fn reportable_only_plain_failed() {
+        assert!(rust_reportable(&json!({ "result": "failed" })));
+        assert!(rust_reportable(
+            &json!({ "result": "failed", "ciRefusal": { "code": "not_mergeable", "mergeState": "DIRTY", "checks": [] } })
+        ));
+        assert!(!rust_reportable(
+            &json!({ "result": "failed", "ciRefusal": { "code": "ci_not_green", "checks": [] } })
+        ));
+        assert!(!rust_reportable(
+            &json!({ "result": "failed", "ciRefusal": { "code": "not_mergeable", "mergeState": "UNSTABLE", "checks": [] } })
+        ));
+        assert!(!rust_reportable(&json!({ "result": "merged" })));
+        assert!(!rust_reportable(&json!({ "result": "queued" })));
     }
 }
