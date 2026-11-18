@@ -2,7 +2,7 @@
 //!
 //! Rust 는 판정 전의 두 갈래만 답한다: 오퍼레이터를 거치지 않은 요청(403 `forbidden`)과 zod 모양이 틀린 본문(400 `bad_request`).
 //! 모양이 맞는 요청은 전부 TS 로 넘긴다 — 임대·연결·`apiGrantFor`(사슬·limits·경로)·쓰기 사람 원인·비밀 열기(`secret_access_log`)·
-//! 막힘 카드(`recordBlocked`)·감사·409 `secret_key_mismatch` 는 아직 TS 몫이다.
+//! 막힘 카드(`recordBlocked`)·감사는 아직 TS 몫이다(아래 권한이 갖춰지면 Rust 가 답한다).
 //! 쓰기 풀에 [`API_CHECKS_DENY_PRIVILEGES`] 가 다 있으면 임대 거절(403 `lease_invalid` — 막힘 카드가 없는 갈래)과 그
 //! `api.call.denied` 감사는 Rust 가 답한다. [`API_CHECKS_ALLOW_PRIVILEGES`] 까지 있으면 임대가 통과한 본체 중
 //! `authKind = none` 연결의 허락(`api.call.checked`)과 막힘 카드가 없는 거절(`bad_path`·`chain_broken`)도 Rust 가 답한다.
@@ -14,8 +14,8 @@
 //! 아닌 연결만 TS 몫). 비밀을 여는 연결(`authKind` 가 `none` 이 아닌 것)은 [`API_CHECKS_SECRET_PRIVILEGES`] 와
 //! DB 확인값에 맞는 v2 키가 있을 때 **허락 갈래만** Rust 가 연다 — `secret_access_log` granted 줄, `api.call.checked` 감사,
 //! 응답 `valueBase64`(오퍼레이터 자신에게만, `no-store`). 비밀 거절(`no_secret`(비밀 행 없음)·`secret_expired`·`owner_inactive`·
-//! `no_value`·`unreadable`)도 TS 처럼 거절 줄·감사·막힘 카드로 Rust 가 답한다. 키 없음·어긋남(`no_secret`·409 `secret_key_mismatch`)과
-//! 비밀 칸이 빈 연결은 아무것도 쓰기 전에 TS 로 넘긴다. 토큰 교환(156)은 `caps` 거절
+//! `no_value`·`unreadable`)도 TS 처럼 거절 줄·감사·막힘 카드로 Rust 가 답한다. 키 없음·비밀 칸이 빈 연결(`no_secret`, 감사·카드만)과
+//! 키 어긋남(감사·카드는 `no_secret`, 응답만 409 `secret_key_mismatch`)도 Rust 가 답한다(S5.5 b). 토큰 교환(156)은 `caps` 거절
 //! (409 `operator_update_required` + 막힘 카드)과, [`API_CHECKS_TOKEN_PRIVILEGES`] 가 있을 때 허락(`tokenUrl`·`tokenForm`)을 Rust 가 답한다.
 use super::api_results::connector_ok;
 use super::grant_reads::through_operator;
@@ -139,7 +139,7 @@ pub const API_CHECKS_TOKEN_PRIVILEGES: &[(&str, &str)] = &[
     ("api_connector.token_form", "SELECT"),
 ];
 
-/// 비밀 열쇠(v2 보관소). 키가 DB 확인값과 맞을 때만 선다 — 없거나 어긋나면(TS 의 `no_secret`·409 `secret_key_mismatch`) TS 몫.
+/// 비밀 열쇠(v2 보관소). 키가 DB 확인값과 맞을 때만 선다.
 pub struct SecretOpener(crate::secrets::keyring::SecretKeyring);
 
 impl std::fmt::Debug for SecretOpener {
@@ -148,13 +148,47 @@ impl std::fmt::Debug for SecretOpener {
     }
 }
 
+/// 기동 때 읽은 비밀 열쇠 상태 — TS `buildServer` 의 `secretKeyring`·`secretKeyMismatch` 짝.
+#[derive(Debug)]
+pub enum SecretKey {
+    /// 맞는 키 — 비밀을 연다.
+    Open(SecretOpener),
+    /// 키링이 없다(TS `keyring == null`) — 비밀을 여는 연결은 `no_secret`. `mismatch` 면 응답만 409 `secret_key_mismatch`.
+    Off { mismatch: bool },
+}
+
+impl SecretKey {
+    /// TS `verified?.keyring ?? null`·`verified?.mismatch ?? false` 그대로(env 키 없음 = 꺼짐, 어긋남 아님).
+    fn from_verified(v: Option<(Option<SecretOpener>, bool)>) -> Self {
+        match v {
+            None => SecretKey::Off { mismatch: false },
+            Some((Some(k), _)) => SecretKey::Open(k),
+            Some((None, mismatch)) => SecretKey::Off { mismatch },
+        }
+    }
+}
+
 /// 기동 한 번 — `secret_reveal::load_state` 와 같은 길(env 키 + DB 확인값). 오류 글귀엔 파일 이름·kid 만 있다.
-pub async fn load_secret_opener(pool: &sqlx::PgPool) -> Result<Option<SecretOpener>, String> {
-    Ok(crate::secrets::verify::load_verified_from_env(pool)
-        .await?
-        .filter(|v| !v.mismatch)
-        .and_then(|v| v.keyring)
-        .map(SecretOpener))
+/// 오류(키 파일을 못 읽음·확인값 조회 실패)면 상태를 모르니 호출 쪽이 비밀 갈래를 TS 에 맡긴다.
+pub async fn load_secret_opener(pool: &sqlx::PgPool) -> Result<SecretKey, String> {
+    Ok(SecretKey::from_verified(
+        crate::secrets::verify::load_verified_from_env(pool)
+            .await?
+            .map(|v| (v.keyring.map(SecretOpener), v.mismatch)),
+    ))
+}
+
+/// TS `apiCallRoutes` 의 키 어긋남 응답 — kid 이름은 싣지 않는다.
+const KEY_MISMATCH_MSG: &str =
+    "the secret store is off: its key does not match the stored key check value";
+
+/// TS 라우트: `no_secret` 거절이고 키링이 없고 키가 어긋났으면 409 `secret_key_mismatch`(감사·카드는 `no_secret` 그대로).
+pub fn key_mismatch_response() -> Response {
+    no_store(json_err(
+        StatusCode::CONFLICT,
+        "secret_key_mismatch",
+        KEY_MISMATCH_MSG,
+    ))
 }
 
 pub struct ChecksState {
@@ -167,8 +201,9 @@ pub struct ChecksState {
     pub card: Option<super::msg_post::PostState>,
     /// 이미 선 카드의 갱신 — `card` 에 더해 [`API_CHECKS_BUMP_PRIVILEGES`] 가 있을 때만. 없으면 그 갈래는 TS 몫.
     pub bump: bool,
-    /// 비밀을 여는 연결의 허락 — `allow` 에 더해 [`API_CHECKS_SECRET_PRIVILEGES`] 와 맞는 키가 있을 때만.
-    pub secret: Option<SecretOpener>,
+    /// 비밀을 여는 연결 — `allow` 에 더해 [`API_CHECKS_SECRET_PRIVILEGES`] 가 있고 키 상태를 읽었을 때만.
+    /// `None` 이면 비밀을 여는 연결은 전부 TS 몫.
+    pub secret: Option<SecretKey>,
 }
 
 /// JS 정규식 `\s`(ECMAScript WhiteSpace + LineTerminator).
@@ -533,7 +568,7 @@ async fn checks_body(
     path300: &str,
     card: Option<&super::msg_post::PostState>,
     bump: bool,
-    secret: Option<&SecretOpener>,
+    secret: Option<&SecretKey>,
     now: &str,
 ) -> sqlx::Result<Option<Response>> {
     use super::mcp::grant_delegate as gd;
@@ -635,19 +670,21 @@ async fn checks_body(
     if !path_covered(path, &limits.path_prefix) || !path_covered(&wire, &limits.path_prefix) {
         return carded("path_not_allowed").await;
     }
-    // 비밀을 여는 연결은 비밀 칸·맞는 키·권한이 있을 때만 — 없으면 TS 가 `no_secret`·409 `secret_key_mismatch` 로
-    // 답한다. 토큰 교환(156)은 TS 처럼 `no_secret` 다음, 쓰기 원인 앞에서 `caps` 를 본다. 여기까지는 아무것도 쓰지 않았다.
-    if c.4 != "none" && c.6.is_none() {
+    // 비밀을 여는 연결은 키 상태를 읽었고 권한이 있을 때만 — 아니면 아무것도 쓰기 전이니 TS 몫.
+    if c.4 != "none" && secret.is_none() {
         return Ok(None);
+    }
+    // TS `apiGrantFor`: 비밀 칸이 빈 연결은 `no_secret`(감사·카드; 비밀 행이 없으니 거절 줄 없음). 키가 어긋나 꺼졌으면
+    // 응답만 409 `secret_key_mismatch`. 토큰 교환(156)은 TS 처럼 이 다음, 쓰기 원인 앞에서 `caps` 를 본다.
+    if c.4 != "none" && c.6.is_none() {
+        return no_secret_denial(carded("no_secret").await?, secret);
     }
     if c.4 == "token_exchange" && !has_token_cap(o) {
         return carded("operator_update_required").await;
     }
-    if c.4 != "none" && secret.is_none() {
-        return Ok(None);
-    }
     // 토큰 주소·form 틀. 권한([`API_CHECKS_TOKEN_PRIVILEGES`])이 없거나 짝이 안 맞으면 쓰기 전이니 TS 몫.
-    let token = if c.4 == "token_exchange" {
+    // 키링이 없으면 TS 는 토큰 칸을 보기 전에 `no_secret` 으로 막으니 읽지 않는다.
+    let token = if c.4 == "token_exchange" && matches!(secret, Some(SecretKey::Open(_))) {
         match sqlx::query_as::<_, (Option<String>, Option<String>)>(TOKEN_SQL)
             .bind(cid)
             .fetch_optional(pool)
@@ -668,9 +705,13 @@ async fn checks_body(
     }
     let value = match (c.4.as_str(), secret) {
         ("none", _) => None,
-        (_, Some(sec)) => {
+        // TS `if (!keyring) return deny('no_secret')` — 비밀 행을 읽기 전이니 거절 줄은 없다.
+        (_, Some(SecretKey::Off { .. })) => {
+            return no_secret_denial(carded("no_secret").await?, secret);
+        }
+        (_, Some(SecretKey::Open(sec))) => {
             let Some(sid) = c.6.as_deref() else {
-                return Ok(None); // `no_secret` 거절은 TS 몫.
+                return Ok(None); // 위에서 이미 막았다.
             };
             match open_secret(
                 pool, sec, sid, &c.2, agent, operator, lease, method, path, now,
@@ -732,6 +773,27 @@ async fn checks_body(
     Ok(Some(no_store(crate::directory::json_ok(
         text.as_str().to_owned(),
     ))))
+}
+
+/// `no_secret` 거절 응답 — 카드가 섰으면(감사·카드는 이미 남았다) 키가 어긋나 꺼진 경우만 409 로 바꾼다(TS 라우트).
+/// 카드가 TS 로 넘어갔으면(`None`) 그대로 TS 몫.
+#[allow(clippy::unnecessary_wraps)]
+fn no_secret_denial(
+    carded: Option<Response>,
+    secret: Option<&SecretKey>,
+) -> sqlx::Result<Option<Response>> {
+    Ok(carded.map(|r| {
+        if mismatch_off(secret) {
+            key_mismatch_response()
+        } else {
+            r
+        }
+    }))
+}
+
+/// TS `!opts.keyring && opts.keyMismatch`.
+fn mismatch_off(secret: Option<&SecretKey>) -> bool {
+    matches!(secret, Some(SecretKey::Off { mismatch: true }))
 }
 
 const TOKEN_SQL: &str = "select token_url, token_form::text from api_connector where id = $1::uuid and auth_kind = 'token_exchange'";
@@ -894,7 +956,7 @@ async fn checks_early(
     allow: bool,
     card: Option<&super::msg_post::PostState>,
     bump: bool,
-    secret: Option<&SecretOpener>,
+    secret: Option<&SecretKey>,
 ) -> sqlx::Result<Option<Response>> {
     let g = |k: &str| o.get(k).and_then(Value::as_str).unwrap_or_default();
     let Some(path) = audit_path(g("path")) else {
@@ -988,7 +1050,7 @@ pub fn routes(
     allow: bool,
     card: Option<super::msg_post::PostState>,
     bump: bool,
-    secret: Option<SecretOpener>,
+    secret: Option<SecretKey>,
     auth: crate::auth::AuthPools,
     cors: Arc<crate::cors::Cors>,
 ) -> crate::route_table::Routes<()> {
@@ -1181,6 +1243,47 @@ mod tests {
         assert!(token_fields("", "{}").is_none());
         assert!(token_fields("https://x/t", "[1]").is_none());
         assert!(token_fields("https://x/t", "not json").is_none());
+    }
+
+    #[test]
+    fn key_state_like_ts() {
+        // env 키 없음 = 꺼짐(어긋남 아님) → 403 `no_secret`.
+        let off = SecretKey::from_verified(None);
+        assert!(matches!(off, SecretKey::Off { mismatch: false }));
+        assert!(!mismatch_off(Some(&off)));
+        // 활성 kid 어긋남 → 키링 없음 + mismatch → 409.
+        let mm = SecretKey::from_verified(Some((None, true)));
+        assert!(mismatch_off(Some(&mm)));
+        let plain = SecretKey::from_verified(Some((None, false)));
+        assert!(!mismatch_off(Some(&plain)));
+        assert!(!mismatch_off(None));
+    }
+
+    #[tokio::test]
+    async fn key_mismatch_body_like_ts() {
+        let r = key_mismatch_response();
+        assert_eq!(r.status(), StatusCode::CONFLICT);
+        assert_eq!(r.headers()["cache-control"], "no-store");
+        let b = axum::body::to_bytes(r.into_body(), 1 << 16).await.unwrap();
+        let v: Value = serde_json::from_slice(&b).unwrap();
+        assert_eq!(
+            v,
+            json!({"error": {"code": "secret_key_mismatch",
+                "message": "the secret store is off: its key does not match the stored key check value"}})
+        );
+    }
+
+    #[tokio::test]
+    async fn no_secret_denial_maps_only_mismatch() {
+        let base = || Some(json_err(StatusCode::FORBIDDEN, "no_secret", "x"));
+        let mm = SecretKey::Off { mismatch: true };
+        let off = SecretKey::Off { mismatch: false };
+        let r = no_secret_denial(base(), Some(&mm)).unwrap().unwrap();
+        assert_eq!(r.status(), StatusCode::CONFLICT);
+        let r = no_secret_denial(base(), Some(&off)).unwrap().unwrap();
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
+        // 카드가 TS 로 넘어갔으면 409 로 바꾸지 않고 TS 에 맡긴다.
+        assert!(no_secret_denial(None, Some(&mm)).unwrap().is_none());
     }
 
     #[test]
