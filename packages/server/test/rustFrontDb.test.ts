@@ -1739,6 +1739,13 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant select (secret_id, version, sealed, revoked_at) on secret_version to ${rw}`,
         `grant insert (secret_id, secret_name, version, agent_id, operator_id, turn_id, channel_id, thread_root_id, result, reason, at) on secret_access_log to ${rw}`,
         `grant usage on sequence secret_access_log_id_seq to ${rw}`,
+        // S5.4 api-checks — `api_checks.rs` 의 DENY·ALLOW·BUMP·SECRET·TOKEN 표(운영 쓰기 역할에 더할 줄과 같다).
+        `grant select on secret_turn_lease, message, account, agent_config, channel, channel_member, agent_invoker to ${rw}`,
+        `grant select (id, name, owner_account_id, base_url, auth_kind, auth_header, secret_id, methods, token_url, token_form) on api_connector to ${rw}`,
+        `grant select (id, account_id, capability, scope, parent_grant_id, granted_by, expires_at, suspended_at, limits, delegate_depth, write_needs_human_cause) on account_grant to ${rw}`,
+        `grant update (meta) on message to ${rw}`,
+        `grant select (id, name, kind, expires_at, owner_account_id) on secret to ${rw}`,
+        `grant select (secret_id, version, sealed, revoked_at) on secret_version to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -11653,6 +11660,148 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             await want('reveal 제한 뒤에도 없음 먼저 → 404', rb(LA, 's54ar-nothing'), 404, 'not_found', 0);
             expect(JSON.stringify(await db.pool.query(`select * from secret_access_log where agent_id = $1`, [ar.accountId]).then((r) => r.rows))).not.toContain('agent-reveal');
             await db.pool.query(`delete from secret where name like 's54ar-%'`);
+          }
+          // 13) POST /agent/api-checks(S5.4 a·b — `api_checks.rs`). 같은 장면에서 TS·Rust 를 차례로 부르고 응답·감사·access log·막힘 카드를 견준다.
+          // 카드는 쪽마다 뜬 뒤 지운다(남기면 Rust 쪽이 TS 카드를 고쳐 쓰는 갈래로 간다). 비밀 연결은 TS `/secrets` 로 만든 ck1 봉인 값을 연다.
+          // 키링 없음·409 `secret_key_mismatch`·비밀 칸 빈 연결은 Rust 가 TS 로 넘기는 갈래라 여기서 견주지 않는다(마지막 PR 몫).
+          {
+            for (const off of ['api checks deny off', 'api checks allow off', 'api checks secret off', 'api checks card bump off']) {
+              expect(f.log(), off).not.toContain(off);
+            }
+            const ap = await mkAgent('s54ap');
+            agents.push(ap.accountId);
+            known.set(ap.accountId, '<ap>');
+            const LP = await lease('ap', ap.accountId);
+            const LPend = await lease('ap-ended', ap.accountId, { ended: true });
+            const vP = viaOp(ap);
+            const powner = (await db.pool.query<{ id: string }>(
+              `insert into account (handle, display_name, kind, login_id, role) values ('s54ap-owner', 's54ap-owner', 'human', 's54ap-owner', 'member') returning id::text`)).rows[0]!.id;
+            known.set(powner, '<powner>');
+            const mkSec = async (name: string, value: string) => {
+              const r = await app.inject({ method: 'POST', url: '/secrets', headers: { authorization: `Bearer ${A}` }, payload: { name, kind: 'text', value } });
+              expect(r.statusCode, r.body).toBe(201);
+              const id = String((r.json() as { secret: { id: string } }).secret.id);
+              known.set(id, `<s:${name}>`);
+              return id;
+            };
+            const sOk = await mkSec('s54ap-ok', 'api-key-ünï');
+            const sTx = await mkSec('s54ap-tx', 'client-secret');
+            const sExp = await mkSec('s54ap-exp', 'exp-value');
+            await db.pool.query(`update secret set expires_at = now() - interval '1 hour' where id = $1`, [sExp]);
+            const sOff = await mkSec('s54ap-off', 'off-value');
+            await db.pool.query(`update secret set owner_account_id = $2 where id = $1`, [sOff, powner]);
+            await db.pool.query(`update account set disabled_at = now() where id = $1`, [powner]);
+            const sNoVal = (await db.pool.query<{ id: string }>(
+              `insert into secret (name, kind, owner_account_id) values ('s54ap-noval', 'text', $1) returning id::text`, [admin.accountId])).rows[0]!.id;
+            known.set(sNoVal, '<s:s54ap-noval>');
+            const sBad = (await db.pool.query<{ id: string }>(
+              `insert into secret (name, kind, owner_account_id) values ('s54ap-bad', 'text', $1) returning id::text`, [admin.accountId])).rows[0]!.id;
+            known.set(sBad, '<s:s54ap-bad>');
+            await db.pool.query(`insert into secret_version (secret_id, version, sealed, size_bytes, created_by) values ($1, 1, 'v2.k9.AAAA.AAAA.AAAA.AAAA', 4, $2)`, [sBad, admin.accountId]);
+            const conn = async (name: string, kind: string, secretId: string | null, o: { header?: string; methods?: string[]; grant?: boolean; write?: boolean } = {}) => {
+              const id = (await db.pool.query<{ id: string }>(
+                `insert into api_connector (name, owner_account_id, base_url, auth_kind, auth_header, secret_id, methods, token_url, token_form)
+                 values ($1, $2, 'https://api.example.test', $3, $4, $5, $6, $7, $8::jsonb) returning id::text`,
+                [name, admin.accountId, kind, o.header ?? null, secretId, o.methods ?? ['GET', 'POST'],
+                  kind === 'token_exchange' ? 'https://auth.example.test/token' : null,
+                  kind === 'token_exchange' ? JSON.stringify({ grant_type: 'client_credentials', z: 1, a: 'x' }) : null])).rows[0]!.id;
+              known.set(id, `<c:${name}>`);
+              if (o.grant !== false) {
+                await db.pool.query(
+                  `insert into account_grant (account_id, capability, scope, granted_by, write_needs_human_cause) values ($1, 'api.call', $2, $3, $4)`,
+                  [ap.accountId, `connector:${id}`, admin.accountId, o.write ?? false]);
+              }
+              return id;
+            };
+            await conn('s54ap-none', 'none', null);
+            await conn('s54ap-bearer', 'bearer', sOk);
+            await conn('s54ap-header', 'header', sOk, { header: 'X-Api-Key' });
+            await conn('s54ap-tx', 'token_exchange', sTx);
+            await conn('s54ap-exp', 'bearer', sExp);
+            await conn('s54ap-off', 'bearer', sOff);
+            await conn('s54ap-noval', 'bearer', sNoVal);
+            await conn('s54ap-bad', 'bearer', sBad);
+            await conn('s54ap-nogrant', 'none', null, { grant: false });
+            await conn('s54ap-getonly', 'none', null, { methods: ['GET'] });
+            const AC = '/agent/api-checks';
+            // 앞 시험이 이 채널에 남긴 막힘 카드는 견주지 않는다.
+            const seenCards: string[] = (await db.pool.query<{ id: string }>(`select id::text from message where channel_id = $1 and meta ? 'blocked'`, [todayId])).rows.map((r) => r.id);
+            const apSide = async (base: string, body: unknown, headers: Record<string, string>) => {
+              const mark = (await db.pool.query<{ a: string; l: string }>(
+                `select (select coalesce(max(id), 0) from audit_log)::text as a, (select coalesce(max(id), 0) from secret_access_log)::text as l`)).rows[0]!;
+              const r = await raw(base, AC, body, headers);
+              const audit = (await db.pool.query(
+                `select action, actor_id, actor_handle, target, detail from audit_log where id > $1 and actor_id = $2 order by id`, [mark.a, ap.accountId])).rows;
+              const access = (await db.pool.query(
+                `select secret_name, version, agent_id, operator_id, turn_id, channel_id, thread_root_id, result, reason from secret_access_log where id > $1 order by id`,
+                [mark.l])).rows;
+              const cards = (await db.pool.query<{ id: string }>(
+                `select id, kind, body, author_id, channel_id, thread_root_id, meta from message
+                  where channel_id = $1 and meta ? 'blocked' and not (id = any($2::uuid[])) order by created_at`, [todayId, seenCards])).rows;
+              seenCards.push(...cards.map((c) => c.id));
+              if (cards.length) await db.pool.query('delete from message where id = any($1::uuid[])', [cards.map((c) => c.id)]);
+              return { r, effects: { audit, access, cards: cards.map(({ id: _id, ...c }) => c) } };
+            };
+            const apPair = async (label: string, body: unknown, headers: Record<string, string> = vP) => {
+              const a = await apSide(tsUrl, body, headers);
+              const b = await apSide(rsUrl, body, headers);
+              expect(norm({ status: b.r.status, cc: b.r.cc, json: b.r.json }), label).toEqual(norm({ status: a.r.status, cc: a.r.cc, json: a.r.json }));
+              expect(norm(b.effects), `${label} 부작용`).toEqual(norm(a.effects));
+              return { a, b };
+            };
+            const q = (l: { leaseId: string; token: string }, connector: string, method = 'GET', path = '/v1/items', extra: Record<string, unknown> = {}) =>
+              ({ leaseId: l.leaseId, token: l.token, connector, method, path, ...extra });
+            // 게이트 앞.
+            await apPair('api 익명 → 401', q(LP, 's54ap-none'), {});
+            await apPair('api 사람 → 403', q(LP, 's54ap-none'), { authorization: `Bearer ${A}` });
+            await apPair('api 본문 틀림 → 400', { ...q(LP, 's54ap-none'), method: 'TRACE' });
+            // 임대.
+            const li = await apPair('api 끝난 임대 → 403 lease_invalid', q(LPend, 's54ap-bearer'));
+            expect(li.a.r.status).toBe(403);
+            expect(norm(li.a.effects)).toMatchObject({ audit: [{ action: 'api.call.denied', detail: { code: 'lease_invalid', leaseId: null } }], access: [], cards: [] });
+            await apPair('api 토큰 틀림 → 403 lease_invalid', { ...q(LP, 's54ap-bearer'), token: 'wrong' });
+            await apPair('api 남의 임대 → 403 lease_invalid', q(L, 's54ap-bearer'));
+            // 허락 — none·bearer·header·질의 붙은 경로.
+            const okN = await apPair('api none 허락', q(LP, 's54ap-none'));
+            expect(okN.a.r.status).toBe(200);
+            expect(okN.a.r.cc).toBe('no-store');
+            expect(okN.a.r.json).toMatchObject({ allowed: true, authKind: 'none', valueBase64: null, causeByHuman: true });
+            const okB = await apPair('api bearer 허락(비밀 엶)', q(LP, 's54ap-bearer', 'GET', '/v1/items?api_key=zzz'));
+            expect(okB.a.r.status).toBe(200);
+            expect([okB.a.r.json.valueBase64, okB.b.r.json.valueBase64].map((v) => Buffer.from(String(v), 'base64').toString('utf8')), '두 쪽 같은 평문')
+              .toEqual(['api-key-ünï', 'api-key-ünï']);
+            expect(norm(okB.b.effects.access)).toEqual([{ secret_name: 's54ap-ok', version: 1, agent_id: '<ap>', operator_id: '<op>', turn_id: '<lease:ap>', channel_id: '<ch>', thread_root_id: '<th>',
+              result: 'granted', reason: 'api:s54ap-bearer GET /v1/items' }]);
+            expect(norm(okB.b.effects.audit)).toMatchObject([{ action: 'api.call.checked', detail: { path: '/v1/items' } }]);
+            expect(JSON.stringify([okB.a.effects, okB.b.effects]), 'access log·감사에 값·질의가 없다').not.toMatch(/api-key|zzz/);
+            const okH = await apPair('api header 허락', q(LP, 's54ap-header', 'POST', '/v1/items'));
+            expect(okH.a.r.json).toMatchObject({ allowed: true, authKind: 'header', authHeader: 'X-Api-Key' });
+            // 토큰 교환 — 옛 오퍼레이터는 409 + 카드, caps 가 있으면 tokenUrl·tokenForm.
+            const txOld = await apPair('api token_exchange 옛 오퍼레이터 → 409', q(LP, 's54ap-tx'));
+            expect(txOld.a.r.status).toBe(409);
+            expect(txOld.a.effects.cards).toHaveLength(1);
+            const txOk = await apPair('api token_exchange 허락', q(LP, 's54ap-tx', 'GET', '/v1/items', { caps: ['token_exchange'] }));
+            expect(txOk.a.r.status).toBe(200);
+            expect(txOk.a.r.json).toMatchObject({ authKind: 'token_exchange', tokenUrl: 'https://auth.example.test/token', tokenForm: { grant_type: 'client_credentials', z: 1, a: 'x' } });
+            expect(txOk.b.effects.access).toHaveLength(1);
+            // 비밀 거절 4종 — denied 줄 하나 + 감사 + 카드(비밀 행 없음 `no_secret` 은 FK·inner join 상 생기지 않는다).
+            for (const [c, code] of [['s54ap-exp', 'secret_expired'], ['s54ap-off', 'owner_inactive'], ['s54ap-noval', 'no_value'], ['s54ap-bad', 'unreadable']] as const) {
+              const d = await apPair(`api ${code}`, q(LP, c));
+              expect(d.a.r.status, code).toBe(403);
+              expect((d.a.r.json.error as { code: string }).code, code).toBe(code);
+              expect(norm(d.a.effects.access), code).toMatchObject([{ result: 'denied', reason: code, version: null }]);
+              expect(norm(d.a.effects.audit), code).toMatchObject([{ action: 'api.call.denied', detail: { code } }]);
+            }
+            // 카드가 서는 거절 — 연결 없음·grant 없음·메서드 밖, 카드 없는 거절 — bad_path.
+            const nc = await apPair('api 연결 없음 → 404', q(LP, 's54ap-nothing'));
+            expect(nc.a.r.status).toBe(404);
+            const ng = await apPair('api grant 없음 → 403 not_granted', q(LP, 's54ap-nogrant'));
+            expect((ng.a.r.json.error as { code: string }).code).toBe('not_granted');
+            expect(ng.a.effects.cards).toHaveLength(1);
+            await apPair('api 메서드 밖', q(LP, 's54ap-getonly', 'POST'));
+            await apPair('api 나쁜 경로', q(LP, 's54ap-none', 'GET', '//evil.example/x'));
+            await db.pool.query(`delete from api_connector where name like 's54ap-%'`);
+            await db.pool.query(`delete from secret where name like 's54ap-%'`);
           }
           // 13) POST /agent/secrets·/rotate import 갈래(S5.4 ab — F4 `value_is_mounted`·`bad_value` 포함). 새 에이전트(쪽마다 제한기 10회 중 8회).
           {
