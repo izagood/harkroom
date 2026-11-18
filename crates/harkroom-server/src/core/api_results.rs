@@ -4,14 +4,11 @@
 //! - 순서는 TS 그대로: 오퍼레이터 아님 403 → zod 400 → 임대 아님 403 `lease_invalid` → 연결 없음 404 `no_connector` → 판정 기록이
 //!   없음 409 `not_checked` → 글 실패 409 `post_failed`. 거절 문구는 `api result not recorded: <code>`.
 //! - 본문은 고정 문구와 서버가 아는 값뿐 — 래퍼가 준 `error` 는 meta 에만 싣는다. 줄은 부르지 않는다(`noMentions`).
-//! - 시스템 줄이 Rust 글 경로에서 TS 몫으로 갈 스레드면([`super::msg_post::system_thread_is_ts`]) 아무것도 쓰기 앞에 TS 로 넘긴다.
 //! - fail-closed: 글 경로와 [`API_RESULTS_PRIVILEGES`] 가 다 있을 때만 붙는다(`main.rs`). `automation.*` 은 읽지 않는다.
 use super::audience::audience_for;
 use super::grant_reads::through_operator;
 use super::merge_approval_peek::{db_now, sha256_hex, str_len_ok};
-use super::msg_post::{
-    Origin, Outcome, PostBody, PostState, channel_is_dm, post_in_tx, system_thread_is_ts, to_ts,
-};
+use super::msg_post::{Origin, Outcome, PostBody, PostState, channel_is_dm, post_in_tx, to_ts};
 use super::msg_read::is_uuid;
 use crate::auth::RequireAccount;
 use crate::directory::{internal, json_err};
@@ -258,10 +255,6 @@ async fn report(st: &PostState, agent: &str, operator: &str, b: &ResultBody) -> 
         .await?;
     if checked <= reported {
         return Ok(Done::Refused(StatusCode::CONFLICT, "not_checked"));
-    }
-    // 시스템 줄이 TS 몫으로 갈 스레드면 쓰기 앞에서 통째로 넘긴다.
-    if system_thread_is_ts(w, &root_msg, agent).await? {
-        return Ok(Done::ToTs);
     }
     let root: Option<(String, String)> = sqlx::query_as(ROOT_SQL)
         .bind(agent)

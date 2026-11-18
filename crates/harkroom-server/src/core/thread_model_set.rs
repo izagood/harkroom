@@ -7,24 +7,19 @@
 //!   → `checkOffered`(400 `model_not_offered`·`effort_not_offered`) → 루트(404 `not_a_root`) → 에이전트(404 `not_found`·400 `not_an_agent`)
 //!   → 쓰기(두 축이 비면 지우기) → 시스템 줄 → `thread.agent_model.changed` → 감사 `thread.agent_model.set` → 200 `{ row }`.
 //! - 하네스 목록은 능력 스냅숏(`operator_capability`)만 본다 — **오퍼레이터 코어가 Rust 일 때만** TS 와 같은 답이라 `main.rs` 는 그때만 붙인다.
-//! - 시스템 줄이 TS 몫으로 갈 스레드면 쓰기 **앞에서** 요청을 통째로 TS 에 넘긴다(fail-closed, 풀기 줄과 같다).
 use super::audience::audience_for;
 use super::mcp::model_options::{ASSIGNMENT_SQL, SNAPSHOT_FRESH_SEC, SNAPSHOT_SQL, models_in};
-use super::msg_post::{
-    Origin, Outcome, PostBody, PostState, channel_is_dm, gate_sql, post_in_tx, system_thread_is_ts,
-    to_ts,
-};
+use super::msg_post::{Origin, Outcome, PostBody, PostState, channel_is_dm, gate_sql, post_in_tx};
 use crate::auth::RequireAccount;
 use crate::directory::{internal, json_err, json_ok};
 use crate::trust_proxy::TrustProxy;
 use crate::write::{AuditEntry, emit_event, record_audit};
 use crate::writes_settings::ip_of;
 use axum::body::to_bytes;
-use axum::extract::{ConnectInfo, Path, Request, State};
+use axum::extract::{Path, Request, State};
 use axum::http::StatusCode;
 use axum::response::Response;
 use serde_json::{Map, Value, json};
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 /// 이 줄이 글 올리기 권한([`super::msg_post::MESSAGE_POST_PRIVILEGES`]) 위에 쓰는 권한 — homelab GRANT 와 같아야 한다.
@@ -265,7 +260,6 @@ async fn check_offered(
 pub async fn set(
     State(st): State<Arc<SetState>>,
     RequireAccount(me, _): RequireAccount,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Path((id, root, agent)): Path<(String, String, String)>,
     req: Request,
 ) -> Response {
@@ -372,12 +366,6 @@ pub async fn set(
         }
         Some((_, h)) => h.unwrap_or_else(|| "claude-code".into()),
     };
-    // 시스템 줄이 TS 몫으로 갈 스레드면 쓰기 앞에서 통째로 넘긴다.
-    match system_thread_is_ts(w, &root, &me.id).await {
-        Ok(false) => {}
-        Ok(true) => return to_ts(st.post.up.clone(), peer, parts, bytes).await,
-        Err(e) => return internal(e),
-    }
     let row: Option<String> = if model.is_none() && effort.is_none() {
         if let Err(e) = sqlx::query(CLEAR_SQL)
             .bind(&root)
