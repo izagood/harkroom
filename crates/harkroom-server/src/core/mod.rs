@@ -4,11 +4,14 @@
 //! C0 가 담는 것: POST `/ws-ticket` · GET `/ws`(TS `ws/wsPlugin.ts`·`tickets.ts`·`heartbeat.ts`·`appHeartbeat.ts`·`socketLifetime.ts`·
 //! `credentials.ts`·`typing.ts`) · 이벤트 공급(outbox LISTEN → 프로세스 안 팬아웃, TS `eventBus.ts` 와 같은 순서·모양 검사).
 //! 에이전트 presence 는 TS `presence.ts` 가 폴마다 묶어 쓰는 `agent_presence`(C6c-1)를 읽어 스냅샷에 합친다.
+pub mod account_grant_revoke;
 pub mod account_grants_read;
 pub mod account_handle;
 pub mod account_keys_activity;
 pub mod account_login_ids;
+pub mod account_reset_code_issue;
 pub mod account_reset_code_revoke;
+pub mod account_role;
 pub mod account_self;
 pub mod agent_config_read;
 pub mod agent_grants_read;
@@ -31,6 +34,7 @@ pub mod attachment_upload;
 pub mod audience;
 pub mod auth_light;
 pub mod auth_login;
+pub mod auth_password;
 pub mod auth_signup;
 pub mod automation_approve;
 pub mod automation_create;
@@ -75,6 +79,7 @@ pub mod inbox_thread;
 pub mod inbox_threads;
 pub mod invites_write;
 pub mod invoke_gate;
+pub mod join_page;
 pub mod mandate_card_thread;
 pub mod mandate_end;
 pub mod mandate_line_write;
