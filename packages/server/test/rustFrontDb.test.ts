@@ -7256,7 +7256,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       }
       // S5.3 C2 — [이 스레드로 위임장 만들고 더하기](`approve_new_mandate`, 코어 `mandate_card_thread.rs`). 카드 스레드의 머리 글을 잠그고
       // 위임장을 세우거나(새로) 잇고(머리에 이미 있음), 머리 글·카드 글·요청 줄에 키를 적은 뒤 그 위임장에 줄을 쓴다. 감사 `mandate.created`.
-      // 머리 글이 남의 글·자동화 글·끝난 위임장이면 `mandate_unavailable` → 입구가 `approve`(7일 grant 만)로 한 번 더 한다(TS `decide`).
+      // 머리 글이 자동화 글·끝난 위임장이면 `mandate_unavailable` → 입구가 `approve`(7일 grant 만)로 한 번 더 한다(TS `decide`).
+      // 남의 글 머리는 승인자(ADMIN)가 워크스페이스 owner/admin 이라 위임장을 세운다(2026-11-19, TS·Rust 같은 조건).
       {
         expect(f.log(), 'C2 칸을 다 주면 켜진다').toContain('front: permission new mandate core on');
         await db.pool.query(`create or replace function c2_line_boom() returns trigger language plpgsql as $$
@@ -7343,7 +7344,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           const out: { step: string; status: number; code?: string; body: unknown }[] = [];
           for (const [name, card] of [
             ['소유자 머리 → 새 위임장·줄', sd.ownCard], ['소유자 에이전트 머리 → 새 위임장·줄', sd.agentCard],
-            ['남의 머리 → mandate_unavailable → approve', sd.otherCard], ['자동화 머리 → mandate_unavailable → approve', sd.autoCard],
+            ['남의 머리(승인자 admin) → 새 위임장·줄', sd.otherCard], ['자동화 머리 → mandate_unavailable → approve', sd.autoCard],
             ['머리에 위임장 있음 → 잇고 줄', sd.existCard], ['끝난 위임장 머리 → mandate_unavailable → approve', sd.endedCard],
             ['새 위임장 + 줄 INSERT 실패 → savepoint 로 줄만', sd.boomCard],
           ] as const) {
@@ -7376,7 +7377,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const tMsgsS = JSON.stringify(tMsgs);
         expect(tMsgsS, '머리 글에 키').toContain('{"k":"ownRoot","mandate":"M:OWNROOT"');
         expect(tMsgsS, '카드 글(요청 에이전트가 씀)에도 키').toContain('{"k":"ownCard","mandate":"M:OWNROOT"');
-        expect(tMsgsS, '남의 머리에는 키 없음').toContain('{"k":"otherRoot","mandate":null');
+        expect(tMsgsS, '남의 머리도 승인자가 admin 이면 키').toContain('{"k":"otherRoot","mandate":"M:OTHERROOT"');
+        expect(tMsgsS, '자동화 머리에는 키 없음').toContain('{"k":"autoRoot","mandate":null');
         expect(await msgs(R2)).toEqual(tMsgs);
         const mandates = async (sd: Side2) => ((await shape2(sd))((await db.pool.query(
           `select id::text as id, owner_account_id::text as owner, delegator_account_id::text as delegator, ended_at is not null as ended,
@@ -7384,14 +7386,14 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
              from mandate where root_message_id = any($1::uuid[]) order by root_message_id`, [Object.values(sd)])).rows) as { id: string }[])
           .sort((a, b) => a.id.localeCompare(b.id));
         const tM = await mandates(T2);
-        expect(tM.length, '위임장 다섯(새 셋 own·agent·boom + 있던 둘)').toBe(5);
+        expect(tM.length, '위임장 여섯(새 넷 own·agent·other·boom + 있던 둘)').toBe(6);
         expect(await mandates(R2)).toEqual(tM);
         const lines = async (sd: Side2) => (await shape2(sd))((await db.pool.query(
           `select (select k from jsonb_each_text($1::jsonb) j(k, id) where j.id::uuid = l.request_id) as req,
                   l.mandate_id::text as mandate, l.cap, l.scope, l.limits, l.agent_ids::text[] as agents, l.granted_by::text as by, l.via
              from mandate_line l where l.request_id = any($2::uuid[]) order by 1`, [ids(sd), Object.values(sd)])).rows);
         const tL = await lines(T2);
-        expect((tL as unknown[]).length, '줄 셋(own·agent·exist) — unavailable 셋은 grant 만, boom 은 savepoint').toBe(3);
+        expect((tL as unknown[]).length, '줄 넷(own·agent·other·exist) — unavailable 둘은 grant 만, boom 은 savepoint').toBe(4);
         expect(await lines(R2)).toEqual(tL);
         const audits = async (sd: Side2) => ((await shape2(sd))((await db.pool.query(
           `select action, actor_id::text as actor, target, detail from audit_log
@@ -7400,7 +7402,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           [Object.values(sd)])).rows) as unknown[]).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
         const tAud = await audits(T2);
         const tAudS = JSON.stringify(tAud);
-        expect(tAudS.match(/"mandate\.created"/g)?.length, '감사 mandate.created 셋(새로 세운 것만)').toBe(3);
+        expect(tAudS.match(/"mandate\.created"/g)?.length, '감사 mandate.created 넷(새로 세운 것만)').toBe(4);
         expect(tAudS, '줄 INSERT 실패는 DB 오류 문구 그대로').toContain('c2 line boom');
         expect(await audits(R2)).toEqual(tAud);
         const grants2 = async (tag: string, sd: Side2) => (await shape2(sd))((await db.pool.query(

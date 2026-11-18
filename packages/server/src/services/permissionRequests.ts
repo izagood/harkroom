@@ -822,6 +822,7 @@ async function answerOptionId(pool: Pool, cardMessageId: string, candidates: str
  * W4-3: 카드의 스레드 머리에 소유자 위임을 세운다(이미 있으면 그것). 머리 글이 이 채널의 지워지지 않은 글이어야 하고,
  * 머리에 다른 위임이 붙어 있거나 그 위임의 소유자가 다르면 세우지 않는다(null).
  * 머리 글은 **소유자 본인이나 그 소유자의 에이전트**가 쓴 것이어야 한다(security F2) — 위임 키는 그런 글에만 있다는 W1 불변식.
+ * 예외: 승인한 사람이 워크스페이스 owner/admin 이면 첫 글 작성자를 보지 않는다(2026-11-19).
  * 남의 글에 키를 찍으면 그 글로 뜬 턴이 키를 얻는다(`issueTurnLease` 는 원인 글의 `mandate_id` 를 믿는다).
  */
 /*
@@ -833,6 +834,9 @@ export const CARD_THREAD_ROOT_SQL = `select m.mandate_id as "mandateId",
             (m.author_id = $4::uuid or ($5::boolean and exists (select 1 from agent_config c where c.account_id = m.author_id and c.owner_account_id = $3::uuid))) as "ownAuthor"
        from message m where m.id = $1::uuid and m.channel_id = $2::uuid and m.deleted_at is null
         and not (coalesce(m.meta, '{}'::jsonb) ? 'automation') for update of m`;
+/** 승인한 사람이 워크스페이스 owner/admin 인 살아 있는 사람인가 — Rust `WORKSPACE_ADMIN_SQL` 과 같은 뜻. $1 승인한 사람. */
+export const CARD_THREAD_ADMIN_SQL = `select exists(select 1 from account where id = $1::uuid and kind = 'human'
+       and role in ('owner', 'admin') and disabled_at is null and deleted_at is null) as ok`;
 export const CARD_THREAD_DELEGATOR_SQL = `select coalesce(delegator_account_id, owner_account_id) as delegator from mandate where id = $1::uuid`;
 export const CARD_THREAD_TOUCH_SQL = `update mandate set last_activity_at = greatest(last_activity_at, $2::timestamptz) where id = $1::uuid`;
 /** $1 주인 $2 머리 $3 채널 $4 지금 $5 맡긴 사람. */
@@ -851,7 +855,10 @@ async function mandateForCardThread(client: PoolClient, args: { ownerId: string;
   const byOwner = delegator === args.ownerId;
   const root = (await client.query<{ mandateId: string | null; ownAuthor: boolean }>(
     CARD_THREAD_ROOT_SQL, [args.threadRootId, args.channelId, args.ownerId, delegator, byOwner])).rows[0];
-  if (!root || !root.ownAuthor) return null;
+  if (!root) return null;
+  // 첫 글을 맡긴 사람·소유자의 에이전트가 쓰지 않았어도, 승인한 사람(delegator)이 워크스페이스 owner/admin 인 살아 있는 사람이면
+  // 위임장을 세운다(소유자 결정 2026-11-19 — W1 불변식을 owner/admin 에게만 푼다). Rust `mandate_card_thread.rs` 와 같은 조건.
+  if (!root.ownAuthor && !(await client.query<{ ok: boolean }>(CARD_THREAD_ADMIN_SQL, [delegator])).rows[0]?.ok) return null;
   if (root.mandateId) {
     const owner = await validMandateOwner(client, root.mandateId, args.now);
     if (owner !== args.ownerId) return null;

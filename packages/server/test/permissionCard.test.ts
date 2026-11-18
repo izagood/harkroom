@@ -270,6 +270,46 @@ describe('permission card decisions (W4b)', () => {
     expect((await pool.query(`select mandate_id from message where id = $1`, [botRoot])).rows[0].mandate_id).toBeNull();
   });
 
+  // 2026-11-19: 승인한 사람이 워크스페이스 owner/admin 이면 남이 연 스레드에도 위임장을 세운다(Rust `mandate_card_thread.rs` 와 같은 조건).
+  // member·guest 는 그대로 막힌다(위 F2·D1). merge 카드도 같은 길이라 7일 grant 로 새지 않고 위임장 줄로만 간다.
+  it.each(['owner', 'admin'] as const)('approve_new_mandate by a workspace %s on a thread another person started → mandate, root keyed, line', async (role) => {
+    await pool.query(`update account set role = $2 where id = $1`, [alice.accountId, role]);
+    try {
+      const root = (await pool.query(`insert into message (channel_id, author_id, body, kind) values ($1, $2, 'bob root', 'user') returning id`, [ch, bob.accountId])).rows[0].id as string;
+      const target = rule();
+      const { requestId, cardId } = await card({ kind: 'tool', target, root, mandateId: null });
+      expect(await decideCard(cardId, 'approve_new_mandate')).toMatchObject({ ok: true, result: { status: 'granted' } });
+      const made = (await pool.query(`select mandate_id from permission_request where id = $1`, [requestId])).rows[0].mandate_id as string;
+      expect(made).toBeTruthy();
+      expect((await pool.query(`select owner_account_id from mandate where id = $1`, [made])).rows[0].owner_account_id).toBe(alice.accountId);
+      expect((await pool.query(`select mandate_id from message where id = $1`, [root])).rows[0].mandate_id).toBe(made);
+      expect(await linesOf(requestId)).toMatchObject([{ mandateId: made, cap: 'tool', scope: target }]);
+      const repo = `acme-org/admin-${role}`;
+      const mroot = (await pool.query(`insert into message (channel_id, author_id, body, kind) values ($1, $2, 'bob merge root', 'user') returning id`, [ch, bob.accountId])).rows[0].id as string;
+      const m = await card({ kind: 'merge', target: repo, root: mroot, mandateId: null });
+      expect(await decideCard(m.cardId, 'approve_new_mandate')).toMatchObject({ ok: true });
+      const mm = (await pool.query(`select mandate_id from permission_request where id = $1`, [m.requestId])).rows[0].mandate_id as string;
+      expect(mm).toBeTruthy();
+      expect(await linesOf(m.requestId)).toMatchObject([{ mandateId: mm, cap: 'merge' }]);
+    } finally {
+      await pool.query(`update account set role = 'member' where id = $1`, [alice.accountId]);
+    }
+  });
+
+  it.each(['member', 'guest'] as const)('approve_new_mandate by a workspace %s on a thread another person started → no mandate (W1 kept)', async (role) => {
+    await pool.query(`update account set role = $2 where id = $1`, [alice.accountId, role]);
+    try {
+      const root = (await pool.query(`insert into message (channel_id, author_id, body, kind) values ($1, $2, 'bob root', 'user') returning id`, [ch, bob.accountId])).rows[0].id as string;
+      const m = await card({ kind: 'merge', target: `acme-org/nonadmin-${role}`, root, mandateId: null });
+      expect(await decideCard(m.cardId, 'approve_new_mandate')).toMatchObject({ ok: false, code: 'mandate_unavailable' });
+      expect((await pool.query(`select mandate_id from message where id = $1`, [root])).rows[0].mandate_id).toBeNull();
+      expect(await decideCard(m.cardId, 'deny')).toMatchObject({ ok: true });
+      await ageRequest(m.requestId);
+    } finally {
+      await pool.query(`update account set role = 'member' where id = $1`, [alice.accountId]);
+    }
+  });
+
   it('approve_new_mandate on a thread the owner\'s own agent started → mandate for the owner', async () => {
     const root = (await pool.query(`insert into message (channel_id, author_id, body, kind) values ($1, $2, 'cardbot root', 'user') returning id`, [ch, agentId])).rows[0].id as string;
     const { requestId, cardId } = await card({ kind: 'tool', target: rule(), root, mandateId: null });
