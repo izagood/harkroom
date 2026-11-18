@@ -127,23 +127,8 @@ pub fn repo_scope(repo: &str) -> Option<String> {
     (owner_ok && name_ok).then(|| format!("repo:{s}"))
 }
 
-/// TS `causeByHuman` — cause 작성자가 사람이거나, cause 가 이 에이전트 자신의 카드이고 정할 수 있는 사람이 답했다.
-pub fn cause_by_human(
-    agent: &str,
-    cause_kind: Option<&str>,
-    ask_author: Option<&str>,
-    answered_by: Option<&str>,
-    answerer_kind: Option<&str>,
-    answerer_owns: bool,
-) -> bool {
-    if cause_kind == Some("human") {
-        return true;
-    }
-    ask_author == Some(agent)
-        && answered_by.is_some_and(|a| !a.is_empty())
-        && answerer_kind == Some("human")
-        && answerer_owns
-}
+/// TS `causeByHuman` — 공용 정의는 `lease_read`.
+pub use super::lease_read::cause_by_human;
 
 pub(crate) fn sha256_hex(s: &str) -> String {
     hex::encode(Sha256::digest(s.as_bytes()))
