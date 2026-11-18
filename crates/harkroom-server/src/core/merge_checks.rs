@@ -7,8 +7,8 @@
 //! `POST /agent/merge-results`(TS `reportMerge`)도 같은 꼴로 부분 이식한다 — 403 `forbidden`·400 `bad_request` 만 Rust,
 //! 읽기 풀([`MERGE_RESULTS_PRIVILEGES`])이 있으면 N1 관문(403 `lease_invalid`·400 `bad_repo`·409 `already_reported`/`not_checked`)도
 //! Rust 가 답한다. 글 경로와 [`MERGE_RESULTS_WRITE_PRIVILEGES`] 까지 있으면 받을 `failed` 보고(CI 거절이면 `recordCiDenial`·`denialId` 까지)와 `merged` 보고
-//! (무시한 체크 0개·닫을 머지 카드 없음·계정을 비운 승인의 고른 gh 이름 없음)도 Rust 가 적는다 — 시스템 줄·감사·201 `{ messageId }`.
-//! `queued` 보고도 위임 v2 스위치가 꺼졌다고 확실하면(감시 없음) Rust 가 적는다. 스위치가 켜졌거나 모르는 「큐」 줄(감시)·무시한 체크·카드 닫기·고른 gh 이름 적기가 필요한 보고는 쓰기 전에 TS 로 넘긴다.
+//! (무시한 체크 꼬리·`obsoleteMergeCards` 카드 닫기 포함, 계정을 비운 승인의 고른 gh 이름 없음)도 Rust 가 적는다 — 시스템 줄·감사·201 `{ messageId }`.
+//! `queued` 보고도 위임 v2 스위치가 꺼졌다고 확실하면(감시 없음) Rust 가 적는다. 스위치가 켜졌거나 모르는 「큐」 줄(감시)·고른 gh 이름 적기가 필요한 보고는 쓰기 전에 TS 로 넘긴다.
 use super::grant_reads::through_operator;
 use super::merge_approval_peek::str_len_ok;
 use super::msg_read::is_uuid;
@@ -218,6 +218,13 @@ pub const MERGE_RESULTS_WRITE_PRIVILEGES: &[(&str, &str)] = &[
     ("permission_request.status", "SELECT"),
     ("permission_request.target", "SELECT"),
     ("permission_request.denial_id", "SELECT"),
+    ("permission_request.id", "SELECT"),
+    ("permission_request.agent_id", "SELECT"),
+    ("permission_request.card_message_id", "SELECT"),
+    ("permission_request.status", "UPDATE"),
+    ("permission_request.decided_at", "UPDATE"),
+    ("merge_denial.card_message_id", "SELECT"),
+    ("message.meta", "UPDATE"),
     ("account_grant", "SELECT"),
     ("agent_config", "SELECT"),
     ("agent_invoker", "SELECT"),
@@ -265,7 +272,7 @@ pub fn is_ci_refusal(c: Option<&Value>) -> bool {
             && c.get("mergeState").and_then(Value::as_str) == Some("UNSTABLE"))
 }
 
-/// Rust 가 적을 수 있는 보고인가 — `failed`(CI 거절 포함)·`merged`·`queued`(무시한 체크 포함). 감시·카드 닫기·gh 이름
+/// Rust 가 적을 수 있는 보고인가 — `failed`(CI 거절 포함)·`merged`(카드 닫기 포함)·`queued`(무시한 체크 포함). 감시·gh 이름
 /// 메모가 필요한 갈래는 `report_failed` 가 DB 를 보고 TS 로 넘긴다.
 pub fn rust_reportable(o: &Value) -> bool {
     matches!(
@@ -332,13 +339,6 @@ fn tail_variant(ci_override: bool, ignored: &[String], grew: bool) -> Option<&'s
         Some("CiOverride")
     }
 }
-
-/// 이 PR 에 닫을 머지 카드(안 쓴 거절 기록·기다리는 머지 권한 요청)가 있는가 — 있으면 `obsoleteMergeCards` 가 카드를 고치고
-/// 알려야 해서 TS 로 넘긴다(없으면 TS 도 아무것도 하지 않는다).
-const OPEN_CARDS_SQL: &str = "select exists(select 1 from merge_denial where scope = $1 and pr_number = $2::bigint \
-         and used_at is null and obsoleted_at is null) \
-      or exists(select 1 from permission_request where kind = 'merge' and status = 'pending' and target = $1 \
-         and denial_id in (select id from merge_denial where scope = $1 and pr_number = $2::bigint))";
 
 const APPROVAL_GH_SQL: &str = "select gh_user is null from merge_approval where id = $1::uuid";
 
@@ -751,16 +751,6 @@ async fn report_failed(
         used.as_ref().map_or(&[][..], |u| &u.3[..]),
     );
     let (body, meta) = if merged || queued {
-        if merged {
-            let open: bool = sqlx::query_scalar(OPEN_CARDS_SQL)
-                .bind(&scope)
-                .bind(number)
-                .fetch_one(w)
-                .await?;
-            if open {
-                return Ok(Report::ToTs);
-            }
-        }
         // 계정을 비운 승인 + 고른 gh 이름이면 `noteOnceGhUserUsed`(카드·거울 고치기)가 필요하다 — TS 몫.
         let gh_used = g("ghUserUsed").filter(|u| gh_user_ok(u));
         if let (Some((id, _, _, _)), Some(_)) = (&used, &gh_used) {
@@ -900,6 +890,20 @@ async fn report_failed(
         },
     )
     .await;
+    // Q3-a: 통과한 판정 뒤의 `merged` 보고면 그 PR 의 기다리는 머지 카드를 모든 에이전트에 걸쳐 닫는다. 실패해도 보고는 남는다.
+    if merged {
+        let _ = super::merge_closed::obsolete_merge_cards(
+            w,
+            &scope,
+            number,
+            "merged",
+            agent,
+            &now,
+            None,
+            json!({}),
+        )
+        .await;
+    }
     Ok(Report::Posted(message_id, denial_id))
 }
 
