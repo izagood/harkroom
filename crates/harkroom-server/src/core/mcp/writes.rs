@@ -37,6 +37,8 @@ pub const SERVED: &[&str] = &[
     // S5.4 A1 — 진행 한 줄·러너 알림 줄. 같은 글 쓰기 풀이다(`message.post` 와 같은 칸).
     "message.progress",
     "message.notice",
+    // S5.4 A3 — 다시 부르기 예약. 글 쓰기 풀에 더해 agent_wake 칸이 있을 때만([`McpWrites::wake`]).
+    "turn.wake",
     // S5.4 A2a — 보드 항목 떼기. 작업 항목 쓰기 풀(`workitem::WORK_ITEM_REMOVE_PRIVILEGES`)이 있을 때만.
     "workitem.remove",
     // S5.4 A2a — 보드 항목 걸기. `workitem::WORK_ITEM_UPSERT_PRIVILEGES` 가 있을 때만, `state: done`+스레드는 TS.
@@ -120,6 +122,8 @@ pub struct McpWrites {
     pub post: Option<std::sync::Arc<crate::core::msg_post::PostState>>,
     /// `message.delegate` 쓰기(C3b-2c-4b) — `post` 에 더해 `delegate_write::DELEGATE_WRITE_PRIVILEGES`. 없으면 게이트를 지난 위임은 TS 로.
     pub delegate: Option<std::sync::Arc<crate::core::msg_post::PostState>>,
+    /// `turn.wake`(S5.4 A3) — `post` 에 더해 `turn_wake::TURN_WAKE_PRIVILEGES`. 없으면 TS 로(게시 전에).
+    pub wake: Option<std::sync::Arc<crate::core::msg_post::PostState>>,
     /// AC5 안전판 — 릴레이가 Rust 오퍼레이터 코어와 함께 옮겨졌다. 그 동안 TS 의 릴레이 허브는 비어 있어 `turn.cancel` 이
     /// 아무 턴도 못 찾고 성공처럼 답하므로, Rust 가 `operator_core_moved` 로 거절한다([`super::route::TURN_CANCEL`]).
     pub relay_moved: bool,

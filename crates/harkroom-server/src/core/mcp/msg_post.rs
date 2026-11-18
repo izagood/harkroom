@@ -625,6 +625,7 @@ async fn post(
         delegation: None,
         system: kind == Kind::Notice,
         progress: kind == Kind::Progress,
+        wake: false,
     };
     let out = msg_post::post_in_tx(
         st,
@@ -668,7 +669,7 @@ async fn post(
 }
 
 /// 골든 문장 — TS `FOLD_WAKES_ON_REPORT_SQL`·`STAMP_WAKE_CLOSED_SQL`.
-fn fold_sql() -> &'static (String, String) {
+pub(super) fn fold_sql() -> &'static (String, String) {
     static S: std::sync::OnceLock<(String, String)> = std::sync::OnceLock::new();
     S.get_or_init(|| {
         let v: Value = serde_json::from_str(include_str!("../../../golden/sql_fragments.json"))
@@ -683,7 +684,7 @@ fn fold_sql() -> &'static (String, String) {
 }
 
 /// 접힌 예약 한 줄 — TS `closedWatchView` 의 키 순서(`id`·`reason`·`wakeAt`·`messageId`·`threadRootId`·`reportTo?`).
-fn closed_watch_view(
+pub(super) fn closed_watch_view(
     id: &str,
     wake_at: &str,
     message_id: &str,
@@ -715,7 +716,7 @@ fn closed_watch_view(
     )
 }
 
-type FoldRow = (
+pub(super) type FoldRow = (
     String,
     String,
     String,

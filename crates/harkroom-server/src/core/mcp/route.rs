@@ -173,6 +173,12 @@ pub async fn handle(
                     _ => super::msg_post::answer_report(st, &me, &args, c, t, has_operator).await,
                 };
             }
+            if tool == "turn.wake" {
+                // agent_wake 권한이 없으면 대기 줄을 세우기 전에 TS 로 넘긴다.
+                let st = writes.wake.as_ref()?;
+                let (c, t) = (cause.as_deref(), turn.as_deref());
+                return super::turn_wake::answer(st, &me, &args, c, t, has_operator).await;
+            }
             if tool == "message.delegate" {
                 let st = writes.delegate.as_deref();
                 return super::delegate_gate::answer(

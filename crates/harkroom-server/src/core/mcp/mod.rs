@@ -27,6 +27,7 @@ pub mod route;
 pub mod search;
 pub mod tools;
 pub mod turn_cancel;
+pub mod turn_wake;
 pub mod workitem;
 pub mod writes;
 

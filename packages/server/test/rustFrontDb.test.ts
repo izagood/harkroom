@@ -1515,6 +1515,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant update (mandate_id) on message to ${rw}`,
         // S5.3 C1c-3b — 사람 답글의 깨움 선점(fired_at·message.meta 는 아래 깨움 루프 줄에 이미 있다).
         `grant update (canceled_at, canceled_by_message_id) on agent_wake to ${rw}`,
+        // S5.4 A3 — MCP `turn.wake` 의 예약 행(`turn_wake.rs::TURN_WAKE_PRIVILEGES`). 없으면 「mcp turn.wake core off」.
+        `grant insert on agent_wake to ${rw}`,
         // S5.3 C1c-3d — 담당 사람 글의 위임 활동(기한 밀기·v1 대기 중 update).
         `grant update (deadline_at) on team_delegation to ${rw}`,
         `grant update (last_activity_at, update_pending_message_id, update_pending_at, closed_by_message_id) on team_delegation_item to ${rw}`,
@@ -8747,6 +8749,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       // `x-harkroom-core: mcp` 로 가른다. 기본 앞단은 암묵 위임 스위치를 모르므로 부름이 든 글은 TS 몫이다(C1c-4d) — 장면은 부름 없이 짠다.
       {
         expect(f.log()).not.toContain('mcp message.post core off');
+        expect(f.log()).not.toContain('mcp turn.wake core off');
         const names = new Map<string, string>([[admin.accountId, 'ADMIN'], [member.accountId, 'MEM'], [member2.accountId, 'MEM2'], [bot2.accountId, 'BOT2']]);
         const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
         const shape = (v: unknown): unknown => {
@@ -8905,6 +8908,49 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['report planStepId → TS', async (ch) => ({ tool: 'message.report', args: { channelId: ch, body: '보고', checks: ['봤다'], planStepId: 's1' }, via: viaPat }), false],
           ['report checks 빈 목록 → TS(zod 오류)', async (ch) => ({ tool: 'message.report', args: { channelId: ch, body: '보고', checks: [] }, via: viaPat }), false],
           ['report durationMs 소수 → TS', async (ch) => ({ tool: 'message.report', args: { channelId: ch, body: '보고', checks: ['봤다'], durationMs: 1.5 }, via: viaPat }), false],
+          // S5.4 A3 — MCP `turn.wake`. 대기 줄(kind 'wake')·예약 행·감시 대체·거절 갈래.
+          ['wake 보통', async (ch) => {
+            const root = await ins({ ch, author: member.accountId, body: '일' });
+            return { tool: 'turn.wake', args: { channelId: ch, threadRootId: root, notBeforeSec: 60, reason: 'w 보통' }, via: viaPat };
+          }, true],
+          ['wake reportTo(다른 스레드 머리) · 앵커와 같은 보고처는 버림', async (ch) => {
+            const root = await ins({ ch, author: member.accountId, body: '일' });
+            const other = await ins({ ch, author: member.accountId, body: '보고처' });
+            await ins({ ch, root, author: member.accountId, body: '답' });
+            return { tool: 'turn.wake', args: { channelId: ch, threadRootId: root, notBeforeSec: 120, reason: 'w 보고처', reportTo: { channelId: ch, threadRootId: other } }, via: viaPat };
+          }, true],
+          ['wake 감시 → 앞 감시 대체 · 보고처 물려받음 · origin', async (ch) => {
+            const { root, call } = await chainBy(bot2.accountId, 1, 0)(ch);
+            const other = await ins({ ch, author: member.accountId, body: '보고처' });
+            const old = await ins({ ch, root, author: bot3.accountId, body: 'v 앞 감시', meta: { wake: { watch: true, reportTo: { channelId: ch, threadRootId: other } } } });
+            await db.pool.query(`insert into agent_wake (account_id, channel_id, message_id, wake_at) values ($1, $2, $3, '2030-01-02T03:04:05.678901Z')`, [bot3.accountId, ch, old]);
+            const once = await ins({ ch, root, author: bot3.accountId, body: 'x 한 번 깨우기', meta: { wake: {} } });
+            await db.pool.query(`insert into agent_wake (account_id, channel_id, message_id, wake_at) values ($1, $2, $3, now() + interval '1 hour')`, [bot3.accountId, ch, once]);
+            return { tool: 'turn.wake', args: { channelId: ch, threadRootId: root, notBeforeSec: 300, reason: 'w 새 감시', watch: true }, via: viaOp, cause: call, turn: turnId };
+          }, true],
+          ['wake 남의 위임 → bad_delegation', async (ch) => {
+            const root = await ins({ ch, author: member.accountId, body: '일' });
+            return { tool: 'turn.wake', args: { channelId: ch, threadRootId: root, notBeforeSec: 60, reason: 'w', delegationId: randomUUID() }, via: viaPat };
+          }, true],
+          ['wake 연속 20회 → wake_limit', async (ch) => {
+            const root = await ins({ ch, author: member.accountId, body: '일' });
+            for (let i = 0; i < 20; i++) {
+              const m = await ins({ ch, root, author: bot3.accountId, body: `기다림 ${i}` });
+              await db.pool.query(`update message set kind = 'wake' where id = $1`, [m]);
+            }
+            return { tool: 'turn.wake', args: { channelId: ch, threadRootId: root, notBeforeSec: 60, reason: 'w' }, via: viaPat };
+          }, true],
+          ['wake 보고처가 답글 → bad_report_to', async (ch) => {
+            const root = await ins({ ch, author: member.accountId, body: '일' });
+            const other = await ins({ ch, author: member.accountId, body: '저쪽' });
+            const reply = await ins({ ch, root: other, author: member.accountId, body: '저쪽 답' });
+            return { tool: 'turn.wake', args: { channelId: ch, threadRootId: root, notBeforeSec: 60, reason: 'w', reportTo: { channelId: ch, threadRootId: reply } }, via: viaPat };
+          }, true],
+          ['wake 없는 머리 → bad_thread', async (ch) => ({ tool: 'turn.wake', args: { channelId: ch, threadRootId: randomUUID(), notBeforeSec: 60, reason: 'w' }, via: viaPat }), true],
+          ['wake 59초 → TS(zod 오류)', async (ch) => {
+            const root = await ins({ ch, author: member.accountId, body: '일' });
+            return { tool: 'turn.wake', args: { channelId: ch, threadRootId: root, notBeforeSec: 59, reason: 'w' }, via: viaPat };
+          }, false],
         ];
         const facts = async (id: string | undefined, cause: string | undefined) => id ? shape((await db.pool.query(
           `select m.mention_depth as depth, m.stall_depth as stall, m.chain_started_at is not null as started,
@@ -8990,6 +9036,25 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(fold.wakeAt).toEqual(['2030-01-02T03:04:05.678Z', '2030-01-02T03:04:05.678Z']);
         expect(fold.body.foldedWakes?.map((w) => w.reason).sort()).toEqual(['b 이 스레드 예약', 'c 보고처가 이 스레드']);
         expect((tsOut as W[]).find((x) => x.name === 'report 머리 없음 → 예약 안 접음')!.wakes).toEqual([{ body: 'e 머리 없는 예약', canceled: false, stamped: false }]);
+        // S5.4 A3 — `turn.wake` 의 TS 값을 못 박는다(둘 다 아무것도 안 함으로 같아지지 않게).
+        type WK = W & { body: { wake?: { id: string }; message?: { meta?: { wake?: Record<string, unknown> } }; replaced?: Record<string, unknown>[]; error?: { code: string } }; row: Record<string, unknown>[] | null };
+        const wk = (n: string) => (tsOut as WK[]).find((x) => x.name === n)!;
+        expect(wk('wake 보통').wakes).toEqual([{ body: 'w 보통', canceled: false, stamped: false }]);
+        expect(wk('wake 보통').row![0]).toMatchObject({ kind: 'wake' });
+        expect(wk('wake reportTo(다른 스레드 머리) · 앵커와 같은 보고처는 버림').body.message?.meta?.wake).toMatchObject({ reportTo: { threadRootId: '<uuid>' } });
+        const watch = wk('wake 감시 → 앞 감시 대체 · 보고처 물려받음 · origin');
+        expect(watch.wakes).toEqual([
+          { body: 'v 앞 감시', canceled: true, stamped: true },
+          { body: 'w 새 감시', canceled: false, stamped: false },
+          { body: 'x 한 번 깨우기', canceled: false, stamped: false },
+        ]);
+        expect(watch.body.message?.meta?.wake).toMatchObject({ watch: true, origin: '<uuid>', reportTo: { threadRootId: '<uuid>' } });
+        expect(watch.body.replaced?.map((r) => r.reason)).toEqual(['v 앞 감시']);
+        expect(watch.row![0]).toMatchObject({ linked: true, turn: '<uuid>' });
+        expect(wk('wake 남의 위임 → bad_delegation').body.error?.code).toBe('bad_delegation');
+        expect(wk('wake 연속 20회 → wake_limit').body.error?.code).toBe('wake_limit');
+        expect(wk('wake 보고처가 답글 → bad_report_to').body.error?.code).toBe('bad_report_to');
+        expect(wk('wake 없는 머리 → bad_thread').body.error?.code).toBe('bad_thread');
         // C3b-2c-1 — 위임 스위치를 아는 앞단(v1)에서 담당(BOT3)의 실패. 안 닫힌 항목이 있으면 TS 가 `failed` 로 닫고 위임자를 깨운다
         // (Rust 에 아직 없는 갈래 → `closes_delegation` 가드가 TS 로 넘긴다). 보고된 항목뿐이면 Rust 가 맡고 「대기 중 update」만 적는다.
         // C3b-2c-2 — 같은 장면을 v1(`'1'`)·v0(`'0'`) 앞단 둘 다에서 돌린다.
