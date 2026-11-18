@@ -9,7 +9,7 @@
 //! - **읽기만 한다.** 읽기 풀만 쓰고 새 GRANT 가 없다. 필요한 SELECT 는 [`MISC_READS_PRIVILEGES`] — 없으면 `main.rs` 가
 //!   이 줄들을 붙이지 않아 TS 에 남는다.
 //! - TS 에 남기는 것: `GET /leases`(투영 워커의 `currentUrl()` — 서버 메모리), `GET /accounts/agents`(허브의
-//!   `runnerRefusal` — 서버 메모리), `GET /agent/config`(읽으면서 종료 수령을 쓴다 — 읽기 전용이 아니다).
+//!   `runnerRefusal` — 서버 메모리), `GET /agent/config` 는 종료 수령을 쓰므로 쓰기 풀로 따로 켠다(`agent_config_read.rs`).
 use crate::auth::RequireAccount;
 use crate::directory::{internal, json_err, json_ok};
 use axum::Extension;
