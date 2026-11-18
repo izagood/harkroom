@@ -3082,14 +3082,28 @@ async fn main() {
             core_routes.http.extend(cu.http);
             core_routes.sockets.extend(cu.sockets);
         }
-        // S5.4 AC4 — 초대 쓰기 2줄(메일이 실린 POST 는 안에서 TS 로 넘긴다, resend 는 TS). 권한이 다 있을 때만.
+        // S5.4 AC4 — 초대 쓰기(발급·취소·다시 보내기, 메일 포함). 권한이 다 있을 때만.
         if let Some(write) = invites_write {
+            // TS `loadMailConfig` 와 같다: 칸이 하나도 없으면 메일 끔, 일부만 있으면 기동을 멈춘다.
+            let mailer = match harkroom_server::core::invite_mail::load_mail_config(|k| {
+                std::env::var(k).ok()
+            })
+            .and_then(|c| {
+                c.map(|c| harkroom_server::core::invite_mail::Mailer::new(&c))
+                    .transpose()
+            }) {
+                Ok(m) => m.map(std::sync::Arc::new),
+                Err(e) => {
+                    eprintln!("front: {e}");
+                    std::process::exit(1);
+                }
+            };
             let iw = harkroom_server::core::invites_write::routes(
                 harkroom_server::core::invites_write::InvitesWriteState {
                     read: state.pool.clone(),
                     write,
                     trust: state.trust.clone(),
-                    up: state.up.clone(),
+                    mailer,
                 },
                 auth.clone(),
                 state.cors.clone(),

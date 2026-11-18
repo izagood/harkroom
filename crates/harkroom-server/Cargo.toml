@@ -31,6 +31,8 @@ bytes = "=1.12.1"
 ring = "=0.17.14"
 rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring", "tls12", "logging"] }
+# 초대 메일 SMTP(S5.4) — rustls(ring) 만, native-tls·pool·hostname 없음.
+lettre = { version = "=0.11.11", default-features = false, features = ["smtp-transport", "tokio1", "tokio1-rustls-tls", "builder"] }
 webpki-roots = "=1.0.11"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
