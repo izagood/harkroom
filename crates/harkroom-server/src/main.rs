@@ -2877,6 +2877,34 @@ async fn main() {
             }
             None => false,
         };
+    // 고쳐 올리기(`artifactId`)·표지(`coverAttachmentId`)는 칸이 더 있을 때만 — 없으면 그 모양만 TS 로 넘긴다(새 안은 그대로 Rust).
+    let artifact_extra = |name: &'static str, need: &'static [(&'static str, &'static str)]| {
+        let w = post_write.clone();
+        async move {
+            if !mcp_artifact_ok {
+                return false;
+            }
+            let Some(w) = w else { return false };
+            match write::missing_in(&w, need, &[]).await {
+                Ok(m) if m.is_empty() => true,
+                Ok(m) => {
+                    eprintln!("front: mcp artifact.publish {name} off — missing privileges {m:?}");
+                    false
+                }
+                Err(_) => false,
+            }
+        }
+    };
+    let mcp_artifact_revise = artifact_extra(
+        "artifactId",
+        harkroom_server::core::mcp::artifact_write::ARTIFACT_REVISE_PRIVILEGES,
+    )
+    .await;
+    let mcp_artifact_cover = artifact_extra(
+        "coverAttachmentId",
+        harkroom_server::core::mcp::artifact_write::ARTIFACT_COVER_PRIVILEGES,
+    )
+    .await;
     let mcp_skill_ok = mcp_post_ok
         && match &post_write {
             Some(w) => match write::missing_in(
@@ -4544,6 +4572,8 @@ async fn main() {
                             harkroom_server::core::mcp::artifact_publish::ArtifactWrite {
                                 post,
                                 storage,
+                                revise: mcp_artifact_revise,
+                                cover: mcp_artifact_cover,
                             },
                         )
                     }),
