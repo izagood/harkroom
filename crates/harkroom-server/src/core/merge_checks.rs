@@ -4,6 +4,8 @@
 //! 쓰기 풀에 [`MERGE_CHECKS_DENY_PRIVILEGES`] 가 다 있으면 그림자 감사가 비는 이른 거절([`early_denial`] — 403 `lease_invalid`·400 `bad_repo`,
 //! `repo.merge.denied` 감사 포함)도 Rust 가 답한다. [`MERGE_CHECKS_ALLOW_PRIVILEGES`] 까지 있으면 흔한 허락 길(위임 스위치 꺼짐·임대에 위임장 없음·
 //! 1회 승인 없음·머지 grant 있음·사람 턴 또는 `allow_agent_cause`)도 Rust 가 `repo.merge.checked`·`mandate.shadow` 감사와 함께 답한다.
+//! 11차: [`MERGE_CHECKS_CARD_PRIVILEGES`] 까지 있으면 grant 없음(`not_granted` — 사람 턴이면 카드용 `merge_denial`·`denialId`, 아니면 카드 없이)도,
+//! 위임장 없는 끝난·만료 임대의 `lease_invalid`(그림자 포함)는 이른 거절 풀로 Rust 가 답한다. `cause_not_human`(사슬 `causeChainRoot`)은 아직 TS.
 //! 그 밖의 모양이 맞는 요청은 전부 TS 로 넘긴다 — 임대·사슬 판정(`checkMergeByChain`)·위임 판정·1회 승인 소모·`merge_denial`·카드·
 //! 그림자 감사(`mandate.shadow`)는 아직 TS 몫이다. 넘기는 쪽은 임대를 읽기만 하고 쓰지 않는다.
 //!
@@ -20,7 +22,7 @@ use crate::directory::json_err;
 use crate::proxy::Upstream;
 use axum::extract::{ConnectInfo, Request, State};
 use axum::http::StatusCode;
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use serde_json::{Map, Value, json};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -1120,6 +1122,125 @@ pub struct ChecksState {
     pub deny: Option<sqlx::PgPool>,
     /// 흔한 허락 길 — 쓰기 풀에 [`MERGE_CHECKS_ALLOW_PRIVILEGES`] 까지 다 있을 때만.
     pub allow: Option<sqlx::PgPool>,
+    /// `not_granted` 거절(카드용 `merge_denial`) — [`MERGE_CHECKS_CARD_PRIVILEGES`] 까지 다 있을 때만.
+    pub card: Option<sqlx::PgPool>,
+}
+
+/// `not_granted` 거절에 카드용 거절 기록(`merge_denial`)을 남길 때 더 있어야 하는 권한(TS `denyWithCard`·`obsoleteOtherHeads`).
+pub const MERGE_CHECKS_CARD_PRIVILEGES: &[(&str, &str)] = &[
+    ("merge_denial.id", "SELECT"),
+    ("merge_denial.agent_id", "SELECT"),
+    ("merge_denial.scope", "SELECT"),
+    ("merge_denial.channel_id", "SELECT"),
+    ("merge_denial.thread_root_id", "SELECT"),
+    ("merge_denial.pr_number", "SELECT"),
+    ("merge_denial.head_sha", "SELECT"),
+    ("merge_denial.used_at", "SELECT"),
+    ("merge_denial.obsoleted_at", "SELECT"),
+    ("merge_denial.expires_at", "SELECT"),
+    ("merge_denial.reason", "SELECT"),
+    ("merge_denial.created_at", "SELECT"),
+    ("merge_denial.lease_id", "UPDATE"),
+    ("merge_denial.reason", "UPDATE"),
+    ("merge_denial.obsoleted_at", "UPDATE"),
+    ("merge_denial.agent_id", "INSERT"),
+    ("merge_denial.scope", "INSERT"),
+    ("merge_denial.pr_number", "INSERT"),
+    ("merge_denial.head_sha", "INSERT"),
+    ("merge_denial.channel_id", "INSERT"),
+    ("merge_denial.thread_root_id", "INSERT"),
+    ("merge_denial.lease_id", "INSERT"),
+    ("merge_denial.expires_at", "INSERT"),
+    ("merge_denial.reason", "INSERT"),
+];
+
+/// TS `denyWithCard` 의 다시 쓰기(같은 head 의 안 쓴 카드 거절 기록 — 임대·사유만 지금 것으로).
+const CARD_REUSE_SQL: &str = "update merge_denial set lease_id = $7::uuid, reason = $9 \
+      where id = (select id from merge_denial \
+                   where agent_id = $1::uuid and scope = $2 and channel_id = $3::uuid and thread_root_id = $4::uuid and pr_number = $5::bigint and head_sha = $6 \
+                     and used_at is null and obsoleted_at is null and expires_at > $8::timestamptz \
+                     and reason in ('not_granted', 'cause_not_human', 'no_mandate_line') \
+                   order by created_at desc limit 1) \
+      returning id::text";
+
+/// TS `obsoleteOtherHeads`(ci = false).
+const CARD_OBSOLETE_SQL: &str = "update merge_denial set obsoleted_at = $7::timestamptz \
+      where agent_id = $1::uuid and scope = $2 and channel_id = $3::uuid and thread_root_id = $4::uuid and pr_number = $5::bigint and head_sha <> $6 \
+        and used_at is null and obsoleted_at is null \
+        and (reason = 'ci_not_green') = false";
+
+const CARD_INSERT_SQL: &str = "insert into merge_denial (agent_id, scope, pr_number, head_sha, channel_id, thread_root_id, lease_id, expires_at, reason) \
+     values ($1::uuid, $2, $3::bigint, $4, $5::uuid, $6::uuid, $7::uuid, $8::timestamptz + interval '24 hours', $9) returning id::text";
+
+/// TS `denyWithCard` 의 기록 부분(감사는 부른 쪽이 먼저 적는다). 하루 상한을 넘으면 `None`(거절은 그대로, 카드만 없다).
+#[allow(clippy::too_many_arguments)]
+async fn record_card_denial(
+    w: &sqlx::PgPool,
+    agent: &str,
+    scope: &str,
+    channel: &str,
+    thread_root: &str,
+    lease_id: &str,
+    number: i64,
+    head_sha: &str,
+    code: &str,
+    now: &str,
+) -> sqlx::Result<Option<String>> {
+    let reused: Option<String> = sqlx::query_scalar(CARD_REUSE_SQL)
+        .bind(agent)
+        .bind(scope)
+        .bind(channel)
+        .bind(thread_root)
+        .bind(number)
+        .bind(head_sha)
+        .bind(lease_id)
+        .bind(now)
+        .bind(code)
+        .fetch_optional(w)
+        .await?;
+    if reused.is_some() {
+        return Ok(reused);
+    }
+    sqlx::query(CARD_OBSOLETE_SQL)
+        .bind(agent)
+        .bind(scope)
+        .bind(channel)
+        .bind(thread_root)
+        .bind(number)
+        .bind(head_sha)
+        .bind(now)
+        .execute(w)
+        .await?;
+    let recent: i32 = sqlx::query_scalar(CI_RECENT_SQL)
+        .bind(agent)
+        .bind(now)
+        .fetch_one(w)
+        .await?;
+    if recent >= MERGE_DENIAL_DAILY_CAP {
+        return Ok(None);
+    }
+    let id: String = sqlx::query_scalar(CARD_INSERT_SQL)
+        .bind(agent)
+        .bind(scope)
+        .bind(number)
+        .bind(head_sha)
+        .bind(channel)
+        .bind(thread_root)
+        .bind(lease_id)
+        .bind(now)
+        .bind(code)
+        .fetch_one(w)
+        .await?;
+    Ok(Some(id))
+}
+
+/// TS 라우트의 거절 응답 — `denialId` 는 있을 때만.
+pub fn denial_body(code: &str, denial_id: Option<&str>) -> Value {
+    let mut e = json!({ "code": code, "message": format!("merge not allowed: {code}") });
+    if let Some(id) = denial_id {
+        e["denialId"] = json!(id);
+    }
+    json!({ "error": e })
 }
 
 /// 흔한 허락 길(사슬 판정·위임 없음·1회 승인 없음·grant 있음·사람 턴 또는 `allow_agent_cause`)에 더 있어야 하는 권한.
@@ -1182,6 +1303,7 @@ pub fn checked_detail(
 
 /// 위임 스위치가 꺼졌고 임대에 위임장이 없을 때 TS `shadowMandate` 의 `mandate.shadow` detail(`findLine` 은 위임장 없이 null).
 pub fn shadow_detail_no_mandate(
+    chain_verdict: &str,
     agent: &str,
     scope: &str,
     lease_id: &str,
@@ -1189,7 +1311,7 @@ pub fn shadow_detail_no_mandate(
 ) -> Value {
     json!({
         "enforced": "chain",
-        "chainVerdict": "allowed",
+        "chainVerdict": chain_verdict,
         "mandateVerdict": "denied",
         "mandateId": null,
         "agentId": agent,
@@ -1230,8 +1352,10 @@ async fn shadow_origin(
 }
 
 /// 흔한 허락 길. `None` 이면 아무것도 쓰지 않았다 — TS 로 넘긴다.
+#[allow(clippy::too_many_arguments)]
 async fn checks_allow(
     pool: &sqlx::PgPool,
+    card: bool,
     agent: &str,
     operator: &str,
     o: &Value,
@@ -1285,7 +1409,15 @@ async fn checks_allow(
         .bind("repo.merge")
         .fetch_optional(pool)
         .await?;
+    let no_grant = grant.is_none();
     let Some((Some(granted_by), grant_scope, granted_at, allow_agent)) = grant else {
+        if card && no_grant {
+            return not_granted(
+                pool, agent, operator, o, lease, &scope, number, channel, root, now,
+            )
+            .await
+            .map(Some);
+        }
         return Ok(None);
     };
     if !by_human && allow_agent != Some(true) {
@@ -1316,7 +1448,7 @@ async fn checks_allow(
             actor_handle: None,
             target: Some(&scope),
             ip: None,
-            detail: shadow_detail_no_mandate(agent, &scope, &lease.id, origin),
+            detail: shadow_detail_no_mandate("allowed", agent, &scope, &lease.id, origin),
         },
     )
     .await;
@@ -1329,6 +1461,123 @@ async fn checks_allow(
         "channelId": lease.channel_id,
         "threadRootId": lease.thread_root_id,
     }))))
+}
+
+/// 끝나거나 만료된 임대 + 맞는 저장소 — TS 는 `lease_invalid` 로 거절하고(감사 `leaseId` 는 null), 그림자는 임대의 위임장으로
+/// `findLine` 을 돈다. 위임장이 없으면 `findLine` 은 null 이라 `mandateVerdict` 는 `denied`. 위임장이 있으면 부른 쪽이 TS 로 넘긴다.
+async fn expired_denial(
+    pool: &sqlx::PgPool,
+    agent: &str,
+    operator: &str,
+    o: &Value,
+    lease: &super::lease_read::LeaseRow,
+) -> sqlx::Result<Response> {
+    let code = "lease_invalid";
+    let repo = o.get("repo").and_then(Value::as_str).unwrap_or_default();
+    let scope = super::merge_approval_peek::repo_scope(repo).unwrap_or_else(|| repo.to_string());
+    crate::write::record_audit(
+        pool,
+        crate::write::AuditEntry {
+            action: "repo.merge.denied",
+            actor_id: Some(agent),
+            actor_handle: None,
+            target: Some(&scope),
+            ip: None,
+            detail: denied_detail(code, o, operator, None),
+        },
+    )
+    .await;
+    let origin = shadow_origin(pool, lease)
+        .await
+        .unwrap_or(("unknown", false, false));
+    crate::write::record_audit(
+        pool,
+        crate::write::AuditEntry {
+            action: "mandate.shadow",
+            actor_id: Some(agent),
+            actor_handle: None,
+            target: Some(&scope),
+            ip: None,
+            detail: shadow_detail_no_mandate(code, agent, &scope, &lease.id, origin),
+        },
+    )
+    .await;
+    let mut r = json_err(
+        StatusCode::FORBIDDEN,
+        code,
+        &format!("merge not allowed: {code}"),
+    );
+    r.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    Ok(r)
+}
+
+/// TS `checkMergeByChain` 의 grant 없음 갈래 — `repo.merge.denied` 감사, 사람 턴이면 카드용 기록(`denialId`), 그리고 그림자.
+/// 사람이 띄우지 않은 턴은 카드 없이 거절한다(C2).
+#[allow(clippy::too_many_arguments)]
+async fn not_granted(
+    pool: &sqlx::PgPool,
+    agent: &str,
+    operator: &str,
+    o: &Value,
+    lease: &super::lease_read::LeaseRow,
+    scope: &str,
+    number: i64,
+    channel: &str,
+    root: &str,
+    now: &str,
+) -> sqlx::Result<Response> {
+    let code = "not_granted";
+    crate::write::record_audit(
+        pool,
+        crate::write::AuditEntry {
+            action: "repo.merge.denied",
+            actor_id: Some(agent),
+            actor_handle: None,
+            target: Some(scope),
+            ip: None,
+            detail: denied_detail(code, o, operator, Some(&lease.id)),
+        },
+    )
+    .await;
+    let denial_id = if lease.cause_by_human() {
+        let head = o.get("headSha").and_then(Value::as_str).unwrap_or_default();
+        record_card_denial(
+            pool, agent, scope, channel, root, &lease.id, number, head, code, now,
+        )
+        .await?
+    } else {
+        None
+    };
+    let origin = shadow_origin(pool, lease)
+        .await
+        .unwrap_or(("unknown", false, false));
+    crate::write::record_audit(
+        pool,
+        crate::write::AuditEntry {
+            action: "mandate.shadow",
+            actor_id: Some(agent),
+            actor_handle: None,
+            target: Some(scope),
+            ip: None,
+            detail: shadow_detail_no_mandate(code, agent, scope, &lease.id, origin),
+        },
+    )
+    .await;
+    Ok((
+        StatusCode::FORBIDDEN,
+        [
+            (
+                axum::http::header::CONTENT_TYPE,
+                "application/json; charset=utf-8",
+            ),
+            (axum::http::header::CACHE_CONTROL, "no-store"),
+        ],
+        denial_body(code, denial_id.as_deref()).to_string(),
+    )
+        .into_response())
 }
 
 /// TS `checkMergeByChain` 의 첫 두 거절 중 **그림자 감사(`shadowMandate`)가 아무것도 남기지 않는** 갈래만 고른다.
@@ -1372,6 +1621,7 @@ pub fn denied_detail(code: &str, o: &Value, operator: &str, lease_id: Option<&st
 async fn checks_early(
     pool: &sqlx::PgPool,
     allow: bool,
+    card: bool,
     agent: &str,
     operator: &str,
     o: &Value,
@@ -1382,7 +1632,14 @@ async fn checks_early(
     let Some(code) = early_denial(lease.as_ref(), agent, operator, g("repo")) else {
         return match lease.as_ref() {
             Some(l) if allow && !l.expired && !l.ended => {
-                checks_allow(pool, agent, operator, o, l, &now).await
+                checks_allow(pool, card, agent, operator, o, l, &now).await
+            }
+            Some(l)
+                if (l.expired || l.ended)
+                    && l.mandate_id.is_none()
+                    && !super::lease_read::mandate_enforced_env() =>
+            {
+                expired_denial(pool, agent, operator, o, l).await.map(Some)
             }
             _ => Ok(None),
         };
@@ -1438,7 +1695,7 @@ pub async fn checks_route(
         auth.operator.as_ref().map(|o| o.id.as_str()),
         parsed.as_ref(),
     ) {
-        match checks_early(pool, st.allow.is_some(), &me.id, op, o).await {
+        match checks_early(pool, st.allow.is_some(), st.card.is_some(), &me.id, op, o).await {
             Ok(Some(r)) => return r,
             Ok(None) => {}
             Err(e) => return crate::directory::internal(e),
@@ -1447,10 +1704,12 @@ pub async fn checks_route(
     super::msg_post::to_ts(st.up.clone(), peer, parts, bytes).await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn routes(
     up: Upstream,
     checks_deny: Option<sqlx::PgPool>,
     checks_allow: Option<sqlx::PgPool>,
+    checks_card: Option<sqlx::PgPool>,
     results_read: Option<sqlx::PgPool>,
     results_post: Option<super::msg_post::PostState>,
     auth: crate::auth::AuthPools,
@@ -1494,6 +1753,7 @@ pub fn routes(
                 up: up.clone(),
                 deny: checks_deny,
                 allow: checks_allow,
+                card: checks_card,
             }))
             .merge(rt.router.with_state(Arc::new(ResultsState {
                 up,
@@ -1637,7 +1897,7 @@ mod tests {
             checked_detail(&o, "o", &ask, "g", "repo:x/y")["viaAskAnswer"],
             json!(true)
         );
-        let d = shadow_detail_no_mandate("a", "repo:x/y", "L", ("human", false, true));
+        let d = shadow_detail_no_mandate("allowed", "a", "repo:x/y", "L", ("human", false, true));
         assert_eq!(d["enforced"], "chain");
         assert_eq!(d["chainVerdict"], "allowed");
         assert_eq!(d["mandateVerdict"], "denied");
@@ -1646,6 +1906,27 @@ mod tests {
         assert_eq!(d["causeHasKey"], true);
         assert_eq!(d["rootHasKey"], false);
         assert!(d.get("viaApproval").is_none());
+    }
+
+    #[test]
+    fn not_granted_like_ts() {
+        assert_eq!(
+            denial_body("not_granted", Some("D")),
+            json!({ "error": { "code": "not_granted", "message": "merge not allowed: not_granted", "denialId": "D" } })
+        );
+        assert_eq!(
+            denial_body("not_granted", None),
+            json!({ "error": { "code": "not_granted", "message": "merge not allowed: not_granted" } })
+        );
+        let d =
+            shadow_detail_no_mandate("not_granted", "a", "repo:x/y", "L", ("agent", false, false));
+        assert_eq!(d["chainVerdict"], "not_granted");
+        assert_eq!(d["mandateVerdict"], "denied");
+        for sql in [CARD_REUSE_SQL, CARD_OBSOLETE_SQL, CARD_INSERT_SQL] {
+            assert!(sql.contains("merge_denial"));
+        }
+        assert!(MERGE_CHECKS_CARD_PRIVILEGES.contains(&("merge_denial.lease_id", "UPDATE")));
+        assert!(MERGE_CHECKS_CARD_PRIVILEGES.contains(&("merge_denial.reason", "INSERT")));
     }
 
     #[test]
