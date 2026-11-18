@@ -152,6 +152,23 @@ fn change_line(
     handle: &str,
     row: Option<(Option<&str>, Option<&str>)>,
 ) -> (String, Map<String, Value>) {
+    change_line_by(actor, agent, handle, row, false)
+}
+
+/// TS `announceChange` — `by_agent` 면 `byKind: 'agent'`(문구 끝 ` (에이전트 지정)`, i18n `…ByAgent`).
+pub(crate) fn change_line_by(
+    actor: &str,
+    agent: &str,
+    handle: &str,
+    row: Option<(Option<&str>, Option<&str>)>,
+    by_agent: bool,
+) -> (String, Map<String, Value>) {
+    let tag = if by_agent {
+        " (에이전트 지정)"
+    } else {
+        ""
+    };
+    let by_kind = if by_agent { "agent" } else { "human" };
     let value = row.map(|(m, e)| {
         let mut parts = vec![m.unwrap_or("설정 모델")];
         if let Some(e) = e.filter(|e| !e.is_empty()) {
@@ -165,25 +182,25 @@ fn change_line(
     let (model, effort) = row.unwrap_or((None, None));
     meta.insert(
         "threadAgentModel".into(),
-        json!({ "agentId": agent, "model": model, "effort": effort, "byKind": "human" }),
+        json!({ "agentId": agent, "model": model, "effort": effort, "byKind": by_kind }),
     );
     let body = match &value {
         Some(v) => {
             meta.insert(
                 "i18n".into(),
-                json!({ "key": "system.threadModel.set", "args": { "accountId": actor, "agentId": agent, "value": v } }),
+                json!({ "key": if by_agent { "system.threadModel.setByAgent" } else { "system.threadModel.set" }, "args": { "accountId": actor, "agentId": agent, "value": v } }),
             );
             format!(
-                "{PLACEHOLDER}님이 이 스레드에서 {handle} 의 모델을 {v} 로 정했습니다. 다음 턴부터 적용됩니다."
+                "{PLACEHOLDER}님이 이 스레드에서 {handle} 의 모델을 {v} 로 정했습니다{tag}. 다음 턴부터 적용됩니다."
             )
         }
         None => {
             meta.insert(
                 "i18n".into(),
-                json!({ "key": "system.threadModel.cleared", "args": { "accountId": actor, "agentId": agent } }),
+                json!({ "key": if by_agent { "system.threadModel.clearedByAgent" } else { "system.threadModel.cleared" }, "args": { "accountId": actor, "agentId": agent } }),
             );
             format!(
-                "{PLACEHOLDER}님이 이 스레드에서 {handle} 의 모델 지정을 풀었습니다. 다음 턴부터 기본값으로 돕니다."
+                "{PLACEHOLDER}님이 이 스레드에서 {handle} 의 모델 지정을 풀었습니다{tag}. 다음 턴부터 기본값으로 돕니다."
             )
         }
     };
@@ -603,5 +620,19 @@ mod tests {
         );
         // 설정 모델이 목록에 없으면 effort 는 모른다 — 받는다.
         assert!(offered_verdict("claude-code", Some("y"), &ms, None, Some("max")).is_ok());
+    }
+
+    #[test]
+    fn change_line_by_agent_tags_and_keys() {
+        let (body, meta) = change_line_by(A, G, "scout", Some((Some("opus"), None)), true);
+        assert_eq!(
+            body,
+            "{account}님이 이 스레드에서 scout 의 모델을 opus 로 정했습니다 (에이전트 지정). 다음 턴부터 적용됩니다."
+        );
+        assert_eq!(meta["i18n"]["key"], "system.threadModel.setByAgent");
+        assert_eq!(meta["threadAgentModel"]["byKind"], "agent");
+        let (body, meta) = change_line_by(A, G, "scout", None, true);
+        assert!(body.ends_with("풀었습니다 (에이전트 지정). 다음 턴부터 기본값으로 돕니다."));
+        assert_eq!(meta["i18n"]["key"], "system.threadModel.clearedByAgent");
     }
 }

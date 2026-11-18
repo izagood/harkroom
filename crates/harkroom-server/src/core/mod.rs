@@ -22,6 +22,7 @@ pub mod agent_memory_audit_read;
 pub mod agent_memory_read;
 pub mod agent_memory_write;
 pub mod agent_model_options;
+pub mod agent_model_picks;
 pub mod agent_secret_create;
 pub mod agent_secret_reveal;
 pub mod agent_wakes_read;
