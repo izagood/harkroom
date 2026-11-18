@@ -375,6 +375,66 @@ pub fn too_many_message() -> String {
     format!("at most {PERMISSION_REQUESTS_PER_DAY} permission requests a day")
 }
 
+/// TS `enqueueAskPush` — golden `enqueue_ask_push` 조각 그대로.
+pub fn enqueue_ask_push_sql() -> &'static str {
+    static S: OnceLock<String> = OnceLock::new();
+    S.get_or_init(|| {
+        let v: Value = serde_json::from_str(include_str!("../../golden/sql_fragments.json"))
+            .expect("golden/sql_fragments.json");
+        v["enqueue_ask_push"]
+            .as_str()
+            .expect("golden fragment enqueue_ask_push")
+            .to_owned()
+    })
+}
+
+/// 카드 잇기·푸시에 드는 쓰기 풀 칸(`push_job` INSERT 와 조각이 읽는 표).
+pub const LINK_PUSH_PRIVILEGES: &[(&str, &str)] = &[
+    ("push_job", "INSERT"),
+    ("account", "SELECT"),
+    ("push_device", "SELECT"),
+    ("account_block", "SELECT"),
+    ("message", "SELECT"),
+];
+
+/// TS `raisePermission` 의 글 뒤: `linkPermissionCard`(잇기 — replayed 여도 잇는다) → 새 글이고 소유자가 inbox 로 알림받지
+/// 않았으면 `enqueueAskPush`. 옛 카드 닫기(`closeSupersededCards`)는 여기 없다 — 부르는 쪽이 대체된 옛 카드가 없을 때만 Rust 로 온다.
+pub async fn link_and_push(
+    write: &sqlx::PgPool,
+    request_id: &str,
+    card_id: &str,
+    owner: Option<&str>,
+    notified: &[String],
+    replayed: bool,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(LINK_CARD_SQL)
+        .bind(request_id)
+        .bind(card_id)
+        .execute(write)
+        .await?;
+    if let Some(o) = owner
+        && !replayed
+        && !notified.iter().any(|n| n == o)
+    {
+        sqlx::query(enqueue_ask_push_sql())
+            .bind(o)
+            .bind(card_id)
+            .execute(write)
+            .await?;
+    }
+    Ok(())
+}
+
+/// TS `raisePermission` 의 답 — `{ requestId, cardMessageId, pending: true, expiresAt }`(칸 차례 그대로).
+pub fn created_result(request_id: &str, card_id: &str, expires_at: &str) -> String {
+    format!(
+        "{{\"requestId\":{},\"cardMessageId\":{},\"pending\":true,\"expiresAt\":{}}}",
+        Value::from(request_id),
+        Value::from(card_id),
+        Value::from(expires_at)
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -571,5 +631,14 @@ mod tests {
             json!({ "requestId": "r", "kind": "merge", "target": "repo:a/b", "warnings": [], "channelId": "c", "threadRootId": "t" })
         );
         assert!(REQUEST_WRITE_PRIVILEGES.contains(&("audit_log", "INSERT")));
+    }
+
+    #[test]
+    fn link_push_like_ts() {
+        assert!(enqueue_ask_push_sql().contains("'ask'"));
+        assert_eq!(
+            created_result("r", "m", "2026-11-19T00:00:00.000Z"),
+            r#"{"requestId":"r","cardMessageId":"m","pending":true,"expiresAt":"2026-11-19T00:00:00.000Z"}"#
+        );
     }
 }
