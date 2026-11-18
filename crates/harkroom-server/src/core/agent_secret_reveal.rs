@@ -2,7 +2,7 @@
 //! `services/secretAccess.ts`(`revealSecret`·`RevealLimiter`)를 옮긴다.
 //!
 //! - 순서는 TS 와 같다: 본문 읽기(fastify 파서 400) → `requireAccount`(401) → 오퍼레이터를 거친 에이전트가 아니면 403 `forbidden`
-//!   → 키링 없음·키 틀림은 **TS 로 넘긴다**(409 `secret_store_disabled`·`secret_key_mismatch` 를 TS 가 그대로 낸다,
+//!   → 키링 없음·키 틀림은 TS 와 같은 409(`secret_store_disabled`·`secret_key_mismatch`)로 직접 답한다(
 //!   `agent_secret_create.rs` 와 같다) → 본문 `{leaseId: uuid, token: 1–200, name: NAME}` 아니면 400 `bad_request`
 //!   → `revealSecret`: 임대(id·토큰 해시) 읽기 → 이름으로 비밀 읽기 → 임대가 이 에이전트·오퍼레이터의 것이고 살아 있지 않으면
 //!   `lease_invalid` → 비밀 없음 `not_found`(로그 없음) → 속도 제한(에이전트마다 10분에 30회) `rate_limited` → 비밀 만료
@@ -14,7 +14,7 @@
 //!   전부 `cache-control: no-store`.
 //! - **속도 제한은 프로세스 로컬이다**(TS 도 인메모리 `RevealLimiter`). TS 의 이 리미터(`deps.secretRevealLimiter`)는 이 줄만
 //!   쓴다 — 소유자 보기·만들기의 리미터와 따로다. 그래서 이 줄을 Rust 가 받으면 TS 카운터는 쓰이지 않고 나뉘어 세는 일이 없다.
-//!   (키링이 없을 때 TS 로 넘기는 요청은 TS 에서 409 로 끝나 리미터를 세지 않는다.)
+//!   (키링이 없으면 409 로 끝나 리미터를 세지 않는다 — TS 와 같다.)
 //! - 감사(`audit_log`) 줄은 없다(TS 도 없다). **값은 답 본문에만** 싣는다.
 //! - `automation.*`·`ingress_*` 칸은 읽지 않는다.
 //! - 칸 권한은 [`privileges`] — 쓰기 풀에 하나라도 없거나 키 env 를 읽을 수 없으면 `main.rs` 가 이 줄을 붙이지 않아 TS 에 남는다.
@@ -31,19 +31,16 @@
 //!   -- 기동 키 확인(`secrets::verify`): select (kid, kcv), insert (kid, kcv) on secret_key_check
 //!   ```
 use crate::auth::RequireAccount;
-use crate::core::msg_post::to_ts;
 use crate::core::secret_reveal::RevealLimiter;
 use crate::directory::{internal, json_err, json_ok};
-use crate::proxy::Upstream;
 use crate::secrets::keyring::{SecretAad, SecretKeyring};
 use crate::secrets::verify::{SECRET_KEY_CHECK_PRIVILEGES, kind_of, load_verified_from_env};
-use axum::extract::{ConnectInfo, FromRequestParts, Request, State};
+use axum::extract::{FromRequestParts, Request, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::Response;
 use base64::Engine;
 use serde_json::{Value, json};
 use sqlx::{PgPool, Row};
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 /// 쓰기 풀이 쓰는 칸 권한(표.칸, 권한).
@@ -172,18 +169,20 @@ pub fn agent_reveal_limiter() -> RevealLimiter {
 
 pub struct AgentSecretRevealState {
     write: PgPool,
-    up: Upstream,
     keyring: Option<SecretKeyring>,
+    /// 키는 걸렸는데 확인값과 맞지 않아 꺼졌다(409 `secret_key_mismatch`).
+    mismatch: bool,
     limiter: RevealLimiter,
 }
 
 /// 기동 한 번: 키를 읽어 확인값과 맞춘다. env 가 잘못됐으면 `Err`(이 줄은 TS 에 남는다).
-pub async fn load_state(write: PgPool, up: Upstream) -> Result<AgentSecretRevealState, String> {
+pub async fn load_state(write: PgPool) -> Result<AgentSecretRevealState, String> {
     let v = load_verified_from_env(&write).await?;
+    let mismatch = v.as_ref().is_some_and(|v| v.mismatch);
     Ok(AgentSecretRevealState {
         write,
-        up,
         keyring: v.and_then(|v| v.keyring),
+        mismatch,
         limiter: agent_reveal_limiter(),
     })
 }
@@ -437,11 +436,7 @@ async fn reveal_secret(
 }
 
 /// `POST /agent/secrets/reveal`.
-pub async fn reveal(
-    State(st): State<Arc<AgentSecretRevealState>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    req: Request,
-) -> Response {
+pub async fn reveal(State(st): State<Arc<AgentSecretRevealState>>, req: Request) -> Response {
     let (mut parts, body) = req.into_parts();
     let bytes = match axum::body::to_bytes(body, crate::write::BODY_LIMIT).await {
         Ok(b) => b,
@@ -472,9 +467,9 @@ pub async fn reveal(
             );
         }
     };
-    // 키가 없거나 틀리면 TS 가 409(`secret_store_disabled`·`secret_key_mismatch`)를 그대로 낸다.
+    // 키가 없거나 틀리면 TS 와 같은 409(`secret_store_disabled`·`secret_key_mismatch`).
     let Some(keyring) = st.keyring.as_ref() else {
-        return to_ts(st.up.clone(), peer, parts, bytes).await;
+        return crate::core::secret_writes::disabled(st.mismatch);
     };
     let json = match &parsed {
         crate::write::Body::Json(v) => v.clone(),

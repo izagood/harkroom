@@ -8,9 +8,9 @@
 //!     본문(400 `bad_request`) → 주소 정규화 → `checkAuth` → 한 트랜잭션에서 UPDATE + grant 멈춤 → 감사
 //!     `connector.updated` → 멈춘 grant 의 계정마다 `grant.changed` → 200 `{connector, suspendedGrants}`.
 //! - 비밀은 **id 로만** 가리킨다(주인·종류 검사). 값은 읽지도 봉하지도 않는다 — 봉인은 `secret_writes` 몫이다.
-//! - 주소 칸(`baseUrl`·`tokenUrl`)에 출력 가능한 ASCII(0x21..=0x7e) 밖 글자가 있으면 요청 전부를 TS 로 넘긴다.
-//!   JS `String.prototype.trim` 과 WHATWG URL(IDNA·유니코드 공백)의 Rust 짝이 글자째 같다는 보장이 없어서다.
-//!   부작용은 넘기기 전에 하나도 없다.
+//! - 주소 칸(`baseUrl`·`tokenUrl`)은 JS `trim` 짝([`js_trim`]) 뒤 `url` 크레이트(WHATWG + IDNA)로 정규화한다 — node
+//!   `new URL()` 과 같은 결과다. 안쪽에 제어 문자·유니코드 공백이 남은 꼴은 같다고 보장하지 못해 400(`bad_base_url`·
+//!   `bad_token_url`)으로 거절한다.
 //! - 권한은 [`CONNECTORS_UPSERT_PRIVILEGES`] — 쓰기 풀에 하나라도 없으면 `main.rs` 가 붙이지 않아 TS 에 남는다.
 use crate::auth::RequireAccount;
 use crate::directory::{internal, json_err};
@@ -19,14 +19,13 @@ use crate::proxy::Upstream;
 use crate::trust_proxy::TrustProxy;
 use crate::write::{AuditEntry, Body, emit_event, record_audit};
 use axum::body::to_bytes;
-use axum::extract::{ConnectInfo, Path, Request, State};
+use axum::extract::{Path, Request, State};
 use axum::http::StatusCode;
 use axum::http::request::Parts;
 use axum::response::{IntoResponse, Response};
 use serde_json::{Map, Value, json};
 use sqlx::PgPool;
 use std::collections::BTreeSet;
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 /// 쓰기 풀이 쓰는 칸 권한.
@@ -99,14 +98,27 @@ pub struct ConnectorsUpsertState {
 // 주소 정규화 — TS `auth/apiGrants.ts` 의 `parseHttpsUrl`·`normalizeBaseUrl`·`normalizeTokenUrl`·`safePath`.
 // ---------------------------------------------------------------------------------------------
 
-/// 이 Rust 짝이 TS 와 글자째 같다고 보장하는 입력인가(출력 가능한 ASCII 만, 빈칸 없음).
-pub fn url_portable(input: &str) -> bool {
-    input.bytes().all(|c| (0x21..=0x7e).contains(&c))
+/// JS `String.prototype.trim` — 양 끝의 JS `\s`(유니코드 공백·줄끝·BOM)를 벗긴다. Rust `str::trim` 과는 U+FEFF·U+0085 가 다르다.
+fn js_trim(input: &str) -> &str {
+    input.trim_matches(js_space)
+}
+
+/// 다듬은 주소에 남은 글자가 node `new URL()` 과 글자째 같은 결과를 보장할 수 있는 꼴인가.
+/// 안쪽의 제어 문자·공백(유니코드 포함)은 WHATWG 의 탭·줄바꿈 지우기와 IDNA 매핑이 얽혀 보장하지 못하므로 거절(400)한다.
+/// 나머지 비 ASCII(IDN 호스트·경로)는 `url` 크레이트(WHATWG + UTS46)가 node 와 같게 다룬다.
+fn url_comparable(trimmed: &str) -> bool {
+    !trimmed
+        .chars()
+        .any(|c| c.is_control() || js_space(c) || c.is_whitespace())
 }
 
 /// TS `parseHttpsUrl`. JS 는 `search`·`hash` 가 `?`·`#` 하나뿐이면 빈 문자열이다 — 그래서 빈 질의·조각은 받는다.
 fn parse_https_url(input: &str) -> Option<url::Url> {
-    let u = url::Url::parse(input.trim()).ok()?;
+    let trimmed = js_trim(input);
+    if !url_comparable(trimmed) {
+        return None;
+    }
+    let u = url::Url::parse(trimmed).ok()?;
     if u.scheme() != "https"
         || !u.username().is_empty()
         || u.password().is_some_and(|p| !p.is_empty())
@@ -678,20 +690,6 @@ async fn read_body(
     Ok((bytes, body))
 }
 
-async fn to_ts(
-    st: &ConnectorsUpsertState,
-    peer: SocketAddr,
-    parts: Parts,
-    bytes: axum::body::Bytes,
-) -> Response {
-    crate::proxy::forward(
-        State(st.up.clone()),
-        ConnectInfo(peer),
-        Request::from_parts(parts, axum::body::Body::from(bytes)),
-    )
-    .await
-}
-
 const INSERT_SQL: &str = "insert into api_connector (name, owner_account_id, base_url, auth_kind, auth_header, secret_id, methods, token_url, token_form)
  values ($1, $2::uuid, $3, $4, $5, $6::uuid, $7, $8, $9::jsonb) returning id::text";
 
@@ -699,12 +697,11 @@ const INSERT_SQL: &str = "insert into api_connector (name, owner_account_id, bas
 pub async fn create(
     State(st): State<Arc<ConnectorsUpsertState>>,
     RequireAccount(me, _): RequireAccount,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     req: Request,
 ) -> Response {
     let (parts, raw) = req.into_parts();
     // fastify 는 본문을 핸들러 앞에서 읽는다(415·깨진 JSON 이 먼저다).
-    let (bytes, body) = match read_body(&parts, raw).await {
+    let (_, body) = match read_body(&parts, raw).await {
         Ok(b) => b,
         Err(r) => return r,
     };
@@ -714,9 +711,6 @@ pub async fn create(
     let Ok(b) = parse_create(&body) else {
         return bad_body();
     };
-    if !url_portable(&b.base_url) || b.token_url.as_deref().is_some_and(|t| !url_portable(t)) {
-        return to_ts(&st, peer, parts, bytes).await;
-    }
     let Some(base_url) = normalize_base_url(&b.base_url) else {
         return bad_base_url();
     };
@@ -829,13 +823,12 @@ pub fn form_changed(next: Option<&FormText>, cur_text: Option<&str>) -> bool {
 pub async fn patch(
     State(st): State<Arc<ConnectorsUpsertState>>,
     RequireAccount(me, _): RequireAccount,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Path(id): Path<String>,
     req: Request,
 ) -> Response {
     let (parts, raw) = req.into_parts();
     // fastify 는 본문을 핸들러 앞에서 읽는다(415·깨진 JSON 이 먼저다).
-    let (bytes, body) = match read_body(&parts, raw).await {
+    let (_, body) = match read_body(&parts, raw).await {
         Ok(b) => b,
         Err(r) => return r,
     };
@@ -876,11 +869,6 @@ pub async fn patch(
     let Ok(p) = parse_patch(&body) else {
         return bad_body();
     };
-    if p.base_url.as_deref().is_some_and(|u| !url_portable(u))
-        || p.token_url.val().is_some_and(|t| !url_portable(t))
-    {
-        return to_ts(&st, peer, parts, bytes).await;
-    }
     let base_url = match &p.base_url {
         Some(u) => normalize_base_url(u),
         None => Some(c_base.clone()),
@@ -1181,12 +1169,44 @@ mod tests {
         assert!(!safe_path("/%2e"));
     }
 
+    /// 기대값은 node 22 `new URL(s.trim()).origin`(+ pathname) 출력이다.
+    #[test]
+    fn idn_matches_node() {
+        for (input, want) in [
+            ("https://bücher.example", "https://xn--bcher-kva.example"),
+            ("https://BÜCHER.example/", "https://xn--bcher-kva.example"),
+            ("https://例え.テスト", "https://xn--r8jz45g.xn--zckzah"),
+            ("https://Faß.de", "https://xn--fa-hia.de"),
+            ("https://ＥＸＡＭＰＬＥ.com", "https://example.com"),
+            ("https://example。com", "https://example.com"),
+            ("https://１２７.０.０.１", "https://127.0.0.1"),
+            ("https://ex\u{200b}ample.com", "https://example.com"),
+            ("https://\u{130}.example", "https://xn--i-9bb.example"),
+            (
+                "\u{feff} https://bücher.example\u{3000}",
+                "https://xn--bcher-kva.example",
+            ),
+        ] {
+            assert_eq!(normalize_base_url(input).as_deref(), Some(want), "{input}");
+        }
+        assert_eq!(
+            normalize_token_url("https://münchen.de/tok%C3%A9n").as_deref(),
+            Some("https://xn--mnchen-3ya.de/tok%C3%A9n")
+        );
+        assert_eq!(
+            normalize_token_url("https://a.example.com/路径/x").as_deref(),
+            Some("https://a.example.com/%E8%B7%AF%E5%BE%84/x")
+        );
+        // node 도 거절한다(호스트 안의 NBSP).
+        assert_eq!(normalize_base_url("https://\u{a0}a.example.com"), None);
+    }
+
     #[test]
     fn portable_inputs_only() {
-        assert!(url_portable("https://a.example.com/x"));
-        assert!(!url_portable(" https://a.example.com"));
-        assert!(!url_portable("https://예시.com"));
-        assert!(!url_portable("https://a.example.com/\t"));
+        assert!(url_comparable("https://a.example.com/x"));
+        assert!(url_comparable("https://예시.com"));
+        assert!(!url_comparable("https://a.example.com/\t"));
+        assert!(!url_comparable("https://\u{a0}a.example.com"));
     }
 
     fn j(v: Value) -> Body {

@@ -897,7 +897,7 @@ async fn main() {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
             use harkroom_server::core::agent_secret_reveal as k;
             match write::missing_in(w, &k::privileges(), k::AGENT_SECRET_REVEAL_SEQUENCES).await {
-                Ok(m) if m.is_empty() => match k::load_state(w.clone(), state.up.clone()).await {
+                Ok(m) if m.is_empty() => match k::load_state(w.clone()).await {
                     Ok(st) => Some(st),
                     Err(e) => {
                         eprintln!("front: agent secret reveal core off — secret keys: {e}");
