@@ -1215,7 +1215,10 @@ pub(crate) async fn post_tx(
     // 만들지만(그 사이 실패면 글만 남는다) 여기서는 같은 tx 다.
     let delegation_id = match (&origin.delegation, v2) {
         (Some(plan), Some(on)) => {
-            if delegate_write::chain_capped(&mut tx, &id, now_ms()).await? {
+            // TS 는 팀 명단 갈래(`team`)에서 사슬 상한을 보지 않는다(`!team && delegationChainCapped`).
+            if plan.team_id.is_none()
+                && delegate_write::chain_capped(&mut tx, &id, now_ms()).await?
+            {
                 tx.rollback().await?;
                 return Ok((Outcome::ChainLimit, None));
             }

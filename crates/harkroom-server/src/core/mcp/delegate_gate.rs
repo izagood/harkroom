@@ -4,7 +4,10 @@
 //! - Rust 가 답하는 것: `forbidden` · `self_delegation` · `not_agent` · `not_invokable` · `round_limit` — 모두 **아무것도 쓰지 않는** 거절이다.
 //! - C3b-2c-4b: 게이트를 지난 요청도 맡는다 — 접속 확인 → 위임 글(`meta.kind = 'delegation'`) → 같은 tx 의 사슬 상한·의무
 //!   ([`crate::core::delegate_write`]) → 이벤트. 쓰기 칸(`McpWrites::delegate`)이 없으면 지금처럼 TS 로 넘긴다.
-//! - **TS 로 넘기는 것**(`None` — fail-closed): 팀장이 자기 팀에 넘기는 요청(팀 명단 갈래) · `agentModels`·`planRootId`·`planGroupId`
+//! - S5.4-11c: 팀장 **에이전트**가 `to` 전원을 담는 자기 팀 **하나**에 넘기는 요청(팀 명단 갈래)도 맡는다 — TS 처럼 호출 게이트·
+//!   사슬 상한을 건너뛰고 팀 명단의 (계정, 꺼짐)으로 접속을 본 뒤 위임 행·부름에 `team_id` 를 적는다. `to` 를 담는 팀이 둘 이상
+//!   (TS 는 행 순서의 첫 팀을 고른다 — 순서 없는 문장이다)이거나 팀장이 사람이면 TS 로 넘긴다.
+//! - **TS 로 넘기는 것**(`None` — fail-closed): 위 밖의 팀 명단 갈래 · `agentModels`·`planRootId`·`planGroupId`
 //!   (모델 고르기·계획판) · zod 가 받지 않을 인자 · 자른 자리가 서로게이트 쌍을 가르는 모델 신고 · `to` 에 같은 이름이 두 번 · 위임 스위치를 모름 · DB 오류.
 //! - 접속 확인: TS 는 프로세스 메모리(`presence.online()`)를, Rust 는 DB `agent_presence`(`expires_at > now()`)를 읽는다. TS 는
 //!   그 표를 담당마다 10초에 한 번만 고쳐 쓰므로(`PERSIST_EVERY_MS`) DB 의 만료가 메모리보다 최대 약 10초 이르다 — 폴을 멈춘 담당은
@@ -128,15 +131,41 @@ fn parse(args: &Value) -> Option<Args> {
     })
 }
 
-/// TS `leadTeamFor` 가 팀을 찾는가 — 한 팀이 `to` 전원을 담으면 팀 명단 갈래(TS 몫)다.
-fn lead_team_covers(rows: &[(String, String)], wanted: &[String]) -> bool {
-    let mut by_team: HashMap<&str, Vec<&str>> = HashMap::new();
-    for (t, h) in rows {
-        by_team.entry(t.as_str()).or_default().push(h.as_str());
+/// 소문자 handle → (계정, 꺼짐) — TS `LeadTeam['members']`.
+type Members = HashMap<String, (String, bool)>;
+
+/// TS `leadTeamFor` 의 판정.
+#[derive(Debug, PartialEq, Eq)]
+enum LeadPick {
+    /// `to` 전원을 담는 팀이 없다 — 호출 게이트 갈래.
+    NoTeam,
+    /// 그런 팀이 꼭 하나 — (팀 id, 그 팀 명단).
+    One(String, Members),
+    /// 둘 이상 — TS 는 행 순서의 첫 팀을 고른다(순서 없는 문장). 맞추지 않고 TS 로 넘긴다.
+    Many,
+}
+
+/// `rows` 는 (팀, 소문자 handle, 계정, 꺼짐).
+fn lead_team_pick(rows: &[(String, String, String, bool)], wanted: &[String]) -> LeadPick {
+    let mut order: Vec<&str> = Vec::new();
+    let mut by_team: HashMap<&str, Members> = HashMap::new();
+    for (t, h, id, off) in rows {
+        if !by_team.contains_key(t.as_str()) {
+            order.push(t.as_str());
+        }
+        by_team
+            .entry(t.as_str())
+            .or_default()
+            .insert(h.clone(), (id.clone(), *off));
     }
-    by_team
-        .values()
-        .any(|hs| wanted.iter().all(|w| hs.contains(&w.as_str())))
+    let mut hits = order
+        .into_iter()
+        .filter(|t| wanted.iter().all(|w| by_team[t].contains_key(w)));
+    match (hits.next(), hits.next()) {
+        (None, _) => LeadPick::NoTeam,
+        (Some(t), None) => LeadPick::One(t.to_owned(), by_team.remove(t).unwrap_or_default()),
+        _ => LeadPick::Many,
+    }
 }
 
 /// `message.delegate` — 거절·위임 결과면 그 글자, 그 밖은 `None`(TS 가 같은 요청을 돈다). `st` 는 쓰기 칸이 있을 때만 있다.
@@ -171,19 +200,50 @@ pub async fn answer(
         .fetch_all(pool)
         .await
         .ok()?;
-    let team: Vec<(String, String)> = rows
+    let rows: Vec<(String, String, String, bool)> = rows
         .into_iter()
-        .map(|(t, h, _, _)| (t, h.to_lowercase()))
+        .map(|(t, h, id, off)| (t, h.to_lowercase(), id, off))
         .collect();
-    if lead_team_covers(&team, &wanted) {
-        return None;
-    }
-    if me.kind != "agent" {
-        return Some(err("not_agent", "only agents delegate"));
-    }
+    let (team_id, members) = match lead_team_pick(&rows, &wanted) {
+        LeadPick::Many => return None,
+        // 팀장이 사람인 팀 명단 갈래는 TS 몫이다.
+        LeadPick::One(..) if me.kind != "agent" => return None,
+        LeadPick::One(t, m) => (Some(t), m),
+        LeadPick::NoTeam => {
+            if me.kind != "agent" {
+                return Some(err("not_agent", "only agents delegate"));
+            }
+            match gate(pool, me, &a, &wanted).await? {
+                Ok(m) => (None, m),
+                Err(refused) => return Some(refused),
+            }
+        }
+    };
+    rounds_then_write(
+        pool,
+        st,
+        me,
+        &a,
+        &wanted,
+        &members,
+        team_id.as_deref(),
+        cause,
+        turn,
+        operator,
+    )
+    .await
+}
+
+/// TS `openDelegationTargets` — 받는 쪽마다 멘션과 같은 호출 게이트. `Ok` 는 명단, `Err` 는 거절 글자.
+async fn gate(
+    pool: &PgPool,
+    me: &Account,
+    a: &Args,
+    wanted: &[String],
+) -> Option<Result<Members, String>> {
     let mut conn = pool.acquire().await.ok()?;
     let rows: Vec<(String, String, bool)> = sqlx::query_as(&*sql().targets)
-        .bind(&wanted)
+        .bind(wanted)
         .fetch_all(&mut *conn)
         .await
         .ok()?;
@@ -193,7 +253,7 @@ pub async fn answer(
         .collect();
     let ids: Vec<String> = rows.iter().map(|(id, _, _)| id.clone()).collect();
     // TS `members` — 소문자 handle → (계정, 꺼짐).
-    let members: HashMap<String, (String, bool)> = rows
+    let members: Members = rows
         .iter()
         .map(|(id, h, off)| (h.clone(), (id.clone(), *off)))
         .collect();
@@ -227,8 +287,25 @@ pub async fn answer(
             Value::from(msg),
             Value::from(refused)
         );
-        return Some(super::respond::text_result(&body));
+        return Some(Err(super::respond::text_result(&body)));
     }
+    Some(Ok(members))
+}
+
+/// 라운드 상한 → (쓰기 칸이 있으면) 위임 쓰기.
+#[allow(clippy::too_many_arguments)]
+async fn rounds_then_write(
+    pool: &PgPool,
+    st: Option<&PostState>,
+    me: &Account,
+    a: &Args,
+    wanted: &[String],
+    members: &Members,
+    team_id: Option<&str>,
+    cause: Option<&str>,
+    turn: Option<&str>,
+    operator: bool,
+) -> Option<String> {
     // TS `roundsUsed` = `roundsUsedMany` 에 한 쌍 — (순번, 수) 한 줄.
     let (_, used): (i32, i32) = sqlx::query_as(&*sql().rounds)
         .bind(vec![a.root.clone()])
@@ -251,7 +328,10 @@ pub async fn answer(
     if !wanted.iter().all(|h| seen.insert(h.as_str())) {
         return None;
     }
-    write(st, me, &a, &wanted, &members, used, cause, turn, operator).await
+    write(
+        st, me, a, wanted, members, team_id, used, cause, turn, operator,
+    )
+    .await
 }
 
 /// TS `message.delegate` 의 뒷부분 — 접속 확인 → 위임 글 → 의무 → 결과.
@@ -261,7 +341,8 @@ async fn write(
     me: &Account,
     a: &Args,
     wanted: &[String],
-    members: &HashMap<String, (String, bool)>,
+    members: &Members,
+    team_id: Option<&str>,
     used: i64,
     cause: Option<&str>,
     turn: Option<&str>,
@@ -324,6 +405,7 @@ async fn write(
         delegation: Some(delegate_write::Plan {
             delegate_ids: &delegate_ids,
             deadline_at: &deadline_at,
+            team_id,
         }),
         system: false,
         progress: false,
@@ -412,13 +494,20 @@ mod tests {
 
     #[test]
     fn lead_team_needs_one_team_with_all() {
-        let rows = vec![
-            ("t1".to_owned(), "a".to_owned()),
-            ("t1".to_owned(), "b".to_owned()),
-            ("t2".to_owned(), "c".to_owned()),
-        ];
-        assert!(lead_team_covers(&rows, &["a".into(), "b".into()]));
-        assert!(!lead_team_covers(&rows, &["a".into(), "c".into()]));
-        assert!(!lead_team_covers(&[], &["a".into()]));
+        let r = |t: &str, h: &str, off: bool| (t.to_owned(), h.to_owned(), format!("id-{h}"), off);
+        let rows = vec![r("t1", "a", false), r("t1", "b", true), r("t2", "c", false)];
+        let LeadPick::One(t, m) = lead_team_pick(&rows, &["a".into(), "b".into()]) else {
+            panic!("one team");
+        };
+        assert_eq!(t, "t1");
+        assert_eq!(m.get("b"), Some(&("id-b".to_owned(), true)));
+        assert_eq!(m.len(), 2);
+        assert_eq!(
+            lead_team_pick(&rows, &["a".into(), "c".into()]),
+            LeadPick::NoTeam
+        );
+        assert_eq!(lead_team_pick(&[], &["a".into()]), LeadPick::NoTeam);
+        let two = vec![r("t1", "a", false), r("t2", "a", false)];
+        assert_eq!(lead_team_pick(&two, &["a".into()]), LeadPick::Many);
     }
 }
