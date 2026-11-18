@@ -348,14 +348,11 @@ pub(crate) struct Origin<'a> {
 /// 읽은 JSON 이 TS 몫인가 — 키만 보고 정한다(값이 틀렸으면 TS 가 400 을 준다).
 fn ts_keys(v: &Value) -> bool {
     let Value::Object(o) = v else { return false };
-    // 머리 id 가 uuid 글자가 아니면(null 포함) zod 400 은 TS 가 낸다.
-    let odd_root = o
-        .get("threadRootId")
-        .is_some_and(|r| !r.as_str().is_some_and(is_uuid));
-    o.contains_key("agentModels") || odd_root
+    o.contains_key("agentModels")
 }
 
-/// zod 스키마 + refine. `threadRootId`·`agentModels` 는 [`ts_keys`] 가 먼저 TS 로 보낸다.
+/// zod 스키마 + refine. `agentModels` 는 [`ts_keys`] 가 먼저 TS 로 보낸다. `threadRootId` 는 uuid 글자만(null 포함 그 밖은 400 —
+/// TS `z.string().uuid().optional()`).
 fn parse_post(v: &Value) -> Option<PostBody> {
     let Value::Object(o) = v else { return None };
     let Some(Value::String(body)) = o.get("body") else {
@@ -383,10 +380,11 @@ fn parse_post(v: &Value) -> Option<PostBody> {
         Some(Value::Bool(b)) => *b,
         _ => return None,
     };
-    let thread_root = o
-        .get("threadRootId")
-        .and_then(Value::as_str)
-        .map(str::to_owned);
+    let thread_root = match o.get("threadRootId") {
+        None => None,
+        Some(Value::String(r)) if is_uuid(r) => Some(r.clone()),
+        Some(_) => return None,
+    };
     if body.trim_matches(js_ws).is_empty() && attachment_ids.is_empty() {
         return None;
     }
@@ -1639,7 +1637,12 @@ mod tests {
         assert!(!ok(json!({ "body": "x", "alsoInChannel": "yes" })));
         assert!(!ok(json!({ "body": "a".repeat(8001) })));
         assert!(ok(json!({ "body": "a".repeat(8000), "extra": 1 })));
-        assert!(ts_keys(&json!({ "body": "x", "threadRootId": "bad" })));
+        assert!(!ts_keys(&json!({ "body": "x", "threadRootId": "bad" })));
+        assert!(!ok(json!({ "body": "x", "threadRootId": "bad" })));
+        assert!(!ok(json!({ "body": "x", "threadRootId": null })));
+        assert!(ok(
+            json!({ "body": "x", "threadRootId": "0b6f8d2e-3c1a-4f5e-9a7b-1c2d3e4f5a6b" })
+        ));
         assert!(ts_keys(&json!({ "body": "x", "agentModels": [] })));
     }
 }
