@@ -7,7 +7,7 @@
 //! - S5.4-11c: 팀장 **에이전트**가 `to` 전원을 담는 자기 팀 **하나**에 넘기는 요청(팀 명단 갈래)도 맡는다 — TS 처럼 호출 게이트·
 //!   사슬 상한을 건너뛰고 팀 명단의 (계정, 꺼짐)으로 접속을 본 뒤 위임 행·부름에 `team_id` 를 적는다. `to` 를 담는 팀이 둘 이상
 //!   (TS 는 행 순서의 첫 팀을 고른다 — 순서 없는 문장이다)이거나 팀장이 사람이면 TS 로 넘긴다.
-//! - **TS 로 넘기는 것**(`None` — fail-closed): 위 밖의 팀 명단 갈래 · `agentModels`·`planRootId`·`planGroupId`
+//! - **TS 로 넘기는 것**(`None` — fail-closed): 위 밖의 팀 명단 갈래 · 비지 않은 `agentModels`·`planRootId`·`planGroupId`
 //!   (모델 고르기·계획판) · zod 가 받지 않을 인자 · 자른 자리가 서로게이트 쌍을 가르는 모델 신고 · `to` 에 같은 이름이 두 번 · 위임 스위치를 모름 · DB 오류.
 //! - 접속 확인: TS 는 프로세스 메모리(`presence.online()`)를, Rust 는 DB `agent_presence`(`expires_at > now()`)를 읽는다. TS 는
 //!   그 표를 담당마다 10초에 한 번만 고쳐 쓰므로(`PERSIST_EVERY_MS`) DB 의 만료가 메모리보다 최대 약 10초 이르다 — 폴을 멈춘 담당은
@@ -73,13 +73,19 @@ struct Args {
     model: Option<String>,
 }
 
-/// zod `message.delegate` 의 `inputSchema` 중 Rust 가 맡는 것. 틀린 꼴·`agentModels`·계획판 칸은 `None`.
+/// zod `message.delegate` 의 `inputSchema` 중 Rust 가 맡는 것. 틀린 꼴·비지 않은 `agentModels`·계획판 칸은 `None`.
 fn parse(args: &Value) -> Option<Args> {
     let Value::Object(o) = args else { return None };
-    for k in ["agentModels", "planRootId", "planGroupId"] {
+    for k in ["planRootId", "planGroupId"] {
         if o.contains_key(k) {
             return None;
         }
+    }
+    // 빈 `agentModels` 는 TS 에서도 고를 것이 없다(`cleanPicks([])` → 고르기 없음) — 없는 것과 같다. 고르는 갈래만 TS 몫.
+    match o.get("agentModels") {
+        None => {}
+        Some(Value::Array(a)) if a.is_empty() => {}
+        Some(_) => return None,
     }
     let uuid = |k: &str| o.get(k)?.as_str().filter(|s| is_uuid(s)).map(str::to_owned);
     let channel = uuid("channelId")?;
@@ -477,13 +483,16 @@ mod tests {
     fn parse_like_zod() {
         let ok = json!({ "channelId": C, "threadRootId": R, "body": "해 줘", "to": ["Bot"], "deadlineSec": 600, "model": "m" });
         assert_eq!(parse(&ok).unwrap().to, vec!["Bot".to_owned()]);
+        let empty = json!({ "channelId": C, "threadRootId": R, "body": "x", "to": ["a"], "agentModels": [] });
+        assert!(parse(&empty).is_some());
         for bad in [
             json!({ "channelId": C, "body": "x", "to": ["a"] }),
             json!({ "channelId": C, "threadRootId": R, "body": "", "to": ["a"] }),
             json!({ "channelId": C, "threadRootId": R, "body": "x", "to": [] }),
             json!({ "channelId": C, "threadRootId": R, "body": "x", "to": ["a"], "deadlineSec": 59 }),
             json!({ "channelId": C, "threadRootId": R, "body": "x", "to": ["a"], "deadlineSec": 1.5 }),
-            json!({ "channelId": C, "threadRootId": R, "body": "x", "to": ["a"], "agentModels": [] }),
+            json!({ "channelId": C, "threadRootId": R, "body": "x", "to": ["a"], "agentModels": [{ "agentId": C }] }),
+            json!({ "channelId": C, "threadRootId": R, "body": "x", "to": ["a"], "agentModels": null }),
             json!({ "channelId": C, "threadRootId": R, "body": "x", "to": ["a"], "planRootId": R }),
             json!({ "channelId": C, "threadRootId": R, "body": "x", "to": ["a"], "planGroupId": "g1" }),
             json!({ "channelId": C, "threadRootId": R, "body": "x", "to": ["a","a","a","a","a","a","a","a","a"] }),
