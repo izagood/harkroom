@@ -140,6 +140,13 @@ pub async fn handle(
                 };
                 return super::turn_cancel::answer(&pool, rc, &me, &args).await;
             }
+            if tool == "agent.modelOptions" {
+                // 하네스 목록이 TS 허브(메모리)에 있는 동안은 TS 가 답한다.
+                if !writes.relay_moved {
+                    return None;
+                }
+                return super::model_options::answer(&pool, &me, &args).await;
+            }
             if matches!(
                 tool,
                 "message.post"

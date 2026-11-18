@@ -16,6 +16,7 @@ pub mod mem_audit;
 pub mod mem_body;
 pub mod mem_recall;
 pub mod mem_writes;
+pub mod model_options;
 pub mod msg_post;
 pub mod note;
 pub mod reads2;
@@ -26,6 +27,7 @@ pub mod route;
 pub mod search;
 pub mod tools;
 pub mod turn_cancel;
+pub mod workitem;
 pub mod writes;
 
 use serde_json::{Value, json};

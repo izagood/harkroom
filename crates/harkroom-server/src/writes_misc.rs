@@ -43,8 +43,8 @@ macro_rules! db {
 // ── 작업 항목 ─────────────────────────────────────────────────────────
 
 /// services/workItems.ts `WORK_ITEM_SOURCES`·`MAX_ITEMS_PER_OWNER`.
-const WORK_ITEM_SOURCES: &[&str] = &["github", "jira", "slack", "other", "avcs"];
-const NO_OWNER: &str = "this agent has no human owner, so it has no board to write to";
+pub(crate) const WORK_ITEM_SOURCES: &[&str] = &["github", "jira", "slack", "other", "avcs"];
+pub(crate) const NO_OWNER: &str = "this agent has no human owner, so it has no board to write to";
 
 struct Frags {
     vis_owner: String,
@@ -69,7 +69,7 @@ fn frags() -> &'static Frags {
 }
 
 /// TS `actorSeesItemSql('w', '$2')` — 주인이 아닌 쪽은 자기가 지금 볼 수 있는 스레드에 붙은 항목만.
-fn actor_sees() -> String {
+pub(crate) fn actor_sees() -> String {
     format!(
         "(w.thread_root_id is not null and exists (select 1 from message am join channel ac on ac.id = am.channel_id \
           where am.id = w.thread_root_id and am.deleted_at is null and {}))",
@@ -78,7 +78,7 @@ fn actor_sees() -> String {
 }
 
 /// TS `resolveWorkItemOwner` — 사람은 자신, 에이전트는 살아 있는 사람 주인, 그 밖은 없음.
-async fn work_item_owner(
+pub(crate) async fn work_item_owner(
     pool: &PgPool,
     me: &crate::auth::Account,
 ) -> Result<Option<String>, sqlx::Error> {
