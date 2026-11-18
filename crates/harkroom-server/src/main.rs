@@ -800,6 +800,48 @@ async fn main() {
         }
         _ => false,
     };
+    // S5.4 — 로그인 ID 읽기(`GET /accounts/login-ids`). 쓰기 풀에 감사 INSERT 가 있을 때만 — 아니면 TS 에 남는다.
+    let account_login_ids_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::account_login_ids as a;
+            match write::missing_in(w, a::ACCOUNT_LOGIN_IDS_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: account login ids core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: account login ids core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+    // S5.4 — 계정 권한 목록 읽기(`GET /accounts/{id}/grants`). 읽기 풀에 SELECT 가 있을 때만 — 아니면 TS 에 남는다.
+    let account_grants_read_on = match &core_mode {
+        harkroom_server::core::CoreMode::Rust => {
+            use harkroom_server::core::account_grants_read as t;
+            match write::missing_in(&state.pool, t::ACCOUNT_GRANTS_READ_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => true,
+                Ok(m) => {
+                    eprintln!("front: account grants read core off — missing privileges {m:?}");
+                    false
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: account grants read core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    false
+                }
+            }
+        }
+        _ => false,
+    };
     // S5.4 MS1 — 저장한 글 다섯 줄(`GET /saved`·`/saved/summary`, `PUT`·`PATCH`·`DELETE /saved/{messageId}`). 두 겹 잠금:
     // `HARKROOM_CORE=rust` 그리고 읽기 풀·쓰기 풀에 그 권한이 다 있을 때만 — 아니면 다섯 줄 모두 TS 에 남는다.
     let saved_write = match (&core_mode, &state.write) {
@@ -1776,6 +1818,33 @@ async fn main() {
             core_routes.router = core_routes.router.merge(ps.router);
             core_routes.http.extend(ps.http);
             core_routes.sockets.extend(ps.sockets);
+        }
+        // S5.4 — 로그인 ID 읽기 1줄. 권한이 있을 때만 — 아니면 TS 에 남는다(재설정 코드 발급·거두기는 언제나 TS).
+        if let Some(write) = account_login_ids_write {
+            let li = harkroom_server::core::account_login_ids::routes(
+                harkroom_server::core::account_login_ids::LoginIdsState {
+                    read: state.pool.clone(),
+                    write,
+                    trust: state.trust.clone(),
+                    once: Default::default(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(li.router);
+            core_routes.http.extend(li.http);
+            core_routes.sockets.extend(li.sockets);
+        }
+        // S5.4 — 계정 권한 목록 읽기 1줄. 권한이 있을 때만 — 아니면 TS 에 남는다(권한 주기 PUT 은 언제나 TS).
+        if account_grants_read_on {
+            let ag = harkroom_server::core::account_grants_read::routes(
+                state.pool.clone(),
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(ag.router);
+            core_routes.http.extend(ag.http);
+            core_routes.sockets.extend(ag.sockets);
         }
         // S5.4 AC2 — 에이전트 기억 읽기 2줄. 권한이 있을 때만 — 아니면 TS 에 남는다(정리 후보·백그라운드 읽기는 언제나 TS).
         if agent_memory_read_on {

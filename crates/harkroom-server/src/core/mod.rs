@@ -4,8 +4,10 @@
 //! C0 가 담는 것: POST `/ws-ticket` · GET `/ws`(TS `ws/wsPlugin.ts`·`tickets.ts`·`heartbeat.ts`·`appHeartbeat.ts`·`socketLifetime.ts`·
 //! `credentials.ts`·`typing.ts`) · 이벤트 공급(outbox LISTEN → 프로세스 안 팬아웃, TS `eventBus.ts` 와 같은 순서·모양 검사).
 //! 에이전트 presence 는 TS `presence.ts` 가 폴마다 묶어 쓰는 `agent_presence`(C6c-1)를 읽어 스냅샷에 합친다.
+pub mod account_grants_read;
 pub mod account_handle;
 pub mod account_keys_activity;
+pub mod account_login_ids;
 pub mod account_self;
 pub mod agent_memory_read;
 pub mod agent_memory_write;
