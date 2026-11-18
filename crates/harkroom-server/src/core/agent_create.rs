@@ -61,6 +61,15 @@ pub const AGENT_CREATE_PRIVILEGES: &[(&str, &str)] = &[
 
 /// `PATCH /accounts/agents/{id}` 의 Rust 성공 길(설정·스위치 칸만)이 쓰기 풀에 바라는 권한.
 /// 없으면 `main.rs` 가 `patch_write` 를 비워 성공 길은 TS 로 넘긴다(오늘과 같다).
+/// PATCH 본문에 `handle` 이 있을 때 더 필요한 권한 — 이름공간 판정·UPDATE·`account.handle_changed` 이벤트.
+pub const AGENT_RENAME_PRIVILEGES: &[(&str, &str)] = &[
+    ("account.handle", "SELECT"),
+    ("handle_group.handle", "SELECT"),
+    ("account.handle", "UPDATE"),
+    ("event_outbox", "INSERT"),
+];
+pub const AGENT_RENAME_SEQUENCE_PRIVILEGES: &[(&str, &str)] = &[("event_outbox_id_seq", "USAGE")];
+
 pub const AGENT_PATCH_PRIVILEGES: &[(&str, &str)] = &[
     ("account.id", "SELECT"),
     ("account.display_name", "UPDATE"),
@@ -155,6 +164,8 @@ pub struct AgentCreateState {
     pub write: Option<PgPool>,
     /// [`AGENT_PATCH_PRIVILEGES`] 가 다 있을 때만 — 그러면 PATCH 성공 길(설정·스위치 칸만)을 Rust 가 한다.
     pub patch_write: Option<PgPool>,
+    /// 이름 바꾸기(`handle`)까지 Rust 가 할 수 있나 — [`AGENT_RENAME_PRIVILEGES`] 가 다 있을 때만. 아니면 TS.
+    pub patch_rename: bool,
     pub trust: Arc<crate::trust_proxy::TrustProxy>,
 }
 
@@ -452,8 +463,8 @@ fn check_patch(m: &Map<String, Value>) -> Result<(), &'static str> {
 const ADMIN_ONLY_FIELDS: &[&str] = &["ownerAccountId", "disabled", "mentionPermission"];
 
 /// 이 칸이 하나라도 있으면 PATCH 성공 길은 TS 로 넘긴다 — 이름 바꾸기(409·감사·WS 이벤트), 끄기(PAT 회수·
-/// 감사·`agent_disabled` grant 정지)가 아직 Rust 에 없다. 스코프·MCP 판정, 정의 변경 grant 정지는 Rust 가 한다.
-const PATCH_TS_ONLY_FIELDS: &[&str] = &["handle", "disabled"];
+/// 감사·`agent_disabled` grant 정지)가 아직 Rust 에 없다. 이름 바꾸기·스코프·MCP 판정, 정의 변경 grant 정지는 Rust 가 한다.
+const PATCH_TS_ONLY_FIELDS: &[&str] = &["disabled"];
 
 /// TS `AUDITED_FIELDS` — 순서·종류가 같다.
 const AUDITED_FIELDS: &[(&str, bool)] = &[
@@ -536,6 +547,50 @@ async fn patch_native(
             .to_owned()
     };
     let ps = |k: &str| m.get(k).and_then(Value::as_str).map(str::to_owned);
+    // TS: 값이 실제로 바뀔 때만 이름공간(계정·집합)을 본다.
+    let renamed_to = ps("handle").filter(|h| *h != bs("handle"));
+    let mut display = ps("displayName");
+    if let Some(h) = &renamed_to {
+        let taken = sqlx::query_scalar::<_, i32>(
+            "select 1 from account where lower(handle) = lower($1) and id != $2::uuid",
+        )
+        .bind(h)
+        .bind(id)
+        .fetch_optional(write)
+        .await;
+        match taken {
+            Ok(Some(_)) => {
+                return json_err(
+                    StatusCode::CONFLICT,
+                    "handle_taken",
+                    "this handle is already taken",
+                );
+            }
+            Ok(None) => {}
+            Err(e) => return crate::directory::internal(e),
+        }
+        let group = sqlx::query_scalar::<_, i32>(
+            "select 1 from handle_group where lower(handle) = lower($1)",
+        )
+        .bind(h)
+        .fetch_optional(write)
+        .await;
+        match group {
+            Ok(Some(_)) => {
+                return json_err(
+                    StatusCode::CONFLICT,
+                    "handle_taken",
+                    "a group with this handle already exists",
+                );
+            }
+            Ok(None) => {}
+            Err(e) => return crate::directory::internal(e),
+        }
+        // 표시 이름이 옛 이름 그대로였다면 따라간다. 명시적으로 보낸 displayName 이 이긴다.
+        if !m.contains_key("displayName") && bs("displayName") == bs("handle") {
+            display = Some(h.clone());
+        }
+    }
     if m.contains_key("invokeScope") || m.contains_key("credentialScope") {
         let invoke = ps("invokeScope").unwrap_or_else(|| bs("invokeScope"));
         let cred = ps("credentialScope").unwrap_or_else(|| bs("credentialScope"));
@@ -645,7 +700,12 @@ async fn patch_native(
         Ok(None) => return not_found(),
         Err(e) => return crate::directory::internal(e),
     }
-    if let Some(d) = m.get("displayName").and_then(Value::as_str)
+    if let Some(h) = &renamed_to
+        && let Err(e) = rename(write, id, h).await
+    {
+        return crate::directory::internal(e);
+    }
+    if let Some(d) = display.as_deref()
         && let Err(e) = sqlx::query("update account set display_name = $2 where id = $1::uuid")
             .bind(id)
             .bind(d)
@@ -722,7 +782,37 @@ async fn patch_native(
         )
         .await;
     }
+    if let Some(h) = &renamed_to {
+        crate::write::record_audit(
+            write,
+            crate::write::AuditEntry {
+                action: "account.handle.changed",
+                actor_id: Some(&me.id),
+                actor_handle: Some(&me.handle),
+                target: Some(id),
+                ip: ip.as_deref(),
+                detail: serde_json::json!({ "from": bs("handle"), "to": h }),
+            },
+        )
+        .await;
+    }
     json_200(updated)
+}
+
+/// 이름 UPDATE 와 `account.handle_changed` 이벤트(받는 사람 everyone, outbox)를 한 트랜잭션에 — `account_handle` 과 같다.
+async fn rename(write: &PgPool, id: &str, handle: &str) -> Result<(), sqlx::Error> {
+    let mut tx = write.begin().await?;
+    sqlx::query("update account set handle = $1 where id = $2::uuid")
+        .bind(handle)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    crate::write::emit_event(
+        &mut tx,
+        &serde_json::json!({ "type": "account.handle_changed", "accountId": id, "newHandle": handle }),
+    )
+    .await?;
+    tx.commit().await
 }
 
 /// TS `validateScopeChange(before, after)`.
@@ -841,6 +931,7 @@ pub async fn patch(
         }
         if let Some(w) = &st.patch_write
             && !PATCH_TS_ONLY_FIELDS.iter().any(|f| m.contains_key(*f))
+            && (st.patch_rename || !m.contains_key("handle"))
         {
             return patch_native(&st, w, &parts, &me, &id, &m).await;
         }
@@ -985,9 +1076,16 @@ mod tests {
             ),
             vec!["harness"]
         );
-        for f in ["handle", "disabled"] {
-            assert!(PATCH_TS_ONLY_FIELDS.contains(&f), "{f}");
+        assert!(PATCH_TS_ONLY_FIELDS.contains(&"disabled"));
+        assert!(!PATCH_TS_ONLY_FIELDS.contains(&"handle"));
+        for p in [
+            ("account.handle", "UPDATE"),
+            ("handle_group.handle", "SELECT"),
+            ("event_outbox", "INSERT"),
+        ] {
+            assert!(AGENT_RENAME_PRIVILEGES.contains(&p), "{p:?}");
         }
+        assert!(AGENT_RENAME_SEQUENCE_PRIVILEGES.contains(&("event_outbox_id_seq", "USAGE")));
     }
 
     #[test]
