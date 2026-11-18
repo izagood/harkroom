@@ -2,7 +2,7 @@
 //! 버전·임대가 없을 때 답한다. 줄이 없으면 — 그때 TS 는 `{entries:[],messages:[]}` 를 내고, 에이전트면
 //! `stopRequestedAt`(키는 늘 있다)을 덧붙인다. 줄이 있으면 `{entries,messages}`(본문 펼치기·시스템 줄 표시)에 에이전트면
 //! `memoryRev` — 위임 스위치(`HARKROOM_DELEGATION_V2`)가 없거나 `delegation_update` 사유를 고쳐 써야 하면 TS. 그 밖은 모두 `None`(→ TS): 긴 폴(이벤트 버스·종료 park), (쓰기 풀이 없을 때의) `version` 기록·`lease`
-//! 임대(쓰기), 아직 승인 안 된 종료 요청(TS `ackAgentStop` 이 쓴다),
+//! 임대(쓰기 — 쓰기 풀에 [`INBOX_LEASE_PRIVILEGES`] 가 있으면 [`answer_full`] 이 TS `leaseInboxEntries` 처럼 걸고 임대 걸린 줄을 빼고 읽는다), 아직 승인 안 된 종료 요청(TS `ackAgentStop` 이 쓴다),
 //! zod 를 못 지나는 인자, DB 오류. 읽기만 한다 — 쓰기 권한(`*_PRIVILEGES`)이 필요 없다.
 //!
 //! `version` 이 온 폴([`answer_versioned`])은 쓰기 풀에 [`RUNNER_VERSION_PRIVILEGES`] 가 있을 때만 Rust 가 답한다 — 답이 정해진 뒤
@@ -173,6 +173,90 @@ const AGENT_STOP_SQL: &str = "select to_char(stop_requested_at at time zone 'UTC
 /// zod 를 지나고 Rust 가 답할 꼴이면 참 — `timeoutMs` 는 없거나 0, `version`·`lease` 는 없어야(있으면 TS 가 쓴다).
 fn quick(args: &Value, allow_version: bool) -> bool {
     quick_with(args, allow_version, false)
+        && !args.as_object().is_some_and(|o| o.contains_key("lease"))
+}
+
+/// TS `INBOX_LEASE_MS`.
+const INBOX_LEASE_MS: i32 = 120_000;
+/// JS `Number.MAX_SAFE_INTEGER`.
+const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+
+/// TS `leaseInboxEntries` 의 첫 문장 — 이 러너가 쥐었다가 이제 안 쥔(안 읽은) 항목을 푼다.
+const UNLEASE_SQL: &str = "update inbox set claimed_by = null, claimed_until = null \
+     where account_id = $1::uuid and claimed_by = $2 and read_at is null and not (id = any($3::bigint[]))";
+/// 둘째 문장 — 쥔 항목에 임대를 건다(쥔 것이 없으면 TS 처럼 부르지 않는다).
+const LEASE_SQL: &str = "update inbox set claimed_by = $2, claimed_until = now() + make_interval(secs => $4::int / 1000.0) \
+     where account_id = $1::uuid and id = any($3::bigint[]) and read_at is null";
+
+/// [`UNLEASE_SQL`]·[`LEASE_SQL`] 이 쓰는 칸(UPDATE)과 `where` 가 읽는 칸(SELECT). 빠지면 `lease` 가 온 폴은 TS.
+pub const INBOX_LEASE_PRIVILEGES: &[(&str, &str)] = &[
+    ("inbox.claimed_by", "UPDATE"),
+    ("inbox.claimed_until", "UPDATE"),
+    ("inbox.id", "SELECT"),
+    ("inbox.account_id", "SELECT"),
+    ("inbox.claimed_by", "SELECT"),
+    ("inbox.read_at", "SELECT"),
+];
+
+/// zod `lease: z.object({ runnerId: z.string().min(1).max(128), holding: z.array(int 1..=MAX_SAFE_INTEGER).max(1000) }).optional()`.
+/// 없으면 `Some(None)`, 못 지나면 `None`.
+fn parse_lease(args: &Value) -> Option<Option<(String, Vec<i64>)>> {
+    let Some(v) = args.get("lease") else {
+        return Some(None);
+    };
+    let o = v.as_object()?;
+    let runner = o.get("runnerId")?.as_str()?;
+    if !(1..=128).contains(&runner.encode_utf16().count()) {
+        return None;
+    }
+    let a = o.get("holding")?.as_array()?;
+    if a.len() > 1000 {
+        return None;
+    }
+    let mut holding = Vec::with_capacity(a.len());
+    for x in a {
+        let f = x.as_f64()?;
+        if f.fract() != 0.0 || !(1.0..=MAX_SAFE_INTEGER).contains(&f) {
+            return None;
+        }
+        holding.push(f as i64);
+    }
+    Some(Some((runner.to_owned(), holding)))
+}
+
+/// TS `leaseInboxEntries`.
+async fn lease_entries(
+    write: &PgPool,
+    account: &str,
+    runner: &str,
+    holding: &[i64],
+) -> Result<(), sqlx::Error> {
+    sqlx::query(UNLEASE_SQL)
+        .bind(account)
+        .bind(runner)
+        .bind(holding)
+        .execute(write)
+        .await?;
+    if holding.is_empty() {
+        return Ok(());
+    }
+    sqlx::query(LEASE_SQL)
+        .bind(account)
+        .bind(runner)
+        .bind(holding)
+        .bind(INBOX_LEASE_MS)
+        .execute(write)
+        .await?;
+    Ok(())
+}
+
+/// 이 폴이 읽을 갈래 — `lease` 가 왔으면 임대 걸린 줄을 뺀다(TS `skipLeased: lease !== undefined`).
+fn unread(leased: bool) -> InboxQuery {
+    if leased {
+        InboxQuery::UnreadUnleased
+    } else {
+        InboxQuery::Unread { since: None }
+    }
 }
 
 /// `timeoutMs: z.number().int().min(0).max(25_000).optional()` — 없으면 0. 못 지나면 `None`.
@@ -207,7 +291,8 @@ fn quick_with(args: &Value, allow_version: bool, allow_wait: bool) -> bool {
         None => true,
         Some(v) => allow_version && v.is_string(),
     };
-    timeout_ok && reasons_ok && version_ok && !o.contains_key("lease")
+    // `lease` 는 [`answer_full`] 이 따로 본다(쓰기 풀이 있을 때만).
+    timeout_ok && reasons_ok && version_ok
 }
 
 /// `{"entries":[],"messages":[]}` 에 에이전트면 종료 요청 키를 붙인다. `stop` = (요청 시각, 승인됨). 승인 안 된 요청이면 `None`.
@@ -229,7 +314,7 @@ pub async fn answer(pool: &PgPool, me: &Account, args: &Value) -> Option<String>
     if !quick(args, false) {
         return None;
     }
-    respond(pool, me, args, None).await
+    respond(pool, me, args, None, false).await
 }
 
 /// `version` 이 온 폴 — 답이 정해지면 TS 처럼 버전을 기록하고(빈 글자는 기록하지 않는다, TS `if (version)`) 답한다. 기록이 실패하면 TS.
@@ -241,17 +326,26 @@ pub async fn answer_full(
     read: &PgPool,
     write: Option<&PgPool>,
     hub: Option<&crate::core::events::Hub>,
+    lease_write: Option<&PgPool>,
     me: &Account,
     args: &Value,
 ) -> Option<String> {
     if !quick_with(args, write.is_some(), hub.is_some()) {
         return None;
     }
+    let lease = parse_lease(args)?;
+    let leased = lease.is_some();
+    // TS 순서: (버전 기록) → 임대 → 읽기. 임대는 같은 값으로 다시 걸어도 같으니, 뒤에서 TS 로 넘겨도 TS 가 다시 건다.
+    if let Some((runner, holding)) = &lease {
+        lease_entries(lease_write?, &me.id, runner, holding)
+            .await
+            .ok()?;
+    }
     let version = args.get("version").and_then(Value::as_str);
     let wait = timeout_ms(args)?;
     let out = match hub.filter(|_| wait > 0) {
-        Some(h) => wait_then_respond(read, me, args, version, h, wait).await?,
-        None => respond(read, me, args, version).await?,
+        Some(h) => wait_then_respond(read, me, args, version, h, wait, leased).await?,
+        None => respond(read, me, args, version, leased).await?,
     };
     if let (Some(w), Some(v)) = (write, version.filter(|v| !v.is_empty())) {
         record_runner_version(w, &me.id, v).await.ok()?;
@@ -282,16 +376,15 @@ async fn wait_then_respond(
     version: Option<&str>,
     hub: &crate::core::events::Hub,
     wait_ms: u64,
+    leased: bool,
 ) -> Option<String> {
     use tokio::sync::broadcast::error::{RecvError, TryRecvError};
     // 첫 읽기 전에 구독한다 — 그 왕복 사이에 온 깨움을 잃지 않게(TS 주석과 같은 까닭).
     let mut rx = hub.subscribe();
     let mut drain = drain_tx().subscribe();
-    let rows = list_inbox(pool, &me.id, InboxQuery::Unread { since: None }, false)
-        .await
-        .ok()?;
+    let rows = list_inbox(pool, &me.id, unread(leased), false).await.ok()?;
     if !rows.is_empty() {
-        return respond(pool, me, args, version).await;
+        return respond(pool, me, args, version, leased).await;
     }
     // 비었는데 승인 안 된 종료 요청이 있으면 TS 가 답한다 — 기다리기 전에 넘긴다.
     if me.kind == "agent" {
@@ -346,7 +439,7 @@ async fn wait_then_respond(
         .await;
     }
     // 깨웠거나 시한을 다 기다렸다 — TS 처럼 다시 읽어 답한다.
-    respond(pool, me, args, version).await
+    respond(pool, me, args, version, leased).await
 }
 
 async fn respond(
@@ -354,14 +447,13 @@ async fn respond(
     me: &Account,
     args: &Value,
     version: Option<&str>,
+    leased: bool,
 ) -> Option<String> {
     // 빈 목록에는 위임 요약이 붙지 않으니 `v2` 값과 무관하다.
-    let rows = list_inbox(pool, &me.id, InboxQuery::Unread { since: None }, false)
-        .await
-        .ok()?;
+    let rows = list_inbox(pool, &me.id, unread(leased), false).await.ok()?;
     let agent = me.kind == "agent";
     if !rows.is_empty() {
-        return batch(pool, me, args, &rows, agent, version).await;
+        return batch(pool, me, args, &rows, agent, version, leased).await;
     }
     let stop = if agent {
         sqlx::query_as::<_, (Option<String>, bool)>(AGENT_STOP_SQL)
@@ -382,6 +474,7 @@ async fn batch(
     rows: &[crate::core::inbox_list::InboxRow],
     agent: bool,
     version: Option<&str>,
+    leased: bool,
 ) -> Option<String> {
     // TS 는 스위치가 없으면 꺼짐으로 본다 — Rust 는 값이 없으면 모르니 TS 로(`msg_post::delegation_v2`).
     let v2 = crate::core::msg_post::delegation_v2(
@@ -389,9 +482,7 @@ async fn batch(
     )?;
     // 위에서 `v2=false` 로 읽었으니, 켜졌으면 위임 요약이 붙은 줄로 다시 읽는다.
     let rows = if v2 {
-        list_inbox(pool, &me.id, InboxQuery::Unread { since: None }, true)
-            .await
-            .ok()?
+        list_inbox(pool, &me.id, unread(leased), true).await.ok()?
     } else {
         rows.to_vec()
     };
@@ -451,6 +542,55 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn lease_args_follow_zod() {
+        assert_eq!(parse_lease(&json!({})), Some(None));
+        assert_eq!(
+            parse_lease(
+                &json!({ "lease": { "runnerId": "r", "holding": [1, 9007199254740991_i64], "x": 1 } })
+            ),
+            Some(Some(("r".to_owned(), vec![1, 9_007_199_254_740_991])))
+        );
+        assert_eq!(
+            parse_lease(&json!({ "lease": { "runnerId": "r", "holding": [] } })),
+            Some(Some(("r".to_owned(), vec![])))
+        );
+        let many: Vec<i64> = (1..=1001).collect();
+        for bad in [
+            json!({ "lease": null }),
+            json!({ "lease": { "holding": [] } }),
+            json!({ "lease": { "runnerId": "", "holding": [] } }),
+            json!({ "lease": { "runnerId": "r".repeat(129), "holding": [] } }),
+            json!({ "lease": { "runnerId": "r" } }),
+            json!({ "lease": { "runnerId": "r", "holding": [0] } }),
+            json!({ "lease": { "runnerId": "r", "holding": [1.5] } }),
+            json!({ "lease": { "runnerId": "r", "holding": ["1"] } }),
+            json!({ "lease": { "runnerId": "r", "holding": [9007199254740992_i64] } }),
+            json!({ "lease": { "runnerId": "r", "holding": many } }),
+        ] {
+            assert_eq!(parse_lease(&bad), None, "{bad}");
+        }
+        assert!(matches!(unread(true), InboxQuery::UnreadUnleased));
+        assert!(matches!(unread(false), InboxQuery::Unread { since: None }));
+    }
+
+    #[test]
+    fn lease_sql_like_ts() {
+        assert!(
+            UNLEASE_SQL
+                .contains("claimed_by = $2 and read_at is null and not (id = any($3::bigint[]))")
+        );
+        assert!(LEASE_SQL.contains("make_interval(secs => $4::int / 1000.0)"));
+        assert!(LEASE_SQL.ends_with("id = any($3::bigint[]) and read_at is null"));
+        assert_eq!(INBOX_LEASE_MS, 120_000);
+        for c in ["claimed_by", "claimed_until"] {
+            assert!(INBOX_LEASE_PRIVILEGES.contains(&(&format!("inbox.{c}") as &str, "UPDATE")));
+        }
+        for c in ["id", "account_id", "claimed_by", "read_at"] {
+            assert!(INBOX_LEASE_PRIVILEGES.contains(&(&format!("inbox.{c}") as &str, "SELECT")));
+        }
+    }
+
+    #[test]
     fn wait_args_follow_zod() {
         assert_eq!(timeout_ms(&json!({})), Some(0));
         assert_eq!(timeout_ms(&json!({ "timeoutMs": 25000 })), Some(25_000));
@@ -460,9 +600,14 @@ mod tests {
         assert_eq!(timeout_ms(&json!({ "timeoutMs": "5" })), None);
         assert!(quick_with(&json!({ "timeoutMs": 5000 }), false, true));
         assert!(!quick_with(&json!({ "timeoutMs": 5000 }), false, false));
-        assert!(!quick_with(
+        // `lease` 는 `quick_with` 가 아니라 `answer_full`(쓰기 풀 있을 때)이 본다. 쓰기 없는 `quick` 은 여전히 넘긴다.
+        assert!(quick_with(
             &json!({ "timeoutMs": 5000, "lease": { "runnerId": "r", "holding": [] } }),
             false,
+            true
+        ));
+        assert!(!quick(
+            &json!({ "lease": { "runnerId": "r", "holding": [] } }),
             true
         ));
         assert!(!quick_with(

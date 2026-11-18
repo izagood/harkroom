@@ -2375,6 +2375,33 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 — MCP `inbox.poll` 의 `lease` 임대(TS `leaseInboxEntries`). 쓰기 풀에 `INBOX_LEASE_PRIVILEGES` 가 다 있을 때만 — 아니면 TS.
+    let inbox_lease_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            match write::missing_in(
+                w,
+                harkroom_server::core::mcp::inbox_poll::INBOX_LEASE_PRIVILEGES,
+                &[],
+            )
+            .await
+            {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: mcp inbox.poll lease off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: mcp inbox.poll lease off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // C4b B1a — MCP 기억 쓰기(memory.get·recalled·lease·archive·unarchive). `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 권한이 다 있을 때만.
     let mem_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -4556,6 +4583,7 @@ async fn main() {
                 automation: automation_write,
                 automation_run: automation_run_write,
                 runner_version: runner_version_write,
+                inbox_lease: inbox_lease_write,
                 inbox_hub: Some(core.hub.clone()),
                 grant_delegate: grant_delegate_write,
                 memory: mem_write,
