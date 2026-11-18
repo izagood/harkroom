@@ -3,7 +3,9 @@
 //! → 추천 둘 이상(`multiple_recommended`) → 머지 거절 카드에 `to`·`mirrorOf`(`merge_denial_audience`). 모두 지나면 `None`
 //! (→ TS). 그 뒤 스레드 안의 사람 앞 카드는 [`answer_plain`] 이 열린 카드 검사(`open_card_in_thread`, `keepOpen` 반영)를 하고,
 //! 평범한 카드(사람 앞·원인 헤더 없음, 스레드 안팎)는 글 올리기 풀로 세운다 — 대신하기(`supersedes`)는 새 카드를 세운 뒤
-//! 옛 카드를 닫고, 계획 단계(`planStepId`)는 세운 뒤 그 단계에 카드를 잇는다(묶음에 담긴 옛 카드·계획·단계 없음은 TS). 거울·머지 거절·사람 앞 푸시는 아직 TS 몫이다. 인자가 zod 를 못 지나거나 DB 오류여도 `None`.
+//! 옛 카드를 닫고, 계획 단계(`planStepId`)는 세운 뒤 그 단계에 카드를 잇는다(묶음에 담긴 옛 카드·계획·단계 없음은 TS). 머지 거절 카드(`mergeDenialId`)는 거절 기록
+//! 검사(`prepareDenialCard` 거절)와 같은 거절 기록의 기다리는 카드(`pending`)까지 읽기 풀로 답하고, 새 요청·카드 세우기는 TS 다.
+//! 거울·사람 앞 푸시는 아직 TS 몫이다. 인자가 zod 를 못 지나거나 DB 오류여도 `None`.
 use super::tools::err;
 use crate::auth::Account;
 use crate::core::ask::{ASK_MAX_OPTIONS, ASK_MIN_OPTIONS, ASK_TEXT_OPTION_ID};
@@ -431,6 +433,16 @@ pub async fn answer_plain(
             return Some(r);
         }
     }
+    if let Some(denial) = o.get("mergeDenialId").and_then(Value::as_str) {
+        return merge_denial_answer(
+            read,
+            me,
+            a.channel,
+            o.get("threadRootId").and_then(Value::as_str),
+            denial,
+        )
+        .await;
+    }
     let st = st?;
     let audience = match o.get("to").and_then(Value::as_str) {
         Some(to) => {
@@ -476,6 +488,159 @@ pub async fn answer_plain(
         plan_step,
     )
     .await
+}
+
+/// TS `readDenial`(잠금 없음) — `now` 는 DB `now()` 로 잰다.
+pub const DENIAL_READ_SQL: &str = "select agent_id::text, scope, channel_id::text, thread_root_id::text,
+            expires_at <= now() as expired, used_at is not null as used, obsoleted_at is not null as obsolete,
+            (obsoleted_at is not null and exists (
+              select 1 from merge_denial n
+               where n.agent_id = d.agent_id and n.scope = d.scope and n.channel_id = d.channel_id and n.thread_root_id = d.thread_root_id
+                 and n.pr_number = d.pr_number and n.head_sha <> d.head_sha and n.created_at > d.created_at)) as head_moved
+       from merge_denial d where id = $1::uuid";
+
+/// TS `openPermissionRequest` 의 `not_agent` 검사.
+const DENIAL_AGENT_SQL: &str = "select 1 from account a join agent_config c on c.account_id = a.id \
+     where a.id = $1::uuid and a.kind = 'agent'";
+
+/// TS `openPermissionRequest` 의 기다리는 카드 찾기(거절에서 온 요청 — `denial_id` 가 같은 것만).
+pub const DENIAL_PENDING_SQL: &str = "select id::text, card_message_id::text from permission_request
+      where agent_id = $1::uuid and kind = 'merge' and target = $2 and thread_root_id = $3::uuid and channel_id = $4::uuid
+        and status = 'pending' and expires_at > now() and denial_id = $5::uuid
+      order by created_at desc limit 1";
+
+/// 머지 거절 카드의 읽기 풀 칸 — [`DENIAL_READ_SQL`]·[`DENIAL_AGENT_SQL`]·[`DENIAL_PENDING_SQL`]. 하나라도 없으면 TS.
+pub const MERGE_DENIAL_ASK_READ_PRIVILEGES: &[(&str, &str)] = &[
+    ("merge_denial.id", "SELECT"),
+    ("merge_denial.agent_id", "SELECT"),
+    ("merge_denial.scope", "SELECT"),
+    ("merge_denial.pr_number", "SELECT"),
+    ("merge_denial.head_sha", "SELECT"),
+    ("merge_denial.channel_id", "SELECT"),
+    ("merge_denial.thread_root_id", "SELECT"),
+    ("merge_denial.expires_at", "SELECT"),
+    ("merge_denial.used_at", "SELECT"),
+    ("merge_denial.obsoleted_at", "SELECT"),
+    ("merge_denial.created_at", "SELECT"),
+    ("account", "SELECT"),
+    ("agent_config", "SELECT"),
+    ("permission_request.id", "SELECT"),
+    ("permission_request.card_message_id", "SELECT"),
+    ("permission_request.agent_id", "SELECT"),
+    ("permission_request.kind", "SELECT"),
+    ("permission_request.target", "SELECT"),
+    ("permission_request.thread_root_id", "SELECT"),
+    ("permission_request.channel_id", "SELECT"),
+    ("permission_request.status", "SELECT"),
+    ("permission_request.expires_at", "SELECT"),
+    ("permission_request.denial_id", "SELECT"),
+    ("permission_request.created_at", "SELECT"),
+];
+
+type DenialRow = (String, String, String, String, bool, bool, bool, bool);
+
+/// TS `prepareDenialCard` 의 거절 차례 그대로. 통과면 `Ok(scope)`.
+fn denial_refusal(
+    row: Option<DenialRow>,
+    me: &str,
+    channel: &str,
+    thread: Option<&str>,
+) -> Result<String, &'static str> {
+    let Some((agent, scope, ch, root, expired, used, obsolete, head_moved)) = row else {
+        return Err("denial_not_found");
+    };
+    if agent != me {
+        return Err("denial_other_agent");
+    }
+    if ch != channel || root != thread.unwrap_or("") {
+        return Err("denial_other_thread");
+    }
+    if used {
+        return Err("denial_used");
+    }
+    if expired {
+        return Err("denial_expired");
+    }
+    if obsolete {
+        return Err(if head_moved {
+            "head_moved"
+        } else {
+            "pr_closed"
+        });
+    }
+    Ok(scope)
+}
+
+/// TS `DENIAL_CARD_REFUSAL_MESSAGE`.
+fn denial_message(code: &str) -> &'static str {
+    match code {
+        "denial_not_found" => "no such merge denial — use the denialId the merge wrapper returned",
+        "denial_other_agent" => "that merge denial belongs to another agent",
+        "denial_other_thread" => {
+            "that merge denial happened in another thread; post the card in the thread where the merge was refused"
+        }
+        "denial_used" => "that merge denial was already used to grant permission",
+        "denial_expired" => "that merge denial expired; ask the wrapper again",
+        "pr_closed" => "that pull request was already merged or closed — no card is needed",
+        _ => {
+            "that pull request got a new head after this refusal — call the merge wrapper again and use the new denialId"
+        }
+    }
+}
+
+/// 저장된 거절 scope 를 TS `repoScope(scope.slice('repo:'.length))` 로 다시 정한 요청 target. 못 지나면 `None`(→ TS: `bad_repo` 등).
+fn denial_target(scope: &str) -> Option<String> {
+    crate::core::merge_approval_peek::repo_scope(scope.strip_prefix("repo:")?)
+}
+
+/// 머지 거절 카드(`mergeDenialId`) — TS `prepareDenialCard` 의 거절과, `openPermissionRequest` 가 같은 거절 기록의 기다리는 카드를
+/// 찾아 주는 `pending` 답까지 Rust 가 답한다. 새 요청 줄·카드 세우기(insert·감사·카드 글·푸시)는 TS. 읽기 칸이 없거나 DB 오류도 `None`.
+async fn merge_denial_answer(
+    read: &PgPool,
+    me: &Account,
+    channel: &str,
+    thread: Option<&str>,
+    denial: &str,
+) -> Option<String> {
+    let missing = crate::write::missing_in(read, MERGE_DENIAL_ASK_READ_PRIVILEGES, &[])
+        .await
+        .ok()?;
+    if !missing.is_empty() {
+        return None;
+    }
+    let row: Option<DenialRow> = sqlx::query_as(DENIAL_READ_SQL)
+        .bind(denial)
+        .fetch_optional(read)
+        .await
+        .ok()?;
+    let scope = match denial_refusal(row, &me.id, channel, thread) {
+        Ok(s) => s,
+        Err(code) => return Some(err(code, denial_message(code))),
+    };
+    let target = denial_target(&scope)?;
+    let agent: Option<i32> = sqlx::query_scalar(DENIAL_AGENT_SQL)
+        .bind(&me.id)
+        .fetch_optional(read)
+        .await
+        .ok()?;
+    agent?; // `not_agent` 는 TS 가 답한다.
+    let pending: Option<(String, Option<String>)> = sqlx::query_as(DENIAL_PENDING_SQL)
+        .bind(&me.id)
+        .bind(&target)
+        .bind(thread?)
+        .bind(channel)
+        .bind(denial)
+        .fetch_optional(read)
+        .await
+        .ok()?;
+    let (request_id, card) = pending?;
+    // TS `jsonResult` 칸 차례(requestId·cardMessageId·pending·message).
+    Some(super::respond::text_result(&format!(
+        "{{\"requestId\":{},\"cardMessageId\":{},\"pending\":true,\"message\":{}}}",
+        Value::from(request_id),
+        card.map_or(Value::Null, Value::from),
+        Value::from("the same request is already waiting for the owner in this thread"),
+    )))
 }
 
 /// `planStepId` 를 Rust 가 맡을 수 있나 — 쓰기 풀에 계획 쓰기 권한([`super::plan_write::PLAN_WRITE_PRIVILEGES`])이 다 있고, 그 스레드에
@@ -890,5 +1055,93 @@ mod tests {
             Some("merge_denial_audience")
         );
         assert_eq!(r(ask(json!({ "mergeDenialId": C }))), None);
+    }
+
+    #[test]
+    fn denial_refusals_follow_prepare_denial_card_order() {
+        let row = |agent: &str, ch: &str, root: &str, e: bool, u: bool, o: bool, h: bool| {
+            Some((
+                agent.to_owned(),
+                "repo:o/r".to_owned(),
+                ch.to_owned(),
+                root.to_owned(),
+                e,
+                u,
+                o,
+                h,
+            ))
+        };
+        assert_eq!(
+            denial_refusal(None, "a", "c", Some("t")),
+            Err("denial_not_found")
+        );
+        assert_eq!(
+            denial_refusal(
+                row("b", "c", "t", true, true, true, true),
+                "a",
+                "c",
+                Some("t")
+            ),
+            Err("denial_other_agent")
+        );
+        assert_eq!(
+            denial_refusal(row("a", "c", "t", true, true, true, true), "a", "c", None),
+            Err("denial_other_thread")
+        );
+        assert_eq!(
+            denial_refusal(
+                row("a", "c", "t", true, true, true, true),
+                "a",
+                "c",
+                Some("t")
+            ),
+            Err("denial_used")
+        );
+        assert_eq!(
+            denial_refusal(
+                row("a", "c", "t", true, false, true, true),
+                "a",
+                "c",
+                Some("t")
+            ),
+            Err("denial_expired")
+        );
+        assert_eq!(
+            denial_refusal(
+                row("a", "c", "t", false, false, true, true),
+                "a",
+                "c",
+                Some("t")
+            ),
+            Err("head_moved")
+        );
+        assert_eq!(
+            denial_refusal(
+                row("a", "c", "t", false, false, true, false),
+                "a",
+                "c",
+                Some("t")
+            ),
+            Err("pr_closed")
+        );
+        assert_eq!(
+            denial_refusal(
+                row("a", "c", "t", false, false, false, false),
+                "a",
+                "c",
+                Some("t")
+            ),
+            Ok("repo:o/r".to_owned())
+        );
+        assert_eq!(
+            denial_message("head_moved"),
+            "that pull request got a new head after this refusal — call the merge wrapper again and use the new denialId"
+        );
+        assert_eq!(denial_target("repo:O/R").as_deref(), Some("repo:o/r"));
+        assert_eq!(denial_target("repo:o/*"), None);
+        assert!(DENIAL_PENDING_SQL.contains("denial_id = $5::uuid"));
+        assert!(
+            MERGE_DENIAL_ASK_READ_PRIVILEGES.contains(&("permission_request.denial_id", "SELECT"))
+        );
     }
 }
