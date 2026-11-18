@@ -54,6 +54,8 @@ pub const SERVED: &[&str] = &[
     "skill.propose",
     // S5.4 MCP 4 — 자동화 제안(행 하나, 글·이벤트 없음). 제안 칸이 있는 쓰기 풀(`writes.automation`)일 때만.
     "automation.propose",
+    // S5.4 MCP 5 — 에이전트의 「지금 한 번」(회차 INSERT 만). 회차 칸이 있는 쓰기 풀(`writes.automation_run`)일 때만.
+    "automation.run",
 ];
 
 /// TS 가 조건부로 싣는 도구 — `/mcp/admit` 이 `registered: true` 라고 답했을 때만 Rust 가 답한다([`super::route::serve`]).
@@ -133,6 +135,8 @@ pub struct McpWrites {
     pub pr_watch: Option<PgPool>,
     /// `automation.propose`(S5.4 MCP 4) — `automation_propose::AUTOMATION_PROPOSE_PRIVILEGES`.
     pub automation: Option<PgPool>,
+    /// `automation.run`(S5.4 MCP 5) — `automation_run::AUTOMATION_RUN_PRIVILEGES`.
+    pub automation_run: Option<PgPool>,
     /// 기억 쓰기(C4b B1a) — [`super::mem_writes::MEMORY_WRITE_PRIVILEGES`]. [`super::mem_writes::answer`] 가 본다.
     pub memory: Option<PgPool>,
     /// 기억 본문 쓰기(C4b B1b: set·merge·restore) — B1a 권한 + [`super::mem_body::MEMORY_BODY_PRIVILEGES`]. [`super::mem_body::answer`] 가 본다.
@@ -247,6 +251,12 @@ pub async fn answer(
             return Some(None);
         };
         return Some(super::skill_propose::answer(st, me, args).await);
+    }
+    if tool == "automation.run" {
+        let Some(write) = writes.automation_run.as_ref() else {
+            return Some(None);
+        };
+        return Some(super::automation_run::answer(read, write, me, args, cause).await);
     }
     if tool == "automation.propose" {
         let Some(write) = writes.automation.as_ref() else {

@@ -57,7 +57,7 @@ const DEBOUNCE_MAX: i64 = 3600;
 
 /// Rust 가 판정하는 시간대. ICU(`Intl.DateTimeFormat`)가 받는 것이 확실한 IANA 정식 이름만 — 대소문자까지 그대로일 때만.
 /// 이 밖(별칭·대소문자 다름·없는 이름)은 TS 가 판정한다. 저장 값은 입력 글자 그대로라 TS 와 같다.
-const TZ_ALLOW: &[&str] = &[
+pub(super) const TZ_ALLOW: &[&str] = &[
     "UTC",
     "Etc/UTC",
     "Asia/Seoul",

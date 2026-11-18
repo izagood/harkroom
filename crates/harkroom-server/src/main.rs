@@ -247,6 +247,32 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 MCP 5 — MCP `automation.run`. 쓰기 풀에 회차 INSERT·셈 칸과 잠금용 UPDATE 칸이 다 있을 때만 — 아니면 TS 에 남는다.
+    let automation_run_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            match write::missing_in(
+                w,
+                harkroom_server::core::mcp::automation_run::AUTOMATION_RUN_PRIVILEGES,
+                &[],
+            )
+            .await
+            {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: mcp automation.run core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: mcp automation.run core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 A2a — MCP `workitem.upsert`. 쓰기 풀에 work_item 넣기·고칠 칸·outbox 권한이 다 있을 때만 — 아니면 TS 에 남는다.
     let work_item_upsert_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -1929,6 +1955,7 @@ async fn main() {
                 work_item_upsert: work_item_upsert_write,
                 pr_watch: pr_watch_write,
                 automation: automation_write,
+                automation_run: automation_run_write,
                 memory: mem_write,
                 memory_body: mem_body_write,
                 delegate: mcp_post.clone().filter(|_| mcp_delegate_ok),
