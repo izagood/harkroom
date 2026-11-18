@@ -587,8 +587,9 @@ pub async fn answer_fail(
     .await
 }
 
-/// `message.ask` 의 평범한 카드(사람 앞·거울/머지 거절/supersedes 없음) — [`super::message_ask::answer_plain`] 이 고른 인자와 ask meta 로
+/// `message.ask` 의 평범한 카드(사람 앞·거울/머지 거절 없음, `supersedes` 는 글이 선 뒤 닫는다) — [`super::message_ask::answer_plain`] 이 고른 인자와 ask meta 로
 /// `message.post` 와 같은 길(가시성 → 모델 신고 → `postMessage` → `postedResult`)을 탄다. `sub` 는 `channelId`·`body`·`model`·`threadRootId` 만.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn answer_ask(
     st: &PostState,
     me: &Account,
@@ -597,9 +598,10 @@ pub(super) async fn answer_ask(
     cause: Option<&str>,
     turn: Option<&str>,
     operator: bool,
+    supersedes: &[&str],
 ) -> Option<String> {
     let a = parse(sub)?;
-    post(
+    post_with(
         st,
         me,
         a,
@@ -611,6 +613,7 @@ pub(super) async fn answer_ask(
         turn,
         operator,
         None,
+        supersedes,
     )
     .await
 }
@@ -731,6 +734,39 @@ async fn post(
     st: &PostState,
     me: &Account,
     a: Args,
+    meta: Map<String, Value>,
+    kind: Kind,
+    closes_delegation: bool,
+    fold: bool,
+    cause: Option<&str>,
+    turn: Option<&str>,
+    operator: bool,
+    artifact: Option<&super::artifact_write::NewArtifact>,
+) -> Option<String> {
+    post_with(
+        st,
+        me,
+        a,
+        meta,
+        kind,
+        closes_delegation,
+        fold,
+        cause,
+        turn,
+        operator,
+        artifact,
+        &[],
+    )
+    .await
+}
+
+/// [`post`] 에 `message.ask` 의 대신하기(`supersedes`)를 더한 것 — 새 카드가 선 **뒤**(커밋 뒤, 재생이 아닐 때) TS `supersedeAsk` 처럼
+/// 옛 카드를 하나씩 닫는다([`super::message_ask::supersede_ask`]).
+#[allow(clippy::too_many_arguments)]
+async fn post_with(
+    st: &PostState,
+    me: &Account,
+    a: Args,
     mut meta: Map<String, Value>,
     kind: Kind,
     closes_delegation: bool,
@@ -739,6 +775,7 @@ async fn post(
     turn: Option<&str>,
     operator: bool,
     artifact: Option<&super::artifact_write::NewArtifact>,
+    supersedes: &[&str],
 ) -> Option<String> {
     match channel_visible(&st.read, &me.id, &a.channel).await {
         Ok(true) => {}
@@ -797,6 +834,16 @@ async fn post(
         )),
         // 에이전트 글은 새 위임을 만들지 않는다(`mandate` 는 사람 글만) — 감사 줄이 없다.
         Outcome::Posted { row, notified, .. } => {
+            if !supersedes.is_empty() {
+                let new_id = serde_json::from_str::<Value>(&row)
+                    .ok()
+                    .and_then(|v| v.get("id").and_then(Value::as_str).map(str::to_owned));
+                if let Some(new_id) = new_id {
+                    for old in supersedes {
+                        super::message_ask::supersede_ask(&st.write, old, &new_id, &me.id).await;
+                    }
+                }
+            }
             // TS `message.report` — 보고가 선 **뒤**(커밋 뒤) 따로 예약을 접는다. 접기가 막혀도 보고는 되돌리지 않는다(TS `.catch(() => [])`).
             let extra = match (fold, a.post.thread_root.as_deref()) {
                 (true, Some(root)) => {

@@ -2,8 +2,8 @@
 //! 없음(`bad_request`) → 채널 가시성(`forbidden`) → 선택지 id 겹침(`duplicate_option`) → 예약 id(`reserved_option_id`)
 //! → 추천 둘 이상(`multiple_recommended`) → 머지 거절 카드에 `to`·`mirrorOf`(`merge_denial_audience`). 모두 지나면 `None`
 //! (→ TS). 그 뒤 스레드 안의 사람 앞 카드는 [`answer_plain`] 이 열린 카드 검사(`open_card_in_thread`, `keepOpen` 반영)를 하고,
-//! 평범한 카드(사람 앞·원인 헤더 없음, 스레드 안팎)는 글 올리기 풀로 세운다 — 대상 찾기(`to`)·거울·대신하기(`supersedes`)·
-//! 계획 단계·머지 거절·푸시는 아직 TS 몫이다. 인자가 zod 를 못 지나거나 DB 오류여도 `None`.
+//! 평범한 카드(사람 앞·원인 헤더 없음, 스레드 안팎)는 글 올리기 풀로 세운다 — 대신하기(`supersedes`)는 새 카드를 세운 뒤
+//! 옛 카드를 닫는다(묶음에 담긴 옛 카드는 TS). 거울·계획 단계·머지 거절·사람 앞 푸시는 아직 TS 몫이다. 인자가 zod 를 못 지나거나 DB 오류여도 `None`.
 use super::tools::err;
 use crate::auth::Account;
 use crate::core::ask::{ASK_MAX_OPTIONS, ASK_MIN_OPTIONS, ASK_TEXT_OPTION_ID};
@@ -199,7 +199,7 @@ pub async fn answer(read: &PgPool, me: &Account, args: &Value) -> Option<String>
             ));
         }
     }
-    // 대신하기를 다 지난 카드는 [`answer_plain`] 이 고른다 — `supersedes` 가 있으면 닫기(`supersedeAsk`)가 TS 몫이라 넘긴다.
+    // 대신하기를 다 지난 카드는 [`answer_plain`] 이 세우고 옛 카드를 닫는다(묶음에 담긴 옛 카드·권한 없음은 TS).
     None
 }
 
@@ -329,7 +329,7 @@ fn plain_meta(o: &Map<String, Value>, to: Value) -> Option<Map<String, Value>> {
 /// `to` 로 대상을 정한 카드 — 거울·대신하기·머지 거절·계획 단계가 없을 때만 Rust 가 세운다. 원인 헤더는 상관없다(TS 의 원인 기반
 /// 푸시는 사람 앞 카드만 쓴다).
 fn addressed(o: &Map<String, Value>) -> bool {
-    ["mirrorOf", "supersedes", "mergeDenialId", "planStepId"]
+    ["mirrorOf", "mergeDenialId", "planStepId"]
         .iter()
         .all(|k| !o.contains_key(*k))
 }
@@ -348,21 +348,15 @@ fn account_audience((id, kind): (String, String)) -> Option<Value> {
 /// 지났어야 한다 — `keepOpen` 은 그 검사에만 쓰인다. 그 밖은 `false`(→ TS).
 fn plain(o: &Map<String, Value>, cause: Option<&str>) -> bool {
     cause.is_none()
-        && [
-            "to",
-            "mirrorOf",
-            "supersedes",
-            "mergeDenialId",
-            "planStepId",
-        ]
-        .iter()
-        .all(|k| !o.contains_key(*k))
+        && ["to", "mirrorOf", "mergeDenialId", "planStepId"]
+            .iter()
+            .all(|k| !o.contains_key(*k))
 }
 
 /// 열린 카드 검사를 Rust 가 할 수 있는 꼴 — TS 의 `audience.kind === 'human' && !mirrorOf && !mergeDenialId && threadRootId`.
-/// `supersedes` 가 있으면 그 앞의 `checkAskSupersede` 가 아직 TS 몫이라 고르지 않는다(→ TS). 고르면 스레드 머리 id.
+/// `supersedes` 의 id 는 밝힌 카드로 센다(TS `declared`). 고르면 스레드 머리 id.
 fn open_card_thread(o: &Map<String, Value>) -> Option<&str> {
-    if ["to", "mirrorOf", "mergeDenialId", "supersedes"]
+    if ["to", "mirrorOf", "mergeDenialId"]
         .iter()
         .any(|k| o.contains_key(*k))
     {
@@ -426,11 +420,13 @@ pub async fn answer_plain(
             .fetch_all(read)
             .await
             .ok()?;
-        let keep: HashSet<&str> = o
+        // TS `declared = new Set([...supersedes, ...keepOpen])`.
+        let mut keep: HashSet<&str> = o
             .get("keepOpen")
             .and_then(Value::as_array)
             .map(|v| v.iter().filter_map(Value::as_str).collect())
             .unwrap_or_default();
+        keep.extend(supersedes_list(o));
         if let Some(r) = open_card_refusal(open, &keep) {
             return Some(r);
         }
@@ -451,6 +447,10 @@ pub async fn answer_plain(
         None if plain(o, cause) => serde_json::json!({ "kind": "human" }),
         None => return None,
     };
+    let olds = supersedes_list(o);
+    if !olds.is_empty() && !supersede_ready(read, st, &olds).await? {
+        return None;
+    }
     let meta = plain_meta(o, audience)?;
     let mut sub = Map::new();
     for k in ["channelId", "body", "threadRootId", "model"] {
@@ -458,7 +458,89 @@ pub async fn answer_plain(
             sub.insert(k.into(), v.clone());
         }
     }
-    super::msg_post::answer_ask(st, me, &Value::Object(sub), meta, cause, turn, operator).await
+    super::msg_post::answer_ask(
+        st,
+        me,
+        &Value::Object(sub),
+        meta,
+        cause,
+        turn,
+        operator,
+        &olds,
+    )
+    .await
+}
+
+/// TS `bundlesHolding` — 옛 카드를 줄로 담은 묶음이 있는가. 있으면 TS `carryBundleItem`(새 카드를 묶음 줄로 옮기기)이 필요한데
+/// 그 쓰기는 아직 TS 몫이라 넘긴다.
+const SUPERSEDE_BUNDLED_SQL: &str = "select exists(select 1 from message
+      where meta->>'kind' = 'askBundle' and deleted_at is null
+        and meta->'askBundle'->'items' @> jsonb_build_array(jsonb_build_object('rootId', $1::text)))";
+
+/// 대신하기를 Rust 가 맡을 수 있나 — 쓰기 풀에 C3b-1 [`ASK_PRIVILEGES`](글 `meta` UPDATE·inbox·outbox)가 다 있고, 어느 옛 카드도
+/// 묶음에 담겨 있지 않을 때만. 아니면 `Some(false)`(→ TS), DB 오류는 `None`(→ TS).
+async fn supersede_ready(
+    read: &PgPool,
+    st: &crate::core::msg_post::PostState,
+    olds: &[&str],
+) -> Option<bool> {
+    use crate::core::ask::{ASK_PRIVILEGES, ASK_SEQUENCE_PRIVILEGES};
+    let missing = crate::write::missing_in(&st.write, ASK_PRIVILEGES, ASK_SEQUENCE_PRIVILEGES)
+        .await
+        .ok()?;
+    if !missing.is_empty() {
+        return Some(false);
+    }
+    for old in olds {
+        let bundled: bool = sqlx::query_scalar(SUPERSEDE_BUNDLED_SQL)
+            .bind(old)
+            .fetch_one(read)
+            .await
+            .ok()?;
+        if bundled {
+            return Some(false);
+        }
+    }
+    Some(true)
+}
+
+/// TS `supersedeAsk` 의 닫기 문장 그대로 — 열렸거나 글 답으로 닫힌 것만 `superseded` 로 닫는다.
+pub const SUPERSEDE_ASK_SQL: &str = "update message
+        set meta = jsonb_set(
+              jsonb_set(
+                jsonb_set(
+                  jsonb_set(meta::jsonb, '{ask,closedAt}', to_jsonb(coalesce(meta->'ask'->>'closedAt', now()::text))),
+                  '{ask,closedBy}', to_jsonb($3::text)),
+                '{ask,closedReason}', to_jsonb('superseded'::text)),
+              '{ask,supersededBy}', to_jsonb($2::text))
+      where id = $1::uuid
+        and deleted_at is null
+        and meta->'ask'->>'answeredWith' is null
+        and (meta->'ask'->>'closedAt' is null or meta->'ask'->>'closedReason' = 'replied')
+        and not (meta ? 'permissionRequest')
+      returning id::text";
+
+/// TS `supersedeAsk` — 옛 카드를 닫고, `message.updated` 를 알리고, 거울을 따라 닫는다(`syncAskMirrors`, [`crate::core::ask_sync`]).
+/// 새 카드는 이미 섰으므로 실패는 기록만 한다. 묶음 옮기기(`carryBundleItem`)는 [`supersede_ready`] 가 묶음 없는 카드만 골라 필요 없다.
+pub(super) async fn supersede_ask(write: &PgPool, old: &str, new_id: &str, actor: &str) {
+    let r: Result<(), sqlx::Error> = async {
+        let mut conn = write.acquire().await?;
+        let closed: Option<String> = sqlx::query_scalar(SUPERSEDE_ASK_SQL)
+            .bind(old)
+            .bind(new_id)
+            .bind(actor)
+            .fetch_optional(&mut *conn)
+            .await?;
+        if closed.is_none() {
+            return Ok(());
+        }
+        crate::core::ask_sync::announce_updated(&mut conn, old).await?;
+        crate::core::ask_sync::sync_ask_mirrors(&mut conn, "message.ask supersedes", old).await
+    }
+    .await;
+    if let Err(e) = r {
+        eprintln!("message.ask: supersede {old} failed: {e}");
+    }
 }
 
 #[cfg(test)]
@@ -530,18 +612,31 @@ mod tests {
                 .unwrap(),
             None
         ));
-        for k in [
-            "to",
-            "mirrorOf",
-            "supersedes",
-            "mergeDenialId",
-            "planStepId",
-        ] {
+        for k in ["to", "mirrorOf", "mergeDenialId", "planStepId"] {
             assert!(
                 !plain(ask(json!({ k: C })).as_object().unwrap(), None),
                 "{k}"
             );
         }
+        // 대신하기는 Rust 가 세운 뒤 닫는다.
+        let sup = ask(json!({ "supersedes": C, "threadRootId": C }));
+        assert!(plain(sup.as_object().unwrap(), None));
+        assert!(addressed(sup.as_object().unwrap()));
+        assert_eq!(open_card_thread(sup.as_object().unwrap()), Some(C));
+    }
+
+    #[test]
+    fn supersede_sql_like_ts() {
+        for frag in [
+            "'{ask,closedReason}', to_jsonb('superseded'::text)",
+            "'{ask,supersededBy}', to_jsonb($2::text)",
+            "coalesce(meta->'ask'->>'closedAt', now()::text)",
+            "meta->'ask'->>'closedReason' = 'replied'",
+            "not (meta ? 'permissionRequest')",
+        ] {
+            assert!(SUPERSEDE_ASK_SQL.contains(frag), "{frag}");
+        }
+        assert!(SUPERSEDE_BUNDLED_SQL.contains("'askBundle'"));
     }
 
     #[test]
@@ -652,7 +747,7 @@ mod tests {
                 .as_object()
                 .unwrap()
         ));
-        for k in ["mirrorOf", "supersedes", "mergeDenialId", "planStepId"] {
+        for k in ["mirrorOf", "mergeDenialId", "planStepId"] {
             assert!(
                 !addressed(ask(json!({ "to": "@a", k: C })).as_object().unwrap()),
                 "{k}"
@@ -680,7 +775,7 @@ mod tests {
             .as_deref(),
             Some(C)
         );
-        for k in ["to", "mirrorOf", "mergeDenialId", "supersedes"] {
+        for k in ["to", "mirrorOf", "mergeDenialId"] {
             assert_eq!(t(ask(json!({ "threadRootId": C, k: C }))), None, "{k}");
         }
     }
