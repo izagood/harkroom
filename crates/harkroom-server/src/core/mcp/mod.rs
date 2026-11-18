@@ -12,6 +12,7 @@ pub mod bg_claim;
 pub mod bg_complete;
 pub mod delegate_gate;
 pub mod grant_writes;
+pub mod mem_audit;
 pub mod mem_body;
 pub mod mem_recall;
 pub mod mem_writes;

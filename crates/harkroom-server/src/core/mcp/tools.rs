@@ -34,6 +34,8 @@ pub const SERVED: &[&str] = &[
     "grant.list",
     // S5.4 A2a — 오퍼레이터 코어가 Rust 일 때만 답한다(`route` 가 `relay_moved` 로 거른다, [`super::model_options`]).
     "agent.modelOptions",
+    // S5.4 A2b
+    "memory.audit",
 ];
 
 /// 입력 스키마가 없는 도구 — SDK 는 `arguments` 를 레코드(객체)로만 받고, 없어도(`null`) 받는다. 스키마가 있는 도구는
@@ -354,6 +356,7 @@ pub async fn answer(
         }
         "message.read" => message_read(pool, me, args).await,
         "message.search" => super::search::answer(pool, me, args).await,
+        "memory.audit" => super::mem_audit::answer(pool, me, args).await,
         "grant.list" => super::reads4::answer(pool, me, tool, args).await,
         "workitem.list" | "automation.list" => {
             super::reads3::answer(pool, me, tool, args, cause).await

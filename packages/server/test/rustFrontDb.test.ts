@@ -1952,6 +1952,48 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       const revText = (await mcpCall(rsUrl4, agent.pat, 'memory.revisions', { slug: 'mem/a' })).text;
       for (const want of ['mem/x', 'merge', 'restore', 'flagged', 'chars\\":4', 'detail\\":{}']) expect(revText).toContain(want);
 
+      // S5.4 A2b — memory.audit. 순수 읽기라 같은 글자만 보면 된다. 후보 11종이 다 차게 bot2 에 기억을 깔고(끝나면 거둔다),
+      // TS 로 넘기는 꼴(zod 밖 patterns·인자 없음·BMP 밖 글자 + `[[`)을 같이 본다.
+      await db.pool.query(
+        `insert into agent_memory (account_id, slug, value, kind, description, read_count, last_read_at, created_at, updated_at, flagged_at, flag_reason) values
+           ($1, 'core', 'core 본문 [[mem/none]] old-word', 'topic', null, 0, null, now() - interval '200 days', now() - interval '200 days', null, null),
+           ($1, 'mem/deploy-a', '배포 순서 #123 #45 그리고 [[mem/deploy-b]] 절반 넘게 겹치는 본문 낱말 하나 둘 셋', 'topic', null, 0, null, now() - interval '10 days', now() - interval '100 days', null, null),
+           ($1, 'mem/deploy-b', '배포 순서 #123 #45 그리고 절반 넘게 겹치는 본문 낱말 하나 둘 넷', 'procedure', '요약 있음', 3, now() - interval '40 days', now() - interval '50 days', now() - interval '45 days', null, null),
+           ($1, 'mem/big', repeat('긴 본문 ', 900) || 'Old-Word #123', 'topic', '  ', 1, now() - interval '1 day', now() - interval '2 days', now() - interval '1 day', null, null),
+           ($1, 'mem/flag', '걸린 본문', 'topic', '걸린 요약', 0, null, now(), now(), now(), 'instruction')`,
+        [bot2.accountId]);
+      await db.pool.query(
+        `insert into agent_memory (account_id, slug, value, kind, created_at, updated_at)
+           select $1, 'mem/journal/j' || lpad(i::text, 2, '0'), '경위 ' || i, 'journal', now() - make_interval(days => i), now() - make_interval(hours => i)
+           from generate_series(1, 57) i`,
+        [bot2.accountId]);
+      for (const [name, args, answeredByRust] of [
+        ['memory.audit', {}, true],
+        ['memory.audit patterns', { patterns: ['old-word', 'ABC', '없는 낱말'] }, true],
+        ['memory.audit 모르는 키는 버린다', { x: 1 }, true],
+        ['memory.audit patterns 2자 → TS', { patterns: ['ab'] }, false],
+        ['memory.audit patterns 21개 → TS', { patterns: Array.from({ length: 21 }, (_, i) => `p${i}x`) }, false],
+        ['memory.audit patterns null → TS', { patterns: null }, false],
+        ['memory.audit 인자 없음 → TS', undefined, false],
+      ] as const) {
+        const [a, b] = [await mcpCall(tsUrl, bot2.pat, 'memory.audit', args), await mcpCall(rsUrl4, bot2.pat, 'memory.audit', args)];
+        expect({ status: b.status, type: b.type, text: b.text }, name).toEqual({ status: a.status, type: a.type, text: a.text });
+        expect(b.core, `${name} — 누가 답했나`).toBe(answeredByRust ? 'mcp' : null);
+      }
+      // 빈 값끼리 비교해 통과하지 않게.
+      const auditText = (await mcpCall(rsUrl4, bot2.pat, 'memory.audit', { patterns: ['old-word'] })).text;
+      for (const want of ['mem/none', 'mem/deploy-a', 'mem/big', '#123', 'mem/journal/j57', 'old-word']) expect(auditText).toContain(want);
+      // 기억이 여럿인 에이전트(판·보관 있음)도 같은 글자.
+      const [aa, ab] = [await mcpCall(tsUrl, agent.pat, 'memory.audit', {}), await mcpCall(rsUrl4, agent.pat, 'memory.audit', {})];
+      expect({ status: ab.status, text: ab.text }, 'memory.audit agent').toEqual({ status: aa.status, text: aa.text });
+      expect(ab.core).toBe('mcp');
+      // BMP 밖 글자 + `[[` → TS(`{1,255}` 를 UTF-16 으로 세는 차이).
+      await db.pool.query(`insert into agent_memory (account_id, slug, value, kind) values ($1, 'mem/emoji', '😀 [[mem/deploy-a]]', 'topic')`, [bot2.accountId]);
+      const [ea, eb] = [await mcpCall(tsUrl, bot2.pat, 'memory.audit', {}), await mcpCall(rsUrl4, bot2.pat, 'memory.audit', {})];
+      expect({ status: eb.status, text: eb.text }, 'memory.audit BMP 밖 → TS').toEqual({ status: ea.status, text: ea.text });
+      expect(eb.core, 'memory.audit BMP 밖 — 누가 답했나').toBe(null);
+      await db.pool.query(`delete from agent_memory where account_id = $1`, [bot2.accountId]);
+
       // S5.3 C4b B1a — 기억 쓰기 다섯(memory.get·recalled·lease·archive·unarchive). 쓰기가 상태를 바꾸므로 같은 글자가 나와야 하는
       // 짝은 「상태를 바꾸지 않는 답」(거절·충돌·읽기)이거나, TS·Rust 가 각자 같은 모양의 다른 행을 쓰게 한다(slug 만 다름).
       const memRow = async (slug: string, acct = agent.accountId) => (await db.pool.query<{ read_count: number; recall_count: number; archived: boolean; updated_at: Date }>(
