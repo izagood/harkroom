@@ -99,6 +99,7 @@ pub mod link_preview_fetch;
 pub mod link_preview_read;
 pub mod mandate_card_thread;
 pub mod mandate_end;
+pub mod mandate_line_match;
 pub mod mandate_line_revoke;
 pub mod mandate_line_write;
 pub mod mandate_lines_read;

@@ -257,7 +257,7 @@ const USED_APPROVAL_SQL: &str = "select id::text, approved_by::text, ci_override
        from merge_approval where used_lease_id = $1::uuid and scope = $2 and pr_number = $3::bigint and head_sha = $4";
 
 /// JS 참 값(`x.viaChain` 의 `&&`).
-fn js_truthy(v: &Value) -> bool {
+pub(crate) fn js_truthy(v: &Value) -> bool {
     match v {
         Value::Null => false,
         Value::Bool(b) => *b,
