@@ -4579,7 +4579,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             plan: {
               goal: ' 목표 "하나" 😀 ', next: 's1', seq: { s: 99, g: 99 },
               groups: [{ id: 'g1', title: '연결', linkedRootId: child }],
-              steps: [{ id: 's1', title: '하나', state: 'active' }, { id: 's2', title: '둘', dependsOn: ['s1', 'g1'] }],
+              steps: [{ id: 's1', title: '하나', state: 'active' }, { id: 's2', title: '둘', state: 'pending', dependsOn: ['s1', 'g1'] }],
             },
           });
           await set('판 있음 + ifUpdatedAt 없음 → guard_required', { plan: { goal: 'x', groups: [], steps: [] } });
@@ -4655,7 +4655,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect(b.core, `${name} — TS 가 답한다`).toBeNull();
         }
         // 자동 진행이 켜진 판에서 관리자를 바꾸면 Rust 는 되감고 TS 로 넘긴다(TS 가 자동 진행을 끄며 바꾼다).
-        await mcpCall(rsUrl, agent.pat, 'thread.plan', { threadRootId: rootX, ifUpdatedAt: null, plan: { goal: 'auto', groups: [], steps: [{ id: 's1', title: 'a' }] } });
+        await mcpCall(rsUrl, agent.pat, 'thread.plan', { threadRootId: rootX, ifUpdatedAt: null, plan: { goal: 'auto', groups: [], steps: [{ id: 's1', title: 'a', state: 'pending' }] } });
         await db.pool.query(`update thread_plan set auto_until = 's1', auto_source = $1, auto_by = $2, auto_at = now() where root_id = $1`, [rootX, member.accountId]);
         {
           const b = await mcpCall(rsUrl, agent.pat, 'thread.plan.item', { threadRootId: rootX, type: 'plan', managerId: null });
