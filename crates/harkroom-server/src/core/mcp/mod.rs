@@ -19,6 +19,7 @@ pub mod mem_writes;
 pub mod model_options;
 pub mod msg_post;
 pub mod note;
+pub mod plan_input;
 pub mod plan_read;
 pub mod reads2;
 pub mod reads3;
