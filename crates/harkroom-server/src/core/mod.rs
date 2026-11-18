@@ -41,6 +41,7 @@ pub mod automation_approve;
 pub mod automation_create;
 pub mod automation_delete;
 pub mod automation_hooks;
+pub mod automation_ingress_issue;
 pub mod automation_ingress_verify;
 pub mod automation_patch;
 pub mod automation_run_now;
