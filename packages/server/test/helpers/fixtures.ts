@@ -30,6 +30,7 @@ export async function createMember(
     payload: { inviteToken, handle, loginId: handle, displayName: handle, password: 'pw123456' },
   });
   const accountId = reg.json().id as string;
+  if (!accountId) throw new Error(`createMember(${handle}): register ${reg.statusCode} ${reg.body}`);
   const login = await app.inject({ method: 'POST', url: '/auth/login', payload: { loginId: handle, password: 'pw123456' } });
   return { token: login.json().token as string, accountId };
 }

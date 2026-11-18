@@ -10480,7 +10480,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             await db.pool.query(`insert into session(token_hash, account_id, expires_at) values ($1, $2, now() + interval '1 day')`, [hashToken(t), admin.accountId]);
             return t;
           };
-          const req = async (base: string) => fetch(`${base}${fill(path)}`, { method, headers: { authorization: `Bearer ${await tokenFor()}`, origin } });
+          // 리미터 줄(signup·login 등)은 IP 마다 센다 — 훑기가 127.0.0.1 몫을 먹으면 뒤의 createMember 가 429 를 받는다(S5.4 6회차).
+          // 그래서 훑기는 따로 정한 주소로 보낸다(TRUST 가 루프백이라 XFF 를 믿는다).
+          const req = async (base: string) => fetch(`${base}${fill(path)}`, { method, headers: { authorization: `Bearer ${await tokenFor()}`, origin, 'x-forwarded-for': '203.0.113.240' } });
           const [a, b] = [await req(tsUrl), await req(rsUrl)];
           await a.arrayBuffer(); await b.arrayBuffer();
           for (const h of CORS_HEADERS) expect(b.headers.get(h), `${key} ${origin} ${h}`).toBe(a.headers.get(h));
