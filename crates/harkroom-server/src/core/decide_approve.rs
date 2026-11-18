@@ -372,6 +372,12 @@ pub const UPSERT_TOOL_GRANT: &str = "insert into account_grant (account_id, capa
      on conflict (account_id, capability, scope) do update \
        set granted_by = excluded.granted_by, granted_at = now(), expires_at = excluded.expires_at, allow_agent_cause = false";
 
+/// merge 7일 승인의 account_grant upsert — capability 만 다르고 [`UPSERT_TOOL_GRANT`] 와 같다(소유자 승인이라 늘 덮는다).
+pub const UPSERT_MERGE_GRANT: &str = "insert into account_grant (account_id, capability, scope, granted_by, expires_at, allow_agent_cause) \
+     values ($1::uuid, 'repo.merge', $2, $3::uuid, $4::timestamptz, false) \
+     on conflict (account_id, capability, scope) do update \
+       set granted_by = excluded.granted_by, granted_at = now(), expires_at = excluded.expires_at, allow_agent_cause = false";
+
 pub const APPROVE_UPDATE_REQUEST: &str = "update permission_request set status = 'granted', decided_at = $3::timestamptz, \
      decided_by = $2::uuid, grant_expires_at = $4::timestamptz, grant_mode = $5 where id = $1::uuid";
 pub const APPROVE_UPDATE_CARD: &str = super::decide_core::DENY_UPDATE_CARD;
@@ -464,6 +470,12 @@ pub async fn approve_write(
         ("command", Decision::ApproveHour) => (COMMAND_GRANT_TTL, Some("hour"), ANSWER_HOUR),
         ("command", Decision::ApproveOnce) => (COMMAND_GRANT_TTL, Some("once"), ANSWER_ONCE),
         ("tool", Decision::Approve) => (TOOL_GRANT_TTL, None, ANSWER_TOOL),
+        // S5.4 12e — 위임장·거절 기록 없는 merge 7일 승인(rust_takes 가 거른다). 그 밖의 merge 는 TS.
+        ("merge", Decision::Approve)
+            if locked.mandate_id.is_none() && locked.denial_id.is_none() =>
+        {
+            (TOOL_GRANT_TTL, None, ANSWER_TOOL)
+        }
         ("tool", Decision::ApproveMandate) => (TOOL_GRANT_TTL, None, ANSWER_TOOL_MANDATE),
         ("tool", Decision::ApproveNewMandate) => (TOOL_GRANT_TTL, None, ANSWER_TOOL_NEW_MANDATE),
         // [이번 턴만] — grant 없이 줄 하나가 승인의 전부(기한 칸은 비운다, TS 와 같음).
@@ -556,6 +568,16 @@ pub async fn approve_write(
             .fetch_one(&mut *conn)
             .await?;
         command_grant_id = Some(id);
+    } else if locked.kind == "merge" {
+        // TS: capability `repo.merge`, scope 는 저장한 꼴(`repo:owner/name`) 그대로.
+        sqlx::query(UPSERT_MERGE_GRANT)
+            .bind(args.agent_id)
+            .bind(&target)
+            .bind(args.actor_id)
+            .bind(expires.as_deref())
+            .execute(&mut *conn)
+            .await?;
+        tool_scope = Some(target.clone());
     } else if !turn {
         let Some(ch) = channel_id.as_deref() else {
             // 채널 없는 tool 요청은 없다(요청 길이 채널을 요구) — 꼴이 다르면 TS.
@@ -686,7 +708,7 @@ pub async fn approve_write(
     }
     if let Some(scope) = &tool_scope {
         let given = json!({
-            "capability": "tool.allow", "scope": scope, "expiresAt": expires_iso,
+            "capability": if locked.kind == "merge" { "repo.merge" } else { "tool.allow" }, "scope": scope, "expiresAt": expires_iso,
             "allowAgentCause": false, "via": "permission_request", "requestId": args.request_id,
         });
         sqlx::query(GRANT_GIVEN_AUDIT)

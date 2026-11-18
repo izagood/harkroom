@@ -72,6 +72,8 @@ fn who_takes_it() {
         ("deny", "merge", Decision::Deny),
         ("deny", "future_kind", Decision::Deny),
         ("approve", "tool", Decision::Approve),
+        // S5.4 12e — 위임장·거절 기록 없는 merge 7일 승인.
+        ("approve", "merge", Decision::Approve),
         ("approve_once", "command", Decision::ApproveOnce),
         ("approve_hour", "command", Decision::ApproveHour),
         // S5.4 — tool 카드의 approve_once 는 Rust 가 409 not_once(쓰기 없음).
@@ -83,9 +85,8 @@ fn who_takes_it() {
     ] {
         assert_eq!(rust_takes(shape(o, k)), Some(d), "{o}/{k}");
     }
-    // 승인 kind 는 허용 목록 — merge·모르는 kind 는 TS.
+    // 승인 kind 는 허용 목록 — merge(7일 승인 밖)·모르는 kind 는 TS.
     for (o, k) in [
-        ("approve", "merge"),
         ("approve", "command"),
         ("approve", "future_kind"),
         ("approve_once", "merge"),
