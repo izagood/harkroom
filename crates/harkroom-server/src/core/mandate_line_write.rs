@@ -79,6 +79,9 @@ pub enum LineKind {
     Turn,
     /// S5.3 C3 — command `approve_once`·`approve_hour`. cap `command`, 기한 1시간(명령 grant 와 같음), `once` 면 `uses: 1`.
     Command { once: bool },
+    /// S5.4 14d — merge 7일 승인(`approve`·`approve_mandate`) — cap `merge`, scope 는 TS `CAPABILITIES.merge.validateScope`,
+    /// `until` 은 같은 결정의 기한(grant 를 쓰지 않는 `approve_mandate` 도 그 기한, TS 와 같음).
+    MergeStanding,
 }
 
 impl LineKind {
@@ -86,6 +89,7 @@ impl LineKind {
     pub fn cap(self) -> &'static str {
         match self {
             LineKind::Command { .. } => "command",
+            LineKind::MergeStanding => "merge",
             LineKind::Standing | LineKind::Turn => "tool",
         }
     }
@@ -223,6 +227,10 @@ pub async fn add_line_from_request(
                 return Ok(failed(m, cap, "bad_scope", Some(code.to_string())));
             }
         },
+        LineKind::MergeStanding => match super::mandate_lines_read::merge_scope(a.target) {
+            Some(scope) => scope,
+            None => return Ok(failed(m, cap, "bad_scope", Some("bad_repo".to_string()))),
+        },
         LineKind::Standing | LineKind::Turn => match validate_tool_rule(a.target) {
             ToolRuleVerdict::Ok { rule, .. } => rule,
             ToolRuleVerdict::Refused(code) => {
@@ -255,7 +263,7 @@ pub async fn add_line_from_request(
             };
             json!({ "turnCause": card, "until": hour_iso })
         }
-        LineKind::Standing => {
+        LineKind::Standing | LineKind::MergeStanding => {
             let Some(until) = a.until else {
                 return Ok(failed(m, cap, "no_until", None));
             };

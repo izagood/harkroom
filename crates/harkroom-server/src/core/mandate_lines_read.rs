@@ -75,7 +75,7 @@ type GrantRow = (
 );
 
 /// TS `CAPABILITIES.merge.validateScope`.
-fn merge_scope(scope: &str) -> Option<String> {
+pub(crate) fn merge_scope(scope: &str) -> Option<String> {
     let raw = scope.trim().to_lowercase();
     repo_grant_scope(raw.strip_prefix("repo:")?)
 }

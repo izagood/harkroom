@@ -136,10 +136,15 @@ fn who_takes_it() {
         rust_takes(m("approve_hour", "command")),
         Some(Decision::ApproveHour)
     );
+    // 14d — 위임장 있는 merge 7일 승인(`approve` = grant + 줄, `approve_mandate` = 줄만)은 Rust.
+    assert_eq!(rust_takes(m("approve", "merge")), Some(Decision::Approve));
+    assert_eq!(
+        rust_takes(m("approve_mandate", "merge")),
+        Some(Decision::ApproveMandate)
+    );
     for (o, k) in [
-        ("approve_mandate", "merge"),
-        ("approve", "merge"),
         ("approve_once", "merge"),
+        ("approve_new_mandate", "merge"),
         ("deny", "command"),
     ] {
         assert_eq!(rust_takes(m(o, k)), None, "{o}/{k}");
@@ -182,7 +187,7 @@ fn who_takes_it() {
         assert_eq!(rust_takes(s), None, "{s:?}");
     }
     // 머지 거절 카드(denial_id): deny 는 Rust, once 값 없는 approve_once 는 TS(security ②-6).
-    // 13d — 같은 카드의 7일 approve 는 Rust(CI 거절이면 400 `ci_card_once_only`, 위임장이 있으면 TS).
+    // 13d — 같은 카드의 7일 approve 는 Rust(CI 거절이면 400 `ci_card_once_only`). 14d — 위임장이 있어도 Rust.
     let d = |o| Shape {
         has_denial: true,
         ..shape(o, "merge")
@@ -200,7 +205,7 @@ fn who_takes_it() {
             has_mandate: true,
             ..d("approve")
         }),
-        None
+        Some(Decision::Approve)
     );
 }
 
