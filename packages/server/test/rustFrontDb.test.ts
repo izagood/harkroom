@@ -1654,6 +1654,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant insert (action, actor_id, target, detail) on audit_log to ${rw}`,
         // S5.4 MCP 6 — 원인이 확인되지 않은 새 위임(대기 줄 upsert). 위 표 단위 insert·update 와 겹치지만 운영 줄과 글자째 같게 둔다.
         `grant select (id, account_id, capability, scope), insert (account_id, capability, scope, granted_by, expires_at, limits, delegate_depth, write_needs_human_cause, parent_grant_id, suspended_at, suspend_reason), update (granted_by, granted_at, expires_at, limits, delegate_depth, write_needs_human_cause, parent_grant_id, suspended_at, suspend_reason) on account_grant to ${rw}`,
+        // S5.4 — MCP `inbox.poll` 의 `version` 기록(`inbox_poll.rs::RUNNER_VERSION_PRIVILEGES`). 없으면 「mcp inbox.poll version off」.
+        `grant select (account_id, version), insert (account_id, version, seen_at), update (version, seen_at) on agent_runner_version to ${rw}`,
         // S5.4 통합 — 갈래 B·C·D 의 쓰기 줄(각 모듈 `*_PRIVILEGES` 와 글자째 같게). automation 비밀 칸 2개는 UPDATE 만 주고 SELECT 는 주지 않는다.
         `grant update (ingress_enabled_at, ingress_token_hash, ingress_secret_enc, updated_at) on automation to ${rw}`,
         `grant select (id, name, owner_account_id), delete on api_connector to ${rw}`,

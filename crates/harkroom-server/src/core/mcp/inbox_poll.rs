@@ -1,9 +1,13 @@
 //! MCP `inbox.poll` 의 빈 즉답 갈래(TS `mcpPlugin.ts` `inbox.poll`). Rust 는 **기다리지 않는 폴**(`timeoutMs` 없음·0)에
 //! 버전·임대가 없을 때 답한다. 줄이 없으면 — 그때 TS 는 `{entries:[],messages:[]}` 를 내고, 에이전트면
 //! `stopRequestedAt`(키는 늘 있다)을 덧붙인다. 줄이 있으면 `{entries,messages}`(본문 펼치기·시스템 줄 표시)에 에이전트면
-//! `memoryRev` — 위임 스위치(`HARKROOM_DELEGATION_V2`)가 없거나 `delegation_update` 사유를 고쳐 써야 하면 TS. 그 밖은 모두 `None`(→ TS): 긴 폴(이벤트 버스·종료 park), `version` 기록·`lease`
+//! `memoryRev` — 위임 스위치(`HARKROOM_DELEGATION_V2`)가 없거나 `delegation_update` 사유를 고쳐 써야 하면 TS. 그 밖은 모두 `None`(→ TS): 긴 폴(이벤트 버스·종료 park), (쓰기 풀이 없을 때의) `version` 기록·`lease`
 //! 임대(쓰기), 아직 승인 안 된 종료 요청(TS `ackAgentStop` 이 쓴다),
 //! zod 를 못 지나는 인자, DB 오류. 읽기만 한다 — 쓰기 권한(`*_PRIVILEGES`)이 필요 없다.
+//!
+//! `version` 이 온 폴([`answer_versioned`])은 쓰기 풀에 [`RUNNER_VERSION_PRIVILEGES`] 가 있을 때만 Rust 가 답한다 — 답이 정해진 뒤
+//! TS `recordRunnerVersion` 처럼 값이 바뀔 때만 쓰고(프로세스 안 10분 캐시), 위임 v2 에서 `delegation_update` 를 모르는 러너라도
+//! 버전이 `0.4.426` 이상이면(TS `knowsDelegationFollowup`) 사유를 `delegation_followup` 으로 바꿔 싣는다. 그보다 옛 러너의 접기(쓰기)는 TS.
 use super::respond::{minify, text_result};
 use crate::auth::Account;
 use crate::core::inbox_list::{InboxQuery, list_inbox};
@@ -35,6 +39,99 @@ fn messages_sql() -> &'static str {
             crate::iso!("t.\"deletedAt\""),
         )
     })
+}
+
+/// TS `recordRunnerVersion` 의 UPSERT — 값이 바뀔 때만 행을 고친다.
+const RUNNER_VERSION_SQL: &str = "insert into agent_runner_version (account_id, version, seen_at) \
+     values ($1::uuid, $2, now()) \
+     on conflict (account_id) do update set version = excluded.version, seen_at = excluded.seen_at \
+     where agent_runner_version.version <> excluded.version";
+
+/// [`RUNNER_VERSION_SQL`] 이 쓰는 칸(INSERT·UPDATE)과 `on conflict`·`where` 가 읽는 칸(SELECT). 빠지면 `version` 이 온 폴은 TS.
+pub const RUNNER_VERSION_PRIVILEGES: &[(&str, &str)] = &[
+    ("agent_runner_version.account_id", "INSERT"),
+    ("agent_runner_version.version", "INSERT"),
+    ("agent_runner_version.seen_at", "INSERT"),
+    ("agent_runner_version.version", "UPDATE"),
+    ("agent_runner_version.seen_at", "UPDATE"),
+    ("agent_runner_version.account_id", "SELECT"),
+    ("agent_runner_version.version", "SELECT"),
+];
+
+/// TS `RUNNER_VERSION_CACHE_TTL_MS`.
+const RUNNER_VERSION_TTL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+type VersionCache =
+    std::sync::Mutex<std::collections::HashMap<String, (String, std::time::Instant)>>;
+fn version_cache() -> &'static VersionCache {
+    static C: OnceLock<VersionCache> = OnceLock::new();
+    C.get_or_init(Default::default)
+}
+
+/// 이 프로세스가 같은 값을 최근(시한 안)에 기록했으면 참 — TS `recorded` 맵 조회.
+fn version_cached(c: &VersionCache, account: &str, version: &str, now: std::time::Instant) -> bool {
+    let m = c.lock().unwrap_or_else(|p| p.into_inner());
+    m.get(account)
+        .is_some_and(|(v, at)| v == version && now.duration_since(*at) < RUNNER_VERSION_TTL)
+}
+
+/// TS `recordRunnerVersion` — 실패한 쓰기는 기억하지 않는다.
+async fn record_runner_version(
+    write: &PgPool,
+    account: &str,
+    version: &str,
+) -> Result<(), sqlx::Error> {
+    let c = version_cache();
+    if version_cached(c, account, version, std::time::Instant::now()) {
+        return Ok(());
+    }
+    sqlx::query(RUNNER_VERSION_SQL)
+        .bind(account)
+        .bind(version)
+        .execute(write)
+        .await?;
+    c.lock().unwrap_or_else(|p| p.into_inner()).insert(
+        account.to_owned(),
+        (version.to_owned(), std::time::Instant::now()),
+    );
+    Ok(())
+}
+
+/// TS `DELEGATION_FOLLOWUP_RUNNER_MIN`.
+const DELEGATION_FOLLOWUP_RUNNER_MIN: [f64; 3] = [0.0, 4.0, 426.0];
+
+/// TS `knowsDelegationFollowup` — `compareRelease(version.replace(/^v/, ''), '0.4.426') >= 0`. 못 읽으면 거짓.
+fn knows_delegation_followup(version: Option<&str>) -> bool {
+    let Some(v) = version.filter(|v| !v.is_empty()) else {
+        return false;
+    };
+    let v = v.strip_prefix('v').unwrap_or(v);
+    let parts: Vec<&str> = v.split('.').collect();
+    if parts.len() != 3
+        || parts
+            .iter()
+            .any(|p| p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit()))
+    {
+        return false;
+    }
+    for (p, min) in parts.iter().zip(DELEGATION_FOLLOWUP_RUNNER_MIN) {
+        // JS `Number(...)` 와 같은 값(아주 긴 숫자도 f64 로).
+        let n: f64 = p.parse().unwrap_or(f64::NAN);
+        if n != min {
+            return n > min;
+        }
+    }
+    true
+}
+
+/// `{...e, reason: 'delegation_followup'}` — 맨 겉 `reason` 값만 그 자리에서 바꾼다(칸 순서 그대로).
+fn to_followup(entry: &str) -> Option<String> {
+    let (a, b) = super::tools::top_string_span(entry, "reason")?;
+    Some(format!(
+        "{}\"delegation_followup\"{}",
+        &entry[..a],
+        &entry[b..]
+    ))
 }
 
 /// TS `memoryRev`.
@@ -74,7 +171,7 @@ const AGENT_STOP_SQL: &str = "select to_char(stop_requested_at at time zone 'UTC
        stop_acked_at is not null from agent_config where account_id = $1::uuid";
 
 /// zod 를 지나고 Rust 가 답할 꼴이면 참 — `timeoutMs` 는 없거나 0, `version`·`lease` 는 없어야(있으면 TS 가 쓴다).
-fn quick(args: &Value) -> bool {
+fn quick(args: &Value, allow_version: bool) -> bool {
     let o = match args {
         Value::Object(o) => o,
         _ => return false,
@@ -89,7 +186,11 @@ fn quick(args: &Value) -> bool {
             .as_array()
             .is_some_and(|a| a.len() <= 32 && a.iter().all(Value::is_string)),
     };
-    timeout_ok && reasons_ok && !o.contains_key("version") && !o.contains_key("lease")
+    let version_ok = match o.get("version") {
+        None => true,
+        Some(v) => allow_version && v.is_string(),
+    };
+    timeout_ok && reasons_ok && version_ok && !o.contains_key("lease")
 }
 
 /// `{"entries":[],"messages":[]}` 에 에이전트면 종료 요청 키를 붙인다. `stop` = (요청 시각, 승인됨). 승인 안 된 요청이면 `None`.
@@ -108,16 +209,43 @@ fn empty_text(agent: bool, stop: Option<(Option<String>, bool)>) -> Option<Strin
 }
 
 pub async fn answer(pool: &PgPool, me: &Account, args: &Value) -> Option<String> {
-    if !quick(args) {
+    if !quick(args, false) {
         return None;
     }
+    respond(pool, me, args, None).await
+}
+
+/// `version` 이 온 폴 — 답이 정해지면 TS 처럼 버전을 기록하고(빈 글자는 기록하지 않는다, TS `if (version)`) 답한다. 기록이 실패하면 TS.
+pub async fn answer_versioned(
+    read: &PgPool,
+    write: &PgPool,
+    me: &Account,
+    args: &Value,
+) -> Option<String> {
+    if !quick(args, true) {
+        return None;
+    }
+    let version = args.get("version").and_then(Value::as_str);
+    let out = respond(read, me, args, version).await?;
+    if let Some(v) = version.filter(|v| !v.is_empty()) {
+        record_runner_version(write, &me.id, v).await.ok()?;
+    }
+    Some(out)
+}
+
+async fn respond(
+    pool: &PgPool,
+    me: &Account,
+    args: &Value,
+    version: Option<&str>,
+) -> Option<String> {
     // 빈 목록에는 위임 요약이 붙지 않으니 `v2` 값과 무관하다.
     let rows = list_inbox(pool, &me.id, InboxQuery::Unread { since: None }, false)
         .await
         .ok()?;
     let agent = me.kind == "agent";
     if !rows.is_empty() {
-        return batch(pool, me, args, &rows, agent).await;
+        return batch(pool, me, args, &rows, agent, version).await;
     }
     let stop = if agent {
         sqlx::query_as::<_, (Option<String>, bool)>(AGENT_STOP_SQL)
@@ -137,6 +265,7 @@ async fn batch(
     args: &Value,
     rows: &[crate::core::inbox_list::InboxRow],
     agent: bool,
+    version: Option<&str>,
 ) -> Option<String> {
     // TS 는 스위치가 없으면 꺼짐으로 본다 — Rust 는 값이 없으면 모르니 TS 로(`msg_post::delegation_v2`).
     let v2 = crate::core::msg_post::delegation_v2(
@@ -167,7 +296,15 @@ async fn batch(
         entries.push(minify(&r.body));
     }
     if needs_reason_rewrite(v2, args, &reasons) {
-        return None;
+        // 옛 러너(163 미만)는 접기(쓰기) — TS.
+        if !knows_delegation_followup(version) {
+            return None;
+        }
+        for (e, r) in entries.iter_mut().zip(&reasons) {
+            if r.as_deref() == Some("delegation_update") {
+                *e = to_followup(e)?;
+            }
+        }
     }
     let msgs: Vec<String> = sqlx::query_scalar::<_, String>(messages_sql())
         .bind(&ids)
@@ -198,10 +335,77 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn quick_version_only_when_allowed() {
+        assert!(quick(&json!({ "version": "0.4.426" }), true));
+        assert!(quick(&json!({ "version": "" }), true));
+        assert!(!quick(&json!({ "version": 1 }), true));
+        assert!(!quick(&json!({ "version": "1", "timeoutMs": 5 }), true));
+        assert!(!quick(
+            &json!({ "version": "1", "lease": { "runnerId": "r", "holding": [] } }),
+            true
+        ));
+    }
+
+    #[test]
+    fn followup_version_matches_ts() {
+        for (v, want) in [
+            (None, false),
+            (Some(""), false),
+            (Some("0.4.426"), true),
+            (Some("v0.4.426"), true),
+            (Some("0.4.425"), false),
+            (Some("0.5.0"), true),
+            (Some("1.0.0"), true),
+            (Some("0.3.999"), false),
+            (Some("0.4.426-rc1"), false),
+            (Some("0.4"), false),
+            (Some("vv0.4.426"), false),
+            (Some("0.4.0426"), true),
+        ] {
+            assert_eq!(knows_delegation_followup(v), want, "{v:?}");
+        }
+    }
+
+    #[test]
+    fn followup_rewrites_top_reason_only() {
+        assert_eq!(
+            to_followup(
+                r#"{"id":1,"reason":"delegation_update","x":{"reason":"delegation_update"}}"#
+            )
+            .unwrap(),
+            r#"{"id":1,"reason":"delegation_followup","x":{"reason":"delegation_update"}}"#
+        );
+        assert!(to_followup(r#"{"id":1}"#).is_none());
+    }
+
+    #[test]
+    fn version_cache_ttl() {
+        let c: VersionCache = Default::default();
+        let t = std::time::Instant::now();
+        assert!(!version_cached(&c, "a", "1", t));
+        c.lock().unwrap().insert("a".into(), ("1".into(), t));
+        assert!(version_cached(&c, "a", "1", t));
+        assert!(!version_cached(&c, "a", "2", t));
+        assert!(!version_cached(&c, "b", "1", t));
+        assert!(!version_cached(&c, "a", "1", t + RUNNER_VERSION_TTL));
+    }
+
+    #[test]
+    fn runner_version_privileges_cover_sql() {
+        let l = RUNNER_VERSION_SQL.to_lowercase();
+        assert!(l.contains("insert into agent_runner_version"));
+        for (col, _) in RUNNER_VERSION_PRIVILEGES {
+            let c = col.strip_prefix("agent_runner_version.").unwrap();
+            assert!(l.contains(c), "{c}");
+        }
+    }
+
+    #[test]
     fn quick_only_for_no_wait_no_write() {
-        assert!(quick(&json!({})));
+        assert!(quick(&json!({}), false));
         assert!(quick(
-            &json!({ "timeoutMs": 0, "inboxReasons": ["mention"], "claudeLane": 1 })
+            &json!({ "timeoutMs": 0, "inboxReasons": ["mention"], "claudeLane": 1 }),
+            false
         ));
         for bad in [
             json!(null),
@@ -211,7 +415,7 @@ mod tests {
             json!({ "lease": { "runnerId": "r", "holding": [] } }),
             json!({ "inboxReasons": [1] }),
         ] {
-            assert!(!quick(&bad), "{bad}");
+            assert!(!quick(&bad, false), "{bad}");
         }
     }
 

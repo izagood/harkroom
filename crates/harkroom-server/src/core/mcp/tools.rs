@@ -127,7 +127,7 @@ fn mention_re() -> &'static regex::Regex {
 }
 
 /// 맨 겉 객체의 `key` 값이 문자열이면 그 글자 범위(따옴표 포함). 공백 없는 JSON([`minify`] 뒤)만 받는다.
-fn top_string_span(t: &str, key: &str) -> Option<(usize, usize)> {
+pub(super) fn top_string_span(t: &str, key: &str) -> Option<(usize, usize)> {
     let b = t.as_bytes();
     let str_end = |i: usize| -> Option<usize> {
         let mut j = i + 1;
