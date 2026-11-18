@@ -1673,6 +1673,12 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant update (used_at) on password_reset_code to ${rw}`,
         `grant update (password_hash) on account to ${rw}`,
         `grant insert (uploader_id, filename, content_type, size_bytes, storage_key) on attachment to ${rw}`,
+        // S5.4 5회차 r — POST /bootstrap·/claim·/auth/register(`auth_signup.rs::AUTH_SIGNUP_PRIVILEGES`). 셋이 signup 리미터를 같이 쓴다.
+        `grant select (id, kind), insert (handle, login_id, display_name, kind, is_admin, role, password_hash) on account to ${rw}`,
+        `grant select (id), insert (name, topic, kind, repo, visibility, created_by) on channel to ${rw}`,
+        `grant select (handle) on handle_group to ${rw}`,
+        `grant select (token_hash, used_by, revoked_at, expires_at), update (used_by) on invite to ${rw}`,
+        `grant select (token_hash, used_at), update (used_at, used_by) on claim_token to ${rw}`,
         // DELETE /channels/:id(`channel_delete.rs::DELETE_PRIVILEGES`) — 표 단위 DELETE(칸 SELECT 는 위 줄들).
         `grant delete on channel, message, channel_read, channel_pref, channel_doc, scheduled_message, agent_wake to ${rw}`,
         `grant insert (action, actor_id, actor_handle, target, ip, detail) on audit_log to ${rw}`,
