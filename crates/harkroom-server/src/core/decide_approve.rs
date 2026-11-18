@@ -470,13 +470,19 @@ pub async fn approve_write(
             .fetch_one(&mut *conn)
             .await?;
     let turn = decision == Decision::ApproveTurn;
+    // 14d — TS D1: 위임장 있는 merge `approve_mandate` 는 grant 를 쓰지 않는다(줄이 실패하면 결정 전체를 되돌린다).
+    let line_only = locked.kind == "merge"
+        && decision == Decision::ApproveMandate
+        && locked.mandate_id.is_some();
     let (ttl, grant_mode, candidates) = match (locked.kind.as_str(), decision) {
         ("command", Decision::ApproveHour) => (COMMAND_GRANT_TTL, Some("hour"), ANSWER_HOUR),
         ("command", Decision::ApproveOnce) => (COMMAND_GRANT_TTL, Some("once"), ANSWER_ONCE),
         ("tool", Decision::Approve) => (TOOL_GRANT_TTL, None, ANSWER_TOOL),
-        // S5.4 12e — 위임장·거절 기록 없는 merge 7일 승인(rust_takes 가 거른다). 그 밖의 merge 는 TS.
-        ("merge", Decision::Approve) if locked.mandate_id.is_none() => {
-            (TOOL_GRANT_TTL, None, ANSWER_TOOL)
+        // S5.4 12e — merge 7일 승인. 14d — 위임장이 있어도(TS `writesStandingGrant`: `approve` 는 grant + 그 위임장에 merge 줄).
+        ("merge", Decision::Approve) => (TOOL_GRANT_TTL, None, ANSWER_TOOL),
+        // 14d — 위임장 있는 merge `approve_mandate`(D1): grant 없이 그 위임장의 merge 줄 하나가 승인의 전부.
+        ("merge", Decision::ApproveMandate) if locked.mandate_id.is_some() => {
+            (TOOL_GRANT_TTL, None, ANSWER_TOOL_MANDATE)
         }
         // 13d — TS D1: merge 는 위임장 없이 7일 승인으로 넘어가지 않는다(쓰기 없음, 거절 기록 대조보다 먼저).
         ("merge", Decision::ApproveMandate) if locked.mandate_id.is_none() => {
@@ -596,7 +602,7 @@ pub async fn approve_write(
             .fetch_one(&mut *conn)
             .await?;
         command_grant_id = Some(id);
-    } else if locked.kind == "merge" {
+    } else if locked.kind == "merge" && !line_only {
         // TS: capability `repo.merge`, scope 는 저장한 꼴(`repo:owner/name`) 그대로.
         sqlx::query(UPSERT_MERGE_GRANT)
             .bind(args.agent_id)
@@ -645,6 +651,7 @@ pub async fn approve_write(
                             once: mode == "once",
                         },
                         None if turn => LineKind::Turn,
+                        None if locked.kind == "merge" => LineKind::MergeStanding,
                         None => LineKind::Standing,
                     },
                     now: &now,
@@ -652,7 +659,7 @@ pub async fn approve_write(
                 },
             )
             .await?;
-            if turn && !out.ok() {
+            if (turn || line_only) && !out.ok() {
                 return Ok(refused(
                     MANDATE_LINE_FAILED_STATUS,
                     "mandate_line_failed",
@@ -684,8 +691,8 @@ pub async fn approve_write(
         if let Some(id) = line.as_ref().and_then(|l| l.line_id()) {
             patch["lineId"] = json!(id);
         }
-        if let Some(b) = args.bundle_message_id {
-            patch["decidedVia"] = json!({ "kind": "bundle", "bundleMessageId": b });
+        if let Some(v) = super::decide_core::decided_via(args.bundle_message_id, None) {
+            patch["decidedVia"] = v;
         }
         patch["decidedByOwner"] = Value::Bool(true);
         sqlx::query(APPROVE_UPDATE_CARD)
@@ -704,6 +711,7 @@ pub async fn approve_write(
         grant_expires_at: expires_iso.as_deref(),
         grant_mode: grant_mode.zip(command_grant_id.as_deref()),
         bundle_message_id: args.bundle_message_id,
+        mirror_message_id: None,
     });
     sqlx::query(APPROVE_AUDIT)
         .bind(args.actor_id)
@@ -747,7 +755,7 @@ pub async fn approve_write(
             .await?;
     }
     // TS: command 이거나 grant 를 썼을 때만(이번 턴만은 grant 가 없어 이벤트도 없다).
-    if !turn {
+    if !turn && !line_only {
         crate::write::emit_event(
             conn,
             &json!({ "type": "grant.changed", "accountId": args.agent_id, "audience": "all" }),
@@ -869,8 +877,8 @@ async fn merge_once_write(
             "status": "approved_once", "decidedAt": now_iso, "decidedBy": args.actor_id,
             "approvedOnce": { "ghUser": once.gh_user, "relaxChecks": once.relax_checks, "expiresAt": expires_iso },
         });
-        if let Some(b) = args.bundle_message_id {
-            patch["decidedVia"] = json!({ "kind": "bundle", "bundleMessageId": b });
+        if let Some(v) = super::decide_core::decided_via(args.bundle_message_id, None) {
+            patch["decidedVia"] = v;
         }
         patch["decidedByOwner"] = Value::Bool(true);
         sqlx::query(APPROVE_UPDATE_CARD)
@@ -905,6 +913,7 @@ async fn merge_once_write(
         grant_expires_at: None,
         grant_mode: None,
         bundle_message_id: args.bundle_message_id,
+        mirror_message_id: None,
     });
     sqlx::query(APPROVE_AUDIT)
         .bind(args.actor_id)

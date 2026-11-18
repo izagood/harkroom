@@ -573,9 +573,11 @@ pub fn rust_takes(s: Shape<'_>) -> Option<Decision> {
         (Decision::ApproveOnce | Decision::ApproveHour, "command") => !s.has_denial,
         // S5.4 12e — merge 카드의 7일 [승인](위임장 없음)은 Rust(`repo.merge` account_grant). 위임장 있는 merge 는 TS.
         // 13d — 거절 기록이 붙은 카드도 Rust(TS: CI 거절이면 400 `ci_card_once_only`, 아니면 같은 7일 grant). 칸이 없으면 쓰기 전에 TS.
-        (Decision::Approve, "merge") => !s.has_mandate,
+        // 14d — 위임장이 있어도 Rust(grant + 그 위임장에 merge 줄). C1 칸이 없으면 쓰기 전에 TS.
+        (Decision::Approve, "merge") => true,
         // 13d — 위임장 없는 merge 의 `approve_mandate` 는 TS 가 쓰기 없이 409 `mandate_unavailable`(D1) — Rust 가 같은 답을 한다.
-        (Decision::ApproveMandate, "merge") => !s.has_mandate,
+        // 14d — 위임장이 있으면 grant 없이 그 위임장의 merge 줄 하나(줄이 실패하면 409 `mandate_line_failed`, 커밋 없음).
+        (Decision::ApproveMandate, "merge") => true,
         // S5.4 — tool 카드의 [이번 한 번](once 없음·거절 기록 없음)은 TS 가 쓰기 없이 409 `not_once` 로 돌려보낸다 — Rust 가 같은 답을 한다.
         (Decision::ApproveOnce, "tool") => !s.has_denial,
         // S5.4 11d — TS 가 쓰기 없이 409 `bad_decision` 으로 돌려보내는 꼴(위임장 없는 tool [이번 턴만], command 의 [이번 턴만]·
@@ -723,10 +725,25 @@ pub struct AuditDetail<'a> {
     pub grant_mode: Option<(&'a str, &'a str)>,
     /// `via: { kind: 'bundle', bundleMessageId }` 이면 묶음, 없으면 `via: 'button'`(chat·mirror 는 처음부터 TS).
     pub bundle_message_id: Option<&'a str>,
+    /// S5.4 14d — 거울 카드에서 온 결정이면 `via: 'mirror', mirrorMessageId`(TS 와 같은 칸). 묶음과 함께 오지 않는다.
+    /// 아직 입구는 거울을 TS 로 넘긴다(`rust_takes`) — 쓰기 길이 이것을 채우는 것은 다음 조각.
+    pub mirror_message_id: Option<&'a str>,
+}
+
+/// S5.4 14d — 카드 meta 의 `decidedVia`(TS: chat·mirror·bundle 일 때만, button 은 없음).
+pub fn decided_via(
+    bundle_message_id: Option<&str>,
+    mirror_message_id: Option<&str>,
+) -> Option<Value> {
+    match (bundle_message_id, mirror_message_id) {
+        (Some(b), _) => Some(serde_json::json!({ "kind": "bundle", "bundleMessageId": b })),
+        (None, Some(m)) => Some(serde_json::json!({ "kind": "mirror", "mirrorMessageId": m })),
+        (None, None) => None,
+    }
 }
 
 /// detail 에 나올 수 있는 칸 전부(TS 와 같은 이름). 시험이 이 밖의 칸이 없는지·TS 원문에 이 이름들이 있는지 본다.
-pub const AUDIT_DETAIL_KEYS: [&str; 11] = [
+pub const AUDIT_DETAIL_KEYS: [&str; 12] = [
     "requestId",
     "kind",
     "target",
@@ -738,6 +755,7 @@ pub const AUDIT_DETAIL_KEYS: [&str; 11] = [
     "commandGrantId",
     "via",
     "bundleMessageId",
+    "mirrorMessageId",
 ];
 
 pub fn audit_detail(a: &AuditDetail<'_>) -> Value {
@@ -762,6 +780,9 @@ pub fn audit_detail(a: &AuditDetail<'_>) -> Value {
     if let Some(b) = a.bundle_message_id {
         o["via"] = serde_json::json!("bundle");
         o["bundleMessageId"] = serde_json::json!(b);
+    } else if let Some(m) = a.mirror_message_id {
+        o["via"] = serde_json::json!("mirror");
+        o["mirrorMessageId"] = serde_json::json!(m);
     } else {
         o["via"] = serde_json::json!("button");
     }
@@ -919,8 +940,8 @@ pub async fn deny_write(
         let mut patch = serde_json::json!({
             "status": "denied", "decidedAt": now, "decidedBy": args.actor_id,
         });
-        if let Some(b) = args.bundle_message_id {
-            patch["decidedVia"] = serde_json::json!({ "kind": "bundle", "bundleMessageId": b });
+        if let Some(v) = decided_via(args.bundle_message_id, None) {
+            patch["decidedVia"] = v;
         }
         patch["decidedByOwner"] = Value::Bool(as_owner);
         sqlx::query(DENY_UPDATE_CARD)
@@ -939,6 +960,7 @@ pub async fn deny_write(
         grant_expires_at: None,
         grant_mode: None,
         bundle_message_id: args.bundle_message_id,
+        mirror_message_id: None,
     });
     sqlx::query(DENY_AUDIT)
         .bind(args.actor_id)
