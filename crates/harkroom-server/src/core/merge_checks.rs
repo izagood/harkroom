@@ -5,7 +5,8 @@
 //! 그림자 감사(`mandate.shadow`)는 아직 TS 몫이다. 넘기는 쪽은 DB 를 건드리지 않으므로 칸 권한이 필요 없다.
 //!
 //! `POST /agent/merge-results`(TS `reportMerge`)도 같은 꼴로 부분 이식한다 — 403 `forbidden`·400 `bad_request` 만 Rust,
-//! 임대·판정 소모·「머지됨」 줄·CI 거절 기록·감사는 아직 TS 몫이다.
+//! 읽기 풀([`MERGE_RESULTS_PRIVILEGES`])이 있으면 N1 관문(403 `lease_invalid`·400 `bad_repo`·409 `already_reported`/`not_checked`)도
+//! Rust 가 답한다. 받을 보고의 「머지됨」 줄·CI 거절 기록(`denialId`)·감사·후속(감시·카드 닫기)은 아직 TS 몫이다.
 use super::grant_reads::through_operator;
 use super::merge_approval_peek::str_len_ok;
 use super::msg_read::is_uuid;
@@ -150,8 +151,78 @@ fn sha_ok(h: &str) -> bool {
     h.len() == 40 && h.bytes().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f'))
 }
 
+/// `merge-results` 의 N1 관문(읽기만)에 쓰는 권한. 없으면 관문 없이 403/400 만 Rust 가 답한다.
+pub const MERGE_RESULTS_PRIVILEGES: &[(&str, &str)] =
+    &[("secret_turn_lease", "SELECT"), ("audit_log", "SELECT")];
+
+/// TS `readLease` 중 이 라우트가 쓰는 칸(보고는 턴이 끝난 뒤 올 수 있어 `ended` 는 보지 않는다).
+const RESULTS_LEASE_SQL: &str = "select l.id::text, l.agent_id::text, l.operator_id::text, \
+       l.expires_at <= $3::timestamptz \
+     from secret_turn_lease l where l.id = $1::uuid and l.token_hash = $2::text";
+
+/// TS `reportMerge` 의 `trail` select.
+const TRAIL_SQL: &str = "select action from audit_log \
+      where action in ('repo.merge.checked', 'repo.merge.merged', 'repo.merge.queued', 'repo.merge.failed') \
+        and target = $1 and detail->>'leaseId' = $2 and (detail->>'number')::int = $3::bigint and detail->>'headSha' = $4";
+
+pub struct ResultsState {
+    pub up: Upstream,
+    pub read: Option<sqlx::PgPool>,
+}
+
+/// N1 관문 전의 거절(`lease_invalid`·`bad_repo`·`already_reported`·`not_checked`) — 쓰기 전 읽기만이라 TS 와 같은 순서로 답한다.
+/// `None` 이면 받을 보고 — TS 가 줄·거절 기록·감사를 쓴다.
+async fn results_refusal(
+    pool: &sqlx::PgPool,
+    agent: &str,
+    operator: &str,
+    o: &Value,
+) -> sqlx::Result<Option<&'static str>> {
+    let g = |k: &str| {
+        o.get(k)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let number = super::merge_approval_peek::positive_int(o.get("number").unwrap_or(&Value::Null));
+    let now = super::merge_approval_peek::db_now(pool).await?;
+    let lease: Option<(String, String, Option<String>, bool)> = sqlx::query_as(RESULTS_LEASE_SQL)
+        .bind(g("leaseId"))
+        .bind(super::merge_approval_peek::sha256_hex(&g("token")))
+        .bind(&now)
+        .fetch_optional(pool)
+        .await?;
+    let lease_id = match lease {
+        Some((id, a, op, expired)) if a == agent && op.as_deref() == Some(operator) && !expired => {
+            id
+        }
+        _ => return Ok(Some("lease_invalid")),
+    };
+    let Some(scope) = super::merge_approval_peek::repo_scope(&g("repo")) else {
+        return Ok(Some("bad_repo"));
+    };
+    let Some(number) = number else {
+        // i64 를 넘는 수 — TS 는 쿼리 오류. TS 에 맡긴다.
+        return Ok(None);
+    };
+    let trail: Vec<String> = sqlx::query_scalar(TRAIL_SQL)
+        .bind(&scope)
+        .bind(&lease_id)
+        .bind(number)
+        .bind(g("headSha"))
+        .fetch_all(pool)
+        .await?;
+    if trail.iter().any(|a| a != "repo.merge.checked") {
+        return Ok(Some("already_reported"));
+    }
+    if trail.is_empty() {
+        return Ok(Some("not_checked"));
+    }
+    Ok(None)
+}
+
 pub async fn results_route(
-    State(up): State<Arc<Upstream>>,
+    State(st): State<Arc<ResultsState>>,
     RequireAccount(me, auth): RequireAccount,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     req: Request,
@@ -167,7 +238,25 @@ pub async fn results_route(
     if !results_shape_ok(parsed.as_ref()) {
         return json_err(StatusCode::BAD_REQUEST, "bad_request", BAD_RESULT);
     }
-    super::msg_post::to_ts((*up).clone(), peer, parts, bytes).await
+    if let (Some(pool), Some(op), Some(body)) = (
+        st.read.as_ref(),
+        auth.operator.as_ref().map(|o| o.id.as_str()),
+        parsed.as_ref(),
+    ) {
+        match results_refusal(pool, &me.id, op, body).await {
+            Ok(Some(code)) => {
+                let status = match code {
+                    "bad_repo" => StatusCode::BAD_REQUEST,
+                    "lease_invalid" => StatusCode::FORBIDDEN,
+                    _ => StatusCode::CONFLICT,
+                };
+                return json_err(status, code, &format!("merge result not recorded: {code}"));
+            }
+            Ok(None) => {}
+            Err(e) => return crate::directory::internal(e),
+        }
+    }
+    super::msg_post::to_ts(st.up.clone(), peer, parts, bytes).await
 }
 
 pub async fn checks_route(
@@ -192,12 +281,25 @@ pub async fn checks_route(
 
 pub fn routes(
     up: Upstream,
+    results_read: Option<sqlx::PgPool>,
     auth: crate::auth::AuthPools,
     cors: Arc<crate::cors::Cors>,
 ) -> crate::route_table::Routes<()> {
     use crate::route_table::Table;
     let t = Table::<Arc<Upstream>>::new()
         .post("/agent/merge-checks", checks_route)
+        .map(|r| {
+            r.route_layer(axum::middleware::from_fn_with_state(
+                auth.clone(),
+                crate::auth::layer,
+            ))
+            .layer(axum::middleware::from_fn_with_state(
+                cors.clone(),
+                crate::cors::layer,
+            ))
+        })
+        .finish();
+    let rt = Table::<Arc<ResultsState>>::new()
         .post("/agent/merge-results", results_route)
         .map(|r| {
             r.route_layer(axum::middleware::from_fn_with_state(
@@ -210,10 +312,20 @@ pub fn routes(
             ))
         })
         .finish();
+    let mut http = t.http;
+    http.extend(rt.http);
+    let mut sockets = t.sockets;
+    sockets.extend(rt.sockets);
     crate::route_table::Routes {
-        router: t.router.with_state(Arc::new(up)),
-        http: t.http,
-        sockets: t.sockets,
+        router: t
+            .router
+            .with_state(Arc::new(up.clone()))
+            .merge(rt.router.with_state(Arc::new(ResultsState {
+                up,
+                read: results_read,
+            }))),
+        http,
+        sockets,
     }
 }
 
