@@ -6,7 +6,7 @@
 //!   `avcs`·`push`·`mail` 은 TS 프로세스 안 상태(소켓·푸시 worker·SMTP)라 TS `/healthz` 를 1초 안에 물어 옮겨 싣는다.
 //!   TS 가 답하지 않으면 TS 의 기본값(`avcs: { connected: false }`)만 싣고 선택 필드(`push`·`mail`)는 뺀다.
 //! - `/metrics` 는 계정 인증(TS `requireAccount`). DB 로 셀 수 있는 게이지만 같은 이름으로 낸다 — 빠진 것은 PR 본문 참고.
-//! - `/projection/status` 는 옮기지 않는다: `lastPolledAt`·`lastError` 가 TS 투영 워커의 메모리에만 있다(DB 에 없다).
+//! - `/projection/status` 는 여기 없다: Rust 투영 루프가 쓰는 `projection_status` 줄을 `directory::projection_status` 가 읽는다.
 use crate::auth::RequireAccount;
 use crate::routes::AppState;
 use axum::body::Body;

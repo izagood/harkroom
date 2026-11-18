@@ -332,8 +332,68 @@ pub async fn leases(State(pool): State<PgPool>, _: RequireAccount) -> Response {
     }
 }
 
+/// shared `PROJECTION_STALL_MS`.
+const PROJECTION_STALL_MS: i64 = 5 * 60 * 1000;
+
+/// shared `projectionState`.
+pub fn projection_state(r: &crate::loops::projection::Runtime, now_ms: i64) -> &'static str {
+    if !r.configured {
+        return "unconfigured";
+    }
+    match r.last_polled_at {
+        None => "stalled",
+        Some(t) if now_ms - t > PROJECTION_STALL_MS => "stalled",
+        Some(_) if r.last_error.as_deref().is_some_and(|e| !e.is_empty()) => "stalled",
+        Some(_) => "ok",
+    }
+}
+
+/// `GET /projection/status` 가 읽는 칸.
+pub const PROJECTION_STATUS_PRIVILEGES: &[(&str, &str)] = &[("projection_status", "SELECT")];
+
+/// `GET /projection/status` — Rust 투영 루프가 사이클마다 쓰는 `projection_status` 한 줄을 읽는다. 줄이 없으면 TS
+/// `DISABLED_PROJECTION_STATUS`. TS 응답은 워커 상태를 펼친 것이라 `connected` 도 실린다 — 같게 싣는다.
+pub async fn projection_status(State(pool): State<PgPool>, _: RequireAccount) -> Response {
+    let rt = match crate::loops::projection::read_status(&pool).await {
+        Ok(Some((_, r))) => r,
+        Ok(None) => crate::loops::projection::Runtime::default(),
+        Err(e) => return internal(e),
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as i64);
+    let body = serde_json::json!({
+        "configured": rt.configured,
+        "connected": rt.connected,
+        "repo": rt.repo,
+        "lastLogIndex": rt.last_log_index,
+        "lastPolledAt": rt.last_polled_at,
+        "lastAdvancedAt": rt.last_advanced_at,
+        "lastError": rt.last_error,
+        "state": projection_state(&rt, now),
+    });
+    json_ok(body.to_string())
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn projection_state_follows_shared() {
+        use crate::loops::projection::Runtime;
+        let mut r = Runtime::default();
+        assert_eq!(projection_state(&r, 1_000_000), "unconfigured");
+        r.configured = true;
+        assert_eq!(projection_state(&r, 1_000_000), "stalled");
+        r.last_polled_at = Some(1_000_000);
+        assert_eq!(projection_state(&r, 1_000_000 + PROJECTION_STALL_MS), "ok");
+        assert_eq!(
+            projection_state(&r, 1_000_001 + PROJECTION_STALL_MS),
+            "stalled"
+        );
+        r.last_error = Some("x".into());
+        assert_eq!(projection_state(&r, 1_000_000), "stalled");
+    }
+
     use super::*;
 
     fn q(raw: &str) -> Result<AuditQuery, &'static str> {
