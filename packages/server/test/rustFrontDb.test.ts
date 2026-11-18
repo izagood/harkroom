@@ -1615,6 +1615,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // S5.4 AC4 — keys PUT·agent/activity(`core/account_keys_activity.rs::KEYS_ACTIVITY_PRIVILEGES`). agent_config insert 는 위 AC3 줄. 없으면 「keys/activity core off」 — TS 에 남는다.
         `grant insert (key_id, account_id, public_key_pem), update (public_key_pem) on account_key to ${rw}`,
         `grant update (last_turn_at, updated_at) on agent_config to ${rw}`,
+        // S5.4 — GET /agent/config(`core/agent_config_read.rs::AGENT_CONFIG_PRIVILEGES`). 없으면 「agent config core off」 — TS 에 남는다.
+        `grant update (stop_acked_at) on agent_config to ${rw}`,
         // S5.4 AC4 — 초대 만들기(메일 없는 것)·취소(`core/invites_write.rs::INVITES_WRITE_PRIVILEGES`). 없으면 「invites write core off」 — TS 에 남는다.
         `grant insert (token_hash, created_by, expires_at), select (id, expires_at, used_by, revoked_at), update (revoked_at, revoked_by) on invite to ${rw}`,
         // S5.4 MS1 — 저장한 글(`core/saved.rs::SAVED_PRIVILEGES`). 없으면 「saved messages core off」 — 다섯 줄 모두 TS 에 남는다.

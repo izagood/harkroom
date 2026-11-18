@@ -634,6 +634,27 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 — GET /agent/config. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 권한이 다 있을 때만.
+    let agent_config_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::agent_config_read as k;
+            match write::missing_in(w, k::AGENT_CONFIG_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: agent config core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: agent config core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 AC4 — keys PUT·agent/activity. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 그 칸 권한이 다 있을 때만.
     let keys_activity_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -782,7 +803,7 @@ async fn main() {
         }
         _ => false,
     };
-    // S5.4 RD1 — `GET /invites`·`GET /connectors`. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 읽기 풀에 그 SELECT 가 다 있을 때만. 리스·에이전트 목록·`/agent/config` 는 언제나 TS.
+    // S5.4 RD1 — `GET /invites`·`GET /connectors`. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 읽기 풀에 그 SELECT 가 다 있을 때만. 리스·에이전트 목록은 언제나 TS(`/agent/config` 는 `agent_config_read.rs`).
     let misc_reads_on = match &core_mode {
         harkroom_server::core::CoreMode::Rust => {
             use harkroom_server::core::misc_reads as m;
@@ -2138,6 +2159,20 @@ async fn main() {
             core_routes.router = core_routes.router.merge(iw.router);
             core_routes.http.extend(iw.http);
             core_routes.sockets.extend(iw.sockets);
+        }
+        // S5.4 — GET /agent/config. 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = agent_config_write {
+            let ac = harkroom_server::core::agent_config_read::routes(
+                harkroom_server::core::agent_config_read::AgentConfigState {
+                    read: state.pool.clone(),
+                    write,
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(ac.router);
+            core_routes.http.extend(ac.http);
+            core_routes.sockets.extend(ac.sockets);
         }
         // S5.4 AC4 — keys PUT·agent/activity 2줄. 권한이 다 있을 때만 — 아니면 TS 에 남는다.
         if let Some(write) = keys_activity_write {

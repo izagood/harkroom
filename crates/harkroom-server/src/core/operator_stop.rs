@@ -103,7 +103,7 @@ macro_rules! db {
 }
 
 /// (AgentView json, 그 행의 `stopRequestedAt`). 없거나 지운 에이전트·사람 계정이면 None.
-async fn agent_view(
+pub(super) async fn agent_view(
     pool: &sqlx::PgPool,
     id: &str,
 ) -> Result<Option<(String, Option<String>)>, sqlx::Error> {
