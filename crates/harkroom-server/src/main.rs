@@ -4415,28 +4415,24 @@ async fn main() {
     .expect("serve");
 }
 
-/// `DATABASE_WRITE_URL` 이 있으면 쓰기 풀(2)을 연다. 연결이 안 되거나 [`write::REQUIRED_PRIVILEGES`] 중 빠진 것이 있으면
-/// 쓰는 줄을 켜지 않는다(`None`) — 반쯤 되는 쓰기보다 TS 로 넘기는 편이 안전하다. 읽는 줄은 그대로 뜬다.
-/// 쓰기 풀에 Rust 가 맡을 길의 권한(GRANT)이 빠졌다 — 그 길을 TS 로 넘기지 않고 기동을 거절한다(배포가 GRANT 를 덜 깐 것을
-/// 조용히 TS 로 덮지 않는다). 옮기는 중에 일부러 TS 로 남기려면 `HARKROOM_ALLOW_MISSING_GRANTS=1` — 그때만 예전처럼 넘긴다.
+/// 쓰기 풀에 Rust 가 맡을 길의 권한(GRANT)이 빠졌다. 기본은 예전대로 그 길을 TS 로 넘긴다(TS 운영에 영향 없음).
+/// `HARKROOM_REQUIRE_GRANTS=1` 이면 넘기지 않고 기동을 거절한다(exit 1) — 배포가 GRANT 를 덜 깐 것을 조용히 TS 로 덮지 않으려면 켠다.
 fn refuse_missing_grants(missing: &[String]) {
-    if allow_missing_grants(
-        std::env::var("HARKROOM_ALLOW_MISSING_GRANTS")
-            .ok()
-            .as_deref(),
-    ) {
+    if !require_grants(std::env::var("HARKROOM_REQUIRE_GRANTS").ok().as_deref()) {
         return;
     }
     eprintln!(
-        "front: refusing to start — missing privileges {missing:?} (set HARKROOM_ALLOW_MISSING_GRANTS=1 to forward to TS instead)"
+        "front: refusing to start — missing privileges {missing:?} (HARKROOM_REQUIRE_GRANTS=1; unset it to forward to TS instead)"
     );
     std::process::exit(1);
 }
 
-fn allow_missing_grants(v: Option<&str>) -> bool {
+fn require_grants(v: Option<&str>) -> bool {
     matches!(v, Some("1" | "true"))
 }
 
+/// `DATABASE_WRITE_URL` 이 있으면 쓰기 풀(2)을 연다. 연결이 안 되거나 [`write::REQUIRED_PRIVILEGES`] 중 빠진 것이 있으면
+/// 쓰는 줄을 켜지 않는다(`None`) — 반쯤 되는 쓰기보다 TS 로 넘기는 편이 안전하다. 읽는 줄은 그대로 뜬다.
 async fn open_write_pool() -> Option<sqlx::PgPool> {
     let url = std::env::var("DATABASE_WRITE_URL")
         .ok()
@@ -4797,5 +4793,17 @@ mod loop_pool_tests {
             assert_eq!(o.get_idle_timeout(), Some(LOOP_POOL_IDLE));
         }
         assert!(LOOP_POOL_IDLE <= std::time::Duration::from_secs(60));
+    }
+}
+
+#[cfg(test)]
+mod grant_tests {
+    #[test]
+    fn require_grants_is_opt_in() {
+        assert!(!super::require_grants(None));
+        assert!(!super::require_grants(Some("0")));
+        assert!(!super::require_grants(Some("")));
+        assert!(super::require_grants(Some("1")));
+        assert!(super::require_grants(Some("true")));
     }
 }
