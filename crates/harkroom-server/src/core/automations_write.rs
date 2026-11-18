@@ -4,7 +4,7 @@
 //!   내 것이 아니거나 지운 것은 404 → 204.
 //! - 수신 비밀(`ingress_token_hash`·`ingress_secret_enc`)은 **null 로 지우기만** 하고 읽지 않는다(SELECT 권한도 받지 않는다).
 //! - 권한은 [`AUTOMATIONS_WRITE_PRIVILEGES`] — 쓰기 풀에 하나라도 없으면 `main.rs` 가 붙이지 않아 TS 에 남는다.
-//! - 지우기(`DELETE /automations/:id`)는 TS 에 남는다 — 위임장 끝내기·카드 `message.updated` 가 따라온다(`automations_read.rs`).
+//! - 지우기(`DELETE /automations/:id`)는 [`super::automation_delete`] 가 맡는다(위임장 끝내기·카드 갱신은 [`super::perm_card`]).
 use crate::auth::RequireAccount;
 use crate::directory::{internal, json_err};
 use axum::extract::{Path, State};

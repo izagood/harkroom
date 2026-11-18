@@ -60,6 +60,7 @@ pub mod inbox_threads;
 pub mod invites_write;
 pub mod invoke_gate;
 pub mod mandate_card_thread;
+pub mod mandate_end;
 pub mod mandate_line_write;
 pub mod mandate_lines_read;
 pub mod mandate_stamp;
