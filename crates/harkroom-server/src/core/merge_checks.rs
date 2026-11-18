@@ -6,9 +6,9 @@
 //!
 //! `POST /agent/merge-results`(TS `reportMerge`)도 같은 꼴로 부분 이식한다 — 403 `forbidden`·400 `bad_request` 만 Rust,
 //! 읽기 풀([`MERGE_RESULTS_PRIVILEGES`])이 있으면 N1 관문(403 `lease_invalid`·400 `bad_repo`·409 `already_reported`/`not_checked`)도
-//! Rust 가 답한다. 글 경로와 [`MERGE_RESULTS_WRITE_PRIVILEGES`] 까지 있으면 받을 `failed` 보고(CI 거절 아님)와 `merged` 보고
+//! Rust 가 답한다. 글 경로와 [`MERGE_RESULTS_WRITE_PRIVILEGES`] 까지 있으면 받을 `failed` 보고(CI 거절이면 `recordCiDenial`·`denialId` 까지)와 `merged` 보고
 //! (무시한 체크 0개·닫을 머지 카드 없음·계정을 비운 승인의 고른 gh 이름 없음)도 Rust 가 적는다 — 시스템 줄·감사·201 `{ messageId }`.
-//! 「큐」 줄(감시)·CI 거절 기록(`denialId`)·무시한 체크·카드 닫기·고른 gh 이름 적기가 필요한 보고는 쓰기 전에 TS 로 넘긴다.
+//! `queued` 보고도 위임 v2 스위치가 꺼졌다고 확실하면(감시 없음) Rust 가 적는다. 스위치가 켜졌거나 모르는 「큐」 줄(감시)·무시한 체크·카드 닫기·고른 gh 이름 적기가 필요한 보고는 쓰기 전에 TS 로 넘긴다.
 use super::grant_reads::through_operator;
 use super::merge_approval_peek::str_len_ok;
 use super::msg_read::is_uuid;
@@ -193,6 +193,26 @@ pub const MERGE_RESULTS_WRITE_PRIVILEGES: &[(&str, &str)] = &[
     ("merge_denial.pr_number", "SELECT"),
     ("merge_denial.used_at", "SELECT"),
     ("merge_denial.obsoleted_at", "SELECT"),
+    ("merge_denial.obsoleted_at", "UPDATE"),
+    ("merge_denial.agent_id", "SELECT"),
+    ("merge_denial.channel_id", "SELECT"),
+    ("merge_denial.thread_root_id", "SELECT"),
+    ("merge_denial.head_sha", "SELECT"),
+    ("merge_denial.expires_at", "SELECT"),
+    ("merge_denial.reason", "SELECT"),
+    ("merge_denial.created_at", "SELECT"),
+    ("merge_denial.lease_id", "UPDATE"),
+    ("merge_denial.failed_checks", "UPDATE"),
+    ("merge_denial.agent_id", "INSERT"),
+    ("merge_denial.scope", "INSERT"),
+    ("merge_denial.pr_number", "INSERT"),
+    ("merge_denial.head_sha", "INSERT"),
+    ("merge_denial.channel_id", "INSERT"),
+    ("merge_denial.thread_root_id", "INSERT"),
+    ("merge_denial.lease_id", "INSERT"),
+    ("merge_denial.expires_at", "INSERT"),
+    ("merge_denial.reason", "INSERT"),
+    ("merge_denial.failed_checks", "INSERT"),
     ("permission_request.kind", "SELECT"),
     ("permission_request.status", "SELECT"),
     ("permission_request.target", "SELECT"),
@@ -244,13 +264,13 @@ pub fn is_ci_refusal(c: Option<&Value>) -> bool {
             && c.get("mergeState").and_then(Value::as_str) == Some("UNSTABLE"))
 }
 
-/// Rust 가 적을 수 있는 보고인가 — `failed` 이고 CI 거절 기록(`recordCiDenial`)이 필요 없다. 나머지(머지됨·큐·CI 거절)는 감시·카드
+/// Rust 가 적을 수 있는 보고인가 — `failed`(CI 거절 포함)·무시한 체크 없는 `merged`·`queued`. 나머지는 감시·카드
 /// 닫기·거절 기록이 붙어 TS 몫이다.
 pub fn rust_reportable(o: &Value) -> bool {
     match o.get("result").and_then(Value::as_str) {
-        Some("failed") => !is_ci_refusal(o.get("ciRefusal")),
+        Some("failed") => true,
         // 무시한 체크가 있으면 TS `sanitizeCheckNames`(\p{Cf} 거르기)·꼬리 문구가 필요하다 — TS 몫.
-        Some("merged") => o
+        Some("merged" | "queued") => o
             .get("ignoredChecks")
             .and_then(Value::as_array)
             .is_none_or(|a| a.is_empty()),
@@ -324,6 +344,60 @@ pub fn merged_line(
     (body, meta)
 }
 
+/// TS `queued` 줄(무시한 체크 0개) — `merged_line` 의 meta 를 고쳐 쓴다.
+#[allow(clippy::too_many_arguments)]
+pub fn queued_line(
+    repo: &str,
+    number: i64,
+    head_sha: &str,
+    merge_sha: Option<&str>,
+    error: Option<&str>,
+    granter: Option<(&str, &str)>,
+    granter_id: Option<&str>,
+    via_approval: bool,
+    ci_override: bool,
+    no_pr_checks: bool,
+    chain_root_id: Option<&str>,
+) -> (String, Map<String, Value>) {
+    let (_, mut meta) = merged_line(
+        repo,
+        number,
+        head_sha,
+        merge_sha,
+        error,
+        granter,
+        granter_id,
+        via_approval,
+        ci_override,
+        no_pr_checks,
+        chain_root_id,
+    );
+    let head: String = head_sha.chars().take(9).collect();
+    let mut body = format!("📥 {repo}#{number} 머지 큐에 넣음 · head {head}");
+    if let Some((_, h)) = granter {
+        body.push_str(&format!(" · 권한: {h}"));
+    }
+    if ci_override {
+        body.push_str(" · CI 실패 무시 승인");
+    }
+    body.push_str(" (래퍼 보고)");
+    if let Some(Value::Object(m)) = meta.get_mut("merge") {
+        m.insert("result".into(), json!("queued"));
+    }
+    meta.remove("i18n");
+    if !ci_override {
+        let clip = |s: &str| super::api_results::js_slice(s, 200);
+        let i18n = match granter {
+            Some((id, _)) => json!({ "key": "system.merge.queuedGranted", "args": {
+                "repo": clip(repo), "number": number, "head": head, "granterId": clip(id) } }),
+            None => json!({ "key": "system.merge.queued", "args": {
+                "repo": clip(repo), "number": number, "head": head } }),
+        };
+        meta.insert("i18n".into(), i18n);
+    }
+    (body, meta)
+}
+
 /// TS `failed` 줄 — 본문과 `meta`(i18n 은 CI 무시 승인 꼬리가 없을 때만).
 #[allow(clippy::too_many_arguments)]
 pub fn failed_line(
@@ -369,10 +443,124 @@ pub fn failed_line(
     (body, meta)
 }
 
+/// 위임 v2 스위치가 꺼졌다고 확실한가(값이 없으면 모른다 → TS) — 그러면 `queued` 보고는 감시 없이 줄·감사뿐이다.
+fn queued_without_watch() -> bool {
+    super::msg_post::delegation_v2(std::env::var("HARKROOM_DELEGATION_V2").ok().as_deref())
+        == Some(false)
+}
+
 enum Report {
     Refused(&'static str),
     ToTs,
-    Posted(String),
+    Posted(String, Option<String>),
+}
+
+/// TS `sanitizeCheckNames` — 제어·서식 문자를 빼고 다듬어 80자(UTF-16)로 자르고, 겹침 없이 20개까지.
+pub fn sanitize_check_names(names: Option<&Value>) -> Vec<String> {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| regex::Regex::new(r"[\p{Cc}\p{Cf}\x{2028}\x{2029}]").unwrap());
+    let mut out: Vec<String> = Vec::new();
+    let Some(arr) = names.and_then(Value::as_array) else {
+        return out;
+    };
+    for n in arr {
+        let Some(n) = n.as_str() else { continue };
+        let clean = re.replace_all(n, "");
+        let clean = super::api_results::js_slice(clean.trim(), 80)
+            .trim()
+            .to_owned();
+        if !clean.is_empty() && !out.contains(&clean) {
+            out.push(clean);
+        }
+        if out.len() >= 20 {
+            break;
+        }
+    }
+    out
+}
+
+/// TS `recordCiDenial` 의 다시 쓰기(같은 head 의 안 쓴 CI 거절 기록).
+const CI_REUSE_SQL: &str = "update merge_denial set lease_id = $7::uuid, failed_checks = $9 \
+      where id = (select id from merge_denial \
+                   where agent_id = $1::uuid and scope = $2 and channel_id = $3::uuid and thread_root_id = $4::uuid and pr_number = $5::bigint and head_sha = $6 \
+                     and used_at is null and obsoleted_at is null and expires_at > $8::timestamptz and reason = 'ci_not_green' \
+                   order by created_at desc limit 1) \
+      returning id::text";
+
+/// TS `obsoleteOtherHeads`(ci = true).
+const CI_OBSOLETE_SQL: &str = "update merge_denial set obsoleted_at = $7::timestamptz \
+      where agent_id = $1::uuid and scope = $2 and channel_id = $3::uuid and thread_root_id = $4::uuid and pr_number = $5::bigint and head_sha <> $6 \
+        and used_at is null and obsoleted_at is null \
+        and (reason = 'ci_not_green') = true";
+
+const CI_RECENT_SQL: &str = "select count(*)::int from merge_denial where agent_id = $1::uuid \
+      and created_at > $2::timestamptz - interval '24 hours'";
+
+const CI_INSERT_SQL: &str = "insert into merge_denial (agent_id, scope, pr_number, head_sha, channel_id, thread_root_id, lease_id, expires_at, reason, failed_checks) \
+     values ($1::uuid, $2, $3::bigint, $4, $5::uuid, $6::uuid, $7::uuid, $8::timestamptz + interval '24 hours', 'ci_not_green', $9) returning id::text";
+
+/// TS `MERGE_DENIAL_DAILY_CAP`.
+const MERGE_DENIAL_DAILY_CAP: i32 = 20;
+
+#[allow(clippy::too_many_arguments)]
+async fn record_ci_denial(
+    w: &sqlx::PgPool,
+    agent: &str,
+    scope: &str,
+    channel: &str,
+    thread_root: &str,
+    lease_id: &str,
+    number: i64,
+    head_sha: &str,
+    checks: &[String],
+    now: &str,
+) -> sqlx::Result<Option<String>> {
+    let reused: Option<String> = sqlx::query_scalar(CI_REUSE_SQL)
+        .bind(agent)
+        .bind(scope)
+        .bind(channel)
+        .bind(thread_root)
+        .bind(number)
+        .bind(head_sha)
+        .bind(lease_id)
+        .bind(now)
+        .bind(checks)
+        .fetch_optional(w)
+        .await?;
+    if reused.is_some() {
+        return Ok(reused);
+    }
+    sqlx::query(CI_OBSOLETE_SQL)
+        .bind(agent)
+        .bind(scope)
+        .bind(channel)
+        .bind(thread_root)
+        .bind(number)
+        .bind(head_sha)
+        .bind(now)
+        .execute(w)
+        .await?;
+    let recent: i32 = sqlx::query_scalar(CI_RECENT_SQL)
+        .bind(agent)
+        .bind(now)
+        .fetch_one(w)
+        .await?;
+    if recent >= MERGE_DENIAL_DAILY_CAP {
+        return Ok(None);
+    }
+    let id: String = sqlx::query_scalar(CI_INSERT_SQL)
+        .bind(agent)
+        .bind(scope)
+        .bind(number)
+        .bind(head_sha)
+        .bind(channel)
+        .bind(thread_root)
+        .bind(lease_id)
+        .bind(now)
+        .bind(checks)
+        .fetch_one(w)
+        .await?;
+    Ok(Some(id))
 }
 
 /// TS `reportMerge` 의 `failed`(CI 거절 아님) 갈래 — 관문부터 줄·감사까지.
@@ -386,6 +574,10 @@ async fn report_failed(
     use super::msg_post::{Origin, Outcome, PostBody, channel_is_dm, post_in_tx};
     let w = &st.write;
     let g = |k: &str| o.get(k).and_then(Value::as_str).map(str::to_owned);
+    // `queued` 는 TS `autoWatchOnQueued` 가 위임 v2 스위치가 켜졌을 때 감시를 건다 — 꺼졌다고 **확실할** 때만 Rust 가 적는다.
+    if g("result").as_deref() == Some("queued") && !queued_without_watch() {
+        return Ok(Report::ToTs);
+    }
     let Some(number) = pk::positive_int(o.get("number").unwrap_or(&Value::Null)) else {
         return Ok(Report::ToTs);
     };
@@ -401,7 +593,7 @@ async fn report_failed(
         .bind(&now)
         .fetch_optional(w)
         .await?;
-    let (lease_id, channel, thread_root) = match lease {
+    let (lease_id, channel, thread_root): (String, String, String) = match lease {
         Some((id, a, op, c, t, expired))
             if a == agent && op.as_deref() == Some(operator) && !expired =>
         {
@@ -460,16 +652,20 @@ async fn report_failed(
     let ci_override = used.as_ref().is_some_and(|u| u.2);
     let granter_id = approved_by.clone().or(grant_by.flatten());
     let merge_sha = g("mergeSha");
-    let merged = g("result").as_deref() == Some("merged");
-    let no_pr_checks = merged && o.get("noPrChecks") == Some(&Value::Bool(true));
-    let (body, meta) = if merged {
-        let open: bool = sqlx::query_scalar(OPEN_CARDS_SQL)
-            .bind(&scope)
-            .bind(number)
-            .fetch_one(w)
-            .await?;
-        if open {
-            return Ok(Report::ToTs);
+    let result = g("result");
+    let merged = result.as_deref() == Some("merged");
+    let queued = result.as_deref() == Some("queued");
+    let no_pr_checks = (merged || queued) && o.get("noPrChecks") == Some(&Value::Bool(true));
+    let (body, meta) = if merged || queued {
+        if merged {
+            let open: bool = sqlx::query_scalar(OPEN_CARDS_SQL)
+                .bind(&scope)
+                .bind(number)
+                .fetch_one(w)
+                .await?;
+            if open {
+                return Ok(Report::ToTs);
+            }
         }
         // 계정을 비운 승인 + 고른 gh 이름이면 `noteOnceGhUserUsed`(카드·거울 고치기)가 필요하다 — TS 몫.
         let gh_used = g("ghUserUsed").filter(|u| gh_user_ok(u));
@@ -492,7 +688,8 @@ async fn report_failed(
             None => None,
         };
         let granter = granter_id.as_deref().zip(handle.as_deref());
-        merged_line(
+        let line = if merged { merged_line } else { queued_line };
+        line(
             &repo,
             number,
             &head_sha,
@@ -523,7 +720,7 @@ async fn report_failed(
     let input = PostBody {
         body,
         attachment_ids: Vec::new(),
-        thread_root: Some(thread_root),
+        thread_root: Some(thread_root.clone()),
         also_in_channel: false,
     };
     let origin = Origin {
@@ -558,11 +755,38 @@ async fn report_failed(
     if no_pr_checks {
         detail["noPrChecks"] = json!(true);
     }
+    let ci_checks = (!merged && !queued && is_ci_refusal(o.get("ciRefusal")))
+        .then(|| sanitize_check_names(o.get("ciRefusal").and_then(|c| c.get("checks"))));
+    let mut denial_id = None;
+    if let Some(checks) = &ci_checks {
+        denial_id = record_ci_denial(
+            w,
+            agent,
+            &scope,
+            &channel,
+            &thread_root,
+            &lease_id,
+            number,
+            &head_sha,
+            checks,
+            &now,
+        )
+        .await?;
+        let c = &o["ciRefusal"];
+        detail["ciRefusal"] = json!({
+            "code": c.get("code").cloned().unwrap_or(Value::Null),
+            "mergeState": c.get("mergeState").cloned().unwrap_or(Value::Null),
+            "checks": checks,
+        });
+        detail["denialId"] = json!(denial_id);
+    }
     crate::write::record_audit(
         w,
         crate::write::AuditEntry {
             action: if merged {
                 "repo.merge.merged"
+            } else if queued {
+                "repo.merge.queued"
             } else {
                 "repo.merge.failed"
             },
@@ -574,7 +798,7 @@ async fn report_failed(
         },
     )
     .await;
-    Ok(Report::Posted(message_id))
+    Ok(Report::Posted(message_id, denial_id))
 }
 
 /// N1 관문 전의 거절(`lease_invalid`·`bad_repo`·`already_reported`·`not_checked`) — 쓰기 전 읽기만이라 TS 와 같은 순서로 답한다.
@@ -660,15 +884,19 @@ pub async fn results_route(
                 };
                 return json_err(status, code, &format!("merge result not recorded: {code}"));
             }
-            Ok(Report::Posted(id)) => {
+            Ok(Report::Posted(id, denial)) => {
                 use axum::response::IntoResponse;
+                let mut out = json!({ "messageId": id });
+                if let Some(d) = denial {
+                    out["denialId"] = json!(d);
+                }
                 return (
                     StatusCode::CREATED,
                     [(
                         axum::http::header::CONTENT_TYPE,
                         "application/json; charset=utf-8",
                     )],
-                    json!({ "messageId": id }).to_string(),
+                    out.to_string(),
                 )
                     .into_response();
             }
@@ -864,14 +1092,94 @@ mod tests {
         assert!(rust_reportable(
             &json!({ "result": "failed", "ciRefusal": { "code": "not_mergeable", "mergeState": "DIRTY", "checks": [] } })
         ));
-        assert!(!rust_reportable(
+        assert!(rust_reportable(
             &json!({ "result": "failed", "ciRefusal": { "code": "ci_not_green", "checks": [] } })
         ));
-        assert!(!rust_reportable(
-            &json!({ "result": "failed", "ciRefusal": { "code": "not_mergeable", "mergeState": "UNSTABLE", "checks": [] } })
-        ));
+        assert!(is_ci_refusal(Some(
+            &json!({ "code": "not_mergeable", "mergeState": "UNSTABLE", "checks": [] })
+        )));
+        assert!(!is_ci_refusal(Some(
+            &json!({ "code": "not_mergeable", "mergeState": "DIRTY" })
+        )));
         assert!(rust_reportable(&json!({ "result": "merged" })));
-        assert!(!rust_reportable(&json!({ "result": "queued" })));
+        assert!(rust_reportable(&json!({ "result": "queued" })));
+        assert!(!rust_reportable(
+            &json!({ "result": "queued", "ignoredChecks": ["x"] })
+        ));
+    }
+
+    #[test]
+    fn sanitize_check_names_like_ts() {
+        assert!(sanitize_check_names(None).is_empty());
+        assert!(sanitize_check_names(Some(&json!("x"))).is_empty());
+        let long = "a".repeat(100);
+        let got = sanitize_check_names(Some(&json!([
+            " ci\u{200b} ",
+            3,
+            "ci",
+            "",
+            "\u{0007}",
+            "l\u{2028}int",
+            long
+        ])));
+        assert_eq!(
+            got,
+            vec!["ci".to_owned(), "lint".to_owned(), "a".repeat(80)]
+        );
+        let many: Vec<String> = (0..30).map(|i| format!("c{i}")).collect();
+        assert_eq!(sanitize_check_names(Some(&json!(many))).len(), 20);
+        let src = include_str!("../../../../packages/server/src/services/mergeDenials.ts");
+        assert!(src.contains("n.replace(/[\\p{Cc}\\p{Cf}\\u2028\\u2029]/gu, '').trim().slice(0, CHECK_NAME_MAX).trim()"));
+        assert!(src.contains("export const CHECK_NAME_MAX = 80;"));
+        assert!(src.contains("export const CHECK_NAMES_MAX = 20;"));
+        let g = include_str!("../../../../packages/server/src/services/mergeGrants.ts");
+        assert!(g.contains("export const MERGE_DENIAL_DAILY_CAP = 20;"));
+        assert!(g.contains("export const MERGE_DENIAL_TTL_MS = 24 * 3_600_000;"));
+    }
+
+    #[test]
+    fn queued_line_like_ts() {
+        let h = "b".repeat(40);
+        let (body, meta) = queued_line(
+            "o/r",
+            7,
+            &h,
+            None,
+            None,
+            Some(("g1", "kim")),
+            Some("g1"),
+            false,
+            false,
+            true,
+            None,
+        );
+        assert_eq!(
+            body,
+            "📥 o/r#7 머지 큐에 넣음 · head bbbbbbbbb · 권한: kim (래퍼 보고)"
+        );
+        assert_eq!(meta["merge"]["result"], json!("queued"));
+        assert_eq!(meta["merge"]["noPrChecks"], json!(true));
+        assert_eq!(meta["merge"]["mergeSha"], Value::Null);
+        assert_eq!(
+            meta["i18n"],
+            json!({ "key": "system.merge.queuedGranted", "args": { "repo": "o/r", "number": 7, "head": "bbbbbbbbb", "granterId": "g1" } })
+        );
+        let (body, meta) = queued_line(
+            "o/r", 7, &h, None, None, None, None, false, false, false, None,
+        );
+        assert_eq!(body, "📥 o/r#7 머지 큐에 넣음 · head bbbbbbbbb (래퍼 보고)");
+        assert_eq!(
+            meta["i18n"],
+            json!({ "key": "system.merge.queued", "args": { "repo": "o/r", "number": 7, "head": "bbbbbbbbb" } })
+        );
+        let (body, meta) = queued_line(
+            "o/r", 7, &h, None, None, None, None, true, true, false, None,
+        );
+        assert_eq!(
+            body,
+            "📥 o/r#7 머지 큐에 넣음 · head bbbbbbbbb · CI 실패 무시 승인 (래퍼 보고)"
+        );
+        assert!(meta.get("i18n").is_none());
     }
 
     #[test]
@@ -930,6 +1238,9 @@ mod tests {
             &json!({ "result": "merged", "ignoredChecks": ["x"] })
         ));
         let src = include_str!("../../../../packages/server/src/services/mergeGrants.ts");
+        assert!(src.contains("`📥 ${repo}#${r.number} 머지 큐에 넣음 · head ${r.headSha.slice(0, 9)}` + (granter ? ` · 권한: ${granter}` : '') + ignoredTail + ' (래퍼 보고)'"));
+        let watch = include_str!("../../../../packages/server/src/services/prWatch.ts");
+        assert!(watch.contains("if (!delegationV2Enabled()) return null;"));
         assert!(src.contains("`🔀 ${repo}#${r.number} 머지됨 · ${(r.mergeSha ?? r.headSha).slice(0, 9)}` + (granter ? ` · 권한: ${granter}` : '') + ignoredTail + ' (래퍼 보고)'"));
     }
 }
