@@ -22,13 +22,16 @@
 //!    consecutive_failures = consecutive_failures + 1, updated_at = now()` + `endAutomationMandatesTx(automation_off)`.
 //!
 //! 이 모듈이 하는 것: 2 의 잡기·삭제·만료·거절 판정·글 올리기(사슬 깊이 없는 회차)·`sent`/`skipped`/`failed(expired)` 기록·
-//! `consecutive_failures = 0`. 비밀 칸(`ingress_token_hash`·`ingress_secret_enc`)은 읽지 않는다.
+//! `consecutive_failures = 0`, 거절(`refuseReason`)·글 거부(`bad_thread`) 회차의 `failed / <code>` + 3 `pauseForRefusal`
+//! ([`pause_for_refusal`] — 자동화 멈춤 + [`end_automation_mandates_tx`] 로 위임장 끝내기·줄 회수, 같은 tx).
+//! TS 처럼 sweep 에서는 위임 카드 갱신(`refreshMandateCards`)을 하지 않는다. 비밀 칸(`ingress_token_hash`·`ingress_secret_enc`)은 읽지 않는다.
 //!
 //! TODO(이것이 끝나야 주인을 `rust` 로 넘길 수 있다):
 //! - [ ] 1 `fireOneSchedule` — tz 벽시계 계산(`nextOccurrence`·`timeVars`, DST 처리 `zonedToUtc`)이 Rust 에 없다(chrono-tz 필요)
 //!   + `enqueueRun` 의 디바운스(`debounce_sec` 창 병합)·시간당 상한 일시정지. [`crate::core::mcp::automation_run::enqueue_tx`] 를 재사용할 것.
-//! - [ ] 3 `pauseForRefusal` — `endAutomationMandatesTx`(위임장 끝내기 + 카드 갱신)가 Rust 에 없다. 지금은 거절·글 거부 회차를
-//!   **되돌려 대기로 둔다**([`Delivered::Left`]).
+//! - [x] 3 `pauseForRefusal` + `endAutomationMandatesTx` — [`pause_for_refusal`]·[`end_automation_mandates_tx`].
+//!   남은 차이: 위임장 `ended_at`·줄 `revoked_at` 이 TS 는 프로세스 시각(`new Date()`), 여기는 DB `now()`(tx 시작 시각)다.
+//!   `BadAttachment`(첨부 없음 — 닿지 않는다)·`ToTs`·`ChainLimit` 은 여전히 대기로 둔다.
 //! - [ ] `chain_depth` 가 있는 회차(에이전트가 돌린 회차, 082) — 글 경로 [`crate::core::msg_post::Origin`] 에 사슬 깊이 입력이 없다. 대기로 둔다.
 //! - [ ] Rust 글 경로가 TS 로 넘기는 본문([`crate::core::msg_post::ts_body`]·`Outcome::ToTs`)은 대기로 둔다(예약 글과 같다).
 //! - [ ] DB 테스트(예약 글 테스트처럼 TS 와 같은 결과인지).
@@ -72,6 +75,21 @@ pub const AUTOMATION_SWEEP_PRIVILEGES: &[(&str, &str)] = &[
     ("automation.body", "SELECT"),
     ("automation.deleted_at", "SELECT"),
     ("automation.consecutive_failures", "UPDATE"),
+    // `pause_for_refusal` — `consecutive_failures + 1` 은 그 칸을 읽는다.
+    ("automation.consecutive_failures", "SELECT"),
+    ("automation.enabled", "UPDATE"),
+    ("automation.next_at", "UPDATE"),
+    ("automation.paused_reason", "UPDATE"),
+    ("automation.updated_at", "UPDATE"),
+    // `end_automation_mandates_tx` — `for update` 는 UPDATE 권한 한 칸 이상, `returning`·where 는 SELECT.
+    ("mandate.id", "SELECT"),
+    ("mandate.automation_id", "SELECT"),
+    ("mandate.ended_at", "SELECT"),
+    ("mandate.ended_at", "UPDATE"),
+    ("mandate.end_reason", "UPDATE"),
+    ("mandate_line.mandate_id", "SELECT"),
+    ("mandate_line.revoked_at", "SELECT"),
+    ("mandate_line.revoked_at", "UPDATE"),
     ("account.id", "SELECT"),
     ("account.deleted_at", "SELECT"),
     ("account.disabled_at", "SELECT"),
@@ -89,6 +107,20 @@ pub const DUE_SQL: &str = "select r.id::text, r.automation_id::text, r.trigger_k
      for update of r skip locked";
 
 const FINISH_SQL: &str = "update automation_run set status = $2, error = $3, message_id = $4::uuid, finished_at = now() where id = $1::uuid";
+
+/// TS `pauseForRefusal` 의 update 그대로.
+pub const PAUSE_SQL: &str = "update automation set enabled = false, next_at = null, paused_reason = $2, \
+       consecutive_failures = consecutive_failures + 1, updated_at = now() \
+     where id = $1::uuid";
+/// TS `endAutomationMandatesTx` 의 잡기.
+pub const LIVE_MANDATES_SQL: &str =
+    "select id::text from mandate where automation_id = $1::uuid and ended_at is null for update";
+/// TS `endMandateTx` 의 끝내기(멱등 — 이미 끝났으면 행 없음).
+pub const END_MANDATE_SQL: &str = "update mandate set ended_at = now(), end_reason = $2 \
+     where id = $1::uuid and ended_at is null returning id::text";
+/// TS `endMandateTx` 의 줄 회수.
+pub const REVOKE_LINES_SQL: &str =
+    "update mandate_line set revoked_at = now() where mandate_id = $1::uuid and revoked_at is null";
 
 type DueRow = (
     String,
@@ -201,6 +233,48 @@ async fn finish(
         .map(|_| ())
 }
 
+/// TS `endAutomationMandatesTx` — 트랜잭션 안에서 그 자동화의 살아 있는 위임장을 모두 끝내고 줄을 닫는다. 잡은 id(TS 와 같다).
+/// `reason` 은 `automation_off` | `automation_changed`.
+pub async fn end_automation_mandates_tx(
+    tx: &mut sqlx::PgConnection,
+    automation_id: &str,
+    reason: &str,
+) -> Result<Vec<String>, sqlx::Error> {
+    let ids: Vec<String> = sqlx::query_scalar(LIVE_MANDATES_SQL)
+        .bind(automation_id)
+        .fetch_all(&mut *tx)
+        .await?;
+    for id in &ids {
+        let ended: Option<String> = sqlx::query_scalar(END_MANDATE_SQL)
+            .bind(id)
+            .bind(reason)
+            .fetch_optional(&mut *tx)
+            .await?;
+        if ended.is_some() {
+            sqlx::query(REVOKE_LINES_SQL)
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
+    Ok(ids)
+}
+
+/// TS `pauseForRefusal` — 게시가 거부되면 그 자리에서 멈추고 위임장을 끝낸다(`automation_off`).
+pub async fn pause_for_refusal(
+    tx: &mut sqlx::PgConnection,
+    automation_id: &str,
+    code: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(PAUSE_SQL)
+        .bind(automation_id)
+        .bind(format!("post_refused:{code}"))
+        .execute(&mut *tx)
+        .await?;
+    end_automation_mandates_tx(tx, automation_id, "automation_off").await?;
+    Ok(())
+}
+
 /// TS `refuseReason`.
 async fn refuse_reason(
     tx: &mut sqlx::PgConnection,
@@ -281,10 +355,11 @@ pub async fn deliver_one(
         tx.commit().await?;
         return Ok(Delivered::Failed("expired".into()));
     }
-    if refuse_reason(&mut tx, &owner, &channel).await?.is_some() {
-        // TODO: `finish(failed, code)` + `pauseForRefusal`(위임장 끝내기 포함) — 모듈 문서.
-        tx.rollback().await?;
-        return Ok(Delivered::Left);
+    if let Some(code) = refuse_reason(&mut tx, &owner, &channel).await? {
+        finish(&mut tx, &id, "failed", Some(code), None).await?;
+        pause_for_refusal(&mut tx, &automation_id, code).await?;
+        tx.commit().await?;
+        return Ok(Delivered::Failed(code.into()));
     }
     if chain_depth.is_some() {
         // TODO: 글 경로에 사슬 깊이 입력이 생기면 넘긴다.
@@ -346,7 +421,14 @@ pub async fn deliver_one(
     };
     let msg = match out {
         Outcome::Posted { row, .. } | Outcome::Replayed(row) => posted(&row),
-        // 거절 코드(`bad_thread` 등)·TS 몫 — TODO: `failed` + `pauseForRefusal`.
+        // TS `result.failure` — `failed / <code>` + `pauseForRefusal`. 머리 없는 글이라 실제로는 닿지 않는다.
+        Outcome::BadThread => {
+            finish(&mut tx, &id, "failed", Some("bad_thread"), None).await?;
+            pause_for_refusal(&mut tx, &automation_id, "bad_thread").await?;
+            tx.commit().await?;
+            return Ok(Delivered::Failed("bad_thread".into()));
+        }
+        // 첨부 실패(첨부 없음 — 닿지 않는다)·TS 몫·사슬 상한 — 대기로 둔다(모듈 문서 TODO).
         _ => None,
     };
     let Some(msg) = msg else {
@@ -439,7 +521,14 @@ mod tests {
 
     #[test]
     fn never_touches_ingress_secrets() {
-        for sql in [DUE_SQL, FINISH_SQL] {
+        for sql in [
+            DUE_SQL,
+            FINISH_SQL,
+            PAUSE_SQL,
+            LIVE_MANDATES_SQL,
+            END_MANDATE_SQL,
+            REVOKE_LINES_SQL,
+        ] {
             assert!(!sql.contains("ingress_token_hash") && !sql.contains("ingress_secret_enc"));
         }
         assert!(
