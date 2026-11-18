@@ -401,6 +401,15 @@ async fn find_source(read: &PgPool, id: &str, uploader: &str) -> sqlx::Result<Op
 
 /// `releaseAvatarFiles` — 실패는 삼킨다(기록만).
 async fn release(st: &AvatarWriteState, previous: Vec<Option<String>>) {
+    release_files(&st.write, &st.storage, previous).await;
+}
+
+/// `releaseAvatarFiles` — 쓰기 풀·저장소만으로(에이전트 지우기도 쓴다).
+pub(crate) async fn release_files(
+    write: &PgPool,
+    storage: &LocalStorage,
+    previous: Vec<Option<String>>,
+) {
     let mut ids: Vec<String> = Vec::new();
     for id in previous.into_iter().flatten() {
         if !ids.contains(&id) {
@@ -412,7 +421,7 @@ async fn release(st: &AvatarWriteState, previous: Vec<Option<String>>) {
     }
     let keys: Vec<String> = match sqlx::query_scalar(RELEASE)
         .bind(&ids)
-        .fetch_all(&st.write)
+        .fetch_all(write)
         .await
     {
         Ok(k) => k,
@@ -422,7 +431,7 @@ async fn release(st: &AvatarWriteState, previous: Vec<Option<String>>) {
         }
     };
     for key in keys {
-        if let Err(e) = st.storage.remove(&key).await {
+        if let Err(e) = storage.remove(&key).await {
             eprintln!("avatar file removal failed ({e})");
         }
     }

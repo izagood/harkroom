@@ -1827,6 +1827,27 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 — 에이전트 지우기(`DELETE /accounts/agents/{id}`). 세 겹 잠금: `HARKROOM_CORE=rust`, 첨부 저장소, 쓰기 풀에 그 권한이 다 있을 때만.
+    let agent_delete_write = match (&core_mode, &state.write, &avatar_read) {
+        (harkroom_server::core::CoreMode::Rust, Some(w), Some(storage)) => {
+            use harkroom_server::core::agent_delete as a;
+            match write::missing_in(w, a::AGENT_DELETE_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some((w.clone(), storage.clone())),
+                Ok(m) => {
+                    eprintln!("front: agent delete core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: agent delete core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 — 기억 정리 후보(`GET /accounts/agents/{id}/memory/audit`). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 읽기 풀에 그 SELECT 가 다 있을 때만.
     let agent_memory_audit_read_on = match &core_mode {
         harkroom_server::core::CoreMode::Rust => {
@@ -3814,6 +3835,21 @@ async fn main() {
             core_routes.router = core_routes.router.merge(rc.router);
             core_routes.http.extend(rc.http);
             core_routes.sockets.extend(rc.sockets);
+        }
+        // S5.4 — 에이전트 지우기 1줄. 권한·저장소가 있을 때만 — 아니면 TS 에 남는다.
+        if let Some((write, storage)) = agent_delete_write {
+            let ad = harkroom_server::core::agent_delete::routes(
+                harkroom_server::core::agent_delete::AgentDeleteState {
+                    write,
+                    storage,
+                    trust: state.trust.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(ad.router);
+            core_routes.http.extend(ad.http);
+            core_routes.sockets.extend(ad.sockets);
         }
         // S5.4 — 고를 수 있는 모델 목록 쓰기 1줄. 권한이 있을 때만 — 아니면 TS 에 남는다.
         if let Some(write) = pickable_models_write {
