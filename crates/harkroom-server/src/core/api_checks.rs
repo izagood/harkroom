@@ -8,8 +8,10 @@
 //! `authKind = none` 연결의 허락(`api.call.checked`)과 막힘 카드가 없는 거절(`bad_path`·`chain_broken`)도 Rust 가 답한다.
 //! 글 올리기 코어(`api-results` 와 같은 `PostState`)까지 있으면 카드가 서는 거절(`not_granted`·`no_connector`·`expired`·
 //! `suspended`·`method_not_allowed`·`path_not_allowed`·`cause_not_human`)도 Rust 가 답하고 그 턴의 스레드에 **새** 막힘 카드를
-//! 세운다(`api_blocked_card`). 같은 날 같은 스레드에 이미 선 카드를 고쳐 쓰는 갈래(`message.updated`)는 아직 TS 몫이다.
-//! 비밀을 여는 연결·`%`/질의가 든 경로는 TS 로 넘긴다.
+//! 세운다(`api_blocked_card`). [`API_CHECKS_BUMP_PRIVILEGES`] 까지 있으면 같은 날 같은 스레드에 이미 선 카드를 고쳐 쓰는
+//! 갈래(`meta.blocked` 의 `count`·`lastAt`·`lastCode`·`lastRequest` + `message.updated`)도 Rust 가 한다.
+//! 경로는 `%`·질의·ASCII 밖 글자까지 TS `safePath`·`wirePath`·`pathCovered` 를 따라 Rust 가 본다(바탕이 http(s) 가
+//! 아닌 연결만 TS 몫). 비밀을 여는 연결(`authKind != none`)은 TS 로 넘긴다.
 use super::api_results::connector_ok;
 use super::grant_reads::through_operator;
 use super::merge_approval_peek::str_len_ok;
@@ -107,6 +109,10 @@ pub const API_CHECKS_ALLOW_PRIVILEGES: &[(&str, &str)] = &[
     ("account_grant.write_needs_human_cause", "SELECT"),
 ];
 
+/// 같은 날 같은 스레드에 이미 선 막힘 카드를 고쳐 쓸 때(TS `recordBlocked` 의 갱신 갈래) 더 있어야 하는 권한 —
+/// `meta` 갱신. 다시 읽기(`getMessageById`)·`message.updated` outbox 는 글 올리기 코어 권한에 든다.
+pub const API_CHECKS_BUMP_PRIVILEGES: &[(&str, &str)] = &[("message.meta", "UPDATE")];
+
 pub struct ChecksState {
     pub up: Upstream,
     /// 임대 거절 경로 — 쓰기 풀에 [`API_CHECKS_DENY_PRIVILEGES`] 가 다 있을 때만.
@@ -115,6 +121,138 @@ pub struct ChecksState {
     pub allow: bool,
     /// 막힘 카드가 서는 거절 — `allow` 에 더해 글 올리기 코어(시스템 줄)가 있을 때만. 없으면 그 거절은 TS 몫.
     pub card: Option<super::msg_post::PostState>,
+    /// 이미 선 카드의 갱신 — `card` 에 더해 [`API_CHECKS_BUMP_PRIVILEGES`] 가 있을 때만. 없으면 그 갈래는 TS 몫.
+    pub bump: bool,
+}
+
+/// JS 정규식 `\s`(ECMAScript WhiteSpace + LineTerminator).
+fn js_space(c: char) -> bool {
+    matches!(
+        c,
+        '\t' | '\n' | '\u{0b}' | '\u{0c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
+            ..='\u{200a}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202f}'
+                | '\u{205f}'
+                | '\u{3000}'
+                | '\u{feff}'
+    )
+}
+
+fn has_ci(s: &str, pat: &str) -> bool {
+    s.to_ascii_lowercase().contains(pat)
+}
+
+/// TS `decodeSlashes` — 질의 앞의 `%2f`(대소문자 무시)를 `/` 로.
+pub fn decode_slashes(path: &str) -> String {
+    let (p, q) = match path.find('?') {
+        Some(i) => (&path[..i], &path[i..]),
+        None => (path, ""),
+    };
+    let b = p.as_bytes();
+    let mut out = String::with_capacity(path.len());
+    let mut i = 0;
+    while i < p.len() {
+        if b[i] == b'%'
+            && p.get(i..i + 3)
+                .is_some_and(|t| t.eq_ignore_ascii_case("%2f"))
+        {
+            out.push('/');
+            i += 3;
+        } else {
+            let c = p[i..].chars().next().unwrap_or_default();
+            out.push(c);
+            i += c.len_utf8();
+        }
+    }
+    out.push_str(q);
+    out
+}
+
+/// TS `safePath` 그대로(`%`·ASCII 밖 글자 포함).
+pub fn safe_path(path: &str) -> bool {
+    if !path.starts_with('/') || path.starts_with("//") {
+        return false;
+    }
+    if path.chars().any(|c| c == '\\' || c == '#' || js_space(c)) {
+        return false;
+    }
+    let p = path.split('?').next().unwrap_or("");
+    if has_ci(p, "%2e") || has_ci(p, "%5c") || has_ci(p, "%25") || p.contains(';') {
+        return false;
+    }
+    let dot = |s: &str| s == ".." || s == ".";
+    if p.split('/').any(dot) {
+        return false;
+    }
+    if !has_ci(p, "%2f") {
+        return true;
+    }
+    let decoded = decode_slashes(p);
+    let segs: Vec<&str> = decoded.split('/').skip(1).collect();
+    let last = segs.len().saturating_sub(1);
+    !segs
+        .iter()
+        .enumerate()
+        .any(|(i, s)| dot(s) || (s.is_empty() && !(i == last && p.ends_with('/'))))
+}
+
+/// TS `pathCovered` 그대로.
+pub fn path_covered(path: &str, prefix: &str) -> bool {
+    if has_ci(path.split('?').next().unwrap_or(""), "%2f")
+        && !path_covered(&decode_slashes(path), prefix)
+    {
+        return false;
+    }
+    let p = path.split('?').next().unwrap_or("");
+    if prefix.ends_with('/') {
+        return p.starts_with(prefix);
+    }
+    p == prefix || p.starts_with(&format!("{prefix}/"))
+}
+
+fn pct_push(out: &mut String, c: char, encode: impl Fn(u8) -> bool) {
+    let mut buf = [0u8; 4];
+    for &b in c.encode_utf8(&mut buf).as_bytes() {
+        if !(0x20..=0x7e).contains(&b) || encode(b) {
+            out.push_str(&format!("%{b:02X}"));
+        } else {
+            out.push(b as char);
+        }
+    }
+}
+
+/// TS `wirePath(baseUrl, path)` 중 `safePath` 를 지난 경로(`/` 하나로 시작, `\`·`#`·`\s`·점 마디 없음)와 http(s) 바탕.
+/// WHATWG URL 의 path·special-query percent-encode set 으로 인코딩하고 빈 질의(`?` 만)는 지운다. 바탕이 http(s)
+/// 가 아니면 `None`(TS 에 맡긴다).
+pub fn wire_path(base_url: &str, path: &str) -> Option<String> {
+    let lb = base_url.trim_start().to_ascii_lowercase();
+    if !(lb.starts_with("https://") || lb.starts_with("http://")) {
+        return None;
+    }
+    let (p, q) = match path.find('?') {
+        Some(i) => (&path[..i], Some(&path[i + 1..])),
+        None => (path, None),
+    };
+    let mut out = String::with_capacity(path.len());
+    for c in p.chars() {
+        pct_push(&mut out, c, |b| {
+            matches!(
+                b,
+                b' ' | b'"' | b'#' | b'<' | b'>' | b'?' | b'`' | b'{' | b'}'
+            )
+        });
+    }
+    if let Some(q) = q.filter(|q| !q.is_empty()) {
+        out.push('?');
+        for c in q.chars() {
+            pct_push(&mut out, c, |b| {
+                matches!(b, b' ' | b'"' | b'#' | b'<' | b'>' | b'\'')
+            });
+        }
+    }
+    Some(out)
 }
 
 /// TS `leaseOk`.
@@ -206,15 +344,24 @@ async fn deny(
 const CARD_EXISTING_SQL: &str = "select id::text from message \
       where meta->'blocked'->>'key' = $1 and channel_id = $2::uuid and coalesce(thread_root_id, id) = $3::uuid and deleted_at is null \
       order by created_at limit 1";
+/// TS `recordBlocked` 의 갱신 — `count`·`lastAt`·`lastCode`·`lastRequest` 만 올린다.
+const CARD_BUMP_SQL: &str = "update message set meta = jsonb_set(jsonb_set(jsonb_set(jsonb_set(meta, \
+           '{blocked,count}', to_jsonb(coalesce((meta->'blocked'->>'count')::int, 1) + 1)), \
+           '{blocked,lastAt}', to_jsonb($2::text)), \
+           '{blocked,lastCode}', to_jsonb($3::text)), \
+           '{blocked,lastRequest}', to_jsonb($4::text)) \
+        where id = $1::uuid returning id::text";
 const CARD_AGENT_SQL: &str = "select a.handle, c.owner_account_id::text from account a \
      left join agent_config c on c.account_id = a.id where a.id = $1::uuid";
 
 /// 카드가 서는 거절(TS `deny` + `recordBlocked`). `Ok(None)` 은 TS 몫 — 카드 경로를 못 따라가거나(`%`·ASCII 밖),
-/// 이미 선 카드를 고쳐 써야 하거나(`message.updated` 는 아직 TS 몫), 글 코어가 TS 로 넘겼을 때. 아무것도 쓰기 전에 고른다.
-/// 새 카드를 먼저 올리고 감사를 남긴다(TS 는 감사 → 카드; 카드 실패는 판정을 바꾸지 않는다).
+/// 이미 선 카드를 고쳐 써야 하는데 갱신 권한이 없거나(`bump`), 글 코어가 TS 로 넘겼을 때. 아무것도 쓰기 전에 고른다.
+/// 새 카드를 먼저 올리고 감사를 남긴다(TS 는 감사 → 카드; 카드 실패는 판정을 바꾸지 않는다). 이미 선 카드는 한 tx 에서
+/// `meta.blocked` 를 올리고 `message.updated` 를 outbox 에 넣은 뒤 감사를 남긴다.
 #[allow(clippy::too_many_arguments)]
 async fn deny_card(
     st: &super::msg_post::PostState,
+    bump: bool,
     agent: &str,
     lease: &super::lease_read::LeaseRow,
     connector_id: Option<&str>,
@@ -244,8 +391,24 @@ async fn deny_card(
         .bind(root)
         .fetch_optional(w)
         .await?;
-    if existing.is_some() {
-        return Ok(None);
+    if let Some(id) = existing {
+        if !bump {
+            return Ok(None);
+        }
+        let request = bc::card_request(method, cpath.as_deref());
+        let mut tx = w.begin().await?;
+        let hit: Option<String> = sqlx::query_scalar(CARD_BUMP_SQL)
+            .bind(&id)
+            .bind(&now)
+            .bind(code)
+            .bind(&request)
+            .fetch_optional(&mut *tx)
+            .await?;
+        if hit.is_some() {
+            super::ask_sync::announce_updated(&mut tx, &id).await?;
+        }
+        tx.commit().await?;
+        return Ok(Some(deny(w, agent, target, detail, code).await));
     }
     let who: Option<(String, Option<String>)> = sqlx::query_as(CARD_AGENT_SQL)
         .bind(agent)
@@ -313,7 +476,8 @@ const LEAF_SQL: &str = "select id::text, limits::text, write_needs_human_cause f
      where account_id = $1::uuid and capability = 'api.call' and scope = $2";
 
 /// 임대가 유효한 본체. `Ok(None)` 은 TS 몫 — 막힘 카드가 서는 거절(`not_granted`·`no_connector`·`expired`·…),
-/// 비밀을 여는 연결(`authKind != none`), `%`·질의·ASCII 밖 글자가 든 경로.
+/// 비밀을 여는 연결(`authKind != none`), http(s) 가 아닌 바탕.
+#[allow(clippy::too_many_arguments)]
 async fn checks_body(
     pool: &sqlx::PgPool,
     agent: &str,
@@ -322,6 +486,7 @@ async fn checks_body(
     o: &Value,
     path300: &str,
     card: Option<&super::msg_post::PostState>,
+    bump: bool,
 ) -> sqlx::Result<Option<Response>> {
     use super::mcp::grant_delegate as gd;
     let g = |k: &str| o.get(k).and_then(Value::as_str).unwrap_or_default();
@@ -336,6 +501,7 @@ async fn checks_body(
         let d = denied_detail("no_connector", method, path300, operator, Some(&lease.id));
         return deny_card(
             st,
+            bump,
             agent,
             lease,
             None,
@@ -356,6 +522,7 @@ async fn checks_body(
         let d = denied_detail(code, method, path300, operator, Some(&lease.id));
         deny_card(
             st,
+            bump,
             agent,
             lease,
             Some(cid),
@@ -375,16 +542,17 @@ async fn checks_body(
             denied_detail(code, method, path300, operator, Some(&lease.id)),
         )
     };
-    let Some(safe) = gd::safe_path_plain(path) else {
-        return Ok(None);
-    };
-    if !safe {
+    if !safe_path(path) {
         let (code, d) = denied("bad_path");
         return Ok(Some(deny(pool, agent, &target, d, code).await));
     }
-    // 실제로 보낼 경로가 입력과 같은 글자일 때만(그 밖은 URL 짓기를 TS 가 한다).
-    if !gd::wire_is_identity(path) {
+    // 실제로 보낼 경로(TS `wirePath`). http(s) 가 아닌 바탕은 TS 가 짓는다.
+    let Some(wire) = wire_path(&c.3, path) else {
         return Ok(None);
+    };
+    if !safe_path(&wire) {
+        let (code, d) = denied("bad_path");
+        return Ok(Some(deny(pool, agent, &target, d, code).await));
     }
     let Some((leaf_id, leaf_limits, write_human)): Option<(String, Option<String>, bool)> =
         sqlx::query_as(LEAF_SQL)
@@ -416,10 +584,7 @@ async fn checks_body(
     if !limits.methods.iter().any(|m| m == method) || !c.7.iter().any(|m| m == method) {
         return carded("method_not_allowed").await;
     }
-    if limits.path_prefix.contains('%') {
-        return Ok(None);
-    }
-    if !gd::path_covered_plain(path, &limits.path_prefix) {
+    if !path_covered(path, &limits.path_prefix) || !path_covered(&wire, &limits.path_prefix) {
         return carded("path_not_allowed").await;
     }
     if c.4 != "none" {
@@ -445,7 +610,7 @@ async fn checks_body(
     .await;
     let body = json!({
         "allowed": true, "connector": c.2, "baseUrl": c.3, "authKind": c.4, "authHeader": c.5,
-        "valueBase64": null, "causeByHuman": by_human, "path": path,
+        "valueBase64": null, "causeByHuman": by_human, "path": wire,
     });
     Ok(Some(no_store(crate::directory::json_ok(body.to_string()))))
 }
@@ -457,6 +622,7 @@ async fn checks_early(
     o: &Value,
     allow: bool,
     card: Option<&super::msg_post::PostState>,
+    bump: bool,
 ) -> sqlx::Result<Option<Response>> {
     let g = |k: &str| o.get(k).and_then(Value::as_str).unwrap_or_default();
     let Some(path) = audit_path(g("path")) else {
@@ -471,7 +637,7 @@ async fn checks_early(
         if !allow {
             return Ok(None);
         }
-        return checks_body(pool, agent, operator, l, o, &path, card).await;
+        return checks_body(pool, agent, operator, l, o, &path, card, bump).await;
     }
     let cid: Option<String> =
         sqlx::query_scalar("select id::text from api_connector where name = $1")
@@ -523,7 +689,7 @@ pub async fn checks_route(
         auth.operator.as_ref().map(|o| o.id.as_str()),
         parsed.as_ref(),
     ) {
-        match checks_early(pool, &me.id, op, o, st.allow, st.card.as_ref()).await {
+        match checks_early(pool, &me.id, op, o, st.allow, st.card.as_ref(), st.bump).await {
             Ok(Some(r)) => return r,
             Ok(None) => {}
             Err(e) => return crate::directory::internal(e),
@@ -537,6 +703,7 @@ pub fn routes(
     deny: Option<sqlx::PgPool>,
     allow: bool,
     card: Option<super::msg_post::PostState>,
+    bump: bool,
     auth: crate::auth::AuthPools,
     cors: Arc<crate::cors::Cors>,
 ) -> crate::route_table::Routes<()> {
@@ -559,6 +726,7 @@ pub fn routes(
             up,
             deny,
             allow,
+            bump: bump && allow && card.is_some(),
             card: card.filter(|_| allow),
         })),
         http: t.http,
@@ -645,6 +813,57 @@ mod tests {
                 "{c}"
             );
         }
+    }
+
+    #[test]
+    fn paths_like_ts() {
+        assert!(safe_path("/a%2Fb"));
+        assert!(!safe_path("/a%2e%2e/x"));
+        assert!(!safe_path("/a%252e"));
+        assert!(!safe_path("/a%2F%2Fb"));
+        assert!(!safe_path("/a%2F"));
+        assert!(!safe_path("/a/%2F/"));
+        assert!(safe_path("/a/b%2Fc/"));
+        assert!(!safe_path("/a%2F..%2Fb"));
+        assert!(!safe_path("/a\u{a0}b"));
+        assert!(!safe_path("/a\u{feff}"));
+        assert!(safe_path("/a\u{85}"));
+        assert!(safe_path("/가?q=%2e"));
+        assert!(!safe_path("/x;y?z"));
+        assert!(safe_path("/x?a;b"));
+        assert_eq!(decode_slashes("/a%2fb%2F?x%2f"), "/a/b/?x%2f");
+        assert!(path_covered("/api/x", "/api"));
+        assert!(!path_covered("/api%2Fx", "/api/"));
+        assert!(path_covered("/api/a%2Fb", "/api/"));
+        assert!(!path_covered("/apix", "/api"));
+        let b = "https://h.example/base/";
+        assert_eq!(wire_path(b, "/x").as_deref(), Some("/x"));
+        assert_eq!(wire_path(b, "/x?").as_deref(), Some("/x"));
+        assert_eq!(
+            wire_path(b, "/가?q=가'").as_deref(),
+            Some("/%EA%B0%80?q=%EA%B0%80%27")
+        );
+        assert_eq!(
+            wire_path(b, "/a{b}`<>\"").as_deref(),
+            Some("/a%7Bb%7D%60%3C%3E%22")
+        );
+        assert_eq!(
+            wire_path(b, "/a%2Fb'?x=?y").as_deref(),
+            Some("/a%2Fb'?x=?y")
+        );
+        assert_eq!(wire_path(b, "/\u{7f}").as_deref(), Some("/%7F"));
+        assert_eq!(wire_path("ftp://h/", "/x"), None);
+    }
+
+    #[test]
+    fn bump_like_ts() {
+        // TS `recordBlocked` 의 갱신: 네 칸만 올리고 count 가 없으면 1 에서 센다.
+        for k in ["count", "lastAt", "lastCode", "lastRequest"] {
+            assert!(CARD_BUMP_SQL.contains(&format!("'{{blocked,{k}}}'")), "{k}");
+        }
+        assert!(CARD_BUMP_SQL.contains("coalesce((meta->'blocked'->>'count')::int, 1) + 1"));
+        assert!(CARD_BUMP_SQL.starts_with("update message set meta ="));
+        assert_eq!(API_CHECKS_BUMP_PRIVILEGES, &[("message.meta", "UPDATE")]);
     }
 
     #[test]

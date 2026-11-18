@@ -1812,6 +1812,28 @@ async fn main() {
         }
         None => false,
     };
+    // S5.4 — `POST /agent/api-checks` 의 이미 선 막힘 카드 갱신. 거절 풀에 [`API_CHECKS_BUMP_PRIVILEGES`] 까지 있을 때만.
+    let api_checks_bump = match (&api_checks_deny, api_checks_allow) {
+        (Some(w), true) => {
+            use harkroom_server::core::api_checks as t;
+            match write::missing_in(w, t::API_CHECKS_BUMP_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => true,
+                Ok(m) => {
+                    eprintln!("front: api checks card bump off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
+                    false
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: api checks card bump off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    false
+                }
+            }
+        }
+        _ => false,
+    };
     // S5.4 — `POST /agent/merge-closed`. 쓰기 풀에 [`MERGE_CLOSED_PRIVILEGES`] 가 다 있을 때만.
     let merge_closed_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -4110,6 +4132,7 @@ async fn main() {
                         up: state.up.clone(),
                         implicit_ok,
                     }),
+                api_checks_bump,
                 auth.clone(),
                 state.cors.clone(),
             );
