@@ -5,7 +5,7 @@
 //! `repo.merge.denied` 감사 포함)도 Rust 가 답한다. [`MERGE_CHECKS_ALLOW_PRIVILEGES`] 까지 있으면 흔한 허락 길(위임 스위치 꺼짐·임대에 위임장 없음·
 //! 1회 승인 없음·머지 grant 있음·사람 턴 또는 `allow_agent_cause`)도 Rust 가 `repo.merge.checked`·`mandate.shadow` 감사와 함께 답한다.
 //! 11차: [`MERGE_CHECKS_CARD_PRIVILEGES`] 까지 있으면 grant 없음(`not_granted` — 사람 턴이면 카드용 `merge_denial`·`denialId`, 아니면 카드 없이)도,
-//! 위임장 없는 끝난·만료 임대의 `lease_invalid`(그림자 포함)는 이른 거절 풀로 Rust 가 답한다. `cause_not_human`(사슬 `causeChainRoot`)은 아직 TS.
+//! 위임장 없는 끝난·만료 임대의 `lease_invalid`(그림자 포함)는 이른 거절 풀로 Rust 가 답한다. 12차: 카드 풀이 있으면 grant 는 있는데 사람 턴이 아닌 갈래(사슬 `causeChainRoot` — 통과면 `viaChain` 허락, 끊기면 `cause_not_human` 카드)도 Rust.
 //! 그 밖의 모양이 맞는 요청은 전부 TS 로 넘긴다 — 임대·사슬 판정(`checkMergeByChain`)·위임 판정·1회 승인 소모·`merge_denial`·카드·
 //! 그림자 감사(`mandate.shadow`)는 아직 TS 몫이다. 넘기는 쪽은 임대를 읽기만 하고 쓰지 않는다.
 //!
@@ -1152,6 +1152,10 @@ pub const MERGE_CHECKS_CARD_PRIVILEGES: &[(&str, &str)] = &[
     ("merge_denial.lease_id", "INSERT"),
     ("merge_denial.expires_at", "INSERT"),
     ("merge_denial.reason", "INSERT"),
+    // `cause_not_human`·사슬(TS `causeChainRoot`)의 위임 후속 깨움 확인.
+    ("inbox.account_id", "SELECT"),
+    ("inbox.message_id", "SELECT"),
+    ("inbox.reason", "SELECT"),
 ];
 
 /// TS `denyWithCard` 의 다시 쓰기(같은 head 의 안 쓴 카드 거절 기록 — 임대·사유만 지금 것으로).
@@ -1351,6 +1355,106 @@ async fn shadow_origin(
     })
 }
 
+/// TS `deciders.ts::mayDecideSql` 을 그대로 편다(`channelVisibleSql` 포함).
+pub fn may_decide_sql(agent: &str, actor: &str, channel: &str) -> String {
+    format!(
+        "exists ( \
+    select 1 from agent_config dc join account da on da.id = dc.account_id join account dp on dp.id = {actor} \
+     where dc.account_id = {agent} and dp.kind = 'human' and dp.disabled_at is null and dp.deleted_at is null \
+       and (dc.owner_account_id = dp.id \
+         or (dc.user_decide and da.disabled_at is null and da.deleted_at is null and dp.role <> 'guest' \
+             and exists (select 1 from channel dch where dch.id = {channel} and ((dch.kind = 'standard' and dch.visibility = 'public') \
+     or exists (select 1 from channel_member cm_vis \
+                 where cm_vis.channel_id = dch.id and cm_vis.account_id = {actor}))) \
+             and (dc.invoke_scope = 'community' \
+               or (dc.invoke_scope = 'list' and exists (select 1 from agent_invoker di where di.agent_id = dc.account_id and di.account_id = dp.id)) \
+               or (dc.invoke_scope = 'channel' and exists (select 1 from channel_member dm join channel dmc on dmc.id = dm.channel_id \
+                     where dm.channel_id = {channel} and dm.account_id = dp.id and dmc.kind <> 'dm'))))))"
+    )
+}
+
+/// TS `CAUSE_CHAIN_MAX_HOPS`.
+pub const CAUSE_CHAIN_MAX_HOPS: i32 = 8;
+/// TS `CAUSE_CHAIN_ROOT_MAX_AGE_MS`(7일).
+pub const CAUSE_CHAIN_ROOT_MAX_AGE_MS: i64 = 7 * 86_400_000;
+
+const CHAIN_FOLLOWUP_SQL: &str = "select 1 from inbox where account_id = $1::uuid and message_id = $2::uuid and reason = 'delegation_followup' limit 1";
+
+/// TS `causeChainRoot` 의 재귀 문장($3 은 지금, 7일은 [`CAUSE_CHAIN_ROOT_MAX_AGE_MS`]).
+pub fn cause_chain_sql() -> &'static str {
+    static S: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    S.get_or_init(|| {
+        format!(
+            "with recursive \
+       own as ( \
+         select c.owner_account_id as id \
+           from agent_config c join account o on o.id = c.owner_account_id \
+          where c.account_id = $1::uuid and o.kind = 'human' and o.deleted_at is null and o.disabled_at is null \
+       ), \
+       walk (id, hop, path) as ( \
+         select m.id, 0, array[m.id] from message m where m.id = $2::uuid \
+         union all \
+         select m.cause_message_id, w.hop + 1, w.path || m.cause_message_id \
+           from walk w \
+           join message m on m.id = w.id \
+           join account a on a.id = m.author_id \
+           join agent_config c on c.account_id = a.id \
+          where w.hop < $4 \
+            and m.cause_message_id is not null \
+            and not (m.cause_message_id = any (w.path)) \
+            and m.deleted_at is null \
+            and a.kind = 'agent' \
+            and c.owner_account_id = (select id from own) \
+            and not (m.meta ? 'ask' and coalesce(m.meta->'ask'->>'answeredBy', '') <> '') \
+       ) \
+     select w.id::text, (select array_agg(x::text order by o) from unnest(w.path) with ordinality as u(x, o)) \
+       from walk w \
+       join message m on m.id = w.id \
+       join account a on a.id = m.author_id \
+      where m.deleted_at is null and m.created_at > $3::timestamptz - make_interval(secs => {}::double precision / 1000) \
+        and ( \
+          (a.kind = 'human' and m.kind = 'user' and not (m.meta ? 'automation') \
+              and {}) \
+          or (m.meta ? 'ask' and a.kind = 'agent' \
+              and exists (select 1 from agent_config c2 where c2.account_id = a.id and c2.owner_account_id = (select id from own)) \
+              and m.meta->'ask'->>'mirrorOf' is null and m.meta->'ask'->>'answeredVia' is null \
+              and coalesce(m.meta->'ask'->>'answeredBy', '') <> '' \
+              and {}) \
+        ) \
+      order by w.hop asc \
+      limit 1",
+            CAUSE_CHAIN_ROOT_MAX_AGE_MS,
+            may_decide_sql("$1::uuid", "a.id", "m.channel_id"),
+            may_decide_sql("$1::uuid", "nullif(m.meta->'ask'->>'answeredBy', '')::uuid", "m.channel_id"),
+        )
+    })
+}
+
+/// TS `causeChainRoot` — 뿌리 id 와 고리 id 목록, 없으면 `None`.
+async fn cause_chain_root(
+    pool: &sqlx::PgPool,
+    agent: &str,
+    cause: Option<&str>,
+    now: &str,
+) -> sqlx::Result<Option<(String, Vec<String>)>> {
+    let followup: Option<i32> = sqlx::query_scalar(CHAIN_FOLLOWUP_SQL)
+        .bind(agent)
+        .bind(cause)
+        .fetch_optional(pool)
+        .await?;
+    if followup.is_some() {
+        return Ok(None);
+    }
+    let r: Option<(String, Vec<String>)> = sqlx::query_as(cause_chain_sql())
+        .bind(agent)
+        .bind(cause)
+        .bind(now)
+        .bind(CAUSE_CHAIN_MAX_HOPS)
+        .fetch_optional(pool)
+        .await?;
+    Ok(r)
+}
+
 /// 흔한 허락 길. `None` 이면 아무것도 쓰지 않았다 — TS 로 넘긴다.
 #[allow(clippy::too_many_arguments)]
 async fn checks_allow(
@@ -1420,9 +1524,34 @@ async fn checks_allow(
         }
         return Ok(None);
     };
+    let mut chain: Option<(String, Vec<String>)> = None;
     if !by_human && allow_agent != Some(true) {
-        // 사슬(`causeChainRoot`)과 `cause_not_human` 카드는 TS 몫.
-        return Ok(None);
+        // 사슬(`causeChainRoot`) — 카드 풀(merge_denial·inbox 읽기)이 없으면 TS 몫.
+        if !card {
+            return Ok(None);
+        }
+        chain = cause_chain_root(pool, agent, lease.cause_message_id.as_deref(), now).await?;
+        if chain.is_none() {
+            return not_granted_code(
+                pool,
+                agent,
+                operator,
+                o,
+                lease,
+                &scope,
+                number,
+                channel,
+                root,
+                now,
+                "cause_not_human",
+            )
+            .await
+            .map(Some);
+        }
+    }
+    let mut detail = checked_detail(o, operator, lease, &granted_by, &grant_scope);
+    if let Some((root_id, path)) = &chain {
+        detail["viaChain"] = json!({ "rootId": root_id, "path": path });
     }
     crate::write::record_audit(
         pool,
@@ -1432,7 +1561,7 @@ async fn checks_allow(
             actor_handle: None,
             target: Some(&scope),
             ip: None,
-            detail: checked_detail(o, operator, lease, &granted_by, &grant_scope),
+            detail,
         },
     )
     .await;
@@ -1457,7 +1586,7 @@ async fn checks_allow(
         "repo": &scope["repo:".len()..],
         "grantedBy": granted_by,
         "grantedAt": granted_at,
-        "causeByHuman": by_human,
+        "causeByHuman": by_human || chain.is_some(),
         "channelId": lease.channel_id,
         "threadRootId": lease.thread_root_id,
     }))))
@@ -1529,7 +1658,37 @@ async fn not_granted(
     root: &str,
     now: &str,
 ) -> sqlx::Result<Response> {
-    let code = "not_granted";
+    not_granted_code(
+        pool,
+        agent,
+        operator,
+        o,
+        lease,
+        scope,
+        number,
+        channel,
+        root,
+        now,
+        "not_granted",
+    )
+    .await
+}
+
+/// [`not_granted`] 과 `cause_not_human` 의 공통 몸통(TS `denyWithCard`/`deny`). `cause_not_human` 은 언제나 카드를 단다.
+#[allow(clippy::too_many_arguments)]
+async fn not_granted_code(
+    pool: &sqlx::PgPool,
+    agent: &str,
+    operator: &str,
+    o: &Value,
+    lease: &super::lease_read::LeaseRow,
+    scope: &str,
+    number: i64,
+    channel: &str,
+    root: &str,
+    now: &str,
+    code: &'static str,
+) -> sqlx::Result<Response> {
     crate::write::record_audit(
         pool,
         crate::write::AuditEntry {
@@ -1542,7 +1701,7 @@ async fn not_granted(
         },
     )
     .await;
-    let denial_id = if lease.cause_by_human() {
+    let denial_id = if code == "cause_not_human" || lease.cause_by_human() {
         let head = o.get("headSha").and_then(Value::as_str).unwrap_or_default();
         record_card_denial(
             pool, agent, scope, channel, root, &lease.id, number, head, code, now,
@@ -1927,6 +2086,24 @@ mod tests {
         }
         assert!(MERGE_CHECKS_CARD_PRIVILEGES.contains(&("merge_denial.lease_id", "UPDATE")));
         assert!(MERGE_CHECKS_CARD_PRIVILEGES.contains(&("merge_denial.reason", "INSERT")));
+    }
+
+    #[test]
+    fn cause_chain_sql_like_ts() {
+        let q = cause_chain_sql();
+        assert!(q.contains("m.created_at > $3::timestamptz - make_interval(secs => 604800000::double precision / 1000)"));
+        assert_eq!(
+            q.matches("select 1 from agent_config dc join account da")
+                .count(),
+            2
+        );
+        assert!(q.contains("dp.id = nullif(m.meta->'ask'->>'answeredBy', '')::uuid"));
+        assert!(q.contains("where w.hop < $4"));
+        assert_eq!(CAUSE_CHAIN_MAX_HOPS, 8);
+        for c in ["account_id", "message_id", "reason"] {
+            let col = format!("inbox.{c}");
+            assert!(MERGE_CHECKS_CARD_PRIVILEGES.contains(&(col.as_str(), "SELECT")));
+        }
     }
 
     #[test]
