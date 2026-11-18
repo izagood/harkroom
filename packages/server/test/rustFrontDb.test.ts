@@ -11246,6 +11246,92 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           await check('만들기 절 부여 있음', viaOp, true);
           await db.pool.query(`delete from account_grant where account_id = $1 and capability = 'secret.create'`, [sc.accountId]);
         }
+        // 11) POST /secrets/:id/reveal(S5.4 `secret_reveal.rs`). 같은 비밀을 두 서버가 차례로 연다 — 값은 바뀌지 않고 access log·감사·
+        // 창 연장만 쌓인다. 쪽마다 X-Forwarded-For 를 갈라(`ip`) 로그 줄을 쪽별로 견준다. 리밋은 두 서버가 따로 세고(인메모리),
+        // 잠긴 요청은 쪽마다 몇 번뿐이라 20/10분에 닿지 않는다. 키링 없음·키 어긋남 409 는 서버를 따로 띄워야 해 여기서 뺀다.
+        {
+          expect(f.log(), 'reveal 이 Rust 에 붙음').toContain('"POST /secrets/{id}/reveal"');
+          expect(f.log()).not.toContain('secret reveal core off');
+          const rv = await createMember(app, A, 's54rv');
+          const [xT, xR] = ['203.0.113.71', '203.0.113.72'];
+          const call = async (base: string, xff: string, path: string, body: unknown, token: string) => {
+            const headers: Record<string, string> = { authorization: `Bearer ${token}`, 'x-forwarded-for': xff, 'content-type': J };
+            const res = await fetch(`${base}${path}`, { method: 'POST', headers, body: JSON.stringify(body) });
+            const text = await res.text();
+            const json = text ? JSON.parse(text) as Record<string, unknown> : {};
+            return { status: res.status, code: (json.error as { code?: string } | undefined)?.code, cc: res.headers.get('cache-control'), json };
+          };
+          const rev = async (name: string, id: string, body: unknown, token = rv.token) => {
+            const [a, b] = [await call(tsUrl, xT, `/secrets/${id}/reveal`, body, token), await call(rsUrl, xR, `/secrets/${id}/reveal`, body, token)];
+            if (a.status === 400) expect({ status: b.status, code: b.code }, name).toEqual({ status: a.status, code: a.code });
+            else expect({ status: b.status, cc: b.cc, json: deep(b.json) }, name).toEqual({ status: a.status, cc: a.cc, json: deep(a.json) });
+            return { a, b };
+          };
+          // 픽스처 — TS 로 텍스트·파일 비밀을 만들고(같은 키 ck1), 값 없는 비밀과 못 여는 판(모르는 kid)을 하나씩 둔다.
+          const mkS = async (body: unknown) => {
+            const r = await call(tsUrl, xT, '/secrets', body, rv.token);
+            expect(r.status, JSON.stringify(r.json)).toBe(201);
+            return String((r.json.secret as { id: string }).id);
+          };
+          const sText = await mkS({ name: 's54rv-text', kind: 'text', value: 'reveal-me-ünï' });
+          const sFile = await mkS({ name: 's54rv-file', kind: 'file', filename: 'id_rsa', valueBase64: Buffer.from([0xff, 0, 1, 2]).toString('base64') });
+          const bare = async (name: string) => (await db.pool.query<{ id: string }>(
+            `insert into secret (name, kind, owner_account_id) values ($1, 'text', $2) returning id::text`, [name, rv.accountId])).rows[0]!.id;
+          const sNone = await bare('s54rv-none');
+          const sBad = await bare('s54rv-bad');
+          await db.pool.query(`insert into secret_version (secret_id, version, sealed, size_bytes, created_by) values ($1, 1, 'v2.k9.AAAA.AAAA.AAAA.AAAA', 4, $2)`, [sBad, rv.accountId]);
+          const view = { action: 'view' };
+          await rev('보기 익명 → 401', sText, view, '');
+          await rev('보기 에이전트 → 403', sText, view, agent.pat);
+          await rev('보기 id 아님 → 400', 'nope', view);
+          await rev('보기 없는 것 → 404', g4, view);
+          await rev('보기 admin 도 남의 것 → 404', sText, view, A);
+          await rev('보기 본문 action 없음 → 400', sText, {});
+          await rev('보기 본문 action 모름 → 400', sText, { action: 'peek' });
+          await rev('보기 client 너무 김 → 400', sText, { action: 'view', client: 'x'.repeat(501) });
+          await rev('보기 잠김 → 403 step_up_required', sText, view);
+          // 창을 연다(비밀번호 다시 확인한 세션과 같은 꼴).
+          const th = hashToken(rv.token);
+          await db.pool.query(`update session set stepped_up_at = now(), stepped_up_until = now() + interval '15 minutes' where token_hash = $1`, [th]);
+          await rev('보기 값 없음 → 409 no_value', sNone, view);
+          await rev('보기 못 엶 → 409 unreadable', sBad, view);
+          const okT = await rev('보기 텍스트 성공', sText, { action: 'copy', client: ' app\n1.2‮ ' });
+          expect(okT.a.status).toBe(200);
+          expect(okT.a.cc).toBe('no-store');
+          expect([okT.a.json.value, okT.b.json.value], '두 쪽 같은 평문').toEqual(['reveal-me-ünï', 'reveal-me-ünï']);
+          expect(okT.b.json).toMatchObject({ name: 's54rv-text', kind: 'text', filename: null, version: 1 });
+          const okF = await rev('보기 파일 성공', sFile, { action: 'download' });
+          expect([okF.a.json.valueBase64, okF.b.json.valueBase64], '두 쪽 같은 바이트').toEqual(['/wABAg==', '/wABAg==']);
+          expect(okF.b.json).toMatchObject({ name: 's54rv-file', kind: 'file', filename: 'id_rsa', version: 1 });
+          // 창 연장 — 밀린 끝 시각이 세션에 들어간다(답의 steppedUpUntil 과 같다).
+          const until = (await db.pool.query<{ u: string }>(`select ${ISO_SQL('stepped_up_until')} as u from session where token_hash = $1`, [th])).rows[0]!.u;
+          expect(until, '마지막(Rust) 연장이 세션에').toBe(okF.b.json.steppedUpUntil);
+          // 다시 잠근다 — 창이 지난 세션은 거절(잠긴 상한으로 센다).
+          await db.pool.query(`update session set stepped_up_until = now() - interval '1 second' where token_hash = $1`, [th]);
+          await rev('보기 창 지남 → 403 step_up_required', sFile, view);
+          // access log — 쪽별(ip) 줄이 같다. 값·해시는 어디에도 없다.
+          const logOf = async (ip: string) => (await db.pool.query(
+            `select secret_id::text, secret_name, version, actor_account_id::text, action, client, result, reason
+               from secret_access_log where ip = $1 order by id`, [ip])).rows;
+          const [lT, lR] = [await logOf(xT), await logOf(xR)];
+          expect(lR, 'access log 줄').toEqual(lT);
+          expect(lR.map((r) => [r.secret_name, r.action, r.result, r.reason, r.version])).toEqual([
+            ['s54rv-text', 'view', 'denied', 'step_up_required', null],
+            ['s54rv-none', 'view', 'denied', 'no_value', null],
+            ['s54rv-bad', 'view', 'denied', 'unreadable', null],
+            ['s54rv-text', 'copy', 'granted', null, 1],
+            ['s54rv-file', 'download', 'granted', null, 1],
+            ['s54rv-file', 'view', 'denied', 'step_up_required', null],
+          ]);
+          expect(lR[3]!.client, 'client 라벨 다듬기').toBe('app 1.2');
+          // 감사 secret.revealed — 쪽별 줄이 같다(ip 만 다르다).
+          const auOf = async (ip: string) => (await auditOf(`action = 'secret.revealed' and ip = $1`, [ip])).map((r) => ({ ...(r as object), ip: null }));
+          const [auT, auR] = [await auOf(xT), await auOf(xR)];
+          expect(auR, 'reveal 감사').toEqual(auT);
+          expect(auR).toHaveLength(2);
+          expect(JSON.stringify([lR, auR])).not.toContain('reveal-me');
+          await db.pool.query('delete from secret where id = any($1)', [[sText, sFile, sNone, sBad]]);
+        }
       }
       // 프리플라이트(옮긴 줄의 OPTIONS 는 앞단이 TS 로 넘긴다 — 두 답이 같아야 한다).
       for (const headers of [{ origin: CORS, 'access-control-request-method': 'PUT' }, { origin: CORS }] as Record<string, string>[]) {
