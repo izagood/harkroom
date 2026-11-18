@@ -640,6 +640,17 @@ async fn main() {
         _ => None,
     };
     // S5.4 AT7 — 들어오는 hook(github·generic). 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 읽기 풀에 수신 비밀 칸 SELECT 가 있을 때만.
+    // S5.4 AT7 — hook 의 회차 만들기(generic). 쓰기 풀에 run-now 와 같은 칸이 다 있을 때만 — 아니면 그 단계는 TS 로 넘긴다.
+    let automation_hooks_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::automation_hooks as k;
+            match write::missing_in(w, &k::write_privileges(), &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                _ => None,
+            }
+        }
+        _ => None,
+    };
     let automation_hooks_on = match core_mode {
         harkroom_server::core::CoreMode::Rust => {
             use harkroom_server::core::automation_hooks as k;
@@ -3081,7 +3092,7 @@ async fn main() {
         if automation_hooks_on {
             use harkroom_server::core::automation_hooks as k;
             let hk = k::routes(
-                k::HooksState::new(state.pool.clone(), state.up.clone()),
+                k::HooksState::new(state.pool.clone(), state.up.clone(), automation_hooks_write),
                 state.cors.clone(),
             );
             core_routes.router = core_routes.router.merge(hk.router);
