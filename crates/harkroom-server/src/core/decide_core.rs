@@ -571,8 +571,9 @@ pub fn rust_takes(s: Shape<'_>) -> Option<Decision> {
         // C1 — [이번 턴만]은 위임장이 있는 tool 카드만 승인이다(없으면 409 `bad_decision` — 11d 부터 그 답도 Rust, 아래).
         // C3 — command 는 위임장이 있어도 Rust(1시간 command_grant + 그 위임장에 command 줄).
         (Decision::ApproveOnce | Decision::ApproveHour, "command") => !s.has_denial,
-        // S5.4 12e — merge 카드의 7일 [승인](위임장·거절 기록 없음)은 Rust(`repo.merge` account_grant). 위임장·거절 기록 있는 merge 는 TS.
-        (Decision::Approve, "merge") => !s.has_denial && !s.has_mandate,
+        // S5.4 12e — merge 카드의 7일 [승인](위임장 없음)은 Rust(`repo.merge` account_grant). 위임장 있는 merge 는 TS.
+        // 13d — 거절 기록이 붙은 카드도 Rust(TS: CI 거절이면 400 `ci_card_once_only`, 아니면 같은 7일 grant). 칸이 없으면 쓰기 전에 TS.
+        (Decision::Approve, "merge") => !s.has_mandate,
         // S5.4 — tool 카드의 [이번 한 번](once 없음·거절 기록 없음)은 TS 가 쓰기 없이 409 `not_once` 로 돌려보낸다 — Rust 가 같은 답을 한다.
         (Decision::ApproveOnce, "tool") => !s.has_denial,
         // S5.4 11d — TS 가 쓰기 없이 409 `bad_decision` 으로 돌려보내는 꼴(위임장 없는 tool [이번 턴만], command 의 [이번 턴만]·
