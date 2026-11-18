@@ -4,13 +4,16 @@
 //! - 판정 순서는 TS 와 같다: `requireAccount`(401) → 본문 해석(fastify 400·415) → 에이전트 403 `agents_cannot_automate` →
 //!   경로 id(400 `invalid_request`) → 내 것이 아니거나 지운 것은 404 → 회차 → 202 `{run}`.
 //!   `duplicate`·`inactive` 는 409 `{code: status, message: 'not queued'}`.
-//! - **TS 로 넘기는 것**: 1시간 회차가 `RATE_LIMIT_PER_HOUR` 에 닿은 경우(자동화를 끄고 위임장을 닫는 쓰기는 TS 만 한다 —
-//!   아직 아무것도 쓰지 않았으므로 TS 가 같은 판정을 처음부터 다시 해 429 를 낸다) · 일정 트리거의 tz 를 `chrono-tz` 가 모름.
+//! - 1시간 회차가 `RATE_LIMIT_PER_HOUR` 에 닿으면 TS `enqueueRun` 처럼 자동화를 멈추고(`paused_reason = 'rate_limited'`)
+//!   위임장을 `automation_off` 로 끝낸 뒤 429 `rate_limited` — sweeper 와 같은 [`RATE_LIMIT_SQL`]·[`end_automation_mandates_tx`]
+//!   를 한 트랜잭션으로 쓴다(TS 는 풀에서 문장마다 커밋한다 — 결과는 같다). 권한은 [`AUTOMATION_RUN_NOW_PAUSE_PRIVILEGES`].
+//! - **TS 로 넘기는 것**: 일정 트리거의 tz 를 `chrono-tz` 가 모름.
 //! - 비밀 칸(`ingress_token_hash`·`ingress_secret_enc`)은 문장에 없다. 소유 확인은 읽기 풀, 회차 셈·INSERT 는 쓰기 풀.
 //! - 권한은 [`AUTOMATION_RUN_NOW_PRIVILEGES`] — MCP `automation.run` 이 이미 받는 칸의 부분집합이다(새 GRANT 없음).
 use crate::auth::RequireAccount;
 use crate::core::mcp::automation_run as ar;
 use crate::directory::{internal, json_err};
+use crate::loops::automation::{RATE_LIMIT_SQL, end_automation_mandates_tx};
 use crate::proxy::Upstream;
 use axum::body::to_bytes;
 use axum::extract::{ConnectInfo, Path, Request, State};
@@ -48,6 +51,22 @@ pub const AUTOMATION_RUN_NOW_PRIVILEGES: &[(&str, &str)] = &[
     ("automation_run.chain_depth", "INSERT"),
 ];
 
+/// 시간당 상한에 닿았을 때의 일시정지·위임장 끝내기 칸(sweeper `AUTOMATION_SWEEP_PRIVILEGES` 의 같은 칸).
+pub const AUTOMATION_RUN_NOW_PAUSE_PRIVILEGES: &[(&str, &str)] = &[
+    ("automation.enabled", "UPDATE"),
+    ("automation.next_at", "UPDATE"),
+    ("automation.paused_reason", "UPDATE"),
+    ("automation.updated_at", "UPDATE"),
+    ("mandate.id", "SELECT"),
+    ("mandate.automation_id", "SELECT"),
+    ("mandate.ended_at", "SELECT"),
+    ("mandate.ended_at", "UPDATE"),
+    ("mandate.end_reason", "UPDATE"),
+    ("mandate_line.mandate_id", "SELECT"),
+    ("mandate_line.revoked_at", "SELECT"),
+    ("mandate_line.revoked_at", "UPDATE"),
+];
+
 /// TS `getAutomation` 중 여기서 쓰는 칸(소유자·지워지지 않음).
 const OWNED_SQL: &str = "select a.id::text, a.trigger::text from automation a \
      where a.id = $1::uuid and a.owner_id = $2::uuid and a.deleted_at is null";
@@ -63,6 +82,7 @@ pub struct RunNowState {
 enum Out {
     Queued(String),
     Refused(&'static str),
+    RateLimited,
     ToTs,
 }
 
@@ -85,7 +105,14 @@ async fn enqueue(
         .fetch_one(write)
         .await?;
     if recent >= ar::RATE_LIMIT_PER_HOUR {
-        return Ok(Out::ToTs);
+        let mut tx = write.begin().await?;
+        sqlx::query(RATE_LIMIT_SQL)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        end_automation_mandates_tx(&mut tx, id, "automation_off").await?;
+        tx.commit().await?;
+        return Ok(Out::RateLimited);
     }
     let ins = sqlx::query(ar::INSERT_SQL)
         .bind(id)
@@ -181,6 +208,11 @@ pub async fn run_now(
         )
             .into_response(),
         Ok(Out::Refused(code)) => json_err(StatusCode::CONFLICT, code, "not queued"),
+        Ok(Out::RateLimited) => json_err(
+            StatusCode::TOO_MANY_REQUESTS,
+            "rate_limited",
+            "too many runs in the last hour; automation paused",
+        ),
         Ok(Out::ToTs) => to_ts(parts, bytes).await,
         Err(e) => internal(e),
     }
@@ -232,6 +264,16 @@ mod tests {
                 .iter()
                 .all(|p| !p.0.contains("ingress_") && p.1 != "UPDATE")
         );
+    }
+
+    #[test]
+    fn pause_privileges_are_subset_of_sweeper() {
+        for p in AUTOMATION_RUN_NOW_PAUSE_PRIVILEGES {
+            assert!(
+                crate::loops::automation::AUTOMATION_SWEEP_PRIVILEGES.contains(p),
+                "{p:?}"
+            );
+        }
     }
 
     #[test]
