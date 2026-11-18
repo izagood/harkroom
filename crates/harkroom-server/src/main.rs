@@ -3082,6 +3082,13 @@ async fn main() {
             core_routes.http.extend(li.http);
             core_routes.sockets.extend(li.sockets);
         }
+        // S5.4 — 초대 안내 페이지(`GET /join`). DB 를 쓰지 않아 코어 모드면 언제나 붙는다.
+        if matches!(core_mode, harkroom_server::core::CoreMode::Rust) {
+            let jp = harkroom_server::core::join_page::routes(state.cors.clone());
+            core_routes.router = core_routes.router.merge(jp.router);
+            core_routes.http.extend(jp.http);
+            core_routes.sockets.extend(jp.sockets);
+        }
         // S5.4 — 자기 비밀번호 바꾸기 1줄. 권한이 있을 때만 — 아니면 TS 에 남는다.
         if let Some(write) = auth_password_write {
             let ap = harkroom_server::core::auth_password::routes(
