@@ -21,6 +21,7 @@ pub mod ask_reply_close;
 pub mod ask_sync;
 pub mod audience;
 pub mod auth_light;
+pub mod automation_time;
 pub mod automations_read;
 pub mod automations_write;
 pub mod cause_link;
