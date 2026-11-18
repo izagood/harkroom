@@ -1,6 +1,6 @@
 //! S5.4 AC4 — 초대 쓰기 두 줄. TS `routes/accountRoutes.ts` 의 `POST /invites`·`DELETE /invites/:id` 를 옮긴다.
 //!
-//! - `POST /invites`: `email` 이 있으면 메일(149)로 보낸다 — 메일이 꺼져 있으면 409 `mail_disabled`, 시간당 30통
+//! - `POST /invites`: `email` 이 있으면 메일(149)로 보낸다 — 앞단에 메일 설정이 없으면 TS 로 넘긴다, 시간당 30통
 //!   상한(보내는 사람 advisory lock 안에서 센다) 429 `mail_rate_limited`, 발송 결과는 `mail_status`·감사(가린 주소)에 남는다.
 //!   없으면 `requireCap('member.invite')`(401·403) → 본문(400: 객체가 아님·`locale` 이 ko/en 이 아님) → 새 토큰
 //!   (`hrki_` + base64url 32바이트, sha256 hex 해시만 저장) → INSERT(만료 `INVITE_TTL_DAYS`=7일) → 감사
@@ -58,8 +58,9 @@ pub struct InvitesWriteState {
     pub read: PgPool,
     pub write: PgPool,
     pub trust: Arc<TrustProxy>,
-    /// None 이면 메일이 꺼져 있다(`email` 을 실은 발급·다시 보내기는 409 `mail_disabled`).
+    /// None 이면 앞단에 메일 설정이 없다 — TS 가 메일을 켰는지 모르니 `email` 을 실은 발급·다시 보내기는 TS 로 넘긴다.
     pub mailer: Option<Arc<super::invite_mail::Mailer>>,
+    pub up: crate::proxy::Upstream,
 }
 
 /// 본문 판정 결과.
@@ -192,14 +193,6 @@ const LOCK: &str = "select pg_advisory_xact_lock(hashtext('invite-mail:' || $1::
 const COUNT: &str = "select count(*)::bigint from invite where created_by = $1::uuid and last_sent_at > now() - interval '1 hour'";
 const MAIL_STATUS: &str = "update invite set mail_status = $2 where id = $1::uuid";
 
-fn mail_disabled() -> Response {
-    json_err(
-        StatusCode::CONFLICT,
-        "mail_disabled",
-        "invite mail is not configured on this server",
-    )
-}
-
 fn too_many() -> Response {
     json_err(
         StatusCode::TOO_MANY_REQUESTS,
@@ -286,7 +279,7 @@ fn created(id: String, expires_at: String, mail: &str, token: String) -> Respons
 }
 
 #[allow(clippy::result_large_err)]
-async fn read_body(req: Request) -> Result<(Parts, Body), Response> {
+async fn read_body(req: Request) -> Result<(Parts, Body, axum::body::Bytes), Response> {
     let (parts, raw) = req.into_parts();
     let bytes = match to_bytes(raw, BODY_LIMIT).await {
         Ok(b) => b,
@@ -299,16 +292,17 @@ async fn read_body(req: Request) -> Result<(Parts, Body), Response> {
         }
     };
     let body = crate::write::fastify_body(&parts.headers, &bytes)?;
-    Ok((parts, body))
+    Ok((parts, body, bytes))
 }
 
 /// `POST /invites`.
 pub async fn create(
     State(st): State<Arc<InvitesWriteState>>,
     RequireAccount(_, auth): RequireAccount,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
     req: Request,
 ) -> Response {
-    let (parts, body) = match read_body(req).await {
+    let (parts, body, bytes) = match read_body(req).await {
         Ok(x) => x,
         Err(r) => return r,
     };
@@ -322,7 +316,9 @@ pub async fn create(
         Kind::Mail(e, ko) => (Some(e), ko),
     };
     let mailer = match (&email, &st.mailer) {
-        (Some(_), None) => return mail_disabled(),
+        (Some(_), None) => {
+            return super::msg_post::to_ts(st.up.clone(), peer, parts, bytes).await;
+        }
         (_, m) => m.clone(),
     };
     let (token, hash) = new_token();
@@ -380,14 +376,15 @@ const RESEND_INSERT: &str = concat!(
     crate::iso!("expires_at")
 );
 
-/// `POST /invites/{id}/resend` — TS 와 같은 차례: cap → params → body → mail_disabled → (tx) 잠금·검사 → 취소+새 행 → 발송 → 감사.
+/// `POST /invites/{id}/resend` — TS 와 같은 차례: cap → params → body → (메일 설정 없으면 TS) → (tx) 잠금·검사 → 취소+새 행 → 발송 → 감사.
 pub async fn resend(
     State(st): State<Arc<InvitesWriteState>>,
     RequireAccount(_, auth): RequireAccount,
     Path(id): Path<String>,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
     req: Request,
 ) -> Response {
-    let (parts, body) = match read_body(req).await {
+    let (parts, body, bytes) = match read_body(req).await {
         Ok(x) => x,
         Err(r) => return r,
     };
@@ -410,7 +407,7 @@ pub async fn resend(
         _ => return bad("body"),
     };
     let Some(mailer) = st.mailer.clone() else {
-        return mail_disabled();
+        return super::msg_post::to_ts(st.up.clone(), peer, parts, bytes).await;
     };
     let (token, hash) = new_token();
     let (row, email): ((String, String), String) = {

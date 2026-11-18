@@ -44,11 +44,16 @@ impl Mode {
 }
 
 /// TS `implicitDelegationMode` — `v2` 는 [`super::msg_post`] 의 `delegation_v2`(모르면 `None`). 모르면 `None`.
+/// v2 가 켜졌는데 `HARKROOM_DELEGATION_IMPLICIT` 가 없거나 비었으면 그것도 모름이다 — TS 가 on·off·shadow 중 무엇인지
+/// 앞단은 알 수 없다(TS 의 「없으면 shadow」를 앞단이 짐작하지 않는다).
 pub fn mode(v2: Option<bool>, implicit: Option<&str>) -> Option<Mode> {
     match v2? {
         false => Some(Mode::Off),
         true => {
-            let v = implicit.unwrap_or_default().trim().to_lowercase();
+            let v = implicit?.trim().to_lowercase();
+            if v.is_empty() {
+                return None;
+            }
             Some(match v.as_str() {
                 "on" | "1" | "true" => Mode::On,
                 "off" | "0" | "false" => Mode::Off,
@@ -273,7 +278,9 @@ mod tests {
     fn mode_words_follow_ts() {
         assert_eq!(mode(None, Some("on")), None);
         assert_eq!(mode(Some(false), Some("on")), Some(Mode::Off));
-        assert_eq!(mode(Some(true), None), Some(Mode::Shadow));
+        assert_eq!(mode(Some(true), None), None);
+        assert_eq!(mode(Some(true), Some("  ")), None);
+        assert_eq!(mode(Some(true), Some("shadow")), Some(Mode::Shadow));
         assert_eq!(mode(Some(true), Some(" ON ")), Some(Mode::On));
         assert_eq!(mode(Some(true), Some("0")), Some(Mode::Off));
         assert_eq!(mode(Some(true), Some("weird")), Some(Mode::Shadow));

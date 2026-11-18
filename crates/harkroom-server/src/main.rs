@@ -1500,7 +1500,7 @@ async fn main() {
                 }
                 (Ok(_), _, None) => {
                     eprintln!(
-                        "front: attachment upload core off — ATTACHMENT_MAX_BYTES unreadable"
+                        "front: attachment upload to TS — ATTACHMENT_MAX_BYTES unset or unreadable"
                     );
                     None
                 }
@@ -1717,6 +1717,30 @@ async fn main() {
         && harkroom_server::core::lease_read::mandate_enforced_env().is_none()
     {
         eprintln!("front: merge checks to TS — HARKROOM_MANDATE_ENFORCE unset");
+    }
+    // 같은 꼴의 스위치들 — 앞단에 값이 없으면 TS 가 어느 쪽으로 도는지 모른다. 그 스위치에 걸린 요청은 TS 로 넘긴다.
+    if matches!(core_mode, harkroom_server::core::CoreMode::Rust) {
+        let unset = |k: &str| std::env::var(k).map_or(true, |v| v.trim().is_empty());
+        if unset("HARKROOM_PRINCIPAL_INVOKE") {
+            eprintln!("front: principal-invoke posts to TS — HARKROOM_PRINCIPAL_INVOKE unset");
+        }
+        if unset("HARKROOM_DELEGATION_IMPLICIT") {
+            eprintln!(
+                "front: agent calls under delegation v2 to TS — HARKROOM_DELEGATION_IMPLICIT unset"
+            );
+        }
+        if std::env::var("ATTACHMENT_MAX_BYTES").is_err() {
+            eprintln!("front: attachment upload to TS — ATTACHMENT_MAX_BYTES unset");
+        }
+        if unset("HARKROOM_BACKGROUND_ENABLED") {
+            eprintln!("front: background list to TS — HARKROOM_BACKGROUND_ENABLED unset");
+        }
+        if matches!(
+            harkroom_server::core::invite_mail::load_mail_config(|k| std::env::var(k).ok()),
+            Ok(None)
+        ) {
+            eprintln!("front: invite mail (issue with email, resend) to TS — mail env unset");
+        }
     }
     let merge_checks_deny = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -3933,6 +3957,7 @@ async fn main() {
                     write,
                     trust: state.trust.clone(),
                     mailer,
+                    up: state.up.clone(),
                 },
                 auth.clone(),
                 state.cors.clone(),
@@ -4711,6 +4736,9 @@ async fn main() {
                 state.pool.clone(),
                 auth.clone(),
                 state.cors.clone(),
+                harkroom_server::core::agent_memory_read::background_switch_known(
+                    std::env::var("HARKROOM_BACKGROUND_ENABLED").ok().as_deref(),
+                ),
             );
             core_routes.router = core_routes.router.merge(am.router);
             core_routes.http.extend(am.http);

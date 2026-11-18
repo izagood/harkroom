@@ -58,10 +58,10 @@ pub struct UploadState {
     pub leak: Option<Arc<super::leak_guard::LeakGuard>>,
 }
 
-/// `ATTACHMENT_MAX_BYTES` — 없으면 기본값. 음이 아닌 정수가 아니면 `None`(TS `Number(...)` 의 NaN·소수 갈래는 옮기지 않는다 → TS).
+/// `ATTACHMENT_MAX_BYTES` — 없으면 `None`(TS 가 어느 상한으로 도는지 모른다 → TS). 음이 아닌 정수가 아니면 `None`(TS `Number(...)` 의 NaN·소수 갈래는 옮기지 않는다 → TS).
 pub fn max_bytes_from_env() -> Option<u64> {
     match std::env::var("ATTACHMENT_MAX_BYTES") {
-        Err(_) => Some(DEFAULT_MAX_BYTES),
+        Err(_) => None,
         Ok(v) => v.trim().parse::<u64>().ok(),
     }
 }

@@ -458,19 +458,31 @@ pub async fn bg_list(
     ))
 }
 
+/// `HARKROOM_BACKGROUND_ENABLED` 를 앞단이 아는가 — 없거나 비었으면 모른다([`routes`] 가 백그라운드 목록 줄을 달지 않는다 → TS).
+pub fn background_switch_known(raw: Option<&str>) -> bool {
+    raw.is_some_and(|v| !v.trim().is_empty())
+}
+
+/// `bg_switch_known` 이 거짓이면 `serverEnabled` 를 싣는 백그라운드 목록 줄은 달지 않는다(TS 에 남는다).
 pub fn routes(
     pool: PgPool,
     auth: crate::auth::AuthPools,
     cors: Arc<crate::cors::Cors>,
+    bg_switch_known: bool,
 ) -> crate::route_table::Routes<()> {
     use crate::route_table::Table;
-    let t = Table::<Arc<PgPool>>::new()
+    let t = Table::<Arc<PgPool>>::new();
+    let t = if bg_switch_known {
+        t.get("/accounts/agents/{id}/background", bg_list)
+    } else {
+        t
+    };
+    let t = t
         .get("/accounts/agents/{id}/memory", list_memory)
         .get(
             "/accounts/agents/{id}/memory/{slug}/revisions",
             list_revisions,
         )
-        .get("/accounts/agents/{id}/background", bg_list)
         .get("/accounts/agents/{id}/background/runs/{runId}", bg_run)
         .map(|r| {
             r.route_layer(axum::middleware::from_fn_with_state(
@@ -495,6 +507,16 @@ pub fn routes(
 #[cfg(test)]
 mod tests {
     use super::decoded_utf16_len as len;
+
+    #[test]
+    fn background_switch_unset_is_unknown() {
+        // 없거나 비면 모름 → 백그라운드 목록 줄을 달지 않는다(TS). `0` 도 값이다.
+        use super::background_switch_known as known;
+        assert!(!known(None));
+        assert!(!known(Some("  ")));
+        assert!(known(Some("0")));
+        assert!(known(Some("1")));
+    }
 
     #[test]
     fn decoded_length_matches_find_my_way() {

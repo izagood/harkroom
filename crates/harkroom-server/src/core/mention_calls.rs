@@ -87,6 +87,16 @@ pub fn principal_invoke_enabled(raw: Option<&str>) -> bool {
     !(v == "off" || v == "0" || v == "false")
 }
 
+/// 앞단이 읽는 `HARKROOM_PRINCIPAL_INVOKE` — 없거나 비었으면 모른다(`None`): TS 가 어느 쪽으로 켰는지 알 수 없으니
+/// 이 스위치에 판정이 걸린 글은 TS 로 넘긴다. 값이 있으면 [`principal_invoke_enabled`] 와 같은 낱말로 갈린다.
+pub fn principal_invoke_switch(raw: Option<&str>) -> Option<bool> {
+    let v = raw?;
+    if v.trim().is_empty() {
+        return None;
+    }
+    Some(principal_invoke_enabled(Some(v)))
+}
+
 pub struct Principal<'a> {
     pub id: &'a str,
 }
@@ -104,8 +114,8 @@ pub struct Input<'a> {
     pub principal: Option<Principal<'a>>,
     /// 지금(밀리초) — TS `Date.now()`. 시험이 고정할 수 있게 받는다.
     pub now_ms: i64,
-    /// `HARKROOM_PRINCIPAL_INVOKE` 판정 결과.
-    pub principal_invoke_enabled: bool,
+    /// `HARKROOM_PRINCIPAL_INVOKE` 판정 결과([`principal_invoke_switch`]) — `None` 은 모름.
+    pub principal_invoke_enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -131,6 +141,8 @@ pub struct Resolved {
     pub channel_called: bool,
     /// 글 `meta` 에 얹는 칸 — TS 와 같은 키 순서.
     pub call_meta: Map<String, Value>,
+    /// 원인 제공자 대행 판정이 `HARKROOM_PRINCIPAL_INVOKE` 에 걸렸는데 그 값을 모른다 — 호출자는 아무것도 쓰지 않고 TS 로 넘긴다.
+    pub principal_switch_unknown: bool,
 }
 
 #[derive(Clone)]
@@ -346,6 +358,7 @@ pub async fn resolve(conn: &mut PgConnection, input: &Input<'_>) -> Result<Resol
     }
 
     let mut principal_shadow: Option<Value> = None;
+    let mut principal_switch_unknown = false;
     let mut invoked_as_principal: Option<Value> = None;
     let mut denied_principal: Option<&'static str> = None;
     if input.author_is_agent && !denied_order.is_empty() {
@@ -374,7 +387,9 @@ pub async fn resolve(conn: &mut PgConnection, input: &Input<'_>) -> Result<Resol
                     })
                 });
                 if let Some(rec) = record {
-                    if !input.principal_invoke_enabled {
+                    if input.principal_invoke_enabled.is_none() {
+                        principal_switch_unknown = true;
+                    } else if input.principal_invoke_enabled == Some(false) {
                         principal_shadow = Some(rec);
                     } else if principal_invokes_today(conn, p.id, input.now_ms).await?
                         < PRINCIPAL_INVOKE_DAILY_CAP
@@ -529,6 +544,7 @@ pub async fn resolve(conn: &mut PgConnection, input: &Input<'_>) -> Result<Resol
         target_call,
         channel_called,
         call_meta: meta,
+        principal_switch_unknown,
     })
 }
 
@@ -538,6 +554,12 @@ mod tests {
 
     #[test]
     fn principal_switch_like_ts() {
+        // 앞단의 스위치: 없거나 비면 모름, 값이 있으면 같은 낱말.
+        assert_eq!(principal_invoke_switch(None), None);
+        assert_eq!(principal_invoke_switch(Some("  ")), None);
+        assert_eq!(principal_invoke_switch(Some("on")), Some(true));
+        assert_eq!(principal_invoke_switch(Some("weird")), Some(true));
+        assert_eq!(principal_invoke_switch(Some(" OFF ")), Some(false));
         assert!(principal_invoke_enabled(None));
         assert!(principal_invoke_enabled(Some("")));
         assert!(principal_invoke_enabled(Some("on")));

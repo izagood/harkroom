@@ -578,7 +578,7 @@ async fn resolve_post(
             reply_grant_thread_id: thread_root,
             principal: principal.map(|id| mention_calls::Principal { id }),
             now_ms: link.now_ms,
-            principal_invoke_enabled: mention_calls::principal_invoke_enabled(
+            principal_invoke_enabled: mention_calls::principal_invoke_switch(
                 std::env::var("HARKROOM_PRINCIPAL_INVOKE").ok().as_deref(),
             ),
         },
@@ -599,6 +599,7 @@ fn no_mention_calls(body: &str) -> mention_calls::Resolved {
         target_call: Vec::new(),
         channel_called: false,
         call_meta: serde_json::Map::new(),
+        principal_switch_unknown: false,
     }
 }
 
@@ -867,6 +868,11 @@ pub(crate) async fn post_tx(
         )
         .await?
     };
+    // 원인 제공자 대행이 걸린 부름인데 앞단에 `HARKROOM_PRINCIPAL_INVOKE` 가 없다 — TS 가 어느 쪽인지 모르니 TS 로 넘긴다.
+    if calls.principal_switch_unknown {
+        tx.rollback().await?;
+        return Ok((Outcome::ToTs, None));
+    }
     // 에이전트 글의 아직 TS 몫인 부수효과 — 상한에 막힌 부름(백스톱 카드). 암묵 위임(C1c-4d)은 모드를 알고 쓰기 칸이 있을 때만
     // 여기서 적는다(꺼짐이면 적을 것이 없다).
     let implicit = implicit_delegation::mode(
