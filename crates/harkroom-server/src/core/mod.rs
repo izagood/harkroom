@@ -120,6 +120,7 @@ pub mod perm_card;
 pub mod pickable_models;
 pub mod plan_graph;
 pub mod pr_watch_due;
+pub mod pr_watch_status;
 pub mod relay;
 pub mod relay_attention;
 pub mod relay_link;

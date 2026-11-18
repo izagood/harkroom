@@ -2352,6 +2352,28 @@ async fn main() {
         }
         None => None,
     };
+    // S5.4 — `POST /agent/pr-watches/{id}/status`. 글 올리기 코어(시스템 줄)와 [`PR_WATCH_STATUS_PRIVILEGES`] 가 다 있고
+    // `HARKROOM_DELEGATION_V2` 값이 있을 때만(due 와 같은 이유).
+    let pr_watch_status_write = match &post_write {
+        Some(w) if std::env::var("HARKROOM_DELEGATION_V2").is_ok_and(|v| !v.trim().is_empty()) => {
+            use harkroom_server::core::pr_watch_status as c;
+            match write::missing_in(w, c::PR_WATCH_STATUS_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: pr-watch status core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: pr-watch status core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 TP3 — 계획 자동 진행 끄기. 글 올리기 코어(시스템 줄이 스레드 안으로 그 경로를 탄다)와 끄기 칸 권한이 다 있을 때만.
     let thread_plan_auto_off = match &post_write {
         Some(w) => {
@@ -3322,6 +3344,22 @@ async fn main() {
             core_routes.router = core_routes.router.merge(ar.router);
             core_routes.http.extend(ar.http);
             core_routes.sockets.extend(ar.sockets);
+        }
+        // S5.4 — `POST /agent/pr-watches/{id}/status`. 글 올리기 코어와 칸 권한이 다 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(write) = pr_watch_status_write {
+            let ps = harkroom_server::core::pr_watch_status::routes(
+                harkroom_server::core::msg_post::PostState {
+                    read: state.pool.clone(),
+                    write,
+                    up: state.up.clone(),
+                    implicit_ok,
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(ps.router);
+            core_routes.http.extend(ps.http);
+            core_routes.sockets.extend(ps.sockets);
         }
         // S5.4 TP3 — 계획 자동 진행 끄기. 글 올리기 코어와 끄기 칸 권한이 다 있을 때만 — 아니면 TS 에 남는다.
         if let Some(write) = thread_plan_auto_off {
