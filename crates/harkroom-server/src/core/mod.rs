@@ -80,6 +80,7 @@ pub mod inbox_read;
 pub mod inbox_rest;
 pub mod inbox_thread;
 pub mod inbox_threads;
+pub mod invite_mail;
 pub mod invites_write;
 pub mod invoke_gate;
 pub mod join_page;
