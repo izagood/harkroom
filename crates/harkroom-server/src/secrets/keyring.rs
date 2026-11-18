@@ -346,6 +346,11 @@ impl SecretKeyring {
         &self.active_kid
     }
 
+    /// 키 묶음을 돌려받는다 — 기동 확인([`super::verify`])이 kid 하나짜리 키링으로 풀어 본 뒤 키를 되찾는 데 쓴다.
+    pub(crate) fn into_keys(self) -> Vec<(String, MasterKey)> {
+        self.keys
+    }
+
     pub(crate) fn kids(&self) -> impl Iterator<Item = &str> {
         self.keys.iter().map(|(k, _)| k.as_str())
     }

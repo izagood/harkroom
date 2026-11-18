@@ -52,7 +52,7 @@ macro_rules! iso {
 }
 
 /// TS `SECRET_COLS`·`SECRET_FROM` 그대로 — 지금 판은 version·size·created_by 만(sealed 는 고르지 않는다).
-const SECRET_SQL: &str = concat!(
+pub(crate) const SECRET_SQL: &str = concat!(
     "select json_build_object(",
     "'id', s.id, 'name', s.name, 'kind', s.kind, 'filename', s.filename, 'description', s.description, ",
     "'ownerAccountId', s.owner_account_id, ",
