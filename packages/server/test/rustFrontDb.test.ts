@@ -1673,6 +1673,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant update (used_at) on password_reset_code to ${rw}`,
         `grant update (password_hash) on account to ${rw}`,
         `grant insert (uploader_id, filename, content_type, size_bytes, storage_key) on attachment to ${rw}`,
+        // S5.4 — 아바타 걸기(`core/avatar_write.rs::AVATAR_WRITE_PRIVILEGES`). outbox 는 위 줄. 없으면 「avatar write core off」 — TS 에 남는다.
+        `grant update (avatar_attachment_id, avatar_source_attachment_id, avatar_crop) on account to ${rw}`,
+        `grant update (content_type), delete on attachment to ${rw}`,
         // S5.4 5회차 r — POST /bootstrap·/claim·/auth/register(`auth_signup.rs::AUTH_SIGNUP_PRIVILEGES`). 셋이 signup 리미터를 같이 쓴다.
         `grant select (id, kind), insert (handle, login_id, display_name, kind, is_admin, role, password_hash) on account to ${rw}`,
         `grant select (id), insert (name, topic, kind, repo, visibility, created_by) on channel to ${rw}`,
@@ -10720,8 +10723,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         for (const k of [
           'POST /auth/login', 'POST /auth/password-reset', 'POST /uploads', 'GET /agent/config',
           'POST /automations', 'POST /automations/{id}/run', 'POST /automations/{id}/approve', 'PUT /secrets/{id}/grants',
+          'PUT /accounts/me/avatar', 'PUT /accounts/agents/{id}/avatar',
         ]) expect(f.log(), k).toContain(`"${k}"`);
-        for (const off of ['agent config core off', 'automation create core off', 'automation approve core off', 'automation run-now core off', 'secret grant give core off']) {
+        for (const off of ['avatar write core off', 'agent config core off', 'automation create core off', 'automation approve core off', 'automation run-now core off', 'secret grant give core off']) {
           expect(f.log(), off).not.toContain(off);
         }
         const g4 = '00000000-0000-4000-8000-0000000c5404';

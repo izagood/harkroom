@@ -1107,6 +1107,35 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 — 아바타 걸기(`PUT /accounts/me/avatar`·`PUT /accounts/agents/{id}/avatar`). 네 겹 잠금: `HARKROOM_CORE=rust`,
+    // 쓰기 풀에 그 칸 권한이 다 있을 때, 아바타 읽기 코어가 켜졌을 때(같은 읽기 SELECT·같은 저장소)만 — 아니면 TS 에 남는다.
+    // 래스터 그림은 코어가 TS 에 넘긴다(sharp 판정).
+    let avatar_write = match (&core_mode, &state.write, &avatar_read) {
+        (harkroom_server::core::CoreMode::Rust, Some(w), Some(storage)) => {
+            use harkroom_server::core::avatar_write as c;
+            match write::missing_in(
+                w,
+                c::AVATAR_WRITE_PRIVILEGES,
+                c::AVATAR_WRITE_SEQUENCE_PRIVILEGES,
+            )
+            .await
+            {
+                Ok(m) if m.is_empty() => Some((w.clone(), storage.clone())),
+                Ok(m) => {
+                    eprintln!("front: avatar write core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: avatar write core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 — 첨부 올리기(`POST /uploads`). 네 겹 잠금: `HARKROOM_CORE=rust`, 쓰기 풀에 그 칸 권한이 다 있을 때,
     // 첨부 저장소(`ATTACHMENT_ROOT`)가 있을 때, `ATTACHMENT_MAX_BYTES` 를 읽을 수 있을 때만 — 아니면 TS 에 남는다.
     let attachment_upload = match (&core_mode, &state.write) {
@@ -2749,6 +2778,21 @@ async fn main() {
             core_routes.router = core_routes.router.merge(au.router);
             core_routes.http.extend(au.http);
             core_routes.sockets.extend(au.sockets);
+        }
+        if let Some((write, storage)) = avatar_write {
+            let aw = harkroom_server::core::avatar_write::routes(
+                harkroom_server::core::avatar_write::AvatarWriteState {
+                    read: state.pool.clone(),
+                    write,
+                    storage,
+                    up: state.up.clone(),
+                },
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(aw.router);
+            core_routes.http.extend(aw.http);
+            core_routes.sockets.extend(aw.sockets);
         }
         if let Some(storage) = avatar_read {
             let av = harkroom_server::core::avatar_read::routes(

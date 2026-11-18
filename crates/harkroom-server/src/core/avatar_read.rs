@@ -8,8 +8,7 @@
 //! - `GET /accounts/{id}/avatar/source`: 사진 맞추기 원본 + `x-harkroom-avatar-source` 헤더. 자기 자신이 아니면
 //!   `checkOwnerOrAdmin` 판정 후 대상이 에이전트일 때만(사람 계정 원본은 admin 도 403).
 //! - 파일이 없으면(행은 있고 파일 없음) TS 는 `AttachmentMissingError` 를 그대로 던진다 → 500.
-//! - PUT 둘(`/accounts/me/avatar`·`/accounts/agents/{id}/avatar`)은 TS 에 남는다 — 이미지 판정(sharp 메타데이터·
-//!   픽셀 상한)과 `avatar.changed` 이벤트·옛 파일 정리가 함께 옮겨져야 한다.
+//! - PUT 둘(`/accounts/me/avatar`·`/accounts/agents/{id}/avatar`)은 `avatar_write.rs` 가 옮긴다(래스터 그림은 TS 로).
 use super::attachment_download::stream_file;
 use super::attachment_store::{LocalStorage, StoreError};
 use super::relay_routes::{Verdict, check_owner_or_admin};
