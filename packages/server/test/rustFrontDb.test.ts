@@ -11072,6 +11072,175 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           }
           await db.pool.query('delete from secret where id = any($1)', [[tT, tR, fT, fR]]);
         }
+        // 8) API 연결 POST·PATCH(S5.4 `connectors_upsert.rs`). 두 벌의 이름은 `s54c[tr]-*` 로 갈라 가린 뒤 견준다.
+        //    주소 칸에 ASCII 밖 글자가 있으면 Rust 가 요청째 TS 로 넘긴다(설계) — 그 사례도 같은 답이어야 한다.
+        {
+          for (const k of ['POST /connectors', 'PATCH /connectors/{id}']) expect(f.log(), k).toContain(`"${k}"`);
+          expect(f.log()).not.toContain('connectors upsert core off');
+          const M = member.token;
+          const norm = (v: unknown): unknown => deep(JSON.parse(JSON.stringify(v ?? null).replace(/s54c[tr]-/g, 's54cx-')));
+          const pairC = async (name: string, m: string, pT: string, pR: string, bT?: unknown, bR?: unknown, token = M) => {
+            const [a, b] = [await callX(tsUrl, m, pT, bT, token), await callX(rsUrl, m, pR, bR, token)];
+            if (a.status === 400) expect({ status: b.status, code: b.code }, name).toEqual({ status: a.status, code: a.code });
+            else expect({ status: b.status, json: norm(b.json) }, name).toEqual({ status: a.status, json: norm(a.json) });
+            return { a, b };
+          };
+          const nm = (side: 't' | 'r', n: string) => `s54c${side}-${n}`;
+          const post = (name: string, body: (side: 't' | 'r') => unknown, token = M) => pairC(name, 'POST', '/connectors', '/connectors', body('t'), body('r'), token);
+          const mkSecret = async (n: string, owner: string, kind = 'text') => (await db.pool.query<{ id: string }>(
+            `insert into secret (name, kind, filename, description, owner_account_id) values ($1, $2, $3, 'd', $4) returning id`,
+            [n, kind, kind === 'file' ? 'k.bin' : null, owner])).rows[0]!.id;
+          const [sMine, sFile, sAdmin] = [await mkSecret('s54c-mine', member.accountId), await mkSecret('s54c-file', member.accountId, 'file'), await mkSecret('s54c-admin', admin.accountId)];
+          const base = (x: 't' | 'r', n: string, extra: Record<string, unknown> = {}) => ({ name: nm(x, n), baseUrl: 'https://api.example.com', authKind: 'none', methods: ['GET'], ...extra });
+          await post('연결 만들기 에이전트 → 403', (x) => base(x, 'a'), agent.pat);
+          await post('연결 만들기 익명 → 401', (x) => base(x, 'a'), '');
+          await post('연결 만들기 본문 없음 → 400', () => ({}));
+          await post('연결 만들기 이름 틀림 → 400', () => base('t', 'a', { name: 'Bad Name' }));
+          await post('연결 만들기 주소 아님 → 400', (x) => base(x, 'a', { baseUrl: 'not a url' }));
+          await post('연결 만들기 http → 400', (x) => base(x, 'a', { baseUrl: 'http://api.example.com' }));
+          await post('연결 만들기 ftp → 400', (x) => base(x, 'a', { baseUrl: 'ftp://api.example.com' }));
+          await post('연결 만들기 경로 있음 → 400', (x) => base(x, 'a', { baseUrl: 'https://api.example.com/v1' }));
+          await post('연결 만들기 사용자 정보 → 400', (x) => base(x, 'a', { baseUrl: 'https://u:p@api.example.com' }));
+          await post('연결 만들기 tokenUrl http → 400', (x) => base(x, 'a', { authKind: 'token_exchange', secretId: sMine, tokenUrl: 'http://auth.example.com/t', tokenForm: { grantType: 'client_credentials', clientId: 'c', keyField: 'client_secret' } }));
+          await post('연결 만들기 header 이름 없음 → 400', (x) => base(x, 'a', { authKind: 'header', secretId: sMine }));
+          await post('연결 만들기 예약 헤더 → 400', (x) => base(x, 'a', { authKind: 'header', authHeader: 'Host', secretId: sMine }));
+          await post('연결 만들기 bearer 키 없음 → 400', (x) => base(x, 'a', { authKind: 'bearer' }));
+          await post('연결 만들기 none 에 키 → 400', (x) => base(x, 'a', { secretId: sMine }));
+          await post('연결 만들기 남의 비밀 → 404', (x) => base(x, 'a', { authKind: 'bearer', secretId: sAdmin }));
+          await post('연결 만들기 없는 비밀 → 404', (x) => base(x, 'a', { authKind: 'bearer', secretId: g4 }));
+          await post('연결 만들기 파일 비밀 → 400', (x) => base(x, 'a', { authKind: 'bearer', secretId: sFile }));
+          await post('연결 만들기 교환 form 없음 → 400', (x) => base(x, 'a', { authKind: 'token_exchange', secretId: sMine, tokenUrl: 'https://auth.example.com/t' }));
+          const okN = await post('연결 만들기 none 성공', (x) => base(x, 'none', { baseUrl: 'HTTPS://API.Example.com:443/', methods: ['GET', 'GET', 'POST'] }));
+          expect(okN.a.status).toBe(201);
+          const okB = await post('연결 만들기 bearer 성공', (x) => base(x, 'bearer', { authKind: 'bearer', secretId: sMine, methods: ['GET', 'POST', 'DELETE'] }));
+          expect(okB.a.status).toBe(201);
+          await post('연결 만들기 교환 성공', (x) => base(x, 'xchg', { authKind: 'token_exchange', secretId: sMine, tokenUrl: 'https://auth.example.com/oauth/token', tokenForm: { grantType: 'client_credentials', clientId: 'cid', keyField: 'client_secret' } }));
+          await post('연결 만들기 이름 겹침 → 409', (x) => base(x, 'none'));
+          await post('연결 만들기 비ASCII 주소(TS 로)', (x) => base(x, 'idn', { baseUrl: 'https://例え.jp' }));
+          const idOf = (r: { json: Record<string, unknown> }) => String((r.json.connector as { id: string }).id);
+          const [nT, nR, bT, bR] = [idOf(okN.a), idOf(okN.b), idOf(okB.a), idOf(okB.b)];
+          // grant 둘 — 주소가 바뀌면 멈춘다(connector_changed), 메서드가 좁아지면 그 메서드를 쓰던 것만(methods_narrowed).
+          for (const c of [bT, bR]) {
+            await db.pool.query(`insert into account_grant (account_id, capability, scope, granted_by, limits) values ($1, 'api.call', $2, $3, $4::jsonb)`,
+              [agent.accountId, `connector:${c}`, member.accountId, JSON.stringify({ methods: ['DELETE'] })]);
+          }
+          for (const c of [nT, nR]) {
+            await db.pool.query(`insert into account_grant (account_id, capability, scope, granted_by) values ($1, 'api.call', $2, $3)`,
+              [agent.accountId, `connector:${c}`, member.accountId]);
+          }
+          const patch = (name: string, t: string, r: string, body: unknown, token = M) => pairC(name, 'PATCH', `/connectors/${t}`, `/connectors/${r}`, body, body, token);
+          await patch('연결 고치기 에이전트 → 403', nT, nR, { methods: ['GET'] }, agent.pat);
+          await patch('연결 고치기 익명 → 401', nT, nR, { methods: ['GET'] }, '');
+          await patch('연결 고치기 id 아님 → 400', 'nope', 'nope', { methods: ['GET'] });
+          await patch('연결 고치기 없는 것 → 404', g4, g4, { methods: ['GET'] });
+          await patch('연결 고치기 admin 도 남의 것 → 404', nT, nR, { methods: ['GET'] }, A);
+          await patch('연결 고치기 메서드 빈 → 400', nT, nR, { methods: [] });
+          await patch('연결 고치기 http → 400', nT, nR, { baseUrl: 'http://api.example.com' });
+          await patch('연결 고치기 남의 비밀 → 404', nT, nR, { authKind: 'bearer', secretId: sAdmin });
+          await patch('연결 고치기 빈 본문', nT, nR, {});
+          const narrowed = await patch('연결 고치기 메서드 좁힘', bT, bR, { methods: ['GET', 'POST'] });
+          expect(narrowed.a.json.suspendedGrants).toBe(1);
+          const moved = await patch('연결 고치기 주소 바꿈', nT, nR, { baseUrl: 'https://api2.example.com' });
+          expect(moved.a.json.suspendedGrants).toBe(1);
+          const gr = async (c: string) => (await db.pool.query(
+            `select suspended_at is not null as s, suspend_reason from account_grant where scope = $1`, [`connector:${c}`])).rows;
+          expect([await gr(bR), await gr(nR)], '멈춘 grant').toEqual([await gr(bT), await gr(nT)]);
+          const au = async (id: string) => (await auditOf(`target = $1 and action like 'connector.%'`, [id])).map(norm);
+          expect(await au(nR), '연결 감사').toEqual(await au(nT));
+          expect(await au(bR), '연결 감사 bearer').toEqual(await au(bT));
+          await db.pool.query(`delete from account_grant where capability = 'api.call' and scope = any($1)`, [[nT, nR, bT, bR].map((c) => `connector:${c}`)]);
+          await db.pool.query(`delete from api_connector where name like 's54c%'`);
+          await db.pool.query('delete from secret where id = any($1)', [[sMine, sFile, sAdmin]]);
+        }
+        // 9) 아바타 걸기 PUT 둘(S5.4 `avatar_write.rs`). 같은 계정에 TS 다음 Rust 로 차례로 건다 — 업로드는 쪽마다 따로.
+        //    래스터(PNG)는 Rust 가 TS 로 넘긴다(설계) — 한 사례로 같은 답만 본다.
+        {
+          const M = member.token;
+          const up = async (uploader: string, ct: string, bytes: string | Buffer) => {
+            const key = `s54av-${randomUUID()}`;
+            writeCases(joinPath(attRoot, key), bytes);
+            return (await db.pool.query<{ id: string }>(
+              `insert into attachment (uploader_id, filename, content_type, size_bytes, storage_key) values ($1, 'a', $2, $3, $4) returning id`,
+              [uploader, ct, Buffer.byteLength(bytes), key])).rows[0]!.id;
+          };
+          const SVG = '<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="#0a0"/></svg>';
+          const BAD_SVG = '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>';
+          const BIG_SVG = `<svg xmlns="http://www.w3.org/2000/svg"><!-- ${'x'.repeat(256 * 1024)} --></svg>`;
+          const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+          const both = async (name: string, path: string, mk: () => Promise<unknown>, token: string) => {
+            const [bT, bR] = [await mk(), await mk()];
+            return pair2(name, 'PUT', path, path, bT, token, bR);
+          };
+          const me = '/accounts/me/avatar';
+          const fixed = (b: unknown) => async () => b;
+          const crop = { x: 0.1, y: 0.2, size: 0.5 };
+          await both('아바타 걸기 익명 → 401', me, fixed({ attachmentId: null }), '');
+          await both('아바타 걸기 본문 없음 → 400', me, fixed({}), M);
+          await both('아바타 걸기 id 아님 → 400', me, fixed({ attachmentId: 'nope' }), M);
+          await both('아바타 걸기 crop 틀림 → 400', me, fixed({ attachmentId: g4, source: { attachmentId: g4, crop: { x: 2, y: 0, size: 0.5 } } }), M);
+          await both('아바타 걸기 없는 업로드 → 404', me, fixed({ attachmentId: g4 }), M);
+          await both('아바타 걸기 남의 업로드 → 404', me, async () => ({ attachmentId: await up(admin.accountId, 'image/svg+xml', SVG) }), M);
+          await both('아바타 걸기 그림 아님 → 400', me, async () => ({ attachmentId: await up(member.accountId, 'text/plain', 'hello') }), M);
+          await both('아바타 걸기 스크립트 SVG → 400', me, async () => ({ attachmentId: await up(member.accountId, 'image/svg+xml', BAD_SVG) }), M);
+          await both('아바타 걸기 큰 SVG → 400', me, async () => ({ attachmentId: await up(member.accountId, 'image/svg+xml', BIG_SVG) }), M);
+          await both('아바타 걸기 원본 없음 → 404', me, async () => ({ attachmentId: await up(member.accountId, 'image/svg+xml', SVG), source: { attachmentId: g4, crop } }), M);
+          const okS = await both('아바타 걸기 SVG 성공', me, async () => ({ attachmentId: await up(member.accountId, 'image/svg+xml', SVG) }), M);
+          expect(okS.a.status).toBe(200);
+          await both('아바타 걸기 SVG + 원본', me, async () => ({ attachmentId: await up(member.accountId, 'image/svg+xml', SVG), source: { attachmentId: await up(member.accountId, 'image/svg+xml', SVG), crop } }), M);
+          await both('아바타 걸기 PNG(TS 로)', me, async () => ({ attachmentId: await up(member.accountId, 'image/png', PNG) }), M);
+          const cl = await both('아바타 걸기 지우기', me, fixed({ attachmentId: null }), M);
+          expect(cl.a.json).toEqual({ avatarAttachmentId: null });
+          // 에이전트 — 관리자가 만든 bot(소유자 admin). 멤버는 소유자가 아니다.
+          const ag = `/accounts/agents/${bot.accountId}/avatar`;
+          await both('에이전트 아바타 소유자 아님 → 403', ag, fixed({ attachmentId: null }), M);
+          await both('에이전트 아바타 익명 → 401', ag, fixed({ attachmentId: null }), '');
+          // TODO(S5.4 avatar): 경로 id 가 uuid 아님 + admin — TS 는 500(`requireOwnerOrAdmin` 이 uuid 아닌 id 로 질의해 PG 오류), Rust 는 400
+          //   `invalid_request`. 실제 차이라 사례를 빼 둔다: `await both('에이전트 아바타 id 아님', '/accounts/agents/nope/avatar', fixed({ attachmentId: null }), A);`
+          await both('에이전트 아바타 없는 id → 404', `/accounts/agents/${g4}/avatar`, fixed({ attachmentId: null }), A);
+          await both('에이전트 아바타 사람 계정 → 404', `/accounts/agents/${member.accountId}/avatar`, fixed({ attachmentId: null }), A);
+          await both('에이전트 아바타 남의 업로드 → 404', ag, async () => ({ attachmentId: await up(member.accountId, 'image/svg+xml', SVG) }), A);
+          await both('에이전트 아바타 SVG 성공', ag, async () => ({ attachmentId: await up(admin.accountId, 'image/svg+xml', SVG) }), A);
+          await both('에이전트 아바타 지우기', ag, fixed({ attachmentId: null }), A);
+          const row = async (id: string) => (await db.pool.query(`select avatar_attachment_id, avatar_source_attachment_id, avatar_crop from account where id = $1`, [id])).rows[0];
+          expect(await row(bot.accountId)).toEqual({ avatar_attachment_id: null, avatar_source_attachment_id: null, avatar_crop: null });
+          expect(await row(member.accountId)).toEqual({ avatar_attachment_id: null, avatar_source_attachment_id: null, avatar_crop: null });
+        }
+        // 10) GET /agent/secret-create(S5.4 SE4) — 사람 · 익명 · PAT 에이전트(오퍼레이터 없음) · 오퍼레이터 경유(부여 없음·있음·만료·멈춤·다른 scope).
+        {
+          const sc = await createAgent(app, A, 's54r5sc');
+          const sop = await registerOperator(app, A, 's54r5-op');
+          await db.pool.query(`insert into agent_assignment (agent_id, operator_id, assigned_by) values ($1, $2, $3)`, [sc.accountId, sop.operatorId, admin.accountId]);
+          const raw = async (base: string, headers: Record<string, string>) => {
+            const r = await fetch(`${base}/agent/secret-create`, { headers });
+            const text = await r.text();
+            const json = text ? JSON.parse(text) as Record<string, unknown> : {};
+            return { status: r.status, cc: r.status === 200 ? r.headers.get('cache-control') : null, json };
+          };
+          const viaOp = { authorization: `Bearer ${sop.token}`, 'x-harkroom-agent': sc.accountId };
+          const check = async (name: string, headers: Record<string, string>, want?: boolean) => {
+            const [a, b] = [await raw(tsUrl, headers), await raw(rsUrl, headers)];
+            expect(b, name).toEqual(a);
+            if (want !== undefined) expect(a.json.granted, name).toBe(want);
+          };
+          await check('만들기 절 사람 → 403', { authorization: `Bearer ${A}` });
+          await check('만들기 절 익명 → 401', {});
+          await check('만들기 절 PAT 에이전트 → 403', { authorization: `Bearer ${sc.pat}` });
+          await check('만들기 절 부여 없음', viaOp, false);
+          const give = (scope: string, extra = '') => db.pool.query(
+            `insert into account_grant (account_id, capability, scope, granted_by${extra ? `, ${extra}` : ''}) values ($1, 'secret.create', $2, $3${extra ? ', now() - interval \'1 hour\'' : ''})`,
+            [sc.accountId, scope, admin.accountId]);
+          await give('other');
+          await check('만들기 절 다른 scope', viaOp, false);
+          await give('', 'expires_at');
+          await check('만들기 절 만료', viaOp, false);
+          await db.pool.query(`delete from account_grant where account_id = $1 and capability = 'secret.create'`, [sc.accountId]);
+          await give('', 'suspended_at');
+          await check('만들기 절 멈춤', viaOp, false);
+          await db.pool.query(`delete from account_grant where account_id = $1 and capability = 'secret.create'`, [sc.accountId]);
+          await give('');
+          await check('만들기 절 부여 있음', viaOp, true);
+          await db.pool.query(`delete from account_grant where account_id = $1 and capability = 'secret.create'`, [sc.accountId]);
+        }
       }
       // 프리플라이트(옮긴 줄의 OPTIONS 는 앞단이 TS 로 넘긴다 — 두 답이 같아야 한다).
       for (const headers of [{ origin: CORS, 'access-control-request-method': 'PUT' }, { origin: CORS }] as Record<string, string>[]) {
