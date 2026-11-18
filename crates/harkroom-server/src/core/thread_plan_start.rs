@@ -5,7 +5,9 @@
 //! - 실제 시작 중 **누른 사람 자기 단계만**(`selfStepIds` 만 있고 보낼 글이 없는 꼴, TP5b)은 Rust 가 쓴다 — 잠금 안 다시 보기·
 //!   active 로 바꾸기([`activate`])는 MCP 계획 쓰기 경로(`write_custom`, 같은 권한 `PLAN_WRITE_PRIVILEGES`)를 탄다. 글이 없으니
 //!   links 달기·되돌리기 쓰기도 없다(TS `linkOf`·`failed` 가 비었다).
-//! - 다른 담당·관리자에게 글을 올리는 꼴은 아직 TS 다 — 부르는 쪽이 요청을 그대로 넘긴다.
+//! - 다른 담당·관리자에게 글을 올리는 꼴(TP5c)도 Rust 다: 잠금 안 active([`activate`], 남에게 고른 담당은 `picked`) →
+//!   글마다 Rust 글 경로(`post_in_tx`, 사람 세션 글·TS 와 같은 재시도 키) → 마무리 쓰기([`finish`]: links 달기·실패 되돌리기).
+//!   글은 라우트 몫(카드 고르기·닫기)을 끈다(`Origin::service_call`). 글 경로가 없으면(`ManagerState::post` 없음) TS 로 넘긴다.
 use super::invoke_gate::{AgentFacts, Ctx, Via, invoke_facts, may_invoke};
 use super::msg_list::derive_plan;
 use super::msg_read::channel_visible;
@@ -46,6 +48,8 @@ pub struct Route {
     pub self_ids: Vec<String>,
     pub skipped: Vec<(String, &'static str)>,
     pub manager_skipped: Option<&'static str>,
+    /// 담당이 비어 있어 고른 사람에게 보내는 단계 `(id, 고른 사람)`(TS `picked` 중 남에게 가는 것).
+    pub picked: Vec<(String, String)>,
 }
 
 fn sid(s: &Value) -> &str {
@@ -157,6 +161,7 @@ pub async fn plan_routes(
         self_ids: Vec::new(),
         skipped: Vec::new(),
         manager_skipped: None,
+        picked: Vec::new(),
     };
     let mut manager_ok = false;
     if let Some(m) = &manager {
@@ -212,8 +217,14 @@ pub async fn plan_routes(
                 p.clone()
             }
         };
+        let pick_used = step_assignee(doc, s).is_none();
         match reachable(pool, &mut conn, &facts, actor, channel, &target).await? {
-            Reach::Ok => add(&target, id),
+            Reach::Ok => {
+                if pick_used {
+                    route.picked.push((id.clone(), target.clone()));
+                }
+                add(&target, id)
+            }
             Reach::NotAgent => route.skipped.push((id.clone(), "other_human_assignee")),
             _ => route.skipped.push((id.clone(), "not_invokable")),
         }
@@ -495,6 +506,7 @@ pub fn activate(
     row_doc: &Value,
     self_ids: &[String],
     actor: &str,
+    picks: &[(String, String)],
     map: &HashMap<String, crate::core::msg_list::Linked>,
 ) -> Result<
     (Value, Vec<String>, Vec<(String, &'static str)>),
@@ -553,7 +565,11 @@ pub fn activate(
             if let Some(o) = s.as_object_mut() {
                 o.insert("state".into(), Value::from("active"));
                 if picked.contains(&id) {
-                    o.insert("assigneeId".into(), Value::from(actor));
+                    let who = picks
+                        .iter()
+                        .find(|(p, _)| *p == id)
+                        .map_or(actor, |(_, w)| w.as_str());
+                    o.insert("assigneeId".into(), Value::from(who));
                 }
             }
         }
@@ -571,7 +587,36 @@ pub fn started_json(
     manager_skipped: Option<&'static str>,
     plan_view: &str,
 ) -> String {
-    let started: Vec<String> = self_ids
+    started_full_json(
+        rev,
+        self_ids,
+        activated,
+        &[],
+        skipped,
+        &[],
+        &[],
+        manager_skipped,
+        plan_view,
+    )
+}
+
+/// 글이 나간 단계 하나 — `(단계 id, 관리자로?, 받는 사람, 글 id)`.
+pub type Sent = (String, bool, String, String);
+
+/// 실제 시작 답 몸통 — 글을 올린 꼴까지(TS `started` 는 자기 단계 먼저, 그다음 글 순서).
+#[allow(clippy::too_many_arguments)]
+pub fn started_full_json(
+    rev: i64,
+    self_ids: &[String],
+    activated: &[String],
+    sent: &[Sent],
+    skipped: &[(String, &'static str)],
+    failed: &[String],
+    not_notified: &[String],
+    manager_skipped: Option<&'static str>,
+    plan_view: &str,
+) -> String {
+    let mut started: Vec<String> = self_ids
         .iter()
         .filter(|id| activated.contains(id))
         .map(|id| {
@@ -581,16 +626,127 @@ pub fn started_json(
             )
         })
         .collect();
+    for (id, manager, to, mid) in sent {
+        started.push(format!(
+            r#"{{"id":{},"via":{},"to":{},"messageId":{}}}"#,
+            q(id),
+            q(if *manager { "manager" } else { "assignee" }),
+            q(to),
+            q(mid)
+        ));
+    }
+    let failed: Vec<String> = failed
+        .iter()
+        .map(|id| format!(r#"{{"id":{},"code":"post_failed"}}"#, q(id)))
+        .collect();
+    let mut nn: Vec<String> = Vec::new();
+    for a in not_notified {
+        if !nn.contains(a) {
+            nn.push(a.clone());
+        }
+    }
     let plan = plan_view
         .strip_prefix(r#"{"plan":"#)
         .and_then(|p| p.strip_suffix('}'))
         .unwrap_or("null");
     format!(
-        r#"{{"ok":true,"dryRun":false,"rev":{rev},"started":[{}],"skipped":{},"failed":[],"notNotified":[],"managerSkipped":{},"plan":{plan}}}"#,
+        r#"{{"ok":true,"dryRun":false,"rev":{rev},"started":[{}],"skipped":{},"failed":[{}],"notNotified":{},"managerSkipped":{},"plan":{plan}}}"#,
         started.join(","),
         skipped_json(skipped),
+        failed.join(","),
+        ids_json(&nn),
         manager_skipped.map_or("null".into(), q)
     )
+}
+
+/// 잠금 뒤 올릴 글(TS 두 번째 `buildPosts`) — 시작된 단계만 남기고, 빈 글은 뺀다. `doc` 은 active 로 바꾼 판.
+/// `(받는 사람, 관리자로?, 단계 id, 본문)`.
+pub fn bodies_after(
+    route: &Route,
+    activated: &[String],
+    doc: &Value,
+    handles: &HashMap<String, String>,
+    en: bool,
+) -> Vec<(String, bool, Vec<String>, String)> {
+    let steps: Vec<&Value> = doc["steps"].as_array().into_iter().flatten().collect();
+    route
+        .posts
+        .iter()
+        .filter_map(|(to, manager, ids)| {
+            let ids: Vec<String> = ids
+                .iter()
+                .filter(|id| activated.contains(id))
+                .cloned()
+                .collect();
+            if ids.is_empty() {
+                return None;
+            }
+            let ss: Vec<&Value> = ids
+                .iter()
+                .filter_map(|id| steps.iter().find(|s| sid(s) == id).copied())
+                .collect();
+            let body = post_body(
+                *manager,
+                handles.get(to).map_or("", String::as_str),
+                to,
+                &ss,
+                doc,
+                handles,
+                en,
+            );
+            Some((to.clone(), *manager, ids, body))
+        })
+        .collect()
+}
+
+/// TS `PLAN_LIMITS.links`.
+const LINKS_MAX: usize = 10;
+
+/// 마무리 쓰기(TS 두 번째 `writeThreadPlan`) — 글을 links 에 달고, 글이 실패한 단계는 그 사이 아무도 안 고쳤을 때만
+/// pending·원래 담당으로 되돌린다. `before` 는 경로를 정할 때 본 판.
+pub fn finish(
+    prev: Option<(&Value, i64)>,
+    activated_rev: i64,
+    link_of: &[(String, String)],
+    failed: &[String],
+    before: &Value,
+) -> Result<Value, &'static str> {
+    let Some((doc, rev)) = prev else {
+        return Err("no_plan");
+    };
+    let untouched = rev == activated_rev;
+    let mut next = doc.clone();
+    if let Some(steps) = next["steps"].as_array_mut() {
+        for s in steps.iter_mut() {
+            let id = sid(s).to_string();
+            if let Some((_, mid)) = link_of.iter().find(|(x, _)| *x == id) {
+                let n = s["links"].as_array().map_or(0, Vec::len);
+                if n < LINKS_MAX
+                    && let Some(o) = s.as_object_mut()
+                {
+                    let mut links = o
+                        .get("links")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default();
+                    links.push(serde_json::json!({"kind": "message", "id": mid}));
+                    o.insert("links".into(), Value::from(links));
+                }
+                continue;
+            }
+            if untouched && failed.contains(&id) {
+                let old = before["steps"]
+                    .as_array()
+                    .and_then(|a| a.iter().find(|x| sid(x) == id))
+                    .map_or(Value::Null, |x| x["assigneeId"].clone());
+                if let Some(o) = s.as_object_mut() {
+                    o.insert("state".into(), Value::from("pending"));
+                    o.insert("assigneeId".into(), old);
+                }
+            }
+        }
+    }
+    Ok(next)
 }
 
 /// 잠금 안 거절 몸통 — `nothing_to_start` 면 첫 빠짐 코드(없으면 `not_ready`)와 `skipped`, 그 밖은 `{ code }`.
@@ -634,6 +790,7 @@ mod tests {
             self_ids: vec![],
             skipped: vec![("s2".into(), "unknown_item")],
             manager_skipped: None,
+            picked: vec![],
         };
         assert_eq!(
             nothing_json(&r),
@@ -653,7 +810,8 @@ mod tests {
     fn activate_marks_self_and_picks_unassigned() {
         let d = plan();
         let ids = vec!["s1".to_string(), "s2".to_string()];
-        let (next, ok, sk) = activate(Some((&d, 4)), 4, &d, &ids, "me", &HashMap::new()).unwrap();
+        let (next, ok, sk) =
+            activate(Some((&d, 4)), 4, &d, &ids, "me", &[], &HashMap::new()).unwrap();
         assert_eq!(ok, ids);
         assert!(sk.is_empty());
         assert_eq!(next["steps"][0]["state"], "active");
@@ -667,13 +825,13 @@ mod tests {
         let d = plan();
         let ids = vec!["s1".to_string()];
         assert_eq!(
-            activate(None, 4, &d, &ids, "me", &HashMap::new())
+            activate(None, 4, &d, &ids, "me", &[], &HashMap::new())
                 .unwrap_err()
                 .0,
             "no_plan"
         );
         assert_eq!(
-            activate(Some((&d, 5)), 4, &d, &ids, "me", &HashMap::new())
+            activate(Some((&d, 5)), 4, &d, &ids, "me", &[], &HashMap::new())
                 .unwrap_err()
                 .0,
             "plan_changed"
@@ -681,7 +839,7 @@ mod tests {
         // 그 사이 누가 먼저 시작했다.
         let mut started = d.clone();
         started["steps"][0]["state"] = "active".into();
-        let e = activate(Some((&started, 4)), 4, &d, &ids, "me", &HashMap::new()).unwrap_err();
+        let e = activate(Some((&started, 4)), 4, &d, &ids, "me", &[], &HashMap::new()).unwrap_err();
         assert_eq!(
             e,
             (
@@ -692,17 +850,18 @@ mod tests {
         // 담당이 바뀌었다·관리자가 바뀌었다.
         let mut moved = d.clone();
         moved["steps"][0]["assigneeId"] = "other".into();
-        let e = activate(Some((&moved, 4)), 4, &d, &ids, "me", &HashMap::new()).unwrap_err();
+        let e = activate(Some((&moved, 4)), 4, &d, &ids, "me", &[], &HashMap::new()).unwrap_err();
         assert_eq!(e.1, vec![("s1".to_string(), "plan_changed")]);
         let mut mgr = d.clone();
         mgr["managerId"] = "n".into();
-        let e = activate(Some((&mgr, 4)), 4, &d, &ids, "me", &HashMap::new()).unwrap_err();
+        let e = activate(Some((&mgr, 4)), 4, &d, &ids, "me", &[], &HashMap::new()).unwrap_err();
         assert_eq!(e.1, vec![("s1".to_string(), "plan_changed")]);
         // 없어진 단계는 빠지고 남은 것만 시작한다.
         let mut gone = d.clone();
         gone["steps"].as_array_mut().unwrap().remove(1);
         let two = vec!["s1".to_string(), "s2".to_string()];
-        let (_, ok, sk) = activate(Some((&gone, 4)), 4, &d, &two, "me", &HashMap::new()).unwrap();
+        let (_, ok, sk) =
+            activate(Some((&gone, 4)), 4, &d, &two, "me", &[], &HashMap::new()).unwrap();
         assert_eq!(ok, vec!["s1".to_string()]);
         assert_eq!(sk, vec![("s2".to_string(), "unknown_item")]);
     }
@@ -735,5 +894,75 @@ mod tests {
             refused_json("plan_changed", &sk).1,
             r#""code":"plan_changed""#
         );
+    }
+
+    #[test]
+    fn finish_links_and_reverts() {
+        let d = plan();
+        let mut act = d.clone();
+        act["steps"][0]["state"] = "active".into();
+        act["steps"][1]["state"] = "active".into();
+        act["steps"][1]["assigneeId"] = "x".into();
+        let link = vec![("s1".to_string(), "m1".to_string())];
+        let failed = vec!["s2".to_string()];
+        let n = finish(Some((&act, 5)), 5, &link, &failed, &d).unwrap();
+        assert_eq!(n["steps"][0]["links"][0]["id"], "m1");
+        assert_eq!(n["steps"][0]["links"][0]["kind"], "message");
+        assert_eq!(n["steps"][1]["state"], "pending");
+        assert_eq!(n["steps"][1]["assigneeId"], Value::Null);
+        // 그 사이 고쳐졌으면 되돌리지 않는다.
+        let n = finish(Some((&act, 6)), 5, &link, &failed, &d).unwrap();
+        assert_eq!(n["steps"][1]["state"], "active");
+        assert_eq!(finish(None, 5, &link, &failed, &d).unwrap_err(), "no_plan");
+    }
+
+    #[test]
+    fn bodies_after_drops_unstarted() {
+        let d = plan();
+        let route = Route {
+            posts: vec![
+                ("a".into(), false, vec!["s1".into(), "s2".into()]),
+                ("b".into(), true, vec!["s3".into()]),
+            ],
+            self_ids: vec![],
+            skipped: vec![],
+            manager_skipped: None,
+            picked: vec![],
+        };
+        let mut h = HashMap::new();
+        h.insert("a".to_string(), "al".to_string());
+        let out = bodies_after(&route, &["s2".to_string()], &d, &h, true);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].2, vec!["s2".to_string()]);
+        assert!(out[0].3.starts_with("@al Starting plan steps."));
+    }
+
+    #[test]
+    fn started_full_body() {
+        let sent = vec![("s2".to_string(), true, "m".to_string(), "x1".to_string())];
+        assert_eq!(
+            started_full_json(
+                3,
+                &[],
+                &[],
+                &sent,
+                &[],
+                &["s3".to_string()],
+                &["m".to_string(), "m".to_string()],
+                None,
+                r#"{"plan":null}"#
+            ),
+            r#"{"ok":true,"dryRun":false,"rev":3,"started":[{"id":"s2","via":"manager","to":"m","messageId":"x1"}],"skipped":[],"failed":[{"id":"s3","code":"post_failed"}],"notNotified":["m"],"managerSkipped":null,"plan":null}"#
+        );
+    }
+
+    #[test]
+    fn activate_uses_picks_for_others() {
+        let d = plan();
+        let ids = vec!["s2".to_string()];
+        let picks = vec![("s2".to_string(), "x".to_string())];
+        let (next, _, _) =
+            activate(Some((&d, 4)), 4, &d, &ids, "me", &picks, &HashMap::new()).unwrap();
+        assert_eq!(next["steps"][1]["assigneeId"], "x");
     }
 }

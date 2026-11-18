@@ -364,6 +364,10 @@ pub(crate) struct Origin<'a> {
     /// TS `beforeCommit` — 글을 넣고 위임을 닫은 뒤, 커밋 **앞** 같은 tx 에서 부른다. 거절하면 롤백하고 [`Outcome::Rejected`].
     /// 지나면 행을 다시 읽어 내보낸다(이 훅이 글에 딸린 행을 더 쓸 수 있다 — TS 의 `reread`). 없으면 아무것도 바뀌지 않는다.
     pub(crate) before_commit: Option<&'a dyn BeforeCommit>,
+    /// 서버 안쪽에서 TS 서비스 `postMessage` 를 바로 부른 사람 글(S5.4 TP5c, `plan/start`) — 라우트를 거치지 않으니 TS 라우트 몫인
+    /// 카드 고르기(`applyChatApproval`)·카드 닫기(`closeAsksByReply`)가 없다. 그래서 카드 갈래 TS 몫 판정과 [`ask_reply_close`] 를 끈다.
+    /// 서비스 몫(부름·`thread_reply`·깨움 선점·위임 기한·위임 키)은 그대로다. 라우트 입력에서는 켜지 않는다.
+    pub(crate) service_call: bool,
 }
 
 /// TS `beforeCommit` 의 거절 — `{ status, code, message }`.
@@ -889,7 +893,7 @@ pub(crate) async fn post_tx(
             .bind(r)
             .bind(author)
             // 시스템 줄은 카드 답이 되지 않는다(TS `closeAsksByReply` 는 라우트 몫) — ask 갈래를 끈다.
-            .bind(origin.system || question_only(body))
+            .bind(origin.system || origin.service_call || question_only(body))
             .bind(v2.is_some())
             .fetch_one(&mut *tx)
             .await?;
@@ -1290,7 +1294,9 @@ pub(crate) async fn post_tx(
     }
     // TS 라우트는 `inbox.updated` 뒤에 `closeAsksByReply` 를 부른다(사람 글만) — 이 답보다 앞선 열린 카드를 `replied` 로 닫는다.
     // 시스템 줄은 라우트를 거치지 않는다(서버가 바로 `postMessage` 를 부른다) — 카드를 닫지 않는다.
-    if let (false, false, Some(r)) = (author_is_agent, origin.system, root) {
+    if let (false, false, false, Some(r)) =
+        (author_is_agent, origin.system, origin.service_call, root)
+    {
         let seq = row_value
             .get("seq")
             .and_then(Value::as_i64)

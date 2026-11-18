@@ -330,6 +330,7 @@ async fn write(
         wake: false,
         no_mentions: false,
         before_commit: None,
+        service_call: false,
     };
     let post = PostBody {
         body: a.body.clone(),

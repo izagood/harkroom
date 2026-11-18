@@ -14,8 +14,8 @@ use super::msg_post::{gate_sql, to_ts};
 use super::msg_read::channel_visible;
 use super::thread_plan_read::{ROOT_SQL, plan_view_json};
 use super::thread_plan_start::{
-    activate, handles_of, nothing_json, plan_routes, preview_json, refused_json, start_req,
-    started_json,
+    Sent, activate, bodies_after, finish, handles_of, nothing_json, plan_routes, preview_json,
+    refused_json, start_req, started_full_json,
 };
 use crate::auth::{RequireAccount, Via};
 use crate::directory::{internal, json_err, json_ok};
@@ -26,6 +26,7 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde_json::Value;
 use sqlx::PgPool;
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -199,8 +200,8 @@ fn parse_start(bytes: &[u8]) -> Option<(bool, bool)> {
 }
 
 /// `POST /threads/{rootId}/plan/start` — TS `startPlanSteps` 의 앞 거절들(`human_only`·`not_found`·`if_rev_required`·
-/// `not_root`·보기 404·`channel_archived`·`no_plan`·`plan_flagged`)만 Rust 가 답한다. 그 뒤(경로 정하기·미리보기·위임 글 올리기)와
-/// zod 판정이 애매한 본문은 요청을 그대로 TS 에 넘긴다(TS 가 같은 판정을 처음부터 다시 돈다).
+/// `not_root`·보기 404·`channel_archived`·`no_plan`·`plan_flagged`), 미리보기, 자기 단계만 시작(TP5b), 글을 올리는 시작(TP5c)을
+/// Rust 가 답한다. 글 경로가 없는 글 올리기와 zod 판정이 애매한 본문은 요청을 그대로 TS 에 넘긴다.
 pub async fn post_start(
     State(st): State<Arc<ManagerState>>,
     RequireAccount(me, auth): RequireAccount,
@@ -283,52 +284,78 @@ pub async fn post_start(
         )
             .into_response();
     }
-    // 보낼 글이 있는 꼴(다른 담당·관리자 부르기)은 TS — 글·links 달기·되돌리기가 거기 있다.
-    if !route.posts.is_empty() {
-        return to_ts(st.up.clone(), peer, parts, bytes).await;
-    }
+    // 보낼 글이 있는 꼴(다른 담당·관리자 부르기, TP5c)은 글 경로가 붙어 있을 때(`post`)만 Rust. 글은 TS 서비스 `postMessage` 와 같이
+    // 라우트 몫(카드 고르기·카드 닫기)을 끈 채 올린다([`super::msg_post::Origin::service_call`]).
+    let post_st = if route.posts.is_empty() {
+        None
+    } else {
+        let Some(p) = st.post.as_ref() else {
+            return to_ts(st.up.clone(), peer, parts, bytes).await;
+        };
+        Some(p)
+    };
     let Some(if_rev) = req.if_rev else {
         return to_ts(st.up.clone(), peer, parts, bytes).await;
+    };
+    let handles = if post_st.is_some() {
+        match handles_of(w, &route, &doc).await {
+            Ok(h) => h,
+            Err(e) => return internal(e),
+        }
+    } else {
+        HashMap::new()
     };
     let map = match super::thread_plan_read::linked_map(w, &me.id, &doc).await {
         Ok(m) => m,
         Err(e) => return internal(e),
     };
+    let wanted: Vec<String> = route
+        .self_ids
+        .iter()
+        .cloned()
+        .chain(route.posts.iter().flat_map(|p| p.2.iter().cloned()))
+        .collect();
     type Out = (
         Vec<String>,
         Vec<(String, &'static str)>,
         Option<&'static str>,
+        Value,
     );
     let out: Arc<std::sync::Mutex<Out>> = Arc::default();
     let f = {
         let out = out.clone();
-        let (row_doc, ids, actor) = (doc.clone(), route.self_ids.clone(), me.id.clone());
+        let (row_doc, ids, actor, picks) = (
+            doc.clone(),
+            wanted.clone(),
+            me.id.clone(),
+            route.picked.clone(),
+        );
         Box::new(move |prev: Option<(&Value, i64)>| {
-            let r = activate(prev, if_rev, &row_doc, &ids, &actor, &map);
+            let r = activate(prev, if_rev, &row_doc, &ids, &actor, &picks, &map);
             let mut o = out
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             match r {
                 Ok((next, ok, sk)) => {
-                    *o = (ok, sk, None);
+                    *o = (ok, sk, None, next.clone());
                     Ok(next)
                 }
                 Err((code, sk)) => {
-                    *o = (Vec::new(), sk, Some(code));
+                    *o = (Vec::new(), sk, Some(code), Value::Null);
                     Err(code)
                 }
             }
         })
     };
     let written = write_custom(w, &me.id, &root, &channel, f).await;
-    let (activated, extra, _) = std::mem::take(
+    let (activated, extra, _, active_doc) = std::mem::take(
         &mut *out
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner),
     );
     let mut skipped = route.skipped.clone();
     skipped.extend(extra);
-    let rev = match written {
+    let mut rev = match written {
         Ok((ManagerWrite::Written { auto_off: None }, r)) => r.unwrap_or(rev),
         Ok((ManagerWrite::Refused { code, .. }, _)) if code == "nothing_to_start" => {
             let (c, fields) = refused_json(code, &skipped);
@@ -344,12 +371,39 @@ pub async fn post_start(
         }
         Err(e) => return internal(e),
     };
+    let mut sent: Vec<Sent> = Vec::new();
+    let mut failed: Vec<String> = Vec::new();
+    let mut not_notified: Vec<String> = Vec::new();
+    if let Some(ps) = post_st {
+        let posts = bodies_after(&route, &activated, &active_doc, &handles, req.en);
+        match send_posts(ps, &channel, &me.id, &root, if_rev, &posts).await {
+            Ok((s, f, n)) => (sent, failed, not_notified) = (s, f, n),
+            Err(e) => return internal(e),
+        }
+        if !sent.is_empty() || !failed.is_empty() {
+            let link_of: Vec<(String, String)> =
+                sent.iter().map(|x| (x.0.clone(), x.3.clone())).collect();
+            let (fl, before, activated_rev) = (failed.clone(), doc.clone(), rev);
+            let f2 = Box::new(move |prev: Option<(&Value, i64)>| {
+                finish(prev, activated_rev, &link_of, &fl, &before)
+            });
+            // TS 와 같이 마무리 쓰기가 실패해도 시작 답은 낸다(흔적만).
+            match write_custom(w, &me.id, &root, &channel, f2).await {
+                Ok((ManagerWrite::Written { .. }, Some(r))) => rev = r,
+                Ok(_) => {}
+                Err(e) => eprintln!("[threadPlanStart] 시작 뒤 판 쓰기 실패: {e}"),
+            }
+        }
+    }
     match plan_view_json(w, &me.id, &root).await {
-        Ok(view) => json_ok(started_json(
+        Ok(view) => json_ok(started_full_json(
             rev,
             &route.self_ids,
             &activated,
+            &sent,
             &skipped,
+            &failed,
+            &not_notified,
             route.manager_skipped,
             &view,
         )),
@@ -357,7 +411,80 @@ pub async fn post_start(
     }
 }
 
-/// 코어 라우터에 합칠 줄 — 인증은 `route_layer`, CORS 는 `layer`. `POST …/plan/start` 는 앞 거절·미리보기·자기 단계만 시작은 Rust, 글을 올리는 시작은 TS.
+/// 시작 글들을 올린다(TS `postMessage(…, authVia: 'session')` 고리) — 글마다 따로 커밋한다. 실패한 글의 단계는 `failed`.
+#[allow(clippy::type_complexity)]
+async fn send_posts(
+    ps: &super::msg_post::PostState,
+    channel: &str,
+    actor: &str,
+    root: &str,
+    start_rev: i64,
+    posts: &[(String, bool, Vec<String>, String)],
+) -> sqlx::Result<(Vec<Sent>, Vec<String>, Vec<String>)> {
+    use super::msg_post::{Origin, Outcome, PostBody, channel_is_dm, post_in_tx};
+    let (mut sent, mut failed, mut nn) = (Vec::new(), Vec::new(), Vec::new());
+    if posts.is_empty() {
+        return Ok((sent, failed, nn));
+    }
+    let audience = super::audience::audience_for(&ps.write, channel)
+        .await?
+        .to_json();
+    let is_dm = channel_is_dm(&ps.write, channel).await?;
+    for (to, manager, ids, body) in posts {
+        let input = PostBody {
+            body: body.clone(),
+            attachment_ids: Vec::new(),
+            thread_root: Some(root.to_owned()),
+            also_in_channel: false,
+        };
+        let key = format!("plan-start:{root}:{to}:{start_rev}:{}", ids.join(","));
+        let r = post_in_tx(
+            ps,
+            channel,
+            actor,
+            false,
+            &input,
+            Some(&key),
+            &audience,
+            is_dm,
+            &Origin {
+                service_call: true,
+                ..Origin::default()
+            },
+        )
+        .await;
+        let mid = match r {
+            Ok(Outcome::Posted { row, notified, .. }) => {
+                if !notified.contains(to) {
+                    nn.push(to.clone());
+                }
+                message_id(&row)
+            }
+            Ok(Outcome::Replayed(row)) => message_id(&row),
+            Ok(_) => None,
+            Err(e) => {
+                eprintln!("[threadPlanStart] 시작 글 실패: {e}");
+                None
+            }
+        };
+        match mid {
+            Some(m) => {
+                for id in ids {
+                    sent.push((id.clone(), *manager, to.clone(), m.clone()));
+                }
+            }
+            None => failed.extend(ids.iter().cloned()),
+        }
+    }
+    Ok((sent, failed, nn))
+}
+
+fn message_id(row: &str) -> Option<String> {
+    let v: Value = serde_json::from_str(row).ok()?;
+    v["id"].as_str().map(str::to_string)
+}
+
+/// 코어 라우터에 합칠 줄 — 인증은 `route_layer`, CORS 는 `layer`. `POST …/plan/start` 는 앞 거절·미리보기·실제 시작 모두 Rust(글 경로가 없을 때만 TS).
 pub fn routes(
     st: ManagerState,
     auth: crate::auth::AuthPools,
