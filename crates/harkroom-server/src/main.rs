@@ -3985,7 +3985,7 @@ async fn main() {
             core_routes.sockets.extend(tc.sockets);
         }
         // S5.4 — `POST /agent/api-results`. 글 올리기 코어와 칸 권한이 다 있을 때만 — 아니면 TS 에 남는다.
-        if let Some(write) = api_results_write {
+        if let Some(write) = api_results_write.clone() {
             let ar = harkroom_server::core::api_results::routes(
                 harkroom_server::core::api_results::ApiResultsState {
                     post: harkroom_server::core::msg_post::PostState {
@@ -4040,6 +4040,14 @@ async fn main() {
                 state.up.clone(),
                 api_checks_deny.clone(),
                 api_checks_allow,
+                api_results_write
+                    .clone()
+                    .map(|write| harkroom_server::core::msg_post::PostState {
+                        read: state.pool.clone(),
+                        write,
+                        up: state.up.clone(),
+                        implicit_ok,
+                    }),
                 auth.clone(),
                 state.cors.clone(),
             );
