@@ -169,6 +169,150 @@ pub fn limit_verdict(used: i32, effective: usize) -> Option<Rejection> {
     None
 }
 
+const PICKABLE_SQL: &str =
+    "select agent_pickable_models from agent_config where account_id = $1::uuid";
+const EXISTING_SQL: &str = "select set_by_kind, model, effort from thread_agent_model \
+     where thread_root_id = $1::uuid and agent_id = $2::uuid";
+const COUNT_SQL: &str =
+    "select n from thread_agent_pick_count where thread_root_id = $1::uuid for update";
+const COUNT_UP_SQL: &str = "insert into thread_agent_pick_count (thread_root_id, n) values ($1::uuid, $2) \
+     on conflict (thread_root_id) do update set n = thread_agent_pick_count.n + excluded.n";
+const CLEAR_AGENT_SQL: &str = "delete from thread_agent_model where thread_root_id = $1::uuid \
+     and agent_id = $2::uuid and set_by_kind = 'agent'";
+const ROOT_SQL: &str = "select 1 from message where id = $1::uuid and channel_id = $2::uuid \
+     and thread_root_id is null and deleted_at is null";
+const AGENT_SQL: &str = "select a.kind, c.harness from account a left join agent_config c on c.account_id = a.id \
+      where a.id = $1::uuid and a.deleted_at is null";
+const UPSERT_AGENT_SQL: &str = "insert into thread_agent_model (thread_root_id, agent_id, harness, model, effort, set_by, set_by_kind) \
+     values ($1::uuid, $2::uuid, $3, $4, $5, $6::uuid, 'agent') \
+     on conflict (thread_root_id, agent_id) do update set \
+       harness = excluded.harness, model = excluded.model, effort = excluded.effort, \
+       set_by = excluded.set_by, set_by_kind = excluded.set_by_kind, set_at = now() \
+     where thread_agent_model.set_by_kind = 'agent'";
+
+/// 쓰기가 끝난 한 줄 — 바뀐 에이전트와 새 (model, effort)(풀기면 `None`). 시스템 줄·이벤트는 커밋 뒤 호출자 몫.
+pub type Change = (String, Option<(Option<String>, Option<String>)>);
+
+async fn existing(
+    tx: &mut sqlx::PgConnection,
+    root: &str,
+    agent: &str,
+) -> sqlx::Result<Option<Existing>> {
+    sqlx::query_as(EXISTING_SQL)
+        .bind(root)
+        .bind(agent)
+        .fetch_optional(tx)
+        .await
+}
+
+/// TS `applyAgentPicks` — 게시 tx 안에서 판정하고 쓴다. `Err(Rejection)` 이면 호출자가 롤백한다. 아직 MCP 갈래에 잇지 않았다.
+pub async fn apply(
+    tx: &mut sqlx::PgConnection,
+    channel: &str,
+    root: &str,
+    actor: &str,
+    picks: &[Pick],
+    notified: &HashSet<String>,
+) -> sqlx::Result<Result<Vec<Change>, Rejection>> {
+    for p in picks {
+        if let Some(r) = target_verdict(actor, notified, p) {
+            return Ok(Err(r));
+        }
+        if !p.clearing() {
+            let raw: Option<Option<Value>> = sqlx::query_scalar(PICKABLE_SQL)
+                .bind(&p.agent_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+            let list = read_pickable(raw.flatten().as_ref());
+            if let Some(r) = pickable_verdict(&list, p) {
+                return Ok(Err(r));
+            }
+        }
+        let row = existing(&mut *tx, root, &p.agent_id).await?;
+        if let Some(r) = pinned_verdict(row.as_ref()) {
+            return Ok(Err(r));
+        }
+    }
+    let mut effective = Vec::new();
+    for p in picks {
+        let row = existing(&mut *tx, root, &p.agent_id).await?;
+        if is_effective(p, row.as_ref()) {
+            effective.push(p);
+        }
+    }
+    if effective.is_empty() {
+        return Ok(Ok(Vec::new()));
+    }
+    let used: Option<i32> = sqlx::query_scalar(COUNT_SQL)
+        .bind(root)
+        .fetch_optional(&mut *tx)
+        .await?;
+    if let Some(r) = limit_verdict(used.unwrap_or(0), effective.len()) {
+        return Ok(Err(r));
+    }
+    sqlx::query(COUNT_UP_SQL)
+        .bind(root)
+        .bind(i32::try_from(effective.len()).unwrap_or(i32::MAX))
+        .execute(&mut *tx)
+        .await?;
+    let mut changes = Vec::new();
+    for p in effective {
+        if p.clearing() {
+            let n = sqlx::query(CLEAR_AGENT_SQL)
+                .bind(root)
+                .bind(&p.agent_id)
+                .execute(&mut *tx)
+                .await?
+                .rows_affected();
+            if n == 0 {
+                return Ok(Err(human_pinned()));
+            }
+            changes.push((p.agent_id.clone(), None));
+            continue;
+        }
+        // TS `setThreadAgentModel(…, setByKind: 'agent')` — 루트·에이전트 판정 뒤 에이전트 행만 덮는다.
+        let is_root: Option<i32> = sqlx::query_scalar(ROOT_SQL)
+            .bind(root)
+            .bind(channel)
+            .fetch_optional(&mut *tx)
+            .await?;
+        let agent: Option<(String, Option<String>)> = sqlx::query_as(AGENT_SQL)
+            .bind(&p.agent_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        let harness = match (is_root, agent) {
+            (Some(_), Some((kind, h))) if kind == "agent" => {
+                h.unwrap_or_else(|| "claude-code".into())
+            }
+            _ => {
+                return Ok(Err(reject(
+                    403,
+                    "not_called",
+                    "그 대상에는 모델을 정할 수 없다",
+                )));
+            }
+        };
+        let n = sqlx::query(UPSERT_AGENT_SQL)
+            .bind(root)
+            .bind(&p.agent_id)
+            .bind(&harness)
+            .bind(&p.model)
+            .bind(&p.effort)
+            .bind(actor)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+        if n == 0 {
+            return Ok(Err(human_pinned()));
+        }
+        changes.push((
+            p.agent_id.clone(),
+            Some((p.model.clone(), p.effort.clone())),
+        ));
+    }
+    Ok(Ok(changes))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
