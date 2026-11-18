@@ -1418,6 +1418,69 @@ async fn main() {
         }
         _ => None,
     };
+    // S5.4 — `POST /agent/merge-approvals/peek`. 읽기만 — 두 겹 잠금(`HARKROOM_CORE=rust` + 읽기 풀 SELECT).
+    let merge_peek_on = match &core_mode {
+        harkroom_server::core::CoreMode::Rust => {
+            use harkroom_server::core::merge_approval_peek as t;
+            match write::missing_in(&state.pool, t::MERGE_APPROVAL_PEEK_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => true,
+                Ok(m) => {
+                    eprintln!("front: merge approval peek core off — missing privileges {m:?}");
+                    false
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: merge approval peek core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    false
+                }
+            }
+        }
+        _ => false,
+    };
+    // S5.4 — `POST /agents/{id}/merge-denials/{denialId}/grant`. 쓰기 풀에 [`MERGE_DENIAL_GRANT_PRIVILEGES`] 가 다 있을 때만.
+    let merge_denial_grant_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::merge_denial_grant as t;
+            match write::missing_in(w, t::MERGE_DENIAL_GRANT_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: merge denial grant core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: merge denial grant core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+    // S5.4 — `POST /agent/merge-closed`. 쓰기 풀에 [`MERGE_CLOSED_PRIVILEGES`] 가 다 있을 때만.
+    let merge_closed_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::merge_closed as t;
+            match write::missing_in(w, t::MERGE_CLOSED_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: merge closed core off — missing privileges {m:?}");
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: merge closed core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 — `GET /agent-wakes`. 같은 두 겹 잠금(읽기 풀 SELECT).
     let agent_wakes_read_on = match &core_mode {
         harkroom_server::core::CoreMode::Rust => {
@@ -2581,6 +2644,33 @@ async fn main() {
             core_routes.router = core_routes.router.merge(ag.router);
             core_routes.http.extend(ag.http);
             core_routes.sockets.extend(ag.sockets);
+        }
+        if merge_peek_on {
+            let mp = harkroom_server::core::merge_approval_peek::routes(
+                state.pool.clone(),
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(mp.router);
+            core_routes.http.extend(mp.http);
+            core_routes.sockets.extend(mp.sockets);
+        }
+        if let Some(w) = merge_denial_grant_write {
+            let mg = harkroom_server::core::merge_denial_grant::routes(
+                w,
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(mg.router);
+            core_routes.http.extend(mg.http);
+            core_routes.sockets.extend(mg.sockets);
+        }
+        if let Some(w) = merge_closed_write {
+            let mc =
+                harkroom_server::core::merge_closed::routes(w, auth.clone(), state.cors.clone());
+            core_routes.router = core_routes.router.merge(mc.router);
+            core_routes.http.extend(mc.http);
+            core_routes.sockets.extend(mc.sockets);
         }
         if let Some(w) = pr_watch_due_write {
             let pd =
