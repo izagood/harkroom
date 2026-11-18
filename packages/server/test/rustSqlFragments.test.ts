@@ -52,6 +52,7 @@ import { COMMAND_GRANTS_SQL, LIST_TOOL_RULES_SQL, MANDATE_AGENT_CHANNEL_SQL, MAN
 import { READ_LEASE_SQL } from '../src/services/mergeGrants.js';
 import { REPO_GRANT_FOR_SQL } from '../src/auth/permissions.js';
 import { SKILL_PROPOSE_UPSERT_SQL } from '../src/services/skills.js';
+import { PROPOSE_AUTOMATION_SQL } from '../src/services/automations.js';
 import { PR_WATCH_COUNT_SQL, PR_WATCH_DELEGATION_SQL, PR_WATCH_INSERT_SQL, PR_WATCH_LOCK_SQL, PR_WATCH_MEMBER_SQL, PR_WATCH_SUBSCRIBE_SQL } from '../src/services/prWatch.js';
 import { VALID_MANDATE_OWNER_SQL } from '../src/services/mandates.js';
 import { ADD_LINE_AGENTS_SQL, ADD_LINE_INSERT_SQL, ADD_LINE_MANDATE_SQL, MANDATE_LINES_STORED_SQL } from '../src/services/mandateLines.js';
@@ -87,6 +88,7 @@ it('Rust 가 쓰는 SQL 조각이 TS 정본과 같다', () => {
     pr_watch_count: PR_WATCH_COUNT_SQL,
     pr_watch_insert: PR_WATCH_INSERT_SQL,
     skill_propose_upsert: SKILL_PROPOSE_UPSERT_SQL,
+    automation_propose_insert: PROPOSE_AUTOMATION_SQL,
     pr_watch_subscribe: PR_WATCH_SUBSCRIBE_SQL,
     grant_tool_reach: TOOL_REACH_SQL,
     grant_mandate_turn_lease: MANDATE_TURN_LEASE_SQL,

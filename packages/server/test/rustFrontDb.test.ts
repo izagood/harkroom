@@ -1629,6 +1629,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant update (delegation_id) on pr_watch_subscriber to ${rw}`,
         // S5.4 MCP 3 — MCP `skill.propose`(`skill_propose.rs::SKILL_PROPOSE_PRIVILEGES`, update 는 위 P4a 줄). 없으면 「mcp skill.propose core off」.
         `grant insert (slug, body, proposed_by, flagged_at, flag_reason) on workspace_skill to ${rw}`,
+        // S5.4 MCP 4 — MCP `automation.propose`(`automation_propose.rs::AUTOMATION_PROPOSE_PRIVILEGES`). 없으면 「mcp automation.propose core off」. 운영에 줄 목록과 글자째 같다.
+        `grant insert (owner_id, proposed_by, approved_at, enabled, channel_id, name, body, trigger, debounce_sec) on automation to ${rw}`,
+        `grant select (id, owner_id, channel_id, name, body, trigger, enabled, next_at, paused_reason, consecutive_failures, ingress_enabled_at, debounce_sec, proposed_by, approved_at, created_at, updated_at) on automation to ${rw}`,
       ]) await db.pool.query(q);
       const writeUrl = new URL(db.uri);
       writeUrl.username = rw;
@@ -9508,6 +9511,73 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 }
               }
               await db.pool.query(`delete from workspace_skill where slug like 'sp-_-%'`);
+            }
+            // S5.4 MCP 4 — `automation.propose`. TS·Rust 가 각자 다른 이름(`ap-t-*`·`ap-r-*`)으로 같은 장면을 돌리고 답 글자·행을 견준다. 글·이벤트는 없다.
+            if (V2 === '1') {
+              const apCh = await freshCh();
+              // 승인할 사람(admin)이 멤버가 아닌 private 채널 — `channelPostGate` 거절.
+              const apOut = (await createChannel(db.pool, { name: `ap-out-${Math.random().toString(36).slice(2, 10)}`, visibility: 'private', creatorId: member.accountId })).id;
+              const adminHandle = (await db.pool.query<{ handle: string }>(`select handle from account where id = $1`, [admin.accountId])).rows[0]!.handle;
+              const aNorm = (t: string) => t.replace(/ap-[tr]-/g, 'ap-x-')
+                .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, '<uuid>')
+                .replace(/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z/g, '<iso>');
+              const apRows = async (name: string) => (await db.pool.query(
+                `select owner_id = $2::uuid as owner_admin, proposed_by = $3::uuid as by_me, channel_id::text as ch, body, trigger,
+                        enabled, approved_at, next_at, debounce_sec, paused_reason, consecutive_failures, deleted_at,
+                        abs(extract(epoch from (created_at - now()))) < 60 as fresh
+                   from automation where name = $1 order by created_at`, [name, admin.accountId, bot3.accountId])).rows;
+              const WEEKLY = { kind: 'schedule', freq: 'weekly', weekdays: [5, 1, 1], time: '09:30', tz: 'Asia/Seoul', extra: 'x' };
+              // [이름, 이름 꼬리, 인자(이름·채널 빼고), 채널, 기대 행 수]
+              type AP = [string, string, Record<string, unknown>, string, number];
+              const APS: AP[] = [
+                ['① 정상(소유자 기본) · weekly dedupe·sort·모르는 키 버림', 'ok', { body: '정리해', trigger: WEEKLY }, apCh, 1],
+                ['② forHandle(@ 붙임) · daily · debounce', 'fh', { body: '본문', trigger: { kind: 'schedule', freq: 'daily', time: '00:00', tz: 'UTC' }, forHandle: `@${adminHandle}`, debounceSec: 30 }, apCh, 1],
+                ['③ monthly', 'mo', { body: '본문', trigger: { kind: 'schedule', freq: 'monthly', monthDay: 31, time: '23:59', tz: 'America/Los_Angeles' } }, apCh, 1],
+                ['④ github(선택 칸 전부)', 'gh', { body: '본문', trigger: { kind: 'github', repo: 'o/r.x', event: 'pull_request.merged', branch: 'main', paths: ['a/**', 'b'], change: 'added' } }, apCh, 1],
+                ['⑤ webhook', 'wh', { body: '본문', trigger: { kind: 'webhook' } }, apCh, 1],
+                ['⑥ 이름 앞뒤 공백 깎음', '  sp  ', { body: '본문', trigger: { kind: 'webhook' } }, apCh, 1],
+                ['⑦ no_owner(없는 사람)', 'no', { body: '본문', trigger: { kind: 'webhook' }, forHandle: '@nobody-ap-x' }, apCh, 0],
+                ['⑦ no_owner(에이전트 handle)', 'noag', { body: '본문', trigger: { kind: 'webhook' }, forHandle: 'c1c4cbot' }, apCh, 0],
+                ['⑧ forbidden(승인자가 못 쓰는 채널)', 'out', { body: '본문', trigger: { kind: 'webhook' } }, apOut, 0],
+                ['⑧ forbidden(없는 채널)', 'gone', { body: '본문', trigger: { kind: 'webhook' } }, randomUUID(), 0],
+              ];
+              const nameOf = (side: 't' | 'r', tail: string) => tail.startsWith(' ') ? `  ap-${side}-${tail.trim()}  ` : `ap-${side}-${tail}`;
+              const stored = (side: 't' | 'r', tail: string) => nameOf(side, tail).trim();
+              const run = async (side: 't' | 'r') => {
+                const out: Record<string, unknown>[] = [];
+                for (const [name, tail, args, ch] of APS) {
+                  const r = await mcpCall(side === 't' ? tsUrl : v2Url, bot3.pat, 'automation.propose', { name: nameOf(side, tail), channelId: ch, ...args }, 31);
+                  out.push({ name, status: r.status, type: r.type, core: r.core, text: aNorm(r.text) });
+                }
+                return out;
+              };
+              const tsAp = await run('t');
+              const rsAp = await run('r');
+              for (let i = 0; i < tsAp.length; i++) {
+                const { core, ...a } = tsAp[i]!;
+                const { core: rc, ...b } = rsAp[i]!;
+                expect(b, `automation.propose ${String(a.name)}`).toEqual(a);
+                expect(core, `${String(a.name)} — TS`).toBeNull();
+                expect(rc, `${String(a.name)} — 누가 답했나`).toBe('mcp');
+              }
+              for (const [name, tail, , , n] of APS) {
+                const [t, r] = [await apRows(stored('t', tail)), await apRows(stored('r', tail))];
+                expect(t, `${name} — 행 수`).toHaveLength(n);
+                expect(r, `${name} — 행`).toEqual(t);
+              }
+              // 빈 값끼리 통과하지 않게 — TS 쪽 결과를 못 박는다.
+              const tsText = (n: string) => String(tsAp.find((x) => x.name === n)!.text);
+              expect(tsText('⑦ no_owner(없는 사람)')).toContain('no_owner');
+              expect(tsText('⑦ no_owner(에이전트 handle)')).toContain('no_owner');
+              expect(tsText('⑧ forbidden(승인자가 못 쓰는 채널)')).toContain('the approver cannot post in this channel');
+              expect(tsText('⑧ forbidden(없는 채널)')).toContain('forbidden');
+              expect(await apRows('ap-t-ok')).toMatchObject([{
+                owner_admin: true, by_me: true, ch: apCh, enabled: false, approved_at: null, next_at: null, fresh: true,
+                trigger: { kind: 'schedule', freq: 'weekly', weekdays: [1, 5], time: '09:30', tz: 'Asia/Seoul' },
+              }]);
+              expect((await apRows('ap-t-ok'))[0]!.trigger).not.toHaveProperty('extra');
+              expect(await apRows('ap-t-fh')).toMatchObject([{ owner_admin: true, debounce_sec: 30 }]);
+              await db.pool.query(`delete from automation where name like 'ap-_-%'`);
             }
             type DI = { name: string; item: Record<string, unknown>[] };
             const itemOf = (n: string) => (tsD as DI[]).find((x) => x.name === n)!.item;
