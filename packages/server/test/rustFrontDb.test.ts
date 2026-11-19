@@ -1483,6 +1483,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant insert, update, delete on agent_team to ${rw}`,
         `grant insert, delete on agent_team_member to ${rw}`,
         `grant insert, delete on agent_team_invoker to ${rw}`,
+        // P4-2 — 에이전트 invokers·delegates PUT(`agent_invokers.rs::AGENT_INVOKERS_PRIVILEGES`). 없으면 그 4줄은 TS 가 답한다.
+        `grant insert, delete on agent_invoker, agent_owner_delegate to ${rw}`,
         `grant insert, update, delete on handle_group to ${rw}`,
         `grant insert, delete on handle_group_member to ${rw}`,
         // P4c — 신고 해결·차단.
