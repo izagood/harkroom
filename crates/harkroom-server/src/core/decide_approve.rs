@@ -270,6 +270,8 @@ pub enum ApproveOutcome {
         grant_expires_at: Option<String>,
         grant_mode: Option<&'static str>,
         answer_candidates: &'static [&'static str],
+        /// P3 B4e — 소유자가 아닌 사람의 승인이면 커밋·카드 답 뒤에 소유자에게 알릴 거리(TS `notifyOwnerOfUserDecision`).
+        owner_notice: Option<Box<super::decide_owner_notice::OwnerNotice>>,
     },
     Refused {
         status: u16,
@@ -420,6 +422,12 @@ pub const NON_OWNER_APPROVE_PRIVILEGES: &[(&str, &str)] = &[
 /// P3 B4 — 소유자가 아닌 사람의 승인을 Rust 가 쓰는가. 소유자 알림 줄(B4e)이 붙기 전에는 거짓 — 쓰기 전에 TS 로 넘긴다(지금과 같음).
 pub const NON_OWNER_APPROVE_WIRED: bool = false;
 
+/// 소유자가 아닌 사람의 승인 쓰기를 Rust 가 맡는가 — 코드가 다 붙었고([`NON_OWNER_APPROVE_WIRED`]) 소유자 알림 줄(B4e)을 쓸 수 있을 때만
+/// ([`super::decide_owner_notice::owner_notice_core_on`], fail-closed). 아니면 쓰기 전에 TS 로 넘긴다.
+pub fn non_owner_approve_on() -> bool {
+    NON_OWNER_APPROVE_WIRED && super::decide_owner_notice::owner_notice_core_on()
+}
+
 pub const APPROVE_UPDATE_REQUEST: &str = "update permission_request set status = 'granted', decided_at = $3::timestamptz, \
      decided_by = $2::uuid, grant_expires_at = $4::timestamptz, grant_mode = $5 where id = $1::uuid";
 pub const APPROVE_UPDATE_CARD: &str = super::decide_core::DENY_UPDATE_CARD;
@@ -440,6 +448,35 @@ pub fn line_via(args: ApproveArgs<'_>) -> &'static str {
     } else {
         "button"
     }
+}
+
+/// P3 B4e — 소유자가 아닌 사람의 승인이면 알림 거리(TS `asOwner === false && decision !== 'deny'`, 기한은 `approval ?? grant`).
+/// 요청 줄에 채널·스레드가 없으면(드문 옛 꼴) 알릴 스레드가 없어 만들지 않는다.
+#[allow(clippy::too_many_arguments)]
+fn owner_notice(
+    as_owner: bool,
+    args: ApproveArgs<'_>,
+    kind: &str,
+    target: &str,
+    channel_id: Option<&str>,
+    thread_root_id: Option<&str>,
+    status: &'static str,
+    expires_at: Option<&str>,
+) -> Option<Box<super::decide_owner_notice::OwnerNotice>> {
+    if as_owner {
+        return None;
+    }
+    Some(Box::new(super::decide_owner_notice::OwnerNotice {
+        request_id: args.request_id.to_owned(),
+        agent_id: args.agent_id.to_owned(),
+        actor_id: args.actor_id.to_owned(),
+        kind: kind.to_owned(),
+        target: target.to_owned(),
+        channel_id: channel_id?.to_owned(),
+        thread_root_id: thread_root_id?.to_owned(),
+        status,
+        expires_at: expires_at.map(str::to_owned),
+    }))
 }
 
 pub async fn approve_write(
@@ -481,7 +518,7 @@ pub async fn approve_write(
     if decision == Decision::ApproveOnce && locked.kind == "merge" {
         // P3 B4c — 소유자가 아닌 사람의 [이번 한 번]은 gh 계정을 비운다(TS `decisions.ts` security F1). 비소유자 쓰기는 B4e 가 붙기
         // 전까지 TS 로 넘긴다([`NON_OWNER_APPROVE_WIRED`]).
-        if !as_owner && !NON_OWNER_APPROVE_WIRED {
+        if !as_owner && !non_owner_approve_on() {
             return Ok(ApproveOutcome::HandToTs);
         }
         // TS 는 1회 승인 기록 뒤 C-3 대조로 위임장을 좁히고 그 위임장에 once 줄을 쓴다 — 대조는 읽기뿐이라 여기서 먼저 해도 같다.
@@ -513,7 +550,7 @@ pub async fn approve_write(
     // 없는 것으로 친다(TS 와 같은 자리: [이번 턴만]·merge 위임장 대조보다 먼저). B4e 전에는 [이번 턴만]이면 지금처럼 TS.
     let narrowed: LockedRequest;
     let locked = match locked.mandate_id.as_deref() {
-        Some(_) if !as_owner && !NON_OWNER_APPROVE_WIRED => {
+        Some(_) if !as_owner && !non_owner_approve_on() => {
             if decision == Decision::ApproveTurn {
                 return Ok(ApproveOutcome::HandToTs);
             }
@@ -543,7 +580,7 @@ pub async fn approve_write(
         return Ok(refused(409, "bad_decision", BAD_DECISION_HOUR));
     }
     // S5.4 12e — 소유자가 아닌 사람의 승인은 쓰기 없는 거절(위)까지만 Rust. 쓰는 길은 소유자 알림 줄(B4e)이 붙을 때까지 TS.
-    if !as_owner && !NON_OWNER_APPROVE_WIRED {
+    if !as_owner && !non_owner_approve_on() {
         return Ok(ApproveOutcome::HandToTs);
     }
     let (target, channel_id, thread_root_id): (String, Option<String>, Option<String>) =
@@ -917,6 +954,16 @@ pub async fn approve_write(
         status: "granted",
         approval_expires_at: None,
         card_message_id: locked.card_message_id.clone(),
+        owner_notice: owner_notice(
+            as_owner,
+            args,
+            &locked.kind,
+            &target,
+            channel_id.as_deref(),
+            thread_root_id.as_deref(),
+            "granted",
+            expires_iso.as_deref(),
+        ),
         grant_expires_at: expires_iso,
         grant_mode,
         answer_candidates: candidates,
@@ -1165,6 +1212,16 @@ async fn merge_once_write(
     }
     Ok(ApproveOutcome::Granted {
         status: "approved_once",
+        owner_notice: owner_notice(
+            as_owner,
+            args,
+            &locked.kind,
+            &target,
+            channel_id.as_deref(),
+            thread_root_id.as_deref(),
+            "approved_once",
+            Some(expires_iso.as_str()),
+        ),
         approval_expires_at: Some(expires_iso),
         card_message_id: locked.card_message_id.clone(),
         grant_expires_at: None,

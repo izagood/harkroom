@@ -3217,6 +3217,55 @@ async fn main() {
         }
         None => None,
     };
+    // P3 B4e — 소유자가 아닌 사람의 승인 뒤 소유자 알림 줄(카드 스레드 + 못 보면 DM). 승인 코어·글 경로·DM 칸이 다 있을 때만(fail-closed —
+    // 없으면 소유자가 아닌 사람의 쓰기는 TS). 켜져도 `NON_OWNER_APPROVE_WIRED` 가 거짓이면 아직 쓰지 않는다.
+    // 소유자가 아닌 사람의 승인 쓰기 칸(B4a·b, `NON_OWNER_APPROVE_PRIVILEGES`)도 같은 스위치에 묶는다 — 승인 풀에서 본다.
+    let ask_owner_notice = match (&ask_approve, &post_write) {
+        (Some(a), Some(w)) => {
+            use harkroom_server::core::decide_owner_notice as on;
+            let missing = match write::missing_in(
+                a,
+                harkroom_server::core::decide_approve::NON_OWNER_APPROVE_PRIVILEGES,
+                &[],
+            )
+            .await
+            {
+                Ok(m) if m.is_empty() => {
+                    write::missing_in(w, on::OWNER_NOTICE_PRIVILEGES, &[]).await
+                }
+                other => other,
+            };
+            match missing {
+                Ok(m) if m.is_empty() => Some(harkroom_server::core::msg_post::PostState {
+                    read: state.pool.clone(),
+                    write: w.clone(),
+                    up: state.up.clone(),
+                    implicit_ok,
+                }),
+                Ok(m) => {
+                    eprintln!(
+                        "front: permission non-owner approve core off — missing privileges {m:?}"
+                    );
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: permission non-owner approve core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+    harkroom_server::core::decide_owner_notice::set_owner_notice_core(ask_owner_notice.is_some());
+    if ask_owner_notice.is_some() {
+        eprintln!(
+            "front: permission non-owner approve core on (wired: {})",
+            harkroom_server::core::decide_approve::NON_OWNER_APPROVE_WIRED
+        );
+    }
     // 받을 `failed` 보고(CI 거절 아님)는 글 경로와 [`MERGE_RESULTS_WRITE_PRIVILEGES`] 가 다 있을 때만 Rust 가 적는다 — 없으면 TS.
     let merge_results_post = match (&post_write, &merge_results_read) {
         (Some(w), Some(_)) => {
@@ -5113,6 +5162,7 @@ async fn main() {
                     up: state.up.clone(),
                     deny: ask_deny,
                     approve: ask_approve,
+                    owner_notice: ask_owner_notice,
                 },
                 auth.clone(),
                 state.cors.clone(),

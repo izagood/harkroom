@@ -82,6 +82,7 @@ pub mod decide_approve;
 pub mod decide_check;
 pub mod decide_core;
 pub mod decide_merge_once;
+pub mod decide_owner_notice;
 pub mod decide_routes;
 pub mod delegate_write;
 pub mod dm_open;

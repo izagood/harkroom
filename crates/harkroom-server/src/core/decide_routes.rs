@@ -493,6 +493,20 @@ async fn approve_then_answer(
             return Err(internal(e));
         }
     }
+    // P3 B4e — TS 와 같은 자리(카드 답 뒤): 소유자가 아닌 사람의 승인이면 소유자에게 알린다. 실패해도 결정은 남는다.
+    if let ApproveOutcome::Granted {
+        owner_notice: Some(n),
+        ..
+    } = &out
+    {
+        match &st.owner_notice {
+            Some(post) => super::decide_owner_notice::notify_owner(post, n).await,
+            None => eprintln!(
+                "[permissionRequests] 소유자 알림 실패: no post state requestId={}",
+                n.request_id
+            ),
+        }
+    }
     Ok(out)
 }
 

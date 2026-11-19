@@ -59,6 +59,8 @@ pub struct AskState {
     pub deny: Option<PgPool>,
     /// S5.3 B2 — 권한 카드 **승인**(소유자, tool 7일·command 1회/1시간) 쓰기 풀([`super::decide_approve::approve_pool`]). `None` 이면 TS.
     pub approve: Option<PgPool>,
+    /// P3 B4e — 소유자가 아닌 사람의 승인 뒤 소유자 알림 줄을 쓰는 글 상태(`decide_owner_notice`). `None` 이면 그 쓰기는 TS 가 맡는다.
+    pub owner_notice: Option<super::msg_post::PostState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
