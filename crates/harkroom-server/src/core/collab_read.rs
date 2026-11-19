@@ -12,8 +12,9 @@
 //! - avcs 응답 하나에 [`RESPONSE_MAX_BYTES`] 상한을 둔다(넘으면 그 저장소만 `unreachable`). TS 는 상한이 없다.
 //! - 캐시 잠금은 커서를 읽을 때와 붙일 때만 쥔다 — avcs 호출 동안 다른 협업 요청을 막지 않는다.
 //!
+//! avcs 주소는 `http://`·`https://` 둘 다 여기서 읽는다(`crate::avcs_http` 가 scheme 으로 고른다).
+//!
 //! TS 로 넘기는 것(아무것도 읽기 전에):
-//! - URL 이 `http://` 가 아닐 때 — 이 크레이트의 avcs 클라이언트는 TLS 를 못 붙는다. Rust 가 답하면 TS 는 읽는 것을 `unreachable` 이라 한다.
 //! - 저장소가 둘 이상인데 이름에 `[a-z0-9/.-]` 밖의 글자가 있을 때 — TS 는 `localeCompare`(ICU)로 줄을 세우고 그 순서를 여기서 못 낸다.
 //!
 //! **읽기만 한다.** 필요한 SELECT 는 [`COLLAB_READ_PRIVILEGES`], 없으면 `main.rs` 가 TS 에 남긴다.
@@ -26,8 +27,6 @@ use axum::extract::{ConnectInfo, Request, State};
 use axum::response::Response;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
-use hyper_util::client::legacy::{Client, connect::HttpConnector};
-use hyper_util::rt::TokioExecutor;
 use serde_json::{Map, Value, json};
 use sqlx::PgPool;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -163,7 +162,7 @@ fn to_entry(
 
 // ---- avcs HTTP(TS `client.ts`) ----
 
-type Http = Client<HttpConnector, Full<Bytes>>;
+type Http = crate::avcs_http::AvcsClient;
 
 struct Got {
     status: u16,
@@ -646,7 +645,7 @@ impl CollabState {
         Self {
             read,
             up,
-            client: Client::builder(TokioExecutor::new()).build_http(),
+            client: crate::avcs_http::client(),
             cache: Arc::default(),
         }
     }
@@ -741,9 +740,6 @@ pub async fn proposals(
     let Some(base) = resolve_url(env.as_deref(), app.as_deref()) else {
         return json_ok(r#"{"baseUrl":null,"repos":[]}"#.to_owned());
     };
-    if !base.starts_with("http://") {
-        return to_ts(req).await;
-    }
     let bound: Vec<(String, String)> = match sqlx::query_as(
         "select repo, id::text from channel where repo is not null and kind = 'standard'",
     )

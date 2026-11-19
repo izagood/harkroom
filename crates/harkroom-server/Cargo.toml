@@ -34,6 +34,8 @@ tokio-rustls = { version = "=0.26.6", default-features = false, features = ["rin
 # 초대 메일 SMTP(S5.4) — rustls(ring) 만, native-tls·pool·hostname 없음.
 lettre = { version = "=0.11.11", default-features = false, features = ["smtp-transport", "tokio1", "tokio1-rustls-tls", "builder"] }
 webpki-roots = "=1.0.11"
+# avcs 클라이언트(`avcs_http`)의 scheme 별 커넥터 — hyper-util legacy Client 가 받는 Service 트레이트. 이미 잠금 파일에 있던 판.
+tower-service = "=0.3.3"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
 sha2 = "=0.10.9"
@@ -81,5 +83,7 @@ harkroom-server = { path = ".", features = ["breakage-tests", "test-origins"] }
 hyper = { version = "=1.12.0", features = ["server", "http2"] }
 # /ws 시험 클라이언트(앞단 의존 axum ws 가 이미 쓰는 판).
 tokio-tungstenite = "=0.29.0"
+# avcs https 시험(`avcs_http`)의 CA·서버 인증서를 실행 때 만든다 — 저장소에 키를 두지 않는다. ring 만.
+rcgen = { version = "=0.13.2", default-features = false, features = ["crypto", "ring"] }
 futures-util = { version = "=0.3.34", default-features = false, features = ["sink", "std"] }
 tokio = { version = "=1.48.0", features = ["macros", "rt-multi-thread", "net", "time", "sync"] }

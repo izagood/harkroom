@@ -11,12 +11,10 @@
 //! `lease` 만 `active_lease` 에 접고 `projection_cursor` 를 전진시킨다. lease 가 바뀌면 `lease.changed` 를 낸다.
 //! 문지기 이름 `projection` — `server_loop` 에 줄이 없으면 `ts` 라 기본은 꺼져 있다.
 //!
-//! HTTP 는 크레이트의 hyper 클라이언트(`build_http`)를 쓴다 — `https://` 서버는 아직 못 붙는다(오류로 남고 백오프한다).
+//! HTTP 는 `crate::avcs_http` 클라이언트를 쓴다 — 주소 scheme 으로 `http://`(평문)·`https://`(TLS, 묶인 Mozilla 루트)를 고른다.
 use super::{GateResult, Side, run_gated};
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
-use hyper_util::client::legacy::{Client, connect::HttpConnector};
-use hyper_util::rt::TokioExecutor;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use std::collections::HashMap;
@@ -192,7 +190,7 @@ pub struct LeaseEntry {
 
 struct Avcs {
     base: String,
-    client: Client<HttpConnector, Full<Bytes>>,
+    client: crate::avcs_http::AvcsClient,
 }
 
 pub(crate) fn repo_path(repo: &str) -> String {
@@ -260,7 +258,7 @@ impl Avcs {
     fn new(base_url: &str) -> Self {
         Self {
             base: base_url.trim_end_matches('/').to_owned(),
-            client: Client::builder(TokioExecutor::new()).build_http(),
+            client: crate::avcs_http::client(),
         }
     }
 
