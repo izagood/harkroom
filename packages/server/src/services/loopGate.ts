@@ -35,6 +35,8 @@ export type GateResult = 'ran' | 'locked' | 'not_owner' | 'busy' | 'error';
 export const LOOP_NAMES = [
   'wake', 'delegation.deadline', 'automation', 'scheduled', 'push',
   'permission.expire', 'mandate.idle', 'bg', 'retention', 'stale', 'bg.produce', 'outbox.prune',
+  // 이벤트로 도는 감시(P5) — tick 이 없어 `runGated` 대신 [`loopOwner`] 로 주인만 본다.
+  'thread.status', 'thread.plan',
 ] as const;
 export type LoopName = typeof LOOP_NAMES[number];
 
@@ -118,5 +120,20 @@ export async function runGated(
     }
     giveBack(pool, s, client, unlockErr ?? (client ? undefined : new Error('connect failed')));
     busy.delete(name);
+  }
+}
+
+/**
+ * 이벤트로 도는 감시(스레드 상태·계획판, P5)의 주인 확인 — 줄이 없으면 `ts`. 잠금은 잡지 않는다: 감시는 tick 이 아니라 이벤트마다
+ * 돌고, 잠금을 못 잡았다고 건너뛰면 그 판정이 사라진다. 주인을 바꾸는 순간 두 쪽이 한 번씩 같은 판정을 할 수는 있다(스레드 상태는
+ * 같은 값을 다시 쓸 뿐이라 결과가 같다). 읽기에 실패하면 `null` — 부르는 쪽은 이번 판정을 건너뛴다.
+ */
+export const LOOP_OWNER_SQL = `select owner from server_loop where name = $1`;
+export async function loopOwner(pool: Pool, name: LoopName): Promise<LoopSide | null> {
+  try {
+    const r = await pool.query<{ owner: LoopSide }>(LOOP_OWNER_SQL, [name]);
+    return r.rows[0]?.owner ?? 'ts';
+  } catch {
+    return null;
   }
 }

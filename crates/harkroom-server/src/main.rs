@@ -5748,6 +5748,25 @@ async fn spawn_loops() {
         Ok(m) => eprintln!("front: loop stale off — missing privileges {m:?}"),
         Err(e) => eprintln!("front: loop stale off — privilege check failed: {e}"),
     }
+    // P5 — 스레드 상태 이모지 감시. 이벤트로 돈다 — 루프 전용 허브를 outbox LISTEN(전용 연결 하나)으로 채운다.
+    // 문지기 이름 `thread.status` — 주인이 rust 일 때만 판정한다(줄이 없으면 TS 가 판정한다).
+    match write::missing_in(
+        &pool,
+        harkroom_server::loops::thread_status::THREAD_STATUS_PRIVILEGES,
+        harkroom_server::loops::thread_status::THREAD_STATUS_SEQUENCE_PRIVILEGES,
+    )
+    .await
+    {
+        Ok(m) if m.is_empty() => {
+            eprintln!("front: loop thread.status on (runs only while server_loop owner is rust)");
+            let hub = harkroom_server::core::events::Hub::new();
+            let events = hub.subscribe();
+            harkroom_server::core::events::spawn_outbox_listener(pool.clone(), url.clone(), hub);
+            harkroom_server::loops::thread_status::spawn(gate.clone(), pool.clone(), events);
+        }
+        Ok(m) => eprintln!("front: loop thread.status off — missing privileges {m:?}"),
+        Err(e) => eprintln!("front: loop thread.status off — privilege check failed: {e}"),
+    }
     // C5c-3b-2 — 백그라운드 회차 생산(distill → cleanup → organize, 1시간에 한 번). 문지기 이름 `bg.produce` — 주인이 rust 일 때만 돈다.
     match write::missing_in(&pool, bg_produce::BG_PRODUCE_PRIVILEGES, &[]).await {
         Ok(m) if m.is_empty() => {

@@ -8,6 +8,7 @@ import { emitEvent, onEvent, type WorkspaceEvent } from '../events.js';
 import { audienceFor } from './channels.js';
 import { bundledRootSql, openBundleSql, uuidOrNullSql } from './askBundleSql.js';
 import type { AgentPresence } from '../mcp/presence.js';
+import { loopOwner } from './loopGate.js';
 
 /**
  * 스레드 상태 리액션(D안)의 서버 쪽 — 사실을 모으고(`readThreadStatusFacts`), shared 의
@@ -20,11 +21,15 @@ import type { AgentPresence } from '../mcp/presence.js';
  */
 
 /** 실패를 푸는 말의 규칙은 `services/messages.ts` 의 `unresolved_failure_count` 와 같다. */
-const FACTS_SQL = `
+/**
+ * 사실 모으기 문장. Rust 감시(`crates/harkroom-server/src/loops/thread_status.rs`)가 `golden/sql_fragments.json` 으로 같은 글자를
+ * 읽는다 — 고치면 `test/rustSqlFragments.test.ts` 가 골든 갱신을 요구한다. 루트 id 칸은 `$1::uuid` 로 캐스트한다(Rust 는 글자로 묶는다).
+ */
+export const THREAD_STATUS_FACTS_SQL = `
 with t as (
   select m.id, m.seq, m.kind, m.author_id, m.meta, a.kind as author_kind
   from message m join account a on a.id = m.author_id
-  where (m.id = $1 or m.thread_root_id = $1) and m.deleted_at is null
+  where (m.id = $1::uuid or m.thread_root_id = $1::uuid) and m.deleted_at is null
 )
 select
   -- 묶음에 담긴 원본은 원 스레드의 🙋 가 되지 않고, 열린 줄을 가진 묶음 카드가 그 묶음 스레드의 🙋 가 된다
@@ -90,12 +95,43 @@ select
   (exists (select 1 from t where t.author_kind = 'agent')
     or exists (select 1 from inbox i join t on t.id = i.message_id join account x on x.id = i.account_id
                where x.kind = 'agent' and i.reason <> 'thread_reply')) as agent_involved,
-  (select channel_id from message where id = $1 and thread_root_id is null) as channel_id`;
+  (select channel_id from message where id = $1::uuid and thread_root_id is null) as channel_id`;
+
+/**
+ * 상태 리액션 맞추기·`thread_status` 쓰기·지우기·presence 로 다시 볼 루트 — Rust 감시가 골든으로 같은 글자를 쓴다.
+ * 루트·계정 id 칸은 `::uuid` 로 캐스트한다.
+ */
+export const SYNC_STATUS_REACTION_SQL = `with want as (select $2::uuid as account_id, $3::text as emoji where $2::uuid is not null and $3::text is not null),
+     del as (
+       delete from message_reaction r
+        where r.message_id = $1::uuid and r.source = 'status'
+          and not exists (select 1 from want w where w.account_id = r.account_id and w.emoji = r.emoji)
+       returning r.account_id, r.emoji),
+     ins as (
+       insert into message_reaction (message_id, account_id, emoji, source)
+       select $1::uuid, w.account_id, w.emoji, 'status' from want w
+        where exists (select 1 from message m where m.id = $1::uuid and m.deleted_at is null)
+       on conflict do nothing
+       returning account_id, emoji)
+     select 'removed' as op, account_id::text as account_id, emoji from del
+     union all select 'added' as op, account_id::text as account_id, emoji from ins`;
+export const UPSERT_THREAD_STATUS_SQL = `insert into thread_status (root_id, status, emoji, account_id, reason)
+       values ($1::uuid, $2, $3, $4::uuid, $5)
+     on conflict (root_id) do update
+       set status = excluded.status, emoji = excluded.emoji, account_id = excluded.account_id,
+           reason = excluded.reason, updated_at = now()
+       where (thread_status.status, thread_status.account_id, thread_status.reason)
+         is distinct from (excluded.status, excluded.account_id, excluded.reason)
+     returning to_char(date_trunc('milliseconds', updated_at) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as updated_at_iso,
+       updated_at`;
+export const DELETE_THREAD_STATUS_SQL = `delete from thread_status where root_id = $1::uuid`;
+export const PRESENCE_ROOTS_SQL =
+  `select root_id from thread_status where account_id = $1::uuid and status in ('running', 'received', 'stuck')`;
 
 export async function readThreadStatusFacts(
   pool: Pool, rootId: string,
 ): Promise<{ channelId: string; facts: ThreadStatusFacts } | null> {
-  const res = await pool.query(FACTS_SQL, [rootId]);
+  const res = await pool.query(THREAD_STATUS_FACTS_SQL, [rootId]);
   const r = res.rows[0];
   if (!r || !r.channel_id) return null;
   return {
@@ -128,20 +164,7 @@ async function syncStatusReaction(
   const emoji = decision ? THREAD_STATUS_EMOJI[decision.status] : null;
   const accountId = decision?.accountId ?? null;
   const res = await pool.query(
-    `with want as (select $2::uuid as account_id, $3::text as emoji where $2::uuid is not null and $3::text is not null),
-     del as (
-       delete from message_reaction r
-        where r.message_id = $1 and r.source = 'status'
-          and not exists (select 1 from want w where w.account_id = r.account_id and w.emoji = r.emoji)
-       returning r.account_id, r.emoji),
-     ins as (
-       insert into message_reaction (message_id, account_id, emoji, source)
-       select $1, w.account_id, w.emoji, 'status' from want w
-        where exists (select 1 from message m where m.id = $1 and m.deleted_at is null)
-       on conflict do nothing
-       returning account_id, emoji)
-     select 'removed' as op, account_id, emoji from del
-     union all select 'added' as op, account_id, emoji from ins`,
+    SYNC_STATUS_REACTION_SQL,
     [rootId, accountId, emoji],
   );
   if (!res.rowCount) return;
@@ -167,7 +190,7 @@ export async function refreshThreadStatus(
   await syncStatusReaction(pool, read.channelId, rootId, decision);
 
   if (!decision) {
-    const del = await pool.query(`delete from thread_status where root_id = $1`, [rootId]);
+    const del = await pool.query(DELETE_THREAD_STATUS_SQL, [rootId]);
     if (!del.rowCount) return 'unchanged';
     emitEvent({ type: 'thread.status', channelId: read.channelId, rootId, statusReaction: null,
       audience: await audienceFor(pool, read.channelId) });
@@ -177,14 +200,7 @@ export async function refreshThreadStatus(
   const emoji = THREAD_STATUS_EMOJI[decision.status];
   // 같으면 쓰지 않는다 — `where` 가 거짓이면 returning 이 비고, 그것이 '안 바뀜'이다.
   const up = await pool.query(
-    `insert into thread_status (root_id, status, emoji, account_id, reason)
-       values ($1, $2, $3, $4, $5)
-     on conflict (root_id) do update
-       set status = excluded.status, emoji = excluded.emoji, account_id = excluded.account_id,
-           reason = excluded.reason, updated_at = now()
-       where (thread_status.status, thread_status.account_id, thread_status.reason)
-         is distinct from (excluded.status, excluded.account_id, excluded.reason)
-     returning updated_at`,
+    UPSERT_THREAD_STATUS_SQL,
     [rootId, decision.status, emoji, decision.accountId, decision.reason],
   );
   if (!up.rowCount) return 'unchanged';
@@ -230,7 +246,10 @@ export function startThreadStatusWatcher(
   const run = (rootId: string) => {
     pending.delete(rootId);
     if (running.has(rootId)) { again.add(rootId); return; }
-    const p = refreshThreadStatus(pool, rootId, new Set(presence.online())).catch(onError)
+    // 주인(`server_loop` 의 `thread.status`, 줄이 없으면 ts)이 Rust 면 Rust 감시가 판정한다(P5) — 여기선 건너뛴다.
+    const p = loopOwner(pool, 'thread.status')
+      .then((owner) => (owner === 'ts' ? refreshThreadStatus(pool, rootId, new Set(presence.online())) : undefined))
+      .catch(onError)
       .finally(() => {
         running.delete(rootId);
         inflight.delete(p);
@@ -257,7 +276,7 @@ export function startThreadStatusWatcher(
     if (e.type === 'presence.changed') {
       // 그 에이전트가 주인인 스레드만 — 꺼지면 💬·👀 가 🚨 로, 켜지면 🚨 가 💬 로 돌아온다.
       void pool.query(
-        `select root_id from thread_status where account_id = $1 and status in ('running', 'received', 'stuck')`,
+        PRESENCE_ROOTS_SQL,
         [e.accountId],
       ).then((res) => { for (const r of res.rows) schedule(r.root_id as string); }).catch(onError);
     }
