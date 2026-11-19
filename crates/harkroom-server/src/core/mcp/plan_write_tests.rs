@@ -298,3 +298,32 @@ fn link_plan_card_hook_out_like_ts() {
     assert!(!has_step(&doc, "s3"));
     assert!(!has_step(&json!({}), "s1"));
 }
+
+#[test]
+fn link_group_follows_link_plan_group() {
+    // TS `linkPlanGroup` — 판이 없으면 no_plan.
+    assert_eq!(
+        build_link_group(None, "g1", CHILD).unwrap_err().code,
+        "no_plan"
+    );
+    let doc = json!({ "goal": "x", "groups": [
+        { "id": "g1", "title": "a" },
+        { "id": "g2", "title": "b", "linkedRootId": CHILD.to_uppercase() },
+        { "id": "g3", "title": "c", "linkedRootId": OTHER },
+    ], "steps": [] });
+    // 없는 그룹 → unknown_item(id 칸).
+    let e = build_link_group(Some((&doc, 3)), "g9", CHILD).unwrap_err();
+    assert_eq!(e.fields, r#""code":"unknown_item","id":"g9""#);
+    // 이미 그 스레드(대소문자 무시) → unchanged — 성공으로 접힌다.
+    let e = build_link_group(Some((&doc, 3)), "g2", CHILD).unwrap_err();
+    assert_eq!(e.code, "unchanged");
+    assert_eq!(plan_hook_out(Err(e)), r#"{"ok":true,"unchanged":true}"#);
+    // 다른 스레드에 이어진 그룹은 갈아 끼우지 않는다.
+    let e = build_link_group(Some((&doc, 3)), "g3", CHILD).unwrap_err();
+    assert_eq!(e.fields, r#""code":"group_already_linked","id":"g3""#);
+    assert!(plan_hook_out(Err(e)).contains("이미 다른 스레드에 이어져"));
+    // 빈 그룹은 잇는다.
+    let out = build_link_group(Some((&doc, 3)), "g1", CHILD).unwrap();
+    assert_eq!(out["groups"][0]["linkedRootId"], json!(CHILD));
+    // 단계를 가진 그룹(`linked_group_has_steps`)은 build 가 아니라 저장 앞 `validate_plan` 이 막는다 — 다른 쓰기와 같은 길.
+}

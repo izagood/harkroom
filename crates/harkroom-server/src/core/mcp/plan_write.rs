@@ -96,6 +96,10 @@ const MESSAGES: &[(&str, &str)] = &[
     ("limit_exceeded", "상한을 넘었다"),
     ("duplicate_id", "같은 id 가 둘이다"),
     (
+        "group_already_linked",
+        "그 그룹은 이미 다른 스레드에 이어져 있다 — 바꾸려면 thread.plan.item 으로 linkedRootId 를 고쳐라",
+    ),
+    (
         "invalid_id",
         "id 꼴이 틀렸다(그룹 g1~g9999, 단계 s1~s9999). 번호가 9999 에 닿아 더 더할 수 없으면 thread.plan 으로 읽은 뒤 지우고(plan: null) 새 번호로 다시 세우면 풀린다",
     ),
@@ -309,6 +313,49 @@ enum Build {
     Item(Box<ItemPatch>),
     /// 잠근 판 `(doc, rev)` 에서 새 판을 만드는 함수(HTTP `plan/start`, S5.4 TP5b). `Err` 는 거절 코드.
     Custom(StartBuild),
+    /// TS `linkPlanGroup` 의 build — 부모 계획의 그룹을 위임 스레드에 잇는다(`message.delegate` 의 `planGroupId`, P6-5).
+    LinkGroup { group: String, child: String },
+}
+
+/// TS `linkPlanGroup` 의 build. 판이 없으면 `no_plan`, 그룹이 없으면 `unknown_item`, 이미 그 스레드에 이어졌으면 `unchanged`,
+/// **다른** 스레드에 이어졌으면 `group_already_linked`(남이 건 연결을 갈아 끼우지 않는다). 나머지 판정은 `applyPlanItem` 이다.
+fn build_link_group(
+    now: Option<(&Value, i64)>,
+    group: &str,
+    child: &str,
+) -> Result<Value, Refusal> {
+    let Some((doc, rev)) = now else {
+        return Err(Refusal::plain("no_plan"));
+    };
+    let found = doc.get("groups").and_then(Value::as_array).and_then(|a| {
+        a.iter()
+            .find(|g| g.get("id").and_then(Value::as_str) == Some(group))
+    });
+    let Some(g) = found else {
+        return Err(Refusal::id("unknown_item", group));
+    };
+    // TS `if (group.linkedRootId)` — 빈 글자는 거짓이다.
+    if let Some(l) = g
+        .get("linkedRootId")
+        .and_then(Value::as_str)
+        .filter(|l| !l.is_empty())
+    {
+        // TS `toLowerCase()` 비교 — 둘 다 uuid 꼴(ASCII)이라 ASCII 소문자로 같다.
+        return Err(if l.eq_ignore_ascii_case(child) {
+            Refusal::plain("unchanged")
+        } else {
+            Refusal::id("group_already_linked", group)
+        });
+    }
+    let patch = ItemPatch {
+        type_: Some("group".to_owned()),
+        id: Some(group.to_owned()),
+        linked_root_id: Some(Some(child.to_owned())),
+        ..ItemPatch::default()
+    };
+    apply_plan_item(Some((doc, rev)), &patch)
+        .map(|(d, _)| d)
+        .map_err(|e| Refusal::plan(&e))
 }
 
 /// [`Build::Custom`] 의 함수.
@@ -467,6 +514,10 @@ async fn write_plan(
         Build::Custom(f) => f(now.as_ref().map(|n| (&n.doc, n.rev)))
             .map(|d| (Some(d), String::new()))
             .map_err(Refusal::plain),
+        Build::LinkGroup { group, child } => {
+            build_link_group(now.as_ref().map(|n| (&n.doc, n.rev)), &group, &child)
+                .map(|d| (Some(d), String::new()))
+        }
     };
     let before = now.as_ref().map(|n| &n.doc);
     let doc = match built {
@@ -920,6 +971,43 @@ pub(crate) async fn link_plan_card(
         false,
     )
     .await?;
+    Ok(plan_hook_out(match out {
+        Outcome::Refused(r) => Err(r),
+        Outcome::Written { rev, .. } => Ok(rev),
+        Outcome::Deleted => Err(Refusal::plain("unexpected_delete")),
+        // 관리자를 바꾸지 않는 판이라 오지 않는다.
+        Outcome::ToTs => Err(Refusal::plain("internal")),
+    }))
+}
+
+/// TS `linkPlanGroup` + `planHookOut` — `message.delegate` 의 `planRootId`·`planGroupId`(P6-5). 위임 글이 선 **뒤** 부모 계획
+/// (`parent`)의 그룹을 위임 스레드(`child`)에 잇고 도구 답의 `plan` 칸(JSON 글자)을 돌려준다. 부모 스레드는 다른 채널일 수 있어
+/// TS `writeThreadPlan` 처럼 루트(`not_found`·`not_root`)·가시성(`forbidden`)을 여기서 본다 — 거절도 `plan` 칸에 싣는다(위임은 이미 섰다).
+pub(crate) async fn link_plan_group(
+    read: &PgPool,
+    write: &PgPool,
+    me: &str,
+    parent: &str,
+    group: &str,
+    child: &str,
+) -> sqlx::Result<String> {
+    let row: Option<(String, bool)> = sqlx::query_as(crate::core::thread_plan_read::ROOT_SQL)
+        .bind(parent)
+        .fetch_optional(read)
+        .await?;
+    let channel = match row {
+        None => return Ok(plan_hook_out(Err(Refusal::plain("not_found")))),
+        Some((_, false)) => return Ok(plan_hook_out(Err(Refusal::plain("not_root")))),
+        Some((c, true)) => c,
+    };
+    if !crate::core::msg_read::channel_visible(read, me, &channel).await? {
+        return Ok(plan_hook_out(Err(Refusal::plain("forbidden"))));
+    }
+    let build = Build::LinkGroup {
+        group: group.to_owned(),
+        child: child.to_owned(),
+    };
+    let out = write_plan(write, me, parent, &channel, build, false).await?;
     Ok(plan_hook_out(match out {
         Outcome::Refused(r) => Err(r),
         Outcome::Written { rev, .. } => Ok(rev),

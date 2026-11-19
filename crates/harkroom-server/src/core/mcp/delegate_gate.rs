@@ -10,8 +10,11 @@
 //! - S5.4-14c: 비지 않은 `agentModels` 도 맡는다 — 접속 확인 뒤 TS `preparePicks`([`super::msg_post::check_picks`]), 글 tx 의
 //!   `applyAgentPicks`(`notified` 에 넘겨받는 팀원을 더한다), 커밋 뒤 시스템 줄·이벤트. 하네스 목록(`relay_moved`)·고르기 쓰기 권한
 //!   (`AGENT_MODEL_PICKS_PRIVILEGES`)이 없으면 TS.
-//! - **TS 로 넘기는 것**(`None` — fail-closed): 위 밖의 팀 명단 갈래 · 권한 없는 `agentModels` · `planRootId`·`planGroupId`
-//!   (계획판) · zod 가 받지 않을 인자 · 자른 자리가 서로게이트 쌍을 가르는 모델 신고 · `to` 에 같은 이름이 두 번 · 위임 스위치를 모름 · DB 오류.
+//! - P6-5: 계획판 칸(`planRootId`·`planGroupId`)도 맡는다 — 가시성 뒤·자기 위임 앞에서 `bad_request`(하나만)·`self_link` 를 답하고,
+//!   위임 글이 선 뒤 TS `linkPlanGroup` 처럼 부모 계획의 그룹을 잇는다([`super::plan_write::link_plan_group`]). 결과·거절은 답의
+//!   `plan` 칸에만 싣는다(위임은 되돌리지 않는다). 계획 쓰기 권한(`PLAN_WRITE_PRIVILEGES`)이 없으면 글을 쓰기 전에 TS.
+//! - **TS 로 넘기는 것**(`None` — fail-closed): 위 밖의 팀 명단 갈래 · 권한 없는 `agentModels`·계획판 칸 · zod 가 받지 않을 인자 ·
+//!   자른 자리가 서로게이트 쌍을 가르는 모델 신고 · `to` 에 같은 이름이 두 번 · 위임 스위치를 모름 · DB 오류.
 //! - 접속 확인: TS 는 프로세스 메모리(`presence.online()`)를, Rust 는 DB `agent_presence`(`expires_at > now()`)를 읽는다. TS 는
 //!   그 표를 담당마다 10초에 한 번만 고쳐 쓰므로(`PERSIST_EVERY_MS`) DB 의 만료가 메모리보다 최대 약 10초 이르다 — 폴을 멈춘 담당은
 //!   Rust 쪽에서 최대 약 10초 **먼저** `unreachable` 이 된다(없는 것을 있다고 하지 않는 쪽). 처음 접속은 첫 폴에 바로 쓰인다.
@@ -76,16 +79,51 @@ struct Args {
     model: Option<String>,
     /// 비지 않은 `agentModels`(zod 꼴만 본 것). 빈 배열은 없는 것과 같다.
     picks: Vec<super::msg_post::Pick>,
+    /// 계획판 칸(P6-5) — TS 와 같은 차례(가시성 뒤, 자기 위임 앞)에서 거절하거나 위임 뒤에 잇는다.
+    plan: PlanArg,
+}
+
+/// `planRootId`·`planGroupId` 의 꼴.
+#[derive(Debug, PartialEq, Eq)]
+enum PlanArg {
+    None,
+    /// 둘 중 하나만 — TS `bad_request`.
+    OnlyOne,
+    /// (부모 계획 스레드, 그룹 id).
+    Link(String, String),
+}
+
+/// TS `bad_request`(계획판 칸 하나만) 문구.
+const PLAN_PAIR_MSG: &str = "planRootId 와 planGroupId 는 함께 준다(부모 계획의 스레드와 그 그룹)";
+/// TS `PLAN_ERROR_MESSAGES.self_link`.
+const SELF_LINK_MSG: &str = "자기 스레드는 연결할 수 없다";
+
+/// zod `planGroupId` — `/^g[1-9][0-9]{0,3}$/`.
+fn plan_group_ok(g: &str) -> bool {
+    let b = g.as_bytes();
+    (2..=5).contains(&b.len())
+        && b[0] == b'g'
+        && (b'1'..=b'9').contains(&b[1])
+        && b[2..].iter().all(u8::is_ascii_digit)
 }
 
 /// zod `message.delegate` 의 `inputSchema` 중 Rust 가 맡는 것. 틀린 꼴·비지 않은 `agentModels`·계획판 칸은 `None`.
 fn parse(args: &Value) -> Option<Args> {
     let Value::Object(o) = args else { return None };
-    for k in ["planRootId", "planGroupId"] {
-        if o.contains_key(k) {
-            return None;
-        }
-    }
+    // zod `.optional()` — 칸이 있으면 꼴이 맞아야 한다(null 도 틀린 꼴 → TS 의 검증 오류).
+    let plan_root = match o.get("planRootId") {
+        None => None,
+        Some(v) => Some(v.as_str().filter(|s| is_uuid(s))?.to_owned()),
+    };
+    let plan_group = match o.get("planGroupId") {
+        None => None,
+        Some(v) => Some(v.as_str().filter(|s| plan_group_ok(s))?.to_owned()),
+    };
+    let plan = match (plan_root, plan_group) {
+        (None, None) => PlanArg::None,
+        (Some(r), Some(g)) => PlanArg::Link(r, g),
+        _ => PlanArg::OnlyOne,
+    };
     // 빈 `agentModels` 는 TS 에서도 고를 것이 없다(`cleanPicks([])` → 고르기 없음) — 없는 것과 같다.
     let picks = match o.get("agentModels") {
         None => Vec::new(),
@@ -139,6 +177,7 @@ fn parse(args: &Value) -> Option<Args> {
         deadline_sec,
         model,
         picks,
+        plan,
     })
 }
 
@@ -223,6 +262,14 @@ pub async fn answer(
         Ok(true) => {}
         Ok(false) => return Some(err("forbidden", "not a member of this dm channel")),
         Err(_) => return None,
+    }
+    // TS: 가시성 뒤, 자기 위임 앞 — 계획판 칸의 짝·자기 연결.
+    match &a.plan {
+        PlanArg::OnlyOne => return Some(err("bad_request", PLAN_PAIR_MSG)),
+        PlanArg::Link(r, _) if r.eq_ignore_ascii_case(&a.root) => {
+            return Some(err("self_link", SELF_LINK_MSG));
+        }
+        _ => {}
     }
     // TS `h.toLowerCase() === account.handle.toLowerCase()` — ASCII 밖 handle 은 JS 소문자 규칙을 맞추지 않고 넘긴다.
     if !me.handle.is_ascii() || a.to.iter().any(|h| !h.is_ascii()) {
@@ -402,6 +449,20 @@ async fn write(
             delegate_ids.push(id.clone());
         }
     }
+    // 계획 잇기는 위임 글 **뒤**라 되돌릴 수 없다 — 계획 쓰기 권한이 없으면 글을 쓰기 전에 TS 로 넘긴다.
+    if matches!(a.plan, PlanArg::Link(..)) {
+        use super::plan_write::{PLAN_WRITE_PRIVILEGES, PLAN_WRITE_SEQUENCE_PRIVILEGES};
+        let missing = crate::write::missing_in(
+            &st.write,
+            PLAN_WRITE_PRIVILEGES,
+            PLAN_WRITE_SEQUENCE_PRIVILEGES,
+        )
+        .await
+        .ok()?;
+        if !missing.is_empty() {
+            return None;
+        }
+    }
     if delegated.is_empty() {
         return Some(super::respond::text_result(&format!(
             "{{\"delegated\":[],\"unreachable\":{},\"message\":null}}",
@@ -537,8 +598,22 @@ async fn write(
                     }
                 }
             }
+            // TS: 위임은 이미 섰다 — 계획 연결이 막혀도 위임을 되돌리지 않고 그 결과만 `plan` 칸에 싣는다.
+            let mut plan_extra = String::new();
+            if let PlanArg::Link(parent, group) = &a.plan {
+                match super::plan_write::link_plan_group(
+                    &st.read, &st.write, &me.id, parent, group, &a.root,
+                )
+                .await
+                {
+                    Ok(plan) => plan_extra = format!(",\"plan\":{plan}"),
+                    // 다름(기록): TS 는 이 DB 오류를 도구 오류로 던진다. Rust 는 위임이 이미 섰으므로 기록만 하고 `plan` 칸 없이 답한다
+                    // (`message.ask` 의 `planStepId` 와 같다).
+                    Err(e) => eprintln!("message.delegate: plan link {group} failed: {e}"),
+                }
+            }
             let inner = format!(
-                "{{\"message\":{row},\"delegationId\":{},\"delegated\":{},\"unreachable\":{},\"deadlineAt\":{},\"roundsLeft\":{}}}",
+                "{{\"message\":{row},\"delegationId\":{},\"delegated\":{},\"unreachable\":{},\"deadlineAt\":{},\"roundsLeft\":{}{plan_extra}}}",
                 Value::from(delegation_id?),
                 Value::from(delegated),
                 Value::from(unreachable),
@@ -585,11 +660,37 @@ mod tests {
             json!({ "channelId": C, "threadRootId": R, "body": "x", "to": ["a"], "deadlineSec": 1.5 }),
             json!({ "channelId": C, "threadRootId": R, "body": "x", "to": ["a"], "agentModels": [{ "agentId": "x" }] }),
             json!({ "channelId": C, "threadRootId": R, "body": "x", "to": ["a"], "agentModels": null }),
-            json!({ "channelId": C, "threadRootId": R, "body": "x", "to": ["a"], "planRootId": R }),
-            json!({ "channelId": C, "threadRootId": R, "body": "x", "to": ["a"], "planGroupId": "g1" }),
+            json!({ "channelId": C, "threadRootId": R, "body": "x", "to": ["a"], "planRootId": "x", "planGroupId": "g1" }),
+            json!({ "channelId": C, "threadRootId": R, "body": "x", "to": ["a"], "planRootId": C, "planGroupId": "g0" }),
+            json!({ "channelId": C, "threadRootId": R, "body": "x", "to": ["a"], "planRootId": C, "planGroupId": "g10000" }),
+            json!({ "channelId": C, "threadRootId": R, "body": "x", "to": ["a"], "planRootId": null, "planGroupId": "g1" }),
             json!({ "channelId": C, "threadRootId": R, "body": "x", "to": ["a","a","a","a","a","a","a","a","a"] }),
         ] {
             assert_eq!(parse(&bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn plan_fields_like_zod() {
+        let base = |extra: Value| {
+            let mut v = json!({ "channelId": C, "threadRootId": R, "body": "x", "to": ["a"] });
+            v.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            parse(&v).map(|a| a.plan)
+        };
+        assert_eq!(base(json!({})), Some(PlanArg::None));
+        assert_eq!(base(json!({ "planRootId": C })), Some(PlanArg::OnlyOne));
+        assert_eq!(base(json!({ "planGroupId": "g1" })), Some(PlanArg::OnlyOne));
+        assert_eq!(
+            base(json!({ "planRootId": C, "planGroupId": "g9999" })),
+            Some(PlanArg::Link(C.to_owned(), "g9999".to_owned()))
+        );
+        for g in ["g1", "g10", "g999", "g9999"] {
+            assert!(plan_group_ok(g), "{g}");
+        }
+        for g in ["g", "g0", "g01", "g10000", "s1", "G1", "g1 ", "g١"] {
+            assert!(!plan_group_ok(g), "{g}");
         }
     }
 
