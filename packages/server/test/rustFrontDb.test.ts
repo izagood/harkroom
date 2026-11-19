@@ -1897,6 +1897,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       expect(f.log()).toContain('front: loop outbox.prune on');
       expect(f.log()).toContain('front: loop scheduled on');
       expect(f.log()).toContain('front: loop stale on');
+      // P5 PR2 — 계획판 감시(`loops/thread_plan.rs::THREAD_PLAN_PRIVILEGES` + 글 올리기). 없으면 「loop thread.plan off」 — TS 에 남는다.
+      expect(f.log()).toContain('front: loop thread.plan on');
       // S5.4 L1 — 스위치 값이 없으면 꺼진다(TS 에 남는다). 권한이 모자라 꺼지는 것은 위 `missing privileges` 가 잡는다.
       expect(f.log()).toMatch(/front: loop delegation\.deadline (on \(v2=|off — HARKROOM_DELEGATION_V2 unset)/);
 

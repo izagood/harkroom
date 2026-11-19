@@ -46,6 +46,10 @@ pub const THREAD_PLAN_PRIVILEGES: &[(&str, &str)] = &[
     ("thread_plan", "INSERT"),
     ("thread_plan_link", "SELECT"),
     ("event_outbox", "INSERT"),
+    // 자동 진행 깨움 글의 위임 키·principal 도장(`thread_plan_auto::wake` → msg_post `plan_auto_stamp`). mandate_id 는 글 권한에 있다.
+    ("message.principal_account_id", "UPDATE"),
+    // 켤 때의 위임장이 아직 유효한가(`mandate_line_write::valid_owner_sql`).
+    ("mandate", "SELECT"),
 ];
 pub const THREAD_PLAN_SEQUENCE_PRIVILEGES: &[(&str, &str)] = &[("event_outbox_id_seq", "USAGE")];
 
