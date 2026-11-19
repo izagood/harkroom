@@ -5173,6 +5173,10 @@ async fn main() {
         let relay_cell: std::sync::Arc<
             std::sync::OnceLock<std::sync::Arc<harkroom_server::core::relay_routes::RelayCore>>,
         > = Default::default();
+        // P2 — 릴레이 줄이 만드는 presence 를 `/mcp` 입장 확인도 쓴다(비어 있으면 TS `/mcp/admit`).
+        let presence_cell: std::sync::Arc<
+            std::sync::OnceLock<std::sync::Arc<harkroom_server::core::relay_live::PresenceMark>>,
+        > = Default::default();
         let mcp = harkroom_server::core::mcp::route::routes(
             state.up.clone(),
             state.pool.clone(),
@@ -5224,6 +5228,8 @@ async fn main() {
                 relay_moved: operator_on,
                 relay: relay_cell.clone(),
                 leak: agent_upload_leak,
+                presence: presence_cell.clone(),
+                switches: harkroom_server::core::mcp::route::AdmitSwitches::from_env(),
             },
             auth.clone(),
             state.cors.clone(),
@@ -5289,6 +5295,7 @@ async fn main() {
                 );
                 // ⓖ — offline 은 스윕이 낸다(TS `startSweep`). 프로세스와 함께 산다.
                 presence.start_sweep();
+                let _ = presence_cell.set(presence.clone());
                 let link = relay_link::RelayLink::spawn(
                     hub,
                     op_hub,

@@ -183,6 +183,13 @@ pub struct McpWrites {
     /// (`relay_moved` 인데 아직 안 채워짐) 옛 안전판처럼 `operator_core_moved` 로 거절한다.
     pub relay:
         std::sync::Arc<std::sync::OnceLock<std::sync::Arc<crate::core::relay_routes::RelayCore>>>,
+    /// P2 — `/mcp` 요청을 생존 신호로 쓰는 presence(릴레이 줄이 만드는 것과 같은 [`crate::core::relay_live::PresenceMark`]).
+    /// 릴레이 줄이 `McpWrites` 뒤에 서므로 그때 채운다. 비어 있으면 입장 확인은 TS `/mcp/admit` 이 한다(그쪽이 mark 한다).
+    pub presence:
+        std::sync::Arc<std::sync::OnceLock<std::sync::Arc<crate::core::relay_live::PresenceMark>>>,
+    /// P2 — 입장 확인 답의 조건부 칸(TS `toolRegisteredNow`·`backgroundEnabled`)을 Rust env 로 정한다. env 가 없으면 `None` 이고 그 도구는
+    /// TS `/mcp/admit` 에 묻는다(앞단과 TS 의 env 가 갈릴 수 있으니 값이 있을 때만 믿는다).
+    pub switches: super::route::AdmitSwitches,
 }
 
 /// JS `Number.MAX_SAFE_INTEGER` — 이 밖의 수는 TS 에서 값이 뭉개진다. Rust 는 같은 결과를 낼 수 없으니 TS 로 넘긴다.
