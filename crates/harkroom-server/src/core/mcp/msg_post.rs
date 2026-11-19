@@ -721,6 +721,7 @@ pub(super) async fn post_card(
         no_mentions: false,
         before_commit,
         service_call: false,
+        chain_depth: None,
     };
     let out = msg_post::post_in_tx(
         st,
@@ -960,6 +961,7 @@ async fn post_with(
             .map(|h| h as &dyn msg_post::BeforeCommit)
             .or(picks.map(|h| h as &dyn msg_post::BeforeCommit)),
         service_call: false,
+        chain_depth: None,
     };
     let out = msg_post::post_in_tx(
         st,

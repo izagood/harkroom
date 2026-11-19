@@ -92,6 +92,8 @@ const RETENTION_GRANTS = ['delete on idempotency_key', 'delete on session'];
 
 /** `loops/outbox_prune.rs::OUTBOX_PRUNE_PRIVILEGES` 만 가진 쓰기 역할(S5.3 C5c-4). */
 const OUTBOX_PRUNE_GRANTS = ['delete on event_outbox'];
+/** `claim_seed.rs::CLAIM_SEED_PRIVILEGES` — 쓰기 풀로 클레임 토큰 해시를 심는 데 드는 GRANT(s34b 앞). */
+const CLAIM_SEED_GRANTS = ['select (token_hash), insert (token_hash) on claim_token'];
 
 /** `loops/push.rs::PUSH_PRIVILEGES` 만 가진 쓰기 역할(S5.3 C5e-2). 읽기는 pg_read_all_data 가 맡는다. */
 const PUSH_GRANTS = [
@@ -158,7 +160,7 @@ async function operatorWriteRole(db: { pool: pg.Pool; uri: string }, grants: rea
 }
 
 describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () => {
-  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention', 'mandate_idle', 'permission_expire', 'bg', 'bg_produce', 'outbox_prune', 'push_loop', 'turn_lease', 'inbox_list', 'decide_core_db', 'relay_live', 'turn_settle', 'turn_cancel', 'health', 'scheduled', 'stale', 'migrate', 'delegation_deadline', 'automation_grant']) {
+  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention', 'mandate_idle', 'permission_expire', 'bg', 'bg_produce', 'outbox_prune', 'push_loop', 'turn_lease', 'inbox_list', 'decide_core_db', 'relay_live', 'turn_settle', 'turn_cancel', 'health', 'scheduled', 'stale', 'migrate', 'delegation_deadline', 'automation_grant', 'claim_seed', 'automation_sweep']) {
     it(`tests/${name}.rs`, async () => {
       const db = await startTestDb();
       try {
@@ -185,6 +187,8 @@ describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () 
         if (name === 'turn_lease') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, TURN_LEASE_GRANTS);
         // S5.4 L1 — 위임 기한 스윕도 `DELEGATION_DEADLINE_PRIVILEGES` 만 가진 역할로.
         if (name === 'delegation_deadline') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, DELEGATION_DEADLINE_GRANTS);
+        // 클레임 토큰 심기도 `CLAIM_SEED_PRIVILEGES` 만 가진 역할로.
+        if (name === 'claim_seed') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, CLAIM_SEED_GRANTS);
         const r = await cargo(['test', '--test', name, '--', '--nocapture'], env);
         expect(r.code, r.out).toBe(0);
         // DB 가 없어 건너뛴 것을 통과로 읽지 않는다.
@@ -1484,6 +1488,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant insert, update, delete on agent_team to ${rw}`,
         `grant insert, delete on agent_team_member to ${rw}`,
         `grant insert, delete on agent_team_invoker to ${rw}`,
+        // P4-2 — 에이전트 invokers·delegates PUT(`agent_invokers.rs::AGENT_INVOKERS_PRIVILEGES`). 없으면 그 4줄은 TS 가 답한다.
+        `grant insert, delete on agent_invoker, agent_owner_delegate to ${rw}`,
         `grant insert, update, delete on handle_group to ${rw}`,
         `grant insert, delete on handle_group_member to ${rw}`,
         // P4c — 신고 해결·차단.
@@ -12706,8 +12712,66 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 expect(u.rs[0]!.status, `스위치 모름: ${label} → TS 로 넘긴다`).toBe(502);
                 expect(u.effects, `스위치 모름: ${label} — 아무것도 적지 않는다`).toEqual({ audit: [], denials: [], used: null });
               }
+              // 13b) POST /agent/merge-results `queued`(TS `reportMerge` + `autoWatchOnQueued`). 쪽마다 새 임대로 TS 판정(merge-checks)을 지난 뒤
+              // 같은 `queued` 보고를 보내 응답·시스템 줄·감사·감시(`pr_watch`·구독자 `source`)를 견준다. Rust 앞단은 닿지 않는 upstream 이라
+              // 같은 결과가 곧 Rust 가 직접 적었다는 증명이다. 위임 v2 스위치: TS 는 요청 때 env, 앞단은 기동 때 값. 모르는 앞단은 TS 로(502).
+              delete process.env.HARKROOM_MANDATE_ENFORCE;
+              const prevV2 = process.env.HARKROOM_DELEGATION_V2;
+              try {
+                const MR = '/agent/merge-results';
+                const QREPO = 'izagood/s55mc-ok';
+                const dQ = { '1': await deadFront('off', { HARKROOM_DELEGATION_V2: '1' }), '0': await deadFront('off', { HARKROOM_DELEGATION_V2: '0' }) };
+                const dQUnset = await deadFront('off', { HARKROOM_DELEGATION_V2: '' });
+                for (const d of Object.values(dQ)) {
+                  for (const off of ['merge results write off', 'mcp pr.watch core off']) expect(d.log(), off).not.toContain(off);
+                }
+                const qSide = async (base: string) => {
+                  const x = await turn(QREPO);
+                  const chk = await fetch(`${tsUrl}${MC}`, { method: 'POST', headers: { ...x.headers, 'content-type': J, 'x-forwarded-for': XFF }, body: JSON.stringify(x.body) });
+                  expect(chk.status, await chk.clone().text()).toBe(200);
+                  const leaseId = (x.body as { leaseId: string }).leaseId;
+                  const root = (await db.pool.query<{ t: string }>(`select thread_root_id::text as t from secret_turn_lease where id = $1`, [leaseId])).rows[0]!.t;
+                  const mark = (await db.pool.query<{ a: string }>(`select coalesce(max(id), 0)::text as a from audit_log`)).rows[0]!.a;
+                  const res = await fetch(`${base}${MR}`, { method: 'POST', headers: { ...x.headers, 'content-type': J, 'x-forwarded-for': XFF },
+                    body: JSON.stringify({ ...(x.body as Record<string, unknown>), result: 'queued' }) });
+                  const text = await res.text();
+                  let json: unknown = text;
+                  try { json = JSON.parse(text); } catch { /* 502 는 맨글자다 */ }
+                  const lines = (await db.pool.query(
+                    `select author_id, body, kind, meta from message where thread_root_id = $1 and kind = 'system' order by created_at`, [root])).rows;
+                  const audit = (await db.pool.query(
+                    `select action, actor_id, target, detail from audit_log where id > $1 and actor_id = $2 order by id`, [mark, mc.accountId])).rows;
+                  const watches = (await db.pool.query(
+                    `select w.repo, w.number, w.head, w.until, w.state, w.expires_at > now() + interval '5 hours' as ttl6h,
+                            s.account_id, s.channel_id, s.thread_root_id = $2::uuid as same_thread, s.delegation_id, s.source
+                       from pr_watch w join pr_watch_subscriber s on s.watch_id = w.id where s.account_id = $1 order by w.repo`, [mc.accountId, root])).rows;
+                  await db.pool.query(`delete from pr_watch where repo = $1`, [QREPO]);
+                  return { r: { status: res.status, json }, effects: { lines, audit, watches } };
+                };
+                for (const v2 of ['1', '0'] as const) {
+                  process.env.HARKROOM_DELEGATION_V2 = v2;
+                  const a = await qSide(tsUrl);
+                  const b = await qSide(dQ[v2].url);
+                  expect(norm(b.r), `queued v2=${v2} — Rust 가 직접 답한다(upstream 없음)`).toEqual(norm(a.r));
+                  expect(norm(b.effects), `queued v2=${v2} 부작용`).toEqual(norm(a.effects));
+                  expect(a.r.status, JSON.stringify(a.r.json)).toBe(201);
+                  expect(a.effects.lines).toHaveLength(1);
+                  expect(a.effects.lines[0]).toMatchObject({ kind: 'system', meta: { merge: { result: 'queued' } } });
+                  expect((a.effects.audit as Array<{ action: string }>).map((r) => r.action)).toEqual(['repo.merge.queued']);
+                  expect(norm(a.effects.watches), `v2=${v2} 감시`).toEqual(v2 === '1'
+                    ? [{ repo: QREPO, number: 7, head: SHA40, until: 'merged', state: 'open', ttl6h: true, account_id: '<mc>', channel_id: '<ch>',
+                      same_thread: true, delegation_id: null, source: 'merge_queue' }]
+                    : []);
+                }
+                // 스위치를 모르는 앞단 — `queued` 보고는 아무것도 적지 않고 TS 로 넘긴다(502).
+                const u = await qSide(dQUnset.url);
+                expect(u.r.status, '스위치 모름: queued → TS 로 넘긴다').toBe(502);
+                expect(u.effects, '스위치 모름: queued — 아무것도 적지 않는다').toEqual({ lines: [], audit: [], watches: [] });
+              } finally {
+                if (prevV2 === undefined) delete process.env.HARKROOM_DELEGATION_V2; else process.env.HARKROOM_DELEGATION_V2 = prevV2;
+              }
               // 14) 남은 다섯 장면(스위치 꺼짐, 앞단은 닿지 않는 upstream) — ① 1회 승인 소모(`merge_approval.used_at`) ② merge-results 쓰기
-              // (merged·failed·CI 거절·queued·시스템 줄) ③ `/agent/merge-closed` ④ 카드 [7일 허락](권한 요청 카드 approve · 옛 거절 카드 REST)
+              // (merged·failed·CI 거절·시스템 줄 — queued 는 13b) ③ `/agent/merge-closed` ④ 카드 [7일 허락](권한 요청 카드 approve · 옛 거절 카드 REST)
               // ⑤ 카드 [이번 한 번](approve-once). 장면마다 쪽별로 새 턴을 세우고 같은 순서로 부른 뒤 응답·감사·시스템 줄·표 상태를 견준다.
               // 502(TS 로 넘김)가 섞이면 TS 와 답이 달라지므로, 같다는 것이 곧 「Rust 가 직접 답했다」는 증명이다.
               delete process.env.HARKROOM_MANDATE_ENFORCE;
@@ -12791,7 +12855,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 expect(once.steps.map((s) => s.status)).toEqual([403, 200, 409, 200, 201, 409]);
                 expect(once.effects.approvals).toMatchObject([{ used: true, used_by_lease: true, gh_user: null }]);
                 expect(once.effects.msgs.length, '1회 승인 줄·머지 줄').toBeGreaterThanOrEqual(2);
-                // ② grant 있는 저장소의 보고 갈래 — merged(무시한 체크 꼬리)·failed·CI 거절(denialId)·queued(감시 없음)·판정 없는 보고.
+                // ② grant 있는 저장소의 보고 갈래 — merged(무시한 체크 꼬리)·failed·CI 거절(denialId)·판정 없는 보고.
                 const res = await both('② merge-results', async (call) => {
                   const cases: Array<[string, Record<string, unknown>]> = [
                     ['merged + 무시한 체크', { result: 'merged', mergeSha: 'e'.repeat(40), ignoredChecks: ['flaky-e2e'] }],
@@ -12808,34 +12872,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 });
                 expect(res.steps.map((s) => s.status)).toEqual([200, 201, 200, 201, 200, 201, 409]);
                 expect((res.steps[5]!.json as { denialId?: string }).denialId, 'CI 거절은 카드용 denialId').toBeTruthy();
-                // ② queued — 위임 v2 가 꺼졌다고 확실한 앞단(`HARKROOM_DELEGATION_V2=0`)만 감시 없는 「큐」 줄을 Rust 가 적는다.
-                // 값이 없는 앞단은 쓰기 전에 TS 로 넘긴다(감시 이전은 따로 — 여기서는 502 와 아무것도 안 씀만 본다).
-                const prevV2 = process.env.HARKROOM_DELEGATION_V2;
-                const dOffV1 = await deadFront('off', { HARKROOM_DELEGATION_V2: '0' });
-                expect(dOffV1.log()).not.toContain('merge results write off');
-                const queuedScript: Parameters<typeof flow>[2] = async (call) => {
-                  const x = await turn('izagood/s55mc-ok');
-                  await call('queued 판정', MC, x.body, x.headers);
-                  await call('queued 보고', MR, { ...lb(x), result: 'queued' }, x.headers);
-                  await call('queued 다시 → 409', MR, { ...lb(x), result: 'queued' }, x.headers);
-                };
-                try {
-                  process.env.HARKROOM_DELEGATION_V2 = '0';
-                  const qa = await flow(tsUrl, 'queued', queuedScript);
-                  const qb = await flow(dOffV1.url, 'queued', queuedScript);
-                  expect(norm(qb.steps), '② queued(v2 꺼짐) — 응답').toEqual(norm(qa.steps));
-                  expect(norm(qb.effects), '② queued(v2 꺼짐) — 부작용').toEqual(norm(qa.effects));
-                  expect(qa.steps.map((s) => s.status)).toEqual([200, 201, 409]);
-                } finally {
-                  if (prevV2 === undefined) delete process.env.HARKROOM_DELEGATION_V2; else process.env.HARKROOM_DELEGATION_V2 = prevV2;
-                }
-                const qu = await flow(dOff.url, 'queued v2 모름', async (call) => {
-                  const x = await turn('izagood/s55mc-ok');
-                  await call('queued 판정', MC, x.body, x.headers);
-                  await call('queued 보고 → TS 로 넘김', MR, { ...lb(x), result: 'queued' }, x.headers);
-                });
-                expect(qu.steps.map((s) => s.status), 'v2 모름 → 큐 보고는 TS 로(502)').toEqual([200, 502]);
-                expect(qu.effects.msgs, 'v2 모름 → 줄을 쓰지 않는다').toEqual([]);
+                // ② queued 는 13b 가 v2=1·0·모름 세 앞단으로 견준다(감시 포함).
                 // ③ merge-closed — 기다리는 거절 카드를 닫고, 닫을 것이 없으면 409 no_card.
                 const cl = await both('③ merge-closed', async (call) => {
                   const x = await turn('izagood/s55mc-cl');

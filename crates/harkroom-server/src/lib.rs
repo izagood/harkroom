@@ -6,6 +6,7 @@
 pub mod api;
 pub mod auth;
 pub mod avcs_http;
+pub mod claim_seed;
 pub mod core;
 pub mod cors;
 pub mod directory;
