@@ -1,7 +1,7 @@
 //! 공급자 사용률 요청(s21c3d-3) — TS `claudeAccounts.ts::providerUsage`·`codexAccounts.ts::providerUsage`·
 //! `server.ts::readUsageRequest` 의 Rust 판.
 //!
-//! - 측정은 `cli_then_api`(CLI 먼저, 안 되면 같은 공급자 API)를 **캐시**(`UsageCache`, TTL 2분) 너머로 한다.
+//! - 측정은 claude 는 `api_then_cli`(API 먼저, 안 되면 CLI), codex 는 `cli_then_api`(CLI 먼저)를 **캐시**(`UsageCache`, TTL 2분) 너머로 한다.
 //!   화면 요청과 폴러가 같은 계정을 따로 재지 않게 claude 캐시 하나를 함께 쓴다(TS `measureUsage`).
 //! - 응답에는 잰 결과만 싣는다 — 토큰·URL·CLI 원문은 싣지 않는다(`Measured` 의 칸이 전부다).
 //! - 계정마다 함께 잰다(TS `Promise.all`) — 다만 동시에 도는 측정은 `MAX_PARALLEL` 개까지다.
@@ -18,12 +18,13 @@ use crate::provider_usage::cli::{
     default_usage_probe_dir,
 };
 use crate::provider_usage::{
-    Measured, UreqUsageHttp, cli_then_api, fetch_claude_provider_usage, fetch_codex_provider_usage,
-    read_claude_token, read_codex_token,
+    Measured, UreqUsageHttp, api_then_cli, cli_then_api, fetch_claude_provider_usage,
+    fetch_codex_provider_usage, read_claude_token, read_codex_token,
 };
 
-/// 동시에 도는 측정(CLI 자식 프로세스) 상한. 계정이 많아도 `claude` 를 한꺼번에 수십 개 띄우지 않는다.
-pub const MAX_PARALLEL: usize = 4;
+/// 동시에 도는 측정 상한. claude 는 대개 HTTP 한 번으로 끝나지만(`api_then_cli`) 폴백이면 CLI 자식 프로세스라,
+/// 계정이 많아도 한꺼번에 수십 개 띄우지 않는다. 묶음은 가장 느린 칸을 기다리므로 흔한 계정 수는 한 묶음에 든다.
+pub const MAX_PARALLEL: usize = 8;
 
 /// TS `ProviderUsageRequest`.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -84,10 +85,12 @@ impl UsageMeters {
         let probe: Arc<PathBuf> = Arc::new(default_usage_probe_dir());
         let http = Arc::new(UreqUsageHttp::default());
         let (p1, h1) = (probe.clone(), http.clone());
+        // Claude 는 API 먼저 — 냉 캐시(오퍼레이터를 새로 띄운 뒤 첫 화면)에 계정마다 node CLI 를 띄우면
+        // 5계정이 16초 걸렸다(`api_then_cli` 주석의 실측).
         let claude: MeasureDir = Arc::new(move |dir: &Path, at: f64| {
-            cli_then_api(
-                || claude_cli_usage(dir, at, &StdRunCommand, &p1),
+            api_then_cli(
                 || fetch_claude_provider_usage(dir, at, h1.as_ref(), &read_claude_token),
+                || claude_cli_usage(dir, at, &StdRunCommand, &p1),
             )
         });
         let codex: MeasureDir = Arc::new(move |home: &Path, at: f64| {

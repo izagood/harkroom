@@ -95,6 +95,41 @@ fn ok() -> Measured {
 }
 
 #[test]
+fn api_first_ok_skips_cli() {
+    let m = api_then_cli(ok, || panic!("cli 를 띄우면 안 된다"));
+    assert_eq!((m.source, m.error), (Some("api"), None));
+}
+
+#[test]
+fn api_first_falls_back_to_cli_on_any_error() {
+    // 만료 토큰(unauthorized)도 CLI 로 넘긴다 — CLI 는 토큰을 갱신하고 이 프로세스는 하지 않는다.
+    for e in ["no-credentials", "unauthorized", "http-429", "network"] {
+        let m = api_then_cli(|| Measured::failed(NOW, e), ok);
+        assert_eq!((m.source, m.error), (Some("cli"), None), "{e}");
+    }
+}
+
+#[test]
+fn api_first_both_fail_picks_like_cli_then_api() {
+    let m = api_then_cli(
+        || Measured::failed(NOW, "unauthorized"),
+        || Measured::failed(NOW, "cli-error"),
+    );
+    assert_eq!(
+        (m.source, m.error.as_deref()),
+        (Some("api"), Some("unauthorized"))
+    );
+    let m = api_then_cli(
+        || Measured::failed(NOW, "timeout"),
+        || Measured::failed(NOW, "cli-unparsed"),
+    );
+    assert_eq!(
+        (m.source, m.error.as_deref()),
+        (Some("cli"), Some("cli-unparsed"))
+    );
+}
+
+#[test]
 fn chain_cli_ok_skips_api() {
     let m = cli_then_api(ok, || panic!("api 를 부르면 안 된다"));
     assert_eq!(m.source, Some("cli"));

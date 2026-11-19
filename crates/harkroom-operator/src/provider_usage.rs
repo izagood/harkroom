@@ -290,6 +290,38 @@ pub fn cli_then_api(cli: impl FnOnce() -> Measured, api: impl FnOnce() -> Measur
     }
 }
 
+/// Claude 순서 — **API 먼저**(Rust HTTP, 실측 계정당 0.3~0.4초), 안 되면 CLI(`claude -p /usage`, node 기동이라
+/// 계정당 2~9초). 같은 1st-party 엔드포인트라 값은 같다(실측 5계정 일치) — CLI 는 기동 비용만 더 든다.
+/// CLI 로 넘어가는 때: 토큰이 없다(`no-credentials`)·만료돼 거절됐다(이 프로세스는 토큰을 갱신하지 않는다 —
+/// CLI 가 갱신한다)·한도(429)·네트워크. 둘 다 실패면 [`cli_then_api`] 와 같은 규칙으로 꼬리표를 고른다.
+pub fn api_then_cli(api: impl FnOnce() -> Measured, cli: impl FnOnce() -> Measured) -> Measured {
+    let b = api();
+    if b.error.is_none() {
+        return Measured {
+            source: Some("api"),
+            ..b
+        };
+    }
+    let a = cli();
+    if a.error.is_none() {
+        return Measured {
+            source: Some("cli"),
+            ..a
+        };
+    }
+    if b.error.as_deref().is_some_and(is_auth_error) {
+        Measured {
+            source: Some("api"),
+            ..b
+        }
+    } else {
+        Measured {
+            source: Some("cli"),
+            ..a
+        }
+    }
+}
+
 // ── 토큰 읽기 ─────────────────────────────────────────────────────────────────
 
 /// TS `ClaudeOAuthToken`. `Debug` 를 일부러 두지 않는다 — 실수로 로그에 찍히지 않게.
