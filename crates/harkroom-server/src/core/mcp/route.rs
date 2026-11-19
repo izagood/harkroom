@@ -290,6 +290,8 @@ pub async fn handle(
             .headers
             .get("x-harkroom-cause")
             .and_then(|v| v.to_str().ok()),
+        presence: writes.presence.get(),
+        switches: writes.switches,
     };
     if let Some(r) = serve_pre(&up, ci, &parts.headers, &bytes, served, &tools, &pre).await {
         return r;
@@ -344,6 +346,71 @@ pub struct Pre<'a> {
     pub bg_pool: Option<&'a sqlx::PgPool>,
     /// cause 헤더 글자(`bg_cause` 가 참일 때 `bg:<uuid>`).
     pub cause_header: Option<&'a str>,
+    /// P2 — 있으면 입장 확인을 Rust 가 끝까지 한다([`local_admit`]). 없으면 TS `/mcp/admit`.
+    pub presence: Option<&'a std::sync::Arc<crate::core::relay_live::PresenceMark>>,
+    pub switches: AdmitSwitches,
+}
+
+/// TS `/mcp/admit` 답의 조건부 칸을 정하는 env 두 개 — 값이 있을 때만 `Some`(TS 와 같은 판정). 없으면 그 도구는 TS 에 묻는다.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct AdmitSwitches {
+    /// TS `delegationV2Enabled` — `HARKROOM_DELEGATION_V2` 를 다듬어 소문자로 `1`·`on`·`true`.
+    pub delegation_v2: Option<bool>,
+    /// TS `backgroundEnabled` — `HARKROOM_BACKGROUND_ENABLED === '1'`.
+    pub background: Option<bool>,
+}
+
+impl AdmitSwitches {
+    /// env 값(없거나 비었으면 `None`)에서. TS 와 같은 글자 판정.
+    pub fn from_values(delegation_v2: Option<&str>, background: Option<&str>) -> Self {
+        fn set(v: Option<&str>) -> Option<&str> {
+            v.filter(|v| !v.trim().is_empty())
+        }
+        Self {
+            delegation_v2: set(delegation_v2)
+                .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "on" | "true")),
+            background: set(background).map(|v| v == "1"),
+        }
+    }
+
+    pub fn from_env() -> Self {
+        Self::from_values(
+            std::env::var("HARKROOM_DELEGATION_V2").ok().as_deref(),
+            std::env::var("HARKROOM_BACKGROUND_ENABLED").ok().as_deref(),
+        )
+    }
+}
+
+/// P2 — TS `/mcp/admit` 의 끝부분(`bgEnabled`·`registered`)을 Rust 가 답한다. 앞부분(leakGuard·회차)은 [`pre_admit`] 이 이미 했다.
+/// 다 할 수 없으면 `None`(→ TS 에 묻는다): presence 가 없다 · 비밀 값 검사를 Rust 가 못 했다(키링 없음 — TS 에 있을 수 있다) ·
+/// 회차 요청인데 회차 상태를 못 읽었다 · TS 가 받지 않는 도구(`admit_refused`) · 그 도구의 스위치 env 가 없다.
+fn local_admit(
+    pre: &Pre<'_>,
+    headers: &axum::http::HeaderMap,
+    tool: &str,
+) -> Option<super::respond::Admit> {
+    pre.presence?;
+    pre.leak?;
+    if pre.bg_cause && (pre.bg_pool.is_none() || pre.cause_header.is_none()) {
+        return None;
+    }
+    if admit_refused(tool, pre, headers) {
+        return None;
+    }
+    switch_answer(pre.switches, tool)
+}
+
+/// TS `/mcp/admit` 의 마지막 두 줄과 같은 답 — `bg.claim` 은 `bgEnabled` 만, 나머지는 `registered`(`toolRegisteredNow`).
+fn switch_answer(sw: AdmitSwitches, tool: &str) -> Option<super::respond::Admit> {
+    let (bg_enabled, registered) = match tool {
+        "bg.claim" => (sw.background?, None),
+        "delegation.close" => (false, Some(sw.delegation_v2?)),
+        _ => (false, Some(true)),
+    };
+    Some(super::respond::Admit::Yes {
+        bg_enabled,
+        registered,
+    })
 }
 
 impl Pre<'static> {
@@ -355,6 +422,11 @@ impl Pre<'static> {
         bg_cause: false,
         bg_pool: None,
         cause_header: None,
+        presence: None,
+        switches: AdmitSwitches {
+            delegation_v2: None,
+            background: None,
+        },
     };
 }
 
@@ -526,7 +598,17 @@ pub async fn serve_pre(
         Ok(None) => {}
         Err(()) => return None,
     }
-    match super::respond::admit(up, ci, headers, name, &args).await {
+    let admitted = match local_admit(pre, headers, name) {
+        Some(a) => {
+            // TS 는 `/mcp`·`/mcp/admit` 에 온 요청마다 mark 한다 — Rust 가 답하는 요청도 같은 생존 신호다(묶어 쓴다).
+            if let Some(p) = pre.presence {
+                p.mark(pre.agent_id);
+            }
+            a
+        }
+        None => super::respond::admit(up, ci, headers, name, &args).await,
+    };
+    match admitted {
         // `bg.claim` 은 TS 의 스위치가 켜졌다고 들었을 때만 — 아니면 TS 가 답한다(`disabled` 는 TS 가 정본).
         // 조건부로 싣는 도구(`delegation.close` — TS env 스위치)는 TS 가 「지금 싣는다」고 답했을 때만 Rust 가 답한다. 그 밖이면
         // TS 로 넘겨 TS 의 「도구 없음」 답을 그대로 낸다. 어떤 도구든 TS 가 거짓이라고 답하면 넘긴다.
@@ -753,6 +835,8 @@ mod tests {
             bg_cause: bg,
             bg_pool: None,
             cause_header: None,
+            presence: None,
+            switches: AdmitSwitches::default(),
         };
         let none = axum::http::HeaderMap::new();
         assert!(admit_refused("memory.set", &pre(true, true), &none));
@@ -760,6 +844,62 @@ mod tests {
         assert!(!admit_refused("bg.complete", &pre(true, false), &none));
         assert!(admit_refused("bg.complete", &pre(false, false), &none));
         assert!(!admit_refused("message.read", &pre(true, true), &none));
+    }
+
+    #[test]
+    fn admit_switches_mirror_ts() {
+        // TS delegationV2Enabled: trim·소문자 → 1·on·true. backgroundEnabled: 정확히 '1'.
+        let s = AdmitSwitches::from_values(Some(" ON "), Some("1"));
+        assert_eq!((s.delegation_v2, s.background), (Some(true), Some(true)));
+        let s = AdmitSwitches::from_values(Some("0"), Some("true"));
+        assert_eq!((s.delegation_v2, s.background), (Some(false), Some(false)));
+        let s = AdmitSwitches::from_values(None, Some("  "));
+        assert_eq!((s.delegation_v2, s.background), (None, None));
+    }
+
+    #[test]
+    fn switch_answer_mirrors_ts_admit_tail() {
+        use super::super::respond::Admit;
+        let on = AdmitSwitches {
+            delegation_v2: Some(true),
+            background: Some(false),
+        };
+        assert_eq!(
+            switch_answer(on, "bg.claim"),
+            Some(Admit::Yes {
+                bg_enabled: false,
+                registered: None
+            })
+        );
+        assert_eq!(
+            switch_answer(on, "delegation.close"),
+            Some(Admit::Yes {
+                bg_enabled: false,
+                registered: Some(true)
+            })
+        );
+        assert_eq!(
+            switch_answer(on, "message.read"),
+            Some(Admit::Yes {
+                bg_enabled: false,
+                registered: Some(true)
+            })
+        );
+        // env 가 없으면 그 도구는 TS 에 묻는다.
+        let unset = AdmitSwitches::default();
+        assert_eq!(switch_answer(unset, "bg.claim"), None);
+        assert_eq!(switch_answer(unset, "delegation.close"), None);
+        assert!(switch_answer(unset, "memory.get").is_some());
+    }
+
+    #[test]
+    fn local_admit_needs_presence_and_leak_guard() {
+        let pre = Pre {
+            switches: AdmitSwitches::from_values(Some("1"), Some("1")),
+            ..Pre::NONE
+        };
+        // presence·비밀 값 검사가 없으면 TS 에 묻는다(TS 가 mark 하고 TS 키링으로 검사한다).
+        assert!(local_admit(&pre, &axum::http::HeaderMap::new(), "message.read").is_none());
     }
 
     #[test]
