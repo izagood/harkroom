@@ -389,6 +389,7 @@ pub async fn answer(
     let is_dm = msg_post::channel_is_dm(&st.read, &a.channel).await.ok()?;
     let audience = audience_for(&st.read, &a.channel).await.ok()?.to_json();
     let origin = Origin {
+        defer_inbox_events: false,
         cause: None,
         chain_cause,
         turn_id: turn.filter(|_| operator),

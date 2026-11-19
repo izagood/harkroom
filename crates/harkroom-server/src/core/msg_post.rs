@@ -372,6 +372,9 @@ pub(crate) struct Origin<'a> {
     /// `max(스캔 깊이, chain_depth)` 와 `chain_bound` 를 넘기고 그 깊이를 `mention_depth` 로 저장한다(TS `postMessage` 와 같다).
     /// 정체 홉·사슬 시작은 TS 처럼 스캔 깊이만 본다. 라우트 입력에서는 켜지 않는다.
     pub(crate) chain_depth: Option<i32>,
+    /// P3b-2 — 받은 사람의 `inbox.updated` 를 커밋 tx 에서 내지 않는다. 호출자가 글 승인 판정 **뒤에** 낸다
+    /// (TS 라우트는 `applyChatApproval` 뒤에 낸다 — security n2: 같은 스레드의 `thread_reply` 턴이 뜰 때 grant 가 이미 있게).
+    pub(crate) defer_inbox_events: bool,
 }
 
 /// TS `beforeCommit` 의 거절 — `{ status, code, message }`.
@@ -1313,9 +1316,11 @@ pub(crate) async fn post_tx(
         )
         .await?;
     }
-    for a in &notified {
-        crate::write::emit_event(&mut tx, &json!({ "type": "inbox.updated", "accountId": a }))
-            .await?;
+    if !origin.defer_inbox_events {
+        for a in &notified {
+            crate::write::emit_event(&mut tx, &json!({ "type": "inbox.updated", "accountId": a }))
+                .await?;
+        }
     }
     // TS `message.delegate` — 넘겨받은 담당의 부름은 `createDelegation` 이 만들었다. 러너가 곧 폴하도록 따로 친다.
     if let Some(plan) = &origin.delegation {
@@ -1477,6 +1482,19 @@ async fn dm_notify(
     mention_fanout::insert_inbox_many(conn, &to, message_id, "dm", notified, None).await
 }
 
+/// 미뤄 둔 받은 사람 `inbox.updated`([`Origin::defer_inbox_events`]).
+async fn emit_inbox_updated(write: &sqlx::PgPool, notified: &[String]) -> sqlx::Result<()> {
+    if notified.is_empty() {
+        return Ok(());
+    }
+    let mut tx = write.begin().await?;
+    for a in notified {
+        crate::write::emit_event(&mut tx, &json!({ "type": "inbox.updated", "accountId": a }))
+            .await?;
+    }
+    tx.commit().await
+}
+
 fn json_response(status: StatusCode, row: String) -> Response {
     (
         status,
@@ -1497,6 +1515,8 @@ pub struct RestState {
     /// ([`ChatDecideSwitches::all_on`], `main.rs` 가 기동 때 정한다). 글 승인은 글을 **커밋한 뒤에** 카드를 고르므로 중간에 TS 로
     /// 넘길 수 없다 — 그래서 카드와 상관없이 쓰기 **전** 입구에서 가른다. 거짓이면 넓은 체에 걸린 글은 글째 TS 로 간다.
     pub chat_decide: bool,
+    /// P3b-2 — 글 승인이 결정 코어(거절·승인·카드 답·소유자 알림)를 부를 상태. `None` 이면 `chat_decide` 를 켜지 않는다(`main.rs`).
+    pub chat: Option<super::ask::AskState>,
 }
 
 /// P3 B5 — 글 승인 결정 스위치(기동 때 권한 검사 결과). 하나라도 꺼져 있으면 그 결정이 Rust 에서 TS 출구로 빠질 수 있다.
@@ -1523,7 +1543,7 @@ impl ChatDecideSwitches {
 
 /// P3 B5 — 글 승인 DB 층(P3b-2b 카드 고르기 → 2c 결정 → 2d 안내 줄)이 `post` 에 붙었는가. 붙기 전에는 스위치가 다 켜져도
 /// 넓은 체에 걸린 글을 TS 로 넘긴다(Rust 가 맡으면 승인 글이 아무 결정 없이 올라간다).
-const CHAT_APPROVAL_WIRED: bool = false;
+const CHAT_APPROVAL_WIRED: bool = true;
 
 /// 넓은 체에 걸린 REST 글을 TS 로 넘기는가 — 체에 걸렸고, 글 승인을 Rust 가 끝까지 할 수 없으면.
 fn guard_to_ts(body: &str, chat_decide: bool) -> bool {
@@ -1577,7 +1597,14 @@ pub async fn post(
     if !picks.is_empty() && !rs.models {
         return to_ts(st.up.clone(), peer, parts, bytes).await;
     }
-    if guard_to_ts(&input.body, rs.chat_decide) {
+    let chat_on = rs.chat_decide && rs.chat.is_some();
+    if guard_to_ts(&input.body, chat_on) {
+        return to_ts(st.up.clone(), peer, parts, bytes).await;
+    }
+    // 글 승인 판정은 사람 세션 글만(TS 라우트). 선택 카드를 링크한 글은 TS P5(`answerAskFromMessage`) 몫 — 쓰기 전에 넘긴다.
+    let chat_apply =
+        chat_on && human_session && super::chat_approval_apply::wants_chat_approval(&input.body);
+    if chat_apply && super::chat_approval_apply::links_ask_card(&st.read, &input.body).await {
         return to_ts(st.up.clone(), peer, parts, bytes).await;
     }
     let preview_urls = extract_preview_urls(&input.body, 3);
@@ -1657,6 +1684,7 @@ pub async fn post(
         is_dm,
         &Origin {
             before_commit: hook.as_ref().map(|h| h as &dyn BeforeCommit),
+            defer_inbox_events: chat_apply,
             ..Origin::default()
         },
     )
@@ -1700,6 +1728,18 @@ pub async fn post(
                     },
                 )
                 .await;
+            }
+            // P3b-2 — 글 승인(TS `applyChatApproval`): 받은 사람 `inbox.updated` **앞**에서 정한다(security n2).
+            if chat_apply {
+                if let (Some(ask), Some(msg)) = (
+                    rs.chat.as_ref(),
+                    super::chat_approval_apply::posted_from_row(&row),
+                ) {
+                    super::chat_approval_apply::apply(ask, st, &msg, &input.body, &me.id).await;
+                }
+                if let Err(e) = emit_inbox_updated(&st.write, &notified).await {
+                    eprintln!("front: deferred inbox.updated failed ({e})");
+                }
             }
             // TS 는 지정의 시스템 줄을 `message.created` 앞에 낸다 — Rust 는 커밋 뒤라 그 뒤다(지정 행 자체는 같은 tx 에 들어갔다).
             if let Some(h) = &hook {
@@ -1882,8 +1922,8 @@ mod tests {
         assert!(!guard_to_ts("점심 뭐 먹지", true));
         // 걸린 글은 스위치가 꺼졌으면 언제나 TS.
         assert!(guard_to_ts("승인", false));
-        // 글 승인 DB 층이 붙기 전에는 다 켜져도 TS(P3b-2b 에서 CHAT_APPROVAL_WIRED 를 켤 때 이 기대를 바꾼다).
-        assert_eq!(guard_to_ts("승인", true), !CHAT_APPROVAL_WIRED);
+        // P3b-2 부터 스위치가 다 켜지면 Rust 가 글 승인까지 한다.
+        assert!(!guard_to_ts("승인", true));
     }
 
     #[test]

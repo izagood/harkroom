@@ -5154,16 +5154,20 @@ async fn main() {
         }
         // C3b-1 — 선택 카드 답하기·닫기. 권한·머지 카드와 못 읽는 카드는 핸들러가 TS 로 넘긴다.
         let mcp_ask_write = ask_write.clone();
-        if let Some(write) = ask_write {
+        // P3b-2 — 글 승인도 같은 결정 상태를 쓴다(아래 글 올리기 `RestState::chat`).
+        let chat_ask = ask_write
+            .clone()
+            .map(|write| harkroom_server::core::ask::AskState {
+                read: state.pool.clone(),
+                write,
+                up: state.up.clone(),
+                deny: ask_deny.clone(),
+                approve: ask_approve.clone(),
+                owner_notice: ask_owner_notice.clone(),
+            });
+        if let Some(ask_state) = chat_ask.clone() {
             let ask = harkroom_server::core::ask::routes(
-                harkroom_server::core::ask::AskState {
-                    read: state.pool.clone(),
-                    write,
-                    up: state.up.clone(),
-                    deny: ask_deny,
-                    approve: ask_approve,
-                    owner_notice: ask_owner_notice,
-                },
+                ask_state.clone(),
                 auth.clone(),
                 state.cors.clone(),
             );
@@ -5193,6 +5197,7 @@ async fn main() {
                     // P3 — 작성창 칩(`agentModels`)은 스레드 모델 지정 코어가 붙었을 때만 Rust 가 맡는다.
                     models: rest_models_ok,
                     chat_decide: chat_decide_ok,
+                    chat: chat_ask.clone(),
                 },
                 auth.clone(),
                 state.cors.clone(),
