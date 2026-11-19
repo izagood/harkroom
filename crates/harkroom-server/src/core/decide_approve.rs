@@ -419,8 +419,8 @@ pub const NON_OWNER_APPROVE_PRIVILEGES: &[(&str, &str)] = &[
     ("account_grant.expires_at", "SELECT"),
     ("agent_config.owner_account_id", "SELECT"),
 ];
-/// P3 B4 — 소유자가 아닌 사람의 승인을 Rust 가 쓰는가. 소유자 알림 줄(B4e)이 붙기 전에는 거짓 — 쓰기 전에 TS 로 넘긴다(지금과 같음).
-pub const NON_OWNER_APPROVE_WIRED: bool = false;
+/// P3 B4 — 소유자가 아닌 사람의 승인을 Rust 가 쓰는가. B4f(TS 대조 블록)와 함께 켰다 — 알림 칸이 없으면 [`non_owner_approve_on`] 이 거짓(TS).
+pub const NON_OWNER_APPROVE_WIRED: bool = true;
 
 /// 소유자가 아닌 사람의 승인 쓰기를 Rust 가 맡는가 — 코드가 다 붙었고([`NON_OWNER_APPROVE_WIRED`]) 소유자 알림 줄(B4e)을 쓸 수 있을 때만
 /// ([`super::decide_owner_notice::owner_notice_core_on`], fail-closed). 아니면 쓰기 전에 TS 로 넘긴다.

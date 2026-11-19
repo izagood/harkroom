@@ -8310,6 +8310,165 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect((await mgrants('rside3')).rowCount, 'Rust: grant 없음(merge·tool 모두)').toBe(0);
         await db.pool.query(`drop trigger b3_line_boom on mandate_line`);
       }
+      // P3 B4f — 소유자가 아닌 사람의 승인(TS `decidePermissionRequest` asOwner false + `notifyOwnerOfUserDecision`). community 범위·켜짐에서
+      // member 가 tool 카드를 정한다: 7일 grant 는 member 이름(B4b), 살아 있는 소유자 grant 는 덮지 않고 원래 기한을 카드에 적는다(security 9),
+      // 카드 `decidedByOwner: false`·감사 `asOwner: false`(B4d), 커밋 뒤 카드 스레드에 에이전트 이름의 시스템 줄 + `@소유자`(B4e).
+      // 소유자가 그 채널을 못 보면(남의 비공개 채널, security F2) 스레드 줄에서 멘션을 떼고 소유자↔에이전트 DM 에 같은 줄을 세운다(없으면 만든다).
+      // deny 는 알림이 없다. TS·Rust 가 각자의 에이전트(소유자 = admin, DM 없음)로 돌아 DM 만들기도 Rust 가 직접 한다.
+      {
+        expect(f.log(), 'B4 스위치가 다 켜졌다').toContain('front: permission non-owner approve core on');
+        const H = { kind: 'human' };
+        const TOPT = ['approve', 'deny'];
+        const side4 = async (tag: string) => {
+          const bot = await createAgent(app, A, `b4f${tag}`);
+          await db.pool.query(`update agent_config set owner_account_id = $2, invoke_scope = 'community', user_decide = true where account_id = $1`,
+            [bot.accountId, admin.accountId]);
+          const privCh = (await createChannel(db.pool, { name: `b4f-${tag}-priv`, visibility: 'private', creatorId: member.accountId })).id;
+          for (const [ch, who] of [[todayId, bot.accountId], [privCh, bot.accountId]] as const) {
+            await db.pool.query(`insert into channel_member(channel_id, account_id) values ($1, $2) on conflict do nothing`, [ch, who]);
+          }
+          const treq = async (name: string, ch: string) => {
+            const target = `Bash(echo b4f ${name}:*)`;
+            const root = await say(`b4f ${tag} ${name} 머리`, { ch, author: member.accountId });
+            const req = (await db.pool.query<{ id: string }>(
+              `insert into permission_request(agent_id, kind, target, reason, channel_id, thread_root_id, expires_at)
+               values ($1, 'tool', $2, 'x', $3, $4, now() + interval '1 hour') returning id::text`,
+              [bot.accountId, target, ch, root])).rows[0]!.id;
+            const card = await say(`@admin ${target}`, {
+              ch, root, author: bot.accountId,
+              meta: {
+                kind: 'ask', ask: { prompt: '허락할까요?', options: TOPT.map((id) => ({ id, label: id })), to: H },
+                permissionRequest: { requestId: req, status: 'pending' },
+              },
+            });
+            await db.pool.query(`update permission_request set card_message_id = $2 where id = $1`, [req, card]);
+            return { req, card, root, ch, target };
+          };
+          const pub = await treq('pub', todayId);
+          const live = await treq('live', todayId);
+          const priv = await treq('priv', privCh);
+          const deny = await treq('deny', todayId);
+          // 소유자가 앞서 준 살아 있는 grant(3일) — 비소유자 승인은 이것을 덮지도 늘리지도 않는다.
+          await db.pool.query(
+            `insert into account_grant (account_id, capability, scope, granted_by, expires_at) values ($1, 'tool.allow', $2, $3, now() + interval '3 days')`,
+            [bot.accountId, `tool:${todayId}:${live.target}`, admin.accountId]);
+          return {
+            bot: bot.accountId, privCh,
+            pubReq: pub.req, pubCard: pub.card, pubRoot: pub.root, liveReq: live.req, liveCard: live.card, liveRoot: live.root,
+            privReq: priv.req, privCard: priv.card, privRoot: priv.root, denyReq: deny.req, denyCard: deny.card, denyRoot: deny.root,
+          };
+        };
+        type Side4 = Awaited<ReturnType<typeof side4>>;
+        const T4 = await side4('tside4');
+        const R4 = await side4('rside4');
+        const T_STAMP = /\d{4}-\d{2}-\d{2} \d{2}:\d{2}Z/g;
+        const shape4 = (sd: Side4) => {
+          const go = (v: unknown): unknown => {
+            if (Array.isArray(v)) return v.map(go);
+            if (v && typeof v === 'object') {
+              const o: Record<string, unknown> = {};
+              for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+                o[k] = /At$/.test(k) ? (x === null ? null : typeof x)
+                  : k === 'seq' || k === 'id' || k === 'until' ? typeof x : go(x);
+              }
+              return o;
+            }
+            if (typeof v === 'string') {
+              for (const [k, id] of Object.entries(sd)) if (v === id) return k.toUpperCase();
+              if (v === admin.accountId) return 'ADMIN';
+              if (v === member.accountId) return 'MEMBER';
+              if (v === todayId) return 'TODAY';
+              return v.replace(/b4f[tr]side4/g, 'b4fSIDE').replace(/[tr]side4/g, 'SIDE').replace(T_STAMP, '<T>');
+            }
+            return v;
+          };
+          return go;
+        };
+        const run4 = async (base: string, sd: Side4) => {
+          const out: { step: string; status: number; code?: string; body: unknown }[] = [];
+          for (const [name, card, ch, optionId] of [
+            ['비소유자 approve → member 이름 7일 grant·알림 줄 @admin', sd.pubCard, todayId, 'approve'],
+            ['살아 있는 소유자 grant → 덮지 않고 원래 기한', sd.liveCard, todayId, 'approve'],
+            ['소유자가 못 보는 비공개 채널 → 멘션 뗀 줄 + DM', sd.privCard, sd.privCh, 'approve'],
+            ['비소유자 deny → 알림 없음', sd.denyCard, todayId, 'deny'],
+          ] as const) {
+            const r = await callX(base, 'POST', `/channels/${ch}/messages/${card}/ask-answer`, { optionId }, member.token);
+            out.push({ step: name, status: r.status, code: r.code, body: r.status === 200 ? shape4(sd)(r.json) : null });
+          }
+          return out;
+        };
+        const busFrom4 = busEvents.length;
+        const tsOut4 = await run4(tsUrl, T4);
+        const rsOut4 = await run4(rsUrl, R4);
+        expect(rsOut4).toEqual(tsOut4);
+        expect(tsOut4.map((o) => o.status)).toEqual([200, 200, 200, 200]);
+        const ids4 = (sd: Side4) => JSON.stringify(sd);
+        const reqs4 = async (sd: Side4) => shape4(sd)((await db.pool.query(
+          `select k, p.status, p.decided_by::text as by from jsonb_each_text($1::jsonb) j(k, id) join permission_request p on p.id = j.id::uuid order by k`,
+          [ids4(sd)])).rows);
+        expect(await reqs4(R4)).toEqual(await reqs4(T4));
+        const cards4 = async (sd: Side4) => shape4(sd)((await db.pool.query(
+          `select k, m.meta->'permissionRequest' as pr, m.meta->'ask' as ask
+             from jsonb_each_text($1::jsonb) j(k, id) join message m on m.id = j.id::uuid where k like '%Card' order by k`, [ids4(sd)])).rows);
+        const tC4 = await cards4(T4);
+        expect(JSON.stringify(tC4), '카드에 소유자 아님 표시').toContain('"decidedByOwner":false');
+        expect(await cards4(R4)).toEqual(tC4);
+        // grant — member 이름 7일(pub·priv), 소유자 grant 는 그대로 3일(live).
+        const grants4 = async (sd: Side4) => shape4(sd)((await db.pool.query(
+          `select replace(scope, $2, 'CH:') as scope, granted_by::text as by, round(extract(epoch from expires_at - now()) / 86400) as days
+             from account_grant where account_id = $1 and capability = 'tool.allow'
+               and (scope like $3 or scope like $4) order by scope`,
+          [sd.bot, `tool:${todayId}:`, `tool:${todayId}:%`, `tool:${sd.privCh}:%`])).rows.map((r) => ({ ...r, scope: String(r.scope).replace(sd.privCh, 'PRIVCH') })));
+        const tG4 = await grants4(T4);
+        expect(tG4).toEqual([
+          { scope: 'CH:Bash(echo b4f live:*)', by: 'ADMIN', days: '3' },
+          { scope: 'CH:Bash(echo b4f pub:*)', by: 'MEMBER', days: '7' },
+          { scope: 'tool:PRIVCH:Bash(echo b4f priv:*)', by: 'MEMBER', days: '7' },
+        ]);
+        expect(await grants4(R4)).toEqual(tG4);
+        // 소유자 알림 줄 — 카드 스레드(공개는 @admin, 비공개는 멘션 뗌) + 비공개만 DM. deny 는 줄이 없다.
+        const notices4 = async (sd: Side4) => shape4(sd)((await db.pool.query(
+          `select (select k from jsonb_each_text($1::jsonb) j(k, id) where j.id = m.meta->'permissionUserDecision'->>'requestId') as req,
+                  c.kind as ch_kind, c.id = $3::uuid as in_priv, c.id = $4::uuid as in_today,
+                  (select k from jsonb_each_text($1::jsonb) j(k, id) where j.id::uuid = m.thread_root_id) as root,
+                  m.author_id::text as author, m.kind, m.body, m.meta
+             from message m join channel c on c.id = m.channel_id
+            where m.meta->'permissionUserDecision'->>'requestId' = any($2::text[]) order by 1, 2`,
+          [ids4(sd), [sd.pubReq, sd.liveReq, sd.privReq, sd.denyReq], sd.privCh, todayId])).rows);
+        const tN4 = await notices4(T4) as { req: string; ch_kind: string; body: string }[];
+        expect(tN4.map((n) => [n.req, n.ch_kind]), '공개·live 스레드 줄, 비공개는 스레드 줄 + DM').toEqual([
+          ['LIVEREQ', 'standard'], ['PRIVREQ', 'dm'], ['PRIVREQ', 'standard'], ['PUBREQ', 'standard'],
+        ]);
+        expect(tN4.find((n) => n.req === 'PUBREQ')!.body).toMatch(/ @admin$/);
+        expect(tN4.find((n) => n.req === 'PRIVREQ' && n.ch_kind === 'standard')!.body).not.toContain('@admin');
+        expect(tN4.find((n) => n.req === 'PRIVREQ' && n.ch_kind === 'dm')!.body).toMatch(/ @admin$/);
+        expect(await notices4(R4)).toEqual(tN4);
+        // DM — 에이전트·소유자 둘만인 DM 이 하나(Rust 쪽은 Rust 가 만들었다).
+        const dms4 = async (sd: Side4) => (await db.pool.query<{ n: string }>(
+          `select count(*)::text as n from channel c where c.kind = 'dm'
+              and exists (select 1 from channel_member x where x.channel_id = c.id and x.account_id = $1)
+              and exists (select 1 from channel_member x where x.channel_id = c.id and x.account_id = $2)
+              and (select count(*) from channel_member x where x.channel_id = c.id) = 2`, [sd.bot, admin.accountId])).rows[0]!.n;
+        expect(await dms4(T4)).toBe('1');
+        expect(await dms4(R4)).toBe('1');
+        // 감사 — asOwner false, grant.given(member), 덮지 않은 live 는 grant 감사 없음.
+        const audits4 = async (sd: Side4) => ((shape4(sd)((await db.pool.query(
+          `select action, actor_id::text as actor, target, detail from audit_log
+            where action in ('permission.approved', 'permission.denied', 'grant.given', 'grant.changed') and detail->>'requestId' = any($1::text[])`,
+          [[sd.pubReq, sd.liveReq, sd.privReq, sd.denyReq]])).rows) as unknown[]).map((a) => JSON.parse(JSON.stringify(a).replace(/tool:[0-9a-f-]{36}:/g, 'tool:CH:'))))
+          .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+        const tAud4 = await audits4(T4);
+        expect(JSON.stringify(tAud4), '감사에 소유자 아님').toContain('"asOwner":false');
+        expect(await audits4(R4)).toEqual(tAud4);
+        // Rust 가 정말 맡았다 — R 쪽 알림 줄의 message.created 가 Rust outbox(버스)로 왔다(TS 로 넘겼으면 없다).
+        const rNoticeIds = (await db.pool.query<{ id: string }>(
+          `select id::text from message where meta->'permissionUserDecision'->>'requestId' = any($1::text[])`, [[R4.pubReq, R4.liveReq, R4.privReq]])).rows.map((r) => r.id);
+        expect(rNoticeIds.length).toBe(4);
+        const rsCreated = () => busEvents.slice(busFrom4).filter((e) => e.type === 'message.created' && rNoticeIds.some((id) => JSON.stringify(e).includes(id)));
+        const until4 = Date.now() + 10_000;
+        while (rsCreated().length < 4 && Date.now() < until4) await new Promise((res) => setTimeout(res, 100));
+        expect(rsCreated().length, 'Rust outbox 에 알림 줄 넷').toBe(4);
+      }
       // S5.3 C3 — 위임장 있는 command `approve_once`·`approve_hour`(코어 `decide_approve.rs` + `mandate_line_write.rs` command 갈래).
       // 1시간 command_grant 와 함께 그 위임장에 cap `command` 줄(기한 1시간, 「이번 한 번」은 uses 1). grant 를 썼으므로 줄이 실패해도
       // (끝난 위임장·줄 INSERT 실패) savepoint 로 줄만 되돌리고 결정은 남는다(TS 와 같음). grant.given 은 없고 grant.changed 만 있다.
