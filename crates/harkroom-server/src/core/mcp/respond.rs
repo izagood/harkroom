@@ -91,9 +91,13 @@ pub fn minify(json: &str) -> String {
 /// `tools/call` 하나의 답 — SDK 의 SSE 모양(무상태라 `mcp-session-id`·이벤트 id 없음). 바깥 키 순서도 SDK 와 같다
 /// (`{ result, jsonrpc, id }` — Protocol 이 답을 그 순서로 짓는다).
 pub fn sse(id: &str, result: &str) -> Response<Body> {
-    let body = format!(
+    sse_body(format!(
         "event: message\ndata: {{\"result\":{result},\"jsonrpc\":\"2.0\",\"id\":{id}}}\n\n"
-    );
+    ))
+}
+
+/// SSE 조각들을 이미 지은 본문 그대로 — 배치(P2b [`super::lifecycle`])가 쓴다. 헤더는 [`sse`] 와 같다.
+pub fn sse_body(body: String) -> Response<Body> {
     let mut r = Response::new(Body::from(body));
     *r.status_mut() = StatusCode::OK;
     let h = r.headers_mut();
@@ -108,6 +112,15 @@ pub fn sse(id: &str, result: &str) -> Response<Body> {
     h.insert("x-accel-buffering", HeaderValue::from_static("no"));
     // 누가 답했는지 — 대조 시험이 「Rust 가 정말 답했나」를 이것으로 본다(같은 글자면 넘긴 것과 구별이 안 된다). 값은 고정이다.
     h.insert("x-harkroom-core", HeaderValue::from_static("mcp"));
+    r
+}
+
+/// 알림·답만 든 본문 — SDK 처럼 본문 없는 202. 누가 답했는지 표지는 [`sse`] 와 같다.
+pub fn accepted() -> Response<Body> {
+    let mut r = Response::new(Body::empty());
+    *r.status_mut() = StatusCode::ACCEPTED;
+    r.headers_mut()
+        .insert("x-harkroom-core", HeaderValue::from_static("mcp"));
     r
 }
 

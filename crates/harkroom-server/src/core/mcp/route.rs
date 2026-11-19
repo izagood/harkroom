@@ -293,10 +293,35 @@ pub async fn handle(
         presence: writes.presence.get(),
         switches: writes.switches,
     };
+    if let Some(r) = lifecycle_reply(&parts.headers, &bytes, &pre) {
+        return r;
+    }
     if let Some(r) = serve_pre(&up, ci, &parts.headers, &bytes, served, &tools, &pre).await {
         return r;
     }
     proxy::forward(State(up), ci, Request::from_parts(parts, Body::from(bytes))).await
+}
+
+/// P2b — 도구 부르기가 아닌 본문(`initialize`·`ping`·`tools/list`·알림·그것들만 든 배치)을 Rust 가 답한다([`super::lifecycle`]).
+/// TS 는 `/mcp` 요청마다 presence 를 mark 한다 — 그 표가 없으면 생존 신호를 잃으므로 답하지 않고 TS 로 넘긴다.
+/// 전송 조건(Accept·Content-Type·판 헤더)이 SDK 와 다르면 그 거절 글자도 TS 가 낸다.
+fn lifecycle_reply(
+    headers: &axum::http::HeaderMap,
+    bytes: &[u8],
+    pre: &Pre<'_>,
+) -> Option<Response<Body>> {
+    let presence = pre.presence?;
+    if !super::respond::transport_ok(headers) {
+        return None;
+    }
+    let v = serde_json::from_slice::<serde_json::Value>(bytes).ok()?;
+    // 도구 목록 스냅숏은 아직 없다 — `tools/list` 는 TS 가 답한다.
+    let reply = super::lifecycle::answer(&v, None)?;
+    presence.mark(pre.agent_id);
+    Some(match reply {
+        super::lifecycle::Reply::Accepted => super::respond::accepted(),
+        super::lifecycle::Reply::Sse(body) => super::respond::sse_body(body),
+    })
 }
 
 /// 백그라운드 회차가 쓸 수 있는 도구 — TS `BG_ALLOWED_TOOLS`(설계 5절). 이 밖은 회차 상태를 보기 전에 거절한다.
