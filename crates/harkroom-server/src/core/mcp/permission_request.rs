@@ -189,7 +189,42 @@ fn rule_message(code: &str) -> &'static str {
         "bad_chars" => {
             "rule may only use letters, digits, spaces and _ . / @ = : + % - — no quotes, backslashes, brackets or commas"
         }
-        _ => unreachable!("rule_message {code}"),
+        "too_long" => "rule is too long (300 characters max)",
+        "merge_bypass" => {
+            "merging goes through the merge wrapper — request kind \"merge\" with the repository instead"
+        }
+        "gh_api_write" => {
+            "`gh api` is granted only as one exact read call — no prefix rule, -X/--method, -f/-F/--input or graphql"
+        }
+        "env_prefix" => {
+            "no NAME=value prefix — pass it as a flag (e.g. kubectl --kubeconfig <path>)"
+        }
+        "path_head" => {
+            "a script called by path is not granted as an exact command — run it yourself or ask for a tool rule"
+        }
+        "relative_path" => {
+            "file arguments (-f, --patch-file, --values, --kubeconfig, @file …) must be absolute, clean paths"
+        }
+        "glued_flag" => {
+            "write file flags apart from their value (-f /abs/path), not glued (-f/abs or -f=/abs)"
+        }
+        "needs_kubeconfig" => {
+            "kubectl/helm need both --kubeconfig <absolute path> and --context (helm: --kube-context)"
+        }
+        "unsupported_head" => {
+            "an exact command can only be kubectl or helm for now — run other tools yourself or ask for a tool rule"
+        }
+        "unsupported_subcommand" => {
+            "that kubectl/helm subcommand (or plugin) is not granted as an exact command"
+        }
+        "unsupported_flag" => {
+            "helm --post-renderer/--repo/--plugins are not granted as an exact command"
+        }
+        "chart_not_pinned" => {
+            "helm install/upgrade/template need `<release> oci://<chart>` right after the subcommand and --version"
+        }
+        // 모르는 거절 코드 — 판정 표가 새 코드를 낼 때 시험(`messages_follow_ts`)이 잡는다.
+        _ => "rule is not accepted",
     }
 }
 
@@ -354,6 +389,341 @@ pub async fn answer(read: &PgPool, me: &Account, args: &Value) -> Option<String>
     }
 }
 
+// ── P6-2a: 받아들여지는 tool·merge 요청 ──────────────────────────────────────────────────────────────────────────────
+
+/// 에이전트의 소유자(TS `openPermissionRequest` 첫 읽기).
+const OWNER_SQL: &str = "select c.owner_account_id::text from account a join agent_config c on c.account_id = a.id \
+     where a.id = $1::uuid and a.kind = 'agent'";
+
+/// TS `openPermissionRequest` 의 「이미 있는 grant」.
+pub(crate) const LIVE_GRANT_SQL: &str = "select (extract(epoch from expires_at) * 1000)::bigint from account_grant \
+     where account_id = $1::uuid and capability = $2 and scope = $3 and (expires_at is null or expires_at > $4::timestamptz) \
+     limit 1";
+
+/// TS `openPermissionRequest` 의 「이미 기다리는 요청」(거절에서 오지 않은 요청 — `denial` 이 null).
+pub(crate) const PENDING_SQL: &str = "select id::text, card_message_id::text from permission_request \
+     where agent_id = $1::uuid and kind = $2 and target = $3 and thread_root_id = $4::uuid and channel_id = $5::uuid \
+       and status = 'pending' and expires_at > $6::timestamptz \
+     order by created_at desc limit 1";
+
+/// 새 요청이 대체할 옛 요청([`crate::core::permission_card::SUPERSEDE_OLDER_SQL`] 의 `denialPr` 없는 갈래) 중 카드가 붙은 것이 있나 —
+/// 있으면 TS `closeSupersededCards`(옛 카드 닫기·묶음 잇기·거울) 몫이라 TS 로 넘긴다.
+pub(crate) const SUPERSEDES_CARD_SQL: &str = "select exists(select 1 from permission_request \
+     where agent_id = $1::uuid and kind = $2 and target = $3 and channel_id = $4::uuid and thread_root_id = $5::uuid \
+       and superseded_by is null and card_message_id is not null \
+       and (status = 'expired' or (status = 'pending' and expires_at <= $6::timestamptz)))";
+
+/// 이 갈래의 읽기 풀 칸.
+pub(crate) const ACCEPT_READ_PRIVILEGES: &[(&str, &str)] = &[
+    ("account.id", "SELECT"),
+    ("account.kind", "SELECT"),
+    ("agent_config.account_id", "SELECT"),
+    ("agent_config.owner_account_id", "SELECT"),
+    ("account_grant.account_id", "SELECT"),
+    ("account_grant.capability", "SELECT"),
+    ("account_grant.scope", "SELECT"),
+    ("account_grant.expires_at", "SELECT"),
+    ("permission_request.id", "SELECT"),
+    ("permission_request.agent_id", "SELECT"),
+    ("permission_request.kind", "SELECT"),
+    ("permission_request.target", "SELECT"),
+    ("permission_request.thread_root_id", "SELECT"),
+    ("permission_request.channel_id", "SELECT"),
+    ("permission_request.status", "SELECT"),
+    ("permission_request.expires_at", "SELECT"),
+    ("permission_request.created_at", "SELECT"),
+    ("permission_request.card_message_id", "SELECT"),
+    ("permission_request.superseded_by", "SELECT"),
+];
+
+/// TS `raisePermission` 의 `alreadyGranted` 답(칸 차례 그대로).
+fn already_granted_result(expires_at: Option<&str>) -> String {
+    format!(
+        "{{\"alreadyGranted\":true,\"expiresAt\":{},\"message\":{}}}",
+        expires_at.map_or(Value::Null, Value::from),
+        Value::from(
+            "already granted — it applies from the next turn in this channel. If a shell command was refused anyway, run it plain: no redirection (such as 2>&1), pipes, chaining or substitution"
+        )
+    )
+}
+
+/// TS `raisePermission` 의 `existing` 답.
+fn existing_result(request_id: &str, card: Option<&str>) -> String {
+    format!(
+        "{{\"requestId\":{},\"cardMessageId\":{},\"pending\":true,\"message\":{}}}",
+        Value::from(request_id),
+        card.map_or(Value::Null, Value::from),
+        Value::from("the same request is already waiting for the owner in this thread"),
+    )
+}
+
+/// 받아들여진 tool·merge 요청의 정규 대상: `(저장할 target, grant capability, grant scope, warnings)`.
+/// `Err(code)` 는 거절, `Ok(None)` 은 TS 몫(ASCII 밖).
+type Target = (String, &'static str, String, Vec<&'static str>);
+fn accepted_target(a: &Args<'_>) -> Result<Option<Target>, &'static str> {
+    use harkroom_proto::tool_rules::{ToolRuleVerdict, validate_tool_rule};
+    match a.kind {
+        Kind::Tool => {
+            let rule = a.rule.ok_or("bad_request")?;
+            if !rule.is_ascii() {
+                return Ok(None);
+            }
+            match validate_tool_rule(rule) {
+                ToolRuleVerdict::Refused(c) => Err(c),
+                ToolRuleVerdict::Ok { rule, warnings, .. } => {
+                    let scope = format!("tool:{}:{rule}", a.channel_id);
+                    Ok(Some((rule, "tool.allow", scope, warnings)))
+                }
+            }
+        }
+        Kind::Merge => {
+            let repo = a.repo.ok_or("bad_request")?;
+            if !repo.is_ascii() {
+                return Ok(None);
+            }
+            if let Some(c) = repo_refusal(repo) {
+                return Err(c);
+            }
+            let Some(t) = crate::core::merge_approval_peek::repo_scope(repo) else {
+                return Err("bad_repo");
+            };
+            Ok(Some((t.clone(), "repo.merge", t, Vec::new())))
+        }
+        Kind::Command => Ok(None),
+    }
+}
+
+fn refusal(code: &'static str) -> String {
+    match code {
+        "org_wide" => err(
+            code,
+            "an organization-wide grant (owner/*) is not requested from a card — ask for the one repository, or ask the owner to grant owner/* in settings",
+        ),
+        "bad_repo" => err(code, "repo must be one <owner>/<name>"),
+        _ => err(code, rule_message(code)),
+    }
+}
+
+/// P6-2a — [`answer`] 가 `None`(받아들여지는 tool·merge 요청)일 때 TS `raisePermission`·`openPermissionRequest` 를 대신한다:
+/// 이미 있는 grant → `alreadyGranted` / 기다리는 요청 → `existing` / 그 밖은 하루 상한 → 요청 줄 → 감사 → 카드 글 → 잇기 → 푸시를
+/// **카드 글과 같은 tx** 로. `None`(→ TS): kind=command · ASCII 밖 · 위임 있는 턴(카드 위임장 칸) · 대체할 옛 요청에 카드가 붙음
+/// (옛 카드 닫기) · 쓰기/읽기 칸 없음 · 글 올리기 풀 없음 · DB 오류.
+pub async fn accept(
+    read: &PgPool,
+    st: Option<&crate::core::msg_post::PostState>,
+    me: &Account,
+    args: &Value,
+    (cause, turn, operator): (Option<&str>, Option<&str>, bool),
+) -> Option<String> {
+    use crate::core::msg_post::{iso_ms, now_ms};
+    use crate::core::permission_card as pc;
+    let a = parse(args)?;
+    let st = st?;
+    if me.kind != "agent" {
+        return None;
+    }
+    let (target, cap, scope, warnings) = match accepted_target(&a) {
+        Ok(Some(t)) => t,
+        Ok(None) => return None,
+        Err(c) => return Some(refusal(c)),
+    };
+    if !crate::write::missing_in(read, ACCEPT_READ_PRIVILEGES, &[])
+        .await
+        .ok()?
+        .is_empty()
+    {
+        return None;
+    }
+    let mut privs = pc::REQUEST_WRITE_PRIVILEGES.to_vec();
+    privs.extend_from_slice(pc::LINK_PUSH_PRIVILEGES);
+    privs.extend_from_slice(super::message_ask::DENIAL_CARD_PATCH_PRIVILEGES);
+    if !crate::write::missing_in(&st.write, &privs, &[])
+        .await
+        .ok()?
+        .is_empty()
+    {
+        return None;
+    }
+    let owner: Option<Option<String>> = sqlx::query_scalar(OWNER_SQL)
+        .bind(&me.id)
+        .fetch_optional(read)
+        .await
+        .ok()?;
+    let owner = owner?; // `not_agent` 는 [`answer`] 가 답했다.
+    let now = now_ms();
+    let (now_iso, expires_iso) = (iso_ms(now), iso_ms(now + pc::PERMISSION_REQUEST_TTL_MS));
+    // W4: 위임 있는 턴의 요청(`mandateId`·카드 위임장 칸)은 TS(P6-2b).
+    if let Some(c) = cause.filter(|_| operator) {
+        let mut conn = st.write.acquire().await.ok()?;
+        if crate::core::cause_link::mandate_for_agent_post(&mut conn, &me.id, c, now, iso_ms)
+            .await
+            .ok()?
+            .is_some()
+        {
+            return None;
+        }
+    }
+    let live: Option<Option<i64>> = sqlx::query_scalar(LIVE_GRANT_SQL)
+        .bind(&me.id)
+        .bind(cap)
+        .bind(&scope)
+        .bind(&now_iso)
+        .fetch_optional(read)
+        .await
+        .ok()?;
+    if let Some(exp) = live {
+        return Some(super::respond::text_result(&already_granted_result(
+            exp.map(iso_ms).as_deref(),
+        )));
+    }
+    let kind = if a.kind == Kind::Tool {
+        "tool"
+    } else {
+        "merge"
+    };
+    let thread = args.get("threadRootId")?.as_str()?;
+    let pending: Option<(String, Option<String>)> = sqlx::query_as(PENDING_SQL)
+        .bind(&me.id)
+        .bind(kind)
+        .bind(&target)
+        .bind(thread)
+        .bind(a.channel_id)
+        .bind(&now_iso)
+        .fetch_optional(read)
+        .await
+        .ok()?;
+    if let Some((id, card)) = pending {
+        return Some(super::respond::text_result(&existing_result(
+            &id,
+            card.as_deref(),
+        )));
+    }
+    let carded: bool = sqlx::query_scalar(SUPERSEDES_CARD_SQL)
+        .bind(&me.id)
+        .bind(kind)
+        .bind(&target)
+        .bind(a.channel_id)
+        .bind(thread)
+        .bind(&now_iso)
+        .fetch_one(read)
+        .await
+        .ok()?;
+    if carded {
+        return None;
+    }
+    let reason = args.get("reason")?.as_str()?;
+    let pr_meta = pc::plain_request_meta(
+        kind,
+        &me.id,
+        owner.as_deref(),
+        &target,
+        a.channel_id,
+        &warnings,
+        reason,
+        &now_iso,
+        &expires_iso,
+    );
+    let shown = pr_meta["target"].as_str()?.to_owned();
+    let card_body = pc::plain_card_body(
+        kind,
+        &shown,
+        &warnings,
+        &format!("@{}", me.handle),
+        pr_meta["reason"].as_str()?,
+    );
+    let meta = pc::plain_card_meta(pr_meta);
+    let mut sub = serde_json::Map::new();
+    sub.insert("channelId".into(), Value::from(a.channel_id));
+    sub.insert("body".into(), Value::from(card_body));
+    sub.insert("threadRootId".into(), Value::from(thread));
+    if let Some(m) = args.get("model") {
+        sub.insert("model".into(), m.clone());
+    }
+    let hook = RequestHook {
+        req: pc::NewRequest {
+            kind,
+            agent: &me.id,
+            target: &target,
+            reason,
+            warnings: &warnings,
+            channel: a.channel_id,
+            thread,
+            denial: None,
+            now: &now_iso,
+            expires: &expires_iso,
+        },
+        owner: owner.as_deref(),
+        request_id: std::sync::OnceLock::new(),
+    };
+    let posted = super::msg_post::post_card(
+        st,
+        me,
+        &Value::Object(sub),
+        meta,
+        cause,
+        turn,
+        operator,
+        Some(&hook),
+    )
+    .await?;
+    let card_id = match posted {
+        Ok((id, _)) => id,
+        Err(answer) => return Some(answer),
+    };
+    let request_id = hook.request_id.get()?;
+    Some(super::respond::text_result(&pc::created_result(
+        request_id,
+        &card_id,
+        &expires_iso,
+    )))
+}
+
+/// 요청 줄(하루 상한 → insert → supersede → 감사) → meta 의 requestId → 잇기 → 푸시를 카드 글과 같은 tx 에서(머지 거절 카드와 같은 꼴).
+#[derive(Debug)]
+struct RequestHook<'a> {
+    req: crate::core::permission_card::NewRequest<'a>,
+    owner: Option<&'a str>,
+    request_id: std::sync::OnceLock<String>,
+}
+
+impl crate::core::msg_post::BeforeCommit for RequestHook<'_> {
+    fn run<'b>(
+        &'b self,
+        tx: &'b mut sqlx::Transaction<'static, sqlx::Postgres>,
+        message_id: &'b str,
+        notified: &'b std::collections::HashSet<String>,
+    ) -> crate::core::msg_post::BeforeCommitFuture<'b> {
+        use super::message_ask::{DENIAL_CARD_PATCH_SQL, denial_hook_outcome, denial_needs_push};
+        use crate::core::permission_card as pc;
+        Box::pin(async move {
+            let opened = pc::open_request(tx, &self.req).await?;
+            let request_id = match denial_hook_outcome(opened) {
+                Ok(id) => id,
+                Err(rej) => return Ok(Some(rej)),
+            };
+            sqlx::query(DENIAL_CARD_PATCH_SQL)
+                .bind(message_id)
+                .bind(&request_id)
+                .execute(&mut **tx)
+                .await?;
+            sqlx::query(pc::LINK_CARD_SQL)
+                .bind(&request_id)
+                .bind(message_id)
+                .execute(&mut **tx)
+                .await?;
+            if denial_needs_push(self.owner, notified) {
+                sqlx::query(pc::enqueue_ask_push_sql())
+                    .bind(self.owner)
+                    .bind(message_id)
+                    .execute(&mut **tx)
+                    .await?;
+            }
+            let _ = self.request_id.set(request_id);
+            Ok(None)
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -443,6 +813,18 @@ mod tests {
             "interpreter",
             "operator_wrapper",
             "bad_chars",
+            "too_long",
+            "merge_bypass",
+            "gh_api_write",
+            "env_prefix",
+            "path_head",
+            "relative_path",
+            "glued_flag",
+            "needs_kubeconfig",
+            "unsupported_head",
+            "unsupported_subcommand",
+            "unsupported_flag",
+            "chart_not_pinned",
         ] {
             assert!(
                 ts.contains(&format!("  {c}: '{}',", rule_message(c))),

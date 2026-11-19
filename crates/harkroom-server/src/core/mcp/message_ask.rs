@@ -1185,11 +1185,11 @@ async fn open_denial_card(
 }
 
 /// 카드 meta 의 `permissionRequest.requestId` 를 훅 안에서 채운다.
-const DENIAL_CARD_PATCH_SQL: &str = "update message set meta = jsonb_set(meta, '{permissionRequest,requestId}', to_jsonb($2::text)) \
+pub(super) const DENIAL_CARD_PATCH_SQL: &str = "update message set meta = jsonb_set(meta, '{permissionRequest,requestId}', to_jsonb($2::text)) \
      where id = $1::uuid";
 
 /// [`DENIAL_CARD_PATCH_SQL`] 의 쓰기 풀 칸.
-const DENIAL_CARD_PATCH_PRIVILEGES: &[(&str, &str)] = &[
+pub(super) const DENIAL_CARD_PATCH_PRIVILEGES: &[(&str, &str)] = &[
     ("message.id", "SELECT"),
     ("message.meta", "SELECT"),
     ("message.meta", "UPDATE"),
@@ -1213,7 +1213,7 @@ struct DenialRequestHook<'a> {
 }
 
 /// 하루 상한이면 카드를 되돌리는 거절(TS `too_many`).
-fn denial_hook_outcome(
+pub(super) fn denial_hook_outcome(
     opened: crate::core::permission_card::Opened,
 ) -> Result<String, crate::core::msg_post::Rejection> {
     use crate::core::permission_card as pc;
@@ -1228,7 +1228,7 @@ fn denial_hook_outcome(
 }
 
 /// 소유자가 inbox 로 알림받지 않았으면 푸시(TS `raisePermission` 글 뒤).
-fn denial_needs_push(owner: Option<&str>, notified: &HashSet<String>) -> bool {
+pub(super) fn denial_needs_push(owner: Option<&str>, notified: &HashSet<String>) -> bool {
     owner.is_some_and(|o| !notified.contains(o))
 }
 
@@ -1241,17 +1241,20 @@ impl crate::core::msg_post::BeforeCommit for DenialRequestHook<'_> {
     ) -> crate::core::msg_post::BeforeCommitFuture<'b> {
         use crate::core::permission_card as pc;
         Box::pin(async move {
-            let opened = pc::open_merge_request(
+            let opened = pc::open_request(
                 tx,
-                self.agent,
-                self.target,
-                self.why,
-                self.channel,
-                self.thread,
-                self.denial,
-                self.number,
-                self.now,
-                self.expires,
+                &pc::NewRequest {
+                    kind: "merge",
+                    agent: self.agent,
+                    target: self.target,
+                    reason: self.why,
+                    warnings: &[],
+                    channel: self.channel,
+                    thread: self.thread,
+                    denial: Some((self.denial, self.number)),
+                    now: self.now,
+                    expires: self.expires,
+                },
             )
             .await?;
             let request_id = match denial_hook_outcome(opened) {

@@ -241,10 +241,10 @@ pub fn merge_card_meta(permission_request: Value, ci: bool) -> Map<String, Value
 pub const REQUEST_COUNT_SQL: &str = "select count(*)::bigint from permission_request \
      where agent_id = $1::uuid and created_at > $2::timestamptz - interval '1 day'";
 
-/// TS `openPermissionRequest` 의 요청 줄(merge · 거절에서 온 것 · 위임 없음 — `warnings` 는 빈 배열).
+/// TS `openPermissionRequest` 의 요청 줄(tool·merge · 위임 없음). 거절에서 오지 않은 요청은 `denial_id` 가 null.
 pub const REQUEST_INSERT_SQL: &str = "insert into permission_request \
      (agent_id, kind, target, reason, warnings, channel_id, thread_root_id, created_at, expires_at, denial_id, mandate_id) \
-     values ($1::uuid, 'merge', $2, $3, '{}', $4::uuid, $5::uuid, $6::timestamptz, $7::timestamptz, $8::uuid, null) \
+     values ($1::uuid, $2, $3, $4, $5::text[], $6::uuid, $7::uuid, $8::timestamptz, $9::timestamptz, $10::uuid, null) \
      returning id::text";
 
 /// TS `supersedeOlderRequests`(거절 카드 — `denialPr` 가 있다: 같은 PR 의 카드만, 살아 있는 pending 도 대체).
@@ -307,67 +307,190 @@ pub enum Opened {
     TooMany,
 }
 
-/// TS `openPermissionRequest` 의 세우기 차례(merge · 거절에서 온 요청 · 위임 없음): 하루 상한 → insert → supersede → 감사.
+/// 요청 하나 — 세우기 차례에 드는 값.
+#[derive(Debug)]
+pub struct NewRequest<'a> {
+    pub kind: &'a str,
+    pub agent: &'a str,
+    /// 저장한 꼴(tool: 정규 규칙 / merge: `repo:owner/name`).
+    pub target: &'a str,
+    pub reason: &'a str,
+    pub warnings: &'a [&'a str],
+    pub channel: &'a str,
+    pub thread: &'a str,
+    /// 거절에서 온 머지 요청이면 그 기록 id 와 PR 번호.
+    pub denial: Option<(&'a str, i64)>,
+    pub now: &'a str,
+    pub expires: &'a str,
+}
+
+/// TS `openPermissionRequest` 의 세우기 차례(tool·merge · 위임 없음): 하루 상한 → insert → supersede → 감사.
 /// 한 tx 안에서 부른다. `now`·`expires` 는 ISO 문자열(`expires = now + 하루`).
-#[allow(clippy::too_many_arguments)]
-pub async fn open_merge_request(
+pub async fn open_request(
     tx: &mut sqlx::PgConnection,
-    agent: &str,
-    target: &str,
-    reason: &str,
-    channel: &str,
-    thread: &str,
-    denial_id: &str,
-    denial_pr: i64,
-    now: &str,
-    expires: &str,
+    r: &NewRequest<'_>,
 ) -> Result<Opened, sqlx::Error> {
     let n: i64 = sqlx::query_scalar(REQUEST_COUNT_SQL)
-        .bind(agent)
-        .bind(now)
+        .bind(r.agent)
+        .bind(r.now)
         .fetch_one(&mut *tx)
         .await?;
     if n >= PERMISSION_REQUESTS_PER_DAY {
         return Ok(Opened::TooMany);
     }
     let id: String = sqlx::query_scalar(REQUEST_INSERT_SQL)
-        .bind(agent)
-        .bind(target)
-        .bind(reason)
-        .bind(channel)
-        .bind(thread)
-        .bind(now)
-        .bind(expires)
-        .bind(denial_id)
+        .bind(r.agent)
+        .bind(r.kind)
+        .bind(r.target)
+        .bind(r.reason)
+        .bind(r.warnings)
+        .bind(r.channel)
+        .bind(r.thread)
+        .bind(r.now)
+        .bind(r.expires)
+        .bind(r.denial.map(|d| d.0))
         .fetch_one(&mut *tx)
         .await?;
     sqlx::query(SUPERSEDE_OLDER_SQL)
-        .bind(agent)
-        .bind("merge")
-        .bind(target)
-        .bind(channel)
-        .bind(thread)
+        .bind(r.agent)
+        .bind(r.kind)
+        .bind(r.target)
+        .bind(r.channel)
+        .bind(r.thread)
         .bind(&id)
-        .bind(now)
-        .bind(i32::try_from(denial_pr).ok())
+        .bind(r.now)
+        .bind(r.denial.and_then(|d| i32::try_from(d.1).ok()))
         .execute(&mut *tx)
         .await?;
     sqlx::query(REQUEST_AUDIT_SQL)
-        .bind(agent)
-        .bind(agent)
-        .bind(request_audit_detail(&id, target, channel, thread))
+        .bind(r.agent)
+        .bind(r.agent)
+        .bind(request_audit_detail(
+            &id, r.kind, r.target, r.warnings, r.channel, r.thread,
+        ))
         .execute(&mut *tx)
         .await?;
     Ok(Opened::Created { request_id: id })
 }
 
 /// TS 감사 `detail` — `{ requestId, kind, target, warnings, channelId, threadRootId }`.
-pub fn request_audit_detail(id: &str, target: &str, channel: &str, thread: &str) -> String {
+pub fn request_audit_detail(
+    id: &str,
+    kind: &str,
+    target: &str,
+    warnings: &[&str],
+    channel: &str,
+    thread: &str,
+) -> String {
     json!({
-        "requestId": id, "kind": "merge", "target": target, "warnings": [],
+        "requestId": id, "kind": kind, "target": target, "warnings": warnings,
         "channelId": channel, "threadRootId": thread,
     })
     .to_string()
+}
+
+/// shared `TOOL_RULE_WARNING_ORDER` 와 `TOOL_RULE_WARNING_HEAD_KO`(그리는 순서대로).
+pub const TOOL_RULE_WARNING_HEAD_KO: &[(&str, &str)] = &[
+    ("runs_arbitrary", "무엇이든 돌릴 수 있다"),
+    ("executes_in_workload", "돌고 있는 서버 안에서 실행한다"),
+    ("mutates_remote", "원격 상태를 바꾼다"),
+    ("unclassified", "무엇을 하는지 판정하지 못했다"),
+    ("reads_file", "파일을 읽는다"),
+    ("short_prefix", "접두가 짧다"),
+    ("uses_github_account", "GitHub 계정으로 돈다"),
+];
+
+/// TS `permissionBodyWarningLine` — 아는 경고를 그리는 순서대로 ko 머리 낱말로 잇는다. 없으면 `None`.
+pub fn body_warning_line(warnings: &[&str]) -> Option<String> {
+    let heads: Vec<&str> = TOOL_RULE_WARNING_HEAD_KO
+        .iter()
+        .filter(|(w, _)| warnings.contains(w))
+        .map(|(_, h)| *h)
+        .collect();
+    (!heads.is_empty()).then(|| format!("⚠ {}", heads.join(" · ")))
+}
+
+/// TS `cardLine('tool', rule, undefined, false)`.
+pub fn tool_card_line(rule: &str) -> Value {
+    json!({ "cap": "tool", "scope": rule, "limits": { "approve_new_mandate": { "untilMs": PERMISSION_GRANT_TTL_MS } } })
+}
+
+/// TS `permissionCardBody`(tool·merge · 거절 아님 · 줄 있음). `target` 은 보이는 꼴(tool: 규칙 / merge: `owner/name`),
+/// `reason` 은 meta 에 적은 값 — TS 처럼 한 번 더 거친다.
+pub fn plain_card_body(
+    kind: &str,
+    target: &str,
+    warnings: &[&str],
+    agent_handle: &str,
+    reason: &str,
+) -> String {
+    let warn = body_warning_line(warnings).map_or(String::new(), |l| format!("\n{l}"));
+    let line = if kind == "tool" {
+        format!("명령 허용 `{target}`")
+    } else {
+        format!("머지 `{target}`")
+    };
+    format!(
+        "권한 요청 · {agent_handle}\n{line}{warn}\n이유: {}",
+        one_line_reason(reason)
+    )
+}
+
+/// 거절에서 오지 않은 새 요청의 카드 meta `permissionRequest`(TS `openPermissionRequest` 의 `created.meta`, tool·merge · 위임 없는 턴).
+/// `target` 은 저장한 꼴(tool: 규칙 / merge: `repo:owner/name`). 요청 id 는 카드 tx 의 훅이 채운다.
+#[allow(clippy::too_many_arguments)]
+pub fn plain_request_meta(
+    kind: &str,
+    agent_id: &str,
+    owner: Option<&str>,
+    target: &str,
+    channel: &str,
+    warnings: &[&str],
+    reason: &str,
+    requested_at: &str,
+    expires_at: &str,
+) -> Value {
+    let tool = kind == "tool";
+    let short = if tool {
+        target
+    } else {
+        target.strip_prefix("repo:").unwrap_or(target)
+    };
+    let mut m = Map::new();
+    m.insert("requestId".into(), json!(""));
+    m.insert("agentId".into(), json!(agent_id));
+    m.insert("ownerAccountId".into(), json!(owner));
+    m.insert("kind".into(), json!(kind));
+    m.insert("target".into(), json!(short));
+    m.insert(
+        "channelId".into(),
+        if tool { json!(channel) } else { Value::Null },
+    );
+    m.insert("warnings".into(), json!(warnings));
+    if let Some(l) = body_warning_line(warnings) {
+        m.insert("bodyWarningLine".into(), json!(l));
+    }
+    m.insert("reason".into(), json!(one_line_reason(reason)));
+    if tool {
+        m.insert("line".into(), tool_card_line(target));
+        m.insert(
+            "bodyTargetLine".into(),
+            json!(format!("명령 허용 `{short}`")),
+        );
+    } else {
+        m.insert("line".into(), merge_card_line(target, None, false));
+        if let Some(l) = merge_body_target_line(short, None) {
+            m.insert("bodyTargetLine".into(), json!(l));
+        }
+    }
+    m.insert("requestedAt".into(), json!(requested_at));
+    m.insert("expiresAt".into(), json!(expires_at));
+    Value::Object(m)
+}
+
+/// 거절에서 오지 않은 카드 글의 ask meta(TS `raisePermission`, tool·merge · 위임 없음).
+pub fn plain_card_meta(permission_request: Value) -> Map<String, Value> {
+    merge_card_meta(permission_request, false)
 }
 
 /// TS `too_many` 거절 글.
@@ -621,11 +744,18 @@ mod tests {
     fn request_sql_follows_ts() {
         assert!(SUPERSEDE_OLDER_SQL.contains("d.pr_number = $8"));
         assert!(SUPERSEDE_OLDER_SQL.contains("$8::int is not null"));
-        assert!(REQUEST_INSERT_SQL.contains("'merge'"));
+        assert!(REQUEST_INSERT_SQL.contains("$5::text[]"));
         assert!(LINK_CARD_SQL.contains("card_message_id is null"));
         assert_eq!(too_many_message(), "at most 20 permission requests a day");
-        let d: Value =
-            serde_json::from_str(&request_audit_detail("r", "repo:a/b", "c", "t")).unwrap();
+        let d: Value = serde_json::from_str(&request_audit_detail(
+            "r",
+            "merge",
+            "repo:a/b",
+            &[],
+            "c",
+            "t",
+        ))
+        .unwrap();
         assert_eq!(
             d,
             json!({ "requestId": "r", "kind": "merge", "target": "repo:a/b", "warnings": [], "channelId": "c", "threadRootId": "t" })

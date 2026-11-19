@@ -10281,6 +10281,39 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['ask 머지 거절 카드 · 기다리는 카드 있음 → pending', denialAsk({ pending: true }), true],
           ['ask 머지 거절 카드 · 쓴 거절 → denial_used', denialAsk({ used: true }), true],
           ['ask 머지 거절 카드 · 다른 스레드 → denial_other_thread', denialAsk({ otherThread: true }), true],
+          // P6-2a — `permission.request` 의 받아들여지는 tool·merge 요청(요청 줄·감사·카드 글·잇기를 카드와 한 tx).
+          ...((): [string, (ch: string) => Promise<Setup>, boolean][] => {
+            const pr = (args: Record<string, unknown>, rust: boolean, name: string, prep?: (ch: string, head: string) => Promise<void>):
+              [string, (ch: string) => Promise<Setup>, boolean] => [name, async (ch) => {
+                const head = await ins({ ch, author: member.accountId, body: '일' });
+                if (prep) await prep(ch, head);
+                return { tool: 'permission.request', args: { channelId: ch, threadRootId: head, reason: '빌드에\n필요 `x`', ...args }, via: viaPat };
+              }, rust];
+            const oldReq = (card: boolean) => async (ch: string, head: string) => {
+              const req = (await db.pool.query<{ id: string }>(
+                `insert into permission_request(agent_id, kind, target, reason, channel_id, thread_root_id, expires_at, created_at)
+                 values ($1, 'tool', 'Bash(kubectl get pods:*)', 'x', $2, $3, now() - interval '1 minute', now() - interval '2 hours') returning id::text`,
+                [bot3.accountId, ch, head])).rows[0]!.id;
+              if (card) {
+                const c = await ins({ ch, root: head, author: bot3.accountId, body: '옛 카드', meta: { kind: 'ask', ask: { options: AD, to: { kind: 'human' } }, permissionRequest: { requestId: req, status: 'pending' } } });
+                await db.pool.query(`update permission_request set card_message_id = $2 where id = $1`, [req, c]);
+              }
+            };
+            return [
+              pr({ kind: 'tool', rule: ' Bash(kubectl get pods:*) ' }, true, 'permission.request tool 새 요청 → 카드'),
+              pr({ kind: 'tool', rule: 'Bash(gh pr view:*)' }, true, 'permission.request tool 경고(gh) → 카드 경고 줄'),
+              pr({ kind: 'tool', rule: 'Bash(gh api -X POST repos/a/b)' }, true, 'permission.request gh api 쓰기 → gh_api_write'),
+              pr({ kind: 'merge', repo: ' Acme/App ' }, true, 'permission.request merge 새 요청 → 카드'),
+              pr({ kind: 'tool', rule: 'Bash(kubectl get pods:*)' }, true, 'permission.request 기다리는 요청 → existing', async (ch, head) => {
+                await db.pool.query(
+                  `insert into permission_request(agent_id, kind, target, reason, channel_id, thread_root_id, expires_at)
+                   values ($1, 'tool', 'Bash(kubectl get pods:*)', 'x', $2, $3, now() + interval '1 hour')`, [bot3.accountId, ch, head]);
+              }),
+              pr({ kind: 'tool', rule: 'Bash(kubectl get pods:*)' }, true, 'permission.request 기한 지난 옛 요청(카드 없음) 대체', oldReq(false)),
+              pr({ kind: 'tool', rule: 'Bash(kubectl get pods:*)' }, false, 'permission.request 옛 요청에 카드 → TS(옛 카드 닫기)', oldReq(true)),
+              pr({ kind: 'command', command: 'kubectl --context rc get pod' }, false, 'permission.request command → TS'),
+            ];
+          })(),
           // C3b-2c-3 — `message.report`(planStepId 없는 것). 보고 meta 를 쓰고, 커밋 뒤 작성자의 예약을 접는다(같은 턴이 건 것은 남김).
           ['report 기본 · files·remaining·next·durationMs', async (ch) => ({ tool: 'message.report', args: {
             channelId: ch, body: '끝', checks: ['시험 통과'], files: ['a.rs'], remaining: [], durationMs: 1200,

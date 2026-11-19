@@ -147,6 +147,20 @@ pub async fn handle(
                 }
                 return super::model_options::answer(&pool, &me, &args).await;
             }
+            if tool == "permission.request" {
+                // 거절 앞머리는 읽기 풀로, 받아들여지는 tool·merge 요청(P6-2a)은 글 올리기 풀로 카드까지.
+                if let Some(r) = super::permission_request::answer(&pool, &me, &args).await {
+                    return Some(r);
+                }
+                return super::permission_request::accept(
+                    &pool,
+                    writes.post.as_deref(),
+                    &me,
+                    &args,
+                    (cause.as_deref(), turn.as_deref(), has_operator),
+                )
+                .await;
+            }
             if tool == "message.ask" {
                 // 거절 앞머리·스레드의 열린 카드 검사는 읽기 풀로, 다 지난 평범한 카드는 글 올리기 풀로([`super::message_ask::answer_plain`]).
                 if let Some(r) = super::message_ask::answer(&pool, &me, &args).await {
