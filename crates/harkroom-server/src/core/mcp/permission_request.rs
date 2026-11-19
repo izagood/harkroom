@@ -406,12 +406,90 @@ pub(crate) const PENDING_SQL: &str = "select id::text, card_message_id::text fro
        and status = 'pending' and expires_at > $6::timestamptz \
      order by created_at desc limit 1";
 
-/// 새 요청이 대체할 옛 요청([`crate::core::permission_card::SUPERSEDE_OLDER_SQL`] 의 `denialPr` 없는 갈래) 중 카드가 붙은 것이 있나 —
-/// 있으면 TS `closeSupersededCards`(옛 카드 닫기·묶음 잇기·거울) 몫이라 TS 로 넘긴다.
-pub(crate) const SUPERSEDES_CARD_SQL: &str = "select exists(select 1 from permission_request \
+/// 새 요청이 대체할 옛 요청([`crate::core::permission_card::SUPERSEDE_OLDER_SQL`] 의 `denialPr` 없는 갈래) 중 카드가 붙은 것의 카드 id.
+/// P6-2b: 그 카드는 새 카드가 선 뒤 [`close_superseded_cards`](TS `closeSupersededCards`)가 닫는다. 어느 카드가 묶음에 담겨 있으면
+/// (TS `carryBundleItem` — 새 카드를 묶음 줄로 옮기기) TS 로 넘긴다.
+pub(crate) const SUPERSEDES_CARDS_SQL: &str = "select card_message_id::text from permission_request \
      where agent_id = $1::uuid and kind = $2 and target = $3 and channel_id = $4::uuid and thread_root_id = $5::uuid \
        and superseded_by is null and card_message_id is not null \
-       and (status = 'expired' or (status = 'pending' and expires_at <= $6::timestamptz)))";
+       and (status = 'expired' or (status = 'pending' and expires_at <= $6::timestamptz))";
+
+/// TS `bundlesHolding` — 그 카드를 줄로 담은 묶음이 있나(`message_ask` 의 같은 판정).
+const CARD_BUNDLED_SQL: &str = "select exists(select 1 from message
+      where meta->>'kind' = 'askBundle' and deleted_at is null
+        and meta->'askBundle'->'items' @> jsonb_build_array(jsonb_build_object('rootId', $1::text)))";
+
+/// TS `closeSupersededCards` 의 옛 요청 읽기.
+pub(crate) const SUPERSEDED_OLD_SQL: &str = "select id::text, status, card_message_id::text from permission_request \
+     where superseded_by = $1::uuid and card_message_id is not null";
+
+/// TS `closeSupersededCards` — 대체된(대기였던) 요청 카드의 `permissionRequest` 상태 칸.
+pub(crate) const SUPERSEDED_PR_META_SQL: &str = "update message set meta = jsonb_set(meta, '{permissionRequest}', (meta->'permissionRequest') || $2::jsonb) \
+     where id = $1::uuid and meta ? 'permissionRequest'";
+
+/// TS `closeSupersededCards` — 아직 열린 옛 카드를 `superseded` 로 닫는다.
+pub(crate) const SUPERSEDED_ASK_CLOSE_SQL: &str = "update message set meta = jsonb_set(meta, '{ask}', (meta->'ask') || $2::jsonb) \
+     where id = $1::uuid and meta ? 'ask' and meta->'ask'->>'closedAt' is null and meta->'ask'->'answeredWith' is null \
+     returning id::text";
+
+/// 옛 카드 닫기에 더 쓰는 쓰기 풀 칸(글 `meta` UPDATE·outbox·거울 맞추기 inbox).
+pub(crate) const SUPERSEDE_CARD_PRIVILEGES: &[(&str, &str)] = &[
+    ("permission_request.id", "SELECT"),
+    ("permission_request.status", "SELECT"),
+    ("permission_request.card_message_id", "SELECT"),
+    ("permission_request.superseded_by", "SELECT"),
+    ("message.meta", "SELECT"),
+    ("message.meta", "UPDATE"),
+    ("inbox", "INSERT"),
+    ("event_outbox", "INSERT"),
+];
+
+/// TS `closeSupersededCards` — 새 카드가 커밋된 뒤 부른다. 대기였다가 대체된 요청은 카드의 `permissionRequest` 에 상태를 적고,
+/// 열린 옛 카드는 `superseded`(대신한 새 카드 id)로 닫는다. 바뀐 카드마다 `message.updated`, 닫힌 카드는 거울도 맞춘다.
+/// TS 처럼 새 카드는 이미 섰으므로 실패는 기록만 한다.
+async fn close_superseded_cards(write: &PgPool, new_request: &str, new_card: &str) {
+    use crate::core::ask_sync::{announce_updated, sync_ask_mirrors};
+    let r: Result<(), sqlx::Error> = async {
+        let mut conn = write.acquire().await?;
+        let old: Vec<(String, String, String)> = sqlx::query_as(SUPERSEDED_OLD_SQL)
+            .bind(new_request)
+            .fetch_all(&mut *conn)
+            .await?;
+        let at = crate::core::msg_post::iso_ms(crate::core::msg_post::now_ms());
+        for (_, status, card) in &old {
+            if status == "superseded" {
+                sqlx::query(SUPERSEDED_PR_META_SQL)
+                    .bind(card)
+                    .bind(
+                        serde_json::json!({ "status": "superseded", "supersededBy": new_request, "decidedAt": at })
+                            .to_string(),
+                    )
+                    .execute(&mut *conn)
+                    .await?;
+            }
+            let closed: Option<String> = sqlx::query_scalar(SUPERSEDED_ASK_CLOSE_SQL)
+                .bind(card)
+                .bind(
+                    serde_json::json!({ "closedAt": at, "closedReason": "superseded", "supersededBy": new_card })
+                        .to_string(),
+                )
+                .fetch_optional(&mut *conn)
+                .await?;
+            if closed.is_none() && status != "superseded" {
+                continue;
+            }
+            announce_updated(&mut conn, card).await?;
+            if closed.is_some() {
+                sync_ask_mirrors(&mut conn, "permission.request supersedes", card).await?;
+            }
+        }
+        Ok(())
+    }
+    .await;
+    if let Err(e) = r {
+        eprintln!("permission.request: supersede follow-up failed: {e}");
+    }
+}
 
 /// 이 갈래의 읽기 풀 칸.
 pub(crate) const ACCEPT_READ_PRIVILEGES: &[(&str, &str)] = &[
@@ -506,8 +584,8 @@ fn refusal(code: &'static str) -> String {
 
 /// P6-2a — [`answer`] 가 `None`(받아들여지는 tool·merge 요청)일 때 TS `raisePermission`·`openPermissionRequest` 를 대신한다:
 /// 이미 있는 grant → `alreadyGranted` / 기다리는 요청 → `existing` / 그 밖은 하루 상한 → 요청 줄 → 감사 → 카드 글 → 잇기 → 푸시를
-/// **카드 글과 같은 tx** 로. `None`(→ TS): kind=command · ASCII 밖 · 위임 있는 턴(카드 위임장 칸) · 대체할 옛 요청에 카드가 붙음
-/// (옛 카드 닫기) · 쓰기/읽기 칸 없음 · 글 올리기 풀 없음 · DB 오류.
+/// **카드 글과 같은 tx** 로, 커밋 뒤 대체된 옛 카드 닫기(P6-2b). `None`(→ TS): kind=command · ASCII 밖 · 위임 있는 턴(카드 위임장 칸) · 대체할 옛 카드가 묶음에 담김
+/// (묶음 줄 옮기기) · 쓰기/읽기 칸 없음 · 글 올리기 풀 없음 · DB 오류.
 pub async fn accept(
     read: &PgPool,
     st: Option<&crate::core::msg_post::PostState>,
@@ -598,18 +676,38 @@ pub async fn accept(
             card.as_deref(),
         )));
     }
-    let carded: bool = sqlx::query_scalar(SUPERSEDES_CARD_SQL)
+    let old_cards: Vec<String> = sqlx::query_scalar(SUPERSEDES_CARDS_SQL)
         .bind(&me.id)
         .bind(kind)
         .bind(&target)
         .bind(a.channel_id)
         .bind(thread)
         .bind(&now_iso)
-        .fetch_one(read)
+        .fetch_all(read)
         .await
         .ok()?;
-    if carded {
-        return None;
+    if !old_cards.is_empty() {
+        if !crate::write::missing_in(
+            &st.write,
+            SUPERSEDE_CARD_PRIVILEGES,
+            crate::core::ask::ASK_SEQUENCE_PRIVILEGES,
+        )
+        .await
+        .ok()?
+        .is_empty()
+        {
+            return None;
+        }
+        for c in &old_cards {
+            let bundled: bool = sqlx::query_scalar(CARD_BUNDLED_SQL)
+                .bind(c)
+                .fetch_one(read)
+                .await
+                .ok()?;
+            if bundled {
+                return None;
+            }
+        }
     }
     let reason = args.get("reason")?.as_str()?;
     let pr_meta = pc::plain_request_meta(
@@ -671,6 +769,9 @@ pub async fn accept(
         Err(answer) => return Some(answer),
     };
     let request_id = hook.request_id.get()?;
+    if !old_cards.is_empty() {
+        close_superseded_cards(&st.write, request_id, &card_id).await;
+    }
     Some(super::respond::text_result(&pc::created_result(
         request_id,
         &card_id,
@@ -837,5 +938,17 @@ mod tests {
         }
         assert!(shared.contains("const SHELL_SYNTAX = /[;&|`<>\\n\\r]|\\$\\(|\\$\\{/;"));
         assert!(shared.contains("const BODY_CHARS = /^[A-Za-z0-9 _./@=:+%-]+$/;"));
+    }
+
+    /// P6-2b: 옛 카드 닫기 문장이 TS `closeSupersededCards` 의 조건을 그대로 갖는다(답·닫힘 있는 카드는 건드리지 않음).
+    #[test]
+    fn supersede_close_sql_follows_ts() {
+        assert!(
+            SUPERSEDED_OLD_SQL.contains("superseded_by = $1::uuid and card_message_id is not null")
+        );
+        assert!(SUPERSEDED_PR_META_SQL.contains("meta ? 'permissionRequest'"));
+        assert!(SUPERSEDED_ASK_CLOSE_SQL.contains("meta->'ask'->>'closedAt' is null"));
+        assert!(SUPERSEDED_ASK_CLOSE_SQL.contains("meta->'ask'->'answeredWith' is null"));
+        assert!(SUPERSEDE_CARD_PRIVILEGES.contains(&("message.meta", "UPDATE")));
     }
 }
