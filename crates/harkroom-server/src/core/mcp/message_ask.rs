@@ -3,7 +3,7 @@
 //! → 추천 둘 이상(`multiple_recommended`) → 머지 거절 카드에 `to`·`mirrorOf`(`merge_denial_audience`). 모두 지나면 `None`
 //! (→ TS). 그 뒤 스레드 안의 사람 앞 카드는 [`answer_plain`] 이 열린 카드 검사(`open_card_in_thread`, `keepOpen` 반영)를 하고,
 //! 평범한 카드(사람 앞·원인 헤더 없음, 스레드 안팎)는 글 올리기 풀로 세운다 — 대신하기(`supersedes`)는 새 카드를 세운 뒤
-//! 옛 카드를 닫고, 계획 단계(`planStepId`)는 세운 뒤 그 단계에 카드를 잇는다(묶음에 담긴 옛 카드·계획·단계 없음은 TS). 머지 거절 카드(`mergeDenialId`)는 거절 기록
+//! 옛 카드를 닫고, 계획 단계(`planStepId`)는 세운 뒤 그 단계에 카드를 잇는다(계획·단계가 없으면 그 거절을 `plan` 칸에 싣는다. 묶음에 담긴 옛 카드는 TS). 머지 거절 카드(`mergeDenialId`)는 거절 기록
 //! 검사(`prepareDenialCard` 거절)와 같은 거절 기록의 기다리는 카드(`pending`)까지 읽기 풀로 답하고, 첫 부름(새 요청 줄·카드·잇기·푸시)도 세운다(위임 있는 턴·재생은 TS).
 //! `to` 로 정한 받는 사람(사람이면 글 뒤 `enqueueAskPush`)도 세운다. 거울(`mirrorOf`)은 거절(`mirror_audience`·`checkAskMirror`)을 답하고, 평범한 거울과 권한 카드 거울(중립, 그리고 경고·파일·위임장 없는 같은 카드 꼴)을 원인 기반 차례 주인 푸시와 함께 세운다(그 밖의 권한 거울은 TS). 인자가 zod 를 못 지나거나 DB 오류여도 `None`.
 use super::tools::err;
@@ -853,9 +853,7 @@ pub async fn answer_plain(
         return None;
     }
     let plan_step = o.get("planStepId").and_then(Value::as_str);
-    if let Some(step) = plan_step
-        && !plan_step_ready(read, st, o.get("threadRootId")?.as_str()?, step).await?
-    {
+    if plan_step.is_some() && !plan_step_ready(st).await? {
         return None;
     }
     let mut meta = plain_meta(o, audience)?;
@@ -1285,14 +1283,10 @@ impl crate::core::msg_post::BeforeCommit for DenialRequestHook<'_> {
     }
 }
 
-/// `planStepId` 를 Rust 가 맡을 수 있나 — 쓰기 풀에 계획 쓰기 권한([`super::plan_write::PLAN_WRITE_PRIVILEGES`])이 다 있고, 그 스레드에
-/// 계획이 있고 그 단계가 있을 때만. 아니면 `Some(false)`(→ TS: `no_plan`·`unknown_item` 답은 TS 가 만든다), DB 오류는 `None`.
-async fn plan_step_ready(
-    read: &PgPool,
-    st: &crate::core::msg_post::PostState,
-    root: &str,
-    step: &str,
-) -> Option<bool> {
+/// `planStepId` 를 Rust 가 맡을 수 있나 — 쓰기 풀에 계획 쓰기 권한([`super::plan_write::PLAN_WRITE_PRIVILEGES`])이 다 있을 때만.
+/// 계획이 없거나(`no_plan`) 그 단계가 없으면(`unknown_item`) TS `linkPlanCard` 처럼 카드는 세우고 그 거절을 답의 `plan` 칸에 싣는다
+/// ([`super::plan_write::link_plan_card`] 가 잠근 판에서 판정한다). 권한이 모자라면 `Some(false)`(→ TS), DB 오류는 `None`.
+async fn plan_step_ready(st: &crate::core::msg_post::PostState) -> Option<bool> {
     use super::plan_write::{PLAN_WRITE_PRIVILEGES, PLAN_WRITE_SEQUENCE_PRIVILEGES};
     let missing = crate::write::missing_in(
         &st.write,
@@ -1301,15 +1295,7 @@ async fn plan_step_ready(
     )
     .await
     .ok()?;
-    if !missing.is_empty() {
-        return Some(false);
-    }
-    let doc: Option<Value> = sqlx::query_scalar(super::plan_write::PLAN_DOC_SQL)
-        .bind(root)
-        .fetch_optional(read)
-        .await
-        .ok()?;
-    Some(doc.is_some_and(|d| super::plan_write::has_step(&d, step)))
+    Some(missing.is_empty())
 }
 
 /// TS `bundlesHolding` — 옛 카드를 줄로 담은 묶음이 있는가. 있으면 TS `carryBundleItem`(새 카드를 묶음 줄로 옮기기)이 필요한데

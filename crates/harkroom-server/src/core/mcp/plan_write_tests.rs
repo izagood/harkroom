@@ -293,10 +293,6 @@ fn link_plan_card_hook_out_like_ts() {
         v,
         json!({ "ok": false, "error": { "code": "unknown_item", "id": "s9", "message": "그런 단계·그룹이 없다" } })
     );
-    let doc = json!({ "steps": [{ "id": "s1" }, { "id": "s2" }] });
-    assert!(has_step(&doc, "s2"));
-    assert!(!has_step(&doc, "s3"));
-    assert!(!has_step(&json!({}), "s1"));
 }
 
 #[test]

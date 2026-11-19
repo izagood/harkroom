@@ -1036,17 +1036,6 @@ fn plan_hook_out(r: Result<i64, Refusal>) -> String {
     }
 }
 
-/// `planStepId` 미리 보기(읽기 풀) — 그 스레드에 계획이 있고 그 단계가 있는가. 없으면 부른 쪽이 TS 로 넘긴다(`no_plan`·`unknown_item`).
-pub(crate) const PLAN_DOC_SQL: &str = "select doc from thread_plan where root_id = $1::uuid";
-
-/// [`PLAN_DOC_SQL`] 의 판에 그 단계가 있는가.
-pub(crate) fn has_step(doc: &Value, step: &str) -> bool {
-    doc.get("steps").and_then(Value::as_array).is_some_and(|a| {
-        a.iter()
-            .any(|s| s.get("id").and_then(Value::as_str) == Some(step))
-    })
-}
-
 /// [`write_system`] 이 쓴 판.
 pub(crate) struct SystemWritten {
     pub channel: String,
