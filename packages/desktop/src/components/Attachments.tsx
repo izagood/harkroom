@@ -420,7 +420,11 @@ function ArtifactCard({ attachment, cover, from }: {
   const selected = useActiveStore((st) => st.artifactPreview?.id === attachment.id);
   // 최신 제목은 #1065(091) 서버부터 싣는다. 없으면 툴팁을 생략한다.
   const latestTitle = ref.latestTitle;
+  const save = useSaveButtonLabel(attachment.id);
   return (
+    // 카드 전체가 여는 버튼이라 그 안에 저장 버튼을 못 넣는다(버튼 안 버튼) — 형제로 두고 오른쪽 아래 구석에 얹는다.
+    // 저장하는 판은 이 카드의 첨부다 = 카드에 적힌 v{n}. 판마다 첨부가 따로이고 서버가 `<제목>.html` 로 내준다.
+    <div className="relative w-[min(28rem,100%)]" data-testid="artifact-card-wrap">
     <button
       type="button"
       onClick={(e) => {
@@ -436,7 +440,7 @@ function ArtifactCard({ attachment, cover, from }: {
       data-testid="artifact-card"
       data-selected={selected ? 'true' : 'false'}
       // `artifact-card` 는 포커스 링을 카드 바깥에 띄운다(index.css) — 선택 표시(카드 테두리)와 모양이 갈린다.
-      className={`artifact-card group block w-[min(28rem,100%)] overflow-hidden rounded-card border bg-surface text-left hover:bg-surface-sunken ${selected ? 'border-accent ring-1 ring-accent' : 'border-border'}`}
+      className={`artifact-card group block w-full overflow-hidden rounded-card border bg-surface text-left hover:bg-surface-sunken ${selected ? 'border-accent ring-1 ring-accent' : 'border-border'}`}
     >
       {/* 표지 칸은 받기 전부터 잡아 둔다 — 늦게 붙으면 카드 높이가 바뀌어 목록이 튄다(bf24d7bd ①).
           받지 못했으면 칸을 거둔다 — 회색 판이 남으면 받는 중인지 깨졌는지 모른다(그림 첨부가 칩으로 내려가는 것과 같은 규칙). */}
@@ -470,10 +474,25 @@ function ArtifactCard({ attachment, cover, from }: {
           <span className={selected ? 'text-fg' : 'text-fg-muted group-hover:text-fg'} data-testid="artifact-card-action">
             {selected ? t('artifact.card.previewing') : t('artifact.card.openLabel')}
           </span>
-          <span className="ml-auto shrink-0 text-fg-subtle">{t('artifact.card.html')} · {formatSize(attachment.sizeBytes)}</span>
+          {/* 크기·저장 칸(아래 형제)이 이 줄 오른쪽에 얹힌다 — 줄 높이만 잡아 둔다. */}
+          <span aria-hidden className="invisible ml-auto shrink-0">{t('artifact.card.html')} · {formatSize(attachment.sizeBytes)} {save.label}</span>
         </span>
       </span>
     </button>
+    <span className="pointer-events-none absolute bottom-2 right-3 flex items-center gap-2 text-meta">
+      <span className="text-fg-subtle" data-testid="artifact-card-size">{t('artifact.card.html')} · {formatSize(attachment.sizeBytes)}</span>
+      <button
+        type="button"
+        className="pointer-events-auto -my-0.5 rounded-sm px-1 text-fg-muted hover:bg-surface-sunken hover:text-fg disabled:cursor-progress"
+        onClick={() => void getController().saveAttachment(attachment)}
+        disabled={save.busy}
+        aria-busy={save.busy ? true : undefined}
+        aria-label={t('artifact.card.save', { title: ref.title, version: ref.version })}
+        title={t('artifact.card.save', { title: ref.title, version: ref.version })}
+        data-testid="artifact-card-download"
+      >{save.label}</button>
+    </span>
+    </div>
   );
 }
 
