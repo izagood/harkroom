@@ -146,6 +146,7 @@ pub mod operator_stop;
 pub mod password_reset_use;
 pub mod perm_card;
 pub mod permission_card;
+pub mod permission_command;
 pub mod pickable_models;
 pub mod plan_graph;
 pub mod pr_status_checks;
