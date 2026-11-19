@@ -2,6 +2,7 @@ import { PROVIDER_LANE_FAILURE_CODES } from '@harkroom/shared/providerLane';
 import { delegateApiGrant, listDelegations, revokeDelegation } from '../services/apiDelegation.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
@@ -149,12 +150,47 @@ export async function bgGate(
 }
 
 /**
- * 이 요청 시점에 TS 가 그 도구를 `/mcp` 에 싣는가(조건부 등록). Rust 코어는 `/mcp/admit` 답의 `registered` 로만 이것을 안다 — 앞단이
- * TS 와 같은 env 를 받는다는 보장이 없으니 스스로 env 를 읽지 않는다(S5.3 C4b). 조건부로 싣는 도구가 늘면 여기에 더한다.
+ * 이 요청 시점에 TS 가 그 도구를 `/mcp` 에 싣는가(조건부 등록). `/mcp/admit` 답의 `registered` 로 Rust 에 전한다.
+ * P2a 부터 Rust 앞단은 자기 env(`HARKROOM_DELEGATION_V2`)가 **설정돼 있으면 그 값을 우선**하고 admit 을 묻지 않는다 — 비어 있을 때만
+ * 이 값(TS 의 env)으로 간다. 그래서 스위치를 바꿀 때는 앞단과 TS 를 함께(또는 앞단 먼저) 바꾼다. P2b 의 `tools/list` 스냅숏
+ * (`crates/harkroom-server/golden/mcp_tools_list*.json`)도 같은 값으로 고른다. 조건부로 싣는 도구가 늘면 여기와 스냅숏 생성기에 더한다.
  */
 export function toolRegisteredNow(tool: string): boolean {
   if (tool === 'delegation.close') return delegationV2Enabled();
   return true;
+}
+
+/**
+ * P2b — `tools/list` 답의 `result` 글자(SDK 가 `/mcp` 에서 내는 그대로). Rust 코어는 이것을 `golden/mcp_tools_list.json` 으로 받아
+ * 스스로 답하고, `test/rustMcpToolsListGolden.test.ts` 가 그 파일이 이 값과 같은지 본다. 도구 목록은 계정·요청과 무관하고
+ * 조건부 등록은 [`toolRegisteredNow`] 의 env 하나뿐이라 `delegationV2` 로만 갈린다. 만들기만 하고 도구를 부르지 않으므로 풀·저장소는 빈 껍데기다.
+ */
+export async function mcpToolsListResult(delegationV2: boolean): Promise<string> {
+  const prev = process.env.HARKROOM_DELEGATION_V2;
+  process.env.HARKROOM_DELEGATION_V2 = delegationV2 ? '1' : '0';
+  let server: McpServer;
+  try {
+    server = buildMcpServer({} as Pool, { id: '00000000-0000-0000-0000-000000000000', kind: 'agent' } as AccountView,
+      {} as Lifecycle, {} as StorageBackend, { online: () => [] });
+  } finally {
+    if (prev === undefined) delete process.env.HARKROOM_DELEGATION_V2;
+    else process.env.HARKROOM_DELEGATION_V2 = prev;
+  }
+  const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+  await server.connect(transport);
+  try {
+    const res = await transport.handleRequest(new Request('http://localhost/mcp', {
+      method: 'POST',
+      headers: { accept: 'application/json, text/event-stream', 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    }));
+    const sse = await res.text();
+    const data = /^data: (.*)$/m.exec(sse)?.[1];
+    if (!data) throw new Error(`tools/list: unexpected reply ${res.status}`);
+    return JSON.stringify((JSON.parse(data) as { result: unknown }).result);
+  } finally {
+    await server.close();
+  }
 }
 
 /** `/mcp/admit` 이 받지 않는 도구 — 회차 쓰기 상한·회차 닫기는 예약·부수효과가 도구 안에 있어 따로 떼어 확인할 수 없다. 예외: 러너 꼴의 bg.complete(admit 안 `bgRunnerComplete`). */

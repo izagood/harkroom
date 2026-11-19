@@ -293,10 +293,36 @@ pub async fn handle(
         presence: writes.presence.get(),
         switches: writes.switches,
     };
+    if let Some(r) = lifecycle_reply(&parts.headers, &bytes, &pre) {
+        return r;
+    }
     if let Some(r) = serve_pre(&up, ci, &parts.headers, &bytes, served, &tools, &pre).await {
         return r;
     }
     proxy::forward(State(up), ci, Request::from_parts(parts, Body::from(bytes))).await
+}
+
+/// P2b — 도구 부르기가 아닌 본문(`initialize`·`ping`·`tools/list`·알림·그것들만 든 배치)을 Rust 가 답한다([`super::lifecycle`]).
+/// TS 는 `/mcp` 요청마다 presence 를 mark 한다 — 그 표가 없으면 생존 신호를 잃으므로 답하지 않고 TS 로 넘긴다.
+/// 전송 조건(Accept·Content-Type·판 헤더)이 SDK 와 다르면 그 거절 글자도 TS 가 낸다.
+fn lifecycle_reply(
+    headers: &axum::http::HeaderMap,
+    bytes: &[u8],
+    pre: &Pre<'_>,
+) -> Option<Response<Body>> {
+    let presence = pre.presence?;
+    if !super::respond::transport_ok(headers) {
+        return None;
+    }
+    let v = serde_json::from_slice::<serde_json::Value>(bytes).ok()?;
+    // 도구 목록은 TS 가 지은 스냅숏 — 앞단에 `HARKROOM_DELEGATION_V2` 가 없으면 `tools/list` 는 TS 가 답한다.
+    let tools_list = super::lifecycle::tools_list(pre.switches.delegation_v2);
+    let reply = super::lifecycle::answer(&v, tools_list)?;
+    presence.mark(pre.agent_id);
+    Some(match reply {
+        super::lifecycle::Reply::Accepted => super::respond::accepted(),
+        super::lifecycle::Reply::Sse(body) => super::respond::sse_body(body),
+    })
 }
 
 /// 백그라운드 회차가 쓸 수 있는 도구 — TS `BG_ALLOWED_TOOLS`(설계 5절). 이 밖은 회차 상태를 보기 전에 거절한다.
@@ -314,7 +340,7 @@ pub const BG_ALLOWED_TOOLS: &[&str] = &[
     "bg.complete",
 ];
 
-/// cause 헤더가 백그라운드 꼴(`bg:<uuid>`, TS `BG_CAUSE_RE`)인가. 값이 여럿이면 node 가 `, ` 로 이어 붙여 꼴이 깨진다 → 거짓.
+/// cause 헤더가 백그라운드 꼴(`bg:<uuid>`, TS `BG_CAUSE_RE` — `/i` 라 접두·hex 모두 대소문자를 가리지 않는다)인가. 값이 여럿이면 node 가 `, ` 로 이어 붙여 꼴이 깨진다 → 거짓.
 pub fn bg_cause(headers: &axum::http::HeaderMap) -> bool {
     let mut it = headers.get_all("x-harkroom-cause").iter();
     let (Some(v), None) = (it.next(), it.next()) else {
@@ -323,7 +349,7 @@ pub fn bg_cause(headers: &axum::http::HeaderMap) -> bool {
     let Ok(v) = v.to_str() else {
         return false;
     };
-    v.get(..3).is_some_and(|p| p == "bg:") && is_uuid(&v[3..])
+    v.get(..3).is_some_and(|p| p.eq_ignore_ascii_case("bg:")) && is_uuid(&v[3..])
 }
 
 fn is_uuid(s: &str) -> bool {
@@ -807,6 +833,17 @@ mod tests {
         h.insert(
             "x-harkroom-cause",
             HeaderValue::from_static("bg:0123ABCD-0123-4567-89ab-0123456789ab"),
+        );
+        assert!(bg_cause(&h));
+        // TS `/i` — 접두도 대소문자를 가리지 않는다(security 메모 1).
+        h.insert(
+            "x-harkroom-cause",
+            HeaderValue::from_static("BG:0123abcd-0123-4567-89ab-0123456789ab"),
+        );
+        assert!(bg_cause(&h));
+        h.insert(
+            "x-harkroom-cause",
+            HeaderValue::from_static("Bg:0123abcd-0123-4567-89ab-0123456789ab"),
         );
         assert!(bg_cause(&h));
         h.append(
