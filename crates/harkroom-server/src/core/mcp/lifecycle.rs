@@ -80,6 +80,23 @@ fn initialize(p: &Value) -> Result<String, ()> {
     ))
 }
 
+/// `tools/list` 의 `result` 글자 — TS `mcpToolsListResult` 가 지은 SDK 글자 그대로를 `golden/mcp_tools_list.json` 으로 받는다
+/// (`packages/server/test/rustMcpToolsListGolden.test.ts` 가 TS 와 같은지 본다). 조건부 등록은 `delegation.close` 하나라
+/// `HARKROOM_DELEGATION_V2`(앞단 env)로 고른다 — 값이 없으면 `None`(TS 가 답한다, P2a 의 `registered` 와 같은 규칙).
+pub fn tools_list(delegation_v2: Option<bool>) -> Option<&'static str> {
+    static G: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
+    let g = G.get_or_init(|| {
+        serde_json::from_str(include_str!("../../../golden/mcp_tools_list.json"))
+            .expect("golden/mcp_tools_list.json")
+    });
+    let key = if delegation_v2? {
+        "delegation_v2"
+    } else {
+        "base"
+    };
+    g.get(key)?.as_str()
+}
+
 /// 본문 하나(단일 또는 배치)를 Rust 가 다 답할 수 있으면 그 답. 하나라도 못 하면 `None`(→ 통째로 TS).
 /// `tools_list` 는 지금 실리는 도구 목록의 `result` 글자 — 없으면 `tools/list` 는 TS 가 답한다.
 pub fn answer(body: &Value, tools_list: Option<&str>) -> Option<Reply> {
@@ -115,6 +132,41 @@ mod tests {
     }
 
     /// SDK 1.30 이 낸 글자(같은 요청을 McpServer + 무상태 전송에 넣어 받은 것)와 같다.
+    /// 골든 두 판: 둘 다 객체 하나(`{"tools":[…]}`)이고, `delegation.close` 는 v2 에만 있다. 값이 없으면 TS.
+    #[test]
+    fn tools_list_snapshot() {
+        assert_eq!(tools_list(None), None);
+        let names = |s: &str| -> Vec<String> {
+            let v: Value = serde_json::from_str(s).unwrap();
+            v["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|t| t["name"].as_str().unwrap().to_owned())
+                .collect()
+        };
+        let base = names(tools_list(Some(false)).unwrap());
+        let v2 = names(tools_list(Some(true)).unwrap());
+        assert!(base.contains(&"bg.claim".to_owned()));
+        assert!(!base.contains(&"delegation.close".to_owned()));
+        assert!(v2.contains(&"delegation.close".to_owned()));
+        assert_eq!(v2.len(), base.len() + 1);
+        // 답 글자는 스냅숏 그대로 실린다.
+        let Some(Reply::Sse(s)) = answer(
+            &json!({ "jsonrpc": "2.0", "id": 7, "method": "tools/list" }),
+            tools_list(Some(true)),
+        ) else {
+            panic!()
+        };
+        assert_eq!(
+            s,
+            format!(
+                "event: message\ndata: {{\"result\":{},\"jsonrpc\":\"2.0\",\"id\":7}}\n\n",
+                tools_list(Some(true)).unwrap()
+            )
+        );
+    }
+
     #[test]
     fn initialize_matches_sdk_bytes() {
         assert_eq!(

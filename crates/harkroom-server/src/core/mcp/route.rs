@@ -315,8 +315,9 @@ fn lifecycle_reply(
         return None;
     }
     let v = serde_json::from_slice::<serde_json::Value>(bytes).ok()?;
-    // 도구 목록 스냅숏은 아직 없다 — `tools/list` 는 TS 가 답한다.
-    let reply = super::lifecycle::answer(&v, None)?;
+    // 도구 목록은 TS 가 지은 스냅숏 — 앞단에 `HARKROOM_DELEGATION_V2` 가 없으면 `tools/list` 는 TS 가 답한다.
+    let tools_list = super::lifecycle::tools_list(pre.switches.delegation_v2);
+    let reply = super::lifecycle::answer(&v, tools_list)?;
     presence.mark(pre.agent_id);
     Some(match reply {
         super::lifecycle::Reply::Accepted => super::respond::accepted(),
@@ -339,7 +340,7 @@ pub const BG_ALLOWED_TOOLS: &[&str] = &[
     "bg.complete",
 ];
 
-/// cause 헤더가 백그라운드 꼴(`bg:<uuid>`, TS `BG_CAUSE_RE`)인가. 값이 여럿이면 node 가 `, ` 로 이어 붙여 꼴이 깨진다 → 거짓.
+/// cause 헤더가 백그라운드 꼴(`bg:<uuid>`, TS `BG_CAUSE_RE` — `/i` 라 접두·hex 모두 대소문자를 가리지 않는다)인가. 값이 여럿이면 node 가 `, ` 로 이어 붙여 꼴이 깨진다 → 거짓.
 pub fn bg_cause(headers: &axum::http::HeaderMap) -> bool {
     let mut it = headers.get_all("x-harkroom-cause").iter();
     let (Some(v), None) = (it.next(), it.next()) else {
@@ -348,7 +349,7 @@ pub fn bg_cause(headers: &axum::http::HeaderMap) -> bool {
     let Ok(v) = v.to_str() else {
         return false;
     };
-    v.get(..3).is_some_and(|p| p == "bg:") && is_uuid(&v[3..])
+    v.get(..3).is_some_and(|p| p.eq_ignore_ascii_case("bg:")) && is_uuid(&v[3..])
 }
 
 fn is_uuid(s: &str) -> bool {
@@ -832,6 +833,17 @@ mod tests {
         h.insert(
             "x-harkroom-cause",
             HeaderValue::from_static("bg:0123ABCD-0123-4567-89ab-0123456789ab"),
+        );
+        assert!(bg_cause(&h));
+        // TS `/i` — 접두도 대소문자를 가리지 않는다(security 메모 1).
+        h.insert(
+            "x-harkroom-cause",
+            HeaderValue::from_static("BG:0123abcd-0123-4567-89ab-0123456789ab"),
+        );
+        assert!(bg_cause(&h));
+        h.insert(
+            "x-harkroom-cause",
+            HeaderValue::from_static("Bg:0123abcd-0123-4567-89ab-0123456789ab"),
         );
         assert!(bg_cause(&h));
         h.append(
