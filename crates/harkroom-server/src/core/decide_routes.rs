@@ -41,7 +41,7 @@ pub fn human_session(me: &Account, auth: &Auth) -> bool {
 
 /// 거절 코어 한 번 + 커밋 뒤 카드 답. `Err` 는 곧 응답(internal)이다.
 #[allow(clippy::result_large_err)] // 거절이 곧 axum 응답이다(CI clippy 1.99).
-async fn deny_then_answer(
+pub(crate) async fn deny_then_answer(
     st: &AskState,
     deny: &PgPool,
     args: DenyArgs<'_>,
@@ -152,6 +152,7 @@ pub async fn rest_deny(
         actor_id: &me.id,
         bundle_message_id: None,
         mirror_message_id: None,
+        chat: None,
     };
     Taken::Done(match deny_then_answer(st, deny, args).await {
         Err(r) => r,
@@ -314,6 +315,7 @@ pub async fn answer_card_deny(
         actor_id: &me.id,
         bundle_message_id: None,
         mirror_message_id: t.mirror.as_deref(),
+        chat: None,
     };
     Taken::Done(match deny_then_answer(st, deny, args).await {
         Err(r) => r,
@@ -376,6 +378,7 @@ pub async fn answer_bundle_deny(
         actor_id: &me.id,
         bundle_message_id: Some(bundle),
         mirror_message_id: None,
+        chat: None,
     };
     Taken::Done(match deny_then_answer(st, deny, args).await {
         Err(r) => r,
@@ -460,7 +463,7 @@ async fn pick_answer(
 
 /// 승인 코어 한 번 + 커밋 뒤 카드 답. `Err` 는 곧 응답(internal)이다.
 #[allow(clippy::result_large_err)]
-async fn approve_then_answer(
+pub(crate) async fn approve_then_answer(
     st: &AskState,
     pool: &PgPool,
     args: ApproveArgs<'_>,
@@ -488,6 +491,20 @@ async fn approve_then_answer(
         };
         if let Err(e) = r {
             return Err(internal(e));
+        }
+    }
+    // P3 B4e — TS 와 같은 자리(카드 답 뒤): 소유자가 아닌 사람의 승인이면 소유자에게 알린다. 실패해도 결정은 남는다.
+    if let ApproveOutcome::Granted {
+        owner_notice: Some(n),
+        ..
+    } = &out
+    {
+        match &st.owner_notice {
+            Some(post) => super::decide_owner_notice::notify_owner(post, n).await,
+            None => eprintln!(
+                "[permissionRequests] 소유자 알림 실패: no post state requestId={}",
+                n.request_id
+            ),
         }
     }
     Ok(out)
@@ -534,6 +551,7 @@ pub async fn rest_approve(
         once,
         bundle_message_id: None,
         mirror_message_id: None,
+        chat: None,
     };
     Taken::Done(match approve_then_answer(st, pool, args).await {
         Err(r) => r,
@@ -631,6 +649,7 @@ pub async fn answer_card_approve(
         once: once.as_ref(),
         bundle_message_id: None,
         mirror_message_id: t.mirror.as_deref(),
+        chat: None,
     };
     Taken::Done(match approve_then_answer(st, pool, args).await {
         Err(r) => r,
@@ -698,6 +717,7 @@ pub async fn answer_bundle_approve(
         once: once.as_ref(),
         bundle_message_id: Some(bundle),
         mirror_message_id: None,
+        chat: None,
     };
     Taken::Done(match approve_then_answer(st, pool, args).await {
         Err(r) => r,

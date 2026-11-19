@@ -638,6 +638,7 @@ async fn deny_writes_request_card_audit_together() {
             actor_id: &stranger,
             bundle_message_id: None,
             mirror_message_id: None,
+            chat: None,
         },
     )
     .await
@@ -669,6 +670,7 @@ async fn deny_writes_request_card_audit_together() {
             actor_id: &f.actor,
             bundle_message_id: None,
             mirror_message_id: None,
+            chat: None,
         },
     )
     .await
@@ -686,6 +688,7 @@ async fn deny_writes_request_card_audit_together() {
             actor_id: &f.actor,
             bundle_message_id: Some(&card),
             mirror_message_id: None,
+            chat: None,
         },
     )
     .await
@@ -737,6 +740,7 @@ async fn deny_writes_request_card_audit_together() {
             actor_id: &f.owner,
             bundle_message_id: None,
             mirror_message_id: None,
+            chat: None,
         },
     )
     .await
@@ -751,6 +755,93 @@ async fn deny_writes_request_card_audit_together() {
         ),
         "{out:?}"
     );
+}
+
+/// P3 B2 — 위임장이 붙은 요청의 거절도 Rust 가 끝낸다(TS 로 넘기지 않음). 위임장·그 줄·활동 시각은 그대로다(TS 거절과 같음).
+/// 소유자가 아닌 사람(위임장을 맡기지 않음)과 소유자 둘 다.
+#[tokio::test]
+async fn deny_with_mandate_leaves_mandate_untouched() {
+    let Some(url) = db_url() else { return };
+    let pool = PgPool::connect(&url).await.unwrap();
+    let f = fixture(&pool, "list").await;
+    for actor in [f.actor.clone(), f.owner.clone()] {
+        let (req, card) = request_with_card(&pool, &f).await;
+        let mandate: String = sqlx::query_scalar(
+            "insert into mandate(owner_account_id, delegator_account_id, root_message_id, channel_id, thread_root_id, last_activity_at) \
+             values ($1::uuid, $1::uuid, $2::uuid, $3::uuid, $2::uuid, now() - interval '1 hour') returning id::text",
+        )
+        .bind(&f.owner)
+        .bind(&card)
+        .bind(&f.channel)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "insert into mandate_line(mandate_id, cap, scope, granted_by, via) values ($1::uuid, 'tool', 'Bash(git status)', $2::uuid, 'button')",
+        )
+        .bind(&mandate)
+        .bind(&f.owner)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("update permission_request set mandate_id = $2::uuid where id = $1::uuid")
+            .bind(&req)
+            .bind(&mandate)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let snap = |m: String| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_as::<_, (i64, String)>(
+                    "select (select count(*) from mandate_line where mandate_id = $1::uuid), \
+                            (select last_activity_at::text from mandate where id = $1::uuid)",
+                )
+                .bind(m)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        let before = snap(mandate.clone()).await;
+        let out = decide_deny(
+            &pool,
+            DenyArgs {
+                agent_id: &f.agent,
+                request_id: &req,
+                actor_id: &actor,
+                bundle_message_id: None,
+                mirror_message_id: None,
+                chat: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            out,
+            DenyOutcome::Denied {
+                card_message_id: Some(card.clone()),
+                as_owner: actor == f.owner,
+            },
+            "actor {actor}"
+        );
+        let st: String =
+            sqlx::query_scalar("select status from permission_request where id = $1::uuid")
+                .bind(&req)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(st, "denied");
+        assert_eq!(snap(mandate.clone()).await, before, "mandate touched");
+        let mid: Option<String> = sqlx::query_scalar(
+            "select mandate_id::text from permission_request where id = $1::uuid",
+        )
+        .bind(&req)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(mid.as_deref(), Some(mandate.as_str()));
+    }
 }
 
 /// 감사 INSERT 가 실패하면 요청 줄·카드 글도 되돌린다(한 tx).
@@ -776,6 +867,7 @@ async fn deny_audit_failure_rolls_back_all() {
             actor_id: &f.owner,
             bundle_message_id: None,
             mirror_message_id: None,
+            chat: None,
         },
         true,
     )

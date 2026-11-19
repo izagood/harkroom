@@ -58,7 +58,6 @@ fn shape<'a>(option: &'a str, kind: &'a str) -> Shape<'a> {
         has_mandate: false,
         has_denial: false,
         has_once: false,
-        via_chat: false,
         via_mirror: false,
     }
 }
@@ -82,6 +81,8 @@ fn who_takes_it() {
         ("approve_mandate", "tool", Decision::ApproveMandate),
         // C2 — 위임장 없는 approve_new_mandate(tool)는 Rust 가 카드 스레드에 위임장을 세운다.
         ("approve_new_mandate", "tool", Decision::ApproveNewMandate),
+        // P3 B3 — merge 도 카드 스레드에 위임장을 세운다(못 세우면 409 `mandate_unavailable`, 7일 승인으로 넘어가지 않음).
+        ("approve_new_mandate", "merge", Decision::ApproveNewMandate),
     ] {
         assert_eq!(rust_takes(shape(o, k)), Some(d), "{o}/{k}");
     }
@@ -90,7 +91,6 @@ fn who_takes_it() {
         ("approve", "command"),
         ("approve", "future_kind"),
         ("approve_once", "merge"),
-        ("approve_new_mandate", "merge"),
         ("approve_turn", "merge"),
         ("nope", "tool"),
     ] {
@@ -110,7 +110,7 @@ fn who_takes_it() {
     ] {
         assert_eq!(rust_takes(shape(o, k)), Some(d), "{o}/{k}");
     }
-    // C1·C2·C3 — 위임장이 있는 tool 승인 넷과 command once·hour 는 Rust, 나머지(merge·deny)는 TS.
+    // C1·C2·C3 — 위임장이 있는 tool 승인 넷과 command once·hour 는 Rust. merge once 는 TS, deny 는 P3 B2·merge new_mandate 는 B3 부터 Rust.
     let m = |o, k| Shape {
         has_mandate: true,
         ..shape(o, k)
@@ -142,12 +142,15 @@ fn who_takes_it() {
         rust_takes(m("approve_mandate", "merge")),
         Some(Decision::ApproveMandate)
     );
-    for (o, k) in [
-        ("approve_once", "merge"),
-        ("approve_new_mandate", "merge"),
-        ("deny", "command"),
-    ] {
-        assert_eq!(rust_takes(m(o, k)), None, "{o}/{k}");
+    // P3 B3 — 위임장 있는 merge `approve_new_mandate` 는 `approve_mandate` 처럼 줄만(Rust).
+    assert_eq!(
+        rust_takes(m("approve_new_mandate", "merge")),
+        Some(Decision::ApproveNewMandate)
+    );
+    assert_eq!(rust_takes(m("approve_once", "merge")), None);
+    // P3 B2 — 위임장 있는 카드의 거절은 kind 와 관계없이 Rust(TS 거절은 위임장을 건드리지 않는다).
+    for k in ["tool", "command", "merge"] {
+        assert_eq!(rust_takes(m("deny", k)), Some(Decision::Deny), "deny/{k}");
     }
     // C3 — 위임장 있는 command 라도 거절 카드(denial)·카드 once 는 TS.
     assert_eq!(
@@ -164,24 +167,15 @@ fn who_takes_it() {
         }),
         None
     );
-    // 위임장·once·글 승인·거울이면 deny 라도 처음부터 TS(반쯤 하다 넘기는 길 없음).
+    // once 면 deny 라도 처음부터 TS(반쯤 하다 넘기는 길 없음). 위임장은 P3 B2 부터 Rust(위).
     let base = shape("deny", "tool");
-    for s in [
-        Shape {
-            has_mandate: true,
-            ..base
-        },
-        Shape {
+    assert_eq!(
+        rust_takes(Shape {
             has_once: true,
             ..base
-        },
-        Shape {
-            via_chat: true,
-            ..base
-        },
-    ] {
-        assert_eq!(rust_takes(s), None, "{s:?}");
-    }
+        }),
+        None
+    );
     // S5.5 d — 진짜 거울(입구가 확인)은 원본 버튼과 같은 허용 목록을 탄다.
     assert_eq!(
         rust_takes(Shape {
@@ -350,7 +344,7 @@ fn recheck_after_request_lock() {
         recheck_locked("a", Some("c"), Some(&locked("a", Some("c"), "command")), sh),
         Recheck::HandToTs
     );
-    // C1 — 위임장이 생겨도 tool approve 는 Rust(있는 위임장에 줄), deny 는 TS. C3 — command 승인도 Rust.
+    // C1 — 위임장이 생겨도 tool approve 는 Rust(있는 위임장에 줄). C3 — command 승인도 Rust. P3 B2 — deny 도 Rust.
     let mut m = base.clone();
     m.mandate_id = Some("m".into());
     assert_eq!(
@@ -359,7 +353,7 @@ fn recheck_after_request_lock() {
     );
     assert_eq!(
         recheck_locked("a", Some("c"), Some(&m), shape("deny", "tool")),
-        Recheck::HandToTs
+        Recheck::Go(Decision::Deny)
     );
     let mut mc = locked("a", Some("c"), "command");
     mc.mandate_id = Some("m".into());
@@ -369,7 +363,7 @@ fn recheck_after_request_lock() {
     );
     assert_eq!(
         recheck_locked("a", Some("c"), Some(&mc), shape("deny", "command")),
-        Recheck::HandToTs
+        Recheck::Go(Decision::Deny)
     );
     let mut d = base.clone();
     d.denial_id = Some("d".into());
@@ -428,6 +422,7 @@ fn audit_detail_keys_match_ts_and_carry_no_secrets() {
         grant_mode: Some(("hour", "g")),
         bundle_message_id: Some("b"),
         mirror_message_id: None,
+        chat: None,
     });
     let keys: Vec<&str> = full
         .as_object()
@@ -438,8 +433,8 @@ fn audit_detail_keys_match_ts_and_carry_no_secrets() {
     for k in &keys {
         assert!(AUDIT_DETAIL_KEYS.contains(k), "unexpected audit key {k}");
     }
-    // bundle 과 mirror 는 함께 오지 않는다 — mirrorMessageId 하나만 빠진다.
-    assert_eq!(keys.len() + 1, AUDIT_DETAIL_KEYS.len());
+    // bundle·mirror·chat 은 함께 오지 않는다 — mirrorMessageId·messageId·chatTarget 셋이 빠진다.
+    assert_eq!(keys.len() + 3, AUDIT_DETAIL_KEYS.len());
     for bad in [
         "reason",
         "warnings",
@@ -462,6 +457,7 @@ fn audit_detail_keys_match_ts_and_carry_no_secrets() {
         grant_mode: None,
         bundle_message_id: None,
         mirror_message_id: None,
+        chat: None,
     });
     // 14d — 거울에서 온 결정: TS `{ via: 'mirror', mirrorMessageId }`.
     let mirror = audit_detail(&AuditDetail {
@@ -475,6 +471,7 @@ fn audit_detail_keys_match_ts_and_carry_no_secrets() {
         grant_mode: None,
         bundle_message_id: None,
         mirror_message_id: Some("m"),
+        chat: None,
     });
     assert_eq!(
         mirror,
@@ -484,14 +481,61 @@ fn audit_detail_keys_match_ts_and_carry_no_secrets() {
         TS_PERMISSION_REQUESTS
             .contains("{ via: 'mirror', mirrorMessageId: args.via.mirrorMessageId }")
     );
-    use harkroom_server::core::decide_core::decided_via;
-    assert_eq!(decided_via(None, None), None);
+    // P3b-2 — 글 승인에서 온 결정: TS `{ via: 'chat', messageId, chatTarget? }`, 카드 meta `decidedVia` 는 `args.via` 그대로.
+    use harkroom_server::core::decide_core::ChatVia;
+    let chat = audit_detail(&AuditDetail {
+        request_id: "r",
+        kind: "tool",
+        target: "Bash(ls:*)",
+        channel_id: None,
+        as_owner: true,
+        thread_root_id: None,
+        grant_expires_at: None,
+        grant_mode: None,
+        bundle_message_id: None,
+        mirror_message_id: None,
+        chat: Some(ChatVia {
+            message_id: "g",
+            target: Some("T2"),
+        }),
+    });
     assert_eq!(
-        decided_via(None, Some("m")),
+        chat,
+        serde_json::json!({"requestId": "r", "kind": "tool", "target": "Bash(ls:*)", "channelId": null, "via": "chat", "messageId": "g", "chatTarget": "T2"})
+    );
+    assert!(TS_PERMISSION_REQUESTS.contains(
+        "{ via: args.via.kind, messageId: args.via.messageId, ...(args.via.target ? { chatTarget: args.via.target } : {}) }"
+    ));
+    use harkroom_server::core::decide_core::decided_via;
+    assert_eq!(
+        decided_via(
+            None,
+            None,
+            Some(ChatVia {
+                message_id: "g",
+                target: Some("T1")
+            })
+        ),
+        Some(serde_json::json!({"kind": "chat", "messageId": "g", "target": "T1"}))
+    );
+    assert_eq!(
+        decided_via(
+            None,
+            None,
+            Some(ChatVia {
+                message_id: "g",
+                target: None
+            })
+        ),
+        Some(serde_json::json!({"kind": "chat", "messageId": "g"}))
+    );
+    assert_eq!(decided_via(None, None, None), None);
+    assert_eq!(
+        decided_via(None, Some("m"), None),
         Some(serde_json::json!({"kind": "mirror", "mirrorMessageId": "m"}))
     );
     assert_eq!(
-        decided_via(Some("b"), None),
+        decided_via(Some("b"), None, None),
         Some(serde_json::json!({"kind": "bundle", "bundleMessageId": "b"}))
     );
     assert_eq!(

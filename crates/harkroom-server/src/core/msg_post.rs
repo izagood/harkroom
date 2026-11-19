@@ -372,6 +372,15 @@ pub(crate) struct Origin<'a> {
     /// `max(스캔 깊이, chain_depth)` 와 `chain_bound` 를 넘기고 그 깊이를 `mention_depth` 로 저장한다(TS `postMessage` 와 같다).
     /// 정체 홉·사슬 시작은 TS 처럼 스캔 깊이만 본다. 라우트 입력에서는 켜지 않는다.
     pub(crate) chain_depth: Option<i32>,
+    /// P3b-2 — 받은 사람의 `inbox.updated` 를 커밋 tx 에서 내지 않는다. 호출자가 글 승인 판정 **뒤에** 낸다
+    /// (TS 라우트는 `applyChatApproval` 뒤에 낸다 — security n2: 같은 스레드의 `thread_reply` 턴이 뜰 때 grant 가 이미 있게).
+    pub(crate) defer_inbox_events: bool,
+    /// P3c — 사람 세션 REST 글이고 글 승인 입구가 켜졌다: 선택 카드 글 답(TS `answerAskFromMessage`)을 Rust 가 커밋 뒤에 한다.
+    /// [`TS_THREAD_SQL`] 의 ask 갈래를 끈다(TS `parseAskPick` 과 같은 판정을 Rust 가 하므로 넓게 넘길 까닭이 없다).
+    pub(crate) chat_ask_rust: bool,
+    /// P3c — 이 글이 카드 답이 될 수 있다(`parseAskPick` 이 Some). tx 안 [`ask_reply_close::close_by_reply`] 를 건너뛴다 —
+    /// 부르는 쪽이 커밋 뒤 TS 라우트 순서(카드 답 → `inbox.updated` → `closeAsksByReply`)로 닫는다. 먼저 닫으면 카드가 `replied` 가 돼 답이 안 된다.
+    pub(crate) close_asks_after_commit: bool,
 }
 
 /// TS `beforeCommit` 의 거절 — `{ status, code, message }`.
@@ -397,13 +406,7 @@ pub(crate) trait BeforeCommit: std::fmt::Debug + Sync {
     ) -> BeforeCommitFuture<'a>;
 }
 
-/// 읽은 JSON 이 TS 몫인가 — 키만 보고 정한다(값이 틀렸으면 TS 가 400 을 준다).
-fn ts_keys(v: &Value) -> bool {
-    let Value::Object(o) = v else { return false };
-    o.contains_key("agentModels")
-}
-
-/// zod 스키마 + refine. `agentModels` 는 [`ts_keys`] 가 먼저 TS 로 보낸다. `threadRootId` 는 uuid 글자만(null 포함 그 밖은 400 —
+/// zod 스키마 + refine. `agentModels` 는 [`super::msg_post_models::parse`] 가 따로 본다. `threadRootId` 는 uuid 글자만(null 포함 그 밖은 400 —
 /// TS `z.string().uuid().optional()`).
 fn parse_post(v: &Value) -> Option<PostBody> {
     let Value::Object(o) = v else { return None };
@@ -917,7 +920,9 @@ pub(crate) async fn post_tx(
             .bind(r)
             .bind(author)
             // 시스템 줄은 카드 답이 되지 않는다(TS `closeAsksByReply` 는 라우트 몫) — ask 갈래를 끈다.
-            .bind(origin.system || origin.service_call || question_only(body))
+            .bind(
+                origin.system || origin.service_call || origin.chat_ask_rust || question_only(body),
+            )
             .bind(v2.is_some())
             .fetch_one(&mut *tx)
             .await?;
@@ -1319,9 +1324,11 @@ pub(crate) async fn post_tx(
         )
         .await?;
     }
-    for a in &notified {
-        crate::write::emit_event(&mut tx, &json!({ "type": "inbox.updated", "accountId": a }))
-            .await?;
+    if !origin.defer_inbox_events {
+        for a in &notified {
+            crate::write::emit_event(&mut tx, &json!({ "type": "inbox.updated", "accountId": a }))
+                .await?;
+        }
     }
     // TS `message.delegate` — 넘겨받은 담당의 부름은 `createDelegation` 이 만들었다. 러너가 곧 폴하도록 따로 친다.
     if let Some(plan) = &origin.delegation {
@@ -1332,9 +1339,13 @@ pub(crate) async fn post_tx(
     }
     // TS 라우트는 `inbox.updated` 뒤에 `closeAsksByReply` 를 부른다(사람 글만) — 이 답보다 앞선 열린 카드를 `replied` 로 닫는다.
     // 시스템 줄은 라우트를 거치지 않는다(서버가 바로 `postMessage` 를 부른다) — 카드를 닫지 않는다.
-    if let (false, false, false, Some(r)) =
-        (author_is_agent, origin.system, origin.service_call, root)
-    {
+    if let (false, false, false, false, Some(r)) = (
+        author_is_agent,
+        origin.system,
+        origin.service_call,
+        origin.close_asks_after_commit,
+        root,
+    ) {
         let seq = row_value
             .get("seq")
             .and_then(Value::as_i64)
@@ -1483,6 +1494,19 @@ async fn dm_notify(
     mention_fanout::insert_inbox_many(conn, &to, message_id, "dm", notified, None).await
 }
 
+/// 미뤄 둔 받은 사람 `inbox.updated`([`Origin::defer_inbox_events`]).
+async fn emit_inbox_updated(write: &sqlx::PgPool, notified: &[String]) -> sqlx::Result<()> {
+    if notified.is_empty() {
+        return Ok(());
+    }
+    let mut tx = write.begin().await?;
+    for a in notified {
+        crate::write::emit_event(&mut tx, &json!({ "type": "inbox.updated", "accountId": a }))
+            .await?;
+    }
+    tx.commit().await
+}
+
 fn json_response(status: StatusCode, row: String) -> Response {
     (
         status,
@@ -1493,13 +1517,59 @@ fn json_response(status: StatusCode, row: String) -> Response {
 }
 
 /// `POST /channels/{id}/messages`.
+/// REST 글 줄의 상태 — 글 코어 + `agentModels` 를 Rust 가 맡을 수 있는가([`super::msg_post_models`]).
+pub struct RestState {
+    pub post: PostState,
+    /// 스레드 모델 지정 코어가 붙었는가(오퍼레이터 코어가 Rust 이고 지정 권한이 있다 — `main.rs` 의 `thread_model_set`).
+    /// 거짓이면 비지 않은 `agentModels` 글은 TS 로 넘긴다(하네스 목록을 능력 스냅숏으로만 볼 수 있다).
+    pub models: bool,
+    /// P3 B5 — 글 승인이 고를 수 있는 결정(거절·[이번 한 번]·위임장 세우기)을 Rust 가 끝까지 할 스위치가 다 켜졌는가
+    /// ([`ChatDecideSwitches::all_on`], `main.rs` 가 기동 때 정한다). 글 승인은 글을 **커밋한 뒤에** 카드를 고르므로 중간에 TS 로
+    /// 넘길 수 없다 — 그래서 카드와 상관없이 쓰기 **전** 입구에서 가른다. 거짓이면 넓은 체에 걸린 글은 글째 TS 로 간다.
+    pub chat_decide: bool,
+    /// P3b-2 — 글 승인이 결정 코어(거절·승인·카드 답·소유자 알림)를 부를 상태. `None` 이면 `chat_decide` 를 켜지 않는다(`main.rs`).
+    pub chat: Option<super::ask::AskState>,
+}
+
+/// P3 B5 — 글 승인 결정 스위치(기동 때 권한 검사 결과). 하나라도 꺼져 있으면 그 결정이 Rust 에서 TS 출구로 빠질 수 있다.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ChatDecideSwitches {
+    /// 권한 카드 거절 코어(`decide_core::deny_pool`).
+    pub deny: bool,
+    /// 권한 카드 승인 코어(`decide_approve::approve_pool`).
+    pub approve: bool,
+    /// 머지 거절 카드의 [이번 한 번](`decide_merge_once::merge_once_on`).
+    pub merge_once: bool,
+    /// 있는 위임장에 줄 쓰기(`decide_approve::mandate_core_on` — command 승인도 이것을 따른다).
+    pub mandate: bool,
+    /// 위임장 새로 세우기(`decide_approve::new_mandate_core_on`).
+    pub new_mandate: bool,
+}
+
+impl ChatDecideSwitches {
+    /// 다 켜졌는가. 만료 닫기 칸은 보지 않는다 — 글 승인은 결정 전에 만료 카드를 걸러 낸다(TS 와 같다).
+    pub fn all_on(self) -> bool {
+        self.deny && self.approve && self.merge_once && self.mandate && self.new_mandate
+    }
+}
+
+/// P3 B5 — 글 승인 DB 층(P3b-2b 카드 고르기 → 2c 결정 → 2d 안내 줄)이 `post` 에 붙었는가. 붙기 전에는 스위치가 다 켜져도
+/// 넓은 체에 걸린 글을 TS 로 넘긴다(Rust 가 맡으면 승인 글이 아무 결정 없이 올라간다).
+const CHAT_APPROVAL_WIRED: bool = true;
+
+/// 넓은 체에 걸린 REST 글을 TS 로 넘기는가 — 체에 걸렸고, 글 승인을 Rust 가 끝까지 할 수 없으면.
+fn guard_to_ts(body: &str, chat_decide: bool) -> bool {
+    ts_guard(body) && !(CHAT_APPROVAL_WIRED && chat_decide)
+}
+
 pub async fn post(
-    State(st): State<Arc<PostState>>,
+    State(rs): State<Arc<RestState>>,
     RequireAccount(me, auth): RequireAccount,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Path(id): Path<String>,
     req: Request,
 ) -> Response {
+    let st = &rs.post;
     let (parts, body) = req.into_parts();
     let bytes = match to_bytes(body, BODY_LIMIT).await {
         Ok(b) => b,
@@ -1519,7 +1589,7 @@ pub async fn post(
     // 사람은 세션 글만(사람 PAT 는 인증에서 401), 에이전트는 PAT·오퍼레이터 글(C1c-4a). 모델 지정 키 등은 판정하지 않고 넘긴다.
     let human_session = me.kind == "human" && auth.via == Some(Via::Session);
     let author_is_agent = me.kind == "agent";
-    if !(human_session || author_is_agent) || parsed.as_ref().is_some_and(ts_keys) {
+    if !(human_session || author_is_agent) {
         return to_ts(st.up.clone(), peer, parts, bytes).await;
     }
     if !is_uuid(&id) {
@@ -1528,9 +1598,29 @@ pub async fn post(
     let Some(input) = parsed.as_ref().and_then(parse_post) else {
         return bad();
     };
-    if ts_guard(&input.body) {
+    let Some(picks) = parsed
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(super::msg_post_models::parse)
+    else {
+        return bad();
+    };
+    // 하네스 목록을 볼 수 없으면(오퍼레이터 코어가 TS) 고르기 글은 TS 몫이다 — 아직 아무것도 읽거나 쓰지 않았다.
+    if !picks.is_empty() && !rs.models {
         return to_ts(st.up.clone(), peer, parts, bytes).await;
     }
+    let chat_on = rs.chat_decide && rs.chat.is_some();
+    if guard_to_ts(&input.body, chat_on) {
+        return to_ts(st.up.clone(), peer, parts, bytes).await;
+    }
+    // 글 승인 판정은 사람 세션 글만(TS 라우트). 선택 카드를 링크한 글은 TS P5(`answerAskFromMessage`) 몫 — 쓰기 전에 넘긴다.
+    // P3c — 선택 카드 글 답(TS P5 `answerAskFromMessage`)도 Rust 가 커밋 뒤에 한다(`chat_ask`). 카드 닫기는 그 뒤로 미룬다.
+    let chat_ask =
+        chat_on && human_session && super::chat_approval_apply::wants_ask_pick(&input.body);
+    let chat_apply = chat_ask
+        || (chat_on
+            && human_session
+            && super::chat_approval_apply::wants_chat_approval(&input.body));
     let preview_urls = extract_preview_urls(&input.body, 3);
     // TS `channelPostGate` — 없는 채널은 'ok'(insert 가 FK 로 실패해 500, TS 와 같다).
     let gate: Option<(bool, bool)> = match sqlx::query_as(sql().gate.as_str())
@@ -1559,6 +1649,25 @@ pub async fn post(
         }
         _ => {}
     }
+    // TS 와 같이 게이트 뒤, 글을 올리기 **전**에 거른다 — 올린 뒤 거절하면 글만 남고 지정이 빠진 채 기본값으로 턴이 돈다.
+    if !picks.is_empty() {
+        match super::msg_post_models::refuse(
+            st,
+            &me.kind,
+            &id,
+            input.thread_root.as_deref(),
+            &picks,
+        )
+        .await
+        {
+            Ok(None) => {}
+            Ok(Some(r)) => return r,
+            Err(e) => return internal(e),
+        }
+    }
+    let hook = (!picks.is_empty()).then(|| {
+        super::msg_post_models::RestPicks::new(&id, input.thread_root.as_deref(), &me.id, picks)
+    });
     // DM 은 받는 사람에게 `dm` 알림이 간다(C1c-3d 부터 Rust 가 넣는다 — [`dm_notify`]).
     let kind: Option<String> = match sqlx::query_scalar(sql().channel_kind.as_str())
         .bind(&id)
@@ -1579,7 +1688,7 @@ pub async fn post(
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
     match post_in_tx(
-        &st,
+        st,
         &id,
         &me.id,
         author_is_agent,
@@ -1587,7 +1696,13 @@ pub async fn post(
         key.as_deref(),
         &audience,
         is_dm,
-        &Origin::default(),
+        &Origin {
+            before_commit: hook.as_ref().map(|h| h as &dyn BeforeCommit),
+            defer_inbox_events: chat_apply,
+            chat_ask_rust: chat_on && human_session,
+            close_asks_after_commit: chat_ask,
+            ..Origin::default()
+        },
     )
     .await
     {
@@ -1630,6 +1745,32 @@ pub async fn post(
                 )
                 .await;
             }
+            // P3b-2 — 글 승인(TS `applyChatApproval`): 받은 사람 `inbox.updated` **앞**에서 정한다(security n2).
+            if chat_apply {
+                if let (Some(ask), Some(msg)) = (
+                    rs.chat.as_ref(),
+                    super::chat_approval_apply::posted_from_row(&row),
+                ) {
+                    // TS `applyChatApproval(pool, message)` 는 **저장된** 본문을 읽는다 — 멘션이 id 토큰(`<@id>`)으로 바뀐 뒤라
+                    // 「@bot2 A 로」의 멘션이 판정에서 빠진다. 받은 본문을 그대로 넘기면 `@bot2 a 로` 가 이름과 안 맞아 답이 안 된다.
+                    let stored = serde_json::from_str::<Value>(&row)
+                        .ok()
+                        .and_then(|v| v.get("body").and_then(Value::as_str).map(str::to_owned))
+                        .unwrap_or_else(|| input.body.clone());
+                    super::chat_approval_apply::apply(ask, st, &msg, &stored, &me.id).await;
+                }
+                if let Err(e) = emit_inbox_updated(&st.write, &notified).await {
+                    eprintln!("front: deferred inbox.updated failed ({e})");
+                }
+                // TS 라우트: `inbox.updated` 뒤 `closeAsksByReply` — 답한 카드는 이미 답이 있어 닫히지 않는다.
+                if chat_ask {
+                    super::chat_approval_apply::close_after(st, &row, &me.id).await;
+                }
+            }
+            // TS 는 지정의 시스템 줄을 `message.created` 앞에 낸다 — Rust 는 커밋 뒤라 그 뒤다(지정 행 자체는 같은 tx 에 들어갔다).
+            if let Some(h) = &hook {
+                h.announce(st).await;
+            }
             // TS `queueLinkPreviewFetch` — 응답을 기다리게 하지 않는다(실패는 삼킨다).
             for u in preview_urls {
                 tokio::spawn(super::link_preview_fetch::queue_fetch(st.write.clone(), u));
@@ -1657,12 +1798,12 @@ pub async fn post(
 
 /// 코어 라우터에 합칠 줄 — `msg_edit.rs` 와 같은 길(인증은 `route_layer`, CORS 는 `layer`).
 pub fn routes(
-    st: PostState,
+    st: RestState,
     auth: crate::auth::AuthPools,
     cors: Arc<crate::cors::Cors>,
 ) -> crate::route_table::Routes<()> {
     use crate::route_table::Table;
-    let t = Table::<Arc<PostState>>::new()
+    let t = Table::<Arc<RestState>>::new()
         .post("/channels/{id}/messages", post)
         .map(|r| {
             r.route_layer(axum::middleware::from_fn_with_state(
@@ -1777,6 +1918,41 @@ mod tests {
     }
 
     #[test]
+    fn chat_decide_switches_all_or_nothing() {
+        let all = ChatDecideSwitches {
+            deny: true,
+            approve: true,
+            merge_once: true,
+            mandate: true,
+            new_mandate: true,
+        };
+        assert!(all.all_on());
+        for off in 0..5 {
+            let mut s = all;
+            match off {
+                0 => s.deny = false,
+                1 => s.approve = false,
+                2 => s.merge_once = false,
+                3 => s.mandate = false,
+                _ => s.new_mandate = false,
+            }
+            assert!(!s.all_on(), "{s:?}");
+        }
+        assert!(!ChatDecideSwitches::default().all_on());
+    }
+
+    #[test]
+    fn guard_goes_to_ts_until_chat_approval_wired() {
+        // 넓은 체에 안 걸린 글은 스위치와 상관없이 Rust.
+        assert!(!guard_to_ts("점심 뭐 먹지", false));
+        assert!(!guard_to_ts("점심 뭐 먹지", true));
+        // 걸린 글은 스위치가 꺼졌으면 언제나 TS.
+        assert!(guard_to_ts("승인", false));
+        // P3b-2 부터 스위치가 다 켜지면 Rust 가 글 승인까지 한다.
+        assert!(!guard_to_ts("승인", true));
+    }
+
+    #[test]
     fn preview_urls_like_shared() {
         assert_eq!(
             extract_preview_urls(
@@ -1830,12 +2006,10 @@ mod tests {
         assert!(!ok(json!({ "body": "x", "alsoInChannel": "yes" })));
         assert!(!ok(json!({ "body": "a".repeat(8001) })));
         assert!(ok(json!({ "body": "a".repeat(8000), "extra": 1 })));
-        assert!(!ts_keys(&json!({ "body": "x", "threadRootId": "bad" })));
         assert!(!ok(json!({ "body": "x", "threadRootId": "bad" })));
         assert!(!ok(json!({ "body": "x", "threadRootId": null })));
         assert!(ok(
             json!({ "body": "x", "threadRootId": "0b6f8d2e-3c1a-4f5e-9a7b-1c2d3e4f5a6b" })
         ));
-        assert!(ts_keys(&json!({ "body": "x", "agentModels": [] })));
     }
 }

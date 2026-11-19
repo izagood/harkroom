@@ -131,7 +131,7 @@ async fn is_decision_card(pool: &PgPool, id: &str) -> sqlx::Result<bool> {
 }
 
 /// TS `isIrreversible` — 결정 카드 표지, 못 읽는 물음, `irreversible: true`, 아니면 본문·물음·선택지 글자의 낱말.
-fn is_irreversible(meta: &Value, body: &str) -> bool {
+pub(super) fn is_irreversible(meta: &Value, body: &str) -> bool {
     if js_truthy(meta.get("permissionRequest")) || js_truthy(meta.get("mergeDenial")) {
         return true;
     }

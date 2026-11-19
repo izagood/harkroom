@@ -59,6 +59,8 @@ pub struct AskState {
     pub deny: Option<PgPool>,
     /// S5.3 B2 — 권한 카드 **승인**(소유자, tool 7일·command 1회/1시간) 쓰기 풀([`super::decide_approve::approve_pool`]). `None` 이면 TS.
     pub approve: Option<PgPool>,
+    /// P3 B4e — 소유자가 아닌 사람의 승인 뒤 소유자 알림 줄을 쓰는 글 상태(`decide_owner_notice`). `None` 이면 그 쓰기는 TS 가 맡는다.
+    pub owner_notice: Option<super::msg_post::PostState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -238,6 +240,7 @@ async fn answer_ask_row(
     actor: &str,
     text: Option<&str>,
     answered_via: Option<&str>,
+    skip_wake_if_inbox_for: Option<&str>,
 ) -> sqlx::Result<Option<String>> {
     // 직접 쓴 답만 `answeredText` 를 싣는다 — 보통 답의 meta 모양은 그대로다(TS 와 같은 문장 둘).
     const ANSWERED: &str = "update message set meta = jsonb_set(jsonb_set(jsonb_set(meta::jsonb, '{ask,answeredWith}', to_jsonb($2::text)), \
@@ -273,7 +276,20 @@ async fn answer_ask_row(
     let Some(author) = q.fetch_optional(&mut *conn).await? else {
         return Ok(None);
     };
-    wake_asker(conn, LABEL, author.as_deref(), actor, id, "ask_answered").await;
+    // 글로 답했을 때(P5) 물어본 쪽이 그 글로 이미 깨었으면(`thread_reply`·멘션) 다시 깨우지 않는다(TS `skipWakeIfInboxFor`).
+    let woken = match (skip_wake_if_inbox_for, author.as_deref()) {
+        (Some(m), Some(a)) => sqlx::query_scalar::<_, bool>(
+            "select exists(select 1 from inbox where account_id = $1::uuid and message_id = $2::uuid)",
+        )
+        .bind(a)
+        .bind(m)
+        .fetch_one(&mut *conn)
+        .await?,
+        _ => false,
+    };
+    if !woken {
+        wake_asker(conn, LABEL, author.as_deref(), actor, id, "ask_answered").await;
+    }
     message_by_id(&mut *conn, id).await
 }
 
@@ -311,7 +327,41 @@ pub(super) async fn record_ask_answer(
     written: Option<&str>,
     answered_via: Option<&str>,
 ) -> sqlx::Result<Outcome> {
-    record_ask_answer_with(read, conn, id, actor, option, written, answered_via, false).await
+    record_ask_answer_with(
+        read,
+        conn,
+        id,
+        actor,
+        option,
+        written,
+        answered_via,
+        None,
+        false,
+    )
+    .await
+}
+
+/// TS `recordAskAnswer(… answeredVia: 'chat', skipWakeIfInboxFor)` — 사람이 글로 고른 답(P5, [`super::chat_approval_ask`]).
+pub(super) async fn record_chat_answer(
+    read: &PgPool,
+    conn: &mut PgConnection,
+    id: &str,
+    actor: &str,
+    option: &str,
+    posted_message_id: &str,
+) -> sqlx::Result<Outcome> {
+    record_ask_answer_with(
+        read,
+        conn,
+        id,
+        actor,
+        option,
+        None,
+        Some("chat"),
+        Some(posted_message_id),
+        false,
+    )
+    .await
 }
 
 /// TS `recordAskAnswer(… viaPermissionDecision: true)` — 권한 결정을 **커밋한 뒤** 카드에 답을 적는 길(C3b-3c).
@@ -323,7 +373,7 @@ pub(super) async fn record_permission_answer(
     actor: &str,
     option: &str,
 ) -> sqlx::Result<Outcome> {
-    record_ask_answer_with(read, conn, id, actor, option, None, None, true).await
+    record_ask_answer_with(read, conn, id, actor, option, None, None, None, true).await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -335,6 +385,7 @@ async fn record_ask_answer_with(
     option: &str,
     written: Option<&str>,
     answered_via: Option<&str>,
+    skip_wake: Option<&str>,
     via_permission: bool,
 ) -> sqlx::Result<Outcome> {
     let Some(meta) = meta_of(&mut *conn, id).await? else {
@@ -375,7 +426,8 @@ async fn record_ask_answer_with(
         if !channel_visible(read, actor, &root_channel).await? {
             return Ok(Outcome::Forbidden);
         }
-        let root_row = answer_ask_row(conn, root, option, actor, written, answered_via).await?;
+        let root_row =
+            answer_ask_row(conn, root, option, actor, written, answered_via, skip_wake).await?;
         if root_row.is_some() {
             announce_updated(conn, root).await?;
         }
@@ -388,7 +440,9 @@ async fn record_ask_answer_with(
             None => Outcome::NotFound,
         });
     }
-    let Some(row) = answer_ask_row(conn, id, option, actor, written, answered_via).await? else {
+    let Some(row) =
+        answer_ask_row(conn, id, option, actor, written, answered_via, skip_wake).await?
+    else {
         return Ok(Outcome::AlreadyAnswered);
     };
     if ask.mirror_of.is_none() {

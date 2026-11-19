@@ -3054,6 +3054,23 @@ async fn main() {
             }
         }
     }
+    // P3 B5 — 글 승인 입구 스위치: 글 승인이 고를 수 있는 결정(거절·[이번 한 번]·위임장 세우기)이 Rust 에서 다 켜졌을 때만
+    // 넓은 체에 걸린 REST 글을 Rust 가 맡는다(fail-closed — 하나라도 꺼지면 글째 TS).
+    let chat_decide_ok = harkroom_server::core::msg_post::ChatDecideSwitches {
+        deny: ask_deny.is_some(),
+        approve: ask_approve.is_some(),
+        merge_once: ask_approve.is_some()
+            && harkroom_server::core::decide_merge_once::merge_once_on(),
+        mandate: ask_approve.is_some() && harkroom_server::core::decide_approve::mandate_core_on(),
+        new_mandate: ask_approve.is_some()
+            && harkroom_server::core::decide_approve::new_mandate_core_on(),
+    };
+    if chat_decide_ok.all_on() {
+        eprintln!("front: chat approval decide switches on");
+    } else {
+        eprintln!("front: chat approval decide switches off — {chat_decide_ok:?}");
+    }
+    let chat_decide_ok = chat_decide_ok.all_on();
     // C3b B1 — `POST /agent/command-grants/match`(명령 grant 하나를 쓰고 감사). `HARKROOM_CORE=rust` 그리고 쓰기 풀에
     // `MATCH_PRIVILEGES` 가 다 있을 때만(fail-closed) — 아니면 경로를 붙이지 않아 TS 가 받는다.
     let match_write = match (&core_mode, &state.write) {
@@ -3200,6 +3217,55 @@ async fn main() {
         }
         None => None,
     };
+    // P3 B4e — 소유자가 아닌 사람의 승인 뒤 소유자 알림 줄(카드 스레드 + 못 보면 DM). 승인 코어·글 경로·DM 칸이 다 있을 때만(fail-closed —
+    // 없으면 소유자가 아닌 사람의 쓰기는 TS). 켜져도 `NON_OWNER_APPROVE_WIRED` 가 거짓이면 아직 쓰지 않는다.
+    // 소유자가 아닌 사람의 승인 쓰기 칸(B4a·b, `NON_OWNER_APPROVE_PRIVILEGES`)도 같은 스위치에 묶는다 — 승인 풀에서 본다.
+    let ask_owner_notice = match (&ask_approve, &post_write) {
+        (Some(a), Some(w)) => {
+            use harkroom_server::core::decide_owner_notice as on;
+            let missing = match write::missing_in(
+                a,
+                harkroom_server::core::decide_approve::NON_OWNER_APPROVE_PRIVILEGES,
+                &[],
+            )
+            .await
+            {
+                Ok(m) if m.is_empty() => {
+                    write::missing_in(w, on::OWNER_NOTICE_PRIVILEGES, &[]).await
+                }
+                other => other,
+            };
+            match missing {
+                Ok(m) if m.is_empty() => Some(harkroom_server::core::msg_post::PostState {
+                    read: state.pool.clone(),
+                    write: w.clone(),
+                    up: state.up.clone(),
+                    implicit_ok,
+                }),
+                Ok(m) => {
+                    eprintln!(
+                        "front: permission non-owner approve core off — missing privileges {m:?}"
+                    );
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: permission non-owner approve core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+    harkroom_server::core::decide_owner_notice::set_owner_notice_core(ask_owner_notice.is_some());
+    if ask_owner_notice.is_some() {
+        eprintln!(
+            "front: permission non-owner approve core on (wired: {})",
+            harkroom_server::core::decide_approve::NON_OWNER_APPROVE_WIRED
+        );
+    }
     // 받을 `failed` 보고(CI 거절 아님)는 글 경로와 [`MERGE_RESULTS_WRITE_PRIVILEGES`] 가 다 있을 때만 Rust 가 적는다 — 없으면 TS.
     let merge_results_post = match (&post_write, &merge_results_read) {
         (Some(w), Some(_)) => {
@@ -3638,6 +3704,7 @@ async fn main() {
         }
         _ => None,
     };
+    let rest_models_ok = thread_model_set.is_some();
     // S5.4 TM3 — `GET /agents/{agentId}/model-options`: 오퍼레이터 코어 + 읽기 칸 권한.
     let agent_model_options = operator_on && {
         use harkroom_server::core::agent_model_options as mo;
@@ -5087,15 +5154,20 @@ async fn main() {
         }
         // C3b-1 — 선택 카드 답하기·닫기. 권한·머지 카드와 못 읽는 카드는 핸들러가 TS 로 넘긴다.
         let mcp_ask_write = ask_write.clone();
-        if let Some(write) = ask_write {
+        // P3b-2 — 글 승인도 같은 결정 상태를 쓴다(아래 글 올리기 `RestState::chat`).
+        let chat_ask = ask_write
+            .clone()
+            .map(|write| harkroom_server::core::ask::AskState {
+                read: state.pool.clone(),
+                write,
+                up: state.up.clone(),
+                deny: ask_deny.clone(),
+                approve: ask_approve.clone(),
+                owner_notice: ask_owner_notice.clone(),
+            });
+        if let Some(ask_state) = chat_ask.clone() {
             let ask = harkroom_server::core::ask::routes(
-                harkroom_server::core::ask::AskState {
-                    read: state.pool.clone(),
-                    write,
-                    up: state.up.clone(),
-                    deny: ask_deny,
-                    approve: ask_approve,
-                },
+                ask_state.clone(),
                 auth.clone(),
                 state.cors.clone(),
             );
@@ -5115,11 +5187,17 @@ async fn main() {
         });
         if let Some(write) = post_write {
             let post = harkroom_server::core::msg_post::routes(
-                harkroom_server::core::msg_post::PostState {
-                    read: state.pool.clone(),
-                    write,
-                    up: state.up.clone(),
-                    implicit_ok,
+                harkroom_server::core::msg_post::RestState {
+                    post: harkroom_server::core::msg_post::PostState {
+                        read: state.pool.clone(),
+                        write,
+                        up: state.up.clone(),
+                        implicit_ok,
+                    },
+                    // P3 — 작성창 칩(`agentModels`)은 스레드 모델 지정 코어가 붙었을 때만 Rust 가 맡는다.
+                    models: rest_models_ok,
+                    chat_decide: chat_decide_ok,
+                    chat: chat_ask.clone(),
                 },
                 auth.clone(),
                 state.cors.clone(),
