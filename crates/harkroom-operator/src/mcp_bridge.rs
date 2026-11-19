@@ -13,7 +13,8 @@
 //! - 한 줄 상한을 넘는 요청은 보내지 않고 그 요청만 거절한다(오퍼레이터가 받으면 링크째 끊는다).
 //!
 //! 구조: 오퍼레이터 Rust 는 std::thread 구조다. 상태는 사건 고리(`run_loop`) 하나가 쥐고, stdin 읽기·소켓 읽기·접속은
-//! 각자 스레드에서 사건을 보낸다. 시한은 고리의 짧은 틱으로 잰다(타이머 스레드를 요청마다 띄우지 않는다).
+//! 각자 스레드에서 사건을 보낸다. 시한은 고리가 **가장 가까운 시한까지만** 사건을 기다려서 잰다(타이머 스레드를 요청마다
+//! 띄우지 않고, 걸린 시한이 없으면 깨어나지 않는다).
 use crate::runner_link::RUNNER_LINK_MAX_LINE_BYTES;
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
@@ -29,7 +30,6 @@ pub const LINK_DOWN_GRACE: Duration = Duration::from_millis(15_000);
 /// relay 의 `LINK_DOWN_MESSAGE` 와 같은 뜻(정본 문구 그대로).
 pub const LINK_DOWN_MESSAGE: &str = "오퍼레이터 링크가 없다 — 재접속 중이다. 잠시 뒤 다시 불러라";
 const DISCONNECT_MESSAGE: &str = "오퍼레이터 링크가 끊겼다(오퍼레이터 교체·재시작) — 이 요청이 처리됐는지는 알 수 없다. 결과를 확인한 뒤에 다시 불러라. 링크는 곧 스스로 다시 붙는다";
-const TICK: Duration = Duration::from_millis(20);
 
 pub const ENV_SOCKET: &str = "HARKROOM_OPERATOR_SOCKET";
 pub const ENV_RUNNER_ID: &str = "HARKROOM_RUNNER_ID";
@@ -293,10 +293,22 @@ fn run_loop<W: Write, E: Write>(
     spawn_connect(link.socket_path.clone(), gen_id, tx.clone(), Duration::ZERO);
 
     loop {
-        let ev = match rx.recv_timeout(TICK) {
-            Ok(e) => Some(e),
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => None,
-            Err(_) => return,
+        // 가장 가까운 시한(링크 유예·요청 시한)까지만 기다린다. 걸린 시한이 없으면 사건이 올 때까지 잔다.
+        let next_deadline = pending
+            .values()
+            .map(|p| p.deadline)
+            .chain(grace_deadline)
+            .min();
+        let ev = match next_deadline {
+            None => match rx.recv() {
+                Ok(e) => Some(e),
+                Err(_) => return,
+            },
+            Some(d) => match rx.recv_timeout(d.saturating_duration_since(Instant::now())) {
+                Ok(e) => Some(e),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => None,
+                Err(_) => return,
+            },
         };
         let now = Instant::now();
         match ev {
@@ -720,6 +732,55 @@ mod tests {
         );
         assert!(ready.exists(), "tools/list 첫 답에 표식 파일을 만든다");
         let _ = std::fs::remove_file(&ready);
+    }
+
+    /// 오퍼레이터가 붙어 있지만 답하지 않는다 — 다른 사건이 하나도 없어도 요청 시한이 지나면 오류로 답한다
+    /// (고리가 「가장 가까운 시한」에 스스로 깨어나는지 본다).
+    #[test]
+    fn unanswered_request_times_out_without_any_other_event() {
+        let path = tmp_sock("timeout");
+        let listener = UnixListener::bind(&path).unwrap();
+        let (hold_tx, hold_rx) = channel::<()>();
+        std::thread::spawn(move || {
+            let (s, _) = listener.accept().unwrap();
+            // 읽지도 답하지도 않고 연결만 쥐고 있는다.
+            let _ = hold_rx.recv();
+            drop(s);
+        });
+        let (mut feed, stdin) = pipe();
+        let out = Sink::default();
+        let out2 = out.clone();
+        let l = link(&path);
+        let mut tuning = fast();
+        tuning.request_timeout = Duration::from_millis(150);
+        let h = std::thread::spawn(move || run_bridge(l, stdin, out2, std::io::sink(), tuning));
+        let started = Instant::now();
+        writeln!(feed, r#"{{"jsonrpc":"2.0","id":3,"method":"tools/call"}}"#).unwrap();
+        for _ in 0..300 {
+            if !out.lines().is_empty() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let waited = started.elapsed();
+        let lines = out.lines();
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert_eq!(lines[0]["id"], 3);
+        assert_eq!(lines[0]["error"]["code"], -32000);
+        assert!(
+            lines[0]["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("150ms 안에 답하지 않았다"),
+            "{lines:?}"
+        );
+        assert!(
+            waited >= Duration::from_millis(150),
+            "시한 전에 답했다: {waited:?}"
+        );
+        drop(feed);
+        h.join().unwrap();
+        let _ = hold_tx.send(());
     }
 
     #[test]
