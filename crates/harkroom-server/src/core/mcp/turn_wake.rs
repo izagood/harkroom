@@ -402,6 +402,7 @@ pub async fn answer(
         no_mentions: false,
         before_commit: None,
         service_call: false,
+        chain_depth: None,
     };
     let post = PostBody {
         body: a.reason.clone(),

@@ -368,6 +368,10 @@ pub(crate) struct Origin<'a> {
     /// 카드 고르기(`applyChatApproval`)·카드 닫기(`closeAsksByReply`)가 없다. 그래서 카드 갈래 TS 몫 판정과 [`ask_reply_close`] 를 끈다.
     /// 서비스 몫(부름·`thread_reply`·깨움 선점·위임 기한·위임 키)은 그대로다. 라우트 입력에서는 켜지 않는다.
     pub(crate) service_call: bool,
+    /// TS `chainDepth`(082) — 자동화 회차가 물려준 사슬 깊이. 있으면 이 글은 사람 이름 글이라도 사슬의 고리다: 부름 판정에
+    /// `max(스캔 깊이, chain_depth)` 와 `chain_bound` 를 넘기고 그 깊이를 `mention_depth` 로 저장한다(TS `postMessage` 와 같다).
+    /// 정체 홉·사슬 시작은 TS 처럼 스캔 깊이만 본다. 라우트 입력에서는 켜지 않는다.
+    pub(crate) chain_depth: Option<i32>,
 }
 
 /// TS `beforeCommit` 의 거절 — `{ status, code, message }`.
@@ -562,6 +566,7 @@ async fn resolve_post(
     body: &str,
     thread_root: Option<&str>,
     link: &Chain,
+    chain_depth: Option<i32>,
     principal: Option<&str>,
 ) -> Result<mention_calls::Resolved, sqlx::Error> {
     mention_calls::resolve(
@@ -571,8 +576,8 @@ async fn resolve_post(
             channel_id: channel,
             author_id: author,
             author_is_agent,
-            mention_depth: link.depth as i64,
-            chain_bound: false,
+            mention_depth: mention_depth(link.depth, chain_depth) as i64,
+            chain_bound: chain_depth.is_some(),
             chain_started_at_ms: link.started_ms,
             // TS 는 결과 발화면 사람 글에도 머리를 넘긴다(사람은 회신권 대상이 아니라 판정은 같다).
             reply_grant_thread_id: thread_root,
@@ -584,6 +589,11 @@ async fn resolve_post(
         },
     )
     .await
+}
+
+/// TS `chainBound ? Math.max(link.depth, chainDepth) : link.depth`.
+fn mention_depth(scan: i32, chain_depth: Option<i32>) -> i32 {
+    chain_depth.map_or(scan, |d| scan.max(d))
 }
 
 /// TS `noMentionCalls` — 본문은 그대로, 부름·meta 는 없다.
@@ -864,6 +874,7 @@ pub(crate) async fn post_tx(
             // TS `replyGrantThreadId: isResult ? threadRootId : null`.
             root.filter(|_| is_result),
             &link,
+            origin.chain_depth,
             principal.as_ref().map(|(p, _)| p.as_str()),
         )
         .await?
@@ -999,7 +1010,7 @@ pub(crate) async fn post_tx(
         .bind(kind)
         .bind(Value::Object(meta).to_string())
         .bind(input.also_in_channel)
-        .bind(link.depth)
+        .bind(mention_depth(link.depth, origin.chain_depth))
         .bind(cause_link_id)
         .bind(stall.stall_depth)
         .bind(link.started_ms.map(iso_ms))

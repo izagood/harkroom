@@ -1,5 +1,5 @@
 //! 자동화 sweep(S5.4) — TS `services/automations.ts` 의 `createAutomationSweeper`(`fireOneSchedule`·`deliverOne`·`refuseReason`·
-//! `pauseForRefusal`)를 옮긴다. **골격이다** — 아래 TODO 가 끝나기 전에는 `server_loop` 의 `automation` 주인을 `ts` 로 둔다
+//! `pauseForRefusal`)를 옮긴다. 아래 TODO 는 모두 끝났다 — 주인(`server_loop` 의 `automation`)을 `rust` 로 넘기는 것은 운영 판단이다
 //! (문지기 기본값이 `ts` 라 띄워도 돌지 않는다. 두 서버가 같은 회차를 보내는 일은 없다).
 //!
 //! TS 한 sweep(15초마다, 문지기 이름 `automation`, 프로세스 안 겹침은 `running` 깃발 = 여기선 tick 이 직렬):
@@ -21,7 +21,7 @@
 //! 3. `pauseForRefusal` = `update automation set enabled = false, next_at = null, paused_reason = 'post_refused:<code>',
 //!    consecutive_failures = consecutive_failures + 1, updated_at = now()` + `endAutomationMandatesTx(automation_off)`.
 //!
-//! 이 모듈이 하는 것: 2 의 잡기·삭제·만료·거절 판정·글 올리기(사슬 깊이 없는 회차)·`sent`/`skipped`/`failed(expired)` 기록·
+//! 이 모듈이 하는 것: 2 의 잡기·삭제·만료·거절 판정·글 올리기(사슬 깊이 있는 회차 포함)·`sent`/`skipped`/`failed(expired)` 기록·
 //! `consecutive_failures = 0`, 거절(`refuseReason`)·글 거부(`bad_thread`) 회차의 `failed / <code>` + 3 `pauseForRefusal`
 //! ([`pause_for_refusal`] — 자동화 멈춤 + [`end_automation_mandates_tx`] 로 위임장 끝내기·줄 회수, 같은 tx).
 //! TS 처럼 sweep 에서는 위임 카드 갱신(`refreshMandateCards`)을 하지 않는다. 비밀 칸(`ingress_token_hash`·`ingress_secret_enc`)은 읽지 않는다.
@@ -34,13 +34,23 @@
 //!   `pool.begin` 실패는 TS 에선 sweep 전체를 끝내지만 여기선 그 한 건만 넘긴다(다음 건도 같은 실패라 결과는 같다).
 //! - [x] 3 `pauseForRefusal` + `endAutomationMandatesTx` — [`pause_for_refusal`]·[`end_automation_mandates_tx`].
 //!   남은 차이: 위임장 `ended_at`·줄 `revoked_at` 이 TS 는 프로세스 시각(`new Date()`), 여기는 DB `now()`(tx 시작 시각)다.
-//!   `BadAttachment`(첨부 없음 — 닿지 않는다)·`ToTs`·`ChainLimit` 은 여전히 대기로 둔다.
-//! - [ ] `chain_depth` 가 있는 회차(에이전트가 돌린 회차, 082) — 글 경로 [`crate::core::msg_post::Origin`] 에 사슬 깊이 입력이 없다. 대기로 둔다.
-//! - [ ] Rust 글 경로가 TS 로 넘기는 본문([`crate::core::msg_post::ts_body`]·`Outcome::ToTs`)은 대기로 둔다(예약 글과 같다).
-//! - [ ] DB 테스트(예약 글 테스트처럼 TS 와 같은 결과인지).
+//! - [x] `chain_depth` 가 있는 회차(에이전트가 돌린 회차, 082) — [`Origin::chain_depth`] 로 넘긴다. 글 경로가 TS `postMessage` 처럼
+//!   `max(스캔 깊이, chain_depth)` 로 부름을 판정(`chain_bound`)하고 그 깊이를 저장한다.
+//! - [x] 본문 갈래(URL·글 승인 낱말) — TS 의 링크 미리보기(`queueLinkPreviewFetch`)·글 승인(`applyChatApproval`)·카드 닫기
+//!   (`closeAsksByReply`)는 **REST 라우트**(`routes/messageRoutes.ts`) 몫이고, TS sweeper 는 서비스 `postMessage` 를 바로 부르니
+//!   그 셋을 하지 않는다. 그래서 여기서도 본문을 거르지 않는다(옛 `ts_body` 보류는 TS 보다 넓은 과잉이었다). [`Origin::service_call`]
+//!   을 켜 라우트 몫 갈래를 끈다.
+//! - [x] DB 테스트 — `tests/automation_sweep.rs`(TS 와 같은 결과인지).
+//!
+//! 넘기지 못한 회차(G4): 이 sweep 은 주인이 `rust` 일 때만 돌므로, 여기서 대기로 되돌린 회차는 TS 도 보내지 않아 1시간 뒤
+//! `failed / expired` 로 조용히 끝났다. 이제 글 경로가 글을 못 만든 갈래(`ToTs`·`ChainLimit`·`BadAttachment`·`Rejected` — 자동화
+//! 회차에는 에이전트 주인의 상한 부름 갈래 말고는 닿지 않는다)는 그 자리에서 `failed / unsupported:<갈래>` 로 적는다(자동화는
+//! 멈추지 않는다 — 다음 회차는 본문·부름이 달라 나갈 수 있다). 일정 쪽 `Fired::Left`(chrono-tz 가 모르는 tz·읽을 수 없는 trigger)는
+//! 자동화 id 를 로그에 남긴다 — 저장 때 zod·`Intl` 이 거르므로 닿기 어렵고, 멈춤(`paused_reason`)으로 바꾸려면 화면 문구가 함께
+//! 필요해 이 모듈에서 정하지 않는다.
 use super::{GateResult, Side, run_gated};
 use crate::core::audience::audience_for;
-use crate::core::msg_post::{Origin, Outcome, PostBody, PostState, gate_sql, post_in_tx, ts_body};
+use crate::core::msg_post::{Origin, Outcome, PostBody, PostState, gate_sql, post_in_tx};
 use serde_json::{Map, Value, json};
 use sqlx::PgPool;
 use std::collections::HashMap;
@@ -188,8 +198,6 @@ pub enum Delivered {
     Sent(String),
     Skipped,
     Failed(String),
-    /// Rust 가 아직 맡지 않는 갈래(모듈 문서 TODO) — 되돌려 대기로 두었다.
-    Left,
 }
 
 /// TS `renderBody` — `{{ name }}` 을 `vars` 로 바꾸고, 모르는 이름은 그대로 둔다.
@@ -404,16 +412,7 @@ pub async fn deliver_one(
         tx.commit().await?;
         return Ok(Delivered::Failed(code.into()));
     }
-    if chain_depth.is_some() {
-        // TODO: 글 경로에 사슬 깊이 입력이 생기면 넘긴다.
-        tx.rollback().await?;
-        return Ok(Delivered::Left);
-    }
     let text = render_body(&body, &body_vars(&payload));
-    if ts_body(&text) {
-        tx.rollback().await?;
-        return Ok(Delivered::Left);
-    }
 
     let kind: Option<String> = sqlx::query_scalar("select kind from account where id = $1::uuid")
         .bind(&owner)
@@ -434,6 +433,9 @@ pub async fn deliver_one(
     meta.insert("automation".into(), auto);
     let origin = Origin {
         meta,
+        chain_depth,
+        // TS sweeper 는 서비스 `postMessage` 를 바로 부른다 — 라우트 몫(카드 고르기·카드 닫기)은 없다.
+        service_call: true,
         ..Origin::default()
     };
     let input = PostBody {
@@ -471,12 +473,16 @@ pub async fn deliver_one(
             tx.commit().await?;
             return Ok(Delivered::Failed("bad_thread".into()));
         }
-        // 첨부 실패(첨부 없음 — 닿지 않는다)·TS 몫·사슬 상한 — 대기로 둔다(모듈 문서 TODO).
-        _ => None,
+        // 글 경로가 글을 만들지 않은 갈래 — 주인이 `rust` 인 동안 TS 도 보내지 않으니 대기로 두면 1시간 뒤 `expired` 로
+        // 조용히 끝난다(G4). 그 자리에서 까닭을 적는다. post_in_tx 가 이미 되돌렸어도 이 tx 는 sweeper 것이다.
+        Outcome::ToTs => return unsupported(tx, &id, "to_ts").await,
+        Outcome::ChainLimit => return unsupported(tx, &id, "chain_limit").await,
+        Outcome::BadAttachment => return unsupported(tx, &id, "bad_attachment").await,
+        Outcome::Rejected(_) => return unsupported(tx, &id, "rejected").await,
     };
     let Some(msg) = msg else {
-        tx.rollback().await?;
-        return Ok(Delivered::Left);
+        // 글 행에서 id 를 읽지 못했다(일어나지 않는다).
+        return unsupported(tx, &id, "no_message_id").await;
     };
     finish(&mut tx, &id, "sent", None, Some(&msg)).await?;
     sqlx::query("update automation set consecutive_failures = 0 where id = $1::uuid")
@@ -485,6 +491,19 @@ pub async fn deliver_one(
         .await?;
     tx.commit().await?;
     Ok(Delivered::Sent(msg))
+}
+
+/// 글 경로가 글을 만들지 않은 회차를 `failed / unsupported:<갈래>` 로 닫는다(G4 — 모듈 문서).
+async fn unsupported(
+    mut tx: sqlx::Transaction<'static, sqlx::Postgres>,
+    id: &str,
+    why: &str,
+) -> Result<Delivered, sqlx::Error> {
+    let code = format!("unsupported:{why}");
+    eprintln!("loop automation: run {id} not posted ({code})");
+    finish(&mut tx, id, "failed", Some(&code), None).await?;
+    tx.commit().await?;
+    Ok(Delivered::Failed(code))
 }
 
 /// TS `EnqueueResult` 중 schedule 갈래가 닿는 것.
@@ -610,8 +629,8 @@ pub async fn enqueue_schedule_tx(
 pub enum Fired {
     None,
     Done(Enqueued),
-    /// Rust 가 계산할 수 없는 일정 — 되돌려 TS 몫으로 두었다.
-    Left,
+    /// Rust 가 계산할 수 없는 일정(자동화 id) — 되돌려 두었다(모듈 문서 G4).
+    Left(String),
 }
 
 /// TS `fireOneSchedule` — 시각이 된 schedule 하나를 회차로 만든다. 밀린 회차는 따라잡지 않는다.
@@ -642,7 +661,7 @@ pub async fn fire_one_schedule(
         crate::core::automation_time::iso(next_at_ms),
     ) else {
         tx.rollback().await?;
-        return Ok(Fired::Left);
+        return Ok(Fired::Left(id));
     };
     // 회차 키는 **예정 시각**이다 — 같은 회차를 두 프로세스가 집어도 하나만 남는다.
     let event_key = format!("schedule:{fired_iso}");
@@ -676,8 +695,10 @@ pub async fn sweep(pool: &PgPool, st: &PostState) -> Result<usize, sqlx::Error> 
     for _ in 0..SWEEP_BATCH_SIZE {
         match fire_one_schedule(pool, &mut skip_a, now_ms).await {
             Ok(Fired::None) => break,
-            Ok(Fired::Left) => {
-                eprintln!("loop automation: left a schedule for TS (owner should stay ts)")
+            Ok(Fired::Left(id)) => {
+                eprintln!(
+                    "loop automation: automation {id} has a schedule Rust cannot read (tz/trigger) — left as is"
+                )
             }
             Ok(Fired::Done(_)) => {}
             // TS 처럼 한 건 오류는 로그만 남기고 다음 건으로 간다(`'done'`).
@@ -690,9 +711,6 @@ pub async fn sweep(pool: &PgPool, st: &PostState) -> Result<usize, sqlx::Error> 
         match deliver_one(pool, st, &mut skip, now_ms()).await {
             Ok(Delivered::None) => break,
             Ok(Delivered::Sent(_)) => n += 1,
-            Ok(Delivered::Left) => {
-                eprintln!("loop automation: left a run for TS (owner should stay ts)")
-            }
             Ok(_) => {}
             Err(e) => eprintln!("loop automation: deliver failed: {e}"),
         }
