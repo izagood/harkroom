@@ -149,6 +149,12 @@ const DELEGATION_DEADLINE_GRANTS = [
   'usage on sequence event_outbox_id_seq',
 ];
 
+const HOOK_DEBOUNCE_GRANTS = [
+  'update (enabled, next_at, paused_reason, updated_at) on automation',
+  'insert (automation_id, event_key, trigger_kind, payload, not_before, initiated_by, cause_message_id, chain_depth) on automation_run',
+  'update (payload) on automation_run',
+];
+
 const THREAD_STATUS_GRANTS = [
   'insert, delete on message_reaction',
   'insert, update, delete on thread_status',
@@ -168,7 +174,7 @@ async function operatorWriteRole(db: { pool: pg.Pool; uri: string }, grants: rea
 }
 
 describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () => {
-  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention', 'mandate_idle', 'permission_expire', 'bg', 'bg_produce', 'outbox_prune', 'push_loop', 'turn_lease', 'inbox_list', 'decide_core_db', 'relay_live', 'turn_settle', 'turn_cancel', 'health', 'scheduled', 'stale', 'migrate', 'delegation_deadline', 'automation_grant', 'claim_seed', 'automation_sweep', 'thread_status']) {
+  for (const name of ['auth', 'perm', 'operator', 'loops', 'wake', 'outbox_listener', 'retention', 'mandate_idle', 'permission_expire', 'bg', 'bg_produce', 'outbox_prune', 'push_loop', 'turn_lease', 'inbox_list', 'decide_core_db', 'relay_live', 'turn_settle', 'turn_cancel', 'health', 'scheduled', 'stale', 'migrate', 'delegation_deadline', 'automation_grant', 'claim_seed', 'automation_sweep', 'hook_debounce', 'thread_status']) {
     it(`tests/${name}.rs`, async () => {
       const db = await startTestDb();
       try {
@@ -197,6 +203,8 @@ describe.skipIf(!ON)('Rust 앞단 DB 대조 시험 — 실제 스키마로', () 
         if (name === 'delegation_deadline') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, DELEGATION_DEADLINE_GRANTS);
         // 클레임 토큰 심기도 `CLAIM_SEED_PRIVILEGES` 만 가진 역할로.
         if (name === 'claim_seed') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, CLAIM_SEED_GRANTS);
+        // P5-3 — hook 디바운스 모으기도 hook 쓰기 권한(`automation_hooks::write_privileges`)만 가진 역할로.
+        if (name === 'hook_debounce') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, HOOK_DEBOUNCE_GRANTS);
         // P5 — 스레드 상태 감시도 `THREAD_STATUS_PRIVILEGES` 만 가진 역할로.
         if (name === 'thread_status') env.HARKROOM_TEST_WRITE_DATABASE_URL = await operatorWriteRole(db, THREAD_STATUS_GRANTS);
         const r = await cargo(['test', '--test', name, '--', '--nocapture'], env);
@@ -1598,6 +1606,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         ...OUTBOX_PRUNE_GRANTS.map((g) => `grant ${g} to ${rw}`),
         // S5.4 L1 — 위임 기한 스윕(`loops/delegation_deadline.rs::DELEGATION_DEADLINE_PRIVILEGES`). 없으면 「loop delegation.deadline off」.
         ...DELEGATION_DEADLINE_GRANTS.map((g) => `grant ${g} to ${rw}`),
+        // P5-3 — hook 디바운스 모으기(`automation_hooks.rs::DEBOUNCE_PRIVILEGES`). 없으면 hook 쓰기 길 전체가 TS 에 남는다.
+        `grant update (payload) on automation_run to ${rw}`,
         // P5 — 스레드 상태 감시(`loops/thread_status.rs::THREAD_STATUS_PRIVILEGES`). 없으면 「loop thread.status off」.
         ...THREAD_STATUS_GRANTS.map((g) => `grant ${g} to ${rw}`),
         // S5.3 C3b-3c — 권한 카드 거절(`decide_core::DENY_PRIVILEGES` + 잠금 함수 EXECUTE, 두 겹). 없으면 「permission deny core off」.
@@ -2770,6 +2780,33 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const [a, b] = [await mcpCall(tsUrl, agent.pat, 'inbox.read', args), await mcpCall(rsUrl4, agent.pat, 'inbox.read', args)];
         expect({ status: b.status, type: b.type, text: b.text }, name).toEqual({ status: a.status, type: a.type, text: a.text });
         expect(b.core, `${name} — 누가 답했나`).toBe(null);
+      }
+
+      // P6-1 — inbox.poll 빈 폴의 승인 안 된 종료 요청(TS `readAgentStop` → `ackAgentStop`). 전에는 Rust 가 TS 로 넘겼다 — 이제 Rust 가
+      // 수령을 찍고 요청 시각을 싣는다. 안 읽은 줄은 잠깐 읽음으로 돌려 두고(빈 폴) 끝나면 되돌린다.
+      const parked = (await db.pool.query<{ id: string }>(
+        `update inbox set read_at = now() where account_id = $1 and read_at is null returning id`, [agent.accountId])).rows.map((r) => r.id);
+      const stopAt = async () => (await db.pool.query<{ acked: boolean }>(
+        `select stop_acked_at is not null as acked from agent_config where account_id = $1`, [agent.accountId])).rows[0]!.acked;
+      const askStop = () => db.pool.query(
+        `update agent_config set stop_requested_at = '2026-01-02T03:04:05.678Z', stop_acked_at = null where account_id = $1`, [agent.accountId]);
+      try {
+        await askStop();
+        const tsStop = await mcpCall(tsUrl, agent.pat, 'inbox.poll', {});
+        expect(await stopAt(), 'TS 가 수령을 찍는다').toBe(true);
+        await askStop();
+        const rsStop = await mcpCall(rsUrl4, agent.pat, 'inbox.poll', {});
+        expect({ status: rsStop.status, type: rsStop.type, text: rsStop.text }, 'inbox.poll 승인 안 된 종료 요청').toEqual({ status: tsStop.status, type: tsStop.type, text: tsStop.text });
+        expect(rsStop.core, 'inbox.poll 종료 요청 — Rust 가 답한다').toBe('mcp');
+        expect(rsStop.text).toContain('2026-01-02T03:04:05.678Z');
+        expect(await stopAt(), 'Rust 가 수령을 찍는다').toBe(true);
+        // 이미 수령한 요청 — 다시 찍지 않고 같은 값을 싣는다.
+        const again = await mcpCall(rsUrl4, agent.pat, 'inbox.poll', {});
+        expect(again.core).toBe('mcp');
+        expect(again.text).toBe(rsStop.text);
+      } finally {
+        await db.pool.query(`update agent_config set stop_requested_at = null, stop_acked_at = null where account_id = $1`, [agent.accountId]);
+        if (parked.length) await db.pool.query(`update inbox set read_at = null where id = any($1::bigint[])`, [parked]);
       }
 
       // S5.3 C4b ④-a(2/2) — bg.claim. 켜짐은 앞단 env(P2), 값이 없으면 TS admit 의 `bgEnabled` 로 안다(꺼짐 → TS 가 `disabled`). 러너가 아닌 꼴(PAT·cause·턴 id)은

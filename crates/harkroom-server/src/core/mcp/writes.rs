@@ -151,6 +151,8 @@ pub struct McpWrites {
     pub runner_version: Option<PgPool>,
     /// `inbox.poll` 의 `lease` 임대 — `inbox_poll::INBOX_LEASE_PRIVILEGES`. 없으면 `lease` 가 온 폴은 TS.
     pub inbox_lease: Option<PgPool>,
+    /// `inbox.poll` 의 옛 러너 접기·종료 요청 수령(P6-1) — `inbox_poll::INBOX_POLL_WRITE_PRIVILEGES`. 없으면 그 둘은 TS.
+    pub inbox_poll_write: Option<PgPool>,
     /// `inbox.poll` 긴 폴의 깨움 — 코어 이벤트 허브(outbox LISTEN 이 채운다). 없으면 `timeoutMs > 0` 폴은 TS.
     pub inbox_hub: Option<crate::core::events::Hub>,
     /// `grant.delegate`(S5.4 MCP 6) — `grant_delegate::GRANT_DELEGATE_PRIVILEGES`.
@@ -228,7 +230,8 @@ pub async fn answer(
             .get("timeoutMs")
             .is_some_and(|v| v.as_f64() != Some(0.0));
         let leasing = args.get("lease").is_some();
-        if versioned || waiting || leasing {
+        // 접기·수령 풀이 있으면 빈 즉답 폴도 여기서 — `tools::answer` 는 쓰지 않는다.
+        if versioned || waiting || leasing || writes.inbox_poll_write.is_some() {
             let write = match (versioned, writes.runner_version.as_ref()) {
                 (false, _) => None,
                 (true, Some(w)) => Some(w),
@@ -244,7 +247,10 @@ pub async fn answer(
                 (true, Some(w)) => Some(w),
                 (true, None) => return Some(None),
             };
-            return Some(super::inbox_poll::answer_full(read, write, hub, lease, me, args).await);
+            let fold = writes.inbox_poll_write.as_ref();
+            return Some(
+                super::inbox_poll::answer_full(read, write, hub, lease, fold, me, args).await,
+            );
         }
     }
     if !SERVED.contains(&tool) {
