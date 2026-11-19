@@ -128,10 +128,7 @@ pub fn to_workspace_event(v: &Value) -> bool {
             return false;
         }
     }
-    if t.bus_account.contains(ty) && !o.get("accountId").is_some_and(Value::is_string) {
-        return false;
-    }
-    true
+    !t.bus_account.contains(ty) || o.get("accountId").is_some_and(Value::is_string)
 }
 
 #[derive(Clone)]

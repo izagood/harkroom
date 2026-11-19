@@ -182,10 +182,7 @@ pub(crate) fn safe_path_plain(path: &str) -> Option<bool> {
         return Some(false);
     }
     let p = path.split('?').next().unwrap_or("");
-    if p.contains(';') || p.split('/').any(|s| s == "." || s == "..") {
-        return Some(false);
-    }
-    Some(true)
+    Some(!p.contains(';') && !p.split('/').any(|s| s == "." || s == ".."))
 }
 
 /// TS `pathCovered` 중 `%` 없는 경로(호출하는 쪽이 보장한다).
