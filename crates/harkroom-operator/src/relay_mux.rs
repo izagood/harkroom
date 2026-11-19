@@ -125,6 +125,33 @@ pub fn wrap_runner_frame(runner_id: &str, f: &Value) -> Option<OperatorToServerF
     })
 }
 
+/// 러너의 `output`·`replay` 프레임을 **소유한 채로** 서버 채널 프레임으로 옮긴다 — `wrap_runner_frame` 의 두 갈래와
+/// 같은 판정(`sessionId`·`data` 가 문자열이어야 한다)이고, 본문(`data`)을 복사하지 않는다.
+fn wrap_pty_frame(runner_id: &str, f: Value, replay: bool) -> Option<OperatorToServerFrame> {
+    let Value::Object(mut m) = f else {
+        return None;
+    };
+    let (Some(Value::String(session_id)), Some(Value::String(bytes))) =
+        (m.remove("sessionId"), m.remove("data"))
+    else {
+        return None;
+    };
+    let runner_id = runner_id.to_string();
+    Some(if replay {
+        OperatorToServerFrame::PtyReplay {
+            runner_id,
+            session_id,
+            bytes,
+        }
+    } else {
+        OperatorToServerFrame::PtyOutput {
+            runner_id,
+            session_id,
+            bytes,
+        }
+    })
+}
+
 /// 서버 채널 프레임 → (runnerId, 러너 프레임). 오퍼레이터 자신의 말이면 `None`(TS `unwrapServerFrame`).
 pub fn unwrap_server_frame(f: &ServerToOperatorFrame) -> Option<(String, Value)> {
     use ServerToOperatorFrame as S;
@@ -239,8 +266,13 @@ impl RelayMux {
     }
 
     fn track(&self, runner_id: &str, frame: &Value) {
+        let ty = frame.get("type").and_then(Value::as_str);
+        // 세션 목록을 바꾸는 프레임만 잠근다 — 나머지(`interactive.*`·`attention.required`·`local.input`)는 볼 것이 없다.
+        if !matches!(ty, Some("announce" | "session.started" | "session.ended")) {
+            return;
+        }
         let mut known = lock(&self.known);
-        match frame.get("type").and_then(Value::as_str) {
+        match ty {
             Some("announce") => {
                 let sessions = frame
                     .get("sessions")
@@ -279,7 +311,19 @@ impl RelayMux {
     }
 
     pub fn on_runner_frame(&self, runner_id: &str, incoming: Value) {
-        let frame = if incoming.get("type").and_then(Value::as_str) == Some("announce") {
+        let ty = incoming.get("type").and_then(Value::as_str);
+        // 터미널 출력·재생은 가장 잦고 가장 크다 — 본문을 복사하지 않고 옮겨 싣는다. 세션 목록과 무관하니 잠그지도 않는다.
+        if let Some(replay) = match ty {
+            Some("output") => Some(false),
+            Some("replay") => Some(true),
+            _ => None,
+        } {
+            if let Some(wrapped) = wrap_pty_frame(runner_id, incoming, replay) {
+                self.deps.send_to_server(&wrapped);
+            }
+            return;
+        }
+        let frame = if ty == Some("announce") {
             self.own_caps(&incoming)
         } else {
             incoming
@@ -294,9 +338,17 @@ impl RelayMux {
 
     /// 러너에게 갔으면 true. 오퍼레이터의 말이거나 러너가 없으면 false.
     pub fn on_server_frame(&self, frame: &ServerToOperatorFrame) -> bool {
-        let Some((runner_id, inner)) = unwrap_server_frame(frame) else {
-            return false;
-        };
+        self.route_server_frame(frame).unwrap_or(false)
+    }
+
+    /// `on_server_frame` 과 같은 일을 하되 「러너로 가는 말이 아니다」(`None`)와 「러너로 가는 말인데 못 보냈다」
+    /// (`Some(false)`)를 가른다 — 부르는 쪽이 그것을 알려고 프레임을 미리 한 번 더 풀지 않게.
+    pub fn route_server_frame(&self, frame: &ServerToOperatorFrame) -> Option<bool> {
+        let (runner_id, inner) = unwrap_server_frame(frame)?;
+        Some(self.deliver_to_runner(runner_id, inner))
+    }
+
+    fn deliver_to_runner(&self, runner_id: String, inner: Value) -> bool {
         if inner["type"] == "interactive.open"
             && let Some(why) = self.deps.refuse_interactive(&runner_id)
         {
@@ -440,12 +492,58 @@ mod tests {
         let (f, m) = mux();
         m.on_runner_frame("r1", json!({"type":"output","sessionId":"s1"})); // data 없음
         m.on_runner_frame("r1", json!({"type":"output","sessionId":1,"data":"x"}));
+        m.on_runner_frame("r1", json!({"type":"replay","sessionId":"s1","data":1}));
+        m.on_runner_frame("r1", json!({"type":"replay","data":"x"}));
         m.on_runner_frame("r1", json!({"type":"announce","sessions":"no"}));
         m.on_runner_frame("r1", json!({"type":"session.updated","session":sess("s1")}));
         m.on_runner_frame("r1", json!({"type":"hello"}));
         m.on_runner_frame("r1", json!({"nope":1}));
         assert!(lock(&f.to_server).is_empty());
         assert!(m.sessions().is_empty());
+    }
+
+    /// 출력·재생의 빠른 길은 `wrap_runner_frame` 과 같은 프레임을 낸다(본문을 옮길 뿐이다).
+    #[test]
+    fn pty_frames_take_the_same_shape_as_wrap_runner_frame() {
+        let (f, m) = mux();
+        let frames = [
+            json!({"type":"output","sessionId":"s1","data":"aGk="}),
+            json!({"type":"replay","sessionId":"s1","data":"cmVwbGF5"}),
+            json!({"type":"output","sessionId":"s1","data":"","extra":true}),
+        ];
+        for fr in &frames {
+            m.on_runner_frame("r1", fr.clone());
+        }
+        let want: Vec<Value> = frames
+            .iter()
+            .map(|fr| serde_json::to_value(wrap_runner_frame("r1", fr).unwrap()).unwrap())
+            .collect();
+        assert_eq!(*lock(&f.to_server), want);
+        assert_eq!(want[1]["type"], "pty.replay");
+        // 세션 목록은 건드리지 않는다.
+        assert!(m.sessions().is_empty());
+    }
+
+    /// 「러너로 가는 말이 아니다」와 「러너가 없어 버렸다」를 가른다.
+    #[test]
+    fn route_server_frame_tells_not_mine_from_no_runner() {
+        let (f, m) = mux();
+        let input = |r: &str| ServerToOperatorFrame::PtyInput {
+            runner_id: r.into(),
+            session_id: "s1".into(),
+            bytes: "eA==".into(),
+        };
+        assert_eq!(m.route_server_frame(&input("r1")), Some(true));
+        assert_eq!(m.route_server_frame(&input("r9")), Some(false));
+        assert_eq!(
+            m.route_server_frame(&ServerToOperatorFrame::RunnerKill {
+                runner_id: "r1".into()
+            }),
+            None
+        );
+        // 한 번 풀고 한 번만 보낸다 · 없는 러너는 한 번만 기록한다.
+        assert_eq!(lock(&f.to_runner).len(), 1);
+        assert_eq!(lock(&f.logs).len(), 1);
     }
 
     #[test]
