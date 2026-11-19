@@ -9649,7 +9649,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['P3c: 이미 답한 카드 → 글 답으로 닫지 않음', withAsk({ to: { kind: 'human' }, answeredWith: 'a', answeredBy: member.accountId }), (r) => ({ body: '2번', threadRootId: r }), A],
           ['P3c: 카드 2장 → 안내 줄', withTwoAsks, (r) => ({ body: '2번', threadRootId: r }), A],
           ['P3c: T1 링크 + 번호(다른 스레드)', withAskCard({ to: { kind: 'human' }, irreversible: true }), (c) => ({ body: `harkroom://message/${c} 2번` }), A],
-          ['P3c: T1 링크 + 맞지 않는 이름 → 거절 줄', withAskCard({ to: { kind: 'human' } }), (c) => ({ body: `harkroom://message/${c} C 로` }), A],
+          // 이름 고르기는 explicit 이 아니라 안 맞으면 조용히 넘어간다(TS `!matched.ok && !explicit`) — 거절 줄은 없는 번호로 본다.
+          ['P3c: T1 링크 + 맞지 않는 이름 → 조용히', withAskCard({ to: { kind: 'human' } }), (c) => ({ body: `harkroom://message/${c} C 로` }), A],
+          ['P3c: T1 링크 + 없는 번호 → 거절 줄', withAskCard({ to: { kind: 'human' } }), (c) => ({ body: `harkroom://message/${c} 3번` }), A],
           // 물어본 에이전트(BOT2)를 부르며 고르면 그 부름으로 이미 깨어난다 — 답 깨움(ask_answered)을 또 넣지 않는다(`skipWakeIfInboxFor`).
           ['P3c: 물어본 에이전트를 부르며 고름 → 깨움 한 번', withAsk({ to: { kind: 'human' } }), (r) => ({ body: '@bot2 A 로', threadRootId: r }), A],
           ['DM 최상위 → 상대에게 dm', async () => '', () => ({ body: '안녕' }), A, undefined, dmMem],
@@ -10017,7 +10019,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(p3('P3c: 이미 답한 카드 → 글 답으로 닫지 않음').asks[0]!.answered).toBe('a');
         expect(p3('P3c: 카드 2장 → 안내 줄').lines.map((l) => l.ca.candidates?.length)).toEqual([2]);
         expect(p3('P3c: T1 링크 + 번호(다른 스레드)').linked).toEqual([{ answered: 'b', via: 'chat', reason: null, inbox: ['BOT2:ask_answered'] }]);
-        expect(p3('P3c: T1 링크 + 맞지 않는 이름 → 거절 줄').lines.length).toBe(1);
+        expect(p3('P3c: T1 링크 + 맞지 않는 이름 → 조용히').lines).toEqual([]);
+        expect(p3('P3c: T1 링크 + 맞지 않는 이름 → 조용히').linked[0]!.answered).toBeNull();
+        expect(p3('P3c: T1 링크 + 없는 번호 → 거절 줄').lines.map((l) => l.ca.reason)).toEqual(['askNoMatch']);
         const once = p3('P3c: 물어본 에이전트를 부르며 고름 → 깨움 한 번');
         expect(once.asks[0]).toMatchObject({ answered: 'a', via: 'chat', inbox: [] });
         expect(once.inbox).toEqual([{ who: 'BOT2', reason: 'mention' }]);
