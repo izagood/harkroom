@@ -6,7 +6,7 @@
 //! 2. 잡은 채로 `server_loop` 에서 주인을 읽는다(줄이 없으면 `ts`). 내가 주인이 아니면 건너뛴다.
 //! 3. 주인이면 sweep 을 돌리고, 끝나면(실패해도) 같은 연결에서 잠금을 푼다.
 //!
-//! class·키·순서가 TS 와 같아야 겹침이 0 이다. 옮긴 루프: [`wake`](C5b) · [`retention`](C5c) · [`mandate_idle`](C5c-2a) · [`permission_expire`](C5c-2b) · [`outbox_prune`](C5c-4) · [`delegation_deadline`](S5.4 L1).
+//! class·키·순서가 TS 와 같아야 겹침이 0 이다. 옮긴 루프: [`wake`](C5b) · [`retention`](C5c) · [`mandate_idle`](C5c-2a) · [`permission_expire`](C5c-2b) · [`outbox_prune`](C5c-4) · [`delegation_deadline`](S5.4 L1) · [`projection`](decision 4).
 pub mod automation;
 pub mod bg;
 pub mod bg_produce;
@@ -31,7 +31,7 @@ use std::future::Future;
 pub const LOOP_LOCK_CLASS: i32 = 0x4c4f_4f50;
 
 /// 루프 이름 — TS `LOOP_NAMES` 와 같아야 한다(`server_loop.name` 의 키).
-pub const LOOP_NAMES: [&str; 14] = [
+pub const LOOP_NAMES: [&str; 15] = [
     "wake",
     "delegation.deadline",
     "automation",
@@ -47,6 +47,8 @@ pub const LOOP_NAMES: [&str; 14] = [
     // 이벤트로 도는 감시(P5).
     "thread.status",
     "thread.plan",
+    // avcs 투영(decision 4, `loops::projection`).
+    "projection",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

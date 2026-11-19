@@ -37,6 +37,8 @@ export const LOOP_NAMES = [
   'permission.expire', 'mandate.idle', 'bg', 'retention', 'stale', 'bg.produce', 'outbox.prune',
   // 이벤트로 도는 감시(P5) — tick 이 없어 `runGated` 대신 [`loopOwner`] 로 주인만 본다.
   'thread.status', 'thread.plan',
+  // avcs 투영(decision 4) — 사이클 하나가 저장소마다 long-poll 이라 tick 이 길다.
+  'projection',
 ] as const;
 export type LoopName = typeof LOOP_NAMES[number];
 
