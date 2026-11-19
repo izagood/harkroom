@@ -6,10 +6,10 @@
 //!   400 → 지우지 않은 에이전트인가 404) → zod 본문 400 → 지금 사진 id 둘 읽기 → `null` 이면 지우기 →
 //!   업로드 찾기 404 `not_found` → 판정 400 → 원본 찾기 404 `source_not_found` → 원본 판정 400 → 걸기 + `avatar.changed`
 //!   (outbox) → 옛 사진 정리(행 + 파일, 실패는 삼킨다).
-//! - **PNG·JPEG 은 여기서 잰다**(`image` 크레이트 헤더 읽기 — sharp `metadata()` 처럼 픽셀은 풀지 않는다). 가로·세로를
-//!   상한(`AVATAR_PIXEL_LIMITS`)과 견주고, 헤더를 못 읽으면 `not_an_image`. PNG·JPEG 은 libvips 도 한 장으로 읽는다.
-//! - **GIF·WebP·AVIF 는 아직 TS 에 넘긴다** — 장 수·AVIF 헤더 판정에 그 디코더가 필요하다(이 서버는 png·jpeg 만 넣는다).
-//!   넘기기 전까지는 읽기만 했으므로 TS 가 처음부터 다시 해도 결과가 같다.
+//! - **래스터는 전부 여기서 잰다** — 픽셀은 풀지 않는다(sharp `metadata()` 와 같은 쓰임). PNG·JPEG 은 `image` 크레이트 헤더
+//!   읽기(libvips 처럼 한 장), GIF·WebP·AVIF 는 [`super::raster_probe`](컨테이너 구조만)로 한 장의 가로·세로와 장 수를 읽어
+//!   `width * pageHeight * pages` 를 상한(`AVATAR_PIXEL_LIMITS`)과 견준다. 헤더를 못 읽으면 `not_an_image`.
+//!   AVIF 장 수는 1로 본다(libheif 는 최상위 그림 수 — TS 와 다를 수 있는 유일한 자리).
 //! - TS 는 `emitEvent` 를 커밋 뒤에 따로 내지만 여기서는 걸기와 같은 트랜잭션의 outbox 줄이다(다른 쓰기 코어와 같다).
 use super::attachment_store::LocalStorage;
 use super::relay_routes::{Verdict, check_owner_or_admin};
@@ -18,7 +18,7 @@ use crate::directory::{internal, json_err, json_ok};
 use crate::proxy::Upstream;
 use crate::write::{BODY_LIMIT, Body};
 use axum::body::{Bytes, to_bytes};
-use axum::extract::{ConnectInfo, FromRequestParts, Path, Request, State};
+use axum::extract::{FromRequestParts, Path, Request, State};
 use axum::http::StatusCode;
 use axum::http::request::Parts;
 use axum::response::Response;
@@ -26,7 +26,6 @@ use regex::Regex;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use std::io::Read;
-use std::net::SocketAddr;
 use std::sync::{Arc, LazyLock};
 
 /// 쓰기 풀이 쓰는 권한. 정리 DELETE 의 하위 질의가 읽는 칸까지 적는다.
@@ -173,12 +172,10 @@ pub fn looks_like_svg(bytes: &[u8]) -> bool {
         && !SVG_UNSAFE.is_match(&String::from_utf8_lossy(bytes).to_ascii_lowercase())
 }
 
-/// 판정 결과. `Image` 는 받아 준 타입(SVG·PNG·JPEG). `Raster` 는 TS(sharp) 에 넘긴다(GIF·WebP·AVIF — 장 수를
-/// 재려면 그 디코더가 필요한데, 이 서버는 PNG·JPEG 디코더만 넣는다).
+/// 판정 결과. `Image` 는 받아 준 타입(SVG·PNG·JPEG·GIF·WebP·AVIF).
 #[derive(Debug, PartialEq)]
 pub enum Detected {
     Image(&'static str),
-    Raster,
     Refused(&'static str, String),
 }
 
@@ -201,22 +198,31 @@ impl Purpose {
 /// 크기를 재려고 올리는 바이트의 상한(`DIMENSION_READ_MAX_BYTES`).
 const DIMENSION_READ_MAX_BYTES: usize = 64 * 1024 * 1024;
 
-/// `checkRasterDimensions`(PNG·JPEG) — 헤더만 읽어 가로·세로를 상한과 견준다. 픽셀은 풀지 않는다.
-/// PNG·JPEG 은 libvips 가 한 장(pages=1)으로 읽는다(APNG 의 뒤 장은 libvips 가 보지 않는다).
+/// `checkRasterDimensions` — 헤더만 읽어 가로·세로·장 수를 상한과 견준다. 픽셀은 풀지 않는다.
+/// PNG·JPEG 은 `image` 크레이트 헤더 읽기, libvips 처럼 한 장(pages=1)으로 본다(APNG 의 뒤 장은 libvips 가 보지 않는다).
+/// GIF·WebP·AVIF 는 [`super::raster_probe`](컨테이너 구조만 읽는다) — 한 장의 가로·세로와 장 수.
 /// 헤더를 못 읽으면 `not_an_image`(깨진 파일).
 pub fn check_raster_dimensions(bytes: &[u8], mime: &str, purpose: Purpose) -> Option<Detected> {
     let (max_side, max_pixels) = purpose.limits();
-    let format = match mime {
-        "image/png" => image::ImageFormat::Png,
-        "image/jpeg" => image::ImageFormat::Jpeg,
-        _ => return Some(not_an_image()),
+    let (w, h, pages) = match mime {
+        "image/png" | "image/jpeg" => {
+            let format = if mime == "image/png" {
+                image::ImageFormat::Png
+            } else {
+                image::ImageFormat::Jpeg
+            };
+            let dims = image::ImageReader::with_format(std::io::Cursor::new(bytes), format)
+                .into_dimensions();
+            let Ok((w, h)) = dims else {
+                return Some(not_an_image());
+            };
+            (u64::from(w), u64::from(h), 1)
+        }
+        _ => match super::raster_probe::probe(mime, bytes) {
+            Some(p) => (p.width, p.height, p.pages),
+            None => return Some(not_an_image()),
+        },
     };
-    let dims =
-        image::ImageReader::with_format(std::io::Cursor::new(bytes), format).into_dimensions();
-    let Ok((w, h)) = dims else {
-        return Some(not_an_image());
-    };
-    let (w, h) = (u64::from(w), u64::from(h));
     let too_large = |detail: String| {
         Some(Detected::Refused(
             "image_dimensions_too_large",
@@ -226,8 +232,13 @@ pub fn check_raster_dimensions(bytes: &[u8], mime: &str, purpose: Purpose) -> Op
     if w == 0 || h == 0 {
         return too_large("of unknown size".into());
     }
-    if w > max_side || h > max_side || w * h > max_pixels {
-        return too_large(format!("{w}x{h}"));
+    if w > max_side || h > max_side || w.saturating_mul(h).saturating_mul(pages) > max_pixels {
+        let frames = if pages > 1 {
+            format!(" x {pages} frames")
+        } else {
+            String::new()
+        };
+        return too_large(format!("{w}x{h}{frames}"));
     }
     None
 }
@@ -242,10 +253,7 @@ fn not_an_image() -> Detected {
 /// `detectAvatarType` 에서 래스터 상한 판정을 뺀 것 — 바이트(앞 `want`)와 행의 크기로 정한다.
 pub fn detect(bytes: &[u8], size_bytes: i64) -> Detected {
     if let Some(t) = sniff_image_type(bytes) {
-        return match t {
-            "image/png" | "image/jpeg" => Detected::Image(t),
-            _ => Detected::Raster,
-        };
+        return Detected::Image(t);
     }
     if size_bytes > SVG_MAX_BYTES {
         return if starts_like_svg(bytes) {
@@ -291,7 +299,10 @@ async fn detect_upload(
     };
     let bytes = read_head(&st.storage, key, want).await?;
     let detected = detect(&bytes, size);
-    let Detected::Image(t @ ("image/png" | "image/jpeg")) = detected else {
+    let Detected::Image(
+        t @ ("image/png" | "image/jpeg" | "image/gif" | "image/webp" | "image/avif"),
+    ) = detected
+    else {
         return Ok(detected);
     };
     let all = read_head(
@@ -455,13 +466,8 @@ fn internal_msg(what: &str) -> Response {
     )
 }
 
-async fn to_ts(up: Upstream, peer: SocketAddr, parts: Parts, bytes: Bytes) -> Response {
-    super::msg_post::to_ts(up, peer, parts, bytes).await
-}
-
 enum Step {
     Done(Response),
-    ToTs,
 }
 
 /// `applyAvatar` — 대상 계정과 업로더(요청자)만 다르다.
@@ -512,7 +518,6 @@ async fn apply(st: &AvatarWriteState, target: &str, uploader: &str, body: &Body)
     let found_type =
         match detect_upload(st, &found_key, i64::from(found_size), Purpose::Avatar).await {
             Ok(Detected::Image(t)) => t,
-            Ok(Detected::Raster) => return Step::ToTs,
             Ok(Detected::Refused(code, msg)) => {
                 return Step::Done(json_err(StatusCode::BAD_REQUEST, code, &msg));
             }
@@ -547,7 +552,6 @@ async fn apply(st: &AvatarWriteState, target: &str, uploader: &str, body: &Body)
         let orig_type =
             match detect_upload(st, &orig_key, i64::from(orig_size), Purpose::Original).await {
                 Ok(Detected::Image(t)) => t,
-                Ok(Detected::Raster) => return Step::ToTs,
                 Ok(Detected::Refused(code, msg)) => {
                     return Step::Done(json_err(StatusCode::BAD_REQUEST, code, &msg));
                 }
@@ -612,29 +616,22 @@ async fn read(req: Request) -> Result<(Parts, Bytes, Body, Account), Response> {
 }
 
 /// `PUT /accounts/me/avatar`.
-pub async fn put_me(
-    State(st): State<Arc<AvatarWriteState>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    req: Request,
-) -> Response {
-    let (parts, bytes, body, me) = match read(req).await {
+pub async fn put_me(State(st): State<Arc<AvatarWriteState>>, req: Request) -> Response {
+    let (_, _, body, me) = match read(req).await {
         Ok(v) => v,
         Err(r) => return r,
     };
-    match apply(&st, &me.id, &me.id, &body).await {
-        Step::Done(r) => r,
-        Step::ToTs => to_ts(st.up.clone(), peer, parts, bytes).await,
-    }
+    let Step::Done(r) = apply(&st, &me.id, &me.id, &body).await;
+    r
 }
 
 /// `PUT /accounts/agents/{id}/avatar`.
 pub async fn put_agent(
     State(st): State<Arc<AvatarWriteState>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Path(id): Path<String>,
     req: Request,
 ) -> Response {
-    let (parts, bytes, body, me) = match read(req).await {
+    let (_, _, body, me) = match read(req).await {
         Ok(v) => v,
         Err(r) => return r,
     };
@@ -659,10 +656,8 @@ pub async fn put_agent(
     if agent.is_none() {
         return json_err(StatusCode::NOT_FOUND, "not_found", "no such agent");
     }
-    match apply(&st, &id, &me.id, &body).await {
-        Step::Done(r) => r,
-        Step::ToTs => to_ts(st.up.clone(), peer, parts, bytes).await,
-    }
+    let Step::Done(r) = apply(&st, &id, &me.id, &body).await;
+    r
 }
 
 const ICON_ID: &str = "select icon_attachment_id::text from workspace_profile where id = true";
@@ -682,11 +677,7 @@ fn parse_icon_body(body: &Body) -> Option<Option<String>> {
 
 /// `PUT /settings/workspace-icon`(TS `workspaceRoutes.ts`) — admin 만. 요청자 자신의 붙지 않은 업로드를 판정(원본 상한)해
 /// 걸거나 null 로 지우고, 바뀐 옛 아이콘을 정리한 뒤 `workspace.icon.changed`·감사 `workspace.icon.updated`.
-pub async fn put_workspace_icon(
-    State(st): State<Arc<AvatarWriteState>>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    req: Request,
-) -> Response {
+pub async fn put_workspace_icon(State(st): State<Arc<AvatarWriteState>>, req: Request) -> Response {
     let (mut parts, body) = req.into_parts();
     let bytes = match to_bytes(body, BODY_LIMIT).await {
         Ok(b) => b,
@@ -733,7 +724,6 @@ pub async fn put_workspace_icon(
             };
             match detect_upload(&st, &found_key, i64::from(found_size), Purpose::Original).await {
                 Ok(Detected::Image(t)) => Some((found_id, t)),
-                Ok(Detected::Raster) => return to_ts(st.up.clone(), peer, parts, bytes).await,
                 Ok(Detected::Refused(code, msg)) => {
                     return json_err(StatusCode::BAD_REQUEST, code, &msg);
                 }
@@ -888,7 +878,7 @@ mod tests {
 
     #[test]
     fn detect_branches() {
-        assert_eq!(detect(b"GIF89a______", 12), Detected::Raster);
+        assert_eq!(detect(b"GIF89a______", 12), Detected::Image("image/gif"));
         assert_eq!(detect(b"<svg/>", 6), Detected::Image("image/svg+xml"));
         assert_eq!(
             detect(b"\xff\xd8\xff\xe0________", 12),
@@ -983,8 +973,75 @@ mod tests {
             Some(Detected::Refused("not_an_image", _))
         ));
 
-        // 움직이는 GIF(장 수 판정)는 아직 TS 다.
-        assert_eq!(detect(b"GIF89a\x01\0\x01\0____", 16), Detected::Raster);
+        // GIF·WebP·AVIF 도 여기서 잰다 — 장 수까지 곱해 픽셀 상한과 견준다(TS `width * pageHeight * pages`).
+        let mut gif = b"GIF89a".to_vec();
+        gif.extend(4096u16.to_le_bytes());
+        gif.extend(4096u16.to_le_bytes());
+        gif.extend([0, 0, 0]);
+        for _ in 0..2 {
+            gif.extend([0x2C, 0, 0, 0, 0, 0, 0x10, 0, 0x10, 0, 2, 2, 0x4C, 0x01, 0]);
+        }
+        gif.push(0x3B);
+        assert!(matches!(
+            check_raster_dimensions(&gif, "image/gif", Purpose::Avatar),
+            Some(Detected::Refused("image_dimensions_too_large", m)) if m.starts_with("image is 4096x4096 x 2 frames;")
+        ));
+        assert_eq!(
+            check_raster_dimensions(&gif, "image/gif", Purpose::Original),
+            None
+        );
+        // 화면 1x1 이어도 장이 화면 밖으로 크면 디코더는 화면을 키운다 — 넓힌 크기로 잰다.
+        let gif_frame = |left: u16, top: u16, w: u16, h: u16, second: Option<(u16, u16)>| {
+            let mut v = b"GIF89a".to_vec();
+            v.extend([1, 0, 1, 0, 0, 0, 0]);
+            let mut frame = |l: u16, t: u16, w: u16, h: u16| {
+                v.push(0x2C);
+                for n in [l, t, w, h] {
+                    v.extend(n.to_le_bytes());
+                }
+                v.extend([0, 2, 2, 0x4C, 0x01, 0]);
+            };
+            frame(left, top, w, h);
+            if let Some((w2, h2)) = second {
+                frame(0, 0, w2, h2);
+            }
+            v.push(0x3B);
+            v
+        };
+        for (g, want) in [
+            (gif_frame(0, 0, 5000, 5000, None), "image is 5000x5000;"),
+            (gif_frame(5000, 5000, 10, 10, None), "image is 5010x5010;"),
+            (
+                gif_frame(0, 0, 1, 1, Some((5000, 5000))),
+                "image is 5000x5000 x 2 frames;",
+            ),
+        ] {
+            assert!(
+                matches!(
+                    check_raster_dimensions(&g, "image/gif", Purpose::Avatar),
+                    Some(Detected::Refused("image_dimensions_too_large", m)) if m.starts_with(want)
+                ),
+                "{want}"
+            );
+        }
+        // 첫 장 3000x3000 은 넓힌 크기(sharp 값과 같음)로 재지만 아바타 상한(4096²) 안이다.
+        assert_eq!(
+            super::super::raster_probe::probe("image/gif", &gif_frame(0, 0, 3000, 3000, None))
+                .map(|p| (p.width, p.height)),
+            Some((3000, 3000))
+        );
+        assert_eq!(
+            check_raster_dimensions(
+                &gif_frame(0, 0, 5000, 5000, None),
+                "image/gif",
+                Purpose::Original
+            ),
+            None
+        );
+        assert!(matches!(
+            check_raster_dimensions(b"GIF89a\x01\0\x01\0____", "image/gif", Purpose::Avatar),
+            Some(Detected::Refused("not_an_image", _))
+        ));
     }
 
     #[test]
