@@ -2,7 +2,8 @@
 //!
 //! 옮기는 것은 **순서와 갈림**이다:
 //! 1. 이 턴은 이제 사람을 기다린다(`awaiting_human`) — 정지 시계를 재지 않는다.
-//! 2. 턴 시작 관문이면 계정 표식을 세운다(다음 배정부터 맨 뒤).
+//! 2. 턴 시작 관문이면 계정 표식을 세운다(다음 배정부터 맨 뒤). **확인 창이 보인 관문만이다** — 주입 미확인
+//!    (`AttentionKind::Unconfirmed`, 화면이 입력칸 그대로)은 표식·원장(하네스 접기)을 건드리지 않고 통지 코드도 다르다.
 //! 3. **스레드에 남기는 것은 원장보다 앞이다** — 관문 통지는 턴마다 한 번, 원장과 무관하게 남긴다.
 //!    통지 본문은 [`gate_fail`] 이 만든다: 화면을 싣지 않고 풀·계정 **순번만** 싣는다(칩 ②).
 //! 4. **원장은 `Startup` 만 묶는다** — 같은 계정에서 이미 다른 턴이 사람을 기다리면 이 PTY 는 접고
@@ -15,7 +16,7 @@ use std::collections::HashMap;
 
 use crate::pty::AttentionKind;
 use crate::turn_end::EndState;
-use crate::turn_notice::{GateFail, GateRanks, gate_fail};
+use crate::turn_notice::{GateFail, GateRanks, gate_fail, unconfirmed_fail};
 
 /// 정본 `createAttentionLedger` — 어느 계정으로 이미 사람을 불렀는지(러너 프로세스 안에서만 산다).
 ///
@@ -152,7 +153,11 @@ pub fn call_human(
     }
     if !gate.noticed {
         gate.noticed = true;
-        io.post_gate_fail(gate_fail(ctx.ranks, startup, &ctx.mention_id));
+        io.post_gate_fail(if kind == AttentionKind::Unconfirmed {
+            unconfirmed_fail(ctx.ranks)
+        } else {
+            gate_fail(ctx.ranks, startup, &ctx.mention_id)
+        });
     }
     if startup && gate.held.is_none() {
         match io.ledger_claim(&ctx.account_label, &ctx.session_key) {
@@ -178,6 +183,7 @@ pub fn call_human(
         match kind {
             AttentionKind::Startup => "startup",
             AttentionKind::Gate => "gate",
+            AttentionKind::Unconfirmed => "unconfirmed",
         },
         ctx.account_label
     ));

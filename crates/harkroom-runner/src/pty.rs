@@ -149,6 +149,9 @@ pub fn looks_like_gate(raw: &str, gate: Option<&Regex>, ready: Option<&Regex>) -
 pub enum AttentionKind {
     Startup,
     Gate,
+    /// 주입 미확인(정본에 없다) — 넣은 프롬프트가 기록에 안 보이고 화면이 입력칸 그대로다. **확인 창이 보인 것이 아니다**:
+    /// 물음이 없으니 계정 관문이 아니고, 계정 표식·원장(하네스 접기)·`account_gate` 코드를 쓰지 않는다.
+    Unconfirmed,
 }
 
 /// SIGTERM → SIGKILL 유예(정본 `SIGKILL_GRACE_MS`).

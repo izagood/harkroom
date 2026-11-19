@@ -12,6 +12,18 @@
 //! 기대는 경계(P4)다. 그래서 TS 와 같은 입력에 **바이트까지 같은** 출력을 내야 한다 — `tests/merge_golden.rs` 가
 //! TS 가 실제로 낸 출력(`golden/merge.json`)과 비교한다.
 //! 파일 잠금(P5)은 전환 동안 Node·Rust 오퍼레이터가 **같은 잠금 파일**을 번갈아 잡도록 맞췄다(Node 판은 P3 에서 지웠다).
+/// 이 crate 의 `eprintln!` — 모든 로그 줄 앞에 시각(UTC)과, 걸려 있으면 세션 표지를 붙인다(`harkroom_proto::log_line`).
+/// 줄 본문은 그대로다. 모듈 선언보다 **앞에** 둬야 아래 모듈 전부에 걸린다.
+macro_rules! eprintln {
+    ($($arg:tt)*) => {
+        ::std::eprintln!(
+            "{}{}",
+            ::harkroom_proto::log_line::head(),
+            ::std::format_args!($($arg)*)
+        )
+    };
+}
+
 pub mod adopt;
 pub mod api_cli;
 pub mod assignments;

@@ -608,8 +608,9 @@ impl PromptInjector {
                         }
                     }
                     Resend::Input => {
+                        // 확인 창이 보인 것이 아니다 — 계정 관문(`Startup`)이 아니라 주입 미확인으로 부른다.
                         if attention {
-                            out.push(Action::Attention(screen, AttentionKind::Startup));
+                            out.push(Action::Attention(screen, AttentionKind::Unconfirmed));
                         }
                     }
                     Resend::Unknown => {

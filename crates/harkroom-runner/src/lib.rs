@@ -22,6 +22,18 @@
 //! - `harness_memory`: 하네스 파일 메모리 수확 알림(`harnessMemory.ts`, B4-2e-2). 턴 흐름 연결은 다음 조각.
 //! - `poll_loop`·`turn_registry`: 폴 루프와 턴 레지스트리·멘션 대기 장부(`main.ts` 루프·`stop.ts`·`idleStop.ts`·`turnRegistry.ts`·`mentionQueue.ts`, B4-1a). 스케줄러는 trait 뒤 — `mentionScheduler` 는 B4-1b.
 
+/// 이 crate 의 `eprintln!` — 모든 로그 줄 앞에 시각(UTC)과, 걸려 있으면 세션 표지를 붙인다(`harkroom_proto::log_line`).
+/// 줄 본문은 그대로다. 모듈 선언보다 **앞에** 둬야 아래 모듈 전부에 걸린다.
+macro_rules! eprintln {
+    ($($arg:tt)*) => {
+        ::std::eprintln!(
+            "{}{}",
+            ::harkroom_proto::log_line::head(),
+            ::std::format_args!($($arg)*)
+        )
+    };
+}
+
 pub mod account_assign;
 pub mod account_failover;
 pub mod account_lane;

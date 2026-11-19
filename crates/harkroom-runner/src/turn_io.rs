@@ -126,6 +126,22 @@ pub fn attention_ranks(ranks: GateRanks) -> (Option<u32>, Option<Option<u32>>) {
     (ranks.pool, account)
 }
 
+/// [`attention_ranks`] 의 반대 — 계정 축에서 찾은 순번(`account_ranks`: `(계정, 풀)`)을 관문 통지의 순번으로.
+/// 계정 칸 `None` = 모른다, `Some(None)` = 기본 로그인. 풀 순번은 계정 순번을 알 때만 뜻이 있다.
+pub fn gate_ranks(ranks: (Option<Option<u32>>, Option<u32>)) -> GateRanks {
+    match ranks.0 {
+        None => GateRanks::default(),
+        Some(None) => GateRanks {
+            pool: None,
+            account: GateAccountRank::DefaultLogin,
+        },
+        Some(Some(n)) => GateRanks {
+            pool: ranks.1,
+            account: GateAccountRank::Rank(n),
+        },
+    }
+}
+
 /// 관문 실패 글 → `message.fail` 의 칸.
 pub fn gate_fail_opts(fail: &GateFail) -> FailOpts {
     FailOpts {
@@ -138,6 +154,14 @@ pub fn gate_fail_opts(fail: &GateFail) -> FailOpts {
         claude_account_rank: fail.claude_account_rank,
         ..FailOpts::default()
     }
+}
+
+/// 옛 서버가 모르는 새 코드(주입 미확인)를 뺀 칸 — 그 코드가 아니면 `None`(다시 보낼 것이 없다).
+pub fn without_new_code(opts: &FailOpts) -> Option<FailOpts> {
+    (opts.code.as_deref() == Some(crate::turn_notice::INJECT_UNCONFIRMED_CODE)).then(|| FailOpts {
+        code: None,
+        ..opts.clone()
+    })
 }
 
 /// 턴 하나의 바깥 일 실구현. 콜백(PTY 회수·관문 표식·lane env 정리)은 부르는 쪽이 넣는다.
