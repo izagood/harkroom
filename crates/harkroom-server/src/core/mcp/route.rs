@@ -230,6 +230,15 @@ pub async fn handle(
                     _ => super::msg_post::answer_report(st, &me, &args, c, t, has_operator).await,
                 };
             }
+            if tool == "message.askBundle"
+                && args.get("bundleId").is_none()
+                && let (Some(st), Some(bw)) = (writes.post.as_ref(), writes.bundle.as_ref())
+            {
+                // P6-4e — 새 묶음: 판정은 읽기 풀, 글은 글 올리기 풀, 커밋 뒤 알림·푸시는 묶음 권한 풀.
+                let (c, t) = (cause.as_deref(), turn.as_deref());
+                return super::msg_post::answer_bundle_new(st, bw, &me, &args, c, t, has_operator)
+                    .await;
+            }
             if tool == "artifact.publish"
                 && let Some(aw) = writes.artifact.as_ref()
             {

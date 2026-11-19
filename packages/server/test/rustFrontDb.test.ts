@@ -9064,7 +9064,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
       }
       // S5.3 C3b-2b-2 — MCP `message.askBundle` 의 있던 묶음에 줄 더하기(코어 `ask_bundle_add.rs`). TS·Rust 에 각자의 묶음으로 같은 시나리오를
       // 돌려 답·묶음 meta(줄 사본)·이벤트·묶음 푸시를 견준다. 담을 수 있는 원본 범위(부른 에이전트가 못 보는 채널의 카드는 못 담음)와
-      // 권한·머지 카드 줄의 `link` 를 서버가 원본 meta 로 붙이는지를 따로 본다. 새 묶음·백스톱 원본·zod 밖 인자는 TS 로 넘긴다.
+      // 권한·머지 카드 줄의 `link` 를 서버가 원본 meta 로 붙이는지를 따로 본다. 새 묶음은 아래 P6-4e 장면에서 본다. zod 밖 인자는 TS 로 넘긴다.
       {
         const H = { kind: 'human' };
         const opts = [{ id: 'a', label: '가', hint: '설명' }, { id: 'b', label: '나', recommended: true }];
@@ -9220,6 +9220,107 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         }
         const txItems = (await db.pool.query<{ n: number }>(`select jsonb_array_length(meta->'askBundle'->'items') as n from message where id = $1`, [txB])).rows[0]!.n;
         expect(txItems, '줄 더하기가 되돌아갔다').toBe(0);
+        // P6-4e — 새 묶음(`bundleId` 없음). TS·Rust 에 각자의 원본으로 같은 시나리오를 돌려 답(새 글 id 는 자리표)·묶음 글 meta·
+        // 담긴 원본의 `message.updated`·묶음 푸시를 견준다. 권한 거울 원본·zod 밖 인자는 TS 로 넘긴다.
+        {
+          const nside = async () => {
+            const root = await say('새 묶음 머리');
+            const c1 = await card('새 묶음 카드 하나');
+            const c2 = await say(`<@${admin.accountId}>\n\n  새 묶음 둘째 첫 줄  \n다음 줄`, { meta: { kind: 'ask', ask: { options: opts, to: H } } });
+            const fresh = await card('새 묶음 거절 섞임용');
+            const hidden = await card('새 묶음 — 못 보는 DM 카드', {}, {}, { ch: dmId, author: admin.accountId });
+            const mirror = await card('새 묶음 — 거울', { mirrorOf: c1 });
+            const pmirror = await card('새 묶음 — 권한 거울', {}, { permissionMirror: { of: c1 } });
+            const cause = await say(`<@${agent.accountId}> 새로 묶어 줘`, { author: admin.accountId });
+            await db.pool.query(`insert into inbox (account_id, message_id, reason) values ($1, $2, 'mention')`, [agent.accountId, cause]);
+            return { root, c1, c2, fresh, hidden, mirror, pmirror, cause } as Record<string, string>;
+          };
+          const NT = await nside();
+          const NR = await nside();
+          const made: Record<string, string> = {};
+          const nlabel = (sd: Record<string, string>) => (v: unknown) => {
+            for (const [k, id] of Object.entries(sd)) if (v === id) return k.toUpperCase();
+            for (const [k, id] of Object.entries(made)) if (v === id) return k;
+            if (v === agent.accountId) return 'AGENT';
+            if (v === admin.accountId) return 'ADMIN';
+            if (v === member.accountId) return 'MEMBER';
+            return v;
+          };
+          const nshape = (sd: Record<string, string>) => (v: unknown): unknown => {
+            if (Array.isArray(v)) return v.map(nshape(sd));
+            if (v && typeof v === 'object') {
+              const o: Record<string, unknown> = {};
+              for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+                o[k] = /At$/.test(k) ? (x === null ? null : typeof x) : k === 'seq' ? typeof x : nshape(sd)(x);
+              }
+              return o;
+            }
+            return nlabel(sd)(v);
+          };
+          const nEvents: WorkspaceEvent[] = [];
+          const offN = onEvent((e) => { nEvents.push(e); });
+          const nrun = async (base: string, sd: Record<string, string>, side: string) => {
+            const out: { step: string; core: string | null; body: unknown }[] = [];
+            const step = async (name: string, roots: string[], extra: Record<string, unknown> = {}, hdr: Record<string, string> = {}) => {
+              const args = { channelId: todayId, threadRootId: sd.root, body: '새로 정할 것', items: roots.map((mirrorOf) => ({ mirrorOf })), ...extra };
+              const r = await mcpCall(base, agent.pat, 'message.askBundle', args, 1, hdr);
+              expect(r.status, name).toBe(200);
+              let raw: unknown;
+              try { raw = toolJson(r.text); } catch { raw = 'not-a-tool-result'; }
+              const id = (raw as { message?: { id?: string } }).message?.id;
+              if (id) made[`${side}:${name}`] = id;
+              const body = JSON.parse(JSON.stringify(nshape(sd)(raw)).split(`${side}:`).join('NEW:'));
+              out.push({ step: name, core: r.core, body });
+            };
+            await step('새 묶음 줄 둘(원인 → 푸시)', [sd.c1!, sd.c2!, sd.c1!], {}, { 'x-harkroom-cause': sd.cause! });
+            await step('새 묶음 거절 섞임', [sd.fresh!, sd.hidden!]);
+            await step('새 묶음 거울', [sd.mirror!]);
+            await step('새 묶음 못 보는 채널로 부름', [sd.fresh!], { channelId: dmId });
+            await step('새 묶음 권한 거울 원본 → TS', [sd.pmirror!]);
+            await step('새 묶음 model 빈 글자 → TS(zod)', [sd.fresh!], { model: '' });
+            return out;
+          };
+          const nts = await nrun(tsUrl, NT, 'T');
+          const nrs = await nrun(rsUrl, NR, 'R');
+          const nstrip = (o: { step: string; body: unknown }[]) => o.map(({ step, body }) => ({ step, body }));
+          expect(nstrip(nrs)).toEqual(nstrip(nts));
+          const N_TS = ['새 묶음 권한 거울 원본 → TS', '새 묶음 model 빈 글자 → TS(zod)'];
+          for (const o of nrs) expect(o.core, `${o.step} — 누가 답했나`).toBe(N_TS.includes(o.step) ? null : 'mcp');
+          const ncode = (o: { body: unknown }) => (o.body as { error?: { code: string; rootId?: string } }).error;
+          expect(Object.fromEntries(nts.slice(0, 4).map((o) => [o.step, ncode(o)?.code ?? 'ok']))).toEqual({
+            '새 묶음 줄 둘(원인 → 푸시)': 'ok', '새 묶음 거절 섞임': 'mirror_not_found', '새 묶음 거울': 'mirror_of_mirror',
+            '새 묶음 못 보는 채널로 부름': 'forbidden',
+          });
+          expect(ncode(nts[1]!)?.rootId).toBe('HIDDEN');
+          // 묶음 글 — kind·줄 사본(순서·물음·선택지)·스레드.
+          const okName = '새 묶음 줄 둘(원인 → 푸시)';
+          const bT = made[`T:${okName}`]!;
+          const bR = made[`R:${okName}`]!;
+          const bundleRow = async (id: string, sd: Record<string, string>) => nshape(sd)((await db.pool.query<{ meta: unknown; t: string; a: string }>(
+            `select meta, thread_root_id::text as t, author_id::text as a from message where id = $1`, [id])).rows[0]!);
+          const tRow = await bundleRow(bT, NT);
+          expect(await bundleRow(bR, NR)).toEqual(tRow);
+          expect(tRow).toMatchObject({ t: 'ROOT', a: 'AGENT', meta: { kind: 'askBundle' } });
+          const tItems = (tRow as { meta: { askBundle: { items: { rootId: string; prompt: string }[] } } }).meta.askBundle.items;
+          expect(tItems.map((i) => i.rootId)).toEqual(['C1', 'C2']);
+          expect(tItems[1]!.prompt).toBe('새 묶음 둘째 첫 줄');
+          // 묶음 푸시 — 원인 글을 쓴 사람(차례 주인)에게 한 번.
+          const npush = async (id: string, sd: Record<string, string>) => (await db.pool.query<{ a: string; r: string }>(
+            `select account_id::text as a, reason as r from push_job where message_id = $1 order by id`, [id])).rows.map((r) => ({ ...r, a: nlabel(sd)(r.a) }));
+          const tp = await npush(bT, NT);
+          expect(tp).toEqual([{ a: 'ADMIN', r: 'ask' }]);
+          expect(await npush(bR, NR)).toEqual(tp);
+          // 담긴 원본의 `message.updated`(TS `announceBundledRoots`) — 원본 C1·C2 마다.
+          const rootUpdates = (evs: WorkspaceEvent[], sd: Record<string, string>) => evs.filter((e) => e.type === 'message.updated'
+            && [sd.c1, sd.c2].includes((e as { message: { id: string } }).message.id))
+            .map((e) => String(nlabel(sd)((e as { message: { id: string } }).message.id)))
+            .filter((v, i, a) => a.indexOf(v) === i).sort();
+          expect(rootUpdates(nEvents, NT)).toEqual(['C1', 'C2']);
+          const nUntil = Date.now() + 10_000;
+          while (rootUpdates(busEvents, NR).length < 2 && Date.now() < nUntil) await new Promise((res) => setTimeout(res, 100));
+          expect(rootUpdates(busEvents, NR), 'Rust 가 낸 원본 알림 = TS').toEqual(['C1', 'C2']);
+          offN();
+        }
       }
       // S5.3 C1c-1 — 글 올리기 뼈대(코어 `msg_post.rs`). 사람·세션·최상위·DM 아님·부름·URL·승인 낱말·링크 없는 글만 Rust 가 올리고,
       // 나머지는 읽은 바이트 그대로 TS 로 넘긴다. TS·Rust 에 같은 시나리오를 돌려 응답(상태·코드·헤더·본문 모양)과 이벤트를 견주고,
