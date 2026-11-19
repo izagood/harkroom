@@ -10418,6 +10418,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         };
         const run = async (base: string) => {
           const out: unknown[] = [];
+          // 하루 요청 상한(20)은 에이전트 단위다 — 앞 서버 회차가 세운 요청 줄이 뒤 회차의 카드 장면을 too_many 로 막지 않게
+          // 회차마다 하루 밖으로 민다(두 서버가 같은 셈에서 시작한다).
+          await db.pool.query(`update permission_request set created_at = created_at - interval '2 days' where agent_id = $1 and created_at > now() - interval '1 day'`, [bot3.accountId]);
           for (const [name, setup, rust] of SCENES) {
             const ch = await freshCh();
             const st = await setup(ch);
