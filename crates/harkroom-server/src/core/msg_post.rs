@@ -1493,6 +1493,41 @@ pub struct RestState {
     /// 스레드 모델 지정 코어가 붙었는가(오퍼레이터 코어가 Rust 이고 지정 권한이 있다 — `main.rs` 의 `thread_model_set`).
     /// 거짓이면 비지 않은 `agentModels` 글은 TS 로 넘긴다(하네스 목록을 능력 스냅숏으로만 볼 수 있다).
     pub models: bool,
+    /// P3 B5 — 글 승인이 고를 수 있는 결정(거절·[이번 한 번]·위임장 세우기)을 Rust 가 끝까지 할 스위치가 다 켜졌는가
+    /// ([`ChatDecideSwitches::all_on`], `main.rs` 가 기동 때 정한다). 글 승인은 글을 **커밋한 뒤에** 카드를 고르므로 중간에 TS 로
+    /// 넘길 수 없다 — 그래서 카드와 상관없이 쓰기 **전** 입구에서 가른다. 거짓이면 넓은 체에 걸린 글은 글째 TS 로 간다.
+    pub chat_decide: bool,
+}
+
+/// P3 B5 — 글 승인 결정 스위치(기동 때 권한 검사 결과). 하나라도 꺼져 있으면 그 결정이 Rust 에서 TS 출구로 빠질 수 있다.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ChatDecideSwitches {
+    /// 권한 카드 거절 코어(`decide_core::deny_pool`).
+    pub deny: bool,
+    /// 권한 카드 승인 코어(`decide_approve::approve_pool`).
+    pub approve: bool,
+    /// 머지 거절 카드의 [이번 한 번](`decide_merge_once::merge_once_on`).
+    pub merge_once: bool,
+    /// 있는 위임장에 줄 쓰기(`decide_approve::mandate_core_on` — command 승인도 이것을 따른다).
+    pub mandate: bool,
+    /// 위임장 새로 세우기(`decide_approve::new_mandate_core_on`).
+    pub new_mandate: bool,
+}
+
+impl ChatDecideSwitches {
+    /// 다 켜졌는가. 만료 닫기 칸은 보지 않는다 — 글 승인은 결정 전에 만료 카드를 걸러 낸다(TS 와 같다).
+    pub fn all_on(self) -> bool {
+        self.deny && self.approve && self.merge_once && self.mandate && self.new_mandate
+    }
+}
+
+/// P3 B5 — 글 승인 DB 층(P3b-2b 카드 고르기 → 2c 결정 → 2d 안내 줄)이 `post` 에 붙었는가. 붙기 전에는 스위치가 다 켜져도
+/// 넓은 체에 걸린 글을 TS 로 넘긴다(Rust 가 맡으면 승인 글이 아무 결정 없이 올라간다).
+const CHAT_APPROVAL_WIRED: bool = false;
+
+/// 넓은 체에 걸린 REST 글을 TS 로 넘기는가 — 체에 걸렸고, 글 승인을 Rust 가 끝까지 할 수 없으면.
+fn guard_to_ts(body: &str, chat_decide: bool) -> bool {
+    ts_guard(body) && !(CHAT_APPROVAL_WIRED && chat_decide)
 }
 
 pub async fn post(
@@ -1542,7 +1577,7 @@ pub async fn post(
     if !picks.is_empty() && !rs.models {
         return to_ts(st.up.clone(), peer, parts, bytes).await;
     }
-    if ts_guard(&input.body) {
+    if guard_to_ts(&input.body, rs.chat_decide) {
         return to_ts(st.up.clone(), peer, parts, bytes).await;
     }
     let preview_urls = extract_preview_urls(&input.body, 3);
@@ -1814,6 +1849,41 @@ mod tests {
         ] {
             assert!(!question_only(b), "{b}");
         }
+    }
+
+    #[test]
+    fn chat_decide_switches_all_or_nothing() {
+        let all = ChatDecideSwitches {
+            deny: true,
+            approve: true,
+            merge_once: true,
+            mandate: true,
+            new_mandate: true,
+        };
+        assert!(all.all_on());
+        for off in 0..5 {
+            let mut s = all;
+            match off {
+                0 => s.deny = false,
+                1 => s.approve = false,
+                2 => s.merge_once = false,
+                3 => s.mandate = false,
+                _ => s.new_mandate = false,
+            }
+            assert!(!s.all_on(), "{s:?}");
+        }
+        assert!(!ChatDecideSwitches::default().all_on());
+    }
+
+    #[test]
+    fn guard_goes_to_ts_until_chat_approval_wired() {
+        // 넓은 체에 안 걸린 글은 스위치와 상관없이 Rust.
+        assert!(!guard_to_ts("점심 뭐 먹지", false));
+        assert!(!guard_to_ts("점심 뭐 먹지", true));
+        // 걸린 글은 스위치가 꺼졌으면 언제나 TS.
+        assert!(guard_to_ts("승인", false));
+        // 글 승인 DB 층이 붙기 전에는 다 켜져도 TS(P3b-2b 에서 CHAT_APPROVAL_WIRED 를 켤 때 이 기대를 바꾼다).
+        assert_eq!(guard_to_ts("승인", true), !CHAT_APPROVAL_WIRED);
     }
 
     #[test]

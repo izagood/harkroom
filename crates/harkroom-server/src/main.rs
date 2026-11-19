@@ -3054,6 +3054,23 @@ async fn main() {
             }
         }
     }
+    // P3 B5 — 글 승인 입구 스위치: 글 승인이 고를 수 있는 결정(거절·[이번 한 번]·위임장 세우기)이 Rust 에서 다 켜졌을 때만
+    // 넓은 체에 걸린 REST 글을 Rust 가 맡는다(fail-closed — 하나라도 꺼지면 글째 TS).
+    let chat_decide_ok = harkroom_server::core::msg_post::ChatDecideSwitches {
+        deny: ask_deny.is_some(),
+        approve: ask_approve.is_some(),
+        merge_once: ask_approve.is_some()
+            && harkroom_server::core::decide_merge_once::merge_once_on(),
+        mandate: ask_approve.is_some() && harkroom_server::core::decide_approve::mandate_core_on(),
+        new_mandate: ask_approve.is_some()
+            && harkroom_server::core::decide_approve::new_mandate_core_on(),
+    };
+    if chat_decide_ok.all_on() {
+        eprintln!("front: chat approval decide switches on");
+    } else {
+        eprintln!("front: chat approval decide switches off — {chat_decide_ok:?}");
+    }
+    let chat_decide_ok = chat_decide_ok.all_on();
     // C3b B1 — `POST /agent/command-grants/match`(명령 grant 하나를 쓰고 감사). `HARKROOM_CORE=rust` 그리고 쓰기 풀에
     // `MATCH_PRIVILEGES` 가 다 있을 때만(fail-closed) — 아니면 경로를 붙이지 않아 TS 가 받는다.
     let match_write = match (&core_mode, &state.write) {
@@ -5125,6 +5142,7 @@ async fn main() {
                     },
                     // P3 — 작성창 칩(`agentModels`)은 스레드 모델 지정 코어가 붙었을 때만 Rust 가 맡는다.
                     models: rest_models_ok,
+                    chat_decide: chat_decide_ok,
                 },
                 auth.clone(),
                 state.cors.clone(),
