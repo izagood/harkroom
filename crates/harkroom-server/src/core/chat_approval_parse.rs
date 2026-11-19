@@ -544,4 +544,88 @@ mod tests {
         );
         assert_eq!(match_ask_pick(&opts, &p("a안").unwrap()), Ok("a"));
     }
+
+    /// P3b-1b 골든 대조 — TS 가 낸 출력(`packages/server/test/fixtures/chat-parse-golden.json`)과 같은지 본다.
+    /// TS 쪽 `chatParseGolden.test.ts` 가 같은 파일이 지금 TS 와 같은지 지키므로, 둘이 함께 초록이면 두 구현이 같다.
+    fn golden() -> serde_json::Value {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../packages/server/test/fixtures/chat-parse-golden.json");
+        serde_json::from_str(&std::fs::read_to_string(&p).expect("golden fixture")).expect("json")
+    }
+
+    fn approval_json(p: &ChatApprovalParse) -> serde_json::Value {
+        let block = p.block.map(|b| match b {
+            ChatBlock::Negated => "negated",
+            ChatBlock::Question => "question",
+            ChatBlock::Bypass => "bypass",
+            ChatBlock::Conflict => "conflict",
+            ChatBlock::NotFinal => "notFinal",
+            ChatBlock::DenyNotFinal => "denyNotFinal",
+        });
+        let action = p.action.map(|a| match a {
+            ChatAction::Approve => "approve",
+            ChatAction::Deny => "deny",
+        });
+        serde_json::json!({ "cardIds": p.card_ids, "action": action, "block": block, "ciWord": p.ci_word })
+    }
+
+    fn pick_json(p: &AskPickParse) -> serde_json::Value {
+        let pick = match &p.pick {
+            AskPick::Index(n) => serde_json::json!({ "kind": "index", "n": n, "explicit": true }),
+            AskPick::Recommended => serde_json::json!({ "kind": "recommended", "explicit": true }),
+            AskPick::Label { text, bare } => {
+                serde_json::json!({ "kind": "label", "text": text, "bare": bare, "explicit": false })
+            }
+        };
+        serde_json::json!({ "cardIds": p.card_ids, "pick": pick })
+    }
+
+    #[test]
+    fn golden_matches_ts() {
+        let g = golden();
+        let mut bad = Vec::new();
+        for c in g["chatApproval"].as_array().unwrap() {
+            let body = c["body"].as_str().unwrap();
+            let got = parse_chat_approval(body)
+                .as_ref()
+                .map_or(serde_json::Value::Null, approval_json);
+            if got != c["want"] {
+                bad.push(format!("approval {body:?}: rust={got} ts={}", c["want"]));
+            }
+            if is_explicit_approval(body) != c["explicit"].as_bool().unwrap() {
+                bad.push(format!("explicit {body:?}"));
+            }
+        }
+        let opts_v = g["askOptions"].as_array().unwrap();
+        let opts: Vec<AskOptionRef> = opts_v
+            .iter()
+            .map(|o| AskOptionRef {
+                id: o["id"].as_str().unwrap(),
+                label: o["label"].as_str().unwrap(),
+                recommended: o["recommended"].as_bool().unwrap_or(false),
+            })
+            .collect();
+        for c in g["askPick"].as_array().unwrap() {
+            let body = c["body"].as_str().unwrap();
+            let p = parse_ask_pick(body);
+            let got = p.as_ref().map_or(serde_json::Value::Null, pick_json);
+            if got != c["want"] {
+                bad.push(format!("pick {body:?}: rust={got} ts={}", c["want"]));
+            }
+            let m = p.map(|p| match match_ask_pick(&opts, &p.pick) {
+                Ok(id) => id.to_string(),
+                Err(AskNoPick::NoMatch) => "askNoMatch".into(),
+                Err(AskNoPick::NoRecommended) => "askNoRecommended".into(),
+            });
+            if serde_json::json!(m) != c["match"] {
+                bad.push(format!("match {body:?}: rust={m:?} ts={}", c["match"]));
+            }
+        }
+        assert!(
+            bad.is_empty(),
+            "{} mismatches:\n{}",
+            bad.len(),
+            bad.join("\n")
+        );
+    }
 }
