@@ -75,7 +75,7 @@ const READ_DENIAL_SQL: &str = "select id::text, agent_id::text, scope, \
      from merge_denial d where id = $1::uuid for update of d";
 
 const USE_SQL: &str = "update merge_denial set used_at = $2::timestamptz, used_by = $3::uuid \
-     where id = $1::uuid and used_at is null returning id";
+     where id = $1::uuid and used_at is null returning id::text";
 
 const GRANT_SQL: &str = "insert into account_grant (account_id, capability, scope, granted_by, expires_at, allow_agent_cause) \
        values ($1::uuid, 'repo.merge', $2, $3::uuid, $4::timestamptz, false) \
