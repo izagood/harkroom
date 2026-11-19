@@ -8249,7 +8249,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           await step('REST command approve_once + 위임장', restP(sd.restReq, 'approve_once'), {});
           await step('카드 approve_hour 끝난 위임장 → grant 만(줄 mandate_invalid)', ansP(sd.endedCard), { optionId: 'approve_hour' });
           await step('카드 approve_once 줄 INSERT 실패 → savepoint 로 줄만', ansP(sd.boomCard), { optionId: 'approve_once' });
-          await step('카드 deny + 위임장 → TS', ansP(sd.denyCard), { optionId: 'deny' });
+          await step('카드 deny + 위임장(P3 B2 부터 Rust)', ansP(sd.denyCard), { optionId: 'deny' });
           await step('REST 다시 → 409', restP(sd.restReq, 'approve_hour'), {});
           return out;
         };
