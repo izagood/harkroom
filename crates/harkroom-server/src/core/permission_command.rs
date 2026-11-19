@@ -26,7 +26,7 @@ fn u16_len(s: &str) -> usize {
 }
 
 /// 헤더 읽기의 결과. `ToTs` 는 TS 와 같은 판정을 장담 못 하는 꼴(느슨한 base64·깨진 UTF-8) — 그 요청은 TS 에 넘긴다.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Header {
     /// TS 가 `null` 을 내는 꼴(헤더 없음·모양 틀림).
     Absent,
@@ -218,7 +218,11 @@ pub fn files_block(files: &[MatchedFile]) -> String {
             f.path,
             f.size,
             &f.sha256[..12],
-            if f.secret { " — 내용 비공개" } else { "" }
+            if f.secret {
+                " — 내용 비공개"
+            } else {
+                ""
+            }
         ));
         if let Some(p) = &f.preview {
             lines.push("```".into());
@@ -282,7 +286,10 @@ mod tests {
         let f = format!(r#"[{{"path":"/a","sha256":"{SHA}","size":3.0}}]"#);
         assert!(matches!(parse_header(Some(&b64(&f))), Header::Digests(_)));
         for bad in [
-            format!(r#"[{{"path":"/a","sha256":"{}","size":3}}]"#, SHA.to_uppercase()),
+            format!(
+                r#"[{{"path":"/a","sha256":"{}","size":3}}]"#,
+                SHA.to_uppercase()
+            ),
             format!(r#"[{{"path":"/a","sha256":"{SHA}","size":-1}}]"#),
             format!(r#"[{{"path":"/a","sha256":"{SHA}","size":1.5}}]"#),
             format!(r#"[{{"path":"/a","sha256":"{SHA}","size":1048577}}]"#),
@@ -315,13 +322,19 @@ mod tests {
     #[test]
     fn matching() {
         assert_eq!(match_files(&[], None), Ok(vec![]));
-        assert_eq!(match_files(&[arg("/a", false)], None), Err("files_unmeasured"));
+        assert_eq!(
+            match_files(&[arg("/a", false)], None),
+            Err("files_unmeasured")
+        );
         assert_eq!(
             match_files(&[arg("/a", false)], Some(&[dig("/b", None)])),
             Err("files_mismatch")
         );
         assert_eq!(
-            match_files(&[arg("/a", false)], Some(&[dig("/a", None), dig("/a", None)])),
+            match_files(
+                &[arg("/a", false)],
+                Some(&[dig("/a", None), dig("/a", None)])
+            ),
             Err("files_mismatch")
         );
         let m = match_files(

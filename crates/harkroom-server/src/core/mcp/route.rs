@@ -116,13 +116,16 @@ pub async fn handle(
     let cause = super::reads3::cause_from(&parts.headers);
     let turn = super::reads3::turn_from(&parts.headers);
     let runner = super::bg_claim::runner(has_operator, &parts.headers);
+    // P6-2c: 오퍼레이터가 잰 「정확한 명령」 파일 해시(TS `req.operator ? parseCommandFilesHeader(...) : null`).
+    let command_files = command_files_header(has_operator, &parts.headers);
     let tools = |tool: &'static str, args: serde_json::Value| -> AnswerFut {
-        let (pool, me, cause, turn, writes) = (
+        let (pool, me, cause, turn, writes, command_files) = (
             pool.clone(),
             me.clone(),
             cause.clone(),
             turn.clone(),
             writes.clone(),
+            command_files.clone(),
         );
         Box::pin(async move {
             if tool == "turn.cancel" {
@@ -158,6 +161,7 @@ pub async fn handle(
                     &me,
                     &args,
                     (cause.as_deref(), turn.as_deref(), has_operator),
+                    &command_files,
                 )
                 .await;
             }
@@ -373,6 +377,24 @@ fn is_uuid(s: &str) -> bool {
             8 | 13 | 18 | 23 => *c == b'-',
             _ => c.is_ascii_hexdigit(),
         })
+}
+
+/// TS `parseCommandFilesHeader` 에 넘기는 헤더 — 오퍼레이터를 거치지 않았으면 없음. 같은 이름이 둘 이상이면(fastify 는 배열 →
+/// TS 판정 `null`) Rust 가 맞추지 않고 TS 에 맡긴다.
+fn command_files_header(
+    has_operator: bool,
+    headers: &axum::http::HeaderMap,
+) -> crate::core::permission_command::Header {
+    use crate::core::permission_command::{COMMAND_FILES_HEADER, Header, parse_header};
+    if !has_operator {
+        return Header::Absent;
+    }
+    let mut all = headers.get_all(COMMAND_FILES_HEADER).iter();
+    match (all.next(), all.next()) {
+        (None, _) => Header::Absent,
+        (Some(v), None) => parse_header(Some(v.as_bytes())),
+        (Some(_), Some(_)) => Header::ToTs,
+    }
 }
 
 /// 입장 확인 가운데 Rust 가 스스로 하는 앞부분(TS `/mcp/admit` 과 같은 순서 — leakGuard → 회차 허용 목록).
