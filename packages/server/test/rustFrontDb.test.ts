@@ -11079,7 +11079,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 await db.pool.query('delete from api_connector where id = $1', [gdConn2]);
               }
             }
-            // S5.4 — `permission.request` 거절 앞머리(`permission_request.rs`). 아무것도 쓰지 않는 거절만 Rust 가 답하고, 받아들여지는 요청·command·gh/git 머리는 TS.
+            // S5.4 — `permission.request` 거절 앞머리(`permission_request.rs`). 거절과 gh/git 머리 판정은 Rust 가 답한다(P6-2a). command 는 아직 TS.
             {
               const prCh = await freshCh();
               const prRoot = await ins({ ch: prCh, author: bot3.accountId, body: 'pr 앞머리' });
@@ -11100,7 +11100,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 ['⑫ 다른 도구', { ...at, kind: 'tool', rule: 'Read(/etc/passwd)' }, true],
                 ['⑬ merge 조직 전체', { ...at, kind: 'merge', repo: 'Izagood/*' }, true],
                 ['⑭ merge 모양 틀림', { ...at, kind: 'merge', repo: 'a/b/c' }, true],
-                ['⑮ gh api 쓰기 → TS', { ...at, kind: 'tool', rule: 'Bash(gh api -X POST repos/a/b)' }, false],
+                ['⑮ gh api 쓰기(P6-2a 부터 Rust)', { ...at, kind: 'tool', rule: 'Bash(gh api -X POST repos/a/b)' }, true],
                 ['⑯ model 빈 글 → TS(zod)', { ...at, kind: 'tool', rule: 'Bash(*)', model: '' }, false],
               ];
               const run = async (side: 't' | 'r') => {
