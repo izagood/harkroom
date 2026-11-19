@@ -2751,7 +2751,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(b.core, `${name} — 누가 답했나`).toBe(null);
       }
 
-      // S5.3 C4b ④-a(2/2) — bg.claim. 켜짐은 TS admit 의 `bgEnabled` 로만 안다(꺼짐 → TS 가 `disabled`). 러너가 아닌 꼴(PAT·cause·턴 id)은
+      // S5.3 C4b ④-a(2/2) — bg.claim. 켜짐은 앞단 env(P2), 값이 없으면 TS admit 의 `bgEnabled` 로 안다(꺼짐 → TS 가 `disabled`). 러너가 아닌 꼴(PAT·cause·턴 id)은
       // TS 가 `runner_only` 로 답한다. 켜진 러너면 Rust 가 답하고 글자가 TS 와 같다 — 창 밖이면 outside_window, 창 안이면 일감이 없어 none
       // (시각을 주입할 수 없어 창 안의 집기·distill digest 는 `bg_claim.rs` 단위 시험이 본다).
       const bgOp = await registerOperator(app, admin.token, 'bg-mac');
@@ -2781,10 +2781,34 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect({ status: b!.status, type: b!.type, text: b!.text }, name).toEqual({ status: a!.status, type: a!.type, text: a!.text });
           expect(b!.core, `${name} — 누가 답했나`).toBe(null);
         }
-        const [a, b] = await bgPair(bgOp.token, asRunner);
-        expect({ status: b!.status, type: b!.type, text: b!.text }, 'bg.claim 켜진 러너').toEqual({ status: a!.status, type: a!.type, text: a!.text });
-        expect(b!.core, 'bg.claim 켜진 러너 — Rust 가 답한다').toBe('mcp');
-        expect(b!.text).toMatch(/outside_window|none/);
+        // P2 — 켜짐은 이제 **앞단 env** 로 안다(값이 없을 때만 TS admit 에 묻는다). 이 앞단은 GROUP_A_ENV 로 `0` 이라 TS 가 켜져 있어도
+        // Rust 는 답하지 않고 TS 가 답한다(글자는 같다).
+        {
+          const [a, b] = await bgPair(bgOp.token, asRunner);
+          expect({ status: b!.status, type: b!.type, text: b!.text }, 'bg.claim 앞단 꺼짐·TS 켜짐').toEqual({ status: a!.status, type: a!.type, text: a!.text });
+          expect(b!.core, 'bg.claim 앞단 꺼짐 — Rust 는 답하지 않는다').toBe(null);
+        }
+        // 켜진 앞단(`HARKROOM_BACKGROUND_ENABLED=1`) — 켜진 러너면 Rust 가 답하고 글자가 TS 와 같다.
+        const portBg = await freePort();
+        let frontBg: ChildProcess | undefined;
+        try {
+          const fBg = await startFront(bin, {
+            UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(portBg), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
+            TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust',
+            ATTACHMENT_ROOT: attRoot, HARKROOM_SECRET_KEYS_DIR: secretKeysDir, HARKROOM_SECRET_KEY_ID: 'ck1',
+            ...GROUP_A_ENV, HARKROOM_BACKGROUND_ENABLED: '1',
+          });
+          frontBg = fBg.child;
+          const untilBg = Date.now() + 10_000;
+          while (!fBg.log().includes('front: rust core routes') && Date.now() < untilBg) await new Promise((res) => setTimeout(res, 100));
+          const a = await mcpCall(tsUrl, bgOp.token, 'bg.claim', {}, 1, asRunner);
+          const b = await mcpCall(`http://127.0.0.1:${portBg}`, bgOp.token, 'bg.claim', {}, 1, asRunner);
+          expect({ status: b.status, type: b.type, text: b.text }, 'bg.claim 켜진 러너').toEqual({ status: a.status, type: a.type, text: a.text });
+          expect(b.core, 'bg.claim 켜진 러너 — Rust 가 답한다').toBe('mcp');
+          expect(b.text).toMatch(/outside_window|none/);
+        } finally {
+          frontBg?.kill('SIGTERM');
+        }
       } finally {
         if (prevBg === undefined) delete process.env.HARKROOM_BACKGROUND_ENABLED; else process.env.HARKROOM_BACKGROUND_ENABLED = prevBg;
       }
