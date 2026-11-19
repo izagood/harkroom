@@ -5710,7 +5710,7 @@ async fn spawn_loops() {
         Ok(m) => eprintln!("front: loop scheduled off — missing privileges {m:?}"),
         Err(e) => eprintln!("front: loop scheduled off — privilege check failed: {e}"),
     }
-    // S5.4 — 자동화 sweep(골격: 발송 단계 일부만, `loops::automation` 모듈 문서의 TODO). 주인 `automation` 은 TODO 가 끝날 때까지 `ts`.
+    // S5.4 — 자동화 sweep(`loops::automation`, TODO 모두 끝남 #2371). 주인 `automation` 을 `rust` 로 넘기는 것은 운영 판단이다.
     let auto_privs = [
         harkroom_server::core::msg_post::MESSAGE_POST_PRIVILEGES,
         harkroom_server::loops::automation::AUTOMATION_SWEEP_PRIVILEGES,
@@ -5905,9 +5905,11 @@ async fn push_sweeper(
     )))
 }
 
-/// Rust 로 옮긴 루프 수(wake·retention·mandate.idle·permission.expire·outbox.prune·scheduled·bg·push·stale·bg.produce = 10,
-/// `spawn_loops` 가 띄우는 순서) — 문지기 풀 크기. 루프를 더하면 같이 올린다.
-const LOOP_GATE_CONNECTIONS: u32 = 10;
+/// Rust 로 옮긴 루프 수(wake·retention·mandate.idle·permission.expire·delegation.deadline·outbox.prune·projection·scheduled·
+/// automation·bg·push·stale·thread.status·thread.plan·bg.produce = 15, `spawn_loops` 가 띄우는 순서) — 문지기 풀 크기. 한 루프는
+/// tick 동안 잠금 연결 하나를 쥐고(`projection` 은 저장소마다 long-poll 이라 오래 쥔다), 쉬는 연결은 [`LOOP_POOL_IDLE`] 뒤 닫힌다.
+/// 루프를 더하면 같이 올린다.
+const LOOP_GATE_CONNECTIONS: u32 = 15;
 /// sweep 풀 크기.
 const LOOP_SWEEP_CONNECTIONS: u32 = 3;
 /// 루프 풀에서 쉬는 연결을 닫기까지. 루프 대부분은 주인이 `rust` 가 아니면 tick 마다 잠깐 잠금만 보고 놓는다 —

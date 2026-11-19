@@ -2,6 +2,7 @@ import type { Pool } from 'pg';
 import type { ProjectionRuntime } from '@harkroom/shared';
 import { emitEvent } from '../events.js';
 import { listBoundRepos } from '../services/channels.js';
+import { runGated } from '../services/loopGate.js';
 import type { AvcsServerClient } from './client.js';
 
 /**
@@ -193,54 +194,18 @@ export class ProjectionWorker {
       let backoffMs = 1_000;
       while (this.running) {
         let hadFailure = false;
-        let lastRepoError: string | null = null;
         /**
-         * **사이클마다 한 번, repo 목록을 보기 전에 찍는다**(#267). repo 루프 안에서
-         * 찍으면 바인딩된 저장소가 하나도 없는 서버는 폴링이 멀쩡히 돌고 있는데도
-         * `lastPolledAt` 이 영영 null 로 남아 `stalled` 로 보인다 — 정상을 장애로
-         * 부르는 것이고, 그러면 사람은 이 표시를 곧 무시한다.
+         * 문지기(`server_loop` 의 `projection`) 아래서 한 사이클을 돈다 — Rust 투영 루프(`loops/projection.rs`)와 같은 이름·잠금이다.
+         * 주인이 `rust` 면 TS 는 사이클을 건너뛴다. 이것이 없으면 주인을 넘긴 뒤에도 두 서버가 같은 저장소를 폴링해 커서·lease 를
+         * 둘 다 쓰고 `lease.changed` 를 두 번 낸다. 줄이 없으면 `ts` 라 지금 동작 그대로다.
          */
-        this.runtime.lastPolledAt = Date.now();
-        try {
-          // 따라갈 repo 목록은 계속 채널 바인딩에서 온다. lease 를 채널에 넣지 않게 된
-          // 뒤에도 이 출처가 맞다 — "이 저장소를 여기서 본다"는 선언은 사람이 채널에
-          // repo 를 붙이는 행위이고, 그 선언이 없는 저장소를 서버가 멋대로 폴링할
-          // 이유가 없다. 다만 이제 `channelId` 는 쓰지 않는다(`runOnce` 주석 참조).
-          const bound = await listBoundRepos(this.deps.pool);
-          // repo 단위 try/catch — 한 repo가 연속 실패해도 같은 사이클의 나머지 repo 처리를
-          // 막지 않는다(감사 ⑥). 백오프는 단순화를 위해 사이클 전체에 한 번만 적용한다.
-          for (const { repo } of bound) {
-            try {
-              // 폴링한 저장소를 남긴다 — 커서가 안 움직여도(조용한 저장소) 물어봤다는 사실이다.
-              this.runtime.repo = repo;
-              const cur = await this.deps.pool.query(
-                `select last_log_index from projection_cursor where repo = $1 and avcs_base_url = $2`,
-                [repo, this.deps.baseUrl],
-              );
-              const since = cur.rowCount ? Number(cur.rows[0].last_log_index) : 0;
-              const changed = await this.deps.avcs.waitForChange(repo, since, pollMs);
-              this.runtime.connected = true;
-              if (changed) await this.runOnce(repo);
-            } catch (err) {
-              this.runtime.connected = false;
-              hadFailure = true;
-              // 에러 메시지를 200자로 자른다.
-              lastRepoError = err instanceof Error ? err.message.slice(0, 200) : 'unknown error';
-            }
-          }
-          if (!bound.length) await new Promise((r) => setTimeout(r, pollMs));
-        } catch (err) {
-          // listBoundRepos 자체 실패(예: DB 다운) — 사이클 전체 실패로 취급.
-          this.runtime.connected = false;
-          hadFailure = true;
-          lastRepoError = err instanceof Error ? err.message.slice(0, 200) : 'unknown error';
+        const gate = await runGated(this.deps.pool, 'projection', async () => { hadFailure = await this.cycle(pollMs); });
+        if (!this.running) break;
+        if (gate === 'not_owner' || gate === 'locked' || gate === 'busy') {
+          await new Promise((r) => setTimeout(r, pollMs));
+          continue;
         }
-        /**
-         * 사이클이 끝날 때 `lastError` 를 **덮어쓴다** — 실패면 메시지, 성공이면 null.
-         * `if (lastRepoError)` 로 실패만 기록하면 한 번 난 오류가 영영 남아 복구한
-         * 서버가 계속 `stalled` 로 보인다("다음 성공 폴링이 지운다"가 성립해야 한다).
-         */
-        this.runtime.lastError = lastRepoError;
+        if (gate === 'error') hadFailure = true;
         if (hadFailure) {
           await new Promise((r) => setTimeout(r, backoffMs));
           backoffMs = Math.min(backoffMs * 2, 60_000);
@@ -249,6 +214,60 @@ export class ProjectionWorker {
         }
       }
     })();
+  }
+
+  /** 사이클 하나 — 실패가 있었으면 `true`. 오류는 `runtime` 에 적고 던지지 않는다. */
+  private async cycle(pollMs: number): Promise<boolean> {
+    let hadFailure = false;
+    let lastRepoError: string | null = null;
+    /**
+     * **사이클마다 한 번, repo 목록을 보기 전에 찍는다**(#267). repo 루프 안에서
+     * 찍으면 바인딩된 저장소가 하나도 없는 서버는 폴링이 멀쩡히 돌고 있는데도
+     * `lastPolledAt` 이 영영 null 로 남아 `stalled` 로 보인다 — 정상을 장애로
+     * 부르는 것이고, 그러면 사람은 이 표시를 곧 무시한다.
+     */
+    this.runtime.lastPolledAt = Date.now();
+    try {
+      // 따라갈 repo 목록은 계속 채널 바인딩에서 온다. lease 를 채널에 넣지 않게 된
+      // 뒤에도 이 출처가 맞다 — "이 저장소를 여기서 본다"는 선언은 사람이 채널에
+      // repo 를 붙이는 행위이고, 그 선언이 없는 저장소를 서버가 멋대로 폴링할
+      // 이유가 없다. 다만 이제 `channelId` 는 쓰지 않는다(`runOnce` 주석 참조).
+      const bound = await listBoundRepos(this.deps.pool);
+      // repo 단위 try/catch — 한 repo가 연속 실패해도 같은 사이클의 나머지 repo 처리를
+      // 막지 않는다(감사 ⑥). 백오프는 단순화를 위해 사이클 전체에 한 번만 적용한다.
+      for (const { repo } of bound) {
+        try {
+          // 폴링한 저장소를 남긴다 — 커서가 안 움직여도(조용한 저장소) 물어봤다는 사실이다.
+          this.runtime.repo = repo;
+          const cur = await this.deps.pool.query(
+            `select last_log_index from projection_cursor where repo = $1 and avcs_base_url = $2`,
+            [repo, this.deps.baseUrl],
+          );
+          const since = cur.rowCount ? Number(cur.rows[0].last_log_index) : 0;
+          const changed = await this.deps.avcs.waitForChange(repo, since, pollMs);
+          this.runtime.connected = true;
+          if (changed) await this.runOnce(repo);
+        } catch (err) {
+          this.runtime.connected = false;
+          hadFailure = true;
+          // 에러 메시지를 200자로 자른다.
+          lastRepoError = err instanceof Error ? err.message.slice(0, 200) : 'unknown error';
+        }
+      }
+      if (!bound.length) await new Promise((r) => setTimeout(r, pollMs));
+    } catch (err) {
+      // listBoundRepos 자체 실패(예: DB 다운) — 사이클 전체 실패로 취급.
+      this.runtime.connected = false;
+      hadFailure = true;
+      lastRepoError = err instanceof Error ? err.message.slice(0, 200) : 'unknown error';
+    }
+    /**
+     * 사이클이 끝날 때 `lastError` 를 **덮어쓴다** — 실패면 메시지, 성공이면 null.
+     * `if (lastRepoError)` 로 실패만 기록하면 한 번 난 오류가 영영 남아 복구한
+     * 서버가 계속 `stalled` 로 보인다("다음 성공 폴링이 지운다"가 성립해야 한다).
+     */
+    this.runtime.lastError = lastRepoError;
+    return hadFailure;
   }
 
   async stop(): Promise<void> {

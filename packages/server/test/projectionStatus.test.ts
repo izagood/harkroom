@@ -179,6 +179,28 @@ describe('#267 투영 워커가 상태를 실제로 갱신한다', () => {
     }
   });
 
+  // 문지기 — 주인(`server_loop` 의 `projection`)이 `rust` 면 TS 워커는 폴링하지 않는다(Rust 루프와 겹치지 않게).
+  it('server_loop projection 주인이 rust 면 폴링하지 않는다', async () => {
+    const { pool: gatedPool, stop: stopGated } = await startTestDb();
+    try {
+      await gatedPool.query(`insert into server_loop (name, owner) values ('projection', 'rust')`);
+      const fake = createFakeAvcs();
+      const worker = new ProjectionWorker({ pool: gatedPool, avcs: fake.client, baseUrl: 'http://avcs.status-test' });
+      worker.start(50);
+      try {
+        await new Promise((r) => setTimeout(r, 400));
+        expect(worker.status().lastPolledAt).toBeNull();
+        // 주인을 되돌리면 다음 주기에 다시 돈다.
+        await gatedPool.query(`update server_loop set owner = 'ts' where name = 'projection'`);
+        await waitFor(() => worker.status().lastPolledAt !== null);
+      } finally {
+        await worker.stop();
+      }
+    } finally {
+      await stopGated();
+    }
+  });
+
   // 회귀 4 의 나머지 절반: 실패가 기록되고 **다음 성공 폴링이 지운다.**
   it('실패가 lastError 에 남고 다음 성공 폴링이 지운다', async () => {
     const fake = createFakeAvcs();
