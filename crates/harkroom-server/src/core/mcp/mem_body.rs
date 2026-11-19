@@ -1069,6 +1069,86 @@ async fn merge_tx(
     Ok(Some(MergeOutcome::Ok))
 }
 
+/// [`restore_one`] 의 결말 — TS `restoreMemory` 의 `'ok' | 'not_found' | 'too_many'`.
+pub(crate) enum Restored {
+    Ok,
+    NotFound,
+    TooMany,
+}
+
+/// `restoreMemory`(+ `pruneRevisions`) 한 건 — MCP `memory.restore` 와 회차 되돌리기가 같이 탄다.
+pub(crate) async fn restore_one(
+    write: &PgPool,
+    me: &Account,
+    slug: &str,
+    revision: Option<i64>,
+    turn: Option<&str>,
+) -> Result<Restored, sqlx::Error> {
+    let mut tx = write.begin().await?;
+    type RevRow = (i64, String, Option<String>, bool, Option<String>);
+    let rev: Option<RevRow> = sqlx::query_as(
+        "select id, value, description, flagged, kind from agent_memory_revision \
+         where account_id = $1::uuid and slug = $2 and ($3::bigint is null or id = $3) \
+         order by replaced_at desc, id desc limit 1",
+    )
+    .bind(&me.id)
+    .bind(slug)
+    .bind(revision)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some((id, value, description, flagged, kind)) = rev else {
+        tx.rollback().await?;
+        return Ok(Restored::NotFound);
+    };
+    let flag_reason = if flagged {
+        Some("restored flagged revision".to_owned())
+    } else {
+        scan_write(&[Some(&value), description.as_deref()]).map(|h| h.reason)
+    };
+    let cur = lock_rows(&mut tx, me, &[slug]).await?.into_iter().next();
+    if cur.as_ref().is_none_or(|c| c.archived) && active_count(&mut tx, me).await? >= MAX_ITEMS {
+        tx.rollback().await?;
+        return Ok(Restored::TooMany);
+    }
+    if let Some(c) = &cur {
+        sqlx::query(
+            "insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged, reason, detail, kind, run_id, turn_id) \
+             select $1::uuid, slug, value, description, updated_at, flagged_at is not null, 'restore', $3::jsonb, kind, null, $4::uuid \
+             from agent_memory where account_id = $1::uuid and slug = $2",
+        )
+        .bind(&me.id)
+        .bind(slug)
+        .bind(json!({ "revisionId": id }).to_string())
+        .bind(turn)
+        .execute(&mut *tx)
+        .await?;
+        let _ = c;
+    }
+    let k = kind
+        .or_else(|| cur.as_ref().map(|c| c.kind.clone()))
+        .unwrap_or_else(|| "topic".to_owned());
+    sqlx::query(
+        "insert into agent_memory (account_id, slug, value, description, kind, flagged_at, flag_reason) \
+         values ($1::uuid, $2, $3, $4, $5, case when $6::text is not null then now() end, $6::text) \
+         on conflict (account_id, slug) do update set \
+           value = excluded.value, description = excluded.description, \
+           kind = excluded.kind, \
+           flagged_at = excluded.flagged_at, flag_reason = excluded.flag_reason, \
+           archived_at = null, updated_at = now()",
+    )
+    .bind(&me.id)
+    .bind(slug)
+    .bind(&value)
+    .bind(description.as_deref())
+    .bind(&k)
+    .bind(flag_reason.as_deref())
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    prune_revisions(write, me, slug).await?;
+    Ok(Restored::Ok)
+}
+
 /// `memory.restore`.
 async fn restore(write: &PgPool, me: &Account, turn: Option<&str>, args: &Value) -> Option<String> {
     let slug = args.get("slug")?.as_str().filter(|s| !s.is_empty())?;
@@ -1082,79 +1162,11 @@ async fn restore(write: &PgPool, me: &Account, turn: Option<&str>, args: &Value)
     if !valid_slug(slug) {
         return Some(err("invalid_slug", SLUG_HINT));
     }
-    enum Out {
-        Ok,
-        NotFound,
-        TooMany,
-    }
-    let r: Result<Out, sqlx::Error> = async {
-        let mut tx = write.begin().await?;
-        type RevRow = (i64, String, Option<String>, bool, Option<String>);
-        let rev: Option<RevRow> = sqlx::query_as(
-            "select id, value, description, flagged, kind from agent_memory_revision \
-             where account_id = $1::uuid and slug = $2 and ($3::bigint is null or id = $3) \
-             order by replaced_at desc, id desc limit 1",
-        )
-        .bind(&me.id)
-        .bind(slug)
-        .bind(revision)
-        .fetch_optional(&mut *tx)
-        .await?;
-        let Some((id, value, description, flagged, kind)) = rev else {
-            tx.rollback().await?;
-            return Ok(Out::NotFound);
-        };
-        let flag_reason = if flagged {
-            Some("restored flagged revision".to_owned())
-        } else {
-            scan_write(&[Some(&value), description.as_deref()]).map(|h| h.reason)
-        };
-        let cur = lock_rows(&mut tx, me, &[slug]).await?.into_iter().next();
-        if cur.as_ref().is_none_or(|c| c.archived) && active_count(&mut tx, me).await? >= MAX_ITEMS {
-            tx.rollback().await?;
-            return Ok(Out::TooMany);
-        }
-        if let Some(c) = &cur {
-            sqlx::query(
-                "insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged, reason, detail, kind, run_id, turn_id) \
-                 select $1::uuid, slug, value, description, updated_at, flagged_at is not null, 'restore', $3::jsonb, kind, null, $4::uuid \
-                 from agent_memory where account_id = $1::uuid and slug = $2",
-            )
-            .bind(&me.id)
-            .bind(slug)
-            .bind(json!({ "revisionId": id }).to_string())
-            .bind(turn)
-            .execute(&mut *tx)
-            .await?;
-            let _ = c;
-        }
-        let k = kind.or_else(|| cur.as_ref().map(|c| c.kind.clone())).unwrap_or_else(|| "topic".to_owned());
-        sqlx::query(
-            "insert into agent_memory (account_id, slug, value, description, kind, flagged_at, flag_reason) \
-             values ($1::uuid, $2, $3, $4, $5, case when $6::text is not null then now() end, $6::text) \
-             on conflict (account_id, slug) do update set \
-               value = excluded.value, description = excluded.description, \
-               kind = excluded.kind, \
-               flagged_at = excluded.flagged_at, flag_reason = excluded.flag_reason, \
-               archived_at = null, updated_at = now()",
-        )
-        .bind(&me.id)
-        .bind(slug)
-        .bind(&value)
-        .bind(description.as_deref())
-        .bind(&k)
-        .bind(flag_reason.as_deref())
-        .execute(&mut *tx)
-        .await?;
-        tx.commit().await?;
-        prune_revisions(write, me, slug).await?;
-        Ok(Out::Ok)
-    }
-    .await;
+    let r = restore_one(write, me, slug, revision, turn).await;
     Some(match r {
-        Ok(Out::Ok) => text_result("{\"ok\":true}"),
-        Ok(Out::NotFound) => err("not_found", "그 판이 없다 — memory.revisions 로 확인해라"),
-        Ok(Out::TooMany) => err(
+        Ok(Restored::Ok) => text_result("{\"ok\":true}"),
+        Ok(Restored::NotFound) => err("not_found", "그 판이 없다 — memory.revisions 로 확인해라"),
+        Ok(Restored::TooMany) => err(
             "too_many",
             &format!("at most {MAX_ITEMS} active memories per account"),
         ),

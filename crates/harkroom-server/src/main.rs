@@ -1500,7 +1500,7 @@ async fn main() {
                 }
                 (Ok(_), _, None) => {
                     eprintln!(
-                        "front: attachment upload core off — ATTACHMENT_MAX_BYTES unreadable"
+                        "front: attachment upload to TS — ATTACHMENT_MAX_BYTES unset or unreadable"
                     );
                     None
                 }
@@ -1711,6 +1711,37 @@ async fn main() {
         _ => None,
     };
     // S5.4 — `POST /agent/merge-checks` 의 이른 거절(`lease_invalid`·`bad_repo` + `repo.merge.denied` 감사). 쓰기 풀에 [`MERGE_CHECKS_DENY_PRIVILEGES`] 가 다 있을 때만.
+    // 위임 스위치(`HARKROOM_MANDATE_ENFORCE`)가 앞단에 없으면 TS 가 어느 판정을 켰는지 모른다 — 아래 권한이 다 있어도 머지 판정은
+    // 요청마다 통째로 TS 로 넘어간다(`merge_checks::checks_early`). `on`/`off` 가 명시됐을 때만 Rust 가 답한다.
+    if matches!(core_mode, harkroom_server::core::CoreMode::Rust)
+        && harkroom_server::core::lease_read::mandate_enforced_env().is_none()
+    {
+        eprintln!("front: merge checks to TS — HARKROOM_MANDATE_ENFORCE unset");
+    }
+    // 같은 꼴의 스위치들 — 앞단에 값이 없으면 TS 가 어느 쪽으로 도는지 모른다. 그 스위치에 걸린 요청은 TS 로 넘긴다.
+    if matches!(core_mode, harkroom_server::core::CoreMode::Rust) {
+        let unset = |k: &str| std::env::var(k).map_or(true, |v| v.trim().is_empty());
+        if unset("HARKROOM_PRINCIPAL_INVOKE") {
+            eprintln!("front: principal-invoke posts to TS — HARKROOM_PRINCIPAL_INVOKE unset");
+        }
+        if unset("HARKROOM_DELEGATION_IMPLICIT") {
+            eprintln!(
+                "front: agent calls under delegation v2 to TS — HARKROOM_DELEGATION_IMPLICIT unset"
+            );
+        }
+        if std::env::var("ATTACHMENT_MAX_BYTES").is_err() {
+            eprintln!("front: attachment upload to TS — ATTACHMENT_MAX_BYTES unset");
+        }
+        if unset("HARKROOM_BACKGROUND_ENABLED") {
+            eprintln!("front: background list to TS — HARKROOM_BACKGROUND_ENABLED unset");
+        }
+        if matches!(
+            harkroom_server::core::invite_mail::load_mail_config(|k| std::env::var(k).ok()),
+            Ok(None)
+        ) {
+            eprintln!("front: invite mail (issue with email, resend) to TS — mail env unset");
+        }
+    }
     let merge_checks_deny = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
             use harkroom_server::core::merge_checks as t;
@@ -1799,6 +1830,29 @@ async fn main() {
         }
         None => false,
     };
+    // S5.5 a — 위임 스위치가 켜졌을 때의 판정(`consumeLine`·`no_mandate_line` 카드)도 Rust 가 답한다. 그림자 권한·카드 권한에 더해
+    // [`MERGE_CHECKS_ENFORCE_PRIVILEGES`](`mandate_line.used_count` UPDATE)까지 있을 때만 — 없으면 스위치가 켜진 판정은 TS 로 넘긴다.
+    let merge_checks_enforce = match (&merge_checks_card, merge_checks_mandate) {
+        (Some(w), true) => {
+            use harkroom_server::core::mandate_line_match as t;
+            match write::missing_in(w, t::MERGE_CHECKS_ENFORCE_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => true,
+                Ok(m) => {
+                    eprintln!("front: merge checks mandate enforce off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
+                    false
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: merge checks mandate enforce off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    false
+                }
+            }
+        }
+        _ => false,
+    };
     // S5.4 — `POST /agent/api-checks` 의 임대 거절(`lease_invalid` + `api.call.denied` 감사). 쓰기 풀에 [`API_CHECKS_DENY_PRIVILEGES`] 가 다 있을 때만.
     let api_checks_deny = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -1865,18 +1919,25 @@ async fn main() {
         }
         _ => false,
     };
-    // S5.4 — `POST /agent/api-checks` 의 비밀을 여는 연결 허락. 본체가 켜져 있고 [`API_CHECKS_SECRET_PRIVILEGES`] 가 다 있고
-    // 키가 DB 확인값과 맞을 때만. 키가 없거나 어긋나면 그 갈래는 TS 몫(`no_secret`·409 `secret_key_mismatch`).
+    // S5.4 — `POST /agent/api-checks` 의 비밀을 여는 연결. 본체가 켜져 있고 [`API_CHECKS_SECRET_PRIVILEGES`] 가 다 있고
+    // 키 상태를 읽었을 때만. env 키가 없으면 TS 몫. 키를 읽었는데 키링이 없거나 어긋나면 Rust 가
+    // `no_secret`·409 `secret_key_mismatch` 로 답한다(S5.5 b).
     let api_checks_secret = match (&api_checks_deny, api_checks_allow) {
         (Some(w), true) => {
             use harkroom_server::core::api_checks as t;
             match write::missing_in(w, t::API_CHECKS_SECRET_PRIVILEGES, &[]).await {
                 Ok(m) if m.is_empty() => match t::load_secret_opener(w).await {
-                    Ok(k) => {
-                        if k.is_none() {
-                            eprintln!("front: api checks secret off — no matching secret key");
+                    Ok(None) => {
+                        eprintln!("front: api checks secret off — no key env");
+                        None
+                    }
+                    Ok(Some(k)) => {
+                        if let t::SecretKey::Off { mismatch } = &k {
+                            eprintln!(
+                                "front: api checks secret — no matching secret key (mismatch: {mismatch}); answering no_secret"
+                            );
                         }
-                        k
+                        Some(k)
                     }
                     Err(e) => {
                         eprintln!("front: api checks secret off — {e}");
@@ -1934,6 +1995,28 @@ async fn main() {
                 Err(e) => {
                     eprintln!(
                         "front: link preview read core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    false
+                }
+            }
+        }
+        _ => false,
+    };
+    // S5.5 — `GET /collab/proposals`. 같은 두 겹 잠금(읽기 풀 SELECT).
+    let collab_read_on = match &core_mode {
+        harkroom_server::core::CoreMode::Rust => {
+            use harkroom_server::core::collab_read as t;
+            match write::missing_in(&state.pool, t::COLLAB_READ_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => true,
+                Ok(m) => {
+                    eprintln!("front: collab read core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
+                    false
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: collab read core off — privilege check failed ({})",
                         e.as_database_error().map_or("io", |_| "db")
                     );
                     false
@@ -2671,6 +2754,28 @@ async fn main() {
             }
         }
         _ => None,
+    };
+    // S5.5 — 회차 되돌리기(`POST …/background/runs/{runId}/revert`). 기억 쓰기 줄이 섰고 쓰기 풀에 `BG_REVERT_PRIVILEGES` 도
+    // 다 있을 때만 — 아니면 그 한 줄만 TS 에 남는다(나머지 여섯 줄은 그대로).
+    let bg_revert = match &agent_memory_write {
+        Some(w) => {
+            use harkroom_server::core::agent_memory_write as a;
+            match write::missing_in(w, a::BG_REVERT_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => true,
+                Ok(m) => {
+                    eprintln!("front: background revert to TS — missing privileges {m:?}");
+                    false
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: background revert to TS — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    false
+                }
+            }
+        }
+        None => false,
     };
     // C3b-1 — 선택 카드 답하기·닫기. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 `ASK_PRIVILEGES` 가 다 있을 때만.
     // C4b B2-1 — MCP `thread.note`. 두 겹 잠금: `HARKROOM_CORE=rust` 그리고 쓰기 풀에 `THREAD_NOTE_PRIVILEGES` 가 다 있을 때만.
@@ -3609,6 +3714,19 @@ async fn main() {
             core_routes.http.extend(lp.http);
             core_routes.sockets.extend(lp.sockets);
         }
+        if collab_read_on {
+            let c = harkroom_server::core::collab_read::routes(
+                harkroom_server::core::collab_read::CollabState::new(
+                    state.pool.clone(),
+                    state.up.clone(),
+                ),
+                auth.clone(),
+                state.cors.clone(),
+            );
+            core_routes.router = core_routes.router.merge(c.router);
+            core_routes.http.extend(c.http);
+            core_routes.sockets.extend(c.sockets);
+        }
         if agent_wakes_read_on {
             let aw = harkroom_server::core::agent_wakes_read::routes(
                 state.pool.clone(),
@@ -3896,6 +4014,7 @@ async fn main() {
                     write,
                     trust: state.trust.clone(),
                     mailer,
+                    up: state.up.clone(),
                 },
                 auth.clone(),
                 state.cors.clone(),
@@ -4175,6 +4294,7 @@ async fn main() {
                 merge_checks_card.clone(),
                 merge_checks_approve.clone(),
                 merge_checks_mandate,
+                merge_checks_enforce,
                 merge_results_read.clone(),
                 merge_results_post.clone(),
                 auth.clone(),
@@ -4673,6 +4793,9 @@ async fn main() {
                 state.pool.clone(),
                 auth.clone(),
                 state.cors.clone(),
+                harkroom_server::core::agent_memory_read::background_switch_known(
+                    std::env::var("HARKROOM_BACKGROUND_ENABLED").ok().as_deref(),
+                ),
             );
             core_routes.router = core_routes.router.merge(am.router);
             core_routes.http.extend(am.http);
@@ -4692,13 +4815,14 @@ async fn main() {
             core_routes.http.extend(au.http);
             core_routes.sockets.extend(au.sockets);
         }
-        // S5.4 AC3 — 기억 쓰기 다섯 줄 + 백그라운드 켜고 끄기. 권한이 다 있을 때만 — 아니면 TS 에 남는다(회차 되돌리기는 언제나 TS).
+        // S5.4 AC3 — 기억 쓰기 다섯 줄 + 백그라운드 켜고 끄기. 권한이 다 있을 때만 — 아니면 TS 에 남는다(회차 되돌리기는 `bg_revert` 일 때만).
         if let Some(write) = agent_memory_write {
             let aw = harkroom_server::core::agent_memory_write::routes(
                 harkroom_server::core::agent_memory_write::MemoryWriteState {
                     read: state.pool.clone(),
                     write,
                     trust: (*state.trust).clone(),
+                    revert: bg_revert,
                 },
                 auth.clone(),
                 state.cors.clone(),

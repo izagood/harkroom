@@ -9,7 +9,8 @@
 //! 그 밖의 모양이 맞는 요청은 전부 TS 로 넘긴다 — 임대·사슬 판정(`checkMergeByChain`)·위임 판정·1회 승인 소모·`merge_denial`·카드·
 //! 그림자 감사(`mandate.shadow`)는 아직 TS 몫이다. 넘기는 쪽은 임대를 읽기만 하고 쓰지 않는다.
 //! 15a: 위임 스위치가 꺼졌고 [`super::mandate_line_match::MERGE_CHECKS_MANDATE_PRIVILEGES`] 가 있으면, 임대에 위임장이 있어도 위 갈래를 Rust 가 답하고
-//! 그림자는 `findLine` 결과(`mandateVerdict`·`lineId`·`lineVia`)를 적는다. 스위치가 켜진 판정(`consumeLine`·`no_mandate_line`)은 아직 TS 몫이다.
+//! 그림자는 `findLine` 결과(`mandateVerdict`·`lineId`·`lineVia`)를 적는다. 스위치가 켜진 판정(`consumeLine`·`no_mandate_line`)은
+//! S5.5 a 부터 [`super::mandate_line_match::MERGE_CHECKS_ENFORCE_PRIVILEGES`]·카드 권한까지 있으면 Rust 가 답한다(없으면 TS).
 //!
 //! `POST /agent/merge-results`(TS `reportMerge`)도 같은 꼴로 부분 이식한다 — 403 `forbidden`·400 `bad_request` 만 Rust,
 //! 읽기 풀([`MERGE_RESULTS_PRIVILEGES`])이 있으면 N1 관문(403 `lease_invalid`·400 `bad_repo`·409 `already_reported`/`not_checked`)도
@@ -1131,6 +1132,9 @@ pub struct ChecksState {
     /// 15a: 임대에 위임장이 있어도 그림자(`findLine`)를 Rust 가 돈다 — 쓰기 풀에
     /// [`super::mandate_line_match::MERGE_CHECKS_MANDATE_PRIVILEGES`] 가 다 있을 때만.
     pub mandate: bool,
+    /// S5.5 a: 위임 스위치가 켜졌을 때(`consumeLine`·`no_mandate_line`)도 Rust 가 답한다 — `mandate`·`card` 에 더해
+    /// [`super::mandate_line_match::MERGE_CHECKS_ENFORCE_PRIVILEGES`] 까지 다 있을 때만.
+    pub enforce: bool,
 }
 
 /// 1회 승인을 Rust 가 소모할 때 더 있어야 하는 권한(TS `checkMergeByChain` 의 승인 갈래). 글 올리기 권한은 글 경로가 따로 본다.
@@ -1352,7 +1356,7 @@ async fn approval_allow(
         },
     )
     .await;
-    record_shadow(w, "allowed", agent, scope, o, lease).await;
+    record_shadow(w, "allowed", agent, scope, o, lease, None, Some(&id)).await;
     Ok(Some(super::grant_reads::ok_no_store(&json!({
         "allowed": true,
         "repo": repo,
@@ -1581,8 +1585,189 @@ pub fn shadow_detail(
     })
 }
 
-/// TS `shadowMandate`(위임 스위치 꺼짐) — 임대의 위임장으로 `findLine` 을 돌려 `mandate.shadow` 를 남긴다.
+/// 위임 스위치가 켜졌을 때 TS `shadowMandate` 의 `mandate.shadow` detail — `verdict` 는 나간 판정(`allowed` 또는 거절 코드),
+/// `line` 은 판정이 쓴 줄(허락일 때만), `via_approval` 은 1회 승인으로 허락했을 때 그 id.
+#[allow(clippy::too_many_arguments)]
+pub fn shadow_detail_enforced(
+    verdict: &str,
+    via_approval: Option<&str>,
+    mandate_id: Option<&str>,
+    line: Option<&super::mandate_line_match::FoundLine>,
+    agent: &str,
+    scope: &str,
+    lease_id: &str,
+    origin: (&str, bool, bool),
+) -> Value {
+    let mut d = json!({
+        "enforced": "mandate",
+        "chainVerdict": Value::Null,
+        "mandateVerdict": verdict,
+    });
+    if verdict == "allowed"
+        && let Some(id) = via_approval
+    {
+        d["viaApproval"] = json!(id);
+    }
+    let rest = json!({
+        "mandateId": mandate_id,
+        "agentId": agent,
+        "repo": scope,
+        "leaseId": lease_id,
+        "lineId": line.map(|l| l.id.as_str()),
+        "lineVia": line.map(|l| l.via.as_str()),
+        "causeKind": origin.0,
+        "rootHasKey": origin.1,
+        "causeHasKey": origin.2,
+    });
+    if let (Some(d), Some(r)) = (d.as_object_mut(), rest.as_object()) {
+        d.extend(r.clone());
+    }
+    d
+}
+
+/// 어느 쪽(Rust/TS)이 이 임대의 판정을 답하나. 스위치가 켜졌으면 `enforce_ok`(위임·카드·소모 권한), 꺼졌으면 위임장이 있을 때만 `mandate_ok`.
+/// 스위치를 **모르면**(`None` — 앞단에 `HARKROOM_MANDATE_ENFORCE` 가 없다) 언제나 TS 다: TS 가 어느 판정을 켰는지 알 수 없다.
+pub fn rust_answers(
+    enforced: Option<bool>,
+    has_mandate: bool,
+    mandate_ok: bool,
+    enforce_ok: bool,
+) -> bool {
+    match enforced {
+        None => false,
+        Some(true) => enforce_ok,
+        Some(false) => !has_mandate || mandate_ok,
+    }
+}
+
+/// TS `checkByMandate` 의 `repo.merge.checked` detail.
+pub fn mandate_checked_detail(
+    o: &Value,
+    operator: &str,
+    lease: &super::lease_read::LeaseRow,
+    line: &super::mandate_line_match::ConsumedLine,
+) -> Value {
+    json!({
+        "number": o.get("number").cloned().unwrap_or(Value::Null),
+        "headSha": o.get("headSha").cloned().unwrap_or(Value::Null),
+        "operatorId": operator,
+        "leaseId": lease.id,
+        "grantedBy": line.granted_by,
+        "mandateId": lease.mandate_id,
+        "lineId": line.id,
+        "lineVia": line.via,
+        "ghUser": line.gh_user(),
+        "ciOverride": line.ci_override(),
+        "causeByHuman": lease.cause_by_human(),
+    })
+}
+
+/// TS 라우트가 `checkByMandate` 허락을 내보내는 몸.
+pub fn mandate_allow_body(
+    scope: &str,
+    lease: &super::lease_read::LeaseRow,
+    line: &super::mandate_line_match::ConsumedLine,
+) -> Value {
+    json!({
+        "allowed": true,
+        "repo": &scope["repo:".len().min(scope.len())..],
+        "grantedBy": line.granted_by,
+        "grantedAt": line.created_at,
+        "causeByHuman": lease.cause_by_human(),
+        "channelId": lease.channel_id,
+        "threadRootId": lease.thread_root_id,
+        "mandateLine": {
+            "id": line.id,
+            "via": line.via,
+            "ghUser": line.gh_user(),
+            "ciOverride": line.ci_override(),
+        },
+    })
+}
+
+fn now_ms_of(now: &str) -> i64 {
+    chrono::DateTime::parse_from_rfc3339(now)
+        .map(|d| d.timestamp_millis())
+        .unwrap_or_else(|_| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_millis() as i64)
+        })
+}
+
+fn merge_action(o: &Value) -> super::mandate_line_match::MergeAction<'_> {
+    super::mandate_line_match::MergeAction {
+        repo: o.get("repo").and_then(Value::as_str).unwrap_or_default(),
+        pr: o.get("number").and_then(Value::as_i64),
+        head: o.get("headSha").and_then(Value::as_str),
+        gh_user: o.get("ghUser").and_then(Value::as_str),
+        ci_override: false,
+    }
+}
+
+/// TS `checkByMandate`(위임 스위치 켜짐, 1회 승인 없음) — `consumeLine` 으로 줄을 쓰고, 없으면 `no_mandate_line` 카드.
+#[allow(clippy::too_many_arguments)]
+async fn check_by_mandate(
+    pool: &sqlx::PgPool,
+    agent: &str,
+    operator: &str,
+    o: &Value,
+    lease: &super::lease_read::LeaseRow,
+    scope: &str,
+    number: i64,
+    channel: &str,
+    root: &str,
+    now: &str,
+) -> sqlx::Result<Response> {
+    let line = super::mandate_line_match::consume_line(
+        pool,
+        lease.mandate_id.as_deref(),
+        agent,
+        &merge_action(o),
+        now_ms_of(now),
+    )
+    .await?;
+    let Some(line) = line else {
+        return not_granted_code(
+            pool,
+            agent,
+            operator,
+            o,
+            lease,
+            scope,
+            number,
+            channel,
+            root,
+            now,
+            "no_mandate_line",
+        )
+        .await;
+    };
+    crate::write::record_audit(
+        pool,
+        crate::write::AuditEntry {
+            action: "repo.merge.checked",
+            actor_id: Some(agent),
+            actor_handle: None,
+            target: Some(scope),
+            ip: None,
+            detail: mandate_checked_detail(o, operator, lease, &line),
+        },
+    )
+    .await;
+    let found = super::mandate_line_match::FoundLine {
+        id: line.id.clone(),
+        via: line.via.clone(),
+    };
+    record_shadow(pool, "allowed", agent, scope, o, lease, Some(&found), None).await;
+    Ok(super::grant_reads::ok_no_store(&mandate_allow_body(
+        scope, lease, &line,
+    )))
+}
+
+/// TS `shadowMandate` — 스위치가 꺼졌으면 임대의 위임장으로 `findLine` 을 돌리고, 켜졌으면 판정이 쓴 줄(`line`)을 그대로 적는다.
 /// TS 는 그림자 전체를 try/catch 로 감싸므로 `findLine` 이 실패하면 감사 없이 지나간다. 판정은 바꾸지 않는다.
+#[allow(clippy::too_many_arguments)]
 async fn record_shadow(
     pool: &sqlx::PgPool,
     chain_verdict: &str,
@@ -1590,18 +1775,41 @@ async fn record_shadow(
     scope: &str,
     o: &Value,
     lease: &super::lease_read::LeaseRow,
+    used_line: Option<&super::mandate_line_match::FoundLine>,
+    via_approval: Option<&str>,
 ) {
+    if super::lease_read::mandate_enforced_env() == Some(true) {
+        let origin = shadow_origin(pool, lease)
+            .await
+            .unwrap_or(("unknown", false, false));
+        crate::write::record_audit(
+            pool,
+            crate::write::AuditEntry {
+                action: "mandate.shadow",
+                actor_id: Some(agent),
+                actor_handle: None,
+                target: Some(scope),
+                ip: None,
+                detail: shadow_detail_enforced(
+                    chain_verdict,
+                    via_approval,
+                    lease.mandate_id.as_deref(),
+                    used_line,
+                    agent,
+                    scope,
+                    &lease.id,
+                    origin,
+                ),
+            },
+        )
+        .await;
+        return;
+    }
     let line = if lease.mandate_id.is_some() {
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_millis() as i64);
-        let action = super::mandate_line_match::MergeAction {
-            repo: o.get("repo").and_then(Value::as_str).unwrap_or_default(),
-            pr: o.get("number").and_then(Value::as_i64),
-            head: o.get("headSha").and_then(Value::as_str),
-            gh_user: o.get("ghUser").and_then(Value::as_str),
-            ci_override: false,
-        };
+        let action = merge_action(o);
         match super::mandate_line_match::find_line(
             pool,
             lease.mandate_id.as_deref(),
@@ -1774,6 +1982,7 @@ async fn checks_allow(
     pool: &sqlx::PgPool,
     card: bool,
     mandate: bool,
+    enforce: bool,
     approve: Option<&super::msg_post::PostState>,
     agent: &str,
     operator: &str,
@@ -1782,7 +1991,9 @@ async fn checks_allow(
     now: &str,
 ) -> sqlx::Result<Option<Response>> {
     let g = |k: &str| o.get(k).and_then(Value::as_str).unwrap_or_default();
-    if super::lease_read::mandate_enforced_env() || (lease.mandate_id.is_some() && !mandate) {
+    let switch = super::lease_read::mandate_enforced_env();
+    let enforced = switch == Some(true);
+    if !rust_answers(switch, lease.mandate_id.is_some(), mandate, enforce && card) {
         return Ok(None);
     }
     let (Some(scope), Some(number), Some(channel), Some(root)) = (
@@ -1827,6 +2038,13 @@ async fn checks_allow(
             st, agent, operator, o, lease, &scope, number, channel, root, row, now,
         )
         .await;
+    }
+    if enforced {
+        return check_by_mandate(
+            pool, agent, operator, o, lease, &scope, number, channel, root, now,
+        )
+        .await
+        .map(Some);
     }
     static GRANT_SQL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     let grant_sql: &'static str = GRANT_SQL.get_or_init(|| {
@@ -1901,7 +2119,7 @@ async fn checks_allow(
     )
     .await;
     // 그림자 — 실패해도 판정은 그대로 나간다(출처 조회가 실패하면 unknown).
-    record_shadow(pool, "allowed", agent, &scope, o, lease).await;
+    record_shadow(pool, "allowed", agent, &scope, o, lease, None, None).await;
     Ok(Some(super::grant_reads::ok_no_store(&json!({
         "allowed": true,
         "repo": &scope["repo:".len()..],
@@ -1937,7 +2155,7 @@ async fn expired_denial(
         },
     )
     .await;
-    record_shadow(pool, code, agent, &scope, o, lease).await;
+    record_shadow(pool, code, agent, &scope, o, lease, None, None).await;
     let mut r = json_err(
         StatusCode::FORBIDDEN,
         code,
@@ -2008,7 +2226,8 @@ async fn not_granted_code(
         },
     )
     .await;
-    let denial_id = if code == "cause_not_human" || lease.cause_by_human() {
+    // `cause_not_human`·`no_mandate_line` 은 TS 가 언제나 `denyWithCard` 로 간다.
+    let denial_id = if code != "not_granted" || lease.cause_by_human() {
         let head = o.get("headSha").and_then(Value::as_str).unwrap_or_default();
         record_card_denial(
             pool, agent, scope, channel, root, &lease.id, number, head, code, now,
@@ -2017,7 +2236,7 @@ async fn not_granted_code(
     } else {
         None
     };
-    record_shadow(pool, code, agent, scope, o, lease).await;
+    record_shadow(pool, code, agent, scope, o, lease, None, None).await;
     Ok((
         StatusCode::FORBIDDEN,
         [
@@ -2076,23 +2295,31 @@ async fn checks_early(
     allow: bool,
     card: bool,
     mandate: bool,
+    enforce: bool,
+    switch: Option<bool>,
     approve: Option<&super::msg_post::PostState>,
     agent: &str,
     operator: &str,
     o: &Value,
 ) -> sqlx::Result<Option<Response>> {
+    // 위임 스위치를 모르면(앞단에 env 가 없다) 이른 거절·감사까지 통째로 TS 몫이다 — 아무것도 읽거나 쓰지 않는다.
+    if switch.is_none() {
+        return Ok(None);
+    }
     let g = |k: &str| o.get(k).and_then(Value::as_str).unwrap_or_default();
     let now = super::merge_approval_peek::db_now(pool).await?;
     let lease = super::lease_read::read_lease(pool, g("leaseId"), g("token"), &now).await?;
     let Some(code) = early_denial(lease.as_ref(), agent, operator, g("repo")) else {
         return match lease.as_ref() {
             Some(l) if allow && !l.expired && !l.ended => {
-                checks_allow(pool, card, mandate, approve, agent, operator, o, l, &now).await
+                checks_allow(
+                    pool, card, mandate, enforce, approve, agent, operator, o, l, &now,
+                )
+                .await
             }
             Some(l)
                 if (l.expired || l.ended)
-                    && (l.mandate_id.is_none() || mandate)
-                    && !super::lease_read::mandate_enforced_env() =>
+                    && rust_answers(switch, l.mandate_id.is_some(), mandate, enforce && card) =>
             {
                 expired_denial(pool, agent, operator, o, l).await.map(Some)
             }
@@ -2155,6 +2382,8 @@ pub async fn checks_route(
             st.allow.is_some(),
             st.card.is_some(),
             st.mandate,
+            st.enforce,
+            super::lease_read::mandate_enforced_env(),
             st.approve.as_ref(),
             &me.id,
             op,
@@ -2178,6 +2407,7 @@ pub fn routes(
     checks_card: Option<sqlx::PgPool>,
     checks_approve: Option<super::msg_post::PostState>,
     checks_mandate: bool,
+    checks_enforce: bool,
     results_read: Option<sqlx::PgPool>,
     results_post: Option<super::msg_post::PostState>,
     auth: crate::auth::AuthPools,
@@ -2224,6 +2454,7 @@ pub fn routes(
                 card: checks_card,
                 approve: checks_approve,
                 mandate: checks_mandate,
+                enforce: checks_enforce,
             }))
             .merge(rt.router.with_state(Arc::new(ResultsState {
                 up,
@@ -2247,6 +2478,177 @@ mod tests {
             operator_id: Some(op.into()),
             ..Default::default()
         }
+    }
+
+    fn consumed(limits: Value) -> crate::core::mandate_line_match::ConsumedLine {
+        crate::core::mandate_line_match::ConsumedLine {
+            id: "N".into(),
+            via: "request".into(),
+            granted_by: "O".into(),
+            limits,
+            created_at: Some("2026-01-02T03:04:05.006Z".into()),
+        }
+    }
+
+    /// 앞단에 `HARKROOM_MANDATE_ENFORCE` 가 없으면(스위치 모름) 판정은 DB 를 건드리기 전에 TS 로 넘어간다 — 닿지 않는 풀을 줘도
+    /// 오류가 아니라 `None`(→ TS)이다. 값이 있으면 임대를 읽으러 가서 이 풀에서는 오류가 난다.
+    #[tokio::test]
+    async fn unset_mandate_switch_leaves_merge_checks_to_ts() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(200))
+            .connect_lazy("postgres://x@127.0.0.1:1/x")
+            .unwrap();
+        let o = serde_json::json!({ "leaseId": "l", "token": "t", "repo": "o/r", "number": 1, "headSha": "a" });
+        let run = |switch| checks_early(&pool, true, true, true, true, switch, None, "a", "op", &o);
+        assert!(matches!(run(None).await, Ok(None)));
+        assert!(run(Some(false)).await.is_err());
+        assert!(run(Some(true)).await.is_err());
+    }
+
+    #[test]
+    fn rust_answers_like_gates() {
+        // 스위치 꺼짐: 위임장 없으면 언제나, 있으면 그림자 권한이 있을 때만.
+        assert!(rust_answers(Some(false), false, false, false));
+        assert!(!rust_answers(Some(false), true, false, true));
+        assert!(rust_answers(Some(false), true, true, false));
+        // 스위치 켜짐: 위임장 유무와 상관없이 소모·카드 권한이 다 있어야.
+        assert!(!rust_answers(Some(true), false, true, false));
+        assert!(!rust_answers(Some(true), true, true, false));
+        assert!(rust_answers(Some(true), false, false, true));
+        // 스위치 모름(앞단에 env 없음): 권한이 다 있어도 TS 로 넘긴다.
+        for (m, ok, e) in [
+            (false, false, false),
+            (false, true, true),
+            (true, true, true),
+        ] {
+            assert!(!rust_answers(None, m, ok, e));
+        }
+    }
+
+    #[test]
+    fn shadow_detail_enforced_like_ts() {
+        let l = crate::core::mandate_line_match::FoundLine {
+            id: "N".into(),
+            via: "standing".into(),
+        };
+        let d = shadow_detail_enforced(
+            "allowed",
+            None,
+            Some("M"),
+            Some(&l),
+            "a",
+            "repo:x/y",
+            "L",
+            ("human", true, false),
+        );
+        assert_eq!(d["enforced"], "mandate");
+        assert_eq!(d["chainVerdict"], Value::Null);
+        assert!(d.as_object().unwrap().contains_key("chainVerdict"));
+        assert_eq!(d["mandateVerdict"], "allowed");
+        assert!(d.get("viaApproval").is_none());
+        assert_eq!(d["mandateId"], "M");
+        assert_eq!(d["lineId"], "N");
+        assert_eq!(d["lineVia"], "standing");
+        assert_eq!(d["repo"], "repo:x/y");
+        assert_eq!(d["leaseId"], "L");
+        assert_eq!(d["causeKind"], "human");
+        assert_eq!(d["rootHasKey"], true);
+        assert_eq!(d["causeHasKey"], false);
+        // 1회 승인으로 허락 — viaApproval, 줄은 null.
+        let d = shadow_detail_enforced(
+            "allowed",
+            Some("A"),
+            None,
+            None,
+            "a",
+            "repo:x/y",
+            "L",
+            ("agent", false, false),
+        );
+        assert_eq!(d["viaApproval"], "A");
+        assert_eq!(d["lineId"], Value::Null);
+        assert_eq!(d["lineVia"], Value::Null);
+        // 거절 — 판정 코드가 mandateVerdict, viaApproval 은 없다.
+        let d = shadow_detail_enforced(
+            "no_mandate_line",
+            Some("A"),
+            Some("M"),
+            None,
+            "a",
+            "repo:x/y",
+            "L",
+            ("unknown", false, false),
+        );
+        assert_eq!(d["mandateVerdict"], "no_mandate_line");
+        assert!(d.get("viaApproval").is_none());
+        assert_eq!(d.as_object().unwrap().len(), 12);
+    }
+
+    #[test]
+    fn consumed_line_limits_like_ts() {
+        let l = consumed(json!({ "ghUser": "Bot", "ciOverride": true }));
+        assert_eq!(l.gh_user(), json!("Bot"));
+        assert!(l.ci_override());
+        let l = consumed(json!({ "ghUser": null, "ciOverride": "true" }));
+        assert_eq!(l.gh_user(), Value::Null);
+        assert!(!l.ci_override());
+        let l = consumed(Value::Null);
+        assert_eq!(l.gh_user(), Value::Null);
+        assert!(!l.ci_override());
+    }
+
+    #[test]
+    fn mandate_checked_and_body_like_ts() {
+        let mut ls = lease("a", "op");
+        ls.mandate_id = Some("M".into());
+        ls.channel_id = Some("C".into());
+        ls.thread_root_id = Some("R".into());
+        let line = consumed(json!({ "ghUser": "bot", "uses": 2 }));
+        let o = json!({ "number": 7, "headSha": "h" });
+        let d = mandate_checked_detail(&o, "op", &ls, &line);
+        assert_eq!(
+            d,
+            json!({
+                "number": 7, "headSha": "h", "operatorId": "op", "leaseId": "L", "grantedBy": "O",
+                "mandateId": "M", "lineId": "N", "lineVia": "request", "ghUser": "bot", "ciOverride": false,
+                "causeByHuman": ls.cause_by_human(),
+            })
+        );
+        let b = mandate_allow_body("repo:x/y", &ls, &line);
+        assert_eq!(
+            b,
+            json!({
+                "allowed": true, "repo": "x/y", "grantedBy": "O", "grantedAt": "2026-01-02T03:04:05.006Z",
+                "causeByHuman": ls.cause_by_human(), "channelId": "C", "threadRootId": "R",
+                "mandateLine": { "id": "N", "via": "request", "ghUser": "bot", "ciOverride": false },
+            })
+        );
+    }
+
+    #[test]
+    fn enforce_privileges_cover_consume() {
+        use crate::core::mandate_line_match as m;
+        assert!(
+            m::MERGE_CHECKS_ENFORCE_PRIVILEGES.contains(&("mandate_line.used_count", "UPDATE"))
+        );
+        for c in [
+            "id",
+            "via",
+            "granted_by",
+            "limits",
+            "created_at",
+            "revoked_at",
+            "used_count",
+        ] {
+            let col = format!("mandate_line.{c}");
+            assert!(
+                m::MERGE_CHECKS_MANDATE_PRIVILEGES.contains(&(col.as_str(), "SELECT")),
+                "{col}"
+            );
+        }
+        assert!(
+            m::MERGE_CHECKS_MANDATE_PRIVILEGES.contains(&("account_grant.granted_at", "SELECT"))
+        );
     }
 
     #[test]

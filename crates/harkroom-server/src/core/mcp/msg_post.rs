@@ -688,6 +688,7 @@ pub(super) async fn post_card(
     cause: Option<&str>,
     turn: Option<&str>,
     operator: bool,
+    before_commit: Option<&dyn msg_post::BeforeCommit>,
 ) -> Option<Result<(String, Vec<String>), String>> {
     let a = parse(sub)?;
     match channel_visible(&st.read, &me.id, &a.channel).await {
@@ -718,7 +719,7 @@ pub(super) async fn post_card(
         progress: false,
         wake: false,
         no_mentions: false,
-        before_commit: None,
+        before_commit,
         service_call: false,
     };
     let out = msg_post::post_in_tx(

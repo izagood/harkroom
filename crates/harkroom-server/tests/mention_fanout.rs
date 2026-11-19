@@ -51,7 +51,7 @@ async fn run(conn: &mut PgConnection, c: &Value) -> Result<String, sqlx::Error> 
         reply_grant_thread_id: None,
         principal: principal.as_deref().map(|id| Principal { id }),
         now_ms,
-        principal_invoke_enabled: true,
+        principal_invoke_enabled: Some(true),
     };
     let r = resolve(&mut *conn, &input).await.unwrap();
     let mut notified: HashSet<String> = HashSet::new();

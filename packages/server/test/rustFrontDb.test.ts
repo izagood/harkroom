@@ -8,6 +8,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { hashToken } from '../src/auth/tokens.js';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer, type AddressInfo } from 'node:net';
+import { createServer as createHttpServer } from 'node:http';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -15,6 +16,7 @@ import { buildServer } from '../src/buildServer.js';
 import { agentPat, bootstrapAdmin, createAgent, createMember, registerOperator } from './helpers/fixtures.js';
 import { startTestDb } from './helpers/testDb.js';
 import { fanOutCalls, postMessage, resolveMentionCalls } from '../src/services/messages.js';
+import { addMandateLine } from '../src/services/mandateLines.js';
 import { mkdtempSync, writeFileSync as writeCases } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join as joinPath } from 'node:path';
@@ -1305,6 +1307,14 @@ async function freePort(): Promise<number> {
 }
 
 /** 앞단 바이너리를 띄우고 `front: listening` 줄과 `front: rust routes [...]` 줄을 기다린다. */
+/**
+ * 가군 스위치 — 앞단은 값이 없으면 「모름」으로 보고 그 스위치에 걸린 요청을 TS 로 넘긴다. 대조하려면 TS 가 쓰는 값(기본값)을
+ * 앞단에 명시한다. 이 값을 주지 않은 앞단이 「없으면 TS」 장면이다.
+ */
+const GROUP_A_ENV: Record<string, string> = {
+  HARKROOM_PRINCIPAL_INVOKE: 'on', ATTACHMENT_MAX_BYTES: '26214400', HARKROOM_BACKGROUND_ENABLED: '0',
+};
+
 async function startFront(bin: string, env: Record<string, string>): Promise<{ child: ChildProcess; log: () => string }> {
   const child = spawn(bin, [], { env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
   let log = '';
@@ -1571,6 +1581,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant insert on mandate_line to ${rw}`,
         // S5.3 C2 — 위임장 새로 세우기(`decide_approve::NEW_MANDATE_PRIVILEGES`, mandate INSERT·message.mandate_id 는 위). 없으면 「permission new mandate core off」.
         `grant update (mandate_id) on permission_request to ${rw}`,
+        // S5.5 f — 머지 거절 카드의 요청 줄 세우기·잇기(`permission_card.rs::REQUEST_WRITE_PRIVILEGES`). 없으면 새 카드는 TS 가 세운다.
+        `grant insert (agent_id, kind, target, reason, warnings, channel_id, thread_root_id, created_at, expires_at, denial_id, mandate_id) on permission_request to ${rw}`,
+        `grant update (superseded_by, card_message_id) on permission_request to ${rw}`,
         // S5.3 C3b B1 — 명령 grant 쓰기(`command_match.rs::MATCH_PRIVILEGES`). 칸 권한 셋(감사 INSERT 는 위). 없으면 「command grant match core off」.
         `grant update (use_count, used_at, bound_cwd) on command_grant to ${rw}`,
         // S5.3 C6a-1 — 인박스 읽음 표시(`core/inbox_read.rs::INBOX_READ_PRIVILEGES`). 칸 권한 하나. 없으면 「inbox read core off」.
@@ -1625,6 +1638,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         `grant delete on channel_member to ${rw}`,
         // S5.4 AC3 — 기억 쓰기·백그라운드 켜고 끄기(`core/agent_memory_write.rs::AGENT_MEMORY_WRITE_PRIVILEGES`). 기억 칸 권한은 위 B1a·B1b 줄. 없으면 「agent memory write core off」 — TS 에 남는다.
         `grant insert, update (bg_enabled) on agent_config to ${rw}`,
+        // S5.5 — 회차 되돌리기(`core/agent_memory_write.rs::BG_REVERT_PRIVILEGES`). bg_job select 는 위 bg.claim 줄. 없으면 「background revert to TS」 — 그 한 줄만 TS 에 남는다.
+        `grant update (reverted_at, reverted_by) on bg_job to ${rw}`,
+        `grant select on bg_job_change to ${rw}`,
+        `grant select (archived_by_run), update (archived_at, archived_by_run) on thread_note to ${rw}`,
         // S5.4 AC4 — handle 바꾸기(`core/account_handle.rs::ACCOUNT_HANDLE_PRIVILEGES`). 없으면 「account handle core off」 — TS 에 남는다.
         `grant update (handle) on account to ${rw}`,
         // S5.4 AC4 — keys PUT·agent/activity(`core/account_keys_activity.rs::KEYS_ACTIVITY_PRIVILEGES`). agent_config insert 는 위 AC3 줄. 없으면 「keys/activity core off」 — TS 에 남는다.
@@ -1796,6 +1813,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // S5.3 C0 — 코어 /ws·/ws-ticket 을 켠다. 주기는 시험이 기다릴 수 있게 줄인다(기본값은 TS 와 같다).
         HARKROOM_CORE: 'rust', HARKROOM_WS_APP_HEARTBEAT_MS: '300', HARKROOM_WS_REVALIDATE_MS: '500',
         ATTACHMENT_ROOT: attRoot, HARKROOM_SECRET_KEYS_DIR: secretKeysDir, HARKROOM_SECRET_KEY_ID: 'ck1',
+        ...GROUP_A_ENV,
       });
       expect(f.log()).toContain('front: core rust');
       expect(f.log()).toContain('/operator, /operators*');
@@ -3237,6 +3255,18 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           const untilN = Date.now() + 10_000;
           while (!fN.log().includes('front: rust core routes') && Date.now() < untilN) await new Promise((res) => setTimeout(res, 100));
           expect(fN.log()).toContain('thread note core off — missing privileges');
+          // 가군 스위치를 주지 않은 앞단 — 스위치마다 「모름 → TS」로 기동한다(값을 준 앞단은 이 줄을 남기지 않는다).
+          const UNSET_LINES = [
+            'front: principal-invoke posts to TS — HARKROOM_PRINCIPAL_INVOKE unset',
+            'front: agent calls under delegation v2 to TS — HARKROOM_DELEGATION_IMPLICIT unset',
+            'front: attachment upload to TS — ATTACHMENT_MAX_BYTES unset',
+            'front: background list to TS — HARKROOM_BACKGROUND_ENABLED unset',
+            'front: invite mail (issue with email, resend) to TS — mail env unset',
+          ];
+          for (const line of UNSET_LINES) expect(fN.log(), line).toContain(line);
+          expect(fN.log()).not.toContain('"POST /uploads"');
+          expect(fN.log()).not.toContain('"GET /accounts/agents/{id}/background"');
+          for (const line of UNSET_LINES.slice(0, 1).concat(UNSET_LINES.slice(2, 4))) expect(f.log(), line).not.toContain(line);
           const viaTs = await mcpCall(`http://127.0.0.1:${portN}`, agent.pat, 'thread.note', { threadRootId: noteRootR, body: 'TS 가 받는다' });
           expect(viaTs.core, '권한이 없으면 TS 가 답한다').toBeNull();
           expect(viaTs.text).toContain('ok\\":true');
@@ -4533,6 +4563,160 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           fP?.child.kill('SIGTERM');
           await appP.close();
           await db.pool.query('update projection_config set avcs_base_url = null where id = true');
+        }
+      }
+
+      // S5.5 — 협업 탭 제안 읽기(`GET /collab/proposals`, 코어 `collab_read.rs`). 가짜 avcs 를 포트 둘로 띄워(같은 내용) TS 는 A 를,
+      // Rust 앞단은 B 를 보게 한다 — B 만 맞았으면 Rust 가 직접 읽어 답한 것이다. 답은 `baseUrl` 만 빼고 같아야 한다.
+      {
+        expect(f.log(), 'collab 줄').toContain('"GET /collab/proposals"');
+        {
+          const [x, y] = [await callX(tsUrl, 'GET', '/collab/proposals'), await callX(rsUrl, 'GET', '/collab/proposals')];
+          expect(y.json, '보는 서버 없음').toEqual({ baseUrl: null, repos: [] });
+          expect(y.json).toEqual(x.json);
+        }
+        const av = {
+          oids: [] as string[], objects: new Map<string, Record<string, unknown>>(),
+          reduced: 'ok' as 'ok' | '404' | '500', etag: '"e1"', body: {} as Record<string, unknown>, hits: new Map<number, number>(),
+        };
+        const fake = () => createHttpServer((req, res) => {
+          const port = (req.socket.address() as AddressInfo).port;
+          av.hits.set(port, (av.hits.get(port) ?? 0) + 1);
+          const u = new URL(req.url ?? '/', 'http://x');
+          const send = (status: number, body?: unknown, headers: Record<string, string> = {}) => {
+            res.writeHead(status, { 'content-type': 'application/json', ...headers });
+            res.end(body === undefined ? '' : JSON.stringify(body));
+          };
+          if (!u.pathname.startsWith('/o/collab-r/')) return send(404, { error: 'no repo' });
+          const leaf = u.pathname.slice('/o/collab-r/'.length);
+          if (req.method === 'GET' && leaf === 'sync') {
+            return send(200, { oids: av.oids.slice(Number(u.searchParams.get('since') ?? 0)), cursor: av.oids.length });
+          }
+          if (req.method === 'POST' && leaf === 'objects/fetch') {
+            let raw = '';
+            req.on('data', (c) => { raw += String(c); });
+            req.on('end', () => {
+              const want = (JSON.parse(raw) as { oids: string[] }).oids;
+              send(200, { objects: want.flatMap((o) => (av.objects.has(o) ? [{ ...av.objects.get(o), oid: o }] : [])) });
+            });
+            return undefined;
+          }
+          if (req.method === 'GET' && leaf === 'reduced') {
+            if (av.reduced === '404') return send(404, {});
+            if (av.reduced === '500') return send(500, {});
+            if (req.headers['if-none-match'] === av.etag) return send(304);
+            return send(200, av.body, { etag: av.etag });
+          }
+          return send(404, {});
+        });
+        const [avA, avB] = [fake(), fake()];
+        await Promise.all([avA, avB].map((sv) => new Promise<void>((res) => sv.listen(0, '127.0.0.1', () => res()))));
+        const [portA, portB] = [avA, avB].map((sv) => (sv.address() as AddressInfo).port) as [number, number];
+        const [urlA, urlB] = [`http://127.0.0.1:${portA}`, `http://127.0.0.1:${portB}`];
+        const appC = await buildServer({
+          pool: db.pool, trustProxy: TRUST, corsOrigins: [CORS],
+          projection: { envBaseUrl: urlA, reconfigure: async () => {}, currentUrl: () => urlA },
+        });
+        const ins = async (sql: string, p: unknown[]) => (await db.pool.query<{ id: string }>(sql, p)).rows[0]!.id;
+        const ch1 = await ins(`insert into channel (name, kind, visibility, repo) values ('collab-1', 'standard', 'public', 'o/collab-r') returning id`, []);
+        const ch2 = await ins(`insert into channel (name, kind, visibility, repo) values ('collab-2', 'standard', 'private', 'o/collab-r') returning id`, []);
+        await db.pool.query(`insert into account_key (key_id, account_id, public_key_pem) values ('collab-k1', $1, 'pem'), ('collab-k2', $2, 'pem')`, [member.accountId, agent.accountId]);
+        await db.pool.query(`alter role ${rw} connection limit -1`);
+        let fC: Awaited<ReturnType<typeof startFront>> | undefined;
+        try {
+          await appC.listen({ port: 0, host: '127.0.0.1' });
+          const tsC = `http://127.0.0.1:${(appC.server.address() as AddressInfo).port}`;
+          const portC = await freePort();
+          fC = await startFront(bin, {
+            UPSTREAM_URL: tsC, DATABASE_URL: db.uri, PORT: String(portC), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
+            TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust', AVCS_BASE_URL: urlB,
+          });
+          const untilC = Date.now() + 10_000;
+          while (!fC.log().includes('front: rust core routes') && Date.now() < untilC) await new Promise((res) => setTimeout(res, 100));
+          expect(fC.log()).toContain('"GET /collab/proposals"');
+          const rsC = `http://127.0.0.1:${portC}`;
+          type View = { baseUrl: string | null; repos: { repo: string; channelIds: string[]; error: string | null; proposals: Record<string, unknown>[]; reducedAt: unknown }[]; actors?: Record<string, string> };
+          const norm = (j: unknown) => {
+            const v = structuredClone(j) as View;
+            for (const r of v.repos ?? []) r.channelIds = [...r.channelIds].sort();
+            return { ...v, baseUrl: 'X' };
+          };
+          // 두 서버에 같은 요청 — Rust 쪽은 B 만 때려야 한다(TS 로 넘겼으면 A 가 맞는다).
+          const both = async (name: string, token: string = A) => {
+            const x = await callX(tsC, 'GET', '/collab/proposals', undefined, token);
+            const [a0, b0] = [av.hits.get(portA) ?? 0, av.hits.get(portB) ?? 0];
+            const y = await callX(rsC, 'GET', '/collab/proposals', undefined, token);
+            expect({ status: y.status, code: y.code }, name).toEqual({ status: x.status, code: x.code });
+            if (x.status !== 200) return { y: y.json as unknown as View, mine: undefined };
+            expect(norm(y.json), name).toEqual(norm(x.json));
+            expect(av.hits.get(portA) ?? 0, `${name}: TS 로 넘기지 않았다`).toBe(a0);
+            expect(av.hits.get(portB) ?? 0, `${name}: Rust 가 avcs 를 읽었다`).toBeGreaterThan(b0);
+            expect((x.json as unknown as View).baseUrl).toBe(urlA);
+            expect((y.json as unknown as View).baseUrl).toBe(urlB);
+            const v = y.json as unknown as View;
+            return { y: v, mine: v.repos.find((r) => r.repo === 'o/collab-r') };
+          };
+          const put = (oid: string, obj: Record<string, unknown>) => { av.oids.push(oid); av.objects.set(oid, obj); };
+          put('intent_a', { type: 'intent', owner: 'collab-k1', title: '제안 A' });
+          av.oids.push('blob_x');
+          put('operation_1', { type: 'operation', actor: { id: 'collab-k2' }, intentOid: 'intent_a', declaredPurpose: '고침 1', effects: { changesBehavior: true } });
+          put('evidence_1', { type: 'evidence', forOps: ['operation_1'], producedBy: { id: 'collab-ext' }, kind: 'test', result: 'pass' });
+          put('lease_1', { type: 'lease', actor: { id: 'collab-k2' }, intentOid: 'intent_a', writeScopes: ['src/a.ts'], expiresAt: '2999-01-01T00:00:00.000Z' });
+          av.body = { view: 'main', cursor: 5, materializer: 'm1', treeHash: 't1', statuses: { operation_1: 'proposed' }, blockedReasons: {}, conflicts: [] };
+          const first = await both('첫 읽기');
+          expect(first.mine).toMatchObject({ channelIds: [ch1, ch2].sort(), error: null, reducedAt: { cursor: 5, materializer: 'm1', treeHash: 't1' } });
+          expect(first.mine!.proposals).toEqual([{
+            intentOid: 'intent_a', title: '제안 A', ownerKeyId: 'collab-k1', lastLogIndex: 4, state: 'open', conflicts: [], decisions: [],
+            effects: { changesBehavior: true, breaksPublicApi: false },
+            ops: [{
+              oid: 'operation_1', purpose: '고침 1', actorKeyId: 'collab-k2', status: 'proposed', blockedReason: null,
+              effects: { changesBehavior: true, breaksPublicApi: false },
+              evidence: [{ oid: 'evidence_1', summary: 'test pass', actorKeyId: 'collab-ext' }],
+            }],
+          }]);
+          expect(first.y.actors, '아는 키만 계정으로').toEqual({ 'collab-k1': member.accountId, 'collab-k2': agent.accountId });
+          // 다시 — 커서부터 읽고 환원은 304 다. 답은 그대로다. 멤버·에이전트도 읽는다.
+          expect((await both('다시(304)')).mine).toEqual(first.mine);
+          expect((await both('멤버', member.token)).mine).toEqual(first.mine);
+          expect((await both('에이전트', agent.pat)).mine).toEqual(first.mine);
+          expect((await both('익명 → 401', '')).mine).toBeUndefined();
+          // 로그가 자란다 — 앞 배치의 op 를 가리키는 decision(op 를 다시 받아 intent 를 찾는다)과 새 intent. 환원은 충돌을 싣는다.
+          put('decision_1', { type: 'decision', chosenOps: ['operation_1'], decidedBy: { id: 'collab-k1' }, reason: '이걸로' });
+          put('intent_b', { type: 'intent', owner: '', title: '제안 B' });
+          av.etag = '"e2"';
+          av.body = {
+            view: 'main', cursor: 7, materializer: 'm1', treeHash: 't2', statuses: { operation_1: 'needs_decision' }, blockedReasons: { operation_1: '다툼' },
+            conflicts: [{ id: 'c1', key: 'file:src/a.ts', kind: 'file', reason: '같은 파일', options: [{ opOid: 'operation_1', actor: 'collab-k2', purpose: '고침 1' }, { opOid: 'operation_gone', actor: 'z', purpose: 'z' }] }],
+          };
+          const grown = await both('자란 로그');
+          expect(grown.mine!.proposals.map((p) => [p.intentOid, p.state, p.lastLogIndex])).toEqual([['intent_a', 'needs_decision', 6], ['intent_b', 'open', 7]]);
+          expect(grown.mine!.proposals[0]).toMatchObject({
+            decisions: [{ oid: 'decision_1', reason: '이걸로', decidedByKeyId: 'collab-k1' }],
+            conflicts: [{ id: 'c1', key: 'file:src/a.ts', reason: '같은 파일' }],
+          });
+          // 환원 평면 없음(404) → 상태를 모른다. 500 → 그 저장소만 unreachable.
+          av.reduced = '404';
+          const none = await both('환원 없음');
+          expect(none.mine).toMatchObject({ error: null, reducedAt: null });
+          expect(none.mine!.proposals.map((p) => p.state)).toEqual(['unknown', 'unknown']);
+          av.reduced = '500';
+          expect((await both('환원 500')).mine).toEqual({ repo: 'o/collab-r', channelIds: [ch1, ch2].sort(), error: 'unreachable', proposals: [], reducedAt: null });
+          av.reduced = 'ok';
+          expect((await both('되살아남')).mine!.proposals.map((p) => p.state)).toEqual(['needs_decision', 'open']);
+          // https 서버 — 이 앞단의 avcs 클라이언트는 TLS 를 못 붙는다. 읽지 않고 TS 에 넘긴다(TS 는 자기 워커의 URL 로 답한다).
+          await db.pool.query(`update projection_config set avcs_base_url = 'https://collab.example' where id = true`);
+          const b1 = av.hits.get(portB) ?? 0;
+          const viaTs = await callX(rsC, 'GET', '/collab/proposals');
+          expect(viaTs.status).toBe(200);
+          expect((viaTs.json as unknown as View).baseUrl, 'https → TS 가 답했다').toBe(urlA);
+          expect(av.hits.get(portB) ?? 0, 'Rust 는 읽지 않았다').toBe(b1);
+        } finally {
+          fC?.child.kill('SIGTERM');
+          await appC.close();
+          await Promise.all([avA, avB].map((sv) => new Promise<void>((res) => { sv.closeAllConnections(); sv.close(() => res()); })));
+          await db.pool.query('update projection_config set avcs_base_url = null where id = true');
+          await db.pool.query(`delete from account_key where key_id like 'collab-%'`);
+          await db.pool.query('delete from channel where id = any($1)', [[ch1, ch2]]);
         }
       }
 
@@ -5863,7 +6047,8 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           expect(f.log(), k).toContain(`"${k}"`);
         }
         expect(f.log()).not.toContain('agent memory write core off');
-        expect(f.log(), '회차 되돌리기는 TS 에 남는다').not.toContain('"POST /accounts/agents/{id}/background/runs/{runId}/revert"');
+        expect(f.log(), '회차 되돌리기도 Rust 줄이다(S5.5)').toContain('"POST /accounts/agents/{id}/background/runs/{runId}/revert"');
+        expect(f.log()).not.toContain('background revert to TS');
         const M = member.token;
         const M2 = member2.token;
         const ins = async (q: string, p: unknown[] = []) => (await db.pool.query<{ id: string }>(q, p)).rows[0]!.id;
@@ -5989,6 +6174,90 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(ts.audit.map((a) => a.action)).toEqual(expect.arrayContaining(['agent.memory.edited', 'agent.memory.deleted',
           'agent.memory.flag_cleared', 'agent.memory.archived', 'agent.memory.unarchived', 'agent.background.toggled']));
         expect(JSON.stringify(ts.audit)).not.toContain('AC3SECRET');
+
+        // S5.5 — [이 회차 되돌리기](`POST …/background/runs/{runId}/revert`, 코어 `agent_memory_write.rs::revert`). 같은 처음 상태에서
+        // 같은 요청 줄을 TS 로 한 번, Rust 로 한 번 보내고 답·기억 행·이전 판·회차 행·스레드 메모·감사가 같은지 본다.
+        {
+          const R1 = '5e55f000-0000-4000-8000-000000000001'; // 끝난 회차 — 되돌린다
+          const R2 = '5e55f000-0000-4000-8000-000000000002'; // 도는 회차 — 409 not_finished
+          const R3 = '5e55f000-0000-4000-8000-000000000003'; // 다른 에이전트의 회차 — 404
+          const T1 = '2026-02-02T00:00:00.456789Z';
+          const root = String((await db.pool.query(`select id from message order by id limit 1`)).rows[0].id);
+          const wipe = async () => {
+            await db.pool.query('delete from thread_note where account_id = $1', [owned]);
+            await db.pool.query('delete from bg_job where id = any($1)', [[R1, R2, R3]]);
+            await db.pool.query('delete from agent_memory_revision where account_id = any($1)', [bots]);
+            await db.pool.query('delete from agent_memory where account_id = any($1)', [bots]);
+          };
+          const seed = async () => {
+            await wipe();
+            await db.pool.query(
+              `insert into bg_job (id, account_id, kind, day, status) values
+                 ($1, $4, 'distill', '2026-02-02', 'done'), ($2, $4, 'cleanup', '2026-02-02', 'running'), ($3, $5, 'distill', '2026-02-02', 'done')`,
+              [R1, R2, R3, owned, orphan]);
+            await db.pool.query(
+              `insert into agent_memory (account_id, slug, value, description, kind, updated_at, archived_at) values
+                 ($1, 'mem/made', 'made by run', null, 'topic', $2, null),
+                 ($1, 'mem/upd', 'new upd', 'nd', 'topic', $2, null),
+                 ($1, 'mem/arc', 'kept', null, 'procedure', $2, now()),
+                 ($1, 'mem/chg', 'edited later', null, 'topic', $3, null),
+                 ($1, 'mem/merged', 'merged in', null, 'topic', $2, null),
+                 ($1, 'mem/nullafter', 'na', null, 'topic', $2, null)`, [owned, T1, T0]);
+            await db.pool.query(
+              `insert into agent_memory_revision (account_id, slug, value, description, updated_at, flagged, reason, detail, kind, run_id) values
+                 ($1, 'mem/upd', 'old upd', 'od', $3, false, null, null, 'procedure', $2),
+                 ($1, 'mem/upd', 'mid upd', null, $3, false, null, null, 'topic', $2),
+                 ($1, 'mem/merged', 'pre merge', null, $3, false, 'merge', '{"created":true}', 'topic', $2)`, [owned, R1, T0]);
+            await db.pool.query(
+              `insert into bg_job_change (run_id, slug, op, after_updated_at) values
+                 ($1, 'mem/made', 'create', $2), ($1, 'mem/upd', 'update', null), ($1, 'mem/arc', 'archive', $2), ($1, 'mem/chg', 'update', $2),
+                 ($1, 'mem/gone', 'create', $2), ($1, 'mem/merged', 'merge', $2), ($1, 'mem/nullafter', 'update', null), ($1, 'mem/upd', 'update', $2)`, [R1, T1]);
+            await db.pool.query(`insert into thread_note (account_id, thread_root_id, body, archived_at, archived_by_run) values ($1, $2, 'note', now(), $3)`, [owned, root, R1]);
+          };
+          const go = async (base: string) => {
+            await seed();
+            const since = String((await db.pool.query('select coalesce(max(id), 0)::text as m from audit_log')).rows[0].m);
+            const out: unknown[] = [];
+            const call = async (id: string, runId: string, token: string) => {
+              const r = await callX(base, 'POST', `/accounts/agents/${id}/background/runs/${runId}/revert`, undefined, token);
+              out.push({ id, runId, status: r.status, json: r.status === 400 ? null : r.json });
+            };
+            await call(owned, R1, M2); // 남 403
+            await call(owned, R1, ''); // 401
+            await call(owned, R1, agent.pat); // 에이전트 403
+            await call(owned, 'nope', M); // 400
+            await call(owned, '5e55f000-0000-4000-8000-0000000000ff', M); // 없는 회차 404
+            await call(owned, R3, M); // 남의 회차 404
+            await call(owned, R2, M); // 도는 회차 409
+            await call(goneBot, R1, M); // 지운 에이전트 404
+            await call(member.accountId, R1, A); // 사람 404
+            await call(owned, R1, M); // 200
+            await call(owned, R1, M); // 409 already_reverted
+            const rows = (await db.pool.query(
+              `select slug, value, description, kind, flagged_at is not null as flagged, archived_at is not null as archived
+                 from agent_memory where account_id = $1 order by slug`, [owned])).rows;
+            const revs = (await db.pool.query(
+              `select slug, value, description, kind, flagged, reason, detail - 'revisionId' as detail, run_id, turn_id
+                 from agent_memory_revision where account_id = $1 order by slug, value`, [owned])).rows;
+            const jobs = (await db.pool.query(
+              `select id::text, status, reverted_at is not null as reverted, reverted_by::text from bg_job where id = any($1) order by id`, [[R1, R2, R3]])).rows;
+            const notes = (await db.pool.query(
+              `select archived_at is not null as archived, archived_by_run::text from thread_note where account_id = $1`, [owned])).rows;
+            const audit = (await db.pool.query(
+              `select action, actor_id::text, actor_handle, target, detail from audit_log where id > $1::bigint and action like 'agent.%' order by id`, [since])).rows;
+            return { out, rows, revs, jobs, notes, audit };
+          };
+          const t2 = await go(tsUrl);
+          const r2 = await go(rsUrl);
+          expect(r2).toEqual(t2);
+          expect((t2.out as { status: number }[]).map((o) => o.status)).toEqual([403, 401, 403, 400, 404, 404, 409, 404, 404, 200, 409]);
+          const done = (t2.out as { json: { reverted: string[]; skipped: { slug: string; reason: string }[]; notesReopened: number } }[])[9]!.json;
+          expect(done.reverted).toEqual(['mem/made', 'mem/upd', 'mem/arc', 'mem/merged']);
+          expect(done.skipped).toEqual([{ slug: 'mem/chg', reason: 'changed_since' }, { slug: 'mem/gone', reason: 'gone' }, { slug: 'mem/nullafter', reason: 'changed_since' }]);
+          expect(done.notesReopened).toBe(1);
+          expect(t2.audit.map((a) => a.action)).toEqual(['agent.background.reverted']);
+          await wipe();
+        }
         await db.pool.query('delete from agent_memory_revision where account_id = any($1)', [bots]);
         await db.pool.query('delete from agent_memory where account_id = any($1)', [bots]);
         await db.pool.query('delete from agent_config where account_id = any($1)', [bots]);
@@ -6170,6 +6439,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           await call('POST', '/invites', {}, ''); // 401
           await call('POST', '/invites', { email: 'ac4@example.test' }, A); // TS 가 판정(메일 꺼짐 409)
           await call('POST', '/invites', { email: 'nope' }, A); // TS 가 판정(400)
+          await call('POST', `/invites/${mine[1]}/resend`, undefined, A); // 메일 설정 없는 앞단 → TS 가 판정(메일 꺼짐 409)
           await call('DELETE', `/invites/${mine[0]}`, undefined, A); // 204
           await call('DELETE', `/invites/${mine[0]}`, undefined, A); // 이미 취소 204
           await call('DELETE', `/invites/${used}`, undefined, A); // 409
@@ -6188,7 +6458,11 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const y = await run(rsUrl);
         expect(y).toEqual(x);
         expect((y.slice(0, -1) as { status: number }[]).map((r) => r.status)).toEqual([
-          201, 201, 201, 400, 400, 403, 401, 409, 400, 204, 204, 409, 404, 400, 403, 401]);
+          201, 201, 201, 400, 400, 403, 401, 409, 400, 409, 204, 204, 409, 404, 400, 403, 401]);
+        // 가군(메일 설정) — 이 앞단에는 메일 env 가 없다. 주소가 실린 발급·다시 보내기의 409 `mail_disabled` 는 TS 만 내는 코드다
+        // (Rust 코어에는 그 답이 없다, d83818756) — 그 코드가 왔으면 TS 가 답한 것이다. 초대 행도 새로 생기지 않는다(감사 4건 그대로).
+        expect((y as { path: string; json: unknown; code?: string }[]).filter((r) => r.code === 'mail_disabled').map((r) => r.path))
+          .toEqual(['/invites', '/invites/N1/resend']);
         expect((y[0] as { json: unknown }).json).toEqual({ keys: ['id', 'expiresAt', 'mail', 'token'], token: true, iso: true, mail: 'off', week: true });
         expect((y.at(-1) as { audit: unknown[] }).audit).toHaveLength(4);
         await db.pool.query('delete from invite where id = any($1)', [made]);
@@ -7361,6 +7635,117 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const until6 = Date.now() + 10_000;
         while (gc() - gc0 < 6 && Date.now() < until6) await new Promise((res) => setTimeout(res, 100));
         expect(gc() - gc0, 'Rust 승인 여섯의 grant.changed').toBeGreaterThanOrEqual(6);
+      }
+      // S5.5 d — 권한 카드를 그 **거울 카드**로 정한다(`decide_routes.rs` `card_target`). 서버가 세운 꼴의 거울(에이전트 글·사람 앞·
+      // 선택지 id 같음)로 거절·승인하면 원본 요청이 정해지고(`via: mirror`) 원본 카드에 답이 적히며 거울이 같이 닫힌다. 응답은 누른 거울이다.
+      // 선택지가 다른 거울은 진짜 거울이 아니다 — 두 쪽 모두 TS 의 물음 길로 간다. Rust 가 맡았는지는 outbox(`busEvents`)로 본다.
+      {
+        const H = { kind: 'human' };
+        const OPTS = [{ id: 'approve', label: '허락' }, { id: 'deny', label: '거절' }];
+        const preq = async (target: string) => {
+          const req = (await db.pool.query<{ id: string }>(
+            `insert into permission_request(agent_id, kind, target, reason, channel_id, thread_root_id, expires_at)
+             values ($1, 'tool', $2, 'x', $3, gen_random_uuid(), now() + interval '1 hour') returning id::text`,
+            [agent.accountId, target, todayId])).rows[0]!.id;
+          const card = await say(`@admin ${target}`, {
+            meta: { kind: 'ask', ask: { prompt: '허락할까요?', options: OPTS, to: H }, permissionRequest: { requestId: req, status: 'pending' } },
+          });
+          await db.pool.query(`update permission_request set card_message_id = $2 where id = $1`, [req, card]);
+          return { req, card };
+        };
+        const mirrorOf = (root: string, options = OPTS) =>
+          say('@admin 거울', { meta: { kind: 'ask', ask: { prompt: '허락할까요?', options, to: H, mirrorOf: root } } });
+        const side = async (tag: string) => {
+          const deny = await preq(`Bash(echo ${tag} mdeny:*)`);
+          const appr = await preq(`Bash(echo ${tag} mappr:*)`);
+          const fake = await preq(`Bash(echo ${tag} mfake:*)`);
+          const mem = await preq(`Bash(echo ${tag} mmem:*)`);
+          return {
+            denyReq: deny.req, denyCard: deny.card, denyMirror: await mirrorOf(deny.card),
+            apprReq: appr.req, apprCard: appr.card, apprMirror: await mirrorOf(appr.card),
+            fakeReq: fake.req, fakeCard: fake.card, fakeMirror: await mirrorOf(fake.card, [{ id: 'approve', label: '허락' }, { id: 'no', label: '아니' }]),
+            memReq: mem.req, memCard: mem.card, memMirror: await mirrorOf(mem.card),
+          };
+        };
+        type Side = Awaited<ReturnType<typeof side>>;
+        const T = await side('tside');
+        const R = await side('rside');
+        const shape = (sd: Side) => (v: unknown): unknown => {
+          if (Array.isArray(v)) return v.map(shape(sd));
+          if (v && typeof v === 'object') {
+            const o: Record<string, unknown> = {};
+            for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+              o[k] = /At$/.test(k) ? (x === null ? null : typeof x) : k === 'seq' || k === 'threadRootId' ? typeof x : shape(sd)(x);
+            }
+            return o;
+          }
+          for (const [k, id] of Object.entries(sd)) if (v === id) return k.toUpperCase();
+          if (typeof v === 'string') return v.replace(/[tr]side/g, 'SIDE');
+          return v;
+        };
+        const ansP = (m: string) => `/channels/${todayId}/messages/${m}/ask-answer`;
+        const updOf = (ids: string[]) => busEvents.filter((e) => (e as { type?: string }).type === 'message.updated'
+          && ids.includes(String((e as { message?: { id?: string } }).message?.id))).length;
+        const run = async (base: string, sd: Side) => {
+          const out: { step: string; status: number; code?: string; body: unknown }[] = [];
+          const step = async (name: string, path: string, body: unknown, token = A) => {
+            const r = await callX(base, 'POST', path, body, token);
+            out.push({ step: name, status: r.status, code: r.code, body: r.status === 200 ? shape(sd)(r.json) : null });
+          };
+          await step('거울로 거절', ansP(sd.denyMirror), { optionId: 'deny' });
+          await step('거울 다시 → 409', ansP(sd.denyMirror), { optionId: 'deny' });
+          await step('정해진 뒤 원본 카드 → 409', ansP(sd.denyCard), { optionId: 'deny' });
+          await step('거울로 승인(소유자)', ansP(sd.apprMirror), { optionId: 'approve' });
+          await step('선택지 다른 거울 거절 → 물음 길', ansP(sd.fakeMirror), { optionId: 'no' });
+          await step('선택지 다른 거울 approve', ansP(sd.fakeMirror), { optionId: 'approve' });
+          await step('멤버가 거울로 거절', ansP(sd.memMirror), { optionId: 'deny' }, member.token);
+          return out;
+        };
+        const tsOut = await run(tsUrl, T);
+        const u0 = updOf([R.denyCard, R.apprCard]);
+        const rsOut = await run(rsUrl, R);
+        expect(rsOut).toEqual(tsOut);
+        const st = (s: string) => tsOut.find((o) => o.step === s);
+        expect(st('거울로 거절')?.status).toBe(200);
+        expect((st('거울로 거절')?.body as { id?: string }).id, '응답은 누른 거울').toBe('DENYMIRROR');
+        expect(st('거울 다시 → 409')?.status).toBe(409);
+        expect(st('거울로 승인(소유자)')?.status).toBe(200);
+        const ids = (sd: Side) => JSON.stringify(sd);
+        const rows = async (sd: Side) => (await db.pool.query(
+          `select k, p.status, p.decided_by::text as by, p.grant_mode as mode, p.decided_at is not null as decided
+             from jsonb_each_text($1::jsonb) j(k, id) join permission_request p on p.id = j.id::uuid order by k`, [ids(sd)])).rows.map((r) => shape(sd)(r));
+        const tRows = await rows(T);
+        expect(tRows.find((r) => (r as { k: string }).k === 'denyReq')).toMatchObject({ status: 'denied' });
+        expect(tRows.find((r) => (r as { k: string }).k === 'apprReq')).toMatchObject({ status: 'granted' });
+        expect(await rows(R)).toEqual(tRows);
+        const cards = async (sd: Side) => (await db.pool.query(
+          `select k, m.meta->'permissionRequest' as pr, m.meta->'ask' as ask from jsonb_each_text($1::jsonb) j(k, id)
+             join message m on m.id = j.id::uuid order by k`, [ids(sd)])).rows.map((r) => shape(sd)(r));
+        const tCards = await cards(T);
+        expect(JSON.stringify(tCards), '원본 카드에 거울로 정했다고 남는다').toContain('"decidedVia":{"kind":"mirror","mirrorMessageId":"APPRMIRROR"}');
+        expect(await cards(R)).toEqual(tCards);
+        const grants = async (tag: string, sd: Side) => (await db.pool.query(
+          `select scope, granted_by::text as by, allow_agent_cause as aac from account_grant
+            where account_id = $1 and capability = 'tool.allow' and scope like $2 order by scope`,
+          [agent.accountId, `tool:${todayId}:Bash(echo ${tag} m%`])).rows.map((r) => shape(sd)(r));
+        const tG = await grants('tside', T);
+        expect(tG.length, '거울 승인의 tool grant').toBeGreaterThanOrEqual(1);
+        expect(await grants('rside', R)).toEqual(tG);
+        const audits = async (sd: Side) => (await db.pool.query(
+          `select action, actor_id::text as actor, target, detail from audit_log
+            where action in ('permission.approved', 'permission.denied', 'grant.given') and detail->>'requestId' = any($1::text[])`,
+          [Object.values(sd)])).rows.map((r) => shape(sd)(r)).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+        const tAud = await audits(T);
+        expect(JSON.stringify(tAud), '감사에 via: mirror').toContain('"via":"mirror"');
+        expect(await audits(R)).toEqual(tAud);
+        const wakes = async (sd: Side) => (await db.pool.query(
+          `select message_id::text as m, reason as r from inbox where message_id = any($1::uuid[]) and reason = 'ask_answered'`,
+          [Object.values(sd)])).rows.map((r) => shape(sd)(r)).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+        expect(await wakes(R)).toEqual(await wakes(T));
+        // Rust 가 맡았다 — 원본 카드 둘의 `message.updated` 가 outbox 로 건너온다(TS 가 했으면 busEvents 에 없다).
+        const untilD = Date.now() + 10_000;
+        while (updOf([R.denyCard, R.apprCard]) - u0 < 2 && Date.now() < untilD) await new Promise((res) => setTimeout(res, 100));
+        expect(updOf([R.denyCard, R.apprCard]) - u0, 'Rust 가 거울로 정한 원본 카드 둘의 message.updated').toBeGreaterThanOrEqual(2);
       }
       // S5.3 C1 — 승인이 **있는 위임장**에 줄을 쓴다(코어 `mandate_line_write.rs`). tool `approve`(위임장 있음)·`approve_mandate`·
       // `approve_turn` 을 TS·Rust 에 각자의 위임장·요청·카드로 돌려 응답·요청 줄·카드 meta(`lineId`)·grant·줄·감사를 견준다.
@@ -8991,7 +9376,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 fd = await startFront(bin, {
                   UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(portD), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
                   TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust', HARKROOM_DELEGATION_V2: mode,
-                  HARKROOM_DELEGATION_IMPLICIT: implicitMode,
+                  HARKROOM_DELEGATION_IMPLICIT: implicitMode, ...GROUP_A_ENV,
                 });
               } catch (err) {
                 if (attempt >= 2 || !String(err).includes('AddrInUse')) throw err;
@@ -9243,6 +9628,47 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           await wokeBy(call);
           return { root, call };
         };
+        // S5.5 e·f — `message.ask` 의 권한 카드 거울(같은 카드를 그리는 꼴)과 머지 거절 카드(`mergeDenialId`).
+        const AD = [{ id: 'approve', label: '허락' }, { id: 'deny', label: '거절' }];
+        const permRoot = async (ch: string, pr: Record<string, unknown>) => {
+          const head = await ins({ ch, author: member.accountId, body: '일' });
+          const req = (await db.pool.query<{ id: string }>(
+            `insert into permission_request(agent_id, kind, target, reason, channel_id, thread_root_id, expires_at)
+             values ($1, $2, $3, $4, $5, $6, now() + interval '1 hour') returning id::text`,
+            [bot3.accountId, pr.kind, pr.target, pr.reason, ch, head])).rows[0]!.id;
+          const card = await ins({ ch, root: head, author: bot3.accountId, body: '권한 카드', meta: {
+            kind: 'ask', ask: { prompt: '허락할까요?', options: AD, to: { kind: 'human' } }, permissionRequest: { requestId: req, status: 'pending', ...pr },
+          } });
+          await db.pool.query(`update permission_request set card_message_id = $2 where id = $1`, [req, card]);
+          return { head, card };
+        };
+        const mirrorAsk = (pr: Record<string, unknown>, o: { op?: boolean } = {}) => async (ch: string): Promise<Setup> => {
+          const { card } = await permRoot(ch, pr);
+          const args = { channelId: ch, body: '정해 주세요', mirrorOf: card, options: AD };
+          if (!o.op) return { tool: 'message.ask', args, via: viaPat };
+          const { call } = await chainBy(member.accountId, 0, 0)(ch);
+          return { tool: 'message.ask', args, via: viaOp, cause: call, turn: turnId };
+        };
+        const denialAsk = (o: { used?: boolean; otherThread?: boolean; pending?: boolean; ci?: boolean } = {}) => async (ch: string): Promise<Setup> => {
+          const head = await ins({ ch, author: member.accountId, body: '머지해 줘' });
+          const other = await ins({ ch, author: member.accountId, body: '다른 스레드' });
+          const denial = (await db.pool.query<{ id: string }>(
+            `insert into merge_denial (agent_id, scope, pr_number, head_sha, channel_id, thread_root_id, reason, failed_checks, expires_at, used_at, lease_id)
+             values ($1, 'repo:acme/app', 7, $2, $3, $4, $5, $6::text[], now() + interval '1 hour', $7, gen_random_uuid()) returning id::text`,
+            [bot3.accountId, 'c'.repeat(40), ch, head, o.ci ? 'ci_not_green' : 'not_granted', o.ci ? ['secrets'] : [],
+              o.used ? new Date() : null])).rows[0]!.id;
+          if (o.pending) {
+            const req = (await db.pool.query<{ id: string }>(
+              `insert into permission_request(agent_id, kind, target, reason, channel_id, thread_root_id, expires_at, denial_id)
+               values ($1, 'merge', 'repo:acme/app', 'x', $2, $3, now() + interval '1 hour', $4) returning id::text`,
+              [bot3.accountId, ch, head, denial])).rows[0]!.id;
+            const card = await ins({ ch, root: head, author: bot3.accountId, body: '기다리는 카드', meta: { kind: 'ask', ask: { options: AD, to: { kind: 'human' } }, permissionRequest: { requestId: req, status: 'pending' } } });
+            await db.pool.query(`update permission_request set card_message_id = $2 where id = $1`, [req, card]);
+          }
+          return { tool: 'message.ask', via: viaPat, args: {
+            channelId: ch, threadRootId: o.otherThread ? other : head, body: '머지가 거절됐다', mergeDenialId: denial,
+            options: [{ id: 'retry', label: '다시 머지' }, { id: 'later', label: '나중에' }] } };
+        };
         const SCENES: [string, (ch: string) => Promise<Setup>, boolean][] = [
           ['원인 없음(PAT) · 모델 어긋남', async (ch) => ({ args: { channelId: ch, body: '보고 드림', model: ' claude-sonnet-5 ' }, via: viaPat }), true],
           ['오퍼레이터 원인 → 깊이·고리·턴 id', async (ch) => {
@@ -9331,6 +9757,18 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
               dl((_c, root) => ({ to: ['c3b2c4del'], planRootId: root, planGroupId: 'g1' }), false, 'delegate 계획판 → TS'),
             ];
           })(),
+          ['ask 권한 거울 · tool(같은 카드)', mirrorAsk({ kind: 'tool', target: 'Bash(echo e:*)', reason: '빌드에 필요' }), true],
+          ['ask 권한 거울 · command', mirrorAsk({ kind: 'command', target: 'kubectl --context rc get pod', reason: '확인' }), true],
+          ['ask 권한 거울 · merge 1회(CI 실패)', mirrorAsk({ kind: 'merge', target: 'repo:acme/app', reason: 'x', once: { number: 7, headSha: 'c'.repeat(40), reason: 'ci_not_green', failedChecks: ['secrets'] } }), true],
+          ['ask 권한 거울 · 위임 줄 표지', mirrorAsk({ kind: 'tool', target: 'Bash(echo line:*)', reason: 'x', line: { scope: 'tool:Bash(echo line:*)' } }), true],
+          ['ask 권한 거울 · 오퍼레이터 원인(차례 주인 푸시)', mirrorAsk({ kind: 'tool', target: 'Bash(echo op:*)', reason: 'x' }, { op: true }), true],
+          ['ask 권한 거울 · 경고 실린 요청 → TS', mirrorAsk({ kind: 'tool', target: 'Bash(echo warn:*)', reason: 'x', warnings: ['broad'] }), false],
+          // 이 앞단의 쓰기 역할에는 요청 줄 INSERT 칸이 없어 새 카드는 TS 가 세운다 — 칸을 준 앞단의 장면은 따로 둔다.
+          ['ask 머지 거절 카드 → 요청·카드 한 번에', denialAsk(), true],
+          ['ask 머지 거절 카드 · CI 실패 거절', denialAsk({ ci: true }), true],
+          ['ask 머지 거절 카드 · 기다리는 카드 있음 → pending', denialAsk({ pending: true }), true],
+          ['ask 머지 거절 카드 · 쓴 거절 → denial_used', denialAsk({ used: true }), true],
+          ['ask 머지 거절 카드 · 다른 스레드 → denial_other_thread', denialAsk({ otherThread: true }), true],
           // C3b-2c-3 — `message.report`(planStepId 없는 것). 보고 meta 를 쓰고, 커밋 뒤 작성자의 예약을 접는다(같은 턴이 건 것은 남김).
           ['report 기본 · files·remaining·next·durationMs', async (ch) => ({ tool: 'message.report', args: {
             channelId: ch, body: '끝', checks: ['시험 통과'], files: ['a.rs'], remaining: [], durationMs: 1200,
@@ -9411,6 +9849,11 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const wakesOf = async (ch: string) => (await db.pool.query(
           `select m.body, w.canceled_at is not null as canceled, m.meta->'wake' ? 'canceledAt' as stamped
              from agent_wake w join message m on m.id = w.message_id where w.channel_id = $1 order by m.body`, [ch])).rows;
+        // S5.5 e·f — 그 채널의 권한 요청 줄과 이어진 카드의 표지(요청·카드가 같이 섰는가).
+        const permsOf = async (ch: string) => shape((await db.pool.query(
+          `select p.kind, p.target, p.status, p.denial_id is not null as from_denial, p.card_message_id is not null as linked,
+                  m.body, m.meta->'permissionRequest' as pr, m.meta->'ask' as ask
+             from permission_request p left join message m on m.id = p.card_message_id where p.channel_id = $1 order by p.created_at`, [ch])).rows);
         const sse = (t: string) => {
           const line = t.split('\n').find((l) => l.startsWith('data: '));
           const res = line ? JSON.parse(line.slice(6)) as { result?: { content?: { text: string }[] } } : null;
@@ -9438,7 +9881,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             const r = await mcpCall(base, st.via.token, st.tool ?? 'message.post', st.args, 7, extra);
             const body = sse(r.text) as { message?: { id?: string }; foldedWakes?: { wakeAt: string }[] } | null;
             out.push({ name, status: r.status, rust: base === tsUrl ? rust : r.core === 'mcp', body: shape(body), row: await facts(body?.message?.id, st.cause),
-              wakes: await wakesOf(ch), wakeAt: body?.foldedWakes?.map((w) => w.wakeAt) ?? null });
+              wakes: await wakesOf(ch), perms: await permsOf(ch), wakeAt: body?.foldedWakes?.map((w) => w.wakeAt) ?? null });
           }
           return out;
         };
@@ -9462,6 +9905,12 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         expect(by('보관된 채널도 올린다').row).not.toBeNull();
         expect(row('fail 원인 없음 · what/reason · 옛 account')).toMatchObject({ kind: 'failure', failure: { retryable: true, what: '빌드', reason: '권한' }, model: { id: 'claude-opus-5' }, depth: 0 });
         expect(row('fail 원인 없음 · what/reason · 옛 account').failure).not.toHaveProperty('account');
+        // S5.5 f — 새 카드: 요청 줄과 카드가 한 번에 서고 이어진다(Rust 가 직접 세운다).
+        for (const n of ['ask 머지 거절 카드 → 요청·카드 한 번에', 'ask 머지 거절 카드 · CI 실패 거절']) {
+          const perms = (by(n) as unknown as { perms: Record<string, unknown>[] }).perms;
+          expect(perms).toHaveLength(1);
+          expect(perms[0]).toMatchObject({ kind: 'merge', target: 'repo:acme/app', status: 'pending', from_denial: true, linked: true });
+        }
         expect(row('fail 오퍼레이터 원인 → 깊이·고리·턴 id')).toMatchObject({ kind: 'failure', failure: { retryable: false }, depth: 3, stall: 2, linked: true, turn: '<uuid>' });
         expect(by('fail 없는 머리 → bad_thread').body.error?.code).toBe('bad_thread');
         expect(row('fail code → TS')).toMatchObject({ kind: 'failure', failure: { retryable: true } });
@@ -9518,7 +9967,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
               try {
                 fd = await startFront(bin, {
                   UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(port), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
-                  TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust', HARKROOM_DELEGATION_V2: V2, HARKROOM_DELEGATION_IMPLICIT: 'off',
+                  TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust', HARKROOM_DELEGATION_V2: V2, HARKROOM_DELEGATION_IMPLICIT: 'off', ...GROUP_A_ENV,
                 });
               } catch (err) {
                 if (attempt >= 2 || !String(err).includes('AddrInUse')) throw err;
@@ -9927,8 +10376,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 ['⑨ cause_used(같은 원인으로 다른 자동화)', 'cause_used'], ['⑩ agent_quota(10분 안에 같은 자동화)', 'agent_quota'],
               ] as const) expect(tsArText(n), n).toContain(code);
               // 회차 행 — payload(이벤트 키는 무작위라 꼴만)·initiated_by·원인·chain_depth 를 견준다.
+              // status 는 pending·sent 를 한 값으로 본다 — TS 의 자동화 sweep(주기 타이머)이 이 사이에 돌면 먼저 넣은
+              // 쪽만 sent 로 넘어가 있다(CI 에서 실제로 갈렸다). 넣은 쪽이 적는 값은 둘 다 pending 이다.
               const arRows = async (name: string) => (await db.pool.query(
-                `select r.trigger_kind, r.status, r.not_before, r.chain_depth, r.initiated_by = $2::uuid as by_bot,
+                `select r.trigger_kind, case when r.status in ('pending', 'sent') then 'queued' else r.status end as status, r.not_before, r.chain_depth, r.initiated_by = $2::uuid as by_bot,
                         r.cause_message_id is not null as has_cause, r.event_key ~ '^manual:[0-9a-f-]{36}$' as key_ok,
                         r.payload -> 'vars' as vars, jsonb_array_length(r.payload -> 'events') as n_events,
                         r.payload -> 'events' -> 0 ->> 'key' = r.event_key and r.payload -> 'events' -> 0 ->> 'summary' = r.event_key as ev_ok
@@ -9939,7 +10390,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                 expect(r, `automation.run 회차 ${tail}`).toEqual(t);
                 expect(t, `automation.run 회차 수 ${tail}`).toHaveLength(['ok', 'sch'].includes(tail) ? 1 : 0);
               }
-              expect(await arRows('ar-t-ok')).toMatchObject([{ trigger_kind: 'manual', status: 'pending', not_before: null, chain_depth: 1, by_bot: true, has_cause: true, key_ok: true, vars: {}, n_events: 1, ev_ok: true }]);
+              expect(await arRows('ar-t-ok')).toMatchObject([{ trigger_kind: 'manual', status: 'queued', not_before: null, chain_depth: 1, by_bot: true, has_cause: true, key_ok: true, vars: {}, n_events: 1, ev_ok: true }]);
               expect(Object.keys((await arRows('ar-t-sch'))[0]!.vars as object).sort()).toEqual(['date', 'lastWeek', 'lastWeek.end', 'lastWeek.start', 'yesterday']);
               // ⑪ — 두 쪽 모두 TS 가 처리했다(끄기). 20회 밖에 회차를 더 넣지 않았다.
               const rl = (await db.pool.query<{ name: string; enabled: boolean; n: number }>(
@@ -10268,6 +10719,84 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             if (prev === undefined) delete process.env.HARKROOM_DELEGATION_V2; else process.env.HARKROOM_DELEGATION_V2 = prev;
           }
         }
+
+        // S5.5 가군 — 「스위치가 없으면 TS」를 요청으로 본다. 값을 준 앞단(K)은 Rust 가, 그 스위치만 비운 앞단은 TS 가 답한다
+        // (`startFront` 는 시험 프로세스의 env 를 물려주므로 「없음」은 빈 값으로 준다 — 두 스위치 모두 빈 값을 모름으로 읽는다).
+        {
+          const prevV2 = process.env.HARKROOM_DELEGATION_V2;
+          const prevImplicit = process.env.HARKROOM_DELEGATION_IMPLICIT;
+          process.env.HARKROOM_DELEGATION_V2 = '1';
+          process.env.HARKROOM_DELEGATION_IMPLICIT = 'off';
+          // 주인(MEM)만 부르는 에이전트 — BOT3 은 못 부르고, 원인 제공자(임대의 principal = MEM)의 권한으로만 열린다.
+          const gap = await createAgent(app, admin.token, 's55gapbot');
+          await db.pool.query(`update agent_config set invoke_scope = 'owner', owner_account_id = $2 where account_id = $1`, [gap.accountId, member.accountId]);
+          await db.pool.query(`insert into channel_member (channel_id, account_id) values ($1, $2) on conflict do nothing`, [todayId, gap.accountId]);
+          const kids: ChildProcess[] = [];
+          const front = async (over: Record<string, string>) => {
+            for (let attempt = 0; ; attempt += 1) {
+              const port = await freePort();
+              try {
+                const fd = await startFront(bin, {
+                  UPSTREAM_URL: tsUrl, DATABASE_URL: db.uri, PORT: String(port), HARKROOM_FRONT_TS_ROUTES: '', DATABASE_WRITE_URL: writeUrl.toString(),
+                  TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust', HARKROOM_DELEGATION_V2: '1', HARKROOM_DELEGATION_IMPLICIT: 'off',
+                  ...GROUP_A_ENV, ...over,
+                });
+                kids.push(fd.child);
+                const until = Date.now() + 10_000;
+                while (!fd.log().includes('front: rust core routes') && Date.now() < until) await new Promise((res) => setTimeout(res, 100));
+                return { url: `http://127.0.0.1:${port}`, log: fd.log };
+              } catch (err) {
+                if (attempt >= 2 || !String(err).includes('AddrInUse')) throw err;
+              }
+            }
+          };
+          const PRINCIPAL_LINE = 'front: principal-invoke posts to TS — HARKROOM_PRINCIPAL_INVOKE unset';
+          const IMPLICIT_LINE = 'front: agent calls under delegation v2 to TS — HARKROOM_DELEGATION_IMPLICIT unset';
+          try {
+            const K = await front({});
+            const noPrincipal = await front({ HARKROOM_PRINCIPAL_INVOKE: '' });
+            const noImplicit = await front({ HARKROOM_DELEGATION_IMPLICIT: '' });
+            for (const line of [PRINCIPAL_LINE, IMPLICIT_LINE]) expect(K.log(), line).not.toContain(line);
+            expect(noPrincipal.log()).toContain(PRINCIPAL_LINE);
+            expect(noPrincipal.log()).not.toContain(IMPLICIT_LINE);
+            expect(noImplicit.log()).toContain(IMPLICIT_LINE);
+            expect(noImplicit.log()).not.toContain(PRINCIPAL_LINE);
+            // 답한 쪽(`x-harkroom-core: mcp` = Rust)과 그 글에 원인 제공자 대행이 적혔는지.
+            const post = async (base: string, body: string, withCause: boolean) => {
+              const ch = await freshCh();
+              const { root, call } = await chainBy(bot2.accountId, 2, 1)(ch);
+              if (withCause) await leaseFor(call, ch);
+              const r = withCause
+                ? await mcpCall(base, viaOp.token, 'message.post', { channelId: ch, threadRootId: root, body }, 7, { ...viaOp.extra, 'x-harkroom-cause': call, 'x-harkroom-turn-id': turnId })
+                : await mcpCall(base, viaPat.token, 'message.post', { channelId: ch, threadRootId: root, body }, 7, {});
+              const id = (sse(r.text) as { message?: { id?: string } } | null)?.message?.id;
+              const row = id ? (await db.pool.query<{ as_principal: boolean; denied: boolean }>(
+                `select meta ? 'invokedAsPrincipal' as as_principal, meta ? 'mentionDenied' as denied from message where id = $1`, [id])).rows[0] : undefined;
+              return { rust: r.core === 'mcp', posted: !!id, asPrincipal: row?.as_principal, denied: row?.denied };
+            };
+            // (가) 원인 제공자 대행 — 대행으로 열릴 부름이 있는 글만 TS 로 간다. TS 는 스위치가 없으면 켜짐이라 대행으로 연다.
+            expect(await post(K.url, '@s55gapbot 이것 봐 줘', true), '값을 준 앞단: Rust 가 대행으로 연다')
+              .toEqual({ rust: true, posted: true, asPrincipal: true, denied: false });
+            expect(await post(noPrincipal.url, '@s55gapbot 이것 봐 줘', true), '스위치 없는 앞단: TS 가 답한다')
+              .toEqual({ rust: false, posted: true, asPrincipal: true, denied: false });
+            expect(await post(tsUrl, '@s55gapbot 이것 봐 줘', true), 'TS 직접')
+              .toEqual({ rust: false, posted: true, asPrincipal: true, denied: false });
+            // 대행이 걸리지 않는 글(원인 없음 → 막힌 부름으로 적힘)은 스위치가 없어도 Rust 가 답한다.
+            expect(await post(noPrincipal.url, '@s55gapbot 이것 봐 줘', false), '대행이 없으면 스위치와 무관')
+              .toEqual({ rust: true, posted: true, asPrincipal: false, denied: true });
+            // (나) 암묵 위임 — 위임 스위치가 켜져 있는데 암묵 위임 값이 없으면 에이전트의 부름은 TS 로 간다. 부름 없는 글은 Rust 가 답한다.
+            expect((await post(K.url, '@mem 봐 줘', false)).rust, '값을 준 앞단: Rust 가 부름을 답한다').toBe(true);
+            expect(await post(noImplicit.url, '@mem 봐 줘', false), '암묵 위임 값 없는 앞단: TS 가 답한다')
+              .toEqual({ rust: false, posted: true, asPrincipal: false, denied: false });
+            expect((await post(noImplicit.url, '부름 없는 글', false)).rust, '부름이 없으면 스위치와 무관').toBe(true);
+            // 위 글들의 호출함 이벤트(outbox)가 다 나간 뒤에 넘어간다 — 다음 블록이 「이벤트 없음」을 센다.
+            await new Promise((res) => setTimeout(res, 1500));
+          } finally {
+            for (const k of kids) k.kill('SIGTERM');
+            if (prevV2 === undefined) delete process.env.HARKROOM_DELEGATION_V2; else process.env.HARKROOM_DELEGATION_V2 = prevV2;
+            if (prevImplicit === undefined) delete process.env.HARKROOM_DELEGATION_IMPLICIT; else process.env.HARKROOM_DELEGATION_IMPLICIT = prevImplicit;
+          }
+        }
       }
 
       // S5.3 C6a-1 — 인박스 읽음 표시(코어 `inbox_read.rs`). 거절은 상태·코드를 견주고, 정상은 TS·Rust 에 각자의 줄로 같은 시나리오를 돌려
@@ -10502,11 +11031,13 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         // 성공 여섯 번 → 이벤트 여섯 번(지우기·없는 줄 지우기 포함, TS 와 같다). 거절은 이벤트가 없다.
         const rsEvents = () => busEvents.slice(busBefore).filter((e) => e.type === 'inbox.updated');
         const deadline = Date.now() + 10_000;
-        while (rsEvents().length < 6 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
+        while (rsEvents().filter((e) => e.accountId === member.accountId).length < 6 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
         await new Promise((r) => setTimeout(r, 500));
         off();
-        expect(tsEvents).toEqual(Array.from({ length: 6 }, () => ({ type: 'inbox.updated', accountId: member.accountId })));
-        expect(rsEvents()).toEqual(tsEvents);
+        // 앞 장면이 늦게 낸 다른 계정의 이벤트가 섞일 수 있다 — 이 장면의 계정 것만 견준다.
+        const mine = (xs: object[]) => xs.filter((e) => (e as { accountId?: unknown }).accountId === member.accountId);
+        expect(mine(tsEvents)).toEqual(Array.from({ length: 6 }, () => ({ type: 'inbox.updated', accountId: member.accountId })));
+        expect(mine(rsEvents())).toEqual(mine(tsEvents));
       }
       await bus.stop();
 
@@ -11497,7 +12028,10 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           const raw = async (base: string, path: string, body: unknown, headers: Record<string, string>) => {
             const res = await fetch(`${base}${path}`, { method: 'POST', headers: { ...headers, 'content-type': J, 'x-forwarded-for': XFF }, body: JSON.stringify(body) });
             const text = await res.text();
-            return { status: res.status, cc: res.headers.get('cache-control'), json: (text ? JSON.parse(text) : {}) as Record<string, unknown> };
+            let json: Record<string, unknown> = {};
+            // 닿지 않는 upstream 앞단의 502 는 맨글자다.
+            try { json = (text ? JSON.parse(text) : {}) as Record<string, unknown>; } catch { json = { raw: text }; }
+            return { status: res.status, cc: res.headers.get('cache-control'), json };
           };
           const agents = [ac.accountId, ac2.accountId];
           const seenMsg: string[] = [];
@@ -11883,8 +12417,262 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             expect(ng.a.effects.cards).toHaveLength(1);
             await apPair('api 메서드 밖', q(LP, 's54ap-getonly', 'POST'));
             await apPair('api 나쁜 경로', q(LP, 's54ap-none', 'GET', '//evil.example/x'));
+            // S5.5 b — 비밀 칸이 빈 연결·키 어긋남(409 `secret_key_mismatch`)·키 env 없음. Rust 쪽은 **닿지 않는 upstream** 앞단이다 —
+            // TS 로 넘기면 502 라서 TS 와 답이 같으면 Rust 가 직접 답한 것이다. 키 어긋남은 다른 키를 같은 kid(`ck1`)로 건 TS 하나와
+            // 앞단 하나를 따로 띄운다(DB 확인값은 원래 키 것이라 둘 다 보관소를 끈다). 키 env 가 없는 앞단은 비밀 갈래만 TS 로 넘긴다.
+            {
+              await conn('s54ap-empty', 'bearer', null);
+              const wrongKeysDir = mkdtempSync(joinPath(tmpdir(), 'contrast-keys-wrong-'));
+              writeCases(joinPath(wrongKeysDir, 'ck1'), randomBytes(32).toString('hex'));
+              const bKids: ChildProcess[] = [];
+              const bDeadPort = await freePort();
+              const bFront = async (env: Record<string, string>) => {
+                for (let attempt = 0; ; attempt += 1) {
+                  const p = await freePort();
+                  try {
+                    const fd = await startFront(bin, {
+                      UPSTREAM_URL: `http://127.0.0.1:${bDeadPort}`, DATABASE_URL: db.uri, PORT: String(p), HARKROOM_FRONT_TS_ROUTES: '',
+                      DATABASE_WRITE_URL: writeUrl.toString(), TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust',
+                      ...GROUP_A_ENV, ...env,
+                    });
+                    bKids.push(fd.child);
+                    const until = Date.now() + 10_000;
+                    while (!fd.log().includes('front: rust core routes') && Date.now() < until) await new Promise((res) => setTimeout(res, 100));
+                    return { url: `http://127.0.0.1:${p}`, log: fd.log };
+                  } catch (err) {
+                    if (attempt >= 2 || !String(err).includes('AddrInUse')) throw err;
+                  }
+                }
+              };
+              const prevDir = process.env.HARKROOM_SECRET_KEYS_DIR;
+              const prevKid = process.env.HARKROOM_SECRET_KEY_ID;
+              process.env.HARKROOM_SECRET_KEYS_DIR = wrongKeysDir;
+              process.env.HARKROOM_SECRET_KEY_ID = 'ck1';
+              let appMm: Awaited<ReturnType<typeof buildServer>> | undefined;
+              try {
+                appMm = await buildServer({ pool: db.pool, push: null, trustProxy: TRUST, corsOrigins: [CORS] });
+              } finally {
+                if (prevDir === undefined) delete process.env.HARKROOM_SECRET_KEYS_DIR; else process.env.HARKROOM_SECRET_KEYS_DIR = prevDir;
+                if (prevKid === undefined) delete process.env.HARKROOM_SECRET_KEY_ID; else process.env.HARKROOM_SECRET_KEY_ID = prevKid;
+              }
+              try {
+                await appMm.listen({ port: 0, host: '127.0.0.1' });
+                const tsMm = `http://127.0.0.1:${(appMm.server.address() as AddressInfo).port}`;
+                const dKey = await bFront({ HARKROOM_SECRET_KEYS_DIR: secretKeysDir, HARKROOM_SECRET_KEY_ID: 'ck1' });
+                const dMm = await bFront({ HARKROOM_SECRET_KEYS_DIR: wrongKeysDir, HARKROOM_SECRET_KEY_ID: 'ck1' });
+                const dNoKey = await bFront({ HARKROOM_SECRET_KEYS_DIR: '', HARKROOM_SECRET_KEY_ID: '' });
+                const NO_KEY_LINE = 'front: api checks secret off — no key env';
+                const MM_LINE = 'front: api checks secret — no matching secret key (mismatch: true)';
+                expect(dKey.log()).not.toContain('api checks secret');
+                expect(dMm.log()).toContain(MM_LINE);
+                expect(dNoKey.log()).toContain(NO_KEY_LINE);
+                const bPair = async (label: string, tsBase: string, rsBase: string, body: unknown) => {
+                  const a = await apSide(tsBase, body, vP);
+                  const b = await apSide(rsBase, body, vP);
+                  expect(norm({ status: b.r.status, cc: b.r.cc, json: b.r.json }), `${label} — Rust 가 직접 답한다(upstream 없음)`)
+                    .toEqual(norm({ status: a.r.status, cc: a.r.cc, json: a.r.json }));
+                  expect(norm(b.effects), `${label} 부작용`).toEqual(norm(a.effects));
+                  return { a, b };
+                };
+                const errCode = (x: { r: { json: unknown } }) => (x.r.json as { error?: { code?: string } }).error?.code;
+                // 키가 맞는 앞단 — 비밀 칸이 빈 연결은 403 `no_secret`(감사·카드, 거절 줄 없음). 비밀을 여는 허락도 직접 답한다.
+                const em = await bPair('api 비밀 칸 빈 연결 → 403 no_secret', tsUrl, dKey.url, q(LP, 's54ap-empty'));
+                expect([em.a.r.status, errCode(em.a)]).toEqual([403, 'no_secret']);
+                expect(norm(em.a.effects)).toMatchObject({ audit: [{ action: 'api.call.denied', detail: { code: 'no_secret' } }], access: [] });
+                expect(em.a.effects.cards).toHaveLength(1);
+                const kb = await bPair('api bearer 허락(닿지 않는 upstream)', tsUrl, dKey.url, q(LP, 's54ap-bearer'));
+                expect(kb.a.r.status).toBe(200);
+                // 키 어긋남 — 비밀을 여는 연결·빈 칸 연결·만료 비밀 모두 응답만 409, 감사·카드는 `no_secret`, 비밀 행을 읽기 전이라 거절 줄이 없다.
+                for (const c of ['s54ap-bearer', 's54ap-empty', 's54ap-exp', 's54ap-tx']) {
+                  const m = await bPair(`api 키 어긋남 ${c} → 409`, tsMm, dMm.url, q(LP, c, 'GET', '/v1/items', { caps: ['token_exchange'] }));
+                  expect([m.a.r.status, errCode(m.a)], c).toEqual([409, 'secret_key_mismatch']);
+                  expect(m.a.r.cc, c).toBe('no-store');
+                  expect(norm(m.a.effects), c).toMatchObject({ audit: [{ action: 'api.call.denied', detail: { code: 'no_secret' } }], access: [] });
+                  expect(m.a.effects.cards, c).toHaveLength(1);
+                }
+                const mn = await bPair('api 키 어긋남이어도 none 연결은 허락', tsMm, dMm.url, q(LP, 's54ap-none'));
+                expect(mn.a.r.status).toBe(200);
+                const mg = await bPair('api 키 어긋남 + grant 없음 → not_granted 그대로', tsMm, dMm.url, q(LP, 's54ap-nogrant'));
+                expect([mg.a.r.status, errCode(mg.a)]).toEqual([403, 'not_granted']);
+                // 키 env 없는 앞단 — 이 프로세스에 키가 없을 뿐이다. 비밀을 여는 연결은 아무것도 적지 않고 TS 로 넘기고(502), none 연결은 직접 답한다.
+                for (const c of ['s54ap-bearer', 's54ap-empty', 's54ap-exp']) {
+                  const u = await apSide(dNoKey.url, q(LP, c), vP);
+                  expect(u.r.status, `키 env 없음: ${c} → TS 로 넘긴다`).toBe(502);
+                  expect(u.effects, `키 env 없음: ${c} — 아무것도 적지 않는다`).toEqual({ audit: [], access: [], cards: [] });
+                }
+                const un = await bPair('api 키 env 없음이어도 none 연결은 직접 답한다', tsUrl, dNoKey.url, q(LP, 's54ap-none'));
+                expect(un.a.r.status).toBe(200);
+              } finally {
+                for (const k of bKids) k.kill('SIGTERM');
+                await appMm.close();
+              }
+            }
             await db.pool.query(`delete from api_connector where name like 's54ap-%'`);
             await db.pool.query(`delete from secret where name like 's54ap-%'`);
+          }
+          // 13) POST /agent/merge-checks(S5.5 a — `merge_checks.rs`). 장면마다 쪽별로 새 원인 글·임대(·위임 줄)를 세우고 같은 요청을 보내
+          // 응답·감사·`merge_denial`·줄 사용 횟수를 견준다. Rust 쪽 앞단은 **닿지 않는 upstream** 을 달고 뜬다 — TS 로 넘기면 502 라서
+          // 답이 TS 와 같다는 것이 곧 「Rust 가 직접 답했다」는 증명이다. 위임 스위치(`HARKROOM_MANDATE_ENFORCE`)는 TS 는 요청 때 env 를,
+          // 앞단은 기동 때 준 값을 읽는다. 값을 주지 않은 앞단은 모름이라 판정을 통째로 TS 로 넘긴다(502).
+          {
+            const mc = await mkAgent('s55mc');
+            agents.push(mc.accountId);
+            known.set(mc.accountId, '<mc>');
+            const vM = viaOp(mc);
+            const MC = '/agent/merge-checks';
+            const SHA40 = 'c'.repeat(40);
+            const UNSET_LINE = 'front: merge checks to TS — HARKROOM_MANDATE_ENFORCE unset';
+            const prevEnforce = process.env.HARKROOM_MANDATE_ENFORCE;
+            const kids: ChildProcess[] = [];
+            const deadPort = await freePort();
+            const deadFront = async (enforce: string) => {
+              for (let attempt = 0; ; attempt += 1) {
+                const port = await freePort();
+                try {
+                  const fd = await startFront(bin, {
+                    UPSTREAM_URL: `http://127.0.0.1:${deadPort}`, DATABASE_URL: db.uri, PORT: String(port), HARKROOM_FRONT_TS_ROUTES: '',
+                    DATABASE_WRITE_URL: writeUrl.toString(), TRUST_PROXY: TRUST.join(','), CORS_ORIGINS: CORS, HARKROOM_CORE: 'rust',
+                    ...GROUP_A_ENV, HARKROOM_MANDATE_ENFORCE: enforce,
+                  });
+                  kids.push(fd.child);
+                  const until = Date.now() + 10_000;
+                  while (!fd.log().includes('front: rust core routes') && Date.now() < until) await new Promise((res) => setTimeout(res, 100));
+                  return { url: `http://127.0.0.1:${port}`, log: fd.log };
+                } catch (err) {
+                  if (attempt >= 2 || !String(err).includes('AddrInUse')) throw err;
+                }
+              }
+            };
+            type McFx = { body: unknown; headers: Record<string, string>; line?: string };
+            let seq = 0;
+            /** 사람(소유자) 글로 띄운 턴의 임대. `pat` 이면 사람 세션 글이 아니라 위임장이 없다. `line` 이면 그 위임장에 merge 줄을 적는다. */
+            const turn = async (repo: string, o: { pat?: boolean; line?: { uses?: number }; token?: string } = {}): Promise<McFx> => {
+              seq += 1;
+              const posted = await postMessage(db.pool, { channelId: todayId, authorId: admin.accountId, body: `@s55mc 머지 ${seq}`, threadRootId: null, authVia: o.pat ? 'pat' : 'session' });
+              const root = (posted as { message: { id: string } }).message.id;
+              const lr = await app.inject({ method: 'POST', url: '/agent/turn-leases', headers: vM, payload: { causeMessageId: root } });
+              expect(lr.statusCode, lr.body).toBe(200);
+              const l = (lr.json() as { lease: { id: string; token: string } }).lease;
+              let line: string | undefined;
+              if (o.line) {
+                const mandate = (await db.pool.query<{ m: string | null }>(`select mandate_id::text as m from message where id = $1`, [root])).rows[0]!.m;
+                expect(mandate, '사람 세션 글에는 위임장이 선다').toBeTruthy();
+                const added = await addMandateLine(db.pool, { mandateId: mandate!, cap: 'merge', scope: `repo:${repo}`, grantedBy: admin.accountId, via: 'button',
+                  ...(o.line.uses ? { limits: { uses: o.line.uses } } : {}) });
+                expect(added.ok, JSON.stringify(added)).toBe(true);
+                line = added.ok ? added.line.id : undefined;
+              }
+              return { body: { leaseId: l.id, token: o.token ?? l.token, repo, number: 7, headSha: SHA40 }, headers: vM, ...(line ? { line } : {}) };
+            };
+            const grant = (repo: string) => db.pool.query(
+              `insert into account_grant (account_id, capability, scope, granted_by, expires_at) values ($1, 'repo.merge', $2, $3, now() + interval '7 days')`,
+              [mc.accountId, `repo:${repo}`, admin.accountId]);
+            const mcSide = async (base: string, fx: () => Promise<McFx>, times: number) => {
+              const x = await fx();
+              const mark = (await db.pool.query<{ a: string }>(`select coalesce(max(id), 0)::text as a from audit_log`)).rows[0]!.a;
+              const rs: Array<{ status: number; cc: string | null; json: unknown }> = [];
+              for (let i = 0; i < times; i += 1) {
+                const res = await fetch(`${base}${MC}`, { method: 'POST', headers: { ...x.headers, 'content-type': J, 'x-forwarded-for': XFF }, body: JSON.stringify(x.body) });
+                const text = await res.text();
+                let json: unknown = text;
+                try { json = JSON.parse(text); } catch { /* 502 는 맨글자다 */ }
+                rs.push({ status: res.status, cc: res.headers.get('cache-control'), json });
+              }
+              const audit = (await db.pool.query(
+                `select action, actor_id, actor_handle, target, detail from audit_log where id > $1 and actor_id = $2 order by id`, [mark, mc.accountId])).rows;
+              const denials = (await db.pool.query(
+                `select reason, scope, pr_number, head_sha, failed_checks, channel_id, thread_root_id is not null as threaded, lease_id is not null as leased,
+                        obsoleted_at is not null as obsoleted, expires_at > now() as live
+                   from merge_denial where agent_id = $1 order by reason, scope`, [mc.accountId])).rows;
+              await db.pool.query(`delete from merge_denial where agent_id = $1`, [mc.accountId]);
+              const used = x.line
+                ? (await db.pool.query<{ n: number }>(`select used_count as n from mandate_line where id = $1`, [x.line])).rows[0]!.n
+                : null;
+              return { rs, effects: { audit, denials, used } };
+            };
+            try {
+              const dOff = await deadFront('off');
+              const dOn = await deadFront('on');
+              const dUnset = await deadFront('');
+              for (const d of [dOff, dOn]) {
+                expect(d.log(), UNSET_LINE).not.toContain(UNSET_LINE);
+                for (const off of ['merge checks deny off', 'merge checks allow off', 'merge checks card off', 'merge checks mandate shadow off', 'merge checks mandate enforce off']) {
+                  expect(d.log(), off).not.toContain(off);
+                }
+              }
+              expect(dUnset.log()).toContain(UNSET_LINE);
+              const mcPair = async (label: string, mode: 'on' | 'off', fx: () => Promise<McFx>, times = 1) => {
+                if (mode === 'on') process.env.HARKROOM_MANDATE_ENFORCE = 'on'; else delete process.env.HARKROOM_MANDATE_ENFORCE;
+                const a = await mcSide(tsUrl, fx, times);
+                const b = await mcSide((mode === 'on' ? dOn : dOff).url, fx, times);
+                expect(norm(b.rs), `${label} — Rust 가 직접 답한다(upstream 없음)`).toEqual(norm(a.rs));
+                expect(norm(b.effects), `${label} 부작용`).toEqual(norm(a.effects));
+                return { a, b };
+              };
+              const code = (p: { a: { rs: Array<{ json: unknown }> } }, i = 0) => (p.a.rs[i]!.json as { error?: { code?: string } }).error?.code;
+              for (const mode of ['off', 'on'] as const) {
+                // 게이트 앞·이른 거절 — 스위치와 무관하다.
+                await mcPair(`merge ${mode} 익명 → 401`, mode, async () => ({ ...(await turn('izagood/s55mc-gate')), headers: {} }));
+                await mcPair(`merge ${mode} 사람 → 403`, mode, async () => ({ ...(await turn('izagood/s55mc-gate')), headers: { authorization: `Bearer ${A}` } }));
+                await mcPair(`merge ${mode} 본문 틀림 → 400`, mode, async () => {
+                  const x = await turn('izagood/s55mc-gate');
+                  return { ...x, body: { ...(x.body as Record<string, unknown>), headSha: 'zz' } };
+                });
+                const li = await mcPair(`merge ${mode} 토큰 틀림 → 403 lease_invalid`, mode, () => turn('izagood/s55mc-gate', { token: 'wrong' }));
+                expect([li.a.rs[0]!.status, code(li)]).toEqual([403, 'lease_invalid']);
+                expect(norm(li.a.effects.audit)).toMatchObject([{ action: 'repo.merge.denied', detail: { code: 'lease_invalid' } }]);
+              }
+              // 스위치 꺼짐 — 사슬 판정(오늘 판정). grant 없음은 카드용 거절 기록, grant 있음은 허락, 줄만 있고 grant 없음은 거절(그림자에는 줄이 맞았다고 적힌다).
+              const ng = await mcPair('merge off grant 없음 → not_granted + 거절 기록', 'off', () => turn('izagood/s55mc-none'));
+              expect([ng.a.rs[0]!.status, code(ng)]).toEqual([403, 'not_granted']);
+              expect((ng.a.rs[0]!.json as { error: { denialId?: string } }).error.denialId, '사람 턴이면 카드용 denialId').toBeTruthy();
+              expect(ng.a.effects.denials).toMatchObject([{ reason: 'not_granted', scope: 'repo:izagood/s55mc-none', leased: true }]);
+              await grant('izagood/s55mc-ok');
+              const ok = await mcPair('merge off grant 있음 → 허락', 'off', () => turn('izagood/s55mc-ok'));
+              expect(ok.a.rs[0]!.status, JSON.stringify(ok.a.rs)).toBe(200);
+              expect(ok.a.rs[0]!.json).toMatchObject({ allowed: true });
+              expect((ok.a.effects.audit as Array<{ action: string }>).map((r) => r.action).sort()).toEqual(['mandate.shadow', 'repo.merge.checked']);
+              const lo = await mcPair('merge off 줄만 있음 → not_granted(그림자: 줄은 맞음)', 'off', () => turn('izagood/s55mc-line', { line: {} }));
+              expect(code(lo)).toBe('not_granted');
+              expect(lo.a.effects.used, '꺼졌으면 줄을 쓰지 않는다').toBe(0);
+              expect(lo.a.effects.audit).toMatchObject(expect.arrayContaining([
+                expect.objectContaining({ action: 'mandate.shadow', detail: expect.objectContaining({ enforced: 'chain', mandateVerdict: 'allowed' }) })]));
+              // 스위치 켜짐 — 위임 판정. 줄이 맞으면 허락(줄을 쓴다), 1회 줄은 두 번째에 거절, 줄이 없으면 `no_mandate_line` + 거절 기록,
+              // 위임장 없는 턴(PAT 글)은 grant 가 있어도 거절, 위임장 있는 턴의 7일 grant 는 standing 줄로 허락.
+              const st = await mcPair('merge on 줄 있음 → 허락', 'on', () => turn('izagood/s55mc-line', { line: {} }));
+              expect(st.a.rs[0]!.status, JSON.stringify(st.a.rs)).toBe(200);
+              expect(st.a.rs[0]!.json).toMatchObject({ allowed: true, mandateLine: { via: 'button', ghUser: null, ciOverride: false } });
+              expect(st.a.effects.audit).toMatchObject(expect.arrayContaining([
+                expect.objectContaining({ action: 'mandate.shadow', detail: expect.objectContaining({ enforced: 'mandate', mandateVerdict: 'allowed', lineVia: 'button' }) })]));
+              const once = await mcPair('merge on 1회 줄 두 번 → 허락 뒤 no_mandate_line', 'on', () => turn('izagood/s55mc-once', { line: { uses: 1 } }), 2);
+              expect([once.a.rs[0]!.status, once.a.rs[1]!.status, code(once, 1)]).toEqual([200, 403, 'no_mandate_line']);
+              expect([once.a.effects.used, once.b.effects.used]).toEqual([1, 1]);
+              const nl = await mcPair('merge on 줄 없음 → no_mandate_line + 거절 기록', 'on', () => turn('izagood/s55mc-none'));
+              expect([nl.a.rs[0]!.status, code(nl)]).toEqual([403, 'no_mandate_line']);
+              expect((nl.a.rs[0]!.json as { error: { denialId?: string } }).error.denialId).toBeTruthy();
+              expect(nl.a.effects.denials).toMatchObject([{ reason: 'no_mandate_line', scope: 'repo:izagood/s55mc-none' }]);
+              const pg1 = await mcPair('merge on 위임장 없는 턴 + grant → no_mandate_line', 'on', () => turn('izagood/s55mc-ok', { pat: true }));
+              expect(code(pg1)).toBe('no_mandate_line');
+              const sg = await mcPair('merge on 위임장 있는 턴 + 7일 grant → standing 줄', 'on', () => turn('izagood/s55mc-ok'));
+              expect(sg.a.rs[0]!.json).toMatchObject({ allowed: true, mandateLine: { via: 'standing' } });
+              // 스위치를 모르는 앞단 — 게이트 앞 두 갈래만 직접 답하고, 판정은 아무것도 읽거나 쓰지 않고 TS 로 넘긴다(여기서는 502).
+              delete process.env.HARKROOM_MANDATE_ENFORCE;
+              const uGate = await mcSide(dUnset.url, async () => ({ ...(await turn('izagood/s55mc-gate')), headers: { authorization: `Bearer ${A}` } }), 1);
+              expect(uGate.rs[0]!.status, '모양·오퍼레이터 검사는 스위치 앞').toBe(403);
+              for (const [label, fx] of [
+                ['허락될 요청', () => turn('izagood/s55mc-ok')],
+                ['이른 거절(토큰 틀림)', () => turn('izagood/s55mc-gate', { token: 'wrong' })],
+                ['grant 없음', () => turn('izagood/s55mc-none')],
+              ] as Array<[string, () => Promise<McFx>]>) {
+                const u = await mcSide(dUnset.url, fx, 1);
+                expect(u.rs[0]!.status, `스위치 모름: ${label} → TS 로 넘긴다`).toBe(502);
+                expect(u.effects, `스위치 모름: ${label} — 아무것도 적지 않는다`).toEqual({ audit: [], denials: [], used: null });
+              }
+            } finally {
+              for (const k of kids) k.kill('SIGTERM');
+              if (prevEnforce === undefined) delete process.env.HARKROOM_MANDATE_ENFORCE; else process.env.HARKROOM_MANDATE_ENFORCE = prevEnforce;
+              await db.pool.query(`delete from account_grant where account_id = $1 and capability = 'repo.merge'`, [mc.accountId]);
+            }
           }
           // 13) POST /agent/secrets·/rotate import 갈래(S5.4 ab — F4 `value_is_mounted`·`bad_value` 포함). 새 에이전트(쪽마다 제한기 10회 중 8회).
           {

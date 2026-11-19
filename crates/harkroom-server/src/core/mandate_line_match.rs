@@ -1,7 +1,7 @@
 //! TS `capabilities.ts::lineLive` + merge `matches` + `lineMatches` — 위임장 줄(`mandate_line`·상시 줄)이 이 머지를 덮는가.
 //!
-//! merge-checks 의 위임장 달린 임대(`findLine`)와 위임 켜짐(`mandateEnforced`) 갈래가 쓸 순수 판정이다. 아직 경로에 물리지 않았다 —
-//! 그 두 갈래는 지금도 TS 몫이고, 물릴 때 읽을 열은 [`MERGE_CHECKS_MANDATE_PRIVILEGES`] 에 열 단위로 적어 둔다.
+//! merge-checks 의 위임장 달린 임대(`findLine`)와 위임 켜짐(`mandateEnforced`) 갈래가 쓸 순수 판정이다. 두 갈래 모두 merge-checks 에 물렸다(`find_line`·`consume_line`) —
+//! 읽고 쓰는 열은 [`MERGE_CHECKS_MANDATE_PRIVILEGES`] 에 열 단위로 적어 둔다.
 
 use super::merge_approval_peek::repo_scope;
 use serde_json::Value;
@@ -195,7 +195,41 @@ struct Cand {
     via: String,
     used_count: i64,
     read_only: bool,
+    created_at: Option<String>,
 }
+
+/// TS `consumeLine` 이 돌려준 줄 — 판정 응답·감사에 쓰는 칸만.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConsumedLine {
+    pub id: String,
+    pub via: String,
+    pub granted_by: String,
+    pub limits: Value,
+    /// `new Date(createdAt).toISOString()` 모양.
+    pub created_at: Option<String>,
+}
+
+impl ConsumedLine {
+    /// TS `line.limits?.ghUser ?? null`.
+    pub fn gh_user(&self) -> Value {
+        match limit(&self.limits, "ghUser") {
+            Some(Value::Null) | None => Value::Null,
+            Some(v) => v.clone(),
+        }
+    }
+    /// TS `line.limits?.ciOverride === true`.
+    pub fn ci_override(&self) -> bool {
+        limit(&self.limits, "ciOverride") == Some(&Value::Bool(true))
+    }
+}
+
+/// TS `consumeLine` 의 저장된 줄 한 문장 — 회수·until·uses 를 다시 보고 `used_count` 를 하나 센다. 0줄이면 다음 후보.
+const CONSUME_SQL: &str = "update mandate_line set used_count = used_count + 1 \
+      where id = $1::uuid and revoked_at is null \
+        and (limits->>'until' is null or (limits->>'until')::timestamptz > $2::timestamptz) \
+        and (limits->>'uses' is null or used_count < (limits->>'uses')::int) \
+      returning id::text, via, granted_by::text, limits::text, \
+        to_char(created_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"')";
 
 const AGENT_OWNER_SQL: &str =
     "select owner_account_id::text from agent_config where account_id = $1::uuid";
@@ -203,7 +237,8 @@ const MANDATE_ROW_SQL: &str = "select owner_account_id::text, coalesce(delegator
        from mandate where id = $1::uuid";
 /// TS `listMandateLines` 의 상시 줄 문장(merge 판정이라 `repo.merge` 만 쓴다 — `tool.allow` 줄은 cap 이 달라 어차피 맞지 않는다).
 const STANDING_SQL: &str = "select g.id::text, g.account_id::text, g.capability, g.scope, g.granted_by::text, \
-            to_char(g.expires_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') \
+            to_char(g.expires_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'), \
+            to_char(g.granted_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') \
        from account_grant g join agent_config c on c.account_id = g.account_id \
       where c.owner_account_id = $1::uuid and g.granted_by = $3::uuid and g.capability in ('repo.merge', 'tool.allow') \
         and (g.expires_at is null or g.expires_at > $2::timestamptz) \
@@ -213,7 +248,8 @@ fn stored_sql() -> &'static str {
     static S: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     S.get_or_init(|| {
         format!(
-            "select t.id::text, t.cap, t.scope, t.limits::text, t.\"agentIds\"::text[], t.\"grantedBy\"::text, t.via, t.\"usedCount\"::int8 from ({}) t",
+            "select t.id::text, t.cap, t.scope, t.limits::text, t.\"agentIds\"::text[], t.\"grantedBy\"::text, t.via, t.\"usedCount\"::int8, \
+             to_char(t.\"createdAt\" at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') from ({}) t",
             crate::core::channels::frag("grant_mandate_lines_stored")
         )
     })
@@ -237,8 +273,17 @@ type StoredRow = (
     String,
     String,
     i64,
+    Option<String>,
 );
-type StandingRow = (String, String, String, String, String, Option<String>);
+type StandingRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+);
 
 /// TS `findLine(pool, { mandateId, agentId, cap: 'merge', action, now })` — 읽기만 한다. 위임장이 없거나 유효하지 않으면 `None`.
 /// 부르는 쪽은 [`MERGE_CHECKS_MANDATE_PRIVILEGES`] 가 다 있을 때만 부른다.
@@ -249,11 +294,75 @@ pub async fn find_line(
     action: &MergeAction<'_>,
     now_ms: i64,
 ) -> sqlx::Result<Option<FoundLine>> {
-    let Some(mandate) = mandate else {
+    Ok(candidate_lines(pool, mandate, agent, action, now_ms)
+        .await?
+        .into_iter()
+        .next()
+        .map(|l| FoundLine {
+            id: l.id,
+            via: l.via,
+        }))
+}
+
+/// TS `consumeLine(pool, { mandateId, agentId, cap: 'merge', action, now })` — 후보를 차례로 보며 상시 줄은 그대로,
+/// 저장된 줄은 [`CONSUME_SQL`] 한 문장으로 센다. 부르는 쪽은 [`MERGE_CHECKS_MANDATE_PRIVILEGES`]·[`MERGE_CHECKS_ENFORCE_PRIVILEGES`] 가 다 있을 때만 부른다.
+pub async fn consume_line(
+    pool: &sqlx::PgPool,
+    mandate: Option<&str>,
+    agent: &str,
+    action: &MergeAction<'_>,
+    now_ms: i64,
+) -> sqlx::Result<Option<ConsumedLine>> {
+    let Some(now_txt) = iso(now_ms) else {
         return Ok(None);
     };
+    for l in candidate_lines(pool, mandate, agent, action, now_ms).await? {
+        if l.read_only {
+            return Ok(Some(ConsumedLine {
+                id: l.id,
+                via: l.via,
+                granted_by: l.granted_by,
+                limits: l.limits,
+                created_at: l.created_at,
+            }));
+        }
+        type Row = (String, String, String, Option<String>, Option<String>);
+        let row: Option<Row> = sqlx::query_as(CONSUME_SQL)
+            .bind(&l.id)
+            .bind(&now_txt)
+            .fetch_optional(pool)
+            .await?;
+        if let Some((id, via, granted_by, limits, created_at)) = row {
+            return Ok(Some(ConsumedLine {
+                id,
+                via,
+                granted_by,
+                limits: parse_limits(limits.as_deref()),
+                created_at,
+            }));
+        }
+    }
+    Ok(None)
+}
+
+fn parse_limits(s: Option<&str>) -> Value {
+    s.and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or(Value::Null)
+}
+
+/// TS `candidateLines` — 맞는 후보 전부(순서 그대로, C-3 까지 거른 것).
+async fn candidate_lines(
+    pool: &sqlx::PgPool,
+    mandate: Option<&str>,
+    agent: &str,
+    action: &MergeAction<'_>,
+    now_ms: i64,
+) -> sqlx::Result<Vec<Cand>> {
+    let Some(mandate) = mandate else {
+        return Ok(vec![]);
+    };
     let (Some(now_txt), Some(cutoff)) = (iso(now_ms), iso(now_ms - MANDATE_IDLE_MS)) else {
-        return Ok(None);
+        return Ok(vec![]);
     };
     let owner: Option<(String,)> = sqlx::query_as(owner_sql())
         .bind(mandate)
@@ -261,14 +370,14 @@ pub async fn find_line(
         .fetch_optional(pool)
         .await?;
     let Some((owner,)) = owner else {
-        return Ok(None);
+        return Ok(vec![]);
     };
     let agent_owner: Option<(Option<String>,)> = sqlx::query_as(AGENT_OWNER_SQL)
         .bind(agent)
         .fetch_optional(pool)
         .await?;
     if agent_owner.and_then(|(o,)| o).as_deref() != Some(owner.as_str()) {
-        return Ok(None);
+        return Ok(vec![]);
     }
     // listMandateLines
     let m: Option<(String, String, String)> = sqlx::query_as(MANDATE_ROW_SQL)
@@ -276,7 +385,7 @@ pub async fn find_line(
         .fetch_optional(pool)
         .await?;
     let Some((m_owner, delegator, channel)) = m else {
-        return Ok(None);
+        return Ok(vec![]);
     };
     let stored: Vec<StoredRow> = sqlx::query_as(stored_sql())
         .bind(mandate)
@@ -285,7 +394,7 @@ pub async fn find_line(
     let mut cands: Vec<Cand> = stored
         .into_iter()
         .map(
-            |(id, cap, scope, limits, agent_ids, granted_by, via, used_count)| Cand {
+            |(id, cap, scope, limits, agent_ids, granted_by, via, used_count, created_at)| Cand {
                 id,
                 cap,
                 scope,
@@ -298,6 +407,7 @@ pub async fn find_line(
                 via,
                 used_count,
                 read_only: false,
+                created_at,
             },
         )
         .collect();
@@ -331,12 +441,11 @@ pub async fn find_line(
         .collect();
     // C-3: 소유자가 아닌 사람이 준 저장된 줄은 그 사람이 지금도 이 위임장 채널에서 정할 수 있을 때만.
     let mut still: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
+    let mut out = Vec::with_capacity(lines.len());
     for l in lines {
         if l.read_only || l.granted_by == owner {
-            return Ok(Some(FoundLine {
-                id: l.id,
-                via: l.via,
-            }));
+            out.push(l);
+            continue;
         }
         let ok = match still.get(&l.granted_by) {
             Some(v) => *v,
@@ -356,13 +465,10 @@ pub async fn find_line(
             }
         };
         if ok {
-            return Ok(Some(FoundLine {
-                id: l.id,
-                via: l.via,
-            }));
+            out.push(l);
         }
     }
-    Ok(None)
+    Ok(out)
 }
 
 /// TS `listMandateLines` 의 상시 줄 펼치기(merge 만). 정규형이 아닌 scope 는 건너뛴다.
@@ -370,24 +476,27 @@ fn standing_lines(grants: Vec<StandingRow>) -> Vec<Cand> {
     grants
         .into_iter()
         .filter(|g| g.2 == "repo.merge")
-        .filter_map(|(id, agent_id, _, scope, granted_by, expires)| {
-            let scope = merge_validate_scope(&scope)?;
-            let limits = match expires {
-                Some(e) => serde_json::json!({ "until": e }),
-                None => serde_json::json!({}),
-            };
-            Some(Cand {
-                id,
-                cap: "merge".into(),
-                scope,
-                limits,
-                agent_ids: Some(vec![agent_id]),
-                granted_by,
-                via: "standing".into(),
-                used_count: 0,
-                read_only: true,
-            })
-        })
+        .filter_map(
+            |(id, agent_id, _, scope, granted_by, expires, granted_at)| {
+                let scope = merge_validate_scope(&scope)?;
+                let limits = match expires {
+                    Some(e) => serde_json::json!({ "until": e }),
+                    None => serde_json::json!({}),
+                };
+                Some(Cand {
+                    id,
+                    cap: "merge".into(),
+                    scope,
+                    limits,
+                    agent_ids: Some(vec![agent_id]),
+                    granted_by,
+                    via: "standing".into(),
+                    used_count: 0,
+                    read_only: true,
+                    created_at: granted_at,
+                })
+            },
+        )
         .collect()
 }
 
@@ -547,6 +656,7 @@ mod tests {
                 "repo:O/R".into(),
                 "o".into(),
                 None,
+                Some("2026-01-01T00:00:00.000Z".into()),
             ),
             (
                 "g2".into(),
@@ -555,6 +665,7 @@ mod tests {
                 "tool:c:x".into(),
                 "o".into(),
                 None,
+                Some("2026-01-01T00:00:00.000Z".into()),
             ),
             (
                 "g3".into(),
@@ -563,6 +674,7 @@ mod tests {
                 "bad".into(),
                 "o".into(),
                 None,
+                Some("2026-01-01T00:00:00.000Z".into()),
             ),
             (
                 "g4".into(),
@@ -571,6 +683,7 @@ mod tests {
                 "repo:o/*".into(),
                 "o".into(),
                 Some("2030-01-01T00:00:00.000Z".into()),
+                None,
             ),
         ];
         let c = standing_lines(g);
@@ -580,6 +693,9 @@ mod tests {
         assert!(c[0].read_only);
         assert_eq!(c[0].agent_ids.as_deref(), Some(&["a".to_string()][..]));
         assert_eq!(c[1].limits["until"], "2030-01-01T00:00:00.000Z");
+        // consumeLine 의 상시 줄 `createdAt` 은 grant 의 `grantedAt`.
+        assert_eq!(c[0].created_at.as_deref(), Some("2026-01-01T00:00:00.000Z"));
+        assert_eq!(c[1].created_at, None);
     }
 
     #[test]

@@ -12,9 +12,17 @@ pub fn mandate_enforced(v: Option<&str>) -> bool {
     v.unwrap_or("").trim().to_lowercase() == "on"
 }
 
-/// [`mandate_enforced`] 를 지금 환경에서.
-pub fn mandate_enforced_env() -> bool {
-    mandate_enforced(std::env::var("HARKROOM_MANDATE_ENFORCE").ok().as_deref())
+/// 앞단이 아는 위임 스위치 — 값이 **없으면(비었으면) 모른다**(`None`). TS 는 없으면 꺼짐이지만, 앞단의 env 는 TS 서버의 env 와
+/// 따로 실리므로 없다는 것만으로 TS 가 꺼져 있다고 볼 수 없다. 모르면 머지 판정을 통째로 TS 에 넘긴다(`HARKROOM_DELEGATION_V2`
+/// 와 같은 꼴). 값이 있으면 [`mandate_enforced`] 그대로(`on` 만 켜짐, 그 밖의 값은 꺼짐).
+pub fn mandate_switch(v: Option<&str>) -> Option<bool> {
+    let v = v?;
+    (!v.trim().is_empty()).then(|| mandate_enforced(Some(v)))
+}
+
+/// [`mandate_switch`] 를 지금 환경에서. 부를 때마다 읽는다.
+pub fn mandate_enforced_env() -> Option<bool> {
+    mandate_switch(std::env::var("HARKROOM_MANDATE_ENFORCE").ok().as_deref())
 }
 
 /// TS `LeaseRow`.
@@ -219,6 +227,18 @@ mod tests {
         assert!(src.contains(
             "return (env.HARKROOM_MANDATE_ENFORCE ?? '').trim().toLowerCase() === 'on';"
         ));
+    }
+
+    #[test]
+    fn mandate_switch_unset_is_unknown() {
+        // 없거나 빈 값은 모름 — 꺼짐이 아니다. 값이 있으면 TS 와 같은 낱말 판정.
+        assert_eq!(mandate_switch(None), None);
+        assert_eq!(mandate_switch(Some("")), None);
+        assert_eq!(mandate_switch(Some("  \n")), None);
+        assert_eq!(mandate_switch(Some("on")), Some(true));
+        assert_eq!(mandate_switch(Some(" ON ")), Some(true));
+        assert_eq!(mandate_switch(Some("off")), Some(false));
+        assert_eq!(mandate_switch(Some("1")), Some(false));
     }
 
     #[test]
