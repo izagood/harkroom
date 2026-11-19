@@ -803,9 +803,12 @@ impl RunnerTable {
 
     /// 채택한 러너의 생사를 묻고 끝난 것을 표·장부에서 뺀 뒤 종료를 알린다(TS `pollAdopted`).
     /// 코드·시그널은 **모른다**(None) — 지어내지 않는다. 주기는 부르는 쪽이 정한다(여기엔 타이머가 없다).
-    pub fn poll_adopted(&self) {
+    ///
+    /// 돌려주는 값은 「아직 지켜볼 것이 남았나」다 — 채택한 러너나 회수 중 세대가 하나라도 남았으면 true.
+    /// 둘 다 기동 때의 고아 채택(`adopt_orphans`)에서만 생기므로, false 가 한 번 나오면 그 뒤로는 물을 것이 없다.
+    pub fn poll_adopted(&self) -> bool {
         let mut gone = Vec::new();
-        {
+        let adopted_left = {
             let mut table = self.table();
             let dead: Vec<String> = table
                 .values()
@@ -820,7 +823,8 @@ impl RunnerTable {
             if !gone.is_empty() {
                 self.save_locked(&table);
             }
-        }
+            table.values().any(|r| r.adopted)
+        };
         for r in gone {
             (self.on_exit)(RunnerExit {
                 tail_lines: tail_of(r.log_path.as_deref()),
@@ -831,13 +835,15 @@ impl RunnerTable {
             });
         }
         // 회수 중 세대도 같은 주기로 거둔다(TS `pollAdopted` 앞부분) — 생사는 시작 시각 대조까지 본다.
-        let reaped = {
+        let (reaped, retiring_left) = {
             let probe = self.probe_retiring();
             let mut set = self.retiring_set();
             let alive = probe.alive(set.boot_times());
-            set.reap_dead(alive)
+            let reaped = set.reap_dead(alive);
+            (reaped, !set.is_empty())
         };
         self.finish_reaped(reaped);
+        adopted_left || retiring_left
     }
 }
 
@@ -1400,7 +1406,7 @@ mod tests {
                 .starts_with(SPAWN_RETIRING)
         );
         assert_eq!(t.retiring_runners().len(), 1);
-        t.poll_adopted();
+        assert!(t.poll_adopted(), "회수 중 세대가 살아 있으면 더 지켜본다");
         assert_eq!(t.retiring_runners().len(), 1);
         assert!(
             PROBED.load(Ordering::SeqCst) >= before + 3,
@@ -1450,7 +1456,10 @@ mod tests {
         );
         old.kill().unwrap();
         old.wait().unwrap();
-        t.poll_adopted();
+        assert!(
+            !t.poll_adopted(),
+            "회수 중 세대가 물러났고 지금 러너는 내 자식이다 — 물을 것이 없다"
+        );
         assert_eq!(
             released.lock().unwrap().clone(),
             vec![("a1".to_string(), now.incarnation_id.clone())]
@@ -1484,13 +1493,13 @@ mod tests {
         assert_eq!(rows[0].link_secret.as_deref(), Some("orph-s"));
         assert_eq!(rows[0].boot_time_sec, Some(7));
         // 살아 있으면 poll 은 아무것도 안 한다.
-        t.poll_adopted();
+        assert!(t.poll_adopted(), "채택한 러너가 살아 있으면 더 지켜본다");
         assert!(rx.try_recv().is_err());
         // 같은 에이전트의 spawn 은 채택한 세대를 그대로 돌려준다(둘이 되지 않는다).
         assert!(matches!(spawn(&t, &[]), SpawnOutcome::Existing(_)));
         child.kill().unwrap();
         child.wait().unwrap();
-        t.poll_adopted();
+        assert!(!t.poll_adopted(), "채택한 러너가 끝났다 — 물을 것이 없다");
         let e = rx.recv_timeout(Duration::from_secs(5)).unwrap();
         assert_eq!(
             (e.agent_id.as_str(), e.incarnation_id.as_str()),
@@ -1528,7 +1537,7 @@ mod tests {
         let st = child.wait().unwrap();
         assert_eq!(st.signal(), Some(libc::SIGTERM));
         assert!(rx.try_recv().is_err(), "보낸 경우는 poll 이 죽음을 알린다");
-        t.poll_adopted();
+        assert!(!t.poll_adopted(), "채택한 러너가 끝났다");
         assert_eq!(
             rx.recv_timeout(Duration::from_secs(5)).unwrap().agent_id,
             "a1"

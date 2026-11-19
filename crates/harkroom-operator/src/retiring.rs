@@ -149,6 +149,11 @@ impl RetiringSet {
         })
     }
 
+    /// 회수 중 줄이 하나도 없다 — 생사를 물을 것이 없다.
+    pub fn is_empty(&self) -> bool {
+        self.by_agent.is_empty()
+    }
+
     /// pid → 장부의 커널 시작 시각. 생사를 `kill(pid,0)` 에 더해 시작 시각으로 대조하려고 부르는 쪽이 쓴다.
     pub fn boot_times(&self) -> HashMap<i32, Option<i64>> {
         self.by_agent
