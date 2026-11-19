@@ -11204,7 +11204,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                   steps: [{ id: 's1', groupId: 'g2', title: '마무리', state: 'pending', links: [], dependsOn: [] }] }), member.accountId]);
               return p;
             };
-            const DW: [string, (ch: string, root: string) => Promise<{ args: Record<string, unknown>; cause?: string; plan?: boolean }>][] = [
+            const DW: [string, (ch: string, root: string) => Promise<{ args: Record<string, unknown>; cause?: string; plan?: boolean; ts?: boolean }>][] = [
               ['delegate 접속한 담당 → 글·의무·부름', async () => ({ args: { to: ['C3B2C4DEL'], body: '맡아 줘', deadlineSec: 900, model: 'claude-opus-5' } })],
               ['delegate 본문 멘션 → mention 부름을 위임 부름으로', async () => ({ args: { to: ['c3b2c4del'], body: '@c3b2c4del 맡아 줘' } })],
               ['delegate 접속 안 한 담당 섞임 → unreachable', async () => ({ args: { to: ['c3b2c4off', 'c3b2c4del'], body: '둘이 맡아 줘' } })],
@@ -11212,7 +11212,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
               ['delegate 같은 이름 둘 · 접속 안 함 → unreachable 둘', async () => ({ args: { to: ['c3b2c4off', 'C3B2C4OFF'], body: '맡아 줘' } })],
               ['delegate 접속한 담당 + 접속 안 한 같은 이름 둘 → 글·의무 하나', async () => ({ args: { to: ['c3b2c4del', 'c3b2c4off', 'C3B2C4OFF'], body: '맡아 줘' } })],
               // 접속한 담당이 겹치면 TS 는 글을 올린 뒤 의무 행 기본 키에 걸려 delegation_failed — Rust 는 TS 로 넘긴다.
-              ['delegate 접속한 같은 이름 둘 → TS delegation_failed', async () => ({ args: { to: ['c3b2c4del', 'C3B2C4DEL'], body: '맡아 줘' } })],
+              ['delegate 접속한 같은 이름 둘 → TS delegation_failed', async () => ({ args: { to: ['c3b2c4del', 'C3B2C4DEL'], body: '맡아 줘' }, ts: true })],
               ['delegate 앞 의무(같은 담당) → v1 은 대체', async (ch, root) => {
                 const d = (await db.pool.query<{ id: string }>(
                   `insert into team_delegation (message_id, lead_account_id, channel_id, thread_root_id, deadline_at)
@@ -11257,7 +11257,7 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
                   `select p.doc, p.rev, p.updated_by::text as by,
                           coalesce((select json_agg(l.child_root::text order by l.child_root) from thread_plan_link l where l.parent_root = p.root_id), '[]') as links
                      from thread_plan p where p.root_id = $1`, [st.args.planRootId])).rows[0] ?? null) : undefined;
-                out.push({ name, status: r.status, rust: base === tsUrl ? true : r.core === 'mcp', body: shape(body), row: await facts(body?.message?.id, st.cause),
+                out.push({ name, status: r.status, rust: base === tsUrl ? !st.ts : r.core === 'mcp', body: shape(body), row: await facts(body?.message?.id, st.cause),
                   deleg: shape(deleg.map((x) => ({ ...x, span: x.span ? 'span' : null }))), inbox: shape(inbox), meta: shape(meta), planRow });
               }
               return out;
