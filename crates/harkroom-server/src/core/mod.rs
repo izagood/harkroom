@@ -82,6 +82,7 @@ pub mod decide_routes;
 pub mod delegate_write;
 pub mod dm_open;
 pub mod events;
+pub mod grant_decide;
 pub mod grant_reads;
 pub mod implicit_delegation;
 pub mod inbox_board;

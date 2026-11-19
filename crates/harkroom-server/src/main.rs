@@ -1666,6 +1666,28 @@ async fn main() {
         }
         _ => false,
     };
+    // P4 — 위임 대기 줄 허락·거절(`POST /grants/{id}/approve`·`decline`). 쓰기 풀에 [`GRANT_DECIDE_PRIVILEGES`] 가 다 있을 때만.
+    let grant_decide_write = match (&core_mode, &state.write) {
+        (harkroom_server::core::CoreMode::Rust, Some(w)) => {
+            use harkroom_server::core::grant_decide as t;
+            match write::missing_in(w, t::GRANT_DECIDE_PRIVILEGES, &[]).await {
+                Ok(m) if m.is_empty() => Some(w.clone()),
+                Ok(m) => {
+                    eprintln!("front: grant decide core off — missing privileges {m:?}");
+                    refuse_missing_grants(&m);
+                    None
+                }
+                Err(e) => {
+                    eprintln!(
+                        "front: grant decide core off — privilege check failed ({})",
+                        e.as_database_error().map_or("io", |_| "db")
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
     // S5.4 — `POST /agents/{id}/merge-denials/{denialId}/grant`. 쓰기 풀에 [`MERGE_DENIAL_GRANT_PRIVILEGES`] 가 다 있을 때만.
     let merge_denial_grant_write = match (&core_mode, &state.write) {
         (harkroom_server::core::CoreMode::Rust, Some(w)) => {
@@ -3682,6 +3704,14 @@ async fn main() {
             core_routes.router = core_routes.router.merge(mp.router);
             core_routes.http.extend(mp.http);
             core_routes.sockets.extend(mp.sockets);
+        }
+        // P4 — 위임 대기 줄 허락·거절 2줄. 권한이 있을 때만 — 아니면 TS 에 남는다.
+        if let Some(w) = grant_decide_write {
+            let gd =
+                harkroom_server::core::grant_decide::routes(w, auth.clone(), state.cors.clone());
+            core_routes.router = core_routes.router.merge(gd.router);
+            core_routes.http.extend(gd.http);
+            core_routes.sockets.extend(gd.sockets);
         }
         if let Some(w) = merge_denial_grant_write {
             let mg = harkroom_server::core::merge_denial_grant::routes(
