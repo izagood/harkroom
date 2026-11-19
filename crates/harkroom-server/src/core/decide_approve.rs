@@ -1259,7 +1259,6 @@ async fn approve_attempt(
         has_mandate: false,
         has_denial: false,
         has_once: args.has_once,
-        via_chat: args.chat.is_some(),
         via_mirror: args.mirror_message_id.is_some(),
     };
     let d = match recheck_locked(&agent, channel.as_deref(), locked.as_ref(), shape) {
@@ -1396,7 +1395,6 @@ mod tests {
             has_mandate: false,
             has_denial: false,
             has_once: false,
-            via_chat: false,
             via_mirror: false,
         };
         assert_eq!(rust_takes(base), Some(Decision::ApproveOnce));
@@ -1430,17 +1428,10 @@ mod tests {
                 kind: "merge",
                 ..base
             },
-            // 머지 1회라도 거절 기록이 없거나 글 승인이면 TS(거울은 S5.5 d 부터 버튼과 같다)(15d — 위임장이 있으면 Rust, 아래).
+            // 머지 1회라도 거절 기록이 없으면 TS(거울은 S5.5 d, 글 승인은 P3 B6 부터 버튼과 같다)(15d — 위임장이 있으면 Rust, 아래).
             Shape {
                 kind: "merge",
                 has_once: true,
-                ..base
-            },
-            Shape {
-                kind: "merge",
-                has_once: true,
-                has_denial: true,
-                via_chat: true,
                 ..base
             },
             Shape {

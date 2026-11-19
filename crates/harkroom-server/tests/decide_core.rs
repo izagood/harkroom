@@ -58,7 +58,6 @@ fn shape<'a>(option: &'a str, kind: &'a str) -> Shape<'a> {
         has_mandate: false,
         has_denial: false,
         has_once: false,
-        via_chat: false,
         via_mirror: false,
     }
 }
@@ -168,20 +167,15 @@ fn who_takes_it() {
         }),
         None
     );
-    // once·글 승인이면 deny 라도 처음부터 TS(반쯤 하다 넘기는 길 없음). 위임장은 P3 B2 부터 Rust(위).
+    // once 면 deny 라도 처음부터 TS(반쯤 하다 넘기는 길 없음). 위임장은 P3 B2 부터 Rust(위).
     let base = shape("deny", "tool");
-    for s in [
-        Shape {
+    assert_eq!(
+        rust_takes(Shape {
             has_once: true,
             ..base
-        },
-        Shape {
-            via_chat: true,
-            ..base
-        },
-    ] {
-        assert_eq!(rust_takes(s), None, "{s:?}");
-    }
+        }),
+        None
+    );
     // S5.5 d — 진짜 거울(입구가 확인)은 원본 버튼과 같은 허용 목록을 탄다.
     assert_eq!(
         rust_takes(Shape {

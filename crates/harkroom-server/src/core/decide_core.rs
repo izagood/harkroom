@@ -536,25 +536,22 @@ pub struct Shape<'a> {
     pub has_denial: bool,
     /// 본문에 `once` 가 있다.
     pub has_once: bool,
-    /// `via: chat`(글 승인 — C1c 쪽).
-    pub via_chat: bool,
     /// 거울 카드에서 왔다.
     pub via_mirror: bool,
 }
 
 /// Rust 가 맡는가. `None` = 처음부터 TS(쓰기 전이라 넘겨도 된다).
 /// - 허용 목록 방식: 아래에 적힌 꼴만 Rust, 나머지는 전부 TS(security ②-1·②-2).
-/// - `once`·글 승인·모르는 선택지는 처음부터 TS(거울은 S5.5 d 부터 버튼과 같다) — Rust 에서 반쯤 하다 넘기는 길은 없다. 위임장(`mandate_id`)은 tool 승인
+/// - `once`·모르는 선택지는 처음부터 TS(거울은 S5.5 d, 글 승인은 P3 B6 부터 버튼과 같다) — Rust 에서 반쯤 하다 넘기는 길은 없다. 위임장(`mandate_id`)은 tool 승인
 ///   (`approve`·`approve_mandate`·`approve_turn`, C1)과 command `approve_once`·`approve_hour`(C3)·deny(P3 B2)는 Rust.
 ///   `approve_new_mandate`(tool)는 C2, merge 는 P3 B3.
 /// - deny 는 kind 와 관계없이 Rust(머지 거절 카드의 deny 포함, grant 를 쓰지 않음). 같은 카드의 approve_once·approve 는 TS(②-6).
 /// - 승인은 `tool`→approve, `command`→approve_once·approve_hour 만. 소유자가 아닌 승인(asOwner=false)은 판정 뒤
 ///   [`after_verdict`] 가 TS 로 돌린다.
 pub fn rust_takes(s: Shape<'_>) -> Option<Decision> {
-    // S5.5 d — 거울 카드(진짜 거울·원본 채널 보기는 입구가 확인)는 원본 카드 버튼과 같은 허용 목록을 탄다. 글 승인은 TS.
-    if s.via_chat {
-        return None;
-    }
+    // S5.5 d — 거울 카드(진짜 거울·원본 채널 보기는 입구가 확인)는 원본 카드 버튼과 같은 허용 목록을 탄다.
+    // P3 B6 — 글 승인(`via: chat`)도 같은 허용 목록이다. 글 승인 입구(msg_post)가 선택지를 deny·approve_once·
+    // approve_new_mandate 로 좁혀 들어오고, 결정 쓰기는 버튼과 같은 길(줄 `via` 만 chat)이다.
     let d = option_decision(s.option)?;
     // S5.4 — `once` 는 머지 거절 카드의 [이번 한 번](거절 기록 있음, 15d 부터 위임장이 있어도)만 Rust. 그 밖의 `once` 는 TS.
     if s.has_once {
@@ -728,7 +725,7 @@ pub struct AuditDetail<'a> {
     pub grant_expires_at: Option<&'a str>,
     /// (grantMode, commandGrantId)
     pub grant_mode: Option<(&'a str, &'a str)>,
-    /// `via: { kind: 'bundle', bundleMessageId }` 이면 묶음, 없으면 `via: 'button'`(chat·mirror 는 처음부터 TS).
+    /// `via: { kind: 'bundle', bundleMessageId }` 이면 묶음, 없으면 `via: 'button'`(mirror·chat 은 아래 칸).
     pub bundle_message_id: Option<&'a str>,
     /// S5.4 14d — 거울 카드에서 온 결정이면 `via: 'mirror', mirrorMessageId`(TS 와 같은 칸). 묶음과 함께 오지 않는다.
     pub mirror_message_id: Option<&'a str>,
@@ -799,7 +796,7 @@ pub fn audit_detail(a: &AuditDetail<'_>) -> Value {
         o["commandGrantId"] = serde_json::json!(id);
     }
     // TS: `via` 는 언제나 실린다(`args.via ? { via: args.via.kind } : {}` — 입구가 늘 넘긴다). Rust 가 맡는 길은 button·bundle·mirror 다
-    // (chat 은 처음부터 TS). 3b 는 button 을 빠뜨렸다 — 3c 대조 시험(rustFrontDb)이 잡았다.
+    // (chat 은 P3b-2 부터 채운다). 3b 는 button 을 빠뜨렸다 — 3c 대조 시험(rustFrontDb)이 잡았다.
     if let Some(b) = a.bundle_message_id {
         o["via"] = serde_json::json!("bundle");
         o["bundleMessageId"] = serde_json::json!(b);
@@ -874,7 +871,7 @@ pub struct DenyArgs<'a> {
     pub agent_id: &'a str,
     pub request_id: &'a str,
     pub actor_id: &'a str,
-    /// `via: { kind: 'bundle' }` 로 왔으면 그 묶음 글 id. chat 은 처음부터 TS([`rust_takes`]).
+    /// `via: { kind: 'bundle' }` 로 왔으면 그 묶음 글 id. chat 은 아래 칸(P3 B6 부터 버튼과 같은 허용 목록).
     pub bundle_message_id: Option<&'a str>,
     /// S5.5 d — 거울 카드에서 왔으면 그 거울 글 id(`via: { kind: 'mirror' }`). 묶음과 함께 오지 않는다.
     /// 호출자가 [`is_genuine_permission_mirror`]·원본 채널 보기를 먼저 확인한다.
@@ -1052,7 +1049,6 @@ async fn deny_attempt(
         has_mandate: false,
         has_denial: false,
         has_once: false,
-        via_chat: args.chat.is_some(),
         via_mirror: args.mirror_message_id.is_some(),
     };
     let d = match recheck_locked(&agent, channel.as_deref(), locked.as_ref(), shape) {
