@@ -11,7 +11,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::LazyLock;
 use std::time::UNIX_EPOCH;
@@ -602,14 +602,37 @@ pub fn read_mcp_auth_rejections(
     out
 }
 
+/// 턴을 시작할 때의 기록 파일 길이(바이트) — [`session_transcript_grew_since`] 가 **이 자리부터** 읽는다.
+/// 파일이 아직 없거나(첫 턴) 기록을 못 읽는 하네스면 0 이다.
+pub fn session_transcript_len(
+    harness: AgentHarness,
+    session_id: Option<&str>,
+    dirs: TranscriptDirs<'_>,
+) -> u64 {
+    session_file(harness, session_id, dirs)
+        .and_then(|path| fs::metadata(path).ok())
+        .map_or(0, |m| m.len())
+}
+
+fn has_user_marker(line: &[u8]) -> bool {
+    const MARKER: &[u8] = b"\"user\"";
+    line.windows(MARKER.len()).any(|w| w == MARKER)
+}
+
 /// 정본 `sessionTranscriptGrewSince` — `since_ms` 이후 시각이 찍힌 **사람 입력 줄**(`type:"user"`, 메타·곁가지 제외)이
 /// 기록에 생겼는가. mtime 이 아닌 이유: `claude -r` 은 입력을 받기 전에 메타 줄로 파일을 건드린다(2.1.295 실측).
 /// **판정할 수 없으면 참이다**(기록을 못 읽는 하네스·세션 미상) — 거짓이면 그 턴들이 매번 사람을 부른다.
 /// 파일을 못 읽으면 거짓(첫 턴: 아직 파일이 없다).
+///
+/// **꼬리가 아니라 턴 시작 자리(`from_offset`, [`session_transcript_len`])부터 읽는다**(정본과 다름). 하네스는
+/// 입력 줄 바로 뒤에 요청 기록 줄을 수백 KB 씩 쓴다 — 꼬리 [`TAIL_BYTES`] 만 보면 첫 답이 나오기도 전에 입력 줄이
+/// 창 밖으로 밀려 「증거 없음」이 된다. 줄 단위로 흘려 읽고 증거를 찾으면 멈춘다. 파일이 그 자리보다 짧아졌으면
+/// (다시 쓰였다) 꼬리로 물러난다.
 pub fn session_transcript_grew_since(
     harness: AgentHarness,
     session_id: Option<&str>,
     since_ms: i64,
+    from_offset: u64,
     dirs: TranscriptDirs<'_>,
 ) -> bool {
     if !reads_session_transcript(harness) {
@@ -618,12 +641,29 @@ pub fn session_transcript_grew_since(
     let Some(id) = session_id.filter(|s| !s.is_empty()) else {
         return true;
     };
-    let Some(text) = read_transcript_tail(id, dirs) else {
+    let Some(path) = claude_session_file_path(id, dirs.config_dir, dirs.home) else {
         return false;
     };
-    text.split('\n')
-        .filter(|line| line.contains("\"user\""))
-        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+    let Ok(mut file) = fs::File::open(path) else {
+        return false;
+    };
+    let Ok(size) = file.metadata().map(|m| m.len()) else {
+        return false;
+    };
+    // 꼬리로 물러나면 첫 줄이 반쪽일 수 있다 — JSON 으로 안 읽혀 저절로 버려진다.
+    let start = if from_offset <= size {
+        from_offset
+    } else {
+        size.saturating_sub(TAIL_BYTES)
+    };
+    if file.seek(SeekFrom::Start(start)).is_err() {
+        return false;
+    }
+    BufReader::new(file)
+        .split(b'\n')
+        .map_while(Result::ok)
+        .filter(|line| has_user_marker(line))
+        .filter_map(|line| serde_json::from_slice::<Value>(&line).ok())
         .any(|r| {
             type_is(&r, "user")
                 && !is_true(&r, "isMeta")
