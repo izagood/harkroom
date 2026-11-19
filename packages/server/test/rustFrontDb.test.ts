@@ -9442,11 +9442,21 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
             `with t as (select thread_root_id as r from message where id = $1)
              select m.body, m.meta->'ask'->>'closedReason' as reason, m.meta->'ask'->>'closedBy' as by,
                     m.meta->'ask'->>'replyMessageId' is not distinct from $1::text as by_reply, m.meta->'ask' ? 'closedAt' as closed,
+                    m.meta->'ask'->>'answeredWith' as answered, m.meta->'ask'->>'answeredVia' as via,
                     (select coalesce(array_agg(i.account_id::text || ':' || i.reason order by i.id), '{}') from inbox i where i.message_id = m.id) as inbox
                from message m, t
               where m.meta->>'kind' = 'ask'
                 and (m.thread_root_id = t.r or m.meta->'ask'->>'mirrorOf' in (select id::text from message where thread_root_id = t.r))
               order by m.body`, [id])).rows),
+          // P3c — 본문에 링크로 든 카드(T1)의 답·닫힘·깨움, 그리고 이 글에 단 글 승인 줄(거절·안내 — 본문·표지).
+          linked: shape((await db.pool.query(
+            `select m.meta->'ask'->>'answeredWith' as answered, m.meta->'ask'->>'answeredVia' as via, m.meta->'ask'->>'closedReason' as reason,
+                    (select coalesce(array_agg(i.account_id::text || ':' || i.reason order by i.id), '{}') from inbox i where i.message_id = m.id) as inbox
+               from message m where m.meta->>'kind' = 'ask' and position(m.id::text in (select body from message where id = $1)) > 0
+              order by m.seq`, [id])).rows),
+          lines: shape((await db.pool.query(
+            `select body, author_id::text as author, kind, meta->'chatApproval' as ca, meta->'i18n'->>'key' as key from message
+              where meta->'chatApproval'->>'messageId' = $1 order by seq`, [id])).rows),
           // C1c-3d — 이 스레드의 위임 항목: 결말·활동 시각·대기 중 update 가 이 글인가·기한이 밀렸나(처음 1분 → 10분).
           deleg: (await db.pool.query(
             `select i.outcome, i.last_activity_at is not null as active, i.update_pending_message_id is not distinct from $1::uuid as pending,
@@ -9567,6 +9577,22 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           await db.pool.query(`insert into agent_wake (account_id, channel_id, message_id, wake_at) values ($1, $2, $3, now() + interval '1 hour')`, [bot2.accountId, todayId, w]);
           return root;
         };
+        // P3c — 같은 스레드에 열린 카드 둘 / 머리 없이 선 카드 하나(링크로 고르는 T1 — 카드 id 를 돌려준다).
+        const askMeta = (a: Record<string, unknown>) => JSON.stringify({ kind: 'ask', ask: { prompt: '고를래?', options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }], ...a } });
+        const withTwoAsks = async () => {
+          const root = await direct(member.accountId, '물음 둘');
+          for (const b of ['첫 카드', '둘째 카드']) {
+            await db.pool.query(`insert into message (channel_id, thread_root_id, author_id, body, kind, meta) values ($1, $2, $3, $4, 'user', $5::jsonb)`,
+              [todayId, root, bot2.accountId, b, askMeta({ to: { kind: 'human' } })]);
+          }
+          return root;
+        };
+        const withAskCard = (ask: Record<string, unknown>) => async () => {
+          const root = await direct(member.accountId, '링크 물음');
+          return (await db.pool.query<{ id: string }>(
+            `insert into message (channel_id, thread_root_id, author_id, body, kind, meta) values ($1, $2, $3, '고를래?', 'user', $4::jsonb) returning id::text as id`,
+            [todayId, root, bot2.accountId, askMeta(ask)])).rows[0]!.id;
+        };
         // C1c-3c — 머리 하나와 그 스레드에 BOT2 가 세운 열린 카드 하나(+ 다른 자리의 거울·묶음 카드).
         const withAsk = (ask: Record<string, unknown>, extra: Record<string, unknown> = {}, mirror = false) => async () => {
           const root = await direct(member.accountId, '물음');
@@ -9606,12 +9632,26 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
           ['없는 머리 → bad_thread', async () => '00000000-0000-4000-8000-000000000000', (r) => ({ body: '답', threadRootId: r }), A],
           ['지워진 머리 → 되살림(rootBack)', async () => { const id = await direct(member.accountId, '지울 글'); await db.pool.query(`update message set deleted_at = now() where id = $1`, [id]); return id; }, (r) => ({ body: '답', threadRootId: r }), A],
           ['열린 카드 + 물음 → 글 답으로 닫음', withAsk({ to: { kind: 'human' } }), (r) => ({ body: '그게 뭐야?', threadRootId: r }), A],
-          ['열린 카드 + 고르는 글 → TS 몫', withAsk({ to: { kind: 'human' } }), (r) => ({ body: 'A 로', threadRootId: r }), A, 'ts'],
-          ['열린 카드 + 인용 속 물음 → TS 몫', withAsk({ to: { kind: 'human' } }), (r) => ({ body: '> 뭐야?\nB 로', threadRootId: r }), A, 'ts'],
+          // P3c 부터 카드를 고르는 글도 Rust 가 맡는다(커밋 뒤 답 적기 → 카드 닫기, TS `answerAskFromMessage` 순서).
+          ['열린 카드 + 고르는 글 → 글로 답함', withAsk({ to: { kind: 'human' } }), (r) => ({ body: 'A 로', threadRootId: r }), A],
+          ['열린 카드 + 인용 속 물음 → 글로 답함', withAsk({ to: { kind: 'human' } }), (r) => ({ body: '> 뭐야?\nB 로', threadRootId: r }), A],
           ['나에게 간 카드 → 닫음', withAsk({ to: { kind: 'account', accountId: admin.accountId } }), (r) => ({ body: 'B 는 뭐가 달라?', threadRootId: r }), A],
           ['남에게 간 카드 → 그대로', withAsk({ to: { kind: 'account', accountId: member2.accountId } }), (r) => ({ body: '내 생각엔?', threadRootId: r }), A],
           ['권한 요청 카드 → 그대로', withAsk({ to: { kind: 'human' } }, { permissionRequest: { rule: 'x' } }), (r) => ({ body: '이건 뭐지?', threadRootId: r }), A],
           ['카드 + 거울 + 묶음 → 같이 닫음', withAsk({ to: { kind: 'human' } }, {}, true), (r) => ({ body: '어떤 차이야?', threadRootId: r }), A],
+          // P3c — 선택 카드를 글로 고르기(TS `answerAskFromMessage`). T2 = 카드 스레드의 글, T1 = 카드 링크가 든 글.
+          ['P3c: T2 이름', withAsk({ to: { kind: 'human' } }), (r) => ({ body: 'B', threadRootId: r }), A],
+          ['P3c: T2 번호', withAsk({ to: { kind: 'human' } }), (r) => ({ body: '2번', threadRootId: r }), A],
+          ['P3c: T2 추천대로', withAsk({ to: { kind: 'human' }, options: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B', recommended: true }] }), (r) => ({ body: '추천대로', threadRootId: r }), A],
+          ['P3c: T2 추천 없음 → 거절 줄', withAsk({ to: { kind: 'human' } }), (r) => ({ body: '추천대로', threadRootId: r }), A],
+          ['P3c: 되돌릴 수 없는 카드 + 링크 없는 번호 → 거절 줄', withAsk({ to: { kind: 'human' }, irreversible: true }), (r) => ({ body: '1번', threadRootId: r }), A],
+          ['P3c: 되돌릴 수 없는 카드 + 이름 → 답함', withAsk({ to: { kind: 'human' }, irreversible: true }), (r) => ({ body: 'A', threadRootId: r }), A],
+          ['P3c: 이미 답한 카드 → 글 답으로 닫지 않음', withAsk({ to: { kind: 'human' }, answeredWith: 'a', answeredBy: member.accountId }), (r) => ({ body: '2번', threadRootId: r }), A],
+          ['P3c: 카드 2장 → 안내 줄', withTwoAsks, (r) => ({ body: '2번', threadRootId: r }), A],
+          ['P3c: T1 링크 + 번호(다른 스레드)', withAskCard({ to: { kind: 'human' }, irreversible: true }), (c) => ({ body: `harkroom://message/${c} 2번` }), A],
+          ['P3c: T1 링크 + 맞지 않는 이름 → 거절 줄', withAskCard({ to: { kind: 'human' } }), (c) => ({ body: `harkroom://message/${c} C 로` }), A],
+          // 물어본 에이전트(BOT2)를 부르며 고르면 그 부름으로 이미 깨어난다 — 답 깨움(ask_answered)을 또 넣지 않는다(`skipWakeIfInboxFor`).
+          ['P3c: 물어본 에이전트를 부르며 고름 → 깨움 한 번', withAsk({ to: { kind: 'human' } }), (r) => ({ body: '@bot2 A 로', threadRootId: r }), A],
           ['DM 최상위 → 상대에게 dm', async () => '', () => ({ body: '안녕' }), A, undefined, dmMem],
           ['DM 답글 → 머리 주인 thread_reply 만', async () => direct(member.accountId, 'DM 질문', dmMem), (r) => ({ body: '답', threadRootId: r }), A, undefined, dmMem],
           ['DM 답글(자기 머리) → 상대에게 dm', async () => direct(admin.accountId, 'DM 혼잣말', dmMem), (r) => ({ body: '덧붙임', threadRootId: r }), A, undefined, dmMem],
@@ -9700,6 +9740,9 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const tsGet = () => tsEvents;
         const tsOut = await run(tsUrl, tsGet, tsGet);
         const rsOut = await run(rsUrl, () => busEvents, tsGet);
+        // 어느 장면이 다른지 이름으로 먼저 — 큰 diff 는 장면 이름을 보여 주지 않는다.
+        const differs = tsOut.map((t, i) => (JSON.stringify(t) === JSON.stringify(rsOut[i]) ? null : (t as { name: string }).name)).filter(Boolean);
+        expect(differs, 'TS 와 다른 장면').toEqual([]);
         expect(rsOut).toEqual(tsOut);
         // C1c-3d — 위임 스위치를 준 앞단(값마다 하나씩 띄운다)과 같은 값의 TS 를 견준다. 사람 글은 닫지도 깨우지도 않는다.
         // S5.4 MS2b — `GET /inbox` 위임 결말(`delegation`) 재료: 팀장(BOT)의 `delegation_done` 줄 둘. 하나는 결말이 섞이고(reported → done,
@@ -9947,18 +9990,36 @@ describe.skipIf(!ON)('TS·Rust 대조 시험 — 같은 DB 의 두 서버', () =
         const back = (tsOut as (Row & B)[]).find((x) => x.name === '지워진 머리 → 되살림(rootBack)')!;
         expect(back.events.map((e) => e.type)).toEqual(['message.created', 'message.updated', 'inbox.updated']);
         expect(back.events[1]!.message).toMatchObject({ deletedAt: 'string', replyCount: 1 });
-        type K = { asks: { body: string; reason: string | null; by: string | null; by_reply: boolean; closed: boolean; inbox: string[] }[]; events: { type: string }[] };
+        type K = { asks: { body: string; reason: string | null; by: string | null; by_reply: boolean; closed: boolean; answered: string | null; via: string | null; inbox: string[] }[]; events: { type: string }[] };
         const asks = (n: string) => (tsOut as (Row & K)[]).find((x) => x.name === n)!;
-        expect(asks('열린 카드 + 물음 → 글 답으로 닫음').asks).toEqual([{ body: '고를래?', reason: 'replied', by: 'ADMIN', by_reply: true, closed: true, inbox: [] }]);
+        expect(asks('열린 카드 + 물음 → 글 답으로 닫음').asks).toEqual([{ body: '고를래?', reason: 'replied', by: 'ADMIN', by_reply: true, closed: true, answered: null, via: null, inbox: [] }]);
         expect(asks('열린 카드 + 물음 → 글 답으로 닫음').events.map((e) => e.type)).toEqual(['message.created', 'inbox.updated', 'message.updated']);
-        expect(asks('열린 카드 + 고르는 글 → TS 몫').asks[0]!.closed).toBe(false);
+        // 대조가 「둘 다 안 적음」으로 같아지지 않게 TS 쪽 답을 못 박는다 — 고른 답이 적히고(answeredVia=chat) 물어본 쪽이 깨어난다.
+        expect(asks('열린 카드 + 고르는 글 → 글로 답함').asks[0]).toMatchObject({ answered: 'a', via: 'chat', inbox: ['BOT2:ask_answered'] });
         expect(asks('나에게 간 카드 → 닫음').asks[0]!.reason).toBe('replied');
         expect(asks('남에게 간 카드 → 그대로').asks[0]!.closed).toBe(false);
         expect(asks('권한 요청 카드 → 그대로').asks[0]!.closed).toBe(false);
         expect(asks('카드 + 거울 + 묶음 → 같이 닫음').asks).toEqual([
-          { body: '거울', reason: 'replied', by: 'ADMIN', by_reply: false, closed: true, inbox: ['BOT:ask_closed'] },
-          { body: '고를래?', reason: 'replied', by: 'ADMIN', by_reply: true, closed: true, inbox: [] },
+          { body: '거울', reason: 'replied', by: 'ADMIN', by_reply: false, closed: true, answered: null, via: null, inbox: ['BOT:ask_closed'] },
+          { body: '고를래?', reason: 'replied', by: 'ADMIN', by_reply: true, closed: true, answered: null, via: null, inbox: [] },
         ]);
+        // P3c — 대조가 「둘 다 안 함」으로 같아지지 않게 TS 쪽 결과를 못 박는다.
+        type L = { linked: { answered: string | null; via: string | null; inbox: string[] }[]; lines: { body: string; ca: { reason?: string; candidates?: string[] } }[] };
+        const p3 = (n: string) => (tsOut as (Row & K & L)[]).find((x) => x.name === n)!;
+        expect(p3('P3c: T2 이름').asks[0]).toMatchObject({ answered: 'b', via: 'chat', inbox: ['BOT2:ask_answered'] });
+        expect(p3('P3c: T2 번호').asks[0]).toMatchObject({ answered: 'b', via: 'chat' });
+        expect(p3('P3c: T2 추천대로').asks[0]).toMatchObject({ answered: 'b', via: 'chat' });
+        expect(p3('P3c: T2 추천 없음 → 거절 줄').lines.map((l) => l.ca.reason)).toEqual(['askNoRecommended']);
+        expect(p3('P3c: 되돌릴 수 없는 카드 + 링크 없는 번호 → 거절 줄').lines.map((l) => l.ca.reason)).toEqual(['askIrreversible']);
+        expect(p3('P3c: 되돌릴 수 없는 카드 + 링크 없는 번호 → 거절 줄').asks[0]!.answered).toBeNull();
+        expect(p3('P3c: 되돌릴 수 없는 카드 + 이름 → 답함').asks[0]).toMatchObject({ answered: 'a', via: 'chat' });
+        expect(p3('P3c: 이미 답한 카드 → 글 답으로 닫지 않음').asks[0]!.answered).toBe('a');
+        expect(p3('P3c: 카드 2장 → 안내 줄').lines.map((l) => l.ca.candidates?.length)).toEqual([2]);
+        expect(p3('P3c: T1 링크 + 번호(다른 스레드)').linked).toEqual([{ answered: 'b', via: 'chat', reason: null, inbox: ['BOT2:ask_answered'] }]);
+        expect(p3('P3c: T1 링크 + 맞지 않는 이름 → 거절 줄').lines.length).toBe(1);
+        const once = p3('P3c: 물어본 에이전트를 부르며 고름 → 깨움 한 번');
+        expect(once.asks[0]).toMatchObject({ answered: 'a', via: 'chat', inbox: [] });
+        expect(once.inbox).toEqual([{ who: 'BOT2', reason: 'mention' }]);
         for (const r of saved) await db.pool.query(`update agent_config set invoke_scope = $2 where account_id = $1`, [r.id, r.scope]);
       }
 

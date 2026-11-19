@@ -213,6 +213,9 @@ pub async fn post_line(
         system: true,
         server_notice: true,
         no_mentions: true,
+        // TS `post`(chatApproval.ts)는 `emitPosted` 만 부른다 — 받은 사람 `inbox.updated` 는 라우트 몫이라 이 줄에는 나지 않는다
+        // (inbox 행은 들어간다). 머리 주인의 `thread_reply` 신호를 TS 와 같이 내지 않는다.
+        defer_inbox_events: true,
         ..Origin::default()
     };
     let out = post_in_tx(
