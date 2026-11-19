@@ -52,11 +52,28 @@ pub struct Downscaled {
 }
 
 /// TS `downscaleImage` — 한 번에 하나만 돈다(블로킹 스레드). 실패는 이유 문장으로.
-pub async fn downscale(input: Vec<u8>, limit_bytes: usize) -> Result<Downscaled, String> {
-    let _run = RUN.acquire().await.map_err(|e| e.to_string())?;
-    tokio::task::spawn_blocking(move || downscale_now(&input, limit_bytes))
-        .await
-        .map_err(|e| format!("could not decode image ({e})"))?
+/// `slot` 은 [`try_slot`] 으로 먼저 잡은 자리 — 블로킹 작업이 끝날 때 놓인다.
+pub async fn downscale(
+    input: Vec<u8>,
+    limit_bytes: usize,
+    slot: Slot,
+) -> Result<Downscaled, String> {
+    run_exclusive(slot, move || downscale_now(&input, limit_bytes)).await
+}
+
+/// 실행 허가(`RUN`)를 받은 뒤 블로킹 스레드에서 `work` 를 돌린다. 허가와 자리는 **클로저 안으로 옮겨**
+/// 블로킹 작업이 끝날 때 놓는다 — 요청 future 가 버려져도(연결 끊김) 도는 디코드가 상한 밖으로 새지 않는다.
+async fn run_exclusive<T: Send + 'static>(
+    slot: Slot,
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    let run = RUN.acquire().await.map_err(|e| e.to_string())?;
+    tokio::task::spawn_blocking(move || {
+        let _held = (run, slot);
+        work()
+    })
+    .await
+    .map_err(|e| format!("could not decode image ({e})"))?
 }
 
 /// sharp `metadata().format` 이름.
@@ -243,8 +260,51 @@ mod tests {
         assert!(e.starts_with("unsupported image format (unknown)"), "{e}");
     }
 
-    #[test]
-    fn slots_cap_pending() {
+    /// `PENDING`·`RUN` 은 프로세스 전역이다 — 이를 세는 시험끼리는 차례로 돈다.
+    static GLOBAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn dropped_request_keeps_slot_and_permit_until_work_ends() {
+        let _g = GLOBAL.lock().await;
+        let others: Vec<_> = (0..MAX_PENDING - 1).map_while(|_| try_slot()).collect();
+        assert_eq!(others.len(), MAX_PENDING - 1);
+        let slot = try_slot().expect("last slot");
+        let (started_tx, started_rx) = std::sync::mpsc::channel::<()>();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+        let req = tokio::spawn(run_exclusive(slot, move || {
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            done_tx.send(()).unwrap();
+            Ok(())
+        }));
+        tokio::task::spawn_blocking(move || started_rx.recv().unwrap())
+            .await
+            .unwrap();
+        // 연결이 끊긴 것처럼 요청 future 를 버린다 — 블로킹 작업은 계속 돈다.
+        req.abort();
+        assert!(req.await.unwrap_err().is_cancelled());
+        assert!(try_slot().is_none(), "slot must stay held while work runs");
+        assert_eq!(RUN.available_permits(), 0, "run permit must stay held");
+        release_tx.send(()).unwrap();
+        tokio::task::spawn_blocking(move || done_rx.recv().unwrap())
+            .await
+            .unwrap();
+        // 작업이 끝나면 놓인다(클로저가 돌아온 직후라 잠깐 기다린다).
+        for _ in 0..200 {
+            if RUN.available_permits() == 1 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        assert_eq!(RUN.available_permits(), 1);
+        assert!(try_slot().is_some());
+        drop(others);
+    }
+
+    #[tokio::test]
+    async fn slots_cap_pending() {
+        let _g = GLOBAL.lock().await;
         let held: Vec<_> = (0..MAX_PENDING).map_while(|_| try_slot()).collect();
         assert_eq!(held.len(), MAX_PENDING);
         assert!(try_slot().is_none());

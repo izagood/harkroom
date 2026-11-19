@@ -194,8 +194,8 @@ async fn downscale_path(m: &Meta, key: &str) -> Option<String> {
         Ok(b) => b,
         Err(r) => return Some(r),
     };
-    let small = super::image_downscale::downscale(body, IMAGE_MAX_BYTES as usize).await;
-    drop(slot);
+    // 자리는 축소 작업 안으로 넘긴다 — 이 future 가 버려져도 블로킹 디코드가 끝날 때 놓인다.
+    let small = super::image_downscale::downscale(body, IMAGE_MAX_BYTES as usize, slot).await;
     let small = match small {
         Ok(s) => s,
         Err(reason) => return Some(not_inlined(&reason)),

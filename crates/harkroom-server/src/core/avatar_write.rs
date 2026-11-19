@@ -990,6 +990,54 @@ mod tests {
             check_raster_dimensions(&gif, "image/gif", Purpose::Original),
             None
         );
+        // 화면 1x1 이어도 장이 화면 밖으로 크면 디코더는 화면을 키운다 — 넓힌 크기로 잰다.
+        let gif_frame = |left: u16, top: u16, w: u16, h: u16, second: Option<(u16, u16)>| {
+            let mut v = b"GIF89a".to_vec();
+            v.extend([1, 0, 1, 0, 0, 0, 0]);
+            let mut frame = |l: u16, t: u16, w: u16, h: u16| {
+                v.push(0x2C);
+                for n in [l, t, w, h] {
+                    v.extend(n.to_le_bytes());
+                }
+                v.extend([0, 2, 2, 0x4C, 0x01, 0]);
+            };
+            frame(left, top, w, h);
+            if let Some((w2, h2)) = second {
+                frame(0, 0, w2, h2);
+            }
+            v.push(0x3B);
+            v
+        };
+        for (g, want) in [
+            (gif_frame(0, 0, 5000, 5000, None), "image is 5000x5000;"),
+            (gif_frame(5000, 5000, 10, 10, None), "image is 5010x5010;"),
+            (
+                gif_frame(0, 0, 1, 1, Some((5000, 5000))),
+                "image is 5000x5000 x 2 frames;",
+            ),
+        ] {
+            assert!(
+                matches!(
+                    check_raster_dimensions(&g, "image/gif", Purpose::Avatar),
+                    Some(Detected::Refused("image_dimensions_too_large", m)) if m.starts_with(want)
+                ),
+                "{want}"
+            );
+        }
+        // 첫 장 3000x3000 은 넓힌 크기(sharp 값과 같음)로 재지만 아바타 상한(4096²) 안이다.
+        assert_eq!(
+            super::super::raster_probe::probe("image/gif", &gif_frame(0, 0, 3000, 3000, None))
+                .map(|p| (p.width, p.height)),
+            Some((3000, 3000))
+        );
+        assert_eq!(
+            check_raster_dimensions(
+                &gif_frame(0, 0, 5000, 5000, None),
+                "image/gif",
+                Purpose::Original
+            ),
+            None
+        );
         assert!(matches!(
             check_raster_dimensions(b"GIF89a\x01\0\x01\0____", "image/gif", Purpose::Avatar),
             Some(Detected::Refused("not_an_image", _))

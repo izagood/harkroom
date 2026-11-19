@@ -1,7 +1,7 @@
 //! GIF·WebP·AVIF 의 가로·세로·장 수를 **헤더(컨테이너 구조)만** 읽어 낸다 — TS `sharp(bytes, { animated: true }).metadata()`
 //! 의 `width`·`pageHeight`·`pages` 자리. 픽셀(LZW·VP8·AV1)은 풀지 않으므로 디코더를 공격면으로 내주지 않는다.
 //!
-//! - GIF: 논리 화면 크기(`width`·`pageHeight`)와 그림 설명자(`0x2C`) 수(`pages`). 끝 표시(`0x3B`) 전에 잘렸어도 센 장까지 인정한다.
+//! - GIF: 논리 화면 크기를 장 설명자의 `left+width`·`top+height` 최댓값까지 넓힌 크기(`width`·`pageHeight`)와 그림 설명자(`0x2C`) 수(`pages`). 끝 표시(`0x3B`) 전에 잘렸어도 센 장까지 인정한다.
 //! - WebP: `VP8X` 캔버스(애니메이션이면 `ANMF` 수가 장 수) · `VP8 `(손실) · `VP8L`(무손실) 머리.
 //! - AVIF: `meta` → `pitm`(주 그림) → `iprp/ipma` 로 주 그림에 묶인 `ispe`. 묶음을 못 찾으면 첫 `ispe`.
 //!   **장 수는 1로 둔다** — libheif 는 최상위 그림 수를 세지만 아바타·첨부 AVIF 는 사실상 한 장이다(TS 와 다를 수 있는 자리).
@@ -72,8 +72,8 @@ fn gif(b: &[u8]) -> Option<Probe> {
     if !(b.starts_with(b"GIF87a") || b.starts_with(b"GIF89a")) {
         return None;
     }
-    let width = u16le(b, 6)?;
-    let height = u16le(b, 8)?;
+    let mut width = u16le(b, 6)?;
+    let mut height = u16le(b, 8)?;
     let packed = *b.get(10)?;
     let mut at = 13;
     if packed & 0x80 != 0 {
@@ -88,6 +88,10 @@ fn gif(b: &[u8]) -> Option<Probe> {
                 None => break,
             },
             Some(0x2C) => {
+                // 장이 화면 밖으로 나가면 디코더(libnsgif)는 화면을 키운다 — 장의 오른쪽·아래 끝까지 넓혀 잰다.
+                // sharp 는 첫 장만 반영하지만 여기서는 모든 장의 최댓값을 쓴다(더 엄격한 쪽).
+                width = width.max(u16le(b, at + 1)? + u16le(b, at + 5)?);
+                height = height.max(u16le(b, at + 3)? + u16le(b, at + 7)?);
                 let local = *b.get(at + 9)?;
                 let mut p = at + 10;
                 if local & 0x80 != 0 {
@@ -168,65 +172,66 @@ fn webp(b: &[u8]) -> Option<Probe> {
 
 // ── AVIF (ISOBMFF) ──────────────────────────────────────────────────
 
-/// `[start, end)` 안의 상자들 — (형, 내용 시작, 상자 끝).
-fn boxes(b: &[u8], start: usize, end: usize) -> Vec<([u8; 4], usize, usize)> {
-    let mut out = vec![];
+/// `[start, end)` 안의 상자들 — (형, 내용 시작, 상자 끝). 하나씩 읽어 찾으면 거기서 멈춘다.
+fn boxes(b: &[u8], start: usize, end: usize) -> impl Iterator<Item = ([u8; 4], usize, usize)> + '_ {
     let mut at = start;
-    while at + 8 <= end {
-        let Some(size) = u32be(b, at) else { break };
-        let Some(kind) = b.get(at + 4..at + 8) else {
-            break;
-        };
-        let kind: [u8; 4] = kind.try_into().unwrap_or_default();
+    std::iter::from_fn(move || {
+        if at + 8 > end {
+            return None;
+        }
+        let size = u32be(b, at)?;
+        let kind: [u8; 4] = b.get(at + 4..at + 8)?.try_into().ok()?;
         let (head, size) = match size {
             0 => (8, (end - at) as u64),
-            1 => match b.get(at + 8..at + 16) {
-                Some(s) => (16, u64::from_be_bytes(s.try_into().unwrap_or_default())),
-                None => break,
-            },
+            1 => (
+                16,
+                u64::from_be_bytes(b.get(at + 8..at + 16)?.try_into().ok()?),
+            ),
             n => (8, n),
         };
-        let Some(box_end) = usize::try_from(size).ok().and_then(|s| at.checked_add(s)) else {
-            break;
-        };
+        let box_end = usize::try_from(size).ok().and_then(|s| at.checked_add(s))?;
         if size < head as u64 || box_end > end {
-            break;
+            return None;
         }
-        out.push((kind, at + head, box_end));
+        let item = (kind, at + head, box_end);
         at = box_end;
-    }
-    out
+        Some(item)
+    })
 }
 
-fn find(list: &[([u8; 4], usize, usize)], kind: &[u8; 4]) -> Option<(usize, usize)> {
-    list.iter().find(|x| &x.0 == kind).map(|x| (x.1, x.2))
+fn find(
+    mut list: impl Iterator<Item = ([u8; 4], usize, usize)>,
+    kind: &[u8; 4],
+) -> Option<(usize, usize)> {
+    list.find(|x| &x.0 == kind).map(|x| (x.1, x.2))
 }
 
 fn avif(b: &[u8]) -> Option<Probe> {
-    let top = boxes(b, 0, b.len());
-    let (fs, _) = find(&top, b"ftyp")?;
+    let (fs, _) = find(boxes(b, 0, b.len()), b"ftyp")?;
     if !matches!(b.get(fs..fs + 4)?, b"avif" | b"avis") {
         return None;
     }
     // `meta` 는 FullBox — 판·깃발 4바이트 뒤가 자식이다.
-    let (ms, me) = find(&top, b"meta")?;
-    let meta = boxes(b, ms + 4, me);
-    let primary = find(&meta, b"pitm").and_then(|(s, _)| match b.get(s)? {
+    let (ms, me) = find(boxes(b, 0, b.len()), b"meta")?;
+    let meta = || boxes(b, ms + 4, me);
+    let primary = find(meta(), b"pitm").and_then(|(s, _)| match b.get(s)? {
         0 => u16be(b, s + 4),
         _ => u32be(b, s + 4),
     });
-    let (ps, pe) = find(&meta, b"iprp")?;
-    let iprp = boxes(b, ps, pe);
-    let (cs, ce) = find(&iprp, b"ipco")?;
-    let props = boxes(b, cs, ce);
+    let (ps, pe) = find(meta(), b"iprp")?;
+    let iprp = || boxes(b, ps, pe);
+    let (cs, ce) = find(iprp(), b"ipco")?;
+    // 속성은 번호로 가리키므로 ipco 자식만 모은다.
+    let props: Vec<_> = boxes(b, cs, ce).collect();
     let ispe = |i: usize| -> Option<(u64, u64)> {
         let (kind, s, _) = props.get(i)?;
         (kind == b"ispe").then_some(())?;
         Some((u32be(b, s + 4)?, u32be(b, s + 8)?))
     };
     let chosen = primary
-        .zip(find(&iprp, b"ipma"))
-        .and_then(|(item, (s, _))| ipma_props(b, s, item))
+        .zip(find(iprp(), b"ipma"))
+        // 상자 끝에서 잘라 넘긴다 — 다음 상자를 ipma 로 읽지 않게.
+        .and_then(|(item, (s, e))| ipma_props(&b[..e], s, item))
         .and_then(|idx| idx.into_iter().find_map(&ispe));
     let (width, height) = chosen.or_else(|| (0..props.len()).find_map(&ispe))?;
     Some(Probe {
@@ -321,6 +326,14 @@ mod tests {
         assert_eq!(
             probe("image/gif", &gif_bytes(10, 20, 2, false)).map(|p| p.pages),
             Some(2)
+        );
+        // 장이 화면 밖으로 나가면 화면을 넓혀 잰다(libnsgif 와 같게, 모든 장의 최댓값).
+        let mut wide = gif_bytes(1, 1, 1, true);
+        let d = wide.iter().position(|&x| x == 0x2C).unwrap();
+        wide[d + 1..d + 9].copy_from_slice(&[0x88, 0x13, 0x88, 0x13, 10, 0, 10, 0]);
+        assert_eq!(
+            probe("image/gif", &wide).map(|p| (p.width, p.height)),
+            Some((5010, 5010))
         );
         // 장이 하나도 없으면 깨진 파일.
         assert_eq!(probe("image/gif", &gif_bytes(10, 20, 0, true)), None);
